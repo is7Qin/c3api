@@ -11,6 +11,7 @@
 - **ID**：路径参数 `{id}` 为模板/账号/分组的整数 ID。
 - **更新语义**：`PUT` 为**全量替换**——请求体中的字段整体覆盖，未提供的字段清零（仅提供部分字段的 `PUT` 会把缺失字段重置为空/零值）。批量 `batch-update` 为**部分更新**（只改 `fields` 中提供的字段）。
 - **列表响应**：templates / accounts / groups 三个旧端点统一返回 `{"total": <满足筛选的总数>, "rows": [...]}`，支持 `limit` / `offset` 分页、筛选参数与白名单 `sort` / `order` 排序（非法 `sort` / `order` → `400`）。兑换码与模型价格为**增强分页范式**（`page` / `page_size`，1-based），见对应章节。
+- **金额单位（两个面，勿混）**：**明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs` 的 `Cost` / `RawCost`、价格快照 `Price*Millis`（每 M token 毫分）、key 的 `Quota` / `QuotaUsed`、`/routing/frontier` 的 `cost_per_success`；这些字段在 API 边界**原样下发，不做换算**。**聚合/账户面恒为 USD float64**——`users.balance`、`temp_balances.amount_usd` / `total_usd`、兑换码 `value`、`/stats/*` 与 `/overview` 的 `Cost` / `cost_usd` / `raw_cost_usd`；这些字段由服务端按 `毫分 / 1e5` 换算后下发。同一含义在两面的类型与量纲不同（如 `usage_logs.Cost` 是毫分 int64，`/stats/trend` 的 `Cost` 是 USD float64），客户端不得跨面直接比较或相加。
 
 ## 枚举值
 
@@ -191,6 +192,8 @@
 | `GET /api/admin/templates/{id}` | 单个模板 | `200`：模板对象；`404` 不存在 |
 | `PUT /api/admin/templates/{id}` | 全量更新（字段同创建） | `200`：更新后模板对象 |
 | `DELETE /api/admin/templates/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id）；仍被账号引用时返回 `500`（DB 外键约束） |
+| `GET /api/admin/templates/{id}/ext` | 读取模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行） | `200`：ext 配置 |
+| `PUT /api/admin/templates/{id}/ext` | 幂等写入模板类型化扩展（Create/Update 合一；全列更新含 NULL 清空） | `200`：写入后的 ext 配置 |
 
 > 模板变更（含 base_url / supported_formats / format_models / model_mapping）通过 invalidate 回调即时生效于调度器快照与上游 SDK 客户端（无需重启）。
 
@@ -224,7 +227,7 @@
 | `max_concurrency` | int | 否 | 账号并发上限；创建时缺省取服务端配置 `scheduler.default_max_concurrency`（显式提供则用之）。写入期**不做静默钳制**——`0` 会让该账号恒不可被选中，属误配置 |
 | `group_ids` | int[] / null | 否 | 所属分组；缺省/`null`/`[]` = 不归组（不归组的账号不进任何组路由，但账号本身可被直接管理） |
 | `enabled` | bool | 否 | 管理端启停；创建缺省 `true`，**显式 `false` 生效**（创建即为禁用态） |
-| `upstream_cost_multiplier` | number / null | 否 | 采购成本倍率；创建缺省 ×1（存储 `10000` bp）。正常值 `1` = ×1、`0` = 免费、上限 `10` = ×10；边界换算 basis points（存储 `25000` ↔ 显示 `2.5`），越界 → `400`。与租户/组计费倍率（`price_multiplier`）完全独立，永不互串 |
+| `upstream_cost_multiplier` | number / null | 否 | 采购成本倍率；创建缺省 ×1（存储 `10000` bp），**显式 `0` 生效**（创建即为免费账号，不被缺省 ×1 吞掉）。正常值 `1` = ×1、`0` = 免费、上限 `10` = ×10；边界换算 basis points（存储 `25000` ↔ 显示 `2.5`），越界 → `400`。与租户/组计费倍率（`price_multiplier`）完全独立，永不互串 |
 
 创建体是**同一个字段模型** `AccountConfigPatch` 加上必需性投影（`required[name, template_id]`），故上表与 `PATCH /accounts/{id}` 的字段逐一对应；三态规则（可空标量 `null` = 清空、缺席 = 不变、不可空标量 `null` 或可空标量 `""` → `400`）对创建与 `PATCH` 一致。
 
@@ -331,6 +334,84 @@
 
 `fields` 必须至少提供一字段；`ids` 中任一 id 不存在 → `404`（事务全败）。成功 `200`：`{"updated": N, "items": [{"account_id": 1, "lifecycle_revision": 2}, ...]}`——**逐账号**回显新 C，供客户端下一次 CAS。批量面不携带逐账号前置条件（无 `If-Match`），但代际仍逐账号原子 +1；批量改 `group_ids` 时旧组与新组都会被刷新（旧∪新）。
 
+### codex 凭据批量导入
+
+`POST /api/admin/accounts/batch-import-codex-oauth`
+
+`POST /api/admin/accounts/batch-import-codex-pat`
+
+把 codex 凭据批量灌入账号表。**幂等组合键 = `codex_email` + `codex_account_id`**：键已存在 → 只更新凭据列（计入 `updated`），不存在 → 新建账号（计入 `imported`）。**行级失败不毁整批**——有失败行仍返回 `200`，明细在 `failed[]`（`index` = `items` 原始下标）。
+
+请求体（两端点同构，只有 `items[]` 的元素类型不同）：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | array | ✅ | 1–100 **原始条数**（空/超限 → `400`） |
+| `template_id` | int | ✅ | codex 账号归属模板；缺失 → `400`，不存在 → `404`；**模板 `credential_type` 必须 == 端点类型**（`codex-oauth` / `codex-pat`），错配 → `400` 整批拒绝 |
+| `group_id` | int / null | 否 | 新建账号归组；缺省 = 不归组；分组不存在 → **行级 failed**（FK 违反不整批 `400`） |
+| `enabled` | bool | 否 | 新建账号的管理面启停（缺省 `true`）——**仅新建行生效** |
+| `cache_domain` | string | 否 | 新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253，非法 → `400` 整批拒绝）——**仅新建行生效** |
+| `upstream_cost_multiplier` | number | 否 | 新建账号的采购成本倍率（缺省 ×1；`0`–`10`，`0` = 免费；越界 → `400` 整批拒绝）——**仅新建行生效** |
+
+> **「仅新建行生效」语义**：`enabled` / `cache_domain` / `upstream_cost_multiplier` 是 **body 级**字段（不在 `items[]` 元素内），只作用于本次**新建**的账号。命中幂等键的已存在行**只更新凭据**，这三项配置不被覆盖（与 `max_concurrency` 同款"仅创建生效"语义）。三项缺省 = 走创建默认（`enabled=true` / 私有域 / ×1）。配置非法是**整批** `400`（配置对全批生效、无行级归属），与模板类型错配同级；而 `group_id` 不存在是**行级** failed——两者不要混。
+
+`items[]` 元素（codex-oauth）：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `codex_email` | string | ✅ | 组合幂等键①（codex 登录邮箱）；格式非法 → **行级 failed** |
+| `codex_account_id` | string | ✅ | 组合幂等键②（上游账号/空间标识） |
+| `codex_oauth_token` | string | ✅ | oauth 访问令牌（与 refresh 成对） |
+| `codex_oauth_refresh_token` | string | ✅ | oauth 刷新令牌（与 token 成对） |
+| `codex_oauth_expires_at` | string | 否 | RFC3339 过期时间；**解析失败 → 行级 failed**（契约里是原始字符串而非 `date-time`，故不进整批 `400`）；缺省 = 过期未知 → `401` 自愈 |
+| `max_concurrency` | int | 否 | 缺省 `25`（**导入面裁决，非账号表默认 8**）；`< 1` → 归 25 |
+
+`items[]` 元素（codex-pat）：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `codex_email` | string | ✅ | 组合幂等键①；格式非法 → 行级 failed |
+| `codex_account_id` | string | ✅ | 组合幂等键②（缺省时服务端按 `codex_pat_key` 在线 whoami 补全；仍空 → 行级 failed） |
+| `codex_pat_key` | string | ✅ | pat（必填非空） |
+| `max_concurrency` | int | 否 | 缺省 `25`；`< 1` → 归 25 |
+
+响应 `200`：
+
+```json
+{ "imported": 3, "updated": 1, "failed": [{ "index": 2, "error": "..." }] }
+```
+
+| 字段 | 说明 |
+|---|---|
+| `imported` | 新建账号数 |
+| `updated` | 键已存在、仅更新凭据数 |
+| `failed` | 行级失败明细（`index` + `error`）；**整批不原子**，成功行已落库 |
+
+> 批末一次性触发 invalidate + publish（`imported` 行归组 ∪ `updated` 行既有分组）——新凭据经 `account_ext` 快照即时生效，无需重启。
+
+### 账号用量聚合
+
+`GET /api/admin/accounts/usage?account_ids=1,2,3&from=...&to=...`
+
+一次取多个账号的用量视图（前端账号列表免逐账号轮询）。
+
+| 查询参数 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `account_ids` | string | ✅ | 逗号分隔账号 id（1–100 条，重复自动去重；空/非数字/超限 → `400`） |
+| `from` / `to` | RFC3339 | 否 | 缺省 = `timezone` 时区当日零点 → now；显式值为绝对时刻，不受时区改写；`from > to` → `400` |
+| `timezone` | string | 否 | 决定缺省 `from` 的日界所在时区；非法 → `400` |
+
+响应 `200`：`{"items": [...]}`，`items` **恒 = `account_ids` 去重后的全量**（无记录账号 gateway 全 0，前端免补零；顺序同去重后顺序）。
+
+每个 item：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `account_id` | int64 | 账号 id |
+| `gateway` | object | 网关侧聚合（`usage_logs` 实时明细）：`request_count` / `error_count` / token 计数 / `cost_usd` / `raw_cost_usd`（**USD float64**，毫分 /1e5）；无记录账号全 0 |
+| `upstream` | object / null | **codex 上游额度快照**（上游账号的用量与重置时间，百分比口径）——**不是本网关的计费**；`api-key` / 无凭据账号恒 `null` |
+| `upstream_error` | string / null | 上游快照失败分类：`auth_expired`（凭据 fatal）/ `upstream_unavailable`（网络/5xx）；`null` = 无上游能力或快照成功 |
+
 ### 账号其他端点
 
 | 方法/路径 | 说明 | 响应 |
@@ -338,6 +419,9 @@
 | `GET /api/admin/accounts/{id}` | 单个账号 | `200`：账号对象；`404` 不存在 |
 | `PATCH /api/admin/accounts/{id}` | 部分更新（唯一字段模型 `AccountConfigPatch`，三态语义；可选 `If-Match` 前置条件） | `200`：更新后账号对象；陈旧 → `412` |
 | `DELETE /api/admin/accounts/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id） |
+| `GET /api/admin/accounts/{id}/groups` | 读取账号的全部分组 id（编辑回显；不随账号列表返回） | `200`：`{"group_ids": [...]}` |
+| `GET /api/admin/accounts/{id}/ext` | 读取账号类型化鉴权扩展（编辑回显；仅 `codex-oauth` / `codex-pat` 账号有 ext 行） | `200`：ext 配置 |
+| `PUT /api/admin/accounts/{id}/ext` | 幂等写入账号类型化鉴权扩展（Create/Update 合一；全列更新含 NULL 清空）；凭据值真变 → 适配层重建 + 身份代际 K +1 | `200`：写入后的 ext 配置 |
 
 ---
 
@@ -506,7 +590,8 @@
 - `POST /user/auth/register-code`：发送注册验证码（受 `mail.register_verification` + `signup_enabled` 双闸；未开验证 → `400` 哨兵文案；同邮箱 `60s` 限频 → `429`；已注册邮箱静默抑制发送仍返回 `{sent:true}`——防枚举）。响应恒 `{"sent":true}`。
 - `POST /user/auth/forgot-password`：忘记密码发码。**恒 `200 {"sent":true}` 同形响应（防枚举）**——无论账号是否存在、邮件是否启用；实际发送条件 = `mail.enabled` 且账号存在且未限频。
 - `POST /user/auth/reset-password {email, code, new_password}`：凭邮件验证码重置密码（码一次性、10 分钟有效、5 次尝试上限后须重新请求；新密码校验前置）；**不撤销既有 JWT**（同修改密码语义），新密码下次登录生效。
-- `GET /user/stats`：我的用量统计（强制 `user_id` = 当前用户，防越权；字段与 `/api/admin/stats` 同契约，见「查询用量统计」章节）。
+- `GET /user/stats`：我的用量统计（强制 `user_id` = 当前用户，防越权；返回 `StatTrendPoint[]`，与 `/api/admin/stats/trend` 同契约，见「查询用量统计」章节）。另有 `GET /user/stats/ttft`（我的 TTFT 摘要）。
+- `GET|POST|PUT|DELETE /api/user/keys*`：我的密钥（列表/创建/更新/删除/轮换），含 `quota` 额度语义，见「密钥 Keys」章节。
 - `GET /user/temp-balances`：我的临时额度（仅有效额度：未过期且正余额，`expires_at` 升序 FEFO 同序、永久最后；`total_usd` 合计 USD），见「临时额度 Temp Balances」章节。
 - `GET|PUT /api/user/balance-warning-threshold`：读取或设置我的永久余额预警阈值，body/响应为 `{"balance_warning_threshold": 5}`，单位 USD；`0` 关闭，负值、非有限值和正值换算后为 `0` 均为 `400`。
 - 兑换码（`/user/redemptions`）：`balance` / `temp_balance` 类型向毫分余额/临时额度充值，见「兑换码 Redemption Codes」章节。
@@ -570,6 +655,54 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 3. 两者均未设置 → ×1 原价。
 
 `0` = **免费**（cost = 0 不扣费；请求仍须有价格，否则 402）；上限 `100000` = ×10。倍率预检：免费用户/组余额为 0 不 402。
+
+---
+
+## 密钥 Keys
+
+key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分组，前缀 `ck-`。**两个面分明**：用户面（`/api/user/keys`，本人可看明文、可轮换）与管理面（`/api/admin/keys`，**永不下发明文**，仅供审计/排障）。
+
+### 额度模型（quota）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `Quota` | int64 | **累计最终计费金额上限，毫分**（1 USD = 100,000 毫分）；`0` = **不限**（且此时 `QuotaUsed` 恒 `0`） |
+| `QuotaUsed` | int64 | **已消耗计费金额，毫分**（后扣：请求完成后由 Recorder 周期增量回写，DB 滞后 ≤ `quota_flush_interval`） |
+
+- **上限**：`quota` ∈ `[0, 9007199254740991]`（= JavaScript `Number.MAX_SAFE_INTEGER`，2^53−1）——上限按 UI 承载能力裁定，负数或超上限 → `400`。
+- **`quota = 0` 会同时清零 `quota_used`**：显式把额度设为 `0`（= 不限）时，服务端在同一个 UPDATE 里把累计消耗一并归零。两条理由：① 不限额度下"已用"没有意义，留着只会让 UI 显示"已用 $X / 不限"；② 它是**累计**上限，不清零则历史消耗会带进下一次设额（用户刚设好额度就被旧消耗挡住）。
+- **`quota_used` 的唯一服务端写点是额度更新路径**；与 Recorder 增量回写的交错是安全的——增量回写 SQL 带 `WHERE "quota" > 0` 守卫（无额度 key 恒不累计），行锁串行化下"回写先 / 清零先"两种提交顺序都收敛到 `0`，迟到的回写不会把已用量带回来。
+- 额度是**软门禁**：请求热路径读内存预算快照，耗尽才回 DB 复核（见「计费 Billing」）。
+
+### 管理面：密钥列表
+
+`GET /api/admin/keys`（platform_admin 专属）
+
+| 查询参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `name` | string | — | 名称模糊搜索（`ILIKE '%name%'`） |
+| `user_id` | int64 | — | 按归属用户收窄；缺省 = 全部用户 |
+| `group_id` | int64 | — | 按归属分组收窄；缺省 = 全部分组 |
+| `limit` / `offset` | int | 20 / 0 | 分页（`limit` 上限 200，超限裁剪到 200） |
+| `sort` | string | `id` | 白名单：`id` / `name` / `created_at`；非法值 → `400` |
+| `order` | string | `desc` | `asc` / `desc`；其他值 → `400` |
+
+响应 `200`：`{"total": N, "rows": [AdminKey...]}`。**脱敏——响应不含 key 明文**（密钥明文绝不下发管理端）。
+
+`AdminKey` 字段：`ID` / `UserID` / `GroupID` / `Name` / `Status`（`active` / `disabled`）/ `MaxConcurrency` / `Quota`（毫分）/ `QuotaUsed`（毫分）/ `CreatedAt` / `UpdatedAt` / `DeletedAt`（软删除时间戳，`null` = 存活）。
+
+### 用户面：我的密钥
+
+| 方法/路径 | 说明 |
+|---|---|
+| `GET /api/user/keys` | 我的 key 列表（`limit` 上限 200 / `offset` / `name` / `sort` / `order`）；**key 明文长期可查看/复制** |
+| `POST /api/user/keys` | 创建 key（body：`name`✅ / `group_id`✅ / `max_concurrency`（`0` = 不限）/ `quota`（毫分，`0` = 不限））；组须为 `public` 或已授予本人的 `private`，否则 `400` |
+| `GET /api/user/keys/{id}` | key 详情（仅本人；他人 key → `404`） |
+| `PUT /api/user/keys/{id}` | 更新（`name` / `status` / `max_concurrency` / `quota`；**字段缺省 = 不变**，`nil` 不落值）；仅本人 |
+| `DELETE /api/user/keys/{id}` | 删除（软删除；Auth 快照增量移除——**立即失效**） |
+| `POST /api/user/keys/{id}/rotate` | 轮换明文（新明文生效，旧 key 立即失效）；仅本人 |
+
+> 用户面 `Key` 比管理面 `AdminKey` 多一个 `key` 字段（明文）。`PUT /api/user/keys/{id}` 传 `"quota": 0` 时按上文语义**同时清零 `quota_used`**。
 
 ---
 
@@ -693,6 +826,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `Cost` | int64 | 计费成本（**毫分**，1 USD = 100,000 毫分）；放行路径行可为 0（免费分组/0 token） |
+| `RawCost` | int64 | 原始成本（**毫分**，乘倍率前——免费组 `Cost`=0 但 `RawCost` 有值，"实际消耗"口径）；bill 未装配/无价防御路径恒 0 |
 | `BillingTier` | string | 请求 `service_tier` 归一化值：`priority` / `flex` / `fast` / `auto`（未知/空值归一 auto）；空 = 未计费路径（billing 关闭或未鉴权） |
 | `AboveHit` | bool | 任一分量超 `above_threshold` 命中分段计价 |
 | `Overdraft` | bool | 本次扣费透支（余额不足扣为负余额；`[billing]` 开启且允许透支时可能为 true） |
@@ -719,54 +853,51 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 
 ### 查询用量统计
 
-`GET /api/admin/stats?from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z&granularity=day&group_id=1&account_id=2&model=gpt-4o`（管理侧，可 `user_id` 过滤）
+统计面**已按查询形状拆成四个端点**（tag `stats`；路径写在 `paths:` 里不带 `/admin`，但挂 `/api/admin` 组，故实际为 `/api/admin/stats/*`）。用户面另有 `user` tag 的两个等价端点，强制 `user_id` = 当前用户（防越权）。
 
-`GET /user/stats?...`（用户侧，强制 `user_id` = 当前用户，`user_id` 过滤参数无效——防越权）
+| 端点 | 形状 | 响应 |
+|---|---|---|
+| `GET /api/admin/stats/trend` | 时间桶趋势（cube 或原始行——按 `timezone` 路由） | `StatTrendPoint[]` |
+| `GET /api/admin/stats/entity-trend` | 单实体时间桶趋势（强制 `entity` + `id`） | `StatTrendPoint[]` |
+| `GET /api/admin/stats/top` | 实体排行（无时间桶，恒走 cube 绝对区间） | `StatTopEntry[]` |
+| `GET /api/admin/stats/ttft` | TTFT 聚合（`entity` 空 = 平台级 sketch 分支；非空 = 实体级 exact 分支） | `StatTTFTSummary` |
+| `GET /api/user/stats` | 我的趋势（= `/stats/trend`，强制 `user_id` = 当前用户） | `StatTrendPoint[]` |
+| `GET /api/user/stats/ttft` | 我的 TTFT（= `/stats/ttft`，强制 `user_id` = 当前用户） | `StatTTFTSummary` |
 
-| 查询参数 | 类型 | 默认 | 说明 |
+**`/stats/trend`（与 `/api/user/stats` 同形）**
+
+| 查询参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `from` / `to` | RFC3339 | 近 24 小时 | 时间范围 |
-| `granularity` | `hour` / `day` | `day` | 聚合粒度；可选 `timezone`（IANA 名，通常 = 浏览器时区；空 = UTC；非法 = 400）决定桶界所在时区——显式 `from`/`to` 恒为绝对时刻，不受时区影响。DST/半小时偏移时区的分组读扫原始明细，窗口上限 8 天（对齐 err_logs 保留），超限 400；UTC 及恒整点无 DST 时区读 180 天卷积表（≤90 天） |
-| `group_id` / `account_id` / `template_id` / `user_id`(仅 `/api/admin/stats`) / `model` | int / int / int / int / string | — | 维度过滤 |
+| `from` / `to` | RFC3339 | ✅ | 时间范围（缺失 → `400`） |
+| `granularity` | `hour` / `day` | 否（缺省 `day`） | 桶粒度 |
+| `group_id` | int64 | 否 | 维度过滤（仅管理面有） |
+| `model` | string | 否 | 模型过滤 |
+| `timezone` | string | 否 | IANA 名（通常 = 浏览器时区；空 = UTC；非法 → `400`）决定桶界所在时区——显式 `from`/`to` 恒为绝对时刻，不受时区影响 |
 
-响应 `200`：统计行数组（按粒度对齐的桶）：
+**`timezone` 是路由键，不只是展示**：
 
-```json
-[
-  {
-    "BucketTime": "2026-08-06T00:00:00Z",
-    "GroupID": 1,
-    "AccountID": 2,
-    "TemplateID": 1,
-    "Model": "gpt-4o",
-    "IsError": false,
-    "RequestCount": 100,
-    "ErrorCount": 0,
-    "InputTokens": 1000,
-    "OutputTokens": 2000,
-    "TotalTokens": 3000,
-    "CacheReadTokens": 100,
-    "CacheCreationTokens": 0,
-    "Cost": 0.5,
-    "CallCount": 12,
-    "TTFTCount": 90,
-    "TTFTAvgMS": 620.5,
-    "TTFTMaxMS": 3800,
-    "TTFTP50MS": 500,
-    "TTFTP90MS": 1500,
-    "TTFTP95MS": 2100,
-    "TTFTP99MS": 3400
-  }
-]
-```
+- 恒整点、无 DST 的时区（含 UTC 缺省）且窗口界对齐 → 读 **180 天 cube 卷积表**（预聚合），窗口上限 **90 天**。
+- 非精确时区，或窗口界劈开卷积行 → 扫 `usage_logs` + `err_logs` **原始明细**分组，窗口上限 **8 天**（对齐 err_logs 默认 7 天保留 + 1 天 DST/日界余量；部署把保留期调短则更严，调长不放水）。超上限 → `400`（宁可报错，不静默残缺）。
 
-字段说明：
+**`/stats/entity-trend`**：额外必填 `entity`（`account` / `user` / `key`）+ `id`（实体 id），`granularity` 必填，可选 `model`；时区路由同 `trend`。
 
-- `Cost`（float64 **USD**）= 内部毫分 /1e5，与价格 API、`/api/admin/overview` 口径一致（破坏性变更：旧版为毫分 int64）
-- `CallCount` = 按次调用计数（图片生成张数 / search 次数；**不入** `TotalTokens`）
-- `TTFT*` = 首 token 时间（毫秒）统计，**仅含首 token 流式请求**（非流式/失败/无首 token 行不计）：`TTFTCount` 样本数（pN/加权 avg 分母）、`TTFTAvgMS` = ΣTTFT/样本数、`TTFTMaxMS` 最大值、`TTFTP50/P90/P95/P99MS` = 直方图插值分位数（nearest-rank + 桶内线性插值；顶桶 `[12800ms, ∞)` 回落 12800；无样本全 0）
-- 前端跨行合并语义：avg 加权（`Σ(avg×count)/Σcount`）、max 取最大、**pN 取请求量最大维度行的近似值**（分位数不可跨行合并）
-- 统计由**离线聚合 worker** 每 5 分钟从 `usage_logs`/`err_logs` 重算落盘（watermark + 覆盖语义），查询结果可能有 ≤5 分钟延迟；错误桶 = abort 行（usage_logs 全字段）+ 纯错误行（err_logs count 语义，tokens/cost/TTFT 恒 0）；拒绝行（限流）随 err_logs 采样——风暴时错误计数可能低估
+**`/stats/top`**：必填 `from` / `to` / `entity`（`account` / `user` / `key`）/ `by`（`cost` / `requests` / `tokens`），可选 `limit`（缺省 20，`1`–`200`，超限裁剪不报错）。排行按实体聚合、**无时间桶**，数值与时区无关——`timezone` 仅接受并校验（客户端统一带浏览器时区，非法名照旧 `400`），不进查询。
+
+**`/stats/ttft`**：必填 `from` / `to`，可选 `entity`（`account` / `user` / `key`）+ `id`（**成对使用**），可选 `model`。分位数与计数是绝对区间数值——`timezone` 仅接受并校验（非法 `400`），不进查询、不进缓存键。两个分支的窗口上限不同：`entity` 空 = 平台级 sketch 分支（cube 直方图服务端合并）上限 90 天；`entity` 非空 = 实体级 exact 分支（打 `usage_logs` 原始行 `percentile_cont`）上限 **7 天**。
+
+`StatTrendPoint` 字段：`BucketTime` / `RequestCount` / `ErrorCount` / `CallCount` / `InputTokens` / `OutputTokens` / `TotalTokens` / `CacheReadTokens` / `CacheCreationTokens` / `Cost` / `RawCost` / `TTFTAvgMS` / `TTFTMaxMS`。
+
+- `Cost` / `RawCost`（float64 **USD**）= 内部毫分 /1e5，与价格 API、`/api/admin/overview` 口径一致（破坏性变更：旧版为毫分 int64）。`RawCost` 是乘倍率前的"实际消耗"口径（免费组 `Cost` 为 0 但 `RawCost` 有值）。
+- `CallCount` = 按次调用计数（图片生成张数 / search 次数；**不入** `TotalTokens`）。
+- `TTFTAvgMS` = `TTFTTotalMS / TTFTCount`（无样本 0）；`TTFTMaxMS` 最大值。
+
+`StatTopEntry` 字段：`EntityType` / `EntityID` + 与 trend 同名的计数与 `Cost` / `RawCost`（USD）+ `TTFTAvgMS` / `TTFTMaxMS`。
+
+`StatTTFTSummary` 字段：`Count` / `AvgMS` / `P50MS` / `P95MS` / `P99MS` / `MaxMS` / `Source`（`exact` = 实体级原始行分位；`sketch` = 平台级 cube 直方图合并）。
+
+> `TTFT*` 统计**仅含首 token 流式请求**（非流式 / 失败 / 无首 token 行不计）。前端跨行合并语义：avg 加权（`Σ(avg×count)/Σcount`）、max 取最大、**pN 取请求量最大维度行的近似值**（分位数不可跨行合并）。
+
+> 统计由**离线聚合 worker** 每 5 分钟从 `usage_logs` / `err_logs` 重算落盘（watermark + 覆盖语义），查询结果可能有 ≤5 分钟延迟；错误桶 = abort 行（usage_logs 全字段）+ 纯错误行（err_logs count 语义，tokens/cost/TTFT 恒 0）；拒绝行（限流）随 err_logs 采样——风暴时错误计数可能低估。
 
 ---
 
@@ -807,7 +938,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 }
 ```
 
-- `summary`：今日汇总（请求 `timezone` 时区日界，缺省 = UTC），`cost_usd` 为 USD（毫分 /1e5），`ttft_*` 口径同 `/api/admin/stats`
+- `summary`：今日汇总（请求 `timezone` 时区日界，缺省 = UTC），`cost_usd` 为 USD（毫分 /1e5），`ttft_*` 口径同 `/api/admin/stats/ttft`
 - `trend`：近 N 天日桶（SQL 侧按请求时区日界聚合；`tokens` = input+output+cache 合并；DST/半小时偏移时区扫原始明细、窗口 >8 天 = 400）
 - `accounts`：账号健康分布 + 并发水位（**调度器快照同源**——与账号列表运行时视图一致；运行时状态只在内存，DB 无第二份）
 - `err_top`：账号维度错误率 Top5（调度器 EWMA，`name` = 账号名）
@@ -961,7 +1092,7 @@ SMTP 连接参数（host/port/username/password/from/tls）同为运行时设置
 | 方法/路径 | 说明 |
 |---|---|
 | `GET /api/admin/routing/plan` | 当前发布路由计划解释：generation + 全路由 primary/explore/degraded 候选发布序 + explore 权重/累积表 + 候选静态身份。空视图 = generation 0 空计划（`routes: []`），不是错误。稳态探索份额 ExploreBP（无 Primary=10000bp；否则 100+min(400, ⌈400×unknown/eligible⌉)bp，上限 500bp）编入计划，请求侧按 canonical 哈希 + 该份额每请求定车道。每路由附带事故状态 `incident`（`active/kind{domin|model|both}/comparable/degraded/domains/evaluated_minute`，detect+surface——不改车道、不节流、不探针；ops `scheduler` 卡 `active_incidents` 计数） |
-| `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制）。TTFT 区间仅由流式首 token 样本贡献（非流式/失败不计入 `ttft_n`） |
+| `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制）。TTFT 区间仅由流式首 token 样本贡献（非流式/失败不计入 `ttft_n`）。**`cost_per_success` 的单位是毫分 int64**（1 USD = 100,000 毫分，与 compiler 同式；属明细/计数面，API 边界不做 USD 换算，`cost_known=false` 时无意义） |
 | `GET /api/admin/routing/flow?route=<64hex>&from&to` | 路由 flow 聚合（Sankey 数据）：RouteClass → (ordinal, lane) → Account → Outcome 完整链边，按 terminal_at 归属；窗口 ≤90 天 |
 
 **缓存亲和（请求级软亲和，非硬钉位）**：请求携带 `prompt_cache_key` / `conversation_id` / `session_id`（按此优先级取首个非空字符串；REST 面单遍提体扫描、responses-ws 从首帧提取，search 不参与）时，键值经 FNV-1a 哈希在一致性哈希环（每域 32 虚拟节点）上定位属主缓存域，计划内属主域候选整体前置、其余候选按原相对顺序顺延——候选集合与 1–8 次尝试上界不变。账号 `cache_domain` 相同 = 共享域（互相亲和命中），`null` = 账号私有域（仅自身可被亲和命中）。无亲和键 = 严格按计划编译原序执行。跨轮次硬续聊钉位（continuation pinning）见对应 continuation 接口与行为约束。
@@ -1220,7 +1351,7 @@ billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval =
 | 场景 | 行为 |
 |---|---|
 | 模型无价格（价格表缺行 / 快照缺失） | 请求前预检 `402`，错误类型 `billing`，不计费不转发 |
-| 余额快照缺失或 ≤ 0（非免费用户/组） | 请求前预检 `402`（错误类型 `billing`） |
+| 余额快照缺失或 **< 0**（非免费用户/组） | 请求前预检 `402`（错误类型 `billing`）。**余额恰为 0 放行**——临时额度由 FEFO 扣费消化，预检不拦 |
 | 余额不足（快照滞后导致预检通过） | 条件扣费允许**透支**（`balance` 可为负），日志 `overdraft = true` |
 | 免费（用户/组倍率 0） | 预检放行且不扣费（请求仍须有价格） |
 | 价格在请求处理中被删（竞态） | 运行时防御：`Warn` + 该请求计费 0（`billing_tier = "no_price"` 审计） |
@@ -1228,6 +1359,7 @@ billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval =
 ### 扣费与明细
 
 - **临时额度 FEFO**：未过期 `temp_balances` 按 `expires_at` 升序逐行扣至 0（最早到期先扣，永久额度最后），剩余扣 `users.balance`（数据面端点见「临时额度 Temp Balances」章节）。
+- **key 额度后扣**：`keys.quota` / `quota_used` 同为毫分；请求热路径读内存预算快照，耗尽才回 DB 复核认领，实际累计由 Recorder 周期增量回写（内存权威，DB 滞后 ≤ `quota_flush_interval`）。无额度 key（`quota = 0`）恒不累计——回写 SQL 带 `WHERE "quota" > 0` 守卫。详见「密钥 Keys」。
 - **全毫分直接扣减**：1 USD = 100,000 毫分，cost/balance/temp_balance/兑换码 Value 同单位，无换算无取整。
 - **优雅停机**：SIGTERM → 2s 优雅窗口 → 强断长连接（在途流式按已累积 token 计费）→ 等在途归零 → 排空扣费（计费 flusher 最先排空，日志 cost 不丢）。崩溃丢 ≤ 1 flush 窗口（接受）。
 - 管理面余额 API 均以 USD float64 输入/展示（换算见「用户 Users」章节）。

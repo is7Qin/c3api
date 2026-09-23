@@ -1360,7 +1360,7 @@ type RoutingFrontierCandidate struct {
 	// CostKnown known + 有成功样本 + 价格可解析
 	CostKnown bool `json:"cost_known"`
 
-	// CostPerSuccess 每次成功平均成本（微分，与 compiler 同式；cost_known=false 时无意义）
+	// CostPerSuccess 每次成功平均成本（毫分，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）
 	CostPerSuccess int64 `json:"cost_per_success"`
 
 	// IdentityRevision 候选内容代际 K（identity_revision）——非客户端 CAS 令牌 C（lifecycle_revision）；C 只围栏管理员写入
