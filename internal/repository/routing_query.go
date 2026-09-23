@@ -44,21 +44,22 @@ type RoutingQualityStat struct {
 	Images               int64
 }
 
-// RoutingFlowStat is one complete edge identity aggregated over the window
-// (identity = every non-aggregated rollup dimension; chain_count is the SUM).
+// RoutingFlowStat is one merged edge identity aggregated over the window
+// (identity = every non-aggregated merged-layer dimension — instance_src and
+// min_generation excluded; chain_count is the cross-shard SUM,
+// min_generation the cross-shard MIN).
 type RoutingFlowStat struct {
-	RouteClassID         domain.RouteClassIDVal
-	Ordinal              int16
-	Lane                 string
-	AccountID            int64
-	PreviousAccountID    *int64
-	PreviousOutcome      string
-	TransitionReason     string
-	Outcome              string
-	IsTerminal           bool
-	Generation           int64
-	CandidateFingerprint domain.CandidateFingerprintVal
-	ChainCount           int64
+	RouteClassID      domain.RouteClassIDVal
+	Ordinal           int16
+	Lane              string
+	AccountID         int64
+	PreviousAccountID *int64
+	PreviousOutcome   string
+	TransitionReason  string
+	Outcome           string
+	IsTerminal        bool
+	MinGeneration     int64
+	ChainCount        int64
 }
 
 // qualityRollupStatsSQL sums every measure per candidate identity; the bigint[]
@@ -94,20 +95,22 @@ LEFT JOIN hist h ON h.route_class_id = f.route_class_id AND h.quality_class_id =
 GROUP BY f.route_class_id, f.quality_class_id, f.candidate_fingerprint
 ORDER BY f.quality_class_id, f.candidate_fingerprint`
 
-// flowRollupStatsSQL groups by the complete edge identity (every dimension of
-// routing_flow_rollup_uniq except terminal_minute/identity_version) and sums
-// chain_count across minutes. NULL previous_account_id pinned first for a
-// total order.
+// flowRollupStatsSQL groups by the merged edge identity (every dimension of
+// routing_flow_rollup_uniq except terminal_minute/identity_version/instance_src)
+// and aggregates cross-shard: SUM(chain_count), MIN(min_generation).
+// NULL previous_account_id pinned first for a total order. The access path is
+// (route_class_id, identity_version, terminal_minute range), served by the
+// routing_flow_merged_read index (A14 asserts via EXPLAIN).
 const flowRollupStatsSQL = `
 SELECT route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
-	transition_reason, outcome, is_terminal, generation, candidate_fingerprint,
-	SUM(chain_count)::bigint
+	transition_reason, outcome, is_terminal,
+	MIN(min_generation)::bigint, SUM(chain_count)::bigint
 FROM routing_flow_rollup
 WHERE route_class_id = $1 AND identity_version = $2 AND terminal_minute >= $3 AND terminal_minute < $4
 GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
-	transition_reason, outcome, is_terminal, generation, candidate_fingerprint
+	transition_reason, outcome, is_terminal
 ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_outcome,
-	transition_reason, outcome, is_terminal DESC, generation, candidate_fingerprint`
+	transition_reason, outcome, is_terminal DESC`
 
 // QueryQualityRollupStats aggregates routing_quality_rollup over the half-open
 // minute window [from, to) for one route class + identity version.
@@ -155,14 +158,13 @@ func (r *PartitionRepo) QueryFlowRollupStats(ctx context.Context, routeClass dom
 	out := []RoutingFlowStat{}
 	for rows.Next() {
 		var s RoutingFlowStat
-		var rt, fp []byte
+		var rt []byte
 		var prevAcc sql.NullInt64
 		if err := rows.Scan(&rt, &s.Ordinal, &s.Lane, &s.AccountID, &prevAcc, &s.PreviousOutcome,
-			&s.TransitionReason, &s.Outcome, &s.IsTerminal, &s.Generation, &fp, &s.ChainCount); err != nil {
+			&s.TransitionReason, &s.Outcome, &s.IsTerminal, &s.MinGeneration, &s.ChainCount); err != nil {
 			return nil, fmt.Errorf("routing flow rollup query: scan: %w", err)
 		}
 		copy(s.RouteClassID[:], rt)
-		copy(s.CandidateFingerprint[:], fp)
 		if prevAcc.Valid {
 			v := prevAcc.Int64
 			s.PreviousAccountID = &v

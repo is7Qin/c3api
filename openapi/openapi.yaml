@@ -3233,8 +3233,8 @@ components:
         previous_accounts: { type: array, items: { type: integer, format: int64 }, description: 到达链的 previous_account_id 去重集（升序）；折叠节点为空 }
     RoutingFlowEdge:
       type: object
-      description: 一条聚合边（rollup 行；完整链身份）
-      required: [ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, chain_count]
+      description: 一条聚合边（合并层行；最早代际为同边多代折叠的最小值）
+      required: [ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, min_generation, chain_count]
       properties:
         ordinal: { type: integer, description: 链内第几次尝试（1 = 首发） }
         lane: { type: string, description: 通道（primary/explore/degraded） }
@@ -3244,8 +3244,7 @@ components:
         transition_reason: { type: string, description: 迁移原因（failover 等；首发边空串） }
         outcome: { type: string, description: 本边结局（success/429/4xx/5xx/network…） }
         is_terminal: { type: boolean, description: true = 该链 Final }
-        generation: { type: integer, format: int64, description: 边所属计划代际（旧 generation 行原样携带自身值） }
-        candidate_fingerprint: { type: string, description: 候选身份指纹 hex（rollup join 键） }
+        min_generation: { type: integer, format: int64, description: 本边链最早计划代际（同边多代折叠的最小值） }
         chain_count: { type: integer, format: int64, description: 同身份链数（SUM） }
     RoutingFlowLane:
       type: object

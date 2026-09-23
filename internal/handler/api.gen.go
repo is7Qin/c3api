@@ -1285,24 +1285,21 @@ type RedemptionUseListResponse struct {
 // RequestFormat defines model for RequestFormat.
 type RequestFormat string
 
-// RoutingFlowEdge 一条聚合边（rollup 行；完整链身份）
+// RoutingFlowEdge 一条聚合边（合并层行；最早代际为同边多代折叠的最小值）
 type RoutingFlowEdge struct {
 	AccountId int64 `json:"account_id"`
 
-	// CandidateFingerprint 候选身份指纹 hex（rollup join 键）
-	CandidateFingerprint string `json:"candidate_fingerprint"`
-
 	// ChainCount 同身份链数（SUM）
 	ChainCount int64 `json:"chain_count"`
-
-	// Generation 边所属计划代际（旧 generation 行原样携带自身值）
-	Generation int64 `json:"generation"`
 
 	// IsTerminal true = 该链 Final
 	IsTerminal bool `json:"is_terminal"`
 
 	// Lane 通道（primary/explore/degraded）
 	Lane string `json:"lane"`
+
+	// MinGeneration 本边链最早计划代际（同边多代折叠的最小值）
+	MinGeneration int64 `json:"min_generation"`
 
 	// Ordinal 链内第几次尝试（1 = 首发）
 	Ordinal int `json:"ordinal"`
