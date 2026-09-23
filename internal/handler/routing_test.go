@@ -57,7 +57,14 @@ type routingSched struct {
 func (r routingSched) CurrentRoutingPlan() *scheduler.RoutingPlan { return r.plan }
 
 func routingRouter(store *routingStore, plan *scheduler.RoutingPlan) http.Handler {
-	svc := service.New(store, routingSched{plan: plan}, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
+	return routingRouterWithRetention(store, plan, 0)
+}
+
+// routingRouterWithRetention 同 routingRouter，另注入观测保留天数（0 = 不设
+// 窗口守卫，与既有用例同语义）。
+func routingRouterWithRetention(store *routingStore, plan *scheduler.RoutingPlan, retentionDays int) http.Handler {
+	svc := service.New(store, routingSched{plan: plan}, service.NopInvalidator{}, nil, nil, nil, nil,
+		service.ServiceDeps{EmailCodeStore: store, RoutingObservationRetentionDays: retentionDays})
 	r := chi.NewRouter()
 	r.Mount("/", New(svc).Router())
 	return r
@@ -184,6 +191,28 @@ func Test_RoutingFlow_Validation(t *testing.T) {
 
 	rec = doGET(t, h, "/api/admin/routing/flow?route="+routingFPHex(t, 0x01)+"&"+routingWindow())
 	require.Equal(t, 404, rec.Code, "well-formed but unknown route → 404: %s", rec.Body.String())
+}
+
+// A10（HTTP 面）：观测窗口守卫断言**状态码 400**（不接受"有错即过"）。
+// 窗口用相对当前时间的偏移：30 天前（远超 7 天截止）必拒、1 天前（远在截止内）
+// 必过——两处与截止相距 23 天/6 天，时钟抖动无法翻转判定，故无需注入时钟。
+func Test_RoutingWindowGuardRetentionHTTP400(t *testing.T) {
+	plan, idHex := routingFixturePlan(t)
+	h := routingRouterWithRetention(&routingStore{fakeStore: newFakeStore()}, plan, 7)
+
+	now := time.Now().UTC()
+	staleFrom := now.AddDate(0, 0, -30)
+	staleTo := now.AddDate(0, 0, -29)
+	freshFrom := now.AddDate(0, 0, -1)
+	freshTo := now.Add(-time.Minute)
+
+	for _, path := range []string{"/api/admin/routing/flow", "/api/admin/routing/frontier"} {
+		rec := doGET(t, h, path+"?route="+idHex+"&from="+staleFrom.Format(time.RFC3339)+"&to="+staleTo.Format(time.RFC3339))
+		require.Equal(t, 400, rec.Code, "%s: window starting before the observation cutoff must be rejected as a whole: %s", path, rec.Body.String())
+
+		rec = doGET(t, h, path+"?route="+idHex+"&from="+freshFrom.Format(time.RFC3339)+"&to="+freshTo.Format(time.RFC3339))
+		require.Equal(t, 200, rec.Code, "%s: window inside the observation cutoff must be served: %s", path, rec.Body.String())
+	}
 }
 
 // --- /routing/frontier ---

@@ -17,6 +17,8 @@ import (
 	"github.com/knadh/koanf/providers/env/v2"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 type Config struct {
@@ -31,6 +33,20 @@ type Config struct {
 	Scheduler SchedulerConfig `koanf:"scheduler"`
 	Usage     UsageConfig     `koanf:"usage"`
 	Billing   BillingConfig   `koanf:"billing"`
+	Routing   RoutingConfig   `koanf:"routing"`
+}
+
+// RoutingConfig 路由观测的**运维/存储**参数。策略参数（分层阈值、探索比例、
+// 窗口长度等）仍不可配——它们是算法事实（编译正确性输入），不是部署旋钮；
+// 保留深度则是存储成本与可查深度的权衡，必须可配。
+//
+// observation_retention_days 地板 = 正确性回看下界 + 24h 边际（见 validate）：
+// 低于地板则编译器/事故判定的 24h 基线窗会读到已被 retention DROP 的分钟，
+// 静默少算 → 启动即失败（fail-fast，不给"看起来能跑"的降级路径）。
+type RoutingConfig struct {
+	// ObservationRetentionDays 观测面（flow/frontier 读 + 保留 worker DROP）
+	// 保留天数。默认 7；地板 2（= BaselineLookback 24h + 24h 边际）。
+	ObservationRetentionDays int `koanf:"observation_retention_days"`
 }
 
 type ServerConfig struct {
@@ -157,6 +173,7 @@ func defaults() *Config {
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
 		Billing:   BillingConfig{Enabled: true, FlushInterval: 250 * time.Millisecond, BalanceRefreshInterval: 10 * time.Second},
+		Routing:   RoutingConfig{ObservationRetentionDays: 7},
 	}
 }
 
@@ -219,6 +236,10 @@ func Load(path string) (*Config, error) {
 // （BatchSize/FlushWorkers/ErrLogQueueSize/ErrLogBatchSize）、
 // Proxy.MaxInflight（唯一消费方是 server 中间件，0 由 server 侧兜底为 50000——
 // 无死锁/静默失效面）。
+// routingRetentionMargin 观测保留地板在正确性回看下界之上的边际（24h）：覆盖
+// 日分区边界（分区按 UTC 日 DROP，cutoff 落在分区内时该分区仍存活）与时钟抖动。
+const routingRetentionMargin = 24 * time.Hour
+
 func validate(c *Config) error {
 	for _, d := range []struct {
 		path      string
@@ -302,6 +323,15 @@ func validate(c *Config) error {
 	}
 	if c.Redis.DB < 0 {
 		return fmt.Errorf("redis.db must be >= 0 (got %d)", c.Redis.DB)
+	}
+	// routing.observation_retention_days 地板：观测保留深度必须完整覆盖
+	// 正确性回看下界（BaselineLookback 24h）再加 24h 边际——1day == 24h 精确
+	// 相等，故 24h 地板零边际，必须加 24h 覆盖日分区边界与时钟抖动。
+	// 低于地板 = 编译/事故判定的基线窗会读到已 DROP 的分钟（静默少算）→ 启动失败。
+	routingMinDays := int((domain.BaselineLookback + routingRetentionMargin) / (24 * time.Hour))
+	if c.Routing.ObservationRetentionDays < routingMinDays {
+		return fmt.Errorf("routing.observation_retention_days must be >= %d (got %d): the observation floor is BaselineLookback %s + %s margin",
+			routingMinDays, c.Routing.ObservationRetentionDays, domain.BaselineLookback, routingRetentionMargin)
 	}
 	if c.Server.TimeZone != "" {
 		if _, err := time.LoadLocation(c.Server.TimeZone); err != nil {

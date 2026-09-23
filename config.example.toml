@@ -53,10 +53,13 @@ scheduler = {
   default_max_concurrency = 8,
   sync_interval = "30s",
 }
-# 智能路由（intelligent routing）无独立配置段：Primary/Explore/Degraded 分层、
-# 探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 + 采购
-# 倍率（账号 upstream_cost_multiplier_bp）+ 运行时健康派生，无固定全局 SLO 阈值
-# 可配（固定阈值跨模型/路由即假数据）。可调项在账号与规则面，非本配置文件。
+# 智能路由（intelligent routing）**策略参数**无配置段：Primary/Explore/Degraded
+# 分层、探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 +
+# 采购倍率（账号 upstream_cost_multiplier_bp）+ 运行时健康派生，无固定全局 SLO
+# 阈值可配（固定阈值跨模型/路由即假数据）；策略可调项在账号与规则面。
+# 但**观测保留深度是运维/存储参数**，必须可配——它决定桑基/前沿/边表能查多久，
+# 以及保留 worker 何时 DROP 路由观测分区，与策略参数无关。
+# 运维参数见文件末尾 [routing] 段（观测保留深度）。
 usage = {
   batch_size = 500,
   flush_interval = "500ms",
@@ -91,3 +94,14 @@ usage = {
 # FEFO 扣减与 billed 标记同事务原子；停机排空受 shutdown 预算约束，超时 Warn
 # 截断不阻塞退出）。
 billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval = "10s" }
+
+# [routing] 路由观测保留深度——运维/存储参数（策略参数不可配的理由见上方"智能
+# 路由"注释）。TOML 段头会切换当前表，故本段放在文件末尾（前面的 usage/billing
+# 是内联表，段头出现在其前会把它们吞进本段）。
+[routing]
+# 路由观测面（/routing/flow、/routing/frontier 的窗口）与保留 worker 的
+# 保留天数，默认 7 天。地板 2 天：地板 = 正确性回看下界（编译器基线窗 24h）
+# + 24h 边际，低于地板则编译/事故判定的基线窗会读到已被 DROP 的分钟
+# （静默少算），故 < 2 启动即失败。窗口起点早于保留截止的查询会被
+# **整窗拒绝（HTTP 400）**，不做静默截断。
+observation_retention_days = 7

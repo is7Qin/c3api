@@ -11,7 +11,7 @@ import (
 
 func TestRoutingPartitionRetentionViaWorker(t *testing.T) {
 	pm := &fakePartitionManager{}
-	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, TickerInterval: 20 * time.Millisecond}, pm, nil)
+	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7, StatsRetentionDays: 180, RoutingObservationRetentionDays: 7, TickerInterval: 20 * time.Millisecond}, pm, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, w.Start(ctx))
 	// wait for at least one tick

@@ -381,9 +381,14 @@ type Service struct {
 	// 兜底用——窗口起点早于保证存留的分区 cutoff 时，行已被 retention DROP，
 	// 宁 400 不静默残缺；0 = 禁用/不限（跳过兜底）。
 	statsRawRetentionDays int
-	// statsNow 当前时间源（nil = time.Now；Service 测试注入固定时钟）。
+	// statsNow 当前时间源（nil = time.Now；Service 测试注入固定时钟——统计
+	// 窗口守卫与路由观测窗口守卫共用同一时钟源）。
 	statsNow func() time.Time
-	log      *logx.Logger
+	// routingRetentionDays 路由观测保留天数（New 经
+	// ServiceDeps.RoutingObservationRetentionDays 一次性注入；0 = 未装配，
+	// 守卫关闭）。见 validateRoutingRetention。
+	routingRetentionDays int
+	log                  *logx.Logger
 }
 
 // ServiceDeps New 的尾部一次性依赖（SetEmailCodeStore /
@@ -435,6 +440,11 @@ type ServiceDeps struct {
 	// cfg.Scheduler.DefaultMaxConcurrency；0 = 未装配（create 显式给 0 即
 	// 落 0，由校验拒绝而非静默钳制）。
 	DefaultMaxConcurrency int
+	// RoutingObservationRetentionDays 路由观测保留天数（main 传
+	// cfg.Routing.ObservationRetentionDays）：/routing/flow 与 /routing/frontier
+	// 窗口守卫的 cutoff 来源，与 retention worker 同源（同一份天数 + 同一换算）。
+	// 0 = 未装配（测试/降级路径），守卫关闭。
+	RoutingObservationRetentionDays int
 }
 
 func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger, deps ServiceDeps) *Service {
@@ -447,7 +457,8 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 		defaultMaxConcurrency:       deps.DefaultMaxConcurrency,
 		compileNotify:               deps.CompileNotify,
 		mailEnqueue:                 deps.MailEnqueue,
-		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown}
+		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown,
+		routingRetentionDays:        deps.RoutingObservationRetentionDays}
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot
 	} else {

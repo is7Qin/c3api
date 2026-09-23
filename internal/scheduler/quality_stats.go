@@ -82,12 +82,12 @@ func LogTTFTFromSamples(ttftMs []int64) (Interval, bool) {
 
 func CurrentWindow(now time.Time) (time.Time, time.Time, time.Time, time.Time) {
 	minute := now.UTC().Truncate(time.Minute)
-	return minute.Add(-5 * time.Minute), minute, minute, now.UTC()
+	return minute.Add(-CurrentWindowLen), minute, minute, now.UTC()
 }
 
 func BaselineWindow(now time.Time) (time.Time, time.Time) {
 	minute := now.UTC().Truncate(time.Minute)
-	return minute.Add(-24 * time.Hour), minute.Add(-5 * time.Minute)
+	return minute.Add(-BaselineLookback), minute.Add(-CurrentWindowLen)
 }
 
 type Counts struct {
@@ -128,7 +128,7 @@ type MinuteBucket struct {
 
 func AccumulateCurrent(buckets []MinuteBucket, live Counts, now time.Time) (Counts, error) {
 	minute := now.UTC().Truncate(time.Minute)
-	cut := minute.Add(-5 * time.Minute)
+	cut := minute.Add(-CurrentWindowLen)
 	var out Counts
 	var err error
 	for _, bucket := range buckets {
@@ -144,7 +144,7 @@ func AccumulateCurrent(buckets []MinuteBucket, live Counts, now time.Time) (Coun
 
 func AccumulateBaseline(buckets []MinuteBucket, now time.Time) (Counts, error) {
 	minute := now.UTC().Truncate(time.Minute)
-	start, end := minute.Add(-24*time.Hour), minute.Add(-5*time.Minute)
+	start, end := minute.Add(-BaselineLookback), minute.Add(-CurrentWindowLen)
 	filtered := make([]MinuteBucket, 0, len(buckets))
 	for _, bucket := range buckets {
 		if !bucket.Start.Before(start) && bucket.Start.Before(end) {

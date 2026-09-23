@@ -13,6 +13,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -172,11 +173,38 @@ type RoutingFlowResult struct {
 	ProcessCrashLossUnobservable bool
 }
 
+// validateRoutingRetention 观测窗口守卫（§5.3）：窗口起点早于观测保留截止 →
+// ErrInvalidInput（httpface 映射 **HTTP 400**）。超界 **fail-closed 且整窗拒绝**
+// ——绝不静默截断成部分聚合（截断后的 sum 看起来正常，实则少了整段分钟，
+// 比报错更危险）。
+//
+// cutoff 与 retention worker **同源**：同一份 routing.observation_retention_days
+// 与同一日历日换算（domain.RoutingObservationCutoff）。未装配（<= 0，测试/降级
+// 路径）→ 不设守卫。
+func (s *Service) validateRoutingRetention(from time.Time) error {
+	if s.routingRetentionDays <= 0 {
+		return nil
+	}
+	now := time.Now
+	if s.statsNow != nil {
+		now = s.statsNow
+	}
+	cutoff := domain.RoutingObservationCutoff(now(), s.routingRetentionDays)
+	if from.Before(cutoff) {
+		return fmt.Errorf("service: routing observation window starts before retained partitions (cutoff %s, retention %dd): %w",
+			cutoff.UTC().Format(time.RFC3339), s.routingRetentionDays, ErrInvalidInput)
+	}
+	return nil
+}
+
 // QueryRoutingFlow 按 terminal_at 归属窗口查询一条路由类的完整链边聚合。
 // 行序沿用 repository 确定性排序（ordinal, lane, account, prev NULLS FIRST,
 // outcome…），lane 分组保持组内原序、组间按 (ordinal, lane) 全序。
 func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*RoutingFlowResult, error) {
 	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
+		return nil, err
+	}
+	if err := s.validateRoutingRetention(q.From); err != nil {
 		return nil, err
 	}
 	plan, _, rc, err := s.resolveRoutingRoute(q.RouteID)
