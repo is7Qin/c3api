@@ -126,19 +126,19 @@ type RoutingFlowQuery struct {
 	Accounts int // 桑基每 (ordinal,lane) 层保留账号数
 }
 
-// RoutingFlowEdge 一条聚合边（rollup 行的防御性拷贝；fingerprint 为 hex）。
+// RoutingFlowEdge 一条聚合边（合并层行的防御性拷贝；min_generation 为
+// 本边链中 multi-generation 折叠后的最早代际，见 S2）。
 type RoutingFlowEdge struct {
-	Ordinal              int16
-	Lane                 string
-	AccountID            int64
-	PreviousAccountID    *int64
-	PreviousOutcome      string
-	TransitionReason     string
-	Outcome              string
-	IsTerminal           bool
-	Generation           int64
-	CandidateFingerprint string
-	ChainCount           int64
+	Ordinal           int16
+	Lane              string
+	AccountID         int64
+	PreviousAccountID *int64
+	PreviousOutcome   string
+	TransitionReason  string
+	Outcome           string
+	IsTerminal        bool
+	MinGeneration     int64
+	ChainCount        int64
 }
 
 // RoutingFlowLane (ordinal, lane) 分组——retry 到下一 ordinal，terminal 边
@@ -203,16 +203,15 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 	for _, row := range rows {
 		prev := row.PreviousAccountID
 		edge := RoutingFlowEdge{
-			Ordinal:              row.Ordinal,
-			Lane:                 row.Lane,
-			AccountID:            row.AccountID,
-			PreviousOutcome:      row.PreviousOutcome,
-			TransitionReason:     row.TransitionReason,
-			Outcome:              row.Outcome,
-			IsTerminal:           row.IsTerminal,
-			Generation:           row.Generation,
-			CandidateFingerprint: domain.CandidateFPHex(row.CandidateFingerprint),
-			ChainCount:           row.ChainCount,
+			Ordinal:          row.Ordinal,
+			Lane:             row.Lane,
+			AccountID:        row.AccountID,
+			PreviousOutcome:  row.PreviousOutcome,
+			TransitionReason: row.TransitionReason,
+			Outcome:          row.Outcome,
+			IsTerminal:       row.IsTerminal,
+			MinGeneration:    row.MinGeneration,
+			ChainCount:       row.ChainCount,
 		}
 		if prev != nil {
 			v := *prev
@@ -225,7 +224,10 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 			res.TerminalChains += row.ChainCount
 		}
 		res.TotalChains += row.ChainCount
-		if row.Generation != int64(plan.Generation) {
+		// 精确性前提（§7）：generation 随发布单调不减，故存量行恒有
+		// generation ≤ plan_generation，行级谓词与"窗口含非当前代际链"
+		// 严格等价。未来代际竞态（行内含更新代际但 min==plan）不在目标场景内。
+		if row.MinGeneration != int64(plan.Generation) {
 			res.StaleChains += row.ChainCount
 		}
 		edges = append(edges, edge)
