@@ -17,7 +17,7 @@ func TestRoutingFlowAuthoritativeOuterPG(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-		outerMinute := now
+	outerMinute := now
 	outerSrc := "src-Auth"
 	outerVersion := int16(1)
 	rowMinute := now.Add(5 * time.Minute)
@@ -66,7 +66,7 @@ func TestRoutingFlowRollupRemovesObsoletePG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-			rowsInitial := []repository.RoutingFlowRow{
+	rowsInitial := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 10, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-Obs", ChainCount: 1},
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 20, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-Obs", ChainCount: 1},
 	}
@@ -93,7 +93,7 @@ func TestRoutingFlowEmptySnapshotRollupPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-		rows := []repository.RoutingFlowRow{
+	rows := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-EmptyRoll", ChainCount: 1},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-EmptyRoll", now, 1, 1, rows))
@@ -114,7 +114,7 @@ func TestRoutingFlowEdgeIdentityPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-		rows := []repository.RoutingFlowRow{
+	rows := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 5, PreviousAccountID: ptrInt64(3), PreviousOutcome: "ok", TransitionReason: "retry", Outcome: "success", IsTerminal: false, Generation: 2, InstanceSrc: "src-Ident", ChainCount: 7},
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 5, PreviousAccountID: ptrInt64(3), PreviousOutcome: "fail", TransitionReason: "fallback", Outcome: "success", IsTerminal: false, Generation: 2, InstanceSrc: "src-Ident", ChainCount: 7},
 	}

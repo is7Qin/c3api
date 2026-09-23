@@ -22,17 +22,17 @@ func flowTestRoute(seed byte) domain.RouteClassIDVal {
 
 func flowTestRow(minute time.Time, ordinal int16, accountID int64, outcome string, terminal bool) repository.RoutingFlowRow {
 	return repository.RoutingFlowRow{
-		IdentityVersion:      int16(domain.RoutingIdentityVersion),
-		RouteClassID:         flowTestRoute(1),
-		TerminalMinute:       minute,
-		Ordinal:              ordinal,
-		Lane:                 "primary",
-		AccountID:            accountID,
-		TransitionReason:     "initial",
-		Outcome:              outcome,
-		IsTerminal:           terminal,
-		Generation:           1,
-		ChainCount:           1,
+		IdentityVersion:  int16(domain.RoutingIdentityVersion),
+		RouteClassID:     flowTestRoute(1),
+		TerminalMinute:   minute,
+		Ordinal:          ordinal,
+		Lane:             "primary",
+		AccountID:        accountID,
+		TransitionReason: "initial",
+		Outcome:          outcome,
+		IsTerminal:       terminal,
+		Generation:       1,
+		ChainCount:       1,
 	}
 }
 
