@@ -14,6 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { fmtTTFT } from '@/components/fmt'
+import { fetchAllRoutingPlanRoutes } from '@/lib/routing-plan'
 
 // stats 为契约自由 schema（unknown）：各 worker 异构观测字段。通用渲染分支：
 // 数字（unix_ms 时间戳字段转时间显示）、布尔、字符串，其余 JSON 摘要。
@@ -40,11 +41,21 @@ export default function Ops() {
     queryFn: () => api.getOpsWorkers(),
     refetchInterval: 10_000,
   })
-  // 发布计划事故（与 stats 页共享 ['routing-plan'] 缓存键）：只取 active
-  // incident 行，渲染进编译道既有 incidents 列表，不另起面板。
+  // 发布计划事故：只取 active incident 行，渲染进编译道既有 incidents 列表，
+  // 不另起面板。
+  //
+  // 取数必须**取全**：`/routing/plan` 的 `routes` 是服务端一页（缺省 20 条、上限
+  // 200），而这里要的是整个计划里所有活跃事故——只读第一页会**静默漏报**第 20 条
+  // 之后路由上的事故。故走 `fetchAllRoutingPlanRoutes` 按 `total_routes` 取全。
+  //
+  // 缓存键不与 stats 页共用：那边是 `['routing-plan', search]`（选择器只要 100 条
+  // 轻量候选、`candidates_limit=0`），形态不同，共用会互相覆盖。
   const planQ = useQuery({
     queryKey: ['routing-plan'],
-    queryFn: () => api.getRoutingPlan(),
+    queryFn: () =>
+      fetchAllRoutingPlanRoutes<components['schemas']['RoutingPlanRoute']>(p =>
+        api.getRoutingPlan({ offset: p.offset, limit: p.limit }),
+      ),
     refetchInterval: 10_000,
   })
 

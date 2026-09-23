@@ -1091,13 +1091,15 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 
 | 方法/路径 | 说明 |
 |---|---|
-| `GET /api/admin/routing/plan` | 当前发布路由计划解释：generation + 全路由 primary/explore/degraded 候选发布序 + explore 权重/累积表 + 候选静态身份。空视图 = generation 0 空计划（`routes: []`），不是错误。稳态探索份额 ExploreBP（无 Primary=10000bp；否则 100+min(400, ⌈400×unknown/eligible⌉)bp，上限 500bp）编入计划，请求侧按 canonical 哈希 + 该份额每请求定车道。每路由附带事故状态 `incident`（`active/kind{domin|model|both}/comparable/degraded/domains/evaluated_minute`，detect+surface——不改车道、不节流、不探针；ops `scheduler` 卡 `active_incidents` 计数） |
-| `GET /api/admin/routing/frontier?route=<64hex>&from&to&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，limit ≤200（超出钳制）。TTFT 区间仅由流式首 token 样本贡献（非流式/失败不计入 `ttft_n`）。**`cost_per_success` 的单位是毫分 int64**（1 USD = 100,000 毫分，与 compiler 同式；属明细/计数面，API 边界不做 USD 换算，`cost_known=false` 时无意义） |
-| `GET /api/admin/routing/flow?route=<64hex>&from&to` | 路由 flow 聚合（Sankey 数据）：RouteClass → (ordinal, lane) → Account → Outcome 完整链边，按 terminal_at 归属；窗口 ≤90 天 |
+| `GET /api/admin/routing/plan` | 当前发布路由计划解释：generation + 全路由 primary/explore/degraded 候选发布序 + explore 权重/累积表 + 候选静态身份。空视图 = generation 0 空计划（`routes: []`），不是错误。稳态探索份额 ExploreBP（无 Primary=10000bp；否则 100+min(400, ⌈400×unknown/eligible⌉)bp，上限 500bp）编入计划，请求侧按 canonical 哈希 + 该份额每请求定车道。每路由附带事故状态 `incident`（`active/kind{domain|model|both}/comparable/degraded/domains/evaluated_minute`，detect+surface——不改车道、不节流、不探针；ops `scheduler` 卡 `active_incidents` 计数）。**查询参数**：`search`（标签模糊匹配，大小写不敏感；匹配 `model` / `format` / `operation_tag` / `group_id` 十进制串）、`route`（64-hex；给定则**优先于 `search`**，只返回该路由；非法 hex → `400`，未知 → `404`）、`offset`/`limit`（路由分页，缺省 0/20，上限 200）、`candidates_offset`/`candidates_limit`（**每个返回路由各自**的候选分页，缺省 0/20，上限 200；**显式 `0` = 不返回候选**）。**响应新增** `total_routes`（`search` 过滤后总数）与每路由 `candidates_total`（切片前总数） |
+| `GET /api/admin/routing/frontier?route=<64hex>&from&to&offset&limit` | 质量-成本前沿（窗口 rollup × 当前计划候选连接）：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本，Pareto 前沿标记；窗口 ≤90 天，`offset`/`limit` 缺省 0/20、上限 200（超出钳制）。**排序与前沿标记在切片之前**，故分页不改变前沿判定；响应含 `total_candidates`（完整候选数，不受分页影响）。TTFT 区间仅由流式首 token 样本贡献（非流式/失败不计入 `ttft_n`）。**`cost_per_success` 的单位是毫分 int64**（1 USD = 100,000 毫分，与 compiler 同式；属明细/计数面，API 边界不做 USD 换算，`cost_known=false` 时无意义） |
+| `GET /api/admin/routing/flow?route=<64hex>&from&to&offset&limit&accounts` | 路由 flow 聚合（Sankey 数据）：RouteClass → (ordinal, lane) → Account → Outcome 完整链边，按 terminal_at 归属；窗口 ≤90 天。`offset`/`limit`（缺省 0/20，上限 200）**只作用于边表分页**；`accounts`（缺省 20，上限 200）**只作用于桑基每层保留账号数**（其余折叠为 `folded=true` 的占位节点）。**`lanes` 只是完整边集的一页**；守恒计数、`total_*` 与 `sankey` 恒在**完整边集**上算，与当前页无关。响应：`total_edges`（完整边**行**数）、`total_chains` / `stale_chains`（完整边集的 `Σ chain_count`；后者仅计 `generation != plan_generation` 的边——**链次单位**，与行单位的 `total_edges` 不同量纲）、`sankey`（服务端折叠后的 `RoutingFlowGraph`：`edges`/`account_limit`/`folded_accounts`/`folded`）。`folded_accounts` 是**各 `(ordinal,lane)` 层被折叠账号数之和**（同账号两层都折叠则计两次），故**不是**去重账号数 |
 
 **缓存亲和（请求级软亲和，非硬钉位）**：请求携带 `prompt_cache_key` / `conversation_id` / `session_id`（按此优先级取首个非空字符串；REST 面单遍提体扫描、responses-ws 从首帧提取，search 不参与）时，键值经 FNV-1a 哈希在一致性哈希环（每域 32 虚拟节点）上定位属主缓存域，计划内属主域候选整体前置、其余候选按原相对顺序顺延——候选集合与 1–8 次尝试上界不变。账号 `cache_domain` 相同 = 共享域（互相亲和命中），`null` = 账号私有域（仅自身可被亲和命中）。无亲和键 = 严格按计划编译原序执行。跨轮次硬续聊钉位（continuation pinning）见对应 continuation 接口与行为约束。
 
 flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incomplete_chain_dropped` = 本进程已观察 cleanup 缺 terminal；`flow_overflow_dropped_chains` = 故障预算淘汰链；`process_crash_loss_unobservable` 恒 `true`（硬崩缺口不可量化）。
+
+旧代际徽标口径：前端读服务端 `stale_chains` / `total_chains` 两整数**自行计算占比**（服务端不输出浮点），**保留一位小数**；**舍入后为 `0.0%` 即隐藏**——该单一规则同时吞没 `stale_chains == 0`（占比 0）与 `total_chains == 0`（占比无定义，不除零），故徽标永不渲染自相矛盾的 `0.0%`。占比基于**完整边集**，翻页不变。
 
 ---
 

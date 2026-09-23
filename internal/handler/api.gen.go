@@ -1320,6 +1320,52 @@ type RoutingFlowEdge struct {
 	TransitionReason string `json:"transition_reason"`
 }
 
+// RoutingFlowGraph 桑基图边集（已按 (ordinal,lane,account,outcome,is_terminal) 聚合）
+type RoutingFlowGraph struct {
+	// AccountLimit 每层保留的账号数 N（实际生效值）
+	AccountLimit int                    `json:"account_limit"`
+	Edges        []RoutingFlowGraphEdge `json:"edges"`
+
+	// Folded folded_accounts > 0 的冗余布尔，便于消费方直读
+	Folded bool `json:"folded"`
+
+	// FoldedAccounts 各 (ordinal
+	FoldedAccounts int64 `json:"folded_accounts"`
+}
+
+// RoutingFlowGraphEdge 一条桑基边；account_id=0 且 folded=true 表示「其他」聚合节点
+type RoutingFlowGraphEdge struct {
+	// AccountId 本跳账号；0 = 「其他」聚合节点
+	AccountId int64 `json:"account_id"`
+
+	// ChainCount 同身份链数（SUM）
+	ChainCount int64 `json:"chain_count"`
+
+	// Folded true = 该边是折叠后的「其他」聚合（account_id 恒 0）
+	Folded bool `json:"folded"`
+
+	// IsTerminal true = 该链 Final
+	IsTerminal bool `json:"is_terminal"`
+
+	// Lane 通道（primary/explore/degraded）
+	Lane string `json:"lane"`
+
+	// Ordinal 链内第几次尝试（1 = 首发）
+	Ordinal int `json:"ordinal"`
+
+	// Outcome 本边结局（success/429/4xx/5xx/network…）
+	Outcome string `json:"outcome"`
+
+	// PreviousAccounts 到达链的 previous_account_id 去重集（升序）；折叠节点为空
+	PreviousAccounts []int64 `json:"previous_accounts"`
+
+	// PreviousOutcomes 到达链的 previous_outcome 去重集（升序）
+	PreviousOutcomes []string `json:"previous_outcomes"`
+
+	// TransitionReasons 到达链的 transition_reason 去重集（升序）
+	TransitionReasons []string `json:"transition_reasons"`
+}
+
 // RoutingFlowLane (ordinal, lane) 分组；组间按 (ordinal, lane) 全序，组内保持仓储确定性行序
 type RoutingFlowLane struct {
 	Edges   []RoutingFlowEdge `json:"edges"`
@@ -1329,15 +1375,17 @@ type RoutingFlowLane struct {
 
 // RoutingFlowResponse defines model for RoutingFlowResponse.
 type RoutingFlowResponse struct {
-	// FirstDispatchChains Attempt1 = ordinal=1 链数和（守恒左端）
+	// FirstDispatchChains Attempt1 = ordinal=1 链数和（守恒左端；完整边集聚合，不受分页影响）
 	FirstDispatchChains int64 `json:"first_dispatch_chains"`
 
 	// FlowOverflowDroppedChains 故障预算淘汰链（容量/入队拒绝；非上游失败）
 	FlowOverflowDroppedChains int64 `json:"flow_overflow_dropped_chains"`
 
 	// IncompleteChainDropped 本进程已观察 cleanup 缺 terminal 的链（非上游失败）
-	IncompleteChainDropped int64             `json:"incomplete_chain_dropped"`
-	Lanes                  []RoutingFlowLane `json:"lanes"`
+	IncompleteChainDropped int64 `json:"incomplete_chain_dropped"`
+
+	// Lanes 边表的当前页（offset/limit 切片后仍按 (ordinal,lane) 分组，组内保持仓储确定性行序）
+	Lanes []RoutingFlowLane `json:"lanes"`
 
 	// PlanGeneration 当前发布计划 generation（边行各自 generation 不混入）
 	PlanGeneration int64 `json:"plan_generation"`
@@ -1346,8 +1394,20 @@ type RoutingFlowResponse struct {
 	ProcessCrashLossUnobservable bool   `json:"process_crash_loss_unobservable"`
 	RouteClassId                 string `json:"route_class_id"`
 
-	// TerminalChains 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains）
+	// Sankey 桑基图边集（已按 (ordinal,lane,account,outcome,is_terminal) 聚合）
+	Sankey RoutingFlowGraph `json:"sankey"`
+
+	// StaleChains 完整边集中 generation != plan_generation 的边的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分子由前端计算）
+	StaleChains int64 `json:"stale_chains"`
+
+	// TerminalChains 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains；完整边集聚合）
 	TerminalChains int64 `json:"terminal_chains"`
+
+	// TotalChains 完整边集的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分母由前端计算）
+	TotalChains int64 `json:"total_chains"`
+
+	// TotalEdges 窗口内完整边行数（行单位，驱动前端翻页器；不受 offset/limit 影响）
+	TotalEdges int64 `json:"total_edges"`
 }
 
 // RoutingFrontierCandidate defines model for RoutingFrontierCandidate.
@@ -1395,9 +1455,13 @@ type RoutingFrontierCandidate struct {
 
 // RoutingFrontierResponse defines model for RoutingFrontierResponse.
 type RoutingFrontierResponse struct {
+	// Candidates 排序后的一页候选
 	Candidates     []RoutingFrontierCandidate `json:"candidates"`
 	PlanGeneration int64                      `json:"plan_generation"`
 	RouteClassId   string                     `json:"route_class_id"`
+
+	// TotalCandidates 排序后候选总条数（分页用；不受 offset/limit 影响）
+	TotalCandidates int64 `json:"total_candidates"`
 }
 
 // RoutingPlanCandidate 候选静态身份（缺叶子引用时 identity-only，其余字段零值）
@@ -1466,12 +1530,18 @@ type RoutingPlanResponse struct {
 
 	// Routes 全身份确定性路由序（与发布字节守卫同序）
 	Routes []RoutingPlanRoute `json:"routes"`
+
+	// TotalRoutes search 过滤后（route 给定时为 0/1）的路由总数（分页用）
+	TotalRoutes int64 `json:"total_routes"`
 }
 
 // RoutingPlanRoute defines model for RoutingPlanRoute.
 type RoutingPlanRoute struct {
-	// Candidates 通道账号并集，升序 AccountID
+	// Candidates 通道账号并集（升序 AccountID）的当前页；candidates_limit=0 时为空数组
 	Candidates []RoutingPlanCandidate `json:"candidates"`
+
+	// CandidatesTotal 该路由候选总数（分页用；不受 candidates_offset/candidates_limit 影响）
+	CandidatesTotal int64 `json:"candidates_total"`
 
 	// Degraded degraded 候选发布序
 	Degraded []int64 `json:"degraded"`
@@ -2112,17 +2182,31 @@ type GetRedemptionCodesIdUsesParams struct {
 
 // GetRoutingFlowParams defines parameters for GetRoutingFlow.
 type GetRoutingFlowParams struct {
-	Route string    `form:"route" json:"route"`
-	From  time.Time `form:"from" json:"from"`
-	To    time.Time `form:"to" json:"to"`
+	Route    string    `form:"route" json:"route"`
+	From     time.Time `form:"from" json:"from"`
+	To       time.Time `form:"to" json:"to"`
+	Offset   *int      `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit    *int      `form:"limit,omitempty" json:"limit,omitempty"`
+	Accounts *int      `form:"accounts,omitempty" json:"accounts,omitempty"`
 }
 
 // GetRoutingFrontierParams defines parameters for GetRoutingFrontier.
 type GetRoutingFrontierParams struct {
-	Route string    `form:"route" json:"route"`
-	From  time.Time `form:"from" json:"from"`
-	To    time.Time `form:"to" json:"to"`
-	Limit *int      `form:"limit,omitempty" json:"limit,omitempty"`
+	Route  string    `form:"route" json:"route"`
+	From   time.Time `form:"from" json:"from"`
+	To     time.Time `form:"to" json:"to"`
+	Offset *int      `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit  *int      `form:"limit,omitempty" json:"limit,omitempty"`
+}
+
+// GetRoutingPlanParams defines parameters for GetRoutingPlan.
+type GetRoutingPlanParams struct {
+	Search           *string `form:"search,omitempty" json:"search,omitempty"`
+	Route            *string `form:"route,omitempty" json:"route,omitempty"`
+	Offset           *int    `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit            *int    `form:"limit,omitempty" json:"limit,omitempty"`
+	CandidatesOffset *int    `form:"candidates_offset,omitempty" json:"candidates_offset,omitempty"`
+	CandidatesLimit  *int    `form:"candidates_limit,omitempty" json:"candidates_limit,omitempty"`
 }
 
 // ListRulesParams defines parameters for ListRules.
@@ -2515,7 +2599,7 @@ type ServerInterface interface {
 	GetRoutingFrontier(w http.ResponseWriter, r *http.Request, params GetRoutingFrontierParams)
 	// 当前发布路由计划解释（只读投影，无历史 generation 参数）
 	// (GET /routing/plan)
-	GetRoutingPlan(w http.ResponseWriter, r *http.Request)
+	GetRoutingPlan(w http.ResponseWriter, r *http.Request, params GetRoutingPlanParams)
 	// 规则列表（enabled 过滤，priority 升序）
 	// (GET /rules)
 	ListRules(w http.ResponseWriter, r *http.Request, params ListRulesParams)
@@ -2878,7 +2962,7 @@ func (_ Unimplemented) GetRoutingFrontier(w http.ResponseWriter, r *http.Request
 
 // 当前发布路由计划解释（只读投影，无历史 generation 参数）
 // (GET /routing/plan)
-func (_ Unimplemented) GetRoutingPlan(w http.ResponseWriter, r *http.Request) {
+func (_ Unimplemented) GetRoutingPlan(w http.ResponseWriter, r *http.Request, params GetRoutingPlanParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4530,6 +4614,30 @@ func (siw *ServerInterfaceWrapper) GetRoutingFlow(w http.ResponseWriter, r *http
 		return
 	}
 
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "accounts" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "accounts", r.URL.Query(), &params.Accounts)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "accounts", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetRoutingFlow(w, r, params)
 	}))
@@ -4594,6 +4702,14 @@ func (siw *ServerInterfaceWrapper) GetRoutingFrontier(w http.ResponseWriter, r *
 		return
 	}
 
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
 	// ------------- Optional query parameter "limit" -------------
 
 	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
@@ -4616,8 +4732,61 @@ func (siw *ServerInterfaceWrapper) GetRoutingFrontier(w http.ResponseWriter, r *
 // GetRoutingPlan operation middleware
 func (siw *ServerInterfaceWrapper) GetRoutingPlan(w http.ResponseWriter, r *http.Request) {
 
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRoutingPlanParams
+
+	// ------------- Optional query parameter "search" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "search", r.URL.Query(), &params.Search)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "search", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "route" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "route", r.URL.Query(), &params.Route)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "candidates_offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "candidates_offset", r.URL.Query(), &params.CandidatesOffset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "candidates_offset", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "candidates_limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "candidates_limit", r.URL.Query(), &params.CandidatesLimit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "candidates_limit", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.GetRoutingPlan(w, r)
+		siw.Handler.GetRoutingPlan(w, r, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
