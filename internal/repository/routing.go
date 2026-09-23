@@ -399,14 +399,14 @@ func foldFlowRows(rows []RoutingFlowRow) []RoutingFlowRow {
 	order := make([]flowEdgeKey, 0, len(rows))
 	for _, row := range rows {
 		k := flowEdgeKey{
-			routeClassID:      row.RouteClassID,
-			ordinal:           row.Ordinal,
-			lane:              row.Lane,
-			accountID:         row.AccountID,
-			previousOutcome:   row.PreviousOutcome,
-			transitionReason:  row.TransitionReason,
-			outcome:           row.Outcome,
-			isTerminal:        row.IsTerminal,
+			routeClassID:     row.RouteClassID,
+			ordinal:          row.Ordinal,
+			lane:             row.Lane,
+			accountID:        row.AccountID,
+			previousOutcome:  row.PreviousOutcome,
+			transitionReason: row.TransitionReason,
+			outcome:          row.Outcome,
+			isTerminal:       row.IsTerminal,
 		}
 		if row.PreviousAccountID != nil {
 			k.previousAccountID = *row.PreviousAccountID

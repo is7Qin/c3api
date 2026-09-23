@@ -24,7 +24,7 @@ func TestRoutingFlowSnapshotAtomicRollbackPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-			src := "src-atomic"
+	src := "src-atomic"
 
 	// Seed seq1 full rows.
 	seq1 := []repository.RoutingFlowRow{
