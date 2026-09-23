@@ -1394,14 +1394,11 @@ type RoutingFlowResponse struct {
 	// Sankey 桑基图边集（已按 (ordinal,lane,account,outcome,is_terminal) 聚合）
 	Sankey RoutingFlowGraph `json:"sankey"`
 
-	// StaleChains 完整边集中 generation != plan_generation 的边的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分子由前端计算）
-	StaleChains int64 `json:"stale_chains"`
+	// StaleGenerationPresent 完整边集内是否存在 min_generation != plan_generation 的边行（行级谓词，精确——无高估无低估；不受 offset/limit 影响）。精确性前提：generation 随发布单调不减，故存量行恒有 min_generation ≤ plan_generation；未来代际竞态不在目标场景内）
+	StaleGenerationPresent bool `json:"stale_generation_present"`
 
 	// TerminalChains 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains；完整边集聚合）
 	TerminalChains int64 `json:"terminal_chains"`
-
-	// TotalChains 完整边集的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分母由前端计算）
-	TotalChains int64 `json:"total_chains"`
 
 	// TotalEdges 窗口内完整边行数（行单位，驱动前端翻页器；不受 offset/limit 影响）
 	TotalEdges int64 `json:"total_edges"`
