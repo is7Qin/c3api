@@ -77,7 +77,7 @@ func TestRollupWorkerPG(t *testing.T) {
 		[]repository.RoutingFlowRow{{
 			IdentityVersion: int16(domain.RoutingIdentityVersion), RouteClassID: rc, TerminalMinute: now,
 			Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "plan", Outcome: "success",
-			IsTerminal: true, Generation: 1, CandidateFingerprint: fp, ChainCount: 3,
+			IsTerminal: true, Generation: 1, ChainCount: 3,
 		}}))
 
 	dirtyQ, err := repos.Partitions.IsDirty(ctx, "quality", 1, now)
@@ -89,7 +89,6 @@ func TestRollupWorkerPG(t *testing.T) {
 
 	st := w.Stats().(RollupStats)
 	require.Equal(t, int64(1), st.QualityRolled)
-	require.Equal(t, int64(1), st.FlowRolled)
 	require.Zero(t, st.Failed)
 	require.Equal(t, now.UnixMilli(), st.WatermarkQualityUnixMs)
 
@@ -97,9 +96,6 @@ func TestRollupWorkerPG(t *testing.T) {
 	dirtyQ, err = repos.Partitions.IsDirty(ctx, "quality", 1, now)
 	require.NoError(t, err)
 	require.False(t, dirtyQ)
-	dirtyF, err := repos.Partitions.IsDirty(ctx, "flow", 1, now)
-	require.NoError(t, err)
-	require.False(t, dirtyF)
 	wmQ, err := repos.Partitions.GetWatermark(ctx, "quality", 1)
 	require.NoError(t, err)
 	require.True(t, wmQ.UTC().Truncate(time.Minute).Equal(now))
@@ -119,7 +115,6 @@ func TestRollupWorkerPG(t *testing.T) {
 	w.runOnce(ctx)
 	st2 := w.Stats().(RollupStats)
 	require.Equal(t, int64(1), st2.QualityRolled)
-	require.Equal(t, int64(1), st2.FlowRolled)
 
 	// 迟到事实重标脏（同桶新 sequence > 旧）→ 等于 watermark 的桶可重算
 	// （选择缝 >= 下界 + advanceWatermarkTx 接受相等）。

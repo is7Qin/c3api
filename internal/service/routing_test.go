@@ -193,16 +193,16 @@ func TestRoutingFlow_NotWired(t *testing.T) {
 // --- flow: conservation + loss separation ---
 
 func TestRoutingFlow_ConservationAndLossSeparation(t *testing.T) {
-	plan, idHex, route := routingFixturePlan()
+	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
 	// 链 A：单跳 terminal（ordinal 1）；链 B：ordinal1 失败 → ordinal2 degraded
-	// terminal；另含一条旧 generation（6）的完整链——行保留自身 generation，
+	// terminal；另含一条旧 min_generation（6）的完整链——行保留自身最早代际，
 	// 结果单独暴露当前计划 generation（stale/current 不混）。
 	fs.routingFlowRows = []repository.RoutingFlowStat{
-		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, Generation: 7, CandidateFingerprint: mustFP(t, route.Candidates[0].IdentityFingerprint), ChainCount: 5},
-		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", IsTerminal: false, Generation: 7, CandidateFingerprint: mustFP(t, route.Candidates[1].IdentityFingerprint), ChainCount: 3},
-		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, Generation: 7, CandidateFingerprint: mustFP(t, route.Candidates[1].IdentityFingerprint), ChainCount: 3},
-		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, Generation: 6, CandidateFingerprint: mustFP(t, route.Candidates[0].IdentityFingerprint), ChainCount: 2},
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
+		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", IsTerminal: false, MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 2},
 	}
 	withRoutingLoss(t, 11, 13)
 	svc := routingSvc(t, fs, plan)
@@ -233,26 +233,26 @@ func TestRoutingFlow_ConservationAndLossSeparation(t *testing.T) {
 	require.Equal(t, "5xx", retry.PreviousOutcome)
 	require.Equal(t, "failover", retry.TransitionReason)
 	require.True(t, retry.IsTerminal)
-	require.Equal(t, int64(7), retry.Generation)
+	require.Equal(t, int64(7), retry.MinGeneration)
 
-	// 旧 generation 行原样保留（不与 PlanGeneration 混淆）。
-	require.Equal(t, int64(6), res.Lanes[0].Edges[2].Generation)
+	// 旧 min_generation 行原样保留（不与 PlanGeneration 混淆）。
+	require.Equal(t, int64(6), res.Lanes[0].Edges[2].MinGeneration)
 
 	// 丢失计数独立口径，与边/结局语义无关。
 	require.Equal(t, int64(11), res.IncompleteChainDropped)
 	require.Equal(t, int64(13), res.FlowOverflowDroppedChains)
 }
 
-func TestRoutingFlow_FingerprintHexAndEmptyWindow(t *testing.T) {
-	plan, idHex, route := routingFixturePlan()
+func TestRoutingFlow_MinGenerationAndEmptyWindow(t *testing.T) {
+	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
 	fs.routingFlowRows = []repository.RoutingFlowStat{
-		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, Generation: 7, CandidateFingerprint: mustFP(t, route.Candidates[0].IdentityFingerprint), ChainCount: 1},
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 1},
 	}
 	svc := routingSvc(t, fs, plan)
 	res, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Minute)})
 	require.NoError(t, err)
-	require.Equal(t, route.Candidates[0].IdentityFingerprint, res.Lanes[0].Edges[0].CandidateFingerprint)
+	require.Equal(t, int64(7), res.Lanes[0].Edges[0].MinGeneration)
 
 	fs.routingFlowRows = nil
 	empty, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Minute)})
