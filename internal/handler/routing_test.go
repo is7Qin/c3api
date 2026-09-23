@@ -381,6 +381,91 @@ func Test_RoutingPlan_CandidatesLimitStates(t *testing.T) {
 	require.Equal(t, int64(250), big.Routes[0].CandidatesTotal)
 }
 
+// A12：三端点各自的 handler 级错误路径——非法 hex → 400；合法但未知 → 404。
+func Test_Routing_ErrorCodesAllThreeEndpoints(t *testing.T) {
+	plan, _ := routingFixturePlan(t)
+	h := routingRouter(&routingStore{fakeStore: newFakeStore()}, plan)
+
+	bad := []struct{ name, url string }{
+		{"flow", "/api/admin/routing/flow?route=nothex&" + routingWindow()},
+		{"frontier", "/api/admin/routing/frontier?route=nothex&" + routingWindow()},
+		{"plan", "/api/admin/routing/plan?route=nothex"},
+	}
+	for _, c := range bad {
+		rec := doGET(t, h, c.url)
+		require.Equal(t, 400, rec.Code, "%s 非法 hex → 400: %s", c.name, rec.Body.String())
+	}
+
+	unknown := routingFPHex(t, 0x01)
+	missing := []struct{ name, url string }{
+		{"flow", "/api/admin/routing/flow?route=" + unknown + "&" + routingWindow()},
+		{"frontier", "/api/admin/routing/frontier?route=" + unknown + "&" + routingWindow()},
+		{"plan", "/api/admin/routing/plan?route=" + unknown},
+	}
+	for _, c := range missing {
+		rec := doGET(t, h, c.url)
+		require.Equal(t, 404, rec.Code, "%s 合法但未知 route → 404: %s", c.name, rec.Body.String())
+	}
+}
+
+// A13：flow / plan 的 HTTP 级分页边界——越界 offset → 200 + 空页；超上限 limit → 200 +
+// 钳制值（绝不 4xx）。frontier 的同类断言见 Test_RoutingFrontier_LimitClamp。
+func Test_RoutingFlowAndPlan_PaginationBoundsAtHTTPLevel(t *testing.T) {
+	plan, idHex := routingFixturePlan(t)
+	store := &routingStore{fakeStore: newFakeStore()}
+	store.flowRows = make([]repository.RoutingFlowStat, 250)
+	for i := range store.flowRows {
+		store.flowRows[i] = repository.RoutingFlowStat{
+			Ordinal: 1, Lane: "primary", AccountID: int64(i + 1),
+			Outcome: "success", IsTerminal: true, Generation: 7,
+			CandidateFingerprint: routingMustFP(t, fmt.Sprintf("%064x", i)),
+			ChainCount:           1,
+		}
+	}
+	h := routingRouter(store, plan)
+
+	flowGet := func(t *testing.T, q string) RoutingFlowResponse {
+		t.Helper()
+		rec := doGET(t, h, "/api/admin/routing/flow?route="+idHex+"&"+routingWindow()+q)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var res RoutingFlowResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+		return res
+	}
+	def := flowGet(t, "")
+	require.Equal(t, int64(250), def.TotalEdges, "total_edges 是完整行数")
+	require.Len(t, def.Lanes[0].Edges, 20, "缺省 limit → 20")
+	clamped := flowGet(t, "&limit=500")
+	require.Len(t, clamped.Lanes[0].Edges, 200, "limit>200 钳到 200（200 非 400）")
+	require.Equal(t, int64(250), clamped.TotalEdges, "total_edges 不受分页影响")
+	require.Empty(t, flowGet(t, "&offset=1000").Lanes, "offset 越界 → 空页（200 非 400）")
+
+	// plan：同一对边界，用 250 条路由使「>200 钳到 200」可证伪。
+	routes := make([]scheduler.RoutingPlanRoute, 250)
+	for i := range routes {
+		rc, err := domain.RouteClassID(int64(i+1), domain.FormatOpenAIChat, fmt.Sprintf("m%d", i), domain.OpChatCompletions)
+		require.NoError(t, err)
+		routes[i] = scheduler.RoutingPlanRoute{Ref: scheduler.RouteRef{
+			GroupID: int64(i + 1), Format: string(domain.FormatOpenAIChat), Model: fmt.Sprintf("m%d", i),
+			OperationTag: string(domain.OpChatCompletions), RouteClassID: domain.RouteClassIDHex(rc),
+		}}
+	}
+	bigH := routingRouter(&routingStore{fakeStore: newFakeStore()}, &scheduler.RoutingPlan{Generation: 3, Routes: routes})
+
+	planGet := func(t *testing.T, q string) RoutingPlanResponse {
+		t.Helper()
+		rec := doGET(t, bigH, "/api/admin/routing/plan"+q)
+		require.Equal(t, 200, rec.Code, rec.Body.String())
+		var res RoutingPlanResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+		return res
+	}
+	require.Len(t, planGet(t, "").Routes, 20, "缺省 limit → 20")
+	require.Equal(t, int64(250), planGet(t, "").TotalRoutes, "total_routes 不受分页影响")
+	require.Len(t, planGet(t, "?limit=500").Routes, 200, "limit>200 钳到 200（200 非 400）")
+	require.Empty(t, planGet(t, "?offset=1000").Routes, "offset 越界 → 空页（200 非 400）")
+}
+
 func Test_RoutingPlan_Incident(t *testing.T) {
 	plan := &scheduler.RoutingPlan{Generation: 7, Routes: []scheduler.RoutingPlanRoute{
 		{

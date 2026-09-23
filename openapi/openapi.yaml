@@ -1664,8 +1664,8 @@ paths:
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: offset, in: query, schema: { type: integer, default: 0, minimum: 0, description: 边表分页偏移（缺省/≤0 → 0） } }
-        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 200, description: 边表每页条数（缺省/≤0 → 20；>200 钳到 200，不报错） } }
-        - { name: accounts, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 200, description: 桑基每层保留账号数（缺省/≤0 → 20；>200 钳到 200）——其余账号折叠为 account_id=0 的「其他」节点，层内 chain_count 求和守恒 } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 0, maximum: 200, description: 边表每页条数（缺省/≤0 → 20；>200 钳到 200，不报错） } }
+        - { name: accounts, in: query, schema: { type: integer, default: 20, minimum: 0, maximum: 200, description: 桑基每层保留账号数（缺省/≤0 → 20；>200 钳到 200）——其余账号折叠为 account_id=0 的「其他」节点，层内 chain_count 求和守恒 } }
       responses:
         '200':
           description: flow 聚合（lanes 边分组 + 守恒计数 + 丢失三口径）
@@ -1691,7 +1691,7 @@ paths:
         - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
         - { name: offset, in: query, schema: { type: integer, default: 0, minimum: 0, description: 候选分页偏移（缺省/≤0 → 0） } }
-        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 200, description: 候选每页条数（缺省/≤0 → 20；>200 钳到 200，不报错） } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 0, maximum: 200, description: 候选每页条数（缺省/≤0 → 20；>200 钳到 200，不报错） } }
       responses:
         '200':
           description: 前沿候选列表（已排序 + 钳制；空为 []）
@@ -1718,7 +1718,7 @@ paths:
         - { name: search, in: query, schema: { type: string, description: 路由标签模糊匹配（model/format/operation_tag/group_id 子串，大小写不敏感）；空 = 不过滤 } }
         - { name: route, in: query, schema: { type: string, description: 64-hex 路由类 ID；给定则只返回该路由（非法 hex → 400，未知 → 404） } }
         - { name: offset, in: query, schema: { type: integer, default: 0, minimum: 0, description: 路由分页偏移（缺省/≤0 → 0；在 search 过滤后的列表上切片） } }
-        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 1, maximum: 200, description: 路由每页条数（缺省/≤0 → 20；>200 钳到 200，不报错） } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 0, maximum: 200, description: 路由每页条数（缺省/≤0 → 20；>200 钳到 200，不报错） } }
         - { name: candidates_offset, in: query, schema: { type: integer, default: 0, minimum: 0, description: 候选分页偏移（每个返回路由各自切片） } }
         - { name: candidates_limit, in: query, schema: { type: integer, default: 20, minimum: 0, maximum: 200, description: 候选每页条数（0 = 不返回候选；>200 钳到 200） } }
       responses:

@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -374,7 +374,7 @@ function RoutingPanel({ range, setRange }: {
   const search = useDebounced(searchInput, 300)
   const planQ = useQuery({
     queryKey: ['routing-plan', search],
-    queryFn: () => api.getRoutingPlan({ search, limit: 100, candidates_limit: 0 }),
+    queryFn: () => api.getRoutingPlan({ search, limit: SELECTOR_ROUTE_LIMIT, candidates_limit: 0 }),
   })
   const routes = useMemo(() => planQ.data?.routes ?? [], [planQ.data])
   const [picked, setPicked] = useState<string | undefined>(undefined)
@@ -394,9 +394,13 @@ function RoutingPanel({ range, setRange }: {
     : (routes[0]?.ref.route_class_id ?? '')
   // 选中路由被 search 过滤掉时：保持当前 routeId（flow/frontier/plan
   // 三卡不断流），labels 缓存保证选择框仍显示其名称。
-  const selectedRouteId = useRef('')
-  if (routeId !== '') selectedRouteId.current = routeId
-  const activeRouteId = routeId !== '' ? routeId : selectedRouteId.current
+  // 用 state + effect 记录最后一次非空 routeId（而不是 render 期写 ref——后者违反
+  // react(refs) 规则且会在并发渲染下读到脏值）。effect 在提交后同步，故本渲染仍读到上一次的值。
+  const [lastRouteId, setLastRouteId] = useState('')
+  useEffect(() => {
+    if (routeId !== '') setLastRouteId(routeId)
+  }, [routeId])
+  const activeRouteId = routeId !== '' ? routeId : lastRouteId
   const from = toRFC3339(range.from) ?? ''
   const to = toRFC3339(range.to) ?? ''
 
@@ -755,7 +759,7 @@ function FlowEdgeTable({ edges, total, offset, limit, onOffsetChange, onLimitCha
         </TableBody>
       </Table>
     </div>
-    <Pagination total={total} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} />
+    <Pagination total={total} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} pageSizes={ROUTING_PAGE_SIZES} />
     </div>
   )
 }
@@ -859,7 +863,7 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
                 </TableBody>
               </Table>
             </div>
-            <Pagination total={frontierQ.data?.total_candidates ?? 0} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} />
+            <Pagination total={frontierQ.data?.total_candidates ?? 0} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} pageSizes={ROUTING_PAGE_SIZES} />
           </>
         )}
       </CardContent>
@@ -873,6 +877,15 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
 type PlanCandidate = components['schemas']['RoutingPlanCandidate']
 
 const CHIP_LIMIT = 20
+
+// 路由观测三处表格的服务端每页上限（openapi: `maximum: 200`）。Pagination 的共享
+// 列表含 1000，超过服务端上限会造成「本地页码按 1000 算、服务端只回 200 行」的不一致，
+// 故三处均显式传入本列表。
+const ROUTING_PAGE_SIZES = [10, 20, 50, 100, 200]
+
+// 选择器轻量调用一次取回的路由数上限（服务端上限 200；`candidates_limit=0` 不返回候选，
+// 避免 limit × candidates_limit 放大）。目录超过此数时被截断，由 `search` 收窄。
+const SELECTOR_ROUTE_LIMIT = 100
 
 function ChipGroup({ ids, weights, expanded, onToggle }: {
   ids: number[]
@@ -996,7 +1009,7 @@ function PlanCard({ route, generation, candidates, candidatesTotal, candidatesLo
             </TableBody>
           </Table>
           </div>
-          <Pagination total={candidatesTotal} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} />
+          <Pagination total={candidatesTotal} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} pageSizes={ROUTING_PAGE_SIZES} />
           </div>
         )}
       </CardContent>

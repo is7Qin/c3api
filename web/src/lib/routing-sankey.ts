@@ -14,7 +14,6 @@
 
 import type { components } from '@/lib/api/schema'
 
-type FlowEdge = components['schemas']['RoutingFlowEdge']
 type GraphEdge = components['schemas']['RoutingFlowGraphEdge']
 
 export type FlowSankeyNodeKind = 'route' | 'lane' | 'account' | 'outcome' | 'terminal'
@@ -183,27 +182,6 @@ function buildSankey(likes: readonly EdgeLike[], labels: FlowSankeyLabels): Flow
     nodes: ordered.map(({ id, name, kind }) => ({ id, name, kind })),
     links: outLinks,
   }
-}
-
-/** 明细边（RoutingFlowEdge）：无折叠，每条边挂自身账号节点。 */
-export function buildFlowSankey(edges: readonly FlowEdge[], labels: FlowSankeyLabels): FlowSankeyData {
-  return buildSankey(
-    edges.map<EdgeLike>(edge => ({
-      ordinal: edge.ordinal,
-      lane: edge.lane,
-      accountNodeId: `acct:${edge.account_id}`,
-      accountName: labels.account(edge.account_id),
-      accountSortKey: [edge.account_id],
-      outcome: edge.outcome,
-      isTerminal: edge.is_terminal,
-      chainCount: edge.chain_count,
-      reasons: edge.transition_reason ? [edge.transition_reason] : [],
-      prevOutcomes: edge.previous_outcome ? [edge.previous_outcome] : [],
-      prevAccounts: edge.previous_account_id === null ? [] : [edge.previous_account_id],
-      hasFirstDispatch: edge.previous_account_id === null,
-    })),
-    labels,
-  )
 }
 
 /** 桑基聚合边（RoutingFlowGraphEdge）：folded 边按层归入独立「其他」节点。 */

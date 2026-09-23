@@ -25,12 +25,17 @@ export function Pagination({
   offset,
   onOffsetChange,
   onLimitChange,
+  pageSizes = PAGE_SIZES,
 }: {
   total: number
   limit: number
   offset: number
   onOffsetChange: (offset: number) => void
   onLimitChange: (limit: number) => void
+  /** 每页条数候选；缺省用共享列表。服务端有更紧上限的调用方**必须**传入自己的
+   *  列表——否则选中值超上限时服务端会钳制，而本地页码计算仍按未钳制的 limit，
+   *  页码与总数对不上。 */
+  pageSizes?: number[]
 }) {
   const { t } = useTranslation()
   const [jumpTo, setJumpTo] = useState('')
@@ -55,7 +60,7 @@ export function Pagination({
           {t('list.pageInfo', { page, totalPages, total })}
         </span>
         <Select
-          items={Object.fromEntries(PAGE_SIZES.map(n => [String(n), String(n)]))}
+          items={Object.fromEntries(pageSizes.map(n => [String(n), String(n)]))}
           value={String(limit)}
           onValueChange={v => onLimitChange(Number(v))}
         >
@@ -64,7 +69,7 @@ export function Pagination({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PAGE_SIZES.map(n => (
+            {pageSizes.map(n => (
               <SelectItem key={n} value={String(n)} label={String(n)}>{n}</SelectItem>
             ))}
           </SelectContent>
