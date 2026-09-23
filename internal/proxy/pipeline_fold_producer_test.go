@@ -320,7 +320,7 @@ func TestFoldProducer_duplicateCompletionAppendsExactlyOnce(t *testing.T) {
 }
 
 // --- no synthetic identity: a plan-less dispatch produces nothing ---
-// The plan-only contract makes the legacy lane unreachable through every
+// The plan-only contract makes the plan-less lane unreachable through every
 // production entry; driving the loop with a nil plan proves the seam itself
 // fabricates no rows and no observation without a canonical attempt identity.
 

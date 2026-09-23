@@ -360,7 +360,7 @@ func (s *Scheduler) resolveCompileScope(f *compileFire) (compileFireMode, string
 
 // scopedRouteCompiler is the per-route seam for affected-routes-only
 // recompute. Only *RoutingCompiler implements it; test doubles take the
-// full-fidelity fallback, preserving their exact legacy behavior.
+// full-fidelity fallback.
 type scopedRouteCompiler interface {
 	compileSingleRoute(in CompilerInputs, gid int64, rk routeKey, op domain.OperationTag) (*RouteDecision, error)
 }

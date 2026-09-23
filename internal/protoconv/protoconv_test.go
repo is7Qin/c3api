@@ -85,7 +85,7 @@ func TestConvertRequestChatToResp(t *testing.T) {
 	require.Equal(t, map[string]any{"type": "function", "name": "get_weather"}, tc, "嵌套 function 扁平化")
 }
 
-func TestConvertRequestChatToRespLegacyMaxTokensAndImages(t *testing.T) {
+func TestConvertRequestChatToRespMaxTokensAndImages(t *testing.T) {
 	body := []byte(`{
 		"model": "gpt-4o",
 		"messages": [
@@ -96,7 +96,7 @@ func TestConvertRequestChatToRespLegacyMaxTokensAndImages(t *testing.T) {
 	out, err := ConvertRequest(body, domain.ProtocolConvertChatToResp)
 	require.NoError(t, err)
 	m := obj(t, out)
-	require.Equal(t, float64(100), m["max_output_tokens"], "legacy max_tokens → max_output_tokens")
+	require.Equal(t, float64(100), m["max_output_tokens"], "max_tokens → max_output_tokens")
 	input := arrOf(t, m, "input")
 	content := arrOf(t, input[0].(map[string]any), "content")
 	require.Len(t, content, 2)

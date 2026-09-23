@@ -98,7 +98,7 @@ func TestPGResponsesSpecialCredential(t *testing.T) {
 	require.NoError(t, err, "responses-special 模板选号")
 	require.Equal(t, credential.TypeResponsesSpecial, sel.CredentialType, "模板主列 credential_type 随快照下发")
 	require.Equal(t, "sk-upstream", sel.UpstreamKey, "账号 upstream_key 随 Selection 携带")
-	defer sched.Release(sel.AccountID)
+	defer sel.Release()
 
 	p := newPGTestProxy(t, sched, g.ID)
 

@@ -162,7 +162,7 @@ See `config.example.toml` for the full schema (server, log, admin, auth, db, red
 - **Fresh setup only (no migration path)** — schemas and configuration are not backward-compatible between versions: an upgrade means a brand-new database and a re-checked configuration (see [Status: Beta](#status-beta)).
 - **Env-only deployments** (e.g. K8s): pass `-config ""` to skip the config file entirely — the flag defaults to `config.toml`, and a missing file is a startup error.
 - **Config is read once at startup** — changes require a rolling restart (no hot reload).
-- **Invalid config fails fast at startup** with the offending key: non-positive durations/intervals, unknown keys (typos, removed legacy keys), missing required secrets, and placeholder values (`change-me`, `dev-admin-token`, …) are all rejected.
+- **Invalid config fails fast at startup** with the offending key: non-positive durations/intervals, unknown keys (typos, removed keys), missing required secrets, and placeholder values (`change-me`, `dev-admin-token`, …) are all rejected.
 
 ## Deployment
 

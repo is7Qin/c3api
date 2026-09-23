@@ -51,8 +51,7 @@ func encodeTestMinute(k Key) *QualityMinute {
 }
 
 // TestAppendQualityCellJSONGolden 冻结编码字节（下游按 JSON 解析；金字节防格式
-// 漂移）。旧 map+json.Marshal 实现与其 oracle 已删——不保留 legacy 参照物；
-// 若需改格式，必须同步更新 golden 并在提交信息里给出理由。
+// 漂移）。若需改格式，必须同步更新 golden 并在提交信息里给出理由。
 func TestAppendQualityCellJSONGolden(t *testing.T) {
 	k := encodeTestKey(0x21)
 	qm := encodeTestMinute(k)

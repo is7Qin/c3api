@@ -655,9 +655,8 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 		blob, state, ok := w.rec.flow.redisPayload(minute)
 		if !ok || state == flowPayloadNone {
 			// No rows and no empty marker (e.g. net-zero folds): nothing
-			// to publish. The legacy zero edges/counts payload had no
-			// consumer (no reader of the flow namespace exists) and is
-			// skipped instead of published.
+			// to publish. Shell edges/counts have no consumer (no reader
+			// of the flow namespace exists), so they are skipped.
 			continue
 		}
 		w.mu.Lock()
@@ -1143,10 +1142,8 @@ func flowRowsFromMinute(fm *FlowMinute, instanceSrc string, seq int64) []reposit
 		}
 		return rows
 	}
-	// No rows and no empty marker: nothing to persist. (The legacy
-	// edges-array fallback is deleted with the consumer seam — shell
-	// edges/counts have no writer, so this point always carried zeros and
-	// returned nil.)
+	// No rows and no empty marker: nothing to persist. (Shell edges/counts
+	// have no writer, so this point always carries zeros.)
 	return nil
 }
 

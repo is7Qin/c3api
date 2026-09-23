@@ -33,7 +33,7 @@ type CompilerSources struct {
 
 // RequestCompile signals the compile lane (non-blocking; coalesced by the
 // debounce window). No-op until sources are armed (Start received non-nil)
-// so legacy/unwired schedulers never publish compiled views.
+// so unwired schedulers never publish compiled views.
 func (s *Scheduler) RequestCompile() {
 	if s.sources == nil {
 		return

@@ -10,8 +10,8 @@ import (
 
 // Select 选号并占用并发槽：执行预编译 DecisionView 计划
 // （NewAttemptPlan + ReserveAttempt：lane 顺序、完整唯一 overflow 尾、
-// reservation reject 不耗 attempt）。legacy 预生成加权序列扫描已随
-// cutover 物理删除——未编译路由（编译车道尚未产出该桶）直接 ErrFormatUnavailable。
+// reservation reject 不耗 attempt）。未编译路由（编译车道尚未产出该桶）
+// 直接 ErrFormatUnavailable。
 // 调用方完成请求后必须 Release + MarkResult。
 //
 // the session is a stack value; the scheduler call takes a stack

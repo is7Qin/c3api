@@ -69,6 +69,19 @@ func concCur(s *Scheduler, accID int64) int64 {
 	return s.View().ByID()[accID].runtime.concurrency.Load()
 }
 
+// releaseByID 直接按账号 ID 归还在途计数（对称于 concSetCur 的"绕开 Select"
+// 直写——供测试直接摆布计数用）。生产路径一律走 Selection.Release：
+// 经 leaseToken 精确归还且幂等。
+func releaseByID(s *Scheduler, accID int64) {
+	v := s.view.Load()
+	if v == nil || v.StaticView() == nil {
+		return
+	}
+	if a, ok := v.Account(accID); ok {
+		a.runtime.concurrency.Add(-1)
+	}
+}
+
 // A1 结构短路：N=1 时 share=limit → 超份额分支数学上不可达，Select/Release
 // 全路径零 Redis 命令（含视图在场时——判定是纯内存读）。worker 在场但未启动。
 func TestAccConcN1StructuralShortCircuit(t *testing.T) {
@@ -94,7 +107,7 @@ func TestAccConcN1StructuralShortCircuit(t *testing.T) {
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "N=1 视图路径同样同点拒绝")
 
 	for range 4 {
-		s.Release(1)
+		releaseByID(s, 1)
 	}
 	require.Zero(t, concCur(s, 1), "Release 净零")
 	require.Zero(t, mr.CommandCount()-base, "Select/Release 全路径零 Redis 命令（公理 2 钉死）")
@@ -148,7 +161,7 @@ func TestConcShareDynamicNInflightInheritance(t *testing.T) {
 	// 释放 6 笔 → 在途 3；N→3：share=3 恰满，超份额借位经新鲜单实例视图
 	// （effective≈L_now）放行至真上限
 	for range 6 {
-		s.Release(1)
+		releaseByID(s, 1)
 	}
 	s.concView.Store(&clusterView{accounts: map[int64]concSnap{
 		1: {total: 3, selfLast: 3, at: time.Now()},
@@ -156,7 +169,7 @@ func TestConcShareDynamicNInflightInheritance(t *testing.T) {
 	sel, err := concSelect(s)
 	require.NoError(t, err, "超份额借位：effective=3−3+4=4 < 9")
 	require.Equal(t, int64(1), sel.AccountID)
-	s.Release(1)
+	sel.Release()
 }
 
 // A3 扫描语义四态（spec §1.1 判定嵌入扫描循环——借位拒绝=换号，不是拒流）：
@@ -179,7 +192,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	sel, err := concSelect(s1)
 	require.NoError(t, err, "借位放行：effective=2−2+3=3 < 4")
 	require.Equal(t, int64(1), sel.AccountID)
-	s1.Release(1)
+	sel.Release()
 
 	// 态 2 视图满换号：账号 1 超份额且视图满（eff=5≥4）被跳过 → 选到账号 2
 	// （fast-path 份额内，与扫描起点无关）。
@@ -191,7 +204,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	sel, err = concSelect(s2)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel.AccountID, "视图满候选被跳过换下一候选")
-	s2.Release(2)
+	sel.Release()
 
 	// 态 3 全员视图满 → ErrAttemptsExhausted：账号 1 本地达真上限、账号 2 超份额且
 	// 视图满（eff=4−2+3=5 ≥ 4）——借用拒绝是换号，换无可换即拒绝。
@@ -221,7 +234,7 @@ func TestClusterViewScanSemantics(t *testing.T) {
 	sel, err = concSelect(s4)
 	require.NoError(t, err, "陈旧视图 fail-open：账号 1 全额本地可选（3 ≤ 4）")
 	require.Equal(t, int64(1), sel.AccountID)
-	s4.Release(1)
+	sel.Release()
 }
 
 // A3 补充——concAllows 判定边界：公式两侧、无视图/条目缺失/陈旧 fail-open。
@@ -378,9 +391,9 @@ func TestAccConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 	}
 	_, err = concSelect(s)
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "真上限兜底：7 > 6 拒绝")
-	s.Release(sel.AccountID)
-	s.Release(1)
-	s.Release(1)
+	sel.Release()
+	releaseByID(s, 1)
+	releaseByID(s, 1)
 	require.Equal(t, int64(3), concCur(s, 1), "回到持 3 笔基态")
 
 	// 同端口重启 → 连接池自动重连，≤数 tick 换入新视图回归共识
@@ -403,9 +416,9 @@ func TestAccConcFailOpenOnRedisOutageAndRecover(t *testing.T) {
 		3*time.Second, 10*time.Millisecond, "他实例字段进聚合")
 	_, err = concSelect(s)
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "effective=6−3+4=7 ≥ 6 借位被拒（共识恢复）")
-	s.Release(1)
-	s.Release(1)
-	s.Release(1)
+	releaseByID(s, 1)
+	releaseByID(s, 1)
+	releaseByID(s, 1)
 }
 
 // A6 Release 形状 + CAS 封顶竞态：Select/Release 路径零 Redis 命令；并发双借
@@ -420,7 +433,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 	sel, err := concSelect(s)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	s.Release(1)
+	sel.Release()
 	require.Zero(t, concCur(s, 1), "Release 净零")
 	require.Zero(t, mr.CommandCount()-base, "Select/Release 路径零 Redis 命令")
 
@@ -445,7 +458,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 						break
 					}
 				}
-				s.Release(sel.AccountID)
+				sel.Release()
 				inflight.Add(-1)
 			}
 		}()
@@ -494,7 +507,7 @@ func TestAccConcInheritedCounterReporting(t *testing.T) {
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "effective=6−4+5=7 ≥ 6 拒绝")
 
 	for range 4 {
-		s.Release(1)
+		releaseByID(s, 1)
 	}
 	require.Zero(t, concCur(s, 1), "净零收尾")
 }

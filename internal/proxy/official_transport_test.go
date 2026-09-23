@@ -27,7 +27,7 @@ func newProxyOfficialRewriteTransport(target string) http.RoundTripper {
 		panic(err)
 	}
 	return roundTripperFuncProxy(func(req *http.Request) (*http.Response, error) {
-		// fallback without assert for legacy call sites – still preserve path/query
+		// fallback without assert – still preserve path/query
 		clone := req.Clone(req.Context())
 		clone.URL.Scheme = u.Scheme
 		clone.URL.Host = u.Host
@@ -106,7 +106,7 @@ type roundTripperFuncProxy func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFuncProxy) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }
 
-// helper for legacy test that needs assert
+// helper for the test that needs assert
 func newProxyOfficialRewriteTransportAssert(t *testing.T, target string) http.RoundTripper {
 	return newProxyOfficialRewriteTransportWithAssert(t, target)
 }

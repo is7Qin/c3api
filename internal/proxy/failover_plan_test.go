@@ -249,7 +249,7 @@ func TestSelectWithPlan_StampsNormalizedMaxAttempts(t *testing.T) {
 	sel, plan, _, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o", scheduler.AttemptPlanIdentity{RequestID: "req-stamp", UserID: 1})
 	require.NoError(t, err)
 	// the session is a stack value — bound identity echoes the request.
-	require.Equal(t, "req-stamp", plan.Identity().RequestID, "compiled route must yield a plan, not a legacy fallback")
+	require.Equal(t, "req-stamp", plan.Identity().RequestID, "compiled route must yield a plan")
 	require.Equal(t, uint8(5), plan.Identity().MaxAttempts)
 	sel.Release()
 }

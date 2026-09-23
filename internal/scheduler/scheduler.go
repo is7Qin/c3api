@@ -95,7 +95,7 @@ func (s *Selection) LeaseAccountForTest() *accountSnapshot {
 // RuntimeInfo 账号运行时视图（管理端展示 + overview 聚合）。Status = 运行时
 // 调度状态（active/disabled——disabled 来自 FailAccount/failed_at 装载；临时
 // 健康细分状态在 RuntimeHealth，不在此重复）；ErrRate/ErrCount 为运行时观测
-// 投影（legacy 状态机写点已随 cutover 删除，值由后续质量统计道供给）。
+// 投影（值由质量统计道供给）。
 type RuntimeInfo struct {
 	Status      domain.AccountStatus
 	Concurrency int64
@@ -237,10 +237,9 @@ func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealt
 // Name 满足 worker.Worker 契约（Global Constraints）。
 func (s *Scheduler) Name() string { return "scheduler" }
 
-// Start 启动定时同步；编译源是 Start 期依赖（结构注入，取代已删的
-// 双 setter）：src 非 nil 即武装编译道（reload/分钟边界/质量/价格触发经
-// armed 门放行），nil = 未装配 legacy 形态（触发 no-op，绝不发布编译视
-// 图）。重复 Start 幂等（返回错误）。
+// Start 启动定时同步；编译源是 Start 期依赖（结构注入）：src 非 nil 即武装
+// 编译道（reload/分钟边界/质量/价格触发经 armed 门放行），nil = 未装配
+// （触发 no-op，绝不发布编译视图）。重复 Start 幂等（返回错误）。
 func (s *Scheduler) Start(ctx context.Context, src *CompilerSources) error {
 	if !s.startOnce.CompareAndSwap(false, true) {
 		return fmt.Errorf("scheduler: already started")
@@ -542,7 +541,7 @@ func modelSet(accs []*accountSnapshot) map[string]struct{} {
 // 模型硬白名单（Serves）都是静态信息，可完全在重建时计算。另为每个格式生成
 // 默认回退桶（model == ""）：仅含全模型账号（无模型空间），请求模型未知时
 // 兜底转发。桶键集是编译车道的枚举域（编译器经 fullCandidateUnion 重算候选，
-// 不消费序列——legacy 加权预生成序列已随 cutover 删除）。
+// 不消费序列）。
 //
 // 分桶语义（模板模型硬白名单，用户裁决 2026-08-18）：
 //   - Serves(model) 命中 → tier1（不变）；
@@ -919,25 +918,6 @@ func (s *Scheduler) Runtimes() []AccountRuntime {
 		})
 	}
 	return out
-}
-
-// Release legacy ID-based release (kept for existing tests that use ID path).
-// New code should use Selection.Release which releases exact object via leaseToken.
-func (s *Scheduler) Release(accountID int64) {
-	v := s.view.Load()
-	if v == nil || v.StaticView() == nil {
-		return
-	}
-	if a, ok := v.Account(accountID); ok {
-		a.runtime.concurrency.Add(-1)
-	}
-}
-
-// ReleaseSelection releases exact leased object idempotently (preferred).
-func (s *Scheduler) ReleaseSelection(sel *Selection) {
-	if sel != nil {
-		sel.Release()
-	}
 }
 
 // MarkResult 请求结果回流：禁用守卫（同步短路）+ 条件投递→ 规则引擎异步处理。

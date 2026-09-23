@@ -217,7 +217,7 @@ func TestExploreShare_coldStartExploreFirst(t *testing.T) {
 	}
 }
 
-// Unset share (bp=0, hand-built/legacy decisions): primary-first, always.
+// Unset share (bp=0, hand-built decisions): primary-first, always.
 // This locks the no-weakening contract — every pre-existing walk-order test
 // uses bp=0 and keeps its assertions verbatim.
 func TestExploreShare_unsetBPStaysPrimaryFirst(t *testing.T) {
@@ -230,7 +230,7 @@ func TestExploreShare_unsetBPStaysPrimaryFirst(t *testing.T) {
 		Degraded: ccDegraded(4),
 	}
 	for i := 0; i < 200; i++ {
-		plan, err := NewAttemptPlan(AttemptPlanIdentity{RequestID: fmt.Sprintf("legacy-%d", i)}, dec)
+		plan, err := NewAttemptPlan(AttemptPlanIdentity{RequestID: fmt.Sprintf("bp0-%d", i)}, dec)
 		require.NoError(t, err)
 		require.False(t, plan.exploreFirst)
 		a, err := plan.Reserve(func(int64) bool { return true })

@@ -92,7 +92,7 @@ type routeKey struct {
 }
 
 // route 是 (format, model) 桶标记：桶键集由 buildRoutes 按白名单/tier 语义
-// 生成，编译车道据此枚举并重算候选（legacy 加权预生成序列已随 cutover 删除）。
+// 生成，编译车道据此枚举并重算候选。
 type route struct{}
 
 type groupSnapshot struct {

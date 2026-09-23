@@ -143,8 +143,7 @@ func TestQualityRecorder_SnapshotDeepCopyLifecycle(t *testing.T) {
 	r, err := NewRecorder(50000)
 	require.NoError(t, err)
 	require.NoError(t, r.AddQualityRow(1000, keyOf(fp(9), qc(9))))
-	// the legacy edges-array vehicle is deleted — a live
-	// consumer row populates the flow minute instead.
+	// a live consumer row populates the flow minute.
 	require.NoError(t, foldConsumerRows(r.FlowOwner(), 1000, []repository.RoutingFlowRow{ownerTestRow(11)}))
 	snap := r.Snapshot()
 	for _, rows := range snap.Quality {

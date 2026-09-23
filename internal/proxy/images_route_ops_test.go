@@ -20,10 +20,10 @@ func TestImagesRouteRefEditsVsGenerationsDistinct(t *testing.T) {
 	require.NotEqual(t, gr.OperationTag, er.OperationTag)
 	require.Equal(t, string(domain.OpImagesGenerations), gr.OperationTag)
 	require.Equal(t, string(domain.OpImagesEdits), er.OperationTag)
-	// legacy RouteRefFor must remain generations for compatibility
-	legacy := scheduler.RouteRefFor(10, string(domain.FormatOpenAIImages), "gpt-image-1")
-	require.Equal(t, string(domain.OpImagesGenerations), legacy.OperationTag)
-	require.Equal(t, gr.OperationTag, legacy.OperationTag, "generations must stay generational")
+	// RouteRefFor 按格式推导默认 operation tag：images 无 op 时归 generations
+	def := scheduler.RouteRefFor(10, string(domain.FormatOpenAIImages), "gpt-image-1")
+	require.Equal(t, string(domain.OpImagesGenerations), def.OperationTag)
+	require.Equal(t, gr.OperationTag, def.OperationTag, "generations must stay generational")
 }
 
 func TestImagesCallerTypedDiscriminator(t *testing.T) {

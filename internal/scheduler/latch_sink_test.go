@@ -105,7 +105,7 @@ func TestLatchFailClosedAndRevisionFence(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	s.Release(sel.AccountID)
+	sel.Release()
 }
 
 func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
@@ -150,7 +150,7 @@ func TestLatchFingerprintAndRemoveReaddFence(t *testing.T) {
 	s.compileOnce()
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
-	s.Release(sel.AccountID)
+	sel.Release()
 }
 
 func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {

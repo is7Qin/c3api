@@ -9,8 +9,7 @@ package scheduler
 // 采集纪律：len(channel) 零成本；快照状态走 snapshot registry Status，不重复。
 
 // SchedulerStats 调度器状态（编译道观测；快照/路由
-// 状态经注册表 Status 直出，此处不重复采集。legacy 状态回写队列已随
-// cutover 删除——持久状态列不存在，无回写可言）。
+// 状态经注册表 Status 直出，此处不重复采集。持久状态列不存在，无回写可言）。
 type SchedulerStats struct {
 	// 编译道（wiring）：pending=待触发编译信号（cap 1，trailing-edge
 	// 合并是设计语义非丢弃）；last_compile_*_unix_ms=最近一次成功/失败编译

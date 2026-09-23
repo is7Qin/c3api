@@ -97,7 +97,7 @@ func TestSelectMappingIdentities(t *testing.T) {
 			require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
 			require.Equal(t, tc.wantPrice, sel.PriceModel(mappingRequestModel))
 			require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
-			s.Release(sel.AccountID)
+			sel.Release()
 		})
 	}
 }
@@ -125,7 +125,7 @@ func TestSelectMappingModeIsFreshForFallbackCandidate(t *testing.T) {
 		require.Equal(t, tc.wantUsage, sel.LogMappedModel(mappingRequestModel))
 		require.Equal(t, tc.wantPrice, sel.PriceModel(mappingRequestModel))
 		require.Equal(t, tc.wantResponse, sel.ClientResponseModel(mappingRequestModel))
-		s.Release(sel.AccountID)
+		sel.Release()
 	}
 }
 
@@ -170,7 +170,7 @@ func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
 			usageModel = sel.LogMappedModel(mappingRequestModel)
 			priceModel = sel.PriceModel(mappingRequestModel)
 			responseModel = sel.ClientResponseModel(mappingRequestModel)
-			fixtures[i].Release(sel.AccountID)
+			sel.Release()
 		})
 		require.NoError(t, selectErr)
 		require.Equal(t, tc.wantUsage, usageModel)
@@ -212,7 +212,7 @@ func BenchmarkSelect5000Accounts(b *testing.B) {
 				}
 				benchmarkUsageModel = sel.LogMappedModel(mappingRequestModel)
 				benchmarkResponseModel = sel.ClientResponseModel(mappingRequestModel)
-				s.Release(sel.AccountID)
+				sel.Release()
 			}
 		})
 	}
