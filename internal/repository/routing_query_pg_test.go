@@ -133,49 +133,44 @@ func TestRoutingFlowRollupQueryPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, base))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	rcOther := mustRouteClassVal(t, 2, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp1 := mustFPVal(t, 10, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-rf1", "", "", "", false, "", "", "", "")
-	fp2 := mustFPVal(t, 20, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-rf2", "", "", "", false, "", "", "", "")
-	fp3 := mustFPVal(t, 30, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-rf3", "", "", "", false, "", "", "", "")
-	edge := func(ord int16, acc int64, prev *int64, prevOut, reason, outcome string, term bool, gen int64, fp domain.CandidateFingerprintVal, minute time.Time, chain int64) repository.RoutingFlowRow {
+	edge := func(ord int16, acc int64, prev *int64, prevOut, reason, outcome string, term bool, gen int64, minute time.Time, chain int64) repository.RoutingFlowRow {
 		return repository.RoutingFlowRow{
 			IdentityVersion: 1, RouteClassID: rc, TerminalMinute: minute, Ordinal: ord, Lane: "primary",
 			AccountID: acc, PreviousAccountID: prev, PreviousOutcome: prevOut, TransitionReason: reason,
-			Outcome: outcome, IsTerminal: term, Generation: gen, CandidateFingerprint: fp, ChainCount: chain,
+			Outcome: outcome, IsTerminal: term, Generation: gen, ChainCount: chain,
 		}
 	}
 
-	// Given: minute 1 edges e1(ord1,acct10)+e2(ord2,acct20,prev10); rolled up.
+	// Given: minute 1 edges e1(ord1,acct10)+e2(ord2,acct20,prev10); snapshot writes merged rows directly.
 	rows1 := []repository.RoutingFlowRow{
-		edge(1, 10, nil, "", "init", "success", false, 1, fp1, base, 2),
-		edge(2, 20, ptrInt64(10), "success", "retry", "success", true, 1, fp2, base, 5),
+		edge(1, 10, nil, "", "init", "success", false, 1, base, 2),
+		edge(2, 20, ptrInt64(10), "success", "retry", "success", true, 1, base, 5),
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-RF", base, 1, 1, rows1))
-	require.NoError(t, repos.Partitions.RollupFlow(ctx, base, 1))
 
-	// Given: minute 2 edges e1'(same identity, chain 3)+e3(ord1,acct30); rolled up.
+	// Given: minute 2 edges e1'(same identity, chain 3)+e3(ord1,acct30).
 	rows2 := []repository.RoutingFlowRow{
-		edge(1, 10, nil, "", "init", "success", false, 1, fp1, min2, 3),
-		edge(1, 30, nil, "", "init", "fail", true, 1, fp3, min2, 7),
+		edge(1, 10, nil, "", "init", "success", false, 1, min2, 3),
+		edge(1, 30, nil, "", "init", "fail", true, 1, min2, 7),
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-RF", min2, 1, 1, rows2))
-	require.NoError(t, repos.Partitions.RollupFlow(ctx, min2, 1))
 
-	// Given: minute 3 fact NOT rolled up (chain 50 must stay invisible).
-	rows3 := []repository.RoutingFlowRow{edge(2, 99, nil, "", "init", "success", true, 1, fp1, base.Add(2*time.Minute), 50)}
+	// Given: minute 3 direct snapshot (chain 50 visible — snapshots write through).
+	rows3 := []repository.RoutingFlowRow{edge(2, 99, nil, "", "init", "success", true, 1, base.Add(2*time.Minute), 50)}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-RF", base.Add(2*time.Minute), 1, 1, rows3))
 
-	// When: full window. Then: one row per complete edge identity, chain_count
-	// summed across minutes, deterministic order (ordinal, then account_id).
+	// When: full window. Then: one row per merged edge identity, chain_count
+	// summed across minutes and shards, deterministic order (ordinal, then account_id).
 	stats, err := repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, base, base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, stats)
-	require.Len(t, stats, 3)
+	require.Len(t, stats, 4)
 	require.Equal(t, rc, stats[0].RouteClassID)
 	require.Equal(t, int16(1), stats[0].Ordinal)
 	require.Equal(t, int64(10), stats[0].AccountID)
 	require.Nil(t, stats[0].PreviousAccountID)
 	require.Equal(t, int64(5), stats[0].ChainCount, "e1 chain 2+3 across minutes")
-	require.Equal(t, fp1, stats[0].CandidateFingerprint)
+	require.Equal(t, int64(1), stats[0].MinGeneration)
 	require.Equal(t, int64(30), stats[1].AccountID)
 	require.Equal(t, int64(7), stats[1].ChainCount)
 	require.Equal(t, "fail", stats[1].Outcome)
@@ -186,6 +181,8 @@ func TestRoutingFlowRollupQueryPG(t *testing.T) {
 	require.Equal(t, int64(10), *stats[2].PreviousAccountID)
 	require.Equal(t, "retry", stats[2].TransitionReason)
 	require.Equal(t, int64(5), stats[2].ChainCount)
+	require.Equal(t, int64(99), stats[3].AccountID)
+	require.Equal(t, int64(50), stats[3].ChainCount)
 
 	// When: window excludes minute 2. Then: e1 keeps only minute 1 chain.
 	stats, err = repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, base, min2)
