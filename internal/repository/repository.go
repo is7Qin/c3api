@@ -821,9 +821,6 @@ func (r *Repository) EnsureRoutingRollupPartitions(ctx context.Context, now, unt
 func (r *Repository) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DropRoutingQualityInstanceBefore(ctx, cutoff)
 }
-func (r *Repository) DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.Partitions.DropRoutingFlowInstanceBefore(ctx, cutoff)
-}
 func (r *Repository) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DropRoutingQualityRollupBefore(ctx, cutoff)
 }

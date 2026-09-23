@@ -49,33 +49,8 @@ var routingQualityInstanceIndexDDLs = []string{
 	`CREATE INDEX routing_quality_instance_minute_bucket ON routing_quality_instance_minute (bucket_minute)`,
 }
 
-var routingFlowInstanceColumnDefs = []string{
-	`id bigint NOT NULL DEFAULT nextval('routing_flow_instance_minute_id_seq'::regclass)`,
-	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
-	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
-	`terminal_minute timestamptz NOT NULL`,
-	`ordinal smallint NOT NULL`,
-	`lane text NOT NULL`,
-	`account_id bigint NOT NULL`,
-	`previous_account_id bigint NULL`,
-	`previous_outcome text NOT NULL DEFAULT ''`,
-	`transition_reason text NOT NULL`,
-	`outcome text NOT NULL`,
-	`is_terminal boolean NOT NULL`,
-	`generation bigint NOT NULL`,
-	`candidate_fingerprint bytea NOT NULL CHECK (octet_length(candidate_fingerprint) = 32)`,
-	`instance_src text NOT NULL`,
-	`absolute_sequence bigint NOT NULL`,
-	`chain_count bigint NOT NULL DEFAULT 0`,
-	`updated_at timestamptz NOT NULL`,
-}
-
-var routingFlowInstanceCreateDDL = partitionedCreateDDL("routing_flow_instance_minute", "terminal_minute", routingFlowInstanceColumnDefs)
-
-var routingFlowInstanceIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_instance_minute_uniq ON routing_flow_instance_minute (instance_src, terminal_minute, identity_version, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id) NULLS NOT DISTINCT`,
-	`CREATE INDEX routing_flow_instance_minute_terminal ON routing_flow_instance_minute (terminal_minute)`,
-}
+// routing_flow_instance_minute 已随 S2′/S3 删除：实例层与 rollup 层合并为
+// routing_flow_rollup 单层（instance_src 为身份维度），不再有独立暂存表。
 
 var routingQualityRollupColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('routing_quality_rollup_id_seq'::regclass)`,
@@ -110,6 +85,9 @@ var routingQualityRollupIndexDDLs = []string{
 	`CREATE INDEX routing_quality_rollup_candidate ON routing_quality_rollup (route_class_id, candidate_fingerprint, bucket_minute DESC)`,
 }
 
+// routing_flow_rollup 即合并流层 S2′：旧边身份减 generation、
+// candidate_fingerprint，加 instance_src（分片身份）。chain_count 为事件累加
+// 的精确和，非负不变式由写面累加语义保证，DB 不加 CHECK（Beta 无迁移路径）。
 var routingFlowRollupColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('routing_flow_rollup_id_seq'::regclass)`,
 	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
@@ -123,8 +101,8 @@ var routingFlowRollupColumnDefs = []string{
 	`transition_reason text NOT NULL`,
 	`outcome text NOT NULL`,
 	`is_terminal boolean NOT NULL`,
-	`generation bigint NOT NULL`,
-	`candidate_fingerprint bytea NOT NULL CHECK (octet_length(candidate_fingerprint) = 32)`,
+	`instance_src text NOT NULL`,
+	`min_generation bigint NOT NULL`,
 	`absolute_sequence bigint NOT NULL`,
 	`chain_count bigint NOT NULL DEFAULT 0`,
 	`updated_at timestamptz NOT NULL`,
@@ -133,7 +111,8 @@ var routingFlowRollupColumnDefs = []string{
 var routingFlowRollupCreateDDL = partitionedCreateDDL("routing_flow_rollup", "terminal_minute", routingFlowRollupColumnDefs)
 
 var routingFlowRollupIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) NULLS NOT DISTINCT`,
+	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, instance_src, identity_version, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT`,
+	`CREATE INDEX routing_flow_merged_read ON routing_flow_rollup (route_class_id, identity_version, terminal_minute)`,
 }
 
 var routingDirtyDDL = `CREATE TABLE IF NOT EXISTS routing_dirty_minute (
@@ -176,9 +155,6 @@ var routingCompilerDDL = `CREATE TABLE IF NOT EXISTS routing_compiler_state (
 func (r *PartitionRepo) EnsureRoutingQualityInstancePartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_instance_minute", "bucket_minute", routingQualityInstanceColumnDefs, routingQualityInstanceIndexDDLs, now)
 }
-func (r *PartitionRepo) EnsureRoutingFlowInstancePartitioned(ctx context.Context, now time.Time) error {
-	return r.ensureTablePartitioned(ctx, "routing_flow_instance_minute", "terminal_minute", routingFlowInstanceColumnDefs, routingFlowInstanceIndexDDLs, now)
-}
 func (r *PartitionRepo) EnsureRoutingQualityRollupPartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_rollup", "bucket_minute", routingQualityRollupColumnDefs, routingQualityRollupIndexDDLs, now)
 }
@@ -201,9 +177,6 @@ func (r *PartitionRepo) EnsureRoutingCompiler(ctx context.Context) error {
 func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Time) error {
 	if err := r.EnsureRoutingQualityInstancePartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality instance: %w", err)
-	}
-	if err := r.EnsureRoutingFlowInstancePartitioned(ctx, now); err != nil {
-		return fmt.Errorf("routing flow instance: %w", err)
 	}
 	if err := r.EnsureRoutingQualityRollupPartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality rollup: %w", err)
@@ -230,9 +203,6 @@ func (r *PartitionRepo) EnsureRoutingInstancePartitions(ctx context.Context, now
 	if err := r.EnsureTablePartitions(ctx, "routing_quality_instance_minute", now, until); err != nil {
 		return err
 	}
-	if err := r.EnsureTablePartitions(ctx, "routing_flow_instance_minute", now, until); err != nil {
-		return err
-	}
 	return nil
 }
 func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error {
@@ -247,9 +217,6 @@ func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, 
 
 func (r *PartitionRepo) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_instance_minute", cutoff)
-}
-func (r *PartitionRepo) DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.DropTablePartitionsBefore(ctx, "routing_flow_instance_minute", cutoff)
 }
 func (r *PartitionRepo) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_rollup", cutoff)
