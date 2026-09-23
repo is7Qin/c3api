@@ -5,8 +5,9 @@
   "type": "module",
   "packageManager": "pnpm@11.20.0",
   "scripts": {
-    "check": "pnpm run check:i18n",
+    "check": "pnpm run check:i18n && pnpm run test",
     "check:i18n": "i18next-cli extract --dry-run --ci",
+    "test": "node --test",
     "dev": "vite",
     "build": "pnpm run check && tsc -b && vite build",
     "lint": "oxlint && pnpm run check",

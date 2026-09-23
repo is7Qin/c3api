@@ -203,11 +203,12 @@ export class ApiClient {
   // —— 运维观测（/api/admin/ops/workers；管理端专属，契约 ops tag 生成类型）——
   getOpsWorkers = () => this.request<components['schemas']['WorkersResponse']>('/ops/workers')
   // —— 智能路由观测面（rollup 聚合 + 当前计划投影，只读）——
-  getRoutingFlow = (p: { route: string; from: string; to: string }) =>
+  getRoutingFlow = (p: { route: string; from: string; to: string; offset?: number; limit?: number; accounts?: number }) =>
     this.request<components['schemas']['RoutingFlowResponse']>('/routing/flow', { params: toQuery(p) })
-  getRoutingFrontier = (p: { route: string; from: string; to: string; limit?: number }) =>
+  getRoutingFrontier = (p: { route: string; from: string; to: string; offset?: number; limit?: number }) =>
     this.request<components['schemas']['RoutingFrontierResponse']>('/routing/frontier', { params: toQuery(p) })
-  getRoutingPlan = () => this.request<components['schemas']['RoutingPlanResponse']>('/routing/plan')
+  getRoutingPlan = (p?: { search?: string; route?: string; offset?: number; limit?: number; candidates_offset?: number; candidates_limit?: number }) =>
+    this.request<components['schemas']['RoutingPlanResponse']>('/routing/plan', { params: toQuery(p) })
   // 管理侧临时额度全量分页（/api/admin/temp-balances；/app/users 查看入口消费）
   getAdminTempBalances = (p?: { page?: number; page_size?: number; user_id?: number; sort?: string; order?: 'asc' | 'desc' }) =>
     this.request<components['schemas']['AdminTempBalancesResponse']>('/temp-balances', { params: toQuery(p) })

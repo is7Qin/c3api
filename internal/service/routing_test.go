@@ -275,20 +275,38 @@ func TestRoutingFrontier_WindowAndLimitClamp(t *testing.T) {
 	_, err = svc.QueryRoutingFrontier(ctx, RoutingFrontierQuery{RouteID: fpHex(0x02), From: routingBase, To: routingBase.Add(time.Hour)})
 	require.ErrorIs(t, err, ErrNotFound)
 
-	// 250 行 → 缺省钳到 200；limit=2 → 2；limit=500 → 钳到 200。
+	// 250 行 → 缺省 20；limit=2 → 2；limit=500 → 钳到 200；offset 在排序后切片。
 	fs.routingQualityRows = make([]repository.RoutingQualityStat, 250)
 	for i := range fs.routingQualityRows {
 		fs.routingQualityRows[i].CandidateFingerprint = mustFP(t, fmt.Sprintf("%064x", i))
 	}
 	all, err := svc.QueryRoutingFrontier(ctx, RoutingFrontierQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour)})
 	require.NoError(t, err)
-	require.Len(t, all.Candidates, 200, "default limit clamps to 200")
+	require.Len(t, all.Candidates, 20, "default limit = 20")
+	require.Equal(t, int64(250), all.TotalCandidates, "总数不受分页影响")
+
 	two, err := svc.QueryRoutingFrontier(ctx, RoutingFrontierQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 2})
 	require.NoError(t, err)
 	require.Len(t, two.Candidates, 2)
+	require.Equal(t, int64(250), two.TotalCandidates)
+
 	big, err := svc.QueryRoutingFrontier(ctx, RoutingFrontierQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 500})
 	require.NoError(t, err)
-	require.Len(t, big.Candidates, 200)
+	require.Len(t, big.Candidates, 200, "limit>200 钳到 200")
+	require.Equal(t, int64(250), big.TotalCandidates)
+
+	// 分页在**排序后**切片：offset 页必须等于全量序的同一段（前沿判定不被分页改变）。
+	first, err := svc.QueryRoutingFrontier(ctx, RoutingFrontierQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 200})
+	require.NoError(t, err)
+	page, err := svc.QueryRoutingFrontier(ctx, RoutingFrontierQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 10, Offset: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Candidates, 10)
+	require.Equal(t, first.Candidates[10:20], page.Candidates, "offset 窗口 = 全量序同一段")
+
+	over, err := svc.QueryRoutingFrontier(ctx, RoutingFrontierQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 10, Offset: 1000})
+	require.NoError(t, err)
+	require.Empty(t, over.Candidates, "offset 越界 → 空页（不报错）")
+	require.Equal(t, int64(250), over.TotalCandidates)
 }
 
 func TestRoutingFrontier_Semantics(t *testing.T) {

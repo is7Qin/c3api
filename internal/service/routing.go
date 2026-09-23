@@ -78,12 +78,52 @@ func (s *Service) resolveRoutingRoute(routeID string) (*scheduler.RoutingPlan, *
 	return nil, nil, domain.RouteClassIDVal{}, ErrNotFound
 }
 
+// routing 观测面分页/折叠归一（契约默认值与上限在此落地，handler 只做取值）。
+const (
+	routingFlowPageDefault      = 20
+	routingFlowPageMax          = 200
+	routingFrontierPageDefault  = 20
+	routingFrontierPageMax      = 200
+	routingPlanRouteDefault     = 20
+	routingPlanRouteMax         = 200
+	routingPlanCandDefault      = 20
+	routingPlanCandMax          = 200
+	routingSankeyAccountDefault = 20
+	routingSankeyAccountMax     = 200
+)
+
+// normalizePage 把 (offset, limit) 归一为切片边界 [lo, hi)。offset 钳到
+// [0, n]；limit ≤0 → def、>cap → cap。n 为集合大小。
+func normalizePage(offset, limit, def, cap, n int) (int, int) {
+	if offset < 0 {
+		offset = 0
+	}
+	if offset > n {
+		offset = n
+	}
+	if limit <= 0 {
+		limit = def
+	}
+	if limit > cap {
+		limit = cap
+	}
+	hi := offset + limit
+	if hi > n {
+		hi = n
+	}
+	return offset, hi
+}
+
 // RoutingFlowQuery routing-flow 入参（窗口 ≤90d 精确上限，复用
-// MaxStatsTrendSpan 常量与 validateStatsWindow 校验序）。
+// MaxStatsTrendSpan 常量与 validateStatsWindow 校验序）。Offset/Limit 只作用于
+// 边表分页；Accounts 只作用于桑基折叠——两者互不影响。
 type RoutingFlowQuery struct {
-	RouteID string // 64-hex route class ID（当前发布目录内）
-	From    time.Time
-	To      time.Time
+	RouteID  string // 64-hex route class ID（当前发布目录内）
+	From     time.Time
+	To       time.Time
+	Offset   int // 边表分页偏移
+	Limit    int // 边表每页条数
+	Accounts int // 桑基每 (ordinal,lane) 层保留账号数
 }
 
 // RoutingFlowEdge 一条聚合边（rollup 行的防御性拷贝；fingerprint 为 hex）。
@@ -112,10 +152,19 @@ type RoutingFlowLane struct {
 // RoutingFlowResult flow 聚合结果。守恒：完整链才入 rollup，故
 // FirstDispatchChains（ordinal=1 链数和 = Attempt1）恒等于 TerminalChains
 // （is_terminal 链数和）；三个丢失计数是独立观测口径，不得混入边/结局语义。
+//
+// 分页边界：Lanes 只是完整边集的**一页**；守恒计数、TotalEdges、TotalChains、
+// StaleChains 与 Sankey 恒在完整边集上聚合/折叠，不受 Offset/Limit 影响。
+// 单位区分是故意的：TotalEdges 为行数，TotalChains/StaleChains 为链次和
+// （Σ chain_count）；占比由前端计算，服务端只返回整数精确值。
 type RoutingFlowResult struct {
 	RouteClassID                 string
 	PlanGeneration               uint64
 	Lanes                        []RoutingFlowLane
+	TotalEdges                   int64
+	TotalChains                  int64
+	StaleChains                  int64
+	Sankey                       RoutingFlowGraph
 	FirstDispatchChains          int64
 	TerminalChains               int64
 	IncompleteChainDropped       int64
@@ -175,16 +224,33 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 		if row.IsTerminal {
 			res.TerminalChains += row.ChainCount
 		}
+		res.TotalChains += row.ChainCount
+		if row.Generation != int64(plan.Generation) {
+			res.StaleChains += row.ChainCount
+		}
 		edges = append(edges, edge)
 	}
 	// 组间 (ordinal, lane) 全序；组内保持 repository 确定性行序（stable）。
+	// 先对**完整边集**排序，再切片——分页边界落在全局序上，不因页而异。
 	sort.SliceStable(edges, func(i, j int) bool {
 		if edges[i].Ordinal != edges[j].Ordinal {
 			return edges[i].Ordinal < edges[j].Ordinal
 		}
 		return edges[i].Lane < edges[j].Lane
 	})
-	for _, e := range edges {
+
+	// 守恒计数、TotalEdges、TotalChains、StaleChains 已在上方按完整边集聚合；
+	// sankey 同样在完整边集上折叠（与分页解耦）。都不受 Offset/Limit 影响。
+	res.TotalEdges = int64(len(edges))
+	accountLimit := q.Accounts
+	if accountLimit <= 0 {
+		accountLimit = routingSankeyAccountDefault
+	}
+	accountLimit = min(accountLimit, routingSankeyAccountMax)
+	res.Sankey = buildFlowSankey(edges, accountLimit)
+
+	lo, hi := normalizePage(q.Offset, q.Limit, routingFlowPageDefault, routingFlowPageMax, len(edges))
+	for _, e := range edges[lo:hi] {
 		if n := len(res.Lanes); n > 0 && res.Lanes[n-1].Ordinal == e.Ordinal && res.Lanes[n-1].Lane == e.Lane {
 			res.Lanes[n-1].Edges = append(res.Lanes[n-1].Edges, e)
 			continue
