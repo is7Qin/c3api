@@ -6,10 +6,8 @@ package repository
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"os"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -17,7 +15,6 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
@@ -25,10 +22,11 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-const (
-	benchBalanceLegacyHash = "e9ea120fef3b3a6e685763ecc74fad380885d7ada83ad90d6cfa8555e4375d2f"
-	benchFefoLegacyHash    = "9b754fe3ea890133e3b5a0015b40b69a200cfa3619b8847b7822ee4b71cdb0ba"
-)
+// 余额预警结算基准（真实 PG：TEST_DATABASE_URL 未设置 → b.Skip）：逐场景测
+// SettleBalanceBatch / SettleFefoBatch 的耗时构成——每轮 StopTimer 重灌种子行
+// （不计入计时），StartTimer 后跑 K 桶结算并采样 WAL 增量。
+//
+//	go test ./internal/repository/ -run '^$' -bench BenchmarkPGBalanceWarningSettlement -v
 
 var balanceWarningBenchSeq atomic.Int64
 
@@ -39,18 +37,8 @@ type warningBenchScenario struct {
 	crossing, fefo       bool
 }
 
-type legacySettleRequest struct {
-	pool             *pgxpool.Pool
-	sql              string
-	limit, k, bucket int
-}
-
 func BenchmarkPGBalanceWarningSettlement(b *testing.B) {
 	repos, pool := newBalanceWarningBenchRepository(b)
-	balanceLegacy := legacySettlementSQL(settleBalanceSQL, "t.delta")
-	fefoLegacy := legacySettlementSQL(settleFefoSQL, "s.spill AS delta")
-	require.Equal(b, benchBalanceLegacyHash, fmt.Sprintf("%x", sha256.Sum256([]byte(balanceLegacy))))
-	require.Equal(b, benchFefoLegacyHash, fmt.Sprintf("%x", sha256.Sum256([]byte(fefoLegacy))))
 
 	scenarios := []warningBenchScenario{
 		{"balance/single_500/disabled", 500, 1, 1, 0, false, false},
@@ -69,49 +57,35 @@ func BenchmarkPGBalanceWarningSettlement(b *testing.B) {
 		{"fefo_spill/drain_8000_k4/crossing", 8000, 40, 4, 500, true, true},
 	}
 	for _, scenario := range scenarios {
-		for variantIndex := range 2 {
-			current := (variantIndex == 1) != (os.Getenv("WARNING_BENCH_CURRENT_FIRST") != "")
-			variant := "legacy_head"
-			if current {
-				variant = "warning_current"
-			}
-			b.Run(scenario.name+"/variant="+variant, func(b *testing.B) {
-				var totalWAL int64
-				for range b.N {
-					b.StopTimer()
-					seedBalanceWarningBench(b, repos, scenario)
-					before := currentWALPosition(b, pool)
-					b.StartTimer()
-					result, err := settleWarningBuckets(scenario.buckets, func(bucket int) (domain.SettlementSummary, error) {
-						if current {
-							if scenario.fefo {
-								return repos.SettleFefoBatch(context.Background(), scenario.rows, scenario.buckets, bucket)
-							}
-							return repos.SettleBalanceBatch(context.Background(), scenario.rows, scenario.buckets, bucket)
-						}
-						legacySQL := balanceLegacy
-						if scenario.fefo {
-							legacySQL = fefoLegacy
-						}
-						return runLegacySettle(context.Background(), legacySettleRequest{pool, legacySQL, scenario.rows, scenario.buckets, bucket})
-					})
-					b.StopTimer()
-					require.NoError(b, err)
-					require.Equal(b, int64(scenario.rows), result.Marked)
-					require.Len(b, result.Balances, scenario.users)
-					wantWarnings := 0
-					if current && scenario.crossing {
-						wantWarnings = scenario.users
+		b.Run(scenario.name, func(b *testing.B) {
+			var totalWAL int64
+			for range b.N {
+				b.StopTimer()
+				seedBalanceWarningBench(b, repos, scenario)
+				before := currentWALPosition(b, pool)
+				b.StartTimer()
+				result, err := settleWarningBuckets(scenario.buckets, func(bucket int) (domain.SettlementSummary, error) {
+					if scenario.fefo {
+						return repos.SettleFefoBatch(context.Background(), scenario.rows, scenario.buckets, bucket)
 					}
-					require.Len(b, result.BalanceWarnings, wantWarnings)
-					totalWAL += currentWALPosition(b, pool) - before
+					return repos.SettleBalanceBatch(context.Background(), scenario.rows, scenario.buckets, bucket)
+				})
+				b.StopTimer()
+				require.NoError(b, err)
+				require.Equal(b, int64(scenario.rows), result.Marked)
+				require.Len(b, result.Balances, scenario.users)
+				wantWarnings := 0
+				if scenario.crossing {
+					wantWarnings = scenario.users
 				}
-				b.ReportMetric(float64(totalWAL)/float64(b.N), "wal-B/op")
-				b.ReportMetric(float64(scenario.users+scenario.buckets), "result-rows/op")
-				b.ReportMetric(float64(4*scenario.buckets), "db-roundtrips/op")
-				b.ReportMetric(float64(scenario.buckets), "settlement-queries/op")
-			})
-		}
+				require.Len(b, result.BalanceWarnings, wantWarnings)
+				totalWAL += currentWALPosition(b, pool) - before
+			}
+			b.ReportMetric(float64(totalWAL)/float64(b.N), "wal-B/op")
+			b.ReportMetric(float64(scenario.users+scenario.buckets), "result-rows/op")
+			b.ReportMetric(float64(4*scenario.buckets), "db-roundtrips/op")
+			b.ReportMetric(float64(scenario.buckets), "settlement-queries/op")
+		})
 	}
 }
 
@@ -195,68 +169,6 @@ func settleWarningBuckets(buckets int, settle func(int) (domain.SettlementSummar
 		total.BalanceWarnings = append(total.BalanceWarnings, result.BalanceWarnings...)
 	}
 	return total, nil
-}
-
-func runLegacySettle(ctx context.Context, request legacySettleRequest) (domain.SettlementSummary, error) {
-	ctx, cancel := context.WithTimeout(ctx, settleTimeout)
-	defer cancel()
-	conn, err := request.pool.Acquire(ctx)
-	if err != nil {
-		return domain.SettlementSummary{}, err
-	}
-	defer conn.Release()
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		return domain.SettlementSummary{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx, billingSyncCommitOffSQL); err != nil {
-		return domain.SettlementSummary{}, err
-	}
-	rows, err := tx.Query(ctx, request.sql, request.limit, request.k, request.bucket)
-	if err != nil {
-		return domain.SettlementSummary{}, err
-	}
-	result, err := scanLegacySettle(rows)
-	if err != nil || result.Marked != result.BatchRows {
-		return result, err
-	}
-	return result, tx.Commit(ctx)
-}
-
-func scanLegacySettle(rows pgx.Rows) (domain.SettlementSummary, error) {
-	defer rows.Close()
-	var result domain.SettlementSummary
-	seen := false
-	for rows.Next() {
-		var uid, balance, batch, debited, forced, marked, ghosts int64
-		if err := rows.Scan(&uid, &balance, &batch, &debited, &forced, &marked, &ghosts); err != nil {
-			return domain.SettlementSummary{}, err
-		}
-		if !seen && uid == -1 {
-			result = domain.SettlementSummary{BatchRows: batch, DebitedUsers: debited, ForcedUsers: forced, Marked: marked, Quarantined: ghosts}
-			seen = true
-			continue
-		}
-		result.Balances = append(result.Balances, domain.UserBalance{UserID: uid, Balance: balance})
-	}
-	if err := rows.Err(); err != nil {
-		return domain.SettlementSummary{}, err
-	}
-	if !seen {
-		return domain.SettlementSummary{}, fmt.Errorf("legacy billing settle: aggregate sentinel row missing")
-	}
-	return result, nil
-}
-
-func legacySettlementSQL(current, deltaProjection string) string {
-	return strings.NewReplacer(
-		"RETURNING u.id AS uid, u.balance AS balance_after, "+deltaProjection+",\n\t\tu.balance_warning_threshold AS threshold, u.email)",
-		"RETURNING u.id AS uid, u.balance AS balance_after)",
-		"changed AS (\n\tSELECT settled.*,\n\t\tthreshold > 0 AND balance_after + delta > threshold\n\t\t\tAND balance_after <= threshold AS crossed\n\tFROM (\n\t\tSELECT uid, balance_after, delta, threshold, email FROM debited\n\t\tUNION ALL\n\t\tSELECT uid, balance_after, delta, threshold, email FROM forced) settled),\n", "",
-		"(SELECT COUNT(*) FROM ghosts)::bigint,\n\tNULL::bigint, NULL::text\nUNION ALL\nSELECT uid, balance_after, 0, 0, 0, 0, 0,\n\tCASE WHEN crossed THEN threshold END,\n\tCASE WHEN crossed THEN email END\nFROM changed\nORDER BY 1",
-		"(SELECT COUNT(*) FROM ghosts)::bigint\nUNION ALL\nSELECT uid, balance_after, 0, 0, 0, 0, 0 FROM debited\nUNION ALL\nSELECT uid, balance_after, 0, 0, 0, 0, 0 FROM forced\nORDER BY 1",
-	).Replace(current)
 }
 
 func currentWALPosition(b *testing.B, pool *pgxpool.Pool) int64 {

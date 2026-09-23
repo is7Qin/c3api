@@ -295,9 +295,9 @@ func TestLoadRejectsUnknownKeys(t *testing.T) {
 	require.ErrorContains(t, err, "max_infligh")
 }
 
-// TestLoadRejectsLegacyKeys：废弃字段已删除（不向后兼容）——显式写旧键 →
-// ErrorUnused 启动报错。
-func TestLoadRejectsLegacyKeys(t *testing.T) {
+// TestLoadRejectsRemovedKeys：已移除的键无字段对应 → ErrorUnused 启动报错
+// （配置面不向后兼容）。
+func TestLoadRejectsRemovedKeys(t *testing.T) {
 	setenvRequired(t)
 	for _, tc := range []struct {
 		name string

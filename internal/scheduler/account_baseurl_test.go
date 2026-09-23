@@ -25,7 +25,7 @@ func TestSelectBaseURLPriority(t *testing.T) {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
 		require.Equal(t, "https://acc.example.com", sel.BaseURL, "账号级非空必须覆盖模板级")
-		s.Release(sel.AccountID)
+		sel.Release()
 	})
 
 	t.Run("账号级 nil 回退模板级", func(t *testing.T) {
@@ -34,7 +34,7 @@ func TestSelectBaseURLPriority(t *testing.T) {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
 		require.Equal(t, "https://u/v1", sel.BaseURL, "账号级 nil → 继承模板 base_url")
-		s.Release(sel.AccountID)
+		sel.Release()
 	})
 
 	t.Run("账号级空串回退模板级", func(t *testing.T) {
@@ -44,6 +44,6 @@ func TestSelectBaseURLPriority(t *testing.T) {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
 		require.Equal(t, "https://u/v1", sel.BaseURL, "账号级空串 → 继承模板 base_url")
-		s.Release(sel.AccountID)
+		sel.Release()
 	})
 }

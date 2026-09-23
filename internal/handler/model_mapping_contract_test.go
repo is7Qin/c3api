@@ -23,7 +23,7 @@ func TestModelMappingHTTPRejectsInvalidEntries(t *testing.T) {
 		name    string
 		mapping string
 	}{
-		{"legacy string", `{"alias":"legacy"}`},
+		{"string form", `{"alias":"string-form"}`},
 		{"missing mode", `{"alias":{"mapped_model":"target"}}`},
 		{"missing mapped model", `{"alias":{"mode":"explicit"}}`},
 		{"null entry", `{"alias":null}`},

@@ -195,8 +195,8 @@ func TestQualitySync_PGBisectPreservesDBWideAndDropsOnlyPoison(t *testing.T) {
 }
 
 func TestQualitySync_FlowPreservesRowsAndRequeuesWholeMinute(t *testing.T) {
-	// the legacy edges-array vehicle is deleted — the same sync
-	// contract (full-minute persist, dirty-retained retry) rides live rows.
+	// the same sync contract (full-minute persist, dirty-retained retry)
+	// rides live rows.
 	_, rdb := newMiniRedis(t)
 	pg := newFakePG()
 	rec, _ := NewRecorder(50000)
@@ -279,8 +279,7 @@ func TestQualitySync_RedisErrorDegradesFreshnessAndPublishesFlow(t *testing.T) {
 	qm := NewQualityMinute(fixed.Unix(), k)
 	qm.SetAttempts(10)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
-	// the legacy edges-array vehicle is deleted — a live row
-	// carries the flow publish instead.
+	// a live row carries the flow publish.
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), fixed.Unix(), []repository.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))

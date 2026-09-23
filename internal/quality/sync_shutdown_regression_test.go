@@ -39,8 +39,8 @@ func TestQualitySync_ShutdownDrainFailureRetainsPending(t *testing.T) {
 	qm.SetAttempts(3)
 	qm.SetSuccesses(1)
 	require.NoError(t, rec.EnqueueQualityMinute(qm))
-	// the legacy edges-array vehicle is deleted — a live row
-	// with the same leading account carries the shutdown-drain contract.
+	// a live row with the same leading account carries the shutdown-drain
+	// contract.
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{
 		{IdentityVersion: 1, TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 7, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, ChainCount: 1},
 	}))

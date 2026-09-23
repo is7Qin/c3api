@@ -416,8 +416,7 @@ func TestFoldCounterFidelity_ConcurrentAddsAreExact(t *testing.T) {
 
 // TestFoldCounterFidelity_ZeroOverflowAtGate is the provisioning proof: mixed
 // request-walk and consumer-seam traffic leaves every overflow counter at
-// zero. (: the legacy-edges and empty-marker halves are deleted
-// with the consumer seam — no live writer exists for either.)
+// zero. (The edges and empty-marker halves have no live writer.)
 func TestFoldCounterFidelity_ZeroOverflowAtGate(t *testing.T) {
 	ResetFlowChainCountersForTest()
 	rec, err := NewRecorder(50000)

@@ -178,7 +178,7 @@ func TestSelectFormatHardFilter(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatAnthropic, "claude")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel.AccountID)
-	s.Release(sel.AccountID)
+	sel.Release()
 
 	// 格式不匹配（组内只有 chat 模板）→ ErrFormatUnavailable
 	m2 := newMemLoader(map[int64][]*domain.Account{10: {acc(1, chat, 4)}})
@@ -197,7 +197,7 @@ func TestSelectCredentialTypeFromTemplate(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexOAuth, sel.CredentialType, "类型随模板传播")
-	s.Release(sel.AccountID)
+	sel.Release()
 
 	// api_key 默认模板 → Selection 携带 api_key（行为不变路径）
 	s2 := newTestScheduler(t, []*domain.Account{
@@ -218,7 +218,7 @@ func TestSelectModelPreference(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID, "model preference tier")
-	s.Release(sel.AccountID)
+	sel.Release()
 }
 
 func TestConcurrencyLimit(t *testing.T) {
@@ -229,7 +229,7 @@ func TestConcurrencyLimit(t *testing.T) {
 	require.NoError(t, err)
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted)
-	s.Release(sel1.AccountID)
+	sel1.Release()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err, "available after release")
 }
@@ -272,7 +272,7 @@ func TestInvalidateGroupReloads(t *testing.T) {
 	}
 	require.True(t, has1 && has2, "both accounts should serve")
 	for _, sel := range sels {
-		s.Release(sel.AccountID)
+		sel.Release()
 	}
 }
 
@@ -296,7 +296,7 @@ func TestInvalidateGroupByIDRebuild(t *testing.T) {
 		sels = append(sels, sel)
 	}
 	for _, sel := range sels {
-		s.Release(sel.AccountID)
+		sel.Release()
 	}
 	ri, ok := s.Runtime(2)
 	require.True(t, ok)
@@ -310,7 +310,7 @@ func TestInvalidateGroupByIDRebuild(t *testing.T) {
 	require.False(t, ok, "removed account must not be in byID")
 	s.MarkResult(1, rule.Kind5xx, nil, 500, "", "")
 	s.FlushRules()
-	s.Release(1)
+	releaseByID(s, 1)
 
 	require.NoError(t, s.Close(context.Background()))
 }
@@ -334,7 +334,7 @@ func TestInvalidateGroupShrinkByID(t *testing.T) {
 	ri, ok := s.Runtime(4)
 	require.True(t, ok)
 	require.Equal(t, int64(1), ri.Concurrency, "select hits the new snapshot (max 1)")
-	s.Release(sel.AccountID)
+	sel.Release()
 	ri, _ = s.Runtime(4)
 	require.Equal(t, int64(0), ri.Concurrency, "release hits the new snapshot")
 
@@ -342,7 +342,7 @@ func TestInvalidateGroupShrinkByID(t *testing.T) {
 	require.False(t, ok, "removed account must not be in byID")
 	s.MarkResult(5, rule.KindNetwork, nil, 0, "", "")
 	s.FlushRules()
-	s.Release(5)
+	releaseByID(s, 5)
 
 	require.NoError(t, s.Close(context.Background()))
 }
@@ -382,7 +382,7 @@ func TestMarkResultDisabledStaysDisabled(t *testing.T) {
 	// 禁用账号不可再被选中
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.Error(t, err)
-	s.Release(sel.AccountID)
+	sel.Release()
 
 	require.NoError(t, s.Close(context.Background()))
 }
@@ -457,7 +457,7 @@ func TestSelectWhitelistHitMiss(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	s.Release(sel.AccountID)
+	sel.Release()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "claude-3-5-sonnet-20241022")
 	require.ErrorIs(t, err, ErrFormatUnavailable, "白名单外模型 → 404")
 }
@@ -478,7 +478,7 @@ func TestSelectFormatModelsOnlyBoundary(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	s.Release(sel.AccountID)
+	sel.Release()
 }
 
 // TestSelectFormatModelsEmptyList 评审 Minor ② 防回归：FormatModels={chat:[]}
@@ -511,7 +511,7 @@ func TestSelectMappingKeyWhitelist(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
 	require.Equal(t, "deepseek-chat", sel.Model)
-	s.Release(sel.AccountID)
+	sel.Release()
 	_, err = s.Select(10, domain.FormatOpenAIChat, "deepseek-chat")
 	require.ErrorIs(t, err, ErrFormatUnavailable, "映射目标（上游模型名）不复查")
 }
@@ -526,7 +526,7 @@ func TestSelectFullModelTier2Fallback(t *testing.T) {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, m)
 		require.NoError(t, err, "全模型账号：任意模型 200（默认桶兜底保留）")
 		require.Equal(t, int64(1), sel.AccountID)
-		s.Release(sel.AccountID)
+		sel.Release()
 	}
 }
 
@@ -552,12 +552,12 @@ func TestSelectMixedGroupWhitelistFullModel(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 	require.NoError(t, err)
 	require.Contains(t, []int64{1, 2}, sel.AccountID)
-	s.Release(sel.AccountID)
+	sel.Release()
 	// 白名单外模型 → 仅 B（默认桶仅全模型账号）
 	sel, err = s.Select(10, domain.FormatOpenAIChat, "claude-3-5-sonnet-20241022")
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sel.AccountID, "白名单外模型 → 默认桶（仅全模型账号）")
-	s.Release(sel.AccountID)
+	sel.Release()
 }
 
 // 并发 CAS 竞争：单账号两并发 Select，恰一成功、另一返回错误。
@@ -615,7 +615,7 @@ func TestSelectConcurrentCASRace(t *testing.T) {
 		require.Equal(t, 1, okCount, "iter %d: exactly one success per pair", i)
 		require.Equal(t, 1, failCount, "iter %d: loser gets no-available (never two successes)", i)
 		require.NotNil(t, winner, "iter %d: winner carries a selection", i)
-		s.Release(winner.AccountID)
+		winner.Release()
 	}
 }
 
@@ -631,8 +631,8 @@ func TestReloadPreservesInFlightConcurrency(t *testing.T) {
 
 	require.NoError(t, s.reload(context.Background()))
 
-	s.Release(sel1.AccountID)
-	s.Release(sel2.AccountID)
+	sel1.Release()
+	sel2.Release()
 
 	ri, ok := s.Runtime(sel1.AccountID)
 	require.True(t, ok)
@@ -643,7 +643,7 @@ func TestReloadPreservesInFlightConcurrency(t *testing.T) {
 	require.NoError(t, err)
 	ri2, _ := s.Runtime(sel1.AccountID)
 	require.Equal(t, int64(1), ri2.Concurrency, "继承后新请求占槽计数为 1")
-	s.Release(s3.AccountID)
+	s3.Release()
 }
 
 // TestMultiGroupSharedInstance 回归（实证修复）：多组账号必须共享同一
@@ -672,15 +672,15 @@ func TestMultiGroupSharedInstance(t *testing.T) {
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "共享实例：真实槽位满")
 
-	s.Release(sel1.AccountID)
-	s.Release(sel2.AccountID)
+	sel1.Release()
+	sel2.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "释放后计数归零")
 
 	sel3, err := s.Select(11, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel3.AccountID)
-	s.Release(sel3.AccountID)
+	sel3.Release()
 }
 
 // TestInvalidateGroupMultiGroupShared 组级重载的共享实例纪律。
@@ -710,14 +710,14 @@ func TestInvalidateGroupMultiGroupShared(t *testing.T) {
 	require.Equal(t, int64(1), ri.Concurrency, "经其它组路由命中新实例（新上限 1）")
 	_, err = s.Select(11, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "新实例真实槽位满")
-	s.Release(sel1.AccountID)
+	sel1.Release()
 	ri, _ = s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "Release 经 byID 命中新实例")
 
 	sel2, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel2.AccountID)
-	s.Release(sel2.AccountID)
+	sel2.Release()
 }
 
 // TestInvalidateGroupMultiGroupRemove 从组移除的多组账号处理。
@@ -749,7 +749,7 @@ func TestInvalidateGroupMultiGroupRemove(t *testing.T) {
 	sel, err := s.Select(11, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	s.Release(sel.AccountID)
+	sel.Release()
 	ri, _ := s.Runtime(1)
 	require.Equal(t, int64(0), ri.Concurrency, "Release 经 byID 命中保留实例")
 
@@ -763,7 +763,7 @@ func TestInvalidateGroupMultiGroupRemove(t *testing.T) {
 	require.False(t, ok, "不再属于任何组 → 从 byID 删除")
 	_, ok = s.Runtime(1)
 	require.False(t, ok)
-	s.Release(1) // no-op 安全
+	releaseByID(s, 1) // no-op 安全
 }
 
 // countingLoader 计数 Loader 包装（热路径零 DB 断言）。
@@ -808,7 +808,7 @@ func TestSelectCarriesAccountExt(t *testing.T) {
 	require.NoError(t, err)
 	require.Same(t, ext, sel.Ext, "Selection.Ext = 快照账号 Ext（指针复制零拷贝）")
 	require.Equal(t, credential.TypeCodexOAuth, sel.CredentialType)
-	s.Release(sel.AccountID)
+	sel.Release()
 	s.MarkResult(sel.AccountID, rule.KindOK, nil, 200, "", "")
 }
 
@@ -827,7 +827,7 @@ func TestRequestPathZeroLoaderCalls(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		sel, err := s.Select(10, domain.FormatOpenAIResponsesWS, "gpt-4o")
 		require.NoError(t, err)
-		s.Release(sel.AccountID)
+		sel.Release()
 		s.MarkResult(sel.AccountID, rule.KindOK, nil, 200, "", "")
 	}
 	require.Equal(t, before, cl.loadsN(), "请求期（Select/MarkResult/Release）零加载器触达——热路径零 DB")
@@ -921,14 +921,14 @@ func TestReuseConcurrencyContinuity(t *testing.T) {
 	require.Same(t, before, after, "复用实例指针不变")
 	require.Equal(t, int64(2), after.runtime.concurrency.Load(), "重建后计数保持")
 
-	s.Release(sel1.AccountID)
-	s.Release(sel2.AccountID)
+	sel1.Release()
+	sel2.Release()
 	require.Equal(t, int64(0), after.runtime.concurrency.Load(), "释放归零，不得为负")
 
 	sel3, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), after.runtime.concurrency.Load(), "重建后新请求在原子计数上连续 +1")
-	s.Release(sel3.AccountID)
+	sel3.Release()
 }
 
 // TestReuseSyncsStaticFieldsFromDB 静态字段 DB 权威同步：管理面改动
@@ -959,7 +959,7 @@ func TestReuseSyncsStaticFieldsFromDB(t *testing.T) {
 	require.Equal(t, int64(1), sel.AccountID)
 	_, err = s.Select(10, domain.FormatOpenAIChat, "m")
 	require.ErrorIs(t, err, ErrAttemptsExhausted, "max_concurrency=1 → 第二个请求假满")
-	s.Release(sel.AccountID)
+	sel.Release()
 }
 
 // TestReusePassesThroughStoredConcurrency 快照忠实透传存储值：写面保证
@@ -1036,7 +1036,7 @@ func TestReuseConcurrentSelectReloadRace(t *testing.T) {
 			if err != nil {
 				continue
 			}
-			s.Release(sel.AccountID)
+			sel.Release()
 			s.MarkResult(sel.AccountID, rule.KindOK, nil, 200, "", "")
 			s.Classify(rule.Event{AccountID: sel.AccountID, Kind: rule.Kind5xx})
 		}

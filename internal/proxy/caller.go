@@ -286,7 +286,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	}
 	// Plan-only contract: selection succeeded only with a compiled plan and a
 	// canonical reserved attempt; any absent/invalid compiled plan lands here
-	// as a typed error and fails closed (no legacy selection lane exists).
+	// as a typed error and fails closed.
 	if err != nil {
 		p.handleSelectError(w, err)
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))

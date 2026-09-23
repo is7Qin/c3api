@@ -77,7 +77,7 @@ func TestFailAccountRemovesFromSelection(t *testing.T) {
 	sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 	require.Equal(t, int64(1), sel.AccountID)
-	s.Release(sel.AccountID)
+	sel.Release()
 
 	s.FailAccount(1)
 
@@ -126,7 +126,7 @@ func TestFailAccountMarkResultGuard(t *testing.T) {
 	s.MarkResult(1, rule.KindOK, nil, 200, "", "")
 	s.MarkResult(1, rule.KindNetwork, nil, 0, "stale error", "")
 	s.FlushRules()
-	s.Release(1)
+	releaseByID(s, 1)
 
 	ri, ok := s.Runtime(1)
 	require.True(t, ok)

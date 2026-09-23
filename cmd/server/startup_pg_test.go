@@ -180,7 +180,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	}, 5*time.Second, 50*time.Millisecond, "scheduler 首刷+编译道收口后 Select 可用")
 	require.Equal(t, acc.ID, sel.AccountID)
 	require.Equal(t, tpl.ID, sel.TemplateID)
-	sched.Release(acc.ID) // 归还并发槽
+	sel.Release() // 归还并发槽
 
 	// rules：空表首刷已写入 typed 种子（状态管理唯一路径）。
 	seeded, err := repos.Client.Rule.Query().Count(ctx)

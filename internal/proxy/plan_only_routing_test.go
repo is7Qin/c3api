@@ -107,7 +107,7 @@ func TestHandleChat_ModellessRequest_FailsClosedWithoutDispatch(t *testing.T) {
 	require.Zero(t, rec.GlobalInflight())
 }
 
-func TestSelectNextWithPlan_PlanlessHasNoLegacyLane(t *testing.T) {
+func TestSelectNextWithPlan_PlanlessHasNoLane(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
@@ -209,7 +209,7 @@ func TestDispatchIdentity_PlanBackedSuccessCarriesCanonicalAttemptIdentity(t *te
 }
 
 // The failover loop is plan-only: a loop entered without a plan cannot
-// advance to any second dispatch (no legacy selection lane to fall through to).
+// advance to any second dispatch (no plan-less lane to fall through to).
 type reject429Attempt struct{ calls *atomic.Int32 }
 
 func (a reject429Attempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64,

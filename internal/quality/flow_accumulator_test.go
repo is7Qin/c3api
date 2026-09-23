@@ -1090,9 +1090,8 @@ func mustFlowRows(t *testing.T, rec *Recorder, minute int64) []repository.Routin
 // TestRed_FlowPostSealRowFoldStaysResidual: after SyncWorker.Close seals, a
 // post-seal consumer-row fold is residual-classified consistently with the
 // request walk — it can never create PG-open dirty accepted state, and the
-// residual row equations hold. (: the empty-marker and legacy-edges
-// halves of this test are deleted with the consumer seam — no live writer
-// exists for either.)
+// residual row equations hold. (The empty-marker and edges halves have no
+// live writer.)
 func TestRed_FlowPostSealRowFoldStaysResidual(t *testing.T) {
 	rec, owner, m := redFlowSealOwner(t)
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))

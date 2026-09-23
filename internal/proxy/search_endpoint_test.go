@@ -605,7 +605,7 @@ func TestSearchIndependentSelection(t *testing.T) {
 // TestSearchFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat 同款）：直构
 // failover_attempts=0（绕过 validate 的 >=1 下限——测试侧 p.cfg 改写等价直构）
 // 新语义 normalized 1..8/default3。plan 车道下每账号至多派发一次（候选唯一、
-// 无 legacy 重扫），单账号组 5xx 终态 → 恰 1 次拨号后耗尽 502，lease 经正常
+// 无重扫），单账号组 5xx 终态 → 恰 1 次拨号后耗尽 502，lease 经正常
 // 路径释放恰一次。
 func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	up, upc := newCodexSearchUpstream(t, codexSearchStep{status: 500, body: `{}`})
@@ -622,7 +622,7 @@ func TestSearchFailoverZeroReleasesSlot(t *testing.T) {
 	b, _ := io.ReadAll(resp.Body)
 	require.Equal(t, http.StatusBadGateway, resp.StatusCode, "body=%s", string(b))
 	require.Contains(t, string(b), "Upstream request failed")
-	require.Equal(t, 1, upc.callsN(), "plan 车道单账号 5xx 终态：恰 1 次拨号（候选唯一，无 legacy 重扫）")
+	require.Equal(t, 1, upc.callsN(), "plan 车道单账号 5xx 终态：恰 1 次拨号（候选唯一，无重扫）")
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "normalized failover must release lease exactly once")

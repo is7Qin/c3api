@@ -71,7 +71,7 @@ func TestModelMappingJSONRoundTrip(t *testing.T) {
 
 func TestModelMappingRejectsInvalidEntries(t *testing.T) {
 	cases := []string{
-		`{"alias": "legacy-string"}`,
+		`{"alias": "string-form"}`,
 		`{"alias": {"mapped_model": "upstream"}}`,
 		`{"alias": {"mode": "explicit"}}`,
 		`{"alias": {"mapped_model": "upstream", "mode": "unknown"}}`,
