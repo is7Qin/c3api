@@ -8,8 +8,7 @@ package repository_test
 // 端到端行为级——usage flusher 单写点（InsertBatch，billed=false 出生）落种子行，
 // 三车道消费面（SettleBalanceBatch 余额车道 / SettleFefoBatch 临时车道 /
 // MarkBilledBulk 零价扫尾 / UnbilledLag 度量 / AcquireBillingLock 会话锁）逐族
-// 验收。legacy chunk 族（DeductGroupsAndMark/DeductOnlyAndMark）随 退役——
-// 语义等价断言迁移至结算语句族；EPQ 并发标记族为最高优先新族（协调者行锁屏障）。
+// 验收。语义等价断言在结算语句族；EPQ 并发标记族为最高优先新族（协调者行锁屏障）。
 //
 // 基座约定同 pg_account_groups_test.go：TEST_DATABASE_URL 未设置 → t.Skip；
 // newPGRepos 每测 DROP SCHEMA 重建；串行无 t.Parallel；testify 只 require。

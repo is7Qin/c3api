@@ -16,7 +16,7 @@ package repository_test
 //
 // 用法（默认跳过，显式开启）：
 //   HOTFIX_BENCH=1 TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15433/c3api_test_hotfix \
-//     go test ./internal/repository/ -run TestDeductBenchComposition -v
+//     go test ./internal/repository/ -run TestSettleBenchComposition -v
 
 import (
 	"context"
@@ -34,23 +34,23 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// deductBenchRounds 每场景测量轮数（≥5 轮 + 首轮预热，取中位数）。
-const deductBenchRounds = 7
+// settleBenchRounds 每场景测量轮数（≥5 轮 + 首轮预热，取中位数）。
+const settleBenchRounds = 7
 
-// deductBenchLogsPerTx 每窗口标记行数 = fetchBatchLimit（billing/flusher.go 车道
+// settleBenchLogsPerTx 每窗口标记行数 = fetchBatchLimit（billing/flusher.go 车道
 // 窗口上限）——单周期单用户满档形态。
-const deductBenchLogsPerTx = 500
+const settleBenchLogsPerTx = 500
 
 // benchLogFor 生产形态计费日志（fullLogFor 全列：列集合锚定回归锚）。
 func benchLogFor(userID int64, requestID string) *domain.UsageLog {
 	return fullLogFor(userID, requestID)
 }
 
-// TestDeductBenchComposition 结算语句单窗口耗时构成（含各环节往返次数与耗时）。
+// TestSettleBenchComposition 结算语句单窗口耗时构成（含各环节往返次数与耗时）。
 // 结果打印为 medians + pg_stat_statements 拆分明细。
-func TestDeductBenchComposition(t *testing.T) {
+func TestSettleBenchComposition(t *testing.T) {
 	if os.Getenv("HOTFIX_BENCH") == "" {
-		t.Skip("HOTFIX_BENCH not set; skipping benchmark (use: HOTFIX_BENCH=1 ... -run TestDeductBenchComposition)")
+		t.Skip("HOTFIX_BENCH not set; skipping benchmark (use: HOTFIX_BENCH=1 ... -run TestSettleBenchComposition)")
 	}
 	dsn := os.Getenv("TEST_DATABASE_URL")
 	require.NotEmpty(t, dsn, "TEST_DATABASE_URL must be set (dedicated benchmark PG)")
@@ -71,15 +71,15 @@ func TestDeductBenchComposition(t *testing.T) {
 	// 主场景（双载体对比）：500 行/窗口（fetchBatchLimit 满档，≥5 轮取中位数）
 	// ——pgx 直连载体（pool）vs ent txDriver 载体（no-pool），同 schema 同环境
 	// 交错测量。
-	durationsCopy := benchDeductRounds(t, "copy", repos, 0, deductBenchLogsPerTx, deductBenchRounds)
+	durationsCopy := benchSettleRounds(t, "copy", repos, 0, settleBenchLogsPerTx, settleBenchRounds)
 	printBenchReport(t, "pgx 载体: balance 车道 500 行/窗口", durationsCopy)
 	reposEnt := newPGReposNoPool(t)
-	durationsEnt := benchDeductRounds(t, "ent", reposEnt, 0, deductBenchLogsPerTx, deductBenchRounds)
+	durationsEnt := benchSettleRounds(t, "ent", reposEnt, 0, settleBenchLogsPerTx, settleBenchRounds)
 	printBenchReport(t, "ent txDriver 载体: balance 车道 500 行/窗口", durationsEnt)
 
 	// 临时额度形态（temp-active 用户 → FEFO 车道；窗口函数消费 3 行 temp）——
 	// 测量"有临时额度时 FEFO 车道的窗口成本"。
-	durationsTB := benchDeductRounds(t, "copytb", repos, 3, deductBenchLogsPerTx, 3)
+	durationsTB := benchSettleRounds(t, "copytb", repos, 3, settleBenchLogsPerTx, 3)
 	printBenchReport(t, "pgx 载体: fefo 车道 500 行/窗口 + temp balances (3 行)", durationsTB)
 
 	// 网络往返延迟直接测量（"往返次数多"假说的决定性实验）：同一连接上 25 次
@@ -90,12 +90,12 @@ func TestDeductBenchComposition(t *testing.T) {
 	printStatBreakdown(t, statPool, ctx)
 }
 
-// benchDeductRounds 跑 n 轮结算语句（每轮独立用户；tag 保证同 schema 上多载体
+// benchSettleRounds 跑 n 轮结算语句（每轮独立用户；tag 保证同 schema 上多载体
 // 测量用户不撞 users_email_key；tempRows 为预插的临时额度行数——>0 时用户
 // temp-active 走 FEFO 车道，否则走 Balance 车道；perTx 为每窗口标记行数），返回
 // 逐轮耗时。种子 unbilled 行先行（usage flusher 单写点形态，InsertBatch 不计入
 // 结算事务计时窗口）。
-func benchDeductRounds(t *testing.T, tag string, repos *repository.Repository, tempRows, perTx, n int) []time.Duration {
+func benchSettleRounds(t *testing.T, tag string, repos *repository.Repository, tempRows, perTx, n int) []time.Duration {
 	t.Helper()
 	ctx := context.Background()
 	durations := make([]time.Duration, 0, n)
