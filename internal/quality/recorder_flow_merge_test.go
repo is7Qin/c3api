@@ -20,28 +20,19 @@ func flowTestRoute(seed byte) domain.RouteClassIDVal {
 	return v
 }
 
-func flowTestFP(seed byte) domain.CandidateFingerprintVal {
-	var v domain.CandidateFingerprintVal
-	for i := range v {
-		v[i] = seed + byte(i)
-	}
-	return v
-}
-
 func flowTestRow(minute time.Time, ordinal int16, accountID int64, outcome string, terminal bool) repository.RoutingFlowRow {
 	return repository.RoutingFlowRow{
-		IdentityVersion:      int16(domain.RoutingIdentityVersion),
-		RouteClassID:         flowTestRoute(1),
-		TerminalMinute:       minute,
-		Ordinal:              ordinal,
-		Lane:                 "primary",
-		AccountID:            accountID,
-		TransitionReason:     "initial",
-		Outcome:              outcome,
-		IsTerminal:           terminal,
-		Generation:           1,
-		CandidateFingerprint: flowTestFP(byte(accountID)),
-		ChainCount:           1,
+		IdentityVersion:  int16(domain.RoutingIdentityVersion),
+		RouteClassID:     flowTestRoute(1),
+		TerminalMinute:   minute,
+		Ordinal:          ordinal,
+		Lane:             "primary",
+		AccountID:        accountID,
+		TransitionReason: "initial",
+		Outcome:          outcome,
+		IsTerminal:       terminal,
+		Generation:       1,
+		ChainCount:       1,
 	}
 }
 

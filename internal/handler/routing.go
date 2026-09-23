@@ -85,8 +85,7 @@ func toAPIRoutingFlow(res *service.RoutingFlowResult) RoutingFlowResponse {
 		PlanGeneration:               int64(res.PlanGeneration),
 		Lanes:                        make([]RoutingFlowLane, 0, len(res.Lanes)),
 		TotalEdges:                   res.TotalEdges,
-		TotalChains:                  res.TotalChains,
-		StaleChains:                  res.StaleChains,
+		StaleGenerationPresent:       res.StaleGenerationPresent,
 		Sankey:                       toAPIRoutingFlowGraph(res.Sankey),
 		FirstDispatchChains:          res.FirstDispatchChains,
 		TerminalChains:               res.TerminalChains,
@@ -98,17 +97,16 @@ func toAPIRoutingFlow(res *service.RoutingFlowResult) RoutingFlowResponse {
 		apiLane := RoutingFlowLane{Ordinal: int(lane.Ordinal), Lane: lane.Lane, Edges: make([]RoutingFlowEdge, 0, len(lane.Edges))}
 		for _, e := range lane.Edges {
 			apiLane.Edges = append(apiLane.Edges, RoutingFlowEdge{
-				Ordinal:              int(e.Ordinal),
-				Lane:                 e.Lane,
-				AccountId:            e.AccountID,
-				PreviousAccountId:    e.PreviousAccountID,
-				PreviousOutcome:      e.PreviousOutcome,
-				TransitionReason:     e.TransitionReason,
-				Outcome:              e.Outcome,
-				IsTerminal:           e.IsTerminal,
-				Generation:           e.Generation,
-				CandidateFingerprint: e.CandidateFingerprint,
-				ChainCount:           e.ChainCount,
+				Ordinal:           int(e.Ordinal),
+				Lane:              e.Lane,
+				AccountId:         e.AccountID,
+				PreviousAccountId: e.PreviousAccountID,
+				PreviousOutcome:   e.PreviousOutcome,
+				TransitionReason:  e.TransitionReason,
+				Outcome:           e.Outcome,
+				IsTerminal:        e.IsTerminal,
+				MinGeneration:     e.MinGeneration,
+				ChainCount:        e.ChainCount,
 			})
 		}
 		out.Lanes = append(out.Lanes, apiLane)

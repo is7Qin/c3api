@@ -85,7 +85,6 @@ func TestFoldProducer_planBackedSuccessEnqueuesCanonicalRow(t *testing.T) {
 	require.Greater(t, rows[0].Generation, int64(0))
 	want := expectedRouteClassBytes(t, 10, "gpt-4o")
 	require.Equal(t, want, [32]byte(rows[0].RouteClassID), "route class must be the real compiled identity")
-	require.NotEqual(t, [32]byte{}, [32]byte(rows[0].CandidateFingerprint), "fingerprint must be real, never synthetic")
 	require.NotZero(t, rows[0].AccountID)
 
 	require.Len(t, fc.snapshot(), 1, "the observation tap still receives every completed outcome")
@@ -489,9 +488,4 @@ func TestFoldStash_usesRealAttemptMetadataOnly(t *testing.T) {
 	require.NoError(t, err)
 	copy(wantRoute[:], decoded)
 	require.Equal(t, wantRoute, r.RouteClassID, "route class must be the real compiled identity")
-	var wantFP domain.CandidateFingerprintVal
-	decodedFP, err := hex.DecodeString(a.CandidateFingerprint)
-	require.NoError(t, err)
-	copy(wantFP[:], decodedFP)
-	require.Equal(t, wantFP, r.CandidateFingerprint, "fingerprint must be real, never synthetic")
 }

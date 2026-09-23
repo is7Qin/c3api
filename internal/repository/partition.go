@@ -51,6 +51,10 @@ type PartitionRepo struct {
 	// driver 为 raw SQL 入口（ent 无分区 DDL 能力；bootstrap/retention 均走
 	// dialect.Driver.Exec/Query —— execUpdate 同构，txDriver 下同连接）。
 	driver dialect.Driver
+	// routingObservationDays 观测保留天数（main 经
+	// SetRoutingObservationRetentionDays 装配 cfg.Routing.ObservationRetentionDays）：
+	// 写面据此拒早于截止的快照（routing.go UpsertFlowSnapshot 守卫）。0 = 未装配。
+	routingObservationDays int
 }
 
 // 分区名 = {table}_{YYYYMMDD}（UTC 日；分区边界按 UTC 零点对齐，避免会话

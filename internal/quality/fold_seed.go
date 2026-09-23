@@ -17,7 +17,6 @@ import (
 // (FoldChain closure values) and the synchronous consumer seam (rows).
 type foldSeed struct {
 	route       domain.RouteClassIDVal
-	fp          domain.CandidateFingerprintVal
 	accountID   int64
 	prevAccount int64
 	generation  int64
@@ -73,7 +72,6 @@ func makeFact(seed foldSeed, bucket int64) (attemptFact, error) {
 	}
 	return canonicalFact(attemptFact{
 		route:           seed.route,
-		fingerprint:     seed.fp,
 		accountID:       seed.accountID,
 		prevAccount:     seed.prevAccount,
 		generation:      seed.generation,
@@ -125,7 +123,6 @@ func rowToSeed(row repository.RoutingFlowRow) (foldSeed, int64, error) {
 	}
 	seed := foldSeed{
 		route:       row.RouteClassID,
-		fp:          row.CandidateFingerprint,
 		accountID:   row.AccountID,
 		generation:  row.Generation,
 		ordinal:     uint8(row.Ordinal),

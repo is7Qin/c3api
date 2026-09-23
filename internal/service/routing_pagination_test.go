@@ -129,15 +129,14 @@ func TestBuildFlowSankey_DeterministicAndTieBreak(t *testing.T) {
 // --- flow: 分页与守恒/桑基解耦 ---
 
 func TestRoutingFlow_PaginationDecoupledFromTotalsAndSankey(t *testing.T) {
-	plan, idHex, route := routingFixturePlan()
+	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
 	rows := make([]repository.RoutingFlowStat, 0, 6)
 	for i := 0; i < 6; i++ {
 		rows = append(rows, repository.RoutingFlowStat{
 			Ordinal: 1, Lane: "primary", AccountID: int64(i%3 + 1),
-			Outcome: "success", IsTerminal: true, Generation: 7,
-			CandidateFingerprint: mustFP(t, route.Candidates[i%3].IdentityFingerprint),
-			ChainCount:           int64(i + 1),
+			Outcome: "success", IsTerminal: true, MinGeneration: 7,
+			ChainCount: int64(i + 1),
 		})
 	}
 	fs.routingFlowRows = rows
@@ -178,15 +177,14 @@ func TestRoutingFlow_PaginationDecoupledFromTotalsAndSankey(t *testing.T) {
 }
 
 func TestRoutingFlow_AccountsParamFoldsGraphOnly(t *testing.T) {
-	plan, idHex, route := routingFixturePlan()
+	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
 	rows := make([]repository.RoutingFlowStat, 0, 3)
 	for i := 0; i < 3; i++ {
 		rows = append(rows, repository.RoutingFlowStat{
 			Ordinal: 1, Lane: "primary", AccountID: int64(i + 1),
-			Outcome: "success", IsTerminal: true, Generation: 7,
-			CandidateFingerprint: mustFP(t, route.Candidates[i].IdentityFingerprint),
-			ChainCount:           int64(30 - i*10),
+			Outcome: "success", IsTerminal: true, MinGeneration: 7,
+			ChainCount: int64(30 - i*10),
 		})
 	}
 	fs.routingFlowRows = rows
@@ -291,21 +289,23 @@ func TestQueryRoutingPlan_SearchPaginationAndCandidates(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
-// --- flow: 链次口径 totals（A1/A3）---
+// --- flow: 完整集口径（A1/A3，B 期重基线为布尔）---
 //
-// fixture 含旧 generation 行：plan generation 为 7，gen-6 行计入 stale。
-// stale_chains > 0 是前置断言——否则页无关性空洞成立（per-page 实现同样通过）。
+// fixture 含旧代际行：plan generation 为 7，min_generation=6 的行即"窗口内含
+// 非当前计划代际的链"。B 期退役链次占比（stale_chains/total_chains），改出精确
+// 布尔 stale_generation_present——行级谓词，无归属误差。A3 的 total_edges 子句
+// （行单位）保留。
 
-func staleFixtureRows(t *testing.T, route scheduler.RoutingPlanRoute) []repository.RoutingFlowStat {
+func staleFixtureRows(t *testing.T) []repository.RoutingFlowStat {
 	t.Helper()
 	rows := []repository.RoutingFlowStat{
-		// gen-7 当前代：ordinal1 首发两行（acct1 5 链、acct2 3 链）+ ordinal2 terminal。
-		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, Generation: 7, CandidateFingerprint: mustFP(t, route.Candidates[0].IdentityFingerprint), ChainCount: 5},
-		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", IsTerminal: false, Generation: 7, CandidateFingerprint: mustFP(t, route.Candidates[1].IdentityFingerprint), ChainCount: 3},
-		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, Generation: 7, CandidateFingerprint: mustFP(t, route.Candidates[1].IdentityFingerprint), ChainCount: 3},
-		// gen-6 旧代际行：首发 + terminal 各一。
-		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, Generation: 6, CandidateFingerprint: mustFP(t, route.Candidates[0].IdentityFingerprint), ChainCount: 2},
-		{Ordinal: 2, Lane: "degraded", AccountID: 3, PreviousAccountID: ptrInt64(1), PreviousOutcome: "success", TransitionReason: "drain", Outcome: "success", IsTerminal: true, Generation: 6, CandidateFingerprint: mustFP(t, route.Candidates[2].IdentityFingerprint), ChainCount: 4},
+		// min_gen-7 当前代：ordinal1 首发两行（acct1 5 链、acct2 3 链）+ ordinal2 terminal。
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
+		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", IsTerminal: false, MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
+		// min_gen-6 旧代际行：首发 + terminal 各一。
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 2},
+		{Ordinal: 2, Lane: "degraded", AccountID: 3, PreviousAccountID: ptrInt64(1), PreviousOutcome: "success", TransitionReason: "drain", Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 4},
 	}
 	return rows
 }
@@ -319,44 +319,50 @@ func flatEdges(lanes []RoutingFlowLane) []RoutingFlowEdge {
 	return out
 }
 
-func TestRoutingFlow_ChainTotalsCompleteSet(t *testing.T) {
-	plan, idHex, route := routingFixturePlan()
+func TestRoutingFlow_CompleteSetTotalsAndStaleBoolean(t *testing.T) {
+	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
-	fs.routingFlowRows = staleFixtureRows(t, route)
+	fs.routingFlowRows = staleFixtureRows(t)
 	svc := routingSvc(t, fs, plan)
 	full, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 200})
 	require.NoError(t, err)
 
-	// A3：total_edges = 完整行数；total_chains = Σ chain_count（5+3+3+2+4=17）；
-	// stale_chains = gen-6 两行的和（2+4=6）≤ total_chains。
+	// A3（total_edges 子句保留）：完整行数，与分页无关。
 	require.Equal(t, int64(5), full.TotalEdges)
-	require.Equal(t, int64(17), full.TotalChains)
-	require.Equal(t, int64(6), full.StaleChains)
-	require.LessOrEqual(t, full.StaleChains, full.TotalChains)
-	require.Greater(t, full.StaleChains, int64(0), "前置：fixture 须含旧代际行，否则 A1 空洞成立")
+	// A15/A1：混代际 fixture（gen-6 行 + gen-7 行）→ 布尔为真；断言**布尔值**
+	// 而非链数——链数在该行不可精确拆分（这正是退役占比的原因）。
+	require.True(t, full.StaleGenerationPresent, "前置：fixture 须含旧代际行，否则 A1 空洞成立")
 
-	// A1：两页的 sankey/total_chains/stale_chains 恒等（完整集上算，与页无关）。
+	// A1：两页的 sankey/total_edges/布尔恒等（完整集上算，与页无关）。
 	p1, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 2, Offset: 0})
 	require.NoError(t, err)
 	p2, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 2, Offset: 2})
 	require.NoError(t, err)
 	require.Equal(t, full.Sankey, p1.Sankey)
 	require.Equal(t, full.Sankey, p2.Sankey)
-	require.Equal(t, full.TotalChains, p1.TotalChains)
-	require.Equal(t, full.TotalChains, p2.TotalChains)
-	require.Equal(t, full.StaleChains, p1.StaleChains)
-	require.Equal(t, full.StaleChains, p2.StaleChains)
 	require.Equal(t, full.TotalEdges, p1.TotalEdges)
+	require.Equal(t, full.TotalEdges, p2.TotalEdges)
+	require.Equal(t, full.StaleGenerationPresent, p1.StaleGenerationPresent)
+	require.Equal(t, full.StaleGenerationPresent, p2.StaleGenerationPresent)
 	require.Equal(t, full.FirstDispatchChains, p1.FirstDispatchChains)
 	require.Equal(t, full.TerminalChains, p2.TerminalChains)
+
+	// A15 负方向：仅当前代际（plan generation 7）→ 布尔为假。
+	fs.routingFlowRows = []repository.RoutingFlowStat{
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(1), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
+	}
+	cur, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 200})
+	require.NoError(t, err)
+	require.False(t, cur.StaleGenerationPresent, "current-generation-only rows must not read as stale")
 }
 
 // --- flow: lanes 切片正确性（A24）---
 
 func TestRoutingFlow_LanesSliceMatchesCompleteOrder(t *testing.T) {
-	plan, idHex, route := routingFixturePlan()
+	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
-	fs.routingFlowRows = staleFixtureRows(t, route)
+	fs.routingFlowRows = staleFixtureRows(t)
 	svc := routingSvc(t, fs, plan)
 	ctx := context.Background()
 	base := RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour)}

@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"time"
 
@@ -49,33 +50,8 @@ var routingQualityInstanceIndexDDLs = []string{
 	`CREATE INDEX routing_quality_instance_minute_bucket ON routing_quality_instance_minute (bucket_minute)`,
 }
 
-var routingFlowInstanceColumnDefs = []string{
-	`id bigint NOT NULL DEFAULT nextval('routing_flow_instance_minute_id_seq'::regclass)`,
-	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
-	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
-	`terminal_minute timestamptz NOT NULL`,
-	`ordinal smallint NOT NULL`,
-	`lane text NOT NULL`,
-	`account_id bigint NOT NULL`,
-	`previous_account_id bigint NULL`,
-	`previous_outcome text NOT NULL DEFAULT ''`,
-	`transition_reason text NOT NULL`,
-	`outcome text NOT NULL`,
-	`is_terminal boolean NOT NULL`,
-	`generation bigint NOT NULL`,
-	`candidate_fingerprint bytea NOT NULL CHECK (octet_length(candidate_fingerprint) = 32)`,
-	`instance_src text NOT NULL`,
-	`absolute_sequence bigint NOT NULL`,
-	`chain_count bigint NOT NULL DEFAULT 0`,
-	`updated_at timestamptz NOT NULL`,
-}
-
-var routingFlowInstanceCreateDDL = partitionedCreateDDL("routing_flow_instance_minute", "terminal_minute", routingFlowInstanceColumnDefs)
-
-var routingFlowInstanceIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_instance_minute_uniq ON routing_flow_instance_minute (instance_src, terminal_minute, identity_version, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id) NULLS NOT DISTINCT`,
-	`CREATE INDEX routing_flow_instance_minute_terminal ON routing_flow_instance_minute (terminal_minute)`,
-}
+// routing_flow_instance_minute 已随 S2′/S3 删除：实例层与 rollup 层合并为
+// routing_flow_rollup 单层（instance_src 为身份维度），不再有独立暂存表。
 
 var routingQualityRollupColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('routing_quality_rollup_id_seq'::regclass)`,
@@ -110,6 +86,9 @@ var routingQualityRollupIndexDDLs = []string{
 	`CREATE INDEX routing_quality_rollup_candidate ON routing_quality_rollup (route_class_id, candidate_fingerprint, bucket_minute DESC)`,
 }
 
+// routing_flow_rollup 即合并流层 S2′：旧边身份减 generation、
+// candidate_fingerprint，加 instance_src（分片身份）。chain_count 为事件累加
+// 的精确和，非负不变式由写面累加语义保证，DB 不加 CHECK（Beta 无迁移路径）。
 var routingFlowRollupColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('routing_flow_rollup_id_seq'::regclass)`,
 	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
@@ -123,8 +102,8 @@ var routingFlowRollupColumnDefs = []string{
 	`transition_reason text NOT NULL`,
 	`outcome text NOT NULL`,
 	`is_terminal boolean NOT NULL`,
-	`generation bigint NOT NULL`,
-	`candidate_fingerprint bytea NOT NULL CHECK (octet_length(candidate_fingerprint) = 32)`,
+	`instance_src text NOT NULL`,
+	`min_generation bigint NOT NULL`,
 	`absolute_sequence bigint NOT NULL`,
 	`chain_count bigint NOT NULL DEFAULT 0`,
 	`updated_at timestamptz NOT NULL`,
@@ -133,8 +112,16 @@ var routingFlowRollupColumnDefs = []string{
 var routingFlowRollupCreateDDL = partitionedCreateDDL("routing_flow_rollup", "terminal_minute", routingFlowRollupColumnDefs)
 
 var routingFlowRollupIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version) NULLS NOT DISTINCT`,
+	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, instance_src, identity_version, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT`,
+	`CREATE INDEX routing_flow_merged_read ON routing_flow_rollup (route_class_id, identity_version, terminal_minute)`,
 }
+
+// ErrRoutingSnapshotBeyondRetention 快照分钟早于观测保留截止（§5.4 写面守卫）。
+// 与"旧序号被拒"的幂等 no-op 语义**不同**：那条路径的 payload 已经落库过
+// （tx.Commit 返回 nil 正确），而超期拒绝意味着该分钟的链已被保留策略丢弃，
+// 是数据丢失。故必须显式返回本哨兵，调用方不得照抄静默形状——否则合法迟到
+// 实例的链会无痕消失（判据 B5）。
+var ErrRoutingSnapshotBeyondRetention = errors.New("routing flow snapshot beyond observation retention")
 
 var routingDirtyDDL = `CREATE TABLE IF NOT EXISTS routing_dirty_minute (
 	kind text NOT NULL,
@@ -176,9 +163,6 @@ var routingCompilerDDL = `CREATE TABLE IF NOT EXISTS routing_compiler_state (
 func (r *PartitionRepo) EnsureRoutingQualityInstancePartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_instance_minute", "bucket_minute", routingQualityInstanceColumnDefs, routingQualityInstanceIndexDDLs, now)
 }
-func (r *PartitionRepo) EnsureRoutingFlowInstancePartitioned(ctx context.Context, now time.Time) error {
-	return r.ensureTablePartitioned(ctx, "routing_flow_instance_minute", "terminal_minute", routingFlowInstanceColumnDefs, routingFlowInstanceIndexDDLs, now)
-}
 func (r *PartitionRepo) EnsureRoutingQualityRollupPartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_rollup", "bucket_minute", routingQualityRollupColumnDefs, routingQualityRollupIndexDDLs, now)
 }
@@ -201,9 +185,6 @@ func (r *PartitionRepo) EnsureRoutingCompiler(ctx context.Context) error {
 func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Time) error {
 	if err := r.EnsureRoutingQualityInstancePartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality instance: %w", err)
-	}
-	if err := r.EnsureRoutingFlowInstancePartitioned(ctx, now); err != nil {
-		return fmt.Errorf("routing flow instance: %w", err)
 	}
 	if err := r.EnsureRoutingQualityRollupPartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality rollup: %w", err)
@@ -230,9 +211,6 @@ func (r *PartitionRepo) EnsureRoutingInstancePartitions(ctx context.Context, now
 	if err := r.EnsureTablePartitions(ctx, "routing_quality_instance_minute", now, until); err != nil {
 		return err
 	}
-	if err := r.EnsureTablePartitions(ctx, "routing_flow_instance_minute", now, until); err != nil {
-		return err
-	}
 	return nil
 }
 func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error {
@@ -247,9 +225,6 @@ func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, 
 
 func (r *PartitionRepo) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_instance_minute", cutoff)
-}
-func (r *PartitionRepo) DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.DropTablePartitionsBefore(ctx, "routing_flow_instance_minute", cutoff)
 }
 func (r *PartitionRepo) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_rollup", cutoff)
@@ -285,22 +260,23 @@ type RoutingQualityRow struct {
 }
 
 type RoutingFlowRow struct {
-	IdentityVersion      int16
-	RouteClassID         domain.RouteClassIDVal
-	TerminalMinute       time.Time
-	Ordinal              int16
-	Lane                 string
-	AccountID            int64
-	PreviousAccountID    *int64
-	PreviousOutcome      string
-	TransitionReason     string
-	Outcome              string
-	IsTerminal           bool
-	Generation           int64
-	CandidateFingerprint domain.CandidateFingerprintVal
-	InstanceSrc          string
-	AbsoluteSequence     int64
-	ChainCount           int64
+	IdentityVersion   int16
+	RouteClassID      domain.RouteClassIDVal
+	TerminalMinute    time.Time
+	Ordinal           int16
+	Lane              string
+	AccountID         int64
+	PreviousAccountID *int64
+	PreviousOutcome   string
+	TransitionReason  string
+	Outcome           string
+	IsTerminal        bool
+	// Generation 是单事件代际（写面输入口径）：同边多代际输入由
+	// UpsertFlowSnapshot 按新键折叠为 min_generation 后落库。
+	Generation       int64
+	InstanceSrc      string
+	AbsoluteSequence int64
+	ChainCount       int64
 }
 
 func advisoryLockKey(parts ...string) int64 {
@@ -405,11 +381,105 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 	return tx.Commit()
 }
 
+// flowEdgeKey 是合并层分片内边键（唯一索引口径：previous_account_id
+// 可空，NULLS NOT DISTINCT 由 DDL 承担，此处仅做 Go 侧分组）。
+type flowEdgeKey struct {
+	routeClassID      domain.RouteClassIDVal
+	ordinal           int16
+	lane              string
+	accountID         int64
+	previousAccountID int64
+	hasPrev           bool
+	previousOutcome   string
+	transitionReason  string
+	outcome           string
+	isTerminal        bool
+}
+
+// foldFlowRows 把同分片多代际输入按新键折叠：chain_count 求和，
+// min_generation 取最小。candidate_fingerprint 换值不增行（非身份）。
+func foldFlowRows(rows []RoutingFlowRow) []RoutingFlowRow {
+	type acc struct {
+		row RoutingFlowRow
+		min int64
+	}
+	m := make(map[flowEdgeKey]*acc, len(rows))
+	order := make([]flowEdgeKey, 0, len(rows))
+	for _, row := range rows {
+		k := flowEdgeKey{
+			routeClassID:     row.RouteClassID,
+			ordinal:          row.Ordinal,
+			lane:             row.Lane,
+			accountID:        row.AccountID,
+			previousOutcome:  row.PreviousOutcome,
+			transitionReason: row.TransitionReason,
+			outcome:          row.Outcome,
+			isTerminal:       row.IsTerminal,
+		}
+		if row.PreviousAccountID != nil {
+			k.previousAccountID = *row.PreviousAccountID
+			k.hasPrev = true
+		}
+		a, ok := m[k]
+		if !ok {
+			cp := row
+			a = &acc{row: cp, min: row.Generation}
+			m[k] = a
+			order = append(order, k)
+			continue
+		}
+		a.row.ChainCount += row.ChainCount
+		if row.Generation < a.min {
+			a.min = row.Generation
+		}
+	}
+	out := make([]RoutingFlowRow, 0, len(order))
+	for _, k := range order {
+		a := m[k]
+		a.row.Generation = a.min
+		out = append(out, a.row)
+	}
+	return out
+}
+
+// SetRoutingObservationRetentionDays 装配观测保留天数（main 传
+// cfg.Routing.ObservationRetentionDays）：写面据此拒超期快照。0/负 = 未装配，
+// 守卫关闭（测试/工具路径）；生产装配缺失由 config 地板校验 + main 接线覆盖。
+func (r *PartitionRepo) SetRoutingObservationRetentionDays(days int) {
+	r.routingObservationDays = days
+}
+
+// DeleteRoutingFlowSnapshotStateBefore 删除早于 cutoff 的分片序号状态（保留巡检
+// 日粒度调用）。snapshot_state 是交接状态，不承担历史职责：它是"本分钟本分片
+// 已发布的最高序号"，一旦该分钟分区被 DROP 就再无意义（§5.4）。
+func (r *PartitionRepo) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	var res sql.Result
+	if err := r.driver.Exec(ctx, `DELETE FROM routing_flow_snapshot_state WHERE terminal_minute < $1`, []any{cutoff.UTC()}, &res); err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	return int(n), nil
+}
+
 // UpsertFlowSnapshot replaces the complete edge set for (terminal_minute, instance_src, identity_version) atomically.
 // Only greater absolute_sequence replaces; equal or lower does not mutate. Uses durable authority table routing_flow_snapshot_state
 // so even empty snapshots advance sequence and remain authoritative independent of edge rows.
+// 写合并表 routing_flow_rollup（S2′）：只删己分片（minute+instance+version），
+// 同分片多代际输入写面折叠（chain_count 求和、min_generation 取最小）。
+// 无下游重算，不再 markDirty("flow")；dirty 仅剩 kind='quality'。
 func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []RoutingFlowRow) error {
 	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
+	// 写面守卫（§5.4）：retention 已 DROP 早于观测截止的分钟分区并清理
+	// snapshot_state；迟到的旧实例若在此之后重建该分钟，就是"删后重建"的
+	// 幽灵分钟（read 面已不可见，却永久占位）。故早于截止一律拒绝。
+	// 观测天数未装配（0/负，仅测试/工具路径）→ 守卫关闭。
+	if r.routingObservationDays > 0 &&
+		terminalMinute.Before(domain.RoutingObservationCutoff(time.Now(), r.routingObservationDays)) {
+		return ErrRoutingSnapshotBeyondRetention
+	}
 	tx, err := r.driver.Tx(ctx)
 	if err != nil {
 		return err
@@ -433,13 +503,13 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	if hasState && curSeq.Valid && absoluteSequence <= curSeq.Int64 {
 		return tx.Commit()
 	}
-	if err := drv.Exec(ctx, `DELETE FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
+	if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
 		return err
 	}
-	for _, row := range rows {
-		q := `INSERT INTO routing_flow_instance_minute (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, absolute_sequence, chain_count, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16, now())`
-		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, row.Generation, row.CandidateFingerprint[:], instanceSrc, absoluteSequence, row.ChainCount}, &res); err != nil {
+	for _, row := range foldFlowRows(rows) {
+		q := `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, instance_src, min_generation, absolute_sequence, chain_count, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now())`
+		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, instanceSrc, row.Generation, absoluteSequence, row.ChainCount}, &res); err != nil {
 			return err
 		}
 	}
@@ -451,9 +521,6 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 		if err := drv.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, identity_version, highest_sequence, updated_at) VALUES ($1,$2,$3,$4, now())`, []any{terminalMinute, instanceSrc, identityVersion, absoluteSequence}, &res); err != nil {
 			return err
 		}
-	}
-	if err := markDirtyMinuteTx(ctx, drv, "flow", identityVersion, terminalMinute); err != nil {
-		return err
 	}
 	return tx.Commit()
 }
@@ -628,53 +695,11 @@ func (r *PartitionRepo) RollupQuality(ctx context.Context, bucket time.Time, ver
 	if err := r.advanceWatermarkTx(ctx, drv, "quality", version, bucket); err != nil {
 		return err
 	}
-	return tx.Commit()
-}
-
-func (r *PartitionRepo) RollupFlow(ctx context.Context, terminalMinute time.Time, version int16) error {
-	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
-	tx, err := r.driver.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-	drv := &txDriver{tx: tx, drv: r.driver}
-	if err := advisoryLockTx(ctx, drv, "rollup-flow", fmt.Sprintf("%d", version), terminalMinute.Format(time.RFC3339)); err != nil {
-		return err
-	}
-	if err := requireDirtyMinuteTx(ctx, drv, "flow", version, terminalMinute); err != nil {
-		return err
-	}
-	hasFact, err := minuteHasFactsTx(ctx, drv, `SELECT 1 FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version})
-	if err != nil {
-		return err
-	}
-	hasSnap := false
-	if !hasFact {
-		var snapErr error
-		hasSnap, snapErr = minuteHasFactsTx(ctx, drv, `SELECT 1 FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND identity_version=$2 LIMIT 1`, []any{terminalMinute, version})
-		if snapErr != nil {
-			return snapErr
-		}
-		if !hasSnap {
-			return fmt.Errorf("no facts for rollup")
-		}
-	}
-	var res sql.Result
-	if hasFact {
-		if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, &res); err != nil {
-			return err
-		}
-		if err := drv.Exec(ctx, `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, absolute_sequence, chain_count, updated_at)
-	SELECT identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, MAX(absolute_sequence), SUM(chain_count), now() FROM routing_flow_instance_minute WHERE terminal_minute=$1 AND identity_version=$2 GROUP BY identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint`, []any{terminalMinute, version}, &res); err != nil {
-			return err
-		}
-	} else if hasSnap {
-		if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND identity_version=$2`, []any{terminalMinute, version}, &res); err != nil {
-			return err
-		}
-	}
-	if err := r.advanceWatermarkTx(ctx, drv, "flow", version, terminalMinute); err != nil {
+	// 有界清理（§5.4）：清掉已滚且**严格早于**水位的历史脏分钟。水位只进不退
+	// （advanceWatermarkTx），故这是唯一的收敛判据；dirty=true 的旧分钟（晚到
+	// 重算待办）与恰好 == 水位的行必须存活（判据 B4 双向负例）。子查询读同一
+	// 事务内刚推进的水位；无水位行 → 子查询 NULL → 不删（冷启动安全）。
+	if err := drv.Exec(ctx, `DELETE FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND dirty=false AND bucket_minute < (SELECT watermark FROM routing_rollup_watermark WHERE kind=$1 AND identity_version=$2)`, []any{"quality", version}, &res); err != nil {
 		return err
 	}
 	return tx.Commit()

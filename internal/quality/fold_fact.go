@@ -56,9 +56,11 @@ const (
 const foldMaxOrdinal = 8
 
 // attemptFact is the stack-passed per-attempt fact AND the counter-cell key.
+// candidate_fingerprint 不是 flow 边身份（S2 修剪）：同边换指纹不增行，
+// 故不进 cell 键；generation 进键（细粒度 cell），同边多代在
+// materializeShell 按新键折叠（chain_count 求和、generation 取最小）。
 type attemptFact struct {
 	route           domain.RouteClassIDVal
-	fingerprint     domain.CandidateFingerprintVal
 	accountID       int64
 	prevAccount     int64
 	generation      int64

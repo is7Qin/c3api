@@ -127,13 +127,12 @@ func TestOpsWorkersQualityFlowOwner(t *testing.T) {
 	// Shape stability after real traffic: one folded fact is visible as
 	// accepted/edge_rows_accepted without any tick.
 	var route domain.RouteClassIDVal
-	var fp domain.CandidateFingerprintVal
-	route[0], fp[0] = 7, 9
+	route[0] = 7
 	owner.FoldChain(1000, 1, func(_ int) (
-		domain.RouteClassIDVal, domain.CandidateFingerprintVal,
+		domain.RouteClassIDVal,
 		int64, int64, int64, uint8, string, string, string, bool, bool,
 	) {
-		return route, fp, 11, 0, 1, 1, "primary", "success", "", true, false
+		return route, 11, 0, 1, 1, "primary", "success", "", true, false
 	})
 	st2 := owner.Stats().(quality.FlowOwnerStats)
 	require.Equal(t, int64(1), st2.Accepted)

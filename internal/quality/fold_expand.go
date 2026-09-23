@@ -153,7 +153,10 @@ func (o *FlowOwner) drainFoldLocked() {
 }
 
 // materializeShell projects one shell into a fresh *FlowMinute payload
-// scratch: per-edge counts become rows with ChainCount = the exact folded sum,
+// scratch: per-(edge+generation) cell counts merge by the merged-layer edge
+// identity (S2′/S2) into rows with ChainCount = the exact folded sum and
+// Generation = the minimum generation (the repository folds again on write,
+// so this merge is an optimization, not the authority).
 // sorted deterministically (ordinal, lane, account, linkage, outcome…). The
 // scratch is allocated fresh per payload build (PG lease / Redis payload
 // version) and GC-freed after use — never pooled, never request-visible.
@@ -165,7 +168,24 @@ func materializeShell(shell *foldShell) *FlowMinute {
 		emptySnapshot: shell.emptyMarked && len(shell.counts) == 0,
 	}
 	if len(shell.counts) > 0 {
-		fm.flowRows = make([]repository.RoutingFlowRow, 0, len(shell.counts))
+		type mergeKey struct {
+			identityVersion uint8
+			route           [32]byte
+			ordinal         uint8
+			lane            string
+			accountID       int64
+			prevAccount     int64
+			hasPrev         bool
+			prevOutcome     string
+			transition      string
+			outcome         string
+			isTerminal      bool
+		}
+		type mergeAcc struct {
+			row repository.RoutingFlowRow
+			min int64
+		}
+		merged := make(map[mergeKey]*mergeAcc, len(shell.counts))
 		terminalMinute := time.Unix(shell.minute, 0).UTC()
 		for k, c := range shell.counts {
 			lane, _ := foldLaneString(k.lane)
@@ -177,26 +197,51 @@ func materializeShell(shell *foldShell) *FlowMinute {
 				prevOutcome, _ = foldOutcomeString(k.prevOutcome)
 			}
 			transition, _ := foldTransitionString(k.transition)
-			row := repository.RoutingFlowRow{
-				IdentityVersion:      int16(k.identityVersion),
-				RouteClassID:         k.route,
-				TerminalMinute:       terminalMinute,
-				Ordinal:              int16(k.ordinal),
-				Lane:                 lane,
-				AccountID:            k.accountID,
-				PreviousOutcome:      prevOutcome,
-				TransitionReason:     transition,
-				Outcome:              outcome,
-				IsTerminal:           k.isTerminal,
-				Generation:           k.generation,
-				CandidateFingerprint: k.fingerprint,
-				ChainCount:           c,
+			mk := mergeKey{
+				identityVersion: k.identityVersion,
+				route:           k.route,
+				ordinal:         k.ordinal,
+				lane:            lane,
+				accountID:       k.accountID,
+				prevAccount:     k.prevAccount,
+				hasPrev:         k.hasPrev,
+				prevOutcome:     prevOutcome,
+				transition:      transition,
+				outcome:         outcome,
+				isTerminal:      k.isTerminal,
 			}
-			if k.hasPrev {
-				v := k.prevAccount
-				row.PreviousAccountID = &v
+			a, ok := merged[mk]
+			if !ok {
+				row := repository.RoutingFlowRow{
+					IdentityVersion:  int16(k.identityVersion),
+					RouteClassID:     k.route,
+					TerminalMinute:   terminalMinute,
+					Ordinal:          int16(k.ordinal),
+					Lane:             lane,
+					AccountID:        k.accountID,
+					PreviousOutcome:  prevOutcome,
+					TransitionReason: transition,
+					Outcome:          outcome,
+					IsTerminal:       k.isTerminal,
+					Generation:       k.generation,
+					ChainCount:       c,
+				}
+				if k.hasPrev {
+					v := k.prevAccount
+					row.PreviousAccountID = &v
+				}
+				merged[mk] = &mergeAcc{row: row, min: k.generation}
+				continue
 			}
-			fm.flowRows = append(fm.flowRows, row)
+			a.row.ChainCount += c
+			if k.generation < a.min {
+				a.min = k.generation
+				a.row.Generation = k.generation
+			}
+		}
+		fm.flowRows = make([]repository.RoutingFlowRow, 0, len(merged))
+		for _, a := range merged {
+			fm.flowRows = append(fm.flowRows, a.row)
 		}
 		sort.Slice(fm.flowRows, func(a, b int) bool {
 			ra, rb := fm.flowRows[a], fm.flowRows[b]
@@ -230,11 +275,6 @@ func materializeShell(shell *foldShell) *FlowMinute {
 			}
 			if ra.Generation != rb.Generation {
 				return ra.Generation < rb.Generation
-			}
-			for i := range ra.CandidateFingerprint {
-				if ra.CandidateFingerprint[i] != rb.CandidateFingerprint[i] {
-					return ra.CandidateFingerprint[i] < rb.CandidateFingerprint[i]
-				}
 			}
 			return false
 		})

@@ -235,10 +235,14 @@ func main() {
 	// usage.errlog_retention_days 默认 7 天短保留——错误审计；usage_stats =
 	// usage.stats_retention_days 默认 180 天——聚合统计长保留）。
 	retention := usage.NewRetention(usage.RetentionConfig{
-		LogRetentionDays:    cfg.Usage.LogRetentionDays,
-		ErrLogRetentionDays: cfg.Usage.ErrLogRetentionDays,
-		StatsRetentionDays:  cfg.Usage.StatsRetentionDays,
+		LogRetentionDays:                cfg.Usage.LogRetentionDays,
+		ErrLogRetentionDays:             cfg.Usage.ErrLogRetentionDays,
+		StatsRetentionDays:              cfg.Usage.StatsRetentionDays,
+		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
 	}, repos, log)
+	// 路由观测写面守卫同源：同一份 observation_retention_days 交给分区仓，
+	// UpsertFlowSnapshot 据此拒早于截止的快照（防 retention 删后重建）。
+	repos.Partitions.SetRoutingObservationRetentionDays(cfg.Routing.ObservationRetentionDays)
 
 	auth := proxy.NewAuth(repos.Keys, repos.Users, log, cfg.Billing.Enabled)
 	hc := httpx.NewClient(httpx.TransportConfig{
@@ -333,17 +337,18 @@ func main() {
 	}
 	mailW := service.NewMailWorker(service.MailDeps{Log: log, Settings: settingsSnap, Templates: repos})
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log, service.ServiceDeps{
-		EmailCodeStore:              verification.New(rdb),
-		TimeLocation:                svcLoc,
-		StatsRawRetentionDays:       rawDays,
-		ClearBalanceWarningCooldown: bwCooldown.Clear,
-		RecoverProber:               runtimeHealth,
-		RecoverLatch:                latchStore,
-		RecoverHealthClear:          runtimeHealth,
-		DefaultMaxConcurrency:       cfg.Scheduler.DefaultMaxConcurrency,
-		CompileNotify:               sched.RequestCompile,
-		MailEnqueue:                 mailW.Enqueue,
-		SettingsSnapshot:            settingsSnap,
+		EmailCodeStore:                  verification.New(rdb),
+		TimeLocation:                    svcLoc,
+		StatsRawRetentionDays:           rawDays,
+		ClearBalanceWarningCooldown:     bwCooldown.Clear,
+		RecoverProber:                   runtimeHealth,
+		RecoverLatch:                    latchStore,
+		RecoverHealthClear:              runtimeHealth,
+		DefaultMaxConcurrency:           cfg.Scheduler.DefaultMaxConcurrency,
+		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
+		CompileNotify:                   sched.RequestCompile,
+		MailEnqueue:                     mailW.Enqueue,
+		SettingsSnapshot:                settingsSnap,
 	})
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据
@@ -544,10 +549,11 @@ func main() {
 	// 价格面见 pricingSync.Reload（service 内经 ServiceDeps.CompileNotify
 	// 变化门控后通知编译）。
 	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log, sched.RequestCompile)
-	// routing rollup worker：消费 quality-sync 落在 instance 分钟表的脏分钟，经
-	// repository 既有 RollupQuality/RollupFlow 缝滚成 rollup 表（单桶事务、状态
-	// 成功后推进、失败保 dirty 下 tick 重试，见 quality/rollup.go）。routing
-	// 观测读面（flow/frontier）钉死 rollup 表——缺本 lane 生产聚合永远为空。
+	// routing rollup worker：消费 quality-sync 落在 quality instance 分钟表的脏分钟，
+	// 经 repository 的 RollupQuality 缝滚成 quality rollup 表（单桶事务、状态成功
+	// 后推进、失败保 dirty 下 tick 重试，见 quality/rollup.go）。flow 车道已删：flow
+	// 快照由写面直写合并层（routing_flow_rollup），无下游重算，故本 worker 只服务
+	// quality 道——/routing/frontier 钉死 quality rollup 表，缺本 lane 其聚合永远为空。
 	// 请求路径零参与；无内存队列，停机零排空义务（DB 即队列）。
 	routingRollup := quality.NewRollupWorker(repos.Partitions, quality.RollupConfig{}, log)
 	// 路由编译源装配（双 setter 已删，编译双源 Start 期结构注入）：
