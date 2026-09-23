@@ -3342,7 +3342,7 @@ components:
       required: [name, stats]
       properties:
         name: { type: string }
-        # stats 为异构动态观测字段（17 个 worker 各形态不同，原子读计数器 +
+        # stats 为异构动态观测字段（20 个 worker 各形态不同，原子读计数器 +
         # channel 长度快照）——契约层面声明为自由 schema（任意对象），后端
         # 直出原类型（any），不做 struct→map 转换。
         #
@@ -3358,9 +3358,17 @@ components:
         #     （最近一次成功编译时刻；0 = 从未）, last_compile_err_unix_ms
         #     int64（最近一次失败编译时刻；0 = 从未；失败保留旧视图是契约）,
         #     decision_generation uint64（当前发布 DecisionView 世代；0 = 未发布）,
-        #     decision_routes int（已发布路由数；0 = 编译道未发布）
-         #   rule-engine: queued int（事件队列积压）, queue_cap int（容量/丢弃阈值）,
-         #     dropped int64（队列满丢弃累计）, drop_warn_threshold int64（丢弃告警阈值）
+        #     decision_routes int（已发布路由数；0 = 编译道未发布）,
+        #     active_incidents int（最近一次成功 fire 时带活跃标记的路由数）,
+        #     last_incident_eval_unix_ms int64（最近一次评估事故的 fire 时刻；
+        #     0 = 从未）, skipped_compiles uint64（编译输入与上次成功编译完全
+        #     相同而跳过的空转 fire 累计——M-advance 复查路径，非回退非重编译）
+        #   rule-engine: queued int（准入队列积压）, queue_cap int（准入容量）,
+        #     drop_warn_threshold int64（丢弃告警阈值）, admission_dropped int64
+        #     （准入满丢弃——Enqueue full）, matched_actions int64（命中计数）,
+        #     persist_queued int（持久化队列积压）, persist_cap int（持久化容量）,
+        #     persist_dropped int64（持久化满丢弃）, persist_failures int64
+        #     （持久化执行失败）
          #   quality-flow-owner: running bool, queued int（提交队列深度）,
          #     queue_cap int（固定容量）, accepted int64, processed int64,
          #     overflowed int64, edge_rows_accepted int64, edge_rows_dropped int64,
@@ -3385,8 +3393,10 @@ components:
         #   retention: last_patrol_unix_ms int64（最近巡检完成时刻）,
         #     last_dropped_log_partitions int64, last_dropped_errlog_partitions int64,
         #     last_dropped_stats_partitions int64（最近成功轮 DROP 分区数；失败轮保留上轮）,
+        #     last_dropped_entity_stats_partitions int64（usage_entity_stats
+        #     DROP 分区数；与 stats 同 StatsRetentionDays，失败轮保留上轮值）,
         #     log_retention_days int, errlog_retention_days int, stats_retention_days int
-        #   notify: running bool
+        #   notify: running bool, ready bool（LISTEN + FullRefresh 已完成——不漏增量的启动屏障）
         #   auth-sync: running bool, last_reload_unix_ms int64（最近成功 Reload 时刻）,
         #     failures int64（Reload 失败累计）, last_failure_unix_ms int64（最近失败时刻）
         #   email: queued int（auth 队列深度）, queue_cap int（auth 队列容量 256）, warning_queued int（余额预警队列深度）, warning_queue_cap int（预警队列容量 256）, sent_total int64（成功投递累计）, failed_total int64（失败累计）, retry_total int64（重试累计）, dropped_total int64（队列满丢弃累计）, last_error string（最近一次投递失败的安全分类；空=无，脱敏不含原始错误明细）
@@ -3417,6 +3427,12 @@ components:
          #     失败文本；空 = 无）, redis_errors int64（Redis 发布失败累计）
          #     residual_quality int64 / residual_flow int64（关闭截止时仍在途、
          #     已转为可观测残余的质量/流量批次数）
+        #   routing-rollup（消费 quality-sync 落库的脏分钟；单桶事务 + watermark 推进）:
+        #     quality_rolled int64 / flow_rolled int64（上轮聚合质量行/流量桶数）,
+        #     failed int64（聚合失败累计）, last_duration_ms int64（上轮耗时毫秒）,
+        #     last_error string（最近一次失败文本 step: err；空 = 无）,
+        #     watermark_quality_unix_ms int64 / watermark_flow_unix_ms int64
+        #     （质量/流量道 watermark 位置毫秒；0 = 尚未推进）
         #   runtime-health（健康投影 lane，intelligent-routing）: records int
         #     （当前视图条目数）, open/retry_after/probing/ready int（按态分桶）,
         #     generation int64（已同步全局健康世代）, last_sync_ok_unix_ms int64
