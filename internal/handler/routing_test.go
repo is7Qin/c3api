@@ -215,6 +215,40 @@ func Test_RoutingWindowGuardRetentionHTTP400(t *testing.T) {
 	}
 }
 
+// A15（线格式）：旧代际信号是**精确布尔** stale_generation_present；链次占比两
+// 字段（stale_chains/total_chains）已随 B 期退役，不得再出现在响应键集合里。
+// total_edges 保留（驱动前端翻页器）。
+func Test_RoutingFlow_StaleGenerationPresentWireShape(t *testing.T) {
+	plan, idHex := routingFixturePlan(t)
+	store := &routingStore{fakeStore: newFakeStore()}
+	store.flowRows = []repository.RoutingFlowStat{
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 10},
+		{Ordinal: 2, Lane: "primary", AccountID: 2, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
+	}
+	h := routingRouter(store, plan)
+
+	rec := doGET(t, h, "/api/admin/routing/flow?route="+idHex+"&"+routingWindow())
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	require.Equal(t, true, raw["stale_generation_present"], "mixed-generation window must read as stale")
+	require.NotContains(t, raw, "stale_chains", "the chain-weighted ratio is retired (it could only be an upper bound)")
+	require.NotContains(t, raw, "total_chains", "the chain-weighted ratio is retired")
+	require.Contains(t, raw, "total_edges", "total_edges stays — it drives the pager")
+	var res RoutingFlowResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+	require.True(t, res.StaleGenerationPresent)
+
+	// 仅当前代际 → 假。
+	store.flowRows = []repository.RoutingFlowStat{
+		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
+	}
+	rec = doGET(t, h, "/api/admin/routing/flow?route="+idHex+"&"+routingWindow())
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw))
+	require.Equal(t, false, raw["stale_generation_present"])
+}
+
 // --- /routing/frontier ---
 
 func Test_RoutingFrontier_Mapping(t *testing.T) {

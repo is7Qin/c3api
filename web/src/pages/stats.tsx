@@ -10,7 +10,6 @@ import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, Sankey, Scatter, S
 import { api } from '@/App'
 import type { components } from '@/lib/api/schema'
 import { buildFoldedFlowSankey } from '@/lib/routing-sankey'
-import { staleShare } from '@/lib/stale-share'
 import { useDebounced } from '@/lib/use-debounced'
 import { Pagination } from '@/components/pagination'
 import { FlowSankeyLegend, FlowSankeyLinkShape, FlowSankeyNodeShape, FlowSankeyTooltip } from '@/components/routing-flow-sankey'
@@ -600,9 +599,10 @@ function FlowCard({ flowQ, offset, limit, onOffsetChange, onLimitChange }: {
   const lanes = useMemo(() => data?.lanes ?? [], [data])
   const edges = useMemo(() => lanes.flatMap(l => l.edges), [lanes])
   const conserved = !!data && data.first_dispatch_chains === data.terminal_chains
-  // 旧代际徽标：完整集上的服务端标量（stale_chains/total_chains），翻页不变；
-  // null = 隐藏（stale 0 / total 0 / 舍入 0.0 / 未就绪皆吞没——承接基线"零隐藏"意图）。
-  const share = staleShare(data?.stale_chains, data?.total_chains)
+  // 旧代际徽标：完整集上的服务端**精确布尔**（stale_generation_present），
+  // 翻页不变；false / 未就绪 → 不渲染。合并层一行聚合多代际的链，链次占比只能
+  // 给出上界，故服务端不再输出占比（见 openapi 描述）。
+  const staleGeneration = data?.stale_generation_present === true
 
   const sankeyEdges = useMemo(() => data?.sankey.edges ?? [], [data])
   const sankeyData = useMemo(() => {
@@ -625,7 +625,7 @@ function FlowCard({ flowQ, offset, limit, onOffsetChange, onLimitChange }: {
           {data && (
             <>
               <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: data.plan_generation })}</Badge>
-              {share !== null && <Badge variant="outline">{t('stats.routing.staleEdges', { share })}</Badge>}
+              {staleGeneration && <Badge variant="outline">{t('stats.routing.staleEdges')}</Badge>}
             </>
           )}
         </CardTitle>
@@ -737,7 +737,7 @@ function FlowEdgeTable({ edges, total, offset, limit, onOffsetChange, onLimitCha
             <TableHead>{t('stats.routing.table.reason')}</TableHead>
             <TableHead>{t('stats.routing.table.outcome')}</TableHead>
             <TableHead>{t('stats.routing.table.terminal')}</TableHead>
-            <TableHead className="text-right">{t('stats.routing.table.generation')}</TableHead>
+            <TableHead className="text-right">{t('stats.routing.table.minGeneration')}</TableHead>
             <TableHead className="text-right">{t('stats.routing.table.chains')}</TableHead>
           </TableRow>
         </TableHeader>
@@ -752,7 +752,7 @@ function FlowEdgeTable({ edges, total, offset, limit, onOffsetChange, onLimitCha
               <TableCell className="text-xs">{e.transition_reason || '—'}</TableCell>
               <TableCell className="text-xs">{t(`stats.routing.outcome.${e.outcome}`, { defaultValue: e.outcome })}</TableCell>
               <TableCell>{e.is_terminal ? <Badge variant="outline" className="text-xs">{t('stats.routing.table.finalBadge')}</Badge> : '—'}</TableCell>
-              <TableCell className="text-right font-mono tabular-nums text-xs">{e.generation}</TableCell>
+              <TableCell className="text-right font-mono tabular-nums text-xs">{e.min_generation}</TableCell>
               <TableCell className="text-right tabular-nums">{e.chain_count.toLocaleString()}</TableCell>
             </TableRow>
           ))}

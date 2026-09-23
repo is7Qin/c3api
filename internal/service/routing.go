@@ -154,17 +154,28 @@ type RoutingFlowLane struct {
 // FirstDispatchChains（ordinal=1 链数和 = Attempt1）恒等于 TerminalChains
 // （is_terminal 链数和）；三个丢失计数是独立观测口径，不得混入边/结局语义。
 //
-// 分页边界：Lanes 只是完整边集的**一页**；守恒计数、TotalEdges、TotalChains、
-// StaleChains 与 Sankey 恒在完整边集上聚合/折叠，不受 Offset/Limit 影响。
-// 单位区分是故意的：TotalEdges 为行数，TotalChains/StaleChains 为链次和
-// （Σ chain_count）；占比由前端计算，服务端只返回整数精确值。
+// 分页边界：Lanes 只是完整边集的**一页**；守恒计数、TotalEdges、
+// StaleGenerationPresent 与 Sankey 恒在完整边集上聚合/折叠，不受 Offset/Limit
+// 影响。
+//
+// 旧代际信号是**精确布尔**而非占比：B 期合并层的 generation 已降格为行级
+// min_generation（一行聚合多代际的链），故"generation != plan_generation 的
+// 链数和"退化为**上界**——一行只要含任一旧代际链就整行计入（例：一行折叠
+// {gen5:10, gen6:7, gen7:5} 存为 chain_count=22、min_generation=5，plan=7 时
+// 22 全算陈旧，实际只有 17）。精确的逐代际链数**不可存**（"当前代际"是移动
+// 靶），故退役占比形态（原 stale_chains/total_chains 两字段已删除），改出
+// StaleGenerationPresent——行级谓词，无归属误差。
+//
+// 精确性前提（不得当作无条件）：generation 随发布单调不减，故存量行恒有
+// min_generation ≤ plan_generation，谓词与"窗口内含非当前计划代际的链"严格
+// 等价。未来代际竞态（行内含更新代际但 min == plan）不在目标场景内，此处显式
+// 记录该前提。
 type RoutingFlowResult struct {
 	RouteClassID                 string
 	PlanGeneration               uint64
 	Lanes                        []RoutingFlowLane
 	TotalEdges                   int64
-	TotalChains                  int64
-	StaleChains                  int64
+	StaleGenerationPresent       bool
 	Sankey                       RoutingFlowGraph
 	FirstDispatchChains          int64
 	TerminalChains               int64
@@ -251,12 +262,10 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 		if row.IsTerminal {
 			res.TerminalChains += row.ChainCount
 		}
-		res.TotalChains += row.ChainCount
-		// 精确性前提（§7）：generation 随发布单调不减，故存量行恒有
-		// generation ≤ plan_generation，行级谓词与"窗口含非当前代际链"
-		// 严格等价。未来代际竞态（行内含更新代际但 min==plan）不在目标场景内。
+		// 行级谓词（不是计数）：该行链中最老代际 != 当前计划代际 → 窗口内存在
+		// 非当前代际的链。min_generation 恰为该行链的最老代际，故无归属误差。
 		if row.MinGeneration != int64(plan.Generation) {
-			res.StaleChains += row.ChainCount
+			res.StaleGenerationPresent = true
 		}
 		edges = append(edges, edge)
 	}
@@ -269,7 +278,7 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 		return edges[i].Lane < edges[j].Lane
 	})
 
-	// 守恒计数、TotalEdges、TotalChains、StaleChains 已在上方按完整边集聚合；
+	// 守恒计数、TotalEdges、StaleGenerationPresent 已在上方按完整边集聚合；
 	// sankey 同样在完整边集上折叠（与分页解耦）。都不受 Offset/Limit 影响。
 	res.TotalEdges = int64(len(edges))
 	accountLimit := q.Accounts
