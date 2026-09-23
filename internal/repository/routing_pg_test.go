@@ -727,24 +727,24 @@ func TestRoutingFlowSnapshotGateBarrierPG(t *testing.T) {
 	writerDB2 := stdlib.OpenDBFromPool(writerPool2)
 	writerRepos2, err := repository.NewWithPG(context.Background(), entsql.OpenDB(dialect.Postgres, writerDB2), true, writerPool2)
 	require.NoError(t, err)
-	// S3 起快照直写合并层：第二个 UpsertFlowSnapshot（同分片分钟 + 实例，
-	// 同 advisory 锁）在门后排队，门开后串行完成，己分片被 seq2 完整替换。
+	// S3 起快照直写合并层，**没有下游重算车道**：旧版"rollup 车道 + writer 两个
+	// 等待者"的屏障场景在构造上不再存在（flow 写面无 dirty、无下游 SELECT）。
+	// 本用例保留仍然成立的不变式：写入被门挡住（真的在途阻塞，而非立即返回），
+	// 门开后同一分片被更高序号完整替换。
 	writerDoneChan2 = make(chan error, 1)
 	go func() {
 		rows2 := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 2, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-GF", AbsoluteSequence: 2, ChainCount: 1}}
 		writerDoneChan2 <- writerRepos2.Partitions.UpsertFlowSnapshot(context.Background(), "src-GF", now, 1, 2, rows2)
 	}()
-	rollupPid2 := waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
-	require.NotEqual(t, holderPid2, rollupPid2)
-	writerConn2, err := writerPool2.Acquire(context.Background())
-	require.NoError(t, err)
-	var writerPid2 int
-	require.NoError(t, writerConn2.QueryRow(context.Background(), "SELECT pg_backend_pid()").Scan(&writerPid2))
-	writerConn2.Release()
-	require.NotEqual(t, holderPid2, writerPid2)
-	require.NotEqual(t, rollupPid2, writerPid2)
-	t.Logf("holder %d rollup %d writer %d distinct", holderPid2, rollupPid2, writerPid2)
-	waitForWriterLock(t, pool, holderPid2, rollupPid2, writerPid2)
+	// 门内等待者 = writer 自身的连接（在 INSERT 触发器上等同一把 advisory 锁）；
+	// 它必须不是持门者，否则说明写入根本没被挡住。
+	waiterPid2 := waitForAdvisoryWaiterForKey(t, pool, holderPid2, gateKey)
+	require.NotEqual(t, holderPid2, waiterPid2)
+	select {
+	case err := <-writerDoneChan2:
+		require.Failf(t, "flow writer must block on the gate", "writer returned early: %v", err)
+	default:
+	}
 	releaseGate2()
 	select {
 	case err := <-writerDoneChan2:
