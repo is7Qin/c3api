@@ -1186,6 +1186,12 @@ export interface paths {
          *     flow_overflow_dropped_chains = 故障预算淘汰链；
          *     process_crash_loss_unobservable 恒 true（硬崩缺口不可量化）。
          *     窗口跨度上限 90 天（精确，超限 400）。
+         *     lanes 只是完整边集的**一页**（offset/limit 切片，仍按 (ordinal,lane)
+         *     分组）；守恒计数与 total_edges/total_chains/stale_chains 恒在**完整边集**上聚合，不受分页影响。
+         *     sankey 是给图形用的有界边集：每 (ordinal,lane) 层按 chain_count 保留
+         *     top-N 账号（accounts），其余折叠进「其他」节点——层内 chain_count 求和
+         *     守恒，故图形不会因折叠而失真。分页与折叠是两件独立的事：表格翻页不
+         *     改变 sankey，sankey 也不随翻页变化。
          */
         get: operations["GetRoutingFlow"];
         put?: never;
@@ -1208,7 +1214,8 @@ export interface paths {
          * @description 候选按窗口聚合：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本
          *     （与 compiler 同数学核）。Pareto 支配只在 known 且 cost_known 候选间
          *     扫描；unknown/成本不可知/样本不足者如实呈现但不上前沿。输出确定性
-         *     排序（前沿 → success_lcb 降序 → 成本升序 → 指纹升序）后钳到 limit。
+         *     排序（前沿 → success_lcb 降序 → 成本升序 → 指纹升序）**先排序再切片**，
+         *     故 offset/limit 分页不改变前沿判定；total_candidates 为排序后总条数。
          *     窗口跨度上限 90 天（精确，超限 400）。
          */
         get: operations["GetRoutingFrontier"];
@@ -1233,6 +1240,10 @@ export interface paths {
          *     （与发布字节守卫同序）+ primary/explore/degraded 候选发布序（序是
          *     语义，不重排）+ explore 权重/累积表 + 候选静态身份。空视图 =
          *     generation 0 空计划（routes 为 []），不是错误。
+         *     search/offset/limit 作用于**路由**列表（先过滤后切片）；route 给定则
+         *     只返回该条路由（供单路由取候选页）。candidates_offset/candidates_limit
+         *     作用于**每个返回路由**的候选目录；candidates_limit=0 = 不返回候选，
+         *     供路由选择器取轻量列表（避免 limit × candidates_limit 的无谓放大）。
          */
         get: operations["GetRoutingPlan"];
         put?: never;
@@ -2840,6 +2851,48 @@ export interface components {
             /** @enum {string} */
             Source: "exact" | "sketch";
         };
+        /** @description 桑基图边集（已按 (ordinal,lane,account,outcome,is_terminal) 聚合） */
+        RoutingFlowGraph: {
+            edges: components["schemas"]["RoutingFlowGraphEdge"][];
+            /** @description 每层保留的账号数 N（实际生效值） */
+            account_limit: number;
+            /**
+             * Format: int64
+             * @description 各 (ordinal
+             */
+            folded_accounts: number;
+            /** @description folded_accounts > 0 的冗余布尔，便于消费方直读 */
+            folded: boolean;
+        };
+        /** @description 一条桑基边；account_id=0 且 folded=true 表示「其他」聚合节点 */
+        RoutingFlowGraphEdge: {
+            /** @description 链内第几次尝试（1 = 首发） */
+            ordinal: number;
+            /** @description 通道（primary/explore/degraded） */
+            lane: string;
+            /**
+             * Format: int64
+             * @description 本跳账号；0 = 「其他」聚合节点
+             */
+            account_id: number;
+            /** @description true = 该边是折叠后的「其他」聚合（account_id 恒 0） */
+            folded: boolean;
+            /** @description 本边结局（success/429/4xx/5xx/network…） */
+            outcome: string;
+            /** @description true = 该链 Final */
+            is_terminal: boolean;
+            /**
+             * Format: int64
+             * @description 同身份链数（SUM）
+             */
+            chain_count: number;
+            /** @description 到达链的 transition_reason 去重集（升序） */
+            transition_reasons: string[];
+            /** @description 到达链的 previous_outcome 去重集（升序） */
+            previous_outcomes: string[];
+            /** @description 到达链的 previous_account_id 去重集（升序）；折叠节点为空 */
+            previous_accounts: number[];
+        };
         /** @description 一条聚合边（rollup 行；完整链身份） */
         RoutingFlowEdge: {
             /** @description 链内第几次尝试（1 = 首发） */
@@ -2887,15 +2940,32 @@ export interface components {
              * @description 当前发布计划 generation（边行各自 generation 不混入）
              */
             plan_generation: number;
+            /** @description 边表的当前页（offset/limit 切片后仍按 (ordinal,lane) 分组，组内保持仓储确定性行序） */
             lanes: components["schemas"]["RoutingFlowLane"][];
             /**
              * Format: int64
-             * @description Attempt1 = ordinal=1 链数和（守恒左端）
+             * @description 窗口内完整边行数（行单位，驱动前端翻页器；不受 offset/limit 影响）
+             */
+            total_edges: number;
+            /**
+             * Format: int64
+             * @description 完整边集的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分母由前端计算）
+             */
+            total_chains: number;
+            /**
+             * Format: int64
+             * @description 完整边集中 generation != plan_generation 的边的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分子由前端计算）
+             */
+            stale_chains: number;
+            sankey: components["schemas"]["RoutingFlowGraph"];
+            /**
+             * Format: int64
+             * @description Attempt1 = ordinal=1 链数和（守恒左端；完整边集聚合，不受分页影响）
              */
             first_dispatch_chains: number;
             /**
              * Format: int64
-             * @description 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains）
+             * @description 保留 terminal 链数和（守恒右端，恒等于 first_dispatch_chains；完整边集聚合）
              */
             terminal_chains: number;
             /**
@@ -2968,7 +3038,13 @@ export interface components {
             route_class_id: string;
             /** Format: int64 */
             plan_generation: number;
+            /** @description 排序后的一页候选 */
             candidates: components["schemas"]["RoutingFrontierCandidate"][];
+            /**
+             * Format: int64
+             * @description 排序后候选总条数（分页用；不受 offset/limit 影响）
+             */
+            total_candidates: number;
         };
         /** @description 路由全身份（group+format+model+operation+route class） */
         RoutingPlanRef: {
@@ -3018,8 +3094,13 @@ export interface components {
             explore: components["schemas"]["RoutingPlanExplore"];
             /** @description degraded 候选发布序 */
             degraded: number[];
-            /** @description 通道账号并集，升序 AccountID */
+            /** @description 通道账号并集（升序 AccountID）的当前页；candidates_limit=0 时为空数组 */
             candidates: components["schemas"]["RoutingPlanCandidate"][];
+            /**
+             * Format: int64
+             * @description 该路由候选总数（分页用；不受 candidates_offset/candidates_limit 影响）
+             */
+            candidates_total: number;
             incident: components["schemas"]["RoutingPlanIncident"];
         };
         /** @description 路由 expose-only 事故标记（detect+surface：不改通道、不节流、不探针；零值 = 无事故） */
@@ -3043,6 +3124,11 @@ export interface components {
         RoutingPlanResponse: {
             /** Format: int64 */
             generation: number;
+            /**
+             * Format: int64
+             * @description search 过滤后（route 给定时为 0/1）的路由总数（分页用）
+             */
+            total_routes: number;
             /** @description 全身份确定性路由序（与发布字节守卫同序） */
             routes: components["schemas"]["RoutingPlanRoute"][];
         };
@@ -5685,6 +5771,9 @@ export interface operations {
                 route: string;
                 from: string;
                 to: string;
+                offset?: number;
+                limit?: number;
+                accounts?: number;
             };
             header?: never;
             path?: never;
@@ -5710,6 +5799,7 @@ export interface operations {
                 route: string;
                 from: string;
                 to: string;
+                offset?: number;
                 limit?: number;
             };
             header?: never;
@@ -5732,14 +5822,21 @@ export interface operations {
     };
     GetRoutingPlan: {
         parameters: {
-            query?: never;
+            query?: {
+                search?: string;
+                route?: string;
+                offset?: number;
+                limit?: number;
+                candidates_offset?: number;
+                candidates_limit?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
         };
         requestBody?: never;
         responses: {
-            /** @description 当前发布计划快照 */
+            /** @description 当前发布计划快照（routes 为过滤 + 切片后的一页） */
             200: {
                 headers: {
                     [name: string]: unknown;
