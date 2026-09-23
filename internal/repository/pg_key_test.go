@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 func TestPGAddQuotaUsedBatch(t *testing.T) {
@@ -98,4 +99,49 @@ func TestPGKeyQuotaUsed(t *testing.T) {
 
 	_, err = repos.Keys.QuotaUsed(ctx, 999999)
 	require.Error(t, err, "缺失 key → 复核读失败（gate 按 DB 错策略处理）")
+}
+
+// TestPGUpdateKeyQuotaZeroResetsUsed 额度显式设为 0（= 不限）→ 同步清零 quota_used
+// （quota_used 的唯一服务端写点）。同时钉住与 Recorder 增量回写的交错收敛：
+// AddQuotaUsed 带 "quota" > 0 守卫，清零后迟到的回写不得把已用量带回来。
+func TestPGUpdateKeyQuotaZeroResetsUsed(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	u := seedPGUser(t, repos, "quota-reset@example.com")
+	g, err := repos.Groups.CreateGroup(ctx, &domain.Group{Name: "qr", Visibility: domain.GroupVisibilityPublic})
+	require.NoError(t, err)
+	k, err := repos.CreateKey(ctx, &domain.Key{
+		UserID: u.ID, GroupID: g.ID, Name: "qr", KeyRaw: "ck-quota-reset",
+		Status: domain.KeyStatusActive, Quota: 1000, QuotaUsed: 400,
+	})
+	require.NoError(t, err)
+
+	// 设成非 0：累计消耗保持（累计语义不变）
+	up := int64(2000)
+	kept, err := repos.UpdateKey(ctx, &repository.KeyPatch{ID: k.ID, Quota: &up})
+	require.NoError(t, err)
+	require.Equal(t, int64(400), kept.QuotaUsed, "设非 0 不清零（返回行即 DB 新鲜值）")
+
+	// 设成 0（不限）：清零
+	zero := int64(0)
+	reset, err := repos.UpdateKey(ctx, &repository.KeyPatch{ID: k.ID, Quota: &zero})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), reset.Quota)
+	require.Equal(t, int64(0), reset.QuotaUsed, "额度设为 0 → quota_used 清零")
+
+	// 迟到的增量回写不得复活：无额度 key 恒 0（"quota" > 0 守卫）
+	require.NoError(t, repos.Keys.AddQuotaUsed(ctx, map[int64]int64{k.ID: 7}))
+	got, err := repos.GetKey(ctx, k.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), got.QuotaUsed, "无额度 key：回写被守卫跳过")
+
+	// 重新设额：从零起算，且回写恢复生效
+	q2 := int64(500)
+	fresh, err := repos.UpdateKey(ctx, &repository.KeyPatch{ID: k.ID, Quota: &q2})
+	require.NoError(t, err)
+	require.Equal(t, int64(0), fresh.QuotaUsed, "重新设额从零起算")
+	require.NoError(t, repos.Keys.AddQuotaUsed(ctx, map[int64]int64{k.ID: 9}))
+	after, err := repos.GetKey(ctx, k.ID)
+	require.NoError(t, err)
+	require.Equal(t, int64(9), after.QuotaUsed, "有额度 key：回写恢复生效")
 }

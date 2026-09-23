@@ -166,6 +166,8 @@ func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery)
 // 意图写该列，全字段写回会覆盖 AddQuotaUsed 增量 → 永久少记、gate 超用
 // 不 429）；ent Save re-SELECT 返回行 → 调用方拿到的 QuotaUsed 反为 DB 新鲜
 // 值，upsertKeyMeta 顺带同步最新。
+// **唯一例外**：Quota 显式设为 0（= 不限）时同步清零 quota_used——见 UpdateKey
+// （不限额度下"已用"无意义，且累计语义会让旧消耗带进下一次设额）。
 type KeyPatch struct {
 	ID             int64
 	Name           *string
@@ -189,6 +191,16 @@ func (r *KeyRepo) UpdateKey(ctx context.Context, p *KeyPatch) (*domain.Key, erro
 	}
 	if p.Quota != nil {
 		upd.SetQuota(*p.Quota)
+		// 额度显式设为 0（= 不限）→ 同步清零累计消耗。两条理由：
+		//  ① 不限额度下"已用"无意义——留着只会让 UI 显示"已用 $X / 不限"；
+		//  ② 它是**累计**上限，不清零则旧消耗会带进下一次设额（用户刚设好额度
+		//     就被历史消耗挡住）。
+		// 这是 quota_used 的唯一服务端写点。与 Recorder 增量回写的交错安全：
+		// AddQuotaUsed 带 "quota" > 0 守卫，行锁串行化下两种提交顺序都收敛到 0
+		// （回写先 → 被本次清零覆盖；清零先 → 回写被 WHERE 排除）。
+		if *p.Quota == 0 {
+			upd.SetQuotaUsed(0)
+		}
 	}
 	row, err := upd.Save(ctx)
 	if err != nil {
@@ -332,7 +344,11 @@ func (r *KeyRepo) AddQuotaUsed(ctx context.Context, deltas map[int64]int64) erro
 	if len(ids) == 0 {
 		return nil
 	}
-	b.WriteString(`ELSE "quota_used" END, "updated_at" = now() WHERE "id" IN (`)
+	// "quota" > 0 守卫：无额度 key（quota = 0 = 不限）恒不累计——把"无额度 key
+	// 恒 0"这条不变量从 gate 的条目簿记下沉到写入方，同时封死"额度刚被清零、
+	// 本实例或他实例仍在途的增量随后回写"这条复活路径（UpdateKey 清零后，
+	// 迟到的回写不得把已用量带回来）。
+	b.WriteString(`ELSE "quota_used" END, "updated_at" = now() WHERE "quota" > 0 AND "id" IN (`)
 	b.WriteString(strings.Join(ids, ", "))
 	b.WriteByte(')')
 	var res sql.Result

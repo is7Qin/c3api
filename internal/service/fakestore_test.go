@@ -1393,6 +1393,9 @@ func (f *fakeStore) UpdateKey(ctx context.Context, p *repository.KeyPatch) (*dom
 	}
 	if p.Quota != nil {
 		cur.Quota = *p.Quota
+		if *p.Quota == 0 {
+			cur.QuotaUsed = 0 // 镜像真实 repo：额度显式设为 0（不限）→ 同步清零累计消耗
+		}
 	}
 	c := *cur
 	return &c, nil
