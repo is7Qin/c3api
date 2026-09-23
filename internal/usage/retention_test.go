@@ -36,7 +36,8 @@ type fakePartitionManager struct {
 	esnows    []time.Time // usage_entity_stats ensure 的 now 参数
 	esensures []time.Time // usage_entity_stats ensure 的 until 参数
 	rdeletes  []time.Time // redemption_uses 批删 cutoff 参数
-	rdrops    []time.Time // routing instance/rollup drops (merged)
+	rdrops    []time.Time // routing 观测分区 drops（quality instance / quality rollup / flow rollup 同一 cutoff）
+	rstateDel []time.Time // routing_flow_snapshot_state 有界删 cutoff 参数
 	rnows     []time.Time // routing ensures
 	dropErr   error       // usage_logs drop 失败注入
 	edropErr  error       // err_logs drop 失败注入（失败隔离断言）
@@ -131,12 +132,6 @@ func (f *fakePartitionManager) DropRoutingQualityInstanceBefore(ctx context.Cont
 	f.rdrops = append(f.rdrops, cutoff)
 	return 0, nil
 }
-func (f *fakePartitionManager) DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.rdrops = append(f.rdrops, cutoff)
-	return 0, nil
-}
 func (f *fakePartitionManager) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -147,6 +142,12 @@ func (f *fakePartitionManager) DropRoutingFlowRollupBefore(ctx context.Context, 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rdrops = append(f.rdrops, cutoff)
+	return 0, nil
+}
+func (f *fakePartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.rstateDel = append(f.rstateDel, cutoff)
 	return 0, nil
 }
 

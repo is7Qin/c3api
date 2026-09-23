@@ -13,6 +13,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"time"
 
@@ -126,19 +127,19 @@ type RoutingFlowQuery struct {
 	Accounts int // 桑基每 (ordinal,lane) 层保留账号数
 }
 
-// RoutingFlowEdge 一条聚合边（rollup 行的防御性拷贝；fingerprint 为 hex）。
+// RoutingFlowEdge 一条聚合边（合并层行的防御性拷贝；min_generation 为
+// 本边链中 multi-generation 折叠后的最早代际，见 S2）。
 type RoutingFlowEdge struct {
-	Ordinal              int16
-	Lane                 string
-	AccountID            int64
-	PreviousAccountID    *int64
-	PreviousOutcome      string
-	TransitionReason     string
-	Outcome              string
-	IsTerminal           bool
-	Generation           int64
-	CandidateFingerprint string
-	ChainCount           int64
+	Ordinal           int16
+	Lane              string
+	AccountID         int64
+	PreviousAccountID *int64
+	PreviousOutcome   string
+	TransitionReason  string
+	Outcome           string
+	IsTerminal        bool
+	MinGeneration     int64
+	ChainCount        int64
 }
 
 // RoutingFlowLane (ordinal, lane) 分组——retry 到下一 ordinal，terminal 边
@@ -153,17 +154,28 @@ type RoutingFlowLane struct {
 // FirstDispatchChains（ordinal=1 链数和 = Attempt1）恒等于 TerminalChains
 // （is_terminal 链数和）；三个丢失计数是独立观测口径，不得混入边/结局语义。
 //
-// 分页边界：Lanes 只是完整边集的**一页**；守恒计数、TotalEdges、TotalChains、
-// StaleChains 与 Sankey 恒在完整边集上聚合/折叠，不受 Offset/Limit 影响。
-// 单位区分是故意的：TotalEdges 为行数，TotalChains/StaleChains 为链次和
-// （Σ chain_count）；占比由前端计算，服务端只返回整数精确值。
+// 分页边界：Lanes 只是完整边集的**一页**；守恒计数、TotalEdges、
+// StaleGenerationPresent 与 Sankey 恒在完整边集上聚合/折叠，不受 Offset/Limit
+// 影响。
+//
+// 旧代际信号是**精确布尔**而非占比：B 期合并层的 generation 已降格为行级
+// min_generation（一行聚合多代际的链），故"generation != plan_generation 的
+// 链数和"退化为**上界**——一行只要含任一旧代际链就整行计入（例：一行折叠
+// {gen5:10, gen6:7, gen7:5} 存为 chain_count=22、min_generation=5，plan=7 时
+// 22 全算陈旧，实际只有 17）。精确的逐代际链数**不可存**（"当前代际"是移动
+// 靶），故退役占比形态（原 stale_chains/total_chains 两字段已删除），改出
+// StaleGenerationPresent——行级谓词，无归属误差。
+//
+// 精确性前提（不得当作无条件）：generation 随发布单调不减，故存量行恒有
+// min_generation ≤ plan_generation，谓词与"窗口内含非当前计划代际的链"严格
+// 等价。未来代际竞态（行内含更新代际但 min == plan）不在目标场景内，此处显式
+// 记录该前提。
 type RoutingFlowResult struct {
 	RouteClassID                 string
 	PlanGeneration               uint64
 	Lanes                        []RoutingFlowLane
 	TotalEdges                   int64
-	TotalChains                  int64
-	StaleChains                  int64
+	StaleGenerationPresent       bool
 	Sankey                       RoutingFlowGraph
 	FirstDispatchChains          int64
 	TerminalChains               int64
@@ -172,11 +184,38 @@ type RoutingFlowResult struct {
 	ProcessCrashLossUnobservable bool
 }
 
+// validateRoutingRetention 观测窗口守卫（§5.3）：窗口起点早于观测保留截止 →
+// ErrInvalidInput（httpface 映射 **HTTP 400**）。超界 **fail-closed 且整窗拒绝**
+// ——绝不静默截断成部分聚合（截断后的 sum 看起来正常，实则少了整段分钟，
+// 比报错更危险）。
+//
+// cutoff 与 retention worker **同源**：同一份 routing.observation_retention_days
+// 与同一日历日换算（domain.RoutingObservationCutoff）。未装配（<= 0，测试/降级
+// 路径）→ 不设守卫。
+func (s *Service) validateRoutingRetention(from time.Time) error {
+	if s.routingRetentionDays <= 0 {
+		return nil
+	}
+	now := time.Now
+	if s.statsNow != nil {
+		now = s.statsNow
+	}
+	cutoff := domain.RoutingObservationCutoff(now(), s.routingRetentionDays)
+	if from.Before(cutoff) {
+		return fmt.Errorf("service: routing observation window starts before retained partitions (cutoff %s, retention %dd): %w",
+			cutoff.UTC().Format(time.RFC3339), s.routingRetentionDays, ErrInvalidInput)
+	}
+	return nil
+}
+
 // QueryRoutingFlow 按 terminal_at 归属窗口查询一条路由类的完整链边聚合。
 // 行序沿用 repository 确定性排序（ordinal, lane, account, prev NULLS FIRST,
 // outcome…），lane 分组保持组内原序、组间按 (ordinal, lane) 全序。
 func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*RoutingFlowResult, error) {
 	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
+		return nil, err
+	}
+	if err := s.validateRoutingRetention(q.From); err != nil {
 		return nil, err
 	}
 	plan, _, rc, err := s.resolveRoutingRoute(q.RouteID)
@@ -203,16 +242,15 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 	for _, row := range rows {
 		prev := row.PreviousAccountID
 		edge := RoutingFlowEdge{
-			Ordinal:              row.Ordinal,
-			Lane:                 row.Lane,
-			AccountID:            row.AccountID,
-			PreviousOutcome:      row.PreviousOutcome,
-			TransitionReason:     row.TransitionReason,
-			Outcome:              row.Outcome,
-			IsTerminal:           row.IsTerminal,
-			Generation:           row.Generation,
-			CandidateFingerprint: domain.CandidateFPHex(row.CandidateFingerprint),
-			ChainCount:           row.ChainCount,
+			Ordinal:          row.Ordinal,
+			Lane:             row.Lane,
+			AccountID:        row.AccountID,
+			PreviousOutcome:  row.PreviousOutcome,
+			TransitionReason: row.TransitionReason,
+			Outcome:          row.Outcome,
+			IsTerminal:       row.IsTerminal,
+			MinGeneration:    row.MinGeneration,
+			ChainCount:       row.ChainCount,
 		}
 		if prev != nil {
 			v := *prev
@@ -224,9 +262,10 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 		if row.IsTerminal {
 			res.TerminalChains += row.ChainCount
 		}
-		res.TotalChains += row.ChainCount
-		if row.Generation != int64(plan.Generation) {
-			res.StaleChains += row.ChainCount
+		// 行级谓词（不是计数）：该行链中最老代际 != 当前计划代际 → 窗口内存在
+		// 非当前代际的链。min_generation 恰为该行链的最老代际，故无归属误差。
+		if row.MinGeneration != int64(plan.Generation) {
+			res.StaleGenerationPresent = true
 		}
 		edges = append(edges, edge)
 	}
@@ -239,7 +278,7 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 		return edges[i].Lane < edges[j].Lane
 	})
 
-	// 守恒计数、TotalEdges、TotalChains、StaleChains 已在上方按完整边集聚合；
+	// 守恒计数、TotalEdges、StaleGenerationPresent 已在上方按完整边集聚合；
 	// sankey 同样在完整边集上折叠（与分页解耦）。都不受 Offset/Limit 影响。
 	res.TotalEdges = int64(len(edges))
 	accountLimit := q.Accounts

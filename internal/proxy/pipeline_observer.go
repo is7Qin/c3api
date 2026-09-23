@@ -137,8 +137,8 @@ type foldOwner struct {
 // packedArm is the in-flight dispatch identity: the walk inputs extracted
 // from the real plan attempt at arm time (pointers dereferenced, lane coded,
 // hex decoded — nothing referencing scheduler memory survives the arm).
+// candidate_fingerprint 不是 flow 边身份（S2 修剪），故不打包。
 type packedArm struct {
-	fp       [32]byte
 	account  int64
 	prevAcct int64
 	ordinal  uint8
@@ -149,7 +149,6 @@ type packedArm struct {
 // packedEdge is one stashed dispatch: the walk inputs only. Terminality is
 // force-marked final at settle (option (a)).
 type packedEdge struct {
-	fp      [32]byte
 	account int64
 	prev    int64
 	ordinal uint8
@@ -257,7 +256,6 @@ func (f *foldOwner) arm(attempt scheduler.Attempt) {
 	f.route = pipelineID(attempt.RouteClassID)
 	f.gen = attempt.RoutingGeneration
 	f.cur = packedArm{
-		fp:      pipelineID(attempt.CandidateFingerprint),
 		account: attempt.AccountID,
 		ordinal: attempt.Ordinal,
 		lane:    foldLaneCodeOf(attempt.Lane),
@@ -282,7 +280,6 @@ func (f *foldOwner) append(outcome AttemptOutcome) {
 			}
 		} else {
 			e := packedEdge{
-				fp:      f.cur.fp,
 				account: f.cur.account,
 				prev:    f.cur.prevAcct,
 				ordinal: f.cur.ordinal,
@@ -348,7 +345,6 @@ func (f *foldOwner) settle(panicked bool) {
 	gen := int64(f.gen)
 	owner.FoldChain(bucket, f.nedges, func(i int) (
 		route domain.RouteClassIDVal,
-		fp domain.CandidateFingerprintVal,
 		accountID, prevAccount, generation int64,
 		ordinal uint8,
 		lane, outcome, prevOutcome string,
@@ -356,7 +352,6 @@ func (f *foldOwner) settle(panicked bool) {
 	) {
 		e := f.edges[i]
 		route = routeVal
-		fp = domain.CandidateFingerprintVal(e.fp)
 		accountID = e.account
 		generation = gen
 		ordinal = e.ordinal

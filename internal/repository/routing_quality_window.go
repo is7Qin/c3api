@@ -107,7 +107,7 @@ ORDER BY 1, 2`
 // QueryCurrentWindowStats aggregates routing_quality_rollup over [M-5m, M).
 func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]WindowCurrentStat, error) {
 	m := evaluatedMinute.UTC().Truncate(time.Minute)
-	from, to := m.Add(-5*time.Minute), m
+	from, to := m.Add(-domain.CurrentWindowLen), m
 	rows := &entsql.Rows{}
 	if err := r.driver.Query(ctx, routingQualityWindowCurrentSQL, []any{identityVersion, from, to}, rows); err != nil {
 		return nil, fmt.Errorf("routing current window query: %w", err)
@@ -140,7 +140,7 @@ func (r *PartitionRepo) QueryBaselineTruncated(ctx context.Context, identityVers
 		return []WindowBaselineStat{}, nil
 	}
 	m := evaluatedMinute.UTC().Truncate(time.Minute)
-	from, to := m.Add(-24*time.Hour), m.Add(-5*time.Minute)
+	from, to := m.Add(-domain.BaselineLookback), m.Add(-domain.CurrentWindowLen)
 	rcHex := make([]string, 0, len(hotKeys))
 	fpHex := make([]string, 0, len(hotKeys))
 	for _, k := range hotKeys {

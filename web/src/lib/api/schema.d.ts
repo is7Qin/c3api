@@ -1187,7 +1187,10 @@ export interface paths {
          *     process_crash_loss_unobservable 恒 true（硬崩缺口不可量化）。
          *     窗口跨度上限 90 天（精确，超限 400）。
          *     lanes 只是完整边集的**一页**（offset/limit 切片，仍按 (ordinal,lane)
-         *     分组）；守恒计数与 total_edges/total_chains/stale_chains 恒在**完整边集**上聚合，不受分页影响。
+         *     分组）；守恒计数与 total_edges/stale_generation_present 恒在**完整边集**上聚合，不受分页影响。
+         *     旧代际信号是**精确布尔** stale_generation_present（窗口内存在
+         *     min_generation != plan_generation 的边行），不再是链次占比：合并层一行
+         *     聚合多代际的链，链次加权谓词只能给出上界（"当前代际"是移动靶，无法预存）。
          *     sankey 是给图形用的有界边集：每 (ordinal,lane) 层按 chain_count 保留
          *     top-N 账号（accounts），其余折叠进「其他」节点——层内 chain_count 求和
          *     守恒，故图形不会因折叠而失真。分页与折叠是两件独立的事：表格翻页不
@@ -2893,7 +2896,7 @@ export interface components {
             /** @description 到达链的 previous_account_id 去重集（升序）；折叠节点为空 */
             previous_accounts: number[];
         };
-        /** @description 一条聚合边（rollup 行；完整链身份） */
+        /** @description 一条聚合边（合并层行；最早代际为同边多代折叠的最小值） */
         RoutingFlowEdge: {
             /** @description 链内第几次尝试（1 = 首发） */
             ordinal: number;
@@ -2916,11 +2919,9 @@ export interface components {
             is_terminal: boolean;
             /**
              * Format: int64
-             * @description 边所属计划代际（旧 generation 行原样携带自身值）
+             * @description 本边链最早计划代际（同边多代折叠的最小值）
              */
-            generation: number;
-            /** @description 候选身份指纹 hex（rollup join 键） */
-            candidate_fingerprint: string;
+            min_generation: number;
             /**
              * Format: int64
              * @description 同身份链数（SUM）
@@ -2947,16 +2948,8 @@ export interface components {
              * @description 窗口内完整边行数（行单位，驱动前端翻页器；不受 offset/limit 影响）
              */
             total_edges: number;
-            /**
-             * Format: int64
-             * @description 完整边集的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分母由前端计算）
-             */
-            total_chains: number;
-            /**
-             * Format: int64
-             * @description 完整边集中 generation != plan_generation 的边的 chain_count 之和（链次单位；不受 offset/limit 影响；占比分子由前端计算）
-             */
-            stale_chains: number;
+            /** @description 完整边集内是否存在 min_generation != plan_generation 的边行（行级谓词，精确——无高估无低估；不受 offset/limit 影响）。精确性前提：generation 随发布单调不减，故存量行恒有 min_generation ≤ plan_generation；未来代际竞态不在目标场景内） */
+            stale_generation_present: boolean;
             sankey: components["schemas"]["RoutingFlowGraph"];
             /**
              * Format: int64

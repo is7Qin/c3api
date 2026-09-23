@@ -174,8 +174,6 @@ func TestFlowOwner_NoRowCapFoldsExactly(t *testing.T) {
 	require.NoError(t, err)
 	owner := rec.FlowOwner()
 	rows := []repository.RoutingFlowRow{ownerTestRow(1), ownerTestRow(2), ownerTestRow(3)}
-	rows[1].CandidateFingerprint[0]++
-	rows[2].CandidateFingerprint[0]++
 	foldRows(t, owner, 100, rows...)
 	stats := owner.SnapshotStats()
 	require.Equal(t, int64(3), stats.EdgeRowsAccepted)

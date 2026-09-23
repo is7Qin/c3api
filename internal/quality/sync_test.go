@@ -556,20 +556,12 @@ func TestQualitySync_FullIdentityFlowRowsPreserved(t *testing.T) {
 				v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
 				return v
 			}(),
-			CandidateFingerprint: func() domain.CandidateFingerprintVal {
-				v, _ := domain.CandidateFingerprint(1, 1, "api_key", "https://api.openai.com", "sk", "", "", "", false, "", "", "", "")
-				return v
-			}(),
 			TerminalMinute: fixed, Ordinal: 1, Lane: "primary", AccountID: 10, TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 5,
 		},
 		{
 			IdentityVersion: 1,
 			RouteClassID: func() domain.RouteClassIDVal {
 				v, _ := domain.RouteClassID(1, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
-				return v
-			}(),
-			CandidateFingerprint: func() domain.CandidateFingerprintVal {
-				v, _ := domain.CandidateFingerprint(2, 1, "api_key", "https://api.openai.com", "sk2", "", "", "", false, "", "", "", "")
 				return v
 			}(),
 			// test-only lane-a/lane-b strings are not codes — tests

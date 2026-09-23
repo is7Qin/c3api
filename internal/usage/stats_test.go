@@ -130,13 +130,13 @@ func (c *countingPartitionManager) EnsureRoutingRollupPartitions(ctx context.Con
 func (c *countingPartitionManager) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
-func (c *countingPartitionManager) DropRoutingFlowInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return 0, nil
-}
 func (c *countingPartitionManager) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
 func (c *countingPartitionManager) DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return 0, nil
+}
+func (c *countingPartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
 func (c *countingPartitionManager) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error) {

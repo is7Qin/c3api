@@ -80,6 +80,9 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
 		return nil, err
 	}
+	if err := s.validateRoutingRetention(q.From); err != nil {
+		return nil, err
+	}
 	plan, route, rc, err := s.resolveRoutingRoute(q.RouteID)
 	if err != nil {
 		return nil, err
