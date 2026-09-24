@@ -100,13 +100,12 @@ type fakeStore struct {
 	txUpsertExtErr error
 	// emailTemplateDeleteErr 注入 DeleteEmailTemplate 非 NotFound 故障。
 	emailTemplateDeleteErr error
-	// routing rollup fake：固定返回行 + 记录最近一次调用参数。
+	// routing 事实读 fake：固定返回行 + 记录最近一次调用参数。
 	routingQualityRows []repository.RoutingQualityStat
 	routingFlowRows    []repository.RoutingFlowStat
-	routingRollupErr   error
-	routingRollupCall  struct {
+	routingFactErr     error
+	routingFactCall    struct {
 		routeClass domain.RouteClassIDVal
-		version    int16
 		from, to   time.Time
 	}
 }

@@ -18,7 +18,7 @@ import (
 // live = ∅ by minute label: PG reads cover [..., M), live rows older than
 // M-5m are excluded from current (they surface via PG once flushed).
 //
-// Cache: PG is fetched at most once per (M, identityVersion) — refresh on
+// Cache: PG is fetched at most once per M — refresh on
 // M advance only — regardless of the ~5s compile cadence; the live source is
 // read fresh on every call and the baseline recomputed only when M advances
 // (newly-hot candidates evaluate non-comparable until next M). PG errors
@@ -88,10 +88,13 @@ type WindowSettledBaseline struct {
 	Successes int64
 }
 
-// WindowSettledSource reads the settled PG rollup (refreshed per M only).
+// WindowSettledSource reads the settled PG fact table (refreshed per M only).
+// The reads are not version-scoped: the DB has no identity_version dimension.
+// Live-row version filtering still happens in the provider core (Row.IdentityVersion
+// vs domain.RoutingIdentityVersion), which is a Go-side gate, not a PG parameter.
 type WindowSettledSource interface {
-	QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]WindowSettledCurrent, error)
-	QueryBaselineTruncated(ctx context.Context, identityVersion int16, evaluatedMinute time.Time, hotKeys []WindowSettledHotKey) ([]WindowSettledBaseline, error)
+	QueryCurrentWindowStats(ctx context.Context, evaluatedMinute time.Time) ([]WindowSettledCurrent, error)
+	QueryBaselineTruncated(ctx context.Context, evaluatedMinute time.Time, hotKeys []WindowSettledHotKey) ([]WindowSettledBaseline, error)
 }
 
 // WindowedQuality is one fire's merged quality inputs.
@@ -214,13 +217,13 @@ func (c *windowedQualityCache) refresh(m time.Time, version int16, liveRows []Wi
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), windowSettledTimeout)
 	defer cancel()
-	pgCur, err := c.settled.QueryCurrentWindowStats(ctx, version, m)
+	pgCur, err := c.settled.QueryCurrentWindowStats(ctx, m)
 	if err != nil {
 		return
 	}
 	c.cur = pgCur
 	hot := hotKeysFrom(m, version, pgCur, liveRows)
-	pgBase, err := c.settled.QueryBaselineTruncated(ctx, version, m, hot)
+	pgBase, err := c.settled.QueryBaselineTruncated(ctx, m, hot)
 	if err != nil {
 		c.cur = nil
 		return
@@ -254,7 +257,7 @@ func hotKeysFrom(m time.Time, version int16, pgCur []WindowSettledCurrent, liveR
 	}
 	var hot []WindowSettledHotKey
 	for key, n := range attempts {
-		if n >= 30 {
+		if n >= domain.BaselineTruncateAttempts {
 			hot = append(hot, WindowSettledHotKey{RouteClassID: key.RouteClassID, Fingerprint: key.Fingerprint})
 		}
 	}

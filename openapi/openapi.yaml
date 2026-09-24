@@ -3455,7 +3455,23 @@ components:
         #     last_dropped_stats_partitions int64（最近成功轮 DROP 分区数；失败轮保留上轮）,
         #     last_dropped_entity_stats_partitions int64（usage_entity_stats
         #     DROP 分区数；与 stats 同 StatsRetentionDays，失败轮保留上轮值）,
-        #     log_retention_days int, errlog_retention_days int, stats_retention_days int
+        #     last_dropped_routing_quality_partitions int64（routing_quality_fact
+        #     最近成功轮 DROP 分区数；失败轮保留上轮值；0 也可能=无过期分区）,
+        #     last_dropped_routing_flow_partitions int64（routing_flow_fact 同上口径）,
+        #     oldest_partition_unix_ms int64（路由两张事实表最老分区下界；0 = 无分区。
+        #     早于观测保留 cutoff ⇒ Warn——保留 worker 停摆时分区会静默无界增长的兜底观测）,
+        #     partition_count int64（路由两张事实表分区总数）,
+        #     quality_partition_count int64（routing_quality_fact 分区数：一表 DROP
+        #     失败时聚合只显漂移，此值定位故障表）,
+        #     quality_oldest_partition_unix_ms int64（routing_quality_fact 最老分区下界）,
+        #     flow_partition_count int64（routing_flow_fact 分区数）,
+        #     flow_oldest_partition_unix_ms int64（routing_flow_fact 最老分区下界）,
+        #     snapshot_state_rows int64（routing_flow_snapshot_state 当前总行数；
+        #     普通表无分区可 DROP，DELETE 失败即无界增长）,
+        #     undated_partition_count int64（名解析失败的分区数；既不计数也不 DROP）,
+        #     partition_stats_stale bool（true = 统计查询失败，当前值为上轮过期值）,
+        #     log_retention_days int, errlog_retention_days int, stats_retention_days int,
+        #     routing_observation_retention_days int（oldest 的 cutoff 解释口径）
         #   notify: running bool, ready bool（LISTEN + FullRefresh 已完成——不漏增量的启动屏障）
         #   auth-sync: running bool, last_reload_unix_ms int64（最近成功 Reload 时刻）,
         #     failures int64（Reload 失败累计）, last_failure_unix_ms int64（最近失败时刻）
@@ -3487,12 +3503,6 @@ components:
          #     失败文本；空 = 无）, redis_errors int64（Redis 发布失败累计）
          #     residual_quality int64 / residual_flow int64（关闭截止时仍在途、
          #     已转为可观测残余的质量/流量批次数）
-        #   routing-rollup（消费 quality-sync 落库的脏分钟；单桶事务 + watermark 推进）:
-        #     quality_rolled int64（上轮聚合质量行数）,
-        #     failed int64（聚合失败累计）, last_duration_ms int64（上轮耗时毫秒）,
-        #     last_error string（最近一次失败文本 step: err；空 = 无）,
-        #     watermark_quality_unix_ms int64
-        #     （质量道 watermark 位置毫秒；0 = 尚未推进）
         #   runtime-health（健康投影 lane，intelligent-routing）: records int
         #     （当前视图条目数）, open/retry_after/probing/ready int（按态分桶）,
         #     generation int64（已同步全局健康世代）, last_sync_ok_unix_ms int64

@@ -44,7 +44,7 @@ func (f *fakePG) keyQ(row repository.RoutingQualityRow) string {
 	return hex.EncodeToString(row.CandidateFingerprint[:]) + ":" + row.BucketMinute.String() + ":" + hex.EncodeToString(row.RouteClassID[:])
 }
 
-func (f *fakePG) UpsertQualityAndMarkDirty(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *fakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
@@ -690,7 +690,7 @@ type blockingPG struct {
 	block chan struct{}
 }
 
-func (b *blockingPG) UpsertQualityAndMarkDirty(ctx context.Context, row repository.RoutingQualityRow) error {
+func (b *blockingPG) UpsertQualityRow(ctx context.Context, row repository.RoutingQualityRow) error {
 	select {
 	case <-b.block:
 		return nil

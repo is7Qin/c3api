@@ -98,7 +98,7 @@ type gatedFailingPG struct {
 	once    sync.Once
 }
 
-func (g *gatedFailingPG) UpsertQualityAndMarkDirty(ctx context.Context, row repository.RoutingQualityRow) error {
+func (g *gatedFailingPG) UpsertQualityRow(ctx context.Context, row repository.RoutingQualityRow) error {
 	g.once.Do(func() { close(g.entered) })
 	<-g.release
 	return context.DeadlineExceeded

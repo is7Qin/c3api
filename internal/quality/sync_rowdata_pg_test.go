@@ -22,7 +22,7 @@ type pgRowFake struct {
 
 func newPgRowFake() *pgRowFake { return &pgRowFake{rowErr: make(map[string]error)} }
 
-func (f *pgRowFake) UpsertQualityAndMarkDirty(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *pgRowFake) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
 	f.calls++
 	if f.failAll != nil {
 		return f.failAll

@@ -19,25 +19,23 @@ import (
 )
 
 // fakeWindowBackend is a PG-free windowSettledBackend: records call counts and
-// serves canned rollup rows for the adapter-conversion tests.
+// serves canned fact rows for the adapter-conversion tests.
 type fakeWindowBackend struct {
 	cur     []repository.WindowCurrentStat
 	base    []repository.WindowBaselineStat
 	q1Calls int
 	q2Calls int
-	version int16
 	lastM   time.Time
 	lastHot []repository.WindowHotKey
 }
 
-func (f *fakeWindowBackend) QueryCurrentWindowStats(_ context.Context, v int16, m time.Time) ([]repository.WindowCurrentStat, error) {
+func (f *fakeWindowBackend) QueryCurrentWindowStats(_ context.Context, m time.Time) ([]repository.WindowCurrentStat, error) {
 	f.q1Calls++
-	f.version = v
 	f.lastM = m
 	return f.cur, nil
 }
 
-func (f *fakeWindowBackend) QueryBaselineTruncated(_ context.Context, _ int16, _ time.Time, hot []repository.WindowHotKey) ([]repository.WindowBaselineStat, error) {
+func (f *fakeWindowBackend) QueryBaselineTruncated(_ context.Context, _ time.Time, hot []repository.WindowHotKey) ([]repository.WindowBaselineStat, error) {
 	f.q2Calls++
 	f.lastHot = append([]repository.WindowHotKey(nil), hot...)
 	return f.base, nil
@@ -81,7 +79,6 @@ func TestNewWindowedQualityProvider(t *testing.T) {
 	wq := provider(fixed)
 
 	require.True(t, wq.SettledBoundary.Equal(m))
-	require.Equal(t, int16(domain.RoutingIdentityVersion), backend.version)
 	require.True(t, backend.lastM.Equal(m))
 
 	// Settled (30/21) + live (2/2 across quality classes) tile per key.

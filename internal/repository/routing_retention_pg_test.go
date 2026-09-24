@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -28,22 +27,22 @@ func TestRoutingQualityWindowBoundarySeedPG(t *testing.T) {
 	ctx := context.Background()
 	m := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
-	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, m.Add(-scheduler.BaselineLookback-24*time.Hour), m.Add(24*time.Hour)))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-scheduler.BaselineLookback-24*time.Hour), m.Add(24*time.Hour)))
 
 	rcA, _, qc1, _, fps := windowVals(t)
 	fp := fps["cur"]
-	baseFrom := m.Add(-scheduler.BaselineLookback)                         // 基线窗下界（含）
-	baseTo := m.Add(-scheduler.CurrentWindowLen)                           // 基线窗上界（半开，不含）
-	curFrom := m.Add(-scheduler.CurrentWindowLen)                          // 当前窗下界（含）
-	seedRollupRow(t, pool, rcA, qc1, fp, baseFrom.Add(-time.Minute), 7, 7) // 基线窗外（更老）
-	seedRollupRow(t, pool, rcA, qc1, fp, baseFrom, 1, 1)                   // 基线窗内下界
-	seedRollupRow(t, pool, rcA, qc1, fp, baseTo.Add(-time.Minute), 1, 1)   // 基线窗内上界-1m
-	seedRollupRow(t, pool, rcA, qc1, fp, baseTo, 7, 7)                     // 基线窗外上界（== 当前窗下界，含）
-	seedRollupRow(t, pool, rcA, qc1, fp, curFrom.Add(time.Minute), 5, 5)   // 当前窗内
-	seedRollupRow(t, pool, rcA, qc1, fp, m, 7, 7)                          // 当前窗上界（不含）
+	baseFrom := m.Add(-scheduler.BaselineLookback)                                          // 基线窗下界（含）
+	baseTo := m.Add(-scheduler.CurrentWindowLen)                                            // 基线窗上界（半开，不含）
+	curFrom := m.Add(-scheduler.CurrentWindowLen)                                           // 当前窗下界（含）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseFrom.Add(-time.Minute), 7, 7) // 基线窗外（更老）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseFrom, 1, 1)                   // 基线窗内下界
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseTo.Add(-time.Minute), 1, 1)   // 基线窗内上界-1m
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseTo, 7, 7)                     // 基线窗外上界（== 当前窗下界，含）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", curFrom.Add(time.Minute), 5, 5)   // 当前窗内
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", m, 7, 7)                          // 当前窗上界（不含）
 
 	keys := []repository.WindowHotKey{{RouteClassID: rcA, Fingerprint: fp}}
-	baseline, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
+	baseline, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	require.Len(t, baseline, 1)
 	require.Equal(t, int64(2), baseline[0].Attempts,
@@ -52,99 +51,78 @@ func TestRoutingQualityWindowBoundarySeedPG(t *testing.T) {
 
 	// 当前窗 [M-CurrentWindowLen, M)：下界含（该分钟正是基线窗的半开上界——两窗
 	// 无缝无重叠），M 本身不含。
-	cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
+	cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, m)
 	require.NoError(t, err)
 	require.Len(t, cur, 1)
 	require.Equal(t, int64(12), cur[0].Attempts,
 		"current window must read the boundary minute (inclusive lower bound) plus the inner row, and exclude M")
 }
 
-// B2（cutoff 内晚到重算正确）：同一分钟第二个实例晚到 → 重标脏 → 整分钟幂等重算，
-// rollup 反映两实例之和。quality 暂存层保留全分钟重算语义，故晚到天然正确
-// （S1）；本用例断言该语义在观测保留期内成立（分钟取当前分钟，前置断言它确实
-// 落在截止之内）。
-func TestRoutingQualityLateArrivalRecomputeWithinRetentionPG(t *testing.T) {
+// TestRoutingFactPartitionStatsPG 兜底统计的分表归因与空态（review findings
+// A/D/E）：两表分区数不对称时聚合 = 两表之和、最老 = 两表最老，分表值各自归位；
+// 快照交接状态行数如实计数；名解析失败的分区计入 UndatedCount 且不被 DROP
+// （误删未知日期分区等于丢未知数据）；全清后聚合与分表全零（零值时间归零由
+// worker 侧断言，此处断言零值本身）。
+func TestRoutingFactPartitionStatsPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Minute)
-	minute := now.Add(-time.Minute)
-	require.True(t, minute.After(domain.RoutingObservationCutoff(now, 7)),
-		"fixture precondition: the late minute must sit inside the 7-day observation cutoff")
+	now := time.Now().UTC()
+	day := now.UTC().Truncate(24 * time.Hour)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	rcA, _, qc1, _, fps := windowVals(t)
-	fp := fps["cur"]
+	// 两表同建 day-3..today（各 5 个：day-3..tomorrow，含 EnsureRoutingPartitions
+	// 的 today/tomorrow）。
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, now.AddDate(0, 0, -3), now))
 
-	row := func(instance string, attempts, successes, seq int64) repository.RoutingQualityRow {
-		return repository.RoutingQualityRow{
-			IdentityVersion: 1, RouteClassID: rcA, QualityClassID: qc1, CandidateFingerprint: fp,
-			InstanceSrc: instance, BucketMinute: minute, AbsoluteSequence: seq,
-			Attempts: attempts, Successes: successes, TTFTN: attempts,
-		}
+	// E 的计数侧：手动建一个无日期分区（名不合 {table}_{YYYYMMDD} 口径）。
+	pgExec(t, pool, `CREATE TABLE routing_quality_fact_manual PARTITION OF routing_quality_fact FOR VALUES FROM ('2099-01-01 00:00:00+00') TO ('2099-01-02 00:00:00+00')`)
+
+	// D 的计数侧：交接状态表 2 行（小而有界，COUNT(*) 即答案）。
+	minute := now.UTC().Truncate(time.Minute)
+	for _, src := range []string{"src-stats-A", "src-stats-B"} {
+		pgExec(t, pool, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, highest_sequence, updated_at) VALUES ($1, $2, 1, now())`, minute, src)
 	}
-	// 实例 A 先到并滚一次。
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row("src-early", 10, 6, 1)))
-	require.NoError(t, repos.Partitions.RollupQuality(ctx, minute, 1))
-	var attempts int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_rollup WHERE bucket_minute=$1`, minute).Scan(&attempts))
-	require.Equal(t, int64(10), attempts)
 
-	// 实例 B 晚到同一分钟：重标脏 → 重算整分钟。
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row("src-late", 4, 3, 1)))
-	dirty, err := repos.Partitions.IsDirty(ctx, "quality", 1, minute)
+	// 只 DROP quality 表的过期分区（cutoff = 昨日零点 → day-3/day-2 落界），
+	// flow 表 untouched——构造单表故障的分歧态。
+	n, err := repos.Partitions.DropRoutingQualityFactBefore(ctx, now.AddDate(0, 0, -1))
 	require.NoError(t, err)
-	require.True(t, dirty, "late arrival must re-mark the minute dirty")
-	require.NoError(t, repos.Partitions.RollupQuality(ctx, minute, 1))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_rollup WHERE bucket_minute=$1`, minute).Scan(&attempts))
-	require.Equal(t, int64(14), attempts, "whole-minute recompute must include the late instance")
-}
+	require.Equal(t, 2, n)
 
-// B4：dirty 有界（双向负例）。提交前删 dirty=false 且**严格早于**水位的行；
-// dirty=true 的旧分钟（晚到重算待办）与恰好 == 水位的行必须存活。
-func TestRoutingDirtyMinuteBoundedCleanupPG(t *testing.T) {
-	repos, pool := newRoutingRepos(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Minute)
-	m0, m1, m2, m3 := now.Add(-3*time.Minute), now.Add(-2*time.Minute), now.Add(-time.Minute), now
-	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	rcA, _, qc1, _, fps := windowVals(t)
-	fp := fps["cur"]
-
-	// 四个分钟各自一行事实 + 脏位。
-	for i, minute := range []time.Time{m0, m1, m2, m3} {
-		require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, repository.RoutingQualityRow{
-			IdentityVersion: 1, RouteClassID: rcA, QualityClassID: qc1, CandidateFingerprint: fp,
-			InstanceSrc: "src-b4", BucketMinute: minute, AbsoluteSequence: int64(i + 1),
-			Attempts: 1, Successes: 1,
-		}))
-	}
-
-	// 滚 m1 → 水位 = m1；清理不删任何行（没有更老的 clean 行）。
-	require.NoError(t, repos.Partitions.RollupQuality(ctx, m1, 1))
-	require.Equal(t, int64(4), dirtyRowCount(t, ctx, pool, "quality"))
-
-	// 滚 m3 → 水位 = m3；m1（dirty=false 且 < 水位）被删，m0/m2（仍 dirty）与
-	// m3（== 水位）存活。
-	require.NoError(t, repos.Partitions.RollupQuality(ctx, m3, 1))
-	var minutes []time.Time
-	rows, err := pool.Query(ctx, `SELECT bucket_minute FROM routing_dirty_minute WHERE kind='quality' ORDER BY bucket_minute`)
+	st, err := repos.Partitions.RoutingFactPartitionStats(ctx)
 	require.NoError(t, err)
-	for rows.Next() {
-		var b time.Time
-		require.NoError(t, rows.Scan(&b))
-		minutes = append(minutes, b.UTC())
-	}
-	rows.Close()
-	require.NoError(t, rows.Err())
-	require.Equal(t, []time.Time{m0, m2, m3}, minutes,
-		"clean minute strictly below the watermark is deleted; dirty older minutes and the watermark minute survive")
-}
+	require.Equal(t, 8, st.Count, "聚合 = quality(3) + flow(5)")
+	require.Equal(t, 3, st.QualityCount)
+	require.Equal(t, 5, st.FlowCount)
+	require.True(t, st.Oldest.Equal(day.AddDate(0, 0, -3)), "聚合最老 = 更老一侧（flow day-3）")
+	require.True(t, st.QualityOldest.Equal(day.AddDate(0, 0, -1)), "故障表（quality）最老 = day-1")
+	require.True(t, st.FlowOldest.Equal(day.AddDate(0, 0, -3)), "健康表（flow）最老 = day-3")
+	require.Equal(t, 2, st.SnapshotRows, "快照交接状态行数如实计数")
+	require.Equal(t, 1, st.UndatedCount, "无名分区被计数但不计入任何表")
 
-// dirtyRowCount 统计 dirty 表某 kind 的行数（有界性断言用）。
-func dirtyRowCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, kind string) int64 {
-	t.Helper()
-	var n int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_dirty_minute WHERE kind=$1`, kind).Scan(&n))
-	return n
+	// 空态：快照行清掉 + 两表全 DROP（cutoff 远未来）→ 聚合与分表全零；无名分区
+	// 不被 DROP（E 的 DROP 侧），仍计 1。
+	pgExec(t, pool, `DELETE FROM routing_flow_snapshot_state`)
+	_, err = repos.Partitions.DropRoutingQualityFactBefore(ctx, now.AddDate(0, 0, 30))
+	require.NoError(t, err)
+	_, err = repos.Partitions.DropRoutingFlowFactBefore(ctx, now.AddDate(0, 0, 30))
+	require.NoError(t, err)
+	st, err = repos.Partitions.RoutingFactPartitionStats(ctx)
+	require.NoError(t, err)
+	require.Zero(t, st.Count)
+	require.True(t, st.Oldest.IsZero(), "无分区时 oldest 为零值（worker 侧归 0 呈现）")
+	require.Zero(t, st.QualityCount)
+	require.True(t, st.QualityOldest.IsZero())
+	require.Zero(t, st.FlowCount)
+	require.True(t, st.FlowOldest.IsZero())
+	require.Zero(t, st.SnapshotRows)
+	require.Equal(t, 1, st.UndatedCount, "无名分区 immune 于 DROP，只能人工介入")
+
+	// 无名分区人工清理后彻底归零。
+	pgExec(t, pool, `DROP TABLE routing_quality_fact_manual`)
+	st, err = repos.Partitions.RoutingFactPartitionStats(ctx)
+	require.NoError(t, err)
+	require.Zero(t, st.UndatedCount)
+	require.Zero(t, st.Count)
 }
 
 // B5（存储面）：snapshot_state 有界。cutoff 前被删、cutoff 内 state 存活且旧序号
@@ -175,7 +153,7 @@ func TestRoutingFlowSnapshotStateBoundedPG(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE instance_src=$1 AND terminal_minute=$2`, "src-B5", now).Scan(&seq))
 	require.Equal(t, int64(2), seq, "replayed older/equal sequence must not advance state")
 	var edgeRows int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B5", now).Scan(&edgeRows))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, "src-B5", now).Scan(&edgeRows))
 	require.Equal(t, int64(1), edgeRows, "replayed snapshot must not mutate the shard")
 
 	// cutoff 外写入：拒绝 + 哨兵（1 天余量，时钟抖动无法翻转判定）。
@@ -187,7 +165,7 @@ func TestRoutingFlowSnapshotStateBoundedPG(t *testing.T) {
 	require.Equal(t, int64(0), outsideStates, "rejected snapshot must not leave state behind (no re-create after cleanup)")
 
 	// 清理：cutoff 前的遗留 state 行被删，cutoff 内的存活。
-	_, err = pool.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, identity_version, highest_sequence, updated_at) VALUES ($1, 'src-B5', 1, 9, now())`, outside)
+	_, err = pool.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, highest_sequence, updated_at) VALUES ($1, 'src-B5', 9, now())`, outside)
 	require.NoError(t, err)
 	n, err := repos.Partitions.DeleteRoutingFlowSnapshotStateBefore(ctx, domain.RoutingObservationCutoff(now, 7))
 	require.NoError(t, err)
@@ -197,57 +175,4 @@ func TestRoutingFlowSnapshotStateBoundedPG(t *testing.T) {
 	var insideStates int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_snapshot_state WHERE terminal_minute=$1`, now).Scan(&insideStates))
 	require.Equal(t, int64(1), insideStates, "state inside the cutoff must survive the sweep")
-}
-
-// B6：watermark / compiler_state 构造有界——主键/单行约束 + 行数断言。flow 道
-// 删除后 watermark 只剩 quality 一行；compiler_state 由 CHECK (id = 1) 锁死单行；
-// dirty 表不再出现 flow 行。
-func TestRoutingStateTablesConstructivelyBoundedPG(t *testing.T) {
-	repos, pool := newRoutingRepos(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Minute)
-	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	rcA, _, qc1, _, fps := windowVals(t)
-	fp := fps["cur"]
-
-	// flow 快照不再写 dirty（S3：dirty 仅剩 quality）。
-	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B6", now, 1, 1, []repository.RoutingFlowRow{{
-		IdentityVersion: 1, RouteClassID: rcA, TerminalMinute: now, Ordinal: 1, Lane: "primary",
-		AccountID: 10, PreviousOutcome: "", TransitionReason: "init", Outcome: "success",
-		IsTerminal: true, Generation: 1, ChainCount: 1,
-	}}))
-	require.Equal(t, int64(0), dirtyRowCount(t, ctx, pool, "flow"))
-
-	// watermark：滚一个 quality 分钟 → 恰好一行（kind=quality），重复滚不增行。
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, repository.RoutingQualityRow{
-		IdentityVersion: 1, RouteClassID: rcA, QualityClassID: qc1, CandidateFingerprint: fp,
-		InstanceSrc: "src-B6", BucketMinute: now, AbsoluteSequence: 1, Attempts: 1, Successes: 1,
-	}))
-	require.NoError(t, repos.Partitions.RollupQuality(ctx, now, 1))
-	var watermarkRows int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_rollup_watermark`).Scan(&watermarkRows))
-	require.Equal(t, int64(1), watermarkRows, "watermark holds exactly one row after the flow lane was removed")
-	var kinds []string
-	rows, err := pool.Query(ctx, `SELECT kind FROM routing_rollup_watermark`)
-	require.NoError(t, err)
-	for rows.Next() {
-		var k string
-		require.NoError(t, rows.Scan(&k))
-		kinds = append(kinds, k)
-	}
-	rows.Close()
-	require.NoError(t, rows.Err())
-	require.Equal(t, []string{"quality"}, kinds)
-
-	// compiler_state：PK (id, identity_version) + CHECK (id = 1)。
-	for i := 0; i < 2; i++ {
-		_, err = pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, identity_version, desired_generation, published_generation, updated_at) VALUES (1, 1, $1, $1, now()) ON CONFLICT (id, identity_version) DO UPDATE SET desired_generation = EXCLUDED.desired_generation`, int64(i+1))
-		require.NoError(t, err)
-	}
-	var compilerRows int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_compiler_state`).Scan(&compilerRows))
-	require.Equal(t, int64(1), compilerRows, "compiler_state is a single row by primary key")
-	_, err = pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, identity_version, desired_generation, published_generation, updated_at) VALUES (2, 1, 1, 1, now())`)
-	require.Error(t, err, "the id = 1 CHECK must forbid a second compiler_state row")
-	require.Contains(t, err.Error(), "check constraint")
 }

@@ -24,14 +24,12 @@ type fakeSettledSource struct {
 	q2Calls int
 	q1Err   error
 	q2Err   error
-	version int16
 	lastHot []WindowSettledHotKey
 	lastM   time.Time
 }
 
-func (f *fakeSettledSource) QueryCurrentWindowStats(_ context.Context, v int16, m time.Time) ([]WindowSettledCurrent, error) {
+func (f *fakeSettledSource) QueryCurrentWindowStats(_ context.Context, m time.Time) ([]WindowSettledCurrent, error) {
 	f.q1Calls++
-	f.version = v
 	f.lastM = m
 	if f.q1Err != nil {
 		return nil, f.q1Err
@@ -39,7 +37,7 @@ func (f *fakeSettledSource) QueryCurrentWindowStats(_ context.Context, v int16, 
 	return f.cur, nil
 }
 
-func (f *fakeSettledSource) QueryBaselineTruncated(_ context.Context, _ int16, _ time.Time, hot []WindowSettledHotKey) ([]WindowSettledBaseline, error) {
+func (f *fakeSettledSource) QueryBaselineTruncated(_ context.Context, _ time.Time, hot []WindowSettledHotKey) ([]WindowSettledBaseline, error) {
 	f.q2Calls++
 	f.lastHot = append([]WindowSettledHotKey(nil), hot...)
 	if f.q2Err != nil {
@@ -153,7 +151,6 @@ func TestWindowedQualityProvider(t *testing.T) {
 	require.Len(t, settled.lastHot, 1)
 	require.Equal(t, k.RouteClassID, settled.lastHot[0].RouteClassID)
 	require.Equal(t, k.Fingerprint, settled.lastHot[0].Fingerprint)
-	require.Equal(t, int16(domain.RoutingIdentityVersion), settled.version)
 
 	// M-keyed cache: same-M refires skip PG; live stays fresh per call.
 	wq2 := provider(providerFixed.Add(10 * time.Second))
