@@ -29,6 +29,6 @@ func TestRoutingPartitionRetentionViaWorker(t *testing.T) {
 	require.NoError(t, w.Close(ctx))
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
-	require.NotEmpty(t, pm.rnows, "routing instance/rollup precreate must be called")
+	require.NotEmpty(t, pm.rnows, "routing fact precreate must be called")
 	require.NotEmpty(t, pm.rdrops, "routing drops must be called via retention")
 }

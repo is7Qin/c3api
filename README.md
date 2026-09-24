@@ -116,7 +116,7 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
                      │   errlog / scheduler / notify │
                      │   retention / stats-agg /     │
                      │   pricing-sync / rule-engine  │
-                     │   quality-sync/routing-rollup │
+                     │   quality-sync                │
                      │   auth-sync / invalidate /    │
                      │   discovery                   │
                     └───────┼───────────────┼──────┘
@@ -129,7 +129,7 @@ Point any OpenAI/Anthropic-compatible SDK at the gateway URL — the request for
 
 - **Single binary**: the frontend is built and embedded via `go:embed`, so the runtime is one `server` process plus a mounted config file.
 - **Stateless gateway, stateful DB**: all shared state lives in PostgreSQL; instances coordinate through `NOTIFY` on the `c3api_invalidate` channel. The cluster instance count for multi-instance budget sharing is auto-discovered via Redis heartbeats — scale horizontally by just adding instances (no manual setting).
-- **Persistent workers**: billing deduction, usage/statistics flushing, error-log auditing, partition retention, offline stats aggregation, price sync, realtime quality sync (`quality-sync`), the routing rollup (`routing-rollup`), and the rule scheduler run as long-lived workers with graceful shutdown draining. The routing plan compiler is not a separate worker: it runs as a serial compile lane inside the scheduler, with freshness surfaced through the scheduler's ops stats.
+- **Persistent workers**: billing deduction, usage/statistics flushing, error-log auditing, partition retention, offline stats aggregation, price sync, realtime quality sync (`quality-sync`), and the rule scheduler run as long-lived workers with graceful shutdown draining. The routing plan compiler is not a separate worker: it runs as a serial compile lane inside the scheduler, with freshness surfaced through the scheduler's ops stats.
 
 ## Performance
 

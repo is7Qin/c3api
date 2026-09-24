@@ -252,7 +252,7 @@ pkg 职责边界：
 
 统一契约 `worker.Worker`（`internal/worker/worker.go:21-25`：Name/Start/Close 均幂等，Close 未 Start 也安全）；`worker.Manager` 顺序启动、**反向排空**、panic 捕获（`internal/worker/worker.go:30-138`；批次：panic 栈入日志 :127-134、Shutdown 等 Go 托管 goroutine（WaitGroup）:88-116、StartAll 启动期无锁 :57-66、单次生命周期（started atomic.Bool，Register 在 StartAll 后报错）:43-51、Go 托管命名 goroutine :123-138）。
 
-注册顺序与反向排空（`cmd/server/main.go:590-591,671-684`）：`mailW → warningWorker → billingWorker → inv → schedW → ruleEngine → retryWorker → healthW → rec → errlogW → pricingSync → retention → statsAgg → qualityFlowOwner → qualitySync → routingRollup` → `concSync → accConcSync → disco` → `listener, authSync`。停机时**反向**（后注册先关）：listener/authSync 先停接收 → disco（ZREM 自身缩容）→ 并发共识 → 质量/路由 rollup → statsAgg → retention → pricingSync → errlogW → rec → healthW/retryWorker → ruleEngine → schedW → inv → billingWorker（游标扫尾，扣费全量落库）。
+注册顺序与反向排空（`cmd/server/main.go:590-591,671-684`）：`mailW → warningWorker → billingWorker → inv → schedW → ruleEngine → retryWorker → healthW → rec → errlogW → pricingSync → retention → statsAgg → qualityFlowOwner → qualitySync` → `concSync → accConcSync → disco` → `listener, authSync`。停机时**反向**（后注册先关）：listener/authSync 先停接收 → disco（ZREM 自身缩容）→ 并发共识 → 质量 sync → statsAgg → retention → pricingSync → errlogW → rec → healthW/retryWorker → ruleEngine → schedW → inv → billingWorker（游标扫尾，扣费全量落库）。
 
 | worker | Name | 类型 | 节奏/背压 | 排空/停机语义 |
 |---|---|---|---|---|
@@ -265,8 +265,8 @@ pkg 职责边界：
 | **discovery** | "discovery"（`internal/discovery/discovery.go:111`） | ticker 心跳 | Redis 注册/续约活体实例数 N（`ClusterInstances()` :172）；**在业务 worker 之后、listener/authSync 之前注册**（反向排空时 listener 先停接收、discovery 随即 ZREM 自身缩容） | Close：ZREM 自身 + 等 goroutine |
 | **proxy.ConcSyncWorker** | "conc-sync"（`internal/proxy/concsync.go:133`） | ticker 500ms | 受限层级在途量跨实例双向同步 → gate 第二快照（clusterView），请求路径零 Redis | Close 取消 + 等 goroutine |
 | **scheduler.AccConcSyncWorker** | "account-conc-sync"（`internal/scheduler/concsync.go:122`） | ticker | 账号并发份额 + 借用跨实例共识 | Close 取消 + 等 goroutine |
-| **quality.SyncWorker** | "quality-sync"（`internal/quality/sync.go:229`） | 串行 loop | 质量行 UPSERT 进实例分钟表（`routing_quality_instance_minute`）；flow 快照**直写合并层**（`routing_flow_fact`，按 `instance_src` 分片、整分片替换，无下游重算） | Close 取消 |
-| **quality.FlowOwner / RollupWorker** | "quality-flow-owner"（`internal/quality/fold_owner.go:112`）/ "routing-rollup"（`internal/quality/rollup.go:97`） | loop / 脏分钟消费 | 实例脏分钟（仅 quality 道）合并进全局 `routing_quality_rollup`，`routing_rollup_watermark` 只剩 quality 一行（flow 无重算故无水位） | Close 取消 |
+| **quality.SyncWorker** | "quality-sync"（`internal/quality/sync.go:229`） | 串行 loop | 质量行逐行 UPSERT 进质量事实表（`routing_quality_fact`——唯一质量存储）；flow 快照**直写**（`routing_flow_fact`，按 `instance_src` 分片、整分片替换，无下游重算） | Close 取消 |
+| **quality.FlowOwner** | "quality-flow-owner"（`internal/quality/fold_owner.go:112`） | loop | 跨请求 flow 累计器的唯一 state owner（请求结算仅一次不可变非阻塞 Submit，归并与消费全在 owner 循环） | Close 取消 |
 | notify.Listener | "notify"（`internal/notify/listener.go:123`） | 事件驱动（阻塞 WaitForNotification） | 独立单连接 LISTEN c3api_invalidate；断线指数退避 1s→30s + 重连全量刷新 | Close 取消 + 等 goroutine（阻塞点均响应 ctx，`internal/notify/listener.go:161-175`） |
 | invalidate.Debouncer | "invalidate"（`internal/invalidate/invalidate.go:230`） | 事件驱动单 goroutine | 200ms 去抖窗口 + 后沿语义（执行期新变更立即再执行，`invalidate.go:262-302`）；重载串行不重叠；**规则重载 Background ctx 不随请求取消**（:347-354，规则快照无周期兜底，事件驱动全量重载必须无条件完成） | Close nil（停机不补最后 flush——DB 权威，`invalidate.go:249`） |
 | pricing.SyncWorker | "pricing-sync"（`internal/pricing/worker.go:81` 构造，`Start` :97） | 启动异步一次 + cron | `price_sync_cron`（默认 `0 3 * * *`）gronx 调度；每轮现读 settings；落 `price_entries` + `price_variants` 双表；非法 cron 1h 重试 | 无资源需排空，Close nil（`Close` :114） |

@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// Routing rollup read face (repository lane): aggregate reads over
+// Routing fact read face (repository lane): aggregate reads over
 // routing_quality_fact / routing_flow_fact ONLY — never instance tables,
 // never raw usage/err logs. Half-open window [from, to) on the bucket column,
 // direct route_class_id + identity_version filters, SUM aggregation grouped by
@@ -62,13 +62,13 @@ type RoutingFlowStat struct {
 	ChainCount        int64
 }
 
-// qualityRollupStatsSQL sums every measure per candidate identity; the bigint[]
+// qualityFactStatsSQL sums every measure per candidate identity; the bigint[]
 // histogram is element-wise summed via generate_subscripts and reassembled in
 // index order (ARRAY_AGG ... ORDER BY idx) so the merge is order-deterministic.
 // bytea ORDER BY is binary comparison — deterministic across collations.
 // 底表为单一分片事实表 routing_quality_fact（度量全可加，跨 instance_src 直接
-// 求和即等价于旧合并 rollup）。
-const qualityRollupStatsSQL = `
+// 求和即等价于旧合并层）。
+const qualityFactStatsSQL = `
 WITH facts AS (
 	SELECT route_class_id, quality_class_id, candidate_fingerprint,
 		attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network,
@@ -97,13 +97,13 @@ LEFT JOIN hist h ON h.route_class_id = f.route_class_id AND h.quality_class_id =
 GROUP BY f.route_class_id, f.quality_class_id, f.candidate_fingerprint
 ORDER BY f.quality_class_id, f.candidate_fingerprint`
 
-// flowRollupStatsSQL groups by the merged edge identity (every dimension of
+// flowFactStatsSQL groups by the merged edge identity (every dimension of
 // routing_flow_fact_uniq except terminal_minute/identity_version/instance_src)
 // and aggregates cross-shard: SUM(chain_count), MIN(min_generation).
 // NULL previous_account_id pinned first for a total order. The access path is
 // (route_class_id, identity_version, terminal_minute range), served by the
 // routing_flow_fact_read index (A14 asserts via EXPLAIN).
-const flowRollupStatsSQL = `
+const flowFactStatsSQL = `
 SELECT route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
 	transition_reason, outcome, is_terminal,
 	MIN(min_generation)::bigint, SUM(chain_count)::bigint
@@ -114,13 +114,13 @@ GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previou
 ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_outcome,
 	transition_reason, outcome, is_terminal DESC`
 
-// QueryQualityRollupStats aggregates routing_quality_fact over the half-open
+// QueryQualityFactStats aggregates routing_quality_fact over the half-open
 // minute window [from, to) for one route class + identity version.
-func (r *PartitionRepo) QueryQualityRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
+func (r *PartitionRepo) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
 	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
 	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, qualityRollupStatsSQL, []any{routeClass[:], identityVersion, from, to}, rows); err != nil {
-		return nil, fmt.Errorf("routing quality rollup query: %w", err)
+	if err := r.driver.Query(ctx, qualityFactStatsSQL, []any{routeClass[:], identityVersion, from, to}, rows); err != nil {
+		return nil, fmt.Errorf("routing quality fact query: %w", err)
 	}
 	defer rows.Close()
 	out := []RoutingQualityStat{}
@@ -133,7 +133,7 @@ func (r *PartitionRepo) QueryQualityRollupStats(ctx context.Context, routeClass 
 			&s.TTFTN, &s.TTFTSumLogQ32, &s.TTFTSumSqLogQ32,
 			&s.InputTokens, &s.OutputTokens, &s.CacheReadTokens, &s.CacheCreateTokens, &s.Calls, &s.Images,
 			&histText); err != nil {
-			return nil, fmt.Errorf("routing quality rollup query: scan: %w", err)
+			return nil, fmt.Errorf("routing quality fact query: scan: %w", err)
 		}
 		copy(s.RouteClassID[:], rt)
 		copy(s.QualityClassID[:], qc)
@@ -142,19 +142,19 @@ func (r *PartitionRepo) QueryQualityRollupStats(ctx context.Context, routeClass 
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("routing quality rollup query: %w", err)
+		return nil, fmt.Errorf("routing quality fact query: %w", err)
 	}
 	return out, nil
 }
 
-// QueryFlowRollupStats aggregates routing_flow_fact over the half-open minute
+// QueryFlowFactStats aggregates routing_flow_fact over the half-open minute
 // window [from, to) for one route class + identity version, one row per
 // complete edge identity.
-func (r *PartitionRepo) QueryFlowRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
+func (r *PartitionRepo) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
 	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
 	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, flowRollupStatsSQL, []any{routeClass[:], identityVersion, from, to}, rows); err != nil {
-		return nil, fmt.Errorf("routing flow rollup query: %w", err)
+	if err := r.driver.Query(ctx, flowFactStatsSQL, []any{routeClass[:], identityVersion, from, to}, rows); err != nil {
+		return nil, fmt.Errorf("routing flow fact query: %w", err)
 	}
 	defer rows.Close()
 	out := []RoutingFlowStat{}
@@ -164,7 +164,7 @@ func (r *PartitionRepo) QueryFlowRollupStats(ctx context.Context, routeClass dom
 		var prevAcc sql.NullInt64
 		if err := rows.Scan(&rt, &s.Ordinal, &s.Lane, &s.AccountID, &prevAcc, &s.PreviousOutcome,
 			&s.TransitionReason, &s.Outcome, &s.IsTerminal, &s.MinGeneration, &s.ChainCount); err != nil {
-			return nil, fmt.Errorf("routing flow rollup query: scan: %w", err)
+			return nil, fmt.Errorf("routing flow fact query: scan: %w", err)
 		}
 		copy(s.RouteClassID[:], rt)
 		if prevAcc.Valid {
@@ -174,19 +174,19 @@ func (r *PartitionRepo) QueryFlowRollupStats(ctx context.Context, routeClass dom
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("routing flow rollup query: %w", err)
+		return nil, fmt.Errorf("routing flow fact query: %w", err)
 	}
 	return out, nil
 }
 
-// QueryQualityRollupStats 组合面委托（service.Store 能力探测经此达 Partitions）。
-func (r *Repository) QueryQualityRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
-	return r.Partitions.QueryQualityRollupStats(ctx, routeClass, identityVersion, from, to)
+// QueryQualityFactStats 组合面委托（service.Store 能力探测经此达 Partitions）。
+func (r *Repository) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
+	return r.Partitions.QueryQualityFactStats(ctx, routeClass, identityVersion, from, to)
 }
 
-// QueryFlowRollupStats 组合面委托（同上）。
-func (r *Repository) QueryFlowRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
-	return r.Partitions.QueryFlowRollupStats(ctx, routeClass, identityVersion, from, to)
+// QueryFlowFactStats 组合面委托（同上）。
+func (r *Repository) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
+	return r.Partitions.QueryFlowFactStats(ctx, routeClass, identityVersion, from, to)
 }
 
 // parseRoutingHist parses a Postgres bigint[] literal ("{1,2,3}") into a slice;

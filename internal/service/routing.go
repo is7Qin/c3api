@@ -5,7 +5,7 @@
 package service
 
 // 路由观测查询面（service lane）：routing flow / quality-cost frontier /
-// plan explanation 三个只读聚合入口。数据源钉死为 rollup 表（repository 聚合读）
+// plan explanation 三个只读聚合入口。数据源钉死为事实表（repository 聚合读）
 // 与 scheduler 当前发布计划的防御性投影——绝不查 usage_logs/err_logs，绝不在
 // 查询路径重编译/重过滤。丢失计数（incomplete/overflow/crash-unobservable）
 // 只来自本进程 quality 观测面，与上游失败语义严格分离。
@@ -29,11 +29,11 @@ type RoutingPlanProvider interface {
 	CurrentRoutingPlan() *scheduler.RoutingPlan
 }
 
-// RoutingRollupReader rollup 聚合读能力（实现 = *repository.Repository 对
+// RoutingFactReader 事实表聚合读能力（实现 = *repository.Repository 对
 // Partitions 的委托，经 s.store 能力探测）。
-type RoutingRollupReader interface {
-	QueryQualityRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]repository.RoutingQualityStat, error)
-	QueryFlowRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]repository.RoutingFlowStat, error)
+type RoutingFactReader interface {
+	QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]repository.RoutingQualityStat, error)
+	QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]repository.RoutingFlowStat, error)
 }
 
 // routingLoss 进程观测 flow 丢失计数接缝（quality 包级原子计数器的读取面；
@@ -150,7 +150,7 @@ type RoutingFlowLane struct {
 	Edges   []RoutingFlowEdge
 }
 
-// RoutingFlowResult flow 聚合结果。守恒：完整链才入 rollup，故
+// RoutingFlowResult flow 聚合结果。守恒：完整链才入事实表，故
 // FirstDispatchChains（ordinal=1 链数和 = Attempt1）恒等于 TerminalChains
 // （is_terminal 链数和）；三个丢失计数是独立观测口径，不得混入边/结局语义。
 //
@@ -222,11 +222,11 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 	if err != nil {
 		return nil, err
 	}
-	reader, ok := s.store.(RoutingRollupReader)
+	reader, ok := s.store.(RoutingFactReader)
 	if !ok {
 		return nil, errRoutingNotWired
 	}
-	rows, err := reader.QueryFlowRollupStats(ctx, rc, int16(domain.RoutingIdentityVersion), q.From, q.To)
+	rows, err := reader.QueryFlowFactStats(ctx, rc, int16(domain.RoutingIdentityVersion), q.From, q.To)
 	if err != nil {
 		return nil, err
 	}

@@ -115,7 +115,7 @@ cd web && pnpm install && pnpm run dev
                      │   errlog / scheduler / notify │
                      │   retention / stats-agg /     │
                      │   pricing-sync / rule-engine  │
-                      │   quality-sync/routing-rollup │
+                      │   quality-sync                │
                       │   auth-sync / invalidate /    │
                       │   discovery                   │
                     └───────┼───────────────┼──────┘
@@ -127,7 +127,7 @@ cd web && pnpm install && pnpm run dev
 
 - **单二进制**：前端经 `go:embed` 内嵌，运行时 = 一个 `server` 进程 + 挂载的配置文件。
 - **网关无状态、状态在 DB**：共享状态全部在 PostgreSQL，实例间经 `c3api_invalidate` 通道 `NOTIFY` 协调；多实例预算分摊基数 N 经 Redis 心跳自动发现——加实例即扩容（无手工设置）。
-- **常驻 worker**：计费扣减、用量/统计落库、错误审计、分区保留、离线聚合、价格同步、实时质量同步（`quality-sync`）、路由分钟聚合（`routing-rollup`）与规则调度均为长驻 worker，支持优雅停机排空；路由计划编译器不是独立 worker，它是 scheduler 内的串行编译道，成功/失败新鲜度经 scheduler 观测面上报。
+- **常驻 worker**：计费扣减、用量/统计落库、错误审计、分区保留、离线聚合、价格同步、实时质量同步（`quality-sync`）与规则调度均为长驻 worker，支持优雅停机排空；路由计划编译器不是独立 worker，它是 scheduler 内的串行编译道，成功/失败新鲜度经 scheduler 观测面上报。
 
 ## 性能
 

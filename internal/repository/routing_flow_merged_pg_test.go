@@ -20,8 +20,8 @@ func mergedKeyColumns(t *testing.T, pool *pgxpool.Pool) []string {
 	return indexColumns(t, pool, "routing_flow_fact_uniq")
 }
 
-// flowRollupColumnSet 返回合并层表的列名集合（catalog 事实）。
-func flowRollupColumnSet(t *testing.T, pool *pgxpool.Pool) map[string]bool {
+// flowFactColumnSet 返回合并层表的列名集合（catalog 事实）。
+func flowFactColumnSet(t *testing.T, pool *pgxpool.Pool) map[string]bool {
 	t.Helper()
 	rows, err := pool.Query(context.Background(),
 		`SELECT column_name FROM information_schema.columns WHERE table_name = 'routing_flow_fact'`)
@@ -83,7 +83,7 @@ func TestRoutingFlowMergedKeyExactPG(t *testing.T) {
 		"outcome", "is_terminal",
 	}, mergedKeyColumns(t, pool), "merged-layer unique key drifted from the specified identity")
 
-	cols := flowRollupColumnSet(t, pool)
+	cols := flowFactColumnSet(t, pool)
 	require.NotContains(t, cols, "candidate_fingerprint",
 		"flow identity must not carry the fingerprint dimension (it can no longer add rows)")
 	require.NotContains(t, cols, "generation", "generation must be demoted to the aggregate min_generation column")
@@ -229,26 +229,26 @@ func TestRoutingFlowRollupWindowAlignmentPG(t *testing.T) {
 	}
 
 	// 非对齐输入 → 截断到分钟：from=base+30s → base，to=base+2m+30s → base+2m。
-	stats, err := repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, base.Add(30*time.Second), base.Add(2*time.Minute+30*time.Second))
+	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base.Add(30*time.Second), base.Add(2*time.Minute+30*time.Second))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(3), stats[0].ChainCount,
 		"from row included (1) + middle row (2); the to-minute row (4) must be excluded")
 
 	// from 整分钟行 included；to 整分钟行 excluded。
-	stats, err = repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, base.Add(time.Minute), base.Add(3*time.Minute))
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base.Add(time.Minute), base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(6), stats[0].ChainCount, "from-minute row (2) + next row (4)")
 
 	// 单分钟窗口 [base+2m, base+3m)：恰含最后一行。
-	stats, err = repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, base.Add(2*time.Minute), base.Add(3*time.Minute))
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base.Add(2*time.Minute), base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(4), stats[0].ChainCount)
 
 	// 空窗口（to == from）不报错，返回空。
-	stats, err = repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, base, base)
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base, base)
 	require.NoError(t, err)
 	require.Empty(t, stats)
 }
@@ -275,7 +275,7 @@ func TestRoutingFlowMergedStaleGenerationPredicatePG(t *testing.T) {
 
 	// 混代际：gen5 + gen7 折叠为一行。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-Stale", m, 1, 1, []repository.RoutingFlowRow{row(5, 10), row(7, 5)}))
-	stats, err := repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, m, m.Add(time.Minute))
+	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, 1, m, m.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(5), stats[0].MinGeneration)
@@ -284,7 +284,7 @@ func TestRoutingFlowMergedStaleGenerationPredicatePG(t *testing.T) {
 
 	// 仅当前代际：同一分片以新序号整分片重写为单一 gen7 行。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-Stale", m, 1, 2, []repository.RoutingFlowRow{row(7, 5)}))
-	stats, err = repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, m, m.Add(time.Minute))
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, m, m.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(7), stats[0].MinGeneration)

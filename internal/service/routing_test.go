@@ -5,7 +5,7 @@
 package service
 
 // service lane：routing flow / frontier / plan explanation 聚合查询的
-// 单元测试。rollup 行由 fakeStore 供给（不触 PG），计划目录由 fake provider
+// 单元测试。聚合行由 fakeStore 供给（不触 PG），计划目录由 fake provider
 // 供给（不触 compiler），丢失计数经 routingLoss 接缝注入确定值。
 
 import (
@@ -23,32 +23,32 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-// --- fakeStore rollup 面 ---
+// --- fakeStore 事实读面 ---
 
-func (f *fakeStore) QueryQualityRollupStats(_ context.Context, routeClass domain.RouteClassIDVal, version int16, from, to time.Time) ([]repository.RoutingQualityStat, error) {
+func (f *fakeStore) QueryQualityFactStats(_ context.Context, routeClass domain.RouteClassIDVal, version int16, from, to time.Time) ([]repository.RoutingQualityStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.routingRollupCall = struct {
+	f.routingFactCall = struct {
 		routeClass domain.RouteClassIDVal
 		version    int16
 		from, to   time.Time
 	}{routeClass, version, from, to}
-	if f.routingRollupErr != nil {
-		return nil, f.routingRollupErr
+	if f.routingFactErr != nil {
+		return nil, f.routingFactErr
 	}
 	return f.routingQualityRows, nil
 }
 
-func (f *fakeStore) QueryFlowRollupStats(_ context.Context, routeClass domain.RouteClassIDVal, version int16, from, to time.Time) ([]repository.RoutingFlowStat, error) {
+func (f *fakeStore) QueryFlowFactStats(_ context.Context, routeClass domain.RouteClassIDVal, version int16, from, to time.Time) ([]repository.RoutingFlowStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.routingRollupCall = struct {
+	f.routingFactCall = struct {
 		routeClass domain.RouteClassIDVal
 		version    int16
 		from, to   time.Time
 	}{routeClass, version, from, to}
-	if f.routingRollupErr != nil {
-		return nil, f.routingRollupErr
+	if f.routingFactErr != nil {
+		return nil, f.routingFactErr
 	}
 	return f.routingFlowRows, nil
 }
@@ -64,10 +64,10 @@ func (f *fakeRoutingSched) Runtime(int64) (scheduler.RuntimeInfo, bool) {
 func (f *fakeRoutingSched) Runtimes() []scheduler.AccountRuntime       { return nil }
 func (f *fakeRoutingSched) CurrentRoutingPlan() *scheduler.RoutingPlan { return f.plan }
 
-// fakeStoreNoRollup 只满足 Store 组合面（rollup 能力探测必失败）。
-type fakeStoreNoRollup struct{ Store }
+// fakeStoreNoFacts 只满足 Store 组合面（事实读能力探测必失败）。
+type fakeStoreNoFacts struct{ Store }
 
-func (fakeStoreNoRollup) GetAllSettings(context.Context) ([]*domain.Setting, error) { return nil, nil }
+func (fakeStoreNoFacts) GetAllSettings(context.Context) ([]*domain.Setting, error) { return nil, nil }
 
 func fpHex(fill byte) string {
 	var b [32]byte
@@ -178,14 +178,14 @@ func TestRoutingFlow_RouteCatalogValidation(t *testing.T) {
 
 	_, err = svc.QueryRoutingFlow(ctx, RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour)})
 	require.NoError(t, err)
-	require.Equal(t, int16(domain.RoutingIdentityVersion), fs.routingRollupCall.version, "rollup filter must pin current identity version")
-	require.True(t, fs.routingRollupCall.from.Equal(routingBase))
-	require.True(t, fs.routingRollupCall.to.Equal(routingBase.Add(time.Hour)))
+	require.Equal(t, int16(domain.RoutingIdentityVersion), fs.routingFactCall.version, "fact filter must pin current identity version")
+	require.True(t, fs.routingFactCall.from.Equal(routingBase))
+	require.True(t, fs.routingFactCall.to.Equal(routingBase.Add(time.Hour)))
 }
 
 func TestRoutingFlow_NotWired(t *testing.T) {
 	plan, idHex, _ := routingFixturePlan()
-	svc := New(&fakeStoreNoRollup{}, &fakeRoutingSched{plan: plan}, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
+	svc := New(&fakeStoreNoFacts{}, &fakeRoutingSched{plan: plan}, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
 	_, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour)})
 	require.ErrorIs(t, err, errRoutingNotWired)
 }

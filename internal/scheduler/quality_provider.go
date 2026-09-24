@@ -88,7 +88,7 @@ type WindowSettledBaseline struct {
 	Successes int64
 }
 
-// WindowSettledSource reads the settled PG rollup (refreshed per M only).
+// WindowSettledSource reads the settled PG fact table (refreshed per M only).
 type WindowSettledSource interface {
 	QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]WindowSettledCurrent, error)
 	QueryBaselineTruncated(ctx context.Context, identityVersion int16, evaluatedMinute time.Time, hotKeys []WindowSettledHotKey) ([]WindowSettledBaseline, error)
