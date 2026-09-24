@@ -81,13 +81,13 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_quality_fact", "routing_flow_rollup"} {
+	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_quality_fact", "routing_flow_fact"} {
 		parted, err := repos.Partitions.IsTablePartitioned(ctx, tbl)
 		require.NoError(t, err)
 		require.True(t, parted, "%s partitioned", tbl)
 	}
 	today := now.UTC().Truncate(24 * time.Hour)
-	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_quality_fact", "routing_flow_rollup"} {
+	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_quality_fact", "routing_flow_fact"} {
 		rows, err := pool.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_inherits i ON i.inhrelid=c.oid JOIN pg_class p ON p.oid=i.inhparent JOIN pg_namespace n ON n.oid=c.relnamespace WHERE p.relname=$1 AND n.nspname=current_schema()`, tbl)
 		require.NoError(t, err)
 		var names []string
@@ -112,8 +112,8 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_quality_instance_minute' AND column_name=$1`, col).Scan(&n))
 		require.Equal(t, int64(1), n, "missing col %s", col)
 	}
-	for _, col := range []string{"previous_outcome", "transition_reason", "absolute_sequence", "instance_src", "min_generation"} {
-		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_flow_rollup' AND column_name=$1`, col).Scan(&n))
+	for _, col := range []string{"previous_outcome", "transition_reason", "instance_src", "min_generation"} {
+		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_flow_fact' AND column_name=$1`, col).Scan(&n))
 		require.Equal(t, int64(1), n, "missing flow col %s", col)
 	}
 }
@@ -261,30 +261,30 @@ func TestRoutingFlowSnapshotPG(t *testing.T) {
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 10, rows))
 	var cnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt)
 	// equal sequence divergent must not mutate
 	rowsDiv := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "degraded", AccountID: 99, PreviousOutcome: "", TransitionReason: "initial", Outcome: "fail", IsTerminal: true, Generation: 1, InstanceSrc: "src-B", ChainCount: 99},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 10, rowsDiv))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt, "equal sequence must not replace")
 	var lane string
-	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2 AND ordinal=1`, "src-B", now).Scan(&lane))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2 AND ordinal=1`, "src-B", now).Scan(&lane))
 	require.Equal(t, "primary", lane)
 	// greater sequence replaces complete set (deletes omitted stale edges)
 	rows2 := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "explore", AccountID: 5, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 2, InstanceSrc: "src-B", ChainCount: 1},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 11, rows2))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(1), cnt, "greater sequence must replace with new edge set")
-	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&lane))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT lane FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&lane))
 	require.Equal(t, "explore", lane)
 	// lower sequence must not mutate
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 9, rows))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, "src-B", now).Scan(&cnt))
 	require.Equal(t, int64(1), cnt, "lower sequence must not mutate")
 }
 
@@ -301,7 +301,7 @@ func TestRoutingFlowDimensionUniquenessPG(t *testing.T) {
 	// these two edges differ only in previous_outcome/transition_reason, must both persist (no collapse)
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-C", now, 1, 5, rows))
 	var cnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-C' AND terminal_minute=$1`, now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src='src-C' AND terminal_minute=$1`, now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt, "distinct edges must not collapse")
 }
 
@@ -388,7 +388,7 @@ func TestRoutingPartitionRetentionPG(t *testing.T) {
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	for _, d := range []string{"20260728", "20260729"} {
-		for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
+		for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_flow_fact"} {
 			pgExec(t, pool, `CREATE TABLE `+tbl+`_`+d+` PARTITION OF `+tbl+` FOR VALUES FROM ('`+mustISODate(d)+` 00:00:00+00') TO ('`+mustNextISODate(d)+` 00:00:00+00')`)
 		}
 	}
@@ -398,7 +398,7 @@ func TestRoutingPartitionRetentionPG(t *testing.T) {
 	n, err = repos.Partitions.DropRoutingQualityRollupBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
-	n, err = repos.Partitions.DropRoutingFlowRollupBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
+	n, err = repos.Partitions.DropRoutingFlowFactBefore(ctx, time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC))
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
 }
@@ -468,19 +468,19 @@ func TestRoutingFlowEmptySnapshotPG(t *testing.T) {
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 10, rows10))
 	var cnt int64
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(1), cnt)
 	// empty snapshot with higher sequence should delete all
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 11, nil))
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(0), cnt, "empty higher seq must delete")
 	// stale seq10 must not repopulate
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 10, rows10))
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(0), cnt, "stale seq10 must remain empty")
 	// seq12 repopulates
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-E", now, 1, 12, rows10))
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src='src-E' AND terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(1), cnt, "seq12 must repopulate")
 }
 
@@ -537,10 +537,10 @@ func TestRoutingFlowSnapshotDirectWritePG(t *testing.T) {
 	// RollupFlow 中间道。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-PF", now, 1, 1, rows))
 	var rollCnt int64
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&rollCnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE terminal_minute=$1`, now).Scan(&rollCnt)
 	require.Equal(t, int64(1), rollCnt, "snapshot writes the merged row directly")
 	var minGen int64
-	pool.QueryRow(ctx, `SELECT min_generation FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&minGen)
+	pool.QueryRow(ctx, `SELECT min_generation FROM routing_flow_fact WHERE terminal_minute=$1`, now).Scan(&minGen)
 	require.Equal(t, int64(1), minGen)
 	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
 	require.False(t, dirty, "flow writes no dirty bit anymore")
@@ -598,13 +598,13 @@ func TestRoutingFlowSnapshotSuccessPG(t *testing.T) {
 	// S3 起快照直写合并层，无 RollupFlow 中间道。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-RF", now, 1, 1, rows))
 	var cnt int64
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&cnt)
+	pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE terminal_minute=$1`, now).Scan(&cnt)
 	require.Equal(t, int64(2), cnt, "no collapse")
 	var prevAcc sql.NullInt64
 	var prevOut, trans, out string
 	var isTerm bool
 	var gen int64
-	pool.QueryRow(ctx, `SELECT previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, min_generation FROM routing_flow_rollup WHERE terminal_minute=$1 AND ordinal=2`, now).Scan(&prevAcc, &prevOut, &trans, &out, &isTerm, &gen)
+	pool.QueryRow(ctx, `SELECT previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, min_generation FROM routing_flow_fact WHERE terminal_minute=$1 AND ordinal=2`, now).Scan(&prevAcc, &prevOut, &trans, &out, &isTerm, &gen)
 	require.True(t, prevAcc.Valid)
 	require.Equal(t, int64(10), prevAcc.Int64)
 	require.Equal(t, "success", prevOut)
@@ -761,7 +761,7 @@ func TestRoutingFlowSnapshotGateBarrierPG(t *testing.T) {
 	_, err = pool.Exec(ctx, "CREATE OR REPLACE FUNCTION gate_f_fn() RETURNS trigger AS $$ BEGIN PERFORM pg_advisory_xact_lock(91002::bigint); RETURN NEW; END; $$ LANGUAGE plpgsql;")
 	require.NoError(t, err)
 	partSuffix2 := now.Format("20060102")
-	_, err = pool.Exec(ctx, fmt.Sprintf("CREATE TRIGGER gate_f_trg BEFORE INSERT ON routing_flow_rollup_%s FOR EACH ROW EXECUTE FUNCTION gate_f_fn();", partSuffix2))
+	_, err = pool.Exec(ctx, fmt.Sprintf("CREATE TRIGGER gate_f_trg BEFORE INSERT ON routing_flow_fact_%s FOR EACH ROW EXECUTE FUNCTION gate_f_fn();", partSuffix2))
 	require.NoError(t, err)
 	var holderPid2 int
 	_ = gateTx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&holderPid2)
@@ -793,7 +793,7 @@ func TestRoutingFlowSnapshotGateBarrierPG(t *testing.T) {
 			case <-time.After(2 * time.Second):
 			}
 		}
-		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_rollup_%s;", partSuffix2))
+		pool.Exec(context.Background(), fmt.Sprintf("DROP TRIGGER IF EXISTS gate_f_trg ON routing_flow_fact_%s;", partSuffix2))
 		pool.Exec(context.Background(), "DROP FUNCTION IF EXISTS gate_f_fn();")
 		writerPool2.Close()
 	})
@@ -826,7 +826,7 @@ func TestRoutingFlowSnapshotGateBarrierPG(t *testing.T) {
 		t.Fatal("flow writer did not complete")
 	}
 	var acct int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT account_id FROM routing_flow_rollup WHERE terminal_minute=$1 AND instance_src='src-GF'`, now).Scan(&acct))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT account_id FROM routing_flow_fact WHERE terminal_minute=$1 AND instance_src='src-GF'`, now).Scan(&acct))
 	require.Equal(t, int64(2), acct, "second snapshot replaced own shard after gate release")
 	dirty, _ := repos.Partitions.IsDirty(ctx, "flow", 1, now)
 	require.False(t, dirty)

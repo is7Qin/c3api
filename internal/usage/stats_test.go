@@ -133,7 +133,7 @@ func (c *countingPartitionManager) DropRoutingQualityInstanceBefore(ctx context.
 func (c *countingPartitionManager) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
-func (c *countingPartitionManager) DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
+func (c *countingPartitionManager) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
 func (c *countingPartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {

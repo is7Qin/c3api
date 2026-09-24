@@ -14,7 +14,7 @@ import (
 )
 
 // Routing rollup read face (repository lane): aggregate reads over
-// routing_quality_fact / routing_flow_rollup ONLY — never instance tables,
+// routing_quality_fact / routing_flow_fact ONLY — never instance tables,
 // never raw usage/err logs. Half-open window [from, to) on the bucket column,
 // direct route_class_id + identity_version filters, SUM aggregation grouped by
 // the complete edge/candidate identity, deterministic ORDER BY, non-nil empty
@@ -98,16 +98,16 @@ GROUP BY f.route_class_id, f.quality_class_id, f.candidate_fingerprint
 ORDER BY f.quality_class_id, f.candidate_fingerprint`
 
 // flowRollupStatsSQL groups by the merged edge identity (every dimension of
-// routing_flow_rollup_uniq except terminal_minute/identity_version/instance_src)
+// routing_flow_fact_uniq except terminal_minute/identity_version/instance_src)
 // and aggregates cross-shard: SUM(chain_count), MIN(min_generation).
 // NULL previous_account_id pinned first for a total order. The access path is
 // (route_class_id, identity_version, terminal_minute range), served by the
-// routing_flow_merged_read index (A14 asserts via EXPLAIN).
+// routing_flow_fact_read index (A14 asserts via EXPLAIN).
 const flowRollupStatsSQL = `
 SELECT route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
 	transition_reason, outcome, is_terminal,
 	MIN(min_generation)::bigint, SUM(chain_count)::bigint
-FROM routing_flow_rollup
+FROM routing_flow_fact
 WHERE route_class_id = $1 AND identity_version = $2 AND terminal_minute >= $3 AND terminal_minute < $4
 GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
 	transition_reason, outcome, is_terminal
@@ -147,7 +147,7 @@ func (r *PartitionRepo) QueryQualityRollupStats(ctx context.Context, routeClass 
 	return out, nil
 }
 
-// QueryFlowRollupStats aggregates routing_flow_rollup over the half-open minute
+// QueryFlowRollupStats aggregates routing_flow_fact over the half-open minute
 // window [from, to) for one route class + identity version, one row per
 // complete edge identity.
 func (r *PartitionRepo) QueryFlowRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {

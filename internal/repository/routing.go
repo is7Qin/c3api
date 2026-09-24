@@ -99,7 +99,7 @@ var routingQualityFactIndexDDLs = []string{
 }
 
 // routing_flow_instance_minute 已随 S2′/S3 删除：实例层与 rollup 层合并为
-// routing_flow_rollup 单层（instance_src 为身份维度），不再有独立暂存表。
+// routing_flow_fact 单层（instance_src 为身份维度），不再有独立暂存表。
 
 var routingQualityRollupColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('routing_quality_rollup_id_seq'::regclass)`,
@@ -134,11 +134,13 @@ var routingQualityRollupIndexDDLs = []string{
 	`CREATE INDEX routing_quality_rollup_candidate ON routing_quality_rollup (route_class_id, candidate_fingerprint, bucket_minute DESC)`,
 }
 
-// routing_flow_rollup 即合并流层 S2′：旧边身份减 generation、
+// routing_flow_fact 即合并流层 S2′：旧边身份减 generation、
 // candidate_fingerprint，加 instance_src（分片身份）。chain_count 为事件累加
 // 的精确和，非负不变式由写面累加语义保证，DB 不加 CHECK（Beta 无迁移路径）。
-var routingFlowRollupColumnDefs = []string{
-	`id bigint NOT NULL DEFAULT nextval('routing_flow_rollup_id_seq'::regclass)`,
+// absolute_sequence 已删除：该列只写不读，片级写守卫读的是
+// routing_flow_snapshot_state.highest_sequence，列本身无任何读取方。
+var routingFlowFactColumnDefs = []string{
+	`id bigint NOT NULL DEFAULT nextval('routing_flow_fact_id_seq'::regclass)`,
 	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
 	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
 	`terminal_minute timestamptz NOT NULL`,
@@ -152,16 +154,15 @@ var routingFlowRollupColumnDefs = []string{
 	`is_terminal boolean NOT NULL`,
 	`instance_src text NOT NULL`,
 	`min_generation bigint NOT NULL`,
-	`absolute_sequence bigint NOT NULL`,
 	`chain_count bigint NOT NULL DEFAULT 0`,
 	`updated_at timestamptz NOT NULL`,
 }
 
-var routingFlowRollupCreateDDL = partitionedCreateDDL("routing_flow_rollup", "terminal_minute", routingFlowRollupColumnDefs)
+var routingFlowFactCreateDDL = partitionedCreateDDL("routing_flow_fact", "terminal_minute", routingFlowFactColumnDefs)
 
-var routingFlowRollupIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_rollup_uniq ON routing_flow_rollup (terminal_minute, instance_src, identity_version, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT`,
-	`CREATE INDEX routing_flow_merged_read ON routing_flow_rollup (route_class_id, identity_version, terminal_minute)`,
+var routingFlowFactIndexDDLs = []string{
+	`CREATE UNIQUE INDEX routing_flow_fact_uniq ON routing_flow_fact (terminal_minute, instance_src, identity_version, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT`,
+	`CREATE INDEX routing_flow_fact_read ON routing_flow_fact (route_class_id, identity_version, terminal_minute)`,
 }
 
 // ErrRoutingSnapshotBeyondRetention 快照分钟早于观测保留截止（§5.4 写面守卫）。
@@ -217,8 +218,8 @@ func (r *PartitionRepo) EnsureRoutingQualityFactPartitioned(ctx context.Context,
 func (r *PartitionRepo) EnsureRoutingQualityRollupPartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_rollup", "bucket_minute", routingQualityRollupColumnDefs, routingQualityRollupIndexDDLs, now)
 }
-func (r *PartitionRepo) EnsureRoutingFlowRollupPartitioned(ctx context.Context, now time.Time) error {
-	return r.ensureTablePartitioned(ctx, "routing_flow_rollup", "terminal_minute", routingFlowRollupColumnDefs, routingFlowRollupIndexDDLs, now)
+func (r *PartitionRepo) EnsureRoutingFlowFactPartitioned(ctx context.Context, now time.Time) error {
+	return r.ensureTablePartitioned(ctx, "routing_flow_fact", "terminal_minute", routingFlowFactColumnDefs, routingFlowFactIndexDDLs, now)
 }
 func (r *PartitionRepo) EnsureRoutingDirty(ctx context.Context) error {
 	return r.execDDLTolerateRace(ctx, routingDirtyDDL)
@@ -243,7 +244,7 @@ func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Ti
 	if err := r.EnsureRoutingQualityRollupPartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality rollup: %w", err)
 	}
-	if err := r.EnsureRoutingFlowRollupPartitioned(ctx, now); err != nil {
+	if err := r.EnsureRoutingFlowFactPartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing flow rollup: %w", err)
 	}
 	if err := r.EnsureRoutingDirty(ctx); err != nil {
@@ -277,7 +278,7 @@ func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, 
 	if err := r.EnsureTablePartitions(ctx, "routing_quality_rollup", now, until); err != nil {
 		return err
 	}
-	if err := r.EnsureTablePartitions(ctx, "routing_flow_rollup", now, until); err != nil {
+	if err := r.EnsureTablePartitions(ctx, "routing_flow_fact", now, until); err != nil {
 		return err
 	}
 	return nil
@@ -292,8 +293,8 @@ func (r *PartitionRepo) DropRoutingQualityFactBefore(ctx context.Context, cutoff
 func (r *PartitionRepo) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_rollup", cutoff)
 }
-func (r *PartitionRepo) DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.DropTablePartitionsBefore(ctx, "routing_flow_rollup", cutoff)
+func (r *PartitionRepo) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.DropTablePartitionsBefore(ctx, "routing_flow_fact", cutoff)
 }
 
 type RoutingQualityRow struct {
@@ -556,7 +557,7 @@ func (r *PartitionRepo) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context
 // UpsertFlowSnapshot replaces the complete edge set for (terminal_minute, instance_src, identity_version) atomically.
 // Only greater absolute_sequence replaces; equal or lower does not mutate. Uses durable authority table routing_flow_snapshot_state
 // so even empty snapshots advance sequence and remain authoritative independent of edge rows.
-// 写合并表 routing_flow_rollup（S2′）：只删己分片（minute+instance+version），
+// 写合并表 routing_flow_fact（S2′）：只删己分片（minute+instance+version），
 // 同分片多代际输入写面折叠（chain_count 求和、min_generation 取最小）。
 // 无下游重算，不再 markDirty("flow")；dirty 仅剩 kind='quality'。
 func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []RoutingFlowRow) error {
@@ -592,13 +593,13 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	if hasState && curSeq.Valid && absoluteSequence <= curSeq.Int64 {
 		return tx.Commit()
 	}
-	if err := drv.Exec(ctx, `DELETE FROM routing_flow_rollup WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
+	if err := drv.Exec(ctx, `DELETE FROM routing_flow_fact WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
 		return err
 	}
 	for _, row := range foldFlowRows(rows) {
-		q := `INSERT INTO routing_flow_rollup (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, instance_src, min_generation, absolute_sequence, chain_count, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15, now())`
-		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, instanceSrc, row.Generation, absoluteSequence, row.ChainCount}, &res); err != nil {
+		q := `INSERT INTO routing_flow_fact (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, instance_src, min_generation, chain_count, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`
+		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, instanceSrc, row.Generation, row.ChainCount}, &res); err != nil {
 			return err
 		}
 	}

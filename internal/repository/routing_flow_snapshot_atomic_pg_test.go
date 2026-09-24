@@ -37,12 +37,12 @@ func TestRoutingFlowSnapshotAtomicRollbackPG(t *testing.T) {
 	// the DELETE and the first INSERT of the seq2 attempt.
 	_, err := pool.Exec(ctx, `CREATE OR REPLACE FUNCTION tmp_flow_fail_sentinel() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.chain_count = 777 THEN RAISE EXCEPTION 'tmp sentinel failure'; END IF; RETURN NEW; END;$$`)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, `DROP TRIGGER IF EXISTS tmp_flow_fail ON routing_flow_rollup`)
+	_, err = pool.Exec(ctx, `DROP TRIGGER IF EXISTS tmp_flow_fail ON routing_flow_fact`)
 	require.NoError(t, err)
-	_, err = pool.Exec(ctx, `CREATE TRIGGER tmp_flow_fail BEFORE INSERT ON routing_flow_rollup FOR EACH ROW WHEN (NEW.chain_count = 777) EXECUTE FUNCTION tmp_flow_fail_sentinel()`)
+	_, err = pool.Exec(ctx, `CREATE TRIGGER tmp_flow_fail BEFORE INSERT ON routing_flow_fact FOR EACH ROW WHEN (NEW.chain_count = 777) EXECUTE FUNCTION tmp_flow_fail_sentinel()`)
 	require.NoError(t, err)
 	t.Cleanup(func() {
-		_, _ = pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS tmp_flow_fail ON routing_flow_rollup`)
+		_, _ = pool.Exec(context.Background(), `DROP TRIGGER IF EXISTS tmp_flow_fail ON routing_flow_fact`)
 		_, _ = pool.Exec(context.Background(), `DROP FUNCTION IF EXISTS tmp_flow_fail_sentinel()`)
 	})
 
@@ -56,10 +56,10 @@ func TestRoutingFlowSnapshotAtomicRollbackPG(t *testing.T) {
 
 	// Old seq1 rows and highest_sequence=1 remain unchanged.
 	var cnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, src, now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, src, now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt, "failed replacement must leave old rows untouched")
 	var accounts []int64
-	rows, err := pool.Query(ctx, `SELECT account_id FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2 ORDER BY ordinal`, src, now)
+	rows, err := pool.Query(ctx, `SELECT account_id FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2 ORDER BY ordinal`, src, now)
 	require.NoError(t, err)
 	for rows.Next() {
 		var a int64
@@ -74,14 +74,14 @@ func TestRoutingFlowSnapshotAtomicRollbackPG(t *testing.T) {
 
 	// Drop the trigger and retry seq2 without the sentinel: full replacement
 	// with highest_sequence=2.
-	_, err = pool.Exec(ctx, `DROP TRIGGER tmp_flow_fail ON routing_flow_rollup`)
+	_, err = pool.Exec(ctx, `DROP TRIGGER tmp_flow_fail ON routing_flow_fact`)
 	require.NoError(t, err)
 	seq2[1].ChainCount = 3
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, src, now, 1, 2, seq2))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, src, now).Scan(&cnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, src, now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt)
 	accounts = nil
-	rows, err = pool.Query(ctx, `SELECT account_id FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2 ORDER BY ordinal`, src, now)
+	rows, err = pool.Query(ctx, `SELECT account_id FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2 ORDER BY ordinal`, src, now)
 	require.NoError(t, err)
 	for rows.Next() {
 		var a int64
