@@ -18,12 +18,12 @@ import (
 )
 
 // A14：读支撑索引生效。跨分片读的访问路径是
-// (route_class_id, identity_version, terminal_minute 范围)；新唯一索引以
+// (route_class_id, terminal_minute 范围)；新唯一索引以
 // terminal_minute 起头不服务该路径，故必须显式建
-// routing_flow_merged_read。本测试以 EXPLAIN 断言该索引被选中且无 Seq Scan，
+// routing_flow_fact_read。本测试以 EXPLAIN 断言该索引被选中且无 Seq Scan，
 // 并以 EXPLAIN ANALYZE 实测跨分片扇出 ≤ 实例数 × 窗口分钟数。
 //
-// 引用生产 SQL 常量 flowRollupStatsSQL（同包），故计划断言不会与发布 SQL 漂移。
+// 引用生产 SQL 常量 flowFactStatsSQL（同包），故计划断言不会与发布 SQL 漂移。
 type mergedReadPlanNode struct {
 	NodeType     string                `json:"Node Type"`
 	RelationName string                `json:"Relation Name"`
@@ -96,11 +96,11 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 		for min := 0; min < windowMinutes; min++ {
 			minute := from.Add(time.Duration(min) * time.Minute)
 			// 热类：每 (实例, 分钟) 恰一条边身份——扇出上界 = 实例数 × 窗口分钟数。
-			batch.Queue(`INSERT INTO routing_flow_rollup
-				(identity_version, route_class_id, terminal_minute, ordinal, lane, account_id,
+			batch.Queue(`INSERT INTO routing_flow_fact
+				(route_class_id, terminal_minute, ordinal, lane, account_id,
 				 previous_outcome, transition_reason, outcome, is_terminal, instance_src,
-				 min_generation, absolute_sequence, chain_count, updated_at)
-				VALUES (1, $1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 1, 5, now())`,
+				 min_generation, chain_count, updated_at)
+				VALUES ($1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 5, now())`,
 				hotRC, minute, instancesSrc[inst])
 			// 噪声：其余路由类在同一窗口内同样铺满。
 			for c := 0; c < noiseClasses; c++ {
@@ -108,11 +108,11 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 				rc[0] = 0xD0
 				rc[1] = byte(c)
 				rc[2] = byte(c >> 8)
-				batch.Queue(`INSERT INTO routing_flow_rollup
-					(identity_version, route_class_id, terminal_minute, ordinal, lane, account_id,
+				batch.Queue(`INSERT INTO routing_flow_fact
+					(route_class_id, terminal_minute, ordinal, lane, account_id,
 					 previous_outcome, transition_reason, outcome, is_terminal, instance_src,
-					 min_generation, absolute_sequence, chain_count, updated_at)
-					VALUES (1, $1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 1, 5, now())`,
+					 min_generation, chain_count, updated_at)
+					VALUES ($1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 5, now())`,
 					rc, minute, instancesSrc[inst])
 			}
 		}
@@ -120,12 +120,12 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 	br := pool.SendBatch(ctx, batch)
 	_, err = br.Exec()
 	require.NoError(t, br.Close())
-	_, err = pool.Exec(ctx, `ANALYZE routing_flow_rollup`)
+	_, err = pool.Exec(ctx, `ANALYZE routing_flow_fact`)
 	require.NoError(t, err)
 
 	var planJSON string
-	err = pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) `+flowRollupStatsSQL,
-		hotRC, int16(1), from, m).Scan(&planJSON)
+	err = pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) `+flowFactStatsSQL,
+		hotRC, from, m).Scan(&planJSON)
 	require.NoError(t, err)
 	t.Logf("merged read plan: %s", planJSON)
 	var plan []struct {
@@ -144,18 +144,18 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 			indexNames = append(indexNames, n.IndexName)
 		}
 	})
-	require.False(t, seqScan, "cross-shard flow read must not seq-scan routing_flow_rollup")
+	require.False(t, seqScan, "cross-shard flow read must not seq-scan routing_flow_fact")
 	require.NotEmpty(t, indexNames, "cross-shard flow read must go through an index")
 	// 分区表的子索引名由「分区表名 + 列名」自动派生，不含父索引名，故必须把
 	// 用到的子索引经 pg_inherits 解析回父索引再断言（父名才是 DDL 承诺的那一个）。
-	require.Contains(t, parentIndexNames(t, ctx, pool, indexNames), "routing_flow_merged_read",
-		"cross-shard flow read must use routing_flow_merged_read; used %v", indexNames)
+	require.Contains(t, parentIndexNames(t, ctx, pool, indexNames), "routing_flow_fact_read",
+		"cross-shard flow read must use routing_flow_fact_read; used %v", indexNames)
 
 	// 扇出实测：窗口内每个 (实例, 分钟) 恰一行热类边，故堆访问行数上界 =
 	// 实例数 × 窗口分钟数（实例越多、分钟越多 → 扇出线性，绝无实例间的二次放大）。
 	var planAnalyze string
-	err = pool.QueryRow(ctx, `EXPLAIN (ANALYZE, FORMAT JSON) `+flowRollupStatsSQL,
-		hotRC, int16(1), from, m).Scan(&planAnalyze)
+	err = pool.QueryRow(ctx, `EXPLAIN (ANALYZE, FORMAT JSON) `+flowFactStatsSQL,
+		hotRC, from, m).Scan(&planAnalyze)
 	require.NoError(t, err)
 	var analyzed []struct {
 		Plan *mergedReadPlanNode `json:"Plan"`
@@ -166,7 +166,7 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 	walkMergedReadPlan(analyzed[0].Plan, func(n *mergedReadPlanNode) {
 		switch n.NodeType {
 		case "Index Scan", "Index Only Scan", "Bitmap Heap Scan":
-			if strings.Contains(n.RelationName, "routing_flow_rollup") {
+			if strings.Contains(n.RelationName, "routing_flow_fact") {
 				scanned += n.ActualRows
 			}
 		}

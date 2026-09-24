@@ -4,7 +4,7 @@
 
 package service
 
-// quality-cost frontier（service lane）：rollup 质量行 × 当前发布计划
+// quality-cost frontier（service lane）：事实表质量行 × 当前发布计划
 // 候选目录的连接视图。数学全部复用 scheduler 既有核（Wilson95 /
 // LogTTFTInterval / IsExplore / AvgTokens / SaturatingMulDiv）与 billing
 // 纯函数——本文件不新发明任何统计公式。
@@ -87,11 +87,11 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 	if err != nil {
 		return nil, err
 	}
-	reader, ok := s.store.(RoutingRollupReader)
+	reader, ok := s.store.(RoutingFactReader)
 	if !ok {
 		return nil, errRoutingNotWired
 	}
-	rows, err := reader.QueryQualityRollupStats(ctx, rc, int16(domain.RoutingIdentityVersion), q.From, q.To)
+	rows, err := reader.QueryQualityFactStats(ctx, rc, q.From, q.To)
 	if err != nil {
 		return nil, err
 	}

@@ -19,7 +19,7 @@ import (
 //     观测写面必须照常落 PG——这是"Redis 只存可丢可重建状态"的结构性保证。
 //  2. **路由存储面无任何 redis 引用**（包内 `git grep redis` 门禁形式）：新增
 //     routing 观测 Redis key（`c3api:routing:` 字面量）或 import redis 客户端
-//     即失败。观测读/写面钉死 rollup 表，不经 Redis。
+//     即失败。观测读/写面钉死事实表，不经 Redis。
 //  3. **路由 PG 套件无 Redis 全过**：本套件不读任何 Redis 环境变量、不建连接
 //     （`go test ./internal/repository/` 在无 Redis 的机器上全绿即为证据）。
 func TestRoutingStorageSurfaceHasNoRedisDependency(t *testing.T) {
@@ -30,8 +30,7 @@ func TestRoutingStorageSurfaceHasNoRedisDependency(t *testing.T) {
 	for _, name := range []string{
 		"NewWithPG",                            // 仓库构造器（生产写面入口）
 		"UpsertFlowSnapshot",                   // 合并层快照写
-		"UpsertQualityAndMarkDirty",            // quality 暂存写
-		"RollupQuality",                        // quality 汇总写
+		"UpsertQualityRow",                     // quality 事实写
 		"DeleteRoutingFlowSnapshotStateBefore", // 交接状态有界清理
 	} {
 		types := funcTypeNames(files, name)

@@ -31,9 +31,11 @@ const (
 
 var globalRecorderID atomic.Uint64
 
-// Key is the canonical routing identity of a quality cell/row: the
-// unique index (identity_version, route_class_id, quality_class_id,
-// candidate_fingerprint) minus the minute bucket.
+// Key is the canonical routing identity of a quality cell/row: the routing
+// identity-hash version plus the unique index (route_class_id, quality_class_id,
+// candidate_fingerprint) minus the minute bucket. IdentityVersion stays part of
+// the key although the DB column was dropped: it is the Redis wire and fold
+// version guard, and the first byte of every identity hash.
 type Key struct {
 	IdentityVersion int16
 	RouteClassID    [32]byte

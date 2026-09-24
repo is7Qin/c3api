@@ -480,12 +480,12 @@ func rmTCPDown(t *testing.T, addr, what string, timeout time.Duration) {
 	})
 }
 
-// rmQualityInstance DB 直读实例层某指纹 attempts/successes（live+flush 未分区感知求和）。
+// rmQualityInstance DB 直读事实表某指纹 attempts/successes（live+flush 未分区感知求和）。
 func rmQualityInstance(t *testing.T, c *rmCluster, fpHex string) (att, suc int64) {
 	t.Helper()
 	_ = c.pg.QueryRow(context.Background(), `
 		SELECT COALESCE(sum(attempts),0), COALESCE(sum(successes),0)
-		FROM routing_quality_instance_minute WHERE encode(candidate_fingerprint,'hex')=$1`, fpHex).Scan(&att, &suc)
+		FROM routing_quality_fact WHERE encode(candidate_fingerprint,'hex')=$1`, fpHex).Scan(&att, &suc)
 	return att, suc
 }
 
@@ -622,7 +622,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	t.Log("阶段 1：A 收敛 → PG rollup 落盘 → FlushDB → B 暖启动")
 	gen0, _ := rtPlan(t, envA)
 	iters := 0
-	rtPollLong(t, "A 首候选充分（DB 实例层 n>=30）", 300*time.Second, func() (bool, string) {
+	rtPollLong(t, "A 首候选充分（DB 事实表 n>=30）", 300*time.Second, func() (bool, string) {
 		iters++
 		if iters > 60 {
 			return false, "60 轮仍无候选充分"
@@ -634,7 +634,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 		}
 		best := 0
 		rows, err := c.pg.Query(ctx, `
-			SELECT COALESCE(sum(attempts),0) FROM routing_quality_instance_minute GROUP BY encode(candidate_fingerprint,'hex')`)
+			SELECT COALESCE(sum(attempts),0) FROM routing_quality_fact GROUP BY encode(candidate_fingerprint,'hex')`)
 		if err != nil {
 			return false, err.Error()
 		}
@@ -663,10 +663,10 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	})
 	genA, _ := rtPlan(t, envA)
 	require.Greater(t, genA, gen0, "质量 influx 必须推进 generation")
-	// PG 真相断言：rollup 表有行（B 恢复的数据源）；行数>0 即可，live 另计。
-	var rollupN int64
-	require.NoError(t, c.pg.QueryRow(ctx, `SELECT count(*) FROM routing_quality_rollup`).Scan(&rollupN))
-	t.Logf("A 收敛：primary=%v rollup_rows=%d（%d 轮）", primA, rollupN, iters)
+	// PG 真相断言：fact 表有行（B 恢复的数据源）；行数>0 即可，live 另计。
+	var factN int64
+	require.NoError(t, c.pg.QueryRow(ctx, `SELECT count(*) FROM routing_quality_fact`).Scan(&factN))
+	t.Logf("A 收敛：primary=%v fact_rows=%d（%d 轮）", primA, factN, iters)
 	// Redis 质量非真相：清掉全部易失态后再起 B（discovery 心跳 1s 自愈）。
 	require.NoError(t, c.rc.FlushDB(ctx).Err(), "warm-start 前 FlushDB")
 	c.envB, c.srvB, c.tmpB = rmStartInstance(t, c, rmAddrB, "rm-b")
@@ -1103,22 +1103,22 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	require.True(t, idsI[accIA] && idsI[accIB1] && idsI[accIB2], "gI 候选须齐三员：%v", idsI)
 	routeHex, _ := rI0["ref"].(map[string]any)["route_class_id"].(string)
 	require.NotEmpty(t, routeHex, "gI 路由缺 route_class_id")
-	// 先打健康流量取 (identity_version, quality_class_id)（同 format+model 跨组同类）。
+	// 先打健康流量取 quality_class_id（同 format+model 跨组同类）。
 	for i := 0; i < 12; i++ {
 		if cc, rb := rmChat(t, envA, kMain, rmModel, nil); cc != 200 {
 			t.Fatalf("incident 基线流量异常：%d %s", cc, rb)
 		}
 	}
-	var ver int16
 	var qc []byte
 	require.NoError(t, c.pg.QueryRow(ctx, `
-		SELECT identity_version, quality_class_id
-		FROM routing_quality_rollup LIMIT 1`).Scan(&ver, &qc),
-		"须有至少一行 live rollup 行以取 version/class")
+		SELECT quality_class_id
+		FROM routing_quality_fact LIMIT 1`).Scan(&qc),
+		"须有至少一行 live fact 行以取 class")
 	// route_class 必须取 gI 路由自身的 route_class_id（plan ref 面 hex）——
 	// baseline/current 查询都按 (route, fp) 精确键匹配，错路即零基线。
 	// 回填 baseline：三候选 × 三分钟（M-62/-61/-60，落在 [M-24h,M-5m) 内），
 	// 45/45 全胜（Wilson LCB≈0.92）——与坏域 current 0% 拉开可判定差距。
+	// 底表是事实表（读路径的事实源）；旧 rollup 已不再被读。
 	nowM := time.Now().UTC().Truncate(time.Minute)
 	fpOf := map[int64]string{accIA: fpsI[accIA], accIB1: fpsI[accIB1], accIB2: fpsI[accIB2]}
 	for _, acc := range []int64{accIA, accIB1, accIB2} {
@@ -1126,16 +1126,16 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 		for _, back := range []time.Duration{62, 61, 60} {
 			bm := nowM.Add(-back * time.Minute)
 			_, err := c.pg.Exec(ctx, `
-				INSERT INTO routing_quality_rollup (identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
-				VALUES ($1,decode($2,'hex'),$3,decode($4,'hex'),$5, 15,15, 0,0,0,0, 0,0,0, ARRAY[0,0,0,0,0,0,0,0,0,0]::bigint[], 0,0,0,0, 0,0, now())
-				ON CONFLICT (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version)
-				DO UPDATE SET attempts=15, successes=15, updated_at=now()`, ver, routeHex, qc, fpOf[acc], bm)
+				INSERT INTO routing_quality_fact (route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
+				VALUES (decode($1,'hex'),$2,decode($3,'hex'),'src-e2e-backfill',$4, 1, 15,15, 0,0,0,0, 0,0,0, ARRAY[0,0,0,0,0,0,0,0,0,0]::bigint[], 0,0,0,0, 0,0, now())
+				ON CONFLICT (route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id)
+				DO UPDATE SET attempts=15, successes=15, updated_at=now()`, routeHex, qc, fpOf[acc], bm)
 			require.NoError(t, err, "回填 baseline acc=%d minute=%v", acc, bm)
 		}
 	}
 	var baseRows int64
 	require.NoError(t, c.pg.QueryRow(ctx, `
-		SELECT count(*) FROM routing_quality_rollup WHERE bucket_minute < $1 AND attempts=15`, nowM.Add(-5*time.Minute)).Scan(&baseRows))
+		SELECT count(*) FROM routing_quality_fact WHERE bucket_minute < $1 AND attempts=15`, nowM.Add(-5*time.Minute)).Scan(&baseRows))
 	require.Equal(t, int64(9), baseRows, "baseline 须回填 9 行（3 候选×3 分钟）")
 	t.Log("baseline 回填 OK：9 行全胜历史（PG ground truth）")
 	// current 构造：gI 持续流量（容忍 500——坏域 terminal 本就向客户端 500），
@@ -1185,11 +1185,11 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 		// 未激活时的窗口水位（诊断：current 是否进窗、baseline 是否命中）。
 		var curN, baseN int64
 		_ = c.pg.QueryRow(ctx, `
-			SELECT COALESCE(sum(attempts),0) FROM routing_quality_rollup
+			SELECT COALESCE(sum(attempts),0) FROM routing_quality_fact
 			WHERE route_class_id=decode($1,'hex') AND bucket_minute >= date_trunc('minute', now()) - interval '5 minutes'`,
 			routeHex).Scan(&curN)
 		_ = c.pg.QueryRow(ctx, `
-			SELECT COALESCE(sum(attempts),0) FROM routing_quality_rollup
+			SELECT COALESCE(sum(attempts),0) FROM routing_quality_fact
 			WHERE route_class_id=decode($1,'hex') AND bucket_minute < date_trunc('minute', now()) - interval '5 minutes'`,
 			routeHex).Scan(&baseN)
 		return false, fmt.Sprintf("incident=%v settled_cur5m=%d settled_base=%d", inc, curN, baseN)

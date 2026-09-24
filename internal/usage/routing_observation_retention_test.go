@@ -16,11 +16,11 @@ import (
 //   - A4：改 observation_retention_days 只动 routing 三张分区表的 cutoff，
 //     usage_stats/usage_entity_stats 恒为 StatsRetentionDays（180d）——观测深度
 //     不再搭聚合统计长保留的车。
-//   - B1：S2′（routing_flow_rollup）cutoff 前分钟分区 DROP，cutoff 内全保留
+//   - B1：S2′（routing_flow_fact）cutoff 前分钟分区 DROP，cutoff 内全保留
 //     （DROP 由 repository.DropTablePartitionsBefore 按分区名日期判定；此处断言
 //     传参口径）。
-//   - B2：routing_quality_instance_minute 同 cutoff。
-//   - B3：routing_quality_rollup 同 cutoff。
+//   - B2：routing_quality_fact（S1）同 cutoff。
+//   - B3：routing_flow_fact（S2′）同 cutoff。
 //
 // 外加 snapshot_state 的有界删（普通表，同一 cutoff 的 DELETE）。
 func TestRoutingObservationRetentionDecoupledFromStats(t *testing.T) {
@@ -44,7 +44,7 @@ func TestRoutingObservationRetentionDecoupledFromStats(t *testing.T) {
 			defer pm.mu.Unlock()
 			now := time.Now().UTC()
 			wantRouting := now.AddDate(0, 0, -days)
-			require.Len(t, pm.rdrops, 3, "观测三张分区表各自 DROP（quality instance / quality rollup / flow rollup）")
+			require.Len(t, pm.rdrops, 2, "观测两张分区表各自 DROP（quality fact / flow fact）")
 			for i, got := range pm.rdrops {
 				require.WithinDurationf(t, wantRouting, got, 5*time.Second,
 					"routing observation cutoff #%d must be now-%dd (observation_retention_days), got %v", i, days, got)

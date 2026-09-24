@@ -3,6 +3,7 @@ package repository_test
 
 import (
 	"context"
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -13,23 +14,25 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// RED: windowed quality reads over routing_quality_rollup.
+// RED: windowed quality reads over routing_quality_fact (single-shard fact).
 // Q1 = current window [M-5m, M) grouped by (route, fingerprint), summed
-// across quality classes. Q2 = per-(route, fp) baseline [M-24h, M-5m)
-// truncated newest→oldest at attempts ≥ 30 in SQL, restricted to hotKeys.
+// across quality classes and instance shards. Q2 = per-(route, fp) baseline
+// [M-24h, M-5m) truncated newest→oldest at attempts ≥ 30 in SQL, restricted
+// to hotKeys (pre-aggregated back to (minute, quality_class) granularity so the
+// truncation boundary matches the old merged rollup).
 
 var windowTestMinute = time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
 
-func seedRollupRow(t *testing.T, pool *pgxpool.Pool, rc domain.RouteClassIDVal, qc domain.QualityClassIDVal, fp domain.CandidateFingerprintVal, minute time.Time, attempts, successes int64) {
+func seedQualityFactRow(t *testing.T, pool *pgxpool.Pool, rc domain.RouteClassIDVal, qc domain.QualityClassIDVal, fp domain.CandidateFingerprintVal, instanceSrc string, minute time.Time, attempts, successes int64) {
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
-		`INSERT INTO routing_quality_rollup
-		 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
-		  bucket_minute, attempts, successes, ttft_n,
+		`INSERT INTO routing_quality_fact
+		 (route_class_id, quality_class_id, candidate_fingerprint,
+		  instance_src, bucket_minute, absolute_sequence, attempts, successes, ttft_n,
 		  ttft_sum_log_q32, ttft_sumsq_log_q32,
 		  input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, updated_at)
-		 VALUES (1, $1, $2, $3, $4, $5, $6, $5, 0, 0, $5, $6, 0, 0, now())`,
-		rc[:], qc[:], fp[:], minute.UTC(), attempts, successes)
+		 VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, 0, 0, $6, $7, 0, 0, now())`,
+		rc[:], qc[:], fp[:], instanceSrc, minute.UTC(), attempts, successes)
 	require.NoError(t, err)
 }
 
@@ -44,7 +47,7 @@ func windowVals(t *testing.T) (rcA, rcB domain.RouteClassIDVal, qc1, qc2 domain.
 	require.NoError(t, err)
 	qc2, err = domain.QualityClassID(domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o-mini", domain.OpChatCompletions)
 	require.NoError(t, err)
-	names := []string{"n29", "n30", "n31", "split", "cut", "old", "cold", "order", "tie", "cur", "other"}
+	names := []string{"n29", "n30", "n31", "split", "cut", "old", "cold", "order", "tie", "cur", "other", "straddle", "equal", "single", "p_full", "p_fallback", "p_deep", "p_shards"}
 	fps = make(map[string]domain.CandidateFingerprintVal, len(names))
 	for i, n := range names {
 		var fp domain.CandidateFingerprintVal
@@ -62,22 +65,22 @@ func TestRoutingQualityWindowCurrentPG(t *testing.T) {
 	ctx := context.Background()
 	m := windowTestMinute
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
-	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
 
 	rcA, rcB, qc1, qc2, fps := windowVals(t)
 	fpk := func(n string) string { v := fps[n]; return string(v[:]) }
 
 	// Multi-quality-class summation inside the window.
-	seedRollupRow(t, pool, rcA, qc1, fps["cur"], m.Add(-4*time.Minute), 10, 7)
-	seedRollupRow(t, pool, rcA, qc2, fps["cur"], m.Add(-2*time.Minute), 20, 11)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-seed", m.Add(-4*time.Minute), 10, 7)
+	seedQualityFactRow(t, pool, rcA, qc2, fps["cur"], "src-seed", m.Add(-2*time.Minute), 20, 11)
 	// Half-open bounds: [M-5m, M) — lower edge included, M excluded, older excluded.
-	seedRollupRow(t, pool, rcA, qc1, fps["cur"], m.Add(-5*time.Minute), 5, 5)
-	seedRollupRow(t, pool, rcA, qc1, fps["cur"], m, 100, 100)
-	seedRollupRow(t, pool, rcA, qc1, fps["cur"], m.Add(-6*time.Minute), 100, 100)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-seed", m.Add(-5*time.Minute), 5, 5)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-seed", m, 100, 100)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-seed", m.Add(-6*time.Minute), 100, 100)
 	// Other route isolated.
-	seedRollupRow(t, pool, rcB, qc1, fps["cur"], m.Add(-1*time.Minute), 3, 3)
+	seedQualityFactRow(t, pool, rcB, qc1, fps["cur"], "src-seed", m.Add(-1*time.Minute), 3, 3)
 
-	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
+	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, m)
 	require.NoError(t, err)
 	byKey := map[string]repository.WindowCurrentStat{}
 	for _, s := range got {
@@ -93,15 +96,40 @@ func TestRoutingQualityWindowCurrentPG(t *testing.T) {
 	other := byKey[string(rcB[:])+fpk("cur")]
 	require.Equal(t, int64(3), other.Attempts)
 
-	// Identity-version mismatch matches nothing (never an error).
-	empty, err := repos.Partitions.QueryCurrentWindowStats(ctx, 2, m)
-	require.NoError(t, err)
-	require.Empty(t, empty)
-
 	// Repository facade delegates.
-	gotFacade, err := repos.QueryCurrentWindowStats(ctx, 1, m)
+	gotFacade, err := repos.QueryCurrentWindowStats(ctx, m)
 	require.NoError(t, err)
 	require.Len(t, gotFacade, 2)
+}
+
+// The current-window read must fold instance shards. The same
+// (bucket_minute, quality_class_id, candidate_fingerprint) published from two
+// distinct instance_src values is one candidate-minute, so the read returns a
+// single row per candidate with the metrics summed across both shards. If
+// instance_src ever leaked into the SQL's GROUP BY, this would silently return
+// two rows per candidate and corrupt the compiler's classify/cost input.
+func TestRoutingQualityWindowCurrentFoldsShardsPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	m := windowTestMinute
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+
+	rcA, _, qc1, _, fps := windowVals(t)
+	fpk := func(n string) string { v := fps[n]; return string(v[:]) }
+
+	// Same (bucket_minute, quality_class_id, candidate_fingerprint), two shards.
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-a", m.Add(-3*time.Minute), 10, 6)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-b", m.Add(-3*time.Minute), 4, 3)
+
+	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, m)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "one candidate row per (route, fp), not one per instance shard")
+	require.Equal(t, rcA, got[0].RouteClassID)
+	require.Equal(t, fpk("cur"), string(got[0].Fingerprint[:]))
+	require.Equal(t, int64(14), got[0].Attempts, "attempts summed across both shards")
+	require.Equal(t, int64(9), got[0].Successes, "successes summed across both shards")
+	require.Equal(t, int64(14), got[0].TTFTN)
 }
 
 func TestRoutingQualityWindowBaselinePG(t *testing.T) {
@@ -109,7 +137,7 @@ func TestRoutingQualityWindowBaselinePG(t *testing.T) {
 	ctx := context.Background()
 	m := windowTestMinute
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
-	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
 
 	rcA, _, qc1, qc2, fps := windowVals(t)
 	fpk := func(n string) string { v := fps[n]; return string(v[:]) }
@@ -122,31 +150,31 @@ func TestRoutingQualityWindowBaselinePG(t *testing.T) {
 	}
 
 	// Truncation goldens 29/30/31 (single newest row).
-	seedRollupRow(t, pool, rcA, qc1, fps["n29"], m.Add(-6*time.Minute), 29, 20)
-	seedRollupRow(t, pool, rcA, qc1, fps["n30"], m.Add(-6*time.Minute), 30, 21)
-	seedRollupRow(t, pool, rcA, qc1, fps["n31"], m.Add(-6*time.Minute), 31, 22)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["n29"], "src-seed", m.Add(-6*time.Minute), 29, 20)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["n30"], "src-seed", m.Add(-6*time.Minute), 30, 21)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["n31"], "src-seed", m.Add(-6*time.Minute), 31, 22)
 	// Split across minutes: 20 newest + 20 older → both kept (40).
-	seedRollupRow(t, pool, rcA, qc1, fps["split"], m.Add(-6*time.Minute), 20, 14)
-	seedRollupRow(t, pool, rcA, qc1, fps["split"], m.Add(-60*time.Minute), 20, 13)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["split"], "src-seed", m.Add(-6*time.Minute), 20, 14)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["split"], "src-seed", m.Add(-60*time.Minute), 20, 13)
 	// Cut: 30 newest + 50 older → older excluded (running-attempts 30, not < 30).
-	seedRollupRow(t, pool, rcA, qc1, fps["cut"], m.Add(-6*time.Minute), 30, 19)
-	seedRollupRow(t, pool, rcA, qc1, fps["cut"], m.Add(-60*time.Minute), 50, 40)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cut"], "src-seed", m.Add(-6*time.Minute), 30, 19)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cut"], "src-seed", m.Add(-60*time.Minute), 50, 40)
 	// Outside the baseline window entirely.
-	seedRollupRow(t, pool, rcA, qc1, fps["old"], m.Add(-25*time.Hour), 100, 90)
-	seedRollupRow(t, pool, rcA, qc1, fps["old"], m.Add(-4*time.Minute), 100, 90)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["old"], "src-seed", m.Add(-25*time.Hour), 100, 90)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["old"], "src-seed", m.Add(-4*time.Minute), 100, 90)
 	// Cold candidate: hot-key restriction excludes it despite attempts.
-	seedRollupRow(t, pool, rcA, qc1, fps["cold"], m.Add(-6*time.Minute), 100, 90)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cold"], "src-seed", m.Add(-6*time.Minute), 100, 90)
 	// Newest-first: inserted oldest-first, truncation still follows minute order
 	// (25 newest + 25 + 25 oldest → 50, oldest excluded).
-	seedRollupRow(t, pool, rcA, qc1, fps["order"], m.Add(-3*time.Hour), 25, 20)
-	seedRollupRow(t, pool, rcA, qc1, fps["order"], m.Add(-2*time.Hour), 25, 20)
-	seedRollupRow(t, pool, rcA, qc1, fps["order"], m.Add(-6*time.Minute), 25, 20)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["order"], "src-seed", m.Add(-3*time.Hour), 25, 20)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["order"], "src-seed", m.Add(-2*time.Hour), 25, 20)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["order"], "src-seed", m.Add(-6*time.Minute), 25, 20)
 	// Same-minute multi-quality-class tie: 20 + 20 → 40 deterministically.
-	seedRollupRow(t, pool, rcA, qc1, fps["tie"], m.Add(-10*time.Minute), 20, 15)
-	seedRollupRow(t, pool, rcA, qc2, fps["tie"], m.Add(-10*time.Minute), 20, 15)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["tie"], "src-seed", m.Add(-10*time.Minute), 20, 15)
+	seedQualityFactRow(t, pool, rcA, qc2, fps["tie"], "src-seed", m.Add(-10*time.Minute), 20, 15)
 
 	keys := hot("n29", "n30", "n31", "split", "cut", "old", "order", "tie")
-	got, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
+	got, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	byFP := map[string]repository.WindowBaselineStat{}
 	for _, s := range got {
@@ -167,28 +195,306 @@ func TestRoutingQualityWindowBaselinePG(t *testing.T) {
 	require.Equal(t, int64(30), byFP[fpk("tie")].Successes)
 
 	// Empty hotKeys short-circuits without querying.
-	empty, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, nil)
-	require.NoError(t, err)
-	require.Empty(t, empty)
-
-	// Identity-version mismatch matches nothing.
-	empty, err = repos.Partitions.QueryBaselineTruncated(ctx, 2, m, keys)
+	empty, err := repos.Partitions.QueryBaselineTruncated(ctx, m, nil)
 	require.NoError(t, err)
 	require.Empty(t, empty)
 
 	// Repository facade delegates.
-	gotFacade, err := repos.QueryBaselineTruncated(ctx, 1, m, keys)
+	gotFacade, err := repos.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	require.Len(t, gotFacade, 7)
 }
 
-func TestRoutingQualityWindowCandidateIndexExistsPG(t *testing.T) {
+func TestRoutingQualityWindowProbeIndexExistsPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	var n int64
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'routing_quality_rollup' AND indexname = 'routing_quality_rollup_candidate'`).Scan(&n))
-	require.Equal(t, int64(1), n, "candidate index must ship in rollup index DDLs")
+		`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'routing_quality_fact' AND indexname = 'routing_quality_fact_uniq'`).Scan(&n))
+	require.Equal(t, int64(1), n, "identity index must ship in fact index DDLs; it serves the baseline LATERAL probe")
+}
+
+// TestRoutingQualityWindowBaselineShardStraddlePG is the A4 tripwire: it proves
+// the inner GROUP BY (bucket_minute, quality_class_id) in
+// routingQualityWindowBaselineSQL is load-bearing, not decoration.
+//
+// Why this is the most important test in the change: the fact table is sharded
+// by instance_src, so a raw scan has an extra row dimension the old merged
+// rollup did not. The truncation predicate accumulates newest→oldest until the
+// cumulative of strictly-newer rows reaches 30, and the boundary lands on the
+// OLDEST included minute. An extra row per minute moves that boundary and
+// silently changes the returned values. Every other case in
+// TestRoutingQualityWindowBaselinePG seeds a single instance ('src-seed'), so
+// deleting the inner aggregation would still leave them green. This fixture
+// seeds a straddling minute across two instances and would fail.
+//
+// Offsets are minutes before m; the baseline window is [M-24h, M-5m), so every
+// offset is ≥ 6 (m-5 itself is the excluded upper bound).
+//
+//	straddle: off6=10(A), off7=10(A), off8=8(A), off9=5(A)+5(B), off10=5(A)
+//	  strictly-newer sum before off9 is 28; the merged row for off9 is 10, so
+//	  running = 38 and 38-10 = 28 < 30 keeps the whole minute → (38,15).
+//	  WITHOUT the inner aggregation off9 has two rows (5,5): the second row sees
+//	  running 38 with 38-5 = 33 ≥ 30 and is DROPPED → (33,13). Different value ⇒
+//	  this candidate is the tripwire.
+//	equal: off6=10(A), off7=10(A), off8=7(A)+8(B), off9=5(A)
+//	  strictly-newer sum before off8 is 20; the minute totals 15 split 7+8 → both
+//	  sub-rows satisfy S + max(t1,t2) = 28 < 30, so both orderings keep both rows
+//	  → (35,14) either way. Control proving the tripwire is not "any split differs".
+//	single: off6=10(A), off7=10(A), off8=8(A), off9=10(A), off10=5(A)
+//	  one instance ⇒ no extra row dimension ⇒ (38,15) either way. Control proving
+//	  the tripwire is specifically about sharding.
+//
+// Successes (merged granularity): straddle = 4+4+3+(2+2) = 15;
+// equal = 4+4+(3+3) = 14; single = 4+4+3+4 = 15.
+func TestRoutingQualityWindowBaselineShardStraddlePG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	m := windowTestMinute
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+
+	rcA, _, qc1, _, fps := windowVals(t)
+	fpk := func(n string) string { v := fps[n]; return string(v[:]) }
+	const instA, instB = "inst-A", "inst-B"
+
+	// straddle: off9 splits 5+5 across two instances (merged minute = 10/4).
+	seedQualityFactRow(t, pool, rcA, qc1, fps["straddle"], instA, m.Add(-6*time.Minute), 10, 4)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["straddle"], instA, m.Add(-7*time.Minute), 10, 4)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["straddle"], instA, m.Add(-8*time.Minute), 8, 3)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["straddle"], instA, m.Add(-9*time.Minute), 5, 2)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["straddle"], instB, m.Add(-9*time.Minute), 5, 2)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["straddle"], instA, m.Add(-10*time.Minute), 5, 2)
+	// equal: off8 splits 7+8 (merged minute = 15/6); off9 is dropped.
+	seedQualityFactRow(t, pool, rcA, qc1, fps["equal"], instA, m.Add(-6*time.Minute), 10, 4)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["equal"], instA, m.Add(-7*time.Minute), 10, 4)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["equal"], instA, m.Add(-8*time.Minute), 7, 3)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["equal"], instB, m.Add(-8*time.Minute), 8, 3)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["equal"], instA, m.Add(-9*time.Minute), 5, 3)
+	// single: one instance, no extra row dimension.
+	seedQualityFactRow(t, pool, rcA, qc1, fps["single"], instA, m.Add(-6*time.Minute), 10, 4)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["single"], instA, m.Add(-7*time.Minute), 10, 4)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["single"], instA, m.Add(-8*time.Minute), 8, 3)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["single"], instA, m.Add(-9*time.Minute), 10, 4)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["single"], instA, m.Add(-10*time.Minute), 5, 2)
+
+	keys := []repository.WindowHotKey{
+		{RouteClassID: rcA, Fingerprint: fps["straddle"]},
+		{RouteClassID: rcA, Fingerprint: fps["equal"]},
+		{RouteClassID: rcA, Fingerprint: fps["single"]},
+	}
+
+	// 1. Production query (inner aggregation restored) returns the merged-granularity
+	// totals. This alone fails if the inner GROUP BY is removed.
+	got, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
+	require.NoError(t, err)
+	byFP := map[string]repository.WindowBaselineStat{}
+	for _, s := range got {
+		require.Equal(t, rcA, s.RouteClassID)
+		byFP[string(s.Fingerprint[:])] = s
+	}
+	require.Len(t, got, 3)
+	require.Equal(t, int64(38), byFP[fpk("straddle")].Attempts, "straddle merged minute keeps the whole boundary minute")
+	require.Equal(t, int64(15), byFP[fpk("straddle")].Successes)
+	require.Equal(t, int64(35), byFP[fpk("equal")].Attempts, "equal split keeps both sub-rows under either ordering")
+	require.Equal(t, int64(14), byFP[fpk("equal")].Successes)
+	require.Equal(t, int64(38), byFP[fpk("single")].Attempts, "single instance has no extra row dimension")
+	require.Equal(t, int64(15), byFP[fpk("single")].Successes)
+
+	// 2. Explicit negative control: the same LATERAL with the inner GROUP BY
+	// removed yields a different straddle value (33,13). This raw SQL exists only
+	// to prove the tripwire has teeth — it must never be used in production (its
+	// result depends on the shard row layout).
+	raw := queryUnaggregatedBaseline(t, pool, m, keys)
+	require.Len(t, raw, 3)
+	require.Equal(t, int64(33), raw[fpk("straddle")].Attempts, "un-aggregated scan drops the boundary minute's second shard row")
+	require.Equal(t, int64(13), raw[fpk("straddle")].Successes)
+	require.Equal(t, int64(35), raw[fpk("equal")].Attempts, "equal split is invariant to aggregation")
+	require.Equal(t, int64(14), raw[fpk("equal")].Successes)
+	require.Equal(t, int64(38), raw[fpk("single")].Attempts, "single instance is invariant to aggregation")
+	require.Equal(t, int64(15), raw[fpk("single")].Successes)
+}
+
+// queryUnaggregatedBaseline mirrors routingQualityWindowBaselineSQL with the
+// inner GROUP BY (bucket_minute, quality_class_id) REMOVED. It exists solely as
+// the negative control for TestRoutingQualityWindowBaselineShardStraddlePG and
+// must never be used in production: without the pre-aggregation the truncation
+// boundary moves and the returned values drift with the shard layout.
+func queryUnaggregatedBaseline(t *testing.T, pool *pgxpool.Pool, m time.Time, keys []repository.WindowHotKey) map[string]repository.WindowBaselineStat {
+	t.Helper()
+	ctx := context.Background()
+	const rawSQL = `
+WITH hot AS (
+	SELECT decode(rc, 'hex') AS rc, decode(fp, 'hex') AS fp
+	FROM unnest($1::text[], $2::text[]) AS t(rc, fp)
+)
+SELECT hot.rc AS route_class_id, hot.fp AS candidate_fingerprint,
+	SUM(sub.attempts)::bigint, SUM(sub.successes)::bigint
+FROM hot,
+LATERAL (
+	SELECT r.attempts, r.successes,
+		SUM(r.attempts) OVER (
+			ORDER BY r.bucket_minute DESC, r.quality_class_id
+			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+		) AS running
+	FROM routing_quality_fact r
+	WHERE r.route_class_id = hot.rc
+		AND r.candidate_fingerprint = hot.fp
+		AND r.bucket_minute >= $3 AND r.bucket_minute < $4
+) AS sub
+WHERE sub.running - sub.attempts < 30
+GROUP BY 1, 2
+ORDER BY 1, 2`
+	rcHex := make([]string, 0, len(keys))
+	fpHex := make([]string, 0, len(keys))
+	for _, k := range keys {
+		rcHex = append(rcHex, hex.EncodeToString(k.RouteClassID[:]))
+		fpHex = append(fpHex, hex.EncodeToString(k.Fingerprint[:]))
+	}
+	from, to := m.Add(-domain.BaselineLookback), m.Add(-domain.CurrentWindowLen)
+	rows, err := pool.Query(ctx, rawSQL, rcHex, fpHex, from, to)
+	require.NoError(t, err)
+	defer rows.Close()
+	out := map[string]repository.WindowBaselineStat{}
+	for rows.Next() {
+		var s repository.WindowBaselineStat
+		var rt, fp []byte
+		require.NoError(t, rows.Scan(&rt, &fp, &s.Attempts, &s.Successes))
+		copy(s.RouteClassID[:], rt)
+		copy(s.Fingerprint[:], fp)
+		out[string(s.Fingerprint[:])] = s
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// TestRoutingQualityWindowBaselineTwoPhaseEquivPG pins the two-phase read
+// (bounded probe prefix + fallback) against the one-shot full-lookback read.
+// The bounded prefix is purely a performance device — the truncation predicate
+// is a monotone stopping condition, so a prefix that already reached the
+// threshold is field-for-field equivalent to the whole lookback — and this test
+// is what makes that claim falsifiable.
+//
+// The fixture deliberately covers every shape the two-phase split can take:
+//
+//   - p_full: 30 attempts inside the probe prefix → round 1 alone completes it.
+//   - p_fallback: newest 20 inside the prefix, older 20 at m-2h → round 1 is
+//     short of the threshold, so the pair must fall back and keep the older row.
+//   - p_deep: NO row inside the prefix at all (newest row is 3h old) → an
+//     implementation that iterated only over round-1 rows would silently drop
+//     this pair. This is the regression the test exists for.
+//   - p_shards: 15+15 across two instances inside the prefix → the pre-aggregation
+//     must fold the shards before the threshold is applied.
+func TestRoutingQualityWindowBaselineTwoPhaseEquivPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	m := windowTestMinute
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+
+	rcA, _, qc1, _, fps := windowVals(t)
+	fpk := func(n string) string { v := fps[n]; return string(v[:]) }
+
+	// Inside the probe prefix (prefix = [M-5m-30m, M-5m)).
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_full"], "src-a", m.Add(-6*time.Minute), 30, 21)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_fallback"], "src-a", m.Add(-6*time.Minute), 20, 14)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_shards"], "src-a", m.Add(-7*time.Minute), 15, 10)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_shards"], "src-b", m.Add(-7*time.Minute), 15, 10)
+	// Older than the probe prefix, still inside the 24h lookback.
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_fallback"], "src-a", m.Add(-2*time.Hour), 20, 13)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_deep"], "src-a", m.Add(-3*time.Hour), 40, 30)
+
+	names := []string{"p_full", "p_fallback", "p_deep", "p_shards"}
+	keys := make([]repository.WindowHotKey, 0, len(names))
+	for _, n := range names {
+		keys = append(keys, repository.WindowHotKey{RouteClassID: rcA, Fingerprint: fps[n]})
+	}
+
+	got, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
+	require.NoError(t, err)
+	want := queryFullLookbackBaseline(t, pool, m, keys)
+
+	require.Len(t, got, len(want), "two-phase read must return exactly the full-lookback row set")
+	for i := range got {
+		require.Equal(t, want[i].RouteClassID, got[i].RouteClassID)
+		require.Equal(t, want[i].Fingerprint, got[i].Fingerprint)
+		require.Equal(t, want[i].Attempts, got[i].Attempts, "attempts must equal the full-lookback read")
+		require.Equal(t, want[i].Successes, got[i].Successes, "successes must equal the full-lookback read")
+	}
+
+	// Pin each shape so the fixture cannot silently stop covering the fallback.
+	byFP := map[string]repository.WindowBaselineStat{}
+	for _, s := range got {
+		byFP[string(s.Fingerprint[:])] = s
+	}
+	require.Equal(t, int64(30), byFP[fpk("p_full")].Attempts, "prefix reached the threshold")
+	require.Equal(t, int64(40), byFP[fpk("p_fallback")].Attempts, "prefix fell short, older row must be included")
+	require.Equal(t, int64(40), byFP[fpk("p_deep")].Attempts, "pair absent from the prefix must still be read")
+	require.Equal(t, int64(30), byFP[fpk("p_shards")].Attempts, "shards fold before the threshold")
+
+	// Duplicate hot keys must not duplicate output rows (the old SQL deduped via
+	// GROUP BY; the two-phase rewrite dedupes explicitly).
+	dup, err := repos.Partitions.QueryBaselineTruncated(ctx, m, append(append([]repository.WindowHotKey{}, keys...), keys...))
+	require.NoError(t, err)
+	require.Len(t, dup, len(got), "duplicate hot keys must collapse")
+}
+
+// queryFullLookbackBaseline is the one-shot reference: the production baseline
+// SQL run over the whole 24h lookback in a single pass.
+// TestRoutingQualityWindowBaselineTwoPhaseEquivPG asserts the two-phase read
+// equals it exactly.
+func queryFullLookbackBaseline(t *testing.T, pool *pgxpool.Pool, m time.Time, keys []repository.WindowHotKey) []repository.WindowBaselineStat {
+	t.Helper()
+	ctx := context.Background()
+	const fullSQL = `
+WITH hot AS (
+	SELECT decode(rc, 'hex') AS rc, decode(fp, 'hex') AS fp
+	FROM unnest($1::text[], $2::text[]) AS t(rc, fp)
+)
+SELECT hot.rc AS route_class_id, hot.fp AS candidate_fingerprint,
+	COALESCE(SUM(sub.attempts)  FILTER (WHERE sub.running - sub.attempts < $5::bigint), 0)::bigint,
+	COALESCE(SUM(sub.successes) FILTER (WHERE sub.running - sub.attempts < $5::bigint), 0)::bigint
+FROM hot,
+LATERAL (
+	SELECT mm.attempts, mm.successes,
+		SUM(mm.attempts) OVER (
+			ORDER BY mm.bucket_minute DESC, mm.quality_class_id
+			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+		) AS running
+	FROM (
+		SELECT r.bucket_minute, r.quality_class_id,
+			SUM(r.attempts)::bigint  AS attempts,
+			SUM(r.successes)::bigint AS successes
+		FROM routing_quality_fact r
+		WHERE r.route_class_id = hot.rc
+			AND r.candidate_fingerprint = hot.fp
+			AND r.bucket_minute >= $3 AND r.bucket_minute < $4
+		GROUP BY r.bucket_minute, r.quality_class_id
+	) AS mm
+) AS sub
+GROUP BY 1, 2
+ORDER BY 1, 2`
+	rcHex := make([]string, 0, len(keys))
+	fpHex := make([]string, 0, len(keys))
+	for _, k := range keys {
+		rcHex = append(rcHex, hex.EncodeToString(k.RouteClassID[:]))
+		fpHex = append(fpHex, hex.EncodeToString(k.Fingerprint[:]))
+	}
+	from, to := m.Add(-domain.BaselineLookback), m.Add(-domain.CurrentWindowLen)
+	rows, err := pool.Query(ctx, fullSQL, rcHex, fpHex, from, to, int64(domain.BaselineTruncateAttempts))
+	require.NoError(t, err)
+	defer rows.Close()
+	out := []repository.WindowBaselineStat{}
+	for rows.Next() {
+		var s repository.WindowBaselineStat
+		var rt, fp []byte
+		require.NoError(t, rows.Scan(&rt, &fp, &s.Attempts, &s.Successes))
+		copy(s.RouteClassID[:], rt)
+		copy(s.Fingerprint[:], fp)
+		out = append(out, s)
+	}
+	require.NoError(t, rows.Err())
+	return out
 }

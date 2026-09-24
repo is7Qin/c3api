@@ -549,13 +549,6 @@ func main() {
 	// 价格面见 pricingSync.Reload（service 内经 ServiceDeps.CompileNotify
 	// 变化门控后通知编译）。
 	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log, sched.RequestCompile)
-	// routing rollup worker：消费 quality-sync 落在 quality instance 分钟表的脏分钟，
-	// 经 repository 的 RollupQuality 缝滚成 quality rollup 表（单桶事务、状态成功
-	// 后推进、失败保 dirty 下 tick 重试，见 quality/rollup.go）。flow 车道已删：flow
-	// 快照由写面直写合并层（routing_flow_rollup），无下游重算，故本 worker 只服务
-	// quality 道——/routing/frontier 钉死 quality rollup 表，缺本 lane 其聚合永远为空。
-	// 请求路径零参与；无内存队列，停机零排空义务（DB 即队列）。
-	routingRollup := quality.NewRollupWorker(repos.Partitions, quality.RollupConfig{}, log)
 	// 路由编译源装配（双 setter 已删，编译双源 Start 期结构注入）：
 	// quality 源 = M 缓存窗口 provider（settled PG 分钟 + recorder 未落库活体
 	// 行合并，基线仅 PG；见 routing_sources.go），价格源 = svc 定价快照基底
@@ -594,7 +587,7 @@ func main() {
 	// （Name="scheduler" 不变）——反序排空语义与 worker_order_test 断言依赖。
 	schedW := schedWorker{s: sched, src: schedSrc}
 	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
-		inv, schedW, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync, routingRollup)
+		inv, schedW, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// （spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的

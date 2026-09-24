@@ -95,7 +95,7 @@ type shutdownFakePG struct {
 	flows int
 }
 
-func (f *shutdownFakePG) UpsertQualityAndMarkDirty(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *shutdownFakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
 	if f.fail != nil {
 		return f.fail
 	}

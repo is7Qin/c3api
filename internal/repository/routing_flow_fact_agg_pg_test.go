@@ -14,8 +14,8 @@ import (
 
 // A6 晚到证伪（分片独立性回归）：A 写 M 边 E chain=10 seq=1；B 迟到写 M
 // 边 E chain=7 seq=1 → 读 E==17 且非负；A 以 seq=2 chain=12 重写 → 读
-// E==19（B 分片完好）。本测试是分片独立性回归，不是新旧判别：旧
-// RollupFlow 对全实例重 SUM 同样得出 19，不得声称"旧代码必红"。
+// E==19（B 分片完好）。本测试是分片独立性回归，不是新旧判别：旧重算道
+// 对全实例重 SUM 同样得出 19，不得声称"旧代码必红"。
 func TestRoutingFlowMergedAggregatesMultiInstancePG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
@@ -37,10 +37,10 @@ func TestRoutingFlowMergedAggregatesMultiInstancePG(t *testing.T) {
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 1, []repository.RoutingFlowRow{rowB}))
 	// barrier: both shard rows inserted distinct via instance_src
 	var instCnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&instCnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE terminal_minute=$1`, now).Scan(&instCnt))
 	require.Equal(t, int64(2), instCnt)
 	// 读恒为跨分片聚合：SUM(chain_count)=17，MIN(min_generation)=1，非负。
-	stats, err := repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, now, now.Add(time.Minute))
+	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, now, now.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(17), stats[0].ChainCount)
@@ -51,7 +51,7 @@ func TestRoutingFlowMergedAggregatesMultiInstancePG(t *testing.T) {
 	rowA2 := rowA
 	rowA2.ChainCount = 12
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-A", now, 1, 2, []repository.RoutingFlowRow{rowA2}))
-	stats, err = repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, now, now.Add(time.Minute))
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, now, now.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(19), stats[0].ChainCount, "A rewrite must not touch B shard")
@@ -75,7 +75,7 @@ func TestRoutingFlowMergedDedupAndConservationPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-A", now, 1, 1, rowsA))
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 1, rowsB))
 	// 读面跨分片聚合：overlap 边合一行（2+3），其余各一行 → 3 行，总和守恒。
-	stats, err := repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, now, now.Add(time.Minute))
+	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, now, now.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 3, "overlapping edge merged: 2+2 distinct but one overlap => 3 rows")
 	var sum int64
