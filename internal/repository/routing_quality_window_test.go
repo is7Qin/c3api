@@ -107,6 +107,36 @@ func TestRoutingQualityWindowCurrentPG(t *testing.T) {
 	require.Len(t, gotFacade, 2)
 }
 
+// The current-window read must fold instance shards. The same
+// (bucket_minute, quality_class_id, candidate_fingerprint) published from two
+// distinct instance_src values is one candidate-minute, so the read returns a
+// single row per candidate with the metrics summed across both shards. If
+// instance_src ever leaked into the SQL's GROUP BY, this would silently return
+// two rows per candidate and corrupt the compiler's classify/cost input.
+func TestRoutingQualityWindowCurrentFoldsShardsPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	m := windowTestMinute
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+
+	rcA, _, qc1, _, fps := windowVals(t)
+	fpk := func(n string) string { v := fps[n]; return string(v[:]) }
+
+	// Same (bucket_minute, quality_class_id, candidate_fingerprint), two shards.
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-a", m.Add(-3*time.Minute), 10, 6)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-b", m.Add(-3*time.Minute), 4, 3)
+
+	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "one candidate row per (route, fp), not one per instance shard")
+	require.Equal(t, rcA, got[0].RouteClassID)
+	require.Equal(t, fpk("cur"), string(got[0].Fingerprint[:]))
+	require.Equal(t, int64(14), got[0].Attempts, "attempts summed across both shards")
+	require.Equal(t, int64(9), got[0].Successes, "successes summed across both shards")
+	require.Equal(t, int64(14), got[0].TTFTN)
+}
+
 func TestRoutingQualityWindowBaselinePG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
