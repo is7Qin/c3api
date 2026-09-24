@@ -47,7 +47,7 @@ func windowVals(t *testing.T) (rcA, rcB domain.RouteClassIDVal, qc1, qc2 domain.
 	require.NoError(t, err)
 	qc2, err = domain.QualityClassID(domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o-mini", domain.OpChatCompletions)
 	require.NoError(t, err)
-	names := []string{"n29", "n30", "n31", "split", "cut", "old", "cold", "order", "tie", "cur", "other", "straddle", "equal", "single"}
+	names := []string{"n29", "n30", "n31", "split", "cut", "old", "cold", "order", "tie", "cur", "other", "straddle", "equal", "single", "p_full", "p_fallback", "p_deep", "p_shards"}
 	fps = make(map[string]domain.CandidateFingerprintVal, len(names))
 	for i, n := range names {
 		var fp domain.CandidateFingerprintVal
@@ -365,6 +365,135 @@ ORDER BY 1, 2`
 		copy(s.RouteClassID[:], rt)
 		copy(s.Fingerprint[:], fp)
 		out[string(s.Fingerprint[:])] = s
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// TestRoutingQualityWindowBaselineTwoPhaseEquivPG pins the two-phase read
+// (bounded probe prefix + fallback) against the one-shot full-lookback read.
+// The bounded prefix is purely a performance device — the truncation predicate
+// is a monotone stopping condition, so a prefix that already reached the
+// threshold is field-for-field equivalent to the whole lookback — and this test
+// is what makes that claim falsifiable.
+//
+// The fixture deliberately covers every shape the two-phase split can take:
+//
+//   - p_full: 30 attempts inside the probe prefix → round 1 alone completes it.
+//   - p_fallback: newest 20 inside the prefix, older 20 at m-2h → round 1 is
+//     short of the threshold, so the pair must fall back and keep the older row.
+//   - p_deep: NO row inside the prefix at all (newest row is 3h old) → an
+//     implementation that iterated only over round-1 rows would silently drop
+//     this pair. This is the regression the test exists for.
+//   - p_shards: 15+15 across two instances inside the prefix → the pre-aggregation
+//     must fold the shards before the threshold is applied.
+func TestRoutingQualityWindowBaselineTwoPhaseEquivPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	m := windowTestMinute
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+
+	rcA, _, qc1, _, fps := windowVals(t)
+	fpk := func(n string) string { v := fps[n]; return string(v[:]) }
+
+	// Inside the probe prefix (prefix = [M-5m-30m, M-5m)).
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_full"], "src-a", m.Add(-6*time.Minute), 30, 21)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_fallback"], "src-a", m.Add(-6*time.Minute), 20, 14)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_shards"], "src-a", m.Add(-7*time.Minute), 15, 10)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_shards"], "src-b", m.Add(-7*time.Minute), 15, 10)
+	// Older than the probe prefix, still inside the 24h lookback.
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_fallback"], "src-a", m.Add(-2*time.Hour), 20, 13)
+	seedQualityFactRow(t, pool, rcA, qc1, fps["p_deep"], "src-a", m.Add(-3*time.Hour), 40, 30)
+
+	names := []string{"p_full", "p_fallback", "p_deep", "p_shards"}
+	keys := make([]repository.WindowHotKey, 0, len(names))
+	for _, n := range names {
+		keys = append(keys, repository.WindowHotKey{RouteClassID: rcA, Fingerprint: fps[n]})
+	}
+
+	got, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
+	require.NoError(t, err)
+	want := queryFullLookbackBaseline(t, pool, m, keys)
+
+	require.Len(t, got, len(want), "two-phase read must return exactly the full-lookback row set")
+	for i := range got {
+		require.Equal(t, want[i].RouteClassID, got[i].RouteClassID)
+		require.Equal(t, want[i].Fingerprint, got[i].Fingerprint)
+		require.Equal(t, want[i].Attempts, got[i].Attempts, "attempts must equal the full-lookback read")
+		require.Equal(t, want[i].Successes, got[i].Successes, "successes must equal the full-lookback read")
+	}
+
+	// Pin each shape so the fixture cannot silently stop covering the fallback.
+	byFP := map[string]repository.WindowBaselineStat{}
+	for _, s := range got {
+		byFP[string(s.Fingerprint[:])] = s
+	}
+	require.Equal(t, int64(30), byFP[fpk("p_full")].Attempts, "prefix reached the threshold")
+	require.Equal(t, int64(40), byFP[fpk("p_fallback")].Attempts, "prefix fell short, older row must be included")
+	require.Equal(t, int64(40), byFP[fpk("p_deep")].Attempts, "pair absent from the prefix must still be read")
+	require.Equal(t, int64(30), byFP[fpk("p_shards")].Attempts, "shards fold before the threshold")
+
+	// Duplicate hot keys must not duplicate output rows (the old SQL deduped via
+	// GROUP BY; the two-phase rewrite dedupes explicitly).
+	dup, err := repos.Partitions.QueryBaselineTruncated(ctx, m, append(append([]repository.WindowHotKey{}, keys...), keys...))
+	require.NoError(t, err)
+	require.Len(t, dup, len(got), "duplicate hot keys must collapse")
+}
+
+// queryFullLookbackBaseline is the one-shot reference: the production baseline
+// SQL run over the whole 24h lookback in a single pass.
+// TestRoutingQualityWindowBaselineTwoPhaseEquivPG asserts the two-phase read
+// equals it exactly.
+func queryFullLookbackBaseline(t *testing.T, pool *pgxpool.Pool, m time.Time, keys []repository.WindowHotKey) []repository.WindowBaselineStat {
+	t.Helper()
+	ctx := context.Background()
+	const fullSQL = `
+WITH hot AS (
+	SELECT decode(rc, 'hex') AS rc, decode(fp, 'hex') AS fp
+	FROM unnest($1::text[], $2::text[]) AS t(rc, fp)
+)
+SELECT hot.rc AS route_class_id, hot.fp AS candidate_fingerprint,
+	COALESCE(SUM(sub.attempts)  FILTER (WHERE sub.running - sub.attempts < $5::bigint), 0)::bigint,
+	COALESCE(SUM(sub.successes) FILTER (WHERE sub.running - sub.attempts < $5::bigint), 0)::bigint
+FROM hot,
+LATERAL (
+	SELECT mm.attempts, mm.successes,
+		SUM(mm.attempts) OVER (
+			ORDER BY mm.bucket_minute DESC, mm.quality_class_id
+			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+		) AS running
+	FROM (
+		SELECT r.bucket_minute, r.quality_class_id,
+			SUM(r.attempts)::bigint  AS attempts,
+			SUM(r.successes)::bigint AS successes
+		FROM routing_quality_fact r
+		WHERE r.route_class_id = hot.rc
+			AND r.candidate_fingerprint = hot.fp
+			AND r.bucket_minute >= $3 AND r.bucket_minute < $4
+		GROUP BY r.bucket_minute, r.quality_class_id
+	) AS mm
+) AS sub
+GROUP BY 1, 2
+ORDER BY 1, 2`
+	rcHex := make([]string, 0, len(keys))
+	fpHex := make([]string, 0, len(keys))
+	for _, k := range keys {
+		rcHex = append(rcHex, hex.EncodeToString(k.RouteClassID[:]))
+		fpHex = append(fpHex, hex.EncodeToString(k.Fingerprint[:]))
+	}
+	from, to := m.Add(-domain.BaselineLookback), m.Add(-domain.CurrentWindowLen)
+	rows, err := pool.Query(ctx, fullSQL, rcHex, fpHex, from, to, int64(domain.BaselineTruncateAttempts))
+	require.NoError(t, err)
+	defer rows.Close()
+	out := []repository.WindowBaselineStat{}
+	for rows.Next() {
+		var s repository.WindowBaselineStat
+		var rt, fp []byte
+		require.NoError(t, rows.Scan(&rt, &fp, &s.Attempts, &s.Successes))
+		copy(s.RouteClassID[:], rt)
+		copy(s.Fingerprint[:], fp)
+		out = append(out, s)
 	}
 	require.NoError(t, rows.Err())
 	return out

@@ -257,7 +257,7 @@ func hotKeysFrom(m time.Time, version int16, pgCur []WindowSettledCurrent, liveR
 	}
 	var hot []WindowSettledHotKey
 	for key, n := range attempts {
-		if n >= 30 {
+		if n >= domain.BaselineTruncateAttempts {
 			hot = append(hot, WindowSettledHotKey{RouteClassID: key.RouteClassID, Fingerprint: key.Fingerprint})
 		}
 	}

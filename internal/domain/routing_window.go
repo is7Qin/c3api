@@ -24,6 +24,22 @@ const (
 	BaselineLookback = 24 * time.Hour
 	// CurrentWindowLen 当前窗长度（[M-CurrentWindowLen, M)）。
 	CurrentWindowLen = 5 * time.Minute
+
+	// BaselineTruncateAttempts 基线窗截断阈值：按分钟从新到老累计到该值即停
+	// （该分钟整分钟计入，更老的排除）。repository 的截断 SQL 与 scheduler 的
+	// hot 候选判定（当前窗 attempts ≥ 该值）必须同源，故落在 domain。
+	BaselineTruncateAttempts = 30
+
+	// BaselineProbeLen 基线窗**首轮探测**长度——注意它不是回看下界。
+	//
+	// 截断谓词（累计 ≥ BaselineTruncateAttempts 即停）在「按分钟从新到老」的序上
+	// 是**单调停止条件**，因此它定义的是整段回看的一个**前缀**。用整段 24h 去算
+	// 这个前缀，等于把「前缀长度」当成常量：读 H·1435·N 行只用 H·k·N 行。
+	// 实测（.omo/evidence/routing-read-amplification/prefix-scan.txt，H=5000、N=3）：
+	// 整段回看 19,459 ms vs 最近 30m 442 ms（44×），**结果逐字段相等**。
+	// 故首轮只探最近 BaselineProbeLen，前缀内未达阈值者才回落整段回看
+	// （见 repository.PartitionRepo.QueryBaselineTruncated）。
+	BaselineProbeLen = 30 * time.Minute
 )
 
 // RoutingObservationCutoff 观测保留截止：保留 worker 与读面窗口守卫**同源**
