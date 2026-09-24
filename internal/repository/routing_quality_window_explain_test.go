@@ -19,7 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// RED (TestRoutingQualityWindowPlanPG): Q2 must use the candidate
+// RED (TestRoutingQualityWindowPlanPG): Q2 must use the fact identity
 // index with no Seq Scan on a seeded multi-candidate fixture, and the Q2 row
 // count stays bounded by the hot-key count. References the production SQL
 // consts directly so plan assertions can never drift from shipped SQL.
@@ -59,11 +59,11 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 
 	m := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
-	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
 
 	// 5000 candidates × 12 rows across ~20h + ANALYZE: the hot set (400)
 	// is selective against the table, mirroring production where the join
-	// must probe the candidate index instead of seq-scanning the rollup.
+	// must probe the fact identity index instead of seq-scanning the table.
 	const ncand, nhot, nrows = 5000, 400, 12
 	rc := make([]byte, 32)
 	rc[0] = 0xA1
@@ -83,17 +83,17 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 		for h := 0; h < nrows; h++ {
 			minute := m.Add(-time.Duration(6+h*110) * time.Minute)
 			batch.Queue(
-				`INSERT INTO routing_quality_rollup
+				`INSERT INTO routing_quality_fact
 				 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
-				  bucket_minute, attempts, successes, updated_at)
-				 VALUES (1, $1, $2, $3, $4, 10, 8, now())`,
+				  instance_src, bucket_minute, absolute_sequence, attempts, successes, updated_at)
+				 VALUES (1, $1, $2, $3, 'src-plan', $4, 1, 10, 8, now())`,
 				rc, qc, fp, minute)
 		}
 	}
 	br := pool.SendBatch(ctx, batch)
 	_, err = br.Exec()
 	require.NoError(t, br.Close())
-	_, err = pool.Exec(ctx, `ANALYZE routing_quality_rollup`)
+	_, err = pool.Exec(ctx, `ANALYZE routing_quality_fact`)
 	require.NoError(t, err)
 
 	var planJSON string
@@ -106,21 +106,27 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal([]byte(planJSON), &plan))
 	require.Len(t, plan, 1)
-	var seqScan, candidateIndex bool
+	var seqScan, identityIndex bool
+	var indexNames []string
 	walkWindowPlan(plan[0].Plan, func(n *windowPlanNode) {
 		if n.NodeType == "Seq Scan" {
 			seqScan = true
 		}
-		// Partitioned-table auto index names derive per-partition
-		// (…_route_class_id_candidate_fing_idx), not the parent name —
-		// match the candidate infix (the canonical parent name is pinned
-		// by the catalog test).
-		if strings.Contains(n.IndexName, "candidate") {
-			candidateIndex = true
+		if n.IndexName != "" {
+			indexNames = append(indexNames, n.IndexName)
+		}
+		// Partitioned-table auto index names derive per-partition from the
+		// column list, not the parent name: the plan reports e.g.
+		// routing_quality_fact_20260820_route_class_id_candidate_fing_idx for the
+		// parent identity index routing_quality_fact_uniq (whose canonical name is
+		// pinned by the catalog test). Match table + identity-key leading columns
+		// so the bucket-only index (…_bucket_minute_idx) cannot satisfy it.
+		if strings.Contains(n.IndexName, "routing_quality_fact") && strings.Contains(n.IndexName, "route_class_id_candidate") {
+			identityIndex = true
 		}
 	})
-	require.False(t, seqScan, "Q2 must not seq-scan routing_quality_rollup")
-	require.True(t, candidateIndex, "Q2 must use routing_quality_rollup_candidate")
+	require.False(t, seqScan, "Q2 must not seq-scan routing_quality_fact")
+	require.True(t, identityIndex, "Q2 must use the fact identity index, saw %v", indexNames)
 
 	// Row-count bound: one row per hot (route, fp) at most.
 	keys := make([]WindowHotKey, 0, nhot)

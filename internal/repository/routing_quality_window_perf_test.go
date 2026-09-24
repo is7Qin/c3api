@@ -31,7 +31,7 @@ func TestRoutingQualityWindowP99PG(t *testing.T) {
 	ctx := context.Background()
 	m := time.Date(2026, time.August, 20, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
-	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-25*time.Hour), m.Add(24*time.Hour)))
 
 	const ncand, nhot, nrows = 5000, 400, 12
 	var rc domain.RouteClassIDVal
@@ -51,25 +51,25 @@ func TestRoutingQualityWindowP99PG(t *testing.T) {
 		for h := 0; h < nrows; h++ {
 			minute := m.Add(-time.Duration(6+h*110) * time.Minute)
 			batch.Queue(
-				`INSERT INTO routing_quality_rollup
+				`INSERT INTO routing_quality_fact
 				 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
-				  bucket_minute, attempts, successes, updated_at)
-				 VALUES (1, $1, $2, $3, $4, 10, 8, now())`,
+				  instance_src, bucket_minute, absolute_sequence, attempts, successes, updated_at)
+				 VALUES (1, $1, $2, $3, 'src-perf', $4, 1, 10, 8, now())`,
 				rc[:], qc[:], fp[:], minute)
 		}
 		// One in-window row per candidate so Q1 scans real current data.
 		batch.Queue(
-			`INSERT INTO routing_quality_rollup
+			`INSERT INTO routing_quality_fact
 			 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
-			  bucket_minute, attempts, successes, ttft_n, updated_at)
-			 VALUES (1, $1, $2, $3, $4, 35, 30, 30, now())`,
+			  instance_src, bucket_minute, absolute_sequence, attempts, successes, ttft_n, updated_at)
+			 VALUES (1, $1, $2, $3, 'src-perf', $4, 1, 35, 30, 30, now())`,
 			rc[:], qc[:], fp[:], m.Add(-2*time.Minute))
 	}
 	br := pool.SendBatch(ctx, batch)
 	_, err := br.Exec()
 	require.NoError(t, err)
 	require.NoError(t, br.Close())
-	pgExec(t, pool, `ANALYZE routing_quality_rollup`)
+	pgExec(t, pool, `ANALYZE routing_quality_fact`)
 
 	round := func() {
 		cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
