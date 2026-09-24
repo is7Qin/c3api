@@ -177,30 +177,37 @@ func TestRoutingQualityReplayPG(t *testing.T) {
 	}
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
-	var attempts int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&attempts))
-	require.Equal(t, int64(5), attempts, "absolute replay must not double")
+	// 本阶段 quality 双写：routing_quality_fact 是新读路径的事实源，实例表仅为
+	// 尚未下线的 rollup 车道保留镜像。两表守卫同构，任何一表漂移都是写面回归。
+	attemptsOf := func(tbl string) int64 {
+		var v int64
+		require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM `+tbl+` WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&v))
+		return v
+	}
+	requireBoth := func(want int64, msg string) {
+		t.Helper()
+		require.Equal(t, want, attemptsOf("routing_quality_instance_minute"), "instance: %s", msg)
+		require.Equal(t, want, attemptsOf("routing_quality_fact"), "fact: %s", msg)
+	}
+	requireBoth(5, "absolute replay must not double")
 	// larger sequence overwrites
 	row2 := row
 	row2.AbsoluteSequence = 11
 	row2.Attempts = 8
 	row2.Successes = 5
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row2))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&attempts))
-	require.Equal(t, int64(8), attempts, "larger sequence must overwrite")
+	requireBoth(8, "larger sequence must overwrite")
 	// smaller sequence must not overwrite (stale replay)
 	rowStale := row
 	rowStale.AbsoluteSequence = 9
 	rowStale.Attempts = 100
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, rowStale))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&attempts))
-	require.Equal(t, int64(8), attempts, "stale sequence must be ignored")
+	requireBoth(8, "stale sequence must be ignored")
 	// equal divergent: same sequence but different attempts must NOT overwrite
 	rowEqualDiverge := row2
 	rowEqualDiverge.Attempts = 99
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, rowEqualDiverge))
-	require.NoError(t, pool.QueryRow(ctx, `SELECT attempts FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2`, "host-1-abc", now).Scan(&attempts))
-	require.Equal(t, int64(8), attempts, "equal divergent must not overwrite")
+	requireBoth(8, "equal divergent must not overwrite")
 	// fingerprint change isolates
 	fp2 := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "inst", "sess", "thr", "win")
 	row3 := row
@@ -210,8 +217,10 @@ func TestRoutingQualityReplayPG(t *testing.T) {
 	row3.Attempts = 7
 	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row3))
 	var cnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_quality_instance_minute WHERE bucket_minute=$1`, now).Scan(&cnt))
-	require.Equal(t, int64(2), cnt, "fingerprint change must create separate row")
+	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_fact"} {
+		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM `+tbl+` WHERE bucket_minute=$1`, now).Scan(&cnt))
+		require.Equal(t, int64(2), cnt, "%s: fingerprint change must create separate row", tbl)
+	}
 }
 
 func TestRoutingQualityDigestCheckPG(t *testing.T) {
