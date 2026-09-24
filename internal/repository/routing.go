@@ -395,21 +395,18 @@ func minuteHasFactsTx(ctx context.Context, drv *txDriver, query string, args []a
 	return hasFact, nil
 }
 
-func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row RoutingQualityRow) error {
-	tx, err := r.driver.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-	drv := &txDriver{tx: tx, drv: r.driver}
-	bucket := row.BucketMinute.UTC().Truncate(time.Minute)
-	if err := advisoryLockTx(ctx, drv, "quality", fmt.Sprintf("%d", row.IdentityVersion), bucket.Format(time.RFC3339), row.InstanceSrc); err != nil {
-		return err
-	}
-	var res sql.Result
-	q := `INSERT INTO routing_quality_instance_minute (identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
+// qualityUpsertSQL 生成 quality 域的逐行绝对量 upsert：INSERT 列清单与行级
+// 序号守卫（WHERE EXCLUDED.absolute_sequence > <table>.absolute_sequence）逐字
+// 相同，仅表名与 ON CONFLICT 目标（列序随各表唯一索引）不同。
+//
+// quality 的写入形状在本阶段保持不变——「逐行绝对量 upsert + 行级序号守卫」是
+// 部分落库（sync.go 按 pgMaxRows/pgMaxBytes/pgMaxDuration 分批，失败时保留未落库
+// 尾部）下的正确形状；改成「DELETE 本分片 + INSERT 本批」会删掉同分钟不在本批的
+// 键，而那些键的 delta 已折进 committed、下一轮不再发 → 永久丢失（spec §3.1）。
+func qualityUpsertSQL(table, conflictCols string) string {
+	return `INSERT INTO ` + table + ` (identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
 	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23, now())
-	ON CONFLICT (instance_src, bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version) DO UPDATE SET
+	ON CONFLICT (` + conflictCols + `) DO UPDATE SET
 		absolute_sequence = EXCLUDED.absolute_sequence,
 		attempts = EXCLUDED.attempts,
 		successes = EXCLUDED.successes,
@@ -428,13 +425,42 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 		calls = EXCLUDED.calls,
 		images = EXCLUDED.images,
 		updated_at = now()
-	WHERE EXCLUDED.absolute_sequence > routing_quality_instance_minute.absolute_sequence`
+	WHERE EXCLUDED.absolute_sequence > ` + table + `.absolute_sequence`
+}
+
+// routingQualityFactUpsertSQL 是新的读路径事实源（身份键列序同
+// routing_quality_fact_uniq）；routingQualityInstanceUpsertSQL 是本阶段为
+// 尚未下线的 rollup 车道保留的镜像写入——rollup 车道仍读实例表，删它需要连同
+// 车道一起下线（后续提交）。两表因此在本阶段双写，读路径只认事实表。
+var (
+	routingQualityFactUpsertSQL     = qualityUpsertSQL("routing_quality_fact", "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id, identity_version")
+	routingQualityInstanceUpsertSQL = qualityUpsertSQL("routing_quality_instance_minute", "instance_src, bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version")
+)
+
+func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row RoutingQualityRow) error {
+	tx, err := r.driver.Tx(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback() //nolint:errcheck
+	drv := &txDriver{tx: tx, drv: r.driver}
+	bucket := row.BucketMinute.UTC().Truncate(time.Minute)
+	if err := advisoryLockTx(ctx, drv, "quality", fmt.Sprintf("%d", row.IdentityVersion), bucket.Format(time.RFC3339), row.InstanceSrc); err != nil {
+		return err
+	}
 	if row.TTFTHist == nil {
 		row.TTFTHist = []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	}
-	if err := drv.Exec(ctx, q, []any{row.IdentityVersion, row.RouteClassID[:], row.QualityClassID[:], row.CandidateFingerprint[:], row.InstanceSrc, bucket, row.AbsoluteSequence, row.Attempts, row.Successes, row.Count429, row.CountOrdinary4xx, row.Count5xx, row.CountNetwork, row.TTFTN, row.TTFTSumLogQ32, row.TTFTSumSqLogQ32, row.TTFTHist, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreateTokens, row.Calls, row.Images}, &res); err != nil {
+	args := []any{row.IdentityVersion, row.RouteClassID[:], row.QualityClassID[:], row.CandidateFingerprint[:], row.InstanceSrc, bucket, row.AbsoluteSequence, row.Attempts, row.Successes, row.Count429, row.CountOrdinary4xx, row.Count5xx, row.CountNetwork, row.TTFTN, row.TTFTSumLogQ32, row.TTFTSumSqLogQ32, row.TTFTHist, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreateTokens, row.Calls, row.Images}
+	var res sql.Result
+	// 事实表先写（读路径的事实源）；实例表镜像写维持 rollup 车道。
+	if err := drv.Exec(ctx, routingQualityFactUpsertSQL, args, &res); err != nil {
 		return err
 	}
+	if err := drv.Exec(ctx, routingQualityInstanceUpsertSQL, args, &res); err != nil {
+		return err
+	}
+	// 两表守卫同构：事实表 no-op ⇔ 实例表 no-op。旧序号静默提交（幂等重放）。
 	if n, _ := res.RowsAffected(); n == 0 {
 		return tx.Commit()
 	}
