@@ -34,7 +34,11 @@ var routingQualityFactColumnDefs = []string{
 	`instance_src text NOT NULL`,
 	`quality_class_id bytea NOT NULL CHECK (octet_length(quality_class_id) = 32)`,
 	`absolute_sequence bigint NOT NULL`,
-	`attempts bigint NOT NULL DEFAULT 0`,
+	// attempts ≥ 0 是**基线窗截断「前缀性」的前提**：截断按「从新到老累计到 30
+	// attempts」停下，只有每分钟 attempts 单调非负时才保证被收下的行构成整段回看的
+	// 一个前缀——§5 的两轮前缀探测与 §8 A4 的等价性证明都依赖它。写面只产生非负数；
+	// 此处把它从「注释里的假设」变成「schema 约束」，否则证明边界只靠人工审阅维持。
+	`attempts bigint NOT NULL DEFAULT 0 CHECK (attempts >= 0)`,
 	`successes bigint NOT NULL DEFAULT 0`,
 	`count_429 bigint NOT NULL DEFAULT 0`,
 	`count_ordinary_4xx bigint NOT NULL DEFAULT 0`,
