@@ -5,7 +5,7 @@
 package handler
 
 // admin API lane：/routing/flow|frontier|plan 三端点的契约测试。
-// 走真实 chi 路由（参数绑定/日期解析/400 语义都是生成物行为）；rollup 行由
+// 走真实 chi 路由（参数绑定/日期解析/400 语义都是生成物行为）；聚合行由
 // fakeStore 包装供给，计划目录由 fake provider 供给。断言以 snake_case 线格式
 // 为准（解码 map 校验键集合精确），值语义校验复用生成类型。
 
@@ -31,22 +31,22 @@ import (
 
 // --- fakes ---
 
-// routingStore 在 fakeStore 之上补 rollup 聚合读能力（service 侧能力探测）。
+// routingStore 在 fakeStore 之上补事实表聚合读能力（service 侧能力探测）。
 type routingStore struct {
 	*fakeStore
 	flowRows    []repository.RoutingFlowStat
 	qualityRows []repository.RoutingQualityStat
 }
 
-func (s *routingStore) QueryQualityRollupStats(context.Context, domain.RouteClassIDVal, int16, time.Time, time.Time) ([]repository.RoutingQualityStat, error) {
+func (s *routingStore) QueryQualityFactStats(context.Context, domain.RouteClassIDVal, int16, time.Time, time.Time) ([]repository.RoutingQualityStat, error) {
 	return s.qualityRows, nil
 }
 
-func (s *routingStore) QueryFlowRollupStats(context.Context, domain.RouteClassIDVal, int16, time.Time, time.Time) ([]repository.RoutingFlowStat, error) {
+func (s *routingStore) QueryFlowFactStats(context.Context, domain.RouteClassIDVal, int16, time.Time, time.Time) ([]repository.RoutingFlowStat, error) {
 	return s.flowRows, nil
 }
 
-var _ service.RoutingRollupReader = (*routingStore)(nil)
+var _ service.RoutingFactReader = (*routingStore)(nil)
 
 // routingSched 提供当前计划投影（RuntimeProvider 面沿用 fakeSched）。
 type routingSched struct {

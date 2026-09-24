@@ -19,7 +19,7 @@ import (
 )
 
 // fakeWindowBackend is a PG-free windowSettledBackend: records call counts and
-// serves canned rollup rows for the adapter-conversion tests.
+// serves canned fact rows for the adapter-conversion tests.
 type fakeWindowBackend struct {
 	cur     []repository.WindowCurrentStat
 	base    []repository.WindowBaselineStat

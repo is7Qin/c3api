@@ -23,7 +23,7 @@ import (
 // routing_flow_fact_read。本测试以 EXPLAIN 断言该索引被选中且无 Seq Scan，
 // 并以 EXPLAIN ANALYZE 实测跨分片扇出 ≤ 实例数 × 窗口分钟数。
 //
-// 引用生产 SQL 常量 flowRollupStatsSQL（同包），故计划断言不会与发布 SQL 漂移。
+// 引用生产 SQL 常量 flowFactStatsSQL（同包），故计划断言不会与发布 SQL 漂移。
 type mergedReadPlanNode struct {
 	NodeType     string                `json:"Node Type"`
 	RelationName string                `json:"Relation Name"`
@@ -124,7 +124,7 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 	require.NoError(t, err)
 
 	var planJSON string
-	err = pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) `+flowRollupStatsSQL,
+	err = pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) `+flowFactStatsSQL,
 		hotRC, int16(1), from, m).Scan(&planJSON)
 	require.NoError(t, err)
 	t.Logf("merged read plan: %s", planJSON)
@@ -154,7 +154,7 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 	// 扇出实测：窗口内每个 (实例, 分钟) 恰一行热类边，故堆访问行数上界 =
 	// 实例数 × 窗口分钟数（实例越多、分钟越多 → 扇出线性，绝无实例间的二次放大）。
 	var planAnalyze string
-	err = pool.QueryRow(ctx, `EXPLAIN (ANALYZE, FORMAT JSON) `+flowRollupStatsSQL,
+	err = pool.QueryRow(ctx, `EXPLAIN (ANALYZE, FORMAT JSON) `+flowFactStatsSQL,
 		hotRC, int16(1), from, m).Scan(&planAnalyze)
 	require.NoError(t, err)
 	var analyzed []struct {
