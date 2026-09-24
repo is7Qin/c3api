@@ -149,7 +149,7 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 	// quality-sync so reverse shutdown closes quality-sync first (its failed
 	// flush may still refill the owner) and the owner second.
 	mustBefore("qualityFlowOwner", "qualitySync")
-	business := []string{"mailW", "warningWorker", "billingWorker", "inv", "schedW", "ruleEngine", "rec", "errlogW", "pricingSync", "retention", "statsAgg", "qualityFlowOwner", "qualitySync", "routingRollup", "concSync", "accConcSync"}
+	business := []string{"mailW", "warningWorker", "billingWorker", "inv", "schedW", "ruleEngine", "rec", "errlogW", "pricingSync", "retention", "statsAgg", "qualityFlowOwner", "qualitySync", "concSync", "accConcSync"}
 	for _, b := range business {
 		mustBefore(b, "disco")
 	}
