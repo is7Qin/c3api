@@ -111,16 +111,6 @@ var routingFlowSnapshotStateDDL = `CREATE TABLE IF NOT EXISTS routing_flow_snaps
 	PRIMARY KEY (terminal_minute, instance_src)
 )`
 
-var routingCompilerDDL = `CREATE TABLE IF NOT EXISTS routing_compiler_state (
-	id bigint NOT NULL,
-	desired_generation bigint NOT NULL DEFAULT 0,
-	published_generation bigint NOT NULL DEFAULT 0,
-	last_error text NULL,
-	updated_at timestamptz NOT NULL,
-	PRIMARY KEY (id),
-	CONSTRAINT routing_compiler_single CHECK (id = 1)
-)`
-
 func (r *PartitionRepo) EnsureRoutingQualityFactPartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_fact", "bucket_minute", routingQualityFactColumnDefs, routingQualityFactIndexDDLs, now)
 }
@@ -130,10 +120,6 @@ func (r *PartitionRepo) EnsureRoutingFlowFactPartitioned(ctx context.Context, no
 func (r *PartitionRepo) EnsureRoutingSnapshotState(ctx context.Context) error {
 	return r.execDDLTolerateRace(ctx, routingFlowSnapshotStateDDL)
 }
-func (r *PartitionRepo) EnsureRoutingCompiler(ctx context.Context) error {
-	return r.execDDLTolerateRace(ctx, routingCompilerDDL)
-}
-
 func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Time) error {
 	if err := r.EnsureRoutingQualityFactPartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality fact: %w", err)
@@ -143,9 +129,6 @@ func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Ti
 	}
 	if err := r.EnsureRoutingSnapshotState(ctx); err != nil {
 		return fmt.Errorf("routing snapshot state: %w", err)
-	}
-	if err := r.EnsureRoutingCompiler(ctx); err != nil {
-		return fmt.Errorf("routing compiler: %w", err)
 	}
 	return nil
 }

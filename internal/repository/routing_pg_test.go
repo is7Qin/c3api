@@ -101,7 +101,6 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 		require.Contains(t, names, tbl+"_"+today.AddDate(0, 0, 1).Format("20060102"))
 	}
 	var n int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_compiler_state`).Scan(&n))
 	// checks for digest length
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE conrelid='routing_quality_fact'::regclass AND contype='c'`).Scan(&n))
 	require.GreaterOrEqual(t, n, int64(3))
