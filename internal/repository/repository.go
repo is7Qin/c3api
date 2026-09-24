@@ -824,6 +824,9 @@ func (r *Repository) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.
 func (r *Repository) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DeleteRoutingFlowSnapshotStateBefore(ctx, cutoff)
 }
+func (r *Repository) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
+	return r.Partitions.RoutingFactPartitionStats(ctx)
+}
 
 // LoadBalances 全量余额快照（计费余额预检数据源）。
 func (r *Repository) LoadBalances(ctx context.Context) (map[int64]int64, error) {

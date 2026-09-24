@@ -1477,6 +1477,8 @@
       "log_retention_days": "日志保留 (天)",
       "errlog_retention_days": "错误日志保留 (天)",
       "stats_retention_days": "统计保留 (天)",
+      "oldest_partition_unix_ms": "最老路由分区",
+      "partition_count": "路由分区数",
       "last_reload_unix_ms": "最近重载",
       "failures": "失败累计",
       "last_failure_unix_ms": "最近失败",

@@ -109,4 +109,3 @@ func TestRoutingFlowSnapshotStateBoundedPG(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_snapshot_state WHERE terminal_minute=$1`, now).Scan(&insideStates))
 	require.Equal(t, int64(1), insideStates, "state inside the cutoff must survive the sweep")
 }
-

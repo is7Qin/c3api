@@ -9,11 +9,14 @@ package usage
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 var errBoom = errors.New("boom")
@@ -45,6 +48,10 @@ type fakePartitionManager struct {
 	esdropErr error       // usage_entity_stats drop 失败注入（失败隔离断言，与 sdrop 独立）
 	rdelErr   error       // redemption_uses 批删失败注入（失败隔离断言）
 	ensureErr error
+
+	rpartCount  int       // RoutingFactPartitionStats 回传的分区数
+	rpartOldest time.Time // RoutingFactPartitionStats 回传的最老分区下界（零值 = 无分区）
+	rpartErr    error     // RoutingFactPartitionStats 失败注入（失败不覆盖上轮值断言）
 }
 
 func (f *fakePartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
@@ -137,6 +144,11 @@ func (f *fakePartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx context.
 	defer f.mu.Unlock()
 	f.rstateDel = append(f.rstateDel, cutoff)
 	return 0, nil
+}
+func (f *fakePartitionManager) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.rpartCount, f.rpartOldest, f.rpartErr
 }
 
 func (f *fakePartitionManager) counts() (int, int) {
@@ -395,4 +407,57 @@ func TestRetentionWorkerRedemptionDeleteFailureIsolated(t *testing.T) {
 	require.Len(t, pm.edrops, len(pm.drops), "err_logs 不受 redemption_uses 批删失败影响")
 	require.Len(t, pm.sdrops, len(pm.drops), "usage_stats 不受 redemption_uses 批删失败影响")
 	require.Len(t, pm.esdrops, len(pm.drops), "usage_entity_stats 不受 redemption_uses 批删失败影响（四表同一循环）")
+}
+
+// TestRetentionRoutingPartitionBackstop 保留期兜底（spec §6 / 判据 A17）：路由两张
+// 事实表的分区概况必须进观测面，且最老分区早于观测保留 cutoff 时告警。
+//
+// 为什么这是必要的：事实表的有界性完全依赖于本 worker 在跑（与已下线的重算机械
+// 是同一种依赖形状）。worker 停摆或 DROP 持续失败时分区会**静默**无界增长——没有这个
+// 观测面，磁盘会被填满而任何指标都不动。正常巡检下「最老分区早于 cutoff」不可能发生，
+// 一旦出现就是该失效的直接信号。
+func TestRetentionRoutingPartitionBackstop(t *testing.T) {
+	// 情形 1：最老分区在 cutoff 内 → 记录观测值，不告警。
+	oldestIn := domain.RoutingObservationCutoff(time.Now(), 7).Add(24 * time.Hour)
+	logger, out := newTestErrLogLogger(t)
+	pm := &fakePartitionManager{rpartCount: 12, rpartOldest: oldestIn}
+	w := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm, logger)
+	w.runOnce()
+	st := w.Stats().(RetentionWorkerStats)
+	require.Equal(t, int64(12), st.PartitionCount, "分区数进观测面")
+	require.Equal(t, oldestIn.UnixMilli(), st.OldestPartitionUnixMs, "最老分区时刻进观测面")
+	require.NoError(t, logger.Sync())
+	b, err := os.ReadFile(out)
+	require.NoError(t, err)
+	require.NotContains(t, string(b), "older than the observation cutoff", "cutoff 内不得告警")
+
+	// 情形 2：最老分区早于 cutoff → 告警触发（分区 DROP 未生效的兜底信号）。
+	logger2, out2 := newTestErrLogLogger(t)
+	pm2 := &fakePartitionManager{rpartCount: 99, rpartOldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(-48 * time.Hour)}
+	w2 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm2, logger2)
+	w2.runOnce()
+	require.Equal(t, int64(99), w2.Stats().(RetentionWorkerStats).PartitionCount)
+	require.NoError(t, logger2.Sync())
+	b2, err := os.ReadFile(out2)
+	require.NoError(t, err)
+	require.Contains(t, string(b2), "older than the observation cutoff",
+		"最老分区早于 cutoff 必须告警——否则分区无界增长无声发生")
+
+	// 情形 3：无分区 → oldest 记 0。零值 time 的 UnixMilli 是巨大负数，必须归 0，
+	// 否则运维会看到公元 1 年的「最老分区」。
+	pm3 := &fakePartitionManager{rpartCount: 0}
+	w3 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm3, nil)
+	w3.runOnce()
+	require.Zero(t, w3.Stats().(RetentionWorkerStats).OldestPartitionUnixMs, "无分区 = 0")
+
+	// 情形 4：查询失败 → 保留上轮值（与 lastDrop* 同观测纪律），lastPatrol 仍推进。
+	pm4 := &fakePartitionManager{rpartCount: 7, rpartOldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(time.Hour)}
+	w4 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm4, nil)
+	w4.runOnce()
+	require.Equal(t, int64(7), w4.Stats().(RetentionWorkerStats).PartitionCount)
+	pm4.rpartErr = errors.New("stats boom")
+	w4.runOnce()
+	st4 := w4.Stats().(RetentionWorkerStats)
+	require.Equal(t, int64(7), st4.PartitionCount, "失败轮保留上轮值")
+	require.NotZero(t, st4.LastPatrolUnixMs, "失败轮 lastPatrol 仍推进")
 }

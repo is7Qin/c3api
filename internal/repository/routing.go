@@ -153,6 +153,33 @@ func (r *PartitionRepo) DropRoutingFlowFactBefore(ctx context.Context, cutoff ti
 	return r.DropTablePartitionsBefore(ctx, "routing_flow_fact", cutoff)
 }
 
+// RoutingFactPartitionStats 路由观测两张事实表的分区概况：分区总数 + 最老分区
+// 下界时刻（无分区时 count=0、oldest 为零值）。这是保留期**兜底**的读面——
+// 事实表的有界性完全依赖保留 worker 在跑（与已下线的重算机械同一种依赖形状），
+// 故「worker 停了」必须可观测，否则分区静默无界增长（spec §6/A17）。
+// 只读元数据、不碰数据行，故可在巡检内零成本调用。
+func (r *PartitionRepo) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
+	count := 0
+	var oldest time.Time
+	for _, table := range []string{"routing_quality_fact", "routing_flow_fact"} {
+		names, err := r.tablePartitionNames(ctx, table)
+		if err != nil {
+			return 0, time.Time{}, fmt.Errorf("list %s partitions: %w", table, err)
+		}
+		for _, name := range names {
+			d, ok := tablePartitionDate(table, name)
+			if !ok {
+				continue
+			}
+			count++
+			if oldest.IsZero() || d.Before(oldest) {
+				oldest = d
+			}
+		}
+	}
+	return count, oldest, nil
+}
+
 type RoutingQualityRow struct {
 	IdentityVersion      int16
 	RouteClassID         domain.RouteClassIDVal

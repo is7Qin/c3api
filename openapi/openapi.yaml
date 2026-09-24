@@ -3455,6 +3455,9 @@ components:
         #     last_dropped_stats_partitions int64（最近成功轮 DROP 分区数；失败轮保留上轮）,
         #     last_dropped_entity_stats_partitions int64（usage_entity_stats
         #     DROP 分区数；与 stats 同 StatsRetentionDays，失败轮保留上轮值）,
+        #     oldest_partition_unix_ms int64（路由两张事实表最老分区下界；0 = 无分区。
+        #     早于观测保留 cutoff ⇒ Warn——保留 worker 停摆时分区会静默无界增长的兜底观测）,
+        #     partition_count int64（路由两张事实表分区总数）,
         #     log_retention_days int, errlog_retention_days int, stats_retention_days int
         #   notify: running bool, ready bool（LISTEN + FullRefresh 已完成——不漏增量的启动屏障）
         #   auth-sync: running bool, last_reload_unix_ms int64（最近成功 Reload 时刻）,
