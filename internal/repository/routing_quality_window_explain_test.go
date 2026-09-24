@@ -98,7 +98,7 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 
 	var planJSON string
 	err = pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) `+routingQualityWindowBaselineSQL,
-		hotRC, hotFP, m.Add(-24*time.Hour), m.Add(-5*time.Minute)).Scan(&planJSON)
+		hotRC, hotFP, m.Add(-24*time.Hour), m.Add(-5*time.Minute), int64(domain.BaselineTruncateAttempts)).Scan(&planJSON)
 	require.NoError(t, err)
 	t.Logf("Q2 plan: %s", planJSON)
 	var plan []struct {
