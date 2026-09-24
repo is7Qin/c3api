@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 // --- Recorder ---
@@ -88,9 +89,8 @@ type countingPartitionManager struct {
 	statsDrops, entityDrops int
 	dropErr                 error // usage_logs drop 失败注入
 
-	partCount  int       // RoutingFactPartitionStats 回传的分区数
-	partOldest time.Time // 回传的最老分区下界（零值 = 无分区）
-	partErr    error     // 失败注入（失败不覆盖上轮值断言）
+	partStats repository.RoutingFactStats // RoutingFactPartitionStats 回传的兜底统计
+	partErr   error                       // 失败注入（失败不覆盖上轮值断言）
 }
 
 func (c *countingPartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
@@ -134,16 +134,19 @@ func (c *countingPartitionManager) DropRoutingQualityFactBefore(ctx context.Cont
 func (c *countingPartitionManager) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
+
+// 注：本 fake 的路由 DROP 恒返回 0（不注入失败）——路由 DROP 失败隔离由
+// retention_test.go 的 fakePartitionManager（rqdropErr/rfdropErr）覆盖。
 func (c *countingPartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
 func (c *countingPartitionManager) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
 }
-func (c *countingPartitionManager) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
+func (c *countingPartitionManager) RoutingFactPartitionStats(ctx context.Context) (repository.RoutingFactStats, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.partCount, c.partOldest, c.partErr
+	return c.partStats, c.partErr
 }
 
 func TestRetentionStats(t *testing.T) {

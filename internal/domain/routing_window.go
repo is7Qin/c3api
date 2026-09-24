@@ -51,3 +51,30 @@ const (
 func RoutingObservationCutoff(now time.Time, retentionDays int) time.Time {
 	return now.AddDate(0, 0, -retentionDays)
 }
+
+// RoutingPartitionStats 路由观测面兜底统计的**共享形状**：聚合告警口径
+// （Count/Oldest）+ 分表诊断口径（QualityCount/FlowCount/QualityOldest/FlowOldest）
+// + 快照交接状态行数（SnapshotRows）+ 无法解析名的分区数（UndatedCount）。
+//
+// **为什么定义在 domain（叶子包）而不是 repository**：usage 的 PartitionManager
+// 是**窄接缝**（保留策略只需 DROP/预建，不感知分区表内部 DDL）。若该接缝的签名引用
+// repository 的类型，usage 就被迫 import repository——而此前 usage 在生产代码里对
+// repository **零依赖**。放叶子包则两侧同源、互不依赖（与本文件上方常量注释同一条
+// 依赖方向纪律）。
+//
+// 聚合值是告警，分表值是诊断——一表 DROP 失败而另一表健康时，聚合只显示漂移，
+// 分表值才指出故障表。Oldest 零值 = 该表无可解析分区（空表 / 全为无名分区）。
+// SnapshotRows 是 routing_flow_snapshot_state 的当前总行数（普通表，无分区可
+// DROP，DELETE 失败会无界增长，故与分区数同轮观测）。UndatedCount 是名解析失败的
+// 分区数：它们既不被计数也不被 DROP（误删未知日期分区等于丢未知数据），只能靠本数
+// 暴露后人工介入。
+type RoutingPartitionStats struct {
+	Count         int
+	Oldest        time.Time
+	QualityCount  int
+	FlowCount     int
+	QualityOldest time.Time
+	FlowOldest    time.Time
+	SnapshotRows  int
+	UndatedCount  int
+}

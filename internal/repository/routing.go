@@ -153,22 +153,48 @@ func (r *PartitionRepo) DropRoutingFlowFactBefore(ctx context.Context, cutoff ti
 	return r.DropTablePartitionsBefore(ctx, "routing_flow_fact", cutoff)
 }
 
-// RoutingFactPartitionStats 路由观测两张事实表的分区概况：分区总数 + 最老分区
-// 下界时刻（无分区时 count=0、oldest 为零值）。这是保留期**兜底**的读面——
+// RoutingFactStats 是 domain.RoutingPartitionStats 的别名（本包内的惯用名）。
+// 形状定义在 domain 叶子包，而不是这里：usage 的 PartitionManager 窄接缝要跨包
+// 引用它，而 usage 不得为此 import repository（依赖方向纪律见
+// domain/routing_window.go 的 RoutingPartitionStats 注释）。
+type RoutingFactStats = domain.RoutingPartitionStats
+
+// CountRoutingFlowSnapshotState 返回交接状态表当前总行数（兜底观测读面）。小而
+// 有界（保留天数 × 实例数，分钟级行），COUNT(*) 零成本，可随巡检每轮调用——
+// 但仅限本表：事实表行数绝不得如此观测（分区 DROP 才是其有界机制，行级 COUNT
+// 是全表扫描）。
+func (r *PartitionRepo) CountRoutingFlowSnapshotState(ctx context.Context) (int, error) {
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, `SELECT COUNT(*) FROM routing_flow_snapshot_state`, []any{}, rows); err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	n, err := entsql.ScanInt(rows)
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
+// RoutingFactPartitionStats 路由观测两张事实表的分区概况：聚合分区总数 + 最老
+// 分区下界（无分区时 count=0、oldest 为零值）+ 分表计数/最老 + 快照行数 +
+// 无名分区数。这是保留期**兜底**的读面——
 // 事实表的有界性完全依赖保留 worker 在跑（与已下线的重算机械同一种依赖形状），
 // 故「worker 停了」必须可观测，否则分区静默无界增长（spec §6/A17）。
-// 只读元数据、不碰数据行，故可在巡检内零成本调用。
-func (r *PartitionRepo) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
-	count := 0
-	var oldest time.Time
+// 只读元数据 + 一次小表 COUNT，不碰事实数据行，故可在巡检内零成本调用。
+func (r *PartitionRepo) RoutingFactPartitionStats(ctx context.Context) (RoutingFactStats, error) {
+	var out RoutingFactStats
 	for _, table := range []string{"routing_quality_fact", "routing_flow_fact"} {
 		names, err := r.tablePartitionNames(ctx, table)
 		if err != nil {
-			return 0, time.Time{}, fmt.Errorf("list %s partitions: %w", table, err)
+			return RoutingFactStats{}, fmt.Errorf("list %s partitions: %w", table, err)
 		}
+		count := 0
+		var oldest time.Time
 		for _, name := range names {
 			d, ok := tablePartitionDate(table, name)
 			if !ok {
+				out.UndatedCount++
 				continue
 			}
 			count++
@@ -176,8 +202,24 @@ func (r *PartitionRepo) RoutingFactPartitionStats(ctx context.Context) (int, tim
 				oldest = d
 			}
 		}
+		out.Count += count
+		if !oldest.IsZero() && (out.Oldest.IsZero() || oldest.Before(out.Oldest)) {
+			out.Oldest = oldest
+		}
+		if table == "routing_quality_fact" {
+			out.QualityCount = count
+			out.QualityOldest = oldest
+		} else {
+			out.FlowCount = count
+			out.FlowOldest = oldest
+		}
 	}
-	return count, oldest, nil
+	n, err := r.CountRoutingFlowSnapshotState(ctx)
+	if err != nil {
+		return RoutingFactStats{}, fmt.Errorf("count routing snapshot state: %w", err)
+	}
+	out.SnapshotRows = n
+	return out, nil
 }
 
 type RoutingQualityRow struct {

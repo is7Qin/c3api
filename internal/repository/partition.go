@@ -69,6 +69,10 @@ func tablePartitionRe(table string) *regexp.Regexp {
 }
 
 func tablePartitionDate(table, name string) (time.Time, bool) {
+	// 名解析失败 = 该分区既不被计数也不被 DROP：分区名即日期是保留口径的唯一
+	// 依据（DROP 按名判定过期），无日期即无法判定过期——误删的风险大于残留。
+	// 此类分区只能由 RoutingFactPartitionStats 计入 UndatedCount 暴露，运维人工
+	// 介入（自动 DROP 一个不知日期的分区等于丢未知数据，不可接受）。
 	m := tablePartitionRe(table).FindStringSubmatch(name)
 	if m == nil {
 		return time.Time{}, false

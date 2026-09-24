@@ -38,9 +38,11 @@ type PartitionManager interface {
 	DropRoutingQualityFactBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error)
-	// RoutingFactPartitionStats 路由两张事实表的分区总数与最老分区下界
-	// （无分区时 count=0、oldest 为零值）。保留期兜底观测的读面（A17）。
-	RoutingFactPartitionStats(ctx context.Context) (count int, oldest time.Time, err error)
+	// RoutingFactPartitionStats 路由观测面的兜底统计（聚合告警 + 分表诊断 +
+	// 快照行数 + 无名分区数，无分区时 Count=0、Oldest 为零值）。保留期兜底观测
+	// 的读面（A17）。形状复用 domain.RoutingPartitionStats——该接缝**不得**引用
+	// repository 的类型，否则 usage 会为它引入对整个 repository 的依赖（此前零依赖）。
+	RoutingFactPartitionStats(ctx context.Context) (domain.RoutingPartitionStats, error)
 	DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
@@ -99,10 +101,25 @@ type RetentionWorker struct {
 	lastDropErrLogs     atomic.Int64
 	lastDropStats       atomic.Int64
 	lastDropEntityStats atomic.Int64
-	// 保留期兜底观测（spec §6/A17）：路由事实表分区总数与最老分区下界。
-	// 事实表的有界性完全依赖本 worker 在跑，故这两项让「worker 停摆」可观测。
-	partitionCount  atomic.Int64
-	oldestPartition atomic.Int64
+	// 路由观测面 DROP 计数（与 lastDrop* 同纪律：失败轮保留上轮值）。0 且分区
+	// 未减 ≠ 失败——无过期分区时 DROP 本就返回 0；是否失败看 Warn 日志。
+	lastDropRoutingQuality atomic.Int64
+	lastDropRoutingFlow    atomic.Int64
+	// 保留期兜底观测（spec §6/A17）：聚合告警口径（partitionCount/oldestPartition）
+	// + 分表诊断口径（quality/flow 各自计数与最老）+ 快照行数 + 无名分区数。
+	// 事实表的有界性完全依赖本 worker 在跑，故这些项让「worker 停摆」可观测。
+	partitionCount        atomic.Int64
+	oldestPartition       atomic.Int64
+	qualityPartitionCount atomic.Int64
+	qualityOldest         atomic.Int64
+	flowPartitionCount    atomic.Int64
+	flowOldest            atomic.Int64
+	snapshotRows          atomic.Int64
+	undatedPartitions     atomic.Int64
+	// statsStale 查询失败的可见标记：失败轮保留上轮值（与 lastDrop* 同纪律），
+	// 但 lastPatrol 仍推进——无此标记，/ops 会把旧数当新鲜数呈现。true = 当前
+	// 呈现的是过期值，下轮成功查询后归 false。
+	statsStale atomic.Bool
 }
 
 func NewRetention(cfg RetentionConfig, parts PartitionManager, log *logx.Logger) *RetentionWorker {
@@ -209,14 +226,24 @@ func (w *RetentionWorker) runOnce() {
 	// 走有界 DELETE（与分区 DROP 同一 cutoff，防"删后重建"由写面守卫兜底）。
 	if w.cfg.RoutingObservationRetentionDays > 0 {
 		cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
-		if _, err := w.parts.DropRoutingQualityFactBefore(ctx, cutoff); err != nil {
+		if n, err := w.parts.DropRoutingQualityFactBefore(ctx, cutoff); err != nil {
 			if w.log != nil {
 				w.log.Warn("retention drop routing_quality_fact partitions failed", logx.Error(err))
 			}
+		} else {
+			w.lastDropRoutingQuality.Store(int64(n))
+			if n > 0 && w.log != nil {
+				w.log.Info("retention dropped routing_quality_fact partitions", logx.Int("count", n))
+			}
 		}
-		if _, err := w.parts.DropRoutingFlowFactBefore(ctx, cutoff); err != nil {
+		if n, err := w.parts.DropRoutingFlowFactBefore(ctx, cutoff); err != nil {
 			if w.log != nil {
 				w.log.Warn("retention drop routing_flow_fact partitions failed", logx.Error(err))
+			}
+		} else {
+			w.lastDropRoutingFlow.Store(int64(n))
+			if n > 0 && w.log != nil {
+				w.log.Info("retention dropped routing_flow_fact partitions", logx.Int("count", n))
 			}
 		}
 		n, err := w.parts.DeleteRoutingFlowSnapshotStateBefore(ctx, cutoff)
@@ -265,31 +292,44 @@ func (w *RetentionWorker) runOnce() {
 		}
 	}
 	// 兜底观测（A17）：预建后取分区概况。失败保留上轮值（与 lastDrop* 同约定：
-	// 失败不覆盖，lastPatrol 仍推进）。最老分区早于 cutoff ⇒ Warn——正常巡检下
-	// 不可能发生，一旦出现即分区 DROP 未生效（worker 停摆或 DROP 持续失败），
-	// 而分区静默无界增长。
-	if count, oldest, err := w.parts.RoutingFactPartitionStats(ctx); err != nil {
+	// 失败不覆盖，lastPatrol 仍推进），但置 statsStale 让过期值可见。最老分区
+	// 早于 cutoff ⇒ Warn——正常巡检下不可能发生，一旦出现即分区 DROP 未生效
+	// （worker 停摆或 DROP 持续失败），而分区静默无界增长。
+	if st, err := w.parts.RoutingFactPartitionStats(ctx); err != nil {
 		if w.log != nil {
 			w.log.Warn("retention routing partition stats failed", logx.Error(err))
 		}
+		w.statsStale.Store(true)
 	} else {
-		w.partitionCount.Store(int64(count))
-		if oldest.IsZero() {
-			w.oldestPartition.Store(0) // 零值 time 的 UnixMilli 是巨大负数，必须归 0
-		} else {
-			w.oldestPartition.Store(oldest.UnixMilli())
-			if w.cfg.RoutingObservationRetentionDays > 0 {
-				cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
-				if oldest.Before(cutoff) && w.log != nil {
-					w.log.Warn("retention routing partitions older than the observation cutoff",
-						logx.Int("partition_count", count),
-						logx.String("oldest_partition", oldest.UTC().Format(time.RFC3339)),
-						logx.String("cutoff", cutoff.UTC().Format(time.RFC3339)))
-				}
+		w.partitionCount.Store(int64(st.Count))
+		w.qualityPartitionCount.Store(int64(st.QualityCount))
+		w.flowPartitionCount.Store(int64(st.FlowCount))
+		w.snapshotRows.Store(int64(st.SnapshotRows))
+		w.undatedPartitions.Store(int64(st.UndatedCount))
+		w.oldestPartition.Store(unixMilliOrZero(st.Oldest))
+		w.qualityOldest.Store(unixMilliOrZero(st.QualityOldest))
+		w.flowOldest.Store(unixMilliOrZero(st.FlowOldest))
+		w.statsStale.Store(false)
+		if !st.Oldest.IsZero() && w.cfg.RoutingObservationRetentionDays > 0 {
+			cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
+			if st.Oldest.Before(cutoff) && w.log != nil {
+				w.log.Warn("retention routing partitions older than the observation cutoff",
+					logx.Int("partition_count", st.Count),
+					logx.String("oldest_partition", st.Oldest.UTC().Format(time.RFC3339)),
+					logx.String("cutoff", cutoff.UTC().Format(time.RFC3339)))
 			}
 		}
 	}
 	w.lastPatrol.Store(now.UnixMilli())
+}
+
+// unixMilliOrZero 零值 time 归 0：零值 time 的 UnixMilli 是巨大负数（公元 1 年），
+// 直接呈现会让运维看到荒谬的「最老分区」。
+func unixMilliOrZero(t time.Time) int64 {
+	if t.IsZero() {
+		return 0
+	}
+	return t.UnixMilli()
 }
 
 // Close 幂等（worker.Worker 契约）：DROP/预建均幂等，无排空需求。

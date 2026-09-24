@@ -108,7 +108,13 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 	require.Len(t, plan, 1)
 	var seqScan, identityIndex bool
 	var indexNames []string
+	// 逐节点计数：A6 要求「必须发布实际节点」，不得只断言「无 Seq Scan」。
+	// 预聚合的**代价形状**（每个 hot 对一次 HashAggregate + 两次 Sort）本身就是
+	// §5 声称的基线窗单价来源（+57%），故它必须被机器断言——否则计划退化成
+	// 「不聚合」时这条用例仍然通过，而结果会静默漂移（见 A4 绊线）。
+	nodeTypes := map[string]int{}
 	walkWindowPlan(plan[0].Plan, func(n *windowPlanNode) {
+		nodeTypes[n.NodeType]++
 		if n.NodeType == "Seq Scan" {
 			seqScan = true
 		}
@@ -127,6 +133,24 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 	})
 	require.False(t, seqScan, "Q2 must not seq-scan routing_quality_fact")
 	require.True(t, identityIndex, "Q2 must use the fact identity index, saw %v", indexNames)
+	// 折叠节点的判据是**聚合节点个数 ≥ 2**，不是「存在聚合节点」——外层 GROUP BY 1,2
+	// 无论如何都会产生一个聚合，故「有没有聚合」是空断言（本用例第一版就写错了，
+	// 去掉内层折叠后仍然通过）。实测两种计划的判别点（同一夹具）：
+	//
+	//	生产（含内层折叠）：Sort → Aggregate → Nested Loop →
+	//	    {Function Scan, WindowAgg → Sort → Aggregate → Append → Index Scan×2}
+	//	去掉内层折叠：      Sort → Aggregate → Nested Loop →
+	//	    {Function Scan, WindowAgg → Incremental Sort → Append → Index Scan×2}
+	//
+	// 内层折叠消失后聚合数由 2 变 1，而排序数**不变**（都是 2：Sort×2 vs
+	// Sort×1+Incremental Sort×1）——所以只有聚合计数能抓住这个回归。
+	// 注：PG 的 JSON 计划把聚合统一报 `Aggregate`（策略在 Strategy 字段，如 Hashed），
+	// 而 §5/A6 沿用设计期原型的叫法 `HashAggregate`——同一件事，故三种标签一起计数。
+	aggNodes := nodeTypes["Aggregate"] + nodeTypes["HashAggregate"] + nodeTypes["GroupAggregate"]
+	require.GreaterOrEqual(t, aggNodes, 2,
+		"Q2 必须同时有外层分组聚合与 LATERAL 内层的折叠聚合（预聚合消失则只剩 1 个）；实际节点: %v", nodeTypes)
+	require.Positive(t, nodeTypes["Sort"]+nodeTypes["Incremental Sort"],
+		"Q2 必须出现窗口 ORDER BY 的排序节点；实际节点: %v", nodeTypes)
 
 	// Row-count bound: one row per hot (route, fp) at most.
 	keys := make([]WindowHotKey, 0, nhot)
