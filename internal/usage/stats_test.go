@@ -87,6 +87,10 @@ type countingPartitionManager struct {
 	logDrops, errDrops      int
 	statsDrops, entityDrops int
 	dropErr                 error // usage_logs drop 失败注入
+
+	partCount  int       // RoutingFactPartitionStats 回传的分区数
+	partOldest time.Time // 回传的最老分区下界（零值 = 无分区）
+	partErr    error     // 失败注入（失败不覆盖上轮值断言）
 }
 
 func (c *countingPartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
@@ -135,6 +139,11 @@ func (c *countingPartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx cont
 }
 func (c *countingPartitionManager) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return 0, nil
+}
+func (c *countingPartitionManager) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.partCount, c.partOldest, c.partErr
 }
 
 func TestRetentionStats(t *testing.T) {

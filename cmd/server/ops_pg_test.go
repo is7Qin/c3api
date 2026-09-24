@@ -69,6 +69,11 @@ func newOpsPGRepos(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
 	t.Cleanup(func() { _ = db.Close() })
 	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+opsTestSchema+` CASCADE; CREATE SCHEMA `+opsTestSchema+`;`)
 	require.NoError(t, err)
+	// 残留的 ops_test.routing_* 表会被另一包未加 schema 过滤的 information_schema 查询扫到，导致列数翻倍；
+	// 失败时也要清理故用 t.Cleanup，且此处后注册先执行、在 pool/db 关闭前 DROP，否则连接已关无法执行。
+	t.Cleanup(func() {
+		_, _ = db.ExecContext(context.Background(), `DROP SCHEMA IF EXISTS `+opsTestSchema+` CASCADE;`)
+	})
 	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool)
 	require.NoError(t, err)
 	return repos, pool
@@ -140,6 +145,8 @@ func TestOpsWorkersPG(t *testing.T) {
 	statsAgg := usage.NewStatsAgg(usage.StatsAggConfig{Interval: 20 * time.Millisecond, Lag: 50 * time.Millisecond}, repos.Stats, nil)
 	retention := usage.NewRetention(usage.RetentionConfig{
 		LogRetentionDays: 1, ErrLogRetentionDays: 0, StatsRetentionDays: 0, TickerInterval: time.Hour,
+		// 路由观测保留打开：兜底观测面（A17）只在配置了观测保留期时才成立。
+		RoutingObservationRetentionDays: 7,
 	}, repos, nil)
 
 	reg := snapshot.New()
@@ -180,6 +187,12 @@ func TestOpsWorkersPG(t *testing.T) {
 	// 分区保留、2 天前分区删除） ---
 	stale := now.AddDate(0, 0, -2)
 	require.NoError(t, repos.EnsureUsageLogPartitions(ctx, stale, stale))
+	// 路由事实表分区：兜底观测（A17）必须有真实分区可观测。必须先建父表 + 当日
+	// 分区——EnsureRoutingFactPartitions 对「父表缺失」是**静默跳过**
+	// （isMissingObject 分支，见 partition.go），只调它会既不报错也不建分区。
+	// 再补建 day-2..today；它们都在观测保留 cutoff（now-7d）内，巡检不会 DROP。
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	require.NoError(t, repos.EnsureRoutingFactPartitions(ctx, stale, now))
 	require.NoError(t, retention.Start(ctx))
 	require.Eventually(t, func() bool {
 		return retention.Stats().(usage.RetentionWorkerStats).LastPatrolUnixMs > 0
@@ -243,6 +256,14 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.Equal(t, float64(2), got["errlog"]["inserted"], "errlog 落盘计数与真实一致")
 	require.NotZero(t, got["retention"]["last_patrol_unix_ms"], "retention 巡检时刻已记")
 	require.Equal(t, float64(1), got["retention"]["last_dropped_log_partitions"], "DROP 分区数")
+	// A17 保留期兜底：/ops 必须能读到路由事实表的分区数与最老分区时刻，且与库内
+	// 真实值一致。这是「保留 worker 停摆 ⇒ 分区静默无界增长」的唯一观测面。
+	wantCount, wantOldest, err := repos.RoutingFactPartitionStats(ctx)
+	require.NoError(t, err)
+	require.Greater(t, wantCount, 0, "夹具必须真的建出了路由分区（否则断言无意义）")
+	require.False(t, wantOldest.IsZero(), "夹具的最老分区必须非零")
+	require.Equal(t, float64(wantCount), got["retention"]["partition_count"], "/ops 分区数 = 库内真实值")
+	require.Equal(t, float64(wantOldest.UnixMilli()), got["retention"]["oldest_partition_unix_ms"], "/ops 最老分区 = 库内真实值")
 	require.Equal(t, float64(1), got["scheduler"]["compile_cap"], "scheduler 编译道信号 cap=1（trailing-edge 合并）")
 	require.NotZero(t, got["rule-engine"]["queue_cap"].(float64))
 	// stats-agg 观测（spec 2026-08-14 §6）：watermark 与 stats_agg_watermark

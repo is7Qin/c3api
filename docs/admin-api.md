@@ -977,6 +977,13 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `last_rows` | 上轮消费明细行数（三查询合计） |
 | `last_duration_ms` | 上轮耗时（毫秒） |
 
+`retention`（分区保留 worker）除巡检时刻与逐表 DROP 计数外，另有两项**保留期兜底观测**——路由事实表的有界性完全依赖该 worker 在跑，worker 停摆或 DROP 持续失败时分区会**静默无界增长**，这两项是该失效的唯一观测面：
+
+| 字段 | 说明 |
+|---|---|
+| `oldest_partition_unix_ms` | `routing_quality_fact` / `routing_flow_fact` 两张表的最老分区下界（毫秒；0 = 无分区）。**早于观测保留 cutoff（`routing.observation_retention_days`）即 Warn**——正常巡检下不可能出现 |
+| `partition_count` | 上述两张表的分区总数 |
+
 ---
 
 ## 规则 Rules

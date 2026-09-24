@@ -585,12 +585,8 @@ func (r *PartitionRepo) EnsureUsageEntityStatsPartitions(ctx context.Context, no
 // DropTablePartitionsBefore DROP 指定表分区下界日期早于 cutoff 的分区（O(1)，
 // 按分区名日期判定，无需查元数据）；返回删除个数。保留 >= cutoff 的分区。
 func (r *PartitionRepo) DropTablePartitionsBefore(ctx context.Context, table string, cutoff time.Time) (int, error) {
-	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid JOIN pg_class p ON p.oid = i.inhparent JOIN pg_namespace n ON n.oid = c.relnamespace WHERE p.relname = $1 AND n.nspname = current_schema()`, []any{table}, rows); err != nil {
-		return 0, err
-	}
-	names := []string{}
-	if err := entsql.ScanSlice(rows, &names); err != nil {
+	names, err := r.tablePartitionNames(ctx, table)
+	if err != nil {
 		return 0, err
 	}
 	cut := cutoff.UTC().Truncate(24 * time.Hour)
@@ -608,6 +604,20 @@ func (r *PartitionRepo) DropTablePartitionsBefore(ctx context.Context, table str
 		}
 	}
 	return dropped, nil
+}
+
+// tablePartitionNames 当前 schema 下指定父表的分区名（不含父表自身）。只读
+// 元数据；DROP 与兜底观测（RoutingFactPartitionStats）共用同一取数口径。
+func (r *PartitionRepo) tablePartitionNames(ctx context.Context, table string) ([]string, error) {
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid JOIN pg_class p ON p.oid = i.inhparent JOIN pg_namespace n ON n.oid = c.relnamespace WHERE p.relname = $1 AND n.nspname = current_schema()`, []any{table}, rows); err != nil {
+		return nil, err
+	}
+	names := []string{}
+	if err := entsql.ScanSlice(rows, &names); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
 
 // DropUsageLogPartitionsBefore usage_logs DROP 分区下界早于 cutoff 的分区

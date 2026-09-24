@@ -1477,6 +1477,8 @@
       "log_retention_days": "Log retention (days)",
       "errlog_retention_days": "Errlog retention (days)",
       "stats_retention_days": "Stats retention (days)",
+      "oldest_partition_unix_ms": "Oldest routing partition",
+      "partition_count": "Routing partitions",
       "last_reload_unix_ms": "Last reload",
       "failures": "Failures",
       "last_failure_unix_ms": "Last failure",

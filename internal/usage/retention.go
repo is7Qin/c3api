@@ -38,6 +38,9 @@ type PartitionManager interface {
 	DropRoutingQualityFactBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// RoutingFactPartitionStats 路由两张事实表的分区总数与最老分区下界
+	// （无分区时 count=0、oldest 为零值）。保留期兜底观测的读面（A17）。
+	RoutingFactPartitionStats(ctx context.Context) (count int, oldest time.Time, err error)
 	DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error)
 }
 
@@ -96,6 +99,10 @@ type RetentionWorker struct {
 	lastDropErrLogs     atomic.Int64
 	lastDropStats       atomic.Int64
 	lastDropEntityStats atomic.Int64
+	// 保留期兜底观测（spec §6/A17）：路由事实表分区总数与最老分区下界。
+	// 事实表的有界性完全依赖本 worker 在跑，故这两项让「worker 停摆」可观测。
+	partitionCount  atomic.Int64
+	oldestPartition atomic.Int64
 }
 
 func NewRetention(cfg RetentionConfig, parts PartitionManager, log *logx.Logger) *RetentionWorker {
@@ -255,6 +262,31 @@ func (w *RetentionWorker) runOnce() {
 	if err := w.parts.EnsureRoutingFactPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
 		if w.log != nil {
 			w.log.Warn("retention pre-create routing fact partitions failed", logx.Error(err))
+		}
+	}
+	// 兜底观测（A17）：预建后取分区概况。失败保留上轮值（与 lastDrop* 同约定：
+	// 失败不覆盖，lastPatrol 仍推进）。最老分区早于 cutoff ⇒ Warn——正常巡检下
+	// 不可能发生，一旦出现即分区 DROP 未生效（worker 停摆或 DROP 持续失败），
+	// 而分区静默无界增长。
+	if count, oldest, err := w.parts.RoutingFactPartitionStats(ctx); err != nil {
+		if w.log != nil {
+			w.log.Warn("retention routing partition stats failed", logx.Error(err))
+		}
+	} else {
+		w.partitionCount.Store(int64(count))
+		if oldest.IsZero() {
+			w.oldestPartition.Store(0) // 零值 time 的 UnixMilli 是巨大负数，必须归 0
+		} else {
+			w.oldestPartition.Store(oldest.UnixMilli())
+			if w.cfg.RoutingObservationRetentionDays > 0 {
+				cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
+				if oldest.Before(cutoff) && w.log != nil {
+					w.log.Warn("retention routing partitions older than the observation cutoff",
+						logx.Int("partition_count", count),
+						logx.String("oldest_partition", oldest.UTC().Format(time.RFC3339)),
+						logx.String("cutoff", cutoff.UTC().Format(time.RFC3339)))
+				}
+			}
 		}
 	}
 	w.lastPatrol.Store(now.UnixMilli())

@@ -58,6 +58,8 @@ type RetentionWorkerStats struct {
 	LastDroppedErrLogPartitions      int64 `json:"last_dropped_errlog_partitions"`       // 最近成功轮 err_logs DROP 分区数（失败轮保留上轮值）
 	LastDroppedStatsPartitions       int64 `json:"last_dropped_stats_partitions"`        // 最近成功轮 usage_stats DROP 分区数（失败轮保留上轮值）
 	LastDroppedEntityStatsPartitions int64 `json:"last_dropped_entity_stats_partitions"` // 最近成功轮 usage_entity_stats DROP 分区数（与 stats 同 StatsRetentionDays，失败轮保留上轮值）
+	OldestPartitionUnixMs            int64 `json:"oldest_partition_unix_ms"`             // 路由两张事实表最老分区下界（UnixMilli；0 = 无分区）。早于观测保留 cutoff ⇒ Warn：保留 worker 停摆的兜底观测
+	PartitionCount                   int64 `json:"partition_count"`                      // 路由两张事实表的分区总数（保留 worker 在跑即有界）
 	LogRetentionDays                 int   `json:"log_retention_days"`
 	ErrLogRetentionDays              int   `json:"errlog_retention_days"`
 	StatsRetentionDays               int   `json:"stats_retention_days"`
@@ -71,6 +73,8 @@ func (w *RetentionWorker) Stats() any {
 		LastDroppedErrLogPartitions:      w.lastDropErrLogs.Load(),
 		LastDroppedStatsPartitions:       w.lastDropStats.Load(),
 		LastDroppedEntityStatsPartitions: w.lastDropEntityStats.Load(),
+		OldestPartitionUnixMs:            w.oldestPartition.Load(),
+		PartitionCount:                   w.partitionCount.Load(),
 		LogRetentionDays:                 w.cfg.LogRetentionDays,
 		ErrLogRetentionDays:              w.cfg.ErrLogRetentionDays,
 		StatsRetentionDays:               w.cfg.StatsRetentionDays,
