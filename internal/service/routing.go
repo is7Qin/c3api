@@ -32,8 +32,8 @@ type RoutingPlanProvider interface {
 // RoutingFactReader 事实表聚合读能力（实现 = *repository.Repository 对
 // Partitions 的委托，经 s.store 能力探测）。
 type RoutingFactReader interface {
-	QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]repository.RoutingQualityStat, error)
-	QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]repository.RoutingFlowStat, error)
+	QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingQualityStat, error)
+	QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingFlowStat, error)
 }
 
 // routingLoss 进程观测 flow 丢失计数接缝（quality 包级原子计数器的读取面；
@@ -226,7 +226,7 @@ func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*Ro
 	if !ok {
 		return nil, errRoutingNotWired
 	}
-	rows, err := reader.QueryFlowFactStats(ctx, rc, int16(domain.RoutingIdentityVersion), q.From, q.To)
+	rows, err := reader.QueryFlowFactStats(ctx, rc, q.From, q.To)
 	if err != nil {
 		return nil, err
 	}

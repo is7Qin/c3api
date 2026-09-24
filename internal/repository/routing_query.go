@@ -115,9 +115,9 @@ ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_ou
 	transition_reason, outcome, is_terminal DESC`
 
 // QueryQualityFactStats aggregates routing_quality_fact over the half-open
-// minute window [from, to) for one route class. identityVersion 仅保留于签名
-// （接口稳定），不再绑定：DB 已无该维度。
-func (r *PartitionRepo) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
+// minute window [from, to) for one route class. The read is not
+// version-scoped: the DB has no identity_version dimension.
+func (r *PartitionRepo) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]RoutingQualityStat, error) {
 	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
 	rows := &entsql.Rows{}
 	if err := r.driver.Query(ctx, qualityFactStatsSQL, []any{routeClass[:], from, to}, rows); err != nil {
@@ -150,8 +150,8 @@ func (r *PartitionRepo) QueryQualityFactStats(ctx context.Context, routeClass do
 
 // QueryFlowFactStats aggregates routing_flow_fact over the half-open minute
 // window [from, to) for one route class, one row per
-// complete edge identity. identityVersion 仅保留于签名（接口稳定），不再绑定。
-func (r *PartitionRepo) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
+// complete edge identity. The read is not version-scoped.
+func (r *PartitionRepo) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]RoutingFlowStat, error) {
 	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
 	rows := &entsql.Rows{}
 	if err := r.driver.Query(ctx, flowFactStatsSQL, []any{routeClass[:], from, to}, rows); err != nil {
@@ -181,13 +181,13 @@ func (r *PartitionRepo) QueryFlowFactStats(ctx context.Context, routeClass domai
 }
 
 // QueryQualityFactStats 组合面委托（service.Store 能力探测经此达 Partitions）。
-func (r *Repository) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
-	return r.Partitions.QueryQualityFactStats(ctx, routeClass, identityVersion, from, to)
+func (r *Repository) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]RoutingQualityStat, error) {
+	return r.Partitions.QueryQualityFactStats(ctx, routeClass, from, to)
 }
 
 // QueryFlowFactStats 组合面委托（同上）。
-func (r *Repository) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
-	return r.Partitions.QueryFlowFactStats(ctx, routeClass, identityVersion, from, to)
+func (r *Repository) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]RoutingFlowStat, error) {
+	return r.Partitions.QueryFlowFactStats(ctx, routeClass, from, to)
 }
 
 // parseRoutingHist parses a Postgres bigint[] literal ("{1,2,3}") into a slice;

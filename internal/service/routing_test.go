@@ -25,28 +25,26 @@ import (
 
 // --- fakeStore 事实读面 ---
 
-func (f *fakeStore) QueryQualityFactStats(_ context.Context, routeClass domain.RouteClassIDVal, version int16, from, to time.Time) ([]repository.RoutingQualityStat, error) {
+func (f *fakeStore) QueryQualityFactStats(_ context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingQualityStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.routingFactCall = struct {
 		routeClass domain.RouteClassIDVal
-		version    int16
 		from, to   time.Time
-	}{routeClass, version, from, to}
+	}{routeClass, from, to}
 	if f.routingFactErr != nil {
 		return nil, f.routingFactErr
 	}
 	return f.routingQualityRows, nil
 }
 
-func (f *fakeStore) QueryFlowFactStats(_ context.Context, routeClass domain.RouteClassIDVal, version int16, from, to time.Time) ([]repository.RoutingFlowStat, error) {
+func (f *fakeStore) QueryFlowFactStats(_ context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingFlowStat, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.routingFactCall = struct {
 		routeClass domain.RouteClassIDVal
-		version    int16
 		from, to   time.Time
-	}{routeClass, version, from, to}
+	}{routeClass, from, to}
 	if f.routingFactErr != nil {
 		return nil, f.routingFactErr
 	}
@@ -178,7 +176,6 @@ func TestRoutingFlow_RouteCatalogValidation(t *testing.T) {
 
 	_, err = svc.QueryRoutingFlow(ctx, RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour)})
 	require.NoError(t, err)
-	require.Equal(t, int16(domain.RoutingIdentityVersion), fs.routingFactCall.version, "fact filter must pin current identity version")
 	require.True(t, fs.routingFactCall.from.Equal(routingBase))
 	require.True(t, fs.routingFactCall.to.Equal(routingBase.Add(time.Hour)))
 }

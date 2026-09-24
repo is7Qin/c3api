@@ -63,7 +63,7 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	seed(fp1, "src-a", base.Add(3*time.Minute), 1, repository.RoutingQualityRow{Attempts: 100})
 
 	// When: full half-open window covering minutes 1 and 2.
-	stats, err := repos.Partitions.QueryQualityFactStats(ctx, rc, 1, base, base.Add(3*time.Minute))
+	stats, err := repos.Partitions.QueryQualityFactStats(ctx, rc, base, base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, stats)
 	// Then: one group per candidate identity; fp1 sums across minutes AND
@@ -98,7 +98,7 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	require.Equal(t, int64(8), got2.Attempts)
 
 	// When: window excludes minute 2. Then: only minute 1 totals (both shards).
-	stats, err = repos.Partitions.QueryQualityFactStats(ctx, rc, 1, base, min2)
+	stats, err = repos.Partitions.QueryQualityFactStats(ctx, rc, base, min2)
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, fp1, stats[0].CandidateFingerprint)
@@ -108,7 +108,7 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	// Then: an unknown route class filters to empty, non-nil. (There is no
 	// identity-version mismatch case to assert any more — the DB column is gone,
 	// so a version-mismatch filter has no parameter to bind and nothing to match.)
-	empty, err := repos.Partitions.QueryQualityFactStats(ctx, rcOther, 1, base, base.Add(3*time.Minute))
+	empty, err := repos.Partitions.QueryQualityFactStats(ctx, rcOther, base, base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, empty)
 	require.Len(t, empty, 0)
@@ -150,7 +150,7 @@ func TestRoutingFlowRollupQueryPG(t *testing.T) {
 
 	// When: full window. Then: one row per merged edge identity, chain_count
 	// summed across minutes and shards, deterministic order (ordinal, then account_id).
-	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base, base.Add(3*time.Minute))
+	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, base, base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, stats)
 	require.Len(t, stats, 4)
@@ -174,13 +174,13 @@ func TestRoutingFlowRollupQueryPG(t *testing.T) {
 	require.Equal(t, int64(50), stats[3].ChainCount)
 
 	// When: window excludes minute 2. Then: e1 keeps only minute 1 chain.
-	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base, min2)
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, base, min2)
 	require.NoError(t, err)
 	require.Len(t, stats, 2)
 	require.Equal(t, int64(2), stats[0].ChainCount)
 
 	// Then: filters — unknown route class is empty, non-nil.
-	empty, err := repos.Partitions.QueryFlowFactStats(ctx, rcOther, 1, base, base.Add(3*time.Minute))
+	empty, err := repos.Partitions.QueryFlowFactStats(ctx, rcOther, base, base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, empty)
 	require.Len(t, empty, 0)

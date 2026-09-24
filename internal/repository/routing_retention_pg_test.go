@@ -42,7 +42,7 @@ func TestRoutingQualityWindowBoundarySeedPG(t *testing.T) {
 	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", m, 7, 7)                          // 当前窗上界（不含）
 
 	keys := []repository.WindowHotKey{{RouteClassID: rcA, Fingerprint: fp}}
-	baseline, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
+	baseline, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	require.Len(t, baseline, 1)
 	require.Equal(t, int64(2), baseline[0].Attempts,
@@ -51,7 +51,7 @@ func TestRoutingQualityWindowBoundarySeedPG(t *testing.T) {
 
 	// 当前窗 [M-CurrentWindowLen, M)：下界含（该分钟正是基线窗的半开上界——两窗
 	// 无缝无重叠），M 本身不含。
-	cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
+	cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, m)
 	require.NoError(t, err)
 	require.Len(t, cur, 1)
 	require.Equal(t, int64(12), cur[0].Attempts,
