@@ -977,12 +977,19 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `last_rows` | 上轮消费明细行数（三查询合计） |
 | `last_duration_ms` | 上轮耗时（毫秒） |
 
-`retention`（分区保留 worker）除巡检时刻与逐表 DROP 计数外，另有两项**保留期兜底观测**——路由事实表的有界性完全依赖该 worker 在跑，worker 停摆或 DROP 持续失败时分区会**静默无界增长**，这两项是该失效的唯一观测面：
+`retention`（分区保留 worker）除巡检时刻与逐表 DROP 计数外，另有一组**保留期兜底观测**——路由事实表的有界性完全依赖该 worker 在跑，worker 停摆或 DROP 持续失败时分区会**静默无界增长**，这组字段是该失效的唯一观测面。聚合值是告警，分表值是诊断（一表 DROP 失败而另一表健康时，聚合只显示漂移，分表值才指出故障表）：
 
 | 字段 | 说明 |
 |---|---|
 | `oldest_partition_unix_ms` | `routing_quality_fact` / `routing_flow_fact` 两张表的最老分区下界（毫秒；0 = 无分区）。**早于观测保留 cutoff（`routing.observation_retention_days`）即 Warn**——正常巡检下不可能出现 |
 | `partition_count` | 上述两张表的分区总数 |
+| `quality_partition_count` / `quality_oldest_partition_unix_ms` | `routing_quality_fact` 单表分区数 / 最老分区下界（毫秒；0 = 该表无可解析分区） |
+| `flow_partition_count` / `flow_oldest_partition_unix_ms` | `routing_flow_fact` 单表分区数 / 最老分区下界（口径同上） |
+| `last_dropped_routing_quality_partitions` / `last_dropped_routing_flow_partitions` | 最近成功轮两张事实表各自 DROP 分区数（失败轮保留上轮值；0 也可能 = 无过期分区，是否失败看 Warn 日志） |
+| `snapshot_state_rows` | `routing_flow_snapshot_state` 当前总行数（普通表，无分区可 DROP，DELETE 失败即无界增长） |
+| `undated_partition_count` | 名解析失败的分区数（既不计数也不 DROP，只能人工介入） |
+| `partition_stats_stale` | `true` = 分区统计查询失败，当前呈现的是上轮过期值（`last_patrol_unix_ms` 仍推进） |
+| `routing_observation_retention_days` | 路由观测保留天数（`oldest_partition_unix_ms` 的 cutoff 解释口径：`cutoff = now - 本值`） |
 
 ---
 

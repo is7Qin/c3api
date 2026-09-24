@@ -824,7 +824,7 @@ func (r *Repository) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.
 func (r *Repository) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DeleteRoutingFlowSnapshotStateBefore(ctx, cutoff)
 }
-func (r *Repository) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
+func (r *Repository) RoutingFactPartitionStats(ctx context.Context) (RoutingFactStats, error) {
 	return r.Partitions.RoutingFactPartitionStats(ctx)
 }
 

@@ -258,12 +258,26 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.Equal(t, float64(1), got["retention"]["last_dropped_log_partitions"], "DROP 分区数")
 	// A17 保留期兜底：/ops 必须能读到路由事实表的分区数与最老分区时刻，且与库内
 	// 真实值一致。这是「保留 worker 停摆 ⇒ 分区静默无界增长」的唯一观测面。
-	wantCount, wantOldest, err := repos.RoutingFactPartitionStats(ctx)
+	// 分表值（quality/flow）、快照行数、无名分区数、stale 标记、路由 DROP 计数与
+	// 观测保留天数同样逐一 cross-check——聚合只告警，分表才定位。
+	wantStats, err := repos.RoutingFactPartitionStats(ctx)
 	require.NoError(t, err)
-	require.Greater(t, wantCount, 0, "夹具必须真的建出了路由分区（否则断言无意义）")
-	require.False(t, wantOldest.IsZero(), "夹具的最老分区必须非零")
-	require.Equal(t, float64(wantCount), got["retention"]["partition_count"], "/ops 分区数 = 库内真实值")
-	require.Equal(t, float64(wantOldest.UnixMilli()), got["retention"]["oldest_partition_unix_ms"], "/ops 最老分区 = 库内真实值")
+	require.Greater(t, wantStats.Count, 0, "夹具必须真的建出了路由分区（否则断言无意义）")
+	require.False(t, wantStats.Oldest.IsZero(), "夹具的最老分区必须非零")
+	gotRetention := got["retention"]
+	require.Equal(t, float64(wantStats.Count), gotRetention["partition_count"], "/ops 分区数 = 库内真实值")
+	require.Equal(t, float64(wantStats.Oldest.UnixMilli()), gotRetention["oldest_partition_unix_ms"], "/ops 最老分区 = 库内真实值")
+	require.Equal(t, float64(wantStats.QualityCount), gotRetention["quality_partition_count"], "/ops quality 分区数 = 库内真实值")
+	require.Equal(t, float64(wantStats.QualityOldest.UnixMilli()), gotRetention["quality_oldest_partition_unix_ms"], "/ops quality 最老分区 = 库内真实值")
+	require.Equal(t, float64(wantStats.FlowCount), gotRetention["flow_partition_count"], "/ops flow 分区数 = 库内真实值")
+	require.Equal(t, float64(wantStats.FlowOldest.UnixMilli()), gotRetention["flow_oldest_partition_unix_ms"], "/ops flow 最老分区 = 库内真实值")
+	require.Equal(t, float64(wantStats.SnapshotRows), gotRetention["snapshot_state_rows"], "/ops 快照行数 = 库内真实值")
+	require.Equal(t, float64(wantStats.UndatedCount), gotRetention["undated_partition_count"], "/ops 无名分区数 = 库内真实值")
+	require.Equal(t, false, gotRetention["partition_stats_stale"], "成功巡检后 stale 必须为 false")
+	require.Equal(t, float64(7), gotRetention["routing_observation_retention_days"], "/ops 观测保留天数 = 装配值")
+	rstLive := retention.Stats().(usage.RetentionWorkerStats)
+	require.Equal(t, float64(rstLive.LastDroppedRoutingQualityParts), gotRetention["last_dropped_routing_quality_partitions"], "/ops quality DROP 计数 = worker 真实值")
+	require.Equal(t, float64(rstLive.LastDroppedRoutingFlowParts), gotRetention["last_dropped_routing_flow_partitions"], "/ops flow DROP 计数 = worker 真实值")
 	require.Equal(t, float64(1), got["scheduler"]["compile_cap"], "scheduler 编译道信号 cap=1（trailing-edge 合并）")
 	require.NotZero(t, got["rule-engine"]["queue_cap"].(float64))
 	// stats-agg 观测（spec 2026-08-14 §6）：watermark 与 stats_agg_watermark

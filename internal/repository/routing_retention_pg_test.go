@@ -58,6 +58,73 @@ func TestRoutingQualityWindowBoundarySeedPG(t *testing.T) {
 		"current window must read the boundary minute (inclusive lower bound) plus the inner row, and exclude M")
 }
 
+// TestRoutingFactPartitionStatsPG 兜底统计的分表归因与空态（review findings
+// A/D/E）：两表分区数不对称时聚合 = 两表之和、最老 = 两表最老，分表值各自归位；
+// 快照交接状态行数如实计数；名解析失败的分区计入 UndatedCount 且不被 DROP
+// （误删未知日期分区等于丢未知数据）；全清后聚合与分表全零（零值时间归零由
+// worker 侧断言，此处断言零值本身）。
+func TestRoutingFactPartitionStatsPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	day := now.UTC().Truncate(24 * time.Hour)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	// 两表同建 day-3..today（各 5 个：day-3..tomorrow，含 EnsureRoutingPartitions
+	// 的 today/tomorrow）。
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, now.AddDate(0, 0, -3), now))
+
+	// E 的计数侧：手动建一个无日期分区（名不合 {table}_{YYYYMMDD} 口径）。
+	pgExec(t, pool, `CREATE TABLE routing_quality_fact_manual PARTITION OF routing_quality_fact FOR VALUES FROM ('2099-01-01 00:00:00+00') TO ('2099-01-02 00:00:00+00')`)
+
+	// D 的计数侧：交接状态表 2 行（小而有界，COUNT(*) 即答案）。
+	minute := now.UTC().Truncate(time.Minute)
+	for _, src := range []string{"src-stats-A", "src-stats-B"} {
+		pgExec(t, pool, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, highest_sequence, updated_at) VALUES ($1, $2, 1, now())`, minute, src)
+	}
+
+	// 只 DROP quality 表的过期分区（cutoff = 昨日零点 → day-3/day-2 落界），
+	// flow 表 untouched——构造单表故障的分歧态。
+	n, err := repos.Partitions.DropRoutingQualityFactBefore(ctx, now.AddDate(0, 0, -1))
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+
+	st, err := repos.Partitions.RoutingFactPartitionStats(ctx)
+	require.NoError(t, err)
+	require.Equal(t, 8, st.Count, "聚合 = quality(3) + flow(5)")
+	require.Equal(t, 3, st.QualityCount)
+	require.Equal(t, 5, st.FlowCount)
+	require.True(t, st.Oldest.Equal(day.AddDate(0, 0, -3)), "聚合最老 = 更老一侧（flow day-3）")
+	require.True(t, st.QualityOldest.Equal(day.AddDate(0, 0, -1)), "故障表（quality）最老 = day-1")
+	require.True(t, st.FlowOldest.Equal(day.AddDate(0, 0, -3)), "健康表（flow）最老 = day-3")
+	require.Equal(t, 2, st.SnapshotRows, "快照交接状态行数如实计数")
+	require.Equal(t, 1, st.UndatedCount, "无名分区被计数但不计入任何表")
+
+	// 空态：快照行清掉 + 两表全 DROP（cutoff 远未来）→ 聚合与分表全零；无名分区
+	// 不被 DROP（E 的 DROP 侧），仍计 1。
+	pgExec(t, pool, `DELETE FROM routing_flow_snapshot_state`)
+	_, err = repos.Partitions.DropRoutingQualityFactBefore(ctx, now.AddDate(0, 0, 30))
+	require.NoError(t, err)
+	_, err = repos.Partitions.DropRoutingFlowFactBefore(ctx, now.AddDate(0, 0, 30))
+	require.NoError(t, err)
+	st, err = repos.Partitions.RoutingFactPartitionStats(ctx)
+	require.NoError(t, err)
+	require.Zero(t, st.Count)
+	require.True(t, st.Oldest.IsZero(), "无分区时 oldest 为零值（worker 侧归 0 呈现）")
+	require.Zero(t, st.QualityCount)
+	require.True(t, st.QualityOldest.IsZero())
+	require.Zero(t, st.FlowCount)
+	require.True(t, st.FlowOldest.IsZero())
+	require.Zero(t, st.SnapshotRows)
+	require.Equal(t, 1, st.UndatedCount, "无名分区 immune 于 DROP，只能人工介入")
+
+	// 无名分区人工清理后彻底归零。
+	pgExec(t, pool, `DROP TABLE routing_quality_fact_manual`)
+	st, err = repos.Partitions.RoutingFactPartitionStats(ctx)
+	require.NoError(t, err)
+	require.Zero(t, st.UndatedCount)
+	require.Zero(t, st.Count)
+}
+
 // B5（存储面）：snapshot_state 有界。cutoff 前被删、cutoff 内 state 存活且旧序号
 // 重放仍**静默**被拒（幂等语义）；cutoff 外的写入被**拒**且返回专用哨兵
 // （可观测的 Warn + 计数在 quality 侧断言——见 quality 包的同名用例）。

@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 )
 
 var errBoom = errors.New("boom")
@@ -49,9 +50,12 @@ type fakePartitionManager struct {
 	rdelErr   error       // redemption_uses 批删失败注入（失败隔离断言）
 	ensureErr error
 
-	rpartCount  int       // RoutingFactPartitionStats 回传的分区数
-	rpartOldest time.Time // RoutingFactPartitionStats 回传的最老分区下界（零值 = 无分区）
-	rpartErr    error     // RoutingFactPartitionStats 失败注入（失败不覆盖上轮值断言）
+	rpartStats repository.RoutingFactStats // RoutingFactPartitionStats 回传的兜底统计（聚合 + 分表 + 快照行数 + 无名数）
+	rpartErr   error                       // RoutingFactPartitionStats 失败注入（失败不覆盖上轮值断言）
+	rqdrop     int                         // DropRoutingQualityFactBefore 回传的 DROP 数
+	rqdropErr  error                       // quality fact DROP 失败注入（失败轮保留上轮计数断言）
+	rfdrop     int                         // DropRoutingFlowFactBefore 回传的 DROP 数
+	rfdropErr  error                       // flow fact DROP 失败注入（口径同上）
 }
 
 func (f *fakePartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
@@ -131,13 +135,13 @@ func (f *fakePartitionManager) DropRoutingQualityFactBefore(ctx context.Context,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rdrops = append(f.rdrops, cutoff)
-	return 0, nil
+	return f.rqdrop, f.rqdropErr
 }
 func (f *fakePartitionManager) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rdrops = append(f.rdrops, cutoff)
-	return 0, nil
+	return f.rfdrop, f.rfdropErr
 }
 func (f *fakePartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	f.mu.Lock()
@@ -145,10 +149,10 @@ func (f *fakePartitionManager) DeleteRoutingFlowSnapshotStateBefore(ctx context.
 	f.rstateDel = append(f.rstateDel, cutoff)
 	return 0, nil
 }
-func (f *fakePartitionManager) RoutingFactPartitionStats(ctx context.Context) (int, time.Time, error) {
+func (f *fakePartitionManager) RoutingFactPartitionStats(ctx context.Context) (repository.RoutingFactStats, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.rpartCount, f.rpartOldest, f.rpartErr
+	return f.rpartStats, f.rpartErr
 }
 
 func (f *fakePartitionManager) counts() (int, int) {
@@ -417,15 +421,35 @@ func TestRetentionWorkerRedemptionDeleteFailureIsolated(t *testing.T) {
 // 观测面，磁盘会被填满而任何指标都不动。正常巡检下「最老分区早于 cutoff」不可能发生，
 // 一旦出现就是该失效的直接信号。
 func TestRetentionRoutingPartitionBackstop(t *testing.T) {
-	// 情形 1：最老分区在 cutoff 内 → 记录观测值，不告警。
+	// 情形 1：最老分区在 cutoff 内 → 记录观测值，不告警。分表值各自归位，聚合
+	// = 两表之和、最老 = 两表最老。
 	oldestIn := domain.RoutingObservationCutoff(time.Now(), 7).Add(24 * time.Hour)
+	oldestFlow := oldestIn.Add(48 * time.Hour)
 	logger, out := newTestErrLogLogger(t)
-	pm := &fakePartitionManager{rpartCount: 12, rpartOldest: oldestIn}
+	pm := &fakePartitionManager{
+		rpartStats: repository.RoutingFactStats{
+			Count: 12, Oldest: oldestIn,
+			QualityCount: 5, QualityOldest: oldestIn,
+			FlowCount: 7, FlowOldest: oldestFlow,
+			SnapshotRows: 3,
+		},
+		rqdrop: 2, rfdrop: 1,
+	}
 	w := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm, logger)
 	w.runOnce()
 	st := w.Stats().(RetentionWorkerStats)
 	require.Equal(t, int64(12), st.PartitionCount, "分区数进观测面")
 	require.Equal(t, oldestIn.UnixMilli(), st.OldestPartitionUnixMs, "最老分区时刻进观测面")
+	require.Equal(t, int64(5), st.QualityPartitionCount, "quality 分区数各自归位")
+	require.Equal(t, oldestIn.UnixMilli(), st.QualityOldestPartitionUnixMs)
+	require.Equal(t, int64(7), st.FlowPartitionCount, "flow 分区数各自归位")
+	require.Equal(t, oldestFlow.UnixMilli(), st.FlowOldestPartitionUnixMs)
+	require.Equal(t, int64(3), st.SnapshotStateRows, "快照交接状态行数进观测面")
+	require.Zero(t, st.UndatedPartitionCount, "无名分区 = 0")
+	require.False(t, st.PartitionStatsStale, "成功轮不置 stale")
+	require.Equal(t, int64(2), st.LastDroppedRoutingQualityParts, "quality DROP 计数进观测面")
+	require.Equal(t, int64(1), st.LastDroppedRoutingFlowParts, "flow DROP 计数进观测面")
+	require.Equal(t, 7, st.RoutingObservationRetentionDays, "cutoff 解释口径随 stats 下发")
 	require.NoError(t, logger.Sync())
 	b, err := os.ReadFile(out)
 	require.NoError(t, err)
@@ -433,7 +457,10 @@ func TestRetentionRoutingPartitionBackstop(t *testing.T) {
 
 	// 情形 2：最老分区早于 cutoff → 告警触发（分区 DROP 未生效的兜底信号）。
 	logger2, out2 := newTestErrLogLogger(t)
-	pm2 := &fakePartitionManager{rpartCount: 99, rpartOldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(-48 * time.Hour)}
+	pm2 := &fakePartitionManager{rpartStats: repository.RoutingFactStats{
+		Count: 99, Oldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(-48 * time.Hour),
+		QualityCount: 99, QualityOldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(-48 * time.Hour),
+	}}
 	w2 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm2, logger2)
 	w2.runOnce()
 	require.Equal(t, int64(99), w2.Stats().(RetentionWorkerStats).PartitionCount)
@@ -445,19 +472,68 @@ func TestRetentionRoutingPartitionBackstop(t *testing.T) {
 
 	// 情形 3：无分区 → oldest 记 0。零值 time 的 UnixMilli 是巨大负数，必须归 0，
 	// 否则运维会看到公元 1 年的「最老分区」。
-	pm3 := &fakePartitionManager{rpartCount: 0}
+	pm3 := &fakePartitionManager{}
 	w3 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm3, nil)
 	w3.runOnce()
-	require.Zero(t, w3.Stats().(RetentionWorkerStats).OldestPartitionUnixMs, "无分区 = 0")
+	st3 := w3.Stats().(RetentionWorkerStats)
+	require.Zero(t, st3.OldestPartitionUnixMs, "无分区 = 0")
+	require.Zero(t, st3.QualityOldestPartitionUnixMs, "分表零值同样归 0")
+	require.Zero(t, st3.FlowOldestPartitionUnixMs, "分表零值同样归 0")
 
-	// 情形 4：查询失败 → 保留上轮值（与 lastDrop* 同观测纪律），lastPatrol 仍推进。
-	pm4 := &fakePartitionManager{rpartCount: 7, rpartOldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(time.Hour)}
+	// 情形 4：查询失败 → 保留上轮值（与 lastDrop* 同观测纪律），但置 stale 标记；
+	// lastPatrol 仍推进。成功轮回明后 stale 归 false。
+	pm4 := &fakePartitionManager{rpartStats: repository.RoutingFactStats{
+		Count: 7, Oldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(time.Hour),
+		QualityCount: 4, QualityOldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(time.Hour),
+		FlowCount: 3, FlowOldest: domain.RoutingObservationCutoff(time.Now(), 7).Add(2 * time.Hour),
+		SnapshotRows: 1,
+	}}
 	w4 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm4, nil)
 	w4.runOnce()
 	require.Equal(t, int64(7), w4.Stats().(RetentionWorkerStats).PartitionCount)
+	require.False(t, w4.Stats().(RetentionWorkerStats).PartitionStatsStale)
 	pm4.rpartErr = errors.New("stats boom")
+	before := w4.Stats().(RetentionWorkerStats).LastPatrolUnixMs
 	w4.runOnce()
 	st4 := w4.Stats().(RetentionWorkerStats)
 	require.Equal(t, int64(7), st4.PartitionCount, "失败轮保留上轮值")
+	require.Equal(t, int64(1), st4.SnapshotStateRows, "失败轮快照行数同样保留上轮值")
+	require.True(t, st4.PartitionStatsStale, "失败轮必须置 stale——否则旧数被当新鲜数呈现")
 	require.NotZero(t, st4.LastPatrolUnixMs, "失败轮 lastPatrol 仍推进")
+	require.GreaterOrEqual(t, st4.LastPatrolUnixMs, before, "lastPatrol 单调推进")
+	pm4.rpartErr = nil
+	w4.runOnce()
+	require.False(t, w4.Stats().(RetentionWorkerStats).PartitionStatsStale, "成功轮回明后 stale 归位")
+
+	// 情形 5：分表分歧——quality 表更老（DROP 失败侧），flow 表健康。聚合只显最老，
+	// 分表值才指出故障表。
+	divergedOld := domain.RoutingObservationCutoff(time.Now(), 7).Add(-72 * time.Hour)
+	healthyOld := domain.RoutingObservationCutoff(time.Now(), 7).Add(24 * time.Hour)
+	pm5 := &fakePartitionManager{rpartStats: repository.RoutingFactStats{
+		Count: 10, Oldest: divergedOld,
+		QualityCount: 6, QualityOldest: divergedOld,
+		FlowCount: 4, FlowOldest: healthyOld,
+	}}
+	w5 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm5, nil)
+	w5.runOnce()
+	st5 := w5.Stats().(RetentionWorkerStats)
+	require.Equal(t, int64(10), st5.PartitionCount, "聚合仍是两表之和（告警口径不变）")
+	require.Equal(t, divergedOld.UnixMilli(), st5.OldestPartitionUnixMs, "聚合最老 = 更老一侧")
+	require.Equal(t, divergedOld.UnixMilli(), st5.QualityOldestPartitionUnixMs, "故障表（quality）最老早于 cutoff")
+	require.Equal(t, healthyOld.UnixMilli(), st5.FlowOldestPartitionUnixMs, "健康表（flow）最老在 cutoff 内")
+
+	// 情形 6：路由 DROP 失败 → 保留上轮计数（与 lastDrop* 同纪律）；另一表成功值
+	// 不受影响（逐表错误隔离）。
+	pm6 := &fakePartitionManager{rqdrop: 3, rfdrop: 2}
+	w6 := NewRetention(RetentionConfig{RoutingObservationRetentionDays: 7}, pm6, nil)
+	w6.runOnce()
+	st6 := w6.Stats().(RetentionWorkerStats)
+	require.Equal(t, int64(3), st6.LastDroppedRoutingQualityParts)
+	require.Equal(t, int64(2), st6.LastDroppedRoutingFlowParts)
+	pm6.rqdropErr = errors.New("drop quality boom")
+	pm6.rfdrop = 5
+	w6.runOnce()
+	st6 = w6.Stats().(RetentionWorkerStats)
+	require.Equal(t, int64(3), st6.LastDroppedRoutingQualityParts, "失败表保留上轮计数——否则失败与无过期分区不可区分")
+	require.Equal(t, int64(5), st6.LastDroppedRoutingFlowParts, "成功表照常更新（逐表隔离）")
 }
