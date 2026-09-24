@@ -28,19 +28,19 @@ func TestRoutingQualityWindowBoundarySeedPG(t *testing.T) {
 	ctx := context.Background()
 	m := time.Date(2026, 9, 19, 12, 0, 0, 0, time.UTC)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, m))
-	require.NoError(t, repos.Partitions.EnsureRoutingRollupPartitions(ctx, m.Add(-scheduler.BaselineLookback-24*time.Hour), m.Add(24*time.Hour)))
+	require.NoError(t, repos.Partitions.EnsureRoutingFactPartitions(ctx, m.Add(-scheduler.BaselineLookback-24*time.Hour), m.Add(24*time.Hour)))
 
 	rcA, _, qc1, _, fps := windowVals(t)
 	fp := fps["cur"]
-	baseFrom := m.Add(-scheduler.BaselineLookback)                         // 基线窗下界（含）
-	baseTo := m.Add(-scheduler.CurrentWindowLen)                           // 基线窗上界（半开，不含）
-	curFrom := m.Add(-scheduler.CurrentWindowLen)                          // 当前窗下界（含）
-	seedRollupRow(t, pool, rcA, qc1, fp, baseFrom.Add(-time.Minute), 7, 7) // 基线窗外（更老）
-	seedRollupRow(t, pool, rcA, qc1, fp, baseFrom, 1, 1)                   // 基线窗内下界
-	seedRollupRow(t, pool, rcA, qc1, fp, baseTo.Add(-time.Minute), 1, 1)   // 基线窗内上界-1m
-	seedRollupRow(t, pool, rcA, qc1, fp, baseTo, 7, 7)                     // 基线窗外上界（== 当前窗下界，含）
-	seedRollupRow(t, pool, rcA, qc1, fp, curFrom.Add(time.Minute), 5, 5)   // 当前窗内
-	seedRollupRow(t, pool, rcA, qc1, fp, m, 7, 7)                          // 当前窗上界（不含）
+	baseFrom := m.Add(-scheduler.BaselineLookback)                            // 基线窗下界（含）
+	baseTo := m.Add(-scheduler.CurrentWindowLen)                              // 基线窗上界（半开，不含）
+	curFrom := m.Add(-scheduler.CurrentWindowLen)                             // 当前窗下界（含）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, baseFrom.Add(-time.Minute), 7, 7) // 基线窗外（更老）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, baseFrom, 1, 1)                   // 基线窗内下界
+	seedQualityFactRow(t, pool, rcA, qc1, fp, baseTo.Add(-time.Minute), 1, 1)   // 基线窗内上界-1m
+	seedQualityFactRow(t, pool, rcA, qc1, fp, baseTo, 7, 7)                     // 基线窗外上界（== 当前窗下界，含）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, curFrom.Add(time.Minute), 5, 5)   // 当前窗内
+	seedQualityFactRow(t, pool, rcA, qc1, fp, m, 7, 7)                          // 当前窗上界（不含）
 
 	keys := []repository.WindowHotKey{{RouteClassID: rcA, Fingerprint: fp}}
 	baseline, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)

@@ -14,7 +14,7 @@ import (
 )
 
 // Routing rollup read face (repository lane): aggregate reads over
-// routing_quality_rollup / routing_flow_rollup ONLY — never instance tables,
+// routing_quality_fact / routing_flow_rollup ONLY — never instance tables,
 // never raw usage/err logs. Half-open window [from, to) on the bucket column,
 // direct route_class_id + identity_version filters, SUM aggregation grouped by
 // the complete edge/candidate identity, deterministic ORDER BY, non-nil empty
@@ -66,13 +66,15 @@ type RoutingFlowStat struct {
 // histogram is element-wise summed via generate_subscripts and reassembled in
 // index order (ARRAY_AGG ... ORDER BY idx) so the merge is order-deterministic.
 // bytea ORDER BY is binary comparison — deterministic across collations.
+// 底表为单一分片事实表 routing_quality_fact（度量全可加，跨 instance_src 直接
+// 求和即等价于旧合并 rollup）。
 const qualityRollupStatsSQL = `
 WITH facts AS (
 	SELECT route_class_id, quality_class_id, candidate_fingerprint,
 		attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network,
 		ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist,
 		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images
-	FROM routing_quality_rollup
+	FROM routing_quality_fact
 	WHERE route_class_id = $1 AND identity_version = $2 AND bucket_minute >= $3 AND bucket_minute < $4
 ), hist_elem AS (
 	SELECT route_class_id, quality_class_id, candidate_fingerprint, idx, SUM(ttft_hist[idx])::bigint AS v
@@ -112,7 +114,7 @@ GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previou
 ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_outcome,
 	transition_reason, outcome, is_terminal DESC`
 
-// QueryQualityRollupStats aggregates routing_quality_rollup over the half-open
+// QueryQualityRollupStats aggregates routing_quality_fact over the half-open
 // minute window [from, to) for one route class + identity version.
 func (r *PartitionRepo) QueryQualityRollupStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
 	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)

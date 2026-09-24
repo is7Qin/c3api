@@ -13,8 +13,11 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// rollupReadFixture writes quality facts via the real writer+rollup pipeline so
-// the read face is proven against genuine routing_quality_rollup content.
+// rollupReadFixture writes quality facts through the real writer so the read
+// face is proven against genuine routing_quality_fact content. The fact table is
+// now the single source for the window reads; the same (minute, quality class,
+// candidate) seen by two instance_src values proves the read folds shards at
+// query time (the old merged rollup folded them at write time).
 func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	repos, _ := newRoutingRepos(t)
 	ctx := context.Background()
@@ -28,55 +31,43 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	ones := []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
 	twos := []int64{2, 2, 2, 2, 2, 2, 2, 2, 2, 2}
 
-	// Given: minute 1 fact for fp1, rolled up.
-	row1 := repository.RoutingQualityRow{
-		IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp1,
-		InstanceSrc: "src-RQ", BucketMinute: base, AbsoluteSequence: 1,
+	seed := func(fp domain.CandidateFingerprintVal, instance string, minute time.Time, seq int64, row repository.RoutingQualityRow) {
+		row.IdentityVersion = 1
+		row.RouteClassID = rc
+		row.QualityClassID = qc
+		row.CandidateFingerprint = fp
+		row.InstanceSrc = instance
+		row.BucketMinute = minute
+		row.AbsoluteSequence = seq
+		require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
+	}
+	min2 := base.Add(time.Minute)
+
+	// Given: minute 1 fp1 observed by two instances (10 + 4 attempts).
+	seed(fp1, "src-a", base, 1, repository.RoutingQualityRow{
 		Attempts: 10, Successes: 6, Count429: 1, CountOrdinary4xx: 1, Count5xx: 1, CountNetwork: 1,
 		TTFTN: 5, TTFTSumLogQ32: 100, TTFTSumSqLogQ32: 200, TTFTHist: ones,
 		InputTokens: 1000, OutputTokens: 2000, CacheReadTokens: 300, CacheCreateTokens: 400, Calls: 7, Images: 3,
-	}
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row1))
-	require.NoError(t, repos.Partitions.RollupQuality(ctx, base, 1))
+	})
+	seed(fp1, "src-b", base, 1, repository.RoutingQualityRow{Attempts: 4, Successes: 2})
+	// Given: minute 2 fp1 + fp2.
+	seed(fp1, "src-a", min2, 2, repository.RoutingQualityRow{
+		Attempts: 5, Successes: 2, Count429: 2, CountOrdinary4xx: 1, Count5xx: 1, CountNetwork: 1,
+		TTFTN: 3, TTFTSumLogQ32: 50, TTFTSumSqLogQ32: 60, TTFTHist: twos,
+		InputTokens: 100, OutputTokens: 200, CacheReadTokens: 30, CacheCreateTokens: 40, Calls: 1,
+	})
+	seed(fp2, "src-a", min2, 2, repository.RoutingQualityRow{Attempts: 8, Successes: 3})
+	// Given: a fact exactly at the exclusive upper bound — half-open [from, to)
+	// must exclude it even though the row exists (the old fixture relied on the
+	// minute never being rolled up; the read no longer depends on the rollup).
+	seed(fp1, "src-a", base.Add(3*time.Minute), 1, repository.RoutingQualityRow{Attempts: 100})
 
-	// Given: minute 2 facts for fp1 + fp2, rolled up.
-	min2 := base.Add(time.Minute)
-	row2 := row1
-	row2.BucketMinute = min2
-	row2.AbsoluteSequence = 2
-	row2.Attempts = 5
-	row2.Successes = 2
-	row2.Count429 = 2
-	row2.TTFTN = 3
-	row2.TTFTSumLogQ32 = 50
-	row2.TTFTSumSqLogQ32 = 60
-	row2.TTFTHist = twos
-	row2.InputTokens = 100
-	row2.OutputTokens = 200
-	row2.CacheReadTokens = 30
-	row2.CacheCreateTokens = 40
-	row2.Calls = 1
-	row2.Images = 0
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row2))
-	row3 := row2
-	row3.CandidateFingerprint = fp2
-	row3.Attempts = 8
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row3))
-	require.NoError(t, repos.Partitions.RollupQuality(ctx, min2, 1))
-
-	// Given: minute 3 fact NOT rolled up (rollup-only read must ignore it).
-	row4 := row1
-	row4.BucketMinute = base.Add(2 * time.Minute)
-	row4.AbsoluteSequence = 2
-	row4.Attempts = 100
-	require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row4))
-
-	// When: full half-open window covering all rolled minutes.
+	// When: full half-open window covering minutes 1 and 2.
 	stats, err := repos.Partitions.QueryQualityRollupStats(ctx, rc, 1, base, base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, stats)
-	// Then: one group per candidate identity; fp1 sums across minutes (100 from
-	// the un-rolled minute 3 must NOT appear).
+	// Then: one group per candidate identity; fp1 sums across minutes AND
+	// instance shards (10 + 4 + 5 = 19); the upper-bound minute must NOT appear.
 	require.Len(t, stats, 2)
 	byFP := map[string]repository.RoutingQualityStat{}
 	for _, s := range stats {
@@ -86,8 +77,8 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	}
 	got1, ok := byFP[domain.CandidateFPHex(fp1)]
 	require.True(t, ok)
-	require.Equal(t, int64(15), got1.Attempts)
-	require.Equal(t, int64(8), got1.Successes)
+	require.Equal(t, int64(19), got1.Attempts)
+	require.Equal(t, int64(10), got1.Successes)
 	require.Equal(t, int64(3), got1.Count429)
 	require.Equal(t, int64(2), got1.CountOrdinary4xx)
 	require.Equal(t, int64(2), got1.Count5xx)
@@ -106,12 +97,12 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(8), got2.Attempts)
 
-	// When: window excludes minute 2. Then: only minute 1 totals.
+	// When: window excludes minute 2. Then: only minute 1 totals (both shards).
 	stats, err = repos.Partitions.QueryQualityRollupStats(ctx, rc, 1, base, min2)
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, fp1, stats[0].CandidateFingerprint)
-	require.Equal(t, int64(10), stats[0].Attempts)
+	require.Equal(t, int64(14), stats[0].Attempts)
 	require.Equal(t, ones, stats[0].TTFTHist)
 
 	// Then: filters — unknown route class and wrong identity version are empty, non-nil.

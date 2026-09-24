@@ -13,19 +13,22 @@ import (
 )
 
 // Windowed quality reads (incident-wiring): the settled-PG half of
-// the compiler's windowed data path. Both queries read routing_quality_rollup
-// ONLY (never instance tables, never raw logs) and return one row per
-// (route_class_id, candidate_fingerprint), summed across quality classes —
-// the compiler keys quality by (route, fingerprint) without quality class.
+// the compiler's windowed data path. Both queries read routing_quality_fact
+// (the single-shard fact table; the legacy instance + rollup pair is no longer
+// read) and return one row per (route_class_id, candidate_fingerprint), summed
+// across quality classes and instance shards — the compiler keys quality by
+// (route, fingerprint) without quality class.
 //
 // Q1 (current): half-open [M-5m, M), full sufficient stats for lanes
-// (classify + cost). Served by the existing routing_quality_rollup_uniq
-// leading column (bucket_minute) + partition pruning; no new index.
+// (classify + cost). Served by the routing_quality_fact_bucket index
+// (bucket_minute) + partition pruning.
 // Q2 (baseline): half-open [M-24h, M-5m), attempts+successes only
 // (incidents use success intervals), truncated newest→oldest at
 // attempts ≥ 30 IN SQL via a running SUM window, restricted to hotKeys
 // (candidates with current attempts ≥ 30 — the provider computes them from
-// the merged current). Requires the routing_quality_rollup_candidate index.
+// the merged current). Requires the routing_quality_fact_uniq index, whose
+// leading (route_class_id, candidate_fingerprint, bucket_minute) serves the
+// LATERAL probe once per hot pair.
 
 // WindowHotKey is one baseline-eligible candidate: current attempts ≥ 30.
 type WindowHotKey struct {
@@ -64,7 +67,7 @@ SELECT route_class_id, candidate_fingerprint,
 	SUM(ttft_sum_log_q32)::bigint, SUM(ttft_sumsq_log_q32)::bigint,
 	SUM(input_tokens)::bigint, SUM(output_tokens)::bigint,
 	SUM(cache_read_tokens)::bigint, SUM(cache_create_tokens)::bigint
-FROM routing_quality_rollup
+FROM routing_quality_fact
 WHERE identity_version = $1 AND bucket_minute >= $2 AND bucket_minute < $3
 GROUP BY 1, 2
 ORDER BY 1, 2`
@@ -78,8 +81,18 @@ ORDER BY 1, 2`
 // deterministic. hotKeys arrive as parallel hex text arrays zipped by
 // multi-argument unnest; decode() is immutable so the LATERAL inner equality
 // on (route_class_id, candidate_fingerprint) + bucket_minute range probes the
-// (route_class_id, candidate_fingerprint, bucket_minute DESC) index once per
-// hot pair instead of seq-scanning the 24h window.
+// (route_class_id, candidate_fingerprint, bucket_minute) identity index once
+// per hot pair instead of seq-scanning the 24h window.
+//
+// The inner aggregation is load-bearing, not decoration: the fact table is
+// sharded by instance_src, so the raw scan has an extra row dimension. The
+// truncation predicate accumulates newest→oldest until the cumulative of
+// strictly-newer rows reaches 30, and the boundary lands on the OLDEST
+// included minute — an extra row per minute moves that boundary and silently
+// changes the returned values (proven counterexample: baseline (38,15) vs
+// un-aggregated (33,13)). Folding back to one row per (bucket_minute,
+// quality_class_id) restores the exact row set, order and values of the old
+// merged rollup. Cost: one HashAggregate + one extra Sort per hot pair.
 const routingQualityWindowBaselineSQL = `
 WITH hot AS (
 	SELECT decode(rc, 'hex') AS rc, decode(fp, 'hex') AS fp
@@ -89,22 +102,29 @@ SELECT hot.rc AS route_class_id, hot.fp AS candidate_fingerprint,
 	SUM(sub.attempts)::bigint, SUM(sub.successes)::bigint
 FROM hot,
 LATERAL (
-	SELECT r.attempts, r.successes,
-		SUM(r.attempts) OVER (
-			ORDER BY r.bucket_minute DESC, r.quality_class_id
+	SELECT m.attempts, m.successes,
+		SUM(m.attempts) OVER (
+			ORDER BY m.bucket_minute DESC, m.quality_class_id
 			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 		) AS running
-	FROM routing_quality_rollup r
-	WHERE r.identity_version = $1
-		AND r.route_class_id = hot.rc
-		AND r.candidate_fingerprint = hot.fp
-		AND r.bucket_minute >= $4 AND r.bucket_minute < $5
+	FROM (
+		-- 先把分片折叠回基线 rollup 的行粒度；此后行集、行序、谓词逐行一致。
+		SELECT r.bucket_minute, r.quality_class_id,
+			SUM(r.attempts)::bigint  AS attempts,
+			SUM(r.successes)::bigint AS successes
+		FROM routing_quality_fact r
+		WHERE r.identity_version = $1
+			AND r.route_class_id = hot.rc
+			AND r.candidate_fingerprint = hot.fp
+			AND r.bucket_minute >= $4 AND r.bucket_minute < $5
+		GROUP BY r.bucket_minute, r.quality_class_id
+	) AS m
 ) AS sub
 WHERE sub.running - sub.attempts < 30
 GROUP BY 1, 2
 ORDER BY 1, 2`
 
-// QueryCurrentWindowStats aggregates routing_quality_rollup over [M-5m, M).
+// QueryCurrentWindowStats aggregates routing_quality_fact over [M-5m, M).
 func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]WindowCurrentStat, error) {
 	m := evaluatedMinute.UTC().Truncate(time.Minute)
 	from, to := m.Add(-domain.CurrentWindowLen), m
@@ -132,7 +152,7 @@ func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, identityVer
 	return out, nil
 }
 
-// QueryBaselineTruncated aggregates routing_quality_rollup over [M-24h, M-5m)
+// QueryBaselineTruncated aggregates routing_quality_fact over [M-24h, M-5m)
 // for hotKeys only, truncated newest→oldest at attempts ≥ 30. Empty hotKeys
 // short-circuit without querying.
 func (r *PartitionRepo) QueryBaselineTruncated(ctx context.Context, identityVersion int16, evaluatedMinute time.Time, hotKeys []WindowHotKey) ([]WindowBaselineStat, error) {
