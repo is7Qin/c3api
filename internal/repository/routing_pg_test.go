@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -40,6 +41,24 @@ func mustFPVal(t *testing.T, accID, tplID int64, ct credential.Type, origin, sk,
 	return id
 }
 
+// indexColumns 从 catalog 读回某索引的列序（pg_get_indexdef 是事实源，
+// 不是 Go 侧期望值的回显），供唯一键/探针键的列序断言共用。
+func indexColumns(t *testing.T, pool *pgxpool.Pool, indexName string) []string {
+	t.Helper()
+	var def string
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT pg_get_indexdef($1::regclass)`, indexName).Scan(&def))
+	open := strings.Index(def, "(")
+	closing := strings.LastIndex(def, ")")
+	require.True(t, open >= 0 && closing > open, "unexpected index definition: %s", def)
+	parts := strings.Split(def[open+1:closing], ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		out = append(out, strings.TrimSpace(p))
+	}
+	return out
+}
+
 func newRoutingRepos(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
 	t.Helper()
 	pool := pgTestPool(t)
@@ -62,13 +81,13 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
+	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_quality_fact", "routing_flow_rollup"} {
 		parted, err := repos.Partitions.IsTablePartitioned(ctx, tbl)
 		require.NoError(t, err)
 		require.True(t, parted, "%s partitioned", tbl)
 	}
 	today := now.UTC().Truncate(24 * time.Hour)
-	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_flow_rollup"} {
+	for _, tbl := range []string{"routing_quality_instance_minute", "routing_quality_rollup", "routing_quality_fact", "routing_flow_rollup"} {
 		rows, err := pool.Query(ctx, `SELECT c.relname FROM pg_class c JOIN pg_inherits i ON i.inhrelid=c.oid JOIN pg_class p ON p.oid=i.inhparent JOIN pg_namespace n ON n.oid=c.relnamespace WHERE p.relname=$1 AND n.nspname=current_schema()`, tbl)
 		require.NoError(t, err)
 		var names []string
@@ -97,6 +116,51 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_flow_rollup' AND column_name=$1`, col).Scan(&n))
 		require.Equal(t, int64(1), n, "missing flow col %s", col)
 	}
+}
+
+// TestRoutingQualityFactDDLPG 钉住 S1 事实表的列集合/列序与两条索引定义。
+// 列定义事实源漂移（加列忘改、身份列序被改回、度量类型被换）必须在此失败；
+// 索引列序取自 pg_get_indexdef，故能真正证明「身份键以
+// (route_class_id, candidate_fingerprint, bucket_minute) 开头」——这正是基线窗
+// LATERAL 探针与唯一性共用同一条索引的前提（改序则探针退化为另建含两个 bytea
+// 的索引，实测 +16.6% B/行，见 routing-footprint 证据 §4）。
+func TestRoutingQualityFactDDLPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC)))
+
+	rows, err := pool.Query(ctx, `SELECT column_name FROM information_schema.columns WHERE table_name = 'routing_quality_fact' ORDER BY ordinal_position`)
+	require.NoError(t, err)
+	var got []string
+	for rows.Next() {
+		var name string
+		require.NoError(t, rows.Scan(&name))
+		got = append(got, name)
+	}
+	rows.Close()
+	require.NoError(t, rows.Err())
+	require.Equal(t, []string{
+		"id", "route_class_id", "candidate_fingerprint", "bucket_minute", "instance_src",
+		"quality_class_id", "identity_version", "absolute_sequence", "attempts", "successes",
+		"count_429", "count_ordinary_4xx", "count_5xx", "count_network", "ttft_n",
+		"ttft_sum_log_q32", "ttft_sumsq_log_q32", "ttft_hist", "input_tokens", "output_tokens",
+		"cache_read_tokens", "cache_create_tokens", "calls", "images", "updated_at",
+	}, got, "routing_quality_fact column set/order drifted from the single-shard fact model")
+
+	require.Equal(t,
+		[]string{"route_class_id", "candidate_fingerprint", "bucket_minute", "instance_src", "quality_class_id", "identity_version"},
+		indexColumns(t, pool, "routing_quality_fact_uniq"))
+	require.Equal(t, []string{"bucket_minute"}, indexColumns(t, pool, "routing_quality_fact_bucket"))
+
+	var uniq bool
+	require.NoError(t, pool.QueryRow(ctx, `SELECT indisunique FROM pg_index WHERE indexrelid = 'routing_quality_fact_uniq'::regclass`).Scan(&uniq))
+	require.True(t, uniq, "identity index must enforce uniqueness")
+
+	// ttft_hist 必须是 bigint[]（udt_name _int8）：跨分片逐元素求和依赖它，
+	// 换成 int4[] 会静默改变溢出语义。
+	var histType string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT udt_name FROM information_schema.columns WHERE table_name='routing_quality_fact' AND column_name='ttft_hist'`).Scan(&histType))
+	require.Equal(t, "_int8", histType, "ttft_hist must stay bigint[]")
 }
 
 func TestRoutingQualityReplayPG(t *testing.T) {
