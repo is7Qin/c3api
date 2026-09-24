@@ -224,6 +224,75 @@ func TestRoutingQualityReplayPG(t *testing.T) {
 	require.Equal(t, int64(2), cnt, "fingerprint change must create separate row")
 }
 
+// TestRoutingQualityPartialShardSurvivesPG 是 spec §8 A16 的 C2 绊线：先发布**完整分片**，
+// 再以**更高序号**发布它的**子集**，断言不在子集里的键存活。
+//
+// WHY 必须多键：单键夹具（TestRoutingQualityReplayPG）在「逐行 upsert」与「DELETE 本分片 +
+// INSERT 本批」两种实现下**结果完全相同**——只有一行，删掉再插回去也一样——故它抓不住整片
+// 替换。多键才能区分：整片替换会把同分钟**不在本批**的键删掉，而那些键的 delta 已折进
+// committed、下一轮不再发 ⇒ 永久丢失（见 routingQualityFactUpsertSQL 上方注释与 spec §3.1）。
+// 若把写入缝改回整片替换，本用例必须失败。
+func TestRoutingQualityPartialShardSurvivesPG(t *testing.T) {
+	repos, pool := newRoutingRepos(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Minute)
+	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
+	rc := mustRouteClassVal(t, 21, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
+
+	const inst = "src-shard"
+	// 同分钟、同分片的三枚候选 = 一个「完整分片」。
+	fps := []domain.CandidateFingerprintVal{
+		mustFPVal(t, 21, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-a", "", "", "", false, "i", "s", "t", "w"),
+		mustFPVal(t, 21, 2, credential.TypeAPIKey, "https://api.openai.com", "sk-b", "", "", "", false, "i", "s", "t", "w"),
+		mustFPVal(t, 21, 3, credential.TypeAPIKey, "https://api.openai.com", "sk-c", "", "", "", false, "i", "s", "t", "w"),
+	}
+	mkRow := func(fp domain.CandidateFingerprintVal, seq, attempts int64) repository.RoutingQualityRow {
+		return repository.RoutingQualityRow{
+			IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp,
+			InstanceSrc: inst, BucketMinute: now, AbsoluteSequence: seq, Attempts: attempts, Successes: attempts / 2,
+		}
+	}
+	// 单次查询同时取「在场与否」与「当前值」：n=0 即该键已被子集轮删掉。
+	lookup := func(fp domain.CandidateFingerprintVal) (int64, int64) {
+		t.Helper()
+		var n, v int64
+		require.NoError(t, pool.QueryRow(ctx,
+			`SELECT COUNT(*), COALESCE(MAX(attempts), 0) FROM routing_quality_fact
+			 WHERE instance_src=$1 AND bucket_minute=$2 AND candidate_fingerprint=$3`,
+			inst, now, fp[:]).Scan(&n, &v))
+		return n, v
+	}
+
+	// 轮 1：完整分片，三键同批、seq=10。
+	for _, fp := range fps {
+		require.NoError(t, repos.Partitions.UpsertQualityRow(ctx, mkRow(fp, 10, 10)))
+	}
+	for i, fp := range fps {
+		n, v := lookup(fp)
+		require.Equal(t, int64(1), n, "轮 1 后候选 %d 必须在场", i)
+		require.Equal(t, int64(10), v)
+	}
+
+	// 轮 2：只发**子集**（fps[0]），序号更高（10 → 20）。
+	require.NoError(t, repos.Partitions.UpsertQualityRow(ctx, mkRow(fps[0], 20, 99)))
+	if n, v := lookup(fps[0]); n != 1 || v != 99 {
+		require.Failf(t, "子集内的键未被更高序号覆盖", "n=%d v=%d", n, v)
+	}
+
+	// 关键断言：不在子集里的两个键必须**原样存活**。整片替换实现会在这里失败。
+	for _, i := range []int{1, 2} {
+		n, v := lookup(fps[i])
+		require.Equal(t, int64(1), n,
+			"候选 %d 不在本轮子集里，但它的 delta 已折进 committed、下一轮不再发——必须存活，否则永久丢失（spec §3.1）", i)
+		require.Equal(t, int64(10), v, "候选 %d 不得被子集轮改写", i)
+	}
+	var total int64
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM routing_quality_fact WHERE instance_src=$1 AND bucket_minute=$2`, inst, now).Scan(&total))
+	require.Equal(t, int64(3), total, "子集轮不得删除同分钟的其他键")
+}
+
 func TestRoutingQualityDigestCheckPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
