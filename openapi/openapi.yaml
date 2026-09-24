@@ -1636,8 +1636,9 @@ paths:
               schema: { $ref: '#/components/schemas/StatTTFTSummary' }
         default:
           $ref: '#/components/responses/Error'
-  # ---- intelligent-routing 观测面：rollup 聚合 + 当前发布计划投影，
-  # 数据源钉死 routing_*_rollup 表与 scheduler 当前视图——绝不查 raw logs、
+  # ---- intelligent-routing 观测面：单分片事实表聚合 + 当前发布计划投影，
+  # 数据源钉死 routing_flow_fact（flow/frontier）与 routing_quality_fact（质量窗）
+  # 两张事实表及 scheduler 当前视图——绝不查 raw logs、
   # 绝不按历史 generation 查询（plan/flow/frontier 一律对齐当前发布计划目录）。
   /routing/flow:
     get:
