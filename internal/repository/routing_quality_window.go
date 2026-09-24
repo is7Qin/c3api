@@ -102,7 +102,8 @@ ORDER BY 1, 2`
 // changes the returned values (proven counterexample: baseline (38,15) vs
 // un-aggregated (33,13)). Folding back to one row per (bucket_minute,
 // quality_class_id) restores the exact row set, order and values of the old
-// merged rollup. Cost: one HashAggregate + one extra Sort per hot pair.
+// merged rollup. Cost: one HashAggregate + two Sorts per hot pair (one for the
+// fold, one for the window ORDER BY).
 const routingQualityWindowBaselineSQL = `
 WITH hot AS (
 	SELECT decode(rc, 'hex') AS rc, decode(fp, 'hex') AS fp
