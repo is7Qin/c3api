@@ -68,7 +68,7 @@ SELECT route_class_id, candidate_fingerprint,
 	SUM(input_tokens)::bigint, SUM(output_tokens)::bigint,
 	SUM(cache_read_tokens)::bigint, SUM(cache_create_tokens)::bigint
 FROM routing_quality_fact
-WHERE identity_version = $1 AND bucket_minute >= $2 AND bucket_minute < $3
+WHERE bucket_minute >= $1 AND bucket_minute < $2
 GROUP BY 1, 2
 ORDER BY 1, 2`
 
@@ -96,7 +96,7 @@ ORDER BY 1, 2`
 const routingQualityWindowBaselineSQL = `
 WITH hot AS (
 	SELECT decode(rc, 'hex') AS rc, decode(fp, 'hex') AS fp
-	FROM unnest($2::text[], $3::text[]) AS t(rc, fp)
+	FROM unnest($1::text[], $2::text[]) AS t(rc, fp)
 )
 SELECT hot.rc AS route_class_id, hot.fp AS candidate_fingerprint,
 	SUM(sub.attempts)::bigint, SUM(sub.successes)::bigint
@@ -113,10 +113,9 @@ LATERAL (
 			SUM(r.attempts)::bigint  AS attempts,
 			SUM(r.successes)::bigint AS successes
 		FROM routing_quality_fact r
-		WHERE r.identity_version = $1
-			AND r.route_class_id = hot.rc
+		WHERE r.route_class_id = hot.rc
 			AND r.candidate_fingerprint = hot.fp
-			AND r.bucket_minute >= $4 AND r.bucket_minute < $5
+			AND r.bucket_minute >= $3 AND r.bucket_minute < $4
 		GROUP BY r.bucket_minute, r.quality_class_id
 	) AS m
 ) AS sub
@@ -125,11 +124,13 @@ GROUP BY 1, 2
 ORDER BY 1, 2`
 
 // QueryCurrentWindowStats aggregates routing_quality_fact over [M-5m, M).
+// identityVersion 仅保留于签名（跨实现接口稳定），不再参与查询：DB 已无该维度，
+// 版本化由身份哈希首字节承担，不同版本行落在不同 route/fp 上。
 func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]WindowCurrentStat, error) {
 	m := evaluatedMinute.UTC().Truncate(time.Minute)
 	from, to := m.Add(-domain.CurrentWindowLen), m
 	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, routingQualityWindowCurrentSQL, []any{identityVersion, from, to}, rows); err != nil {
+	if err := r.driver.Query(ctx, routingQualityWindowCurrentSQL, []any{from, to}, rows); err != nil {
 		return nil, fmt.Errorf("routing current window query: %w", err)
 	}
 	defer rows.Close()
@@ -154,7 +155,8 @@ func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, identityVer
 
 // QueryBaselineTruncated aggregates routing_quality_fact over [M-24h, M-5m)
 // for hotKeys only, truncated newest→oldest at attempts ≥ 30. Empty hotKeys
-// short-circuit without querying.
+// short-circuit without querying. identityVersion 仅保留于签名（接口稳定），不再
+// 绑定：参数位已前移为 $1,$2=hot 数组、$3,$4=窗口。
 func (r *PartitionRepo) QueryBaselineTruncated(ctx context.Context, identityVersion int16, evaluatedMinute time.Time, hotKeys []WindowHotKey) ([]WindowBaselineStat, error) {
 	if len(hotKeys) == 0 {
 		return []WindowBaselineStat{}, nil
@@ -168,7 +170,7 @@ func (r *PartitionRepo) QueryBaselineTruncated(ctx context.Context, identityVers
 		fpHex = append(fpHex, hex.EncodeToString(k.Fingerprint[:]))
 	}
 	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, routingQualityWindowBaselineSQL, []any{identityVersion, rcHex, fpHex, from, to}, rows); err != nil {
+	if err := r.driver.Query(ctx, routingQualityWindowBaselineSQL, []any{rcHex, fpHex, from, to}, rows); err != nil {
 		return nil, fmt.Errorf("routing baseline window query: %w", err)
 	}
 	defer rows.Close()

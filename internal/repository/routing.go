@@ -17,13 +17,15 @@ import (
 
 // routingQualityFactColumnDefs 是单一分片事实表 S1 的列定义事实源：身份列
 // **改序**为 (route_class_id, candidate_fingerprint, bucket_minute, instance_src,
-// quality_class_id, identity_version)。改序不是审美：身份索引因此以
+// quality_class_id)。改序不是审美：身份索引因此以
 // (route_class_id, candidate_fingerprint, bucket_minute) 开头，同时服务基线窗
 // LATERAL 探针（rc 等值 + fp 等值 + 分钟范围）与唯一性；把 bucket_minute 放首位
 // 会迫使另建一条含两个 32 字节 bytea 的探针索引（实测 781.8 → 652.1 B/行，
 // −16.6%，见 .omo/evidence/routing-footprint/README.md §4）。
 //
-// identity_version 在本阶段**保留**（§3.2 的独立提交才删除），故身份键仍是 6 列。
+// 旧 schema 的常量版本列已删除（§3.2 独立提交）：常量伪装成维度只膨胀每张表的
+// 索引与每个读的参数；版本化由身份哈希首字节承担（domain.hashFields 写入
+// RoutingIdentityVersion），DB 列并不携带额外身份信息。
 var routingQualityFactColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('routing_quality_fact_id_seq'::regclass)`,
 	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
@@ -31,7 +33,6 @@ var routingQualityFactColumnDefs = []string{
 	`bucket_minute timestamptz NOT NULL`,
 	`instance_src text NOT NULL`,
 	`quality_class_id bytea NOT NULL CHECK (octet_length(quality_class_id) = 32)`,
-	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
 	`absolute_sequence bigint NOT NULL`,
 	`attempts bigint NOT NULL DEFAULT 0`,
 	`successes bigint NOT NULL DEFAULT 0`,
@@ -58,7 +59,7 @@ var routingQualityFactCreateDDL = partitionedCreateDDL("routing_quality_fact", "
 // candidate_fingerprint, bucket_minute) 开头——**同时**承担唯一性约束与基线窗
 // LATERAL 探针；bucket 单列索引服务 5m 当前窗（无 rc 过滤）。
 var routingQualityFactIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_quality_fact_uniq ON routing_quality_fact (route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id, identity_version)`,
+	`CREATE UNIQUE INDEX routing_quality_fact_uniq ON routing_quality_fact (route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id)`,
 	`CREATE INDEX routing_quality_fact_bucket ON routing_quality_fact (bucket_minute)`,
 }
 
@@ -72,7 +73,6 @@ var routingQualityFactIndexDDLs = []string{
 // routing_flow_snapshot_state.highest_sequence，列本身无任何读取方。
 var routingFlowFactColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('routing_flow_fact_id_seq'::regclass)`,
-	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
 	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
 	`terminal_minute timestamptz NOT NULL`,
 	`ordinal smallint NOT NULL`,
@@ -92,8 +92,8 @@ var routingFlowFactColumnDefs = []string{
 var routingFlowFactCreateDDL = partitionedCreateDDL("routing_flow_fact", "terminal_minute", routingFlowFactColumnDefs)
 
 var routingFlowFactIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_flow_fact_uniq ON routing_flow_fact (terminal_minute, instance_src, identity_version, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT`,
-	`CREATE INDEX routing_flow_fact_read ON routing_flow_fact (route_class_id, identity_version, terminal_minute)`,
+	`CREATE UNIQUE INDEX routing_flow_fact_uniq ON routing_flow_fact (terminal_minute, instance_src, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT`,
+	`CREATE INDEX routing_flow_fact_read ON routing_flow_fact (route_class_id, terminal_minute)`,
 }
 
 // ErrRoutingSnapshotBeyondRetention 快照分钟早于观测保留截止（§5.4 写面守卫）。
@@ -106,20 +106,18 @@ var ErrRoutingSnapshotBeyondRetention = errors.New("routing flow snapshot beyond
 var routingFlowSnapshotStateDDL = `CREATE TABLE IF NOT EXISTS routing_flow_snapshot_state (
 	terminal_minute timestamptz NOT NULL,
 	instance_src text NOT NULL,
-	identity_version smallint NOT NULL CHECK (identity_version = 1),
 	highest_sequence bigint NOT NULL,
 	updated_at timestamptz NOT NULL,
-	PRIMARY KEY (terminal_minute, instance_src, identity_version)
+	PRIMARY KEY (terminal_minute, instance_src)
 )`
 
 var routingCompilerDDL = `CREATE TABLE IF NOT EXISTS routing_compiler_state (
 	id bigint NOT NULL,
-	identity_version smallint NOT NULL CHECK (identity_version = 1),
 	desired_generation bigint NOT NULL DEFAULT 0,
 	published_generation bigint NOT NULL DEFAULT 0,
 	last_error text NULL,
 	updated_at timestamptz NOT NULL,
-	PRIMARY KEY (id, identity_version),
+	PRIMARY KEY (id),
 	CONSTRAINT routing_compiler_single CHECK (id = 1)
 )`
 
@@ -243,8 +241,8 @@ func advisoryLockTx(ctx context.Context, drv *txDriver, parts ...string) error {
 // 尾部）下的正确形状；改成「DELETE 本分片 + INSERT 本批」会删掉同分钟不在本批的
 // 键，而那些键的 delta 已折进 committed、下一轮不再发 → 永久丢失（spec §3.1）。
 func qualityUpsertSQL(table, conflictCols string) string {
-	return `INSERT INTO ` + table + ` (identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
-	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23, now())
+	return `INSERT INTO ` + table + ` (route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
+	VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22, now())
 	ON CONFLICT (` + conflictCols + `) DO UPDATE SET
 		absolute_sequence = EXCLUDED.absolute_sequence,
 		attempts = EXCLUDED.attempts,
@@ -269,7 +267,7 @@ func qualityUpsertSQL(table, conflictCols string) string {
 
 // routingQualityFactUpsertSQL 是质量域唯一写入缝（身份键列序同
 // routing_quality_fact_uniq）。
-var routingQualityFactUpsertSQL = qualityUpsertSQL("routing_quality_fact", "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id, identity_version")
+var routingQualityFactUpsertSQL = qualityUpsertSQL("routing_quality_fact", "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id")
 
 // UpsertQualityRow 逐行写入质量事实表（S1）：累计绝对量 upsert + 行级序号
 // 守卫（WHERE EXCLUDED.absolute_sequence > …），旧序号静默 no-op（幂等重放）。
@@ -288,7 +286,7 @@ func (r *PartitionRepo) UpsertQualityRow(ctx context.Context, row RoutingQuality
 	if row.TTFTHist == nil {
 		row.TTFTHist = []int64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	}
-	args := []any{row.IdentityVersion, row.RouteClassID[:], row.QualityClassID[:], row.CandidateFingerprint[:], row.InstanceSrc, bucket, row.AbsoluteSequence, row.Attempts, row.Successes, row.Count429, row.CountOrdinary4xx, row.Count5xx, row.CountNetwork, row.TTFTN, row.TTFTSumLogQ32, row.TTFTSumSqLogQ32, row.TTFTHist, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreateTokens, row.Calls, row.Images}
+	args := []any{row.RouteClassID[:], row.QualityClassID[:], row.CandidateFingerprint[:], row.InstanceSrc, bucket, row.AbsoluteSequence, row.Attempts, row.Successes, row.Count429, row.CountOrdinary4xx, row.Count5xx, row.CountNetwork, row.TTFTN, row.TTFTSumLogQ32, row.TTFTSumSqLogQ32, row.TTFTHist, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreateTokens, row.Calls, row.Images}
 	var res sql.Result
 	if err := drv.Exec(ctx, routingQualityFactUpsertSQL, args, &res); err != nil {
 		return err
@@ -379,12 +377,13 @@ func (r *PartitionRepo) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context
 	return int(n), nil
 }
 
-// UpsertFlowSnapshot replaces the complete edge set for (terminal_minute, instance_src, identity_version) atomically.
+// UpsertFlowSnapshot replaces the complete edge set for (terminal_minute, instance_src) atomically.
 // Only greater absolute_sequence replaces; equal or lower does not mutate. Uses durable authority table routing_flow_snapshot_state
 // so even empty snapshots advance sequence and remain authoritative independent of edge rows.
-// 写合并表 routing_flow_fact（S2′）：只删己分片（minute+instance+version），
+// 写合并表 routing_flow_fact（S2′）：只删己分片（minute+instance），
 // 同分片多代际输入写面折叠（chain_count 求和、min_generation 取最小）。
-// 无下游重算，无脏位（重算机械已整体下线）。
+// 无下游重算，无脏位（重算机械已整体下线）。identityVersion 仍参与 advisory 锁键
+// （§3.2：常量不改变互斥，但保持锁键连续性），不再写入任何表列。
 func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []RoutingFlowRow) error {
 	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
 	// 写面守卫（§5.4）：retention 已 DROP 早于观测截止的分钟分区并清理
@@ -407,7 +406,7 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	var res sql.Result
 	var curSeq sql.NullInt64
 	rs := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3 FOR UPDATE`, []any{terminalMinute, instanceSrc, identityVersion}, rs); err != nil {
+	if err := drv.Query(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2 FOR UPDATE`, []any{terminalMinute, instanceSrc}, rs); err != nil {
 		return err
 	}
 	hasState := rs.Next()
@@ -418,22 +417,22 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 	if hasState && curSeq.Valid && absoluteSequence <= curSeq.Int64 {
 		return tx.Commit()
 	}
-	if err := drv.Exec(ctx, `DELETE FROM routing_flow_fact WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=$3`, []any{terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
+	if err := drv.Exec(ctx, `DELETE FROM routing_flow_fact WHERE terminal_minute=$1 AND instance_src=$2`, []any{terminalMinute, instanceSrc}, &res); err != nil {
 		return err
 	}
 	for _, row := range foldFlowRows(rows) {
-		q := `INSERT INTO routing_flow_fact (identity_version, route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, instance_src, min_generation, chain_count, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14, now())`
-		if err := drv.Exec(ctx, q, []any{identityVersion, row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, instanceSrc, row.Generation, row.ChainCount}, &res); err != nil {
+		q := `INSERT INTO routing_flow_fact (route_class_id, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, instance_src, min_generation, chain_count, updated_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13, now())`
+		if err := drv.Exec(ctx, q, []any{row.RouteClassID[:], terminalMinute, row.Ordinal, row.Lane, row.AccountID, row.PreviousAccountID, row.PreviousOutcome, row.TransitionReason, row.Outcome, row.IsTerminal, instanceSrc, row.Generation, row.ChainCount}, &res); err != nil {
 			return err
 		}
 	}
 	if hasState {
-		if err := drv.Exec(ctx, `UPDATE routing_flow_snapshot_state SET highest_sequence=$1, updated_at=now() WHERE terminal_minute=$2 AND instance_src=$3 AND identity_version=$4`, []any{absoluteSequence, terminalMinute, instanceSrc, identityVersion}, &res); err != nil {
+		if err := drv.Exec(ctx, `UPDATE routing_flow_snapshot_state SET highest_sequence=$1, updated_at=now() WHERE terminal_minute=$2 AND instance_src=$3`, []any{absoluteSequence, terminalMinute, instanceSrc}, &res); err != nil {
 			return err
 		}
 	} else {
-		if err := drv.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, identity_version, highest_sequence, updated_at) VALUES ($1,$2,$3,$4, now())`, []any{terminalMinute, instanceSrc, identityVersion, absoluteSequence}, &res); err != nil {
+		if err := drv.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, highest_sequence, updated_at) VALUES ($1,$2,$3, now())`, []any{terminalMinute, instanceSrc, absoluteSequence}, &res); err != nil {
 			return err
 		}
 	}

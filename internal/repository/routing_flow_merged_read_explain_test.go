@@ -18,7 +18,7 @@ import (
 )
 
 // A14：读支撑索引生效。跨分片读的访问路径是
-// (route_class_id, identity_version, terminal_minute 范围)；新唯一索引以
+// (route_class_id, terminal_minute 范围)；新唯一索引以
 // terminal_minute 起头不服务该路径，故必须显式建
 // routing_flow_fact_read。本测试以 EXPLAIN 断言该索引被选中且无 Seq Scan，
 // 并以 EXPLAIN ANALYZE 实测跨分片扇出 ≤ 实例数 × 窗口分钟数。
@@ -97,10 +97,10 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 			minute := from.Add(time.Duration(min) * time.Minute)
 			// 热类：每 (实例, 分钟) 恰一条边身份——扇出上界 = 实例数 × 窗口分钟数。
 			batch.Queue(`INSERT INTO routing_flow_fact
-				(identity_version, route_class_id, terminal_minute, ordinal, lane, account_id,
+				(route_class_id, terminal_minute, ordinal, lane, account_id,
 				 previous_outcome, transition_reason, outcome, is_terminal, instance_src,
 				 min_generation, chain_count, updated_at)
-				VALUES (1, $1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 5, now())`,
+				VALUES ($1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 5, now())`,
 				hotRC, minute, instancesSrc[inst])
 			// 噪声：其余路由类在同一窗口内同样铺满。
 			for c := 0; c < noiseClasses; c++ {
@@ -109,10 +109,10 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 				rc[1] = byte(c)
 				rc[2] = byte(c >> 8)
 				batch.Queue(`INSERT INTO routing_flow_fact
-					(identity_version, route_class_id, terminal_minute, ordinal, lane, account_id,
+					(route_class_id, terminal_minute, ordinal, lane, account_id,
 					 previous_outcome, transition_reason, outcome, is_terminal, instance_src,
 					 min_generation, chain_count, updated_at)
-					VALUES (1, $1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 5, now())`,
+					VALUES ($1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 5, now())`,
 					rc, minute, instancesSrc[inst])
 			}
 		}
@@ -125,7 +125,7 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 
 	var planJSON string
 	err = pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) `+flowFactStatsSQL,
-		hotRC, int16(1), from, m).Scan(&planJSON)
+		hotRC, from, m).Scan(&planJSON)
 	require.NoError(t, err)
 	t.Logf("merged read plan: %s", planJSON)
 	var plan []struct {
@@ -155,7 +155,7 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 	// 实例数 × 窗口分钟数（实例越多、分钟越多 → 扇出线性，绝无实例间的二次放大）。
 	var planAnalyze string
 	err = pool.QueryRow(ctx, `EXPLAIN (ANALYZE, FORMAT JSON) `+flowFactStatsSQL,
-		hotRC, int16(1), from, m).Scan(&planAnalyze)
+		hotRC, from, m).Scan(&planAnalyze)
 	require.NoError(t, err)
 	var analyzed []struct {
 		Plan *mergedReadPlanNode `json:"Plan"`

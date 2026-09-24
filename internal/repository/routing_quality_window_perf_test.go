@@ -52,17 +52,17 @@ func TestRoutingQualityWindowP99PG(t *testing.T) {
 			minute := m.Add(-time.Duration(6+h*110) * time.Minute)
 			batch.Queue(
 				`INSERT INTO routing_quality_fact
-				 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
+				 (route_class_id, quality_class_id, candidate_fingerprint,
 				  instance_src, bucket_minute, absolute_sequence, attempts, successes, updated_at)
-				 VALUES (1, $1, $2, $3, 'src-perf', $4, 1, 10, 8, now())`,
+				 VALUES ($1, $2, $3, 'src-perf', $4, 1, 10, 8, now())`,
 				rc[:], qc[:], fp[:], minute)
 		}
 		// One in-window row per candidate so Q1 scans real current data.
 		batch.Queue(
 			`INSERT INTO routing_quality_fact
-			 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
+			 (route_class_id, quality_class_id, candidate_fingerprint,
 			  instance_src, bucket_minute, absolute_sequence, attempts, successes, ttft_n, updated_at)
-			 VALUES (1, $1, $2, $3, 'src-perf', $4, 1, 35, 30, 30, now())`,
+			 VALUES ($1, $2, $3, 'src-perf', $4, 1, 35, 30, 30, now())`,
 			rc[:], qc[:], fp[:], m.Add(-2*time.Minute))
 	}
 	br := pool.SendBatch(ctx, batch)

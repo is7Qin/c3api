@@ -105,12 +105,10 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	require.Equal(t, int64(14), stats[0].Attempts)
 	require.Equal(t, ones, stats[0].TTFTHist)
 
-	// Then: filters — unknown route class and wrong identity version are empty, non-nil.
+	// Then: an unknown route class filters to empty, non-nil. (There is no
+	// identity-version mismatch case to assert any more — the DB column is gone,
+	// so a version-mismatch filter has no parameter to bind and nothing to match.)
 	empty, err := repos.Partitions.QueryQualityFactStats(ctx, rcOther, 1, base, base.Add(3*time.Minute))
-	require.NoError(t, err)
-	require.NotNil(t, empty)
-	require.Len(t, empty, 0)
-	empty, err = repos.Partitions.QueryQualityFactStats(ctx, rc, 2, base, base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.NotNil(t, empty)
 	require.Len(t, empty, 0)

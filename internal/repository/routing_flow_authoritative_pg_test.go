@@ -43,12 +43,10 @@ func TestRoutingFlowAuthoritativeOuterPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, outerSrc, outerMinute, outerVersion, 10, rows))
 	var gotMinute time.Time
 	var gotSrc string
-	var gotVer int16
 	var gotRoute []byte
-	require.NoError(t, pool.QueryRow(ctx, `SELECT terminal_minute, instance_src, identity_version, route_class_id FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, outerSrc, outerMinute).Scan(&gotMinute, &gotSrc, &gotVer, &gotRoute))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT terminal_minute, instance_src, route_class_id FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, outerSrc, outerMinute).Scan(&gotMinute, &gotSrc, &gotRoute))
 	require.True(t, gotMinute.Equal(outerMinute), "terminal_minute must be authoritative outer")
 	require.Equal(t, outerSrc, gotSrc, "instance_src must be authoritative outer")
-	require.Equal(t, outerVersion, gotVer, "identity_version must be authoritative outer")
 	var wantRoute [32]byte = bogusRC
 	require.Equal(t, wantRoute[:], gotRoute, "route_class_id per edge must be preserved from row")
 	var cnt int64
