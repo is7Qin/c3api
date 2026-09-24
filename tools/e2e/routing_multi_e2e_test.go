@@ -480,12 +480,12 @@ func rmTCPDown(t *testing.T, addr, what string, timeout time.Duration) {
 	})
 }
 
-// rmQualityInstance DB 直读实例层某指纹 attempts/successes（live+flush 未分区感知求和）。
+// rmQualityInstance DB 直读事实表某指纹 attempts/successes（live+flush 未分区感知求和）。
 func rmQualityInstance(t *testing.T, c *rmCluster, fpHex string) (att, suc int64) {
 	t.Helper()
 	_ = c.pg.QueryRow(context.Background(), `
 		SELECT COALESCE(sum(attempts),0), COALESCE(sum(successes),0)
-		FROM routing_quality_instance_minute WHERE encode(candidate_fingerprint,'hex')=$1`, fpHex).Scan(&att, &suc)
+		FROM routing_quality_fact WHERE encode(candidate_fingerprint,'hex')=$1`, fpHex).Scan(&att, &suc)
 	return att, suc
 }
 
@@ -622,7 +622,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	t.Log("阶段 1：A 收敛 → PG rollup 落盘 → FlushDB → B 暖启动")
 	gen0, _ := rtPlan(t, envA)
 	iters := 0
-	rtPollLong(t, "A 首候选充分（DB 实例层 n>=30）", 300*time.Second, func() (bool, string) {
+	rtPollLong(t, "A 首候选充分（DB 事实表 n>=30）", 300*time.Second, func() (bool, string) {
 		iters++
 		if iters > 60 {
 			return false, "60 轮仍无候选充分"
@@ -634,7 +634,7 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 		}
 		best := 0
 		rows, err := c.pg.Query(ctx, `
-			SELECT COALESCE(sum(attempts),0) FROM routing_quality_instance_minute GROUP BY encode(candidate_fingerprint,'hex')`)
+			SELECT COALESCE(sum(attempts),0) FROM routing_quality_fact GROUP BY encode(candidate_fingerprint,'hex')`)
 		if err != nil {
 			return false, err.Error()
 		}

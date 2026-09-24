@@ -812,17 +812,11 @@ func (r *Repository) DeleteRedemptionUsesBefore(ctx context.Context, cutoff time
 	return r.Partitions.DeleteRedemptionUsesBefore(ctx, cutoff)
 }
 
-func (r *Repository) EnsureRoutingInstancePartitions(ctx context.Context, now, until time.Time) error {
-	return r.Partitions.EnsureRoutingInstancePartitions(ctx, now, until)
+func (r *Repository) EnsureRoutingFactPartitions(ctx context.Context, now, until time.Time) error {
+	return r.Partitions.EnsureRoutingFactPartitions(ctx, now, until)
 }
-func (r *Repository) EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error {
-	return r.Partitions.EnsureRoutingRollupPartitions(ctx, now, until)
-}
-func (r *Repository) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.Partitions.DropRoutingQualityInstanceBefore(ctx, cutoff)
-}
-func (r *Repository) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.Partitions.DropRoutingQualityRollupBefore(ctx, cutoff)
+func (r *Repository) DropRoutingQualityFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropRoutingQualityFactBefore(ctx, cutoff)
 }
 func (r *Repository) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DropRoutingFlowFactBefore(ctx, cutoff)

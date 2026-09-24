@@ -24,7 +24,7 @@ func TestRoutingQualityClassMultiplierPG(t *testing.T) {
 	fp := fps["cur"]
 
 	for i, qc := range []domain.QualityClassIDVal{qc1, qc2} {
-		require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, repository.RoutingQualityRow{
+		require.NoError(t, repos.Partitions.UpsertQualityRow(ctx, repository.RoutingQualityRow{
 			IdentityVersion: 1, RouteClassID: rcA, QualityClassID: qc, CandidateFingerprint: fp,
 			InstanceSrc: "src-A8", BucketMinute: m, AbsoluteSequence: int64(i + 1),
 			Attempts: 10, Successes: 7, TTFTN: 10,

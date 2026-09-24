@@ -40,7 +40,7 @@ type redFlowBlockingPG struct {
 	once    sync.Once
 }
 
-func (f *redFlowBlockingPG) UpsertQualityAndMarkDirty(context.Context, repository.RoutingQualityRow) error {
+func (f *redFlowBlockingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
 	return nil
 }
 
@@ -889,7 +889,7 @@ type redFlowRetainingPG struct {
 	minutes []int64
 }
 
-func (f *redFlowRetainingPG) UpsertQualityAndMarkDirty(context.Context, repository.RoutingQualityRow) error {
+func (f *redFlowRetainingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
 	return nil
 }
 
@@ -996,7 +996,7 @@ type redFlowMutatingPG struct {
 	inner *fakePG
 }
 
-func (f *redFlowMutatingPG) UpsertQualityAndMarkDirty(context.Context, repository.RoutingQualityRow) error {
+func (f *redFlowMutatingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
 	return nil
 }
 

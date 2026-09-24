@@ -15,44 +15,8 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-var routingQualityInstanceColumnDefs = []string{
-	`id bigint NOT NULL DEFAULT nextval('routing_quality_instance_minute_id_seq'::regclass)`,
-	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
-	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
-	`quality_class_id bytea NOT NULL CHECK (octet_length(quality_class_id) = 32)`,
-	`candidate_fingerprint bytea NOT NULL CHECK (octet_length(candidate_fingerprint) = 32)`,
-	`instance_src text NOT NULL`,
-	`bucket_minute timestamptz NOT NULL`,
-	`absolute_sequence bigint NOT NULL`,
-	`attempts bigint NOT NULL DEFAULT 0`,
-	`successes bigint NOT NULL DEFAULT 0`,
-	`count_429 bigint NOT NULL DEFAULT 0`,
-	`count_ordinary_4xx bigint NOT NULL DEFAULT 0`,
-	`count_5xx bigint NOT NULL DEFAULT 0`,
-	`count_network bigint NOT NULL DEFAULT 0`,
-	`ttft_n bigint NOT NULL DEFAULT 0`,
-	`ttft_sum_log_q32 bigint NOT NULL DEFAULT 0`,
-	`ttft_sumsq_log_q32 bigint NOT NULL DEFAULT 0`,
-	`ttft_hist bigint[] NOT NULL DEFAULT '{0,0,0,0,0,0,0,0,0,0}'`,
-	`input_tokens bigint NOT NULL DEFAULT 0`,
-	`output_tokens bigint NOT NULL DEFAULT 0`,
-	`cache_read_tokens bigint NOT NULL DEFAULT 0`,
-	`cache_create_tokens bigint NOT NULL DEFAULT 0`,
-	`calls bigint NOT NULL DEFAULT 0`,
-	`images bigint NOT NULL DEFAULT 0`,
-	`updated_at timestamptz NOT NULL`,
-}
-
-var routingQualityInstanceCreateDDL = partitionedCreateDDL("routing_quality_instance_minute", "bucket_minute", routingQualityInstanceColumnDefs)
-
-var routingQualityInstanceIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_quality_instance_minute_uniq ON routing_quality_instance_minute (instance_src, bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version)`,
-	`CREATE INDEX routing_quality_instance_minute_bucket ON routing_quality_instance_minute (bucket_minute)`,
-}
-
-// routingQualityFactColumnDefs 是单一分片事实表 S1 的列定义事实源：列集合与
-// 度量类型逐字同 routingQualityInstanceColumnDefs，仅身份列**改序**为
-// (route_class_id, candidate_fingerprint, bucket_minute, instance_src,
+// routingQualityFactColumnDefs 是单一分片事实表 S1 的列定义事实源：身份列
+// **改序**为 (route_class_id, candidate_fingerprint, bucket_minute, instance_src,
 // quality_class_id, identity_version)。改序不是审美：身份索引因此以
 // (route_class_id, candidate_fingerprint, bucket_minute) 开头，同时服务基线窗
 // LATERAL 探针（rc 等值 + fp 等值 + 分钟范围）与唯一性；把 bucket_minute 放首位
@@ -101,39 +65,6 @@ var routingQualityFactIndexDDLs = []string{
 // routing_flow_instance_minute 已随 S2′/S3 删除：实例层与 rollup 层合并为
 // routing_flow_fact 单层（instance_src 为身份维度），不再有独立暂存表。
 
-var routingQualityRollupColumnDefs = []string{
-	`id bigint NOT NULL DEFAULT nextval('routing_quality_rollup_id_seq'::regclass)`,
-	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
-	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
-	`quality_class_id bytea NOT NULL CHECK (octet_length(quality_class_id) = 32)`,
-	`candidate_fingerprint bytea NOT NULL CHECK (octet_length(candidate_fingerprint) = 32)`,
-	`bucket_minute timestamptz NOT NULL`,
-	`attempts bigint NOT NULL DEFAULT 0`,
-	`successes bigint NOT NULL DEFAULT 0`,
-	`count_429 bigint NOT NULL DEFAULT 0`,
-	`count_ordinary_4xx bigint NOT NULL DEFAULT 0`,
-	`count_5xx bigint NOT NULL DEFAULT 0`,
-	`count_network bigint NOT NULL DEFAULT 0`,
-	`ttft_n bigint NOT NULL DEFAULT 0`,
-	`ttft_sum_log_q32 bigint NOT NULL DEFAULT 0`,
-	`ttft_sumsq_log_q32 bigint NOT NULL DEFAULT 0`,
-	`ttft_hist bigint[] NOT NULL DEFAULT '{0,0,0,0,0,0,0,0,0,0}'`,
-	`input_tokens bigint NOT NULL DEFAULT 0`,
-	`output_tokens bigint NOT NULL DEFAULT 0`,
-	`cache_read_tokens bigint NOT NULL DEFAULT 0`,
-	`cache_create_tokens bigint NOT NULL DEFAULT 0`,
-	`calls bigint NOT NULL DEFAULT 0`,
-	`images bigint NOT NULL DEFAULT 0`,
-	`updated_at timestamptz NOT NULL`,
-}
-
-var routingQualityRollupCreateDDL = partitionedCreateDDL("routing_quality_rollup", "bucket_minute", routingQualityRollupColumnDefs)
-
-var routingQualityRollupIndexDDLs = []string{
-	`CREATE UNIQUE INDEX routing_quality_rollup_uniq ON routing_quality_rollup (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version)`,
-	`CREATE INDEX routing_quality_rollup_candidate ON routing_quality_rollup (route_class_id, candidate_fingerprint, bucket_minute DESC)`,
-}
-
 // routing_flow_fact 即合并流层 S2′：旧边身份减 generation、
 // candidate_fingerprint，加 instance_src（分片身份）。chain_count 为事件累加
 // 的精确和，非负不变式由写面累加语义保证，DB 不加 CHECK（Beta 无迁移路径）。
@@ -172,23 +103,6 @@ var routingFlowFactIndexDDLs = []string{
 // 实例的链会无痕消失（判据 B5）。
 var ErrRoutingSnapshotBeyondRetention = errors.New("routing flow snapshot beyond observation retention")
 
-var routingDirtyDDL = `CREATE TABLE IF NOT EXISTS routing_dirty_minute (
-	kind text NOT NULL,
-	identity_version smallint NOT NULL CHECK (identity_version = 1),
-	bucket_minute timestamptz NOT NULL,
-	dirty boolean NOT NULL DEFAULT true,
-	updated_at timestamptz NOT NULL,
-	PRIMARY KEY (kind, identity_version, bucket_minute)
-)`
-
-var routingWatermarkDDL = `CREATE TABLE IF NOT EXISTS routing_rollup_watermark (
-	kind text NOT NULL,
-	identity_version smallint NOT NULL CHECK (identity_version = 1),
-	watermark timestamptz NOT NULL,
-	updated_at timestamptz NOT NULL,
-	PRIMARY KEY (kind, identity_version)
-)`
-
 var routingFlowSnapshotStateDDL = `CREATE TABLE IF NOT EXISTS routing_flow_snapshot_state (
 	terminal_minute timestamptz NOT NULL,
 	instance_src text NOT NULL,
@@ -209,23 +123,11 @@ var routingCompilerDDL = `CREATE TABLE IF NOT EXISTS routing_compiler_state (
 	CONSTRAINT routing_compiler_single CHECK (id = 1)
 )`
 
-func (r *PartitionRepo) EnsureRoutingQualityInstancePartitioned(ctx context.Context, now time.Time) error {
-	return r.ensureTablePartitioned(ctx, "routing_quality_instance_minute", "bucket_minute", routingQualityInstanceColumnDefs, routingQualityInstanceIndexDDLs, now)
-}
 func (r *PartitionRepo) EnsureRoutingQualityFactPartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_fact", "bucket_minute", routingQualityFactColumnDefs, routingQualityFactIndexDDLs, now)
 }
-func (r *PartitionRepo) EnsureRoutingQualityRollupPartitioned(ctx context.Context, now time.Time) error {
-	return r.ensureTablePartitioned(ctx, "routing_quality_rollup", "bucket_minute", routingQualityRollupColumnDefs, routingQualityRollupIndexDDLs, now)
-}
 func (r *PartitionRepo) EnsureRoutingFlowFactPartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_flow_fact", "terminal_minute", routingFlowFactColumnDefs, routingFlowFactIndexDDLs, now)
-}
-func (r *PartitionRepo) EnsureRoutingDirty(ctx context.Context) error {
-	return r.execDDLTolerateRace(ctx, routingDirtyDDL)
-}
-func (r *PartitionRepo) EnsureRoutingWatermark(ctx context.Context) error {
-	return r.execDDLTolerateRace(ctx, routingWatermarkDDL)
 }
 func (r *PartitionRepo) EnsureRoutingSnapshotState(ctx context.Context) error {
 	return r.execDDLTolerateRace(ctx, routingFlowSnapshotStateDDL)
@@ -235,23 +137,11 @@ func (r *PartitionRepo) EnsureRoutingCompiler(ctx context.Context) error {
 }
 
 func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Time) error {
-	if err := r.EnsureRoutingQualityInstancePartitioned(ctx, now); err != nil {
-		return fmt.Errorf("routing quality instance: %w", err)
-	}
 	if err := r.EnsureRoutingQualityFactPartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality fact: %w", err)
 	}
-	if err := r.EnsureRoutingQualityRollupPartitioned(ctx, now); err != nil {
-		return fmt.Errorf("routing quality rollup: %w", err)
-	}
 	if err := r.EnsureRoutingFlowFactPartitioned(ctx, now); err != nil {
-		return fmt.Errorf("routing flow rollup: %w", err)
-	}
-	if err := r.EnsureRoutingDirty(ctx); err != nil {
-		return fmt.Errorf("routing dirty: %w", err)
-	}
-	if err := r.EnsureRoutingWatermark(ctx); err != nil {
-		return fmt.Errorf("routing watermark: %w", err)
+		return fmt.Errorf("routing flow fact: %w", err)
 	}
 	if err := r.EnsureRoutingSnapshotState(ctx); err != nil {
 		return fmt.Errorf("routing snapshot state: %w", err)
@@ -262,20 +152,11 @@ func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Ti
 	return nil
 }
 
-func (r *PartitionRepo) EnsureRoutingInstancePartitions(ctx context.Context, now, until time.Time) error {
-	if err := r.EnsureTablePartitions(ctx, "routing_quality_instance_minute", now, until); err != nil {
-		return err
-	}
-	return nil
-}
+// EnsureRoutingFactPartitions 预建两张事实表的未来日分区：S1
+// routing_quality_fact（bucket_minute 分区）与 S2 routing_flow_fact
+// （terminal_minute 分区）同属观测事实面，同一保留巡检统一调度。
 func (r *PartitionRepo) EnsureRoutingFactPartitions(ctx context.Context, now, until time.Time) error {
 	if err := r.EnsureTablePartitions(ctx, "routing_quality_fact", now, until); err != nil {
-		return err
-	}
-	return nil
-}
-func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error {
-	if err := r.EnsureTablePartitions(ctx, "routing_quality_rollup", now, until); err != nil {
 		return err
 	}
 	if err := r.EnsureTablePartitions(ctx, "routing_flow_fact", now, until); err != nil {
@@ -284,14 +165,8 @@ func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, 
 	return nil
 }
 
-func (r *PartitionRepo) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.DropTablePartitionsBefore(ctx, "routing_quality_instance_minute", cutoff)
-}
 func (r *PartitionRepo) DropRoutingQualityFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_fact", cutoff)
-}
-func (r *PartitionRepo) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.DropTablePartitionsBefore(ctx, "routing_quality_rollup", cutoff)
 }
 func (r *PartitionRepo) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_flow_fact", cutoff)
@@ -353,47 +228,10 @@ func advisoryLockKey(parts ...string) int64 {
 	return int64(binary.BigEndian.Uint64(sum[:8]))
 }
 
-// advisoryLockTx 在事务内取分钟级 pg_advisory_xact_lock（upsert/rollup 两对共用）。
+// advisoryLockTx 在事务内取分钟级 pg_advisory_xact_lock（quality upsert 用）。
 func advisoryLockTx(ctx context.Context, drv *txDriver, parts ...string) error {
 	var res sql.Result
 	return drv.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, []any{advisoryLockKey(parts...)}, &res)
-}
-
-// markDirtyMinuteTx 置分钟脏位（upsert 对共用；调用方传各自的 kind/分钟，SQL 形状一致）。
-func markDirtyMinuteTx(ctx context.Context, drv *txDriver, kind string, version int16, minute time.Time) error {
-	var res sql.Result
-	return drv.Exec(ctx, `INSERT INTO routing_dirty_minute (kind, identity_version, bucket_minute, dirty, updated_at) VALUES ($1, $2, $3, true, now()) ON CONFLICT (kind, identity_version, bucket_minute) DO UPDATE SET dirty = true, updated_at = now()`, []any{kind, version, minute}, &res)
-}
-
-// requireDirtyMinuteTx 锁脏行（FOR UPDATE）并要求存在且 dirty（rollup 对共用；
-// 防丢脏语义不变：读 facts 前先锁脏行）。
-func requireDirtyMinuteTx(ctx context.Context, drv *txDriver, kind string, version int16, minute time.Time) error {
-	dirtyRows := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3 FOR UPDATE`, []any{kind, version, minute}, dirtyRows); err != nil {
-		return err
-	}
-	hasDirty := dirtyRows.Next()
-	var isDirty bool
-	if hasDirty {
-		_ = dirtyRows.Scan(&isDirty)
-	}
-	dirtyRows.Close()
-	if !hasDirty || !isDirty {
-		return fmt.Errorf("rollup requires dirty minute %v", minute)
-	}
-	return nil
-}
-
-// minuteHasFactsTx 存在性探针（SELECT 1 … LIMIT 1）；调用方传各自原 SQL
-// （表/分钟列不同），无插值拼接风险。
-func minuteHasFactsTx(ctx context.Context, drv *txDriver, query string, args []any) (bool, error) {
-	factRows := &entsql.Rows{}
-	if err := drv.Query(ctx, query, args, factRows); err != nil {
-		return false, err
-	}
-	hasFact := factRows.Next()
-	factRows.Close()
-	return hasFact, nil
 }
 
 // qualityUpsertSQL 生成 quality 域的逐行绝对量 upsert：INSERT 列清单与行级
@@ -429,16 +267,14 @@ func qualityUpsertSQL(table, conflictCols string) string {
 	WHERE EXCLUDED.absolute_sequence > ` + table + `.absolute_sequence`
 }
 
-// routingQualityFactUpsertSQL 是新的读路径事实源（身份键列序同
-// routing_quality_fact_uniq）；routingQualityInstanceUpsertSQL 是本阶段为
-// 尚未下线的 rollup 车道保留的镜像写入——rollup 车道仍读实例表，删它需要连同
-// 车道一起下线（后续提交）。两表因此在本阶段双写，读路径只认事实表。
-var (
-	routingQualityFactUpsertSQL     = qualityUpsertSQL("routing_quality_fact", "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id, identity_version")
-	routingQualityInstanceUpsertSQL = qualityUpsertSQL("routing_quality_instance_minute", "instance_src, bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version")
-)
+// routingQualityFactUpsertSQL 是质量域唯一写入缝（身份键列序同
+// routing_quality_fact_uniq）。
+var routingQualityFactUpsertSQL = qualityUpsertSQL("routing_quality_fact", "route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id, identity_version")
 
-func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row RoutingQualityRow) error {
+// UpsertQualityRow 逐行写入质量事实表（S1）：累计绝对量 upsert + 行级序号
+// 守卫（WHERE EXCLUDED.absolute_sequence > …），旧序号静默 no-op（幂等重放）。
+// 无下游重算，故不再置脏位；事实表就是唯一质量存储。
+func (r *PartitionRepo) UpsertQualityRow(ctx context.Context, row RoutingQualityRow) error {
 	tx, err := r.driver.Tx(ctx)
 	if err != nil {
 		return err
@@ -454,18 +290,7 @@ func (r *PartitionRepo) UpsertQualityAndMarkDirty(ctx context.Context, row Routi
 	}
 	args := []any{row.IdentityVersion, row.RouteClassID[:], row.QualityClassID[:], row.CandidateFingerprint[:], row.InstanceSrc, bucket, row.AbsoluteSequence, row.Attempts, row.Successes, row.Count429, row.CountOrdinary4xx, row.Count5xx, row.CountNetwork, row.TTFTN, row.TTFTSumLogQ32, row.TTFTSumSqLogQ32, row.TTFTHist, row.InputTokens, row.OutputTokens, row.CacheReadTokens, row.CacheCreateTokens, row.Calls, row.Images}
 	var res sql.Result
-	// 事实表先写（读路径的事实源）；实例表镜像写维持 rollup 车道。
 	if err := drv.Exec(ctx, routingQualityFactUpsertSQL, args, &res); err != nil {
-		return err
-	}
-	if err := drv.Exec(ctx, routingQualityInstanceUpsertSQL, args, &res); err != nil {
-		return err
-	}
-	// 两表守卫同构：事实表 no-op ⇔ 实例表 no-op。旧序号静默提交（幂等重放）。
-	if n, _ := res.RowsAffected(); n == 0 {
-		return tx.Commit()
-	}
-	if err := markDirtyMinuteTx(ctx, drv, "quality", row.IdentityVersion, bucket); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -559,7 +384,7 @@ func (r *PartitionRepo) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context
 // so even empty snapshots advance sequence and remain authoritative independent of edge rows.
 // 写合并表 routing_flow_fact（S2′）：只删己分片（minute+instance+version），
 // 同分片多代际输入写面折叠（chain_count 求和、min_generation 取最小）。
-// 无下游重算，不再 markDirty("flow")；dirty 仅剩 kind='quality'。
+// 无下游重算，无脏位（重算机械已整体下线）。
 func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []RoutingFlowRow) error {
 	terminalMinute = terminalMinute.UTC().Truncate(time.Minute)
 	// 写面守卫（§5.4）：retention 已 DROP 早于观测截止的分钟分区并清理
@@ -611,186 +436,6 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 		if err := drv.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, identity_version, highest_sequence, updated_at) VALUES ($1,$2,$3,$4, now())`, []any{terminalMinute, instanceSrc, identityVersion, absoluteSequence}, &res); err != nil {
 			return err
 		}
-	}
-	return tx.Commit()
-}
-
-func (r *PartitionRepo) QueryQualityRow(ctx context.Context, instanceSrc string, bucket time.Time, fingerprint domain.CandidateFingerprintVal, qualityClass domain.QualityClassIDVal, routeClass domain.RouteClassIDVal, version int16) (*RoutingQualityRow, error) {
-	bucket = bucket.UTC().Truncate(time.Minute)
-	rows := &entsql.Rows{}
-	q := `SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist::text, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images FROM routing_quality_instance_minute WHERE instance_src=$1 AND bucket_minute=$2 AND candidate_fingerprint=$3 AND quality_class_id=$4 AND route_class_id=$5 AND identity_version=$6`
-	if err := r.driver.Query(ctx, q, []any{instanceSrc, bucket, fingerprint[:], qualityClass[:], routeClass[:], version}, rows); err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return nil, sql.ErrNoRows
-	}
-	var out RoutingQualityRow
-	var rt, qc []byte
-	var fp []byte
-	var bucketOut time.Time
-	var histText string
-	if err := rows.Scan(&out.IdentityVersion, &rt, &qc, &fp, &out.InstanceSrc, &bucketOut, &out.AbsoluteSequence, &out.Attempts, &out.Successes, &out.Count429, &out.CountOrdinary4xx, &out.Count5xx, &out.CountNetwork, &out.TTFTN, &out.TTFTSumLogQ32, &out.TTFTSumSqLogQ32, &histText, &out.InputTokens, &out.OutputTokens, &out.CacheReadTokens, &out.CacheCreateTokens, &out.Calls, &out.Images); err != nil {
-		return nil, err
-	}
-	copy(out.RouteClassID[:], rt)
-	copy(out.QualityClassID[:], qc)
-	copy(out.CandidateFingerprint[:], fp)
-	out.BucketMinute = bucketOut
-	out.TTFTHist = parseRoutingHist(histText)
-	return &out, nil
-}
-
-func (r *PartitionRepo) IsDirty(ctx context.Context, kind string, version int16, bucket time.Time) (bool, error) {
-	bucket = bucket.UTC().Truncate(time.Minute)
-	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, `SELECT dirty FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3`, []any{kind, version, bucket}, rows); err != nil {
-		return false, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return false, nil
-	}
-	var d bool
-	if err := rows.Scan(&d); err != nil {
-		return false, err
-	}
-	return d, nil
-}
-
-// ListDirtyMinutes 是 rollup worker 的最小选择缝：返回 kind/version 下
-// dirty=true 的最老分钟（升序、至多 limit 个）。from 仍作为调用方的进度
-// 观测参数保留；迟到分钟也必须先被消费，不能被更新的 watermark 跳过。
-func (r *PartitionRepo) ListDirtyMinutes(ctx context.Context, kind string, version int16, from time.Time, limit int) ([]time.Time, error) {
-	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, `SELECT bucket_minute FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND dirty=true ORDER BY bucket_minute ASC LIMIT $3`, []any{kind, version, limit}, rows); err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []time.Time{}
-	for rows.Next() {
-		var b time.Time
-		if err := rows.Scan(&b); err != nil {
-			return nil, err
-		}
-		out = append(out, b)
-	}
-	return out, rows.Err()
-}
-
-func (r *PartitionRepo) GetWatermark(ctx context.Context, kind string, version int16) (time.Time, error) {
-	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, `SELECT watermark FROM routing_rollup_watermark WHERE kind=$1 AND identity_version=$2`, []any{kind, version}, rows); err != nil {
-		return time.Time{}, err
-	}
-	defer rows.Close()
-	if !rows.Next() {
-		return time.Time{}, sql.ErrNoRows
-	}
-	var w time.Time
-	if err := rows.Scan(&w); err != nil {
-		return time.Time{}, err
-	}
-	return w, nil
-}
-
-func (r *PartitionRepo) advanceWatermarkTx(ctx context.Context, drv *txDriver, kind string, version int16, newWatermark time.Time) error {
-	newWatermark = newWatermark.UTC().Truncate(time.Minute)
-	var res sql.Result
-	var cur sql.NullTime
-	rs := &entsql.Rows{}
-	if err := drv.Query(ctx, `SELECT watermark FROM routing_rollup_watermark WHERE kind=$1 AND identity_version=$2 FOR UPDATE`, []any{kind, version}, rs); err != nil {
-		return err
-	}
-	has := rs.Next()
-	if has {
-		var w time.Time
-		_ = rs.Scan(&w)
-		cur = sql.NullTime{Time: w, Valid: true}
-	}
-	rs.Close()
-	if cur.Valid && newWatermark.Before(cur.Time) {
-		if err := drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3 AND dirty=true`, []any{kind, version, newWatermark}, &res); err != nil {
-			return err
-		}
-		return nil
-	}
-	if has {
-		if err := drv.Exec(ctx, `UPDATE routing_rollup_watermark SET watermark=$1, updated_at=now() WHERE kind=$2 AND identity_version=$3`, []any{newWatermark, kind, version}, &res); err != nil {
-			return err
-		}
-	} else {
-		if err := drv.Exec(ctx, `INSERT INTO routing_rollup_watermark (kind, identity_version, watermark, updated_at) VALUES ($1,$2,$3, now())`, []any{kind, version, newWatermark}, &res); err != nil {
-			return err
-		}
-	}
-	if err := drv.Exec(ctx, `UPDATE routing_dirty_minute SET dirty=false, updated_at=now() WHERE kind=$1 AND identity_version=$2 AND bucket_minute=$3 AND dirty=true`, []any{kind, version, newWatermark}, &res); err != nil {
-		return err
-	}
-	return nil
-}
-
-func (r *PartitionRepo) RollupQuality(ctx context.Context, bucket time.Time, version int16) error {
-	bucket = bucket.UTC().Truncate(time.Minute)
-	tx, err := r.driver.Tx(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback() //nolint:errcheck
-	drv := &txDriver{tx: tx, drv: r.driver}
-	if err := advisoryLockTx(ctx, drv, "rollup-quality", fmt.Sprintf("%d", version), bucket.Format(time.RFC3339)); err != nil {
-		return err
-	}
-	// lock dirty row FOR UPDATE before reading facts (no-lost-dirty)
-	if err := requireDirtyMinuteTx(ctx, drv, "quality", version, bucket); err != nil {
-		return err
-	}
-	// read facts existence (must have at least one row)
-	hasFact, err := minuteHasFactsTx(ctx, drv, `SELECT 1 FROM routing_quality_instance_minute WHERE bucket_minute=$1 AND identity_version=$2 LIMIT 1`, []any{bucket, version})
-	if err != nil {
-		return err
-	}
-	if !hasFact {
-		return fmt.Errorf("no facts for rollup")
-	}
-	var res sql.Result
-	if err := drv.Exec(ctx, `INSERT INTO routing_quality_rollup (identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
-	WITH grouped AS (
-		SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute,
-			MAX(absolute_sequence) AS absolute_sequence,
-			SUM(attempts) AS attempts, SUM(successes) AS successes,
-			SUM(count_429) AS count_429, SUM(count_ordinary_4xx) AS count_ordinary_4xx,
-			SUM(count_5xx) AS count_5xx, SUM(count_network) AS count_network,
-			SUM(ttft_n) AS ttft_n, SUM(ttft_sum_log_q32) AS ttft_sum_log_q32,
-			SUM(ttft_sumsq_log_q32) AS ttft_sumsq_log_q32,
-			array_agg(ttft_hist) AS hist_rows,
-			SUM(input_tokens) AS input_tokens, SUM(output_tokens) AS output_tokens,
-			SUM(cache_read_tokens) AS cache_read_tokens, SUM(cache_create_tokens) AS cache_create_tokens,
-			SUM(calls) AS calls, SUM(images) AS images
-		FROM routing_quality_instance_minute
-		WHERE bucket_minute=$1 AND identity_version=$2
-		GROUP BY identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute
-	)
-	SELECT identity_version, route_class_id, quality_class_id, candidate_fingerprint, bucket_minute,
-		attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network,
-		ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32,
-		ARRAY(SELECT COALESCE(SUM(v), 0) FROM unnest(hist_rows) WITH ORDINALITY AS bins(v, ord)
-			GROUP BY ((ord - 1) % 10) ORDER BY ((ord - 1) % 10)),
-		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, now()
-	FROM grouped
-	ON CONFLICT (bucket_minute, candidate_fingerprint, quality_class_id, route_class_id, identity_version) DO UPDATE SET attempts=EXCLUDED.attempts, successes=EXCLUDED.successes, count_429=EXCLUDED.count_429, count_ordinary_4xx=EXCLUDED.count_ordinary_4xx, count_5xx=EXCLUDED.count_5xx, count_network=EXCLUDED.count_network, ttft_n=EXCLUDED.ttft_n, ttft_sum_log_q32=EXCLUDED.ttft_sum_log_q32, ttft_sumsq_log_q32=EXCLUDED.ttft_sumsq_log_q32, ttft_hist=EXCLUDED.ttft_hist, input_tokens=EXCLUDED.input_tokens, output_tokens=EXCLUDED.output_tokens, cache_read_tokens=EXCLUDED.cache_read_tokens, cache_create_tokens=EXCLUDED.cache_create_tokens, calls=EXCLUDED.calls, images=EXCLUDED.images, updated_at=now()`, []any{bucket, version}, &res); err != nil {
-		return err
-	}
-	if err := r.advanceWatermarkTx(ctx, drv, "quality", version, bucket); err != nil {
-		return err
-	}
-	// 有界清理（§5.4）：清掉已滚且**严格早于**水位的历史脏分钟。水位只进不退
-	// （advanceWatermarkTx），故这是唯一的收敛判据；dirty=true 的旧分钟（晚到
-	// 重算待办）与恰好 == 水位的行必须存活（判据 B4 双向负例）。子查询读同一
-	// 事务内刚推进的水位；无水位行 → 子查询 NULL → 不删（冷启动安全）。
-	if err := drv.Exec(ctx, `DELETE FROM routing_dirty_minute WHERE kind=$1 AND identity_version=$2 AND dirty=false AND bucket_minute < (SELECT watermark FROM routing_rollup_watermark WHERE kind=$1 AND identity_version=$2)`, []any{"quality", version}, &res); err != nil {
-		return err
 	}
 	return tx.Commit()
 }

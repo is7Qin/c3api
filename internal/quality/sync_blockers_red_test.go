@@ -331,7 +331,7 @@ type retryFakePG struct {
 	calls     int
 }
 
-func (f *retryFakePG) UpsertQualityAndMarkDirty(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *retryFakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
 	f.calls++
 	if f.calls <= f.failFirst {
 		return context.DeadlineExceeded

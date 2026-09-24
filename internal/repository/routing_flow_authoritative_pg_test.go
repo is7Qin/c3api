@@ -101,9 +101,6 @@ func TestRoutingFlowEmptySnapshotRollupPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-EmptyRoll", now, 1, 2, nil))
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE terminal_minute=$1`, now).Scan(&cnt))
 	require.Equal(t, int64(0), cnt, "empty snapshot must clear merged edges")
-	dirty, err := repos.Partitions.IsDirty(ctx, "flow", 1, now)
-	require.NoError(t, err)
-	require.False(t, dirty, "flow writes no dirty bit anymore")
 }
 
 func TestRoutingFlowEdgeIdentityPG(t *testing.T) {

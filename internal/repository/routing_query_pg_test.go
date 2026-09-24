@@ -39,7 +39,7 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 		row.InstanceSrc = instance
 		row.BucketMinute = minute
 		row.AbsoluteSequence = seq
-		require.NoError(t, repos.Partitions.UpsertQualityAndMarkDirty(ctx, row))
+		require.NoError(t, repos.Partitions.UpsertQualityRow(ctx, row))
 	}
 	min2 := base.Add(time.Minute)
 

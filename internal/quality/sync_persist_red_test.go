@@ -24,7 +24,7 @@ func newTypedFakePG() *typedFakePG {
 	return &typedFakePG{rowErr: make(map[string]error)}
 }
 
-func (f *typedFakePG) UpsertQualityAndMarkDirty(_ context.Context, row repository.RoutingQualityRow) error {
+func (f *typedFakePG) UpsertQualityRow(_ context.Context, row repository.RoutingQualityRow) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++
