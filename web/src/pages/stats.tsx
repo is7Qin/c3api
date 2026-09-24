@@ -146,7 +146,8 @@ export default function Stats() {
         <TabsContent value="usage" className="space-y-6">
 
       <Card className="p-4">
-        <div className="flex flex-nowrap items-start gap-5 overflow-x-auto">
+        <ScrollArea showHorizontal>
+        <div className="flex flex-nowrap items-start gap-5">
           <div className="w-[14rem] shrink-0 space-y-1.5">
             <Label>{t('dateRange.label')}</Label>
             <DateRangePicker value={range} onChange={setRange} />
@@ -170,6 +171,7 @@ export default function Stats() {
             </Tabs>
           </div>
         </div>
+        </ScrollArea>
       </Card>
 
       <Card>
@@ -664,7 +666,7 @@ function FlowCard({ flowQ, offset, limit, onOffsetChange, onLimitChange }: {
                 {data?.sankey.folded && (
                   <p className="text-xs text-muted-foreground">{t('stats.routing.sankey.foldedNote', { limit: data.sankey.account_limit })}</p>
                 )}
-                <div className="overflow-x-auto">
+                <ScrollArea showHorizontal>
                   <ChartContainer config={{}} className="h-[320px] w-full min-w-[640px]">
                     <Sankey
                       accessibilityLayer
@@ -680,7 +682,7 @@ function FlowCard({ flowQ, offset, limit, onOffsetChange, onLimitChange }: {
                       <ChartTooltip content={<FlowSankeyTooltip />} />
                     </Sankey>
                   </ChartContainer>
-                </div>
+                </ScrollArea>
                 <FlowSankeyLegend />
                 <details className="rounded-lg border border-border/50">
                   <summary className="cursor-pointer select-none px-3 py-2 text-xs font-medium text-muted-foreground">
@@ -725,8 +727,8 @@ function FlowEdgeTable({ edges, total, offset, limit, onOffsetChange, onLimitCha
   const { t } = useTranslation()
   return (
     <div>
-    <div className="overflow-x-auto">
-      <Table>
+    <ScrollArea showHorizontal>
+      <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
         <TableHeader>
           <TableRow>
             <TableHead className="text-right">{t('stats.routing.table.ordinal')}</TableHead>
@@ -758,7 +760,7 @@ function FlowEdgeTable({ edges, total, offset, limit, onOffsetChange, onLimitCha
           ))}
         </TableBody>
       </Table>
-    </div>
+    </ScrollArea>
     <Pagination total={total} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} pageSizes={ROUTING_PAGE_SIZES} />
     </div>
   )
@@ -826,8 +828,8 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
                 </div>
               </>
             )}
-            <div className="overflow-x-auto">
-              <Table>
+            <ScrollArea showHorizontal>
+              <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t('stats.routing.table.fingerprint')}</TableHead>
@@ -862,7 +864,7 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
                   ))}
                 </TableBody>
               </Table>
-            </div>
+            </ScrollArea>
             <Pagination total={frontierQ.data?.total_candidates ?? 0} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} pageSizes={ROUTING_PAGE_SIZES} />
           </>
         )}
@@ -981,8 +983,8 @@ function PlanCard({ route, generation, candidates, candidatesTotal, candidatesLo
           <Skeleton className="h-32 w-full" />
         ) : (
           <div>
-          <div className="overflow-x-auto">
-          <Table>
+          <ScrollArea showHorizontal>
+          <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
             <TableHeader>
               <TableRow>
                 <TableHead className="text-right">{t('stats.routing.table.account')}</TableHead>
@@ -1008,7 +1010,7 @@ function PlanCard({ route, generation, candidates, candidatesTotal, candidatesLo
               ))}
             </TableBody>
           </Table>
-          </div>
+          </ScrollArea>
           <Pagination total={candidatesTotal} limit={limit} offset={offset} onOffsetChange={onOffsetChange} onLimitChange={onLimitChange} pageSizes={ROUTING_PAGE_SIZES} />
           </div>
         )}
