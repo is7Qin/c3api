@@ -98,7 +98,7 @@ func TestRoutingFlowSnapshotStateBoundedPG(t *testing.T) {
 	require.Equal(t, int64(0), outsideStates, "rejected snapshot must not leave state behind (no re-create after cleanup)")
 
 	// 清理：cutoff 前的遗留 state 行被删，cutoff 内的存活。
-	_, err = pool.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, identity_version, highest_sequence, updated_at) VALUES ($1, 'src-B5', 1, 9, now())`, outside)
+	_, err = pool.Exec(ctx, `INSERT INTO routing_flow_snapshot_state (terminal_minute, instance_src, highest_sequence, updated_at) VALUES ($1, 'src-B5', 9, now())`, outside)
 	require.NoError(t, err)
 	n, err := repos.Partitions.DeleteRoutingFlowSnapshotStateBefore(ctx, domain.RoutingObservationCutoff(now, 7))
 	require.NoError(t, err)
@@ -117,15 +117,15 @@ func TestRoutingStateTablesConstructivelyBoundedPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 
-	// compiler_state：PK (id, identity_version) + CHECK (id = 1)。
+	// compiler_state：PK (id) + CHECK (id = 1)。
 	for i := 0; i < 2; i++ {
-		_, err := pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, identity_version, desired_generation, published_generation, updated_at) VALUES (1, 1, $1, $1, now()) ON CONFLICT (id, identity_version) DO UPDATE SET desired_generation = EXCLUDED.desired_generation`, int64(i+1))
+		_, err := pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, desired_generation, published_generation, updated_at) VALUES (1, $1, $1, now()) ON CONFLICT (id) DO UPDATE SET desired_generation = EXCLUDED.desired_generation`, int64(i+1))
 		require.NoError(t, err)
 	}
 	var compilerRows int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_compiler_state`).Scan(&compilerRows))
 	require.Equal(t, int64(1), compilerRows, "compiler_state is a single row by primary key")
-	_, err := pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, identity_version, desired_generation, published_generation, updated_at) VALUES (2, 1, 1, 1, now())`)
+	_, err := pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, desired_generation, published_generation, updated_at) VALUES (2, 1, 1, now())`)
 	require.Error(t, err, "the id = 1 CHECK must forbid a second compiler_state row")
 	require.Contains(t, err.Error(), "check constraint")
 }

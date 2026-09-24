@@ -78,7 +78,7 @@ func TestRoutingFlowMergedKeyExactPG(t *testing.T) {
 	// 键精确性（catalog）：唯一索引列序 = §4 新键——旧边身份减 generation、
 	// candidate_fingerprint，加 instance_src。
 	require.Equal(t, []string{
-		"terminal_minute", "instance_src", "identity_version", "route_class_id", "ordinal",
+		"terminal_minute", "instance_src", "route_class_id", "ordinal",
 		"lane", "account_id", "previous_account_id", "previous_outcome", "transition_reason",
 		"outcome", "is_terminal",
 	}, mergedKeyColumns(t, pool), "merged-layer unique key drifted from the specified identity")
@@ -98,8 +98,9 @@ func TestRoutingFlowMergedKeyExactPG(t *testing.T) {
 //
 // 基线行数用基线 schema 的副本表实测（列/唯一键抄自
 // `git show 8037f31:internal/repository/routing.go` 的
-// routingFlowInstanceColumnDefs/IndexDDLs 与 routingFlowRollupColumnDefs/IndexDDLs），
-// 而不是用 Go 侧算式回显，故 50% 是测量而非断言我自己的算术。
+// routingFlowInstanceColumnDefs/IndexDDLs 与 routingFlowRollupColumnDefs/IndexDDLs，
+// 仅略去当时的常量版本列——它不改变任何行数或唯一性，而本夹具度量的是两表 → 单表
+// 的行数减半），而不是用 Go 侧算式回显，故 50% 是测量而非断言我自己的算术。
 func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
@@ -148,10 +149,9 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 		generation bigint NOT NULL,
 		candidate_fingerprint bytea NOT NULL,
 		instance_src text NOT NULL,
-		identity_version smallint NOT NULL,
 		route_class_id bytea NOT NULL,
 		chain_count bigint NOT NULL DEFAULT 0,
-		UNIQUE NULLS NOT DISTINCT (instance_src, terminal_minute, identity_version, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id)
+		UNIQUE NULLS NOT DISTINCT (instance_src, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id)
 	)`)
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, `CREATE TABLE baseline_flow_rollup (
@@ -166,23 +166,22 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 		is_terminal boolean NOT NULL,
 		generation bigint NOT NULL,
 		candidate_fingerprint bytea NOT NULL,
-		identity_version smallint NOT NULL,
 		route_class_id bytea NOT NULL,
 		chain_count bigint NOT NULL DEFAULT 0,
-		UNIQUE NULLS NOT DISTINCT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version)
+		UNIQUE NULLS NOT DISTINCT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id)
 	)`)
 	require.NoError(t, err)
 	for i := 0; i < fixtureMinutes; i++ {
 		minute := m.Add(time.Duration(i) * time.Minute)
 		for e := 0; e < fixtureEdges; e++ {
 			_, err = pool.Exec(ctx, `INSERT INTO baseline_flow_instance
-				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, identity_version, route_class_id, chain_count)
-				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,'src-A7',1,$6,5)`,
+				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, route_class_id, chain_count)
+				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,'src-A7',$6,5)`,
 				minute, int16(e+1), int64(100+e), fixtureGen, fixtureFP, rc[:])
 			require.NoError(t, err)
 			_, err = pool.Exec(ctx, `INSERT INTO baseline_flow_rollup
-				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, identity_version, route_class_id, chain_count)
-				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,1,$6,5)`,
+				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, chain_count)
+				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,$6,5)`,
 				minute, int16(e+1), int64(100+e), fixtureGen, fixtureFP, rc[:])
 			require.NoError(t, err)
 		}

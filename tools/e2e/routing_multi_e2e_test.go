@@ -1103,18 +1103,17 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 	require.True(t, idsI[accIA] && idsI[accIB1] && idsI[accIB2], "gI 候选须齐三员：%v", idsI)
 	routeHex, _ := rI0["ref"].(map[string]any)["route_class_id"].(string)
 	require.NotEmpty(t, routeHex, "gI 路由缺 route_class_id")
-	// 先打健康流量取 (identity_version, quality_class_id)（同 format+model 跨组同类）。
+	// 先打健康流量取 quality_class_id（同 format+model 跨组同类）。
 	for i := 0; i < 12; i++ {
 		if cc, rb := rmChat(t, envA, kMain, rmModel, nil); cc != 200 {
 			t.Fatalf("incident 基线流量异常：%d %s", cc, rb)
 		}
 	}
-	var ver int16
 	var qc []byte
 	require.NoError(t, c.pg.QueryRow(ctx, `
-		SELECT identity_version, quality_class_id
-		FROM routing_quality_fact LIMIT 1`).Scan(&ver, &qc),
-		"须有至少一行 live fact 行以取 version/class")
+		SELECT quality_class_id
+		FROM routing_quality_fact LIMIT 1`).Scan(&qc),
+		"须有至少一行 live fact 行以取 class")
 	// route_class 必须取 gI 路由自身的 route_class_id（plan ref 面 hex）——
 	// baseline/current 查询都按 (route, fp) 精确键匹配，错路即零基线。
 	// 回填 baseline：三候选 × 三分钟（M-62/-61/-60，落在 [M-24h,M-5m) 内），
@@ -1127,10 +1126,10 @@ func TestIntelligentRoutingMultiInstanceE2E(t *testing.T) {
 		for _, back := range []time.Duration{62, 61, 60} {
 			bm := nowM.Add(-back * time.Minute)
 			_, err := c.pg.Exec(ctx, `
-				INSERT INTO routing_quality_fact (identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
-				VALUES ($1,decode($2,'hex'),$3,decode($4,'hex'),'src-e2e-backfill',$5, 1, 15,15, 0,0,0,0, 0,0,0, ARRAY[0,0,0,0,0,0,0,0,0,0]::bigint[], 0,0,0,0, 0,0, now())
-				ON CONFLICT (route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id, identity_version)
-				DO UPDATE SET attempts=15, successes=15, updated_at=now()`, ver, routeHex, qc, fpOf[acc], bm)
+				INSERT INTO routing_quality_fact (route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, attempts, successes, count_429, count_ordinary_4xx, count_5xx, count_network, ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist, input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images, updated_at)
+				VALUES (decode($1,'hex'),$2,decode($3,'hex'),'src-e2e-backfill',$4, 1, 15,15, 0,0,0,0, 0,0,0, ARRAY[0,0,0,0,0,0,0,0,0,0]::bigint[], 0,0,0,0, 0,0, now())
+				ON CONFLICT (route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id)
+				DO UPDATE SET attempts=15, successes=15, updated_at=now()`, routeHex, qc, fpOf[acc], bm)
 			require.NoError(t, err, "回填 baseline acc=%d minute=%v", acc, bm)
 		}
 	}

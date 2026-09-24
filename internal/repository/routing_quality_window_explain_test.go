@@ -84,9 +84,9 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 			minute := m.Add(-time.Duration(6+h*110) * time.Minute)
 			batch.Queue(
 				`INSERT INTO routing_quality_fact
-				 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
+				 (route_class_id, quality_class_id, candidate_fingerprint,
 				  instance_src, bucket_minute, absolute_sequence, attempts, successes, updated_at)
-				 VALUES (1, $1, $2, $3, 'src-plan', $4, 1, 10, 8, now())`,
+				 VALUES ($1, $2, $3, 'src-plan', $4, 1, 10, 8, now())`,
 				rc, qc, fp, minute)
 		}
 	}
@@ -98,7 +98,7 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 
 	var planJSON string
 	err = pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) `+routingQualityWindowBaselineSQL,
-		int16(1), hotRC, hotFP, m.Add(-24*time.Hour), m.Add(-5*time.Minute)).Scan(&planJSON)
+		hotRC, hotFP, m.Add(-24*time.Hour), m.Add(-5*time.Minute)).Scan(&planJSON)
 	require.NoError(t, err)
 	t.Logf("Q2 plan: %s", planJSON)
 	var plan []struct {

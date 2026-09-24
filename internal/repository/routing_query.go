@@ -16,7 +16,7 @@ import (
 // Routing fact read face (repository lane): aggregate reads over
 // routing_quality_fact / routing_flow_fact ONLY — never instance tables,
 // never raw usage/err logs. Half-open window [from, to) on the bucket column,
-// direct route_class_id + identity_version filters, SUM aggregation grouped by
+// direct route_class_id filter, SUM aggregation grouped by
 // the complete edge/candidate identity, deterministic ORDER BY, non-nil empty
 // results.
 
@@ -75,7 +75,7 @@ WITH facts AS (
 		ttft_n, ttft_sum_log_q32, ttft_sumsq_log_q32, ttft_hist,
 		input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, calls, images
 	FROM routing_quality_fact
-	WHERE route_class_id = $1 AND identity_version = $2 AND bucket_minute >= $3 AND bucket_minute < $4
+	WHERE route_class_id = $1 AND bucket_minute >= $2 AND bucket_minute < $3
 ), hist_elem AS (
 	SELECT route_class_id, quality_class_id, candidate_fingerprint, idx, SUM(ttft_hist[idx])::bigint AS v
 	FROM facts, generate_subscripts(facts.ttft_hist, 1) AS idx
@@ -98,28 +98,29 @@ GROUP BY f.route_class_id, f.quality_class_id, f.candidate_fingerprint
 ORDER BY f.quality_class_id, f.candidate_fingerprint`
 
 // flowFactStatsSQL groups by the merged edge identity (every dimension of
-// routing_flow_fact_uniq except terminal_minute/identity_version/instance_src)
+// routing_flow_fact_uniq except terminal_minute/instance_src)
 // and aggregates cross-shard: SUM(chain_count), MIN(min_generation).
 // NULL previous_account_id pinned first for a total order. The access path is
-// (route_class_id, identity_version, terminal_minute range), served by the
+// (route_class_id, terminal_minute range), served by the
 // routing_flow_fact_read index (A14 asserts via EXPLAIN).
 const flowFactStatsSQL = `
 SELECT route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
 	transition_reason, outcome, is_terminal,
 	MIN(min_generation)::bigint, SUM(chain_count)::bigint
 FROM routing_flow_fact
-WHERE route_class_id = $1 AND identity_version = $2 AND terminal_minute >= $3 AND terminal_minute < $4
+WHERE route_class_id = $1 AND terminal_minute >= $2 AND terminal_minute < $3
 GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
 	transition_reason, outcome, is_terminal
 ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_outcome,
 	transition_reason, outcome, is_terminal DESC`
 
 // QueryQualityFactStats aggregates routing_quality_fact over the half-open
-// minute window [from, to) for one route class + identity version.
+// minute window [from, to) for one route class. identityVersion 仅保留于签名
+// （接口稳定），不再绑定：DB 已无该维度。
 func (r *PartitionRepo) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingQualityStat, error) {
 	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
 	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, qualityFactStatsSQL, []any{routeClass[:], identityVersion, from, to}, rows); err != nil {
+	if err := r.driver.Query(ctx, qualityFactStatsSQL, []any{routeClass[:], from, to}, rows); err != nil {
 		return nil, fmt.Errorf("routing quality fact query: %w", err)
 	}
 	defer rows.Close()
@@ -148,12 +149,12 @@ func (r *PartitionRepo) QueryQualityFactStats(ctx context.Context, routeClass do
 }
 
 // QueryFlowFactStats aggregates routing_flow_fact over the half-open minute
-// window [from, to) for one route class + identity version, one row per
-// complete edge identity.
+// window [from, to) for one route class, one row per
+// complete edge identity. identityVersion 仅保留于签名（接口稳定），不再绑定。
 func (r *PartitionRepo) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, identityVersion int16, from, to time.Time) ([]RoutingFlowStat, error) {
 	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
 	rows := &entsql.Rows{}
-	if err := r.driver.Query(ctx, flowFactStatsSQL, []any{routeClass[:], identityVersion, from, to}, rows); err != nil {
+	if err := r.driver.Query(ctx, flowFactStatsSQL, []any{routeClass[:], from, to}, rows); err != nil {
 		return nil, fmt.Errorf("routing flow fact query: %w", err)
 	}
 	defer rows.Close()

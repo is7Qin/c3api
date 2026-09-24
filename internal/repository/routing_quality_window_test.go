@@ -27,11 +27,11 @@ func seedQualityFactRow(t *testing.T, pool *pgxpool.Pool, rc domain.RouteClassID
 	t.Helper()
 	_, err := pool.Exec(context.Background(),
 		`INSERT INTO routing_quality_fact
-		 (identity_version, route_class_id, quality_class_id, candidate_fingerprint,
+		 (route_class_id, quality_class_id, candidate_fingerprint,
 		  instance_src, bucket_minute, absolute_sequence, attempts, successes, ttft_n,
 		  ttft_sum_log_q32, ttft_sumsq_log_q32,
 		  input_tokens, output_tokens, cache_read_tokens, cache_create_tokens, updated_at)
-		 VALUES (1, $1, $2, $3, $4, $5, 1, $6, $7, $6, 0, 0, $6, $7, 0, 0, now())`,
+		 VALUES ($1, $2, $3, $4, $5, 1, $6, $7, $6, 0, 0, $6, $7, 0, 0, now())`,
 		rc[:], qc[:], fp[:], instanceSrc, minute.UTC(), attempts, successes)
 	require.NoError(t, err)
 }
@@ -95,11 +95,6 @@ func TestRoutingQualityWindowCurrentPG(t *testing.T) {
 	require.Equal(t, int64(23), cur.OutputTokens)
 	other := byKey[string(rcB[:])+fpk("cur")]
 	require.Equal(t, int64(3), other.Attempts)
-
-	// Identity-version mismatch matches nothing (never an error).
-	empty, err := repos.Partitions.QueryCurrentWindowStats(ctx, 2, m)
-	require.NoError(t, err)
-	require.Empty(t, empty)
 
 	// Repository facade delegates.
 	gotFacade, err := repos.QueryCurrentWindowStats(ctx, 1, m)
@@ -201,11 +196,6 @@ func TestRoutingQualityWindowBaselinePG(t *testing.T) {
 
 	// Empty hotKeys short-circuits without querying.
 	empty, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, nil)
-	require.NoError(t, err)
-	require.Empty(t, empty)
-
-	// Identity-version mismatch matches nothing.
-	empty, err = repos.Partitions.QueryBaselineTruncated(ctx, 2, m, keys)
 	require.NoError(t, err)
 	require.Empty(t, empty)
 
@@ -338,7 +328,7 @@ func queryUnaggregatedBaseline(t *testing.T, pool *pgxpool.Pool, m time.Time, ke
 	const rawSQL = `
 WITH hot AS (
 	SELECT decode(rc, 'hex') AS rc, decode(fp, 'hex') AS fp
-	FROM unnest($2::text[], $3::text[]) AS t(rc, fp)
+	FROM unnest($1::text[], $2::text[]) AS t(rc, fp)
 )
 SELECT hot.rc AS route_class_id, hot.fp AS candidate_fingerprint,
 	SUM(sub.attempts)::bigint, SUM(sub.successes)::bigint
@@ -350,10 +340,9 @@ LATERAL (
 			ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 		) AS running
 	FROM routing_quality_fact r
-	WHERE r.identity_version = $1
-		AND r.route_class_id = hot.rc
+	WHERE r.route_class_id = hot.rc
 		AND r.candidate_fingerprint = hot.fp
-		AND r.bucket_minute >= $4 AND r.bucket_minute < $5
+		AND r.bucket_minute >= $3 AND r.bucket_minute < $4
 ) AS sub
 WHERE sub.running - sub.attempts < 30
 GROUP BY 1, 2
@@ -365,7 +354,7 @@ ORDER BY 1, 2`
 		fpHex = append(fpHex, hex.EncodeToString(k.Fingerprint[:]))
 	}
 	from, to := m.Add(-domain.BaselineLookback), m.Add(-domain.CurrentWindowLen)
-	rows, err := pool.Query(ctx, rawSQL, 1, rcHex, fpHex, from, to)
+	rows, err := pool.Query(ctx, rawSQL, rcHex, fpHex, from, to)
 	require.NoError(t, err)
 	defer rows.Close()
 	out := map[string]repository.WindowBaselineStat{}

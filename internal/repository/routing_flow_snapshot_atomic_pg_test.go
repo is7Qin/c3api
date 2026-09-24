@@ -69,7 +69,7 @@ func TestRoutingFlowSnapshotAtomicRollbackPG(t *testing.T) {
 	rows.Close()
 	require.Equal(t, []int64{3, 4}, accounts)
 	var highest int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=1`, now, src).Scan(&highest))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2`, now, src).Scan(&highest))
 	require.Equal(t, int64(1), highest, "failed replacement must not advance durable sequence")
 
 	// Drop the trigger and retry seq2 without the sentinel: full replacement
@@ -90,6 +90,6 @@ func TestRoutingFlowSnapshotAtomicRollbackPG(t *testing.T) {
 	}
 	rows.Close()
 	require.Equal(t, []int64{5, 6}, accounts, "retry replaces with the full new edge set")
-	require.NoError(t, pool.QueryRow(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2 AND identity_version=1`, now, src).Scan(&highest))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE terminal_minute=$1 AND instance_src=$2`, now, src).Scan(&highest))
 	require.Equal(t, int64(2), highest)
 }

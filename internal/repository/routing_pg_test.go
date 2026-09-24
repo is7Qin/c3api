@@ -139,14 +139,14 @@ func TestRoutingQualityFactDDLPG(t *testing.T) {
 	require.NoError(t, rows.Err())
 	require.Equal(t, []string{
 		"id", "route_class_id", "candidate_fingerprint", "bucket_minute", "instance_src",
-		"quality_class_id", "identity_version", "absolute_sequence", "attempts", "successes",
+		"quality_class_id", "absolute_sequence", "attempts", "successes",
 		"count_429", "count_ordinary_4xx", "count_5xx", "count_network", "ttft_n",
 		"ttft_sum_log_q32", "ttft_sumsq_log_q32", "ttft_hist", "input_tokens", "output_tokens",
 		"cache_read_tokens", "cache_create_tokens", "calls", "images", "updated_at",
 	}, got, "routing_quality_fact column set/order drifted from the single-shard fact model")
 
 	require.Equal(t,
-		[]string{"route_class_id", "candidate_fingerprint", "bucket_minute", "instance_src", "quality_class_id", "identity_version"},
+		[]string{"route_class_id", "candidate_fingerprint", "bucket_minute", "instance_src", "quality_class_id"},
 		indexColumns(t, pool, "routing_quality_fact_uniq"))
 	require.Equal(t, []string{"bucket_minute"}, indexColumns(t, pool, "routing_quality_fact_bucket"))
 
@@ -223,7 +223,7 @@ func TestRoutingQualityDigestCheckPG(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Minute)
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	// direct SQL with malformed digest (3 bytes) must fail CHECK octet_length=32
-	_, err := pool.Exec(ctx, `INSERT INTO routing_quality_fact (identity_version, route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, updated_at) VALUES (1, '\x010203'::bytea, '\x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'::bytea, '\x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'::bytea, 'src', $1, 1, now())`, now)
+	_, err := pool.Exec(ctx, `INSERT INTO routing_quality_fact (route_class_id, quality_class_id, candidate_fingerprint, instance_src, bucket_minute, absolute_sequence, updated_at) VALUES ('\x010203'::bytea, '\x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'::bytea, '\x0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20'::bytea, 'src', $1, 1, now())`, now)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "check constraint")
 }
