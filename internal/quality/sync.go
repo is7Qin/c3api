@@ -48,7 +48,7 @@ const (
 )
 
 type PGQualityWriter interface {
-	UpsertQualityAndMarkDirty(ctx context.Context, row repository.RoutingQualityRow) error
+	UpsertQualityRow(ctx context.Context, row repository.RoutingQualityRow) error
 	UpsertFlowSnapshot(ctx context.Context, instanceSrc string, terminalMinute time.Time, identityVersion int16, absoluteSequence int64, rows []repository.RoutingFlowRow) error
 }
 
@@ -1087,7 +1087,7 @@ func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) ([]qR
 			Calls:                r.qm.calls,
 			Images:               r.qm.images,
 		}
-		if err := w.pg.UpsertQualityAndMarkDirty(ctx, row); err != nil {
+		if err := w.pg.UpsertQualityRow(ctx, row); err != nil {
 			if isRowDataError(err) {
 				var rde *RowDataError
 				if !errors.As(err, &rde) {

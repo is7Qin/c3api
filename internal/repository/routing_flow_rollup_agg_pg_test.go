@@ -14,8 +14,8 @@ import (
 
 // A6 晚到证伪（分片独立性回归）：A 写 M 边 E chain=10 seq=1；B 迟到写 M
 // 边 E chain=7 seq=1 → 读 E==17 且非负；A 以 seq=2 chain=12 重写 → 读
-// E==19（B 分片完好）。本测试是分片独立性回归，不是新旧判别：旧
-// RollupFlow 对全实例重 SUM 同样得出 19，不得声称"旧代码必红"。
+// E==19（B 分片完好）。本测试是分片独立性回归，不是新旧判别：旧重算道
+// 对全实例重 SUM 同样得出 19，不得声称"旧代码必红"。
 func TestRoutingFlowMergedAggregatesMultiInstancePG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()

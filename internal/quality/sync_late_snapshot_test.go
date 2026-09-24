@@ -18,7 +18,7 @@ import (
 // 不参与本用例。
 type retentionRejectingPG struct{}
 
-func (retentionRejectingPG) UpsertQualityAndMarkDirty(context.Context, repository.RoutingQualityRow) error {
+func (retentionRejectingPG) UpsertQualityRow(context.Context, repository.RoutingQualityRow) error {
 	return nil
 }
 

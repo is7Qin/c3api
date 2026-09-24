@@ -34,10 +34,8 @@ type PartitionManager interface {
 	DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
 	EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error
 	DropUsageEntityStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
-	EnsureRoutingInstancePartitions(ctx context.Context, now, until time.Time) error
-	EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error
-	DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error)
-	DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error)
+	EnsureRoutingFactPartitions(ctx context.Context, now, until time.Time) error
+	DropRoutingQualityFactBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error)
 	DeleteRedemptionUsesBefore(ctx context.Context, cutoff time.Time) (int, error)
@@ -53,8 +51,8 @@ type RetentionConfig struct {
 	LogRetentionDays    int // usage_logs 分区保留天数（config usage.log_retention_days；<= 0 = 不删除）
 	ErrLogRetentionDays int // err_logs 分区保留天数（config usage.errlog_retention_days，默认 7 天短保留——错误审计；<= 0 = 不删除）
 	StatsRetentionDays  int // usage_stats 分区保留天数（config usage.stats_retention_days，默认 180 天——聚合统计长保留；<= 0 = 不删除）
-	// RoutingObservationRetentionDays 路由观测面（routing_quality_instance_minute /
-	// routing_quality_rollup / routing_flow_fact 三分区 + snapshot_state 交接状态）
+	// RoutingObservationRetentionDays 路由观测面（routing_quality_fact /
+	// routing_flow_fact 两张事实分区表 + snapshot_state 交接状态）
 	// 保留天数（config routing.observation_retention_days，默认 7；config 地板 2）。
 	// 与 usage_stats **解耦**：观测深度是运维参数，不再搭 180 天长保留的车
 	// （判据 A4/B1/B2/B3）；读面窗口守卫用同一份天数 + 同一换算
@@ -204,14 +202,9 @@ func (w *RetentionWorker) runOnce() {
 	// 走有界 DELETE（与分区 DROP 同一 cutoff，防"删后重建"由写面守卫兜底）。
 	if w.cfg.RoutingObservationRetentionDays > 0 {
 		cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
-		if _, err := w.parts.DropRoutingQualityInstanceBefore(ctx, cutoff); err != nil {
+		if _, err := w.parts.DropRoutingQualityFactBefore(ctx, cutoff); err != nil {
 			if w.log != nil {
-				w.log.Warn("retention drop routing_quality_instance partitions failed", logx.Error(err))
-			}
-		}
-		if _, err := w.parts.DropRoutingQualityRollupBefore(ctx, cutoff); err != nil {
-			if w.log != nil {
-				w.log.Warn("retention drop routing_quality_rollup partitions failed", logx.Error(err))
+				w.log.Warn("retention drop routing_quality_fact partitions failed", logx.Error(err))
 			}
 		}
 		if _, err := w.parts.DropRoutingFlowFactBefore(ctx, cutoff); err != nil {
@@ -259,14 +252,9 @@ func (w *RetentionWorker) runOnce() {
 			w.log.Warn("retention pre-create usage_entity_stats partitions failed", logx.Error(err))
 		}
 	}
-	if err := w.parts.EnsureRoutingInstancePartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
+	if err := w.parts.EnsureRoutingFactPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
 		if w.log != nil {
-			w.log.Warn("retention pre-create routing instance partitions failed", logx.Error(err))
-		}
-	}
-	if err := w.parts.EnsureRoutingRollupPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
-		if w.log != nil {
-			w.log.Warn("retention pre-create routing rollup partitions failed", logx.Error(err))
+			w.log.Warn("retention pre-create routing fact partitions failed", logx.Error(err))
 		}
 	}
 	w.lastPatrol.Store(now.UnixMilli())

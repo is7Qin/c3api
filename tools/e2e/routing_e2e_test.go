@@ -608,14 +608,14 @@ func rtAuditMaxSeq(t *testing.T) int64 {
 	return m
 }
 
-// rtRollupBest DB 直读实例层按候选聚合 attempts（quality-sync 5s 节奏落库，
-// 秒级可见；frontier 读 rollup 另有 5s 节奏滞后）。收敛门以实例层快速信号
+// rtRollupBest DB 直读事实表按候选聚合 attempts（quality-sync 5s 节奏落库，
+// 秒级可见；frontier 读事实表 另有 5s 节奏滞后）。收敛门以事实表快速信号
 // 为准，frontier 真实性另行断言（缺陷 C 修复后两者一致，不再是二选一）。
 func rtRollupBest(t *testing.T, env *e2eEnv) (int, map[string]int64) {
 	t.Helper()
 	rows, err := env.pg.Query(context.Background(), `
 		SELECT encode(candidate_fingerprint,'hex'), COALESCE(sum(attempts),0)
-		FROM routing_quality_instance_minute GROUP BY 1`)
+		FROM routing_quality_fact GROUP BY 1`)
 	if err != nil {
 		return 0, nil
 	}
@@ -900,7 +900,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	})
 
 	// ============ 4a. 质量收敛 → 首个 Primary（事件驱动，无 nudge） ============
-	// 收敛信号只随新尝试推进：每轮先打 10 个流式请求再读 DB 实例层，直到任一
+	// 收敛信号只随新尝试推进：每轮先打 10 个流式请求再读 DB 事实表，直到任一
 	// 候选 attempts>=30（流式才有 TTFT；非流式 ttft_n 恒 0）。缺陷 B 已修复：
 	// 质量落库边界直接驱逐编译道（PG flush→RequestCompile，去抖收敛），首个
 	// 充分候选晋升 Primary——本阶段不再做任何管理面写 nudge，只等 primary 非空。
@@ -929,7 +929,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	// 收敛后读起点会漏掉已发生的推进。
 	genBefore, _ := rtPlan(t, env)
 	iters := 0
-	rtPollLong(t, "质量收敛首候选 n>=30（DB 实例层）", 300*time.Second, func() (bool, string) {
+	rtPollLong(t, "质量收敛首候选 n>=30（DB 事实表）", 300*time.Second, func() (bool, string) {
 		iters++
 		if iters > 60 {
 			return false, "60 轮（600 请求）仍无候选充分"
@@ -940,13 +940,8 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 			}
 		}
 		rows, err := env.pg.Query(context.Background(), `
-			SELECT fp, MAX(n) FROM (
-				SELECT encode(candidate_fingerprint,'hex') AS fp, COALESCE(sum(attempts),0) AS n
-				FROM routing_quality_instance_minute GROUP BY 1
-				UNION ALL
-				SELECT encode(candidate_fingerprint,'hex') AS fp, COALESCE(sum(attempts),0) AS n
-				FROM routing_quality_rollup GROUP BY 1
-			) s GROUP BY fp`)
+			SELECT encode(candidate_fingerprint,'hex') AS fp, COALESCE(sum(attempts),0) AS n
+			FROM routing_quality_fact GROUP BY 1`)
 		if err != nil {
 			return false, err.Error()
 		}
@@ -985,16 +980,16 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	genAfter, _ := rtPlan(t, env)
 	t.Logf("事件驱动重编译后 gen=%d primary=%v", genAfter, primaries)
 	require.Greater(t, genAfter, genBefore, "质量 influx 必须推进 plan generation（无管理面写）")
-	// durable TTFT 和：实例层充分候选（n>=30）ttft 和/平方和非零（缺陷 C 特征
+	// durable TTFT 和：事实表充分候选（n>=30）ttft 和/平方和非零（缺陷 C 特征
 	// 即计数有、和零；首帧限速后 ~2ms 样本的对数和恒非零）。未充分候选豁免
 	// （区间本就要求 n>=30）。
-	rtPollLong(t, "实例层 TTFT 和非零（充分候选）", 120*time.Second, func() (bool, string) {
+	rtPollLong(t, "事实表 TTFT 和非零（充分候选）", 120*time.Second, func() (bool, string) {
 		rows, err := env.pg.Query(context.Background(), `
 			SELECT encode(candidate_fingerprint,'hex') AS fp,
 				COALESCE(sum(ttft_n),0) AS n,
 				COALESCE(sum(ttft_sum_log_q32),0) AS s,
 				COALESCE(sum(ttft_sumsq_log_q32),0) AS sq
-			FROM routing_quality_instance_minute GROUP BY 1`)
+			FROM routing_quality_fact GROUP BY 1`)
 		if err != nil {
 			return false, err.Error()
 		}
@@ -1066,12 +1061,12 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	// 需新流量，确定性）→ Primary 全员按成本升序（B 贵 2.5× 居末）。
 	t.Log("阶段 4b：探索份额注活 → 单隔离协同 + 成本序")
 	require.NotEmpty(t, primaries, "4a 必须已产生领袖 primary：%v", primaries)
-	// rtQualityCounts 实例层 attempts 快照（fp→aid 经 fpAcc 落定）。
+	// rtQualityCounts 事实表 attempts 快照（fp→aid 经 fpAcc 落定）。
 	rtQualityCounts := func() map[int64]int64 {
 		t.Helper()
 		rows, err := env.pg.Query(context.Background(), `
 			SELECT encode(candidate_fingerprint,'hex') AS fp, COALESCE(sum(attempts),0) AS n
-			FROM routing_quality_instance_minute GROUP BY 1`)
+			FROM routing_quality_fact GROUP BY 1`)
 		require.NoError(t, err)
 		defer rows.Close()
 		got := map[int64]int64{}
@@ -1108,7 +1103,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	// 积累样本。基线快照后打节奏化流量（10/轮，与 4a 同节奏，flush 跟得
 	// 上）：有界 300 请求内至少一名非 primary 候选严格增长即命中（此处
 	// bp≈367，零注活概率 ~1e-5，early-exit，通常数十请求即命中），且
-	// primary 同步增长（排除流量整体停滞的伪命中）。DB 实例层为断言源
+	// primary 同步增长（排除流量整体停滞的伪命中）。DB 事实表为断言源
 	// （durable，非 live cell）。
 	t.Log("4b(i)：探索份额注活（零隔离）")
 	base := rtQualityCounts()
@@ -1273,13 +1268,13 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 	require.Equal(t, float64(10000), bp[accA], "A 成本 ×1.0 → 10000bp：%v", bp)
 	require.Equal(t, float64(25000), bp[accB], "B 成本 ×2.5 → 25000bp：%v", bp)
 	// 全员 durable 和 + frontier 真实（缺陷 C 在协同路径同样成立）。
-	rtPollLong(t, "全员实例层 TTFT 和非零", 120*time.Second, func() (bool, string) {
+	rtPollLong(t, "全员事实表 TTFT 和非零", 120*time.Second, func() (bool, string) {
 		rows, err := env.pg.Query(context.Background(), `
 			SELECT encode(candidate_fingerprint,'hex') AS fp,
 				COALESCE(sum(ttft_n),0) AS n,
 				COALESCE(sum(ttft_sum_log_q32),0) AS s,
 				COALESCE(sum(ttft_sumsq_log_q32),0) AS sq
-			FROM routing_quality_instance_minute GROUP BY 1`)
+			FROM routing_quality_fact GROUP BY 1`)
 		if err != nil {
 			return false, err.Error()
 		}
