@@ -37,7 +37,7 @@ func TestRoutingFlowMergedAggregatesMultiInstancePG(t *testing.T) {
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 1, []repository.RoutingFlowRow{rowB}))
 	// barrier: both shard rows inserted distinct via instance_src
 	var instCnt int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, now).Scan(&instCnt))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE terminal_minute=$1`, now).Scan(&instCnt))
 	require.Equal(t, int64(2), instCnt)
 	// 读恒为跨分片聚合：SUM(chain_count)=17，MIN(min_generation)=1，非负。
 	stats, err := repos.Partitions.QueryFlowRollupStats(ctx, rc, 1, now, now.Add(time.Minute))

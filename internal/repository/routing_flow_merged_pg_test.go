@@ -17,14 +17,14 @@ import (
 // 回显：索引定义来自 pg_get_indexdef，故能真正钉住 §4 新键）。
 func mergedKeyColumns(t *testing.T, pool *pgxpool.Pool) []string {
 	t.Helper()
-	return indexColumns(t, pool, "routing_flow_rollup_uniq")
+	return indexColumns(t, pool, "routing_flow_fact_uniq")
 }
 
 // flowRollupColumnSet 返回合并层表的列名集合（catalog 事实）。
 func flowRollupColumnSet(t *testing.T, pool *pgxpool.Pool) map[string]bool {
 	t.Helper()
 	rows, err := pool.Query(context.Background(),
-		`SELECT column_name FROM information_schema.columns WHERE table_name = 'routing_flow_rollup'`)
+		`SELECT column_name FROM information_schema.columns WHERE table_name = 'routing_flow_fact'`)
 	require.NoError(t, err)
 	defer rows.Close()
 	out := map[string]bool{}
@@ -63,7 +63,7 @@ func TestRoutingFlowMergedKeyExactPG(t *testing.T) {
 
 	var rowCount, chainSum, minGen int64
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT COUNT(*), COALESCE(SUM(chain_count), 0), COALESCE(MIN(min_generation), 0) FROM routing_flow_rollup WHERE terminal_minute=$1 AND instance_src=$2`,
+		`SELECT COUNT(*), COALESCE(SUM(chain_count), 0), COALESCE(MIN(min_generation), 0) FROM routing_flow_fact WHERE terminal_minute=$1 AND instance_src=$2`,
 		m, "src-K1").Scan(&rowCount, &chainSum, &minGen))
 	require.Equal(t, int64(1), rowCount, "same edge with two generations must collapse into one row")
 	require.Equal(t, int64(17), chainSum, "chain_count must sum across generations within the shard")
@@ -72,7 +72,7 @@ func TestRoutingFlowMergedKeyExactPG(t *testing.T) {
 	// 不同 instance_src = 不同分片身份 → 各一行（分片独立，不合并）。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-K2", m, 1, 1, []repository.RoutingFlowRow{newer}))
 	require.NoError(t, pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM routing_flow_rollup WHERE terminal_minute=$1`, m).Scan(&rowCount))
+		`SELECT COUNT(*) FROM routing_flow_fact WHERE terminal_minute=$1`, m).Scan(&rowCount))
 	require.Equal(t, int64(2), rowCount, "different instance_src must stay separate rows")
 
 	// 键精确性（catalog）：唯一索引列序 = §4 新键——旧边身份减 generation、
@@ -130,7 +130,7 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 	}
 
 	var merged int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup`).Scan(&merged))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact`).Scan(&merged))
 	require.Equal(t, int64(fixtureEdges*fixtureMinutes*fixtureInstances), merged,
 		"merged rows must be exactly the (edge, instance) combinations")
 
@@ -199,7 +199,7 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 	var mergedBytes, baselineBytes int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COALESCE(SUM(pg_relation_size(c.oid)), 0)
 		FROM pg_class c JOIN pg_inherits i ON i.inhrelid = c.oid
-		WHERE i.inhparent = 'routing_flow_rollup'::regclass`).Scan(&mergedBytes))
+		WHERE i.inhparent = 'routing_flow_fact'::regclass`).Scan(&mergedBytes))
 	require.NoError(t, pool.QueryRow(ctx, `SELECT pg_relation_size('baseline_flow_instance') + pg_relation_size('baseline_flow_rollup')`).Scan(&baselineBytes))
 	require.Greater(t, baselineBytes, int64(0))
 	t.Logf("A7 heap bytes: merged=%d baseline_two_tables=%d ratio=%.3f", mergedBytes, baselineBytes, float64(mergedBytes)/float64(baselineBytes))

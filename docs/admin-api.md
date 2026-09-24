@@ -1085,7 +1085,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 
 ## 路由观测 Routing
 
-智能路由数据链：热路径每次 attempt 终态进 quality recorder（内存归并），`quality-sync` worker 串行 loop 定期把快照 + 质量行 UPSERT 进实例分钟表（`routing_quality_instance_minute`），flow 快照则**直写合并层**（`routing_flow_rollup`，按 `instance_src` 分片、整分片替换——无下游重算）；`routing-rollup` worker 只消费 quality 脏分钟合并进 `routing_quality_rollup`，`routing_rollup_watermark` 只剩 quality 一行（与 stats-agg 的 `usage_stats` 水位分表分车道，互不影响）。观测保留深度由 `[routing] observation_retention_days` 决定（默认 7 天，独立于 `usage.stats_retention_days`）。选号面为 **plan-only**：无计划外车道，AI 派生身份一律由编译计划背书；冷启动窗口（编译决策视图未发布）与编译滞后窗口（静态已装载、该路由桶尚未编出 → `ErrPlanNotReady`）AI 流量一律 `503` + `Retry-After: 1`（管理面/用户面/healthz 不经此门，空库照常发布空决策）；仅真正不可路由（模型未映射/格式无候选/组不存在）fail-closed `404`（不再以占位身份转发）。
+智能路由数据链：热路径每次 attempt 终态进 quality recorder（内存归并），`quality-sync` worker 串行 loop 定期把快照 + 质量行 UPSERT 进实例分钟表（`routing_quality_instance_minute`），flow 快照则**直写合并层**（`routing_flow_fact`，按 `instance_src` 分片、整分片替换——无下游重算）；`routing-rollup` worker 只消费 quality 脏分钟合并进 `routing_quality_rollup`，`routing_rollup_watermark` 只剩 quality 一行（与 stats-agg 的 `usage_stats` 水位分表分车道，互不影响）。观测保留深度由 `[routing] observation_retention_days` 决定（默认 7 天，独立于 `usage.stats_retention_days`）。选号面为 **plan-only**：无计划外车道，AI 派生身份一律由编译计划背书；冷启动窗口（编译决策视图未发布）与编译滞后窗口（静态已装载、该路由桶尚未编出 → `ErrPlanNotReady`）AI 流量一律 `503` + `Retry-After: 1`（管理面/用户面/healthz 不经此门，空库照常发布空决策）；仅真正不可路由（模型未映射/格式无候选/组不存在）fail-closed `404`（不再以占位身份转发）。
 
 三只读观测端点（数据源钉死 routing rollup 表与当前发布 RoutingView——不查 raw logs、不按历史 generation 查询）：
 

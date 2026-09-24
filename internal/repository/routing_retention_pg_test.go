@@ -175,7 +175,7 @@ func TestRoutingFlowSnapshotStateBoundedPG(t *testing.T) {
 	require.NoError(t, pool.QueryRow(ctx, `SELECT highest_sequence FROM routing_flow_snapshot_state WHERE instance_src=$1 AND terminal_minute=$2`, "src-B5", now).Scan(&seq))
 	require.Equal(t, int64(2), seq, "replayed older/equal sequence must not advance state")
 	var edgeRows int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_rollup WHERE instance_src=$1 AND terminal_minute=$2`, "src-B5", now).Scan(&edgeRows))
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_flow_fact WHERE instance_src=$1 AND terminal_minute=$2`, "src-B5", now).Scan(&edgeRows))
 	require.Equal(t, int64(1), edgeRows, "replayed snapshot must not mutate the shard")
 
 	// cutoff 外写入：拒绝 + 哨兵（1 天余量，时钟抖动无法翻转判定）。

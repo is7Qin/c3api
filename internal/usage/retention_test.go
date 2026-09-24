@@ -138,7 +138,7 @@ func (f *fakePartitionManager) DropRoutingQualityRollupBefore(ctx context.Contex
 	f.rdrops = append(f.rdrops, cutoff)
 	return 0, nil
 }
-func (f *fakePartitionManager) DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
+func (f *fakePartitionManager) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.rdrops = append(f.rdrops, cutoff)

@@ -824,8 +824,8 @@ func (r *Repository) DropRoutingQualityInstanceBefore(ctx context.Context, cutof
 func (r *Repository) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DropRoutingQualityRollupBefore(ctx, cutoff)
 }
-func (r *Repository) DropRoutingFlowRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
-	return r.Partitions.DropRoutingFlowRollupBefore(ctx, cutoff)
+func (r *Repository) DropRoutingFlowFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropRoutingFlowFactBefore(ctx, cutoff)
 }
 func (r *Repository) DeleteRoutingFlowSnapshotStateBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DeleteRoutingFlowSnapshotStateBefore(ctx, cutoff)
