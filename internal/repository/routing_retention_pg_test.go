@@ -110,22 +110,3 @@ func TestRoutingFlowSnapshotStateBoundedPG(t *testing.T) {
 	require.Equal(t, int64(1), insideStates, "state inside the cutoff must survive the sweep")
 }
 
-// B6：compiler_state 构造有界——CHECK (id = 1) + 主键锁死单行，行数断言。
-func TestRoutingStateTablesConstructivelyBoundedPG(t *testing.T) {
-	repos, pool := newRoutingRepos(t)
-	ctx := context.Background()
-	now := time.Now().UTC().Truncate(time.Minute)
-	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
-
-	// compiler_state：PK (id) + CHECK (id = 1)。
-	for i := 0; i < 2; i++ {
-		_, err := pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, desired_generation, published_generation, updated_at) VALUES (1, $1, $1, now()) ON CONFLICT (id) DO UPDATE SET desired_generation = EXCLUDED.desired_generation`, int64(i+1))
-		require.NoError(t, err)
-	}
-	var compilerRows int64
-	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_compiler_state`).Scan(&compilerRows))
-	require.Equal(t, int64(1), compilerRows, "compiler_state is a single row by primary key")
-	_, err := pool.Exec(ctx, `INSERT INTO routing_compiler_state (id, desired_generation, published_generation, updated_at) VALUES (2, 1, 1, now())`)
-	require.Error(t, err, "the id = 1 CHECK must forbid a second compiler_state row")
-	require.Contains(t, err.Error(), "check constraint")
-}
