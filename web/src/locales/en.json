@@ -1430,7 +1430,6 @@
       "account-conc-sync": "Account conc-view sync",
       "quality-sync": "Routing quality sync",
       "quality-flow-owner": "Quality flow owner",
-      "routing-rollup": "Routing rollup",
       "runtime-health": "Runtime health lane"
     },
     "stats": {
@@ -1490,9 +1489,6 @@
       "last_buckets": "Last buckets",
       "last_rows": "Last rows",
       "last_duration_ms": "Last duration (ms)",
-      "quality_rolled": "Quality rolled up",
-      "failed": "Rollup failures",
-      "watermark_quality_unix_ms": "Quality watermark",
       "accepted": "Accepted",
       "processed": "Processed",
       "overflowed": "Overflowed",
