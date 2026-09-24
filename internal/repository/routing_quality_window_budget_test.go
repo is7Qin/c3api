@@ -3,6 +3,7 @@ package repository_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -114,7 +115,7 @@ func TestRoutingQualityWindowBaselineBudgetPG(t *testing.T) {
 		fullRes = queryFullLookbackBaseline(t, pool, m, keys)
 		fullDurs = append(fullDurs, time.Since(start))
 	}
-	twoPhaseMax, fullMax := twoPhaseDurs[0], fullDurs[0]
+	twoPhaseMax, fullMax, fullMin := twoPhaseDurs[0], fullDurs[0], fullDurs[0]
 	for i := 1; i < timedRounds; i++ {
 		if twoPhaseDurs[i] > twoPhaseMax {
 			twoPhaseMax = twoPhaseDurs[i]
@@ -122,13 +123,29 @@ func TestRoutingQualityWindowBaselineBudgetPG(t *testing.T) {
 		if fullDurs[i] > fullMax {
 			fullMax = fullDurs[i]
 		}
+		if fullDurs[i] < fullMin {
+			fullMin = fullDurs[i]
+		}
 	}
-	t.Logf("baseline H=%d N=2 full-24h: two-phase max=%s %v, full-lookback one-shot max=%s %v (budget 1500ms)",
-		nhot, twoPhaseMax, twoPhaseDurs, fullMax, fullDurs)
+	t.Logf("baseline H=%d N=2 full-24h: two-phase max=%s %v, full-lookback one-shot min=%s max=%s %v (budget 1500ms, ratio=%.1fx)",
+		nhot, twoPhaseMax, twoPhaseDurs, fullMin, fullMax, fullDurs, float64(fullMin)/float64(twoPhaseMax))
 
 	const budget = 1500 * time.Millisecond
 	require.Less(t, twoPhaseMax, budget, "两轮前缀路径必须在预算内；超预算说明前缀优化丢失或探针退化")
-	require.Greater(t, fullMax, budget, "自校准失败：整段回看单次读在本夹具本机上都未超预算，夹具已失去区分度（分不清前缀路径与无前缀路径），该预算门已空洞——必须修夹具，不得放宽预算")
+	// 自校准方向取 **min** 而非 max：max 只要有一轮抖动就能满足「超预算」，夹具退化时
+	// 会间歇性假通过；min 要求三轮**全部**超预算，才是稳定信号。
+	require.Greater(t, fullMin, budget, "自校准失败：整段回看单次读三轮中至少一轮未超预算，夹具已失去区分度（分不清前缀路径与无前缀路径），该预算门已空洞——必须修夹具，不得放宽预算")
+	// 再钉区分度**比值**：仅「都超预算」仍不够——夹具若退化到两条路径彼此接近（比值→1），
+	// 上面两条仍可同时成立。实测比值 ~47×，取 5× 作宽松下界。比值与硬件无关（两条路径
+	// 同比例缩放），故该断言不会随机器快慢漂移。
+	//
+	// 快速路径取**中位数**而非 max：max 已被上一条断言用于「最坏一轮仍在预算内」，而比值
+	// 判据问的是两条路径的**特征**差距；若这里也用 max，单轮抖动会把比值判据推成假失败，
+	// 而失败信息却指向「夹具退化」——诊断会骗人。
+	twoPhaseSorted := append([]time.Duration(nil), twoPhaseDurs...)
+	slices.Sort(twoPhaseSorted)
+	twoPhaseMed := twoPhaseSorted[len(twoPhaseSorted)/2]
+	require.Greater(t, fullMin, 5*twoPhaseMed, "区分度不足：整段回看（最好一轮）未达两轮前缀（中位一轮）的 5 倍，夹具已分不清两条路径——必须修夹具，不得放宽预算")
 
 	// 大规模正确性：两轮读与整段回看单次读逐字段相等（与 TwoPhaseEquiv 同比较形状）。
 	require.Len(t, twoPhaseRes, len(fullRes), "两轮读必须返回与整段回看完全相同的行集")
