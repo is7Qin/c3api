@@ -32,15 +32,15 @@ func TestRoutingQualityWindowBoundarySeedPG(t *testing.T) {
 
 	rcA, _, qc1, _, fps := windowVals(t)
 	fp := fps["cur"]
-	baseFrom := m.Add(-scheduler.BaselineLookback)                            // 基线窗下界（含）
-	baseTo := m.Add(-scheduler.CurrentWindowLen)                              // 基线窗上界（半开，不含）
-	curFrom := m.Add(-scheduler.CurrentWindowLen)                             // 当前窗下界（含）
-	seedQualityFactRow(t, pool, rcA, qc1, fp, baseFrom.Add(-time.Minute), 7, 7) // 基线窗外（更老）
-	seedQualityFactRow(t, pool, rcA, qc1, fp, baseFrom, 1, 1)                   // 基线窗内下界
-	seedQualityFactRow(t, pool, rcA, qc1, fp, baseTo.Add(-time.Minute), 1, 1)   // 基线窗内上界-1m
-	seedQualityFactRow(t, pool, rcA, qc1, fp, baseTo, 7, 7)                     // 基线窗外上界（== 当前窗下界，含）
-	seedQualityFactRow(t, pool, rcA, qc1, fp, curFrom.Add(time.Minute), 5, 5)   // 当前窗内
-	seedQualityFactRow(t, pool, rcA, qc1, fp, m, 7, 7)                          // 当前窗上界（不含）
+	baseFrom := m.Add(-scheduler.BaselineLookback)                                          // 基线窗下界（含）
+	baseTo := m.Add(-scheduler.CurrentWindowLen)                                            // 基线窗上界（半开，不含）
+	curFrom := m.Add(-scheduler.CurrentWindowLen)                                           // 当前窗下界（含）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseFrom.Add(-time.Minute), 7, 7) // 基线窗外（更老）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseFrom, 1, 1)                   // 基线窗内下界
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseTo.Add(-time.Minute), 1, 1)   // 基线窗内上界-1m
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", baseTo, 7, 7)                     // 基线窗外上界（== 当前窗下界，含）
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", curFrom.Add(time.Minute), 5, 5)   // 当前窗内
+	seedQualityFactRow(t, pool, rcA, qc1, fp, "src-seed", m, 7, 7)                          // 当前窗上界（不含）
 
 	keys := []repository.WindowHotKey{{RouteClassID: rcA, Fingerprint: fp}}
 	baseline, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
