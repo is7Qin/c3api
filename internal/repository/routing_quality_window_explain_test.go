@@ -139,7 +139,7 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 		copy(fpV[:], fpb)
 		keys = append(keys, WindowHotKey{RouteClassID: rcV, Fingerprint: fpV})
 	}
-	got, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
+	got, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	require.LessOrEqual(t, len(got), nhot)
 }

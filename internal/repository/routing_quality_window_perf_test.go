@@ -72,10 +72,10 @@ func TestRoutingQualityWindowP99PG(t *testing.T) {
 	pgExec(t, pool, `ANALYZE routing_quality_fact`)
 
 	round := func() {
-		cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
+		cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, m)
 		require.NoError(t, err)
 		require.Len(t, cur, ncand, "one current row per candidate")
-		base, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
+		base, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 		require.NoError(t, err)
 		require.Len(t, base, nhot, "one truncated row per hot key")
 	}

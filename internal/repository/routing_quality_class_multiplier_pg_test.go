@@ -37,7 +37,7 @@ func TestRoutingQualityClassMultiplierPG(t *testing.T) {
 		rcA[:], m).Scan(&factRows))
 	require.Equal(t, int64(2), factRows, "two quality classes × one candidate must be exactly two fact rows")
 
-	cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m.Add(time.Minute))
+	cur, err := repos.Partitions.QueryCurrentWindowStats(ctx, m.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, cur, 1, "the compiler current window aggregates by (route, fingerprint) only")
 	require.Equal(t, int64(20), cur[0].Attempts)

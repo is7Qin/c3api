@@ -80,7 +80,7 @@ func TestRoutingQualityWindowCurrentPG(t *testing.T) {
 	// Other route isolated.
 	seedQualityFactRow(t, pool, rcB, qc1, fps["cur"], "src-seed", m.Add(-1*time.Minute), 3, 3)
 
-	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
+	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, m)
 	require.NoError(t, err)
 	byKey := map[string]repository.WindowCurrentStat{}
 	for _, s := range got {
@@ -97,7 +97,7 @@ func TestRoutingQualityWindowCurrentPG(t *testing.T) {
 	require.Equal(t, int64(3), other.Attempts)
 
 	// Repository facade delegates.
-	gotFacade, err := repos.QueryCurrentWindowStats(ctx, 1, m)
+	gotFacade, err := repos.QueryCurrentWindowStats(ctx, m)
 	require.NoError(t, err)
 	require.Len(t, gotFacade, 2)
 }
@@ -122,7 +122,7 @@ func TestRoutingQualityWindowCurrentFoldsShardsPG(t *testing.T) {
 	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-a", m.Add(-3*time.Minute), 10, 6)
 	seedQualityFactRow(t, pool, rcA, qc1, fps["cur"], "src-b", m.Add(-3*time.Minute), 4, 3)
 
-	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, 1, m)
+	got, err := repos.Partitions.QueryCurrentWindowStats(ctx, m)
 	require.NoError(t, err)
 	require.Len(t, got, 1, "one candidate row per (route, fp), not one per instance shard")
 	require.Equal(t, rcA, got[0].RouteClassID)
@@ -174,7 +174,7 @@ func TestRoutingQualityWindowBaselinePG(t *testing.T) {
 	seedQualityFactRow(t, pool, rcA, qc2, fps["tie"], "src-seed", m.Add(-10*time.Minute), 20, 15)
 
 	keys := hot("n29", "n30", "n31", "split", "cut", "old", "order", "tie")
-	got, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
+	got, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	byFP := map[string]repository.WindowBaselineStat{}
 	for _, s := range got {
@@ -195,12 +195,12 @@ func TestRoutingQualityWindowBaselinePG(t *testing.T) {
 	require.Equal(t, int64(30), byFP[fpk("tie")].Successes)
 
 	// Empty hotKeys short-circuits without querying.
-	empty, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, nil)
+	empty, err := repos.Partitions.QueryBaselineTruncated(ctx, m, nil)
 	require.NoError(t, err)
 	require.Empty(t, empty)
 
 	// Repository facade delegates.
-	gotFacade, err := repos.QueryBaselineTruncated(ctx, 1, m, keys)
+	gotFacade, err := repos.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	require.Len(t, gotFacade, 7)
 }
@@ -288,7 +288,7 @@ func TestRoutingQualityWindowBaselineShardStraddlePG(t *testing.T) {
 
 	// 1. Production query (inner aggregation restored) returns the merged-granularity
 	// totals. This alone fails if the inner GROUP BY is removed.
-	got, err := repos.Partitions.QueryBaselineTruncated(ctx, 1, m, keys)
+	got, err := repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 	require.NoError(t, err)
 	byFP := map[string]repository.WindowBaselineStat{}
 	for _, s := range got {

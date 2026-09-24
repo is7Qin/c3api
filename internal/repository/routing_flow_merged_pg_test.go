@@ -96,11 +96,15 @@ func TestRoutingFlowMergedKeyExactPG(t *testing.T) {
 // 单实例夹具恰为基线两表行数和的 50%——基线实例行按全保留期留存，故被消除的
 // 那一半是重复副本。
 //
-// 基线行数用基线 schema 的副本表实测（列/唯一键抄自
+// 基线行数用基线 schema 的副本表实测（列/唯一键逐字抄自
 // `git show 8037f31:internal/repository/routing.go` 的
 // routingFlowInstanceColumnDefs/IndexDDLs 与 routingFlowRollupColumnDefs/IndexDDLs，
-// 仅略去当时的常量版本列——它不改变任何行数或唯一性，而本夹具度量的是两表 → 单表
-// 的行数减半），而不是用 Go 侧算式回显，故 50% 是测量而非断言我自己的算术。
+// 含当时的常量 identity_version 列），而不是用 Go 侧算式回显，故 50% 是测量而非
+// 断言我自己的算术。
+//
+// 注意：这里的 identity_version 是刻意保留的**历史重建**——它复刻的是已经退役的
+// 两表形状（A7 证据的对照组），不是任何线上表。A9 门禁（线上表列/索引列/查询
+// 参数不得出现 identity_version）不适用于它。
 func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 	repos, pool := newRoutingRepos(t)
 	ctx := context.Background()
@@ -135,7 +139,8 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 	require.Equal(t, int64(fixtureEdges*fixtureMinutes*fixtureInstances), merged,
 		"merged rows must be exactly the (edge, instance) combinations")
 
-	// 基线两表副本（列与唯一键 = 基线 DDL 口径）。
+	// 基线两表副本（列与唯一键 = 基线 DDL 口径，含已退役的常量 identity_version 列。
+	// 这是刻意的历史重建（见上），不是线上表——A9 门禁不适用。
 	_, err := pool.Exec(ctx, `CREATE TABLE baseline_flow_instance (
 		terminal_minute timestamptz NOT NULL,
 		ordinal smallint NOT NULL,
@@ -149,9 +154,10 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 		generation bigint NOT NULL,
 		candidate_fingerprint bytea NOT NULL,
 		instance_src text NOT NULL,
+		identity_version smallint NOT NULL CHECK (identity_version = 1),
 		route_class_id bytea NOT NULL,
 		chain_count bigint NOT NULL DEFAULT 0,
-		UNIQUE NULLS NOT DISTINCT (instance_src, terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id)
+		UNIQUE NULLS NOT DISTINCT (instance_src, terminal_minute, identity_version, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id)
 	)`)
 	require.NoError(t, err)
 	_, err = pool.Exec(ctx, `CREATE TABLE baseline_flow_rollup (
@@ -166,22 +172,23 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 		is_terminal boolean NOT NULL,
 		generation bigint NOT NULL,
 		candidate_fingerprint bytea NOT NULL,
+		identity_version smallint NOT NULL CHECK (identity_version = 1),
 		route_class_id bytea NOT NULL,
 		chain_count bigint NOT NULL DEFAULT 0,
-		UNIQUE NULLS NOT DISTINCT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id)
+		UNIQUE NULLS NOT DISTINCT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version)
 	)`)
 	require.NoError(t, err)
 	for i := 0; i < fixtureMinutes; i++ {
 		minute := m.Add(time.Duration(i) * time.Minute)
 		for e := 0; e < fixtureEdges; e++ {
 			_, err = pool.Exec(ctx, `INSERT INTO baseline_flow_instance
-				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, route_class_id, chain_count)
-				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,'src-A7',$6,5)`,
+				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, identity_version, route_class_id, chain_count)
+				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,'src-A7',1,$6,5)`,
 				minute, int16(e+1), int64(100+e), fixtureGen, fixtureFP, rc[:])
 			require.NoError(t, err)
 			_, err = pool.Exec(ctx, `INSERT INTO baseline_flow_rollup
-				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, chain_count)
-				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,$6,5)`,
+				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, identity_version, route_class_id, chain_count)
+				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,1,$6,5)`,
 				minute, int16(e+1), int64(100+e), fixtureGen, fixtureFP, rc[:])
 			require.NoError(t, err)
 		}
@@ -228,26 +235,26 @@ func TestRoutingFlowRollupWindowAlignmentPG(t *testing.T) {
 	}
 
 	// 非对齐输入 → 截断到分钟：from=base+30s → base，to=base+2m+30s → base+2m。
-	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base.Add(30*time.Second), base.Add(2*time.Minute+30*time.Second))
+	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, base.Add(30*time.Second), base.Add(2*time.Minute+30*time.Second))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(3), stats[0].ChainCount,
 		"from row included (1) + middle row (2); the to-minute row (4) must be excluded")
 
 	// from 整分钟行 included；to 整分钟行 excluded。
-	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base.Add(time.Minute), base.Add(3*time.Minute))
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, base.Add(time.Minute), base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(6), stats[0].ChainCount, "from-minute row (2) + next row (4)")
 
 	// 单分钟窗口 [base+2m, base+3m)：恰含最后一行。
-	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base.Add(2*time.Minute), base.Add(3*time.Minute))
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, base.Add(2*time.Minute), base.Add(3*time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(4), stats[0].ChainCount)
 
 	// 空窗口（to == from）不报错，返回空。
-	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, base, base)
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, base, base)
 	require.NoError(t, err)
 	require.Empty(t, stats)
 }
@@ -274,7 +281,7 @@ func TestRoutingFlowMergedStaleGenerationPredicatePG(t *testing.T) {
 
 	// 混代际：gen5 + gen7 折叠为一行。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-Stale", m, 1, 1, []repository.RoutingFlowRow{row(5, 10), row(7, 5)}))
-	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, 1, m, m.Add(time.Minute))
+	stats, err := repos.Partitions.QueryFlowFactStats(ctx, rc, m, m.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(5), stats[0].MinGeneration)
@@ -283,7 +290,7 @@ func TestRoutingFlowMergedStaleGenerationPredicatePG(t *testing.T) {
 
 	// 仅当前代际：同一分片以新序号整分片重写为单一 gen7 行。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-Stale", m, 1, 2, []repository.RoutingFlowRow{row(7, 5)}))
-	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, 1, m, m.Add(time.Minute))
+	stats, err = repos.Partitions.QueryFlowFactStats(ctx, rc, m, m.Add(time.Minute))
 	require.NoError(t, err)
 	require.Len(t, stats, 1)
 	require.Equal(t, int64(7), stats[0].MinGeneration)

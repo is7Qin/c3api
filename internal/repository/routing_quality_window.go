@@ -124,9 +124,10 @@ GROUP BY 1, 2
 ORDER BY 1, 2`
 
 // QueryCurrentWindowStats aggregates routing_quality_fact over [M-5m, M).
-// identityVersion 仅保留于签名（跨实现接口稳定），不再参与查询：DB 已无该维度，
-// 版本化由身份哈希首字节承担，不同版本行落在不同 route/fp 上。
-func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]WindowCurrentStat, error) {
+// The read is not version-scoped: the DB has no identity_version dimension —
+// versioning lives in the identity hash's first byte, so different versions
+// land on different route/fp rows.
+func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, evaluatedMinute time.Time) ([]WindowCurrentStat, error) {
 	m := evaluatedMinute.UTC().Truncate(time.Minute)
 	from, to := m.Add(-domain.CurrentWindowLen), m
 	rows := &entsql.Rows{}
@@ -155,9 +156,8 @@ func (r *PartitionRepo) QueryCurrentWindowStats(ctx context.Context, identityVer
 
 // QueryBaselineTruncated aggregates routing_quality_fact over [M-24h, M-5m)
 // for hotKeys only, truncated newest→oldest at attempts ≥ 30. Empty hotKeys
-// short-circuit without querying. identityVersion 仅保留于签名（接口稳定），不再
-// 绑定：参数位已前移为 $1,$2=hot 数组、$3,$4=窗口。
-func (r *PartitionRepo) QueryBaselineTruncated(ctx context.Context, identityVersion int16, evaluatedMinute time.Time, hotKeys []WindowHotKey) ([]WindowBaselineStat, error) {
+// short-circuit without querying.
+func (r *PartitionRepo) QueryBaselineTruncated(ctx context.Context, evaluatedMinute time.Time, hotKeys []WindowHotKey) ([]WindowBaselineStat, error) {
 	if len(hotKeys) == 0 {
 		return []WindowBaselineStat{}, nil
 	}
@@ -192,11 +192,11 @@ func (r *PartitionRepo) QueryBaselineTruncated(ctx context.Context, identityVers
 }
 
 // QueryCurrentWindowStats 组合面委托（service.Store 能力探测经此达 Partitions）。
-func (r *Repository) QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]WindowCurrentStat, error) {
-	return r.Partitions.QueryCurrentWindowStats(ctx, identityVersion, evaluatedMinute)
+func (r *Repository) QueryCurrentWindowStats(ctx context.Context, evaluatedMinute time.Time) ([]WindowCurrentStat, error) {
+	return r.Partitions.QueryCurrentWindowStats(ctx, evaluatedMinute)
 }
 
 // QueryBaselineTruncated 组合面委托（同上）。
-func (r *Repository) QueryBaselineTruncated(ctx context.Context, identityVersion int16, evaluatedMinute time.Time, hotKeys []WindowHotKey) ([]WindowBaselineStat, error) {
-	return r.Partitions.QueryBaselineTruncated(ctx, identityVersion, evaluatedMinute, hotKeys)
+func (r *Repository) QueryBaselineTruncated(ctx context.Context, evaluatedMinute time.Time, hotKeys []WindowHotKey) ([]WindowBaselineStat, error) {
+	return r.Partitions.QueryBaselineTruncated(ctx, evaluatedMinute, hotKeys)
 }

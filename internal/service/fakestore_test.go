@@ -106,7 +106,6 @@ type fakeStore struct {
 	routingFactErr     error
 	routingFactCall    struct {
 		routeClass domain.RouteClassIDVal
-		version    int16
 		from, to   time.Time
 	}
 }

@@ -18,8 +18,8 @@ import (
 // windowSettledBackend is the narrow PG face the windowed provider needs
 // (satisfied by *repository.Partitions; fakes in tests).
 type windowSettledBackend interface {
-	QueryCurrentWindowStats(ctx context.Context, identityVersion int16, evaluatedMinute time.Time) ([]repository.WindowCurrentStat, error)
-	QueryBaselineTruncated(ctx context.Context, identityVersion int16, evaluatedMinute time.Time, hotKeys []repository.WindowHotKey) ([]repository.WindowBaselineStat, error)
+	QueryCurrentWindowStats(ctx context.Context, evaluatedMinute time.Time) ([]repository.WindowCurrentStat, error)
+	QueryBaselineTruncated(ctx context.Context, evaluatedMinute time.Time, hotKeys []repository.WindowHotKey) ([]repository.WindowBaselineStat, error)
 }
 
 // partitionWindowSettled adapts the repository window rows to the scheduler
@@ -28,8 +28,8 @@ type partitionWindowSettled struct {
 	parts windowSettledBackend
 }
 
-func (p *partitionWindowSettled) QueryCurrentWindowStats(ctx context.Context, v int16, m time.Time) ([]scheduler.WindowSettledCurrent, error) {
-	rows, err := p.parts.QueryCurrentWindowStats(ctx, v, m)
+func (p *partitionWindowSettled) QueryCurrentWindowStats(ctx context.Context, m time.Time) ([]scheduler.WindowSettledCurrent, error) {
+	rows, err := p.parts.QueryCurrentWindowStats(ctx, m)
 	if err != nil {
 		return nil, err
 	}
@@ -51,12 +51,12 @@ func (p *partitionWindowSettled) QueryCurrentWindowStats(ctx context.Context, v 
 	return out, nil
 }
 
-func (p *partitionWindowSettled) QueryBaselineTruncated(ctx context.Context, v int16, m time.Time, hot []scheduler.WindowSettledHotKey) ([]scheduler.WindowSettledBaseline, error) {
+func (p *partitionWindowSettled) QueryBaselineTruncated(ctx context.Context, m time.Time, hot []scheduler.WindowSettledHotKey) ([]scheduler.WindowSettledBaseline, error) {
 	keys := make([]repository.WindowHotKey, 0, len(hot))
 	for _, h := range hot {
 		keys = append(keys, repository.WindowHotKey{RouteClassID: h.RouteClassID, Fingerprint: h.Fingerprint})
 	}
-	rows, err := p.parts.QueryBaselineTruncated(ctx, v, m, keys)
+	rows, err := p.parts.QueryBaselineTruncated(ctx, m, keys)
 	if err != nil {
 		return nil, err
 	}

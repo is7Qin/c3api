@@ -38,11 +38,11 @@ type routingStore struct {
 	qualityRows []repository.RoutingQualityStat
 }
 
-func (s *routingStore) QueryQualityFactStats(context.Context, domain.RouteClassIDVal, int16, time.Time, time.Time) ([]repository.RoutingQualityStat, error) {
+func (s *routingStore) QueryQualityFactStats(context.Context, domain.RouteClassIDVal, time.Time, time.Time) ([]repository.RoutingQualityStat, error) {
 	return s.qualityRows, nil
 }
 
-func (s *routingStore) QueryFlowFactStats(context.Context, domain.RouteClassIDVal, int16, time.Time, time.Time) ([]repository.RoutingFlowStat, error) {
+func (s *routingStore) QueryFlowFactStats(context.Context, domain.RouteClassIDVal, time.Time, time.Time) ([]repository.RoutingFlowStat, error) {
 	return s.flowRows, nil
 }
 

@@ -91,7 +91,7 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 	if !ok {
 		return nil, errRoutingNotWired
 	}
-	rows, err := reader.QueryQualityFactStats(ctx, rc, int16(domain.RoutingIdentityVersion), q.From, q.To)
+	rows, err := reader.QueryQualityFactStats(ctx, rc, q.From, q.To)
 	if err != nil {
 		return nil, err
 	}
