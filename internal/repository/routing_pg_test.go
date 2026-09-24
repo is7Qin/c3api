@@ -101,9 +101,17 @@ func TestRoutingPartitionBootstrapPG(t *testing.T) {
 		require.Contains(t, names, tbl+"_"+today.AddDate(0, 0, 1).Format("20060102"))
 	}
 	var n int64
-	// checks for digest length
+	// CHECK 数下界（digest 长度等）。注意：这类「数总数」的断言**抓不住单个约束被
+	// 删掉**——故对 load-bearing 的约束另用具名断言（见下）。
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE conrelid='routing_quality_fact'::regclass AND contype='c'`).Scan(&n))
 	require.GreaterOrEqual(t, n, int64(3))
+	// attempts >= 0 是基线窗截断「前缀性」的前提（见 routing.go 列定义注释）：
+	// 截断按「从新到老累计到 30」停下，只有 attempts 单调非负才保证被收下的行构成
+	// 整段回看的一个前缀，§5 的两轮前缀探测与 A4 的等价性证明都依赖它。具名断言，
+	// 否则该约束被静默删除时上面那条 >=3 仍然通过（3 或 4 都过）。
+	var attemptsCheck int64
+	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM pg_constraint WHERE conrelid='routing_quality_fact'::regclass AND contype='c' AND conname='routing_quality_fact_attempts_check'`).Scan(&attemptsCheck))
+	require.Equal(t, int64(1), attemptsCheck, "attempts >= 0 的 CHECK 必须具名在场（截断前缀性的前提）")
 	// columns existence for sufficient stats
 	for _, col := range []string{"count_429", "count_ordinary_4xx", "count_5xx", "count_network", "ttft_n", "ttft_sum_log_q32", "ttft_hist", "input_tokens", "calls", "images"} {
 		require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM information_schema.columns WHERE table_name='routing_quality_fact' AND column_name=$1`, col).Scan(&n))
