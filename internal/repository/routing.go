@@ -50,6 +50,54 @@ var routingQualityInstanceIndexDDLs = []string{
 	`CREATE INDEX routing_quality_instance_minute_bucket ON routing_quality_instance_minute (bucket_minute)`,
 }
 
+// routingQualityFactColumnDefs 是单一分片事实表 S1 的列定义事实源：列集合与
+// 度量类型逐字同 routingQualityInstanceColumnDefs，仅身份列**改序**为
+// (route_class_id, candidate_fingerprint, bucket_minute, instance_src,
+// quality_class_id, identity_version)。改序不是审美：身份索引因此以
+// (route_class_id, candidate_fingerprint, bucket_minute) 开头，同时服务基线窗
+// LATERAL 探针（rc 等值 + fp 等值 + 分钟范围）与唯一性；把 bucket_minute 放首位
+// 会迫使另建一条含两个 32 字节 bytea 的探针索引（实测 781.8 → 652.1 B/行，
+// −16.6%，见 .omo/evidence/routing-footprint/README.md §4）。
+//
+// identity_version 在本阶段**保留**（§3.2 的独立提交才删除），故身份键仍是 6 列。
+var routingQualityFactColumnDefs = []string{
+	`id bigint NOT NULL DEFAULT nextval('routing_quality_fact_id_seq'::regclass)`,
+	`route_class_id bytea NOT NULL CHECK (octet_length(route_class_id) = 32)`,
+	`candidate_fingerprint bytea NOT NULL CHECK (octet_length(candidate_fingerprint) = 32)`,
+	`bucket_minute timestamptz NOT NULL`,
+	`instance_src text NOT NULL`,
+	`quality_class_id bytea NOT NULL CHECK (octet_length(quality_class_id) = 32)`,
+	`identity_version smallint NOT NULL CHECK (identity_version = 1)`,
+	`absolute_sequence bigint NOT NULL`,
+	`attempts bigint NOT NULL DEFAULT 0`,
+	`successes bigint NOT NULL DEFAULT 0`,
+	`count_429 bigint NOT NULL DEFAULT 0`,
+	`count_ordinary_4xx bigint NOT NULL DEFAULT 0`,
+	`count_5xx bigint NOT NULL DEFAULT 0`,
+	`count_network bigint NOT NULL DEFAULT 0`,
+	`ttft_n bigint NOT NULL DEFAULT 0`,
+	`ttft_sum_log_q32 bigint NOT NULL DEFAULT 0`,
+	`ttft_sumsq_log_q32 bigint NOT NULL DEFAULT 0`,
+	`ttft_hist bigint[] NOT NULL DEFAULT '{0,0,0,0,0,0,0,0,0,0}'`,
+	`input_tokens bigint NOT NULL DEFAULT 0`,
+	`output_tokens bigint NOT NULL DEFAULT 0`,
+	`cache_read_tokens bigint NOT NULL DEFAULT 0`,
+	`cache_create_tokens bigint NOT NULL DEFAULT 0`,
+	`calls bigint NOT NULL DEFAULT 0`,
+	`images bigint NOT NULL DEFAULT 0`,
+	`updated_at timestamptz NOT NULL`,
+}
+
+var routingQualityFactCreateDDL = partitionedCreateDDL("routing_quality_fact", "bucket_minute", routingQualityFactColumnDefs)
+
+// routingQualityFactIndexDDLs：身份唯一索引以 (route_class_id,
+// candidate_fingerprint, bucket_minute) 开头——**同时**承担唯一性约束与基线窗
+// LATERAL 探针；bucket 单列索引服务 5m 当前窗（无 rc 过滤）。
+var routingQualityFactIndexDDLs = []string{
+	`CREATE UNIQUE INDEX routing_quality_fact_uniq ON routing_quality_fact (route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id, identity_version)`,
+	`CREATE INDEX routing_quality_fact_bucket ON routing_quality_fact (bucket_minute)`,
+}
+
 // routing_flow_instance_minute 已随 S2′/S3 删除：实例层与 rollup 层合并为
 // routing_flow_rollup 单层（instance_src 为身份维度），不再有独立暂存表。
 
@@ -163,6 +211,9 @@ var routingCompilerDDL = `CREATE TABLE IF NOT EXISTS routing_compiler_state (
 func (r *PartitionRepo) EnsureRoutingQualityInstancePartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_instance_minute", "bucket_minute", routingQualityInstanceColumnDefs, routingQualityInstanceIndexDDLs, now)
 }
+func (r *PartitionRepo) EnsureRoutingQualityFactPartitioned(ctx context.Context, now time.Time) error {
+	return r.ensureTablePartitioned(ctx, "routing_quality_fact", "bucket_minute", routingQualityFactColumnDefs, routingQualityFactIndexDDLs, now)
+}
 func (r *PartitionRepo) EnsureRoutingQualityRollupPartitioned(ctx context.Context, now time.Time) error {
 	return r.ensureTablePartitioned(ctx, "routing_quality_rollup", "bucket_minute", routingQualityRollupColumnDefs, routingQualityRollupIndexDDLs, now)
 }
@@ -185,6 +236,9 @@ func (r *PartitionRepo) EnsureRoutingCompiler(ctx context.Context) error {
 func (r *PartitionRepo) EnsureRoutingPartitions(ctx context.Context, now time.Time) error {
 	if err := r.EnsureRoutingQualityInstancePartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality instance: %w", err)
+	}
+	if err := r.EnsureRoutingQualityFactPartitioned(ctx, now); err != nil {
+		return fmt.Errorf("routing quality fact: %w", err)
 	}
 	if err := r.EnsureRoutingQualityRollupPartitioned(ctx, now); err != nil {
 		return fmt.Errorf("routing quality rollup: %w", err)
@@ -213,6 +267,12 @@ func (r *PartitionRepo) EnsureRoutingInstancePartitions(ctx context.Context, now
 	}
 	return nil
 }
+func (r *PartitionRepo) EnsureRoutingFactPartitions(ctx context.Context, now, until time.Time) error {
+	if err := r.EnsureTablePartitions(ctx, "routing_quality_fact", now, until); err != nil {
+		return err
+	}
+	return nil
+}
 func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, until time.Time) error {
 	if err := r.EnsureTablePartitions(ctx, "routing_quality_rollup", now, until); err != nil {
 		return err
@@ -225,6 +285,9 @@ func (r *PartitionRepo) EnsureRoutingRollupPartitions(ctx context.Context, now, 
 
 func (r *PartitionRepo) DropRoutingQualityInstanceBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_instance_minute", cutoff)
+}
+func (r *PartitionRepo) DropRoutingQualityFactBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.DropTablePartitionsBefore(ctx, "routing_quality_fact", cutoff)
 }
 func (r *PartitionRepo) DropRoutingQualityRollupBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "routing_quality_rollup", cutoff)

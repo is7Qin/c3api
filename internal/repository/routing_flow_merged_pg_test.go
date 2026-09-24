@@ -3,7 +3,6 @@ package repository_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -18,18 +17,7 @@ import (
 // 回显：索引定义来自 pg_get_indexdef，故能真正钉住 §4 新键）。
 func mergedKeyColumns(t *testing.T, pool *pgxpool.Pool) []string {
 	t.Helper()
-	var def string
-	require.NoError(t, pool.QueryRow(context.Background(),
-		`SELECT pg_get_indexdef('routing_flow_rollup_uniq'::regclass)`).Scan(&def))
-	open := strings.Index(def, "(")
-	closing := strings.LastIndex(def, ")")
-	require.True(t, open >= 0 && closing > open, "unexpected index definition: %s", def)
-	parts := strings.Split(def[open+1:closing], ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		out = append(out, strings.TrimSpace(p))
-	}
-	return out
+	return indexColumns(t, pool, "routing_flow_rollup_uniq")
 }
 
 // flowRollupColumnSet 返回合并层表的列名集合（catalog 事实）。
