@@ -802,8 +802,8 @@
         "degraded": "degraded"
       },
       "outcome": {
-        "success": "success",
         "429": "429",
+        "success": "success",
         "4xx": "4xx",
         "5xx": "5xx",
         "network": "network"
@@ -856,6 +856,19 @@
       "p95": "P95",
       "p99": "P99",
       "source": "Source: {{source}}"
+    },
+    "window": {
+      "effective": "Server read window: {{from}} ~ {{to}}",
+      "reason": {
+        "offset": "This timezone has a non-whole-hour offset, so isolated windows cannot use the pre-aggregated table",
+        "dst": "The window spans a DST transition, so the pre-aggregated table cannot express this grouping",
+        "span_below_grid": "The requested span is shorter than one bucket (1h)",
+        "raw_horizon": "The window starts before the raw-log retention cutoff",
+        "cube_horizon": "The window starts before the pre-aggregated retention cutoff",
+        "window_too_long": "The requested span exceeds the limit for this query shape",
+        "window_invalid": "The window itself is invalid (from/to missing, or from not before to)",
+        "window_ambiguous": "Exactly one of window / from+to must be supplied"
+      }
     }
   },
   "calendar": {
@@ -1751,7 +1764,7 @@
         "p95": "P95",
         "p99": "P99",
         "source": "Source: {{source}}",
-        "clamped": "Self TTFT supports up to 7 days — range narrowed automatically."
+        "clamped": "Self TTFT supports up to {{days}} days — range narrowed automatically."
       }
     },
     "redemptions": {

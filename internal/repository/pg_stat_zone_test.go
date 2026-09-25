@@ -18,8 +18,10 @@ package repository_test
 //     同断言）；
 //   - 原始行语义与 cube 写侧逐位一致：usage none/abort 全测量 + err_logs
 //     非 abort 计数补充（abort 行排除防双计、豁免 none 行计 rc）；
-//   - SummarizeStats 绝对区间：数值与时区无关（UTC 界窗内 raw 路径与 cube
-//     路径等值）。
+//   - SummarizeStats 绝对区间：数值与时区无关（UTC 界窗内 Raw 与 Cube 两实现
+//     等值——两实现都只是绝对区间 sum）。
+//   - 路径选择全在调用方：Cube/Raw 是两套同形 SQL，本包零存储判定（判定唯一
+//     入口是 domain.Admit；多时区用例各自显式选路径）。
 //
 // 基座同 pg_stat_test.go（共享 PID schema；本包 PG 测试串行——无 t.Parallel）。
 
@@ -85,7 +87,7 @@ func TestPGRawKolkataHourAndDay(t *testing.T) {
 			errLogRow("tz-e1", time.Date(2026, 8, 14, 10, 45, 0, 0, time.UTC), domain.Err5xx, 1, 5, 42, 9, "gpt-4o"),
 		})
 
-	hourly, err := repos.Stats.StatsTrend(ctx, base, base.Add(4*time.Hour), "hour", 0, "", ist)
+	hourly, err := repos.Stats.StatsTrendRaw(ctx, base, base.Add(4*time.Hour), "hour", 0, "", ist)
 	require.NoError(t, err)
 	require.Equal(t, map[string]int64{"08:30": 1, "09:30": 2, "10:30": 1}, bucketClocks(hourly),
 		"hour 桶界 = IST 本地整点（:30 分界劈开 UTC 小时行——raw 精确形态）")
@@ -94,7 +96,7 @@ func TestPGRawKolkataHourAndDay(t *testing.T) {
 	}
 	require.Equal(t, int64(1), hourly[len(hourly)-1].ErrorCount, "err_logs 补充行入其本地小时桶")
 
-	daily, err := repos.Stats.StatsTrend(ctx, base.Add(-time.Hour), base.Add(8*time.Hour), "day", 0, "", ist)
+	daily, err := repos.Stats.StatsTrendRaw(ctx, base.Add(-time.Hour), base.Add(8*time.Hour), "day", 0, "", ist)
 	require.NoError(t, err)
 	require.Len(t, daily, 1, "IST Aug14 全天单桶")
 	require.True(t, daily[0].BucketTime.Equal(time.Date(2026, 8, 13, 18, 30, 0, 0, time.UTC)),
@@ -108,7 +110,7 @@ func TestPGRawKolkataHourAndDay(t *testing.T) {
 	cube, entity, _, err := repos.Stats.LoadAggRange(ctx, base, base.Add(4*time.Hour))
 	require.NoError(t, err)
 	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(4*time.Hour), base.Add(4*time.Hour), cube, entity))
-	hourlyUTC, err := repos.Stats.StatsTrend(ctx, base, base.Add(4*time.Hour), "hour", 0, "", time.UTC)
+	hourlyUTC, err := repos.Stats.StatsTrendCube(ctx, base, base.Add(4*time.Hour), "hour", 0, "", time.UTC)
 	require.NoError(t, err)
 	require.Equal(t, map[string]int64{"09:00": 2, "10:00": 2}, hourKey(hourlyUTC),
 		"UTC 下同数据落整点桶（对照 IST :30 界）")
@@ -136,7 +138,7 @@ func TestPGRawNYDSTFallBackNoCollapse(t *testing.T) {
 		usageLogRow("fb-1", time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC), domain.ErrNone, 0, 0, 42, 0, "m", 1, 1, 0, 0, 1, 1, 0, nil), // 01:30 EDT
 		usageLogRow("fb-2", time.Date(2026, 11, 1, 6, 30, 0, 0, time.UTC), domain.ErrNone, 0, 0, 42, 0, "m", 1, 1, 0, 0, 1, 1, 0, nil), // 01:30 EST（重复墙钟）
 	}, nil)
-	hourly, err := repos.Stats.StatsTrend(ctx, base, base.Add(4*time.Hour), "hour", 0, "", ny)
+	hourly, err := repos.Stats.StatsTrendRaw(ctx, base, base.Add(4*time.Hour), "hour", 0, "", ny)
 	require.NoError(t, err)
 	require.Len(t, hourly, 2, "重复墙钟小时 = 两个独立绝对桶（不静默塌缩）")
 	require.True(t, hourly[0].BucketTime.Equal(time.Date(2026, 11, 1, 5, 0, 0, 0, time.UTC)))
@@ -146,7 +148,7 @@ func TestPGRawNYDSTFallBackNoCollapse(t *testing.T) {
 	require.NotEqual(t, o1, o2, "两桶 offset 不同（EDT/EST）——RFC3339 offset 分量可表达重复墙钟标签")
 	require.Equal(t, hourly[0].BucketTime.In(ny).Format("15:04"), hourly[1].BucketTime.In(ny).Format("15:04"), "墙钟标签相同")
 
-	daily, err := repos.Stats.StatsTrend(ctx, base, base.Add(4*time.Hour), "day", 0, "", ny)
+	daily, err := repos.Stats.StatsTrendRaw(ctx, base, base.Add(4*time.Hour), "day", 0, "", ny)
 	require.NoError(t, err)
 	require.Len(t, daily, 1, "fall-back 日本地日界唯一")
 	require.True(t, daily[0].BucketTime.Equal(time.Date(2026, 11, 1, 4, 0, 0, 0, time.UTC)), "Nov1 本地零点 EDT 04:00Z")
@@ -159,7 +161,7 @@ func TestPGRawNYDSTFallBackNoCollapse(t *testing.T) {
 		usageLogRow("sf-1", time.Date(2026, 3, 8, 6, 30, 0, 0, time.UTC), domain.ErrNone, 0, 0, 42, 0, "m", 1, 1, 0, 0, 1, 1, 0, nil),
 		usageLogRow("sf-2", time.Date(2026, 3, 8, 7, 30, 0, 0, time.UTC), domain.ErrNone, 0, 0, 42, 0, "m", 1, 1, 0, 0, 1, 1, 0, nil),
 	}, nil)
-	sh, err := repos.Stats.StatsTrend(ctx, sb, sb.Add(4*time.Hour), "hour", 0, "", ny)
+	sh, err := repos.Stats.StatsTrendRaw(ctx, sb, sb.Add(4*time.Hour), "hour", 0, "", ny)
 	require.NoError(t, err)
 	require.Len(t, sh, 2)
 	require.Equal(t, "01:00", sh[0].BucketTime.In(ny).Format("15:04"))
@@ -187,13 +189,13 @@ func TestPGShanghaiCubeAndEntityDayGrouping(t *testing.T) {
 	from, to := dayStartUTC.Add(-24*time.Hour), dayStartUTC.Add(48*time.Hour)
 
 	// UTC 缺省（cube 现状路径）。
-	tr, err := repos.Stats.ScanStatsDays(ctx, from, to, 0, nil)
+	tr, err := repos.Stats.ScanStatsDaysCube(ctx, from, to, 0, nil)
 	require.NoError(t, err)
 	require.Len(t, tr, 1, "UTC 日界：15:00Z 与 16:00Z 同属 Aug 14")
 	require.Equal(t, int64(8), tr[0].Requests)
 
 	// Shanghai 请求：分两桶（绝对起点 = 本地日零点，墙钟 = 请求时区日期）。
-	tr, err = repos.Stats.ScanStatsDays(ctx, from, to, 0, cst)
+	tr, err = repos.Stats.ScanStatsDaysCube(ctx, from, to, 0, cst)
 	require.NoError(t, err)
 	require.Len(t, tr, 2, "请求时区日界分桶（Asia/Shanghai）")
 	require.True(t, tr[0].Date.Equal(dayStartUTC.Add(-8*time.Hour)), "桶 1 = 本地 Aug14 零点（UTC Aug13 16:00）（%v）", tr[0].Date)
@@ -203,14 +205,14 @@ func TestPGShanghaiCubeAndEntityDayGrouping(t *testing.T) {
 	require.Equal(t, "2026-08-15", tr[1].Date.Format("2006-01-02"))
 	require.Equal(t, int64(5), tr[1].Requests)
 
-	tb, err := repos.Stats.StatsTrend(ctx, from, to, "day", 0, "", cst)
+	tb, err := repos.Stats.StatsTrendCube(ctx, from, to, "day", 0, "", cst)
 	require.NoError(t, err)
 	require.Len(t, tb, 2)
 	require.Equal(t, "2026-08-14", tb[0].BucketTime.Format("2006-01-02"))
 	require.Equal(t, int64(3), tb[0].RequestCount)
 	require.Equal(t, int64(5), tb[1].RequestCount)
 
-	eb, err := repos.Stats.StatsEntityTrend(ctx, from, to, "day", "user", 42, "", cst)
+	eb, err := repos.Stats.StatsEntityTrendCube(ctx, from, to, "day", "user", 42, "", cst)
 	require.NoError(t, err)
 	require.Len(t, eb, 2)
 	require.True(t, eb[0].BucketTime.Equal(dayStartUTC.Add(-8*time.Hour)))
@@ -246,7 +248,7 @@ func TestPGRawMatchesBruteForce(t *testing.T) {
 	// Kolkata 本地日界：base 12:00Z = IST 17:30（Aug14）；base+6h = IST 23:30
 	// （Aug14）；base+7h = IST 00:30（Aug15，日界起点 = Aug14 18:30Z）。跨界归属
 	// 与逐行手工分组期望一致（独立参照，不经被测 SQL）。
-	days, err := repos.Stats.ScanStatsDays(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), 0, ist)
+	days, err := repos.Stats.ScanStatsDaysRaw(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), 0, ist)
 	require.NoError(t, err)
 	require.Len(t, days, 2)
 	require.True(t, days[0].Date.Equal(base.Add(-17*time.Hour-30*time.Minute)), "Aug14 本地日桶 = IST Aug14 零点绝对时刻（Aug13 18:30Z）（%v）", days[0].Date)
@@ -259,7 +261,7 @@ func TestPGRawMatchesBruteForce(t *testing.T) {
 	require.Equal(t, int64(10), days[1].Tokens)
 
 	// 组过滤 + 绝对区间：组 8 只有 u3（Aug15 IST，桶起点 Aug14 18:30Z）。
-	tb, err := repos.Stats.StatsTrend(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), "day", 8, "", ist)
+	tb, err := repos.Stats.StatsTrendRaw(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), "day", 8, "", ist)
 	require.NoError(t, err)
 	require.Len(t, tb, 1, "组 8 只有 u3（Aug15 IST）")
 	require.Equal(t, int64(1), tb[0].RequestCount)
@@ -267,7 +269,7 @@ func TestPGRawMatchesBruteForce(t *testing.T) {
 		"桶起点 = IST Aug15 零点（绝对时刻 %v）", tb[0].BucketTime)
 
 	// 实体趋势：user 42（u1 u2 + e1 e2 → 4 rc / 2 ec 两桶）+ model 过滤。
-	eb, err := repos.Stats.StatsEntityTrend(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), "hour", "user", 42, "m", ist)
+	eb, err := repos.Stats.StatsEntityTrendRaw(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), "hour", "user", 42, "m", ist)
 	require.NoError(t, err)
 	var rc, ec int64
 	for _, b := range eb {
@@ -278,7 +280,7 @@ func TestPGRawMatchesBruteForce(t *testing.T) {
 	require.Equal(t, int64(2), ec, "abort + 5xx")
 
 	// 绝对区间单行 sum：请求时区不改变区间数值——UTC-cube 式期望。
-	su, err := repos.Stats.SummarizeStats(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), 0, ist)
+	su, err := repos.Stats.SummarizeStatsRaw(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), 0, ist)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), su.Requests, "u1 u2 u3 + e1 e2（u4 排除——写侧口径）")
 	require.Equal(t, int64(2), su.Errors)
@@ -304,14 +306,14 @@ func TestPGRawEntityNullDropped(t *testing.T) {
 	}, []*domain.UsageLog{
 		errLogRow("n-e1", base.Add(time.Hour), domain.Err5xx, 0, 0, 0, 0, "m"),
 	})
-	eb, err := repos.Stats.StatsEntityTrend(ctx, base.Add(-time.Hour), base.Add(4*time.Hour), "hour", "user", 42, "", ist)
+	eb, err := repos.Stats.StatsEntityTrendRaw(ctx, base.Add(-time.Hour), base.Add(4*time.Hour), "hour", "user", 42, "", ist)
 	require.NoError(t, err)
 	rc := int64(0)
 	for _, b := range eb {
 		rc += b.RequestCount
 	}
 	require.Equal(t, int64(1), rc, "只计 user=42 行；NULL 归属行丢弃（实体无 ID=0）")
-	eb0, err := repos.Stats.StatsEntityTrend(ctx, base.Add(-time.Hour), base.Add(4*time.Hour), "hour", "user", 0, "", ist)
+	eb0, err := repos.Stats.StatsEntityTrendRaw(ctx, base.Add(-time.Hour), base.Add(4*time.Hour), "hour", "user", 0, "", ist)
 	require.NoError(t, err)
 	require.Empty(t, eb0, "无主行不入任何实体桶")
 }
@@ -336,11 +338,11 @@ func TestPGStatsZoneSessionPoison(t *testing.T) {
 	}, nil)
 
 	// 基线（默认会话）：cube Shanghai 日界 + raw Kolkata 小时界 + UTC。
-	baseCube, err := repos.Stats.ScanStatsDays(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), 0, cst)
+	baseCube, err := repos.Stats.ScanStatsDaysCube(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), 0, cst)
 	require.NoError(t, err)
 	require.Len(t, baseCube, 1)
 	require.True(t, baseCube[0].Date.Equal(dayStartUTC.Add(16*time.Hour)), "基线 = 本地 Aug16 零点")
-	baseRaw, err := repos.Stats.StatsTrend(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), "hour", 0, "", ist)
+	baseRaw, err := repos.Stats.StatsTrendRaw(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), "hour", 0, "", ist)
 	require.NoError(t, err)
 	require.Len(t, baseRaw, 1)
 	require.True(t, baseRaw[0].BucketTime.Equal(dayStartUTC.Add(12*time.Hour+30*time.Minute)),
@@ -370,21 +372,21 @@ func TestPGStatsZoneSessionPoison(t *testing.T) {
 	require.NoError(t, err)
 
 	// NY 会话 + Shanghai（cube 路径）→ 与基线逐桶相等（绑定参数压过会话 TZ）。
-	nyCube, err := nyRepos.Stats.ScanStatsDays(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), 0, cst)
+	nyCube, err := nyRepos.Stats.ScanStatsDaysCube(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), 0, cst)
 	require.NoError(t, err)
 	require.Len(t, nyCube, 1)
 	require.True(t, nyCube[0].Date.Equal(baseCube[0].Date), "NY 会话下仍按请求时区分桶（%s ≠ %s）", nyCube[0].Date, baseCube[0].Date)
 	require.Equal(t, "2026-08-16", nyCube[0].Date.Format("2006-01-02"))
 
 	// NY 会话 + Kolkata（raw 路径）→ 与基线逐桶相等。
-	nyRaw, err := nyRepos.Stats.StatsTrend(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), "hour", 0, "", ist)
+	nyRaw, err := nyRepos.Stats.StatsTrendRaw(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), "hour", 0, "", ist)
 	require.NoError(t, err)
 	require.Len(t, nyRaw, 1)
 	require.True(t, nyRaw[0].BucketTime.Equal(baseRaw[0].BucketTime), "raw 路径同样会话无关（%v ≠ %v）", nyRaw[0].BucketTime, baseRaw[0].BucketTime)
 
 	// NY 会话 + 缺省 UTC（cube 路径）→ UTC 小时界（会话 TZ 既不漏进分组也不
 	// 压掉请求时区——16:00Z 桶来自 cube，与默认会话基线同形）。
-	nyUTC, err := nyRepos.Stats.StatsTrend(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), "hour", 0, "", time.UTC)
+	nyUTC, err := nyRepos.Stats.StatsTrendCube(ctx, dayStartUTC, dayStartUTC.Add(24*time.Hour), "hour", 0, "", time.UTC)
 	require.NoError(t, err)
 	require.Len(t, nyUTC, 1)
 	require.True(t, nyUTC[0].BucketTime.Equal(dayStartUTC.Add(16*time.Hour)), "UTC 请求下 NY 会话不得移动 cube 桶界（%v）", nyUTC[0].BucketTime)
@@ -417,13 +419,25 @@ func TestPGRawConcurrentDistinctZones(t *testing.T) {
 		buckets []*domain.StatBucket
 	}
 	got := make([]res, 3)
-	zones := []*time.Location{time.UTC, ist, cst}
+	// 路径选择是**调用方**的事（本包零判定）：UTC/Shanghai 双界恒整点且偏移恒整点
+	// → Cube；Kolkata :30 偏移 → Raw。
+	calls := []func() ([]*domain.StatBucket, error){
+		func() ([]*domain.StatBucket, error) {
+			return repos.Stats.StatsTrendCube(ctx, base.Add(-time.Hour), base.Add(2*time.Hour), "hour", 0, "", time.UTC)
+		},
+		func() ([]*domain.StatBucket, error) {
+			return repos.Stats.StatsTrendRaw(ctx, base.Add(-time.Hour), base.Add(2*time.Hour), "hour", 0, "", ist)
+		},
+		func() ([]*domain.StatBucket, error) {
+			return repos.Stats.StatsTrendCube(ctx, base.Add(-time.Hour), base.Add(2*time.Hour), "hour", 0, "", cst)
+		},
+	}
 	for i := range got {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			bs, err := repos.Stats.StatsTrend(ctx, base.Add(-time.Hour), base.Add(2*time.Hour), "hour", 0, "", zones[i])
+			bs, err := calls[i]()
 			require.NoError(t, err)
 			got[i].buckets = bs
 		}(i)
@@ -463,7 +477,7 @@ func TestPGRawTTFTHistAndCubeRangeEquivalence(t *testing.T) {
 		usageLogRow("he-2", base.Add(90*time.Minute), domain.ErrNone, 1, 5, 42, 9, "m", 1, 1, 0, 0, 1, 1, 0, &ttft),
 	}, nil)
 	// raw 日桶（IST → raw 路径）：hist 逐桶带回可插值。
-	days, err := repos.Stats.ScanStatsDays(ctx, base, base.Add(4*time.Hour), 0, ist)
+	days, err := repos.Stats.ScanStatsDaysRaw(ctx, base, base.Add(4*time.Hour), 0, ist)
 	require.NoError(t, err)
 	require.Len(t, days, 1)
 	require.Len(t, days[0].TTFTHist, 10)
@@ -475,9 +489,9 @@ func TestPGRawTTFTHistAndCubeRangeEquivalence(t *testing.T) {
 	cube, entity, _, err := repos.Stats.LoadAggRange(ctx, base, base.Add(4*time.Hour))
 	require.NoError(t, err)
 	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(4*time.Hour), base.Add(4*time.Hour), cube, entity))
-	sSpan, err := repos.Stats.SummarizeStats(ctx, base, base.Add(4*time.Hour), 0, cst)
+	sSpan, err := repos.Stats.SummarizeStatsCube(ctx, base, base.Add(4*time.Hour), 0, cst)
 	require.NoError(t, err)
-	sSpanRaw, err := repos.Stats.SummarizeStats(ctx, base, base.Add(4*time.Hour), 0, ist)
+	sSpanRaw, err := repos.Stats.SummarizeStatsRaw(ctx, base, base.Add(4*time.Hour), 0, ist)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), sSpan.Requests, "cube 区间 sum")
 	require.Equal(t, sSpan.Requests, sSpanRaw.Requests, "同绝对区间数值不因请求时区改变（cst=cube / ist=raw）")
@@ -489,7 +503,7 @@ func TestPGRawTTFTHistAndCubeRangeEquivalence(t *testing.T) {
 // 2025-04 孤岛日，与其他用例的 2026/now 数据零交叠）：
 //   - 空窗口 SummarizeStats（无 GROUP BY 单行聚合）→ 全零结构而非 pgx NULL
 //     扫描错误——rawSummary 每个入 int64 的 SUM 恒 COALESCE（空集 sum = NULL）；
-//   - 窗口界劈开卷积小时行（[12:30Z,13:30Z)）时 zone=UTC 也必须 raw 路由：
+//   - 窗口界劈开卷积小时行（[12:30Z,13:30Z)）时 zone=UTC 也必须选 raw 路径：
 //     12:45Z 行入窗并归 12:00 本地桶——cube 谓词 bucket_time >= 12:30 会把
 //     12:00 整行排除（半行丢失形态，对齐前提存在的理由）。
 func TestPGRawEmptyWindowAndUnalignedBoundary(t *testing.T) {
@@ -500,7 +514,7 @@ func TestPGRawEmptyWindowAndUnalignedBoundary(t *testing.T) {
 	base := time.Date(2025, 4, 2, 0, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, base, base.Add(24*time.Hour))
 
-	s, err := repos.Stats.SummarizeStats(ctx, base, base.Add(24*time.Hour), 0, ist) // :30 偏移 → raw，空窗
+	s, err := repos.Stats.SummarizeStatsRaw(ctx, base, base.Add(24*time.Hour), 0, ist) // :30 偏移 → raw，空窗
 	require.NoError(t, err, "rawSummary 空窗不得 NULL 扫描报错")
 	require.Equal(t, int64(0), s.Requests)
 	require.Equal(t, int64(0), s.Cost)
@@ -517,9 +531,9 @@ func TestPGRawEmptyWindowAndUnalignedBoundary(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, repos.Stats.AggregateRange(ctx, base, base.Add(24*time.Hour), base.Add(24*time.Hour), cube, entity))
 
-	bs, err := repos.Stats.StatsTrend(ctx, base.Add(12*time.Hour+30*time.Minute), base.Add(13*time.Hour+30*time.Minute), "hour", 0, "", time.UTC)
+	bs, err := repos.Stats.StatsTrendRaw(ctx, base.Add(12*time.Hour+30*time.Minute), base.Add(13*time.Hour+30*time.Minute), "hour", 0, "", time.UTC)
 	require.NoError(t, err)
-	require.Len(t, bs, 1, "界不齐 → UTC 也 raw 路由：12:45 行入窗归 12:00 本地桶（cube 谓词会整行丢失）")
+	require.Len(t, bs, 1, "界不齐 → 调用方选 raw：12:45 行入窗归 12:00 本地桶（cube 谓词会整行丢失）")
 	require.True(t, bs[0].BucketTime.Equal(base.Add(12*time.Hour)), "桶起点 = 12:00Z（%v）", bs[0].BucketTime)
 	require.Equal(t, int64(1), bs[0].RequestCount)
 }
@@ -539,7 +553,7 @@ func TestPGRawSubsecondHourlyBoundary(t *testing.T) {
 		usageLogRow("subsecond-after", time.Date(2026, 8, 14, 9, 30, 0, 400_000_000, time.UTC), domain.ErrNone, 1, 5, 42, 9, "m", 1, 1, 0, 0, 1, 1, 0, nil),
 	}, nil)
 
-	got, err := repos.Stats.StatsTrend(ctx, base, base.Add(time.Hour), "hour", 0, "", ist)
+	got, err := repos.Stats.StatsTrendRaw(ctx, base, base.Add(time.Hour), "hour", 0, "", ist)
 	require.NoError(t, err)
 	require.Equal(t, map[string]int64{"08:30": 1, "09:30": 1}, bucketClocks(got))
 }

@@ -7,9 +7,10 @@ package repository
 // —— 原始行读取面：浏览器时区精确分组（request-browser-timezone-stats 2026-09-03）——
 //
 // usage_stats / usage_entity_stats 卷积表小时桶界恒规范 UTC。请求浏览器时区无法
-// 由卷积行精确重组的场景（domain.ZoneCubeExact == false：窗口内 DST 偏移漂移、
-// 或 :30/:45 半小时偏移劈开小时行）下，分组读取改从 usage_logs + err_logs 原始
-// 行直接聚合，逐行语义与 cube 写侧两查询（aggUsageSQL/aggErrLogSQL）完全一致：
+// 由卷积行精确重组的场景（domain.Admit 判定为 raw：窗口内 DST 偏移漂移、
+// :30/:45 半小时偏移劈开小时行、或界不齐/跨度小于网格）下，分组读取改从
+// usage_logs + err_logs 原始行直接聚合，逐行语义与 cube 写侧两查询
+// （aggUsageSQL/aggErrLogSQL）完全一致：
 //   - usage_logs：error_type IN ('none','abort') 放行行全测量（rc=count(*)、
 //     ec=FILTER(<>'none')、tokens×5/cost/raw/call/TTFT sum/count/max/hist）；
 //   - err_logs：error_type <> 'abort'（abort 已由 usage 源全字段计，防双计），
@@ -20,10 +21,9 @@ package repository
 // date_trunc 精确归日——表达式论证见 stat_raw_expr.go rawBucketExpr）。
 // 白名单/绑定纪律与 [from,to) 绝对谓词同见 expr 半区。
 //
-// 窗口上限：本路径受原始行保留期约束（usage.log_retention_days 默认 30d、
-// usage.errlog_retention_days 默认 7d）。service 层对非 cube 精确窗口（时区
-// 不精确或界劈开卷积行）按部署配置换算的 horizon（缺省 MaxStatsRawSpan 8d）
-// 强制上限，宁可 400 也不静默返回残缺桶。
+// 窗口上限：本路径的成本上限（分组原始行固定 8d）与覆盖率（读 usage_logs +
+// err_logs ⇒ 取两表保留期的较小者）**都由调用方（service）经 domain.Admit 判定**
+// ——本文件只执行，不做任何上限判定（上限与保留期是两件独立的事，见 spec §4.5）。
 //
 // 本文件只放执行面（pool 查询 + Go 合并/排序/回落）；SQL 形状构造在
 // stat_raw_expr.go。

@@ -26,6 +26,24 @@ const (
 	UpstreamUnavailable AccountUsageItemUpstreamError = "upstream_unavailable"
 )
 
+// Defines values for ErrorResponseReason.
+const (
+	CubeHorizon     ErrorResponseReason = "cube_horizon"
+	Dst             ErrorResponseReason = "dst"
+	Offset          ErrorResponseReason = "offset"
+	RawHorizon      ErrorResponseReason = "raw_horizon"
+	SpanBelowGrid   ErrorResponseReason = "span_below_grid"
+	WindowAmbiguous ErrorResponseReason = "window_ambiguous"
+	WindowInvalid   ErrorResponseReason = "window_invalid"
+	WindowTooLong   ErrorResponseReason = "window_too_long"
+)
+
+// Defines values for ErrorResponseStorage.
+const (
+	ErrorResponseStorageCube ErrorResponseStorage = "cube"
+	ErrorResponseStorageRaw  ErrorResponseStorage = "raw"
+)
+
 // Defines values for ErrorType.
 const (
 	Abort     ErrorType = "abort"
@@ -173,6 +191,12 @@ const (
 	StatTopEntryEntityTypeAccount StatTopEntryEntityType = "account"
 	StatTopEntryEntityTypeKey     StatTopEntryEntityType = "key"
 	StatTopEntryEntityTypeUser    StatTopEntryEntityType = "user"
+)
+
+// Defines values for StatsKindCapabilityStorages.
+const (
+	StatsKindCapabilityStoragesCube StatsKindCapabilityStorages = "cube"
+	StatsKindCapabilityStoragesRaw  StatsKindCapabilityStorages = "raw"
 )
 
 // Defines values for TemplateCredentialType.
@@ -799,8 +823,45 @@ type ErrLogsResponse struct {
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
-	Error string `json:"error"`
+	// EffectiveFrom 判定后的生效窗口下界（`window_invalid` 不携带）
+	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
+
+	// EffectiveTo 判定后的生效窗口上界（`window_invalid` 不携带）
+	EffectiveTo *time.Time `json:"effective_to,omitempty"`
+	Error       string     `json:"error"`
+
+	// LimitSeconds 成本上限秒数（`window_too_long` 携带；0 = 无上限）
+	LimitSeconds *int64 `json:"limit_seconds,omitempty"`
+
+	// Reason 统计窗口被拒的机读原因（仅统计端点可能携带）。取值词表取自规划层原因与
+	// 拒绝原因的**全量映射表**（唯一来源），本版实际会发出的只有四个：
+	// raw_horizon/cube_horizon = 起点早于所要读表的保留截止；
+	// window_too_long = 请求跨度超过该形状的成本上限；window_invalid =
+	// 必填/倒序等参数本身非法。offset/dst/span_below_grid 是"该窗口无法用
+	// 卷积表精确表达、已降级到原始行"的派生原因（当前只用于降级告警日志，
+	// 不作为拒绝原因发出）；window_ambiguous 随 `window` 相对窗口参数落地
+	// 生效。
+	Reason *ErrorResponseReason `json:"reason,omitempty"`
+
+	// RetentionDays 覆盖判定所依据的最保守保留天数（`*_horizon` 携带）
+	RetentionDays *int `json:"retention_days,omitempty"`
+
+	// Storage 判定所依据的实际存储（`window_invalid` 不携带）
+	Storage *ErrorResponseStorage `json:"storage,omitempty"`
 }
+
+// ErrorResponseReason 统计窗口被拒的机读原因（仅统计端点可能携带）。取值词表取自规划层原因与
+// 拒绝原因的**全量映射表**（唯一来源），本版实际会发出的只有四个：
+// raw_horizon/cube_horizon = 起点早于所要读表的保留截止；
+// window_too_long = 请求跨度超过该形状的成本上限；window_invalid =
+// 必填/倒序等参数本身非法。offset/dst/span_below_grid 是"该窗口无法用
+// 卷积表精确表达、已降级到原始行"的派生原因（当前只用于降级告警日志，
+// 不作为拒绝原因发出）；window_ambiguous 随 `window` 相对窗口参数落地
+// 生效。
+type ErrorResponseReason string
+
+// ErrorResponseStorage 判定所依据的实际存储（`window_invalid` 不携带）
+type ErrorResponseStorage string
 
 // ErrorType defines model for ErrorType.
 type ErrorType string
@@ -1754,6 +1815,36 @@ type StatTrendPoint struct {
 	TotalTokens *int64 `json:"TotalTokens,omitempty"`
 }
 
+// StatsCapabilities defines model for StatsCapabilities.
+type StatsCapabilities struct {
+	// BucketGridSeconds 卷积表桶网格单位（秒；恒 3600 = 1 小时）
+	BucketGridSeconds int `json:"bucket_grid_seconds"`
+
+	// Kinds 键 = 读形状标识（trend/entity_trend/summary/days/top/ttft_sketch/ttft_exact/usage_agg/usage_list/errlog_list）
+	Kinds map[string]StatsKindCapability `json:"kinds"`
+}
+
+// StatsKindCapability defines model for StatsKindCapability.
+type StatsKindCapability struct {
+	// CostCapSeconds 每候选存储的最大跨度秒数（保留期无关的纯常量；0 = 无上限）
+	CostCapSeconds map[string]int64 `json:"cost_cap_seconds"`
+
+	// CoverageDays 每候选存储实际读表的保留天数（读多表取最保守者；0 = 该表未启用分区保留，覆盖守卫关闭）
+	CoverageDays map[string]int `json:"coverage_days"`
+
+	// Grouping 读形状的分组模式：`zoned` = 按请求时区分组（桶界随时区变）；`none` =
+	// 数值与请求时区无关。刻意不写 enum：enum 会为一个取值是 `none` 的字段
+	// 生成名为 `None` 的常量，与既有 `ErrorType` 枚举的 `None` 撞名，触发
+	// oapi-codegen 把该枚举九个常量全部改名（无关生成的额外改动）。
+	Grouping string `json:"grouping"`
+
+	// Storages 候选存储（按偏好序）
+	Storages []StatsKindCapabilityStorages `json:"storages"`
+}
+
+// StatsKindCapabilityStorages defines model for StatsKindCapability.Storages.
+type StatsKindCapabilityStorages string
+
 // Template defines model for Template.
 type Template struct {
 	// BaseURL credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure)
@@ -2030,9 +2121,14 @@ type GetAccountsUsageParams struct {
 	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
 	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
 	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
-	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
-	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	// 客户端）；未知名 → 400。
+	//
+	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+	// 取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+	// 分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+	// 8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+	// 截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
 	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
@@ -2092,9 +2188,14 @@ type GetAdminOverviewParams struct {
 	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
 	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
 	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
-	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
-	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	// 客户端）；未知名 → 400。
+	//
+	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+	// 取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+	// 分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+	// 8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+	// 截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
 	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
@@ -2221,9 +2322,14 @@ type GetStatsEntityTrendParams struct {
 	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
 	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
 	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
-	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
-	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	// 客户端）；未知名 → 400。
+	//
+	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+	// 取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+	// 分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+	// 8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+	// 截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
 	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
@@ -2245,9 +2351,14 @@ type GetStatsTopParams struct {
 	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
 	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
 	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
-	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
-	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	// 客户端）；未知名 → 400。
+	//
+	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+	// 取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+	// 分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+	// 8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+	// 截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
 	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
@@ -2269,9 +2380,14 @@ type GetStatsTrendParams struct {
 	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
 	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
 	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
-	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
-	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	// 客户端）；未知名 → 400。
+	//
+	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+	// 取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+	// 分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+	// 8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+	// 截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
 	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
@@ -2290,9 +2406,14 @@ type GetStatsTTFTParams struct {
 	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
 	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
 	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。DST 或 :30/:45 偏移时区的分组读改扫原始明细
-	// （受 usage.log_retention_days / usage.errlog_retention_days 保留期约束，
-	// 窗口上限 8 天，超限 → 400）；UTC 及恒整点无 DST 时区读 180 天卷积表。
+	// 客户端）；未知名 → 400。
+	//
+	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+	// 取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+	// 分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+	// 8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+	// 截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
 	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
 }
 
@@ -2615,13 +2736,16 @@ type ServerInterface interface {
 	// 更新设置（类型化校验：switch 必须 true/false、number 必须数字）
 	// (PUT /settings)
 	PutAdminSettings(w http.ResponseWriter, r *http.Request)
+	// 统计能力（本部署能查多久——per-deployment 常量）
+	// (GET /stats/capabilities)
+	GetStatsCapabilities(w http.ResponseWriter, r *http.Request)
 	// 实体趋势（entity 卷积）
 	// (GET /stats/entity-trend)
 	GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, params GetStatsEntityTrendParams)
 	// Top 排行（entity 卷积）
 	// (GET /stats/top)
 	GetStatsTop(w http.ResponseWriter, r *http.Request, params GetStatsTopParams)
-	// 趋势聚合（cube/原始行——按 timezone 路由）
+	// 趋势聚合（cube/原始行——按请求时区判定）
 	// (GET /stats/trend)
 	GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams)
 	// TTFT 聚合（sketch 或 exact）
@@ -3002,6 +3126,12 @@ func (_ Unimplemented) PutAdminSettings(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// 统计能力（本部署能查多久——per-deployment 常量）
+// (GET /stats/capabilities)
+func (_ Unimplemented) GetStatsCapabilities(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // 实体趋势（entity 卷积）
 // (GET /stats/entity-trend)
 func (_ Unimplemented) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, params GetStatsEntityTrendParams) {
@@ -3014,7 +3144,7 @@ func (_ Unimplemented) GetStatsTop(w http.ResponseWriter, r *http.Request, param
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 趋势聚合（cube/原始行——按 timezone 路由）
+// 趋势聚合（cube/原始行——按请求时区判定）
 // (GET /stats/trend)
 func (_ Unimplemented) GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -4923,6 +5053,20 @@ func (siw *ServerInterfaceWrapper) PutAdminSettings(w http.ResponseWriter, r *ht
 	handler.ServeHTTP(w, r)
 }
 
+// GetStatsCapabilities operation middleware
+func (siw *ServerInterfaceWrapper) GetStatsCapabilities(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetStatsCapabilities(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetStatsEntityTrend operation middleware
 func (siw *ServerInterfaceWrapper) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request) {
 
@@ -6145,6 +6289,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/settings", wrapper.PutAdminSettings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/stats/capabilities", wrapper.GetStatsCapabilities)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/stats/entity-trend", wrapper.GetStatsEntityTrend)

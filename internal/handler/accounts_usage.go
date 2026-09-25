@@ -33,6 +33,11 @@ type CodexUsageProber interface {
 // 时刻直透，不做任何时区改写；from > to → 400。响应 items 恒 = account_ids
 // 去重后全量（无记录账号 gateway 全 0——前端免补零），顺序 = 去重后顺序。
 // 底层读 usage_logs 原始行绝对区间——本端点时区只影响缺省日界，不影响数值。
+//
+// **窗口上限与覆盖率在 service 层判定**（domain.Admit，KindUsageAgg：raw cost
+// 90d + usage_logs 覆盖率）——本 handler 的 from < to 只是形状前置检查，超限
+// 由 service 返回 400（spec §4.5：全区间 GROUP BY 无 LIMIT 的真实成本洞在此
+// 补掉）。
 func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams) {
 	zone, err := resolveStatsZone(params.Timezone)
 	if err != nil {

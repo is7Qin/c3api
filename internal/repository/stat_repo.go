@@ -556,8 +556,8 @@ FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 // 'UTC'，与旧字面量逐位等值）；WHERE 后可追加组过滤（占位 $4），GROUP BY/
 // ORDER BY 尾段单独常量（statTrendTailSQL）——过滤条件必须插在 GROUP BY 之前。
 // 会话 TimeZone 无关：先 AT TIME ZONE $3 取本地墙钟再截断、再转回
-// timestamptz。仅当 domain.ZoneCubeExact 判定（双界 UTC 整点对齐且该时区在窗口
-// 内恒整点无 DST）时走本路径（小时桶与本地日界严格对齐——重组精确）；否则走
+// timestamptz。本 SQL 只被 ScanStatsDaysCube 使用——「窗口能否由 cube 精确重组」
+// 由调用方（service）经 domain.Admit 判定（本包零存储判定）；判定为否时走
 // stat_raw_read.go 原始行精确聚合。
 var statTrendSQL = `SELECT date_trunc('day', "bucket_time" AT TIME ZONE $3) AT TIME ZONE $3,
 	COALESCE(sum(request_count), 0)::bigint,
@@ -575,19 +575,16 @@ FROM "usage_stats" WHERE "bucket_time" >= $1 AND "bucket_time" < $2`
 // statTrendTailSQL 日桶聚合尾段（GROUP BY 1 ORDER BY 1——组过滤拼接后追加）。
 var statTrendTailSQL = ` GROUP BY 1 ORDER BY 1`
 
-// SummarizeStats 区间聚合单行（overview summary）。zone = 请求浏览器时区
-// （handler 边界已校验；nil = UTC）：窗口在恒整点无 DST 时区（含 UTC）下
-// cube 小时行与本地日界严格对齐 → cube 区间 sum（绝对区间 SQL，无分组）；
-// 否则（DST/半小时偏移）cube 小时行会被本地边界切开、重组不精确 → 原始
-// usage_logs+err_logs 绝对区间 sum（stat_raw_read.go，语义与 cube 写侧两
-// 查询完全一致）。groupID > 0 = 按组过滤（0 = 全局）。pool 未注入
-// （非 NewWithPG 构造）→ 显式错误（不静默降级）。
-func (r *StatRepo) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
+// SummarizeStatsCube 区间聚合单行（overview summary，cube 读路径）。调用方
+// （service）已按 domain.Admit 判定 cube 小时行与本地日界严格对齐（恒整点无 DST
+// 时区），故本方法不再做任何存储判定：cube 绝对区间 sum（无分组）。groupID > 0 =
+// 按组过滤（0 = 全局）。pool 未注入（非 NewWithPG 构造）→ 显式错误（不静默降级）。
+// zone 不参与本查询（绝对区间 sum 与时区无关）——保留参数以维持四对方法签名
+// 同形（service 调用点同形 dispatch）；时区正确性由 Admit 的判定与
+// ScanStatsDays 的本地日分组承载。
+func (r *StatRepo) SummarizeStatsCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
 	if r.pool == nil {
 		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate overview summary")
-	}
-	if !domain.ZoneCubeExact(zone, from, to) {
-		return r.rawSummary(ctx, from, to, groupID)
 	}
 	sql := statSummarySQL
 	args := []any{from, to}
@@ -611,20 +608,27 @@ func (r *StatRepo) SummarizeStats(ctx context.Context, from, to time.Time, group
 	return s, nil
 }
 
-// ScanStatsDays 日桶聚合（overview trend——服务端分组，不拉全行客户端聚合）。
-// zone = 请求浏览器时区（nil = UTC）：恒整点无 DST 时区走 cube 日重组
-// （statTrendSQL，$3 绑定时区名，小时桶与本地日界严格对齐）；DST/半小时
-// 偏移时区走原始行按本地日界精确聚合（stat_raw_read.go）。返回日桶
+// SummarizeStatsRaw 区间聚合单行（overview summary，原始行读路径）：调用方
+// （service）已按 domain.Admit 判定 cube 小时行会被本地边界切开（DST/半小时
+// 偏移），故改读 usage_logs+err_logs 绝对区间 sum（stat_raw_read.go，语义与 cube
+// 写侧两查询完全一致）。zone 不参与本查询（绝对区间 sum 与时区无关）。
+func (r *StatRepo) SummarizeStatsRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
+	if r.pool == nil {
+		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate overview summary")
+	}
+	return r.rawSummary(ctx, from, to, groupID)
+}
+
+// ScanStatsDaysCube 日桶聚合（overview trend，cube 读路径——服务端分组，不拉全行
+// 客户端聚合）。调用方（service）已按 domain.Admit 判定小时桶与本地日界严格对齐，
+// 故本方法不再做任何存储判定：statTrendSQL 按 $3 绑定的时区名重组日桶。返回日桶
 // .In(zone)：绝对时刻 = 本地日界起点，墙钟分量 = 请求时区日期。groupID > 0 =
 // 按组过滤（0 = 全局）。
-func (r *StatRepo) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
+func (r *StatRepo) ScanStatsDaysCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
 	if r.pool == nil {
 		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate overview trend")
 	}
 	zone = locOrUTC(zone)
-	if !domain.ZoneCubeExact(zone, from, to) {
-		return r.rawScanStatsDays(ctx, from, to, groupID, zone)
-	}
 	sql := statTrendSQL
 	args := []any{from, to, zoneName(zone)}
 	if groupID > 0 {
@@ -653,6 +657,16 @@ func (r *StatRepo) ScanStatsDays(ctx context.Context, from, to time.Time, groupI
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// ScanStatsDaysRaw 日桶聚合（overview trend，原始行读路径）：调用方（service）已按
+// domain.Admit 判定 cube 日重组不精确（DST/半小时偏移），故按本地日界逐行精确
+// 聚合（stat_raw_read.go）。
+func (r *StatRepo) ScanStatsDaysRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
+	if r.pool == nil {
+		return nil, fmt.Errorf("stat repo: pgx pool not configured (repository.NewWithPG); cannot aggregate overview trend")
+	}
+	return r.rawScanStatsDays(ctx, from, to, groupID, locOrUTC(zone))
 }
 
 // OverviewResourceCounts 资源计数（overview resources：templates/groups/users

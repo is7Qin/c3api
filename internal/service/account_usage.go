@@ -46,10 +46,17 @@ func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (
 }
 
 // AccountsGatewayUsage 账号网关用量批量聚合（/api/admin/accounts/usage 查询面
-// 的 gateway 栏）：repo 单查询聚合 + 按 ids 顺序组装全量 items（无记录账号
-// 补零——gateway 全 0，前端免补零）。repo 聚合失败 → 整批失败（gateway
-// 数据面不可用）。upstream 栏由调用方（handler fan-out）另行装配。
+// 的 gateway 栏）：先过 domain.Admit（KindUsageAgg——raw 成本上限 90d + usage_logs
+// 覆盖率），再 repo 单查询聚合 + 按 ids 顺序组装全量 items（无记录账号补零
+// ——gateway 全 0，前端免补零）。repo 聚合失败 → 整批失败（gateway 数据面不
+// 可用）。upstream 栏由调用方（handler fan-out）另行装配。
 func (s *Service) AccountsGatewayUsage(ctx context.Context, ids []int64, from, to time.Time) ([]domain.AccountUsage, error) {
+	// KindUsageAgg 无分组、只有原始行一种候选存储（Storages[0]），故执行方法
+	// 单一；窗口取 Exec（判定与执行同源）。该处旧实现只校验 from < to（handler
+	// 层），全区间 GROUP BY 无 LIMIT ⇒ 本判定补掉该成本洞（spec §4.5）。
+	if _, err := s.admitStats(domain.KindUsageAgg, time.UTC, from, to); err != nil {
+		return nil, err
+	}
 	aggs, err := s.store.ScanUsageAgg(ctx, ids, from, to)
 	if err != nil {
 		return nil, err

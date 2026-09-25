@@ -562,29 +562,49 @@ func (r *Repository) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 }
 
 // --- /api/admin/overview 聚合面（spec 2026-08-14；SQL 侧聚合 + 冷面计数） ---
+//
+// 统计读面四对方法（Cube/Raw）是**纯执行**：本层与 StatRepo 都不含任何存储判定
+// 或时区路由知识——判定唯一入口是 domain.Admit，调用方（service）据 Exec.Storage
+// 在这四对方法里选择（见 spec-stats-window-plan-2026-09-25 §4.1）。
 
-func (r *Repository) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
-	return r.Stats.SummarizeStats(ctx, from, to, groupID, zone)
+func (r *Repository) SummarizeStatsCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
+	return r.Stats.SummarizeStatsCube(ctx, from, to, groupID, zone)
 }
 
-func (r *Repository) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
-	return r.Stats.ScanStatsDays(ctx, from, to, groupID, zone)
+func (r *Repository) SummarizeStatsRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*StatSummary, error) {
+	return r.Stats.SummarizeStatsRaw(ctx, from, to, groupID, zone)
+}
+
+func (r *Repository) ScanStatsDaysCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
+	return r.Stats.ScanStatsDaysCube(ctx, from, to, groupID, zone)
+}
+
+func (r *Repository) ScanStatsDaysRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*StatDayAgg, error) {
+	return r.Stats.ScanStatsDaysRaw(ctx, from, to, groupID, zone)
 }
 
 func (r *Repository) CountOverviewResources(ctx context.Context) (*OverviewResourceCounts, error) {
 	return r.Stats.CountOverviewResources(ctx)
 }
 
-func (r *Repository) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
-	return r.Stats.StatsTrend(ctx, from, to, unit, groupID, model, zone)
+func (r *Repository) StatsTrendCube(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
+	return r.Stats.StatsTrendCube(ctx, from, to, unit, groupID, model, zone)
+}
+
+func (r *Repository) StatsTrendRaw(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
+	return r.Stats.StatsTrendRaw(ctx, from, to, unit, groupID, model, zone)
 }
 
 func (r *Repository) StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error) {
 	return r.Stats.StatsTop(ctx, from, to, entityType, by, limit)
 }
 
-func (r *Repository) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
-	return r.Stats.StatsEntityTrend(ctx, from, to, unit, entityType, entityID, model, zone)
+func (r *Repository) StatsEntityTrendCube(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
+	return r.Stats.StatsEntityTrendCube(ctx, from, to, unit, entityType, entityID, model, zone)
+}
+
+func (r *Repository) StatsEntityTrendRaw(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
+	return r.Stats.StatsEntityTrendRaw(ctx, from, to, unit, entityType, entityID, model, zone)
 }
 
 func (r *Repository) StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error) {

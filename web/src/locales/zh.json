@@ -802,8 +802,8 @@
         "degraded": "降级"
       },
       "outcome": {
-        "success": "成功",
         "429": "429",
+        "success": "成功",
         "4xx": "4xx",
         "5xx": "5xx",
         "network": "网络"
@@ -856,6 +856,19 @@
       "p95": "P95",
       "p99": "P99",
       "source": "来源：{{source}}"
+    },
+    "window": {
+      "effective": "服务端实际窗口：{{from}} ~ {{to}}",
+      "reason": {
+        "offset": "该时区偏移非整小时，单段窗口无法使用预聚合表",
+        "dst": "窗口跨越夏令时跳变，预聚合表无法精确表达该分组",
+        "span_below_grid": "请求跨度小于一个桶（1 小时）",
+        "raw_horizon": "窗口起点早于原始日志保留截止",
+        "cube_horizon": "窗口起点早于预聚合表保留截止",
+        "window_too_long": "请求跨度超过该查询形状的上限",
+        "window_invalid": "窗口本身非法（from/to 缺失，或 from 不早于 to）",
+        "window_ambiguous": "window 与 from+to 必须恰择其一"
+      }
     }
   },
   "calendar": {
@@ -1751,7 +1764,7 @@
         "p95": "P95",
         "p99": "P99",
         "source": "来源：{{source}}",
-        "clamped": "自见 TTFT 仅支持近 7 天，已自动收窄范围。"
+        "clamped": "自见 TTFT 上限 {{days}} 天，已自动收窄范围。"
       }
     },
     "redemptions": {
