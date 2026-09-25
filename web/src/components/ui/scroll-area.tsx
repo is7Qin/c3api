@@ -34,6 +34,13 @@ function ScrollArea({
       // 区不遮挡表格最后一行。但 base-ui 只在有溢出时才设置 data-has-overflow-x
       // 并渲染滚动条——无条件加 padding 会让内容不超宽时卡片底部空出 10px 裸玻璃
       // （表格与玻璃边框之间出现一条带，卡片不再贴合表格）。
+      // 玻璃卡片外框必须是**真实 border**（页面 className 传 border-<颜色>），
+      // 不能用 border-transparent + after:border 画框：border 透明时元素自身
+      // 背景（bg-[color:var(--glass-card-light)]，background-clip 默认 border-box）
+      // 会铺满整个 border box，在 ::after 框**外侧**露出 0.8px 亮环；而 ::after
+      // 与元素同用 14px 半径却整体内缩 0.8px，亮环在四角张开到 ~2.8px。结果边框
+      // 看起来浮在卡片内部、卡片四角溢出边框，liquid glass 的清晰边光被模糊亮弧
+      // 取代（ListToolbar 用真实 border，所以同一页上搜索卡片一直是正常的）。
       className={cn('relative flex min-h-0 flex-col', showHorizontal && 'data-[has-overflow-x]:pb-2.5', className)}
       {...props}
     >
