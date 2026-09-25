@@ -1004,7 +1004,10 @@ function PlanCard({ route, generation, candidates, candidatesTotal, candidatesLo
                   <TableCell className="text-right font-mono tabular-nums">{c.identity_revision}</TableCell>
                   <TableCell className="text-xs">{c.mapped_model || '—'}</TableCell>
                   <TableCell className="font-mono text-xs" title={c.quality_class_id}>{truncate(c.quality_class_id, 12)}</TableCell>
-                  <TableCell className="text-right font-mono tabular-nums">{`${(c.upstream_cost_multiplier_bp / 100).toFixed(2)}×`}</TableCell>
+                  {/* bp 是 basis points：10000 = ×1（见 openapi upstream_cost_multiplier_bp 与
+                      account-config.ts 的 normalToMult）。除 100 会整整放大 100 倍——
+                      默认 ×1 的账号会显示成 100.00×。 */}
+                  <TableCell className="text-right font-mono tabular-nums">{`${(c.upstream_cost_multiplier_bp / 10000).toFixed(2)}×`}</TableCell>
                   <TableCell className="font-mono text-xs" title={c.fingerprint || c.identity_fingerprint}>{truncate(c.fingerprint || c.identity_fingerprint, 12)}</TableCell>
                 </TableRow>
               ))}
