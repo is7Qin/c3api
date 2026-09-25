@@ -499,7 +499,7 @@ export default function Logs() {
           {/* 玻璃与滚动分离：Card 透明化，玻璃与圆角由包裹表格的 ScrollArea 承载（单层边框）；
               横竖滚动均由 ScrollArea 自绘滚动条承接，Table 去自身玻璃与横向滚动依赖，
               避免 Card overflow-hidden 与 Table 横向滚动嵌套导致的裁切/贴边 */}
-          <ScrollArea className="max-h-[calc(100vh-16rem)] rounded-[14px] border border-transparent bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] after:pointer-events-none after:absolute after:inset-0 after:z-20 after:rounded-[14px] after:border after:border-[rgba(19,45,83,0.26)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:after:border-[rgba(148,180,220,0.32)]" showHorizontal>
+          <ScrollArea className="max-h-[calc(100vh-16rem)] rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:border-[rgba(148,180,220,0.32)]" showHorizontal>
           <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
             <TableHeader className="!bg-transparent">
               <TableRow>
