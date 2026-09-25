@@ -1457,7 +1457,7 @@ export default function Accounts() {
             </div>
             {/* 批量面携带 AccountConfigPatch 全字段（模板/并发/启停/倍率/缓存域）；
                 失效恢复是逐账号 fenced 端点，不在批量面 */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t('accounts.templateLabel')}</Label>
                 <Select
@@ -1492,7 +1492,7 @@ export default function Accounts() {
               </label>
             </div>
             {/* 生命周期配置（启停/倍率/缓存域）——同为批量契约字段，留空/不变 = 不修改 */}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t('accounts.enabledLabel')}</Label>
                 <Select
@@ -1739,7 +1739,9 @@ export default function Accounts() {
             )}
             </div>
           </div>
-          <DialogFooter className="shrink-0 rounded-b-[14px] border-t bg-muted/10 px-6 py-5">
+          {/* mx-0 mb-0：本弹窗是 p-0（自管内边距），DialogFooter 默认的 -mx-4 -mb-4 是为
+              DialogContent 默认 p-4 抵消用的；不抵消会让页脚比弹窗宽 32px，被 overflow-hidden 裁掉两侧 */}
+          <DialogFooter className="mx-0 mb-0 shrink-0 rounded-b-[14px] border-t bg-muted/10 px-6 py-5">
             <Button variant="outline" onClick={() => setUsageDetail(null)}>{t('common.cancel')}</Button>
           </DialogFooter>
         </DialogContent>

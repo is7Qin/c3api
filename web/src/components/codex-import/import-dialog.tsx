@@ -319,7 +319,9 @@ export function CodexImportDialog({ open, onOpenChange, templates, groups, onDon
         </ScrollArea>
       </div>
 
-      <DialogFooter className="shrink-0 rounded-b-[14px] border-t bg-muted/10 px-6 py-5">
+      {/* mx-0 mb-0：本弹窗是 p-0（自管内边距），DialogFooter 默认的 -mx-4 -mb-4 是为
+          DialogContent 默认 p-4 抵消用的；不抵消会让页脚比弹窗宽 32px，被 overflow-hidden 裁掉两侧 */}
+      <DialogFooter className="mx-0 mb-0 shrink-0 rounded-b-[14px] border-t bg-muted/10 px-6 py-5">
         <Button variant="outline" onClick={() => step > 1 ? setStep(step - 1) : close(false)}>{step > 1 ? t('accounts.import.prev') : t('common.cancel')}</Button>
         {step < 3 && <Button onClick={() => setStep(step + 1)} disabled={!canNext}>{t('accounts.import.next.source')}</Button>}
         {step === 3 && <Button onClick={() => setStep(4)} disabled={!canNext}>{t('accounts.import.next.preview')}</Button>}

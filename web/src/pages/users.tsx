@@ -465,7 +465,7 @@ export default function Users() {
                 <p className="text-xs text-muted-foreground">{t('users.passwordHint')}</p>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t('users.roleLabel')}</Label>
                 <Select value={form.role} items={Object.fromEntries(ROLES.map(r => [r, t(`users.role.${r}`)]))} onValueChange={v => setForm(f => ({ ...f, role: v as UserRole }))}>
@@ -485,7 +485,7 @@ export default function Users() {
                 </Select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="usr-max">{t('users.maxLabel')}</Label>
                 <Input id="usr-max" type="number" min={0} value={form.max_concurrency} onChange={e => setForm(f => ({ ...f, max_concurrency: e.target.value }))} />

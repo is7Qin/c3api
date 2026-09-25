@@ -92,6 +92,9 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
+// 页脚做成整幅贴边的色带：-mx-4 -mb-4 抵消 DialogContent 的默认 p-4，让色带铺满
+// 弹窗底边并与圆角对齐。**DialogContent 若用 p-0 自管内边距，页脚必须传 mx-0 mb-0**
+// ——否则页脚比弹窗宽 32px，被 overflow-hidden 裁掉两侧（按钮和圆角都会被切）。
 function DialogFooter({
   className,
   showCloseButton = false,
