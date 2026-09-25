@@ -29,9 +29,12 @@ function ScrollArea({
       // flex-col + Viewport flex-1：Viewport size-full 的 height:100% 在只有
       // max-h 无显式 height 的父级下解析为 auto（=内容高度），会把页面撑破；
       // flex 布局让 Viewport 收缩到可用高度
-      // showHorizontal 时 pb-2.5：横向滚动条 absolute 定位在 Root 底部，padding
-      // 把 Viewport 顶上去，滚动条落在 padding 区不遮挡表格最后一行
-      className={cn('relative flex min-h-0 flex-col', showHorizontal && 'pb-2.5', className)}
+      // showHorizontal 时 pb-2.5 只在**确实发生横向溢出**时才加：横向滚动条
+      // absolute 定位在 Root 底部，padding 把 Viewport 顶上去，滚动条落在 padding
+      // 区不遮挡表格最后一行。但 base-ui 只在有溢出时才设置 data-has-overflow-x
+      // 并渲染滚动条——无条件加 padding 会让内容不超宽时卡片底部空出 10px 裸玻璃
+      // （表格与玻璃边框之间出现一条带，卡片不再贴合表格）。
+      className={cn('relative flex min-h-0 flex-col', showHorizontal && 'data-[has-overflow-x]:pb-2.5', className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
