@@ -3,9 +3,15 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // 日期+时间选择器：shadcn 官方按钮式形态（参考 ui/apps/v4/examples/base/date-picker-time.tsx）。
-// Trigger 为 outline Button（宽约 212px，justify-between），空值时显示占位文案（muted），
+// Trigger 为 outline Button（基准宽 212px，justify-between），空值时显示占位文案（muted），
 // 右侧 ChevronDown；Popover 内为 Calendar（mode=single + captionLayout="dropdown" 年月下拉
 // 导航）+ 小时/分钟两个下拉选择（5 分钟步进）。
+// 宽度必须可收缩：清除按钮（X，28px + gap 4px）是 Trigger 的兄弟节点，而 Button 基类
+// 自带 shrink-0、Trigger 又指定了 w-[212px]，于是整行最小宽度被钉死为 244px。放在
+// grid-cols-2 单元格（宽约 201px）里时该行撑破单元格——右侧清除按钮越过对话框内容盒，
+// 对话框出现横向原生滚动条；窄屏（手机）更会把相邻列的框压在一起。故 Trigger 用
+// shrink 覆盖基类的 shrink-0、再加 min-w-0 允许收缩到内容最小宽以下，文本用 truncate
+// 截断（与 date-range-picker 的 Trigger 同款写法），清除按钮 shrink-0 保持完整。
 // 值格式与 datetime-local 一致：'YYYY-MM-DDTHH:mm'（本地时区），'' = 未设置；
 // 页面侧沿用 fmt.toRFC3339 转 RFC3339，不改过滤数据流。
 // 交互：点按钮打开 → 选日期（保留原时间，无时间则补 00:00，不关闭——还需选时间）
@@ -70,7 +76,7 @@ export function DateTimePicker({ value, onChange, id, className }: DateTimePicke
   }
 
   return (
-    <div className={cn("flex items-center gap-1", className)}>
+    <div className={cn("flex min-w-0 items-center gap-1", className)}>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger
           render={
@@ -79,12 +85,13 @@ export function DateTimePicker({ value, onChange, id, className }: DateTimePicke
               id={id}
               data-empty={!value}
               aria-label={t("datePicker.selectDate")}
-              className="w-[212px] justify-between text-left font-normal data-[empty=true]:text-muted-foreground"
+              className="w-[212px] min-w-0 shrink justify-between text-left font-normal data-[empty=true]:text-muted-foreground"
             />
           }
         >
-          {value ? display : <span>{t("datePicker.selectDate")}</span>}
-          <ChevronDownIcon className="size-4" />
+          {/* truncate：收缩时截断而非撑破单元格（overflow 非 visible 即让 flex 最小尺寸归零） */}
+          <span className="truncate">{value ? display : t("datePicker.selectDate")}</span>
+          <ChevronDownIcon className="size-4 shrink-0" />
         </PopoverTrigger>
         <PopoverContent align="start" className="w-auto p-0">
           <Calendar

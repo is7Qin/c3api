@@ -424,7 +424,7 @@ export default function RedemptionCodes() {
           ) : (
             <>
               <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>{t('redemptions.typeLabel')}</Label>
                     <Select
@@ -450,7 +450,7 @@ export default function RedemptionCodes() {
                   <Label htmlFor="rc-remark">{t('redemptions.remarkLabel')}</Label>
                   <Input id="rc-remark" value={genForm.remark} placeholder={t('redemptions.remarkPlaceholder')} onChange={e => updateGenForm({ remark: e.target.value })} />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="rc-expires">{t('redemptions.expiresAtLabel')}</Label>
                     <DateTimePicker id="rc-expires" value={genForm.expires_at} onChange={v => updateGenForm({ expires_at: v })} />
@@ -467,7 +467,7 @@ export default function RedemptionCodes() {
                     )}
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="rc-max">{t('redemptions.maxUsesLabel')}</Label>
                     <Input id="rc-max" type="number" min={1} value={genForm.max_uses} onChange={e => updateGenForm({ max_uses: e.target.value })} />
