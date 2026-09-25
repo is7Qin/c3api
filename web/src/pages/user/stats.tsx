@@ -16,7 +16,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { browserTimeZone, fmtTTFT, formatDateTime, localOffsetSuffix, toRFC3339 } from '@/components/fmt'
+import { alignStatsWindow, browserTimeZone, fmtTTFT, formatDateTime, localOffsetSuffix, toRFC3339 } from '@/components/fmt'
 import { userApi } from '@/lib/api/client'
 import { useDebounced } from '@/lib/use-debounced'
 
@@ -56,7 +56,15 @@ export default function UserStats() {
     // timezone = 浏览器 IANA 时区（服务端按本地桶界精确聚合；label 用 new Date
     // 本地渲染恰一次）。TTFT 卡片不发送 timezone：其数值为绝对区间分位数，与
     // 请求时区无关（服务端缓存键亦不含区），前端带上只会碎片化 queryKey。
-    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, granularity, model: debouncedModel || undefined, timezone: browserTimeZone() }),
+    // 窗口先对齐 UTC 整点：/api/user/stats 同样落到 QueryEntityTrend 的
+    // validateZoneSpan，界不齐时弃用卷积表改扫原始行，超保留期 → 400
+    //（详见 fmt.alignStatsWindow 注释）。只对齐查询参数，选择器展示保持原样。
+    () => ({
+      ...alignStatsWindow(Date.parse(toRFC3339(range.from)!), Date.parse(toRFC3339(range.to)!)),
+      granularity,
+      model: debouncedModel || undefined,
+      timezone: browserTimeZone(),
+    }),
     [range, granularity, debouncedModel]
   )
   const { data, isLoading, isError, error } = useQuery({

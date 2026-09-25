@@ -87,6 +87,25 @@ export function defaultLogRange(): { from: string; to: string } {
   return { from: local(from), to: local(to) }
 }
 
+// 统计窗口对齐 UTC 整点（request-browser-timezone-stats 的硬前提，勿省）。
+// 卷积表（usage_stats/usage_entity_stats）桶界恒 UTC 整点，服务端
+// domain.ZoneCubeExact 要求**窗口两端恒 UTC 整点**才走卷积表快路径；界不齐
+// （例如毫秒精度的 now-7d → now）一律被判为「无法精确重组」而改扫原始明细行
+// ——原始行路径受保留期约束（上限远小于 7/30/90 天）→ 显式 400。即：界不齐会
+// 让 7 天以上的窗口**必然失败**，且卷积表快路径永远用不上。
+// 故请求前把两端**同向向上**取整到整点：跨度因此恒等于请求的 hours（服务端
+// 上限判定是 to-from > max，必须保持不超），to 落在进行中的小时上（把当前小时
+// 纳入，与弹窗尾窗补行 [末桶起点, now) 的语义一致；服务端允许 to 在未来，
+// 原始行端点只校验 from < to）。两端必须同向——一端向下取整会把跨度撑出上限
+// （90d 窗会被判 to-from > 90d 而 400）。
+export function alignStatsWindow(fromMs: number, toMs: number): { from: string; to: string } {
+  const HOUR = 3_600_000
+  return {
+    from: new Date(Math.ceil(fromMs / HOUR) * HOUR).toISOString(),
+    to: new Date(Math.ceil(toMs / HOUR) * HOUR).toISOString(),
+  }
+}
+
 // 逗号列表截断展示，完整内容放 title。
 export function commaList(items: string[] | undefined, max = 3): { text: string; full: string } {
   const full = items?.join(', ') ?? ''

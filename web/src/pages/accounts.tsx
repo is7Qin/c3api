@@ -29,7 +29,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
-import { browserTimeZone, fmtTokens, formatPercent, formatDateTime, toRFC3339, truncate } from '@/components/fmt'
+import { alignStatsWindow, browserTimeZone, fmtTokens, formatPercent, formatDateTime, toRFC3339, truncate } from '@/components/fmt'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
@@ -460,16 +460,22 @@ export default function Accounts() {
   const range = USAGE_RANGES.find(r => r.key === rangeKey) ?? USAGE_RANGES[1]
   // 分桶粒度（≤72h → hour，否则 day）——分桶表时间列按粒度截断（day 只显示日期）
   const granularity: 'hour' | 'day' = range.hours <= 72 ? 'hour' : 'day'
-  const from = new Date(Date.now() - range.hours * 3600_000).toISOString()
-  const to = new Date().toISOString()
+  // 窗口两端必须对齐 UTC 整点：服务端只对整点界窗口走卷积表快路径，毫秒精度的
+  // now-N → now 会被判为「无法精确重组」而改扫原始明细行，受保留期约束 → 7d/30d/90d
+  // 必然 400（根因见 fmt.alignStatsWindow 注释）。三条查询共用同一窗口，避免
+  // 汇总卡片与分桶表口径不一致。now 只取一次：两次取值若跨整点会让跨度多出一小时。
+  const now = Date.now()
+  const { from, to } = alignStatsWindow(now - range.hours * 3600_000, now)
   const detailQ = useQuery({
     queryKey: ['account-usage-detail', usageDetail?.ID, rangeKey],
     queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from, to }),
     enabled: !!usageDetail,
   })
   const statsQ = useQuery({
-    // 分桶 = 按浏览器时区本地桶界聚合（30d/90d 窗跨 DST 或半小时偏移时区落在
-    // 原始行保留窗外 → 服务端 400，弹窗表格回落提示；键含时区防串台）。
+    // 分桶 = 按浏览器时区本地桶界聚合。窗口已对齐 UTC 整点，故恒整点无 DST 时区
+    // （含 UTC 与 +8 这类）走 180 天卷积表；仅窗口跨 DST 跳变或时区偏移非整小时
+    // （:30/:45）时服务端才回落原始明细行，那时超出保留期的窗口 → 400，弹窗表格
+    // 回落错误提示。键含时区防串台。
     queryKey: ['account-stats-detail', usageDetail?.ID, rangeKey, browserTimeZone()],
     queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, from, to, granularity, timezone: browserTimeZone() }),
     enabled: !!usageDetail,
