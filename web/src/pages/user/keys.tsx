@@ -363,7 +363,7 @@ export default function UserKeys() {
                   </Select>
                   {selectableGroups.length === 0 && <p className="text-xs text-muted-foreground">{t('user.keys.groupEmpty')}</p>}
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="uk-max">{t('user.keys.maxLabel')}</Label>
                     <Input id="uk-max" type="number" min={0} value={createForm.max_concurrency} onChange={e => updateCreate({ max_concurrency: e.target.value })} />
@@ -410,7 +410,7 @@ export default function UserKeys() {
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="uk-emax">{t('user.keys.maxLabel')}</Label>
                 <Input id="uk-emax" type="number" min={0} value={editForm.max_concurrency} onChange={e => setEditForm(f => ({ ...f, max_concurrency: e.target.value }))} />

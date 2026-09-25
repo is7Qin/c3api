@@ -480,7 +480,7 @@ function VariantsDialog({
                   <Input id="var-call" type="number" min={0} step="any" value={setPricePerCallStr} onChange={e => { setSetPricePerCallStr(e.target.value); setRowErr(null) }} placeholder="0.01" />
                 </div>
               ) : mode === 'image' ? (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="var-img-in">{t('pricing.variants.setImgInTokLabel')}</Label>
                     <Input id="var-img-in" type="number" min={0} step="any" value={setImgInStr} onChange={e => { setSetImgInStr(e.target.value); setRowErr(null) }} placeholder="0.001" />
@@ -495,7 +495,7 @@ function VariantsDialog({
                   </div>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="var-in">{t('pricing.variants.setInputLabel')}</Label>
                     <Input id="var-in" type="number" min={0} step="any" value={setInputStr} onChange={e => { setSetInputStr(e.target.value); setRowErr(null) }} placeholder="0.001" />
@@ -547,7 +547,7 @@ function VariantsDialog({
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupTokenRange')}</p>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label htmlFor="var-ctx-min">{t('pricing.variants.ctxMinLabel')}</Label>
                       <Input id="var-ctx-min" type="number" min={0} step={1} value={ctxMinStr} onChange={e => { setCtxMinStr(e.target.value); setRowErr(null) }} placeholder="0" />
@@ -560,7 +560,7 @@ function VariantsDialog({
                 </div>
                 <div className="space-y-1.5">
                   <p className="text-xs font-medium text-muted-foreground">{t('pricing.variants.groupWindow')}</p>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label htmlFor="var-time-start">{t('pricing.variants.timeStartLabel')}</Label>
                       <Input id="var-time-start" value={timeStart} onChange={e => { setTimeStart(e.target.value); setRowErr(null) }} placeholder="09:00" />
@@ -1176,7 +1176,7 @@ export default function PricingPage() {
                 <p className="text-xs text-muted-foreground">{t('pricing.takeoverHint')}</p>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label htmlFor="pf-input">{t('pricing.promptLabel')}</Label>
                 <Input id="pf-input" type="number" min={0} step="any" value={form.inputPerM} onChange={e => { setForm(f => ({ ...f, inputPerM: e.target.value })); setFormErr(null) }} />
