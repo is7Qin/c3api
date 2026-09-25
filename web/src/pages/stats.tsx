@@ -24,7 +24,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from '@/components/ui/combobox'
-import { browserTimeZone, fmtTTFT, formatCost, formatDateTime, localOffsetSuffix, toRFC3339, truncate } from '@/components/fmt'
+import { alignStatsWindow, browserTimeZone, fmtTTFT, formatCost, formatDateTime, localOffsetSuffix, toRFC3339, truncate } from '@/components/fmt'
 
 type Metric = 'requests' | 'tokens'
 type Granularity = 'hour' | 'day'
@@ -59,7 +59,14 @@ export default function Stats() {
   const params = useMemo(
     // timezone = 浏览器 IANA 时区——服务端按本地桶界精确聚合；label 用
     // new Date 本地渲染恰一次（与请求时区一致，见 fmt.browserTimeZone）。
-    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, granularity, timezone: browserTimeZone() }),
+    // 窗口先对齐 UTC 整点：界不齐时服务端弃用卷积表改扫原始明细行，超出保留期的
+    // 窗口直接 400（详见 fmt.alignStatsWindow 注释）。只对齐**查询参数**，选择器
+    // 展示的 range 保持用户原样。
+    () => ({
+      ...alignStatsWindow(Date.parse(toRFC3339(range.from)!), Date.parse(toRFC3339(range.to)!)),
+      granularity,
+      timezone: browserTimeZone(),
+    }),
     [range, granularity]
   )
   const { data, isLoading, isError, error } = useQuery({
