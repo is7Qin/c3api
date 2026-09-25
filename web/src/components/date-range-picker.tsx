@@ -40,10 +40,15 @@ export function DateRangePicker({
   value,
   onChange,
   className,
+  minDate,
 }: {
   value: DateRangeValue
   onChange: (v: DateRangeValue) => void
   className?: string
+  /** 可选起点下界（含）：来自 /stats/capabilities——早于它的窗口在任何存储上都会
+   *  被服务端拒绝，故日历直接禁选（裁剪规则见 lib/stats-capabilities.ts）。
+   *  undefined = 能力未知 ⇒ 不裁剪（不假装有上限）。 */
+  minDate?: Date
 }) {
   const { t } = useTranslation()
   const [open, setOpen] = useState(false)
@@ -114,7 +119,14 @@ export function DateRangePicker({
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto p-0">
-        <Calendar mode="range" numberOfMonths={2} selected={selected} onSelect={onSelect} defaultMonth={selected?.from} />
+        <Calendar
+          mode="range"
+          numberOfMonths={2}
+          selected={selected}
+          onSelect={onSelect}
+          defaultMonth={selected?.from}
+          disabled={minDate ? { before: minDate } : undefined}
+        />
         <div className="flex items-center gap-3 border-t p-3">
           <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
             {t('dateRange.from')}

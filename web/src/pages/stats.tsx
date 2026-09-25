@@ -24,7 +24,9 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList } from '@/components/ui/combobox'
-import { alignStatsWindow, browserTimeZone, fmtTTFT, formatCost, formatDateTime, localOffsetSuffix, toRFC3339, truncate } from '@/components/fmt'
+import { browserTimeZone, fmtTTFT, formatCost, formatDateTime, localOffsetSuffix, toRFC3339, truncate } from '@/components/fmt'
+import { StatsWindowNotice } from '@/components/stats-window-notice'
+import { compositeMaxSpanSeconds } from '@/lib/stats-capabilities'
 
 type Metric = 'requests' | 'tokens'
 type Granularity = 'hour' | 'day'
@@ -59,11 +61,12 @@ export default function Stats() {
   const params = useMemo(
     // timezone = 浏览器 IANA 时区——服务端按本地桶界精确聚合；label 用
     // new Date 本地渲染恰一次（与请求时区一致，见 fmt.browserTimeZone）。
-    // 窗口先对齐 UTC 整点：界不齐时服务端弃用卷积表改扫原始明细行，超出保留期的
-    // 窗口直接 400（详见 fmt.alignStatsWindow 注释）。只对齐**查询参数**，选择器
-    // 展示的 range 保持用户原样。
+    // 窗口**不做客户端对齐**：界不齐时由服务端归一化（两端向后取整到整点）并用
+    // X-Stats-Effective-From/To 回显生效窗口——规则上移到唯一 owner（domain.Admit），
+    // 客户端不再自证自己无法证明的不变式。选择器展示的 range 保持用户原样。
     () => ({
-      ...alignStatsWindow(Date.parse(toRFC3339(range.from)!), Date.parse(toRFC3339(range.to)!)),
+      from: toRFC3339(range.from)!,
+      to: toRFC3339(range.to)!,
       granularity,
       timezone: browserTimeZone(),
     }),
@@ -138,6 +141,20 @@ export default function Stats() {
     [labeledRows]
   )
 
+  // 统计能力（本部署能查多久）：per-deployment 常量，按部署缓存（staleTime 无限，
+  // 服务端对该端点"只读、无参数、可按部署缓存"）。用途 = 选择器裁剪：超过
+  // 可服务跨度的窗口在任何存储上都会被拒，直接禁选（规则见 lib/stats-capabilities）。
+  const capsQ = useQuery({
+    queryKey: ['stats-capabilities'],
+    queryFn: () => api.getStatsCapabilities(),
+    staleTime: Infinity,
+  })
+  // 本页两个查询（趋势图 + TTFT 卡片）共用同一 range，故取下界。能力未就绪 ⇒ 不裁剪。
+  const maxSpanSeconds = compositeMaxSpanSeconds(capsQ.data, ['trend', 'ttft_sketch'])
+  // 挂载时固定一次（渲染期不读时钟——与 defaultRange 同纪律）。
+  const [mountedMs] = useState(() => Date.now())
+  const minDate = maxSpanSeconds === undefined ? undefined : new Date(mountedMs - maxSpanSeconds * 1000)
+
   return (
     <div className="space-y-6">
       <div>
@@ -157,7 +174,7 @@ export default function Stats() {
         <div className="flex flex-nowrap items-start gap-5">
           <div className="w-[14rem] shrink-0 space-y-1.5">
             <Label>{t('dateRange.label')}</Label>
-            <DateRangePicker value={range} onChange={setRange} />
+            <DateRangePicker value={range} onChange={setRange} minDate={minDate} />
           </div>
           <div className="shrink-0 space-y-1.5">
             <Label>{t('stats.granularity')}</Label>
@@ -188,7 +205,10 @@ export default function Stats() {
         </CardHeader>
         <CardContent>
           {isError ? (
-            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+            <div>
+              <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+              <StatsWindowNotice error={error} />
+            </div>
           ) : isLoading ? (
             <Skeleton className="h-[320px] w-full" />
           ) : labeledRows.length === 0 ? (
@@ -301,7 +321,10 @@ export default function Stats() {
 
       <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0">
         {isError ? (
-          <p className="p-4 text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+          <div className="p-4">
+            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+            <StatsWindowNotice error={error} />
+          </div>
         ) : (
           <ScrollArea className="max-h-[calc(100dvh-20rem)] min-h-0 rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:border-[rgba(148,180,220,0.32)]" showHorizontal data-od-id="table-scroll-stats">
           <Table className="min-w-[1100px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">

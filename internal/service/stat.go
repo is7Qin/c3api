@@ -18,23 +18,17 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	serviceerr "github.com/is7qin/c3api/internal/service/errors"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// 校验上限常量（spec §5 校验规则；TTFT 双分支各自独立上限——钉死）。
+// 校验上限常量（spec §5 校验规则；TTFT 双分支各自独立上限——钉死）。统计面
+// 的窗口上限已收敛到 domain.StatsKinds 的 CostCap（domain.Admit 判定），此处
+// 只留路由观测面（routing.go/routing_frontier.go）共用的跨度上限。
 const (
-	// MaxStatsTrendSpan trend/top/entity-trend 共用窗口跨度上限（90 天）：
-	// cube 查询按小时桶扫描，90d × 维度基数是交互式端点的合理上界。
-	MaxStatsTrendSpan = 90 * 24 * time.Hour
-
-	// MaxStatsSketchBuckets sketch 分支桶数上限 = 2160（= 90d × 24 小时桶，
-	// 与 MaxStatsTrendSpan 自洽——同一窗口两种表述）。sketch 走 cube hist
-	// 服务端合并（array_agg 带回逐行直方图），桶数直接决定合并成本。
-	MaxStatsSketchBuckets = 2160
-
-	// MaxStatsTTFTExactSpan exact 分支窗口跨度上限（168h = 7 天）：打
-	// usage_logs 原始行 percentile_cont，无预聚合保护，窗口必须远小于走
-	// 预聚合 cube 的 sketch 分支。
-	MaxStatsTTFTExactSpan = 168 * time.Hour
+	// MaxStatsTrendSpan 路由观测窗口跨度上限（90 天）——与 KIND 矩阵的 cube
+	// 成本上限是同一个 90d（单源：domain.MaxCubeSpan）。
+	MaxStatsTrendSpan = domain.MaxCubeSpan
 
 	// DefaultStatsTopLimit top 排行缺省条数（repo 层 ≤0 归一同值，双保险）。
 	DefaultStatsTopLimit = 20
@@ -46,21 +40,6 @@ const (
 	// ttftQueryBudget TTFT 冷查询预算上界（实测最坏 ~7s；30s 为宽裕封顶
 	// ——配合 WithoutCancel 脱钩 leader 取消，见 QueryStatsTTFT 注释）。
 	ttftQueryBudget = 30 * time.Second
-
-	// MaxStatsRawSpan 浏览器时区原始行分组路径窗口上限的缺省值（step 7 裁决：
-	// 支持 horizon 对齐既有关于保留期，宁可 400 不静默残缺）。非精确时区或
-	// 窗口界劈开卷积行的分组读走 usage_logs + err_logs 原始行（repository
-	// stat_raw_read.go）——受 usage.log_retention_days（默认 30d）与
-	// usage.errlog_retention_days（默认 7d，日级分区 + 1 天 DST/日界余量）
-	// 双重约束；取两者都完整覆盖的最保守窗口 8 天（7d errlog + 1d DST 日历
-	// 余量——overview 7 日窗在 fall-back 日本地跨度 24h+1h×7 ≤ 8d）。实际
-	// horizon 由 Service.statsRawSpan 承载（New 经 ServiceDeps.
-	// StatsRawRetentionDays(min(log, errlog) 正保留) 换算部署配置——配置更短
-	// 则更严，配置更长不放水超出本文档化的保守窗口之外仍按 days+1 计）。恒
-	// 整点无 DST 时区且双界对齐（含 UTC 缺省）走 cube 重组，窗口维持
-	// MaxStatsTrendSpan（90d，cube 保留 180d）。部署若把 errlog/usage 保留期
-	// 调低，老桶自然缺行——OpenAPI 描述与 repository 注释均文档化该耦合。
-	MaxStatsRawSpan = 8 * 24 * time.Hour
 )
 
 // statEntityTypes 实体类型白名单（与 repository.statEntityCols 键集一致——
@@ -113,25 +92,45 @@ type TTFTQuery struct {
 	Model      string
 }
 
-// QueryStatsTrend 时间趋势（校验顺序：必填 → to>from → 跨度 → 粒度白名单 →
-// 非 cube 时区原始行 horizon）。
-func (s *Service) QueryStatsTrend(ctx context.Context, q TrendQuery) ([]*domain.StatBucket, error) {
-	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
-		return nil, err
-	}
-	if err := s.validateZoneSpan(q.Zone, q.From, q.To); err != nil {
-		return nil, err
+// StatsRows 一次分组统计读的结果：桶 + 该次读取**实际使用**的执行计划（生效
+// 窗口 + 实际存储）。泛型桶类型让 trend（*domain.StatBucket）与 entity-trend
+// （*domain.EntityStatBucket）共用同一结果形状。
+//
+// Exec 随结果一起回传，是响应回显头（spec §4.4(b)）的**唯一**取值来源——handler
+// 绝不重算 Admit（判定 owner 只有 domain.Admit 一处，重算即第二份判定，正是本
+// spec 的头号病根）。
+type StatsRows[B any] struct {
+	Buckets []B
+	Exec    domain.Exec
+}
+
+// QueryStatsTrend 时间趋势：domain.Admit 判定（窗口 → cube/raw → cost →
+// coverage）→ 按 Exec.Storage 选 Cube/Raw 方法 → 降级 Warn（节流）。粒度白名单
+// 在判定之后（与既有校验序一致）。
+func (s *Service) QueryStatsTrend(ctx context.Context, q TrendQuery) (StatsRows[*domain.StatBucket], error) {
+	exec, err := s.admitStats(domain.KindTrend, q.Zone, q.From, q.To)
+	if err != nil {
+		return StatsRows[*domain.StatBucket]{}, err
 	}
 	unit, err := normalizeGranularity(q.Granularity)
 	if err != nil {
-		return nil, err
+		return StatsRows[*domain.StatBucket]{}, err
 	}
-	return s.store.StatsTrend(ctx, q.From, q.To, unit, q.GroupID, q.Model, q.Zone)
+	var rows []*domain.StatBucket
+	if exec.Storage == domain.StatsStorageCube {
+		rows, err = s.store.StatsTrendCube(ctx, exec.From, exec.To, unit, q.GroupID, q.Model, exec.Zone)
+	} else {
+		rows, err = s.store.StatsTrendRaw(ctx, exec.From, exec.To, unit, q.GroupID, q.Model, exec.Zone)
+	}
+	return StatsRows[*domain.StatBucket]{Buckets: rows, Exec: exec}, err
 }
 
 // QueryStatsTop 实体排行（limit 归一化后透传；排序键/实体类型白名单前置拦截）。
+// KindTop 无分组、只有 cube 一种候选存储（StatsKinds 的 Storages[0]），故执行
+// 方法单一——窗口仍取 Exec（判定与执行同源）。
 func (s *Service) QueryStatsTop(ctx context.Context, q TopQuery) ([]*domain.EntityStatBucket, error) {
-	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
+	exec, err := s.admitStats(domain.KindTop, time.UTC, q.From, q.To)
+	if err != nil {
 		return nil, err
 	}
 	if !statEntityTypes[q.EntityType] {
@@ -144,49 +143,54 @@ func (s *Service) QueryStatsTop(ctx context.Context, q TopQuery) ([]*domain.Enti
 	if limit <= 0 {
 		limit = DefaultStatsTopLimit
 	}
-	return s.store.StatsTop(ctx, q.From, q.To, q.EntityType, q.By, min(limit, MaxStatsListLimit))
+	return s.store.StatsTop(ctx, exec.From, exec.To, q.EntityType, q.By, min(limit, MaxStatsListLimit))
 }
 
 // QueryEntityTrend 单实体时间趋势（实体类型白名单前置拦截；EntityID 合法性由
-// 数据语义兜底——卷积表无 ID=0 行，零值自然返回空集）。
-func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) ([]*domain.EntityStatBucket, error) {
-	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
-		return nil, err
-	}
-	if err := s.validateZoneSpan(q.Zone, q.From, q.To); err != nil {
-		return nil, err
+// 数据语义兜底——卷积表无 ID=0 行，零值自然返回空集）。判定/执行/告警同
+// QueryStatsTrend。
+func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) (StatsRows[*domain.EntityStatBucket], error) {
+	exec, err := s.admitStats(domain.KindEntityTrend, q.Zone, q.From, q.To)
+	if err != nil {
+		return StatsRows[*domain.EntityStatBucket]{}, err
 	}
 	unit, err := normalizeGranularity(q.Granularity)
 	if err != nil {
-		return nil, err
+		return StatsRows[*domain.EntityStatBucket]{}, err
 	}
 	if !statEntityTypes[q.EntityType] {
-		return nil, ErrInvalidInput
+		return StatsRows[*domain.EntityStatBucket]{}, ErrInvalidInput
 	}
-	return s.store.StatsEntityTrend(ctx, q.From, q.To, unit, q.EntityType, q.EntityID, q.Model, q.Zone)
+	var rows []*domain.EntityStatBucket
+	if exec.Storage == domain.StatsStorageCube {
+		rows, err = s.store.StatsEntityTrendCube(ctx, exec.From, exec.To, unit, q.EntityType, q.EntityID, q.Model, exec.Zone)
+	} else {
+		rows, err = s.store.StatsEntityTrendRaw(ctx, exec.From, exec.To, unit, q.EntityType, q.EntityID, q.Model, exec.Zone)
+	}
+	return StatsRows[*domain.EntityStatBucket]{Buckets: rows, Exec: exec}, err
 }
 
-// QueryStatsTTFT TTFT 分位数卡片，双分支独立上限：
-//   - EntityType == ""：sketch 分支（cube hist 服务端合并），桶数 ≤
-//     MaxStatsSketchBuckets；
+// QueryStatsTTFT TTFT 分位数卡片，双分支各自独立的 kind（成本/覆盖随行）：
+//   - EntityType == ""：sketch 分支（cube hist 服务端合并），成本上限 = 矩阵的
+//     cube 90d（2160 小时桶，与桶数上限是同一窗口的两种表述）；
 //   - 非空：exact 分支（usage_logs percentile_cont），必须配 EntityID ≠ 0 且
-//     entityType 过白名单，跨度 ≤ MaxStatsTTFTExactSpan。
+//     entityType 过白名单，成本上限 = 矩阵的 raw 168h。
 //
-// 校验通过后经 statsTTFTC TTL 缓存（验收遗留尾巴：exact 冷缓存 × 系统饱和
-// 排序致负载 p99 5-6s；仪表盘同参轮询命中率天然高，陈旧 ≤30s 为展示面可
-// 接受语义——overview 先例）。
+// **Admit 在 statsTTFTC 缓存之前**（spec §4.5 硬约束）：被拒绝的窗口不得命中
+// 旧缓存。校验通过后经 TTL 缓存（验收遗留尾巴：exact 冷缓存 × 系统饱和排序致
+// 负载 p99 5-6s；仪表盘同参轮询命中率天然高，陈旧 ≤30s 为展示面可接受语义
+// ——overview 先例）。
 func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFTSummary, error) {
-	if q.EntityType == "" {
-		if err := validateStatsWindow(q.From, q.To, MaxStatsSketchBuckets*time.Hour); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := validateStatsWindow(q.From, q.To, MaxStatsTTFTExactSpan); err != nil {
-			return nil, fmt.Errorf("self/entity ttft window exceeds %s exact-track limit: %w", MaxStatsTTFTExactSpan, err)
-		}
-		if !statEntityTypes[q.EntityType] || q.EntityID == 0 {
-			return nil, ErrInvalidInput
-		}
+	kind := domain.KindTTFTSketch
+	if q.EntityType != "" {
+		kind = domain.KindTTFTExact
+	}
+	exec, err := s.admitStats(kind, time.UTC, q.From, q.To)
+	if err != nil {
+		return nil, err
+	}
+	if q.EntityType != "" && (!statEntityTypes[q.EntityType] || q.EntityID == 0) {
+		return nil, ErrInvalidInput
 	}
 	key := q.EntityType + "|" + strconv.FormatInt(q.EntityID, 10) + "|" + q.Model + "|" +
 		strconv.FormatInt(q.From.Unix(), 10) + "|" + strconv.FormatInt(q.To.Unix(), 10)
@@ -197,15 +201,15 @@ func (s *Service) QueryStatsTTFT(ctx context.Context, q TTFTQuery) (*domain.TTFT
 		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ttftQueryBudget)
 		defer cancel()
 		if q.EntityType == "" {
-			return s.store.StatsTTFTSketch(qctx, q.From, q.To, q.Model)
+			return s.store.StatsTTFTSketch(qctx, exec.From, exec.To, q.Model)
 		}
-		return s.store.StatsTTFTExact(qctx, q.From, q.To, q.EntityType, q.EntityID, q.Model)
+		return s.store.StatsTTFTExact(qctx, exec.From, exec.To, q.EntityType, q.EntityID, q.Model)
 	})
 }
 
 // UserStats 用户台自己的用量趋势：忽略调用方传入的任何 entity 参数，userID
 // 钉死注入（JWT 身份即过滤条件，防越权只看 service 层这一道钉死）。
-func (s *Service) UserStats(ctx context.Context, userID int64, q EntityTrendQuery) ([]*domain.EntityStatBucket, error) {
+func (s *Service) UserStats(ctx context.Context, userID int64, q EntityTrendQuery) (StatsRows[*domain.EntityStatBucket], error) {
 	q.EntityType = "user"
 	q.EntityID = userID
 	return s.QueryEntityTrend(ctx, q)
@@ -218,20 +222,126 @@ func (s *Service) UserStatsTTFT(ctx context.Context, userID int64, q TTFTQuery) 
 	return s.QueryStatsTTFT(ctx, q)
 }
 
-// validateStatsWindow 统计窗口校验（spec §5 顺序：必填 → to>from → 跨度）。
-// 违规一律 ErrInvalidInput（errors 包既有校验哨兵族成员，httpface 映射 400
-// ——spec 行文中的 "ErrInvalidArgument" 即此哨兵，不另立重复语义的新哨兵）。
-func validateStatsWindow(from, to time.Time, max time.Duration) error {
-	if from.IsZero() || to.IsZero() {
-		return ErrInvalidInput
+// StatsCapabilities 能力端点（spec §4.4(a)）的数据面：把 domain 的
+// StatsKinds × Retention 机械投影回传。保留期取自本 Service 注入的那一份
+// ——与 admitStats 传给 domain.Admit 的是**同一份内存**，故报告与实际判定不会
+// 漂移（构造同源，不靠测试保证）。
+func (s *Service) StatsCapabilities() domain.Capabilities {
+	return domain.StatsCapabilities(s.retention)
+}
+
+// ——————— 统计窗口判定接线（spec §4.1 判定 / §4.3 可观测 / §4.4(d) 错误身份） ———————
+
+// StatsWindowError 统计窗口拒绝的线缆载体——**类型别名**指向
+// serviceerr.StatsWindowError（同一类型的第二个名字，不是第二套类型；与
+// ErrInvalidInput 等哨兵的 re-export 同一手法）。载体必须住在叶子包里才对
+// httpface 可见：httpface 不能 import internal/service（service → auth →
+// httpface 已成环），详见该类型注释。
+type StatsWindowError = serviceerr.StatsWindowError
+
+// statsWindowErr domain 判定结果 → 线缆错误（nil 透传）。
+func statsWindowErr(err *domain.StatsWindowError) error {
+	if err == nil {
+		return nil
 	}
-	if !to.After(from) {
-		return ErrInvalidInput
+	return &StatsWindowError{StatsWindowError: *err}
+}
+
+// admitStats 判定 + 降级告警的**唯一接线点**：调 domain.Admit（唯一判定入口，
+// 纯函数：保留期与时钟都以参数传入），拒绝时转成线缆载体错误，降级/位移时按
+// 节流规则发 Warn。调用点因此在同一视线范围内完成「判定 → 读取 Exec.Storage →
+// 执行 store 的 Cube/Raw 方法」。
+func (s *Service) admitStats(kind domain.StatsKindID, zone *time.Location, from, to time.Time) (domain.Exec, error) {
+	exec, werr := domain.Admit(kind, s.retention, zone, from, to, s.statsClock())
+	if werr != nil {
+		return domain.Exec{}, statsWindowErr(werr)
 	}
-	if to.Sub(from) > max {
-		return ErrInvalidInput
+	s.warnStatsPlan(kind, zone, from, exec)
+	return exec, nil
+}
+
+// statsClock 判定与 Warn 节流共用的当前时间源（statsNow 注入；nil = time.Now）。
+func (s *Service) statsClock() time.Time {
+	if s.statsNow != nil {
+		return s.statsNow()
 	}
-	return nil
+	return time.Now()
+}
+
+// warnStatsPlan 降级/位移告警（spec §4.3；Admit 自身不打日志——domain 零 logx
+// 依赖，可观测与判定同位置=本包装）：
+//   - Raw 降级：`stats: falling back to raw rows`，字段 reason（offset|dst|
+//     span_below_grid）/kind/timezone/from/to/span_seconds；
+//   - 窗口位移：`stats: window shifted to hour boundary`，字段 kind/timezone/
+//     requested_from/effective_from/shift_seconds。
+//
+// 精确路径与拒绝路径都零 Warn（后者的可观测性由 400 机读字段承载，也不与节流
+// 规则纠缠）。s.log 是可选字段（测试与降级路径可字面量构造 Service）——**必须
+// 判空**：pkg/logx 的 Warn 直接解引用接收者。
+func (s *Service) warnStatsPlan(kind domain.StatsKindID, zone *time.Location, reqFrom time.Time, exec domain.Exec) {
+	if s.log == nil || exec.Reason == domain.StatsPlanExact {
+		return
+	}
+	zoneName := zoneLabel(zone)
+	if exec.Reason == domain.StatsPlanWindowShifted {
+		if !s.warnAllowed(kind, zoneName, "shift") {
+			return
+		}
+		s.log.Warn("stats: window shifted to hour boundary",
+			logx.String("kind", string(kind)),
+			logx.String("timezone", zoneName),
+			logx.String("requested_from", reqFrom.UTC().Format(time.RFC3339)),
+			logx.String("effective_from", exec.From.UTC().Format(time.RFC3339)),
+			logx.Int64("shift_seconds", int64(exec.From.Sub(reqFrom)/time.Second)))
+		return
+	}
+	if !s.warnAllowed(kind, zoneName, exec.Reason.String()) {
+		return
+	}
+	s.log.Warn("stats: falling back to raw rows",
+		logx.String("reason", exec.Reason.String()),
+		logx.String("kind", string(kind)),
+		logx.String("timezone", zoneName),
+		logx.String("from", exec.From.UTC().Format(time.RFC3339)),
+		logx.String("to", exec.To.UTC().Format(time.RFC3339)),
+		logx.Int64("span_seconds", int64(exec.To.Sub(exec.From)/time.Second)))
+}
+
+// warnThrottleKey Warn 节流键：同 (kind, zone 名, reason) 每分钟至多一条。
+type warnThrottleKey struct {
+	kind   domain.StatsKindID
+	zone   string
+	reason string
+}
+
+// warnThrottleEvery 节流窗口（spec §4.3）：日志量级上界 = kind 数 × zone 数 ×
+// reason 数 / 分钟，与请求量无关（Asia/Kolkata 整时区恒 raw 的部署不再按请求刷屏）。
+const warnThrottleEvery = time.Minute
+
+// warnAllowed 判定并登记节流。状态挂在 Service 上（**不用包级单例**：测试构造
+// 大量 Service，包级节流态会在用例间泄漏，把"恰好一条 Warn"的断言变成顺序依赖
+// 的 flake；节流态的生命周期本就该随 Service 而非随进程）。
+func (s *Service) warnAllowed(kind domain.StatsKindID, zone, reason string) bool {
+	now := s.statsClock().Unix()
+	key := warnThrottleKey{kind: kind, zone: zone, reason: reason}
+	s.warnThrottleMu.Lock()
+	defer s.warnThrottleMu.Unlock()
+	if s.warnThrottle == nil {
+		s.warnThrottle = map[warnThrottleKey]int64{}
+	}
+	if last, ok := s.warnThrottle[key]; ok && now-last < int64(warnThrottleEvery/time.Second) {
+		return false
+	}
+	s.warnThrottle[key] = now
+	return true
+}
+
+// zoneLabel Warn 的 timezone 字段（nil = UTC；与 repository 的 zoneName 同语义）。
+func zoneLabel(zone *time.Location) string {
+	if zone == nil {
+		return "UTC"
+	}
+	return zone.String()
 }
 
 // normalizeGranularity 粒度白名单归一化：空 = day（缺省）；hour/day 原样；
@@ -261,39 +371,6 @@ func ResolveTimeZone(raw string) (*time.Location, error) {
 		return nil, fmt.Errorf("service: invalid timezone %q: %w", raw, ErrInvalidInput)
 	}
 	return loc, nil
-}
-
-// validateZoneSpan 原始行分组路径双闸门（step 7 裁决 + 保留兜底）：窗口无法
-// 由 cube 精确重组（界非 UTC 整点劈开卷积小时行，或 DST 偏移漂移 / :30/:45
-// 偏移，domain.ZoneCubeExact == false——与 repository 读面路由同一谓词，校验
-// 与执行永不判岐）时，读走 usage_logs/err_logs 原始行，受保留期双重约束：
-//   - 窗口跨度 > s.statsRawSpan（缺省 MaxStatsRawSpan，main 按双表最小正保留
-//     配置换算）→ 显式 400；statsRawSpan == 0（保留禁用）= 不限；
-//   - from 早于保证存留的 UTC 分区 cutoff（now−statsRawRetentionDays 的日界
-//     截断，与 retention worker DROP 同一保守语义）→ 显式 400——短历史窗口
-//     即使不触跨度上限，起点分区也可能已被 DROP，静默缺行比超窗更危险；
-//     保留禁用（days <= 0）跳过该兜底；to 超出 now 的未来窗不因此拒绝。
-//
-// cube 可精确窗口恒零成本放行。绝不静默返回残缺桶。
-func (s *Service) validateZoneSpan(zone *time.Location, from, to time.Time) error {
-	if domain.ZoneCubeExact(zone, from, to) {
-		return nil
-	}
-	if s.statsRawSpan > 0 && to.Sub(from) > s.statsRawSpan {
-		return fmt.Errorf("service: timezone %v grouping over raw logs supports windows up to %s: %w", zone, s.statsRawSpan, ErrInvalidInput)
-	}
-	if s.statsRawRetentionDays > 0 {
-		now := time.Now
-		if s.statsNow != nil {
-			now = s.statsNow
-		}
-		cutoff := now().AddDate(0, 0, -s.statsRawRetentionDays).UTC().Truncate(24 * time.Hour)
-		if from.Before(cutoff) {
-			return fmt.Errorf("service: timezone %v grouping over raw logs starts before retained partitions (cutoff %s, retention %dd): %w",
-				zone, cutoff.Format(time.RFC3339), s.statsRawRetentionDays, ErrInvalidInput)
-		}
-	}
-	return nil
 }
 
 // —— stats.ttft TTL 缓存（spec-ttft-cache-2026-08-23）——

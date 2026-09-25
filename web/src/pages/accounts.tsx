@@ -29,7 +29,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
-import { alignStatsWindow, browserTimeZone, fmtTokens, formatPercent, formatDateTime, toRFC3339, truncate } from '@/components/fmt'
+import { browserTimeZone, fmtTokens, formatPercent, formatDateTime, toRFC3339, truncate } from '@/components/fmt'
+import { StatsWindowNotice } from '@/components/stats-window-notice'
+import { compositeMaxSpanSeconds } from '@/lib/stats-capabilities'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
@@ -456,27 +458,46 @@ export default function Accounts() {
   // from/to 每次渲染重算但查询 key 不含时间戳——渲染期不重取；弹窗打开（enabled
   // 翻转触发 refetch）/切换范围（key 变化）时 queryFn 拿到当前时刻，滚动/轮询零请求。
   const [usageDetail, setUsageDetail] = useState<AccountView | null>(null)
+  // 统计能力（本部署能查多久）：per-deployment 常量，按部署缓存（staleTime 无限）。
+  // 用途 = 预置范围裁剪：弹窗三条查询（usage_agg + entity_trend + 尾窗 usage_agg）
+  // 都必须成立，故取各 kind 下界——超过它的预置在任何存储上都会被拒，直接不提供
+  //（spec §4.4(a) 的前端用途：证据部署 R=2 下 30d/90d 预置不可服务）。
+  const capsQ = useQuery({
+    queryKey: ['stats-capabilities'],
+    queryFn: () => api.getStatsCapabilities(),
+    staleTime: Infinity,
+  })
+  const maxSpanSeconds = compositeMaxSpanSeconds(capsQ.data, ['usage_agg', 'entity_trend'])
+  const offeredRanges = useMemo(
+    () => (maxSpanSeconds === undefined
+      ? [...USAGE_RANGES]
+      : USAGE_RANGES.filter(r => r.hours * 3600 <= maxSpanSeconds)),
+    [maxSpanSeconds]
+  )
+  // 被裁掉的范围（例如能力未就绪时选了 30d、加载后发现只支持 2d）回落到最长的
+  // 可服务预置——**不**保留一个必然 400 的选择。
   const [rangeKey, setRangeKey] = useState<string>('7d')
-  const range = USAGE_RANGES.find(r => r.key === rangeKey) ?? USAGE_RANGES[1]
+  const offeredKeys: string[] = offeredRanges.map(r => r.key)
+  const activeKey = offeredKeys.includes(rangeKey) ? rangeKey : (offeredKeys[offeredKeys.length - 1] ?? USAGE_RANGES[0].key)
+  const range = USAGE_RANGES.find(r => r.key === activeKey) ?? USAGE_RANGES[1]
   // 分桶粒度（≤72h → hour，否则 day）——分桶表时间列按粒度截断（day 只显示日期）
   const granularity: 'hour' | 'day' = range.hours <= 72 ? 'hour' : 'day'
-  // 窗口两端必须对齐 UTC 整点：服务端只对整点界窗口走卷积表快路径，毫秒精度的
-  // now-N → now 会被判为「无法精确重组」而改扫原始明细行，受保留期约束 → 7d/30d/90d
-  // 必然 400（根因见 fmt.alignStatsWindow 注释）。三条查询共用同一窗口，避免
-  // 汇总卡片与分桶表口径不一致。now 只取一次：两次取值若跨整点会让跨度多出一小时。
-  const now = Date.now()
-  const { from, to } = alignStatsWindow(now - range.hours * 3600_000, now)
+  // 窗口**不做客户端对齐**：界不齐时由服务端归一化（两端向后取整到整点）——
+  // 规则上移到唯一 owner（domain.Admit）。三条查询共用同一窗口，避免汇总卡片与
+  // 分桶表口径不一致；from 由 to 推出，保证两端出自同一次时钟读取。
+  const to = new Date().toISOString()
+  const from = new Date(Date.parse(to) - range.hours * 3600_000).toISOString()
   const detailQ = useQuery({
-    queryKey: ['account-usage-detail', usageDetail?.ID, rangeKey],
+    queryKey: ['account-usage-detail', usageDetail?.ID, activeKey],
     queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from, to }),
     enabled: !!usageDetail,
   })
   const statsQ = useQuery({
-    // 分桶 = 按浏览器时区本地桶界聚合。窗口已对齐 UTC 整点，故恒整点无 DST 时区
-    // （含 UTC 与 +8 这类）走 180 天卷积表；仅窗口跨 DST 跳变或时区偏移非整小时
-    // （:30/:45）时服务端才回落原始明细行，那时超出保留期的窗口 → 400，弹窗表格
-    // 回落错误提示。键含时区防串台。
-    queryKey: ['account-stats-detail', usageDetail?.ID, rangeKey, browserTimeZone()],
+    // 分桶 = 按浏览器时区本地桶界聚合。恒整点无 DST 时区（含 UTC 与 +8 这类）
+    // 走 180 天卷积表；仅窗口跨 DST 跳变或时区偏移非整小时（:30/:45）时服务端才
+    // 回落原始明细行，那时超出保留期的窗口 → 400，弹窗表格回落错误提示。键含
+    // 时区防串台。
+    queryKey: ['account-stats-detail', usageDetail?.ID, activeKey, browserTimeZone()],
     queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, from, to, granularity, timezone: browserTimeZone() }),
     enabled: !!usageDetail,
   })
@@ -490,7 +511,7 @@ export default function Accounts() {
   //（watermark 可停在任意整点）；stats 空数组 → 不查尾窗、分桶表无补行。
   const tailFrom = statsBuckets.length > 0 ? statsBuckets[statsBuckets.length - 1].BucketTime : undefined
   const tailQ = useQuery({
-    queryKey: ['account-stats-tail', usageDetail?.ID, rangeKey, tailFrom],
+    queryKey: ['account-stats-tail', usageDetail?.ID, activeKey, tailFrom],
     queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from: tailFrom!, to }),
     enabled: !!usageDetail && !!tailFrom,
   })
@@ -1648,19 +1669,19 @@ export default function Accounts() {
         <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="shrink-0 px-6 pt-6">
             <DialogTitle>{t('accounts.usageDetail.title', { name: usageDetail?.Name ?? '—', id: usageDetail?.ID })}</DialogTitle>
-            <DialogDescription>{t(`accounts.usageDetail.range.${rangeKey}`)}</DialogDescription>
+            <DialogDescription>{t(`accounts.usageDetail.range.${activeKey}`)}</DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <div className="space-y-4">
             <div className="flex justify-end">
               <Select
-                items={Object.fromEntries(USAGE_RANGES.map(r => [r.key, t(`accounts.usageDetail.range.${r.key}`)]))}
-                value={rangeKey}
+                items={Object.fromEntries(offeredRanges.map(r => [r.key, t(`accounts.usageDetail.range.${r.key}`)]))}
+                value={activeKey}
                 onValueChange={setRangeKey}
               >
                 <SelectTrigger size="sm" className="w-36"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {USAGE_RANGES.map(r => (
+                  {offeredRanges.map(r => (
                     <SelectItem key={r.key} value={r.key} label={t(`accounts.usageDetail.range.${r.key}`)}>
                       {t(`accounts.usageDetail.range.${r.key}`)}
                     </SelectItem>
@@ -1670,7 +1691,10 @@ export default function Accounts() {
             </div>
             {/* 汇总卡片（A/U 金额口径与单元格一致：≥$0.01 两位、更小四位，0 → $0.00） */}
             {detailQ.isError ? (
-              <p className="text-sm text-destructive">{t('common.loadFailed', { message: (detailQ.error as Error).message })}</p>
+              <div>
+                <p className="text-sm text-destructive">{t('common.loadFailed', { message: (detailQ.error as Error).message })}</p>
+                <StatsWindowNotice error={detailQ.error} />
+              </div>
             ) : detailQ.isPending ? (
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-20" />)}
@@ -1686,7 +1710,10 @@ export default function Accounts() {
             {/* 分桶表：A 列来自 raw_cost_usd（与汇总同口径）；末桶被尾窗行原位替代；
                 尾窗失败 → 恢复完整 buckets 渲染（末桶保留）+ 错误行提示（O 级裁决） */}
             {statsQ.isError ? (
-              <p className="text-sm text-destructive">{t('common.loadFailed', { message: (statsQ.error as Error).message })}</p>
+              <div>
+                <p className="text-sm text-destructive">{t('common.loadFailed', { message: (statsQ.error as Error).message })}</p>
+                <StatsWindowNotice error={statsQ.error} />
+              </div>
             ) : statsQ.isPending ? (
               <div className="space-y-2">
                 {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-9" />)}

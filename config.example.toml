@@ -83,7 +83,13 @@ usage = {
   # errlog_retention_days = 7,         # err_logs 分区保留天数（默认 7 天短保留）
   # stats_retention_days = 180,        # usage_stats 分区保留天数（默认 180 天；
   #                                    # 聚合统计也分区化——清理 DROP 分区 O(1)，
-  #                                    # PG DELETE 不释放空间）
+  #                                    # PG DELETE 不释放空间）。
+  #                                    # 注意：统计查询的"能查多久"取 成本上限（纯常量：
+  #                                    # 卷积表 90 天 / 分组原始行 8 天）与 覆盖天数（本项）
+  #                                    # 的较小者——**stats_retention_days < 90 会让 90 天
+  #                                    # 卷积窗口被覆盖率闸门拒绝（400 cube_horizon）**，
+  #                                    # 此后真实可达上限等于本项。本部署的实际上限见
+  #                                    # GET /api/admin/stats/capabilities。
 }
 # 计费：默认开启（与代码默认一致）。首次启动后需先同步价格
 # （POST /api/admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前余额

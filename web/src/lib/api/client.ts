@@ -10,10 +10,24 @@ import { userAuth } from '@/lib/auth'
 // 类实现（brief 原为 type 别名，但 throw new ApiError(...) 需要运行时值）
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  // 统计窗口拒绝的机读字段（spec §4.4(c)）：服务端在 400 体里把"哪个原因、
+  // 实际读哪套存储、上限/保留期、判定后的生效窗口"一并给出。非统计错误全为
+  // undefined（ErrorResponse 的这六个字段都是可选的）。带上它们的目的地是
+  // "错误位旁显示服务端实际查的窗口"——客户端不猜、不重算。
+  reason?: components['schemas']['ErrorResponse']['reason']
+  effectiveFrom?: string
+  effectiveTo?: string
+  limitSeconds?: number
+  retentionDays?: number
+  constructor(status: number, message: string, detail?: { [K in keyof components['schemas']['ErrorResponse']]?: components['schemas']['ErrorResponse'][K] }) {
     super(message)
     this.status = status
     this.name = 'ApiError'
+    this.reason = detail?.reason
+    this.effectiveFrom = detail?.effective_from
+    this.effectiveTo = detail?.effective_to
+    this.limitSeconds = detail?.limit_seconds
+    this.retentionDays = detail?.retention_days
   }
 }
 
@@ -93,8 +107,8 @@ export class ApiClient {
     const res = await fetch(url, { ...rest, headers })
     if (res.status === 401) throw new ApiUnauthorized()
     if (!res.ok) {
-      const body = await res.json().catch(() => null)
-      throw new ApiError(res.status, (body as { error?: string } | null)?.error ?? `HTTP ${res.status}`)
+      const body = (await res.json().catch(() => null)) as components['schemas']['ErrorResponse'] | null
+      throw new ApiError(res.status, body?.error ?? `HTTP ${res.status}`, body ?? undefined)
     }
     // DELETE /rules/{id} 等返回 204 无 body，不能 res.json()
     if (res.status === 204) return undefined as T
@@ -165,6 +179,10 @@ export class ApiClient {
     this.request<components['schemas']['StatTrendPoint'][]>('/stats/entity-trend', { params: toQuery(p) })
   getStatsTTFT = (p: { from: string; to: string; entity?: 'account' | 'user' | 'key'; id?: number; model?: string; timezone?: string }) =>
     this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
+  // 统计能力（本部署能查多久）：per-deployment 常量，无参数、只读。选择器裁剪与
+  // TTFT 窗口上限的唯一来源——调用方 staleTime 设为无限（"可按部署缓存"）。
+  getStatsCapabilities = () =>
+    this.request<components['schemas']['StatsCapabilities']>('/stats/capabilities')
   // —— 用户管理 ——
   listUsers = (p?: { limit?: number; offset?: number; email?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['UserListResponse']>('/users', { params: toQuery(p) })
   createUser = (b: components['schemas']['UserCreate']) => this.request<components['schemas']['User']>('/users', { method: 'POST', body: JSON.stringify(b) })
@@ -227,6 +245,10 @@ export class ApiClient {
   getMyStats = (p: UserStatParams) => this.request<components['schemas']['StatTrendPoint'][]>('/stats', { params: toQuery(p) })
   getMyStatsTTFT = (p: { from: string; to: string; model?: string; timezone?: string }) =>
     this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
+  // 用户面能力变体（同一份服务端投影）：/api/admin/* 只接受 platform_admin
+  // 凭据，普通用户只能走本端点（与 /stats/ttft ↔ /api/user/stats/ttft 同惯例）。
+  getMyStatsCapabilities = () =>
+    this.request<components['schemas']['StatsCapabilities']>('/stats/capabilities')
   redeem = (code: string) => this.request<components['schemas']['RedeemResponse']>('/redemptions', { method: 'POST', body: JSON.stringify({ code }) })
   listUserRedemptions = (p?: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['RedemptionRecordListResponse']>('/redemptions', { params: toQuery(p) })
   getTempBalances = () => this.request<components['schemas']['TempBalancesResponse']>('/temp-balances')

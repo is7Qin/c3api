@@ -110,13 +110,21 @@ type countingStore struct {
 	emailCalls atomic.Int64 // ListUserEmails
 }
 
-func (c *countingStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
+func (c *countingStore) SummarizeStatsCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
 	c.statAggs.Add(1)
-	return c.Store.SummarizeStats(ctx, from, to, groupID, zone)
+	return c.Store.SummarizeStatsCube(ctx, from, to, groupID, zone)
 }
-func (c *countingStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+func (c *countingStore) SummarizeStatsRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
 	c.statAggs.Add(1)
-	return c.Store.ScanStatsDays(ctx, from, to, groupID, zone)
+	return c.Store.SummarizeStatsRaw(ctx, from, to, groupID, zone)
+}
+func (c *countingStore) ScanStatsDaysCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+	c.statAggs.Add(1)
+	return c.Store.ScanStatsDaysCube(ctx, from, to, groupID, zone)
+}
+func (c *countingStore) ScanStatsDaysRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+	c.statAggs.Add(1)
+	return c.Store.ScanStatsDaysRaw(ctx, from, to, groupID, zone)
 }
 func (c *countingStore) CountOverviewResources(ctx context.Context) (*repository.OverviewResourceCounts, error) {
 	c.statAggs.Add(1)
@@ -523,7 +531,7 @@ func TestPGOverviewTrendUTCDayBoundary(t *testing.T) {
 	nyRepos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, nyDB), false, nyPool)
 	require.NoError(t, err)
 
-	tr, err := nyRepos.Stats.ScanStatsDays(ctx, day0.Add(-24*time.Hour), day0.Add(24*time.Hour), 0, time.UTC)
+	tr, err := nyRepos.Stats.ScanStatsDaysCube(ctx, day0.Add(-24*time.Hour), day0.Add(24*time.Hour), 0, time.UTC)
 	require.NoError(t, err)
 	// 修复前：NY 会话下 UTC 00:30 桶落前一日 → 1 桶且日期错位；修复后 2 桶按 UTC 日界
 	// （请求缺省 timezone = UTC——绑定参数支配，会话 TimeZone 不泄漏）。

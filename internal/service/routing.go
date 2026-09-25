@@ -116,7 +116,7 @@ func normalizePage(offset, limit, def, cap, n int) (int, int) {
 }
 
 // RoutingFlowQuery routing-flow 入参（窗口 ≤90d 精确上限，复用
-// MaxStatsTrendSpan 常量与 validateStatsWindow 校验序）。Offset/Limit 只作用于
+// MaxStatsTrendSpan 常量与 validateRoutingWindow 校验序）。Offset/Limit 只作用于
 // 边表分页；Accounts 只作用于桑基折叠——两者互不影响。
 type RoutingFlowQuery struct {
 	RouteID  string // 64-hex route class ID（当前发布目录内）
@@ -208,11 +208,25 @@ func (s *Service) validateRoutingRetention(from time.Time) error {
 	return nil
 }
 
+// validateRoutingWindow 观测窗口三段校验（必填 → to>from → 跨度 ≤ 90d）。
+// 校验序与统计面旧 helper 逐位相同；统计面的窗口判定已整体收敛到
+// domain.Admit（cost/coverage 由 KIND 矩阵承载），观测面只保留这三段自身
+// 约束——故语义本地化到此面，不再共享（也没有可共享的判定体）。
+func validateRoutingWindow(from, to time.Time) error {
+	if from.IsZero() || to.IsZero() || !to.After(from) {
+		return ErrInvalidInput
+	}
+	if to.Sub(from) > MaxStatsTrendSpan {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
 // QueryRoutingFlow 按 terminal_at 归属窗口查询一条路由类的完整链边聚合。
 // 行序沿用 repository 确定性排序（ordinal, lane, account, prev NULLS FIRST,
 // outcome…），lane 分组保持组内原序、组间按 (ordinal, lane) 全序。
 func (s *Service) QueryRoutingFlow(ctx context.Context, q RoutingFlowQuery) (*RoutingFlowResult, error) {
-	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
+	if err := validateRoutingWindow(q.From, q.To); err != nil {
 		return nil, err
 	}
 	if err := s.validateRoutingRetention(q.From); err != nil {

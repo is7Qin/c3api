@@ -32,19 +32,29 @@ import (
 )
 
 // windowStore 记录最近一次 overview 聚合收参区间与时区（委托内层 fakeStore）。
+// Cube/Raw 两变体都记录（判定在 service，本包装只观察生效窗口）。
 type windowStore struct {
 	service.Store
 	lastSumFrom, lastSumTo time.Time
 	lastSumZone            *time.Location
 }
 
-func (w *windowStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
+func (w *windowStore) SummarizeStatsCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
 	w.lastSumFrom, w.lastSumTo, w.lastSumZone = from, to, zone
-	return w.Store.SummarizeStats(ctx, from, to, groupID, zone)
+	return w.Store.SummarizeStatsCube(ctx, from, to, groupID, zone)
 }
 
-func (w *windowStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
-	return w.Store.ScanStatsDays(ctx, from, to, groupID, zone)
+func (w *windowStore) SummarizeStatsRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
+	w.lastSumFrom, w.lastSumTo, w.lastSumZone = from, to, zone
+	return w.Store.SummarizeStatsRaw(ctx, from, to, groupID, zone)
+}
+
+func (w *windowStore) ScanStatsDaysCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+	return w.Store.ScanStatsDaysCube(ctx, from, to, groupID, zone)
+}
+
+func (w *windowStore) ScanStatsDaysRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+	return w.Store.ScanStatsDaysRaw(ctx, from, to, groupID, zone)
 }
 
 // statsTZOverview 请求级时区 overview 装配：fake + windowStore + countingStore。
@@ -200,15 +210,16 @@ func TestGetAccountsUsageRequestZoneDefault(t *testing.T) {
 }
 
 // TestStatsEndpointsZoneThreading /stats/trend、/stats/entity-trend 把已解析
-// 时区透传至 store（fake 记录断言）；缺省 = UTC；非法 = 400；跨度守卫：
-// DST 时区（原始行路径）> MaxStatsRawSpan → 400，恒整点无 DST 时区
-// （cube 路径）90d 合法；top/ttft 仅校验数值无关。
+// 时区透传至 store（fake 记录断言）；缺省 = UTC；非法 = 400；跨度守卫（cost 步，
+// 保留期无关常量）：DST 时区（原始行路径）> 8d → 400，恒整点无 DST 时区
+// （cube 路径）90d 合法；top/ttft 仅校验数值无关。Retention 零注入 ⇒ coverage
+// 步整体跳过（覆盖率拒绝由 service 级用例钉死）。
 func TestStatsEndpointsZoneThreading(t *testing.T) {
 	cst, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	fake := newFakeStore()
 	svc := service.New(fake, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
-		service.ServiceDeps{EmailCodeStore: fake, StatsRawRetentionDays: 7}) // 7d → 8d 缺省 horizon（旧 New 默认）
+		service.ServiceDeps{EmailCodeStore: fake})
 	h := New(svc)
 
 	from, to := "2026-08-17T00:00:00Z", "2026-08-18T00:00:00Z"
@@ -240,7 +251,7 @@ func TestStatsEndpointsZoneThreading(t *testing.T) {
 
 	// 跨 DST 跳变（11-01 秋退在窗内）的长窗：service horizon 400。
 	rec = get("stats/trend?from=2026-10-28T00:00:00Z&to=2026-11-08T00:00:00Z&granularity=day&timezone=America%2FNew_York")
-	require.Equal(t, 400, rec.Code, "跨 DST 跳变超 MaxStatsRawSpan → 400（宁缺勿残）；body: %s", rec.Body.String())
+	require.Equal(t, 400, rec.Code, "跨 DST 跳变超分组原始行成本上限（8d）→ 400（宁缺勿残）；body: %s", rec.Body.String())
 	require.Equal(t, time.UTC, fake.lastTrendZone, "400 路径零 store 调用（上一条成功记录停在 UTC）")
 
 	// 恒整点无 DST 时区（cube 路径）90d 合法；NY 无跳变夏窗同样合法。

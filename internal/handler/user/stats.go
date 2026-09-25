@@ -49,11 +49,22 @@ func (h *UserAPI) GetUserStats(w http.ResponseWriter, r *http.Request, params Ge
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	out := make([]StatTrendPoint, 0, len(rows))
-	for _, b := range rows {
+	// 与 /stats/trend、/stats/entity-trend 同形：200 体裸数组 ⇒ 生效窗口与
+	// 实际存储走回显头（spec §4.4(b)），值取自 service 判定回传的 Exec。
+	httpface.WriteStatsEcho(w, rows.Exec)
+	out := make([]StatTrendPoint, 0, len(rows.Buckets))
+	for _, b := range rows.Buckets {
 		out = append(out, toAPIEntityStatTrendPoint(b))
 	}
 	httpface.WriteJSON(w, http.StatusOK, out)
+}
+
+// GetUserStatsCapabilities 用户台的统计能力（与 /api/admin/stats/capabilities
+// 同一份服务端投影——service.StatsCapabilities 是唯一来源，本层只做形状映射，
+// 零字面量）。存在的理由：用户台的选择器裁剪与 TTFT 窗口上限同样需要按部署
+// 取值，而 /api/admin/* 只接受 platform_admin 凭据（普通用户拿不到）。
+func (h *UserAPI) GetUserStatsCapabilities(w http.ResponseWriter, r *http.Request) {
+	httpface.WriteJSON(w, http.StatusOK, toAPIStatsCapabilities(h.svc.StatsCapabilities()))
 }
 
 // GetUserStatsTTFT 我的 TTFT 聚合（强制 user_id = 当前用户）。数值与
