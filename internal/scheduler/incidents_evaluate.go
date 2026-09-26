@@ -82,7 +82,7 @@ func evaluateRouteIncident(facts []compilerCandidateFacts, routeRC domain.RouteC
 		if !ok {
 			bc = Counts{}
 		}
-		origin, err := CanonicalOrigin(f.baseURL)
+		origin, err := domain.CanonicalOrigin(f.baseURL)
 		if err != nil {
 			continue // empty/unparseable origin abstains fail-closed
 		}
