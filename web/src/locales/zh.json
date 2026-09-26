@@ -156,7 +156,7 @@
     },
     "editTitle": "编辑模板 #{{id}}",
     "newTitle": "新建模板",
-    "dialogDesc": "base_url 需为上游根地址（不含 /v1——/v1 由协议按格式自动拼接）",
+    "dialogDesc": "base_url 填上游地址。协议前缀可以带（如 /zen），但不要以 /v1 结尾——网关会按格式再拼一次 /v1",
     "credentialTypeLabel": "凭据类型",
     "credentialType": {
       "api_key": "API Key",
@@ -214,7 +214,7 @@
       "saveSuccess": "扩展配置已保存",
       "loadFailed": "读取扩展配置失败：{{message}}"
     },
-    "baseUrlOptional": "api_key / responses-special：可选裸根（不含 /v1，非空覆盖）；留空可能导致路由失败。codex-oauth / codex-pat 须留空（SDK 默认端点，非空将被拒绝）。",
+    "baseUrlOptional": "api_key / responses-special：可带协议前缀（如 /zen），但不要以 /v1 结尾，网关会再拼 /v1；留空可能导致路由失败。codex-oauth / codex-pat 须留空（SDK 默认端点，非空将被拒绝）。",
     "baseUrlCodexHidden": "Codex OAuth / PAT 使用 SDK 默认端点——不可设置 BaseURL，须保持为空（非空将被拒绝）。",
     "batchBaseUrlCodexDisabled": "Codex 模板使用 SDK 默认端点，不发送 BaseURL"
   },
@@ -412,7 +412,7 @@
     "groupLabel": "分组",
     "groupHint": "保存后替换账号原有分组；不在任何分组中的账号不会被调度。",
     "loadGroupsFailed": "读取当前分组失败，已禁用保存",
-    "baseUrlHint": "api_key / responses-special：留空继承模板 base_url。codex-oauth / codex-pat 须留空（SDK 默认，非空禁用）。",
+    "baseUrlHint": "api_key / responses-special：留空继承模板 base_url；填写时可带协议前缀（如 /zen），但不要以 /v1 结尾。codex-oauth / codex-pat 须留空（SDK 默认，非空禁用）。",
     "baseUrlCodexHidden": "Codex OAuth / PAT 使用 SDK 默认端点——不可设置 BaseURL，须保持为空。",
     "batchBaseUrlHint": "未勾选且留空 = 不变；勾选 = 清空（回继承模板）",
     "batchBaseUrlCodexDisabled": "Codex 目标已禁用 BaseURL（非空禁用，SDK 默认）；改为非 Codex 模板后可编辑。",
