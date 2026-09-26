@@ -51,27 +51,49 @@ type OverviewData struct {
 //	summary = [day, day+1本地日) 区间单行 sum（SQL 侧）；
 //	trend   = [day−(days−1)本地日, day+1本地日) 日桶（SQL 侧按请求时区日界
 //	          分组——恒整点无 DST 时区走 usage_stats cube 重组（分区键 range
-//	          毫秒级）；DST/半小时时区走原始行精确聚合，见 repository）；
+//	          毫秒级）；DST/半小时时区走原始行精确聚合，路由由 domain.Admit
+//	          判定后在本方法选 Cube/Raw）；
 //	accounts/err_top = 调度器快照遍历（O(N) 冷面，30s 缓存摊薄）；
 //	resources = 三表冷面 count。
 //
 // day 由调用方传入（handler 缓存键与聚合区间同一日界源——请求浏览器时区本地
 // 日零点，跨午夜滚转不漂移）；日窗推进用日历 AddDate（DST 安全，绝不用固定
 // 24h 算术）；zone = handler 边界解析过的请求时区（nil/UTC = 现状 cube 路径，
-// 向后兼容；非 cube 精确时区受原始行保留期窗口 MaxStatsRawSpan 约束，超限
-// ErrInvalidInput(400) 而非静默残缺）；days 已由调用方钳制 [1,30]；groupID > 0
-// = 按组过滤 summary/trend（accounts/err_top/resources 为全局面，spec 参数语义）。
+// 向后兼容）。**两个窗口各自过一次 domain.Admit**（summary 用 [day,to)、trend
+// 用 [from,to)——同一 kind 矩阵判定，cost/coverage 对两个 Exec 分别生效）；
+// days 已由调用方钳制 [1,30]；groupID > 0 = 按组过滤 summary/trend
+// （accounts/err_top/resources 为全局面，spec 参数语义）。
+//
+// 可证结论（spec §4.5）：Overview 的两个计划**永远不会是 WindowShifted**——
+// 整点无 DST 时区下 day/from/to 都是本地零点即 UTC 整点 ⇒ 第一条判定命中；非
+// 整点偏移或跨 DST 时区下对齐后的 cand 仍不精确 ⇒ 第三条判定。故 overview
+// 无需窗口回显（P2）。
 func (s *Service) Overview(ctx context.Context, day time.Time, days int, groupID int64, zone *time.Location) (*OverviewData, error) {
 	from := day.AddDate(0, 0, -(days - 1))
 	to := day.AddDate(0, 0, 1)
-	if err := s.validateZoneSpan(zone, from, to); err != nil {
-		return nil, err
-	}
-	summary, err := s.store.SummarizeStats(ctx, day, to, groupID, zone)
+	sumExec, err := s.admitStats(domain.KindSummary, zone, day, to)
 	if err != nil {
 		return nil, err
 	}
-	trend, err := s.store.ScanStatsDays(ctx, from, to, groupID, zone)
+	daysExec, err := s.admitStats(domain.KindDays, zone, from, to)
+	if err != nil {
+		return nil, err
+	}
+	var summary *repository.StatSummary
+	if sumExec.Storage == domain.StatsStorageCube {
+		summary, err = s.store.SummarizeStatsCube(ctx, sumExec.From, sumExec.To, groupID, sumExec.Zone)
+	} else {
+		summary, err = s.store.SummarizeStatsRaw(ctx, sumExec.From, sumExec.To, groupID, sumExec.Zone)
+	}
+	if err != nil {
+		return nil, err
+	}
+	var trend []*repository.StatDayAgg
+	if daysExec.Storage == domain.StatsStorageCube {
+		trend, err = s.store.ScanStatsDaysCube(ctx, daysExec.From, daysExec.To, groupID, daysExec.Zone)
+	} else {
+		trend, err = s.store.ScanStatsDaysRaw(ctx, daysExec.From, daysExec.To, groupID, daysExec.Zone)
+	}
 	if err != nil {
 		return nil, err
 	}

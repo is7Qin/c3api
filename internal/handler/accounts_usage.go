@@ -27,15 +27,20 @@ type CodexUsageProber interface {
 
 // GetAccountsUsage 账号用量聚合（/api/admin/accounts/usage——统一 usage API 查询
 // 面 spec 2026-08-18，ServerInterface）。参数解析与校验在 handler 层：
-// account_ids 逗号分隔必填（非数字/空/去重后 >100 → 400）；from/to RFC3339
-// 可选——缺省 = 当天（from=请求浏览器时区当日零点（`timezone` 参数，缺省
-// UTC）、to=now，"当天"语义单点，经 h.now 可注入时钟）；显式 from/to 为绝对
-// 时刻直透，不做任何时区改写；from > to → 400。响应 items 恒 = account_ids
+// account_ids 逗号分隔必填（非数字/空/去重后 >100 → 400）；窗口**两形态恰择一**
+// （P3，spec §7.3）：from+to 绝对窗口，或 window 时长串相对窗口（服务端自持
+// `h.now`：to = 整点向上取整、from = to − window）。两态都给 / 只给一端 / 都不给
+// → 400 `window_ambiguous`；`window` 不是时长串（如 `7d`）→ 400 `window_invalid`。
+// **本端点不再有"缺省 = 当天"**（那正是"两态都不给"的第三种形态，双路径按裁决
+// 删除而非兼容；调用方必须显式说出它要哪一段）。响应 items 恒 = account_ids
 // 去重后全量（无记录账号 gateway 全 0——前端免补零），顺序 = 去重后顺序。
-// 底层读 usage_logs 原始行绝对区间——本端点时区只影响缺省日界，不影响数值。
+//
+// **窗口上限与覆盖率在 service 层判定**（domain.Admit，KindUsageAgg：raw cost
+// 90d + usage_logs 覆盖率）——本 handler 只把线上形态解码成一对绝对时刻，
+// 倒序（from 不早于 to）也由 Admit step 1 报 400（window_invalid），不再有第二
+// 份形状校验（spec §4.5：全区间 GROUP BY 无 LIMIT 的真实成本洞在 service 补掉）。
 func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams) {
-	zone, err := resolveStatsZone(params.Timezone)
-	if err != nil {
+	if _, err := resolveStatsZone(params.Timezone); err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
@@ -44,17 +49,9 @@ func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, para
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	now := h.now()
-	from := dayStart(now, zone) // 请求时区当日零点（"当天"缺省单点）
-	to := now
-	if params.From != nil {
-		from = *params.From
-	}
-	if params.To != nil {
-		to = *params.To
-	}
-	if !from.Before(to) {
-		httpface.WriteErr(w, http.StatusBadRequest, "from must be before to")
+	from, to, err := httpface.ResolveStatsWindow(params.From, params.To, params.Window, h.now())
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
 		return
 	}
 	items, err := h.svc.AccountsGatewayUsage(r.Context(), ids, from, to)

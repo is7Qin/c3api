@@ -10,10 +10,24 @@ import { userAuth } from '@/lib/auth'
 // 类实现（brief 原为 type 别名，但 throw new ApiError(...) 需要运行时值）
 export class ApiError extends Error {
   status: number
-  constructor(status: number, message: string) {
+  // 统计窗口拒绝的机读字段（spec §4.4(c)）：服务端在 400 体里把"哪个原因、
+  // 实际读哪套存储、上限/保留期、判定后的生效窗口"一并给出。非统计错误全为
+  // undefined（ErrorResponse 的这六个字段都是可选的）。带上它们的目的地是
+  // "错误位旁显示服务端实际查的窗口"——客户端不猜、不重算。
+  reason?: components['schemas']['ErrorResponse']['reason']
+  effectiveFrom?: string
+  effectiveTo?: string
+  limitSeconds?: number
+  retentionDays?: number
+  constructor(status: number, message: string, detail?: { [K in keyof components['schemas']['ErrorResponse']]?: components['schemas']['ErrorResponse'][K] }) {
     super(message)
     this.status = status
     this.name = 'ApiError'
+    this.reason = detail?.reason
+    this.effectiveFrom = detail?.effective_from
+    this.effectiveTo = detail?.effective_to
+    this.limitSeconds = detail?.limit_seconds
+    this.retentionDays = detail?.retention_days
   }
 }
 
@@ -52,9 +66,12 @@ export interface ErrLogParams extends UsageLogParams {
 // 用户端无 user_id 过滤（服务端强制本人），也无 account_id（用户级契约不含该参数）
 export type MyUsageLogParams = Omit<UsageLogParams, 'user_id' | 'account_id'>
 export type MyErrLogParams = Omit<ErrLogParams, 'user_id' | 'account_id'>
-export interface UserStatParams {
-  from: string
-  to: string
+// 统计窗口恰择一：绝对 from+to，或相对 window（时长串，如 24h/168h）。
+// 用重载而不是「可选 from 再加可选 window」：一个调用点不能类型上同时给出
+// 两者（服务端两态都给是 400 window_ambiguous）。
+type AbsoluteWindow = { from: string; to: string }
+type RelativeWindow = { window: string }
+export type UserStatParams = (AbsoluteWindow | RelativeWindow) & {
   granularity?: 'hour' | 'day'
   model?: string
   timezone?: string
@@ -93,8 +110,8 @@ export class ApiClient {
     const res = await fetch(url, { ...rest, headers })
     if (res.status === 401) throw new ApiUnauthorized()
     if (!res.ok) {
-      const body = await res.json().catch(() => null)
-      throw new ApiError(res.status, (body as { error?: string } | null)?.error ?? `HTTP ${res.status}`)
+      const body = (await res.json().catch(() => null)) as components['schemas']['ErrorResponse'] | null
+      throw new ApiError(res.status, body?.error ?? `HTTP ${res.status}`, body ?? undefined)
     }
     // DELETE /rules/{id} 等返回 204 无 body，不能 res.json()
     if (res.status === 204) return undefined as T
@@ -136,13 +153,16 @@ export class ApiClient {
   getAccountGroups = (id: number) => this.request<components['schemas']['AccountGroupsResponse']>(`/accounts/${id}/groups`)
   getAccountExt = (id: number) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`)
   putAccountExt = (id: number, b: components['schemas']['AccountExt']) => this.request<components['schemas']['AccountExt']>(`/accounts/${id}/ext`, { method: 'PUT', body: JSON.stringify(b) })
-  // —— 账号用量聚合（0e77d2a）：批量 ≤100 条；from/to 缺省 = 当天（请求
-  //     timezone 时区当日零点 → now；显式 from/to 绝对时刻直透）。
+  // —— 账号用量聚合：窗口与 from/to 恰择一（无「缺省 = 当天」）。预设发
+  //     window 时长串（服务端自持 now 取整点）；自定义绝对区间发 from+to。
   // codex 账号附带上游额度快照（upstream）；api-key/无凭据账号恒 null。
-  listAccountsUsage = (accountIds: number[], p?: { from?: string; to?: string; timezone?: string }) =>
-    this.request<components['schemas']['AccountsUsageResponse']>('/accounts/usage', {
+  listAccountsUsage(accountIds: number[], p: AbsoluteWindow & { timezone?: string }): Promise<components['schemas']['AccountsUsageResponse']>
+  listAccountsUsage(accountIds: number[], p: RelativeWindow & { timezone?: string }): Promise<components['schemas']['AccountsUsageResponse']>
+  listAccountsUsage(accountIds: number[], p: (AbsoluteWindow | RelativeWindow) & { timezone?: string }) {
+    return this.request<components['schemas']['AccountsUsageResponse']>('/accounts/usage', {
       params: toQuery({ account_ids: accountIds.join(','), ...p }),
     })
+  }
   // —— codex 凭据批量导入（行级失败归 failed——HTTP 恒 200）——
   importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
   importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
@@ -156,15 +176,28 @@ export class ApiClient {
   getUsageLogs = (p: UsageLogParams) => this.request<components['schemas']['LogsResponse']>('/usage_logs', { params: toQuery(p) })
   getErrLogs = (p: ErrLogParams) => this.request<components['schemas']['ErrLogsResponse']>('/err_logs', { params: toQuery(p) })
   // —— 统计 v2（全部可选 `timezone`：浏览器 IANA 名——服务端按该时区聚合桶界；
-  //     top/ttft 无时间分组仅校验；显式 from/to 恒绝对时刻）——
-  getStatsTrend = (p: { from: string; to: string; granularity: 'hour' | 'day'; group_id?: number; model?: string; timezone?: string }) =>
-    this.request<components['schemas']['StatTrendPoint'][]>('/stats/trend', { params: toQuery(p) })
+  //     top 无时间分组、from/to 仍必填，不接受 window）——
+  getStatsTrend(p: AbsoluteWindow & { granularity: 'hour' | 'day'; group_id?: number; model?: string; timezone?: string }): Promise<components['schemas']['StatTrendPoint'][]>
+  getStatsTrend(p: RelativeWindow & { granularity: 'hour' | 'day'; group_id?: number; model?: string; timezone?: string }): Promise<components['schemas']['StatTrendPoint'][]>
+  getStatsTrend(p: (AbsoluteWindow | RelativeWindow) & { granularity: 'hour' | 'day'; group_id?: number; model?: string; timezone?: string }) {
+    return this.request<components['schemas']['StatTrendPoint'][]>('/stats/trend', { params: toQuery(p) })
+  }
   getStatsTop = (p: { from: string; to: string; entity: 'account' | 'user' | 'key'; by: 'cost' | 'requests' | 'tokens'; limit?: number; timezone?: string }) =>
     this.request<components['schemas']['StatTopEntry'][]>('/stats/top', { params: toQuery(p) })
-  getStatsEntityTrend = (p: { entity: 'account' | 'user' | 'key'; id: number; from: string; to: string; granularity: 'hour' | 'day'; model?: string; timezone?: string }) =>
-    this.request<components['schemas']['StatTrendPoint'][]>('/stats/entity-trend', { params: toQuery(p) })
-  getStatsTTFT = (p: { from: string; to: string; entity?: 'account' | 'user' | 'key'; id?: number; model?: string; timezone?: string }) =>
-    this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
+  getStatsEntityTrend(p: AbsoluteWindow & { entity: 'account' | 'user' | 'key'; id: number; granularity: 'hour' | 'day'; model?: string; timezone?: string }): Promise<components['schemas']['StatTrendPoint'][]>
+  getStatsEntityTrend(p: RelativeWindow & { entity: 'account' | 'user' | 'key'; id: number; granularity: 'hour' | 'day'; model?: string; timezone?: string }): Promise<components['schemas']['StatTrendPoint'][]>
+  getStatsEntityTrend(p: (AbsoluteWindow | RelativeWindow) & { entity: 'account' | 'user' | 'key'; id: number; granularity: 'hour' | 'day'; model?: string; timezone?: string }) {
+    return this.request<components['schemas']['StatTrendPoint'][]>('/stats/entity-trend', { params: toQuery(p) })
+  }
+  getStatsTTFT(p: AbsoluteWindow & { entity?: 'account' | 'user' | 'key'; id?: number; model?: string; timezone?: string }): Promise<components['schemas']['StatTTFTSummary']>
+  getStatsTTFT(p: RelativeWindow & { entity?: 'account' | 'user' | 'key'; id?: number; model?: string; timezone?: string }): Promise<components['schemas']['StatTTFTSummary']>
+  getStatsTTFT(p: (AbsoluteWindow | RelativeWindow) & { entity?: 'account' | 'user' | 'key'; id?: number; model?: string; timezone?: string }) {
+    return this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
+  }
+  // 统计能力（本部署能查多久）：per-deployment 常量，无参数、只读。选择器裁剪与
+  // TTFT 窗口上限的唯一来源——调用方 staleTime 设为无限（"可按部署缓存"）。
+  getStatsCapabilities = () =>
+    this.request<components['schemas']['StatsCapabilities']>('/stats/capabilities')
   // —— 用户管理 ——
   listUsers = (p?: { limit?: number; offset?: number; email?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['UserListResponse']>('/users', { params: toQuery(p) })
   createUser = (b: components['schemas']['UserCreate']) => this.request<components['schemas']['User']>('/users', { method: 'POST', body: JSON.stringify(b) })
@@ -224,9 +257,19 @@ export class ApiClient {
   rotateUserKey = (id: number) => this.request<components['schemas']['Key']>(`/keys/${id}/rotate`, { method: 'POST' })
   getMyUsageLogs = (p: MyUsageLogParams) => this.request<components['schemas']['UserLogsResponse']>('/usage_logs', { params: toQuery(p) })
   getMyErrLogs = (p: MyErrLogParams) => this.request<components['schemas']['UserErrLogsResponse']>('/err_logs', { params: toQuery(p) })
-  getMyStats = (p: UserStatParams) => this.request<components['schemas']['StatTrendPoint'][]>('/stats', { params: toQuery(p) })
-  getMyStatsTTFT = (p: { from: string; to: string; model?: string; timezone?: string }) =>
-    this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
+  getMyStats(p: UserStatParams): Promise<components['schemas']['StatTrendPoint'][]>
+  getMyStats(p: UserStatParams) {
+    return this.request<components['schemas']['StatTrendPoint'][]>('/stats', { params: toQuery(p) })
+  }
+  getMyStatsTTFT(p: AbsoluteWindow & { model?: string; timezone?: string }): Promise<components['schemas']['StatTTFTSummary']>
+  getMyStatsTTFT(p: RelativeWindow & { model?: string; timezone?: string }): Promise<components['schemas']['StatTTFTSummary']>
+  getMyStatsTTFT(p: (AbsoluteWindow | RelativeWindow) & { model?: string; timezone?: string }) {
+    return this.request<components['schemas']['StatTTFTSummary']>('/stats/ttft', { params: toQuery(p) })
+  }
+  // 用户面能力变体（同一份服务端投影）：/api/admin/* 只接受 platform_admin
+  // 凭据，普通用户只能走本端点（与 /stats/ttft ↔ /api/user/stats/ttft 同惯例）。
+  getMyStatsCapabilities = () =>
+    this.request<components['schemas']['StatsCapabilities']>('/stats/capabilities')
   redeem = (code: string) => this.request<components['schemas']['RedeemResponse']>('/redemptions', { method: 'POST', body: JSON.stringify({ code }) })
   listUserRedemptions = (p?: { page?: number; page_size?: number; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['RedemptionRecordListResponse']>('/redemptions', { params: toQuery(p) })
   getTempBalances = () => this.request<components['schemas']['TempBalancesResponse']>('/temp-balances')

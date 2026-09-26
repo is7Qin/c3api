@@ -20,8 +20,11 @@ import (
 
 var statsTestFrom = time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
 
+// statsTestSvc 最简装配（**无 logger、零 Retention**——coverage 步整体跳过）。
+// 凡断言 Warn 或 coverage 拒绝的用例**必须自建带依赖的 Service**，复用本构造器
+// 会假绿（spec §9.8）。
 func statsTestSvc(fs *fakeStore) *Service {
-	return &Service{store: fs, inv: &invRecorder{}, statsRawSpan: MaxStatsRawSpan}
+	return &Service{store: fs, inv: &invRecorder{}}
 }
 
 // seedTrend 两小时桶同日同组同模型（day 粒度合并为 1 行、hour 保持 2 行的探针）。
@@ -57,11 +60,11 @@ func TestQueryStatsTrend_whenSpanAtLimit_thenOK(t *testing.T) {
 	fs := newFakeStore()
 	seedTrend(fs)
 	svc := statsTestSvc(fs)
-	rows, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
+	res, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
 		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsTrendSpan), Granularity: "hour",
 	})
 	require.NoError(t, err)
-	require.Len(t, rows, 2, "三个桶落在两个不同小时（同小时异维度按趋势面口径合一）")
+	require.Len(t, res.Buckets, 2, "三个桶落在两个不同小时（同小时异维度按趋势面口径合一）")
 }
 
 // TestQueryStatsTrend_whenGranularityVariants_thenNormalizedOrRejected 粒度白名单：
@@ -71,18 +74,18 @@ func TestQueryStatsTrend_whenGranularityVariants_thenNormalizedOrRejected(t *tes
 	seedTrend(fs)
 	svc := statsTestSvc(fs)
 
-	rows, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
+	res, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
 		From: statsTestFrom, To: statsTestFrom.Add(2 * time.Hour),
 	})
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "空粒度归一化 day：窗口内全部小时桶合一日桶")
-	require.Equal(t, int64(115), rows[0].RequestCount, "10+5+100 三桶同日合并")
+	require.Len(t, res.Buckets, 1, "空粒度归一化 day：窗口内全部小时桶合一日桶")
+	require.Equal(t, int64(115), res.Buckets[0].RequestCount, "10+5+100 三桶同日合并")
 
-	rows, err = svc.QueryStatsTrend(context.Background(), TrendQuery{
+	res, err = svc.QueryStatsTrend(context.Background(), TrendQuery{
 		From: statsTestFrom, To: statsTestFrom.Add(2 * time.Hour), Granularity: "hour",
 	})
 	require.NoError(t, err)
-	require.Len(t, rows, 2, "hour 原样透传")
+	require.Len(t, res.Buckets, 2, "hour 原样透传")
 
 	_, err = svc.QueryStatsTrend(context.Background(), TrendQuery{
 		From: statsTestFrom, To: statsTestFrom.Add(time.Hour), Granularity: "week",
@@ -95,13 +98,13 @@ func TestQueryStatsTrend_whenFiltersSet_thenPassedThrough(t *testing.T) {
 	fs := newFakeStore()
 	seedTrend(fs)
 	svc := statsTestSvc(fs)
-	rows, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
+	res, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
 		From: statsTestFrom, To: statsTestFrom.Add(2 * time.Hour), Granularity: "hour",
 		GroupID: 1, Model: "m1",
 	})
 	require.NoError(t, err)
-	require.Len(t, rows, 2, "group=1 model=m1 过滤生效")
-	require.Equal(t, int64(15), rows[0].RequestCount+rows[1].RequestCount)
+	require.Len(t, res.Buckets, 2, "group=1 model=m1 过滤生效")
+	require.Equal(t, int64(15), res.Buckets[0].RequestCount+res.Buckets[1].RequestCount)
 }
 
 // TestQueryStatsTop_whenParamsInvalid_thenSentinel 窗口先于白名单；实体类型/
@@ -178,22 +181,33 @@ func TestQueryEntityTrend_whenValid_thenPassedThrough(t *testing.T) {
 		{BucketTime: statsTestFrom, EntityType: "user", EntityID: 8, Model: "m1", RequestCount: 4},
 	}
 	svc := statsTestSvc(fs)
-	rows, err := svc.QueryEntityTrend(context.Background(), EntityTrendQuery{
+	res, err := svc.QueryEntityTrend(context.Background(), EntityTrendQuery{
 		EntityType: "user", EntityID: 7, From: statsTestFrom, To: statsTestFrom.Add(2 * time.Hour),
 		Model: "m1",
 	})
 	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, int64(1), rows[0].RequestCount, "entity+model 过滤透传")
-	require.Equal(t, "user", rows[0].EntityType)
-	require.Equal(t, int64(7), rows[0].EntityID)
+	require.Len(t, res.Buckets, 1)
+	require.Equal(t, int64(1), res.Buckets[0].RequestCount, "entity+model 过滤透传")
+	require.Equal(t, "user", res.Buckets[0].EntityType)
+	require.Equal(t, int64(7), res.Buckets[0].EntityID)
 
-	rows, err = svc.QueryEntityTrend(context.Background(), EntityTrendQuery{
+	res, err = svc.QueryEntityTrend(context.Background(), EntityTrendQuery{
 		EntityType: "user", EntityID: 7, From: statsTestFrom, To: statsTestFrom.Add(2 * time.Hour),
 	})
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "空粒度归一化 day：同日两小时桶合一")
-	require.Equal(t, int64(3), rows[0].RequestCount)
+	require.Len(t, res.Buckets, 1, "空粒度归一化 day：同日两小时桶合一")
+	require.Equal(t, int64(3), res.Buckets[0].RequestCount)
+}
+
+// assertStatWindowReject 断言拒绝的线缆载体身份（errors.As 取值——禁字符串嗅探）：
+// 返回载体供调用方继续断言机读字段（cost 的 LimitSeconds / coverage 的
+// RetentionDays 与 Cutoff）。
+func assertStatWindowReject(t *testing.T, err error, reject domain.StatsWindowReject) *StatsWindowError {
+	t.Helper()
+	var swe *StatsWindowError
+	require.ErrorAs(t, err, &swe)
+	require.Equal(t, reject, swe.Reject)
+	return swe
 }
 
 // seedTTFT cube 与实体表各置不同 TTFT 样本数——Count 值即分支选择探针
@@ -218,12 +232,12 @@ func TestQueryStatsTTFT_whenSketchBranch_thenBucketCapApplies(t *testing.T) {
 	require.Equal(t, "sketch", sum.Source)
 
 	sum, err = svc.QueryStatsTTFT(context.Background(), TTFTQuery{
-		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsSketchBuckets * time.Hour)})
+		From: statsTestFrom, To: statsTestFrom.Add(domain.MaxCubeSpan)})
 	require.NoError(t, err, "桶数恰为上限合法")
 	require.NotNil(t, sum)
 
 	_, err = svc.QueryStatsTTFT(context.Background(), TTFTQuery{
-		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsSketchBuckets*time.Hour + time.Hour)})
+		From: statsTestFrom, To: statsTestFrom.Add(domain.MaxCubeSpan + time.Hour)})
 	require.ErrorIs(t, err, ErrInvalidInput, "桶数超上限")
 }
 
@@ -247,19 +261,20 @@ func TestQueryStatsTTFT_whenExactBranch_thenWhitelistSpanAndID(t *testing.T) {
 		From: statsTestFrom, To: statsTestFrom.Add(time.Hour), EntityType: "group", EntityID: 7})
 	require.ErrorIs(t, err, ErrInvalidInput, "entityType 非白名单")
 	_, err = svc.QueryStatsTTFT(context.Background(), TTFTQuery{
-		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsTTFTExactSpan + time.Hour),
+		From: statsTestFrom, To: statsTestFrom.Add(domain.MaxExactTTFTSpan + time.Hour),
 		EntityType: "account", EntityID: 7})
 	require.ErrorIs(t, err, ErrInvalidInput, "exact 跨度超 168h")
-	require.Contains(t, err.Error(), "exact-track limit")
+	require.Equal(t, int64(domain.MaxExactTTFTSpan/time.Second),
+		assertStatWindowReject(t, err, domain.StatsRejectWindowTooLong).LimitSeconds)
 
 	_, err = svc.QueryStatsTTFT(context.Background(), TTFTQuery{
-		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsTTFTExactSpan + time.Millisecond),
+		From: statsTestFrom, To: statsTestFrom.Add(domain.MaxExactTTFTSpan + time.Millisecond),
 		EntityType: "account", EntityID: 7})
 	require.ErrorIs(t, err, ErrInvalidInput, "exact 跨度超 168h 1ms 亦拒绝")
-	require.Contains(t, err.Error(), "exact-track limit")
+	assertStatWindowReject(t, err, domain.StatsRejectWindowTooLong)
 
 	sum, err = svc.QueryStatsTTFT(context.Background(), TTFTQuery{
-		From: statsTestFrom, To: statsTestFrom.Add(MaxStatsTTFTExactSpan),
+		From: statsTestFrom, To: statsTestFrom.Add(domain.MaxExactTTFTSpan),
 		EntityType: "account", EntityID: 7})
 	require.NoError(t, err, "exact 跨度恰为 168h 合法")
 	require.NotNil(t, sum)
@@ -279,15 +294,15 @@ func TestUserStats_whenCallerForgesEntity_thenPinnedToSelf(t *testing.T) {
 	)
 	svc := statsTestSvc(fs)
 
-	rows, err := svc.UserStats(context.Background(), 7, EntityTrendQuery{
+	res, err := svc.UserStats(context.Background(), 7, EntityTrendQuery{
 		EntityType: "account", EntityID: 999,
 		From: statsTestFrom, To: statsTestFrom.Add(time.Hour),
 	})
 	require.NoError(t, err)
-	require.Len(t, rows, 1, "伪造 entity 参数被覆盖：只见自己（user/7）数据")
-	require.Equal(t, "user", rows[0].EntityType)
-	require.Equal(t, int64(7), rows[0].EntityID)
-	require.Equal(t, int64(1), rows[0].RequestCount)
+	require.Len(t, res.Buckets, 1, "伪造 entity 参数被覆盖：只见自己（user/7）数据")
+	require.Equal(t, "user", res.Buckets[0].EntityType)
+	require.Equal(t, int64(7), res.Buckets[0].EntityID)
+	require.Equal(t, int64(1), res.Buckets[0].RequestCount)
 
 	sum, err := svc.UserStatsTTFT(context.Background(), 7, TTFTQuery{
 		EntityType: "account", EntityID: 999,

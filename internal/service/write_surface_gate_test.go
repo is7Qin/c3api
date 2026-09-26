@@ -126,6 +126,7 @@ var allowedServiceMethods = []string{
 	"ServiceTierPolicy",
 	"SetGroupAssignments",
 	"SetUserGroups",
+	"StatsCapabilities",
 	"UpdateAccountsBatch",
 	"UpdateBalanceWarningThreshold",
 	"UpdateGroup",

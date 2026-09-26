@@ -56,6 +56,10 @@ func getUsage(h *AdminAPI, query string) *httptest.ResponseRecorder {
 
 // TestGetAccountsUsageValidation 参数校验矩阵：>100（去重后计）→ 400、空 ids →
 // 400、非数字 → 400、重复去重唯一、非法时间格式 → 400、from>to → 400。
+//
+// P3 追加：窗口**恰择一**（两态都给 / 只给一端 / 都不给 → 400 window_ambiguous）+
+// 只收时长（`window=7d` → 400 window_invalid）。**"缺省 = 当天"已删除**——它正是
+// "两态都不给"的第三种形态，按裁决删除而非兼容（无缺省即无双路径）。
 func TestGetAccountsUsageValidation(t *testing.T) {
 	h, _ := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), &hUsageSnap{})
 
@@ -76,10 +80,16 @@ func TestGetAccountsUsageValidation(t *testing.T) {
 		{"混入非数字", "account_ids=1,2,x", 400},
 		{"101 唯一 → 400", "account_ids=" + strings.Join(ids101, ","), 400},
 		{"101 原始含重复 → 400（normalizeIDs 惯例：原始长度检查在前）", "account_ids=" + strings.Join(dup101, ","), 400},
-		{"非法 from 格式", "account_ids=1&from=not-a-time", 400},
-		{"非法 to 格式", "account_ids=1&to=2026-13-99T00:00:00Z", 400},
+		{"非法 from 格式", "account_ids=1&to=2026-08-18T00:00:00Z&from=not-a-time", 400},
+		{"非法 to 格式", "account_ids=1&from=2026-08-18T00:00:00Z&to=2026-13-99T00:00:00Z", 400},
 		{"from > to", "account_ids=1&from=2026-08-18T12:00:00Z&to=2026-08-18T11:00:00Z", 400},
 		{"from == to", "account_ids=1&from=2026-08-18T11:00:00Z&to=2026-08-18T11:00:00Z", 400},
+		{"两态都不给 → window_ambiguous", "account_ids=1", 400},
+		{"只给 from → window_ambiguous", "account_ids=1&from=2026-08-18T11:00:00Z", 400},
+		{"只给 to → window_ambiguous", "account_ids=1&to=2026-08-18T11:00:00Z", 400},
+		{"window + from/to → window_ambiguous", "account_ids=1&window=24h&from=2026-08-18T11:00:00Z&to=2026-08-18T12:00:00Z", 400},
+		{"日历天窗口 7d → window_invalid（只收时长）", "account_ids=1&window=7d", 400},
+		{"相对窗口单独给出 → 200", "account_ids=1&window=24h", 200},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -89,13 +99,13 @@ func TestGetAccountsUsageValidation(t *testing.T) {
 	}
 }
 
-// TestGetAccountsUsageDefaultsAndOrdering 缺省时间注入（from=统计时区当日零点，
-// 未配置 = UTC；to=now——h.now 注入固定时钟，无真实 now 漂移）+ items 顺序 =
-// 去重后 account_ids 顺序 + 聚合与全量补零。
-func TestGetAccountsUsageDefaultsAndOrdering(t *testing.T) {
+// TestGetAccountsUsageWindowFormAndOrdering 相对窗口形态（P3）：`window=24h` 由
+// 服务端自持注入时钟算出**双界整点**的绝对窗口，另加 items 顺序 = 去重后
+// account_ids 顺序 + 聚合与全量补零。
+func TestGetAccountsUsageWindowFormAndOrdering(t *testing.T) {
 	now := time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC)
 	h, store := newUsageTestHandler(t, now, &hUsageSnap{})
-	base := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC) // 当日窗内
+	base := time.Date(2026, 8, 18, 9, 0, 0, 0, time.UTC) // 窗内
 	store.logs = []*domain.UsageLog{
 		{RequestID: "d1", AccountID: 3, Format: domain.FormatOpenAIChat, ErrorType: domain.ErrNone, TotalTokens: 10, Cost: 100, RawCost: 200, CreatedAt: base},
 		{RequestID: "d2", AccountID: 1, Format: domain.FormatOpenAIChat, ErrorType: domain.ErrNone, TotalTokens: 100, Cost: 1000, RawCost: 3000, CreatedAt: base},
@@ -103,7 +113,7 @@ func TestGetAccountsUsageDefaultsAndOrdering(t *testing.T) {
 	}
 
 	// 重复 id（3,1,2,1）→ 去重后 [3,1,2]（顺序保持首次出现序）
-	rec := getUsage(h, "account_ids=3,1,2,1")
+	rec := getUsage(h, "account_ids=3,1,2,1&window=24h")
 	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
 
 	var resp AccountsUsageResponse
@@ -111,10 +121,15 @@ func TestGetAccountsUsageDefaultsAndOrdering(t *testing.T) {
 	require.Len(t, resp.Items, 3, "items 恒 = 去重后 ids 全量")
 	require.Equal(t, []int64{3, 1, 2}, []int64{resp.Items[0].AccountId, resp.Items[1].AccountId, resp.Items[2].AccountId}, "items 顺序 = 去重后 account_ids 顺序")
 
-	// 缺省时间注入断言（fake 收参 = handler 注入值）
+	// 相对窗口注入断言（fake 收参 = handler 由注入时钟算出的值）：
+	// to = ceilHour(now) = 16:00Z，from = to − 24h = 前一日 16:00Z，双界整点。
 	require.Equal(t, []int64{3, 1, 2}, store.aggIDs, "去重后 ids 传入 repo")
-	require.True(t, store.aggFrom.Equal(now.UTC().Truncate(24*time.Hour)), "缺省 from = UTC 当日零点（%v）", store.aggFrom)
-	require.True(t, store.aggTo.Equal(now), "缺省 to = now（注入时钟）（%v）", store.aggTo)
+	require.True(t, store.aggTo.Equal(time.Date(2026, 8, 18, 16, 0, 0, 0, time.UTC)),
+		"to = ceilHour(now)（%v）", store.aggTo)
+	require.True(t, store.aggFrom.Equal(time.Date(2026, 8, 17, 16, 0, 0, 0, time.UTC)),
+		"from = to − 24h（%v）", store.aggFrom)
+	require.Zero(t, store.aggFrom.Nanosecond())
+	require.Equal(t, 0, store.aggFrom.Minute())
 
 	// 聚合 + 补零：a3（1 行）、a1（2 行）、a2（无记录全 0）
 	g3 := resp.Items[0].Gateway
@@ -133,7 +148,7 @@ func TestGetAccountsUsageDefaultsAndOrdering(t *testing.T) {
 	require.Equal(t, int64(0), resp.Items[2].Gateway.TotalTokens)
 }
 
-// TestGetAccountsUsageExplicitRange 显式 from/to 透传（不做"当天"注入）。
+// TestGetAccountsUsageExplicitRange 显式 from/to 透传（绝对窗口形态，零改写）。
 func TestGetAccountsUsageExplicitRange(t *testing.T) {
 	h, store := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), &hUsageSnap{})
 	from := "2026-08-17T00:00:00Z"
@@ -164,7 +179,7 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 	store.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-bad")}
 	store.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-net")}
 
-	rec := getUsage(h, "account_ids=1,2,3,4")
+	rec := getUsage(h, "account_ids=1,2,3,4&window=24h")
 	require.Equal(t, 200, rec.Code, "单账号快照失败不整批失败: %s", rec.Body.String())
 	var resp AccountsUsageResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
@@ -207,7 +222,7 @@ func TestGetAccountsUsageNilProber(t *testing.T) {
 	h, store := newUsageTestHandler(t, now, nil)
 	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
 
-	rec := getUsage(h, "account_ids=1")
+	rec := getUsage(h, "account_ids=1&window=24h")
 	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
 	var resp AccountsUsageResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -258,14 +259,20 @@ type LogStore interface {
 type StatStore interface {
 	// /api/admin/overview 聚合面（spec 2026-08-14）：SQL 侧聚合——
 	// 服务端 GROUP BY 返回日桶，不拉全行客户端聚合。zone = 请求浏览器时区
-	// （handler 边界校验；nil/UTC = 现状 cube 路径）；repo 内按
-	// domain.ZoneCubeExact 路由 cube 重组 vs 原始行精确聚合。
-	SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error)
-	ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error)
+	// （handler 边界校验；nil/UTC = UTC）。**Cube/Raw 是两套同形 SQL 的纯执行
+	// 方法**：本接口与实现零存储判定、零时区路由知识——「cube 还是原始行」
+	// 唯一由 domain.Admit 判定，调用方（service）据 Exec.Storage 选择（spec
+	// stats-window-plan §4.1「调用选择而非数据标志」）。
+	SummarizeStatsCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error)
+	SummarizeStatsRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error)
+	ScanStatsDaysCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error)
+	ScanStatsDaysRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error)
 	CountOverviewResources(ctx context.Context) (*repository.OverviewResourceCounts, error)
-	StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error)
+	StatsTrendCube(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error)
+	StatsTrendRaw(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error)
 	StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error)
-	StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error)
+	StatsEntityTrendCube(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error)
+	StatsEntityTrendRaw(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error)
 	StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error)
 	StatsTTFTExact(ctx context.Context, from, to time.Time, entityType string, entityID int64, model string) (*domain.TTFTSummary, error)
 }
@@ -370,17 +377,16 @@ type Service struct {
 	// 未提供由校验拒绝）。
 	defaultMaxConcurrency int
 	tzLoc                 *time.Location
-	// statsRawSpan 浏览器时区原始行分组路径的窗口上限（usage_logs/err_logs
-	// 原始行保留期决定）：New 经 ServiceDeps.StatsRawRetentionDays 换算（>0 →
-	// (days+1)×24h 窗口上限 + days 保留兜底；<=0 → 0 = 不限窗口且无兜底，
-	// 分区保留被禁用，既无固定 horizon 也无保证存留期；换算细节与"宁 400
-	// 不静默残缺"见 New）。校验见 validateZoneSpan。
-	statsRawSpan time.Duration
-	// statsRawRetentionDays statsRawSpan 背后的正保留天数（main 传 usage_logs
-	// 与 err_logs 的最小正保留——raw 读两表，两者都须完整覆盖）：retention
-	// 兜底用——窗口起点早于保证存留的分区 cutoff 时，行已被 retention DROP，
-	// 宁 400 不静默残缺；0 = 禁用/不限（跳过兜底）。
-	statsRawRetentionDays int
+	// retention 统计面 coverage 步的保留期来源（usage_logs/err_logs/usage_stats
+	// 三表天数；New 经 ServiceDeps.Retention 一次性注入）。判定唯一入口
+	// domain.Admit 以**参数**接收它（纯函数：不读配置、不读全局）。Days(t) <= 0
+	// ⇒ 该表守卫关闭（分区保留被禁用）。
+	retention domain.Retention
+	// warnThrottleMu / warnThrottle 降级 Warn 节流（spec §4.3）：同
+	// (kind, zone 名, reason) 每分钟至多一条。状态随 Service（不用包级单例
+	// ——测试构造大量 Service，包级态会跨用例泄漏）。见 warnAllowed。
+	warnThrottleMu sync.Mutex
+	warnThrottle   map[warnThrottleKey]int64
 	// statsNow 当前时间源（nil = time.Now；Service 测试注入固定时钟——统计
 	// 窗口守卫与路由观测窗口守卫共用同一时钟源）。
 	statsNow func() time.Time
@@ -406,13 +412,11 @@ type ServiceDeps struct {
 	// TimeLocation 定价时段解释用时区：nil = 进程本地（现状），
 	// 非 nil = at.In(tzLoc) 后再进 domain.ResolveEntryPrices（零热路径额外 DB/锁）。
 	TimeLocation *time.Location
-	// StatsRawRetentionDays 原始行分组 horizon 背后的正保留天数（main 传
-	// usage_logs 与 err_logs 的最小正保留——raw 读两表，两者都须完整覆盖）：
-	// >0 → (days+1)×24h 窗口上限 + days 保留兜底 cutoff（1d DST/日界日历
-	// 余量——默认 7d → 8d，与 MaxStatsRawSpan 缺省同值）；<=0 → 0 = 不限
-	// 窗口且无兜底（分区保留被禁用）。绝不把 horizon 报得比配置保留期更长
-	// ——超限窗口宁 400 不静默残缺。
-	StatsRawRetentionDays int
+	// Retention 统计面 coverage 步的三表保留天数（main 传 usage.log/errlog/
+	// stats_retention_days 三者原件）：domain.Admit 的 step 4 据此算各表 floor
+	// （读 N 张表取最保守者）。**不再预先把 raw 双表折成 min 天数**——max-of-floors
+	// 是 Tables 的自然推论（spec §4.5）。各字段 <= 0 ⇒ 该表守卫关闭。
+	Retention domain.Retention
 	// ClearBalanceWarningCooldown 余额预警偏好变更后的 Redis 已知键清理：
 	// nil = 禁用清理（仅做偏好持久化）。
 	ClearBalanceWarningCooldown func(context.Context, int64, int64) error
@@ -458,18 +462,12 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 		compileNotify:               deps.CompileNotify,
 		mailEnqueue:                 deps.MailEnqueue,
 		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown,
-		routingRetentionDays:        deps.RoutingObservationRetentionDays}
+		routingRetentionDays:        deps.RoutingObservationRetentionDays,
+		retention:                   deps.Retention}
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot
 	} else {
 		s.settings = settingssnap.New(store, log)
-	}
-	if deps.StatsRawRetentionDays > 0 {
-		s.statsRawSpan = time.Duration(deps.StatsRawRetentionDays+1) * 24 * time.Hour
-		s.statsRawRetentionDays = deps.StatsRawRetentionDays
-	} else {
-		s.statsRawSpan = 0
-		s.statsRawRetentionDays = 0
 	}
 	// settings 快照构造时首载（注册表不覆盖 settings——NOTIFY 处理路径
 	// ReloadSettings 保持既有行为）；pricing 快照首载统一由快照注册表

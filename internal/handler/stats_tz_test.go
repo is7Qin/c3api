@@ -10,8 +10,8 @@ package handler
 //     （同窗不同时区各自独立聚合——上海缓存绝不服务纽约请求）；缺省 = UTC
 //     兼容；未知名 → 400；
 //   - 日窗推进 service.AddDate 日历算术（America/New_York 春进日 23h，DST 安全）；
-//   - accounts/usage：缺省 from = 请求时区当日零点；显式 from/to 绝对时刻
-//     直透，任何时区零改写；
+//   - accounts/usage：窗口两形态恰择一（无「缺省=当天」）；显式 from/to 绝对时刻
+//     直透，任何时区零改写；非法时区 → 400；
 //   - /stats/trend、/stats/entity-trend：Zone 透传到 store（fake 记录断言）；
 //     非法 → 400；top/ttft 接受并校验但数值与结果与时区无关。
 
@@ -32,19 +32,29 @@ import (
 )
 
 // windowStore 记录最近一次 overview 聚合收参区间与时区（委托内层 fakeStore）。
+// Cube/Raw 两变体都记录（判定在 service，本包装只观察生效窗口）。
 type windowStore struct {
 	service.Store
 	lastSumFrom, lastSumTo time.Time
 	lastSumZone            *time.Location
 }
 
-func (w *windowStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
+func (w *windowStore) SummarizeStatsCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
 	w.lastSumFrom, w.lastSumTo, w.lastSumZone = from, to, zone
-	return w.Store.SummarizeStats(ctx, from, to, groupID, zone)
+	return w.Store.SummarizeStatsCube(ctx, from, to, groupID, zone)
 }
 
-func (w *windowStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
-	return w.Store.ScanStatsDays(ctx, from, to, groupID, zone)
+func (w *windowStore) SummarizeStatsRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
+	w.lastSumFrom, w.lastSumTo, w.lastSumZone = from, to, zone
+	return w.Store.SummarizeStatsRaw(ctx, from, to, groupID, zone)
+}
+
+func (w *windowStore) ScanStatsDaysCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+	return w.Store.ScanStatsDaysCube(ctx, from, to, groupID, zone)
+}
+
+func (w *windowStore) ScanStatsDaysRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+	return w.Store.ScanStatsDaysRaw(ctx, from, to, groupID, zone)
 }
 
 // statsTZOverview 请求级时区 overview 装配：fake + windowStore + countingStore。
@@ -168,47 +178,50 @@ func TestGetAdminOverviewDSTLocalDayWindow(t *testing.T) {
 		"上界 = 次日本地零点 EDT 04:00Z——本地日 23h（%v）", w.lastSumTo)
 }
 
-// TestGetAccountsUsageRequestZoneDefault 当天缺省 from = 请求时区零点：
-// Asia/Shanghai 下 now = Aug18 17:30Z → from = Aug18 16:00Z（CST Aug19 零点）
-// ——UTC 口径会是 Aug18 00:00Z（差 16h）；缺省参数 = UTC（兼容）；显式
-// from/to 恒绝对时刻直透，任何时区零改写；非法时区 → 400。
-func TestGetAccountsUsageRequestZoneDefault(t *testing.T) {
+// TestGetAccountsUsageNoDefaultDay 账号用量不再有「缺省 = 当天」：只给 timezone
+// 或不给窗口 → 400 window_ambiguous。显式 from/to 仍是绝对时刻，任何时区零改写；
+// 非法时区 → 400（且不是窗口原因）。
+func TestGetAccountsUsageNoDefaultDay(t *testing.T) {
 	now := time.Date(2026, 8, 18, 17, 30, 0, 0, time.UTC)
 	h, store := newUsageTestHandler(t, now, &hUsageSnap{})
 
 	rec := getUsage(h, "account_ids=1&timezone=Asia%2FShanghai")
-	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
-	require.True(t, store.aggFrom.Equal(time.Date(2026, 8, 18, 16, 0, 0, 0, time.UTC)),
-		"缺省 from = 请求时区当日零点（CST Aug19 00:00 = UTC Aug18 16:00）（%v）", store.aggFrom)
-	require.True(t, store.aggTo.Equal(now), "to = now 直透")
+	require.Equal(t, 400, rec.Code, "body: %s", rec.Body.String())
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "window_ambiguous", body["reason"])
 
-	// 缺省（无参数）= UTC 兼容。
 	rec = getUsage(h, "account_ids=1")
-	require.Equal(t, 200, rec.Code)
-	require.True(t, store.aggFrom.Equal(time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC)),
-		"无参数缺省 from = UTC 当日零点（%v）", store.aggFrom)
+	require.Equal(t, 400, rec.Code, "body: %s", rec.Body.String())
+	body = map[string]any{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "window_ambiguous", body["reason"])
 
 	// 显式区间直透（绝对时刻语义不因请求时区改写）。
 	rec = getUsage(h, "account_ids=1&from=2026-08-17T05:00:00Z&to=2026-08-17T06:00:00Z&timezone=Asia%2FShanghai")
-	require.Equal(t, 200, rec.Code)
+	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
 	require.True(t, store.aggFrom.Equal(time.Date(2026, 8, 17, 5, 0, 0, 0, time.UTC)))
 	require.True(t, store.aggTo.Equal(time.Date(2026, 8, 17, 6, 0, 0, 0, time.UTC)))
 
-	// 非法时区 → 400。
+	// 非法时区 → 400，且先于窗口形态（不是 window_ambiguous）。
 	rec = getUsage(h, "account_ids=1&timezone=Not%2FAZone")
 	require.Equal(t, 400, rec.Code, "body: %s", rec.Body.String())
+	body = map[string]any{}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.NotContains(t, body, "reason")
 }
 
 // TestStatsEndpointsZoneThreading /stats/trend、/stats/entity-trend 把已解析
-// 时区透传至 store（fake 记录断言）；缺省 = UTC；非法 = 400；跨度守卫：
-// DST 时区（原始行路径）> MaxStatsRawSpan → 400，恒整点无 DST 时区
-// （cube 路径）90d 合法；top/ttft 仅校验数值无关。
+// 时区透传至 store（fake 记录断言）；缺省 = UTC；非法 = 400；跨度守卫（cost 步，
+// 保留期无关常量）：DST 时区（原始行路径）> 8d → 400，恒整点无 DST 时区
+// （cube 路径）90d 合法；top/ttft 仅校验数值无关。Retention 零注入 ⇒ coverage
+// 步整体跳过（覆盖率拒绝由 service 级用例钉死）。
 func TestStatsEndpointsZoneThreading(t *testing.T) {
 	cst, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	fake := newFakeStore()
 	svc := service.New(fake, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
-		service.ServiceDeps{EmailCodeStore: fake, StatsRawRetentionDays: 7}) // 7d → 8d 缺省 horizon（旧 New 默认）
+		service.ServiceDeps{EmailCodeStore: fake})
 	h := New(svc)
 
 	from, to := "2026-08-17T00:00:00Z", "2026-08-18T00:00:00Z"
@@ -240,7 +253,7 @@ func TestStatsEndpointsZoneThreading(t *testing.T) {
 
 	// 跨 DST 跳变（11-01 秋退在窗内）的长窗：service horizon 400。
 	rec = get("stats/trend?from=2026-10-28T00:00:00Z&to=2026-11-08T00:00:00Z&granularity=day&timezone=America%2FNew_York")
-	require.Equal(t, 400, rec.Code, "跨 DST 跳变超 MaxStatsRawSpan → 400（宁缺勿残）；body: %s", rec.Body.String())
+	require.Equal(t, 400, rec.Code, "跨 DST 跳变超分组原始行成本上限（8d）→ 400（宁缺勿残）；body: %s", rec.Body.String())
 	require.Equal(t, time.UTC, fake.lastTrendZone, "400 路径零 store 调用（上一条成功记录停在 UTC）")
 
 	// 恒整点无 DST 时区（cube 路径）90d 合法；NY 无跳变夏窗同样合法。

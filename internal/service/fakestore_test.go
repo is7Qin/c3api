@@ -68,13 +68,13 @@ type fakeStore struct {
 	accExtErr map[int64]error
 	// pricingListErr 注入 ListPricing 失败（快照 fail-safe 测试）。
 	pricingListErr error
-	// lastTrendZone/lastEntityTrendZone/lastSummaryZone/lastDaysZone 记录统计
-	// 读族最近一次收到的请求时区（request-tz 透传断言面——fake 分组模拟恒
-	// UTC，cube/raw 路由真实性由 repository PG 测试钉）。
-	lastTrendZone       *time.Location
-	lastEntityTrendZone *time.Location
-	lastSummaryZone     *time.Location
-	lastDaysZone        *time.Location
+	// lastTrendExec/lastEntityTrendExec/lastSummaryExec/lastDaysExec 记录统计读族
+	// 最近一次收到的可执行计划（**Cube/Raw 方法对**的上游选择 + 生效窗口 + 时区
+	// 透传断言面；真实 cube/raw 语义由 repository PG 测试钉）。
+	lastTrendExec       domain.Exec
+	lastEntityTrendExec domain.Exec
+	lastSummaryExec     domain.Exec
+	lastDaysExec        domain.Exec
 	// imageListErr 注入 ListImagePrice 失败（image 快照 fail-safe 测试）。
 	imageListErr error
 	// functionListErr 注入 ListFunctionPrice 失败（function 快照 fail-safe 测试）。
@@ -711,10 +711,24 @@ func (f *fakeStore) queryLogs(userID int64) []*domain.UsageLog {
 	return out
 }
 
-func (f *fakeStore) StatsTrend(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
+// StatsTrendCube / StatsTrendRaw 趋势读族（Cube/Raw 同形 SQL 的 fake 模拟：分组
+// 结果相同——两者都只按传入的生效窗口/粒度聚合，差异只在记录的上游选择）。
+func (f *fakeStore) StatsTrendCube(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.lastTrendZone = zone // 透传断言面（分组模拟恒 UTC——cube 语义）
+	f.lastTrendExec = domain.Exec{Storage: domain.StatsStorageCube, From: from, To: to, Zone: zone}
+	return f.trendLocked(from, to, unit, groupID, model), nil
+}
+
+func (f *fakeStore) StatsTrendRaw(ctx context.Context, from, to time.Time, unit string, groupID int64, model string, zone *time.Location) ([]*domain.StatBucket, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastTrendExec = domain.Exec{Storage: domain.StatsStorageRaw, From: from, To: to, Zone: zone}
+	return f.trendLocked(from, to, unit, groupID, model), nil
+}
+
+// trendLocked 趋势聚合体（调用方持 f.mu）。
+func (f *fakeStore) trendLocked(from, to time.Time, unit string, groupID int64, model string) []*domain.StatBucket {
 	m := map[time.Time]*domain.StatBucket{}
 	for _, b := range f.stats {
 		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
@@ -759,7 +773,7 @@ func (f *fakeStore) StatsTrend(ctx context.Context, from, to time.Time, unit str
 		out = append(out, &c)
 	}
 	slices.SortFunc(out, func(a, b *domain.StatBucket) int { return a.BucketTime.Compare(b.BucketTime) })
-	return out, nil
+	return out
 }
 
 func (f *fakeStore) StatsTop(ctx context.Context, from, to time.Time, entityType string, by string, limit int) ([]*domain.EntityStatBucket, error) {
@@ -822,10 +836,23 @@ func (f *fakeStore) StatsTop(ctx context.Context, from, to time.Time, entityType
 	return out, nil
 }
 
-func (f *fakeStore) StatsEntityTrend(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
+// StatsEntityTrendCube / StatsEntityTrendRaw 实体趋势读族（同形 SQL 的 fake 模拟）。
+func (f *fakeStore) StatsEntityTrendCube(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.lastEntityTrendZone = zone // 透传断言面（分组模拟恒 UTC）
+	f.lastEntityTrendExec = domain.Exec{Storage: domain.StatsStorageCube, From: from, To: to, Zone: zone}
+	return f.entityTrendLocked(from, to, unit, entityType, entityID, model), nil
+}
+
+func (f *fakeStore) StatsEntityTrendRaw(ctx context.Context, from, to time.Time, unit string, entityType string, entityID int64, model string, zone *time.Location) ([]*domain.EntityStatBucket, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastEntityTrendExec = domain.Exec{Storage: domain.StatsStorageRaw, From: from, To: to, Zone: zone}
+	return f.entityTrendLocked(from, to, unit, entityType, entityID, model), nil
+}
+
+// entityTrendLocked 实体趋势聚合体（调用方持 f.mu）。
+func (f *fakeStore) entityTrendLocked(from, to time.Time, unit string, entityType string, entityID int64, model string) []*domain.EntityStatBucket {
 	m := map[time.Time]*domain.EntityStatBucket{}
 	for _, b := range f.entityStats {
 		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
@@ -870,7 +897,7 @@ func (f *fakeStore) StatsEntityTrend(ctx context.Context, from, to time.Time, un
 		out = append(out, &c)
 	}
 	slices.SortFunc(out, func(a, b *domain.EntityStatBucket) int { return a.BucketTime.Compare(b.BucketTime) })
-	return out, nil
+	return out
 }
 
 func (f *fakeStore) StatsTTFTSketch(ctx context.Context, from, to time.Time, model string) (*domain.TTFTSummary, error) {
@@ -926,10 +953,24 @@ func (f *fakeStore) StatsTTFTExact(ctx context.Context, from, to time.Time, enti
 
 // --- /api/admin/overview 聚合面（与真实 StatRepo 同语义：区间 + 组过滤；毫分原样） ---
 
-func (f *fakeStore) SummarizeStats(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
+// SummarizeStatsCube / SummarizeStatsRaw summary 读族（绝对区间 sum——时区不参与
+// 数值，两个变体同形）。
+func (f *fakeStore) SummarizeStatsCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.lastSummaryZone = zone // 透传断言面（区间 sum 与时区无关）
+	f.lastSummaryExec = domain.Exec{Storage: domain.StatsStorageCube, From: from, To: to, Zone: zone}
+	return f.summaryLocked(from, to, groupID), nil
+}
+
+func (f *fakeStore) SummarizeStatsRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) (*repository.StatSummary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastSummaryExec = domain.Exec{Storage: domain.StatsStorageRaw, From: from, To: to, Zone: zone}
+	return f.summaryLocked(from, to, groupID), nil
+}
+
+// summaryLocked 区间聚合体（调用方持 f.mu）。
+func (f *fakeStore) summaryLocked(from, to time.Time, groupID int64) *repository.StatSummary {
 	s := &repository.StatSummary{}
 	for _, b := range f.stats {
 		if b.BucketTime.Before(from) || !b.BucketTime.Before(to) {
@@ -946,13 +987,27 @@ func (f *fakeStore) SummarizeStats(ctx context.Context, from, to time.Time, grou
 		s.CacheReadTokens += b.CacheReadTokens
 		s.Cost += b.Cost
 	}
-	return s, nil
+	return s
 }
 
-func (f *fakeStore) ScanStatsDays(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+// ScanStatsDaysCube / ScanStatsDaysRaw 日桶读族（日分组模拟恒 UTC——真实时区分组
+// 由 repository PG 测试钉死）。
+func (f *fakeStore) ScanStatsDaysCube(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.lastDaysZone = zone // 透传断言面（日分组模拟恒 UTC——真实时区分组由 repository PG 测试钉死）
+	f.lastDaysExec = domain.Exec{Storage: domain.StatsStorageCube, From: from, To: to, Zone: zone}
+	return f.daysLocked(from, to, groupID), nil
+}
+
+func (f *fakeStore) ScanStatsDaysRaw(ctx context.Context, from, to time.Time, groupID int64, zone *time.Location) ([]*repository.StatDayAgg, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastDaysExec = domain.Exec{Storage: domain.StatsStorageRaw, From: from, To: to, Zone: zone}
+	return f.daysLocked(from, to, groupID), nil
+}
+
+// daysLocked 日桶聚合体（调用方持 f.mu）。
+func (f *fakeStore) daysLocked(from, to time.Time, groupID int64) []*repository.StatDayAgg {
 	day := map[string]*repository.StatDayAgg{}
 	var order []string
 	for _, b := range f.stats {
@@ -978,7 +1033,7 @@ func (f *fakeStore) ScanStatsDays(ctx context.Context, from, to time.Time, group
 	for _, k := range order {
 		out = append(out, day[k])
 	}
-	return out, nil
+	return out
 }
 
 func (f *fakeStore) CountOverviewResources(ctx context.Context) (*repository.OverviewResourceCounts, error) {

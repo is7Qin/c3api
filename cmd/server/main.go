@@ -313,13 +313,6 @@ func main() {
 	})
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
 	// 不能随模板/账号/分组等任意资源变更触发）。
-	// 浏览器时区原始行分组 horizon 跟随 raw 双表（usage_logs + err_logs 都
-	// 被读）的最小正保留：一个 <=0 取另一个，双禁用 → 不限；缺省 errlog
-	// 7d < log 30d → 8d 窗口。统计读时区本身是请求级参数，不进装配面。
-	rawDays := cfg.Usage.ErrLogRetentionDays
-	if d := cfg.Usage.LogRetentionDays; d > 0 && (rawDays <= 0 || d < rawDays) {
-		rawDays = d
-	}
 	// 余额预警已知键清理（Redis）：构造期一次建好，ServiceDeps 与
 	// wireBalanceWarning 共用同一实例。
 	bwCooldown := notification.NewCooldown(rdb)
@@ -337,9 +330,15 @@ func main() {
 	}
 	mailW := service.NewMailWorker(service.MailDeps{Log: log, Settings: settingsSnap, Templates: repos})
 	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log, service.ServiceDeps{
-		EmailCodeStore:                  verification.New(rdb),
-		TimeLocation:                    svcLoc,
-		StatsRawRetentionDays:           rawDays,
+		EmailCodeStore: verification.New(rdb),
+		TimeLocation:   svcLoc,
+		// Retention 三表原件（不预先折 min：读 N 张表取最保守 floor 是
+		// domain.StatsKinds 的 Tables 推论，spec §4.5）。
+		Retention: domain.Retention{
+			Log:    cfg.Usage.LogRetentionDays,
+			ErrLog: cfg.Usage.ErrLogRetentionDays,
+			Stats:  cfg.Usage.StatsRetentionDays,
+		},
 		ClearBalanceWarningCooldown:     bwCooldown.Clear,
 		RecoverProber:                   runtimeHealth,
 		RecoverLatch:                    latchStore,
