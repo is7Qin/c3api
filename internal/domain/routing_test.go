@@ -165,18 +165,22 @@ func TestRoutingUTF8AndURL(t *testing.T) {
 	orig6, err := CanonicalOrigin("http://192.168.1.1")
 	require.NoError(t, err)
 	require.Equal(t, "http://192.168.1.1:80", orig6)
-	_, err = CanonicalOrigin("https://api.openai.com?foo=bar")
-	require.Error(t, err, "query must be rejected")
-	_, err = CanonicalOrigin("https://api.openai.com?")
-	require.Error(t, err, "empty query marker must be rejected")
-	_, err = CanonicalOrigin("https://api.openai.com#frag")
-	require.Error(t, err, "fragment must be rejected")
-	_, err = CanonicalOrigin("https://api.openai.com#")
-	require.Error(t, err, "empty fragment marker must be rejected")
+	// 查询串、片段、userinfo 都不是源的组成部分：剥掉，与裸源同一结果。
+	for _, raw := range []string{
+		"https://api.openai.com?foo=bar",
+		"https://api.openai.com?",
+		"https://api.openai.com#frag",
+		"https://api.openai.com#",
+		"https://user:pass@api.openai.com/v1",
+	} {
+		got, err := CanonicalOrigin(raw)
+		require.NoError(t, err, raw)
+		require.Equal(t, "https://api.openai.com:443", got, raw)
+	}
 	_, err = CanonicalOrigin("")
 	require.Error(t, err, "empty origin must be rejected")
-	_, err = CanonicalOrigin("http://user:pass@api.openai.com")
-	require.Error(t, err, "userinfo must be rejected")
+	_, err = CanonicalOrigin("   ")
+	require.Error(t, err, "blank origin must be rejected")
 	_, err = CanonicalOrigin("not-a-url")
 	require.Error(t, err)
 	_, err = CanonicalOrigin("https://api.openai.com:99999")

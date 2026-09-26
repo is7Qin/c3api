@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -121,72 +122,45 @@ func HexToID(s string) ([32]byte, error) {
 	return out, nil
 }
 
+// CanonicalOrigin 把 base_url 收成源：scheme://host:port。
+//
+// 源只由这三样决定。路径是上游协议前缀（/v1、/zen、/zen/go），查询串、片段、
+// userinfo 都不是源的组成部分——一律剥掉，不因此拒绝。带路径的 base_url 若被
+// 拒绝，账号指纹为空，调度器预留的空指纹门会把该路由的全部候选刷掉，表现为
+// 429 "no available account"。
+//
+// 仍拒绝：空串、无 scheme/host、非 http(s)、下划线主机名、非法端口。
 func CanonicalOrigin(raw string) (string, error) {
-	if strings.TrimSpace(raw) == "" {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
 		return "", fmt.Errorf("routing: empty origin")
 	}
-	if strings.Contains(raw, "?") {
-		return "", fmt.Errorf("routing: origin must not contain query marker %q", raw)
-	}
-	if strings.Contains(raw, "#") {
-		return "", fmt.Errorf("routing: origin must not contain fragment marker %q", raw)
-	}
-	rawTrim := strings.TrimSpace(raw)
-	u, err := url.Parse(rawTrim)
-	if err != nil {
-		return "", fmt.Errorf("routing: invalid origin %q: %w", raw, err)
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("routing: origin missing scheme or host %q", raw)
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return "", fmt.Errorf("routing: invalid origin %q", raw)
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if scheme != "https" && scheme != "http" {
 		return "", fmt.Errorf("routing: origin scheme must be http or https %q", raw)
 	}
-	if u.User != nil {
-		return "", fmt.Errorf("routing: origin must not contain userinfo %q", raw)
-	}
-	// 路径不参与源的判定：base_url 的路径是上游协议前缀（/v1、/zen、/zen/go），
-	// 同一 host 下的不同路径属于同一个源。带路径的 base_url 必须能算出指纹，
-	// 否则该账号在调度器里指纹为空、被 reserve 的空指纹门刷掉，表现为
-	// 429 "no available account"——而账号本身完全健康。源只取 scheme+host+port。
-	if u.Opaque != "" {
-		return "", fmt.Errorf("routing: invalid origin %q", raw)
-	}
-	hostname := u.Hostname()
-	if hostname == "" {
-		return "", fmt.Errorf("routing: origin missing hostname %q", raw)
-	}
-	hostname = strings.ToLower(hostname)
-	if strings.Contains(hostname, "_") {
+	host := strings.ToLower(u.Hostname())
+	if host == "" || strings.Contains(host, "_") {
 		return "", fmt.Errorf("routing: invalid hostname %q", raw)
 	}
-	if ip := net.ParseIP(hostname); ip == nil {
-		if len(hostname) > 253 {
-			return "", fmt.Errorf("routing: hostname too long %q", raw)
-		}
+	if net.ParseIP(host) == nil && len(host) > 253 {
+		return "", fmt.Errorf("routing: hostname too long %q", raw)
 	}
-	portStr := u.Port()
-	var port string
-	if portStr == "" {
+	port := u.Port()
+	if port == "" {
 		if scheme == "https" {
 			port = "443"
 		} else {
 			port = "80"
 		}
-	} else {
-		if _, err := fmt.Sscanf(portStr, "%d", new(int)); err != nil {
-			return "", fmt.Errorf("routing: invalid port %q", raw)
-		}
-		var p int
-		fmt.Sscanf(portStr, "%d", &p)
-		if p <= 0 || p > 65535 {
-			return "", fmt.Errorf("routing: invalid port %q", raw)
-		}
-		port = portStr
+	} else if p, err := strconv.Atoi(port); err != nil || p <= 0 || p > 65535 {
+		return "", fmt.Errorf("routing: invalid port %q", raw)
 	}
-	host := net.JoinHostPort(hostname, port)
-	return scheme + "://" + host, nil
+	return scheme + "://" + net.JoinHostPort(host, port), nil
 }
 
 func RouteClassID(groupID int64, clientFormat RequestFormat, requestedModel string, opTag OperationTag) (RouteClassIDVal, error) {
@@ -326,9 +300,6 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 	baseURL := a.Template.BaseURL
 	if a.BaseURL != nil && *a.BaseURL != "" {
 		baseURL = *a.BaseURL
-	}
-	if baseURL != "" && strings.HasSuffix(baseURL, "/v1") {
-		baseURL = strings.TrimSuffix(baseURL, "/v1")
 	}
 	var patKey, email, codexAccountID, installationID, sessionID, threadID, windowID string
 	if a.Ext != nil {

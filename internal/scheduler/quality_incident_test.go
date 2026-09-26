@@ -4,25 +4,26 @@ package scheduler
 import (
 	"testing"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/stretchr/testify/require"
 )
 
 func TestIncidentFailureDomain(t *testing.T) {
-	first, err := CanonicalOrigin("https://api.example.com/v1/chat")
+	// 故障域与候选指纹读的是同一份源：路径、查询串都不把同一 host 拆成两个域。
+	first, err := domain.CanonicalOrigin("https://api.example.com/v1/chat")
 	require.NoError(t, err)
 	require.Equal(t, "https://api.example.com:443", first)
-	second, err := CanonicalOrigin("HTTPS://API.EXAMPLE.COM:443/path?x=1")
+	second, err := domain.CanonicalOrigin("HTTPS://API.EXAMPLE.COM:443/path?x=1")
 	require.NoError(t, err)
 	require.Equal(t, first, second)
-	httpOrigin, err := CanonicalOrigin("http://example.com")
+	httpOrigin, err := domain.CanonicalOrigin("http://example.com")
 	require.NoError(t, err)
 	require.Equal(t, "http://example.com:80", httpOrigin)
-	_, err = CanonicalOrigin("")
+	_, err = domain.CanonicalOrigin("")
 	require.Error(t, err)
-	_, err = CanonicalOrigin("not-a-url")
+	_, err = domain.CanonicalOrigin("not-a-url")
 	require.Error(t, err)
-	require.Equal(t, FailureDomainID("https://api.example.com/v1"), FailureDomainID("https://api.example.com/other"))
-	require.NotEqual(t, FailureDomainID("http://a.com"), FailureDomainID("https://a.com"))
+	require.NotEqual(t, first, httpOrigin)
 }
 
 func TestIncidentDegraded(t *testing.T) {
