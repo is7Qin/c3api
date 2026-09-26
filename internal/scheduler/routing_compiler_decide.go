@@ -6,7 +6,6 @@ import (
 	"math"
 	"sort"
 
-	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -18,33 +17,40 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 		key := CandidateQualityKey{RouteClassID: routeRC, Fingerprint: facts.identityFingerprint}
 		qin, hasQ := quality[key]
 		var cnt Counts
-		var inTok, outTok, crTok, ccTok int64
+		var inTok, crTok int64
 		if hasQ {
 			cnt = qin.Counts
 			inTok = qin.InputTokens
-			outTok = qin.OutputTokens
 			crTok = qin.CacheReadTokens
-			ccTok = qin.CacheCreateTokens
 		}
 		price, hasPrice := prices[rk.model]
 		known := hasPrice && cnt.Successes > 0
 		var cost int64
 		if known {
-			avgIn := AvgTokens(inTok, int64(cnt.Successes))
-			avgOut := AvgTokens(outTok, int64(cnt.Successes))
-			avgCr := AvgTokens(crTok, int64(cnt.Successes))
-			avgCc := AvgTokens(ccTok, int64(cnt.Successes))
-			raw := billing.CostFromResolved(price, avgIn, avgOut, avgCr, avgCc)
-			mult := facts.upstreamCostMultiplierBp
-			if mult < 0 {
-				mult = 0
+			billable := inTok
+			if billable < 0 {
+				billable = 0
 			}
-			if mult > 100000 {
-				mult = 100000
+			cached := crTok
+			if cached < 0 {
+				cached = 0
 			}
-			cost = SaturatingMulDiv(raw, int64(mult), 10000)
-			if cost < 0 {
-				cost = 0
+			denom := billable + cached
+			if denom == 0 {
+				cost = math.MaxInt64
+				known = false
+			} else {
+				mult := facts.upstreamCostMultiplierBp
+				if mult < 0 {
+					mult = 0
+				}
+				if mult > 100000 {
+					mult = 100000
+				}
+				cost = inputUnitPurchaseCost(uint64(mult), uint64(billable), uint64(cached), nonNegPrice(price.InputPerM), nonNegPrice(price.CacheReadPerM), uint64(denom))
+				if cost < 0 {
+					cost = 0
+				}
 			}
 		} else {
 			cost = math.MaxInt64
