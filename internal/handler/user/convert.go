@@ -200,6 +200,33 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	return rule.UnifiedMessage(then, upstream)
 }
 
+// toAPIStatsCapabilities 能力投影 → 用户面包内线缆类型（与
+// internal/handler/stat.go 的同名函数是**逐句同构的双份**——两面各自生成
+// schema 类型，跨包不可共用，这是本仓库既有的双面包惯例：toAPIStatTrendPoint /
+// toAPIEntityStatTrendPoint / toAPIStatTTFTSummary 同样各有一份）。
+// 无数值字面量：上限/覆盖天数全部来自同一份 domain KIND 矩阵投影。
+func toAPIStatsCapabilities(c domain.Capabilities) StatsCapabilities {
+	kinds := make(map[string]StatsKindCapability, len(c.Kinds))
+	for id, k := range c.Kinds {
+		storages := make([]StatsKindCapabilityStorages, 0, len(k.Storages))
+		caps := make(map[string]int64, len(k.Storages))
+		days := make(map[string]int, len(k.Storages))
+		for _, s := range k.Storages {
+			name := s.String()
+			storages = append(storages, StatsKindCapabilityStorages(name))
+			caps[name] = k.CostCapSeconds[s]
+			days[name] = k.CoverageDays[s]
+		}
+		kinds[string(id)] = StatsKindCapability{
+			Grouping:       k.Grouping.String(),
+			Storages:       storages,
+			CostCapSeconds: caps,
+			CoverageDays:   days,
+		}
+	}
+	return StatsCapabilities{BucketGridSeconds: int(c.BucketGridSeconds), Kinds: kinds}
+}
+
 func toAPIStatTrendPoint(b *domain.StatBucket) StatTrendPoint {
 	var avg float64
 	if b.TTFTCount > 0 {

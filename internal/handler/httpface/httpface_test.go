@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/domain"
 	serviceerr "github.com/is7qin/c3api/internal/service/errors"
 )
 
@@ -58,6 +61,85 @@ func TestWriteServiceErr(t *testing.T) {
 			WriteServiceErr(rec, tc.err)
 			require.Equal(t, tc.status, rec.Code)
 			require.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+			require.Equal(t, tc.body, rec.Body.String(), "响应体必须逐字节精确")
+		})
+	}
+}
+
+// TestWriteServiceErrWindowFields 400 机读字段（spec §4.4(c)/(d)）：四类拒绝各自的
+// 字段集合，逐字节精确。载体用合成构造——**不走墙钟**（coverage 拒绝的 cutoff
+// 与生效窗口由固定字面量给出）。
+//
+// `window_invalid` 一例是 J2b 的判据：参数本身非法时**没有**存储/上限/保留期/
+// 生效窗口可言，故这些字段必须**省略**，不得序列化 `"storage":"cube"`
+// （StatsStorage 零值）或 `limit_seconds:0` 这类伪造事实。
+func TestWriteServiceErrWindowFields(t *testing.T) {
+	// 分组原始行的成本上限（8d）与其十进制文本——两处都用常量推导，
+	// 使本包不含任何上限秒值字面量。
+	groupedRawCapSec := int64(domain.MaxGroupedRawSpan / time.Second)
+	capSecText := strconv.FormatInt(groupedRawCapSec, 10)
+
+	effFrom := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	effTo := time.Date(2026, 8, 9, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		err  error
+		body string
+	}{
+		{
+			"window_invalid 只报 reason",
+			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowInvalid,
+				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+			"{\"error\":\"service: stats window invalid: from/to must be set and from \\u003c to, or window must be a duration string\",\"reason\":\"window_invalid\"}\n",
+		},
+		{
+			// 上限秒数取自矩阵常量（本包不出现裸的上限秒值字面量——A16'② 的
+			// 零命中审计覆盖 internal/handler 全部文件；绝对值金标准在 internal/domain）。
+			"window_too_long 携带 storage/limit_seconds/effective_*",
+			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowTooLong,
+				Storage: domain.StatsStorageRaw, LimitSeconds: groupedRawCapSec,
+				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+			"{\"error\":\"service: stats window too long: trend raw supports windows up to 192h0m0s\"," +
+				"\"reason\":\"window_too_long\",\"storage\":\"raw\",\"limit_seconds\":" + capSecText + "," +
+				"\"effective_from\":\"2026-08-01T00:00:00Z\",\"effective_to\":\"2026-08-09T00:00:00Z\"}\n",
+		},
+		{
+			"raw_horizon 携带 retention_days 而非 limit_seconds",
+			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+				Kind: domain.KindUsageList, Reject: domain.StatsRejectRawHorizon,
+				Storage: domain.StatsStorageRaw, Cutoff: effFrom, RetentionDays: 2,
+				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+			"{\"error\":\"service: stats raw window starts before retained partitions" +
+				" (cutoff 2026-08-01T00:00:00Z, retention 2d)\",\"reason\":\"raw_horizon\",\"storage\":\"raw\"," +
+				"\"effective_from\":\"2026-08-01T00:00:00Z\",\"effective_to\":\"2026-08-09T00:00:00Z\"," +
+				"\"retention_days\":2}\n",
+		},
+		{
+			"cube_horizon storage=cube",
+			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+				Kind: domain.KindTop, Reject: domain.StatsRejectCubeHorizon,
+				Storage: domain.StatsStorageCube, Cutoff: effFrom, RetentionDays: 30,
+				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+			"{\"error\":\"service: stats cube window starts before retained partitions" +
+				" (cutoff 2026-08-01T00:00:00Z, retention 30d)\",\"reason\":\"cube_horizon\",\"storage\":\"cube\"," +
+				"\"effective_from\":\"2026-08-01T00:00:00Z\",\"effective_to\":\"2026-08-09T00:00:00Z\"," +
+				"\"retention_days\":30}\n",
+		},
+		{
+			"包装链上的载体仍被 errors.As 取到（禁字符串嗅探）",
+			fmt.Errorf("query failed: %w", &serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowInvalid}}),
+			"{\"error\":\"query failed: service: stats window invalid: from/to must be set and from " +
+				"\\u003c to, or window must be a duration string\",\"reason\":\"window_invalid\"}\n",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			WriteServiceErr(rec, tc.err)
+			require.Equal(t, http.StatusBadRequest, rec.Code)
 			require.Equal(t, tc.body, rec.Body.String(), "响应体必须逐字节精确")
 		})
 	}

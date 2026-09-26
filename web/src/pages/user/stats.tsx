@@ -16,7 +16,9 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { alignStatsWindow, browserTimeZone, fmtTTFT, formatDateTime, localOffsetSuffix, toRFC3339 } from '@/components/fmt'
+import { browserTimeZone, fmtTTFT, formatDateTime, localOffsetSuffix, toRFC3339 } from '@/components/fmt'
+import { StatsWindowNotice } from '@/components/stats-window-notice'
+import { compositeMaxSpanSeconds, kindCostCapSeconds } from '@/lib/stats-capabilities'
 import { userApi } from '@/lib/api/client'
 import { useDebounced } from '@/lib/use-debounced'
 
@@ -33,11 +35,16 @@ function defaultRange() {
 
 const pad2 = (n: number) => String(n).padStart(2, '0')
 
-const TTFT_MAX_SPAN_MS = 7 * 24 * 3600 * 1000
-
 export default function UserStats() {
   const { t } = useTranslation()
   const [range, setRange] = useState(defaultRange)
+  // true = 仍是挂载时的「近 24h」预设：趋势与 TTFT 发 window=24h。
+  // 用户用选择器改成任意绝对区间后置空，改发 from+to（恰择一）。
+  const [preset, setPreset] = useState(true)
+  const onRange = (next: { from: string; to: string }) => {
+    setPreset(false)
+    setRange(next)
+  }
   const [granularity, setGranularity] = useState<Granularity>('hour')
   const [metric, setMetric] = useState<Metric>('tokens')
   const [modelInput, setModelInput] = useState('')
@@ -52,24 +59,21 @@ export default function UserStats() {
     })
   }
 
-  const params = useMemo(
-    // timezone = 浏览器 IANA 时区（服务端按本地桶界精确聚合；label 用 new Date
-    // 本地渲染恰一次）。TTFT 卡片不发送 timezone：其数值为绝对区间分位数，与
-    // 请求时区无关（服务端缓存键亦不含区），前端带上只会碎片化 queryKey。
-    // 窗口先对齐 UTC 整点：/api/user/stats 同样落到 QueryEntityTrend 的
-    // validateZoneSpan，界不齐时弃用卷积表改扫原始行，超保留期 → 400
-    //（详见 fmt.alignStatsWindow 注释）。只对齐查询参数，选择器展示保持原样。
-    () => ({
-      ...alignStatsWindow(Date.parse(toRFC3339(range.from)!), Date.parse(toRFC3339(range.to)!)),
-      granularity,
-      model: debouncedModel || undefined,
-      timezone: browserTimeZone(),
-    }),
-    [range, granularity, debouncedModel]
-  )
+  // timezone = 浏览器 IANA 时区（服务端按本地桶界精确聚合；label 用 new Date
+  // 本地渲染恰一次）。预设发 window=；自定义绝对区间发 from+to。两个调用
+  // 分开写，避免一个对象同时带 window 和 from。
+  const trendKey = { preset, from: range.from, to: range.to, granularity, model: debouncedModel }
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['user', 'stats', params],
-    queryFn: () => userApi.getMyStats(params),
+    queryKey: ['user', 'stats', trendKey],
+    queryFn: () => preset
+      ? userApi.getMyStats({ window: '24h', granularity, model: debouncedModel || undefined, timezone: browserTimeZone() })
+      : userApi.getMyStats({
+          from: toRFC3339(range.from)!,
+          to: toRFC3339(range.to)!,
+          granularity,
+          model: debouncedModel || undefined,
+          timezone: browserTimeZone(),
+        }),
   })
   const rows = data ?? []
   // label 跨桶唯一纪律（同管理台 stats.tsx）：recharts category 轴按 label
@@ -97,21 +101,43 @@ export default function UserStats() {
     })
   }, [rows, granularity])
 
-  const { ttftParams, ttftClamped } = useMemo(() => {
-    const toMs = new Date(range.to).getTime()
-    const origFromMs = new Date(range.from).getTime()
-    const fromMs = Math.max(origFromMs, toMs - TTFT_MAX_SPAN_MS)
-    const clamped = !Number.isNaN(origFromMs) && !Number.isNaN(toMs) && fromMs > origFromMs
-    const clampedFrom = Number.isNaN(fromMs) ? toRFC3339(range.from)! : new Date(fromMs).toISOString()
-    return {
-      ttftClamped: clamped,
-      ttftParams: { from: clampedFrom, to: toRFC3339(range.to)!, model: debouncedModel || undefined },
-    }
-  }, [range, debouncedModel])
-  const ttftQ = useQuery({
-    queryKey: ['user', 'stats-ttft', ttftParams],
-    queryFn: () => userApi.getMyStatsTTFT(ttftParams),
+  // 统计能力（本部署能查多久）：per-deployment 常量，按部署缓存（staleTime 无限）。
+  // 用户面包走 /api/user/stats/capabilities——与 /api/admin/stats/capabilities 是
+  // 同一份服务端投影，但普通用户拿不到 /api/admin/*（platform_admin 凭据）。
+  const capsQ = useQuery({
+    queryKey: ['user', 'stats-capabilities'],
+    queryFn: () => userApi.getMyStatsCapabilities(),
+    staleTime: Infinity,
   })
+  // 挂载时固定一次（渲染期不读时钟——与 defaultRange 同纪律）。
+  const [mountedMs] = useState(() => Date.now())
+  // TTFT 卡片上限 = kinds.ttft_exact 的成本上限（原先硬编码 7d——能力上移到唯一
+  // 来源）。未知（能力未就绪）⇒ 不钳制：宁可由服务端按同一常量拒绝并回显原因，
+  // 也不假装一个前端自有的上限。
+  const ttftCapSeconds = kindCostCapSeconds(capsQ.data, 'ttft_exact')
+  // 钳制后的跨度恰好等于上限（168h 整）才发 window=168h。更短的自定义区间
+  // 继续发绝对 from/to——不把一段任意区间伪装成时长，也不为了钳制把下界
+  // 减到一个不对齐的绝对时刻。挂载预设就是 24h，短于任何上限。
+  const ttftSpanMs = new Date(range.to).getTime() - new Date(range.from).getTime()
+  const ttftClamped = !preset && ttftCapSeconds !== undefined && !Number.isNaN(ttftSpanMs)
+    && ttftSpanMs > ttftCapSeconds * 1000 && ttftCapSeconds % 3600 === 0
+  const ttftKey = preset
+    ? { window: '24h', model: debouncedModel }
+    : ttftClamped
+      ? { window: `${ttftCapSeconds! / 3600}h`, model: debouncedModel }
+      : { from: range.from, to: range.to, model: debouncedModel }
+  const ttftQ = useQuery({
+    queryKey: ['user', 'stats-ttft', ttftKey],
+    queryFn: () => {
+      const model = debouncedModel || undefined
+      if (preset) return userApi.getMyStatsTTFT({ window: '24h', model })
+      if (ttftClamped) return userApi.getMyStatsTTFT({ window: `${ttftCapSeconds! / 3600}h`, model })
+      return userApi.getMyStatsTTFT({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, model })
+    },
+  })
+  // 选择器裁剪：趋势图（entity_trend）的可服务跨度（>90d 的窗口在任何存储上都被拒）。
+  const maxSpanSeconds = compositeMaxSpanSeconds(capsQ.data, ['entity_trend'])
+  const minDate = maxSpanSeconds === undefined ? undefined : new Date(mountedMs - maxSpanSeconds * 1000)
 
   const chartConfig = {
     requests: { label: t('user.stats.metricRequests'), color: 'var(--chart-1)' },
@@ -150,7 +176,7 @@ export default function UserStats() {
         <div className="flex flex-nowrap items-start gap-5 overflow-x-auto">
           <div className="w-[14rem] shrink-0 space-y-1.5">
             <Label>{t('dateRange.label')}</Label>
-            <DateRangePicker value={range} onChange={setRange} />
+            <DateRangePicker value={range} onChange={onRange} minDate={minDate} />
           </div>
           <div className="shrink-0 space-y-1.5">
             <Label>{t('user.stats.granularity')}</Label>
@@ -184,7 +210,10 @@ export default function UserStats() {
         </CardHeader>
         <CardContent>
           {isError ? (
-            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+            <div>
+              <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+              <StatsWindowNotice error={error} />
+            </div>
           ) : isLoading ? (
             <Skeleton className="h-[320px] w-full" />
           ) : labeledRows.length === 0 ? (
@@ -265,11 +294,18 @@ export default function UserStats() {
         <CardHeader>
           <CardTitle>{t('user.stats.ttft.title')}</CardTitle>
           <CardDescription>{t('user.stats.ttft.desc')}</CardDescription>
-          {ttftClamped && <p className="text-xs text-muted-foreground">{t('user.stats.ttft.clamped')}</p>}
+          {ttftClamped && ttftCapSeconds !== undefined && (
+            <p className="text-xs text-muted-foreground">
+              {t('user.stats.ttft.clamped', { days: Math.round(ttftCapSeconds / 86400) })}
+            </p>
+          )}
         </CardHeader>
         <CardContent>
           {ttftQ.isError ? (
-            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (ttftQ.error as Error).message })}</p>
+            <div>
+              <p className="text-sm text-destructive">{t('common.loadFailed', { message: (ttftQ.error as Error).message })}</p>
+              <StatsWindowNotice error={ttftQ.error} />
+            </div>
           ) : ttftQ.isLoading ? (
             <div className="grid grid-cols-3 gap-4">
               {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-16" />)}
@@ -298,7 +334,10 @@ export default function UserStats() {
 
       <Card className="bg-transparent border-0 shadow-none backdrop-blur-none p-0">
         {isError ? (
-          <p className="p-4 text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+          <div className="p-4">
+            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
+            <StatsWindowNotice error={error} />
+          </div>
         ) : (
           <ScrollArea className="max-h-[calc(100dvh-20rem)] min-h-0 rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] dark:border-[rgba(148,180,220,0.32)]" showHorizontal data-od-id="table-scroll-user-stats">
           <Table className="min-w-[1100px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">

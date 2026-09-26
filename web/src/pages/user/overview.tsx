@@ -5,7 +5,7 @@
 // 用户端总览（/user 默认落地页）：me() 余额卡（Balance/MaxConcurrency/Status/注册时间）
 // + 近况（可用 keys 数 + 最近 7 天用量摘要）。卡片与动画延续管理端 dashboard 模式。
 // 单位语义：User.Balance 为 USD 浮点直显（$ + 2 位小数）；MaxConcurrency 0 = 不限。
-import { useMemo } from 'react'
+
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { BarChart3, CalendarDays, KeyRound, Wallet, Zap } from 'lucide-react'
@@ -28,19 +28,15 @@ const cardGrid = 'grid grid-cols-1 gap-5 *:data-[slot=card]:bg-linear-to-t *:dat
 export default function UserOverview() {
   const { t } = useTranslation()
 
-  // 近 7 天窗口（挂载时固定，避免 queryKey 每次渲染变化导致无限 refetch）
-  const [from, to] = useMemo(() => {
-    const end = new Date()
-    const start = new Date(end.getTime() - 7 * 86_400_000)
-    return [start.toISOString(), end.toISOString()]
-  }, [])
+  // 近 7 天是预设：发 window=168h（服务端自持 now 取整点）。不在客户端用墙钟
+  // 减出 from/to——那会把首个不满小时的桶平移丢掉。
 
   const meQ = useQuery({ queryKey: ['user', 'me'], queryFn: () => userApi.me() })
   // limit 1 仅取 total（KeyListResponse.total），不用拉全量
   const keysQ = useQuery({ queryKey: ['user', 'keys'], queryFn: () => userApi.listUserKeys({ limit: 1 }) })
   const statsQ = useQuery({
-    queryKey: ['user', 'stats', { from, to, granularity: 'day', timezone: browserTimeZone() }],
-    queryFn: () => userApi.getMyStats({ from, to, granularity: 'day', timezone: browserTimeZone() }),
+    queryKey: ['user', 'stats', { window: '168h', granularity: 'day', timezone: browserTimeZone() }],
+    queryFn: () => userApi.getMyStats({ window: '168h', granularity: 'day', timezone: browserTimeZone() }),
   })
 
   // 最近 7 天汇总：请求数 / 总 token / 成本（/user/stats 的 Cost 已 USD → formatUSD）

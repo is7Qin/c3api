@@ -77,7 +77,7 @@ type RoutingFrontierResult struct {
 // 样本不足者如实呈现但不上前沿。输出确定性排序：前沿优先 → LCB 降序 →
 // 成本升序 → 指纹升序，随后钳到 limit。
 func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQuery) (*RoutingFrontierResult, error) {
-	if err := validateStatsWindow(q.From, q.To, MaxStatsTrendSpan); err != nil {
+	if err := validateRoutingWindow(q.From, q.To); err != nil {
 		return nil, err
 	}
 	if err := s.validateRoutingRetention(q.From); err != nil {

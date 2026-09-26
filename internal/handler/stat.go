@@ -13,10 +13,18 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// GetStatsTrend 趋势聚合（cube 或原始行——按请求 `timezone` 由 repo 路由）。
-// ServerInterface。
+// GetStatsTrend 趋势聚合（按请求 `timezone` 判定 cube/原始行走哪条——判定在
+// domain.Admit，本层只读判定结果）。200 体是裸数组，故生效窗口与实际存储走
+// 回显头（spec §4.4(b)）。窗口两形态（from+to / window 单独，恰择一）在
+// httpface.ResolveStatsWindow 解码，时钟用本层可注入的 h.now（P3）——本层不判
+// "这个窗口能不能被服务"。ServerInterface。
 func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams) {
 	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	from, to, err := httpface.ResolveStatsWindow(params.From, params.To, params.Window, h.now())
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -28,8 +36,8 @@ func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params 
 		granularity = string(*params.Granularity)
 	}
 	q := service.TrendQuery{
-		From:        params.From,
-		To:          params.To,
+		From:        from,
+		To:          to,
 		Granularity: granularity,
 		Zone:        zone,
 	}
@@ -39,13 +47,14 @@ func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params 
 	if params.Model != nil {
 		q.Model = *params.Model
 	}
-	rows, err := h.svc.QueryStatsTrend(r.Context(), q)
+	res, err := h.svc.QueryStatsTrend(r.Context(), q)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	out := make([]StatTrendPoint, 0, len(rows))
-	for _, b := range rows {
+	httpface.WriteStatsEcho(w, res.Exec)
+	out := make([]StatTrendPoint, 0, len(res.Buckets))
+	for _, b := range res.Buckets {
 		out = append(out, toAPIStatTrendPoint(b))
 	}
 	httpface.WriteJSON(w, http.StatusOK, out)
@@ -86,9 +95,14 @@ func (h *AdminAPI) GetStatsTop(w http.ResponseWriter, r *http.Request, params Ge
 	httpface.WriteJSON(w, http.StatusOK, out)
 }
 
-// GetStatsEntityTrend 实体趋势（时区路由同 GetStatsTrend）。
+// GetStatsEntityTrend 实体趋势（时区判定/窗口形态解码/回显同 GetStatsTrend）。
 func (h *AdminAPI) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, params GetStatsEntityTrendParams) {
 	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	from, to, err := httpface.ResolveStatsWindow(params.From, params.To, params.Window, h.now())
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -96,21 +110,22 @@ func (h *AdminAPI) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, p
 	q := service.EntityTrendQuery{
 		EntityType:  string(params.Entity),
 		EntityID:    params.Id,
-		From:        params.From,
-		To:          params.To,
+		From:        from,
+		To:          to,
 		Granularity: string(params.Granularity),
 		Zone:        zone,
 	}
 	if params.Model != nil {
 		q.Model = *params.Model
 	}
-	rows, err := h.svc.QueryEntityTrend(r.Context(), q)
+	res, err := h.svc.QueryEntityTrend(r.Context(), q)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	out := make([]StatTrendPoint, 0, len(rows))
-	for _, b := range rows {
+	httpface.WriteStatsEcho(w, res.Exec)
+	out := make([]StatTrendPoint, 0, len(res.Buckets))
+	for _, b := range res.Buckets {
 		out = append(out, toAPIEntityStatTrendPoint(b))
 	}
 	httpface.WriteJSON(w, http.StatusOK, out)
@@ -123,9 +138,14 @@ func (h *AdminAPI) GetStatsTTFT(w http.ResponseWriter, r *http.Request, params G
 		httpface.WriteServiceErr(w, err)
 		return
 	}
+	from, to, err := httpface.ResolveStatsWindow(params.From, params.To, params.Window, h.now())
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	q := service.TTFTQuery{
-		From: params.From,
-		To:   params.To,
+		From: from,
+		To:   to,
 	}
 	if params.Entity != nil {
 		q.EntityType = string(*params.Entity)
@@ -142,6 +162,39 @@ func (h *AdminAPI) GetStatsTTFT(w http.ResponseWriter, r *http.Request, params G
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, toAPIStatTTFTSummary(sum))
+}
+
+// GetStatsCapabilities 统计能力（spec §4.4(a)）：本部署的 per-deployment 常量，
+// 无参数、只读、可按部署缓存。**零字面量**——数据面由
+// `service.StatsCapabilities`（= domain.StatsKinds × 注入保留期的机械投影）给出，
+// 本层只做形状映射（改这里的数字不可能，因为没有任何数字可改：上限/覆盖天数
+// 全部来自同一份 KIND 矩阵）。`zero literals` 由 spec §8 A16'② 的
+// 零命中 `git grep` 审计钉死：本包（含测试）不得出现任何上限秒值字面量。
+func (h *AdminAPI) GetStatsCapabilities(w http.ResponseWriter, r *http.Request) {
+	httpface.WriteJSON(w, http.StatusOK, toAPIStatsCapabilities(h.svc.StatsCapabilities()))
+}
+
+// toAPIStatsCapabilities domain 投影 → 线缆类型（逐字段搬运，无数值字面量）。
+func toAPIStatsCapabilities(c domain.Capabilities) StatsCapabilities {
+	kinds := make(map[string]StatsKindCapability, len(c.Kinds))
+	for id, k := range c.Kinds {
+		storages := make([]StatsKindCapabilityStorages, 0, len(k.Storages))
+		caps := make(map[string]int64, len(k.Storages))
+		days := make(map[string]int, len(k.Storages))
+		for _, s := range k.Storages {
+			name := s.String()
+			storages = append(storages, StatsKindCapabilityStorages(name))
+			caps[name] = k.CostCapSeconds[s]
+			days[name] = k.CoverageDays[s]
+		}
+		kinds[string(id)] = StatsKindCapability{
+			Grouping:       k.Grouping.String(),
+			Storages:       storages,
+			CostCapSeconds: caps,
+			CoverageDays:   days,
+		}
+	}
+	return StatsCapabilities{BucketGridSeconds: int(c.BucketGridSeconds), Kinds: kinds}
 }
 
 func toAPIStatTrendPoint(b *domain.StatBucket) StatTrendPoint {
