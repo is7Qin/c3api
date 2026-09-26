@@ -38,6 +38,13 @@ const pad2 = (n: number) => String(n).padStart(2, '0')
 export default function UserStats() {
   const { t } = useTranslation()
   const [range, setRange] = useState(defaultRange)
+  // true = 仍是挂载时的「近 24h」预设：趋势与 TTFT 发 window=24h。
+  // 用户用选择器改成任意绝对区间后置空，改发 from+to（恰择一）。
+  const [preset, setPreset] = useState(true)
+  const onRange = (next: { from: string; to: string }) => {
+    setPreset(false)
+    setRange(next)
+  }
   const [granularity, setGranularity] = useState<Granularity>('hour')
   const [metric, setMetric] = useState<Metric>('tokens')
   const [modelInput, setModelInput] = useState('')
@@ -52,24 +59,21 @@ export default function UserStats() {
     })
   }
 
-  const params = useMemo(
-    // timezone = 浏览器 IANA 时区（服务端按本地桶界精确聚合；label 用 new Date
-    // 本地渲染恰一次）。TTFT 卡片不发送 timezone：其数值为绝对区间分位数，与
-    // 请求时区无关（服务端缓存键亦不含区），前端带上只会碎片化 queryKey。
-    // 窗口**不做客户端对齐**：/api/user/stats 落到同一 domain.Admit 归一化，
-    // 生效窗口由 X-Stats-Effective-From/To 回显。选择器展示保持原样。
-    () => ({
-      from: toRFC3339(range.from)!,
-      to: toRFC3339(range.to)!,
-      granularity,
-      model: debouncedModel || undefined,
-      timezone: browserTimeZone(),
-    }),
-    [range, granularity, debouncedModel]
-  )
+  // timezone = 浏览器 IANA 时区（服务端按本地桶界精确聚合；label 用 new Date
+  // 本地渲染恰一次）。预设发 window=；自定义绝对区间发 from+to。两个调用
+  // 分开写，避免一个对象同时带 window 和 from。
+  const trendKey = { preset, from: range.from, to: range.to, granularity, model: debouncedModel }
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['user', 'stats', params],
-    queryFn: () => userApi.getMyStats(params),
+    queryKey: ['user', 'stats', trendKey],
+    queryFn: () => preset
+      ? userApi.getMyStats({ window: '24h', granularity, model: debouncedModel || undefined, timezone: browserTimeZone() })
+      : userApi.getMyStats({
+          from: toRFC3339(range.from)!,
+          to: toRFC3339(range.to)!,
+          granularity,
+          model: debouncedModel || undefined,
+          timezone: browserTimeZone(),
+        }),
   })
   const rows = data ?? []
   // label 跨桶唯一纪律（同管理台 stats.tsx）：recharts category 轴按 label
@@ -111,26 +115,29 @@ export default function UserStats() {
   // 来源）。未知（能力未就绪）⇒ 不钳制：宁可由服务端按同一常量拒绝并回显原因，
   // 也不假装一个前端自有的上限。
   const ttftCapSeconds = kindCostCapSeconds(capsQ.data, 'ttft_exact')
-  const { ttftParams, ttftClamped } = useMemo(() => {
-    const toMs = new Date(range.to).getTime()
-    const origFromMs = new Date(range.from).getTime()
-    const fromMs = ttftCapSeconds === undefined
-      ? origFromMs
-      : Math.max(origFromMs, toMs - ttftCapSeconds * 1000)
-    const clamped = !Number.isNaN(origFromMs) && !Number.isNaN(toMs) && fromMs > origFromMs
-    const clampedFrom = Number.isNaN(fromMs) ? toRFC3339(range.from)! : new Date(fromMs).toISOString()
-    return {
-      ttftClamped: clamped,
-      ttftParams: { from: clampedFrom, to: toRFC3339(range.to)!, model: debouncedModel || undefined },
-    }
-  }, [range, debouncedModel, ttftCapSeconds])
+  // 钳制后的跨度恰好等于上限（168h 整）才发 window=168h。更短的自定义区间
+  // 继续发绝对 from/to——不把一段任意区间伪装成时长，也不为了钳制把下界
+  // 减到一个不对齐的绝对时刻。挂载预设就是 24h，短于任何上限。
+  const ttftSpanMs = new Date(range.to).getTime() - new Date(range.from).getTime()
+  const ttftClamped = !preset && ttftCapSeconds !== undefined && !Number.isNaN(ttftSpanMs)
+    && ttftSpanMs > ttftCapSeconds * 1000 && ttftCapSeconds % 3600 === 0
+  const ttftKey = preset
+    ? { window: '24h', model: debouncedModel }
+    : ttftClamped
+      ? { window: `${ttftCapSeconds! / 3600}h`, model: debouncedModel }
+      : { from: range.from, to: range.to, model: debouncedModel }
+  const ttftQ = useQuery({
+    queryKey: ['user', 'stats-ttft', ttftKey],
+    queryFn: () => {
+      const model = debouncedModel || undefined
+      if (preset) return userApi.getMyStatsTTFT({ window: '24h', model })
+      if (ttftClamped) return userApi.getMyStatsTTFT({ window: `${ttftCapSeconds! / 3600}h`, model })
+      return userApi.getMyStatsTTFT({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, model })
+    },
+  })
   // 选择器裁剪：趋势图（entity_trend）的可服务跨度（>90d 的窗口在任何存储上都被拒）。
   const maxSpanSeconds = compositeMaxSpanSeconds(capsQ.data, ['entity_trend'])
   const minDate = maxSpanSeconds === undefined ? undefined : new Date(mountedMs - maxSpanSeconds * 1000)
-  const ttftQ = useQuery({
-    queryKey: ['user', 'stats-ttft', ttftParams],
-    queryFn: () => userApi.getMyStatsTTFT(ttftParams),
-  })
 
   const chartConfig = {
     requests: { label: t('user.stats.metricRequests'), color: 'var(--chart-1)' },
@@ -169,7 +176,7 @@ export default function UserStats() {
         <div className="flex flex-nowrap items-start gap-5 overflow-x-auto">
           <div className="w-[14rem] shrink-0 space-y-1.5">
             <Label>{t('dateRange.label')}</Label>
-            <DateRangePicker value={range} onChange={setRange} minDate={minDate} />
+            <DateRangePicker value={range} onChange={onRange} minDate={minDate} />
           </div>
           <div className="shrink-0 space-y-1.5">
             <Label>{t('user.stats.granularity')}</Label>

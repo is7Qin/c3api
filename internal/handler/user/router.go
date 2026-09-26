@@ -22,6 +22,14 @@ import (
 // rules 为规则引擎（/api/user/err_logs 行级脱敏用；main 装配注入——非 New，
 // 测试构造零回归；nil = 不脱敏）。
 func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvider, rules *rule.RuleEngine) http.Handler {
+	api := New(svc, iss)
+	api.rules = rules
+	return Mount(api, iss, users)
+}
+
+// Mount 把已构造的 UserAPI 挂上公开/JWT 分流。导出是为了测试在 New 之后
+// SetClock 再挂路由；生产走 Router。
+func Mount(api *UserAPI, iss *auth.Issuer, users auth.UserStatusProvider) http.Handler {
 	publicPaths := map[string]bool{
 		"/api/user/auth/register":        true,
 		"/api/user/auth/login":           true,
@@ -29,8 +37,6 @@ func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvide
 		"/api/user/auth/forgot-password": true,
 		"/api/user/auth/reset-password":  true,
 	}
-	api := New(svc, iss)
-	api.rules = rules
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {

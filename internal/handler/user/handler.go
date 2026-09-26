@@ -12,6 +12,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
@@ -24,6 +25,18 @@ type UserAPI struct {
 	// rules 规则引擎（/api/user/err_logs 行级脱敏用：平台问题行 error_message 按
 	// Classify 判定替换固定文案；main 装配经 Router 注入——nil = 不脱敏）。
 	rules *rule.RuleEngine
+	// now 可注入时钟（默认 time.Now）——P3 相对窗口 `?window=` 的服务端自持时刻
+	// 从这里取。与 AdminAPI.now 是**同一套机制**（每面一个可注入字段），不是第二
+	// 个时钟源：生产恒 time.Now，测试注入固定时刻，故判定与断言都无墙钟依赖。
+	now func() time.Time
+}
+
+// SetClock 注入相对窗口用的时钟（nil 忽略）。生产装配不调用；测试在挂路由前
+// 固定时刻，使 window= 的双界整点可断言、不读墙钟。
+func (h *UserAPI) SetClock(now func() time.Time) {
+	if now != nil {
+		h.now = now
+	}
 }
 
 // tokenIssuer JWT 签发（*auth.Issuer 实现；测试可注入替身）。ver = 签发时
@@ -35,7 +48,7 @@ type tokenIssuer interface {
 
 // New 构造契约处理器（路由由 Router 组装）。
 func New(svc *service.Service, iss tokenIssuer) *UserAPI {
-	return &UserAPI{svc: svc, iss: iss}
+	return &UserAPI{svc: svc, iss: iss, now: time.Now}
 }
 
 // decode 严格解码（用户面全部 JSON 入参共用，与管理面 handler.decode 同款）：
