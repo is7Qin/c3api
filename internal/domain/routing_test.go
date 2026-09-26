@@ -138,8 +138,15 @@ func TestRoutingFingerprintCredentialStability(t *testing.T) {
 func TestRoutingUTF8AndURL(t *testing.T) {
 	_, err := RouteClassID(1, FormatOpenAIChat, string([]byte{0xff, 0xfe}), OpChatCompletions)
 	require.Error(t, err, "invalid UTF-8 model must be rejected")
-	_, err = CanonicalOrigin("https://api.openai.com/v1")
-	require.Error(t, err)
+	// 带路径的 base_url 必须归一到裸源而不是被拒绝：路径是上游协议前缀
+	// （/v1、/zen、/zen/go），同一 host 同属一个源。拒绝它会让这类账号指纹
+	// 为空、被调度器空指纹门全部刷掉（429 "no available account"）。
+	origPath, err := CanonicalOrigin("https://api.openai.com/v1")
+	require.NoError(t, err)
+	require.Equal(t, "https://api.openai.com:443", origPath)
+	origDeep, err := CanonicalOrigin("https://opencode.ai/zen/go")
+	require.NoError(t, err)
+	require.Equal(t, "https://opencode.ai:443", origDeep)
 	orig, err := CanonicalOrigin("https://API.OpenAI.COM:443/")
 	require.NoError(t, err)
 	require.Equal(t, "https://api.openai.com:443", orig)

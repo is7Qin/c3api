@@ -146,10 +146,10 @@ func CanonicalOrigin(raw string) (string, error) {
 	if u.User != nil {
 		return "", fmt.Errorf("routing: origin must not contain userinfo %q", raw)
 	}
-	path := u.EscapedPath()
-	if path != "" && path != "/" {
-		return "", fmt.Errorf("routing: origin must be naked root without path %q", raw)
-	}
+	// 路径不参与源的判定：base_url 的路径是上游协议前缀（/v1、/zen、/zen/go），
+	// 同一 host 下的不同路径属于同一个源。带路径的 base_url 必须能算出指纹，
+	// 否则该账号在调度器里指纹为空、被 reserve 的空指纹门刷掉，表现为
+	// 429 "no available account"——而账号本身完全健康。源只取 scheme+host+port。
 	if u.Opaque != "" {
 		return "", fmt.Errorf("routing: invalid origin %q", raw)
 	}
