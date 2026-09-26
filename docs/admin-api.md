@@ -56,7 +56,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | ✅ | 模板名 |
-| `base_url` | string | ✅* | 上游**根**地址（**不含 `/v1`**——`/v1` 是协议细节，网关按格式追加：openai 系拼 `/v1/...`，anthropic SDK 自带 `v1` 前缀；含尾 `/v1` 会被拒（`400`）；`codex-oauth`/`codex-pat` 模板该字段须为空（SDK 默认端点，非空 → `400`），`api_key`/`responses-special` 为可选裸根覆盖） |
+| `base_url` | string | ✅* | 上游地址（可带协议前缀，如 `/zen`；**不要以 `/v1` 结尾**——`/v1` 由网关按格式追加：openai 系拼 `/v1/...`，anthropic SDK 自带 `v1` 前缀；以 `/v1` 结尾会被拒（`400`）；`codex-oauth`/`codex-pat` 模板该字段须为空（SDK 默认端点，非空 → `400`），`api_key`/`responses-special` 为可选覆盖） |
 | `supported_formats` | string[] | ✅ | 支持的请求格式枚举数组（至少 1 项，项枚举见上；重复/非法枚举返回 `400`） |
 | `models` | string[] | 否 | 可服务模型名集合 |
 | `format_models` | object | 否 | 格式级模型覆盖：`{格式: [模型名]}`，key 必须是 `supported_formats` 子集、模型必须是 `models` 子集（否则 `400`）；未配置的格式 = 全部 `models` |
@@ -127,7 +127,7 @@
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `name` | string | 否 | 模板名（非空） |
-| `base_url` | string | 否 | 上游裸根地址（**不含 `/v1`**）；`codex-oauth`/`codex-pat` 模板该字段须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖（留空保持不变） |
+| `base_url` | string | 否 | 上游地址（可带协议前缀，如 `/zen`，**不要以 `/v1` 结尾**）；`codex-oauth`/`codex-pat` 模板该字段须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖（留空保持不变） |
 | `supported_formats` | string[] | 否 | 支持的请求格式枚举数组（至少 1 项，枚举见上；重复/非法枚举 → `400`） |
 | `models` | string[] | 否 | 可服务模型集合 |
 | `format_models` | object | 否 | 格式级模型覆盖：`{格式: [模型名]}`，key 必须是 `supported_formats` 子集（同批提供时校验）、模型必须是 `models` 子集 |
@@ -221,7 +221,7 @@
 |---|---|---|---|
 | `name` | string | ✅ | 账号名 |
 | `template_id` | int | ✅ | 所属模板 ID |
-| `base_url` | string | 否 | 账号级覆盖（裸根，不含 `/v1`，留空继承模板）；`codex-oauth`/`codex-pat` 关联模板须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖 |
+| `base_url` | string | 否 | 账号级覆盖（可带协议前缀，如 `/zen`，不要以 `/v1` 结尾，留空继承模板）；`codex-oauth`/`codex-pat` 关联模板须为空（SDK 默认，非空 → `400`），`api_key`/`responses-special` 为可选覆盖 |
 | `upstream_key` | string | ✅* | 上游 API key（`codex-oauth`/`codex-pat` 关联模板可为空，凭据走 `account_ext`；`api_key`/`responses-special` 必填） |
 | `cache_domain` | string / null | 否 | 共享缓存域（软亲和一致性哈希的域标识，请求侧显式亲和键语义见「路由观测 Routing」；合法域名形态 ≤253，非法 → `400`）；创建缺省/`null` = 账号私有域；后续更新走 `PATCH /accounts/{id}`（fenced），`null` = 清空回私有域、缺席 = 不变、空串 → `400` |
 | `max_concurrency` | int | 否 | 账号并发上限；创建时缺省取服务端配置 `scheduler.default_max_concurrency`（显式提供则用之）。写入期**不做静默钳制**——`0` 会让该账号恒不可被选中，属误配置 |

@@ -1340,7 +1340,7 @@ export interface components {
         ErrorType: "none" | "429" | "4xx" | "5xx" | "network" | "auth" | "no_account" | "abort" | "billing";
         TemplateCreate: {
             name: string;
-            /** @description credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special optional bare root without /v1 (non-empty overrides, empty uses default or fails to route) */
+            /** @description credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (the gateway appends /v1; non-empty overrides, empty uses default or fails to route) */
             base_url?: string;
             /**
              * @default api_key
@@ -1365,7 +1365,7 @@ export interface components {
             /** Format: int64 */
             ID: number;
             Name: string;
-            /** @description credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure) */
+            /** @description credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (non-empty override, or empty for default/route failure) */
             BaseURL: string;
             /**
              * @description 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
@@ -2096,7 +2096,7 @@ export interface components {
         };
         TemplatePatch: {
             name?: string;
-            /** @description credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional bare root override */
+            /** @description credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional override, protocol prefix allowed, must not end in /v1 */
             base_url?: string;
             supported_formats?: ("openai-chat" | "openai-responses" | "openai-responses-ws" | "openai-images" | "openai-search" | "anthropic")[];
             models?: string[];

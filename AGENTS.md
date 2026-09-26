@@ -60,7 +60,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 
 - **仅 chat→resp 方向是字节级(gjson)**，其余转换方向 map-based——优化不对称是有意的，别"统一"
 - **方向命名双轨**：`ProtocolConvertXToY`=客户端说 X 上游说 Y；转换函数按数据流命名(`respToChatResponse`)
-- **base_url 一律裸根**（拒绝含 `/v1`，防 `/v1/v1/...` 404）；openai 族自动补 `/v1`
+- **base_url 可带协议前缀**（如 `/zen`），但拒绝以 `/v1` 结尾（防 `/v1/v1/...` 404）；openai 族自动补 `/v1`
 - **配置 fail-fast**：未知键、时长<1ms、受控整数<1、占位密钥(change-me 等)全部启动即炸；改 TOML 键名=故意破坏性变更
 - **测试**：testify **只 require 不 assert**；PG 测试真实 PostgreSQL（pgxmock 仅 5 个遗留/冒烟文件勿扩展：repository_test/rule_repo_test/pg_account_groups_test/signup_bootstrap_pg_test/notify publisher）；全仓 `t.Parallel()`=0 串行；固定 `time.Date(2026,8,...)` 注入时间；channel 屏障替代 sleep（参考 codex_test.go runWave）
 - **前端**：pnpm only（本机须 `--config.node-linker=hoisted`）；schema.d.ts 由 `pnpm gen:api` 生成禁手改

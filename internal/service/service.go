@@ -498,9 +498,9 @@ func (s *Service) publish(ctx context.Context, ch notify.Change) {
 	_ = s.pub.Publish(context.WithoutCancel(ctx), ch)
 }
 
-// validateBaseURL 校验 base_url：可解析、有 scheme/host，且为裸根（不含尾
-// /v1）。/v1 是协议细节（aiclient 按格式追加；anthropic SDK 自带 v1 前缀，
-// base 含 /v1 会拼出 /v1/v1/messages 404）——约定裸根，防呆拒绝含 /v1。
+// validateBaseURL 校验 base_url：可解析、有 scheme/host，且路径不以 /v1
+// 结尾。协议前缀（/zen、/zen/go）合法；/v1 是协议细节（aiclient 按格式追加，
+// anthropic SDK 自带 v1 前缀，以 /v1 结尾会拼出 /v1/v1/messages 404）。
 func validateBaseURL(base string) error {
 	u, err := url.Parse(base)
 	if err != nil || u.Scheme == "" || u.Host == "" {
@@ -546,7 +546,7 @@ func validateTemplate(t *domain.Template) error {
 	}
 	// base_url 全类型可选（用户裁决 2026-08-14：模板层级所有类型都可空——codex
 	// 走 SDK 默认端点；api_key 静态透传留空则路由时失败，管理面不拦截）；提供时
-	// 校验格式（可解析、裸根不含 /v1）。
+	// 校验格式（可解析、路径不以 /v1 结尾）。
 	if t.BaseURL != "" {
 		if err := validateBaseURL(t.BaseURL); err != nil {
 			return err

@@ -156,7 +156,7 @@
     },
     "editTitle": "Edit template #{{id}}",
     "newTitle": "New template",
-    "dialogDesc": "base_url must be the upstream root (no /v1 — the /v1 path is added per protocol)",
+    "dialogDesc": "Upstream address. A protocol prefix such as /zen is fine, but it must not end in /v1 — the gateway appends /v1 per format",
     "credentialTypeLabel": "Credential type",
     "credentialType": {
       "api_key": "API Key",
@@ -214,7 +214,7 @@
       "saveSuccess": "Extensions saved",
       "loadFailed": "Failed to load extensions: {{message}}"
     },
-    "baseUrlOptional": "For api_key / responses-special: optional bare root without /v1 (non-empty overrides); empty may fail to route. Codex OAuth/PAT must be empty (SDK default, non-empty is forbidden).",
+    "baseUrlOptional": "For api_key / responses-special: a protocol prefix such as /zen is allowed, but the value must not end in /v1 — the gateway appends /v1; empty may fail to route. Codex OAuth/PAT must be empty (SDK default, non-empty is forbidden).",
     "baseUrlCodexHidden": "Codex OAuth / PAT uses the SDK default endpoint — BaseURL is not used and must stay empty (non-empty will be rejected).",
     "batchBaseUrlCodexDisabled": "Codex templates use the SDK default endpoint — BaseURL is unavailable and will not be sent."
   },
@@ -412,7 +412,7 @@
     "groupLabel": "Groups",
     "groupHint": "Saving replaces the account's current groups. Accounts in no group are not scheduled.",
     "loadGroupsFailed": "Failed to load current groups — saving is disabled",
-    "baseUrlHint": "For api_key / responses-special: leave empty to inherit template base_url. Codex OAuth/PAT must be empty (SDK default, non-empty forbidden).",
+    "baseUrlHint": "For api_key / responses-special: leave empty to inherit the template base_url. A prefix such as /zen is allowed, but the value must not end in /v1. Codex OAuth/PAT must be empty (SDK default, non-empty forbidden).",
     "baseUrlCodexHidden": "Codex OAuth / PAT uses the SDK default endpoint — BaseURL cannot be set (non-empty will be rejected).",
     "batchBaseUrlHint": "Unchecked with empty input = unchanged; checked = clear (inherit template)",
     "batchBaseUrlCodexDisabled": "BaseURL disabled for Codex targets (non-empty forbidden, SDK default). Change target template to non-Codex to edit.",

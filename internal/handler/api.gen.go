@@ -1756,7 +1756,7 @@ type StatTrendPoint struct {
 
 // Template defines model for Template.
 type Template struct {
-	// BaseURL credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special bare root override (non-empty) or empty (default/route failure)
+	// BaseURL credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (non-empty override, or empty for default/route failure)
 	BaseURL   string    `json:"BaseURL"`
 	CreatedAt time.Time `json:"CreatedAt"`
 
@@ -1782,7 +1782,7 @@ type TemplateSupportedFormats string
 
 // TemplateCreate defines model for TemplateCreate.
 type TemplateCreate struct {
-	// BaseUrl credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special optional bare root without /v1 (non-empty overrides, empty uses default or fails to route)
+	// BaseUrl credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden, SDK default endpoint); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (the gateway appends /v1; non-empty overrides, empty uses default or fails to route)
 	BaseUrl          *string                          `json:"base_url,omitempty"`
 	CredentialType   *TemplateCreateCredentialType    `json:"credential_type,omitempty"`
 	FormatModels     *map[string][]string             `json:"format_models,omitempty"`
@@ -1819,7 +1819,7 @@ type TemplateListResponse struct {
 
 // TemplatePatch defines model for TemplatePatch.
 type TemplatePatch struct {
-	// BaseUrl credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional bare root override
+	// BaseUrl credential-type conditional: codex-oauth/codex-pat must be empty (non-empty forbidden); api_key/responses-special optional override, protocol prefix allowed, must not end in /v1
 	BaseUrl          *string                          `json:"base_url,omitempty"`
 	FormatModels     *map[string][]string             `json:"format_models,omitempty"`
 	ModelMapping     *map[string]ModelMappingEntry    `json:"model_mapping,omitempty"`
