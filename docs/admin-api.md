@@ -398,8 +398,9 @@
 | 查询参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `account_ids` | string | ✅ | 逗号分隔账号 id（1–100 条，重复自动去重；空/非数字/超限 → `400`） |
-| `from` / `to` | RFC3339 | 否 | 缺省 = `timezone` 时区当日零点 → now；显式值为绝对时刻，不受时区改写；`from > to` → `400` |
-| `timezone` | string | 否 | 决定缺省 `from` 的日界所在时区；非法 → `400` |
+| `from` / `to` | RFC3339 | 与 `window` 恰择一 | 绝对窗口。显式值为绝对时刻，不受时区改写；`from` 不早于 `to` → `400` `reason=window_invalid`。与 `window` 同给、只给一端、或两者都不给 → `400` `reason=window_ambiguous`。**没有「缺省 = 当天」** |
+| `window` | string | 与 `from`/`to` 恰择一 | 相对窗口，只收 Go `time.ParseDuration` 时长串（`24h` / `168h` / `720h` / `2160h`）。服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`，两端恒整点。`7d` 不是时长单位 → `400` `reason=window_invalid` |
+| `timezone` | string | 否 | 非法 IANA 名 → `400`。不再决定任何缺省窗口 |
 
 响应 `200`：`{"items": [...]}`，`items` **恒 = `account_ids` 去重后的全量**（无记录账号 gateway 全 0，前端免补零；顺序同去重后顺序）。
 
@@ -870,11 +871,12 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 
 | 查询参数 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `from` / `to` | RFC3339 | ✅ | 时间范围（缺失 → `400`） |
+| `from` / `to` | RFC3339 | 与 `window` 恰择一 | 绝对窗口（显式值为绝对时刻，不受时区改写）。与 `window` 同给、只给一端、或两者都不给 → `400` `reason=window_ambiguous`；`from` 不早于 `to` → `400` `reason=window_invalid` |
+| `window` | string | 与 `from`/`to` 恰择一 | 相对窗口，**只收** Go `time.ParseDuration` 时长串（`24h` / `168h` / `2160h`）。服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`，故两端恒整点、零对齐位移。`7d` 这类日历天不是时长单位 → `400` `reason=window_invalid`（`24h` 在 DST 切换日 ≠ 一个日历天，不另立一套长度语义） |
 | `granularity` | `hour` / `day` | 否（缺省 `day`） | 桶粒度 |
 | `group_id` | int64 | 否 | 维度过滤（仅管理面有） |
 | `model` | string | 否 | 模型过滤 |
-| `timezone` | string | 否 | IANA 名（通常 = 浏览器时区；空 = UTC；非法 → `400`）决定桶界所在时区——显式 `from`/`to` 恒为绝对时刻，不受时区影响 |
+| `timezone` | string | 否 | IANA 名（通常 = 浏览器时区；空 = UTC；非法 → `400`）决定桶界所在时区——显式 `from`/`to` 恒为绝对时刻，不受时区影响。它不再推出任何缺省窗口 |
 
 **`timezone` 是路由键，不只是展示**：
 
@@ -882,11 +884,11 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 - 无法走卷积表（`:30`/`:45` 偏移，或窗内跨 DST 跳变）→ 只能扫 `usage_logs` + `err_logs` **原始明细**分组。
 - **上限不是一个固定天数**：成本上限（cost）是**保留期无关的纯常量**——分组原始行 8 天、卷积表 90 天；覆盖面另有 per-table 保留期闸门（起点早于该表保留截止 → `400`）。两者互相独立，且**真实数值随部署而变**（`usage.log_retention_days` / `usage.errlog_retention_days` / `usage.stats_retention_days`）——`GET /api/admin/stats/capabilities` 报的就是本部署的这两个量（`cost_cap_seconds` 与 `coverage_days`，`0` = 无上限）。超限一律 `400`（宁可报错，不静默残缺）。
 
-**`/stats/entity-trend`**：额外必填 `entity`（`account` / `user` / `key`）+ `id`（实体 id），`granularity` 必填，可选 `model`；时区路由同 `trend`。
+**`/stats/entity-trend`**：窗口与 `trend` 同形（`from`+`to` 或 `window` 恰择一）。额外必填 `entity`（`account` / `user` / `key`）+ `id`（实体 id），`granularity` 必填，可选 `model`；时区路由同 `trend`。
 
-**`/stats/top`**：必填 `from` / `to` / `entity`（`account` / `user` / `key`）/ `by`（`cost` / `requests` / `tokens`），可选 `limit`（缺省 20，`1`–`200`，超限裁剪不报错）。排行按实体聚合、**无时间桶**，数值与时区无关——`timezone` 仅接受并校验（客户端统一带浏览器时区，非法名照旧 `400`），不进查询。窗口仍过同一套判定（cost + 覆盖面），**本部署的实际上限见 `/stats/capabilities` 的 `top`**。
+**`/stats/top`**：必填 `from` / `to` / `entity`（`account` / `user` / `key`）/ `by`（`cost` / `requests` / `tokens`），可选 `limit`（缺省 20，`1`–`200`，超限裁剪不报错）。**不接受 `window`**——排行无预设、无对齐分支，`from` / `to` 保持必填。排行按实体聚合、**无时间桶**，数值与时区无关——`timezone` 仅接受并校验（客户端统一带浏览器时区，非法名照旧 `400`），不进查询。窗口仍过同一套判定（cost + 覆盖面），**本部署的实际上限见 `/stats/capabilities` 的 `top`**。
 
-**`/stats/ttft`**：必填 `from` / `to`，可选 `entity`（`account` / `user` / `key`）+ `id`（**成对使用**），可选 `model`。分位数与计数是绝对区间数值——`timezone` 仅接受并校验（非法 `400`），不进查询、不进缓存键。两个分支的窗口上限不同，**取值见 `/stats/capabilities` 的 `ttft_sketch` / `ttft_exact`**（不改常量的前提下：`entity` 空 = 平台级 sketch 分支（cube 直方图服务端合并）90 天；`entity` 非空 = 实体级 exact 分支（打 `usage_logs` 原始行 `percentile_cont`）168h）。
+**`/stats/ttft`（与 `/api/user/stats/ttft` 同形）**：窗口与 `trend` 同形（`from`+`to` 或 `window` 恰择一），可选 `entity`（`account` / `user` / `key`）+ `id`（**成对使用**），可选 `model`。分位数与计数是绝对区间数值——`timezone` 仅接受并校验（非法 `400`），不进查询、不进缓存键。两个分支的窗口上限不同，**取值见 `/stats/capabilities` 的 `ttft_sketch` / `ttft_exact`**（不改常量的前提下：`entity` 空 = 平台级 sketch 分支（cube 直方图服务端合并）90 天；`entity` 非空 = 实体级 exact 分支（打 `usage_logs` 原始行 `percentile_cont`）168h）。
 
 **`/stats/capabilities`（`/api/user/stats/capabilities` 为用户面同一投影）**：只读、无参数、可按部署缓存。返回每个读形状（`kinds` 键）的候选存储 `storages`、成本上限秒数 `cost_cap_seconds` 与覆盖天数 `coverage_days`：
 
@@ -896,7 +898,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 
 **成功响应回显头**（`/stats/trend`、`/stats/entity-trend`、`/api/user/stats`——这三个端点 200 体是**裸数组**，加字段即破坏契约，故回显走头）：`X-Stats-Effective-From` / `X-Stats-Effective-To`（RFC3339，UTC，本次读取**真正使用**的半开窗口）/ `X-Stats-Storage`（`cube` / `raw`）。`/overview` **没有**回显头——它的窗口由服务端按 `days` 自算、恒为本地日界（整点），从不发生位移。
 
-**拒绝时的机读字段**（`400` 响应体，全部**可选**，故既有客户端零影响）：`reason`、`storage`、`limit_seconds`、`effective_from`、`effective_to`、`retention_days`。`reason` 取值：`window_invalid`（必填/倒序等参数本身非法——此时**只有** `reason`，没有可报的存储与上限）、`window_too_long`（请求跨度超过该形状的成本上限，携 `limit_seconds`）、`raw_horizon` / `cube_horizon`（起点早于所要读表的保留截止，携 `retention_days`）。`error` 的人读文案形态不变。
+**拒绝时的机读字段**（`400` 响应体，全部**可选**，故既有客户端零影响）：`reason`、`storage`、`limit_seconds`、`effective_from`、`effective_to`、`retention_days`。`reason` 取值：`window_invalid`（必填/倒序/`window` 时长串不可解析——此时**只有** `reason`，没有可报的存储与上限）、`window_ambiguous`（`from`/`to`/`window` 未恰择一：两态都给、只给一端、或纳入端点上两者都不给——同样**只有** `reason`）、`window_too_long`（请求跨度超过该形状的成本上限，携 `limit_seconds`）、`raw_horizon` / `cube_horizon`（起点早于所要读表的保留截止，携 `retention_days`）。`error` 的人读文案形态不变。
 
 `StatTrendPoint` 字段：`BucketTime` / `RequestCount` / `ErrorCount` / `CallCount` / `InputTokens` / `OutputTokens` / `TotalTokens` / `CacheReadTokens` / `CacheCreationTokens` / `Cost` / `RawCost` / `TTFTAvgMS` / `TTFTMaxMS`。
 

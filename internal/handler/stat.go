@@ -15,9 +15,16 @@ import (
 
 // GetStatsTrend 趋势聚合（按请求 `timezone` 判定 cube/原始行走哪条——判定在
 // domain.Admit，本层只读判定结果）。200 体是裸数组，故生效窗口与实际存储走
-// 回显头（spec §4.4(b)）。ServerInterface。
+// 回显头（spec §4.4(b)）。窗口两形态（from+to / window 单独，恰择一）在
+// httpface.ResolveStatsWindow 解码，时钟用本层可注入的 h.now（P3）——本层不判
+// "这个窗口能不能被服务"。ServerInterface。
 func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params GetStatsTrendParams) {
 	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	from, to, err := httpface.ResolveStatsWindow(params.From, params.To, params.Window, h.now())
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -29,8 +36,8 @@ func (h *AdminAPI) GetStatsTrend(w http.ResponseWriter, r *http.Request, params 
 		granularity = string(*params.Granularity)
 	}
 	q := service.TrendQuery{
-		From:        params.From,
-		To:          params.To,
+		From:        from,
+		To:          to,
 		Granularity: granularity,
 		Zone:        zone,
 	}
@@ -88,9 +95,14 @@ func (h *AdminAPI) GetStatsTop(w http.ResponseWriter, r *http.Request, params Ge
 	httpface.WriteJSON(w, http.StatusOK, out)
 }
 
-// GetStatsEntityTrend 实体趋势（时区判定/回显同 GetStatsTrend）。
+// GetStatsEntityTrend 实体趋势（时区判定/窗口形态解码/回显同 GetStatsTrend）。
 func (h *AdminAPI) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, params GetStatsEntityTrendParams) {
 	zone, err := resolveStatsZone(params.Timezone)
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	from, to, err := httpface.ResolveStatsWindow(params.From, params.To, params.Window, h.now())
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -98,8 +110,8 @@ func (h *AdminAPI) GetStatsEntityTrend(w http.ResponseWriter, r *http.Request, p
 	q := service.EntityTrendQuery{
 		EntityType:  string(params.Entity),
 		EntityID:    params.Id,
-		From:        params.From,
-		To:          params.To,
+		From:        from,
+		To:          to,
 		Granularity: string(params.Granularity),
 		Zone:        zone,
 	}
@@ -126,9 +138,14 @@ func (h *AdminAPI) GetStatsTTFT(w http.ResponseWriter, r *http.Request, params G
 		httpface.WriteServiceErr(w, err)
 		return
 	}
+	from, to, err := httpface.ResolveStatsWindow(params.From, params.To, params.Window, h.now())
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
 	q := service.TTFTQuery{
-		From: params.From,
-		To:   params.To,
+		From: from,
+		To:   to,
 	}
 	if params.Entity != nil {
 		q.EntityType = string(*params.Entity)

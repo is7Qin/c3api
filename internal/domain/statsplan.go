@@ -86,10 +86,15 @@ func (r StatsPlanReason) String() string {
 type StatsWindowReject uint8
 
 const (
-	StatsRejectWindowInvalid StatsWindowReject = iota // window_invalid：必填/倒序
+	StatsRejectWindowInvalid StatsWindowReject = iota // window_invalid：必填/倒序/时长串不可解析
 	StatsRejectWindowTooLong                          // window_too_long：cost 步（span > CostCap）
 	StatsRejectRawHorizon                             // raw_horizon：coverage 步（读原始行表）
 	StatsRejectCubeHorizon                            // cube_horizon：coverage 步（读卷积表）
+	// StatsRejectWindowAmbiguous window_ambiguous：`from`/`to`/`window` 三者的
+	// 「恰择一」未被满足（P3 相对窗口）。它由**请求边界**的形态解析产生
+	// （httpface.ResolveStatsWindow），不是 Admit 的窗口判定——Admit 只接受已定的
+	// (from, to) 对，判不了"调用方给了哪种形态"（wire 形态活在 domain 之外）。
+	StatsRejectWindowAmbiguous
 )
 
 func (r StatsWindowReject) String() string {
@@ -102,6 +107,8 @@ func (r StatsWindowReject) String() string {
 		return "raw_horizon"
 	case StatsRejectCubeHorizon:
 		return "cube_horizon"
+	case StatsRejectWindowAmbiguous:
+		return "window_ambiguous"
 	}
 	return "unknown"
 }
@@ -233,13 +240,20 @@ type StatsWindowError struct {
 func (e *StatsWindowError) Error() string {
 	switch e.Reject {
 	case StatsRejectWindowInvalid:
-		return "service: stats window invalid: from/to must be set and from < to"
+		// 一类一文案：`window_invalid` 覆盖"窗口请求本身非法"的三个子情形
+		// ——必填缺失（step 1）、倒序（step 1）、`window` 时长串不可解析
+		// （请求边界的形态解析）。文本对三者都成立，具体是哪一个由机读
+		// `reason` + 请求本身可见；不为子情形增设字段（那会让载体承载展示细节）。
+		return "service: stats window invalid: from/to must be set and from < to, or window must be a duration string"
 	case StatsRejectWindowTooLong:
 		return fmt.Sprintf("service: stats window too long: %s %s supports windows up to %s",
 			e.Kind, e.Storage, time.Duration(e.LimitSeconds)*time.Second)
 	case StatsRejectRawHorizon, StatsRejectCubeHorizon:
 		return fmt.Sprintf("service: stats %s window starts before retained partitions (cutoff %s, retention %dd)",
 			e.Storage, e.Cutoff.UTC().Format(time.RFC3339), e.RetentionDays)
+	case StatsRejectWindowAmbiguous:
+		// 边界形态冲突：不是某个窗口的错，而是"给的形态不是一个窗口"。
+		return "service: stats window ambiguous: require from+to, or window alone"
 	}
 	return fmt.Sprintf("service: stats window rejected (%s)", e.Reject)
 }
@@ -341,6 +355,19 @@ func ceilHour(t time.Time) time.Time {
 		return time.Unix(secs, 0).UTC()
 	}
 	return time.Unix(((secs+3599)/3600)*3600, 0).UTC()
+}
+
+// WindowFromDuration 相对窗口 → 绝对窗口对（P3 `?window=<dur>`，spec §7.3）：
+// `to = ceilHour(now)`、`from = to − d`。**两处都用同一个 ceilHour**（不是
+// 复制一份取整算术）——这正是"双界恒整点 ⇒ 按定义命中 Admit 第 1 条（精确）
+// ⇒ 零对齐位移、零桶丢失"在实现上的保证；若调用方各自取整，该承诺就只是巧合。
+//
+// 纯函数：时钟由参数传入（服务端自持，不读墙钟）。`d <= 0` 不在此校验——时长串
+// 的解析与合法性是请求边界的事（time.ParseDuration 只产出正值），本函数不假装
+// 判定（判定 owner 只有 Admit）。
+func WindowFromDuration(d time.Duration, now time.Time) (from, to time.Time) {
+	to = ceilHour(now)
+	return to.Add(-d), to
 }
 
 // floor 表保留截止（coverage 的判定下界）：now 倒退 days 个日历日后的 UTC 日界。

@@ -91,7 +91,7 @@ func TestWriteServiceErrWindowFields(t *testing.T) {
 			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
 				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowInvalid,
 				EffectiveFrom: effFrom, EffectiveTo: effTo}},
-			"{\"error\":\"service: stats window invalid: from/to must be set and from \\u003c to\",\"reason\":\"window_invalid\"}\n",
+			"{\"error\":\"service: stats window invalid: from/to must be set and from \\u003c to, or window must be a duration string\",\"reason\":\"window_invalid\"}\n",
 		},
 		{
 			// 上限秒数取自矩阵常量（本包不出现裸的上限秒值字面量——A16'② 的
@@ -132,7 +132,7 @@ func TestWriteServiceErrWindowFields(t *testing.T) {
 			fmt.Errorf("query failed: %w", &serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
 				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowInvalid}}),
 			"{\"error\":\"query failed: service: stats window invalid: from/to must be set and from " +
-				"\\u003c to\",\"reason\":\"window_invalid\"}\n",
+				"\\u003c to, or window must be a duration string\",\"reason\":\"window_invalid\"}\n",
 		},
 	}
 	for _, tc := range cases {

@@ -52,9 +52,15 @@ type StatsWindowError struct {
 func (e *StatsWindowError) Unwrap() error { return ErrInvalidInput }
 
 // CarriesWindowFields 该拒绝是否携带 storage / limit_seconds / retention_days /
-// effective_* 字段。`window_invalid` 是参数本身非法（必填/倒序），**没有**可报
-// 的存储、上限或保留截止，故这些字段必须省略（J2b）——否则客户端会读到
-// `"storage":"cube"`（StatsStorage 零值）与 `limit_seconds:0` 这类伪造事实。
+// effective_* 字段。**白名单**（fail-closed）：只有真正知道"实际存储/上限/截止/
+// 生效窗口"的判定才携带——新增拒绝原因默认不携带，绝不自带伪造事实。
+// 不带的两类都是"参数本身非法"（`window_invalid`：必填/倒序/时长串不可解析；
+// `window_ambiguous`：from/to/window 未恰择一）：它们没有判定出的存储、上限、
+// 截止或生效窗口——把被拒的请求窗口回显成生效窗口就是伪造事实（J2b）。
 func (e *StatsWindowError) CarriesWindowFields() bool {
-	return e.Reject != domain.StatsRejectWindowInvalid
+	switch e.Reject {
+	case domain.StatsRejectWindowTooLong, domain.StatsRejectRawHorizon, domain.StatsRejectCubeHorizon:
+		return true
+	}
+	return false
 }

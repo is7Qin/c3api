@@ -206,11 +206,12 @@ paths:
     get:
       operationId: GetAccountsUsage
       tags: [accounts]
-      summary: 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天）
+      summary: 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
       parameters:
         - { name: account_ids, in: query, required: true, schema: { type: string, description: "逗号分隔账号 id（1-100 条；重复 id 自动去重——响应 item 唯一；空/非数字/超限 → 400）" } }
-        - { name: from, in: query, schema: { type: string, format: date-time, description: "RFC3339 起始（含）；缺省 = timezone 时区当日零点；显式值为绝对时刻，不受时区改写" } }
-        - { name: to, in: query, schema: { type: string, format: date-time, description: "RFC3339 结束（不含）；缺省 = now；from > to → 400" } }
+        - { name: from, in: query, schema: { type: string, format: date-time, description: "绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）" } }
+        - { name: to, in: query, schema: { type: string, format: date-time, description: "绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`" } }
+        - $ref: '#/components/parameters/StatsWindow'
         - $ref: '#/components/parameters/StatsTimezone'
       responses:
         '200':
@@ -1337,8 +1338,9 @@ paths:
       tags: [user]
       summary: 我的用量统计（强制 user_id = 当前用户）
       parameters:
-        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: from, in: query, schema: { type: string, format: date-time, description: "绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）" } }
+        - { name: to, in: query, schema: { type: string, format: date-time, description: "绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`" } }
+        - $ref: '#/components/parameters/StatsWindow'
         - { name: granularity, in: query, schema: { type: string, enum: [hour, day], default: day } }
         - { name: model, in: query, schema: { type: string } }
         - $ref: '#/components/parameters/StatsTimezone'
@@ -1362,8 +1364,9 @@ paths:
       tags: [user]
       summary: 我的 TTFT 聚合（强制 user_id = 当前用户）
       parameters:
-        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: from, in: query, schema: { type: string, format: date-time, description: "绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）" } }
+        - { name: to, in: query, schema: { type: string, format: date-time, description: "绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`" } }
+        - $ref: '#/components/parameters/StatsWindow'
         - { name: model, in: query, schema: { type: string } }
         - $ref: '#/components/parameters/StatsTimezone'
       responses:
@@ -1579,8 +1582,9 @@ paths:
       tags: [stats]
       summary: 趋势聚合（cube/原始行——按请求时区判定）
       parameters:
-        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: from, in: query, schema: { type: string, format: date-time, description: "绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）" } }
+        - { name: to, in: query, schema: { type: string, format: date-time, description: "绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`" } }
+        - $ref: '#/components/parameters/StatsWindow'
         - { name: granularity, in: query, schema: { type: string, enum: [hour, day], default: day } }
         - { name: group_id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
@@ -1629,8 +1633,9 @@ paths:
       parameters:
         - { name: entity, in: query, required: true, schema: { type: string, enum: [account, user, key] } }
         - { name: id, in: query, required: true, schema: { type: integer, format: int64 } }
-        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: from, in: query, schema: { type: string, format: date-time, description: "绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）" } }
+        - { name: to, in: query, schema: { type: string, format: date-time, description: "绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`" } }
+        - $ref: '#/components/parameters/StatsWindow'
         - { name: granularity, in: query, required: true, schema: { type: string, enum: [hour, day] } }
         - { name: model, in: query, schema: { type: string } }
         - $ref: '#/components/parameters/StatsTimezone'
@@ -1654,8 +1659,9 @@ paths:
       tags: [stats]
       summary: TTFT 聚合（sketch 或 exact）
       parameters:
-        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
-        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: from, in: query, schema: { type: string, format: date-time, description: "绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）" } }
+        - { name: to, in: query, schema: { type: string, format: date-time, description: "绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`" } }
+        - $ref: '#/components/parameters/StatsWindow'
         - { name: entity, in: query, schema: { type: string, enum: [account, user, key] } }
         - { name: id, in: query, schema: { type: integer, format: int64 } }
         - { name: model, in: query, schema: { type: string } }
@@ -1862,16 +1868,32 @@ paths:
           $ref: '#/components/responses/Error'
 components:
   parameters:
+    StatsWindow:
+      name: window
+      in: query
+      required: false
+      description: |
+        相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
+        给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
+        服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`
+        ⇒ 两端恒整点，命中卷积表的精确分支（零对齐位移、零桶丢失），这就是 UI 预设
+        走这条形态的理由。
+
+        **只收时长，不收日历天**：`d` 不是 `time.ParseDuration` 的单位，`7d` → 400
+        （`reason=window_invalid`）。理由：`24h` 与"一个日历天"在 DST 切换日不相等，
+        而本 API 的唯一对齐基准是固定 1h 网格；另立 `AddDate` 日历语义会引入第二套
+        窗口长度语义。预设即网格整倍数：24h / 168h / 720h / 2160h。
+      schema: { type: string }
     StatsTimezone:
       name: timezone
       in: query
       required: false
       description: |
         IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
-        仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
-        其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
-        等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-        客户端）；未知名 → 400。
+        仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+        绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+        但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+        「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
 
         窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
         卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
@@ -1907,17 +1929,18 @@ components:
           enum: [offset, dst, span_below_grid, raw_horizon, cube_horizon, window_too_long, window_invalid, window_ambiguous]
           description: |
             统计窗口被拒的机读原因（仅统计端点可能携带）。取值词表取自规划层原因与
-            拒绝原因的**全量映射表**（唯一来源），本版实际会发出的只有四个：
+            拒绝原因的**全量映射表**（唯一来源），本版实际会发出的有五个：
             raw_horizon/cube_horizon = 起点早于所要读表的保留截止；
             window_too_long = 请求跨度超过该形状的成本上限；window_invalid =
-            必填/倒序等参数本身非法。offset/dst/span_below_grid 是"该窗口无法用
-            卷积表精确表达、已降级到原始行"的派生原因（当前只用于降级告警日志，
-            不作为拒绝原因发出）；window_ambiguous 随 `window` 相对窗口参数落地
-            生效。
+            必填/倒序/`window` 时长串不可解析等参数本身非法；window_ambiguous =
+            `from`/`to`/`window` 三者的"恰择一"未被满足（两态都给、只给一端、
+            或两态都不给）。offset/dst/span_below_grid 是"该窗口无法用卷积表精确
+            表达、已降级到原始行"的派生原因（只用于降级告警日志，不作为拒绝原因
+            发出）。
         storage:
           type: string
           enum: [cube, raw]
-          description: 判定所依据的实际存储（`window_invalid` 不携带）
+          description: 判定所依据的实际存储（`window_invalid`/`window_ambiguous` 不携带）
         limit_seconds:
           type: integer
           format: int64
@@ -1925,11 +1948,11 @@ components:
         effective_from:
           type: string
           format: date-time
-          description: 判定后的生效窗口下界（`window_invalid` 不携带）
+          description: 判定后的生效窗口下界（`window_invalid`/`window_ambiguous` 不携带）
         effective_to:
           type: string
           format: date-time
-          description: 判定后的生效窗口上界（`window_invalid` 不携带）
+          description: 判定后的生效窗口上界（`window_invalid`/`window_ambiguous` 不携带）
         retention_days:
           type: integer
           description: 覆盖判定所依据的最保守保留天数（`*_horizon` 携带）

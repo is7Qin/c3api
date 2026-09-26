@@ -823,10 +823,10 @@ type ErrLogsResponse struct {
 
 // ErrorResponse defines model for ErrorResponse.
 type ErrorResponse struct {
-	// EffectiveFrom 判定后的生效窗口下界（`window_invalid` 不携带）
+	// EffectiveFrom 判定后的生效窗口下界（`window_invalid`/`window_ambiguous` 不携带）
 	EffectiveFrom *time.Time `json:"effective_from,omitempty"`
 
-	// EffectiveTo 判定后的生效窗口上界（`window_invalid` 不携带）
+	// EffectiveTo 判定后的生效窗口上界（`window_invalid`/`window_ambiguous` 不携带）
 	EffectiveTo *time.Time `json:"effective_to,omitempty"`
 	Error       string     `json:"error"`
 
@@ -834,33 +834,35 @@ type ErrorResponse struct {
 	LimitSeconds *int64 `json:"limit_seconds,omitempty"`
 
 	// Reason 统计窗口被拒的机读原因（仅统计端点可能携带）。取值词表取自规划层原因与
-	// 拒绝原因的**全量映射表**（唯一来源），本版实际会发出的只有四个：
+	// 拒绝原因的**全量映射表**（唯一来源），本版实际会发出的有五个：
 	// raw_horizon/cube_horizon = 起点早于所要读表的保留截止；
 	// window_too_long = 请求跨度超过该形状的成本上限；window_invalid =
-	// 必填/倒序等参数本身非法。offset/dst/span_below_grid 是"该窗口无法用
-	// 卷积表精确表达、已降级到原始行"的派生原因（当前只用于降级告警日志，
-	// 不作为拒绝原因发出）；window_ambiguous 随 `window` 相对窗口参数落地
-	// 生效。
+	// 必填/倒序/`window` 时长串不可解析等参数本身非法；window_ambiguous =
+	// `from`/`to`/`window` 三者的"恰择一"未被满足（两态都给、只给一端、
+	// 或两态都不给）。offset/dst/span_below_grid 是"该窗口无法用卷积表精确
+	// 表达、已降级到原始行"的派生原因（只用于降级告警日志，不作为拒绝原因
+	// 发出）。
 	Reason *ErrorResponseReason `json:"reason,omitempty"`
 
 	// RetentionDays 覆盖判定所依据的最保守保留天数（`*_horizon` 携带）
 	RetentionDays *int `json:"retention_days,omitempty"`
 
-	// Storage 判定所依据的实际存储（`window_invalid` 不携带）
+	// Storage 判定所依据的实际存储（`window_invalid`/`window_ambiguous` 不携带）
 	Storage *ErrorResponseStorage `json:"storage,omitempty"`
 }
 
 // ErrorResponseReason 统计窗口被拒的机读原因（仅统计端点可能携带）。取值词表取自规划层原因与
-// 拒绝原因的**全量映射表**（唯一来源），本版实际会发出的只有四个：
+// 拒绝原因的**全量映射表**（唯一来源），本版实际会发出的有五个：
 // raw_horizon/cube_horizon = 起点早于所要读表的保留截止；
 // window_too_long = 请求跨度超过该形状的成本上限；window_invalid =
-// 必填/倒序等参数本身非法。offset/dst/span_below_grid 是"该窗口无法用
-// 卷积表精确表达、已降级到原始行"的派生原因（当前只用于降级告警日志，
-// 不作为拒绝原因发出）；window_ambiguous 随 `window` 相对窗口参数落地
-// 生效。
+// 必填/倒序/`window` 时长串不可解析等参数本身非法；window_ambiguous =
+// `from`/`to`/`window` 三者的"恰择一"未被满足（两态都给、只给一端、
+// 或两态都不给）。offset/dst/span_below_grid 是"该窗口无法用卷积表精确
+// 表达、已降级到原始行"的派生原因（只用于降级告警日志，不作为拒绝原因
+// 发出）。
 type ErrorResponseReason string
 
-// ErrorResponseStorage 判定所依据的实际存储（`window_invalid` 不携带）
+// ErrorResponseStorage 判定所依据的实际存储（`window_invalid`/`window_ambiguous` 不携带）
 type ErrorResponseStorage string
 
 // ErrorType defines model for ErrorType.
@@ -2094,6 +2096,9 @@ type WorkersResponse struct {
 // StatsTimezone defines model for StatsTimezone.
 type StatsTimezone = string
 
+// StatsWindow defines model for StatsWindow.
+type StatsWindow = string
+
 // Error defines model for Error.
 type Error = ErrorResponse
 
@@ -2117,11 +2122,23 @@ type GetAccountsUsageParams struct {
 	From       *time.Time `form:"from,omitempty" json:"from,omitempty"`
 	To         *time.Time `form:"to,omitempty" json:"to,omitempty"`
 
+	// Window 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
+	// 给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
+	// 服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`
+	// ⇒ 两端恒整点，命中卷积表的精确分支（零对齐位移、零桶丢失），这就是 UI 预设
+	// 走这条形态的理由。
+	//
+	// **只收时长，不收日历天**：`d` 不是 `time.ParseDuration` 的单位，`7d` → 400
+	// （`reason=window_invalid`）。理由：`24h` 与"一个日历天"在 DST 切换日不相等，
+	// 而本 API 的唯一对齐基准是固定 1h 网格；另立 `AddDate` 日历语义会引入第二套
+	// 窗口长度语义。预设即网格整倍数：24h / 168h / 720h / 2160h。
+	Window *StatsWindow `form:"window,omitempty" json:"window,omitempty"`
+
 	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
-	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
-	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
-	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+	// 绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+	// 但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+	// 「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
 	//
 	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
 	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
@@ -2185,10 +2202,10 @@ type GetAdminOverviewParams struct {
 	GroupId *int64 `form:"group_id,omitempty" json:"group_id,omitempty"`
 
 	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
-	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
-	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
-	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+	// 绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+	// 但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+	// 「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
 	//
 	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
 	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
@@ -2311,18 +2328,30 @@ type ListRulesParams struct {
 
 // GetStatsEntityTrendParams defines parameters for GetStatsEntityTrend.
 type GetStatsEntityTrendParams struct {
-	Entity      GetStatsEntityTrendParamsEntity      `form:"entity" json:"entity"`
-	Id          int64                                `form:"id" json:"id"`
-	From        time.Time                            `form:"from" json:"from"`
-	To          time.Time                            `form:"to" json:"to"`
+	Entity GetStatsEntityTrendParamsEntity `form:"entity" json:"entity"`
+	Id     int64                           `form:"id" json:"id"`
+	From   *time.Time                      `form:"from,omitempty" json:"from,omitempty"`
+	To     *time.Time                      `form:"to,omitempty" json:"to,omitempty"`
+
+	// Window 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
+	// 给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
+	// 服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`
+	// ⇒ 两端恒整点，命中卷积表的精确分支（零对齐位移、零桶丢失），这就是 UI 预设
+	// 走这条形态的理由。
+	//
+	// **只收时长，不收日历天**：`d` 不是 `time.ParseDuration` 的单位，`7d` → 400
+	// （`reason=window_invalid`）。理由：`24h` 与"一个日历天"在 DST 切换日不相等，
+	// 而本 API 的唯一对齐基准是固定 1h 网格；另立 `AddDate` 日历语义会引入第二套
+	// 窗口长度语义。预设即网格整倍数：24h / 168h / 720h / 2160h。
+	Window      *StatsWindow                         `form:"window,omitempty" json:"window,omitempty"`
 	Granularity GetStatsEntityTrendParamsGranularity `form:"granularity" json:"granularity"`
 	Model       *string                              `form:"model,omitempty" json:"model,omitempty"`
 
 	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
-	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
-	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
-	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+	// 绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+	// 但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+	// 「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
 	//
 	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
 	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
@@ -2348,10 +2377,10 @@ type GetStatsTopParams struct {
 	Limit  *int                    `form:"limit,omitempty" json:"limit,omitempty"`
 
 	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
-	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
-	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
-	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+	// 绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+	// 但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+	// 「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
 	//
 	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
 	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
@@ -2370,17 +2399,29 @@ type GetStatsTopParamsBy string
 
 // GetStatsTrendParams defines parameters for GetStatsTrend.
 type GetStatsTrendParams struct {
-	From        time.Time                       `form:"from" json:"from"`
-	To          time.Time                       `form:"to" json:"to"`
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To   *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Window 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
+	// 给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
+	// 服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`
+	// ⇒ 两端恒整点，命中卷积表的精确分支（零对齐位移、零桶丢失），这就是 UI 预设
+	// 走这条形态的理由。
+	//
+	// **只收时长，不收日历天**：`d` 不是 `time.ParseDuration` 的单位，`7d` → 400
+	// （`reason=window_invalid`）。理由：`24h` 与"一个日历天"在 DST 切换日不相等，
+	// 而本 API 的唯一对齐基准是固定 1h 网格；另立 `AddDate` 日历语义会引入第二套
+	// 窗口长度语义。预设即网格整倍数：24h / 168h / 720h / 2160h。
+	Window      *StatsWindow                    `form:"window,omitempty" json:"window,omitempty"`
 	Granularity *GetStatsTrendParamsGranularity `form:"granularity,omitempty" json:"granularity,omitempty"`
 	GroupId     *int64                          `form:"group_id,omitempty" json:"group_id,omitempty"`
 	Model       *string                         `form:"model,omitempty" json:"model,omitempty"`
 
 	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
-	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
-	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
-	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+	// 绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+	// 但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+	// 「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
 	//
 	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
 	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
@@ -2396,17 +2437,29 @@ type GetStatsTrendParamsGranularity string
 
 // GetStatsTTFTParams defines parameters for GetStatsTTFT.
 type GetStatsTTFTParams struct {
-	From   time.Time                 `form:"from" json:"from"`
-	To     time.Time                 `form:"to" json:"to"`
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To   *time.Time `form:"to,omitempty" json:"to,omitempty"`
+
+	// Window 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
+	// 给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
+	// 服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`
+	// ⇒ 两端恒整点，命中卷积表的精确分支（零对齐位移、零桶丢失），这就是 UI 预设
+	// 走这条形态的理由。
+	//
+	// **只收时长，不收日历天**：`d` 不是 `time.ParseDuration` 的单位，`7d` → 400
+	// （`reason=window_invalid`）。理由：`24h` 与"一个日历天"在 DST 切换日不相等，
+	// 而本 API 的唯一对齐基准是固定 1h 网格；另立 `AddDate` 日历语义会引入第二套
+	// 窗口长度语义。预设即网格整倍数：24h / 168h / 720h / 2160h。
+	Window *StatsWindow              `form:"window,omitempty" json:"window,omitempty"`
 	Entity *GetStatsTTFTParamsEntity `form:"entity,omitempty" json:"entity,omitempty"`
 	Id     *int64                    `form:"id,omitempty" json:"id,omitempty"`
 	Model  *string                   `form:"model,omitempty" json:"model,omitempty"`
 
 	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
-	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合、缺省"当天"日界按
-	// 其本地零点计算；显式 from/to 恒为绝对时刻直透，不受时区改写；排行/TTFT
-	// 等无分组数值端点接受并校验该参数但不改变数值。空/缺省 = UTC（兼容旧
-	// 客户端）；未知名 → 400。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+	// 绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+	// 但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+	// 「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
 	//
 	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
 	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
@@ -2592,7 +2645,7 @@ type ServerInterface interface {
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
-	// 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天）
+	// 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
 	// (GET /accounts/usage)
 	GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams)
 
@@ -2844,7 +2897,7 @@ func (_ Unimplemented) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 账号用量聚合（统一 usage API——批量 ≤100 条；from/to 缺省 = 当天）
+// 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
 // (GET /accounts/usage)
 func (_ Unimplemented) GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams) {
 	w.WriteHeader(http.StatusNotImplemented)
@@ -3445,6 +3498,14 @@ func (siw *ServerInterfaceWrapper) GetAccountsUsage(w http.ResponseWriter, r *ht
 	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
 		return
 	}
 
@@ -5105,33 +5166,27 @@ func (siw *ServerInterfaceWrapper) GetStatsEntityTrend(w http.ResponseWriter, r 
 		return
 	}
 
-	// ------------- Required query parameter "from" -------------
+	// ------------- Optional query parameter "from" -------------
 
-	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
 		return
 	}
 
-	// ------------- Required query parameter "to" -------------
+	// ------------- Optional query parameter "to" -------------
 
-	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
 		return
 	}
 
-	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
 		return
 	}
 
@@ -5280,33 +5335,27 @@ func (siw *ServerInterfaceWrapper) GetStatsTrend(w http.ResponseWriter, r *http.
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetStatsTrendParams
 
-	// ------------- Required query parameter "from" -------------
+	// ------------- Optional query parameter "from" -------------
 
-	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
 		return
 	}
 
-	// ------------- Required query parameter "to" -------------
+	// ------------- Optional query parameter "to" -------------
 
-	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
 		return
 	}
 
-	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
 		return
 	}
 
@@ -5361,33 +5410,27 @@ func (siw *ServerInterfaceWrapper) GetStatsTTFT(w http.ResponseWriter, r *http.R
 	// Parameter object where we will unmarshal all parameters from the context
 	var params GetStatsTTFTParams
 
-	// ------------- Required query parameter "from" -------------
+	// ------------- Optional query parameter "from" -------------
 
-	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
-		return
-	}
-
-	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
 		return
 	}
 
-	// ------------- Required query parameter "to" -------------
+	// ------------- Optional query parameter "to" -------------
 
-	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
-
-	} else {
-		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
 		return
 	}
 
-	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
 	if err != nil {
-		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
 		return
 	}
 

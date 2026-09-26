@@ -90,6 +90,10 @@ const USAGE_RANGES = [
   { key: '90d', hours: 2160 },
 ] as const
 
+// 与服务端 ceilHour 同一取整（毫秒精度下与进位式逐位相同）。尾窗上界要接预设的
+// 生效上界，但尾窗下界是末桶起点，不能再发成 window=。
+const ceilHourISO = (ms: number) => new Date(Math.ceil(ms / 3_600_000) * 3_600_000).toISOString()
+
 // 分桶时间列按粒度截断：day → 仅日期（桶边界 08:00 的 UTC 时刻对"一天"无语义）；
 // hour → 日期 + 整点（桶起点）。本地时区转换（与 formatDateTime 一致）。
 const fmtBucketTime = (iso?: string, g: 'hour' | 'day' = 'day'): string => {
@@ -386,7 +390,8 @@ export default function Accounts() {
   // —— 用量/额度聚合（0e77d2a）：**视口懒加载**（用户裁决 2026-08-19）——
   // 批量端点上限 100/次 → 块 100；滚动/缩放 rAF 节流 + 二分定位可视行；
   // useQueries 每块独立 key/缓存/轮询——块滚出视口即停轮询（数据留缓存，
-  // 滚回从缓存恢复）；usage 列隐藏时 enabled=false 全停。from/to 缺省 = 今日。
+  // 滚回从缓存恢复）；usage 列隐藏时 enabled=false 全停。列表格固定近 24h
+  //（相对窗口，服务端自持 now；不再有「缺省 = 当天」）。
   const tableRef = useRef<HTMLTableElement>(null)
   const [visibleRange, setVisibleRange] = useState<[number, number]>([0, 0])
   // IO 观察数据行（表格在 ScrollArea viewport 内滚动——window scroll 监听接不住；
@@ -431,8 +436,8 @@ export default function Accounts() {
   const usageQs = useQueries({
     queries: visibleBlocks.map(b => ({
       queryKey: ['accounts-usage-block', b.map(r => r.ID).join(','), browserTimeZone()],
-      // 无 from/to → 服务端按请求时区计算"当天"缺省窗（键含时区）。
-      queryFn: () => api.listAccountsUsage(b.map(r => r.ID!), { timezone: browserTimeZone() }),
+      // 列表格是固定近 24h 预设：发 window，不在客户端用墙钟算 from/to。
+      queryFn: () => api.listAccountsUsage(b.map(r => r.ID!), { window: '24h', timezone: browserTimeZone() }),
       enabled: isColVisible('usage') && pageIds.length > 0,
       // staleTime = 轮询周期：切回页面/滚回视口时缓存新鲜（<10s）零请求直显，
       // 避免 staleTime=0 默认的切回突刺 refetch；过期后按轮询节奏刷新。
@@ -454,9 +459,9 @@ export default function Accounts() {
 
   // —— 用量明细弹窗：三查询并行——汇总 = usage_logs 实时全窗（无聚合延迟，
   // A/U 准确、含尾窗）；分桶 = stats-agg 离线聚合（watermark 滞后 Lag，末桶为进行中的
-  // 部分桶）→ 末桶被尾窗补行 [末桶起点, now) 原位替代（无双计无缺口）。
-  // from/to 每次渲染重算但查询 key 不含时间戳——渲染期不重取；弹窗打开（enabled
-  // 翻转触发 refetch）/切换范围（key 变化）时 queryFn 拿到当前时刻，滚动/轮询零请求。
+  // 部分桶）→ 末桶被尾窗补行 [末桶起点, 预设上界) 原位替代（无双计无缺口）。
+  // 预设发 window=（服务端自持 now，零平移）；尾窗的下界是末桶起点，不是预设，
+  // 故仍发绝对 from/to，上界取回显的生效上界（没有回显前不查尾窗）。
   const [usageDetail, setUsageDetail] = useState<AccountView | null>(null)
   // 统计能力（本部署能查多久）：per-deployment 常量，按部署缓存（staleTime 无限）。
   // 用途 = 预置范围裁剪：弹窗三条查询（usage_agg + entity_trend + 尾窗 usage_agg）
@@ -482,23 +487,21 @@ export default function Accounts() {
   const range = USAGE_RANGES.find(r => r.key === activeKey) ?? USAGE_RANGES[1]
   // 分桶粒度（≤72h → hour，否则 day）——分桶表时间列按粒度截断（day 只显示日期）
   const granularity: 'hour' | 'day' = range.hours <= 72 ? 'hour' : 'day'
-  // 窗口**不做客户端对齐**：界不齐时由服务端归一化（两端向后取整到整点）——
-  // 规则上移到唯一 owner（domain.Admit）。三条查询共用同一窗口，避免汇总卡片与
-  // 分桶表口径不一致；from 由 to 推出，保证两端出自同一次时钟读取。
-  const to = new Date().toISOString()
-  const from = new Date(Date.parse(to) - range.hours * 3600_000).toISOString()
+  // 预设是网格整倍数时长：发 window=，由服务端持有 now 算出双界整点（零平移）。
+  // 客户端不再用 new Date() 算 from/to——那会把首桶平移丢掉。
+  const presetWindow = `${range.hours}h`
   const detailQ = useQuery({
     queryKey: ['account-usage-detail', usageDetail?.ID, activeKey],
-    queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from, to }),
+    queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { window: presetWindow }),
     enabled: !!usageDetail,
   })
   const statsQ = useQuery({
     // 分桶 = 按浏览器时区本地桶界聚合。恒整点无 DST 时区（含 UTC 与 +8 这类）
-    // 走 180 天卷积表；仅窗口跨 DST 跳变或时区偏移非整小时（:30/:45）时服务端才
+    // 走卷积表；仅窗口跨 DST 跳变或时区偏移非整小时（:30/:45）时服务端才
     // 回落原始明细行，那时超出保留期的窗口 → 400，弹窗表格回落错误提示。键含
     // 时区防串台。
     queryKey: ['account-stats-detail', usageDetail?.ID, activeKey, browserTimeZone()],
-    queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, from, to, granularity, timezone: browserTimeZone() }),
+    queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, window: presetWindow, granularity, timezone: browserTimeZone() }),
     enabled: !!usageDetail,
   })
   // 统计桶按 BucketTime 升序（spec 钉死）：后端 day 合并按 map 迭代返回无序
@@ -509,10 +512,13 @@ export default function Accounts() {
   )
   // 切分点不假设「上一整点」——取 stats 升序数组末桶 BucketTime 为真实边界
   //（watermark 可停在任意整点）；stats 空数组 → 不查尾窗、分桶表无补行。
+  // 上界与预设的生效上界同一取整（ceil 到整点），弹窗打开时固定一次：尾窗下界
+  // 是末桶起点，不是时长预设，所以发绝对 from/to，而不是再发一个 window=。
+  const tailTo = useMemo(() => ceilHourISO(Date.now()), [usageDetail?.ID, activeKey])
   const tailFrom = statsBuckets.length > 0 ? statsBuckets[statsBuckets.length - 1].BucketTime : undefined
   const tailQ = useQuery({
-    queryKey: ['account-stats-tail', usageDetail?.ID, activeKey, tailFrom],
-    queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from: tailFrom!, to }),
+    queryKey: ['account-stats-tail', usageDetail?.ID, activeKey, tailFrom, tailTo],
+    queryFn: () => api.listAccountsUsage([usageDetail!.ID!], { from: tailFrom!, to: tailTo }),
     enabled: !!usageDetail && !!tailFrom,
   })
   // 尾窗补行：末桶被尾窗行原位替代（slice(0,-1)）；tailQ 失败 → 恢复完整 buckets

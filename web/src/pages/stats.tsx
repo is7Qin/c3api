@@ -31,7 +31,9 @@ import { compositeMaxSpanSeconds } from '@/lib/stats-capabilities'
 type Metric = 'requests' | 'tokens'
 type Granularity = 'hour' | 'day'
 
-// 默认近 24h（组件挂载时固定一次，避免渲染期时间漂移）。
+// 默认近 24h 是预设：挂载时不在客户端算 from/to（那会把首桶平移丢掉），
+// 展示用的本地串只给选择器，真正发出去的是 window=24h。用户改过选择器后
+// preset 置空，改发绝对 from+to。
 function defaultRange() {
   const to = new Date()
   const from = new Date(to.getTime() - 24 * 3600 * 1000)
@@ -46,6 +48,13 @@ export default function Stats() {
   const { t } = useTranslation()
   const [tab, setTab] = useState<'usage' | 'routing'>('usage')
   const [range, setRange] = useState(defaultRange)
+  // true = 仍是挂载时的「近 24h」预设，趋势与平台 TTFT 发 window=24h。
+  // 路由观测不在相对窗口的端点里，始终发绝对 from/to。
+  const [preset, setPreset] = useState(true)
+  const onRange = (next: { from: string; to: string }) => {
+    setPreset(false)
+    setRange(next)
+  }
   const [granularity, setGranularity] = useState<Granularity>('hour')
   const [metric, setMetric] = useState<Metric>('tokens')
   const [hidden, setHidden] = useState<Set<string>>(new Set())
@@ -58,23 +67,19 @@ export default function Stats() {
     })
   }
 
-  const params = useMemo(
-    // timezone = 浏览器 IANA 时区——服务端按本地桶界精确聚合；label 用
-    // new Date 本地渲染恰一次（与请求时区一致，见 fmt.browserTimeZone）。
-    // 窗口**不做客户端对齐**：界不齐时由服务端归一化（两端向后取整到整点）并用
-    // X-Stats-Effective-From/To 回显生效窗口——规则上移到唯一 owner（domain.Admit），
-    // 客户端不再自证自己无法证明的不变式。选择器展示的 range 保持用户原样。
-    () => ({
-      from: toRFC3339(range.from)!,
-      to: toRFC3339(range.to)!,
-      granularity,
-      timezone: browserTimeZone(),
-    }),
-    [range, granularity]
-  )
+  // timezone = 浏览器 IANA 时区——服务端按本地桶界精确聚合；label 用
+  // new Date 本地渲染恰一次（与请求时区一致，见 fmt.browserTimeZone）。
+  // 预设发 window=（服务端自持 now，零平移）；用户改成任意绝对区间后发
+  // from+to。两个分支分开写：合并成一个对象会让 from 变成 `undefined`，
+  // 类型上就又能和 window 同时出现。
+  const trendKey = preset
+    ? { window: '24h' as const, granularity }
+    : { from: range.from, to: range.to, granularity }
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['stats', params],
-    queryFn: () => api.getStatsTrend(params),
+    queryKey: ['stats', trendKey],
+    queryFn: () => preset
+      ? api.getStatsTrend({ window: '24h', granularity, timezone: browserTimeZone() })
+      : api.getStatsTrend({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)!, granularity, timezone: browserTimeZone() }),
   })
   // 数据即时间线点，无需中间聚合层；label 本地生成
   const rows = data ?? []
@@ -106,13 +111,12 @@ export default function Stats() {
   }, [rows, granularity])
 
   // TTFT 卡片独立 query，不阻塞图表渲染
-  const ttftParams = useMemo(
-    () => ({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)! }),
-    [range]
-  )
+  const ttftKey = preset ? { window: '24h' } : { from: range.from, to: range.to }
   const ttftQ = useQuery({
-    queryKey: ['stats-ttft', ttftParams],
-    queryFn: () => api.getStatsTTFT(ttftParams),
+    queryKey: ['stats-ttft', ttftKey],
+    queryFn: () => preset
+      ? api.getStatsTTFT({ window: '24h' })
+      : api.getStatsTTFT({ from: toRFC3339(range.from)!, to: toRFC3339(range.to)! }),
   })
 
   const chartConfig = {
@@ -174,7 +178,7 @@ export default function Stats() {
         <div className="flex flex-nowrap items-start gap-5">
           <div className="w-[14rem] shrink-0 space-y-1.5">
             <Label>{t('dateRange.label')}</Label>
-            <DateRangePicker value={range} onChange={setRange} minDate={minDate} />
+            <DateRangePicker value={range} onChange={onRange} minDate={minDate} />
           </div>
           <div className="shrink-0 space-y-1.5">
             <Label>{t('stats.granularity')}</Label>
@@ -378,7 +382,7 @@ export default function Stats() {
       </Card>
         </TabsContent>
         <TabsContent value="routing" className="space-y-6">
-          <RoutingPanel range={range} setRange={setRange} />
+          <RoutingPanel range={range} setRange={onRange} />
         </TabsContent>
       </Tabs>
     </div>
