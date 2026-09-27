@@ -845,7 +845,7 @@
         "attempts": "尝试数",
         "successRange": "成功率 95%",
         "ttftRange": "TTFT 95%",
-        "costPerSuccess": "输入侧单价",
+        "inputUnitCost": "输入侧单价",
         "flags": "标记"
       }
     },

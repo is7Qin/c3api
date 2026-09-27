@@ -55,7 +55,7 @@ type RoutingFrontierCandidate struct {
 	TTFTLCB          float64
 	TTFTUCB          float64
 	TTFTKnown        bool
-	CostPerSuccess   int64
+	InputUnitCost   int64
 	CostKnown        bool
 	Insufficient     bool
 	OnFrontier       bool
@@ -119,7 +119,7 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 			c.IdentityRevision = planCand.IdentityRevision
 			c.QualityClassID = planCand.QualityClassID
 			c.MappedModel = planCand.MappedModel
-			c.CostPerSuccess, c.CostKnown = s.frontierCost(route.Ref.Model, row, planCand.UpstreamCostMultiplierBp, now)
+			c.InputUnitCost, c.CostKnown = s.frontierCost(route.Ref.Model, row, planCand.UpstreamCostMultiplierBp, now)
 		}
 		cands = append(cands, c)
 	}
@@ -179,7 +179,7 @@ func (s *Service) frontierCost(requestedModel string, row repository.RoutingQual
 // frontierSortCost 排序键：成本未知者排最后（MaxInt64 哨兵，不参与支配）。
 func frontierSortCost(c RoutingFrontierCandidate) int64 {
 	if c.CostKnown {
-		return c.CostPerSuccess
+		return c.InputUnitCost
 	}
 	return math.MaxInt64
 }
@@ -198,8 +198,8 @@ func markParetoFrontier(cands []RoutingFrontierCandidate) {
 	}
 	sort.SliceStable(idx, func(a, b int) bool {
 		ca, cb := cands[idx[a]], cands[idx[b]]
-		if ca.CostPerSuccess != cb.CostPerSuccess {
-			return ca.CostPerSuccess < cb.CostPerSuccess
+		if ca.InputUnitCost != cb.InputUnitCost {
+			return ca.InputUnitCost < cb.InputUnitCost
 		}
 		return ca.SuccessLCB > cb.SuccessLCB
 	})

@@ -845,7 +845,7 @@
         "attempts": "Attempts",
         "successRange": "Success 95%",
         "ttftRange": "TTFT 95%",
-        "costPerSuccess": "Input unit price",
+        "inputUnitCost": "Input unit price",
         "flags": "Flags"
       }
     },

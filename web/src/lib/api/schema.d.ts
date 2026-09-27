@@ -3140,7 +3140,7 @@ export interface components {
              * Format: int64
              * @description 输入侧单位采购价（毫分/1M 输入侧 token，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）
              */
-            cost_per_success: number;
+            input_unit_cost: number;
             /** @description known + 有成功样本 + 价格可解析 */
             cost_known: boolean;
             /** @description 样本 <30（与 explore 同门槛） */

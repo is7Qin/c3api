@@ -162,7 +162,7 @@ func toAPIRoutingFrontier(res *service.RoutingFrontierResult) RoutingFrontierRes
 			TtftLcb:              c.TTFTLCB,
 			TtftUcb:              c.TTFTUCB,
 			TtftKnown:            c.TTFTKnown,
-			CostPerSuccess:       c.CostPerSuccess,
+			InputUnitCost:        c.InputUnitCost,
 			CostKnown:            c.CostKnown,
 			Insufficient:         c.Insufficient,
 			OnFrontier:           c.OnFrontier,
