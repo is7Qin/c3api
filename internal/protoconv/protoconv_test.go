@@ -259,7 +259,7 @@ func TestConvertRequestChatToMess(t *testing.T) {
 	require.Len(t, tools, 1)
 	tl := tools[0].(map[string]any)
 	require.Equal(t, map[string]any{"type": "object"}, tl["input_schema"])
-	require.Equal(t, "any", m["tool_choice"], "required → any")
+	require.Equal(t, map[string]any{"type": "any"}, m["tool_choice"], "required → {type:any}")
 }
 
 func TestConvertRequestChatToMessMaxCompletionTokens(t *testing.T) {
@@ -352,8 +352,8 @@ func TestConvertResponseMessToResp(t *testing.T) {
 	require.Equal(t, "function_call", fc["type"])
 	require.Equal(t, `{"city":"x"}`, fc["arguments"], "input 对象 → arguments JSON 字符串")
 	u := m["usage"].(map[string]any)
-	require.Equal(t, float64(10), u["input_tokens"])
-	require.Equal(t, float64(15), u["total_tokens"])
+	require.Equal(t, float64(13), u["input_tokens"])
+	require.Equal(t, float64(18), u["total_tokens"])
 	require.Equal(t, float64(3), u["input_tokens_details"].(map[string]any)["cached_tokens"])
 }
 
@@ -377,8 +377,8 @@ func TestConvertResponseMessToChat(t *testing.T) {
 	tc := arrOf(t, msg, "tool_calls")[0].(map[string]any)
 	require.Equal(t, `{"city":"x"}`, tc["function"].(map[string]any)["arguments"])
 	u := m["usage"].(map[string]any)
-	require.Equal(t, float64(10), u["prompt_tokens"])
-	require.Equal(t, float64(15), u["total_tokens"])
+	require.Equal(t, float64(13), u["prompt_tokens"])
+	require.Equal(t, float64(18), u["total_tokens"])
 	require.Equal(t, float64(3), u["prompt_tokens_details"].(map[string]any)["cached_tokens"])
 }
 
@@ -456,7 +456,8 @@ func TestMapRespToChatStream(t *testing.T) {
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"","name":"get_weather"},"id":"call_1","index":1,"type":"function"}]`, "tool_calls 前导 id = call_id")
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"{\"city\": \"x\"}"},"index":1}]`, "arguments delta")
 	require.Contains(t, out, `"finish_reason":"tool_calls"`, "含 function_call → tool_calls")
-	require.Contains(t, out, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "收尾 chunk 内联 usage")
+	require.NotContains(t, out, `"finish_reason":"tool_calls","index":0}],"created":1750000000,"id":"rsp_1","model":"gpt-4o","object":"chat.completion.chunk","usage"`, "finish 帧不含 usage")
+	require.Contains(t, out, `"choices":[],"created":1750000000,"id":"rsp_1","model":"gpt-4o","object":"chat.completion.chunk","usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "usage 在 finish 帧之后的单独帧，choices 为空")
 	require.Contains(t, out, "data: [DONE]", "收尾 [DONE]")
 }
 
@@ -466,7 +467,7 @@ func TestMapRespToChatFailed(t *testing.T) {
 		"response.failed", `{"type":"response.failed","response":{"id":"rsp_1","object":"response","status":"failed","error":{"code":"server_error","message":"boom"}}}`,
 	)
 	require.Contains(t, out, `data: {"error":{"message":"boom"}}`, "failed → chat 流式错误帧")
-	require.NotContains(t, out, "[DONE]")
+	require.Contains(t, out, "data: [DONE]", "error 帧之后有 [DONE]")
 }
 
 func TestMapRespToMessStream(t *testing.T) {
@@ -486,7 +487,7 @@ func TestMapRespToMessStream(t *testing.T) {
 	require.Contains(t, out, `"delta":{"partial_json":"{\"city\": \"x\"}","type":"input_json_delta"}`, "json delta")
 	require.Contains(t, out, `event: content_block_stop`+"\n"+`data: {"index":1,"type":"content_block_stop"}`, "tool_use 块 stop")
 	require.Contains(t, out, `"stop_reason":"tool_use"`, "stop_reason 映射")
-	require.Contains(t, out, `"usage":{"output_tokens":5}`, "message_delta 用量")
+	require.Contains(t, out, `"usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"input_tokens":3,"output_tokens":5}`, "message_delta 用量")
 	require.Contains(t, out, `event: message_stop`, "message_stop 收尾")
 }
 
@@ -501,7 +502,8 @@ func TestMapMessToRespStream(t *testing.T) {
 		"message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":20}}`,
 		"message_stop", `{"type":"message_stop"}`,
 	)
-	require.Contains(t, out, `event: response.created`+"\n"+`data: {"response":{"created_at":0,"id":"msg_1","model":"claude-3-5-sonnet","object":"response","output":[],"parallel_tool_calls":true,"status":"in_progress","usage":null},"type":"response.created"}`, "response.created 首帧")
+	require.Contains(t, out, `event: response.created`+"\n"+`data: {"response":{"created_at":0,"id":"msg_1","model":"claude-3-5-sonnet","object":"response","output":[],"status":"in_progress","usage":null},"type":"response.created"}`, "response.created 首帧")
+	require.NotContains(t, out, "parallel_tool_calls", "不发明 parallel_tool_calls")
 	require.Contains(t, out, `"item_id":"msg_msg_1_0"`, "合成 item id（message 块）")
 	require.Contains(t, out, `"content_index":0,"delta":"hel","item_id":"msg_msg_1_0","output_index":0,"type":"response.output_text.delta"`)
 	require.Contains(t, out, `"call_id":"toolu_1","id":"fc_toolu_1","name":"get_weather","status":"in_progress","type":"function_call"`, "function_call 项")
@@ -509,7 +511,7 @@ func TestMapMessToRespStream(t *testing.T) {
 	// response.completed：累积输出 + 用量
 	require.Contains(t, out, `event: response.completed`)
 	require.Contains(t, out, `"arguments":"{\"city\": \"x\"}"`, "arguments 累积")
-	require.Contains(t, out, `"input_tokens":10,"input_tokens_details":{"cached_tokens":3},"output_tokens":20,"total_tokens":30`, "用量累积")
+	require.Contains(t, out, `"input_tokens":13,"input_tokens_details":{"cached_tokens":3},"output_tokens":20,"total_tokens":33`, "用量累积")
 	require.Contains(t, out, `"cached_tokens":3`, "cache_read 映射")
 	require.Contains(t, out, `"status":"completed"`, "终态项")
 }
@@ -528,7 +530,7 @@ func TestMapMessToChatStream(t *testing.T) {
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"","name":"get_weather"},"id":"toolu_1","index":1,"type":"function"}]`)
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"{\"city\": \"x\"}"},"index":1}]`)
 	require.Contains(t, out, `"finish_reason":"tool_calls"`, "tool_use → tool_calls")
-	require.Contains(t, out, `"usage":{"completion_tokens":20,"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":3},"total_tokens":30}`, "用量累积（input 来自 message_start）")
+	require.Contains(t, out, `"usage":{"completion_tokens":20,"prompt_tokens":13,"prompt_tokens_details":{"cached_tokens":3},"total_tokens":33}`, "用量在 finish 帧之后的单独帧")
 	require.Contains(t, out, `"prompt_tokens_details":{"cached_tokens":3}`)
 	require.Contains(t, out, "data: [DONE]")
 	require.NotContains(t, out, `"message_stop"`, "message_stop 丢弃（收尾已在 message_delta）")
@@ -546,7 +548,8 @@ func TestMapDataOnlyFramesInferred(t *testing.T) {
 	)
 	require.Contains(t, out, `"delta":{"content":"","role":"assistant"}`, "created 推断 → 角色前导 chunk")
 	require.Contains(t, out, `"delta":{"content":"hi"}`, "文本 delta 推断 → content chunk")
-	require.Contains(t, out, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "completed 推断 → 收尾 chunk 内联用量")
+	require.Contains(t, out, `"choices":[],"created":0,"id":"rsp_1","model":"m","object":"chat.completion.chunk","usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "completed 推断 → 单独 choices:[] usage 帧")
+	require.NotContains(t, out, `"finish_reason":"stop","index":0}],"created":0,"id":"rsp_1","model":"m","object":"chat.completion.chunk","usage"`, "finish 帧不含 usage")
 	require.Contains(t, out, "data: [DONE]", "completed 推断 → [DONE] 收尾")
 }
 
@@ -572,7 +575,8 @@ func TestMapDataOnlyFramesInferredFallback(t *testing.T) {
 		"", `{"type":"response.completed","response":{"id":"rsp_1","object":"response","status":"completed","model":"m","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}}}`,
 	)
 	require.Contains(t, out, `"delta":{"content":"","role":"assistant"}`, "非首键 type 回退推断 → 角色前导 chunk")
-	require.Contains(t, out, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "completed 推断 → 收尾 chunk 内联用量")
+	require.Contains(t, out, `"choices":[],"created":0,"id":"rsp_1","model":"m","object":"chat.completion.chunk","usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "completed 推断 → 单独 choices:[] usage 帧")
+	require.NotContains(t, out, `"finish_reason":"stop","index":0}],"created":0,"id":"rsp_1","model":"m","object":"chat.completion.chunk","usage"`, "finish 帧不含 usage")
 	require.Contains(t, out, "data: [DONE]", "completed 推断 → [DONE] 收尾")
 }
 
@@ -761,23 +765,23 @@ func TestMapRespToChatCompleteFrames(t *testing.T) {
 
 	frame, drop = m.Map("response.completed", []byte(`{"type":"response.completed","response":{"id":"rsp_1","object":"response","created_at":1750000000,"status":"completed","model":"gpt-4o","output":[{"id":"fc_1","type":"function_call","call_id":"call_1","name":"get_weather","arguments":"","status":"completed"}],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8}}}`))
 	require.False(t, drop)
-	require.Equal(t, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\",\"index\":0}],\"created\":1750000000,\"id\":\"rsp_1\",\"model\":\"gpt-4o\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":5,\"prompt_tokens\":3,\"total_tokens\":8}}\n\ndata: [DONE]\n\n", string(frame), "completed = chunk 帧 + [DONE] 独立帧（不粘连）")
+	require.Equal(t, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\",\"index\":0}],\"created\":1750000000,\"id\":\"rsp_1\",\"model\":\"gpt-4o\",\"object\":\"chat.completion.chunk\"}\n\ndata: {\"choices\":[],\"created\":1750000000,\"id\":\"rsp_1\",\"model\":\"gpt-4o\",\"object\":\"chat.completion.chunk\",\"usage\":{\"completion_tokens\":5,\"prompt_tokens\":3,\"total_tokens\":8}}\n\ndata: [DONE]\n\n", string(frame), "completed = finish 帧（无 usage）+ choices:[] usage 帧 + [DONE]")
 
 	// failed → data-only 错误帧（新 mapper：completed 后 done 守卫已激活）
 	m2 := NewStreamMapper(domain.ProtocolConvertChatToResp)
 	frame, drop = m2.Map("response.failed", []byte(`{"type":"response.failed","response":{"id":"rsp_1","object":"response","status":"failed","error":{"code":"server_error","message":"boom"}}}`))
 	require.False(t, drop)
-	require.Equal(t, "data: {\"error\":{\"message\":\"boom\"}}\n\n", string(frame))
+	require.Equal(t, "data: {\"error\":{\"message\":\"boom\"}}\n\ndata: [DONE]\n\n", string(frame))
 }
 
 // TestConvertResponseRespToChatPureTool（回归）：纯工具响应（无文本
-// 部件）→ content 恒为合法空字符串。
+// 部件）→ content 为 JSON null。
 func TestConvertResponseRespToChatPureTool(t *testing.T) {
 	out, err := ConvertResponse([]byte(`{"id":"rsp_1","object":"response","status":"completed","model":"m","output":[{"id":"fc_1","type":"function_call","call_id":"call_1","name":"get_weather","arguments":"{}","status":"completed"}]}`), domain.ProtocolConvertChatToResp)
 	require.NoError(t, err)
 	m := obj(t, out) // 完整 JSON 合法
 	msg := arrOf(t, m, "choices")[0].(map[string]any)["message"].(map[string]any)
-	require.Equal(t, "", msg["content"], "无文本部件 → content 空字符串")
+	require.Nil(t, msg["content"], "无文本部件 → content JSON null")
 	tcs := arrOf(t, msg, "tool_calls")
 	require.Len(t, tcs, 1)
 	require.Equal(t, "call_1", tcs[0].(map[string]any)["id"], "tool_call id = call_id")
@@ -891,4 +895,298 @@ func TestMapRespToChatEscapedType(t *testing.T) {
 		"response.output_item.added", `{"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_c\u0061ll","call_id":"call_1","name":"get_weather","arguments":"","status":"in_progress"}}`,
 	)
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"","name":"get_weather"},"id":"call_1","index":1,"type":"function"}]`, "转义 type 值仍按 function_call 处理")
+}
+
+// --- API 对齐验收（protoconv-api-alignment）---
+
+func TestAPIAlignDeveloperRole(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[
+		{"role":"system","content":"sys"},
+		{"role":"developer","content":"dev"},
+		{"role":"user","content":"hi"}
+	]}`)
+	out, err := ConvertRequest(body, domain.ProtocolConvertChatToResp)
+	require.NoError(t, err)
+	input := arrOf(t, obj(t, out), "input")
+	require.GreaterOrEqual(t, len(input), 2)
+	dev := input[1].(map[string]any)
+	require.Equal(t, "developer", dev["role"])
+	require.Equal(t, "dev", arrOf(t, dev, "content")[0].(map[string]any)["text"])
+
+	out, err = ConvertRequest(body, domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	require.Equal(t, "sys\ndev", obj(t, out)["system"])
+
+	interleaved := []byte(`{"model":"m","messages":[
+		{"role":"developer","content":"d1"},
+		{"role":"system","content":"s1"},
+		{"role":"user","content":"hi"}
+	]}`)
+	out, err = ConvertRequest(interleaved, domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	require.Equal(t, "d1\ns1", obj(t, out)["system"])
+}
+
+func TestAPIAlignToolChoiceObject(t *testing.T) {
+	for _, tc := range []struct {
+		in, typ string
+	}{
+		{`"auto"`, "auto"},
+		{`"none"`, "none"},
+		{`"required"`, "any"},
+	} {
+		chat, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"tool_choice":`+tc.in+`}`), domain.ProtocolConvertChatToMess)
+		require.NoError(t, err)
+		require.Equal(t, map[string]any{"type": tc.typ}, obj(t, chat)["tool_choice"], tc.in)
+		resp, err := ConvertRequest([]byte(`{"model":"m","input":"hi","tool_choice":`+tc.in+`}`), domain.ProtocolConvertRespToMess)
+		require.NoError(t, err)
+		require.Equal(t, map[string]any{"type": tc.typ}, obj(t, resp)["tool_choice"], tc.in)
+	}
+	named, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"tool_choice":{"type":"function","function":{"name":"get_weather"}}}`), domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	require.Equal(t, map[string]any{"type": "tool", "name": "get_weather"}, obj(t, named)["tool_choice"])
+}
+
+func TestAPIAlignImages(t *testing.T) {
+	chat := []byte(`{"model":"m","messages":[{"role":"user","content":[
+		{"type":"image_url","image_url":{"url":"https://example.com/a.png","detail":"high"}},
+		{"type":"image_url","image_url":"data:image/png;base64,QUJD"}
+	]}]}`)
+	out, err := ConvertRequest(chat, domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	msgs := arrOf(t, obj(t, out), "messages")
+	require.Len(t, msgs, 1, "纯图片 user 消息不再消失")
+	blocks := arrOf(t, msgs[0].(map[string]any), "content")
+	require.Equal(t, map[string]any{"type": "url", "url": "https://example.com/a.png"}, blocks[0].(map[string]any)["source"])
+	require.Equal(t, map[string]any{"type": "base64", "media_type": "image/png", "data": "QUJD"}, blocks[1].(map[string]any)["source"])
+	require.NotContains(t, blocks[0], "detail")
+
+	resp := []byte(`{"model":"m","input":[{"type":"message","role":"user","content":[
+		{"type":"input_image","image_url":"https://example.com/a.png"},
+		{"type":"input_image","file_id":"file_1"}
+	]}]}`)
+	out, err = ConvertRequest(resp, domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	msgs = arrOf(t, obj(t, out), "messages")
+	require.Len(t, msgs, 1)
+	blocks = arrOf(t, msgs[0].(map[string]any), "content")
+	require.Len(t, blocks, 1, "只有 file_id 的图片丢弃")
+	require.Equal(t, "image", blocks[0].(map[string]any)["type"])
+
+	toResp, err := ConvertRequest(chat, domain.ProtocolConvertChatToResp)
+	require.NoError(t, err)
+	parts := arrOf(t, arrOf(t, obj(t, toResp), "input")[0].(map[string]any), "content")
+	require.Equal(t, "high", parts[0].(map[string]any)["detail"])
+	require.Equal(t, "https://example.com/a.png", parts[0].(map[string]any)["image_url"])
+}
+
+func TestAPIAlignOrphanFunctionCall(t *testing.T) {
+	body := []byte(`{"model":"m","input":[
+		{"type":"function_call","id":"fc_1","call_id":"call_1","name":"get_weather","arguments":"{}"},
+		{"type":"function_call_output","call_id":"call_1","output":"ok"}
+	]}`)
+	out, err := ConvertRequest(body, domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	msgs := arrOf(t, obj(t, out), "messages")
+	require.Len(t, msgs, 2)
+	assistant := msgs[0].(map[string]any)
+	require.Equal(t, "assistant", assistant["role"])
+	tu := arrOf(t, assistant, "content")[0].(map[string]any)
+	require.Equal(t, "tool_use", tu["type"])
+	require.Equal(t, "call_1", tu["id"])
+	tr := arrOf(t, msgs[1].(map[string]any), "content")[0].(map[string]any)
+	require.Equal(t, "call_1", tr["tool_use_id"])
+}
+
+func TestAPIAlignAssistantStringContent(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[{"role":"assistant","content":"hello"}]}`)
+	out, err := ConvertRequest(body, domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	input := arrOf(t, obj(t, out), "input")
+	require.Len(t, input, 1)
+	part := arrOf(t, input[0].(map[string]any), "content")[0].(map[string]any)
+	require.Equal(t, "output_text", part["type"])
+	require.Equal(t, "hello", part["text"])
+
+	empty, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"assistant","content":""}]}`), domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	require.Empty(t, arrOf(t, obj(t, empty), "input"))
+}
+
+func TestAPIAlignFCOutputInputText(t *testing.T) {
+	body := []byte(`{"model":"m","input":[
+		{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"sunny"}]}
+	]}`)
+	out, err := ConvertRequest(body, domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	tr := arrOf(t, arrOf(t, obj(t, out), "messages")[0].(map[string]any), "content")[0].(map[string]any)
+	require.Equal(t, "sunny", tr["content"])
+}
+
+func TestAPIAlignDefaultMaxTokens(t *testing.T) {
+	chat, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`), domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	require.Equal(t, float64(4096), obj(t, chat)["max_tokens"])
+	resp, err := ConvertRequest([]byte(`{"model":"m","input":"hi"}`), domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	require.Equal(t, float64(4096), obj(t, resp)["max_tokens"])
+	given, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_completion_tokens":300}`), domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	require.Equal(t, float64(300), obj(t, given)["max_tokens"])
+}
+
+func TestAPIAlignIncompleteReason(t *testing.T) {
+	body := func(reason string) []byte {
+		return []byte(`{"id":"rsp_1","status":"incomplete","incomplete_details":{"reason":"` + reason + `"},"model":"m","output":[{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"}]}`)
+	}
+	chat, err := ConvertResponse(body("content_filter"), domain.ProtocolConvertChatToResp)
+	require.NoError(t, err)
+	require.Equal(t, "content_filter", arrOf(t, obj(t, chat), "choices")[0].(map[string]any)["finish_reason"])
+	mess, err := ConvertResponse(body("content_filter"), domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	require.Equal(t, "refusal", obj(t, mess)["stop_reason"])
+
+	chat, err = ConvertResponse(body("max_output_tokens"), domain.ProtocolConvertChatToResp)
+	require.NoError(t, err)
+	require.Equal(t, "length", arrOf(t, obj(t, chat), "choices")[0].(map[string]any)["finish_reason"])
+	mess, err = ConvertResponse(body("max_output_tokens"), domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	require.Equal(t, "max_tokens", obj(t, mess)["stop_reason"])
+}
+
+func TestAPIAlignMessStopReason(t *testing.T) {
+	for _, tc := range []struct{ stop, finish string }{
+		{"refusal", "content_filter"},
+		{"model_context_window_exceeded", "length"},
+		{"pause_turn", "stop"},
+		{"end_turn", "stop"},
+	} {
+		body := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"x"}],"stop_reason":"` + tc.stop + `","usage":{"input_tokens":1,"output_tokens":1}}`)
+		out, err := ConvertResponse(body, domain.ProtocolConvertChatToMess)
+		require.NoError(t, err)
+		require.Equal(t, tc.finish, arrOf(t, obj(t, out), "choices")[0].(map[string]any)["finish_reason"], tc.stop)
+	}
+}
+
+func TestAPIAlignUsage(t *testing.T) {
+	mess := []byte(`{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[{"type":"text","text":"x"}],"stop_reason":"end_turn","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":2,"cache_read_input_tokens":3}}`)
+	chat, err := ConvertResponse(mess, domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	u := obj(t, chat)["usage"].(map[string]any)
+	require.Equal(t, float64(15), u["prompt_tokens"])
+	require.Equal(t, float64(3), u["prompt_tokens_details"].(map[string]any)["cached_tokens"])
+
+	resp, err := ConvertResponse(mess, domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	u = obj(t, resp)["usage"].(map[string]any)
+	require.Equal(t, float64(15), u["input_tokens"])
+	require.Equal(t, float64(3), u["input_tokens_details"].(map[string]any)["cached_tokens"])
+	require.NotContains(t, u, "cache_write_tokens")
+
+	fromResp := []byte(`{"id":"rsp_1","status":"completed","model":"m","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3}}}`)
+	messOut, err := ConvertResponse(fromResp, domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	mu := obj(t, messOut)["usage"].(map[string]any)
+	require.Equal(t, float64(10), mu["input_tokens"], "不减 cached_tokens")
+	require.Equal(t, float64(3), mu["cache_read_input_tokens"])
+}
+
+func TestAPIAlignRespMessStreamIndex(t *testing.T) {
+	out := mapAll(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_1","model":"m","output":[]}}`,
+		"response.output_text.delta", `{"type":"response.output_text.delta","output_index":1,"delta":"a"}`,
+		"response.output_text.delta", `{"type":"response.output_text.delta","output_index":1,"delta":"b"}`,
+		"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"f","arguments":""}}`,
+		"response.function_call_arguments.delta", `{"type":"response.function_call_arguments.delta","output_index":0,"delta":"{}"}`,
+	)
+	require.Contains(t, out, `"index":1,"type":"content_block_start"`)
+	require.Contains(t, out, `"content_block":{"text":"","type":"text"}`)
+	require.Contains(t, out, `"index":1,"type":"content_block_delta"`)
+	require.Contains(t, out, `"index":0,"type":"content_block_start"`)
+	require.Contains(t, out, `"content_block":{"id":"call_1"`)
+	require.Contains(t, out, `"index":0,"type":"content_block_delta"`)
+	require.Equal(t, 1, strings.Count(out, `"index":1,"type":"content_block_start"`), "文本块只分配一次")
+	require.Equal(t, 2, strings.Count(out, `"index":1,"type":"content_block_delta"`), "后续文本 delta 沿用 index 1")
+	require.Equal(t, 1, strings.Count(out, `"index":0,"type":"content_block_delta"`), "函数 delta 是 index 0")
+}
+
+func TestAPIAlignMessDeltaUsage(t *testing.T) {
+	out := mapAll(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_1","model":"m","output":[],"usage":null}}`,
+		"response.completed", `{"type":"response.completed","response":{"id":"rsp_1","status":"completed","model":"m","output":[],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3}}}}`,
+	)
+	require.Contains(t, out, `"input_tokens":0`, "message_start 仍是 0")
+	require.Contains(t, out, `"usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":3,"input_tokens":10,"output_tokens":5}`)
+}
+
+func TestAPIAlignPureToolContentNull(t *testing.T) {
+	out, err := ConvertResponse([]byte(`{"id":"msg_1","type":"message","role":"assistant","model":"m","content":[{"type":"tool_use","id":"toolu_1","name":"f","input":{}}],"stop_reason":"tool_use","usage":{"input_tokens":1,"output_tokens":1}}`), domain.ProtocolConvertChatToMess)
+	require.NoError(t, err)
+	msg := arrOf(t, obj(t, out), "choices")[0].(map[string]any)["message"].(map[string]any)
+	require.Nil(t, msg["content"])
+
+	stream := mapAll(t, domain.ProtocolConvertChatToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_1","model":"m","output":[]}}`,
+	)
+	require.Contains(t, stream, `"content":""`, "流式首块仍是空字符串")
+}
+
+func TestAPIAlignFailedFrames(t *testing.T) {
+	chat := mapAll(t, domain.ProtocolConvertChatToResp,
+		"response.failed", `{"type":"response.failed","response":{"status":"failed","error":{"message":"boom"}}}`,
+	)
+	errAt := strings.Index(chat, `data: {"error":{"message":"boom"}}`)
+	doneAt := strings.Index(chat, "data: [DONE]")
+	require.GreaterOrEqual(t, errAt, 0)
+	require.Greater(t, doneAt, errAt)
+
+	mess := mapAll(t, domain.ProtocolConvertMessToResp,
+		"response.failed", `{"type":"response.failed","response":{"status":"failed"}}`,
+	)
+	require.Contains(t, mess, `event: error`)
+	require.Contains(t, mess, `"message":""`)
+	require.Contains(t, mess, `"type":"api_error"`)
+}
+
+func TestAPIAlignChatStreamUsageFrame(t *testing.T) {
+	out := mapAll(t, domain.ProtocolConvertChatToMess,
+		"message_start", `{"type":"message_start","message":{"id":"msg_1","model":"m","usage":{"input_tokens":10,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}`,
+		"message_delta", `{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}`,
+	)
+	finish := strings.Index(out, `"finish_reason":"stop"`)
+	usage := strings.Index(out, `"choices":[]`)
+	done := strings.Index(out, "data: [DONE]")
+	require.GreaterOrEqual(t, finish, 0)
+	require.Greater(t, usage, finish)
+	require.Greater(t, done, usage)
+	require.Contains(t, out, `"prompt_tokens":15`)
+	require.NotContains(t, out, `"finish_reason":"stop","index":0}],"created":0,"id":"msg_1","model":"m","object":"chat.completion.chunk","usage"`)
+}
+
+func TestAPIAlignResponseFormatAndReasoning(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],
+		"response_format":{"type":"json_schema","json_schema":{"name":"ans","schema":{"type":"object"},"strict":true,"description":"d"}},
+		"reasoning_effort":"low"}`)
+	out, err := ConvertRequest(body, domain.ProtocolConvertChatToResp)
+	require.NoError(t, err)
+	m := obj(t, out)
+	format := m["text"].(map[string]any)["format"].(map[string]any)
+	require.Equal(t, "json_schema", format["type"])
+	require.Equal(t, "ans", format["name"])
+	require.Equal(t, true, format["strict"])
+	require.Equal(t, "d", format["description"])
+	require.Equal(t, "low", m["reasoning"].(map[string]any)["effort"])
+
+	bad, err := ConvertRequest([]byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"reasoning_effort":"turbo"}`), domain.ProtocolConvertChatToResp)
+	require.NoError(t, err)
+	require.NotContains(t, obj(t, bad), "reasoning")
+}
+
+func TestAPIAlignDisableParallel(t *testing.T) {
+	off, err := ConvertRequest([]byte(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}],"tool_choice":{"type":"auto","disable_parallel_tool_use":true}}`), domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	require.Equal(t, false, obj(t, off)["parallel_tool_calls"])
+	on, err := ConvertRequest([]byte(`{"model":"m","max_tokens":8,"messages":[{"role":"user","content":"hi"}],"tool_choice":{"type":"any"}}`), domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	require.NotContains(t, obj(t, on), "parallel_tool_calls")
 }

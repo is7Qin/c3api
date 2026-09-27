@@ -14,9 +14,8 @@ import (
 //   - input → messages：message 项 → user/assistant 消息（文本块）；
 //     function_call 项 → 追加到最近 assistant 消息的 tool_use 块；
 //     function_call_output 项 → user 消息的 tool_result 块
-//   - max_output_tokens → max_tokens（anthropic 必填，客户端缺失则不补——
-//     补差值属策略决定，不由转换器发明）
-//   - tools → tools（parameters → input_schema）；tool_choice 归一化
+//   - max_output_tokens → max_tokens（anthropic 必填；缺失则补常量 4096）
+//   - tools → tools（parameters → input_schema）；tool_choice 归一化为对象
 //     （required → any；{type:"function",name} → {type:"tool",name}）
 //   - 同名字段透传：model/temperature/top_p/stream/metadata
 //   - anthropic 无对应参数（top_logprobs/seed/store/parallel_tool_calls/
@@ -39,6 +38,8 @@ func respToMessRequest(body []byte) ([]byte, error) {
 	pass(out, req, "model", "temperature", "top_p", "stream", "metadata")
 	if v, ok := req["max_output_tokens"]; ok {
 		out["max_tokens"] = v
+	} else {
+		out["max_tokens"] = defaultMaxTokens
 	}
 	if tools, ok := arr(req, "tools"); ok {
 		out["tools"] = respToolsToMess(tools)
@@ -95,9 +96,9 @@ func inputItemText(im map[string]any) (string, bool) {
 }
 
 // respInputToMessMessages resp input → anthropic messages：message 项 → 消息
-// （文本块）；function_call 项 → 最近 assistant 消息追加 tool_use 块；
-// function_call_output 项 → user 消息 tool_result 块。input_image 等图像
-// 透传属 范围，按规范丢弃。
+// （文本块 + input_image）；function_call 项 → assistant 消息的 tool_use 块
+// （无前置 assistant 时先补一条）；function_call_output 项 → user 消息
+// tool_result 块。无 image_url 只有 file_id 的图片继续丢弃。
 func respInputToMessMessages(req map[string]any) ([]any, bool) {
 	input, ok := arr(req, "input")
 	if !ok {
@@ -128,6 +129,12 @@ func respInputToMessMessages(req map[string]any) ([]any, bool) {
 						if t, ok := str(pm, "text"); ok {
 							blocks = append(blocks, map[string]any{"type": "text", "text": t})
 						}
+					case "input_image":
+						if url, ok := str(pm, "image_url"); ok {
+							if blk, ok := imageSourceFromURL(url); ok {
+								blocks = append(blocks, blk)
+							}
+						}
 					}
 				}
 			}
@@ -141,7 +148,9 @@ func respInputToMessMessages(req map[string]any) ([]any, bool) {
 			}
 		case "function_call":
 			if lastAssistant < 0 {
-				continue // 无前置 assistant 消息：孤立调用按规范丢弃
+				// 孤立 function_call：先补一条 assistant，再把 tool_use 放进去。
+				msgs = append(msgs, map[string]any{"role": "assistant", "content": []any{}})
+				lastAssistant = len(msgs) - 1
 			}
 			am, _ := msgs[lastAssistant].(map[string]any)
 			content, _ := arr(am, "content")
@@ -155,7 +164,7 @@ func respInputToMessMessages(req map[string]any) ([]any, bool) {
 			am["content"] = content
 		case "function_call_output":
 			callID, _ := str(im, "call_id")
-			output, _ := blockText(im["output"])
+			output, _ := respFCOutputText(im["output"])
 			msgs = append(msgs, map[string]any{
 				"role":    "user",
 				"content": []any{map[string]any{"type": "tool_result", "tool_use_id": callID, "content": output}},
@@ -190,18 +199,16 @@ func respToolsToMess(tools []any) []any {
 	return out
 }
 
-// respToolChoice resp tool_choice → anthropic tool_choice："auto"/"none" 透传；
-// "required" → "any"；{type:"function", name} → {type:"tool", name}。
+// respToolChoice resp tool_choice → anthropic tool_choice 对象：
+// "auto"/"none" → {type}；"required" → {type:any}；
+// {type:"function", name} → {type:"tool", name}。
 func respToolChoice(req map[string]any) (any, bool) {
 	v, ok := req["tool_choice"]
 	if !ok || v == nil {
 		return nil, false
 	}
 	if s, ok := v.(string); ok {
-		if s == "required" {
-			return "any", true
-		}
-		return s, true
+		return toolChoiceStringToMess(s)
 	}
 	if m, ok := v.(map[string]any); ok && m["type"] == "function" {
 		if name, ok := str(m, "name"); ok {
@@ -224,14 +231,13 @@ func messToRespResponse(body []byte) ([]byte, error) {
 	model, _ := str(msg, "model")
 	output, it, ot := messContentToRespOutput(msg)
 	out := map[string]any{
-		"id":                  id,
-		"object":              "response",
-		"created_at":          0, // anthropic message 无时间戳（转换器纯函数，不发明）
-		"status":              "completed",
-		"model":               model,
-		"output":              output,
-		"parallel_tool_calls": true,
-		"usage":               messUsageToResp(msg, it, ot),
+		"id":         id,
+		"object":     "response",
+		"created_at": 0, // anthropic message 无时间戳（转换器纯函数，不发明）
+		"status":     "completed",
+		"model":      model,
+		"output":     output,
+		"usage":      messUsageToResp(msg, it, ot),
 	}
 	return json.Marshal(out)
 }
@@ -275,13 +281,14 @@ func messContentToRespOutput(msg map[string]any) ([]any, int64, int64) {
 	}
 	it, ot := int64(0), int64(0)
 	if u, ok := msg["usage"].(map[string]any); ok {
-		it = intOr0(u, "input_tokens")
+		it = intOr0(u, "input_tokens") + intOr0(u, "cache_creation_input_tokens") + intOr0(u, "cache_read_input_tokens")
 		ot = intOr0(u, "output_tokens")
 	}
 	return output, it, ot
 }
 
-// messUsageToResp anthropic usage → resp usage。
+// messUsageToResp anthropic usage → resp usage。input_tokens 含 cache_creation
+// 与 cache_read；cached_tokens 只取 cache_read。不写 cache_write_tokens。
 func messUsageToResp(msg map[string]any, it, ot int64) map[string]any {
 	cached := int64(0)
 	if u, ok := msg["usage"].(map[string]any); ok {
@@ -322,15 +329,14 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 			m.id, _ = str(msg, "id")
 			m.model, _ = str(msg, "model")
 			if u, ok := msg["usage"].(map[string]any); ok {
-				m.it = intOr0(u, "input_tokens")
-				m.cached = intOr0(u, "cache_read_input_tokens")
+				m.noteMessUsage(u, false)
 			}
 		}
 		return EncodeFrame("response.created", map[string]any{
 			"type": "response.created",
 			"response": map[string]any{
 				"id": m.id, "object": "response", "created_at": 0, "status": "in_progress",
-				"model": m.model, "output": []any{}, "parallel_tool_calls": true, "usage": nil,
+				"model": m.model, "output": []any{}, "usage": nil,
 			},
 		}), false
 	case "content_block_start":
@@ -399,6 +405,7 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 	case "message_delta":
 		if u, ok := ev["usage"].(map[string]any); ok {
 			m.ot = intOr0(u, "output_tokens")
+			m.noteMessUsage(u, true)
 		}
 		if d, ok := ev["delta"].(map[string]any); ok {
 			m.reason, _ = str(d, "stop_reason")
@@ -409,13 +416,14 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 			return nil, true
 		}
 		m.done = true
+		input := m.messInputTotal()
 		return EncodeFrame("response.completed", map[string]any{
 			"type": "response.completed",
 			"response": map[string]any{
 				"id": m.id, "object": "response", "created_at": 0, "status": "completed",
-				"model": m.model, "output": m.messOutputItems(), "parallel_tool_calls": true,
+				"model": m.model, "output": m.messOutputItems(),
 				"usage": map[string]any{
-					"input_tokens": m.it, "output_tokens": m.ot, "total_tokens": m.it + m.ot,
+					"input_tokens": input, "output_tokens": m.ot, "total_tokens": input + m.ot,
 					"input_tokens_details": map[string]any{"cached_tokens": m.cached},
 				},
 			},

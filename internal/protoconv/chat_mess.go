@@ -10,13 +10,15 @@ import (
 
 // chatToMessRequest 客户端 chat 请求体 → anthropic messages 请求体。字段映射
 // 按 Messages API 规范：
-//   - system 消息 → 顶层 system（拼接）；user/assistant 文本 → 消息（文本块）；
-//     assistant tool_calls → tool_use 块；tool 消息 → user 消息 tool_result 块
-//   - max_completion_tokens / max_tokens → max_tokens（anthropic 必填，客户端
-//     缺失则不补——补差值属策略决定，不由转换器发明）
+//   - system / developer 消息 → 顶层 system（按出现顺序以 \n 拼接）；
+//     user/assistant 文本 → 消息（文本块）；assistant tool_calls → tool_use 块；
+//     tool 消息 → user 消息 tool_result 块；image_url → image 块
+//   - max_completion_tokens / max_tokens → max_tokens（anthropic 必填；
+//     两者都缺时补常量 4096；两者都给时 max_completion_tokens 优先）
 //   - stop → stop_sequences（string 归一为数组）；tools → tools
-//     （{type:"function"} 内嵌扁平化 → input_schema）；tool_choice 归一化
-//     （required → any；{type:"function",name} → {type:"tool",name}）
+//     （{type:"function"} 内嵌扁平化 → input_schema）；tool_choice 归一化为
+//     对象（auto/none 同名；required → any；{type:"function",name} →
+//     {type:"tool",name}）
 //   - 同名字段透传：model/temperature/top_p/stream/metadata
 //   - anthropic 无对应参数（n/seed/logprobs/frequency_penalty/
 //     presence_penalty/stream_options/response_format/logit_bias/user 等）
@@ -34,13 +36,14 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 		out["messages"] = msgs
 	}
 	pass(out, req, "model", "temperature", "top_p", "stream", "metadata")
-	// max_completion_tokens / max_tokens → max_tokens（anthropic 必填，客户端
-	// 缺失则不补——补差值属策略决定，不由转换器发明）。两者都给时以
-	// max_completion_tokens 为准（与 chatToResp 同语义）。
+	// max_completion_tokens / max_tokens → max_tokens（Messages 必填）。
+	// 两者都给时以 max_completion_tokens 为准；都缺时补常量 4096。
 	if v, ok := req["max_completion_tokens"]; ok {
 		out["max_tokens"] = v
 	} else if v, ok := req["max_tokens"]; ok {
 		out["max_tokens"] = v
+	} else {
+		out["max_tokens"] = defaultMaxTokens
 	}
 	if stop, ok := chatStop(req); ok {
 		out["stop_sequences"] = stop
@@ -54,7 +57,8 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// chatSystem chat system 消息（role=system）→ 顶层 system 拼接文本。
+// chatSystem chat system / developer 消息 → 顶层 system 拼接文本。
+// 交错时按 messages 中的出现顺序，分隔符 \n。
 func chatSystem(req map[string]any) (string, bool) {
 	msgs, ok := arr(req, "messages")
 	if !ok {
@@ -66,7 +70,8 @@ func chatSystem(req map[string]any) (string, bool) {
 		if !ok {
 			continue
 		}
-		if role, _ := str(mm, "role"); role == "system" {
+		role, _ := str(mm, "role")
+		if role == "system" || role == "developer" {
 			if t, ok := contentText(mm["content"]); ok {
 				parts = append(parts, t)
 			}
@@ -78,11 +83,11 @@ func chatSystem(req map[string]any) (string, bool) {
 	return joinStrings(parts, "\n"), true
 }
 
-// chatMessagesToMess chat messages → anthropic messages（system 已并入顶层
-// system，此处跳过）：user 文本 → 消息（单文本块 → string content）；
-// assistant 文本 → 消息 + tool_calls → tool_use 块（arguments JSON 字符串 →
-// input 对象）；tool 消息 → user 消息 tool_result 块；image_url 等部件按
-// 规范丢弃（图像透传属 范围）。
+// chatMessagesToMess chat messages → anthropic messages（system/developer
+// 已并入顶层 system，此处跳过）：user 文本 → 消息（单文本块 → string
+// content）；assistant 文本 → 消息 + tool_calls → tool_use 块（arguments
+// JSON 字符串 → input 对象）；tool 消息 → user 消息 tool_result 块；
+// image_url → image 块（http(s) 或 data:image base64；detail 丢弃）。
 func chatMessagesToMess(req map[string]any) ([]any, bool) {
 	msgs, ok := arr(req, "messages")
 	if !ok {
@@ -95,7 +100,7 @@ func chatMessagesToMess(req map[string]any) ([]any, bool) {
 			continue
 		}
 		switch role, _ := str(mm, "role"); role {
-		case "system":
+		case "system", "developer":
 			continue // 已并入顶层 system
 		case "user":
 			content := mm["content"]
@@ -153,7 +158,8 @@ func chatMessagesToMess(req map[string]any) ([]any, bool) {
 }
 
 // chatPartsToMessBlocks chat 消息 content 部件 → anthropic 内容块（text →
-// text 块；image_url 等按规范丢弃）。
+// text 块；image_url → image 块）。其它 scheme、缺 url、无法识别的 media
+// type 丢弃；detail 在 Messages 图片块没有对应字段，丢弃。
 func chatPartsToMessBlocks(content any) []any {
 	cs, ok := content.([]any)
 	if !ok {
@@ -165,13 +171,31 @@ func chatPartsToMessBlocks(content any) []any {
 		if !ok {
 			continue
 		}
-		if pm["type"] == "text" {
+		switch pm["type"] {
+		case "text":
 			if t, ok := str(pm, "text"); ok {
 				blocks = append(blocks, map[string]any{"type": "text", "text": t})
+			}
+		case "image_url":
+			if raw, ok := chatImageURL(pm["image_url"]); ok {
+				if blk, ok := imageSourceFromURL(raw); ok {
+					blocks = append(blocks, blk)
+				}
 			}
 		}
 	}
 	return blocks
+}
+
+// chatImageURL image_url 为字符串或 {url}。
+func chatImageURL(v any) (string, bool) {
+	switch u := v.(type) {
+	case string:
+		return u, u != ""
+	case map[string]any:
+		return str(u, "url")
+	}
+	return "", false
 }
 
 // chatStop chat stop（string 或数组）→ anthropic stop_sequences（数组）。
@@ -218,19 +242,16 @@ func chatToolsToMess(tools []any) []any {
 	return out
 }
 
-// chatToolChoiceMess chat tool_choice → anthropic tool_choice："auto"/"none"
-// 透传；"required" → "any"；{type:"function", function:{name}} →
-// {type:"tool", name}。
+// chatToolChoiceMess chat tool_choice → anthropic tool_choice 对象：
+// "auto"/"none" → {type}；"required" → {type:any}；
+// {type:"function", function:{name}} → {type:"tool", name}。
 func chatToolChoiceMess(req map[string]any) (any, bool) {
 	v, ok := req["tool_choice"]
 	if !ok || v == nil {
 		return nil, false
 	}
 	if s, ok := v.(string); ok {
-		if s == "required" {
-			return "any", true
-		}
-		return s, true
+		return toolChoiceStringToMess(s)
 	}
 	if m, ok := v.(map[string]any); ok && m["type"] == "function" {
 		if fn, ok := m["function"].(map[string]any); ok {
@@ -272,7 +293,7 @@ func messToChatResponse(body []byte) ([]byte, error) {
 // messToChatMessage anthropic content → chat assistant message（text 块拼接
 // content；tool_use → tool_calls）。
 func messToChatMessage(msg map[string]any) map[string]any {
-	m := map[string]any{"role": "assistant", "content": ""}
+	m := map[string]any{"role": "assistant", "content": nil}
 	var text []string
 	var tcs []any
 	if content, ok := arr(msg, "content"); ok {
@@ -296,28 +317,24 @@ func messToChatMessage(msg map[string]any) map[string]any {
 			}
 		}
 	}
-	m["content"] = joinStrings(text, "")
+	if len(text) > 0 {
+		m["content"] = joinStrings(text, "")
+	}
 	if len(tcs) > 0 {
 		m["tool_calls"] = tcs
 	}
 	return m
 }
 
-// messToChatFinishReason anthropic stop_reason → chat finish_reason：
-// end_turn → "stop"；tool_use → "tool_calls"；max_tokens → "length"；
-// stop_sequence → "stop"。
+// messToChatFinishReason anthropic stop_reason → chat finish_reason。
 func messToChatFinishReason(msg map[string]any) string {
-	switch reason, _ := str(msg, "stop_reason"); reason {
-	case "tool_use":
-		return "tool_calls"
-	case "max_tokens":
-		return "length"
-	default:
-		return "stop"
-	}
+	reason, _ := str(msg, "stop_reason")
+	return messStopToChatFinish(reason)
 }
 
-// messUsageToChat anthropic usage → chat usage。
+// messUsageToChat anthropic usage → chat usage。prompt_tokens 含
+// cache_creation 与 cache_read（这两项在 Messages 的 input_tokens 之外）；
+// cached_tokens 只取 cache_read。
 func messUsageToChat(msg map[string]any) (map[string]any, bool) {
 	u, ok := msg["usage"].(map[string]any)
 	if !ok || u == nil {
@@ -325,13 +342,16 @@ func messUsageToChat(msg map[string]any) (map[string]any, bool) {
 	}
 	it := intOr0(u, "input_tokens")
 	ot := intOr0(u, "output_tokens")
+	cr := intOr0(u, "cache_read_input_tokens")
+	cc := intOr0(u, "cache_creation_input_tokens")
+	prompt := it + cr + cc
 	out := map[string]any{
-		"prompt_tokens":     it,
+		"prompt_tokens":     prompt,
 		"completion_tokens": ot,
-		"total_tokens":      it + ot,
+		"total_tokens":      prompt + ot,
 	}
-	if c := intOr0(u, "cache_read_input_tokens"); c > 0 {
-		out["prompt_tokens_details"] = map[string]any{"cached_tokens": c}
+	if cr > 0 {
+		out["prompt_tokens_details"] = map[string]any{"cached_tokens": cr}
 	}
 	return out, true
 }
@@ -342,7 +362,8 @@ func messUsageToChat(msg map[string]any) (map[string]any, bool) {
 //	content_block_start       → tool_use → tool_calls 前导 chunk（id+name）
 //	content_block_delta       → text_delta → content delta chunk /
 //	                            input_json_delta → tool_calls arguments delta
-//	message_delta             → 收尾 chunk（finish_reason+usage）+ [DONE]
+//	message_delta             → 收尾 chunk（finish_reason，不含 usage）
+//	                            + 单独 usage 帧（choices 为空）+ [DONE]
 //	message_stop              → 丢弃（收尾已在 message_delta 发出）
 //	error                     → data-only {"error":{...}} 帧（chat 流式错误约定）
 //	其余 → 丢弃
@@ -361,8 +382,7 @@ func (m *StreamMapper) mapMessToChat(name string, data []byte) ([]byte, bool) {
 			m.id, _ = str(msg, "id")
 			m.model, _ = str(msg, "model")
 			if u, ok := msg["usage"].(map[string]any); ok {
-				m.it = intOr0(u, "input_tokens")
-				m.cached = intOr0(u, "cache_read_input_tokens")
+				m.noteMessUsage(u, false)
 			}
 		}
 		return m.chatFrame(map[string]any{"role": "assistant", "content": ""}, nil, nil), false
@@ -400,27 +420,28 @@ func (m *StreamMapper) mapMessToChat(name string, data []byte) ([]byte, bool) {
 			return nil, true
 		}
 		m.done = true
-		var reason any = "stop"
+		reason := "stop"
 		if d, ok := ev["delta"].(map[string]any); ok {
-			switch r, _ := str(d, "stop_reason"); r {
-			case "tool_use":
-				reason = "tool_calls"
-			case "max_tokens":
-				reason = "length"
-			}
+			r, _ := str(d, "stop_reason")
+			reason = messStopToChatFinish(r)
 		}
-		var ot int64
 		if u, ok := ev["usage"].(map[string]any); ok {
-			ot = intOr0(u, "output_tokens")
+			m.ot = intOr0(u, "output_tokens")
+			// message_delta 带累计字段时覆盖 message_start。
+			m.noteMessUsage(u, true)
 		}
-		m.ot = ot
+		prompt := m.messInputTotal()
 		usage := map[string]any{
-			"prompt_tokens": m.it, "completion_tokens": m.ot, "total_tokens": m.it + m.ot,
+			"prompt_tokens": prompt, "completion_tokens": m.ot, "total_tokens": prompt + m.ot,
 		}
 		if m.cached > 0 {
 			usage["prompt_tokens_details"] = map[string]any{"cached_tokens": m.cached}
 		}
-		return append(m.chatFrame(map[string]any{}, reason, usage), []byte("data: [DONE]\n\n")...), false
+		// finish 帧不含 usage；下一帧 choices 为空且只含 usage。
+		finish := m.chatFrame(map[string]any{}, reason, nil)
+		usageFrame := m.chatUsageOnlyFrame(usage)
+		out := append(finish, usageFrame...)
+		return append(out, []byte("data: [DONE]\n\n")...), false
 	case "error":
 		if e, ok := ev["error"].(map[string]any); ok {
 			msg, _ := str(e, "message")

@@ -17,10 +17,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
+
+// defaultMaxTokens 是 Messages 必填 max_tokens 在客户端未给上限时的常量，
+// 不是模型上限查询。
+const defaultMaxTokens = 4096
 
 // ConvertRequest 把客户端协议请求体转换为 dir 指向的模板协议请求体（返回的
 // 字节即模板协议上游请求体，可直接转发）。转换器按目标协议规范映射字段；
@@ -73,6 +78,61 @@ func (m *StreamMapper) ensureBlocks() {
 		m.argsByIndex = make(map[int64]string)
 		m.fcNames = make(map[int64]string)
 		m.fcIDs = make(map[int64]string)
+		m.itemIndex = make(map[int64]int64)
+		m.usedIndex = make(map[int64]bool)
+	}
+}
+
+// contentIndex 把 resp output_index 分配成 anthropic content index。
+// 同一 output_index 只分配一次：优先用 output_index 本身，已被占用则用
+// max(已占用)+1。output_index 缺省为 0（调用方 intOr0）。
+func (m *StreamMapper) contentIndex(outputIndex int64) int64 {
+	if m.itemIndex == nil {
+		m.itemIndex = make(map[int64]int64)
+		m.usedIndex = make(map[int64]bool)
+	}
+	if idx, ok := m.itemIndex[outputIndex]; ok {
+		return idx
+	}
+	idx := outputIndex
+	if m.usedIndex[idx] {
+		var max int64
+		first := true
+		for k := range m.usedIndex {
+			if first || k > max {
+				max = k
+				first = false
+			}
+		}
+		idx = max + 1
+	}
+	m.itemIndex[outputIndex] = idx
+	m.usedIndex[idx] = true
+	return idx
+}
+
+// messInputTotal Messages input_tokens + cache_creation + cache_read。
+func (m *StreamMapper) messInputTotal() int64 {
+	return m.it + m.cached + m.cacheCreate
+}
+
+// noteMessUsage 记录 Messages usage。partial 时只覆盖出现的累计字段
+// （message_delta 覆盖 message_start）；否则三项都写入（缺失为 0）。
+func (m *StreamMapper) noteMessUsage(u map[string]any, partial bool) {
+	if !partial {
+		m.it = intOr0(u, "input_tokens")
+		m.cached = intOr0(u, "cache_read_input_tokens")
+		m.cacheCreate = intOr0(u, "cache_creation_input_tokens")
+		return
+	}
+	if _, ok := u["input_tokens"]; ok {
+		m.it = intOr0(u, "input_tokens")
+	}
+	if _, ok := u["cache_read_input_tokens"]; ok {
+		m.cached = intOr0(u, "cache_read_input_tokens")
+	}
+	if _, ok := u["cache_creation_input_tokens"]; ok {
+		m.cacheCreate = intOr0(u, "cache_creation_input_tokens")
 	}
 }
 
@@ -89,9 +149,14 @@ type StreamMapper struct {
 	id      string
 	model   string
 	created int64
-	it, ot  int64 // 用量（input/output tokens）
-	cached  int64 // cache_read / cached_tokens
-	reason  string
+	it, ot      int64 // 用量（input/output tokens；mess 侧 it 是未含缓存的 input_tokens）
+	cached      int64 // cache_read / cached_tokens
+	cacheCreate int64 // mess cache_creation_input_tokens（不计入 cached_tokens）
+	reason      string
+
+	// resp→mess：output_index → content index，以及已占用的 content index。
+	itemIndex map[int64]int64
+	usedIndex map[int64]bool
 
 	// 字节级帧组装复用缓冲（chat→resp 流式路径）：buf = 输出帧；dbuf =
 	// delta/usage 预组装。帧返回后下一帧覆盖，调用方不得跨帧保留。
@@ -241,17 +306,34 @@ func pass(dst, src map[string]any, keys ...string) {
 }
 
 // blockText 提取 anthropic 内容块 content（string 或 text 块数组 → 拼接文本）。
+// 只认 type:text。Responses function_call_output 的 input_text 不走这里。
 func blockText(content any) (string, bool) {
+	return blockTextTypes(content, "text")
+}
+
+// respFCOutputText Responses function_call_output.output：字符串，或
+// input_text / text 数组（图片与文件丢弃）。分隔符 \n。
+func respFCOutputText(content any) (string, bool) {
+	return blockTextTypes(content, "input_text", "text")
+}
+
+func blockTextTypes(content any, types ...string) (string, bool) {
 	switch c := content.(type) {
 	case string:
 		return c, true
 	case []any:
 		var parts []string
 		for _, p := range c {
-			if pm, ok := p.(map[string]any); ok && pm["type"] == "text" {
-				if t, ok := str(pm, "text"); ok {
-					parts = append(parts, t)
-				}
+			pm, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+			typ, _ := pm["type"].(string)
+			if !stringIn(typ, types) {
+				continue
+			}
+			if t, ok := str(pm, "text"); ok {
+				parts = append(parts, t)
 			}
 		}
 		if len(parts) == 0 {
@@ -260,6 +342,109 @@ func blockText(content any) (string, bool) {
 		return joinStrings(parts, "\n"), true
 	}
 	return "", false
+}
+
+func stringIn(s string, types []string) bool {
+	for _, t := range types {
+		if s == t {
+			return true
+		}
+	}
+	return false
+}
+
+// toolChoiceStringToMess Chat/Responses 的 tool_choice 字符串 → Messages 对象。
+// required → any；auto/none 同名。未知字符串丢弃（Messages 没有字符串形式）。
+func toolChoiceStringToMess(s string) (any, bool) {
+	switch s {
+	case "auto", "none":
+		return map[string]any{"type": s}, true
+	case "required", "any":
+		return map[string]any{"type": "any"}, true
+	default:
+		return nil, false
+	}
+}
+
+// imageSourceFromURL http(s) URL 或 data:image/(jpeg|png|gif|webp);base64 载荷
+// → Messages image 块。其它 scheme、缺 url、无法识别的 media type 丢弃。
+func imageSourceFromURL(raw string) (map[string]any, bool) {
+	if raw == "" {
+		return nil, false
+	}
+	if strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "http://") {
+		return map[string]any{
+			"type":   "image",
+			"source": map[string]any{"type": "url", "url": raw},
+		}, true
+	}
+	const pfx = "data:image/"
+	if !strings.HasPrefix(raw, pfx) {
+		return nil, false
+	}
+	rest := raw[len(pfx):]
+	semi := strings.IndexByte(rest, ';')
+	if semi <= 0 {
+		return nil, false
+	}
+	media := rest[:semi]
+	switch media {
+	case "jpeg", "png", "gif", "webp":
+	default:
+		return nil, false
+	}
+	const b64 = ";base64,"
+	if !strings.HasPrefix(rest[semi:], b64) {
+		return nil, false
+	}
+	return map[string]any{
+		"type": "image",
+		"source": map[string]any{
+			"type":       "base64",
+			"media_type": "image/" + media,
+			"data":       rest[semi+len(b64):],
+		},
+	}, true
+}
+
+// messStopToChatFinish Messages stop_reason → Chat finish_reason。
+func messStopToChatFinish(reason string) string {
+	switch reason {
+	case "tool_use":
+		return "tool_calls"
+	case "max_tokens", "model_context_window_exceeded":
+		return "length"
+	case "refusal":
+		return "content_filter"
+	default:
+		// end_turn / stop_sequence / pause_turn / compaction / 缺省
+		return "stop"
+	}
+}
+
+// chatFinishFromIncomplete Responses incomplete_details.reason → Chat finish_reason。
+func chatFinishFromIncomplete(reason string) string {
+	switch reason {
+	case "content_filter":
+		return "content_filter"
+	case "steered":
+		return "stop"
+	default:
+		// max_output_tokens / max_messages / 缺 reason
+		return "length"
+	}
+}
+
+// messStopFromIncomplete Responses incomplete_details.reason → Messages stop_reason。
+func messStopFromIncomplete(reason string) string {
+	switch reason {
+	case "content_filter":
+		return "refusal"
+	case "steered":
+		return "end_turn"
+	default:
+		return "max_tokens"
+	}
 }
 
 // marshalAny 任意值 → JSON 字符串（失败 → "{}"）；function_call arguments

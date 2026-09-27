@@ -30,6 +30,9 @@ func messToRespRequest(body []byte) ([]byte, error) {
 		out["instructions"] = sys
 	}
 	if items, ok := messMessagesToInput(req); ok {
+		if items == nil {
+			items = []any{}
+		}
 		out["input"] = items
 	}
 	pass(out, req, "model", "temperature", "top_p", "stream", "metadata")
@@ -42,7 +45,23 @@ func messToRespRequest(body []byte) ([]byte, error) {
 	if tc, ok := messToolChoice(req); ok {
 		out["tool_choice"] = tc
 	}
+	// disable_parallel_tool_use==true → false；否则不写（不发明 true）。
+	if parallel, ok := messDisableParallel(req); ok {
+		out["parallel_tool_calls"] = parallel
+	}
 	return json.Marshal(out)
+}
+
+// messDisableParallel tool_choice.disable_parallel_tool_use==true 时返回 false。
+func messDisableParallel(req map[string]any) (bool, bool) {
+	m, ok := req["tool_choice"].(map[string]any)
+	if !ok {
+		return false, false
+	}
+	if dis, ok := m["disable_parallel_tool_use"].(bool); ok && dis {
+		return false, true
+	}
+	return false, false
 }
 
 // anthropicSystem anthropic system（string 或 text 块/字符串数组）→ 拼接文本。
@@ -120,7 +139,12 @@ func messMessagesToInput(req map[string]any) ([]any, bool) {
 		case "assistant":
 			var textParts []any
 			var fcs []any
-			if cs, ok := arr(mm, "content"); ok {
+			// 字符串 content 是单个 text 块的简写。空字符串不产生项。
+			if c, ok := mm["content"].(string); ok {
+				if c != "" {
+					textParts = append(textParts, map[string]any{"type": "output_text", "text": c})
+				}
+			} else if cs, ok := arr(mm, "content"); ok {
 				for _, blk := range cs {
 					bm, ok := blk.(map[string]any)
 					if !ok {
@@ -262,11 +286,12 @@ func respOutputToMessBlocks(r map[string]any) []any {
 	return blocks
 }
 
-// respToMessStopReason resp 状态/输出 → anthropic stop_reason：incomplete →
-// "max_tokens"；含 function_call → "tool_use"；其余 "end_turn"。
+// respToMessStopReason resp 状态/输出 → anthropic stop_reason。status 已经是
+// incomplete 时只看 incomplete_details.reason，不再看 function_call。
 func respToMessStopReason(r map[string]any) string {
 	if status, _ := str(r, "status"); status == "incomplete" {
-		return "max_tokens"
+		reason, _ := str(mapOrEmpty(r["incomplete_details"]), "reason")
+		return messStopFromIncomplete(reason)
 	}
 	if output, ok := arr(r, "output"); ok {
 		for _, item := range output {
@@ -276,6 +301,13 @@ func respToMessStopReason(r map[string]any) string {
 		}
 	}
 	return "end_turn"
+}
+
+func mapOrEmpty(v any) map[string]any {
+	if m, ok := v.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
 }
 
 // respUsageToMess resp usage → anthropic usage（cached_tokens →
@@ -303,15 +335,15 @@ func respUsageToMess(r map[string]any) map[string]any {
 //	response.created                 → message_start（usage.input_tokens 在响应
 //	                                  完成前不可知 → 0，补差映射已知取舍；网关
 //	                                  计费独立于客户端用量展示）
-//	response.output_text.delta       → content_block_start(0,text) 惰性 +
+//	response.output_text.delta       → content_block_start(按 output_index 分配) 惰性 +
 //	                                  content_block_delta(text_delta)
-//	response.output_text.done        → content_block_stop(0)
-//	response.output_item.added(FC)   → content_block_start(块索引, tool_use)
+//	response.output_text.done        → content_block_stop(同一 content index)
+//	response.output_item.added(FC)   → content_block_start(按 output_index 分配, tool_use)
 //	response.function_call_arguments.delta → content_block_delta(input_json_delta)
-//	response.function_call_arguments.done  → content_block_stop(块索引)
-//	response.completed               → message_delta（stop_reason+output_tokens）
-//	                                  + message_stop
-//	response.failed                  → error 事件（anthropic 错误帧形态）
+//	response.function_call_arguments.done  → content_block_stop(同一 content index)
+//	response.completed               → message_delta（stop_reason + 按 P1-3 换算的 usage）
+//	                                  + message_stop。message_start 的 input_tokens 仍为 0
+//	response.failed                  → error 事件（无 error 时 message 为空字符串）
 //	其余 → 丢弃
 func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 	m.ensureBlocks() // 块级累积 map 懒初始化
@@ -340,23 +372,25 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		}), false
 	case "response.output_text.delta":
 		delta, _ := str(ev, "delta")
+		index := m.contentIndex(intOr0(ev, "output_index"))
 		var f []byte
-		if !m.blockStarted[0] {
-			m.blockStarted[0] = true
+		if !m.blockStarted[index] {
+			m.blockStarted[index] = true
 			f = EncodeFrame("content_block_start", map[string]any{
-				"type": "content_block_start", "index": 0,
+				"type": "content_block_start", "index": index,
 				"content_block": map[string]any{"type": "text", "text": ""},
 			})
 		}
 		f = append(f, EncodeFrame("content_block_delta", map[string]any{
-			"type": "content_block_delta", "index": 0,
+			"type": "content_block_delta", "index": index,
 			"delta": map[string]any{"type": "text_delta", "text": delta},
 		})...)
 		return f, false
 	case "response.output_text.done":
-		if m.blockStarted[0] && !m.blockStopped[0] {
-			m.blockStopped[0] = true
-			return EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": 0}), false
+		index := m.contentIndex(intOr0(ev, "output_index"))
+		if m.blockStarted[index] && !m.blockStopped[index] {
+			m.blockStopped[index] = true
+			return EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": index}), false
 		}
 		return nil, true
 	case "response.output_item.added":
@@ -364,7 +398,7 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		if !ok || item["type"] != "function_call" {
 			return nil, true
 		}
-		index := intOr0(ev, "output_index")
+		index := m.contentIndex(intOr0(ev, "output_index"))
 		id := toolCallID(item) // call_id 优先（tool_result.tool_use_id 匹配键）
 		name, _ := str(item, "name")
 		if !m.blockStarted[index] {
@@ -377,13 +411,13 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		return nil, true
 	case "response.function_call_arguments.delta":
 		delta, _ := str(ev, "delta")
-		index := intOr0(ev, "output_index")
+		index := m.contentIndex(intOr0(ev, "output_index"))
 		return EncodeFrame("content_block_delta", map[string]any{
 			"type": "content_block_delta", "index": index,
 			"delta": map[string]any{"type": "input_json_delta", "partial_json": delta},
 		}), false
 	case "response.function_call_arguments.done":
-		index := intOr0(ev, "output_index")
+		index := m.contentIndex(intOr0(ev, "output_index"))
 		if m.blockStarted[index] && !m.blockStopped[index] {
 			m.blockStopped[index] = true
 			return EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": index}), false
@@ -394,18 +428,16 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			return nil, true
 		}
 		m.done = true
-		var ot int64
 		var reason string
+		usage := respUsageToMess(nil)
 		if resp, ok := ev["response"].(map[string]any); ok {
-			if u, ok := resp["usage"].(map[string]any); ok {
-				ot = intOr0(u, "output_tokens")
-			}
+			usage = respUsageToMess(resp)
 			reason = respToMessStopReason(resp)
 		}
 		f := EncodeFrame("message_delta", map[string]any{
 			"type":  "message_delta",
 			"delta": map[string]any{"stop_reason": reason, "stop_sequence": nil},
-			"usage": map[string]any{"output_tokens": ot},
+			"usage": usage,
 		})
 		return append(f, EncodeFrame("message_stop", map[string]any{"type": "message_stop"})...), false
 	case "response.failed":
@@ -413,13 +445,13 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			return nil, true
 		}
 		m.done = true
+		msg := ""
 		if resp, ok := ev["response"].(map[string]any); ok {
 			if e, ok := resp["error"].(map[string]any); ok {
-				msg, _ := str(e, "message")
-				return EncodeFrame("error", map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": msg}}), false
+				msg, _ = str(e, "message")
 			}
 		}
-		return nil, true
+		return EncodeFrame("error", map[string]any{"type": "error", "error": map[string]any{"type": "api_error", "message": msg}}), false
 	}
 	return nil, true
 }
