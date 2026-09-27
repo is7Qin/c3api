@@ -17,6 +17,8 @@ cmd/server/dist/*
 .claude/
 .playwright-mcp/
 .omo/
+.crushrc
+.crush/
 
 # 设计文档仅存本地，不进 git
 docs/superpowers/
