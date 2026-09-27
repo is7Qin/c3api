@@ -358,20 +358,20 @@ func TestRoutingFrontier_Semantics(t *testing.T) {
 	require.InDelta(t, 100.0, a.TTFTUCB, 1.0)
 	require.InDelta(t, scheduler.Wilson95(40, 40).LCB, a.SuccessLCB, 1e-12)
 	require.True(t, a.CostKnown)
-	require.Equal(t, int64(1000), a.CostPerSuccess)
+	require.Equal(t, int64(1000), a.InputUnitCost)
 	require.True(t, a.OnFrontier)
 
 	b := byFP[fpB+":20"]
 	require.True(t, b.Known)
 	require.Equal(t, "mapped-b", b.MappedModel)
 	require.True(t, b.CostKnown)
-	require.Equal(t, int64(487), b.CostPerSuccess)
+	require.Equal(t, int64(487), b.InputUnitCost)
 	require.True(t, b.OnFrontier)
 
 	c := byFP[fpC+":20"]
 	require.True(t, c.Known)
 	require.True(t, c.CostKnown)
-	require.Equal(t, int64(3000), c.CostPerSuccess)
+	require.Equal(t, int64(3000), c.InputUnitCost)
 	require.False(t, c.OnFrontier, "same LCB as B at higher cost → dominated")
 	require.InDelta(t, b.SuccessLCB, c.SuccessLCB, 1e-12)
 

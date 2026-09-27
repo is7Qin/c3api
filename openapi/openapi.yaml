@@ -3445,7 +3445,7 @@ components:
         process_crash_loss_unobservable: { type: boolean, description: 硬崩丢失不可量化标记，恒 true }
     RoutingFrontierCandidate:
       type: object
-      required: [candidate_fingerprint, known, account_id, template_id, identity_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, cost_per_success, cost_known, insufficient, on_frontier]
+      required: [candidate_fingerprint, known, account_id, template_id, identity_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, input_unit_cost, cost_known, insufficient, on_frontier]
       properties:
         candidate_fingerprint: { type: string }
         known: { type: boolean, description: 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实 }
@@ -3461,7 +3461,7 @@ components:
         ttft_lcb: { type: number, format: double, description: TTFT 对数区间下界（ttft_known=false 时无意义） }
         ttft_ucb: { type: number, format: double }
         ttft_known: { type: boolean, description: 样本量足以给出区间 }
-        cost_per_success: { type: integer, format: int64, description: "输入侧单位采购价（毫分/1M 输入侧 token，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）" }
+        input_unit_cost: { type: integer, format: int64, description: "输入侧单位采购价（毫分/1M 输入侧 token，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）" }
         cost_known: { type: boolean, description: known + 有成功样本 + 价格可解析 }
         insufficient: { type: boolean, description: 样本 <30（与 explore 同门槛） }
         on_frontier: { type: boolean, description: Pareto 非支配（仅 known 且 cost_known 间扫描） }
