@@ -5,9 +5,8 @@
 package service
 
 // quality-cost frontier（service lane）：事实表质量行 × 当前发布计划
-// 候选目录的连接视图。数学全部复用 scheduler 既有核（Wilson95 /
-// LogTTFTInterval / IsExplore / AvgTokens / SaturatingMulDiv）与 billing
-// 纯函数——本文件不新发明任何统计公式。
+// 候选目录的连接视图。成本与 compiler 同一个输入侧单价。Wilson95 /
+// LogTTFTInterval / IsExplore 仍复用 scheduler。
 
 import (
 	"context"
@@ -15,7 +14,6 @@ import (
 	"sort"
 	"time"
 
-	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -57,7 +55,7 @@ type RoutingFrontierCandidate struct {
 	TTFTLCB          float64
 	TTFTUCB          float64
 	TTFTKnown        bool
-	CostPerSuccess   int64
+	InputUnitCost   int64
 	CostKnown        bool
 	Insufficient     bool
 	OnFrontier       bool
@@ -121,7 +119,7 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 			c.IdentityRevision = planCand.IdentityRevision
 			c.QualityClassID = planCand.QualityClassID
 			c.MappedModel = planCand.MappedModel
-			c.CostPerSuccess, c.CostKnown = s.frontierCost(route.Ref.Model, row, planCand.UpstreamCostMultiplierBp, now)
+			c.InputUnitCost, c.CostKnown = s.frontierCost(route.Ref.Model, row, planCand.UpstreamCostMultiplierBp, now)
 		}
 		cands = append(cands, c)
 	}
@@ -151,35 +149,37 @@ func (s *Service) QueryRoutingFrontier(ctx context.Context, q RoutingFrontierQue
 	}, nil
 }
 
-// frontierCost 每次成功平均成本（compiler 同式：avg tokens/success ×
-// 请求模型解析价 × 采购倍率 bp/10000，饱和乘除）。价格不可解析或无成功
-// 样本 → costKnown=false（与 compiler 的 costKnown 门一致）。
+// frontierCost 输入侧单位采购价，与 compiler 的 inputUnitPurchaseCost 同式：
+// 毫分 / 1M 输入侧 token。输出 token 与缓存写不单独计价。输入侧合计为 0、
+// 价格不可解析或无成功样本 → costKnown=false。价格取 promptTokens=0 的基底价。
 func (s *Service) frontierCost(requestedModel string, row repository.RoutingQualityStat, multBp int, at time.Time) (int64, bool) {
 	if row.Successes <= 0 {
 		return 0, false
 	}
-	avgIn := scheduler.AvgTokens(row.InputTokens, row.Successes)
-	price, hasPrice := s.ResolvePrices(requestedModel, avgIn, "", at)
+	price, hasPrice := s.ResolvePrices(requestedModel, 0, "", at)
 	if !hasPrice {
 		return 0, false
 	}
-	raw := billing.CostFromResolved(price,
-		avgIn,
-		scheduler.AvgTokens(row.OutputTokens, row.Successes),
-		scheduler.AvgTokens(row.CacheReadTokens, row.Successes),
-		scheduler.AvgTokens(row.CacheCreateTokens, row.Successes))
-	mult := max(min(multBp, 100000), 0)
-	cost := scheduler.SaturatingMulDiv(raw, int64(mult), 10000)
-	if cost < 0 {
-		cost = 0
+	billable := row.InputTokens
+	if billable < 0 {
+		billable = 0
 	}
-	return cost, true
+	cached := row.CacheReadTokens
+	if cached < 0 {
+		cached = 0
+	}
+	denom := billable + cached
+	if denom == 0 {
+		return 0, false
+	}
+	mult := max(min(multBp, 100000), 0)
+	return scheduler.InputUnitPurchaseCost(uint64(mult), uint64(billable), uint64(cached), scheduler.NonNegPrice(price.InputPerM), scheduler.NonNegPrice(price.CacheReadPerM), uint64(denom)), true
 }
 
 // frontierSortCost 排序键：成本未知者排最后（MaxInt64 哨兵，不参与支配）。
 func frontierSortCost(c RoutingFrontierCandidate) int64 {
 	if c.CostKnown {
-		return c.CostPerSuccess
+		return c.InputUnitCost
 	}
 	return math.MaxInt64
 }
@@ -198,8 +198,8 @@ func markParetoFrontier(cands []RoutingFrontierCandidate) {
 	}
 	sort.SliceStable(idx, func(a, b int) bool {
 		ca, cb := cands[idx[a]], cands[idx[b]]
-		if ca.CostPerSuccess != cb.CostPerSuccess {
-			return ca.CostPerSuccess < cb.CostPerSuccess
+		if ca.InputUnitCost != cb.InputUnitCost {
+			return ca.InputUnitCost < cb.InputUnitCost
 		}
 		return ca.SuccessLCB > cb.SuccessLCB
 	})

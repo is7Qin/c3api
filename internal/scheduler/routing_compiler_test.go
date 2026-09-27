@@ -259,3 +259,75 @@ func TestRoutingCompilerImmutability(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEqual(t, view.routes[rr].Primary, view2.routes[rr].Primary)
 }
+
+func TestRoutingCompilerUnitCost(t *testing.T) {
+	logged := math.Log(100)
+	same := func(in, cache int64) CandidateQualityInput {
+		return CandidateQualityInput{
+			Counts:          Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30},
+			InputTokens:     in,
+			CacheReadTokens: cache,
+		}
+	}
+	price := domain.ResolvedPrices{InputPerM: pricePtr(3_000_000), CacheReadPerM: pricePtr(300_000), OutputPerM: pricePtr(9_000_000)}
+	openAI := map[int64]CandidateQualityInput{1: same(10, 500), 2: same(50, 0)}
+	primary := compileUnitCost(t, openAI, 10000, 10000, price)
+	require.Equal(t, []int64{1, 2}, primary)
+	a := InputUnitPurchaseCost(10000, 10, 500, 3_000_000, 300_000, 510)
+	b := InputUnitPurchaseCost(10000, 50, 0, 3_000_000, 300_000, 50)
+	require.Less(t, a, b)
+
+	anthropic := map[int64]CandidateQualityInput{1: same(100, 900), 2: same(1000, 0)}
+	require.Equal(t, []int64{1, 2}, compileUnitCost(t, anthropic, 10000, 10000, price))
+
+	half := compileUnitCost(t, map[int64]CandidateQualityInput{1: same(1000, 0), 2: same(1000, 0)}, 5000, 10000, price)
+	require.Equal(t, []int64{1, 2}, half)
+	low := InputUnitPurchaseCost(5000, 1000, 0, 3_000_000, 300_000, 1000)
+	high := InputUnitPurchaseCost(10000, 1000, 0, 3_000_000, 300_000, 1000)
+	require.Equal(t, int64(1_500_000), low)
+	require.Equal(t, int64(3_000_000), high)
+	require.Less(t, low, high)
+
+	scaled := compileUnitCost(t, map[int64]CandidateQualityInput{1: same(20, 1000), 2: same(100, 0)}, 10000, 10000, price)
+	require.Equal(t, []int64{1, 2}, scaled)
+	require.InDelta(t, float64(a), float64(InputUnitPurchaseCost(10000, 20, 1000, 3_000_000, 300_000, 1020)), 1)
+	require.InDelta(t, float64(b), float64(InputUnitPurchaseCost(10000, 100, 0, 3_000_000, 300_000, 100)), 1)
+
+	unknown := compileUnitRoute(t, map[int64]CandidateQualityInput{1: same(0, 0)}, 10000, price)
+	require.Empty(t, unknown.Primary)
+	require.Empty(t, unknown.Degraded)
+	require.Equal(t, []int64{1}, compiledAccountIDs(unknown.Explore.Ordered))
+
+	wide := InputUnitPurchaseCost(10000, uint64(1)<<32, 0, uint64(1)<<32, 0, uint64(1)<<32)
+	require.Equal(t, int64(uint64(1)<<32), wide)
+	require.NotEqual(t, int64(math.MaxInt64), wide)
+}
+
+func compileUnitCost(t *testing.T, raw map[int64]CandidateQualityInput, multA, multB int, price domain.ResolvedPrices) []int64 {
+	t.Helper()
+	rd := compileUnitRoute(t, raw, multA, price, multB)
+	return compiledAccountIDs(rd.Primary)
+}
+
+func compileUnitRoute(t *testing.T, raw map[int64]CandidateQualityInput, multA int, price domain.ResolvedPrices, multB ...int) *RouteDecision {
+	t.Helper()
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	b := multA
+	if len(multB) > 0 {
+		b = multB[0]
+	}
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, multA)}
+	if _, ok := raw[2]; ok {
+		accs = append(accs, accWithEnabled(2, tpl, true, b))
+	}
+	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: accs}))
+	view, err := NewRoutingCompiler().Compile(CompilerInputs{
+		Static:  s.View().StaticView(),
+		Quality: buildQuality(10, domain.FormatOpenAIChat, "m", raw, accs),
+		Prices:  map[string]domain.ResolvedPrices{"m": price},
+	})
+	require.NoError(t, err)
+	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
+	require.True(t, ok)
+	return rd
+}

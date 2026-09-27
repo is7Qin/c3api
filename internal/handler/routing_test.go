@@ -298,7 +298,7 @@ func Test_RoutingFrontier_Mapping(t *testing.T) {
 	require.Len(t, raw.Candidates[0], 18)
 	for _, key := range []string{"candidate_fingerprint", "known", "account_id", "template_id", "identity_revision",
 		"quality_class_id", "mapped_model", "attempts", "successes", "success_lcb", "success_ucb",
-		"ttft_lcb", "ttft_ucb", "ttft_known", "cost_per_success", "cost_known", "insufficient", "on_frontier"} {
+		"ttft_lcb", "ttft_ucb", "ttft_known", "input_unit_cost", "cost_known", "insufficient", "on_frontier"} {
 		require.Contains(t, raw.Candidates[0], key)
 	}
 }

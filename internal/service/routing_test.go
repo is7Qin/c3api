@@ -311,7 +311,7 @@ func TestRoutingFrontier_Semantics(t *testing.T) {
 	require.Len(t, route.Candidates, 3)
 	fs := newFakeStore()
 	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(1000), OutputPerM: int64Ptr(2000), Source: domain.PricingSourceLitellm},
+		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(1000), OutputPerM: int64Ptr(2000), CacheReadPerM: int64Ptr(100), Source: domain.PricingSourceLitellm},
 	})
 	require.NoError(t, err)
 	svc := routingSvc(t, fs, plan)
@@ -324,11 +324,11 @@ func TestRoutingFrontier_Semantics(t *testing.T) {
 	fpUnknown := fpHex(0xdd)
 
 	fs.routingQualityRows = []repository.RoutingQualityStat{
-		// A：40/40，成本 3000（(1e6×1000+1e6×2000)/1e6 ×1.0）——高质量高成本。
+		// A：40/40，输入侧单价 1000（1000 毫分/1M × 倍率 1.0）。输出不计入。
 		{CandidateFingerprint: mustFP(t, fpA), Attempts: 40, Successes: 40, TTFTN: 40, TTFTSumLogQ32: sumLog, TTFTSumSqLogQ32: sumSq, InputTokens: 40_000_000, OutputTokens: 40_000_000},
-		// B：20/40，成本 1800（1200×1.5）——低成本侧。
-		{CandidateFingerprint: mustFP(t, fpB), Attempts: 40, Successes: 20, TTFTN: 40, TTFTSumLogQ32: sumLog, TTFTSumSqLogQ32: sumSq, InputTokens: 20_000_000, OutputTokens: 2_000_000},
-		// C：与 B 同 LCB、更高成本（1400×3.0=4200）→ 被 B 支配。
+		// B：20/40，输入侧单价 487。未缓存 5M 与缓存读 15M 不相交，倍率 1.5：(5×1000+15×100)/20×1.5。比 A 便宜且成功率更低，仍在前沿。
+		{CandidateFingerprint: mustFP(t, fpB), Attempts: 40, Successes: 20, TTFTN: 40, TTFTSumLogQ32: sumLog, TTFTSumSqLogQ32: sumSq, InputTokens: 5_000_000, CacheReadTokens: 15_000_000, OutputTokens: 2_000_000},
+		// C：与 B 同 LCB、更高单价（1000 × 倍率 3.0=3000）→ 被 B 支配。
 		{CandidateFingerprint: mustFP(t, fpC), Attempts: 40, Successes: 20, InputTokens: 20_000_000, OutputTokens: 4_000_000},
 		// D：未知指纹（不在当前目录）→ 不参与支配。
 		{CandidateFingerprint: mustFP(t, fpUnknown), Attempts: 40, Successes: 40, InputTokens: 40_000_000},
@@ -358,20 +358,20 @@ func TestRoutingFrontier_Semantics(t *testing.T) {
 	require.InDelta(t, 100.0, a.TTFTUCB, 1.0)
 	require.InDelta(t, scheduler.Wilson95(40, 40).LCB, a.SuccessLCB, 1e-12)
 	require.True(t, a.CostKnown)
-	require.Equal(t, int64(3000), a.CostPerSuccess)
+	require.Equal(t, int64(1000), a.InputUnitCost)
 	require.True(t, a.OnFrontier)
 
 	b := byFP[fpB+":20"]
 	require.True(t, b.Known)
 	require.Equal(t, "mapped-b", b.MappedModel)
 	require.True(t, b.CostKnown)
-	require.Equal(t, int64(1800), b.CostPerSuccess)
+	require.Equal(t, int64(487), b.InputUnitCost)
 	require.True(t, b.OnFrontier)
 
 	c := byFP[fpC+":20"]
 	require.True(t, c.Known)
 	require.True(t, c.CostKnown)
-	require.Equal(t, int64(4200), c.CostPerSuccess)
+	require.Equal(t, int64(3000), c.InputUnitCost)
 	require.False(t, c.OnFrontier, "same LCB as B at higher cost → dominated")
 	require.InDelta(t, b.SuccessLCB, c.SuccessLCB, 1e-12)
 
