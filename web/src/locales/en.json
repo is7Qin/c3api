@@ -809,7 +809,7 @@
         "network": "network"
       },
       "frontierTitle": "Quality–cost frontier",
-      "frontierDesc": "Wilson 95% bounds, TTFT intervals and cost per success are server-computed; point size = attempts. Pareto frontier spans known candidates with resolvable cost only.",
+      "frontierDesc": "Wilson 95% bounds, TTFT intervals and the input-side unit price are server-computed; point size = attempts. Pareto frontier spans known candidates with a resolvable unit price only.",
       "frontierEmpty": "No observed candidates for this route in the window",
       "frontierOn": "On frontier",
       "frontierDominated": "Dominated",
@@ -845,7 +845,7 @@
         "attempts": "Attempts",
         "successRange": "Success 95%",
         "ttftRange": "TTFT 95%",
-        "costPerSuccess": "Cost / success",
+        "costPerSuccess": "Input unit price",
         "flags": "Flags"
       }
     },

@@ -800,8 +800,8 @@ function FlowEdgeTable({ edges, total, offset, limit, onOffsetChange, onLimitCha
   )
 }
 
-// frontier 卡：散点（x=每次成功成本，y=成功率 Wilson LCB——均为服务端值）+
-// 全候选表（unknown/成本不可知者只呈现观测事实，不上前沿）。
+// frontier 卡：散点（x=输入侧单价，y=成功率 Wilson LCB——均为服务端值）+
+// 全候选表（unknown/单价不可知者只呈现观测事实，不上前沿）。
 type FrontierQuery = { data?: components['schemas']['RoutingFrontierResponse']; isLoading: boolean; isError: boolean; error: unknown }
 
 function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange }: {
