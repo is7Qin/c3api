@@ -47,7 +47,7 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 				if mult > 100000 {
 					mult = 100000
 				}
-				cost = inputUnitPurchaseCost(uint64(mult), uint64(billable), uint64(cached), nonNegPrice(price.InputPerM), nonNegPrice(price.CacheReadPerM), uint64(denom))
+				cost = InputUnitPurchaseCost(uint64(mult), uint64(billable), uint64(cached), NonNegPrice(price.InputPerM), NonNegPrice(price.CacheReadPerM), uint64(denom))
 				if cost < 0 {
 					cost = 0
 				}

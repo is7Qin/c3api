@@ -1273,8 +1273,8 @@ export interface paths {
         };
         /**
          * 质量-成本前沿（rollup 质量 × 当前计划候选目录连接）
-         * @description 候选按窗口聚合：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本
-         *     （与 compiler 同数学核）。Pareto 支配只在 known 且 cost_known 候选间
+         * @description 候选按窗口聚合：Wilson95 成功区间 + TTFT 区间 + 输入侧单位采购价
+         *     （与 compiler 同数学核，毫分/1M 输入侧 token）。Pareto 支配只在 known 且 cost_known 候选间
          *     扫描；unknown/成本不可知/样本不足者如实呈现但不上前沿。输出确定性
          *     排序（前沿 → success_lcb 降序 → 成本升序 → 指纹升序）**先排序再切片**，
          *     故 offset/limit 分页不改变前沿判定；total_candidates 为排序后总条数。
@@ -3138,7 +3138,7 @@ export interface components {
             ttft_known: boolean;
             /**
              * Format: int64
-             * @description 每次成功平均成本（毫分，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）
+             * @description 输入侧单位采购价（毫分/1M 输入侧 token，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）
              */
             cost_per_success: number;
             /** @description known + 有成功样本 + 价格可解析 */

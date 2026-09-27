@@ -37,7 +37,7 @@ func SaturatingMulDiv(a, b, divisor int64) int64 {
 	return int64(lo / uint64(divisor))
 }
 
-func nonNegPrice(p *int64) uint64 {
+func NonNegPrice(p *int64) uint64 {
 	if p == nil || *p < 0 {
 		return 0
 	}
@@ -45,15 +45,18 @@ func nonNegPrice(p *int64) uint64 {
 }
 
 // inputUnitPurchaseCost is
-// trunc(mult * (billable*inputPrice + cached*cachePrice) / (denom * 10000 * 1000000)).
-// denom is divided first because it is one limb. The fixed 10^10 scale is divided
-// second. Reversing those divisions drops a remainder. denom is nonzero before
-// the call. Only a quotient above MaxInt64 saturates.
-func inputUnitPurchaseCost(mult, billable, cached, inputPrice, cachePrice, denom uint64) int64 {
+// trunc(mult * (billable*inputPrice + cached*cachePrice) / (denom * 10000)).
+// Prices are already milli-cents per million tokens, and this quotient keeps that
+// unit: milli-cents per million input-side tokens. Dividing by another million
+// would truncate ordinary prices to zero. denom is divided first because it is
+// one limb; the 10000 basis-point scale is divided second. Reversing those
+// divisions drops a remainder. denom is nonzero before the call. Only a quotient
+// above MaxInt64 saturates.
+func InputUnitPurchaseCost(mult, billable, cached, inputPrice, cachePrice, denom uint64) int64 {
 	pHi, pLo := weightedPrice(billable, inputPrice, cached, cachePrice)
 	n2, n1, n0 := mul192(pHi, pLo, mult)
 	q2, q1, q0 := div192By64(n2, n1, n0, denom)
-	s2, s1, s0 := div192By64(q2, q1, q0, 10000*1000000)
+	s2, s1, s0 := div192By64(q2, q1, q0, 10000)
 	if s2 != 0 || s1 != 0 || s0 > uint64(math.MaxInt64) {
 		return math.MaxInt64
 	}
