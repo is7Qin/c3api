@@ -800,8 +800,8 @@ function FlowEdgeTable({ edges, total, offset, limit, onOffsetChange, onLimitCha
   )
 }
 
-// frontier 卡：散点（x=每次成功成本，y=成功率 Wilson LCB——均为服务端值）+
-// 全候选表（unknown/成本不可知者只呈现观测事实，不上前沿）。
+// frontier 卡：散点（x=输入侧单价，y=成功率 Wilson LCB——均为服务端值）+
+// 全候选表（unknown/单价不可知者只呈现观测事实，不上前沿）。
 type FrontierQuery = { data?: components['schemas']['RoutingFrontierResponse']; isLoading: boolean; isError: boolean; error: unknown }
 
 function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange }: {
@@ -819,7 +819,7 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
     dominated: { label: t('stats.routing.frontierDominated'), color: 'var(--chart-2)' },
   } satisfies ChartConfig
   const toPoint = (c: components['schemas']['RoutingFrontierCandidate']) => ({
-    cost: c.cost_per_success,
+    cost: c.input_unit_cost,
     lcb: c.success_lcb * 100,
     attempts: c.attempts,
   })
@@ -846,7 +846,7 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
                 <ChartContainer config={scatterConfig} className="h-[280px] w-full">
                   <ScatterChart>
                     <CartesianGrid />
-                    <XAxis type="number" dataKey="cost" name={t('stats.routing.table.costPerSuccess')} tickFormatter={(v: number) => (v > 0 ? formatCost(v) : '$0')} tickLine={false} axisLine={false} fontSize={12} />
+                    <XAxis type="number" dataKey="cost" name={t('stats.routing.table.inputUnitCost')} tickFormatter={(v: number) => (v > 0 ? formatCost(v) : '$0')} tickLine={false} axisLine={false} fontSize={12} />
                     <YAxis type="number" dataKey="lcb" name={t('stats.routing.frontierLcb')} domain={[0, 100]} tickFormatter={(v: number) => `${v}%`} tickLine={false} axisLine={false} tickMargin={8} fontSize={12} />
                     <ZAxis type="number" dataKey="attempts" range={[40, 240]} name={t('stats.routing.table.attempts')} />
                     <ChartTooltip cursor={{ strokeDasharray: '3 3' }} content={<ChartTooltipContent />} />
@@ -872,7 +872,7 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
                     <TableHead className="text-right">{t('stats.routing.table.attempts')}</TableHead>
                     <TableHead className="text-right">{t('stats.routing.table.successRange')}</TableHead>
                     <TableHead className="text-right">{t('stats.routing.table.ttftRange')}</TableHead>
-                    <TableHead className="text-right">{t('stats.routing.table.costPerSuccess')}</TableHead>
+                    <TableHead className="text-right">{t('stats.routing.table.inputUnitCost')}</TableHead>
                     <TableHead>{t('stats.routing.table.flags')}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -885,7 +885,7 @@ function FrontierCard({ frontierQ, offset, limit, onOffsetChange, onLimitChange 
                       <TableCell className="text-right tabular-nums">{c.attempts.toLocaleString()} / {c.successes.toLocaleString()}</TableCell>
                       <TableCell className="text-right font-mono text-xs tabular-nums">{`${(c.success_lcb * 100).toFixed(1)}–${(c.success_ucb * 100).toFixed(1)}%`}</TableCell>
                       <TableCell className="text-right font-mono text-xs tabular-nums">{c.ttft_known ? `${fmtTTFT(c.ttft_lcb)}–${fmtTTFT(c.ttft_ucb)}` : '—'}</TableCell>
-                      <TableCell className="text-right font-mono text-xs tabular-nums">{c.cost_known ? formatCost(c.cost_per_success) : '—'}</TableCell>
+                      <TableCell className="text-right font-mono text-xs tabular-nums">{c.cost_known ? formatCost(c.input_unit_cost) : '—'}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
                           {c.on_frontier && <Badge variant="default" className="text-xs">{t('stats.routing.frontierOn')}</Badge>}

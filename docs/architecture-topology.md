@@ -215,7 +215,7 @@ pkg 职责边界：
 - **stats_agg_watermark 辅助表**（`partition.go:481-491` DDL + `EnsureUsageStatsPartitioned` 内建）：单行 watermark（`CHECK (id = 1)`）——stats-agg worker 每周期读聚合位置、推进与 DELETE+INSERT 同事务。
 
 **金额单位（两个面，勿混）**：
-- **明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs.cost` / `raw_cost`、`price_*_millis` 价格快照列（每 M token 毫分）、`keys.quota` / `quota_used`、routing frontier 的 `cost_per_success`；API 边界**原样下发不换算**。
+- **明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs.cost` / `raw_cost`、`price_*_millis` 价格快照列（每 M token 毫分）、`keys.quota` / `quota_used`、routing frontier 的 `input_unit_cost`（毫分/1M 输入侧 token）；API 边界**原样下发不换算**。
 - **聚合/账户面恒为 USD float64**——`users.balance` / `balance_warning_threshold`、`temp_balances.amount`、兑换码 `value`、`/stats/*` 与 `/overview` 的 cost 族；由 handler 按 `毫分 / 1e5` 换算（单一换算点 `internal/handler/convert.go:215` `millisToUSD`，反向 `:219` `usdToMillis`）。
 - 换算系三处并存、**禁混用**：余额/成本 `×1e5`（毫分）；token 单价 `×1e11`（毫分/1M token，即 USD/token × 1e6 × 1e5）；出参 `/1e5`。
 

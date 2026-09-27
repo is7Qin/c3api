@@ -1751,8 +1751,8 @@ paths:
       tags: [routing]
       summary: 质量-成本前沿（rollup 质量 × 当前计划候选目录连接）
       description: |
-        候选按窗口聚合：Wilson95 成功区间 + TTFT 区间 + 每次成功平均成本
-        （与 compiler 同数学核）。Pareto 支配只在 known 且 cost_known 候选间
+        候选按窗口聚合：Wilson95 成功区间 + TTFT 区间 + 输入侧单位采购价
+        （与 compiler 同数学核，毫分/1M 输入侧 token）。Pareto 支配只在 known 且 cost_known 候选间
         扫描；unknown/成本不可知/样本不足者如实呈现但不上前沿。输出确定性
         排序（前沿 → success_lcb 降序 → 成本升序 → 指纹升序）**先排序再切片**，
         故 offset/limit 分页不改变前沿判定；total_candidates 为排序后总条数。
@@ -3445,7 +3445,7 @@ components:
         process_crash_loss_unobservable: { type: boolean, description: 硬崩丢失不可量化标记，恒 true }
     RoutingFrontierCandidate:
       type: object
-      required: [candidate_fingerprint, known, account_id, template_id, identity_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, cost_per_success, cost_known, insufficient, on_frontier]
+      required: [candidate_fingerprint, known, account_id, template_id, identity_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, input_unit_cost, cost_known, insufficient, on_frontier]
       properties:
         candidate_fingerprint: { type: string }
         known: { type: boolean, description: 指纹在当前发布计划该路由候选目录内；false = 只呈现观测事实 }
@@ -3461,7 +3461,7 @@ components:
         ttft_lcb: { type: number, format: double, description: TTFT 对数区间下界（ttft_known=false 时无意义） }
         ttft_ucb: { type: number, format: double }
         ttft_known: { type: boolean, description: 样本量足以给出区间 }
-        cost_per_success: { type: integer, format: int64, description: "每次成功平均成本（毫分，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）" }
+        input_unit_cost: { type: integer, format: int64, description: "输入侧单位采购价（毫分/1M 输入侧 token，1 USD = 100,000 毫分，与 compiler 同式；cost_known=false 时无意义）" }
         cost_known: { type: boolean, description: known + 有成功样本 + 价格可解析 }
         insufficient: { type: boolean, description: 样本 <30（与 explore 同门槛） }
         on_frontier: { type: boolean, description: Pareto 非支配（仅 known 且 cost_known 间扫描） }
