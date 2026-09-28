@@ -10,6 +10,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ## [Unreleased]
 
+## [v0.0.1-beta.7] - 2026-09-28
+
 ### Breaking
 
 - **Routing cost is an input-side unit price, not spend per success**: compiled account order and `GET /api/admin/routing/frontier` now returns `input_unit_cost` instead of `cost_per_success`. Both the compiled account order and this field use milli-cents per million input-side tokens. Cache reads pull it down and a lower account multiplier pulls it down. Output tokens and prompt length no longer move an account ahead of another. A zero input-side total is unknown cost.
@@ -40,6 +42,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 - **The console no longer second-guesses the server about statistics windows**: the client-side hour-alignment patch is gone (the server normalises and echoes the effective window), the range pickers and the TTFT window bound are derived from the new capabilities endpoint instead of hardcoded day counts, and a rejected request shows the window the server actually read next to the error message. Range presets that this deployment cannot serve are no longer offered at all.
 
 ### Added
+
+- **Protocol conversion follows the three public APIs**: a Chat `developer` message stays a Responses developer message and is folded into the Messages `system` prompt; `tool_choice` is sent as the object each API accepts (`required` becomes Messages `any`); `image_url` and Responses `input_image` become Messages image blocks for `http`, `https` and `data:image/(jpeg|png|gif|webp);base64` only. An orphan Responses `function_call` is attached to a new assistant turn, and a Messages request with no token limit is sent with `max_tokens` 4096. Streaming usage is its own Chat frame with empty `choices`, and Messages `prompt`/`input` token counts include cache creation and cache reads. Responses `input_tokens` are copied through without subtracting cached tokens.
 
 - **A statistics capability endpoint reports how far back this deployment can query**: `GET /api/admin/stats/capabilities` (and `GET /api/user/stats/capabilities`, since ordinary users cannot reach the admin group and the user console needs the same numbers) returns, per read shape, the candidate storages with their maximum span in seconds (`cost_cap_seconds`, `0` = unbounded) and the retention days of the tables that shape actually reads (`coverage_days`, `0` = retention disabled for those tables). The two are independent: the cost limit is a constant that does not move with retention, while coverage is per table and takes the most conservative table a shape reads. The endpoint is a mechanical projection of the same in-memory matrix the window guards use, so the numbers it reports cannot drift from the behaviour that enforces them. It reports only per-deployment constants — whether one particular request can use the pre-aggregated table depends on where its window sits, and that is reported per request by the headers above instead of being faked as a deployment constant.
 
