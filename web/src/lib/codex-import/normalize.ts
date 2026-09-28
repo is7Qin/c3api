@@ -15,9 +15,10 @@ export function normalizeExpired(value: unknown): string | undefined {
   return date.toISOString()
 }
 
-function validateIdentity(email: string, accountId: string) {
+function validateIdentity(email: string, accountId: string, kind: CredentialKind) {
   if (!email) return '邮箱为必填项'
-  if (!accountId) return '账号 ID 为必填项，且无法从 access_token 解析'
+  // PAT 没有 JWT，空账号 ID 交给后端 whoami 补全；OAuth 只能从 access_token 离线解析。
+  if (!accountId && kind !== 'codex-pat') return '账号 ID 为必填项，且无法从 access_token 解析'
   if (!emailRe.test(email) || email.includes('..')) return '邮箱格式无效'
   return undefined
 }
@@ -42,7 +43,7 @@ export function normalizeRow(raw: unknown, kind: CredentialKind, index: number):
   const email = str(obj.email ?? obj.codex_email)
   const token = str(obj.access_token ?? obj.codex_oauth_token)
   const accountId = str(obj.account_id ?? obj.codex_account_id) || (kind === 'codex-oauth' ? accountIdFromToken(token) : '')
-  const identityError = validateIdentity(email, accountId)
+  const identityError = validateIdentity(email, accountId, kind)
   if (identityError) return { index, raw, error: identityError }
   try {
     if (kind === 'codex-oauth') {

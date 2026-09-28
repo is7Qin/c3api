@@ -19,6 +19,16 @@ test('derives a missing OAuth account id from access_token', () => {
   assert.equal(row.item && 'codex_account_id' in row.item && row.item.codex_account_id, 'acc-1')
 })
 
+test('lets PAT import omit the account id for backend whoami lookup', () => {
+  const row = normalizeRow({
+    email: 'user@example.com',
+    access_token: 'sk-pat',
+  }, 'codex-pat', 0)
+  assert.equal(row.error, undefined)
+  assert.equal(row.item && 'codex_account_id' in row.item && row.item.codex_account_id, '')
+  assert.equal(row.item && 'codex_pat_key' in row.item && row.item.codex_pat_key, 'sk-pat')
+})
+
 test('keeps an explicit account id ahead of the token claim', () => {
   const row = normalizeRow({
     email: 'user@example.com',
