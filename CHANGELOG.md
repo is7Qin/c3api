@@ -24,6 +24,10 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 - **Raw-row grouped statistics now have a fixed 8-day window limit instead of one derived from retention**: when a timezone cannot use the pre-aggregated table (a `:30`/`:45` offset, or a window crossing a DST transition), statistics group `usage_logs` + `err_logs` rows directly. That window limit used to be computed from the configured retention, so keeping more logs *widened* the scan a single request was allowed to run — the cost direction was backwards (scanning ten days of logs costs the same however long logs are kept). It is now a constant 8 days. Deployments keeping more than 7 days of logs therefore see a half-hour-offset or DST-crossing request for more than 8 days flip from 200 to 400; the default deployment is unchanged, because 8 days was already the documented promise.
 
+- **AI routes live only under `/v1/*`**: the gateway no longer mounts the proxy on `/`. A request to `/chat/completions` (or any other AI path without the `/v1` prefix) is no longer served by the proxy.
+
+- **Account writes are one patch, fenced by two different generations**: create, single update and batch update share one field set (lifecycle, cost multiplier, cache domain, Codex import included). A single update takes `lifecycle_revision` as its compare-and-swap token. Routing and health use a separate `identity_revision`, which does not move when only a credential is refreshed, so an in-flight plan stays valid across that refresh. Setting an account cost multiplier to `0` is kept; it is no longer replaced by the create default.
+
 - **Four raw-log read paths now reject a window that starts before the retention cutoff instead of silently returning partial data**: `/api/admin/usage_logs`, `/api/user/usage_logs`, `/api/admin/err_logs`, `/api/user/err_logs`, `/api/admin/accounts/usage`, and the entity-level branch of `/api/admin/stats/ttft`. Their rows live in daily partitions that the retention worker `DROP`s, so a window starting earlier could never be completed — the answer was silently smaller than the request. Measured on a deployment keeping two days of logs: a 30-day `/usage_logs` request returned exactly the same 151 rows as a 2-day one, and entity-level TTFT reported a sample count of 3 for a 7-day window. These now answer 400 with a machine-readable reason, so a caller that wants older data must page within the retention window rather than being shown a truncated answer as if it were complete.
 
 ### Changed
@@ -40,6 +44,15 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 - **Statistics rejections now carry machine-readable fields**: a 400 body from a statistics endpoint gains optional `reason` (`window_invalid`, `window_too_long`, `raw_horizon`, `cube_horizon`), `storage`, `limit_seconds`, `effective_from`, `effective_to` and `retention_days` next to the existing human-readable `error` string. Every added field is optional, so existing clients are unaffected; fields that do not apply are omitted rather than defaulted (an invalid window reports no storage and no limit).
 
 - **The console no longer second-guesses the server about statistics windows**: the client-side hour-alignment patch is gone (the server normalises and echoes the effective window), the range pickers and the TTFT window bound are derived from the new capabilities endpoint instead of hardcoded day counts, and a rejected request shows the window the server actually read next to the error message. Range presets that this deployment cannot serve are no longer offered at all.
+
+### Fixed
+
+- **A template base URL may include a path prefix**: accounts on that template are routed with the prefix instead of being dropped. The console describes `base_url` as an origin plus an optional prefix.
+- **Health probes follow the throttle window and no longer call `/v1/models`**. A probe verdict is kept only when it still matches the candidate identity it was taken for.
+- **A Codex credential rotation no longer keeps the previous upstream account id.** The id is derived from the live credential and relayed upstream; the console keeps it across extension saves.
+- **Setting a key quota to `0` clears `quota_used`.** A non-zero quota leaves the accumulated spend in place, and a later quota starts again from zero.
+- **Pricing changes reach the other instances**, and a long statistics range uses the pre-aggregated table when the window qualifies.
+- **Console layout**: dialog footers are no longer clipped, the redemption date picker no longer stretches its dialog, table cards enclose the table, a table that fits does not reserve a scrollbar, column menus scroll, and the plan cost multiplier is shown at the right scale.
 
 ### Added
 
