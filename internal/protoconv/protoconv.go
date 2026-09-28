@@ -79,7 +79,7 @@ func (m *StreamMapper) ensureBlocks() {
 		m.fcNames = make(map[int64]string)
 		m.fcIDs = make(map[int64]string)
 		m.itemIndex = make(map[int64]int64)
-		m.usedIndex = make(map[int64]bool)
+		m.owner = make(map[int64]int64)
 	}
 }
 
@@ -89,25 +89,26 @@ func (m *StreamMapper) ensureBlocks() {
 func (m *StreamMapper) contentIndex(outputIndex int64) int64 {
 	if m.itemIndex == nil {
 		m.itemIndex = make(map[int64]int64)
-		m.usedIndex = make(map[int64]bool)
+		m.owner = make(map[int64]int64)
 	}
 	if idx, ok := m.itemIndex[outputIndex]; ok {
 		return idx
 	}
 	idx := outputIndex
-	if m.usedIndex[idx] {
-		var max int64
-		first := true
-		for k := range m.usedIndex {
-			if first || k > max {
-				max = k
-				first = false
-			}
+	if holder, taken := m.owner[idx]; taken && holder != outputIndex {
+		idx = m.nextIndex
+	}
+	for {
+		if holder, taken := m.owner[idx]; !taken || holder == outputIndex {
+			break
 		}
-		idx = max + 1
+		idx++
 	}
 	m.itemIndex[outputIndex] = idx
-	m.usedIndex[idx] = true
+	m.owner[idx] = outputIndex
+	if idx >= m.nextIndex {
+		m.nextIndex = idx + 1
+	}
 	return idx
 }
 
@@ -154,14 +155,18 @@ type StreamMapper struct {
 	cacheCreate int64 // mess cache_creation_input_tokens（不计入 cached_tokens）
 	reason      string
 
-	// resp→mess：output_index → content index，以及已占用的 content index。
+	// resp→mess：output_index → content index，以及 content index → 占用它的 output_index。
 	itemIndex map[int64]int64
-	usedIndex map[int64]bool
+	owner     map[int64]int64
+	nextIndex int64
 
 	// 字节级帧组装复用缓冲（chat→resp 流式路径）：buf = 输出帧；dbuf =
-	// delta/usage 预组装。帧返回后下一帧覆盖，调用方不得跨帧保留。
+	// delta/usage 预组装；ubuf = completed 帧上从 dbuf 拷出的 usage，
+	// 避免 chatChunkFrame 覆盖 dbuf 前再分配一次。帧返回后下一帧覆盖，
+	// 调用方不得跨帧保留。
 	buf  []byte
 	dbuf []byte
+	ubuf []byte
 
 	// mess→resp（RespToMess）方向：块级累积状态。
 	blockStarted map[int64]bool

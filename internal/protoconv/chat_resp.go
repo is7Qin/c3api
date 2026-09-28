@@ -689,6 +689,24 @@ func contentText(content any) (string, bool) {
 //	                                  （无 error 时只写 [DONE]）
 //	其余（in_progress/output_item.done/content_part.* 等）→ 丢弃
 func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
+	switch name {
+	case "response.output_text.delta":
+		if raw, _, ok := literalTop(data, "delta", ""); ok {
+			m.dbuf = append(m.dbuf[:0], `{"content":`...)
+			m.dbuf = append(m.dbuf, raw...)
+			m.dbuf = append(m.dbuf, '}')
+			return m.chatChunkFrame(m.dbuf, nil, nil), false
+		}
+	case "response.function_call_arguments.delta":
+		if raw, index, ok := literalTop(data, "delta", "output_index"); ok {
+			m.dbuf = append(m.dbuf[:0], `{"tool_calls":[{"function":{"arguments":`...)
+			m.dbuf = append(m.dbuf, raw...)
+			m.dbuf = append(m.dbuf, `},"index":`...)
+			m.dbuf = appendInt64(m.dbuf, index)
+			m.dbuf = append(m.dbuf, `}]}`...)
+			return m.chatChunkFrame(m.dbuf, nil, nil), false
+		}
+	}
 	if !json.Valid(data) {
 		return nil, true
 	}
@@ -746,18 +764,21 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 			return nil, true
 		}
 		m.done = true
-		finish := []byte(`"stop"`)
+		finish := stopFinish
 		var usage []byte
 		if resp := ev.Get("response"); resp.IsObject() {
 			if rawStrEq(resp.Get("status").Raw, "incomplete") {
-				finish = []byte(`"` + chatFinishFromIncomplete(resp.Get("incomplete_details.reason").Str) + `"`)
+				finish = finishQuoted(chatFinishFromIncomplete(resp.Get("incomplete_details.reason").Str))
 			} else if hasRespFunctionCall(resp.Get("output")) {
-				finish = []byte(`"tool_calls"`)
+				finish = toolFinish
 			}
 			// 上游 usage 存在时单独成帧（choices 为空）。finish 帧省略 usage
-			// （不是 null）。中间 delta 不写 usage:null。
+			// （不是 null）。中间 delta 不写 usage:null。usage 先写入 ubuf，
+			// chatChunkFrame 会覆盖 dbuf。
 			if u := resp.Get("usage"); u.IsObject() {
-				usage = append([]byte(nil), m.appendUsageToBuf(u)...)
+				m.appendUsageToBuf(u)
+				usage = append(m.ubuf[:0], m.dbuf...)
+				m.ubuf = usage
 			}
 		}
 		m.buf = m.chatChunkFrame([]byte(`{}`), finish, nil)
@@ -809,6 +830,29 @@ func (m *StreamMapper) appendUsageToBuf(u gjson.Result) []byte {
 	m.dbuf = appendInt64(m.dbuf, tt)
 	m.dbuf = append(m.dbuf, '}')
 	return m.dbuf
+}
+
+// 结束原因字面量。包级常量，避免每条流的 completed 帧再分配。
+var (
+	stopFinish = []byte(`"stop"`)
+	toolFinish = []byte(`"tool_calls"`)
+	lenFinish  = []byte(`"length"`)
+	filtFinish = []byte(`"content_filter"`)
+)
+
+func finishQuoted(reason string) []byte {
+	switch reason {
+	case "stop":
+		return stopFinish
+	case "tool_calls":
+		return toolFinish
+	case "length":
+		return lenFinish
+	case "content_filter":
+		return filtFinish
+	default:
+		return []byte(`"` + reason + `"`)
+	}
 }
 
 // appendUsageOnlyChunk 在已写完的 finish 帧之后追加 choices:[] 的 usage 帧。

@@ -42,6 +42,60 @@ const benchRespBody = `{
 // benchSink 承接基准输出，防 DCE。
 var benchSink []byte
 
+const benchMessReqBody = `{
+	"model": "claude-3-5-sonnet",
+	"max_tokens": 200,
+	"system": "you are helpful",
+	"messages": [
+		{"role": "user", "content": "hi"},
+		{"role": "assistant", "content": [{"type": "text", "text": "hello"}, {"type": "tool_use", "id": "toolu_1", "name": "get_weather", "input": {"city": "x"}}]},
+		{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "{\"temp\": 20}"}]}
+	],
+	"temperature": 0.5,
+	"stream": true,
+	"tools": [{"name": "get_weather", "description": "d", "input_schema": {"type": "object"}}],
+	"tool_choice": {"type": "auto"}
+}`
+
+const benchRespReqBody = `{
+	"model": "gpt-4o",
+	"instructions": "you are helpful",
+	"input": [
+		{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "hi"}]},
+		{"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": "get_weather", "arguments": "{\"city\": \"x\"}"},
+		{"type": "function_call_output", "call_id": "call_1", "output": "{\"temp\": 20}"}
+	],
+	"max_output_tokens": 200,
+	"temperature": 0.5,
+	"stream": true,
+	"tools": [{"type": "function", "name": "get_weather", "description": "d", "parameters": {"type": "object"}, "strict": true}],
+	"tool_choice": "auto"
+}`
+
+func benchReq(b *testing.B, body []byte, dir domain.ProtocolConvert) {
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	for i := 0; i < b.N; i++ {
+		out, err := ConvertRequest(body, dir)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchSink = out
+	}
+}
+
+func BenchmarkConvertRequestChatToMess(b *testing.B) {
+	benchReq(b, []byte(benchChatReqBody), domain.ProtocolConvertChatToMess)
+}
+
+func BenchmarkConvertRequestMessToResp(b *testing.B) {
+	benchReq(b, []byte(benchMessReqBody), domain.ProtocolConvertMessToResp)
+}
+
+func BenchmarkConvertRequestRespToMess(b *testing.B) {
+	benchReq(b, []byte(benchRespReqBody), domain.ProtocolConvertRespToMess)
+}
+
 func BenchmarkConvertRequestChatToResp(b *testing.B) {
 	body := []byte(benchChatReqBody)
 	b.ReportAllocs()
