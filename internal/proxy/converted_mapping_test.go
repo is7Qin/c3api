@@ -310,7 +310,7 @@ func TestConvertedMappingStreamFramesViaProxy(t *testing.T) {
 		require.Contains(t, body, "data: [DONE]", "multiple output frames must include terminal [DONE] as separate frame")
 		dataCount := strings.Count(body, "data:")
 		require.GreaterOrEqual(t, dataCount, 3, "created chunk + completed chunk + DONE = at least 3 data lines")
-		require.Equal(t, 2, strings.Count(body, `"model":"client-model"`), "both model-bearing frames rewritten")
+		require.Equal(t, 3, strings.Count(body, `"model":"client-model"`), "created、finish 和单独 usage 帧都改写模型")
 		require.NoError(t, p.rec.Close(context.Background()))
 		store.mu.Lock()
 		defer store.mu.Unlock()

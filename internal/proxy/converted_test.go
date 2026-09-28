@@ -333,7 +333,7 @@ func TestConvertedChatToMess(t *testing.T) {
 	require.Contains(t, got, `"object":"chat.completion.chunk"`)
 	require.Contains(t, got, `"delta":{"content":"hi"}`)
 	require.Contains(t, got, `"finish_reason":"stop"`)
-	require.Contains(t, got, `"usage":{"completion_tokens":20,"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":3},"total_tokens":30}`, "input 来自 message_start + output 来自 message_delta")
+	require.Contains(t, got, `"usage":{"completion_tokens":20,"prompt_tokens":13,"prompt_tokens_details":{"cached_tokens":3},"total_tokens":33}`, "prompt 含 cache_read；usage 在单独帧")
 	require.Contains(t, got, "data: [DONE]")
 }
 
@@ -356,7 +356,7 @@ func TestConvertedChatToRespStreamingDataOnly(t *testing.T) {
 	got := rec.Body.String()
 	require.NotEmpty(t, got, "缺名帧不得静默全丢")
 	require.Contains(t, got, `"delta":{"content":"hi"}`, "缺名 delta 帧按 data.type 推断 → content chunk")
-	require.Contains(t, got, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "缺名 completed 帧推断 → 收尾 chunk 内联用量")
+	require.Contains(t, got, `"usage":{"completion_tokens":5,"prompt_tokens":3,"total_tokens":8}`, "缺名 completed 帧推断 → 单独 usage 帧")
 	require.Contains(t, got, "data: [DONE]", "completed 推断 → [DONE] 收尾")
 	require.NotContains(t, got, "response.completed", "上游事件不外泄")
 }
