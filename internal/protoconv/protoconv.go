@@ -112,9 +112,52 @@ func (m *StreamMapper) contentIndex(outputIndex int64) int64 {
 	return idx
 }
 
-// messInputTotal Messages input_tokens + cache_creation + cache_read。
+// --- Responses / Anthropic usage 口径（唯一真相；改动前必读）---
+//
+// 网关内部 Responses（resp）侧 usage.input_tokens 恒为**总量（gross）**：
+//
+//	input_tokens = uncached_input + cache_read + cache_write
+//
+// input_tokens_details.cached_tokens（= cache_read）与
+// input_tokens_details.cache_write_tokens（= cache_write）都是 input_tokens 的
+// **子集**（cached ⊆ input、cache_write ⊆ input）。该包含关系由 codex 源码
+// 证实：codex-rs/protocol/src/protocol.rs:2426-2432 令
+// non_cached_input() = (input_tokens - cached_input_tokens).max(0)（cached ⊆
+// input）；codex-rs/codex-api/src/sse/responses.rs:128-143 把
+// input_tokens_details.cached_tokens / cache_write_tokens 作为 input_tokens 的
+// 明细子字段（其测试用例 input_tokens=100 配 cached=40 / cache_write=60）。
+//
+// Anthropic Messages（mess）侧相反：input_tokens 是**净额（net，不含缓存）**，
+// cache_read_input_tokens / cache_creation_input_tokens 是独立字段。故 resp↔mess
+// 必须换算（此前 resp→mess 不减、mess→resp 相加，往返把 input_tokens 从 10
+// 膨胀到 17——P0-1）：
+//
+//	resp→mess：net = input_tokens - cache_read - cache_write（下限 0）
+//	mess→resp：gross = input_tokens + cache_read + cache_write
+//
+// 计费侧同此口径（internal/proxy/usage_extract.go、internal/billing/cost.go）：
+// 按 net（uncached）计 input 单价，cache_read / cache_write 各自单价——消除
+// cache_write 被 input 价与 cache-write 价双重计费（P0-2）。
+
+// respInputGross 由 Anthropic 侧净额 + 缓存分量重建 resp（gross）input_tokens。
+func respInputGross(net, cacheRead, cacheWrite int64) int64 {
+	return net + cacheRead + cacheWrite
+}
+
+// respInputNet 由 resp（gross）input_tokens 反推 Anthropic 侧净额（下限 0——
+// 病态上游 input_tokens < cache_read + cache_write 时钳 0 防负值；口径见上）。
+func respInputNet(gross, cacheRead, cacheWrite int64) int64 {
+	net := gross - cacheRead - cacheWrite
+	if net < 0 {
+		return 0
+	}
+	return net
+}
+
+// messInputTotal Messages 净额 + cache_creation + cache_read → resp（gross）
+// input_tokens（口径见本文件上方「Responses / Anthropic usage 口径」）。
 func (m *StreamMapper) messInputTotal() int64 {
-	return m.it + m.cached + m.cacheCreate
+	return respInputGross(m.it, m.cached, m.cacheCreate)
 }
 
 // noteMessUsage 记录 Messages usage。partial 时只覆盖出现的累计字段

@@ -47,7 +47,7 @@ type wsRelayTransport interface {
 // 流中止已记录）；false = 首帧转发失败（上游未消费，记 not-sent 可重试），fwMsg
 // 为截断错误文本，调用方按连接级错误转移。业务帧未送达前可重试，送达后不再迁移。
 // frameHook 可选（nil = aiclient 路径零开销——指针比较）：**读帧成功后、
-// usage 嗅探（sniffResponsesCompleted）与 client.Write 之前调用**（与现状
+// usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**（与现状
 // codex_responses_ws.go:339-341 先于 354 的调用序一致——codex 路径判死帧
 // FatalAuth 钩子；客户端写失败时判死帧仍触发 FatalAuth）。
 func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwMsg string) {
@@ -234,11 +234,11 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			if frameHook != nil {
 				frameHook(f) // codex 路径：判死帧 → FatalAuth（唯一跨边界点，判死帧照常透传客户端）
 			}
-			// 热路径纪律：bytes.Contains 零分配预筛，命中才最小字节扫描取 usage
-			// （usage_extract.go scanKeyValue 单遍扫描零分配）；流式中间帧
-			// 零解析直转——网关层零分配，库层每帧 io.ReadAll 物化 + flate 属库
-			// 内账目。
-			if u, ok := sniffResponsesCompleted(f); ok {
+			// 热路径纪律：只嗅探 response.completed 帧（精确 type 判定，
+			// usage_extract.go sniffResponsesCompletedUsage scanKeyValue 单遍扫描
+			// 零分配）；流式中间帧零解析直转——网关层零分配，库层每帧 io.ReadAll
+			// 物化 + flate 属库内账目。
+			if u, ok := sniffResponsesCompletedUsage(f); ok {
 				it, ot, tt, cr, cc = u.it, u.ot, u.tt, u.cr, u.cc
 				// codex 槽身份水位推进（成功取到 usage 时 Step 一次；非 codex
 				// Selection 无槽 → no-op）。

@@ -42,3 +42,15 @@ func TestCostFromResolved_ZeroPrice(t *testing.T) {
 	rp := domain.ResolvedPrices{InputPerM: &zero, OutputPerM: &zero, CacheReadPerM: &zero, CacheWritePerM: &zero}
 	require.Equal(t, int64(0), CostFromResolved(rp, 100, 200, 300, 400))
 }
+
+// TestCostFromResolved_CacheLanesDisjoint 计费四分量不相交（P0-2）：pt 为 net
+// （uncached），缓存读/写各走独立单价——缓存部分绝不再按 input 价重复计费。
+func TestCostFromResolved_CacheLanesDisjoint(t *testing.T) {
+	in, out, cr, cw := int64(1e7), int64(2e7), int64(1e6), int64(3e6)
+	rp := domain.ResolvedPrices{InputPerM: &in, OutputPerM: &out, CacheReadPerM: &cr, CacheWritePerM: &cw}
+	// gross input 100 = uncached 0 + cache_read 40 + cache_write 60（cached/cc ⊆ input）。
+	// 计费 = 0×1e7 + 10×2e7 + 40×1e6 + 60×3e6 = 420,000,000 毫分 / 1e6 = 420。
+	require.Equal(t, int64(420), CostFromResolved(rp, 0, 10, 40, 60))
+	// 旧的双重计费会把 gross(100) 当 pt：100×1e7 + … = 1420，故断言必须失败。
+	require.NotEqual(t, int64(1420), CostFromResolved(rp, 0, 10, 40, 60), "缓存不得再按 input 价计费")
+}

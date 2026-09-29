@@ -5,7 +5,6 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -40,10 +39,11 @@ var wsDialTimeout = 15 * time.Second
 // 只在传输面（WS 升级 + 双向事件帧转发 + usage 嗅探 + 心跳）。
 //
 // 热路径纪律（架构定稿 §5）：流式中间帧零解析直转——账目分层：网关层零解析
-// 零分配（bytes.Contains 子串预筛，命中才字节扫描取 usage——usage_extract.go
-// scanKeyValue 单遍扫描）；库层（coder/websocket）每帧 io.ReadAll 物化 +
+// 零分配（仅嗅探 response.completed 帧，走 usage_extract.go
+// sniffResponsesCompletedUsage 的 scanKeyValue 单遍字节扫描——精确 type
+// 判定，无子串预筛）；库层（coder/websocket）每帧 io.ReadAll 物化 +
 // permessage-deflate 往返属库内账目，非网关责任。只嗅探 response.completed
-// 帧（预筛命中才最小字节扫描）；首帧（response.create = 请求帧）才做模型改写
+// 帧（命中才最小字节扫描）；首帧（response.create = 请求帧）才做模型改写
 // （ModelMapping 语义，与 setModel 同构）——也是 图像剥离的帧级预处理点。
 
 const (
@@ -400,21 +400,6 @@ func wsCloseStatus(err error) websocket.StatusCode {
 		return ce.Code
 	}
 	return websocket.StatusInternalError
-}
-
-// sniffResponsesCompleted 热路径预筛：bytes.Contains 零分配子串预筛
-// response.completed 帧（命中才最小字节扫描取 usage——response.usage 前缀
-// 五计数：input/output/total + cache_read/cache_creation 明细）；流式中间帧
-// 零解析。ok 语义 = usage 存在（随 responsesCompletedUsage 签名改写，非"子串
-// 命中"）：误命中帧（内容文本含该子串）与 error 终态（{"type":
-// "response.completed","response":{...,"error":...}} 无 usage）→ ok=false 不
-// 更新——completed 终态唯一、元组仅此处写入（此前值恒 0），与旧行为（覆盖 0）
-// 实际等价，勿误判为行为回归。
-func sniffResponsesCompleted(frame []byte) (usageTuple, bool) {
-	if !bytes.Contains(frame, []byte(`"type":"response.completed"`)) {
-		return usageTuple{}, false
-	}
-	return responsesCompletedUsage(frame)
 }
 
 // isWebSocketUpgrade 升级请求判定（coder/websocket 未导出该检查，与库内

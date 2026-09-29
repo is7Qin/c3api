@@ -27,7 +27,7 @@ import (
 // codexsdk import 仅限本文件族 + sdkbridge 扩展）。与 aiclient 路径同构的编
 // 排（合一骨架 relayWS + 传输适配 codexTransport——用户裁决抽 5 方法传输接口
 // wsRelayTransport，见 ws_relay.go）：双向帧透传 1:1 / usage 嗅探
-// （response.completed——sniffResponsesCompleted 复用）/ 关闭分类
+// （response.completed——sniffResponsesCompletedUsage 复用）/ 关闭分类
 // （relayClassify/recordClose 复用）/ 心跳（30s Ping + 10s pong 超时同款）——
 // 差异收口在本文件：传输适配层 = *codexsdk.Client 具体类型（Send/Recv/Ping/
 // Close/CloseNow——SDK 具体类型经 codexTransport 适配接口）与每帧判死钩子

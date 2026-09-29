@@ -366,7 +366,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, `{"type":"response.created","response":{"id":"rsp_ws_1","model":"gpt-4o"}}`, got[0])
 	require.Equal(t, `{"type":"response.output_text.delta","delta":"hi"}`, got[1])
 	require.Contains(t, got[2], `"type":"response.completed"`)
-	require.Contains(t, got[2], `"input_tokens":3`)
+	require.Contains(t, got[2], `"input_tokens":6`)
 	// 回声帧：payload 为客户端帧 + SDK 注入的 client_metadata（帧透传 1:1
 	// 语义——注入层成本与真实 codex 客户端一致）
 	for i, want := range []string{f1, f2, f3} {
@@ -419,9 +419,9 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 线上 input 3 − cached 1（spec 2026-08-25 归一）")
+	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 线上 input 6 − cached 1 − cache_write 3（P0-2 归一）")
 	require.Equal(t, int64(5), lg.OutputTokens)
-	require.Equal(t, int64(8), lg.TotalTokens)
+	require.Equal(t, int64(11), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens)
 	require.Equal(t, int64(3), lg.CacheCreationTokens)
 	require.Equal(t, domain.FormatOpenAIResponsesWS, lg.Format)
