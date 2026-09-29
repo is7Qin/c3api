@@ -19,9 +19,9 @@ import (
 
 // AccountExtRepo 账号类型化鉴权扩展（account_ext 1:1 边缘表；codex 专用——
 // credential_type ∈ {codex-oauth, codex-pat}，codex 列组：codex_identity
-// （身份四元组 jsonb，service 导入时自动生成、持久复用）+ codex_oauth_* 组
-// + codex_pat_key 组；列组类型约束由 service 校验）。未来 claude oauth 等
-// 新类型 → 新增 ext_claude_repo.go 同构。
+// （持久身份 jsonb，仅 installation_id；service 导入时自动生成、持久复用）+
+// codex_oauth_* 组 + codex_pat_key 组；列组类型约束由 service 校验）。未来
+// claude oauth 等新类型 → 新增 ext_claude_repo.go 同构。
 type AccountExtRepo struct{ client *ent.Client }
 
 // extIdentityField 标识 ext 凭据面里参与"是否改身份"判定的字段。凭据面整体是
@@ -29,14 +29,14 @@ type AccountExtRepo struct{ client *ent.Client }
 // （失效判决 / latch / 健康记录 / continuation）作废。
 //
 // 凭据值（token / refresh / expires）也在列，因为管理面写入是**凭据替换**：
-// 身份四元组与 digest 之外的凭据材料同样只由这次写入决定。SDK 自动刷新走
+// 持久身份与 digest 之外的凭据材料同样只由这次写入决定。SDK 自动刷新走
 // WriteOAuthRotation（不触 accounts 行）——它天然 K 中性，"刷新同一账号的令牌"
 // 不是身份写入。
 type extIdentityField uint8
 
 const (
 	extCredentialType extIdentityField = iota
-	extIdentityQuad
+	extIdentity
 	extOAuthToken
 	extOAuthRefresh
 	extOAuthExpires
@@ -64,7 +64,7 @@ func extIdentityChanged(cur, next *domain.AccountExt, fields ...extIdentityField
 			if next.CredentialType != cur.CredentialType {
 				return true
 			}
-		case extIdentityQuad:
+		case extIdentity:
 			if !sameCodexIdentity(next.CodexIdentity, cur.CodexIdentity) {
 				return true
 			}
@@ -97,7 +97,7 @@ func extIdentityChanged(cur, next *domain.AccountExt, fields ...extIdentityField
 	return false
 }
 
-// sameCodexIdentity 身份四元组按值相等（nil 与 nil 相等）。
+// sameCodexIdentity 持久身份按值相等（nil 与 nil 相等；现只含 installation_id）。
 func sameCodexIdentity(a, b *domain.CodexIdentity) bool {
 	if a == nil || b == nil {
 		return a == b
@@ -384,7 +384,7 @@ func (r *AccountExtRepo) AdminUpsertAccountExtCAS(ctx context.Context, e *domain
 		return nil, err
 	}
 	advanceIdentity := extIdentityChanged(cur, e,
-		extCredentialType, extIdentityQuad, extOAuthToken, extOAuthRefresh,
+		extCredentialType, extIdentity, extOAuthToken, extOAuthRefresh,
 		extOAuthExpires, extPATKey, extEmail, extCodexAccountID)
 	n, err := bumpAccountGeneration(ctx, tx.Client(), e.AccountID, expectedRevision, advanceIdentity)
 	if err != nil {

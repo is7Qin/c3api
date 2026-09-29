@@ -25,8 +25,8 @@ import (
 // 解耦的是 API/校验面（oauth/pat 各端点类型特定校验），底层单实现
 // importCodexAccounts：逐行 键查重（组合键 codex_email + codex_account_id）→
 //   - 不存在 → imported：**单行事务**（txRepo.CreateAccount + txRepo.
-//     UpsertAccountExt（NewCodexIdentity 身份）+ txRepo.SetAccountGroups 可选——
-//     任一步失败整体回滚，无孤儿）；
+//     UpsertAccountExt（NewCodexIdentity 生成 installation_id）+ txRepo.
+//     SetAccountGroups 可选——任一步失败整体回滚，无孤儿）；
 //   - 存在且类型匹配 → updated：**只更新凭据列**（oauth 三列 / pat 单列——
 //     identity/并发/权重/归属零触碰；全量 UpsertAccountExt 的 ClearX 清 NULL
 //     面禁用）；

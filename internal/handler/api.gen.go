@@ -447,10 +447,10 @@ type AccountExt struct {
 	// CodexAccountId 上游账号/空间标识；可留空——导入/单账号保存时自动识别（OAuth token claims 离线解析 / PAT whoami 查询）；识别失败：导入行拒绝、单账号保存留空且下次保存重试
 	CodexAccountId *string `json:"codex_account_id"`
 
-	// CodexEmail 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空）
+	// CodexEmail 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成 installation_id；可空）
 	CodexEmail *string `json:"codex_email"`
 
-	// CodexIdentity codex 账号身份四元组（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）
+	// CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）。仅 installation_id——会话级 session/thread/window 已退役为运行时槽状态，不再持久化/暴露。
 	CodexIdentity *CodexIdentity `json:"codex_identity,omitempty"`
 
 	// CodexOauthExpiresAt 凭据：oauth 访问令牌过期时间
@@ -652,19 +652,10 @@ type CodexCredits struct {
 	Balance *string `json:"balance"`
 }
 
-// CodexIdentity codex 账号身份四元组（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）
+// CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）。仅 installation_id——会话级 session/thread/window 已退役为运行时槽状态，不再持久化/暴露。
 type CodexIdentity struct {
 	// InstallationId 身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成；空/缺省 → service 自动生成）
 	InstallationId *string `json:"installation_id,omitempty"`
-
-	// SessionId 身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用；响应 nil → null）
-	SessionId *string `json:"session_id"`
-
-	// ThreadId 身份：会话级（UUIDv7；恒等 == session_id；响应 nil → null）
-	ThreadId *string `json:"thread_id"`
-
-	// WindowId 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null）
-	WindowId *string `json:"window_id"`
 }
 
 // CodexOAuthImportBody 批量导入 codex-oauth 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-oauth——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）

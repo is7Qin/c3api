@@ -1639,14 +1639,11 @@ export default function Accounts() {
                 />
               </div>
             )}
-            {/* 身份四元组：只读展示（首次写入自动生成、恒等约束——不提供编辑） */}
+            {/* 持久身份：只读展示（首次写入自动生成——不提供编辑） */}
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">{t('accounts.ext.identityNote')}</p>
               <div className="space-y-0.5 font-mono text-xs text-muted-foreground">
                 <p>{t('accounts.ext.installationId')}: {extQ.data?.codex_identity?.installation_id ?? '—'}</p>
-                <p>{t('accounts.ext.sessionId')}: {extQ.data?.codex_identity?.session_id ?? '—'}</p>
-                <p>{t('accounts.ext.threadId')}: {extQ.data?.codex_identity?.thread_id ?? '—'}</p>
-                <p>{t('accounts.ext.windowId')}: {extQ.data?.codex_identity?.window_id ?? '—'}</p>
               </div>
             </div>
             {extQ.isError && (

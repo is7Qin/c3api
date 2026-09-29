@@ -42,7 +42,7 @@ func TestCredentialDiscriminatorMatchesScheduler_TemplateAuthority(t *testing.T)
 	// Scheduler uses Template.CredentialType only; Ext mismatched must be ignored.
 	// Case A: Template api_key but Ext codex_oauth => should NOT self-fail via SDK (non-Codex)
 	tplA := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeAPIKey}
-	acctA := &domain.Account{ID: 1, TemplateID: 10, Template: tplA, UpstreamKey: "k1", LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "i", SessionID: "s"}}}
+	acctA := &domain.Account{ID: 1, TemplateID: 10, Template: tplA, UpstreamKey: "k1", LifecycleRevision: 1, IdentityRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}}}
 	storeA := &fakeCASStore2{accounts: map[int64]*domain.Account{1: acctA}}
 	latchA := newFakeLatch2()
 	failerA := &fakeFailer2{}
@@ -64,7 +64,7 @@ func TestCredentialDiscriminatorMatchesScheduler_TemplateAuthority(t *testing.T)
 
 func TestCanonicalFingerprint_MatchesSchedulerAuthority(t *testing.T) {
 	tpl := &domain.Template{ID: 10, BaseURL: "https://api.openai.com/v1", CredentialType: credential.TypeCodexOAuth, StripImageTools: true}
-	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth, CodexPATKey: strPtrBlockers("pat"), CodexEmail: strPtrBlockers("e@e.com"), CodexAccountID: strPtrBlockers("ca"), CodexIdentity: &domain.CodexIdentity{InstallationID: "i", SessionID: "s", ThreadID: "th", WindowID: "w"}}}
+	acct := &domain.Account{ID: 7, TemplateID: 10, Template: tpl, UpstreamKey: "sk", LifecycleRevision: 1, Ext: &domain.AccountExt{CredentialType: credential.TypeCodexOAuth, CodexPATKey: strPtrBlockers("pat"), CodexEmail: strPtrBlockers("e@e.com"), CodexAccountID: strPtrBlockers("ca"), CodexIdentity: &domain.CodexIdentity{InstallationID: "i"}}}
 	fpSched, err := domain.AccountCandidateFingerprint(acct)
 	require.NoError(t, err)
 	want := domain.CandidateFPHex(fpSched)

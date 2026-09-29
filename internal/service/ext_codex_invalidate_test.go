@@ -104,7 +104,6 @@ func TestUpsertAccountExtFailureLeavesNoInvalidation(t *testing.T) {
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexIdentity: &domain.CodexIdentity{
 				InstallationID: "11111111-2222-3333-4444-555555555555",
-				SessionID:      "s", ThreadID: "s", WindowID: "s:0",
 			},
 			CodexOAuthToken: strPtr("at-old"),
 		})

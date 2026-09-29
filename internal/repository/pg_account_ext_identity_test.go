@@ -24,7 +24,7 @@ func seedCodexAccountWithExt(t *testing.T, repos *repository.Repository, name st
 	ext := &domain.AccountExt{
 		AccountID:       acc.ID,
 		CredentialType:  "codex-oauth",
-		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i1", SessionID: "s1", ThreadID: "s1", WindowID: "s1:0"},
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i1"},
 		CodexOAuthToken: strPtr("tok-1"), CodexOAuthRefreshToken: strPtr("rt-1"),
 		CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("ca-1"),
 	}
@@ -66,7 +66,7 @@ func TestPGAdminCredentialWriteAdvancesIdentityOnlyOnValueChange(t *testing.T) {
 	// 4) 全量 PUT 逐值相同（幂等）：只推进 C。
 	_, err = repos.AccountExts.AdminUpsertAccountExtCAS(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: "codex-oauth",
-		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i1", SessionID: "s1", ThreadID: "s1", WindowID: "s1:0"},
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i1"},
 		CodexOAuthToken: strPtr("tok-rotated"), CodexOAuthRefreshToken: strPtr("rt-rotated"),
 		CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("ca-1"),
 	}, 3)
@@ -76,10 +76,10 @@ func TestPGAdminCredentialWriteAdvancesIdentityOnlyOnValueChange(t *testing.T) {
 	require.Equal(t, int64(4), idemUpsert.LifecycleRevision)
 	require.Equal(t, int64(2), idemUpsert.IdentityRevision, "idempotent PUT must not advance K")
 
-	// 5) 全量 PUT 改身份四元组：C 与 K 同时推进。
+	// 5) 全量 PUT 改 installation：C 与 K 同时推进。
 	_, err = repos.AccountExts.AdminUpsertAccountExtCAS(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: "codex-oauth",
-		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i2", SessionID: "s2", ThreadID: "s2", WindowID: "s2:0"},
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i2"},
 		CodexOAuthToken: strPtr("tok-rotated"), CodexOAuthRefreshToken: strPtr("rt-rotated"),
 		CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("ca-1"),
 	}, 4)
@@ -87,7 +87,7 @@ func TestPGAdminCredentialWriteAdvancesIdentityOnlyOnValueChange(t *testing.T) {
 	newIdentity, err := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(5), newIdentity.LifecycleRevision)
-	require.Equal(t, int64(3), newIdentity.IdentityRevision, "identity quadruple change is an identity write")
+	require.Equal(t, int64(3), newIdentity.IdentityRevision, "installation change is an identity write")
 
 	// 6) PAT 轮转端点：值变 ⇒ K 推进；值不变 ⇒ 只推进 C。
 	require.NoError(t, repos.AccountExts.AdminWritePATKeyCAS(ctx, acc.ID, 5, "pat-1"))
