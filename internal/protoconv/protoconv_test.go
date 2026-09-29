@@ -493,7 +493,7 @@ func TestMapRespToMessStream(t *testing.T) {
 
 func TestMapMessToRespStream(t *testing.T) {
 	out := mapAll(t, domain.ProtocolConvertRespToMess,
-		"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":3}}}`,
+		"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}`,
 		"content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`,
 		"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hel"}}`,
 		"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"lo"}}`,
@@ -511,14 +511,13 @@ func TestMapMessToRespStream(t *testing.T) {
 	// response.completed：累积输出 + 用量
 	require.Contains(t, out, `event: response.completed`)
 	require.Contains(t, out, `"arguments":"{\"city\": \"x\"}"`, "arguments 累积")
-	require.Contains(t, out, `"input_tokens":13,"input_tokens_details":{"cached_tokens":3},"output_tokens":20,"total_tokens":33`, "用量累积")
-	require.Contains(t, out, `"cached_tokens":3`, "cache_read 映射")
+	require.Contains(t, out, `"input_tokens":15,"input_tokens_details":{"cache_write_tokens":2,"cached_tokens":3},"output_tokens":20,"total_tokens":35`, "用量累积（cache_creation → cache_write_tokens）")
 	require.Contains(t, out, `"status":"completed"`, "终态项")
 }
 
 func TestMapMessToChatStream(t *testing.T) {
 	out := mapAll(t, domain.ProtocolConvertChatToMess,
-		"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":3}}}`,
+		"message_start", `{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-3-5-sonnet","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}}`,
 		"content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`,
 		"content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":"get_weather","input":{}}}`,
 		"content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\": \"x\"}"}}`,
@@ -530,8 +529,7 @@ func TestMapMessToChatStream(t *testing.T) {
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"","name":"get_weather"},"id":"toolu_1","index":1,"type":"function"}]`)
 	require.Contains(t, out, `"tool_calls":[{"function":{"arguments":"{\"city\": \"x\"}"},"index":1}]`)
 	require.Contains(t, out, `"finish_reason":"tool_calls"`, "tool_use → tool_calls")
-	require.Contains(t, out, `"usage":{"completion_tokens":20,"prompt_tokens":13,"prompt_tokens_details":{"cached_tokens":3},"total_tokens":33}`, "用量在 finish 帧之后的单独帧")
-	require.Contains(t, out, `"prompt_tokens_details":{"cached_tokens":3}`)
+	require.Contains(t, out, `"usage":{"completion_tokens":20,"prompt_tokens":15,"prompt_tokens_details":{"cache_write_tokens":2,"cached_tokens":3},"total_tokens":35}`, "用量在 finish 帧之后的单独帧（cache_creation → cache_write_tokens）")
 	require.Contains(t, out, "data: [DONE]")
 	require.NotContains(t, out, `"message_stop"`, "message_stop 丢弃（收尾已在 message_delta）")
 }
@@ -1075,20 +1073,22 @@ func TestAPIAlignUsage(t *testing.T) {
 	u := obj(t, chat)["usage"].(map[string]any)
 	require.Equal(t, float64(15), u["prompt_tokens"])
 	require.Equal(t, float64(3), u["prompt_tokens_details"].(map[string]any)["cached_tokens"])
+	require.Equal(t, float64(2), u["prompt_tokens_details"].(map[string]any)["cache_write_tokens"], "cache_creation → prompt_tokens_details.cache_write_tokens")
 
 	resp, err := ConvertResponse(mess, domain.ProtocolConvertRespToMess)
 	require.NoError(t, err)
 	u = obj(t, resp)["usage"].(map[string]any)
 	require.Equal(t, float64(15), u["input_tokens"])
 	require.Equal(t, float64(3), u["input_tokens_details"].(map[string]any)["cached_tokens"])
-	require.NotContains(t, u, "cache_write_tokens")
+	require.Equal(t, float64(2), u["input_tokens_details"].(map[string]any)["cache_write_tokens"], "cache_creation → input_tokens_details.cache_write_tokens")
 
-	fromResp := []byte(`{"id":"rsp_1","status":"completed","model":"m","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3}}}`)
+	fromResp := []byte(`{"id":"rsp_1","status":"completed","model":"m","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}}}`)
 	messOut, err := ConvertResponse(fromResp, domain.ProtocolConvertMessToResp)
 	require.NoError(t, err)
 	mu := obj(t, messOut)["usage"].(map[string]any)
 	require.Equal(t, float64(10), mu["input_tokens"], "不减 cached_tokens")
 	require.Equal(t, float64(3), mu["cache_read_input_tokens"])
+	require.Equal(t, float64(4), mu["cache_creation_input_tokens"], "cache_write_tokens → cache_creation_input_tokens")
 }
 
 func TestAPIAlignRespMessStreamIndex(t *testing.T) {
@@ -1113,10 +1113,26 @@ func TestAPIAlignRespMessStreamIndex(t *testing.T) {
 func TestAPIAlignMessDeltaUsage(t *testing.T) {
 	out := mapAll(t, domain.ProtocolConvertMessToResp,
 		"response.created", `{"type":"response.created","response":{"id":"rsp_1","model":"m","output":[],"usage":null}}`,
-		"response.completed", `{"type":"response.completed","response":{"id":"rsp_1","status":"completed","model":"m","output":[],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3}}}}`,
+		"response.completed", `{"type":"response.completed","response":{"id":"rsp_1","status":"completed","model":"m","output":[],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}}}}`,
 	)
 	require.Contains(t, out, `"input_tokens":0`, "message_start 仍是 0")
-	require.Contains(t, out, `"usage":{"cache_creation_input_tokens":0,"cache_read_input_tokens":3,"input_tokens":10,"output_tokens":5}`)
+	require.Contains(t, out, `"usage":{"cache_creation_input_tokens":4,"cache_read_input_tokens":3,"input_tokens":10,"output_tokens":5}`, "cache_write_tokens → cache_creation_input_tokens")
+}
+
+// TestCacheWriteMappingRespToChat resp → chat 缓存写入映射（input_tokens_details.
+// cache_write_tokens → prompt_tokens_details.cache_write_tokens，非流式 + 流式）。
+func TestCacheWriteMappingRespToChat(t *testing.T) {
+	resp := []byte(`{"id":"rsp_1","status":"completed","model":"m","output":[],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}}}`)
+	out, err := ConvertResponse(resp, domain.ProtocolConvertChatToResp)
+	require.NoError(t, err)
+	d := obj(t, out)["usage"].(map[string]any)["prompt_tokens_details"].(map[string]any)
+	require.Equal(t, float64(3), d["cached_tokens"])
+	require.Equal(t, float64(4), d["cache_write_tokens"])
+
+	streamed := mapAll(t, domain.ProtocolConvertChatToResp,
+		"response.completed", `{"type":"response.completed","response":{"id":"rsp_1","status":"completed","model":"m","output":[],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}}}}`,
+	)
+	require.Contains(t, streamed, `"prompt_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}`)
 }
 
 func TestAPIAlignPureToolContentNull(t *testing.T) {

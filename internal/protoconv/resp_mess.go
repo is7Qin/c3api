@@ -20,10 +20,12 @@ import (
 //   - 同名字段透传：model/temperature/top_p/stream/metadata
 //   - anthropic 无对应参数（top_logprobs/seed/store/parallel_tool_calls/
 //     reasoning/text/include/truncation 等）→ 按规范丢弃
+//
 // messToRespResponse anthropic message 对象 → resp 响应对象（非流式）：
 // content text 块 → message 项（output_text）；tool_use 块 → function_call
 // 项（input 对象 → arguments JSON 字符串）；usage → input/output/total +
-// cache_read → input_tokens_details.cached_tokens。
+// cache_read → input_tokens_details.cached_tokens + cache_creation →
+// input_tokens_details.cache_write_tokens。
 func messToRespResponse(body []byte) ([]byte, error) {
 	msg, err := decodeObj(body)
 	if err != nil {
@@ -90,18 +92,29 @@ func messContentToRespOutput(msg map[string]any) ([]any, int64, int64) {
 }
 
 // messUsageToResp anthropic usage → resp usage。input_tokens 含 cache_creation
-// 与 cache_read；cached_tokens 只取 cache_read。不写 cache_write_tokens。
+// 与 cache_read；cached_tokens 取 cache_read，cache_write_tokens 取 cache_creation。
 func messUsageToResp(msg map[string]any, it, ot int64) map[string]any {
-	cached := int64(0)
+	cached, write := int64(0), int64(0)
 	if u, ok := msg["usage"].(map[string]any); ok {
 		cached = intOr0(u, "cache_read_input_tokens")
+		write = intOr0(u, "cache_creation_input_tokens")
 	}
 	return map[string]any{
 		"input_tokens":         it,
 		"output_tokens":        ot,
 		"total_tokens":         it + ot,
-		"input_tokens_details": map[string]any{"cached_tokens": cached},
+		"input_tokens_details": respInputDetails(cached, write),
 	}
+}
+
+// respInputDetails resp usage 的 input_tokens_details（cached_tokens 恒含；
+// cache_write_tokens 仅在非 0 时出现，避免无缓存写入的响应多出零值键）。
+func respInputDetails(cached, write int64) map[string]any {
+	d := map[string]any{"cached_tokens": cached}
+	if write > 0 {
+		d["cache_write_tokens"] = write
+	}
+	return d
 }
 
 // mapMessToResp 流式：anthropic messages SSE 事件 → resp 流。事件映射表：
@@ -226,7 +239,7 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 				"model": m.model, "output": m.messOutputItems(),
 				"usage": map[string]any{
 					"input_tokens": input, "output_tokens": m.ot, "total_tokens": input + m.ot,
-					"input_tokens_details": map[string]any{"cached_tokens": m.cached},
+					"input_tokens_details": respInputDetails(m.cached, m.cacheCreate),
 				},
 			},
 		}), false

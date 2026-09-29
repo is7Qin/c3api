@@ -23,6 +23,7 @@ import (
 //   - anthropic 无对应参数（n/seed/logprobs/frequency_penalty/
 //     presence_penalty/stream_options/response_format/logit_bias/user 等）
 //     → 按规范丢弃
+//
 // messToChatResponse anthropic message 对象 → chat completion 对象（非流式）：
 // text 块拼接 content；tool_use → tool_calls（input 对象 → arguments JSON
 // 字符串）；stop_reason → finish_reason；usage 同构映射。
@@ -110,8 +111,12 @@ func messUsageToChat(msg map[string]any) (map[string]any, bool) {
 		"completion_tokens": ot,
 		"total_tokens":      prompt + ot,
 	}
-	if cr > 0 {
-		out["prompt_tokens_details"] = map[string]any{"cached_tokens": cr}
+	if cr > 0 || cc > 0 {
+		d := map[string]any{"cached_tokens": cr}
+		if cc > 0 {
+			d["cache_write_tokens"] = cc
+		}
+		out["prompt_tokens_details"] = d
 	}
 	return out, true
 }
@@ -194,8 +199,12 @@ func (m *StreamMapper) mapMessToChat(name string, data []byte) ([]byte, bool) {
 		usage := map[string]any{
 			"prompt_tokens": prompt, "completion_tokens": m.ot, "total_tokens": prompt + m.ot,
 		}
-		if m.cached > 0 {
-			usage["prompt_tokens_details"] = map[string]any{"cached_tokens": m.cached}
+		if m.cached > 0 || m.cacheCreate > 0 {
+			d := map[string]any{"cached_tokens": m.cached}
+			if m.cacheCreate > 0 {
+				d["cache_write_tokens"] = m.cacheCreate
+			}
+			usage["prompt_tokens_details"] = d
 		}
 		// finish 帧不含 usage；下一帧 choices 为空且只含 usage。
 		finish := m.chatFrame(map[string]any{}, reason, nil)

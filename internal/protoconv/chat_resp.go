@@ -641,9 +641,15 @@ func appendRespUsage(out []byte, u gjson.Result) []byte {
 	out = append(out, `,"prompt_tokens":`...)
 	out = appendInt64(out, it)
 	if d := u.Get("input_tokens_details"); d.IsObject() {
-		if c := gjsonNumInt(d.Get("cached_tokens")); c > 0 {
+		c := gjsonNumInt(d.Get("cached_tokens"))
+		w := gjsonNumInt(d.Get("cache_write_tokens"))
+		if c > 0 || w > 0 {
 			out = append(out, `,"prompt_tokens_details":{"cached_tokens":`...)
 			out = appendInt64(out, c)
+			if w > 0 {
+				out = append(out, `,"cache_write_tokens":`...)
+				out = appendInt64(out, w)
+			}
 			out = append(out, '}')
 		}
 	}
@@ -820,9 +826,15 @@ func (m *StreamMapper) appendUsageToBuf(u gjson.Result) []byte {
 	m.dbuf = append(m.dbuf, `,"prompt_tokens":`...)
 	m.dbuf = appendInt64(m.dbuf, it)
 	if d := u.Get("input_tokens_details"); d.IsObject() {
-		if c := gjsonNumInt(d.Get("cached_tokens")); c > 0 {
+		c := gjsonNumInt(d.Get("cached_tokens"))
+		w := gjsonNumInt(d.Get("cache_write_tokens"))
+		if c > 0 || w > 0 {
 			m.dbuf = append(m.dbuf, `,"prompt_tokens_details":{"cached_tokens":`...)
 			m.dbuf = appendInt64(m.dbuf, c)
+			if w > 0 {
+				m.dbuf = append(m.dbuf, `,"cache_write_tokens":`...)
+				m.dbuf = appendInt64(m.dbuf, w)
+			}
 			m.dbuf = append(m.dbuf, '}')
 		}
 	}

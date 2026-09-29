@@ -20,6 +20,7 @@ import (
 //     （any → required；{type:"tool",name} → {type:"function",name}）
 //   - 同名字段透传：model/stream/metadata
 //   - resp 无对应参数（stop_sequences/thinking 等）→ 按规范丢弃
+//
 // respToMessResponse resp 响应对象 → anthropic message 对象（非流式）：
 // output message 项 → text 块；function_call → tool_use 块（arguments JSON
 // 字符串 → input 对象）；usage → input/output/cache 字段。
@@ -103,21 +104,23 @@ func mapOrEmpty(v any) map[string]any {
 }
 
 // respUsageToMess resp usage → anthropic usage（cached_tokens →
-// cache_read_input_tokens；anthropic 响应四字段全含）。
+// cache_read_input_tokens，cache_write_tokens → cache_creation_input_tokens；
+// anthropic 响应四字段全含）。
 func respUsageToMess(r map[string]any) map[string]any {
 	it, ot := int64(0), int64(0)
-	cached := int64(0)
+	cached, write := int64(0), int64(0)
 	if u, ok := r["usage"].(map[string]any); ok {
 		it = intOr0(u, "input_tokens")
 		ot = intOr0(u, "output_tokens")
 		if d, ok := u["input_tokens_details"].(map[string]any); ok {
 			cached = intOr0(d, "cached_tokens")
+			write = intOr0(d, "cache_write_tokens")
 		}
 	}
 	return map[string]any{
 		"input_tokens":                it,
 		"output_tokens":               ot,
-		"cache_creation_input_tokens": 0,
+		"cache_creation_input_tokens": write,
 		"cache_read_input_tokens":     cached,
 	}
 }
