@@ -240,13 +240,13 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			// 物化 + flate 属库内账目。
 			if u, ok := sniffResponsesCompletedUsage(f); ok {
 				it, ot, tt, cr, cc = u.it, u.ot, u.tt, u.cr, u.cc
-				// codex 槽身份水位推进（成功取到 usage 时 Step 一次；非 codex
+				// codex 槽身份轮次推进（成功取到 usage 时 Step 一次；非 codex
 				// Selection 无槽 → no-op）。**多轮语义**：WS 长连接一次订阅可
 				// 承载多轮，每轮一帧 response.completed → 每帧各推进一次（多次
 				// 观测，语义正确）。与 HTTP 流式分支的 usageTaken「仅取首个」
 				// 守卫有意不同：后者单次响应只可能有一个终态 completed 帧，
 				// 此处则每轮各一个——非缺陷，勿据文档统一。
-				sel.AdvanceIdentity(tt)
+				sel.AdvanceIdentity()
 				// 响应检测旁路（spec §6）：completed 帧恒在流末——最终计数由其
 				// 覆盖（最后帧语义）；门控关闭（api_key/strip 开）→ 零额外解析。
 				if respImageDetectOn(sel) {

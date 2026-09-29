@@ -3,9 +3,9 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 //
 // codex 伪装身份轮换（账号级槽位池）：账号级恒定身份 → 账号级 K 槽位池；每个
-// 槽按观测水位确定性演化 thread/window，使上游见「多条独立会话、各自演化」。
-// 槽 = codexsdk.IdentityState（InstallationID 账号级共享；ThreadID/WindowN/
-// Baseline/Armed/WMax 各槽私有）。整族**无锁**：认领 = 旋转游标 + 逐槽 CAS，
+// 槽按完成轮数确定性演化 thread/window，使上游见「多条独立会话、各自演化」。
+// 槽 = codexsdk.IdentityState（InstallationID 账号级共享；ThreadID/Turns/WindowN/
+// NextWindowAt/WMax 各槽私有）。整族**无锁**：认领 = 旋转游标 + 逐槽 CAS，
 // 归还 = Store(false)——无 channel、无 mutex、请求路径零每请求锁。
 package scheduler
 
@@ -21,8 +21,8 @@ import (
 
 // identitySlot 槽位池中的单个槽（无锁）：busy 认领标志（CAS 认领 / Store 归还）
 // + 身份状态（atomic.Pointer 承载，Step 推进经 CAS 换入新状态）。policy 槽
-// 构造期写入、此后只读（Step 用它采样 WMax / 判定口径）。复用（占用）**不改
-// 身份**——身份演化只由水位轴驱动。
+// 构造期写入、此后只读（Step 用它采样 WMax）。复用（占用）**不改
+// 身份**——身份演化只由完成轮数驱动。
 type identitySlot struct {
 	busy   atomic.Bool
 	policy codexsdk.RotatePolicy
@@ -56,7 +56,7 @@ type identityRegistry struct {
 }
 
 // newIdentitySlot 构造一个槽：身份状态用 installationID 开新线程（WMax 按 policy
-// 抽样、WindowN=0、Armed=true）。
+// 抽样、Turns/WindowN 归零）。
 func newIdentitySlot(installationID string, policy codexsdk.RotatePolicy) *identitySlot {
 	st := codexsdk.NewIdentityState(installationID, policy)
 	s := &identitySlot{policy: policy}

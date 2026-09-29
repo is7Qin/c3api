@@ -221,39 +221,33 @@ func TestIdentityPoolReuseKeepsIdentity(t *testing.T) {
 	again.release()
 }
 
-// TestAdvanceIdentityOnlyStepsAtThreshold 水位未跨 θ_w 不推进；跨过且 WMax 未达
-// 不换线程（WindowN++）；达 WMax 退休换新线程。
-func TestAdvanceIdentityOnlyStepsAtThreshold(t *testing.T) {
-	slug := "unknown-slug" // 目录外 → fallback θ_w
-	theta := codexsdk.AutoCompactTokens(slug)
-	require.Positive(t, theta)
-
-	// 无退休（WMax 0）：θ 下不推进，θ 上升沿 WindowN++，持续高位不重复计数。
+// TestAdvanceIdentityTurnDrive 每 AdvanceIdentity() 一次 Turns+1；WMax 未达不换线程，
+// 达则退休换新线程。
+func TestAdvanceIdentityTurnDrive(t *testing.T) {
 	noRetire := codexsdk.RotatePolicy{}
 	slot := newIdentitySlot("inst", noRetire)
-	sel := &Selection{identitySlot: slot, Model: slug}
-	thread := slot.state.Load().ThreadID
+	sel := &Selection{identitySlot: slot}
 
-	sel.AdvanceIdentity(theta - 1)
-	require.Equal(t, uint64(0), slot.state.Load().WindowN, "低于 θ_w 不推进")
-	sel.AdvanceIdentity(theta)
-	require.Equal(t, uint64(1), slot.state.Load().WindowN, "跨 θ_w 上升沿 WindowN++")
-	sel.AdvanceIdentity(theta)
-	require.Equal(t, uint64(1), slot.state.Load().WindowN, "持续高位不重复计数")
-	sel.AdvanceIdentity(theta - 1)
-	sel.AdvanceIdentity(theta)
-	require.Equal(t, uint64(2), slot.state.Load().WindowN, "回落再跨 → 新上升沿")
-	require.Equal(t, thread, slot.state.Load().ThreadID, "无退休不换线程")
+	const n = 200
+	for i := uint64(1); i <= n; i++ {
+		sel.AdvanceIdentity()
+		require.Equal(t, i, slot.state.Load().Turns, "每轮 Turns+1")
+	}
+	require.Less(t, slot.state.Load().Turns, slot.state.Load().NextWindowAt, "窗口内不变量 Turns<NextWindowAt")
 
-	// WMax=1：WindowN 达上限 → 退休换新线程。
+	// WMax=1：窗口数达上限即退休（span∈[48,96]，故 48 轮前不退休、96 轮内必退休）。
 	retire := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}
 	rslot := newIdentitySlot("inst", retire)
-	rsel := &Selection{identitySlot: rslot, Model: slug}
+	rsel := &Selection{identitySlot: rslot}
 	oldThread := rslot.state.Load().ThreadID
-	rsel.AdvanceIdentity(theta)
-	after := rslot.state.Load()
-	require.Equal(t, uint64(0), after.WindowN, "退休换新线程后 WindowN 归零")
-	require.NotEqual(t, oldThread, after.ThreadID, "WindowN ≥ WMax → 换 thread")
+	for i := 0; i < 47; i++ {
+		rsel.AdvanceIdentity()
+	}
+	require.Equal(t, oldThread, rslot.state.Load().ThreadID, "48 轮前不应退休（span≥48）")
+	for i := 0; i < 49; i++ {
+		rsel.AdvanceIdentity()
+	}
+	require.NotEqual(t, oldThread, rslot.state.Load().ThreadID, "96 轮内必退休（span≤96）")
 }
 
 // TestIdentityPoolResizeMigratesMin 容量变化按位次迁移旧槽身份至 min(old,new)；
@@ -342,43 +336,34 @@ func TestIdentityPoolConcurrentClaimUnique(t *testing.T) {
 	require.Nil(t, pool.claim(), "全忙 → nil（兜底在外层）")
 }
 
-// TestIdentitySlotConcurrentAdvanceNoLostUpdate 同槽并发推进 CAS 面：G 个
-// goroutine 并发对同一槽 AdvanceIdentity(θ)，水位上升沿恰计一次
-// （CAS 读改写不丢不重）；回落再跨界继续恰计一次（证明 arm 更新也被 CAS 应用）。
+// TestIdentitySlotConcurrentAdvanceNoLostUpdate 同槽并发推进 CAS 面：G 个 goroutine
+// 并发对同一槽 AdvanceIdentity()，每轮恰计一次（CAS 读改写不丢不重）。
 func TestIdentitySlotConcurrentAdvanceNoLostUpdate(t *testing.T) {
-	slug := "unknown-slug" // 目录外 → fallback θ_w
-	theta := codexsdk.AutoCompactTokens(slug)
-	require.Positive(t, theta)
 	pol := codexsdk.RotatePolicy{} // WMaxHi=0 不退休
 	slot := newIdentitySlot("inst", pol)
-	sel := &Selection{identitySlot: slot, Model: slug}
+	sel := &Selection{identitySlot: slot}
 
 	const g = 16
 	const m = 100
-	advanceAll := func() {
-		var start sync.WaitGroup
-		start.Add(1)
-		var done sync.WaitGroup
-		for i := 0; i < g; i++ {
-			done.Add(1)
-			go func() {
-				defer done.Done()
-				start.Wait()
-				for j := 0; j < m; j++ {
-					sel.AdvanceIdentity(theta) // 每步都是「跨 θ_w」
-				}
-			}()
-		}
-		start.Done()
-		done.Wait()
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	for i := 0; i < g; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			start.Wait()
+			for j := 0; j < m; j++ {
+				sel.AdvanceIdentity()
+			}
+		}()
 	}
+	start.Done()
+	done.Wait()
 
-	advanceAll()
-	require.Equal(t, uint64(1), slot.state.Load().WindowN, "并发跨 θ_w 恰计一次上升沿（CAS 不丢不重）")
-
-	sel.AdvanceIdentity(theta - 1) // 回落 → 重新武装
-	advanceAll()
-	require.Equal(t, uint64(2), slot.state.Load().WindowN, "回落再跨 → 继续恰计一次（arm 更新未被丢）")
+	st := slot.state.Load()
+	require.Equal(t, uint64(g*m), st.Turns, "并发推进恰计 G×M 轮（CAS 不丢不重）")
+	require.Less(t, st.Turns, st.NextWindowAt, "窗口内不变量 Turns<NextWindowAt")
 }
 
 // TestIdentityPoolRotatePolicySingleSource 轮换策略单一来源在槽：pool.rotatePolicy

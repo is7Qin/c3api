@@ -444,7 +444,7 @@ type TemplateExt struct {
 // 契约类型——json tag 即落库形态）。仅保留安装级 installation_id：账号存在
 // 期间稳定、运行时唯一被消费的身份项（安装级永久；internal/proxy/scheduler
 // 注入源）。会话级 session/thread/window 已退役为运行时槽状态（scheduler
-// 槽位池按水位演化——见 internal/scheduler/identity_pool.go），不再是持久身份，
+// 槽位池按完成轮数演化——见 internal/scheduler/identity_pool.go），不再是持久身份，
 // 故不在此结构承载；旧行 jsonb 内的多余键读取时被忽略（jsonb blob 反序列化
 // 丢弃未知键），写侧恒只落 installation_id。空字段 = 未提供（service 归一：
 // 空 → 自动生成/沿用存量；identity 无清空路径——账号存在期间稳定）。

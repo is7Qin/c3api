@@ -227,8 +227,8 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	var it, ot, tt, cr, cc int64
 	if t, ok := responsesBodyUsage(resp.Raw); ok {
 		it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
-		// 水位推进：成功取到 usage 时 Step 一次（slug = 已映射模型）。
-		sel.AdvanceIdentity(tt)
+		// 轮次推进：成功取到 usage 时 Step 一次。
+		sel.AdvanceIdentity()
 	}
 	var img int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 	if respImageDetectOn(sel) {
@@ -296,8 +296,8 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 				if respImageDetectOn(sel) {
 					img = respImageCountCompleted(raw)
 				}
-				// 水位推进：成功取到 usage 时 Step 一次（slug = 已映射模型）。
-				sel.AdvanceIdentity(tt)
+				// 轮次推进：成功取到 usage 时 Step 一次。
+				sel.AdvanceIdentity()
 				usageTaken = true
 			}
 		}

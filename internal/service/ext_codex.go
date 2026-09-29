@@ -22,7 +22,7 @@ import (
 // NewCodexIdentity 生成 codex 账号持久身份（账号导入时自动生成、持久复用；
 // 纯函数零依赖——标准库 crypto/rand 构造 UUIDv4 形状）。持久身份现只含安装级
 // installation_id（UUIDv4，~/.codex/installation_id 语义，账号级唯一身份）；
-// 会话级 session/thread/window 已退役为运行时槽状态（scheduler 槽位池按水位
+// 会话级 session/thread/window 已退役为运行时槽状态（scheduler 槽位池按完成轮数
 // 演化），不再生成、不再持久化。
 func NewCodexIdentity() domain.CodexIdentity {
 	return domain.CodexIdentity{InstallationID: newUUIDv4()}

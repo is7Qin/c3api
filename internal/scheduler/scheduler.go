@@ -45,7 +45,8 @@ var (
 type Config struct {
 	SyncInterval time.Duration
 	// RotatePolicy codex 伪装身份轮换策略（SDK 类型）：槽位池开线程与 Step 用它
-	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口口径由 SDK 内部定。
+	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口推进口径（按完成轮数、每窗口
+	// 随机 span）由 SDK 内部定。
 	RotatePolicy codexsdk.RotatePolicy
 	// StalenessProbe 是 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
@@ -120,10 +121,9 @@ func (s *Selection) CodexIdentity() (codexsdk.Session, codexsdk.CodexMeta) {
 	}
 }
 
-// AdvanceIdentity 用一次观测水位（响应的 total_tokens）推进本槽身份——**仅成功
-// 取到 usage 时调用一次**；slug = 已应用模型映射后的上游模型（sel.Model）。无槽
-// no-op。CAS 换入新状态（并发同槽推进不丢更新）。
-func (s *Selection) AdvanceIdentity(totalTokens int64) {
+// AdvanceIdentity 推进本槽一次完成轮（Step 一次 = Turns+1）——**仅成功取到
+// usage 时调用一次**；无槽 no-op。CAS 换入新状态（并发同槽推进不丢更新）。
+func (s *Selection) AdvanceIdentity() {
 	if s == nil || s.identitySlot == nil {
 		return
 	}
@@ -133,7 +133,7 @@ func (s *Selection) AdvanceIdentity(totalTokens int64) {
 		if cur == nil {
 			return
 		}
-		next := codexsdk.Step(*cur, totalTokens, s.Model, slot.policy)
+		next := codexsdk.Step(*cur, slot.policy)
 		if slot.state.CompareAndSwap(cur, &next) {
 			return
 		}

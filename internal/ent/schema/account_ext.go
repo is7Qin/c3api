@@ -15,7 +15,7 @@ import (
 // 持久身份（账号存在期间稳定）合并为 codex_identity jsonb 单列：仅
 // installation_id（UUIDv4 安装级永久，导入时 service NewCodexIdentity() 自动
 // 生成）；会话级 session/thread/window 已退役为运行时槽状态（scheduler 槽位池
-// 按水位演化），不再持久化。除 id/account_id/credential_type 外全 nullable
+// 按完成轮数演化），不再持久化。除 id/account_id/credential_type 外全 nullable
 // （用户裁决——未来其他账号类型复用表加自己的列组，零约束冲突）。
 type AccountExt struct{ ent.Schema }
 
