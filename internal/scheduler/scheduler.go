@@ -89,8 +89,12 @@ func (s *Selection) Release() {
 		return
 	}
 	if s.lease.released.CompareAndSwap(false, true) {
-		s.lease.acc.runtime.concurrency.Add(-1)
+		// 先归还槽，再减并发计数：门禁按 concurrency 放行，若先减计数则释放
+		// 窗口内可出现「K 槽全忙而 concurrency=K-1」——新预留放行后
+		// claim()==nil（兜底临时身份 + Warn，破坏「K 条稳定会话」）。归还槽
+		// 先于计数，使门禁观测到的空闲额度对应的槽已真正可用。
 		s.identitySlot.release()
+		s.lease.acc.runtime.concurrency.Add(-1)
 	}
 }
 

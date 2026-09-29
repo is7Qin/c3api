@@ -6,6 +6,7 @@ package scheduler
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
@@ -91,6 +92,47 @@ func TestReloadPublishesPoolWithView(t *testing.T) {
 	require.NotNil(t, v.static.identityPools, "池随静态根发布（非独立发布点）")
 	require.Len(t, v.static.identityPools.pools[1].slots, 4)
 	require.Same(t, v.static, s.View().static, "同一静态根")
+}
+
+// TestReleaseFreesSlotBeforeConcurrencyDecrement 释放窗口内 claim 恒成功（P0-4）：
+// 旧序（先减并发计数、后归还槽）下新预留可放行而 K 槽全忙 → claim()==nil → 兜底
+// 临时身份（不落池）。并发 Select/Release 断言任一成功预留都拿到**池内**槽。
+func TestReleaseFreesSlotBeforeConcurrencyDecrement(t *testing.T) {
+	const k = 2
+	a := codexAcc(1, domain.FormatOpenAIResponses, "m", k, "inst-1")
+	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: {a}}))
+	route := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1)})
+
+	pool := s.View().static.identityPools.pools[1]
+	require.NotNil(t, pool)
+	inPool := make(map[*identitySlot]bool, k)
+	for _, sl := range pool.slots {
+		inPool[sl] = true
+	}
+
+	var ephemeral, successes int64
+	var wg sync.WaitGroup
+	for g := 0; g < 32; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 2000; i++ {
+				sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
+				if err != nil {
+					continue // 门禁满（预期 ErrNoAvailable）
+				}
+				atomic.AddInt64(&successes, 1)
+				if sel.identitySlot == nil || !inPool[sel.identitySlot] {
+					atomic.AddInt64(&ephemeral, 1)
+				}
+				sel.Release()
+			}
+		}()
+	}
+	wg.Wait()
+	require.Positive(t, atomic.LoadInt64(&successes), "并发至少成功预留一次（否则用例空转）")
+	require.Zero(t, atomic.LoadInt64(&ephemeral), "释放窗口内 claim 不得落池外临时身份")
 }
 
 // TestIdentityPoolClaimReleaseNoCrossSlot 认领 K 槽互不相同（不串槽）、全忙
