@@ -235,11 +235,15 @@ func splitSSEFrames(body string) []string {
 	return out
 }
 
-// TestCodexResponsesSlotIdentityConcurrentDistinctThread 端到端：同账号两个
-// 请求同时**在途**（上游阻塞制造重叠）→ 上游见**不同** session/thread/window
-// （槽位池一请求一槽）。为规避预留并发的 CAS 竞争（既有保守拒绝，非本特性
-// 引入），按"先占稳 A、再发 B"制造重叠——B 预留时无并发写者，CAS 恒成功。
-func TestCodexResponsesSlotIdentityConcurrentDistinctThread(t *testing.T) {
+// TestCodexResponsesSlotIdentitySequentialAcquireDistinctThread 端到端：同账号
+// 两个在途请求重叠（上游阻塞至两槽均被占用）→ 上游见**不同**
+// session/thread/window（槽位池一请求一槽）。
+//
+// 预留**串行**申请（先占稳 A、再发 B——B 预留时 A 只持有槽位、无并发写者，
+// concurrency CAS 恒成功）：同账号真并发预留会撞 concurrency CAS 的保守拒绝
+// （既有行为，非本特性引入；消除它需产线改动，超出本测试范围）。故断言覆盖的
+// 语义是"A 持槽期间 B 必得不同槽"，**非**"并发预留竞争"。
+func TestCodexResponsesSlotIdentitySequentialAcquireDistinctThread(t *testing.T) {
 	const n = 2
 	var (
 		mu       sync.Mutex
