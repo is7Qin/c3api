@@ -235,11 +235,12 @@ func splitSSEFrames(body string) []string {
 	return out
 }
 
-// TestCodexResponsesSlotIdentityConcurrentDistinctThread 端到端：同账号并发
-// （上游阻塞至全部到齐 ⇒ 槽同时被占用）→ 上游见**不同** session/thread/window
-// （槽位池一连接一槽）。K = MaxConcurrency = 4，n=3 ≤ K。
+// TestCodexResponsesSlotIdentityConcurrentDistinctThread 端到端：同账号两个
+// 请求同时**在途**（上游阻塞制造重叠）→ 上游见**不同** session/thread/window
+// （槽位池一请求一槽）。为规避预留并发的 CAS 竞争（既有保守拒绝，非本特性
+// 引入），按"先占稳 A、再发 B"制造重叠——B 预留时无并发写者，CAS 恒成功。
 func TestCodexResponsesSlotIdentityConcurrentDistinctThread(t *testing.T) {
-	const n = 3
+	const n = 2
 	var (
 		mu       sync.Mutex
 		sessions []string
@@ -254,7 +255,7 @@ func TestCodexResponsesSlotIdentityConcurrentDistinctThread(t *testing.T) {
 		sessions = append(sessions, cm.Get("session_id").String())
 		windows = append(windows, cm.Get("x-codex-window-id").String())
 		mu.Unlock()
-		// 阻塞至所有并发请求到齐：强制 n 个槽同时被占用。
+		// 阻塞至释放：制造两请求同时占用两槽。
 		ready <- struct{}{}
 		<-release
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -278,7 +279,7 @@ func TestCodexResponsesSlotIdentityConcurrentDistinctThread(t *testing.T) {
 	defer srv.Close()
 
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	start := func() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -287,13 +288,10 @@ func TestCodexResponsesSlotIdentityConcurrentDistinctThread(t *testing.T) {
 			resp.Body.Close()
 		}()
 	}
-	for i := 0; i < n; i++ {
-		select {
-		case <-ready:
-		case <-time.After(5 * time.Second):
-			t.Fatal("上游未在期限内收到全部并发请求（槽未重叠）")
-		}
-	}
+	start()
+	waitCodexSlotReady(t, ready)
+	start()
+	waitCodexSlotReady(t, ready)
 	fire()
 	wg.Wait()
 
@@ -301,10 +299,19 @@ func TestCodexResponsesSlotIdentityConcurrentDistinctThread(t *testing.T) {
 	defer mu.Unlock()
 	require.Len(t, sessions, n)
 	require.Len(t, windows, n)
-	require.Len(t, uniqueStrings(sessions), n, "同账号并发 → 上游见不同 session/thread")
+	require.Len(t, uniqueStrings(sessions), n, "同账号重叠请求 → 上游见不同 session/thread")
 	require.Len(t, uniqueStrings(windows), n, "window 随 thread 各不相同")
 	for _, s := range sessions {
 		require.True(t, isUUIDv7(s), "槽身份为 UUIDv7：%s", s)
+	}
+}
+
+func waitCodexSlotReady(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(5 * time.Second):
+		t.Fatal("上游未在期限内收到请求（槽未占稳）")
 	}
 }
 
