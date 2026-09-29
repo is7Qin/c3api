@@ -79,7 +79,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 		return nil, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
-	sess, meta := codexSlotIdentity(sel)
+	sess, meta := sel.CodexIdentity()
 	opts := []codexsdk.Option{
 		codexsdk.WithPayloadFiltering(false), // 帧透传 1:1（白名单过滤剥合法键）
 		codexsdk.WithPingInterval(0),         // 心跳单源：编排层 30s+10s 单一所有者
@@ -182,36 +182,9 @@ func sniffCodexWSDeath(f []byte) *codexsdk.AuthPermanentlyRevokedError {
 	return codexsdk.ClassifyAuthFatalFrame(f)
 }
 
-// codexIdentityFromExt 从账号 ext 快照取**账号级稳定身份项**（installation_id）。
-// 身份三件套 session/thread/window 已退役为运行时槽状态（scheduler 槽位池按水位
-// 演化，见 codexSlotIdentity）——不再从 ext 组装；返回的 Session 恒零值（保留
-// 签名以兼容既有调用面/测试）。身份 nil/缺列 → 空值（SDK 内层 omit，不注入）。
-func codexIdentityFromExt(ext *domain.AccountExt) (sess codexsdk.Session, meta codexsdk.CodexMeta) {
-	if ext == nil || ext.CodexIdentity == nil {
-		return sess, meta
-	}
-	meta.InstallationID = ext.CodexIdentity.InstallationID
-	return sess, meta
-}
-
-// codexSlotIdentity 组装本次请求的伪装身份（注入源 = 运行时槽身份）：
-// installation_id 取账号 ext（账号级稳定项，经 codexIdentityFromExt）；session/
-// thread/window 取 Selection 认领的槽当前状态（Session() 语义：session==thread、
-// window={thread}:{n}）——同一账号的并发请求各持不同槽 ⇒ 上游见不同 thread/window。
-// 无槽（非 codex / 池缺席）→ 仅 installation（session 零值，SDK 内层 omit）。
-func codexSlotIdentity(sel *scheduler.Selection) (sess codexsdk.Session, meta codexsdk.CodexMeta) {
-	if sel == nil {
-		return sess, meta
-	}
-	_, meta = codexIdentityFromExt(sel.Ext)
-	if slotSess, ok := sel.SlotSession(); ok {
-		sess = slotSess
-		meta.SessionID = slotSess.SessionID
-		meta.ThreadID = slotSess.ThreadID
-		meta.WindowID = slotSess.WindowID
-	}
-	return sess, meta
-}
+// 伪装身份注入源：scheduler.Selection.CodexIdentity 一次给全四元组
+// （installation_id / session_id / thread_id / window_id，全部取自槽状态）——
+// proxy 不再回账号 ext 拼装，杜绝 installation 双源。
 
 // codexTransport 上游侧 *codexsdk.Client 的 wsRelayTransport 适配（codex 路
 // 径）：typ 语义与现状 relayCodexWS 同款——Send 忽略 typ 恒 text（SDK Send

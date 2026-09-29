@@ -597,7 +597,7 @@ func identityOpts(sess *codexsdk.Session, meta *codexsdk.CodexMeta) []codexsdk.O
 // identitySig 伪装身份签名（客户端重建判定——HTTPClient 构造期 opts 承载，
 // 变化必须重建才能生效；与 credSig 同约定：\x00 分隔——身份值为 UUID/URI 字
 // 符集，不含控制字符）。nil 与全空等价（均不注入 → ""）——proxy 恒传
-// codexIdentityFromExt 产物（缺列 = 全空），与测试/未配置路径（nil）同签名，
+// Selection.CodexIdentity 产物（无槽 = 全空），与测试/未配置路径（nil）同签名，
 // 不引发无谓重建。
 func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
 	if (meta == nil || *meta == (codexsdk.CodexMeta{})) &&

@@ -200,10 +200,10 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 伪装身份：注入源 = 运行时槽身份（codexSlotIdentity：session/thread/window
-	// 取 Selection 认领的槽状态，installation_id 取账号 ext）——同账号并发各持
-	// 不同槽 ⇒ 上游见多条独立会话。HTTP 面经 SDK client_metadata 注入。
-	sess, meta := codexSlotIdentity(sel)
+	// 伪装身份：注入源 = 运行时槽身份（Selection.CodexIdentity 一次给全四元组，
+	// installation_id 亦取自槽状态）——同账号并发各持不同槽 ⇒ 上游见多条独立会话。
+	// HTTP 面经 SDK client_metadata 注入。
+	sess, meta := sel.CodexIdentity()
 	resp, err := p.codex.Responses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r))
 	if err != nil {
 		if r.Context().Err() != nil {
@@ -281,7 +281,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		ttft               *int64
 	)
 	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
-	sess, meta := codexSlotIdentity(sel)
+	sess, meta := sel.CodexIdentity()
 	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r), func(raw []byte) error {
 		if !framesWritten {
 			// 首事件发头：三件套 + WriteHeader(200) 显式——SDK 载荷

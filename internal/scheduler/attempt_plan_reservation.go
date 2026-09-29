@@ -210,6 +210,6 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	// 认领槽身份（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
 	// 内**，避免后置校验异常路径泄漏槽）。仅 codex 凭据认领（claimIdentitySlot
 	// 内判定），非 codex → nil。池注册表取自本视图静态根——与门禁 limit 同源。
-	selected.identitySlot = s.claimIdentitySlot(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType, curAv.acc.Ext)
+	selected.identitySlot = s.claimIdentitySlot(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType)
 	return selected, attempt, nil
 }

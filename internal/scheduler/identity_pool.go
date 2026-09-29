@@ -96,6 +96,10 @@ func resizeIdentityPool(old *identityPool, k int, installationID string, policy 
 			if os.busy.CompareAndSwap(false, true) {
 				if cur := os.state.Load(); cur != nil {
 					st := *cur
+					// installation_id 是账号级项、与注入同源（Selection.CodexIdentity
+					// 读槽 state）：迁移沿用旧 thread/window 演化，但 installation
+					// 必须取本次生效值——否则槽状态与 ext 静默不一致（P1-3）。
+					st.InstallationID = installationID
 					slot := &identitySlot{policy: policy}
 					slot.state.Store(&st)
 					np.slots[i] = slot
@@ -162,8 +166,8 @@ func (s *Scheduler) prevIdentityPoolsLocked() *identityRegistry {
 // claimIdentitySlot 为一次**已成功预留**的 codex 调用认领槽身份：仅 codex 凭据
 // （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入槽身份）。pools 取自
 // 本次预留所用视图的静态根（与门禁 limit 同源）；全忙兜底 = 临时一次性身份
-// （不落池，计一条 warn）。
-func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, credType credential.Type, ext *domain.AccountExt) *identitySlot {
+// （不落池，计一条 warn）——installation/policy 取自池（单一来源，不再回 ext）。
+func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, credType credential.Type) *identitySlot {
 	if credType != credential.TypeCodexOAuth && credType != credential.TypeCodexPAT {
 		return nil
 	}
@@ -180,7 +184,7 @@ func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, 
 	if s.log != nil {
 		s.log.Warn("identity pool exhausted; using ephemeral identity", logx.Int64("account_id", accountID))
 	}
-	return newIdentitySlot(installationIDOf(ext), pool.policy)
+	return newIdentitySlot(pool.installationID, pool.policy)
 }
 
 // installationIDOf 取账号 ext 的安装 ID（账号级稳定项；缺列 → 空串）。

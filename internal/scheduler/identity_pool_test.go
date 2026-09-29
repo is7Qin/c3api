@@ -30,6 +30,47 @@ func newTestPool(k int, p codexsdk.RotatePolicy) *identityPool {
 	return pool
 }
 
+// TestSelectionCodexIdentityFromSlot 伪装身份四元组一次给全（Selection.
+// CodexIdentity），且 installation 取自槽 state（单一来源）——与账号 ext 无关。
+func TestSelectionCodexIdentityFromSlot(t *testing.T) {
+	slot := newIdentitySlot("slot-inst", testPolicy())
+	sel := &Selection{
+		identitySlot: slot,
+		Ext:          codexExt("ext-inst"), // 故意与槽不一致：注入必须取槽
+	}
+	sess, meta := sel.CodexIdentity()
+	st := slot.state.Load()
+	require.Equal(t, st.ThreadID, sess.SessionID)
+	require.Equal(t, st.ThreadID, sess.ThreadID)
+	require.Equal(t, st.WindowID(), sess.WindowID)
+	require.Equal(t, "slot-inst", meta.InstallationID, "installation 取槽 state，非 ext")
+	require.Equal(t, sess.SessionID, meta.SessionID)
+	require.Equal(t, sess.ThreadID, meta.ThreadID)
+	require.Equal(t, sess.WindowID, meta.WindowID)
+
+	// 无槽（非 codex / 池缺席）→ 零值（不注入）。
+	empty := &Selection{Ext: codexExt("ext-inst")}
+	s2, m2 := empty.CodexIdentity()
+	require.Zero(t, s2)
+	require.Zero(t, m2)
+	var nilSel *Selection
+	s3, m3 := nilSel.CodexIdentity()
+	require.Zero(t, s3)
+	require.Zero(t, m3)
+}
+
+// TestResizeUpdatesInstallationOnMigration resize（容量/安装 ID 变化）迁移按位次
+// 复用旧槽 thread/window，但 installation 更新为本次生效值——不再留旧值（P1-3）。
+func TestResizeUpdatesInstallationOnMigration(t *testing.T) {
+	old := newTestPool(2, testPolicy()) // installation "inst"
+	np := resizeIdentityPool(old, 2, "inst-new", testPolicy())
+	require.Len(t, np.slots, 2)
+	for i, s := range np.slots {
+		require.Equal(t, "inst-new", s.state.Load().InstallationID, "迁移槽 installation 取新值")
+		require.Equal(t, old.slots[i].state.Load().ThreadID, s.state.Load().ThreadID, "thread 沿用（身份演化不丢）")
+	}
+}
+
 func codexExt(installationID string) *domain.AccountExt {
 	return &domain.AccountExt{CodexIdentity: &domain.CodexIdentity{InstallationID: installationID}}
 }
@@ -348,18 +389,18 @@ func TestClaimIdentitySlotOnlyCodexAndFallback(t *testing.T) {
 	reg := &identityRegistry{pools: map[int64]*identityPool{7: pool}}
 
 	// 非 codex → nil
-	require.Nil(t, s.claimIdentitySlot(reg, 7, credential.TypeAPIKey, codexExt("inst")))
+	require.Nil(t, s.claimIdentitySlot(reg, 7, credential.TypeAPIKey))
 	// 无池 → nil
-	require.Nil(t, s.claimIdentitySlot(reg, 99, credential.TypeCodexOAuth, codexExt("inst")))
+	require.Nil(t, s.claimIdentitySlot(reg, 99, credential.TypeCodexOAuth))
 
 	// 认领入池槽
-	slot := s.claimIdentitySlot(reg, 7, credential.TypeCodexOAuth, codexExt("inst"))
+	slot := s.claimIdentitySlot(reg, 7, credential.TypeCodexOAuth)
 	require.NotNil(t, slot)
 	require.True(t, slot.busy.Load())
 
 	// 全忙兜底：临时身份不落池、不计 busy。
-	s.claimIdentitySlot(reg, 7, credential.TypeCodexPAT, codexExt("inst")) // 占满第二槽
-	ephem := s.claimIdentitySlot(reg, 7, credential.TypeCodexPAT, codexExt("inst"))
+	s.claimIdentitySlot(reg, 7, credential.TypeCodexPAT) // 占满第二槽
+	ephem := s.claimIdentitySlot(reg, 7, credential.TypeCodexPAT)
 	require.NotNil(t, ephem)
 	require.False(t, ephem.busy.Load(), "兜底临时身份不落池（不计 busy）")
 	for _, sl := range pool.slots {

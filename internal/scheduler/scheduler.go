@@ -98,18 +98,26 @@ func (s *Selection) Release() {
 	}
 }
 
-// SlotSession 返回本 Selection 认领的槽的当前 SDK 会话标识（无槽 → 零值 +
-// false）。伪装身份注入源：session/thread/window 由槽状态给出（installation_id
-// 仍取账号 ext——账号级稳定项，见 proxy codexSlotIdentity）。
-func (s *Selection) SlotSession() (codexsdk.Session, bool) {
+// CodexIdentity 返回本 Selection 认领的槽的**完整** codex 伪装身份（四元组一次
+// 给全，装配收回调度器侧——proxy 不再回 ext 拼装）。installation_id / session_id
+// / thread_id / window_id 全部取自槽状态：installation 是账号级稳定项、与
+// session/thread/window 同源（池构建时写入槽 state），故不再与账号 ext 各存一份。
+// 无槽（非 codex / 池缺席）→ 零值（SDK 内层 omit，不注入）。
+func (s *Selection) CodexIdentity() (codexsdk.Session, codexsdk.CodexMeta) {
 	if s == nil || s.identitySlot == nil {
-		return codexsdk.Session{}, false
+		return codexsdk.Session{}, codexsdk.CodexMeta{}
 	}
 	st := s.identitySlot.state.Load()
 	if st == nil {
-		return codexsdk.Session{}, false
+		return codexsdk.Session{}, codexsdk.CodexMeta{}
 	}
-	return st.Session(), true
+	sess := st.Session()
+	return sess, codexsdk.CodexMeta{
+		InstallationID: st.InstallationID,
+		SessionID:      sess.SessionID,
+		ThreadID:       sess.ThreadID,
+		WindowID:       sess.WindowID,
+	}
 }
 
 // AdvanceIdentity 用一次观测水位（响应的 total_tokens）推进本槽身份——**仅成功
