@@ -235,6 +235,87 @@ func splitSSEFrames(body string) []string {
 	return out
 }
 
+// TestCodexResponsesSlotIdentityConcurrentDistinctThread 端到端：同账号并发
+// （上游阻塞至全部到齐 ⇒ 槽同时被占用）→ 上游见**不同** session/thread/window
+// （槽位池一连接一槽）。K = MaxConcurrency = 4，n=3 ≤ K。
+func TestCodexResponsesSlotIdentityConcurrentDistinctThread(t *testing.T) {
+	const n = 3
+	var (
+		mu       sync.Mutex
+		sessions []string
+		windows  []string
+		ready    = make(chan struct{}, n)
+		release  = make(chan struct{})
+	)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		cm := gjson.GetBytes(b, "client_metadata")
+		mu.Lock()
+		sessions = append(sessions, cm.Get("session_id").String())
+		windows = append(windows, cm.Get("x-codex-window-id").String())
+		mu.Unlock()
+		// 阻塞至所有并发请求到齐：强制 n 个槽同时被占用。
+		ready <- struct{}{}
+		<-release
+		w.Header().Set("Content-Type", "text/event-stream")
+		f := w.(http.Flusher)
+		for _, ev := range []string{t6RespCreated, t6RespItemEv, t6RespDone} {
+			_, _ = io.WriteString(w, "data: "+ev+"\n\n")
+			f.Flush()
+		}
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		f.Flush()
+	}))
+	var releaseOnce sync.Once
+	fire := func() { releaseOnce.Do(func() { close(release) }) }
+	defer func() {
+		fire() // 释放任何仍在阻塞的 handler，避免 Close 挂起
+		up.Close()
+	}()
+	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
+		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, nil, &captureLogStore{})
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp := postResponses(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+		}()
+	}
+	for i := 0; i < n; i++ {
+		select {
+		case <-ready:
+		case <-time.After(5 * time.Second):
+			t.Fatal("上游未在期限内收到全部并发请求（槽未重叠）")
+		}
+	}
+	fire()
+	wg.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, sessions, n)
+	require.Len(t, windows, n)
+	require.Len(t, uniqueStrings(sessions), n, "同账号并发 → 上游见不同 session/thread")
+	require.Len(t, uniqueStrings(windows), n, "window 随 thread 各不相同")
+	for _, s := range sessions {
+		require.True(t, isUUIDv7(s), "槽身份为 UUIDv7：%s", s)
+	}
+}
+
+func uniqueStrings(in []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(in))
+	for _, s := range in {
+		out[s] = struct{}{}
+	}
+	return out
+}
+
 // TestCodexResponsesMockNonstreamComposite 非流式主流程（oauth + ModelMapping）：
 // SDK 合成体透传（网关侧断言）+ setModel 改写落位（wire model = 映射模型）+
 // stream:true 注入 + 合成体顶层 usage 五计数（非流式路径）+ cred 传递（Bearer
@@ -269,13 +350,16 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	}
 	require.Equal(t, "hi", gjson.GetBytes(upc.bodies[0], "input").String(), "注入不应动其余字段")
 
-	// 伪装身份注入：installation_id（account_ext 持久化——codexOAuthExt
-	// 带 installation 无 session/thread/window 列 → 缺列不注入）+ turn_id 自动
-	// UUIDv7（SDK 恒带面）。
+	// 伪装身份注入：installation_id（account_ext 账号级稳定项）+ session/thread/
+	// window（运行时槽身份——UUIDv7，session==thread、window={thread}:0）+
+	// turn_id 自动 UUIDv7（SDK 恒带面）。
 	cm := gjson.GetBytes(upc.bodies[0], "client_metadata")
-	require.Equal(t, "inst-"+strings.Repeat("0", 32), cm.Get("x-codex-installation-id").String(), "installation_id（ext 持久化）注入")
+	require.Equal(t, "inst-"+strings.Repeat("0", 32), cm.Get("x-codex-installation-id").String(), "installation_id（ext 账号级）注入")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id UUIDv7 格式（SDK 自动）")
-	require.False(t, cm.Get("session_id").Exists(), "缺列（session/thread/window）不注入")
+	sessID := cm.Get("session_id").String()
+	require.True(t, isUUIDv7(sessID), "session_id = 槽身份（UUIDv7）")
+	require.Equal(t, sessID, cm.Get("thread_id").String(), "槽内 session==thread")
+	require.Equal(t, sessID+":0", cm.Get("x-codex-window-id").String(), "window={thread}:{n}")
 
 	// usage 断言（非流式：合成体 Raw 顶层解析）
 	require.NoError(t, p.rec.Close(context.Background()))

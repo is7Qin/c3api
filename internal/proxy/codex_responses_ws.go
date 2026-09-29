@@ -79,7 +79,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 		return nil, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
-	sess, meta := codexIdentityFromExt(sel.Ext)
+	sess, meta := codexSlotIdentity(sel)
 	opts := []codexsdk.Option{
 		codexsdk.WithPayloadFiltering(false), // 帧透传 1:1（白名单过滤剥合法键）
 		codexsdk.WithPingInterval(0),         // 心跳单源：编排层 30s+10s 单一所有者
@@ -182,31 +182,33 @@ func sniffCodexWSDeath(f []byte) *codexsdk.AuthPermanentlyRevokedError {
 	return codexsdk.ClassifyAuthFatalFrame(f)
 }
 
-// codexIdentityFromExt 从账号 ext 快照组装伪装四元组（数据层持久化——账号
-// 存在期间稳定：InstallationID 账号级永久 / SessionID==ThreadID 会话级 /
-// WindowID={thread}:0）。返回 SDK Session（握手头 + 帧内 metadata 双注入）与
-// CodexMeta（帧内 x-codex-installation-id 等；优先级 CodexMeta > WithSession，
-// 双选项同值无冲突）。身份 nil/缺列（codex_identity jsonb 可空——未配置/
-// 旧数据异常）→ 空值（SDK 内层 omit，不注入；sdkbridge identitySig 既有
-// 空身份兜底——零新增语义）；Session.ClientRequestID 留空——SDK 缺省回退
-// ThreadID（client.go:349-355）。
+// codexIdentityFromExt 从账号 ext 快照取**账号级稳定身份项**（installation_id）。
+// 身份三件套 session/thread/window 已退役为运行时槽状态（scheduler 槽位池按水位
+// 演化，见 codexSlotIdentity）——不再从 ext 组装；返回的 Session 恒零值（保留
+// 签名以兼容既有调用面/测试）。身份 nil/缺列 → 空值（SDK 内层 omit，不注入）。
 func codexIdentityFromExt(ext *domain.AccountExt) (sess codexsdk.Session, meta codexsdk.CodexMeta) {
 	if ext == nil || ext.CodexIdentity == nil {
 		return sess, meta
 	}
-	id := ext.CodexIdentity
-	meta.InstallationID = id.InstallationID
-	if id.SessionID != "" {
-		sess.SessionID = id.SessionID
-		meta.SessionID = id.SessionID
+	meta.InstallationID = ext.CodexIdentity.InstallationID
+	return sess, meta
+}
+
+// codexSlotIdentity 组装本次请求的伪装身份（注入源 = 运行时槽身份）：
+// installation_id 取账号 ext（账号级稳定项，经 codexIdentityFromExt）；session/
+// thread/window 取 Selection 认领的槽当前状态（Session() 语义：session==thread、
+// window={thread}:{n}）——同一账号的并发请求各持不同槽 ⇒ 上游见不同 thread/window。
+// 无槽（非 codex / 池缺席）→ 仅 installation（session 零值，SDK 内层 omit）。
+func codexSlotIdentity(sel *scheduler.Selection) (sess codexsdk.Session, meta codexsdk.CodexMeta) {
+	if sel == nil {
+		return sess, meta
 	}
-	if id.ThreadID != "" {
-		sess.ThreadID = id.ThreadID
-		meta.ThreadID = id.ThreadID
-	}
-	if id.WindowID != "" {
-		sess.WindowID = id.WindowID
-		meta.WindowID = id.WindowID
+	_, meta = codexIdentityFromExt(sel.Ext)
+	if slotSess, ok := sel.SlotSession(); ok {
+		sess = slotSess
+		meta.SessionID = slotSess.SessionID
+		meta.ThreadID = slotSess.ThreadID
+		meta.WindowID = slotSess.WindowID
 	}
 	return sess, meta
 }

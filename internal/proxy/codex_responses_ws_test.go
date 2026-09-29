@@ -382,9 +382,10 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	// 握手面断言（伪装头）：两次升级（401 首拨 + 轮转后重拨），账号鉴权
-	// 注入（首拨旧 at / 重拨新 at——轮转生效）；网关 key 不泄漏；伪装四元组头
-	// = ext 身份（客户端 rogue 头被剔除）；OpenAI-Beta = 网关默认（rogue 被剔
-	// 除）；客户端自定义头（如 X-Client-Version）自 spec §12 起一律不递。
+	// 注入（首拨旧 at / 重拨新 at——轮转生效）；网关 key 不泄漏；伪装身份
+	// session/thread/window = 运行时槽身份（UUIDv7；客户端 rogue 头被剔除）；
+	// OpenAI-Beta = 网关默认（rogue 被剔除）；客户端自定义头（如
+	// X-Client-Version）自 spec §12 起一律不递。
 	hooks.mu.Lock()
 	defer hooks.mu.Unlock()
 	require.Equal(t, 2, hooks.upgrades, "401 轮转：首拨 + 重拨一次")
@@ -392,22 +393,23 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, "Bearer at-new", hooks.headers[1].Get("Authorization"), "轮转后新 at")
 	h := hooks.headers[1]
 	ext := codexWSExt(10, "", "")
-	require.Equal(t, ext.CodexIdentity.SessionID, h.Get("Session-Id"), "session-id = 账号 ext 身份（rogue 已剔除）")
-	require.Equal(t, ext.CodexIdentity.ThreadID, h.Get("Thread-Id"), "thread-id = 账号 ext 身份")
-	require.Equal(t, ext.CodexIdentity.ThreadID, h.Get("X-Client-Request-Id"), "x-client-request-id 缺省 = thread-id")
-	require.Equal(t, ext.CodexIdentity.WindowID, h.Get("X-Codex-Window-Id"), "window-id = {thread}:0")
+	require.True(t, isUUIDv7(h.Get("Session-Id")), "session-id = 槽身份（UUIDv7；rogue 已剔除）")
+	require.Equal(t, h.Get("Session-Id"), h.Get("Thread-Id"), "槽内 session==thread")
+	require.Equal(t, h.Get("Thread-Id"), h.Get("X-Client-Request-Id"), "x-client-request-id 缺省 = thread-id")
+	require.Equal(t, h.Get("Thread-Id")+":0", h.Get("X-Codex-Window-Id"), "window-id = {thread}:0")
 	require.Equal(t, "responses_websockets="+aiclient.ResponsesWSBetaHeader, h.Get("OpenAI-Beta"), "网关默认 beta（rogue 已剔除）")
 	// spec §12：codex 面只发 SDK 自己写的头 ⇒ 客户端 X-Client-Version 不再透传
 	//（旧断言是「非冲突面客户端头透传」，属旧契约）。
 	require.Empty(t, h.Get("X-Client-Version"), "codex 面不得递客户端头（spec §12）")
 	require.NotEqual(t, "Bearer ck-1", h.Get("Authorization"), "网关 key 不得直通上游")
 
-	// 帧内 client_metadata 注入（伪装四元组帧级面——真实 codex 客户端语义）
+	// 帧内 client_metadata 注入（伪装身份帧级面——真实 codex 客户端语义）：
+	// installation_id 取账号 ext；session/thread/window 取运行时槽身份。
 	f0 := hooks.frames[0]
 	require.Contains(t, f0, `"x-codex-installation-id":"`+ext.CodexIdentity.InstallationID+`"`)
-	require.Contains(t, f0, `"session_id":"`+ext.CodexIdentity.SessionID+`"`)
-	require.Contains(t, f0, `"thread_id":"`+ext.CodexIdentity.ThreadID+`"`)
-	require.Contains(t, f0, `"x-codex-window-id":"`+ext.CodexIdentity.WindowID+`"`)
+	require.True(t, isUUIDv7(gjson.Get(f0, "client_metadata.session_id").String()), "帧内 session_id = 槽身份")
+	require.Equal(t, gjson.Get(f0, "client_metadata.session_id").String(), gjson.Get(f0, "client_metadata.thread_id").String(), "帧内 session==thread")
+	require.Equal(t, gjson.Get(f0, "client_metadata.thread_id").String()+":0", gjson.Get(f0, "client_metadata.x-codex-window-id").String(), "帧内 window={thread}:0")
 
 	// usage 记录：5 计数 + 成功路径（与 aiclient 路径逐字节同口径）
 	require.NoError(t, p.rec.Close(context.Background()))
@@ -1046,19 +1048,14 @@ func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
 	require.NotContains(t, got.Get("OpenAI-Beta"), "1999-01-01", "客户端 beta 值不得顶掉 SDK 的")
 }
 
-// TestCodexIdentityFromExt 伪装四元组组装：ext 身份 → Session/CodexMeta 映射
-// （session==thread / window={thread}:0 / installation 帧级）；缺列 → 空值。
+// TestCodexIdentityFromExt 退役后行为：ext 只提供 installation_id（账号级
+// 稳定项）；session/thread/window 不再从 ext 组装（改由运行时槽身份给出，
+// 见 codexSlotIdentity）。缺列 → 空值。
 func TestCodexIdentityFromExt(t *testing.T) {
 	ext := codexWSExt(10, "", "")
 	sess, meta := codexIdentityFromExt(ext)
-	require.Equal(t, ext.CodexIdentity.SessionID, sess.SessionID)
-	require.Equal(t, ext.CodexIdentity.ThreadID, sess.ThreadID)
-	require.Equal(t, ext.CodexIdentity.WindowID, sess.WindowID)
-	require.Empty(t, sess.ClientRequestID, "SDK 缺省回退 thread-id")
+	require.Zero(t, sess, "session/thread/window 已退役为槽状态——ext 不再组装")
 	require.Equal(t, ext.CodexIdentity.InstallationID, meta.InstallationID)
-	require.Equal(t, ext.CodexIdentity.SessionID, meta.SessionID)
-	require.Equal(t, ext.CodexIdentity.ThreadID, meta.ThreadID)
-	require.Equal(t, ext.CodexIdentity.WindowID, meta.WindowID)
 
 	emptySess, emptyMeta := codexIdentityFromExt(nil)
 	require.Zero(t, emptySess)
@@ -1066,12 +1063,11 @@ func TestCodexIdentityFromExt(t *testing.T) {
 	// nil 身份（codex_identity jsonb 可空——未配置/异常）→ 空组装不 panic
 	noIdentity := &domain.AccountExt{AccountID: 10, CredentialType: credential.TypeCodexOAuth}
 	nSess, nMeta := codexIdentityFromExt(noIdentity)
-	require.Zero(t, nSess, "nil 身份 → 空 Session（identitySig 既有兜底，零新增语义）")
+	require.Zero(t, nSess, "nil 身份 → 空 Session")
 	require.Zero(t, nMeta, "nil 身份 → 空 CodexMeta")
 	// 缺列（旧数据）→ 空值不注入
 	partial := &domain.AccountExt{AccountID: 10, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}}
 	s2, m2 := codexIdentityFromExt(partial)
-	require.Empty(t, s2.SessionID)
-	require.Empty(t, m2.ThreadID)
+	require.Zero(t, s2)
 	require.Equal(t, "inst-1", m2.InstallationID)
 }

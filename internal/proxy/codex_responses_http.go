@@ -200,10 +200,10 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 伪装身份（spec 2026-08-15）：复用 WS 路径 codexIdentityFromExt
-	//（account_ext 四元组 + installation——账号存在期间稳定）；HTTP 面经 SDK
-	// client_metadata 注入（键集对齐真实 codex；未配置仍恒带 turn_id）。
-	sess, meta := codexIdentityFromExt(sel.Ext)
+	// 伪装身份：注入源 = 运行时槽身份（codexSlotIdentity：session/thread/window
+	// 取 Selection 认领的槽状态，installation_id 取账号 ext）——同账号并发各持
+	// 不同槽 ⇒ 上游见多条独立会话。HTTP 面经 SDK client_metadata 注入。
+	sess, meta := codexSlotIdentity(sel)
 	resp, err := p.codex.Responses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r))
 	if err != nil {
 		if r.Context().Err() != nil {
@@ -227,6 +227,8 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	var it, ot, tt, cr, cc int64
 	if t, ok := responsesBodyUsage(resp.Raw); ok {
 		it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
+		// 水位推进：成功取到 usage 时 Step 一次（slug = 已映射模型）。
+		sel.AdvanceIdentity(tt)
 	}
 	var img int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 	if respImageDetectOn(sel) {
@@ -279,7 +281,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		ttft               *int64
 	)
 	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
-	sess, meta := codexIdentityFromExt(sel.Ext)
+	sess, meta := codexSlotIdentity(sel)
 	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r), func(raw []byte) error {
 		if !framesWritten {
 			// 首事件发头：三件套 + WriteHeader(200) 显式——SDK 载荷
@@ -298,6 +300,8 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 				if respImageDetectOn(sel) {
 					img = respImageCountCompleted(raw)
 				}
+				// 水位推进：成功取到 usage 时 Step 一次（slug = 已映射模型）。
+				sel.AdvanceIdentity(tt)
 				usageTaken = true
 			}
 		}
