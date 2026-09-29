@@ -115,9 +115,9 @@ func TestResponsesWSBillingPG(t *testing.T) {
 		FROM usage_logs WHERE format = 'openai-responses-ws' ORDER BY id DESC LIMIT 1`).
 		Scan(&it, &ot, &tt, &cr, &cc, &cost, &format, &et, &model, &billed)
 	require.NoError(t, err, "usage_logs 必须有 resp-ws 计费行")
-	require.Equal(t, int64(2), it, "input_tokens（可计费输入 = 3 − cached 1，spec 2026-08-25 归一）")
+	require.Equal(t, int64(2), it, "input_tokens（可计费输入 = 6 − cached 1 − cache_write 3，P0-2 归一）")
 	require.Equal(t, int64(5), ot, "output_tokens")
-	require.Equal(t, int64(8), tt, "total_tokens")
+	require.Equal(t, int64(11), tt, "total_tokens（gross input 6 + output 5）")
 	require.Equal(t, int64(1), cr, "cache_read_tokens")
 	require.Equal(t, int64(3), cc, "cache_write_tokens")
 	require.Equal(t, int64(120), cost, "it'=2：2×1e7+5×2e7 每 M 毫分 = 120")
