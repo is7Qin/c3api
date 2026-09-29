@@ -240,14 +240,53 @@ func TestAdvanceIdentityTurnDrive(t *testing.T) {
 	rslot := newIdentitySlot("inst", retire)
 	rsel := &Selection{identitySlot: rslot}
 	oldThread := rslot.state.Load().ThreadID
-	for i := 0; i < 47; i++ {
+	retiredAt := 0
+	for i := 1; i <= 96; i++ {
 		rsel.AdvanceIdentity()
+		if rslot.state.Load().ThreadID != oldThread {
+			retiredAt = i
+			require.Equal(t, uint64(0), rslot.state.Load().Turns, "退休当步 Turns 归 0")
+			require.Equal(t, uint64(0), rslot.state.Load().WindowN, "退休当步 WindowN 归 0")
+			break
+		}
 	}
-	require.Equal(t, oldThread, rslot.state.Load().ThreadID, "48 轮前不应退休（span≥48）")
-	for i := 0; i < 49; i++ {
-		rsel.AdvanceIdentity()
+	require.GreaterOrEqual(t, retiredAt, 48, "48 轮前不应退休（span≥48）")
+	require.LessOrEqual(t, retiredAt, 96, "96 轮内必退休（span≤96）")
+}
+
+// TestAdvanceIdentityOrderInvariant 推进只由「调用次数」驱动（Step 无 token 参量），
+// 与「谁在发/到达顺序」无关：同一起点状态，顺序推进 K 次 vs 三用户交替推进 K 次，
+// 终态（Turns/WindowN/ThreadID）一致。
+func TestAdvanceIdentityOrderInvariant(t *testing.T) {
+	pol := codexsdk.RotatePolicy{WMaxLo: 5, WMaxHi: 5} // 固定 WMax=5，退休点可界定
+	base := newIdentitySlot("inst", pol)
+	init := *base.state.Load()
+
+	seq := &identitySlot{policy: pol}
+	initSeq := init
+	seq.state.Store(&initSeq)
+	inter := &identitySlot{policy: pol}
+	initInter := init
+	inter.state.Store(&initInter)
+
+	const k = 30
+	const users = 3
+	require.Zero(t, k%users, "k 需为 users 整数倍，保证两路总调用次数相同")
+
+	seqSel := &Selection{identitySlot: seq}
+	for i := 0; i < k; i++ {
+		seqSel.AdvanceIdentity()
 	}
-	require.NotEqual(t, oldThread, rslot.state.Load().ThreadID, "96 轮内必退休（span≤96）")
+	interSel := &Selection{identitySlot: inter}
+	for r := 0; r < k/users; r++ {
+		for u := 0; u < users; u++ {
+			interSel.AdvanceIdentity()
+		}
+	}
+
+	require.Equal(t, seq.state.Load().Turns, inter.state.Load().Turns, "Turns 轨迹一致")
+	require.Equal(t, seq.state.Load().WindowN, inter.state.Load().WindowN, "WindowN 轨迹一致")
+	require.Equal(t, seq.state.Load().ThreadID, inter.state.Load().ThreadID, "退休点一致")
 }
 
 // TestIdentityPoolResizeMigratesMin 容量变化按位次迁移旧槽身份至 min(old,new)；
