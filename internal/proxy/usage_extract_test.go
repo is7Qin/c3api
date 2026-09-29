@@ -278,7 +278,7 @@ func sniffResponsesCompletedUsageRef(data []byte) (usageTuple, bool) {
 // （TestScanIntValuePathologicalDivergence）。
 func TestUsageExtractEquivalence(t *testing.T) {
 	chatFrames := []string{
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":6}}}`,
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":4}}}`,
 		`{"id":"x","choices":[],"usage":{}}`,   // 空对象仍存在
 		`{"id":"x","choices":[]}`,              // usage 缺失
 		`{"id":"x","choices":[],"usage":null}`, // 显式 null
@@ -400,7 +400,7 @@ func TestScanIntValuePathologicalDivergence(t *testing.T) {
 // GetBytes 物化 Raw 字符串分配；scanKeyValue 族纯切片零分配）：A 项全部函数
 // 命中/未命中路径均钉 AllocsPerRun == 0。
 func TestUsageExtractZeroAlloc(t *testing.T) {
-	chat := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":6}}}`)
+	chat := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":4}}}`)
 	anthropic := []byte(`{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":7,"cache_creation_input_tokens":3}}}`)
 	delta := []byte(`{"type":"message_delta","usage":{"output_tokens":20}}`)
 	completed := []byte(`{"type":"response.completed","response":{"id":"r","model":"m","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5}},"output":[]}}`)
