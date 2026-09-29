@@ -103,9 +103,10 @@ func mapOrEmpty(v any) map[string]any {
 	return map[string]any{}
 }
 
-// respUsageToMess resp usage → anthropic usage（cached_tokens →
-// cache_read_input_tokens，cache_write_tokens → cache_creation_input_tokens；
-// anthropic 响应四字段全含）。
+// respUsageToMess resp usage → anthropic usage。resp 侧 input_tokens 是 gross
+// （含缓存，口径见 protoconv.go 顶部）；anthropic 侧 input_tokens 是 net：
+// input_tokens = it − cache_read − cache_write，cache_read 取 cached_tokens、
+// cache_creation 取 cache_write_tokens（anthropic 响应四字段全含）。
 func respUsageToMess(r map[string]any) map[string]any {
 	it, ot := int64(0), int64(0)
 	cached, write := int64(0), int64(0)
@@ -118,7 +119,7 @@ func respUsageToMess(r map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"input_tokens":                it,
+		"input_tokens":                respInputNet(it, cached, write),
 		"output_tokens":               ot,
 		"cache_creation_input_tokens": write,
 		"cache_read_input_tokens":     cached,

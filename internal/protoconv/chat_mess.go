@@ -93,9 +93,9 @@ func messToChatFinishReason(msg map[string]any) string {
 	return messStopToChatFinish(reason)
 }
 
-// messUsageToChat anthropic usage → chat usage。prompt_tokens 含
-// cache_creation 与 cache_read（这两项在 Messages 的 input_tokens 之外）；
-// cached_tokens 只取 cache_read。
+// messUsageToChat anthropic usage → chat usage。anthropic input_tokens 是 net，
+// chat prompt_tokens 为 gross（口径见 protoconv.go 顶部）：prompt = input +
+// cache_creation + cache_read；cached_tokens 只取 cache_read。
 func messUsageToChat(msg map[string]any) (map[string]any, bool) {
 	u, ok := msg["usage"].(map[string]any)
 	if !ok || u == nil {
@@ -105,7 +105,7 @@ func messUsageToChat(msg map[string]any) (map[string]any, bool) {
 	ot := intOr0(u, "output_tokens")
 	cr := intOr0(u, "cache_read_input_tokens")
 	cc := intOr0(u, "cache_creation_input_tokens")
-	prompt := it + cr + cc
+	prompt := respInputGross(it, cr, cc)
 	out := map[string]any{
 		"prompt_tokens":     prompt,
 		"completion_tokens": ot,

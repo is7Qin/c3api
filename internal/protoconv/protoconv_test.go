@@ -325,7 +325,7 @@ func TestConvertResponseRespToMess(t *testing.T) {
 	require.Equal(t, "tool_use", tu["type"])
 	require.Equal(t, map[string]any{"city": "x"}, tu["input"], "arguments JSON 字符串 → input 对象")
 	u := m["usage"].(map[string]any)
-	require.Equal(t, float64(10), u["input_tokens"])
+	require.Equal(t, float64(7), u["input_tokens"], "anthropic 净额 = resp gross input 10 − cached 3（口径见 protoconv.go 顶部）")
 	require.Equal(t, float64(5), u["output_tokens"])
 	require.Equal(t, float64(3), u["cache_read_input_tokens"], "cached_tokens → cache_read_input_tokens")
 }
@@ -1086,9 +1086,34 @@ func TestAPIAlignUsage(t *testing.T) {
 	messOut, err := ConvertResponse(fromResp, domain.ProtocolConvertMessToResp)
 	require.NoError(t, err)
 	mu := obj(t, messOut)["usage"].(map[string]any)
-	require.Equal(t, float64(10), mu["input_tokens"], "不减 cached_tokens")
+	require.Equal(t, float64(3), mu["input_tokens"], "anthropic 净额 = resp gross input 10 − cached 3 − cache_write 4（P0-1 修复）")
 	require.Equal(t, float64(3), mu["cache_read_input_tokens"])
 	require.Equal(t, float64(4), mu["cache_creation_input_tokens"], "cache_write_tokens → cache_creation_input_tokens")
+}
+
+// TestAPIAlignUsageRespMessRoundTrip 口径守恒/幂等（P0-1 回归）：resp(gross) →
+// mess(net) → resp(gross) 的 input_tokens 必须还原（10 → 3 → 10），不得膨胀。
+func TestAPIAlignUsageRespMessRoundTrip(t *testing.T) {
+	resp := []byte(`{"id":"rsp_1","status":"completed","model":"m","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"x"}]}],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}}}`)
+
+	mess, err := ConvertResponse(resp, domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	mu := obj(t, mess)["usage"].(map[string]any)
+	require.Equal(t, float64(3), mu["input_tokens"], "resp→mess：net = gross 10 − cache_read 3 − cache_write 4")
+	require.Equal(t, float64(3), mu["cache_read_input_tokens"])
+	require.Equal(t, float64(4), mu["cache_creation_input_tokens"])
+
+	back, err := ConvertResponse(mess, domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	ru := obj(t, back)["usage"].(map[string]any)
+	require.Equal(t, float64(10), ru["input_tokens"], "mess→resp：gross 重建守恒（3 + 3 + 4）")
+	require.Equal(t, float64(5), ru["output_tokens"])
+	require.Equal(t, float64(3), ru["input_tokens_details"].(map[string]any)["cached_tokens"])
+	require.Equal(t, float64(4), ru["input_tokens_details"].(map[string]any)["cache_write_tokens"])
+
+	mess2, err := ConvertResponse(back, domain.ProtocolConvertMessToResp)
+	require.NoError(t, err)
+	require.Equal(t, mu, obj(t, mess2)["usage"].(map[string]any), "往返幂等（usage 不再膨胀）")
 }
 
 func TestAPIAlignRespMessStreamIndex(t *testing.T) {
@@ -1116,7 +1141,7 @@ func TestAPIAlignMessDeltaUsage(t *testing.T) {
 		"response.completed", `{"type":"response.completed","response":{"id":"rsp_1","status":"completed","model":"m","output":[],"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3,"cache_write_tokens":4}}}}`,
 	)
 	require.Contains(t, out, `"input_tokens":0`, "message_start 仍是 0")
-	require.Contains(t, out, `"usage":{"cache_creation_input_tokens":4,"cache_read_input_tokens":3,"input_tokens":10,"output_tokens":5}`, "cache_write_tokens → cache_creation_input_tokens")
+	require.Contains(t, out, `"usage":{"cache_creation_input_tokens":4,"cache_read_input_tokens":3,"input_tokens":3,"output_tokens":5}`, "anthropic 净额 = gross 10 − cached 3 − cache_write 4；cache_write_tokens → cache_creation_input_tokens（P0-1）")
 }
 
 // TestCacheWriteMappingRespToChat resp → chat 缓存写入映射（input_tokens_details.

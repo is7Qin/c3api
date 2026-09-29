@@ -85,14 +85,16 @@ func messContentToRespOutput(msg map[string]any) ([]any, int64, int64) {
 	}
 	it, ot := int64(0), int64(0)
 	if u, ok := msg["usage"].(map[string]any); ok {
-		it = intOr0(u, "input_tokens") + intOr0(u, "cache_creation_input_tokens") + intOr0(u, "cache_read_input_tokens")
+		it = respInputGross(intOr0(u, "input_tokens"), intOr0(u, "cache_read_input_tokens"), intOr0(u, "cache_creation_input_tokens"))
 		ot = intOr0(u, "output_tokens")
 	}
 	return output, it, ot
 }
 
-// messUsageToResp anthropic usage → resp usage。input_tokens 含 cache_creation
-// 与 cache_read；cached_tokens 取 cache_read，cache_write_tokens 取 cache_creation。
+// messUsageToResp anthropic usage → resp usage。anthropic input_tokens 是 net，
+// resp 侧 input_tokens 恒为 gross（口径见 protoconv.go 顶部）：it 由
+// messContentToRespOutput 按 input + cache_creation + cache_read 重建；
+// cached_tokens 取 cache_read，cache_write_tokens 取 cache_creation。
 func messUsageToResp(msg map[string]any, it, ot int64) map[string]any {
 	cached, write := int64(0), int64(0)
 	if u, ok := msg["usage"].(map[string]any); ok {
