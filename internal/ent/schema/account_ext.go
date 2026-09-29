@@ -12,12 +12,11 @@ import (
 // AccountExt 账号类型化鉴权扩展（1:1 边缘表；credential_type ∈
 // {codex-oauth, codex-pat}——账号只两种 codex 类型）。列组按类型约束由
 // service 校验：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key。
-// 身份四元组（对齐真实 codex 客户端语义，导入时 service NewCodexIdentity()
-// 自动生成并持久化、账号存在期间稳定）合并为 codex_identity jsonb 单列：
-// installation_id 必存（UUIDv4 安装级永久）；session_id/thread_id UUIDv7
-// 会话级（主线程 thread_id==session_id）；window_id = {thread_id}:0（导入时
-// 生成后恒定不变——零递增零状态）。除 id/account_id/credential_type 外全
-// nullable（用户裁决——未来其他账号类型复用表加自己的列组，零约束冲突）。
+// 持久身份（账号存在期间稳定）合并为 codex_identity jsonb 单列：仅
+// installation_id（UUIDv4 安装级永久，导入时 service NewCodexIdentity() 自动
+// 生成）；会话级 session/thread/window 已退役为运行时槽状态（scheduler 槽位池
+// 按水位演化），不再持久化。除 id/account_id/credential_type 外全 nullable
+// （用户裁决——未来其他账号类型复用表加自己的列组，零约束冲突）。
 type AccountExt struct{ ent.Schema }
 
 func (AccountExt) Fields() []ent.Field {
@@ -25,7 +24,7 @@ func (AccountExt) Fields() []ent.Field {
 		field.Int64("id"),
 		field.Int64("account_id"),
 		field.String("credential_type"),
-		// —— 身份四元组（jsonb 单列；导入时 service NewCodexIdentity() 自动
+		// —— 持久身份（jsonb 单列；导入时 service NewCodexIdentity() 自动
 		// 生成、账号存在期间稳定；nil = 未配置/旧数据异常）——
 		field.JSON("codex_identity", &domain.CodexIdentity{}).Optional(),
 		// —— 凭据列组（按 credential_type 约束：oauth 只允许 codex_oauth_*；pat 只允许 codex_pat_key）——
@@ -36,7 +35,7 @@ func (AccountExt) Fields() []ent.Field {
 		field.String("codex_pat_key").Optional().Nillable(),
 		// —— 管理标识 ——
 		// codex 账号登录邮箱（管理面标识；导入时由人工/上游提供，非自动生成——
-		// NewCodexIdentity 不生成 codex_email，只生成身份四元组；可空）
+		// NewCodexIdentity 不生成 codex_email，只生成 installation_id；可空）
 		field.String("codex_email").Optional().Nillable(),
 		// 上游账号/空间标识（可留空——导入/保存时自动识别：OAuth claims / PAT
 		// whoami；组合唯一见 Indexes——NULL 不参与唯一）

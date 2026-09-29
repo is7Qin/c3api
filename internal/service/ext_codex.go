@@ -9,8 +9,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"strings"
-	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
@@ -18,24 +16,16 @@ import (
 )
 
 // —— 账号类型化鉴权扩展（account_ext 1:1；codex 专用——账号只两种 codex 类型，
-// codex 列组：身份四元组（codex_identity jsonb 单列）+ codex_oauth_* 组 +
-// codex_pat_key 组。数据层 CRUD + 契约） ——
+// codex 列组：持久身份（codex_identity jsonb 单列——仅 installation_id）+
+// codex_oauth_* 组 + codex_pat_key 组。数据层 CRUD + 契约） ——
 
-// NewCodexIdentity 生成 codex 账号身份四元组（账号导入时自动生成、持久复用；
-// 纯函数零依赖——标准库 crypto/rand + time 构造 UUID 形状）：
-//   - installation_id：UUIDv4（~/.codex/installation_id 语义，账号级唯一身份）；
-//   - session_id / thread_id：UUIDv7（真实客户端主线程 thread_id==session_id，
-//     同值对齐；UUIDv7 = 48bit unix ms + 版本位 + 随机位，时间有序近似）；
-//   - window_id：{thread_id}:0（导入时生成后恒定不变——恒 0，用户裁决：高性能
-//     网关不背透传解析（零分支零解析），上游不校验 n 单调性，形状正确即可）。
+// NewCodexIdentity 生成 codex 账号持久身份（账号导入时自动生成、持久复用；
+// 纯函数零依赖——标准库 crypto/rand 构造 UUIDv4 形状）。持久身份现只含安装级
+// installation_id（UUIDv4，~/.codex/installation_id 语义，账号级唯一身份）；
+// 会话级 session/thread/window 已退役为运行时槽状态（scheduler 槽位池按水位
+// 演化），不再生成、不再持久化。
 func NewCodexIdentity() domain.CodexIdentity {
-	session := newUUIDv7(time.Now())
-	return domain.CodexIdentity{
-		InstallationID: newUUIDv4(),
-		SessionID:      session,
-		ThreadID:       session, // 主线程 thread_id == session_id（真实客户端语义）
-		WindowID:       session + ":0",
-	}
+	return domain.CodexIdentity{InstallationID: newUUIDv4()}
 }
 
 // newUUIDv4 生成 UUIDv4 字符串（16 随机字节，版本 4 + 变体 10 位）。
@@ -45,25 +35,6 @@ func newUUIDv4() string {
 		panic(fmt.Sprintf("uuidv4: crypto/rand unavailable: %v", err)) // 永不发生（OS 熵源）
 	}
 	b[6] = (b[6] & 0x0f) | 0x40 // version 4
-	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
-	return formatUUID(b)
-}
-
-// newUUIDv7 生成 UUIDv7 字符串（时间有序：48bit unix ms + 版本 7 + 随机位 +
-// 变体 10 位——真实客户端会话身份语义近似）。
-func newUUIDv7(t time.Time) string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		panic(fmt.Sprintf("uuidv7: crypto/rand unavailable: %v", err))
-	}
-	ms := uint64(t.UnixMilli())
-	b[0] = byte(ms >> 40)
-	b[1] = byte(ms >> 32)
-	b[2] = byte(ms >> 24)
-	b[3] = byte(ms >> 16)
-	b[4] = byte(ms >> 8)
-	b[5] = byte(ms)
-	b[6] = (b[6] & 0x0f) | 0x70 // version 7
 	b[8] = (b[8] & 0x3f) | 0x80 // variant 10
 	return formatUUID(b)
 }
@@ -88,14 +59,14 @@ func formatUUID(b []byte) string {
 }
 
 // validateAccountExt 校验账号 ext 行：credential_type ∈ {codex-oauth, codex-pat}
-// （类型白名单）；installation_id 必存（账号级唯一身份，service 自动生成兜底）；
-// oauth 只允许 codex_oauth_* 列组 + 最小完整性（至少 codex_oauth_token，
+// （类型白名单）；installation_id 必存（账号级唯一持久身份，service 自动生成
+// 兜底）；oauth 只允许 codex_oauth_* 列组 + 最小完整性（至少 codex_oauth_token，
 // refresh/expires 可空——refresh 未过期场景可缺）；pat 只允许 codex_pat_key。
-// 身份四元组由 service 维护（导入时生成、持久复用），不参与列组约束。
+// 身份由 service 维护（导入时生成、持久复用），不参与列组约束。
 //
 // 身份缺失（nil CodexIdentity / installation 空）→ 400（正确行为——loud）：
 // 应用写路径恒带完整身份（自动生成/沿用），NULL 身份行仅手工 SQL 可达
-// （损坏行）；拒绝而非静默写残缺身份——防止消费面组装残缺伪装四元组。
+// （损坏行）；拒绝而非静默写残缺身份——防止消费面组装残缺伪装身份。
 func validateAccountExt(e *domain.AccountExt) error {
 	if e.AccountID <= 0 {
 		return ErrInvalidInput
@@ -137,61 +108,15 @@ func (s *Service) GetAccountExt(ctx context.Context, accountID int64) (*domain.A
 	return e, nil
 }
 
-// normalizeCodexIdentity 身份恒等式归一（导入期；非运行时透传解析）：
-//   - thread==session：只给其一 → 自动补齐恒等；成对显式冲突 → ErrInvalidInput；
-//   - window 恒 {thread}:0（零透传）：只给 window → 剥尾段反推 thread；
-//     显式 window ≠ {thread}:0 → ErrInvalidInput（window 永不落库为其它值）。
-//   - 存量行（cur 非 nil）上只给 window：反推 ≠ 存量 thread → ErrInvalidInput
-//     （方向 2——派生值不得冒充显式值改身份：window-only 只允许与存量
-//     一致的无操作轮换；无存量行才允许自由反推）。
-//
-// 空字段 = 未提供（codex_identity jsonb 契约：空串与缺省同形——identity 无
-// 清空路径，账号存在期间稳定）——由调用方沿用存量/自动生成后兜底派生 window。
-func normalizeCodexIdentity(e *domain.AccountExt, cur *domain.AccountExt) error {
-	if e.CodexIdentity == nil {
-		return nil // 全缺省：调用方自动生成/沿用
-	}
-	id := e.CodexIdentity
-	// window 只给 → 反推 thread（{thread}:{n} 形状，剥最后 :段）
-	if id.WindowID != "" && id.ThreadID == "" {
-		w := id.WindowID
-		i := strings.LastIndexByte(w, ':')
-		if i <= 0 {
-			return ErrInvalidInput // 形状非法：必须 {thread}:{n}
-		}
-		t := w[:i]
-		if cur != nil && cur.CodexIdentity != nil && t != cur.CodexIdentity.ThreadID {
-			return ErrInvalidInput // 存量行 window-only：反推 ≠ 存量 → 400
-		}
-		id.ThreadID = t
-	}
-	// thread==session 恒等：只给其一 → 补齐；成对显式冲突 → 拒绝
-	switch {
-	case id.SessionID == "" && id.ThreadID != "":
-		id.SessionID = id.ThreadID
-	case id.ThreadID == "" && id.SessionID != "":
-		id.ThreadID = id.SessionID
-	case id.SessionID != "" && id.ThreadID != "" && id.SessionID != id.ThreadID:
-		return ErrInvalidInput
-	}
-	// window 恒 {thread}:0：thread 已知时显式 window 必须匹配
-	if id.ThreadID != "" && id.WindowID != "" && id.WindowID != id.ThreadID+":0" {
-		return ErrInvalidInput
-	}
-	return nil
-}
-
-// fillIdentityDefaults 缺省身份沿用（持久复用）：installation 空 → 取存量；
-// session/thread 空 → 取存量。window 不沿用——恒 {thread}:0 派生（thread
-// 定后由调用方兜底派生）。email 不在 fill 列表（未提供 → NULL 清空，
-// 兑现"全列更新含 NULL 清空"契约）。调用方保证 cur 为存量行（已有行
-// carry-forward 或首写冲突赢者）。
+// fillIdentityDefaults 缺省身份沿用（持久复用）：installation 空 → 取存量。
+// email 不在 fill 列表（未提供 → NULL 清空，兑现"全列更新含 NULL 清空"契约）。
+// 调用方保证 cur 为存量行（已有行 carry-forward 或首写冲突赢者）。
 func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 	if e.CodexIdentity == nil {
 		if cur.CodexIdentity == nil {
 			return
 		}
-		id := *cur.CodexIdentity // 值拷贝——不共享指针（后续兜底派生 window 不污染 cur）
+		id := *cur.CodexIdentity // 值拷贝——不共享指针
 		e.CodexIdentity = &id
 		return
 	}
@@ -201,33 +126,23 @@ func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 	if e.CodexIdentity.InstallationID == "" {
 		e.CodexIdentity.InstallationID = cur.CodexIdentity.InstallationID
 	}
-	if e.CodexIdentity.SessionID == "" {
-		e.CodexIdentity.SessionID = cur.CodexIdentity.SessionID
-	}
-	if e.CodexIdentity.ThreadID == "" {
-		e.CodexIdentity.ThreadID = cur.CodexIdentity.ThreadID
-	}
 }
 
 // UpsertAccountExt 幂等写入账号 ext 行。账号缺 id → 404。
 // 类型一致性：ext 行 credential_type 必须与父行（账号所属模板）的
 // credential_type 一致（账号无独立类型列，类型继承自模板）——不一致 → 400。
-// 身份恒等式（thread==session、window={thread}:0 零透传）：显式部分提供自动
-// 补齐（normalizeCodexIdentity）；成对冲突 → 400；存量行上 window-only 反推
-// ≠ 存量 thread → 400（方向 2：派生值不得冒充显式值改身份）。
-// 身份四元组自动管理：无存量行 → NewCodexIdentity() 生成四元组并经
-// TryInsert（ON CONFLICT DO NOTHING 先写者胜）原子首写——并发双导入同一账号
-// 不覆盖不报错，冲突方完全采用赢者身份后走围栏 CAS 写令牌（方向 3：
-// 显式身份只在首写成功路径生效）；后续写入缺省 → 沿用存量（持久复用，账号
-// 存在期间稳定）；调用方显式提供 → 采用。email 不在缺省沿用面——未提供 →
+// 身份自动管理（持久身份现只含 installation_id）：无存量行 → NewCodexIdentity()
+// 生成 installation_id 并经 TryInsert（ON CONFLICT DO NOTHING 先写者胜）原子首写
+// ——并发双导入同一账号不覆盖不报错，冲突方完全采用赢者身份后走围栏 CAS 写令牌
+// （方向 3：显式身份只在首写成功路径生效）；后续写入缺省 → 沿用存量（持久复用，
+// 账号存在期间稳定）；调用方显式提供 → 采用。email 不在缺省沿用面——未提供 →
 // NULL 清空（契约）。
-// 校验先于落库：window 派生 + 列组校验在 TryInsert 之前——被拒凭据
-// 零残留（400 前不写库；含 NULL window 问题同步消除）；终校验保留（冲突路径
-// 重改 e 后，早校验覆盖不到）。
+// 校验先于落库：列组校验在 TryInsert 之前——被拒凭据零残留（400 前不写库）；
+// 终校验保留（冲突路径重改 e 后，早校验覆盖不到）。
 // 围栏写（d401b71）：终写必经 AdminUpsertAccountExtCAS（revision 原子递增，
 // 无绕围栏面、无双增）。并发首写参与者全部预读同一 revision——围栏过期 ≠
-// 内容冲突：CAS 败者重读最新 revision 与持久身份（漂移则再采用，恒单一完整
-// 四元组）后重试 CAS，并发首写永不返回 conflict；revision 未推进的 conflict
+// 内容冲突：CAS 败者重读最新 revision 与持久身份（漂移则再采用）后重试 CAS，
+// 并发首写永不返回 conflict；revision 未推进的 conflict
 // 原样上抛（非竞态冲突不重试，兼作活锁守卫）。
 // 提交后即失效：ext 行是调度快照经 Selection.Ext 消费的 codex 凭据原料，
 // 成功写入后按账号写面统一失效面做组级定向重载 + NOTIFY（快照重载幂等：值
@@ -251,31 +166,16 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, mapRepoErr(err) // 非缺行错误原样上抛（不误判为首次写入）
 	}
-	// 先取存量行再归一（方向 2）：存量行上 window-only 反推 ≠ 存量 → 400
-	if err := normalizeCodexIdentity(e, cur); err != nil {
-		return nil, err
-	}
 	if err == nil {
-		// 已有行：身份字段缺省 → 沿用存量（持久复用；window 兜底派生）
+		// 已有行：installation 缺省 → 沿用存量（持久复用）
 		fillIdentityDefaults(e, cur)
 	} else {
-		// 无存量行：installation 缺省自动生成；会话三元组全缺省 → 自动生成
+		// 无存量行：installation 缺省自动生成
 		if e.CodexIdentity == nil {
 			e.CodexIdentity = &domain.CodexIdentity{}
 		}
-		id := e.CodexIdentity
-		if id.InstallationID == "" {
-			id.InstallationID = NewCodexIdentity().InstallationID
-		}
-		if id.SessionID == "" && id.ThreadID == "" && id.WindowID == "" {
-			fresh := NewCodexIdentity()
-			id.SessionID = fresh.SessionID
-			id.ThreadID = fresh.ThreadID
-			id.WindowID = fresh.WindowID
-		}
-		// window 恒 {thread}:0——thread 定后兜底派生（永不沿用旧 window）
-		if id.ThreadID != "" && id.WindowID == "" {
-			id.WindowID = id.ThreadID + ":0"
+		if e.CodexIdentity.InstallationID == "" {
+			e.CodexIdentity.InstallationID = NewCodexIdentity().InstallationID
 		}
 		// 校验先于落库：自动生成值恒合法，早校验只命中列组违规
 		if err := validateAccountExt(e); err != nil {
@@ -294,15 +194,11 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 				return nil, mapRepoErr(gerr)
 			}
 			*e = orig
-			e.CodexIdentity = winner.CodexIdentity // 完全采用赢者身份（单一完整四元组）
+			e.CodexIdentity = winner.CodexIdentity // 完全采用赢者身份
 			if e.CodexEmail == nil {
 				e.CodexEmail = winner.CodexEmail // 未提供 email → 沿用赢者（管理标识随首写者）
 			}
 		}
-	}
-	// window 恒 {thread}:0——thread 定后兜底派生（永不沿用旧 window）
-	if e.CodexIdentity != nil && e.CodexIdentity.ThreadID != "" && e.CodexIdentity.WindowID == "" {
-		e.CodexIdentity.WindowID = e.CodexIdentity.ThreadID + ":0"
 	}
 	// 终校验（冲突路径重改 e 后，早校验覆盖不到）——校验失败不落库
 	if err := validateAccountExt(e); err != nil {
@@ -336,7 +232,7 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 			return nil, mapRepoErr(rerr)
 		}
 		if rerr == nil && row.CodexIdentity != nil && *row.CodexIdentity != *e.CodexIdentity {
-			e.CodexIdentity = row.CodexIdentity // 持久身份已漂移 → 完全采用（恒单一完整四元组）
+			e.CodexIdentity = row.CodexIdentity // 持久身份已漂移 → 完全采用
 		}
 	}
 }

@@ -22,7 +22,7 @@ import (
 // pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
 
-// seedPGOAuthExt 建 codex-oauth 模板 + 账号 + 带身份四元组与 oauth 凭据的
+// seedPGOAuthExt 建 codex-oauth 模板 + 账号 + 带持久身份与 oauth 凭据的
 // ext 行（写入面全列：codex_identity/codex_pat_key/codex_email 断言不动）。
 func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at, rt string, expires *time.Time) (*domain.Account, *domain.AccountExt) {
 	t.Helper()
@@ -39,10 +39,7 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 	require.NoError(t, err)
 	ext := &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity: &domain.CodexIdentity{
-			InstallationID: "inst-" + name,
-			SessionID:      "sess-" + name, ThreadID: "th-" + name, WindowID: "th-" + name + ":0",
-		},
+		CodexIdentity:   &domain.CodexIdentity{InstallationID: "inst-" + name},
 		CodexOAuthToken: strPtrPG(at), CodexOAuthRefreshToken: strPtrPG(rt), CodexOAuthExpiresAt: expires,
 		CodexEmail: strPtrPG("a@" + name + ".x"),
 	}
@@ -73,9 +70,6 @@ func TestWriteOAuthRotationPG(t *testing.T) {
 	require.True(t, got.CodexOAuthExpiresAt.Equal(expires), "codex_oauth_expires_at 写回后不变（防 ClearX 清空回归）")
 	// 其余列原样（部分更新不触碰）
 	require.Equal(t, ext.CodexIdentity.InstallationID, got.CodexIdentity.InstallationID)
-	require.Equal(t, ext.CodexIdentity.SessionID, got.CodexIdentity.SessionID)
-	require.Equal(t, ext.CodexIdentity.ThreadID, got.CodexIdentity.ThreadID)
-	require.Equal(t, ext.CodexIdentity.WindowID, got.CodexIdentity.WindowID)
 	require.Equal(t, *ext.CodexEmail, *got.CodexEmail)
 
 	// 幂等：重复回调（重试投递同一 (at, rt)）→ 收敛不报错

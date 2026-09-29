@@ -24,7 +24,7 @@ func TestAdminFencingImportRevision(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// create ext
-	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "sess-1", WindowID: "sess-1:0"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("acc1")}
+	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("acc1")}
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, ext)
 	require.NoError(t, err)
 	// Admin rotation via WriteOAuthRotationWithRevision should increment, but currently WriteOAuthRotation does not
@@ -135,7 +135,7 @@ func TestStaleFirstExtPutLeavesNoExt(t *testing.T) {
 	tpl := seedPGTemplate(t, repos)
 	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale-first-ext", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
 	require.Equal(t, int64(1), acc.LifecycleRevision)
-	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "sess-1", WindowID: "sess-1:0"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("e1@example.com"), CodexAccountID: strPtr("a1")}
+	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("e1@example.com"), CodexAccountID: strPtr("a1")}
 	// stale expected 999 should fail and leave no ext
 	_, err := repos.AccountExts.AdminUpsertAccountExtCAS(ctx, ext, 999)
 	require.ErrorIs(t, err, repository.ErrConflict)
@@ -175,7 +175,7 @@ func TestAdminStaleDoesNotUpdateExt(t *testing.T) {
 	ctx := context.Background()
 	tpl := seedPGTemplate(t, repos)
 	acc, _ := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "stale-ext", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
-	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "sess-1", WindowID: "sess-1:0"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("e@example.com"), CodexAccountID: strPtr("a1")}
+	ext := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}, CodexOAuthToken: strPtr("tok1"), CodexOAuthRefreshToken: strPtr("rt1"), CodexEmail: strPtr("e@example.com"), CodexAccountID: strPtr("a1")}
 	_, _ = repos.AccountExts.UpsertAccountExt(ctx, ext)
 	require.NoError(t, repos.AccountExts.AdminWriteOAuthRotationCAS(ctx, acc.ID, 1, "tok2", "rt2", nil))
 	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)

@@ -440,25 +440,24 @@ type TemplateExt struct {
 	StripImageTools *bool // 三类型公共能力开关：模板级图像 tool 剥离（消费）
 }
 
-// CodexIdentity codex 账号身份四元组（对齐真实客户端语义：installation_id
-// 安装级永久；session/thread 会话级恒等；window = {thread_id}:{n} 起始 :0）——
-// account_ext.codex_identity jsonb 序列化契约类型（json tag 即落库形态）。
-// 空字段 = 未提供（service 归一：全空 → 自动生成/沿用存量；identity 无清空
-// 路径——账号存在期间稳定）。
+// CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 序列化
+// 契约类型——json tag 即落库形态）。仅保留安装级 installation_id：账号存在
+// 期间稳定、运行时唯一被消费的身份项（安装级永久；internal/proxy/scheduler
+// 注入源）。会话级 session/thread/window 已退役为运行时槽状态（scheduler
+// 槽位池按水位演化——见 internal/scheduler/identity_pool.go），不再是持久身份，
+// 故不在此结构承载；旧行 jsonb 内的多余键读取时被忽略（jsonb blob 反序列化
+// 丢弃未知键），写侧恒只落 installation_id。空字段 = 未提供（service 归一：
+// 空 → 自动生成/沿用存量；identity 无清空路径——账号存在期间稳定）。
 type CodexIdentity struct {
 	InstallationID string `json:"installation_id"`
-	SessionID      string `json:"session_id"`
-	ThreadID       string `json:"thread_id"`
-	WindowID       string `json:"window_id"`
 }
 
 // AccountExt 账号类型化鉴权扩展（account_ext 子表，1:1）：credential_type
 // ∈ {codex-oauth, codex-pat}（账号只两种 codex 类型）。字段按作用分组：
-// 标识 → 身份（codex_identity jsonb 单列）→ 凭据 → 管理标识。身份四元组
-// （对齐真实 codex 客户端语义，导入时 service NewCodexIdentity() 自动生成并
-// 持久化、账号存在期间稳定）：InstallationID 必存（UUIDv4 安装级永久）；
-// SessionID/ThreadID UUIDv7 会话级（恒等 thread==session）；WindowID =
-// {thread_id}:0（导入时生成后恒定不变——零递增零状态）。nil = 未配置。
+// 标识 → 身份（codex_identity jsonb 单列）→ 凭据 → 管理标识。身份只含安装级
+// InstallationID（UUIDv4 安装级永久；导入时 service NewCodexIdentity() 自动
+// 生成并持久化、账号存在期间稳定）；会话级 session/thread/window 已退役为
+// 运行时槽状态（不再持久化）。nil = 未配置。
 // 凭据列组按类型约束（service 校验）：oauth 只允许 CodexOAuth* 列组；pat
 // 只允许 CodexPATKey。CodexAccountID 为上游账号/空间标识（可留空：导入/单账号
 // 保存时自动识别——OAuth token claims 离线解析 / PAT whoami；识别失败时导入行

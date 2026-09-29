@@ -63,8 +63,6 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		require.Equal(t, "rt-1", *ext.CodexOAuthRefreshToken)
 		require.NotNil(t, ext.CodexIdentity)
 		require.NotEmpty(t, ext.CodexIdentity.InstallationID, "身份自动生成")
-		require.Equal(t, ext.CodexIdentity.SessionID, ext.CodexIdentity.ThreadID, "thread==session 恒等")
-		require.Equal(t, ext.CodexIdentity.ThreadID+":0", ext.CodexIdentity.WindowID)
 
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)

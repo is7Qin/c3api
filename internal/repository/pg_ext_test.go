@@ -150,36 +150,6 @@ func TestAccountExtPG(t *testing.T) {
 		require.Equal(t, iid, got.CodexIdentity.InstallationID)
 	})
 
-	t.Run("session columns roundtrip and clear", func(t *testing.T) {
-		saved, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
-			AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
-			CodexIdentity: &domain.CodexIdentity{
-				InstallationID: iid, SessionID: "s1", ThreadID: "t1", WindowID: "t1:0",
-			},
-			CodexPATKey: strPtrPG("pat"),
-			CodexEmail:  strPtrPG("pat@example.com"),
-		})
-		require.NoError(t, err)
-		require.Equal(t, "pat@example.com", *saved.CodexEmail)
-		require.Equal(t, "s1", saved.CodexIdentity.SessionID)
-		require.Equal(t, "t1", saved.CodexIdentity.ThreadID)
-		require.Equal(t, "t1:0", saved.CodexIdentity.WindowID)
-		// 会话轮换：写新会话 → 旧值清空（nil 显式清列）
-		saved, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
-			AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
-			CodexIdentity: &domain.CodexIdentity{
-				InstallationID: iid, SessionID: "s2", ThreadID: "t2", WindowID: "t2:0",
-			},
-			CodexPATKey: strPtrPG("pat"),
-		})
-		require.NoError(t, err)
-		require.Equal(t, "s2", saved.CodexIdentity.SessionID)
-		require.Equal(t, "t2", saved.CodexIdentity.ThreadID)
-		got, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
-		require.NoError(t, err)
-		require.Equal(t, "t2:0", got.CodexIdentity.WindowID)
-	})
-
 	t.Run("missing parent account FK", func(t *testing.T) {
 		_, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: 999999, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
@@ -366,7 +336,6 @@ func TestPGAccountExtSnapshotLoad(t *testing.T) {
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 
 	const iid = "11111111-2222-3333-4444-555555555555"
-	sess, thread, win := "s1", "t1", "t1:0"
 
 	t.Run("no ext row is nil", func(t *testing.T) {
 		require.Nil(t, snapshotExtOf(t, repos, g.ID, acc.ID), "无 ext 行 → Ext nil")
@@ -380,9 +349,7 @@ func TestPGAccountExtSnapshotLoad(t *testing.T) {
 		exp := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 		_, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-			CodexIdentity: &domain.CodexIdentity{
-				InstallationID: iid, SessionID: sess, ThreadID: thread, WindowID: win,
-			},
+			CodexIdentity:   &domain.CodexIdentity{InstallationID: iid},
 			CodexEmail:      strPtrPG("user@example.com"),
 			CodexOAuthToken: strPtrPG("at"), CodexOAuthRefreshToken: strPtrPG("rt"), CodexOAuthExpiresAt: &exp,
 		})
@@ -390,10 +357,7 @@ func TestPGAccountExtSnapshotLoad(t *testing.T) {
 		got := snapshotExtOf(t, repos, g.ID, acc.ID)
 		require.NotNil(t, got, "ext 行必须合并进全量快照")
 		require.Equal(t, credential.TypeCodexOAuth, got.CredentialType)
-		require.Equal(t, iid, got.CodexIdentity.InstallationID, "身份四元组落快照")
-		require.Equal(t, sess, got.CodexIdentity.SessionID)
-		require.Equal(t, thread, got.CodexIdentity.ThreadID)
-		require.Equal(t, win, got.CodexIdentity.WindowID)
+		require.Equal(t, iid, got.CodexIdentity.InstallationID, "持久身份落快照")
 		require.Equal(t, "at", *got.CodexOAuthToken, "凭据材料落快照（热路径零 DB 数据源）")
 		require.Equal(t, "rt", *got.CodexOAuthRefreshToken)
 		require.True(t, exp.Equal(*got.CodexOAuthExpiresAt))
@@ -416,7 +380,7 @@ func TestPGAccountExtSnapshotLoad(t *testing.T) {
 }
 
 // TestAccountExtIdentityJSONBPG codex_identity jsonb 存取（本 task 存储形态）：
-// 四元组 roundtrip 等值（序列化/解包双向一致）+ nil 身份（NULL → nil，upsert
+// 持久身份 roundtrip 等值（序列化/解包双向一致）+ nil 身份（NULL → nil，upsert
 // 冲突路径 ClearX 清空）+ 坏 json（手工 SQL 注入——应用路径不可达）→ ent 扫描
 // 器 Unmarshal 报错原样透传（loud failure，非 nil 静默）。
 func TestAccountExtIdentityJSONBPG(t *testing.T) {
@@ -426,14 +390,11 @@ func TestAccountExtIdentityJSONBPG(t *testing.T) {
 	acc := seedPGAccount(t, repos, tpl.ID, "a-jsonb")
 
 	const iid = "11111111-2222-3333-4444-555555555555"
-	sess, thread, win := "s-jsonb", "t-jsonb", "t-jsonb:0"
 
-	t.Run("four-value roundtrip", func(t *testing.T) {
+	t.Run("installation roundtrip", func(t *testing.T) {
 		saved, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-			CodexIdentity: &domain.CodexIdentity{
-				InstallationID: iid, SessionID: sess, ThreadID: thread, WindowID: win,
-			},
+			CodexIdentity:   &domain.CodexIdentity{InstallationID: iid},
 			CodexOAuthToken: strPtrPG("at"),
 		})
 		require.NoError(t, err)
@@ -441,8 +402,8 @@ func TestAccountExtIdentityJSONBPG(t *testing.T) {
 		got, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 		require.NoError(t, err)
 		require.NotNil(t, got.CodexIdentity)
-		require.Equal(t, &domain.CodexIdentity{InstallationID: iid, SessionID: sess, ThreadID: thread, WindowID: win},
-			got.CodexIdentity, "身份四元组 jsonb roundtrip 全等（四值）")
+		require.Equal(t, &domain.CodexIdentity{InstallationID: iid},
+			got.CodexIdentity, "持久身份 jsonb roundtrip 全等")
 	})
 
 	t.Run("nil identity roundtrip", func(t *testing.T) {
