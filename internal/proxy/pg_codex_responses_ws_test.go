@@ -155,13 +155,21 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
-	// 握手头：伪装四元组 = 落库 ext 身份（真实凭据链路）
+	// 握手头 + 帧内 metadata：伪装身份 = 运行时槽身份（session/thread/window
+	// 为 UUIDv7，session==thread、window={thread}:0）；installation_id 仍取
+	// 落库 ext（账号级稳定项）。
 	hooks.mu.Lock()
 	require.Equal(t, 1, hooks.upgrades, "真实凭据单拨成功")
 	require.Equal(t, "Bearer pat-pg-1", hooks.headers[0].Get("Authorization"), "PAT 直供适配层")
-	require.Equal(t, sess, hooks.headers[0].Get("Session-Id"))
-	require.Equal(t, thread, hooks.headers[0].Get("Thread-Id"))
-	require.Equal(t, win, hooks.headers[0].Get("X-Codex-Window-Id"))
+	h := hooks.headers[0]
+	require.True(t, isUUIDv7(h.Get("Session-Id")), "session-id = 槽身份（UUIDv7）")
+	require.Equal(t, h.Get("Session-Id"), h.Get("Thread-Id"), "槽内 session==thread")
+	require.Equal(t, h.Get("Thread-Id")+":0", h.Get("X-Codex-Window-Id"), "window-id = {thread}:0")
+	f0 := hooks.frames[0]
+	require.Contains(t, f0, `"x-codex-installation-id":"`+iid+`"`, "installation_id 取落库 ext")
+	require.Contains(t, f0, `"session_id":"`+h.Get("Session-Id")+`"`, "帧内 session_id = 槽身份")
+	require.Contains(t, f0, `"thread_id":"`+h.Get("Thread-Id")+`"`, "帧内 thread_id = 槽身份")
+	require.Contains(t, f0, `"x-codex-window-id":"`+h.Get("Thread-Id")+`:0"`, "帧内 window={thread}:0")
 	hooks.mu.Unlock()
 
 	// rec 排空（InsertBatch 落库）后断言 usage_logs 行——与

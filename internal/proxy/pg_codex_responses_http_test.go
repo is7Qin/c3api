@@ -151,14 +151,15 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		t.Fatalf("非流式 wire 必须 stream:true（SDK 注入）, body = %s", upc.body(0))
 	}
 
-	// 伪装身份注入——上游收到 client_metadata（account_ext 持久化值 →
-	// 快照 → codexIdentityFromExt → SDK 注入）：恒 4 key + turn_id UUIDv7
-	//（spec 2026-08-15 验收面）
+	// 伪装身份注入——上游收到 client_metadata：installation_id 取落库 ext
+	//（账号级稳定项）；session/thread/window = 运行时槽身份（UUIDv7，session==
+	// thread、window={thread}:0）；turn_id UUIDv7（SDK 自动）
 	cm := gjson.GetBytes(upc.body(0), "client_metadata")
-	require.Equal(t, "inst-pg-1", cm.Get("x-codex-installation-id").String(), "installation_id（ext 持久化）注入")
-	require.Equal(t, "sess-pg-1", cm.Get("session_id").String(), "session_id（ext 持久化）注入")
-	require.Equal(t, "thread-pg-1", cm.Get("thread_id").String(), "thread_id（ext 持久化）注入")
-	require.Equal(t, "thread-pg-1:0", cm.Get("x-codex-window-id").String(), "window_id（ext 持久化）注入")
+	require.Equal(t, "inst-pg-1", cm.Get("x-codex-installation-id").String(), "installation_id（ext）注入")
+	sessID := cm.Get("session_id").String()
+	require.True(t, isUUIDv7(sessID), "session_id = 槽身份（UUIDv7）")
+	require.Equal(t, sessID, cm.Get("thread_id").String(), "槽内 session==thread")
+	require.Equal(t, sessID+":0", cm.Get("x-codex-window-id").String(), "window={thread}:0")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id UUIDv7 格式（SDK 自动生成）")
 
 	// rec 排空（InsertBatch 落库）后断言 usage_logs 行——合成体顶层 usage
