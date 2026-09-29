@@ -6,6 +6,7 @@ package scheduler
 
 import (
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
@@ -22,15 +23,157 @@ func testPolicy() codexsdk.RotatePolicy {
 
 // newTestPool 构造容量 k 的池（installation "inst"）。
 func newTestPool(k int, p codexsdk.RotatePolicy) *identityPool {
-	pool := &identityPool{policy: p, installationID: "inst", slots: make([]*identitySlot, k)}
+	pool := &identityPool{installationID: "inst", slots: make([]*identitySlot, k)}
 	for i := 0; i < k; i++ {
 		pool.slots[i] = newIdentitySlot("inst", p)
 	}
 	return pool
 }
 
+// TestSelectionCodexIdentityFromSlot 伪装身份四元组一次给全（Selection.
+// CodexIdentity），且 installation 取自槽 state（单一来源）——与账号 ext 无关。
+func TestSelectionCodexIdentityFromSlot(t *testing.T) {
+	slot := newIdentitySlot("slot-inst", testPolicy())
+	sel := &Selection{
+		identitySlot: slot,
+		Ext:          codexExt("ext-inst"), // 故意与槽不一致：注入必须取槽
+	}
+	sess, meta := sel.CodexIdentity()
+	st := slot.state.Load()
+	require.Equal(t, st.ThreadID, sess.SessionID)
+	require.Equal(t, st.ThreadID, sess.ThreadID)
+	require.Equal(t, st.WindowID(), sess.WindowID)
+	require.Equal(t, "slot-inst", meta.InstallationID, "installation 取槽 state，非 ext")
+	require.Equal(t, sess.SessionID, meta.SessionID)
+	require.Equal(t, sess.ThreadID, meta.ThreadID)
+	require.Equal(t, sess.WindowID, meta.WindowID)
+
+	// 无槽（非 codex / 池缺席）→ 零值（不注入）。
+	empty := &Selection{Ext: codexExt("ext-inst")}
+	s2, m2 := empty.CodexIdentity()
+	require.Zero(t, s2)
+	require.Zero(t, m2)
+	var nilSel *Selection
+	s3, m3 := nilSel.CodexIdentity()
+	require.Zero(t, s3)
+	require.Zero(t, m3)
+}
+
+// TestResizeUpdatesInstallationOnMigration resize（容量/安装 ID 变化）迁移按位次
+// 复用旧槽 thread/window，但 installation 更新为本次生效值——不再留旧值（P1-3）。
+func TestResizeUpdatesInstallationOnMigration(t *testing.T) {
+	old := newTestPool(2, testPolicy()) // installation "inst"
+	np := resizeIdentityPool(old, 2, "inst-new", testPolicy())
+	require.Len(t, np.slots, 2)
+	for i, s := range np.slots {
+		require.Equal(t, "inst-new", s.state.Load().InstallationID, "迁移槽 installation 取新值")
+		require.Equal(t, old.slots[i].state.Load().ThreadID, s.state.Load().ThreadID, "thread 沿用（身份演化不丢）")
+	}
+}
+
 func codexExt(installationID string) *domain.AccountExt {
 	return &domain.AccountExt{CodexIdentity: &domain.CodexIdentity{InstallationID: installationID}}
+}
+
+// codexAcc 构造带 codex 凭据模板 + ext 的账号（池建池需要 tpl.CredentialType
+// 为 codex 且 Ext 非 nil）。
+func codexAcc(id int64, format domain.RequestFormat, model string, maxConc int, installationID string) *domain.Account {
+	t := tpl(id, format, []string{model})
+	t.CredentialType = credential.TypeCodexOAuth
+	a := acc(id, t, maxConc)
+	a.Ext = codexExt(installationID)
+	return a
+}
+
+// TestInvalidateGroupMaintainsIdentityPool 组级定向重载按新 byID 维护槽位池，
+// 与门禁上限同发布点（P0-3）：调高 max_concurrency 后池 K 与静态叶一致；新增
+// 账号入池、删除账号池随之 GC——杜绝「门禁上限已变、池仍旧」。
+func TestInvalidateGroupMaintainsIdentityPool(t *testing.T) {
+	a1 := codexAcc(1, domain.FormatOpenAIResponses, "gpt-5", 2, "inst-1")
+	byGroup := map[int64][]*domain.Account{10: {a1}}
+	m := newMemLoader(byGroup)
+	s := newSched(t, m)
+
+	require.Len(t, s.View().static.identityPools.pools[1].slots, 2, "初始池 K = max_concurrency=2")
+
+	// 管理面调高 max_concurrency（账号变更生产路由 = InvalidateGroup）→ 池同源扩容。
+	m.mu.Lock()
+	m.byGroup[10][0].MaxConcurrency = 5
+	m.mu.Unlock()
+	s.InvalidateGroup(10)
+	s.compileOnce()
+
+	v := s.View()
+	require.Equal(t, 5, v.static.byID[1].static.Load().acc.MaxConcurrency, "门禁上限更新")
+	require.Len(t, v.static.identityPools.pools[1].slots, 5, "池 K 与门禁同发布点更新")
+
+	// 新增 codex 账号（组内）→ 立即有池（此前缺失 → 不注入身份）。
+	m.mu.Lock()
+	m.byGroup[10] = append(m.byGroup[10], codexAcc(2, domain.FormatOpenAIResponses, "gpt-5", 3, "inst-2"))
+	m.mu.Unlock()
+	s.InvalidateGroup(10)
+	s.compileOnce()
+	require.Len(t, s.View().static.identityPools.pools[2].slots, 3, "新增账号经 InvalidateGroup 即建池")
+
+	// 删除账号 → 池随注册表替换 GC（有界泄漏修复）。
+	m.mu.Lock()
+	m.byGroup[10] = m.byGroup[10][:1]
+	m.mu.Unlock()
+	s.InvalidateGroup(10)
+	s.compileOnce()
+	require.NotContains(t, s.View().static.identityPools.pools, int64(2), "删除账号池被回收")
+}
+
+// TestReloadPublishesPoolWithView 全量 reload 的池挂在与门禁同读的静态根上：
+// 同一 RoutingView.static 既给门禁 limit（byID 叶）又给池 K（identityPools）。
+func TestReloadPublishesPoolWithView(t *testing.T) {
+	m := newMemLoader(map[int64][]*domain.Account{10: {codexAcc(1, domain.FormatOpenAIResponses, "gpt-5", 4, "inst-1")}})
+	s := newSched(t, m)
+	v := s.View()
+	require.NotNil(t, v.static.identityPools, "池随静态根发布（非独立发布点）")
+	require.Len(t, v.static.identityPools.pools[1].slots, 4)
+	require.Same(t, v.static, s.View().static, "同一静态根")
+}
+
+// TestReleaseFreesSlotBeforeConcurrencyDecrement 释放窗口内 claim 恒成功（P0-4）：
+// 旧序（先减并发计数、后归还槽）下新预留可放行而 K 槽全忙 → claim()==nil → 兜底
+// 临时身份（不落池）。并发 Select/Release 断言任一成功预留都拿到**池内**槽。
+func TestReleaseFreesSlotBeforeConcurrencyDecrement(t *testing.T) {
+	const k = 2
+	a := codexAcc(1, domain.FormatOpenAIResponses, "m", k, "inst-1")
+	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: {a}}))
+	route := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
+	publishAttemptDecision(s, route, &RouteDecision{Primary: ccPrimary(1)})
+
+	pool := s.View().static.identityPools.pools[1]
+	require.NotNil(t, pool)
+	inPool := make(map[*identitySlot]bool, k)
+	for _, sl := range pool.slots {
+		inPool[sl] = true
+	}
+
+	var ephemeral, successes int64
+	var wg sync.WaitGroup
+	for g := 0; g < 32; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < 2000; i++ {
+				sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
+				if err != nil {
+					continue // 门禁满（预期 ErrNoAvailable）
+				}
+				atomic.AddInt64(&successes, 1)
+				if sel.identitySlot == nil || !inPool[sel.identitySlot] {
+					atomic.AddInt64(&ephemeral, 1)
+				}
+				sel.Release()
+			}
+		}()
+	}
+	wg.Wait()
+	require.Positive(t, atomic.LoadInt64(&successes), "并发至少成功预留一次（否则用例空转）")
+	require.Zero(t, atomic.LoadInt64(&ephemeral), "释放窗口内 claim 不得落池外临时身份")
 }
 
 // TestIdentityPoolClaimReleaseNoCrossSlot 认领 K 槽互不相同（不串槽）、全忙
@@ -238,26 +381,35 @@ func TestIdentitySlotConcurrentAdvanceNoLostUpdate(t *testing.T) {
 	require.Equal(t, uint64(2), slot.state.Load().WindowN, "回落再跨 → 继续恰计一次（arm 更新未被丢）")
 }
 
+// TestIdentityPoolRotatePolicySingleSource 轮换策略单一来源在槽：pool.rotatePolicy
+// 从槽派生（池不再各存一份投影）。
+func TestIdentityPoolRotatePolicySingleSource(t *testing.T) {
+	p := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 3, Scope: codexsdk.ScopeBodyAfterPrefix}
+	pool := newTestPool(3, p)
+	require.Equal(t, p, pool.rotatePolicy(), "池策略由槽派生")
+	require.Equal(t, p, newIdentitySlot("inst", p).policy, "槽持有策略（单一来源）")
+}
+
 // TestClaimIdentitySlotOnlyCodexAndFallback 仅 codex 凭据认领；全忙兜底临时身份
 // 不落池；非 codex / 无池 → nil。
 func TestClaimIdentitySlotOnlyCodexAndFallback(t *testing.T) {
 	pool := newTestPool(2, testPolicy())
 	s := &Scheduler{}
-	s.identityPools.Store(&identityRegistry{pools: map[int64]*identityPool{7: pool}})
+	reg := &identityRegistry{pools: map[int64]*identityPool{7: pool}}
 
 	// 非 codex → nil
-	require.Nil(t, s.claimIdentitySlot(7, credential.TypeAPIKey, codexExt("inst")))
+	require.Nil(t, s.claimIdentitySlot(reg, 7, credential.TypeAPIKey))
 	// 无池 → nil
-	require.Nil(t, s.claimIdentitySlot(99, credential.TypeCodexOAuth, codexExt("inst")))
+	require.Nil(t, s.claimIdentitySlot(reg, 99, credential.TypeCodexOAuth))
 
 	// 认领入池槽
-	slot := s.claimIdentitySlot(7, credential.TypeCodexOAuth, codexExt("inst"))
+	slot := s.claimIdentitySlot(reg, 7, credential.TypeCodexOAuth)
 	require.NotNil(t, slot)
 	require.True(t, slot.busy.Load())
 
 	// 全忙兜底：临时身份不落池、不计 busy。
-	s.claimIdentitySlot(7, credential.TypeCodexPAT, codexExt("inst")) // 占满第二槽
-	ephem := s.claimIdentitySlot(7, credential.TypeCodexPAT, codexExt("inst"))
+	s.claimIdentitySlot(reg, 7, credential.TypeCodexPAT) // 占满第二槽
+	ephem := s.claimIdentitySlot(reg, 7, credential.TypeCodexPAT)
 	require.NotNil(t, ephem)
 	require.False(t, ephem.busy.Load(), "兜底临时身份不落池（不计 busy）")
 	for _, sl := range pool.slots {

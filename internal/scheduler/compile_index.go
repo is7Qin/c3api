@@ -50,7 +50,8 @@ func buildRouteIndex(groups map[int64]*groupSnapshot) *compileRouteIndex {
 
 // newStaticView builds a staged root with its owned facts map AND route index
 // in one place (copy-modify-Store discipline: the maps are born here, never
-// mutated after staging).
-func newStaticView(groups map[int64]*groupSnapshot, byID map[int64]*accountSnapshot) *StaticView {
-	return &StaticView{groups: groups, byID: byID, facts: attachCompilerFacts(byID), routeIndex: buildRouteIndex(groups)}
+// mutated after staging). pools is the codex identity registry published
+// together with this root (gate limit and pool K share one source).
+func newStaticView(groups map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry) *StaticView {
+	return &StaticView{groups: groups, byID: byID, facts: attachCompilerFacts(byID), identityPools: pools, routeIndex: buildRouteIndex(groups)}
 }

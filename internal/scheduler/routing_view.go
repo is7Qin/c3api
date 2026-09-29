@@ -27,6 +27,11 @@ type StaticView struct {
 	groups     map[int64]*groupSnapshot
 	byID       map[int64]*accountSnapshot
 	facts      map[int64]compilerAccountFacts
+	// identityPools 账号级 codex 槽位池注册表，与静态叶**同发布点**：门禁读
+	// 的 MaxConcurrency（byID 叶）与 request 认领的池 K 由同一 StaticView
+	// 给出，杜绝「门禁上限已变、池仍旧」的双发布路径（P0-3）。nil = 无 codex
+	// 账号 / 未装配。发布后不可变（map 不增删）。
+	identityPools *identityRegistry
 	// routeIndex maps events to affected routes. Born at stage with
 	// the root, dies with it, read-only between (compile-lane-owned).
 	routeIndex *compileRouteIndex
@@ -357,7 +362,7 @@ func (p *routingPublisher) publishPairLocked(staticView *StaticView, decisionVie
 		gen = 1
 	}
 	if cur != nil && cur.static == staticView {
-		staticView = &StaticView{generation: gen, groups: staticView.groups, byID: staticView.byID, facts: staticView.facts, routeIndex: staticView.routeIndex}
+		staticView = &StaticView{generation: gen, groups: staticView.groups, byID: staticView.byID, facts: staticView.facts, identityPools: staticView.identityPools, routeIndex: staticView.routeIndex}
 	} else {
 		staticView.generation = gen
 	}

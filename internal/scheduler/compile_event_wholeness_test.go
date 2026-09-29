@@ -24,7 +24,7 @@ type supersedeCompiler struct{ s *Scheduler }
 func (c *supersedeCompiler) Compile(CompilerInputs) (*DecisionView, error) {
 	cur := c.s.View()
 	c.s.publisher.mu.Lock()
-	c.s.publisher.pending = newStaticView(cur.Groups(), cur.ByID())
+	c.s.publisher.pending = newStaticView(cur.Groups(), cur.ByID(), cur.static.identityPools)
 	c.s.publisher.mu.Unlock()
 	return &DecisionView{routes: map[RouteRef]*RouteDecision{}}, nil
 }

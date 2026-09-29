@@ -89,23 +89,35 @@ func (s *Selection) Release() {
 		return
 	}
 	if s.lease.released.CompareAndSwap(false, true) {
-		s.lease.acc.runtime.concurrency.Add(-1)
+		// 先归还槽，再减并发计数：门禁按 concurrency 放行，若先减计数则释放
+		// 窗口内可出现「K 槽全忙而 concurrency=K-1」——新预留放行后
+		// claim()==nil（兜底临时身份 + Warn，破坏「K 条稳定会话」）。归还槽
+		// 先于计数，使门禁观测到的空闲额度对应的槽已真正可用。
 		s.identitySlot.release()
+		s.lease.acc.runtime.concurrency.Add(-1)
 	}
 }
 
-// SlotSession 返回本 Selection 认领的槽的当前 SDK 会话标识（无槽 → 零值 +
-// false）。伪装身份注入源：session/thread/window 由槽状态给出（installation_id
-// 仍取账号 ext——账号级稳定项，见 proxy codexSlotIdentity）。
-func (s *Selection) SlotSession() (codexsdk.Session, bool) {
+// CodexIdentity 返回本 Selection 认领的槽的**完整** codex 伪装身份（四元组一次
+// 给全，装配收回调度器侧——proxy 不再回 ext 拼装）。installation_id / session_id
+// / thread_id / window_id 全部取自槽状态：installation 是账号级稳定项、与
+// session/thread/window 同源（池构建时写入槽 state），故不再与账号 ext 各存一份。
+// 无槽（非 codex / 池缺席）→ 零值（SDK 内层 omit，不注入）。
+func (s *Selection) CodexIdentity() (codexsdk.Session, codexsdk.CodexMeta) {
 	if s == nil || s.identitySlot == nil {
-		return codexsdk.Session{}, false
+		return codexsdk.Session{}, codexsdk.CodexMeta{}
 	}
 	st := s.identitySlot.state.Load()
 	if st == nil {
-		return codexsdk.Session{}, false
+		return codexsdk.Session{}, codexsdk.CodexMeta{}
 	}
-	return st.Session(), true
+	sess := st.Session()
+	return sess, codexsdk.CodexMeta{
+		InstallationID: st.InstallationID,
+		SessionID:      sess.SessionID,
+		ThreadID:       sess.ThreadID,
+		WindowID:       sess.WindowID,
+	}
 }
 
 // AdvanceIdentity 用一次观测水位（响应的 total_tokens）推进本槽身份——**仅成功
@@ -154,9 +166,6 @@ type Scheduler struct {
 	view      atomic.Pointer[RoutingView]
 	gen       atomic.Uint64
 	publisher *routingPublisher
-	// identityPools 账号级槽位池注册表（发布后不可变；reload copy-modify-store
-	// 换入）。请求路径 Load() 读、无每请求锁。仅 codex 凭据面消费。
-	identityPools atomic.Pointer[identityRegistry]
 	// concView 集群账号并发视图（concsync.go worker 换入的第二 atomic 快照，
 	// spec conc-share-borrow-account）：超份额借位判定的对账聚合。nil / 陈旧 =
 	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
@@ -368,36 +377,14 @@ func (s *Scheduler) reload(ctx context.Context) error {
 		oldByID = cur.static.byID
 	}
 	groups, byID := buildSnapshots(m, oldByID)
-	// codex 槽位池：按当前账号集与容量同步注册表（copy-modify-store 换入）。
-	// 未变（容量/安装 ID/策略）则复用旧池——保留在途 busy 与槽身份，无关重载
-	// 不重置会话；容量变化才按位次迁移旧槽状态。仅 codex 凭据建池。
-	prevReg := s.identityPools.Load()
-	newPools := make(map[int64]*identityPool)
-	for id, as := range byID {
-		av := as.static.Load()
-		if av == nil || av.tpl == nil || av.acc.Ext == nil {
-			continue
-		}
-		ct := av.tpl.CredentialType
-		if ct != credential.TypeCodexOAuth && ct != credential.TypeCodexPAT {
-			continue
-		}
-		k := av.acc.MaxConcurrency
-		if k <= 0 {
-			continue
-		}
-		var prev *identityPool
-		if prevReg != nil {
-			prev = prevReg.pools[id]
-		}
-		installationID := ""
-		if av.acc.Ext.CodexIdentity != nil {
-			installationID = av.acc.Ext.CodexIdentity.InstallationID
-		}
-		newPools[id] = identityPoolFor(prev, k, installationID, s.cfg.RotatePolicy)
-	}
-	s.identityPools.Store(&identityRegistry{pools: newPools})
-	sv := newStaticView(groups, byID)
+	// codex 槽位池：与静态叶**同一发布点**（sv.identityPools）——门禁读的
+	// MaxConcurrency（byID 叶）与 request 认领的池 K 恒同源，杜绝「门禁上限
+	// 已变、池仍旧」的双发布路径。按当前账号集与容量重建注册表
+	// （copy-modify-store）：未变（容量/安装 ID/策略）复用旧池——保留在途
+	// busy 与槽身份，无关重载不重置会话；容量变化才按位次迁移旧槽状态；
+	// 删除的账号其池随注册表替换自然 GC。仅 codex 凭据建池。
+	pools := s.buildIdentityPools(byID, s.prevIdentityPoolsLocked())
+	sv := newStaticView(groups, byID, pools)
 	if s.latch != nil {
 		for id, as := range byID {
 			av := as.static.Load()
@@ -841,7 +828,11 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 		}
 		newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
 	}
-	sv := newStaticView(newM, newByID)
+	// codex 槽位池与静态叶**同一发布点**：组级重载同样按新 byID 重建注册表
+	// （P0-3）——否则调高 max_concurrency / 新增账号的窗口内门禁上限已变新而池
+	// 仍旧（新增账号无池 → 不注入身份；旧 K 槽不足 → claim==nil 兜底）。
+	pools := s.buildIdentityPools(newByID, s.prevIdentityPoolsLocked())
+	sv := newStaticView(newM, newByID, pools)
 	s.publisher.stageLocked(sv)
 	// this staging touches exactly scopeGroups — the lane recomputes
 	// only their routes. Scope-first, then wake.

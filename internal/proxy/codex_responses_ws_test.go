@@ -1048,26 +1048,6 @@ func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
 	require.NotContains(t, got.Get("OpenAI-Beta"), "1999-01-01", "客户端 beta 值不得顶掉 SDK 的")
 }
 
-// TestCodexIdentityFromExt 退役后行为：ext 只提供 installation_id（账号级
-// 稳定项）；session/thread/window 不再从 ext 组装（改由运行时槽身份给出，
-// 见 codexSlotIdentity）。缺列 → 空值。
-func TestCodexIdentityFromExt(t *testing.T) {
-	ext := codexWSExt(10, "", "")
-	sess, meta := codexIdentityFromExt(ext)
-	require.Zero(t, sess, "session/thread/window 已退役为槽状态——ext 不再组装")
-	require.Equal(t, ext.CodexIdentity.InstallationID, meta.InstallationID)
-
-	emptySess, emptyMeta := codexIdentityFromExt(nil)
-	require.Zero(t, emptySess)
-	require.Zero(t, emptyMeta)
-	// nil 身份（codex_identity jsonb 可空——未配置/异常）→ 空组装不 panic
-	noIdentity := &domain.AccountExt{AccountID: 10, CredentialType: credential.TypeCodexOAuth}
-	nSess, nMeta := codexIdentityFromExt(noIdentity)
-	require.Zero(t, nSess, "nil 身份 → 空 Session")
-	require.Zero(t, nMeta, "nil 身份 → 空 CodexMeta")
-	// 缺列（旧数据）→ 空值不注入
-	partial := &domain.AccountExt{AccountID: 10, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}}
-	s2, m2 := codexIdentityFromExt(partial)
-	require.Zero(t, s2)
-	require.Equal(t, "inst-1", m2.InstallationID)
-}
+// 伪装身份装配已收敛到 scheduler.Selection.CodexIdentity（一次给全四元组，注入
+// 值取自槽状态、与账号 ext 无关）；此处不再有 proxy 侧组装函数可测——其正确性由
+// scheduler 包 TestSelectionCodexIdentityFromSlot 覆盖。

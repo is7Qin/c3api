@@ -31,12 +31,21 @@ type identitySlot struct {
 
 // identityPool 账号级槽位池（无锁）：容量 K = 账号 MaxConcurrency；cursor 为
 // 认领的旋转起点（round-robin 打散并发）。slots 切片发布后不再增删；逐槽状态
-// 经 atomic 可变。installationID/policy 供 resize / 兜底开新线程。
+// 经 atomic 可变。轮换策略单一来源在**槽**（slot.policy，Step 读它）——pool 不再
+// 各存一份（需要时经 rotatePolicy 从槽派生）。installationID 供 resize / 兜底开
+// 新线程。
 type identityPool struct {
 	slots          []*identitySlot
 	cursor         atomic.Uint64
-	policy         codexsdk.RotatePolicy
 	installationID string
+}
+
+// rotatePolicy 返回本池的轮换策略（单一来源 = 槽：池内各槽构造期写入同一策略）。
+func (p *identityPool) rotatePolicy() codexsdk.RotatePolicy {
+	if p == nil || len(p.slots) == 0 {
+		return codexsdk.RotatePolicy{}
+	}
+	return p.slots[0].policy
 }
 
 // identityRegistry 账号 ID → 池 的只读注册表：**发布后不可变**（map 不增删），
@@ -89,13 +98,17 @@ func resizeIdentityPool(old *identityPool, k int, installationID string, policy 
 	if k < 1 {
 		k = 1
 	}
-	np := &identityPool{policy: policy, installationID: installationID, slots: make([]*identitySlot, k)}
+	np := &identityPool{installationID: installationID, slots: make([]*identitySlot, k)}
 	for i := 0; i < k; i++ {
 		if old != nil && i < len(old.slots) {
 			os := old.slots[i]
 			if os.busy.CompareAndSwap(false, true) {
 				if cur := os.state.Load(); cur != nil {
 					st := *cur
+					// installation_id 是账号级项、与注入同源（Selection.CodexIdentity
+					// 读槽 state）：迁移沿用旧 thread/window 演化，但 installation
+					// 必须取本次生效值——否则槽状态与 ext 静默不一致（P1-3）。
+					st.InstallationID = installationID
 					slot := &identitySlot{policy: policy}
 					slot.state.Store(&st)
 					np.slots[i] = slot
@@ -111,24 +124,66 @@ func resizeIdentityPool(old *identityPool, k int, installationID string, policy 
 // identityPoolFor 取本次 reload 生效的池：容量/安装 ID/策略均未变则**原样复用**
 // （保留在途 busy 标志与槽身份，杜绝无关重载重置会话）；任一变化才重建。
 func identityPoolFor(prev *identityPool, k int, installationID string, policy codexsdk.RotatePolicy) *identityPool {
-	if prev != nil && len(prev.slots) == k && prev.installationID == installationID && prev.policy == policy {
+	if prev != nil && len(prev.slots) == k && prev.installationID == installationID && prev.rotatePolicy() == policy {
 		return prev
 	}
 	return resizeIdentityPool(prev, k, installationID, policy)
 }
 
+// buildIdentityPools 按当前 byID 重建 codex 槽位池注册表：仅 codex 凭据
+// （oauth/pat）且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
+// StaticView.identityPools），使门禁读的 MaxConcurrency 与池 K 恒同源。prevReg
+// 供复用（未变的池原样保留在途 busy 与槽身份）；删除/非 codex 的账号不在新
+// 表中 → 旧池随之 GC。
+func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg *identityRegistry) *identityRegistry {
+	pools := make(map[int64]*identityPool)
+	for id, as := range byID {
+		av := as.static.Load()
+		if av == nil || av.tpl == nil || av.acc.Ext == nil {
+			continue
+		}
+		ct := av.tpl.CredentialType
+		if ct != credential.TypeCodexOAuth && ct != credential.TypeCodexPAT {
+			continue
+		}
+		k := av.acc.MaxConcurrency
+		if k <= 0 {
+			continue
+		}
+		var prev *identityPool
+		if prevReg != nil {
+			prev = prevReg.pools[id]
+		}
+		pools[id] = identityPoolFor(prev, k, installationIDOf(av.acc.Ext), s.cfg.RotatePolicy)
+	}
+	return &identityRegistry{pools: pools}
+}
+
+// prevIdentityPoolsLocked 取当前「最新」静态根的池注册表作为复用源：优先
+// staged（pending）根，否则已发布根——与 reload 取 oldByID 同纪律（持
+// publisher.mu 读取安全）。
+func (s *Scheduler) prevIdentityPoolsLocked() *identityRegistry {
+	if p := s.publisher.pending; p != nil {
+		return p.identityPools
+	}
+	if cur := s.view.Load(); cur != nil && cur.static != nil {
+		return cur.static.identityPools
+	}
+	return nil
+}
+
 // claimIdentitySlot 为一次**已成功预留**的 codex 调用认领槽身份：仅 codex 凭据
-// （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入槽身份）。全忙兜底 =
-// 临时一次性身份（不落池，计一条 warn）。
-func (s *Scheduler) claimIdentitySlot(accountID int64, credType credential.Type, ext *domain.AccountExt) *identitySlot {
+// （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入槽身份）。pools 取自
+// 本次预留所用视图的静态根（与门禁 limit 同源）；全忙兜底 = 临时一次性身份
+// （不落池，计一条 warn）——installation/policy 取自池（单一来源，不再回 ext）。
+func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, credType credential.Type) *identitySlot {
 	if credType != credential.TypeCodexOAuth && credType != credential.TypeCodexPAT {
 		return nil
 	}
-	reg := s.identityPools.Load()
-	if reg == nil {
+	if pools == nil {
 		return nil
 	}
-	pool := reg.pools[accountID]
+	pool := pools.pools[accountID]
 	if pool == nil {
 		return nil
 	}
@@ -138,7 +193,7 @@ func (s *Scheduler) claimIdentitySlot(accountID int64, credType credential.Type,
 	if s.log != nil {
 		s.log.Warn("identity pool exhausted; using ephemeral identity", logx.Int64("account_id", accountID))
 	}
-	return newIdentitySlot(installationIDOf(ext), pool.policy)
+	return newIdentitySlot(pool.installationID, pool.rotatePolicy())
 }
 
 // installationIDOf 取账号 ext 的安装 ID（账号级稳定项；缺列 → 空串）。
