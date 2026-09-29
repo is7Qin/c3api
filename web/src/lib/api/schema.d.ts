@@ -1672,21 +1672,15 @@ export interface components {
             codex_oauth_expires_at?: string | null;
             /** @description 凭据：pat */
             codex_pat_key?: string | null;
-            /** @description 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成身份四元组；可空） */
+            /** @description 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成 installation_id；可空） */
             codex_email?: string | null;
             /** @description 上游账号/空间标识；可留空——导入/单账号保存时自动识别（OAuth token claims 离线解析 / PAT whoami 查询）；识别失败：导入行拒绝、单账号保存留空且下次保存重试 */
             codex_account_id?: string | null;
         };
-        /** @description codex 账号身份四元组（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供） */
+        /** @description codex 账号持久身份（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）。仅 installation_id——会话级 session/thread/window 已退役为运行时槽状态，不再持久化/暴露。 */
         CodexIdentity: {
             /** @description 身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成；空/缺省 → service 自动生成） */
             installation_id?: string;
-            /** @description 身份：会话级（UUIDv7；恒等 == thread_id；service 自动生成/沿用；响应 nil → null） */
-            session_id?: string | null;
-            /** @description 身份：会话级（UUIDv7；恒等 == session_id；响应 nil → null） */
-            thread_id?: string | null;
-            /** @description 身份：会话级派生 {thread_id}:0（导入时生成后恒定不变——恒 0，无透传无解析；上游不校验 n；响应 nil → null） */
-            window_id?: string | null;
         };
         /** @description 批量导入 codex-oauth 单行（组合幂等键 codex_email + codex_account_id；token+refresh 成对必填） */
         CodexOAuthImportItem: {
