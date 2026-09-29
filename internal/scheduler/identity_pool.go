@@ -31,12 +31,21 @@ type identitySlot struct {
 
 // identityPool 账号级槽位池（无锁）：容量 K = 账号 MaxConcurrency；cursor 为
 // 认领的旋转起点（round-robin 打散并发）。slots 切片发布后不再增删；逐槽状态
-// 经 atomic 可变。installationID/policy 供 resize / 兜底开新线程。
+// 经 atomic 可变。轮换策略单一来源在**槽**（slot.policy，Step 读它）——pool 不再
+// 各存一份（需要时经 rotatePolicy 从槽派生）。installationID 供 resize / 兜底开
+// 新线程。
 type identityPool struct {
 	slots          []*identitySlot
 	cursor         atomic.Uint64
-	policy         codexsdk.RotatePolicy
 	installationID string
+}
+
+// rotatePolicy 返回本池的轮换策略（单一来源 = 槽：池内各槽构造期写入同一策略）。
+func (p *identityPool) rotatePolicy() codexsdk.RotatePolicy {
+	if p == nil || len(p.slots) == 0 {
+		return codexsdk.RotatePolicy{}
+	}
+	return p.slots[0].policy
 }
 
 // identityRegistry 账号 ID → 池 的只读注册表：**发布后不可变**（map 不增删），
@@ -89,7 +98,7 @@ func resizeIdentityPool(old *identityPool, k int, installationID string, policy 
 	if k < 1 {
 		k = 1
 	}
-	np := &identityPool{policy: policy, installationID: installationID, slots: make([]*identitySlot, k)}
+	np := &identityPool{installationID: installationID, slots: make([]*identitySlot, k)}
 	for i := 0; i < k; i++ {
 		if old != nil && i < len(old.slots) {
 			os := old.slots[i]
@@ -115,7 +124,7 @@ func resizeIdentityPool(old *identityPool, k int, installationID string, policy 
 // identityPoolFor 取本次 reload 生效的池：容量/安装 ID/策略均未变则**原样复用**
 // （保留在途 busy 标志与槽身份，杜绝无关重载重置会话）；任一变化才重建。
 func identityPoolFor(prev *identityPool, k int, installationID string, policy codexsdk.RotatePolicy) *identityPool {
-	if prev != nil && len(prev.slots) == k && prev.installationID == installationID && prev.policy == policy {
+	if prev != nil && len(prev.slots) == k && prev.installationID == installationID && prev.rotatePolicy() == policy {
 		return prev
 	}
 	return resizeIdentityPool(prev, k, installationID, policy)
@@ -184,7 +193,7 @@ func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, 
 	if s.log != nil {
 		s.log.Warn("identity pool exhausted; using ephemeral identity", logx.Int64("account_id", accountID))
 	}
-	return newIdentitySlot(pool.installationID, pool.policy)
+	return newIdentitySlot(pool.installationID, pool.rotatePolicy())
 }
 
 // installationIDOf 取账号 ext 的安装 ID（账号级稳定项；缺列 → 空串）。

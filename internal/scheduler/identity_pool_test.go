@@ -23,7 +23,7 @@ func testPolicy() codexsdk.RotatePolicy {
 
 // newTestPool 构造容量 k 的池（installation "inst"）。
 func newTestPool(k int, p codexsdk.RotatePolicy) *identityPool {
-	pool := &identityPool{policy: p, installationID: "inst", slots: make([]*identitySlot, k)}
+	pool := &identityPool{installationID: "inst", slots: make([]*identitySlot, k)}
 	for i := 0; i < k; i++ {
 		pool.slots[i] = newIdentitySlot("inst", p)
 	}
@@ -379,6 +379,15 @@ func TestIdentitySlotConcurrentAdvanceNoLostUpdate(t *testing.T) {
 	sel.AdvanceIdentity(theta - 1) // 回落 → 重新武装
 	advanceAll()
 	require.Equal(t, uint64(2), slot.state.Load().WindowN, "回落再跨 → 继续恰计一次（arm 更新未被丢）")
+}
+
+// TestIdentityPoolRotatePolicySingleSource 轮换策略单一来源在槽：pool.rotatePolicy
+// 从槽派生（池不再各存一份投影）。
+func TestIdentityPoolRotatePolicySingleSource(t *testing.T) {
+	p := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 3, Scope: codexsdk.ScopeBodyAfterPrefix}
+	pool := newTestPool(3, p)
+	require.Equal(t, p, pool.rotatePolicy(), "池策略由槽派生")
+	require.Equal(t, p, newIdentitySlot("inst", p).policy, "槽持有策略（单一来源）")
 }
 
 // TestClaimIdentitySlotOnlyCodexAndFallback 仅 codex 凭据认领；全忙兜底临时身份
