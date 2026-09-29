@@ -97,7 +97,7 @@ func contFixture(t *testing.T) (*miniredis.Miniredis, *continuation.Store, *cont
 
 func contFP(t *testing.T, accountID int64, key string) domain.CandidateFingerprintVal {
 	t.Helper()
-	f, err := domain.CandidateFingerprint(accountID, 1, credential.TypeAPIKey, "https://cont.invalid", key, "", "", "", false, "", "", "", "")
+	f, err := domain.CandidateFingerprint(accountID, 1, credential.TypeAPIKey, "https://cont.invalid", key, "", "", "", false, "")
 	require.NoError(t, err)
 	return f
 }

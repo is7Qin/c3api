@@ -34,9 +34,9 @@ func mustQualityClassVal(t *testing.T, ck domain.CallerKind, uf domain.RequestFo
 	require.NoError(t, err)
 	return id
 }
-func mustFPVal(t *testing.T, accID, tplID int64, ct credential.Type, origin, sk, pat, email, acc string, strip bool, inst, sess, thr, win string) domain.CandidateFingerprintVal {
+func mustFPVal(t *testing.T, accID, tplID int64, ct credential.Type, origin, sk, pat, email, acc string, strip bool, inst string) domain.CandidateFingerprintVal {
 	t.Helper()
-	id, err := domain.CandidateFingerprint(accID, tplID, ct, origin, sk, pat, email, acc, strip, inst, sess, thr, win)
+	id, err := domain.CandidateFingerprint(accID, tplID, ct, origin, sk, pat, email, acc, strip, inst)
 	require.NoError(t, err)
 	return id
 }
@@ -175,7 +175,7 @@ func TestRoutingQualityReplayPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-one", "", "", "", false, "inst", "sess", "thr", "win")
+	fp := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-one", "", "", "", false, "inst")
 	row := repository.RoutingQualityRow{
 		IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp,
 		InstanceSrc: "host-1-abc", BucketMinute: now, AbsoluteSequence: 10, Attempts: 5, Successes: 3, Count429: 1, InputTokens: 100, Calls: 2,
@@ -212,7 +212,7 @@ func TestRoutingQualityReplayPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.UpsertQualityRow(ctx, rowEqualDiverge))
 	requireAttempts(8, "equal divergent must not overwrite")
 	// fingerprint change isolates
-	fp2 := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "inst", "sess", "thr", "win")
+	fp2 := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "inst")
 	row3 := row
 	row3.CandidateFingerprint = fp2
 	row3.InstanceSrc = "host-1-abc"
@@ -243,9 +243,9 @@ func TestRoutingQualityPartialShardSurvivesPG(t *testing.T) {
 	const inst = "src-shard"
 	// 同分钟、同分片的三枚候选 = 一个「完整分片」。
 	fps := []domain.CandidateFingerprintVal{
-		mustFPVal(t, 21, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-a", "", "", "", false, "i", "s", "t", "w"),
-		mustFPVal(t, 21, 2, credential.TypeAPIKey, "https://api.openai.com", "sk-b", "", "", "", false, "i", "s", "t", "w"),
-		mustFPVal(t, 21, 3, credential.TypeAPIKey, "https://api.openai.com", "sk-c", "", "", "", false, "i", "s", "t", "w"),
+		mustFPVal(t, 21, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-a", "", "", "", false, "i"),
+		mustFPVal(t, 21, 2, credential.TypeAPIKey, "https://api.openai.com", "sk-b", "", "", "", false, "i"),
+		mustFPVal(t, 21, 3, credential.TypeAPIKey, "https://api.openai.com", "sk-c", "", "", "", false, "i"),
 	}
 	mkRow := func(fp domain.CandidateFingerprintVal, seq, attempts int64) repository.RoutingQualityRow {
 		return repository.RoutingQualityRow{
@@ -367,8 +367,8 @@ func TestRoutingPartitionConcurrencyPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fpA := mustFPVal(t, 10, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-conc-a", "", "", "", false, "", "", "", "")
-	fpB := mustFPVal(t, 11, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-conc-b", "", "", "", false, "", "", "", "")
+	fpA := mustFPVal(t, 10, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-conc-a", "", "", "", false, "")
+	fpB := mustFPVal(t, 11, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-conc-b", "", "", "", false, "")
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
 	wg.Add(2)
@@ -443,7 +443,7 @@ func TestRoutingQualityFullStatsPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 7, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp := mustFPVal(t, 99, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-full", "", "", "", false, "i1", "s1", "t1", "w1")
+	fp := mustFPVal(t, 99, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-full", "", "", "", false, "i1")
 	row := repository.RoutingQualityRow{
 		IdentityVersion: 1, RouteClassID: rc, QualityClassID: qc, CandidateFingerprint: fp,
 		InstanceSrc: "src-full", BucketMinute: now, AbsoluteSequence: 5, Attempts: 10, Successes: 6, Count429: 1, CountOrdinary4xx: 1, Count5xx: 1, CountNetwork: 1,

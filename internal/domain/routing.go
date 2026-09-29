@@ -230,6 +230,11 @@ func stableCredentialDigest(credType credential.Type, upstreamKey string, patKey
 	}
 }
 
+// CandidateFingerprint 汇总“候选身份”的全部**账号级稳定输入**（见 routing.go
+// 头注）：账号/模板/凭据类型/生效源/凭据摘要/strip 旗 + codex 账号级稳定项
+// （installation_id、codex_account_id）。身份三件套 session/thread/window 已
+// 退役为运行时槽状态（scheduler 槽位池按水位演化），**不得**再进指纹：否则
+// 每次槽轮换都会击穿 continuation 绑定与在途 (指纹,K) 工件。
 func CandidateFingerprint(
 	accountID int64,
 	templateID int64,
@@ -241,9 +246,6 @@ func CandidateFingerprint(
 	codexAccountID string,
 	stripImageTools bool,
 	installationID string,
-	sessionID string,
-	threadID string,
-	windowID string,
 ) (CandidateFingerprintVal, error) {
 	if !credType.Valid() {
 		return CandidateFingerprintVal{}, fmt.Errorf("routing: invalid credential_type %q", credType)
@@ -271,7 +273,7 @@ func CandidateFingerprint(
 	if err != nil {
 		return CandidateFingerprintVal{}, err
 	}
-	for _, s := range []string{installationID, sessionID, threadID, windowID, codexAccountID} {
+	for _, s := range []string{installationID, codexAccountID} {
 		if !utf8.ValidString(s) {
 			return CandidateFingerprintVal{}, fmt.Errorf("routing: codex identity field not valid UTF-8")
 		}
@@ -285,11 +287,8 @@ func CandidateFingerprint(
 	orig, _ := fieldString(canonicalOrigin)
 	strip := fieldBool(stripImageTools)
 	inst, _ := fieldString(installationID)
-	sess, _ := fieldString(sessionID)
-	thr, _ := fieldString(threadID)
-	win, _ := fieldString(windowID)
 	caid, _ := fieldString(codexAccountID)
-	h := hashFields(acc, tpl, ct, orig, digest, strip, inst, sess, thr, win, caid)
+	h := hashFields(acc, tpl, ct, orig, digest, strip, inst, caid)
 	return CandidateFingerprintVal(h), nil
 }
 
@@ -301,7 +300,9 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 	if a.BaseURL != nil && *a.BaseURL != "" {
 		baseURL = *a.BaseURL
 	}
-	var patKey, email, codexAccountID, installationID, sessionID, threadID, windowID string
+	// 只读账号级稳定身份项：installation_id（CodexIdentity 退役为运行时槽状态后
+	// session/thread/window 不再是决策输入）；CodexIdentity 仅保留 InstallationID。
+	var patKey, email, codexAccountID, installationID string
 	if a.Ext != nil {
 		if a.Ext.CodexPATKey != nil {
 			patKey = *a.Ext.CodexPATKey
@@ -314,12 +315,9 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 		}
 		if a.Ext.CodexIdentity != nil {
 			installationID = a.Ext.CodexIdentity.InstallationID
-			sessionID = a.Ext.CodexIdentity.SessionID
-			threadID = a.Ext.CodexIdentity.ThreadID
-			windowID = a.Ext.CodexIdentity.WindowID
 		}
 	}
-	return CandidateFingerprint(a.ID, a.TemplateID, a.Template.CredentialType, baseURL, a.UpstreamKey, patKey, email, codexAccountID, a.Template.StripImageTools, installationID, sessionID, threadID, windowID)
+	return CandidateFingerprint(a.ID, a.TemplateID, a.Template.CredentialType, baseURL, a.UpstreamKey, patKey, email, codexAccountID, a.Template.StripImageTools, installationID)
 }
 
 var _ = fieldUint64

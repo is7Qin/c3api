@@ -26,8 +26,8 @@ func TestRoutingQualityRollupQueryPG(t *testing.T) {
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	rcOther := mustRouteClassVal(t, 2, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	qc := mustQualityClassVal(t, domain.CallerChat, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
-	fp1 := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-rq1", "", "", "", false, "", "", "", "")
-	fp2 := mustFPVal(t, 2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-rq2", "", "", "", false, "", "", "", "")
+	fp1 := mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-rq1", "", "", "", false, "")
+	fp2 := mustFPVal(t, 2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-rq2", "", "", "", false, "")
 	ones := []int64{1, 1, 1, 1, 1, 1, 1, 1, 1, 1}
 	twos := []int64{2, 2, 2, 2, 2, 2, 2, 2, 2, 2}
 

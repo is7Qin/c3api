@@ -101,9 +101,6 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.Ext.CodexEmail":                   {staticPathField, "codexEmail"},
 	"$S.acc.Ext.CodexPATKey":                  {staticPathField, "codexPATKey"},
 	"$S.acc.Ext.CodexIdentity.InstallationID": {staticPathField, "codexInstallation"},
-	"$S.acc.Ext.CodexIdentity.SessionID":      {staticPathField, "codexSession"},
-	"$S.acc.Ext.CodexIdentity.ThreadID":       {staticPathField, "codexThread"},
-	"$S.acc.Ext.CodexIdentity.WindowID":       {staticPathField, "codexWindow"},
 
 	// --- 账号凭据面（载荷：只影响叶子内容是否新鲜） ---
 	"$S.acc.Ext.CodexOAuthToken":        {staticPathField, "codexOAuthToken"},

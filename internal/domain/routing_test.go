@@ -52,46 +52,40 @@ func TestRoutingQualityClassComposition(t *testing.T) {
 }
 
 func TestRoutingFingerprintGolden(t *testing.T) {
-	fp, err := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
+	fp, err := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst")
 	require.NoError(t, err)
-	require.Equal(t, "950eabbcaf4c61629bde89e96855d9aa602ade67a086f049eed3670fa8798011", CandidateFPHex(fp))
-	fp2, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "https://api.openai.com", "", "pat_abc", "", "", false, "inst", "sess", "thr", "win")
+	require.Equal(t, "b78d9ed2fcd0d990e2bf237a1da01ca7a180c3b08cd9a6af999b7cc8325162d4", CandidateFPHex(fp))
+	fp2, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "https://api.openai.com", "", "pat_abc", "", "", false, "inst")
 	require.NoError(t, err)
-	require.Equal(t, "9c7021f9b5c6817d49bb8ea4dbc0a9964f1c6c6d9e0d050713af6aaff85cd9ac", CandidateFPHex(fp2))
-	fp3, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "install-1", "sess1", "thr1", "win1")
+	require.Equal(t, "d381eb847a824fcf16ba17c727038fea3dc1195b6a8878502eb6e7481d5eee67", CandidateFPHex(fp2))
+	fp3, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "install-1")
 	require.NoError(t, err)
-	require.Equal(t, "8a0849c54c65ebc2ac97d7da2931d47f5e80c55b3dcfdc023381a033dc9d5c8b", CandidateFPHex(fp3))
+	require.Equal(t, "c58742d44acd63dfe8a7edc29931ac7753b6e669817df5eb3414ee4d2f9c53b8", CandidateFPHex(fp3))
 	// email must not affect oauth fingerprint
-	fp3b, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "install-1", "sess1", "thr1", "win1")
+	fp3b, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "install-1")
 	require.NoError(t, err)
 	require.Equal(t, fp3, fp3b, "oauth email must not change fingerprint")
 }
 
 func TestRoutingFingerprintInvalidation(t *testing.T) {
-	base, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
-	changedAccount, _ := CandidateFingerprint(2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
+	base, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst")
+	changedAccount, _ := CandidateFingerprint(2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst")
 	require.NotEqual(t, base, changedAccount, "account_id changes fingerprint")
-	changedTpl, _ := CandidateFingerprint(1, 11, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
+	changedTpl, _ := CandidateFingerprint(1, 11, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst")
 	require.NotEqual(t, base, changedTpl, "template_id changes fingerprint")
-	changedType, _ := CandidateFingerprint(1, 10, credential.TypeResponsesSpecial, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
+	changedType, _ := CandidateFingerprint(1, 10, credential.TypeResponsesSpecial, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst")
 	require.NotEqual(t, base, changedType, "credential_type changes fingerprint")
-	changedURL, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.anthropic.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
+	changedURL, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.anthropic.com", "sk-abc123", "", "", "", false, "inst")
 	require.NotEqual(t, base, changedURL, "baseURL changes fingerprint")
-	changedStrip, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", true, "inst", "sess", "thr", "win")
+	changedStrip, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", true, "inst")
 	require.NotEqual(t, base, changedStrip, "strip flag changes fingerprint")
-	changedInst, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst2", "sess", "thr", "win")
+	changedInst, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst2")
 	require.NotEqual(t, base, changedInst, "installation_id changes fingerprint")
-	changedSess, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess2", "thr", "win")
-	require.NotEqual(t, base, changedSess, "session_id changes fingerprint")
-	changedCodexAcc, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "other-acc", false, "inst", "sess", "thr", "win")
+	changedCodexAcc, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "other-acc", false, "inst")
 	require.NotEqual(t, base, changedCodexAcc, "codex_account_id changes fingerprint")
-	changedThread, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr2", "win")
-	require.NotEqual(t, base, changedThread, "thread_id changes fingerprint")
-	changedWindow, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win2")
-	require.NotEqual(t, base, changedWindow, "window_id changes fingerprint")
-	same, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
+	same, _ := CandidateFingerprint(1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-abc123", "", "", "", false, "inst")
 	require.Equal(t, base, same)
-	_, err := CandidateFingerprint(1, 10, credential.TypeAPIKey, "", "sk-abc123", "", "", "", false, "inst", "sess", "thr", "win")
+	_, err := CandidateFingerprint(1, 10, credential.TypeAPIKey, "", "sk-abc123", "", "", "", false, "inst")
 	require.Error(t, err, "empty effectiveBaseURL must be rejected")
 }
 
@@ -102,36 +96,36 @@ func TestRoutingFingerprintInvalidation(t *testing.T) {
 // base_url = 不可路由）。空 base_url 下 fingerprint 仍随凭据输入变化（fencing
 // 权威不降级）；空/非空两条产线互不串扰。
 func TestRoutingFingerprintCodexEmptyBaseURL(t *testing.T) {
-	fpPAT, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "", "", "pat_abc", "", "", false, "", "", "", "")
+	fpPAT, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "", "", "pat_abc", "", "", false, "")
 	require.NoError(t, err, "codex-pat with empty base_url must fingerprint")
 	require.NotEmpty(t, CandidateFPHex(fpPAT))
-	fpOAuth, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "", "", "", "user@example.com", "acc-123", false, "i", "s", "t", "w")
+	fpOAuth, err := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "", "", "", "user@example.com", "acc-123", false, "i")
 	require.NoError(t, err, "codex-oauth with empty base_url must fingerprint")
 	require.NotEmpty(t, CandidateFPHex(fpOAuth))
 	// PAT 轮换 → fingerprint 变化（fencing 权威要求）。
-	fpPAT2, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "", "", "pat-two", "", "", false, "", "", "", "")
+	fpPAT2, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "", "", "pat-two", "", "", false, "")
 	require.NoError(t, err)
 	require.NotEqual(t, fpPAT, fpPAT2, "pat change must change fingerprint")
 	// 空与非空 base_url 产线两条路径互不串扰。
-	fpPATWithBase, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "https://api.openai.com", "", "pat_abc", "", "", false, "", "", "", "")
+	fpPATWithBase, err := CandidateFingerprint(1, 10, credential.TypeCodexPAT, "https://api.openai.com", "", "pat_abc", "", "", false, "")
 	require.NoError(t, err)
 	require.NotEqual(t, fpPAT, fpPATWithBase, "base_url presence must change fingerprint")
 }
 
 func TestRoutingFingerprintCredentialStability(t *testing.T) {
-	fp1, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i", "s", "t", "w")
-	fp2, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "i", "s", "t", "w")
+	fp1, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i")
+	fp2, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "other@example.com", "acc-123", false, "i")
 	require.Equal(t, fp1, fp2, "oauth email must not change fingerprint")
 	// tokens/expiry are not inputs, so different upstreamKey/pat for OAuth must not change fingerprint
-	fp1b, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "sk-different", "pat-different", "user@example.com", "acc-123", false, "i", "s", "t", "w")
+	fp1b, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "sk-different", "pat-different", "user@example.com", "acc-123", false, "i")
 	require.Equal(t, fp1, fp1b, "oauth upstreamKey/pat must not change fingerprint")
-	fp3, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i2", "s", "t", "w")
+	fp3, _ := CandidateFingerprint(1, 10, credential.TypeCodexOAuth, "https://api.openai.com", "", "", "user@example.com", "acc-123", false, "i2")
 	require.NotEqual(t, fp1, fp3, "oauth installation change must change fingerprint")
-	fpA1, _ := CandidateFingerprint(5, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-one", "", "", "", false, "", "", "", "")
-	fpA2, _ := CandidateFingerprint(5, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "", "", "", "")
+	fpA1, _ := CandidateFingerprint(5, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-one", "", "", "", false, "")
+	fpA2, _ := CandidateFingerprint(5, 1, credential.TypeAPIKey, "https://api.openai.com", "sk-two", "", "", "", false, "")
 	require.NotEqual(t, fpA1, fpA2, "upstreamKey change changes api_key fingerprint")
-	fpP1, _ := CandidateFingerprint(5, 1, credential.TypeCodexPAT, "https://api.openai.com", "", "pat-one", "", "", false, "", "", "", "")
-	fpP2, _ := CandidateFingerprint(5, 1, credential.TypeCodexPAT, "https://api.openai.com", "", "pat-two", "", "", false, "", "", "", "")
+	fpP1, _ := CandidateFingerprint(5, 1, credential.TypeCodexPAT, "https://api.openai.com", "", "pat-one", "", "", false, "")
+	fpP2, _ := CandidateFingerprint(5, 1, credential.TypeCodexPAT, "https://api.openai.com", "", "pat-two", "", "", false, "")
 	require.NotEqual(t, fpP1, fpP2, "pat key change changes pat fingerprint")
 }
 

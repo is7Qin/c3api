@@ -20,7 +20,7 @@ import (
 //
 // 比较规则第 2 项（`CandidateFingerprint` 本身按值比较）在这里**未接线**：
 // 它按值覆盖 accountID/templateID/credential_type/生效 baseURL/stripImageTools/
-// upstreamKey/凭据摘要/凭据身份四元组/codexAccountID，这些事实**均已逐项**落在
+// upstreamKey/凭据摘要/installation_id/codexAccountID，这些事实**均已逐项**落在
 // 下列字段里（digest 是 upstreamKey|patKey 的纯函数：domain/routing.go:231-257），
 // 故覆盖面无缺口。
 //
@@ -47,6 +47,11 @@ type planKey struct {
 	// （email 仅管理面改写，SDK 自动刷新不碰它）；一旦有人把它真正接进指纹，
 	// 判据无需改动即仍然正确。
 	//
+	// codexInstallation 落在这里：AccountCandidateFingerprint 把
+	// Ext.CodexIdentity.InstallationID 传给 CandidateFingerprint（账号级稳定项）。
+	// 身份三件套 session/thread/window 已退役为运行时槽状态（scheduler 槽位池），
+	// **不再**进键——否则每次槽轮换都会作废在途计划。
+	//
 	// codexPATKey 落在这里：stableCredentialDigest 对 codex-pat 就是
 	// sha256(patKey)，pat 轮转确实改变候选指纹 ⇒ 确实必须打断计划。而
 	// codex-oauth 分支返回常量（domain/routing.go:249-253），故 OAuth 令牌不是
@@ -54,9 +59,6 @@ type planKey struct {
 	// 指纹函数的拆分同源。
 	codexAccountID    string
 	codexInstallation string
-	codexSession      string
-	codexThread       string
-	codexWindow       string
 	codexEmail        string
 	codexPATKey       string // 凭据值：pat（api_key/pat 类型上游鉴权用；同时进候选指纹）
 
@@ -138,9 +140,6 @@ func planKeyOf(av *snapshotStatic) planKey {
 		k.codexPATKey = derefString(ext.CodexPATKey)
 		if id := ext.CodexIdentity; id != nil {
 			k.codexInstallation = id.InstallationID
-			k.codexSession = id.SessionID
-			k.codexThread = id.ThreadID
-			k.codexWindow = id.WindowID
 		}
 	}
 	if tpl := av.tpl; tpl != nil {

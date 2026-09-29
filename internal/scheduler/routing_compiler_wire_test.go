@@ -122,7 +122,10 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 	// Incident wiring: the serialized form now carries the expose-only
 	// incident mark per route (zero here — no baseline/evaluator in this
 	// direct compile) — golden regenerated for the incident-carrying form.
-	require.Equal(t, "985be50a3bfde2c065a4543a678a0c48848ce2ed58f5a6e196853aa6e5eb6e09", hexOf(sum[:]), "golden serialized DecisionView")
+	// Identity decoupling: CandidateFingerprint no longer mixes the runtime
+	// session/thread/window identity trio, so every candidate fingerprint
+	// changed — golden regenerated for the slot-identity form.
+	require.Equal(t, "8cec15ec2c091d91b10a2d044bac804aa24405ec4ee15e93a59d2c2cf12c8f21", hexOf(sum[:]), "golden serialized DecisionView")
 }
 
 func hexOf(b []byte) string {

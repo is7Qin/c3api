@@ -238,9 +238,9 @@ func TestRoutingShardEquivPG(t *testing.T) {
 	}
 	qcs := []domain.QualityClassIDVal{qcA, qcB}
 	fps := []domain.CandidateFingerprintVal{
-		mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-equiv-1", "", "", "", false, "inst", "sess", "thr", "win"),
-		mustFPVal(t, 2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-equiv-2", "", "", "", false, "inst", "sess", "thr", "win"),
-		mustFPVal(t, 3, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-equiv-3", "", "", "", false, "inst", "sess", "thr", "win"),
+		mustFPVal(t, 1, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-equiv-1", "", "", "", false, "inst"),
+		mustFPVal(t, 2, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-equiv-2", "", "", "", false, "inst"),
+		mustFPVal(t, 3, 10, credential.TypeAPIKey, "https://api.openai.com", "sk-equiv-3", "", "", "", false, "inst"),
 	}
 	insts := []string{"shard-A", "shard-B"}
 	minutes := make([]time.Time, 0, 8)
