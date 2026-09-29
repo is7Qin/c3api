@@ -284,12 +284,8 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 	sess, meta := sel.CodexIdentity()
 	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r), func(raw []byte) error {
 		if !framesWritten {
-			// 首事件发头：三件套 + WriteHeader(200) 显式——SDK 载荷
-			// 直写无 sserelay 首帧隐式写头；延至此处保证首帧前失败不吞状态码。
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("X-Accel-Buffering", "no")
-			w.WriteHeader(http.StatusOK)
+			// 首事件发头：延至此处保证首帧前失败不吞状态码。
+			beginSSE(w)
 			framesWritten = true
 		}
 		if !usageTaken {
@@ -373,10 +369,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 	// 零帧防御（病态上游仅发 [DONE]——fn 从未调用、头未提交）：此刻才提交头，
 	// [DONE] 是首个写出字节。
 	if !framesWritten {
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("X-Accel-Buffering", "no")
-		w.WriteHeader(http.StatusOK)
+		beginSSE(w)
 		framesWritten = true
 	}
 	if err := writeCodexSSEFrame(w, sseDonePayload); err != nil {
@@ -410,6 +403,17 @@ var (
 	sseFrameSuffix = []byte("\n\n")
 	sseDonePayload = []byte("[DONE]")
 )
+
+// beginSSE 提交 SSE 响应头（Content-Type/Cache-Control/X-Accel-Buffering 三件套
+// + 显式 WriteHeader(200)）：SDK 载荷直写无 sserelay 首帧隐式写头，须显式下发；
+// 提交后不可再改状态码。仅在确知要写首帧时调用（首帧前失败不调用 → 头未提交，
+// HTTP 状态可由 failover 循环正常分类）。
+func beginSSE(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+}
 
 // writeCodexSSEFrame 逐帧重帧写出（`data: <payload>\n\n` + flush——SDK
 // 交付的是载荷非完整 SSE 行，event: 行不重建）。零分配：三段直写（前缀/载荷/

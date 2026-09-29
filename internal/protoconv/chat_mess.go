@@ -112,13 +112,20 @@ func messUsageToChat(msg map[string]any) (map[string]any, bool) {
 		"total_tokens":      prompt + ot,
 	}
 	if cr > 0 || cc > 0 {
-		d := map[string]any{"cached_tokens": cr}
-		if cc > 0 {
-			d["cache_write_tokens"] = cc
-		}
-		out["prompt_tokens_details"] = d
+		out["prompt_tokens_details"] = chatPromptDetails(cr, cc)
 	}
 	return out, true
+}
+
+// chatPromptDetails chat usage 的 prompt_tokens_details：cached_tokens 恒含；
+// cache_write_tokens 仅在非 0 时出现（无缓存写入的响应不多出零值键——零值策略
+// 与 resp_mess.go respInputDetails 一致）。
+func chatPromptDetails(cr, cc int64) map[string]any {
+	d := map[string]any{"cached_tokens": cr}
+	if cc > 0 {
+		d["cache_write_tokens"] = cc
+	}
+	return d
 }
 
 // mapMessToChat 流式：anthropic messages SSE 事件 → chat 流。事件映射表：
@@ -200,11 +207,7 @@ func (m *StreamMapper) mapMessToChat(name string, data []byte) ([]byte, bool) {
 			"prompt_tokens": prompt, "completion_tokens": m.ot, "total_tokens": prompt + m.ot,
 		}
 		if m.cached > 0 || m.cacheCreate > 0 {
-			d := map[string]any{"cached_tokens": m.cached}
-			if m.cacheCreate > 0 {
-				d["cache_write_tokens"] = m.cacheCreate
-			}
-			usage["prompt_tokens_details"] = d
+			usage["prompt_tokens_details"] = chatPromptDetails(m.cached, m.cacheCreate)
 		}
 		// finish 帧不含 usage；下一帧 choices 为空且只含 usage。
 		finish := m.chatFrame(map[string]any{}, reason, nil)

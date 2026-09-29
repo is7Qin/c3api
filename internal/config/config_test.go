@@ -68,7 +68,8 @@ func TestDefaults(t *testing.T) {
 }
 
 // TestCodexIdentityDefaultsAndValidation [codex_identity] 轮换参数：默认
-// 2/6/total；fail-fast 1 ≤ wmax_lo ≤ wmax_hi；scope 限已知口径。
+// 2/6/total；fail-fast——wmax_hi>0 时 1 ≤ wmax_lo ≤ wmax_hi（wmax_hi=0 为
+// 「不退休」哨兵，此时 wmax_lo 被忽略）；scope 限已知口径。
 func TestCodexIdentityDefaultsAndValidation(t *testing.T) {
 	setenvRequired(t)
 	c, err := Load("")
@@ -82,6 +83,16 @@ func TestCodexIdentityDefaultsAndValidation(t *testing.T) {
 	require.Equal(t, 3, c2.CodexIdentity.WMaxLo)
 	require.Equal(t, 5, c2.CodexIdentity.WMaxHi)
 	require.Equal(t, "body_after_prefix", c2.CodexIdentity.Scope)
+
+	// wmax_hi=0 = 「不退休」哨兵：SDK drawWMax 对 hi==0 恒返回 0（线程永不退休），
+	// 此时 wmax_lo 被忽略 → 任意 lo（含 0）均通过。
+	c3, err := Load(writeConfig(t, "[codex_identity]\nwmax_lo = 4\nwmax_hi = 0\n"))
+	require.NoError(t, err)
+	require.Equal(t, 4, c3.CodexIdentity.WMaxLo)
+	require.Equal(t, 0, c3.CodexIdentity.WMaxHi)
+	c4, err := Load(writeConfig(t, "[codex_identity]\nwmax_lo = 0\nwmax_hi = 0\n"))
+	require.NoError(t, err, "wmax_hi=0 时不退休，wmax_lo 被忽略")
+	require.Equal(t, 0, c4.CodexIdentity.WMaxHi)
 
 	_, err = Load(writeConfig(t, "[codex_identity]\nwmax_lo = 0\nwmax_hi = 6\n"))
 	require.ErrorContains(t, err, "codex_identity")

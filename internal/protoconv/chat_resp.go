@@ -644,19 +644,27 @@ func appendRespUsage(out []byte, u gjson.Result) []byte {
 		c := gjsonNumInt(d.Get("cached_tokens"))
 		w := gjsonNumInt(d.Get("cache_write_tokens"))
 		if c > 0 || w > 0 {
-			out = append(out, `,"prompt_tokens_details":{"cached_tokens":`...)
-			out = appendInt64(out, c)
-			if w > 0 {
-				out = append(out, `,"cache_write_tokens":`...)
-				out = appendInt64(out, w)
-			}
-			out = append(out, '}')
+			out = appendChatPromptDetails(out, c, w)
 		}
 	}
 	out = append(out, `,"total_tokens":`...)
 	out = appendInt64(out, tt)
 	out = append(out, '}')
 	return out
+}
+
+// appendChatPromptDetails 向 buf 追加 prompt_tokens_details 原始字节：cached_tokens
+// 恒写，cache_write_tokens 仅在 cc>0 时写（零值策略与 chat_mess.go chatPromptDetails
+// 一致——调用方负责 c>0||w>0 门控）。
+func appendChatPromptDetails(buf []byte, cr, cc int64) []byte {
+	buf = append(buf, `,"prompt_tokens_details":{"cached_tokens":`...)
+	buf = appendInt64(buf, cr)
+	if cc > 0 {
+		buf = append(buf, `,"cache_write_tokens":`...)
+		buf = appendInt64(buf, cc)
+	}
+	buf = append(buf, '}')
+	return buf
 }
 
 // contentText chat 消息 content（string 或 text 部件数组）→ 拼接文本（map 版
@@ -829,13 +837,7 @@ func (m *StreamMapper) appendUsageToBuf(u gjson.Result) []byte {
 		c := gjsonNumInt(d.Get("cached_tokens"))
 		w := gjsonNumInt(d.Get("cache_write_tokens"))
 		if c > 0 || w > 0 {
-			m.dbuf = append(m.dbuf, `,"prompt_tokens_details":{"cached_tokens":`...)
-			m.dbuf = appendInt64(m.dbuf, c)
-			if w > 0 {
-				m.dbuf = append(m.dbuf, `,"cache_write_tokens":`...)
-				m.dbuf = appendInt64(m.dbuf, w)
-			}
-			m.dbuf = append(m.dbuf, '}')
+			m.dbuf = appendChatPromptDetails(m.dbuf, c, w)
 		}
 	}
 	m.dbuf = append(m.dbuf, `,"total_tokens":`...)

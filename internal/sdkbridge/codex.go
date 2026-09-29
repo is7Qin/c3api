@@ -313,14 +313,6 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	if err != nil {
 		return nil, nil, err
 	}
-	var opts []codexsdk.Option
-	if a.transport != nil {
-		opts = append(opts, codexsdk.WithTransport(a.transport))
-	}
-	if turnState != "" {
-		opts = append(opts, codexsdk.WithHeader(codexsdk.HeaderTurnState, turnState))
-	}
-	opts = append(opts, identityOpts(sess, meta)...)
 	sig := identitySig(sess, meta)
 	a.mu.Lock()
 	if e.clients == nil {
@@ -328,6 +320,16 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	}
 	c := e.clients[sig]
 	if c == nil || c.appliedTurnState != turnState {
+		// opts 仅在真正构造（miss/重建）时组装：缓存命中（常态）跳过
+		// WithTransport/WithHeader/identityOpts 的闭包分配。
+		var opts []codexsdk.Option
+		if a.transport != nil {
+			opts = append(opts, codexsdk.WithTransport(a.transport))
+		}
+		if turnState != "" {
+			opts = append(opts, codexsdk.WithHeader(codexsdk.HeaderTurnState, turnState))
+		}
+		opts = append(opts, identityOpts(sess, meta)...)
 		c = &codexHTTPClient{client: codexsdk.NewHTTPClient(e.auth, opts...), appliedTurnState: turnState}
 		e.clients[sig] = c
 	}
