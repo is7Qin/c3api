@@ -177,7 +177,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	require.Equal(t, int64(20), ot, "output_tokens")
 	require.Equal(t, int64(30), tt, "total_tokens")
 	require.Equal(t, int64(2), cr, "cache_read_tokens")
-	require.Equal(t, int64(4), cc, "cache_creation_tokens")
+	require.Equal(t, int64(4), cc, "cache_write_tokens")
 	require.Equal(t, int64(480), cost, "it'=8：8×1e7+20×2e7 每 M 毫分 = 480（重复计费的 cr×InputPerM 份额已消除）")
 	require.Equal(t, "openai-responses", format)
 	require.Equal(t, "none", et)

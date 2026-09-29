@@ -307,7 +307,7 @@ func fakeResponsesWSWithModel(t *testing.T, hooks *fakeWSHooks, model string) *h
 			hooks.mu.Unlock()
 			if !streamed {
 				streamed = true
-				completed := `{"type":"response.completed","response":{"id":"rsp_ws_1","status":"completed","model":"` + model + `","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8,"input_tokens_details":{"cached_tokens":1,"text_tokens":2,"audio_tokens":0},"output_tokens_details":{"reasoning_tokens":2,"text_tokens":3,"audio_tokens":0},"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}}}}`
+				completed := `{"type":"response.completed","response":{"id":"rsp_ws_1","status":"completed","model":"` + model + `","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8,"input_tokens_details":{"cached_tokens":1,"text_tokens":2,"audio_tokens":0,"cache_write_tokens":3},"output_tokens_details":{"reasoning_tokens":2,"text_tokens":3,"audio_tokens":0}}}}`
 				for _, f := range []string{
 					`{"type":"response.created","response":{"id":"rsp_ws_1","model":"` + model + `"}}`,
 					`{"type":"response.output_text.delta","delta":"hi"}`,

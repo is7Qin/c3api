@@ -29,8 +29,8 @@ import (
 )
 
 // responsesWSCompletedFrame 假上游的 response.completed 事件帧（usage 5 计数：
-// input 3 / output 5 / total 8 / cache_read 1 / cache_creation 3=2+1）。
-const responsesWSCompletedFrame = `{"type":"response.completed","response":{"id":"rsp_ws_1","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8,"input_tokens_details":{"cached_tokens":1,"text_tokens":2,"audio_tokens":0},"output_tokens_details":{"reasoning_tokens":2,"text_tokens":3,"audio_tokens":0},"cache_creation":{"ephemeral_5m_input_tokens":2,"ephemeral_1h_input_tokens":1}}}}`
+// input 3 / output 5 / total 8 / cache_read 1 / cache_write 3）。
+const responsesWSCompletedFrame = `{"type":"response.completed","response":{"id":"rsp_ws_1","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8,"input_tokens_details":{"cached_tokens":1,"text_tokens":2,"audio_tokens":0,"cache_write_tokens":3},"output_tokens_details":{"reasoning_tokens":2,"text_tokens":3,"audio_tokens":0}}}}`
 
 // fakeWSHooks 假上游观测面（断言用）。
 type fakeWSHooks struct {
@@ -253,7 +253,7 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(8), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens, "input_tokens_details.cached_tokens")
-	require.Equal(t, int64(3), lg.CacheCreationTokens, "cache_creation 两 TTL 桶聚合 2+1")
+	require.Equal(t, int64(3), lg.CacheCreationTokens, "input_tokens_details.cache_write_tokens")
 	require.Equal(t, "gpt-4o", lg.Model)
 	require.Equal(t, "", lg.MappedModel)
 	require.Equal(t, domain.FormatOpenAIResponsesWS, lg.Format)

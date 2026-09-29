@@ -39,7 +39,7 @@ const wsPGTestSchema = "proxy_ws_test"
 // TestResponsesWSBillingPG resp-ws 全链路计费落库：WS 请求 → usage 嗅探 →
 // finish → applyBilling（价格快照 + 倍率）→ routeLog 单写点（spec §一）→
 // rec → InsertBatch 落库 → 断言 usage_logs 5 计数 + cost + 格式 + Billed 出生标记。
-// 5 计数：input 3 / output 5 / total 8 / cache_read 1 / cache_creation 3；
+// 5 计数：input 3 / output 5 / total 8 / cache_read 1 / cache_write 3；
 // cost = 3×1e7 + 5×2e7 每 M 毫分 = 130 毫分（缓存分量无价不参与计费）。
 func TestResponsesWSBillingPG(t *testing.T) {
 	dsn := os.Getenv("TEST_DATABASE_URL")
@@ -119,7 +119,7 @@ func TestResponsesWSBillingPG(t *testing.T) {
 	require.Equal(t, int64(5), ot, "output_tokens")
 	require.Equal(t, int64(8), tt, "total_tokens")
 	require.Equal(t, int64(1), cr, "cache_read_tokens")
-	require.Equal(t, int64(3), cc, "cache_creation_tokens")
+	require.Equal(t, int64(3), cc, "cache_write_tokens")
 	require.Equal(t, int64(120), cost, "it'=2：2×1e7+5×2e7 每 M 毫分 = 120")
 	require.Equal(t, "openai-responses-ws", format)
 	require.Equal(t, "none", et)

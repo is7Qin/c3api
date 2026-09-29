@@ -860,7 +860,7 @@ func TestProxyBillingPriceSnapshotCache(t *testing.T) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
 		fl := w.(http.Flusher)
-		fmt.Fprint(w, `data: {"id":"c1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":4},"cache_creation":{"ephemeral_5m_input_tokens":2}}}`+"\n\n")
+		fmt.Fprint(w, `data: {"id":"c1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15,"prompt_tokens_details":{"cached_tokens":4,"cache_write_tokens":2}}}`+"\n\n")
 		fl.Flush()
 		fmt.Fprint(w, "data: [DONE]\n\n")
 		fl.Flush()

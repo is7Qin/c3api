@@ -180,7 +180,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	require.Equal(t, int64(5), ot, "output_tokens")
 	require.Equal(t, int64(8), tt, "total_tokens")
 	require.Equal(t, int64(1), cr, "cache_read_tokens")
-	require.Equal(t, int64(3), cc, "cache_creation_tokens")
+	require.Equal(t, int64(3), cc, "cache_write_tokens")
 	require.Equal(t, int64(120), cost, "it'=2：2×1e7+5×2e7 每 M 毫分 = 120")
 	require.Equal(t, "openai-responses-ws", format)
 	require.Equal(t, "none", et)

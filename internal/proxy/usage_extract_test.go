@@ -23,18 +23,18 @@ import (
 // 提取单测用真实上游 JSON 构造（不得用结构体 marshal 自证——
 // RawJSON 路径必须经过 SDK UnmarshalJSON 才能得到原始字节）。
 
-// —— chat 流式 usage 帧（顶层 usage.*；cached_tokens 嵌套于
-// prompt_tokens_details，与 SDK CompletionUsage 结构体一致） ——
+// —— chat 流式 usage 帧（顶层 usage.*；cached_tokens / cache_write_tokens
+// 嵌套于 prompt_tokens_details） ——
 
 func TestChatStreamUsage(t *testing.T) {
-	frame := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`)
+	frame := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":6}}}`)
 	u, ok := chatStreamUsage(frame)
 	require.True(t, ok, "usage 存在 → ok")
 	require.Equal(t, int64(5), u.it, "可计费输入 = prompt − cached（spec 2026-08-25 缓存归一）")
 	require.Equal(t, int64(20), u.ot)
 	require.Equal(t, int64(30), u.tt, "tt 线上原值——归一不改 total（数值不变量）")
 	require.Equal(t, int64(5), u.cr, "prompt_tokens_details.cached_tokens 直读")
-	require.Equal(t, int64(6), u.cc, "ephemeral 5m+1h 聚合")
+	require.Equal(t, int64(6), u.cc, "prompt_tokens_details.cache_write_tokens")
 
 	// 空对象 usage 仍存在（字段缺失 → 0，不阻塞采集）
 	u, ok = chatStreamUsage([]byte(`{"usage":{}}`))
@@ -63,7 +63,7 @@ func TestChatStreamUsage(t *testing.T) {
 // —— chat 非流式（SDK UnmarshalJSON → PromptTokensDetails 直读 + RawJSON gjson） ——
 
 func TestChatUsageFromResponse(t *testing.T) {
-	raw := `{"id":"x","object":"chat.completion","model":"m","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`
+	raw := `{"id":"x","object":"chat.completion","model":"m","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":6}}}`
 	var resp openai.ChatCompletion
 	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
 	require.True(t, resp.JSON.Usage.Valid())
@@ -72,7 +72,7 @@ func TestChatUsageFromResponse(t *testing.T) {
 	require.Equal(t, int64(20), ct)
 	require.Equal(t, int64(30), tt, "tt 信任上游 TotalTokens 原值")
 	require.Equal(t, int64(5), cr, "SDK PromptTokensDetails.CachedTokens 直读")
-	require.Equal(t, int64(6), cc, "RawJSON 保留上游原始字节 → ephemeral 聚合")
+	require.Equal(t, int64(6), cc, "RawJSON → prompt_tokens_details.cache_write_tokens")
 
 	// 无 cache 字段 → 0
 	plain := `{"id":"x","object":"chat.completion","model":"m","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`
@@ -134,7 +134,7 @@ func TestResponsesStreamUsage(t *testing.T) {
 	require.Equal(t, int64(20), u.ot)
 	require.Equal(t, int64(30), u.tt, "tt 线上原值——归一不改 total")
 	require.Equal(t, int64(5), u.cr, "response.usage.input_tokens_details.cached_tokens")
-	require.Zero(t, u.cc, "Responses 无 cache_creation 对象，恒 0 预期")
+	require.Zero(t, u.cc, "无 cache_write_tokens → 0")
 
 	// 无 response / 无 usage / 显式 null → ok=false
 	_, ok = responsesCompletedUsage([]byte(`{"type":"response.completed"}`))
@@ -148,14 +148,14 @@ func TestResponsesStreamUsage(t *testing.T) {
 // —— codex 合成体顶层 usage（SDK 把 response.usage 提升到合成体） ——
 
 func TestResponsesBodyUsage(t *testing.T) {
-	composite := []byte(`{"id":"resp_001","object":"response","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}}`)
+	composite := []byte(`{"id":"resp_001","object":"response","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":4}}}`)
 	u, ok := responsesBodyUsage(composite)
 	require.True(t, ok)
 	require.Equal(t, int64(8), u.it, "可计费输入 = input − cached（spec 2026-08-25）")
 	require.Equal(t, int64(20), u.ot)
 	require.Equal(t, int64(30), u.tt, "tt 线上原值——归一不改 total")
 	require.Equal(t, int64(2), u.cr, "usage.input_tokens_details.cached_tokens")
-	require.Equal(t, int64(4), u.cc, "cache_creation ephemeral 5m+1h 聚合")
+	require.Equal(t, int64(4), u.cc, "input_tokens_details.cache_write_tokens")
 
 	// 缺失 → ok=false；空对象仍存在；显式 null 字段 → 0（不阻塞采集）
 	_, ok = responsesBodyUsage([]byte(`{"id":"x"}`))
@@ -170,7 +170,7 @@ func TestResponsesBodyUsage(t *testing.T) {
 }
 
 func TestSniffResponsesCompletedUsage(t *testing.T) {
-	completed := []byte(`{"type":"response.completed","response":{"id":"r","object":"response","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}}}`)
+	completed := []byte(`{"type":"response.completed","response":{"id":"r","object":"response","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":4}}}}`)
 	u, ok := sniffResponsesCompletedUsage(completed)
 	require.True(t, ok, "completed 帧命中")
 	require.Equal(t, int64(8), u.it, "可计费输入 = input − cached（spec 2026-08-25）")
@@ -220,8 +220,7 @@ func chatStreamUsageRef(data []byte) (usageTuple, bool) {
 		ot: gjson.GetBytes(data, "usage.completion_tokens").Int(),
 		tt: gjson.GetBytes(data, "usage.total_tokens").Int(),
 		cr: gjson.GetBytes(data, "usage.prompt_tokens_details.cached_tokens").Int(),
-		cc: gjson.GetBytes(data, "usage.cache_creation.ephemeral_5m_input_tokens").Int() +
-			gjson.GetBytes(data, "usage.cache_creation.ephemeral_1h_input_tokens").Int(),
+		cc: gjson.GetBytes(data, "usage.prompt_tokens_details.cache_write_tokens").Int(),
 	}
 	t.it = deductCacheRead(t.it, t.cr)
 	return t, gjson.GetBytes(data, "usage").Type == gjson.JSON
@@ -246,8 +245,7 @@ func responsesCompletedUsageRef(data []byte) (usageTuple, bool) {
 		ot: gjson.GetBytes(data, "response.usage.output_tokens").Int(),
 		tt: gjson.GetBytes(data, "response.usage.total_tokens").Int(),
 		cr: gjson.GetBytes(data, "response.usage.input_tokens_details.cached_tokens").Int(),
-		cc: gjson.GetBytes(data, "response.usage.cache_creation.ephemeral_5m_input_tokens").Int() +
-			gjson.GetBytes(data, "response.usage.cache_creation.ephemeral_1h_input_tokens").Int(),
+		cc: gjson.GetBytes(data, "response.usage.input_tokens_details.cache_write_tokens").Int(),
 	}
 	t.it = deductCacheRead(t.it, t.cr)
 	return t, gjson.GetBytes(data, "response.usage").Type == gjson.JSON
@@ -259,8 +257,7 @@ func responsesBodyUsageRef(data []byte) (usageTuple, bool) {
 		ot: gjson.GetBytes(data, "usage.output_tokens").Int(),
 		tt: gjson.GetBytes(data, "usage.total_tokens").Int(),
 		cr: gjson.GetBytes(data, "usage.input_tokens_details.cached_tokens").Int(),
-		cc: gjson.GetBytes(data, "usage.cache_creation.ephemeral_5m_input_tokens").Int() +
-			gjson.GetBytes(data, "usage.cache_creation.ephemeral_1h_input_tokens").Int(),
+		cc: gjson.GetBytes(data, "usage.input_tokens_details.cache_write_tokens").Int(),
 	}
 	t.it = deductCacheRead(t.it, t.cr)
 	return t, gjson.GetBytes(data, "usage").Type == gjson.JSON
@@ -276,13 +273,13 @@ func sniffResponsesCompletedUsageRef(data []byte) (usageTuple, bool) {
 
 // TestUsageExtractEquivalence 语义等价双实现对照：真实上游形态用例 + 病态
 // 用例（显式 null / 缺失字段 / 字符串数字 / 嵌套同名键 / 键名前缀干扰 /
-// cache_creation 单桶缺失）全跑新实现与 gjson 对照（真实 JSON 构造，非结构体
+// cache_write_tokens 单字段）全跑新实现与 gjson 对照（真实 JSON 构造，非结构体
 // marshal 自证），输出元组与 ok 全等。已知差异方向（float / 指数 /
 // 超 int64 / 字符串 \uXXXX 数字 / bool 字面——"保守 0"）不入本表，单独断言
 // （TestScanIntValuePathologicalDivergence）。
 func TestUsageExtractEquivalence(t *testing.T) {
 	chatFrames := []string{
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`,
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":6}}}`,
 		`{"id":"x","choices":[],"usage":{}}`,   // 空对象仍存在
 		`{"id":"x","choices":[]}`,              // usage 缺失
 		`{"id":"x","choices":[],"usage":null}`, // 显式 null
@@ -293,8 +290,8 @@ func TestUsageExtractEquivalence(t *testing.T) {
 		`{"id":"x","choices":[],"usage":{"prompt_tokens":9223372036854775807,"completion_tokens":1,"total_tokens":9223372036854775807}}`,                            // int64 边界
 		`{"id":"x","choices":[],"usage":{"prompt_tokens_extra":5,"prompt_tokens":7,"completion_tokens":2,"total_tokens":9}}`,                                        // 键名前缀干扰
 		`{"id":"x","choices":[],"usage":{"prompt_tokens":7,"prompt_tokens_details":{"prompt_tokens":99,"cached_tokens":5},"completion_tokens":2,"total_tokens":9}}`, // 嵌套同名键（子区间内不误定位）
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"cache_creation":{"ephemeral_1h_input_tokens":2}}}`,               // cache_creation 单桶缺失
-		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"cache_creation":{}}}`,                                            // cache_creation 空对象
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"prompt_tokens_details":{"cache_write_tokens":2}}}`,               // prompt_tokens_details 仅 cache_write_tokens
+		`{"id":"x","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3,"prompt_tokens_details":{}}}`,                                     // prompt_tokens_details 空对象
 	}
 	for _, f := range chatFrames {
 		got, ok := chatStreamUsage([]byte(f))
@@ -339,7 +336,7 @@ func TestUsageExtractEquivalence(t *testing.T) {
 		`{"type":"response.completed","response":{"id":"r"}}`, // error 终态形状（无 usage）
 		`{"type":"response.completed","response":{"id":"r","usage":null}}`,
 		`{"type":"response.completed"}`,
-		`{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":1}}}}`,
+		`{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5,"cache_write_tokens":1}}}}`,
 	}
 	for _, f := range responsesFrames {
 		got, ok := responsesCompletedUsage([]byte(f))
@@ -349,7 +346,7 @@ func TestUsageExtractEquivalence(t *testing.T) {
 	}
 
 	bodyFrames := []string{
-		`{"id":"resp_001","object":"response","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}}`,
+		`{"id":"resp_001","object":"response","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":4}}}`,
 		`{"id":"x"}`,
 		`{"id":"x","usage":null}`,
 		`{"usage":{}}`,
@@ -362,7 +359,7 @@ func TestUsageExtractEquivalence(t *testing.T) {
 	}
 
 	sniffFrames := []string{
-		`{"type":"response.completed","response":{"id":"r","object":"response","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}}}`,
+		`{"type":"response.completed","response":{"id":"r","object":"response","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":4}}}}`,
 		`{"type":"response.completed","response":{"id":"r"}}`,
 		`{"type":"response.completed","response":{"id":"r","usage":null}}`,
 		`{"type":"message","content":[{"type":"output_text","text":"say {\"type\":\"response.completed\"} please"}]}`,
@@ -404,11 +401,11 @@ func TestScanIntValuePathologicalDivergence(t *testing.T) {
 // GetBytes 物化 Raw 字符串分配；scanKeyValue 族纯切片零分配）：A 项全部函数
 // 命中/未命中路径均钉 AllocsPerRun == 0。
 func TestUsageExtractZeroAlloc(t *testing.T) {
-	chat := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5},"cache_creation":{"ephemeral_5m_input_tokens":4,"ephemeral_1h_input_tokens":2}}}`)
+	chat := []byte(`{"id":"x","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":6}}}`)
 	anthropic := []byte(`{"type":"message_start","message":{"usage":{"input_tokens":10,"cache_read_input_tokens":7,"cache_creation_input_tokens":3}}}`)
 	delta := []byte(`{"type":"message_delta","usage":{"output_tokens":20}}`)
 	completed := []byte(`{"type":"response.completed","response":{"id":"r","model":"m","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5}},"output":[]}}`)
-	body := []byte(`{"id":"resp_001","object":"response","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}}`)
+	body := []byte(`{"id":"resp_001","object":"response","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":4}}}`)
 	miss := []byte(`{"id":"x"}`)
 
 	require.Zero(t, testing.AllocsPerRun(100, func() { chatStreamUsage(chat) }))
@@ -429,7 +426,7 @@ func TestUsageExtractZeroAlloc(t *testing.T) {
 // —— Responses 非流式（直读 + RawJSON） ——
 
 func TestResponsesUsageFromResponse(t *testing.T) {
-	raw := `{"id":"r","object":"response","model":"m","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5}},"output":[]}`
+	raw := `{"id":"r","object":"response","model":"m","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5,"cache_write_tokens":7}},"output":[]}`
 	var resp responses.Response
 	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
 	require.True(t, resp.JSON.Usage.Valid())
@@ -438,7 +435,7 @@ func TestResponsesUsageFromResponse(t *testing.T) {
 	require.Equal(t, int64(20), ct)
 	require.Equal(t, int64(30), tt, "tt 先按原始 in+out 定值再归一——数值不变量")
 	require.Equal(t, int64(5), cr, "SDK InputTokensDetails.CachedTokens 直读")
-	require.Zero(t, cc, "恒 0 预期")
+	require.Equal(t, int64(7), cc, "RawJSON → input_tokens_details.cache_write_tokens")
 }
 
 // —— deductCacheRead 归一边界（spec 2026-08-25 验收） ——

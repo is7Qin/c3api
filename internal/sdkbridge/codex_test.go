@@ -718,7 +718,7 @@ const (
 	t6RespCreated = `{"type":"response.created","response":{"id":"resp_t6","object":"response","status":"in_progress","model":"gpt-5.6"}}`
 	t6RespItem    = `{"id":"msg_1","status":"completed","type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}`
 	t6RespItemEv  = `{"type":"response.output_item.done","item":` + t6RespItem + `}`
-	t6RespUsage   = `{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}`
+	t6RespUsage   = `{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2,"cache_write_tokens":4}}`
 	t6RespDone    = `{"type":"response.completed","response":{"id":"resp_t6","object":"response","status":"completed","usage":` + t6RespUsage + `}}`
 )
 

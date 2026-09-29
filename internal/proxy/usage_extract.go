@@ -22,13 +22,18 @@ import (
 // 拆分独立函数以便用真实上游 JSON 构造单测（不得结构体
 // marshal 自证）。
 
-// cacheCreationFromRaw 从 usage 原始 JSON 聚合缓存写入 token：OpenAI 的
-// cache_creation.ephemeral_5m/1h_input_tokens 两个 TTL 桶求和。SDK 不解析
-// cache_creation 对象（v1.12.0 结构体无此字段），必须走 RawJSON() 的
-// 上游原始字节（方案）。
-func cacheCreationFromRaw(raw string) int64 {
-	return gjson.Get(raw, "cache_creation.ephemeral_5m_input_tokens").Int() +
-		gjson.Get(raw, "cache_creation.ephemeral_1h_input_tokens").Int()
+// OpenAI 族的缓存写入计数在 *_tokens_details.cache_write_tokens（chat 为
+// prompt_tokens_details，responses 为 input_tokens_details）。anthropic 用
+// cache_creation_input_tokens（不经本族）。v1.12.0 的 InputTokensDetails 只有
+// cached_tokens，非流式必须走 RawJSON() 的上游原始字节。
+const (
+	chatCacheWritePath      = "prompt_tokens_details.cache_write_tokens"
+	responsesCacheWritePath = "input_tokens_details.cache_write_tokens"
+)
+
+// cacheWriteFromRaw 从 usage 原始 JSON 读 cache_write_tokens（缺失 → 0）。
+func cacheWriteFromRaw(raw, path string) int64 {
+	return gjson.Get(raw, path).Int()
 }
 
 // chatStreamUsage 流式 chat usage 帧 → 元组 + ok（usage 存在判定内建——调用方
@@ -76,9 +81,8 @@ func anthropicDeltaOutput(data []byte) int64 {
 }
 
 // responsesCompletedUsage 流式 response.completed 帧 → 元组 + ok（
-// 前缀 response.usage.*；cr 在 input_tokens_details.cached_tokens；cc 走
-// ephemeral 聚合——Responses 无 cache_creation 对象，恒 0 预期）。显式 null /
-// 缺失 → ok=false（调用方保留此前值）。
+// 前缀 response.usage.*；cr/cc 在 input_tokens_details.cached_tokens /
+// cache_write_tokens）。显式 null / 缺失 → ok=false（调用方保留此前值）。
 func responsesCompletedUsage(data []byte) (usageTuple, bool) {
 	start, end, ok := scanKeyValue(data, responseKeyBytes)
 	if !ok {
@@ -157,10 +161,11 @@ func deductCacheRead(it, cr int64) int64 {
 // usageFieldsFromInterval 从 usage 值区间提取五计数元组（chat/responses 两协议
 // 共用——字段名按协议经参数注入：chat 为 prompt_tokens/completion_tokens/
 // prompt_tokens_details.cached_tokens，responses 为 input_tokens/output_tokens/
-// input_tokens_details.cached_tokens；cache_creation ephemeral 双桶聚合两协议
-// 同构）。crKey 恒非 nil（调用方按协议注入其 cached_tokens 内嵌路径——评审
-// 认定 nil 分支死代码；Anthropic 不经本 helper，其 cr 由 anthropicStartUsage
-// 直读 cache_read_input_tokens）。键名不匹配/缺失 → 0（与 gjson 缺失 = 0 等价）。
+// input_tokens_details.cached_tokens；cr/cc 在 crKey 对象内，cc 取
+// cache_write_tokens 两协议同构）。crKey 恒非 nil（调用方按协议注入其
+// cached_tokens 内嵌路径——评审认定 nil 分支死代码；Anthropic 不经本 helper，
+// 其 cr 由 anthropicStartUsage 直读 cache_read_input_tokens）。键名不匹配/缺失
+// → 0（与 gjson 缺失 = 0 等价）。
 // 出口施加 deductCacheRead 归一——it 为可计费输入（spec 2026-08-25）；tt 保持
 // 线上原值（数值不变量：归一只迁移组成，不改 total——配额扣减按 TotalTokens，
 // 数值恒等）。
@@ -171,9 +176,7 @@ func usageFieldsFromInterval(raw []byte, itKey, otKey, crKey []byte) usageTuple 
 	u.tt = scanFieldInt64(raw, totalTokensKeyBytes)
 	if s, e, ok := scanKeyValue(raw, crKey); ok {
 		u.cr = scanFieldInt64(raw[s:e], cachedTokensKeyBytes)
-	}
-	if s, e, ok := scanKeyValue(raw, cacheCreationKeyBytes); ok {
-		u.cc = scanFieldInt64(raw[s:e], ephemeral5mKeyBytes) + scanFieldInt64(raw[s:e], ephemeral1hKeyBytes)
+		u.cc = scanFieldInt64(raw[s:e], cacheWriteTokensKeyBytes)
 	}
 	u.it = deductCacheRead(u.it, u.cr)
 	return u
@@ -226,24 +229,24 @@ func scanIntValue(raw []byte) int64 {
 
 // chatUsageFromResponse 非流式 chat 响应用量：cr 直读 SDK 结构体字段
 // （PromptTokensDetails.CachedTokens，v1.12.0 有该字段）；cc 从 RawJSON()
-// （SDK 保留的上游原始字节）gjson 聚合——SDK 不解析 cache_creation 对象
-// （方案）。调用方已用 resp.JSON.Usage.Valid() 防护。
+// （SDK 保留的上游原始字节）读 prompt_tokens_details.cache_write_tokens。
+// 调用方已用 resp.JSON.Usage.Valid() 防护。
 // 出口施加 deductCacheRead 归一（spec 2026-08-25）——it 为可计费输入；tt 信任
 // 上游 TotalTokens 原值（数值不变量：归一不改 total）。上游 total 与 in+out 的
 // 既有分歧维持现状（不收敛也不扩大）。
 func chatUsageFromResponse(u openai.CompletionUsage) (it, ot, tt, cr, cc int64) {
 	it, ot, tt, cr, cc = u.PromptTokens, u.CompletionTokens, u.TotalTokens,
-		u.PromptTokensDetails.CachedTokens, cacheCreationFromRaw(u.RawJSON())
+		u.PromptTokensDetails.CachedTokens, cacheWriteFromRaw(u.RawJSON(), chatCacheWritePath)
 	return deductCacheRead(it, cr), ot, tt, cr, cc
 }
 
-// responsesUsageFromResponse 非流式 Responses 响应用量：同 chat 的
-// 直读 + RawJSON 方案（cc 恒 0 预期）。出口施加 deductCacheRead 归一
-// （spec 2026-08-25）——tt 先按原始 in+out 定值再归一 it（数值不变量：归一
-// 不改 total）。
+// responsesUsageFromResponse 非流式 Responses 响应用量：cr 直读 SDK 结构体
+// 字段，cc 从 RawJSON() 读 input_tokens_details.cache_write_tokens。出口施加
+// deductCacheRead 归一（spec 2026-08-25）——tt 先按原始 in+out 定值再归一 it
+// （数值不变量：归一不改 total）。
 func responsesUsageFromResponse(u responses.ResponseUsage) (it, ot, tt, cr, cc int64) {
 	it, ot, tt = u.InputTokens, u.OutputTokens, u.InputTokens+u.OutputTokens
-	cr, cc = u.InputTokensDetails.CachedTokens, cacheCreationFromRaw(u.RawJSON())
+	cr, cc = u.InputTokensDetails.CachedTokens, cacheWriteFromRaw(u.RawJSON(), responsesCacheWritePath)
 	return deductCacheRead(it, cr), ot, tt, cr, cc
 }
 
