@@ -277,6 +277,29 @@ func testAppliedTurnState(e *codexEntry, sig string) string {
 	return ""
 }
 
+// TestCodexHTTPClientCacheIsBoundedLRU 多条目客户端缓存限幅：身份签名随槽
+// thread/window 演化而变，缓存必须按 LRU 收敛到 codexHTTPClientCacheMax。
+func TestCodexHTTPClientCacheIsBoundedLRU(t *testing.T) {
+	a := NewCodex(nil, nil, RotationDeps{})
+	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-lru"}
+	total := codexHTTPClientCacheMax + 20
+	for i := 0; i < total; i++ {
+		meta := &codexsdk.CodexMeta{InstallationID: fmt.Sprintf("inst-%d", i)}
+		_, _, err := a.clientFor(cred, nil, meta, "")
+		require.NoError(t, err)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	e := a.entries[9]
+	require.NotNil(t, e)
+	require.Len(t, e.clients, codexHTTPClientCacheMax, "客户端缓存条目数收敛到 LRU 上限")
+	require.Len(t, e.clientsLRU, codexHTTPClientCacheMax, "LRU 序长度与条目数一致")
+	// 最近写入者在序尾；最早者已被驱逐。
+	require.Equal(t, identitySig(nil, &codexsdk.CodexMeta{InstallationID: fmt.Sprintf("inst-%d", total-1)}), e.clientsLRU[len(e.clientsLRU)-1])
+	_, oldest := e.clients[identitySig(nil, &codexsdk.CodexMeta{InstallationID: "inst-0"})]
+	require.False(t, oldest, "最久未用条目已驱逐")
+}
+
 // TestCodexCacheReuseAndRebuild 同账号复用（同 HTTPClient 指针断言）/ 凭据
 // 更新后重建（token/rt/pat 任一变化 → 新客户端）/ 轮转回调写回不重建
 // （回调本身不触发缓存变更）。

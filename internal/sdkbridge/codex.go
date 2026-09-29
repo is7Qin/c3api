@@ -70,6 +70,11 @@ type codexHTTPClient struct {
 	appliedTurnState string
 }
 
+// codexHTTPClientCacheMax 是账号级 HTTPClient 多条目缓存的 LRU 上限。身份签名
+// 含 thread/window，随槽窗口推进/线程退休而变 ⇒ 无界会随流量持续增长；按 LRU
+// 限幅（超限驱逐最久未用条目），保证内存有界。
+const codexHTTPClientCacheMax = 64
+
 // codexEntry 单账号缓存条目：Auth（HTTP/WS 双面共享——at 缓存/单飞/rt 轮换
 // 在 SDK Auth 内）+ HTTPClient 多条目缓存（按身份签名，nil = 未构造）+ 重建
 // 判定签名 + fatal 已上报标记（双源去重——回调路径与 errors.As 路径共享同一 CAS）。
@@ -80,10 +85,12 @@ type codexEntry struct {
 	auth      codexsdk.Auth
 	sig       string // 凭据签名（外部凭据变更 → 重建）
 	// clients HTTP 面客户端缓存：按伪装身份签名（identitySig）分条目，每个
-	// 槽身份各持一份客户端，仅轮换/变化时重建单条（≤K）——避免相邻请求轮换
-	// 槽身份反复重建（旧单条缓存的病）。键空间有界：在用的身份签名集（codex
-	// 槽 ≤K）+ 空身份 ""（无身份的 GenerateImage/Search/GetUsage 面）。
-	clients map[string]*codexHTTPClient
+	// 槽身份各持一份客户端，仅轮换/变化时重建单条。键空间 = 身份签名
+	// （含 thread/window，随槽窗口推进/线程退休而变）——**必须限幅**：以
+	// codexHTTPClientCacheMax 为上限的 LRU（clientsLRU 最近使用序，末尾最新），
+	// 超限驱逐最久未用条目，杜绝无界增长。clientsLRU 仅 a.mu 下读写。
+	clients    map[string]*codexHTTPClient
+	clientsLRU []string
 	// turnState HTTP 面 turn-state 持有（spec 2026-08-15 评审 PASS）：
 	// 上游响应签发值（HTTPResponse.TurnState / SDK 池级捕获值回读），后续请求
 	// 注入 x-codex-turn-state 头（同轮回传对齐真实 codex client.rs:1202——
@@ -324,8 +331,31 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 		c = &codexHTTPClient{client: codexsdk.NewHTTPClient(e.auth, opts...), appliedTurnState: turnState}
 		e.clients[sig] = c
 	}
+	// LRU 触碰（sig 置最近使用）+ 超限驱逐最久未用条目。
+	if len(e.clientsLRU) > 0 && e.clientsLRU[len(e.clientsLRU)-1] == sig {
+		// 已在末尾，无需移动。
+	} else {
+		e.clientsLRU = moveToEnd(e.clientsLRU, sig)
+	}
+	for len(e.clientsLRU) > codexHTTPClientCacheMax {
+		old := e.clientsLRU[0]
+		e.clientsLRU = e.clientsLRU[1:]
+		delete(e.clients, old)
+	}
 	a.mu.Unlock()
 	return e, c.client, nil
+}
+
+// moveToEnd 把 sig 移到 LRU 序末尾（最近使用）；不在序中则追加。均在 a.mu 下调用。
+func moveToEnd(lru []string, sig string) []string {
+	for i, s := range lru {
+		if s == sig {
+			copy(lru[i:], lru[i+1:])
+			lru[len(lru)-1] = sig
+			return lru
+		}
+	}
+	return append(lru, sig)
 }
 
 // turnStateOf 读账号 held turn-state（生效值判定——客户端未自带时注入
