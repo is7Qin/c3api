@@ -34,19 +34,6 @@ type Config struct {
 	Usage     UsageConfig     `koanf:"usage"`
 	Billing   BillingConfig   `koanf:"billing"`
 	Routing   RoutingConfig   `koanf:"routing"`
-	// CodexIdentity codex 伪装身份轮换参数（账号级槽位池，spec
-	// 2026-09-29-codex-identity-rotation-design §D5）。
-	CodexIdentity CodexIdentityConfig `koanf:"codex_identity"`
-}
-
-// CodexIdentityConfig codex 伪装身份轮换参数：每线程最多活几个窗口（开线程时在
-// [wmax_lo, wmax_hi] 内均匀抽样——wmax_hi=0 表示不退休，此时 wmax_lo 被忽略）＋
-// 水位口径。fail-fast：wmax_hi>0 时 1 ≤ wmax_lo ≤ wmax_hi（wmax_hi=0 无限定）；
-// scope ∈ {total, body_after_prefix}。
-type CodexIdentityConfig struct {
-	WMaxLo int    `koanf:"wmax_lo"`
-	WMaxHi int    `koanf:"wmax_hi"`
-	Scope  string `koanf:"scope"` // total（默认，codex 默认口径）| body_after_prefix
 }
 
 // RoutingConfig 路由观测的**运维/存储**参数。策略参数（分层阈值、探索比例、
@@ -187,8 +174,6 @@ func defaults() *Config {
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
 		Billing:   BillingConfig{Enabled: true, FlushInterval: 250 * time.Millisecond, BalanceRefreshInterval: 10 * time.Second},
 		Routing:   RoutingConfig{ObservationRetentionDays: 7},
-		// codex 伪装身份轮换：默认 2..6 窗口/线程 + Total 口径（codex 默认）。
-		CodexIdentity: CodexIdentityConfig{WMaxLo: 2, WMaxHi: 6, Scope: "total"},
 	}
 }
 
@@ -307,20 +292,6 @@ func validate(c *Config) error {
 	// 与下限 1 成对锁定合法域 1..8（默认 3）。
 	if c.Proxy.FailoverAttempts > 8 {
 		return fmt.Errorf("proxy.failover_attempts must be <= 8 (got %d)", c.Proxy.FailoverAttempts)
-	}
-	// codex_identity 轮换参数：wmax_hi == 0 为「不退休」哨兵（SDK drawWMax 对
-	// hi==0 返回 0 → 线程永不退休，此时 wmax_lo 被忽略，不做区间校验）；wmax_hi > 0
-	// 时须满足 1 ≤ wmax_lo ≤ wmax_hi（开线程抽样区间非法 = 启动即拒绝）。wmax_hi
-	// 上限不设——仅每线程窗口数；scope 必须为已知口径。
-	if c.CodexIdentity.WMaxHi != 0 &&
-		(c.CodexIdentity.WMaxLo < 1 || c.CodexIdentity.WMaxHi < c.CodexIdentity.WMaxLo) {
-		return fmt.Errorf("codex_identity: must satisfy 1 <= wmax_lo <= wmax_hi (got lo=%d hi=%d; wmax_hi=0 means never retire)",
-			c.CodexIdentity.WMaxLo, c.CodexIdentity.WMaxHi)
-	}
-	switch c.CodexIdentity.Scope {
-	case "total", "body_after_prefix":
-	default:
-		return fmt.Errorf("codex_identity.scope must be total|body_after_prefix (got %q)", c.CodexIdentity.Scope)
 	}
 	for _, r := range []struct {
 		path  string

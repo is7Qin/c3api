@@ -69,6 +69,8 @@ github.com/is7Qin/codex-sdk v0.0.0-20260929093306-db4ff5a250cb h1:tgE59shKHIO7vH
 github.com/is7Qin/codex-sdk v0.0.0-20260929093306-db4ff5a250cb/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
 github.com/is7Qin/codex-sdk v0.0.0-20260929123800-ebaf592dec9f h1:9PfoCJ5q2tz/e43d2yBTSeImlpWX6IsF4JdpgMJqNHU=
 github.com/is7Qin/codex-sdk v0.0.0-20260929123800-ebaf592dec9f/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
+github.com/is7Qin/codex-sdk v0.0.0-20260929140904-c6ebfbc30cb0 h1:riq4t6MRKm3nsmJzZAig8x0d1itnfxo97+gmPCJM86g=
+github.com/is7Qin/codex-sdk v0.0.0-20260929140904-c6ebfbc30cb0/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=

@@ -44,8 +44,8 @@ var (
 
 type Config struct {
 	SyncInterval time.Duration
-	// RotatePolicy codex 伪装身份轮换策略（wmax_lo/wmax_hi/scope）：槽位池开
-	// 线程与 Step 用它采样/判定。零值 = WMaxHi 0（线程不退休）。
+	// RotatePolicy codex 伪装身份轮换策略（SDK 类型）：槽位池开线程与 Step 用它
+	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口口径由 SDK 内部定。
 	RotatePolicy codexsdk.RotatePolicy
 	// StalenessProbe 是 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go

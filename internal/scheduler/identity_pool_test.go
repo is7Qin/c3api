@@ -16,9 +16,9 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// testPolicy 无退休（WMaxHi 0）+ Total 口径——池机制测试用（身份演化另测）。
+// testPolicy 无退休（WMaxHi 0）——池机制测试用（身份演化另测）。
 func testPolicy() codexsdk.RotatePolicy {
-	return codexsdk.RotatePolicy{Scope: codexsdk.ScopeTotal}
+	return codexsdk.RotatePolicy{}
 }
 
 // newTestPool 构造容量 k 的池（installation "inst"）。
@@ -229,7 +229,7 @@ func TestAdvanceIdentityOnlyStepsAtThreshold(t *testing.T) {
 	require.Positive(t, theta)
 
 	// 无退休（WMax 0）：θ 下不推进，θ 上升沿 WindowN++，持续高位不重复计数。
-	noRetire := codexsdk.RotatePolicy{Scope: codexsdk.ScopeTotal}
+	noRetire := codexsdk.RotatePolicy{}
 	slot := newIdentitySlot("inst", noRetire)
 	sel := &Selection{identitySlot: slot, Model: slug}
 	thread := slot.state.Load().ThreadID
@@ -246,7 +246,7 @@ func TestAdvanceIdentityOnlyStepsAtThreshold(t *testing.T) {
 	require.Equal(t, thread, slot.state.Load().ThreadID, "无退休不换线程")
 
 	// WMax=1：WindowN 达上限 → 退休换新线程。
-	retire := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1, Scope: codexsdk.ScopeTotal}
+	retire := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}
 	rslot := newIdentitySlot("inst", retire)
 	rsel := &Selection{identitySlot: rslot, Model: slug}
 	oldThread := rslot.state.Load().ThreadID
@@ -299,7 +299,7 @@ func TestIdentityPoolForReusesWhenUnchanged(t *testing.T) {
 	require.Same(t, pool, identityPoolFor(pool, 3, "inst", p), "未变复用")
 	require.NotSame(t, pool, identityPoolFor(pool, 4, "inst", p), "容量变化重建")
 	require.NotSame(t, pool, identityPoolFor(pool, 3, "other", p), "安装 ID 变化重建")
-	require.NotSame(t, pool, identityPoolFor(pool, 3, "inst", codexsdk.RotatePolicy{Scope: codexsdk.ScopeBodyAfterPrefix}), "策略变化重建")
+	require.NotSame(t, pool, identityPoolFor(pool, 3, "inst", codexsdk.RotatePolicy{WMaxLo: 2, WMaxHi: 4}), "策略变化重建")
 }
 
 // TestIdentityPoolConcurrentClaimUnique 并发认领唯一性：G 个 goroutine 同时
@@ -343,13 +343,13 @@ func TestIdentityPoolConcurrentClaimUnique(t *testing.T) {
 }
 
 // TestIdentitySlotConcurrentAdvanceNoLostUpdate 同槽并发推进 CAS 面：G 个
-// goroutine 并发对同一槽 AdvanceIdentity(θ)，ScopeTotal 上升沿恰计一次
+// goroutine 并发对同一槽 AdvanceIdentity(θ)，水位上升沿恰计一次
 // （CAS 读改写不丢不重）；回落再跨界继续恰计一次（证明 arm 更新也被 CAS 应用）。
 func TestIdentitySlotConcurrentAdvanceNoLostUpdate(t *testing.T) {
 	slug := "unknown-slug" // 目录外 → fallback θ_w
 	theta := codexsdk.AutoCompactTokens(slug)
 	require.Positive(t, theta)
-	pol := codexsdk.RotatePolicy{Scope: codexsdk.ScopeTotal} // WMaxHi=0 不退休
+	pol := codexsdk.RotatePolicy{} // WMaxHi=0 不退休
 	slot := newIdentitySlot("inst", pol)
 	sel := &Selection{identitySlot: slot, Model: slug}
 
@@ -384,7 +384,7 @@ func TestIdentitySlotConcurrentAdvanceNoLostUpdate(t *testing.T) {
 // TestIdentityPoolRotatePolicySingleSource 轮换策略单一来源在槽：pool.rotatePolicy
 // 从槽派生（池不再各存一份投影）。
 func TestIdentityPoolRotatePolicySingleSource(t *testing.T) {
-	p := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 3, Scope: codexsdk.ScopeBodyAfterPrefix}
+	p := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 3}
 	pool := newTestPool(3, p)
 	require.Equal(t, p, pool.rotatePolicy(), "池策略由槽派生")
 	require.Equal(t, p, newIdentitySlot("inst", p).policy, "槽持有策略（单一来源）")
