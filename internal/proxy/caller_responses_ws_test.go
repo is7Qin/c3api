@@ -29,8 +29,9 @@ import (
 )
 
 // responsesWSCompletedFrame 假上游的 response.completed 事件帧（usage 5 计数：
-// input 3 / output 5 / total 8 / cache_read 1 / cache_write 3）。
-const responsesWSCompletedFrame = `{"type":"response.completed","response":{"id":"rsp_ws_1","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":3,"output_tokens":5,"total_tokens":8,"input_tokens_details":{"cached_tokens":1,"text_tokens":2,"audio_tokens":0,"cache_write_tokens":3},"output_tokens_details":{"reasoning_tokens":2,"text_tokens":3,"audio_tokens":0}}}}`
+// input 6（gross = uncached 2 + cache_read 1 + cache_write 3）/ output 5 /
+// total 11 / cache_read 1 / cache_write 3）。
+const responsesWSCompletedFrame = `{"type":"response.completed","response":{"id":"rsp_ws_1","status":"completed","model":"gpt-4o","output":[],"usage":{"input_tokens":6,"output_tokens":5,"total_tokens":11,"input_tokens_details":{"cached_tokens":1,"text_tokens":2,"audio_tokens":0,"cache_write_tokens":3},"output_tokens_details":{"reasoning_tokens":2,"text_tokens":3,"audio_tokens":0}}}}`
 
 // fakeWSHooks 假上游观测面（断言用）。
 type fakeWSHooks struct {
@@ -209,7 +210,7 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	require.Equal(t, `{"type":"response.created","response":{"id":"rsp_ws_1","model":"gpt-4o"}}`, got[0])
 	require.Equal(t, `{"type":"response.output_text.delta","delta":"hi"}`, got[1])
 	require.Contains(t, got[2], `"type":"response.completed"`)
-	require.Contains(t, got[2], `"input_tokens":3`)
+	require.Contains(t, got[2], `"input_tokens":6`)
 	// 回声帧：payload 与客户端发出字节逐字一致（中间帧零解析零改写直转）
 	for i, want := range []string{f1, f2, f3} {
 		var echo struct {
@@ -249,9 +250,9 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 线上 input 3 − cached 1（spec 2026-08-25 归一）")
+	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 线上 input 6 − cached 1 − cache_write 3（P0-2 归一）")
 	require.Equal(t, int64(5), lg.OutputTokens)
-	require.Equal(t, int64(8), lg.TotalTokens)
+	require.Equal(t, int64(11), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens, "input_tokens_details.cached_tokens")
 	require.Equal(t, int64(3), lg.CacheCreationTokens, "input_tokens_details.cache_write_tokens")
 	require.Equal(t, "gpt-4o", lg.Model)
@@ -336,9 +337,9 @@ func TestResponsesWSClientAbortRecordsUsage(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrAbort, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(2), lg.InputTokens, "断开前已嗅探的 usage 不丢（可计费输入 = 3 − cached 1）")
+	require.Equal(t, int64(2), lg.InputTokens, "断开前已嗅探的 usage 不丢（可计费输入 = 6 − cached 1 − cache_write 3）")
 	require.Equal(t, int64(5), lg.OutputTokens)
-	require.Equal(t, int64(8), lg.TotalTokens)
+	require.Equal(t, int64(11), lg.TotalTokens)
 	require.Equal(t, lg.RequestID, store.logs[1].RequestID, "双轨行 request_id 关联")
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
@@ -548,9 +549,9 @@ func TestResponsesWSHandshakeUnderShortTimeout(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(2), lg.InputTokens, "短超时下正常会话 usage 嗅探照常（可计费输入 = 3 − cached 1）")
+	require.Equal(t, int64(2), lg.InputTokens, "短超时下正常会话 usage 嗅探照常（可计费输入 = 6 − cached 1 − cache_write 3）")
 	require.Equal(t, int64(5), lg.OutputTokens)
-	require.Equal(t, int64(8), lg.TotalTokens)
+	require.Equal(t, int64(11), lg.TotalTokens)
 }
 
 // TestResponsesWSFailoverZeroReleasesSlot 防呆（spec 纵深，与 chat/search 同
@@ -734,7 +735,7 @@ func TestSniffResponsesCompleted(t *testing.T) {
 	// 命中：completed 帧完整 usage → 5 计数正确
 	u, ok := sniffResponsesCompleted([]byte(responsesWSCompletedFrame))
 	require.True(t, ok)
-	require.Equal(t, usageTuple{it: 2, ot: 5, tt: 8, cr: 1, cc: 3}, u, "it'=线上 input 3−cached 1（归一后）；tt 不变")
+	require.Equal(t, usageTuple{it: 2, ot: 5, tt: 11, cr: 1, cc: 3}, u, "it'=线上 input 6−cached 1−cache_write 3（归一后）；tt 不变")
 
 	// 未命中：流式中间帧零解析直转（预筛 miss，不触达 gjson）
 	_, ok = sniffResponsesCompleted([]byte(`{"type":"response.output_text.delta","delta":"hi"}`))
@@ -863,9 +864,9 @@ func TestResponsesWSConcurrentWriteClose(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType, "正常关闭帧优先 → 成功（不得误判冷却）")
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 3 − cached 1")
+	require.Equal(t, int64(2), lg.InputTokens, "可计费输入 = 6 − cached 1 − cache_write 3")
 	require.Equal(t, int64(5), lg.OutputTokens)
-	require.Equal(t, int64(8), lg.TotalTokens)
+	require.Equal(t, int64(11), lg.TotalTokens)
 	require.Equal(t, int64(1), lg.CacheReadTokens)
 	require.Equal(t, int64(3), lg.CacheCreationTokens)
 }
@@ -901,7 +902,7 @@ func TestResponsesWSBillingTierFast(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	require.Equal(t, "fast", store.logs[0].BillingTier, "WS service_tier=fast → BillingTier=fast 落库")
-	require.Equal(t, int64(240), store.logs[0].Cost, "fast ×2.0：120×2 = 240 毫分（与 HTTP 同价；可计费输入 it'=3−1=2 → 2×10+5×20=120 毫分，cr 车道本例无缓存价 → 0）")
+	require.Equal(t, int64(240), store.logs[0].Cost, "fast ×2.0：120×2 = 240 毫分（与 HTTP 同价；可计费输入 it'=6−1−3=2 → 2×10+5×20=120 毫分，cr/cc 车道本例无缓存价 → 0）")
 }
 
 // TestResponsesWSBillingTierAuto 无 service_tier：BillingTier="auto"（与 HTTP
@@ -926,11 +927,11 @@ func TestResponsesWSBillingTierAuto(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	require.Equal(t, "auto", store.logs[0].BillingTier, "WS 无 service_tier → BillingTier=auto")
-	require.Equal(t, int64(120), store.logs[0].Cost, "auto 基础价：it'=3−1=2 → 2×10 + 输出 5×20 = 120 毫分（缓存读单独车道，本例无缓存价 → 0）")
+	require.Equal(t, int64(120), store.logs[0].Cost, "auto 基础价：it'=6−1−3=2 → 2×10 + 输出 5×20 = 120 毫分（缓存车道单独计价，本例无缓存价 → 0）")
 }
 
 // TestResponsesWSQuotaDeductedByFinalCost 跨路径回归：resp-ws 会话
-// 结束经 finish 按最终 Cost 扣 Key 额度（auto 120 毫分，非 TotalTokens=8）——
+// 结束经 finish 按最终 Cost 扣 Key 额度（auto 120 毫分，非 TotalTokens=11）——
 // WS 与 HTTP 面共用同一额度扣减源。
 func TestResponsesWSQuotaDeductedByFinalCost(t *testing.T) {
 	// Given
@@ -955,7 +956,7 @@ func TestResponsesWSQuotaDeductedByFinalCost(t *testing.T) {
 
 	// Then：relay 会话收尾异步于关闭帧 → 有界轮询 consumed 收敛
 	require.Eventually(t, func() bool { return probe.consumed() == 120 }, 3*time.Second, 10*time.Millisecond,
-		"WS 按最终 Cost 扣额度（120 ≠ TotalTokens 8）")
+		"WS 按最终 Cost 扣额度（120 ≠ TotalTokens 11）")
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 

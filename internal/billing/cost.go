@@ -97,6 +97,12 @@ func clampToken(t, p int64) int64 {
 const imageTotalCap = math.MaxInt64 / 100_000
 
 // CostFromResolved pure arithmetic on resolved prices (new unified path).
+//
+// pt 是**净可计费输入**（uncached = gross input − cr − cc），cr/cc 是缓存读取/
+// 写入分量，各自走 CacheReadPerM / CacheWritePerM 单价——三者不相交，故不会把
+// 缓存部分同时按 input 价与缓存价计费。gross→net 的换算在调用方完成
+// （internal/proxy/usage_extract.go 的 deductCacheTokens；口径见
+// internal/protoconv/protoconv.go 顶部）。负数 token 入口钳 0。
 func CostFromResolved(rp domain.ResolvedPrices, pt, ct, cr, cc int64) int64 {
 	clamp := func(t int64) int64 {
 		if t < 0 {

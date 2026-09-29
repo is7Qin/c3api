@@ -376,7 +376,7 @@ func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(8), lg.InputTokens, "可计费输入 = 线上 input 10 − cached 2（spec 2026-08-25 归一）")
+	require.Equal(t, int64(4), lg.InputTokens, "可计费输入 = 线上 input 10 − cached 2 − cache_write 4（P0-2 归一）")
 	require.Equal(t, int64(20), lg.OutputTokens)
 	require.Equal(t, int64(30), lg.TotalTokens)
 	require.Equal(t, int64(2), lg.CacheReadTokens)
@@ -474,7 +474,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	lg := store.logs[0]
 	require.Equal(t, domain.ErrNone, lg.ErrorType)
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(8), lg.InputTokens, "可计费输入 = 10 − cached 2（spec 2026-08-25 归一）")
+	require.Equal(t, int64(4), lg.InputTokens, "可计费输入 = 10 − cached 2 − cache_write 4（P0-2 归一）")
 	require.Equal(t, int64(20), lg.OutputTokens)
 	require.Equal(t, int64(30), lg.TotalTokens)
 	require.Equal(t, int64(2), lg.CacheReadTokens)
@@ -965,7 +965,7 @@ func TestCodexResponsesStreamDoneWriteAbort(t *testing.T) {
 	require.Len(t, store.logs, 1)
 	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType)
 	require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
-	require.Equal(t, int64(8), store.logs[0].InputTokens, "completed 帧 usage 已嗅探——abort 记录不丢用量（可计费输入 = 10 − cached 2）")
+	require.Equal(t, int64(4), store.logs[0].InputTokens, "completed 帧 usage 已嗅探——abort 记录不丢用量（可计费输入 = 10 − cached 2 − cache_write 4）")
 	require.Equal(t, int64(20), store.logs[0].OutputTokens)
 	require.Equal(t, int64(30), store.logs[0].TotalTokens)
 	require.Equal(t, int64(2), store.logs[0].CacheReadTokens)

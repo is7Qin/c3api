@@ -143,19 +143,29 @@ func usageInterval(data []byte, usageKey []byte) ([]byte, bool) {
 	return raw, true
 }
 
-// deductCacheRead OpenAI 族输入归一（spec 2026-08-25-input-cache-billing-normalization）：
-// OpenAI 语义 cached ⊆ input，InputTokens 承载**可计费输入**（扣除缓存读；cr
-// 单独按 CacheReadPerM 计价——否则缓存部分被 input 价与 cache-read 价重复计费）。
-// Anthropic 语义 cache_read ∉ input_tokens，不经本函数。病态上游 cr > it → 钳 0
-// 防负车道（cr 原样保留）。cr 缺失/为 0 → 恒等。
-func deductCacheRead(it, cr int64) int64 {
-	if cr <= 0 {
+// deductCacheTokens OpenAI 族输入归一（spec 2026-08-25；2026-09-29 P0-2 纳入
+// cache_write）：OpenAI 语义 input_tokens 为 gross，cached_tokens ⊆ input_tokens
+// 且 cache_write_tokens ⊆ input_tokens（唯一口径见 internal/protoconv/protoconv.go
+// 顶部），InputTokens 承载**净可计费输入**（扣除缓存读 + 缓存写；cr/cc 分别按
+// CacheReadPerM / CacheWritePerM 单列计价——否则缓存部分被 input 价与缓存价
+// 重复计费）。Anthropic 语义 cache_read ∉ input_tokens（net），不经本函数。
+// 病态上游 cr+cc > it → 钳 0 防负车道（cr/cc 原样保留）。cr/cc 均缺失或 ≤0 →
+// 恒等（负值视同缺失）。
+func deductCacheTokens(it, cr, cc int64) int64 {
+	if cr < 0 {
+		cr = 0
+	}
+	if cc < 0 {
+		cc = 0
+	}
+	cache := cr + cc
+	if cache <= 0 {
 		return it
 	}
-	if cr >= it {
+	if cache >= it {
 		return 0
 	}
-	return it - cr
+	return it - cache
 }
 
 // usageFieldsFromInterval 从 usage 值区间提取五计数元组（chat/responses 两协议
@@ -166,7 +176,8 @@ func deductCacheRead(it, cr int64) int64 {
 // cached_tokens 内嵌路径——评审认定 nil 分支死代码；Anthropic 不经本 helper，
 // 其 cr 由 anthropicStartUsage 直读 cache_read_input_tokens）。键名不匹配/缺失
 // → 0（与 gjson 缺失 = 0 等价）。
-// 出口施加 deductCacheRead 归一——it 为可计费输入（spec 2026-08-25）；tt 保持
+// 出口施加 deductCacheTokens 归一——it 为可计费输入（uncached = input − cr − cc，
+// spec 2026-08-25 + P0-2）；tt 保持
 // 线上原值（数值不变量：归一只迁移组成，不改 total——配额扣减按 TotalTokens，
 // 数值恒等）。
 func usageFieldsFromInterval(raw []byte, itKey, otKey, crKey []byte) usageTuple {
@@ -178,7 +189,7 @@ func usageFieldsFromInterval(raw []byte, itKey, otKey, crKey []byte) usageTuple 
 		u.cr = scanFieldInt64(raw[s:e], cachedTokensKeyBytes)
 		u.cc = scanFieldInt64(raw[s:e], cacheWriteTokensKeyBytes)
 	}
-	u.it = deductCacheRead(u.it, u.cr)
+	u.it = deductCacheTokens(u.it, u.cr, u.cc)
 	return u
 }
 
@@ -231,23 +242,25 @@ func scanIntValue(raw []byte) int64 {
 // （PromptTokensDetails.CachedTokens，v1.12.0 有该字段）；cc 从 RawJSON()
 // （SDK 保留的上游原始字节）读 prompt_tokens_details.cache_write_tokens。
 // 调用方已用 resp.JSON.Usage.Valid() 防护。
-// 出口施加 deductCacheRead 归一（spec 2026-08-25）——it 为可计费输入；tt 信任
+// 出口施加 deductCacheTokens 归一（spec 2026-08-25 + P0-2）——it 为可计费输入
+// （input − cached − cache_write）；tt 信任
 // 上游 TotalTokens 原值（数值不变量：归一不改 total）。上游 total 与 in+out 的
 // 既有分歧维持现状（不收敛也不扩大）。
 func chatUsageFromResponse(u openai.CompletionUsage) (it, ot, tt, cr, cc int64) {
 	it, ot, tt, cr, cc = u.PromptTokens, u.CompletionTokens, u.TotalTokens,
 		u.PromptTokensDetails.CachedTokens, cacheWriteFromRaw(u.RawJSON(), chatCacheWritePath)
-	return deductCacheRead(it, cr), ot, tt, cr, cc
+	return deductCacheTokens(it, cr, cc), ot, tt, cr, cc
 }
 
 // responsesUsageFromResponse 非流式 Responses 响应用量：cr 直读 SDK 结构体
 // 字段，cc 从 RawJSON() 读 input_tokens_details.cache_write_tokens。出口施加
-// deductCacheRead 归一（spec 2026-08-25）——tt 先按原始 in+out 定值再归一 it
+// deductCacheTokens 归一（spec 2026-08-25 + P0-2）——tt 先按原始 in+out 定值
+// 再归一 it
 // （数值不变量：归一不改 total）。
 func responsesUsageFromResponse(u responses.ResponseUsage) (it, ot, tt, cr, cc int64) {
 	it, ot, tt = u.InputTokens, u.OutputTokens, u.InputTokens+u.OutputTokens
 	cr, cc = u.InputTokensDetails.CachedTokens, cacheWriteFromRaw(u.RawJSON(), responsesCacheWritePath)
-	return deductCacheRead(it, cr), ot, tt, cr, cc
+	return deductCacheTokens(it, cr, cc), ot, tt, cr, cc
 }
 
 // anthropicUsageFromResponse 非流式 Anthropic 响应用量：SDK v1.56.0 Usage
