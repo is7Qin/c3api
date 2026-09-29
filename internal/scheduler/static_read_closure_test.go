@@ -44,6 +44,7 @@ var staticReaderFuncs = map[string]string{
 	"ProbeAccount":               "探针：把整个账号交给候选指纹权威",
 	"Runtimes":                   "运行时视图：并发上限与名字",
 	"attachCompilerFacts":        "把逐账号编译事实挂到静态根",
+	"buildIdentityPools":         "按静态叶重建 codex 槽位池：凭据类型、K、installation",
 	"buildRoutes":                "路由索引：模板的格式集",
 	"buildSnapshots":             "构造快照：复用判定需读旧叶子",
 	"deriveCompilerAccountFacts": "编译事实派生（决策输入）",

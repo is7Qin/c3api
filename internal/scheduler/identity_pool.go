@@ -117,18 +117,60 @@ func identityPoolFor(prev *identityPool, k int, installationID string, policy co
 	return resizeIdentityPool(prev, k, installationID, policy)
 }
 
+// buildIdentityPools 按当前 byID 重建 codex 槽位池注册表：仅 codex 凭据
+// （oauth/pat）且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
+// StaticView.identityPools），使门禁读的 MaxConcurrency 与池 K 恒同源。prevReg
+// 供复用（未变的池原样保留在途 busy 与槽身份）；删除/非 codex 的账号不在新
+// 表中 → 旧池随之 GC。
+func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg *identityRegistry) *identityRegistry {
+	pools := make(map[int64]*identityPool)
+	for id, as := range byID {
+		av := as.static.Load()
+		if av == nil || av.tpl == nil || av.acc.Ext == nil {
+			continue
+		}
+		ct := av.tpl.CredentialType
+		if ct != credential.TypeCodexOAuth && ct != credential.TypeCodexPAT {
+			continue
+		}
+		k := av.acc.MaxConcurrency
+		if k <= 0 {
+			continue
+		}
+		var prev *identityPool
+		if prevReg != nil {
+			prev = prevReg.pools[id]
+		}
+		pools[id] = identityPoolFor(prev, k, installationIDOf(av.acc.Ext), s.cfg.RotatePolicy)
+	}
+	return &identityRegistry{pools: pools}
+}
+
+// prevIdentityPoolsLocked 取当前「最新」静态根的池注册表作为复用源：优先
+// staged（pending）根，否则已发布根——与 reload 取 oldByID 同纪律（持
+// publisher.mu 读取安全）。
+func (s *Scheduler) prevIdentityPoolsLocked() *identityRegistry {
+	if p := s.publisher.pending; p != nil {
+		return p.identityPools
+	}
+	if cur := s.view.Load(); cur != nil && cur.static != nil {
+		return cur.static.identityPools
+	}
+	return nil
+}
+
 // claimIdentitySlot 为一次**已成功预留**的 codex 调用认领槽身份：仅 codex 凭据
-// （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入槽身份）。全忙兜底 =
-// 临时一次性身份（不落池，计一条 warn）。
-func (s *Scheduler) claimIdentitySlot(accountID int64, credType credential.Type, ext *domain.AccountExt) *identitySlot {
+// （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入槽身份）。pools 取自
+// 本次预留所用视图的静态根（与门禁 limit 同源）；全忙兜底 = 临时一次性身份
+// （不落池，计一条 warn）。
+func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, credType credential.Type, ext *domain.AccountExt) *identitySlot {
 	if credType != credential.TypeCodexOAuth && credType != credential.TypeCodexPAT {
 		return nil
 	}
-	reg := s.identityPools.Load()
-	if reg == nil {
+	if pools == nil {
 		return nil
 	}
-	pool := reg.pools[accountID]
+	pool := pools.pools[accountID]
 	if pool == nil {
 		return nil
 	}
