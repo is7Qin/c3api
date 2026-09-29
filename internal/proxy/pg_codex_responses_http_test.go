@@ -161,7 +161,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	require.Equal(t, "thread-pg-1:0", cm.Get("x-codex-window-id").String(), "window_id（ext 持久化）注入")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id UUIDv7 格式（SDK 自动生成）")
 
-	// rec 排空（InsertBatch 落库）后断言 usage_logs 行——顶层 usage
+	// rec 排空（InsertBatch 落库）后断言 usage_logs 行——合成体顶层 usage
 	// 五计数 + cost（10×1e7+20×2e7 = 500 毫分；cache 价 nil → cache 分量 0 成本）
 	require.NoError(t, rec.Close(ctx))
 	var (
@@ -173,7 +173,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		FROM usage_logs WHERE format = 'openai-responses' ORDER BY id DESC LIMIT 1`).
 		Scan(&it, &ot, &tt, &cr, &cc, &cost, &format, &et, &model)
 	require.NoError(t, err, "usage_logs 必须有 resp 计费行")
-	require.Equal(t, int64(8), it, "input_tokens（顶层 usage 提取；可计费输入 = 10 − cached 2，spec 2026-08-25 归一）")
+	require.Equal(t, int64(8), it, "input_tokens（合成体顶层 usage 提取；可计费输入 = 10 − cached 2，spec 2026-08-25 归一）")
 	require.Equal(t, int64(20), ot, "output_tokens")
 	require.Equal(t, int64(30), tt, "total_tokens")
 	require.Equal(t, int64(2), cr, "cache_read_tokens")

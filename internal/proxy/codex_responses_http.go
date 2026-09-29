@@ -185,9 +185,8 @@ func sniffCodexTurnCallItem(f []byte) bool {
 }
 
 // nonstreamCodexResponses 非流式 codex resp：setModel 改写（与 typed 非流式 SDK 路径 params.Model = sel.Model 等价；短路守卫零分配）→
-// 适配层 Responses → 合成体原样转发（application/json）+ 顶层 usage 提取
-// （合成体无 type 字段——顶层 usage 直接解析；typed 的 SDK 结构体解析
-// 路径不适用——合成体是上游 wire 原样交付）。turn-state：客户端
+// 适配层 Responses → 合成体原样转发（application/json）+ 合成体顶层 usage
+// 提取（SDK 把 response.usage 提升到合成体顶层；无 type 字段）。turn-state：客户端
 // 自带 → 透传优先；未带 → 网关注入 held（上游签发值——同轮回传）；合成体无
 // 工具调用项（轮结束）→ ClearTurnState（跨轮不回传）。
 func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
@@ -224,10 +223,9 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp.Raw)
-	// 顶层 usage（非流式低频路径）：缺失/显式 null → ok=false → 恒 0（与原
-	// gjson 缺失 = 0 等价）。
+	// 合成体顶层 usage：缺失/显式 null → ok=false → 恒 0。
 	var it, ot, tt, cr, cc int64
-	if t, ok := responsesTopLevelUsage(resp.Raw); ok {
+	if t, ok := responsesBodyUsage(resp.Raw); ok {
 		it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
 	}
 	var img int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
@@ -263,7 +261,7 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // 费请求，token 取断前已收 usage 帧）；上游超时/错误（帧已写出，200 已定型）
 // → recordStreamAbort 语义 + 连接级/5xx 分流。
 //
-// usage 嗅探：fn 内 gjson type 精确判定 + 顶层解析（取首个命中帧——
+// usage 嗅探：fn 内精确判定 type 后读 response.usage（取首个命中帧——
 // completed 终态恒唯一，usage 只读一次）。
 func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
@@ -294,8 +292,8 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 		}
 		if !usageTaken {
 			// 热路径：字节扫描 type 精确判定（防正文含子串帧冻结）+
-			// 顶层 usage 解析（单遍，零分配）；首个命中后跳过（终态事件唯一）。
-			if hit, ok := sniffResponsesCompletedTop(raw); ok {
+			// response.usage（零分配）；首个命中后跳过（终态事件唯一）。
+			if hit, ok := sniffResponsesCompletedUsage(raw); ok {
 				it, ot, tt, cr, cc = hit.it, hit.ot, hit.tt, hit.cr, hit.cc
 				if respImageDetectOn(sel) {
 					img = respImageCountCompleted(raw)

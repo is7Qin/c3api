@@ -181,7 +181,7 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 // Responses 非流式 responses 合成调用（§1）：cred → 缓存取 HTTPClient
 // （clientFor——机制复用）→ c.Responses(ctx, payload)（SDK 合成非流式——
 // 内部无条件 stream:true + SSE 事件聚合重组完整响应体；网关以非流式语义消费，
-// 原样转发 + 顶层 usage 提取）。sess/meta 为 HTTP 面伪装身份
+// 原样转发；网关从合成体顶层 usage 计费）。sess/meta 为 HTTP 面伪装身份
 // client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id
 // clientTurnState 为客户端请求自带 x-codex-turn-state（
 // 透传优先——客户端自管，非空覆盖 held 注入）；未带 → 注入 held（上游签发值

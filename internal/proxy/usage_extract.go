@@ -91,20 +91,9 @@ func responsesCompletedUsage(data []byte) (usageTuple, bool) {
 	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
 }
 
-// --- codex resp 顶层 usage 解析（SDK 路径的 usage 形状为顶层） ---
-// codex SSE data 载荷 usage 在**顶层**（{"type":"response.completed","response":
-// {id,object,status},"usage":{...}}——codex-sdk responses.go:90-93 顶层读取实证）；
-// 合成体（codex-sdk responses.go:113-119 responsesComposite：id/object/status/
-// output/usage）无 type 字段但 usage 同样顶层。既有 sniffResponsesCompleted
-//（"type":"response.completed" 子串预筛 + response.usage.* 前缀——WS 帧形状）
-// 对两路径均不适用（预筛命中但读 0 / 预筛恒不命中——静默归零）——本族是 WS
-// 形状之外的独立路径族（流式 completed 帧 / 合成体共用同一顶层 helper）。
-
-// responsesTopLevelUsage 顶层 usage → 元组 + ok（流式 completed 帧与合成体
-// 共用）：input/output/total + input_tokens_details.cached_tokens +
-// cache_creation ephemeral 双桶聚合（与 cacheCreationFromRaw 同口径）。
-// 显式 null / 缺失 → ok=false。
-func responsesTopLevelUsage(data []byte) (usageTuple, bool) {
+// responsesBodyUsage 合成体用量：SDK 把 response.completed.response.usage
+// 提升到合成体顶层 usage。显式 null / 缺失 → ok=false。
+func responsesBodyUsage(data []byte) (usageTuple, bool) {
 	raw, ok := usageInterval(data, usageKeyBytes)
 	if !ok {
 		return usageTuple{}, false
@@ -112,35 +101,23 @@ func responsesTopLevelUsage(data []byte) (usageTuple, bool) {
 	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
 }
 
-// sniffResponsesCompletedTop 流式 fn 热路径嗅探：字节扫描 **type 精确判
-// 定** "type"=="response.completed"（SDK 交付载荷无 event: 行——正文含该子串
-// 的消息帧不冻结；WS 路径 bytes.Contains 预筛形状不适用）+ 顶层 usage 解析
-// 内联（不再经 responsesTopLevelUsage 二次定位——type 检查与 usage 提取共用
-// usageInterval/usageFieldsFromInterval 提取 helper）。ok 语义不变：type 命中
-// 即 true（usage 缺失 → 零值元组——缺失 = 0，不阻塞采集）。
-// 真实上游 response.completed 恒唯一（终态事件）——调用方取首个命中帧后跳过
-// 后续解析（usage 只读一次；"最后帧覆盖"语义由终态唯一性等价保证）。
-func sniffResponsesCompletedTop(data []byte) (usageTuple, bool) {
+// sniffResponsesCompletedUsage 流式热路径：精确匹配顶层 type 为
+// response.completed，再读 response.usage。SDK 回调没有 event 行，不能用
+// 子串预筛。type 命中即 ok（usage 缺失 → 零值，不阻塞采集）。
+func sniffResponsesCompletedUsage(data []byte) (usageTuple, bool) {
 	start, end, ok := scanKeyValue(data, typeKeyBytes)
 	if !ok {
 		return usageTuple{}, false
 	}
-	// type 值必须为字符串字面（非字符串值不可能等于字面目标——gjson String()
-	// 对非字符串返原文/空，比较结果同为不命中）。病态差异（保守方向，对齐
-	// scanIntValue 惯例）：type 值含 \uXXXX 转义（如 "response.completed"
-	// 解码后与字面相同）——gjson 值 unescape 后比较命中，本实现 bytes.Equal
-	// 字节原样比较不匹配 → ok=false（不误计）
+	// type 值必须为字符串字面。含 \uXXXX 转义时字节原样比较不命中，不误计。
 	if start >= len(data) || data[start] != '"' {
 		return usageTuple{}, false
 	}
 	if !bytes.Equal(data[start+1:end-1], completedTypeBytes) {
 		return usageTuple{}, false
 	}
-	raw, usageOK := usageInterval(data, usageKeyBytes)
-	if !usageOK {
-		return usageTuple{}, true // type 命中但 usage 缺失 → 零值元组（同旧行为）
-	}
-	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
+	u, _ := responsesCompletedUsage(data)
+	return u, true
 }
 
 // --- 字节扫描 helper（spec 2026-08-15-gc-opt-ab gjson 多遍扫描 →

@@ -33,15 +33,15 @@ import (
 // 真实上游不可控面（401 轮转 / 信封 / 帧规格）用本地可编程 mock 覆盖；真实凭据
 // e2e（happy path / 计费落库）在 pg_codex_responses_http_test.go。
 
-// 事件 fixture（对齐 codex-sdk responses_test.go：created/item.done/completed
-// 形状；usage 顶层五计数含 cache 明细——双路径断言共用）。SDK 聚合器从
-// output_item.done 事件提取 item 对象（合成体 output 只含 item——t6RespItem）。
+// 事件 fixture（对齐当前 Responses：created / output_item.done / completed；
+// usage 在 response.usage，五计数含 cache 明细）。SDK 聚合器从
+// response.output_item.done 提取 item（合成体 output 只含 item）。
 const (
 	t6RespCreated = `{"type":"response.created","response":{"id":"resp_t6","object":"response","status":"in_progress","model":"gpt-5.6"}}`
 	t6RespItem    = `{"id":"msg_1","status":"completed","type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}`
-	t6RespItemEv  = `{"type":"output_item.done","item":` + t6RespItem + `}`
+	t6RespItemEv  = `{"type":"response.output_item.done","item":` + t6RespItem + `}`
 	t6RespUsage   = `{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}`
-	t6RespDone    = `{"type":"response.completed","response":{"id":"resp_t6","object":"response","status":"completed"},"usage":` + t6RespUsage + `}`
+	t6RespDone    = `{"type":"response.completed","response":{"id":"resp_t6","object":"response","status":"completed","usage":` + t6RespUsage + `}}`
 )
 
 // codexHTTPUpstream codex 类型 resp HTTP 路径 mock 上游（/v1/responses 端点）：
@@ -237,7 +237,7 @@ func splitSSEFrames(body string) []string {
 
 // TestCodexResponsesMockNonstreamComposite 非流式主流程（oauth + ModelMapping）：
 // SDK 合成体透传（网关侧断言）+ setModel 改写落位（wire model = 映射模型）+
-// stream:true 注入 + 顶层 usage 五计数（非流式路径）+ cred 传递（Bearer
+// stream:true 注入 + 合成体顶层 usage 五计数（非流式路径）+ cred 传递（Bearer
 // at-10）。
 func TestCodexResponsesMockNonstreamComposite(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
@@ -375,7 +375,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "未配置 identity 仍注入自动 turn_id")
 	require.False(t, cm.Get("x-codex-installation-id").Exists(), "未配置不注入静态键")
 
-	// usage 断言（流式：fn 嗅探 response.completed 帧顶层 usage）
+	// usage 断言（流式：fn 嗅探 response.completed 的 response.usage）
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -396,7 +396,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 
 // t6RespCallEv 工具调用输出事件 fixture（轮边界判定面——item.type
 // function_call → 轮继续信号）。
-const t6RespCallEv = `{"type":"output_item.done","item":{"id":"call_1","status":"completed","type":"function_call","name":"shell","arguments":"{}","call_id":"call_1"}}`
+const t6RespCallEv = `{"type":"response.output_item.done","item":{"id":"call_1","status":"completed","type":"function_call","name":"shell","arguments":"{}","call_id":"call_1"}}`
 
 // postResponsesTS 向网关发 /v1/responses 请求并携带 x-codex-turn-state 头
 // （透传优先断言面；空 = 不带头）。

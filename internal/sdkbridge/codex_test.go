@@ -712,15 +712,14 @@ func (c *codexRespUpstream) turnState(i int) string {
 	return c.turnStates[i]
 }
 
-// 事件 fixture（对齐 codex-sdk responses_test.go：created/item.done/completed
-// 形状；usage 顶层五计数含 cache 明细——双路径断言共用）。SDK 聚合器从
-// output_item.done 事件提取 item 对象（合成体 output 只含 item——t6RespItem）。
+// 事件 fixture（对齐当前 Responses：usage 在 response.usage）。SDK 聚合器从
+// response.output_item.done 提取 item（合成体 output 只含 item）。
 const (
 	t6RespCreated = `{"type":"response.created","response":{"id":"resp_t6","object":"response","status":"in_progress","model":"gpt-5.6"}}`
 	t6RespItem    = `{"id":"msg_1","status":"completed","type":"message","role":"assistant","content":[{"type":"output_text","text":"Hello"}]}`
-	t6RespItemEv  = `{"type":"output_item.done","item":` + t6RespItem + `}`
+	t6RespItemEv  = `{"type":"response.output_item.done","item":` + t6RespItem + `}`
 	t6RespUsage   = `{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":2},"cache_creation":{"ephemeral_5m_input_tokens":1,"ephemeral_1h_input_tokens":3}}`
-	t6RespDone    = `{"type":"response.completed","response":{"id":"resp_t6","object":"response","status":"completed"},"usage":` + t6RespUsage + `}`
+	t6RespDone    = `{"type":"response.completed","response":{"id":"resp_t6","object":"response","status":"completed","usage":` + t6RespUsage + `}}`
 )
 
 // uuidv7Re UUIDv7 格式（8-4-4-4-12 十六进制，version 位 = 7——SDK NewUUIDv7
@@ -879,7 +878,7 @@ const t6RespCallItem = `{"id":"call_1","status":"completed","type":"function_cal
 // turn_state.rs persists_within_turn_and_resets_after）。
 func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
 	up, c := newCodexRespUpstream(t,
-		codexRespStep{status: 200, events: []string{t6RespCreated, `{"type":"output_item.done","item":` + t6RespCallItem + `}`, t6RespDone}, turnState: "ts-1"},
+		codexRespStep{status: 200, events: []string{t6RespCreated, `{"type":"response.output_item.done","item":` + t6RespCallItem + `}`, t6RespDone}, turnState: "ts-1"},
 		codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
