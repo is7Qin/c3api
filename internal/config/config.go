@@ -40,8 +40,9 @@ type Config struct {
 }
 
 // CodexIdentityConfig codex 伪装身份轮换参数：每线程最多活几个窗口（开线程时在
-// [wmax_lo, wmax_hi] 内均匀抽样——wmax_hi=0 表示不退休）＋水位口径。
-// fail-fast：1 ≤ wmax_lo ≤ wmax_hi；scope ∈ {total, body_after_prefix}。
+// [wmax_lo, wmax_hi] 内均匀抽样——wmax_hi=0 表示不退休，此时 wmax_lo 被忽略）＋
+// 水位口径。fail-fast：wmax_hi>0 时 1 ≤ wmax_lo ≤ wmax_hi（wmax_hi=0 无限定）；
+// scope ∈ {total, body_after_prefix}。
 type CodexIdentityConfig struct {
 	WMaxLo int    `koanf:"wmax_lo"`
 	WMaxHi int    `koanf:"wmax_hi"`
@@ -307,10 +308,13 @@ func validate(c *Config) error {
 	if c.Proxy.FailoverAttempts > 8 {
 		return fmt.Errorf("proxy.failover_attempts must be <= 8 (got %d)", c.Proxy.FailoverAttempts)
 	}
-	// codex_identity 轮换参数：1 ≤ wmax_lo ≤ wmax_hi（开线程抽样区间非法 = 启动
-	// 即拒绝；wmax_hi 上限不设——仅每线程窗口数）；scope 必须为已知口径。
-	if c.CodexIdentity.WMaxLo < 1 || c.CodexIdentity.WMaxHi < c.CodexIdentity.WMaxLo {
-		return fmt.Errorf("codex_identity: must satisfy 1 <= wmax_lo <= wmax_hi (got lo=%d hi=%d)",
+	// codex_identity 轮换参数：wmax_hi == 0 为「不退休」哨兵（SDK drawWMax 对
+	// hi==0 返回 0 → 线程永不退休，此时 wmax_lo 被忽略，不做区间校验）；wmax_hi > 0
+	// 时须满足 1 ≤ wmax_lo ≤ wmax_hi（开线程抽样区间非法 = 启动即拒绝）。wmax_hi
+	// 上限不设——仅每线程窗口数；scope 必须为已知口径。
+	if c.CodexIdentity.WMaxHi != 0 &&
+		(c.CodexIdentity.WMaxLo < 1 || c.CodexIdentity.WMaxHi < c.CodexIdentity.WMaxLo) {
+		return fmt.Errorf("codex_identity: must satisfy 1 <= wmax_lo <= wmax_hi (got lo=%d hi=%d; wmax_hi=0 means never retire)",
 			c.CodexIdentity.WMaxLo, c.CodexIdentity.WMaxHi)
 	}
 	switch c.CodexIdentity.Scope {
