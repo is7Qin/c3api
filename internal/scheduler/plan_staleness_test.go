@@ -22,7 +22,7 @@ func oauthRotationFixture(t *testing.T, token, refresh string) (*Scheduler, *mem
 	a := acc(1, tplx, 4)
 	a.Ext = &domain.AccountExt{
 		AccountID: 1, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity:          &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "s1", ThreadID: "t1", WindowID: "w1"},
+		CodexIdentity:          &domain.CodexIdentity{InstallationID: "inst-1"},
 		CodexAccountID:         strPtrT("ca-1"),
 		CodexOAuthToken:        strPtrT(token),
 		CodexOAuthRefreshToken: strPtrT(refresh),

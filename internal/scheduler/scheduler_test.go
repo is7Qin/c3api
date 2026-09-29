@@ -797,7 +797,7 @@ func (c *countingLoader) loadsN() int {
 func TestSelectCarriesAccountExt(t *testing.T) {
 	ext := &domain.AccountExt{
 		AccountID: 7, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1", SessionID: "s1", ThreadID: "t1"},
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"},
 	}
 	tpl := &domain.Template{ID: 1, BaseURL: "", CredentialType: credential.TypeCodexOAuth,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponsesWS}, Models: []string{"gpt-4o"}}

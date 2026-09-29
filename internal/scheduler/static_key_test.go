@@ -227,7 +227,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 				CodexAccountID: strPtr("acct-up"),
 				CodexPATKey:    &pat, // 凭据明文：**不进键**（§5.5b(2)：digest 已由 upstreamKey|patKey 覆盖，且 token 刷新不该改身份）
 				CodexIdentity: &domain.CodexIdentity{
-					InstallationID: "inst", SessionID: "sess", ThreadID: "thr", WindowID: "win",
+					InstallationID: "inst",
 				},
 			},
 		}

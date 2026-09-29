@@ -186,14 +186,10 @@ func (m *codexWSRefreshMock) callsN() int {
 	return m.calls
 }
 
-// codexWSExt 构造带完整身份四元组的 codex-oauth 账号扩展（installation 账号
-// 级永久 / session==thread 会话级 / window={thread}:0）。
+// codexWSExt 构造 codex-oauth 账号扩展。持久身份只保留 installation_id；
+// session/thread/window 运行时由槽身份给出（不再来自 ext）。
 func codexWSExt(accountID int64, at, rt string) *domain.AccountExt {
-	ext := codexOAuthExt(accountID, at, rt)
-	ext.CodexIdentity.SessionID = "11111111-1111-7111-8111-111111111111"
-	ext.CodexIdentity.ThreadID = "22222222-2222-7222-8222-222222222222"
-	ext.CodexIdentity.WindowID = ext.CodexIdentity.ThreadID + ":0"
-	return ext
+	return codexOAuthExt(accountID, at, rt)
 }
 
 // newTestCodexWSProxy 构造 codex 类型 resp-ws 测试代理：模板（credType 类型 +

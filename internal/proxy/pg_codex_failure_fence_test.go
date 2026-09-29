@@ -132,9 +132,7 @@ func TestCodexFatalChainUsesFencedPathPG(t *testing.T) {
 	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity: &domain.CodexIdentity{
-			InstallationID: "11111111-2222-3333-4444-555555555555", SessionID: "s", ThreadID: "t", WindowID: "t:0",
-		},
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
 		CodexOAuthToken: strPtrPG("at-1"), CodexOAuthRefreshToken: strPtrPG("rt-1"),
 	})
 	require.NoError(t, err)

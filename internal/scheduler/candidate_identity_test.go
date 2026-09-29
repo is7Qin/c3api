@@ -22,7 +22,7 @@ func TestCandidateFingerprintProducerMatchesSelectionAndFailureEvent(t *testing.
 	a := acc(1, tpl, 4)
 	a.Ext = &domain.AccountExt{
 		AccountID: 1, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity:  &domain.CodexIdentity{InstallationID: "i", SessionID: "s", ThreadID: "t", WindowID: "w"},
+		CodexIdentity:  &domain.CodexIdentity{InstallationID: "i"},
 		CodexAccountID: strPtrT("ca"),
 	}
 	s := newTestScheduler(t, []*domain.Account{a})
