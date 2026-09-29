@@ -791,9 +791,9 @@ func TestCodexResponsesIdentityMetadata(t *testing.T) {
 	require.Equal(t, "hi", gjson.GetBytes(c.body(0), "input").String(), "注入不应动其余字段")
 }
 
-// TestCodexResponsesIdentityPassthroughTurnID payload 自带 turn_id → 原值透传
-// 不覆盖（优先级：payload 内已存在 > CodexMeta > 自动 UUIDv7）。
-func TestCodexResponsesIdentityPassthroughTurnID(t *testing.T) {
+// TestCodexResponsesIdentityTurnIDOverride payload 自带 turn_id 恒被网关覆盖为
+// 自动 UUIDv7（codex 面客户端 client_metadata 永不透传：优先级 = 网关值 > payload）。
+func TestCodexResponsesIdentityTurnIDOverride(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
@@ -801,7 +801,9 @@ func TestCodexResponsesIdentityPassthroughTurnID(t *testing.T) {
 
 	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), nil, nil, "")
 	require.NoError(t, err)
-	require.Equal(t, "tid-keep", gjson.GetBytes(c.body(0), "client_metadata.turn_id").String(), "透传优先（不覆盖）")
+	got := gjson.GetBytes(c.body(0), "client_metadata.turn_id").String()
+	require.True(t, isUUIDv7(got), "客户端 turn_id 不透传，网关注入自动 UUIDv7: %s", got)
+	require.NotEqual(t, "tid-keep", got, "客户端 turn_id 应被覆盖")
 }
 
 // TestCodexStreamResponsesIdentityMetadata 流式路径同注入（Stream 统
