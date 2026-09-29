@@ -191,15 +191,13 @@ func TestSniffResponsesCompletedUsage(t *testing.T) {
 	_, ok = sniffResponsesCompletedUsage([]byte(`{"type":"response.output_item.done","item":{"id":"m"}}`))
 	require.False(t, ok)
 
-	// completed 但 usage 缺失 → 命中 + 全 0（缺失 = 0，不阻塞采集）
-	u, ok = sniffResponsesCompletedUsage([]byte(`{"type":"response.completed","response":{"id":"r"}}`))
-	require.True(t, ok)
-	require.Zero(t, u.it)
-	require.Zero(t, u.cc)
+	// completed 但 usage 缺失 → ok=false（不阻塞采集；调用方保留此前值）
+	_, ok = sniffResponsesCompletedUsage([]byte(`{"type":"response.completed","response":{"id":"r"}}`))
+	require.False(t, ok, "type 命中但 usage 缺失 → ok=false（统一 missing 语义）")
 
-	// 用量只在 response.usage。顶层 usage 不是当前事件契约。
+	// 用量只在 response.usage。顶层 usage 不是当前事件契约（response.usage 缺失 → ok=false）。
 	u, ok = sniffResponsesCompletedUsage([]byte(`{"type":"response.completed","response":{"id":"r"},"usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30}}`))
-	require.True(t, ok)
+	require.False(t, ok)
 	require.Zero(t, u.it, "不读顶层 usage")
 	require.Zero(t, u.ot)
 	require.Zero(t, u.tt)
@@ -267,8 +265,9 @@ func sniffResponsesCompletedUsageRef(data []byte) (usageTuple, bool) {
 	if gjson.GetBytes(data, "type").String() != "response.completed" {
 		return usageTuple{}, false
 	}
-	t, _ := responsesCompletedUsageRef(data)
-	return t, true
+	// type 命中后沿用 usage 存在性判定：缺失/显式 null → ok=false（统一 missing
+	// 语义，与生产实现一致）。
+	return responsesCompletedUsageRef(data)
 }
 
 // TestUsageExtractEquivalence 语义等价双实现对照：真实上游形态用例 + 病态

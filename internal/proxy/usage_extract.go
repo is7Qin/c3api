@@ -105,9 +105,12 @@ func responsesBodyUsage(data []byte) (usageTuple, bool) {
 	return usageFieldsFromInterval(raw, inputTokensKeyBytes, outputTokensKeyBytes, inputTokensDetailsKeyBytes), true
 }
 
-// sniffResponsesCompletedUsage 流式热路径：精确匹配顶层 type 为
-// response.completed，再读 response.usage。SDK 回调没有 event 行，不能用
-// 子串预筛。type 命中即 ok（usage 缺失 → 零值，不阻塞采集）。
+// sniffResponsesCompletedUsage 流式热路径统一嗅探（唯一实现，resp-ws 与 codex
+// HTTP 两条路径共用）：精确匹配顶层 type 为 response.completed，再读
+// response.usage。SDK 回调没有 event 行，不能用子串预筛。missing 语义与其余
+// 提取同族：type 命中但 response.usage 缺失或为 null（error 终态形状）→
+// ok=false（调用方保留此前累积值，不用零值覆盖）。此前 resp-ws 侧独立的
+// bytes.Contains 预筛实现（ok=usage 存在）已删除合一。
 func sniffResponsesCompletedUsage(data []byte) (usageTuple, bool) {
 	start, end, ok := scanKeyValue(data, typeKeyBytes)
 	if !ok {
@@ -120,8 +123,7 @@ func sniffResponsesCompletedUsage(data []byte) (usageTuple, bool) {
 	if !bytes.Equal(data[start+1:end-1], completedTypeBytes) {
 		return usageTuple{}, false
 	}
-	u, _ := responsesCompletedUsage(data)
-	return u, true
+	return responsesCompletedUsage(data)
 }
 
 // --- 字节扫描 helper（spec 2026-08-15-gc-opt-ab gjson 多遍扫描 →

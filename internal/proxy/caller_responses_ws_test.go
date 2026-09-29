@@ -729,31 +729,27 @@ func TestResponsesWSDial5xxNormalized(t *testing.T) {
 	require.Equal(t, "upstream rejected", *lg.ErrorMessage, "错误文本 = 上游 body message")
 }
 
-// --- unit：预筛嗅探逻辑（热路径纪律） ---
+// --- unit：completed 嗅探（热路径纪律，与 usage_extract.go 单实现共用） ---
 
-func TestSniffResponsesCompleted(t *testing.T) {
+func TestSniffResponsesCompletedUnified(t *testing.T) {
 	// 命中：completed 帧完整 usage → 5 计数正确
-	u, ok := sniffResponsesCompleted([]byte(responsesWSCompletedFrame))
+	u, ok := sniffResponsesCompletedUsage([]byte(responsesWSCompletedFrame))
 	require.True(t, ok)
 	require.Equal(t, usageTuple{it: 2, ot: 5, tt: 11, cr: 1, cc: 3}, u, "it'=线上 input 6−cached 1−cache_write 3（归一后）；tt 不变")
 
-	// 未命中：流式中间帧零解析直转（预筛 miss，不触达 gjson）
-	_, ok = sniffResponsesCompleted([]byte(`{"type":"response.output_text.delta","delta":"hi"}`))
+	// 未命中：流式中间帧零解析直转
+	_, ok = sniffResponsesCompletedUsage([]byte(`{"type":"response.output_text.delta","delta":"hi"}`))
 	require.False(t, ok)
 
-	// 误命中：非 completed 帧内嵌该子串（嵌套 key-value，原始字节可真命中——
-	// 字符串内容里的引号恒被转义，不可能误匹配）→ 预筛命中但 response.usage
-	// 不存在 → ok=false 不更新（此前值保留）。旧行为解析出零值元组覆盖——
-	// completed 终态唯一且恒在流末，最终值由真实 completed 帧覆盖（最后帧
-	// 语义），实际等价（spec 连带改写）。
-	u, ok = sniffResponsesCompleted([]byte(`{"type":"response.output_text.delta","delta":"hi","meta":{"type":"response.completed"}}`))
+	// 非 completed 帧：顶层 type 精确判定——正文/嵌套对象含 "response.completed"
+	// 也不命中（无子串预筛，杜绝误命中）。
+	u, ok = sniffResponsesCompletedUsage([]byte(`{"type":"response.output_text.delta","delta":"hi","meta":{"type":"response.completed"}}`))
 	require.False(t, ok)
 	require.Zero(t, u, "ok=false 返回零值元组（调用方不更新）")
 
-	// completed 帧但 usage 缺失（error 终态形状）→ ok=false 不更新（不阻塞
-	// 采集；此前值保留——completed 终态唯一、元组仅此处写入，此前值恒 0，
-	// 与旧行为覆盖 0 等价）。
-	u, ok = sniffResponsesCompleted([]byte(`{"type":"response.completed","response":{"id":"r"}}`))
+	// completed 帧但 usage 缺失（error 终态形状）→ ok=false 不更新（调用方保留
+	// 此前值，不用零值覆盖——统一 missing 语义）。
+	u, ok = sniffResponsesCompletedUsage([]byte(`{"type":"response.completed","response":{"id":"r"}}`))
 	require.False(t, ok)
 	require.Zero(t, u)
 }
