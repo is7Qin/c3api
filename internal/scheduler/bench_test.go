@@ -147,7 +147,8 @@ func TestSelectionSizeAMD64(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("amd64 layout gate")
 	}
-	require.Equal(t, uintptr(144), unsafe.Sizeof(Selection{}))
+	// +8：codex 槽位池认领的 identitySlot 指针（slot-identity 注入/推进面）。
+	require.Equal(t, uintptr(152), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {

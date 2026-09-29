@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
+package scheduler
+
+import (
+	"testing"
+
+	codexsdk "github.com/is7Qin/codex-sdk"
+	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
+)
+
+// testPolicy 无退休（WMaxHi 0）+ Total 口径——池机制测试用（身份演化另测）。
+func testPolicy() codexsdk.RotatePolicy {
+	return codexsdk.RotatePolicy{Scope: codexsdk.ScopeTotal}
+}
+
+// newTestPool 构造容量 k 的池（installation "inst"）。
+func newTestPool(k int, p codexsdk.RotatePolicy) *identityPool {
+	pool := &identityPool{policy: p, installationID: "inst", slots: make([]*identitySlot, k)}
+	for i := 0; i < k; i++ {
+		pool.slots[i] = newIdentitySlot("inst", p)
+	}
+	return pool
+}
+
+func codexExt(installationID string) *domain.AccountExt {
+	return &domain.AccountExt{CodexIdentity: &domain.CodexIdentity{InstallationID: installationID}}
+}
+
+// TestIdentityPoolClaimReleaseNoCrossSlot 认领 K 槽互不相同（不串槽）、全忙
+// claim 返回 nil、归还可再认领。
+func TestIdentityPoolClaimReleaseNoCrossSlot(t *testing.T) {
+	pool := newTestPool(3, testPolicy())
+	seen := map[*identitySlot]bool{}
+	threads := map[string]bool{}
+	for i := 0; i < 3; i++ {
+		s := pool.claim()
+		require.NotNil(t, s)
+		require.False(t, seen[s], "槽不得重复认领")
+		seen[s] = true
+		require.True(t, s.busy.Load())
+		threads[s.state.Load().ThreadID] = true
+	}
+	require.Len(t, threads, 3, "K 槽身份互不相同（不串槽）")
+	require.Nil(t, pool.claim(), "全忙 → nil（兜底在外层）")
+
+	pool.slots[1].release()
+	require.False(t, pool.slots[1].busy.Load())
+	require.Same(t, pool.slots[1], pool.claim(), "唯一空闲槽被认领")
+}
+
+// TestIdentityPoolReuseKeepsIdentity 复用（占用）不改身份：同一槽释放后再认领，
+// thread/window 不变。
+func TestIdentityPoolReuseKeepsIdentity(t *testing.T) {
+	pool := newTestPool(2, testPolicy())
+	slot := pool.claim()
+	require.NotNil(t, slot)
+	thread := slot.state.Load().ThreadID
+	slot.release()
+	// K=2，轮转一圈内必再得同一槽对象。
+	var again *identitySlot
+	for i := 0; i < len(pool.slots); i++ {
+		c := pool.claim()
+		if c == slot {
+			again = c
+			break
+		}
+		c.release()
+	}
+	require.Same(t, slot, again)
+	require.Equal(t, thread, again.state.Load().ThreadID, "复用不换身份")
+	again.release()
+}
+
+// TestAdvanceIdentityOnlyStepsAtThreshold 水位未跨 θ_w 不推进；跨过且 WMax 未达
+// 不换线程（WindowN++）；达 WMax 退休换新线程。
+func TestAdvanceIdentityOnlyStepsAtThreshold(t *testing.T) {
+	slug := "unknown-slug" // 目录外 → fallback θ_w
+	theta := codexsdk.AutoCompactTokens(slug)
+	require.Positive(t, theta)
+
+	// 无退休（WMax 0）：θ 下不推进，θ 上升沿 WindowN++，持续高位不重复计数。
+	noRetire := codexsdk.RotatePolicy{Scope: codexsdk.ScopeTotal}
+	slot := newIdentitySlot("inst", noRetire)
+	sel := &Selection{identitySlot: slot, Model: slug}
+	thread := slot.state.Load().ThreadID
+
+	sel.AdvanceIdentity(theta - 1)
+	require.Equal(t, uint64(0), slot.state.Load().WindowN, "低于 θ_w 不推进")
+	sel.AdvanceIdentity(theta)
+	require.Equal(t, uint64(1), slot.state.Load().WindowN, "跨 θ_w 上升沿 WindowN++")
+	sel.AdvanceIdentity(theta)
+	require.Equal(t, uint64(1), slot.state.Load().WindowN, "持续高位不重复计数")
+	sel.AdvanceIdentity(theta - 1)
+	sel.AdvanceIdentity(theta)
+	require.Equal(t, uint64(2), slot.state.Load().WindowN, "回落再跨 → 新上升沿")
+	require.Equal(t, thread, slot.state.Load().ThreadID, "无退休不换线程")
+
+	// WMax=1：WindowN 达上限 → 退休换新线程。
+	retire := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1, Scope: codexsdk.ScopeTotal}
+	rslot := newIdentitySlot("inst", retire)
+	rsel := &Selection{identitySlot: rslot, Model: slug}
+	oldThread := rslot.state.Load().ThreadID
+	rsel.AdvanceIdentity(theta)
+	after := rslot.state.Load()
+	require.Equal(t, uint64(0), after.WindowN, "退休换新线程后 WindowN 归零")
+	require.NotEqual(t, oldThread, after.ThreadID, "WindowN ≥ WMax → 换 thread")
+}
+
+// TestIdentityPoolResizeMigratesMin 容量变化按位次迁移旧槽身份至 min(old,new)；
+// 扩容新位次开新线程；busy 旧槽不迁移（避免与在途请求共享身份）。
+func TestIdentityPoolResizeMigratesMin(t *testing.T) {
+	old := newTestPool(4, testPolicy())
+	oldThreads := make([]string, 4)
+	for i, s := range old.slots {
+		oldThreads[i] = s.state.Load().ThreadID
+	}
+
+	shrunk := resizeIdentityPool(old, 2, "inst", testPolicy())
+	require.Len(t, shrunk.slots, 2)
+	require.Equal(t, oldThreads[0], shrunk.slots[0].state.Load().ThreadID)
+	require.Equal(t, oldThreads[1], shrunk.slots[1].state.Load().ThreadID)
+
+	grown := resizeIdentityPool(shrunk, 4, "inst", testPolicy())
+	require.Len(t, grown.slots, 4)
+	require.Equal(t, oldThreads[0], grown.slots[0].state.Load().ThreadID)
+	require.Equal(t, oldThreads[1], grown.slots[1].state.Load().ThreadID)
+	require.NotEmpty(t, grown.slots[2].state.Load().ThreadID)
+	require.NotEmpty(t, grown.slots[3].state.Load().ThreadID)
+
+	// busy 槽不迁移：认领 slots[0] 后同容量重建 → 新 pools[0] 身份不等同旧 busy 槽。
+	busyPool := newTestPool(2, testPolicy())
+	busy := busyPool.claim()
+	var got *identitySlot
+	for i := 0; i < 2; i++ {
+		if busyPool.slots[i] == busy {
+			got = busyPool.slots[i]
+		}
+	}
+	require.NotNil(t, got)
+	rebuilt := resizeIdentityPool(busyPool, 2, "inst", testPolicy())
+	require.NotEqual(t, busy.state.Load().ThreadID, rebuilt.slots[0].state.Load().ThreadID)
+}
+
+// TestIdentityPoolForReusesWhenUnchanged 容量/安装 ID/策略均未变 → 原样复用
+// （保留在途 busy 与槽身份）；任一变化才重建。
+func TestIdentityPoolForReusesWhenUnchanged(t *testing.T) {
+	p := testPolicy()
+	pool := newTestPool(3, p)
+	require.Same(t, pool, identityPoolFor(pool, 3, "inst", p), "未变复用")
+	require.NotSame(t, pool, identityPoolFor(pool, 4, "inst", p), "容量变化重建")
+	require.NotSame(t, pool, identityPoolFor(pool, 3, "other", p), "安装 ID 变化重建")
+	require.NotSame(t, pool, identityPoolFor(pool, 3, "inst", codexsdk.RotatePolicy{Scope: codexsdk.ScopeBodyAfterPrefix}), "策略变化重建")
+}
+
+// TestClaimIdentitySlotOnlyCodexAndFallback 仅 codex 凭据认领；全忙兜底临时身份
+// 不落池；非 codex / 无池 → nil。
+func TestClaimIdentitySlotOnlyCodexAndFallback(t *testing.T) {
+	pool := newTestPool(2, testPolicy())
+	s := &Scheduler{}
+	s.identityPools.Store(&identityRegistry{pools: map[int64]*identityPool{7: pool}})
+
+	// 非 codex → nil
+	require.Nil(t, s.claimIdentitySlot(7, credential.TypeAPIKey, codexExt("inst")))
+	// 无池 → nil
+	require.Nil(t, s.claimIdentitySlot(99, credential.TypeCodexOAuth, codexExt("inst")))
+
+	// 认领入池槽
+	slot := s.claimIdentitySlot(7, credential.TypeCodexOAuth, codexExt("inst"))
+	require.NotNil(t, slot)
+	require.True(t, slot.busy.Load())
+
+	// 全忙兜底：临时身份不落池、不计 busy。
+	s.claimIdentitySlot(7, credential.TypeCodexPAT, codexExt("inst")) // 占满第二槽
+	ephem := s.claimIdentitySlot(7, credential.TypeCodexPAT, codexExt("inst"))
+	require.NotNil(t, ephem)
+	require.False(t, ephem.busy.Load(), "兜底临时身份不落池（不计 busy）")
+	for _, sl := range pool.slots {
+		require.NotSame(t, ephem, sl)
+	}
+	require.NotEmpty(t, ephem.state.Load().ThreadID)
+}

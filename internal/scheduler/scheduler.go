@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	codexsdk "github.com/is7Qin/codex-sdk"
+
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/latch"
@@ -42,6 +44,9 @@ var (
 
 type Config struct {
 	SyncInterval time.Duration
+	// RotatePolicy codex 伪装身份轮换策略（wmax_lo/wmax_hi/scope）：槽位池开
+	// 线程与 Step 用它采样/判定。零值 = WMaxHi 0（线程不退休）。
+	RotatePolicy codexsdk.RotatePolicy
 	// StalenessProbe 是 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
 	// 定义，赋值即满足，无需命名类型）。构造期传入，nil = 不接线
@@ -73,7 +78,10 @@ type Selection struct {
 	Ext                  *domain.AccountExt
 	CandidateFingerprint string
 	lease                *leaseToken
-	ModelMappingMode     domain.ModelMappingMode
+	// identitySlot 本次预留认领的 codex 伪装身份槽（仅 codex 凭据；nil = 无
+	// 槽身份——非 codex 面不认领）。Release 归还。
+	identitySlot     *identitySlot
+	ModelMappingMode domain.ModelMappingMode
 }
 
 func (s *Selection) Release() {
@@ -82,6 +90,41 @@ func (s *Selection) Release() {
 	}
 	if s.lease.released.CompareAndSwap(false, true) {
 		s.lease.acc.runtime.concurrency.Add(-1)
+		s.identitySlot.release()
+	}
+}
+
+// SlotSession 返回本 Selection 认领的槽的当前 SDK 会话标识（无槽 → 零值 +
+// false）。伪装身份注入源：session/thread/window 由槽状态给出（installation_id
+// 仍取账号 ext——账号级稳定项，见 proxy codexSlotIdentity）。
+func (s *Selection) SlotSession() (codexsdk.Session, bool) {
+	if s == nil || s.identitySlot == nil {
+		return codexsdk.Session{}, false
+	}
+	st := s.identitySlot.state.Load()
+	if st == nil {
+		return codexsdk.Session{}, false
+	}
+	return st.Session(), true
+}
+
+// AdvanceIdentity 用一次观测水位（响应的 total_tokens）推进本槽身份——**仅成功
+// 取到 usage 时调用一次**；slug = 已应用模型映射后的上游模型（sel.Model）。无槽
+// no-op。CAS 换入新状态（并发同槽推进不丢更新）。
+func (s *Selection) AdvanceIdentity(totalTokens int64) {
+	if s == nil || s.identitySlot == nil {
+		return
+	}
+	slot := s.identitySlot
+	for {
+		cur := slot.state.Load()
+		if cur == nil {
+			return
+		}
+		next := codexsdk.Step(*cur, totalTokens, s.Model, slot.policy)
+		if slot.state.CompareAndSwap(cur, &next) {
+			return
+		}
 	}
 }
 
@@ -111,6 +154,9 @@ type Scheduler struct {
 	view      atomic.Pointer[RoutingView]
 	gen       atomic.Uint64
 	publisher *routingPublisher
+	// identityPools 账号级槽位池注册表（发布后不可变；reload copy-modify-store
+	// 换入）。请求路径 Load() 读、无每请求锁。仅 codex 凭据面消费。
+	identityPools atomic.Pointer[identityRegistry]
 	// concView 集群账号并发视图（concsync.go worker 换入的第二 atomic 快照，
 	// spec conc-share-borrow-account）：超份额借位判定的对账聚合。nil / 陈旧 =
 	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
@@ -322,6 +368,35 @@ func (s *Scheduler) reload(ctx context.Context) error {
 		oldByID = cur.static.byID
 	}
 	groups, byID := buildSnapshots(m, oldByID)
+	// codex 槽位池：按当前账号集与容量同步注册表（copy-modify-store 换入）。
+	// 未变（容量/安装 ID/策略）则复用旧池——保留在途 busy 与槽身份，无关重载
+	// 不重置会话；容量变化才按位次迁移旧槽状态。仅 codex 凭据建池。
+	prevReg := s.identityPools.Load()
+	newPools := make(map[int64]*identityPool)
+	for id, as := range byID {
+		av := as.static.Load()
+		if av == nil || av.tpl == nil || av.acc.Ext == nil {
+			continue
+		}
+		ct := av.tpl.CredentialType
+		if ct != credential.TypeCodexOAuth && ct != credential.TypeCodexPAT {
+			continue
+		}
+		k := av.acc.MaxConcurrency
+		if k <= 0 {
+			continue
+		}
+		var prev *identityPool
+		if prevReg != nil {
+			prev = prevReg.pools[id]
+		}
+		installationID := ""
+		if av.acc.Ext.CodexIdentity != nil {
+			installationID = av.acc.Ext.CodexIdentity.InstallationID
+		}
+		newPools[id] = identityPoolFor(prev, k, installationID, s.cfg.RotatePolicy)
+	}
+	s.identityPools.Store(&identityRegistry{pools: newPools})
 	sv := newStaticView(groups, byID)
 	if s.latch != nil {
 		for id, as := range byID {

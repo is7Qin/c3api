@@ -207,5 +207,9 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		CandidateFingerprint: candidate.Fingerprint, lease: &leaseToken{acc: cur},
 		ModelMappingMode: mappingMode,
 	}
+	// 认领槽身份（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
+	// 内**，避免后置校验异常路径泄漏槽）。仅 codex 凭据认领（claimIdentitySlot
+	// 内判定），非 codex → nil。
+	selected.identitySlot = s.claimIdentitySlot(curAv.acc.ID, curAv.tpl.CredentialType, curAv.acc.Ext)
 	return selected, attempt, nil
 }

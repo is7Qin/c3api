@@ -253,6 +253,30 @@ func TestMapStreamEventType(t *testing.T) {
 // cred → Auth 缓存
 // ---------------------------------------------------------------------------
 
+// testCachedClient 取条目多条目缓存中指定身份签名（sig）的客户端（测试断言
+// 用；生产代码经 clientFor 取）。nil 条目/未构造/无该签名 → nil。
+func testCachedClient(e *codexEntry, sig string) *codexsdk.HTTPClient {
+	if e == nil || e.clients == nil {
+		return nil
+	}
+	if c := e.clients[sig]; c != nil {
+		return c.client
+	}
+	return nil
+}
+
+// testAppliedTurnState 取条目多条目缓存中指定身份签名的客户端构造期已应用
+// turn-state（测试断言用；无该签名 → ""）。
+func testAppliedTurnState(e *codexEntry, sig string) string {
+	if e == nil || e.clients == nil {
+		return ""
+	}
+	if c := e.clients[sig]; c != nil {
+		return c.appliedTurnState
+	}
+	return ""
+}
+
 // TestCodexCacheReuseAndRebuild 同账号复用（同 HTTPClient 指针断言）/ 凭据
 // 更新后重建（token/rt/pat 任一变化 → 新客户端）/ 轮转回调写回不重建
 // （回调本身不触发缓存变更）。
@@ -275,34 +299,34 @@ func TestCodexCacheReuseAndRebuild(t *testing.T) {
 	// 同账号同凭据 → 复用（同一 HTTPClient）
 	_, err = a.GenerateImage(context.Background(), cred, p)
 	require.NoError(t, err)
-	require.Same(t, e1.client, a.entries[7].client, "同账号复用（轮转状态/连接池保持）")
+	require.Same(t, testCachedClient(e1, ""), testCachedClient(a.entries[7], ""), "同账号复用（轮转状态/连接池保持）")
 	require.Equal(t, 2, c.callsN())
 
 	// 凭据更新（管理面导入/更新——at 变更）→ 重建
 	cred2 := oauthCred(7, "at-2", "rt-1")
 	_, err = a.GenerateImage(context.Background(), cred2, p)
 	require.NoError(t, err)
-	require.NotSame(t, e1.client, a.entries[7].client, "凭据更新 → 重建")
+	require.NotSame(t, testCachedClient(e1, ""), testCachedClient(a.entries[7], ""), "凭据更新 → 重建")
 	require.NotEqual(t, "Bearer at-1", c.auth(c.callsN()-1), "重建后新 at 生效")
 
 	// rt 变更同样触发重建
 	cred3 := oauthCred(7, "at-2", "rt-2")
 	_, err = a.GenerateImage(context.Background(), cred3, p)
 	require.NoError(t, err)
-	e2 := a.entries[7].client
-	require.NotSame(t, e1.client, e2, "rt 更新 → 重建")
+	e2 := testCachedClient(a.entries[7], "")
+	require.NotSame(t, testCachedClient(e1, ""), e2, "rt 更新 → 重建")
 	require.NotEqual(t, "Bearer at-1", c.auth(c.callsN()-1), "rt 更新后 client 已重建")
 
 	// 同凭据 → 复用（无变化不重建）
 	_, err = a.GenerateImage(context.Background(), cred3, p)
 	require.NoError(t, err)
-	require.Same(t, e2, a.entries[7].client, "同凭据 → 复用")
+	require.Same(t, e2, testCachedClient(a.entries[7], ""), "同凭据 → 复用")
 
 	// pat 变更（OAuth→PAT 切换）→ 重建（pat 维度）
 	cred4 := &domain.AccountCredential{AccountID: 7, PATKey: "pat-new"}
 	_, err = a.GenerateImage(context.Background(), cred4, p)
 	require.NoError(t, err)
-	require.NotSame(t, e2, a.entries[7].client, "pat 变更 → 重建")
+	require.NotSame(t, e2, testCachedClient(a.entries[7], ""), "pat 变更 → 重建")
 
 	// 无上报（成功路径）
 	require.Empty(t, handler.snapshot(), "成功路径不上报")
@@ -323,7 +347,7 @@ func TestCodexCachePAT(t *testing.T) {
 	e1 := a.entries[9]
 	_, err = a.GenerateImage(context.Background(), cred, p)
 	require.NoError(t, err)
-	require.Same(t, e1.client, a.entries[9].client, "PAT 同账号复用")
+	require.Same(t, testCachedClient(e1, ""), testCachedClient(a.entries[9], ""), "PAT 同账号复用")
 }
 
 // TestCodexCacheConcurrentReuse 同账号并发复用：32 并发首请求全部成功，
@@ -372,7 +396,7 @@ func TestCodexCacheConcurrentReuse(t *testing.T) {
 	require.NotNil(t, first)
 	require.Equal(t, 32, c.callsN(), "并发请求全部送达上游")
 	a.mu.Lock()
-	require.Same(t, first.client, a.entries[7].client, "并发后缓存的 HTTPClient 为同一实例")
+	require.Same(t, testCachedClient(first, ""), testCachedClient(a.entries[7], ""), "并发后缓存的 HTTPClient 为同一实例")
 	a.mu.Unlock()
 }
 
@@ -831,24 +855,28 @@ func TestCodexResponsesIdentityChangeRebuild(t *testing.T) {
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-r"}
 	meta1 := &codexsdk.CodexMeta{InstallationID: "inst-1"}
 	meta2 := &codexsdk.CodexMeta{InstallationID: "inst-2"}
+	sig1 := identitySig(nil, meta1)
+	sig2 := identitySig(nil, meta2)
+	require.NotEqual(t, sig1, sig2, "不同 identity 签名不同")
 
 	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1, "")
 	require.NoError(t, err)
 	a.mu.Lock()
-	c1 := a.entries[9].client
+	c1 := testCachedClient(a.entries[9], sig1)
 	a.mu.Unlock()
 	require.NotNil(t, c1)
 
 	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta1, "")
 	require.NoError(t, err)
 	a.mu.Lock()
-	require.Same(t, c1, a.entries[9].client, "同 identity 复用连接池")
+	require.Same(t, c1, testCachedClient(a.entries[9], sig1), "同 identity 复用连接池")
 	a.mu.Unlock()
 
 	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, meta2, "")
 	require.NoError(t, err)
 	a.mu.Lock()
-	require.NotSame(t, c1, a.entries[9].client, "identity 变化 → 重建客户端")
+	require.NotSame(t, c1, testCachedClient(a.entries[9], sig2), "identity 变化 → 新条目客户端")
+	require.Same(t, c1, testCachedClient(a.entries[9], sig1), "identity 变化不扰动旧条目客户端（多条目复用）")
 	a.mu.Unlock()
 }
 
@@ -944,17 +972,17 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
 	require.NoError(t, err)
 	a.mu.Lock()
-	c1 := a.entries[9].client
-	require.Equal(t, "", a.entries[9].appliedTurnState, "首调用应用空值")
+	c1 := testCachedClient(a.entries[9], "")
+	require.Equal(t, "", testAppliedTurnState(a.entries[9], ""), "首调用应用空值")
 	a.mu.Unlock()
 
 	// 同值复用（held 已回写 ts-1 → 生效值变化 → 重建——断言客户端非同一实例）
 	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
 	require.NoError(t, err)
 	a.mu.Lock()
-	c2 := a.entries[9].client
+	c2 := testCachedClient(a.entries[9], "")
 	require.NotSame(t, c1, c2, "生效值空 → ts-1 变化 → 重建客户端")
-	require.Equal(t, "ts-1", a.entries[9].appliedTurnState, "重建后记录应用值")
+	require.Equal(t, "ts-1", testAppliedTurnState(a.entries[9], ""), "重建后记录应用值")
 	require.NotNil(t, c2)
 	a.mu.Unlock()
 
@@ -962,7 +990,7 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "ts-1")
 	require.NoError(t, err)
 	a.mu.Lock()
-	require.Same(t, c2, a.entries[9].client, "同生效值复用不重建")
+	require.Same(t, c2, testCachedClient(a.entries[9], ""), "同生效值复用不重建")
 	a.mu.Unlock()
 }
 
