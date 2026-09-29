@@ -5,6 +5,7 @@
 package scheduler
 
 import (
+	"sync"
 	"testing"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
@@ -156,6 +157,85 @@ func TestIdentityPoolForReusesWhenUnchanged(t *testing.T) {
 	require.NotSame(t, pool, identityPoolFor(pool, 4, "inst", p), "容量变化重建")
 	require.NotSame(t, pool, identityPoolFor(pool, 3, "other", p), "安装 ID 变化重建")
 	require.NotSame(t, pool, identityPoolFor(pool, 3, "inst", codexsdk.RotatePolicy{Scope: codexsdk.ScopeBodyAfterPrefix}), "策略变化重建")
+}
+
+// TestIdentityPoolConcurrentClaimUnique 并发认领唯一性：G 个 goroutine 同时
+// claim（WaitGroup 屏障对齐起跑），成功者互不相同、成功数恰为 K、全忙后 nil。
+func TestIdentityPoolConcurrentClaimUnique(t *testing.T) {
+	const k = 8
+	pool := newTestPool(k, testPolicy())
+	const g = 64
+
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	var mu sync.Mutex
+	claimed := map[*identitySlot]int{}
+	success := 0
+	for i := 0; i < g; i++ {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			start.Wait() // 屏障：全部就绪后同时认领，最大化 CAS 争用
+			s := pool.claim()
+			if s == nil {
+				return
+			}
+			mu.Lock()
+			claimed[s]++
+			success++
+			mu.Unlock()
+		}()
+	}
+	start.Done()
+	done.Wait()
+
+	require.Len(t, claimed, success, "并发认领的成功者互不相同（不串槽）")
+	require.Equal(t, k, success, "K 个空槽恰好被全部认领一次")
+	for s, n := range claimed {
+		require.Equal(t, 1, n, "同一槽不得被重复认领")
+		require.True(t, s.busy.Load())
+	}
+	require.Nil(t, pool.claim(), "全忙 → nil（兜底在外层）")
+}
+
+// TestIdentitySlotConcurrentAdvanceNoLostUpdate 同槽并发推进 CAS 面：G 个
+// goroutine 并发对同一槽 AdvanceIdentity(θ)，ScopeTotal 上升沿恰计一次
+// （CAS 读改写不丢不重）；回落再跨界继续恰计一次（证明 arm 更新也被 CAS 应用）。
+func TestIdentitySlotConcurrentAdvanceNoLostUpdate(t *testing.T) {
+	slug := "unknown-slug" // 目录外 → fallback θ_w
+	theta := codexsdk.AutoCompactTokens(slug)
+	require.Positive(t, theta)
+	pol := codexsdk.RotatePolicy{Scope: codexsdk.ScopeTotal} // WMaxHi=0 不退休
+	slot := newIdentitySlot("inst", pol)
+	sel := &Selection{identitySlot: slot, Model: slug}
+
+	const g = 16
+	const m = 100
+	advanceAll := func() {
+		var start sync.WaitGroup
+		start.Add(1)
+		var done sync.WaitGroup
+		for i := 0; i < g; i++ {
+			done.Add(1)
+			go func() {
+				defer done.Done()
+				start.Wait()
+				for j := 0; j < m; j++ {
+					sel.AdvanceIdentity(theta) // 每步都是「跨 θ_w」
+				}
+			}()
+		}
+		start.Done()
+		done.Wait()
+	}
+
+	advanceAll()
+	require.Equal(t, uint64(1), slot.state.Load().WindowN, "并发跨 θ_w 恰计一次上升沿（CAS 不丢不重）")
+
+	sel.AdvanceIdentity(theta - 1) // 回落 → 重新武装
+	advanceAll()
+	require.Equal(t, uint64(2), slot.state.Load().WindowN, "回落再跨 → 继续恰计一次（arm 更新未被丢）")
 }
 
 // TestClaimIdentitySlotOnlyCodexAndFallback 仅 codex 凭据认领；全忙兜底临时身份
