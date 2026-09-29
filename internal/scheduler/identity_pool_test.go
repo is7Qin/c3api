@@ -254,39 +254,55 @@ func TestAdvanceIdentityTurnDrive(t *testing.T) {
 	require.LessOrEqual(t, retiredAt, 96, "96 轮内必退休（span≤96）")
 }
 
-// TestAdvanceIdentityOrderInvariant 推进只由「调用次数」驱动（Step 无 token 参量），
-// 与「谁在发/到达顺序」无关：同一起点状态，顺序推进 K 次 vs 三用户交替推进 K 次，
-// 终态（Turns/WindowN/ThreadID）一致。
+// TestAdvanceIdentityOrderInvariant 推进只由「调用次数」驱动（Step 无 token 参量）：
+// 从同一起点身份出发，顺序推进与「三用户交替」推进在相同调用次数下，首个退休点与
+// 当步状态（Turns/WindowN）一致——证明推进与「谁在发/到达顺序」无关。
+// 退休后新线程 ID 由各槽独立随机生成，故只比较首退点与 Turns/WindowN，不复比 ThreadID。
 func TestAdvanceIdentityOrderInvariant(t *testing.T) {
-	pol := codexsdk.RotatePolicy{WMaxLo: 5, WMaxHi: 5} // 固定 WMax=5，退休点可界定
-	base := newIdentitySlot("inst", pol)
-	init := *base.state.Load()
-
-	seq := &identitySlot{policy: pol}
-	initSeq := init
-	seq.state.Store(&initSeq)
-	inter := &identitySlot{policy: pol}
-	initInter := init
-	inter.state.Store(&initInter)
-
-	const k = 30
-	const users = 3
-	require.Zero(t, k%users, "k 需为 users 整数倍，保证两路总调用次数相同")
-
-	seqSel := &Selection{identitySlot: seq}
-	for i := 0; i < k; i++ {
-		seqSel.AdvanceIdentity()
+	pol := codexsdk.RotatePolicy{WMaxLo: 2, WMaxHi: 2} // 固定 WMax=2：K 内发生首退
+	init := *newIdentitySlot("inst", pol).state.Load()
+	mk := func() *identitySlot {
+		s := &identitySlot{policy: pol}
+		c := init
+		s.state.Store(&c)
+		return s
 	}
-	interSel := &Selection{identitySlot: inter}
-	for r := 0; r < k/users; r++ {
-		for u := 0; u < users; u++ {
-			interSel.AdvanceIdentity()
+	seq, inter := mk(), mk()
+
+	const k = 201 // 3 的整数倍且 > 首退上界 span0+span1 ≤ 192
+	const users = 3
+	require.Zero(t, k%users, "k 需为 users 整数倍")
+
+	// step 推进一次，返回本步是否发生退休（ThreadID 变化）。
+	step := func(s *identitySlot) bool {
+		old := s.state.Load().ThreadID
+		(&Selection{identitySlot: s}).AdvanceIdentity()
+		return s.state.Load().ThreadID != old
+	}
+
+	seqRetire := 0
+	for i := 1; i <= k; i++ {
+		if step(seq) {
+			seqRetire = i
+			break
 		}
 	}
+	require.NotZero(t, seqRetire, "K 内应发生首个退休")
 
-	require.Equal(t, seq.state.Load().Turns, inter.state.Load().Turns, "Turns 轨迹一致")
-	require.Equal(t, seq.state.Load().WindowN, inter.state.Load().WindowN, "WindowN 轨迹一致")
-	require.Equal(t, seq.state.Load().ThreadID, inter.state.Load().ThreadID, "退休点一致")
+	interRetire := 0
+	n := 0
+	for r := 0; r < k/users && interRetire == 0; r++ {
+		for u := 0; u < users; u++ {
+			n++
+			if step(inter) {
+				interRetire = n
+				break
+			}
+		}
+	}
+	require.Equal(t, seqRetire, interRetire, "首个退休点与到达顺序无关")
+	require.Equal(t, seq.state.Load().Turns, inter.state.Load().Turns, "首退当步 Turns 一致")
+	require.Equal(t, seq.state.Load().WindowN, inter.state.Load().WindowN, "首退当步 WindowN 一致")
 }
 
 // TestIdentityPoolResizeMigratesMin 容量变化按位次迁移旧槽身份至 min(old,new)；
