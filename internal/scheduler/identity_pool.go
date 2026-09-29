@@ -79,22 +79,28 @@ func (s *identitySlot) release() {
 	}
 }
 
-// resizeIdentityPool 按新容量重建池：按位次迁移旧槽身份至 min(old,new)。busy 的
-// 旧槽不迁移（避免与在途请求共享同一身份——在途持旧槽指针、其 Step 写在旧槽上，
-// 该窗口轮换丢失，spec D2 已声明可接受）；其余位次新开线程。旧池 GC。
+// resizeIdentityPool 按新容量重建池：按位次迁移旧槽身份至 min(old,new)。迁移
+// 判据为**原子预留**（旧槽 busy CAS false→true）：只有成功预留的旧槽才迁移其
+// 身份——杜绝与在途认领 TOCTOU 共享同一 thread（旧池虽将被 GC，但在注册表换入
+// 前仍可被请求 Load 到并认领，故判据必须原子）。CAS 失败（在途持有）→ 该位次
+// 新开线程（在途持旧槽指针、其 Step 写在旧槽，该窗口轮换丢失，spec D2 可接受）；
+// 其余位次新开线程。新槽 busy=false 起始。旧池 GC。
 func resizeIdentityPool(old *identityPool, k int, installationID string, policy codexsdk.RotatePolicy) *identityPool {
 	if k < 1 {
 		k = 1
 	}
 	np := &identityPool{policy: policy, installationID: installationID, slots: make([]*identitySlot, k)}
 	for i := 0; i < k; i++ {
-		if old != nil && i < len(old.slots) && !old.slots[i].busy.Load() {
-			if cur := old.slots[i].state.Load(); cur != nil {
-				st := *cur
-				slot := &identitySlot{policy: policy}
-				slot.state.Store(&st)
-				np.slots[i] = slot
-				continue
+		if old != nil && i < len(old.slots) {
+			os := old.slots[i]
+			if os.busy.CompareAndSwap(false, true) {
+				if cur := os.state.Load(); cur != nil {
+					st := *cur
+					slot := &identitySlot{policy: policy}
+					slot.state.Store(&st)
+					np.slots[i] = slot
+					continue
+				}
 			}
 		}
 		np.slots[i] = newIdentitySlot(installationID, policy)
