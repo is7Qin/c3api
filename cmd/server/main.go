@@ -21,6 +21,7 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
+	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/jackc/pgx/v5/stdlib"
 
 	jwtauth "github.com/is7qin/c3api/internal/auth"
@@ -60,6 +61,20 @@ import (
 // "-X main.version=..." 注入 tag 值（如 v0.0.1-beta.1）；本地 dev 构建不注入 =
 // "dev"。查询方式：c3api -version——不带入 /healthz（无鉴权端点保持最小面）。
 var version = "dev"
+
+// codexRotatePolicy 把 [codex_identity] 配置映射为 SDK 轮换策略（默认 total
+// 口径——codex 默认；scope 已由 config.validate 保证为已知值）。
+func codexRotatePolicy(cfg config.CodexIdentityConfig) codexsdk.RotatePolicy {
+	scope := codexsdk.ScopeTotal
+	if cfg.Scope == "body_after_prefix" {
+		scope = codexsdk.ScopeBodyAfterPrefix
+	}
+	return codexsdk.RotatePolicy{
+		WMaxLo: uint64(cfg.WMaxLo),
+		WMaxHi: uint64(cfg.WMaxHi),
+		Scope:  scope,
+	}
+}
 
 func main() {
 	cfgPath := flag.String("config", "config.toml", "path to TOML config")
@@ -199,6 +214,7 @@ func main() {
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,
 		StalenessProbe: repos.Groups,
+		RotatePolicy:   codexRotatePolicy(cfg.CodexIdentity),
 	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
 	// 额度回写器只在计费开启时注入：BillingCapture=false 时 proxy finish
 	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；

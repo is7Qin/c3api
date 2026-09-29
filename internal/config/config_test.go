@@ -67,6 +67,30 @@ func TestDefaults(t *testing.T) {
 	require.Equal(t, 10*time.Second, c.Billing.BalanceRefreshInterval)
 }
 
+// TestCodexIdentityDefaultsAndValidation [codex_identity] 轮换参数：默认
+// 2/6/total；fail-fast 1 ≤ wmax_lo ≤ wmax_hi；scope 限已知口径。
+func TestCodexIdentityDefaultsAndValidation(t *testing.T) {
+	setenvRequired(t)
+	c, err := Load("")
+	require.NoError(t, err)
+	require.Equal(t, 2, c.CodexIdentity.WMaxLo)
+	require.Equal(t, 6, c.CodexIdentity.WMaxHi)
+	require.Equal(t, "total", c.CodexIdentity.Scope)
+
+	c2, err := Load(writeConfig(t, "[codex_identity]\nwmax_lo = 3\nwmax_hi = 5\nscope = \"body_after_prefix\"\n"))
+	require.NoError(t, err)
+	require.Equal(t, 3, c2.CodexIdentity.WMaxLo)
+	require.Equal(t, 5, c2.CodexIdentity.WMaxHi)
+	require.Equal(t, "body_after_prefix", c2.CodexIdentity.Scope)
+
+	_, err = Load(writeConfig(t, "[codex_identity]\nwmax_lo = 0\nwmax_hi = 6\n"))
+	require.ErrorContains(t, err, "codex_identity")
+	_, err = Load(writeConfig(t, "[codex_identity]\nwmax_lo = 5\nwmax_hi = 2\n"))
+	require.ErrorContains(t, err, "1 <= wmax_lo <= wmax_hi")
+	_, err = Load(writeConfig(t, "[codex_identity]\nwmax_lo = 2\nwmax_hi = 6\nscope = \"bogus\"\n"))
+	require.ErrorContains(t, err, "codex_identity.scope")
+}
+
 // TestEnvOverlay 改造后保持通过：env 叠加 + duration 解析回归（原只设
 // MAX_INFLIGHT，必填校验移入 Load 后需补三密钥）。
 func TestEnvOverlay(t *testing.T) {

@@ -53,6 +53,15 @@ scheduler = {
   default_max_concurrency = 8,
   sync_interval = "30s",
 }
+# codex 伪装身份轮换（账号级槽位池）：每线程最多活几个窗口（开线程时在
+# [wmax_lo, wmax_hi] 内均匀抽样——wmax_hi = 0 表示不退休）+ 水位口径
+# （total = codex 默认；body_after_prefix = 只计窗口起点之后增长的部分）。
+# fail-fast：1 <= wmax_lo <= wmax_hi；scope ∈ {total, body_after_prefix}。
+codex_identity = {
+  wmax_lo = 2,
+  wmax_hi = 6,
+  scope = "total",
+}
 # 智能路由（intelligent routing）**策略参数**无配置段：Primary/Explore/Degraded
 # 分层、探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 +
 # 采购倍率（账号 upstream_cost_multiplier_bp）+ 运行时健康派生，无固定全局 SLO
