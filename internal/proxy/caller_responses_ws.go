@@ -221,7 +221,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// r.Context() 取用（handled=true 终态由 caller 侧完成观测）。
 	r = r.WithContext(ctx)
 	p := a.p
-	if isCodexCredentialType(sel.CredentialType) {
+	if sel.CredentialType.IsCodex() {
 		// codex 独立 relay 变体：SDK Dial 路径——快照派生 cred 直供
 		// 适配层（不经 credentialFor 单字符串路径：codex 凭据为复合结构
 		// oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表

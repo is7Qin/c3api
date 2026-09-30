@@ -120,7 +120,7 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 			return ErrNotFound
 		}
 		for _, tpl := range tpls {
-			if isCodexCredentialType(tpl.CredentialType) {
+			if tpl.CredentialType.IsCodex() {
 				return ErrInvalidInput
 			}
 		}

@@ -18,7 +18,6 @@ import (
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/billing"
-	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -206,9 +205,4 @@ func imagesMultipartModel(body []byte, contentType string) string {
 			return strings.TrimSpace(string(b))
 		}
 	}
-}
-
-// isCodexCredentialType 判定是否为 codex 号池类型。
-func isCodexCredentialType(t credential.Type) bool {
-	return t == credential.TypeCodexOAuth || t == credential.TypeCodexPAT
 }

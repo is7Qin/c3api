@@ -105,7 +105,7 @@ type Proxy struct {
 // 与原 setter 完全一致：Codex nil → codex 类型请求 501 显式拒绝；Recorder
 // nil → 休眠依赖；Continuation nil → continuation 请求 fail-closed）。尾部
 // struct 而非 3 个位置参数：New 本就 9 参，位置参数会冲到 12 个（>3 参
-// smell），具名字段自文档且调用点可只填所需（ServiceDeps 同款）。
+// smell），具名字段自文档且调用点可只填所需（Deps 同款）。
 type Deps struct {
 	// Codex codex SDK 适配层（nil = 未装配 → codex 类型请求 501）。
 	Codex *sdkbridge.Codex

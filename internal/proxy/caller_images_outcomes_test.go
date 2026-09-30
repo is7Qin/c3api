@@ -171,9 +171,10 @@ func TestImagesOutcomes_multipartModelExtraction(t *testing.T) {
 	require.False(t, isMultipartForm("application/json"))
 }
 
-// TestProtocolConvertSpec_ConsistentAcrossHelpers 钉住 B4：protocolConvertSpec
-// 单点映射与 convertedOpTag/clientAndTargetOf/convertedRoute 三个消费端口径一致。
-func TestProtocolConvertSpec_ConsistentAcrossHelpers(t *testing.T) {
+// TestProtocolConvertDirections_ConsistentAcrossHelpers 钉住 B4：方向方法
+// ProtocolConvert.Client()/Target() 与 convertedOpTag/clientAndTargetOf/
+// convertedRoute 三个消费端口径逐方向一致（X2 等价性证据）。
+func TestProtocolConvertDirections_ConsistentAcrossHelpers(t *testing.T) {
 	cases := []struct {
 		dir    domain.ProtocolConvert
 		client domain.RequestFormat
@@ -186,10 +187,8 @@ func TestProtocolConvertSpec_ConsistentAcrossHelpers(t *testing.T) {
 		{domain.ProtocolConvertChatToMess, domain.FormatOpenAIChat, domain.FormatAnthropic, OperationTag(domain.OpChatCompletions)},
 	}
 	for _, tc := range cases {
-		client, target, op := protocolConvertSpec(tc.dir)
-		require.Equal(t, tc.client, client, tc.dir)
-		require.Equal(t, tc.target, target, tc.dir)
-		require.Equal(t, tc.op, op, tc.dir)
+		require.Equal(t, tc.client, tc.dir.Client(), tc.dir)
+		require.Equal(t, tc.target, tc.dir.Target(), tc.dir)
 		require.Equal(t, tc.op, convertedOpTag(tc.dir), tc.dir)
 		gotClient, gotTarget := clientAndTargetOf(tc.dir)
 		require.Equal(t, tc.client, gotClient, tc.dir)

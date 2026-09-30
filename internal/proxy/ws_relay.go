@@ -91,7 +91,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 在 Redis ACK 前不得转发客户端（ACK-before-visible）；codex/未装配 =
 	// 零变化零开销。
 	contTag := ""
-	if p.cont != nil && !isCodexCredentialType(sel.CredentialType) {
+	if p.cont != nil && !sel.CredentialType.IsCodex() {
 		contTag = contProtocolWS
 	}
 	var (

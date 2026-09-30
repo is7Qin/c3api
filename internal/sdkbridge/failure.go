@@ -127,10 +127,6 @@ var (
 	ErrStaleFailureRevision           = errors.New("sdkbridge: stale failure revision")
 )
 
-func isCodexCredentialType(t credential.Type) bool {
-	return t == credential.TypeCodexOAuth || t == credential.TypeCodexPAT
-}
-
 func credentialTypeOf(acct *domain.Account) (credential.Type, bool) {
 	if acct == nil || acct.Template == nil {
 		return "", false
@@ -175,7 +171,7 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 			if !ok {
 				return ErrMissingCredentialDiscriminator
 			}
-			if !isCodexCredentialType(ct) {
+			if !ct.IsCodex() {
 				return nil
 			}
 			fp, ferr := canonicalFingerprint(acct)

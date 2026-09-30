@@ -239,7 +239,7 @@ func (f *fakeStore) UpdateTemplate(ctx context.Context, t *domain.Template) (*do
 	if _, ok := f.tpls[t.ID]; !ok {
 		return nil, missingErr(t.ID)
 	}
-	if isCodexCredentialType(t.CredentialType) {
+	if t.CredentialType.IsCodex() {
 		if t.BaseURL != "" {
 			return nil, repository.ErrInvalidInput
 		}
@@ -470,7 +470,7 @@ func (f *fakeStore) UpdateTemplatesBatch(ctx context.Context, ids []int64, p rep
 		if !ok {
 			return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
 		}
-		if p.BaseURL != nil && *p.BaseURL != "" && isCodexCredentialType(t.CredentialType) {
+		if p.BaseURL != nil && *p.BaseURL != "" && t.CredentialType.IsCodex() {
 			return repository.ErrInvalidInput
 		}
 	}
@@ -540,7 +540,7 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 		if p.BaseURL != nil {
 			baseURL = p.BaseURL
 		}
-		if isCodexCredentialType(tpl.CredentialType) && baseURL != nil && *baseURL != "" {
+		if tpl.CredentialType.IsCodex() && baseURL != nil && *baseURL != "" {
 			return nil, repository.ErrInvalidInput
 		}
 	}

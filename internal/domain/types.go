@@ -641,6 +641,30 @@ func (p ProtocolConvert) Valid() bool {
 	return false
 }
 
+// Client 方向的客户端协议格式（未知/off 方向 → 零值 ""，仅防御）。
+func (p ProtocolConvert) Client() RequestFormat {
+	switch p {
+	case ProtocolConvertChatToResp, ProtocolConvertChatToMess:
+		return FormatOpenAIChat
+	case ProtocolConvertMessToResp:
+		return FormatAnthropic
+	case ProtocolConvertRespToMess:
+		return FormatOpenAIResponses
+	}
+	return ""
+}
+
+// Target 方向映射的模板（上游）协议格式（未知/off 方向 → 零值 ""，仅防御）。
+func (p ProtocolConvert) Target() RequestFormat {
+	switch p {
+	case ProtocolConvertChatToResp, ProtocolConvertMessToResp:
+		return FormatOpenAIResponses
+	case ProtocolConvertRespToMess, ProtocolConvertChatToMess:
+		return FormatAnthropic
+	}
+	return ""
+}
+
 // User 用户（顶层实体，无租户）。标识 = 邮箱；PasswordHash 为 bcrypt
 // DefaultCost(10)（与 sub2api 同参数，存量 hash 可迁移验证）。
 // Balance 最小单位（毫分；1 USD = 100,000 毫分 计费统一单位，

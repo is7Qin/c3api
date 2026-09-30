@@ -161,7 +161,7 @@ func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http
 		handled  bool
 		callErr  error
 	)
-	if isCodexCredentialType(sel.CredentialType) {
+	if sel.CredentialType.IsCodex() {
 		code, respBody, handled, callErr = a.p.callCodexSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)
 	} else {
 		code, respBody, handled, callErr = a.p.callStaticSearch(ctx, w, r, reqID, groupID, start, sel, reqModel, body)

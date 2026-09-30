@@ -43,7 +43,7 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	if key == "" && tpl.CredentialType != credential.TypeCodexOAuth && tpl.CredentialType != credential.TypeCodexPAT {
 		return nil, ErrInvalidInput
 	}
-	if isCodexCredentialType(tpl.CredentialType) && p.BaseURL != nil && *p.BaseURL != "" {
+	if tpl.CredentialType.IsCodex() && p.BaseURL != nil && *p.BaseURL != "" {
 		return nil, ErrInvalidInput
 	}
 	if p.GroupIDs != nil {
@@ -150,7 +150,7 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 	if p.UpstreamKey != nil {
 		key = *p.UpstreamKey
 	}
-	if key == "" && !isCodexCredentialType(tpl.CredentialType) {
+	if key == "" && !tpl.CredentialType.IsCodex() {
 		return nil, ErrInvalidInput
 	}
 	if p.GroupIDs != nil {
