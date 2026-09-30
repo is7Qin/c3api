@@ -51,6 +51,7 @@ const (
 type codexHTTPUpstream struct {
 	mu         sync.Mutex
 	calls      int
+	paths      []string // 每次请求的 r.URL.Path（上游端点断言）
 	auths      []string
 	bodies     [][]byte
 	turnStates []string // 每次请求的 x-codex-turn-state 请求头
@@ -78,6 +79,7 @@ func newCodexHTTPUpstream(t *testing.T, steps ...codexHTTPStep) (*httptest.Serve
 		b, _ := io.ReadAll(r.Body)
 		c.mu.Lock()
 		c.calls++
+		c.paths = append(c.paths, r.URL.Path)
 		c.auths = append(c.auths, r.Header.Get("Authorization"))
 		c.bodies = append(c.bodies, b)
 		c.turnStates = append(c.turnStates, r.Header.Get("x-codex-turn-state"))
@@ -114,6 +116,12 @@ func (c *codexHTTPUpstream) callsN() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.calls
+}
+
+func (c *codexHTTPUpstream) path(i int) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.paths[i]
 }
 
 func (c *codexHTTPUpstream) auth(i int) string {

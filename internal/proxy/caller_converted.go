@@ -44,6 +44,12 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	client, target := clientAndTargetOf(c.dir)
 	opTag := convertedOpTag(c.dir)
 	// 转换路径按目标上游协议记录用量和质量，响应再反向转换回客户端协议。
+	// codex 凭证分流：目标协议 = openai-responses 且账号为 codex 类型 → 上游走
+	// codex SDK 适配层（不再经通用 aiclient——codex 模板 BaseURL=="" 走 aiclient
+	// 会得空 scheme → `unsupported protocol scheme ""`）。分流在 aiclient 分支前。
+	if target == domain.FormatOpenAIResponses && isCodexCredentialType(sel.CredentialType) {
+		return p.callConvertedCodexResponses(ctx, w, r, reqID, groupID, start, sel, body, stream, c.dir)
+	}
 
 	if stream {
 		reqModel := gjson.GetBytes(body, "model").String()
@@ -265,6 +271,42 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	// 计费落账与日志由 p.finish 统一收口。
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 	return 200, nil, true, nil
+}
+
+// callConvertedCodexResponses 协议转换路径命中 codex 凭证类型 + 目标协议 =
+// openai-responses 时的上游调用：镜像 callCodexResponses 的入口前置（501 / ext
+// 缺失语义与直连一致），再调 codex resp core——mapDir = 转换方向（响应经
+// protoconv 反向映射回客户端协议），logFormat = 客户端协议（clientAndTargetOf
+// 的 client 侧——与转换路径其余分支一致；计费不读 format）。outcome 取 codex
+// 口径（CallerCodexHTTP / OpResponses，见 codexDispatchBase）。
+func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, body []byte, stream bool, dir domain.ProtocolConvert) (int, []byte, bool, error) {
+	client, _ := clientAndTargetOf(dir)
+	// 客户端请求模型（日志/回填口径）：转换后请求体经 ConvertRequest 保持 model。
+	reqModel := gjson.GetBytes(body, "model").String()
+	if p.codex == nil {
+		// 适配层未装配（SetCodex 未调用）：显式 501（防 nil 误走凭据缺失 502）。
+		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, usageTuple{}, nil))
+		o.Result = ResultFailed
+		o.HTTPStatus = AttemptStatus(http.StatusNotImplemented)
+		o.Commit = CommitUpstreamResponded
+		o.Terminal = true
+		o.BusinessFrameSent = false
+		emitCodexOutcome(ctx, p, sel, o, rule.Kind5xx, errCodexResponsesNotIntegrated.msg)
+		sel.Release()
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
+		writeErr(w, errCodexResponsesNotIntegrated)
+		return 0, nil, true, nil
+	}
+	if sel.Ext == nil {
+		// 配置损坏（codex 账号必有 ext 行——快照缺 account_ext 行）：连接级错误
+		// 转移（失败文本落盘，耗尽 502 语义）；不上报失效（与直连同语义）。
+		return 0, nil, false, errCodexExtMissing
+	}
+	cred := domain.CredentialFromExt(sel.Ext)
+	if stream {
+		return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, dir, client)
+	}
+	return p.nonstreamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, dir, client)
 }
 
 func convertedOpTag(dir domain.ProtocolConvert) OperationTag {
