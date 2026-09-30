@@ -171,7 +171,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	accs := make(map[int64][]*domain.Account, 1)
 	for _, a := range accts {
 		baseURL := upstream
-		if isCodexCredentialType(a.credType) {
+		if a.credType.IsCodex() {
 			baseURL = ""
 		}
 		tpl := &domain.Template{

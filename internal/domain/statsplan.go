@@ -164,7 +164,7 @@ const (
 	TableUsageStats                       // usage_stats
 )
 
-// Retention 各表的**部署**保留天数（由 service 从 ServiceDeps 注入，domain 里
+// Retention 各表的**部署**保留天数（由 service 从 Deps 注入，domain 里
 // 不读配置）。Days(t) <= 0 ⇒ 该表守卫关闭（分区保留被禁用）。
 type Retention struct {
 	Log    int // usage_logs ← usage.log_retention_days

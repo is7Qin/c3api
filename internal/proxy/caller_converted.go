@@ -47,7 +47,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	// codex 凭证分流：目标协议 = openai-responses 且账号为 codex 类型 → 上游走
 	// codex SDK 适配层（不再经通用 aiclient——codex 模板 BaseURL=="" 走 aiclient
 	// 会得空 scheme → `unsupported protocol scheme ""`）。分流在 aiclient 分支前。
-	if target == domain.FormatOpenAIResponses && isCodexCredentialType(sel.CredentialType) {
+	if target == domain.FormatOpenAIResponses && sel.CredentialType.IsCodex() {
 		return p.callConvertedCodexResponses(ctx, w, r, reqID, groupID, start, sel, body, stream, c.dir)
 	}
 
@@ -308,35 +308,24 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
 }
 
-// protocolConvertSpec 单一映射 ProtocolConvert 方向 →（客户端协议, 模板/上游
-// 协议, 操作标签）。三个字段同源于方向枚举，收敛原先 convertedRoute /
-// clientAndTargetOf / convertedOpTag 三处各自列举同一 switch 的重复（B4，proxy
-// 本地、不跨包）。方向合法性由枚举校验保证；未知方向回退「客户端=模板=零值、
-// 操作标签=chat」（仅防御，与原三处默认分支逐一等价）。
-func protocolConvertSpec(dir domain.ProtocolConvert) (client, target domain.RequestFormat, op OperationTag) {
-	switch dir {
-	case domain.ProtocolConvertChatToResp:
-		return domain.FormatOpenAIChat, domain.FormatOpenAIResponses, OperationTag(domain.OpChatCompletions)
-	case domain.ProtocolConvertMessToResp:
-		return domain.FormatAnthropic, domain.FormatOpenAIResponses, OperationTag(domain.OpAnthropicMessages)
-	case domain.ProtocolConvertRespToMess:
-		return domain.FormatOpenAIResponses, domain.FormatAnthropic, OperationTag(domain.OpResponses)
-	case domain.ProtocolConvertChatToMess:
-		return domain.FormatOpenAIChat, domain.FormatAnthropic, OperationTag(domain.OpChatCompletions)
-	}
-	return "", "", OperationTag(domain.OpChatCompletions)
-}
-
+// convertedOpTag 转换方向对应的操作标签：由 domain.ProtocolConvert.Client()
+// 的客户端协议经本地 client→OperationTag 映射得出（Chat→chat_completions、
+// Anthropic→anthropic_messages、Responses→responses、未知/off→chat_completions，
+// 与重构前 proxy 单点映射的 op 列逐一等价）。
 func convertedOpTag(dir domain.ProtocolConvert) OperationTag {
-	_, _, op := protocolConvertSpec(dir)
-	return op
+	switch dir.Client() {
+	case domain.FormatAnthropic:
+		return OperationTag(domain.OpAnthropicMessages)
+	case domain.FormatOpenAIResponses:
+		return OperationTag(domain.OpResponses)
+	}
+	return OperationTag(domain.OpChatCompletions)
 }
 
 // clientAndTargetOf 转换方向的客户端/模板协议格式（方向合法性由枚举校验
 // 保证；未知方向 → 客户端=模板=零值，仅防御）。
 func clientAndTargetOf(dir domain.ProtocolConvert) (domain.RequestFormat, domain.RequestFormat) {
-	client, target, _ := protocolConvertSpec(dir)
-	return client, target
+	return dir.Client(), dir.Target()
 }
 
 func convertedOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {

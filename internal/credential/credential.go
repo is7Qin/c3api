@@ -63,6 +63,9 @@ func (t Type) ValidAccountExt() bool {
 	return false
 }
 
+// IsCodex codex 号池类型（oauth / pat）：鉴权走 SDK；请求格式限定 resp/resp-ws。
+func (t Type) IsCodex() bool { return t == TypeCodexOAuth || t == TypeCodexPAT }
+
 // CredentialInput 凭据取用输入：api_key 类型用 APIKey（调度 Selection 携带
 // 的静态 Key）；oauth 等类型后续按 AccountID 从凭据扩展表加载。
 type CredentialInput struct {

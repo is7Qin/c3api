@@ -551,7 +551,7 @@ func validateTemplate(t *domain.Template) error {
 	if !t.CredentialType.Valid() {
 		return ErrInvalidInput
 	}
-	if isCodexCredentialType(t.CredentialType) && t.BaseURL != "" {
+	if t.CredentialType.IsCodex() && t.BaseURL != "" {
 		return ErrInvalidInput
 	}
 	if t.Name == "" {
@@ -797,8 +797,4 @@ func mapRepoErrCore(err error, withInvalidInput bool) error {
 		return fmt.Errorf("%w: %s", ErrConflict, detail)
 	}
 	return err
-}
-
-func isCodexCredentialType(typ credential.Type) bool {
-	return typ == credential.TypeCodexOAuth || typ == credential.TypeCodexPAT
 }

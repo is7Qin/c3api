@@ -30,7 +30,7 @@ type responsesCaller struct{ p *Proxy }
 func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	// 按凭证类型分流：codex 凭证走适配层（合成与 SSE 透传），其余走原始字节透传；分流在图像剥离之前，codex 分支不剥离
-	if isCodexCredentialType(sel.CredentialType) {
+	if sel.CredentialType.IsCodex() {
 		return p.callCodexResponses(ctx, w, r, reqID, groupID, start, sel, body, stream)
 	}
 	// 图像工具剥离：受模板开关门控，内部先对 "image" 子串预筛，无命中零解析直接透传，命中才最小解析改写

@@ -46,9 +46,8 @@ type forwardRoute struct {
 // 协议无路由或无可用账号）由调用方负责。
 func convertedRoute(converts []domain.ProtocolConvert, client domain.RequestFormat) (domain.RequestFormat, domain.ProtocolConvert, bool) {
 	for _, pc := range converts {
-		specClient, specTarget, _ := protocolConvertSpec(pc)
-		if specClient != "" && specClient == client {
-			return specTarget, pc, true
+		if c := pc.Client(); c != "" && c == client {
+			return pc.Target(), pc, true
 		}
 	}
 	return "", "", false
@@ -335,7 +334,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 	// codexImagesCaller 会把健康 api_key 账号路由到 Ext=nil 空凭据路径
 	// （502 + 错误率污染 + 无谓失效上报 account 0）。
 	caller := st.caller
-	if st.routeFormat == domain.FormatOpenAIImages && isCodexCredentialType(sel.CredentialType) {
+	if st.routeFormat == domain.FormatOpenAIImages && sel.CredentialType.IsCodex() {
 		caller = a.p.codexImagesFor(r)
 	}
 	// 凭据每轮取：尾部 Select 后 Selection 变化，凭据随账号；
@@ -348,7 +347,7 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		handled  bool
 		callErr  error
 	)
-	if isCodexCredentialType(sel.CredentialType) {
+	if sel.CredentialType.IsCodex() {
 		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, "", body, st.stream)
 	} else {
 		cred, err := a.p.credentialFor(ctx, sel)

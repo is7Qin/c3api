@@ -14,7 +14,7 @@ import (
 )
 
 func wsCallerCategory(sel *scheduler.Selection) CallerCategory {
-	if isCodexCredentialType(sel.CredentialType) {
+	if sel.CredentialType.IsCodex() {
 		return CallerCodexWS
 	}
 	return CallerResponsesWS
