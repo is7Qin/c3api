@@ -186,21 +186,21 @@ func sniffCodexTurnCallItem(f []byte) bool {
 	return isCodexCallItemType(gjson.GetBytes(f, "item.type").String())
 }
 
-// nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：mapDir 空 = 合成体
-// 原样透传、logFormat = openai-responses）。直连路径逐字节不变。
+// nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——
+// 合成体原样透传、日志口径 openai-responses）。直连路径逐字节不变。
 func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
-	return p.nonstreamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, cred, body, "", domain.FormatOpenAIResponses)
+	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, cred, body, &codexDirectOutput{w: w})
 }
 
-// nonstreamCodexResponsesCore 非流式 codex resp core（参数化写出 seam）：setModel
-// 改写（与 typed 非流式 SDK 路径 params.Model = sel.Model 等价；短路守卫零分配）→
-// 适配层 Responses → 写出（mapDir 空 = 合成体原样转发 application/json；非空 =
-// responses 合成体经 protoconv 反向映射回客户端协议 + 客户端模型回填）→ 合成体
-// 顶层 usage 提取（SDK 把 response.usage 提升到合成体顶层；无 type 字段）。
-// turn-state：客户端自带 → 透传优先；未带 → 网关注入 held（上游签发值——同轮回
-// 传）；合成体无工具调用项（轮结束）→ ClearTurnState（跨轮不回传）。logFormat 为
-// 日志口径（直连 = openai-responses；转换 = 客户端协议）。
-func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, mapDir domain.ProtocolConvert, logFormat domain.RequestFormat) (int, []byte, bool, error) {
+// nonstreamCodexResponsesCore 非流式 codex resp core（渲染经注入 output——core
+// 体内无转换分支）：setModel 改写（与 typed 非流式 SDK 路径 params.Model =
+// sel.Model 等价；短路守卫零分配）→ 适配层 Responses → out.Body 写出（直连 =
+// 合成体原样转发 application/json；转换 = responses 合成体经 protoconv 反向映射
+// 回客户端协议 + 客户端模型回填）→ 合成体顶层 usage 提取（SDK 把 response.usage
+// 提升到合成体顶层；无 type 字段）。turn-state：客户端自带 → 透传优先；未带 →
+// 网关注入 held（上游签发值——同轮回传）；合成体无工具调用项（轮结束）→
+// ClearTurnState（跨轮不回传）。日志 Format 由 out.LogFormat() 自报。
+func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespOutput) (int, []byte, bool, error) {
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
 		return 0, nil, false, err
@@ -226,27 +226,16 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, w http.Response
 		code := statusOf(err)
 		return code, upstreamBody(err), false, err
 	}
-	// 写出字节：直连（mapDir == ""）原样透传合成体；转换路径反向映射回客户端
-	// 协议（+ 客户端模型回填）。转换失败在任何字节写出前返回，交 failover 分类。
-	out := resp.Raw
-	if mapDir != "" {
-		conv, cerr := protoconv.ConvertResponse(resp.Raw, mapDir)
-		if cerr != nil {
-			return http.StatusInternalServerError, nil, false, fmt.Errorf("protocol response conversion failed: %w", cerr)
-		}
-		if cm := sel.ClientResponseModel(reqModel); cm != "" {
-			conv = rewriteResponseModelJSON(conv, cm)
-		}
-		out = conv
+	// 写出字节：直连原样透传合成体；转换路径反向映射回客户端协议（+ 客户端模型
+	// 回填）。转换失败在任何字节写出前返回，交 failover 分类（→ 500）。
+	if err := out.Body(resp.Raw); err != nil {
+		return http.StatusInternalServerError, nil, false, err
 	}
 	// 轮结束清除：合成体成功返回必含 completed 终态——无工具调用项
 	// → 轮结束 → 清除 held（跨轮不回传；适配层已回写本次响应签发值）。
 	if codexTurnEndedBody(resp.Raw) {
 		p.codex.ClearTurnState(sel.AccountID)
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(out)
 	// 合成体顶层 usage：缺失/显式 null → ok=false → 恒 0。
 	var it, ot, tt, cr, cc int64
 	if t, ok := responsesBodyUsage(resp.Raw); ok {
@@ -266,32 +255,29 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, w http.Response
 	o.BusinessFrameSent = true
 	o.Terminal = true
 	emitCodexOutcome(ctx, p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), logFormat, http.StatusOK, domain.ErrNone, ut, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
 
-// streamCodexResponses 直连 codex resp 流式（薄封装 core：mapDir 空 = SDK 载荷
-// 重帧 `data: <payload>\n\n` 透传；logFormat = openai-responses）。直连路径逐
-// 字节不变（帧规格 / [DONE] 补发 / outcome / log 皆同现状）。
+// streamCodexResponses 直连 codex resp 流式（薄封装 core：注入直连 output——SDK
+// 载荷重帧 `data: <payload>\n\n` 透传；日志口径 openai-responses）。直连路径
+// 逐字节不变（帧规格 / [DONE] 补发 / outcome / log 皆同现状）。
 func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
-	return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, cred, body, "", domain.FormatOpenAIResponses)
+	return p.streamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, cred, body, &codexDirectOutput{w: w})
 }
 
-// streamCodexResponsesCore 流式 codex resp core（参数化写出 seam）：setModel 改写
-// → 适配层 StreamResponses（SDK 逐 data: 载荷零拷贝回调）→ 每载荷写出：
-//   - mapDir == ""（直连）：重帧 `data: <payload>\n\n` + flush 直写（fn 内立即写出
-//     ——SDK 回调切片指向 scanner 复用缓冲，仅回调期有效）；流末自补
-//     `data: [DONE]\n\n`。
-//   - mapDir != ""（转换）：载荷经 protoconv.StreamMapper 映射为客户端协议完整
-//     SSE 帧（缺名 → data.type 推断）后直写（含 data:/event: 行，勿再包 data:）+
-//     客户端模型回填；终止帧由映射器自产（chat: [DONE] / mess: message_stop），
-//     core 不再补发。
+// streamCodexResponsesCore 流式 codex resp core（渲染经注入 output——core 体内
+// 无转换分支）：setModel 改写 → 适配层 StreamResponses（SDK 逐 data: 载荷零拷贝
+// 回调）→ out.Frame 渲染写出（直连 = 重帧 `data: <payload>\n\n` + flush；转换 =
+// 载荷经 protoconv.StreamMapper 映射为客户端协议完整 SSE 帧后直写 + 客户端模型
+// 回填）+ out.End 流末收尾（直连补 `data: [DONE]`；转换零帧防御提交头，终止帧由
+// 映射器自产：chat: [DONE] / mess: message_stop）。日志 Format 由 out.LogFormat()
+// 自报。
 //
-// 头延至首个 fn 调用内（评审修复：SDK 调用前提交 200 会把首帧前 4xx
-// 信封错误吞成"200 空成功流"——上游 403 → 客户端 200 + 裸错误体 + 无 [DONE]；
-// 同根因致流式 failover 耗尽把 502 JSON 裸写进 SSE 体）。首帧前失败 → 头未
-// 提交，HTTP 状态可用 → (code, body, false) 交 failover 循环正常分类（4xx 透
-// 传 / 429/5xx 转移 / 耗尽 502——typed 分支 ResponseStreamRaw 非 200 同语义）。
+// 首帧响应头由 output 自管（直连 begin() 首次 Frame/End 提交；转换仅确写帧时
+// begin()——drop 帧不提交头）。首帧前失败 → 头未提交，HTTP 状态可用 →
+// (code, body, false) 交 failover 循环正常分类（4xx 透传 / 429/5xx 转移 /
+// 耗尽 502——typed 分支 ResponseStreamRaw 非 200 同语义）。
 //
 // 断开/超时收尾镜像 caller_responses.go 双分支：客户端断开
 // （r.Context().Err() != nil）→ 不 MarkResult（finish 200 ErrAbort——上游已消
@@ -299,20 +285,15 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 // → recordStreamAbort 语义 + 连接级/5xx 分流。
 //
 // usage 嗅探：fn 内精确判定 type 后读 response.usage（取首个命中帧——
-// completed 终态恒唯一，usage 只读一次）。两分支共用（用量口径不变）。
-// logFormat 为日志口径（直连 = openai-responses；转换 = 客户端协议）。
-func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, mapDir domain.ProtocolConvert, logFormat domain.RequestFormat) (int, []byte, bool, error) {
+// completed 终态恒唯一，usage 只读一次）。TTFT 在 out.Frame 之前记录（drop 帧
+// 也记——现状）。framesWritten 由 Frame/End 回传的 wrote 复现（判据不变）。
+func (p *Proxy) streamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespOutput) (int, []byte, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 	defer cancel()
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
 		return 0, nil, false, err
 	}
-	var mapper *protoconv.StreamMapper
-	if mapDir != "" {
-		mapper = protoconv.NewStreamMapper(mapDir)
-	}
-	clientModel := sel.ClientResponseModel(reqModel)
 	var (
 		it, ot, tt, cr, cc int64
 		img                int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
@@ -324,12 +305,6 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
 	sess, meta := sel.CodexIdentity()
 	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r), func(raw []byte) error {
-		if mapDir == "" && !framesWritten {
-			// 直连：首事件发头（延至此处保证首帧前失败不吞状态码——现状）。
-			// 映射分支头延至确写帧时（drop 帧不提交头）。
-			beginSSE(w)
-			framesWritten = true
-		}
 		if !usageTaken {
 			// 热路径：字节扫描 type 精确判定（防正文含子串帧冻结）+
 			// response.usage（零分配）；首个命中后跳过（终态事件唯一）。
@@ -348,29 +323,15 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		if !turnCallSeen && sniffCodexTurnCallItem(raw) {
 			turnCallSeen = true
 		}
+		// TTFT 先于写出记录（drop 帧也记——现状）：out.Frame 的 drop 路径
+		// 不写任何字节，但 TTFT 仍按首个上游载荷计时。
 		if ttft == nil {
 			ms := time.Since(start).Milliseconds()
 			ttft = &ms
 		}
-		if mapDir == "" {
-			// 直连：立即写出（回调切片仅回调期有效——不得跨回调保留）。
-			return writeCodexSSEFrame(w, raw)
-		}
-		// 映射分支：SDK 载荷 → 客户端协议完整 SSE 帧（空 name → InferEventName
-		// 从 data.type 推断）；clientModel 非空 → 逐帧回填客户端模型。
-		frame, drop := mapper.Map("", raw)
-		if drop {
-			return nil
-		}
-		if clientModel != "" {
-			frame = rewriteConvertedFrames(frame, clientModel)
-		}
-		if !framesWritten {
-			// 仅确写帧时提交头。
-			beginSSE(w)
-			framesWritten = true
-		}
-		return writeSSEFrameRaw(w, frame)
+		wrote, werr := out.Frame(raw)
+		framesWritten = framesWritten || wrote
+		return werr
 	})
 	if err != nil {
 		// 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志防
@@ -385,7 +346,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 				o.BusinessFrameSent = true
 				o.Terminal = true
 				emitCodexOutcome(ctx, p, sel, o, 0, "")
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), logFormat, http.StatusOK, domain.ErrAbort, ut, start)))
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrAbort, ut, start)))
 				return 0, nil, true, nil
 			}
 			return 0, nil, false, r.Context().Err()
@@ -423,34 +384,23 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	if ttft != nil {
 		logCtx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 	}
-	// 直连：流正常结束（SDK 已消费 [DONE]/EOF）：补发 data: [DONE]\n\n + flush。
-	// 补发失败 = 客户端断开 → 按 abort 收尾（上游已正常完成——usage 照记）。
-	// 零帧防御（病态上游仅发 [DONE]——fn 从未调用、头未提交）：此刻才提交头，
-	// [DONE] 是首个写出字节。映射分支终止帧由映射器自产（chat: [DONE] /
-	// mess: message_stop），此处不补（截断时无终止帧 = 与非 codex 转换路径一致）。
-	if mapDir == "" {
-		if !framesWritten {
-			beginSSE(w)
-			framesWritten = true
-		}
-		if err := writeCodexSSEFrame(w, sseDonePayload); err != nil {
-			ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-			o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
-			o.Result = ResultClientCancel
-			o.HTTPStatus = 0
-			o.Commit = CommitResponseStarted
-			o.BusinessFrameSent = true
-			o.Terminal = true
-			emitCodexOutcome(ctx, p, sel, o, 0, "")
-			p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), logFormat, http.StatusOK, domain.ErrAbort, ut, start)))
-			return 0, nil, true, nil
-		}
-	} else if !framesWritten {
-		// 映射分支零帧防御（病态上游仅发 [DONE]——SDK 回调未触发）：至少提交 SSE
-		// 头（避免无 Content-Type 的空 200）；终止帧仍由映射器自产（上游未
-		// completed → 无终止帧，与非 codex 转换路径截断语义一致）。
-		beginSSE(w)
-		framesWritten = true
+	// 流末收尾（out.End）：直连补发 data: [DONE]\n\n + flush（补发失败 = 客户端
+	// 断开 → 按 abort 收尾，上游已正常完成——usage 照记）；转换零帧防御（病态
+	// 上游仅发 [DONE]——Frame 从未调用、头未提交）：此刻才提交头；终止帧由映射器
+	// 自产（chat: [DONE] / mess: message_stop），core 不补。
+	wrote, endErr := out.End()
+	framesWritten = framesWritten || wrote
+	if endErr != nil {
+		ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
+		o.Result = ResultClientCancel
+		o.HTTPStatus = 0
+		o.Commit = CommitResponseStarted
+		o.BusinessFrameSent = true
+		o.Terminal = true
+		emitCodexOutcome(ctx, p, sel, o, 0, "")
+		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrAbort, ut, start)))
+		return 0, nil, true, nil
 	}
 	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
 	o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
@@ -460,8 +410,132 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	o.BusinessFrameSent = true
 	o.Terminal = true
 	emitCodexOutcome(ctx, p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), logFormat, http.StatusOK, domain.ErrNone, ut, start)))
+	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
+}
+
+// --- codex responses 输出渲染 seam（注入式 output 策略） ---
+//
+// codexRespOutput 渲染 codex responses 上游响应给客户端：
+//   - 直连 = 合成体/载荷原样重帧透传；
+//   - 协议转换 = protoconv 反向映射回客户端协议。
+//
+// core 只拨号/取用量/记 outcome，渲染经此注入——core 体内无任何转换分支。
+// 首帧响应头由实现自管（含零帧防御）；Frame/End 回传 wrote 供 core 复现
+// framesWritten 语义（分类客户端断开 / 首帧前信封错误 / 零帧防御）。
+type codexRespOutput interface {
+	// Frame 渲染并写出一个流式载荷（SDK 交付的 bare JSON）。
+	//   提交/写出字节 → (true, err)；按映射语义丢弃（drop，未写任何字节）→ (false, nil)
+	//   （供 core 判「首帧前失败」：drop 不当成已写出）。
+	Frame(raw []byte) (wrote bool, err error)
+	// End 流末收尾：直连补 data: [DONE]；转换空操作（终止帧由映射器自产）。
+	// 仍负责零帧时的响应头提交（上游正常结束但从未回调 → 至少提交 SSE 头）。
+	//   提交/写出字节 → true；写出错误 → err（直连 [DONE] 失败 = 客户端断开）。
+	End() (wrote bool, err error)
+	// Body 写出非流式合成体。仅「转换前置失败」（ConvertResponse 出错、字节未写出）
+	// 返回 error（→ 500）；写出阶段错误按现状忽略（响应已定型）。
+	Body(raw []byte) error
+	// LogFormat 日志 Format 口径（直连 = openai-responses；转换 = 客户端协议）。
+	LogFormat() domain.RequestFormat
+}
+
+// codexDirectOutput 直连渲染（现状默认）：合成体/载荷原样透传；started 自管头
+// 提交（首次 Frame/End 时提交 SSE 头——首帧前失败不提交，HTTP 状态可用）。
+type codexDirectOutput struct {
+	w       http.ResponseWriter
+	started bool
+}
+
+func (o *codexDirectOutput) begin() {
+	if !o.started {
+		beginSSE(o.w)
+		o.started = true
+	}
+}
+
+func (o *codexDirectOutput) Frame(raw []byte) (bool, error) {
+	o.begin()
+	return true, writeCodexSSEFrame(o.w, raw) // begin 已提交头 ⇒ 恒 true
+}
+
+func (o *codexDirectOutput) End() (bool, error) {
+	o.begin()
+	return true, writeCodexSSEFrame(o.w, sseDonePayload)
+}
+
+func (o *codexDirectOutput) Body(raw []byte) error {
+	o.w.Header().Set("Content-Type", "application/json")
+	o.w.WriteHeader(http.StatusOK)
+	// 写出阶段错误按现状忽略：WriteHeader(200) 已定型响应，状态码/头不可再改，
+	// 无 failover 可分类路径（非流式无「首帧前失败」语义）。与 caller_chat /
+	// caller_responses / caller_images 非流式写路径同款（见 codexRespOutput.Body 契约）。
+	_, _ = o.w.Write(raw)
+	return nil
+}
+
+func (o *codexDirectOutput) LogFormat() domain.RequestFormat { return domain.FormatOpenAIResponses }
+
+// codexConvertedOutput 协议转换渲染：上游 responses 输出经 protoconv 反向映射回
+// 客户端协议（mapper 懒建——非流式路径不分配）；clientModel 非空 → 逐帧/合成体
+// 回填客户端模型。started 自管头提交（仅确写帧/End 时提交——drop 帧不提交头）。
+type codexConvertedOutput struct {
+	w           http.ResponseWriter
+	dir         domain.ProtocolConvert
+	clientModel string
+	mapper      *protoconv.StreamMapper // 懒建：仅流式首个 Frame 建一次
+	started     bool
+}
+
+func newCodexConvertedOutput(w http.ResponseWriter, dir domain.ProtocolConvert, clientModel string) *codexConvertedOutput {
+	return &codexConvertedOutput{w: w, dir: dir, clientModel: clientModel}
+}
+
+func (o *codexConvertedOutput) begin() {
+	if !o.started {
+		beginSSE(o.w)
+		o.started = true
+	}
+}
+
+func (o *codexConvertedOutput) Frame(raw []byte) (bool, error) {
+	if o.mapper == nil {
+		o.mapper = protoconv.NewStreamMapper(o.dir)
+	}
+	frame, drop := o.mapper.Map("", raw)
+	if drop {
+		return false, nil // 未写任何字节（不提交头）
+	}
+	if o.clientModel != "" {
+		frame = rewriteConvertedFrames(frame, o.clientModel)
+	}
+	o.begin()
+	return true, writeSSEFrameRaw(o.w, frame)
+}
+
+func (o *codexConvertedOutput) End() (bool, error) {
+	o.begin()
+	return true, nil
+}
+
+func (o *codexConvertedOutput) Body(raw []byte) error {
+	conv, err := protoconv.ConvertResponse(raw, o.dir)
+	if err != nil {
+		return fmt.Errorf("protocol response conversion failed: %w", err)
+	}
+	if o.clientModel != "" {
+		conv = rewriteResponseModelJSON(conv, o.clientModel)
+	}
+	o.w.Header().Set("Content-Type", "application/json")
+	o.w.WriteHeader(http.StatusOK)
+	// 写出阶段错误按现状忽略：响应已由 WriteHeader(200) 定型，无恢复路径（转换
+	// 前置失败已在入口返回 error → 500，见 codexRespOutput.Body 契约）。
+	_, _ = o.w.Write(conv)
+	return nil
+}
+
+func (o *codexConvertedOutput) LogFormat() domain.RequestFormat {
+	c, _ := clientAndTargetOf(o.dir)
+	return c
 }
 
 // SSE 帧常量（codex 流式分支专用——SDK 交付载荷重帧；typed 面由 sserelay 全
@@ -472,14 +546,12 @@ var (
 	sseDonePayload = []byte("[DONE]")
 )
 
-// beginSSE 提交 SSE 响应头（Content-Type/Cache-Control/X-Accel-Buffering 三件套
-// + 显式 WriteHeader(200)）：SDK 载荷直写无 sserelay 首帧隐式写头，须显式下发；
-// 提交后不可再改状态码。仅在确知要写首帧时调用（首帧前失败不调用 → 头未提交，
-// HTTP 状态可由 failover 循环正常分类）。
+// beginSSE 提交 SSE 响应头：writeSSEHeaders 三件套 + 显式 WriteHeader(200)
+// （SDK 载荷直写无 sserelay 首帧隐式写头，须显式下发）。提交后不可再改状态码，
+// 仅在确知要写首帧时调用（首帧前失败不调用 → 头未提交，HTTP 状态可由 failover
+// 循环正常分类）。
 func beginSSE(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
+	writeSSEHeaders(w)
 	w.WriteHeader(http.StatusOK)
 }
 

@@ -444,3 +444,37 @@ func TestStreamImageGroupMultiplier(t *testing.T) {
 	l := collectImageLogs(t, p, store)
 	require.Equal(t, int64(8100), l.Cost, "×1.5 组倍率作用于 image 分量 cost")
 }
+
+// sseHeaderSpy 记录是否显式提交状态码，用于区分 writeSSEHeaders 的惰性置头
+// 与 beginSSE 的显式 200 提交（内嵌 ResponseRecorder 提供 Header/Write 实现）。
+type sseHeaderSpy struct {
+	*httptest.ResponseRecorder
+	wroteHeader bool
+}
+
+func (s *sseHeaderSpy) WriteHeader(code int) {
+	s.wroteHeader = true
+	s.ResponseRecorder.WriteHeader(code)
+}
+
+func newSSEHeaderSpy() *sseHeaderSpy {
+	return &sseHeaderSpy{ResponseRecorder: httptest.NewRecorder()}
+}
+
+// TestSSEHeaderHelpers_LazySetVsEagerCommit 钉住 B3：单一 writeSSEHeaders 只设置
+// 三件套、不提交状态码（保持 sserelay 站点「首帧前不提交头」的惰性语义）；需要
+// 立即提交的 beginSSE 在其上显式 WriteHeader(200)。
+func TestSSEHeaderHelpers_LazySetVsEagerCommit(t *testing.T) {
+	lazy := newSSEHeaderSpy()
+	writeSSEHeaders(lazy)
+	require.Equal(t, "text/event-stream", lazy.Header().Get("Content-Type"))
+	require.Equal(t, "no-cache", lazy.Header().Get("Cache-Control"))
+	require.Equal(t, "no", lazy.Header().Get("X-Accel-Buffering"))
+	require.False(t, lazy.wroteHeader, "writeSSEHeaders must not commit the status code")
+
+	eager := newSSEHeaderSpy()
+	beginSSE(eager)
+	require.Equal(t, "text/event-stream", eager.Header().Get("Content-Type"))
+	require.True(t, eager.wroteHeader, "beginSSE must commit the status code")
+	require.Equal(t, http.StatusOK, eager.Code)
+}

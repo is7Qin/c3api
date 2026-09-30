@@ -74,9 +74,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			resp.Body.Close()
 			return resp.StatusCode, rb, false, nil
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("X-Accel-Buffering", "no")
+		writeSSEHeaders(w)
 		// ACK-before-visible：映射帧在响应 id 的 Redis 绑定确认前不得达客户端
 		// （仅 resp_to_mess 方向 + store 装配时上闸——其余方向零闸门零分配）。
 		var gate *contGateWriter
@@ -275,10 +273,10 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 
 // callConvertedCodexResponses 协议转换路径命中 codex 凭证类型 + 目标协议 =
 // openai-responses 时的上游调用：镜像 callCodexResponses 的入口前置（501 / ext
-// 缺失语义与直连一致），再调 codex resp core——mapDir = 转换方向（响应经
-// protoconv 反向映射回客户端协议），logFormat = 客户端协议（clientAndTargetOf
-// 的 client 侧——与转换路径其余分支一致；计费不读 format）。outcome 取 codex
-// 口径（CallerCodexHTTP / OpResponses，见 codexDispatchBase）。
+// 缺失语义与直连一致），再调 codex resp core——注入协议转换 output（响应经
+// protoconv 反向映射回客户端协议 + 客户端模型回填；日志 Format 由 output 自报 =
+// clientAndTargetOf 的 client 侧——与转换路径其余分支一致；计费不读 format）。
+// outcome 取 codex 口径（CallerCodexHTTP / OpResponses，见 codexDispatchBase）。
 func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, body []byte, stream bool, dir domain.ProtocolConvert) (int, []byte, bool, error) {
 	client, _ := clientAndTargetOf(dir)
 	// 客户端请求模型（日志/回填口径）：转换后请求体经 ConvertRequest 保持 model。
@@ -303,52 +301,61 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 		return 0, nil, false, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
+	cm := sel.ClientResponseModel(reqModel)
 	if stream {
-		return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, dir, client)
+		return p.streamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
 	}
-	return p.nonstreamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, dir, client)
+	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
+}
+
+// protocolConvertSpec 单一映射 ProtocolConvert 方向 →（客户端协议, 模板/上游
+// 协议, 操作标签）。三个字段同源于方向枚举，收敛原先 convertedRoute /
+// clientAndTargetOf / convertedOpTag 三处各自列举同一 switch 的重复（B4，proxy
+// 本地、不跨包）。方向合法性由枚举校验保证；未知方向回退「客户端=模板=零值、
+// 操作标签=chat」（仅防御，与原三处默认分支逐一等价）。
+func protocolConvertSpec(dir domain.ProtocolConvert) (client, target domain.RequestFormat, op OperationTag) {
+	switch dir {
+	case domain.ProtocolConvertChatToResp:
+		return domain.FormatOpenAIChat, domain.FormatOpenAIResponses, OperationTag(domain.OpChatCompletions)
+	case domain.ProtocolConvertMessToResp:
+		return domain.FormatAnthropic, domain.FormatOpenAIResponses, OperationTag(domain.OpAnthropicMessages)
+	case domain.ProtocolConvertRespToMess:
+		return domain.FormatOpenAIResponses, domain.FormatAnthropic, OperationTag(domain.OpResponses)
+	case domain.ProtocolConvertChatToMess:
+		return domain.FormatOpenAIChat, domain.FormatAnthropic, OperationTag(domain.OpChatCompletions)
+	}
+	return "", "", OperationTag(domain.OpChatCompletions)
 }
 
 func convertedOpTag(dir domain.ProtocolConvert) OperationTag {
-	client, _ := clientAndTargetOf(dir)
-	switch client {
-	case domain.FormatOpenAIChat:
-		return OperationTag(domain.OpChatCompletions)
-	case domain.FormatAnthropic:
-		return OperationTag(domain.OpAnthropicMessages)
-	case domain.FormatOpenAIResponses:
-		return OperationTag(domain.OpResponses)
-	default:
-		return OperationTag(domain.OpChatCompletions)
-	}
-}
-
-func convertedOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
-	fp := sel.CandidateFingerprint
-	if fp == "" {
-		fp = "fp-" + reqID
-	}
-	return AttemptOutcome{
-		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
-		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
-		CallerCategory: CallerConverted, OperationTag: op, Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
-		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
-		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
-	}
+	_, _, op := protocolConvertSpec(dir)
+	return op
 }
 
 // clientAndTargetOf 转换方向的客户端/模板协议格式（方向合法性由枚举校验
 // 保证；未知方向 → 客户端=模板=零值，仅防御）。
 func clientAndTargetOf(dir domain.ProtocolConvert) (domain.RequestFormat, domain.RequestFormat) {
-	switch dir {
-	case domain.ProtocolConvertChatToResp:
-		return domain.FormatOpenAIChat, domain.FormatOpenAIResponses
-	case domain.ProtocolConvertMessToResp:
-		return domain.FormatAnthropic, domain.FormatOpenAIResponses
-	case domain.ProtocolConvertRespToMess:
-		return domain.FormatOpenAIResponses, domain.FormatAnthropic
-	case domain.ProtocolConvertChatToMess:
-		return domain.FormatOpenAIChat, domain.FormatAnthropic
-	}
-	return "", ""
+	client, target, _ := protocolConvertSpec(dir)
+	return client, target
+}
+
+func convertedOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+	return buildOutcome(CallerConverted, op, outcomeParams{
+		reqID:          AttemptID(reqID),
+		routeClassID:   RouteClassID("rc-" + reqID),
+		qualityClassID: QualityClassID("qc-" + reqID),
+		fingerprint:    syntheticFingerprint(sel, reqID),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         timing,
+		usage:          usage,
+		commit:         commit,
+		result:         result,
+		status:         status,
+		businessSent:   businessSent,
+		terminal:       terminal,
+		malformed:      malformed,
+	})
 }

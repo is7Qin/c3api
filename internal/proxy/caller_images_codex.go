@@ -112,21 +112,24 @@ func codexImagesOpTag(r *http.Request) OperationTag {
 }
 
 func codexImagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
-	fp := sel.CandidateFingerprint
-	if fp == "" {
-		fp = "fp-" + reqID
-	}
-	return AttemptOutcome{
-		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
-		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
-		CallerCategory: CallerImagesCodex, OperationTag: op, Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
-		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
-		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
-	}
-}
-
-func isCodexFatal(err error) bool {
-	return sdkbridge.IsFatal(err)
+	return buildOutcome(CallerImagesCodex, op, outcomeParams{
+		reqID:          AttemptID(reqID),
+		routeClassID:   RouteClassID("rc-" + reqID),
+		qualityClassID: QualityClassID("qc-" + reqID),
+		fingerprint:    syntheticFingerprint(sel, reqID),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         timing,
+		usage:          usage,
+		commit:         commit,
+		result:         result,
+		status:         status,
+		businessSent:   businessSent,
+		terminal:       terminal,
+		malformed:      malformed,
+	})
 }
 
 // codexImagesFor 按端点路径选择 codex 调用器。

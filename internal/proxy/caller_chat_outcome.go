@@ -16,24 +16,17 @@ func chatDispatchedBase(sel *scheduler.Selection, reqID string, reqModel string,
 	if fp == "" {
 		fp = "fp-placeholder"
 	}
-	lat := max(time.Since(start).Milliseconds(), 0)
-	return AttemptOutcome{
-		ID:               AttemptID(reqID + ":1"),
-		RouteClassID:     "rc1",
-		QualityClassID:   "qc1",
-		Fingerprint:      CandidateFingerprint(fp),
-		TemplateID:       sel.TemplateID,
-		AccountID:        sel.AccountID,
-		RequestedModel:   reqModel,
-		MappedModel:      sel.Model,
-		CallerCategory:   CallerChat,
-		OperationTag:     "chat_completions",
-		Ordinal:          1,
-		IdentityRevision: 1,
-		Lane:             LanePrimary,
-		Generation:       1,
-		Timing:           AttemptTiming{LatencyMS: lat},
-	}
+	return buildOutcome(CallerChat, "chat_completions", outcomeParams{
+		reqID:          AttemptID(reqID + ":1"),
+		routeClassID:   "rc1",
+		qualityClassID: "qc1",
+		fingerprint:    CandidateFingerprint(fp),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         AttemptTiming{LatencyMS: max(time.Since(start).Milliseconds(), 0)},
+	})
 }
 
 func chatOutcomeForSuccess(base AttemptOutcome, ttft *int64, u usageTuple) AttemptOutcome {
@@ -48,37 +41,31 @@ func chatOutcomeForSuccess(base AttemptOutcome, ttft *int64, u usageTuple) Attem
 	return o
 }
 
-func chatOutcomeForClientCancel(base AttemptOutcome, sent bool, u usageTuple, ttft *int64) AttemptOutcome {
+// chatOutcomeForAbort 收敛 chat 流式两条中止支路：客户端取消（clientCancel=true）
+// 与上游断流（sent 表示已首帧/已发送）。二者差异只在 Result 与 sent 时的
+// commit/terminal 映射，其余（status 0、保留已采集 usage/TTFT）同款。合并前为
+// chatOutcomeForClientCancel / chatOutcomeForNetwork 两份。
+func chatOutcomeForAbort(base AttemptOutcome, sent bool, u usageTuple, ttft *int64, clientCancel bool) AttemptOutcome {
 	o := base
-	o.Result = ResultClientCancel
-	o.HTTPStatus = 0
-	o.Terminal = true
-	o.Timing.TTFTMS = ttft
-	o.Usage = AttemptUsage{InputTokens: u.it, OutputTokens: u.ot, CacheReadTokens: u.cr, CacheCreationTokens: u.cc}
-	if sent {
-		o.Commit = CommitResponseStarted
-		o.BusinessFrameSent = true
-	} else {
-		o.Commit = CommitNotSent
-		o.BusinessFrameSent = false
-	}
-	return o
-}
-
-func chatOutcomeForNetwork(base AttemptOutcome, sent bool, u usageTuple, ttft *int64) AttemptOutcome {
-	o := base
-	o.Result = ResultFailed
 	o.HTTPStatus = 0
 	o.Timing.TTFTMS = ttft
 	o.Usage = AttemptUsage{InputTokens: u.it, OutputTokens: u.ot, CacheReadTokens: u.cr, CacheCreationTokens: u.cc}
-	if sent {
-		o.Commit = CommitSentAmbiguous
-		o.BusinessFrameSent = true
+	if clientCancel {
+		o.Result = ResultClientCancel
 		o.Terminal = true
 	} else {
+		o.Result = ResultFailed
+		o.Terminal = sent
+	}
+	if sent {
+		o.BusinessFrameSent = true
+		o.Commit = CommitSentAmbiguous
+		if clientCancel {
+			o.Commit = CommitResponseStarted
+		}
+	} else {
 		o.Commit = CommitNotSent
 		o.BusinessFrameSent = false
-		o.Terminal = false
 	}
 	return o
 }

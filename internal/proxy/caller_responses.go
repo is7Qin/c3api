@@ -56,9 +56,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			resp.Body.Close()
 			return resp.StatusCode, rb, false, nil
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("X-Accel-Buffering", "no")
+		writeSSEHeaders(w)
 		// ACK-before-visible：响应 id 帧在 Redis 绑定确认前不得达客户端（仅
 		// store 装配时上闸——未装配零行为变化零分配）。
 		var gate *contGateWriter
@@ -266,12 +264,16 @@ func responsesBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 	if fp == "" {
 		fp = hex.EncodeToString(routeID[:8])
 	}
-	return AttemptOutcome{
-		ID: AttemptID(reqID), RouteClassID: RouteClassID(hex.EncodeToString(routeID[:])), QualityClassID: QualityClassID(hex.EncodeToString(qualityID[:])), Fingerprint: CandidateFingerprint(fp),
-		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
-		CallerCategory: CallerResponses, OperationTag: OperationTag(domain.OpResponses),
-		Ordinal: 1, Lane: LanePrimary, Generation: 1, IdentityRevision: 1,
-		Timing: AttemptTiming{LatencyMS: max(time.Since(start).Milliseconds(), 0), TTFTMS: ttft},
-		Usage:  AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img},
-	}
+	return buildOutcome(CallerResponses, OperationTag(domain.OpResponses), outcomeParams{
+		reqID:          AttemptID(reqID),
+		routeClassID:   RouteClassID(hex.EncodeToString(routeID[:])),
+		qualityClassID: QualityClassID(hex.EncodeToString(qualityID[:])),
+		fingerprint:    CandidateFingerprint(fp),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         AttemptTiming{LatencyMS: max(time.Since(start).Milliseconds(), 0), TTFTMS: ttft},
+		usage:          AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img},
+	})
 }

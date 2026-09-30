@@ -51,9 +51,14 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	// multipart 原样透传，保留 boundary；JSON 才做模型映射改写。
 	upBody := body
 	if !multipart {
-		if nb, err := setModel(body, sel.Model); err == nil {
-			upBody = nb
+		nb, err := setModel(body, sel.Model)
+		if err != nil {
+			// 模型映射改写失败（body 非 JSON 对象等）：不得静默转发未映射 body，
+			// 返回错误交 failover 循环分类（handled=false，对齐 caller_chat 的
+			// setStreamAndModel 失败语义——S6 修复）。
+			return 0, nil, false, err
 		}
+		upBody = nb
 	}
 	upCT := ""
 	if multipart {
@@ -74,9 +79,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			resp.Body.Close()
 			return resp.StatusCode, rb, false, nil
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("X-Accel-Buffering", "no")
+		writeSSEHeaders(w)
 		// 首帧到达即记录 TTFT；每帧按 image 事件提取张数与 image tokens。
 		var ttft *int64
 		var imgCount, imgII, imgIO int64
@@ -160,17 +163,24 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 }
 
 func imagesOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
-	fp := sel.CandidateFingerprint
-	if fp == "" {
-		fp = "fp-" + reqID
-	}
-	return AttemptOutcome{
-		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
-		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
-		CallerCategory: CallerImages, OperationTag: op, Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
-		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
-		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
-	}
+	return buildOutcome(CallerImages, op, outcomeParams{
+		reqID:          AttemptID(reqID),
+		routeClassID:   RouteClassID("rc-" + reqID),
+		qualityClassID: QualityClassID("qc-" + reqID),
+		fingerprint:    syntheticFingerprint(sel, reqID),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         timing,
+		usage:          usage,
+		commit:         commit,
+		result:         result,
+		status:         status,
+		businessSent:   businessSent,
+		terminal:       terminal,
+		malformed:      malformed,
+	})
 }
 
 // isMultipartForm 判定是否为 multipart/form-data（images 双协议分支）。

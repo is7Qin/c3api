@@ -186,13 +186,13 @@ func sniffCodexWSDeath(f []byte) *codexsdk.AuthPermanentlyRevokedError {
 // proxy 不再回账号 ext 拼装，杜绝 installation 双源。
 
 // codexTransport 上游侧 *codexsdk.Client 的 wsRelayTransport 适配（codex 路
-// 径）：typ 语义与现状 relayCodexWS 同款——Send 忽略 typ 恒 text（SDK Send
-// 内部恒 conn.Write MessageText，client.go:499-511）、Recv 丢帧类型 → Read 恒
-// 返回 MessageText（responses WS 协议全 text 帧，binary 帧降级 text 转发，风
-// 险低——现状既有降级语义）；Ping/Close/CloseNow 直通 SDK（Close 幂等
-// closeOnce；pong 由 relay 循环的常驻 Read 处理——SDK Client 并发语义
-// client.go:273-275 前提满足）。错误原样透传（SDK Recv 透传 coder/websocket
-// 错误 → errors.As *CloseError 成立，relayClassify/recordClose 直接复用）。
+// 径）：typ 语义沿用 relayWS 传输面约定——Send 忽略 typ 恒文本（SDK Send 内部
+// 恒以 MessageText 写连接）、Recv 丢弃帧类型 → Read 恒返回 MessageText
+// （responses WS 协议全 text 帧，binary 帧降级文本转发，风险低——既有降级
+// 语义）；Ping/Close/CloseNow 直通 SDK（Close 幂等 closeOnce；pong 由 relay
+// 循环的常驻 Read 处理——满足 SDK Client 并发读写前提）。错误原样透传（SDK Recv
+// 透传 coder/websocket 错误 → errors.As *CloseError 成立，relayClassify/recordClose
+// 直接复用）。
 type codexTransport struct{ up *codexsdk.Client }
 
 func newCodexTransport(up *codexsdk.Client) *codexTransport {

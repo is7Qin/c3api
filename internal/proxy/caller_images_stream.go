@@ -48,6 +48,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		if !headersSent {
 			headersSent = true
 			writeSSEHeaders(w)
+			w.WriteHeader(http.StatusOK)
 			flushWriter(w)
 			if ttft == nil {
 				ms := time.Since(start).Milliseconds()
@@ -129,6 +130,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 
 	if !headersSent {
 		writeSSEHeaders(w)
+		w.WriteHeader(http.StatusOK)
 		flushWriter(w)
 		if ttft == nil {
 			ms := time.Since(start).Milliseconds()
@@ -144,25 +146,35 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 }
 
 func imagesStreamOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
-	fp := sel.CandidateFingerprint
-	if fp == "" {
-		fp = "fp-" + reqID
-	}
-	return AttemptOutcome{
-		ID: AttemptID(reqID), RouteClassID: RouteClassID("rc-" + reqID), QualityClassID: QualityClassID("qc-" + reqID), Fingerprint: CandidateFingerprint(fp),
-		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
-		CallerCategory: CallerImagesCodex, OperationTag: op, Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
-		Commit: commit, Result: result, HTTPStatus: status, Timing: timing, Usage: usage,
-		BusinessFrameSent: businessSent, Terminal: terminal, IsMalformed: malformed,
-	}
+	return buildOutcome(CallerImagesCodex, op, outcomeParams{
+		reqID:          AttemptID(reqID),
+		routeClassID:   RouteClassID("rc-" + reqID),
+		qualityClassID: QualityClassID("qc-" + reqID),
+		fingerprint:    syntheticFingerprint(sel, reqID),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         timing,
+		usage:          usage,
+		commit:         commit,
+		result:         result,
+		status:         status,
+		businessSent:   businessSent,
+		terminal:       terminal,
+		malformed:      malformed,
+	})
 }
 
-// writeSSEHeaders 发 SSE 响应头（text/event-stream）。
+// writeSSEHeaders 设置 SSE 响应头三件套（text/event-stream）——单一 SSE 头
+// 助手，beginSSE 与所有响应头三件套站点共用。仅设置头、不提交状态码：提交
+// 时机交由首个 Write 或紧随的显式 WriteHeader 决定，保持「首帧前不提交头」
+// 的惰性语义（sserelay 站点首帧前失败仍可失败重分类；需立即提交的调用方
+// 自行 WriteHeader(200)）。
 func writeSSEHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("X-Accel-Buffering", "no")
-	w.WriteHeader(http.StatusOK)
 }
 
 // flushWriter 逐事件 Flush。
