@@ -21,15 +21,15 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// --- resp-ws relay 合一骨架（relayResponsesWS/relayCodexWS 双份并发状态机
-// 合一，用户裁决抽 5 方法传输接口） ---
-// 双份差异只在传输面（上游具体类型/typ 语义/每帧判死钩子），状态机段（首帧改
-// 写 → 三向 goroutine relay → 分类 → 关闭传播 → 记录）逐字同款——骨架只合一
+// --- resp-ws relay 合一骨架（relayWS：双传输面共用的并发状态机，传输差异抽
+// 到 5 方法 wsRelayTransport 接口 + 一个可选 frameHook） ---
+// 双传输面差异只在传输层（上游具体类型/typ 语义/每帧判死钩子），状态机段（首帧
+// 改写 → 三向 goroutine relay → 分类 → 关闭传播 → 记录）逐字同款——骨架只合一
 // 逐字同款段，差异收口在 wsRelayTransport 5 方法 + 一个可选 frameHook。
 
-// wsRelayTransport 双向 relay 传输面抽象（传输接口，5 方法——用户裁决形状）：
-// 语义与现状逐方法对应；codex 实现（SDK 具体类型）对 typ 恒 MessageText
-// （responses WS 协议全 text 帧——现状 relayCodexWS 的既有降级语义）。
+// wsRelayTransport 双向 relay 传输面抽象（传输接口，5 方法）：
+// 语义与各实现逐方法对应；codex 实现（SDK 具体类型）对 typ 恒 MessageText
+// （responses WS 协议全 text 帧——既有降级语义）。
 // 方法签名即 relayWS 骨架调用点逐一对位；热路径每帧零新增分配（无参数装箱、
 // 无回调注册——frameHook 只是可选函数指针）。
 type wsRelayTransport interface {
@@ -47,9 +47,8 @@ type wsRelayTransport interface {
 // 流中止已记录）；false = 首帧转发失败（上游未消费，记 not-sent 可重试），fwMsg
 // 为截断错误文本，调用方按连接级错误转移。业务帧未送达前可重试，送达后不再迁移。
 // frameHook 可选（nil = aiclient 路径零开销——指针比较）：**读帧成功后、
-// usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**（与现状
-// codex_responses_ws.go:339-341 先于 354 的调用序一致——codex 路径判死帧
-// FatalAuth 钩子；客户端写失败时判死帧仍触发 FatalAuth）。
+// usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**——codex
+// 路径的判死帧 FatalAuth 钩子即挂此处（客户端写失败时判死帧仍触发 FatalAuth）。
 func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwMsg string) {
 	// 首帧未送达视为上游未消费，不可记业务帧已见，保留可重试语义。
 	frame := first

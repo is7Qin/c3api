@@ -46,23 +46,9 @@ type forwardRoute struct {
 // 协议无路由或无可用账号）由调用方负责。
 func convertedRoute(converts []domain.ProtocolConvert, client domain.RequestFormat) (domain.RequestFormat, domain.ProtocolConvert, bool) {
 	for _, pc := range converts {
-		switch pc {
-		case domain.ProtocolConvertChatToResp:
-			if client == domain.FormatOpenAIChat {
-				return domain.FormatOpenAIResponses, pc, true
-			}
-		case domain.ProtocolConvertMessToResp:
-			if client == domain.FormatAnthropic {
-				return domain.FormatOpenAIResponses, pc, true
-			}
-		case domain.ProtocolConvertRespToMess:
-			if client == domain.FormatOpenAIResponses {
-				return domain.FormatAnthropic, pc, true
-			}
-		case domain.ProtocolConvertChatToMess:
-			if client == domain.FormatOpenAIChat {
-				return domain.FormatAnthropic, pc, true
-			}
+		specClient, specTarget, _ := protocolConvertSpec(pc)
+		if specClient != "" && specClient == client {
+			return specTarget, pc, true
 		}
 	}
 	return "", "", false

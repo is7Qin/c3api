@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package proxy
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/is7qin/c3api/internal/scheduler"
+)
 
 // AttemptID is a per-attempt identifier. Dispatched metadata
 // (RouteClassID/QualityClassID/Fingerprint/Lane/Generation/IdentityRevision)
@@ -483,4 +487,68 @@ func (o AttemptOutcome) Validate() error {
 		return fmt.Errorf("success cannot be upstream_responded")
 	}
 	return nil
+}
+
+// outcomeParams 是 buildOutcome 的逐字段入参：只覆盖各 caller/WS/转换 outcome
+// 构造器里会变化的字段；派发元数据（Ordinal/IdentityRevision/Lane/Generation）
+// 由 buildOutcome 统一钉为 plan-canonical 常量（=1/Primary），杜绝逐构造器重复
+// 的字面量字段（B2 收敛）。行为与原实现逐字段等价。
+type outcomeParams struct {
+	reqID          AttemptID
+	routeClassID   RouteClassID
+	qualityClassID QualityClassID
+	fingerprint    CandidateFingerprint
+	templateID     int64
+	accountID      int64
+	requestedModel string
+	mappedModel    string
+	timing         AttemptTiming
+	usage          AttemptUsage
+	commit         CommitState
+	result         AttemptResult
+	status         AttemptStatus
+	businessSent   bool
+	terminal       bool
+	malformed      bool
+}
+
+// buildOutcome 是所有「已派发尝试」outcome 的单一构造点：caller/op 由调用方
+// 显式传入，其余字段经 outcomeParams 传递。构造器只承担各自差异字段的装箱
+// （fingerprint 回退、route/quality id 派生等），派发元数据统一在此填充。
+func buildOutcome(caller CallerCategory, op OperationTag, p outcomeParams) AttemptOutcome {
+	return AttemptOutcome{
+		ID:                p.reqID,
+		RouteClassID:      p.routeClassID,
+		QualityClassID:    p.qualityClassID,
+		Fingerprint:       p.fingerprint,
+		TemplateID:        p.templateID,
+		AccountID:         p.accountID,
+		RequestedModel:    p.requestedModel,
+		MappedModel:       p.mappedModel,
+		CallerCategory:    caller,
+		OperationTag:      op,
+		Ordinal:           1,
+		IdentityRevision:  1,
+		Lane:              LanePrimary,
+		Generation:        1,
+		Commit:            p.commit,
+		Result:            p.result,
+		HTTPStatus:        p.status,
+		Timing:            p.timing,
+		Usage:             p.usage,
+		BusinessFrameSent: p.businessSent,
+		Terminal:          p.terminal,
+		IsMalformed:       p.malformed,
+	}
+}
+
+// syntheticFingerprint buildOutcome 调用方的 fingerprint 装箱助手：候选取值
+// 优先，缺失回退「fp-<reqID>」（复现 images/codex-images/converted 构造器原有的
+// reqID 派生回退；chat/search 各自的占位回退仍由各自构造器提供）。
+func syntheticFingerprint(sel *scheduler.Selection, reqID string) CandidateFingerprint {
+	fp := sel.CandidateFingerprint
+	if fp == "" {
+		fp = "fp-" + reqID
+	}
+	return CandidateFingerprint(fp)
 }

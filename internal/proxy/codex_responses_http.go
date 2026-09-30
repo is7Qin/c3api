@@ -466,6 +466,9 @@ func (o *codexDirectOutput) End() (bool, error) {
 func (o *codexDirectOutput) Body(raw []byte) error {
 	o.w.Header().Set("Content-Type", "application/json")
 	o.w.WriteHeader(http.StatusOK)
+	// 写出阶段错误按现状忽略：WriteHeader(200) 已定型响应，状态码/头不可再改，
+	// 无 failover 可分类路径（非流式无「首帧前失败」语义）。与 caller_chat /
+	// caller_responses / caller_images 非流式写路径同款（见 codexRespOutput.Body 契约）。
 	_, _ = o.w.Write(raw)
 	return nil
 }
@@ -524,6 +527,8 @@ func (o *codexConvertedOutput) Body(raw []byte) error {
 	}
 	o.w.Header().Set("Content-Type", "application/json")
 	o.w.WriteHeader(http.StatusOK)
+	// 写出阶段错误按现状忽略：响应已由 WriteHeader(200) 定型，无恢复路径（转换
+	// 前置失败已在入口返回 error → 500，见 codexRespOutput.Body 契约）。
 	_, _ = o.w.Write(conv)
 	return nil
 }
@@ -541,14 +546,12 @@ var (
 	sseDonePayload = []byte("[DONE]")
 )
 
-// beginSSE 提交 SSE 响应头（Content-Type/Cache-Control/X-Accel-Buffering 三件套
-// + 显式 WriteHeader(200)）：SDK 载荷直写无 sserelay 首帧隐式写头，须显式下发；
-// 提交后不可再改状态码。仅在确知要写首帧时调用（首帧前失败不调用 → 头未提交，
-// HTTP 状态可由 failover 循环正常分类）。
+// beginSSE 提交 SSE 响应头：writeSSEHeaders 三件套 + 显式 WriteHeader(200)
+// （SDK 载荷直写无 sserelay 首帧隐式写头，须显式下发）。提交后不可再改状态码，
+// 仅在确知要写首帧时调用（首帧前失败不调用 → 头未提交，HTTP 状态可由 failover
+// 循环正常分类）。
 func beginSSE(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
+	writeSSEHeaders(w)
 	w.WriteHeader(http.StatusOK)
 }
 

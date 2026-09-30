@@ -47,9 +47,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			resp.Body.Close()
 			return resp.StatusCode, rb, false, nil
 		}
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("X-Accel-Buffering", "no")
+		writeSSEHeaders(w)
 		var it, ot, tt, cr, cc int64
 		// TTFT 首帧语义：首个 SSE 事件写出后回调记录毫秒，已提交流无帧则保持 nil
 		var ttft *int64
@@ -175,12 +173,16 @@ func anthropicBaseOutcome(reqID string, groupID int64, sel *scheduler.Selection,
 	if fp == "" {
 		fp = hex.EncodeToString(routeID[:8])
 	}
-	return AttemptOutcome{
-		ID: AttemptID(reqID), RouteClassID: RouteClassID(hex.EncodeToString(routeID[:])), QualityClassID: QualityClassID(hex.EncodeToString(qualityID[:])), Fingerprint: CandidateFingerprint(fp),
-		TemplateID: sel.TemplateID, AccountID: sel.AccountID, RequestedModel: reqModel, MappedModel: sel.Model,
-		CallerCategory: CallerAnthropic, OperationTag: OperationTag(domain.OpAnthropicMessages),
-		Ordinal: 1, Lane: LanePrimary, Generation: 1, IdentityRevision: 1,
-		Timing: AttemptTiming{LatencyMS: max(time.Since(start).Milliseconds(), 0), TTFTMS: ttft},
-		Usage:  AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc},
-	}
+	return buildOutcome(CallerAnthropic, OperationTag(domain.OpAnthropicMessages), outcomeParams{
+		reqID:          AttemptID(reqID),
+		routeClassID:   RouteClassID(hex.EncodeToString(routeID[:])),
+		qualityClassID: QualityClassID(hex.EncodeToString(qualityID[:])),
+		fingerprint:    CandidateFingerprint(fp),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         AttemptTiming{LatencyMS: max(time.Since(start).Milliseconds(), 0), TTFTMS: ttft},
+		usage:          AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc},
+	})
 }

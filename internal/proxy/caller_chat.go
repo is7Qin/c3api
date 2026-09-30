@@ -53,9 +53,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			return resp.StatusCode, rb, false, nil
 		}
 		// SSE 响应头与旧 sseWriter 一致（relay 只转发字节，不代设头）
-		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Cache-Control", "no-cache")
-		w.Header().Set("X-Accel-Buffering", "no")
+		writeSSEHeaders(w)
 		var it, ot, tt, cr, cc int64
 		// TTFT 采集（首 token 时间毫秒）：首个 SSE 帧（任意事件）到达时间——
 		// Observer 在帧原样写出后回调，与客户端感知首 chunk 最接近；单帧旁路
@@ -92,14 +90,14 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if errors.Is(err, context.Canceled) {
 				// 客户端断开：上游已消费请求，仍保留已采集的 usage/TTFT 并记 200+ErrAbort，避免成功请求丢日志。
 				base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
-				outcome := chatOutcomeForClientCancel(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
+				outcome := chatOutcomeForAbort(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, true)
 				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 				return 0, nil, true, nil
 			}
 			// 上游流中断：按是否已首帧（ttft != nil）区分已发送，保留已采集 usage 走网络错误观测。
 			sent := ttft != nil
 			base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
-			outcome := chatOutcomeForNetwork(base, sent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft)
+			outcome := chatOutcomeForAbort(base, sent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, false)
 			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 			return 0, nil, true, nil
 		}

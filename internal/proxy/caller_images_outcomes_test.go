@@ -32,6 +32,42 @@ func TestConvertedAndImagesOutcomes_reportsExpectedMetadata(t *testing.T) {
 	require.Equal(t, OperationTag(domain.OpImagesEdits), OperationTag(domain.OpImagesEdits))
 }
 
+// TestBuildOutcome_CallerVariantsShareCanonicalFields 钉住 B2 收敛：四类「合成
+// id」构造器（images/codex-images/images-stream/converted）现经单一 buildOutcome
+// 生产，除 CallerCategory 外逐字段一致，且派发元数据取自 canonical 常量。
+func TestBuildOutcome_CallerVariantsShareCanonicalFields(t *testing.T) {
+	sel := &scheduler.Selection{AccountID: 7, TemplateID: 8, Model: "upstream", CandidateFingerprint: "fp"}
+	op := OperationTag(domain.OpImagesGenerations)
+	usage := AttemptUsage{InputTokens: 1}
+	cases := []struct {
+		name   string
+		caller CallerCategory
+		got    AttemptOutcome
+	}{
+		{"images", CallerImages, imagesOutcome("r", sel, "req", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+		{"codex_images", CallerImagesCodex, codexImagesOutcome("r", sel, "req", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+		{"images_stream", CallerImagesCodex, imagesStreamOutcome("r", sel, "req", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+		{"converted", CallerConverted, convertedOutcome("r", sel, "req", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+	}
+	for _, tc := range cases {
+		o := tc.got
+		require.Equal(t, tc.caller, o.CallerCategory, tc.name)
+		require.Equal(t, op, o.OperationTag, tc.name)
+		require.Equal(t, AttemptID("r"), o.ID, tc.name)
+		require.Equal(t, RouteClassID("rc-r"), o.RouteClassID, tc.name)
+		require.Equal(t, QualityClassID("qc-r"), o.QualityClassID, tc.name)
+		require.Equal(t, CandidateFingerprint("fp"), o.Fingerprint, tc.name)
+		require.Equal(t, int64(8), o.TemplateID, tc.name)
+		require.Equal(t, int64(7), o.AccountID, tc.name)
+		require.Equal(t, "req", o.RequestedModel, tc.name)
+		require.Equal(t, "upstream", o.MappedModel, tc.name)
+		require.EqualValues(t, 1, o.Ordinal, tc.name)
+		require.EqualValues(t, 1, o.IdentityRevision, tc.name)
+		require.Equal(t, LanePrimary, o.Lane, tc.name)
+		require.EqualValues(t, 1, o.Generation, tc.name)
+	}
+}
+
 func TestImagesOutcomes_generationsVsEditsIdentity(t *testing.T) {
 	sel := &scheduler.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
 	oGen := imagesOutcome("req-1", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultSuccess, 200, CommitResponseStarted, true, true, false)
@@ -133,4 +169,45 @@ func TestImagesOutcomes_clientCancelSkipsHealth(t *testing.T) {
 func TestImagesOutcomes_multipartModelExtraction(t *testing.T) {
 	require.True(t, isMultipartForm("multipart/form-data; boundary=abc"))
 	require.False(t, isMultipartForm("application/json"))
+}
+
+// TestProtocolConvertSpec_ConsistentAcrossHelpers 钉住 B4：protocolConvertSpec
+// 单点映射与 convertedOpTag/clientAndTargetOf/convertedRoute 三个消费端口径一致。
+func TestProtocolConvertSpec_ConsistentAcrossHelpers(t *testing.T) {
+	cases := []struct {
+		dir    domain.ProtocolConvert
+		client domain.RequestFormat
+		target domain.RequestFormat
+		op     OperationTag
+	}{
+		{domain.ProtocolConvertChatToResp, domain.FormatOpenAIChat, domain.FormatOpenAIResponses, OperationTag(domain.OpChatCompletions)},
+		{domain.ProtocolConvertMessToResp, domain.FormatAnthropic, domain.FormatOpenAIResponses, OperationTag(domain.OpAnthropicMessages)},
+		{domain.ProtocolConvertRespToMess, domain.FormatOpenAIResponses, domain.FormatAnthropic, OperationTag(domain.OpResponses)},
+		{domain.ProtocolConvertChatToMess, domain.FormatOpenAIChat, domain.FormatAnthropic, OperationTag(domain.OpChatCompletions)},
+	}
+	for _, tc := range cases {
+		client, target, op := protocolConvertSpec(tc.dir)
+		require.Equal(t, tc.client, client, tc.dir)
+		require.Equal(t, tc.target, target, tc.dir)
+		require.Equal(t, tc.op, op, tc.dir)
+		require.Equal(t, tc.op, convertedOpTag(tc.dir), tc.dir)
+		gotClient, gotTarget := clientAndTargetOf(tc.dir)
+		require.Equal(t, tc.client, gotClient, tc.dir)
+		require.Equal(t, tc.target, gotTarget, tc.dir)
+		gotTarget2, gotDir, ok := convertedRoute([]domain.ProtocolConvert{tc.dir}, tc.client)
+		require.True(t, ok, tc.dir)
+		require.Equal(t, tc.target, gotTarget2, tc.dir)
+		require.Equal(t, tc.dir, gotDir, tc.dir)
+		for _, other := range []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatAnthropic, domain.FormatOpenAIResponses} {
+			if other == tc.client {
+				continue
+			}
+			_, _, miss := convertedRoute([]domain.ProtocolConvert{tc.dir}, other)
+			require.False(t, miss, "%s must not match client %s", tc.dir, other)
+		}
+	}
+	_, _, ok := convertedRoute(nil, domain.FormatOpenAIChat)
+	require.False(t, ok, "empty converts must not match")
+	_, _, ok = convertedRoute([]domain.ProtocolConvert{"bogus"}, domain.FormatOpenAIChat)
+	require.False(t, ok, "unknown direction must not match")
 }

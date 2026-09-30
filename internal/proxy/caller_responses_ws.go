@@ -231,9 +231,9 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		up, dialErr := p.dialCodexWS(r, sel)
 		if dialErr == nil {
 			// frameHook：每帧判死嗅探（唯一跨边界点——读帧成功后、usage
-			// 嗅探与 client.Write 前调用，与现状 codex_responses_ws.go:339-341
-			// 先于 354 的调用序一致）；判死帧照常透传客户端（错误事件属业务
-			// 流），会话随后由上游关闭帧自然收尾。闭包捕获 p/sel——每 relay
+			// 嗅探与 client.Write 前调用，即 relayWS 的 frameHook 调用序）；
+			// 判死帧照常透传客户端（错误事件属业务流），会话随后由上游关闭帧
+			// 自然收尾。闭包捕获 p/sel——每 relay
 			// 一次分配（与 reqMeta/logCtx 同级），非每帧。
 			frameHook := func(f []byte) {
 				if fatal := sniffCodexWSDeath(f); fatal != nil {
@@ -319,13 +319,13 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 }
 
 // aiclientTransport 上游侧 *websocket.Conn 的 wsRelayTransport 适配（aiclient
-// 路径）：typ 语义逐方法透传（现状 relayResponsesWS 同款——Write/Read 携 typ
-// 原样往返）；构造器执行 SetReadLimit（现状 relayResponsesWS 函数体首行语义
+// 路径）：typ 语义逐方法透传（Write/Read 携 typ 原样往返）；构造器执行
+// SetReadLimit（沿用原 relay 骨架读限首行语义
 // ——16MB 读限不能丢，回落库默认 32KB 会拒 response.completed 全量帧）。
 type aiclientTransport struct{ up *websocket.Conn }
 
-// newAiclientTransport 构造适配层并应用读限（现状首行语义——gate 阻断项：
-// 读限不得随重构丢失）。
+// newAiclientTransport 构造适配层并应用读限（原 relay 骨架读限首行语义——gate
+// 阻断项：读限不得随重构丢失）。
 func newAiclientTransport(up *websocket.Conn) *aiclientTransport {
 	up.SetReadLimit(responsesWSReadLimit)
 	return &aiclientTransport{up: up}

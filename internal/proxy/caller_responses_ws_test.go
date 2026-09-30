@@ -956,7 +956,7 @@ func TestResponsesWSQuotaDeductedByFinalCost(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 
-// TestResponsesWSBillingTierStrip strip 策略：首帧改写点（relayResponsesWS）删
+// TestResponsesWSBillingTierStrip strip 策略：首帧改写点（relayWS）删
 // service_tier 字段（sjson.DeleteBytes 字节级）——上游帧不含该字段；剥离路径
 // 计费照常（tier 已提取 → fast 档 240）。
 func TestResponsesWSBillingTierStrip(t *testing.T) {

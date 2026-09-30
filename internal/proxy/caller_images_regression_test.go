@@ -5,6 +5,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -48,8 +49,6 @@ func TestRegression_NoDuplicateMarkResultAndReleaseOnHandledFalse(t *testing.T) 
 func TestRegression_CodexFatalStatus0NotRetryable(t *testing.T) {
 	require.True(t, sdkbridge.IsFatal(&codexsdk.RefreshOAuthError{}), "sanity: RefreshOAuthError is fatal")
 	require.False(t, sdkbridge.IsFatal(&codexsdk.HTTPError{StatusCode: 0}), "plain network error not fatal")
-	require.True(t, isCodexFatal(&codexsdk.RefreshOAuthError{}), "isCodexFatal must delegate to sdkbridge.IsFatal")
-	require.False(t, isCodexFatal(&codexsdk.HTTPError{StatusCode: 0}), "non-fatal status-0 must remain retryable network")
 	sel := &scheduler.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
 	oFatal := codexImagesOutcome("req-fatal", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultFailed, AttemptStatus(0), CommitUpstreamResponded, false, true, false)
 	require.True(t, oFatal.Terminal, "fatal status-0 must be terminal")
@@ -77,6 +76,29 @@ func TestRegression_CodexFatalStatus0NotRetryable(t *testing.T) {
 	require.True(t, sdkbridge.IsFatal(fatalNetErr))
 	oFatalNet := codexImagesOutcome("req-fatal-net", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultFailed, AttemptStatus(502), CommitUpstreamResponded, false, true, false)
 	require.False(t, CanRetry(oFatalNet.CallerCategory, oFatalNet), "status-0 fatal mapped to 502 must not be retryable network")
+}
+
+// TestRegression_ImagesSetModelFailureNotSilentlyForwarded 钉住 S6 修复：JSON
+// body 模型映射改写失败（非 JSON 对象根）时，imagesCaller 不得静默把未映射的
+// body 转发上游，而应返回错误交 failover（handled=false；对齐 caller_chat 的
+// setStreamAndModel 失败语义）。
+func TestRegression_ImagesSetModelFailureNotSilentlyForwarded(t *testing.T) {
+	var hit atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit.Store(true)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer server.Close()
+	p, sel := newImagesRegressionProxy(t, server.URL)
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	w := httptest.NewRecorder()
+	code, _, handled, err := p.imageGenerations.Call(context.Background(), w, req, "req-map-fail", 10, time.Now(), sel, "sk", []byte(`[]`), false)
+	require.Error(t, err, "unmapped body must surface an error")
+	require.False(t, handled, "pre-response rewrite failure must be handled=false for failover")
+	require.Equal(t, 0, code)
+	require.False(t, hit.Load(), "unmapped body must not be forwarded upstream")
+	sel.Release()
 }
 
 func newImagesRegressionProxy(t *testing.T, baseURL string) (*Proxy, *scheduler.Selection) {
