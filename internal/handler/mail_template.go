@@ -27,7 +27,7 @@ func (h *AdminAPI) GetMailTemplates(w http.ResponseWriter, r *http.Request) {
 // PutMailTemplate 更新邮件模板（空 body_text 还原默认=删行）。
 func (h *AdminAPI) PutMailTemplate(w http.ResponseWriter, r *http.Request, purpose string) {
 	var in MailTemplateUpdate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

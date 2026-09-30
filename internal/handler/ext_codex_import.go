@@ -21,7 +21,7 @@ import (
 // 200——行级语义，全部失败也 200）。
 func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
 	var in CodexOAuthImportBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -60,7 +60,7 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 // 结构校验与响应组装同 oauth 端点）。
 func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
 	var in CodexPATImportBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

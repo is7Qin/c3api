@@ -104,6 +104,16 @@ type StatsRows[B any] struct {
 	Exec    domain.Exec
 }
 
+// statsPick 按判定后 Exec.Storage 在 cube/raw 两执行分支间分派一次（C1：cube/raw
+// 存储分派去重单点）。domain.Admit 是判定唯一入口，判定结果只驱动这一处分派——
+// trend / entity-trend / summary / days 四处统计读取共用，不再各自写 if/else 二选一。
+func statsPick[T any](exec domain.Exec, cube, raw func() (T, error)) (T, error) {
+	if exec.Storage == domain.StatsStorageCube {
+		return cube()
+	}
+	return raw()
+}
+
 // QueryStatsTrend 时间趋势：domain.Admit 判定（窗口 → cube/raw → cost →
 // coverage）→ 按 Exec.Storage 选 Cube/Raw 方法 → 降级 Warn（节流）。粒度白名单
 // 在判定之后（与既有校验序一致）。
@@ -116,12 +126,13 @@ func (s *Service) QueryStatsTrend(ctx context.Context, q TrendQuery) (StatsRows[
 	if err != nil {
 		return StatsRows[*domain.StatBucket]{}, err
 	}
-	var rows []*domain.StatBucket
-	if exec.Storage == domain.StatsStorageCube {
-		rows, err = s.store.StatsTrendCube(ctx, exec.From, exec.To, unit, q.GroupID, q.Model, exec.Zone)
-	} else {
-		rows, err = s.store.StatsTrendRaw(ctx, exec.From, exec.To, unit, q.GroupID, q.Model, exec.Zone)
-	}
+	rows, err := statsPick(exec,
+		func() ([]*domain.StatBucket, error) {
+			return s.store.StatsTrendCube(ctx, exec.From, exec.To, unit, q.GroupID, q.Model, exec.Zone)
+		},
+		func() ([]*domain.StatBucket, error) {
+			return s.store.StatsTrendRaw(ctx, exec.From, exec.To, unit, q.GroupID, q.Model, exec.Zone)
+		})
 	return StatsRows[*domain.StatBucket]{Buckets: rows, Exec: exec}, err
 }
 
@@ -161,12 +172,13 @@ func (s *Service) QueryEntityTrend(ctx context.Context, q EntityTrendQuery) (Sta
 	if !statEntityTypes[q.EntityType] {
 		return StatsRows[*domain.EntityStatBucket]{}, ErrInvalidInput
 	}
-	var rows []*domain.EntityStatBucket
-	if exec.Storage == domain.StatsStorageCube {
-		rows, err = s.store.StatsEntityTrendCube(ctx, exec.From, exec.To, unit, q.EntityType, q.EntityID, q.Model, exec.Zone)
-	} else {
-		rows, err = s.store.StatsEntityTrendRaw(ctx, exec.From, exec.To, unit, q.EntityType, q.EntityID, q.Model, exec.Zone)
-	}
+	rows, err := statsPick(exec,
+		func() ([]*domain.EntityStatBucket, error) {
+			return s.store.StatsEntityTrendCube(ctx, exec.From, exec.To, unit, q.EntityType, q.EntityID, q.Model, exec.Zone)
+		},
+		func() ([]*domain.EntityStatBucket, error) {
+			return s.store.StatsEntityTrendRaw(ctx, exec.From, exec.To, unit, q.EntityType, q.EntityID, q.Model, exec.Zone)
+		})
 	return StatsRows[*domain.EntityStatBucket]{Buckets: rows, Exec: exec}, err
 }
 

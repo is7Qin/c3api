@@ -225,8 +225,7 @@ func TestQueryStatsTrend_coverageCutoff(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			svc := New(newFakeStore(), nil, &invRecorder{}, nil, nil, nil, nil,
-				ServiceDeps{EmailCodeStore: testEmailCodes, Retention: tc.retention})
+			svc := New(Deps{Store: newFakeStore(), Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes, Retention: tc.retention})
 			svc.statsNow = func() time.Time { return now }
 			_, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
 				From: tc.from, To: tc.from.Add(day), Granularity: "day", Zone: tc.zone,
@@ -245,8 +244,7 @@ func TestQueryStatsTrend_coverageCutoff(t *testing.T) {
 	// cube 侧同一条 floor 规则（独立 basis：Retention.Stats）——整点对齐 1h 窗
 	// 起点早于 now−Stats 日界 → cube_horizon。
 	t.Run("cube coverage：Retention.Stats 生效 → cube_horizon", func(t *testing.T) {
-		svc := New(newFakeStore(), nil, &invRecorder{}, nil, nil, nil, nil,
-			ServiceDeps{EmailCodeStore: testEmailCodes, Retention: domain.Retention{Stats: 7}})
+		svc := New(Deps{Store: newFakeStore(), Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes, Retention: domain.Retention{Stats: 7}})
 		svc.statsNow = func() time.Time { return now }
 		_, err := svc.QueryStatsTrend(context.Background(), TrendQuery{
 			From: cutoff.Add(-day), To: cutoff, Granularity: "day", Zone: time.UTC,

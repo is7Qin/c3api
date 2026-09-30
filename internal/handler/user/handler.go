@@ -8,14 +8,11 @@
 package user
 
 import (
-	"encoding/json"
-	"errors"
-	"io"
-	"net/http"
 	"time"
 
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // UserAPI 实现生成的 ServerInterface（user 面唯一实现）。
@@ -25,6 +22,9 @@ type UserAPI struct {
 	// rules 规则引擎（/api/user/err_logs 行级脱敏用：平台问题行 error_message 按
 	// Classify 判定替换固定文案；main 装配经 Router 注入——nil = 不脱敏）。
 	rules *rule.RuleEngine
+	// log 面日志：/forgot-password 反枚举路径仍恒 200，发送失败不再静默吞——
+	// 记 Warn 后照常返回 200（main 装配经 Router 注入；nil = 静默）。
+	log *logx.Logger
 	// now 可注入时钟（默认 time.Now）——P3 相对窗口 `?window=` 的服务端自持时刻
 	// 从这里取。与 AdminAPI.now 是**同一套机制**（每面一个可注入字段），不是第二
 	// 个时钟源：生产恒 time.Now，测试注入固定时刻，故判定与断言都无墙钟依赖。
@@ -50,33 +50,3 @@ type tokenIssuer interface {
 func New(svc *service.Service, iss tokenIssuer) *UserAPI {
 	return &UserAPI{svc: svc, iss: iss, now: time.Now}
 }
-
-// decode 严格解码（用户面全部 JSON 入参共用，与管理面 handler.decode 同款）：
-// 未知字段 → 错误（拼错字段名从 200 静默不生效变 400 显式——spec 2026-08-17
-// 边界收敛）；二次 Decode 拒尾随数据（io.EOF 才算完）。
-func decode(r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return errors.New("unexpected trailing data after JSON body")
-		}
-		return err
-	}
-	return nil
-}
-
-// deref 返回指针指向的值；nil 时返回零值。
-func deref[T any](p *T) T {
-	if p == nil {
-		var zero T
-		return zero
-	}
-	return *p
-}
-
-// ptr 返回指向 v 的指针（构造契约指针字段）。
-func ptr[T any](v T) *T { return &v }

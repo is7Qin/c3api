@@ -79,21 +79,23 @@ func (s *Service) Overview(ctx context.Context, day time.Time, days int, groupID
 	if err != nil {
 		return nil, err
 	}
-	var summary *repository.StatSummary
-	if sumExec.Storage == domain.StatsStorageCube {
-		summary, err = s.store.SummarizeStatsCube(ctx, sumExec.From, sumExec.To, groupID, sumExec.Zone)
-	} else {
-		summary, err = s.store.SummarizeStatsRaw(ctx, sumExec.From, sumExec.To, groupID, sumExec.Zone)
-	}
+	summary, err := statsPick(sumExec,
+		func() (*repository.StatSummary, error) {
+			return s.store.SummarizeStatsCube(ctx, sumExec.From, sumExec.To, groupID, sumExec.Zone)
+		},
+		func() (*repository.StatSummary, error) {
+			return s.store.SummarizeStatsRaw(ctx, sumExec.From, sumExec.To, groupID, sumExec.Zone)
+		})
 	if err != nil {
 		return nil, err
 	}
-	var trend []*repository.StatDayAgg
-	if daysExec.Storage == domain.StatsStorageCube {
-		trend, err = s.store.ScanStatsDaysCube(ctx, daysExec.From, daysExec.To, groupID, daysExec.Zone)
-	} else {
-		trend, err = s.store.ScanStatsDaysRaw(ctx, daysExec.From, daysExec.To, groupID, daysExec.Zone)
-	}
+	trend, err := statsPick(daysExec,
+		func() ([]*repository.StatDayAgg, error) {
+			return s.store.ScanStatsDaysCube(ctx, daysExec.From, daysExec.To, groupID, daysExec.Zone)
+		},
+		func() ([]*repository.StatDayAgg, error) {
+			return s.store.ScanStatsDaysRaw(ctx, daysExec.From, daysExec.To, groupID, daysExec.Zone)
+		})
 	if err != nil {
 		return nil, err
 	}

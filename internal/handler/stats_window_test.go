@@ -39,8 +39,7 @@ func newStatsHandler(t *testing.T, ret domain.Retention) (*AdminAPI, *fakeStore)
 	fake.stats = []*domain.StatBucket{
 		{BucketTime: time.Date(2026, 8, 17, 1, 0, 0, 0, time.UTC), Model: "m", RequestCount: 7},
 	}
-	svc := service.New(fake, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
-		service.ServiceDeps{EmailCodeStore: fake, Retention: ret})
+	svc := service.New(service.Deps{Store: fake, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: fake, Retention: ret})
 	return New(svc), fake
 }
 

@@ -10,13 +10,14 @@ import (
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // PostUserAuthRegister 注册（signup_enabled 开关检查在 service；注册即登录：
 // 直接签发 JWT 返回，ServerInterface）。code 可选：verif=on 时必填（缺→400 sentinel），verif=off 时忽略。
 func (h *UserAPI) PostUserAuthRegister(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthRegister
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -35,7 +36,7 @@ func (h *UserAPI) PostUserAuthRegister(w http.ResponseWriter, r *http.Request) {
 // PostUserAuthRegisterCode 发送注册验证码（public）。
 func (h *UserAPI) PostUserAuthRegisterCode(w http.ResponseWriter, r *http.Request) {
 	var in RegisterCodeRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -46,14 +47,17 @@ func (h *UserAPI) PostUserAuthRegisterCode(w http.ResponseWriter, r *http.Reques
 	httpface.WriteJSON(w, http.StatusOK, SentResponse{Sent: true})
 }
 
-// PostUserAuthForgotPassword 忘记密码发码（恒 200 反枚举）。
+// PostUserAuthForgotPassword 忘记密码发码（恒 200 反枚举）。发送失败不再静默
+// 吞：记 Warn 后仍返回 200（反枚举语义不变——响应码/体不泄露邮箱是否存在）。
 func (h *UserAPI) PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Request) {
 	var in ForgotPasswordRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	_ = h.svc.SendForgotPasswordCode(r.Context(), in.Email)
+	if err := h.svc.SendForgotPasswordCode(r.Context(), in.Email); err != nil && h.log != nil {
+		h.log.Warn("user forgot-password: send code failed", logx.Error(err))
+	}
 	httpface.WriteJSON(w, http.StatusOK, SentResponse{Sent: true})
 }
 
@@ -61,7 +65,7 @@ func (h *UserAPI) PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Requ
 // 该用户全部既有 JWT 401，spec 2026-08-25-jwt-password-revocation）。
 func (h *UserAPI) PostUserAuthResetPassword(w http.ResponseWriter, r *http.Request) {
 	var in ResetPasswordRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -75,7 +79,7 @@ func (h *UserAPI) PostUserAuthResetPassword(w http.ResponseWriter, r *http.Reque
 // PostUserAuthLogin 登录：bcrypt 校验 → JWT（ServerInterface）。
 func (h *UserAPI) PostUserAuthLogin(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthLogin
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -104,7 +108,7 @@ func (h *UserAPI) GetUserAuthMe(w http.ResponseWriter, r *http.Request) {
 // ServerInterface）。
 func (h *UserAPI) PostUserAuthChangePassword(w http.ResponseWriter, r *http.Request) {
 	var in UserAuthChangePassword
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

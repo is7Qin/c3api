@@ -18,7 +18,7 @@ import (
 // email = TopN user_id 一次 IN 查询回填（users 表无 name 列——仅 email）。
 // 内部 TTL 2s 缓存（top 并入缓存键）；多实例部署下为**本实例**在途并发。
 func (h *AdminAPI) GetAdminUsersTop(w http.ResponseWriter, r *http.Request, params GetAdminUsersTopParams) {
-	top := deref(params.Top)
+	top := httpface.Deref(params.Top)
 	if top < 1 {
 		top = 20
 	}

@@ -12,7 +12,7 @@ import (
 
 func (h *AdminAPI) PostMailChannelTest(w http.ResponseWriter, r *http.Request) {
 	var in MailChannelTestRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

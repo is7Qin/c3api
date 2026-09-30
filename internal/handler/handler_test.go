@@ -63,7 +63,7 @@ func (testEmailCodeStore) DeleteEmailCode(ctx context.Context, email, purpose st
 func newTestHandler(t *testing.T) *AdminAPI {
 	t.Helper()
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	return New(svc)
 }
 
@@ -331,7 +331,7 @@ func TestGetErrLogsRequiresFromTo(t *testing.T) {
 // error_type/error_message/billing_tier 全值）。
 func TestGetErrLogs(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {

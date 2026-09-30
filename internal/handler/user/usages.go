@@ -14,35 +14,20 @@ import (
 // GetUserUsageLogs 我的用量明细（/api/user/usage_logs；强制 user_id = 当前用户——
 // 越权过滤在 service/repo 层，请求侧不可指定他人，ServerInterface）。
 // keyset 游标分页：cursor 透传仅作本人行内 id 下界（跨页注入他人 id 仍被
-// user_id 过滤钳制），next_cursor 组装与 admin 侧同构。
+// user_id 过滤钳制），next_cursor 组装与 admin 侧同构（limit 归一/探测走
+// httpface.LogLimit + ClipLogPage，C2 消重）。
 func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, params GetUserUsageLogsParams) {
-	lq := repository.UsageQuery{Limit: 20, From: &params.From, To: &params.To, UserID: currentUserID(r)}
-	if params.Limit != nil {
-		lq.Limit = *params.Limit
-	}
-	if lq.Limit <= 0 {
-		lq.Limit = 20
-	}
-	if lq.Limit > 200 {
-		lq.Limit = 200
-	}
-	if params.Cursor != nil {
-		lq.Cursor = *params.Cursor
-	}
-	if params.GroupId != nil {
-		lq.GroupID = *params.GroupId
-	}
-	if params.KeyId != nil {
-		lq.KeyID = *params.KeyId
-	}
-	if params.Model != nil {
-		lq.Model = *params.Model
-	}
-	if params.Format != nil {
-		lq.Format = string(*params.Format)
-	}
-	if params.ErrorType != nil {
-		lq.ErrorType = *params.ErrorType
+	lq := repository.UsageQuery{
+		Limit:     httpface.LogLimit(httpface.Deref(params.Limit)),
+		Cursor:    httpface.Deref(params.Cursor),
+		From:      &params.From,
+		To:        &params.To,
+		UserID:    currentUserID(r),
+		GroupID:   httpface.Deref(params.GroupId),
+		KeyID:     httpface.Deref(params.KeyId),
+		Model:     httpface.Deref(params.Model),
+		Format:    string(httpface.Deref(params.Format)),
+		ErrorType: httpface.Deref(params.ErrorType),
 	}
 	rows, err := h.svc.QueryUsages(r.Context(), lq)
 	if err != nil {
@@ -54,10 +39,6 @@ func (h *UserAPI) GetUserUsageLogs(w http.ResponseWriter, r *http.Request, param
 		out = append(out, toAPIUsageLog(l))
 	}
 	// limit+1 探测（与 admin 侧同语义）：next_cursor = 本页最后一条 id。
-	var next *int64
-	if len(out) > lq.Limit {
-		next = out[lq.Limit-1].ID
-		out = out[:lq.Limit]
-	}
+	out, next := httpface.ClipLogPage(out, lq.Limit, func(l UserUsageLog) *int64 { return l.ID })
 	httpface.WriteJSON(w, http.StatusOK, UserLogsResponse{Rows: out, NextCursor: next})
 }

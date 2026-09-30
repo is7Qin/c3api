@@ -40,7 +40,7 @@ func (s *hUsageSnap) GetUsageSnapshot(ctx context.Context, cred *domain.AccountC
 func newUsageTestHandler(t *testing.T, now time.Time, snap CodexUsageProber) (*AdminAPI, *fakeStore) {
 	t.Helper()
 	store := newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	h := New(svc, OpsOptions{UsageSnap: snap})
 	h.now = func() time.Time { return now }
 	return h, store

@@ -6,6 +6,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -13,21 +14,27 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
-// whenToAPI 领域 RuleWhen → 契约 when 对象（json round-trip，与 repo 序列化同法）。
-func whenToAPI(w domain.RuleWhen) map[string]any {
-	b, _ := json.Marshal(w)
+// mustJSONMap 领域结构 → 契约 map（json round-trip，与 repo 序列化同法）。
+// marshal/unmarshal 对受控领域类型（RuleWhen/RuleThen）不可能失败；失败即编程
+// 错误 → panic 显式暴露（C5：不再静默吞掉 json.Marshal/json.Unmarshal 的 error
+// 而让字段静默丢失）。
+func mustJSONMap(v any) map[string]any {
 	m := map[string]any{}
-	_ = json.Unmarshal(b, &m)
+	b, err := json.Marshal(v)
+	if err != nil {
+		panic(fmt.Sprintf("rule: marshal %T: %v", v, err))
+	}
+	if err := json.Unmarshal(b, &m); err != nil {
+		panic(fmt.Sprintf("rule: unmarshal %T: %v", v, err))
+	}
 	return m
 }
 
+// whenToAPI 领域 RuleWhen → 契约 when 对象。
+func whenToAPI(w domain.RuleWhen) map[string]any { return mustJSONMap(w) }
+
 // thenToAPI 领域 RuleThen → 契约 then 对象。
-func thenToAPI(t domain.RuleThen) map[string]any {
-	b, _ := json.Marshal(t)
-	m := map[string]any{}
-	_ = json.Unmarshal(b, &m)
-	return m
-}
+func thenToAPI(t domain.RuleThen) map[string]any { return mustJSONMap(t) }
 
 func toAPIRule(r *domain.Rule) Rule {
 	return Rule{
@@ -56,7 +63,7 @@ func ruleInputFromCreate(in RuleCreate) service.RuleInput {
 // CreateRule 创建规则（ServerInterface）。
 func (h *AdminAPI) CreateRule(w http.ResponseWriter, r *http.Request) {
 	var in RuleCreate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -85,7 +92,7 @@ func (h *AdminAPI) ListRules(w http.ResponseWriter, r *http.Request, params List
 // UpdateRule 部分更新规则（未提供字段保持原值，ServerInterface）。
 func (h *AdminAPI) UpdateRule(w http.ResponseWriter, r *http.Request, id int64) {
 	var in RulePatch
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -116,7 +123,7 @@ func (h *AdminAPI) DeleteRule(w http.ResponseWriter, r *http.Request, id int64) 
 // PostRulesBatchDelete 批量删除规则（事务，全成或全败，ServerInterface）。
 func (h *AdminAPI) PostRulesBatchDelete(w http.ResponseWriter, r *http.Request) {
 	var in BatchDeleteBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

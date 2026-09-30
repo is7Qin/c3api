@@ -43,15 +43,27 @@ func (r *RuleRepo) ListRules(ctx context.Context, enabled *bool) ([]domain.Rule,
 	}
 	out := make([]domain.Rule, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, *toDomainRule(row))
+		r, err := toDomainRule(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *r)
 	}
 	return out, nil
 }
 
 func (r *RuleRepo) CreateRule(ctx context.Context, rl domain.Rule) (int64, error) {
+	wm, err := whenToMap(rl.When)
+	if err != nil {
+		return 0, err
+	}
+	tm, err := thenToMap(rl.Then)
+	if err != nil {
+		return 0, err
+	}
 	row, err := r.client.Rule.Create().
 		SetName(rl.Name).SetEnabled(rl.Enabled).SetPriority(rl.Priority).
-		SetWhen(whenToMap(rl.When)).SetThen(thenToMap(rl.Then)).
+		SetWhen(wm).SetThen(tm).
 		Save(ctx)
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
@@ -63,9 +75,17 @@ func (r *RuleRepo) CreateRule(ctx context.Context, rl domain.Rule) (int64, error
 }
 
 func (r *RuleRepo) UpdateRule(ctx context.Context, rl domain.Rule) error {
-	_, err := r.client.Rule.UpdateOneID(rl.ID).
+	wm, err := whenToMap(rl.When)
+	if err != nil {
+		return err
+	}
+	tm, err := thenToMap(rl.Then)
+	if err != nil {
+		return err
+	}
+	_, err = r.client.Rule.UpdateOneID(rl.ID).
 		SetName(rl.Name).SetEnabled(rl.Enabled).SetPriority(rl.Priority).
-		SetWhen(whenToMap(rl.When)).SetThen(thenToMap(rl.Then)).
+		SetWhen(wm).SetThen(tm).
 		Save(ctx)
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
@@ -132,40 +152,51 @@ func (r *RuleRepo) CountRules(ctx context.Context) (int64, error) {
 	return int64(n), nil
 }
 
-func toDomainRule(row *ent.Rule) *domain.Rule {
+func toDomainRule(row *ent.Rule) (*domain.Rule, error) {
+	w, err := whenFromMap(row.When)
+	if err != nil {
+		return nil, err
+	}
+	t, err := thenFromMap(row.Then)
+	if err != nil {
+		return nil, err
+	}
 	return &domain.Rule{
 		ID: row.ID, Name: row.Name, Enabled: row.Enabled, Priority: row.Priority,
-		When: whenFromMap(row.When), Then: thenFromMap(row.Then),
+		When: w, Then: t,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, DeletedAt: row.DeletedAt,
-	}
+	}, nil
 }
 
 // whenToMap/thenToMap 领域 when/then → ent JSON 字段值；whenFromMap/thenFromMap 反向。
 // 用 json 标签 round-trip（nil 指针字段自然省略、整数精度无损），避免逐字段手写互转。
-func whenToMap(w domain.RuleWhen) map[string]any {
-	b, _ := json.Marshal(w)
+// C5：marshal/unmarshal 错误显式返回（不再 `_ =` 静默吞——吞掉即字段静默丢失）。
+func whenToMap(w domain.RuleWhen) (map[string]any, error)   { return jsonToMap(w) }
+func thenToMap(t domain.RuleThen) (map[string]any, error)   { return jsonToMap(t) }
+func whenFromMap(m map[string]any) (domain.RuleWhen, error) { return mapToJSON[domain.RuleWhen](m) }
+func thenFromMap(m map[string]any) (domain.RuleThen, error) { return mapToJSON[domain.RuleThen](m) }
+
+// jsonToMap 结构体 → map；mapToJSON map → 结构体。json round-trip 公共实现。
+func jsonToMap[T any](v T) (map[string]any, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
 	m := map[string]any{}
-	_ = json.Unmarshal(b, &m)
-	return m
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
-func whenFromMap(m map[string]any) domain.RuleWhen {
-	b, _ := json.Marshal(m)
-	var w domain.RuleWhen
-	_ = json.Unmarshal(b, &w)
-	return w
-}
-
-func thenToMap(t domain.RuleThen) map[string]any {
-	b, _ := json.Marshal(t)
-	m := map[string]any{}
-	_ = json.Unmarshal(b, &m)
-	return m
-}
-
-func thenFromMap(m map[string]any) domain.RuleThen {
-	b, _ := json.Marshal(m)
-	var t domain.RuleThen
-	_ = json.Unmarshal(b, &t)
-	return t
+func mapToJSON[T any](m map[string]any) (T, error) {
+	var v T
+	b, err := json.Marshal(m)
+	if err != nil {
+		return v, err
+	}
+	if err := json.Unmarshal(b, &v); err != nil {
+		return v, err
+	}
+	return v, nil
 }

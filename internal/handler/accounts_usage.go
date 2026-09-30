@@ -76,12 +76,12 @@ func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, para
 // upstream_unavailable；未知错误 → Warn + null/null，不误标）。
 //
 // 失败语义：单账号快照失败不整批失败（其余账号照常）；批内 errgroup 有界
-// 并发（8——与 sdkbridge usageFetchSem 容量对齐：上游并发仍由适配层恒保
-// ≤8，此处仅并行化编排的 DB 往返/调用分发）；结果按 ids 顺序（goroutine
-// 按 index 写 items，保序）。
+// 并发（8——与适配层 usage 并发上限 8 对齐（sdkbridge.usageFetchConcurrency）：
+// 上游并发仍由适配层恒保 ≤8，此处仅并行化编排的 DB 往返/调用分发）；结果按 ids
+// 顺序（goroutine 按 index 写 items，保序）。
 func (h *AdminAPI) assembleUpstream(ctx context.Context, items []domain.AccountUsage) {
 	var g errgroup.Group
-	g.SetLimit(8) // 批内并行度（与 sdkbridge usageFetchSem 语义对齐）
+	g.SetLimit(8) // 批内并行度（与适配层 usage 并发上限 8 / sdkbridge.usageFetchConcurrency 语义对齐）
 	for i := range items {
 		i := i
 		g.Go(func() error {

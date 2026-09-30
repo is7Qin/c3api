@@ -7,9 +7,7 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
@@ -84,36 +82,6 @@ func (h *AdminAPI) Router() http.Handler {
 func (h *AdminAPI) RoutesMux() http.Handler {
 	return h.Router()
 }
-
-// decode 严格解码（管理面全部 JSON 入参共用）：未知字段 → 错误（拼错字段名
-// 从 200 静默不生效变 400 显式，与 config ErrorUnused fail-fast 哲学一致——
-// spec 2026-08-17 边界收敛）；二次 Decode 拒尾随数据（io.EOF 才算完）。
-func decode(r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return errors.New("unexpected trailing data after JSON body")
-		}
-		return err
-	}
-	return nil
-}
-
-// deref 返回指针指向的值；nil 时返回零值。
-func deref[T any](p *T) T {
-	if p == nil {
-		var zero T
-		return zero
-	}
-	return *p
-}
-
-// ptr 返回指向 v 的指针（响应契约字段赋值用）。
-func ptr[T any](v T) *T { return &v }
 
 // normalizeIDs 校验批量 ids 1–100 条且去重（返回去重后列表，条数按去重后计）。
 func normalizeIDs(ids []int64) ([]int64, error) {

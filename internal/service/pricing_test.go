@@ -18,7 +18,7 @@ import (
 
 func newPricingSvc(t *testing.T, fs *fakeStore) *Service {
 	t.Helper()
-	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
 	return svc
 }
@@ -88,7 +88,7 @@ func TestResolvePricesWithVariant(t *testing.T) {
 func TestPricingChangeNotifiesCompiler(t *testing.T) {
 	fs := newFakeStore()
 	var calls int
-	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes, CompileNotify: func() { calls++ }})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes, CompileNotify: func() { calls++ }})
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
 	ctx := context.Background()
 
@@ -113,7 +113,7 @@ func TestPricingChangeNotifiesCompiler(t *testing.T) {
 // and nil before the snapshot is loaded.
 func TestResolvedPricesByModel(t *testing.T) {
 	fs := newFakeStore()
-	svc := New(fs, nil, NopInvalidator{}, nil, nil, nil, nil, ServiceDeps{EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	require.Nil(t, svc.ResolvedPricesByModel(time.Now()), "unloaded snapshot = nil (compile lane treats as no prices)")
 	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
 		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceManual},

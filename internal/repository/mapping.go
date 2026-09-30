@@ -8,7 +8,6 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
-	"github.com/is7qin/c3api/internal/ent/template"
 )
 
 func toDomainUser(u *ent.User) *domain.User {
@@ -163,6 +162,3 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 	}
 	return d
 }
-
-// templatePredicate 供调用处过滤，避免未用 import 告警。
-var _ = template.FieldName

@@ -131,10 +131,8 @@ func (r *ErrLogRepo) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 	if q.Cursor > 0 {
 		pred = pred.Where(errlog.IDLT(q.Cursor))
 	}
-	if q.Limit <= 0 {
-		q.Limit = 20
-	}
-	rows, err := pred.Order(ent.Desc(errlog.FieldID)).Limit(q.Limit + 1).All(ctx)
+	limit := logQueryLimit(q.Limit)
+	rows, err := pred.Order(ent.Desc(errlog.FieldID)).Limit(limit + 1).All(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -148,27 +146,13 @@ func (r *ErrLogRepo) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 			LatencyMS:    row.LatencyMs,
 			CreatedAt:    row.CreatedAt,
 		}
-		if row.ClientIP != nil {
-			l.ClientIP = *row.ClientIP
-		}
-		if row.GroupID != nil {
-			l.GroupID = *row.GroupID
-		}
-		if row.AccountID != nil {
-			l.AccountID = *row.AccountID
-		}
-		if row.TemplateID != nil {
-			l.TemplateID = *row.TemplateID
-		}
-		if row.UserID != nil {
-			l.UserID = *row.UserID
-		}
-		if row.KeyID != nil {
-			l.KeyID = *row.KeyID
-		}
-		if row.BillingTier != nil {
-			l.BillingTier = *row.BillingTier
-		}
+		l.ClientIP = logValueOrZero(row.ClientIP)
+		l.GroupID = logValueOrZero(row.GroupID)
+		l.AccountID = logValueOrZero(row.AccountID)
+		l.TemplateID = logValueOrZero(row.TemplateID)
+		l.UserID = logValueOrZero(row.UserID)
+		l.KeyID = logValueOrZero(row.KeyID)
+		l.BillingTier = logValueOrZero(row.BillingTier)
 		out = append(out, l)
 	}
 	return out, nil

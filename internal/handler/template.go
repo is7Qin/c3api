@@ -131,11 +131,11 @@ func (h *AdminAPI) PostTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 	created, err := h.svc.CreateTemplate(r.Context(), &domain.Template{
 		Name:    in.Name,
-		BaseURL: deref(in.BaseUrl),
+		BaseURL: httpface.Deref(in.BaseUrl),
 		// 透传不做默认值兜底（兜底在 service 层，防直接调用绕过）
-		CredentialType:   credential.Type(deref(in.CredentialType)),
+		CredentialType:   credential.Type(httpface.Deref(in.CredentialType)),
 		SupportedFormats: formatsFromBody(in.SupportedFormats),
-		Models:           deref(in.Models),
+		Models:           httpface.Deref(in.Models),
 		FormatModels:     formatModelsFromBody(in.FormatModels),
 		ModelMapping:     modelMappingFromBody(in.ModelMapping),
 	})
@@ -149,11 +149,11 @@ func (h *AdminAPI) PostTemplates(w http.ResponseWriter, r *http.Request) {
 // GetTemplates 模板列表（分页/筛选/排序，ServerInterface）。
 func (h *AdminAPI) GetTemplates(w http.ResponseWriter, r *http.Request, params GetTemplatesParams) {
 	q := repository.ListQuery{
-		Limit:  httpface.ClampLimit(int(deref(params.Limit))),
-		Offset: int(deref(params.Offset)),
-		Name:   deref(params.Name),
-		Sort:   deref(params.Sort),
-		Order:  string(deref(params.Order)),
+		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset: int(httpface.Deref(params.Offset)),
+		Name:   httpface.Deref(params.Name),
+		Sort:   httpface.Deref(params.Sort),
+		Order:  string(httpface.Deref(params.Order)),
 	}
 	rows, total, err := h.svc.ListTemplates(r.Context(), q)
 	if err != nil {
@@ -191,11 +191,11 @@ func (h *AdminAPI) PutTemplatesId(w http.ResponseWriter, r *http.Request, id int
 	}
 	tpl := &domain.Template{
 		Name:    in.Name,
-		BaseURL: deref(in.BaseUrl),
+		BaseURL: httpface.Deref(in.BaseUrl),
 		// 透传不做默认值兜底（兜底在 service 层）
-		CredentialType:   credential.Type(deref(in.CredentialType)),
+		CredentialType:   credential.Type(httpface.Deref(in.CredentialType)),
 		SupportedFormats: formatsFromBody(in.SupportedFormats),
-		Models:           deref(in.Models),
+		Models:           httpface.Deref(in.Models),
 		FormatModels:     formatModelsFromBody(in.FormatModels),
 		ModelMapping:     modelMappingFromBody(in.ModelMapping),
 	}
@@ -220,7 +220,7 @@ func (h *AdminAPI) DeleteTemplatesId(w http.ResponseWriter, r *http.Request, id 
 // PostTemplatesBatchDelete 批量删除模板（事务，全成或全败，ServerInterface）。
 func (h *AdminAPI) PostTemplatesBatchDelete(w http.ResponseWriter, r *http.Request) {
 	var in BatchDeleteBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

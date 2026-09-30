@@ -56,30 +56,22 @@ type codexImportRow struct {
 // 逐行类型特定校验（必填/成对/expires RFC3339/email 格式——失败 → 行级 failed
 // 收集继续）；共享核心落库。
 func (s *Service) ImportCodexOAuthAccounts(ctx context.Context, items []domain.CodexOAuthImportItem, tplID, groupID *int64, cfg domain.CodexImportConfig) (*domain.ImportResult, error) {
-	if err := s.checkCodexImportTemplate(ctx, tplID, credential.TypeCodexOAuth); err != nil {
-		return nil, err
-	}
-	if err := validateCodexImportConfig(cfg); err != nil {
-		return nil, err
-	}
-	res := &domain.ImportResult{}
-	rows := make([]codexImportRow, 0, len(items))
-	for i, it := range items {
-		row, err := codexOAuthRow(i, it)
-		if err != nil {
-			res.Failed = append(res.Failed, domain.ImportFailedItem{Index: i, Error: err.Error()})
-			continue
-		}
-		rows = append(rows, row)
-	}
-	s.importCodexAccounts(ctx, rows, *tplID, groupID, credential.TypeCodexOAuth, cfg, res)
-	return res, nil
+	return importCodexBatch(s, ctx, items, codexOAuthRow, tplID, groupID, credential.TypeCodexOAuth, cfg)
 }
 
 // ImportCodexPATAccounts 批量导入 codex-pat 凭据（结构同 oauth 端点；模板
 // credential_type 必须 == codex-pat）。
 func (s *Service) ImportCodexPATAccounts(ctx context.Context, items []domain.CodexPATImportItem, tplID, groupID *int64, cfg domain.CodexImportConfig) (*domain.ImportResult, error) {
-	if err := s.checkCodexImportTemplate(ctx, tplID, credential.TypeCodexPAT); err != nil {
+	return importCodexBatch(s, ctx, items, codexPATRow, tplID, groupID, credential.TypeCodexPAT, cfg)
+}
+
+// importCodexBatch oauth/pat 两导入端点的共享核心——唯一差异即入参 credType
+// （模板类型校验用）与 rowFn（行解析器：类型特定校验 → 共享行形态）。模板顶层
+// 校验 → 配置校验 → 逐行解析（行级失败收集继续）→ 共享落库核心
+// importCodexAccounts。泛型 T = 端点 item 类型（CodexOAuthImportItem /
+// CodexPATImportItem）；Go 不允许方法带类型参数，故为包级函数（首参 *Service）。
+func importCodexBatch[T any](s *Service, ctx context.Context, items []T, rowFn func(int, T) (codexImportRow, error), tplID, groupID *int64, credType credential.Type, cfg domain.CodexImportConfig) (*domain.ImportResult, error) {
+	if err := s.checkCodexImportTemplate(ctx, tplID, credType); err != nil {
 		return nil, err
 	}
 	if err := validateCodexImportConfig(cfg); err != nil {
@@ -88,14 +80,14 @@ func (s *Service) ImportCodexPATAccounts(ctx context.Context, items []domain.Cod
 	res := &domain.ImportResult{}
 	rows := make([]codexImportRow, 0, len(items))
 	for i, it := range items {
-		row, err := codexPATRow(i, it)
+		row, err := rowFn(i, it)
 		if err != nil {
 			res.Failed = append(res.Failed, domain.ImportFailedItem{Index: i, Error: err.Error()})
 			continue
 		}
 		rows = append(rows, row)
 	}
-	s.importCodexAccounts(ctx, rows, *tplID, groupID, credential.TypeCodexPAT, cfg, res)
+	s.importCodexAccounts(ctx, rows, *tplID, groupID, credType, cfg, res)
 	return res, nil
 }
 

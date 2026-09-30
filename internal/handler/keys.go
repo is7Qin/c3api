@@ -23,13 +23,13 @@ import (
 // （20/0），sort/order 缺省（id/desc）与白名单校验在 sortOrder。
 func (h *AdminAPI) GetKeys(w http.ResponseWriter, r *http.Request, params GetKeysParams) {
 	q := repository.ListQuery{
-		Limit:   httpface.ClampLimit(int(deref(params.Limit))),
-		Offset:  int(deref(params.Offset)),
-		Name:    deref(params.Name),
-		UserID:  deref(params.UserId),
-		GroupID: deref(params.GroupId),
-		Sort:    deref(params.Sort),
-		Order:   string(deref(params.Order)),
+		Limit:   httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset:  int(httpface.Deref(params.Offset)),
+		Name:    httpface.Deref(params.Name),
+		UserID:  httpface.Deref(params.UserId),
+		GroupID: httpface.Deref(params.GroupId),
+		Sort:    httpface.Deref(params.Sort),
+		Order:   string(httpface.Deref(params.Order)),
 	}
 	rows, total, err := h.svc.ListAdminKeys(r.Context(), q)
 	if err != nil {

@@ -20,8 +20,8 @@ func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetP
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	q.Sort = deref(params.Sort)
-	q.Order = string(deref(params.Order))
+	q.Sort = httpface.Deref(params.Sort)
+	q.Order = string(httpface.Deref(params.Order))
 	var src *domain.PricingSource
 	if params.Source != nil {
 		s := domain.PricingSource(*params.Source)
@@ -34,12 +34,12 @@ func (h *AdminAPI) GetPrices(w http.ResponseWriter, r *http.Request, params GetP
 	}
 	var prov *string
 	if params.Provider != nil {
-		v := deref(params.Provider)
+		v := httpface.Deref(params.Provider)
 		if v != "" {
 			prov = &v
 		}
 	}
-	rows, total, err := h.svc.ListPriceEntries(r.Context(), q, src, mode, prov, deref(params.Model))
+	rows, total, err := h.svc.ListPriceEntries(r.Context(), q, src, mode, prov, httpface.Deref(params.Model))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -63,7 +63,7 @@ func (h *AdminAPI) GetPriceEntry(w http.ResponseWriter, r *http.Request, params 
 
 func (h *AdminAPI) PutPriceEntry(w http.ResponseWriter, r *http.Request, params PutPriceEntryParams) {
 	var in PriceEntryUpsert
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -106,14 +106,14 @@ func (h *AdminAPI) GetPriceVariants(w http.ResponseWriter, r *http.Request, para
 
 func (h *AdminAPI) PutPriceVariants(w http.ResponseWriter, r *http.Request, params PutPriceVariantsParams) {
 	var in PriceVariantListRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	var vars []*domain.PriceVariant
 	if in.Variants != nil {
 		for _, v := range *in.Variants {
-			pv := &domain.PriceVariant{Model: params.Model, Seq: deref(v.Seq)}
+			pv := &domain.PriceVariant{Model: params.Model, Seq: httpface.Deref(v.Seq)}
 			if v.ServiceTier != nil {
 				pv.ServiceTier = v.ServiceTier
 			}

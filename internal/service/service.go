@@ -59,7 +59,7 @@ type Store interface {
 	AccountExtStore
 	EmailTemplateStore
 	// EmailCodeStore 不在复合面：验证码已迁 Redis（spec 2026-08-25-emailcode-
-	// redis-migration §2.2/§2.3），经 New 的 ServiceDeps.EmailCodeStore 独立注入，
+	// redis-migration §2.2/§2.3），经 New 的 Deps.EmailCodeStore 独立注入，
 	// repository 实现已随 PG 验证码表卸载。
 	// WithTx 在单事务内执行 fn：真实仓库为 tx 版 Repository（全部走
 	// tx 连接）；fake 为事务语义模拟（fn 内变更先入暂存、成功提交/失败丢弃——
@@ -342,7 +342,7 @@ type KeyRegistrar interface {
 type Service struct {
 	store Store
 	// emailCodes 验证码存储（Redis 实现，spec 2026-08-25-emailcode-redis-migration
-	// §2.2）：New 经 ServiceDeps.EmailCodeStore 一次性注入，Redis 必选 ⇒ 非 nil
+	// §2.2）：New 经 Deps.EmailCodeStore 一次性注入，Redis 必选 ⇒ 非 nil
 	//（nil panic fail-fast）。
 	emailCodes EmailCodeStore
 	sched      RuntimeProvider
@@ -357,28 +357,28 @@ type Service struct {
 	settings *settingssnap.Snapshot
 	// priceSnapshot 统一价格快照：entries + variants
 	priceSnapshot atomic.Pointer[priceSnapshot]
-	// recoverProber 恢复→PROBING 健康写入面（New 经 ServiceDeps.RecoverProber
+	// recoverProber 恢复→PROBING 健康写入面（New 经 Deps.RecoverProber
 	// 注入；nil = 未装配，recover 仅完成持久恢复——调度器同步周期兜底）。
 	recoverProber RecoverProber
-	// recoverLatch 恢复→latch 显式释放面（New 经 ServiceDeps.RecoverLatch
+	// recoverLatch 恢复→latch 显式释放面（New 经 Deps.RecoverLatch
 	// 注入；nil = 未装配，跳过释放）。
 	recoverLatch RecoverLatchReleaser
 	// recoverHealthClear 恢复→健康记录显式清除面（New 经
-	// ServiceDeps.RecoverHealthClear 注入；nil = 未装配，跳过清除）。
+	// Deps.RecoverHealthClear 注入；nil = 未装配，跳过清除）。
 	recoverHealthClear RecoverHealthClearer
-	// compileNotify 路由编译触发面（New 经 ServiceDeps.CompileNotify
+	// compileNotify 路由编译触发面（New 经 Deps.CompileNotify
 	// 一次性注入；nil = 未装配，定价写面静默——仅编译道装配后有效。
 	// 调用方承诺非阻塞，见 pricing.go）。
 	compileNotify               func()
 	mailEnqueue                 func(MailSendTask) error
 	clearBalanceWarningCooldown func(context.Context, int64, int64) error
 	// defaultMaxConcurrency 创建期 max_concurrency 缺省落值（main 经
-	// ServiceDeps.DefaultMaxConcurrency 一次性注入；0 = 未装配，create 视为
+	// Deps.DefaultMaxConcurrency 一次性注入；0 = 未装配，create 视为
 	// 未提供由校验拒绝）。
 	defaultMaxConcurrency int
 	tzLoc                 *time.Location
 	// retention 统计面 coverage 步的保留期来源（usage_logs/err_logs/usage_stats
-	// 三表天数；New 经 ServiceDeps.Retention 一次性注入）。判定唯一入口
+	// 三表天数；New 经 Deps.Retention 一次性注入）。判定唯一入口
 	// domain.Admit 以**参数**接收它（纯函数：不读配置、不读全局）。Days(t) <= 0
 	// ⇒ 该表守卫关闭（分区保留被禁用）。
 	retention domain.Retention
@@ -391,20 +391,33 @@ type Service struct {
 	// 窗口守卫与路由观测窗口守卫共用同一时钟源）。
 	statsNow func() time.Time
 	// routingRetentionDays 路由观测保留天数（New 经
-	// ServiceDeps.RoutingObservationRetentionDays 一次性注入；0 = 未装配，
+	// Deps.RoutingObservationRetentionDays 一次性注入；0 = 未装配，
 	// 守卫关闭）。见 validateRoutingRetention。
 	routingRetentionDays int
 	log                  *logx.Logger
 }
 
-// ServiceDeps New 的尾部一次性依赖（SetEmailCodeStore /
-// SetTimeLocation / SetStatsRawSpan / SetBalanceWarningCooldownCleaner /
-// SetRecoverProber 五个事后回填折叠进构造：编译通知回填
-// 折叠进构造——零语义变化，各字段 nil/零值语义与原 setter 完全一致）。
-// 尾部 struct 而非位置参数：New 本就 7 参，位置参数会冲到 12+ 个（>3 参
-// smell），具名字段自文档且调用点可只填所需（新增 CompileNotify 字段零
-// 调用点 churn：缺省 nil = 未装配静默，与原 setter 未调用同语义）。
-type ServiceDeps struct {
+// Deps 是 New 的**全部**构造依赖（S2/C4：原 8 位置参数折叠为单个具名结构——
+// 前 7 个为 store/sched/invalidate/pub/ruleReload/keys/log，其余为原尾部
+// Deps 的一次性依赖，合并入本结构）。具名字段自文档且调用点可只填所需
+// （缺省 nil/零值 = 未装配语义，与已删除的历史 setter 未调用一致；**无事后
+// Set* 回填**——历史 setter 已随构造折叠删除）。
+type Deps struct {
+	// Store 复合持久化面（repository.Repository 实现）。
+	Store Store
+	// Scheduler 账号运行时视图（overview/列表运行时视图；nil = 未装配）。
+	Scheduler RuntimeProvider
+	// Invalidate 管理面变更去抖失效（nil = 不失效）。
+	Invalidate Invalidator
+	// Publisher 多实例 NOTIFY 发布器（nil = 单实例/未装配，publish no-op）。
+	Publisher Publisher
+	// RuleReload 规则重载面（规则写后触发；nil = 不重载）。
+	RuleReload RuleReloader
+	// Keys 客户端 key 增删的鉴权快照增量面（nil = 不刷新）。
+	Keys KeyRegistrar
+	// Log 面日志（nil = 静默）。
+	Log *logx.Logger
+
 	// EmailCodeStore 验证码存储（Redis 实现，必选依赖）：nil 直接 panic
 	// fail-fast（与原 SetEmailCodeStore 同纪律——生产误接线必须启动即炸，
 	// 无降级路径）。
@@ -451,11 +464,13 @@ type ServiceDeps struct {
 	RoutingObservationRetentionDays int
 }
 
-func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publisher, ruleReload RuleReloader, keys KeyRegistrar, log *logx.Logger, deps ServiceDeps) *Service {
+// New 构造 Service（全部依赖经单一 Deps 注入，S2 消重）。
+func New(deps Deps) *Service {
 	if deps.EmailCodeStore == nil {
 		panic("service: New(nil EmailCodeStore): Redis 是必选依赖，验证码存储无降级路径")
 	}
-	s := &Service{store: store, sched: sched, inv: invalidate, pub: pub, ruleReload: ruleReload, keys: keys, log: log,
+	s := &Service{store: deps.Store, sched: deps.Scheduler, inv: deps.Invalidate, pub: deps.Publisher,
+		ruleReload: deps.RuleReload, keys: deps.Keys, log: deps.Log,
 		emailCodes: deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
 		recoverLatch: deps.RecoverLatch, recoverHealthClear: deps.RecoverHealthClear,
 		defaultMaxConcurrency:       deps.DefaultMaxConcurrency,
@@ -467,7 +482,7 @@ func New(store Store, sched RuntimeProvider, invalidate Invalidator, pub Publish
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot
 	} else {
-		s.settings = settingssnap.New(store, log)
+		s.settings = settingssnap.New(deps.Store, deps.Log)
 	}
 	// settings 快照构造时首载（注册表不覆盖 settings——NOTIFY 处理路径
 	// ReloadSettings 保持既有行为）；pricing 快照首载统一由快照注册表
@@ -764,10 +779,16 @@ func validateAccountPatch(p repository.AccountPatch) error {
 // mapRepoErr 存储错误映射：repository.ErrNotFound → ErrNotFound（保留缺失 id
 // 详情，404 响应带 "id=5 missing"）；repository.ErrConflict → ErrConflict
 // （保留冲突详情，409 响应带 "name=\"x\""）。其他错误原样返回。
-func mapRepoErr(err error) error {
-	switch {
-	case errors.Is(err, repository.ErrInvalidInput):
+func mapRepoErr(err error) error { return mapRepoErrCore(err, true) }
+
+// mapRepoErrCore 存储错误映射公共核心（mapRepoErr / mapRuleRepoErr 唯一差异 =
+// withInvalidInput：规则写面不做 repository.ErrInvalidInput 归类）。ErrNotFound /
+// ErrConflict 保留详情（404/409 响应带上下文），其余原样返回。
+func mapRepoErrCore(err error, withInvalidInput bool) error {
+	if withInvalidInput && errors.Is(err, repository.ErrInvalidInput) {
 		return ErrInvalidInput
+	}
+	switch {
 	case errors.Is(err, repository.ErrNotFound):
 		detail := strings.TrimPrefix(err.Error(), repository.ErrNotFound.Error()+": ")
 		return fmt.Errorf("%w: %s", ErrNotFound, detail)

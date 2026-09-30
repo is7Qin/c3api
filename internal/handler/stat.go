@@ -212,9 +212,9 @@ func toAPIStatTrendPoint(b *domain.StatBucket) StatTrendPoint {
 		TotalTokens:         &b.TotalTokens,
 		CacheReadTokens:     &b.CacheReadTokens,
 		CacheCreationTokens: &b.CacheCreationTokens,
-		Cost:                ptr(millisToUSD(b.Cost)),
-		RawCost:             ptr(millisToUSD(b.RawCost)),
-		TTFTAvgMS:           ptr(avg),
+		Cost:                httpface.Ptr(millisToUSD(b.Cost)),
+		RawCost:             httpface.Ptr(millisToUSD(b.RawCost)),
+		TTFTAvgMS:           httpface.Ptr(avg),
 		TTFTMaxMS:           &b.TTFTMaxMS,
 	}
 }
@@ -234,9 +234,9 @@ func toAPIEntityStatTrendPoint(b *domain.EntityStatBucket) StatTrendPoint {
 		TotalTokens:         &b.TotalTokens,
 		CacheReadTokens:     &b.CacheReadTokens,
 		CacheCreationTokens: &b.CacheCreationTokens,
-		Cost:                ptr(millisToUSD(b.Cost)),
-		RawCost:             ptr(millisToUSD(b.RawCost)),
-		TTFTAvgMS:           ptr(avg),
+		Cost:                httpface.Ptr(millisToUSD(b.Cost)),
+		RawCost:             httpface.Ptr(millisToUSD(b.RawCost)),
+		TTFTAvgMS:           httpface.Ptr(avg),
 		TTFTMaxMS:           &b.TTFTMaxMS,
 	}
 }
@@ -258,9 +258,9 @@ func toAPIStatTopEntry(b *domain.EntityStatBucket) StatTopEntry {
 		TotalTokens:         &b.TotalTokens,
 		CacheReadTokens:     &b.CacheReadTokens,
 		CacheCreationTokens: &b.CacheCreationTokens,
-		Cost:                ptr(millisToUSD(b.Cost)),
-		RawCost:             ptr(millisToUSD(b.RawCost)),
-		TTFTAvgMS:           ptr(avg),
+		Cost:                httpface.Ptr(millisToUSD(b.Cost)),
+		RawCost:             httpface.Ptr(millisToUSD(b.RawCost)),
+		TTFTAvgMS:           httpface.Ptr(avg),
 		TTFTMaxMS:           &b.TTFTMaxMS,
 	}
 }

@@ -149,7 +149,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	require.NoError(t, sched.Start(schedCtx, &scheduler.CompilerSources{}))
 	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
 	balances := billing.NewBalances(repos, nil)
-	svc := service.New(repos, sched, service.NopInvalidator{}, nil, ruleEngine, auth, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: ruleEngine, Keys: auth, Log: nil, EmailCodeStore: testEmailCodes})
 
 	reg := snapshot.New()
 	for _, s := range []snapshot.Snapshot{
@@ -285,7 +285,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	invCtx, stopInv := context.WithCancel(ctx)
 	t.Cleanup(stopInv)
 	require.NoError(t, inv.Start(invCtx))
-	svc := service.New(repos, sched, inv, nil, ruleEngine, auth, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: nil, RuleReload: ruleEngine, Keys: auth, Log: nil, EmailCodeStore: testEmailCodes})
 	obs.svc = svc // 回填（首次 LoadKeys 在注册表 ReloadAll 时）
 	auth.SetInstancesProvider(discoStub{})
 

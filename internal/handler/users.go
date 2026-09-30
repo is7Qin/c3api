@@ -21,11 +21,11 @@ import (
 // ServerInterface）。
 func (h *AdminAPI) GetUsers(w http.ResponseWriter, r *http.Request, params GetUsersParams) {
 	q := repository.ListQuery{
-		Limit:  httpface.ClampLimit(int(deref(params.Limit))),
-		Offset: int(deref(params.Offset)),
-		Email:  deref(params.Email),
-		Sort:   deref(params.Sort),
-		Order:  string(deref(params.Order)),
+		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset: int(httpface.Deref(params.Offset)),
+		Email:  httpface.Deref(params.Email),
+		Sort:   httpface.Deref(params.Sort),
+		Order:  string(httpface.Deref(params.Order)),
 	}
 	rows, total, err := h.svc.ListUsers(r.Context(), q)
 	if err != nil {
@@ -43,7 +43,7 @@ func (h *AdminAPI) GetUsers(w http.ResponseWriter, r *http.Request, params GetUs
 // service；balance 输入 USD 换算毫分，ServerInterface）。
 func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 	var in UserCreate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -56,7 +56,7 @@ func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 		status = domain.UserStatus(*in.Status)
 	}
 	u, err := h.svc.CreateUser(r.Context(), in.Email, in.Password, role, status,
-		deref(in.MaxConcurrency), usdToMillis(deref(in.Balance)))
+		httpface.Deref(in.MaxConcurrency), usdToMillis(httpface.Deref(in.Balance)))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -72,7 +72,7 @@ func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 // → 0 行 → service 重读重试，new 保持管理员显式意图）。
 func (h *AdminAPI) PutUsersId(w http.ResponseWriter, r *http.Request, id int64) {
 	var in UserUpdate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -128,7 +128,7 @@ func (h *AdminAPI) GetUsersIdGroups(w http.ResponseWriter, r *http.Request, id i
 // null = 清除为未设置 → 回退组倍率；键必须 ∈ group_ids）。
 func (h *AdminAPI) PutUsersIdGroups(w http.ResponseWriter, r *http.Request, id int64) {
 	var in UserGroupsBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

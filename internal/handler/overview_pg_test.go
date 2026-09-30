@@ -138,7 +138,7 @@ func (c *countingStore) ListUserEmails(ctx context.Context, ids []int64) (map[in
 // overviewPGRouter 真实 PG + 契约路由（admin token 中间件；count 可为 nil）。
 func overviewPGRouter(t *testing.T, st service.Store, sched service.RuntimeProvider, opts OpsOptions) (*AdminAPI, func(method, path string) *httptest.ResponseRecorder) {
 	t.Helper()
-	svc := service.New(st, sched, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: st, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
 	h := New(svc, opts)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件

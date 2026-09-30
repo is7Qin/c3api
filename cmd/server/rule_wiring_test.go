@@ -16,7 +16,7 @@ import (
 // 回填 setter（SetHealthSink/SetPersistFunc）与旧 HealthController 装配必须
 // 缺席（各 0 次）；latch→hub→sink→persistFn→ruleEngine→sched 构造序钉死；
 // rule.New 恰 5 参、scheduler.New 恰 7 参；recover→PROBING 写入面
-// （RecoverProber）经 service.New 的 ServiceDeps 恰好注入一次（原不断言保留）。
+// （RecoverProber）经 service.New 的 Deps 恰好注入一次（原不断言保留）。
 func TestRuleHealthWiringOnce(t *testing.T) {
 	fset, f := parseMainGo(t)
 	mainFn := findFuncDecl(t, f, "main")
@@ -77,7 +77,7 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 				argCounts[want] = append(argCounts[want], len(ce.Args))
 			}
 		}
-		// service.New 的 ServiceDeps 复合字面量中 RecoverProber 字段出现次数。
+		// service.New 的 Deps 复合字面量中 RecoverProber 字段出现次数。
 		if recv.Name == "service" && sel.Sel.Name == "New" {
 			for _, arg := range ce.Args {
 				ast.Inspect(arg, func(m ast.Node) bool {

@@ -20,7 +20,7 @@ import (
 // 显式 0，repo 不再把 0 当未指定）。
 func (h *AdminAPI) PostGroups(w http.ResponseWriter, r *http.Request) {
 	var in GroupCreate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -53,11 +53,11 @@ func (h *AdminAPI) PostGroups(w http.ResponseWriter, r *http.Request) {
 // GetGroups 分组列表（分页/筛选/排序，ServerInterface）。
 func (h *AdminAPI) GetGroups(w http.ResponseWriter, r *http.Request, params GetGroupsParams) {
 	q := repository.ListQuery{
-		Limit:  httpface.ClampLimit(int(deref(params.Limit))),
-		Offset: int(deref(params.Offset)),
-		Name:   deref(params.Name),
-		Sort:   deref(params.Sort),
-		Order:  string(deref(params.Order)),
+		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset: int(httpface.Deref(params.Offset)),
+		Name:   httpface.Deref(params.Name),
+		Sort:   httpface.Deref(params.Sort),
+		Order:  string(httpface.Deref(params.Order)),
 	}
 	rows, total, err := h.svc.ListGroups(r.Context(), q)
 	if err != nil {
@@ -85,7 +85,7 @@ func (h *AdminAPI) GetGroupsId(w http.ResponseWriter, r *http.Request, id int64)
 // 0~10）提供（含 0 = 免费）即写入；缺省 = 保持原值。
 func (h *AdminAPI) PutGroupsId(w http.ResponseWriter, r *http.Request, id int64) {
 	var in GroupCreate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -127,7 +127,7 @@ func (h *AdminAPI) PutGroupsId(w http.ResponseWriter, r *http.Request, id int64)
 // 倍率； 修正：用户专属倍率按组挂载）。
 func (h *AdminAPI) PutGroupsIdAssignments(w http.ResponseWriter, r *http.Request, id int64) {
 	var in GroupAssignmentsBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -179,7 +179,7 @@ func (h *AdminAPI) DeleteGroupsId(w http.ResponseWriter, r *http.Request, id int
 // service 完成，ServerInterface）。
 func (h *AdminAPI) PostGroupsBatchDelete(w http.ResponseWriter, r *http.Request) {
 	var in BatchDeleteBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -198,7 +198,7 @@ func (h *AdminAPI) PostGroupsBatchDelete(w http.ResponseWriter, r *http.Request)
 // PostGroupsBatchUpdate 批量更新分组（fields 任意子集，ServerInterface）。
 func (h *AdminAPI) PostGroupsBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	var in BatchUpdateGroupsBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

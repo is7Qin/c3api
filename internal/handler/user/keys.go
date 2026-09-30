@@ -15,11 +15,11 @@ import (
 // GetUserKeys 我的 key 列表（分页/排序；明文长期回显，ServerInterface）。
 func (h *UserAPI) GetUserKeys(w http.ResponseWriter, r *http.Request, params GetUserKeysParams) {
 	q := repository.ListQuery{
-		Limit:  httpface.ClampLimit(int(deref(params.Limit))),
-		Offset: int(deref(params.Offset)),
-		Name:   deref(params.Name),
-		Sort:   deref(params.Sort),
-		Order:  string(deref(params.Order)),
+		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset: int(httpface.Deref(params.Offset)),
+		Name:   httpface.Deref(params.Name),
+		Sort:   httpface.Deref(params.Sort),
+		Order:  string(httpface.Deref(params.Order)),
 	}
 	rows, total, err := h.svc.ListKeys(r.Context(), currentUserID(r), q)
 	if err != nil {
@@ -37,12 +37,12 @@ func (h *UserAPI) GetUserKeys(w http.ResponseWriter, r *http.Request, params Get
 // ServerInterface）。
 func (h *UserAPI) PostUserKeys(w http.ResponseWriter, r *http.Request) {
 	var in KeyCreate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	k, err := h.svc.CreateKey(r.Context(), currentUserID(r), in.Name, in.GroupId,
-		deref(in.MaxConcurrency), deref(in.Quota))
+		httpface.Deref(in.MaxConcurrency), httpface.Deref(in.Quota))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -64,7 +64,7 @@ func (h *UserAPI) GetUserKeysId(w http.ResponseWriter, r *http.Request, id int64
 // ServerInterface）。
 func (h *UserAPI) PutUserKeysId(w http.ResponseWriter, r *http.Request, id int64) {
 	var in KeyUpdate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

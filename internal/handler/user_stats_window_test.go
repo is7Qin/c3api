@@ -37,8 +37,7 @@ func TestUserStatsRelativeWindow(t *testing.T) {
 	store := newFakeStore()
 	snap := settingssnap.New(store, nil)
 	mw := service.NewMailWorker(service.MailDeps{Settings: snap, Templates: store})
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil,
-		service.ServiceDeps{EmailCodeStore: store, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
 	require.NoError(t, mw.Start(t.Context()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
 
