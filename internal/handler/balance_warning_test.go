@@ -23,7 +23,7 @@ import (
 
 func TestUserBalanceWarningThreshold_Handler(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
 	// seed user
 	u, err := store.CreateUser(nil, &domain.User{Email: "u@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive})
 	require.NoError(t, err)
@@ -33,14 +33,14 @@ func TestUserBalanceWarningThreshold_Handler(t *testing.T) {
 	}}
 	token, err := iss.Issue(u.ID, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
-	userRouter := handleruser.Router(svc, iss, provider, nil)
+	userRouter := handleruser.Router(svc, iss, provider, nil, nil)
 	authed := &bwAuthedHandler{r: userRouter, token: token}
 
 	// Unauthenticated
 	req := httptest.NewRequest(http.MethodPut, "/api/user/balance-warning-threshold", strings.NewReader(`{"balance_warning_threshold":5}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	plain := handleruser.Router(svc, iss, provider, nil)
+	plain := handleruser.Router(svc, iss, provider, nil, nil)
 	plain.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 
@@ -128,7 +128,7 @@ func (a *bwAuthedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func TestMailChannelTest_IsolationAndAuth(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
 	adminAPI := New(svc)
 	u, err := store.CreateUser(nil, &domain.User{Email: "u2@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive, Balance: 50000, BalanceWarningThreshold: 100000})
 	require.NoError(t, err)
@@ -166,14 +166,14 @@ func TestMailChannelTest_IsolationAndAuth(t *testing.T) {
 
 func TestUserBalanceWarningThreshold_OverflowViaHandler(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
 	u, err := store.CreateUser(nil, &domain.User{Email: "ovh@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive, BalanceWarningThreshold: 500000})
 	require.NoError(t, err)
 	iss := auth.NewIssuer("test-secret-bw")
 	provider := &fakeUserProviderBW{users: map[int64]domain.UserSnapshot{u.ID: {Status: domain.UserStatusActive, Role: domain.RoleUser, TokenVersion: 0}}}
 	token, err := iss.Issue(u.ID, "ovh@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
-	router := handleruser.Router(svc, iss, provider, nil)
+	router := handleruser.Router(svc, iss, provider, nil, nil)
 	authed := &bwAuthedHandler{r: router, token: token}
 	overflow := float64(math.MaxInt64)/1e5 + 10000
 	body := strings.NewReader(`{"balance_warning_threshold":` + jsonNumber(overflow) + `}`)
@@ -213,7 +213,7 @@ func (f fakeAdminStatus) UserSnapshot(id int64) (domain.UserSnapshot, bool) {
 
 func TestMailChannelTest_AdminAuthViaServer(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(store, nil, service.NopInvalidator{}, nil, nil, nil, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
 	adminAPI := New(svc)
 	iss := auth.NewIssuer("test-secret")
 	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)

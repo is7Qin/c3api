@@ -28,7 +28,7 @@ import (
 func newSharedRouters(t *testing.T) (doAdmin, doUser func(method, path, body, token string) *httptest.ResponseRecorder, store *fakeStore) {
 	t.Helper()
 	store = newFakeStore()
-	svc := service.New(store, fakeSched{}, service.NopInvalidator{}, nil, nil, &fakeKeys{}, nil, service.ServiceDeps{EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 
 	// admin 路由（静态 token 中间件，模拟 server 层 /admin 鉴权）
 	adminH := New(svc)
@@ -46,7 +46,7 @@ func newSharedRouters(t *testing.T) (doAdmin, doUser func(method, path, body, to
 
 	// user 路由（真实 Router：公开/RequireJWT 分流）
 	iss := auth.NewIssuer("test-secret")
-	ur := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil)
+	ur := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil, nil)
 
 	doAdmin = func(method, path, body, token string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))

@@ -36,7 +36,7 @@ func pageToQuery(page, pageSize *int) (repository.ListQuery, error) {
 // 过期/用尽，统一不泄露细节，决策 7）、409 already redeemed（重复兑换）。
 func (h *UserAPI) PostUserRedemptions(w http.ResponseWriter, r *http.Request) {
 	var in RedeemRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -60,8 +60,8 @@ func (h *UserAPI) GetUserRedemptions(w http.ResponseWriter, r *http.Request, par
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	q.Sort = deref(params.Sort)
-	q.Order = string(deref(params.Order))
+	q.Sort = httpface.Deref(params.Sort)
+	q.Order = string(httpface.Deref(params.Order))
 	rows, total, err := h.svc.ListMyRedemptions(r.Context(), currentUserID(r), q)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)

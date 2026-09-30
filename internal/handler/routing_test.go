@@ -63,8 +63,7 @@ func routingRouter(store *routingStore, plan *scheduler.RoutingPlan) http.Handle
 // routingRouterWithRetention 同 routingRouter，另注入观测保留天数（0 = 不设
 // 窗口守卫，与既有用例同语义）。
 func routingRouterWithRetention(store *routingStore, plan *scheduler.RoutingPlan, retentionDays int) http.Handler {
-	svc := service.New(store, routingSched{plan: plan}, service.NopInvalidator{}, nil, nil, nil, nil,
-		service.ServiceDeps{EmailCodeStore: store, RoutingObservationRetentionDays: retentionDays})
+	svc := service.New(service.Deps{Store: store, Scheduler: routingSched{plan: plan}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store, RoutingObservationRetentionDays: retentionDays})
 	r := chi.NewRouter()
 	r.Mount("/", New(svc).Router())
 	return r

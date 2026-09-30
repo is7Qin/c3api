@@ -28,7 +28,7 @@ func (h *AdminAPI) GetAdminSettings(w http.ResponseWriter, r *http.Request) {
 // ServerInterface）。
 func (h *AdminAPI) PutAdminSettings(w http.ResponseWriter, r *http.Request) {
 	var in SettingUpdate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

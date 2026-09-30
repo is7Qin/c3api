@@ -466,10 +466,14 @@ func (r *PartitionRepo) UpsertFlowSnapshot(ctx context.Context, instanceSrc stri
 		return err
 	}
 	hasState := rs.Next()
+	var scanErr error
 	if hasState {
-		_ = rs.Scan(&curSeq)
+		scanErr = rs.Scan(&curSeq)
 	}
 	rs.Close()
+	if scanErr != nil {
+		return scanErr
+	}
 	if hasState && curSeq.Valid && absoluteSequence <= curSeq.Int64 {
 		return tx.Commit()
 	}

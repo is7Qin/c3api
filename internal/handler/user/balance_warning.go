@@ -23,7 +23,7 @@ func (h *UserAPI) GetUserBalanceWarningThreshold(w http.ResponseWriter, r *http.
 
 func (h *UserAPI) PutUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request) {
 	var in BalanceWarningThresholdUpdate
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

@@ -83,7 +83,7 @@ func redemptionValueToAPI(typ domain.RedemptionType, millis int64) float64 {
 // ServerInterface）。
 func (h *AdminAPI) PostRedemptionCodes(w http.ResponseWriter, r *http.Request) {
 	var in GenerateRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -100,8 +100,8 @@ func (h *AdminAPI) PostRedemptionCodes(w http.ResponseWriter, r *http.Request) {
 		Remark:            in.Remark,
 		ExpiresAt:         in.ExpiresAt,
 		ResourceExpiresAt: in.ResourceExpiresAt,
-		MaxUses:           deref(in.MaxUses),
-		Count:             deref(in.Count),
+		MaxUses:           httpface.Deref(in.MaxUses),
+		Count:             httpface.Deref(in.Count),
 	}, createdBy(r))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
@@ -122,8 +122,8 @@ func (h *AdminAPI) GetRedemptionCodes(w http.ResponseWriter, r *http.Request, pa
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	q.Sort = deref(params.Sort)
-	q.Order = string(deref(params.Order))
+	q.Sort = httpface.Deref(params.Sort)
+	q.Order = string(httpface.Deref(params.Order))
 	var typ *domain.RedemptionType
 	if params.Type != nil {
 		t := domain.RedemptionType(*params.Type)
@@ -156,8 +156,8 @@ func (h *AdminAPI) GetRedemptionCodesIdUses(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	rows, total, err := h.svc.GetCodeUses(r.Context(), id, repository.ListQuery{
-		Limit:  int(deref(params.Limit)),
-		Offset: int(deref(params.Offset)),
+		Limit:  int(httpface.Deref(params.Limit)),
+		Offset: int(httpface.Deref(params.Offset)),
 	})
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
@@ -184,7 +184,7 @@ func (h *AdminAPI) PostRedemptionCodesIdDeactivate(w http.ResponseWriter, r *htt
 // 404 含缺失详情，ServerInterface）。
 func (h *AdminAPI) PostRedemptionCodesBatchDeactivate(w http.ResponseWriter, r *http.Request) {
 	var in BatchDeactivateRequest
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

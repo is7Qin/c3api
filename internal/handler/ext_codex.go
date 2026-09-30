@@ -60,7 +60,7 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 	if in.CodexIdentity != nil {
 		// 身份对象缺省/空字段 → 空串 = 未提供 → service 自动生成/沿用（语义保持）
 		e.CodexIdentity = &domain.CodexIdentity{
-			InstallationID: deref(in.CodexIdentity.InstallationId),
+			InstallationID: httpface.Deref(in.CodexIdentity.InstallationId),
 		}
 	}
 	// account id 后置补全（可留空语义——保存后自动识别）：入参空才补；派生
@@ -84,14 +84,14 @@ func (h *AdminAPI) PutAccountsIdExt(w http.ResponseWriter, r *http.Request, id i
 func (h *AdminAPI) deriveCodexAccountID(ctx context.Context, e *domain.AccountExt) string {
 	switch e.CredentialType {
 	case credential.TypeCodexOAuth:
-		if tok := deref(e.CodexOAuthToken); tok != "" {
+		if tok := httpface.Deref(e.CodexOAuthToken); tok != "" {
 			if id, ok := sdkbridge.DeriveCodexAccountID(tok); ok {
 				return id
 			}
 		}
 		return ""
 	case credential.TypeCodexPAT:
-		if key := deref(e.CodexPATKey); key != "" {
+		if key := httpface.Deref(e.CodexPATKey); key != "" {
 			if id, err := sdkbridge.FetchPATAccountID(ctx, key); err == nil && id != "" {
 				return id
 			}

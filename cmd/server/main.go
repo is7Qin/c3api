@@ -315,7 +315,7 @@ func main() {
 	})
 	// ruleReload 独立于 invalidate：规则 CRUD 后全量重载（重载会重置窗口计数，
 	// 不能随模板/账号/分组等任意资源变更触发）。
-	// 余额预警已知键清理（Redis）：构造期一次建好，ServiceDeps 与
+	// 余额预警已知键清理（Redis）：构造期一次建好，Deps 与
 	// wireBalanceWarning 共用同一实例。
 	bwCooldown := notification.NewCooldown(rdb)
 	// svc 一次性装配（定价时区/原始行 horizon/验证码存储/预警清理/
@@ -325,15 +325,14 @@ func main() {
 	// 根因重开：settings 快照提升为一等组件——main 先构造单个共享
 	// *settingssnap.Snapshot（首载失败仅 Warn，由 Snapshot.Load 调用方保持
 	// fail-safe），mailW 与 svc 同源共享该指针（NOTIFY 只刷一处，无分叉）；
-	// mailW.Enqueue 经 ServiceDeps.MailEnqueue 一次注入，零 Set* 回填。
+	// mailW.Enqueue 经 Deps.MailEnqueue 一次注入，零 Set* 回填。
 	settingsSnap := settingssnap.New(repos, log)
 	if err := settingsSnap.Load(context.Background()); err != nil && log != nil {
 		log.Warn("settings snapshot initial load failed", logx.Error(err))
 	}
 	mailW := service.NewMailWorker(service.MailDeps{Log: log, Settings: settingsSnap, Templates: repos})
-	svc := service.New(repos, sched, inv, pub, ruleEngine, auth, log, service.ServiceDeps{
-		EmailCodeStore: verification.New(rdb),
-		TimeLocation:   svcLoc,
+	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Keys: auth, Log: log, EmailCodeStore: verification.New(rdb),
+		TimeLocation: svcLoc,
 		// Retention 三表原件（不预先折 min：读 N 张表取最保守 floor 是
 		// domain.StatsKinds 的 Tables 推论，spec §4.5）。
 		Retention: domain.Retention{
@@ -349,8 +348,7 @@ func main() {
 		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
 		CompileNotify:                   sched.RequestCompile,
 		MailEnqueue:                     mailW.Enqueue,
-		SettingsSnapshot:                settingsSnap,
-	})
+		SettingsSnapshot:                settingsSnap})
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据
 	// （零 DB），首刷统一在构造链完成后执行（见下 ReloadAll——单一启动入口，
@@ -547,7 +545,7 @@ func main() {
 	// merge 按 instance_src 区分，同源身份是 merge 正确性的前提。
 	// 缺陷 B 质量面：PG 落库边界成功持久新质量行 → 事件驱动编译（非阻塞、
 	// 下游去抖收敛；空刷/失败静默，无定周全量）。构造器注入（nil = 未装配）；
-	// 价格面见 pricingSync.Reload（service 内经 ServiceDeps.CompileNotify
+	// 价格面见 pricingSync.Reload（service 内经 Deps.CompileNotify
 	// 变化门控后通知编译）。
 	qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, quality.SyncConfig{InstanceSrc: src}, log, sched.RequestCompile)
 	// 路由编译源装配（双 setter 已删，编译双源 Start 期结构注入）：
@@ -565,7 +563,7 @@ func main() {
 	}
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
-	userHandler := userapi.Router(svc, iss, auth, ruleEngine)
+	userHandler := userapi.Router(svc, iss, auth, ruleEngine, log)
 
 	// /api/admin/ops/workers 运维观测（spec 2026-08-11，用户裁决并入管理面）：
 	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持

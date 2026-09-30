@@ -23,9 +23,9 @@ func (h *AdminAPI) GetRoutingFlow(w http.ResponseWriter, r *http.Request, params
 		RouteID:  params.Route,
 		From:     params.From,
 		To:       params.To,
-		Offset:   deref(params.Offset),
-		Limit:    deref(params.Limit),
-		Accounts: deref(params.Accounts),
+		Offset:   httpface.Deref(params.Offset),
+		Limit:    httpface.Deref(params.Limit),
+		Accounts: httpface.Deref(params.Accounts),
 	})
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
@@ -41,8 +41,8 @@ func (h *AdminAPI) GetRoutingFrontier(w http.ResponseWriter, r *http.Request, pa
 		RouteID: params.Route,
 		From:    params.From,
 		To:      params.To,
-		Limit:   deref(params.Limit),
-		Offset:  deref(params.Offset),
+		Limit:   httpface.Deref(params.Limit),
+		Offset:  httpface.Deref(params.Offset),
 	})
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
@@ -56,11 +56,11 @@ func (h *AdminAPI) GetRoutingFrontier(w http.ResponseWriter, r *http.Request, pa
 // 「缺省指针 → 契约默认」的取值。
 func (h *AdminAPI) GetRoutingPlan(w http.ResponseWriter, r *http.Request, params GetRoutingPlanParams) {
 	res, err := h.svc.QueryRoutingPlan(service.RoutingPlanQuery{
-		Search:           deref(params.Search),
-		Route:            deref(params.Route),
-		Offset:           deref(params.Offset),
-		Limit:            deref(params.Limit),
-		CandidatesOffset: deref(params.CandidatesOffset),
+		Search:           httpface.Deref(params.Search),
+		Route:            httpface.Deref(params.Route),
+		Offset:           httpface.Deref(params.Offset),
+		Limit:            httpface.Deref(params.Limit),
+		CandidatesOffset: httpface.Deref(params.CandidatesOffset),
 		CandidatesLimit:  planCandidatesLimit(params.CandidatesLimit),
 	})
 	if err != nil {

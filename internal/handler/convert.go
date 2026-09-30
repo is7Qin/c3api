@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -29,7 +30,7 @@ func toAPITemplate(t *domain.Template) Template {
 		ID:               t.ID,
 		Name:             t.Name,
 		BaseURL:          t.BaseURL,
-		CredentialType:   ptr(TemplateCredentialType(t.CredentialType)),
+		CredentialType:   httpface.Ptr(TemplateCredentialType(t.CredentialType)),
 		SupportedFormats: formats,
 		Models:           &t.Models,
 		FormatModels:     toAPITemplateFormatModels(t.FormatModels),
@@ -85,7 +86,7 @@ func toAPIAccount(a *domain.Account) Account {
 		FailureSource:          a.FailureSource,
 		LifecycleRevision:      &a.LifecycleRevision,
 		IdentityRevision:       &a.IdentityRevision,
-		UpstreamCostMultiplier: ptr(multToNormal(domain.MultBp(a.UpstreamCostMultiplierBp))), // bp → 正常值（组倍率边界换算同构）
+		UpstreamCostMultiplier: httpface.Ptr(multToNormal(domain.MultBp(a.UpstreamCostMultiplierBp))), // bp → 正常值（组倍率边界换算同构）
 		CacheDomain:            a.CacheDomain,
 		CreatedAt:              &a.CreatedAt,
 		UpdatedAt:              &a.UpdatedAt,
@@ -137,7 +138,7 @@ func toAPIGroup(g *domain.Group) Group {
 		ID:              &g.ID,
 		Name:            &g.Name,
 		Visibility:      &v,
-		PriceMultiplier: ptr(multToNormal(g.PriceMultiplier)),
+		PriceMultiplier: httpface.Ptr(multToNormal(g.PriceMultiplier)),
 		ProtocolConvert: &converts,
 		CreatedAt:       &g.CreatedAt,
 		UpdatedAt:       &g.UpdatedAt,
@@ -254,20 +255,14 @@ func multI64ToNormalPtr(v *int64) *float64 {
 // 不走 /1e6 除法，独立函数自文档化）。
 
 // usdPerImageToMilli USD/张 → 毫分/张（×1e5；与 token 价同为 ×1e5 系数但单位
-// 语义独立——按张 flat 计费，防混用）。
-func usdPerImageToMilli(usd float64) int64 { return int64(math.Round(usd * 1e5)) }
+// 语义独立——按张 flat 计费，防混用）。实现与 usdToMillis 共用（同系数同取整）。
+func usdPerImageToMilli(usd float64) int64 { return usdToMillis(usd) }
 
 // milliPerImageToUSD 毫分/张 → USD/张（/1e5；API 展示换算）。
 func milliPerImageToUSD(millis int64) float64 { return float64(millis) / 1e5 }
 
 // usdPerImageToMilliPtr *float64（USD/张）→ *int64（毫分/张）；nil 透传。
-func usdPerImageToMilliPtr(v *float64) *int64 {
-	if v == nil {
-		return nil
-	}
-	i := usdPerImageToMilli(*v)
-	return &i
-}
+func usdPerImageToMilliPtr(v *float64) *int64 { return usdToMillisPtr(v) }
 
 // milliPerImageToUSDPtr *int64（毫分/张）→ *float64（USD/张）；nil 透传。
 func milliPerImageToUSDPtr(v *int64) *float64 {
@@ -284,8 +279,9 @@ func milliPerImageToUSDPtr(v *int64) *float64 {
 // input_cost_per_query 原生口径；系数与 usdPerImageToMilli/usdToMillis 相同但
 // 单位语义独立——按次 flat 计费不走 /1e6 除法，独立函数防误用）。
 
-// usdPerCallToMilli USD/次 → 毫分/次（×1e5；math.Round 消除浮点取整误差）。
-func usdPerCallToMilli(usd float64) int64 { return int64(math.Round(usd * 1e5)) }
+// usdPerCallToMilli USD/次 → 毫分/次（×1e5）。实现与 usdToMillis 共用（同系数
+// 同取整）。
+func usdPerCallToMilli(usd float64) int64 { return usdToMillis(usd) }
 
 // milliPerCallToUSD 毫分/次 → USD/次（/1e5；API 展示换算，回显 litellm 原生
 // 口径 input_cost_per_query）。
@@ -293,13 +289,7 @@ func milliPerCallToUSD(millis int64) float64 { return float64(millis) / 1e5 }
 
 // usdPerCallToMilliPtr *float64（USD/次，litellm 原生口径）→ *int64（毫分/次）；
 // nil 透传。
-func usdPerCallToMilliPtr(v *float64) *int64 {
-	if v == nil {
-		return nil
-	}
-	i := usdPerCallToMilli(*v)
-	return &i
-}
+func usdPerCallToMilliPtr(v *float64) *int64 { return usdToMillisPtr(v) }
 
 // milliPerCallToUSDPtr *int64（毫分/次）→ *float64（USD/次）；nil 透传。
 func milliPerCallToUSDPtr(v *int64) *float64 {
@@ -331,7 +321,7 @@ func toAPIUser(u *domain.User) User {
 		Role:           &r,
 		Status:         &st,
 		MaxConcurrency: &u.MaxConcurrency,
-		Balance:        ptr(millisToUSD(u.Balance)),
+		Balance:        httpface.Ptr(millisToUSD(u.Balance)),
 		CreatedAt:      &u.CreatedAt,
 		UpdatedAt:      &u.UpdatedAt,
 	}

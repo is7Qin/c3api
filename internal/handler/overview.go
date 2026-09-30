@@ -29,14 +29,14 @@ func (h *AdminAPI) GetAdminOverview(w http.ResponseWriter, r *http.Request, para
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	days := deref(params.Days)
+	days := httpface.Deref(params.Days)
 	if days < 1 {
 		days = 7 // 缺省 7（契约 default；nil/非法回落缺省）
 	}
 	if days > 30 {
 		days = 30
 	}
-	groupID := deref(params.GroupId)
+	groupID := httpface.Deref(params.GroupId)
 	day := dayStart(h.now(), zone) // 缓存键与聚合区间同一日界源（请求时区）
 	key := fmt.Sprintf("o:%d:%d:%s:%s", days, groupID, zone.String(), day.Format("2006-01-02"))
 	if v, ok := h.overviewCache.get(key); ok {

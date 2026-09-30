@@ -20,7 +20,7 @@ import (
 // 同一个三态转换；Name/TemplateID 必填由 service 收口判定。
 func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 	var in AccountConfigPatch
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -40,12 +40,12 @@ func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 // GetAccounts 账号列表（分页/筛选/排序，含运行时视图，ServerInterface）。
 func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params GetAccountsParams) {
 	q := repository.ListQuery{
-		Limit:      httpface.ClampLimit(int(deref(params.Limit))),
-		Offset:     int(deref(params.Offset)),
-		Name:       deref(params.Name),
-		Sort:       deref(params.Sort),
-		Order:      string(deref(params.Order)),
-		TemplateID: deref(params.TemplateId),
+		Limit:      httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset:     int(httpface.Deref(params.Offset)),
+		Name:       httpface.Deref(params.Name),
+		Sort:       httpface.Deref(params.Sort),
+		Order:      string(httpface.Deref(params.Order)),
+		TemplateID: httpface.Deref(params.TemplateId),
 		Enabled:    params.Enabled,
 	}
 	rows, total, err := h.svc.ListAccountViews(r.Context(), q)
@@ -86,7 +86,7 @@ func (h *AdminAPI) GetAccountsIdGroups(w http.ResponseWriter, r *http.Request, i
 // 语法非法 → 400。
 func (h *AdminAPI) PatchAccountsId(w http.ResponseWriter, r *http.Request, id int64, params PatchAccountsIdParams) {
 	var in AccountConfigPatch
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -141,7 +141,7 @@ func (h *AdminAPI) DeleteAccountsId(w http.ResponseWriter, r *http.Request, id i
 // 失效由 service invalidate 完成，ServerInterface）。
 func (h *AdminAPI) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Request) {
 	var in BatchDeleteBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -162,7 +162,7 @@ func (h *AdminAPI) PostAccountsBatchDelete(w http.ResponseWriter, r *http.Reques
 // 代际。
 func (h *AdminAPI) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
 	var in BatchUpdateAccountsBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
@@ -192,7 +192,7 @@ func (h *AdminAPI) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Reques
 // 新代际置 PROBING；stale → 409（ServerInterface）。
 func (h *AdminAPI) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
 	var in AccountRecoverBody
-	if err := decode(r, &in); err != nil {
+	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}

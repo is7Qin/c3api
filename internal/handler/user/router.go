@@ -13,6 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // Router 组装 /api/user 组路由（挂载于 /api/user/*）：
@@ -20,10 +21,12 @@ import (
 // RequireJWT（验证 + 内存快照用户状态校验）。生成路由的 spec 路径自带
 // /api/user 前缀，故无独立 BaseURL，HandlerWithOptions 直接使用 spec 路径。
 // rules 为规则引擎（/api/user/err_logs 行级脱敏用；main 装配注入——非 New，
-// 测试构造零回归；nil = 不脱敏）。
-func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvider, rules *rule.RuleEngine) http.Handler {
+// 测试构造零回归；nil = 不脱敏）。log 为面日志（/forgot-password 反枚举路径的
+// 发送失败可观测出口；nil = 静默）。
+func Router(svc *service.Service, iss *auth.Issuer, users auth.UserStatusProvider, rules *rule.RuleEngine, log *logx.Logger) http.Handler {
 	api := New(svc, iss)
 	api.rules = rules
+	api.log = log
 	return Mount(api, iss, users)
 }
 
