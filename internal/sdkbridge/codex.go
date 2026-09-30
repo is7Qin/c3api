@@ -641,7 +641,7 @@ func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
 // 取（entryFor——账号级长存：at 缓存/单飞/rt 轮换在 Auth 内，与 HTTP 面共享；
 // WS 连接本身 per-请求不缓存）→ codexsdk.Dial(ctx, auth, opts...)。opts 由
 // 网关侧组装（codex_responses_ws.go——伪装四元组 / WithPingInterval(0) /
-// WithPayloadFiltering(false) / 透传头）；端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses，
+// 透传头；SDK 侧按 codex 形状归一 WS 帧）；端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses，
 // transport 观察为 https）。错误翻译（translateDialError）：
 //   - *DialError → 信封包装（EnvelopeError——StatusCode()/RawJSON()/Unwrap
 //     链，Refreshed 语义保留：已轮转重连一次仍失败 → 网关避免双份刷新）

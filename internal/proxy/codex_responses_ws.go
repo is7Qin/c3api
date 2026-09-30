@@ -26,9 +26,10 @@ import (
 // 独立文件族（用户拍板文件边界：codex 相关处理不散落现有 caller/forward 文件，
 // codexsdk import 仅限本文件族 + sdkbridge 扩展）。与 aiclient 路径同构的编
 // 排（合一骨架 relayWS + 传输适配 codexTransport——用户裁决抽 5 方法传输接口
-// wsRelayTransport，见 ws_relay.go）：双向帧透传 1:1 / usage 嗅探
-// （response.completed——sniffResponsesCompletedUsage 复用）/ 关闭分类
-// （relayClassify/recordClose 复用）/ 心跳（30s Ping + 10s pong 超时同款）——
+// wsRelayTransport，见 ws_relay.go）：双向帧中继（客户端帧经 SDK 按 codex
+// 形状归一）/ usage 嗅探（response.completed——sniffResponsesCompletedUsage
+// 复用）/ 关闭分类（relayClassify/recordClose 复用）/ 心跳（30s Ping + 10s
+// pong 超时同款）——
 // 差异收口在本文件：传输适配层 = *codexsdk.Client 具体类型（Send/Recv/Ping/
 // Close/CloseNow——SDK 具体类型经 codexTransport 适配接口）与每帧判死钩子
 // frameHook（见 wsAttempt 调用点）；服务端 Accept 侧 = 既有
@@ -63,10 +64,9 @@ const codexAuthFailedMsg = "codex authorization failed"
 //     thread/window）+ WithCodexMeta（帧内 x-codex-installation-id——真实客户
 //     端该头不进握手头，仅帧 metadata）
 //   - WithPingInterval(0)：禁 SDK 内部心跳（心跳单源——编排层 30s+10s）
-//   - WithPayloadFiltering(false)：Send 默认白名单过滤会剥
-//     max_output_tokens/api/user/metadata 等合法顶层键（过滤后为空整帧不入网）——
-//     与双向帧透传 1:1 等价直接矛盾；关闭过滤与 client_metadata 伪装注入独立
-//     （prepareFrame client.go:513-579——关闭后注入仍生效）
+//   - SDK 侧按 codex 形状归一（无条件，不可关）：WS 19 键白名单过滤 + 强制
+//     store:false——违禁顶层键（如 max_output_tokens）被剥、store 恒 false
+//     （对齐真实 codex；归一后 prepareFrame 照常注入 client_metadata）
 //   - 透传头：**无**（spec §12）—— 该面只发 SDK 自己写的头，客户端头一律不递；
 //     握手头仅来自 SDK（伪装身份、beta、session 四元组、Authorization）。
 //
@@ -81,10 +81,9 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 	cred := domain.CredentialFromExt(sel.Ext)
 	sess, meta := sel.CodexIdentity()
 	opts := []codexsdk.Option{
-		codexsdk.WithPayloadFiltering(false), // 帧透传 1:1（白名单过滤剥合法键）
-		codexsdk.WithPingInterval(0),         // 心跳单源：编排层 30s+10s 单一所有者
-		codexsdk.WithSession(sess),           // 伪装：握手头 + 帧内 session/thread/window
-		codexsdk.WithCodexMeta(meta),         // 伪装：帧内 x-codex-installation-id 等
+		codexsdk.WithPingInterval(0), // 心跳单源：编排层 30s+10s 单一所有者
+		codexsdk.WithSession(sess),   // 伪装：握手头 + 帧内 session/thread/window
+		codexsdk.WithCodexMeta(meta), // 伪装：帧内 x-codex-installation-id 等
 	}
 	// 裁决（spec §12）：codex 面不透传任何客户端头，握手头全由 SDK 生成（伪装身份、
 	// beta、session 四元组、Authorization）；此处不喂任何客户端头。

@@ -180,7 +180,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	}
 
 	wg.Add(1)
-	go func() { // 客户端 → 上游（客户端帧透传；写失败 = 上游侧问题）
+	go func() { // 客户端 → 上游（客户端帧中继；codex 面由传输适配层按 codex 形状归一；写失败 = 上游侧问题）
 		defer wg.Done()
 		defer relayRecover("client-loop", &upErr) // panic 按身份入槽：本 goroutine 故障归上游侧
 		for {

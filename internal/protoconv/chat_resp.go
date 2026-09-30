@@ -6,7 +6,7 @@ package protoconv
 
 // chat→resp 方向（压测主路径 优化）：请求/响应/流式帧转换均为字节级——
 // 不 Unmarshal 到 map[string]any/结构体中间对象，直接对源 JSON 做字段级
-// 原始字节提取（gjson，SDK FilterCodexPayload 模式：预筛 + 提取 + 拼接），
+// 原始字节提取（gjson，SDK 字节级白名单过滤模式：预筛 + 提取 + 拼接），
 // 无需改写的值原字节透传（转义/格式原样保留，解析结果与 map 重排重编码
 // 等价）；仅 messages→input、tools、tool_choice 等结构差异字段做消息级/
 // 工具级局部处理。输出单缓冲直写（请求/响应按输入长度预分配一次；流式帧

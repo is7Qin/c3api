@@ -363,8 +363,8 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, `{"type":"response.output_text.delta","delta":"hi"}`, got[1])
 	require.Contains(t, got[2], `"type":"response.completed"`)
 	require.Contains(t, got[2], `"input_tokens":6`)
-	// 回声帧：payload 为客户端帧 + SDK 注入的 client_metadata（帧透传 1:1
-	// 语义——注入层成本与真实 codex 客户端一致）
+	// 回声帧：payload 为客户端帧（经 SDK 按 codex 形状归一——白名单内键保留、
+	// 强制 store:false）+ SDK 注入的 client_metadata（与真实 codex 客户端一致）
 	for i, want := range []string{f1, f2, f3} {
 		var echo struct {
 			Type    string `json:"type"`
@@ -372,7 +372,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal([]byte(got[3+i]), &echo))
 		require.Equal(t, "echo", echo.Type)
-		require.Contains(t, echo.Payload, gjson.Get(want, "type").String(), "帧内容原样透传")
+		require.Contains(t, echo.Payload, gjson.Get(want, "type").String(), "白名单内键保留")
 		require.Contains(t, echo.Payload, `"client_metadata"`)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)

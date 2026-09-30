@@ -1422,12 +1422,13 @@ func dialCred(accountID int64) *domain.AccountCredential {
 }
 
 // TestCodexDialPATSuccess PAT 凭据 Dial 成功：升级头带 Bearer pat；连接建
-// 立后 Send/Recv 帧回声往返（帧透传面）。
+// 立后 Send/Recv 帧回声往返（帧经 SDK 无条件归一：白名单内键保留 +
+// 强制 store:false）。
 func TestCodexDialPATSuccess(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 200)
 	a := NewCodex(nil, newOfficialRewriteTransport(t, srv.URL), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-1"}
-	c, err := a.Dial(context.Background(), cred, codexsdk.WithPingInterval(0), codexsdk.WithPayloadFiltering(false))
+	c, err := a.Dial(context.Background(), cred, codexsdk.WithPingInterval(0))
 	require.NoError(t, err)
 	require.NoError(t, c.Send(context.Background(), []byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	f, err := c.Recv(context.Background())
@@ -1439,8 +1440,9 @@ func TestCodexDialPATSuccess(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(f, &echo))
 	require.Equal(t, "echo", echo.Type)
-	require.Contains(t, echo.Payload, `"input":"hi"`, "原帧内容原样透传")
-	require.Contains(t, echo.Payload, `"client_metadata"`, "伪装注入照常（关闭过滤与注入独立）")
+	require.Contains(t, echo.Payload, `"input":"hi"`, "白名单内键原样保留")
+	require.Contains(t, echo.Payload, `"store":false`, "SDK 无条件强制 store:false")
+	require.Contains(t, echo.Payload, `"client_metadata"`, "伪装注入照常")
 	c.CloseNow()
 	require.Equal(t, 1, up.upgradesN())
 	require.Equal(t, "Bearer pat-1", up.header(0).Get("Authorization"))
