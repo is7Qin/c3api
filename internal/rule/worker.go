@@ -77,27 +77,7 @@ func (e *RuleEngine) flushPersist(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case item := <-e.persistCh:
-			func() {
-				defer func() {
-					if r := recover(); r != nil {
-						if e.log != nil {
-							e.log.Warn("persist callback panicked", logx.Any("panic", r))
-						}
-					}
-					if e.persistPending.Add(-1) < 0 {
-						e.persistPending.Store(0)
-					}
-				}()
-				fn := e.persistFn
-				if fn != nil {
-					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
-						e.persistFailures.Add(1)
-						if e.log != nil {
-							e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
-						}
-					}
-				}
-			}()
+			e.processPersistItem(ctx, item, false)
 		default:
 			return
 		}
@@ -110,32 +90,38 @@ func (e *RuleEngine) persistLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case item := <-e.persistCh:
-			func() {
-				defer func() {
-					// Release pending exactly once, even if callback panics.
-					if e.persistPending.Add(-1) < 0 {
-						e.persistPending.Store(0)
-					}
-					// Do not recover here fully; let panic propagate to worker.Loop for restart.
-					// But we already need to ensure pending released before propagate.
-					// Use recover to log then re-panic.
-					if r := recover(); r != nil {
-						if e.log != nil {
-							e.log.Warn("persist callback panicked", logx.Any("panic", r))
-						}
-						panic(r)
-					}
-				}()
-				fn := e.persistFn
-				if fn != nil {
-					if err := fn(ctx, item); err != nil && ctx.Err() == nil {
-						e.persistFailures.Add(1)
-						if e.log != nil {
-							e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
-						}
-					}
-				}
-			}()
+			// rethrow=true: a callback panic propagates to worker.GoLoop for restart.
+			e.processPersistItem(ctx, item, true)
+		}
+	}
+}
+
+// processPersistItem runs one persist queue item: release pending exactly once
+// (even on panic), log a callback panic, and count + warn on persistence
+// failure. rethrow distinguishes the callers: flushPersist (Flush/Close,
+// synchronous drain) swallows the panic after logging; persistLoop re-panics so
+// worker.GoLoop can restart the loop.
+func (e *RuleEngine) processPersistItem(ctx context.Context, item PersistItem, rethrow bool) {
+	defer func() {
+		if e.persistPending.Add(-1) < 0 {
+			e.persistPending.Store(0)
+		}
+		if r := recover(); r != nil {
+			if e.log != nil {
+				e.log.Warn("persist callback panicked", logx.Any("panic", r))
+			}
+			if rethrow {
+				panic(r)
+			}
+		}
+	}()
+	fn := e.persistFn
+	if fn != nil {
+		if err := fn(ctx, item); err != nil && ctx.Err() == nil {
+			e.persistFailures.Add(1)
+			if e.log != nil {
+				e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
+			}
 		}
 	}
 }
@@ -201,7 +187,7 @@ func (e *RuleEngine) Close(ctx context.Context) error {
 }
 
 // Enqueue 投递事件：有界 channel，满则丢弃（dropped 原子计数）。热点修复 B：
-// 逐条 Warn → 阈值告警（errlog 同构）——丢弃累计 ≥ ruleDropWarnThreshold 且
+// 逐条 Warn → 阈值告警（errlog 同构）——丢弃累计 ≥ e.dropWarnThreshold 且
 // 边沿未告警 → Warn 恰好一次（带累计数），不再刷屏。热路径纪律：丢弃路径
 // 仅两个原子操作（Add + CompareAndSwap），零分配；日志只在阈值跨越时产生。
 func (e *RuleEngine) Enqueue(ev Event) {
@@ -209,11 +195,11 @@ func (e *RuleEngine) Enqueue(ev Event) {
 	case e.ch <- ev:
 	default:
 		n := e.dropped.Add(1)
-		if n >= uint64(ruleDropWarnThreshold) && e.warnDropped.CompareAndSwap(false, true) {
+		if n >= uint64(e.dropWarnThreshold) && e.warnDropped.CompareAndSwap(false, true) {
 			if e.log != nil {
 				e.log.Warn("rule-engine event queue full, dropping events",
 					logx.Int64("dropped", int64(n)),
-					logx.Int64("threshold", ruleDropWarnThreshold),
+					logx.Int64("threshold", e.dropWarnThreshold),
 					logx.Int("queue_cap", cap(e.ch)),
 				)
 			}

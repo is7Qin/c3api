@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+//
+// evaluate.go holds the non-hot Match entry point used by tests and window
+// adjudication. Basic-condition matching is NOT duplicated here: Match compiles
+// the when into a compiledRule and calls the single matchBasic (engine.go), so
+// the hot path (compiledRule + prebuilt Sets) and the cold path cannot drift.
 
 package rule
 
 import (
-	"strings"
-
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -24,98 +27,20 @@ func ruleWindowSeconds(w domain.RuleWhen) int {
 	return defaultWindowSeconds
 }
 
-// 非热路径：Match 供测试/窗口判定线性扫；热路径 Classify 走 engine.compiledRule Set（零分配早退）。
-func matchBasic(w domain.RuleWhen, ev Event) bool {
-	if w.Kind != nil && kindFromString(*w.Kind) != ev.Kind {
-		return false
-	}
-	if w.HTTPStatus != nil && (ev.HTTPStatus == nil || *w.HTTPStatus != *ev.HTTPStatus) {
-		return false
-	}
-	if len(w.HTTPStatusIn) > 0 {
-		if ev.HTTPStatus == nil {
-			return false
-		}
-		found := false
-		for _, v := range w.HTTPStatusIn {
-			if *ev.HTTPStatus == v {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	if w.ErrorMessageContains != nil && !strings.Contains(ev.ErrorMessage, *w.ErrorMessageContains) {
-		return false
-	}
-	if len(w.ErrorMessageContainsIn) > 0 {
-		found := false
-		for _, sub := range w.ErrorMessageContainsIn {
-			if strings.Contains(ev.ErrorMessage, sub) {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	if w.AccountID != nil && ev.AccountID != *w.AccountID {
-		return false
-	}
-	if w.TemplateID != nil && ev.TemplateID != *w.TemplateID {
-		return false
-	}
-	if w.GroupID != nil && (ev.GroupID == nil || *ev.GroupID != *w.GroupID) {
-		return false
-	}
-	if w.Model != nil && *w.Model != ev.Model {
-		return false
-	}
-	if len(w.ModelIn) > 0 {
-		found := false
-		for _, v := range w.ModelIn {
-			if ev.Model == v {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return false
-		}
-	}
-	return true
-}
-
 // Match 规则 when 与事件（+ 窗口计数）是否匹配：等值/子串/计数阈值/比例。
 // 窗口比例 = t429(或 failure) / (ok+failure+t429)，仅当 total ≥ CountTotalGE
 // 时参与判定（样本不足不满足，ValidateWhen 已保证比例类必配 CountTotalGE，
 // 此处仍防御）。
+//
+// 非热路径：基础条件复用唯一 matchBasic——把 when 编译成 compiledRule（一次
+// 性小分配）后走与热路径相同的判定；窗口条件复用 matchWindow。两处都不再
+// 另写一套。
 func Match(w domain.RuleWhen, ev Event, wc windowSnapshot) bool {
-	if !matchBasic(w, ev) {
+	r, err := compileRule(domain.Rule{When: w})
+	if err != nil || !matchBasic(ev, r) {
 		return false
 	}
-	if w.Count429GE != nil && wc.t429 < *w.Count429GE {
-		return false
-	}
-	if w.CountFailureGE != nil && wc.failure < *w.CountFailureGE {
-		return false
-	}
-	if w.CountOKGE != nil && wc.ok < *w.CountOKGE {
-		return false
-	}
-	if w.CountTotalGE != nil && wc.total() < *w.CountTotalGE {
-		return false
-	}
-	if w.Ratio429GE != nil && !ratioPass(wc.t429, wc.total(), w.CountTotalGE, *w.Ratio429GE) {
-		return false
-	}
-	if w.RatioFailureGE != nil && !ratioPass(wc.failure, wc.total(), w.CountTotalGE, *w.RatioFailureGE) {
-		return false
-	}
-	return true
+	return matchWindow(w, wc)
 }
 
 // ratioPass 比例阈值判定：分母为 total；total < CountTotalGE 时样本不足不满足。

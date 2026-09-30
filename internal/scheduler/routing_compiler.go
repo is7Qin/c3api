@@ -22,9 +22,6 @@ type CandidateQualityKey struct {
 	Fingerprint  domain.CandidateFingerprintVal
 }
 
-// LatchKey 已迁 internal/latch（根因重开：锁存一等组件；本包经
-// Scheduler.latch 间接持有，不再自有类型）。
-
 // CompilerInputs is immutable deterministic inputs.
 //
 // v5-§5.1A (COMPILED-HEALTH-FREE): Health/Latched fields are DELETED —
@@ -185,13 +182,15 @@ func canonicalRouteRefWithOp(gid int64, rk routeKey, op domain.OperationTag) Rou
 }
 
 func operationTagsForFormat(f domain.RequestFormat) []domain.OperationTag {
-	switch f {
-	case domain.FormatOpenAIImages:
-		return []domain.OperationTag{domain.OpImagesGenerations, domain.OpImagesEdits}
-	default:
-		if op := operationTagForFormat(string(f)); op != "" {
-			return []domain.OperationTag{op}
-		}
+	spec := formatSpecs[f]
+	if spec.operation == "" {
 		return nil
 	}
+	if len(spec.extraOperations) == 0 {
+		return []domain.OperationTag{spec.operation}
+	}
+	ops := make([]domain.OperationTag, 0, 1+len(spec.extraOperations))
+	ops = append(ops, spec.operation)
+	ops = append(ops, spec.extraOperations...)
+	return ops
 }

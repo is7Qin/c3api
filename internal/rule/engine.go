@@ -119,11 +119,12 @@ type Config struct {
 // defaultWindowSeconds 未配 window_seconds 的规则默认统计窗口。
 const defaultWindowSeconds = 60
 
-// ruleDropWarnThreshold 事件丢弃累计告警阈值（热点修复 B，对齐 errlog 模式）：
-// 丢弃计数 ≥ 阈值后 Warn 恰好一次（有界队列风暴丢弃的可观测面；队列排空后
-// 边沿回落——每风暴一次，不刷屏）。默认 10_000（对齐 errlog 默认且风暴实测
-// 12,355 恰可触发一次）。var（非 const）：测试注入小阈值。
-var ruleDropWarnThreshold int64 = 10_000
+// defaultRuleDropWarnThreshold 事件丢弃累计告警阈值（热点修复 B，对齐 errlog
+// 模式）：丢弃计数 ≥ 阈值后 Warn 恰好一次（有界队列风暴丢弃的可观测面；队列
+// 排空后边沿回落——每风暴一次，不刷屏）。默认 10_000（对齐 errlog 默认且风暴
+// 实测 12,355 恰可触发一次）。实例字段 dropWarnThreshold 由此默认值初始化；
+// 测试经实例注入小阈值（不再是包级可变全局）。
+const defaultRuleDropWarnThreshold int64 = 10_000
 
 // compiledRule 预编译规则：domain.Rule 纯数据 + 三 Set 只读视图。
 // 编译后只读无锁，Classify 热路径零分配。
@@ -171,6 +172,9 @@ type RuleEngine struct {
 
 	ch      chan Event
 	dropped atomic.Uint64
+	// dropWarnThreshold 丢弃告警阈值（构造期默认 defaultRuleDropWarnThreshold；
+	// 测试经实例字段注入小阈值，替代旧的包级可变全局 ruleDropWarnThreshold）。
+	dropWarnThreshold int64
 	// warnDropped 丢弃告警边沿（热点修复 B）：≥ 阈值告警恰好一次；队列排空
 	// 后回落（resetDropWarnIfDrained）——每风暴一次，不刷屏。
 	warnDropped atomic.Bool
@@ -212,14 +216,15 @@ func New(cfg Config, store repository.RuleStore, log *logx.Logger, sink HealthSi
 		pq = 1024
 	}
 	return &RuleEngine{
-		cfg:        cfg,
-		store:      store,
-		log:        log,
-		healthSink: sink,
-		persistFn:  persist,
-		ch:         make(chan Event, q),
-		persistCh:  make(chan PersistItem, pq),
-		timeNow:    time.Now,
+		cfg:               cfg,
+		store:             store,
+		log:               log,
+		healthSink:        sink,
+		persistFn:         persist,
+		ch:                make(chan Event, q),
+		persistCh:         make(chan PersistItem, pq),
+		dropWarnThreshold: defaultRuleDropWarnThreshold,
+		timeNow:           time.Now,
 	}
 }
 
@@ -367,8 +372,10 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 // 执行语义（设计文档 §1.5，NOTIFY Rules:true 远端变更触发）。
 func (e *RuleEngine) ReloadRules(ctx context.Context) error { return e.Reload(ctx) }
 
-// matchBasic 编译后热路径：1 级缩进 6 行单值+Set 早退，零分配。
-func (e *RuleEngine) matchBasic(ev Event, r compiledRule) bool {
+// matchBasic 单值+预编译 Set 早退（零分配）。唯一实现：热路径
+// HandleEvent/Classify 直接调用；非热路径 Match 先把 when 编译成 compiledRule
+// 再走同一函数，杜绝两套判定漂移。
+func matchBasic(ev Event, r compiledRule) bool {
 	if r.When.Kind != nil && kindFromString(*r.When.Kind) != ev.Kind {
 		return false
 	}
@@ -449,7 +456,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 		if ruleNeedsWindow(r.When) {
 			wc = e.wm.Snapshot(ev.AccountID, ruleWindowSeconds(r.When), ev.OccurredAt)
 		}
-		if !e.matchBasic(ev, r) {
+		if !matchBasic(ev, r) {
 			continue
 		}
 		if !matchWindow(r.When, wc) {
@@ -478,7 +485,12 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 		if r.Then.FailAccount {
 			sink := e.healthSink
 			if sink != nil {
-				_ = sink.FailAccount(ev)
+				if err := sink.FailAccount(ev); err != nil {
+					e.persistFailures.Add(1)
+					if e.log != nil {
+						e.log.Warn("health fail-account failed", logx.Error(err))
+					}
+				}
 			}
 			e.matched.Add(1)
 			e.enqueuePersist(ev, r.Then)
@@ -534,7 +546,7 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 	rules := e.rules
 	e.rulesMu.RUnlock()
 	for _, r := range rules {
-		if !e.matchBasic(ev, r) {
+		if !matchBasic(ev, r) {
 			continue
 		}
 		// account_route typed throttle: missing IDs → not matched (same as HandleEvent)
@@ -553,10 +565,11 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 	return domain.RuleThen{ResponseCode: intPtr(502), CustomMessage: strPtr("upstream rejected request")}, false
 }
 
-// UnifiedMessage 统一公式 msg=CustomMessage!=nil?*CustomMessage:upstream
-// 响应与 sanitize 同源，代理日志保留原文边界另述
-// TODO: upstream param unused — kept for formula parity (honest return would be upstream when CustomMessage==nil; callers currently handle passthrough separately)
-func UnifiedMessage(then domain.RuleThen, upstream string) (string, bool) {
+// UnifiedMessage 统一公式 msg=CustomMessage!=nil?*CustomMessage:upstream，响应
+// 与 errlog sanitize 同源（代理日志保留原文边界另述）。返回 (msg, true) 表示
+// 规则覆写了文案；("", false) 表示调用方自行透传上游正文。第二参数仅为保持
+// 调用点对称（上游正文由调用方透传），此处不使用。
+func UnifiedMessage(then domain.RuleThen, _ string) (string, bool) {
 	if then.CustomMessage != nil {
 		return *then.CustomMessage, true
 	}

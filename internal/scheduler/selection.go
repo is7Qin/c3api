@@ -17,25 +17,26 @@ import (
 // the session is a stack value; the scheduler call takes a stack
 // pointer that never escapes (nothing retained across calls).
 func (s *Scheduler) Select(groupID int64, format domain.RequestFormat, model string) (*Selection, error) {
-	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{ApplyModelMapping: true}, RouteRefFor(groupID, string(format), model))
-	if err != nil {
-		return nil, err
-	}
-	sel, _, rerr := s.ReserveAttempt(&plan)
-	if rerr != nil {
-		return nil, rerr
-	}
-	return sel, nil
+	return s.selectAttempt(true, groupID, format, model)
 }
 
 // SelectOpaque selects from a compiled route without applying model mapping.
 func (s *Scheduler) SelectOpaque(groupID int64, format domain.RequestFormat, model string) (*Selection, error) {
-	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{ApplyModelMapping: false}, RouteRefFor(groupID, string(format), model))
+	return s.selectAttempt(false, groupID, format, model)
+}
+
+// selectAttempt is the single reservation body behind Select/SelectOpaque; the
+// only difference is whether the compiled plan applies model mapping.
+func (s *Scheduler) selectAttempt(applyMapping bool, groupID int64, format domain.RequestFormat, model string) (*Selection, error) {
+	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{ApplyModelMapping: applyMapping}, RouteRefFor(groupID, string(format), model))
 	if err != nil {
 		return nil, err
 	}
-	sel, _, reserveErr := s.ReserveAttempt(&plan)
-	return sel, reserveErr
+	sel, _, err := s.ReserveAttempt(&plan)
+	if err != nil {
+		return nil, err
+	}
+	return sel, nil
 }
 
 // LogMappedModel returns the optional mapped_model audit value. Implicit

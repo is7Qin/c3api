@@ -177,6 +177,15 @@ type Scheduler struct {
 	startOnce atomic.Bool
 	latch     *latch.LatchStore
 	health    *RuntimeHealth
+	// reserveHook is a test-only barrier seam (nil in production) invoked between
+	// the concurrency CAS and the state CAS in reserveOnView, letting tests pin
+	// that interleaving against FailAccount. Instance-scoped, so it is no longer
+	// a package-level mutable global.
+	reserveHook func()
+	// fingerprintSkips counts MarkResult/failureEvent events dropped because the
+	// account's candidate fingerprint could not be computed (missing identity
+	// fields). The error used to be swallowed into an identity-less event.
+	fingerprintSkips atomic.Uint64
 	// Compile lane (wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
 	// sources 是 Start 期结构注入的编译双源（nil = 未装配，armed 门
@@ -1015,7 +1024,13 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 		hp = &httpStatus
 	}
 	av := a.static.Load() // 静态字段视图一次取用（评审 Critical 修复）
-	fp, _ := candidateFingerprint(&av.acc)
+	fp, err := candidateFingerprint(&av.acc)
+	if err != nil {
+		// 指纹是规则 sink / persist 围栏所需的候选人身份，缺失的事件无法应用：
+		// 显式跳过并计数（此前错误被吞，投递出无身份事件）。
+		s.fingerprintSkips.Add(1)
+		return
+	}
 	ev := rule.Event{
 		AccountID:                accountID,
 		TemplateID:               av.acc.TemplateID,
@@ -1079,7 +1094,11 @@ func (s *Scheduler) failureEvent(accountID int64, kind rule.Kind, errMsg string)
 		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
 	}
 	av := a.static.Load()
-	fp, _ := candidateFingerprint(&av.acc)
+	fp, err := candidateFingerprint(&av.acc)
+	if err != nil {
+		s.fingerprintSkips.Add(1)
+		return rule.Event{AccountID: accountID, Kind: kind, ErrorMessage: errMsg}
+	}
 	return rule.Event{AccountID: accountID, TemplateID: av.acc.TemplateID, GroupID: groupIDPtr(av.eventGID()), Kind: kind, ErrorMessage: errMsg, CandidateFingerprint: fp, ExpectedIdentityRevision: av.acc.IdentityRevision}
 }
 

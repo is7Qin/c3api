@@ -159,11 +159,12 @@ func TestReserveAttemptPreservesConcurrentFailAccount(t *testing.T) {
 	// Barrier between concurrency CAS and state CAS
 	barrier := make(chan struct{})
 	unblock := make(chan struct{})
-	reserveHook = func() {
+	reserveHook := func() {
 		close(barrier)
 		<-unblock
 	}
-	defer func() { reserveHook = nil }()
+	s.reserveHook = reserveHook
+	defer func() { s.reserveHook = nil }()
 	done := make(chan *Selection, 1)
 	go func() {
 		sel, _, e := s.ReserveAttempt(&plan)

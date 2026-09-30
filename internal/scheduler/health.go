@@ -144,6 +144,23 @@ func parseGenStrict(s string) (int64, error) {
 	return v, nil
 }
 
+// redisInt64 normalizes a Redis integer reply to int64. go-redis decodes Lua
+// number replies as int64; int/int32 cover other backends and test fakes; any
+// other type (or nil) maps to 0. Single helper so the three eval-reply
+// conversions (Throttle/MarkReady/fence) cannot drift apart.
+func redisInt64(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case int:
+		return int64(n)
+	case int32:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
 const (
 	healthGenKey          = "c3api:health:generation"
 	healthRecordsHash     = "c3api:health:records"
@@ -330,7 +347,12 @@ type RuntimeHealth struct {
 	probeDone    <-chan struct{}
 	lastSyncOkMs atomic.Int64
 	syncErrors   atomic.Int64
-	lastTickOk   atomic.Bool
+	// probeErrors counts failed probe-side apply writes (MarkReady after two
+	// successes / reopen Throttle after a failed probe): a swallowed error here
+	// used to leave no trace. Unwired client (nil) makes both writes fail, which
+	// is exactly the observable seam tests exercise.
+	probeErrors atomic.Int64
+	lastTickOk  atomic.Bool
 }
 
 // NewRuntimeHealth constructs the core. members may be nil (single instance).
@@ -367,7 +389,15 @@ func (h *RuntimeHealth) currentMs() int64 {
 	return time.Now().UnixMilli()
 }
 
-// rendezvousOwner is default rendezvous (highest FNV weight) for probe owner election.
+// rendezvousOwner is the default rendezvous (highest FNV-1a weight) for probe
+// owner election. The weight is a standard FNV-1a 64-bit hash over member||key
+// using the package's single shared basis/prime (fnvOffset64/fnvPrime64), so
+// every FNV site in scheduler agrees on the same hash family.
+//
+// Fix (behavior change): the basis here was historically the truncated 19-digit
+// 1469598103934665603, which skewed the weight distribution and could elect a
+// non-canonical probe owner. Unifying on fnvOffset64 normalizes probe-owner
+// election only; ExploreHash/CacheAffinityHash already used the standard basis.
 func rendezvousOwner(key string, members []string) string {
 	if len(members) == 0 {
 		return ""
@@ -375,16 +405,15 @@ func rendezvousOwner(key string, members []string) string {
 	var best string
 	var bestScore uint64
 	for i, m := range members {
-		var hash uint64 = 1469598103934665603
+		var hash uint64 = fnvOffset64
 		for _, b := range []byte(m) {
 			hash ^= uint64(b)
-			hash *= 1099511628211
+			hash *= fnvPrime64
 		}
-		hash ^= 0
-		hash *= 1099511628211
+		hash *= fnvPrime64 // member/key separator (mirrors ExploreHash's per-field step)
 		for _, b := range []byte(key) {
 			hash ^= uint64(b)
-			hash *= 1099511628211
+			hash *= fnvPrime64
 		}
 		if i == 0 || hash > bestScore {
 			bestScore = hash
@@ -487,12 +516,7 @@ func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state Healt
 	if err != nil {
 		return 0, err
 	}
-	gen, _ := res.(int64)
-	if gen == 0 {
-		if v, ok := res.(int); ok {
-			gen = int64(v)
-		}
-	}
+	gen := redisInt64(res)
 	h.lastGen.Store(gen)
 	return gen, nil
 }
@@ -511,15 +535,7 @@ func (h *RuntimeHealth) MarkReady(ctx context.Context, key HealthKey, expectedGe
 	if err != nil {
 		return 0, err
 	}
-	var gen int64
-	switch v := res.(type) {
-	case int64:
-		gen = v
-	case int:
-		gen = int64(v)
-	case int32:
-		gen = int64(v)
-	}
+	gen := redisInt64(res)
 	if gen == 0 {
 		return 0, fmt.Errorf("health: stale generation")
 	}
@@ -813,17 +829,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			return err
 		}
 	}
-	var fenceOk int64
-	switch v := fenceRes.(type) {
-	case int64:
-		fenceOk = v
-	case int:
-		fenceOk = int64(v)
-	case int32:
-		fenceOk = int64(v)
-	default:
-		fenceOk = 0
-	}
+	fenceOk := redisInt64(fenceRes)
 	if fenceOk != 1 {
 		return fmt.Errorf("health: stale generation fence %d", candidateGen)
 	}
@@ -960,7 +966,12 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 			cnt := h.successCount[field]
 			h.mu.Unlock()
 			if cnt >= 2 {
-				_, _ = h.MarkReady(ctx, key, curGen, 30*time.Second)
+				if _, err := h.MarkReady(ctx, key, curGen, 30*time.Second); err != nil {
+					h.probeErrors.Add(1)
+					if h.log != nil {
+						h.log.Warn("health probe MarkReady failed", logx.Int64("account_id", key.AccountID), logx.Error(err))
+					}
+				}
 				h.mu.Lock()
 				delete(h.successCount, field)
 				delete(h.successGen, field)
@@ -972,7 +983,12 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 			delete(h.successGen, field)
 			h.mu.Unlock()
 			if !errors.Is(err, ErrProbeStaleRevision) {
-				_, _ = h.Throttle(ctx, key, StateOPEN, 30*time.Second)
+				if _, terr := h.Throttle(ctx, key, StateOPEN, 30*time.Second); terr != nil {
+					h.probeErrors.Add(1)
+					if h.log != nil {
+						h.log.Warn("health probe reopen throttle failed", logx.Int64("account_id", key.AccountID), logx.Error(terr))
+					}
+				}
 			}
 		}
 		h.permit <- struct{}{}
