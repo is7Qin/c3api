@@ -10,6 +10,19 @@ import (
 )
 
 func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices, rr RouteRef) (*RouteDecision, error) {
+	qcs, costKnown := compileRouteQualityCandidates(filtered, routeRC, quality, prices, rk)
+	cl := classifyRouteCandidates(qcs, costKnown)
+	exploreBP, weights, cumulative, total, exploreIDs := compileExplorePlan(len(filtered), cl)
+	fallbackIDs := compileFallbackIDs(cl.Explore, exploreIDs)
+	primaryIDs, degradedIDs := compileLaneIDs(cl.Primary, cl.Degraded)
+	return assembleRouteDecision(filtered, rk, rr, primaryIDs, degradedIDs, exploreIDs, fallbackIDs, weights, cumulative, total, exploreBP)
+}
+
+// compileRouteQualityCandidates maps every filtered candidate fact to a
+// QualityCandidate, resolving quality window counts and purchase cost (with the
+// upstream multiplier clamp and MaxInt64/zero fallbacks). costKnown[id] records
+// whether the cost came from a real priced sample.
+func compileRouteQualityCandidates(filtered []compilerCandidateFacts, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices, rk routeKey) ([]QualityCandidate, map[int64]bool) {
 	qcs := make([]QualityCandidate, 0, len(filtered))
 	costKnown := make(map[int64]bool, len(filtered))
 	for _, facts := range filtered {
@@ -59,6 +72,13 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 		costKnown[id] = known
 		qcs = append(qcs, QualityCandidate{AccountID: id, Successes: cnt.Successes, Attempts: cnt.Attempts, SumLog: cnt.SumLog, SumSq: cnt.SumSq, TTFTCount: cnt.TTFTCount, Cost: cost})
 	}
+	return qcs, costKnown
+}
+
+// classifyRouteCandidates runs the deterministic quality classification and
+// demotes any cost-unknown primary/degraded candidate into the explore set,
+// preserving the accountID ordering at each sort boundary.
+func classifyRouteCandidates(qcs []QualityCandidate, costKnown map[int64]bool) QualityClassification {
 	sort.Slice(qcs, func(i, j int) bool { return qcs[i].AccountID < qcs[j].AccountID })
 	ws := NewQualityWorkspace(len(qcs))
 	cl := NewQualityClassification(len(qcs))
@@ -88,12 +108,17 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 	cl.Primary = newPrimary
 	cl.Degraded = newDegraded
 	sort.Slice(cl.Explore, func(i, j int) bool { return cl.Explore[i].AccountID < cl.Explore[j].AccountID })
-	// Steady-state exploration share (charter): computed from the
-	// window inputs already read — eligible route candidates, unknown
-	// (low-sample, incl. cost-unknown demotees) and serving primaries.
-	// No Primary → 10000bp (all explore); unknown==0 → 100bp; cap 500bp.
-	exploreBP := ExploreBP(len(filtered), len(cl.Explore), len(cl.Primary))
-	weights := make(map[int64]int, len(cl.Explore))
+	return cl
+}
+
+// compileExplorePlan computes the steady-state exploration share and the explore
+// weight/cumulative table. Steady-state share (charter): computed from the
+// window inputs already read — eligible route candidates, unknown (low-sample,
+// incl. cost-unknown demotees) and serving primaries.
+// No Primary → 10000bp (all explore); unknown==0 → 100bp; cap 500bp.
+func compileExplorePlan(filteredCount int, cl QualityClassification) (exploreBP int, weights map[int64]int, cumulative []uint64, total uint64, exploreIDs []int64) {
+	exploreBP = ExploreBP(filteredCount, len(cl.Explore), len(cl.Primary))
+	weights = make(map[int64]int, len(cl.Explore))
 	var exploreCandidates []ExploreCandidate
 	for _, qc := range cl.Explore {
 		w, err := ExploreWeight(qc.Successes, qc.Attempts)
@@ -103,9 +128,6 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 		weights[qc.AccountID] = w
 		exploreCandidates = append(exploreCandidates, ExploreCandidate{AccountID: qc.AccountID, Weight: w})
 	}
-	var cumulative []uint64
-	var total uint64
-	var exploreIDs []int64
 	if len(exploreCandidates) > 0 {
 		tab := NewExploreTable(len(exploreCandidates))
 		if err := tab.Build(exploreCandidates); err == nil {
@@ -131,38 +153,52 @@ func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeR
 			}
 		}
 	}
-	fallbackCandidates := make([]FallbackCandidate, 0, len(cl.Explore))
-	for _, qc := range cl.Explore {
+	return exploreBP, weights, cumulative, total, exploreIDs
+}
+
+// compileFallbackIDs derives the ordered fallback account IDs from the explore
+// set, falling back to the raw explore order if FallbackTail errors.
+func compileFallbackIDs(explore []QualityCandidate, exploreIDs []int64) []int64 {
+	fallbackCandidates := make([]FallbackCandidate, 0, len(explore))
+	for _, qc := range explore {
 		fallbackCandidates = append(fallbackCandidates, FallbackCandidate{AccountID: qc.AccountID, Successes: qc.Successes, Attempts: qc.Attempts})
 	}
-	var fallbackIDs []int64
 	if len(fallbackCandidates) > 0 {
 		out, err := FallbackTail(fallbackCandidates, -1, make([]FallbackCandidate, 0, len(fallbackCandidates)))
 		if err == nil {
-			fallbackIDs = make([]int64, len(out))
+			fallbackIDs := make([]int64, len(out))
 			for i, fc := range out {
 				fallbackIDs[i] = fc.AccountID
 			}
-		} else {
-			fallbackIDs = exploreIDs
+			return fallbackIDs
 		}
-	} else {
-		fallbackIDs = []int64{}
+		return exploreIDs
 	}
+	return []int64{}
+}
+
+// compileLaneIDs extracts account IDs for the primary and degraded lanes.
+func compileLaneIDs(primary, degraded []QualityCandidate) ([]int64, []int64) {
 	var primaryIDs []int64
-	if len(cl.Primary) > 0 {
-		primaryIDs = make([]int64, len(cl.Primary))
-		for i, qc := range cl.Primary {
+	if len(primary) > 0 {
+		primaryIDs = make([]int64, len(primary))
+		for i, qc := range primary {
 			primaryIDs[i] = qc.AccountID
 		}
 	}
 	var degradedIDs []int64
-	if len(cl.Degraded) > 0 {
-		degradedIDs = make([]int64, len(cl.Degraded))
-		for i, qc := range cl.Degraded {
+	if len(degraded) > 0 {
+		degradedIDs = make([]int64, len(degraded))
+		for i, qc := range degraded {
 			degradedIDs[i] = qc.AccountID
 		}
 	}
+	return primaryIDs, degradedIDs
+}
+
+// assembleRouteDecision normalizes empty explore slices to nil, builds the cache
+// domain plan and compiled lanes, and assembles/validates the RouteDecision.
+func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr RouteRef, primaryIDs, degradedIDs, exploreIDs, fallbackIDs []int64, weights map[int64]int, cumulative []uint64, total uint64, exploreBP int) (*RouteDecision, error) {
 	if len(exploreIDs) == 0 {
 		exploreIDs = nil
 	}
