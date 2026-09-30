@@ -154,7 +154,7 @@ func (m *StreamMapper) mapMessToChat(name string, data []byte) ([]byte, bool) {
 			m.id, _ = str(msg, "id")
 			m.model, _ = str(msg, "model")
 			if u, ok := msg["usage"].(map[string]any); ok {
-				m.noteMessUsage(u, false)
+				m.setMessUsage(u)
 			}
 		}
 		return m.chatFrame(map[string]any{"role": "assistant", "content": ""}, nil, nil), false
@@ -200,7 +200,7 @@ func (m *StreamMapper) mapMessToChat(name string, data []byte) ([]byte, bool) {
 		if u, ok := ev["usage"].(map[string]any); ok {
 			m.ot = intOr0(u, "output_tokens")
 			// message_delta 带累计字段时覆盖 message_start。
-			m.noteMessUsage(u, true)
+			m.mergeMessUsage(u)
 		}
 		prompt := m.messInputTotal()
 		usage := map[string]any{

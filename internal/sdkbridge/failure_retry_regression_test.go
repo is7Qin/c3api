@@ -16,13 +16,13 @@ import (
 func TestRequeueDoesNotPanicAfterReset(t *testing.T) {
 	ResetFailureRetryForTest()
 	defer ResetFailureRetryForTest()
-	origBackoff := retryBackoff
-	origMax := retryMaxBackoff
-	retryBackoff = 50 * time.Millisecond
-	retryMaxBackoff = 100 * time.Millisecond
+	origBackoff := defaultRetryWorker.backoff
+	origMax := defaultRetryWorker.maxBackoff
+	defaultRetryWorker.backoff = 50 * time.Millisecond
+	defaultRetryWorker.maxBackoff = 100 * time.Millisecond
 	defer func() {
-		retryBackoff = origBackoff
-		retryMaxBackoff = origMax
+		defaultRetryWorker.backoff = origBackoff
+		defaultRetryWorker.maxBackoff = origMax
 	}()
 
 	store := &retryFakeStore{

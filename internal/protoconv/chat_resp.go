@@ -139,7 +139,7 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 		}
 		first = false
 		out = append(out, `"tools":[`...)
-		out = appendRespTools(out, tools)
+		out = appendToolsMapped(out, tools, toolsRespFromChat)
 		out = append(out, ']')
 	}
 	if rawNotNull(topP) {
@@ -166,7 +166,7 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 		content := m.Get("content")
 		switch {
 		case rawStrEq(role.Raw, "system"), rawStrEq(role.Raw, "developer"):
-			// system / developer → developer 消息项（文本非空才产生，contentText 语义）
+			// system / developer → developer 消息项（文本非空才产生，contentTextRaw 语义）
 			if t, ok, nonEmpty := contentTextRaw(content); ok && nonEmpty {
 				if n > 0 {
 					out = append(out, ',')
@@ -432,63 +432,6 @@ func textFormatRaw(v gjson.Result) string {
 	return ""
 }
 
-// appendRespTools resp tools 数组（转换后扁平化 function 工具）：非 function
-// 工具按规范丢弃；输出 {type:"function", name?, description?, parameters?,
-// strict?}（原字节透传）。
-func appendRespTools(out []byte, tools gjson.Result) []byte {
-	n := 0
-	tools.ForEach(func(_, tv gjson.Result) bool {
-		if !tv.IsObject() {
-			return true
-		}
-		fn := tv.Get("function")
-		if !fn.IsObject() {
-			return true
-		}
-		if n > 0 {
-			out = append(out, ',')
-		}
-		n++
-		w := 0
-		out = append(out, '{')
-		if d := fn.Get("description"); d.Type == gjson.String {
-			out = append(out, `"description":`...)
-			out = append(out, d.Raw...)
-			w++
-		}
-		if nm := fn.Get("name"); nm.Type == gjson.String {
-			if w > 0 {
-				out = append(out, ',')
-			}
-			out = append(out, `"name":`...)
-			out = append(out, nm.Raw...)
-			w++
-		}
-		if p := fn.Get("parameters"); p.Exists() && p.Type != gjson.Null {
-			if w > 0 {
-				out = append(out, ',')
-			}
-			out = append(out, `"parameters":`...)
-			out = append(out, p.Raw...)
-			w++
-		}
-		if s := fn.Get("strict"); s.Type == gjson.True || s.Type == gjson.False {
-			if w > 0 {
-				out = append(out, ',')
-			}
-			out = append(out, `"strict":`...)
-			out = append(out, s.Raw...)
-			w++
-		}
-		if w > 0 {
-			out = append(out, ',')
-		}
-		out = append(out, `"type":"function"}`...)
-		return true
-	})
-	return out
-}
-
 // chatToolChoiceRaw tool_choice 转换（字节级）：字符串 → 原样透传；
 // {type:"function", function:{name}} → {name, type:"function"}（扁平化）；
 // 其余 → nil（字段省略，与 map 版一致）。
@@ -557,7 +500,7 @@ func respToChatResponse(body []byte) ([]byte, error) {
 	out = append(out, `,"object":"chat.completion"`...)
 	if u := r.Get("usage"); u.IsObject() {
 		out = append(out, `,"usage":`...)
-		out = appendRespUsage(out, u)
+		out = appendChatUsage(out, u)
 	}
 	out = append(out, '}')
 	return out, nil
@@ -630,27 +573,29 @@ func hasRespFunctionCall(output gjson.Result) bool {
 	return found
 }
 
-// appendRespUsage resp usage → chat usage（input/output/total 同构；
-// input_tokens_details.cached_tokens > 0 → prompt_tokens_details.cached_tokens）。
-func appendRespUsage(out []byte, u gjson.Result) []byte {
+// appendChatUsage resp usage → chat usage 字节追加到 buf（input/output/total
+// 同构；input_tokens_details.cached_tokens/cache_write_tokens > 0 →
+// prompt_tokens_details）。调用方自持缓冲与截断语义：非流式直接续写输出
+// 缓冲；流式传 m.dbuf[:0] 写入复用缓冲。
+func appendChatUsage(buf []byte, u gjson.Result) []byte {
 	it := gjsonNumInt(u.Get("input_tokens"))
 	ot := gjsonNumInt(u.Get("output_tokens"))
 	tt := gjsonNumInt(u.Get("total_tokens"))
-	out = append(out, `{"completion_tokens":`...)
-	out = appendInt64(out, ot)
-	out = append(out, `,"prompt_tokens":`...)
-	out = appendInt64(out, it)
+	buf = append(buf, `{"completion_tokens":`...)
+	buf = appendInt64(buf, ot)
+	buf = append(buf, `,"prompt_tokens":`...)
+	buf = appendInt64(buf, it)
 	if d := u.Get("input_tokens_details"); d.IsObject() {
 		c := gjsonNumInt(d.Get("cached_tokens"))
 		w := gjsonNumInt(d.Get("cache_write_tokens"))
 		if c > 0 || w > 0 {
-			out = appendChatPromptDetails(out, c, w)
+			buf = appendChatPromptDetails(buf, c, w)
 		}
 	}
-	out = append(out, `,"total_tokens":`...)
-	out = appendInt64(out, tt)
-	out = append(out, '}')
-	return out
+	buf = append(buf, `,"total_tokens":`...)
+	buf = appendInt64(buf, tt)
+	buf = append(buf, '}')
+	return buf
 }
 
 // appendChatPromptDetails 向 buf 追加 prompt_tokens_details 原始字节：cached_tokens
@@ -665,29 +610,6 @@ func appendChatPromptDetails(buf []byte, cr, cc int64) []byte {
 	}
 	buf = append(buf, '}')
 	return buf
-}
-
-// contentText chat 消息 content（string 或 text 部件数组）→ 拼接文本（map 版
-// 助手，chat_mess.go 共用；字节级路径用 contentTextRaw）。
-func contentText(content any) (string, bool) {
-	switch c := content.(type) {
-	case string:
-		return c, true
-	case []any:
-		var parts []string
-		for _, p := range c {
-			if pm, ok := p.(map[string]any); ok && pm["type"] == "text" {
-				if t, ok := str(pm, "text"); ok {
-					parts = append(parts, t)
-				}
-			}
-		}
-		if len(parts) == 0 {
-			return "", false
-		}
-		return joinStrings(parts, "\n"), true
-	}
-	return "", false
 }
 
 // mapRespToChat 流式：resp SSE 事件 → chat 流（字节级：事件字段 gjson 原始
@@ -790,7 +712,7 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 			// （不是 null）。中间 delta 不写 usage:null。usage 先写入 ubuf，
 			// chatChunkFrame 会覆盖 dbuf。
 			if u := resp.Get("usage"); u.IsObject() {
-				m.appendUsageToBuf(u)
+				m.dbuf = appendChatUsage(m.dbuf[:0], u)
 				usage = append(m.ubuf[:0], m.dbuf...)
 				m.ubuf = usage
 			}
@@ -822,28 +744,6 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 		return m.buf, false
 	}
 	return nil, true
-}
-
-// appendUsageToBuf resp usage → chat usage 字节（写入复用缓冲 m.dbuf）。
-func (m *StreamMapper) appendUsageToBuf(u gjson.Result) []byte {
-	it := gjsonNumInt(u.Get("input_tokens"))
-	ot := gjsonNumInt(u.Get("output_tokens"))
-	tt := gjsonNumInt(u.Get("total_tokens"))
-	m.dbuf = append(m.dbuf[:0], `{"completion_tokens":`...)
-	m.dbuf = appendInt64(m.dbuf, ot)
-	m.dbuf = append(m.dbuf, `,"prompt_tokens":`...)
-	m.dbuf = appendInt64(m.dbuf, it)
-	if d := u.Get("input_tokens_details"); d.IsObject() {
-		c := gjsonNumInt(d.Get("cached_tokens"))
-		w := gjsonNumInt(d.Get("cache_write_tokens"))
-		if c > 0 || w > 0 {
-			m.dbuf = appendChatPromptDetails(m.dbuf, c, w)
-		}
-	}
-	m.dbuf = append(m.dbuf, `,"total_tokens":`...)
-	m.dbuf = appendInt64(m.dbuf, tt)
-	m.dbuf = append(m.dbuf, '}')
-	return m.dbuf
 }
 
 // 结束原因字面量。包级常量，避免每条流的 completed 帧再分配。

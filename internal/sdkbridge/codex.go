@@ -34,6 +34,12 @@ type Codex struct {
 	// transport SDK HTTPClient 上游 transport（构造期传入；nil = SDK 默认——
 	// MaxIdleConnsPerHost=2，补压测连接风暴根因，生产传 httpx 网关同形态）。
 	transport http.RoundTripper
+	// usage 额度快照拉取的实例级节流与时间参数（S8——原包级全局挂实例，
+	// 消除跨调用面共享的可变包级状态）：usageSem 有界并发 semaphore；usageTTL
+	// 快照 TTL；usageCooldown 失败冷却。三者构造期定值，测试按实例调整。
+	usageSem      chan struct{}
+	usageTTL      time.Duration
+	usageCooldown time.Duration
 }
 
 // (SetTransport setter deleted by hygiene: transport is a construction-time
@@ -117,12 +123,15 @@ type codexEntry struct {
 // 三者皆为构造期依赖，一次给齐——构造后不存在“半装配”的 Codex。
 func NewCodex(failure FailureHandler, transport http.RoundTripper, rotation RotationDeps) *Codex {
 	return &Codex{
-		failure:   failure,
-		transport: transport,
-		rotate:    rotation.Store,
-		inval:     rotation.InvalidateSnapshot,
-		log:       rotation.Log,
-		entries:   make(map[int64]*codexEntry),
+		failure:       failure,
+		transport:     transport,
+		rotate:        rotation.Store,
+		inval:         rotation.InvalidateSnapshot,
+		log:           rotation.Log,
+		entries:       make(map[int64]*codexEntry),
+		usageSem:      make(chan struct{}, usageFetchConcurrency),
+		usageTTL:      defaultUsageSnapshotTTL,
+		usageCooldown: defaultUsageCooldown,
 	}
 }
 
@@ -406,26 +415,25 @@ var ErrAuthExpired = errors.New("codex: usage auth expired")
 // RefreshError 等一律保守归本类；upstream_error 映射输入）。
 var ErrUpstream = errors.New("codex: usage upstream error")
 
-// usageFetchSem 快照拉取包级 semaphore（容量 8——所有调用面共享节流：管理面
+// usageFetchConcurrency 快照拉取有界并发上限（所有调用面共享节流：管理面
 // 几百账号懒加载 + 未来路由面共用同一上限，防 OpenAI 429；只限并发不限速率
-// ——速率上限由失败冷却封顶）。
-// 测试勿 t.Parallel（包级状态串扰——测试可调包级 var/共享 semaphore）。
-var usageFetchSem = make(chan struct{}, usageFetchConcurrency)
-
+// ——速率上限由失败冷却封顶）。实例级 semaphore（Codex.usageSem）容量即此值，
+// 挂实例消除包级可变状态（S8）。
 const usageFetchConcurrency = 8
 
-// usageSnapshotTTL 快照 TTL（5min 慢变量——上游分钟级更新；滚动查看零上游）。
-// var（非 const）——测试注入可调值。测试勿 t.Parallel（包级状态串扰）。
-var usageSnapshotTTL = 5 * time.Minute
-
-// usageCooldown 失败冷却（60s——冷却内直接返回分类错误零上游，封顶重试率
-// ≤1 次/账号/分钟；不缓存错误体，冷却后重试）。测试勿 t.Parallel（包级状态
-// 串扰）。
-var usageCooldown = 60 * time.Second
+// 快照 TTL 与失败冷却默认值（挂 Codex 实例字段 usageTTL/usageCooldown——见
+// NewCodex）。
+const (
+	// defaultUsageSnapshotTTL 快照 TTL（5min 慢变量——上游分钟级更新；滚动查看零上游）。
+	defaultUsageSnapshotTTL = 5 * time.Minute
+	// defaultUsageCooldown 失败冷却（60s——冷却内直接返回分类错误零上游，封顶
+	// 重试率 ≤1 次/账号/分钟；不缓存错误体，冷却后重试）。
+	defaultUsageCooldown = 60 * time.Second
+)
 
 // GetUsageSnapshot 账号 codex 额度快照（ChatGPT 面 wham/usage）：cred →
 // 缓存条目（entryFor——sig 比对/重建，重建时 usage/usageAt/usageErrAt 随新
-// 条目一并清除）→ 5min TTL 命中直接返回（零上游）；未命中 → 包级 semaphore
+// 条目一并清除）→ 5min TTL 命中直接返回（零上游）；未命中 → 实例 semaphore
 // （容量 8，有界并发）→ SDK GetUsage（e.client 复用——固定 SDK 官方端点
 // https://chatgpt.com/backend-api/wham/usage，网关零拼装，test transport 仅 host 重写保留官方 path）→ 白名单收敛映射（fromSDKUsage）→ 写
 // e.usage + e.usageAt。失败 → 写 e.usageErrAt（60s 冷却）。
@@ -459,11 +467,11 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 		return nil, err
 	}
 	select {
-	case usageFetchSem <- struct{}{}:
+	case a.usageSem <- struct{}{}:
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	defer func() { <-usageFetchSem }()
+	defer func() { <-a.usageSem }()
 	// 双检：semaphore 等待期间并发请求可能已拉取成功/失败（TTL/冷却语义保持
 	// ——不重复拉取、不重复报错）。
 	if s, ok := a.snapshotCached(e); ok {
@@ -501,7 +509,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if e := a.entries[accountID]; e != nil && e.usage != nil && time.Since(e.usageAt) < usageSnapshotTTL {
+	if e := a.entries[accountID]; e != nil && e.usage != nil && time.Since(e.usageAt) < a.usageTTL {
 		return e.usage, true
 	}
 	return nil, false
@@ -511,7 +519,7 @@ func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, 
 func (a *Codex) snapshotCached(e *codexEntry) (*domain.CodexUsageSnapshot, bool) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if e.usage != nil && time.Since(e.usageAt) < usageSnapshotTTL {
+	if e.usage != nil && time.Since(e.usageAt) < a.usageTTL {
 		return e.usage, true
 	}
 	return nil, false
@@ -523,7 +531,7 @@ func (a *Codex) snapshotCached(e *codexEntry) (*domain.CodexUsageSnapshot, bool)
 func (a *Codex) snapshotCooldown(e *codexEntry) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if !e.usageErrAt.IsZero() && time.Since(e.usageErrAt) < usageCooldown {
+	if !e.usageErrAt.IsZero() && time.Since(e.usageErrAt) < a.usageCooldown {
 		return e.usageErr
 	}
 	return nil
