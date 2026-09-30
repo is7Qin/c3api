@@ -146,7 +146,7 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 			m.id, _ = str(msg, "id")
 			m.model, _ = str(msg, "model")
 			if u, ok := msg["usage"].(map[string]any); ok {
-				m.noteMessUsage(u, false)
+				m.setMessUsage(u)
 			}
 		}
 		return EncodeFrame("response.created", map[string]any{
@@ -222,7 +222,7 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 	case "message_delta":
 		if u, ok := ev["usage"].(map[string]any); ok {
 			m.ot = intOr0(u, "output_tokens")
-			m.noteMessUsage(u, true)
+			m.mergeMessUsage(u)
 		}
 		if d, ok := ev["delta"].(map[string]any); ok {
 			m.reason, _ = str(d, "stop_reason")

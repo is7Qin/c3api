@@ -167,8 +167,8 @@ func (p *holPublisher) PublishGroups(_ context.Context, gids []int64) {
 
 func TestRetryHOLFairness_SecondTaskNotStarved(t *testing.T) {
 	ResetFailureRetryForTest()
-	retryBackoff = 20 * time.Millisecond
-	retryMaxBackoff = 40 * time.Millisecond
+	defaultRetryWorker.backoff = 20 * time.Millisecond
+	defaultRetryWorker.maxBackoff = 40 * time.Millisecond
 
 	tplA := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}
 	tplB := &domain.Template{ID: 10, BaseURL: "https://api.openai.com", CredentialType: credential.TypeCodexOAuth}

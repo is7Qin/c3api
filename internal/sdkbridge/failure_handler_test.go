@@ -161,10 +161,10 @@ func newCodexAccountForRetry(id int64, rev int64) *domain.Account {
 
 func TestFailureRetry_NonblockingAndProcessLifetime(t *testing.T) {
 	ResetFailureRetryForTest()
-	oldBackoff, oldMax := retryBackoff, retryMaxBackoff
-	defer func() { retryBackoff, retryMaxBackoff = oldBackoff, oldMax }()
-	retryBackoff = 10 * time.Millisecond
-	retryMaxBackoff = 20 * time.Millisecond
+	oldBackoff, oldMax := defaultRetryWorker.backoff, defaultRetryWorker.maxBackoff
+	defer func() { defaultRetryWorker.backoff, defaultRetryWorker.maxBackoff = oldBackoff, oldMax }()
+	defaultRetryWorker.backoff = 10 * time.Millisecond
+	defaultRetryWorker.maxBackoff = 20 * time.Millisecond
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: newCodexAccountForRetry(7, 1)},
 		failSeq:  []error{errors.New("transient db down")},
@@ -198,9 +198,9 @@ func TestFailureRetry_NonblockingAndProcessLifetime(t *testing.T) {
 
 func TestFailureRetry_NoRetryAfterShutdown(t *testing.T) {
 	ResetFailureRetryForTest()
-	oldBackoff := retryBackoff
-	defer func() { retryBackoff = oldBackoff }()
-	retryBackoff = 10 * time.Millisecond
+	oldBackoff := defaultRetryWorker.backoff
+	defer func() { defaultRetryWorker.backoff = oldBackoff }()
+	defaultRetryWorker.backoff = 10 * time.Millisecond
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: newCodexAccountForRetry(7, 1)},
 		failSeq:  []error{errors.New("transient")},
@@ -267,7 +267,7 @@ func TestFailure_StaleFencedByCanonicalFingerprint(t *testing.T) {
 
 func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	ResetFailureRetryForTest()
-	retryBackoff = 10 * time.Millisecond
+	defaultRetryWorker.backoff = 10 * time.Millisecond
 	acct := newCodexAccountForRetry(7, 5)
 	store := &retryFakeStore{
 		accounts: map[int64]*domain.Account{7: acct},
@@ -279,9 +279,9 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrStaleFailureRevision))
 	// stale should not be retried: callCount should be 1 (no retry)
-	retryMu.Lock()
-	qlen := len(retryQueue)
-	retryMu.Unlock()
+	defaultRetryWorker.mu.Lock()
+	qlen := len(defaultRetryWorker.queue)
+	defaultRetryWorker.mu.Unlock()
 	require.Equal(t, 0, qlen, "stale must not enqueue retry")
 	ResetFailureRetryForTest()
 }

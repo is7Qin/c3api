@@ -78,7 +78,7 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 	if rawNotNull(temperature) {
 		out = appendField(out, &first, "temperature", temperature)
 	}
-	if tc := toolChoiceToMessRaw(toolChoice, true); tc != "" {
+	if tc := chatToolChoiceToMess(toolChoice); tc != "" {
 		out = appendField(out, &first, "tool_choice", tc)
 	}
 	if tools.IsArray() {
@@ -87,7 +87,7 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 		}
 		first = false
 		out = append(out, `"tools":[`...)
-		out = appendChatToolsMess(out, tools)
+		out = appendToolsMapped(out, tools, toolsMessFromChat)
 		out = append(out, ']')
 	}
 	if rawNotNull(topP) {
@@ -269,70 +269,160 @@ func chatStopRaw(v gjson.Result) string {
 	return ""
 }
 
-func appendChatToolsMess(out []byte, tools gjson.Result) []byte {
+// toolsFieldMap 描述一次 tools 数组转换的源/目标字段差异（§4 流 E2：四个
+// append*Tools* 收敛为 appendToolsMapped 的映射表）。源一律读
+// description/name，参数 schema 源键 inSchemaKey、目标片段 outSchemaFrag；
+// schemaBeforeName 决定参数与 name 的输出顺序（Mess 目标 schema 在前、resp
+// 目标 name 在前——逐字节保持原输出）。
+type toolsFieldMap struct {
+	nestedInput      bool   // 源工具嵌套在 "function" 下（OpenAI chat 形态）
+	typeFunctionGate bool   // 源工具须 type=="function" 才转换（resp 源）
+	inSchemaKey      string // 源参数 schema 字段名（parameters / input_schema）
+	outSchemaFrag    string // 目标参数 schema 片段（含引号冒号，如 `"input_schema":`）
+	schemaObjectOnly bool   // schema 门控：true=IsObject；false=Exists 且非 null
+	schemaBeforeName bool   // 参数 schema 先于 name 输出
+	emitType         bool   // 目标追加 "type":"function"
+	copyStrict       bool   // 目标透传 strict
+}
+
+var (
+	// chat tools（{function:{...}}）→ Mess tools（{name,description,input_schema}）。
+	toolsMessFromChat = toolsFieldMap{nestedInput: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, schemaObjectOnly: true, schemaBeforeName: true}
+	// Mess tools（{name,description,input_schema}）→ resp tools（{...,type:"function"}）。
+	toolsRespFromMess = toolsFieldMap{inSchemaKey: "input_schema", outSchemaFrag: `"parameters":`, schemaObjectOnly: true, emitType: true}
+	// chat tools（{function:{...}}）→ resp tools（strict 透传）。
+	toolsRespFromChat = toolsFieldMap{nestedInput: true, inSchemaKey: "parameters", outSchemaFrag: `"parameters":`, emitType: true, copyStrict: true}
+	// resp tools（{type:"function",...}）→ Mess tools。
+	toolsMessFromResp = toolsFieldMap{typeFunctionGate: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, schemaObjectOnly: true, schemaBeforeName: true}
+)
+
+// appendToolsMapped tools 数组转换（映射表驱动）：四个方向的 tools 处理收敛
+// 于此，源/目标键差异全由 m 表达，输出逐字节等价于原各方向内联版本。
+func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 	n := 0
 	tools.ForEach(func(_, tv gjson.Result) bool {
-		fn := tv.Get("function")
-		if !fn.IsObject() {
+		if !tv.IsObject() {
+			return true
+		}
+		src := tv
+		if m.nestedInput {
+			if src = tv.Get("function"); !src.IsObject() {
+				return true
+			}
+		} else if m.typeFunctionGate && !rawStrEq(tv.Get("type").Raw, "function") {
 			return true
 		}
 		out, n = appendComma(out, n)
 		out = append(out, '{')
 		wrote := false
-		if d := fn.Get("description"); d.Type == gjson.String {
+		if d := src.Get("description"); d.Type == gjson.String {
 			out = append(out, `"description":`...)
 			out = append(out, d.Raw...)
 			wrote = true
 		}
-		if p := fn.Get("parameters"); p.IsObject() {
+		writeName := func() {
+			if name := src.Get("name"); name.Type == gjson.String {
+				if wrote {
+					out = append(out, ',')
+				}
+				out = append(out, `"name":`...)
+				out = append(out, name.Raw...)
+				wrote = true
+			}
+		}
+		writeSchema := func() {
+			schema := src.Get(m.inSchemaKey)
+			ok := schema.IsObject()
+			if !m.schemaObjectOnly {
+				ok = schema.Exists() && schema.Type != gjson.Null
+			}
+			if ok {
+				if wrote {
+					out = append(out, ',')
+				}
+				out = append(out, m.outSchemaFrag...)
+				out = append(out, schema.Raw...)
+				wrote = true
+			}
+		}
+		if m.schemaBeforeName {
+			writeSchema()
+			writeName()
+		} else {
+			writeName()
+			writeSchema()
+		}
+		if m.copyStrict {
+			if s := src.Get("strict"); s.Type == gjson.True || s.Type == gjson.False {
+				if wrote {
+					out = append(out, ',')
+				}
+				out = append(out, `"strict":`...)
+				out = append(out, s.Raw...)
+				wrote = true
+			}
+		}
+		if m.emitType {
 			if wrote {
 				out = append(out, ',')
 			}
-			out = append(out, `"input_schema":`...)
-			out = append(out, p.Raw...)
-			wrote = true
+			out = append(out, `"type":"function"}`...)
+		} else {
+			out = append(out, '}')
 		}
-		if name := fn.Get("name"); name.Type == gjson.String {
-			if wrote {
-				out = append(out, ',')
-			}
-			out = append(out, `"name":`...)
-			out = append(out, name.Raw...)
-		}
-		out = append(out, '}')
 		return true
 	})
 	return out
 }
 
-func toolChoiceToMessRaw(v gjson.Result, nested bool) string {
-	if !v.Exists() || v.Type == gjson.Null {
-		return ""
+// messToolChoiceString tool_choice 字符串形态 → Messages 对象字面量；非字符串
+// 或未知值 → ok=false（Messages 没有字符串形式）。Chat/Responses 同名映射。
+func messToolChoiceString(v gjson.Result) (string, bool) {
+	if !v.Exists() || v.Type == gjson.Null || v.Type != gjson.String {
+		return "", false
 	}
-	if v.Type == gjson.String {
-		switch v.Str {
-		case "auto":
-			return `{"type":"auto"}`
-		case "none":
-			return `{"type":"none"}`
-		case "required", "any":
-			return `{"type":"any"}`
-		}
-		return ""
+	switch v.Str {
+	case "auto":
+		return `{"type":"auto"}`, true
+	case "none":
+		return `{"type":"none"}`, true
+	case "required", "any":
+		return `{"type":"any"}`, true
 	}
-	if !v.IsObject() || !rawStrEq(v.Get("type").Raw, "function") {
-		return ""
-	}
-	var name gjson.Result
-	if nested {
-		name = v.Get("function.name")
-	} else {
-		name = v.Get("name")
-	}
+	return "", false
+}
+
+// messToolChoiceFromName 由已定位的 name 结果组装 Messages tool_choice 对象；
+// name 非字符串 → 丢弃。
+func messToolChoiceFromName(name gjson.Result) string {
 	if name.Type != gjson.String {
 		return ""
 	}
 	return `{"name":` + name.Raw + `,"type":"tool"}`
+}
+
+// chatToolChoiceToMess Chat tool_choice → Messages 对象：字符串同名映射；
+// {type:"function",function:{name}} → {name,type:"tool"}（嵌套名）。
+func chatToolChoiceToMess(v gjson.Result) string {
+	if s, ok := messToolChoiceString(v); ok {
+		return s
+	}
+	if !v.IsObject() || !rawStrEq(v.Get("type").Raw, "function") {
+		return ""
+	}
+	return messToolChoiceFromName(v.Get("function.name"))
+}
+
+// respToolChoiceToMess Responses tool_choice → Messages 对象：字符串同名映射；
+// {type:"function",name} → {name,type:"tool"}（扁平名）。
+func respToolChoiceToMess(v gjson.Result) string {
+	if s, ok := messToolChoiceString(v); ok {
+		return s
+	}
+	if !v.IsObject() || !rawStrEq(v.Get("type").Raw, "function") {
+		return ""
+	}
+	return messToolChoiceFromName(v.Get("name"))
 }
 
 func messToRespRequest(body []byte) ([]byte, error) {
@@ -410,7 +500,7 @@ func messToRespRequest(body []byte) ([]byte, error) {
 		}
 		first = false
 		out = append(out, `"tools":[`...)
-		out = appendMessToolsResp(out, tools)
+		out = appendToolsMapped(out, tools, toolsRespFromMess)
 		out = append(out, ']')
 	}
 	if rawNotNull(topP) {
@@ -589,45 +679,6 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 	return append(out, ']')
 }
 
-func appendMessToolsResp(out []byte, tools gjson.Result) []byte {
-	n := 0
-	tools.ForEach(func(_, tv gjson.Result) bool {
-		if !tv.IsObject() {
-			return true
-		}
-		out, n = appendComma(out, n)
-		out = append(out, '{')
-		wrote := false
-		if d := tv.Get("description"); d.Type == gjson.String {
-			out = append(out, `"description":`...)
-			out = append(out, d.Raw...)
-			wrote = true
-		}
-		if name := tv.Get("name"); name.Type == gjson.String {
-			if wrote {
-				out = append(out, ',')
-			}
-			out = append(out, `"name":`...)
-			out = append(out, name.Raw...)
-			wrote = true
-		}
-		if schema := tv.Get("input_schema"); schema.IsObject() {
-			if wrote {
-				out = append(out, ',')
-			}
-			out = append(out, `"parameters":`...)
-			out = append(out, schema.Raw...)
-			wrote = true
-		}
-		if wrote {
-			out = append(out, ',')
-		}
-		out = append(out, `"type":"function"}`...)
-		return true
-	})
-	return out
-}
-
 func messToolChoiceRaw(v gjson.Result) string {
 	if !v.Exists() || v.Type == gjson.Null {
 		return ""
@@ -730,7 +781,7 @@ func respToMessRequest(body []byte) ([]byte, error) {
 	if rawNotNull(temperature) {
 		out = appendField(out, &first, "temperature", temperature)
 	}
-	if tc := toolChoiceToMessRaw(toolChoice, false); tc != "" {
+	if tc := respToolChoiceToMess(toolChoice); tc != "" {
 		out = appendField(out, &first, "tool_choice", tc)
 	}
 	if tools.IsArray() {
@@ -739,7 +790,7 @@ func respToMessRequest(body []byte) ([]byte, error) {
 		}
 		first = false
 		out = append(out, `"tools":[`...)
-		out = appendRespToolsMess(out, tools)
+		out = appendToolsMapped(out, tools, toolsMessFromResp)
 		out = append(out, ']')
 	}
 	if rawNotNull(topP) {
@@ -876,39 +927,4 @@ func appendRespMessMessages(out []byte, first *bool, input gjson.Result) []byte 
 		closeAsst()
 	}
 	return append(out, ']')
-}
-
-func appendRespToolsMess(out []byte, tools gjson.Result) []byte {
-	n := 0
-	tools.ForEach(func(_, tv gjson.Result) bool {
-		if !rawStrEq(tv.Get("type").Raw, "function") {
-			return true
-		}
-		out, n = appendComma(out, n)
-		out = append(out, '{')
-		wrote := false
-		if d := tv.Get("description"); d.Type == gjson.String {
-			out = append(out, `"description":`...)
-			out = append(out, d.Raw...)
-			wrote = true
-		}
-		if p := tv.Get("parameters"); p.IsObject() {
-			if wrote {
-				out = append(out, ',')
-			}
-			out = append(out, `"input_schema":`...)
-			out = append(out, p.Raw...)
-			wrote = true
-		}
-		if name := tv.Get("name"); name.Type == gjson.String {
-			if wrote {
-				out = append(out, ',')
-			}
-			out = append(out, `"name":`...)
-			out = append(out, name.Raw...)
-		}
-		out = append(out, '}')
-		return true
-	})
-	return out
 }

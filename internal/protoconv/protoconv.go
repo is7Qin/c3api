@@ -17,7 +17,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/sserelay"
@@ -160,15 +159,17 @@ func (m *StreamMapper) messInputTotal() int64 {
 	return respInputGross(m.it, m.cached, m.cacheCreate)
 }
 
-// noteMessUsage 记录 Messages usage。partial 时只覆盖出现的累计字段
-// （message_delta 覆盖 message_start）；否则三项都写入（缺失为 0）。
-func (m *StreamMapper) noteMessUsage(u map[string]any, partial bool) {
-	if !partial {
-		m.it = intOr0(u, "input_tokens")
-		m.cached = intOr0(u, "cache_read_input_tokens")
-		m.cacheCreate = intOr0(u, "cache_creation_input_tokens")
-		return
-	}
+// setMessUsage 全量记录 Messages usage（message_start 首帧）：三项都写入
+// （缺失为 0）。
+func (m *StreamMapper) setMessUsage(u map[string]any) {
+	m.it = intOr0(u, "input_tokens")
+	m.cached = intOr0(u, "cache_read_input_tokens")
+	m.cacheCreate = intOr0(u, "cache_creation_input_tokens")
+}
+
+// mergeMessUsage 合并记录 Messages usage（message_delta 覆盖 message_start）：
+// 只覆盖出现的累计字段。
+func (m *StreamMapper) mergeMessUsage(u map[string]any) {
 	if _, ok := u["input_tokens"]; ok {
 		m.it = intOr0(u, "input_tokens")
 	}
@@ -351,108 +352,6 @@ func pass(dst, src map[string]any, keys ...string) {
 			dst[k] = v
 		}
 	}
-}
-
-// blockText 提取 anthropic 内容块 content（string 或 text 块数组 → 拼接文本）。
-// 只认 type:text。Responses function_call_output 的 input_text 不走这里。
-func blockText(content any) (string, bool) {
-	return blockTextTypes(content, "text")
-}
-
-// respFCOutputText Responses function_call_output.output：字符串，或
-// input_text / text 数组（图片与文件丢弃）。分隔符 \n。
-func respFCOutputText(content any) (string, bool) {
-	return blockTextTypes(content, "input_text", "text")
-}
-
-func blockTextTypes(content any, types ...string) (string, bool) {
-	switch c := content.(type) {
-	case string:
-		return c, true
-	case []any:
-		var parts []string
-		for _, p := range c {
-			pm, ok := p.(map[string]any)
-			if !ok {
-				continue
-			}
-			typ, _ := pm["type"].(string)
-			if !stringIn(typ, types) {
-				continue
-			}
-			if t, ok := str(pm, "text"); ok {
-				parts = append(parts, t)
-			}
-		}
-		if len(parts) == 0 {
-			return "", false
-		}
-		return joinStrings(parts, "\n"), true
-	}
-	return "", false
-}
-
-func stringIn(s string, types []string) bool {
-	for _, t := range types {
-		if s == t {
-			return true
-		}
-	}
-	return false
-}
-
-// toolChoiceStringToMess Chat/Responses 的 tool_choice 字符串 → Messages 对象。
-// required → any；auto/none 同名。未知字符串丢弃（Messages 没有字符串形式）。
-func toolChoiceStringToMess(s string) (any, bool) {
-	switch s {
-	case "auto", "none":
-		return map[string]any{"type": s}, true
-	case "required", "any":
-		return map[string]any{"type": "any"}, true
-	default:
-		return nil, false
-	}
-}
-
-// imageSourceFromURL http(s) URL 或 data:image/(jpeg|png|gif|webp);base64 载荷
-// → Messages image 块。其它 scheme、缺 url、无法识别的 media type 丢弃。
-func imageSourceFromURL(raw string) (map[string]any, bool) {
-	if raw == "" {
-		return nil, false
-	}
-	if strings.HasPrefix(raw, "https://") || strings.HasPrefix(raw, "http://") {
-		return map[string]any{
-			"type":   "image",
-			"source": map[string]any{"type": "url", "url": raw},
-		}, true
-	}
-	const pfx = "data:image/"
-	if !strings.HasPrefix(raw, pfx) {
-		return nil, false
-	}
-	rest := raw[len(pfx):]
-	semi := strings.IndexByte(rest, ';')
-	if semi <= 0 {
-		return nil, false
-	}
-	media := rest[:semi]
-	switch media {
-	case "jpeg", "png", "gif", "webp":
-	default:
-		return nil, false
-	}
-	const b64 = ";base64,"
-	if !strings.HasPrefix(rest[semi:], b64) {
-		return nil, false
-	}
-	return map[string]any{
-		"type": "image",
-		"source": map[string]any{
-			"type":       "base64",
-			"media_type": "image/" + media,
-			"data":       rest[semi+len(b64):],
-		},
-	}, true
 }
 
 // messStopToChatFinish Messages stop_reason → Chat finish_reason。

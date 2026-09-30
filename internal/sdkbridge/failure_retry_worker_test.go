@@ -22,9 +22,9 @@ func TestFailureRetryWorkerLifecycle(t *testing.T) {
 	require.Equal(t, "sdk-failure-retry", w.Name())
 
 	require.NoError(t, w.Start(context.Background()))
-	retryMu.Lock()
-	q, ctxLive := retryQueue, retryCtx
-	retryMu.Unlock()
+	w.mu.Lock()
+	q, ctxLive := w.queue, w.ctx
+	w.mu.Unlock()
 	require.NotNil(t, q, "Start must own the retry queue")
 	require.NotNil(t, ctxLive, "Start must own the retry context")
 	require.NoError(t, ctxLive.Err())
@@ -33,9 +33,9 @@ func TestFailureRetryWorkerLifecycle(t *testing.T) {
 	defer cancel()
 	require.NoError(t, w.Close(closeCtx), "Close must join the retry loop within budget")
 
-	retryMu.Lock()
-	done := retryDone
-	retryMu.Unlock()
+	w.mu.Lock()
+	done := w.done
+	w.mu.Unlock()
 	require.NotNil(t, done)
 	select {
 	case <-done:
@@ -82,14 +82,14 @@ func TestFailureRetryWorkerCloseJoinsBackoffGoroutine(t *testing.T) {
 
 	// 前序测试会改写全局 backoff 旋钮且不还原——本测试自钉双值（backoff 必须
 	// 大于 watchdog 探测窗，max 不得把 backoff 截回去）。
-	oldBackoff, oldMax := retryBackoff, retryMaxBackoff
-	retryBackoff = 300 * time.Millisecond
-	retryMaxBackoff = 5 * time.Second
-	t.Cleanup(func() { retryBackoff, retryMaxBackoff = oldBackoff, oldMax })
+	oldBackoff, oldMax := w.backoff, w.maxBackoff
+	w.backoff = 300 * time.Millisecond
+	w.maxBackoff = 5 * time.Second
+	t.Cleanup(func() { w.backoff, w.maxBackoff = oldBackoff, oldMax })
 
-	requeueWithBackoff(failureRetryTask{accountID: 1, fingerprint: "fp", identityRevision: 1})
+	w.requeueWithBackoff(failureRetryTask{accountID: 1, fingerprint: "fp", identityRevision: 1})
 	waited := make(chan struct{})
-	go func() { retryWG.Wait(); close(waited) }()
+	go func() { w.wg.Wait(); close(waited) }()
 	select {
 	case <-waited:
 		require.FailNow(t, "requeueWithBackoff must track its goroutine in the join group")
@@ -98,9 +98,9 @@ func TestFailureRetryWorkerCloseJoinsBackoffGoroutine(t *testing.T) {
 
 	// 模拟一条尚未结束的在途重投（与真实 goroutine 同一 join 组）。
 	var once sync.Once
-	release := func() { once.Do(retryWG.Done) }
+	release := func() { once.Do(w.wg.Done) }
 	defer release()
-	retryWG.Add(1)
+	w.wg.Add(1)
 	closeCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
 	require.ErrorIs(t, w.Close(closeCtx), context.DeadlineExceeded,

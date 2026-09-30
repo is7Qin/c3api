@@ -209,8 +209,14 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 			deps.Latch.Clear(accountID)
 			if deps.Publisher != nil {
 				if gg, ok := deps.Store.(groupGetter); ok {
-					gids, _ := gg.GetAccountGroups(ctx, accountID)
-					if len(gids) > 0 {
+					gids, gerr := gg.GetAccountGroups(ctx, accountID)
+					if gerr != nil {
+						// 组失效是 best-effort：取组失败不阻断失效链（账号已判死），
+						// 但不得静默吞错——记一条 Warn 供排查。
+						if deps.Log != nil {
+							deps.Log.Warn("account groups lookup failed", logx.Int64("account_id", accountID), logx.Error(gerr))
+						}
+					} else if len(gids) > 0 {
 						deps.Publisher.PublishGroups(context.WithoutCancel(ctx), gids)
 					}
 				}

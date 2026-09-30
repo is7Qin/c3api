@@ -174,7 +174,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	e, err = a.entryFor(cred)
 	require.NoError(t, err)
 	a.mu.Lock()
-	e.usageAt = time.Now().Add(-usageSnapshotTTL - time.Second)
+	e.usageAt = time.Now().Add(-a.usageTTL - time.Second)
 	a.mu.Unlock()
 
 	got, err := a.GetUsageSnapshot(ctx, cred)
@@ -245,7 +245,7 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 	require.Nil(t, e.usage, "失败不写快照缓存")
 	require.Equal(t, ErrUpstream, e.usageErr, "冷却只存分类哨兵")
 	// 冷却后重试（时间注入：拨旧 usageErrAt 越过冷却——禁 sleep）
-	e.usageErrAt = time.Now().Add(-usageCooldown - time.Second)
+	e.usageErrAt = time.Now().Add(-a.usageCooldown - time.Second)
 	a.mu.Unlock()
 
 	snap, err := a.GetUsageSnapshot(ctx, cred)
@@ -421,7 +421,7 @@ func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
 	a.mu.Lock()
-	e.usageAt = time.Now().Add(-usageSnapshotTTL - time.Second)
+	e.usageAt = time.Now().Add(-a.usageTTL - time.Second)
 	a.mu.Unlock()
 
 	_, err = a.GetUsageSnapshot(ctx, cred)
@@ -527,7 +527,7 @@ func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	e, err := a.entryFor(base)
 	require.NoError(t, err)
 	a.mu.Lock()
-	e.usageAt = time.Now().Add(-usageSnapshotTTL - time.Second)
+	e.usageAt = time.Now().Add(-a.usageTTL - time.Second)
 	a.mu.Unlock()
 	snap, err = a.GetUsageSnapshot(ctx, changed)
 	require.NoError(t, err)
