@@ -163,15 +163,7 @@ func (s *Scheduler) compileOnce() {
 	if mode == fireFull {
 		dv, err = s.compiler.Compile(in)
 		if err == nil {
-			// Full-fidelity path: every route recomputed — the view is whole.
-			if dv != nil {
-				dv.whole = true
-			}
-			total := 0
-			if target.routeIndex != nil {
-				total = target.routeIndex.totalRoutes
-			}
-			s.recordCompileFallback(fullCause, len(fire.scopes), len(fire.affected), total)
+			s.markFullAndRecord(dv, fullCause, fire, target)
 		}
 	} else {
 		dv, err = s.compileScopedRoutes(fire)
@@ -179,15 +171,7 @@ func (s *Scheduler) compileOnce() {
 			dv, err = s.compiler.Compile(in)
 			tookFull = true
 			if err == nil {
-				// Full-fidelity path: every route recomputed — the view is whole.
-				if dv != nil {
-					dv.whole = true
-				}
-				total := 0
-				if target.routeIndex != nil {
-					total = target.routeIndex.totalRoutes
-				}
-				s.recordCompileFallback(fallbackCompilerSeam, len(fire.scopes), len(fire.affected), total)
+				s.markFullAndRecord(dv, fallbackCompilerSeam, fire, target)
 			}
 		}
 	}
@@ -233,6 +217,21 @@ func (s *Scheduler) compileOnce() {
 		s.lastDecisionBytes = append(s.lastDecisionBytes[:0], b...)
 		s.lastCompiledStatic = target
 	}
+}
+
+// markFullAndRecord finalizes a successful full-fidelity compile: it flags the
+// decision view whole and records the fallback with its cause. Shared by the
+// native full path (cause=fullCause) and the scoped-unsupported seam fallback
+// (cause=fallbackCompilerSeam) so both exit points cannot drift.
+func (s *Scheduler) markFullAndRecord(dv *DecisionView, cause string, fire *compileFire, target *StaticView) {
+	if dv != nil {
+		dv.whole = true
+	}
+	total := 0
+	if target.routeIndex != nil {
+		total = target.routeIndex.totalRoutes
+	}
+	s.recordCompileFallback(cause, len(fire.scopes), len(fire.affected), total)
 }
 
 // incidentEvaluator builds the lane's per-fire incident closure over the

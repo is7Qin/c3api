@@ -30,10 +30,10 @@ type CacheDomainAccount struct {
 }
 
 func CacheAffinityHash(key string) uint64 {
-	h := uint64(14695981039346656037)
+	h := uint64(fnvOffset64)
 	for i := 0; i < len(key); i++ {
 		h ^= uint64(key[i])
-		h *= 1099511628211
+		h *= fnvPrime64
 	}
 	return h
 }

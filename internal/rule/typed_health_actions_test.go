@@ -4,6 +4,7 @@ package rule
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -400,4 +401,43 @@ func TestRuleFailAccount_BasicAndExpectedRevision(t *testing.T) {
 	sink.mu.Lock()
 	require.Equal(t, int64(42), sink.fails[0].Event.ExpectedIdentityRevision)
 	sink.mu.Unlock()
+}
+
+// --- Sink failure accounting (D4) ---
+
+// failingFailSink returns an error from FailAccount so the engine's
+// count-and-warn path is exercised (fakeHealthSink always succeeds).
+type failingFailSink struct {
+	mu    sync.Mutex
+	calls int
+}
+
+func (f *failingFailSink) Throttle(Event, domain.ThrottleAction) error { return nil }
+
+func (f *failingFailSink) FailAccount(Event) error {
+	f.mu.Lock()
+	f.calls++
+	f.mu.Unlock()
+	return fmt.Errorf("fail sink boom")
+}
+
+// TestRuleFailAccountCountsSinkFailure pins D4: a FailAccount sink error is
+// counted (like the Throttle path) instead of being swallowed, and is logged.
+func TestRuleFailAccountCountsSinkFailure(t *testing.T) {
+	sink := &failingFailSink{}
+	e := New(Config{EventQueueSize: 16, PersistQueueSize: 16}, newFakeRuleStore(), nil, sink, nil)
+	e.rulesMu.Lock()
+	e.rules = []compiledRule{{Rule: domain.Rule{Name: "fail", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{FailAccount: true}}}}
+	e.rulesMu.Unlock()
+	logger, out := newTestRuleLogger(t)
+	e.log = logger
+
+	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)})
+
+	require.Equal(t, 1, sink.calls)
+	require.Equal(t, int64(1), e.PersistFailures(), "FailAccount sink failure must be counted")
+	require.NoError(t, logger.Sync())
+	b, err := os.ReadFile(out)
+	require.NoError(t, err)
+	require.Contains(t, string(b), "health fail-account failed")
 }

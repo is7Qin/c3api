@@ -238,22 +238,7 @@ func parseRequestFormat(s string) (domain.RequestFormat, bool) {
 }
 
 func operationTagForFormat(format string) domain.OperationTag {
-	switch domain.RequestFormat(format) {
-	case domain.FormatOpenAIChat:
-		return domain.OpChatCompletions
-	case domain.FormatOpenAIResponses:
-		return domain.OpResponses
-	case domain.FormatOpenAIResponsesWS:
-		return domain.OpResponsesWS
-	case domain.FormatAnthropic:
-		return domain.OpAnthropicMessages
-	case domain.FormatOpenAIImages:
-		return domain.OpImagesGenerations
-	case domain.FormatOpenAISearch:
-		return domain.OpSearch
-	default:
-		return ""
-	}
+	return formatSpecs[domain.RequestFormat(format)].operation
 }
 
 // RoutingView explicitly holds immutable *StaticView and *DecisionView.

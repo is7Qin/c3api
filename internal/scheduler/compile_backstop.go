@@ -54,11 +54,6 @@ func snapshotToProbeCounts(s domain.CompileStaleness) compileProbeCounts {
 	}
 }
 
-// (SetStalenessProbe setter deleted by hygiene: probe supplier arrives via
-// Config.StalenessProbe at construction. A post-construction setter for a
-// construction-time dependency is temporal coupling — the object is incomplete
-// between New and Set. Nil field = unwired, same fail-safe as before.)
-
 // publishedViewWhole reports whether the published decision is whole (every
 // route recomputed by a full fire). A missing view or missing decision counts
 // as not-whole. Lock-free: DecisionView is immutable after publish. Owner:

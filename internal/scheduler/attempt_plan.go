@@ -125,6 +125,9 @@ func (a Attempt) Validate() error {
 
 type AttemptReservation func(accountID int64) bool
 
+// fnvOffset64 / fnvPrime64 are the standard FNV-1a 64-bit offset basis and
+// prime. Single source of truth for every FNV site in this package
+// (ExploreHash, CacheAffinityHash, rendezvousOwner).
 const fnvOffset64 = 14695981039346656037
 const fnvPrime64 = 1099511628211
 

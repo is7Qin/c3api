@@ -25,6 +25,6 @@ func TestRuleEngineStats(t *testing.T) {
 	st = e.Stats().(RuleEngineStats)
 	require.Equal(t, 2, st.Queued, "队列占用 = 实际积压")
 	require.Equal(t, int64(3), st.AdmissionDropped, "溢出丢弃 = 5 投 2 收")
-	require.Equal(t, ruleDropWarnThreshold, st.DropWarnThreshold)
+	require.Equal(t, e.dropWarnThreshold, st.DropWarnThreshold)
 	require.Equal(t, uint64(3), e.dropped.Load(), "Stats 与内部计数同源")
 }

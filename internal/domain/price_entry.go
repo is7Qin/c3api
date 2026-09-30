@@ -71,8 +71,8 @@ type PriceVariant struct {
 	Model                string
 	Seq                  int
 	ServiceTier          *string // equality
-	CtxMin               *int64  // promptTokens >= min
-	CtxMax               *int64  // promptTokens < max (spec says containment; use >=min && <max or <=max? spec says ctx_min/ctx_max contain; define >=min && <=max for simplicity, test will clarify)
+	CtxMin               *int64  // promptTokens >= min (inclusive lower bound)
+	CtxMax               *int64  // promptTokens < max (exclusive upper bound)
 	TimeStart            *string // HH:MM本地时间
 	TimeEnd              *string
 	DowMask              *int

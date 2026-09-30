@@ -197,14 +197,26 @@ type StatsKind struct {
 	Tables map[StatsStorage][]RetentionTable
 }
 
+// zonedStatsKind returns the shared "zoned" kind shape: cube+raw candidate
+// storages with their caps/tables. A function (not a shared value) so every
+// entry owns independent maps/slices.
+func zonedStatsKind() StatsKind {
+	return StatsKind{
+		Grouping: GroupingZoned,
+		Storages: []StatsStorage{StatsStorageCube, StatsStorageRaw},
+		CostCap:  map[StatsStorage]time.Duration{StatsStorageCube: MaxCubeSpan, StatsStorageRaw: MaxGroupedRawSpan},
+		Tables:   map[StatsStorage][]RetentionTable{StatsStorageCube: {TableUsageStats}, StatsStorageRaw: {TableUsageLogs, TableErrLogs}},
+	}
+}
+
 // StatsKinds KIND 矩阵 as code（spec §4.1 逐行；每种读形状声明一次，再无处写分支）。
 // 判定（Admit）、执行选择（service 的 Cube/Raw 调用）、能力报告（P4 端点）全部
 // 读这一份内存——数值不一致在构造上不可能。
 var StatsKinds = map[StatsKindID]StatsKind{
-	KindTrend:       {Grouping: GroupingZoned, Storages: []StatsStorage{StatsStorageCube, StatsStorageRaw}, CostCap: map[StatsStorage]time.Duration{StatsStorageCube: MaxCubeSpan, StatsStorageRaw: MaxGroupedRawSpan}, Tables: map[StatsStorage][]RetentionTable{StatsStorageCube: {TableUsageStats}, StatsStorageRaw: {TableUsageLogs, TableErrLogs}}},
-	KindEntityTrend: {Grouping: GroupingZoned, Storages: []StatsStorage{StatsStorageCube, StatsStorageRaw}, CostCap: map[StatsStorage]time.Duration{StatsStorageCube: MaxCubeSpan, StatsStorageRaw: MaxGroupedRawSpan}, Tables: map[StatsStorage][]RetentionTable{StatsStorageCube: {TableUsageStats}, StatsStorageRaw: {TableUsageLogs, TableErrLogs}}},
-	KindSummary:     {Grouping: GroupingZoned, Storages: []StatsStorage{StatsStorageCube, StatsStorageRaw}, CostCap: map[StatsStorage]time.Duration{StatsStorageCube: MaxCubeSpan, StatsStorageRaw: MaxGroupedRawSpan}, Tables: map[StatsStorage][]RetentionTable{StatsStorageCube: {TableUsageStats}, StatsStorageRaw: {TableUsageLogs, TableErrLogs}}},
-	KindDays:        {Grouping: GroupingZoned, Storages: []StatsStorage{StatsStorageCube, StatsStorageRaw}, CostCap: map[StatsStorage]time.Duration{StatsStorageCube: MaxCubeSpan, StatsStorageRaw: MaxGroupedRawSpan}, Tables: map[StatsStorage][]RetentionTable{StatsStorageCube: {TableUsageStats}, StatsStorageRaw: {TableUsageLogs, TableErrLogs}}},
+	KindTrend:       zonedStatsKind(),
+	KindEntityTrend: zonedStatsKind(),
+	KindSummary:     zonedStatsKind(),
+	KindDays:        zonedStatsKind(),
 	KindTop:         {Grouping: GroupingNone, Storages: []StatsStorage{StatsStorageCube}, CostCap: map[StatsStorage]time.Duration{StatsStorageCube: MaxCubeSpan}, Tables: map[StatsStorage][]RetentionTable{StatsStorageCube: {TableUsageStats}}},
 	KindTTFTSketch:  {Grouping: GroupingNone, Storages: []StatsStorage{StatsStorageCube}, CostCap: map[StatsStorage]time.Duration{StatsStorageCube: MaxCubeSpan}, Tables: map[StatsStorage][]RetentionTable{StatsStorageCube: {TableUsageStats}}},
 	KindTTFTExact:   {Grouping: GroupingNone, Storages: []StatsStorage{StatsStorageRaw}, CostCap: map[StatsStorage]time.Duration{StatsStorageRaw: MaxExactTTFTSpan}, Tables: map[StatsStorage][]RetentionTable{StatsStorageRaw: {TableUsageLogs}}},

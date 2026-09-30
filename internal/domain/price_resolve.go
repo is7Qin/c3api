@@ -50,9 +50,7 @@ func ResolveEntryPrices(entry *PriceEntry, variants []*PriceVariant, tier string
 					if val < 0 {
 						return
 					}
-					// 复制新指针，禁止改写快照内分量（并发读者可见性）
-					nv := val
-					*p = &nv
+					setInt64Ptr(p, &val) // copy new pointer; never alias snapshot-owned memory
 				}
 			}
 			applyMult(&rp.InputPerM)
@@ -64,41 +62,27 @@ func ResolveEntryPrices(entry *PriceEntry, variants []*PriceVariant, tier string
 			applyMult(&rp.ImgOutTokPerM)
 			applyMult(&rp.PricePerImage)
 		}
-		if v.SetInputPerM != nil {
-			nv := *v.SetInputPerM
-			rp.InputPerM = &nv
-		}
-		if v.SetOutputPerM != nil {
-			nv := *v.SetOutputPerM
-			rp.OutputPerM = &nv
-		}
-		if v.SetCacheReadPerM != nil {
-			nv := *v.SetCacheReadPerM
-			rp.CacheReadPerM = &nv
-		}
-		if v.SetCacheCreationPerM != nil {
-			nv := *v.SetCacheCreationPerM
-			rp.CacheWritePerM = &nv
-		}
-		if v.SetPricePerCall != nil {
-			nv := *v.SetPricePerCall
-			rp.PricePerCall = &nv
-		}
-		if v.SetImgInTokPerM != nil {
-			nv := *v.SetImgInTokPerM
-			rp.ImgInTokPerM = &nv
-		}
-		if v.SetImgOutTokPerM != nil {
-			nv := *v.SetImgOutTokPerM
-			rp.ImgOutTokPerM = &nv
-		}
-		if v.SetPricePerImage != nil {
-			nv := *v.SetPricePerImage
-			rp.PricePerImage = &nv
-		}
+		setInt64Ptr(&rp.InputPerM, v.SetInputPerM)
+		setInt64Ptr(&rp.OutputPerM, v.SetOutputPerM)
+		setInt64Ptr(&rp.CacheReadPerM, v.SetCacheReadPerM)
+		setInt64Ptr(&rp.CacheWritePerM, v.SetCacheCreationPerM)
+		setInt64Ptr(&rp.PricePerCall, v.SetPricePerCall)
+		setInt64Ptr(&rp.ImgInTokPerM, v.SetImgInTokPerM)
+		setInt64Ptr(&rp.ImgOutTokPerM, v.SetImgOutTokPerM)
+		setInt64Ptr(&rp.PricePerImage, v.SetPricePerImage)
 		break
 	}
 	return rp, true
+}
+
+// setInt64Ptr points *dst at a fresh copy of *src; nil src leaves dst untouched.
+// Copying (never aliasing src) keeps the resolved snapshot immutable for
+// concurrent readers.
+func setInt64Ptr(dst **int64, src *int64) {
+	if src != nil {
+		nv := *src
+		*dst = &nv
+	}
 }
 
 // variantMatches 变体条件匹配：全 nil = 通配；非 nil 条件全过才命中。

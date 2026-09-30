@@ -5,8 +5,6 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-var reserveHook func() // ponytail: test hook for race barrier between concurrency CAS and state CAS
-
 // selectSessionForView binds a compiled route to one already-loaded immutable
 // routing root. An exact route miss falls back to the compiled default bucket
 // (model ""). The session is a stack value — never boxed.
@@ -165,8 +163,8 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		if !a.runtime.concurrency.CompareAndSwap(cur, cur+1) {
 			return false
 		}
-		if reserveHook != nil {
-			reserveHook()
+		if s.reserveHook != nil {
+			s.reserveHook()
 		}
 		used := s.timeNow()
 		for {

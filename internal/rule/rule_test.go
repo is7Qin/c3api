@@ -631,11 +631,8 @@ func TestReloadRulesAdapter(t *testing.T) {
 // 丢弃累计 ≥ 阈值 → Warn 恰好一次（带累计数）；队列排空（Flush）边沿回落 →
 // 再次风暴再次 Warn（每风暴一次，不刷屏——风暴期 12k 条刷屏不复现）。
 func TestEnqueueDropWarnEdge(t *testing.T) {
-	old := ruleDropWarnThreshold
-	ruleDropWarnThreshold = 50
-	t.Cleanup(func() { ruleDropWarnThreshold = old })
-
 	e := New(Config{EventQueueSize: 8}, newFakeRuleStore(), nil, nil, nil)
+	e.dropWarnThreshold = 50
 	logger, out := newTestRuleLogger(t)
 	e.log = logger
 

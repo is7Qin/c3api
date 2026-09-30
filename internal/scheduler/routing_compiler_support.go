@@ -19,23 +19,28 @@ func qualityClassHexForWithOp(format domain.RequestFormat, model string, op doma
 	return domain.QualityClassIDHex(id)
 }
 
+// formatSpec is the single per-RequestFormat dispatch record: it binds the
+// canonical caller kind and the operation(s) a format maps to. One table,
+// consulted by callerKindForFormat (quality class), operationTagForFormat
+// (route class / RouteRef) and operationTagsForFormat (compile fan-out), so the
+// three views cannot drift apart.
+type formatSpec struct {
+	callerKind      domain.CallerKind
+	operation       domain.OperationTag   // primary op ("" = unsupported format)
+	extraOperations []domain.OperationTag // additional compile ops (images edits)
+}
+
+var formatSpecs = map[domain.RequestFormat]formatSpec{
+	domain.FormatOpenAIChat:        {callerKind: domain.CallerChat, operation: domain.OpChatCompletions},
+	domain.FormatOpenAIResponses:   {callerKind: domain.CallerResponses, operation: domain.OpResponses},
+	domain.FormatOpenAIResponsesWS: {callerKind: domain.CallerWS, operation: domain.OpResponsesWS},
+	domain.FormatAnthropic:         {callerKind: domain.CallerAnthropic, operation: domain.OpAnthropicMessages},
+	domain.FormatOpenAIImages:      {callerKind: domain.CallerImages, operation: domain.OpImagesGenerations, extraOperations: []domain.OperationTag{domain.OpImagesEdits}},
+	domain.FormatOpenAISearch:      {callerKind: domain.CallerSearch, operation: domain.OpSearch},
+}
+
 func callerKindForFormat(f domain.RequestFormat) domain.CallerKind {
-	switch f {
-	case domain.FormatOpenAIChat:
-		return domain.CallerChat
-	case domain.FormatOpenAIResponses:
-		return domain.CallerResponses
-	case domain.FormatOpenAIResponsesWS:
-		return domain.CallerWS
-	case domain.FormatAnthropic:
-		return domain.CallerAnthropic
-	case domain.FormatOpenAIImages:
-		return domain.CallerImages
-	case domain.FormatOpenAISearch:
-		return domain.CallerSearch
-	default:
-		return ""
-	}
+	return formatSpecs[f].callerKind
 }
 
 func tplSupportsFormat(tpl *domain.Template, format domain.RequestFormat) bool {

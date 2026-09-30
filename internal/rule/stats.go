@@ -26,7 +26,7 @@ func (e *RuleEngine) Stats() any {
 	return RuleEngineStats{
 		Queued:            len(e.ch),
 		QueueCap:          cap(e.ch),
-		DropWarnThreshold: ruleDropWarnThreshold,
+		DropWarnThreshold: e.dropWarnThreshold,
 		AdmissionDropped:  int64(e.dropped.Load()),
 		MatchedActions:    int64(e.matched.Load()),
 		PersistQueued:     int(e.persistPending.Load()),
