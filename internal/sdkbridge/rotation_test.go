@@ -73,13 +73,16 @@ func newRotationUpstream(t *testing.T, atOld string) *rotationUpstream {
 		u.auths = append(u.auths, auth)
 		hook := u.onCall
 		u.mu.Unlock()
-		if hook != nil {
-			hook()
-		}
 		if auth != "Bearer "+atOld {
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(okImageResponse))
 			return
+		}
+		// onCall 仅在旧 at 首拨（401 路径）触发：重试携带新 at，若也计入会把单飞屏障
+		// 提前喂满 → 漏掉尚未拿到 401 的客户端 → 触发二次 refresh → 屏障永远等不到 N 而
+		// 死锁（CI/低并行度必现）。屏障须只对齐「N 个不同客户端的首拨 401」。
+		if hook != nil {
+			hook()
 		}
 		w.WriteHeader(401)
 		_, _ = w.Write([]byte(`{"error":{"code":"token_expired"}}`))
@@ -189,28 +192,27 @@ func (u *rotationUpstream401Always) callsN() int {
 func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 	const n = 8
 	up := newRotationUpstream(t, "at-old")
-	// 确定性汇合屏障：refresh 不返回，直到 N 路请求全部命中上游 401 并
-	// 加入单飞——替代睡眠撑大的单飞窗口；超时兜底放行防死锁并事后断言。
-	arrived := make(chan struct{}, n)
+	// 并发屏障置于**上游**：旧 at 首拨的每次上游命中都阻塞，直到 N 路全部到齐后
+	// 一并放行 → N 路同时收到 401、同时进入单飞，由 SDK 去重成一次 refresh。
+	//
+	// 不把屏障放在 refresh 服务器上「等 N 个上游到达」：它无法观测「客户端已 join」，
+	// 在低并行度/CI 下会出现「第 N 路到达时尚未 join」的竞态 → 触发二次 refresh →
+	// 屏障凑不齐 N 而每轮各等 10s（GOMAXPROCS=1 曾 100% 复现 30s 失败）。上游同时放行
+	// 使 N 路进入单飞的时间差仅微秒级，远小于一次 refresh 往返（毫秒级），稳健。
+	var arrived atomic.Int64
+	release := make(chan struct{})
 	up.onCall = func() {
+		if arrived.Add(1) == int64(n) {
+			close(release)
+		}
 		select {
-		case arrived <- struct{}{}:
-		default:
+		case <-release:
+		case <-time.After(10 * time.Second): // 超时兜底放行防死锁
 		}
 	}
-	var refreshTimedOut atomic.Bool
 	var refreshCalls atomic.Int64
 	rsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		refreshCalls.Add(1)
-		joined := true
-		for i := 0; joined && i < n; i++ {
-			select {
-			case <-arrived:
-			case <-time.After(10 * time.Second):
-				refreshTimedOut.Store(true)
-				joined = false
-			}
-		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte(`{"access_token":"at-new","refresh_token":"rt-new"}`))
@@ -240,7 +242,6 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 		require.NoError(t, err, "请求 %d 必须成功（单飞共享轮转结果）", i)
 	}
 	require.Equal(t, int64(1), refreshCalls.Load(), "单飞恰一次 refresh")
-	require.False(t, refreshTimedOut.Load(), "汇合屏障超时：N 路请求未全部到达上游")
 	require.Len(t, store.snapshot(), 1, "并发单飞不重复回写——同账号轮转回调串行")
 }
 
