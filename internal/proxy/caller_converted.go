@@ -275,10 +275,10 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 
 // callConvertedCodexResponses 协议转换路径命中 codex 凭证类型 + 目标协议 =
 // openai-responses 时的上游调用：镜像 callCodexResponses 的入口前置（501 / ext
-// 缺失语义与直连一致），再调 codex resp core——mapDir = 转换方向（响应经
-// protoconv 反向映射回客户端协议），logFormat = 客户端协议（clientAndTargetOf
-// 的 client 侧——与转换路径其余分支一致；计费不读 format）。outcome 取 codex
-// 口径（CallerCodexHTTP / OpResponses，见 codexDispatchBase）。
+// 缺失语义与直连一致），再调 codex resp core——注入协议转换 output（响应经
+// protoconv 反向映射回客户端协议 + 客户端模型回填；日志 Format 由 output 自报 =
+// clientAndTargetOf 的 client 侧——与转换路径其余分支一致；计费不读 format）。
+// outcome 取 codex 口径（CallerCodexHTTP / OpResponses，见 codexDispatchBase）。
 func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, body []byte, stream bool, dir domain.ProtocolConvert) (int, []byte, bool, error) {
 	client, _ := clientAndTargetOf(dir)
 	// 客户端请求模型（日志/回填口径）：转换后请求体经 ConvertRequest 保持 model。
@@ -303,10 +303,11 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 		return 0, nil, false, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
+	cm := sel.ClientResponseModel(reqModel)
 	if stream {
-		return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, dir, client)
+		return p.streamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
 	}
-	return p.nonstreamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, dir, client)
+	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
 }
 
 func convertedOpTag(dir domain.ProtocolConvert) OperationTag {
