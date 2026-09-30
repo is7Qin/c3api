@@ -637,63 +637,123 @@ func (h *RuntimeHealth) ViewRunID() string {
 // Candidate generation stored only after all cleanup and view publication succeed; cleanup failure leaves old curGen/view unchanged.
 // Read actual Redis run_id and compare with previous immutable view runID; retention/probe transition based on run-change event, not test-mutated field.
 // Same-run empty may clear READY/missing; run-change repeated empty retains OPEN/RETRY until original ExpiresAt then PROBING until real probe result.
+//
+// Sync 只做「命名阶段编排」：各阶段抽取为未导出方法，调用顺序、返回值、Redis
+// 往返、锁边界与 syncHook/runIDHook 调用时机与次数逐字保持拆分前行为。
 func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	if h.client == nil {
 		return nil
 	}
-	genBeforeStr, err := h.client.Get(ctx, healthGenKey).Result()
-	var genBefore int64
-	if err != nil {
-		if err == redis.Nil {
-			genBefore = 0
-		} else {
-			return err
-		}
-	} else {
-		genBefore, err = parseGenStrict(genBeforeStr)
-		if err != nil {
-			return err
-		}
-	}
-	var runID string
-	if h.runIDHook != nil {
-		runID, err = h.runIDHook(ctx)
-		if err != nil {
-			return err
-		}
-	} else {
-		infoStr, err := h.client.Info(ctx, "replication").Result()
-		if err != nil {
-			fallback, ferr := h.client.Info(ctx).Result()
-			if ferr != nil {
-				return err
-			}
-			infoStr = fallback
-		}
-		for _, line := range strings.Split(infoStr, "\n") {
-			line = strings.TrimSpace(line)
-			if strings.HasPrefix(line, "run_id:") {
-				runID = strings.TrimSpace(strings.TrimPrefix(line, "run_id:"))
-				break
-			}
-			if strings.HasPrefix(line, "master_replid:") && runID == "" {
-				runID = strings.TrimSpace(strings.TrimPrefix(line, "master_replid:"))
-			}
-		}
-	}
-	members, err := h.client.ZRange(ctx, healthActiveZSet, 0, -1).Result()
+	genBefore, err := h.syncReadGen(ctx)
 	if err != nil {
 		return err
 	}
-	records := make(map[HealthKey]healthEntry)
-	var staleActive []string
+	runID, err := h.syncResolveRunID(ctx)
+	if err != nil {
+		return err
+	}
+	members, err := h.syncReadActiveZSet(ctx)
+	if err != nil {
+		return err
+	}
 	nowMs := h.currentMs()
 	prevForExpiry := h.view.Load()
+	records, staleActive, err := h.syncBuildRecords(ctx, members, nowMs, prevForExpiry)
+	if err != nil {
+		return err
+	}
+	tombMembers, staleTomb, err := h.syncReadTombstones(ctx)
+	if err != nil {
+		return err
+	}
+	if h.syncHook != nil {
+		h.syncHook("beforeGenAfter")
+	}
+	genAfter, err := h.syncReadGen(ctx)
+	if err != nil {
+		return err
+	}
+	if genBefore != genAfter {
+		return fmt.Errorf("health: stale generation %d != %d", genBefore, genAfter)
+	}
+	candidateGen := genAfter
+
+	if h.syncHook != nil {
+		h.syncHook("beforeCleanup")
+	}
+	if err := h.syncCleanup(ctx, staleActive, staleTomb, candidateGen); err != nil {
+		return err
+	}
+
+	if h.syncHook != nil {
+		h.syncHook("beforePublish")
+	}
+	if err := h.syncFence(ctx, candidateGen); err != nil {
+		return err
+	}
+
+	h.syncPublish(records, candidateGen, runID, nowMs, tombMembers, staleTomb)
+	return nil
+}
+
+// syncReadGen reads the global health generation key, normalizing a missing key
+// (redis.Nil) to 0 and strictly parsing any present value.
+func (h *RuntimeHealth) syncReadGen(ctx context.Context) (int64, error) {
+	genStr, err := h.client.Get(ctx, healthGenKey).Result()
+	if err != nil {
+		if err == redis.Nil {
+			return 0, nil
+		}
+		return 0, err
+	}
+	return parseGenStrict(genStr)
+}
+
+// syncResolveRunID resolves the current Redis run_id, preferring the injected
+// runIDHook and otherwise parsing INFO (replication, fallback plain INFO).
+func (h *RuntimeHealth) syncResolveRunID(ctx context.Context) (string, error) {
+	if h.runIDHook != nil {
+		return h.runIDHook(ctx)
+	}
+	infoStr, err := h.client.Info(ctx, "replication").Result()
+	if err != nil {
+		fallback, ferr := h.client.Info(ctx).Result()
+		if ferr != nil {
+			return "", err
+		}
+		infoStr = fallback
+	}
+	var runID string
+	for _, line := range strings.Split(infoStr, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "run_id:") {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "run_id:"))
+			break
+		}
+		if strings.HasPrefix(line, "master_replid:") && runID == "" {
+			runID = strings.TrimSpace(strings.TrimPrefix(line, "master_replid:"))
+		}
+	}
+	return runID, nil
+}
+
+// syncReadActiveZSet reads the active health ZSET membership.
+func (h *RuntimeHealth) syncReadActiveZSet(ctx context.Context) ([]string, error) {
+	return h.client.ZRange(ctx, healthActiveZSet, 0, -1).Result()
+}
+
+// syncBuildRecords loads every active record HASH into the immutable view map,
+// collecting stale members (missing HASH or unparsable field). prevForExpiry
+// carries prior expiry for generation-stable entries; nowMs fixes the expiry
+// clock for the whole pass.
+func (h *RuntimeHealth) syncBuildRecords(ctx context.Context, members []string, nowMs int64, prevForExpiry *healthView) (map[HealthKey]healthEntry, []string, error) {
+	records := make(map[HealthKey]healthEntry)
+	var staleActive []string
 	for _, field := range members {
 		recKey := healthRecordPrefix + field
 		m, err := h.client.HGetAll(ctx, recKey).Result()
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if len(m) == 0 {
 			staleActive = append(staleActive, field)
@@ -719,30 +779,30 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 		}
 		genStr := m["gen"]
 		if genStr == "" {
-			return fmt.Errorf("health: missing generation for %s", field)
+			return nil, nil, fmt.Errorf("health: missing generation for %s", field)
 		}
 		gen, err := parseGenStrict(genStr)
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		revStr := strings.TrimSpace(m["rev"])
 		if revStr == "" {
-			return fmt.Errorf("health: missing rev for %s", field)
+			return nil, nil, fmt.Errorf("health: missing rev for %s", field)
 		}
 		rev, err := parseGenStrict(revStr)
 		if err != nil {
-			return fmt.Errorf("health: malformed rev for %s: %w", field, err)
+			return nil, nil, fmt.Errorf("health: malformed rev for %s: %w", field, err)
 		}
 		ttlStr := strings.TrimSpace(m["ttl"])
 		if ttlStr == "" {
-			return fmt.Errorf("health: missing ttl for %s", field)
+			return nil, nil, fmt.Errorf("health: missing ttl for %s", field)
 		}
 		ttlMs, err := parseGenStrict(ttlStr)
 		if err != nil {
-			return fmt.Errorf("health: malformed ttl for %s: %w", field, err)
+			return nil, nil, fmt.Errorf("health: malformed ttl for %s: %w", field, err)
 		}
 		if ttlMs <= 0 {
-			return fmt.Errorf("health: invalid ttl %d for %s", ttlMs, field)
+			return nil, nil, fmt.Errorf("health: invalid ttl %d for %s", ttlMs, field)
 		}
 		expiresAt := nowMs + ttlMs
 		updatedAt := nowMs
@@ -755,46 +815,33 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 		}
 		records[k] = healthEntry{Key: k, State: st, Generation: gen, Revision: rev, UpdatedAt: updatedAt, TTLms: ttlMs, ExpiresAt: expiresAt}
 	}
+	return records, staleActive, nil
+}
+
+// syncReadTombstones reads the tombstone HASH and collects tomb entries whose
+// per-key marker key is already gone (stale).
+func (h *RuntimeHealth) syncReadTombstones(ctx context.Context) (map[string]string, []string, error) {
 	tombMembers, err := h.client.HGetAll(ctx, healthTombstoneHash).Result()
 	if err != nil && err != redis.Nil {
-		return err
+		return nil, nil, err
 	}
 	var staleTomb []string
 	for field := range tombMembers {
 		tombKey := healthTombstonePrefix + field
 		exists, err := h.client.Exists(ctx, tombKey).Result()
 		if err != nil {
-			return err
+			return nil, nil, err
 		}
 		if exists == 0 {
 			staleTomb = append(staleTomb, field)
 		}
 	}
-	if h.syncHook != nil {
-		h.syncHook("beforeGenAfter")
-	}
-	genAfterStr, err := h.client.Get(ctx, healthGenKey).Result()
-	var genAfter int64
-	if err != nil {
-		if err == redis.Nil {
-			genAfter = 0
-		} else {
-			return err
-		}
-	} else {
-		genAfter, err = parseGenStrict(genAfterStr)
-		if err != nil {
-			return err
-		}
-	}
-	if genBefore != genAfter {
-		return fmt.Errorf("health: stale generation %d != %d", genBefore, genAfter)
-	}
-	candidateGen := genAfter
+	return tombMembers, staleTomb, nil
+}
 
-	if h.syncHook != nil {
-		h.syncHook("beforeCleanup")
-	}
+// syncCleanup removes stale active/tombstone members via cleanupLua, bounded by
+// healthCleanupBound per category; both categories use the same candidateGen fence.
+func (h *RuntimeHealth) syncCleanup(ctx context.Context, staleActive, staleTomb []string, candidateGen int64) error {
 	if len(staleActive) > 0 {
 		if len(staleActive) > healthCleanupBound {
 			staleActive = staleActive[:healthCleanupBound]
@@ -817,10 +864,11 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 			}
 		}
 	}
+	return nil
+}
 
-	if h.syncHook != nil {
-		h.syncHook("beforePublish")
-	}
+// syncFence verifies the candidate generation is still current via fenceLua.
+func (h *RuntimeHealth) syncFence(ctx context.Context, candidateGen int64) error {
 	fenceRes, err := h.client.Eval(ctx, fenceLua, []string{healthGenKey}, fmt.Sprintf("%d", candidateGen)).Result()
 	if err != nil {
 		if err == redis.Nil {
@@ -833,7 +881,13 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	if fenceOk != 1 {
 		return fmt.Errorf("health: stale generation fence %d", candidateGen)
 	}
+	return nil
+}
 
+// syncPublish performs the run-change/retention/probe transition and stores the
+// new immutable view plus curGen/runID. It never fails; every branch stores a
+// view (empty, retained, or the fresh records map).
+func (h *RuntimeHealth) syncPublish(records map[HealthKey]healthEntry, candidateGen int64, runID string, nowMs int64, tombMembers map[string]string, staleTomb []string) {
 	prevView := h.view.Load()
 	prevRunID := ""
 	if prevView != nil {
@@ -857,7 +911,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 					if runID != "" {
 						h.runID = runID
 					}
-					return nil
+					return
 				}
 			}
 			staleTombSet := make(map[string]struct{}, len(staleTomb))
@@ -902,7 +956,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 				if runID != "" {
 					h.runID = runID
 				}
-				return nil
+				return
 			}
 		}
 		newView := &healthView{entries: make(map[HealthKey]healthEntry), gen: candidateGen, runID: runID}
@@ -911,7 +965,7 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 		if runID != "" {
 			h.runID = runID
 		}
-		return nil
+		return
 	}
 	newView := &healthView{entries: records, gen: candidateGen, runID: runID}
 	h.view.Store(newView)
@@ -919,7 +973,6 @@ func (h *RuntimeHealth) Sync(ctx context.Context) error {
 	if runID != "" {
 		h.runID = runID
 	}
-	return nil
 }
 
 // probeTick performs one probe cycle: owner check via rendezvous, one permit, two current-gen successes READY, failure reopen.
