@@ -446,12 +446,7 @@ type codexDirectOutput struct {
 	started bool
 }
 
-func (o *codexDirectOutput) begin() {
-	if !o.started {
-		beginSSE(o.w)
-		o.started = true
-	}
-}
+func (o *codexDirectOutput) begin() { beginSSEOnce(o.w, &o.started) }
 
 func (o *codexDirectOutput) Frame(raw []byte) (bool, error) {
 	o.begin()
@@ -490,12 +485,7 @@ func newCodexConvertedOutput(w http.ResponseWriter, dir domain.ProtocolConvert, 
 	return &codexConvertedOutput{w: w, dir: dir, clientModel: clientModel}
 }
 
-func (o *codexConvertedOutput) begin() {
-	if !o.started {
-		beginSSE(o.w)
-		o.started = true
-	}
-}
+func (o *codexConvertedOutput) begin() { beginSSEOnce(o.w, &o.started) }
 
 func (o *codexConvertedOutput) Frame(raw []byte) (bool, error) {
 	if o.mapper == nil {
@@ -553,6 +543,15 @@ var (
 func beginSSE(w http.ResponseWriter) {
 	writeSSEHeaders(w)
 	w.WriteHeader(http.StatusOK)
+}
+
+// beginSSEOnce 幂等提交 SSE 头：首个确写帧/End 时调用一次，之后置 sent 短路。
+// codexDirectOutput 与 codexConvertedOutput 的自管头提交共用此单一实现。
+func beginSSEOnce(w http.ResponseWriter, sent *bool) {
+	if !*sent {
+		beginSSE(w)
+		*sent = true
+	}
 }
 
 // writeCodexSSEFrame 逐帧重帧写出（`data: <payload>\n\n` + flush——SDK
