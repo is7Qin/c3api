@@ -124,6 +124,92 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	defer p.auth.Release(rm.meta, level)
 	groupID := rm.meta.GroupID
 
+	reqModel, stream, body, ok := p.readAndParseFormatBody(format, w, r, rm, reqID, groupID, start)
+	if !ok {
+		return
+	}
+
+	// 硬续接（仅 Responses）：previous_response_id 把派生钉死在产出该响应的
+	// 账号上。普通请求（无续接键、其余全部格式）零 Redis。解析在计划就绪后
+	// 执行（route class 取计划规范身份，与 create 侧绑定键同源），失败一律
+	// fail-closed（missing/expired→410、Redis 不可用→503），零上游拨号。
+	contPrevID := ""
+	if format == domain.FormatOpenAIResponses {
+		contPrevID = gjson.GetBytes(body, "previous_response_id").String()
+	}
+
+	// 路由信息：格式 + 调用器 + 请求体。默认 = 客户端格式直连（零转换）；
+	// images 端点按请求路径选调用器（generations/edits 上游子路径不同）；
+	// 协议转换（只补差）命中时整体替换为模板协议路由。
+	route := forwardRoute{format: format, caller: p.callers[format], body: body}
+	if format == domain.FormatOpenAIImages {
+		route.caller = p.imagesCallerFor(r)
+	}
+
+	sel, plan, attempt, err := p.selectFormatPlan(format, groupID, reqID, reqModel, rm, route)
+	// converted route uses target identity when fallback
+	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
+		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
+			// Target identity uses same request identity but target RouteClassID
+			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
+			if sel2, plan2, attempt2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
+				sel2GuardActive := true
+				defer func() {
+					if sel2GuardActive {
+						if r := recover(); r != nil {
+							sel2.Release()
+							panic(r)
+						}
+					}
+				}()
+				cb, cerr := convertRequest(body, conv)
+				if cerr != nil {
+					sel2.Release()
+					sel2GuardActive = false
+					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: protocol conversion failed: " + cerr.Error()}})
+					return
+				}
+				sel2GuardActive = false
+				sel, plan, attempt = sel2, plan2, attempt2
+				err = nil
+				route = forwardRoute{format: tgt, caller: p.convCallers[conv], body: cb}
+			} else {
+				// Preserve target error (distinguish ErrNoAvailable vs AttemptsExhausted)
+				err = err2
+			}
+		}
+	}
+	// Plan-only contract: selection succeeded only with a compiled plan and a
+	// canonical reserved attempt; any absent/invalid compiled plan lands here
+	// as a typed error and fails closed.
+	if err != nil {
+		p.handleSelectError(w, err)
+		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
+		return
+	}
+	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
+	// fail-closed（释放已占并发槽，零上游拨号）。
+	sel, attempt, contBinding, ok := p.resolveFormatContinuation(format, w, r, reqID, groupID, rm.meta.UserID, reqModel, contPrevID, start, sel, &plan, attempt)
+	if !ok {
+		return
+	}
+	defer leaseGuard(sel)
+
+	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（chat/resp/
+	// anthropic/images 走缺价预检）；尾部推进走入口编译计划（选号时已按
+	// route.format 绑定路由，协议转换命中即目标路由）；记录仍按客户端
+	// format（buildLog 参数不变）。差异状态按值传入 attemptState（零分配
+	// ——attempt/sink 为 New 构造单例）。
+	p.failoverLoopWithPlan(w, r, format, reqID, groupID, start, reqModel, route.body, sel, plan, attempt,
+		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream, hardContinuation: contBinding != nil},
+		p.chatAttempt, p.httpSink, true)
+}
+
+// readAndParseFormatBody 读请求体并解析格式差异段（multipart 分支 / JSON 校验
+// + scanKeys 三键 + tier 策略）——handleFormat 的读请求阶段提取（只提函数：字节
+// 语义、错误码/文案、rm 原地补字段、返回体整体与现状逐字不变）。okParsed=false
+// 表示已写出错误响应（调用方直接 return）。
+func (p *Proxy) readAndParseFormatBody(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, rm *reqMeta, reqID string, groupID int64, start time.Time) (reqModel string, stream bool, body []byte, okParsed bool) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, p.cfg.MaxBodySize))
 	if err != nil {
 		writeErr(w, errBody)
@@ -135,8 +221,6 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// 从 form 字段取；图片文件原样透传（不解析内容）；不做
 	// setModel/setStreamAndModel JSON 重写（form model 字段原样透传，spec
 	// §5.1 声明）。JSON 形态照常：model/stream 顶层提取 + service_tier 归一化。
-	var reqModel string
-	var stream bool
 	if format == domain.FormatOpenAIImages && isMultipartForm(r.Header.Get("Content-Type")) {
 		reqModel = imagesMultipartModel(body, r.Header.Get("Content-Type"))
 		// stream 恒 false：multipart 无流式形态（stream 探测仅 JSON 路径）
@@ -205,112 +289,47 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 			}
 		}
 	}
+	return reqModel, stream, body, true
+}
 
-	// 硬续接（仅 Responses）：previous_response_id 把派生钉死在产出该响应的
-	// 账号上。普通请求（无续接键、其余全部格式）零 Redis。解析在计划就绪后
-	// 执行（route class 取计划规范身份，与 create 侧绑定键同源），失败一律
-	// fail-closed（missing/expired→410、Redis 不可用→503），零上游拨号。
-	contPrevID := ""
-	if format == domain.FormatOpenAIResponses {
-		contPrevID = gjson.GetBytes(body, "previous_response_id").String()
-	}
-
-	// 路由信息：格式 + 调用器 + 请求体。默认 = 客户端格式直连（零转换）；
-	// images 端点按请求路径选调用器（generations/edits 上游子路径不同）；
-	// 协议转换（只补差）命中时整体替换为模板协议路由。
-	route := forwardRoute{format: format, caller: p.callers[format], body: body}
-	if format == domain.FormatOpenAIImages {
-		route.caller = p.imagesCallerFor(r)
-	}
-
+// selectFormatPlan 入口选号阶段（handleFormat 提取）：默认按客户端格式直连
+// （零转换）；images 端点按调用器选上游子路径（generations/edits，路由子路径
+// 不同）。返回 (sel, plan, attempt, err) 与 selectWithPlan(*) 逐字一致（只提
+// 函数，零语义变化）。
+func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, reqID, reqModel string, rm *reqMeta, route forwardRoute) (*scheduler.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
 	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
-	var sel *scheduler.Selection
-	var plan scheduler.AttemptPlan
-	var attempt scheduler.Attempt
 	if format == domain.FormatOpenAIImages {
 		if ic, ok := route.caller.(*imagesCaller); ok {
 			rr := scheduler.RouteRefForOp(groupID, string(format), reqModel, ic.operationTag())
-			sel, plan, attempt, err = p.selectWithPlanForRoute(rr, groupID, format, reqModel, identity)
-		} else {
-			sel, plan, attempt, err = p.selectWithPlan(groupID, format, reqModel, identity)
-		}
-	} else {
-		sel, plan, attempt, err = p.selectWithPlan(groupID, format, reqModel, identity)
-	}
-	// converted route uses target identity when fallback
-	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
-		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
-			// Target identity uses same request identity but target RouteClassID
-			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
-			if sel2, plan2, attempt2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
-				sel2GuardActive := true
-				defer func() {
-					if sel2GuardActive {
-						if r := recover(); r != nil {
-							sel2.Release()
-							panic(r)
-						}
-					}
-				}()
-				cb, cerr := convertRequest(body, conv)
-				if cerr != nil {
-					sel2.Release()
-					sel2GuardActive = false
-					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: protocol conversion failed: " + cerr.Error()}})
-					return
-				}
-				sel2GuardActive = false
-				sel, plan, attempt = sel2, plan2, attempt2
-				err = nil
-				route = forwardRoute{format: tgt, caller: p.convCallers[conv], body: cb}
-			} else {
-				// Preserve target error (distinguish ErrNoAvailable vs AttemptsExhausted)
-				err = err2
-			}
+			return p.selectWithPlanForRoute(rr, groupID, format, reqModel, identity)
 		}
 	}
-	// Plan-only contract: selection succeeded only with a compiled plan and a
-	// canonical reserved attempt; any absent/invalid compiled plan lands here
-	// as a typed error and fails closed.
-	if err != nil {
-		p.handleSelectError(w, err)
-		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
-		return
-	}
-	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
-	// fail-closed（释放已占并发槽，零上游拨号）。
-	var contBinding *continuation.Binding
-	if contPrevID != "" {
-		b, ferr := p.contResolve(r.Context(), rm.meta.UserID, groupID, contProtocolREST, contPrevID, attempt)
-		if ferr != nil {
-			sel.Release()
-			p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
-			writeErr(w, ferr)
-			return
-		}
-		contBinding = b
-	}
-	// 续接钉选：计划推进到绑定账号（其余候选释放跳过）；绑定账号身份漂移或
-	// 不可派生 → fail-closed，绝不迁移到其他账号。
-	if contBinding != nil {
-		pinned, pinnedAttempt, ferr := p.contPin(&plan, sel, attempt, contBinding)
-		if ferr != nil {
-			p.recordRejected(r.Context(), reqID, groupID, contBinding.AccountID, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
-			writeErr(w, ferr)
-			return
-		}
-		sel, attempt = pinned, pinnedAttempt
-	}
-	defer leaseGuard(sel)
+	return p.selectWithPlan(groupID, format, reqModel, identity)
+}
 
-	// failover 循环（共享骨架，见 pipeline.go）：precheck=true（chat/resp/
-	// anthropic/images 走缺价预检）；尾部推进走入口编译计划（选号时已按
-	// route.format 绑定路由，协议转换命中即目标路由）；记录仍按客户端
-	// format（buildLog 参数不变）。差异状态按值传入 attemptState（零分配
-	// ——attempt/sink 为 New 构造单例）。
-	p.failoverLoopWithPlan(w, r, format, reqID, groupID, start, reqModel, route.body, sel, plan, attempt,
-		attemptState{format: format, routeFormat: route.format, caller: route.caller, stream: stream, hardContinuation: contBinding != nil},
-		p.chatAttempt, p.httpSink, true)
+// resolveFormatContinuation 续接解析与钉选阶段（handleFormat 提取）：contPrevID
+// 为空 → 原样返回（零 Redis）。否则 contResolve 查绑定（失败 fail-closed：先释放
+// 已占并发槽，记录后写出）；再 contPin 推进计划到绑定账号（失败 fail-closed：
+// 记录后写出，绝不迁移到其他账号）。ok=false 表示已收尾写出，调用方直接 return。
+// 释放/记录时机与现状逐字一致（contPin 内部自行释放被跳过候选）。
+func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, reqID string, groupID, userID int64, reqModel, contPrevID string, start time.Time, sel *scheduler.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*scheduler.Selection, scheduler.Attempt, *continuation.Binding, bool) {
+	if contPrevID == "" {
+		return sel, attempt, nil, true
+	}
+	b, ferr := p.contResolve(r.Context(), userID, groupID, contProtocolREST, contPrevID, attempt)
+	if ferr != nil {
+		sel.Release()
+		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
+		writeErr(w, ferr)
+		return sel, attempt, nil, false
+	}
+	pinned, pinnedAttempt, ferr := p.contPin(plan, sel, attempt, b)
+	if ferr != nil {
+		p.recordRejected(r.Context(), reqID, groupID, b.AccountID, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
+		writeErr(w, ferr)
+		return sel, attempt, nil, false
+	}
+	return pinned, pinnedAttempt, b, true
 }
 
 // chatAttempt handleFormat 的 attempt 实现（覆盖 chat/responses/anthropic/

@@ -258,14 +258,8 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// 无映射用上游目标。images 格式查统一价格快照 image 分量（跳过 chat
 		// 价预检——纯 image 价模型无 token 行，chat 预检会先行 402 误杀，
 		// "image 分量定生死"轮不到执行）；其余格式照旧。
-		if precheck {
-			priceModel := sel.PriceModel(reqModel)
-			if err := p.precheckPrice(format, priceModel); err != nil {
-				p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mapped, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
-				sel.Release()
-				sink.writePrecheckRejected(w, st)
-				return
-			}
+		if precheck && p.failoverPrecheckPrice(w, r, format, reqID, groupID, start, reqModel, mapped, sel, st, sink) {
+			return
 		}
 		// Dispatch ownership: exactly one owner-created AttemptContext + observer
 		// per real upstream call, begun before the call and completed exactly
@@ -283,104 +277,9 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		lastCode = code
 		lastHdr = hdr
 		lastBody = respBody
-		if code == http.StatusTooManyRequests {
-			// 429：上游 body message（既有语义；域内截断 500）。WS 拨号 429 的
-			// 错误文本经 respBody 传递（可能为 SDK 纯文本）——提取为空时直取
-			// 原文（与 code==0 分支同款防丢失；chat/search 上游错误体恒 JSON
-			// message 键，该回退零影响）。
-			lastErrMsg = domain.TruncateErrMsg(upstreamErrMsg(respBody))
-			if lastErrMsg == "" && len(respBody) > 0 {
-				lastErrMsg = domain.TruncateErrMsg(string(respBody))
-			}
-			// 429 分支统一走 Classify（规则表 = 单一决策源）：seed-429 恒命中
-			// （punish=true → 恒投递，现状等价）；规则删改后按声明裁定投递。
-			// Model 口径 = 最终请求模型 sel.Model（映射后，与上游实际模型一致）。
-			_, punish := p.sched.Classify(rule.Event{
-				AccountID: sel.AccountID, Kind: rule.Kind429, HTTPStatus: &code,
-				Model: sel.Model, ErrorMessage: lastErrMsg,
-			})
-			if punish {
-				p.sched.MarkResult(sel.AccountID, rule.Kind429, nil, code, lastErrMsg, sel.Model)
-			}
-		} else if code >= 500 || code == 0 {
-			// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
-			// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
-			// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则
-			// 无辜账号冷却 + failover 空转 + error_type 误记 network）；记
-			// 499（nginx "client closed request" 约定）+ ErrAbort，立即返回。
-			// tokens 必然 0 → cost=0 不计费；客户端已断，不写 HTTP 响应。
-			// 流式路径的流中止/首字节后断连由 caller 内部分类（handled=true），
-			// 到不了这里——本分支只覆盖 SDK 请求阶段（首字节前）的断连。
-			// WS 修复性声明（gate Minor 2c）：WS 拨号/首帧转发阶段断连同样归
-			// 此分支（现状记连接级错误冷却无辜账号——统一 499 语义不冷却）。
-			if code == 0 && r.Context().Err() != nil {
-				l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
-				msg := "client closed request before upstream response"
-				l.ErrorMessage = &msg
-				p.finish(sel, l)
-				return
-			}
-			// 5xx：上游 body message（既有语义）。连接级/凭据错（code==0）：
-			// err.Error() 全文填 last_error 与耗尽记录（域内截断 500）——Warn
-			// 由 attempt 内部代发（文案两版本保留不统一，循环不代发）。
-			// code==0 且 callErr==nil（WS 拨号/首帧转发失败）：错误文本经
-			// respBody 传递（可能为纯文本——upstreamErrMsg 只认 JSON 键，
-			// gjson 提取吃空）→ 直取原文（复审实证；chat/search 该分支不可达
-			// ——code==0 恒带 callErr，零影响）。
-			lastErrMsg = upstreamErrMsg(respBody)
-			if code == 0 && callErr != nil {
-				lastErrMsg = domain.TruncateErrMsg(callErr.Error())
-			} else if lastErrMsg != "" {
-				lastErrMsg = domain.TruncateErrMsg(lastErrMsg)
-			} else if len(respBody) > 0 {
-				lastErrMsg = domain.TruncateErrMsg(string(respBody))
-			}
-			// 5xx/0 分支统一走 Classify（seed-5xx/seed-network 恒命中 → 恒投递，
-			// 行为不变）。防呆 b（gate r4）：分支不拆 ≠ 恒传 Kind5xx——事件 kind
-			// 按单点分流 helper（code==0→network）计算，否则 code==0 事件不命中
-			// seed-network → 不投递 → 连接级冷却整体失效。
-			kind := scheduler.RuleKindOf(code)
-			var hp *int
-			if code > 0 {
-				hp = &code
-			}
-			_, punish := p.sched.Classify(rule.Event{
-				AccountID: sel.AccountID, Kind: kind, HTTPStatus: hp,
-				Model: sel.Model, ErrorMessage: lastErrMsg,
-			})
-			if punish {
-				p.sched.MarkResult(sel.AccountID, kind, nil, code, lastErrMsg, sel.Model)
-			}
-		} else {
-			// 4xx 确定性错误（统一公式 status=ResponseCode!=nil?*ResponseCode:code, msg=CustomMessage!=nil?*CustomMessage:respBody）
-			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, code, domain.Err4xx, usageTuple{}, start))
-			em := domain.TruncateErrMsg(string(respBody))
-			if em == "" && callErr != nil {
-				em = domain.TruncateErrMsg(callErr.Error())
-			}
-			if em != "" {
-				l.ErrorMessage = &em
-			}
-			p.finish(sel, l)
-			then, punish := p.sched.Classify(rule.Event{
-				AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
-				Model: sel.Model, ErrorMessage: em,
-			})
-			status := passthroughStatus(then, code)
-			applyPassthroughHeader(w, then, hdr, status)
-			// 代理日志保留原文 em，响应与 sanitize 同源 via rule.UnifiedMessage
-			if msg, isCustom := rule.UnifiedMessage(then, string(respBody)); isCustom {
-				if _, isWS := sink.(*wsSink); isWS {
-					sink.writeUpstreamRejection(w, st, status, []byte(msg))
-				} else {
-					writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error"}})
-				}
-			} else {
-				sink.writeUpstreamRejection(w, st, status, respBody)
-			}
-			if punish {
-				p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)
-			}
+		var terminate bool
+		lastErrMsg, terminate = p.classifyFailoverAttempt(w, r, format, reqID, groupID, start, reqModel, mapped, sel, code, respBody, hdr, callErr, st, sink)
+		if terminate {
 			return
 		}
 		// plan-aware retry gating: committed/ambiguous/client-cancel/hard-continuation
@@ -406,6 +305,137 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 	if !attempted {
 		lastSel.Release()
 	}
+	p.writeFailoverExhausted(w, r, format, reqID, groupID, start, reqModel, lastSel, lastCode, lastErrMsg, lastHdr, lastBody, st, sink)
+}
+
+// failoverPrecheckPrice 缺价预检阶段（failoverLoopWithPlan 提取）：命中即
+// recordRejected + sel.Release + sink.writePrecheckRejected，返回 true（调用方直接
+// return）；未命中返回 false。记录/释放/写出时机与现状逐字一致。
+func (p *Proxy) failoverPrecheckPrice(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *scheduler.Selection, st attemptState, sink pipelineSink) bool {
+	priceModel := sel.PriceModel(reqModel)
+	if err := p.precheckPrice(format, priceModel); err != nil {
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, mapped, format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errNoPrice.msg)
+		sel.Release()
+		sink.writePrecheckRejected(w, st)
+		return true
+	}
+	return false
+}
+
+// classifyFailoverAttempt 单次失败分类阶段（failoverLoopWithPlan 提取）：
+// 429 → TruncateErrMsg + Classify/MarkResult；5xx/0 → 分类文本 + Classify/
+// MarkResult（首字节前客户端断连记 499 后 terminate）；4xx → finish + 透传 +
+// Classify/MarkResult 后 terminate。返回最后的错误文本与是否终止（terminate=true
+// 调用方直接 return）。错误分类/冷却/日志字段/时机逐字一致。
+func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *scheduler.Selection, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
+	if code == http.StatusTooManyRequests {
+		// 429：上游 body message（既有语义；域内截断 500）。WS 拨号 429 的
+		// 错误文本经 respBody 传递（可能为 SDK 纯文本）——提取为空时直取
+		// 原文（与 code==0 分支同款防丢失；chat/search 上游错误体恒 JSON
+		// message 键，该回退零影响）。
+		lastErrMsg = domain.TruncateErrMsg(upstreamErrMsg(respBody))
+		if lastErrMsg == "" && len(respBody) > 0 {
+			lastErrMsg = domain.TruncateErrMsg(string(respBody))
+		}
+		// 429 分支统一走 Classify（规则表 = 单一决策源）：seed-429 恒命中
+		// （punish=true → 恒投递，现状等价）；规则删改后按声明裁定投递。
+		// Model 口径 = 最终请求模型 sel.Model（映射后，与上游实际模型一致）。
+		_, punish := p.sched.Classify(rule.Event{
+			AccountID: sel.AccountID, Kind: rule.Kind429, HTTPStatus: &code,
+			Model: sel.Model, ErrorMessage: lastErrMsg,
+		})
+		if punish {
+			p.sched.MarkResult(sel.AccountID, rule.Kind429, nil, code, lastErrMsg, sel.Model)
+		}
+	} else if code >= 500 || code == 0 {
+		// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
+		// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
+		// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则
+		// 无辜账号冷却 + failover 空转 + error_type 误记 network）；记
+		// 499（nginx "client closed request" 约定）+ ErrAbort，立即返回。
+		// tokens 必然 0 → cost=0 不计费；客户端已断，不写 HTTP 响应。
+		// 流式路径的流中止/首字节后断连由 caller 内部分类（handled=true），
+		// 到不了这里——本分支只覆盖 SDK 请求阶段（首字节前）的断连。
+		// WS 修复性声明（gate Minor 2c）：WS 拨号/首帧转发阶段断连同样归
+		// 此分支（现状记连接级错误冷却无辜账号——统一 499 语义不冷却）。
+		if code == 0 && r.Context().Err() != nil {
+			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
+			msg := "client closed request before upstream response"
+			l.ErrorMessage = &msg
+			p.finish(sel, l)
+			return "", true
+		}
+		// 5xx：上游 body message（既有语义）。连接级/凭据错（code==0）：
+		// err.Error() 全文填 last_error 与耗尽记录（域内截断 500）——Warn
+		// 由 attempt 内部代发（文案两版本保留不统一，循环不代发）。
+		// code==0 且 callErr==nil（WS 拨号/首帧转发失败）：错误文本经
+		// respBody 传递（可能为纯文本——upstreamErrMsg 只认 JSON 键，
+		// gjson 提取吃空）→ 直取原文（复审实证；chat/search 该分支不可达
+		// ——code==0 恒带 callErr，零影响）。
+		lastErrMsg = upstreamErrMsg(respBody)
+		if code == 0 && callErr != nil {
+			lastErrMsg = domain.TruncateErrMsg(callErr.Error())
+		} else if lastErrMsg != "" {
+			lastErrMsg = domain.TruncateErrMsg(lastErrMsg)
+		} else if len(respBody) > 0 {
+			lastErrMsg = domain.TruncateErrMsg(string(respBody))
+		}
+		// 5xx/0 分支统一走 Classify（seed-5xx/seed-network 恒命中 → 恒投递，
+		// 行为不变）。防呆 b（gate r4）：分支不拆 ≠ 恒传 Kind5xx——事件 kind
+		// 按单点分流 helper（code==0→network）计算，否则 code==0 事件不命中
+		// seed-network → 不投递 → 连接级冷却整体失效。
+		kind := scheduler.RuleKindOf(code)
+		var hp *int
+		if code > 0 {
+			hp = &code
+		}
+		_, punish := p.sched.Classify(rule.Event{
+			AccountID: sel.AccountID, Kind: kind, HTTPStatus: hp,
+			Model: sel.Model, ErrorMessage: lastErrMsg,
+		})
+		if punish {
+			p.sched.MarkResult(sel.AccountID, kind, nil, code, lastErrMsg, sel.Model)
+		}
+	} else {
+		// 4xx 确定性错误（统一公式 status=ResponseCode!=nil?*ResponseCode:code, msg=CustomMessage!=nil?*CustomMessage:respBody）
+		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, code, domain.Err4xx, usageTuple{}, start))
+		em := domain.TruncateErrMsg(string(respBody))
+		if em == "" && callErr != nil {
+			em = domain.TruncateErrMsg(callErr.Error())
+		}
+		if em != "" {
+			l.ErrorMessage = &em
+		}
+		p.finish(sel, l)
+		then, punish := p.sched.Classify(rule.Event{
+			AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
+			Model: sel.Model, ErrorMessage: em,
+		})
+		status := passthroughStatus(then, code)
+		applyPassthroughHeader(w, then, hdr, status)
+		// 代理日志保留原文 em，响应与 sanitize 同源 via rule.UnifiedMessage
+		if msg, isCustom := rule.UnifiedMessage(then, string(respBody)); isCustom {
+			if _, isWS := sink.(*wsSink); isWS {
+				sink.writeUpstreamRejection(w, st, status, []byte(msg))
+			} else {
+				writeJSON(w, status, map[string]any{"error": map[string]any{"message": msg, "type": "upstream_error"}})
+			}
+		} else {
+			sink.writeUpstreamRejection(w, st, status, respBody)
+		}
+		if punish {
+			p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)
+		}
+		return "", true
+	}
+	return lastErrMsg, false
+}
+
+// writeFailoverExhausted 耗尽收尾阶段（failoverLoopWithPlan 提取）：按最后一次尝试
+// 的 kind/HTTPStatus/Message 重新分类取 then → status/头透传 → buildLog +
+// recordLog → 统一写出（via rule.UnifiedMessage；WS/HTTP 分流）。字段/文案/时机
+// 逐字一致。
+func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, lastSel *scheduler.Selection, lastCode int, lastErrMsg string, lastHdr http.Header, lastBody []byte, st attemptState, sink pipelineSink) {
 	et := domain.Err5xx
 	switch lastCode {
 	case http.StatusTooManyRequests:
