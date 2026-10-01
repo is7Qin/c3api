@@ -281,8 +281,7 @@ func (g *concurrencyGate) acquire(meta domain.KeyMeta) (int, bool) {
 		limit := int64(meta.UserMaxConc)
 		if limit > 0 && c.Load() > int64(concShare(meta.UserMaxConc, g.instancesN())) &&
 			!g.concAllows(false, meta.UserID, limit, c.Load()) {
-			c.Add(-1) // 回滚计数（稳态不超限）
-			level &^= 1
+			c.Add(-1)       // 回滚计数（稳态不超限）
 			return 0, false // user 层超限 → 429（计数已复原，无占用）
 		}
 	}
