@@ -552,3 +552,28 @@ func syntheticFingerprint(sel *scheduler.Selection, reqID string) CandidateFinge
 	}
 	return CandidateFingerprint(fp)
 }
+
+// syntheticOutcome 组装 images / codex-images / images-stream / converted 四个
+// caller 共用的 AttemptOutcome：四者字段装箱逐字相同、仅 CallerCategory 不同
+// （原 imagesStreamOutcome 与 codexImagesOutcome 逐字重复，imagesOutcome 与
+// convertedOutcome 仅差类别）。收敛为单一来源，指纹统一走 syntheticFingerprint。
+func syntheticOutcome(caller CallerCategory, reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
+	return buildOutcome(caller, op, outcomeParams{
+		reqID:          AttemptID(reqID),
+		routeClassID:   RouteClassID("rc-" + reqID),
+		qualityClassID: QualityClassID("qc-" + reqID),
+		fingerprint:    syntheticFingerprint(sel, reqID),
+		templateID:     sel.TemplateID,
+		accountID:      sel.AccountID,
+		requestedModel: reqModel,
+		mappedModel:    sel.Model,
+		timing:         timing,
+		usage:          usage,
+		commit:         commit,
+		result:         result,
+		status:         status,
+		businessSent:   businessSent,
+		terminal:       terminal,
+		malformed:      malformed,
+	})
+}
