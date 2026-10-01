@@ -123,8 +123,8 @@ type foldOwner struct {
 	recorder *quality.Recorder
 	tap      AttemptFlowAppend // observation seam (tests); nil in production
 	seamFn   AttemptFlowAppend // stable per-request closure (one capture, reused by every dispatch)
-	route    [32]byte          // plan-constant identity (attempt_plan_exec.go:315), decoded per arm
-	gen      uint64            // plan-constant generation (attempt_plan_exec.go:319), bound per arm
+	route    [32]byte          // plan-constant identity, decoded per arm
+	gen      uint64            // plan-constant generation, bound per arm
 	cur      packedArm         // identity of the dispatch in flight
 	armed    bool
 	edges    [8]packedEdge // packed stash, cap-8 (attempt 9+ counts cap-overflow)

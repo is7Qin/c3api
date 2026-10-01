@@ -71,10 +71,10 @@ func buildCacheDomainRing(domains []string) (CacheDomainRing, error) {
 
 func cacheDomainNodeHash(domain string, vnode int) uint64 {
 	h := CacheAffinityHash(domain)
-	h *= 1099511628211
+	h *= fnvPrime64
 	for shift := uint(56); ; shift -= 8 {
 		h ^= uint64(byte(uint64(vnode) >> shift))
-		h *= 1099511628211
+		h *= fnvPrime64
 		if shift == 0 {
 			break
 		}

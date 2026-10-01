@@ -30,6 +30,9 @@ func TestConvertedAndImagesOutcomes_reportsExpectedMetadata(t *testing.T) {
 	}
 	require.Equal(t, OperationTag(domain.OpImagesGenerations), OperationTag(domain.OpImagesGenerations))
 	require.Equal(t, OperationTag(domain.OpImagesEdits), OperationTag(domain.OpImagesEdits))
+	// off / 未知方向回退 chat_completions（convertedOpTag 的默认分支）。
+	require.Equal(t, OperationTag(domain.OpChatCompletions), convertedOpTag(domain.ProtocolConvertOff))
+	require.Equal(t, OperationTag(domain.OpChatCompletions), convertedOpTag(domain.ProtocolConvert("bogus")))
 }
 
 // TestBuildOutcome_CallerVariantsShareCanonicalFields 钉住 B2 收敛：四类「合成
@@ -66,6 +69,24 @@ func TestBuildOutcome_CallerVariantsShareCanonicalFields(t *testing.T) {
 		require.Equal(t, LanePrimary, o.Lane, tc.name)
 		require.EqualValues(t, 1, o.Generation, tc.name)
 	}
+
+	// 候选指纹缺失 → 四类合成 id 构造器统一回退「fp-<reqID>」（syntheticFingerprint
+	// 的回退分支）；另建独立 sel（CandidateFingerprint == ""），不复用上方共享候选。
+	t.Run("empty_candidate_fingerprint_falls_back", func(t *testing.T) {
+		emptyFP := &scheduler.Selection{AccountID: 7, TemplateID: 8, Model: "upstream"}
+		fallbacks := []struct {
+			name string
+			got  AttemptOutcome
+		}{
+			{"images", imagesOutcome("req", emptyFP, "upstream", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+			{"codex_images", codexImagesOutcome("req", emptyFP, "upstream", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+			{"images_stream", imagesStreamOutcome("req", emptyFP, "upstream", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+			{"converted", convertedOutcome("req", emptyFP, "upstream", op, AttemptTiming{}, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false)},
+		}
+		for _, tc := range fallbacks {
+			require.Equal(t, CandidateFingerprint("fp-req"), tc.got.Fingerprint, tc.name)
+		}
+	})
 }
 
 func TestImagesOutcomes_generationsVsEditsIdentity(t *testing.T) {

@@ -80,7 +80,7 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 	// errInsufficientBalance（不按 0 记账），但免费放行（修复）：
 	// 有效倍率 0 = 免费用户/组 → 缺失/0 余额不 402（与 applyBilling 同一快照
 	// 同一判定；cost 0 只记日志不扣费）。余额 0 放行——临时额度由 FEFO 扣费
-	// 消化（billing_repo.go:71-76 先扣 temp）；负余额持续负债拒绝。快照缺失
+	// 消化（billing 仓储先扣 temp 余额）；负余额持续负债拒绝。快照缺失
 	// 窗口内免费组照常放行；缺失且非免费 → 仍 402（用户不在快照 = 无余额
 	// 记录，语义不变）。在 Acquire 前 → 不占用并发槽。
 	if precheckBalance && p.cfg.BillingCapture && p.bill != nil {

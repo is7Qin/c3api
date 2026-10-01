@@ -316,6 +316,8 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 	if contPrevID == "" {
 		return sel, attempt, nil, true
 	}
+	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
+	// fail-closed（释放已占并发槽，零上游拨号）。
 	b, ferr := p.contResolve(r.Context(), userID, groupID, contProtocolREST, contPrevID, attempt)
 	if ferr != nil {
 		sel.Release()
@@ -323,6 +325,8 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 		writeErr(w, ferr)
 		return sel, attempt, nil, false
 	}
+	// 续接钉选：计划推进到绑定账号（其余候选释放跳过）；绑定账号身份漂移或
+	// 不可派生 → fail-closed，绝不迁移到其他账号。
 	pinned, pinnedAttempt, ferr := p.contPin(plan, sel, attempt, b)
 	if ferr != nil {
 		p.recordRejected(r.Context(), reqID, groupID, b.AccountID, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)

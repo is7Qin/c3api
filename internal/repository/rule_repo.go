@@ -43,11 +43,11 @@ func (r *RuleRepo) ListRules(ctx context.Context, enabled *bool) ([]domain.Rule,
 	}
 	out := make([]domain.Rule, 0, len(rows))
 	for _, row := range rows {
-		r, err := toDomainRule(row)
+		rl, err := toDomainRule(row)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, *r)
+		out = append(out, *rl)
 	}
 	return out, nil
 }

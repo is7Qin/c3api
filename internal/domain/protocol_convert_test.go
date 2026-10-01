@@ -11,8 +11,8 @@ import (
 )
 
 // TestProtocolConvertDirectionMethods 钉住 X2 等价性证据：ProtocolConvert.Client()
-// /Target() 对四方向与 off/未知方向的输出（与重构前 proxy.protocolConvertSpec 的
-// 客户端/模板两列逐分支一致；未知/off 方向回退零值 ""，仅防御）。
+// /Target() 对四方向与 off/未知方向的输出（与重构前 proxy 的转换方向表（已删除，
+// 现由本方法取代）的客户端/模板两列逐分支一致；未知/off 方向回退零值 ""，仅防御）。
 func TestProtocolConvertDirectionMethods(t *testing.T) {
 	cases := []struct {
 		name   string
