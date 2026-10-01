@@ -250,9 +250,9 @@ type CandidateKey struct {
 	StripImageTools  bool
 }
 
-// CandidateFingerprint 汇总“候选身份”的全部**账号级稳定输入**（见 routing.go
-// 头注）：账号/模板/凭据类型/生效源/凭据摘要/strip 旗 + codex 账号级稳定项
-// （installation_id、codex_account_id）。身份三件套 session/thread/window 已
+// CandidateFingerprint 汇总“候选身份”的全部**账号级稳定输入**：账号/模板/凭据类型/
+// 生效源/凭据摘要/strip 旗 + codex 账号级稳定项（installation_id、codex_account_id）。
+// 身份三件套 session/thread/window 已
 // 退役为运行时槽状态（scheduler 槽位池按完成轮数演化），**不得**再进指纹：否则
 // 每次槽轮换都会击穿 continuation 绑定与在途 (指纹,K) 工件。
 func CandidateFingerprint(k CandidateKey) (CandidateFingerprintVal, error) {

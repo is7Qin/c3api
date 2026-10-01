@@ -60,7 +60,7 @@ const codexAuthFailedMsg = "codex authorization failed"
 // dialCodexWS 组装一次 codex WS Dial（凭当前请求选中账号 cred）：
 //   - 凭据线：sel.Ext 快照 → AccountCredential 派生（relay 线；热路径零 DB）
 //   - 端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses）
-//   - 伪装四元组（持久化）：WithSession（握手头 + 帧内 metadata session/
+//   - 伪装四元组（运行时槽身份）：WithSession（握手头 + 帧内 metadata session/
 //     thread/window）+ WithCodexMeta（帧内 x-codex-installation-id——真实客户
 //     端该头不进握手头，仅帧 metadata）
 //   - WithPingInterval(0)：禁 SDK 内部心跳（心跳单源——编排层 30s+10s）

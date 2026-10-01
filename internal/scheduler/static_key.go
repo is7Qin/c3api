@@ -21,7 +21,8 @@ import (
 // 比较规则第 2 项（`CandidateFingerprint` 本身按值比较）在这里**未接线**：
 // 它按值覆盖 accountID/templateID/credential_type/生效 baseURL/stripImageTools/
 // upstreamKey/凭据摘要/installation_id/codexAccountID，这些事实**均已逐项**落在
-// 下列字段里（digest 是 upstreamKey|patKey 的纯函数：domain/routing.go:231-257），
+// 下列字段里（digest 是 upstreamKey|patKey 的纯函数：
+// domain/routing.go 的 stableCredentialDigest），
 // 故覆盖面无缺口。
 //
 // 两枚 struct 都只含值语义字段（标量 / `[32]byte` 摘要），`==` 仍是唯一算子
@@ -54,7 +55,7 @@ type planKey struct {
 	//
 	// codexPATKey 落在这里：stableCredentialDigest 对 codex-pat 就是
 	// sha256(patKey)，pat 轮转确实改变候选指纹 ⇒ 确实必须打断计划。而
-	// codex-oauth 分支返回常量（domain/routing.go:249-253），故 OAuth 令牌不是
+	// codex-oauth 分支返回常量（domain/routing.go 的 stableCredentialDigest），故 OAuth 令牌不是
 	// 决策输入——两个分支的差异正是"载荷 vs 决策输入"的分界线，键的拆分与
 	// 指纹函数的拆分同源。
 	codexAccountID    string
@@ -99,7 +100,7 @@ type payloadKey struct {
 // **本类型必须不含任何指针/切片/映射字段**：含指针的 struct 仍然「可比较」，
 // 但 `==` 对指针只比**地址**；键是每次重载重建的（buildSnapshots 每次 new
 // snapshotStatic），只要键里有一个指向「该次重载新建对象」的指针（state.go 的
-// tpl/Ext，routing_compiler_candidates.go:70-71 内嵌的 account/static），键就
+// tpl/Ext，routing_compiler_candidates.go 内嵌的 account/static），键就
 // **恒不等** ⇒ 规则重新变惰性——即本 spec 要消灭的那个缺陷。Slice/Map 类事实一律
 // 以**规范序 32 字节摘要**（[32]byte，kind = reflect.Array，保持 struct 可比较）入键。
 // 守卫见 static_key_test.go。
@@ -111,7 +112,7 @@ type staticKey struct {
 // planKeyOf 由快照静态视图派生计划有效性判据。av 为 nil（首轮无旧快照）时
 // 返回零值键；调用方不得依赖零值比较做缺席判定——fence 必须显式处理缺席。
 //
-// 生效 baseURL 与编译器同源（routing_compiler_candidates.go:98-103）：模板值为底，
+// 生效 baseURL 与编译器同源（routing_compiler_candidates.go 的 baseURL 派生）：模板值为底，
 // 账号覆盖非空时优先。两者必须是同一套优先级，否则判据会在编译器认为「变化了」的
 // 场景下判等（或反之），复用分支与编译事实就此分叉。
 func planKeyOf(av *snapshotStatic) planKey {
@@ -181,7 +182,7 @@ func staticKeyOf(av *snapshotStatic) staticKey {
 }
 
 // normalizeCacheDomain 把 nil 与 "" 归并为同一个空串：cacheDomainForAccount
-// （cache_affinity.go:100-105）对二者都回私有域，消费者等价 ⇒ 键不得制造比
+// （cache_affinity.go 的 cacheDomainForAccount）对二者都回私有域，消费者等价 ⇒ 键不得制造比
 // 消费面更细的差异。
 func normalizeCacheDomain(d *string) string {
 	if d == nil {
