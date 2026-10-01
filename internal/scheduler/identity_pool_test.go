@@ -340,15 +340,15 @@ func TestIdentityPoolResizeMigratesMin(t *testing.T) {
 	require.NotEqual(t, busy.state.Load().ThreadID, rebuilt.slots[0].state.Load().ThreadID)
 }
 
-// TestIdentityPoolForReusesWhenUnchanged 容量/安装 ID/策略均未变 → 原样复用
+// TestSyncIdentityPoolReusesWhenUnchanged 容量/安装 ID/策略均未变 → 原样复用
 // （保留在途 busy 与槽身份）；任一变化才重建。
-func TestIdentityPoolForReusesWhenUnchanged(t *testing.T) {
+func TestSyncIdentityPoolReusesWhenUnchanged(t *testing.T) {
 	p := testPolicy()
 	pool := newTestPool(3, p)
-	require.Same(t, pool, identityPoolFor(pool, 3, "inst", p), "未变复用")
-	require.NotSame(t, pool, identityPoolFor(pool, 4, "inst", p), "容量变化重建")
-	require.NotSame(t, pool, identityPoolFor(pool, 3, "other", p), "安装 ID 变化重建")
-	require.NotSame(t, pool, identityPoolFor(pool, 3, "inst", codexsdk.RotatePolicy{WMaxLo: 2, WMaxHi: 4}), "策略变化重建")
+	require.Same(t, pool, syncIdentityPool(pool, 3, "inst", p), "未变复用")
+	require.NotSame(t, pool, syncIdentityPool(pool, 4, "inst", p), "容量变化重建")
+	require.NotSame(t, pool, syncIdentityPool(pool, 3, "other", p), "安装 ID 变化重建")
+	require.NotSame(t, pool, syncIdentityPool(pool, 3, "inst", codexsdk.RotatePolicy{WMaxLo: 2, WMaxHi: 4}), "策略变化重建")
 }
 
 // TestIdentityPoolConcurrentClaimUnique 并发认领唯一性：G 个 goroutine 同时

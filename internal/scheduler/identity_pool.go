@@ -121,9 +121,9 @@ func resizeIdentityPool(old *identityPool, k int, installationID string, policy 
 	return np
 }
 
-// identityPoolFor 取本次 reload 生效的池：容量/安装 ID/策略均未变则**原样复用**
+// syncIdentityPool 取本次 reload 生效的池：容量/安装 ID/策略均未变则**原样复用**
 // （保留在途 busy 标志与槽身份，杜绝无关重载重置会话）；任一变化才重建。
-func identityPoolFor(prev *identityPool, k int, installationID string, policy codexsdk.RotatePolicy) *identityPool {
+func syncIdentityPool(prev *identityPool, k int, installationID string, policy codexsdk.RotatePolicy) *identityPool {
 	if prev != nil && len(prev.slots) == k && prev.installationID == installationID && prev.rotatePolicy() == policy {
 		return prev
 	}
@@ -154,7 +154,7 @@ func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg 
 		if prevReg != nil {
 			prev = prevReg.pools[id]
 		}
-		pools[id] = identityPoolFor(prev, k, installationIDOf(av.acc.Ext), s.cfg.RotatePolicy)
+		pools[id] = syncIdentityPool(prev, k, installationIDOf(av.acc.Ext), s.cfg.RotatePolicy)
 	}
 	return &identityRegistry{pools: pools}
 }
