@@ -547,10 +547,15 @@ func writeErr(w http.ResponseWriter, e *formatError) {
 
 // --- 辅助 ---
 
+// usageTuple 单次尝试的用量元组（统一计费模型输入）。字段逐项具名带注释——
+// 原名 it/ot/tt/cr/cc/ii/io 单字母连排，读者无从辨认，勿再吞回连排。
 type usageTuple struct {
-	it, ot, tt int64
-	cr, cc     int64 // 缓存读取/写入 token（缺失 = 0）
-	// 功能调用计数（统一计费模型 spec 2026-08-13；当前唯一生产者 = 图片张数：
+	it int64 // input tokens（mess 侧为未含缓存的 input_tokens；resp 侧出口按 gross 归一）
+	ot int64 // output tokens
+	tt int64 // total tokens
+	cr int64 // cache read tokens（cache_read_input_tokens / cached_tokens；缺失 = 0）
+	cc int64 // cache write tokens（cache_creation_input_tokens / cache_write_tokens；缺失 = 0）
+	// calls 功能调用计数（统一计费模型 spec 2026-08-13；当前唯一生产者 = 图片张数：
 	// resp 检测旁路 spec §6 / images 格式直连与 codex 路径 data 长 / 流式
 	// completed 事件数；search 端点接入后 = 1）。落 CallCount，不入 TotalTokens。
 	calls int64
@@ -559,7 +564,8 @@ type usageTuple struct {
 	// images 请求只计 image 分量。tt 含 image tokens 不含张数（
 	// quota 口径：张数不入 TotalTokens）。resp 检测路径 ii/io 恒 0（
 	// 实证 responses 路径无 image_tokens）。ii/io 由 buildLog 并入 in/out。
-	ii, io int64
+	ii int64 // image input tokens 分量
+	io int64 // image output tokens 分量
 }
 
 // recordStreamAbort 上游流中止记录（客户端断开/上游停滞统一入口）：先已收

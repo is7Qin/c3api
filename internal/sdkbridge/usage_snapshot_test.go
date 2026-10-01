@@ -159,7 +159,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
 	a.mu.Lock()
-	e.sig = "corrupted-sig"
+	e.sig = credKey{oauthToken: "corrupted-sig"}
 	a.mu.Unlock()
 
 	for i := 0; i < 5; i++ {

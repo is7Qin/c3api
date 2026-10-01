@@ -255,7 +255,7 @@ func TestMapStreamEventType(t *testing.T) {
 
 // testCachedClient 取条目多条目缓存中指定身份签名（sig）的客户端（测试断言
 // 用；生产代码经 clientFor 取）。nil 条目/未构造/无该签名 → nil。
-func testCachedClient(e *codexEntry, sig string) *codexsdk.HTTPClient {
+func testCachedClient(e *codexEntry, sig identityKey) *codexsdk.HTTPClient {
 	if e == nil || e.clients == nil {
 		return nil
 	}
@@ -267,7 +267,7 @@ func testCachedClient(e *codexEntry, sig string) *codexsdk.HTTPClient {
 
 // testAppliedTurnState 取条目多条目缓存中指定身份签名的客户端构造期已应用
 // turn-state（测试断言用；无该签名 → ""）。
-func testAppliedTurnState(e *codexEntry, sig string) string {
+func testAppliedTurnState(e *codexEntry, sig identityKey) string {
 	if e == nil || e.clients == nil {
 		return ""
 	}
@@ -322,34 +322,34 @@ func TestCodexCacheReuseAndRebuild(t *testing.T) {
 	// 同账号同凭据 → 复用（同一 HTTPClient）
 	_, err = a.GenerateImage(context.Background(), cred, p)
 	require.NoError(t, err)
-	require.Same(t, testCachedClient(e1, ""), testCachedClient(a.entries[7], ""), "同账号复用（轮转状态/连接池保持）")
+	require.Same(t, testCachedClient(e1, identityKey{}), testCachedClient(a.entries[7], identityKey{}), "同账号复用（轮转状态/连接池保持）")
 	require.Equal(t, 2, c.callsN())
 
 	// 凭据更新（管理面导入/更新——at 变更）→ 重建
 	cred2 := oauthCred(7, "at-2", "rt-1")
 	_, err = a.GenerateImage(context.Background(), cred2, p)
 	require.NoError(t, err)
-	require.NotSame(t, testCachedClient(e1, ""), testCachedClient(a.entries[7], ""), "凭据更新 → 重建")
+	require.NotSame(t, testCachedClient(e1, identityKey{}), testCachedClient(a.entries[7], identityKey{}), "凭据更新 → 重建")
 	require.NotEqual(t, "Bearer at-1", c.auth(c.callsN()-1), "重建后新 at 生效")
 
 	// rt 变更同样触发重建
 	cred3 := oauthCred(7, "at-2", "rt-2")
 	_, err = a.GenerateImage(context.Background(), cred3, p)
 	require.NoError(t, err)
-	e2 := testCachedClient(a.entries[7], "")
-	require.NotSame(t, testCachedClient(e1, ""), e2, "rt 更新 → 重建")
+	e2 := testCachedClient(a.entries[7], identityKey{})
+	require.NotSame(t, testCachedClient(e1, identityKey{}), e2, "rt 更新 → 重建")
 	require.NotEqual(t, "Bearer at-1", c.auth(c.callsN()-1), "rt 更新后 client 已重建")
 
 	// 同凭据 → 复用（无变化不重建）
 	_, err = a.GenerateImage(context.Background(), cred3, p)
 	require.NoError(t, err)
-	require.Same(t, e2, testCachedClient(a.entries[7], ""), "同凭据 → 复用")
+	require.Same(t, e2, testCachedClient(a.entries[7], identityKey{}), "同凭据 → 复用")
 
 	// pat 变更（OAuth→PAT 切换）→ 重建（pat 维度）
 	cred4 := &domain.AccountCredential{AccountID: 7, PATKey: "pat-new"}
 	_, err = a.GenerateImage(context.Background(), cred4, p)
 	require.NoError(t, err)
-	require.NotSame(t, e2, testCachedClient(a.entries[7], ""), "pat 变更 → 重建")
+	require.NotSame(t, e2, testCachedClient(a.entries[7], identityKey{}), "pat 变更 → 重建")
 
 	// 无上报（成功路径）
 	require.Empty(t, handler.snapshot(), "成功路径不上报")
@@ -370,7 +370,7 @@ func TestCodexCachePAT(t *testing.T) {
 	e1 := a.entries[9]
 	_, err = a.GenerateImage(context.Background(), cred, p)
 	require.NoError(t, err)
-	require.Same(t, testCachedClient(e1, ""), testCachedClient(a.entries[9], ""), "PAT 同账号复用")
+	require.Same(t, testCachedClient(e1, identityKey{}), testCachedClient(a.entries[9], identityKey{}), "PAT 同账号复用")
 }
 
 // TestCodexCacheConcurrentReuse 同账号并发复用：32 并发首请求全部成功，
@@ -419,7 +419,7 @@ func TestCodexCacheConcurrentReuse(t *testing.T) {
 	require.NotNil(t, first)
 	require.Equal(t, 32, c.callsN(), "并发请求全部送达上游")
 	a.mu.Lock()
-	require.Same(t, testCachedClient(first, ""), testCachedClient(a.entries[7], ""), "并发后缓存的 HTTPClient 为同一实例")
+	require.Same(t, testCachedClient(first, identityKey{}), testCachedClient(a.entries[7], identityKey{}), "并发后缓存的 HTTPClient 为同一实例")
 	a.mu.Unlock()
 }
 
@@ -995,17 +995,17 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	_, err := a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
 	require.NoError(t, err)
 	a.mu.Lock()
-	c1 := testCachedClient(a.entries[9], "")
-	require.Equal(t, "", testAppliedTurnState(a.entries[9], ""), "首调用应用空值")
+	c1 := testCachedClient(a.entries[9], identityKey{})
+	require.Equal(t, "", testAppliedTurnState(a.entries[9], identityKey{}), "首调用应用空值")
 	a.mu.Unlock()
 
 	// 同值复用（held 已回写 ts-1 → 生效值变化 → 重建——断言客户端非同一实例）
 	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "")
 	require.NoError(t, err)
 	a.mu.Lock()
-	c2 := testCachedClient(a.entries[9], "")
+	c2 := testCachedClient(a.entries[9], identityKey{})
 	require.NotSame(t, c1, c2, "生效值空 → ts-1 变化 → 重建客户端")
-	require.Equal(t, "ts-1", testAppliedTurnState(a.entries[9], ""), "重建后记录应用值")
+	require.Equal(t, "ts-1", testAppliedTurnState(a.entries[9], identityKey{}), "重建后记录应用值")
 	require.NotNil(t, c2)
 	a.mu.Unlock()
 
@@ -1013,8 +1013,38 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	_, err = a.Responses(context.Background(), cred, []byte(`{"model":"m"}`), nil, nil, "ts-1")
 	require.NoError(t, err)
 	a.mu.Lock()
-	require.Same(t, c2, testCachedClient(a.entries[9], ""), "同生效值复用不重建")
+	require.Same(t, c2, testCachedClient(a.entries[9], identityKey{}), "同生效值复用不重建")
 	a.mu.Unlock()
+}
+
+// TestIdentitySigKeyEquivalence 身份键等价/不串键（取代原 \x00 拼串约定）：
+// nil 与全空同键；meta 段与 session 段的同名字段互不串键；任一字段差异 →
+// 不同键。这是「LRU 缓存键语义等价」的直接守卫。
+func TestIdentitySigKeyEquivalence(t *testing.T) {
+	empty := identitySig(nil, nil)
+	require.Equal(t, identityKey{}, empty, "nil 与零值键等价")
+	require.Equal(t, empty, identitySig(nil, &codexsdk.CodexMeta{}), "空 meta 与 nil 同键")
+	require.Equal(t, empty, identitySig(&codexsdk.Session{}, nil), "空 session 与 nil 同键")
+	require.Equal(t, empty, identitySig(&codexsdk.Session{}, &codexsdk.CodexMeta{}), "全空与 nil 同键")
+
+	// 段间同名字段不串键（旧拼串靠 0x1e 分隔才侥幸不碰撞）。
+	require.NotEqual(t,
+		identitySig(nil, &codexsdk.CodexMeta{SessionID: "s"}),
+		identitySig(&codexsdk.Session{SessionID: "s"}, nil),
+		"meta.SessionID 与 sess.SessionID 不串键")
+
+	// 单字段差异 → 不同键（meta 段 + session 段各取一例）。
+	require.NotEqual(t,
+		identitySig(nil, &codexsdk.CodexMeta{InstallationID: "a"}),
+		identitySig(nil, &codexsdk.CodexMeta{InstallationID: "b"}))
+	require.NotEqual(t,
+		identitySig(&codexsdk.Session{ThreadID: "a"}, nil),
+		identitySig(&codexsdk.Session{ThreadID: "b"}, nil))
+
+	// 同输入 → 同键（幂等/可比较性）。
+	require.Equal(t,
+		identitySig(&codexsdk.Session{ThreadID: "t"}, &codexsdk.CodexMeta{InstallationID: "i"}),
+		identitySig(&codexsdk.Session{ThreadID: "t"}, &codexsdk.CodexMeta{InstallationID: "i"}))
 }
 
 // searchReqPayload search 端点请求 fixture（opaque——网关零解析断言面）。

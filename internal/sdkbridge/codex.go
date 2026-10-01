@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -89,14 +88,14 @@ const codexHTTPClientCacheMax = 64
 type codexEntry struct {
 	accountID int64
 	auth      codexsdk.Auth
-	sig       string // 凭据签名（外部凭据变更 → 重建）
-	// clients HTTP 面客户端缓存：按伪装身份签名（identitySig）分条目，每个
-	// 槽身份各持一份客户端，仅轮换/变化时重建单条。键空间 = 身份签名
+	sig       credKey // 凭据签名（外部凭据变更 → 重建）
+	// clients HTTP 面客户端缓存：按伪装身份键（identitySig）分条目，每个
+	// 槽身份各持一份客户端，仅轮换/变化时重建单条。键空间 = 身份键
 	// （含 thread/window，随槽窗口推进/线程退休而变）——**必须限幅**：以
 	// codexHTTPClientCacheMax 为上限的 LRU（clientsLRU 最近使用序，末尾最新），
 	// 超限驱逐最久未用条目，杜绝无界增长。clientsLRU 仅 a.mu 下读写。
-	clients    map[string]*codexHTTPClient
-	clientsLRU []string
+	clients    map[identityKey]*codexHTTPClient
+	clientsLRU []identityKey
 	// turnState HTTP 面 turn-state 持有（spec 2026-08-15 评审 PASS）：
 	// 上游响应签发值（HTTPResponse.TurnState / SDK 池级捕获值回读），后续请求
 	// 注入 x-codex-turn-state 头（同轮回传对齐真实 codex client.rs:1202——
@@ -325,7 +324,7 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	sig := identitySig(sess, meta)
 	a.mu.Lock()
 	if e.clients == nil {
-		e.clients = make(map[string]*codexHTTPClient)
+		e.clients = make(map[identityKey]*codexHTTPClient)
 	}
 	c := e.clients[sig]
 	if c == nil || c.appliedTurnState != turnState {
@@ -358,7 +357,7 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 }
 
 // moveToEnd 把 sig 移到 LRU 序末尾（最近使用）；不在序中则追加。均在 a.mu 下调用。
-func moveToEnd(lru []string, sig string) []string {
+func moveToEnd(lru []identityKey, sig identityKey) []identityKey {
 	for i, s := range lru {
 		if s == sig {
 			copy(lru[i:], lru[i+1:])
@@ -445,7 +444,7 @@ const (
 // 面，不从状态码反推鉴权结论）保守归 ErrUpstream。usage 是查询面不是会话面——凭据失效
 // 由会话路径上报（防循环），entry 恒保留（fatal 后后续调用仍命中冷却）。
 // 命中路径零分配：先按 accountID 查 entry.usage（map 查 + 锁 + 时间
-// 比较——不计算 credSig 字符串拼接/不重建条目），命中直接返回；未命中才走
+// 比较——不计算 credSig/不重建条目），命中直接返回；未命中才走
 // clientFor（entryFor 签名比对/重建）。
 func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
 	if s, ok := a.snapshotCachedFor(cred.AccountID); ok {
@@ -504,7 +503,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 }
 
 // snapshotCachedFor 命中路径零分配快查：按 accountID 查 entry + TTL
-// 判定——命中直接返回缓存实例，不经过 clientFor/credSig（字符串拼接）/
+// 判定——命中直接返回缓存实例，不经过 clientFor/credSig/
 // entryFor（重建判定）。未命中/无 entry → nil（走完整路径）。
 func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, bool) {
 	a.mu.Lock()
@@ -604,45 +603,50 @@ func identityOpts(sess *codexsdk.Session, meta *codexsdk.CodexMeta) []codexsdk.O
 	return opts
 }
 
-// identitySig 伪装身份签名（客户端重建判定——HTTPClient 构造期 opts 承载，
-// 变化必须重建才能生效；与 credSig 同约定：\x00 分隔——身份值为 UUID/URI 字
-// 符集，不含控制字符）。nil 与全空等价（均不注入 → ""）——proxy 恒传
-// Selection.CodexIdentity 产物（无槽 = 全空），与测试/未配置路径（nil）同签名，
-// 不引发无谓重建。
-func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
-	if (meta == nil || *meta == (codexsdk.CodexMeta{})) &&
-		(sess == nil || *sess == (codexsdk.Session{})) {
-		return ""
-	}
-	var b strings.Builder
+// identityKey 是伪装身份的**可比较值键**，取代原先用 \x00/\x1e 拼串当缓存键的
+// 做法：具名 struct 用 `==` 逐字段比较，不再依赖「身份值不含控制字符」这一脆弱
+// 约定（一旦被违反即碰撞）。字段名区分 meta/session 两段，两侧同名字段不串键；
+// nil meta/sess 与全空同键（零值）——proxy 无槽路径与未配置路径落同一键，不引发
+// 无谓重建。
+type identityKey struct {
+	// meta 段（meta == nil → 全零）
+	installationID string
+	sessionID      string
+	threadID       string
+	windowID       string
+	subagent       string
+	parentThreadID string
+	parentTurnID   string
+	turnMetadata   string
+	// session 段（sess == nil → 全零）
+	sessSessionID       string
+	sessThreadID        string
+	sessWindowID        string
+	sessClientRequestID string
+}
+
+// identitySig 伪装身份键（客户端重建判定——HTTPClient 构造期 opts 承载，
+// 变化必须重建才能生效）。nil 与全空等价（均不注入 → 零值键）——proxy 无槽
+// 路径与测试/未配置路径（nil）同键，不引发无谓重建。
+func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) identityKey {
+	var k identityKey
 	if meta != nil {
-		b.WriteString(meta.InstallationID)
-		b.WriteByte(0)
-		b.WriteString(meta.SessionID)
-		b.WriteByte(0)
-		b.WriteString(meta.ThreadID)
-		b.WriteByte(0)
-		b.WriteString(meta.WindowID)
-		b.WriteByte(0)
-		b.WriteString(meta.Subagent)
-		b.WriteByte(0)
-		b.WriteString(meta.ParentThreadID)
-		b.WriteByte(0)
-		b.WriteString(meta.ParentTurnID)
-		b.WriteByte(0)
-		b.WriteString(meta.TurnMetadata)
+		k.installationID = meta.InstallationID
+		k.sessionID = meta.SessionID
+		k.threadID = meta.ThreadID
+		k.windowID = meta.WindowID
+		k.subagent = meta.Subagent
+		k.parentThreadID = meta.ParentThreadID
+		k.parentTurnID = meta.ParentTurnID
+		k.turnMetadata = meta.TurnMetadata
 	}
-	b.WriteByte(0x1e) // meta/session 段分隔
 	if sess != nil {
-		b.WriteString(sess.SessionID)
-		b.WriteByte(0)
-		b.WriteString(sess.ThreadID)
-		b.WriteByte(0)
-		b.WriteString(sess.WindowID)
-		b.WriteByte(0)
-		b.WriteString(sess.ClientRequestID)
+		k.sessSessionID = sess.SessionID
+		k.sessThreadID = sess.ThreadID
+		k.sessWindowID = sess.WindowID
+		k.sessClientRequestID = sess.ClientRequestID
 	}
-	return b.String()
+	return k
 }
 
 // Dial 建立到上游的 Responses WebSocket 连接（§2 接线）：cred → Auth 缓存
@@ -744,15 +748,25 @@ func atUsable(cred *domain.AccountCredential) bool {
 	return cred.OAuthExpiresAt.After(time.Now())
 }
 
+// credKey 是外部凭据签名（重建判定）的**可比较值键**，取代原先的 \x00 拼串：
+// 逐字段 `==` 比较，不依赖「OAuth token/PAT 为 base64url 字符集」的脆弱约定。
+type credKey struct {
+	oauthToken     string
+	oauthRefresh   string
+	patKey         string
+	codexAccountID string
+}
+
 // credSig 凭据签名（重建判定）：外部凭据变更（管理面导入/更新——token/rt/pat/
 // account id 任一变化）→ 重建。过期时刻不参与签名（构造时的初始 at 预置决策已
 // 经生效；过期 at 由 SDK 401 自愈轮转，无需重建）。
-//
-// 分隔符用 \x00："|" 在理论上可被 token 内容携带（碰撞误重建——
-// 仅多构造一次，无害但脏）；\x00 为 Go 字符串中不可现字符（OAuth token/PAT
-// base64url 字符集）。
-func credSig(c *domain.AccountCredential) string {
-	return c.OAuthToken + "\x00" + c.OAuthRefreshToken + "\x00" + c.PATKey + "\x00" + c.CodexAccountID
+func credSig(c *domain.AccountCredential) credKey {
+	return credKey{
+		oauthToken:     c.OAuthToken,
+		oauthRefresh:   c.OAuthRefreshToken,
+		patKey:         c.PATKey,
+		codexAccountID: c.CodexAccountID,
+	}
 }
 
 // report 单次上报核心（双源去重——CAS 胜者上报，败者并发调用/补报路径跳过）；

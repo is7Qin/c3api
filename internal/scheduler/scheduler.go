@@ -492,7 +492,7 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 // 在途计划的有效性检查（attempt_plan_exec.go:hasStaticChange 取当前叶计划摘要）
 // 必须能区分「决策输入变了」与「只是载荷变了」：前者跳过该账号，后者继续
 // 预留（spec §5.7(b)「态 2」）。若叶指针永不改变，任何 generation 变化都直接
-// ErrAttemptsExhausted（attempt_plan_reservation.go:106）⇒ 在途 plan **永不能续跑**，
+// ErrAttemptsExhausted（attempt_plan_reservation.go 的预留拒绝）⇒ 在途 plan **永不能续跑**，
 // 比「不复用」更糟。故叶身份必须随「消费面是否变化」而动。
 //
 // 由此 staticKey 的字段集判据是「消费面 ⊆ 键字段集」：**凡从叶消费的事实
@@ -524,13 +524,20 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 	for id, inf := range infoMap {
 		a := inf.acc
 		// gid 必须是**确定性**派生：它随快照进入事件投递归组与规则事件
-		// （scheduler.go:975 groupIDPtr(av.eventGID())）。此前取「首个出现组」=
+		// （事件构造处 groupIDPtr(av.eventGID())）。此前取「首个出现组」=
 		// map 迭代序首元素，同一份 DB 数据在不同进程/不同重载下可得不同
 		// gid —— 组归属是静态事实，不得有这种自由度。多组账号取最小
 		// 组 ID（min 与迭代序无关，且与组集合一一对应）。
 		// 入快照的账号 max_concurrency 由写面保证 ≥1（创建默认 + 校验拒绝），
-		// 此处不再静默钳制——落库异常值应显形而非被快照掩盖。
-		av := &snapshotStatic{acc: *a, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
+		// 故此处不对**下界**静默钳制——落库的 0/负值应显形而非被快照掩盖。
+		// 但对 codex 账号必须有**上界**：其 max_concurrency 同时是槽位池容量 K，
+		// 而 reload 持 publisher.mu 按 K 同步分配 K 个 UUID（写面只校验 ≥1，
+		// tools/loadtest 曾配 100000）。钳在 acc 上使门禁与池 K 读同一份值，恒同源。
+		acc := *a
+		if acc.Template != nil && codexPoolCredential(acc.Template.CredentialType) && acc.MaxConcurrency > maxIdentityPoolSlots {
+			acc.MaxConcurrency = maxIdentityPoolSlots
+		}
+		av := &snapshotStatic{acc: acc, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
 		if old, exists := oldByID[id]; exists {
 			oldAv := old.static.Load()
 			// 静态事实比较经 staticKeyOf（值类型，`==` 算子）——此前的

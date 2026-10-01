@@ -230,50 +230,59 @@ func stableCredentialDigest(credType credential.Type, upstreamKey string, patKey
 	}
 }
 
-// CandidateFingerprint 汇总“候选身份”的全部**账号级稳定输入**（见 routing.go
-// 头注）：账号/模板/凭据类型/生效源/凭据摘要/strip 旗 + codex 账号级稳定项
-// （installation_id、codex_account_id）。身份三件套 session/thread/window 已
+// CandidateKey 是 CandidateFingerprint 的具名输入。此前该函数吃 10 个位置参数
+// （7 个 string + bool 连排），调用点（含测试）成片 `"","","","",false` 占位——
+// 一旦错位，编译器不会报错，只会静默算出另一个指纹。逐字段具名后调用点自解释、
+// 字段错位由编译器兜住。
+//
+// 字段集与下列 CandidateFingerprint 头注一致；字段声明顺序无关哈希顺序——
+// hashFields 的实参顺序由 CandidateFingerprint 内部固定，保证指纹逐字节不变。
+type CandidateKey struct {
+	AccountID        int64
+	TemplateID       int64
+	CredType         credential.Type
+	EffectiveBaseURL string // 生效 baseURL（账号覆盖优先，否则模板值）
+	UpstreamKey      string // 静态上游鉴权键（api_key 族）；进凭据摘要
+	PATKey           string // codex-pat 身份键；进凭据摘要
+	CodexAccountID   string // codex 账号级稳定项
+	InstallationID   string // codex 账号级稳定项（installation_id）
+	CodexEmail       string // 仅为语义完整；当前 hashFields 未纳入（见 static_key.go）
+	StripImageTools  bool
+}
+
+// CandidateFingerprint 汇总“候选身份”的全部**账号级稳定输入**：账号/模板/凭据类型/
+// 生效源/凭据摘要/strip 旗 + codex 账号级稳定项（installation_id、codex_account_id）。
+// 身份三件套 session/thread/window 已
 // 退役为运行时槽状态（scheduler 槽位池按完成轮数演化），**不得**再进指纹：否则
 // 每次槽轮换都会击穿 continuation 绑定与在途 (指纹,K) 工件。
-func CandidateFingerprint(
-	accountID int64,
-	templateID int64,
-	credType credential.Type,
-	effectiveBaseURL string,
-	upstreamKey string,
-	patKey string,
-	codexEmail string,
-	codexAccountID string,
-	stripImageTools bool,
-	installationID string,
-) (CandidateFingerprintVal, error) {
-	if !credType.Valid() {
-		return CandidateFingerprintVal{}, fmt.Errorf("routing: invalid credential_type %q", credType)
+func CandidateFingerprint(k CandidateKey) (CandidateFingerprintVal, error) {
+	if !k.CredType.Valid() {
+		return CandidateFingerprintVal{}, fmt.Errorf("routing: invalid credential_type %q", k.CredType)
 	}
-	if effectiveBaseURL == "" {
+	if k.EffectiveBaseURL == "" {
 		// codex 凭据 base_url 合法为空：数据面 URL 归 SDK 官方默认所有
 		//（accountcred.go 契约），凭据身份由 PAT/OAuth 身份输入承载（均入
 		// digest）——空 base_url 拒绝只适用于静态路由族（api_key 无
 		// base_url = 不可路由）。
-		switch credType {
+		switch k.CredType {
 		case credential.TypeCodexOAuth, credential.TypeCodexPAT:
 		default:
 			return CandidateFingerprintVal{}, fmt.Errorf("routing: effectiveBaseURL must not be empty")
 		}
 	}
 	var canonicalOrigin string
-	if effectiveBaseURL != "" {
+	if k.EffectiveBaseURL != "" {
 		var err error
-		canonicalOrigin, err = CanonicalOrigin(effectiveBaseURL)
+		canonicalOrigin, err = CanonicalOrigin(k.EffectiveBaseURL)
 		if err != nil {
 			return CandidateFingerprintVal{}, err
 		}
 	}
-	digest, err := stableCredentialDigest(credType, upstreamKey, patKey)
+	digest, err := stableCredentialDigest(k.CredType, k.UpstreamKey, k.PATKey)
 	if err != nil {
 		return CandidateFingerprintVal{}, err
 	}
-	for _, s := range []string{installationID, codexAccountID} {
+	for _, s := range []string{k.InstallationID, k.CodexAccountID} {
 		if !utf8.ValidString(s) {
 			return CandidateFingerprintVal{}, fmt.Errorf("routing: codex identity field not valid UTF-8")
 		}
@@ -281,13 +290,13 @@ func CandidateFingerprint(
 	if !utf8.ValidString(canonicalOrigin) {
 		return CandidateFingerprintVal{}, fmt.Errorf("routing: canonical origin not valid UTF-8")
 	}
-	acc := fieldInt64(accountID)
-	tpl := fieldInt64(templateID)
-	ct, _ := fieldString(string(credType))
+	acc := fieldInt64(k.AccountID)
+	tpl := fieldInt64(k.TemplateID)
+	ct, _ := fieldString(string(k.CredType))
 	orig, _ := fieldString(canonicalOrigin)
-	strip := fieldBool(stripImageTools)
-	inst, _ := fieldString(installationID)
-	caid, _ := fieldString(codexAccountID)
+	strip := fieldBool(k.StripImageTools)
+	inst, _ := fieldString(k.InstallationID)
+	caid, _ := fieldString(k.CodexAccountID)
 	h := hashFields(acc, tpl, ct, orig, digest, strip, inst, caid)
 	return CandidateFingerprintVal(h), nil
 }
@@ -317,7 +326,18 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 			installationID = a.Ext.CodexIdentity.InstallationID
 		}
 	}
-	return CandidateFingerprint(a.ID, a.TemplateID, a.Template.CredentialType, baseURL, a.UpstreamKey, patKey, email, codexAccountID, a.Template.StripImageTools, installationID)
+	return CandidateFingerprint(CandidateKey{
+		AccountID:        a.ID,
+		TemplateID:       a.TemplateID,
+		CredType:         a.Template.CredentialType,
+		EffectiveBaseURL: baseURL,
+		UpstreamKey:      a.UpstreamKey,
+		PATKey:           patKey,
+		CodexEmail:       email,
+		CodexAccountID:   codexAccountID,
+		StripImageTools:  a.Template.StripImageTools,
+		InstallationID:   installationID,
+	})
 }
 
 var _ = fieldUint64
