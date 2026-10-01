@@ -529,8 +529,15 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		// gid —— 组归属是静态事实，不得有这种自由度。多组账号取最小
 		// 组 ID（min 与迭代序无关，且与组集合一一对应）。
 		// 入快照的账号 max_concurrency 由写面保证 ≥1（创建默认 + 校验拒绝），
-		// 此处不再静默钳制——落库异常值应显形而非被快照掩盖。
-		av := &snapshotStatic{acc: *a, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
+		// 故此处不对**下界**静默钳制——落库的 0/负值应显形而非被快照掩盖。
+		// 但对 codex 账号必须有**上界**：其 max_concurrency 同时是槽位池容量 K，
+		// 而 reload 持 publisher.mu 按 K 同步分配 K 个 UUID（写面只校验 ≥1，
+		// tools/loadtest 曾配 100000）。钳在 acc 上使门禁与池 K 读同一份值，恒同源。
+		acc := *a
+		if acc.Template != nil && codexPoolCredential(acc.Template.CredentialType) && acc.MaxConcurrency > maxIdentityPoolSlots {
+			acc.MaxConcurrency = maxIdentityPoolSlots
+		}
+		av := &snapshotStatic{acc: acc, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
 		if old, exists := oldByID[id]; exists {
 			oldAv := old.static.Load()
 			// 静态事实比较经 staticKeyOf（值类型，`==` 算子）——此前的

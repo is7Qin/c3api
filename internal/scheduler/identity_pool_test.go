@@ -124,6 +124,22 @@ func TestInvalidateGroupMaintainsIdentityPool(t *testing.T) {
 	require.NotContains(t, s.View().static.identityPools.pools, int64(2), "删除账号池被回收")
 }
 
+// TestIdentityPoolCapacityClamped codex 账号的 max_concurrency 上界在装载期钳制：
+// 池 K 与门禁上限同源取钳后值，reload 锁内 UUID 分配有界；非 codex 账号不受
+// 上界影响（不建池、门禁照旧）。
+func TestIdentityPoolCapacityClamped(t *testing.T) {
+	huge := maxIdentityPoolSlots + 5000
+	codex := codexAcc(1, domain.FormatOpenAIResponses, "gpt-5", huge, "inst-1")
+	plain := acc(2, tpl(2, domain.FormatOpenAIChat, []string{"gpt-4o"}), huge) // api_key：无池
+	s := newSched(t, newMemLoader(map[int64][]*domain.Account{10: {codex, plain}}))
+
+	v := s.View()
+	require.Len(t, v.static.identityPools.pools[1].slots, maxIdentityPoolSlots, "codex 池 K 钳到上界")
+	require.Equal(t, maxIdentityPoolSlots, v.static.byID[1].static.Load().acc.MaxConcurrency, "门禁上限同源钳制")
+	require.Nil(t, v.static.identityPools.pools[2], "非 codex 账号不建池")
+	require.Equal(t, huge, v.static.byID[2].static.Load().acc.MaxConcurrency, "非 codex 账号门禁不受上界影响")
+}
+
 // TestReloadPublishesPoolWithView 全量 reload 的池挂在与门禁同读的静态根上：
 // 同一 RoutingView.static 既给门禁 limit（byID 叶）又给池 K（identityPools）。
 func TestReloadPublishesPoolWithView(t *testing.T) {

@@ -130,11 +130,25 @@ func syncIdentityPool(prev *identityPool, k int, installationID string, policy c
 	return resizeIdentityPool(prev, k, installationID, policy)
 }
 
+// maxIdentityPoolSlots 是 codex 槽位池容量 K 的防御性上界。K = 账号
+// MaxConcurrency，而 reload 在持 publisher.mu 期间按 K **同步**分配 K 个 UUID
+// （newIdentitySlot → NewIdentityState；tools/loadtest 曾配 100000）——无上界即
+// 让一次 reload 的锁内分配量随配置线性放大。1024 覆盖任何合理并发会话数
+// （账号默认 8，实测运维 ≤ 数十），同时把锁内 UUID 分配压在常数级。上界只在
+// 装载期施加于 codex 账号（见 buildSnapshots），非 codex 账号的并发门禁不变；
+// 门禁与池读同一份 acc，故二者仍恒同源。
+const maxIdentityPoolSlots = 1024
+
+// codexPoolCredential 判定凭据类型是否走 codex 槽位池（oauth/pat）。
+func codexPoolCredential(ct credential.Type) bool {
+	return ct == credential.TypeCodexOAuth || ct == credential.TypeCodexPAT
+}
+
 // buildIdentityPools 按当前 byID 重建 codex 槽位池注册表：仅 codex 凭据
 // （oauth/pat）且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
 // StaticView.identityPools），使门禁读的 MaxConcurrency 与池 K 恒同源。prevReg
 // 供复用（未变的池原样保留在途 busy 与槽身份）；删除/非 codex 的账号不在新
-// 表中 → 旧池随之 GC。
+// 表中 → 旧池随之 GC。K 的上界已在 buildSnapshots 装载期施加于 acc.MaxConcurrency。
 func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg *identityRegistry) *identityRegistry {
 	pools := make(map[int64]*identityPool)
 	for id, as := range byID {
@@ -142,8 +156,7 @@ func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg 
 		if av == nil || av.tpl == nil || av.acc.Ext == nil {
 			continue
 		}
-		ct := av.tpl.CredentialType
-		if ct != credential.TypeCodexOAuth && ct != credential.TypeCodexPAT {
+		if !codexPoolCredential(av.tpl.CredentialType) {
 			continue
 		}
 		k := av.acc.MaxConcurrency
