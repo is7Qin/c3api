@@ -7,7 +7,6 @@ package service
 import (
 	"context"
 
-	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
@@ -40,7 +39,7 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	if p.UpstreamKey != nil {
 		key = *p.UpstreamKey
 	}
-	if key == "" && tpl.CredentialType != credential.TypeCodexOAuth && tpl.CredentialType != credential.TypeCodexPAT {
+	if key == "" && !tpl.CredentialType.IsCodex() {
 		return nil, ErrInvalidInput
 	}
 	if tpl.CredentialType.IsCodex() && p.BaseURL != nil && *p.BaseURL != "" {

@@ -139,11 +139,6 @@ func syncIdentityPool(prev *identityPool, k int, installationID string, policy c
 // 门禁与池读同一份 acc，故二者仍恒同源。
 const maxIdentityPoolSlots = 1024
 
-// codexPoolCredential 判定凭据类型是否走 codex 槽位池（oauth/pat）。
-func codexPoolCredential(ct credential.Type) bool {
-	return ct == credential.TypeCodexOAuth || ct == credential.TypeCodexPAT
-}
-
 // buildIdentityPools 按当前 byID 重建 codex 槽位池注册表：仅 codex 凭据
 // （oauth/pat）且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
 // StaticView.identityPools），使门禁读的 MaxConcurrency 与池 K 恒同源。prevReg
@@ -156,7 +151,7 @@ func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg 
 		if av == nil || av.tpl == nil || av.acc.Ext == nil {
 			continue
 		}
-		if !codexPoolCredential(av.tpl.CredentialType) {
+		if !av.tpl.CredentialType.IsCodex() {
 			continue
 		}
 		k := av.acc.MaxConcurrency
@@ -190,7 +185,7 @@ func (s *Scheduler) prevIdentityPoolsLocked() *identityRegistry {
 // 本次预留所用视图的静态根（与门禁 limit 同源）；全忙兜底 = 临时一次性身份
 // （不落池，计一条 warn）——installation/policy 取自池（单一来源，不再回 ext）。
 func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, credType credential.Type) *identitySlot {
-	if credType != credential.TypeCodexOAuth && credType != credential.TypeCodexPAT {
+	if !credType.IsCodex() {
 		return nil
 	}
 	if pools == nil {

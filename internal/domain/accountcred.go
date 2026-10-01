@@ -37,7 +37,7 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 	c := AccountCredential{AccountID: e.AccountID}
 	// 账号标识 codex 两类型统一投影（非 codex 类型不带——调用方按类型分流，
 	// 非本类型的列不触达）。
-	if e.CredentialType == credential.TypeCodexOAuth || e.CredentialType == credential.TypeCodexPAT {
+	if e.CredentialType.IsCodex() {
 		if e.CodexAccountID != nil {
 			c.CodexAccountID = *e.CodexAccountID
 		}

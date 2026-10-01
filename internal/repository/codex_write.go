@@ -14,7 +14,6 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 
-	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
@@ -182,14 +181,14 @@ func loadTemplates(ctx context.Context, client *ent.Client, ids []int64) (map[in
 }
 
 func validateCodexAccountBaseURL(tpl *domain.Template, baseURL *string) error {
-	if isCodexType(tpl.CredentialType) && baseURL != nil && *baseURL != "" {
+	if tpl.CredentialType.IsCodex() && baseURL != nil && *baseURL != "" {
 		return fmt.Errorf("%w: codex account base_url must be empty", ErrInvalidInput)
 	}
 	return nil
 }
 
 func validateCodexTemplateUpdate(ctx context.Context, client *ent.Client, tpl *domain.Template) error {
-	if !isCodexType(tpl.CredentialType) {
+	if !tpl.CredentialType.IsCodex() {
 		return nil
 	}
 	if tpl.BaseURL != "" {
@@ -207,10 +206,6 @@ func validateCodexTemplateUpdate(ctx context.Context, client *ent.Client, tpl *d
 		return fmt.Errorf("%w: referenced codex account base_url must be empty", ErrInvalidInput)
 	}
 	return nil
-}
-
-func isCodexType(typ credential.Type) bool {
-	return typ == credential.TypeCodexOAuth || typ == credential.TypeCodexPAT
 }
 
 func sortedUniqueIDs(ids []int64) []int64 {
