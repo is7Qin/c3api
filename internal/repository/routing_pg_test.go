@@ -36,7 +36,18 @@ func mustQualityClassVal(t *testing.T, ck domain.CallerKind, uf domain.RequestFo
 }
 func mustFPVal(t *testing.T, accID, tplID int64, ct credential.Type, origin, sk, pat, email, acc string, strip bool, inst string) domain.CandidateFingerprintVal {
 	t.Helper()
-	id, err := domain.CandidateFingerprint(accID, tplID, ct, origin, sk, pat, email, acc, strip, inst)
+	id, err := domain.CandidateFingerprint(domain.CandidateKey{
+		AccountID:        accID,
+		TemplateID:       tplID,
+		CredType:         ct,
+		EffectiveBaseURL: origin,
+		UpstreamKey:      sk,
+		PATKey:           pat,
+		CodexEmail:       email,
+		CodexAccountID:   acc,
+		StripImageTools:  strip,
+		InstallationID:   inst,
+	})
 	require.NoError(t, err)
 	return id
 }

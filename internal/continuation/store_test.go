@@ -39,14 +39,26 @@ func routeID(t *testing.T) domain.RouteClassIDVal {
 
 func fp(t *testing.T) domain.CandidateFingerprintVal {
 	t.Helper()
-	f, err := domain.CandidateFingerprint(10, 20, "api_key", "https://api.openai.com", "sk-abc", "", "", "", false, "")
+	f, err := domain.CandidateFingerprint(domain.CandidateKey{
+		AccountID:        10,
+		TemplateID:       20,
+		CredType:         "api_key",
+		EffectiveBaseURL: "https://api.openai.com",
+		UpstreamKey:      "sk-abc",
+	})
 	require.NoError(t, err)
 	return f
 }
 
 func fp2(t *testing.T) domain.CandidateFingerprintVal {
 	t.Helper()
-	f, err := domain.CandidateFingerprint(11, 20, "api_key", "https://api.openai.com", "sk-different", "", "", "", false, "")
+	f, err := domain.CandidateFingerprint(domain.CandidateKey{
+		AccountID:        11,
+		TemplateID:       20,
+		CredType:         "api_key",
+		EffectiveBaseURL: "https://api.openai.com",
+		UpstreamKey:      "sk-different",
+	})
 	require.NoError(t, err)
 	return f
 }
