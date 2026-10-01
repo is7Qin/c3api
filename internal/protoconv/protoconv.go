@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/sserelay"
@@ -337,12 +338,18 @@ func num(m map[string]any, key string) (float64, bool) {
 	return 0, false
 }
 
-// intOr0 读整数字段（缺失/类型异常 → 0）。
+// intOr0 读整数字段（缺失/类型异常 → 0）。浮点越界（病态大数，超出 int64
+// 范围如 1e400 或 ±Inf）→ 0：Go 的 float64→int64 转换在越界时是**实现相关**的
+// 垃圾值（Go 规范未定义），与 scanIntValue/gjsonNumInt 的「保守 0」一致。
 func intOr0(m map[string]any, key string) int64 {
-	if f, ok := num(m, key); ok {
-		return int64(f)
+	f, ok := num(m, key)
+	if !ok {
+		return 0
 	}
-	return 0
+	if f > math.MaxInt64 || f < math.MinInt64 {
+		return 0
+	}
+	return int64(f)
 }
 
 // pass 按表透传字段：dst[key] = src[key]（仅当存在且非 nil）。

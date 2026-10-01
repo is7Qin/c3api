@@ -7,6 +7,7 @@ package protoconv
 import (
 	"bytes"
 	"encoding/json"
+	"math"
 	"strings"
 	"testing"
 
@@ -14,6 +15,31 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 )
+
+// TestIntOr0ClampsFloatOverflow intOr0 对病态大浮点（超出 int64 范围）必须
+// 钳 0，而非实现相关的垃圾值（对齐 gjsonNumInt/scanIntValue 的保守 0）。
+func TestIntOr0ClampsFloatOverflow(t *testing.T) {
+	big := math.Pow(2, 70) // > math.MaxInt64
+	m := map[string]any{
+		"ok":      float64(123),
+		"neg":     float64(-7),
+		"huge":    big,
+		"hugeNeg": -big,
+		"posInf":  math.Inf(1),
+		"negInf":  math.Inf(-1),
+		"nil":     nil,
+		"str":     "12",
+	}
+	require.Equal(t, int64(123), intOr0(m, "ok"), "正常浮点截断")
+	require.Equal(t, int64(-7), intOr0(m, "neg"), "负值")
+	require.Equal(t, int64(0), intOr0(m, "huge"), "上溢 → 0（钳制）")
+	require.Equal(t, int64(0), intOr0(m, "hugeNeg"), "下溢 → 0（钳制）")
+	require.Equal(t, int64(0), intOr0(m, "posInf"), "+Inf → 0")
+	require.Equal(t, int64(0), intOr0(m, "negInf"), "-Inf → 0")
+	require.Equal(t, int64(0), intOr0(m, "nil"), "nil → 0")
+	require.Equal(t, int64(0), intOr0(m, "str"), "非数字类型 → 0")
+	require.Equal(t, int64(0), intOr0(m, "absent"), "缺失 → 0")
+}
 
 func obj(t *testing.T, b []byte) map[string]any {
 	t.Helper()
