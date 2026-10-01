@@ -151,7 +151,7 @@ func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p 
 		}
 		if p.BaseURL != nil && *p.BaseURL != "" {
 			for _, id := range ids {
-				if isCodexType(templates[id].CredentialType) {
+				if templates[id].CredentialType.IsCodex() {
 					return fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
 				}
 			}

@@ -26,7 +26,7 @@ func seedExtTemplate(t *testing.T, svc *Service, name string, ct credential.Type
 		formats = []domain.RequestFormat{domain.FormatOpenAIChat}
 	}
 	baseURL := "https://u"
-	if ct == credential.TypeCodexOAuth || ct == credential.TypeCodexPAT {
+	if ct.IsCodex() {
 		baseURL = ""
 	}
 	tpl, err := svc.CreateTemplate(context.Background(), &domain.Template{
@@ -80,7 +80,7 @@ func TestTemplateCredentialTypeConstraint(t *testing.T) {
 	}
 	for _, ct := range []credential.Type{credential.TypeResponsesSpecial, credential.TypeCodexOAuth, credential.TypeCodexPAT} {
 		baseURL := "https://u"
-		if ct == credential.TypeCodexOAuth || ct == credential.TypeCodexPAT {
+		if ct.IsCodex() {
 			baseURL = ""
 		}
 		for i, fmts := range formatsCases {

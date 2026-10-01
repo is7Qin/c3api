@@ -146,24 +146,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 }
 
 func imagesStreamOutcome(reqID string, sel *scheduler.Selection, reqModel string, op OperationTag, timing AttemptTiming, usage AttemptUsage, result AttemptResult, status AttemptStatus, commit CommitState, businessSent, terminal, malformed bool) AttemptOutcome {
-	return buildOutcome(CallerImagesCodex, op, outcomeParams{
-		reqID:          AttemptID(reqID),
-		routeClassID:   RouteClassID("rc-" + reqID),
-		qualityClassID: QualityClassID("qc-" + reqID),
-		fingerprint:    syntheticFingerprint(sel, reqID),
-		templateID:     sel.TemplateID,
-		accountID:      sel.AccountID,
-		requestedModel: reqModel,
-		mappedModel:    sel.Model,
-		timing:         timing,
-		usage:          usage,
-		commit:         commit,
-		result:         result,
-		status:         status,
-		businessSent:   businessSent,
-		terminal:       terminal,
-		malformed:      malformed,
-	})
+	return syntheticOutcome(CallerImagesCodex, reqID, sel, reqModel, op, timing, usage, result, status, commit, businessSent, terminal, malformed)
 }
 
 // writeSSEHeaders 设置 SSE 响应头三件套（text/event-stream）——单一 SSE 头

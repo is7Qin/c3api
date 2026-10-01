@@ -196,7 +196,7 @@ func createPGWriteTemplate(t *testing.T, repos *repository.Repository, name stri
 	t.Helper()
 	baseURL := "https://api.example.com"
 	format := domain.FormatOpenAIChat
-	if typ == credential.TypeCodexOAuth || typ == credential.TypeCodexPAT {
+	if typ.IsCodex() {
 		baseURL = ""
 		format = domain.FormatOpenAIResponses
 	}
@@ -224,7 +224,7 @@ func requirePGCodexBaseURLInvariant(t *testing.T, repos *repository.Repository, 
 	require.NoError(t, err)
 	tpl, err := repos.Templates.GetTemplate(context.Background(), account.TemplateID)
 	require.NoError(t, err)
-	if tpl.CredentialType == credential.TypeCodexOAuth || tpl.CredentialType == credential.TypeCodexPAT {
+	if tpl.CredentialType.IsCodex() {
 		require.True(t, account.BaseURL == nil || *account.BaseURL == "")
 	}
 }

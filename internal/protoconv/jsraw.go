@@ -116,7 +116,7 @@ func fcIDRaw(item gjson.Result) string {
 	return emptyStr
 }
 
-// rawNotNull 值原始文本非空且非 null 字面量（pass() 的 v != nil 语义；
+// rawNotNull 值原始文本非空且非 null 字面量（等价于「键存在且非 null」判定；
 // json.Valid 已保证 'n' 开头的值恰为 null）。
 func rawNotNull(v string) bool {
 	return len(v) > 0 && v[0] != 'n'

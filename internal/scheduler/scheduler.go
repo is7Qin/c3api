@@ -534,7 +534,7 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		// 而 reload 持 publisher.mu 按 K 同步分配 K 个 UUID（写面只校验 ≥1，
 		// tools/loadtest 曾配 100000）。钳在 acc 上使门禁与池 K 读同一份值，恒同源。
 		acc := *a
-		if acc.Template != nil && codexPoolCredential(acc.Template.CredentialType) && acc.MaxConcurrency > maxIdentityPoolSlots {
+		if acc.Template != nil && acc.Template.CredentialType.IsCodex() && acc.MaxConcurrency > maxIdentityPoolSlots {
 			acc.MaxConcurrency = maxIdentityPoolSlots
 		}
 		av := &snapshotStatic{acc: acc, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
@@ -896,23 +896,6 @@ func minGID(ids []int64) int64 {
 		}
 	}
 	return m
-}
-
-func groupsEqual(a, b []int64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	m := make(map[int64]int, len(a))
-	for _, v := range a {
-		m[v]++
-	}
-	for _, v := range b {
-		if c, ok := m[v]; !ok || c == 0 {
-			return false
-		}
-		m[v]--
-	}
-	return true
 }
 
 // removeGid 摘除 groupIDs 中的指定组（实例共享纪律：组级重载的从组移除路径）。

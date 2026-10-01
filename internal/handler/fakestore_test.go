@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
@@ -123,14 +122,10 @@ func missingErr(id int64) error {
 	return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
 }
 
-func isFakeCodexType(typ credential.Type) bool {
-	return typ == credential.TypeCodexOAuth || typ == credential.TypeCodexPAT
-}
-
 func (f *fakeStore) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if isFakeCodexType(t.CredentialType) && t.BaseURL != "" {
+	if t.CredentialType.IsCodex() && t.BaseURL != "" {
 		return nil, repository.ErrInvalidInput
 	}
 	if err := f.templateNameConflictLocked(0, t.Name); err != nil {
@@ -186,7 +181,7 @@ func (f *fakeStore) UpdateTemplate(ctx context.Context, t *domain.Template) (*do
 	if _, ok := f.tpls[t.ID]; !ok {
 		return nil, missingErr(t.ID)
 	}
-	if isFakeCodexType(t.CredentialType) {
+	if t.CredentialType.IsCodex() {
 		if t.BaseURL != "" {
 			return nil, repository.ErrInvalidInput
 		}
@@ -224,7 +219,7 @@ func (f *fakeStore) CreateAccount(ctx context.Context, a *domain.Account) (*doma
 	if !ok {
 		return nil, missingErr(a.TemplateID)
 	}
-	if isFakeCodexType(tpl.CredentialType) && a.BaseURL != nil && *a.BaseURL != "" {
+	if tpl.CredentialType.IsCodex() && a.BaseURL != nil && *a.BaseURL != "" {
 		return nil, repository.ErrInvalidInput
 	}
 	a.ID = f.nextID
@@ -704,7 +699,7 @@ func (f *fakeStore) UpdateTemplatesBatch(ctx context.Context, ids []int64, p rep
 		return fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id)
 	}
 	for _, id := range ids {
-		if p.BaseURL != nil && *p.BaseURL != "" && isFakeCodexType(f.tpls[id].CredentialType) {
+		if p.BaseURL != nil && *p.BaseURL != "" && f.tpls[id].CredentialType.IsCodex() {
 			return repository.ErrInvalidInput
 		}
 	}
@@ -776,7 +771,7 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 		if p.BaseURL != nil {
 			baseURL = p.BaseURL
 		}
-		if isFakeCodexType(tpl.CredentialType) && baseURL != nil && *baseURL != "" {
+		if tpl.CredentialType.IsCodex() && baseURL != nil && *baseURL != "" {
 			return nil, repository.ErrInvalidInput
 		}
 	}

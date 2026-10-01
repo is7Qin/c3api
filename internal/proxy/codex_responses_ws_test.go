@@ -35,12 +35,14 @@ import (
 
 // --- codex 路径 resp-ws 本地 mock 上游测试（可编程面） ---
 // 真实上游不可控面（401 轮转 / 心跳节奏 / 伪装头断言）用本地可编程 mock 覆盖；
-// 真实凭据 e2e（happy path / usage 逐字节一致）在 pg_codex_responses_ws_test.go。
+// 真实凭据 e2e（happy path / usage 5 计数与 aiclient 路径同值）在
+// pg_codex_responses_ws_test.go。
 
 // codexWSUpstream codex 路径 mock WS 上游（升级状态按序弹出，耗尽重复最后
 // 一步）+ 握手头观测 + 帧观测（首个数据帧后下发事件流 created/delta/
-// completed——与 aiclient 路径同帧断言逐字节一致 + 每帧回声）+ 读满
-// frameLimit 帧后 1000 关闭帧。
+// completed——与 aiclient 路径共用同一 completed 帧；每帧回声 = 客户端帧经 SDK
+// codex 形状归一后的字节，区别于 aiclient 路径的零解析直转）+ 读满 frameLimit
+// 帧后 1000 关闭帧。
 type codexWSUpstream struct {
 	mu         sync.Mutex
 	upgrades   int
@@ -322,7 +324,7 @@ func TestCodexWSBlackHoleDialTimeout(t *testing.T) {
 
 // TestCodexWSMockRotateRefreshSuccess 端到端主流程（oauth）：升级 401 → SDK
 // 单飞 refresh（真端点 mock）→ 重拨 200 → 完整会话（事件流 + 回声 + 关闭）
-// + usage 嗅探计费（5 计数与 aiclient 路径逐字节一致）+ 伪装四元组握手头断
+// + usage 嗅探计费（5 计数与 aiclient 路径同值，共用同一 completed 帧）+ 伪装四元组握手头断
 // 言 + 客户端头一律不递（spec §12：session 头族/OpenAI-Beta 不得顶掉账号身份，
 // 自定义头如 X-Client-Version 也不得出现）+ 网关 key 不泄漏 + 帧内
 // client_metadata 注入断言。
@@ -363,8 +365,17 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, `{"type":"response.output_text.delta","delta":"hi"}`, got[1])
 	require.Contains(t, got[2], `"type":"response.completed"`)
 	require.Contains(t, got[2], `"input_tokens":6`)
-	// 回声帧：payload 为客户端帧（经 SDK 按 codex 形状归一——白名单内键保留、
-	// 强制 store:false）+ SDK 注入的 client_metadata（与真实 codex 客户端一致）
+	// 回声帧 = 客户端帧经 SDK 按 codex 形状归一后的字节（无条件生效）：顶层
+	// 白名单过滤（非白名单键如 f2 的 delta / f3 的 n 被剥离）→ 强制追加
+	// store:false → 末尾注入 client_metadata（伪装身份对象）。归一后
+	// client_metadata 值之前的字节完全确定，逐字节断言；client_metadata 值含
+	// 每帧 UUIDv7 动态身份（turn_id/traceparent），就其尾部结构单独断言。
+	const metaKey = `"client_metadata":`
+	wantNormalizedPrefix := []string{
+		`{"type":"response.create","model":"gpt-4o","input":"hi","store":false,` + metaKey,
+		`{"type":"response.input_text.delta","store":false,` + metaKey,
+		`{"type":"custom.mid","store":false,` + metaKey,
+	}
 	for i, want := range []string{f1, f2, f3} {
 		var echo struct {
 			Type    string `json:"type"`
@@ -372,8 +383,20 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal([]byte(got[3+i]), &echo))
 		require.Equal(t, "echo", echo.Type)
-		require.Contains(t, echo.Payload, gjson.Get(want, "type").String(), "白名单内键保留")
-		require.Contains(t, echo.Payload, `"client_metadata"`)
+		// 精确字节断言：client_metadata 值之前的归一字节逐字节相等——覆盖
+		// ① 白名单键保序保留（type/model/input）② 非白名单键剥离（delta/n）
+		// ③ store:false 强制追加 ④ client_metadata 为末尾唯一附加键。
+		idx := strings.Index(echo.Payload, metaKey)
+		require.GreaterOrEqual(t, idx, 0, "归一帧必带 client_metadata")
+		require.Equal(t, wantNormalizedPrefix[i], echo.Payload[:idx+len(metaKey)],
+			"归一后确定字节不一致（客户端帧 %q）：白名单保序 + 剥离 + store:false", want)
+		// client_metadata 值 = 每帧注入的伪装身份对象：installation_id 固定、
+		// session/thread/window/turn/traceparent 为 UUIDv7 动态值——断言末尾
+		// 唯一附加键、键序前缀与对象闭合（不含动态取值）。
+		rest := echo.Payload[idx+len(metaKey):]
+		require.True(t, strings.HasPrefix(rest, `{"x-codex-installation-id":"inst-00000000000000000000000000000000","session_id":"`),
+			"client_metadata 为末尾唯一附加键且键序固定（installation_id 固定值）")
+		require.True(t, strings.HasSuffix(echo.Payload, "}}"), "client_metadata 对象 + 帧对象闭合")
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 

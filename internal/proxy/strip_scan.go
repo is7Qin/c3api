@@ -614,5 +614,4 @@ var (
 	streamKeyBytes      = []byte("stream")
 	modelKeyBytes       = []byte("model")
 	serviceTierKeyBytes = []byte("service_tier")
-	streamModelTierKeys = [][]byte{streamKeyBytes, modelKeyBytes, serviceTierKeyBytes}
 )

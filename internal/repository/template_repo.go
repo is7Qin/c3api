@@ -23,7 +23,7 @@ type TemplateRepo struct {
 }
 
 func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
-	if isCodexType(t.CredentialType) && t.BaseURL != "" {
+	if t.CredentialType.IsCodex() && t.BaseURL != "" {
 		return nil, fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
 	}
 	row, err := r.client.Template.Create().
