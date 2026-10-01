@@ -898,23 +898,6 @@ func minGID(ids []int64) int64 {
 	return m
 }
 
-func groupsEqual(a, b []int64) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	m := make(map[int64]int, len(a))
-	for _, v := range a {
-		m[v]++
-	}
-	for _, v := range b {
-		if c, ok := m[v]; !ok || c == 0 {
-			return false
-		}
-		m[v]--
-	}
-	return true
-}
-
 // removeGid 摘除 groupIDs 中的指定组（实例共享纪律：组级重载的从组移除路径）。
 func removeGid(gids []int64, gid int64) []int64 {
 	out := gids[:0]

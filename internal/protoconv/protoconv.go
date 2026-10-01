@@ -23,10 +23,6 @@ import (
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
-// defaultMaxTokens 是 Messages 必填 max_tokens 在客户端未给上限时的常量，
-// 不是模型上限查询。
-const defaultMaxTokens = 4096
-
 // ConvertRequest 把客户端协议请求体转换为 dir 指向的模板协议请求体（返回的
 // 字节即模板协议上游请求体，可直接转发）。转换器按目标协议规范映射字段；
 // 目标协议无对应参数的字段（如 chat 的 frequency_penalty → resp 无此参数）
@@ -350,15 +346,6 @@ func intOr0(m map[string]any, key string) int64 {
 		return 0
 	}
 	return int64(f)
-}
-
-// pass 按表透传字段：dst[key] = src[key]（仅当存在且非 nil）。
-func pass(dst, src map[string]any, keys ...string) {
-	for _, k := range keys {
-		if v, ok := src[k]; ok && v != nil {
-			dst[k] = v
-		}
-	}
 }
 
 // messStopToChatFinish Messages stop_reason → Chat finish_reason。
