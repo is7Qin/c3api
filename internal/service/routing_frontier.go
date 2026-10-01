@@ -55,7 +55,7 @@ type RoutingFrontierCandidate struct {
 	TTFTLCB          float64
 	TTFTUCB          float64
 	TTFTKnown        bool
-	InputUnitCost   int64
+	InputUnitCost    int64
 	CostKnown        bool
 	Insufficient     bool
 	OnFrontier       bool

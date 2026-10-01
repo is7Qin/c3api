@@ -92,7 +92,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
-		CodexPATKey: strPtrPG("pat-pg-1"),
+		CodexPATKey:   strPtrPG("pat-pg-1"),
 	})
 	require.NoError(t, err)
 

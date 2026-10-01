@@ -190,11 +190,11 @@ func (m *StreamMapper) mergeMessUsage(u map[string]any) {
 type StreamMapper struct {
 	dir domain.ProtocolConvert
 
-	started bool // 已发出首事件（防御重复的 created/start）
-	done    bool // 已发出终止帧（防御重复的 completed/stop）
-	id      string
-	model   string
-	created int64
+	started     bool // 已发出首事件（防御重复的 created/start）
+	done        bool // 已发出终止帧（防御重复的 completed/stop）
+	id          string
+	model       string
+	created     int64
 	it, ot      int64 // 用量（input/output tokens；mess 侧 it 是未含缓存的 input_tokens）
 	cached      int64 // cache_read / cached_tokens
 	cacheCreate int64 // mess cache_creation_input_tokens（不计入 cached_tokens）
