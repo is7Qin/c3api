@@ -8,3 +8,12 @@ overrides:
   # redocly/openapi-core pin 精确 4.3.0，故强制全链升级到 4.3.2（dev 构建链，
   # 不打包进生产 bundle）。
   js-yaml: 4.3.2
+  # Dependabot 4 条 medium（均在 web 构建/工具链，不进生产 bundle）：
+  #   fast-uri：host 大小写归一化不一致（percent-encoded octets）——ajv 链。
+  fast-uri: 3.1.8
+  #   ip-address：isInSubnet() 跨地址族比较越界 + Address6 解析无长度上限
+  #   （单条长串即卡死/崩溃）——shadcn（MCP sdk / socks）链。
+  ip-address: 10.7.1
+  #   brace-expansion：2.x 的 `{a},b}` 重写二次方膨胀 CPU DoS——minimatch@5
+  #   （openapi-typescript 链）。仅约束 2.x 段，5.x 实例（glob/ts-morph）不动。
+  "brace-expansion@>=2.0.0 <2.1.7": 2.1.7
