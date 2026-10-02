@@ -31,15 +31,20 @@ type codexUsageProber interface {
 // 恢复由时间窗 + 真实流量判定。
 type healthProber struct {
 	lookup  func(accountID int64) (*domain.Account, bool)
+	runtime func(accountID int64) (scheduler.RuntimeInfo, bool)
 	codex   codexUsageProber
 	timeout time.Duration
 }
 
 // newHealthProber 构造适配器并返回 scheduler.ProbeFunc 形态（装配点经
-// healthWorker 在 Start 期一次性交给 RuntimeHealth）。
-func newHealthProber(lookup func(accountID int64) (*domain.Account, bool), codex codexUsageProber,
-	timeout time.Duration) scheduler.ProbeFunc {
-	p := &healthProber{lookup: lookup, codex: codex, timeout: timeout}
+// healthWorker 在 Start 期一次性交给 RuntimeHealth）。lookup = 账号静态快照
+// （sched.ProbeAccount）；runtime = 账号运行时状态（sched.Runtime）——失效
+// （failed_at → StatusDisabled）冻结判定读它（静态快照的 failed_at 只在异步
+// 重载后刷新，运行时状态则随 FailAccount 同步翻转，故冻结必须看运行时状态）。
+func newHealthProber(lookup func(accountID int64) (*domain.Account, bool),
+	runtime func(accountID int64) (scheduler.RuntimeInfo, bool),
+	codex codexUsageProber, timeout time.Duration) scheduler.ProbeFunc {
+	p := &healthProber{lookup: lookup, runtime: runtime, codex: codex, timeout: timeout}
 	return p.probe
 }
 
@@ -62,10 +67,23 @@ func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error
 	defer cancel()
 	acct, ok := p.lookup(key.AccountID)
 	if !ok || acct.IdentityRevision != key.IdentityRevision {
-		// 视图缺失（已删/未同步）或**身份代际 K 错配**——fail-closed：探测失败
-		// → probeTick 重开记录，stale PROBING 不可能经错配 probe 变 READY。
+		// 视图缺失（已删/未同步）或**身份代际 K 错配**——fail-closed：返回
+		// ErrProbeStaleRevision，probeTick 对它**不重开、不推进 READY**（记录保持
+		// PROBING，stale PROBING 不可能经错配 probe 变 READY）。
 		// 比的是 K（identity_revision）而非客户端 CAS 令牌 C：健康记录按 K 隔离。
 		return fmt.Errorf("%w: account %d not healthy-routable at identity revision %d", scheduler.ErrProbeStaleRevision, key.AccountID, key.IdentityRevision)
+	}
+	// 冻结：运行时失效（failed_at → 调度 StatusDisabled）账号已从路由摘除，恢复
+	// 唯一入口 /recover——不再健康探测上游（额度查询无意义，且对失效凭据拨号会
+	// 反复触发 SDK 刷新判死上报）。语义同上面的"不可路由"分支：复用
+	// ErrProbeStaleRevision（probeTick 对它**不重开、不推进 READY**）；该 PROBING
+	// 记录保留在视图中被每 tick 复检（不拨号，与账号缺失同款既有行为）。恢复后
+	// 运行时回 active，即按新代际正常探测。判据是**逐实例**运行时状态——多实例
+	// 下未 reload 的对端在传播窗口内可能多探一次，经 NOTIFY/reload 有界收敛。
+	if p.runtime != nil {
+		if ri, ok := p.runtime(key.AccountID); ok && ri.Status == domain.StatusDisabled {
+			return fmt.Errorf("%w: account %d runtime-disabled (frozen, not probed)", scheduler.ErrProbeStaleRevision, key.AccountID)
+		}
 	}
 	tpl := acct.Template
 	if tpl == nil {

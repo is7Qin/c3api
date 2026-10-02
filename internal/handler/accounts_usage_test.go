@@ -25,13 +25,21 @@ import (
 )
 
 // hUsageSnap 逐账号可编程快照数据源（handler 装配矩阵注入面——handler
-// CodexUsageProber 接口，经 OpsOptions.UsageSnap 构造注入）。
+// CodexUsageProber 接口，经 OpsOptions.UsageSnap 构造注入）。calls 记录每账号
+// 实收拨号次数（冻结断言：失效账号零调用）。
 type hUsageSnap struct {
 	snaps map[int64]*domain.CodexUsageSnapshot
 	errs  map[int64]error
+	mu    sync.Mutex
+	calls map[int64]int
 }
 
 func (s *hUsageSnap) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
+	if s.calls != nil {
+		s.mu.Lock()
+		s.calls[cred.AccountID]++
+		s.mu.Unlock()
+	}
 	return s.snaps[cred.AccountID], s.errs[cred.AccountID]
 }
 
@@ -342,3 +350,45 @@ func TestAssembleUpstreamParallel(t *testing.T) {
 	}
 }
 func strPtr(s string) *string { return &s }
+
+// TestGetAccountsUsageFrozenFailedAccountSkipsProbe 冻结：运行时失效
+// （failed_at 置位）的 codex 账号不打上游额度端点（prober 零调用）；upstream_error
+// 按失效来源映射（Q2）：SDK 判死 → auth_expired；规则判死 → 不标。未失效账号照常拉取。
+func TestGetAccountsUsageFrozenFailedAccountSkipsProbe(t *testing.T) {
+	now := time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC)
+	snap := &hUsageSnap{
+		snaps: map[int64]*domain.CodexUsageSnapshot{1: {PlanType: "chatgpt-plus"}},
+		calls: map[int64]int{},
+	}
+	h, store := newUsageTestHandler(t, now, snap)
+	failedAt := now.Add(-time.Hour)
+	sdkSrc := domain.FailureSourceSDK
+	ruleSrc := domain.FailureSourceRule
+	store.accs[1] = &domain.Account{ID: 1, Enabled: true}
+	store.accs[2] = &domain.Account{ID: 2, Enabled: true, FailedAt: &failedAt, FailureSource: &sdkSrc}
+	store.accs[3] = &domain.Account{ID: 3, Enabled: true, FailedAt: &failedAt, FailureSource: &ruleSrc}
+	for id := int64(1); id <= 3; id++ {
+		store.accExts[id] = &domain.AccountExt{AccountID: id, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-" + strconv.FormatInt(id, 10))}
+	}
+
+	rec := getUsage(h, "account_ids=1,2,3&window=24h")
+	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
+	var resp AccountsUsageResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(t, resp.Items, 3)
+
+	// a1 未失效 codex → 正常拉取
+	require.NotNil(t, resp.Items[0].Upstream, "未失效账号照常返回快照")
+	require.Equal(t, 1, snap.calls[1], "未失效账号照常拨号")
+
+	// a2 SDK 判死 → 冻结：零上游拨号 + auth_expired（token 吊销场景展示不变）
+	require.Nil(t, resp.Items[1].Upstream, "失效账号 → null 快照")
+	require.NotNil(t, resp.Items[1].UpstreamError)
+	require.Equal(t, AuthExpired, *resp.Items[1].UpstreamError, "SDK 判死 → auth_expired")
+	require.Equal(t, 0, snap.calls[2], "失效账号不得打上游额度端点")
+
+	// a3 规则判死 → 冻结：零上游拨号且**不标** upstream_error（避免误标凭据失效）
+	require.Nil(t, resp.Items[2].Upstream, "失效账号 → null 快照")
+	require.Nil(t, resp.Items[2].UpstreamError, "规则判死 → 不标 upstream_error")
+	require.Equal(t, 0, snap.calls[3], "失效账号不得打上游额度端点")
+}

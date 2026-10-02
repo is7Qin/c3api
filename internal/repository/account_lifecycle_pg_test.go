@@ -197,6 +197,39 @@ func TestPGAccountRevisionStaleReject(t *testing.T) {
 	require.Equal(t, gotK.IdentityRevision, got2.IdentityRevision, "恢复不改 K")
 }
 
+// TestPGFailAccountCASIdempotent 幂等：已失效账号同 K 再次判死 → no-op（nil、
+// C 不再增长、失败字段保持首次）；K 陈旧仍拒绝（旧判决作废语义不变）。
+func TestPGFailAccountCASIdempotent(t *testing.T) {
+	repos := newPGRepos(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	a, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "fail-idem", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, Enabled: true})
+	require.NoError(t, err)
+
+	first := time.Date(2026, 8, 28, 0, 0, 0, 0, time.UTC)
+	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, a.IdentityRevision, "rule", first, "first"))
+	got, _ := repos.Accounts.GetAccount(ctx, a.ID)
+	require.NotNil(t, got.FailedAt)
+	require.Equal(t, int64(2), got.LifecycleRevision)
+	require.Equal(t, "rule", *got.FailureSource)
+
+	// 第二次同 K 判死 → 幂等 no-op：nil、C 不变、失败字段保持首次。
+	second := first.Add(time.Hour)
+	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, a.ID, a.IdentityRevision, "sdk", second, "second"))
+	got2, _ := repos.Accounts.GetAccount(ctx, a.ID)
+	require.Equal(t, int64(2), got2.LifecycleRevision, "重复上报不推 C")
+	require.NotNil(t, got2.FailedAt)
+	require.True(t, got2.FailedAt.Equal(first), "失效时刻保持首次")
+	require.Equal(t, "rule", *got2.FailureSource, "失败来源保持首次")
+	require.Equal(t, "first", *got2.LastError, "失败原因保持首次")
+
+	// K 陈旧 → 仍拒绝（旧判决作废语义不变），即便账号已失效。
+	err = repos.Accounts.FailAccountCAS(ctx, a.ID, a.IdentityRevision+99, "sdk", second, "stale")
+	require.ErrorIs(t, err, repository.ErrConflict)
+	got3, _ := repos.Accounts.GetAccount(ctx, a.ID)
+	require.Equal(t, int64(2), got3.LifecycleRevision, "陈旧 K 拒绝且不推 C")
+}
+
 func TestPGAccountBatchAndImport(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()

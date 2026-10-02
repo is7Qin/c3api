@@ -285,3 +285,30 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	require.Equal(t, 0, qlen, "stale must not enqueue retry")
 	ResetFailureRetryForTest()
 }
+
+// TestHandleFailureIdempotentWhenAlreadyFailed 幂等：账号已失效（failed_at
+// 置位）→ HandleFailure no-op（不 CAS、不摘除、不发布组、返回 nil）——失效账号
+// 在途请求再次收到 token revoked 不得重复推进生命周期代际 C。
+func TestHandleFailureIdempotentWhenAlreadyFailed(t *testing.T) {
+	failedAt := time.Now()
+	acct := newCodexAccountForRetry(7, 1)
+	acct.FailedAt = &failedAt
+	store := &retryFakeStore{
+		accounts: map[int64]*domain.Account{7: acct},
+		groups:   map[int64][]int64{7: {10}},
+	}
+	failer := &retryFakeFailer{}
+	pub := &retryFakePublisher{}
+	deps := FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch(), Publisher: pub}
+
+	require.NoError(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
+
+	store.mu.Lock()
+	calls := store.callCount
+	rev := store.accounts[7].LifecycleRevision
+	store.mu.Unlock()
+	require.Equal(t, 0, calls, "已失效 → 不得再 CAS")
+	require.Equal(t, int64(1), rev, "已失效 → C 不得再推进")
+	require.Equal(t, 0, failer.calls, "已失效 → 不得再摘除")
+	require.Empty(t, pub.gids, "已失效 → 不得重复发布组")
+}

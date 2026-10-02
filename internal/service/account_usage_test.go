@@ -69,3 +69,50 @@ func TestAccountUsageCredentialStoreError(t *testing.T) {
 	require.Error(t, err, "store 故障透错")
 	require.Nil(t, cred)
 }
+
+// TestAccountUsageFrozen failed_at 判定（Q1 冻结范围）+ 失效来源透出（Q2）：
+// failed_at 置位 → frozen=true 且透出 failure_source；未失效 / enabled=false
+// （手动禁用）→ false；缺 id → false 不报错（无对象可冻结）。
+func TestAccountUsageFrozen(t *testing.T) {
+	svc := &Service{store: newFakeStore()}
+	ctx := context.Background()
+	f := svc.store.(*fakeStore)
+
+	failedAt := time.Now()
+	sdkSrc := domain.FailureSourceSDK
+	ruleSrc := domain.FailureSourceRule
+	f.accs[1] = &domain.Account{ID: 1, Enabled: true, FailedAt: &failedAt, FailureSource: &sdkSrc}
+	f.accs[2] = &domain.Account{ID: 2, Enabled: true}
+	f.accs[3] = &domain.Account{ID: 3, Enabled: false} // 手动禁用：语义分离，不冻结
+	f.accs[4] = &domain.Account{ID: 4, Enabled: true, FailedAt: &failedAt, FailureSource: &ruleSrc}
+	f.accs[5] = &domain.Account{ID: 5, Enabled: true, FailedAt: &failedAt} // 旧路径：无来源
+
+	frozen, source, err := svc.AccountUsageFrozen(ctx, 1)
+	require.NoError(t, err)
+	require.True(t, frozen, "failed_at 置位 → 冻结")
+	require.Equal(t, domain.FailureSourceSDK, source, "透出失效来源（SDK 判死）")
+
+	frozen, source, err = svc.AccountUsageFrozen(ctx, 2)
+	require.NoError(t, err)
+	require.False(t, frozen, "未失效 → 不冻结")
+	require.Empty(t, source)
+
+	frozen, _, err = svc.AccountUsageFrozen(ctx, 3)
+	require.NoError(t, err)
+	require.False(t, frozen, "enabled=false（手动禁用）不冻结——只有 failed_at 冻结")
+
+	frozen, source, err = svc.AccountUsageFrozen(ctx, 4)
+	require.NoError(t, err)
+	require.True(t, frozen)
+	require.Equal(t, domain.FailureSourceRule, source, "透出失效来源（规则判死）")
+
+	frozen, source, err = svc.AccountUsageFrozen(ctx, 5)
+	require.NoError(t, err)
+	require.True(t, frozen)
+	require.Empty(t, source, "无来源 → 空串（调用方按不标处理）")
+
+	frozen, source, err = svc.AccountUsageFrozen(ctx, 999)
+	require.NoError(t, err, "缺 id → 无对象可冻结，不报错")
+	require.False(t, frozen)
+	require.Empty(t, source)
+}

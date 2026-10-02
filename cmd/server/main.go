@@ -496,7 +496,7 @@ func main() {
 	// 裁决：/v1/models 与流量无关，已删除——探测视为通过，恢复由时间窗+真实
 	// 流量判定）。超时同上游请求预算。probe 经 healthWorker 在 Start 期一次性
 	// 交给 runtimeHealth（Start 前记录 fail-closed 停在 OPEN/PROBING，绝不 READY）。
-	probe := newHealthProber(sched.ProbeAccount, codexAdapter, cfg.Proxy.UpstreamTimeout)
+	probe := newHealthProber(sched.ProbeAccount, sched.Runtime, codexAdapter, cfg.Proxy.UpstreamTimeout)
 	// 多实例集群 N 注入（discovery 接管，consumer spec §2.2）：gate 预算
 	// ceil(剩余/N) + limit RPM ceil(rpm/N)。N = Redis 心跳活体数（disco 实时读
 	// atomic），gate/limit 在每次预算分配时现读 provider（gate.go:106-121），

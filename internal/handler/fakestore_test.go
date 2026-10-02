@@ -267,6 +267,10 @@ func (f *fakeStore) FailAccountCAS(ctx context.Context, id int64, expectedRevisi
 	if cur.IdentityRevision != expectedRevision {
 		return fmt.Errorf("%w: id=%d expected identity revision %d stale", repository.ErrStaleIdentityRevision, id, expectedRevision)
 	}
+	// 与生产同语义：已失效 → 幂等 no-op（不推 C、不二次改写失败字段）。
+	if cur.FailedAt != nil {
+		return nil
+	}
 	cur.FailedAt = &failedAt
 	cur.FailureSource = &source
 	if reason != "" {

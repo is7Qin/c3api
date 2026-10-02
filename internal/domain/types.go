@@ -361,6 +361,15 @@ func (t *Template) HasModelSpace() bool {
 	return len(t.Models) > 0 || len(t.FormatModels) > 0 || len(t.ModelMapping) > 0
 }
 
+// 账号失效来源（account.failure_source 列）：SDK 运行时判死（凭据经 SDK 权威
+// 分类为 fatal）vs 规则引擎判死（依据流量/错误率等，凭据本身未必失效）。usage
+// 查询面对失效账号的 upstream_error 标记按来源区分（Q2：sdk → auth_expired；
+// rule 非凭据失效 → 不标）。
+const (
+	FailureSourceSDK  = "sdk"
+	FailureSourceRule = "rule"
+)
+
 type Account struct {
 	ID         int64
 	Name       string

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -247,7 +248,7 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 		}
 		return false
 	}
-	err = cs.FailAccountCAS(ctx, task.accountID, task.identityRevision, "sdk", time.Now(), task.reason)
+	err = cs.FailAccountCAS(ctx, task.accountID, task.identityRevision, domain.FailureSourceSDK, time.Now(), task.reason)
 	if err == nil {
 		if task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)

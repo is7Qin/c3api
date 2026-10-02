@@ -14,7 +14,7 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// 本文件只留网关聚合 + 凭据组装两个纯 helper：codex 额度快照的
+// 本文件只留网关聚合 + 凭据组装 + 失效冻结判定三个纯 helper：codex 额度快照的
 // fan-out 编排（含上游调用与错误分类）已整体搬到 handler 层（AdminAPI 经
 // 构造注入的 CodexUsageProber 直调适配器）——service 不再持有快照数据源，
 // 不再 import sdkbridge。
@@ -43,6 +43,33 @@ func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (
 		return nil, nil // 非 codex 凭据（防御——ext 行仅 codex 类型可写）→ 无上游能力
 	}
 	return &cred, nil
+}
+
+// AccountUsageFrozen 失效冻结判定：账号是否处于运行时失效（failed_at 置位）——
+// SDK/rule 判死并已从调度摘除的账号。调用方（handler usage 装配）据此**冻结**
+// 上游额度拉取：失效账号的额度查询无意义，且对其拨号会反复触发 SDK 凭据刷新
+// 判死上报（token revoked 循环 → C 无限增长）。与 Enabled=false（管理面手动
+// 禁用）语义分离——手动禁用的账号仍可查额度，只有 failed_at 冻结（Q1 裁决）。
+//
+// 返回 (frozen, failureSource, err)：frozen=true 时 failureSource 为
+// account.failure_source（domain.FailureSourceSDK/Rule，空 = 未记来源的旧路径），
+// 供调用方按来源决定 upstream_error 标记（Q2：sdk → 凭据失效；rule → 不标）。
+// 账号缺 id（ErrNotFound）→ (false, "", nil)（无对象可冻结）；其余 store 故障透传。
+func (s *Service) AccountUsageFrozen(ctx context.Context, accountID int64) (bool, string, error) {
+	a, err := s.store.GetAccount(ctx, accountID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return false, "", nil
+		}
+		return false, "", err
+	}
+	if a.FailedAt == nil {
+		return false, "", nil
+	}
+	if a.FailureSource != nil {
+		return true, *a.FailureSource, nil
+	}
+	return true, "", nil
 }
 
 // AccountsGatewayUsage 账号网关用量批量聚合（/api/admin/accounts/usage 查询面

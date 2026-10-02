@@ -70,10 +70,12 @@ func (h *AdminAPI) GetAccountsUsage(w http.ResponseWriter, r *http.Request, para
 // assembleUpstream upstream 栏装配（原 service.AccountsUsage 后半段
 // 整体搬迁——行为逐分支一致）：逐账号凭据组装（svc.AccountUsageCredential：
 // api-key/非 codex → nil cred → null 快照/null 标记；store 故障 → 已在
-// service 侧 Warn + null/null）→ codex 账号调 prober（nil prober = 未装配
-// → null 快照，与旧 service nil-setter 降级一致）→ sdkbridge 哨兵映射
-// upstream_error（ErrAuthExpired → auth_expired，ErrUpstream →
-// upstream_unavailable；未知错误 → Warn + null/null，不误标）。
+// service 侧 Warn + null/null）→ **冻结短路**（codex 账号 failed_at 置位 →
+// 不打上游，按失效来源标 upstream_error：sdk → auth_expired；rule/空 → 不标；
+// 见 svc.AccountUsageFrozen）→ codex 账号调
+// prober（nil prober = 未装配 → null 快照，与旧 service nil-setter 降级一致）
+// → sdkbridge 哨兵映射 upstream_error（ErrAuthExpired → auth_expired，
+// ErrUpstream → upstream_unavailable；未知错误 → Warn + null/null，不误标）。
 //
 // 失败语义：单账号快照失败不整批失败（其余账号照常）；批内 errgroup 有界
 // 并发（8——与适配层 usage 并发上限 8 对齐（sdkbridge.usageFetchConcurrency）：
@@ -94,6 +96,25 @@ func (h *AdminAPI) assembleUpstream(ctx context.Context, items []domain.AccountU
 			}
 			if h.usageSnap == nil {
 				return nil // 未装配 → null 快照（旧 nil-setter 降级语义）
+			}
+			// 冻结：运行时失效（failed_at）账号不打上游额度端点。失效即从调度
+			// 摘除，额度查询无意义；且拨号会反复触发 SDK 凭据刷新判死上报
+			// （token revoked 循环 → C 无限增长）。upstream_error 按失效来源映射
+			// （Q2）：SDK 判死 = 凭据失效（auth_expired，token 吊销场景展示不变）；
+			// 规则引擎判死（凭据未必失效）→ 不标（避免误标"凭据失效"误导运维）。
+			// 冻结态读失败（store 故障）→ 记 Warn 后按**未冻结**继续（fail-open：
+			// 误标 auth_expired 比多打一次上游更糟；C 增长已由失效上报幂等守卫
+			// 兜住，故此处 fail-open 安全）。
+			frozen, source, ferr := h.svc.AccountUsageFrozen(ctx, items[i].AccountID)
+			if ferr != nil && ctx.Err() == nil && h.log != nil {
+				h.log.Warn("accounts usage: frozen-state lookup failed", logx.Int64("account_id", items[i].AccountID), logx.Error(ferr))
+			}
+			if ferr == nil && frozen {
+				if source == domain.FailureSourceSDK {
+					e := domain.UpstreamErrorAuthExpired
+					items[i].UpstreamError = &e
+				}
+				return nil
 			}
 			snap, err := h.usageSnap.GetUsageSnapshot(ctx, cred)
 			switch {

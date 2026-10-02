@@ -163,6 +163,14 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 			if err != nil {
 				return err
 			}
+			// 幂等 no-op：账号已失效（failed_at 置位）→ 不再重复摘除/上报/推 C。
+			// 失效是终态（恢复唯一入口 /recover）；重复上报（如失效账号的在途
+			// 请求又收到 token revoked）不得再推进生命周期代际。
+			// 跳过 FailAccount/组发布是安全的：首次失效的胜者已执行两者（本分支
+			// 正常只在竞态下被重复上报命中）；多实例下对端经 NOTIFY/周期兜底收敛。
+			if acct != nil && acct.FailedAt != nil {
+				return nil
+			}
 			acct, err = ensureTemplate(ctx, cs, acct, accountID)
 			if err != nil {
 				return err
@@ -186,7 +194,7 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 			}
 			deps.Latch.TryAcquire(accountID, fp, expectedRev)
 			deps.Failer.FailAccount(accountID)
-			err = cs.FailAccountCAS(ctx, accountID, expectedRev, "sdk", time.Now(), reason)
+			err = cs.FailAccountCAS(ctx, accountID, expectedRev, domain.FailureSourceSDK, time.Now(), reason)
 			if err != nil {
 				if errors.Is(err, repository.ErrStaleIdentityRevision) {
 					fresh, ferr := cs.GetAccount(ctx, accountID)

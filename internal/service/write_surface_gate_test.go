@@ -34,6 +34,7 @@ import (
 //     定价、兑换、邮件、统计、用量、路由观测），不触账号配置或身份代际。
 var allowedServiceMethods = []string{
 	"AccountUsageCredential",
+	"AccountUsageFrozen",
 	"AccountsGatewayUsage",
 	"BalanceWarningEnabled",
 	"ChangePassword",

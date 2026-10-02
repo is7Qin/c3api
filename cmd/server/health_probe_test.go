@@ -59,9 +59,17 @@ func (f *fakeCodexProber) GetUsageSnapshot(_ context.Context, cred *domain.Accou
 	return &domain.CodexUsageSnapshot{}, nil
 }
 
+// probeRuntimeActive 运行时状态源：默认全部 active（失效冻结断言另见
+// TestHealthProbeRuntimeDisabledFrozen）。
+func probeRuntimeActive() func(int64) (scheduler.RuntimeInfo, bool) {
+	return func(int64) (scheduler.RuntimeInfo, bool) {
+		return scheduler.RuntimeInfo{Status: domain.StatusActive}, true
+	}
+}
+
 func probeFn(t *testing.T, lookup func(int64) (*domain.Account, bool), codex codexUsageProber) scheduler.ProbeFunc {
 	t.Helper()
-	return newHealthProber(lookup, codex, 5*time.Second)
+	return newHealthProber(lookup, probeRuntimeActive(), codex, 5*time.Second)
 }
 
 // TestHealthProbeRevisionFenceFailClosed：账号缺失（已删/未加载）与 revision
@@ -80,6 +88,32 @@ func TestHealthProbeRevisionFenceFailClosed(t *testing.T) {
 	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision,
 		"stale revision must fail closed")
 	require.Zero(t, codex.calls)
+}
+
+// TestHealthProbeRuntimeDisabledFrozen：运行时失效（failed_at → 调度
+// StatusDisabled）的 codex 账号冻结——健康探测**不拨上游**，fail-closed
+// （ErrProbeStaleRevision：probeTick 不重开、不推进 READY），恢复后重新探测。
+func TestHealthProbeRuntimeDisabledFrozen(t *testing.T) {
+	pat := probeTpl(3, credential.TypeCodexPAT, domain.FormatOpenAIResponses)
+	codex := &fakeCodexProber{}
+	runtime := func(id int64) (scheduler.RuntimeInfo, bool) {
+		if id == 7 {
+			return scheduler.RuntimeInfo{Status: domain.StatusDisabled}, true
+		}
+		return scheduler.RuntimeInfo{Status: domain.StatusActive}, true
+	}
+	fn := newHealthProber(probeLookup(map[int64]*domain.Account{
+		7: probeAcc(7, pat, 5, "http://unused.invalid"),
+		8: probeAcc(8, pat, 5, "http://unused.invalid"),
+	}), runtime, codex, 5*time.Second)
+
+	err := fn(context.Background(), scheduler.HealthKey{AccountID: 7, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 5})
+	require.ErrorIs(t, err, scheduler.ErrProbeStaleRevision, "runtime-disabled must fail closed (frozen)")
+	require.Zero(t, codex.calls, "runtime-disabled account must not dial upstream")
+
+	require.NoError(t, fn(context.Background(), scheduler.HealthKey{AccountID: 8, Quality: "*", Identity: healthTestIdentity, IdentityRevision: 5}),
+		"active account still probes")
+	require.Equal(t, 1, codex.calls, "active account routes to the codex adapter")
 }
 
 // TestHealthProbeAPIKeyFamilyNoNetworkNoop（owner 裁决）：api_key/responses-special
@@ -193,7 +227,7 @@ func TestHealthProbeRecoverySurface(t *testing.T) {
 	defer cancel()
 	require.NoError(t, h.Start(ctx, newHealthProber(probeLookup(map[int64]*domain.Account{
 		1: probeAcc(1, pat, 5, "http://unused.invalid"),
-	}), codex, time.Second)))
+	}), probeRuntimeActive(), codex, time.Second)))
 	t.Cleanup(func() {
 		closeCtx, closeCancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer closeCancel()

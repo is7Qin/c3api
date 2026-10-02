@@ -59,7 +59,7 @@ func NewRulePersistFunc(store rulePersistStore, latchStore *latch.LatchStore, pu
 		if reason == "" {
 			reason = "rule fail_account"
 		}
-		err = store.FailAccountCAS(ctx, item.Event.AccountID, item.Event.ExpectedIdentityRevision, "rule", time.Now(), reason)
+		err = store.FailAccountCAS(ctx, item.Event.AccountID, item.Event.ExpectedIdentityRevision, domain.FailureSourceRule, time.Now(), reason)
 		if err != nil {
 			if errors.Is(err, repository.ErrStaleIdentityRevision) {
 				if fresh, ferr := store.GetAccount(ctx, item.Event.AccountID); ferr == nil && fresh.IdentityRevision > item.Event.ExpectedIdentityRevision && latchStore != nil {

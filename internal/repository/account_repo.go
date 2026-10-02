@@ -197,8 +197,11 @@ var ErrStaleRevision = fmt.Errorf("%w: stale lifecycle_revision", ErrConflict)
 var ErrStaleIdentityRevision = fmt.Errorf("%w: stale identity_revision", ErrConflict)
 
 // FailAccountCAS 生命周期 fenced 失效：guard K（expectedIdentityRevision）
-// 并原子 +1 C，设置 failed_at/last_error/failure_source。0 行命中 → K
-// stale（ErrStaleIdentityRevision）。
+// 并原子 +1 C，设置 failed_at/last_error/failure_source。
+//
+// **幂等**：guard 另有 failed_at IS NULL——已失效账号重复上报不再推进 C、
+// 不二次改写失败字段（返回 nil no-op）。失效是终态（恢复唯一入口
+// /recover），重复上报（如失效账号在途请求又收 token revoked）不得再推代际。
 //
 // 非对称更新（必须 pin 住）：guard 的是 K，被推进的是 C。C 必须用相对自增
 // AddLifecycleRevision(1)：guard 不再钉住 C，SetLifecycleRevision(
@@ -207,9 +210,13 @@ var ErrStaleIdentityRevision = fmt.Errorf("%w: stale identity_revision", ErrConf
 //
 // K 本身在此不推进：失效是运行时观测写入，不是管理面身份写入（§2.1）；
 // 身份未变 ⇒ 在途工件的 (I,K) 身份延续，C+1 只提供"被改过"的水位信号。
+//
+// 0 行命中回读区分（一次 PK 读，冷面）：K 仍当前且已失效 → 幂等 no-op（nil）；
+// 其余（K 陈旧 / 缺行 / 回读故障——保守按 stale 处理）→ ErrStaleIdentityRevision
+// （旧判决作废，语义不变）。
 func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedIdentityRevision int64, source string, failedAt time.Time, reason string) error {
 	u := r.client.Account.Update().
-		Where(account.IDEQ(id), account.IdentityRevisionEQ(expectedIdentityRevision)).
+		Where(account.IDEQ(id), account.IdentityRevisionEQ(expectedIdentityRevision), account.FailedAtIsNil()).
 		AddLifecycleRevision(1).
 		SetFailedAt(failedAt).
 		SetFailureSource(source)
@@ -221,6 +228,11 @@ func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedIden
 		return err
 	}
 	if n == 0 {
+		// 幂等守卫命中（已失效且身份未变）→ 视为成功 no-op：不推 C、不改写。
+		if fresh, gerr := r.GetAccount(ctx, id); gerr == nil && fresh != nil &&
+			fresh.FailedAt != nil && fresh.IdentityRevision == expectedIdentityRevision {
+			return nil
+		}
 		return fmt.Errorf("%w: id=%d expected identity revision %d stale", ErrStaleIdentityRevision, id, expectedIdentityRevision)
 	}
 	return nil
