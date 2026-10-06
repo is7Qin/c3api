@@ -157,6 +157,8 @@ func TestQueryObservedRouteClassesPlanPG(t *testing.T) {
 			indexNames = append(indexNames, n.IndexName)
 		}
 	})
+	// 本夹具为窄窗口，规划器稳定命中 routing_flow_fact_uniq（Index Only Scan）；宽窗口下
+	// 规划器可合法退化为 Seq Scan（spec §4.2 已承认）——故此处仅对窄窗口夹具断言，不弱化。
 	require.False(t, seqScan, "narrow-window observed route lookup must not seq-scan routing_flow_fact")
 	require.NotEmpty(t, indexNames, "narrow-window observed route lookup must go through an index")
 	require.Contains(t, parentIndexNames(t, ctx, pool, indexNames), "routing_flow_fact_uniq",
