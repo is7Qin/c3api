@@ -235,46 +235,46 @@ func TestQueryRoutingPlan_SearchPaginationAndCandidates(t *testing.T) {
 	svc := routingSvc(t, newFakeStore(), plan)
 
 	// 路由分页：total_routes 为过滤后总数，不受分页影响。
-	page, err := svc.QueryRoutingPlan(RoutingPlanQuery{Limit: 2, CandidatesLimit: 1})
+	page, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Limit: 2, CandidatesLimit: 1})
 	require.NoError(t, err)
 	require.Equal(t, uint64(9), page.Generation)
 	require.Equal(t, int64(6), page.TotalRoutes)
 	require.Len(t, page.Routes, 2)
 	require.Equal(t, "m0", page.Routes[0].Route.Ref.Model)
 
-	second, err := svc.QueryRoutingPlan(RoutingPlanQuery{Limit: 2, Offset: 2, CandidatesLimit: 1})
+	second, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Limit: 2, Offset: 2, CandidatesLimit: 1})
 	require.NoError(t, err)
 	require.Len(t, second.Routes, 2)
 	require.Equal(t, "m2", second.Routes[0].Route.Ref.Model, "offset 在过滤后的列表上切片")
 
 	// 搜索在切片前生效。
-	found, err := svc.QueryRoutingPlan(RoutingPlanQuery{Search: "m3", CandidatesLimit: 1})
+	found, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Search: "m3", CandidatesLimit: 1})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), found.TotalRoutes)
 	require.Len(t, found.Routes, 1)
 	require.Equal(t, "m3", found.Routes[0].Route.Ref.Model)
 
 	require.Zero(t, func() int64 {
-		none, err := svc.QueryRoutingPlan(RoutingPlanQuery{Search: "zzz-no-such-model"})
+		none, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Search: "zzz-no-such-model"})
 		require.NoError(t, err)
 		require.Empty(t, none.Routes)
 		return none.TotalRoutes
 	}(), "无命中 → 空列表 + total 0")
 
 	// 候选分页：candidates_total 为完整候选数，page 只含一页。
-	one, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: plan.Routes[3].Ref.RouteClassID, CandidatesLimit: 2})
+	one, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: plan.Routes[3].Ref.RouteClassID, CandidatesLimit: 2})
 	require.NoError(t, err)
 	require.Len(t, one.Routes, 1)
 	require.Equal(t, int64(5), one.Routes[0].CandidatesTotal)
 	require.Len(t, one.Routes[0].Route.Candidates, 2)
 
-	candPage, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: plan.Routes[3].Ref.RouteClassID, CandidatesLimit: 2, CandidatesOffset: 4})
+	candPage, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: plan.Routes[3].Ref.RouteClassID, CandidatesLimit: 2, CandidatesOffset: 4})
 	require.NoError(t, err)
 	require.Len(t, candPage.Routes[0].Route.Candidates, 1, "尾页只剩 1 条")
 	require.Equal(t, int64(5), candPage.Routes[0].CandidatesTotal)
 
 	// candidates_limit=0 = 不返回候选（路由选择器取轻量列表），但 total 仍在。
-	light, err := svc.QueryRoutingPlan(RoutingPlanQuery{Limit: 6, CandidatesLimit: 0})
+	light, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Limit: 6, CandidatesLimit: 0})
 	require.NoError(t, err)
 	require.Len(t, light.Routes, 6)
 	for _, r := range light.Routes {
@@ -283,9 +283,9 @@ func TestQueryRoutingPlan_SearchPaginationAndCandidates(t *testing.T) {
 	}
 
 	// 路由校验：非法 hex → ErrInvalidInput；合法但不在目录 → ErrNotFound。
-	_, err = svc.QueryRoutingPlan(RoutingPlanQuery{Route: "nothex"})
+	_, err = svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: "nothex"})
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.QueryRoutingPlan(RoutingPlanQuery{Route: fpHex(0xff)})
+	_, err = svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: fpHex(0xff)})
 	require.ErrorIs(t, err, ErrNotFound)
 }
 
@@ -452,7 +452,7 @@ func TestQueryRoutingPlan_SearchAllFields(t *testing.T) {
 	svc := routingSvc(t, newFakeStore(), searchPlan())
 	search := func(term string) *RoutingPlanResult {
 		t.Helper()
-		res, err := svc.QueryRoutingPlan(RoutingPlanQuery{Search: term, CandidatesLimit: 0})
+		res, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Search: term, CandidatesLimit: 0})
 		require.NoError(t, err)
 		return res
 	}
@@ -489,19 +489,19 @@ func TestQueryRoutingPlan_CandidatesLimitStates(t *testing.T) {
 
 	// 服务层默认：RoutingPlanCandidatesDefault（handler 负责把缺席的 nil 解析为
 	// 该默认；服务层 0 的语义是"不返回候选"，不是"缺席"）。
-	absent, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: plan.Routes[0].Ref.RouteClassID, CandidatesLimit: RoutingPlanCandidatesDefault})
+	absent, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: plan.Routes[0].Ref.RouteClassID, CandidatesLimit: RoutingPlanCandidatesDefault})
 	require.NoError(t, err)
 	require.Len(t, absent.Routes[0].Route.Candidates, 5)
 	require.Equal(t, int64(5), absent.Routes[0].CandidatesTotal)
 
 	// 显式 0 → 空数组，但 candidates_total 仍完整。
-	zero, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: plan.Routes[0].Ref.RouteClassID, CandidatesLimit: 0})
+	zero, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: plan.Routes[0].Ref.RouteClassID, CandidatesLimit: 0})
 	require.NoError(t, err)
 	require.Empty(t, zero.Routes[0].Route.Candidates)
 	require.Equal(t, int64(5), zero.Routes[0].CandidatesTotal)
 
 	// 负数 → 默认 20。
-	neg, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: plan.Routes[0].Ref.RouteClassID, CandidatesLimit: -1})
+	neg, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: plan.Routes[0].Ref.RouteClassID, CandidatesLimit: -1})
 	require.NoError(t, err)
 	require.Len(t, neg.Routes[0].Route.Candidates, 5)
 
@@ -512,7 +512,7 @@ func TestQueryRoutingPlan_CandidatesLimitStates(t *testing.T) {
 		big.Routes[0].Candidates[i] = scheduler.RoutingPlanCandidate{AccountID: int64(i + 1), IdentityFingerprint: fpHex(byte(i))}
 	}
 	bigSvc := routingSvc(t, newFakeStore(), big)
-	capped, err := bigSvc.QueryRoutingPlan(RoutingPlanQuery{CandidatesLimit: 500})
+	capped, err := bigSvc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{CandidatesLimit: 500})
 	require.NoError(t, err)
 	require.Len(t, capped.Routes[0].Route.Candidates, 200, ">200 钳到 200")
 	require.Equal(t, int64(250), capped.Routes[0].CandidatesTotal)
@@ -525,7 +525,7 @@ func TestQueryRoutingPlan_RouteBeatsSearch(t *testing.T) {
 	svc := routingSvc(t, newFakeStore(), plan)
 	target := plan.Routes[2].Ref.RouteClassID
 
-	res, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: target, Search: "m0", CandidatesLimit: 0})
+	res, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: target, Search: "m0", CandidatesLimit: 0})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), res.TotalRoutes, "route 给定时 search 被忽略")
 	require.Len(t, res.Routes, 1)
@@ -536,7 +536,7 @@ func TestQueryRoutingPlan_RouteBeatsSearch(t *testing.T) {
 
 func TestQueryRoutingPlan_EmptyPlan(t *testing.T) {
 	svc := routingSvc(t, newFakeStore(), &scheduler.RoutingPlan{Routes: []scheduler.RoutingPlanRoute{}})
-	res, err := svc.QueryRoutingPlan(RoutingPlanQuery{CandidatesLimit: 0})
+	res, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{CandidatesLimit: 0})
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), res.Generation)
 	require.Equal(t, int64(0), res.TotalRoutes)
@@ -554,14 +554,14 @@ func TestQueryRoutingPlan_TwoAxisSlicing(t *testing.T) {
 	svc := routingSvc(t, newFakeStore(), plan)
 
 	// routes 轴：offset 页 == 过滤后全量序同一段。
-	page, err := svc.QueryRoutingPlan(RoutingPlanQuery{Limit: 2, Offset: 2, CandidatesLimit: 0})
+	page, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Limit: 2, Offset: 2, CandidatesLimit: 0})
 	require.NoError(t, err)
 	require.Equal(t, int64(6), page.TotalRoutes)
 	require.Len(t, page.Routes, 2)
 	require.Equal(t, "m2", page.Routes[0].Route.Ref.Model)
 	require.Equal(t, "m3", page.Routes[1].Route.Ref.Model)
 
-	page2, err := svc.QueryRoutingPlan(RoutingPlanQuery{Limit: 2, Offset: 4, CandidatesLimit: 0})
+	page2, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Limit: 2, Offset: 4, CandidatesLimit: 0})
 	require.NoError(t, err)
 	require.Len(t, page2.Routes, 2)
 	require.Equal(t, "m4", page2.Routes[0].Route.Ref.Model)
@@ -569,14 +569,14 @@ func TestQueryRoutingPlan_TwoAxisSlicing(t *testing.T) {
 
 	// candidates 轴：candidates_offset 页 == 该路由候选全量序同一段。
 	target := plan.Routes[1].Ref.RouteClassID
-	c1, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: target, CandidatesLimit: 2, CandidatesOffset: 1})
+	c1, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: target, CandidatesLimit: 2, CandidatesOffset: 1})
 	require.NoError(t, err)
 	require.Len(t, c1.Routes[0].Route.Candidates, 2)
 	require.Equal(t, int64(2), c1.Routes[0].Route.Candidates[0].AccountID)
 	require.Equal(t, int64(3), c1.Routes[0].Route.Candidates[1].AccountID)
 	require.Equal(t, int64(5), c1.Routes[0].CandidatesTotal)
 
-	c2, err := svc.QueryRoutingPlan(RoutingPlanQuery{Route: target, CandidatesLimit: 2, CandidatesOffset: 3})
+	c2, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{Route: target, CandidatesLimit: 2, CandidatesOffset: 3})
 	require.NoError(t, err)
 	require.Len(t, c2.Routes[0].Route.Candidates, 2)
 	require.Equal(t, int64(4), c2.Routes[0].Route.Candidates[0].AccountID)

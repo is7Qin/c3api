@@ -55,13 +55,15 @@ func (h *AdminAPI) GetRoutingFrontier(w http.ResponseWriter, r *http.Request, pa
 // 面；search/route/分页见契约）。分页与切片归一全在 service，handler 只做
 // 「缺省指针 → 契约默认」的取值。
 func (h *AdminAPI) GetRoutingPlan(w http.ResponseWriter, r *http.Request, params GetRoutingPlanParams) {
-	res, err := h.svc.QueryRoutingPlan(service.RoutingPlanQuery{
+	res, err := h.svc.QueryRoutingPlan(r.Context(), service.RoutingPlanQuery{
 		Search:           httpface.Deref(params.Search),
 		Route:            httpface.Deref(params.Route),
 		Offset:           httpface.Deref(params.Offset),
 		Limit:            httpface.Deref(params.Limit),
 		CandidatesOffset: httpface.Deref(params.CandidatesOffset),
 		CandidatesLimit:  planCandidatesLimit(params.CandidatesLimit),
+		ObservedFrom:     params.ObservedFrom,
+		ObservedTo:       params.ObservedTo,
 	})
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
@@ -173,9 +175,10 @@ func toAPIRoutingFrontier(res *service.RoutingFrontierResult) RoutingFrontierRes
 
 func toAPIRoutingPlan(res *service.RoutingPlanResult) RoutingPlanResponse {
 	out := RoutingPlanResponse{
-		Generation:  int64(res.Generation),
-		Routes:      make([]RoutingPlanRoute, 0, len(res.Routes)),
-		TotalRoutes: res.TotalRoutes,
+		Generation:      int64(res.Generation),
+		Routes:          make([]RoutingPlanRoute, 0, len(res.Routes)),
+		TotalRoutes:     res.TotalRoutes,
+		PlanTotalRoutes: res.PlanTotalRoutes,
 	}
 	for _, view := range res.Routes {
 		rt := view.Route
