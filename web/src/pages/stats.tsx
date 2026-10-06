@@ -9,7 +9,9 @@ import { useTranslation } from 'react-i18next'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, Sankey, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts'
 import { api } from '@/App'
 import type { components } from '@/lib/api/schema'
+import { ApiError } from '@/lib/api/client'
 import { buildFoldedFlowSankey } from '@/lib/routing-sankey'
+import { observedWindowQuery, routingContentState } from '@/lib/routing-plan'
 import { useDebounced } from '@/lib/use-debounced'
 import { Pagination } from '@/components/pagination'
 import { FlowSankeyLegend, FlowSankeyLinkShape, FlowSankeyNodeShape, FlowSankeyTooltip } from '@/components/routing-flow-sankey'
@@ -407,9 +409,15 @@ function RoutingPanel({ range, setRange }: {
   // 避免 limit × candidates_limit 放大），search 服务端模糊匹配。
   const [searchInput, setSearchInput] = useState('')
   const search = useDebounced(searchInput, 300)
+  // 观测窗口（成对或都省略）：toRFC3339 失败 / span 非 (0,90d] → win 空，
+  // observed_from/observed_to 两端都省略（服务端恰给一端 = 400，绝不给半窗口）。
+  // from/to 仍供 flow/frontier 直查使用。
+  const from = toRFC3339(range.from) ?? ''
+  const to = toRFC3339(range.to) ?? ''
+  const win = observedWindowQuery(range)
   const planQ = useQuery({
-    queryKey: ['routing-plan', search],
-    queryFn: () => api.getRoutingPlan({ search, limit: SELECTOR_ROUTE_LIMIT, candidates_limit: 0 }),
+    queryKey: ['routing-plan', search, win.from, win.to],
+    queryFn: () => api.getRoutingPlan({ search, observed_from: win.from, observed_to: win.to, limit: SELECTOR_ROUTE_LIMIT, candidates_limit: 0 }),
   })
   const routes = useMemo(() => planQ.data?.routes ?? [], [planQ.data])
   const [picked, setPicked] = useState<string | undefined>(undefined)
@@ -423,21 +431,10 @@ function RoutingPanel({ range, setRange }: {
       return next
     })
   }, [routes])
-  // 选中项失效（计划换代/路由消失）→ 回落首条；空目录 = 未发布计划
-  const routeId = picked && routes.some(r => r.ref.route_class_id === picked)
-    ? picked
-    : (routes[0]?.ref.route_class_id ?? '')
-  // 选中路由被 search 过滤掉时：保持当前 routeId（flow/frontier/plan
-  // 三卡不断流），labels 缓存保证选择框仍显示其名称。
-  // 用 state + effect 记录最后一次非空 routeId（而不是 render 期写 ref——后者违反
-  // react(refs) 规则且会在并发渲染下读到脏值）。effect 在提交后同步，故本渲染仍读到上一次的值。
-  const [lastRouteId, setLastRouteId] = useState('')
-  useEffect(() => {
-    if (routeId !== '') setLastRouteId(routeId)
-  }, [routeId])
-  const activeRouteId = routeId !== '' ? routeId : lastRouteId
-  const from = toRFC3339(range.from) ?? ''
-  const to = toRFC3339(range.to) ?? ''
+  // 选中以用户选择 state 为准：即使该路由不在 routes（窗口内无流量）也保持选中
+  // ——flow/frontier 对空窗口如实显示空态，PlanCard 经 route= 直查仍显示候选。
+  // 仅在「尚无选择（首屏）」时落到 routes[0]；「选中路由已离开计划」的回落见下方 404 effect。
+  const activeRouteId = picked ?? (routes[0]?.ref.route_class_id ?? '')
 
   // 三处表格分页（offset/limit 与服务端同构，分页状态进 queryKey）。
   const [flowOffset, setFlowOffset] = useState(0)
@@ -473,147 +470,145 @@ function RoutingPanel({ range, setRange }: {
     return found ?? routes.find(r => r.ref.route_class_id === activeRouteId)
   }, [pickedRouteQ.data, routes, activeRouteId])
 
-  if (planQ.isLoading) {
-    return <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-48" />)}</div>
-  }
-  if (planQ.isError) {
-    return <p className="text-sm text-destructive">{t('common.loadFailed', { message: (planQ.error as Error).message })}</p>
-  }
-  if (planQ.data && planQ.data.total_routes === 0) {
-    return (
-      <Card>
-        <CardContent className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-          <Workflow className="size-10" />
-          <p className="font-medium">{t('stats.routing.planEmptyTitle')}</p>
-          <p className="text-sm">{t('stats.routing.planEmptyDesc')}</p>
-        </CardContent>
-      </Card>
-    )
-  }
+  // 选中路由已不在当前计划（route 分支绕过窗口过滤，仅当 id 未知才 404）→ 清空选择回落首条。
+  // **仅** 404 重置；网络抖动等瞬态错误保持选中（不重置）。
+  useEffect(() => {
+    if (pickedRouteQ.error instanceof ApiError && pickedRouteQ.error.status === 404) setPicked(undefined)
+  }, [pickedRouteQ.error])
 
+  // 内容区状态（真值表，见 lib/routing-plan.ts）：顶部 Card 恒渲染，loading/error/空态
+  // 只占其下内容区，保证任何 planQ 失败都可由用户改范围恢复（面板不整块消失）。
+  const state = routingContentState({
+    loading: planQ.isLoading,
+    error: planQ.isError,
+    planTotal: planQ.data?.plan_total_routes ?? 0,
+    observedCount: routes.length,
+    search,
+  })
   const route = pickedRoute ?? routes[0]
-  if (!route || activeRouteId === '') {
-    // search 无命中：保持选择器可见（可改词重搜），三卡隐藏。
-    return (
-      <div className="space-y-6">
-        <Card className="p-4">
-          <div className="flex flex-wrap items-start gap-5">
-            <div className="w-full min-w-0 space-y-1.5 sm:w-[22rem]">
-              <Label>{t('stats.routing.route')}</Label>
-              <Combobox
-                items={routes.map(r => r.ref.route_class_id)}
-                filter={() => true}
-                autoComplete="none"
-                value={null}
-                onValueChange={v => setPicked(v ?? undefined)}
-                itemToStringLabel={v => labels.get(v) ?? v}
-              >
-                <ComboboxInput
-                  placeholder={t('stats.routing.routePlaceholder')}
-                  showClear={false}
-                  value={searchInput}
-                  onChange={e => setSearchInput(e.target.value)}
-                />
-                <ComboboxContent>
-                  <ComboboxEmpty>{planQ.isFetching ? t('logs.filter.searching') : t('logs.filter.noMatch')}</ComboboxEmpty>
-                  <ComboboxList />
-                </ComboboxContent>
-              </Combobox>
-            </div>
-            <div className="w-[14rem] shrink-0 space-y-1.5">
-              <Label>{t('dateRange.label')}</Label>
-              <DateRangePicker value={range} onChange={setRange} />
-            </div>
-            <div className="flex items-center gap-2 pt-7">
-              <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: planQ.data?.generation ?? 0 })}</Badge>
-              <span className="text-xs text-muted-foreground">{t('stats.routing.routesCount', { count: planQ.data?.total_routes ?? 0 })}</span>
-            </div>
-          </div>
-        </Card>
-        <Card>
-          <CardContent className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
-            <Workflow className="size-10" />
-            <p className="font-medium">{t('stats.routing.routeNoMatchTitle')}</p>
-            <p className="text-sm">{t('stats.routing.routeNoMatchDesc')}</p>
-          </CardContent>
-        </Card>
+
+  // 顶部 Card：路由选择器 + 日期选择器 + generation / 窗口内条数徽标——任何状态下都渲染。
+  const selectorCard = (
+    <Card className="p-4">
+      <div className="flex flex-wrap items-start gap-5">
+        <div className="w-full min-w-0 space-y-1.5 sm:w-[22rem]">
+          <Label>{t('stats.routing.route')}</Label>
+          <Combobox
+            items={routes.map(r => r.ref.route_class_id)}
+            filter={() => true}
+            autoComplete="none"
+            value={activeRouteId || null}
+            onValueChange={v => setPicked(v ?? undefined)}
+            itemToStringLabel={v => labels.get(v) ?? v}
+          >
+            {/* 服务端搜索：输入即时反映在受控框（300ms 防抖后发 search 请求——
+                与 logs.tsx 候选搜索同频）；filter 恒真关本地过滤（仓库已验证惯例）。 */}
+            <ComboboxInput
+              placeholder={t('stats.routing.routePlaceholder')}
+              showClear={false}
+              value={searchInput}
+              onChange={e => setSearchInput(e.target.value)}
+            />
+            <ComboboxContent>
+              <ComboboxEmpty>{planQ.isFetching ? t('logs.filter.searching') : t('logs.filter.noMatch')}</ComboboxEmpty>
+              <ComboboxList>
+                {routes.map(r => (
+                  <ComboboxItem key={r.ref.route_class_id} value={r.ref.route_class_id}>
+                    <span className="min-w-0 truncate">{routeLabel(r)}</span>
+                  </ComboboxItem>
+                ))}
+              </ComboboxList>
+            </ComboboxContent>
+          </Combobox>
+        </div>
+        <div className="w-[14rem] shrink-0 space-y-1.5">
+          <Label>{t('dateRange.label')}</Label>
+          <DateRangePicker value={range} onChange={setRange} />
+        </div>
+        <div className="flex items-center gap-2 pt-7">
+          <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: planQ.data?.generation ?? 0 })}</Badge>
+          <span className="text-xs text-muted-foreground">{t('stats.routing.routesCount', { count: planQ.data?.total_routes ?? 0 })}</span>
+        </div>
       </div>
-    )
-  }
+    </Card>
+  )
+
+  // 内容区：按真值表切换（选择器恒在上方，绝不随 planQ 失败/空态消失）。
+  const content = (() => {
+    switch (state) {
+      case 'loading':
+        return <div className="grid grid-cols-1 gap-5 lg:grid-cols-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-48" />)}</div>
+      case 'error':
+        return <p className="text-sm text-destructive">{t('common.loadFailed', { message: (planQ.error as Error).message })}</p>
+      case 'empty-plan':
+        return (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+              <Workflow className="size-10" />
+              <p className="font-medium">{t('stats.routing.planEmptyTitle')}</p>
+              <p className="text-sm">{t('stats.routing.planEmptyDesc')}</p>
+            </CardContent>
+          </Card>
+        )
+      case 'no-match':
+        return (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+              <Workflow className="size-10" />
+              <p className="font-medium">{t('stats.routing.routeNoMatchTitle')}</p>
+              <p className="text-sm">{t('stats.routing.routeNoMatchDesc')}</p>
+            </CardContent>
+          </Card>
+        )
+      case 'no-traffic':
+        return (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
+              <Workflow className="size-10" />
+              <p className="font-medium">{t('stats.routing.noTrafficTitle')}</p>
+              <p className="text-sm">{t('stats.routing.noTrafficDesc')}</p>
+            </CardContent>
+          </Card>
+        )
+      case 'cards':
+        if (!route) return null
+        return (
+          <>
+            <FlowCard
+              flowQ={flowQ}
+              offset={flowOffset}
+              limit={flowLimit}
+              onOffsetChange={setFlowOffset}
+              onLimitChange={changeFlowLimit}
+            />
+            <FrontierCard
+              frontierQ={frontierQ}
+              offset={frontierOffset}
+              limit={frontierLimit}
+              onOffsetChange={setFrontierOffset}
+              onLimitChange={changeFrontierLimit}
+            />
+            <PlanCard
+              route={route}
+              generation={planQ.data?.generation ?? 0}
+              candidates={pickedRoute?.candidates ?? []}
+              candidatesTotal={pickedRoute?.candidates_total ?? 0}
+              candidatesLoading={pickedRouteQ.isLoading}
+              candidatesError={pickedRouteQ.isError ? pickedRouteQ.error : null}
+              offset={candOffset}
+              limit={candLimit}
+              onOffsetChange={setCandOffset}
+              onLimitChange={changeCandLimit}
+            />
+          </>
+        )
+    }
+  })()
 
   return (
     <div className="space-y-6">
-      <Card className="p-4">
-        <div className="flex flex-wrap items-start gap-5">
-          <div className="w-full min-w-0 space-y-1.5 sm:w-[22rem]">
-            <Label>{t('stats.routing.route')}</Label>
-            <Combobox
-              items={routes.map(r => r.ref.route_class_id)}
-              filter={() => true}
-              autoComplete="none"
-              value={routeId || null}
-              onValueChange={v => setPicked(v ?? undefined)}
-              itemToStringLabel={v => labels.get(v) ?? v}
-            >
-              {/* 服务端搜索：输入即时反映在受控框（300ms 防抖后发 search 请求——
-                  与 logs.tsx 候选搜索同频）；filter 恒真关本地过滤（仓库已验证惯例）。 */}
-              <ComboboxInput
-                placeholder={t('stats.routing.routePlaceholder')}
-                showClear={false}
-                value={searchInput}
-                onChange={e => setSearchInput(e.target.value)}
-              />
-              <ComboboxContent>
-                {routes.length === 0 && (
-                  <ComboboxEmpty>{planQ.isFetching ? t('logs.filter.searching') : t('logs.filter.noMatch')}</ComboboxEmpty>
-                )}
-                <ComboboxList>
-                  {routes.map(r => (
-                    <ComboboxItem key={r.ref.route_class_id} value={r.ref.route_class_id}>
-                      <span className="min-w-0 truncate">{routeLabel(r)}</span>
-                    </ComboboxItem>
-                  ))}
-                </ComboboxList>
-              </ComboboxContent>
-            </Combobox>
-          </div>
-          <div className="w-[14rem] shrink-0 space-y-1.5">
-            <Label>{t('dateRange.label')}</Label>
-            <DateRangePicker value={range} onChange={setRange} />
-          </div>
-          <div className="flex items-center gap-2 pt-7">
-            <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: planQ.data?.generation ?? 0 })}</Badge>
-            <span className="text-xs text-muted-foreground">{t('stats.routing.routesCount', { count: planQ.data?.total_routes ?? routes.length })}</span>
-          </div>
-        </div>
-      </Card>
-
-      <FlowCard
-        flowQ={flowQ}
-        offset={flowOffset}
-        limit={flowLimit}
-        onOffsetChange={setFlowOffset}
-        onLimitChange={changeFlowLimit}
-      />
-      <FrontierCard
-        frontierQ={frontierQ}
-        offset={frontierOffset}
-        limit={frontierLimit}
-        onOffsetChange={setFrontierOffset}
-        onLimitChange={changeFrontierLimit}
-      />
-      <PlanCard
-        route={route}
-        generation={planQ.data?.generation ?? 0}
-        candidates={pickedRoute?.candidates ?? []}
-        candidatesTotal={pickedRoute?.candidates_total ?? 0}
-        candidatesLoading={pickedRouteQ.isLoading}
-        candidatesError={pickedRouteQ.isError ? pickedRouteQ.error : null}
-        offset={candOffset}
-        limit={candLimit}
-        onOffsetChange={setCandOffset}
-        onLimitChange={changeCandLimit}
-      />
+      {selectorCard}
+      {content}
     </div>
   )
 }

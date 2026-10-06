@@ -240,7 +240,9 @@ export class ApiClient {
     this.request<components['schemas']['RoutingFlowResponse']>('/routing/flow', { params: toQuery(p) })
   getRoutingFrontier = (p: { route: string; from: string; to: string; offset?: number; limit?: number }) =>
     this.request<components['schemas']['RoutingFrontierResponse']>('/routing/frontier', { params: toQuery(p) })
-  getRoutingPlan = (p?: { search?: string; route?: string; offset?: number; limit?: number; candidates_offset?: number; candidates_limit?: number }) =>
+  // observed_from/observed_to 成对给出时，routes 只保留半开窗口 [from,to) 内有流量的
+  // 已发布路由（单端 → 服务端 400）。gen:api 只重生 schema.d.ts，故手写 params 须同步。
+  getRoutingPlan = (p?: { search?: string; route?: string; observed_from?: string; observed_to?: string; offset?: number; limit?: number; candidates_offset?: number; candidates_limit?: number }) =>
     this.request<components['schemas']['RoutingPlanResponse']>('/routing/plan', { params: toQuery(p) })
   // 管理侧临时额度全量分页（/api/admin/temp-balances；/app/users 查看入口消费）
   getAdminTempBalances = (p?: { page?: number; page_size?: number; user_id?: number; sort?: string; order?: 'asc' | 'desc' }) =>

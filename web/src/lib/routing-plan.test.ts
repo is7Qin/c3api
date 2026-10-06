@@ -6,7 +6,7 @@
 // 运行：`node --test`（Node 内置运行器原生跑 TS，零新依赖）。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { fetchAllRoutingPlanRoutes, ROUTING_PLAN_PAGE_MAX } from './routing-plan.ts'
+import { fetchAllRoutingPlanRoutes, OBSERVED_WINDOW_MAX_SECONDS, observedWindowQuery, routingContentState, ROUTING_PLAN_PAGE_MAX } from './routing-plan.ts'
 
 type Route = { id: number }
 
@@ -82,5 +82,72 @@ describe('fetchAllRoutingPlanRoutes', () => {
     const page = await fetchAllRoutingPlanRoutes<Route>(fetchPage)
     assert.equal(page.routes.length, 2)
     assert.equal(call, 2)
+  })
+})
+
+describe('observedWindowQuery', () => {
+  const local = (min: number) => {
+    const d = new Date(2026, 0, 1, 0, 0, 0)
+    d.setMinutes(d.getMinutes() + min)
+    const pad = (n: number) => String(n).padStart(2, '0')
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  }
+
+  it('合法窗口 → 成对 RFC3339（本地串按浏览器时区解析）', () => {
+    const q = observedWindowQuery({ from: local(0), to: local(60) })
+    assert.equal(q.from, new Date(2026, 0, 1, 0, 0, 0).toISOString())
+    assert.equal(q.to, new Date(2026, 0, 1, 1, 0, 0).toISOString())
+  })
+
+  it('恰 90d → 给对；>90d → 两端都省略（绝不发半窗口）', () => {
+    const spanMinutes = (OBSERVED_WINDOW_MAX_SECONDS / 60)
+    assert.deepEqual(
+      Object.keys(observedWindowQuery({ from: local(0), to: local(spanMinutes) })).sort(),
+      ['from', 'to'],
+    )
+    const over = observedWindowQuery({ from: local(0), to: local(spanMinutes + 1) })
+    assert.deepEqual(over, {})
+    assert.equal(over.from, undefined)
+    assert.equal(over.to, undefined)
+  })
+
+  it('from ≥ to（含相等）→ 两端都省略', () => {
+    assert.deepEqual(observedWindowQuery({ from: local(60), to: local(0) }), {})
+    assert.deepEqual(observedWindowQuery({ from: local(30), to: local(30) }), {})
+  })
+
+  it('任一端非法/空 → 两端都省略（不发半窗口）', () => {
+    assert.deepEqual(observedWindowQuery({ from: '', to: local(60) }), {})
+    assert.deepEqual(observedWindowQuery({ from: local(0), to: 'not-a-date' }), {})
+    assert.deepEqual(observedWindowQuery({ from: 'not-a-date', to: local(60) }), {})
+  })
+})
+
+describe('routingContentState', () => {
+  const base = { loading: false, error: false, planTotal: 3, observedCount: 2, search: '' }
+
+  it('loading 优先于一切', () => {
+    assert.equal(routingContentState({ ...base, loading: true }), 'loading')
+    assert.equal(routingContentState({ ...base, loading: true, error: true, planTotal: 0 }), 'loading')
+  })
+
+  it('error 次之（顶部 Card 仍由页面保留）', () => {
+    assert.equal(routingContentState({ ...base, error: true }), 'error')
+    assert.equal(routingContentState({ ...base, error: true, planTotal: 0 }), 'error')
+  })
+
+  it('planTotal=0 → empty-plan（不分有无搜索）', () => {
+    assert.equal(routingContentState({ ...base, planTotal: 0, observedCount: 0, search: 'x' }), 'empty-plan')
+    assert.equal(routingContentState({ ...base, planTotal: 0, observedCount: 0, search: '' }), 'empty-plan')
+  })
+
+  it('planTotal>0 且窗口内 0 有流量：有搜索 → no-match，无搜索 → no-traffic', () => {
+    assert.equal(routingContentState({ ...base, observedCount: 0, search: 'gpt' }), 'no-match')
+    assert.equal(routingContentState({ ...base, observedCount: 0, search: '' }), 'no-traffic')
+  })
+
+  it('observedCount>0 → cards', () => {
+    assert.equal(routingContentState({ ...base, observedCount: 1, search: 'gpt' }), 'cards')
+    assert.equal(routingContentState({ ...base, observedCount: 5, search: '' }), 'cards')
   })
 })
