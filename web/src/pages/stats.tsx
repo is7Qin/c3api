@@ -418,6 +418,8 @@ function RoutingPanel({ range, setRange }: {
   const planQ = useQuery({
     queryKey: ['routing-plan', search, win.from, win.to],
     queryFn: () => api.getRoutingPlan({ search, observed_from: win.from, observed_to: win.to, limit: SELECTOR_ROUTE_LIMIT, candidates_limit: 0 }),
+    // react-query v5：换 key（改范围/搜索词）时保留上一帧数据，避免徽标/generation 瞬态归 0。
+    placeholderData: (prev) => prev,
   })
   const routes = useMemo(() => planQ.data?.routes ?? [], [planQ.data])
   const [picked, setPicked] = useState<string | undefined>(undefined)
@@ -501,12 +503,14 @@ function RoutingPanel({ range, setRange }: {
             onValueChange={v => setPicked(v ?? undefined)}
             itemToStringLabel={v => labels.get(v) ?? v}
           >
-            {/* 服务端搜索：输入即时反映在受控框（300ms 防抖后发 search 请求——
-                与 logs.tsx 候选搜索同频）；filter 恒真关本地过滤（仓库已验证惯例）。 */}
+            {/* 服务端搜索：输入框**不受控**（对齐 logs.tsx FilterCombobox）——base-ui
+                仅在不控时才把 itemToStringLabel 的标签回填进框内，选中项名因此可见；
+                onChange 即时同步 searchInput（300ms 防抖后发 search 请求，与 logs.tsx
+                候选搜索同频）；选中只走 onValueChange，不写 searchInput → 不污染搜索；
+                filter 恒真关本地过滤（仓库已验证惯例）。 */}
             <ComboboxInput
               placeholder={t('stats.routing.routePlaceholder')}
               showClear={false}
-              value={searchInput}
               onChange={e => setSearchInput(e.target.value)}
             />
             <ComboboxContent>
@@ -520,6 +524,10 @@ function RoutingPanel({ range, setRange }: {
               </ComboboxList>
             </ComboboxContent>
           </Combobox>
+          {/* 服务端只回一页（SELECTOR_ROUTE_LIMIT）：有流量路由多于此即被截断，提示用户缩小范围。 */}
+          {routes.length < (planQ.data?.total_routes ?? 0) && (
+            <p className="text-xs text-muted-foreground">{t('stats.routing.routesTruncated', { count: routes.length })}</p>
+          )}
         </div>
         <div className="w-[14rem] shrink-0 space-y-1.5">
           <Label>{t('dateRange.label')}</Label>
@@ -527,7 +535,16 @@ function RoutingPanel({ range, setRange }: {
         </div>
         <div className="flex items-center gap-2 pt-7">
           <Badge variant="secondary" className="font-mono">{t('stats.routing.generation', { gen: planQ.data?.generation ?? 0 })}</Badge>
-          <span className="text-xs text-muted-foreground">{t('stats.routing.routesCount', { count: planQ.data?.total_routes ?? 0 })}</span>
+          {/* 空计划（plan_total_routes=0）不显条数徽标：避免「窗口内 0 条」与「暂无计划」并陈。 */}
+          {(planQ.data?.plan_total_routes ?? 0) > 0 && (
+            <span className="text-xs text-muted-foreground">
+              {/* win.from 存在 = 观测窗口已下发；否则 range 非法/超 90d → 未下发，planQ 为未过滤全量，
+                  徽标改用全量口径并提示「未按流量过滤」，不再谎称「窗口内」。 */}
+              {win.from
+                ? t('stats.routing.routesCount', { count: planQ.data?.total_routes ?? 0 })
+                : t('stats.routing.allRoutesCount', { count: planQ.data?.total_routes ?? 0 })}
+            </span>
+          )}
         </div>
       </div>
     </Card>

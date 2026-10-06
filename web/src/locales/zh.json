@@ -758,6 +758,8 @@
       "routeNoMatchDesc": "当前计划中没有与该搜索词匹配的路由；换个关键词或清空搜索。",
       "generation": "代际 #{{gen}}",
       "routesCount": "窗口内 {{count}} 条有流量路由",
+      "allRoutesCount": "共 {{count}} 条路由 · 未按流量过滤（范围超出观测窗口）",
+      "routesTruncated": "仅显示前 {{count}} 条，请用搜索缩小范围",
       "chipsExpand": "展开其余 {{count}} 个",
       "chipsCollapse": "收起",
       "planEmptyTitle": "暂无已发布路由计划",

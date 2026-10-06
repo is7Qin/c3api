@@ -758,6 +758,8 @@
       "routeNoMatchDesc": "No route in the current plan matches this search term. Try another keyword or clear the search.",
       "generation": "gen #{{gen}}",
       "routesCount": "{{count}} routes with traffic in window",
+      "allRoutesCount": "{{count}} routes · not filtered by traffic (range outside observation window)",
+      "routesTruncated": "Showing first {{count}}; refine with search",
       "chipsExpand": "Show {{count}} more",
       "chipsCollapse": "Collapse",
       "planEmptyTitle": "No published routing plan",
