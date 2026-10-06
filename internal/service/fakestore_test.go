@@ -101,13 +101,17 @@ type fakeStore struct {
 	// emailTemplateDeleteErr 注入 DeleteEmailTemplate 非 NotFound 故障。
 	emailTemplateDeleteErr error
 	// routing 事实读 fake：固定返回行 + 记录最近一次调用参数。
-	routingQualityRows []repository.RoutingQualityStat
-	routingFlowRows    []repository.RoutingFlowStat
-	routingFactErr     error
-	routingFactCall    struct {
+	routingQualityRows  []repository.RoutingQualityStat
+	routingFlowRows     []repository.RoutingFlowStat
+	routingObservedRows []domain.RouteClassIDVal
+	routingFactErr      error
+	routingFactCall     struct {
 		routeClass domain.RouteClassIDVal
 		from, to   time.Time
 	}
+	// routingObservedCalls 记录 QueryObservedRouteClasses 被调用次数（计划为空时
+	// 的短路测试断言其为 0）。
+	routingObservedCalls int
 }
 
 // fakeTempRow 临时额度行模拟（domain 无 TempBalance 类型，CreateTempBalance

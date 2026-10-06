@@ -1785,9 +1785,14 @@ paths:
         只返回该条路由（供单路由取候选页）。candidates_offset/candidates_limit
         作用于**每个返回路由**的候选目录；candidates_limit=0 = 不返回候选，
         供路由选择器取轻量列表（避免 limit × candidates_limit 的无谓放大）。
+        observed_from/observed_to 成对给出时，routes 只保留半开窗口 [from,to)
+        内 routing_flow_fact 有记录的路由（窗口 ≤ 90d 且不早于观测保留 cutoff，
+        否则 400；只给一端 → 400）；route 给定时绕过窗口过滤，只按目录返回该条。
       parameters:
         - { name: search, in: query, schema: { type: string, description: 路由标签模糊匹配（model/format/operation_tag/group_id 子串，大小写不敏感）；空 = 不过滤 } }
         - { name: route, in: query, schema: { type: string, description: 64-hex 路由类 ID；给定则只返回该路由（非法 hex → 400，未知 → 404） } }
+        - { name: observed_from, in: query, schema: { type: string, format: date-time, description: "观测窗口起点（RFC3339）；与 observed_to 成对给出，单独给出 → 400；给出时 routes 只保留窗口内 routing_flow_fact 有记录的路由" } }
+        - { name: observed_to, in: query, schema: { type: string, format: date-time, description: "观测窗口终点（RFC3339，半开 [from,to)）；与 observed_from 成对给出" } }
         - { name: offset, in: query, schema: { type: integer, default: 0, minimum: 0, description: 路由分页偏移（缺省/≤0 → 0；在 search 过滤后的列表上切片） } }
         - { name: limit, in: query, schema: { type: integer, default: 20, minimum: 0, maximum: 200, description: 路由每页条数（缺省/≤0 → 20；>200 钳到 200，不报错） } }
         - { name: candidates_offset, in: query, schema: { type: integer, default: 0, minimum: 0, description: 候选分页偏移（每个返回路由各自切片） } }
@@ -3550,10 +3555,11 @@ components:
     RoutingPlanResponse:
       type: object
       description: 当前发布计划快照（无历史 generation 查询面；空视图 = generation 0 + routes []）
-      required: [generation, routes, total_routes]
+      required: [generation, routes, total_routes, plan_total_routes]
       properties:
         generation: { type: integer, format: int64 }
-        total_routes: { type: integer, format: int64, description: search 过滤后（route 给定时为 0/1）的路由总数（分页用） }
+        plan_total_routes: { type: integer, format: int64, description: 未过滤的当前计划路由总数（区分「空计划」与「窗口内无流量」） }
+        total_routes: { type: integer, format: int64, description: 过滤后（search ∩ observed 窗口；route 给定时恒为 1）的路由总数（分页用） }
         routes:
           type: array
           items: { $ref: '#/components/schemas/RoutingPlanRoute' }

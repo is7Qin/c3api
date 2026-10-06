@@ -51,6 +51,16 @@ func (f *fakeStore) QueryFlowFactStats(_ context.Context, routeClass domain.Rout
 	return f.routingFlowRows, nil
 }
 
+func (f *fakeStore) QueryObservedRouteClasses(_ context.Context, from, to time.Time) ([]domain.RouteClassIDVal, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.routingObservedCalls++
+	if f.routingFactErr != nil {
+		return nil, f.routingFactErr
+	}
+	return f.routingObservedRows, nil
+}
+
 // --- fixtures ---
 
 // fakeRoutingSched 只提供当前计划投影（RuntimeProvider 面留空）。

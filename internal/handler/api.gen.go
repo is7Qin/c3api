@@ -1576,10 +1576,13 @@ type RoutingPlanRef struct {
 type RoutingPlanResponse struct {
 	Generation int64 `json:"generation"`
 
+	// PlanTotalRoutes 未过滤的当前计划路由总数（区分「空计划」与「窗口内无流量」）
+	PlanTotalRoutes int64 `json:"plan_total_routes"`
+
 	// Routes 全身份确定性路由序（与发布字节守卫同序）
 	Routes []RoutingPlanRoute `json:"routes"`
 
-	// TotalRoutes search 过滤后（route 给定时为 0/1）的路由总数（分页用）
+	// TotalRoutes 过滤后（search ∩ observed 窗口；route 给定时恒为 1）的路由总数（分页用）
 	TotalRoutes int64 `json:"total_routes"`
 }
 
@@ -2304,12 +2307,14 @@ type GetRoutingFrontierParams struct {
 
 // GetRoutingPlanParams defines parameters for GetRoutingPlan.
 type GetRoutingPlanParams struct {
-	Search           *string `form:"search,omitempty" json:"search,omitempty"`
-	Route            *string `form:"route,omitempty" json:"route,omitempty"`
-	Offset           *int    `form:"offset,omitempty" json:"offset,omitempty"`
-	Limit            *int    `form:"limit,omitempty" json:"limit,omitempty"`
-	CandidatesOffset *int    `form:"candidates_offset,omitempty" json:"candidates_offset,omitempty"`
-	CandidatesLimit  *int    `form:"candidates_limit,omitempty" json:"candidates_limit,omitempty"`
+	Search           *string    `form:"search,omitempty" json:"search,omitempty"`
+	Route            *string    `form:"route,omitempty" json:"route,omitempty"`
+	ObservedFrom     *time.Time `form:"observed_from,omitempty" json:"observed_from,omitempty"`
+	ObservedTo       *time.Time `form:"observed_to,omitempty" json:"observed_to,omitempty"`
+	Offset           *int       `form:"offset,omitempty" json:"offset,omitempty"`
+	Limit            *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	CandidatesOffset *int       `form:"candidates_offset,omitempty" json:"candidates_offset,omitempty"`
+	CandidatesLimit  *int       `form:"candidates_limit,omitempty" json:"candidates_limit,omitempty"`
 }
 
 // ListRulesParams defines parameters for ListRules.
@@ -4926,6 +4931,22 @@ func (siw *ServerInterfaceWrapper) GetRoutingPlan(w http.ResponseWriter, r *http
 	err = runtime.BindQueryParameter("form", true, false, "route", r.URL.Query(), &params.Route)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "observed_from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "observed_from", r.URL.Query(), &params.ObservedFrom)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "observed_from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "observed_to" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "observed_to", r.URL.Query(), &params.ObservedTo)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "observed_to", Err: err})
 		return
 	}
 

@@ -34,6 +34,9 @@ type RoutingPlanProvider interface {
 type RoutingFactReader interface {
 	QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingQualityStat, error)
 	QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingFlowStat, error)
+	// QueryObservedRouteClasses 列出窗口 [from,to) 内 routing_flow_fact 有记录的
+	// 路由类集合（计划展示面用它把 routes 收敛到「窗口内有流量」）。
+	QueryObservedRouteClasses(ctx context.Context, from, to time.Time) ([]domain.RouteClassIDVal, error)
 }
 
 // routingLoss 进程观测 flow 丢失计数接缝（quality 包级原子计数器的读取面；

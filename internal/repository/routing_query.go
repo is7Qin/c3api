@@ -114,6 +114,17 @@ GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previou
 ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_outcome,
 	transition_reason, outcome, is_terminal DESC`
 
+// observedRouteClassesSQL lists the distinct route classes that have at least
+// one routing_flow_fact row in the half-open minute window [from, to). The
+// predicate carries only the terminal_minute range (no route_class_id
+// equality), so the unique index routing_flow_fact_uniq (terminal_minute
+// leading) is the only usable access path; day partitions prune to the
+// retained days. ORDER BY keeps the read face deterministic across calls.
+const observedRouteClassesSQL = `
+SELECT DISTINCT route_class_id FROM routing_flow_fact
+WHERE terminal_minute >= $1 AND terminal_minute < $2
+ORDER BY route_class_id`
+
 // QueryQualityFactStats aggregates routing_quality_fact over the half-open
 // minute window [from, to) for one route class. The read is not
 // version-scoped: the DB has no identity_version dimension.
@@ -180,6 +191,34 @@ func (r *PartitionRepo) QueryFlowFactStats(ctx context.Context, routeClass domai
 	return out, nil
 }
 
+// QueryObservedRouteClasses returns the distinct route classes that have at
+// least one routing_flow_fact row in the half-open minute window [from, to),
+// ascending. from/to are truncated to UTC minutes first (same as the other
+// read-face windows). The result is always non-nil (empty slice when nothing
+// matched).
+func (r *PartitionRepo) QueryObservedRouteClasses(ctx context.Context, from, to time.Time) ([]domain.RouteClassIDVal, error) {
+	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, observedRouteClassesSQL, []any{from, to}, rows); err != nil {
+		return nil, fmt.Errorf("routing observed route classes query: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.RouteClassIDVal{}
+	for rows.Next() {
+		var raw []byte
+		if err := rows.Scan(&raw); err != nil {
+			return nil, fmt.Errorf("routing observed route classes query: scan: %w", err)
+		}
+		var v domain.RouteClassIDVal
+		copy(v[:], raw)
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("routing observed route classes query: %w", err)
+	}
+	return out, nil
+}
+
 // QueryQualityFactStats 组合面委托（service.Store 能力探测经此达 Partitions）。
 func (r *Repository) QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]RoutingQualityStat, error) {
 	return r.Partitions.QueryQualityFactStats(ctx, routeClass, from, to)
@@ -188,6 +227,11 @@ func (r *Repository) QueryQualityFactStats(ctx context.Context, routeClass domai
 // QueryFlowFactStats 组合面委托（同上）。
 func (r *Repository) QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]RoutingFlowStat, error) {
 	return r.Partitions.QueryFlowFactStats(ctx, routeClass, from, to)
+}
+
+// QueryObservedRouteClasses 组合面委托（同上）。
+func (r *Repository) QueryObservedRouteClasses(ctx context.Context, from, to time.Time) ([]domain.RouteClassIDVal, error) {
+	return r.Partitions.QueryObservedRouteClasses(ctx, from, to)
 }
 
 // parseRoutingHist parses a Postgres bigint[] literal ("{1,2,3}") into a slice;

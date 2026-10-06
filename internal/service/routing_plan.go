@@ -11,8 +11,10 @@ package service
 // 找路由要用全量），本方法只服务展示面。
 
 import (
+	"context"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
@@ -35,6 +37,11 @@ type RoutingPlanQuery struct {
 	// CandidatesLimit 0 = 不返回候选（路由选择器取轻量列表）；调用方须在参数
 	// 缺省时填入 RoutingPlanCandidatesDefault。
 	CandidatesLimit int
+	// ObservedFrom/ObservedTo 观测窗口 [from,to)（可选，成对给出）。给定时 routes
+	// 只保留窗口内 routing_flow_fact 有记录的路由；恰给一端 → ErrInvalidInput。
+	// route 给定时绕过窗口过滤。
+	ObservedFrom *time.Time
+	ObservedTo   *time.Time
 }
 
 // RoutingPlanRouteView 一条路由 + 其候选总数（切片后仍可算出分页）。
@@ -43,19 +50,29 @@ type RoutingPlanRouteView struct {
 	CandidatesTotal int64
 }
 
-// RoutingPlanResult 计划展示面结果。TotalRoutes 为过滤后总数（不受分页影响）。
+// RoutingPlanResult 计划展示面结果。TotalRoutes 为过滤后总数（不受分页影响）；
+// PlanTotalRoutes 为未过滤的当前计划路由总数（区分「空计划」与「窗口内无流量」）。
 type RoutingPlanResult struct {
-	Generation  uint64
-	Routes      []RoutingPlanRouteView
-	TotalRoutes int64
+	Generation      uint64
+	Routes          []RoutingPlanRouteView
+	TotalRoutes     int64
+	PlanTotalRoutes int64
 }
 
-// QueryRoutingPlan 当前发布计划的分页投影。
-func (s *Service) QueryRoutingPlan(q RoutingPlanQuery) (*RoutingPlanResult, error) {
+// QueryRoutingPlan 当前发布计划的分页投影。观测窗口（ObservedFrom/ObservedTo，
+// 成对可选）把 routes 收敛为窗口内 routing_flow_fact 有记录的路由；route 给定
+// 时绕过窗口过滤（单条直查）。
+func (s *Service) QueryRoutingPlan(ctx context.Context, q RoutingPlanQuery) (*RoutingPlanResult, error) {
+	// 形状校验先于 route 分支：恰给一端 → ErrInvalidInput（route=<hex> 外加半窗口
+	// 同样 400）。判定用显式存在位，不用时间零值。
+	if (q.ObservedFrom == nil) != (q.ObservedTo == nil) {
+		return nil, ErrInvalidInput
+	}
 	plan, err := s.RoutingPlanExplanation()
 	if err != nil {
 		return nil, err
 	}
+	planTotal := int64(len(plan.Routes))
 	// CurrentRoutingPlan 每次返回防御性深拷贝，切片/改写候选安全。
 	routes := plan.Routes
 
@@ -74,14 +91,46 @@ func (s *Service) QueryRoutingPlan(q RoutingPlanQuery) (*RoutingPlanResult, erro
 			return nil, ErrNotFound
 		}
 		routes = routes[found : found+1]
-	} else if term := strings.ToLower(strings.TrimSpace(q.Search)); term != "" {
-		filtered := make([]scheduler.RoutingPlanRoute, 0, len(routes))
-		for _, r := range routes {
-			if routingRouteMatches(r, term) {
-				filtered = append(filtered, r)
+	} else {
+		if q.ObservedFrom != nil {
+			if err := validateRoutingWindow(*q.ObservedFrom, *q.ObservedTo); err != nil {
+				return nil, err
+			}
+			if err := s.validateRoutingRetention(*q.ObservedFrom); err != nil {
+				return nil, err
+			}
+			// 计划为空 ⇒ 窗口内必无流量：跳过 reader 查询（结果恒空）。
+			if planTotal > 0 {
+				reader, ok := s.store.(RoutingFactReader)
+				if !ok {
+					return nil, errRoutingNotWired
+				}
+				observed, err := reader.QueryObservedRouteClasses(ctx, *q.ObservedFrom, *q.ObservedTo)
+				if err != nil {
+					return nil, err
+				}
+				set := make(map[string]struct{}, len(observed))
+				for _, v := range observed {
+					set[domain.RouteClassIDHex(v)] = struct{}{}
+				}
+				kept := make([]scheduler.RoutingPlanRoute, 0, len(routes))
+				for _, r := range routes {
+					if _, ok := set[r.Ref.RouteClassID]; ok {
+						kept = append(kept, r)
+					}
+				}
+				routes = kept
 			}
 		}
-		routes = filtered
+		if term := strings.ToLower(strings.TrimSpace(q.Search)); term != "" {
+			filtered := make([]scheduler.RoutingPlanRoute, 0, len(routes))
+			for _, r := range routes {
+				if routingRouteMatches(r, term) {
+					filtered = append(filtered, r)
+				}
+			}
+			routes = filtered
+		}
 	}
 
 	total := int64(len(routes))
@@ -97,9 +146,10 @@ func (s *Service) QueryRoutingPlan(q RoutingPlanQuery) (*RoutingPlanResult, erro
 	}
 
 	out := &RoutingPlanResult{
-		Generation:  plan.Generation,
-		Routes:      make([]RoutingPlanRouteView, 0, len(routes)),
-		TotalRoutes: total,
+		Generation:      plan.Generation,
+		Routes:          make([]RoutingPlanRouteView, 0, len(routes)),
+		TotalRoutes:     total,
+		PlanTotalRoutes: planTotal,
 	}
 	for i := range routes {
 		cands := routes[i].Candidates

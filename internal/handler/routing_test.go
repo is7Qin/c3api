@@ -34,8 +34,9 @@ import (
 // routingStore 在 fakeStore 之上补事实表聚合读能力（service 侧能力探测）。
 type routingStore struct {
 	*fakeStore
-	flowRows    []repository.RoutingFlowStat
-	qualityRows []repository.RoutingQualityStat
+	flowRows     []repository.RoutingFlowStat
+	qualityRows  []repository.RoutingQualityStat
+	observedRows []domain.RouteClassIDVal
 }
 
 func (s *routingStore) QueryQualityFactStats(context.Context, domain.RouteClassIDVal, time.Time, time.Time) ([]repository.RoutingQualityStat, error) {
@@ -44,6 +45,10 @@ func (s *routingStore) QueryQualityFactStats(context.Context, domain.RouteClassI
 
 func (s *routingStore) QueryFlowFactStats(context.Context, domain.RouteClassIDVal, time.Time, time.Time) ([]repository.RoutingFlowStat, error) {
 	return s.flowRows, nil
+}
+
+func (s *routingStore) QueryObservedRouteClasses(context.Context, time.Time, time.Time) ([]domain.RouteClassIDVal, error) {
+	return s.observedRows, nil
 }
 
 var _ service.RoutingFactReader = (*routingStore)(nil)
@@ -395,6 +400,58 @@ func Test_RoutingPlan_EmptyViewIsNotError(t *testing.T) {
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 	require.True(t, strings.Contains(rec.Body.String(), `"generation":0`))
 	require.Contains(t, rec.Body.String(), `"routes":[]`, "空计划 routes 必须是 [] 而非 null")
+}
+
+// A1/A2（HTTP 契约）：observed 窗口成对语义 + plan_total_routes 线格式。
+func Test_RoutingPlan_ObservedWindowContract(t *testing.T) {
+	rcA, err := domain.RouteClassID(10, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
+	require.NoError(t, err)
+	rcB, err := domain.RouteClassID(5, domain.FormatAnthropic, "z", domain.OpAnthropicMessages)
+	require.NoError(t, err)
+	plan := &scheduler.RoutingPlan{Generation: 8, Routes: []scheduler.RoutingPlanRoute{
+		{Ref: scheduler.RouteRef{GroupID: 10, Format: "openai-chat", Model: "m", OperationTag: "chat_completions", RouteClassID: domain.RouteClassIDHex(rcA)}},
+		{Ref: scheduler.RouteRef{GroupID: 5, Format: "anthropic-messages", Model: "z", OperationTag: "messages", RouteClassID: domain.RouteClassIDHex(rcB)}},
+	}}
+	store := &routingStore{fakeStore: newFakeStore()}
+	// 窗口内只有 rcB 有流量。
+	rawB, err := domain.HexToID(domain.RouteClassIDHex(rcB))
+	require.NoError(t, err)
+	store.observedRows = []domain.RouteClassIDVal{domain.RouteClassIDVal(rawB)}
+	h := routingRouter(store, plan)
+
+	win := "observed_from=" + routingBase.Format(time.RFC3339) + "&observed_to=" + routingBase.Add(time.Hour).Format(time.RFC3339)
+
+	// 两端都给：只保留窗口内有流量的 rcB；plan_total_routes 为未过滤总数。
+	rec := doGET(t, h, "/api/admin/routing/plan?"+win)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	var res RoutingPlanResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+	require.Equal(t, int64(2), res.PlanTotalRoutes)
+	require.Equal(t, int64(1), res.TotalRoutes)
+	require.Len(t, res.Routes, 1)
+	require.Equal(t, domain.RouteClassIDHex(rcB), res.Routes[0].Ref.RouteClassId)
+
+	// 两端省略：行为不变（全部路由，plan_total == total）。
+	rec = doGET(t, h, "/api/admin/routing/plan")
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+	require.Equal(t, int64(2), res.PlanTotalRoutes)
+	require.Equal(t, int64(2), res.TotalRoutes)
+
+	// 只给一端 → 400（含 route + 半窗口组合）。
+	rec = doGET(t, h, "/api/admin/routing/plan?observed_from="+routingBase.Format(time.RFC3339))
+	require.Equal(t, 400, rec.Code, "single observed_from → 400: %s", rec.Body.String())
+	rec = doGET(t, h, "/api/admin/routing/plan?route="+domain.RouteClassIDHex(rcA)+"&observed_from="+routingBase.Format(time.RFC3339))
+	require.Equal(t, 400, rec.Code, "route + half window → 400: %s", rec.Body.String())
+
+	// route 直查绕过窗口：窗口内无流量的 rcA 仍返回该条。
+	rec = doGET(t, h, "/api/admin/routing/plan?route="+domain.RouteClassIDHex(rcA)+"&"+win)
+	require.Equal(t, 200, rec.Code, rec.Body.String())
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &res))
+	require.Equal(t, int64(1), res.TotalRoutes)
+	require.Equal(t, int64(2), res.PlanTotalRoutes)
+	require.Len(t, res.Routes, 1)
+	require.Equal(t, domain.RouteClassIDHex(rcA), res.Routes[0].Ref.RouteClassId)
 }
 
 // A10（handler 层契约）：candidates_limit 缺省 → 契约默认；显式 0 = 不返回候选；

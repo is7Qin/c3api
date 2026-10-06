@@ -1306,6 +1306,9 @@ export interface paths {
          *     只返回该条路由（供单路由取候选页）。candidates_offset/candidates_limit
          *     作用于**每个返回路由**的候选目录；candidates_limit=0 = 不返回候选，
          *     供路由选择器取轻量列表（避免 limit × candidates_limit 的无谓放大）。
+         *     observed_from/observed_to 成对给出时，routes 只保留半开窗口 [from,to)
+         *     内 routing_flow_fact 有记录的路由（窗口 ≤ 90d 且不早于观测保留 cutoff，
+         *     否则 400；只给一端 → 400）；route 给定时绕过窗口过滤，只按目录返回该条。
          */
         get: operations["GetRoutingPlan"];
         put?: never;
@@ -3234,7 +3237,12 @@ export interface components {
             generation: number;
             /**
              * Format: int64
-             * @description search 过滤后（route 给定时为 0/1）的路由总数（分页用）
+             * @description 未过滤的当前计划路由总数（区分「空计划」与「窗口内无流量」）
+             */
+            plan_total_routes: number;
+            /**
+             * Format: int64
+             * @description 过滤后（search ∩ observed 窗口；route 给定时恒为 1）的路由总数（分页用）
              */
             total_routes: number;
             /** @description 全身份确定性路由序（与发布字节守卫同序） */
@@ -6122,6 +6130,8 @@ export interface operations {
             query?: {
                 search?: string;
                 route?: string;
+                observed_from?: string;
+                observed_to?: string;
                 offset?: number;
                 limit?: number;
                 candidates_offset?: number;
