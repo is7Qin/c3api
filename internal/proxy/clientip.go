@@ -26,14 +26,14 @@ var clientIPHeaders = func() []string {
 
 // clientIP 提取客户端 IP（审计/排障的尽力而为标识，非安全边界——不做鉴权/
 // 限流决策依据；spec 2026-08-17 用户裁决方案：供应商头识别 + RemoteAddr 兜底）：
-//   - behindCDN=false（默认）：完全不读供应商头（零伪造面，与直连行为一致），
-//     直取 RemoteAddr 剥端口（IPv6 [::1]:port → ::1；net.SplitHostPort 失败
-//     原样返回）。
-//   - behindCDN=true：按序采信首个非空头 CF-Connecting-IP → True-Client-IP →
+//   - behindCDN=true（默认）：按序采信首个非空头 CF-Connecting-IP → True-Client-IP →
 //     X-Real-IP（TrimSpace；值域截断 64 字符——真实 IP 最长 IPv6 45 字符）；
 //     全空 → RemoteAddr 剥端口。部署前提：源站只对 CDN/反向代理暴露（防火墙
 //     层封直连），客户端直连时可自填任意值——布尔开关即极简门控形态
 //     （nginx realip 的粗粒度版）。
+//   - behindCDN=false：完全不读供应商头（零伪造面，与直连行为一致），
+//     直取 RemoteAddr 剥端口（IPv6 [::1]:port → ::1；net.SplitHostPort 失败
+//     原样返回）。
 //
 // 热路径零分配（≤64 路径）：Header.Get map 查找、TrimSpace 子串、切片、
 // SplitHostPort 均零分配；>64 防御截断必须 strings.Clone（string(s[:64]) 在

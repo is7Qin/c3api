@@ -105,11 +105,13 @@ type ProxyConfig struct {
 	FailoverAttempts int  `koanf:"failover_attempts"`
 	UsageCapture     bool `koanf:"usage_capture"`
 	// BehindCDN 客户端 IP 识别开关（用户裁决 2026-08-17：config 文件键，非 admin
-	// setting）：false（默认）→ 完全不读供应商头（CF-Connecting-IP /
-	// True-Client-IP / X-Real-IP），直取 RemoteAddr（零伪造面，与直连行为一致）；
-	// true → 按序采信三头。部署前提：源站只对 CDN/反向代理暴露（防火墙层封
-	// 直连）——直连时可自填任意值，client_ip 为审计/排障的尽力而为标识，非安全
-	// 边界。可选键，旧配置不带此键照常加载（零值 false）。
+	// setting；2026-10-07 默认翻转 false → true）：true（默认）→ 按序采信
+	// CF-Connecting-IP / True-Client-IP / X-Real-IP（首个非空头），全空回退
+	// RemoteAddr；false → 完全不读供应商头，直取 RemoteAddr（零伪造面，与直连
+	// 行为一致）。部署前提：默认采信供应商头仅当源站只对 CDN/反向代理暴露
+	// （防火墙层封直连）时安全——直连公网暴露可自填任意值，此时须显式置 false；
+	// client_ip 为审计/排障的尽力而为标识，非安全边界。可选键，旧配置不带此键
+	// → 默认 true（注意：与旧版零值 false 行为不同）。
 	BehindCDN bool `koanf:"behind_cdn"`
 	// LowBalanceMaxConcurrency 低余额时用户级并发上限（默认 5；0 = 关闭该特性，
 	// 退回原 UserMaxConc）。
@@ -174,7 +176,7 @@ func defaults() *Config {
 		// 计费路径防卡死）由 OpenPG/SettleBalance·SettleFefo 统一补，DSN 无需手工写（用户
 		// 显式配置同名参数时尊重不覆盖；statement_timeout 不设会话级——副作用核实见 f1-impl-report.md）。
 		DB:        DBConfig{MaxConns: 20},
-		Proxy:     ProxyConfig{MaxBodySize: 4 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10},
+		Proxy:     ProxyConfig{MaxBodySize: 4 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10},
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},

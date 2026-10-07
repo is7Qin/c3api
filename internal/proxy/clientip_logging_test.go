@@ -75,7 +75,7 @@ func TestProxyClientIPOffIgnoresForgedHeaders(t *testing.T) {
 	up := fakeOpenAI(t, "")
 	defer up.Close()
 	store := &captureLogStore{}
-	p := newTestProxyTimeoutLogs(t, up.URL, 1, store) // BehindCDN 缺省 false
+	p := newTestProxyTimeoutLogs(t, up.URL, 1, store) // 测试装配未设 BehindCDN → 结构体零值 false
 
 	req := chatReq("ck-1")
 	req.Header.Set("CF-Connecting-IP", "9.9.9.9")

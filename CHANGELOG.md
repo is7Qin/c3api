@@ -10,6 +10,10 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ## [Unreleased]
 
+### Changed
+
+- **`proxy.behind_cdn` now defaults to `true`**: the client IP column (usage and error logs) trusts `CF-Connecting-IP` → `True-Client-IP` → `X-Real-IP` (first non-empty) with a `RemoteAddr` fallback, instead of the previous `RemoteAddr`-only default. Deployments that expose the gateway directly to the internet must set it back to `false`, because those headers are then client-forgeable.
+
 ## [v0.0.1-beta.7] - 2026-09-28
 
 ### Breaking

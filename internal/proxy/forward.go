@@ -40,9 +40,9 @@ type Config struct {
 	FailoverAttempts      int
 	UsageCapture          bool
 	BillingCapture        bool // 计费开关（config.Billing.Enabled 映射；余额预检门控 + billable 行 Billed 出生标记取反——单写点后不再路由分流）
-	// BehindCDN 客户端 IP 识别开关（config.proxy.behind_cdn 映射；clientIP
-	// 提取门控——false 完全不读供应商头直取 RemoteAddr，true 按序采信三头）。
-	// 部署前提见 config.go 注释与 clientip.go：源站只对 CDN 暴露。
+	// BehindCDN 客户端 IP 识别开关（config.proxy.behind_cdn 映射；默认 true——
+	// clientIP 提取门控：true 按序采信供应商头，false 完全不读直取 RemoteAddr）。
+	// 部署前提见 config.go 注释与 clientip.go：源站只对 CDN/反代暴露时方可采信。
 	BehindCDN bool
 	// LowBalanceConcCap 低余额用户级并发上限（config.proxy.low_balance_max_concurrency
 	// 映射；0 = 关闭该特性——guardPipeline 保持逐位等价现状）。

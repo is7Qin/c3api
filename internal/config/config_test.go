@@ -92,13 +92,14 @@ func TestLoadFromTOML(t *testing.T) {
 	require.Empty(t, deploy.Server.TimeZone, "deploy 模板的 time_zone 必须位于 server 内联表")
 }
 
-// S-E（2026-08-17）：proxy.behind_cdn 可选键——缺省 = false（零伪造面默认；
-// 旧配置不带此键照常加载通过 validate）；显式 true 加载；显式 false 等价缺省。
-func TestBehindCDNDefaultFalseAndExplicit(t *testing.T) {
+// S-E（2026-08-17，2026-10-07 默认翻转）：proxy.behind_cdn 可选键——缺省 = true
+// （供应商头识别默认开；旧配置不带此键也走默认 true，加载通过 validate）；显式
+// true 加载；显式 false 退回直取 RemoteAddr（零伪造面）。
+func TestBehindCDNDefaultTrueAndExplicit(t *testing.T) {
 	setenvRequired(t)
 	c, err := Load("")
 	require.NoError(t, err)
-	require.False(t, c.Proxy.BehindCDN, "behind_cdn 缺省 = false（完全不读供应商头）")
+	require.True(t, c.Proxy.BehindCDN, "behind_cdn 缺省 = true（按序采信供应商头）")
 
 	c2, err := Load(writeConfig(t, "[proxy]\nbehind_cdn = true\n"))
 	require.NoError(t, err)
@@ -106,7 +107,7 @@ func TestBehindCDNDefaultFalseAndExplicit(t *testing.T) {
 
 	c3, err := Load(writeConfig(t, "[proxy]\nbehind_cdn = false\nusage_capture = false\n"))
 	require.NoError(t, err)
-	require.False(t, c3.Proxy.BehindCDN, "显式 false 等价缺省")
+	require.False(t, c3.Proxy.BehindCDN, "显式 false 退回直取 RemoteAddr")
 }
 
 // TestLoadRejectsNonPositiveDurations：8 个 duration 字段 × 0/-1s → error 含字段名

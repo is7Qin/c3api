@@ -22,12 +22,12 @@ proxy = {
   # 合法域 1..8（上限 = AttemptPlan 固定去重集），0/负值或 >8 启动即失败
   failover_attempts = 3,
   usage_capture = true,
-  # 反代/CDN 之后部署时置 true：client_ip 按序采信 CF-Connecting-IP →
-  # True-Client-IP → X-Real-IP。false（默认）完全不读这些头直取 RemoteAddr——
-  # compose + 前置代理拓扑下只会记到内网对端（如 172.18.0.1），审计无意义。
-  # 置 true 的前提是源站端口只对代理开放（防火墙封直连）；若本机直连公网
-  # 暴露，改回 false——头可被客户端自填，client_ip 仅为尽力而为的排障标识。
-  behind_cdn = false,
+  # client_ip 按序采信 CF-Connecting-IP → True-Client-IP → X-Real-IP（true，默认）；
+  # false 完全不读这些头直取 RemoteAddr——compose + 前置代理拓扑下只会记到内网
+  # 对端（如 172.18.0.1），审计无意义。默认开的前提是源站端口只对代理开放
+  # （防火墙封直连）；若本机直连公网暴露，须显式置 false——头可被客户端自填，
+  # client_ip 仅为尽力而为的排障标识。
+  behind_cdn = true,
   # 低余额用户级并发钳制：余额（毫分）严格小于阈值的用户，其用户级并发上限
   # 钳为 low_balance_max_concurrency；余额回到阈值以上恢复原上限。
   # 阈值单位 USD；low_balance_max_concurrency = 0 关闭该特性（退回旧行为）。

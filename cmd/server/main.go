@@ -477,7 +477,7 @@ func main() {
 		FailoverAttempts:      cfg.Proxy.FailoverAttempts,
 		UsageCapture:          cfg.Proxy.UsageCapture,
 		BillingCapture:        cfg.Billing.Enabled,
-		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（false = 直取 RemoteAddr）
+		BehindCDN:             cfg.Proxy.BehindCDN, // client_ip 供应商头识别开关（true = 采信供应商头，默认；false = 直取 RemoteAddr）
 		// 低余额用户级并发钳制：cap 直通；阈值 USD → 毫分（×1e5 取整，与
 		// convert.go 余额毫分单位一致）。
 		LowBalanceConcCap:            cfg.Proxy.LowBalanceMaxConcurrency,

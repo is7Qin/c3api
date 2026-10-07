@@ -29,15 +29,15 @@ proxy = {
   # 失败（拒绝死锁/越界配置），默认 3
   failover_attempts = 3,
   usage_capture = true,
-  # client_ip（usage_logs / err_logs 审计列）提取方式：true = 按序采信
+  # client_ip（usage_logs / err_logs 审计列）提取方式：true（默认）= 按序采信
   # CF-Connecting-IP → True-Client-IP → X-Real-IP（首个非空值），全空回退
-  # RemoteAddr；false（默认）= 完全不读这些头，直取 RemoteAddr 剥端口（零伪造面）。
-  # nginx/Caddy/compose 网桥之后部署须置 true，否则 client_ip 只会是代理内网地址
-  # （如 172.18.0.1）；代理侧需自行写真实 IP 头（如 nginx
+  # RemoteAddr；false = 完全不读这些头，直取 RemoteAddr 剥端口（零伪造面）。
+  # nginx/Caddy/compose 网桥之后部署直接用默认值即可，client_ip 记为真实客户端
+  # 地址；代理侧需自行写真实 IP 头（如 nginx
   # proxy_set_header X-Real-IP $remote_addr）——X-Forwarded-For 不被解析。
-  # 置 true 的前提是源站端口只对代理开放（防火墙封直连）：网关直连公网暴露时
-  # 客户端可自填这些头，须改回 false。client_ip 始终只是排障标识，非安全边界。
-  behind_cdn = false,
+  # 采信这些头的前提是源站端口只对代理开放（防火墙封直连）：网关直连公网暴露时
+  # 客户端可自填这些头，此时须显式置 false。client_ip 始终只是排障标识，非安全边界。
+  behind_cdn = true,
   # 低余额用户级并发钳制：余额（毫分）严格小于阈值的用户，其用户级并发上限
   # 钳为 low_balance_max_concurrency；余额回到阈值以上恢复原 UserMaxConc。
   # 阈值单位 USD；low_balance_max_concurrency = 0 关闭该特性（退回旧行为）。
