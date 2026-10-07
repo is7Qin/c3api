@@ -95,6 +95,7 @@ const (
 // Defines values for UserRole.
 const (
 	UserRolePlatformAdmin UserRole = "platform_admin"
+	UserRoleSupplier      UserRole = "supplier"
 	UserRoleUser          UserRole = "user"
 )
 

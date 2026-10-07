@@ -2871,7 +2871,7 @@ components:
           items: { $ref: '#/components/schemas/AdminKey' }
     UserRole:
       type: string
-      enum: [platform_admin, user]
+      enum: [platform_admin, user, supplier]
     UserStatus:
       type: string
       enum: [active, disabled]
