@@ -38,6 +38,9 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "c3api.serviceAccountName" . }}
+      # 关闭 K8s 注入的 service-link 环境变量（C3API_SERVICE_* / C3API_PORT* 等）：
+      # 本应用把 C3API_ 前缀的 env 全部当配置解析，而 Service 名恰为 c3api，会与之冲突导致启动失败。
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: {{ .Values.app.securityContext.runAsNonRoot }}
         runAsUser: {{ .Values.app.securityContext.runAsUser }}
