@@ -68,3 +68,19 @@ func validateSupplierOverrides(ctx context.Context, repo *repository.SupplierRep
 	}
 	return nil
 }
+
+// validateSupplierDisabled 停用 liability 校验（spec 2026-10-09 §5.5 / I6 / A23）：
+// enabled=false 且存在残留冻结桶 / 未记账 usage backlog / available>0 / 在途单
+// （pending|approved|paying）⇒ 拒绝启动并打印分项规模。理由：enabled=false 时
+// credit/thaw 链根本不存在 ⇒ 残留为「债权不可达」；必须让操作员看见。
+func validateSupplierDisabled(ctx context.Context, repo *repository.SupplierRepo) error {
+	l, err := repo.SupplierLiability(ctx)
+	if err != nil {
+		return fmt.Errorf("supplier liability probe: %w", err)
+	}
+	if l.Zero() {
+		return nil
+	}
+	return fmt.Errorf("supplier disabled but outstanding liability remains: frozen_chunks_rows=%d uncredited_usage_rows=%d available=%d inflight_settlements=%d",
+		l.ChunksRows, l.UncreditedRows, l.Available, l.InFlightSettlements)
+}

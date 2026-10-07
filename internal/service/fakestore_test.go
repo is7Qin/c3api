@@ -1273,6 +1273,14 @@ func (f *fakeStore) UpdateUser(ctx context.Context, p *repository.UserPatch) (*d
 	}
 	if p.Status != nil {
 		cur.Status = *p.Status
+		// 供应商生命周期（§2.7-1，镜像真实 repo）：禁用 ⇒ 连带禁用其名下账号。
+		if *p.Status != domain.UserStatusActive {
+			for _, a := range f.accs {
+				if a.SupplierUserID == p.ID {
+					a.Enabled = false
+				}
+			}
+		}
 	}
 	c := *cur
 	return &c, nil

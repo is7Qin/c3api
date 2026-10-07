@@ -15,6 +15,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
+	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/user"
 )
@@ -315,6 +316,20 @@ func (r *UserRepo) UpdateUser(ctx context.Context, p *UserPatch) (*domain.User, 
 	row, err := r.client.User.Get(ctx, p.ID)
 	if err != nil {
 		return nil, errMissingID(err, p.ID)
+	}
+	// 供应商生命周期：**禁用**（status != active）⇒ 同事务连带禁用其名下账号
+	// （spec 2026-10-09 §2.7-1）。用户行 UPDATE 已在本事务内对其加行锁；账号写面的
+	// 归属校验（ownership.go）以 FOR UPDATE 锁同一 users 行 ⇒ 两条路径串行化
+	// （消灭「先读 active ⇒ 禁用提交 ⇒ 再写归属」的 TOCTOU）。账号快照由调度器
+	// 周期同步（≤ SyncInterval）收敛（见报告偏离说明）。
+	if p.Status != nil && *p.Status != domain.UserStatusActive {
+		if _, err := r.client.Account.Update().
+			Where(account.SupplierUserID(p.ID)).
+			Where(account.EnabledEQ(true)).
+			SetEnabled(false).
+			Save(ctx); err != nil {
+			return nil, err
+		}
 	}
 	return toDomainUser(row), nil
 }

@@ -31,6 +31,41 @@ import (
 	"github.com/is7qin/c3api/internal/supplier"
 )
 
+// --- 停用 liability 校验（I6/A23，§5.5）---
+
+// SupplierLiability 停用前必须为零的 outstanding liability 分项（§5.5）：
+// liability = available + Σ chunks.amount + Σ settlements(pending|approved|paying)
+// ——**必须含 available**（否则债权人无法自行提现 = 债权不可达）。另暴露 usage
+// backlog 行数（未记账债权）用于拒绝启动时的分项打印。
+type SupplierLiability struct {
+	ChunksRows          int64
+	UncreditedRows      int64
+	Available           int64
+	InFlightSettlements int64
+}
+
+// Zero 报告全部 liability 分项为零（可安全停用）。
+func (l SupplierLiability) Zero() bool {
+	return l.ChunksRows == 0 && l.UncreditedRows == 0 && l.Available == 0 && l.InFlightSettlements == 0
+}
+
+// SupplierLiability 单语句汇总停用检查所需分项（§5.5 enabled=false 启动校验）。
+func (r *SupplierRepo) SupplierLiability(ctx context.Context) (SupplierLiability, error) {
+	if r.pool == nil {
+		return SupplierLiability{}, errSupplierNoPool
+	}
+	const q = `SELECT
+  (SELECT COUNT(*) FROM supplier_frozen_chunks),
+  (SELECT COUNT(*) FROM usage_logs WHERE NOT supplier_credited AND supplier_earn_millis > 0),
+  (SELECT COALESCE(SUM(available), 0) FROM supplier_balances),
+  (SELECT COUNT(*) FROM supplier_settlements WHERE status IN ('pending','approved','paying'))`
+	var l SupplierLiability
+	if err := r.pool.QueryRow(ctx, q).Scan(&l.ChunksRows, &l.UncreditedRows, &l.Available, &l.InFlightSettlements); err != nil {
+		return l, err
+	}
+	return l, nil
+}
+
 // ListSupplierSettlementsAdmin 管理面结算单列表（§6.3；status/kind 可空过滤）。
 func (r *SupplierRepo) ListSupplierSettlementsAdmin(ctx context.Context, filter domain.SupplierSettlementFilter, limit, offset int) ([]*domain.SupplierSettlement, int64, error) {
 	if r.pool == nil {
