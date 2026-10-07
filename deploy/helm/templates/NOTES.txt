@@ -1,0 +1,37 @@
+{{- $fullname := include "c3api.fullname" . -}}
+{{- $svcPort := .Values.service.port -}}
+c3api has been deployed.
+
+Chart:   {{ .Chart.Name }}-{{ .Chart.Version }} (app {{ .Chart.AppVersion }})
+Release: {{ .Release.Name }} in namespace {{ .Release.Namespace }}
+Port:    {{ $svcPort }} (container listens on :{{ .Values.app.port }})
+
+1. Access the gateway (default Service is {{ .Values.service.type }}):
+     kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ $fullname }} {{ $svcPort }}:{{ $svcPort }}
+   Then open:
+     - Console / dashboard:  http://localhost:{{ $svcPort }}/app
+     - User console:         http://localhost:{{ $svcPort }}/user
+     - Health check:         http://localhost:{{ $svcPort }}/healthz
+   {{- if .Values.ingress.enabled }}
+   Ingress is enabled; reach the app through the configured hosts. Note that the
+   "/" Prefix also exposes /healthz externally.
+   {{- end }}
+
+2. First login: the FIRST registered user automatically becomes platform_admin.
+   Register, then sign in at /user to administer the gateway. Sync pricing after
+   the first boot (POST /admin/pricing/sync) — an empty price table returns 402.
+
+3. External dependencies: this chart does NOT deploy PostgreSQL or Redis. Point
+   it at your own instances via externalDatabase / externalRedis (dsn/addr or an
+   existing Secret). Prefer a Redis instance WITHOUT an allkeys-lru eviction
+   policy (eviction only forces verification-code re-issue).
+
+4. Persistence & upgrades: the application creates its schema on first start
+   (fresh setup only, no migration path). Back up external PostgreSQL before
+   upgrading.
+
+{{- if and .Values.podDisruptionBudget.enabled (eq (int .Values.replicaCount) 1) }}
+
+WARNING: podDisruptionBudget.enabled=true with replicaCount=1 will block voluntary
+evictions (node drains). Use replicaCount > 1, or disable the PDB.
+{{- end }}

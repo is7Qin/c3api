@@ -1,0 +1,111 @@
+# Default values for c3api.
+# This chart deploys ONLY the c3api application. PostgreSQL and Redis are
+# NOT bundled — you must point the chart at external instances.
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/is7qin/c3api
+  tag: beta            # production: pin an immutable version, e.g. v1.2.3
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+# --- Sensitive material (Secret) ---
+# By default the chart creates a Secret from the values below.
+# Set create=false to reference an externally managed Secret instead.
+secrets:
+  create: true                 # true: render a Secret; false: use existingSecret
+  existingSecret: ""           # keys: auth-jwt-secret (required) / admin-token (optional)
+  jwtSecret: ""                # required (empty -> template `required` fails)
+  adminToken: ""               # optional (empty = no static admin token)
+
+# --- External dependencies (connection info: pick ONE of each pair) ---
+# At least one of dsn/existingSecret (and one of addr/existingSecret) MUST be set,
+# otherwise rendering fails via `required`.
+externalDatabase:
+  dsn: ""                      # full DSN, e.g. postgres://u:p@db:5432/c3api?sslmode=disable
+  existingSecret: ""           # or read the DSN from a Secret (key: db-dsn); takes precedence
+
+externalRedis:
+  addr: ""                     # host:port, e.g. redis:6379
+  existingSecret: ""           # or read the addr from a Secret (key: redis-addr); takes precedence
+
+# --- Application configuration ---
+config:
+  inline: true                 # true: render config.toml into a ConfigMap; false: env-only (-config "")
+  content: |
+    server = { addr = ":18080", time_zone = "" }
+    scheduler = { default_max_concurrency = 8 }
+
+app:
+  port: 18080
+  env:                         # non-sensitive container env (key = env var name)
+    GOGC: ""
+    GOMEMLIMIT: ""
+    # C3API_SERVER_TIME_ZONE: "Asia/Shanghai"
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  podAnnotations: {}
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  readOnlyRootFilesystem: true
+  tmpVolume: true              # mount an emptyDir at /tmp (required with a read-only root fs)
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+  probes:
+    startup:
+      enabled: true
+      periodSeconds: 5
+      failureThreshold: 24       # ~120s, covers first-boot bootstrap
+    liveness:
+      enabled: true
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 5
+    readiness:
+      enabled: true
+      periodSeconds: 10
+      timeoutSeconds: 3
+      failureThreshold: 3
+  terminationGracePeriodSeconds: 60
+  strategy:
+    maxUnavailable: 0
+    maxSurge: 1
+
+service:
+  type: ClusterIP
+  port: 18080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: c3api.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+podDisruptionBudget:
+  enabled: false               # WARNING: with replicaCount=1 enabling this blocks voluntary eviction
+  minAvailable: 1
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: ""
