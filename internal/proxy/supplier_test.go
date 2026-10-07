@@ -1,0 +1,160 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
+package proxy
+
+import (
+	"math"
+	"math/big"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/domain"
+)
+
+// TestEarnOfExactFloor A2：以 math/big 独立计算 floor(cost*b/10000) 为 oracle，
+// 覆盖 cost × bp 全矩阵（5×5），并断言无钳制（MaxInt64 不缩小）。
+func TestEarnOfExactFloor(t *testing.T) {
+	costs := []int64{0, 1, 10000, 9999, math.MaxInt64}
+	bps := []int{0, 1, 1000, 9999, 10000}
+	for _, cost := range costs {
+		for _, bp := range bps {
+			got := earnOf(cost, bp)
+			want := bigFloorEarn(cost, bp)
+			require.Equal(t, want, got, "earnOf(%d,%d)", cost, bp)
+			if cost >= 0 {
+				require.LessOrEqual(t, got, cost, "earn <= cost（非负域）")
+			}
+		}
+	}
+}
+
+// TestEarnOfNegativeCost A2①：负 cost 真实调用纯函数并断言 == 0。
+func TestEarnOfNegativeCost(t *testing.T) {
+	require.Equal(t, int64(0), earnOf(-1, 7000))
+	require.Equal(t, int64(0), earnOf(math.MinInt64, 10000))
+	require.Equal(t, int64(0), earnOf(-10000, 1000))
+}
+
+// TestEarnOfZeroBp bp<=0 ⇒ 0。
+func TestEarnOfZeroBp(t *testing.T) {
+	require.Equal(t, int64(0), earnOf(100000, 0))
+	require.Equal(t, int64(0), earnOf(100000, -5))
+}
+
+// TestEarnOfFullBp A2③：share_bp=10000 ⇒ earn==cost（非负域，恒等短路，无钳制）。
+func TestEarnOfFullBp(t *testing.T) {
+	for _, cost := range []int64{1, 9999, 10000, 123456789, math.MaxInt64} {
+		require.Equal(t, cost, earnOf(cost, shareBpFull))
+	}
+}
+
+// bigFloorEarn oracle：floor(cost*bp/10000)（cost<=0/bp<=0 ⇒ 0）。
+func bigFloorEarn(cost int64, bp int) int64 {
+	if cost <= 0 || bp <= 0 {
+		return 0
+	}
+	n := new(big.Int).Mul(big.NewInt(cost), big.NewInt(int64(bp)))
+	n.Div(n, big.NewInt(10000))
+	return n.Int64()
+}
+
+// TestSupplierViewOwnerShare 视图归属/分成率读取 + 单指针换代。
+func TestSupplierViewOwnerShare(t *testing.T) {
+	snap := NewSupplierSnapshot(time.Minute)
+	snap.Store(map[int64]int64{1: 100, 2: 200}, map[int64]int{100: 7000, 200: 0}, time.Unix(1000, 0))
+	v := snap.Load()
+	require.NotNil(t, v)
+	uid, ok := v.Owner(1)
+	require.True(t, ok)
+	require.Equal(t, int64(100), uid)
+	require.Equal(t, 7000, v.ShareBp(100))
+	// 显式 0 与「无行」区分：uid 200 显式 0。
+	require.Equal(t, 0, v.ShareBp(200))
+	// 未装载 uid 也返回 0（装配时须已注入默认，此处仅验读取）。
+	_, ok = v.Owner(999)
+	require.False(t, ok)
+	// 视图 nil（未 Store）安全。
+	require.Nil(t, (*SupplierSnapshot)(nil).Load())
+}
+
+// TestSupplierSnapshotObs 三态可观测。
+func TestSupplierSnapshotObs(t *testing.T) {
+	snap := NewSupplierSnapshot(time.Minute)
+	now := time.Unix(2000, 0)
+	obs := snap.Obs(now)
+	require.False(t, obs.Loaded)
+	require.Equal(t, int64(0), obs.LastSuccessUnixMs)
+	require.Equal(t, int64(-1), obs.StaleAgeMs)
+	require.True(t, snap.Stale(now), "从未成功 = 陈旧")
+
+	snap.Store(nil, nil, now)
+	obs = snap.Obs(now)
+	require.True(t, obs.Loaded)
+	require.Equal(t, now.UnixMilli(), obs.LastSuccessUnixMs)
+	require.Equal(t, int64(0), obs.StaleAgeMs)
+	require.False(t, snap.Stale(now))
+
+	obs = snap.Obs(now.Add(2 * time.Minute))
+	require.Equal(t, int64(120000), obs.StaleAgeMs)
+	require.True(t, snap.Stale(now.Add(2*time.Minute)))
+}
+
+// TestStampSupplierQuadrants A1③/A3 出生定态四象限（关闭态 / 无归属 / 有归属
+// 正收益 / 有归属零收益）。
+func TestStampSupplierQuadrants(t *testing.T) {
+	// 关闭态（未装配快照）：uid 0、earn 0、credited true。
+	off := &Proxy{}
+	l := &domain.UsageLog{AccountID: 7, Cost: 100000}
+	off.stampSupplier(l)
+	require.Equal(t, int64(0), l.SupplierUserID)
+	require.Equal(t, int64(0), l.SupplierEarnMillis)
+	require.True(t, l.SupplierCredited, "关闭态 credited=true（新行不入索引）")
+
+	// 装配快照：账号 7 归属 uid 100（bp=7000）。
+	snap := NewSupplierSnapshot(time.Minute)
+	snap.Store(map[int64]int64{7: 100}, map[int64]int{100: 7000}, time.Unix(0, 0))
+	p := &Proxy{supplier: snap}
+
+	// 有归属正收益：uid=100，earn=floor(100000*7000/10000)=70000，credited=false。
+	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
+	p.stampSupplier(l)
+	require.Equal(t, int64(100), l.SupplierUserID)
+	require.Equal(t, int64(70000), l.SupplierEarnMillis)
+	require.False(t, l.SupplierCredited)
+
+	// 有归属零收益（cost=0）：uid=100、earn 0、credited=true。
+	l = &domain.UsageLog{AccountID: 7, Cost: 0}
+	p.stampSupplier(l)
+	require.Equal(t, int64(100), l.SupplierUserID)
+	require.Equal(t, int64(0), l.SupplierEarnMillis)
+	require.True(t, l.SupplierCredited)
+
+	// 无归属（平台自有号）：uid 0、earn 0、credited true。
+	l = &domain.UsageLog{AccountID: 8, Cost: 100000}
+	p.stampSupplier(l)
+	require.Equal(t, int64(0), l.SupplierUserID)
+	require.True(t, l.SupplierCredited)
+
+	// bp=0 显式：有归属但零收益。
+	snap2 := NewSupplierSnapshot(time.Minute)
+	snap2.Store(map[int64]int64{7: 100}, map[int64]int{100: 0}, time.Unix(0, 0))
+	p2 := &Proxy{supplier: snap2}
+	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
+	p2.stampSupplier(l)
+	require.Equal(t, int64(100), l.SupplierUserID)
+	require.Equal(t, int64(0), l.SupplierEarnMillis)
+	require.True(t, l.SupplierCredited)
+}
+
+// TestCaptureFinanceNotReady 视图未就绪（未装载）⇒ Ready=false（不等同平台自有；
+// 供给准入据此排除带归属账号）。
+func TestCaptureFinanceNotReady(t *testing.T) {
+	snap := NewSupplierSnapshot(time.Minute)
+	p := &Proxy{supplier: snap}
+	fin := p.captureFinance(7)
+	require.False(t, fin.Ready, "视图未就绪 ⇒ 不捕获归属")
+}

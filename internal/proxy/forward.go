@@ -104,6 +104,10 @@ type Proxy struct {
 	wsAttempt     upstreamAttempt
 	httpSink      pipelineSink
 	wsSink        pipelineSink
+	// supplier 供应商归属/分成率快照（spec 2026-10-09 §4.3；nil = 未装配/
+	// 关闭态——热路径 stampSupplier 保持出生定态 credited=true，零 DB）。
+	// main 经 SetSupplierSnapshot 注入，独立 ticker 刷新（§6.4）。
+	supplier *SupplierSnapshot
 }
 
 // Deps New 的尾部一次性协作者（SetCodex / SetQualityRecorder /
@@ -206,6 +210,9 @@ func (p *Proxy) finish(sel *scheduler.Selection, l *domain.UsageLog) {
 		}
 	}
 	if p.cfg.UsageCapture && l != nil {
+		// 供应商收益出生定态（spec 2026-10-09 §4.2）：归属/分成/credited 三列
+		// 在计费完成后盖章（关闭态 credited=true 且零列——新行不入收益索引）。
+		p.stampSupplier(l)
 		p.routeLog(l)
 	}
 }
