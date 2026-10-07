@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"strings"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -19,12 +18,11 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
-)
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 
-// compileProbeTestSchema is this test's dedicated namespace inside the shared
-// TEST_DATABASE_URL database (per-package real-PG convention: DROP + CREATE
-// up front, serial suite so no cross-test interference).
-const compileProbeTestSchema = "compile_probe_test"
+	// Registers pgtest's repository-dependent hooks.
+	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
+)
 
 // TestCompileEvent_ProductionProbeWired pins the production wiring: the
 // backstop tick consumes the repository-owned O(1) tuple (§9-A1) against real
@@ -38,24 +36,12 @@ const compileProbeTestSchema = "compile_probe_test"
 // from production by asserting the single authorized call-site exists in
 // cmd/server/main.go.
 func TestCompileEvent_ProductionProbeWired(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + compileProbeTestSchema
-	} else {
-		dsn += "?search_path=" + compileProbeTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+compileProbeTestSchema+` CASCADE; CREATE SCHEMA `+compileProbeTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 
 	// --- seed real groups/accounts (the probe's aggregate source) ---

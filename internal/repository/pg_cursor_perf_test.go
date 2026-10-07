@@ -23,6 +23,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // pgCursorPerfRows ≥1M 行基准规模（验收线）。
@@ -36,7 +38,7 @@ const pgCursorPerfRows = 1_000_000
 func TestPGCursorPerfBounded(t *testing.T) {
 	_ = newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)

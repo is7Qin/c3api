@@ -27,7 +27,6 @@ package repository_test
 
 import (
 	"context"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +39,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // —— 断言辅助 ——
@@ -348,18 +348,14 @@ func TestPGStatsZoneSessionPoison(t *testing.T) {
 	require.True(t, baseRaw[0].BucketTime.Equal(dayStartUTC.Add(12*time.Hour+30*time.Minute)),
 		"13:00Z = IST 18:30 → Kolkata 本地 18:00 界 = UTC 12:30", baseRaw[0].BucketTime)
 
-	// NY 会话池（DSN options 注入 TimeZone）指向同一共享 schema。
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	require.NotEqual(t, "", dsn)
+	// NY 会话池（DSN options 注入 TimeZone）指向同一 clone。
+	dsn := pgtest.Clone(t)
 	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + sharedPGSchema()
+		dsn += "&options=-c%20TimeZone%3DAmerica%2FNew_York"
 	} else {
-		dsn += "?search_path=" + sharedPGSchema()
+		dsn += "?options=-c%20TimeZone%3DAmerica%2FNew_York"
 	}
-	dsn += "&options=-c%20TimeZone%3DAmerica%2FNew_York"
-	nyPool, err := repository.OpenPG(ctx, dsn, 2)
-	require.NoError(t, err)
-	t.Cleanup(nyPool.Close)
+	nyPool := pgtest.OpenPool(t, dsn)
 	conn, err := nyPool.Acquire(ctx)
 	require.NoError(t, err)
 	var tz string

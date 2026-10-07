@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -20,6 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 func mustRouteClassVal(t *testing.T, gid int64, cf domain.RequestFormat, model string, op domain.OperationTag) domain.RouteClassIDVal {
@@ -72,7 +72,7 @@ func indexColumns(t *testing.T, pool *pgxpool.Pool, indexName string) []string {
 
 func newRoutingRepos(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
 	t.Helper()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.CloneEmpty(t))
 	ctx := context.Background()
 	db := stdlib.OpenDBFromPool(pool)
 	_, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
@@ -396,7 +396,7 @@ func TestRoutingPartitionConcurrencyPG(t *testing.T) {
 	wg.Wait()
 	require.NoError(t, errs[0])
 	require.NoError(t, errs[1])
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.CloneEmpty(t))
 	var cnt int64
 	require.NoError(t, pool.QueryRow(ctx, `SELECT COUNT(*) FROM routing_quality_fact WHERE bucket_minute=$1`, now).Scan(&cnt))
 	require.Equal(t, int64(2), cnt, "two sources must not serialize cluster-wide")
@@ -564,8 +564,7 @@ func TestRoutingFlowSnapshotGateBarrierPG(t *testing.T) {
 	rows := []repository.RoutingFlowRow{{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 1, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-GF", ChainCount: 1}}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-GF", now, 1, 1, rows))
 	gateKey := int64(91002)
-	dsnGate2 := os.Getenv("TEST_DATABASE_URL")
-	require.NotEmpty(t, dsnGate2)
+	dsnGate2 := pgtest.CloneEmpty(t)
 	gatePoolCfg2, err := pgxpool.ParseConfig(dsnGate2)
 	require.NoError(t, err)
 	gatePoolCfg2.MaxConns = 1
@@ -593,8 +592,7 @@ func TestRoutingFlowSnapshotGateBarrierPG(t *testing.T) {
 			gateConn2.Release()
 		})
 	}
-	dsn2 := os.Getenv("TEST_DATABASE_URL")
-	require.NotEmpty(t, dsn2)
+	dsn2 := pgtest.CloneEmpty(t)
 	writerPoolCfg2, err := pgxpool.ParseConfig(dsn2)
 	require.NoError(t, err)
 	writerPoolCfg2.MaxConns = 1

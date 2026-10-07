@@ -18,7 +18,7 @@ package handler
 // 排除端点（top / logs / err_logs / routing / overview）的 from/to 仍必填、
 // 参数结构没有 Window 字段。
 //
-// 纪律：require only、无 t.Parallel()、时钟一律 time.Date(2026, …)。
+// 纪律：require only、无 t.Parallel、时钟一律 time.Date(2026, …)。
 
 import (
 	"encoding/json"

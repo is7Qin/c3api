@@ -8,8 +8,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +21,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/internal/usage"
 )
 
@@ -31,10 +30,8 @@ import (
 //	TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \
 //	  go test ./internal/proxy/ -run TestResponsesWSBillingPG -v
 //
-// 未设置 TEST_DATABASE_URL → t.Skip。每测试重建独立 schema（proxy_ws_test）：
-// 与 repository 包的 PG 测试（DROP public schema）隔离——两包测试并发跑不互踩。
-
-const wsPGTestSchema = "proxy_ws_test"
+// 未设置 TEST_DATABASE_URL → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
+// 隔离粒度 = database）：与 repository 包的 PG 测试——两包测试并发跑不互踩。
 
 // TestResponsesWSBillingPG resp-ws 全链路计费落库：WS 请求 → usage 嗅探 →
 // finish → applyBilling（价格快照 + 倍率）→ routeLog 单写点（spec §一）→
@@ -42,24 +39,12 @@ const wsPGTestSchema = "proxy_ws_test"
 // 5 计数：input 3 / output 5 / total 8 / cache_read 1 / cache_write 3；
 // cost = 3×1e7 + 5×2e7 每 M 毫分 = 130 毫分（缓存分量无价不参与计费）。
 func TestResponsesWSBillingPG(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + wsPGTestSchema
-	} else {
-		dsn += "?search_path=" + wsPGTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+wsPGTestSchema+` CASCADE; CREATE SCHEMA `+wsPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	// usagelog 已从 ent migrate 排除——分区表基座由 bootstrap 独占建表（与
 	// repository 包 PG 测试同款基座约定）；缺表则 rec 的 InsertBatch 落入
@@ -131,24 +116,12 @@ func TestResponsesWSBillingPG(t *testing.T) {
 // 带 service_tier=fast → usage_logs.billing_tier="fast" + cost 按 fast 倍率
 // （240 ≠ auto 120）——同请求 HTTP 按档计费、WS 恒 auto 的金额错收修复钉死。
 func TestResponsesWSBillingTierPG(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + wsPGTestSchema
-	} else {
-		dsn += "?search_path=" + wsPGTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+wsPGTestSchema+` CASCADE; CREATE SCHEMA `+wsPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 

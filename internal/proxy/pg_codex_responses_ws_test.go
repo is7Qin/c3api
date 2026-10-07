@@ -8,8 +8,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +24,7 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
@@ -41,29 +40,15 @@ import (
 // TestResponsesWSBillingPG）**逐字节一致**——usage_logs 行 5 计数 + cost 130
 // + format/error_type/model 全同。独立 schema 与 repository 包隔离。
 
-const codexWSPGTestSchema = "proxy_codex_ws_test"
-
 func strPtrPG(s string) *string { return &s }
 
 func TestCodexResponsesWSBillingPG(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + codexWSPGTestSchema
-	} else {
-		dsn += "?search_path=" + codexWSPGTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+codexWSPGTestSchema+` CASCADE; CREATE SCHEMA `+codexWSPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 	require.NoError(t, repos.EnsureErrLogPartitioned(ctx, time.Now()))

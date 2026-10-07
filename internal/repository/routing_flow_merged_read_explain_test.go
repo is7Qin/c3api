@@ -4,7 +4,6 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // A14：读支撑索引生效。跨分片读的访问路径是
@@ -61,18 +62,11 @@ func parentIndexNames(t *testing.T, ctx context.Context, pool *pgxpool.Pool, nam
 }
 
 func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	dsn := pgtest.CloneEmpty(t)
 	ctx := context.Background()
-	pool, err := OpenPG(ctx, dsn, 2)
-	require.NoError(t, err)
-	defer pool.Close()
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
-	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
 	repos, err := NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool)
 	require.NoError(t, err)
 

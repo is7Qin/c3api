@@ -26,6 +26,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // statBucketFor 构造小时桶（bucket_time 为分区键；维度列非零——唯一索引键；
@@ -73,7 +74,7 @@ func pgUsageStatsPartitionNames(t *testing.T, pool *pgxpool.Pool) []string {
 func TestUsageStatsPartitionBootstrapPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	parted, err := repos.Partitions.IsUsageStatsPartitioned(ctx)
 	require.NoError(t, err)
@@ -116,7 +117,7 @@ func TestUsageStatsPartitionBootstrapPG(t *testing.T) {
 func TestUsageStatsPartitionRoutingPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	now := time.Now().UTC()
 	dayA := now.Truncate(24 * time.Hour)
@@ -149,7 +150,7 @@ func TestUsageStatsPartitionRoutingPG(t *testing.T) {
 func TestUsageStatsPartitionRetentionPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	now := time.Now().UTC()
 	// 构造 181 天前的历史分区 + 桶（预建历史分区，幂等）

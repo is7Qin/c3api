@@ -6,7 +6,6 @@ package repository_test
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -17,6 +16,11 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
+
+	// Registers pgtest's repository-dependent hooks (template migration and
+	// per-clone day partitions).
+	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
 )
 
 // ---------------------------------------------------------------------------
@@ -24,32 +28,27 @@ import (
 // 既有 pgxmock 测试保留不动）。
 //
 // 启动方式：deploy/test-compose.yml 起 postgres:18，然后
-//   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test go test ./internal/repository/ -run PG -v
+//   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test scripts/test.sh -run PG -v
 //
 // 未设置 TEST_DATABASE_URL → t.Skip（不炸本地/CI 无库环境）。
+//
+// 隔离粒度 = database：每个测试从已迁移模板克隆一个私有库（pgtest.Clone 按
+// 测试幂等），迁移只在模板构建时跑一次。
 // ---------------------------------------------------------------------------
 
 func newPGReposFresh(tb testing.TB) *repository.Repository {
 	tb.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		tb.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	dsn := pgtest.Clone(tb)
+	pool := pgtest.OpenPool(tb, dsn)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(tb, err)
-	tb.Cleanup(pool.Close)
 	db := stdlib.OpenDBFromPool(pool)
 	tb.Cleanup(func() { _ = db.Close() })
-	// 每测试重建 schema（AutoMigrate 幂等；DROP 保证表间无残留）
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
-	require.NoError(tb, err)
-	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool) // pool 注入 Stats（Upsert COPY 两阶段真实路径）
+	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), false, pool) // pool 注入 Stats（Upsert COPY 两阶段真实路径）
 	require.NoError(tb, err)
 	// 分表设计 + 用户裁决 2026-08-11：四张分区表（usage_logs/err_logs/
 	// usage_stats/usage_entity_stats）已从 ent migrate 列表排除
-	// （migrateHookExcludesPartitioned），分区表由 bootstrap 独占建表——所有 PG
-	// 测试共用同一分区表基座（含 usage_stats 分区上的 Upsert 真实路径）。
+	// （migrateHookExcludesPartitioned），分区表由 bootstrap 独占建表——模板/
+	// 克隆已含当日分区，这里幂等重申（克隆后跨天用例依赖它补齐当日分区）。
 	require.NoError(tb, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 	require.NoError(tb, repos.EnsureErrLogPartitioned(ctx, time.Now()))
 	require.NoError(tb, repos.EnsureUsageStatsPartitioned(ctx, time.Now()))
@@ -58,23 +57,22 @@ func newPGReposFresh(tb testing.TB) *repository.Repository {
 	return repos
 }
 
-// newPGRepos 保留 fresh-schema 语义；DDL、分区、锁和性能测试依赖它。
+// newPGRepos 保留 fresh-database 语义；DDL、分区、锁和性能测试依赖它。
 func newPGRepos(tb testing.TB) *repository.Repository {
 	tb.Helper()
 	return newPGReposFresh(tb)
 }
 
-// newPGReposNoPool 同一 schema 上的无池仓库（结算语句双载体
+// newPGReposNoPool 同一 clone 上的无池仓库（结算语句双载体
 // A/B 与等价性测试用）——pool == nil → ent txDriver 载体；与 newPGRepos
-// （pool → pgx 直连载体）共享同一测试 schema（必须先于本函数调用
-// newPGRepos 完成建表）。
+// （pool → pgx 直连载体）共享同一测试 clone（pgtest.Clone 按测试幂等；
+// 建表由模板/克隆保证，无需先调 newPGRepos）。
 func newPGReposNoPool(t *testing.T) *repository.Repository {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	db := pgTestDB(t) // 独立池 → *sql.DB（ent driver 用）
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
+	db := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() { _ = db.Close() })
 	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	return repos

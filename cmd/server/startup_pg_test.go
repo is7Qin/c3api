@@ -8,8 +8,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +28,7 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/internal/snapshot"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // 启动就绪时序（快照注册表）真实 PG 集成基座（与 repository/pricing 包同款
@@ -38,12 +37,8 @@ import (
 //	TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test_snap \
 //	  go test ./cmd/server/ -run TestStartupReloadAllPG -v
 //
-// 独立测试库 c3api_test_snap（避开与其它包测试的 DB 竞争）；本测试另用独立
-// schema（snapshot_test）与同库其它 schema 隔离。未设置 TEST_DATABASE_URL →
-// t.Skip。
-
-// snapshotTestSchema 本测试专用 schema（同一数据库内隔离命名空间）。
-const snapshotTestSchema = "snapshot_test"
+// 每测试克隆一个私有数据库（pgtest.Clone，隔离粒度 = database）；未设置
+// TEST_DATABASE_URL → t.Skip。
 
 // testEmailCodes 无行为 EmailCodeStore（service.New 必选依赖的测试占位：
 // PG 装配测试不触验证码面；验证码行为由 service/handler 的 fake 真实现覆盖）。
@@ -69,24 +64,11 @@ func (testEmailCodeStore) DeleteEmailCode(ctx context.Context, email, purpose st
 
 func newSnapshotPGRepos(t *testing.T) *repository.Repository {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + snapshotTestSchema
-	} else {
-		dsn += "?search_path=" + snapshotTestSchema
-	}
-	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+snapshotTestSchema+` CASCADE; CREATE SCHEMA `+snapshotTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	return repos
 }

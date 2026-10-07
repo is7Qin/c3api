@@ -32,10 +32,11 @@ jobs:
       - name: test
         env:
           TEST_DATABASE_URL: "postgres://postgres:c3api@localhost:5432/c3api_test?sslmode=disable"
-        # -p 1 包级串行：多包二进制并行 bootstrap 同一 c3api_test 库时，
-        # ent 迁移目录检查会撞上他包的 DROP/重建 → XX000 could-not-open-relation
-        # （定价功能给 internal/service 引入首个 PG 测试后暴露）。
-        run: go test -count=1 -p 1 ./...
+        # scripts/test.sh gives every PG test its own clone of one migrated
+        # template database (CREATE DATABASE ... TEMPLATE), so package test
+        # binaries run concurrently again — the old -p 1 serialisation is gone.
+        # It also gates the no-t.Parallel() discipline.
+        run: scripts/test.sh -count=1
         timeout-minutes: 30
 
   contract-gen:

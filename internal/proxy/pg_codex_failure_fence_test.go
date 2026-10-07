@@ -27,6 +27,7 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // 真实 PG 集成：SDK 失效链必须走**围栏路径**（先按 (指纹, K) 上锁存 → 以身份代际
@@ -36,8 +37,6 @@ import (
 //
 //	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test \
 //	  go test ./internal/proxy/ -run TestCodexFatalChainUsesFencedPathPG -v
-
-const codexFailureFencePGTestSchema = "proxy_codex_failure_fence_test"
 
 // latchAcquire 一次锁存获取的可观测记录。
 type latchAcquire struct {
@@ -94,24 +93,12 @@ func (p *recordingGroupPublisher) published() [][]int64 {
 }
 
 func TestCodexFatalChainUsesFencedPathPG(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + codexFailureFencePGTestSchema
-	} else {
-		dsn += "?search_path=" + codexFailureFencePGTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+codexFailureFencePGTestSchema+` CASCADE; CREATE SCHEMA `+codexFailureFencePGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 
