@@ -82,7 +82,7 @@ helm install c3api ./deploy/helm \
 | `config.inline` | Render config.toml ConfigMap; `false` = env-only | `true` |
 | `config.content` | Free-form TOML; must keep `server.addr=":18080"` | `server = { addr = ":18080", time_zone = "" }`<br>`scheduler = { default_max_concurrency = 8 }` |
 | `app.port` | Container listen port (`C3API_SERVER_ADDR`) | `18080` |
-| `app.env` | Extra container env (e.g. `GOGC`, `GOMEMLIMIT`) | `{}` |
+| `app.env` | Extra container env (e.g. `GOGC`, `GOMEMLIMIT`) | `{GOGC:"", GOMEMLIMIT:""}` |
 | `app.resources` | Resource requests/limits | see `values.yaml` |
 | `app.podAnnotations` | Pod annotations | `{}` |
 | `app.nodeSelector` | Node selector | `{}` |
@@ -120,4 +120,4 @@ helm install c3api ./deploy/helm \
 - **Redis:** do not configure an `allkeys-lru` eviction policy; eviction only
   forces verification-code re-issue (harmless).
 - **First user:** the first registered user becomes `platform_admin`. Sync
-  pricing (`POST /admin/pricing/sync`) after the first boot.
+  pricing (`POST /api/admin/pricing/sync`) after the first boot.

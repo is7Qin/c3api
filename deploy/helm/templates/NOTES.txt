@@ -18,8 +18,9 @@ Port:    {{ $svcPort }} (container listens on :{{ .Values.app.port }})
    {{- end }}
 
 2. First login: the FIRST registered user automatically becomes platform_admin.
-   Register, then sign in at /user to administer the gateway. Sync pricing after
-   the first boot (POST /admin/pricing/sync) — an empty price table returns 402.
+   Register, then sign in at /user/login and administer the gateway at /app.
+   Sync pricing after the first boot (POST /api/admin/pricing/sync) — an empty
+   price table returns 402.
 
 3. External dependencies: this chart does NOT deploy PostgreSQL or Redis. Point
    it at your own instances via externalDatabase / externalRedis (dsn/addr or an
