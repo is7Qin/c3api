@@ -15,7 +15,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -29,26 +28,21 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // pgTestPool 额外开一个直连池（分区级断言 SQL 用；newPGRepos 的池随测试
-// 关闭，且不暴露 *sql.DB）。
-func pgTestPool(t *testing.T) *pgxpool.Pool {
+// 关闭，且不暴露 *sql.DB）。dsn 由调用方显式给出：默认传 pgtest.Clone(t)
+// （与 newPGRepos 同一个 clone），空库用例传 pgtest.CloneEmpty(t)。
+func pgTestPool(t *testing.T, dsn string) *pgxpool.Pool {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	pool, err := repository.OpenPG(context.Background(), dsn, 2)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
-	return pool
+	return pgtest.OpenPool(t, dsn)
 }
 
 // pgTestDB 直连 *sql.DB（ent 无钩子 migrate / 二次启动模拟用）。
-func pgTestDB(t *testing.T) *sql.DB {
+func pgTestDB(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
-	db := stdlib.OpenDBFromPool(pgTestPool(t))
+	db := stdlib.OpenDBFromPool(pgTestPool(t, dsn))
 	t.Cleanup(func() { _ = db.Close() })
 	return db
 }
@@ -99,7 +93,7 @@ func usageLogFor(reqID string, at time.Time) *domain.UsageLog {
 func TestUsageLogPartitionBootstrapPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	parted, err := repos.Partitions.IsUsageLogPartitioned(ctx)
 	require.NoError(t, err)
@@ -150,7 +144,7 @@ func TestUsageLogPartitionBootstrapPG(t *testing.T) {
 func TestUsageLogPartitionRoutingPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -217,7 +211,7 @@ func TestUsageLogPartitionRoutingPG(t *testing.T) {
 func TestUsageLogPartitionRetentionPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	// 补建两个历史分区（模拟运行多日后的存量分区；分区名 = 日期 YYYYMMDD）
 	for _, d := range []string{"20260728", "20260729"} {
@@ -265,7 +259,7 @@ func TestEntMigrateSecondRunPG(t *testing.T) {
 	_ = repos
 	ctx := context.Background()
 
-	db := pgTestDB(t)
+	db := pgTestDB(t, pgtest.Clone(t))
 	// 二次启动：同一 schema 上再跑 migrate（钩子）+ bootstrap 幂等
 	repos2, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
 	require.NoError(t, err, "二次启动 ent migrate 必须容忍分区表（钩子过滤 usagelog）")
@@ -291,7 +285,7 @@ func TestEntMigrateSecondRunPG(t *testing.T) {
 // 叠加重压撞名路径）。
 func TestUsageLogPartitionConcurrentBootstrapPG(t *testing.T) {
 	ctx := context.Background()
-	db := pgTestDB(t)
+	db := pgTestDB(t, pgtest.CloneEmpty(t))
 	_, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
 	require.NoError(t, err)
 	// 与生产启动顺序一致：migrate（钩子）建其余表，bootstrap 由并发调用承担

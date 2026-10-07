@@ -6,7 +6,6 @@ package service
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
@@ -17,21 +16,21 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
+
+	// Registers pgtest's repository-dependent hooks.
+	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
 )
 
 func newPGServiceRepos(t *testing.T) (*repository.Repository, *Service) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(func() { pool.Close() })
 	db := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() { _ = db.Close() })
 	drv := entsql.OpenDB("postgres", db)
-	repo, err := repository.NewWithPG(ctx, drv, true, pool)
+	repo, err := repository.NewWithPG(ctx, drv, false, pool)
 	require.NoError(t, err)
 	require.NoError(t, repo.EnsurePriceVariantsEffectCheck(ctx))
 	_, err = pool.Exec(ctx, "DELETE FROM price_variants")

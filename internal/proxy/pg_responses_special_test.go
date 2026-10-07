@@ -8,8 +8,6 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +22,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
@@ -33,11 +32,9 @@ import (
 //	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test \
 //	  go test ./internal/proxy/ -run TestPGResponsesSpecialCredential -v
 //
-// 未设置 TEST_DATABASE_URL → t.Skip。独立 schema（proxy_rsp_special_test）：
-// 与同包 pg_responses_ws_test 的 proxy_ws_test、repository 包的 public schema
-// 测试并行跑均不互踩。
-
-const rspSpecialPGTestSchema = "proxy_rsp_special_test"
+// 未设置 TEST_DATABASE_URL → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
+// 隔离粒度 = database）：与同包 pg_responses_ws_test、repository 包的 PG 测试
+// 并行跑均不互踩。
 
 // TestPGResponsesSpecialCredential responses-special 模板（主列
 // credential_type）+ 账号 upstream_key → 真实 PG 快照 → Selection →
@@ -47,24 +44,12 @@ const rspSpecialPGTestSchema = "proxy_rsp_special_test"
 // 言确定性红）。HTTP 补充：完整 resp-ws 会话正常闭环（上游校验 Authorization:
 // Bearer <账号 key>）。
 func TestPGResponsesSpecialCredential(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + rspSpecialPGTestSchema
-	} else {
-		dsn += "?search_path=" + rspSpecialPGTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+rspSpecialPGTestSchema+` CASCADE; CREATE SCHEMA `+rspSpecialPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 
 	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 1})

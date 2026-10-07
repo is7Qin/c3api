@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -27,6 +25,7 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
@@ -42,27 +41,13 @@ import (
 // usage 顶层五计数计费落库（cost 500 毫分）+ cred 传递（Bearer pat-pg-1 直供
 // 适配层）。
 
-const codexHTTPPGTestSchema = "c3api_test_t6"
-
 func TestCodexResponsesHTTPBillingPG(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + codexHTTPPGTestSchema
-	} else {
-		dsn += "?search_path=" + codexHTTPPGTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+codexHTTPPGTestSchema+` CASCADE; CREATE SCHEMA `+codexHTTPPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	require.NoError(t, repos.EnsureUsageLogPartitioned(ctx, time.Now()))
 	require.NoError(t, repos.EnsureErrLogPartitioned(ctx, time.Now()))

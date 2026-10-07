@@ -15,7 +15,7 @@ package handler
 //     internal/domain/statsplan_test.go——本包内刻意不写死那三个数字，
 //     由 A16'② 的零命中审计钉死）。
 //
-// 纪律：require only、无 t.Parallel()、无墙钟依赖（判定全用固定字面量窗口）。
+// 纪律：require only、无 t.Parallel、无墙钟依赖（判定全用固定字面量窗口）。
 
 import (
 	"encoding/json"

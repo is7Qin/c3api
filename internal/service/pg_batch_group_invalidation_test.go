@@ -3,8 +3,6 @@ package service
 
 import (
 	"context"
-	"os"
-	"strings"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -14,33 +12,18 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
-// batchGroupPGTestSchema 本文件 PG 测试专用 schema（与其它 PG 测试隔离）。
-const batchGroupPGTestSchema = "batch_group_invalidation_test"
-
-// newBatchGroupPG 独立 schema 上的服务：注入记录失效与发布的假件，调用方可
+// newBatchGroupPG 测试私有 clone 上的服务：注入记录失效与发布的假件，调用方可
 // 断言事务提交后的失效动作面。未设置 TEST_DATABASE_URL 则跳过。
 func newBatchGroupPG(t *testing.T) (*Service, *repository.Repository, *invRecorder, *pubRecorder) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + batchGroupPGTestSchema
-	} else {
-		dsn += "?search_path=" + batchGroupPGTestSchema
-	}
-	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+batchGroupPGTestSchema+` CASCADE; CREATE SCHEMA `+batchGroupPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), true, pool)
+	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), false, pool)
 	require.NoError(t, err)
 	rec, pr := &invRecorder{}, &pubRecorder{}
 	svc := New(Deps{Store: repos, Scheduler: nil, Invalidate: rec, Publisher: pr, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})

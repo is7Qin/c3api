@@ -23,6 +23,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // pgErrPartitionNames 当前 err_logs 分区名列表（pgPartitionNames 是 usage_logs
@@ -51,7 +52,7 @@ func pgErrPartitionNames(t *testing.T, pool *pgxpool.Pool) []string {
 func TestErrLogPartitionBootstrapPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	parted, err := repos.Partitions.IsErrLogPartitioned(ctx)
 	require.NoError(t, err)
@@ -85,7 +86,7 @@ func TestErrLogPartitionBootstrapPG(t *testing.T) {
 func TestErrLogPartitionRoutingPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	now := time.Now().UTC()
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
@@ -123,7 +124,7 @@ func TestErrLogPartitionRoutingPG(t *testing.T) {
 func TestErrLogPartitionRetentionPG(t *testing.T) {
 	repos := newPGRepos(t)
 	ctx := context.Background()
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	now := time.Now().UTC()
 	// 构造 8 天前的分区数据（两表同日期——边界差异检验）

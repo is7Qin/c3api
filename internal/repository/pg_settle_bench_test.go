@@ -32,6 +32,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // settleBenchRounds 每场景测量轮数（≥5 轮 + 首轮预热，取中位数）。
@@ -52,18 +53,13 @@ func TestSettleBenchComposition(t *testing.T) {
 	if os.Getenv("HOTFIX_BENCH") == "" {
 		t.Skip("HOTFIX_BENCH not set; skipping benchmark (use: HOTFIX_BENCH=1 ... -run TestSettleBenchComposition)")
 	}
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	require.NotEmpty(t, dsn, "TEST_DATABASE_URL must be set (dedicated benchmark PG)")
 	repos := newPGRepos(t)
 	ctx := context.Background()
 
-	// pg_stat_statements 窗口清零（重置在本测试全部 schema 建立之后——统计面
-	// 只含结算语句）。扩展装在 public schema，newPGRepos 的 DROP SCHEMA public
-	// CASCADE 会连带删掉扩展对象——此处幂等重建。
-	statPool, err := repository.OpenPG(ctx, dsn, 2)
-	require.NoError(t, err)
-	defer statPool.Close()
-	_, err = statPool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`)
+	// pg_stat_statements 窗口清零（统计面只含结算语句）。扩展装在本 clone 的
+	// public schema——模板/克隆迁移不建它，此处幂等重建。
+	statPool := pgtest.OpenPool(t, pgtest.Clone(t))
+	_, err := statPool.Exec(ctx, `CREATE EXTENSION IF NOT EXISTS pg_stat_statements`)
 	require.NoError(t, err)
 	_, err = statPool.Exec(ctx, `SELECT pg_stat_statements_reset()`)
 	require.NoError(t, err)

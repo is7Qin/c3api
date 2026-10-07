@@ -1,11 +1,16 @@
-# repository 测试用独立 PostgreSQL + Redis（真实 PG 测试基座，测试代码在
-# internal/repository/pg_account_groups_test.go，TEST_DATABASE_URL 驱动；网关
+# repository/integration 测试用独立 PostgreSQL + Redis（真实 PG 测试基座，
+# 测试代码基座在 internal/testsupport/pgtest，TEST_DATABASE_URL 驱动；网关
 # 双必需依赖中的 Redis 由本栈一并供给——e2e 网关启动即需 Redis）。
+#
+# 角色需 CREATEDB（默认 postgres 为超管，已满足）：scripts/test.sh 先把 ent
+# 迁移 + 分区/种子灌进一个模板库（c3api_test_template_<hash>），每个 PG 测试
+# 再从模板 CREATE DATABASE ... TEMPLATE 克隆一个私有库，跑完即 DROP。因此
+# 包级可并行（不再 -p 1），连接预算 = 并发包数 × 单测池数 × 4（+ 1 维护连接）。
 #
 # 用法：
 #   docker compose -f deploy/test-compose.yml up -d
 #   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \
-#     go test ./internal/repository/ -run PG -v
+#     scripts/test.sh -count=1
 #   C3API_REDIS_ADDR=127.0.0.1:16379 \
 #     go test -tags e2e -run TestRoutingSmoke ./tools/e2e -v -timeout 600s
 #   docker compose -f deploy/test-compose.yml down
