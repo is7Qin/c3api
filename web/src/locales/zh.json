@@ -1078,6 +1078,7 @@
       "type": "类型",
       "value": "面值",
       "remark": "备注",
+      "createdBy": "生成者",
       "maxUses": "已用/上限",
       "status": "状态",
       "expiresAt": "过期时间",

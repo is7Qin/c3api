@@ -1078,6 +1078,7 @@
       "type": "Type",
       "value": "Value",
       "remark": "Remark",
+      "createdBy": "Created by",
       "maxUses": "Used/limit",
       "status": "Status",
       "expiresAt": "Expires at",
