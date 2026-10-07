@@ -99,7 +99,7 @@ type SupplierSnapshot struct {
 	view               atomic.Pointer[SupplierView]
 	loaded             atomic.Bool
 	lastSuccessUnixMs  atomic.Int64 // 0 = 从未成功
-	revisionCounter    atomic.Int64
+	genSeq             atomic.Int64
 	staleWarnThreshold time.Duration
 }
 
@@ -113,7 +113,7 @@ func NewSupplierSnapshot(staleWarnThreshold time.Duration) *SupplierSnapshot {
 
 // Store 装载并换代（**全部成功才调用一次**；失败保留旧视图 fail-safe）。
 func (s *SupplierSnapshot) Store(owner map[int64]int64, share map[int64]int, now time.Time) {
-	rev := s.revisionCounter.Add(1)
+	rev := s.genSeq.Add(1)
 	s.view.Store(NewSupplierView(owner, share, rev))
 	s.loaded.Store(true)
 	s.lastSuccessUnixMs.Store(now.UnixMilli())

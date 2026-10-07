@@ -245,7 +245,7 @@ func TestAccountFreshSchemaColumns(t *testing.T) {
 		"id", "name", "template_id", "base_url", "upstream_key",
 		"max_concurrency", "last_error", "last_used_at", "failed_at",
 		"failure_source", "enabled", "lifecycle_revision", "identity_revision",
-		"upstream_cost_multiplier_bp", "cache_domain",
+		"upstream_cost_multiplier_bp", "cache_domain", "supplier_user_id",
 		"updated_at", "deleted_at", "created_at",
 	}, got, "账号列集必须与 fresh 契约允许全集一致")
 }
