@@ -204,15 +204,43 @@ func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySett
 		return nil, err
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck
+	s, err := applySettlementTx(ctx, tx, req)
+	if err != nil {
+		var kc errSettlementKeyConflict
+		if errors.As(err, &kc) {
+			// 并发同 key 唯一冲突 ⇒ 回滚整事务，再按 key 读回原单（§6.2 I3）。
+			_ = tx.Rollback(ctx)
+			orig, ferr := r.getSettlementByKey(ctx, req.OperatorUID, req.RequestKey)
+			if ferr != nil {
+				return nil, ferr
+			}
+			if orig == nil {
+				return nil, err
+			}
+			if merr := matchSettlement(orig, req); merr != nil {
+				return nil, merr
+			}
+			return orig, nil
+		}
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return s, nil
+}
 
+// applySettlementTx 申请结算单事务体（supplier_request / admin_request 共用；
+// §6.2 ⓪→③）。调用方负责取得单连接、BEGIN/COMMIT/ROLLBACK。
+func applySettlementTx(ctx context.Context, tx pgx.Tx, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
 	// ⓪ 幂等预查（扣款之前）。
-	if s, err := r.readSettlementByKey(ctx, tx, req.OperatorUID, req.RequestKey); err != nil {
+	if s, err := readSettlementByKeyTx(ctx, tx, req.OperatorUID, req.RequestKey); err != nil {
 		return nil, err
 	} else if s != nil {
 		if err := matchSettlement(s, req); err != nil {
 			return nil, err
 		}
-		return s, tx.Commit(ctx)
+		return s, nil
 	}
 
 	// ① 条件扣（行锁获取点与串行化点）。
@@ -223,7 +251,7 @@ WHERE supplier_user_id = $1 AND available >= $2`, req.SupplierUID, req.AmountMil
 	}
 	if tag.RowsAffected() == 0 {
 		// ①′ 用新 RC 语句重查 key（提交成功但响应丢失后的重试会走到这里）。
-		s, err := r.readSettlementByKey(ctx, tx, req.OperatorUID, req.RequestKey)
+		s, err := readSettlementByKeyTx(ctx, tx, req.OperatorUID, req.RequestKey)
 		if err != nil {
 			return nil, err
 		}
@@ -231,7 +259,7 @@ WHERE supplier_user_id = $1 AND available >= $2`, req.SupplierUID, req.AmountMil
 			if err := matchSettlement(s, req); err != nil {
 				return nil, err
 			}
-			return s, tx.Commit(ctx)
+			return s, nil
 		}
 		// 余额不足 或 无余额行 ⇒ 400（金额校验）。
 		return nil, ErrInvalidInput
@@ -255,30 +283,23 @@ RETURNING `+supplierSettlementColumns,
 	s, err := scanSupplierSettlement(row)
 	if err != nil {
 		if isUniqueViolation(err) {
-			// 并发同 key 唯一冲突 ⇒ 回滚整事务，再按 key 读回原单。
-			_ = tx.Rollback(ctx)
-			orig, ferr := r.getSettlementByKey(ctx, req.OperatorUID, req.RequestKey)
-			if ferr != nil {
-				return nil, ferr
-			}
-			if orig == nil {
-				return nil, err
-			}
-			if merr := matchSettlement(orig, req); merr != nil {
-				return nil, merr
-			}
-			return orig, nil
+			// 并发同 key 唯一冲突 ⇒ 调用方回滚整事务，这里直接返回冲突错误；
+			// 由 ApplySettlement 的事务包装回滚后按 key 读回原单。
+			return nil, errSettlementKeyConflict{err: err}
 		}
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return s, nil
 }
 
-// readSettlementByKey 事务内按 (operator, key) 读结算单（命中 ⇒ 返回，缺 ⇒ nil）。
-func (r *SupplierRepo) readSettlementByKey(ctx context.Context, tx pgx.Tx, operator int64, key string) (*domain.SupplierSettlement, error) {
+// errSettlementKeyConflict 并发同 key 唯一冲突：调用方需回滚整事务再按 key 读回。
+type errSettlementKeyConflict struct{ err error }
+
+func (e errSettlementKeyConflict) Error() string { return e.err.Error() }
+func (e errSettlementKeyConflict) Unwrap() error { return e.err }
+
+// readSettlementByKeyTx 事务内按 (operator, key) 读结算单（命中 ⇒ 返回，缺 ⇒ nil）。
+func readSettlementByKeyTx(ctx context.Context, tx pgx.Tx, operator int64, key string) (*domain.SupplierSettlement, error) {
 	row := tx.QueryRow(ctx, `SELECT `+supplierSettlementColumns+` FROM supplier_settlements WHERE requested_operator = $1 AND request_key = $2`, operator, key)
 	s, err := scanSupplierSettlement(row)
 	if errors.Is(err, pgx.ErrNoRows) {

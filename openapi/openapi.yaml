@@ -18,6 +18,7 @@ tags:
   - name: pricing
   - name: ops
   - name: routing
+  - name: admin-supplier
 paths:
   /templates:
     post:
@@ -1967,6 +1968,175 @@ paths:
               schema: { $ref: '#/components/schemas/SupplierSettlement' }
         default:
           $ref: '#/components/responses/Error'
+  # ---- 管理面结算审批（spec 2026-10-09 §6.3；tag admin-supplier）----
+  # 资金命令（approve/reject/claim/paid/confirm-failed/admin-request）一律要求具名
+  # JWT 操作者（I5）：静态 admin token ⇒ 403；写事务内复核 status/role/token_version。
+  /supplier/settlements:
+    get:
+      operationId: GetAdminSupplierSettlements
+      tags: [admin-supplier]
+      summary: 结算单列表（按 status / kind 过滤；pending 是工作台）
+      parameters:
+        - { name: status, in: query, schema: { type: string, enum: [pending, approved, paying, paid, rejected] } }
+        - { name: kind, in: query, schema: { type: string, enum: [supplier_request, admin_request] } }
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: 结算单列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierSettlementList' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/settlements/{id}/approve:
+    post:
+      operationId: PostAdminSupplierSettlementsIdApprove
+      tags: [admin-supplier]
+      summary: pending → approved（CAS）
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer, format: int64 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettlementTransitionBody' }
+      responses:
+        '200':
+          description: 更新后的结算单
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierSettlement' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/settlements/{id}/reject:
+    post:
+      operationId: PostAdminSupplierSettlementsIdReject
+      tags: [admin-supplier]
+      summary: pending|approved → rejected（退还 available；paying 不可 reject）
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer, format: int64 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettlementRejectBody' }
+      responses:
+        '200':
+          description: 更新后的结算单
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierSettlement' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/settlements/{id}/claim:
+    post:
+      operationId: PostAdminSupplierSettlementsIdClaim
+      tags: [admin-supplier]
+      summary: approved → paying（认领 CAS；付款风控门 + 固定收款快照 + payment_key）
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer, format: int64 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettlementClaimBody' }
+      responses:
+        '200':
+          description: 更新后的结算单
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierSettlement' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/settlements/{id}/confirm-failed:
+    post:
+      operationId: PostAdminSupplierSettlementsIdConfirmFailed
+      tags: [admin-supplier]
+      summary: paying → approved（仅接受「确定未支付」的核验结果；留证）
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer, format: int64 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettlementConfirmFailedBody' }
+      responses:
+        '200':
+          description: 更新后的结算单
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierSettlement' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/settlements/{id}/paid:
+    post:
+      operationId: PostAdminSupplierSettlementsIdPaid
+      tags: [admin-supplier]
+      summary: 仅 paying → paid（lifetime_paid 累加；不重做风控门）
+      parameters: [{ name: id, in: path, required: true, schema: { type: integer, format: int64 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SettlementPaidBody' }
+      responses:
+        '200':
+          description: 更新后的结算单
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierSettlement' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/settlements/admin-request:
+    post:
+      operationId: PostAdminSupplierSettlementsAdminRequest
+      tags: [admin-supplier]
+      summary: 代申请（kind=admin_request；复用同一通道，目标须已有余额行）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AdminRequestSettlementBody' }
+      responses:
+        '200':
+          description: 创建的结算单
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierSettlement' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/balances:
+    get:
+      operationId: GetAdminSupplierBalances
+      tags: [admin-supplier]
+      summary: 余额列表（含最晚 available_at / bucket_rows）
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: 余额列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBalanceList' }
+        default:
+          $ref: '#/components/responses/Error'
+  /supplier/balances/{uid}:
+    patch:
+      operationId: PatchAdminSupplierBalancesUid
+      tags: [admin-supplier]
+      summary: 仅 share_bp / freeze_hours（不接受金额）
+      parameters: [{ name: uid, in: path, required: true, schema: { type: integer, format: int64 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SupplierBalancePatchBody' }
+      responses:
+        '200':
+          description: 更新后的余额行
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupplierBalance' }
+        default:
+          $ref: '#/components/responses/Error'
 components:
   parameters:
     StatsWindow:
@@ -2101,6 +2271,83 @@ components:
         amount_millis: { type: integer, format: int64, description: 申请金额（> 0；受 available 条件扣约束） }
         request_key: { type: string, description: 业务幂等键（客户端生成、重试复用；作用域 = 操作者 × key） }
         note: { type: string }
+    # ---- 管理面结算审批请求/响应（spec 2026-10-09 §6.3/§6.5）----
+    SettlementTransitionBody:
+      type: object
+      required: [expected_revision]
+      description: 状态迁移 CAS 令牌（陈旧 ⇒ 409；缺席 ⇒ 400）
+      properties:
+        expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
+    SettlementRejectBody:
+      type: object
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
+        reason: { type: string, nullable: true }
+    SettlementClaimBody:
+      type: object
+      required: [expected_revision, payee_snapshot, risk_evidence]
+      description: 认领付款；收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at）
+      properties:
+        expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
+        payee_snapshot: { type: string, description: 收款目标快照（副作用前固定） }
+        risk_evidence: { type: string, description: 风险核对证据（非空；平台信用风险放行记录） }
+    SettlementConfirmFailedBody:
+      type: object
+      required: [expected_revision, reason]
+      properties:
+        expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
+        reason: { type: string, description: 确定未支付的原因（网络失败不算） }
+    SettlementPaidBody:
+      type: object
+      required: [expected_revision]
+      properties:
+        expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
+        external_ref: { type: string, nullable: true, description: 银行/渠道回单号 }
+    AdminRequestSettlementBody:
+      type: object
+      required: [supplier_user_id, amount_millis, request_key]
+      properties:
+        supplier_user_id: { type: integer, format: int64, description: 目标供应商（须已有余额行，否则 404） }
+        amount_millis: { type: integer, format: int64, description: 金额（> 0） }
+        request_key: { type: string, description: 业务幂等键 }
+        note: { type: string }
+    SupplierBalance:
+      type: object
+      required: [supplier_user_id, available, lifetime_credited, lifetime_paid, bucket_rows]
+      properties:
+        supplier_user_id: { type: integer, format: int64 }
+        available: { type: integer, format: int64 }
+        lifetime_credited: { type: integer, format: int64 }
+        lifetime_paid: { type: integer, format: int64 }
+        share_bp: { type: integer, nullable: true }
+        freeze_hours: { type: integer, nullable: true }
+        latest_available_at: { type: string, format: date-time, nullable: true }
+        bucket_rows: { type: integer, format: int64 }
+    SupplierBalanceList:
+      type: object
+      required: [items, total]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/SupplierBalance' } }
+        total: { type: integer, format: int64 }
+    SupplierBalancePatchBody:
+      type: object
+      description: PATCH 逐供应商配置（仅 share_bp/freeze_hours；缺席 = 不变；null = 清空回继承）
+      properties:
+        share_bp:
+          x-omitempty: true
+          type: integer
+          nullable: true
+          x-go-type: nullable.Nullable[int]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        freeze_hours:
+          x-omitempty: true
+          type: integer
+          nullable: true
+          x-go-type: nullable.Nullable[int]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
     ErrorResponse:
       type: object
       required: [error]

@@ -76,6 +76,8 @@ type fakeStore struct {
 	accExtErr map[int64]error
 	// balanceLogs 余额变动记录行（/api/admin/users/{id}/balance-logs 分页断言用）。
 	balanceLogs []*domain.BalanceLog
+	// supplierAdmin 管理面结算审批替身（spec 2026-10-09 §6.3/§6.5）；nil = 未启用。
+	supplierAdmin *fakeSupplierAdminStore
 }
 
 func newFakeStore() *fakeStore {
@@ -2628,4 +2630,135 @@ func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlemen
 		ID: 1, SupplierUserID: req.SupplierUID, Kind: req.Kind, AmountMillis: req.AmountMillis,
 		Status: domain.SettlementPending, Revision: 1, RequestKey: req.RequestKey, RequestedOperator: req.OperatorUID,
 	}, nil
+}
+
+// --- SupplierAdminStore 替身（spec 2026-10-09 §6.3/§6.5）：仅满足接口，行为由
+// fakeSupplierAdminStore 注入（nil = 返回空/未找到）。---
+
+func (f *fakeStore) ListSupplierSettlementsAdmin(_ context.Context, _ domain.SupplierSettlementFilter, _, _ int) ([]*domain.SupplierSettlement, int64, error) {
+	if f.supplierAdmin == nil {
+		return nil, 0, nil
+	}
+	return f.supplierAdmin.ListSupplierSettlementsAdmin()
+}
+
+func (f *fakeStore) ListSupplierBalances(_ context.Context, _, _ int) ([]domain.SupplierBalance, int64, error) {
+	if f.supplierAdmin == nil {
+		return nil, 0, nil
+	}
+	return f.supplierAdmin.ListSupplierBalances()
+}
+
+func (f *fakeStore) PatchSupplierBalance(_ context.Context, uid int64, p domain.SupplierBalancePatch) (*domain.SupplierBalance, error) {
+	if f.supplierAdmin == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.supplierAdmin.PatchSupplierBalance(uid, p)
+}
+
+func (f *fakeStore) ApproveSettlement(_ context.Context, id, rev int64, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if f.supplierAdmin == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.supplierAdmin.Mutate(id, rev, domain.SettlementApproved, actor)
+}
+
+func (f *fakeStore) RejectSettlement(_ context.Context, id, rev int64, _ *string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if f.supplierAdmin == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.supplierAdmin.Mutate(id, rev, domain.SettlementRejected, domain.FundsActor{})
+}
+
+func (f *fakeStore) ClaimSettlement(_ context.Context, id, rev int64, _, _ string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if f.supplierAdmin == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.supplierAdmin.Mutate(id, rev, domain.SettlementPaying, domain.FundsActor{})
+}
+
+func (f *fakeStore) ConfirmFailedSettlement(_ context.Context, id, rev int64, _ string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if f.supplierAdmin == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.supplierAdmin.Mutate(id, rev, domain.SettlementApproved, domain.FundsActor{})
+}
+
+func (f *fakeStore) PaidSettlement(_ context.Context, id, rev int64, _ *string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if f.supplierAdmin == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.supplierAdmin.Mutate(id, rev, domain.SettlementPaid, domain.FundsActor{})
+}
+
+func (f *fakeStore) AdminApplySettlement(_ context.Context, req domain.ApplySettlementRequest, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if f.supplierAdmin == nil {
+		return nil, repository.ErrNotFound
+	}
+	return f.supplierAdmin.AdminApply(req)
+}
+
+// fakeSupplierAdminStore 管理面结算替身状态（nil = 未启用）。
+type fakeSupplierAdminStore struct {
+	settlements []*domain.SupplierSettlement
+	balances    map[int64]*domain.SupplierBalance
+}
+
+func (s *fakeSupplierAdminStore) ListSupplierSettlementsAdmin() ([]*domain.SupplierSettlement, int64, error) {
+	return s.settlements, int64(len(s.settlements)), nil
+}
+
+func (s *fakeSupplierAdminStore) ListSupplierBalances() ([]domain.SupplierBalance, int64, error) {
+	out := make([]domain.SupplierBalance, 0, len(s.balances))
+	for _, b := range s.balances {
+		out = append(out, *b)
+	}
+	return out, int64(len(out)), nil
+}
+
+func (s *fakeSupplierAdminStore) PatchSupplierBalance(uid int64, p domain.SupplierBalancePatch) (*domain.SupplierBalance, error) {
+	b, ok := s.balances[uid]
+	if !ok {
+		return nil, repository.ErrNotFound
+	}
+	if p.ShareBp != nil {
+		v := *p.ShareBp
+		b.ShareBp = &v
+	} else if p.ClearShareBp {
+		b.ShareBp = nil
+	}
+	if p.FreezeHours != nil {
+		v := *p.FreezeHours
+		b.FreezeHours = &v
+	} else if p.ClearFreezeHours {
+		b.FreezeHours = nil
+	}
+	cp := *b
+	return &cp, nil
+}
+
+func (s *fakeSupplierAdminStore) Mutate(id, rev int64, status domain.SupplierSettlementStatus, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	for _, x := range s.settlements {
+		if x.ID != id {
+			continue
+		}
+		if x.Revision != rev {
+			return nil, repository.ErrStaleRevision
+		}
+		x.Status = status
+		x.Revision++
+		return x, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (s *fakeSupplierAdminStore) AdminApply(req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+	if _, ok := s.balances[req.SupplierUID]; !ok {
+		return nil, repository.ErrNotFound
+	}
+	x := &domain.SupplierSettlement{ID: int64(len(s.settlements) + 1), SupplierUserID: req.SupplierUID,
+		Kind: req.Kind, AmountMillis: req.AmountMillis, Status: domain.SettlementPending, Revision: 1,
+		RequestKey: req.RequestKey, RequestedOperator: req.OperatorUID, Note: req.Note}
+	s.settlements = append(s.settlements, x)
+	return x, nil
 }

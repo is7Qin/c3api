@@ -23,7 +23,10 @@ var (
 	// ErrPreconditionFailed 乐观锁前置条件不满足（PATCH 的 If-Match 陈旧 → 412）。
 	// 与 ErrConflict（body-CAS 陈旧 → 409，仅 recover 的 expected_revision）刻意
 	// 分码：header 前置条件与 body-CAS 是两类不同的陈旧判据。
-	ErrPreconditionFailed    = errors.New("service: precondition failed")
+	ErrPreconditionFailed = errors.New("service: precondition failed")
+	// ErrForbidden 授权复核失败（spec 2026-10-09 §6.5 I5：静态 admin token / 写事务内
+	// 操作者 status/role/token_version 复核不通过 ⇒ 403）。
+	ErrForbidden             = errors.New("service: forbidden")
 	ErrInvalidCredentials    = errors.New("service: invalid email or password")
 	ErrSignupDisabled        = errors.New("service: signup disabled")
 	ErrTooManyRequests       = errors.New("service: too many requests")

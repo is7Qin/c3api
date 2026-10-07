@@ -42,6 +42,12 @@ type SupplierRepoConfig struct {
 	FreezeHoursDefault int
 	// ShareBpDefault 全局默认分成率（supplier_balances 无行 / share_bp IS NULL 时继承）。
 	ShareBpDefault int
+	// 付款风控门（§6.5）：claim 事务内判定，缺一项即失败闭合。
+	BillingEnabled       bool
+	PayoutMaxBacklogRows int
+	PayoutMaxBacklogAge  time.Duration
+	PayoutMaxObserveAge  time.Duration
+	RiskReviewMaxAge     time.Duration
 }
 
 // SupplierRepo 供应商记账链 / 解冻链持久面（实现 supplier.CreditStore；另暴露

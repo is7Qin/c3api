@@ -33,6 +33,7 @@ var (
 	ErrInvalidInput          = serviceerr.ErrInvalidInput
 	ErrConflict              = serviceerr.ErrConflict
 	ErrPreconditionFailed    = serviceerr.ErrPreconditionFailed
+	ErrForbidden             = serviceerr.ErrForbidden
 	ErrTooManyRequests       = serviceerr.ErrTooManyRequests
 	ErrMailNotConfigured     = serviceerr.ErrMailNotConfigured
 	ErrMailQueueFull         = serviceerr.ErrMailQueueFull
@@ -60,6 +61,7 @@ type Store interface {
 	AccountExtStore
 	EmailTemplateStore
 	SupplierStore
+	SupplierAdminStore
 	// EmailCodeStore 不在复合面：验证码已迁 Redis（spec 2026-08-25-emailcode-
 	// redis-migration §2.2/§2.3），经 New 的 Deps.EmailCodeStore 独立注入，
 	// repository 实现已随 PG 验证码表卸载。
@@ -225,6 +227,20 @@ type SupplierStore interface {
 	SupplierEarnings(ctx context.Context, uid int64, limit, offset int) ([]domain.SupplierEarning, int64, error)
 	ListSupplierSettlements(ctx context.Context, uid int64, limit, offset int) ([]*domain.SupplierSettlement, int64, error)
 	ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error)
+}
+
+// SupplierAdminStore 管理面结算审批持久化（spec 2026-10-09 §6.3/§6.5）。
+// 资金命令以 domain.FundsActor 传具名操作者；写事务内的 I5 复核在 repository 完成。
+type SupplierAdminStore interface {
+	ListSupplierSettlementsAdmin(ctx context.Context, filter domain.SupplierSettlementFilter, limit, offset int) ([]*domain.SupplierSettlement, int64, error)
+	ListSupplierBalances(ctx context.Context, limit, offset int) ([]domain.SupplierBalance, int64, error)
+	PatchSupplierBalance(ctx context.Context, uid int64, p domain.SupplierBalancePatch) (*domain.SupplierBalance, error)
+	ApproveSettlement(ctx context.Context, id, expectedRevision int64, actor domain.FundsActor) (*domain.SupplierSettlement, error)
+	RejectSettlement(ctx context.Context, id, expectedRevision int64, reason *string, actor domain.FundsActor) (*domain.SupplierSettlement, error)
+	ClaimSettlement(ctx context.Context, id, expectedRevision int64, payeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error)
+	ConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, reason string, actor domain.FundsActor) (*domain.SupplierSettlement, error)
+	PaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef *string, actor domain.FundsActor) (*domain.SupplierSettlement, error)
+	AdminApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error)
 }
 
 // EmailCodeStore 验证码持久化。
@@ -393,7 +409,11 @@ type Service struct {
 	// Deps.DefaultMaxConcurrency 一次性注入；0 = 未装配，create 视为
 	// 未提供由校验拒绝）。
 	defaultMaxConcurrency int
-	tzLoc                 *time.Location
+	// supplierGranularity 解冻粒度（main 传 cfg.Supplier.ThawGranularity）：管理面
+	// PATCH share_bp/freeze_hours 的跨字段上界校验用（§6.4 A16⑤）。0 = 未装配
+	//（测试/降级路径），仅做值域校验。
+	supplierGranularity time.Duration
+	tzLoc               *time.Location
 	// retention 统计面 coverage 步的保留期来源（usage_logs/err_logs/usage_stats
 	// 三表天数；New 经 Deps.Retention 一次性注入）。判定唯一入口
 	// domain.Admit 以**参数**接收它（纯函数：不读配置、不读全局）。Days(t) <= 0
@@ -479,6 +499,9 @@ type Deps struct {
 	// 窗口守卫的 cutoff 来源，与 retention worker 同源（同一份天数 + 同一换算）。
 	// 0 = 未装配（测试/降级路径），守卫关闭。
 	RoutingObservationRetentionDays int
+	// SupplierThawGranularity 解冻粒度（main 传 cfg.Supplier.ThawGranularity）：
+	// 管理面 PATCH share_bp/freeze_hours 跨字段上界校验（§6.4 A16⑤）。0 = 未装配。
+	SupplierThawGranularity time.Duration
 }
 
 // New 构造 Service（全部依赖经单一 Deps 注入，S2 消重）。
@@ -495,6 +518,7 @@ func New(deps Deps) *Service {
 		mailEnqueue:                 deps.MailEnqueue,
 		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown,
 		routingRetentionDays:        deps.RoutingObservationRetentionDays,
+		supplierGranularity:         deps.SupplierThawGranularity,
 		retention:                   deps.Retention}
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot

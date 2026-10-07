@@ -71,6 +71,8 @@ type fakeStore struct {
 	supplierOverviews   map[int64]*domain.SupplierOverview
 	supplierSettlements []*domain.SupplierSettlement
 	supplierApplyErr    error
+	// supplierBalances 管理面余额替身（§6.3 PATCH/列表）。
+	supplierBalances map[int64]*domain.SupplierBalance
 	// pricingListErr 注入 ListPricing 失败（快照 fail-safe 测试）。
 	pricingListErr error
 	// lastTrendExec/lastEntityTrendExec/lastSummaryExec/lastDaysExec 记录统计读族
@@ -2562,4 +2564,137 @@ func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlemen
 	}
 	f.supplierSettlements = append(f.supplierSettlements, s)
 	return s, nil
+}
+
+// --- SupplierAdminStore 替身（spec 2026-10-09 §6.3/§6.5）---
+
+func (f *fakeStore) ListSupplierSettlementsAdmin(_ context.Context, filter domain.SupplierSettlementFilter, _, _ int) ([]*domain.SupplierSettlement, int64, error) {
+	out := make([]*domain.SupplierSettlement, 0, len(f.supplierSettlements))
+	for _, s := range f.supplierSettlements {
+		if filter.Status != nil && s.Status != *filter.Status {
+			continue
+		}
+		if filter.Kind != nil && s.Kind != *filter.Kind {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out, int64(len(out)), nil
+}
+
+func (f *fakeStore) ListSupplierBalances(_ context.Context, _, _ int) ([]domain.SupplierBalance, int64, error) {
+	out := make([]domain.SupplierBalance, 0, len(f.supplierBalances))
+	for _, b := range f.supplierBalances {
+		out = append(out, *b)
+	}
+	return out, int64(len(out)), nil
+}
+
+func (f *fakeStore) PatchSupplierBalance(_ context.Context, uid int64, p domain.SupplierBalancePatch) (*domain.SupplierBalance, error) {
+	b, ok := f.supplierBalances[uid]
+	if !ok {
+		return nil, repository.ErrNotFound
+	}
+	if p.ShareBp != nil {
+		v := *p.ShareBp
+		b.ShareBp = &v
+	} else if p.ClearShareBp {
+		b.ShareBp = nil
+	}
+	if p.FreezeHours != nil {
+		v := *p.FreezeHours
+		b.FreezeHours = &v
+	} else if p.ClearFreezeHours {
+		b.FreezeHours = nil
+	}
+	cp := *b
+	return &cp, nil
+}
+
+// fakeSettlementMutation 定位结算单并复核 revision；不存在 ⇒ ErrNotFound，
+// 陈旧 ⇒ ErrStaleRevision。fn 原地改状态。
+func (f *fakeStore) fakeSettlementMutation(id, expectedRevision int64, fn func(s *domain.SupplierSettlement) error) (*domain.SupplierSettlement, error) {
+	for _, s := range f.supplierSettlements {
+		if s.ID != id {
+			continue
+		}
+		if s.Revision != expectedRevision {
+			return nil, repository.ErrStaleRevision
+		}
+		if err := fn(s); err != nil {
+			return nil, err
+		}
+		s.Revision++
+		return s, nil
+	}
+	return nil, repository.ErrNotFound
+}
+
+func (f *fakeStore) ApproveSettlement(_ context.Context, id, expectedRevision int64, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
+		if s.Status != domain.SettlementPending {
+			return repository.ErrStaleRevision
+		}
+		s.Status = domain.SettlementApproved
+		return nil
+	})
+}
+
+func (f *fakeStore) RejectSettlement(_ context.Context, id, expectedRevision int64, reason *string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
+		if s.Status != domain.SettlementPending && s.Status != domain.SettlementApproved {
+			return repository.ErrStaleRevision
+		}
+		s.Status = domain.SettlementRejected
+		s.RejectReason = reason
+		if b, ok := f.supplierBalances[s.SupplierUserID]; ok {
+			b.Available += s.AmountMillis
+		}
+		return nil
+	})
+}
+
+func (f *fakeStore) ClaimSettlement(_ context.Context, id, expectedRevision int64, payeeSnapshot, riskEvidence string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if payeeSnapshot == "" || riskEvidence == "" {
+		return nil, repository.ErrInvalidInput
+	}
+	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
+		if s.Status != domain.SettlementApproved {
+			return repository.ErrStaleRevision
+		}
+		s.Status = domain.SettlementPaying
+		return nil
+	})
+}
+
+func (f *fakeStore) ConfirmFailedSettlement(_ context.Context, id, expectedRevision int64, reason string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
+		if s.Status != domain.SettlementPaying {
+			return repository.ErrStaleRevision
+		}
+		s.Status = domain.SettlementApproved
+		s.PayoutFailureReason = &reason
+		return nil
+	})
+}
+
+func (f *fakeStore) PaidSettlement(_ context.Context, id, expectedRevision int64, externalRef *string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
+		if s.Status != domain.SettlementPaying {
+			return repository.ErrStaleRevision
+		}
+		s.Status = domain.SettlementPaid
+		s.ExternalRef = externalRef
+		if b, ok := f.supplierBalances[s.SupplierUserID]; ok {
+			b.LifetimePaid += s.AmountMillis
+		}
+		return nil
+	})
+}
+
+func (f *fakeStore) AdminApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if _, ok := f.supplierBalances[req.SupplierUID]; !ok {
+		return nil, repository.ErrNotFound
+	}
+	return f.ApplySettlement(ctx, req)
 }

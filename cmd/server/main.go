@@ -348,6 +348,7 @@ func main() {
 		RecoverHealthClear:              runtimeHealth,
 		DefaultMaxConcurrency:           cfg.Scheduler.DefaultMaxConcurrency,
 		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
+		SupplierThawGranularity:         cfg.Supplier.ThawGranularity,
 		CompileNotify:                   sched.RequestCompile,
 		MailEnqueue:                     mailW.Enqueue,
 		SettingsSnapshot:                settingsSnap})
@@ -592,18 +593,27 @@ func main() {
 	// （Name="scheduler" 不变）——反序排空语义与 worker_order_test 断言依赖。
 	schedW := schedWorker{s: sched, src: schedSrc}
 
-	// 供应商收益链装配（spec 2026-10-09 §4.3/§4.6/§5.5/§6.4）：启用时构造记账/
-	// 解冻 worker + 财务视图快照 + 独立刷新 ticker。财务视图首刷在构造期同步执行
-	// （尽量落在监听端口之前；失败不阻塞启动，进入 NotReady ⇒ 带归属账号不入调度）。
+	// 供应商收益链装配（spec 2026-10-09 §4.3/§4.6/§5.5/§6.4）：持久面**无条件**构造
+	// （enabled=false 时管理面余额/结算单列表仍须可用——余额与结算单永久保留，§2.7）；
+	// 记账/解冻 worker + 财务视图快照 + 独立刷新 ticker 仅在 enabled=true 构造。
+	// 财务视图首刷在构造期同步执行（尽量落在监听端口之前；失败不阻塞启动，进入
+	// NotReady ⇒ 带归属账号不入调度）。
 	var supplierWorkers []worker.Worker
 	var supplierViewLoader worker.Worker
+	suppRepo := repos.SupplierRepo(repository.SupplierRepoConfig{
+		GranularitySeconds:   int64(cfg.Supplier.ThawGranularity / time.Second),
+		FreezeEnabled:        cfg.Supplier.FreezeEnabled,
+		FreezeHoursDefault:   cfg.Supplier.FreezeHours,
+		ShareBpDefault:       cfg.Supplier.ShareBpDefault,
+		BillingEnabled:       cfg.Billing.Enabled,
+		PayoutMaxBacklogRows: cfg.Supplier.PayoutMaxBacklogRows,
+		PayoutMaxBacklogAge:  cfg.Supplier.PayoutMaxBacklogAge,
+		PayoutMaxObserveAge:  cfg.Supplier.PayoutMaxObserveAge,
+		RiskReviewMaxAge:     cfg.Supplier.RiskReviewMaxAge,
+	})
+	// enabled=false 时停用 liability 校验（I6/A23，§5.5）：残留冻结/在途单/available
+	// 任一非零 ⇒ 拒绝启动并打印分项规模。必须在 bootstrap 后、监听/接流量前执行。
 	if cfg.Supplier.Enabled {
-		suppRepo := repos.SupplierRepo(repository.SupplierRepoConfig{
-			GranularitySeconds: int64(cfg.Supplier.ThawGranularity / time.Second),
-			FreezeEnabled:      cfg.Supplier.FreezeEnabled,
-			FreezeHoursDefault: cfg.Supplier.FreezeHours,
-			ShareBpDefault:     cfg.Supplier.ShareBpDefault,
-		})
 		// A16⑦ 启动校验：override 集合按全局 g 重算上界，越界拒绝启动并列出 uid。
 		initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
 		if err := validateSupplierOverrides(initCtx, suppRepo, cfg.Supplier.ThawGranularity); err != nil {

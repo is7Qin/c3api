@@ -207,6 +207,21 @@ const (
 	StatsKindCapabilityStoragesRaw  StatsKindCapabilityStorages = "raw"
 )
 
+// Defines values for SupplierSettlementKind.
+const (
+	SupplierSettlementKindAdminRequest    SupplierSettlementKind = "admin_request"
+	SupplierSettlementKindSupplierRequest SupplierSettlementKind = "supplier_request"
+)
+
+// Defines values for SupplierSettlementStatus.
+const (
+	SupplierSettlementStatusApproved SupplierSettlementStatus = "approved"
+	SupplierSettlementStatusPaid     SupplierSettlementStatus = "paid"
+	SupplierSettlementStatusPaying   SupplierSettlementStatus = "paying"
+	SupplierSettlementStatusPending  SupplierSettlementStatus = "pending"
+	SupplierSettlementStatusRejected SupplierSettlementStatus = "rejected"
+)
+
 // Defines values for TemplateCredentialType.
 const (
 	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
@@ -366,6 +381,21 @@ const (
 	GetStatsTTFTParamsEntityAccount GetStatsTTFTParamsEntity = "account"
 	GetStatsTTFTParamsEntityKey     GetStatsTTFTParamsEntity = "key"
 	GetStatsTTFTParamsEntityUser    GetStatsTTFTParamsEntity = "user"
+)
+
+// Defines values for GetAdminSupplierSettlementsParamsStatus.
+const (
+	GetAdminSupplierSettlementsParamsStatusApproved GetAdminSupplierSettlementsParamsStatus = "approved"
+	GetAdminSupplierSettlementsParamsStatusPaid     GetAdminSupplierSettlementsParamsStatus = "paid"
+	GetAdminSupplierSettlementsParamsStatusPaying   GetAdminSupplierSettlementsParamsStatus = "paying"
+	GetAdminSupplierSettlementsParamsStatusPending  GetAdminSupplierSettlementsParamsStatus = "pending"
+	GetAdminSupplierSettlementsParamsStatusRejected GetAdminSupplierSettlementsParamsStatus = "rejected"
+)
+
+// Defines values for GetAdminSupplierSettlementsParamsKind.
+const (
+	GetAdminSupplierSettlementsParamsKindAdminRequest    GetAdminSupplierSettlementsParamsKind = "admin_request"
+	GetAdminSupplierSettlementsParamsKindSupplierRequest GetAdminSupplierSettlementsParamsKind = "supplier_request"
 )
 
 // Defines values for GetTempBalancesParamsOrder.
@@ -590,6 +620,19 @@ type AdminKey struct {
 type AdminKeyListResponse struct {
 	Rows  []AdminKey `json:"rows"`
 	Total int64      `json:"total"`
+}
+
+// AdminRequestSettlementBody defines model for AdminRequestSettlementBody.
+type AdminRequestSettlementBody struct {
+	// AmountMillis 金额（> 0）
+	AmountMillis int64   `json:"amount_millis"`
+	Note         *string `json:"note,omitempty"`
+
+	// RequestKey 业务幂等键
+	RequestKey string `json:"request_key"`
+
+	// SupplierUserId 目标供应商（须已有余额行，否则 404）
+	SupplierUserId int64 `json:"supplier_user_id"`
 }
 
 // AdminTempBalanceRow defines model for AdminTempBalanceRow.
@@ -1779,6 +1822,44 @@ type SettingUpdate struct {
 	Value string `json:"value"`
 }
 
+// SettlementClaimBody 认领付款；收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at）
+type SettlementClaimBody struct {
+	SettlementRev int64 `json:"expected_revision"`
+
+	// PayeeSnapshot 收款目标快照（副作用前固定）
+	PayeeSnapshot string `json:"payee_snapshot"`
+
+	// RiskEvidence 风险核对证据（非空；平台信用风险放行记录）
+	RiskEvidence string `json:"risk_evidence"`
+}
+
+// SettlementConfirmFailedBody defines model for SettlementConfirmFailedBody.
+type SettlementConfirmFailedBody struct {
+	SettlementRev int64 `json:"expected_revision"`
+
+	// Reason 确定未支付的原因（网络失败不算）
+	Reason string `json:"reason"`
+}
+
+// SettlementPaidBody defines model for SettlementPaidBody.
+type SettlementPaidBody struct {
+	SettlementRev int64 `json:"expected_revision"`
+
+	// ExternalRef 银行/渠道回单号
+	ExternalRef *string `json:"external_ref"`
+}
+
+// SettlementRejectBody defines model for SettlementRejectBody.
+type SettlementRejectBody struct {
+	SettlementRev int64   `json:"expected_revision"`
+	Reason        *string `json:"reason"`
+}
+
+// SettlementTransitionBody 状态迁移 CAS 令牌（陈旧 ⇒ 409；缺席 ⇒ 400）
+type SettlementTransitionBody struct {
+	SettlementRev int64 `json:"expected_revision"`
+}
+
 // SnapshotState defines model for SnapshotState.
 type SnapshotState struct {
 	// LastError 最近一次 reload 错误文本；缺省 = 成功
@@ -1883,6 +1964,68 @@ type StatsKindCapability struct {
 
 // StatsKindCapabilityStorages defines model for StatsKindCapability.Storages.
 type StatsKindCapabilityStorages string
+
+// SupplierBalance defines model for SupplierBalance.
+type SupplierBalance struct {
+	Available         int64      `json:"available"`
+	BucketRows        int64      `json:"bucket_rows"`
+	FreezeHours       *int       `json:"freeze_hours"`
+	LatestAvailableAt *time.Time `json:"latest_available_at"`
+	LifetimeCredited  int64      `json:"lifetime_credited"`
+	LifetimePaid      int64      `json:"lifetime_paid"`
+	ShareBp           *int       `json:"share_bp"`
+	SupplierUserId    int64      `json:"supplier_user_id"`
+}
+
+// SupplierBalanceList defines model for SupplierBalanceList.
+type SupplierBalanceList struct {
+	Items []SupplierBalance `json:"items"`
+	Total int64             `json:"total"`
+}
+
+// SupplierBalancePatchBody PATCH 逐供应商配置（仅 share_bp/freeze_hours；缺席 = 不变；null = 清空回继承）
+type SupplierBalancePatchBody struct {
+	FreezeHours nullable.Nullable[int] `json:"freeze_hours,omitempty"`
+	ShareBp     nullable.Nullable[int] `json:"share_bp,omitempty"`
+}
+
+// SupplierSettlement defines model for SupplierSettlement.
+type SupplierSettlement struct {
+	AmountMillis         int64                    `json:"amount_millis"`
+	ExternalRef          *string                  `json:"external_ref"`
+	Id                   int64                    `json:"id"`
+	Kind                 SupplierSettlementKind   `json:"kind"`
+	Note                 *string                  `json:"note"`
+	PaidAt               *time.Time               `json:"paid_at"`
+	PaidOperatorUserId   *int64                   `json:"paid_operator_user_id"`
+	PayoutFailedAt       *time.Time               `json:"payout_failed_at"`
+	PayoutFailureReason  *string                  `json:"payout_failure_reason"`
+	PayoutOperatorUserId *int64                   `json:"payout_operator_user_id"`
+	PayoutStartedAt      *time.Time               `json:"payout_started_at"`
+	PeriodEnd            time.Time                `json:"period_end"`
+	PeriodStart          time.Time                `json:"period_start"`
+	RejectReason         *string                  `json:"reject_reason"`
+	RequestKey           string                   `json:"request_key"`
+	RequestedAt          time.Time                `json:"requested_at"`
+	RequestedOperator    int64                    `json:"requested_operator"`
+	ReviewedAt           *time.Time               `json:"reviewed_at"`
+	ReviewerUserId       *int64                   `json:"reviewer_user_id"`
+	Revision             int64                    `json:"revision"`
+	Status               SupplierSettlementStatus `json:"status"`
+	SupplierUserId       int64                    `json:"supplier_user_id"`
+}
+
+// SupplierSettlementKind defines model for SupplierSettlement.Kind.
+type SupplierSettlementKind string
+
+// SupplierSettlementStatus defines model for SupplierSettlement.Status.
+type SupplierSettlementStatus string
+
+// SupplierSettlementList defines model for SupplierSettlementList.
+type SupplierSettlementList struct {
+	Items []SupplierSettlement `json:"items"`
+	Total int64                `json:"total"`
+}
 
 // Template defines model for Template.
 type Template struct {
@@ -2512,6 +2655,26 @@ type GetStatsTTFTParams struct {
 // GetStatsTTFTParamsEntity defines parameters for GetStatsTTFT.
 type GetStatsTTFTParamsEntity string
 
+// GetAdminSupplierBalancesParams defines parameters for GetAdminSupplierBalances.
+type GetAdminSupplierBalancesParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetAdminSupplierSettlementsParams defines parameters for GetAdminSupplierSettlements.
+type GetAdminSupplierSettlementsParams struct {
+	Status *GetAdminSupplierSettlementsParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	Kind   *GetAdminSupplierSettlementsParamsKind   `form:"kind,omitempty" json:"kind,omitempty"`
+	Limit  *int                                     `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int                                     `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetAdminSupplierSettlementsParamsStatus defines parameters for GetAdminSupplierSettlements.
+type GetAdminSupplierSettlementsParamsStatus string
+
+// GetAdminSupplierSettlementsParamsKind defines parameters for GetAdminSupplierSettlements.
+type GetAdminSupplierSettlementsParamsKind string
+
 // GetTempBalancesParams defines parameters for GetTempBalances.
 type GetTempBalancesParams struct {
 	Page     *int                        `form:"page,omitempty" json:"page,omitempty"`
@@ -2645,6 +2808,27 @@ type UpdateRuleJSONRequestBody = RulePatch
 
 // PutAdminSettingsJSONRequestBody defines body for PutAdminSettings for application/json ContentType.
 type PutAdminSettingsJSONRequestBody = SettingUpdate
+
+// PatchAdminSupplierBalancesUidJSONRequestBody defines body for PatchAdminSupplierBalancesUid for application/json ContentType.
+type PatchAdminSupplierBalancesUidJSONRequestBody = SupplierBalancePatchBody
+
+// PostAdminSupplierSettlementsAdminRequestJSONRequestBody defines body for PostAdminSupplierSettlementsAdminRequest for application/json ContentType.
+type PostAdminSupplierSettlementsAdminRequestJSONRequestBody = AdminRequestSettlementBody
+
+// PostAdminSupplierSettlementsIdApproveJSONRequestBody defines body for PostAdminSupplierSettlementsIdApprove for application/json ContentType.
+type PostAdminSupplierSettlementsIdApproveJSONRequestBody = SettlementTransitionBody
+
+// PostAdminSupplierSettlementsIdClaimJSONRequestBody defines body for PostAdminSupplierSettlementsIdClaim for application/json ContentType.
+type PostAdminSupplierSettlementsIdClaimJSONRequestBody = SettlementClaimBody
+
+// PostAdminSupplierSettlementsIdConfirmFailedJSONRequestBody defines body for PostAdminSupplierSettlementsIdConfirmFailed for application/json ContentType.
+type PostAdminSupplierSettlementsIdConfirmFailedJSONRequestBody = SettlementConfirmFailedBody
+
+// PostAdminSupplierSettlementsIdPaidJSONRequestBody defines body for PostAdminSupplierSettlementsIdPaid for application/json ContentType.
+type PostAdminSupplierSettlementsIdPaidJSONRequestBody = SettlementPaidBody
+
+// PostAdminSupplierSettlementsIdRejectJSONRequestBody defines body for PostAdminSupplierSettlementsIdReject for application/json ContentType.
+type PostAdminSupplierSettlementsIdRejectJSONRequestBody = SettlementRejectBody
 
 // PostTemplatesJSONRequestBody defines body for PostTemplates for application/json ContentType.
 type PostTemplatesJSONRequestBody = TemplateCreate
@@ -2849,6 +3033,33 @@ type ServerInterface interface {
 	// TTFT 聚合（sketch 或 exact）
 	// (GET /stats/ttft)
 	GetStatsTTFT(w http.ResponseWriter, r *http.Request, params GetStatsTTFTParams)
+	// 余额列表（含最晚 available_at / bucket_rows）
+	// (GET /supplier/balances)
+	GetAdminSupplierBalances(w http.ResponseWriter, r *http.Request, params GetAdminSupplierBalancesParams)
+	// 仅 share_bp / freeze_hours（不接受金额）
+	// (PATCH /supplier/balances/{uid})
+	PatchAdminSupplierBalancesUid(w http.ResponseWriter, r *http.Request, uid int64)
+	// 结算单列表（按 status / kind 过滤；pending 是工作台）
+	// (GET /supplier/settlements)
+	GetAdminSupplierSettlements(w http.ResponseWriter, r *http.Request, params GetAdminSupplierSettlementsParams)
+	// 代申请（kind=admin_request；复用同一通道，目标须已有余额行）
+	// (POST /supplier/settlements/admin-request)
+	PostAdminSupplierSettlementsAdminRequest(w http.ResponseWriter, r *http.Request)
+	// pending → approved（CAS）
+	// (POST /supplier/settlements/{id}/approve)
+	PostAdminSupplierSettlementsIdApprove(w http.ResponseWriter, r *http.Request, id int64)
+	// approved → paying（认领 CAS；付款风控门 + 固定收款快照 + payment_key）
+	// (POST /supplier/settlements/{id}/claim)
+	PostAdminSupplierSettlementsIdClaim(w http.ResponseWriter, r *http.Request, id int64)
+	// paying → approved（仅接受「确定未支付」的核验结果；留证）
+	// (POST /supplier/settlements/{id}/confirm-failed)
+	PostAdminSupplierSettlementsIdConfirmFailed(w http.ResponseWriter, r *http.Request, id int64)
+	// 仅 paying → paid（lifetime_paid 累加；不重做风控门）
+	// (POST /supplier/settlements/{id}/paid)
+	PostAdminSupplierSettlementsIdPaid(w http.ResponseWriter, r *http.Request, id int64)
+	// pending|approved → rejected（退还 available；paying 不可 reject）
+	// (POST /supplier/settlements/{id}/reject)
+	PostAdminSupplierSettlementsIdReject(w http.ResponseWriter, r *http.Request, id int64)
 	// 临时额度列表（platform_admin 专属；全量视角含过期/用尽/负扣减行；user_id 筛选；sort 白名单 expires_at/amount/created_at，默认 expires_at asc——FEFO 同序）
 	// (GET /temp-balances)
 	GetTempBalances(w http.ResponseWriter, r *http.Request, params GetTempBalancesParams)
@@ -3254,6 +3465,60 @@ func (_ Unimplemented) GetStatsTrend(w http.ResponseWriter, r *http.Request, par
 // TTFT 聚合（sketch 或 exact）
 // (GET /stats/ttft)
 func (_ Unimplemented) GetStatsTTFT(w http.ResponseWriter, r *http.Request, params GetStatsTTFTParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 余额列表（含最晚 available_at / bucket_rows）
+// (GET /supplier/balances)
+func (_ Unimplemented) GetAdminSupplierBalances(w http.ResponseWriter, r *http.Request, params GetAdminSupplierBalancesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 仅 share_bp / freeze_hours（不接受金额）
+// (PATCH /supplier/balances/{uid})
+func (_ Unimplemented) PatchAdminSupplierBalancesUid(w http.ResponseWriter, r *http.Request, uid int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 结算单列表（按 status / kind 过滤；pending 是工作台）
+// (GET /supplier/settlements)
+func (_ Unimplemented) GetAdminSupplierSettlements(w http.ResponseWriter, r *http.Request, params GetAdminSupplierSettlementsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 代申请（kind=admin_request；复用同一通道，目标须已有余额行）
+// (POST /supplier/settlements/admin-request)
+func (_ Unimplemented) PostAdminSupplierSettlementsAdminRequest(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// pending → approved（CAS）
+// (POST /supplier/settlements/{id}/approve)
+func (_ Unimplemented) PostAdminSupplierSettlementsIdApprove(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// approved → paying（认领 CAS；付款风控门 + 固定收款快照 + payment_key）
+// (POST /supplier/settlements/{id}/claim)
+func (_ Unimplemented) PostAdminSupplierSettlementsIdClaim(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// paying → approved（仅接受「确定未支付」的核验结果；留证）
+// (POST /supplier/settlements/{id}/confirm-failed)
+func (_ Unimplemented) PostAdminSupplierSettlementsIdConfirmFailed(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 仅 paying → paid（lifetime_paid 累加；不重做风控门）
+// (POST /supplier/settlements/{id}/paid)
+func (_ Unimplemented) PostAdminSupplierSettlementsIdPaid(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// pending|approved → rejected（退还 available；paying 不可 reject）
+// (POST /supplier/settlements/{id}/reject)
+func (_ Unimplemented) PostAdminSupplierSettlementsIdReject(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5547,6 +5812,256 @@ func (siw *ServerInterfaceWrapper) GetStatsTTFT(w http.ResponseWriter, r *http.R
 	handler.ServeHTTP(w, r)
 }
 
+// GetAdminSupplierBalances operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminSupplierBalances(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminSupplierBalancesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminSupplierBalances(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchAdminSupplierBalancesUid operation middleware
+func (siw *ServerInterfaceWrapper) PatchAdminSupplierBalancesUid(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "uid" -------------
+	var uid int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "uid", chi.URLParam(r, "uid"), &uid, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "uid", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchAdminSupplierBalancesUid(w, r, uid)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAdminSupplierSettlements operation middleware
+func (siw *ServerInterfaceWrapper) GetAdminSupplierSettlements(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAdminSupplierSettlementsParams
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "status", r.URL.Query(), &params.Status)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "kind" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "kind", r.URL.Query(), &params.Kind)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "kind", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAdminSupplierSettlements(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminSupplierSettlementsAdminRequest operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminSupplierSettlementsAdminRequest(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminSupplierSettlementsAdminRequest(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminSupplierSettlementsIdApprove operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminSupplierSettlementsIdApprove(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminSupplierSettlementsIdApprove(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminSupplierSettlementsIdClaim operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminSupplierSettlementsIdClaim(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminSupplierSettlementsIdClaim(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminSupplierSettlementsIdConfirmFailed operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminSupplierSettlementsIdConfirmFailed(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminSupplierSettlementsIdConfirmFailed(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminSupplierSettlementsIdPaid operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminSupplierSettlementsIdPaid(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminSupplierSettlementsIdPaid(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAdminSupplierSettlementsIdReject operation middleware
+func (siw *ServerInterfaceWrapper) PostAdminSupplierSettlementsIdReject(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAdminSupplierSettlementsIdReject(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetTempBalances operation middleware
 func (siw *ServerInterfaceWrapper) GetTempBalances(w http.ResponseWriter, r *http.Request) {
 
@@ -6461,6 +6976,33 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/stats/ttft", wrapper.GetStatsTTFT)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/supplier/balances", wrapper.GetAdminSupplierBalances)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/supplier/balances/{uid}", wrapper.PatchAdminSupplierBalancesUid)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/supplier/settlements", wrapper.GetAdminSupplierSettlements)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/supplier/settlements/admin-request", wrapper.PostAdminSupplierSettlementsAdminRequest)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/supplier/settlements/{id}/approve", wrapper.PostAdminSupplierSettlementsIdApprove)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/supplier/settlements/{id}/claim", wrapper.PostAdminSupplierSettlementsIdClaim)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/supplier/settlements/{id}/confirm-failed", wrapper.PostAdminSupplierSettlementsIdConfirmFailed)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/supplier/settlements/{id}/paid", wrapper.PostAdminSupplierSettlementsIdPaid)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/supplier/settlements/{id}/reject", wrapper.PostAdminSupplierSettlementsIdReject)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/temp-balances", wrapper.GetTempBalances)

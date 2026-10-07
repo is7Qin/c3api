@@ -68,6 +68,9 @@ func adminAuth(opts Options) func(http.Handler) http.Handler {
 						sn.TokenVersion == claims.Ver {
 						// JWT 路径注入 claims.UserID（兑换码 created_by 用，决策 5）
 						ctx := context.WithValue(req.Context(), adminUserIDKey{}, claims.UserID)
+						// 资金操作者（spec 2026-10-09 §6.5 I5）：具名 uid + 签名请求的
+						// token_version——资金写命令在写事务内据它复核。
+						ctx = domain.WithFundsActor(ctx, domain.FundsActor{UserID: claims.UserID, TokenVersion: claims.Ver})
 						next.ServeHTTP(w, req.WithContext(ctx))
 						return
 					}

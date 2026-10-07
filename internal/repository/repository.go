@@ -165,6 +165,71 @@ func (r *Repository) ApplySettlement(ctx context.Context, req domain.ApplySettle
 	return r.supplier.ApplySettlement(ctx, req)
 }
 
+// --- 管理面结算审批门面（service.SupplierAdminStore）---
+
+func (r *Repository) ListSupplierSettlementsAdmin(ctx context.Context, filter domain.SupplierSettlementFilter, limit, offset int) ([]*domain.SupplierSettlement, int64, error) {
+	if r.supplier == nil {
+		return nil, 0, errSupplierNoPool
+	}
+	return r.supplier.ListSupplierSettlementsAdmin(ctx, filter, limit, offset)
+}
+
+func (r *Repository) ListSupplierBalances(ctx context.Context, limit, offset int) ([]domain.SupplierBalance, int64, error) {
+	if r.supplier == nil {
+		return nil, 0, errSupplierNoPool
+	}
+	return r.supplier.ListSupplierBalances(ctx, limit, offset)
+}
+
+func (r *Repository) PatchSupplierBalance(ctx context.Context, uid int64, p domain.SupplierBalancePatch) (*domain.SupplierBalance, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.PatchSupplierBalance(ctx, uid, p.ShareBp, p.ClearShareBp, p.FreezeHours, p.ClearFreezeHours)
+}
+
+func (r *Repository) ApproveSettlement(ctx context.Context, id, expectedRevision int64, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.ApproveSettlement(ctx, id, expectedRevision, actor)
+}
+
+func (r *Repository) RejectSettlement(ctx context.Context, id, expectedRevision int64, reason *string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.RejectSettlement(ctx, id, expectedRevision, reason, actor)
+}
+
+func (r *Repository) ClaimSettlement(ctx context.Context, id, expectedRevision int64, payeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.ClaimSettlement(ctx, id, expectedRevision, payeeSnapshot, riskEvidence, actor)
+}
+
+func (r *Repository) ConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, reason string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.ConfirmFailedSettlement(ctx, id, expectedRevision, reason, actor)
+}
+
+func (r *Repository) PaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef *string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.PaidSettlement(ctx, id, expectedRevision, externalRef, actor)
+}
+
+func (r *Repository) AdminApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.AdminApplySettlement(ctx, req, actor)
+}
+
 // --- 事务（核心） ---
 
 // txDriver 把 dialect.Tx 包装成 dialect.Driver（镜像 ent 内部 txDriver 语义）：
