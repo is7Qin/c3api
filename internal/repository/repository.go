@@ -48,6 +48,10 @@ type Repository struct {
 	//（ent v0.14 生成代码无 ExecContext/QueryContext，raw SQL 无客户端入口）；
 	// WithTx 内为事务驱动（txDriver），保证 raw SQL 与 ent 构建器同连接。
 	driver dialect.Driver
+	// pool 为 pgx 连接池（生产 NewWithPG 注入；nil = 测试/无池装配）。供应商
+	// 记账链/解冻链的显式多语句事务走它（形态同 Billing 结算语句；WithTx 内为
+	// nil → 事务面回落）。
+	pool *pgxpool.Pool
 }
 
 // New 用既有 driver 构建仓库（PG 生产：entsql.OpenDB(dialect.Postgres, db)；测试：
@@ -109,7 +113,15 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		BalanceLogs:    &BalanceLogRepo{client: client},
 		Client:         client,
 		driver:         drv,
+		pool:           pool,
 	}
+}
+
+// SupplierRepo 用本门面的 client/driver/pool 与供应商配置构造记账链/解冻链
+// 持久面（实现 supplier.CreditStore 等消费面接口）。cfg 携带记账链读取所需的
+// 生效默认（share_bp_default / freeze 默认与开关 / 粒度）。
+func (r *Repository) SupplierRepo(cfg SupplierRepoConfig) *SupplierRepo {
+	return &SupplierRepo{client: r.Client, pool: r.pool, cfg: cfg}
 }
 
 // --- 事务（核心） ---

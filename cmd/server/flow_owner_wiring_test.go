@@ -58,6 +58,17 @@ func TestQualityFlowOwnerWiring(t *testing.T) {
 						}
 					}
 				}
+				// managedWorkers = append(managedWorkers, ...)：供应商 worker 切片
+				// 与后续业务 worker 追加（spec §5.5 装配形态）。
+				if fun, ok := ce.Fun.(*ast.Ident); ok && fun.Name == "append" && len(ce.Args) >= 2 {
+					if head, ok := ce.Args[0].(*ast.Ident); ok && head.Name == "managedWorkers" {
+						for _, a := range ce.Args[1:] {
+							if id, ok := a.(*ast.Ident); ok {
+								ordered = append(ordered, id.Name)
+							}
+						}
+					}
+				}
 			}
 		}
 		return true

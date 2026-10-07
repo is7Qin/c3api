@@ -49,6 +49,7 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/internal/snapshot"
+	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/internal/verification"
 	"github.com/is7qin/c3api/internal/worker"
@@ -590,8 +591,56 @@ func main() {
 	// 编译源启动适配（双 setter 已删）：同一位置同一顺序注册 schedW
 	// （Name="scheduler" 不变）——反序排空语义与 worker_order_test 断言依赖。
 	schedW := schedWorker{s: sched, src: schedSrc}
-	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker,
-		inv, schedW, ruleEngine, retryWorker, healthW, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
+
+	// 供应商收益链装配（spec 2026-10-09 §4.3/§4.6/§5.5/§6.4）：启用时构造记账/
+	// 解冻 worker + 财务视图快照 + 独立刷新 ticker。财务视图首刷在构造期同步执行
+	// （尽量落在监听端口之前；失败不阻塞启动，进入 NotReady ⇒ 带归属账号不入调度）。
+	var supplierWorkers []worker.Worker
+	var supplierViewLoader worker.Worker
+	if cfg.Supplier.Enabled {
+		suppRepo := repos.SupplierRepo(repository.SupplierRepoConfig{
+			GranularitySeconds: int64(cfg.Supplier.ThawGranularity / time.Second),
+			FreezeEnabled:      cfg.Supplier.FreezeEnabled,
+			FreezeHoursDefault: cfg.Supplier.FreezeHours,
+			ShareBpDefault:     cfg.Supplier.ShareBpDefault,
+		})
+		// A16⑦ 启动校验：override 集合按全局 g 重算上界，越界拒绝启动并列出 uid。
+		initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := validateSupplierOverrides(initCtx, suppRepo, cfg.Supplier.ThawGranularity); err != nil {
+			initCancel()
+			fatalf("supplier startup validation: %v", err)
+		}
+		snap := proxy.NewSupplierSnapshot(supplierViewStaleThreshold)
+		px.SetSupplierSnapshot(snap)
+		sched.SetSupplierAdmission(snap)
+		viewLoader := supplier.NewViewLoader(supplier.ViewConfig{Interval: cfg.Billing.BalanceRefreshInterval}, suppRepo, snap, log)
+		if !viewLoader.LoadOnce(initCtx) {
+			log.Warn("supplier view initial load failed; accounts with supplier ownership are not scheduled until a reload succeeds (NotReady)")
+		}
+		initCancel()
+		supplierViewLoader = viewLoader
+		creditW := supplier.NewCredit(supplier.CreditConfig{
+			Interval:      200 * time.Millisecond,
+			BatchLimit:    500,
+			DrainBudget:   supplierCreditDrainBudget,
+			FreezeEnabled: cfg.Supplier.FreezeEnabled,
+			LagFullEvery:  20,
+		}, suppRepo, log)
+		var thawW worker.Worker
+		if cfg.Supplier.FreezeEnabled {
+			thawW = supplier.NewThaw(supplier.ThawConfig{
+				Interval:    time.Second,
+				BatchLimit:  1000,
+				DrainBudget: 3 * time.Second,
+			}, suppRepo, log)
+		}
+		supplierWorkers = supplierWorkersFor(cfg.Supplier.Enabled, cfg.Supplier.FreezeEnabled, thawW, creditW)
+	}
+	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker, inv, schedW, ruleEngine, retryWorker, healthW)
+	// supplier worker 插在 rec 之前（§5.5：reverse-shutdown 时 rec 先关 → 先落完整
+	// 账本，credit 再排空其消费；关闭态 supplierWorkers 为 nil，append 不贡献元素）。
+	managedWorkers = append(managedWorkers, supplierWorkers...)
+	managedWorkers = append(managedWorkers, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// （spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
@@ -672,6 +721,11 @@ func main() {
 	// auth 邮件行为保持独立。
 	wm := worker.New(log)
 	wm.Register(managedWorkers...) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）。billFlusher 缺位时：计费关闭，billable 行出生即 billed=true 吸收态，无未扣积压
+	// 供应商财务视图刷新 ticker（独立于 billing.enabled；§6.4）：在 managedWorkers
+	// 之后注册 ⇒ 反向排空最早关（刷新 ticker 无须排空语义）。
+	if supplierViewLoader != nil {
+		wm.Register(supplierViewLoader)
+	}
 	// conc-sync 业务区段尾部（spec §1.5：协调态可丢、无排空顺序依赖——停机即停
 	// tick，在途 HASH 字段 ≤4s ts 出局 + 16s EXPIRE 自灭，Close 无清理义务）。
 	wm.Register(concSync)

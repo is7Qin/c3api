@@ -26,6 +26,7 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 	mainFn := findFuncDecl(t, f, "main")
 	var order []string
 	var ordered []string
+	var appendOrder []string
 	managedFound := false
 	expansionFound := false
 	guardedBilling := false
@@ -73,6 +74,17 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 									ordered = append(ordered, id.Name)
 								}
 							}
+							// managedWorkers = append(managedWorkers, ...)：供应商
+							// worker 切片 / 后续业务 worker 追加（spec §5.5 装配形态）。
+							if fun, ok := ce.Fun.(*ast.Ident); ok && fun.Name == "append" && len(ce.Args) >= 2 {
+								if head, ok := ce.Args[0].(*ast.Ident); ok && head.Name == "managedWorkers" {
+									for _, a := range ce.Args[1:] {
+										if id, ok := a.(*ast.Ident); ok {
+											appendOrder = append(appendOrder, id.Name)
+										}
+									}
+								}
+							}
 						}
 					}
 				}
@@ -86,6 +98,7 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 						require.True(t, managedFound, "wm.Register(managedWorkers...) without prior managedWorkers := orderedWorkers(...)")
 						require.NotEmpty(t, ordered, "orderedWorkers args empty")
 						order = append(order, ordered...)
+						order = append(order, appendOrder...)
 						expansionFound = true
 						continue
 					}
@@ -144,6 +157,11 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 	mustBefore("mailW", "warningWorker")
 	mustBefore("warningWorker", "billingWorker")
 	mustBefore("billingWorker", "rec")
+	// 供应商 worker 切片插在 healthW 之后、rec 之前（spec §5.5：reverse-shutdown
+	// 使 rec 先关，credit 再排空）。组合（thaw×credit）由 supplierWorkersFor 纯函数
+	// 的运行时断言覆盖；此处仅断言切片位置。
+	mustBefore("healthW", "supplierWorkers")
+	mustBefore("supplierWorkers", "rec")
 	mustBefore("rec", "errlogW")
 	// async-routing-quality-telemetry: the flow owner is registered BEFORE
 	// quality-sync so reverse shutdown closes quality-sync first (its failed

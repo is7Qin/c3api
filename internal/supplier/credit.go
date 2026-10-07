@@ -97,10 +97,14 @@ func (w *CreditWorker) loop(ctx context.Context) {
 	}
 }
 
-// runOnce 单周期：取批 → 记账事务 → lag 刷新（头行高频 + 全量降频）→
-// freeze_enabled=false 存量释放。任一失败 Warn 不中断（下轮重试；Loop 正常返回
-// 即退出，故不 panic/不 return）。
+// runOnce 单周期（leader 锁门控）：取批 → 记账事务 → lag 刷新（头行高频 +
+// 全量降频）→ freeze_enabled=false 存量释放。任一失败 Warn 不中断（下轮重试；
+// Loop 正常返回即退出，故不 panic/不 return）。
 func (w *CreditWorker) runOnce(ctx context.Context) {
+	w.withLeaderLock(ctx, func() { w.runOnceLocked(ctx) })
+}
+
+func (w *CreditWorker) runOnceLocked(ctx context.Context) {
 	// 存量释放：freeze_enabled=false ⇒ 不注册解冻 worker，须由本链释放（§5.4）。
 	// 必须在没有 usage 批时也执行——故置于批次之前且不因 backlog==0 跳过。
 	if !w.cfg.FreezeEnabled {
@@ -177,8 +181,16 @@ func (w *CreditWorker) refreshLag(ctx context.Context) {
 }
 
 // Close 排空：独立总预算（不得复用 drainCycleBudget），消费到 backlog==0 或预算
-// 到期；尽力语义（失败仅 Warn 留证，不阻断停机）。
+// 到期；尽力语义（失败仅 Warn 留证，不阻断停机）。leader 锁门控——非 leader
+// 不做排空（其他实例在消费）。
 func (w *CreditWorker) Close(ctx context.Context) error {
+	w.withLeaderLock(ctx, func() {
+		w.closeDrain(ctx)
+	})
+	return nil
+}
+
+func (w *CreditWorker) closeDrain(ctx context.Context) {
 	budget := w.cfg.DrainBudget
 	if budget <= 0 {
 		budget = 5 * time.Second
@@ -188,22 +200,21 @@ func (w *CreditWorker) Close(ctx context.Context) error {
 		batch, err := w.store.FetchCreditBatch(ctx, w.batchLimit())
 		if err != nil {
 			w.warn("supplier credit drain fetch failed", logx.Error(err))
-			return nil
+			return
 		}
 		if len(batch) == 0 {
-			return nil
+			return
 		}
 		freeze, ferr := w.store.FreezeHoursByUID(ctx, uniqueUIDs(batch))
 		if ferr != nil {
 			w.warn("supplier credit drain freeze lookup failed", logx.Error(ferr))
-			return nil
+			return
 		}
 		if aerr := w.applyWithRetry(ctx, batch, freeze); aerr != nil {
 			w.warn("supplier credit drain apply failed", logx.Error(aerr))
-			return nil
+			return
 		}
 	}
-	return nil
 }
 
 func (w *CreditWorker) batchLimit() int {
@@ -254,3 +265,31 @@ func uniqueUIDs(batch []BatchRow) []int64 {
 // ErrNotLeader credit 取批由 leader/会话锁把持（多实例减少撞同批）；非 leader
 // 返回本哨兵 → 空转下轮。
 var ErrNotLeader = errors.New("supplier: not leader")
+
+// CreditLocker 记账链取批的 leader/会话锁面（repository *SupplierRepo 实现；
+// fake 不实现 ⇒ 视为单 leader，锁 no-op）。I4：多实例用会话锁取批，标记计数守卫
+// 继续作锁丢失后的安全后盾（§5.2）。
+type CreditLocker interface {
+	AcquireSupplierLock(ctx context.Context) (release func(), ok bool, err error)
+}
+
+// withLeaderLock 取 leader 锁后执行 fn：store 非 locker（或单实例）⇒ 直接执行；
+// 抢锁失败（其他实例在消费）⇒ ok=false，跳过本周期。
+func (w *CreditWorker) withLeaderLock(ctx context.Context, fn func()) (ok bool) {
+	locker, isLocker := w.store.(CreditLocker)
+	if !isLocker {
+		fn()
+		return true
+	}
+	release, acquired, err := locker.AcquireSupplierLock(ctx)
+	if err != nil {
+		w.warn("supplier credit leader lock failed", logx.Error(err))
+		return false
+	}
+	if !acquired {
+		return false
+	}
+	defer release()
+	fn()
+	return true
+}

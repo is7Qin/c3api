@@ -63,13 +63,28 @@ func TestQualitySyncWiring(t *testing.T) {
 			return true
 		}
 		fun, ok := ce.Fun.(*ast.Ident)
-		if !ok || fun.Name != "orderedWorkers" {
+		if !ok {
 			return true
 		}
-		managedFound = true
-		for _, a := range ce.Args {
-			if id, ok := a.(*ast.Ident); ok && id.Name == "qualitySync" {
-				inManaged = true
+		if fun.Name == "orderedWorkers" {
+			managedFound = true
+			for _, a := range ce.Args {
+				if id, ok := a.(*ast.Ident); ok && id.Name == "qualitySync" {
+					inManaged = true
+				}
+			}
+			return true
+		}
+		// managedWorkers = append(managedWorkers, ..., qualitySync, ...)：spec §5.5
+		// 装配形态下 qualitySync 落在 append 尾部。
+		if fun.Name == "append" && len(ce.Args) >= 2 {
+			if head, ok := ce.Args[0].(*ast.Ident); ok && head.Name == "managedWorkers" {
+				managedFound = true
+				for _, a := range ce.Args[1:] {
+					if id, ok := a.(*ast.Ident); ok && id.Name == "qualitySync" {
+						inManaged = true
+					}
+				}
 			}
 		}
 		return true
