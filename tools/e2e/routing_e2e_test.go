@@ -742,7 +742,7 @@ func TestIntelligentRoutingE2E(t *testing.T) {
 		"name": "rt-g", "template_id": tpl, "upstream_key": rtKeyG,
 		"group_ids": []int64{g4},
 	})
-	_ = accH // H 隔离在 g5（5xx-terminal 对照），g4 断言仅 F/G
+	_ = accH                     // H 隔离在 g5（5xx-terminal 对照），g4 断言仅 F/G
 	rtSetCost(t, env, accB, 2.5) // B 采购贵 2.5×：成本面可观测
 	// 种子自检（fail-fast：组成员 + 缓存域回显；编译缺候选时先排除种子问题）。
 	rtAssertGroups := func(acc int64, want ...int64) {

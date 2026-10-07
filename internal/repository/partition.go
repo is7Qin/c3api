@@ -19,6 +19,7 @@ import (
 	"entgo.io/ent/dialect/sql/schema"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent/errlog"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/usagestat"
@@ -151,6 +152,13 @@ var usageLogColumnDefs = []string{
 	// false=待对账消费（出生未扣，计费游标子集）；true=已结算（billing worker
 	// 扣费事务内原子标记，或关闭计费/匿名行的出生吸收态）。
 	`billed boolean NOT NULL DEFAULT false`,
+	// 供应商收益快照（spec 2026-10-09 §3.3）：三列——归属 uid 快照（请求时点，
+	// NULL = 平台自有/未归属）、收益额快照（毫分）、记账游标（出生定态）。
+	// **无 supplier_share_bp**（分成率不落列，§2.3）。新列仅全新部署（分区表
+	// 首次创建）时建立——升级路径见 §3.3，已装库不补齐（beta 哲学）。
+	`supplier_user_id bigint NULL`,
+	`supplier_earn_millis bigint NOT NULL DEFAULT 0`,
+	`supplier_credited boolean NOT NULL DEFAULT false`,
 	`created_at timestamptz NOT NULL`,
 }
 
@@ -178,6 +186,17 @@ var usageLogIndexDDLs = []string{
 	// 两步法（部分 id 索引定位 + pkey 回表），marked 步索引维护 -33%。不建
 	// (id) WHERE NOT billed AND cost=0——已消灭该查询类，索引是写放大负债。
 	`CREATE INDEX usagelog_unbilled_id ON usage_logs (id) WHERE NOT billed`,
+	// 供应商记账游标（spec 2026-10-09 §3.3①）：部分索引 (id) WHERE NOT
+	// supplier_credited AND supplier_earn_millis > 0——取批 ORDER BY id LIMIT
+	// 只扫未记账正收益子集。**键序必须是 (id)**（报表索引不保证有序取前 N）。
+	// **部分索引是 G1 的落地载体**：关闭态下行全为 supplier_user_id IS NULL、
+	// earn = 0 ⇒ 谓词恒假 ⇒ 新写入不产生条目。I3 backlog 探测须写同一组谓词
+	// 才享索引资格（逻辑蕴含，非逐字一致）。
+	`CREATE INDEX usagelog_uncredited_earn_id ON usage_logs (id) WHERE NOT supplier_credited AND supplier_earn_millis > 0`,
+	// 供应商报表索引（spec 2026-10-09 §3.3②）：(supplier_user_id, created_at)
+	// WHERE supplier_user_id IS NOT NULL——区间收益明细（§6.1 earnings）按供应商
+	// + 时间窗口。启用态维护面 ≈ 供应商流量占比 × INSERT + billed 标记 UPDATE。
+	`CREATE INDEX usagelog_supplier_created_at ON usage_logs (supplier_user_id, created_at) WHERE supplier_user_id IS NOT NULL`,
 }
 
 // errLogColumnDefs err_logs 分区表列定义（单一事实源，与 ent schema 完全一致，
@@ -628,6 +647,149 @@ func (r *PartitionRepo) tablePartitionNames(ctx context.Context, table string) (
 // （既有 API；O(1)）。保留 >= cutoff 的分区。
 func (r *PartitionRepo) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "usage_logs", cutoff)
+}
+
+// retireLockTimeout 分区退休屏障内封闭迟到写入的锁等待上界（§3.11 步骤 4
+// "限定锁等待"；OpenPG 的 lock_timeout=5s 只是默认兜底，这里显式 SET LOCAL）。
+const retireLockTimeout = "5s"
+
+// RetireUsageLogPartitions usage_logs 分区退休屏障（spec 2026-10-09 §3.11，
+// C2）：DROP 前置检查——未确认资金事件不得随 retention 删除。
+//
+// 对每个候选分区（下界日期 < cutoff）：
+//  1. 候选分区按分区名日期选出（同 DropTablePartitionsBefore）；
+//  2. 在限定锁等待的事务内对分区取 ACCESS EXCLUSIVE（封闭迟到写入，
+//     使检查与 DROP 间无新行）；
+//  3. 未确认检查：用消费索引 ① 的同一组谓词 EXISTS / COUNT（NOT
+//     supplier_credited AND supplier_earn_millis > 0），并保护既有未扣费事件
+//     （NOT billed）；
+//  4. 锁内复检通过（两项均无）⇒ 同事务 DROP；否则**禁止 DROP**，记入 Blocked；
+//  5. 不得"先查空、再任意时间 DROP"（检查、锁、DROP 同一事务）。
+//
+// 被挡分区由调用方（retention worker）呈现为独立持久告警 + ETA（Step 5）。
+func (r *PartitionRepo) RetireUsageLogPartitions(ctx context.Context, cutoff time.Time) (domain.UsageLogRetireResult, error) {
+	var res domain.UsageLogRetireResult
+	names, err := r.tablePartitionNames(ctx, "usage_logs")
+	if err != nil {
+		return res, err
+	}
+	cut := cutoff.UTC().Truncate(24 * time.Hour)
+	for _, name := range names {
+		d, ok := tablePartitionDate("usage_logs", name)
+		if !ok {
+			continue
+		}
+		if !d.Before(cut) {
+			continue
+		}
+		blocked, dropped, err := r.retireOneUsageLogPartition(ctx, name)
+		if err != nil {
+			return res, err
+		}
+		if blocked != nil {
+			res.Blocked = append(res.Blocked, *blocked)
+			continue
+		}
+		if dropped {
+			res.Dropped++
+		}
+	}
+	return res, nil
+}
+
+// retireOneUsageLogPartition 单分区屏障判定 + DROP（见 RetireUsageLogPartitions）。
+// 返回 (blocked, dropped, err)：blocked != nil ⇒ 禁止 DROP（已记阻断证据）；
+// dropped=true ⇒ 已成功 DROP；分区已消失或不存在 ⇒ 均返回 (nil,false,nil)。
+func (r *PartitionRepo) retireOneUsageLogPartition(ctx context.Context, name string) (*domain.BlockedPartition, bool, error) {
+	tx, err := r.driver.Tx(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	// Commit 成功后 Rollback 返回 ErrTxClosed，忽略（与 settlePGX 同款）。
+	defer func() { _ = tx.Rollback() }()
+
+	var res sql.Result
+	if err := tx.Exec(ctx, `SET LOCAL lock_timeout = '`+retireLockTimeout+`'`, []any{}, &res); err != nil {
+		return nil, false, err
+	}
+	// 2. 封闭迟到写入：ACCESS EXCLUSIVE 锁分区。分区已消失（stale）⇒ 视为已退休。
+	if err := tx.Exec(ctx, `LOCK TABLE `+name+` IN ACCESS EXCLUSIVE MODE`, []any{}, &res); err != nil {
+		if isMissingObject(err) {
+			return nil, false, nil
+		}
+		if isLockNotAvailable(err) {
+			// 锁等待超时：无法封闭写入 ⇒ 禁止 DROP（保守），记 blocked（计数未知 -1）。
+			return &domain.BlockedPartition{Name: name, UncreditedEarnRows: -1, UnbilledRows: -1}, false, nil
+		}
+		return nil, false, err
+	}
+	// 3. 未确认检查（与消费索引 ① 逻辑蕴含的同一组谓词）+ 未扣费事件保护。
+	ucRows := &entsql.Rows{}
+	if err := tx.Query(ctx, `SELECT COUNT(*) FROM `+name+` WHERE NOT supplier_credited AND supplier_earn_millis > 0`, []any{}, ucRows); err != nil {
+		return nil, false, err
+	}
+	var ucCount int64
+	if ucRows.Next() {
+		if err := ucRows.Scan(&ucCount); err != nil {
+			ucRows.Close()
+			return nil, false, err
+		}
+	}
+	ucRows.Close()
+	oldRows := &entsql.Rows{}
+	if err := tx.Query(ctx, `SELECT MIN(created_at) FROM `+name+` WHERE NOT supplier_credited AND supplier_earn_millis > 0`, []any{}, oldRows); err != nil {
+		return nil, false, err
+	}
+	var oldest sql.NullTime
+	if oldRows.Next() {
+		if err := oldRows.Scan(&oldest); err != nil {
+			oldRows.Close()
+			return nil, false, err
+		}
+	}
+	oldRows.Close()
+	ubRows := &entsql.Rows{}
+	if err := tx.Query(ctx, `SELECT COUNT(*) FROM `+name+` WHERE NOT billed`, []any{}, ubRows); err != nil {
+		return nil, false, err
+	}
+	var ubCount int64
+	if ubRows.Next() {
+		if err := ubRows.Scan(&ubCount); err != nil {
+			ubRows.Close()
+			return nil, false, err
+		}
+	}
+	ubRows.Close()
+	if ucCount > 0 || ubCount > 0 {
+		// 4. 未通过检查 ⇒ 禁止 DROP（事务仍持有锁，defer Rollback 释放）。
+		bp := &domain.BlockedPartition{Name: name, UncreditedEarnRows: ucCount, UnbilledRows: ubCount}
+		if oldest.Valid {
+			ms := oldest.Time.UnixMilli()
+			bp.OldestUncredited = &ms
+		}
+		return bp, false, nil
+	}
+	// 4. 锁内复检通过 ⇒ 同事务 DROP。
+	if err := tx.Exec(ctx, `DROP TABLE IF EXISTS `+name, []any{}, &res); err != nil {
+		if isMissingObject(err) {
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, false, err
+	}
+	return nil, true, nil
+}
+
+// isLockNotAvailable 判断锁等待超时/锁不可用（55P03 lock_not_available；
+// lock_timeout 触发即此码）。
+func isLockNotAvailable(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	return pgErr.Code == "55P03"
 }
 
 // DropErrLogPartitionsBefore err_logs DROP 分区下界早于 cutoff 的分区（独立

@@ -27,7 +27,10 @@ import (
 // 有界批删路径——同为保留策略的周期清理手段，归口本接口。
 type PartitionManager interface {
 	EnsureUsageLogPartitions(ctx context.Context, now, until time.Time) error
-	DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
+	// RetireUsageLogPartitions usage_logs 分区退休屏障（spec 2026-10-09 §3.11）：
+	// 只在无未确认资金事件（未记账正收益行 / 未扣费事件）时分区分区 DROP；被挡
+	// 分区经 Blocked 返回（独立持久告警）。替代裸 DropUsageLogPartitionsBefore。
+	RetireUsageLogPartitions(ctx context.Context, cutoff time.Time) (domain.UsageLogRetireResult, error)
 	EnsureErrLogPartitions(ctx context.Context, now, until time.Time) error
 	DropErrLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
 	EnsureUsageStatsPartitions(ctx context.Context, now, until time.Time) error
@@ -96,8 +99,11 @@ type RetentionWorker struct {
 	// DROP 分区数（失败轮保留上轮值——缓存 runOnce 现有返回值，DROP 的 n 即
 	// 真实 DB 答案）；usage_entity_stats 与 usage_stats 共用 StatsRetentionDays，
 	// 独立计数 lastDropEntityStats。
-	lastPatrol          atomic.Int64
-	lastDropLogs        atomic.Int64
+	lastPatrol   atomic.Int64
+	lastDropLogs atomic.Int64
+	// lastBlockedLogs 最近一轮 usage_logs 分区退休屏障挡下的分区数（§3.11 应用
+	// 告警；>0 = 存在未确认资金事件，容量耗尽前须处置）。
+	lastBlockedLogs     atomic.Int64
 	lastDropErrLogs     atomic.Int64
 	lastDropStats       atomic.Int64
 	lastDropEntityStats atomic.Int64
@@ -168,15 +174,27 @@ func (w *RetentionWorker) runOnce() {
 	// 保留上一轮值，LastPatrol 仍推进标记"巡检发生过"）。
 	if w.cfg.LogRetentionDays > 0 {
 		cutoff := now.AddDate(0, 0, -w.cfg.LogRetentionDays)
-		n, err := w.parts.DropUsageLogPartitionsBefore(ctx, cutoff)
+		res, err := w.parts.RetireUsageLogPartitions(ctx, cutoff)
 		if err != nil {
 			if w.log != nil {
-				w.log.Warn("retention drop usage_logs partitions failed", logx.Error(err))
+				w.log.Warn("retention retire usage_logs partitions failed", logx.Error(err))
 			}
 		} else {
-			w.lastDropLogs.Store(int64(n))
-			if n > 0 && w.log != nil {
-				w.log.Info("retention dropped usage_logs partitions", logx.Int("count", n))
+			w.lastDropLogs.Store(int64(res.Dropped))
+			w.lastBlockedLogs.Store(int64(len(res.Blocked)))
+			if res.Dropped > 0 && w.log != nil {
+				w.log.Info("retention retired usage_logs partitions", logx.Int("count", res.Dropped))
+			}
+			// 未确认资金事件不得随 retention 删除（§3.11）：被挡分区进入持久
+			// 告警（分项规模 + 最老债权时刻），运维须扩容磁盘/恢复 credit/thaw
+			// 后重试；绝不能默默清掉债务。
+			for _, b := range res.Blocked {
+				if w.log != nil {
+					w.log.Warn("retention blocked usage_logs partition (unconfirmed liability)",
+						logx.String("partition", b.Name),
+						logx.Int64("uncredited_earn_rows", b.UncreditedEarnRows),
+						logx.Int64("unbilled_rows", b.UnbilledRows))
+				}
 			}
 		}
 	}

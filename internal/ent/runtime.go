@@ -19,6 +19,9 @@ import (
 	"github.com/is7qin/c3api/internal/ent/rule"
 	"github.com/is7qin/c3api/internal/ent/schema"
 	"github.com/is7qin/c3api/internal/ent/setting"
+	"github.com/is7qin/c3api/internal/ent/supplierbalance"
+	"github.com/is7qin/c3api/internal/ent/supplierreconciliation"
+	"github.com/is7qin/c3api/internal/ent/suppliersettlement"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/usageentitystat"
@@ -54,13 +57,13 @@ func init() {
 	// account.DefaultUpstreamCostMultiplierBp holds the default value on creation for the upstream_cost_multiplier_bp field.
 	account.DefaultUpstreamCostMultiplierBp = accountDescUpstreamCostMultiplierBp.Default.(int)
 	// accountDescUpdatedAt is the schema descriptor for updated_at field.
-	accountDescUpdatedAt := accountFields[15].Descriptor()
+	accountDescUpdatedAt := accountFields[16].Descriptor()
 	// account.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	account.DefaultUpdatedAt = accountDescUpdatedAt.Default.(func() time.Time)
 	// account.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	account.UpdateDefaultUpdatedAt = accountDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// accountDescCreatedAt is the schema descriptor for created_at field.
-	accountDescCreatedAt := accountFields[17].Descriptor()
+	accountDescCreatedAt := accountFields[18].Descriptor()
 	// account.DefaultCreatedAt holds the default value on creation for the created_at field.
 	account.DefaultCreatedAt = accountDescCreatedAt.Default.(func() time.Time)
 	balancelogFields := schema.BalanceLog{}.Fields()
@@ -235,6 +238,50 @@ func init() {
 	setting.DefaultUpdatedAt = settingDescUpdatedAt.Default.(func() time.Time)
 	// setting.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	setting.UpdateDefaultUpdatedAt = settingDescUpdatedAt.UpdateDefault.(func() time.Time)
+	supplierbalanceFields := schema.SupplierBalance{}.Fields()
+	_ = supplierbalanceFields
+	// supplierbalanceDescAvailable is the schema descriptor for available field.
+	supplierbalanceDescAvailable := supplierbalanceFields[2].Descriptor()
+	// supplierbalance.DefaultAvailable holds the default value on creation for the available field.
+	supplierbalance.DefaultAvailable = supplierbalanceDescAvailable.Default.(int64)
+	// supplierbalanceDescLifetimeCredited is the schema descriptor for lifetime_credited field.
+	supplierbalanceDescLifetimeCredited := supplierbalanceFields[3].Descriptor()
+	// supplierbalance.DefaultLifetimeCredited holds the default value on creation for the lifetime_credited field.
+	supplierbalance.DefaultLifetimeCredited = supplierbalanceDescLifetimeCredited.Default.(int64)
+	// supplierbalanceDescLifetimePaid is the schema descriptor for lifetime_paid field.
+	supplierbalanceDescLifetimePaid := supplierbalanceFields[4].Descriptor()
+	// supplierbalance.DefaultLifetimePaid holds the default value on creation for the lifetime_paid field.
+	supplierbalance.DefaultLifetimePaid = supplierbalanceDescLifetimePaid.Default.(int64)
+	// supplierbalanceDescCreatedAt is the schema descriptor for created_at field.
+	supplierbalanceDescCreatedAt := supplierbalanceFields[7].Descriptor()
+	// supplierbalance.DefaultCreatedAt holds the default value on creation for the created_at field.
+	supplierbalance.DefaultCreatedAt = supplierbalanceDescCreatedAt.Default.(func() time.Time)
+	// supplierbalanceDescUpdatedAt is the schema descriptor for updated_at field.
+	supplierbalanceDescUpdatedAt := supplierbalanceFields[8].Descriptor()
+	// supplierbalance.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	supplierbalance.DefaultUpdatedAt = supplierbalanceDescUpdatedAt.Default.(func() time.Time)
+	// supplierbalance.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	supplierbalance.UpdateDefaultUpdatedAt = supplierbalanceDescUpdatedAt.UpdateDefault.(func() time.Time)
+	supplierreconciliationFields := schema.SupplierReconciliation{}.Fields()
+	_ = supplierreconciliationFields
+	// supplierreconciliationDescGrossCost is the schema descriptor for gross_cost field.
+	supplierreconciliationDescGrossCost := supplierreconciliationFields[3].Descriptor()
+	// supplierreconciliation.DefaultGrossCost holds the default value on creation for the gross_cost field.
+	supplierreconciliation.DefaultGrossCost = supplierreconciliationDescGrossCost.Default.(int64)
+	// supplierreconciliationDescEarned is the schema descriptor for earned field.
+	supplierreconciliationDescEarned := supplierreconciliationFields[4].Descriptor()
+	// supplierreconciliation.DefaultEarned holds the default value on creation for the earned field.
+	supplierreconciliation.DefaultEarned = supplierreconciliationDescEarned.Default.(int64)
+	// supplierreconciliationDescRowCount is the schema descriptor for row_count field.
+	supplierreconciliationDescRowCount := supplierreconciliationFields[5].Descriptor()
+	// supplierreconciliation.DefaultRowCount holds the default value on creation for the row_count field.
+	supplierreconciliation.DefaultRowCount = supplierreconciliationDescRowCount.Default.(int64)
+	suppliersettlementFields := schema.SupplierSettlement{}.Fields()
+	_ = suppliersettlementFields
+	// suppliersettlementDescRevision is the schema descriptor for revision field.
+	suppliersettlementDescRevision := suppliersettlementFields[7].Descriptor()
+	// suppliersettlement.DefaultRevision holds the default value on creation for the revision field.
+	suppliersettlement.DefaultRevision = suppliersettlementDescRevision.Default.(int64)
 	tempbalanceFields := schema.TempBalance{}.Fields()
 	_ = tempbalanceFields
 	// tempbalanceDescCreatedAt is the schema descriptor for created_at field.
@@ -379,8 +426,16 @@ func init() {
 	usagelogDescBilled := usagelogFields[30].Descriptor()
 	// usagelog.DefaultBilled holds the default value on creation for the billed field.
 	usagelog.DefaultBilled = usagelogDescBilled.Default.(bool)
+	// usagelogDescSupplierEarnMillis is the schema descriptor for supplier_earn_millis field.
+	usagelogDescSupplierEarnMillis := usagelogFields[32].Descriptor()
+	// usagelog.DefaultSupplierEarnMillis holds the default value on creation for the supplier_earn_millis field.
+	usagelog.DefaultSupplierEarnMillis = usagelogDescSupplierEarnMillis.Default.(int64)
+	// usagelogDescSupplierCredited is the schema descriptor for supplier_credited field.
+	usagelogDescSupplierCredited := usagelogFields[33].Descriptor()
+	// usagelog.DefaultSupplierCredited holds the default value on creation for the supplier_credited field.
+	usagelog.DefaultSupplierCredited = usagelogDescSupplierCredited.Default.(bool)
 	// usagelogDescCreatedAt is the schema descriptor for created_at field.
-	usagelogDescCreatedAt := usagelogFields[31].Descriptor()
+	usagelogDescCreatedAt := usagelogFields[34].Descriptor()
 	// usagelog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	usagelog.DefaultCreatedAt = usagelogDescCreatedAt.Default.(func() time.Time)
 	usagestatFields := schema.UsageStat{}.Fields()

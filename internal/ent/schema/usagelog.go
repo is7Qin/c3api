@@ -88,6 +88,15 @@ func (UsageLog) Fields() []ent.Field {
 		// 计费游标 = 部分索引 (id) WHERE NOT billed——ent 无部分索引表达力，
 		// 仅存于 repository/partition.go usageLogIndexDDLs（双轨声明单向）。
 		field.Bool("billed").Default(false),
+		// 供应商收益快照（spec 2026-10-09 §3.3）：三列——归属 uid 快照（请求
+		// 时点）、收益额快照（毫分）、记账游标（出生定态）。**无 supplier_share_bp**
+		// （分成率只在请求时算 earn，不参与此后消费；§2.3 显式接受审计损失）。
+		// 两个部分索引（消费索引 (id)、报表索引 (supplier_user_id, created_at)）
+		// 在 ent 无表达力，仅存于 repository/partition.go usageLogIndexDDLs（双轨
+		// 声明单向，谓词手写断言）。列集由 TestUsageLogColumnDefsMatchCreateDDL 锚定。
+		field.Int64("supplier_user_id").Optional().Nillable(),
+		field.Int64("supplier_earn_millis").Default(0),
+		field.Bool("supplier_credited").Default(false),
 		field.Time("created_at").Default(time.Now),
 	}
 }

@@ -291,6 +291,33 @@ func (_u *AccountUpdate) ClearCacheDomain() *AccountUpdate {
 	return _u
 }
 
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (_u *AccountUpdate) SetSupplierUserID(v int64) *AccountUpdate {
+	_u.mutation.ResetSupplierUserID()
+	_u.mutation.SetSupplierUserID(v)
+	return _u
+}
+
+// SetNillableSupplierUserID sets the "supplier_user_id" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableSupplierUserID(v *int64) *AccountUpdate {
+	if v != nil {
+		_u.SetSupplierUserID(*v)
+	}
+	return _u
+}
+
+// AddSupplierUserID adds value to the "supplier_user_id" field.
+func (_u *AccountUpdate) AddSupplierUserID(v int64) *AccountUpdate {
+	_u.mutation.AddSupplierUserID(v)
+	return _u
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (_u *AccountUpdate) ClearSupplierUserID() *AccountUpdate {
+	_u.mutation.ClearSupplierUserID()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *AccountUpdate) SetUpdatedAt(v time.Time) *AccountUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -543,6 +570,15 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.CacheDomainCleared() {
 		_spec.ClearField(account.FieldCacheDomain, field.TypeString)
+	}
+	if value, ok := _u.mutation.SupplierUserID(); ok {
+		_spec.SetField(account.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSupplierUserID(); ok {
+		_spec.AddField(account.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if _u.mutation.SupplierUserIDCleared() {
+		_spec.ClearField(account.FieldSupplierUserID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)
@@ -955,6 +991,33 @@ func (_u *AccountUpdateOne) ClearCacheDomain() *AccountUpdateOne {
 	return _u
 }
 
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (_u *AccountUpdateOne) SetSupplierUserID(v int64) *AccountUpdateOne {
+	_u.mutation.ResetSupplierUserID()
+	_u.mutation.SetSupplierUserID(v)
+	return _u
+}
+
+// SetNillableSupplierUserID sets the "supplier_user_id" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableSupplierUserID(v *int64) *AccountUpdateOne {
+	if v != nil {
+		_u.SetSupplierUserID(*v)
+	}
+	return _u
+}
+
+// AddSupplierUserID adds value to the "supplier_user_id" field.
+func (_u *AccountUpdateOne) AddSupplierUserID(v int64) *AccountUpdateOne {
+	_u.mutation.AddSupplierUserID(v)
+	return _u
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (_u *AccountUpdateOne) ClearSupplierUserID() *AccountUpdateOne {
+	_u.mutation.ClearSupplierUserID()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *AccountUpdateOne) SetUpdatedAt(v time.Time) *AccountUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -1237,6 +1300,15 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if _u.mutation.CacheDomainCleared() {
 		_spec.ClearField(account.FieldCacheDomain, field.TypeString)
+	}
+	if value, ok := _u.mutation.SupplierUserID(); ok {
+		_spec.SetField(account.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSupplierUserID(); ok {
+		_spec.AddField(account.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if _u.mutation.SupplierUserIDCleared() {
+		_spec.ClearField(account.FieldSupplierUserID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)

@@ -6,7 +6,7 @@
 
 // Package e2e 多实例智能路由端到端测试（charter）：两网关进程共享
 // PG + Redis（distinct 端口，same JWT secret + admin token）+ 双 fakeupstream
-//（双 failure domain）+ 真实 outage 演练（docker stop/start）。
+// （双 failure domain）+ 真实 outage 演练（docker stop/start）。
 //
 // 运行（前置：PG 127.0.0.1:15432，Redis 127.0.0.1:16379，docker CLI 可用；
 // 测试以 postgres 维护库自建 c3api_routing_multi_e2e 库）：
@@ -134,7 +134,7 @@ func (c *rmCluster) rmKillHard(cmd *exec.Cmd) {
 }
 
 // rmBoot 新鲜库 + 空 Redis + 双 fakeupstream + 实例 A；B 由场景按需后起
-//（暖启动场景要求 B 在质量数据存在后才 boot）。
+// （暖启动场景要求 B 在质量数据存在后才 boot）。
 func rmBoot(t *testing.T) *rmCluster {
 	t.Helper()
 	for _, a := range []string{rmAddrA, rmAddrB, rmUp1, rmUp2} {

@@ -426,6 +426,48 @@ func (_c *UsageLogCreate) SetNillableBilled(v *bool) *UsageLogCreate {
 	return _c
 }
 
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (_c *UsageLogCreate) SetSupplierUserID(v int64) *UsageLogCreate {
+	_c.mutation.SetSupplierUserID(v)
+	return _c
+}
+
+// SetNillableSupplierUserID sets the "supplier_user_id" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableSupplierUserID(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetSupplierUserID(*v)
+	}
+	return _c
+}
+
+// SetSupplierEarnMillis sets the "supplier_earn_millis" field.
+func (_c *UsageLogCreate) SetSupplierEarnMillis(v int64) *UsageLogCreate {
+	_c.mutation.SetSupplierEarnMillis(v)
+	return _c
+}
+
+// SetNillableSupplierEarnMillis sets the "supplier_earn_millis" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableSupplierEarnMillis(v *int64) *UsageLogCreate {
+	if v != nil {
+		_c.SetSupplierEarnMillis(*v)
+	}
+	return _c
+}
+
+// SetSupplierCredited sets the "supplier_credited" field.
+func (_c *UsageLogCreate) SetSupplierCredited(v bool) *UsageLogCreate {
+	_c.mutation.SetSupplierCredited(v)
+	return _c
+}
+
+// SetNillableSupplierCredited sets the "supplier_credited" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableSupplierCredited(v *bool) *UsageLogCreate {
+	if v != nil {
+		_c.SetSupplierCredited(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *UsageLogCreate) SetCreatedAt(v time.Time) *UsageLogCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -537,6 +579,14 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultBilled
 		_c.mutation.SetBilled(v)
 	}
+	if _, ok := _c.mutation.SupplierEarnMillis(); !ok {
+		v := usagelog.DefaultSupplierEarnMillis
+		_c.mutation.SetSupplierEarnMillis(v)
+	}
+	if _, ok := _c.mutation.SupplierCredited(); !ok {
+		v := usagelog.DefaultSupplierCredited
+		_c.mutation.SetSupplierCredited(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := usagelog.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -597,6 +647,12 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.Billed(); !ok {
 		return &ValidationError{Name: "billed", err: errors.New(`ent: missing required field "UsageLog.billed"`)}
+	}
+	if _, ok := _c.mutation.SupplierEarnMillis(); !ok {
+		return &ValidationError{Name: "supplier_earn_millis", err: errors.New(`ent: missing required field "UsageLog.supplier_earn_millis"`)}
+	}
+	if _, ok := _c.mutation.SupplierCredited(); !ok {
+		return &ValidationError{Name: "supplier_credited", err: errors.New(`ent: missing required field "UsageLog.supplier_credited"`)}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "UsageLog.created_at"`)}
@@ -753,6 +809,18 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Billed(); ok {
 		_spec.SetField(usagelog.FieldBilled, field.TypeBool, value)
 		_node.Billed = value
+	}
+	if value, ok := _c.mutation.SupplierUserID(); ok {
+		_spec.SetField(usagelog.FieldSupplierUserID, field.TypeInt64, value)
+		_node.SupplierUserID = &value
+	}
+	if value, ok := _c.mutation.SupplierEarnMillis(); ok {
+		_spec.SetField(usagelog.FieldSupplierEarnMillis, field.TypeInt64, value)
+		_node.SupplierEarnMillis = value
+	}
+	if value, ok := _c.mutation.SupplierCredited(); ok {
+		_spec.SetField(usagelog.FieldSupplierCredited, field.TypeBool, value)
+		_node.SupplierCredited = value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
@@ -1371,6 +1439,60 @@ func (u *UsageLogUpsert) SetBilled(v bool) *UsageLogUpsert {
 // UpdateBilled sets the "billed" field to the value that was provided on create.
 func (u *UsageLogUpsert) UpdateBilled() *UsageLogUpsert {
 	u.SetExcluded(usagelog.FieldBilled)
+	return u
+}
+
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (u *UsageLogUpsert) SetSupplierUserID(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldSupplierUserID, v)
+	return u
+}
+
+// UpdateSupplierUserID sets the "supplier_user_id" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateSupplierUserID() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldSupplierUserID)
+	return u
+}
+
+// AddSupplierUserID adds v to the "supplier_user_id" field.
+func (u *UsageLogUpsert) AddSupplierUserID(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldSupplierUserID, v)
+	return u
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (u *UsageLogUpsert) ClearSupplierUserID() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldSupplierUserID)
+	return u
+}
+
+// SetSupplierEarnMillis sets the "supplier_earn_millis" field.
+func (u *UsageLogUpsert) SetSupplierEarnMillis(v int64) *UsageLogUpsert {
+	u.Set(usagelog.FieldSupplierEarnMillis, v)
+	return u
+}
+
+// UpdateSupplierEarnMillis sets the "supplier_earn_millis" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateSupplierEarnMillis() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldSupplierEarnMillis)
+	return u
+}
+
+// AddSupplierEarnMillis adds v to the "supplier_earn_millis" field.
+func (u *UsageLogUpsert) AddSupplierEarnMillis(v int64) *UsageLogUpsert {
+	u.Add(usagelog.FieldSupplierEarnMillis, v)
+	return u
+}
+
+// SetSupplierCredited sets the "supplier_credited" field.
+func (u *UsageLogUpsert) SetSupplierCredited(v bool) *UsageLogUpsert {
+	u.Set(usagelog.FieldSupplierCredited, v)
+	return u
+}
+
+// UpdateSupplierCredited sets the "supplier_credited" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateSupplierCredited() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldSupplierCredited)
 	return u
 }
 
@@ -2089,6 +2211,69 @@ func (u *UsageLogUpsertOne) SetBilled(v bool) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateBilled() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateBilled()
+	})
+}
+
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (u *UsageLogUpsertOne) SetSupplierUserID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSupplierUserID(v)
+	})
+}
+
+// AddSupplierUserID adds v to the "supplier_user_id" field.
+func (u *UsageLogUpsertOne) AddSupplierUserID(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddSupplierUserID(v)
+	})
+}
+
+// UpdateSupplierUserID sets the "supplier_user_id" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateSupplierUserID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSupplierUserID()
+	})
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (u *UsageLogUpsertOne) ClearSupplierUserID() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearSupplierUserID()
+	})
+}
+
+// SetSupplierEarnMillis sets the "supplier_earn_millis" field.
+func (u *UsageLogUpsertOne) SetSupplierEarnMillis(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSupplierEarnMillis(v)
+	})
+}
+
+// AddSupplierEarnMillis adds v to the "supplier_earn_millis" field.
+func (u *UsageLogUpsertOne) AddSupplierEarnMillis(v int64) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddSupplierEarnMillis(v)
+	})
+}
+
+// UpdateSupplierEarnMillis sets the "supplier_earn_millis" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateSupplierEarnMillis() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSupplierEarnMillis()
+	})
+}
+
+// SetSupplierCredited sets the "supplier_credited" field.
+func (u *UsageLogUpsertOne) SetSupplierCredited(v bool) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSupplierCredited(v)
+	})
+}
+
+// UpdateSupplierCredited sets the "supplier_credited" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateSupplierCredited() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSupplierCredited()
 	})
 }
 
@@ -2975,6 +3160,69 @@ func (u *UsageLogUpsertBulk) SetBilled(v bool) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateBilled() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateBilled()
+	})
+}
+
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (u *UsageLogUpsertBulk) SetSupplierUserID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSupplierUserID(v)
+	})
+}
+
+// AddSupplierUserID adds v to the "supplier_user_id" field.
+func (u *UsageLogUpsertBulk) AddSupplierUserID(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddSupplierUserID(v)
+	})
+}
+
+// UpdateSupplierUserID sets the "supplier_user_id" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateSupplierUserID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSupplierUserID()
+	})
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (u *UsageLogUpsertBulk) ClearSupplierUserID() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearSupplierUserID()
+	})
+}
+
+// SetSupplierEarnMillis sets the "supplier_earn_millis" field.
+func (u *UsageLogUpsertBulk) SetSupplierEarnMillis(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSupplierEarnMillis(v)
+	})
+}
+
+// AddSupplierEarnMillis adds v to the "supplier_earn_millis" field.
+func (u *UsageLogUpsertBulk) AddSupplierEarnMillis(v int64) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.AddSupplierEarnMillis(v)
+	})
+}
+
+// UpdateSupplierEarnMillis sets the "supplier_earn_millis" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateSupplierEarnMillis() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSupplierEarnMillis()
+	})
+}
+
+// SetSupplierCredited sets the "supplier_credited" field.
+func (u *UsageLogUpsertBulk) SetSupplierCredited(v bool) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSupplierCredited(v)
+	})
+}
+
+// UpdateSupplierCredited sets the "supplier_credited" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateSupplierCredited() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSupplierCredited()
 	})
 }
 

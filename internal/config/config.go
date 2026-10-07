@@ -34,6 +34,7 @@ type Config struct {
 	Usage     UsageConfig     `koanf:"usage"`
 	Billing   BillingConfig   `koanf:"billing"`
 	Routing   RoutingConfig   `koanf:"routing"`
+	Supplier  SupplierConfig  `koanf:"supplier"`
 }
 
 // RoutingConfig 路由观测的**运维/存储**参数。策略参数（分层阈值、探索比例、
@@ -182,6 +183,17 @@ func defaults() *Config {
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
 		Billing:   BillingConfig{Enabled: true, FlushInterval: 250 * time.Millisecond, BalanceRefreshInterval: 10 * time.Second},
 		Routing:   RoutingConfig{ObservationRetentionDays: 7},
+		Supplier: SupplierConfig{
+			Enabled:              false,
+			FreezeEnabled:        true,
+			FreezeHours:          24,
+			ThawGranularity:      2 * time.Hour,
+			ShareBpDefault:       1000,
+			PayoutMaxBacklogRows: 10000,
+			PayoutMaxBacklogAge:  10 * time.Minute,
+			PayoutMaxObserveAge:  3 * time.Minute,
+			RiskReviewMaxAge:     24 * time.Hour,
+		},
 	}
 }
 
@@ -356,6 +368,10 @@ func validate(c *Config) error {
 		}
 	}
 	if _, err := EffectiveMaxInflight(c.Proxy.MaxInflight); err != nil {
+		return err
+	}
+	// 供应商收益（spec 2026-10-09 §6.4）：专用校验函数（非既有两个表）。
+	if err := validateSupplier(&c.Supplier); err != nil {
 		return err
 	}
 	return nil

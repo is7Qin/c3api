@@ -177,6 +177,54 @@ func (f SettingFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, err
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SettingMutation", m)
 }
 
+// The SupplierBalanceFunc type is an adapter to allow the use of ordinary
+// function as SupplierBalance mutator.
+type SupplierBalanceFunc func(context.Context, *ent.SupplierBalanceMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SupplierBalanceFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SupplierBalanceMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SupplierBalanceMutation", m)
+}
+
+// The SupplierFrozenChunkFunc type is an adapter to allow the use of ordinary
+// function as SupplierFrozenChunk mutator.
+type SupplierFrozenChunkFunc func(context.Context, *ent.SupplierFrozenChunkMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SupplierFrozenChunkFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SupplierFrozenChunkMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SupplierFrozenChunkMutation", m)
+}
+
+// The SupplierReconciliationFunc type is an adapter to allow the use of ordinary
+// function as SupplierReconciliation mutator.
+type SupplierReconciliationFunc func(context.Context, *ent.SupplierReconciliationMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SupplierReconciliationFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SupplierReconciliationMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SupplierReconciliationMutation", m)
+}
+
+// The SupplierSettlementFunc type is an adapter to allow the use of ordinary
+// function as SupplierSettlement mutator.
+type SupplierSettlementFunc func(context.Context, *ent.SupplierSettlementMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f SupplierSettlementFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.SupplierSettlementMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.SupplierSettlementMutation", m)
+}
+
 // The TempBalanceFunc type is an adapter to allow the use of ordinary
 // function as TempBalance mutator.
 type TempBalanceFunc func(context.Context, *ent.TempBalanceMutation) (ent.Value, error)

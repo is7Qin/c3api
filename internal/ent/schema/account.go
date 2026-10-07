@@ -38,6 +38,11 @@ func (Account) Fields() []ent.Field {
 		field.Int64("identity_revision").Default(1),
 		field.Int("upstream_cost_multiplier_bp").Default(10000),
 		field.String("cache_domain").Optional().Nillable(),
+		// supplier_user_id 账号归属（spec 2026-10-09 §3.2）：NULL = 平台自有。
+		// Identity = false：归属变更是账务属性，不推进 identity_revision（K）。
+		// 无迁移逻辑——ent auto-migrate 自动加列（accounts 非分区表），旧行
+		// NULL = 平台自有。
+		field.Int64("supplier_user_id").Optional().Nillable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		field.Time("deleted_at").Optional().Nillable(), // 软删除时间戳（nil = 存活）；null 语义 = 未删除
 		field.Time("created_at").Default(time.Now),

@@ -74,6 +74,12 @@ const (
 	FieldOverdraft = "overdraft"
 	// FieldBilled holds the string denoting the billed field in the database.
 	FieldBilled = "billed"
+	// FieldSupplierUserID holds the string denoting the supplier_user_id field in the database.
+	FieldSupplierUserID = "supplier_user_id"
+	// FieldSupplierEarnMillis holds the string denoting the supplier_earn_millis field in the database.
+	FieldSupplierEarnMillis = "supplier_earn_millis"
+	// FieldSupplierCredited holds the string denoting the supplier_credited field in the database.
+	FieldSupplierCredited = "supplier_credited"
 	// FieldCreatedAt holds the string denoting the created_at field in the database.
 	FieldCreatedAt = "created_at"
 	// Table holds the table name of the usagelog in the database.
@@ -113,6 +119,9 @@ var Columns = []string{
 	FieldAboveHit,
 	FieldOverdraft,
 	FieldBilled,
+	FieldSupplierUserID,
+	FieldSupplierEarnMillis,
+	FieldSupplierCredited,
 	FieldCreatedAt,
 }
 
@@ -155,6 +164,10 @@ var (
 	DefaultOverdraft bool
 	// DefaultBilled holds the default value on creation for the "billed" field.
 	DefaultBilled bool
+	// DefaultSupplierEarnMillis holds the default value on creation for the "supplier_earn_millis" field.
+	DefaultSupplierEarnMillis int64
+	// DefaultSupplierCredited holds the default value on creation for the "supplier_credited" field.
+	DefaultSupplierCredited bool
 	// DefaultCreatedAt holds the default value on creation for the "created_at" field.
 	DefaultCreatedAt func() time.Time
 )
@@ -342,6 +355,21 @@ func ByOverdraft(opts ...sql.OrderTermOption) OrderOption {
 // ByBilled orders the results by the billed field.
 func ByBilled(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldBilled, opts...).ToFunc()
+}
+
+// BySupplierUserID orders the results by the supplier_user_id field.
+func BySupplierUserID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSupplierUserID, opts...).ToFunc()
+}
+
+// BySupplierEarnMillis orders the results by the supplier_earn_millis field.
+func BySupplierEarnMillis(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSupplierEarnMillis, opts...).ToFunc()
+}
+
+// BySupplierCredited orders the results by the supplier_credited field.
+func BySupplierCredited(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldSupplierCredited, opts...).ToFunc()
 }
 
 // ByCreatedAt orders the results by the created_at field.

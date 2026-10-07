@@ -777,6 +777,13 @@ func (r *Repository) DropUsageLogPartitionsBefore(ctx context.Context, cutoff ti
 	return r.Partitions.DropUsageLogPartitionsBefore(ctx, cutoff)
 }
 
+// RetireUsageLogPartitions usage_logs 分区退休屏障（spec 2026-10-09 §3.11）：
+// 未确认资金事件（未记账正收益行 / 未扣费事件）不随 retention 删除；被挡分区
+// 返回 Blocked 供 retention worker 告警。retention worker 按 LogRetentionDays 调。
+func (r *Repository) RetireUsageLogPartitions(ctx context.Context, cutoff time.Time) (domain.UsageLogRetireResult, error) {
+	return r.Partitions.RetireUsageLogPartitions(ctx, cutoff)
+}
+
 // EnsureErrLogPartitioned err_logs 分区 bootstrap（幂等；main 装配在 ent
 // migrate 之后调用，与 usage_logs 同路线）。
 func (r *Repository) EnsureErrLogPartitioned(ctx context.Context, now time.Time) error {

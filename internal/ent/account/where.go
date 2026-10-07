@@ -125,6 +125,11 @@ func CacheDomain(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldCacheDomain, v))
 }
 
+// SupplierUserID applies equality check predicate on the "supplier_user_id" field. It's identical to SupplierUserIDEQ.
+func SupplierUserID(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSupplierUserID, v))
+}
+
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldUpdatedAt, v))
@@ -858,6 +863,56 @@ func CacheDomainEqualFold(v string) predicate.Account {
 // CacheDomainContainsFold applies the ContainsFold predicate on the "cache_domain" field.
 func CacheDomainContainsFold(v string) predicate.Account {
 	return predicate.Account(sql.FieldContainsFold(FieldCacheDomain, v))
+}
+
+// SupplierUserIDEQ applies the EQ predicate on the "supplier_user_id" field.
+func SupplierUserIDEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDNEQ applies the NEQ predicate on the "supplier_user_id" field.
+func SupplierUserIDNEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDIn applies the In predicate on the "supplier_user_id" field.
+func SupplierUserIDIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldSupplierUserID, vs...))
+}
+
+// SupplierUserIDNotIn applies the NotIn predicate on the "supplier_user_id" field.
+func SupplierUserIDNotIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldSupplierUserID, vs...))
+}
+
+// SupplierUserIDGT applies the GT predicate on the "supplier_user_id" field.
+func SupplierUserIDGT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDGTE applies the GTE predicate on the "supplier_user_id" field.
+func SupplierUserIDGTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDLT applies the LT predicate on the "supplier_user_id" field.
+func SupplierUserIDLT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDLTE applies the LTE predicate on the "supplier_user_id" field.
+func SupplierUserIDLTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDIsNil applies the IsNil predicate on the "supplier_user_id" field.
+func SupplierUserIDIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldSupplierUserID))
+}
+
+// SupplierUserIDNotNil applies the NotNil predicate on the "supplier_user_id" field.
+func SupplierUserIDNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldSupplierUserID))
 }
 
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.

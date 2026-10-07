@@ -29,6 +29,10 @@ import (
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
 	"github.com/is7qin/c3api/internal/ent/setting"
+	"github.com/is7qin/c3api/internal/ent/supplierbalance"
+	"github.com/is7qin/c3api/internal/ent/supplierfrozenchunk"
+	"github.com/is7qin/c3api/internal/ent/supplierreconciliation"
+	"github.com/is7qin/c3api/internal/ent/suppliersettlement"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/templateext"
@@ -71,6 +75,14 @@ type Client struct {
 	Rule *RuleClient
 	// Setting is the client for interacting with the Setting builders.
 	Setting *SettingClient
+	// SupplierBalance is the client for interacting with the SupplierBalance builders.
+	SupplierBalance *SupplierBalanceClient
+	// SupplierFrozenChunk is the client for interacting with the SupplierFrozenChunk builders.
+	SupplierFrozenChunk *SupplierFrozenChunkClient
+	// SupplierReconciliation is the client for interacting with the SupplierReconciliation builders.
+	SupplierReconciliation *SupplierReconciliationClient
+	// SupplierSettlement is the client for interacting with the SupplierSettlement builders.
+	SupplierSettlement *SupplierSettlementClient
 	// TempBalance is the client for interacting with the TempBalance builders.
 	TempBalance *TempBalanceClient
 	// Template is the client for interacting with the Template builders.
@@ -110,6 +122,10 @@ func (c *Client) init() {
 	c.RedemptionUse = NewRedemptionUseClient(c.config)
 	c.Rule = NewRuleClient(c.config)
 	c.Setting = NewSettingClient(c.config)
+	c.SupplierBalance = NewSupplierBalanceClient(c.config)
+	c.SupplierFrozenChunk = NewSupplierFrozenChunkClient(c.config)
+	c.SupplierReconciliation = NewSupplierReconciliationClient(c.config)
+	c.SupplierSettlement = NewSupplierSettlementClient(c.config)
 	c.TempBalance = NewTempBalanceClient(c.config)
 	c.Template = NewTemplateClient(c.config)
 	c.TemplateExt = NewTemplateExtClient(c.config)
@@ -207,29 +223,33 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 	cfg := c.config
 	cfg.driver = tx
 	return &Tx{
-		ctx:             ctx,
-		config:          cfg,
-		Account:         NewAccountClient(cfg),
-		AccountExt:      NewAccountExtClient(cfg),
-		BalanceLog:      NewBalanceLogClient(cfg),
-		EmailTemplate:   NewEmailTemplateClient(cfg),
-		ErrLog:          NewErrLogClient(cfg),
-		Group:           NewGroupClient(cfg),
-		GroupAssignment: NewGroupAssignmentClient(cfg),
-		Key:             NewKeyClient(cfg),
-		PriceEntry:      NewPriceEntryClient(cfg),
-		PriceVariant:    NewPriceVariantClient(cfg),
-		RedemptionCode:  NewRedemptionCodeClient(cfg),
-		RedemptionUse:   NewRedemptionUseClient(cfg),
-		Rule:            NewRuleClient(cfg),
-		Setting:         NewSettingClient(cfg),
-		TempBalance:     NewTempBalanceClient(cfg),
-		Template:        NewTemplateClient(cfg),
-		TemplateExt:     NewTemplateExtClient(cfg),
-		UsageEntityStat: NewUsageEntityStatClient(cfg),
-		UsageLog:        NewUsageLogClient(cfg),
-		UsageStat:       NewUsageStatClient(cfg),
-		User:            NewUserClient(cfg),
+		ctx:                    ctx,
+		config:                 cfg,
+		Account:                NewAccountClient(cfg),
+		AccountExt:             NewAccountExtClient(cfg),
+		BalanceLog:             NewBalanceLogClient(cfg),
+		EmailTemplate:          NewEmailTemplateClient(cfg),
+		ErrLog:                 NewErrLogClient(cfg),
+		Group:                  NewGroupClient(cfg),
+		GroupAssignment:        NewGroupAssignmentClient(cfg),
+		Key:                    NewKeyClient(cfg),
+		PriceEntry:             NewPriceEntryClient(cfg),
+		PriceVariant:           NewPriceVariantClient(cfg),
+		RedemptionCode:         NewRedemptionCodeClient(cfg),
+		RedemptionUse:          NewRedemptionUseClient(cfg),
+		Rule:                   NewRuleClient(cfg),
+		Setting:                NewSettingClient(cfg),
+		SupplierBalance:        NewSupplierBalanceClient(cfg),
+		SupplierFrozenChunk:    NewSupplierFrozenChunkClient(cfg),
+		SupplierReconciliation: NewSupplierReconciliationClient(cfg),
+		SupplierSettlement:     NewSupplierSettlementClient(cfg),
+		TempBalance:            NewTempBalanceClient(cfg),
+		Template:               NewTemplateClient(cfg),
+		TemplateExt:            NewTemplateExtClient(cfg),
+		UsageEntityStat:        NewUsageEntityStatClient(cfg),
+		UsageLog:               NewUsageLogClient(cfg),
+		UsageStat:              NewUsageStatClient(cfg),
+		User:                   NewUserClient(cfg),
 	}, nil
 }
 
@@ -247,29 +267,33 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 	cfg := c.config
 	cfg.driver = &txDriver{tx: tx, drv: c.driver}
 	return &Tx{
-		ctx:             ctx,
-		config:          cfg,
-		Account:         NewAccountClient(cfg),
-		AccountExt:      NewAccountExtClient(cfg),
-		BalanceLog:      NewBalanceLogClient(cfg),
-		EmailTemplate:   NewEmailTemplateClient(cfg),
-		ErrLog:          NewErrLogClient(cfg),
-		Group:           NewGroupClient(cfg),
-		GroupAssignment: NewGroupAssignmentClient(cfg),
-		Key:             NewKeyClient(cfg),
-		PriceEntry:      NewPriceEntryClient(cfg),
-		PriceVariant:    NewPriceVariantClient(cfg),
-		RedemptionCode:  NewRedemptionCodeClient(cfg),
-		RedemptionUse:   NewRedemptionUseClient(cfg),
-		Rule:            NewRuleClient(cfg),
-		Setting:         NewSettingClient(cfg),
-		TempBalance:     NewTempBalanceClient(cfg),
-		Template:        NewTemplateClient(cfg),
-		TemplateExt:     NewTemplateExtClient(cfg),
-		UsageEntityStat: NewUsageEntityStatClient(cfg),
-		UsageLog:        NewUsageLogClient(cfg),
-		UsageStat:       NewUsageStatClient(cfg),
-		User:            NewUserClient(cfg),
+		ctx:                    ctx,
+		config:                 cfg,
+		Account:                NewAccountClient(cfg),
+		AccountExt:             NewAccountExtClient(cfg),
+		BalanceLog:             NewBalanceLogClient(cfg),
+		EmailTemplate:          NewEmailTemplateClient(cfg),
+		ErrLog:                 NewErrLogClient(cfg),
+		Group:                  NewGroupClient(cfg),
+		GroupAssignment:        NewGroupAssignmentClient(cfg),
+		Key:                    NewKeyClient(cfg),
+		PriceEntry:             NewPriceEntryClient(cfg),
+		PriceVariant:           NewPriceVariantClient(cfg),
+		RedemptionCode:         NewRedemptionCodeClient(cfg),
+		RedemptionUse:          NewRedemptionUseClient(cfg),
+		Rule:                   NewRuleClient(cfg),
+		Setting:                NewSettingClient(cfg),
+		SupplierBalance:        NewSupplierBalanceClient(cfg),
+		SupplierFrozenChunk:    NewSupplierFrozenChunkClient(cfg),
+		SupplierReconciliation: NewSupplierReconciliationClient(cfg),
+		SupplierSettlement:     NewSupplierSettlementClient(cfg),
+		TempBalance:            NewTempBalanceClient(cfg),
+		Template:               NewTemplateClient(cfg),
+		TemplateExt:            NewTemplateExtClient(cfg),
+		UsageEntityStat:        NewUsageEntityStatClient(cfg),
+		UsageLog:               NewUsageLogClient(cfg),
+		UsageStat:              NewUsageStatClient(cfg),
+		User:                   NewUserClient(cfg),
 	}, nil
 }
 
@@ -301,8 +325,9 @@ func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
 		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
-		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
-		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance, c.SupplierFrozenChunk,
+		c.SupplierReconciliation, c.SupplierSettlement, c.TempBalance, c.Template,
+		c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Use(hooks...)
 	}
@@ -314,8 +339,9 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
 		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
-		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
-		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance, c.SupplierFrozenChunk,
+		c.SupplierReconciliation, c.SupplierSettlement, c.TempBalance, c.Template,
+		c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -352,6 +378,14 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Rule.mutate(ctx, m)
 	case *SettingMutation:
 		return c.Setting.mutate(ctx, m)
+	case *SupplierBalanceMutation:
+		return c.SupplierBalance.mutate(ctx, m)
+	case *SupplierFrozenChunkMutation:
+		return c.SupplierFrozenChunk.mutate(ctx, m)
+	case *SupplierReconciliationMutation:
+		return c.SupplierReconciliation.mutate(ctx, m)
+	case *SupplierSettlementMutation:
+		return c.SupplierSettlement.mutate(ctx, m)
 	case *TempBalanceMutation:
 		return c.TempBalance.mutate(ctx, m)
 	case *TemplateMutation:
@@ -2441,6 +2475,538 @@ func (c *SettingClient) mutate(ctx context.Context, m *SettingMutation) (Value, 
 	}
 }
 
+// SupplierBalanceClient is a client for the SupplierBalance schema.
+type SupplierBalanceClient struct {
+	config
+}
+
+// NewSupplierBalanceClient returns a client for the SupplierBalance from the given config.
+func NewSupplierBalanceClient(c config) *SupplierBalanceClient {
+	return &SupplierBalanceClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `supplierbalance.Hooks(f(g(h())))`.
+func (c *SupplierBalanceClient) Use(hooks ...Hook) {
+	c.hooks.SupplierBalance = append(c.hooks.SupplierBalance, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `supplierbalance.Intercept(f(g(h())))`.
+func (c *SupplierBalanceClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SupplierBalance = append(c.inters.SupplierBalance, interceptors...)
+}
+
+// Create returns a builder for creating a SupplierBalance entity.
+func (c *SupplierBalanceClient) Create() *SupplierBalanceCreate {
+	mutation := newSupplierBalanceMutation(c.config, OpCreate)
+	return &SupplierBalanceCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SupplierBalance entities.
+func (c *SupplierBalanceClient) CreateBulk(builders ...*SupplierBalanceCreate) *SupplierBalanceCreateBulk {
+	return &SupplierBalanceCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SupplierBalanceClient) MapCreateBulk(slice any, setFunc func(*SupplierBalanceCreate, int)) *SupplierBalanceCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SupplierBalanceCreateBulk{err: fmt.Errorf("calling to SupplierBalanceClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SupplierBalanceCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SupplierBalanceCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SupplierBalance.
+func (c *SupplierBalanceClient) Update() *SupplierBalanceUpdate {
+	mutation := newSupplierBalanceMutation(c.config, OpUpdate)
+	return &SupplierBalanceUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SupplierBalanceClient) UpdateOne(_m *SupplierBalance) *SupplierBalanceUpdateOne {
+	mutation := newSupplierBalanceMutation(c.config, OpUpdateOne, withSupplierBalance(_m))
+	return &SupplierBalanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SupplierBalanceClient) UpdateOneID(id int64) *SupplierBalanceUpdateOne {
+	mutation := newSupplierBalanceMutation(c.config, OpUpdateOne, withSupplierBalanceID(id))
+	return &SupplierBalanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SupplierBalance.
+func (c *SupplierBalanceClient) Delete() *SupplierBalanceDelete {
+	mutation := newSupplierBalanceMutation(c.config, OpDelete)
+	return &SupplierBalanceDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SupplierBalanceClient) DeleteOne(_m *SupplierBalance) *SupplierBalanceDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SupplierBalanceClient) DeleteOneID(id int64) *SupplierBalanceDeleteOne {
+	builder := c.Delete().Where(supplierbalance.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SupplierBalanceDeleteOne{builder}
+}
+
+// Query returns a query builder for SupplierBalance.
+func (c *SupplierBalanceClient) Query() *SupplierBalanceQuery {
+	return &SupplierBalanceQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSupplierBalance},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SupplierBalance entity by its id.
+func (c *SupplierBalanceClient) Get(ctx context.Context, id int64) (*SupplierBalance, error) {
+	return c.Query().Where(supplierbalance.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SupplierBalanceClient) GetX(ctx context.Context, id int64) *SupplierBalance {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SupplierBalanceClient) Hooks() []Hook {
+	return c.hooks.SupplierBalance
+}
+
+// Interceptors returns the client interceptors.
+func (c *SupplierBalanceClient) Interceptors() []Interceptor {
+	return c.inters.SupplierBalance
+}
+
+func (c *SupplierBalanceClient) mutate(ctx context.Context, m *SupplierBalanceMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SupplierBalanceCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SupplierBalanceUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SupplierBalanceUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SupplierBalanceDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SupplierBalance mutation op: %q", m.Op())
+	}
+}
+
+// SupplierFrozenChunkClient is a client for the SupplierFrozenChunk schema.
+type SupplierFrozenChunkClient struct {
+	config
+}
+
+// NewSupplierFrozenChunkClient returns a client for the SupplierFrozenChunk from the given config.
+func NewSupplierFrozenChunkClient(c config) *SupplierFrozenChunkClient {
+	return &SupplierFrozenChunkClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `supplierfrozenchunk.Hooks(f(g(h())))`.
+func (c *SupplierFrozenChunkClient) Use(hooks ...Hook) {
+	c.hooks.SupplierFrozenChunk = append(c.hooks.SupplierFrozenChunk, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `supplierfrozenchunk.Intercept(f(g(h())))`.
+func (c *SupplierFrozenChunkClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SupplierFrozenChunk = append(c.inters.SupplierFrozenChunk, interceptors...)
+}
+
+// Create returns a builder for creating a SupplierFrozenChunk entity.
+func (c *SupplierFrozenChunkClient) Create() *SupplierFrozenChunkCreate {
+	mutation := newSupplierFrozenChunkMutation(c.config, OpCreate)
+	return &SupplierFrozenChunkCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SupplierFrozenChunk entities.
+func (c *SupplierFrozenChunkClient) CreateBulk(builders ...*SupplierFrozenChunkCreate) *SupplierFrozenChunkCreateBulk {
+	return &SupplierFrozenChunkCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SupplierFrozenChunkClient) MapCreateBulk(slice any, setFunc func(*SupplierFrozenChunkCreate, int)) *SupplierFrozenChunkCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SupplierFrozenChunkCreateBulk{err: fmt.Errorf("calling to SupplierFrozenChunkClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SupplierFrozenChunkCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SupplierFrozenChunkCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SupplierFrozenChunk.
+func (c *SupplierFrozenChunkClient) Update() *SupplierFrozenChunkUpdate {
+	mutation := newSupplierFrozenChunkMutation(c.config, OpUpdate)
+	return &SupplierFrozenChunkUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SupplierFrozenChunkClient) UpdateOne(_m *SupplierFrozenChunk) *SupplierFrozenChunkUpdateOne {
+	mutation := newSupplierFrozenChunkMutation(c.config, OpUpdateOne, withSupplierFrozenChunk(_m))
+	return &SupplierFrozenChunkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SupplierFrozenChunkClient) UpdateOneID(id int64) *SupplierFrozenChunkUpdateOne {
+	mutation := newSupplierFrozenChunkMutation(c.config, OpUpdateOne, withSupplierFrozenChunkID(id))
+	return &SupplierFrozenChunkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SupplierFrozenChunk.
+func (c *SupplierFrozenChunkClient) Delete() *SupplierFrozenChunkDelete {
+	mutation := newSupplierFrozenChunkMutation(c.config, OpDelete)
+	return &SupplierFrozenChunkDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SupplierFrozenChunkClient) DeleteOne(_m *SupplierFrozenChunk) *SupplierFrozenChunkDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SupplierFrozenChunkClient) DeleteOneID(id int64) *SupplierFrozenChunkDeleteOne {
+	builder := c.Delete().Where(supplierfrozenchunk.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SupplierFrozenChunkDeleteOne{builder}
+}
+
+// Query returns a query builder for SupplierFrozenChunk.
+func (c *SupplierFrozenChunkClient) Query() *SupplierFrozenChunkQuery {
+	return &SupplierFrozenChunkQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSupplierFrozenChunk},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SupplierFrozenChunk entity by its id.
+func (c *SupplierFrozenChunkClient) Get(ctx context.Context, id int64) (*SupplierFrozenChunk, error) {
+	return c.Query().Where(supplierfrozenchunk.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SupplierFrozenChunkClient) GetX(ctx context.Context, id int64) *SupplierFrozenChunk {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SupplierFrozenChunkClient) Hooks() []Hook {
+	return c.hooks.SupplierFrozenChunk
+}
+
+// Interceptors returns the client interceptors.
+func (c *SupplierFrozenChunkClient) Interceptors() []Interceptor {
+	return c.inters.SupplierFrozenChunk
+}
+
+func (c *SupplierFrozenChunkClient) mutate(ctx context.Context, m *SupplierFrozenChunkMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SupplierFrozenChunkCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SupplierFrozenChunkUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SupplierFrozenChunkUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SupplierFrozenChunkDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SupplierFrozenChunk mutation op: %q", m.Op())
+	}
+}
+
+// SupplierReconciliationClient is a client for the SupplierReconciliation schema.
+type SupplierReconciliationClient struct {
+	config
+}
+
+// NewSupplierReconciliationClient returns a client for the SupplierReconciliation from the given config.
+func NewSupplierReconciliationClient(c config) *SupplierReconciliationClient {
+	return &SupplierReconciliationClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `supplierreconciliation.Hooks(f(g(h())))`.
+func (c *SupplierReconciliationClient) Use(hooks ...Hook) {
+	c.hooks.SupplierReconciliation = append(c.hooks.SupplierReconciliation, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `supplierreconciliation.Intercept(f(g(h())))`.
+func (c *SupplierReconciliationClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SupplierReconciliation = append(c.inters.SupplierReconciliation, interceptors...)
+}
+
+// Create returns a builder for creating a SupplierReconciliation entity.
+func (c *SupplierReconciliationClient) Create() *SupplierReconciliationCreate {
+	mutation := newSupplierReconciliationMutation(c.config, OpCreate)
+	return &SupplierReconciliationCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SupplierReconciliation entities.
+func (c *SupplierReconciliationClient) CreateBulk(builders ...*SupplierReconciliationCreate) *SupplierReconciliationCreateBulk {
+	return &SupplierReconciliationCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SupplierReconciliationClient) MapCreateBulk(slice any, setFunc func(*SupplierReconciliationCreate, int)) *SupplierReconciliationCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SupplierReconciliationCreateBulk{err: fmt.Errorf("calling to SupplierReconciliationClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SupplierReconciliationCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SupplierReconciliationCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SupplierReconciliation.
+func (c *SupplierReconciliationClient) Update() *SupplierReconciliationUpdate {
+	mutation := newSupplierReconciliationMutation(c.config, OpUpdate)
+	return &SupplierReconciliationUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SupplierReconciliationClient) UpdateOne(_m *SupplierReconciliation) *SupplierReconciliationUpdateOne {
+	mutation := newSupplierReconciliationMutation(c.config, OpUpdateOne, withSupplierReconciliation(_m))
+	return &SupplierReconciliationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SupplierReconciliationClient) UpdateOneID(id int64) *SupplierReconciliationUpdateOne {
+	mutation := newSupplierReconciliationMutation(c.config, OpUpdateOne, withSupplierReconciliationID(id))
+	return &SupplierReconciliationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SupplierReconciliation.
+func (c *SupplierReconciliationClient) Delete() *SupplierReconciliationDelete {
+	mutation := newSupplierReconciliationMutation(c.config, OpDelete)
+	return &SupplierReconciliationDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SupplierReconciliationClient) DeleteOne(_m *SupplierReconciliation) *SupplierReconciliationDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SupplierReconciliationClient) DeleteOneID(id int64) *SupplierReconciliationDeleteOne {
+	builder := c.Delete().Where(supplierreconciliation.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SupplierReconciliationDeleteOne{builder}
+}
+
+// Query returns a query builder for SupplierReconciliation.
+func (c *SupplierReconciliationClient) Query() *SupplierReconciliationQuery {
+	return &SupplierReconciliationQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSupplierReconciliation},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SupplierReconciliation entity by its id.
+func (c *SupplierReconciliationClient) Get(ctx context.Context, id int64) (*SupplierReconciliation, error) {
+	return c.Query().Where(supplierreconciliation.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SupplierReconciliationClient) GetX(ctx context.Context, id int64) *SupplierReconciliation {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SupplierReconciliationClient) Hooks() []Hook {
+	return c.hooks.SupplierReconciliation
+}
+
+// Interceptors returns the client interceptors.
+func (c *SupplierReconciliationClient) Interceptors() []Interceptor {
+	return c.inters.SupplierReconciliation
+}
+
+func (c *SupplierReconciliationClient) mutate(ctx context.Context, m *SupplierReconciliationMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SupplierReconciliationCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SupplierReconciliationUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SupplierReconciliationUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SupplierReconciliationDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SupplierReconciliation mutation op: %q", m.Op())
+	}
+}
+
+// SupplierSettlementClient is a client for the SupplierSettlement schema.
+type SupplierSettlementClient struct {
+	config
+}
+
+// NewSupplierSettlementClient returns a client for the SupplierSettlement from the given config.
+func NewSupplierSettlementClient(c config) *SupplierSettlementClient {
+	return &SupplierSettlementClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `suppliersettlement.Hooks(f(g(h())))`.
+func (c *SupplierSettlementClient) Use(hooks ...Hook) {
+	c.hooks.SupplierSettlement = append(c.hooks.SupplierSettlement, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `suppliersettlement.Intercept(f(g(h())))`.
+func (c *SupplierSettlementClient) Intercept(interceptors ...Interceptor) {
+	c.inters.SupplierSettlement = append(c.inters.SupplierSettlement, interceptors...)
+}
+
+// Create returns a builder for creating a SupplierSettlement entity.
+func (c *SupplierSettlementClient) Create() *SupplierSettlementCreate {
+	mutation := newSupplierSettlementMutation(c.config, OpCreate)
+	return &SupplierSettlementCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of SupplierSettlement entities.
+func (c *SupplierSettlementClient) CreateBulk(builders ...*SupplierSettlementCreate) *SupplierSettlementCreateBulk {
+	return &SupplierSettlementCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *SupplierSettlementClient) MapCreateBulk(slice any, setFunc func(*SupplierSettlementCreate, int)) *SupplierSettlementCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &SupplierSettlementCreateBulk{err: fmt.Errorf("calling to SupplierSettlementClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*SupplierSettlementCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &SupplierSettlementCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for SupplierSettlement.
+func (c *SupplierSettlementClient) Update() *SupplierSettlementUpdate {
+	mutation := newSupplierSettlementMutation(c.config, OpUpdate)
+	return &SupplierSettlementUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *SupplierSettlementClient) UpdateOne(_m *SupplierSettlement) *SupplierSettlementUpdateOne {
+	mutation := newSupplierSettlementMutation(c.config, OpUpdateOne, withSupplierSettlement(_m))
+	return &SupplierSettlementUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *SupplierSettlementClient) UpdateOneID(id int64) *SupplierSettlementUpdateOne {
+	mutation := newSupplierSettlementMutation(c.config, OpUpdateOne, withSupplierSettlementID(id))
+	return &SupplierSettlementUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for SupplierSettlement.
+func (c *SupplierSettlementClient) Delete() *SupplierSettlementDelete {
+	mutation := newSupplierSettlementMutation(c.config, OpDelete)
+	return &SupplierSettlementDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *SupplierSettlementClient) DeleteOne(_m *SupplierSettlement) *SupplierSettlementDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *SupplierSettlementClient) DeleteOneID(id int64) *SupplierSettlementDeleteOne {
+	builder := c.Delete().Where(suppliersettlement.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &SupplierSettlementDeleteOne{builder}
+}
+
+// Query returns a query builder for SupplierSettlement.
+func (c *SupplierSettlementClient) Query() *SupplierSettlementQuery {
+	return &SupplierSettlementQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeSupplierSettlement},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a SupplierSettlement entity by its id.
+func (c *SupplierSettlementClient) Get(ctx context.Context, id int64) (*SupplierSettlement, error) {
+	return c.Query().Where(suppliersettlement.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *SupplierSettlementClient) GetX(ctx context.Context, id int64) *SupplierSettlement {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *SupplierSettlementClient) Hooks() []Hook {
+	return c.hooks.SupplierSettlement
+}
+
+// Interceptors returns the client interceptors.
+func (c *SupplierSettlementClient) Interceptors() []Interceptor {
+	return c.inters.SupplierSettlement
+}
+
+func (c *SupplierSettlementClient) mutate(ctx context.Context, m *SupplierSettlementMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&SupplierSettlementCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&SupplierSettlementUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&SupplierSettlementUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&SupplierSettlementDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown SupplierSettlement mutation op: %q", m.Op())
+	}
+}
+
 // TempBalanceClient is a client for the TempBalance schema.
 type TempBalanceClient struct {
 	config
@@ -3489,13 +4055,15 @@ type (
 	hooks struct {
 		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
 		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
-		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
-		User []ent.Hook
+		SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
+		SupplierSettlement, TempBalance, Template, TemplateExt, UsageEntityStat,
+		UsageLog, UsageStat, User []ent.Hook
 	}
 	inters struct {
 		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
 		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
-		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
-		User []ent.Interceptor
+		SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
+		SupplierSettlement, TempBalance, Template, TemplateExt, UsageEntityStat,
+		UsageLog, UsageStat, User []ent.Interceptor
 	}
 )

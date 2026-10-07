@@ -40,6 +40,14 @@ type Tx struct {
 	Rule *RuleClient
 	// Setting is the client for interacting with the Setting builders.
 	Setting *SettingClient
+	// SupplierBalance is the client for interacting with the SupplierBalance builders.
+	SupplierBalance *SupplierBalanceClient
+	// SupplierFrozenChunk is the client for interacting with the SupplierFrozenChunk builders.
+	SupplierFrozenChunk *SupplierFrozenChunkClient
+	// SupplierReconciliation is the client for interacting with the SupplierReconciliation builders.
+	SupplierReconciliation *SupplierReconciliationClient
+	// SupplierSettlement is the client for interacting with the SupplierSettlement builders.
+	SupplierSettlement *SupplierSettlementClient
 	// TempBalance is the client for interacting with the TempBalance builders.
 	TempBalance *TempBalanceClient
 	// Template is the client for interacting with the Template builders.
@@ -199,6 +207,10 @@ func (tx *Tx) init() {
 	tx.RedemptionUse = NewRedemptionUseClient(tx.config)
 	tx.Rule = NewRuleClient(tx.config)
 	tx.Setting = NewSettingClient(tx.config)
+	tx.SupplierBalance = NewSupplierBalanceClient(tx.config)
+	tx.SupplierFrozenChunk = NewSupplierFrozenChunkClient(tx.config)
+	tx.SupplierReconciliation = NewSupplierReconciliationClient(tx.config)
+	tx.SupplierSettlement = NewSupplierSettlementClient(tx.config)
 	tx.TempBalance = NewTempBalanceClient(tx.config)
 	tx.Template = NewTemplateClient(tx.config)
 	tx.TemplateExt = NewTemplateExtClient(tx.config)

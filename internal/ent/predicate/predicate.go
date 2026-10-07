@@ -48,6 +48,18 @@ type Rule func(*sql.Selector)
 // Setting is the predicate function for setting builders.
 type Setting func(*sql.Selector)
 
+// SupplierBalance is the predicate function for supplierbalance builders.
+type SupplierBalance func(*sql.Selector)
+
+// SupplierFrozenChunk is the predicate function for supplierfrozenchunk builders.
+type SupplierFrozenChunk func(*sql.Selector)
+
+// SupplierReconciliation is the predicate function for supplierreconciliation builders.
+type SupplierReconciliation func(*sql.Selector)
+
+// SupplierSettlement is the predicate function for suppliersettlement builders.
+type SupplierSettlement func(*sql.Selector)
+
 // TempBalance is the predicate function for tempbalance builders.
 type TempBalance func(*sql.Selector)
 

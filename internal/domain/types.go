@@ -57,18 +57,41 @@ const (
 	StatusDisabled  AccountStatus = "disabled"
 )
 
-// Role 用户角色（两级：platform_admin | user）。
+// Role 用户角色（三级：platform_admin | supplier | user）。spec 2026-10-09：
+// supplier 是消费能力的超集（/v1/* 鉴权走 key 快照，与 role 无关）；供应商面
+// 可达集 = {supplier, platform_admin}（见 SupplierSurfaceRoles）。
 type Role string
 
 const (
 	RolePlatformAdmin Role = "platform_admin"
+	RoleSupplier      Role = "supplier"
 	RoleUser          Role = "user"
 )
 
 func (r Role) Valid() bool {
 	switch r {
-	case RolePlatformAdmin, RoleUser:
+	case RolePlatformAdmin, RoleSupplier, RoleUser:
 		return true
+	}
+	return false
+}
+
+// SupplierSurfaceRoles 供应商面可达角色集（**单一事实源**，spec 2026-10-09
+// §2.6）：门控（RequireRole）与账号归属值域校验（§2.5）共用同一导出值/函数——
+// **不得**在任一处重抄角色名（否则「管理員也可以是供應商」会造成静默囚笼，
+// 且新增可达角色时会漂移）。含 platform_admin：管理员要能进入供应商面查看/
+// 管理**自己名下**的账号与收益（作用域仍以 JWT 自身 user_id 为准，不互放大）。
+func SupplierSurfaceRoles() []Role {
+	return []Role{RoleSupplier, RolePlatformAdmin}
+}
+
+// CanAccessSupplierSurface 报告角色是否可访问供应商面（= 可达集成员）。
+// 门控与归属值域校验的能力谓词。
+func CanAccessSupplierSurface(r Role) bool {
+	for _, rr := range SupplierSurfaceRoles() {
+		if r == rr {
+			return true
+		}
 	}
 	return false
 }
@@ -820,8 +843,17 @@ type UsageLog struct {
 	// 消费者扣减；true=扣费事务已完成（或出生吸收态——计费关闭/匿名行）。
 	// 出生标记由 proxy.routeLog 按 NOT BillingCapture OR UserID<=0 盖章；
 	// 翻转为 true 只发生在对账事务内（与 FEFO 扣减同事务原子）。
-	Billed    bool
-	CreatedAt time.Time
+	Billed bool
+	// 供应商收益快照（spec 2026-10-09 §3.3，三列，**无 share_bp**）：
+	//   - SupplierUserID：归属 uid 快照（请求选中账号时点捕获），NULL = 平台自有；
+	//   - SupplierEarnMillis：收益额快照（毫分），floor(cost × share_bp / 10000)；
+	//   - SupplierCredited：记账游标出生定态——earn<=0 出生 true（不入消费游标），
+	//     否则 false（唯一消费者在自己事务内翻 true）。
+	// 归属随选中固定（"归属随选中固定"，非收尾重查）——转属/删除不改在途请求归属。
+	SupplierUserID     int64
+	SupplierEarnMillis int64
+	SupplierCredited   bool
+	CreatedAt          time.Time
 }
 
 // LedgerRow 计费游标消费行（usage_logs 未扣子集的瘦身投影；spec-f2-ledger-cursor

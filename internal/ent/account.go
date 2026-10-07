@@ -46,6 +46,8 @@ type Account struct {
 	UpstreamCostMultiplierBp int `json:"upstream_cost_multiplier_bp,omitempty"`
 	// CacheDomain holds the value of the "cache_domain" field.
 	CacheDomain *string `json:"cache_domain,omitempty"`
+	// SupplierUserID holds the value of the "supplier_user_id" field.
+	SupplierUserID *int64 `json:"supplier_user_id,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.
@@ -107,7 +109,7 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case account.FieldEnabled:
 			values[i] = new(sql.NullBool)
-		case account.FieldID, account.FieldTemplateID, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldIdentityRevision, account.FieldUpstreamCostMultiplierBp:
+		case account.FieldID, account.FieldTemplateID, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldIdentityRevision, account.FieldUpstreamCostMultiplierBp, account.FieldSupplierUserID:
 			values[i] = new(sql.NullInt64)
 		case account.FieldName, account.FieldBaseURL, account.FieldUpstreamKey, account.FieldLastError, account.FieldFailureSource, account.FieldCacheDomain:
 			values[i] = new(sql.NullString)
@@ -223,6 +225,13 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.CacheDomain = new(string)
 				*_m.CacheDomain = value.String
+			}
+		case account.FieldSupplierUserID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field supplier_user_id", values[i])
+			} else if value.Valid {
+				_m.SupplierUserID = new(int64)
+				*_m.SupplierUserID = value.Int64
 			}
 		case account.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -346,6 +355,11 @@ func (_m *Account) String() string {
 	if v := _m.CacheDomain; v != nil {
 		builder.WriteString("cache_domain=")
 		builder.WriteString(*v)
+	}
+	builder.WriteString(", ")
+	if v := _m.SupplierUserID; v != nil {
+		builder.WriteString("supplier_user_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")

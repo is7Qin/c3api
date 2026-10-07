@@ -197,6 +197,20 @@ func (_c *AccountCreate) SetNillableCacheDomain(v *string) *AccountCreate {
 	return _c
 }
 
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (_c *AccountCreate) SetSupplierUserID(v int64) *AccountCreate {
+	_c.mutation.SetSupplierUserID(v)
+	return _c
+}
+
+// SetNillableSupplierUserID sets the "supplier_user_id" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableSupplierUserID(v *int64) *AccountCreate {
+	if v != nil {
+		_c.SetSupplierUserID(*v)
+	}
+	return _c
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_c *AccountCreate) SetUpdatedAt(v time.Time) *AccountCreate {
 	_c.mutation.SetUpdatedAt(v)
@@ -464,6 +478,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.CacheDomain(); ok {
 		_spec.SetField(account.FieldCacheDomain, field.TypeString, value)
 		_node.CacheDomain = &value
+	}
+	if value, ok := _c.mutation.SupplierUserID(); ok {
+		_spec.SetField(account.FieldSupplierUserID, field.TypeInt64, value)
+		_node.SupplierUserID = &value
 	}
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)
@@ -803,6 +821,30 @@ func (u *AccountUpsert) UpdateCacheDomain() *AccountUpsert {
 // ClearCacheDomain clears the value of the "cache_domain" field.
 func (u *AccountUpsert) ClearCacheDomain() *AccountUpsert {
 	u.SetNull(account.FieldCacheDomain)
+	return u
+}
+
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (u *AccountUpsert) SetSupplierUserID(v int64) *AccountUpsert {
+	u.Set(account.FieldSupplierUserID, v)
+	return u
+}
+
+// UpdateSupplierUserID sets the "supplier_user_id" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateSupplierUserID() *AccountUpsert {
+	u.SetExcluded(account.FieldSupplierUserID)
+	return u
+}
+
+// AddSupplierUserID adds v to the "supplier_user_id" field.
+func (u *AccountUpsert) AddSupplierUserID(v int64) *AccountUpsert {
+	u.Add(account.FieldSupplierUserID, v)
+	return u
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (u *AccountUpsert) ClearSupplierUserID() *AccountUpsert {
+	u.SetNull(account.FieldSupplierUserID)
 	return u
 }
 
@@ -1159,6 +1201,34 @@ func (u *AccountUpsertOne) UpdateCacheDomain() *AccountUpsertOne {
 func (u *AccountUpsertOne) ClearCacheDomain() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearCacheDomain()
+	})
+}
+
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (u *AccountUpsertOne) SetSupplierUserID(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSupplierUserID(v)
+	})
+}
+
+// AddSupplierUserID adds v to the "supplier_user_id" field.
+func (u *AccountUpsertOne) AddSupplierUserID(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddSupplierUserID(v)
+	})
+}
+
+// UpdateSupplierUserID sets the "supplier_user_id" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateSupplierUserID() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSupplierUserID()
+	})
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (u *AccountUpsertOne) ClearSupplierUserID() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearSupplierUserID()
 	})
 }
 
@@ -1688,6 +1758,34 @@ func (u *AccountUpsertBulk) UpdateCacheDomain() *AccountUpsertBulk {
 func (u *AccountUpsertBulk) ClearCacheDomain() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearCacheDomain()
+	})
+}
+
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (u *AccountUpsertBulk) SetSupplierUserID(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetSupplierUserID(v)
+	})
+}
+
+// AddSupplierUserID adds v to the "supplier_user_id" field.
+func (u *AccountUpsertBulk) AddSupplierUserID(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddSupplierUserID(v)
+	})
+}
+
+// UpdateSupplierUserID sets the "supplier_user_id" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateSupplierUserID() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateSupplierUserID()
+	})
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (u *AccountUpsertBulk) ClearSupplierUserID() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearSupplierUserID()
 	})
 }
 

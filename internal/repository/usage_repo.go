@@ -125,6 +125,11 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		SetAboveHit(l.AboveHit).
 		SetOverdraft(l.Overdraft).
 		SetBilled(l.Billed).
+		// 供应商收益快照（spec 2026-10-09 §3.3）：earning 与 credited 恒落
+		// （对齐 SetCost/SetBilled——credited 显式透传，**不依赖 ent Default(false)**；
+		// 先例 SetBilled）。
+		SetSupplierEarnMillis(l.SupplierEarnMillis).
+		SetSupplierCredited(l.SupplierCredited).
 		SetCreatedAt(l.CreatedAt)
 	// client_ip（S-E 2026-08-17）：非空才 Set（ent 只落被 Set 的列——空 = NULL
 	// 不写该列，与 COPY 路径 usageLogRowValues 条件赋值一一对应）。
@@ -170,6 +175,9 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 	if l.PricePerCallMillis != nil {
 		c = c.SetPricePerCallMillis(*l.PricePerCallMillis)
 	}
+	if l.SupplierUserID > 0 {
+		c = c.SetSupplierUserID(l.SupplierUserID)
+	}
 	return c
 }
 
@@ -196,6 +204,7 @@ var usageLogCopyColumns = []string{
 	usagelog.FieldRawCost,
 	usagelog.FieldBillingTier, usagelog.FieldAboveHit, usagelog.FieldOverdraft,
 	usagelog.FieldBilled,
+	usagelog.FieldSupplierUserID, usagelog.FieldSupplierEarnMillis, usagelog.FieldSupplierCredited,
 	usagelog.FieldCreatedAt,
 }
 
@@ -204,7 +213,7 @@ var usageLogCopyColumns = []string{
 // cost/raw_cost 恒落（spec 2026-08-18——乘倍率前原始成本，可 0）；
 // client_ip 非空才赋值，否则 NULL；billed 恒落布尔——出生标记透传）。
 func usageLogRowValues(l *domain.UsageLog) []any {
-	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier, clientIP any
+	var groupID, accountID, templateID, userID, keyID, mappedModel, billingTier, clientIP, supplierUserID any
 	var ttft, priceIn, priceOut, priceCR, priceCC, pricePerCall any
 	if l.ClientIP != "" {
 		clientIP = l.ClientIP
@@ -248,13 +257,17 @@ func usageLogRowValues(l *domain.UsageLog) []any {
 	if l.PricePerCallMillis != nil {
 		pricePerCall = *l.PricePerCallMillis
 	}
+	if l.SupplierUserID > 0 {
+		supplierUserID = l.SupplierUserID
+	}
 	return []any{
 		l.RequestID, clientIP, groupID, accountID, templateID, userID, keyID,
 		l.Model, mappedModel, string(l.Format), string(l.ErrorType), l.LatencyMS, ttft,
 		l.InputTokens, priceIn, l.OutputTokens, priceOut, l.TotalTokens,
 		l.CacheReadTokens, priceCR, l.CacheCreationTokens, priceCC,
 		l.CallCount, pricePerCall,
-		l.Cost, l.RawCost, billingTier, l.AboveHit, l.Overdraft, l.Billed, l.CreatedAt,
+		l.Cost, l.RawCost, billingTier, l.AboveHit, l.Overdraft, l.Billed,
+		supplierUserID, l.SupplierEarnMillis, l.SupplierCredited, l.CreatedAt,
 	}
 }
 
@@ -325,6 +338,9 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 			RawCost:                  row.RawCost,
 			AboveHit:                 row.AboveHit,
 			Overdraft:                row.Overdraft,
+			Billed:                   row.Billed,
+			SupplierEarnMillis:       row.SupplierEarnMillis,
+			SupplierCredited:         row.SupplierCredited,
 			CreatedAt:                row.CreatedAt,
 		}
 		l.GroupID = logValueOrZero(row.GroupID)
@@ -335,6 +351,7 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 		l.MappedModel = logValueOrZero(row.MappedModel)
 		l.BillingTier = logValueOrZero(row.BillingTier)
 		l.ClientIP = logValueOrZero(row.ClientIP)
+		l.SupplierUserID = logValueOrZero(row.SupplierUserID)
 		out = append(out, l)
 	}
 	return out, nil

@@ -199,6 +199,21 @@ func Billed(v bool) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldBilled, v))
 }
 
+// SupplierUserID applies equality check predicate on the "supplier_user_id" field. It's identical to SupplierUserIDEQ.
+func SupplierUserID(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldSupplierUserID, v))
+}
+
+// SupplierEarnMillis applies equality check predicate on the "supplier_earn_millis" field. It's identical to SupplierEarnMillisEQ.
+func SupplierEarnMillis(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldSupplierEarnMillis, v))
+}
+
+// SupplierCredited applies equality check predicate on the "supplier_credited" field. It's identical to SupplierCreditedEQ.
+func SupplierCredited(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldSupplierCredited, v))
+}
+
 // CreatedAt applies equality check predicate on the "created_at" field. It's identical to CreatedAtEQ.
 func CreatedAt(v time.Time) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldEQ(FieldCreatedAt, v))
@@ -1582,6 +1597,106 @@ func BilledEQ(v bool) predicate.UsageLog {
 // BilledNEQ applies the NEQ predicate on the "billed" field.
 func BilledNEQ(v bool) predicate.UsageLog {
 	return predicate.UsageLog(sql.FieldNEQ(FieldBilled, v))
+}
+
+// SupplierUserIDEQ applies the EQ predicate on the "supplier_user_id" field.
+func SupplierUserIDEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDNEQ applies the NEQ predicate on the "supplier_user_id" field.
+func SupplierUserIDNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDIn applies the In predicate on the "supplier_user_id" field.
+func SupplierUserIDIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldSupplierUserID, vs...))
+}
+
+// SupplierUserIDNotIn applies the NotIn predicate on the "supplier_user_id" field.
+func SupplierUserIDNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldSupplierUserID, vs...))
+}
+
+// SupplierUserIDGT applies the GT predicate on the "supplier_user_id" field.
+func SupplierUserIDGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDGTE applies the GTE predicate on the "supplier_user_id" field.
+func SupplierUserIDGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDLT applies the LT predicate on the "supplier_user_id" field.
+func SupplierUserIDLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDLTE applies the LTE predicate on the "supplier_user_id" field.
+func SupplierUserIDLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldSupplierUserID, v))
+}
+
+// SupplierUserIDIsNil applies the IsNil predicate on the "supplier_user_id" field.
+func SupplierUserIDIsNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIsNull(FieldSupplierUserID))
+}
+
+// SupplierUserIDNotNil applies the NotNil predicate on the "supplier_user_id" field.
+func SupplierUserIDNotNil() predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotNull(FieldSupplierUserID))
+}
+
+// SupplierEarnMillisEQ applies the EQ predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldSupplierEarnMillis, v))
+}
+
+// SupplierEarnMillisNEQ applies the NEQ predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisNEQ(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldSupplierEarnMillis, v))
+}
+
+// SupplierEarnMillisIn applies the In predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldIn(FieldSupplierEarnMillis, vs...))
+}
+
+// SupplierEarnMillisNotIn applies the NotIn predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisNotIn(vs ...int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNotIn(FieldSupplierEarnMillis, vs...))
+}
+
+// SupplierEarnMillisGT applies the GT predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisGT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGT(FieldSupplierEarnMillis, v))
+}
+
+// SupplierEarnMillisGTE applies the GTE predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisGTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldGTE(FieldSupplierEarnMillis, v))
+}
+
+// SupplierEarnMillisLT applies the LT predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisLT(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLT(FieldSupplierEarnMillis, v))
+}
+
+// SupplierEarnMillisLTE applies the LTE predicate on the "supplier_earn_millis" field.
+func SupplierEarnMillisLTE(v int64) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldLTE(FieldSupplierEarnMillis, v))
+}
+
+// SupplierCreditedEQ applies the EQ predicate on the "supplier_credited" field.
+func SupplierCreditedEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldEQ(FieldSupplierCredited, v))
+}
+
+// SupplierCreditedNEQ applies the NEQ predicate on the "supplier_credited" field.
+func SupplierCreditedNEQ(v bool) predicate.UsageLog {
+	return predicate.UsageLog(sql.FieldNEQ(FieldSupplierCredited, v))
 }
 
 // CreatedAtEQ applies the EQ predicate on the "created_at" field.

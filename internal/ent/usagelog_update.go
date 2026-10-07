@@ -672,6 +672,68 @@ func (_u *UsageLogUpdate) SetNillableBilled(v *bool) *UsageLogUpdate {
 	return _u
 }
 
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (_u *UsageLogUpdate) SetSupplierUserID(v int64) *UsageLogUpdate {
+	_u.mutation.ResetSupplierUserID()
+	_u.mutation.SetSupplierUserID(v)
+	return _u
+}
+
+// SetNillableSupplierUserID sets the "supplier_user_id" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableSupplierUserID(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetSupplierUserID(*v)
+	}
+	return _u
+}
+
+// AddSupplierUserID adds value to the "supplier_user_id" field.
+func (_u *UsageLogUpdate) AddSupplierUserID(v int64) *UsageLogUpdate {
+	_u.mutation.AddSupplierUserID(v)
+	return _u
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (_u *UsageLogUpdate) ClearSupplierUserID() *UsageLogUpdate {
+	_u.mutation.ClearSupplierUserID()
+	return _u
+}
+
+// SetSupplierEarnMillis sets the "supplier_earn_millis" field.
+func (_u *UsageLogUpdate) SetSupplierEarnMillis(v int64) *UsageLogUpdate {
+	_u.mutation.ResetSupplierEarnMillis()
+	_u.mutation.SetSupplierEarnMillis(v)
+	return _u
+}
+
+// SetNillableSupplierEarnMillis sets the "supplier_earn_millis" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableSupplierEarnMillis(v *int64) *UsageLogUpdate {
+	if v != nil {
+		_u.SetSupplierEarnMillis(*v)
+	}
+	return _u
+}
+
+// AddSupplierEarnMillis adds value to the "supplier_earn_millis" field.
+func (_u *UsageLogUpdate) AddSupplierEarnMillis(v int64) *UsageLogUpdate {
+	_u.mutation.AddSupplierEarnMillis(v)
+	return _u
+}
+
+// SetSupplierCredited sets the "supplier_credited" field.
+func (_u *UsageLogUpdate) SetSupplierCredited(v bool) *UsageLogUpdate {
+	_u.mutation.SetSupplierCredited(v)
+	return _u
+}
+
+// SetNillableSupplierCredited sets the "supplier_credited" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableSupplierCredited(v *bool) *UsageLogUpdate {
+	if v != nil {
+		_u.SetSupplierCredited(*v)
+	}
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *UsageLogUpdate) SetCreatedAt(v time.Time) *UsageLogUpdate {
 	_u.mutation.SetCreatedAt(v)
@@ -931,6 +993,24 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.Billed(); ok {
 		_spec.SetField(usagelog.FieldBilled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SupplierUserID(); ok {
+		_spec.SetField(usagelog.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSupplierUserID(); ok {
+		_spec.AddField(usagelog.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if _u.mutation.SupplierUserIDCleared() {
+		_spec.ClearField(usagelog.FieldSupplierUserID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SupplierEarnMillis(); ok {
+		_spec.SetField(usagelog.FieldSupplierEarnMillis, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSupplierEarnMillis(); ok {
+		_spec.AddField(usagelog.FieldSupplierEarnMillis, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.SupplierCredited(); ok {
+		_spec.SetField(usagelog.FieldSupplierCredited, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
@@ -1599,6 +1679,68 @@ func (_u *UsageLogUpdateOne) SetNillableBilled(v *bool) *UsageLogUpdateOne {
 	return _u
 }
 
+// SetSupplierUserID sets the "supplier_user_id" field.
+func (_u *UsageLogUpdateOne) SetSupplierUserID(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetSupplierUserID()
+	_u.mutation.SetSupplierUserID(v)
+	return _u
+}
+
+// SetNillableSupplierUserID sets the "supplier_user_id" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableSupplierUserID(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetSupplierUserID(*v)
+	}
+	return _u
+}
+
+// AddSupplierUserID adds value to the "supplier_user_id" field.
+func (_u *UsageLogUpdateOne) AddSupplierUserID(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddSupplierUserID(v)
+	return _u
+}
+
+// ClearSupplierUserID clears the value of the "supplier_user_id" field.
+func (_u *UsageLogUpdateOne) ClearSupplierUserID() *UsageLogUpdateOne {
+	_u.mutation.ClearSupplierUserID()
+	return _u
+}
+
+// SetSupplierEarnMillis sets the "supplier_earn_millis" field.
+func (_u *UsageLogUpdateOne) SetSupplierEarnMillis(v int64) *UsageLogUpdateOne {
+	_u.mutation.ResetSupplierEarnMillis()
+	_u.mutation.SetSupplierEarnMillis(v)
+	return _u
+}
+
+// SetNillableSupplierEarnMillis sets the "supplier_earn_millis" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableSupplierEarnMillis(v *int64) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetSupplierEarnMillis(*v)
+	}
+	return _u
+}
+
+// AddSupplierEarnMillis adds value to the "supplier_earn_millis" field.
+func (_u *UsageLogUpdateOne) AddSupplierEarnMillis(v int64) *UsageLogUpdateOne {
+	_u.mutation.AddSupplierEarnMillis(v)
+	return _u
+}
+
+// SetSupplierCredited sets the "supplier_credited" field.
+func (_u *UsageLogUpdateOne) SetSupplierCredited(v bool) *UsageLogUpdateOne {
+	_u.mutation.SetSupplierCredited(v)
+	return _u
+}
+
+// SetNillableSupplierCredited sets the "supplier_credited" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableSupplierCredited(v *bool) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetSupplierCredited(*v)
+	}
+	return _u
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_u *UsageLogUpdateOne) SetCreatedAt(v time.Time) *UsageLogUpdateOne {
 	_u.mutation.SetCreatedAt(v)
@@ -1888,6 +2030,24 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.Billed(); ok {
 		_spec.SetField(usagelog.FieldBilled, field.TypeBool, value)
+	}
+	if value, ok := _u.mutation.SupplierUserID(); ok {
+		_spec.SetField(usagelog.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSupplierUserID(); ok {
+		_spec.AddField(usagelog.FieldSupplierUserID, field.TypeInt64, value)
+	}
+	if _u.mutation.SupplierUserIDCleared() {
+		_spec.ClearField(usagelog.FieldSupplierUserID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.SupplierEarnMillis(); ok {
+		_spec.SetField(usagelog.FieldSupplierEarnMillis, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedSupplierEarnMillis(); ok {
+		_spec.AddField(usagelog.FieldSupplierEarnMillis, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.SupplierCredited(); ok {
+		_spec.SetField(usagelog.FieldSupplierCredited, field.TypeBool, value)
 	}
 	if value, ok := _u.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)

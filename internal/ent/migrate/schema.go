@@ -3,6 +3,7 @@
 package migrate
 
 import (
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/dialect/sql/schema"
 	"entgo.io/ent/schema/field"
 )
@@ -24,6 +25,7 @@ var (
 		{Name: "identity_revision", Type: field.TypeInt64, Default: 1},
 		{Name: "upstream_cost_multiplier_bp", Type: field.TypeInt, Default: 10000},
 		{Name: "cache_domain", Type: field.TypeString, Nullable: true},
+		{Name: "supplier_user_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
@@ -37,7 +39,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "accounts_templates_accounts",
-				Columns:    []*schema.Column{AccountsColumns[17]},
+				Columns:    []*schema.Column{AccountsColumns[18]},
 				RefColumns: []*schema.Column{TemplatesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -421,6 +423,137 @@ var (
 		Columns:    SettingsColumns,
 		PrimaryKey: []*schema.Column{SettingsColumns[0]},
 	}
+	// SupplierBalancesColumns holds the columns for the "supplier_balances" table.
+	SupplierBalancesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "supplier_user_id", Type: field.TypeInt64},
+		{Name: "available", Type: field.TypeInt64, Default: 0},
+		{Name: "lifetime_credited", Type: field.TypeInt64, Default: 0},
+		{Name: "lifetime_paid", Type: field.TypeInt64, Default: 0},
+		{Name: "share_bp", Type: field.TypeInt, Nullable: true},
+		{Name: "freeze_hours", Type: field.TypeInt, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// SupplierBalancesTable holds the schema information for the "supplier_balances" table.
+	SupplierBalancesTable = &schema.Table{
+		Name:       "supplier_balances",
+		Columns:    SupplierBalancesColumns,
+		PrimaryKey: []*schema.Column{SupplierBalancesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "supplierbalance_supplier_user_id",
+				Unique:  true,
+				Columns: []*schema.Column{SupplierBalancesColumns[1]},
+			},
+		},
+	}
+	// SupplierFrozenChunksColumns holds the columns for the "supplier_frozen_chunks" table.
+	SupplierFrozenChunksColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "supplier_user_id", Type: field.TypeInt64},
+		{Name: "available_at", Type: field.TypeTime},
+		{Name: "amount", Type: field.TypeInt64},
+	}
+	// SupplierFrozenChunksTable holds the schema information for the "supplier_frozen_chunks" table.
+	SupplierFrozenChunksTable = &schema.Table{
+		Name:       "supplier_frozen_chunks",
+		Columns:    SupplierFrozenChunksColumns,
+		PrimaryKey: []*schema.Column{SupplierFrozenChunksColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "supplierfrozenchunk_supplier_user_id_available_at",
+				Unique:  true,
+				Columns: []*schema.Column{SupplierFrozenChunksColumns[1], SupplierFrozenChunksColumns[2]},
+			},
+			{
+				Name:    "supplierfrozenchunk_available_at",
+				Unique:  false,
+				Columns: []*schema.Column{SupplierFrozenChunksColumns[2]},
+			},
+		},
+	}
+	// SupplierReconciliationColumns holds the columns for the "supplier_reconciliation" table.
+	SupplierReconciliationColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "supplier_user_id", Type: field.TypeInt64},
+		{Name: "source_day", Type: field.TypeTime, SchemaType: map[string]string{"postgres": "date"}},
+		{Name: "gross_cost", Type: field.TypeInt64, Default: 0},
+		{Name: "earned", Type: field.TypeInt64, Default: 0},
+		{Name: "row_count", Type: field.TypeInt64, Default: 0},
+		{Name: "state", Type: field.TypeEnum, Enums: []string{"open", "closed"}, Default: "open"},
+		{Name: "closed_revision", Type: field.TypeInt64, Nullable: true},
+		{Name: "closed_at", Type: field.TypeTime, Nullable: true},
+	}
+	// SupplierReconciliationTable holds the schema information for the "supplier_reconciliation" table.
+	SupplierReconciliationTable = &schema.Table{
+		Name:       "supplier_reconciliation",
+		Columns:    SupplierReconciliationColumns,
+		PrimaryKey: []*schema.Column{SupplierReconciliationColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "supplierreconciliation_supplier_user_id_source_day",
+				Unique:  true,
+				Columns: []*schema.Column{SupplierReconciliationColumns[1], SupplierReconciliationColumns[2]},
+			},
+		},
+	}
+	// SupplierSettlementsColumns holds the columns for the "supplier_settlements" table.
+	SupplierSettlementsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "supplier_user_id", Type: field.TypeInt64},
+		{Name: "kind", Type: field.TypeEnum, Enums: []string{"supplier_request", "admin_request"}},
+		{Name: "amount_millis", Type: field.TypeInt64},
+		{Name: "period_start", Type: field.TypeTime},
+		{Name: "period_end", Type: field.TypeTime},
+		{Name: "status", Type: field.TypeEnum, Enums: []string{"pending", "approved", "paying", "paid", "rejected"}, Default: "pending"},
+		{Name: "revision", Type: field.TypeInt64, Default: 1},
+		{Name: "request_key", Type: field.TypeString},
+		{Name: "requested_at", Type: field.TypeTime},
+		{Name: "requested_operator", Type: field.TypeInt64},
+		{Name: "reviewed_at", Type: field.TypeTime, Nullable: true},
+		{Name: "reviewer_user_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "payout_operator_user_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "payout_started_at", Type: field.TypeTime, Nullable: true},
+		{Name: "payment_key", Type: field.TypeString, Nullable: true},
+		{Name: "external_ref", Type: field.TypeString, Nullable: true},
+		{Name: "payee_snapshot", Type: field.TypeString, Nullable: true},
+		{Name: "payout_failure_reason", Type: field.TypeString, Nullable: true},
+		{Name: "payout_failed_at", Type: field.TypeTime, Nullable: true},
+		{Name: "risk_review", Type: field.TypeString, Nullable: true},
+		{Name: "paid_at", Type: field.TypeTime, Nullable: true},
+		{Name: "paid_operator_user_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "note", Type: field.TypeString, Nullable: true},
+		{Name: "reject_reason", Type: field.TypeString, Nullable: true},
+	}
+	// SupplierSettlementsTable holds the schema information for the "supplier_settlements" table.
+	SupplierSettlementsTable = &schema.Table{
+		Name:       "supplier_settlements",
+		Columns:    SupplierSettlementsColumns,
+		PrimaryKey: []*schema.Column{SupplierSettlementsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "suppliersettlement_requested_operator_request_key",
+				Unique:  true,
+				Columns: []*schema.Column{SupplierSettlementsColumns[10], SupplierSettlementsColumns[8]},
+			},
+			{
+				Name:    "suppliersettlement_payment_key",
+				Unique:  true,
+				Columns: []*schema.Column{SupplierSettlementsColumns[15]},
+			},
+			{
+				Name:    "suppliersettlement_supplier_user_id_period_end",
+				Unique:  false,
+				Columns: []*schema.Column{SupplierSettlementsColumns[1], SupplierSettlementsColumns[5]},
+			},
+			{
+				Name:    "suppliersettlement_status_requested_at",
+				Unique:  false,
+				Columns: []*schema.Column{SupplierSettlementsColumns[6], SupplierSettlementsColumns[9]},
+			},
+		},
+	}
 	// TempBalancesColumns holds the columns for the "temp_balances" table.
 	TempBalancesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -572,6 +705,9 @@ var (
 		{Name: "above_hit", Type: field.TypeBool, Default: false},
 		{Name: "overdraft", Type: field.TypeBool, Default: false},
 		{Name: "billed", Type: field.TypeBool, Default: false},
+		{Name: "supplier_user_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "supplier_earn_millis", Type: field.TypeInt64, Default: 0},
+		{Name: "supplier_credited", Type: field.TypeBool, Default: false},
 		{Name: "created_at", Type: field.TypeTime},
 	}
 	// UsageLogsTable holds the schema information for the "usage_logs" table.
@@ -583,32 +719,32 @@ var (
 			{
 				Name:    "usagelog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[31]},
+				Columns: []*schema.Column{UsageLogsColumns[34]},
 			},
 			{
 				Name:    "usagelog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[31]},
+				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[34]},
 			},
 			{
 				Name:    "usagelog_account_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[4], UsageLogsColumns[31]},
+				Columns: []*schema.Column{UsageLogsColumns[4], UsageLogsColumns[34]},
 			},
 			{
 				Name:    "usagelog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[31]},
+				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[34]},
 			},
 			{
 				Name:    "usagelog_key_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[7], UsageLogsColumns[31]},
+				Columns: []*schema.Column{UsageLogsColumns[7], UsageLogsColumns[34]},
 			},
 			{
 				Name:    "usagelog_request_id_created_at",
 				Unique:  true,
-				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[31]},
+				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[34]},
 			},
 		},
 	}
@@ -651,7 +787,7 @@ var (
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "email", Type: field.TypeString, Unique: true},
 		{Name: "password_hash", Type: field.TypeString},
-		{Name: "role", Type: field.TypeEnum, Enums: []string{"platform_admin", "user"}, Default: "user"},
+		{Name: "role", Type: field.TypeEnum, Enums: []string{"platform_admin", "user", "supplier"}, Default: "user"},
 		{Name: "status", Type: field.TypeEnum, Enums: []string{"active", "disabled"}, Default: "active"},
 		{Name: "max_concurrency", Type: field.TypeInt, Default: 0},
 		{Name: "balance", Type: field.TypeInt64, Default: 0},
@@ -707,6 +843,10 @@ var (
 		RedemptionUsesTable,
 		RulesTable,
 		SettingsTable,
+		SupplierBalancesTable,
+		SupplierFrozenChunksTable,
+		SupplierReconciliationTable,
+		SupplierSettlementsTable,
 		TempBalancesTable,
 		TemplatesTable,
 		TemplateExtsTable,
@@ -726,6 +866,31 @@ func init() {
 	KeysTable.ForeignKeys[0].RefTable = GroupsTable
 	KeysTable.ForeignKeys[1].RefTable = UsersTable
 	RedemptionUsesTable.ForeignKeys[0].RefTable = RedemptionCodesTable
+	SupplierBalancesTable.Annotation = &entsql.Annotation{}
+	SupplierBalancesTable.Annotation.Checks = map[string]string{
+		"supplier_balances_available_non_negative":         "available >= 0",
+		"supplier_balances_freeze_hours_non_negative":      "freeze_hours IS NULL OR freeze_hours >= 0",
+		"supplier_balances_lifetime_credited_non_negative": "lifetime_credited >= 0",
+		"supplier_balances_lifetime_paid_non_negative":     "lifetime_paid >= 0",
+		"supplier_balances_share_bp_range":                 "share_bp IS NULL OR (share_bp >= 0 AND share_bp <= 10000)",
+	}
+	SupplierFrozenChunksTable.Annotation = &entsql.Annotation{}
+	SupplierFrozenChunksTable.Annotation.Checks = map[string]string{
+		"supplier_frozen_chunks_amount_positive": "amount > 0",
+	}
+	SupplierReconciliationTable.Annotation = &entsql.Annotation{
+		Table: "supplier_reconciliation",
+	}
+	SupplierReconciliationTable.Annotation.Checks = map[string]string{
+		"supplier_reconciliation_earned_non_negative":     "earned >= 0",
+		"supplier_reconciliation_gross_cost_non_negative": "gross_cost >= 0",
+		"supplier_reconciliation_row_count_non_negative":  "row_count >= 0",
+	}
+	SupplierSettlementsTable.Annotation = &entsql.Annotation{}
+	SupplierSettlementsTable.Annotation.Checks = map[string]string{
+		"supplier_settlements_amount_positive": "amount_millis > 0",
+		"supplier_settlements_period_order":    "period_end >= period_start",
+	}
 	TempBalancesTable.ForeignKeys[0].RefTable = UsersTable
 	TemplateExtsTable.ForeignKeys[0].RefTable = TemplatesTable
 	AccountGroupsTable.ForeignKeys[0].RefTable = AccountsTable

@@ -93,10 +93,10 @@ type countingPartitionManager struct {
 	partErr   error                       // 失败注入（失败不覆盖上轮值断言）
 }
 
-func (c *countingPartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+func (c *countingPartitionManager) RetireUsageLogPartitions(ctx context.Context, cutoff time.Time) (domain.UsageLogRetireResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.logDrops, c.dropErr
+	return domain.UsageLogRetireResult{Dropped: c.logDrops}, c.dropErr
 }
 func (c *countingPartitionManager) DropErrLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	c.mu.Lock()

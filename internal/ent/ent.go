@@ -26,6 +26,10 @@ import (
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
 	"github.com/is7qin/c3api/internal/ent/setting"
+	"github.com/is7qin/c3api/internal/ent/supplierbalance"
+	"github.com/is7qin/c3api/internal/ent/supplierfrozenchunk"
+	"github.com/is7qin/c3api/internal/ent/supplierreconciliation"
+	"github.com/is7qin/c3api/internal/ent/suppliersettlement"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
 	"github.com/is7qin/c3api/internal/ent/templateext"
@@ -93,27 +97,31 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			account.Table:         account.ValidColumn,
-			accountext.Table:      accountext.ValidColumn,
-			balancelog.Table:      balancelog.ValidColumn,
-			emailtemplate.Table:   emailtemplate.ValidColumn,
-			errlog.Table:          errlog.ValidColumn,
-			group.Table:           group.ValidColumn,
-			groupassignment.Table: groupassignment.ValidColumn,
-			key.Table:             key.ValidColumn,
-			priceentry.Table:      priceentry.ValidColumn,
-			pricevariant.Table:    pricevariant.ValidColumn,
-			redemptioncode.Table:  redemptioncode.ValidColumn,
-			redemptionuse.Table:   redemptionuse.ValidColumn,
-			rule.Table:            rule.ValidColumn,
-			setting.Table:         setting.ValidColumn,
-			tempbalance.Table:     tempbalance.ValidColumn,
-			template.Table:        template.ValidColumn,
-			templateext.Table:     templateext.ValidColumn,
-			usageentitystat.Table: usageentitystat.ValidColumn,
-			usagelog.Table:        usagelog.ValidColumn,
-			usagestat.Table:       usagestat.ValidColumn,
-			user.Table:            user.ValidColumn,
+			account.Table:                account.ValidColumn,
+			accountext.Table:             accountext.ValidColumn,
+			balancelog.Table:             balancelog.ValidColumn,
+			emailtemplate.Table:          emailtemplate.ValidColumn,
+			errlog.Table:                 errlog.ValidColumn,
+			group.Table:                  group.ValidColumn,
+			groupassignment.Table:        groupassignment.ValidColumn,
+			key.Table:                    key.ValidColumn,
+			priceentry.Table:             priceentry.ValidColumn,
+			pricevariant.Table:           pricevariant.ValidColumn,
+			redemptioncode.Table:         redemptioncode.ValidColumn,
+			redemptionuse.Table:          redemptionuse.ValidColumn,
+			rule.Table:                   rule.ValidColumn,
+			setting.Table:                setting.ValidColumn,
+			supplierbalance.Table:        supplierbalance.ValidColumn,
+			supplierfrozenchunk.Table:    supplierfrozenchunk.ValidColumn,
+			supplierreconciliation.Table: supplierreconciliation.ValidColumn,
+			suppliersettlement.Table:     suppliersettlement.ValidColumn,
+			tempbalance.Table:            tempbalance.ValidColumn,
+			template.Table:               template.ValidColumn,
+			templateext.Table:            templateext.ValidColumn,
+			usageentitystat.Table:        usageentitystat.ValidColumn,
+			usagelog.Table:               usagelog.ValidColumn,
+			usagestat.Table:              usagestat.ValidColumn,
+			user.Table:                   user.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

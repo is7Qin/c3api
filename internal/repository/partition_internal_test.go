@@ -62,6 +62,11 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 	require.Contains(t, source, "raw_cost", "锚必须覆盖 raw_cost 新列")
 	// billed（ledger-cursor，spec 2026-08-23）：扣费收敛标记列锚。
 	require.Contains(t, source, "billed", "锚必须覆盖 billed 新列")
+	// 供应商收益快照（spec 2026-10-09 §3.3）：三列锚（**无 supplier_share_bp**）。
+	require.Contains(t, source, "supplier_user_id", "锚必须覆盖 supplier_user_id 新列")
+	require.Contains(t, source, "supplier_earn_millis", "锚必须覆盖 supplier_earn_millis 新列")
+	require.Contains(t, source, "supplier_credited", "锚必须覆盖 supplier_credited 新列")
+	require.NotContains(t, source, "supplier_share_bp", "分成率不落列（§2.3 显式裁决）")
 	for _, old := range []string{"image_input_tokens", "image_output_tokens", "image_count",
 		"price_image_input_millis", "price_image_output_millis", "price_per_image_millis"} {
 		require.NotContains(t, source, old, "删 6 列：%s 不得残留", old)
@@ -75,7 +80,7 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 // billed 为 ledger-cursor spec 2026-08-23 追加）。
 func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 	source := ddlColumnNames(strings.Join(usageLogColumnDefs, "\n"))
-	require.Len(t, usageLogCopyColumns, 31, "COPY 列数 30→31")
+	require.Len(t, usageLogCopyColumns, 34, "COPY 列数 31→34（+3 供应商收益快照列）")
 	want := make([]string, 0, len(source)-1)
 	for _, s := range source {
 		if s != "id" { // id 为自增列（COPY 不写，序列默认生成）
@@ -93,6 +98,11 @@ func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 		if c == usagelog.FieldOverdraft {
 			require.Equal(t, usagelog.FieldBilled, usageLogCopyColumns[i+1], "billed 紧随 overdraft")
 		}
+		if c == usagelog.FieldBilled {
+			require.Equal(t, usagelog.FieldSupplierUserID, usageLogCopyColumns[i+1], "supplier_user_id 紧随 billed")
+			require.Equal(t, usagelog.FieldSupplierEarnMillis, usageLogCopyColumns[i+2], "supplier_earn_millis 次之")
+			require.Equal(t, usagelog.FieldSupplierCredited, usageLogCopyColumns[i+3], "supplier_credited 次之")
+		}
 	}
 }
 
@@ -102,12 +112,39 @@ func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 // NOT billed 即计费游标本体——标记后自动退出索引，重启天然续传；谓词列序/
 // 索引名漂移即红。
 func TestUsageLogUnbilledPartialIndex(t *testing.T) {
-	require.Len(t, usageLogIndexDDLs, 7, "6 个 ent 对齐索引 + 1 个计费游标部分索引")
-	idx := usageLogIndexDDLs[len(usageLogIndexDDLs)-1]
-	require.Contains(t, idx, "CREATE INDEX usagelog_unbilled_id ON usage_logs (id)", "游标索引名与键列")
-	require.Contains(t, idx, "WHERE NOT billed", "部分索引谓词 = 未扣子集")
+	require.Len(t, usageLogIndexDDLs, 9, "6 ent 对齐索引 + 1 计费游标部分索引 + 2 供应商收益部分索引")
+	var unbilled string
+	for _, ddl := range usageLogIndexDDLs {
+		if strings.Contains(ddl, "usagelog_unbilled_id") {
+			unbilled = ddl
+		}
+	}
+	require.NotEmpty(t, unbilled, "计费游标部分索引必须存在")
+	require.Contains(t, unbilled, "CREATE INDEX usagelog_unbilled_id ON usage_logs (id)", "游标索引名与键列")
+	require.Contains(t, unbilled, "WHERE NOT billed", "部分索引谓词 = 未扣子集")
 	require.NotContains(t, strings.Join(usageLogIndexDDLs, "\n"),
 		"usagelog_unbilled_created", " 已删除的 lag 度量索引不得残留")
+}
+
+// TestUsageLogSupplierPartialIndexes 供应商收益部分索引手写谓词断言
+// （spec 2026-10-09 §3.3 / A15②；ent 侧无部分索引表达力，谓词仅存于
+// usageLogIndexDDLs，故须手写断言语词逐字正确——谓词漂移即 I3 探测失去索引
+// 资格、G1 关闭态零条目失效）：
+//   - 消费索引键序必须为 (id)（取批 ORDER BY id LIMIT；供应商+时间索引不保证
+//     有序取前 N）；
+//   - 两索引均为**部分索引**（G1 落地载体）。
+func TestUsageLogSupplierPartialIndexes(t *testing.T) {
+	joined := strings.Join(usageLogIndexDDLs, "\n")
+	require.Contains(t, joined,
+		"CREATE INDEX usagelog_uncredited_earn_id ON usage_logs (id) WHERE NOT supplier_credited AND supplier_earn_millis > 0",
+		"消费索引：键序 (id) + 双谓词逐字正确")
+	require.Contains(t, joined,
+		"CREATE INDEX usagelog_supplier_created_at ON usage_logs (supplier_user_id, created_at) WHERE supplier_user_id IS NOT NULL",
+		"报表索引：(supplier_user_id, created_at) + 归属非空谓词逐字正确")
+	// 消费索引键序必须是 (id)——(supplier_user_id, created_at) 键序不享有序取前 N。
+	require.NotContains(t, joined,
+		"usagelog_uncredited_earn_id ON usage_logs (supplier_user_id",
+		"消费索引不得用 (supplier_user_id, created_at) 键序")
 }
 
 // TestErrLogColumnDefsMatchCreateDDL err_logs 列事实源锚（架构审查——

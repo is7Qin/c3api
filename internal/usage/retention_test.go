@@ -27,27 +27,29 @@ var errBoom = errors.New("boom")
 // entity_stats 与 usage_stats 共用 StatsRetentionDays 同一循环 DROP+预建）。
 type fakePartitionManager struct {
 	mu        sync.Mutex
-	drops     []time.Time // usage_logs cutoff 参数
-	nows      []time.Time // usage_logs ensure 的 now 参数
-	ensures   []time.Time // usage_logs ensure 的 until 参数
-	edrops    []time.Time // err_logs cutoff 参数
-	enows     []time.Time // err_logs ensure 的 now 参数
-	eensures  []time.Time // err_logs ensure 的 until 参数
-	sdrops    []time.Time // usage_stats cutoff 参数
-	snows     []time.Time // usage_stats ensure 的 now 参数
-	sensures  []time.Time // usage_stats ensure 的 until 参数
-	esdrops   []time.Time // usage_entity_stats cutoff 参数（与 usage_stats 同 StatsRetentionDays）
-	esnows    []time.Time // usage_entity_stats ensure 的 now 参数
-	esensures []time.Time // usage_entity_stats ensure 的 until 参数
-	rdeletes  []time.Time // redemption_uses 批删 cutoff 参数
-	rdrops    []time.Time // routing 观测分区 drops（quality fact / flow fact 同一 cutoff）
-	rstateDel []time.Time // routing_flow_snapshot_state 有界删 cutoff 参数
-	rnows     []time.Time // routing fact ensures
-	dropErr   error       // usage_logs drop 失败注入
-	edropErr  error       // err_logs drop 失败注入（失败隔离断言）
-	sdropErr  error       // usage_stats drop 失败注入（失败隔离断言）
-	esdropErr error       // usage_entity_stats drop 失败注入（失败隔离断言，与 sdrop 独立）
-	rdelErr   error       // redemption_uses 批删失败注入（失败隔离断言）
+	drops     []time.Time               // usage_logs cutoff 参数
+	nows      []time.Time               // usage_logs ensure 的 now 参数
+	ensures   []time.Time               // usage_logs ensure 的 until 参数
+	edrops    []time.Time               // err_logs cutoff 参数
+	enows     []time.Time               // err_logs ensure 的 now 参数
+	eensures  []time.Time               // err_logs ensure 的 until 参数
+	sdrops    []time.Time               // usage_stats cutoff 参数
+	snows     []time.Time               // usage_stats ensure 的 now 参数
+	sensures  []time.Time               // usage_stats ensure 的 until 参数
+	esdrops   []time.Time               // usage_entity_stats cutoff 参数（与 usage_stats 同 StatsRetentionDays）
+	esnows    []time.Time               // usage_entity_stats ensure 的 now 参数
+	esensures []time.Time               // usage_entity_stats ensure 的 until 参数
+	rdeletes  []time.Time               // redemption_uses 批删 cutoff 参数
+	rdrops    []time.Time               // routing 观测分区 drops（quality fact / flow fact 同一 cutoff）
+	rstateDel []time.Time               // routing_flow_snapshot_state 有界删 cutoff 参数
+	rnows     []time.Time               // routing fact ensures
+	dropErr   error                     // usage_logs drop 失败注入
+	logDrops  int                       // RetireUsageLogPartitions 回传的 Dropped 数
+	blocked   []domain.BlockedPartition // RetireUsageLogPartitions 回传的被挡分区（屏障告警断言）
+	edropErr  error                     // err_logs drop 失败注入（失败隔离断言）
+	sdropErr  error                     // usage_stats drop 失败注入（失败隔离断言）
+	esdropErr error                     // usage_entity_stats drop 失败注入（失败隔离断言，与 sdrop 独立）
+	rdelErr   error                     // redemption_uses 批删失败注入（失败隔离断言）
 	ensureErr error
 
 	rpartStats repository.RoutingFactStats // RoutingFactPartitionStats 回传的兜底统计（聚合 + 分表 + 快照行数 + 无名数）
@@ -58,11 +60,11 @@ type fakePartitionManager struct {
 	rfdropErr  error                       // flow fact DROP 失败注入（口径同上）
 }
 
-func (f *fakePartitionManager) DropUsageLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+func (f *fakePartitionManager) RetireUsageLogPartitions(ctx context.Context, cutoff time.Time) (domain.UsageLogRetireResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.drops = append(f.drops, cutoff)
-	return 0, f.dropErr
+	return domain.UsageLogRetireResult{Dropped: f.logDrops, Blocked: f.blocked}, f.dropErr
 }
 
 func (f *fakePartitionManager) EnsureUsageLogPartitions(ctx context.Context, now, until time.Time) error {
