@@ -44,6 +44,12 @@ type Config struct {
 	// 提取门控——false 完全不读供应商头直取 RemoteAddr，true 按序采信三头）。
 	// 部署前提见 config.go 注释与 clientip.go：源站只对 CDN 暴露。
 	BehindCDN bool
+	// LowBalanceConcCap 低余额用户级并发上限（config.proxy.low_balance_max_concurrency
+	// 映射；0 = 关闭该特性——guardPipeline 保持逐位等价现状）。
+	LowBalanceConcCap int
+	// LowBalanceConcThresholdMilli 触发阈值（毫分；config.proxy.low_balance_threshold_usd
+	// × 1e5 取整）。余额快照存在且严格小于它时把用户级上限钳为 LowBalanceConcCap。
+	LowBalanceConcThresholdMilli int64
 }
 
 type Proxy struct {

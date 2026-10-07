@@ -18,7 +18,7 @@ import (
 
 // --- 转发管线骨架（三份内联管线合一） ---
 // handleFormat / HandleSearch / HandleResponsesWS 三份内联管线（鉴权 → reqMeta
-// ctx 注入 → quota → 余额预检 → 两级门禁 → 限流 → 选号 → failover 循环 → 耗尽
+// ctx 注入 → quota → 余额预检/低余额钳制 → 两级门禁 → 限流 → 选号 → failover 循环 → 耗尽
 // 记录）同构复制，骨架收敛**逐字一致段**（guard 六段 + 循环分类 + 耗尽记录）；
 // 差异点收口成两个窄接口：
 //   - upstreamAttempt：单次上游尝试（chat/search/WS 各自实现——分流/拨号/
@@ -26,7 +26,16 @@ import (
 //   - pipelineSink：循环收尾写出（httpSink: HTTP 信封；wsSink: WS 错误事件帧）
 // 不造阶段表/配置驱动（过度抽象否决——评审 b06："抽共享阶段函数"）。
 
-// guardPipeline 鉴权 → reqMeta ctx 注入 → quota → 余额预检(可选) → 两级并发
+// 低余额用户级并发上限（纯函数）：原上限不限（cur==0）或大于 cap → 取 cap；
+// 否则维持原值（min 语义）。cur<0 不可达（用户写面拒绝负 max_concurrency）。
+func capLowBalanceUserConc(cur, cap int) int {
+	if cur == 0 || cur > cap {
+		return cap
+	}
+	return cur
+}
+
+// guardPipeline 鉴权 → reqMeta ctx 注入 → quota → 余额预检/低余额钳制(可选) → 两级并发
 // 门禁 → 限流；任一失败已写响应并记录，返回 ok=false（失败路径 inflight 减量
 // 由内部完成——等价现状各失败分支 return 时 defer 已生效；401/429/402 无并发
 // 槽占用，限流失败已回滚门禁）。precheckBalance=false 跳过余额预检（search
@@ -75,17 +84,25 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 		p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusTooManyRequests, domain.Err429, 0, usageTuple{}, start, errQuotaExhausted.msg)
 		return nil, nil, 0, false
 	}
-	// 余额预检（计费；无槽位问题）：快照读零 DB（滞后 ≤
-	// BalanceRefreshInterval，多实例条件扣 DB 兜底）。快照缺失或 ≤0 → 402
-	// errInsufficientBalance，但免费放行：
+	// 余额预检 + 低余额用户级并发钳制（计费；无槽位问题）：快照读零 DB（滞后 ≤
+	// BalanceRefreshInterval，多实例条件扣 DB 兜底）。单次快照读——钳制判定与
+	// 预检共用同一读值，不二次读。快照缺失或 ≤0 → 402 errInsufficientBalance，
+	// 但免费放行：
 	// 有效倍率 0 = 免费用户/组 → 缺失/非正余额不 402（与 applyBilling 同一快照
 	// 同一判定；cost 0 只记日志不扣费）。余额 ≤0 拒绝——预检不读临时额度
 	// （临时额度由结算时 FEFO 消化），故余额非正的临时额度用户在预检即被拒。
 	// 快照缺失窗口内免费组照常放行；缺失且非免费 → 仍 402（用户不在快照 =
 	// 无余额记录）。在 Acquire 前 → 不占用并发槽。
-	if precheckBalance && p.cfg.BillingCapture && p.bill != nil {
+	// 低余额钳制（cap>0 且余额快照存在且余额严格小于阈值）→ 就地替换
+	// meta.UserMaxConc 为有效上限，再交 Acquire；快照缺失不钳（无法判定，保守）。
+	// cap==0（关闭）→ 条件化简为 precheckBalance，读点/分支与现状逐位一致。
+	capConc := p.cfg.LowBalanceConcCap
+	if p.cfg.BillingCapture && p.bill != nil && (precheckBalance || capConc > 0) {
 		bal, ok := p.bill.Balances.BalanceOf(meta.UserID)
-		if (!ok || bal <= 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
+		if capConc > 0 && ok && bal < p.cfg.LowBalanceConcThresholdMilli {
+			meta.UserMaxConc = capLowBalanceUserConc(meta.UserMaxConc, capConc)
+		}
+		if precheckBalance && (!ok || bal <= 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
 			p.inflight.Add(-1)
 			writeErr(w, errInsufficientBalance)
 			p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errInsufficientBalance.msg)

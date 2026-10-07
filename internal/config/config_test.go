@@ -387,3 +387,52 @@ func TestLoadRedisConfig(t *testing.T) {
 		require.ErrorContains(t, err, "tls")
 	})
 }
+
+// TestLoadLowBalanceConcDefaults 低余额并发钳制默认 5 / 10（代码默认 + 两份
+// toml 显式写出与默认一致）。
+func TestLoadLowBalanceConcDefaults(t *testing.T) {
+	setenvRequired(t)
+	c, err := Load("")
+	require.NoError(t, err)
+	require.Equal(t, 5, c.Proxy.LowBalanceMaxConcurrency, "默认 cap = 5")
+	require.Equal(t, float64(10), c.Proxy.LowBalanceThresholdUSD, "默认阈值 = $10")
+
+	for _, path := range []string{"../../config.example.toml", "../../deploy/config.toml"} {
+		t.Run(path, func(t *testing.T) {
+			c, err := Load(path)
+			require.NoError(t, err)
+			require.Equal(t, 5, c.Proxy.LowBalanceMaxConcurrency)
+			require.Equal(t, float64(10), c.Proxy.LowBalanceThresholdUSD)
+		})
+	}
+}
+
+// TestLoadLowBalanceConcValidation 校验规则单一化：cap<0 → 报错；仅 cap>0 时
+// 阈值须 >0；cap==0（关闭）→ 两键均不校验（阈值任意值忽略）。
+func TestLoadLowBalanceConcValidation(t *testing.T) {
+	setenvRequired(t)
+	t.Run("cap<0 报错", func(t *testing.T) {
+		_, err := Load(writeConfig(t, `proxy = { low_balance_max_concurrency = -1, low_balance_threshold_usd = 10 }`))
+		require.Error(t, err)
+		require.ErrorContains(t, err, "proxy.low_balance_max_concurrency")
+	})
+	t.Run("cap>0 且阈值<=0 报错", func(t *testing.T) {
+		for _, v := range []string{"0", "-5"} {
+			_, err := Load(writeConfig(t, "proxy = { low_balance_max_concurrency = 5, low_balance_threshold_usd = "+v+" }"))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "proxy.low_balance_threshold_usd")
+		}
+	})
+	t.Run("cap>0 且阈值>0 通过", func(t *testing.T) {
+		c, err := Load(writeConfig(t, `proxy = { low_balance_max_concurrency = 5, low_balance_threshold_usd = 2.5 }`))
+		require.NoError(t, err)
+		require.Equal(t, float64(2.5), c.Proxy.LowBalanceThresholdUSD)
+	})
+	t.Run("cap==0 时阈值任意值忽略", func(t *testing.T) {
+		for _, v := range []string{"0", "-5", "10"} {
+			c, err := Load(writeConfig(t, "proxy = { low_balance_max_concurrency = 0, low_balance_threshold_usd = "+v+" }"))
+			require.NoError(t, err)
+			require.Equal(t, 0, c.Proxy.LowBalanceMaxConcurrency)
+		}
+	})
+}
