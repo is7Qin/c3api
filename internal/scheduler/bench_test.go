@@ -148,7 +148,9 @@ func TestSelectionSizeAMD64(t *testing.T) {
 		t.Skip("amd64 layout gate")
 	}
 	// +8：codex 槽位池认领的 identitySlot 指针（slot-identity 注入/推进面）。
-	require.Equal(t, uintptr(152), unsafe.Sizeof(Selection{}))
+	// +32：SupplierFinance（选中账号时捕获的不可变财务上下文，spec 2026-10-09
+	// §4.2/§4.6；随尝试携带，收尾不再回查 owner）。
+	require.Equal(t, uintptr(184), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {

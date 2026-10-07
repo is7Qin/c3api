@@ -65,6 +65,10 @@ func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Sele
 		sel.Release()
 		return nil, scheduler.Attempt{}, scheduler.ErrFormatUnavailable
 	}
+	// 财务上下文随选中固定（spec 2026-10-09 §4.2/§4.6）：此刻单次 Load 财务
+	// 快照捕获归属/分成/代数，随本尝试的 Selection 携带；收尾（含 failover
+	// 获胜尝试）只按该捕获值落账——不再回查 owner。关闭态（未装配快照）⇒ 零值。
+	sel.SupplierFinance = p.captureFinance(sel.AccountID)
 	return sel, attempt, nil
 }
 

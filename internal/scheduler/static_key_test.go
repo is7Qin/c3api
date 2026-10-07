@@ -81,7 +81,7 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 		declaredPlanKeyFields = []string{
 			"accountID", "name", "templateID", "baseURL", "upstreamKey",
 			"maxConcurrency", "enabled", "cacheDomain", "upstreamCostMultiplierBp",
-			"identityRevision",
+			"identityRevision", "supplierUserID",
 			"codexAccountID", "codexInstallation",
 			"codexEmail", "codexPATKey",
 			"credentialType", "stripImageTools", "modelsDigest", "formatModelsKey",

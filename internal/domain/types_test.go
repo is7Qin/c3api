@@ -90,8 +90,8 @@ func TestAccountDomainContractFieldSet(t *testing.T) {
 	require.Equal(t, []string{
 		"BaseURL", "CacheDomain", "CreatedAt", "DeletedAt", "Enabled", "Ext",
 		"FailedAt", "FailureSource", "GroupIDs", "ID", "IdentityRevision", "LastError",
-		"LastUsedAt", "LifecycleRevision", "MaxConcurrency", "Name", "Template", "TemplateID",
-		"UpdatedAt", "UpstreamCostMultiplierBp", "UpstreamKey",
+		"LastUsedAt", "LifecycleRevision", "MaxConcurrency", "Name", "SupplierUserID",
+		"Template", "TemplateID", "UpdatedAt", "UpstreamCostMultiplierBp", "UpstreamKey",
 	}, exportedFieldNames(reflect.TypeOf(Account{})))
 }
 

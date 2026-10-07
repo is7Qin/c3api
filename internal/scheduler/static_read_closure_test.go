@@ -96,6 +96,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.CacheDomain":              {staticPathField, "cacheDomain"},
 	"$S.acc.UpstreamCostMultiplierBp": {staticPathField, "upstreamCostMultiplierBp"},
 	"$S.acc.IdentityRevision":         {staticPathField, "identityRevision"},
+	"$S.acc.SupplierUserID":           {staticPathField, "supplierUserID"},
 
 	// --- 账号凭据面（决策输入子集） ---
 	"$S.acc.Ext.CodexAccountID":               {staticPathField, "codexAccountID"},

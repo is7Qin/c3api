@@ -434,9 +434,15 @@ type Account struct {
 	// 可区分。从存储读回的账号恒非 nil（列为 NOT NULL + 默认），读取走 MultBp。
 	UpstreamCostMultiplierBp *int
 	CacheDomain              *string
-	CreatedAt                time.Time
-	UpdatedAt                time.Time
-	DeletedAt                *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
+	// SupplierUserID 供应商归属（账号写面 spec 2026-10-09 §2.5）：
+	// 0 = 平台自有；非 0 = 归属该 supplier uid。**非身份类**（不推进
+	// IdentityRevision）——归属是账务属性，不是路由目标身份（§2.5）。但它是
+	// **供给准入门**（§4.6）的静态判据：带归属账号在财务快照未就绪时不得入选
+	// 调度 ⇒ 落在静态键（planKey.supplierUserID）内，归属变更即换新叶子。
+	SupplierUserID int64
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	DeletedAt      *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
 	// GroupIDs 写路径（创建/更新）专用：nil = 不设置/不变；非 nil = 替换账号
 	// 全部分组（含空数组 = 清空）。读路径忽略——编辑回显走 GetAccountGroups
 	// 独立查询（toDomainAccount 不填充该字段）。

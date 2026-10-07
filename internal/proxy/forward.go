@@ -211,8 +211,9 @@ func (p *Proxy) finish(sel *scheduler.Selection, l *domain.UsageLog) {
 	}
 	if p.cfg.UsageCapture && l != nil {
 		// 供应商收益出生定态（spec 2026-10-09 §4.2）：归属/分成/credited 三列
-		// 在计费完成后盖章（关闭态 credited=true 且零列——新行不入收益索引）。
-		p.stampSupplier(l)
+		// 在计费完成后按**选中账号时捕获**的财务上下文盖章（关闭态 credited=true
+		// 且零列——新行不入收益索引）。
+		p.stampSupplier(sel, l)
 		p.routeLog(l)
 	}
 }

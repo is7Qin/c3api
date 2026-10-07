@@ -83,6 +83,10 @@ type Selection struct {
 	// 槽身份——非 codex 面不认领）。Release 归还。
 	identitySlot     *identitySlot
 	ModelMappingMode domain.ModelMappingMode
+	// SupplierFinance 选中本账号时捕获的不可变财务上下文（spec 2026-10-09 §4.2/§4.6）：
+	// proxy 在预留成功后立刻按本 Selection 的 AccountID 从财务快照单次 Load
+	// 捕获，收尾（含 failover 获胜尝试）只按该捕获值落账——不再回查 owner。
+	SupplierFinance domain.SupplierFinance
 }
 
 func (s *Selection) Release() {
@@ -232,6 +236,11 @@ type Scheduler struct {
 	// trigger. Conditional (lane-quiet boundary only) + byte-guarded publish:
 	// never an unconditional periodic recompile.
 	lastFireMinute atomic.Int64
+	// supplierAdmission 供给准入门（spec 2026-10-09 §4.6，I1）：nil = 未装配
+	// （功能关闭态）⇒ 全部账号照常调度（G1：关闭态零成本，平台自有不受影响）。
+	// 装配后，预留谓词对「带供应商归属的账号」追加一道财务上下文就绪检查；
+	// 未就绪 ⇒ 拒绝（不耗 attempt），使该账号暂不入调度。
+	supplierAdmission atomic.Pointer[SupplierAdmission]
 }
 
 // View returns current RoutingView root (single atomic root; structurally shared StaticView+DecisionView).

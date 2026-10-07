@@ -39,6 +39,11 @@ type planKey struct {
 	cacheDomain              string // 规范化：nil 与 "" 对消费者等价（cacheDomainForAccount）
 	upstreamCostMultiplierBp int
 	identityRevision         int64 // K（spec §5.5 注：K 会进编译事实/候选/wire）
+	// supplierUserID 供应商归属（spec 2026-10-09 §2.5/§4.6）：**非身份类**
+	// （归属变更不推进 K），但它是**供给准入门**的静态判据——带归属账号在财务
+	// 快照未就绪时不得入选调度。落在键内使归属变更换新叶子 ⇒ 预留谓词读到的是
+	// 当前归属（否则叶子复用会带来陈旧归属读，正是静态读闭包门要防的缺陷）。
+	supplierUserID int64
 
 	// --- 凭据面消费子集（决策输入部分） ---
 	//
@@ -135,6 +140,7 @@ func planKeyOf(av *snapshotStatic) planKey {
 	k.cacheDomain = normalizeCacheDomain(av.acc.CacheDomain)
 	k.upstreamCostMultiplierBp = domain.MultBp(av.acc.UpstreamCostMultiplierBp)
 	k.identityRevision = av.acc.IdentityRevision
+	k.supplierUserID = av.acc.SupplierUserID
 	if ext := av.acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)
 		k.codexEmail = derefString(ext.CodexEmail)

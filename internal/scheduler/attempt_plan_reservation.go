@@ -155,6 +155,13 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		if st.status == domain.StatusDisabled {
 			return false
 		}
+		// 供给准入门（spec 2026-10-09 §4.6，I1）：带供应商归属的账号在财务
+		// 快照未就绪（或该归属不在快照中）时暂不入调度——拒绝不耗 attempt，
+		// 自然落到下一候选；平台自有账号（owner == 0）恒放行（未装配门时
+		// admitSupplier 也恒放行，关闭态零成本）。
+		if !s.admitSupplier(av.acc.ID, av.acc.SupplierUserID) {
+			return false
+		}
 		cur := a.runtime.concurrency.Load()
 		limit := int64(av.acc.MaxConcurrency)
 		if cur >= int64(concShare(int(limit), instances)) && (cur >= limit || !concAllows(cluster, av.acc.ID, limit, cur+1)) {

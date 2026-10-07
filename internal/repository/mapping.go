@@ -153,6 +153,10 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 		CacheDomain:              a.CacheDomain,
 		CreatedAt:                a.CreatedAt, UpdatedAt: a.UpdatedAt, DeletedAt: a.DeletedAt,
 	}
+	// 供应商归属（spec §2.5/§4.6）：列 NULL = 平台自有（0）。非 nil 落值。
+	if a.SupplierUserID != nil {
+		d.SupplierUserID = *a.SupplierUserID
+	}
 	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts
 	// ——全表/子查询扫描后内存装配 Edges.Ext）会带 account_ext 边；其余路径
 	// 无 ext 边 → nil（与 Template.StripImageTools 同款合并先例，定死

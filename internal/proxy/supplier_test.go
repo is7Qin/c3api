@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // TestEarnOfExactFloor A2：以 math/big 独立计算 floor(cost*b/10000) 为 oracle，
@@ -104,47 +105,43 @@ func TestSupplierSnapshotObs(t *testing.T) {
 }
 
 // TestStampSupplierQuadrants A1③/A3 出生定态四象限（关闭态 / 无归属 / 有归属
-// 正收益 / 有归属零收益）。
+// 正收益 / 有归属零收益）。归属随选中固定：盖章只读 sel.SupplierFinance。
 func TestStampSupplierQuadrants(t *testing.T) {
 	// 关闭态（未装配快照）：uid 0、earn 0、credited true。
 	off := &Proxy{}
 	l := &domain.UsageLog{AccountID: 7, Cost: 100000}
-	off.stampSupplier(l)
+	off.stampSupplier(nil, l)
 	require.Equal(t, int64(0), l.SupplierUserID)
 	require.Equal(t, int64(0), l.SupplierEarnMillis)
 	require.True(t, l.SupplierCredited, "关闭态 credited=true（新行不入索引）")
 
-	// 装配快照：账号 7 归属 uid 100（bp=7000）。
-	snap := NewSupplierSnapshot(time.Minute)
-	snap.Store(map[int64]int64{7: 100}, map[int64]int{100: 7000}, time.Unix(0, 0))
-	p := &Proxy{supplier: snap}
-
-	// 有归属正收益：uid=100，earn=floor(100000*7000/10000)=70000，credited=false。
+	// 有归属（uid=100，bp=7000）正收益：earn=floor(100000*7000/10000)=70000。
+	p := &Proxy{}
+	sel := &scheduler.Selection{AccountID: 7, SupplierFinance: FinanceCtx{Ready: true, UID: 100, Bp: 7000, Rev: 1}}
 	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
-	p.stampSupplier(l)
+	p.stampSupplier(sel, l)
 	require.Equal(t, int64(100), l.SupplierUserID)
 	require.Equal(t, int64(70000), l.SupplierEarnMillis)
 	require.False(t, l.SupplierCredited)
 
 	// 有归属零收益（cost=0）：uid=100、earn 0、credited=true。
 	l = &domain.UsageLog{AccountID: 7, Cost: 0}
-	p.stampSupplier(l)
+	p.stampSupplier(sel, l)
 	require.Equal(t, int64(100), l.SupplierUserID)
 	require.Equal(t, int64(0), l.SupplierEarnMillis)
 	require.True(t, l.SupplierCredited)
 
-	// 无归属（平台自有号）：uid 0、earn 0、credited true。
+	// 无归属（平台自有号）：Ready=false ⇒ uid 0、earn 0、credited true。
+	ownless := &scheduler.Selection{AccountID: 8}
 	l = &domain.UsageLog{AccountID: 8, Cost: 100000}
-	p.stampSupplier(l)
+	p.stampSupplier(ownless, l)
 	require.Equal(t, int64(0), l.SupplierUserID)
 	require.True(t, l.SupplierCredited)
 
 	// bp=0 显式：有归属但零收益。
-	snap2 := NewSupplierSnapshot(time.Minute)
-	snap2.Store(map[int64]int64{7: 100}, map[int64]int{100: 0}, time.Unix(0, 0))
-	p2 := &Proxy{supplier: snap2}
+	zeroBp := &scheduler.Selection{AccountID: 7, SupplierFinance: FinanceCtx{Ready: true, UID: 100, Bp: 0, Rev: 1}}
 	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
-	p2.stampSupplier(l)
+	p.stampSupplier(zeroBp, l)
 	require.Equal(t, int64(100), l.SupplierUserID)
 	require.Equal(t, int64(0), l.SupplierEarnMillis)
 	require.True(t, l.SupplierCredited)
@@ -157,4 +154,22 @@ func TestCaptureFinanceNotReady(t *testing.T) {
 	p := &Proxy{supplier: snap}
 	fin := p.captureFinance(7)
 	require.False(t, fin.Ready, "视图未就绪 ⇒ 不捕获归属")
+}
+
+// TestAdmitSupplierAccount 供给准入门（§4.6）：平台自有无条件放行；带归属
+// 仅在财务快照就绪且归属一致时放行。
+func TestAdmitSupplierAccount(t *testing.T) {
+	// 未装配快照（nil）⇒ 带归属拒绝、平台自有放行。
+	var nilSnap *SupplierSnapshot
+	require.True(t, nilSnap.AdmitSupplierAccount(7, 0))
+	require.False(t, nilSnap.AdmitSupplierAccount(7, 100))
+
+	snap := NewSupplierSnapshot(time.Minute)
+	// 未装载视图 ⇒ 带归属拒绝。
+	require.False(t, snap.AdmitSupplierAccount(7, 100))
+	require.True(t, snap.AdmitSupplierAccount(7, 0))
+	snap.Store(map[int64]int64{7: 100}, map[int64]int{100: 7000}, time.Unix(0, 0))
+	require.True(t, snap.AdmitSupplierAccount(7, 100), "归属一致 + 就绪 ⇒ 放行")
+	require.False(t, snap.AdmitSupplierAccount(7, 200), "归属不一致 ⇒ 拒绝")
+	require.False(t, snap.AdmitSupplierAccount(9, 100), "该账号未落在快照 ⇒ 拒绝")
 }
