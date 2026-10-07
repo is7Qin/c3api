@@ -29,10 +29,10 @@ helm install c3api ./deploy/helm \
 helm upgrade c3api ./deploy/helm -f my-values.yaml
 ```
 
-Changing `config.content` or `secrets.*` updates a checksum annotation and
-triggers a rolling restart. The application creates its schema on first start
-(fresh setup only — no migration path); back up external PostgreSQL before
-upgrading.
+Changing `config.content` (or `secrets.jwtSecret`/`secrets.adminToken` when
+`secrets.create=true`) updates a checksum annotation and triggers a rolling
+restart. The application creates its schema on first start (fresh setup only —
+no migration path); back up external PostgreSQL before upgrading.
 
 ## Uninstalling
 

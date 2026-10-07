@@ -92,7 +92,7 @@ spec:
               value: {{ required "externalRedis.addr or externalRedis.existingSecret is required" .Values.externalRedis.addr | quote }}
               {{- end }}
             {{- range $k, $v := .Values.app.env }}
-            {{- if $v }}
+            {{- if and (not (kindIs "invalid" $v)) (ne (toString $v) "") }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
