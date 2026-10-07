@@ -5,12 +5,14 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 )
@@ -24,7 +26,7 @@ func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	p, err := accountPatchFromBody(&in)
+	p, err := accountPatchFromBody(r.Context(), &in)
 	if err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -90,7 +92,7 @@ func (h *AdminAPI) PatchAccountsId(w http.ResponseWriter, r *http.Request, id in
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	p, err := accountPatchFromBody(&in)
+	p, err := accountPatchFromBody(r.Context(), &in)
 	if err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -171,7 +173,7 @@ func (h *AdminAPI) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Reques
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	p, err := accountPatchFromBody(&in.Fields)
+	p, err := accountPatchFromBody(r.Context(), &in.Fields)
 	if err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -215,8 +217,14 @@ func (h *AdminAPI) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request,
 //   - 可空标量（base_url/cache_domain）：缺席 → nil（不变）；显式 null → &""
 //     （repo 层"清空"编码：落 NULL）；"" → 400；非空 → &v。
 //   - group_ids：原样透传（nil = 不变，[] = 清空，列表 = 替换）。
-func accountPatchFromBody(f *AccountConfigPatch) (repository.AccountPatch, error) {
+func accountPatchFromBody(ctx context.Context, f *AccountConfigPatch) (repository.AccountPatch, error) {
 	var p repository.AccountPatch
+	// 归属（§2.5 唯一字段级例外）：供应商面请求体出现该字段（含显式 null）⇒ 400；
+	// 供应商面归属恒为 JWT 本人（service 钉死），不可经请求体改写。管理面经此字段
+	// 「把账号分配给供应商」。
+	if f.SupplierUserId.IsSpecified() && domain.AccountScopeFrom(ctx).Set {
+		return p, errors.New("supplier_user_id is not writable on the supplier surface")
+	}
 	if v, err := requiredScalar(f.Name, "name"); err != nil {
 		return p, err
 	} else {
@@ -260,7 +268,34 @@ func accountPatchFromBody(f *AccountConfigPatch) (repository.AccountPatch, error
 		p.CacheDomain = v
 	}
 	p.GroupIDs = f.GroupIds
+	if v, err := nullableInt64(f.SupplierUserId, "supplier_user_id"); err != nil {
+		return p, err
+	} else {
+		p.SupplierUserID = v
+	}
 	return p, nil
+}
+
+// nullableInt64 可空整数标量的三态投影（归属专用）：缺席 → nil；显式 null → &0
+// （repo 层「清空 = 回平台自有」编码，落 NULL）；正值 → &v；0 → 400（清空只有
+// 一个拼法 null）。
+func nullableInt64(f interface {
+	IsSpecified() bool
+	IsNull() bool
+	MustGet() int64
+}, field string) (*int64, error) {
+	if !f.IsSpecified() {
+		return nil, nil
+	}
+	if f.IsNull() {
+		zero := int64(0)
+		return &zero, nil
+	}
+	v := f.MustGet()
+	if v <= 0 {
+		return nil, fmt.Errorf("%s must be positive (use null to clear)", field)
+	}
+	return &v, nil
 }
 
 // requiredScalar 不可空标量的三态投影：缺席 → nil；显式 null → 400；有值 → &v。

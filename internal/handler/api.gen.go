@@ -440,6 +440,7 @@ type AccountConfigPatch struct {
 	GroupIds               *[]int64                   `json:"group_ids,omitempty"`
 	MaxConcurrency         nullable.Nullable[int]     `json:"max_concurrency,omitempty"`
 	Name                   nullable.Nullable[string]  `json:"name,omitempty"`
+	SupplierUserId         nullable.Nullable[int64]   `json:"supplier_user_id,omitempty"`
 	TemplateId             nullable.Nullable[int64]   `json:"template_id,omitempty"`
 	UpstreamCostMultiplier nullable.Nullable[float64] `json:"upstream_cost_multiplier,omitempty"`
 	UpstreamKey            nullable.Nullable[string]  `json:"upstream_key,omitempty"`
@@ -706,6 +707,9 @@ type CodexOAuthImportBody struct {
 	GroupId *int64                 `json:"group_id"`
 	Items   []CodexOAuthImportItem `json:"items"`
 
+	// SupplierUserId 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
+	SupplierUserId *int64 `json:"supplier_user_id"`
+
 	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-oauth）
 	TemplateId int64 `json:"template_id"`
 
@@ -745,6 +749,9 @@ type CodexPATImportBody struct {
 	// GroupId 可选：新建账号归组（不存在 → 行级 failed）
 	GroupId *int64               `json:"group_id"`
 	Items   []CodexPATImportItem `json:"items"`
+
+	// SupplierUserId 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
+	SupplierUserId *int64 `json:"supplier_user_id"`
 
 	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-pat）
 	TemplateId int64 `json:"template_id"`

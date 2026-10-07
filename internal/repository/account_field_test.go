@@ -38,6 +38,7 @@ func TestChangedFieldsCoversEveryDeclaredField(t *testing.T) {
 		domain.FieldEnabled:                {Enabled: boolPtr(false)},
 		domain.FieldCacheDomain:            {CacheDomain: strPtr("new-domain")},
 		domain.FieldUpstreamCostMultiplier: {UpstreamCostMultiplierBp: intPtr(25000)},
+		domain.FieldSupplierUserID:         {SupplierUserID: int64Ptr(9)},
 	}
 	declared := domain.AccountFieldSpecs()
 	require.Len(t, cases, len(declared), "every declared field needs a change case")

@@ -744,7 +744,8 @@ func validateAccountPatch(p repository.AccountPatch) error {
 	// 空补丁：无任何字段 = 无意义的空写（仍会推进 C）——拒绝而非静默接受。
 	if p.Name == nil && p.TemplateID == nil && p.UpstreamKey == nil &&
 		p.BaseURL == nil && p.MaxConcurrency == nil && p.GroupIDs == nil &&
-		p.Enabled == nil && p.UpstreamCostMultiplierBp == nil && p.CacheDomain == nil {
+		p.Enabled == nil && p.UpstreamCostMultiplierBp == nil && p.CacheDomain == nil &&
+		p.SupplierUserID == nil {
 		return ErrInvalidInput
 	}
 	if p.Name != nil && *p.Name == "" {
@@ -791,6 +792,11 @@ func validateAccountPatch(p repository.AccountPatch) error {
 		if err := validateCacheDomain(*p.CacheDomain); err != nil {
 			return ErrInvalidInput
 		}
+	}
+	// 归属（§2.5）：nil = 不变；&0 = 清空（回平台自有）；&uid>0 = 分配给该用户
+	// （目标值域校验在 repository 写入事务内锁 users 行后进行，见 ownership.go）。
+	if p.SupplierUserID != nil && *p.SupplierUserID < 0 {
+		return ErrInvalidInput
 	}
 	return nil
 }

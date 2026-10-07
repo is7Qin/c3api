@@ -826,6 +826,9 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 				a.CacheDomain = &v
 			}
 		}
+		if p.SupplierUserID != nil {
+			a.SupplierUserID = *p.SupplierUserID
+		}
 		// 配置写入**无条件**推进 C（镜像真实 repo）；身份类字段真的变了才推进 K。
 		a.LifecycleRevision++
 		if changed.IdentityChanged() {
@@ -853,6 +856,7 @@ func accountFieldValues(a *domain.Account) repository.AccountFieldValues {
 		Enabled:                  a.Enabled,
 		CacheDomain:              a.CacheDomain,
 		UpstreamCostMultiplierBp: domain.MultBp(a.UpstreamCostMultiplierBp),
+		SupplierUserID:           a.SupplierUserID,
 	}
 }
 

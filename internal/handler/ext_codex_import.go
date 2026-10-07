@@ -29,6 +29,11 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 		httpface.WriteErr(w, http.StatusBadRequest, "items must contain 1-100 entries")
 		return
 	}
+	// 归属（§2.5）：供应商面导入体出现该字段（含 null）⇒ 400；归属恒为 JWT 本人。
+	if in.SupplierUserId != nil && domain.AccountScopeFrom(r.Context()).Set {
+		httpface.WriteErr(w, http.StatusBadRequest, "supplier_user_id is not writable on the supplier surface")
+		return
+	}
 	items := make([]domain.CodexOAuthImportItem, len(in.Items))
 	for i, it := range in.Items {
 		accountID := it.CodexAccountId
@@ -66,6 +71,10 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 	}
 	if len(in.Items) == 0 || len(in.Items) > 100 {
 		httpface.WriteErr(w, http.StatusBadRequest, "items must contain 1-100 entries")
+		return
+	}
+	if in.SupplierUserId != nil && domain.AccountScopeFrom(r.Context()).Set {
+		httpface.WriteErr(w, http.StatusBadRequest, "supplier_user_id is not writable on the supplier surface")
 		return
 	}
 	items := make([]domain.CodexPATImportItem, len(in.Items))

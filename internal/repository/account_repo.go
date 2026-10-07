@@ -50,6 +50,12 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if err := validateCodexAccountBaseURL(templates[a.TemplateID], a.BaseURL); err != nil {
 			return err
 		}
+		// 归属写入（§2.5）：锁目标 users 行并校验「供应商面可达 + active」。
+		if a.SupplierUserID > 0 {
+			if err := validateOwnershipTarget(ctx, driver, a.SupplierUserID); err != nil {
+				return err
+			}
+		}
 		b := client.Account.Create().
 			SetName(a.Name).SetTemplateID(a.TemplateID).
 			SetNillableBaseURL(a.BaseURL).

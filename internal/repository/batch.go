@@ -53,6 +53,10 @@ type AccountPatch struct {
 	Enabled                  *bool
 	UpstreamCostMultiplierBp *int
 	CacheDomain              *string // nil=不变, &""=清空, &val=落值
+	// SupplierUserID 归属（spec §2.5 管理面「把账号分配给供应商」入口）：nil =
+	// 不变；&0 = 清空（回平台自有，落 NULL）；&uid(>0) = 分配给该用户（值域校验：
+	// 目标须为供应商面可达用户，且与禁用路径锁同一 users 行）。
+	SupplierUserID *int64
 }
 
 type GroupPatch struct {
@@ -226,6 +230,13 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				return err
 			}
 		}
+		// 归属写入（§2.5）：分配（&uid>0）时锁目标 users 行并校验；&0 = 清空
+		// （回平台自有）无需目标校验。
+		if p.SupplierUserID != nil && *p.SupplierUserID > 0 {
+			if err := validateOwnershipTarget(ctx, driver, *p.SupplierUserID); err != nil {
+				return err
+			}
+		}
 		pre := make(map[int64]AccountFieldValues, len(locked))
 		for _, row := range locked {
 			pre[row.ID] = row
@@ -277,6 +288,14 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 					u = u.ClearCacheDomain()
 				} else {
 					u = u.SetCacheDomain(*p.CacheDomain)
+				}
+			}
+			// 归属（§2.5）：&0 = 清空（回平台自有，落 NULL）；&uid>0 = 分配。
+			if p.SupplierUserID != nil {
+				if *p.SupplierUserID == 0 {
+					u = u.ClearSupplierUserID()
+				} else {
+					u = u.SetSupplierUserID(*p.SupplierUserID)
 				}
 			}
 			updated, err := u.Save(ctx)

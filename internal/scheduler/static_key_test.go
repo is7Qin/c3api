@@ -120,6 +120,7 @@ func TestStaticKeyCoversEveryDeclaredAccountField(t *testing.T) {
 		domain.FieldEnabled:                "enabled",
 		domain.FieldCacheDomain:            "cacheDomain",
 		domain.FieldUpstreamCostMultiplier: "upstreamCostMultiplierBp",
+		domain.FieldSupplierUserID:         "supplierUserID",
 	}
 	kt := reflect.TypeOf(staticKey{})
 	keyFields := make(map[string]bool)

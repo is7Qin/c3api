@@ -2428,6 +2428,9 @@ components:
         enabled: { type: boolean, description: "可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）" }
         cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
         upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
+        # 归属（spec §2.5）：供应商面导入体出现该字段（含 null）⇒ 400；供应商面
+        # 归属恒写 JWT 本人。管理面（导入端点仅 /api/admin）保留字段以便 400 显式拒绝。
+        supplier_user_id: { type: integer, format: int64, nullable: true, description: "保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）" }
     CodexPATImportBody:
       type: object
       required: [items, template_id]
@@ -2445,6 +2448,7 @@ components:
         enabled: { type: boolean, description: "可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）" }
         cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
         upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
+        supplier_user_id: { type: integer, format: int64, nullable: true, description: "保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）" }
     ImportFailedItem:
       type: object
       required: [index, error]
@@ -3027,6 +3031,18 @@ components:
           minimum: 0
           maximum: 10
           x-go-type: nullable.Nullable[float64]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        # 归属（spec 2026-10-09 §2.5 行层作用域锚点；唯一字段级例外）：缺席 = 不变；
+        # null = 清空（回平台自有）；正整数 = 分配给该供应商（值域校验：目标须为供应商面
+        # 可达且 active 的用户，写入事务内锁 users 行串行化）。供应商面请求体出现该字段
+        # （含 null）⇒ 400——供应商面归属恒为 JWT 本人、不可改。
+        supplier_user_id:
+          x-omitempty: true
+          type: integer
+          format: int64
+          nullable: true
+          x-go-type: nullable.Nullable[int64]
           x-go-type-import: { path: github.com/oapi-codegen/nullable }
           x-go-type-skip-optional-pointer: true
     GroupPatch:

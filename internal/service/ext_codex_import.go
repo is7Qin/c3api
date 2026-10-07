@@ -278,6 +278,11 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 	// 不存在 → imported：单行事务。直调 tx 版 repo 原始方法——不调
 	// service.CreateAccount（invalidate/publish 副作用面在事务回滚时已发）；
 	// 副作用批末一次（importCodexAccounts）。
+	// 归属（§2.5）：供应商面导入恒写 JWT 本人（作用域注入）；管理面 = 平台自有。
+	var supplierUID int64
+	if sc := domain.AccountScopeFrom(ctx); sc.Set {
+		supplierUID = sc.OwnerUID
+	}
 	identity := NewCodexIdentity()
 	err = s.store.WithTx(ctx, func(tx repository.TxStore) error {
 		acc, err := tx.CreateAccount(ctx, &domain.Account{
@@ -286,6 +291,7 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 			// 配置面（body 级）只作用于新建行——updated 路径只更新凭据列。
 			UpstreamCostMultiplierBp: codexImportMultiplierBp(cfg),
 			CacheDomain:              codexImportCacheDomain(cfg),
+			SupplierUserID:           supplierUID,
 		})
 		if err != nil {
 			return err
