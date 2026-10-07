@@ -610,3 +610,21 @@ func TestRecovererSSEConnectionClosed(t *testing.T) {
 	require.Error(t, err, "已写头 + panic → 连接被关闭：读取以异常终止而非干净 EOF")
 	require.False(t, errors.Is(err, io.EOF), "必须非干净流尾（关闭连接语义：无终结 chunk）")
 }
+
+// TestSupplierMountPrecedence /api/user/supplier/* 更具体的静态前缀优先于
+// /api/user/*（供应商面挂载不与用户面冲突）。
+func TestSupplierMountPrecedence(t *testing.T) {
+	userH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	supH := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusCreated) })
+	s := NewServer(Options{AdminToken: "tok", UserHandler: userH, SupplierHandler: supH})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/supplier/accounts", nil)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, "供应商面路径必须由 SupplierHandler 处理")
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/user/keys", nil)
+	rec2 := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec2, req2)
+	require.Equal(t, http.StatusOK, rec2.Code, "其余 /api/user/* 由 UserHandler 处理")
+}

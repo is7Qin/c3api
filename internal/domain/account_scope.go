@@ -4,6 +4,27 @@
 
 package domain
 
+import "context"
+
+// accountScopeCtxKey 账号作用域上下文键（单键单值）。作用域经 context 从供应商面
+// 中间件（handler.SupplierScopeInject）透传到 repository 的账号读/写入口——每处
+// WHERE 由 repository 读取该键并 AND 进谓词（§2.5：禁止「先按 id 取行再应用层比
+// 归属」）。管理面/用户面不注入 ⇒ 缺省 = 管理面全量（PlatformAccountScope）。
+type accountScopeCtxKey struct{}
+
+// WithAccountScope 注入账号作用域（供应商面中间件调用）。
+func WithAccountScope(ctx context.Context, s AccountScope) context.Context {
+	return context.WithValue(ctx, accountScopeCtxKey{}, s)
+}
+
+// AccountScopeFrom 读取注入的账号作用域；缺省 = 管理面全量（{Set:false}）。
+func AccountScopeFrom(ctx context.Context) AccountScope {
+	if s, ok := ctx.Value(accountScopeCtxKey{}).(AccountScope); ok {
+		return s
+	}
+	return PlatformAccountScope()
+}
+
 // AccountScope 账号读/写入口的行层作用域（spec 2026-10-09 §2.5）。供应商面恒传
 // {OwnerUID: jwtUser, Set: true}，管理面传 {Set: false}（全量）。**作用域必须
 // AND 进每一处 WHERE**（列表/单读/单改/删/批量/ext/recover/usage）——禁止「先按

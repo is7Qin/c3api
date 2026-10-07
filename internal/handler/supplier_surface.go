@@ -22,6 +22,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
 // SupplierSurfaceBaseURL 供应商面第二 BaseURL。
@@ -94,8 +95,9 @@ func SupplierSurfaceGuard(full http.Handler) http.Handler {
 	})
 }
 
-// ctxKeyAccountScope 作用域注入键（单键单值，对齐 ctxKeyReqMeta 惯例）。
-type ctxKeyAccountScope struct{}
+// 作用域注入键/读值下沉 domain（叶子包）——service/repository 与 handler 共用同一
+// 访问器（domain.WithAccountScope/domain.AccountScopeFrom），避免 handler→service
+// 反向依赖（§2.5）。见 internal/domain/account_scope.go。
 
 // SupplierScopeInject 供应商面作用域注入：从已验证 JWT claims 取 user_id，注入
 // {OwnerUID: jwtUser, Set:true}（§2.5 行层作用域）。必须位于 RequireJWT 之后。
@@ -103,7 +105,7 @@ type ctxKeyAccountScope struct{}
 func SupplierScopeInject(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if claims, ok := auth.ClaimsFrom(r.Context()); ok {
-			ctx := context.WithValue(r.Context(), ctxKeyAccountScope{}, domain.SupplierAccountScope(claims.UserID))
+			ctx := domain.WithAccountScope(r.Context(), domain.SupplierAccountScope(claims.UserID))
 			r = r.WithContext(ctx)
 		}
 		next.ServeHTTP(w, r)
@@ -111,10 +113,61 @@ func SupplierScopeInject(next http.Handler) http.Handler {
 }
 
 // AccountScopeFrom 读取注入的账号作用域（缺省 = 管理面全量 {Set:false}）。
-// service 层每个账号读/写入口据此把作用域 AND 进 WHERE。
+// service/repository 层经 domain.AccountScopeFrom 读取同一键（此处为 handler 面
+// 便捷别名，保持既有引用）。
 func AccountScopeFrom(ctx context.Context) domain.AccountScope {
-	if s, ok := ctx.Value(ctxKeyAccountScope{}).(domain.AccountScope); ok {
-		return s
+	return domain.AccountScopeFrom(ctx)
+}
+
+// SupplierSurfaceRouter 供应商面复用路由（第二 BaseURL /api/user/supplier）：
+// 以**同一生成 ServerInterfaceWrapper** 注册允许清单内的账号/分组/模板端点——
+// 字段层**零差异化**（同一 AccountConfigPatch/validateAccountPatch/accountFieldSpecs），
+// 仅作用域由 ctx 注入（repository 每处 WHERE AND 归属谓词）。
+//
+// 仅注册 allowlist（default-deny）：未列出的管理端点（/users、/settings、
+// /pricing、/rules、/ops、/mail、组写面/assignments、模板写面）**根本不注册**
+// ⇒ 404（安全默认方向：新增管理端点默认不对供应商暴露）。
+func (h *AdminAPI) SupplierSurfaceRouter() http.Handler {
+	siw := &ServerInterfaceWrapper{
+		Handler: h,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
+		},
 	}
-	return domain.PlatformAccountScope()
+	r := chi.NewRouter()
+	// 账号端点全量（复用）。
+	r.Get("/api/user/supplier/accounts", siw.GetAccounts)
+	r.Post("/api/user/supplier/accounts", siw.PostAccounts)
+	r.Post("/api/user/supplier/accounts/batch-update", siw.PostAccountsBatchUpdate)
+	r.Post("/api/user/supplier/accounts/batch-delete", siw.PostAccountsBatchDelete)
+	r.Post("/api/user/supplier/accounts/batch-import-codex-oauth", siw.PostAccountsBatchImportCodexOauth)
+	r.Post("/api/user/supplier/accounts/batch-import-codex-pat", siw.PostAccountsBatchImportCodexPat)
+	r.Get("/api/user/supplier/accounts/usage", siw.GetAccountsUsage)
+	r.Get("/api/user/supplier/accounts/{id}", siw.GetAccountsId)
+	r.Patch("/api/user/supplier/accounts/{id}", siw.PatchAccountsId)
+	r.Delete("/api/user/supplier/accounts/{id}", siw.DeleteAccountsId)
+	r.Get("/api/user/supplier/accounts/{id}/ext", siw.GetAccountsIdExt)
+	r.Put("/api/user/supplier/accounts/{id}/ext", siw.PutAccountsIdExt)
+	r.Get("/api/user/supplier/accounts/{id}/groups", siw.GetAccountsIdGroups)
+	r.Post("/api/user/supplier/accounts/{id}/recover", siw.PostAccountsIdRecover)
+	// groups GET 只读候选列表（账号页「选择分组」依赖）；组写面/assignments 不注册。
+	r.Get("/api/user/supplier/groups", siw.GetGroups)
+	// templates GET 只读（提交账号需选模板）；模板写面不注册。
+	r.Get("/api/user/supplier/templates", siw.GetTemplates)
+	r.Get("/api/user/supplier/templates/{id}", siw.GetTemplatesId)
+	return r
+}
+
+// NewSupplierSurface 组装供应商面完整链路（挂载于 /api/user/supplier/*）：
+//
+//	RequireJWT(iss,users) → RequireRole(users, SupplierSurfaceRoles...) →
+//	SupplierScopeInject → SupplierSurfaceGuard(default-deny) → 复用路由
+//
+// 门控可达集唯一事实源 = domain.SupplierSurfaceRoles()（§2.6）。
+func NewSupplierSurface(api *AdminAPI, iss *auth.Issuer, users auth.UserStatusProvider) http.Handler {
+	var h http.Handler = SupplierSurfaceGuard(api.SupplierSurfaceRouter())
+	h = SupplierScopeInject(h)
+	h = auth.RequireRole(users, domain.SupplierSurfaceRoles()...)(h)
+	h = auth.RequireJWT(iss, users)(h)
+	return h
 }

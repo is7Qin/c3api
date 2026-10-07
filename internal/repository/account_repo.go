@@ -14,11 +14,22 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
+	"github.com/is7qin/c3api/internal/ent/predicate"
 )
 
 type AccountRepo struct {
 	client *ent.Client
 	driver dialect.Driver
+}
+
+// accountOwnerPred 供应商面归属作用域谓词（spec 2026-10-09 §2.5）：作用域从 ctx
+// 读取（domain.AccountScopeFrom），管理面/用户面缺省 ⇒ 空谓词（全量，行为不变）。
+// 必须 AND 进每一处账号 WHERE——禁止「先按 id 取行、再应用层比归属」（TOCTOU）。
+func accountOwnerPred(ctx context.Context) []predicate.Account {
+	if s := domain.AccountScopeFrom(ctx); s.Set {
+		return []predicate.Account{account.SupplierUserID(s.OwnerUID)}
+	}
+	return nil
 }
 
 // CreateAccount 按值逐字写入 enabled：domain.Account.Enabled 是普通 bool，
@@ -58,6 +69,11 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if a.LifecycleRevision != 0 {
 			b = b.SetLifecycleRevision(a.LifecycleRevision)
 		}
+		// 归属（供应商面）：服务端钉死 JWT 本人（>0）；0/缺省 = 不写该列（落 NULL =
+		// 平台自有）。供应商面无法改写归属——字段不在 AccountConfigPatch 写面内。
+		if a.SupplierUserID > 0 {
+			b = b.SetSupplierUserID(a.SupplierUserID)
+		}
 		// 身份纪元（K）按存在性写：缺省（0）= 不写 → 落 DB 默认 1（与
 		// LifecycleRevision 同款语义；§3.2 的创建默认由 service 收口显式给 1）。
 		if a.IdentityRevision != 0 {
@@ -75,7 +91,11 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 }
 
 func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account, error) {
-	row, err := r.client.Account.Get(ctx, id)
+	// 作用域 AND 进 WHERE（供应商面越域 id ⇒ 0 行 ⇒ ErrNotFound/404，不泄漏存在性）。
+	row, err := r.client.Account.Query().
+		Where(account.IDEQ(id)).
+		Where(accountOwnerPred(ctx)...).
+		Only(ctx)
 	if err != nil {
 		return nil, errMissingID(err, id)
 	}
@@ -83,7 +103,10 @@ func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account
 }
 
 func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
-	row, err := r.client.Account.Query().Where(account.IDEQ(id)).WithTemplate().Only(ctx)
+	row, err := r.client.Account.Query().
+		Where(account.IDEQ(id)).
+		Where(accountOwnerPred(ctx)...).
+		WithTemplate().Only(ctx)
 	if err != nil {
 		return nil, errMissingID(err, id)
 	}
@@ -92,7 +115,7 @@ func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*do
 
 func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.Account, int64, error) {
 	// 软删除：列表默认过滤已删（count 同谓词——pred 复用）；GET 单个不过滤。
-	pred := r.client.Account.Query().Where(account.DeletedAtIsNil())
+	pred := r.client.Account.Query().Where(account.DeletedAtIsNil()).Where(accountOwnerPred(ctx)...)
 	if q.Name != "" {
 		pred = pred.Where(account.NameContainsFold(q.Name))
 	}
@@ -128,7 +151,8 @@ func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.
 }
 
 func (r *AccountRepo) DeleteAccount(ctx context.Context, id int64) error {
-	n, err := r.client.Account.Update().Where(account.IDEQ(id)).SetDeletedAt(time.Now()).Save(ctx)
+	// 作用域 AND 进 UPDATE 的 WHERE：越域 id ⇒ 0 行 ⇒ ErrNotFound/404。
+	n, err := r.client.Account.Update().Where(account.IDEQ(id)).Where(accountOwnerPred(ctx)...).SetDeletedAt(time.Now()).Save(ctx)
 	if err != nil {
 		return err
 	}
@@ -147,6 +171,23 @@ func (r *AccountRepo) SetAccountGroups(ctx context.Context, accountID int64, gro
 			return err
 		}
 	}
+	// 供应商面（作用域已注入）：作用域 AND 进 UPDATE 的 WHERE（越域 id ⇒ 0 行 ⇒
+	// ErrNotFound）；管理面（无作用域）保持既有 UpdateOneID 形态不变。
+	if sc := domain.AccountScopeFrom(ctx); sc.Set {
+		n, err := r.client.Account.Update().
+			Where(account.IDEQ(accountID)).
+			Where(account.SupplierUserID(sc.OwnerUID)).
+			ClearGroups().
+			AddGroupIDs(groupIDs...).
+			Save(ctx)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("%w: id=%d missing", ErrNotFound, accountID)
+		}
+		return nil
+	}
 	_, err := r.client.Account.UpdateOneID(accountID).
 		ClearGroups().
 		AddGroupIDs(groupIDs...).
@@ -161,6 +202,7 @@ func (r *AccountRepo) SetAccountGroups(ctx context.Context, accountID int64, gro
 func (r *AccountRepo) GetAccountGroups(ctx context.Context, accountID int64) ([]int64, error) {
 	return r.client.Account.Query().
 		Where(account.ID(accountID)).
+		Where(accountOwnerPred(ctx)...).
 		QueryGroups().
 		IDs(ctx)
 }
@@ -217,6 +259,7 @@ var ErrStaleIdentityRevision = fmt.Errorf("%w: stale identity_revision", ErrConf
 func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedIdentityRevision int64, source string, failedAt time.Time, reason string) error {
 	u := r.client.Account.Update().
 		Where(account.IDEQ(id), account.IdentityRevisionEQ(expectedIdentityRevision), account.FailedAtIsNil()).
+		Where(accountOwnerPred(ctx)...).
 		AddLifecycleRevision(1).
 		SetFailedAt(failedAt).
 		SetFailureSource(source)
@@ -243,6 +286,7 @@ func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedIden
 func (r *AccountRepo) RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error {
 	n, err := r.client.Account.Update().
 		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).
+		Where(accountOwnerPred(ctx)...).
 		SetLifecycleRevision(expectedRevision + 1).
 		ClearFailedAt().ClearLastError().ClearFailureSource().
 		Save(ctx)

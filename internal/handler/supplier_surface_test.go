@@ -104,3 +104,36 @@ func TestSupplierScopeInject(t *testing.T) {
 	require.True(t, got.MatchesOwner(77))
 	require.False(t, got.MatchesOwner(88), "他人归属越域")
 }
+
+// TestSupplierSurfaceRouterDefaultDeny A14④：复用路由器只注册允许清单——未列出
+// 的管理端点根本不注册 ⇒ 404（安全默认方向：新增管理端点默认不对供应商暴露）。
+func TestSupplierSurfaceRouterDefaultDeny(t *testing.T) {
+	api := &AdminAPI{}
+	r := api.SupplierSurfaceRouter()
+	cases := []struct {
+		method, path string
+	}{
+		// 未列入子集的管理资源 ⇒ 未注册 ⇒ 404。
+		{"GET", "/api/user/supplier/users"},
+		{"GET", "/api/user/supplier/settings"},
+		{"GET", "/api/user/supplier/ops/workers"},
+		{"GET", "/api/user/supplier/prices"},
+		{"GET", "/api/user/supplier/rules"},
+		// 组写面/assignments 未注册（同路径已注册 GET ⇒ chi 405；其余 404）。
+		{"POST", "/api/user/supplier/groups"},
+		{"PUT", "/api/user/supplier/groups/1"},
+		// 模板写面未注册（同路径已注册 GET ⇒ 405；其余 404）。
+		{"POST", "/api/user/supplier/templates"},
+		{"PUT", "/api/user/supplier/templates/1"},
+		// 假设新增一个管理端点：默认不对供应商暴露（反向断言）。
+		{"GET", "/api/user/supplier/brand-new-admin-thing"},
+	}
+	for _, tc := range cases {
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		rec := httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+		// 未注册 ⇒ 404（不存在）或 405（方法不允许，同路径仅注册了其它方法）；
+		// 二者都表示「不可达」。
+		require.Contains(t, []int{http.StatusNotFound, http.StatusMethodNotAllowed}, rec.Code, "%s %s", tc.method, tc.path)
+	}
+}

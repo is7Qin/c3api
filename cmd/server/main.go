@@ -677,6 +677,16 @@ func main() {
 		},
 	})
 
+	// 供应商面（/api/user/supplier/*）：仅在 enabled=true 时挂载（§6.4 关闭态短路
+	// 清单第 4 项）。门控 RequireJWT + 快照基 RequireRole(supplier|platform_admin)
+	// + 作用域注入 + default-deny 允许清单均在 NewSupplierSurface 内组装；账号
+	// 端点复用管理面生成路由（字段层零差异化），作用域由 repository 每处 WHERE
+	// AND 归属谓词（§2.5，T4/T7）。
+	var supplierHandler http.Handler
+	if cfg.Supplier.Enabled {
+		supplierHandler = handler.NewSupplierSurface(h, iss, auth)
+	}
+
 	srv := server.NewServer(server.Options{
 		AdminToken:        cfg.Admin.Token,
 		JWTIssuer:         iss,
@@ -686,6 +696,7 @@ func main() {
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 		AdminHandler:      h.RoutesMux(),
 		UserHandler:       userHandler,
+		SupplierHandler:   supplierHandler,
 		AIHandler:         planReadyGate(sched, aiRouter),
 		WebFS:             webUI(),
 		Logger:            log,

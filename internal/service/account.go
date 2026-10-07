@@ -79,6 +79,11 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	if p.Enabled != nil {
 		a.Enabled = *p.Enabled
 	}
+	// 供应商面：归属由服务端钉死为 JWT 本人（§2.5 行层作用域；请求体无法指定——
+	// supplier_user_id 不在 AccountConfigPatch 写面内）。管理面（无作用域）⇒ 平台自有。
+	if sc := domain.AccountScopeFrom(ctx); sc.Set {
+		a.SupplierUserID = sc.OwnerUID
+	}
 	created, err := s.store.CreateAccount(ctx, a)
 	if err != nil {
 		return nil, mapRepoErr(err)

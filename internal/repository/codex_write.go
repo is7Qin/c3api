@@ -128,7 +128,14 @@ func lockAccountsForUpdate(ctx context.Context, driver dialect.Driver, ids []int
 		args[index] = id
 		placeholders[index] = fmt.Sprintf("$%d", index+1)
 	}
-	query := `SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp FROM accounts WHERE id IN (` + strings.Join(placeholders, ",") + `) ORDER BY id FOR UPDATE`
+	// 作用域 AND 进行锁 SELECT（§2.5）：越域 id 不返回 ⇒ diffMissing ⇒ ErrNotFound
+	// ⇒ 整事务失败（批量「任一越域即整事务 404」）。
+	ownerFilter := ""
+	if s := domain.AccountScopeFrom(ctx); s.Set {
+		args = append(args, s.OwnerUID)
+		ownerFilter = fmt.Sprintf(" AND supplier_user_id = $%d", len(args))
+	}
+	query := `SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp FROM accounts WHERE id IN (` + strings.Join(placeholders, ",") + `)` + ownerFilter + ` ORDER BY id FOR UPDATE`
 	rows := &entsql.Rows{}
 	if err := driver.Query(ctx, query, args, rows); err != nil {
 		return nil, err
