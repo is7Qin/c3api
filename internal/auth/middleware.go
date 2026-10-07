@@ -64,19 +64,27 @@ func RequireJWT(iss *Issuer, users UserStatusProvider) func(http.Handler) http.H
 	}
 }
 
-// RequireRole 端点级 RBAC 声明：claims.Role 必须 ∈ 允许角色。当前两级角色下
-// 用户面端点不区分角色（platform_admin 也可用 /user 面），本中间件供后续
-// 细分权限使用（/admin 组鉴权 = 静态 token OR platform_admin JWT）。
-func RequireRole(roles ...domain.Role) func(http.Handler) http.Handler {
+// RequireRole 端点级 RBAC 声明：**快照 role ∈ 允许角色**（fail-closed——
+// 快照缺失即拒；与 RequireJWT/adminAuth 同源快照，降权在下一次成功 auth-sync
+// 刷新后生效，§2.6）。就地改造为快照基（原读 claims.Role；RequireJWT 与
+// adminAuth 均读快照，本函数须一致，否则违反 fail-closed）。supplier 面用法：
+// RequireJWT(users) → RequireRole(users, domain.SupplierSurfaceRoles()...)。
+func RequireRole(users UserStatusProvider, roles ...domain.Role) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			claims, ok := ClaimsFrom(r.Context())
 			if !ok {
-				httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
+				writeUnauthorized(w)
+				return
+			}
+			// 快照基判定：快照缺失/状态非 active ⇒ 拒（fail-closed）。
+			sn, ok := users.UserSnapshot(claims.UserID)
+			if !ok || sn.Status != domain.UserStatusActive {
+				writeUnauthorized(w)
 				return
 			}
 			for _, role := range roles {
-				if claims.Role == string(role) {
+				if sn.Role == role {
 					next.ServeHTTP(w, r)
 					return
 				}

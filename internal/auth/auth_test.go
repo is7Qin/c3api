@@ -212,18 +212,45 @@ func TestRequireRole(t *testing.T) {
 	iss := NewIssuer("s")
 	token, _ := iss.Issue(7, "u@example.com", string(domain.RoleUser), 0)
 	adminToken, _ := iss.Issue(8, "a@example.com", string(domain.RolePlatformAdmin), 0)
-	// 快照含两用户（active）——fail-closed 下快照缺失 401，本测试聚焦
-	// RequireRole 角色声明而非快照路径（快照缺失用例见 TestRequireJWTRejects）
+	// 快照含两用户（active）——**快照基**：RequireRole 读快照 role（非
+	// claims.Role），fail-closed 下快照缺失 401。
+	users := fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{
+		7: {Status: domain.UserStatusActive, Role: domain.RoleUser},
+		8: {Status: domain.UserStatusActive, Role: domain.RolePlatformAdmin},
+	}}
 	mw := func(next http.Handler) http.Handler {
-		// 链序：RequireJWT（验证 + claims 入 ctx）→ RequireRole（角色声明）
-		return RequireJWT(iss, fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{
-			7: {Status: domain.UserStatusActive},
-			8: {Status: domain.UserStatusActive},
-		}})(RequireRole(domain.RolePlatformAdmin)(next))
+		// 链序：RequireJWT（验证 + claims 入 ctx）→ RequireRole（快照 role）
+		return RequireJWT(iss, users)(RequireRole(users, domain.RolePlatformAdmin)(next))
 	}
 	rec := doReq(t, mw, token)
 	require.Equal(t, http.StatusForbidden, rec.Code, "user 角色访问 platform 端点 → 403")
 	require.Equal(t, "{\"error\":\"forbidden\"}\n", rec.Body.String(), "403 信封 encoder 编码含尾换行")
 	rec = doReq(t, mw, adminToken)
 	require.Equal(t, http.StatusOK, rec.Code, "platform_admin 放行")
+}
+
+// TestRequireRoleSnapshotBased 快照 role 覆盖 claims：claims 声明 platform_admin
+// 但快照已降权 user/降级 ⇒ 拒（降权即时语义，§2.6）；快照缺失 ⇒ 拒。
+func TestRequireRoleSnapshotBased(t *testing.T) {
+	iss := NewIssuer("s")
+	// claims 声明 platform_admin（旧票），但快照 role=user（已降权）。
+	tok, _ := iss.Issue(9, "d@example.com", string(domain.RolePlatformAdmin), 0)
+	serve := func(users UserStatusProvider) int {
+		h := RequireJWT(iss, users)(RequireRole(users, domain.SupplierSurfaceRoles()...)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+		req := httptest.NewRequest(http.MethodGet, "/api/user/supplier/accounts", nil)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	// 快照 role=user ∉ 可达集 ⇒ 403。
+	require.Equal(t, http.StatusForbidden, serve(fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{
+		9: {Status: domain.UserStatusActive, Role: domain.RoleUser},
+	}}), "快照 role=user ∉ 可达集 → 403")
+	// 快照 role=supplier ⇒ 放行。
+	require.Equal(t, http.StatusOK, serve(fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{
+		9: {Status: domain.UserStatusActive, Role: domain.RoleSupplier},
+	}}), "supplier ∈ 可达集放行")
+	// 快照缺失（fail-closed）⇒ 401。
+	require.Equal(t, http.StatusUnauthorized, serve(fakeUserStatus{}), "快照缺失 → 401")
 }
