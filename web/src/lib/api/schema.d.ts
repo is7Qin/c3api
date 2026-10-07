@@ -1405,10 +1405,427 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/supplier/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 供应商收益概览（可提领/冻结/累计/生效分成率与冻结小时/最晚解冻时刻/桶行数） */
+        get: operations["GetSupplierOverview"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/earnings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 区间收益明细（分页；走报表索引 ②，窗口 = 保留期） */
+        get: operations["GetSupplierEarnings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/chunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 冻结中明细（未解冻桶） */
+        get: operations["GetSupplierChunks"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/settlements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的结算单（分页） */
+        get: operations["GetSupplierSettlements"];
+        put?: never;
+        /** 申请结算（条件扣 available + 期间链 + request_key 幂等） */
+        post: operations["PostSupplierSettlement"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/settlements": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 结算单列表（按 status / kind 过滤；pending 是工作台） */
+        get: operations["GetAdminSupplierSettlements"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/settlements/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** pending → approved（CAS） */
+        post: operations["PostAdminSupplierSettlementsIdApprove"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/settlements/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** pending|approved → rejected（退还 available；paying 不可 reject） */
+        post: operations["PostAdminSupplierSettlementsIdReject"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/settlements/{id}/claim": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** approved → paying（认领 CAS；付款风控门 + 固定收款快照 + payment_key） */
+        post: operations["PostAdminSupplierSettlementsIdClaim"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/settlements/{id}/confirm-failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** paying → approved（仅接受「确定未支付」的核验结果；留证） */
+        post: operations["PostAdminSupplierSettlementsIdConfirmFailed"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/settlements/{id}/paid": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 仅 paying → paid（lifetime_paid 累加；不重做风控门） */
+        post: operations["PostAdminSupplierSettlementsIdPaid"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/settlements/admin-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 代申请（kind=admin_request；复用同一通道，目标须已有余额行） */
+        post: operations["PostAdminSupplierSettlementsAdminRequest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/balances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 余额列表（含最晚 available_at / bucket_rows） */
+        get: operations["GetAdminSupplierBalances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/supplier/balances/{uid}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** 仅 share_bp / freeze_hours（不接受金额） */
+        patch: operations["PatchAdminSupplierBalancesUid"];
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SupplierOverview: {
+            /**
+             * Format: int64
+             * @description 可提领（结算申请条件扣）
+             */
+            available: number;
+            /**
+             * Format: int64
+             * @description Σ 未解冻桶 amount
+             */
+            frozen_amount: number;
+            /**
+             * Format: int64
+             * @description 累计已入账（只增，永久）
+             */
+            lifetime_credited: number;
+            /**
+             * Format: int64
+             * @description 累计已付（只增，永久）
+             */
+            lifetime_paid: number;
+            /** @description 生效分成率（bp；10000 = 100%） */
+            share_bp: number;
+            /** @description 生效冻结小时（0 = 不冻结） */
+            freeze_hours: number;
+            /**
+             * Format: date-time
+             * @description 在途桶最晚解冻时刻（无桶 = null；运维可见性 §2.4）
+             */
+            latest_available_at?: string | null;
+            /**
+             * Format: int64
+             * @description 未解冻桶行数
+             */
+            bucket_rows: number;
+        };
+        SupplierChunk: {
+            /** Format: date-time */
+            available_at: string;
+            /** Format: int64 */
+            amount: number;
+        };
+        SupplierChunkList: {
+            items: components["schemas"]["SupplierChunk"][];
+            /** Format: int64 */
+            total: number;
+        };
+        SupplierEarning: {
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: int64
+             * @description 计价额（毫分）
+             */
+            cost: number;
+            /**
+             * Format: int64
+             * @description 收益额（毫分）
+             */
+            earn_millis: number;
+            model?: string;
+        };
+        SupplierEarningList: {
+            items: components["schemas"]["SupplierEarning"][];
+            /** Format: int64 */
+            total: number;
+        };
+        SupplierSettlement: {
+            /** Format: int64 */
+            id: number;
+            /** Format: int64 */
+            supplier_user_id: number;
+            /** @enum {string} */
+            kind: "supplier_request" | "admin_request";
+            /** Format: int64 */
+            amount_millis: number;
+            /** Format: date-time */
+            period_start: string;
+            /** Format: date-time */
+            period_end: string;
+            /** @enum {string} */
+            status: "pending" | "approved" | "paying" | "paid" | "rejected";
+            /** Format: int64 */
+            revision: number;
+            request_key: string;
+            /** Format: date-time */
+            requested_at: string;
+            /** Format: int64 */
+            requested_operator: number;
+            /** Format: date-time */
+            reviewed_at?: string | null;
+            /** Format: int64 */
+            reviewer_user_id?: number | null;
+            /** Format: int64 */
+            payout_operator_user_id?: number | null;
+            /** Format: date-time */
+            payout_started_at?: string | null;
+            external_ref?: string | null;
+            /** Format: date-time */
+            paid_at?: string | null;
+            /** Format: int64 */
+            paid_operator_user_id?: number | null;
+            payout_failure_reason?: string | null;
+            /** Format: date-time */
+            payout_failed_at?: string | null;
+            note?: string | null;
+            reject_reason?: string | null;
+        };
+        SupplierSettlementList: {
+            items: components["schemas"]["SupplierSettlement"][];
+            /** Format: int64 */
+            total: number;
+        };
+        ApplySettlementBody: {
+            /**
+             * Format: int64
+             * @description 申请金额（> 0；受 available 条件扣约束）
+             */
+            amount_millis: number;
+            /** @description 业务幂等键（客户端生成、重试复用；作用域 = 操作者 × key） */
+            request_key: string;
+            note?: string;
+        };
+        /** @description 状态迁移 CAS 令牌（陈旧 ⇒ 409；缺席 ⇒ 400） */
+        SettlementTransitionBody: {
+            /** Format: int64 */
+            expected_revision: number;
+        };
+        SettlementRejectBody: {
+            /** Format: int64 */
+            expected_revision: number;
+            reason?: string | null;
+        };
+        /** @description 认领付款；收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at） */
+        SettlementClaimBody: {
+            /** Format: int64 */
+            expected_revision: number;
+            /** @description 收款目标快照（副作用前固定） */
+            payee_snapshot: string;
+            /** @description 风险核对证据（非空；平台信用风险放行记录） */
+            risk_evidence: string;
+        };
+        SettlementConfirmFailedBody: {
+            /** Format: int64 */
+            expected_revision: number;
+            /** @description 确定未支付的原因（网络失败不算） */
+            reason: string;
+        };
+        SettlementPaidBody: {
+            /** Format: int64 */
+            expected_revision: number;
+            /** @description 银行/渠道回单号 */
+            external_ref?: string | null;
+        };
+        AdminRequestSettlementBody: {
+            /**
+             * Format: int64
+             * @description 目标供应商（须已有余额行，否则 404）
+             */
+            supplier_user_id: number;
+            /**
+             * Format: int64
+             * @description 金额（> 0）
+             */
+            amount_millis: number;
+            /** @description 业务幂等键 */
+            request_key: string;
+            note?: string;
+        };
+        SupplierBalance: {
+            /** Format: int64 */
+            supplier_user_id: number;
+            /** Format: int64 */
+            available: number;
+            /** Format: int64 */
+            lifetime_credited: number;
+            /** Format: int64 */
+            lifetime_paid: number;
+            share_bp?: number | null;
+            freeze_hours?: number | null;
+            /** Format: date-time */
+            latest_available_at?: string | null;
+            /** Format: int64 */
+            bucket_rows: number;
+        };
+        SupplierBalanceList: {
+            items: components["schemas"]["SupplierBalance"][];
+            /** Format: int64 */
+            total: number;
+        };
+        /** @description PATCH 逐供应商配置（仅 share_bp/freeze_hours；缺席 = 不变；null = 清空回继承） */
+        SupplierBalancePatchBody: {
+            share_bp?: number | null;
+            freeze_hours?: number | null;
+        };
         ErrorResponse: {
             error: string;
             /**
@@ -1752,6 +2169,11 @@ export interface components {
              * @description 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
              */
             upstream_cost_multiplier?: number;
+            /**
+             * Format: int64
+             * @description 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
+             */
+            supplier_user_id?: number | null;
         };
         /** @description 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed） */
         CodexPATImportBody: {
@@ -1775,6 +2197,11 @@ export interface components {
              * @description 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
              */
             upstream_cost_multiplier?: number;
+            /**
+             * Format: int64
+             * @description 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
+             */
+            supplier_user_id?: number | null;
         };
         /** @description 行级失败条目（index = items 原始下标——行级定位契约） */
         ImportFailedItem: {
@@ -2257,6 +2684,8 @@ export interface components {
             cache_domain?: string | null;
             /** Format: double */
             upstream_cost_multiplier?: number;
+            /** Format: int64 */
+            supplier_user_id?: number | null;
         };
         GroupPatch: {
             name?: string;
@@ -6311,6 +6740,361 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkersResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierOverview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 供应商收益概览 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierOverview"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierEarnings: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 收益明细列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierEarningList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierChunks: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 冻结桶列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierChunkList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierSettlements: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 结算单列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlementList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierSettlement: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplySettlementBody"];
+            };
+        };
+        responses: {
+            /** @description 创建的结算单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetAdminSupplierSettlements: {
+        parameters: {
+            query?: {
+                status?: "pending" | "approved" | "paying" | "paid" | "rejected";
+                kind?: "supplier_request" | "admin_request";
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 结算单列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlementList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAdminSupplierSettlementsIdApprove: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettlementTransitionBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的结算单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAdminSupplierSettlementsIdReject: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettlementRejectBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的结算单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAdminSupplierSettlementsIdClaim: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettlementClaimBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的结算单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAdminSupplierSettlementsIdConfirmFailed: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettlementConfirmFailedBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的结算单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAdminSupplierSettlementsIdPaid: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SettlementPaidBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的结算单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAdminSupplierSettlementsAdminRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminRequestSettlementBody"];
+            };
+        };
+        responses: {
+            /** @description 创建的结算单 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetAdminSupplierBalances: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 余额列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierBalanceList"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PatchAdminSupplierBalancesUid: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                uid: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SupplierBalancePatchBody"];
+            };
+        };
+        responses: {
+            /** @description 更新后的余额行 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SupplierBalance"];
                 };
             };
             default: components["responses"]["Error"];
