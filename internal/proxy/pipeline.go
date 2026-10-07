@@ -38,8 +38,9 @@ func capLowBalanceUserConc(cur, cap int) int {
 // guardPipeline 鉴权 → reqMeta ctx 注入 → quota → 余额预检/低余额钳制(可选) → 两级并发
 // 门禁 → 限流；任一失败已写响应并记录，返回 ok=false（失败路径 inflight 减量
 // 由内部完成——等价现状各失败分支 return 时 defer 已生效；401/429/402 无并发
-// 槽占用，限流失败已回滚门禁）。precheckBalance=false 跳过余额预检（search
-// 无 402 语义）。成功返回 (r, rm, level, true)：
+// 槽占用，限流失败已回滚门禁）。precheckBalance=false 仅跳过余额预检的 402
+// （search 无 402 语义）；cap>0 时 search 仍读快照做低余额钳制。成功返回
+// (r, rm, level, true)：
 //   - r 已注入 reqMeta ctx（user_id/key_id 日志归属；rm 指针直接返回——chat/WS
 //     后续 tier 注入用，免从 ctx 重取）
 //   - level 为已 acquire 门禁层级，调用方须注册释放（两条 defer 即合并释放的
