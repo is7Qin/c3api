@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
+	"github.com/is7qin/c3api/internal/ent/balancelog"
 	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
 	"github.com/is7qin/c3api/internal/ent/group"
@@ -94,6 +95,7 @@ func checkColumn(t, c string) error {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
 			account.Table:         account.ValidColumn,
 			accountext.Table:      accountext.ValidColumn,
+			balancelog.Table:      balancelog.ValidColumn,
 			emailtemplate.Table:   emailtemplate.ValidColumn,
 			errlog.Table:          errlog.ValidColumn,
 			group.Table:           group.ValidColumn,

@@ -583,6 +583,18 @@
 
 变更即时生效（鉴权/余额快照刷新，计费预检读内存快照）。错误映射：email 重复 → `409`；非法输入（格式/负余额）→ `400`；用户不存在 → `404`。
 
+### 用户的余额变动记录
+
+`GET /api/admin/users/{id}/balance-logs?limit=20&offset=0`
+
+| 查询参数 | 类型 | 默认 | 说明 |
+|---|---|---|---|
+| `limit` / `offset` | int | 20 / 0 | 分页（`limit` 上限 200，超限裁剪） |
+
+响应 `200`：`{"total": N, "rows": [...]}`。每行 = 一笔**永久余额**（`users.balance`）的**非用量**变动，与余额变更**同事务**落库：`ID`/`UserID`（int64）、`Amount`（USD，**有符号**：正=增加 / 负=减少）、`BalanceAfter`（USD，变更后余额快照）、`Source`（`signup_default` / `admin_create` / `admin_adjust` / `redemption`）、`OperatorID`（0 = 系统/用户自助；>0 = platform_admin 用户 id）、`Note`（可空；兑换 → 兑换码文本）、`CreatedAt`。
+
+**范围**：仅记录**非用量消耗**的余额变动（注册默认余额、管理面建用户初始余额、管理面改余额、兑换码 `balance` 型）；**按次消费不计入**（在 `/usage_logs`）。临时额度在 `/temp-balances`。无变更不记（余额 0 初值、新值==旧值）；不回溯既有用户。用户不存在 → `404`。
+
 ### 用户面
 
 - `POST /user/auth/register` / `POST /user/auth/login`：注册（受 `signup_enabled` 设置；开启注册邮箱验证后还需先经 `/user/auth/register-code` 获取并携带 `code` 字段）与登录，返回 JWT + 用户对象（`Balance` 同样 USD float64）。

@@ -42,6 +42,7 @@ type Repository struct {
 	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1； 数据层，消费接线）
 	AccountExts    *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1； 数据层，消费接线）
 	EmailTemplates *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
+	BalanceLogs    *BalanceLogRepo    // 余额变动记录（balance_logs；管理面留痕 + 分页查看）
 	Client         *ent.Client
 	// driver 为原始 dialect.Driver：原子资源方法/条件递增等 raw SQL 走它
 	//（ent v0.14 生成代码无 ExecContext/QueryContext，raw SQL 无客户端入口）；
@@ -105,6 +106,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		TemplateExts:   &TemplateExtRepo{client: client},
 		AccountExts:    &AccountExtRepo{client: client},
 		EmailTemplates: &EmailTemplateRepo{client: client},
+		BalanceLogs:    &BalanceLogRepo{client: client},
 		Client:         client,
 		driver:         drv,
 	}
@@ -142,6 +144,14 @@ type TxStore interface {
 	GetUse(ctx context.Context, codeID, userID int64) (*domain.RedemptionUse, error)
 	GetByCode(ctx context.Context, code string) (*domain.RedemptionCode, error)
 	UpdateUserBalance(ctx context.Context, userID, delta int64) error
+	// CreateBalanceLog 余额变动记录（注册默认余额/管理面建用户/管理面改余额/
+	// 兑换码）；与对应 users.balance 变更同事务提交（原子不变量，spec §4）。
+	CreateBalanceLog(ctx context.Context, l *domain.BalanceLog) error
+	// CreateUser/UpdateUser/GetUser 供注册、管理面建用户/改余额与兑换读回余额
+	// 的事务内使用（签名与 *Repository 既有方法一致，仅列入事务面白名单）。
+	CreateUser(ctx context.Context, u *domain.User) (*domain.User, error)
+	UpdateUser(ctx context.Context, p *UserPatch) (*domain.User, error)
+	GetUser(ctx context.Context, id int64) (*domain.User, error)
 	UpdateUserMaxConcurrency(ctx context.Context, userID int64, value int) error
 	CreateTempBalance(ctx context.Context, userID int64, amount int64, expiresAt *time.Time, note *string) error
 	CreateUse(ctx context.Context, use *domain.RedemptionUse) error
@@ -409,6 +419,17 @@ func (r *Repository) ListTempBalances(ctx context.Context, q ListQuery, userID i
 // ListUserEmails 批量取邮箱（/api/admin/users-top TopN 回填；id IN 一次查询）。
 func (r *Repository) ListUserEmails(ctx context.Context, ids []int64) (map[int64]string, error) {
 	return r.Users.ListUserEmails(ctx, ids)
+}
+
+// CreateBalanceLog 余额变动记录写入（TxStore 面；与对应 users.balance 变更同事务）。
+func (r *Repository) CreateBalanceLog(ctx context.Context, l *domain.BalanceLog) error {
+	return r.BalanceLogs.CreateBalanceLog(ctx, l)
+}
+
+// ListUserBalanceLogs 某用户的余额变动记录（/api/admin/users/{id}/balance-logs；
+// WHERE user_id + 分页 + sort 白名单）。
+func (r *Repository) ListUserBalanceLogs(ctx context.Context, userID int64, q ListQuery) ([]*domain.BalanceLog, int64, error) {
+	return r.BalanceLogs.ListUserBalanceLogs(ctx, userID, q)
 }
 
 // --- 客户端 key ---

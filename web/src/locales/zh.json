@@ -493,6 +493,26 @@
       "note": "备注",
       "createdAt": "创建时间"
     },
+    "balanceLogs": {
+      "button": "查看余额记录",
+      "title": "余额变动记录 · {{name}}",
+      "desc": "永久余额的非消费变动留痕：注册默认余额、管理面创建、管理面调整、兑换码兑换。",
+      "empty": "暂无余额变动记录",
+      "col": {
+        "time": "时间",
+        "source": "来源",
+        "amount": "变动额",
+        "balanceAfter": "变更后余额",
+        "operator": "操作人",
+        "note": "备注"
+      },
+      "source": {
+        "signup_default": "注册默认",
+        "admin_create": "管理面创建",
+        "admin_adjust": "管理面调整",
+        "redemption": "兑换码"
+      }
+    },
     "new": "新建用户",
     "searchEmail": "搜索邮箱",
     "emptyTitle": "暂无用户",

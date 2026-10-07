@@ -49,6 +49,7 @@ type Store interface {
 	KeyStore
 	GroupAssignmentStore
 	UserStore
+	BalanceLogStore
 	SettingStore
 	RuleStore
 	LogStore
@@ -93,6 +94,11 @@ type UserStore interface {
 	ListTempBalances(ctx context.Context, q repository.ListQuery, userID int64) ([]*domain.TempBalance, int64, error)
 	// ListUserEmails 批量取邮箱（/api/admin/users-top TopN 回填；id IN 一次查询）。
 	ListUserEmails(ctx context.Context, ids []int64) (map[int64]string, error)
+}
+
+// BalanceLogStore 余额变动记录（管理面只读列表：/api/admin/users/{id}/balance-logs）。
+type BalanceLogStore interface {
+	ListUserBalanceLogs(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.BalanceLog, int64, error)
 }
 
 // SettingStore 类型化配置持久化。
@@ -650,6 +656,8 @@ var listSortFields = map[string][]string{
 	"temp_balances": {"expires_at", "amount", "created_at"},
 	// 与 repo 层 priceEntrySortFields 白名单一致（双保险；/api/admin/prices）。
 	"price_entries": {"model", "updated_at"},
+	// 与 repo 层 balanceLogSortFields 白名单一致（双保险；/api/admin/users/{id}/balance-logs）。
+	"balance_logs": {"id", "amount", "balance_after", "created_at"},
 }
 
 // validateListQuery sort/order 白名单校验（非法 → ErrInvalidInput；handler 依赖此 400）。

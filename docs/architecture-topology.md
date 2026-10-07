@@ -182,12 +182,13 @@ pkg 职责边界：
 
 ## 6. 数据模型
 
-**20 张 ent 表**（`internal/ent/schema/` 20 个文件；ent migrate 清单 21 张 = 17 普通 + 4 分区，`internal/ent/migrate/schema.go:671-693`；另非 ent 辅助表 `stats_agg_watermark`，**总账 22 张**）：
+**21 张 ent 表**（`internal/ent/schema/` 21 个文件；ent migrate 清单 22 张 = 18 普通 + 4 分区，`internal/ent/migrate/schema.go`；另非 ent 辅助表 `stats_agg_watermark`，**总账 23 张**）：
 
 | 表 | schema 文件 | 说明 |
 |---|---|---|
 | accounts | account.go | 上游账号（enabled/failed_at/failure_source/lifecycle_revision/identity_revision/upstream_cost_multiplier_bp/cache_domain/max_concurrency + template_id；生命周期两轴正交，两个代际 C/K 的分工见 admin-api「生命周期模型」） |
 | account_exts | account_ext.go | 账号类型化扩展（codex oauth/pat 凭据；`(codex_email, codex_account_id)` 组合幂等键） |
+| balance_logs | balance_log.go | 余额变动记录（永久余额的非用量变动：注册默认/管理面创建/管理面调整/兑换码；`(user_id,id)` 索引；**普通表无保留期**，与余额变更同事务写） |
 | email_templates | emailtemplate.go | 邮件模板覆盖（purpose/subject/body_text；缺行回退内置默认） |
 | groups | group.go | 组（倍率、protocol_convert、key 限制） |
 | group_assignments | group_assignment.go | 用户-组关联（专属倍率） |
@@ -322,7 +323,7 @@ flowchart LR
 | `/v1/*` | AI key 鉴权（proxy） | 8 端点：chat/anthropic/responses + WS + images×2 + search + models（`internal/proxy/router.go:19-57`）。**用 `Handle("/v1/*")` 而非 `Mount("/")`**（`internal/server/server.go:89-101`）——通配挂载会吞掉 SPA 深链 |
 | `/assets/*`、`/favicon.svg`、`/`、SPA fallback | 无 | 网关内嵌 web/dist（`internal/server/server.go:103-137` + `cmd/server/embed.go:15`） |
 
-- admin 组（`internal/handler/api.gen.go`，openapi 生成；BaseURL `/api/admin`，路由区 `:5825-6047`）：`/accounts`（含 `usage`、批量 batch-delete/batch-update、`batch-import-codex-oauth|pat`、`{id}/ext`、`{id}/groups`、`{id}/recover`）、`/groups`（含 assignments）、`/users`（含 `{id}/groups`）、`/temp-balances`、`/templates`（含 batch、`{id}/ext`）、`/keys`、`/prices`（`/prices/entry`、`/prices/variants`；model 在 query）、`/pricing/sync`（含 `/pricing/sync/preview`）、`/rules`、`/settings`、`/mail/templates`（含 `/mail/channel-test`）、`/redemption-codes`（含 batch-deactivate、`{id}/deactivate`、`{id}/uses`）、`/usage_logs`、`/err_logs`、`/stats/*`（trend/top/entity-trend/ttft）、`/routing/*`（plan/flow/frontier）、`/overview`、`/users-top`、`/ops/workers`（ops tag 契约化并入管理面，`internal/handler/ops.go:75`）。
+- admin 组（`internal/handler/api.gen.go`，openapi 生成；BaseURL `/api/admin`，路由区 `:5825-6047`）：`/accounts`（含 `usage`、批量 batch-delete/batch-update、`batch-import-codex-oauth|pat`、`{id}/ext`、`{id}/groups`、`{id}/recover`）、`/groups`（含 assignments）、`/users`（含 `{id}/groups`、`{id}/balance-logs`）、`/temp-balances`、`/templates`（含 batch、`{id}/ext`）、`/keys`、`/prices`（`/prices/entry`、`/prices/variants`；model 在 query）、`/pricing/sync`（含 `/pricing/sync/preview`）、`/rules`、`/settings`、`/mail/templates`（含 `/mail/channel-test`）、`/redemption-codes`（含 batch-deactivate、`{id}/deactivate`、`{id}/uses`）、`/usage_logs`、`/err_logs`、`/stats/*`（trend/top/entity-trend/ttft）、`/routing/*`（plan/flow/frontier）、`/overview`、`/users-top`、`/ops/workers`（ops tag 契约化并入管理面，`internal/handler/ops.go:75`）。
 - user 组（`internal/handler/user/api.gen.go`，路径自带 `/api/user` 前缀）：`/api/user/auth/login|register|me|change-password|register-code|forgot-password|reset-password`、`/api/user/keys`（含 `{id}`、`{id}/rotate`）、`/api/user/groups`、`/api/user/usage_logs`、`/api/user/err_logs`、`/api/user/stats`（含 `/stats/ttft`）、`/api/user/redemptions`、`/api/user/temp-balances`、`/api/user/balance-warning-threshold`。
 - AI 组（`internal/proxy/router.go:19-57`）：`POST /v1/chat/completions`、`POST /v1/responses`（upgrade → WS）、`GET /v1/responses`（仅 upgrade 放行，否则 405）、`POST /v1/messages`、`POST /v1/images/generations`、`POST /v1/images/edits`、`POST /v1/alpha/search`（codex CLI web search 独立编排，`internal/proxy/forward_search.go:111`）、`GET /v1/models`（快照读零 DB，`internal/proxy/models.go:19`）。
 - **路由观测读面分页契约**（`/api/admin/routing/{plan,flow,frontier}`，详细契约见 `docs/admin-api.md`）：三处表格各自服务端分页（`offset`/`limit`，缺省 **0/20**、上限 **200**，与库内其余 `limit` 端点同约定；`/routing/plan` 另有每路由候选轴 `candidates_offset`/`candidates_limit`）。**`/routing/flow` 的 `lanes` 只是一页**，而守恒计数、`total_edges`/`stale_generation_present` 与 `sankey` 恒在**完整边集**上算（与当前页无关——否则徽标会随翻页闪烁）；`accounts` 只作用于桑基每层 top-N 折叠，折叠层 `chain_count` 守恒。旧代际徽标由服务端**精确布尔** `stale_generation_present` 决定（前端不再算占比：合并层一行聚合多代际的链，链次占比只能给出上界）。窗口起点早于观测保留截止（`routing.observation_retention_days`）时两端点**整窗 400**，不静默截断。

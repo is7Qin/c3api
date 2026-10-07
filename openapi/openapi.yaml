@@ -621,6 +621,24 @@ paths:
               schema: { $ref: '#/components/schemas/UserGroupsResponse' }
         default:
           $ref: '#/components/responses/Error'
+  /users/{id}/balance-logs:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      operationId: GetUsersIdBalanceLogs
+      tags: [users]
+      summary: 某用户的余额变动记录（platform_admin 专属；永久余额的非 usage 变动：注册默认/管理面创建/管理面调整/兑换码；分页）
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, default: 20, maximum: 200, description: 每页条数（上限 200，超限裁剪到 200） } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: 余额变动记录列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BalanceLogListResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /temp-balances:
     get:
       operationId: GetTempBalances
@@ -3010,6 +3028,32 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/AdminTempBalanceRow' }
+    # --- 余额变动记录（/api/admin/users/{id}/balance-logs） ---
+    # 永久余额的非 usage 变动留痕（注册默认/管理面创建/管理面调整/兑换码）；
+    # Amount/BalanceAfter = 毫分 /1e5 → USD（API 边界换算，内部存储恒毫分）。
+    BalanceLogSource:
+      type: string
+      enum: [signup_default, admin_create, admin_adjust, redemption]
+    BalanceLog:
+      type: object
+      required: [ID, UserID, Amount, BalanceAfter, Source, OperatorID, CreatedAt]
+      properties:
+        ID: { type: integer, format: int64 }
+        UserID: { type: integer, format: int64 }
+        Amount: { type: number, format: double, description: "变动额 USD（有符号：正=增加/负=减少；1 USD = 100,000 毫分）" }
+        BalanceAfter: { type: number, format: double, description: "变更后余额 USD（毫分快照 /1e5）" }
+        Source: { $ref: '#/components/schemas/BalanceLogSource' }
+        OperatorID: { type: integer, format: int64, description: "0 = 系统/用户自助；>0 = platform_admin 用户 id" }
+        Note: { type: string, nullable: true, description: "附加说明（兑换→兑换码文本；其余可空）" }
+        CreatedAt: { type: string, format: date-time }
+    BalanceLogListResponse:
+      type: object
+      required: [total, rows]
+      properties:
+        total: { type: integer, format: int64 }
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/BalanceLog' }
     GenerateRequest:
       type: object
       required: [type, value]

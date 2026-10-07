@@ -12,6 +12,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
+	"github.com/is7qin/c3api/internal/ent/balancelog"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/key"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
@@ -112,5 +113,11 @@ var (
 	priceEntrySortFields = map[string]string{
 		"id": priceentry.FieldID, "model": priceentry.FieldModel,
 		"updated_at": priceentry.FieldUpdatedAt,
+	}
+	// balanceLogSortFields /api/admin/users/{id}/balance-logs sort 白名单
+	// （默认 id——按用户分页走 (user_id, id) 索引）。
+	balanceLogSortFields = map[string]string{
+		"id": balancelog.FieldID, "amount": balancelog.FieldAmount,
+		"balance_after": balancelog.FieldBalanceAfter, "created_at": balancelog.FieldCreatedAt,
 	}
 )

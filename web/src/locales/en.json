@@ -493,6 +493,26 @@
       "note": "Note",
       "createdAt": "Created"
     },
+    "balanceLogs": {
+      "button": "Balance history",
+      "title": "Balance changes · {{name}}",
+      "desc": "Recorded changes to permanent balance (non-usage): signup default, admin create, admin adjust, redemption.",
+      "empty": "No balance change records",
+      "col": {
+        "time": "Time",
+        "source": "Source",
+        "amount": "Change",
+        "balanceAfter": "Balance after",
+        "operator": "Operator",
+        "note": "Note"
+      },
+      "source": {
+        "signup_default": "Signup default",
+        "admin_create": "Admin create",
+        "admin_adjust": "Admin adjust",
+        "redemption": "Redemption"
+      }
+    },
     "new": "New user",
     "searchEmail": "Search email",
     "emptyTitle": "No users yet",

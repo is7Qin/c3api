@@ -33,6 +33,18 @@ func (f AccountExtFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, 
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.AccountExtMutation", m)
 }
 
+// The BalanceLogFunc type is an adapter to allow the use of ordinary
+// function as BalanceLog mutator.
+type BalanceLogFunc func(context.Context, *ent.BalanceLogMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f BalanceLogFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.BalanceLogMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.BalanceLogMutation", m)
+}
+
 // The EmailTemplateFunc type is an adapter to allow the use of ordinary
 // function as EmailTemplate mutator.
 type EmailTemplateFunc func(context.Context, *ent.EmailTemplateMutation) (ent.Value, error)

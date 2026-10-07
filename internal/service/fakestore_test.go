@@ -93,6 +93,14 @@ type fakeStore struct {
 	codesConflictAlways bool
 	// countUsersErr 注入 CountUsers 失败（注册 bootstrap 错误传播测试）。
 	countUsersErr error
+	// balanceLogs 余额变动记录行（注册默认/管理面建用户/管理面改余额/兑换写入断言用）。
+	balanceLogs []*domain.BalanceLog
+	// createBalanceLogErr 注入事务内 CreateBalanceLog 失败（原子回滚断言，spec §4/A6）。
+	createBalanceLogErr error
+	// createUserUnique 事务内 CreateUser 强制 email 唯一（并发重复邮箱竞态测试）。
+	createUserUnique bool
+	// updateUserTxErr 注入事务内 UpdateUser 失败（重试超限/回滚测试）。
+	updateUserTxErr error
 	// revokeGroupErr 注入 RevokeGroup 失败（替换中途失败 → 整体回滚测试）。
 	revokeGroupErr error
 	// txUpsertExtErr 注入事务内 UpsertAccountExt 失败（导入单行事务
@@ -1321,6 +1329,22 @@ func (f *fakeStore) ListTempBalances(ctx context.Context, q repository.ListQuery
 	return out, int64(len(out)), nil
 }
 
+// ListUserBalanceLogs 某用户的余额变动记录（编译兜底：按 user_id 过滤；fake 不做
+// 排序/分页语义——行内容/顺序断言直接读 f.balanceLogs）。
+func (f *fakeStore) ListUserBalanceLogs(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.BalanceLog, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*domain.BalanceLog
+	for _, l := range f.balanceLogs {
+		if l.UserID != userID {
+			continue
+		}
+		c := *l
+		out = append(out, &c)
+	}
+	return out, int64(len(out)), nil
+}
+
 func (f *fakeStore) GetSetting(ctx context.Context, key string) (*domain.Setting, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1630,6 +1654,11 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		users:  cloneUserMap(f.users),
 		temps:  slices.Clone(f.temps),
 		nextID: f.nextID,
+		// 余额变动记录（注册/建用户/改余额/兑换写行；注入透传）
+		balanceLogs:      slices.Clone(f.balanceLogs),
+		balanceLogErr:    f.createBalanceLogErr,
+		createUserUnique: f.createUserUnique,
+		updateUserErr:    f.updateUserTxErr,
 		// 授予面（assignment 替换循环入事务；error 注入透传）
 		assign:     cloneAssignMap(f.assign),
 		assignMult: maps.Clone(f.assignMult),
@@ -1647,6 +1676,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		return err // 回滚：暂存丢弃
 	}
 	f.codes, f.uses, f.users, f.temps, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.nextID
+	f.balanceLogs = tx.balanceLogs
 	f.assign, f.assignMult = tx.assign, tx.assignMult
 	f.accs, f.accExts, f.accGroups = tx.accs, tx.accExts, tx.accGroups
 	f.priceEntries, f.priceVariants = tx.priceEntries, tx.priceVariants
@@ -1748,6 +1778,13 @@ type fakeTx struct {
 	users  map[int64]*domain.User
 	temps  []*fakeTempRow
 	nextID int64
+	// 余额变动记录（暂存；balanceLogErr 注入 CreateBalanceLog 失败 → 回滚断言）
+	balanceLogs   []*domain.BalanceLog
+	balanceLogErr error
+	// createUserUnique 事务内 CreateUser 强制 email 唯一（并发重复邮箱竞态）。
+	createUserUnique bool
+	// updateUserErr 注入事务内 UpdateUser 失败（重试超限/回滚测试）。
+	updateUserErr error
 	// 授予面：assign/assignMult 同 fakeStore 语义；revokeErr 注入
 	// 替换中途失败（回滚断言用）。
 	assign     map[int64][]int64
@@ -1823,6 +1860,75 @@ func (t *fakeTx) UpdateUserMaxConcurrency(ctx context.Context, userID int64, val
 	} else {
 		u.MaxConcurrency += value
 	}
+	return nil
+}
+
+// CreateUser 事务内建用户（注册/管理面建用户；镜像 fakeStore.CreateUser 语义）。
+func (t *fakeTx) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
+	if t.createUserUnique {
+		for _, existing := range t.users {
+			if existing.Email == u.Email {
+				return nil, fmt.Errorf("%w: email=%q", repository.ErrConflict, u.Email)
+			}
+		}
+	}
+	u.ID = t.nextID
+	t.nextID++
+	c := *u
+	t.users[u.ID] = &c
+	return &c, nil
+}
+
+// GetUser 事务内读用户（兑换读回余额；缺失 → ErrNotFound 包装）。
+func (t *fakeTx) GetUser(ctx context.Context, id int64) (*domain.User, error) {
+	u, ok := t.users[id]
+	if !ok {
+		return nil, missingErr(id)
+	}
+	c := *u
+	return &c, nil
+}
+
+// UpdateUser 事务内条件更新（镜像 fakeStore.UpdateUser 语义：旧值不满足 → ErrConflict）。
+func (t *fakeTx) UpdateUser(ctx context.Context, p *repository.UserPatch) (*domain.User, error) {
+	if t.updateUserErr != nil {
+		return nil, t.updateUserErr
+	}
+	cur, ok := t.users[p.ID]
+	if !ok {
+		return nil, missingErr(p.ID)
+	}
+	if p.MaxConcurrency != nil {
+		if p.OldMaxConcurrency == nil || cur.MaxConcurrency != *p.OldMaxConcurrency {
+			return nil, fmt.Errorf("%w: id=%d max_concurrency changed", repository.ErrConflict, p.ID)
+		}
+		cur.MaxConcurrency = *p.MaxConcurrency
+	}
+	if p.Balance != nil {
+		if p.OldBalance == nil || cur.Balance != *p.OldBalance {
+			return nil, fmt.Errorf("%w: id=%d balance changed", repository.ErrConflict, p.ID)
+		}
+		cur.Balance = *p.Balance
+	}
+	if p.Role != nil {
+		cur.Role = *p.Role
+	}
+	if p.Status != nil {
+		cur.Status = *p.Status
+	}
+	c := *cur
+	return &c, nil
+}
+
+// CreateBalanceLog 事务内写入余额变动记录（暂存；balanceLogErr 注入失败 → 回滚）。
+func (t *fakeTx) CreateBalanceLog(ctx context.Context, l *domain.BalanceLog) error {
+	if t.balanceLogErr != nil {
+		return t.balanceLogErr
+	}
+	c := *l
+	c.ID = t.nextID
+	t.nextID++
+	t.balanceLogs = append(t.balanceLogs, &c)
 	return nil
 }
 

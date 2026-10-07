@@ -327,6 +327,21 @@ func toAPIUser(u *domain.User) User {
 	}
 }
 
+// toAPIBalanceLog 余额变动记录领域对象 → 契约类型（Amount/BalanceAfter 毫分 →
+// USD 展示换算；Amount 有符号——正=增加/负=减少）。
+func toAPIBalanceLog(l *domain.BalanceLog) BalanceLog {
+	return BalanceLog{
+		ID:           l.ID,
+		UserID:       l.UserID,
+		Amount:       millisToUSD(l.Amount),
+		BalanceAfter: millisToUSD(l.BalanceAfter),
+		Source:       BalanceLogSource(l.Source),
+		OperatorID:   l.OperatorID,
+		Note:         l.Note,
+		CreatedAt:    l.CreatedAt,
+	}
+}
+
 // toAPIUsageLog 用量日志领域对象 → 契约类型（err_logs 分表后 usage_logs 无
 // status_code/error_message——响应不含该两字段）。
 func toAPIUsageLog(l *domain.UsageLog) UsageLog {

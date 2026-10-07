@@ -411,6 +411,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/users/{id}/balance-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 某用户的余额变动记录（platform_admin 专属；永久余额的非 usage 变动：注册默认/管理面创建/管理面调整/兑换码；分页） */
+        get: operations["GetUsersIdBalanceLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/temp-balances": {
         parameters: {
             query?: never;
@@ -2407,6 +2426,39 @@ export interface components {
             /** Format: int64 */
             total: number;
             rows: components["schemas"]["AdminTempBalanceRow"][];
+        };
+        /** @enum {string} */
+        BalanceLogSource: "signup_default" | "admin_create" | "admin_adjust" | "redemption";
+        BalanceLog: {
+            /** Format: int64 */
+            ID: number;
+            /** Format: int64 */
+            UserID: number;
+            /**
+             * Format: double
+             * @description 变动额 USD（有符号：正=增加/负=减少；1 USD = 100,000 毫分）
+             */
+            Amount: number;
+            /**
+             * Format: double
+             * @description 变更后余额 USD（毫分快照 /1e5）
+             */
+            BalanceAfter: number;
+            Source: components["schemas"]["BalanceLogSource"];
+            /**
+             * Format: int64
+             * @description 0 = 系统/用户自助；>0 = platform_admin 用户 id
+             */
+            OperatorID: number;
+            /** @description 附加说明（兑换→兑换码文本；其余可空） */
+            Note?: string | null;
+            /** Format: date-time */
+            CreatedAt: string;
+        };
+        BalanceLogListResponse: {
+            /** Format: int64 */
+            total: number;
+            rows: components["schemas"]["BalanceLog"][];
         };
         GenerateRequest: {
             type: components["schemas"]["RedemptionType"];
@@ -4416,6 +4468,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserGroupsResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUsersIdBalanceLogs: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 余额变动记录列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BalanceLogListResponse"];
                 };
             };
             default: components["responses"]["Error"];

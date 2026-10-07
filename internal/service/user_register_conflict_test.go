@@ -28,8 +28,12 @@ type registerRaceStore struct {
 }
 
 func newRegisterRaceStore() *registerRaceStore {
+	fs := newFakeStore()
+	// RegisterUser 现走 WithTx：事务内 CreateUser 需强制 email 唯一（镜像
+	// user_repo.go CreateUser 对 23505 的映射形态）——竞态双插入必现一者冲突。
+	fs.createUserUnique = true
 	return &registerRaceStore{
-		fakeStore: newFakeStore(),
+		fakeStore: fs,
 		arrived:   make(chan struct{}, 2),
 		release:   make(chan struct{}),
 	}

@@ -16,6 +16,8 @@ type Tx struct {
 	Account *AccountClient
 	// AccountExt is the client for interacting with the AccountExt builders.
 	AccountExt *AccountExtClient
+	// BalanceLog is the client for interacting with the BalanceLog builders.
+	BalanceLog *BalanceLogClient
 	// EmailTemplate is the client for interacting with the EmailTemplate builders.
 	EmailTemplate *EmailTemplateClient
 	// ErrLog is the client for interacting with the ErrLog builders.
@@ -185,6 +187,7 @@ func (tx *Tx) Client() *Client {
 func (tx *Tx) init() {
 	tx.Account = NewAccountClient(tx.config)
 	tx.AccountExt = NewAccountExtClient(tx.config)
+	tx.BalanceLog = NewBalanceLogClient(tx.config)
 	tx.EmailTemplate = NewEmailTemplateClient(tx.config)
 	tx.ErrLog = NewErrLogClient(tx.config)
 	tx.Group = NewGroupClient(tx.config)

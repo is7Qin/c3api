@@ -74,6 +74,8 @@ type fakeStore struct {
 	// accExtErr 注入 GetAccountExt 非 ErrNotFound 故障（per-account；store
 	// 故障隔离断言用——对齐 service 侧 fakeStore 同名字段）。
 	accExtErr map[int64]error
+	// balanceLogs 余额变动记录行（/api/admin/users/{id}/balance-logs 分页断言用）。
+	balanceLogs []*domain.BalanceLog
 }
 
 func newFakeStore() *fakeStore {
@@ -1471,6 +1473,23 @@ func (f *fakeStore) ListTempBalances(ctx context.Context, q repository.ListQuery
 	return nil, 0, nil
 }
 
+// ListUserBalanceLogs 某用户的余额变动记录（/api/admin/users/{id}/balance-logs；
+// 按 id 降序 + 分页——镜像 repo 缺省排序与 limit/offset 归一）。
+func (f *fakeStore) ListUserBalanceLogs(ctx context.Context, userID int64, q repository.ListQuery) ([]*domain.BalanceLog, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*domain.BalanceLog
+	for _, l := range f.balanceLogs {
+		if l.UserID != userID {
+			continue
+		}
+		c := *l
+		out = append(out, &c)
+	}
+	slices.SortFunc(out, func(a, b *domain.BalanceLog) int { return cmp.Compare(b.ID, a.ID) })
+	return paginate(out, q), int64(len(out)), nil
+}
+
 func (f *fakeStore) GetSetting(ctx context.Context, key string) (*domain.Setting, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1751,11 +1770,12 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	tx := &fakeTx{
-		codes:  cloneCodeMap(f.codes),
-		uses:   cloneUseMap(f.uses),
-		users:  cloneUserMap(f.users),
-		temps:  slices.Clone(f.temps),
-		nextID: f.nextID,
+		codes:       cloneCodeMap(f.codes),
+		uses:        cloneUseMap(f.uses),
+		users:       cloneUserMap(f.users),
+		temps:       slices.Clone(f.temps),
+		nextID:      f.nextID,
+		balanceLogs: slices.Clone(f.balanceLogs),
 		// 授予面（assignment 替换循环入事务）
 		assign:     cloneAssignMap(f.assign),
 		assignMult: maps.Clone(f.assignMult),
@@ -1771,6 +1791,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		return err // 回滚：暂存丢弃
 	}
 	f.codes, f.uses, f.users, f.temps, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.nextID
+	f.balanceLogs = tx.balanceLogs
 	f.assign, f.assignMult = tx.assign, tx.assignMult
 	f.accs, f.accExts, f.accGroups = tx.accs, tx.accExts, tx.accGroups
 	f.priceEntries, f.priceVariants = tx.priceEntries, tx.priceVariants
@@ -1816,6 +1837,8 @@ type fakeTx struct {
 	users  map[int64]*domain.User
 	temps  []*fakeTempRow
 	nextID int64
+	// balanceLogs 余额变动记录暂存（提交/回滚同 WithTx）。
+	balanceLogs []*domain.BalanceLog
 	// 授予面：assign/assignMult 同 fakeStore 语义。
 	assign     map[int64][]int64
 	assignMult map[[2]int64]*int
@@ -2009,6 +2032,62 @@ func (t *fakeTx) UpdateUserMaxConcurrency(ctx context.Context, userID int64, val
 	} else {
 		u.MaxConcurrency += value
 	}
+	return nil
+}
+
+// CreateUser 事务内建用户（镜像 fakeStore.CreateUser）。
+func (t *fakeTx) CreateUser(ctx context.Context, u *domain.User) (*domain.User, error) {
+	u.ID = t.nextID
+	t.nextID++
+	c := *u
+	t.users[u.ID] = &c
+	return &c, nil
+}
+
+// GetUser 事务内读用户（兑换读回余额；缺失 → ErrNotFound 包装）。
+func (t *fakeTx) GetUser(ctx context.Context, id int64) (*domain.User, error) {
+	u, ok := t.users[id]
+	if !ok {
+		return nil, missingErr(id)
+	}
+	c := *u
+	return &c, nil
+}
+
+// UpdateUser 事务内条件更新（镜像 fakeStore.UpdateUser：旧值不满足 → ErrConflict）。
+func (t *fakeTx) UpdateUser(ctx context.Context, p *repository.UserPatch) (*domain.User, error) {
+	cur, ok := t.users[p.ID]
+	if !ok {
+		return nil, missingErr(p.ID)
+	}
+	if p.MaxConcurrency != nil {
+		if p.OldMaxConcurrency == nil || cur.MaxConcurrency != *p.OldMaxConcurrency {
+			return nil, fmt.Errorf("%w: id=%d max_concurrency changed", repository.ErrConflict, p.ID)
+		}
+		cur.MaxConcurrency = *p.MaxConcurrency
+	}
+	if p.Balance != nil {
+		if p.OldBalance == nil || cur.Balance != *p.OldBalance {
+			return nil, fmt.Errorf("%w: id=%d balance changed", repository.ErrConflict, p.ID)
+		}
+		cur.Balance = *p.Balance
+	}
+	if p.Role != nil {
+		cur.Role = *p.Role
+	}
+	if p.Status != nil {
+		cur.Status = *p.Status
+	}
+	c := *cur
+	return &c, nil
+}
+
+// CreateBalanceLog 事务内写入余额变动记录（暂存）。
+func (t *fakeTx) CreateBalanceLog(ctx context.Context, l *domain.BalanceLog) error {
+	c := *l
+	c.ID = t.nextID
+	t.nextID++
+	t.balanceLogs = append(t.balanceLogs, &c)
 	return nil
 }
 

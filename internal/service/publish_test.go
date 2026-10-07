@@ -149,7 +149,7 @@ func TestPublishMatrix(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, pr.last().Users, "注册 → Users:true")
 
-		u, err := svc.CreateUser(ctx, "adm@example.com", "pw12345678", domain.RoleUser, domain.UserStatusActive, 8, 1000)
+		u, err := svc.CreateUser(ctx, "adm@example.com", "pw12345678", domain.RoleUser, domain.UserStatusActive, 8, 1000, 0)
 		require.NoError(t, err)
 		require.True(t, pr.last().Users, "管理面创建用户 → Users:true")
 
@@ -161,7 +161,7 @@ func TestPublishMatrix(t *testing.T) {
 			ID: u.ID, Role: &role, Status: &st,
 			MaxConcurrency: &mc, OldMaxConcurrency: &oldMC,
 			Balance: &bal, OldBalance: &oldBal,
-		})
+		}, 0)
 		require.NoError(t, err)
 		require.True(t, pr.last().Users, "更新用户 → Users:true")
 		require.Equal(t, 3, pr.total(), "一次操作一条 NOTIFY")
@@ -232,7 +232,7 @@ func TestPublishNilPublisher(t *testing.T) {
 	svc := &Service{store: fs, inv: &invRecorder{}, log: nil}
 	u := seedUser(t, fs, "nilpub@example.com", 0, 0)
 	svc.publish(ctx, notify.Change{Users: true}) // 直接调用也不 panic（nil 容忍）
-	_, err := svc.CreateUser(ctx, u.Email+"2", "pw12345678", domain.RoleUser, domain.UserStatusActive, 8, 1000)
+	_, err := svc.CreateUser(ctx, u.Email+"2", "pw12345678", domain.RoleUser, domain.UserStatusActive, 8, 1000, 0)
 	require.NoError(t, err, "nil publisher 下业务路径正常")
 }
 

@@ -17,6 +17,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/accountext"
+	"github.com/is7qin/c3api/internal/ent/balancelog"
 	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
 	"github.com/is7qin/c3api/internal/ent/group"
@@ -46,6 +47,8 @@ type Client struct {
 	Account *AccountClient
 	// AccountExt is the client for interacting with the AccountExt builders.
 	AccountExt *AccountExtClient
+	// BalanceLog is the client for interacting with the BalanceLog builders.
+	BalanceLog *BalanceLogClient
 	// EmailTemplate is the client for interacting with the EmailTemplate builders.
 	EmailTemplate *EmailTemplateClient
 	// ErrLog is the client for interacting with the ErrLog builders.
@@ -95,6 +98,7 @@ func (c *Client) init() {
 	c.Schema = migrate.NewSchema(c.driver)
 	c.Account = NewAccountClient(c.config)
 	c.AccountExt = NewAccountExtClient(c.config)
+	c.BalanceLog = NewBalanceLogClient(c.config)
 	c.EmailTemplate = NewEmailTemplateClient(c.config)
 	c.ErrLog = NewErrLogClient(c.config)
 	c.Group = NewGroupClient(c.config)
@@ -207,6 +211,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		config:          cfg,
 		Account:         NewAccountClient(cfg),
 		AccountExt:      NewAccountExtClient(cfg),
+		BalanceLog:      NewBalanceLogClient(cfg),
 		EmailTemplate:   NewEmailTemplateClient(cfg),
 		ErrLog:          NewErrLogClient(cfg),
 		Group:           NewGroupClient(cfg),
@@ -246,6 +251,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		config:          cfg,
 		Account:         NewAccountClient(cfg),
 		AccountExt:      NewAccountExtClient(cfg),
+		BalanceLog:      NewBalanceLogClient(cfg),
 		EmailTemplate:   NewEmailTemplateClient(cfg),
 		ErrLog:          NewErrLogClient(cfg),
 		Group:           NewGroupClient(cfg),
@@ -293,10 +299,10 @@ func (c *Client) Close() error {
 // In order to add hooks to a specific client, call: `client.Node.Use(...)`.
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
-		c.Account, c.AccountExt, c.EmailTemplate, c.ErrLog, c.Group, c.GroupAssignment,
-		c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode, c.RedemptionUse, c.Rule,
-		c.Setting, c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat,
-		c.UsageLog, c.UsageStat, c.User,
+		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
+		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
+		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
+		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Use(hooks...)
 	}
@@ -306,10 +312,10 @@ func (c *Client) Use(hooks ...Hook) {
 // In order to add interceptors to a specific client, call: `client.Node.Intercept(...)`.
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
-		c.Account, c.AccountExt, c.EmailTemplate, c.ErrLog, c.Group, c.GroupAssignment,
-		c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode, c.RedemptionUse, c.Rule,
-		c.Setting, c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat,
-		c.UsageLog, c.UsageStat, c.User,
+		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
+		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
+		c.RedemptionUse, c.Rule, c.Setting, c.TempBalance, c.Template, c.TemplateExt,
+		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -322,6 +328,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.Account.mutate(ctx, m)
 	case *AccountExtMutation:
 		return c.AccountExt.mutate(ctx, m)
+	case *BalanceLogMutation:
+		return c.BalanceLog.mutate(ctx, m)
 	case *EmailTemplateMutation:
 		return c.EmailTemplate.mutate(ctx, m)
 	case *ErrLogMutation:
@@ -690,6 +698,139 @@ func (c *AccountExtClient) mutate(ctx context.Context, m *AccountExtMutation) (V
 		return (&AccountExtDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown AccountExt mutation op: %q", m.Op())
+	}
+}
+
+// BalanceLogClient is a client for the BalanceLog schema.
+type BalanceLogClient struct {
+	config
+}
+
+// NewBalanceLogClient returns a client for the BalanceLog from the given config.
+func NewBalanceLogClient(c config) *BalanceLogClient {
+	return &BalanceLogClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `balancelog.Hooks(f(g(h())))`.
+func (c *BalanceLogClient) Use(hooks ...Hook) {
+	c.hooks.BalanceLog = append(c.hooks.BalanceLog, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `balancelog.Intercept(f(g(h())))`.
+func (c *BalanceLogClient) Intercept(interceptors ...Interceptor) {
+	c.inters.BalanceLog = append(c.inters.BalanceLog, interceptors...)
+}
+
+// Create returns a builder for creating a BalanceLog entity.
+func (c *BalanceLogClient) Create() *BalanceLogCreate {
+	mutation := newBalanceLogMutation(c.config, OpCreate)
+	return &BalanceLogCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of BalanceLog entities.
+func (c *BalanceLogClient) CreateBulk(builders ...*BalanceLogCreate) *BalanceLogCreateBulk {
+	return &BalanceLogCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *BalanceLogClient) MapCreateBulk(slice any, setFunc func(*BalanceLogCreate, int)) *BalanceLogCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &BalanceLogCreateBulk{err: fmt.Errorf("calling to BalanceLogClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*BalanceLogCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &BalanceLogCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for BalanceLog.
+func (c *BalanceLogClient) Update() *BalanceLogUpdate {
+	mutation := newBalanceLogMutation(c.config, OpUpdate)
+	return &BalanceLogUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *BalanceLogClient) UpdateOne(_m *BalanceLog) *BalanceLogUpdateOne {
+	mutation := newBalanceLogMutation(c.config, OpUpdateOne, withBalanceLog(_m))
+	return &BalanceLogUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *BalanceLogClient) UpdateOneID(id int64) *BalanceLogUpdateOne {
+	mutation := newBalanceLogMutation(c.config, OpUpdateOne, withBalanceLogID(id))
+	return &BalanceLogUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for BalanceLog.
+func (c *BalanceLogClient) Delete() *BalanceLogDelete {
+	mutation := newBalanceLogMutation(c.config, OpDelete)
+	return &BalanceLogDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *BalanceLogClient) DeleteOne(_m *BalanceLog) *BalanceLogDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *BalanceLogClient) DeleteOneID(id int64) *BalanceLogDeleteOne {
+	builder := c.Delete().Where(balancelog.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &BalanceLogDeleteOne{builder}
+}
+
+// Query returns a query builder for BalanceLog.
+func (c *BalanceLogClient) Query() *BalanceLogQuery {
+	return &BalanceLogQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeBalanceLog},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a BalanceLog entity by its id.
+func (c *BalanceLogClient) Get(ctx context.Context, id int64) (*BalanceLog, error) {
+	return c.Query().Where(balancelog.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *BalanceLogClient) GetX(ctx context.Context, id int64) *BalanceLog {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *BalanceLogClient) Hooks() []Hook {
+	return c.hooks.BalanceLog
+}
+
+// Interceptors returns the client interceptors.
+func (c *BalanceLogClient) Interceptors() []Interceptor {
+	return c.inters.BalanceLog
+}
+
+func (c *BalanceLogClient) mutate(ctx context.Context, m *BalanceLogMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&BalanceLogCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&BalanceLogUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&BalanceLogUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&BalanceLogDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown BalanceLog mutation op: %q", m.Op())
 	}
 }
 
@@ -3346,14 +3487,14 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 // hooks and interceptors per client, for fast access.
 type (
 	hooks struct {
-		Account, AccountExt, EmailTemplate, ErrLog, Group, GroupAssignment, Key,
-		PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
+		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
+		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
 		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
 		User []ent.Hook
 	}
 	inters struct {
-		Account, AccountExt, EmailTemplate, ErrLog, Group, GroupAssignment, Key,
-		PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
+		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
+		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
 		TempBalance, Template, TemplateExt, UsageEntityStat, UsageLog, UsageStat,
 		User []ent.Interceptor
 	}

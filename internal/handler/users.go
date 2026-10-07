@@ -56,7 +56,7 @@ func (h *AdminAPI) PostUsers(w http.ResponseWriter, r *http.Request) {
 		status = domain.UserStatus(*in.Status)
 	}
 	u, err := h.svc.CreateUser(r.Context(), in.Email, in.Password, role, status,
-		httpface.Deref(in.MaxConcurrency), usdToMillis(httpface.Deref(in.Balance)))
+		httpface.Deref(in.MaxConcurrency), usdToMillis(httpface.Deref(in.Balance)), createdBy(r))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -99,7 +99,7 @@ func (h *AdminAPI) PutUsersId(w http.ResponseWriter, r *http.Request, id int64) 
 		patch.Balance = &bal
 		patch.OldBalance = &u.Balance // 旧值条件：GET 快照
 	}
-	updated, err := h.svc.UpdateUser(r.Context(), patch)
+	updated, err := h.svc.UpdateUser(r.Context(), patch, createdBy(r))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -150,4 +150,27 @@ func (h *AdminAPI) PutUsersIdGroups(w http.ResponseWriter, r *http.Request, id i
 		GroupIds:    applied,
 		Multipliers: toAPIMultipliers(postMults),
 	})
+}
+
+// GetUsersIdBalanceLogs 某用户的余额变动记录（platform_admin 专属；分页；
+// limit 经 ClampLimit 上限 200 裁剪，≤0 由 repo 归一 20，ServerInterface）。
+// 先 GetUser 校验用户存在（缺失 → 404，对齐 GetRedemptionCodesIdUses 取码范式）。
+func (h *AdminAPI) GetUsersIdBalanceLogs(w http.ResponseWriter, r *http.Request, id int64, params GetUsersIdBalanceLogsParams) {
+	if _, err := h.svc.GetUser(r.Context(), id); err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	rows, total, err := h.svc.ListUserBalanceLogs(r.Context(), id, repository.ListQuery{
+		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset: int(httpface.Deref(params.Offset)),
+	})
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	out := make([]BalanceLog, 0, len(rows))
+	for _, l := range rows {
+		out = append(out, toAPIBalanceLog(l))
+	}
+	httpface.WriteJSON(w, http.StatusOK, BalanceLogListResponse{Total: total, Rows: out})
 }

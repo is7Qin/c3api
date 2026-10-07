@@ -216,9 +216,20 @@ var appliers = map[domain.RedemptionType]applyFunc{
 	domain.RedemptionTypeTempBalance: applyTempBalance,
 }
 
-// applyBalance 余额累加：users.balance += value（原子 SQL，无读改写）。
+// applyBalance 余额累加：users.balance += value（原子 SQL，无读改写），同事务
+// 读回变更后余额并写 redemption 行（spec §4.4 不变量）。
 func applyBalance(ctx context.Context, tx repository.TxStore, userID int64, c *domain.RedemptionCode) error {
-	return tx.UpdateUserBalance(ctx, userID, c.Value)
+	if err := tx.UpdateUserBalance(ctx, userID, c.Value); err != nil {
+		return err
+	}
+	// 读回顺序在 UpdateUserBalance 之后：同事务内 ent SELECT 经同一 txDriver 连接
+	// 可见刚写的值；不依赖陈旧快照，规避 READ COMMITTED 下「先读后算」的并发偏差。
+	u, err := tx.GetUser(ctx, userID)
+	if err != nil {
+		return err
+	}
+	note := c.Code // 兑换码文本（供记录展示；码本身即前台可见）
+	return writeBalanceLog(ctx, tx, userID, c.Value, u.Balance, domain.BalanceSourceRedemption, 0, &note)
 }
 
 // applyConcurrency 并发上限（决策 2）：0 = 不限特判——当前 0 直接设为 value，

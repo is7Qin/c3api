@@ -159,7 +159,7 @@ func TestCreateUserAdminNoDefaults(t *testing.T) {
 	require.NoError(t, err)
 
 	u, err := svc.CreateUser(ctx, "admin@example.com", "s3cret-pass",
-		domain.RoleUser, domain.UserStatusActive, 0, 0)
+		domain.RoleUser, domain.UserStatusActive, 0, 0, 0)
 	require.NoError(t, err)
 	require.Zero(t, u.MaxConcurrency, "管理面显式 0 不套默认")
 	require.Zero(t, u.Balance, "管理面显式 0 不套默认")
