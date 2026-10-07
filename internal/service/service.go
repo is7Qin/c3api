@@ -59,6 +59,7 @@ type Store interface {
 	TemplateExtStore
 	AccountExtStore
 	EmailTemplateStore
+	SupplierStore
 	// EmailCodeStore 不在复合面：验证码已迁 Redis（spec 2026-08-25-emailcode-
 	// redis-migration §2.2/§2.3），经 New 的 Deps.EmailCodeStore 独立注入，
 	// repository 实现已随 PG 验证码表卸载。
@@ -214,6 +215,16 @@ type EmailTemplateStore interface {
 	ListEmailTemplates(ctx context.Context) ([]*domain.EmailTemplate, error)
 	UpsertEmailTemplate(ctx context.Context, purpose, subject, bodyText string) (*domain.EmailTemplate, error)
 	DeleteEmailTemplate(ctx context.Context, purpose string) error
+}
+
+// SupplierStore 供应商业务面持久化（spec 2026-10-09 §6.1/§6.2）：overview/
+// earnings/chunks/settlements + 申请结算（条件扣 + 期间链 + request_key 幂等）。
+type SupplierStore interface {
+	SupplierOverview(ctx context.Context, uid int64) (*domain.SupplierOverview, error)
+	SupplierChunks(ctx context.Context, uid int64, limit, offset int) ([]domain.SupplierChunk, int64, error)
+	SupplierEarnings(ctx context.Context, uid int64, limit, offset int) ([]domain.SupplierEarning, int64, error)
+	ListSupplierSettlements(ctx context.Context, uid int64, limit, offset int) ([]*domain.SupplierSettlement, int64, error)
+	ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error)
 }
 
 // EmailCodeStore 验证码持久化。

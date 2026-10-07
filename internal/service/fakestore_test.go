@@ -66,6 +66,11 @@ type fakeStore struct {
 	// accExtErr 注入 GetAccountExt 非 ErrNotFound 故障（per-account；
 	// store 故障隔离测试——不误标上游问题）。
 	accExtErr map[int64]error
+	// supplier* 供应商业务面 fake（spec 2026-10-09 §6.1/§6.2）：概览缺省零值、
+	// 结算单按序追加、ApplySettlement 可注入错误。
+	supplierOverviews   map[int64]*domain.SupplierOverview
+	supplierSettlements []*domain.SupplierSettlement
+	supplierApplyErr    error
 	// pricingListErr 注入 ListPricing 失败（快照 fail-safe 测试）。
 	pricingListErr error
 	// lastTrendExec/lastEntityTrendExec/lastSummaryExec/lastDaysExec 记录统计读族
@@ -2511,4 +2516,46 @@ func (f *fakeStore) DeleteEmailCode(ctx context.Context, email, purpose string) 
 	}
 	delete(f.emailCodes, key)
 	return nil
+}
+
+// --- SupplierStore fake（spec 2026-10-09 §6.1/§6.2）---
+
+func (f *fakeStore) SupplierOverview(_ context.Context, uid int64) (*domain.SupplierOverview, error) {
+	if f.supplierOverviews != nil {
+		if o, ok := f.supplierOverviews[uid]; ok {
+			return o, nil
+		}
+	}
+	return &domain.SupplierOverview{}, nil
+}
+
+func (f *fakeStore) SupplierChunks(_ context.Context, _ int64, _, _ int) ([]domain.SupplierChunk, int64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeStore) SupplierEarnings(_ context.Context, _ int64, _, _ int) ([]domain.SupplierEarning, int64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeStore) ListSupplierSettlements(_ context.Context, uid int64, _, _ int) ([]*domain.SupplierSettlement, int64, error) {
+	out := make([]*domain.SupplierSettlement, 0)
+	for _, s := range f.supplierSettlements {
+		if s.SupplierUserID == uid {
+			out = append(out, s)
+		}
+	}
+	return out, int64(len(out)), nil
+}
+
+func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+	if f.supplierApplyErr != nil {
+		return nil, f.supplierApplyErr
+	}
+	s := &domain.SupplierSettlement{
+		ID: int64(len(f.supplierSettlements) + 1), SupplierUserID: req.SupplierUID,
+		Kind: req.Kind, AmountMillis: req.AmountMillis, Status: domain.SettlementPending,
+		Revision: 1, RequestKey: req.RequestKey, RequestedOperator: req.OperatorUID, Note: req.Note,
+	}
+	f.supplierSettlements = append(f.supplierSettlements, s)
+	return s, nil
 }

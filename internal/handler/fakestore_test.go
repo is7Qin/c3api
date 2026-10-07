@@ -2600,3 +2600,28 @@ func (f *fakeStore) DeleteEmailCode(ctx context.Context, email, purpose string) 
 	delete(f.emailCodes, key)
 	return nil
 }
+
+// --- SupplierStore fake（spec 2026-10-09 §6.1/§6.2）---
+
+func (f *fakeStore) SupplierOverview(_ context.Context, _ int64) (*domain.SupplierOverview, error) {
+	return &domain.SupplierOverview{ShareBp: 1000, FreezeHours: 24}, nil
+}
+
+func (f *fakeStore) SupplierChunks(_ context.Context, _ int64, _, _ int) ([]domain.SupplierChunk, int64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeStore) SupplierEarnings(_ context.Context, _ int64, _, _ int) ([]domain.SupplierEarning, int64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeStore) ListSupplierSettlements(_ context.Context, _ int64, _, _ int) ([]*domain.SupplierSettlement, int64, error) {
+	return nil, 0, nil
+}
+
+func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+	return &domain.SupplierSettlement{
+		ID: 1, SupplierUserID: req.SupplierUID, Kind: req.Kind, AmountMillis: req.AmountMillis,
+		Status: domain.SettlementPending, Revision: 1, RequestKey: req.RequestKey, RequestedOperator: req.OperatorUID,
+	}, nil
+}

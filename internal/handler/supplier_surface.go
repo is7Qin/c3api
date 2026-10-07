@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
+	"github.com/is7qin/c3api/internal/handler/supplier"
 )
 
 // SupplierSurfaceBaseURL 供应商面第二 BaseURL。
@@ -51,6 +52,12 @@ var supplierSurfaceRoutes = []string{
 	// templates GET 只读（提交账号需选模板）；模板写面不在子集内。
 	"GET /templates",
 	"GET /templates/{id}",
+	// 供应商业务面（§6.1/§6.2）：概览/收益明细/冻结桶/结算单 + 申请结算。
+	"GET /overview",
+	"GET /earnings",
+	"GET /chunks",
+	"GET /settlements",
+	"POST /settlements",
 }
 
 // SupplierSurfaceAllowlist 返回允许清单副本（顺序 = 声明序）。
@@ -155,6 +162,19 @@ func (h *AdminAPI) SupplierSurfaceRouter() http.Handler {
 	// templates GET 只读（提交账号需选模板）；模板写面不注册。
 	r.Get("/api/user/supplier/templates", siw.GetTemplates)
 	r.Get("/api/user/supplier/templates/{id}", siw.GetTemplatesId)
+	// 供应商业务面（§6.1/§6.2；生成面 supplier.ServerInterface，实现见
+	// supplier_business.go）。
+	bsiw := &supplier.ServerInterfaceWrapper{
+		Handler: h,
+		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
+			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
+		},
+	}
+	r.Get("/api/user/supplier/overview", bsiw.GetSupplierOverview)
+	r.Get("/api/user/supplier/earnings", bsiw.GetSupplierEarnings)
+	r.Get("/api/user/supplier/chunks", bsiw.GetSupplierChunks)
+	r.Get("/api/user/supplier/settlements", bsiw.GetSupplierSettlements)
+	r.Post("/api/user/supplier/settlements", bsiw.PostSupplierSettlement)
 	return r
 }
 

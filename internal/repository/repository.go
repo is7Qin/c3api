@@ -52,6 +52,9 @@ type Repository struct {
 	// 记账链/解冻链的显式多语句事务走它（形态同 Billing 结算语句；WithTx 内为
 	// nil → 事务面回落）。
 	pool *pgxpool.Pool
+	// supplier 供应商业务面持久面（SupplierRepo(cfg) 装配后置位；service 门面经
+	// 它派发 overview/earnings/chunks/settlements/apply——实现 service.SupplierStore）。
+	supplier *SupplierRepo
 }
 
 // New 用既有 driver 构建仓库（PG 生产：entsql.OpenDB(dialect.Postgres, db)；测试：
@@ -121,7 +124,45 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 // 持久面（实现 supplier.CreditStore 等消费面接口）。cfg 携带记账链读取所需的
 // 生效默认（share_bp_default / freeze 默认与开关 / 粒度）。
 func (r *Repository) SupplierRepo(cfg SupplierRepoConfig) *SupplierRepo {
-	return &SupplierRepo{client: r.Client, pool: r.pool, cfg: cfg}
+	r.supplier = &SupplierRepo{client: r.Client, pool: r.pool, cfg: cfg}
+	return r.supplier
+}
+
+// --- SupplierStore 门面（service.SupplierStore）---
+
+func (r *Repository) SupplierOverview(ctx context.Context, uid int64) (*domain.SupplierOverview, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.SupplierOverview(ctx, uid)
+}
+
+func (r *Repository) SupplierChunks(ctx context.Context, uid int64, limit, offset int) ([]domain.SupplierChunk, int64, error) {
+	if r.supplier == nil {
+		return nil, 0, errSupplierNoPool
+	}
+	return r.supplier.SupplierChunks(ctx, uid, limit, offset)
+}
+
+func (r *Repository) SupplierEarnings(ctx context.Context, uid int64, limit, offset int) ([]domain.SupplierEarning, int64, error) {
+	if r.supplier == nil {
+		return nil, 0, errSupplierNoPool
+	}
+	return r.supplier.SupplierEarnings(ctx, uid, limit, offset)
+}
+
+func (r *Repository) ListSupplierSettlements(ctx context.Context, uid int64, limit, offset int) ([]*domain.SupplierSettlement, int64, error) {
+	if r.supplier == nil {
+		return nil, 0, errSupplierNoPool
+	}
+	return r.supplier.ListSupplierSettlements(ctx, uid, limit, offset)
+}
+
+func (r *Repository) ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+	if r.supplier == nil {
+		return nil, errSupplierNoPool
+	}
+	return r.supplier.ApplySettlement(ctx, req)
 }
 
 // --- 事务（核心） ---
