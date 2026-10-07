@@ -39,7 +39,7 @@ type GroupVisibility = components['schemas']['GroupVisibility']
 type UserGroupsBody = components['schemas']['UserGroupsBody']
 type BalanceLog = components['schemas']['BalanceLog']
 
-const ROLES: UserRole[] = ['platform_admin', 'user']
+const ROLES: UserRole[] = ['platform_admin', 'user', 'supplier']
 const STATUSES: UserStatus[] = ['active', 'disabled']
 
 // 余额（USD 浮点，已由 API 边界换算）→ $N.NN；空 → —。
@@ -49,15 +49,19 @@ const formatBalance = (b?: number): string => (b == null ? '—' : `$${b.toFixed
 const formatLogAmount = (v: number): string => `${v < 0 ? '-' : '+'}$${Math.abs(v).toFixed(5)}`
 const formatLogBalance = (v: number): string => `$${v.toFixed(5)}`
 
-// 角色徽章：platform_admin 蓝点（管理面）/ user 灰点（普通用户，与 groups
-// VisibilityBadge 同风格）。
+// 角色徽章：platform_admin 蓝点（管理面）/ supplier 绿点（供应商面）/
+// user 灰点（普通用户，与 groups VisibilityBadge 同风格）。
 function RoleBadge({ role }: { role?: UserRole }) {
   const { t } = useTranslation()
   const isAdmin = role === 'platform_admin'
+  const isSupplier = role === 'supplier'
+  const tone = isAdmin ? 'text-blue-700 dark:text-blue-400' : isSupplier ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground'
+  const dot = isAdmin ? 'bg-blue-500' : isSupplier ? 'bg-emerald-500' : 'bg-muted-foreground/60'
+  const key = isAdmin ? 'users.role.platform_admin' : isSupplier ? 'users.role.supplier' : 'users.role.user'
   return (
-    <Badge variant="secondary" className={cn('gap-1.5', isAdmin ? 'text-blue-700 dark:text-blue-400' : 'text-muted-foreground')}>
-      <span className={cn('size-1.5 shrink-0 rounded-full', isAdmin ? 'bg-blue-500' : 'bg-muted-foreground/60')} />
-      {t(isAdmin ? 'users.role.platform_admin' : 'users.role.user')}
+    <Badge variant="secondary" className={cn('gap-1.5', tone)}>
+      <span className={cn('size-1.5 shrink-0 rounded-full', dot)} />
+      {t(key)}
     </Badge>
   )
 }

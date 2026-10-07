@@ -4,7 +4,8 @@
 
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { Outlet, RouterProvider, createBrowserRouter, Navigate } from 'react-router-dom'
-import { ApiClient, ApiUnauthorized } from '@/lib/api/client'
+import { ApiUnauthorized, adminApi, supplierApi } from '@/lib/api/client'
+import { ApiScopeProvider } from '@/lib/api/scope'
 import { ThemeProvider } from '@/components/theme-provider'
 import { userAuth } from '@/lib/auth'
 import { Toaster } from '@/components/ui/toast'
@@ -34,10 +35,14 @@ import RedemptionCodes from '@/pages/redemption-codes'
 import PricingPage from '@/pages/pricing'
 import SettingsPage from '@/pages/settings'
 import Ops from '@/pages/ops'
+import SupplierConsole from '@/pages/supplier/console'
+import SupplierAdmin from '@/pages/supplier-admin'
 
 // 唯一登录态 userAuth：管理端 api 与用户端 userApi 同源取 token，
 // platform_admin 的 JWT 同样通过 /admin 后端鉴权（middleware 已支持）。
-export const api = new ApiClient(userAuth.getToken)
+// api = 管理端实例（/api/admin），实例定义下沉到 client.ts（adminApi），
+// 以便供应商面（supplierApi）与作用域上下文共享同一批方法而不产生循环依赖。
+export const api = adminApi
 
 const router = createBrowserRouter([
   { path: '/', element: <Home /> },
@@ -66,6 +71,7 @@ const router = createBrowserRouter([
           { path: 'pricing', element: <PricingPage /> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'ops', element: <Ops /> },
+          { path: 'supplier', element: <SupplierAdmin /> },
         ],
       },
       {
@@ -77,6 +83,15 @@ const router = createBrowserRouter([
           { path: 'logs', element: <UserLogs /> },
           { path: 'stats', element: <UserStats /> },
           { path: 'redemptions', element: <UserRedemptions /> },
+          // 供应商控制台（spec 2026-10-09 §6.1）：门控 RequireSupplier（supplier | platform_admin）。
+          { path: 'supplier', element: <RequireSupplier />, children: [
+            // 整个供应商域注入 supplierApi（base /api/user/supplier）作用域。
+            { element: <SupplierScope />, children: [
+              { index: true, element: <SupplierConsole /> },
+              // 账号管理页**复用同一 Accounts 组件**（作用域参数化，只切 BaseURL）。
+              { path: 'accounts', element: <Accounts scope="supplier" /> },
+            ] },
+          ] },
         ],
       },
     ],
@@ -92,6 +107,26 @@ function RequireAdmin() {
   if (!userAuth.getToken()) return <Navigate to="/user/login" replace />
   if (userAuth.getRole() !== 'platform_admin') return <Forbidden />
   return <Outlet />
+}
+
+// 供应商面门控（spec 2026-10-09 §2.6 可达集 = {supplier, platform_admin}）：
+// 后端 RequireRole 仍兜底（非可达角色 → 401/403），此处仅前端第一层拦截。
+// platform_admin 亦可进入（查看/管理自己名下账号与收益；非供应商管理员看到空态，无害）。
+function RequireSupplier() {
+  if (!userAuth.getToken()) return <Navigate to="/user/login" replace />
+  const role = userAuth.getRole()
+  if (role !== 'supplier' && role !== 'platform_admin') return <Forbidden />
+  return <Outlet />
+}
+
+// 供应商作用域注入：整个供应商域（控制台 + 账号页）的 useScopedApi() 返回
+// supplierApi（base /api/user/supplier）。账号页管理面/supplier 复用同一组件。
+function SupplierScope() {
+  return (
+    <ApiScopeProvider client={supplierApi}>
+      <Outlet />
+    </ApiScopeProvider>
+  )
 }
 
 // 401 全局拦截：任何 query/mutation 收到

@@ -19,12 +19,14 @@ import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import { importSequential } from '@/lib/codex-import/chunk'
 import type { CredentialKind, NormalizedRow } from '@/lib/codex-import/normalize'
 import type { components } from '@/lib/api/schema'
-import { api } from '@/App'
+import { useScopedApi } from '@/lib/api/scope'
 
 type Template = components['schemas']['Template']
 type Group = components['schemas']['Group']
 
 export function CodexImportDialog({ open, onOpenChange, templates, groups, onDone }: { open: boolean; onOpenChange: (open: boolean) => void; templates: Template[]; groups: Group[]; onDone: () => void }) {
+  // 作用域客户端：管理面 /api/admin、供应商面 /api/user/supplier（spec §6.1 复用）。
+  const api = useScopedApi()
   const { t } = useTranslation()
   const STEP_LABELS = [
     t('accounts.import.step.kind'),

@@ -7,7 +7,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { api } from '@/App'
+import { useScopedApi } from '@/lib/api/scope'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import { BatchBar } from '@/components/batch-bar'
@@ -15,6 +15,7 @@ import { ListToolbar } from '@/components/list-toolbar'
 import { Pagination } from '@/components/pagination'
 import { SortableHeader, type SortOrder } from '@/components/sortable-header'
 import { Badge } from '@/components/ui/badge'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -206,6 +207,10 @@ interface FormState {
   codex_pat_key: string
   codex_email: string
   codex_account_id: string
+  // 归属供应商 user_id（**仅管理面作用域**：把账号分配给供应商的唯一入口，
+  // spec §2.5/§6.1 L834）；供应商面不展示、不可编辑（服务端恒为 JWT 本人）。
+  // 空串 = 不发送（创建态 = 平台自有 null；编辑态 = 保持不变，绝不误清空）。
+  supplier_user_id: string
 }
 
 const emptyForm = (): FormState => ({
@@ -223,6 +228,7 @@ const emptyForm = (): FormState => ({
   codex_pat_key: '',
   codex_email: '',
   codex_account_id: '',
+  supplier_user_id: '',
 })
 
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
@@ -249,6 +255,9 @@ function toForm(a: AccountView): FormState {
     codex_pat_key: '',
     codex_email: '',
     codex_account_id: '',
+    // 归属不回显（AccountView 契约暂不含该列）：编辑态留空 = 保持不变，
+    // 仅当管理员显式填入 user_id 才发送（= 分配到该供应商）。
+    supplier_user_id: '',
   }
 }
 
@@ -330,7 +339,18 @@ const emptyBatchForm = (): BatchForm => ({
   multiplier: '',
 })
 
-export default function Accounts() {
+// 作用域参数化（spec 2026-10-09 §6.1/§10）：**同一页面组件**在管理面（/app/accounts）与
+// 供应商控制台（/app 之外的 /user/supplier/accounts）复用，只切 API base 前缀——
+// 供应商面走 supplierApi（/api/user/supplier/*），管理面走 adminApi（/api/admin/*）。
+// 能力集完全一致（创建/编辑/批改/批删/启停/缓存域/倍率/ext Codex 凭据/批量导入/恢复/用量）；
+// 差异仅在：供应商面 `supplier_user_id` 不展示、不可编辑（服务端恒为 JWT 本人）。
+export interface AccountsProps {
+  scope?: 'admin' | 'supplier'
+}
+
+export default function Accounts({ scope = 'admin' }: AccountsProps = {}) {
+  const api = useScopedApi()
+  const isSupplierScope = scope === 'supplier'
   const { t } = useTranslation()
   const qc = useQueryClient()
 
@@ -471,6 +491,10 @@ export default function Accounts() {
     queryKey: ['stats-capabilities'],
     queryFn: () => api.getStatsCapabilities(),
     staleTime: Infinity,
+    // /stats/capabilities 不在供应商面路由子集内（spec §2.5/§6.1 只放行
+    // accounts + groups 只读 + templates 只读 + 供应商业务面）⇒ 供应商作用域下
+    // 不发该请求（否则必 404）；预置范围回落到全量 USAGE_RANGES。
+    enabled: !isSupplierScope,
   })
   const maxSpanSeconds = compositeMaxSpanSeconds(capsQ.data, ['usage_agg', 'entity_trend'])
   const offeredRanges = useMemo(
@@ -502,7 +526,9 @@ export default function Accounts() {
     // 时区防串台。
     queryKey: ['account-stats-detail', usageDetail?.ID, activeKey, browserTimeZone()],
     queryFn: () => api.getStatsEntityTrend({ entity: 'account', id: usageDetail!.ID!, window: presetWindow, granularity, timezone: browserTimeZone() }),
-    enabled: !!usageDetail,
+    // /stats/entity-trend 不在供应商面路由子集内 ⇒ 供应商作用域关闭分桶趋势
+    //（明细弹窗的汇总与尾窗走 /accounts/usage，仍可用）。
+    enabled: !!usageDetail && !isSupplierScope,
   })
   // 统计桶按 BucketTime 升序（spec 钉死）：后端 day 合并按 map 迭代返回无序
   //（实测 17/18/19/16 乱序）——末桶判定/slice(0,-1) 依赖升序，必须显式排序。
@@ -796,11 +822,16 @@ export default function Accounts() {
         }
         await api.putAccountExt(id, extBody)
       }
+      // 归属供应商（仅管理面作用域；供应商面恒隐含 JWT 本人）。空 = 不发送。
+      const ownerRaw = isSupplierScope ? '' : f.supplier_user_id.trim()
+      if (ownerRaw !== '' && !/^\d+$/.test(ownerRaw)) throw new Error(t('accounts.owner.invalid'))
+      const ownerUID = ownerRaw === '' ? null : Number(ownerRaw)
       if (!editing) {
         // 创建：一次 POST 落全部字段（倍率非 ×1 时随体带，无补写腿）
         // structurally force base_url null for Codex/unresolved even if form still stale
         const body = toBody(f, null, isCodexForBody)
         if (mult !== 1) body.upstream_cost_multiplier = mult
+        if (ownerUID != null) body.supplier_user_id = ownerUID
         const created = await api.createAccount(body)
         await saveCodexExt(created.ID!)
         return
@@ -811,6 +842,8 @@ export default function Accounts() {
       const patch: AccountConfigPatch = toBody(f, editing, isCodexForBody)
       if (mult !== normMult(editing.UpstreamCostMultiplier)) patch.upstream_cost_multiplier = mult
       if (newDom !== (editing.CacheDomain ?? null)) patch.cache_domain = newDom
+      // 归属回填（AccountView 暂不回显）：仅当管理员显式填入才发送（缺席 = 不变）。
+      if (ownerUID != null) patch.supplier_user_id = ownerUID
       await api.updateAccount(id, patch, editing.LifecycleRevision)
       await saveCodexExt(id)
       return
@@ -1006,6 +1039,13 @@ export default function Accounts() {
         </Button>
         </div>
       </div>
+
+      {/* 必须提示（spec §6.1 L178/L838）：「未分配分组的账号不接流量」——
+          新账号默认无分组；无分组账号不入任何快照、对流量是空集 no-op。
+          「无需审核」≠「自动可用」：供应商若以为提交即生效会长期零收益。 */}
+      <Alert data-od-id="accounts-ungrouped-notice" className="border-amber-500/30 bg-amber-500/5">
+        <AlertDescription className="text-sm">{t('accounts.ungroupedNotice')}</AlertDescription>
+      </Alert>
 
       <ListToolbar
         name={name}
@@ -1241,6 +1281,21 @@ export default function Accounts() {
               <Label htmlFor="acc-name">{t('accounts.nameLabel')}</Label>
               <Input id="acc-name" value={form.name} placeholder={t('accounts.namePlaceholder')} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
             </div>
+            {/* 归属供应商（仅管理面作用域）：把账号分配给供应商的唯一入口（spec §6.1 L834）。
+                供应商面不展示（服务端把归属恒定为 JWT 本人）。 */}
+            {!isSupplierScope && (
+              <div className="space-y-1.5">
+                <Label htmlFor="acc-owner">{t('accounts.owner.label')}</Label>
+                <Input
+                  id="acc-owner"
+                  inputMode="numeric"
+                  value={form.supplier_user_id}
+                  placeholder={t('accounts.owner.placeholder')}
+                  onChange={e => setForm(f => ({ ...f, supplier_user_id: e.target.value }))}
+                />
+                <p className="text-xs text-muted-foreground">{t('accounts.owner.hint')}</p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>{t('accounts.templateLabel')}</Label>
               <Select

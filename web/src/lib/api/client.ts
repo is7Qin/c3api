@@ -288,6 +288,27 @@ export class ApiClient {
   sendMailChannelTest = (b: components['schemas']['MailChannelTestRequest']) => this.request<components['schemas']['MailChannelTestResponse']>('/mail/channel-test', { method: 'POST', body: JSON.stringify(b) })
   getMailTemplates = () => this.request<components['schemas']['MailTemplate'][]>('/mail/templates')
   putMailTemplate = (purpose: string, b: components['schemas']['MailTemplateUpdate']) => this.request<components['schemas']['MailTemplate']>(`/mail/templates/${purpose}`, { method: 'PUT', body: JSON.stringify(b) })
+  // —— 供应商面（supplierApi 专属；base '/api/user/supplier'；无 /api/user/supplier 前缀重复）——
+  // overview/earnings/chunks/settlements 为 supplier tag 生成的绝对路径资源；本实例 base
+  // 已含前缀，故此处只发相对片段（与 userApi 的 '/auth/me' 同款惯例）。
+  getSupplierOverview = () => this.request<components['schemas']['SupplierOverview']>('/overview')
+  getSupplierEarnings = (p?: { limit?: number; offset?: number }) => this.request<components['schemas']['SupplierEarningList']>('/earnings', { params: toQuery(p) })
+  getSupplierChunks = (p?: { limit?: number; offset?: number }) => this.request<components['schemas']['SupplierChunkList']>('/chunks', { params: toQuery(p) })
+  getSupplierSettlements = (p?: { limit?: number; offset?: number }) => this.request<components['schemas']['SupplierSettlementList']>('/settlements', { params: toQuery(p) })
+  applySupplierSettlement = (b: components['schemas']['ApplySettlementBody']) => this.request<components['schemas']['SupplierSettlement']>('/settlements', { method: 'POST', body: JSON.stringify(b) })
+  // —— 管理面结算审批（spec 2026-10-09 §6.3；base '/api/admin'）——
+  // 五态 CAS 迁移（approve/reject/claim/confirm-failed/paid）+ 代申请 + 余额列表/PATCH。
+  // 资金命令要求具名 JWT 操作者（I5）：静态 admin token ⇒ 403（服务端强卡，前端不感知）。
+  listAdminSupplierSettlements = (p?: { status?: components['schemas']['SupplierSettlement']['status']; kind?: components['schemas']['SupplierSettlement']['kind']; limit?: number; offset?: number }) =>
+    this.request<components['schemas']['SupplierSettlementList']>('/supplier/settlements', { params: toQuery(p) })
+  approveSettlement = (id: number, b: components['schemas']['SettlementTransitionBody']) => this.request<components['schemas']['SupplierSettlement']>(`/supplier/settlements/${id}/approve`, { method: 'POST', body: JSON.stringify(b) })
+  rejectSettlement = (id: number, b: components['schemas']['SettlementRejectBody']) => this.request<components['schemas']['SupplierSettlement']>(`/supplier/settlements/${id}/reject`, { method: 'POST', body: JSON.stringify(b) })
+  claimSettlement = (id: number, b: components['schemas']['SettlementClaimBody']) => this.request<components['schemas']['SupplierSettlement']>(`/supplier/settlements/${id}/claim`, { method: 'POST', body: JSON.stringify(b) })
+  confirmFailedSettlement = (id: number, b: components['schemas']['SettlementConfirmFailedBody']) => this.request<components['schemas']['SupplierSettlement']>(`/supplier/settlements/${id}/confirm-failed`, { method: 'POST', body: JSON.stringify(b) })
+  paidSettlement = (id: number, b: components['schemas']['SettlementPaidBody']) => this.request<components['schemas']['SupplierSettlement']>(`/supplier/settlements/${id}/paid`, { method: 'POST', body: JSON.stringify(b) })
+  adminRequestSettlement = (b: components['schemas']['AdminRequestSettlementBody']) => this.request<components['schemas']['SupplierSettlement']>('/supplier/settlements/admin-request', { method: 'POST', body: JSON.stringify(b) })
+  listSupplierBalances = (p?: { limit?: number; offset?: number }) => this.request<components['schemas']['SupplierBalanceList']>('/supplier/balances', { params: toQuery(p) })
+  patchSupplierBalance = (uid: number, b: components['schemas']['SupplierBalancePatchBody']) => this.request<components['schemas']['SupplierBalance']>(`/supplier/balances/${uid}`, { method: 'PATCH', body: JSON.stringify(b) })
 }
 
 export class ApiUnauthorized extends Error {
@@ -296,3 +317,11 @@ export class ApiUnauthorized extends Error {
 
 // 用户端实例：base '/api/user'，Authorization 走 userAuth（c3api_user_token）。
 export const userApi = new ApiClient(userAuth.getToken, '/api/user')
+
+// 管理端实例：base '/api/admin'（App.tsx 以 `api` 名再导出，保持既有导入点不变）。
+export const adminApi = new ApiClient(userAuth.getToken, '/api/admin')
+
+// 供应商面实例：base '/api/user/supplier'。**与账号页复用同一 ApiClient 类与同一批方法**
+// （listAccounts/createAccount/... 路径相对，切换 base 即切作用域）——这正是 spec
+// 2026-10-09 §6.1「账号页复用 + 只切 BaseURL」的前端落点：不复制页面、不建平行方法集。
+export const supplierApi = new ApiClient(userAuth.getToken, '/api/user/supplier')

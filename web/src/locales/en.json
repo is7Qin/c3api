@@ -28,7 +28,8 @@
     "redemptions": "Redemption codes",
     "pricing": "Pricing",
     "settings": "Settings",
-    "ops": "Ops"
+    "ops": "Ops",
+    "supplierWorkbench": "Settlement Workbench"
   },
   "theme": {
     "toggle": "Toggle theme",
@@ -477,6 +478,13 @@
       "empty": "No usage in this period",
       "current": "Now",
       "hint": "View usage details"
+    },
+    "ungroupedNotice": "Accounts without a group receive no traffic: assign at least one group in the account Edit dialog, otherwise the account serves no requests and earns nothing.",
+    "owner": {
+      "label": "Owning supplier user_id (optional)",
+      "placeholder": "Empty = platform-owned",
+      "hint": "Assign this account to a supplier (must be an active supplier/platform_admin). Empty keeps platform-owned / leaves ownership unchanged.",
+      "invalid": "Owning supplier user_id must be a positive integer"
     }
   },
   "users": {
@@ -540,7 +548,8 @@
     "roleLabel": "Role",
     "role": {
       "platform_admin": "Platform admin",
-      "user": "User"
+      "user": "User",
+      "supplier": "Supplier"
     },
     "statusLabel": "Status",
     "maxLabel": "Max concurrency",
@@ -1655,7 +1664,8 @@
       "keys": "Keys",
       "logs": "Logs",
       "stats": "Stats",
-      "redemptions": "Redeem"
+      "redemptions": "Redeem",
+      "supplierSection": "Supplier"
     },
     "common": {
       "loading": "Loading…",
@@ -1881,5 +1891,166 @@
     "title": "Page Not Found",
     "desc": "The page you are looking for does not exist or has been moved",
     "backHome": "Back to Home"
+  },
+  "supplier": {
+    "title": "Supplier Console",
+    "subtitle": "Earnings, freezes and settlements at a glance",
+    "nav": {
+      "console": "Earnings",
+      "accounts": "My Accounts"
+    },
+    "card": {
+      "available": "Available",
+      "frozen": "Frozen",
+      "frozenHint": "{{rows}} frozen chunks; latest {{at}}",
+      "noBucket": "none",
+      "lifetimeCredited": "Lifetime credited",
+      "lifetimePaid": "Lifetime paid",
+      "shareBp": "Revenue share",
+      "shareBpHint": "{{bp}} bp (10000 = 100%)",
+      "freezeHours": "Freeze window",
+      "noFreeze": "No freeze"
+    },
+    "tab": {
+      "earnings": "Earnings",
+      "chunks": "Frozen",
+      "settlements": "Settlements"
+    },
+    "earnings": {
+      "empty": "No earnings yet",
+      "col": {
+        "time": "Time",
+        "model": "Model",
+        "cost": "Cost",
+        "earn": "Earnings"
+      }
+    },
+    "chunks": {
+      "empty": "No frozen chunks",
+      "col": {
+        "availableAt": "Available at",
+        "amount": "Amount"
+      }
+    },
+    "settlements": {
+      "empty": "No settlements",
+      "col": {
+        "amount": "Amount",
+        "status": "Status",
+        "kind": "Source",
+        "period": "Period",
+        "requestedAt": "Requested at"
+      }
+    },
+    "settlement": {
+      "status": {
+        "pending": "Pending",
+        "approved": "Approved",
+        "paying": "Paying",
+        "paid": "Paid",
+        "rejected": "Rejected"
+      },
+      "kind": {
+        "supplier_request": "Self-requested",
+        "admin_request": "Admin-requested"
+      }
+    },
+    "pager": "{{from}}–{{to}} of {{total}}",
+    "prev": "Prev",
+    "next": "Next",
+    "apply": {
+      "button": "Apply for settlement",
+      "title": "Apply for settlement",
+      "desc": "Available balance {{available}}; the amount is held immediately pending review.",
+      "amount": "Amount (USD)",
+      "amountHint": "Up to 5 decimals; must not exceed the available balance.",
+      "note": "Note (optional)",
+      "submit": "Submit",
+      "success": "Settlement request submitted",
+      "invalidAmount": "Invalid amount (must be > 0, up to 5 decimals)"
+    }
+  },
+  "supplierAdmin": {
+    "title": "Settlement Workbench",
+    "subtitle": "Review, claim payouts and request on behalf",
+    "conflict": "The record changed elsewhere; refresh and retry",
+    "approveSuccess": "Approved",
+    "actionSuccess": "Done",
+    "act": {
+      "approve": "Approve",
+      "reject": "Reject",
+      "claim": "Claim payout",
+      "paid": "Mark paid",
+      "confirmFailed": "Confirm failed",
+      "submit": "Submit",
+      "idDesc": "Record #{{id}}, amount {{amount}}"
+    },
+    "field": {
+      "reason": "Reason",
+      "payee": "Payee snapshot",
+      "payeePlaceholder": "Payee / account / currency",
+      "risk": "Risk-check evidence",
+      "externalRef": "External reference (optional)"
+    },
+    "claim": {
+      "required": "Payee snapshot and risk evidence are required",
+      "hint": "Claiming starts the external payout and fixes the payee."
+    },
+    "confirmFailed": {
+      "required": "A definite non-payment reason is required",
+      "hint": "Only a confirmed non-payment is accepted; network failures do not qualify."
+    },
+    "request": {
+      "button": "Request on behalf",
+      "title": "Request settlement on behalf",
+      "desc": "An admin files a settlement request for a supplier (same channel).",
+      "uid": "Supplier user_id",
+      "amount": "Amount (USD)",
+      "note": "Note (optional)",
+      "success": "Request submitted",
+      "invalidUid": "Invalid supplier user_id",
+      "invalidAmount": "Invalid amount",
+      "notFound": "Target supplier has no balance row"
+    },
+    "balance": {
+      "edit": "Configure",
+      "title": "Supplier #{{uid}} configuration",
+      "desc": "Only share and freeze window are editable (no amounts). Empty = inherit the global default.",
+      "shareBp": "Revenue share (bp)",
+      "freezeHours": "Freeze window (hours)",
+      "success": "Saved",
+      "invalid": "Enter a non-negative integer"
+    },
+    "inherit": "Inherit",
+    "inheritPlaceholder": "Empty = inherit",
+    "tab": {
+      "settlements": "Settlements",
+      "balances": "Supplier balances"
+    },
+    "filter": {
+      "allStatus": "All statuses",
+      "allKind": "All sources"
+    },
+    "refresh": "Refresh",
+    "settlements": {
+      "empty": "No settlements"
+    },
+    "balances": {
+      "empty": "No supplier balances"
+    },
+    "col": {
+      "supplier": "Supplier",
+      "amount": "Amount",
+      "status": "Status",
+      "kind": "Source",
+      "requestedAt": "Requested at",
+      "actions": "Actions",
+      "available": "Available",
+      "lifetimeCredited": "Lifetime credited",
+      "lifetimePaid": "Lifetime paid",
+      "shareBp": "Share",
+      "freezeHours": "Freeze",
+      "buckets": "Buckets"
+    }
   }
 }

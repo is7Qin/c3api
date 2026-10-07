@@ -2364,7 +2364,7 @@ export interface components {
             rows: components["schemas"]["AdminKey"][];
         };
         /** @enum {string} */
-        UserRole: "platform_admin" | "user";
+        UserRole: "platform_admin" | "user" | "supplier";
         /** @enum {string} */
         UserStatus: "active" | "disabled";
         User: {

@@ -28,7 +28,8 @@
     "redemptions": "兑换码",
     "pricing": "模型价格",
     "settings": "系统设置",
-    "ops": "运维状态"
+    "ops": "运维状态",
+    "supplierWorkbench": "结算工作台"
   },
   "theme": {
     "toggle": "切换主题",
@@ -477,6 +478,13 @@
       "empty": "该时间段无用量记录",
       "current": "当前",
       "hint": "查看用量明细"
+    },
+    "ungroupedNotice": "未分配分组的账号不接流量：请在账号「编辑」里为其选择至少一个分组，否则该账号不会服务任何请求、也不会产生收益。",
+    "owner": {
+      "label": "归属供应商 user_id（可选）",
+      "placeholder": "留空 = 平台自有",
+      "hint": "将该账号分配给某供应商（须为 active 的 supplier/platform_admin）。留空表示平台自有／不改变现有归属。",
+      "invalid": "归属供应商 user_id 必须为正整数"
     }
   },
   "users": {
@@ -540,7 +548,8 @@
     "roleLabel": "角色",
     "role": {
       "platform_admin": "平台管理员",
-      "user": "普通用户"
+      "user": "普通用户",
+      "supplier": "供应商"
     },
     "statusLabel": "状态",
     "maxLabel": "最大并发",
@@ -1655,7 +1664,8 @@
       "keys": "Keys",
       "logs": "日志",
       "stats": "统计",
-      "redemptions": "兑换"
+      "redemptions": "兑换",
+      "supplierSection": "供应商"
     },
     "common": {
       "loading": "加载中…",
@@ -1881,5 +1891,166 @@
     "title": "页面不存在",
     "desc": "您访问的页面不存在或已被移除",
     "backHome": "返回首页"
+  },
+  "supplier": {
+    "title": "供应商控制台",
+    "subtitle": "收益、冻结与结算一览",
+    "nav": {
+      "console": "收益总览",
+      "accounts": "我的账号"
+    },
+    "card": {
+      "available": "可提领",
+      "frozen": "冻结中",
+      "frozenHint": "{{rows}} 个冻结桶；最晚 {{at}}",
+      "noBucket": "暂无",
+      "lifetimeCredited": "累计入账",
+      "lifetimePaid": "累计已付",
+      "shareBp": "分成率",
+      "shareBpHint": "{{bp}} bp（10000 = 100%）",
+      "freezeHours": "冻结期",
+      "noFreeze": "不冻结"
+    },
+    "tab": {
+      "earnings": "收益明细",
+      "chunks": "冻结中",
+      "settlements": "结算单"
+    },
+    "earnings": {
+      "empty": "暂无收益记录",
+      "col": {
+        "time": "时间",
+        "model": "模型",
+        "cost": "计价额",
+        "earn": "收益"
+      }
+    },
+    "chunks": {
+      "empty": "暂无冻结中的收益",
+      "col": {
+        "availableAt": "解冻时刻",
+        "amount": "金额"
+      }
+    },
+    "settlements": {
+      "empty": "暂无结算单",
+      "col": {
+        "amount": "金额",
+        "status": "状态",
+        "kind": "来源",
+        "period": "期间",
+        "requestedAt": "申请时间"
+      }
+    },
+    "settlement": {
+      "status": {
+        "pending": "待审批",
+        "approved": "已批准",
+        "paying": "付款中",
+        "paid": "已付款",
+        "rejected": "已驳回"
+      },
+      "kind": {
+        "supplier_request": "自行申请",
+        "admin_request": "代申请"
+      }
+    },
+    "pager": "第 {{from}}–{{to}} 条，共 {{total}}",
+    "prev": "上一页",
+    "next": "下一页",
+    "apply": {
+      "button": "申请结算",
+      "title": "申请结算",
+      "desc": "可提领余额 {{available}}；申请后金额立即冻结待审批。",
+      "amount": "申请金额（USD）",
+      "amountHint": "最多 5 位小数；须 ≤ 可提领余额。",
+      "note": "备注（可选）",
+      "submit": "提交申请",
+      "success": "结算申请已提交",
+      "invalidAmount": "金额无效（须 > 0，最多 5 位小数）"
+    }
+  },
+  "supplierAdmin": {
+    "title": "结算工作台",
+    "subtitle": "审批、认领付款与代申请",
+    "conflict": "单据已被他人变更，请刷新后重试",
+    "approveSuccess": "已批准",
+    "actionSuccess": "操作成功",
+    "act": {
+      "approve": "批准",
+      "reject": "驳回",
+      "claim": "认领付款",
+      "paid": "确认已付",
+      "confirmFailed": "确认失败",
+      "submit": "提交",
+      "idDesc": "单据 #{{id}}，金额 {{amount}}"
+    },
+    "field": {
+      "reason": "原因",
+      "payee": "收款目标快照",
+      "payeePlaceholder": "收款人/账号/币种",
+      "risk": "风险核对证据",
+      "externalRef": "外部回单号（可选）"
+    },
+    "claim": {
+      "required": "收款目标与风险证据均必填",
+      "hint": "认领后即开始外部打款；认领前固定收款目标。"
+    },
+    "confirmFailed": {
+      "required": "必须填写确定未支付的原因",
+      "hint": "仅接受「确定未支付」的核验结果；网络失败不算。"
+    },
+    "request": {
+      "button": "代申请",
+      "title": "代供应商申请结算",
+      "desc": "管理员代供应商发起结算申请（复用同一通道）。",
+      "uid": "供应商 user_id",
+      "amount": "金额（USD）",
+      "note": "备注（可选）",
+      "success": "已代申请",
+      "invalidUid": "供应商 user_id 无效",
+      "invalidAmount": "金额无效",
+      "notFound": "目标供应商无余额行"
+    },
+    "balance": {
+      "edit": "配置",
+      "title": "供应商 #{{uid}} 配置",
+      "desc": "仅可改分成率与冻结期（不接受金额）。留空 = 继承全局默认。",
+      "shareBp": "分成率（bp）",
+      "freezeHours": "冻结期（小时）",
+      "success": "已保存",
+      "invalid": "请输入非负整数"
+    },
+    "inherit": "继承",
+    "inheritPlaceholder": "留空 = 继承",
+    "tab": {
+      "settlements": "结算单",
+      "balances": "供应商余额"
+    },
+    "filter": {
+      "allStatus": "全部状态",
+      "allKind": "全部来源"
+    },
+    "refresh": "刷新",
+    "settlements": {
+      "empty": "暂无结算单"
+    },
+    "balances": {
+      "empty": "暂无供应商余额"
+    },
+    "col": {
+      "supplier": "供应商",
+      "amount": "金额",
+      "status": "状态",
+      "kind": "来源",
+      "requestedAt": "申请时间",
+      "actions": "操作",
+      "available": "可提领",
+      "lifetimeCredited": "累计入账",
+      "lifetimePaid": "累计已付",
+      "shareBp": "分成率",
+      "freezeHours": "冻结期",
+      "buckets": "桶行数"
+    }
   }
 }

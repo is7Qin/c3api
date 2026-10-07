@@ -4,7 +4,7 @@
 
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3, ScrollText, Ticket, Coins, Settings, KeyRound, Cpu, Menu } from 'lucide-react'
+import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3, ScrollText, Ticket, Coins, Settings, KeyRound, Cpu, Menu, Wallet, HandCoins } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
@@ -51,8 +51,16 @@ const adminNav = [
   { to: '/app/stats', key: 'nav.stats', icon: BarChart3 },
   { to: '/app/redemption-codes', key: 'nav.redemptions', icon: Ticket },
   { to: '/app/pricing', key: 'nav.pricing', icon: Coins },
+  { to: '/app/supplier', key: 'nav.supplierWorkbench', icon: HandCoins },
   { to: '/app/settings', key: 'nav.settings', icon: Settings },
   { to: '/app/ops', key: 'nav.ops', icon: Cpu },
+]
+
+// 供应商控制台菜单组（spec 2026-10-09 §6.1）：仅 supplier / platform_admin 可见。
+// 账号管理页复用同一 /app/accounts 组件（作用域参数化），此处只提供入口路径。
+const supplierNav = [
+  { to: '/user/supplier', key: 'supplier.nav.console', icon: Wallet, end: true },
+  { to: '/user/supplier/accounts', key: 'supplier.nav.accounts', icon: Users, end: false },
 ]
 
 const LANGS: { code: AppLang; label: string }[] = [
@@ -71,6 +79,8 @@ function breadcrumbFor(pathname: string): { root: string; section: string; page:
   }
   if (pathname.startsWith('/user')) {
     if (pathname === '/user/profile') return { root: '/user', section: 'user.nav.userSection', page: 'user.nav.profile' }
+    const supplierItem = supplierNav.find((n) => n.to === pathname)
+    if (supplierItem) return { root: '/user', section: 'user.nav.supplierSection', page: supplierItem.key }
     const item = userNav.find((n) => n.to === pathname)
     return item ? { root: '/user', section: 'user.nav.userSection', page: item.key } : null
   }
@@ -90,9 +100,13 @@ export default function AppShell() {
     staleTime: 60_000,
   })
   const isAdmin = me?.Role === 'platform_admin'
-  const navs = isAdmin
-    ? [{ titleKey: 'user.nav.adminSection', items: adminNav }, { titleKey: 'user.nav.userSection', items: userNav }]
-    : [{ titleKey: 'user.nav.userSection', items: userNav }]
+  const isSupplier = me?.Role === 'supplier'
+  // 菜单组顺序：管理域（仅 admin）→ 供应商域（supplier | admin）→ 用户中心（全员）。
+  const navs = [
+    ...(isAdmin ? [{ titleKey: 'user.nav.adminSection', items: adminNav }] : []),
+    ...(isAdmin || isSupplier ? [{ titleKey: 'user.nav.supplierSection', items: supplierNav }] : []),
+    { titleKey: 'user.nav.userSection', items: userNav },
+  ]
   // 顶栏面包屑（两级）：未知路径返回 null 不渲染
   const crumb = breadcrumbFor(location.pathname)
   return (
