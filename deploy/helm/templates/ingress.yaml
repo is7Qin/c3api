@@ -23,8 +23,8 @@ spec:
       http:
         paths:
           {{- range .paths }}
-          - path: {{ .path }}
-            pathType: {{ .pathType }}
+          - path: {{ .path | quote }}
+            pathType: {{ .pathType | quote }}
             backend:
               service:
                 name: {{ include "c3api.fullname" $ }}

@@ -1,3 +1,6 @@
+{{- if and .Values.podDisruptionBudget.enabled (eq (int .Values.replicaCount) 1) }}
+{{- fail "podDisruptionBudget.enabled=true requires replicaCount>1: a PDB with minAvailable=1 and a single replica blocks all voluntary evictions" }}
+{{- end }}
 {{- if .Values.podDisruptionBudget.enabled }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget

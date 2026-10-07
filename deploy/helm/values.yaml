@@ -21,7 +21,7 @@ secrets:
   create: true                 # true: render a Secret; false: use existingSecret
   existingSecret: ""           # keys: auth-jwt-secret (required) / admin-token (optional)
   jwtSecret: ""                # required (empty -> template `required` fails)
-  adminToken: ""               # optional (empty = no static admin token)
+  adminToken: ""               # optional; empty = static admin token DISABLED (no key rendered)
 
 # --- External dependencies (connection info: pick ONE of each pair) ---
 # At least one of dsn/existingSecret (and one of addr/existingSecret) MUST be set,
@@ -43,10 +43,11 @@ config:
 
 app:
   port: 18080
-  env:                         # non-sensitive container env (key = env var name)
-    GOGC: ""
-    GOMEMLIMIT: ""
+  env:                         # extra container env (key = env var name); empty values are skipped
+    GOGC: ""                   # empty -> not rendered (Go default). Set "off" to disable GC.
+    GOMEMLIMIT: ""             # empty -> not rendered. Plain bytes, e.g. "17179869184".
     # C3API_SERVER_TIME_ZONE: "Asia/Shanghai"
+    # Note: a key colliding with a built-in C3API_* var above is overridden by it.
   resources:
     requests:
       cpu: "250m"
@@ -85,6 +86,8 @@ app:
   strategy:
     maxUnavailable: 0
     maxSurge: 1
+  revisionHistoryLimit: 3
+  minReadySeconds: 0
 
 service:
   type: ClusterIP
@@ -102,7 +105,7 @@ ingress:
   tls: []
 
 podDisruptionBudget:
-  enabled: false               # WARNING: with replicaCount=1 enabling this blocks voluntary eviction
+  enabled: false               # enabling with replicaCount=1 fails rendering (would block evictions)
   minAvailable: 1
 
 serviceAccount:

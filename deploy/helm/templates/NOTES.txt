@@ -30,9 +30,3 @@ Port:    {{ $svcPort }} (container listens on :{{ .Values.app.port }})
 4. Persistence & upgrades: the application creates its schema on first start
    (fresh setup only, no migration path). Back up external PostgreSQL before
    upgrading.
-
-{{- if and .Values.podDisruptionBudget.enabled (eq (int .Values.replicaCount) 1) }}
-
-WARNING: podDisruptionBudget.enabled=true with replicaCount=1 will block voluntary
-evictions (node drains). Use replicaCount > 1, or disable the PDB.
-{{- end }}
