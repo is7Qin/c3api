@@ -55,9 +55,21 @@ func TestCapLowBalanceUserConcZeroAlloc(t *testing.T) {
 // 计费开（余额预检 + 钳制生效）、无额度、单用户单 key（user 级门禁）。
 // UsageCapture 关 → 拒绝路径 recordRejected 短路（不落明细，无需 errlog）。
 func lowBalGateProxy(tb testing.TB, capConc int, thresholdMilli, balanceMilli int64, userMaxConc int) *Proxy {
+	return guardProxy(tb, capConc, thresholdMilli, userMaxConc, true, true, reloadBalances(tb, map[int64]int64{1: balanceMilli}))
+}
+
+// reloadBalances 构造并首刷余额快照（空表 = 用户无快照条目）。
+func reloadBalances(tb testing.TB, m map[int64]int64) *billing.Balances {
 	tb.Helper()
-	bal := billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: balanceMilli}}, nil)
+	bal := billing.NewBalances(fakeBalanceLoader{m: m}, nil)
 	require.NoError(tb, bal.Reload(context.Background()))
+	return bal
+}
+
+// guardProxy 低余额钳制夹具（真实门禁 + 假余额）：billingCapture 控 BillingCapture
+// 开关；withBill=false → bill=nil（计费钩子未装配）。
+func guardProxy(tb testing.TB, capConc int, thresholdMilli int64, userMaxConc int, billingCapture, withBill bool, bal *billing.Balances) *Proxy {
+	tb.Helper()
 	meta := activeKey(1, 1, 10)
 	meta.UserMaxConc = userMaxConc
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
@@ -68,29 +80,43 @@ func lowBalGateProxy(tb testing.TB, capConc int, thresholdMilli, balanceMilli in
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second,
-		BillingCapture:    true,
+		BillingCapture:    billingCapture,
 		LowBalanceConcCap: capConc, LowBalanceConcThresholdMilli: thresholdMilli,
 	}
-	return New(cfg, nil, credential.New(), rec, nil, auth, nil, &BillingHooks{Balances: bal}, nil, Deps{})
+	var bill *BillingHooks
+	if withBill {
+		bill = &BillingHooks{Balances: bal}
+	}
+	return New(cfg, nil, credential.New(), rec, nil, auth, nil, bill, nil, Deps{})
 }
 
-// guardOnce 单次 guardPipeline（真实门禁入口）：返回写出状态码、响应体、
-// 已 acquire 层级、是否放行。放行者占用门禁槽，调用方须随后 Release。
+// guardOnce 单次 guardPipeline（真实门禁入口，precheckBalance=true）：返回写出
+// 状态码、响应体、已 acquire 层级、是否放行。放行者占用门禁槽，调用方须随后 Release。
 func guardOnce(t *testing.T, p *Proxy) (int, string, int, bool) {
+	return guardOncePre(t, p, true)
+}
+
+// guardOncePre 同 guardOnce，precheckBalance 可配（快照缺失场景关预检避免 402）。
+func guardOncePre(t *testing.T, p *Proxy, precheck bool) (int, string, int, bool) {
 	t.Helper()
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o"}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
-	_, _, level, ok := p.guardPipeline(w, req, domain.FormatOpenAIChat, "r", time.Now(), true)
+	_, _, level, ok := p.guardPipeline(w, req, domain.FormatOpenAIChat, "r", time.Now(), precheck)
 	return w.Code, w.Body.String(), level, ok
 }
 
-// acquireN 连续 hold 次 guardPipeline 全部须放行（占住门禁槽），返回已 acquire 层级。
+// acquireN 连续 hold 次 guardPipeline（precheckBalance=true）全部须放行，返回已 acquire 层级。
 func acquireN(t *testing.T, p *Proxy, hold int) []int {
+	return acquireNPre(t, p, hold, true)
+}
+
+// acquireNPre 同 acquireN，precheckBalance 可配。
+func acquireNPre(t *testing.T, p *Proxy, hold int, precheck bool) []int {
 	t.Helper()
 	levels := make([]int, 0, hold)
 	for i := 0; i < hold; i++ {
-		code, body, level, ok := guardOnce(t, p)
+		code, body, level, ok := guardOncePre(t, p, precheck)
 		require.True(t, ok, "第 %d 个并发须放行（code=%d body=%s）", i+1, code, body)
 		levels = append(levels, level)
 	}
@@ -156,6 +182,51 @@ func TestGuardPipelineLowBalanceDisabledIdentical(t *testing.T) {
 	t.Run("cap=0 低余额 原上限不限 → 不受钳", func(t *testing.T) {
 		p := lowBalGateProxy(t, 0, lowBalThresholdMilli, low, 0)
 		levels := acquireN(t, p, 3) // 不限并发：3 个全放行
+		releaseAll(p, levels)
+	})
+}
+
+// TestGuardPipelineLowBalanceNoClampWhenUnavailable A5：cap>0 但钳制不可判定 / 未
+// 启用 → 均不钳（用户上限不被改小，行为 = 原上限）。原上限 10 > cap 5：不钳时第 6
+// 个仍放行（若被钳则第 6 个 429）。
+func TestGuardPipelineLowBalanceNoClampWhenUnavailable(t *testing.T) {
+	const cap = 5
+	const umc = 10 // 原上限 > cap（钳与否可区分）
+	t.Run("余额快照缺失", func(t *testing.T) {
+		// 空快照表 → BalanceOf(1) = (0,false)；关预检避免 402（search 路径语义）。
+		p := guardProxy(t, cap, lowBalThresholdMilli, umc, true, true, reloadBalances(t, map[int64]int64{}))
+		levels := acquireNPre(t, p, 6, false) // 未钳：原上限 10 → 6 个全放行
+		releaseAll(p, levels)
+	})
+	t.Run("BillingCapture=false", func(t *testing.T) {
+		p := guardProxy(t, cap, lowBalThresholdMilli, umc, false, true, reloadBalances(t, map[int64]int64{1: 500_000 /* $5 低余额 */}))
+		levels := acquireN(t, p, 6)
+		releaseAll(p, levels)
+	})
+	t.Run("bill=nil", func(t *testing.T) {
+		p := guardProxy(t, cap, lowBalThresholdMilli, umc, true, false, nil)
+		levels := acquireN(t, p, 6)
+		releaseAll(p, levels)
+	})
+}
+
+// TestGuardPipelineLowBalanceThresholdBoundary 阈值等值边界：余额严格小于阈值才
+// 钳——bal == thresholdMilli 不钳；bal == thresholdMilli-1 钳。
+func TestGuardPipelineLowBalanceThresholdBoundary(t *testing.T) {
+	const cap = 5
+	const umc = 10 // 原上限 > cap（钳与否可区分）
+	const th = lowBalThresholdMilli
+	t.Run("bal==threshold 不钳", func(t *testing.T) {
+		p := lowBalGateProxy(t, cap, th, th, umc)
+		levels := acquireN(t, p, 6) // 未钳：原上限 10 → 6 个全放行
+		releaseAll(p, levels)
+	})
+	t.Run("bal==threshold-1 钳为 5", func(t *testing.T) {
+		p := lowBalGateProxy(t, cap, th, th-1, umc)
+		levels := acquireN(t, p, 5) // 钳为 5：第 5 个放行
+		code, body, _, ok := guardOnce(t, p)
+		require.False(t, ok, "第 6 个并发必须 429（钳为 5）")
+		require.Equal(t, http.StatusTooManyRequests, code, "body=%s", body)
 		releaseAll(p, levels)
 	})
 }
