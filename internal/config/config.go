@@ -111,6 +111,12 @@ type ProxyConfig struct {
 	// 直连）——直连时可自填任意值，client_ip 为审计/排障的尽力而为标识，非安全
 	// 边界。可选键，旧配置不带此键照常加载（零值 false）。
 	BehindCDN bool `koanf:"behind_cdn"`
+	// LowBalanceMaxConcurrency 低余额时用户级并发上限（默认 5；0 = 关闭该特性，
+	// 退回原 UserMaxConc）。
+	LowBalanceMaxConcurrency int `koanf:"low_balance_max_concurrency"`
+	// LowBalanceThresholdUSD 触发阈值（USD，默认 10）；余额严格小于它时把
+	// 用户级并发上限钳为 LowBalanceMaxConcurrency。派生毫分 = ×1e5 取整。
+	LowBalanceThresholdUSD float64 `koanf:"low_balance_threshold_usd"`
 }
 
 type UpstreamConfig struct {
@@ -168,7 +174,7 @@ func defaults() *Config {
 		// 计费路径防卡死）由 OpenPG/SettleBalance·SettleFefo 统一补，DSN 无需手工写（用户
 		// 显式配置同名参数时尊重不覆盖；statement_timeout 不设会话级——副作用核实见 f1-impl-report.md）。
 		DB:        DBConfig{MaxConns: 20},
-		Proxy:     ProxyConfig{MaxBodySize: 4 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true},
+		Proxy:     ProxyConfig{MaxBodySize: 4 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10},
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
@@ -292,6 +298,15 @@ func validate(c *Config) error {
 	// 与下限 1 成对锁定合法域 1..8（默认 3）。
 	if c.Proxy.FailoverAttempts > 8 {
 		return fmt.Errorf("proxy.failover_attempts must be <= 8 (got %d)", c.Proxy.FailoverAttempts)
+	}
+	// proxy.low_balance_max_concurrency：并发上限不能为负——<0 启动即拒绝。
+	// 仅当 >0（特性开启）时才要求阈值 >0（否则阈值无意义/钳制恒不触发）；
+	// ==0（关闭）→ 两键均不参与校验，阈值任意值一律忽略。
+	if c.Proxy.LowBalanceMaxConcurrency < 0 {
+		return fmt.Errorf("proxy.low_balance_max_concurrency must be >= 0 (got %d)", c.Proxy.LowBalanceMaxConcurrency)
+	}
+	if c.Proxy.LowBalanceMaxConcurrency > 0 && c.Proxy.LowBalanceThresholdUSD <= 0 {
+		return fmt.Errorf("proxy.low_balance_threshold_usd must be > 0 (got %v) when proxy.low_balance_max_concurrency > 0", c.Proxy.LowBalanceThresholdUSD)
 	}
 	for _, r := range []struct {
 		path  string

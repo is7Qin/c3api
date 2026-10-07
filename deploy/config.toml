@@ -28,6 +28,12 @@ proxy = {
   # 置 true 的前提是源站端口只对代理开放（防火墙封直连）；若本机直连公网
   # 暴露，改回 false——头可被客户端自填，client_ip 仅为尽力而为的排障标识。
   behind_cdn = false,
+  # 低余额用户级并发钳制：余额（毫分）严格小于阈值的用户，其用户级并发上限
+  # 钳为 low_balance_max_concurrency；余额回到阈值以上恢复原上限。
+  # 阈值单位 USD；low_balance_max_concurrency = 0 关闭该特性（退回旧行为）。
+  # 默认开启（5 / 10）——升级后余额 < $10 的用户即时被钳为 5（原上限更大/不限者）。
+  low_balance_max_concurrency = 5,
+  low_balance_threshold_usd = 10,
 }
 upstream = {
   max_idle_conns = 8192,
@@ -73,7 +79,7 @@ usage = {
 }
 # 计费：默认开启（与代码/example 默认一致）。首次启动后需先同步
 # 价格（POST /admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前
-# 余额预检（快照缺失或 <0 → 402——余额 0 放行，临时额度由 FEFO 扣费消化）、
+# 余额预检（快照缺失或 ≤0 → 402；免费用户/组放行，临时额度由 FEFO 扣费消化）、
 # 临时额度 FEFO 优先扣、条件扣费允许透支、优雅停机排空不丢计费。
 # flush_interval：计费游标轮询周期（ledger-cursor：billable 行由 usage
 # flusher 单写落库 billed=false，本 worker 每周期取批消费 unbilled 账本——
