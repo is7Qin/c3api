@@ -65,7 +65,7 @@ func TestCreateUser_ImmediateUserSnapshot(t *testing.T) {
 	svc := &Service{store: fs, inv: rec, keys: auth, log: nil}
 
 	created, err := svc.CreateUser(context.Background(), "snap@example.com", "pw12345678",
-		domain.RoleUser, domain.UserStatusActive, 8, 1000)
+		domain.RoleUser, domain.UserStatusActive, 8, 1000, 0)
 	require.NoError(t, err)
 
 	snap, ok := auth.snapshot(created.ID)
@@ -102,14 +102,14 @@ func TestUpdateUser_ImmediateUserSnapshot(t *testing.T) {
 	svc := &Service{store: fs, inv: rec, keys: auth, log: nil}
 
 	u, err := svc.CreateUser(context.Background(), "up@example.com", "pw12345678",
-		domain.RoleUser, domain.UserStatusActive, 8, 1000)
+		domain.RoleUser, domain.UserStatusActive, 8, 1000, 0)
 	require.NoError(t, err)
 
 	// 变更 status 为 disabled（附带旧值条件）
 	st := domain.UserStatusDisabled
 	updated, err := svc.UpdateUser(context.Background(), &repository.UserPatch{
 		ID: u.ID, Status: &st,
-	})
+	}, 0)
 	require.NoError(t, err)
 	require.Equal(t, domain.UserStatusDisabled, updated.Status)
 
@@ -124,6 +124,6 @@ func TestCreateUser_NoAuthRegistrar_NoPanic(t *testing.T) {
 	fs := newFakeStore()
 	svc := &Service{store: fs, inv: &invRecorder{}, keys: nil, log: nil}
 	_, err := svc.CreateUser(context.Background(), "noop@example.com", "pw12345678",
-		domain.RoleUser, domain.UserStatusActive, 8, 1000)
+		domain.RoleUser, domain.UserStatusActive, 8, 1000, 0)
 	require.NoError(t, err)
 }

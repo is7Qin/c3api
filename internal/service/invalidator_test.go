@@ -93,7 +93,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 		rec := &invRecorder{}
 		svc := &Service{store: fs, inv: rec, log: nil}
 		u, err := svc.CreateUser(ctx, "u1@example.com", "pw12345678", domain.RoleUser,
-			domain.UserStatusActive, 8, 1000)
+			domain.UserStatusActive, 8, 1000, 0)
 		require.NoError(t, err)
 		require.Equal(t, 1, rec.countKind("users"), "创建用户 → Users()")
 		// patch 形态（条件写）：旧值条件 = 创建快照（MaxConcurrency 8 / Balance 1000）
@@ -104,7 +104,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 			ID: u.ID, Role: &role, Status: &st,
 			MaxConcurrency: &mc, OldMaxConcurrency: &oldMC,
 			Balance: &bal, OldBalance: &oldBal,
-		})
+		}, 0)
 		require.NoError(t, err)
 		require.Equal(t, 2, rec.countKind("users"), "更新用户 → Users()")
 		require.Zero(t, rec.countKind("templates"))
@@ -234,7 +234,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 		rec := &invRecorder{}
 		svc := &Service{store: fs, inv: rec, log: nil}
 		u, err := svc.CreateUser(ctx, "am@example.com", "pw12345678", domain.RoleUser,
-			domain.UserStatusActive, 8, 1000)
+			domain.UserStatusActive, 8, 1000, 0)
 		require.NoError(t, err)
 		g, err := svc.CreateGroup(ctx, "g", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)

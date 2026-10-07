@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/ent/account"
+	"github.com/is7qin/c3api/internal/ent/balancelog"
 	"github.com/is7qin/c3api/internal/ent/emailtemplate"
 	"github.com/is7qin/c3api/internal/ent/errlog"
 	"github.com/is7qin/c3api/internal/ent/group"
@@ -62,6 +63,16 @@ func init() {
 	accountDescCreatedAt := accountFields[17].Descriptor()
 	// account.DefaultCreatedAt holds the default value on creation for the created_at field.
 	account.DefaultCreatedAt = accountDescCreatedAt.Default.(func() time.Time)
+	balancelogFields := schema.BalanceLog{}.Fields()
+	_ = balancelogFields
+	// balancelogDescOperatorID is the schema descriptor for operator_id field.
+	balancelogDescOperatorID := balancelogFields[5].Descriptor()
+	// balancelog.DefaultOperatorID holds the default value on creation for the operator_id field.
+	balancelog.DefaultOperatorID = balancelogDescOperatorID.Default.(int64)
+	// balancelogDescCreatedAt is the schema descriptor for created_at field.
+	balancelogDescCreatedAt := balancelogFields[7].Descriptor()
+	// balancelog.DefaultCreatedAt holds the default value on creation for the created_at field.
+	balancelog.DefaultCreatedAt = balancelogDescCreatedAt.Default.(func() time.Time)
 	emailtemplateFields := schema.EmailTemplate{}.Fields()
 	_ = emailtemplateFields
 	// emailtemplateDescUpdatedAt is the schema descriptor for updated_at field.

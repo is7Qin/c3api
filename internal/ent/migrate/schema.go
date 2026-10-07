@@ -82,6 +82,30 @@ var (
 			},
 		},
 	}
+	// BalanceLogsColumns holds the columns for the "balance_logs" table.
+	BalanceLogsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "user_id", Type: field.TypeInt64},
+		{Name: "amount", Type: field.TypeInt64},
+		{Name: "balance_after", Type: field.TypeInt64},
+		{Name: "source", Type: field.TypeEnum, Enums: []string{"signup_default", "admin_create", "admin_adjust", "redemption"}},
+		{Name: "operator_id", Type: field.TypeInt64, Default: 0},
+		{Name: "note", Type: field.TypeString, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// BalanceLogsTable holds the schema information for the "balance_logs" table.
+	BalanceLogsTable = &schema.Table{
+		Name:       "balance_logs",
+		Columns:    BalanceLogsColumns,
+		PrimaryKey: []*schema.Column{BalanceLogsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "balancelog_user_id_id",
+				Unique:  false,
+				Columns: []*schema.Column{BalanceLogsColumns[1], BalanceLogsColumns[0]},
+			},
+		},
+	}
 	// EmailTemplatesColumns holds the columns for the "email_templates" table.
 	EmailTemplatesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -671,6 +695,7 @@ var (
 	Tables = []*schema.Table{
 		AccountsTable,
 		AccountExtsTable,
+		BalanceLogsTable,
 		EmailTemplatesTable,
 		ErrLogsTable,
 		GroupsTable,

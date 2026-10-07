@@ -10,6 +10,10 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ## [Unreleased]
 
+### Added
+
+- **Balance change history for admins**: permanent balance changes that are not usage-based (signup default balance, admin-created user, admin adjustment, redemption) are now recorded row-by-row in a new `balance_logs` table, written in the same transaction as the balance change itself. A new `GET /api/admin/users/{id}/balance-logs` endpoint lists a user's records with pagination, and `/app/users` exposes them behind a per-row history button. Records cover the permanent balance only; usage-based spending stays in `usage_logs`. The table is unpartitioned and keeps rows indefinitely (low volume per user; no retention policy).
+
 ### Changed
 
 - **`proxy.behind_cdn` now defaults to `true`**: the client IP column (usage and error logs) trusts `CF-Connecting-IP` → `True-Client-IP` → `X-Real-IP` (first non-empty) with a `RemoteAddr` fallback, instead of the previous `RemoteAddr`-only default. Deployments that expose the gateway directly to the internet must set it back to `false`, because those headers are then client-forgeable.

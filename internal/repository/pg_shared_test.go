@@ -134,7 +134,7 @@ func resetPGSharedData(t *testing.T) {
 	t.Helper()
 	_, err := sharedPG.pool.Exec(context.Background(), `TRUNCATE TABLE
 		account_groups, group_assignments, account_exts, template_exts, keys,
-		temp_balances, redemption_uses, accounts, groups, users,
+		temp_balances, balance_logs, redemption_uses, accounts, groups, users,
 		redemption_codes, rules, settings, email_templates, price_variants,
 		price_entries, templates, usage_logs, err_logs, usage_stats,
 		usage_entity_stats, stats_agg_watermark RESTART IDENTITY`)

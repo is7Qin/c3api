@@ -89,6 +89,7 @@ var allowedServiceMethods = []string{
 	"ListRules",
 	"ListTempBalances",
 	"ListTemplates",
+	"ListUserBalanceLogs",
 	"ListUserTempBalances",
 	"ListUsers",
 	"LoginUser",

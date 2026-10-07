@@ -26,6 +26,14 @@ const (
 	UpstreamUnavailable AccountUsageItemUpstreamError = "upstream_unavailable"
 )
 
+// Defines values for BalanceLogSource.
+const (
+	AdminAdjust   BalanceLogSource = "admin_adjust"
+	AdminCreate   BalanceLogSource = "admin_create"
+	Redemption    BalanceLogSource = "redemption"
+	SignupDefault BalanceLogSource = "signup_default"
+)
+
 // Defines values for ErrorResponseReason.
 const (
 	CubeHorizon     ErrorResponseReason = "cube_horizon"
@@ -601,6 +609,34 @@ type AdminTempBalancesResponse struct {
 	Rows  []AdminTempBalanceRow `json:"rows"`
 	Total int64                 `json:"total"`
 }
+
+// BalanceLog defines model for BalanceLog.
+type BalanceLog struct {
+	// Amount 变动额 USD（有符号：正=增加/负=减少；1 USD = 100,000 毫分）
+	Amount float64 `json:"Amount"`
+
+	// BalanceAfter 变更后余额 USD（毫分快照 /1e5）
+	BalanceAfter float64   `json:"BalanceAfter"`
+	CreatedAt    time.Time `json:"CreatedAt"`
+	ID           int64     `json:"ID"`
+
+	// Note 附加说明（兑换→兑换码文本；其余可空）
+	Note *string `json:"Note"`
+
+	// OperatorID 0 = 系统/用户自助；>0 = platform_admin 用户 id
+	OperatorID int64            `json:"OperatorID"`
+	Source     BalanceLogSource `json:"Source"`
+	UserID     int64            `json:"UserID"`
+}
+
+// BalanceLogListResponse defines model for BalanceLogListResponse.
+type BalanceLogListResponse struct {
+	Rows  []BalanceLog `json:"rows"`
+	Total int64        `json:"total"`
+}
+
+// BalanceLogSource defines model for BalanceLogSource.
+type BalanceLogSource string
 
 // BatchDeactivateRequest defines model for BatchDeactivateRequest.
 type BatchDeactivateRequest struct {
@@ -2525,6 +2561,12 @@ type GetAdminUsersTopParams struct {
 	Top *int `form:"top,omitempty" json:"top,omitempty"`
 }
 
+// GetUsersIdBalanceLogsParams defines parameters for GetUsersIdBalanceLogs.
+type GetUsersIdBalanceLogsParams struct {
+	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
 // PostAccountsJSONRequestBody defines body for PostAccounts for application/json ContentType.
 type PostAccountsJSONRequestBody = AccountCreate
 
@@ -2845,6 +2887,9 @@ type ServerInterface interface {
 	// 更新用户（role/status/max_concurrency/balance；变更即时生效——Auth 快照刷新）
 	// (PUT /users/{id})
 	PutUsersId(w http.ResponseWriter, r *http.Request, id int64)
+	// 某用户的余额变动记录（platform_admin 专属；永久余额的非 usage 变动：注册默认/管理面创建/管理面调整/兑换码；分页）
+	// (GET /users/{id}/balance-logs)
+	GetUsersIdBalanceLogs(w http.ResponseWriter, r *http.Request, id int64, params GetUsersIdBalanceLogsParams)
 	// 读取用户被授予的分组与各专属倍率（platform_admin；用户视角，与 /groups/{id}/assignments 对称）
 	// (GET /users/{id}/groups)
 	GetUsersIdGroups(w http.ResponseWriter, r *http.Request, id int64)
@@ -3289,6 +3334,12 @@ func (_ Unimplemented) GetAdminUsersTop(w http.ResponseWriter, r *http.Request, 
 // 更新用户（role/status/max_concurrency/balance；变更即时生效——Auth 快照刷新）
 // (PUT /users/{id})
 func (_ Unimplemented) PutUsersId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 某用户的余额变动记录（platform_admin 专属；永久余额的非 usage 变动：注册默认/管理面创建/管理面调整/兑换码；分页）
+// (GET /users/{id}/balance-logs)
+func (_ Unimplemented) GetUsersIdBalanceLogs(w http.ResponseWriter, r *http.Request, id int64, params GetUsersIdBalanceLogsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -6020,6 +6071,50 @@ func (siw *ServerInterfaceWrapper) PutUsersId(w http.ResponseWriter, r *http.Req
 	handler.ServeHTTP(w, r)
 }
 
+// GetUsersIdBalanceLogs operation middleware
+func (siw *ServerInterfaceWrapper) GetUsersIdBalanceLogs(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUsersIdBalanceLogsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUsersIdBalanceLogs(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUsersIdGroups operation middleware
 func (siw *ServerInterfaceWrapper) GetUsersIdGroups(w http.ResponseWriter, r *http.Request) {
 
@@ -6404,6 +6499,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/users/{id}", wrapper.PutUsersId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/users/{id}/balance-logs", wrapper.GetUsersIdBalanceLogs)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/users/{id}/groups", wrapper.GetUsersIdGroups)

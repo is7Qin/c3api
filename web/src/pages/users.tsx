@@ -5,7 +5,7 @@
 import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Ban, CircleCheck, UserCog, Filter, UsersRound, X, Coins } from 'lucide-react'
+import { Plus, Pencil, Ban, CircleCheck, UserCog, Filter, UsersRound, X, Coins, History } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
@@ -37,12 +37,17 @@ type UserRole = components['schemas']['UserRole']
 type UserStatus = components['schemas']['UserStatus']
 type GroupVisibility = components['schemas']['GroupVisibility']
 type UserGroupsBody = components['schemas']['UserGroupsBody']
+type BalanceLog = components['schemas']['BalanceLog']
 
 const ROLES: UserRole[] = ['platform_admin', 'user']
 const STATUSES: UserStatus[] = ['active', 'disabled']
 
 // 余额（USD 浮点，已由 API 边界换算）→ $N.NN；空 → —。
 const formatBalance = (b?: number): string => (b == null ? '—' : `$${b.toFixed(2)}`)
+
+// 余额变动额（有符号 USD）→ +$X / -$X；变更后余额 → $X（可合法为 0）。
+const formatLogAmount = (v: number): string => `${v < 0 ? '-' : '+'}$${Math.abs(v).toFixed(5)}`
+const formatLogBalance = (v: number): string => `$${v.toFixed(5)}`
 
 // 角色徽章：platform_admin 蓝点（管理面）/ user 灰点（普通用户，与 groups
 // VisibilityBadge 同风格）。
@@ -203,6 +208,18 @@ export default function Users() {
   const tempActiveTotal = tempRows
     .filter((r) => r.amount_usd > 0 && (r.expires_at == null || new Date(r.expires_at) > new Date()))
     .reduce((s, r) => s + r.amount_usd, 0)
+
+  // —— 余额变动记录查看（行按钮 → 弹窗；limit/offset 分页）——
+  const [logUser, setLogUser] = useState<User | null>(null)
+  const [logOffset, setLogOffset] = useState(0)
+  const [logLimit, setLogLimit] = useState(20)
+  const openLog = (u: User) => { setLogUser(u); setLogOffset(0) }
+  const logQ = useQuery({
+    queryKey: ['admin', 'balance-logs', logUser?.ID, { limit: logLimit, offset: logOffset }],
+    queryFn: () => api.getUsersIdBalanceLogs(logUser!.ID!, { limit: logLimit, offset: logOffset }),
+    enabled: logUser != null,
+  })
+  const logRows: BalanceLog[] = logQ.data?.rows ?? []
 
   const save = useMutation({
     mutationFn: (f: UserForm) =>
@@ -410,6 +427,7 @@ export default function Users() {
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(u.CreatedAt)}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon-sm" title={t('users.balanceLogs.button')} data-od-id="users-balance-logs" onClick={() => openLog(u)}><History /></Button>
                         <Button variant="ghost" size="icon-sm" title={t('users.tempBalances.button')} data-od-id="users-temp-balances" onClick={() => setTempUser(u)}><Coins /></Button>
                         <Button variant="ghost" size="icon-sm" title={t('users.groups.button')} onClick={() => openGroups(u)}><UsersRound /></Button>
                         <Button
@@ -554,6 +572,62 @@ export default function Users() {
               </Table>
             </ScrollArea>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* —— 余额变动记录：分页查看（永久余额的非 usage 变动：注册默认/管理面创建/管理面调整/兑换码） —— */}
+      <Dialog open={!!logUser} onOpenChange={o => { if (!o) setLogUser(null) }}>
+        <DialogContent className="sm:max-w-2xl overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>{t('users.balanceLogs.title', { name: logUser?.Email })}</DialogTitle>
+            <DialogDescription>{t('users.balanceLogs.desc')}</DialogDescription>
+          </DialogHeader>
+          {logQ.isLoading ? (
+            <div className="space-y-1.5">
+              {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-9" />)}
+            </div>
+          ) : logQ.isError ? (
+            <p className="text-sm text-destructive">{t('common.loadFailed', { message: (logQ.error as Error).message })}</p>
+          ) : logRows.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">{t('users.balanceLogs.empty')}</p>
+          ) : (
+            <ScrollArea className="max-h-96 rounded-md border">
+              <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t('users.balanceLogs.col.time')}</TableHead>
+                    <TableHead>{t('users.balanceLogs.col.source')}</TableHead>
+                    <TableHead className="text-right">{t('users.balanceLogs.col.amount')}</TableHead>
+                    <TableHead className="text-right">{t('users.balanceLogs.col.balanceAfter')}</TableHead>
+                    <TableHead className="text-right">{t('users.balanceLogs.col.operator')}</TableHead>
+                    <TableHead>{t('users.balanceLogs.col.note')}</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {logRows.map(r => (
+                    <TableRow key={r.ID}>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{formatDateTime(r.CreatedAt)}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs">{t(`users.balanceLogs.source.${r.Source}`)}</TableCell>
+                      <TableCell className={cn('text-right tabular-nums', r.Amount < 0 ? 'text-destructive' : 'text-emerald-600 dark:text-emerald-400')}>
+                        {formatLogAmount(r.Amount)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{formatLogBalance(r.BalanceAfter)}</TableCell>
+                      <TableCell className="text-right tabular-nums">{r.OperatorID === 0 ? '—' : r.OperatorID}</TableCell>
+                      <TableCell className="max-w-40 truncate text-xs text-muted-foreground" title={r.Note ?? undefined}>{r.Note ?? '—'}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </ScrollArea>
+          )}
+          <Pagination
+            total={logQ.data?.total ?? 0}
+            limit={logLimit}
+            offset={logOffset}
+            onOffsetChange={setLogOffset}
+            onLimitChange={l => { setLogLimit(l); setLogOffset(0) }}
+            pageSizes={[10, 20, 50, 100]}
+          />
         </DialogContent>
       </Dialog>
 
