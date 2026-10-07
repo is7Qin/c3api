@@ -76,16 +76,16 @@ func (p *Proxy) guardPipeline(w http.ResponseWriter, r *http.Request, format dom
 		return nil, nil, 0, false
 	}
 	// 余额预检（计费；无槽位问题）：快照读零 DB（滞后 ≤
-	// BalanceRefreshInterval，多实例条件扣 DB 兜底）。快照缺失或 <0 → 402
-	// errInsufficientBalance（不按 0 记账），但免费放行（修复）：
-	// 有效倍率 0 = 免费用户/组 → 缺失/0 余额不 402（与 applyBilling 同一快照
-	// 同一判定；cost 0 只记日志不扣费）。余额 0 放行——临时额度由 FEFO 扣费
-	// 消化（billing 仓储先扣 temp 余额）；负余额持续负债拒绝。快照缺失
-	// 窗口内免费组照常放行；缺失且非免费 → 仍 402（用户不在快照 = 无余额
-	// 记录，语义不变）。在 Acquire 前 → 不占用并发槽。
+	// BalanceRefreshInterval，多实例条件扣 DB 兜底）。快照缺失或 ≤0 → 402
+	// errInsufficientBalance，但免费放行：
+	// 有效倍率 0 = 免费用户/组 → 缺失/非正余额不 402（与 applyBilling 同一快照
+	// 同一判定；cost 0 只记日志不扣费）。余额 ≤0 拒绝——预检不读临时额度
+	// （临时额度由结算时 FEFO 消化），故余额非正的临时额度用户在预检即被拒。
+	// 快照缺失窗口内免费组照常放行；缺失且非免费 → 仍 402（用户不在快照 =
+	// 无余额记录）。在 Acquire 前 → 不占用并发槽。
 	if precheckBalance && p.cfg.BillingCapture && p.bill != nil {
 		bal, ok := p.bill.Balances.BalanceOf(meta.UserID)
-		if (!ok || bal < 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
+		if (!ok || bal <= 0) && p.bill.Balances.EffectiveMultiplier(meta.UserID, groupID) != 0 {
 			p.inflight.Add(-1)
 			writeErr(w, errInsufficientBalance)
 			p.recordRejected(r.Context(), reqID, groupID, 0, "", "", format, http.StatusPaymentRequired, domain.ErrBilling, 0, usageTuple{}, start, errInsufficientBalance.msg)

@@ -537,7 +537,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	r = env.lastLogFor("e2e-model")
 	require.Equal(t, int64(500), r.Cost)
 
-	// 第二笔：余额 1000 → 500；第三笔：500 → 0；第四笔：0 仍放行（spec 2026-08-15 余额 0 放行，FEFO 覆盖）→ -500 overdraft；第五笔：负余额预检 402
+	// 第二笔：余额 1000 → 500；第三笔：500 → 0；第四笔：余额 0 预检 402（余额 ≤0 拒绝）
 	for _, want := range []int64{500, 0} {
 		c, rb2 := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
 			"model": "e2e-model", "stream": true,
@@ -546,20 +546,14 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		require.Equal(t, 200, c, "drain: %s", rb2)
 		pollBalance(t, env, u2, want)
 	}
-	// 余额 0 仍放行一次（overdraft），见 proxy/billing_test.go:691 “余额 0 放行”
-	c, rbOver := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
-		"model": "e2e-model", "stream": true,
-		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
-	})
-	require.Equal(t, 200, c, "overdraft must still 200 (bal 0 → -500): %s", rbOver)
-	pollBalance(t, env, u2, -500) // 透支后余额 -500
-	rOver := env.lastLogFor("e2e-model")
-	require.True(t, rOver.Overdraft, "透支行 overdraft=true")
+	// 余额 0 拒绝：预检 ≤0 → 402（临时额度已耗尽，无 FEFO 兜底）；
+	// 去抖等定向余额快照 Set 落定，避免读到扣减前的旧值。
+	waitSnapshot()
 	c, rb3 := env.aiReq(http.MethodPost, "/v1/chat/completions", u2Key, map[string]any{
 		"model": "e2e-model", "stream": true,
 		"messages": []any{map[string]any{"role": "user", "content": "hi"}},
 	})
-	require.Equal(t, 402, c, "insufficient must 402: %s", rb3)
+	require.Equal(t, 402, c, "balance 0 must 402: %s", rb3)
 
 	// ============ 场景 3：未设价 402 ============
 	t.Log("场景 3：未设价模型 → 402（error_type=billing）")

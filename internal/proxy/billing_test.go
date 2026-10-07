@@ -1086,9 +1086,8 @@ func newTestProxyBillingT3Logs(t *testing.T, upstream string, prices *fakePriceL
 }
 
 // TestProxyBillingInsufficientBalance402 余额预检（无槽位问题）：
-// 快照 <0 或缺失 → 402 + 上游零命中，预检在 Acquire 前不占用并发槽；余额 0
-// 放行（spec 2026-08-15 语义边界表：临时额度由 FEFO 扣费消化，预检不读临时
-// 额度）。 源头修复：本地预用量拒绝不产生 usage_logs 明细/pending
+// 快照 ≤0 或缺失 → 402 + 上游零命中，预检在 Acquire 前不占用并发槽；余额 >0
+// 放行。 源头修复：本地预用量拒绝不产生 usage_logs 明细/pending
 // （balance 烧穿后的 402 风暴与 429 同路径，明细即无界积压源）；billed
 // flusher 零调用（spec 2026-08-14：请求路径零统计——拒绝路径统计计数交由
 // 离线聚合 worker 兜底，不再请求路径即时聚合）。
@@ -1099,7 +1098,8 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 		pass     bool // true = 放行（上游命中）；false = 402 + 上游零命中
 		upStatus int  // 放行用例 200（单次命中完成流，failover 不重试）；拒绝用例 500（不可达）
 	}{
-		{"余额 0 放行", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 0}}, nil), true, http.StatusOK},
+		{"余额正放行", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 50000}}, nil), true, http.StatusOK},
+		{"余额 0 拒绝", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: 0}}, nil), false, http.StatusInternalServerError},
 		{"余额负", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{1: -1}}, nil), false, http.StatusInternalServerError},
 		{"快照缺失", billing.NewBalances(fakeBalanceLoader{m: map[int64]int64{}}, nil), false, http.StatusInternalServerError},
 		// 快照缺失 + 组倍率显式 ×1（非免费）→ 仍 402（免费放行只对
@@ -1124,7 +1124,7 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 				BatchSize: 100, FlushInterval: time.Hour,
 				QuotaFlushInterval: time.Hour,
 			}, store, nil)
-			require.NoError(t, c.bal.Reload(context.Background()), "快照加载（余额 0 / 负 / 空表）")
+			require.NoError(t, c.bal.Reload(context.Background()), "快照加载（余额正 / 0 / 负 / 空表）")
 			p := newTestProxyBillingT3Logs(t, up.URL, &fakePriceLookup{entries: map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}, variants: map[string][]*domain.PriceVariant{"gpt-4o": proxyPricingVariants()}}, c.bal, rec)
 
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
@@ -1133,8 +1133,8 @@ func TestProxyBillingInsufficientBalance402(t *testing.T) {
 			p.HandleChat(recw, req)
 
 			if c.pass {
-				require.Equal(t, http.StatusOK, recw.Code, "余额 0 放行：不得 402，须转发上游成功响应")
-				require.Equal(t, int64(1), hits.Load(), "余额 0 放行：必须命中上游且单次完成")
+				require.Equal(t, http.StatusOK, recw.Code, "正余额放行：不得 402，须转发上游成功响应")
+				require.Equal(t, int64(1), hits.Load(), "正余额放行：必须命中上游且单次完成")
 				require.NoError(t, rec.Close(context.Background()), "Recorder 手动 flush")
 				return
 			}
