@@ -11,5 +11,8 @@ keywords:
 home: https://github.com/is7qin/c3api
 sources:
   - https://github.com/is7qin/c3api
+maintainers:
+  - name: is7Qin
+    url: https://github.com/is7Qin
 annotations:
   category: Infrastructure

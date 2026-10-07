@@ -29,7 +29,8 @@ helm install c3api ./deploy/helm \
 helm upgrade c3api ./deploy/helm -f my-values.yaml
 ```
 
-Changing `config.content` updates the ConfigMap checksum and triggers a rolling
+Changing `config.content` (or `secrets.jwtSecret`/`secrets.adminToken` when
+`secrets.create=true`) updates a checksum annotation and triggers a rolling
 restart. The application creates its schema on first start (fresh setup only —
 no migration path); back up external PostgreSQL before upgrading.
 
@@ -41,6 +42,14 @@ helm uninstall c3api
 
 This removes only the chart-managed resources; your external PostgreSQL and
 Redis are untouched.
+
+## Testing
+
+```bash
+helm test c3api
+```
+
+Runs a pod that `wget`s `/healthz` from the Service.
 
 ## Using an existing Secret / env-only mode
 
@@ -74,7 +83,7 @@ helm install c3api ./deploy/helm \
 | `secrets.create` | Create a Secret from values | `true` |
 | `secrets.existingSecret` | Existing Secret name (when `create=false`) | `""` |
 | `secrets.jwtSecret` | JWT secret (required when `create=true`) | `""` |
-| `secrets.adminToken` | Static admin token (optional) | `""` |
+| `secrets.adminToken` | Static admin token; empty = disabled (key not rendered) | `""` |
 | `externalDatabase.dsn` | PostgreSQL DSN (or use existingSecret) | `""` |
 | `externalDatabase.existingSecret` | Secret with key `db-dsn` | `""` |
 | `externalRedis.addr` | Redis `host:port` (or use existingSecret) | `""` |
@@ -82,7 +91,7 @@ helm install c3api ./deploy/helm \
 | `config.inline` | Render config.toml ConfigMap; `false` = env-only | `true` |
 | `config.content` | Free-form TOML; must keep `server.addr=":18080"` | `server = { addr = ":18080", time_zone = "" }`<br>`scheduler = { default_max_concurrency = 8 }` |
 | `app.port` | Container listen port (`C3API_SERVER_ADDR`) | `18080` |
-| `app.env` | Extra container env (e.g. `GOGC`, `GOMEMLIMIT`) | `{GOGC:"", GOMEMLIMIT:""}` |
+| `app.env` | Extra container env; empty values are skipped | `{GOGC:"", GOMEMLIMIT:""}` (both empty) |
 | `app.resources` | Resource requests/limits | see `values.yaml` |
 | `app.podAnnotations` | Pod annotations | `{}` |
 | `app.nodeSelector` | Node selector | `{}` |
@@ -94,6 +103,8 @@ helm install c3api ./deploy/helm \
 | `app.probes.*` | startup/liveness/readiness probes on `/healthz` | enabled |
 | `app.terminationGracePeriodSeconds` | Graceful shutdown budget | `60` |
 | `app.strategy` | RollingUpdate `maxUnavailable`/`maxSurge` | `0` / `1` |
+| `app.revisionHistoryLimit` | Old ReplicaSets kept | `3` |
+| `app.minReadySeconds` | Seconds a pod must be ready before available | `0` |
 | `service.type` | Service type | `ClusterIP` |
 | `service.port` | Service port | `18080` |
 | `ingress.enabled` | Render an Ingress | `false` |
@@ -101,7 +112,7 @@ helm install c3api ./deploy/helm \
 | `ingress.annotations` | Ingress annotations | `{}` |
 | `ingress.hosts` | Ingress hosts/paths | `c3api.example.com /` |
 | `ingress.tls` | Ingress TLS | `[]` |
-| `podDisruptionBudget.enabled` | Render a PDB | `false` |
+| `podDisruptionBudget.enabled` | Render a PDB (fails if `replicaCount=1`) | `false` |
 | `podDisruptionBudget.minAvailable` | PDB minAvailable | `1` |
 | `serviceAccount.create` | Create a ServiceAccount | `true` |
 | `serviceAccount.annotations` | ServiceAccount annotations | `{}` |
@@ -115,8 +126,17 @@ helm install c3api ./deploy/helm \
   override `app.port`, keep `config.content` consistent.
 - **Probes:** all three probes use `/healthz`, which reports process liveness
   only (not DB/Redis). The app fail-fasts on dependencies at startup.
-- **PodDisruptionBudget:** with `replicaCount=1`, enabling the PDB
-  (`minAvailable=1`) blocks voluntary evictions. Use `replicaCount > 1`.
+- **PodDisruptionBudget:** enabling it with `replicaCount=1` fails rendering
+  (a PDB with `minAvailable=1` and a single replica blocks all voluntary
+  evictions); use `replicaCount > 1`.
+- **Secrets:** `secrets.*` and a literal `externalDatabase.dsn` are injected as
+  plain env values (visible via `kubectl describe pod`). For production prefer
+  `existingSecret`, and pin `image.tag` to an immutable version.
+- **Admin token:** an empty `secrets.adminToken` disables the static admin token
+  (the key is not rendered); `/api/admin` then accepts `platform_admin` JWTs only.
+- **Config content:** `config.content` is emitted verbatim — Helm does NOT
+  re-template values, so `{{` inside it is safe. Prefer `-f values.yaml` over
+  `--set` for multi-line TOML.
 - **Redis:** do not configure an `allkeys-lru` eviction policy; eviction only
   forces verification-code re-issue (harmless).
 - **First user:** the first registered user becomes `platform_admin`. Sync

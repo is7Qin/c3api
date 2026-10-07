@@ -6,6 +6,8 @@ metadata:
     {{- include "c3api.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.app.revisionHistoryLimit }}
+  minReadySeconds: {{ .Values.app.minReadySeconds }}
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -16,10 +18,13 @@ spec:
       {{- include "c3api.selectorLabels" . | nindent 6 }}
   template:
     metadata:
-      {{- if or .Values.config.inline .Values.app.podAnnotations }}
+      {{- if or .Values.config.inline .Values.secrets.create .Values.app.podAnnotations }}
       annotations:
         {{- if .Values.config.inline }}
         checksum/config: {{ include (print $.Template.BasePath "/configmap-config.yaml") . | sha256sum }}
+        {{- end }}
+        {{- if .Values.secrets.create }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
         {{- end }}
         {{- with .Values.app.podAnnotations }}
         {{- toYaml . | nindent 8 }}
@@ -87,8 +92,10 @@ spec:
               value: {{ required "externalRedis.addr or externalRedis.existingSecret is required" .Values.externalRedis.addr | quote }}
               {{- end }}
             {{- range $k, $v := .Values.app.env }}
+            {{- if and (not (kindIs "invalid" $v)) (ne (toString $v) "") }}
             - name: {{ $k }}
               value: {{ $v | quote }}
+            {{- end }}
             {{- end }}
           {{- if .Values.app.probes.startup.enabled }}
           startupProbe:

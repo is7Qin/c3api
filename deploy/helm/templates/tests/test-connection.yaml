@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "c3api.fullname" . }}-test-connection
+  labels:
+    {{- include "c3api.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+spec:
+  restartPolicy: Never
+  containers:
+    - name: wget
+      image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      command: ["wget"]
+      args:
+        - "-q"
+        - "-O"
+        - "-"
+        - "http://{{ include "c3api.fullname" . }}:{{ .Values.service.port }}/healthz"
