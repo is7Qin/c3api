@@ -1,0 +1,159 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "c3api.fullname" . }}
+  labels:
+    {{- include "c3api.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.app.strategy.maxUnavailable }}
+      maxSurge: {{ .Values.app.strategy.maxSurge }}
+  selector:
+    matchLabels:
+      {{- include "c3api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- if or .Values.config.inline .Values.app.podAnnotations }}
+      annotations:
+        {{- if .Values.config.inline }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap-config.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.app.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      labels:
+        {{- include "c3api.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "c3api.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: {{ .Values.app.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.app.securityContext.runAsUser }}
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: {{ .Values.app.terminationGracePeriodSeconds }}
+      containers:
+        - name: c3api
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "-config"
+            {{- if .Values.config.inline }}
+            - "/etc/c3api/config.toml"
+            {{- else }}
+            - ""
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.app.port }}
+              protocol: TCP
+          env:
+            - name: C3API_SERVER_ADDR
+              value: ":{{ .Values.app.port }}"
+            - name: C3API_AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "c3api.secretName" . }}
+                  key: auth-jwt-secret
+            - name: C3API_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "c3api.secretName" . }}
+                  key: admin-token
+                  optional: true
+            - name: C3API_DB_DSN
+              {{- if .Values.externalDatabase.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.existingSecret }}
+                  key: db-dsn
+              {{- else }}
+              value: {{ required "externalDatabase.dsn or externalDatabase.existingSecret is required" .Values.externalDatabase.dsn | quote }}
+              {{- end }}
+            - name: C3API_REDIS_ADDR
+              {{- if .Values.externalRedis.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalRedis.existingSecret }}
+                  key: redis-addr
+              {{- else }}
+              value: {{ required "externalRedis.addr or externalRedis.existingSecret is required" .Values.externalRedis.addr | quote }}
+              {{- end }}
+            {{- range $k, $v := .Values.app.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          {{- if .Values.app.probes.startup.enabled }}
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.app.port }}
+            periodSeconds: {{ .Values.app.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.app.probes.startup.failureThreshold }}
+          {{- end }}
+          {{- if .Values.app.probes.liveness.enabled }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.app.port }}
+            periodSeconds: {{ .Values.app.probes.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.app.probes.liveness.timeoutSeconds }}
+            failureThreshold: {{ .Values.app.probes.liveness.failureThreshold }}
+          {{- end }}
+          {{- if .Values.app.probes.readiness.enabled }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.app.port }}
+            periodSeconds: {{ .Values.app.probes.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.app.probes.readiness.timeoutSeconds }}
+            failureThreshold: {{ .Values.app.probes.readiness.failureThreshold }}
+          {{- end }}
+          {{- with .Values.app.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: {{ .Values.app.securityContext.allowPrivilegeEscalation }}
+            readOnlyRootFilesystem: {{ .Values.app.readOnlyRootFilesystem }}
+            capabilities:
+              {{- toYaml .Values.app.securityContext.capabilities | nindent 14 }}
+          volumeMounts:
+            {{- if .Values.app.tmpVolume }}
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- if .Values.config.inline }}
+            - name: config
+              mountPath: /etc/c3api
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.app.tmpVolume }}
+        - name: tmp
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.config.inline }}
+        - name: config
+          configMap:
+            name: {{ include "c3api.fullname" . }}
+        {{- end }}
+      {{- with .Values.app.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

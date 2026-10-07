@@ -1,0 +1,15 @@
+apiVersion: v2
+name: c3api
+description: c3api gateway (single binary + embedded UI) for Kubernetes; connects to external PostgreSQL / Redis
+type: application
+version: 0.1.0
+appVersion: "beta"
+keywords:
+  - c3api
+  - gateway
+  - llm
+home: https://github.com/is7qin/c3api
+sources:
+  - https://github.com/is7qin/c3api
+annotations:
+  category: Infrastructure
