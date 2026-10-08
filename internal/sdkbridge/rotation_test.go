@@ -213,6 +213,11 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 	var refreshCalls atomic.Int64
 	rsrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		refreshCalls.Add(1)
+		// 拉长单飞 leader 的 refresh，使其远大于 N 路进入单飞的微秒级时间差：
+		// 否则本地 httptest 子毫秒即返回，落后者会在 leader 完成后再起一次 refresh
+		// → 计数 >1（GOMAXPROCS 受限时必现）。真实 refresh 是毫秒级网络往返，本延迟
+		// 即对齐该量级，让 8 路都并入同一次单飞。
+		time.Sleep(50 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(200)
 		_, _ = w.Write([]byte(`{"access_token":"at-new","refresh_token":"rt-new"}`))
