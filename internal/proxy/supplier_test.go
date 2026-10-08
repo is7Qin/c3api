@@ -147,29 +147,41 @@ func TestStampSupplierQuadrants(t *testing.T) {
 	require.True(t, l.SupplierCredited)
 }
 
-// TestCaptureFinanceNotReady 视图未就绪（未装载）⇒ Ready=false（不等同平台自有；
-// 供给准入据此排除带归属账号）。
-func TestCaptureFinanceNotReady(t *testing.T) {
-	snap := NewSupplierSnapshot(time.Minute)
-	p := &Proxy{supplier: snap}
-	fin := p.captureFinance(7)
-	require.False(t, fin.Ready, "视图未就绪 ⇒ 不捕获归属")
-}
-
-// TestAdmitSupplierAccount 供给准入门（§4.6）：平台自有无条件放行；带归属
-// 仅在财务快照就绪且归属一致时放行。
+// TestAdmitSupplierAccount 供给准入门（§4.6）：平台自有在视图**不含**旧归属时
+// 放行；带归属仅当视图就绪且归属一致时放行，并返回同一视图的财务上下文。
 func TestAdmitSupplierAccount(t *testing.T) {
-	// 未装配快照（nil）⇒ 带归属拒绝、平台自有放行。
+	// 未装配快照（nil）：平台自有放行（零值上下文）、带归属拒绝。
 	var nilSnap *SupplierSnapshot
-	require.True(t, nilSnap.AdmitSupplierAccount(7, 0))
-	require.False(t, nilSnap.AdmitSupplierAccount(7, 100))
+	fin, ok := nilSnap.AdmitSupplierAccount(7, 0)
+	require.True(t, ok)
+	require.False(t, fin.Ready)
+	_, ok = nilSnap.AdmitSupplierAccount(7, 100)
+	require.False(t, ok)
 
 	snap := NewSupplierSnapshot(time.Minute)
-	// 未装载视图 ⇒ 带归属拒绝。
-	require.False(t, snap.AdmitSupplierAccount(7, 100))
-	require.True(t, snap.AdmitSupplierAccount(7, 0))
+	// 未装载视图 ⇒ 带归属拒绝、平台自有放行。
+	_, ok = snap.AdmitSupplierAccount(7, 100)
+	require.False(t, ok)
+	_, ok = snap.AdmitSupplierAccount(7, 0)
+	require.True(t, ok)
+
 	snap.Store(map[int64]int64{7: 100}, map[int64]int{100: 7000}, time.Unix(0, 0))
-	require.True(t, snap.AdmitSupplierAccount(7, 100), "归属一致 + 就绪 ⇒ 放行")
-	require.False(t, snap.AdmitSupplierAccount(7, 200), "归属不一致 ⇒ 拒绝")
-	require.False(t, snap.AdmitSupplierAccount(9, 100), "该账号未落在快照 ⇒ 拒绝")
+	fin, ok = snap.AdmitSupplierAccount(7, 100)
+	require.True(t, ok, "归属一致 + 就绪 ⇒ 放行")
+	require.True(t, fin.Ready)
+	require.Equal(t, int64(100), fin.UID)
+	require.Equal(t, 7000, fin.Bp)
+	_, ok = snap.AdmitSupplierAccount(7, 200)
+	require.False(t, ok, "归属不一致 ⇒ 拒绝")
+	_, ok = snap.AdmitSupplierAccount(9, 100)
+	require.False(t, ok, "该账号未落在快照 ⇒ 拒绝")
+	// 视图仍含旧归属 100 时按平台自有（ownerUID==0）必须拒绝（发布屏障 §4.6.3：
+	// 归属换代未发布前不得把平台流量记为旧 uid）。
+	_, ok = snap.AdmitSupplierAccount(7, 0)
+	require.False(t, ok, "视图仍含旧归属 ⇒ 平台自有不得抢跑")
+
+	// 换代后旧归属消失 ⇒ 平台自有放行。
+	snap.Store(map[int64]int64{}, map[int64]int{}, time.Unix(1, 0))
+	_, ok = snap.AdmitSupplierAccount(7, 0)
+	require.True(t, ok)
 }

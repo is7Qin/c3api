@@ -170,21 +170,28 @@ func (p *Proxy) SupplierSnapshotRef() *SupplierSnapshot {
 	return p.supplier
 }
 
-// captureFinance 选中账号的财务上下文（**单次 Load**；G2：零 DB）。
-// Ready=false 表示该账号无归属或视图未就绪。
-func (p *Proxy) captureFinance(accountID int64) FinanceCtx {
-	if p.supplier == nil {
-		return FinanceCtx{}
-	}
-	v := p.supplier.Load()
-	if v == nil {
-		return FinanceCtx{}
+// AdmitSupplierAccount 供给准入门实现（scheduler.SupplierAdmission，§4.6）：
+// **单次 Load** 取一致视图，并返回本次判定所用的财务上下文（与准入同一视图，
+// 消除「准入读 + 收尾再读」双读）。规则：
+//   - 视图 nil（NotReady）⇒ 平台自有（ownerUID==0）放行（零值上下文）；带归属拒绝；
+//   - 视图就绪：ownerUID==0 且视图**不含**该账号旧归属 ⇒ 放行（零值上下文）；
+//     视图仍含旧归属（归属换代未发布）⇒ 拒绝，等 Reload（§4.6.3 发布屏障）；
+//     带归属账号仅当视图 owner 命中该 ownerUID ⇒ 放行并返回 UID/Bp/Rev。
+func (s *SupplierSnapshot) AdmitSupplierAccount(accountID, ownerUID int64) (domain.SupplierFinance, bool) {
+	v := s.Load() // nil 安全：未装配/未就绪 ⇒ 空视图
+	if ownerUID == 0 {
+		if _, ok := v.Owner(accountID); ok {
+			// 视图仍把该账号记在旧归属下：发布未换代，暂不按平台自有入选
+			// （否则会把平台流量记为旧 uid）。
+			return domain.SupplierFinance{}, false
+		}
+		return domain.SupplierFinance{}, true
 	}
 	uid, ok := v.Owner(accountID)
-	if !ok {
-		return FinanceCtx{}
+	if !ok || uid != ownerUID {
+		return domain.SupplierFinance{}, false
 	}
-	return FinanceCtx{Ready: true, UID: uid, Bp: v.ShareBp(uid), Rev: v.Revision()}
+	return domain.SupplierFinance{Ready: true, UID: uid, Bp: v.ShareBp(uid), Rev: v.Revision()}, true
 }
 
 // stampSupplier 收尾盖章 `usage_logs` 三收益列（出生定态；§4.2 四象限）。
@@ -205,23 +212,4 @@ func (p *Proxy) stampSupplier(sel *scheduler.Selection, l *domain.UsageLog) {
 	}
 	// 出生定态：只对已正确算出的 earn 分类（零收益/未归属/关闭态 ⇒ true）。
 	l.SupplierCredited = l.SupplierEarnMillis <= 0
-}
-
-// AdmitSupplierAccount 供给准入门实现（scheduler.SupplierAdmission，§4.6）：
-// 平台自有账号（ownerUID == 0）恒放行；带归属账号要求财务快照已就绪**且**该
-// 账号归属（owner 命中）与快照一致——否则不入调度（不把「未知」折叠成资金
-// 零值）。视图 nil（未就绪）⇒ 带归属账号一律拒绝。
-func (s *SupplierSnapshot) AdmitSupplierAccount(accountID, ownerUID int64) bool {
-	if ownerUID == 0 {
-		return true
-	}
-	if s == nil {
-		return false
-	}
-	v := s.Load()
-	if v == nil {
-		return false
-	}
-	uid, ok := v.Owner(accountID)
-	return ok && uid == ownerUID
 }

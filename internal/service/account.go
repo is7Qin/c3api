@@ -104,6 +104,11 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	// 组级定向：新账号进其分组快照（无分组账号不入任何快照 → 空集 no-op）。
 	s.inv.Accounts(groupsOfPatch(p), false)
 	s.publish(ctx, notify.Change{Groups: groupsOfPatch(p)})
+	// 新账号带供应商归属 ⇒ 财务视图换代（§4.6.3）：否则调度快照已含它、财务
+	// 视图未含，供给准入门会一直拒绝该账号入选（可用性缺口）。
+	if created.SupplierUserID > 0 {
+		s.reloadSupplierView(ctx)
+	}
 	return created, nil
 }
 
@@ -186,6 +191,10 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 	identityChanged := identityChangedIn(results)
 	s.inv.Accounts(gids, identityChanged)
 	s.publish(ctx, notify.Change{Groups: gids, Clients: identityChanged})
+	// 归属/启用变更 ⇒ 财务视图换代（§4.6.3 发布屏障）。
+	if p.SupplierUserID != nil || p.Enabled != nil {
+		s.reloadSupplierView(ctx)
+	}
 	return s.accountOrErr(ctx, id)
 }
 
@@ -290,6 +299,10 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	identityChanged := identityChangedIn(results)
 	s.inv.Accounts(gids, identityChanged)
 	s.publish(ctx, notify.Change{Groups: gids, Clients: identityChanged})
+	// 归属/启用变更 ⇒ 财务视图换代（§4.6.3 发布屏障）。
+	if p.SupplierUserID != nil || p.Enabled != nil {
+		s.reloadSupplierView(ctx)
+	}
 	return results, nil
 }
 

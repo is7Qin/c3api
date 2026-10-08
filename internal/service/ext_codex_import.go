@@ -88,6 +88,10 @@ func importCodexBatch[T any](s *Service, ctx context.Context, items []T, rowFn f
 		rows = append(rows, row)
 	}
 	s.importCodexAccounts(ctx, rows, *tplID, groupID, credType, cfg, res)
+	// 供应商面导入新建归属本人账号 ⇒ 财务视图换代（§4.6.3 发布屏障）。
+	if sc := domain.AccountScopeFrom(ctx); sc.Set {
+		s.reloadSupplierView(ctx)
+	}
 	return res, nil
 }
 

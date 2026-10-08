@@ -12,8 +12,21 @@ import (
 
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/worker"
 )
+
+// supplierViewReloader 把 *supplier.ViewLoader 转成非 nil 的
+// service.SupplierViewReloader；nil loader 返回**真 nil 接口**（nil *ViewLoader
+// 装箱成非 nil 接口会让 Service 的 nil 守卫失效 ⇒ 写面 Reload 打到 nil receiver
+// panic——typed-nil 教训同 main 的 invBalances）。
+func supplierViewReloader(l *supplier.ViewLoader) service.SupplierViewReloader {
+	if l == nil {
+		return nil
+	}
+	return l
+}
 
 // supplierCreditDrainBudget 记账链 Close 排空的独立总预算（不得复用
 // drainCycleBudget 的 500ms——那是单消费周期预算，§5.5）。

@@ -65,10 +65,10 @@ func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Sele
 		sel.Release()
 		return nil, scheduler.Attempt{}, scheduler.ErrFormatUnavailable
 	}
-	// 财务上下文随选中固定（spec 2026-10-09 §4.2/§4.6）：此刻单次 Load 财务
-	// 快照捕获归属/分成/代数，随本尝试的 Selection 携带；收尾（含 failover
-	// 获胜尝试）只按该捕获值落账——不再回查 owner。关闭态（未装配快照）⇒ 零值。
-	sel.SupplierFinance = p.captureFinance(sel.AccountID)
+	// 财务上下文随选中固定（spec 2026-10-09 §4.2/§4.6）：供给准入门放行候选时
+	// **同一次视图读取**捕获归属/分成/代数，已由 ReserveAttempt 写入
+	// sel.SupplierFinance；此处**不得再 Load**（双读会在两次读取间换代，
+	// 把未知记成零或记到旧 uid）。收尾（含 failover 获胜尝试）只按该捕获值落账。
 	return sel, attempt, nil
 }
 

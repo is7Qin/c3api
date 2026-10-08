@@ -83,9 +83,10 @@ type Selection struct {
 	// 槽身份——非 codex 面不认领）。Release 归还。
 	identitySlot     *identitySlot
 	ModelMappingMode domain.ModelMappingMode
-	// SupplierFinance 选中本账号时捕获的不可变财务上下文（spec 2026-10-09 §4.2/§4.6）：
-	// proxy 在预留成功后立刻按本 Selection 的 AccountID 从财务快照单次 Load
-	// 捕获，收尾（含 failover 获胜尝试）只按该捕获值落账——不再回查 owner。
+	// SupplierFinance 选中本账号时捕获的不可变财务上下文（spec 2026-10-09
+	// §4.2/§4.6）：供给准入门放行候选时**同一次视图读取**捕获归属/分成/代数，
+	// 随本 Selection 携带；收尾（含 failover 获胜尝试）只按该捕获值落账——
+	// 不再回查 owner。
 	SupplierFinance domain.SupplierFinance
 }
 

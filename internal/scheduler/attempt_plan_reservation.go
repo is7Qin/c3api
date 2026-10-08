@@ -115,6 +115,10 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	applyMapping := plan.identity.ApplyModelMapping
 	byID := v.static.byID
 	facts := v.static.facts
+	// admittedFinance 捕获**本次放行候选**的财务上下文：与准入判定同一次视图
+	// 读取（§4.2/§4.6——归属随选中固定，收尾不再 Load/查 owner）。只在谓词真正
+	// 放行（最后一个 return true 前）写入，避免被后续 CAS 失败候选污染。
+	var admittedFinance domain.SupplierFinance
 	attempt, candidate, err := plan.reserve(func(c CompiledCandidate) bool {
 		if c.Leaf == nil || c.Static == nil || c.Fingerprint == "" {
 			return false
@@ -157,9 +161,10 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		}
 		// 供给准入门（spec 2026-10-09 §4.6，I1）：带供应商归属的账号在财务
 		// 快照未就绪（或该归属不在快照中）时暂不入调度——拒绝不耗 attempt，
-		// 自然落到下一候选；平台自有账号（owner == 0）恒放行（未装配门时
-		// admitSupplier 也恒放行，关闭态零成本）。
-		if !s.admitSupplier(av.acc.ID, av.acc.SupplierUserID) {
+		// 自然落到下一候选；未装配门（关闭态）恒放行（零值财务上下文）。
+		// 放行时捕获**同一视图**的归属/分成/代数，随 Selection 携带。
+		admittedFin, admitted := s.admitSupplier(av.acc.ID, av.acc.SupplierUserID)
+		if !admitted {
 			return false
 		}
 		cur := a.runtime.concurrency.Load()
@@ -185,6 +190,7 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 				break
 			}
 		}
+		admittedFinance = admittedFin
 		return true
 	})
 	if err != nil {
@@ -216,5 +222,8 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 	// 内**，避免后置校验异常路径泄漏槽）。仅 codex 凭据认领（claimIdentitySlot
 	// 内判定），非 codex → nil。池注册表取自本视图静态根——与门禁 limit 同源。
 	selected.identitySlot = s.claimIdentitySlot(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType)
+	// 财务上下文随选中固定（供给准入门放行时同一次视图读取捕获；§4.2/§4.6）：
+	// 收尾只按本值落账，不再 Load/查 owner。
+	selected.SupplierFinance = admittedFinance
 	return selected, attempt, nil
 }

@@ -378,6 +378,13 @@ type KeyRegistrar interface {
 	Delete(hash string)
 }
 
+// SupplierViewReloader 供应商财务视图装载面（*supplier.ViewLoader 实现）：账号
+// **归属/启用**写成功后触发本地有界 Reload，使旧归属尽早从视图消失、新归属尽早
+// 入选（spec 2026-10-09 §4.6.3 发布屏障）。nil = 功能关闭/未装配（no-op）。
+type SupplierViewReloader interface {
+	Reload(ctx context.Context) bool
+}
+
 type Service struct {
 	store Store
 	// emailCodes 验证码存储（Redis 实现，spec 2026-08-25-emailcode-redis-migration
@@ -389,6 +396,9 @@ type Service struct {
 	pub        Publisher   // 多实例 NOTIFY 发布器（nil = 单实例/未装配，publish no-op）
 	ruleReload RuleReloader
 	keys       KeyRegistrar
+	// supplierViewReload 财务视图装载面（账号归属/启用写成功后本地 Reload；
+	// §4.6.3 发布屏障）。nil = 功能关闭/未装配（见 Deps.SupplierViewReload）。
+	supplierViewReload SupplierViewReloader
 	// settings 设置全量内存快照（默认值 + DB 覆盖）：Service 与 MailWorker
 	// 同源共享单个 *settingssnap.Snapshot（根因重开——单指针，无双快照
 	// 分叉；NOTIFY 只刷这一处）。公开读路径零 DB 直读；仅管理面
@@ -458,6 +468,11 @@ type Deps struct {
 	RuleReload RuleReloader
 	// Keys 客户端 key 增删的鉴权快照增量面（nil = 不刷新）。
 	Keys KeyRegistrar
+	// SupplierViewReload 供应商财务视图装载面（*supplier.ViewLoader 实现；
+	// 账号归属/启用写成功后本地 Reload——先让旧归属停止入选再换归属，§4.6.3）。
+	// nil = 功能关闭/未装配（no-op）。**注意 typed-nil**：调用方须传真 nil 接口，
+	// 不得把 nil *ViewLoader 装箱（否则写面 Reload 会打到 nil receiver）。
+	SupplierViewReload SupplierViewReloader
 	// Log 面日志（nil = 静默）。
 	Log *logx.Logger
 
@@ -517,7 +532,8 @@ func New(deps Deps) *Service {
 	}
 	s := &Service{store: deps.Store, sched: deps.Scheduler, inv: deps.Invalidate, pub: deps.Publisher,
 		ruleReload: deps.RuleReload, keys: deps.Keys, log: deps.Log,
-		emailCodes: deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
+		supplierViewReload: deps.SupplierViewReload,
+		emailCodes:         deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
 		recoverLatch: deps.RecoverLatch, recoverHealthClear: deps.RecoverHealthClear,
 		defaultMaxConcurrency:       deps.DefaultMaxConcurrency,
 		compileNotify:               deps.CompileNotify,
@@ -556,6 +572,23 @@ func (s *Service) publish(ctx context.Context, ch notify.Change) {
 		return // 空 Change：无任何变更语义
 	}
 	_ = s.pub.Publish(context.WithoutCancel(ctx), ch)
+}
+
+// supplierViewReloadTimeout 归属/启用写后财务视图本地 Reload 的有界超时。
+const supplierViewReloadTimeout = 3 * time.Second
+
+// reloadSupplierView 账号**归属/启用**写成功后触发财务视图换代（spec 2026-10-09
+// §4.6.3 发布屏障）：先让旧归属从视图消失、新归属尽早入选，否则调度快照已换代
+// 而财务视图仍陈旧，发布窗口内可能把流量记到旧 uid。脱离请求 ctx（WithoutCancel）
+// 避免客户端断开吞掉换代；有界超时避免写面被慢装载拖住。未装配（关闭态/测试）⇒
+// best-effort no-op（ticker 兜底收敛）。
+func (s *Service) reloadSupplierView(ctx context.Context) {
+	if s.supplierViewReload == nil {
+		return
+	}
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), supplierViewReloadTimeout)
+	defer cancel()
+	s.supplierViewReload.Reload(rctx)
 }
 
 // validateBaseURL 校验 base_url：可解析、有 scheme/host，且路径不以 /v1

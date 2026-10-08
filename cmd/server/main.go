@@ -333,8 +333,47 @@ func main() {
 		log.Warn("settings snapshot initial load failed", logx.Error(err))
 	}
 	mailW := service.NewMailWorker(service.MailDeps{Log: log, Settings: settingsSnap, Templates: repos})
+	// 供应商持久面 + 财务视图装载器（spec 2026-10-09 §4.3/§4.6/§6.4）：持久面
+	// **无条件**构造（enabled=false 时管理面余额/结算单列表仍须可用——余额与结算单
+	// 永久保留，§2.7）；财务视图装载器仅在 enabled=true 构造，并经 Service.Deps
+	// .SupplierViewReload 注入账号归属/启用写面——写成功后触发本地 Reload，先让
+	// 旧归属停止入选再换归属（§4.6.3 发布屏障）。首刷 + ticker 在 px/sched 装配后接线。
+	suppRepo := repos.SupplierRepo(repository.SupplierRepoConfig{
+		GranularitySeconds:   int64(cfg.Supplier.ThawGranularity / time.Second),
+		FreezeEnabled:        cfg.Supplier.FreezeEnabled,
+		FreezeHoursDefault:   cfg.Supplier.FreezeHours,
+		ShareBpDefault:       cfg.Supplier.ShareBpDefault,
+		BillingEnabled:       cfg.Billing.Enabled,
+		PayoutMaxBacklogRows: cfg.Supplier.PayoutMaxBacklogRows,
+		PayoutMaxBacklogAge:  cfg.Supplier.PayoutMaxBacklogAge,
+		PayoutMaxObserveAge:  cfg.Supplier.PayoutMaxObserveAge,
+		RiskReviewMaxAge:     cfg.Supplier.RiskReviewMaxAge,
+	})
+	var supplierViewSnap *proxy.SupplierSnapshot
+	var supplierViewLoader *supplier.ViewLoader
+	if !cfg.Supplier.Enabled {
+		// enabled=false 时停用 liability 校验（I6/A23，§5.5）：残留冻结/在途单/
+		// available 任一非零 ⇒ 拒绝启动并打印分项规模。bootstrap 后、接流量前执行。
+		initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := validateSupplierDisabled(initCtx, suppRepo); err != nil {
+			initCancel()
+			fatalf("supplier disabled startup validation: %v", err)
+		}
+		initCancel()
+	} else {
+		// A16⑦ 启动校验：override 集合按全局 g 重算上界，越界拒绝启动并列出 uid。
+		initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := validateSupplierOverrides(initCtx, suppRepo, cfg.Supplier.ThawGranularity); err != nil {
+			initCancel()
+			fatalf("supplier startup validation: %v", err)
+		}
+		initCancel()
+		supplierViewSnap = proxy.NewSupplierSnapshot(supplierViewStaleThreshold)
+		supplierViewLoader = supplier.NewViewLoader(supplier.ViewConfig{Interval: cfg.Billing.BalanceRefreshInterval}, suppRepo, supplierViewSnap, log)
+	}
 	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Keys: auth, Log: log, EmailCodeStore: verification.New(rdb),
-		TimeLocation: svcLoc,
+		SupplierViewReload: supplierViewReloader(supplierViewLoader),
+		TimeLocation:       svcLoc,
 		// Retention 三表原件（不预先折 min：读 N 张表取最保守 floor 是
 		// domain.StatsKinds 的 Tables 推论，spec §4.5）。
 		Retention: domain.Retention{
@@ -593,50 +632,20 @@ func main() {
 	// （Name="scheduler" 不变）——反序排空语义与 worker_order_test 断言依赖。
 	schedW := schedWorker{s: sched, src: schedSrc}
 
-	// 供应商收益链装配（spec 2026-10-09 §4.3/§4.6/§5.5/§6.4）：持久面**无条件**构造
-	// （enabled=false 时管理面余额/结算单列表仍须可用——余额与结算单永久保留，§2.7）；
-	// 记账/解冻 worker + 财务视图快照 + 独立刷新 ticker 仅在 enabled=true 构造。
-	// 财务视图首刷在构造期同步执行（尽量落在监听端口之前；失败不阻塞启动，进入
-	// NotReady ⇒ 带归属账号不入调度）。
+	// 供应商记账/解冻 worker 装配（spec 2026-10-09 §5.5）：仅在 enabled=true 构造
+	// （关闭态 supplierWorkers 为 nil，append 不贡献元素）。财务视图快照/装载器
+	// 已在上方（svc 之前）构造并经 Deps 注入写面 Reload；此处接线 px/sched + 首刷。
 	var supplierWorkers []worker.Worker
-	var supplierViewLoader worker.Worker
-	suppRepo := repos.SupplierRepo(repository.SupplierRepoConfig{
-		GranularitySeconds:   int64(cfg.Supplier.ThawGranularity / time.Second),
-		FreezeEnabled:        cfg.Supplier.FreezeEnabled,
-		FreezeHoursDefault:   cfg.Supplier.FreezeHours,
-		ShareBpDefault:       cfg.Supplier.ShareBpDefault,
-		BillingEnabled:       cfg.Billing.Enabled,
-		PayoutMaxBacklogRows: cfg.Supplier.PayoutMaxBacklogRows,
-		PayoutMaxBacklogAge:  cfg.Supplier.PayoutMaxBacklogAge,
-		PayoutMaxObserveAge:  cfg.Supplier.PayoutMaxObserveAge,
-		RiskReviewMaxAge:     cfg.Supplier.RiskReviewMaxAge,
-	})
-	// enabled=false 时停用 liability 校验（I6/A23，§5.5）：残留冻结/在途单/available
-	// 任一非零 ⇒ 拒绝启动并打印分项规模。必须在 bootstrap 后、监听/接流量前执行。
-	if !cfg.Supplier.Enabled {
-		initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		if err := validateSupplierDisabled(initCtx, suppRepo); err != nil {
-			initCancel()
-			fatalf("supplier disabled startup validation: %v", err)
-		}
-		initCancel()
-	}
 	if cfg.Supplier.Enabled {
-		// A16⑦ 启动校验：override 集合按全局 g 重算上界，越界拒绝启动并列出 uid。
+		px.SetSupplierSnapshot(supplierViewSnap)
+		sched.SetSupplierAdmission(supplierViewSnap)
 		initCtx, initCancel := context.WithTimeout(context.Background(), 15*time.Second)
-		if err := validateSupplierOverrides(initCtx, suppRepo, cfg.Supplier.ThawGranularity); err != nil {
-			initCancel()
-			fatalf("supplier startup validation: %v", err)
-		}
-		snap := proxy.NewSupplierSnapshot(supplierViewStaleThreshold)
-		px.SetSupplierSnapshot(snap)
-		sched.SetSupplierAdmission(snap)
-		viewLoader := supplier.NewViewLoader(supplier.ViewConfig{Interval: cfg.Billing.BalanceRefreshInterval}, suppRepo, snap, log)
-		if !viewLoader.LoadOnce(initCtx) {
+		// 财务视图首刷在构造期同步执行（尽量落在监听端口之前；失败不阻塞启动，
+		// 进入 NotReady ⇒ 带归属账号不入调度，ticker 兜底重试）。
+		if !supplierViewLoader.LoadOnce(initCtx) {
 			log.Warn("supplier view initial load failed; accounts with supplier ownership are not scheduled until a reload succeeds (NotReady)")
 		}
 		initCancel()
-		supplierViewLoader = viewLoader
 		creditW := supplier.NewCredit(supplier.CreditConfig{
 			Interval:      200 * time.Millisecond,
 			BatchLimit:    500,
