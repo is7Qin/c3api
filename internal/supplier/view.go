@@ -20,8 +20,8 @@ type ViewStore interface {
 	LoadSupplierView(ctx context.Context) (owner map[int64]int64, share map[int64]int, err error)
 }
 
-// ViewSink 视图发布面（proxy.SupplierSnapshot 实现：单原子指针换入一致视图；
-// 失败保留旧视图 fail-safe）。
+// ViewSink 视图发布面（*SupplierSnapshot 实现：单原子指针换入一致视图；失败
+// 保留旧视图 fail-safe）。
 type ViewSink interface {
 	Store(owner map[int64]int64, share map[int64]int, now time.Time)
 }
@@ -50,7 +50,7 @@ type ViewLoader struct {
 	loadSuccess atomic.Int64
 	// obs 视图快照三态观测面（装配期注入一次；Start 之前写、之后只读——见
 	// SetObsProvider）。
-	obs func(now time.Time) any
+	obs func(now time.Time) SupplierSnapshotObs
 }
 
 // NewViewLoader 构造视图装载器。
@@ -115,10 +115,9 @@ type ViewLoadStats struct {
 	Attempts int64 `json:"attempts"`
 	Success  int64 `json:"success"`
 	// Snapshot 视图快照三态（loaded/revision/last_success_unix_ms/stale_age_ms；
-	// §4.4/A13④）。装配侧经 SetObsProvider 注入（supplier 包不 import proxy——
-	// 分层约束）；未注入 = nil（JSON 省略）。三态是「功能开了但从未装载成功」
-	// 的唯一可见痕迹（收益恒零而无人察觉）。
-	Snapshot any `json:"snapshot,omitempty"`
+	// §4.4/A13④）。装配侧经 SetObsProvider 注入；未注入 = nil（JSON 省略）。
+	// 三态是「功能开了但从未装载成功」的唯一可见痕迹（收益恒零而无人察觉）。
+	Snapshot *SupplierSnapshotObs `json:"snapshot,omitempty"`
 }
 
 // Stats 返回装载计数 + 视图快照三态（实现 handler.StatsProvider——Name() +
@@ -126,14 +125,15 @@ type ViewLoadStats struct {
 func (l *ViewLoader) Stats() any {
 	st := ViewLoadStats{Attempts: l.loadAttempt.Load(), Success: l.loadSuccess.Load()}
 	if l.obs != nil {
-		st.Snapshot = l.obs(time.Now())
+		obs := l.obs(time.Now())
+		st.Snapshot = &obs
 	}
 	return st
 }
 
 // SetObsProvider 注入视图快照三态观测面（装配期一次，Start 之前；now 注入便于
-// 测试）。supplier 包不直接依赖 proxy——由组合根经闭包桥接（Obs(now)）。
-func (l *ViewLoader) SetObsProvider(obs func(now time.Time) any) { l.obs = obs }
+// 测试）。typed observation（SupplierSnapshotObs），不再经 any 桥接。
+func (l *ViewLoader) SetObsProvider(obs func(now time.Time) SupplierSnapshotObs) { l.obs = obs }
 
 func (l *ViewLoader) warnRateLimited(msg string, fields ...logx.Field) {
 	if l.log == nil {

@@ -12,7 +12,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/is7qin/c3api/internal/proxy"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/supplier"
 )
@@ -34,11 +33,11 @@ func (f fakeViewStore) LoadSupplierView(context.Context) (map[int64]int64, map[i
 // 必须进统一快照注册表——NotReady（装载失败）经 LastError 呈现；健康轮刷新
 // LastReload 且 Obs 置 loaded=true。否则「功能开了但从未装载成功」在 ops 面不可见。
 func TestSupplierViewSnapshotWiredToRegistry(t *testing.T) {
-	snap := proxy.NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 
 	// 失败轮：NotReady ⇒ Reload 返回错误（保留旧视图 fail-safe）。
 	bad := supplier.NewViewLoader(supplier.ViewConfig{}, fakeViewStore{err: errors.New("db down")}, snap, nil)
-	bad.SetObsProvider(func(now time.Time) any { return snap.Obs(now) })
+	bad.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return snap.Obs(now) })
 	require.False(t, bad.LoadOnce(context.Background()), "装载失败 ⇒ LoadOnce false")
 
 	reg := snapshot.New()
@@ -50,7 +49,7 @@ func TestSupplierViewSnapshotWiredToRegistry(t *testing.T) {
 	// 健康轮：LoadOnce 成功 ⇒ Reload 无错；obs loaded=true。
 	good := supplier.NewViewLoader(supplier.ViewConfig{},
 		fakeViewStore{owner: map[int64]int64{1: 7}, share: map[int64]int{7: 1000}}, snap, nil)
-	good.SetObsProvider(func(now time.Time) any { return snap.Obs(now) })
+	good.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return snap.Obs(now) })
 	reg2 := snapshot.New()
 	require.NoError(t, reg2.Register(supplierViewSnapshot{loader: good}))
 	require.Empty(t, reg2.ReloadAll(context.Background()))

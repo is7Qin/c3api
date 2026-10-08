@@ -4,16 +4,19 @@
 
 package proxy
 
-// 供应商收益热路径（spec 2026-10-09 §4）：归属与分成率来自**单个**
-// atomic.Pointer 视图（G2 零 DB），收益额纯整数计算（earnOf）。关闭态
-// （enabled=false）视图恒 nil，热路径仅一次 Load + nil 分支。
+// 供应商收益热路径（spec 2026-10-09 §4）：收益额纯整数计算（earnOf），收尾按
+// **选中账号时捕获**的财务上下文（scheduler.Selection 携带的 domain.SupplierFinance）
+// 盖章 `usage_logs` 三收益列（stampSupplier）——不在此回查归属视图。
+//
+// 视图/快照（SupplierView/SupplierSnapshot）与供给准入的**实现归属**在
+// internal/supplier 包（ViewSink/ViewLoader/SupplierSnapshot）；组合根把同一快照同时
+// 接到 loader 与 scheduler。proxy 仅保留收益计算与落账适配，不再拥有快照类型。
+// 关闭态（enabled=false）快照未装配，收尾字段保持出生定态 credited=true。
 
 import (
-	"sync/atomic"
-	"time"
-
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/supplier"
 )
 
 // shareBpFull 分成率满值（10000 = 100%）。
@@ -39,187 +42,6 @@ func earnOf(cost int64, shareBp int) int64 {
 	return (cost/10000)*b + (cost%10000)*b/shareBpFull
 }
 
-// FinanceCtx 请求级不可变财务上下文（选中账号时捕获；收尾按捕获值落账，
-// 非收尾重查 owner）。Ready=false 不等于平台自有——该供应商账号不得入选
-// （供给准入，§4.6）。别名到 domain.SupplierFinance（随 Selection 携带）。
-type FinanceCtx = domain.SupplierFinance
-
-// SupplierView 供应商归属/分成率的**不可变值对象**（一次 Store 换代；
-// 热路径只 Load 一次取一致视图——两个独立 atomic.Pointer 不构成原子换代）。
-type SupplierView struct {
-	owner    map[int64]int64 // account_id → supplier_user_id
-	share    map[int64]int   // supplier_user_id → 生效 share_bp（已注入默认）
-	revision int64
-}
-
-// NewSupplierView 构造视图。传入的 share 已由装载器（repository.LoadSupplierView）
-// 对「无行 / share_bp IS NULL」显式注入默认分成率（§2.3）；本构造不依赖 map 零值
-// ——Go map 零值 0 会把「无行」误判为「显式 0」⇒ 首个供应商永不产生收益 ⇒
-// 永不触发自动建行。
-func NewSupplierView(owner map[int64]int64, share map[int64]int, revision int64) *SupplierView {
-	if owner == nil {
-		owner = map[int64]int64{}
-	}
-	if share == nil {
-		share = map[int64]int{}
-	}
-	return &SupplierView{owner: owner, share: share, revision: revision}
-}
-
-// Owner 返回账号归属供应商 uid（无归属 = false）。
-func (v *SupplierView) Owner(accountID int64) (int64, bool) {
-	if v == nil {
-		return 0, false
-	}
-	uid, ok := v.owner[accountID]
-	return uid, ok
-}
-
-// ShareBp 返回供应商生效分成率（未装载 = 0；装配时必须已注入默认）。
-func (v *SupplierView) ShareBp(uid int64) int {
-	if v == nil {
-		return 0
-	}
-	return v.share[uid]
-}
-
-// Revision 视图代数。
-func (v *SupplierView) Revision() int64 {
-	if v == nil {
-		return 0
-	}
-	return v.revision
-}
-
-// SupplierSnapshot 单原子指针快照（热路径单次 Load）+ 三态可观测（§4.4）。
-type SupplierSnapshot struct {
-	view               atomic.Pointer[SupplierView]
-	loaded             atomic.Bool
-	lastSuccessUnixMs  atomic.Int64 // 0 = 从未成功
-	genSeq             atomic.Int64
-	staleWarnThreshold time.Duration
-	// capacityBlocked 数据盘容量不足（retention §3.11 处置）：置位后带归属账号
-	// 准入拒绝（停供应商新流量），平台自有账号不受影响；恢复后复位。
-	capacityBlocked atomic.Bool
-}
-
-// NewSupplierSnapshot 构造（staleWarnThreshold<=0 ⇒ 兜底 1m）。
-func NewSupplierSnapshot(staleWarnThreshold time.Duration) *SupplierSnapshot {
-	if staleWarnThreshold <= 0 {
-		staleWarnThreshold = time.Minute
-	}
-	return &SupplierSnapshot{staleWarnThreshold: staleWarnThreshold}
-}
-
-// Store 装载并换代（**全部成功才调用一次**；失败保留旧视图 fail-safe）。
-func (s *SupplierSnapshot) Store(owner map[int64]int64, share map[int64]int, now time.Time) {
-	rev := s.genSeq.Add(1)
-	s.view.Store(NewSupplierView(owner, share, rev))
-	s.loaded.Store(true)
-	s.lastSuccessUnixMs.Store(now.UnixMilli())
-}
-
-// Load 单次原子读（热路径唯一入口）。
-func (s *SupplierSnapshot) Load() *SupplierView {
-	if s == nil {
-		return nil
-	}
-	return s.view.Load()
-}
-
-// SupplierSnapshotObs 视图可观测（ops 面；§4.4 三态：loaded / last_success /
-// stale_age）。
-type SupplierSnapshotObs struct {
-	Loaded            bool
-	Revision          int64
-	LastSuccessUnixMs int64 // 0 = 从未成功
-	StaleAgeMs        int64 // 距上次成功装载；从未成功 = -1
-}
-
-// Obs 返回快照可观测状态（now 注入便于测试）。
-func (s *SupplierSnapshot) Obs(now time.Time) SupplierSnapshotObs {
-	last := s.lastSuccessUnixMs.Load()
-	obs := SupplierSnapshotObs{
-		Loaded:            s.loaded.Load(),
-		LastSuccessUnixMs: last,
-		StaleAgeMs:        -1,
-	}
-	if v := s.view.Load(); v != nil {
-		obs.Revision = v.Revision()
-	}
-	if last > 0 {
-		obs.StaleAgeMs = now.UnixMilli() - last
-	}
-	return obs
-}
-
-// Stale 报告快照是否陈旧（从未成功 = 陈旧）。
-func (s *SupplierSnapshot) Stale(now time.Time) bool {
-	obs := s.Obs(now)
-	if obs.LastSuccessUnixMs == 0 {
-		return true
-	}
-	return time.Duration(obs.StaleAgeMs)*time.Millisecond > s.staleWarnThreshold
-}
-
-// SetSupplierSnapshot 注入供应商视图快照（main 装配；nil = 未装配/关闭态——
-// 热路径字段保持出生定态 credited=true）。归属写入/刷新由 main 的 ticker 触发
-// Store（§6.4）。
-func (p *Proxy) SetSupplierSnapshot(s *SupplierSnapshot) {
-	p.supplier = s
-}
-
-// SetCapacityBlocked 置/复位容量不足标记（retention §3.11 处置回调；main 装配）。
-// 置位 ⇒ AdmitSupplierAccount 对带归属账号拒绝（停供应商新流量），平台自有不受影响。
-func (s *SupplierSnapshot) SetCapacityBlocked(blocked bool) {
-	if s == nil {
-		return
-	}
-	s.capacityBlocked.Store(blocked)
-}
-
-// CapacityBlocked 返回当前容量不足标记（ops/测试读取）。
-func (s *SupplierSnapshot) CapacityBlocked() bool {
-	if s == nil {
-		return false
-	}
-	return s.capacityBlocked.Load()
-}
-
-// SupplierSnapshotRef 返回已装配的供应商快照（nil = 未装配；ops 面读取）。
-func (p *Proxy) SupplierSnapshotRef() *SupplierSnapshot {
-	return p.supplier
-}
-
-// AdmitSupplierAccount 供给准入门实现（scheduler.SupplierAdmission，§4.6）：
-// **单次 Load** 取一致视图，并返回本次判定所用的财务上下文（与准入同一视图，
-// 消除「准入读 + 收尾再读」双读）。规则：
-//   - 视图 nil（NotReady）⇒ 平台自有（ownerUID==0）放行（零值上下文）；带归属拒绝；
-//   - 视图就绪：ownerUID==0 且视图**不含**该账号旧归属 ⇒ 放行（零值上下文）；
-//     视图仍含旧归属（归属换代未发布）⇒ 拒绝，等 Reload（§4.6.3 发布屏障）；
-//     带归属账号仅当视图 owner 命中该 ownerUID ⇒ 放行并返回 UID/Bp/Rev。
-func (s *SupplierSnapshot) AdmitSupplierAccount(accountID, ownerUID int64) (domain.SupplierFinance, bool) {
-	// 容量不足处置（spec §3.11）：停供应商新流量——带归属账号一律拒绝，平台自有
-	// （ownerUID==0）不受影响（平台供给不依赖供应商磁盘预算）。
-	if s != nil && ownerUID != 0 && s.capacityBlocked.Load() {
-		return domain.SupplierFinance{}, false
-	}
-	v := s.Load() // nil 安全：未装配/未就绪 ⇒ 空视图
-	if ownerUID == 0 {
-		if _, ok := v.Owner(accountID); ok {
-			// 视图仍把该账号记在旧归属下：发布未换代，暂不按平台自有入选
-			// （否则会把平台流量记为旧 uid）。
-			return domain.SupplierFinance{}, false
-		}
-		return domain.SupplierFinance{}, true
-	}
-	uid, ok := v.Owner(accountID)
-	if !ok || uid != ownerUID {
-		return domain.SupplierFinance{}, false
-	}
-	return domain.SupplierFinance{Ready: true, UID: uid, Bp: v.ShareBp(uid), Rev: v.Revision()}, true
-}
-
 // stampSupplier 收尾盖章 `usage_logs` 三收益列（出生定态；§4.2 四象限）。
 // 归属/分成只取自**选中账号时捕获的**财务上下文（sel.SupplierFinance）——不在此
 // 回查 owner（视图换代/删除后收尾不再 Load/查 owner；转属/删除在途不改归属）。
@@ -239,4 +61,16 @@ func (p *Proxy) stampSupplier(sel *scheduler.Selection, l *domain.UsageLog) {
 	}
 	// 出生定态：只对已正确算出的 earn 分类（零收益/未归属/关闭态 ⇒ true）。
 	l.SupplierCredited = l.SupplierEarnMillis <= 0
+}
+
+// SetSupplierSnapshot 注入供应商视图快照（main 装配；nil = 未装配/关闭态——
+// 热路径字段保持出生定态 credited=true）。归属写入/刷新由 main 的 ticker 触发
+// Store（§6.4）。快照类型归属 internal/supplier（ViewSink/准入同处）。
+func (p *Proxy) SetSupplierSnapshot(s *supplier.SupplierSnapshot) {
+	p.supplier = s
+}
+
+// SupplierSnapshotRef 返回已装配的供应商快照（nil = 未装配；ops 面读取）。
+func (p *Proxy) SupplierSnapshotRef() *supplier.SupplierSnapshot {
+	return p.supplier
 }

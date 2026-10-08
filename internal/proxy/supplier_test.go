@@ -14,6 +14,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/supplier"
 )
 
 // TestEarnOfExactFloor A2：以 math/big 独立计算 floor(cost*b/10000) 为 oracle，
@@ -65,7 +66,7 @@ func bigFloorEarn(cost int64, bp int) int64 {
 
 // TestSupplierViewOwnerShare 视图归属/分成率读取 + 单指针换代。
 func TestSupplierViewOwnerShare(t *testing.T) {
-	snap := NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 	snap.Store(map[int64]int64{1: 100, 2: 200}, map[int64]int{100: 7000, 200: 0}, time.Unix(1000, 0))
 	v := snap.Load()
 	require.NotNil(t, v)
@@ -79,12 +80,12 @@ func TestSupplierViewOwnerShare(t *testing.T) {
 	_, ok = v.Owner(999)
 	require.False(t, ok)
 	// 视图 nil（未 Store）安全。
-	require.Nil(t, (*SupplierSnapshot)(nil).Load())
+	require.Nil(t, (*supplier.SupplierSnapshot)(nil).Load())
 }
 
 // TestSupplierSnapshotObs 三态可观测。
 func TestSupplierSnapshotObs(t *testing.T) {
-	snap := NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 	now := time.Unix(2000, 0)
 	obs := snap.Obs(now)
 	require.False(t, obs.Loaded)
@@ -117,7 +118,7 @@ func TestStampSupplierQuadrants(t *testing.T) {
 
 	// 有归属（uid=100，bp=7000）正收益：earn=floor(100000*7000/10000)=70000。
 	p := &Proxy{}
-	sel := &scheduler.Selection{AccountID: 7, SupplierFinance: FinanceCtx{Ready: true, UID: 100, Bp: 7000, Rev: 1}}
+	sel := &scheduler.Selection{AccountID: 7, SupplierFinance: domain.SupplierFinance{Ready: true, UID: 100, Bp: 7000, Rev: 1}}
 	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
 	p.stampSupplier(sel, l)
 	require.Equal(t, int64(100), l.SupplierUserID)
@@ -139,7 +140,7 @@ func TestStampSupplierQuadrants(t *testing.T) {
 	require.True(t, l.SupplierCredited)
 
 	// bp=0 显式：有归属但零收益。
-	zeroBp := &scheduler.Selection{AccountID: 7, SupplierFinance: FinanceCtx{Ready: true, UID: 100, Bp: 0, Rev: 1}}
+	zeroBp := &scheduler.Selection{AccountID: 7, SupplierFinance: domain.SupplierFinance{Ready: true, UID: 100, Bp: 0, Rev: 1}}
 	l = &domain.UsageLog{AccountID: 7, Cost: 100000}
 	p.stampSupplier(zeroBp, l)
 	require.Equal(t, int64(100), l.SupplierUserID)
@@ -151,14 +152,14 @@ func TestStampSupplierQuadrants(t *testing.T) {
 // 放行；带归属仅当视图就绪且归属一致时放行，并返回同一视图的财务上下文。
 func TestAdmitSupplierAccount(t *testing.T) {
 	// 未装配快照（nil）：平台自有放行（零值上下文）、带归属拒绝。
-	var nilSnap *SupplierSnapshot
+	var nilSnap *supplier.SupplierSnapshot
 	fin, ok := nilSnap.AdmitSupplierAccount(7, 0)
 	require.True(t, ok)
 	require.False(t, fin.Ready)
 	_, ok = nilSnap.AdmitSupplierAccount(7, 100)
 	require.False(t, ok)
 
-	snap := NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 	// 未装载视图 ⇒ 带归属拒绝、平台自有放行。
 	_, ok = snap.AdmitSupplierAccount(7, 100)
 	require.False(t, ok)
@@ -189,7 +190,7 @@ func TestAdmitSupplierAccount(t *testing.T) {
 // TestAdmitSupplierAccountCapacityBlocked spec §3.11 处置：容量不足置位后，带归属
 // 账号一律拒绝（停供应商新流量），平台自有账号不受影响；恢复后复位。
 func TestAdmitSupplierAccountCapacityBlocked(t *testing.T) {
-	snap := NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 	snap.Store(map[int64]int64{7: 100}, map[int64]int{100: 7000}, time.Unix(0, 0))
 
 	// 置位：带归属拒绝，平台自有放行。
@@ -207,7 +208,7 @@ func TestAdmitSupplierAccountCapacityBlocked(t *testing.T) {
 	require.True(t, ok)
 
 	// nil 安全。
-	var nilSnap *SupplierSnapshot
+	var nilSnap *supplier.SupplierSnapshot
 	nilSnap.SetCapacityBlocked(true)
 	require.False(t, nilSnap.CapacityBlocked())
 }

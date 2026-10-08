@@ -20,6 +20,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/supplier"
 )
 
 // TestSupplierFinanceTerminalAttemptOwner A→B failover 成功后，计费日志归属取
@@ -43,7 +44,7 @@ func TestSupplierFinanceTerminalAttemptOwner(t *testing.T) {
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
-	snap := NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 	snap.Store(map[int64]int64{1: 100, 2: 200}, map[int64]int{100: 10000, 200: 10000}, time.Unix(0, 0))
 	p.SetSupplierSnapshot(snap)
 	sched.SetSupplierAdmission(snap)
@@ -72,7 +73,7 @@ func TestSupplierFinanceTransferBarrierNoStaleOwner(t *testing.T) {
 	// 账号 1 调度静态事实为平台自有（SupplierUserID=0）。
 	p := newTestProxyTplTimeoutLogs(t, &domain.Template{ID: 1, Name: "t", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}, 1, true, 30*time.Second, store, nil)
 
-	snap := NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 	// 财务视图仍是旧归属（账号 1 → 100）：发布未换代。
 	snap.Store(map[int64]int64{1: 100}, map[int64]int{100: 10000}, time.Unix(0, 0))
 	p.SetSupplierSnapshot(snap)

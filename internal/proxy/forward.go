@@ -28,6 +28,7 @@ import (
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -107,7 +108,7 @@ type Proxy struct {
 	// supplier 供应商归属/分成率快照（spec 2026-10-09 §4.3；nil = 未装配/
 	// 关闭态——热路径 stampSupplier 保持出生定态 credited=true，零 DB）。
 	// main 经 SetSupplierSnapshot 注入，独立 ticker 刷新（§6.4）。
-	supplier *SupplierSnapshot
+	supplier *supplier.SupplierSnapshot
 }
 
 // Deps New 的尾部一次性协作者（SetCodex / SetQualityRecorder /

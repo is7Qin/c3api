@@ -240,7 +240,7 @@ func main() {
 	// usage.stats_retention_days 默认 180 天——聚合统计长保留）。
 	// 供应商财务视图快照（enabled=true 才构造；此处先声明以便 retention 的容量
 	// 处置回调经闭包桥接——回调运行时点晚于下面 enabled 分支的赋值）。
-	var supplierViewSnap *proxy.SupplierSnapshot
+	var supplierViewSnap *supplier.SupplierSnapshot
 	retention := usage.NewRetention(usage.RetentionConfig{
 		LogRetentionDays:                cfg.Usage.LogRetentionDays,
 		ErrLogRetentionDays:             cfg.Usage.ErrLogRetentionDays,
@@ -378,11 +378,11 @@ func main() {
 			fatalf("supplier startup validation: %v", err)
 		}
 		initCancel()
-		supplierViewSnap = proxy.NewSupplierSnapshot(supplierViewStaleThreshold)
+		supplierViewSnap = supplier.NewSupplierSnapshot(supplierViewStaleThreshold)
 		supplierViewLoader = supplier.NewViewLoader(supplier.ViewConfig{Interval: cfg.Billing.BalanceRefreshInterval}, suppRepo, supplierViewSnap, log)
-		// 三态观测桥接：supplier 包不 import proxy，由组合根注入 Obs(now)
-		// （§4.4/A13④）——否则「功能开了但从未装载成功」在 ops 面不可见。
-		supplierViewLoader.SetObsProvider(func(now time.Time) any { return supplierViewSnap.Obs(now) })
+		// 三态观测注入（typed observation；§4.4/A13④）——否则「功能开了但从未装载
+		// 成功」在 ops 面不可见。
+		supplierViewLoader.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return supplierViewSnap.Obs(now) })
 	}
 	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Keys: auth, Log: log, EmailCodeStore: verification.New(rdb),
 		SupplierViewReload: supplierViewReloader(supplierViewLoader),

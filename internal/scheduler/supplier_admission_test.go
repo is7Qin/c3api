@@ -13,7 +13,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// fakeSupplierAdmission 按账号返回财务上下文（模拟 proxy.SupplierSnapshot）。
+// fakeSupplierAdmission 按账号返回财务上下文（模拟 supplier.SupplierSnapshot）。
 type fakeSupplierAdmission struct {
 	byAccount map[int64]domain.SupplierFinance
 	reject    map[int64]bool

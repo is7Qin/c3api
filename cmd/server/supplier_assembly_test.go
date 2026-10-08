@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/handler"
-	"github.com/is7qin/c3api/internal/proxy"
 	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/worker"
 )
@@ -61,9 +60,9 @@ func TestSupplierWorkersFor(t *testing.T) {
 func TestSupplierWorkersImplementStatsProvider(t *testing.T) {
 	credit := supplier.NewCredit(supplier.CreditConfig{}, nil, nil, nil)
 	thaw := supplier.NewThaw(supplier.ThawConfig{}, nil, nil)
-	snap := proxy.NewSupplierSnapshot(time.Minute)
+	snap := supplier.NewSupplierSnapshot(time.Minute)
 	loader := supplier.NewViewLoader(supplier.ViewConfig{}, nil, snap, nil)
-	loader.SetObsProvider(func(now time.Time) any { return snap.Obs(now) })
+	loader.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return snap.Obs(now) })
 
 	providers := statsProviders([]worker.Worker{credit, thaw, loader}, nil)
 	require.Len(t, providers, 3, "credit/thaw/view 必须全部满足 StatsProvider（否则 ops 静默缺失）")
