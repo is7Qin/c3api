@@ -47,10 +47,10 @@ func TestSupplierRiskEvidenceNormalizeAndValidate(t *testing.T) {
 // TestSupplierClaimCommandNormalizeAndValidate 认领命令：金额 + 收款目标 + 风险证据。
 func TestSupplierClaimCommandNormalizeAndValidate(t *testing.T) {
 	valid := SupplierClaimCommand{
-		AmountMillis:     100,
-		ExpectedRevision: 3,
-		Payee:            SupplierPayeeSnapshot{PayeeName: "p", Account: "a", Unit: "u"},
-		Risk:             SupplierRiskEvidence{Reference: "r", Summary: "s", ApprovedRevision: 3},
+		AmountMillis: 100,
+		Revision:     3,
+		Payee:        SupplierPayeeSnapshot{PayeeName: "p", Account: "a", Unit: "u"},
+		Risk:         SupplierRiskEvidence{Reference: "r", Summary: "s", ApprovedRevision: 3},
 	}
 	got, err := valid.NormalizeAndValidate()
 	require.NoError(t, err)

@@ -94,10 +94,10 @@ func (s *Service) AdminRejectSettlement(ctx context.Context, id, expectedRevisio
 // DB 时间、操作者复核、状态/revision CAS 在 repository 事务内完成。
 func (s *Service) AdminClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, risk domain.SupplierRiskEvidence, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	cmd, err := (domain.SupplierClaimCommand{
-		AmountMillis:     amountMillis,
-		ExpectedRevision: expectedRevision,
-		Payee:            payee,
-		Risk:             risk,
+		AmountMillis: amountMillis,
+		Revision:     expectedRevision,
+		Payee:        payee,
+		Risk:         risk,
 	}).NormalizeAndValidate()
 	if err != nil {
 		return nil, ErrInvalidInput

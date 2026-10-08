@@ -422,10 +422,10 @@ func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision
 	// 纯输入规则复用 domain 单一实现（金额 > 0、结构化收款目标、风险证据 non-empty +
 	// revision 绑定）；映射到 repository.ErrInvalidInput。
 	cmd, err := (domain.SupplierClaimCommand{
-		AmountMillis:     amountMillis,
-		ExpectedRevision: expectedRevision,
-		Payee:            payee,
-		Risk:             risk,
+		AmountMillis: amountMillis,
+		Revision:     expectedRevision,
+		Payee:        payee,
+		Risk:         risk,
 	}).NormalizeAndValidate()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
