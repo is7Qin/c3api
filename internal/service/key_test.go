@@ -36,7 +36,7 @@ func TestKeyMetaProtocolConvertsIncremental(t *testing.T) {
 
 	// UpdateKey（改额度）：同样携带（组预取在写库前）
 	q := int64(1000)
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q, nil)
 	require.NoError(t, err)
 	last = keys.lastMeta()
 	require.Equal(t, g.ProtocolConverts, last.ProtocolConverts, "更新后快照转换方向与组一致")
@@ -92,11 +92,11 @@ func TestKeyQuotaMaxSafeIntegerBoundary(t *testing.T) {
 	k, err := svc.CreateKey(ctx, u.ID, "qb-k", g.ID, 0, 0)
 	require.NoError(t, err)
 	over := maxKeyQuotaMillis + 1
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &over)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &over, nil)
 	require.ErrorIs(t, err, ErrInvalidInput, "PUT quota 超限 → 400")
 	top := maxKeyQuotaMillis
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &top)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &top, nil)
 	require.NoError(t, err, "PUT quota=上限放行")
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, nil)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, nil, nil)
 	require.NoError(t, err, "quota nil = 不改，维持放行")
 }

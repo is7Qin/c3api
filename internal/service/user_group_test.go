@@ -86,7 +86,7 @@ func TestKeyOwnership(t *testing.T) {
 	// bob 访问 alice 的 key → 404
 	_, err = svc.GetKey(ctx, bob.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound)
-	_, err = svc.UpdateKey(ctx, bob.ID, k.ID, nil, nil, nil, nil)
+	_, err = svc.UpdateKey(ctx, bob.ID, k.ID, nil, nil, nil, nil, nil)
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = svc.RotateKey(ctx, bob.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -94,7 +94,7 @@ func TestKeyOwnership(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 
 	// alice 本人操作正常
-	updated, err := svc.UpdateKey(ctx, alice.ID, k.ID, nil, nil, nil, nil)
+	updated, err := svc.UpdateKey(ctx, alice.ID, k.ID, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, k.ID, updated.ID)
 	rotated, err := svc.RotateKey(ctx, alice.ID, k.ID)
@@ -125,14 +125,14 @@ func TestKeyUpdateFields(t *testing.T) {
 	bad := domain.KeyStatus("bogus")
 	q := int64(1000)
 
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, &empty, nil, nil, nil)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, &empty, nil, nil, nil, nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, &bad, nil, nil)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, &bad, nil, nil, nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, &neg, nil)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, &neg, nil, nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
 
-	updated, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, &st, nil, &q)
+	updated, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, &st, nil, &q, nil)
 	require.NoError(t, err)
 	require.Equal(t, domain.KeyStatusDisabled, updated.Status)
 	require.Equal(t, int64(1000), updated.Quota)

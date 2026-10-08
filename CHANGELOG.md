@@ -12,6 +12,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ### Added
 
+- **API keys can switch routing group**: the user console's key list now shows the group **name** (falling back to `#<id>` for a retired group) and lets a key move to another group in place from the list, or from a group dropdown in the edit dialog. Only groups the user could already pick when creating a key are selectable (public, or granted private). `PUT /api/user/keys/{id}` accepts an optional `group_id`, re-checks eligibility before writing, and refreshes the key's auth snapshot with the target group's protocol-convert set so routing switches immediately. Key read responses now include `GroupName` (empty when the group is soft-deleted).
+
 - **Balance change history for admins**: permanent balance changes that are not usage-based (signup default balance, admin-created user, admin adjustment, redemption) are now recorded row-by-row in a new `balance_logs` table, written in the same transaction as the balance change itself. A new `GET /api/admin/users/{id}/balance-logs` endpoint lists a user's records with pagination, and `/app/users` exposes them behind a per-row history button. Records cover the permanent balance only; usage-based spending stays in `usage_logs`. The table is unpartitioned and keeps rows indefinitely (low volume per user; no retention policy).
 
 ### Changed
