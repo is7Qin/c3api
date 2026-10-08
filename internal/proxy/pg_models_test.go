@@ -9,9 +9,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,8 +24,12 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/pkg/aiclient"
+
+	// Registers pgtest's repository-dependent hooks.
+	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
 )
 
 // GET /v1/models 真实 PG 集成（与 pg_responses_special_test.go 同款约定）：
@@ -35,32 +37,17 @@ import (
 //	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test \
 //	  go test ./internal/proxy/ -run TestPGModels -v
 //
-// 未设置 TEST_DATABASE_URL → t.Skip。独立 schema（proxy_models_test）：与同包
-// 其它 PG 测试并行跑均不互踩。
+// 未设置 TEST_DATABASE_URL → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
+// 隔离粒度 = database）：与同包其它 PG 测试并行跑均不互踩。
 
-const modelsPGTestSchema = "proxy_models_test"
-
-// modelsPGTestDB 打开独立 schema 的测试库并迁移建表。
+// modelsPGTestDB 打开测试私有 clone 的测试库并迁移建表。
 func modelsPGTestDB(t *testing.T) *repository.Repository {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + modelsPGTestSchema
-	} else {
-		dsn += "?search_path=" + modelsPGTestSchema
-	}
-	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+modelsPGTestSchema+` CASCADE; CREATE SCHEMA `+modelsPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	return repos
 }

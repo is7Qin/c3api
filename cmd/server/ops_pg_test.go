@@ -11,8 +11,8 @@ package main
 //	TEST_DATABASE_URL=postgres://postgres:c3api@localhost:5432/c3api_test_ops \
 //	  go test ./cmd/server/ -run TestOpsWorkersPG -v
 //
-// 独立测试库 c3api_test_ops（本任务专用，避开并行 worktree 竞争）；另用独立
-// schema（ops_test）与同库其它 schema 隔离。未设置 TEST_DATABASE_URL → t.Skip。
+// 每测试克隆一个私有数据库（pgtest.Clone，隔离粒度 = database，取自迁移模板）。
+// 未设置 TEST_DATABASE_URL → t.Skip。
 
 import (
 	"context"
@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -42,39 +40,23 @@ import (
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/internal/snapshot"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 	"github.com/is7qin/c3api/internal/usage"
+
+	// Registers pgtest's repository-dependent hooks.
+	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
 )
 
 func ptrI64(v int64) *int64 { return &v }
 
-// opsTestSchema 本测试专用 schema（同一数据库内隔离命名空间）。
-const opsTestSchema = "ops_test"
-
 func newOpsPGRepos(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + opsTestSchema
-	} else {
-		dsn += "?search_path=" + opsTestSchema
-	}
+	dsn := pgtest.Clone(t)
 	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+opsTestSchema+` CASCADE; CREATE SCHEMA `+opsTestSchema+`;`)
-	require.NoError(t, err)
-	// 残留的 ops_test.routing_* 表会被另一包未加 schema 过滤的 information_schema 查询扫到，导致列数翻倍；
-	// 失败时也要清理故用 t.Cleanup，且此处后注册先执行、在 pool/db 关闭前 DROP，否则连接已关无法执行。
-	t.Cleanup(func() {
-		_, _ = db.ExecContext(context.Background(), `DROP SCHEMA IF EXISTS `+opsTestSchema+` CASCADE;`)
-	})
-	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool)
+	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), false, pool)
 	require.NoError(t, err)
 	return repos, pool
 }

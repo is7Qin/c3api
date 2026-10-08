@@ -77,12 +77,6 @@ func (h *AdminAPI) Router() http.Handler {
 	})
 }
 
-// RoutesMux 兼容保留：cmd/server/main.go 仍以 Handle("/api/admin/*") 挂载，
-// 后续任务改接 Router 后可删除。
-func (h *AdminAPI) RoutesMux() http.Handler {
-	return h.Router()
-}
-
 // normalizeIDs 校验批量 ids 1–100 条且去重（返回去重后列表，条数按去重后计）。
 func normalizeIDs(ids []int64) ([]int64, error) {
 	if len(ids) == 0 || len(ids) > 100 {

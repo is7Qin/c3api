@@ -7,7 +7,6 @@ package repository
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -20,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // 余额预警结算基准（真实 PG：TEST_DATABASE_URL 未设置 → b.Skip）：逐场景测
@@ -90,18 +90,11 @@ func BenchmarkPGBalanceWarningSettlement(b *testing.B) {
 }
 
 func newBalanceWarningBenchRepository(b *testing.B) (*Repository, *pgxpool.Pool) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		b.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL benchmark")
-	}
+	dsn := pgtest.CloneEmpty(b)
 	ctx := context.Background()
-	pool, err := OpenPG(ctx, dsn, 5)
-	require.NoError(b, err)
-	b.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(b, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	b.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public`)
-	require.NoError(b, err)
 	repos, err := NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool)
 	require.NoError(b, err)
 	require.NoError(b, repos.EnsureUsageLogPartitioned(ctx, time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)))

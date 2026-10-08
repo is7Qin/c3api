@@ -28,11 +28,13 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // queryBarrier 一次性查询屏障：匹配到目标查询时在**发送前**阻塞，直到 release。
@@ -109,12 +111,16 @@ func (t *barrierTx) Query(ctx context.Context, query string, args, v any) error 
 	return t.Tx.Query(ctx, query, args, v)
 }
 
-// newBarrierRepos 用屏障驱动在同一共享 schema 上构造独立仓储实例（不触发 migrate）。
+// newBarrierRepos 用屏障驱动在本测试的私有 clone 上构造独立仓储实例（不触发 migrate）。
+// pgtest.Clone 按测试幂等 ⇒ 与同测试内的 newPGReposShared 共享同一库（见同包 pg_shared_test.go）。
 func newBarrierRepos(t *testing.T, bar *queryBarrier) *repository.Repository {
 	t.Helper()
-	ensurePGShared(t)
-	drv := entsql.OpenDB(dialect.Postgres, sharedPG.db)
-	brepos, err := repository.NewWithPG(context.Background(), &barrierDriver{Driver: drv, barrier: bar}, false, sharedPG.pool)
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
+	db := stdlib.OpenDBFromPool(pool)
+	t.Cleanup(func() { _ = db.Close() })
+	drv := entsql.OpenDB(dialect.Postgres, db)
+	brepos, err := repository.NewWithPG(context.Background(), &barrierDriver{Driver: drv, barrier: bar}, false, pool)
 	require.NoError(t, err)
 	return brepos
 }

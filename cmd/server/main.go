@@ -750,7 +750,7 @@ func main() {
 		MaxInflight:       effectiveInflight,
 		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
-		AdminHandler:      h.RoutesMux(),
+		AdminHandler:      h.Router(),
 		UserHandler:       userHandler,
 		SupplierHandler:   supplierHandler,
 		AIHandler:         planReadyGate(sched, aiRouter),

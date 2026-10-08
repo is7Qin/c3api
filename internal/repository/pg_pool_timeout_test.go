@@ -11,8 +11,10 @@ package repository_test
 // 回归锚：session 级 statement_timeout 与 admin 面 ScanStats 大窗口聚合实测
 // 冲突（57014，见 f1-impl-report.md）→ 不设会话级，计费路径执行时长由
 // 结算语句 per-query 10s ctx 超时兜底（settleTimeout，
-// TestPGBillingDeductLockTimeout）。纯读测试（SHOW），不动表/schema——与既有
-// PG 测试共享测试库串行无冲突。基座约定同 pg_account_groups_test：
+// TestPGBillingDeductLockTimeout）。纯读测试（SHOW），不动表。**刻意**绕开
+// pgtest.Clone/OpenPool，直连 TEST_DATABASE_URL 基库：本测试断言的是
+// repository.OpenPG 自身的连接池补丁（lock_timeout / MaxConnLifetime），必须
+// 不经过 pgtest 的池装配——spec §6.4「OpenPool 唯一开池入口」在此有意破例。
 // TEST_DATABASE_URL 未设置 → t.Skip。
 
 import (

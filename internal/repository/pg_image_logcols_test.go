@@ -33,6 +33,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // pgCallLogCols 统一计费模型 2 列元数据（data_type/is_nullable 断言用）：
@@ -82,7 +83,7 @@ func pgCallColAbsent(t *testing.T, pool *pgxpool.Pool, name string) {
 // 不存在（删 6 加 2 的建表终态语义）。
 func TestUsageLogCallColumnsExistPG(t *testing.T) {
 	newPGRepos(t) // bootstrap 副作用（分区表路径建表）
-	pool := pgTestPool(t)
+	pool := pgTestPool(t, pgtest.Clone(t))
 
 	// 分区表路径（newPGRepos 已 bootstrap）
 	for _, c := range pgCallLogCols {
@@ -99,7 +100,7 @@ func TestUsageLogCallColumnsExistPG(t *testing.T) {
 
 	// 普通表 → bootstrap DROP 重建路径（用户裁决：直接重建即终态，无补列逻辑）
 	ctx := context.Background()
-	db := pgTestDB(t)
+	db := pgTestDB(t, pgtest.Clone(t))
 	_, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
 	require.NoError(t, err)
 	drv := entsql.OpenDB(dialect.Postgres, db)

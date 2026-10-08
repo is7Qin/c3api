@@ -46,7 +46,7 @@ func (s *Service) RegisterUser(ctx context.Context, email, password string) (*do
 		return nil, err
 	}
 	if existing != nil {
-		return nil, ErrConflict // email 唯一 → 409
+		return nil, ErrEmailExists // email 唯一 → 409
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
@@ -89,7 +89,10 @@ func (s *Service) RegisterUser(ctx context.Context, email, password string) (*do
 	})
 	if err != nil {
 		// 并发重复邮箱：双过 pre-check 后一者撞 DB 唯一冲突 → repo 已映射
-		// ErrConflict → 这里映射 409（不映射 → 裸错 500）。
+		// repository.ErrConflict（本事务唯一冲突源即 email）→ ErrEmailExists。
+		if errors.Is(err, repository.ErrConflict) {
+			return nil, ErrEmailExists
+		}
 		return nil, mapRepoErr(err)
 	}
 	if temp := s.settingInt("default_user_temp_balance"); temp > 0 {
@@ -209,7 +212,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string, role d
 		return nil, err
 	}
 	if existing != nil {
-		return nil, ErrConflict // email 唯一 → 409
+		return nil, ErrEmailExists // email 唯一 → 409
 	}
 	hash, err := auth.HashPassword(password)
 	if err != nil {
@@ -234,7 +237,11 @@ func (s *Service) CreateUser(ctx context.Context, email, password string, role d
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		// 并发重复邮箱（管理面并发建同一 email）：repo 唯一冲突 → ErrEmailExists。
+		if errors.Is(err, repository.ErrConflict) {
+			return nil, ErrEmailExists
+		}
+		return nil, mapRepoErr(err)
 	}
 	s.upsertUserSnapshot(created)
 	s.inv.Users()

@@ -11,7 +11,6 @@ package repository
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"testing"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 func observedRouteClass(fill byte) domain.RouteClassIDVal {
@@ -45,18 +45,11 @@ func insertObservedFlowFact(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 
 func openObservedPG(t *testing.T) (context.Context, *pgxpool.Pool, *Repository) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	dsn := pgtest.CloneEmpty(t)
 	ctx := context.Background()
-	pool, err := OpenPG(ctx, dsn, 2)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
-	require.NoError(t, err)
 	repos, err := NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool)
 	require.NoError(t, err)
 	return ctx, pool, repos

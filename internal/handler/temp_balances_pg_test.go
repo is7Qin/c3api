@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +24,7 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // /api/admin/temp-balances 真实 PG 测试（spec 2026-08-15）：全量视角（含过期/
@@ -32,30 +32,14 @@ import (
 // 基座同 overview_pg_test.go：独立 schema + repository.New（本查询走 ent，
 // 无需 pool/分区表）。
 
-// handlerTempBalancesPGTestSchema 本文件 PG 测试专用 schema。
-const handlerTempBalancesPGTestSchema = "handler_tempbalances_test"
-
-// tempBalancesPGTestDB 打开真实 PG（独立 schema）+ 迁移建表，返回仓库。
+// tempBalancesPGTestDB 打开真实 PG（测试私有 clone）+ 迁移建表，返回仓库。
 func tempBalancesPGTestDB(t *testing.T) *repository.Repository {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + handlerTempBalancesPGTestSchema
-	} else {
-		dsn += "?search_path=" + handlerTempBalancesPGTestSchema
-	}
-	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+handlerTempBalancesPGTestSchema+` CASCADE; CREATE SCHEMA `+handlerTempBalancesPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	return repos
 }

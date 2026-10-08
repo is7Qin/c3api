@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // RED (TestRoutingQualityWindowPlanPG): Q2 must use the fact identity
@@ -42,18 +42,11 @@ func walkWindowPlan(n *windowPlanNode, visit func(*windowPlanNode)) {
 }
 
 func TestRoutingQualityWindowPlanPG(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	dsn := pgtest.CloneEmpty(t)
 	ctx := context.Background()
-	pool, err := OpenPG(ctx, dsn, 2)
-	require.NoError(t, err)
-	defer pool.Close()
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
-	defer db.Close()
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
-	require.NoError(t, err)
+	t.Cleanup(func() { _ = db.Close() })
 	repos, err := NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), true, pool)
 	require.NoError(t, err)
 

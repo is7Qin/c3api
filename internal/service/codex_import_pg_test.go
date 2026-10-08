@@ -6,8 +6,6 @@ package service
 
 import (
 	"context"
-	"os"
-	"strings"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -18,37 +16,22 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // ---------------------------------------------------------------------------
 // codex 批量导入 service 层真实 PG（幂等矩阵/事务回滚/缺省断言/快照生效
-// ——基座同 signup_bootstrap_pg_test.go：独立 schema，不 DROP public）。
+// ——基座同 signup_bootstrap_pg_test.go：测试私有 clone）。
 // ---------------------------------------------------------------------------
 
-// codexImportPGTestSchema 本文件 PG 测试专用 schema。
-const codexImportPGTestSchema = "codex_import_test"
-
-// newCodexImportPG 独立 schema 上的服务（模板/组种子齐备）。
+// newCodexImportPG 测试私有 clone 上的服务（模板/组种子齐备）。
 func newCodexImportPG(t *testing.T) (*Service, *repository.Repository) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + codexImportPGTestSchema
-	} else {
-		dsn += "?search_path=" + codexImportPGTestSchema
-	}
-	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+codexImportPGTestSchema+` CASCADE; CREATE SCHEMA `+codexImportPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), true, pool)
+	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), false, pool)
 	require.NoError(t, err)
 	svc := New(Deps{Store: repos, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	return svc, repos

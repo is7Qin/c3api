@@ -18,6 +18,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 - **`proxy.behind_cdn` now defaults to `true`**: the client IP column (usage and error logs) trusts `CF-Connecting-IP` → `True-Client-IP` → `X-Real-IP` (first non-empty) with a `RemoteAddr` fallback, instead of the previous `RemoteAddr`-only default. Deployments that expose the gateway directly to the internet must set it back to `false`, because those headers are then client-forgeable.
 
+- **PostgreSQL integration tests clone a template database per test**: the suite runs through `scripts/test.sh`, which builds one migrated template database and clones a private database from it (`CREATE DATABASE ... TEMPLATE`) for each test. Migrations now run once instead of ~20×, and because tests no longer share a schema the package binaries can run concurrently again — the old `go test -p 1` serialisation is gone. The script also enforces the repo's no-`t.Parallel()` discipline and pre-checks that the test role can create databases.
+
 ## [v0.0.1-beta.7] - 2026-09-28
 
 ### Breaking

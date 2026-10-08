@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -24,37 +23,22 @@ import (
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // /api/user/temp-balances + /api/user/auth/change-password 真实 PG 测试（spec
 // 2026-08-15）：有效过滤/FEFO 排序/total USD/越权回归/空结果；改密码
 // 登录语义校验 + 新密码校验 + 更新后旧密登录失败新密成功。
 
-// handlerUserTempPGTestSchema 本文件 PG 测试专用 schema。
-const handlerUserTempPGTestSchema = "handler_usertemp_test"
-
 // newUserTempPGRouter 真实 PG 用户面路由（真实 svc + 真实 Issuer；状态快照
 // 直读真实仓库——对齐 fakeUserStatus 语义）。
 func newUserTempPGRouter(t *testing.T) (*repository.Repository, func(method, path, body, token string) *httptest.ResponseRecorder) {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
-	if strings.Contains(dsn, "?") {
-		dsn += "&search_path=" + handlerUserTempPGTestSchema
-	} else {
-		dsn += "?search_path=" + handlerUserTempPGTestSchema
-	}
-	ctx := context.Background()
-	pool, err := repository.OpenPG(ctx, dsn, 5)
-	require.NoError(t, err)
-	t.Cleanup(pool.Close)
+	dsn := pgtest.Clone(t)
+	pool := pgtest.OpenPool(t, dsn)
 	db := stdlib.OpenDBFromPool(pool)
 	t.Cleanup(func() { _ = db.Close() })
-	_, err = db.ExecContext(ctx, `DROP SCHEMA IF EXISTS `+handlerUserTempPGTestSchema+` CASCADE; CREATE SCHEMA `+handlerUserTempPGTestSchema+`;`)
-	require.NoError(t, err)
-	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
+	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), false)
 	require.NoError(t, err)
 	svc := service.New(service.Deps{Store: repos, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
 	iss := auth.NewIssuer("test-secret")

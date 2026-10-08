@@ -36,7 +36,7 @@ func statusPtrT(s domain.AccountStatus) *domain.AccountStatus { return &s }
 // recordingHealthSink 是 proxy 测试包的规则引擎 HealthSink 记录面。cutover 后
 // 惩罚动作（typed Throttle/FailAccount）不再回写调度器运行时状态机（unhealthy/
 // 429/cooldown 持久面已删）——sink 收到的动作即"punish 恰一次投递"的可观测事实。
-// 全测试 harness 的 rule.New 统一挂 testHealthSink（全仓 t.Parallel()=0 串行，
+// 全测试 harness 的 rule.New 统一挂 testHealthSink（全仓 t.Parallel=0 串行，
 // 包级实例安全；断言前 reset）。
 type recordingHealthSink struct {
 	mu       sync.Mutex
