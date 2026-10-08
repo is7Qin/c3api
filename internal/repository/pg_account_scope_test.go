@@ -50,6 +50,18 @@ func seedOwnedAccount(t *testing.T, repos *repository.Repository, tplID, uid int
 	return a
 }
 
+// seedCodexKeyExtPG 为账号写入带组合幂等键（codex_email, codex_account_id）的
+// pat ext 行——跨归属同键隔离断言用（该组合键有全局唯一索引）。
+func seedCodexKeyExtPG(t *testing.T, repos *repository.Repository, accountID int64, email, codexAccountID, pat string) {
+	t.Helper()
+	_, err := repos.AccountExts.UpsertAccountExt(context.Background(), &domain.AccountExt{
+		AccountID: accountID, CredentialType: credential.TypeCodexPAT,
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
+		CodexEmail:    strPtrPG(email), CodexAccountID: strPtrPG(codexAccountID), CodexPATKey: strPtrPG(pat),
+	})
+	require.NoError(t, err)
+}
+
 // TestPGAccountScopeOwnershipPredicate A14③：同一批 id 在管理面（无作用域）与供应商
 // 面（作用域）下返回不同的可见集——越域 id 0 行（ErrNotFound），不泄漏存在性。
 func TestPGAccountScopeOwnershipPredicate(t *testing.T) {
@@ -134,6 +146,58 @@ func TestPGUsageAggScopeC1(t *testing.T) {
 	aggs, err = repos.ScanUsageAgg(context.Background(), []int64{mine.ID, theirs.ID}, from, to)
 	require.NoError(t, err)
 	require.Len(t, aggs, 2, "管理面无作用域 ⇒ 全量可见")
+}
+
+// TestPGCodexKeyScopeIsolation 跨归属同组合键（spec §2.5「跨归属同键 ⇒ 行级 failed，
+// 绝不得越权更新他人账号」）在真实 PG 上成立：作用域查重查不到他人行（不是「先全局
+// 命中再应用层比归属」），插入撞全局唯一索引，**他人行与其凭据保持原值**。
+func TestPGCodexKeyScopeIsolation(t *testing.T) {
+	repos := newPGReposShared(t)
+	tpl := seedPGTemplate(t, repos)
+	owner := seedSupplierUser(t, repos, "key-scope-owner@example.com")
+	other := seedSupplierUser(t, repos, "key-scope-other@example.com")
+
+	const email, acctID = "shared@example.com", "shared-acct"
+	a := seedOwnedAccount(t, repos, tpl.ID, owner.ID, "key-scope-a")
+	seedCodexKeyExtPG(t, repos, a.ID, email, acctID, "owner-pat")
+
+	otherCtx := scopeCtx(other.ID)
+	// ① 供应商面（他人）：同组合键查重**查不到**（作用域谓词 AND 进 SQL）。
+	_, err := repos.AccountExts.FindAccountExtByCodexKey(otherCtx, email, acctID)
+	require.ErrorIs(t, err, repository.ErrNotFound,
+		"越域同键不得被全局查重命中（否则即 spec 禁止的 TOCTOU 形态）")
+
+	// 管理面（无作用域）：同键可见（证明过滤确由作用域引入）。
+	got, err := repos.AccountExts.FindAccountExtByCodexKey(context.Background(), email, acctID)
+	require.NoError(t, err)
+	require.Equal(t, a.ID, got.AccountID)
+
+	// ② 他人导入同键（新账号 + 同 ext 键）⇒ 撞全局唯一索引，事务回滚，无孤儿。
+	b := seedOwnedAccount(t, repos, tpl.ID, other.ID, "key-scope-b")
+	_, err = repos.AccountExts.UpsertAccountExt(context.Background(), &domain.AccountExt{
+		AccountID: b.ID, CredentialType: credential.TypeCodexPAT,
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
+		CodexEmail:    strPtrPG(email), CodexAccountID: strPtrPG(acctID), CodexPATKey: strPtrPG("other-pat"),
+	})
+	require.Error(t, err, "跨归属同组合键必须撞唯一索引（row-level failed，不是改他人行）")
+
+	// ③ 他人行与其凭据**未被改动**。
+	cur, err := repos.AccountExts.GetAccountExt(context.Background(), a.ID)
+	require.NoError(t, err)
+	require.Equal(t, "owner-pat", *cur.CodexPATKey, "跨归属导入不得改他人凭据")
+	// ④ 他人账号仍只归原主（作用域下他人仍不可见）。
+	_, err = repos.Accounts.GetAccount(otherCtx, a.ID)
+	require.ErrorIs(t, err, repository.ErrNotFound)
+
+	// ⑤ 凭据 CAS 也不得越域写（§2.5「更新语句必须 AND 供应商作用域」）：他人带
+	// **正确 revision** 轮转凭据 ⇒ 影响 0 行（ErrStaleRevision），他人 ext 不变。
+	accA, err := repos.Accounts.GetAccount(context.Background(), a.ID)
+	require.NoError(t, err)
+	err = repos.AccountExts.AdminWritePATKeyCAS(otherCtx, a.ID, accA.LifecycleRevision, "attacker-pat")
+	require.ErrorIs(t, err, repository.ErrStaleRevision, "越域 CAS 必须 0 行拒绝")
+	cur, err = repos.AccountExts.GetAccountExt(context.Background(), a.ID)
+	require.NoError(t, err)
+	require.Equal(t, "owner-pat", *cur.CodexPATKey, "越域 CAS 不得改动他人凭据")
 }
 
 // TestPGAccountScopeOwnedExtRead C1 回归（ext 面）：GetOwnedAccountExt 越域不读 ext

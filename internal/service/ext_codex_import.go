@@ -341,12 +341,15 @@ func (s *Service) updateCodexCredentials(ctx context.Context, accountID int64, r
 	return mapRepoErr(s.store.AdminWritePATKeyCAS(ctx, accountID, expected, row.patKey))
 }
 
-// importKeyConflictErr 唯一索引冲突 → 行级 failed 文案（并发同键兜底面：
-// ent 透传 *pgconn.PgError Code=23505）。
+// importKeyConflictErr 唯一索引冲突 → 行级 failed 文案（并发同键兜底面；
+// 也覆盖**跨归属同组合键**：供应商面查重带作用域 ⇒ 他人归属的同键行查不到，
+// 落到 INSERT 撞全局唯一索引 (codex_email, codex_account_id) ⇒ 23505）。
+// 文案**不得回显他人 id**：判据里只出现本次请求自带的 email/account_id（那是
+// 调用方自己的输入），归属与行 id 一律不出现——越域探针拿不到任何他人信息。
 func importKeyConflictErr(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return errors.New("键冲突：同 (codex_email, codex_account_id) 账号并发导入，本行未写入")
+		return errors.New("键冲突：同 (codex_email, codex_account_id) 账号已存在或并发导入，本行未写入")
 	}
 	return err
 }

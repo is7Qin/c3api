@@ -136,10 +136,14 @@ func loadAccountExtInTx(ctx context.Context, tx *ent.Client, accountID int64) (*
 // bumpAccountGeneration 在同一个 UPDATE 里推进 C（无条件）并按需推进 K：C 用
 // **相对自增**（与 guard 解耦——把 expected 写进 C 会同时破坏客户端 CAS 令牌与
 // 重编译水位），guard 仍是 C 前置条件。
+//
+// **作用域（§2.5）**：ctx 带作用域时 owner 谓词同样 AND 进本 UPDATE——越域账号
+// 影响 0 行，调用方按「stale/越域」同一分支拒绝（不写他人行、不推进他人代际）。
 func bumpAccountGeneration(ctx context.Context, tx *ent.Client, accountID, expectedRevision int64, advanceIdentity bool) (int, error) {
 	u := tx.Account.Update().
 		Where(account.IDEQ(accountID), account.LifecycleRevisionEQ(expectedRevision)).
 		AddLifecycleRevision(1)
+	u = accountOwnerUpdate(ctx, u)
 	if advanceIdentity {
 		u = u.AddIdentityRevision(1)
 	}
@@ -275,17 +279,55 @@ func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64
 // (codex_email, codex_account_id) 双条件 AND 定位，对齐唯一索引；GetAccountExt
 // 仅按 account_id，查重面不存在）。命中返回行（含 credential_type——跨类型
 // 判定用）；缺行 → ErrNotFound。
+//
+// **作用域（§2.5）**：供应商面（ctx 带作用域）时 owner 谓词经子查询 AND 进**同
+// 一条 SQL**——他人归属的同键行查不到，于是不会走「先全局命中、再应用层比归属」
+// 的 TOCTOU 路径（那正是 spec 明令禁止的形状）。跨归属同键随后撞全局唯一索引
+// （23505）⇒ 行级 failed，不改他人行（调用方把它翻成不透出他人 id 的文案）。
 func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
-	row, err := r.client.AccountExt.Query().
+	row, err := r.accountExtQuery(ctx).
 		Where(accountext.CodexEmailEQ(codexEmail), accountext.CodexAccountIDEQ(codexAccountID)).
 		Only(ctx)
 	if err != nil {
 		if ent.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", ErrNotFound, codexEmail, codexAccountID)
+			return nil, fmt.Errorf("%w: codex key not found in scope", ErrNotFound)
 		}
 		return nil, err
 	}
 	return toDomainAccountExt(row), nil
+}
+
+// accountExtQuery ext 查询基座：作用域未注入（管理面全量）⇒ 不附加谓词；供应商面
+// ⇒ 限定在「本归属账号」集合内（`account_id IN (SELECT id FROM accounts
+// WHERE supplier_user_id=$n)`）。**与账号单读同谓词**：不额外过滤软删——软删判据
+// 由调用方按行内 `deleted_at` 自行决定（导入路径据此给出「账号已删除」的明确
+// 行级文案，而不是把已删行伪装成键冲突）。
+func (r *AccountExtRepo) accountExtQuery(ctx context.Context) *ent.AccountExtQuery {
+	q := r.client.AccountExt.Query()
+	s := domain.AccountScopeFrom(ctx)
+	if !s.Set {
+		return q
+	}
+	owned, err := r.client.Account.Query().
+		Where(accountOwnerPred(ctx)...).
+		IDs(ctx)
+	if err != nil || len(owned) == 0 {
+		// 归属集取不到 ⇒ 空集（fail-closed：作用域已声明但归属不可判定一律看不到，
+		// 不放行全量）。
+		return q.Where(accountext.AccountIDIn())
+	}
+	return q.Where(accountext.AccountIDIn(owned...))
+}
+
+// accountOwnerFilter 把归属谓词 AND 进 accounts 上的 UPDATE（`WHERE id = $1 AND
+// supplier_user_id = $2`）：影响行数 0 即代表「账号越域或 revision 陈旧」，两种
+// 情形在调用方同一错误分支（不区分，避免泄漏他人行状态）。
+func accountOwnerUpdate(ctx context.Context, u *ent.AccountUpdate) *ent.AccountUpdate {
+	s := domain.AccountScopeFrom(ctx)
+	if !s.Set {
+		return u
+	}
+	return u.Where(account.SupplierUserID(s.OwnerUID))
 }
 
 // GetAccountExt 按账号取类型化鉴权扩展；缺行 → ErrNotFound。
@@ -353,7 +395,7 @@ func (r *AccountExtRepo) AdminWriteOAuthRotationCAS(ctx context.Context, account
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, accountID, expectedRevision)
+		return fmt.Errorf("%w: account_id=%d expected revision %d stale or outside scope", ErrStaleRevision, accountID, expectedRevision)
 	}
 	u := tx.AccountExt.Update().Where(accountext.AccountIDEQ(accountID)).SetCodexOauthToken(at).SetCodexOauthRefreshToken(rt)
 	if expiresAt != nil {
@@ -388,7 +430,7 @@ func (r *AccountExtRepo) AdminWritePATKeyCAS(ctx context.Context, accountID int6
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, accountID, expectedRevision)
+		return fmt.Errorf("%w: account_id=%d expected revision %d stale or outside scope", ErrStaleRevision, accountID, expectedRevision)
 	}
 	n2, err := tx.AccountExt.Update().Where(accountext.AccountIDEQ(accountID)).SetCodexPatKey(patKey).Save(ctx)
 	if err != nil {

@@ -5,6 +5,7 @@
 package httpface
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -29,6 +30,33 @@ func Decode(r *http.Request, v any) error {
 		return err
 	}
 	return nil
+}
+
+// HasJSONKey 报告原始 JSON **对象顶层**是否出现该键（**含显式 null**）。
+// 与「解码到 &T」的区别：普通指针字段把「键缺席」与「键为 null」都归零值，而
+// 部分契约要求「出现即拒」（如供应商面导入体出现 supplier_user_id ⇒ 400，
+// 见 spec 2026-10-09 §2.5）——那种判据只能看原始键存在性。
+//
+// body 为已读入内存的原始请求体。顶层非对象（数组/标量）⇒ 返回 false（不做
+// 结构校验；Decode 到结构体的路径自会拒绝，不在此重复判定）。非法 JSON ⇒ 错误。
+func HasJSONKey(body []byte, key string) (bool, error) {
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return false, err
+	}
+	_, ok := raw[key]
+	return ok, nil
+}
+
+// DecodeRaw 读入原始请求体（有界）并恢复 r.Body，供需要「键存在性」判据的
+// 端点先看原始 JSON、再走 Decode 的严格结构校验。
+func DecodeRaw(r *http.Request) ([]byte, error) {
+	body, err := io.ReadAll(http.MaxBytesReader(nil, r.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
 }
 
 // Deref 返回指针指向的值；nil 时返回零值。

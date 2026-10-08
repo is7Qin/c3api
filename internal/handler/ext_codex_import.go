@@ -5,6 +5,8 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -20,6 +22,11 @@ import (
 // 结构错误（items 空/超 100、template_id 缺）→ 400；行级失败归 failed（HTTP 恒
 // 200——行级语义，全部失败也 200）。
 func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+	raw, err := httpface.DecodeRaw(r)
+	if err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
 	var in CodexOAuthImportBody
 	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -29,9 +36,11 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 		httpface.WriteErr(w, http.StatusBadRequest, "items must contain 1-100 entries")
 		return
 	}
-	// 归属（§2.5）：供应商面导入体出现该字段（含 null）⇒ 400；归属恒为 JWT 本人。
-	if in.SupplierUserId != nil && domain.AccountScopeFrom(r.Context()).Set {
-		httpface.WriteErr(w, http.StatusBadRequest, "supplier_user_id is not writable on the supplier surface")
+	// 归属（§2.5）：供应商面导入体出现该字段（**含显式 null**）⇒ 400；归属恒为
+	// JWT 本人。普通指针把 null 与缺席都归零值，故判据取**原始键存在性**（不是
+	// `!= nil`——那会让 `"supplier_user_id": null` 漏过）。
+	if err := rejectSupplierUserIDOnSupplierSurface(r.Context(), raw, "supplier_user_id is not writable on the supplier surface"); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	items := make([]domain.CodexOAuthImportItem, len(in.Items))
@@ -64,6 +73,11 @@ func (h *AdminAPI) PostAccountsBatchImportCodexOauth(w http.ResponseWriter, r *h
 // PostAccountsBatchImportCodexPat 批量导入 codex-pat 凭据（ServerInterface；
 // 结构校验与响应组装同 oauth 端点）。
 func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
+	raw, err := httpface.DecodeRaw(r)
+	if err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
 	var in CodexPATImportBody
 	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -73,8 +87,9 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 		httpface.WriteErr(w, http.StatusBadRequest, "items must contain 1-100 entries")
 		return
 	}
-	if in.SupplierUserId != nil && domain.AccountScopeFrom(r.Context()).Set {
-		httpface.WriteErr(w, http.StatusBadRequest, "supplier_user_id is not writable on the supplier surface")
+	// 归属（§2.5）：同 oauth 端点——出现（含显式 null）⇒ 400。
+	if err := rejectSupplierUserIDOnSupplierSurface(r.Context(), raw, "supplier_user_id is not writable on the supplier surface"); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	items := make([]domain.CodexPATImportItem, len(in.Items))
@@ -100,6 +115,25 @@ func (h *AdminAPI) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r *htt
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, toAPIImportResult(res))
+}
+
+// rejectSupplierUserIDOnSupplierSurface 供应商面导入体的归属字段拒绝判据
+// （§2.5 行「导入体出现 ⇒ 400」）：**原始键存在性**判据（`has`），不是值判据
+// ——生成类型 `*int64` 无法区分「键缺席」与「键为 null」，`!= nil` 会让显式
+// null 漏过（spec I4）。管理面（无作用域）不受此判据约束：该字段在那里是
+// 「保留但无效」，归属照旧由管理面单建/批改分配。
+func rejectSupplierUserIDOnSupplierSurface(ctx context.Context, raw []byte, msg string) error {
+	if !domain.AccountScopeFrom(ctx).Set {
+		return nil
+	}
+	has, err := httpface.HasJSONKey(raw, "supplier_user_id")
+	if err != nil {
+		return errors.New("invalid json: " + err.Error())
+	}
+	if has {
+		return errors.New(msg)
+	}
+	return nil
 }
 
 // codexImportConfigFromBody body 级账号配置 → 领域配置（倍率走 normalToMult
