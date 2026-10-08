@@ -125,7 +125,7 @@ func (w *CreditWorker) runOnceLocked(ctx context.Context) {
 	}
 
 	if _, err := w.consumeBatch(ctx); err != nil {
-		w.warn("supplier credit consume failed", logx.Error(err))
+		w.warn(creditConsumeFailedEvent(err, false), logx.Error(err))
 		// 故障轮仍更新观测（陈旧状态）——置 stale，不刷新则 lag 保持旧健康值，
 		// ops 看不到记账链已停摆（spec I2）。
 		w.lagStale.Store(true)
@@ -134,23 +134,87 @@ func (w *CreditWorker) runOnceLocked(ctx context.Context) {
 	w.refreshLag(ctx)
 }
 
+// creditConsumeStage 标识 consumeBatch 的失败阶段（取批 / 查 freeze / 记账 apply）。
+// 它不是控制流开关，只供调用方按阶段选取告警事件名——spec I2 要求记账链停摆按阶段
+// 可筛，而非笼统一个事件名。取值顺序即消费顺序。
+type creditConsumeStage int
+
+const (
+	stageFetch creditConsumeStage = iota
+	stageFreeze
+	stageApply
+)
+
+// stageLabel 返回该阶段在 logx.Error(err) 里的前缀（与旧错误串逐字一致）。
+func (s creditConsumeStage) stageLabel() string {
+	switch s {
+	case stageFetch:
+		return "fetch batch"
+	case stageFreeze:
+		return "freeze hours lookup"
+	case stageApply:
+		return "apply"
+	}
+	return "consume"
+}
+
+// creditConsumeError 携带失败阶段与底层错误：调用方按阶段选事件名，且 logx.Error(err)
+// 仍打出阶段前缀（%w 语义——不吞错误、不改控制流/重试/预算）。
+type creditConsumeError struct {
+	stage creditConsumeStage
+	err   error
+}
+
+func (e *creditConsumeError) Error() string { return e.stage.stageLabel() + ": " + e.err.Error() }
+func (e *creditConsumeError) Unwrap() error { return e.err }
+
+// creditConsumeFailedEvent 按失败阶段选取告警事件名，恢复「取批 / 查 freeze / 记账
+// apply」三阶段的可筛性（spec I2）。drain=true 用停机排空变体；无法识别阶段时退回
+// 笼统名（不吞错误、不改控制流）。
+func creditConsumeFailedEvent(err error, drain bool) string {
+	suffix := "consume failed"
+	var ce *creditConsumeError
+	if errors.As(err, &ce) {
+		switch ce.stage {
+		case stageFetch:
+			if drain {
+				suffix = "fetch failed"
+			} else {
+				suffix = "fetch batch failed"
+			}
+		case stageFreeze:
+			if drain {
+				suffix = "freeze lookup failed"
+			} else {
+				suffix = "freeze hours lookup failed"
+			}
+		case stageApply:
+			suffix = "apply failed"
+		}
+	}
+	if drain {
+		return "supplier credit drain " + suffix
+	}
+	return "supplier credit " + suffix
+}
+
 // consumeBatch 单批消费（fetch → freeze → apply），正常周期与排空共用。返回本次
-// 实际记账的行数（批为空 ⇒ 0）；任一阶段失败返回带阶段前缀的错误（调用方决定
-// 告警措辞与 stale 标记）。不改重试次数、释放顺序、总预算。
+// 实际记账的行数（批为空 ⇒ 0）；任一阶段失败返回带阶段标记的错误（调用方据此选
+// 分阶段告警事件名与 stale 标记）。不改重试次数、释放顺序、总预算。
 func (w *CreditWorker) consumeBatch(ctx context.Context) (int, error) {
 	batch, err := w.store.FetchCreditBatch(ctx, w.batchLimit())
 	if err != nil {
-		return 0, fmt.Errorf("fetch batch: %w", err)
+		return 0, &creditConsumeError{stage: stageFetch, err: err}
 	}
 	if len(batch) == 0 {
 		return 0, nil
 	}
 	freeze, err := w.store.FreezeHoursByUID(ctx, uniqueUIDs(batch))
 	if err != nil {
-		return 0, fmt.Errorf("freeze hours lookup: %w", err)
+		return 0, &creditConsumeError{stage: stageFreeze, err: err}
 	}
 	if err := w.applyWithRetry(ctx, batch, freeze); err != nil {
-		return 0, fmt.Errorf("apply: %w", err)
+		return 0, &creditConsumeError{stage: stageApply, err: err}
 	}
 	return len(batch), nil
 }
@@ -245,7 +309,7 @@ func (w *CreditWorker) closeDrain(ctx context.Context) {
 		}
 		rows, err := w.consumeBatch(dctx)
 		if err != nil {
-			w.warn("supplier credit drain consume failed", logx.Error(err))
+			w.warn(creditConsumeFailedEvent(err, true), logx.Error(err))
 			return
 		}
 		if rows == 0 {
