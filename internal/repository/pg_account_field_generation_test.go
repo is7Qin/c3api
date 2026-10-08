@@ -51,6 +51,9 @@ func fieldPatchForSpec(t *testing.T, repos *repository.Repository, spec domain.A
 		return repository.AccountPatch{CacheDomain: strPtr("cache-" + spec.Name + ".example")}
 	case domain.FieldUpstreamCostMultiplier:
 		return repository.AccountPatch{UpstreamCostMultiplierBp: intPtr(25000)}
+	case domain.FieldSupplierUserID:
+		owner := seedPGUserRole(t, repos, "owner-"+spec.Name, domain.RoleSupplier)
+		return repository.AccountPatch{SupplierUserID: &owner.ID}
 	default:
 		t.Fatalf("declared field %q has no patch constructor: add one, do not skip", spec.Name)
 		return repository.AccountPatch{}
@@ -79,6 +82,12 @@ func idempotentPatchForSpec(spec domain.AccountFieldSpec, got *domain.Account, g
 		return repository.AccountPatch{CacheDomain: got.CacheDomain}
 	case domain.FieldUpstreamCostMultiplier:
 		return repository.AccountPatch{UpstreamCostMultiplierBp: got.UpstreamCostMultiplierBp}
+	case domain.FieldSupplierUserID:
+		if got.SupplierUserID == 0 {
+			return repository.AccountPatch{}
+		}
+		uid := got.SupplierUserID
+		return repository.AccountPatch{SupplierUserID: &uid}
 	default:
 		return repository.AccountPatch{}
 	}

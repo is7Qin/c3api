@@ -71,6 +71,8 @@ type fakeStore struct {
 	supplierOverviews   map[int64]*domain.SupplierOverview
 	supplierSettlements []*domain.SupplierSettlement
 	supplierApplyErr    error
+	// lastSupplierApplyActor 记录 ApplySettlement 收到的具名操作者（I5 透传断言）。
+	lastSupplierApplyActor domain.FundsActor
 	// supplierBalances 管理面余额替身（§6.3 PATCH/列表）。
 	supplierBalances map[int64]*domain.SupplierBalance
 	// pricingListErr 注入 ListPricing 失败（快照 fail-safe 测试）。
@@ -2561,7 +2563,8 @@ func (f *fakeStore) ListSupplierSettlements(_ context.Context, uid int64, _, _ i
 	return out, int64(len(out)), nil
 }
 
-func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	f.lastSupplierApplyActor = actor
 	if f.supplierApplyErr != nil {
 		return nil, f.supplierApplyErr
 	}
@@ -2700,9 +2703,9 @@ func (f *fakeStore) PaidSettlement(_ context.Context, id, expectedRevision int64
 	})
 }
 
-func (f *fakeStore) AdminApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) AdminApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if _, ok := f.supplierBalances[req.SupplierUID]; !ok {
 		return nil, repository.ErrNotFound
 	}
-	return f.ApplySettlement(ctx, req)
+	return f.ApplySettlement(ctx, req, actor)
 }

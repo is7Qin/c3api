@@ -2625,7 +2625,7 @@ func (f *fakeStore) ListSupplierSettlements(_ context.Context, _ int64, _, _ int
 	return nil, 0, nil
 }
 
-func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) ApplySettlement(_ context.Context, req domain.ApplySettlementRequest, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
 	return &domain.SupplierSettlement{
 		ID: 1, SupplierUserID: req.SupplierUID, Kind: req.Kind, AmountMillis: req.AmountMillis,
 		Status: domain.SettlementPending, Revision: 1, RequestKey: req.RequestKey, RequestedOperator: req.OperatorUID,

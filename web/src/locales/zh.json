@@ -484,7 +484,8 @@
       "label": "归属供应商 user_id（可选）",
       "placeholder": "留空 = 平台自有",
       "hint": "将该账号分配给某供应商（须为 active 的 supplier/platform_admin）。留空表示平台自有／不改变现有归属。",
-      "invalid": "归属供应商 user_id 必须为正整数"
+      "invalid": "归属供应商 user_id 必须为正整数",
+      "clear": "清空归属（回平台自有）"
     }
   },
   "users": {

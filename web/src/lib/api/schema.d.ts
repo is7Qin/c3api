@@ -1992,6 +1992,11 @@ export interface components {
             UpstreamCostMultiplier?: number;
             /** @description 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段） */
             CacheDomain?: string | null;
+            /**
+             * Format: int64
+             * @description 供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）
+             */
+            supplier_user_id?: number | null;
             /** Format: date-time */
             CreatedAt?: string;
             /** Format: date-time */

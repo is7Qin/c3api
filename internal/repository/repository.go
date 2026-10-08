@@ -158,11 +158,11 @@ func (r *Repository) ListSupplierSettlements(ctx context.Context, uid int64, lim
 	return r.supplier.ListSupplierSettlements(ctx, uid, limit, offset)
 }
 
-func (r *Repository) ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+func (r *Repository) ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if r.supplier == nil {
 		return nil, errSupplierNoPool
 	}
-	return r.supplier.ApplySettlement(ctx, req)
+	return r.supplier.ApplySettlement(ctx, req, actor)
 }
 
 // --- 管理面结算审批门面（service.SupplierAdminStore）---

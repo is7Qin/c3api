@@ -455,6 +455,9 @@ type Account struct {
 	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
+
+	// SupplierUserId 供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）
+	SupplierUserId *int64 `json:"supplier_user_id"`
 }
 
 // AccountBatchUpdateResponse 账号批量更新响应（独立 schema——不与 templates/groups 共用的 BatchUpdateResponse 合并）
@@ -591,6 +594,9 @@ type AccountView struct {
 	Concurrency            *int64   `json:"concurrency,omitempty"`
 	ErrCount               *int     `json:"err_count,omitempty"`
 	ErrRate                *float64 `json:"err_rate,omitempty"`
+
+	// SupplierUserId 供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）
+	SupplierUserId *int64 `json:"supplier_user_id"`
 }
 
 // AccountsUsageResponse 账号用量聚合响应（items 顺序 = account_ids 去重后顺序）

@@ -484,7 +484,8 @@
       "label": "Owning supplier user_id (optional)",
       "placeholder": "Empty = platform-owned",
       "hint": "Assign this account to a supplier (must be an active supplier/platform_admin). Empty keeps platform-owned / leaves ownership unchanged.",
-      "invalid": "Owning supplier user_id must be a positive integer"
+      "invalid": "Owning supplier user_id must be a positive integer",
+      "clear": "Clear ownership (back to platform-owned)"
     }
   },
   "users": {

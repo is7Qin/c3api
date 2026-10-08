@@ -137,7 +137,9 @@ func resetPGSharedData(t *testing.T) {
 		temp_balances, balance_logs, redemption_uses, accounts, groups, users,
 		redemption_codes, rules, settings, email_templates, price_variants,
 		price_entries, templates, usage_logs, err_logs, usage_stats,
-		usage_entity_stats, stats_agg_watermark RESTART IDENTITY`)
+		usage_entity_stats, stats_agg_watermark,
+		supplier_balances, supplier_frozen_chunks, supplier_settlements,
+		supplier_reconciliation RESTART IDENTITY`)
 	require.NoError(t, err)
 }
 

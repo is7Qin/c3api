@@ -221,9 +221,14 @@ func (r *SupplierRepo) PatchSupplierBalance(ctx context.Context, uid int64, shar
 // --- 五态 CAS 迁移 ---
 
 // lockFundsOperator 在写事务内锁操作者 users 行并复核（I5）：status=active、
-// role=platform_admin、token_version == 签名请求 version。任一不符 ⇒ ErrInvalidInput
-// 包装（service 归类 403）。缺行 ⇒ 同样拒绝。
-func lockFundsOperator(ctx context.Context, tx pgx.Tx, actor domain.FundsActor) error {
+// role ∈ roles（缺省 = platform_admin；`supplier_request` 传供应商面可达集
+// `SupplierSurfaceRoles()`）、token_version == 签名请求 version。任一不符 ⇒
+// ErrFundsForbidden（service 归类 403）。缺行 ⇒ 同样拒绝。锁序固定：操作者
+// users → 目标 supplier_balances → supplier_settlements（§6.5）。
+func lockFundsOperator(ctx context.Context, tx pgx.Tx, actor domain.FundsActor, roles ...domain.Role) error {
+	if len(roles) == 0 {
+		roles = []domain.Role{domain.RolePlatformAdmin}
+	}
 	var role, status string
 	var tv int64
 	err := tx.QueryRow(ctx, `SELECT role, status, token_version FROM users WHERE id = $1 FOR UPDATE`, actor.UserID).Scan(&role, &status, &tv)
@@ -233,7 +238,14 @@ func lockFundsOperator(ctx context.Context, tx pgx.Tx, actor domain.FundsActor) 
 	if err != nil {
 		return err
 	}
-	if role != string(domain.RolePlatformAdmin) || status != string(domain.UserStatusActive) {
+	allowed := false
+	for _, r := range roles {
+		if role == string(r) {
+			allowed = true
+			break
+		}
+	}
+	if !allowed || status != string(domain.UserStatusActive) {
 		return fmt.Errorf("%w: operator %d role=%s status=%s", ErrFundsForbidden, actor.UserID, role, status)
 	}
 	if tv != actor.TokenVersion {
@@ -356,7 +368,8 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, reaso
 }
 
 // ClaimSettlement approved → paying（认领 CAS；§6.5 C3）：生成/复用全局唯一
-// payment_key、固定 payee_snapshot、判定付款风控门、原子持久化 risk_review。
+// payment_key、固定 payee_snapshot（首次认领固定，重试复用；不一致 ⇒ 拒绝）、
+// 判定付款风控门、原子持久化 risk_review。
 func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision int64, payeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if payeeSnapshot == "" || riskEvidence == "" {
 		return nil, fmt.Errorf("%w: payee_snapshot and risk evidence are required", ErrInvalidInput)
@@ -369,6 +382,21 @@ func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision
 		}
 		if _, err := lockSupplierBalanceRow(ctx, tx, supplierUID); err != nil {
 			return err
+		}
+		// payment_key / payee_snapshot 永久固定（§6.5 C2/I1）：首次认领落定，后续
+		// 认领/恢复复用同键同收款目标；收款目标不一致 ⇒ 拒绝（不得静默更换）。
+		var existingKey, existingPayee *string
+		if err := tx.QueryRow(ctx,
+			`SELECT payment_key, payee_snapshot FROM supplier_settlements WHERE id = $1`, id).
+			Scan(&existingKey, &existingPayee); err != nil {
+			return err
+		}
+		paymentKey := uuid.NewString()
+		if existingKey != nil && *existingKey != "" {
+			paymentKey = *existingKey
+		}
+		if existingPayee != nil && *existingPayee != "" && *existingPayee != payeeSnapshot {
+			return fmt.Errorf("%w: payee_snapshot mismatch on re-claim", ErrInvalidInput)
 		}
 		// 付款风控门（锁等待后以新取 clock_timestamp() 复核年龄）。
 		probe, err := r.billingProbe(ctx, tx)
@@ -392,7 +420,6 @@ func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision
 		if err != nil {
 			return err
 		}
-		paymentKey := uuid.NewString()
 		row := tx.QueryRow(ctx, `UPDATE supplier_settlements
 SET status = 'paying', revision = revision + 1, payout_operator_user_id = $3,
     payout_started_at = clock_timestamp(), payment_key = $4, payee_snapshot = $5, risk_review = $6
@@ -558,12 +585,19 @@ FROM usage_logs WHERE NOT billed AND error_type IN ('none','abort') AND cost > 0
 // buildRiskReview 结构化 risk_review（§6.5 严格 JSON）：服务端派生 operator_id
 // （取资金 Actor）/ decided_at（DB 时刻）/ scope（固定 platform_credit_risk）/
 // expires_at（decided_at + max_age），绑定 approved_revision；evidence 由客户端
-// 提供（非空）。返回持久化文本。
+// 提供（非空 reference）。**落库前对构建出的记录做严格反序列化 + 校验
+// （round-trip）**——任何非良构记录失败闭合（A22 拒绝矩阵）。返回持久化文本。
 func buildRiskReview(actor domain.FundsActor, evidence string, expectedRevision int64, decidedAt time.Time, maxAge time.Duration) (string, error) {
-	if evidence == "" {
-		return "", fmt.Errorf("%w: risk_review evidence required", ErrInvalidInput)
+	rr, err := supplier.BuildRiskReview(actor.UserID, evidence, expectedRevision, decidedAt, maxAge)
+	if err != nil {
+		return "", err
 	}
-	expires := decidedAt.Add(maxAge)
-	return fmt.Sprintf(`{"operator_id":%d,"decided_at":%q,"scope":"platform_credit_risk","evidence":%q,"decision":"approve_credit_risk","expires_at":%q,"approved_revision":%d}`,
-		actor.UserID, decidedAt.UTC().Format(time.RFC3339), evidence, expires.UTC().Format(time.RFC3339), expectedRevision), nil
+	raw, err := supplier.MarshalRiskReview(rr)
+	if err != nil {
+		return "", err
+	}
+	if err := supplier.ParseAndValidateRiskReview(raw, actor.UserID, expectedRevision, decidedAt, maxAge); err != nil {
+		return "", err
+	}
+	return raw, nil
 }

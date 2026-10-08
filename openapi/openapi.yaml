@@ -2517,6 +2517,9 @@ components:
         IdentityRevision: { type: integer, format: int64, description: "身份代际 K：仅身份类字段（template_id/base_url/upstream_key 及可轮换凭据）按值变更时 +1；SDK 自动 token 刷新不推进" }
         UpstreamCostMultiplier: { type: number, format: double, description: "采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）" }
         CacheDomain: { type: string, nullable: true, description: "共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段）" }
+        # 归属（spec 2026-10-09 §2.5）：只读回显当前归属（管理面列表可展示/清空入口依赖它）；
+        # null = 平台自有；写面走 PATCH /accounts/{id} 的 supplier_user_id 字段。
+        supplier_user_id: { type: integer, format: int64, nullable: true, description: "供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）" }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项） }

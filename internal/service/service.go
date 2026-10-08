@@ -226,7 +226,7 @@ type SupplierStore interface {
 	SupplierChunks(ctx context.Context, uid int64, limit, offset int) ([]domain.SupplierChunk, int64, error)
 	SupplierEarnings(ctx context.Context, uid int64, limit, offset int) ([]domain.SupplierEarning, int64, error)
 	ListSupplierSettlements(ctx context.Context, uid int64, limit, offset int) ([]*domain.SupplierSettlement, int64, error)
-	ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error)
+	ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error)
 }
 
 // SupplierAdminStore 管理面结算审批持久化（spec 2026-10-09 §6.3/§6.5）。

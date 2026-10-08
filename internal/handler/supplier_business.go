@@ -27,6 +27,17 @@ func supplierUIDFrom(r *http.Request) (int64, bool) {
 	return claims.UserID, true
 }
 
+// supplierFundsActor 从已验证 JWT claims 构造具名资金操作者（I5）：携带
+// user_id + 签名请求的 token_version（claims.ver）——写事务内复核 status/role/
+// token_version。RequireJWT 已注入 claims，故门控后必 ok。
+func supplierFundsActor(r *http.Request) (domain.FundsActor, bool) {
+	claims, ok := auth.ClaimsFrom(r.Context())
+	if !ok {
+		return domain.FundsActor{}, false
+	}
+	return domain.FundsActor{UserID: claims.UserID, TokenVersion: claims.Ver}, true
+}
+
 // GetSupplierOverview GET /api/user/supplier/overview。
 func (h *AdminAPI) GetSupplierOverview(w http.ResponseWriter, r *http.Request) {
 	uid, ok := supplierUIDFrom(r)
@@ -112,10 +123,16 @@ func (h *AdminAPI) GetSupplierSettlements(w http.ResponseWriter, r *http.Request
 }
 
 // PostSupplierSettlement POST /api/user/supplier/settlements（申请结算 §6.2）。
+// 具名 JWT 操作者（I5）：actor 从已验证 claims 构造（缺 ⇒ 403，fail-closed）。
 func (h *AdminAPI) PostSupplierSettlement(w http.ResponseWriter, r *http.Request) {
 	uid, ok := supplierUIDFrom(r)
 	if !ok {
 		httpface.WriteErr(w, http.StatusUnauthorized, "unauthorized")
+		return
+	}
+	actor, ok := supplierFundsActor(r)
+	if !ok {
+		httpface.WriteErr(w, http.StatusForbidden, "funds commands require a named JWT operator")
 		return
 	}
 	var body supplier.PostSupplierSettlementJSONRequestBody
@@ -130,7 +147,7 @@ func (h *AdminAPI) PostSupplierSettlement(w http.ResponseWriter, r *http.Request
 		AmountMillis: body.AmountMillis,
 		RequestKey:   body.RequestKey,
 		Note:         body.Note,
-	})
+	}, actor)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return

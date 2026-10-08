@@ -96,7 +96,7 @@ func (s *Service) AdminClaimSettlement(ctx context.Context, id, expectedRevision
 	}
 	out, err := s.store.ClaimSettlement(ctx, id, expectedRevision, payeeSnapshot, riskEvidence, actor)
 	if err != nil {
-		if errors.Is(err, supplier.ErrPayoutGate) {
+		if errors.Is(err, supplier.ErrPayoutGate) || errors.Is(err, supplier.ErrRiskReview) {
 			return nil, ErrInvalidInput
 		}
 		return nil, mapSupplierAdminErr(err)

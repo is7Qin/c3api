@@ -211,6 +211,9 @@ interface FormState {
   // spec §2.5/§6.1 L834）；供应商面不展示、不可编辑（服务端恒为 JWT 本人）。
   // 空串 = 不发送（创建态 = 平台自有 null；编辑态 = 保持不变，绝不误清空）。
   supplier_user_id: string
+  // 清空归属哨兵（对齐 clearCacheDomain）：编辑态勾选 ⇒ 显式发送 supplier_user_id:
+  // null（回平台自有）；供应商面不展示该控件（服务端恒为 JWT 本人）。
+  clearOwner: boolean
 }
 
 const emptyForm = (): FormState => ({
@@ -229,6 +232,7 @@ const emptyForm = (): FormState => ({
   codex_email: '',
   codex_account_id: '',
   supplier_user_id: '',
+  clearOwner: false,
 })
 
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
@@ -255,9 +259,10 @@ function toForm(a: AccountView): FormState {
     codex_pat_key: '',
     codex_email: '',
     codex_account_id: '',
-    // 归属不回显（AccountView 契约暂不含该列）：编辑态留空 = 保持不变，
-    // 仅当管理员显式填入 user_id 才发送（= 分配到该供应商）。
-    supplier_user_id: '',
+    // 归属回显（AccountView 现含 supplier_user_id 列）：编辑态按当前归属回填，
+    // 空 = 平台自有；勾选 clearOwner 显式清空（发送 null）。
+    supplier_user_id: a.supplier_user_id != null ? String(a.supplier_user_id) : '',
+    clearOwner: false,
   }
 }
 
@@ -842,8 +847,14 @@ export default function Accounts({ scope = 'admin' }: AccountsProps = {}) {
       const patch: AccountConfigPatch = toBody(f, editing, isCodexForBody)
       if (mult !== normMult(editing.UpstreamCostMultiplier)) patch.upstream_cost_multiplier = mult
       if (newDom !== (editing.CacheDomain ?? null)) patch.cache_domain = newDom
-      // 归属回填（AccountView 暂不回显）：仅当管理员显式填入才发送（缺席 = 不变）。
-      if (ownerUID != null) patch.supplier_user_id = ownerUID
+      // 归属三态（AccountView 现回显）：勾选清空 ⇒ null；显式填值 ⇒ 分配；
+      // 字段被清空且原有归属 ⇒ 清空；其余 ⇒ 缺席（保持原归属不变）。
+      if (!isSupplierScope) {
+        const currentOwner = editing.supplier_user_id ?? null
+        if (f.clearOwner) patch.supplier_user_id = null
+        else if (ownerUID != null) patch.supplier_user_id = ownerUID
+        else if (currentOwner != null) patch.supplier_user_id = null
+      }
       await api.updateAccount(id, patch, editing.LifecycleRevision)
       await saveCodexExt(id)
       return
@@ -1290,10 +1301,20 @@ export default function Accounts({ scope = 'admin' }: AccountsProps = {}) {
                   id="acc-owner"
                   inputMode="numeric"
                   value={form.supplier_user_id}
+                  disabled={form.clearOwner}
                   placeholder={t('accounts.owner.placeholder')}
                   onChange={e => setForm(f => ({ ...f, supplier_user_id: e.target.value }))}
                 />
                 <p className="text-xs text-muted-foreground">{t('accounts.owner.hint')}</p>
+                {editing && (
+                  <label className="flex items-center gap-2">
+                    <Checkbox
+                      checked={form.clearOwner}
+                      onCheckedChange={c => setForm(f => ({ ...f, clearOwner: c === true }))}
+                    />
+                    <span className="text-sm">{t('accounts.owner.clear')}</span>
+                  </label>
+                )}
               </div>
             )}
             <div className="space-y-1.5">

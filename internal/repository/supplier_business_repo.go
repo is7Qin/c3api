@@ -178,16 +178,21 @@ func (r *SupplierRepo) ListSupplierSettlements(ctx context.Context, uid int64, l
 	return out, total, rows.Err()
 }
 
-// ApplySettlement 申请结算单事务（§6.2；RC + clock_timestamp + request_key 幂等 I3）：
+// ApplySettlement 申请结算单事务（§6.2；RC + clock_timestamp + request_key 幂等 I3 +
+// 写事务内复核操作者 I5）：
 //
+//	锁操作者 users 行（I5：status/role ∈ SupplierSurfaceRoles/token_version）；
 //	⓪ 扣款前按 key 预查（命中 ⇒ 校验参数 ⇒ 返回原单 / 409）；
 //	① 条件扣（UPDATE ... WHERE available >= amount RETURNING 的 FEFO idiom）；
 //	   0 行 ⇒ ①′ 用新 RC 语句重查 key；
 //	② 独立语句读期间起点（必须在 ① 之后，不得合并）；
 //	③ INSERT（status=pending, revision=1）；并发同 key 唯一冲突 ⇒ 回滚再读回原单。
-func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if req.AmountMillis <= 0 || req.RequestKey == "" || req.OperatorUID <= 0 || req.SupplierUID <= 0 {
 		return nil, ErrInvalidInput
+	}
+	if actor.UserID != req.OperatorUID {
+		return nil, fmt.Errorf("%w: operator mismatch", ErrFundsForbidden)
 	}
 	if r.pool == nil {
 		return nil, errSupplierNoPool
@@ -204,6 +209,12 @@ func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySett
 		return nil, err
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck
+	// I5：写事务内复核操作者（supplier_request 的操作者须为供应商面可达的具名
+	// JWT 用户，且签名请求 token_version 与 DB 当前值一致）。静态 admin token 不
+	// 携 uid/ver，结构上无法构造 FundsActor ⇒ 供应商面天然拒绝。
+	if err := lockFundsOperator(ctx, tx, actor, domain.SupplierSurfaceRoles()...); err != nil {
+		return nil, err
+	}
 	s, err := applySettlementTx(ctx, tx, req)
 	if err != nil {
 		var kc errSettlementKeyConflict

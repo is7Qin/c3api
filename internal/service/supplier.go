@@ -37,16 +37,20 @@ func (s *Service) SupplierSettlements(ctx context.Context, uid int64, limit, off
 }
 
 // ApplySupplierSettlement 申请结算（§6.2）：amount > 0 且 request_key 非空；
-// 条件扣 + 期间链 + 幂等在 repository 单事务完成。
-func (s *Service) ApplySupplierSettlement(ctx context.Context, req domain.ApplySettlementRequest) (*domain.SupplierSettlement, error) {
+// 条件扣 + 期间链 + 幂等在 repository 单事务完成；**写事务内复核具名操作者
+// （I5：状态/角色/token_version）**——actor 缺失/陈旧 ⇒ ErrForbidden(403)。
+func (s *Service) ApplySupplierSettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if req.AmountMillis <= 0 {
 		return nil, ErrInvalidInput
 	}
 	if req.RequestKey == "" {
 		return nil, ErrInvalidInput
 	}
-	out, err := s.store.ApplySettlement(ctx, req)
+	out, err := s.store.ApplySettlement(ctx, req, actor)
 	if err != nil {
+		if errors.Is(err, repository.ErrFundsForbidden) {
+			return nil, ErrForbidden
+		}
 		if errors.Is(err, repository.ErrConflict) {
 			return nil, ErrConflict
 		}

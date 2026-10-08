@@ -88,10 +88,19 @@ func toAPIAccount(a *domain.Account) Account {
 		IdentityRevision:       &a.IdentityRevision,
 		UpstreamCostMultiplier: httpface.Ptr(multToNormal(domain.MultBp(a.UpstreamCostMultiplierBp))), // bp → 正常值（组倍率边界换算同构）
 		CacheDomain:            a.CacheDomain,
+		SupplierUserId:         supplierUserIDPtr(a.SupplierUserID), // 0 = 平台自有 ⇒ null
 		CreatedAt:              &a.CreatedAt,
 		UpdatedAt:              &a.UpdatedAt,
 		DeletedAt:              a.DeletedAt, // 软删除时间戳（只读字段，入参不接收）
 	}
+}
+
+// supplierUserIDPtr 归属只读回显：0（平台自有）⇒ nil（契约 null）；非 0 ⇒ 地址。
+func supplierUserIDPtr(uid int64) *int64 {
+	if uid == 0 {
+		return nil
+	}
+	return &uid
 }
 
 // toAPIAccountView 账号运行时视图 → 契约类型（AccountView 是平铺结构，
@@ -117,6 +126,7 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		IdentityRevision:       base.IdentityRevision,
 		UpstreamCostMultiplier: base.UpstreamCostMultiplier,
 		CacheDomain:            base.CacheDomain,
+		SupplierUserId:         base.SupplierUserId, // 归属回显（列表展示/清空入口依赖）
 		CreatedAt:              base.CreatedAt,
 		UpdatedAt:              base.UpdatedAt,
 		Concurrency:            &v.Concurrency,
