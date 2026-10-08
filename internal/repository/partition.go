@@ -194,9 +194,12 @@ var usageLogIndexDDLs = []string{
 	// 才享索引资格（逻辑蕴含，非逐字一致）。
 	`CREATE INDEX usagelog_uncredited_earn_id ON usage_logs (id) WHERE NOT supplier_credited AND supplier_earn_millis > 0`,
 	// 供应商报表索引（spec 2026-10-09 §3.3②）：(supplier_user_id, created_at)
-	// WHERE supplier_user_id IS NOT NULL——区间收益明细（§6.1 earnings）按供应商
-	// + 时间窗口。启用态维护面 ≈ 供应商流量占比 × INSERT + billed 标记 UPDATE。
-	`CREATE INDEX usagelog_supplier_created_at ON usage_logs (supplier_user_id, created_at) WHERE supplier_user_id IS NOT NULL`,
+	// WHERE supplier_user_id IS NOT NULL AND supplier_earn_millis > 0——收益明细
+	// （§6.1 earnings 唯一消费者：`WHERE supplier_user_id=$1 AND supplier_earn_millis>0
+	// ORDER BY created_at DESC`）按供应商 + 时间窗口。谓词与查询**逐字对齐** ⇒ 只索引
+	// **有收益**的行（cost=0 ⇒ earn=0 的供应商行不入索引），显著降低索引尺寸与 INSERT/
+	// 标记写放大。**不向后兼容**：仅 bootstrap 建，存量库不自动重建（无迁移逻辑）。
+	`CREATE INDEX usagelog_supplier_created_at ON usage_logs (supplier_user_id, created_at) WHERE supplier_user_id IS NOT NULL AND supplier_earn_millis > 0`,
 }
 
 // errLogColumnDefs err_logs 分区表列定义（单一事实源，与 ent schema 完全一致，

@@ -139,8 +139,8 @@ func TestUsageLogSupplierPartialIndexes(t *testing.T) {
 		"CREATE INDEX usagelog_uncredited_earn_id ON usage_logs (id) WHERE NOT supplier_credited AND supplier_earn_millis > 0",
 		"消费索引：键序 (id) + 双谓词逐字正确")
 	require.Contains(t, joined,
-		"CREATE INDEX usagelog_supplier_created_at ON usage_logs (supplier_user_id, created_at) WHERE supplier_user_id IS NOT NULL",
-		"报表索引：(supplier_user_id, created_at) + 归属非空谓词逐字正确")
+		"CREATE INDEX usagelog_supplier_created_at ON usage_logs (supplier_user_id, created_at) WHERE supplier_user_id IS NOT NULL AND supplier_earn_millis > 0",
+		"报表索引：(supplier_user_id, created_at) + 归属非空且正收益谓词逐字正确")
 	// 消费索引键序必须是 (id)——(supplier_user_id, created_at) 键序不享有序取前 N。
 	require.NotContains(t, joined,
 		"usagelog_uncredited_earn_id ON usage_logs (supplier_user_id",
