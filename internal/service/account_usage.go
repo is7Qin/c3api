@@ -7,6 +7,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -20,16 +21,16 @@ import (
 // 不再 import sdkbridge。
 
 // AccountUsageCredential 账号 codex 凭据组装（纯数据面零上游调用）：
-// store.GetAccountExt 取 ext 行（api-key 无 ext 行 → ErrNotFound → nil/nil）
+// **先走 scoped 单读** store.GetAccount（供应商面越域 ⇒ ErrNotFound，既不读 ext
+// 也不探上游——§2.5 禁止「先按 id 取行、再应用层比归属」）→ store.GetAccountExt
+// 取 ext 行（api-key 无 ext 行 → ErrNotFound → nil/nil）
 // → CredentialFromExt 派生 cred（codex-oauth/codex-pat 列组）→ 非 codex
 // 凭据（全空）→ nil/nil。调用方（handler fan-out）凭 nil/non-nil 分流：
 // nil = 无上游能力（null 快照），non-nil = 调 prober。
 func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
-	e, err := s.store.GetAccountExt(ctx, accountID)
-	if err != nil {
-		if errors.Is(err, repository.ErrNotFound) {
-			return nil, nil // api-key（无 ext 行）→ 无上游能力
-		}
+	// 作用域门：账号不可见（越域或缺失）⇒ 不读 ext、不返回凭据。
+	e, err := s.store.GetOwnedAccountExt(ctx, accountID)
+	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		mapped := mapRepoErr(err)
 		// 非 ErrNotFound store 故障 → Warn + 透错（handler 侧记 null/null，
 		// 不误标上游问题；ctx 取消为请求已死信号，不记 Warn）。
@@ -37,6 +38,9 @@ func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (
 			s.log.Warn("accounts usage: account upstream lookup failed", logx.Int64("account_id", accountID), logx.Error(mapped))
 		}
 		return nil, mapped
+	}
+	if errors.Is(err, repository.ErrNotFound) {
+		return nil, nil // 越域 / 账号缺失 / api-key（无 ext 行）→ 无上游能力
 	}
 	cred := domain.CredentialFromExt(e)
 	if cred.OAuthToken == "" && cred.OAuthRefreshToken == "" && cred.PATKey == "" {
@@ -73,11 +77,23 @@ func (s *Service) AccountUsageFrozen(ctx context.Context, accountID int64) (bool
 }
 
 // AccountsGatewayUsage 账号网关用量批量聚合（/api/admin/accounts/usage 查询面
-// 的 gateway 栏）：先过 domain.Admit（KindUsageAgg——raw 成本上限 90d + usage_logs
-// 覆盖率），再 repo 单查询聚合 + 按 ids 顺序组装全量 items（无记录账号补零
-// ——gateway 全 0，前端免补零）。repo 聚合失败 → 整批失败（gateway 数据面不
-// 可用）。upstream 栏由调用方（handler fan-out）另行装配。
+// 的 gateway 栏）：先过**整批作用域前置校验**（供应商面：ids 必须**全部**归属
+// JWT 本人，任一越域 ⇒ ErrNotFound/404，**不补零**、不泄漏存在性——§2.5「批量面
+// 任一 id 越出作用域 ⇒ 整事务失败」），再过 domain.Admit（KindUsageAgg——raw 成本
+// 上限 90d + usage_logs 覆盖率），再 repo 单查询聚合 + 按 ids 顺序组装全量 items
+// （无记录账号补零——gateway 全 0，前端免补零）。repo 聚合失败 → 整批失败
+// （gateway 数据面不可用）。upstream 栏由调用方（handler fan-out）另行装配。
+//
+// 越域校验与聚合是两次查询，但**两次都带 owner 谓词**（前置校验 + ScanUsageAgg 的
+// AND），故校验后发生的转属不会让聚合读到新归属的他人数据；最坏情形是同一批内
+// 出现零行补齐（不泄漏任何他人数值）。
 func (s *Service) AccountsGatewayUsage(ctx context.Context, ids []int64, from, to time.Time) ([]domain.AccountUsage, error) {
+	// 整批作用域前置校验（管理面缺省作用域 ⇒ 恒放行，既有语义不变）。
+	if _, missing, err := s.store.MissingOwnedAccountID(ctx, ids); err != nil {
+		return nil, mapRepoErr(err)
+	} else if missing {
+		return nil, fmt.Errorf("%w: account_ids contains an account outside the current scope", ErrNotFound)
+	}
 	// KindUsageAgg 无分组、只有原始行一种候选存储（Storages[0]），故执行方法
 	// 单一；窗口取 Exec（判定与执行同源）。该处旧实现只校验 from < to（handler
 	// 层），全区间 GROUP BY 无 LIMIT ⇒ 本判定补掉该成本洞（spec §4.5）。

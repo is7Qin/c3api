@@ -2159,6 +2159,47 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 	return &c, nil
 }
 
+// GetOwnedAccountExt 作用域内 ext 单读镜像：管理面（无作用域）⇒ 同 GetAccountExt；
+// 供应商面（scope.Set）⇒ 归属不符一律 ErrNotFound（与真实 repo 的 owner 谓词同语义
+// ——谓词读 ctx，fake 同源读 ctx）。
+func (f *fakeStore) GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
+	f.mu.Lock()
+	scope := domain.AccountScopeFrom(ctx)
+	defer f.mu.Unlock()
+	if scope.Set {
+		a, ok := f.accs[accountID]
+		if !ok || a.DeletedAt != nil || !scope.MatchesOwner(a.SupplierUserID) {
+			return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+		}
+	}
+	if err, ok := f.accExtErr[accountID]; ok {
+		return nil, err // 注入非 ErrNotFound 故障（store 故障隔离测试）
+	}
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+	}
+	c := *e
+	return &c, nil
+}
+
+// MissingOwnedAccountID ids 中第一个越出当前作用域的 id 镜像（作用域未设 ⇒ 恒 false）。
+func (f *fakeStore) MissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	scope := domain.AccountScopeFrom(ctx)
+	if !scope.Set {
+		return 0, false, nil
+	}
+	for _, id := range ids {
+		a, ok := f.accs[id]
+		if !ok || a.DeletedAt != nil || !scope.MatchesOwner(a.SupplierUserID) {
+			return id, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
 // FindAccountExtByCodexKey 组合幂等键查重（批量导入；镜像真实 repo
 // 双条件 AND——缺行 → ErrNotFound）。
 func (f *fakeStore) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {

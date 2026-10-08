@@ -168,6 +168,9 @@ type AccountStore interface {
 	// GetAccountGroups 账号的分组 id 列表（编辑回显；账号缺 id 由调用方先
 	// GetAccount 拦截）。
 	GetAccountGroups(ctx context.Context, accountID int64) ([]int64, error)
+	// MissingOwnedAccountID ids 中第一个越出当前作用域的 id（usage 聚合面的整批
+	// 前置校验——§2.5「批量面任一越域即整事务失败」；作用域未注入 ⇒ 恒 false）。
+	MissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error)
 }
 
 type GroupStore interface {
@@ -201,6 +204,9 @@ type AccountExtStore interface {
 	AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error)
 	TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error)
 	GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
+	// GetOwnedAccountExt 作用域内的 ext 单读（usage 上游凭据组装面）：owner 谓词
+	// AND 进同一 SQL，越域/缺失/无 ext 行 ⇒ ErrNotFound（调用方按无上游能力处理）。
+	GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
 	// FindAccountExtByCodexKey 组合幂等键查重（批量导入——(codex_email,
 	// codex_account_id)；GetAccountExt 仅按 account_id，查重面不存在）；缺行 →
 	// ErrNotFound。

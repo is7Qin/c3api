@@ -376,11 +376,24 @@ func (r *UsageRepo) ScanUsageAgg(ctx context.Context, accountIDs []int64, from, 
 	// sum(bigint) → numeric，显式 ::bigint 回落（pgx 扫描 int64 不受 numeric
 	// 精度语义干扰——statSummarySQL 同款）；GROUP BY 行必有行 → sum 非 NULL，
 	// COALESCE 归零仅为形态防御。
-	rows, err := r.pool.Query(ctx, `SELECT account_id, count(*)::bigint,
-		COALESCE(sum(cost), 0)::bigint, COALESCE(sum(raw_cost), 0)::bigint,
-		COALESCE(sum(total_tokens), 0)::bigint
-		FROM usage_logs WHERE account_id = ANY($1) AND created_at >= $2 AND created_at < $3
-		GROUP BY account_id`, accountIDs, from, to)
+	//
+	// **作用域（§2.5）**：供应商面（domain.AccountScopeFrom(ctx).Set）时 owner 谓词
+	// 直接 AND 进聚合 SQL 的 JOIN 条件（`JOIN accounts`）——越域 id 的 usage_logs
+	// 行被 SQL 侧过滤掉，不存在「先聚合再应用层比归属」。管理面（scope 未设）走
+	// 单表形态，谓词与索引使用与旧实现逐字一致（不引入 JOIN 的成本回归）。
+	args := []any{accountIDs, from, to}
+	query := `SELECT u.account_id, count(*)::bigint,
+		COALESCE(sum(u.cost), 0)::bigint, COALESCE(sum(u.raw_cost), 0)::bigint,
+		COALESCE(sum(u.total_tokens), 0)::bigint
+		FROM usage_logs u WHERE u.account_id = ANY($1) AND u.created_at >= $2 AND u.created_at < $3`
+	if s := domain.AccountScopeFrom(ctx); s.Set {
+		args = append(args, s.OwnerUID)
+		query += fmt.Sprintf(`
+		AND EXISTS (SELECT 1 FROM accounts a WHERE a.id = u.account_id AND a.supplier_user_id = $%d)`, len(args))
+	}
+	query += `
+		GROUP BY u.account_id`
+	rows, err := r.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}

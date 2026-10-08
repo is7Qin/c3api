@@ -15,6 +15,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/service"
 )
 
 // supplierRegisteredRoutes 供应商面**应有的**登记集（方法 + chi pattern），顺序无关。
@@ -113,11 +114,12 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 
 	// 无路径参数的登记端点须真正跑通（≤ 证明登记的是**同一批管理面实现**，
 	// 而非占位 stub）：账号/分组/模板列表在缺省作用域（管理面全量）下 200。
-	// 业务面 4 个 GET 需具名 JWT（claims 取本人 uid），故其可达性只按路由命中
-	// 断言（上面），运行态复用在 TestNewSupplierSurfaceGate 里验。
+	// **usage 不在此列**：它的 200 依赖「无作用域 = 全量」这一管理面语义，拿它
+	// 当「登记的是真实现」的证据等于把越域可读编码成期望行为（A14③ 反例）。
+	// usage 的**作用域**语义由 TestSupplierUsageScopeDeniesForeignAccountIDs
+	// （供应商 JWT + 他人 account_ids ⇒ 404）与账户作用域 PG 用例覆盖。
 	for _, tc := range []struct{ method, path string }{
 		{"GET", "/api/user/supplier/accounts"},
-		{"GET", "/api/user/supplier/accounts/usage?account_ids=1&window=24h"},
 		{"GET", "/api/user/supplier/groups"},
 		{"GET", "/api/user/supplier/templates"},
 	} {
@@ -165,6 +167,50 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 		require.Contains(t, []int{http.StatusNotFound, http.StatusMethodNotAllowed}, rec.Code,
 			"%s %s 必须不可达（default-deny）", tc.method, tc.path)
 	}
+}
+
+// TestSupplierUsageScopeDeniesForeignAccountIDs A14③（C1 回归）：供应商 JWT 调
+// `/accounts/usage?account_ids=<他人 id>` ⇒ **404**（整批作用域前置校验，不补零、
+// 不泄漏存在性）；本属账号 ⇒ 200。旧实现（无 owner 谓词）在此处返回 200 + 他人
+// 用量——本用例是该漏洞的固定回归面。
+func TestSupplierUsageScopeDeniesForeignAccountIDs(t *testing.T) {
+	store := newFakeStore()
+	// 账号 1 归他人（uid 88：平台管理员另兼供应商）；账号 2 归本人（uid 77）。
+	store.accs[1] = &domain.Account{ID: 1, Name: "other", Enabled: true, SupplierUserID: 88}
+	store.accs[2] = &domain.Account{ID: 2, Name: "mine", Enabled: true, SupplierUserID: 77}
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Keys: &fakeKeys{}, EmailCodeStore: store})
+	api := New(svc)
+
+	iss := auth.NewIssuer("s")
+	active := domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleSupplier}
+	h := NewSupplierSurface(api, iss, fakeUsers{sn: active})
+
+	tok, err := iss.Issue(77, "s@example.com", string(domain.RoleSupplier), 0)
+	require.NoError(t, err)
+	call := func(query string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodGet,
+			SupplierSurfaceBaseURL+"/accounts/usage?"+query, http.NoBody)
+		req.Header.Set("Authorization", "Bearer "+tok)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// 他人 id（越域）⇒ 404（且不得是 200——补零即泄漏）。
+	rec := call("account_ids=1&window=24h")
+	require.Equal(t, http.StatusNotFound, rec.Code, "越域 account_ids 必须 404：%s", rec.Body.String())
+
+	// 混合（本人 + 他人）⇒ 整批 404（任一越域即整事务失败）。
+	rec = call("account_ids=2,1&window=24h")
+	require.Equal(t, http.StatusNotFound, rec.Code, "混合批任一越域必须整批 404：%s", rec.Body.String())
+
+	// 不存在（非本人所有）⇒ 同样 404（不泄漏存在性差异）。
+	rec = call("account_ids=999999&window=24h")
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	// 本属账号 ⇒ 200（无记录账号零值补齐仍成立）。
+	rec = call("account_ids=2&window=24h")
+	require.Equal(t, http.StatusOK, rec.Code, "本属账号必须 200：%s", rec.Body.String())
 }
 
 // TestAccountScopeFromDefault 缺省 = 管理面全量。

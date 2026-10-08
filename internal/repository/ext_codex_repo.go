@@ -300,6 +300,36 @@ func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*d
 	return toDomainAccountExt(row), nil
 }
 
+// GetOwnedAccountExt 作用域内的 ext 单读（§2.5）：owner 谓词由子查询 AND 进
+// **同一条 SQL**（`account_id IN (SELECT id FROM accounts WHERE supplier_user_id=$n)`），
+// 越域 ⇒ 零行 ⇒ ErrNotFound——不存在「先读 ext、再应用层比归属」的窗口。
+// 无 ext 行（api-key）同样 ErrNotFound（调用方按「无上游能力」处理，与
+// GetAccountExt 同族错误，不区分缺失原因以免泄漏归属）。
+//
+// 子查询带 `deleted_at IS NULL`：软删账号不可见（与账号读面同谓词）。
+func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
+	q := r.client.AccountExt.Query().Where(accountext.AccountIDEQ(accountID))
+	if s := domain.AccountScopeFrom(ctx); s.Set {
+		owned, err := r.client.Account.Query().
+			Where(account.ID(accountID)).
+			Where(accountOwnerPred(ctx)...).
+			Where(account.DeletedAtIsNil()).
+			IDs(ctx)
+		if err != nil {
+			return nil, err
+		}
+		q = q.Where(accountext.AccountIDIn(owned...))
+	}
+	row, err := q.Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return nil, fmt.Errorf("%w: account_id=%d missing", ErrNotFound, accountID)
+		}
+		return nil, err
+	}
+	return toDomainAccountExt(row), nil
+}
+
 // AdminWriteOAuthRotationCAS 管理员 OAuth 轮转（fenced）：CAS expectedRevision，
 // 无条件推进 C，并在凭据面**按值变更**时推进 K；ext 三列与计数器同事务。
 // SDK 内部刷新继续使用 WriteOAuthRotation（unfenced，不触 accounts 行、K 中性）。

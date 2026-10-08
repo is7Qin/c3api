@@ -32,6 +32,37 @@ func accountOwnerPred(ctx context.Context) []predicate.Account {
 	return nil
 }
 
+// MissingOwnedAccountID 报告 ids 中**不被当前作用域拥有**的第一个 id（按输入顺序），
+// 全部在作用域内 ⇒ (0, false)。作用域未注入（管理面全量）⇒ 恒 (0, false)——管理面
+// 语义不因此收窄。查询把 owner 谓词 AND 进同一条 SQL（§2.5：禁止先取行再应用层比
+// 归属），故「越域」与「不存在」不可区分，调用方一律按 404 处理（不泄漏存在性）。
+//
+// 批量聚合面（usage）用它做**整批前置校验**：任一越域 ⇒ 整批 404、不补零。
+func (r *AccountRepo) MissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
+	scope := domain.AccountScopeFrom(ctx)
+	if !scope.Set || len(ids) == 0 {
+		return 0, false, nil
+	}
+	uniq := sortedUniqueIDs(ids)
+	owned, err := r.client.Account.Query().
+		Where(account.IDIn(uniq...)).
+		Where(accountOwnerPred(ctx)...).
+		IDs(ctx)
+	if err != nil {
+		return 0, false, err
+	}
+	seen := make(map[int64]struct{}, len(owned))
+	for _, id := range owned {
+		seen[id] = struct{}{}
+	}
+	for _, id := range uniq {
+		if _, ok := seen[id]; !ok {
+			return id, true, nil
+		}
+	}
+	return 0, false, nil
+}
+
 // CreateAccount 按值逐字写入 enabled：domain.Account.Enabled 是普通 bool，
 // 仓库层无法区分"未提供"与"显式 false"，故零值即落库为禁用，不补默认。
 // 直接构造 domain.Account 的仓库层调用方必须显式给出 Enabled（可用账号

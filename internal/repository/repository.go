@@ -378,6 +378,12 @@ func (r *Repository) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.A
 	return r.Accounts.ListAccounts(ctx, q)
 }
 
+// MissingOwnedAccountID 报告 ids 中第一个越出当前作用域的 id（usage 聚合面的整批
+// 前置校验；作用域未注入 = 管理面全量 ⇒ 恒 false）。
+func (r *Repository) MissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
+	return r.Accounts.MissingOwnedAccountID(ctx, ids)
+}
+
 func (r *Repository) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {
 	return r.Accounts.FailAccountCAS(ctx, id, expectedRevision, source, failedAt, reason)
 }
@@ -454,6 +460,11 @@ func (r *Repository) TryInsertAccountExt(ctx context.Context, e *domain.AccountE
 
 func (r *Repository) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	return r.AccountExts.GetAccountExt(ctx, accountID)
+}
+
+// GetOwnedAccountExt 作用域内的 ext 单读（供应商面越域 ⇒ ErrNotFound，不读 ext）。
+func (r *Repository) GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
+	return r.AccountExts.GetOwnedAccountExt(ctx, accountID)
 }
 
 // FindAccountExtByCodexKey 组合幂等键查重（批量导入——(codex_email,

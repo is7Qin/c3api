@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
+package repository_test
+
+// account_scope_pg_test.go 账号作用域（spec 2026-10-09 §2.5 / A13① / A14③）在真实
+// PostgreSQL 上的越域拒绝证据：C1 修复后 usage 聚合与 ext 单读都必须把 owner 谓词
+// AND 进 SQL，越域 id 在**数据库层**被过滤，应用层拿不到他人数据。
+//
+// 跑法：TEST_DATABASE_URL=... go test -count=1 -p 1 ./internal/repository/ \
+//      -run 'PGAccountScope|PGUsageAggScope' -v
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
+)
+
+// scopeCtx 注入供应商面行层作用域（镜像 handler.SupplierScopeInject）。
+func scopeCtx(uid int64) context.Context {
+	return domain.WithAccountScope(context.Background(), domain.SupplierAccountScope(uid))
+}
+
+// seedPATExtPG 为账号写入 pat ext 行（凭据面越域断言用）。
+func seedPATExtPG(t *testing.T, repos *repository.Repository, accountID int64, pat string) {
+	t.Helper()
+	_, err := repos.AccountExts.UpsertAccountExt(context.Background(), &domain.AccountExt{
+		AccountID: accountID, CredentialType: credential.TypeCodexPAT,
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
+		CodexPATKey:   strPtrPG(pat),
+	})
+	require.NoError(t, err)
+}
+
+// seedOwnedAccount 建一个归属指定供应商的账号（SupplierUserID>0 走 §2.5 值域校验）。
+func seedOwnedAccount(t *testing.T, repos *repository.Repository, tplID, uid int64, name string) *domain.Account {
+	t.Helper()
+	a, err := repos.Accounts.CreateAccount(context.Background(), &domain.Account{
+		Name: name, TemplateID: tplID, UpstreamKey: "sk-" + name,
+		MaxConcurrency: 8, Enabled: true, SupplierUserID: uid})
+	require.NoError(t, err)
+	require.Equal(t, uid, a.SupplierUserID)
+	return a
+}
+
+// TestPGAccountScopeOwnershipPredicate A14③：同一批 id 在管理面（无作用域）与供应商
+// 面（作用域）下返回不同的可见集——越域 id 0 行（ErrNotFound），不泄漏存在性。
+func TestPGAccountScopeOwnershipPredicate(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	owner := seedSupplierUser(t, repos, "scope-owner@example.com")
+	other := seedSupplierUser(t, repos, "scope-other@example.com")
+
+	mine := seedOwnedAccount(t, repos, tpl.ID, owner.ID, "scope-mine")
+	theirs := seedOwnedAccount(t, repos, tpl.ID, other.ID, "scope-theirs")
+
+	// 管理面全量：两条都可见。
+	got, err := repos.Accounts.GetAccount(ctx, theirs.ID)
+	require.NoError(t, err, "管理面（无作用域）不受归属限制")
+	require.Equal(t, other.ID, got.SupplierUserID)
+
+	// 供应商面：本人可见。
+	got, err = repos.Accounts.GetAccount(scopeCtx(owner.ID), mine.ID)
+	require.NoError(t, err)
+	require.Equal(t, owner.ID, got.SupplierUserID)
+
+	// 供应商面：他人 id ⇒ ErrNotFound（0 行，非 403——不泄漏存在性）。
+	_, err = repos.Accounts.GetAccount(scopeCtx(owner.ID), theirs.ID)
+	require.ErrorIs(t, err, repository.ErrNotFound, "越域单读必须 ErrNotFound")
+
+	// 整批作用域校验：全部本属 ⇒ 无缺失；混入他人 ⇒ 报出该 id。
+	_, missing, err := repos.MissingOwnedAccountID(scopeCtx(owner.ID), []int64{mine.ID})
+	require.NoError(t, err)
+	require.False(t, missing)
+
+	badID, missing, err := repos.MissingOwnedAccountID(scopeCtx(owner.ID), []int64{mine.ID, theirs.ID})
+	require.NoError(t, err)
+	require.True(t, missing, "混入他人 id 必须报缺失")
+	require.Equal(t, theirs.ID, badID)
+
+	// 管理面缺省作用域 ⇒ 恒无缺失（既有语义不变）。
+	_, missing, err = repos.MissingOwnedAccountID(ctx, []int64{theirs.ID})
+	require.NoError(t, err)
+	require.False(t, missing, "管理面无作用域 ⇒ 恒放行")
+}
+
+// TestPGUsageAggScopeC1 C1 回归（真实 SQL）：供应商面 ScanUsageAgg 必须**在 SQL 层**
+// 过滤他人 usage_logs——即使调用方传入他人 account_id，也拿不到任何行；且管理面同一
+// 查询仍能读到（证明过滤来自作用域而非数据缺失）。
+func TestPGUsageAggScopeC1(t *testing.T) {
+	repos := newPGReposShared(t)
+	tpl := seedPGTemplate(t, repos)
+	owner := seedSupplierUser(t, repos, "usage-scope-owner@example.com")
+	other := seedSupplierUser(t, repos, "usage-scope-other@example.com")
+
+	mine := seedOwnedAccount(t, repos, tpl.ID, owner.ID, "usage-scope-mine")
+	theirs := seedOwnedAccount(t, repos, tpl.ID, other.ID, "usage-scope-theirs")
+
+	from := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+	to := from.Add(2 * time.Hour)
+	logs := []*domain.UsageLog{
+		{RequestID: "scope-mine-1", AccountID: mine.ID, Model: "m", Format: domain.FormatOpenAIChat, ErrorType: domain.ErrNone, TotalTokens: 10, Cost: 100, RawCost: 200, CreatedAt: from},
+		{RequestID: "scope-theirs-1", AccountID: theirs.ID, Model: "m", Format: domain.FormatOpenAIChat, ErrorType: domain.ErrNone, TotalTokens: 99, Cost: 9999, RawCost: 9999, CreatedAt: from},
+	}
+	require.NoError(t, repos.Usages.InsertBatch(context.Background(), logs))
+
+	// 供应商面：**传入他人 id** 也拿不到（SQL 层 owner 过滤）。
+	aggs, err := repos.ScanUsageAgg(scopeCtx(owner.ID), []int64{theirs.ID}, from, to)
+	require.NoError(t, err)
+	require.Empty(t, aggs, "越域 account_id 的聚合结果必须为空（C1：WHERE 必须 AND 归属）")
+
+	// 供应商面：本属 id 正常返回。
+	aggs, err = repos.ScanUsageAgg(scopeCtx(owner.ID), []int64{mine.ID}, from, to)
+	require.NoError(t, err)
+	require.Len(t, aggs, 1)
+	require.Equal(t, int64(100), aggs[mine.ID].Cost)
+
+	// 顺带：越域 + 本属混批时，他人行被过滤而本属行保留（证明是行级过滤而非整批失败）。
+	aggs, err = repos.ScanUsageAgg(scopeCtx(owner.ID), []int64{mine.ID, theirs.ID}, from, to)
+	require.NoError(t, err)
+	require.Len(t, aggs, 1, "SQL 侧仅保留本属账号行")
+	require.NotNil(t, aggs[mine.ID])
+	require.Nil(t, aggs[theirs.ID])
+
+	// 管理面（无作用域）：两条都可读（既有语义不变；过滤确由作用域引入）。
+	aggs, err = repos.ScanUsageAgg(context.Background(), []int64{mine.ID, theirs.ID}, from, to)
+	require.NoError(t, err)
+	require.Len(t, aggs, 2, "管理面无作用域 ⇒ 全量可见")
+}
+
+// TestPGAccountScopeOwnedExtRead C1 回归（ext 面）：GetOwnedAccountExt 越域不读 ext
+// ——他人账号即使有 ext 行，供应商面也拿 ErrNotFound（不泄漏凭据、不探上游）。
+func TestPGAccountScopeOwnedExtRead(t *testing.T) {
+	repos := newPGReposShared(t)
+	tpl := seedPGTemplate(t, repos)
+	owner := seedSupplierUser(t, repos, "ext-scope-owner@example.com")
+	other := seedSupplierUser(t, repos, "ext-scope-other@example.com")
+
+	mine := seedOwnedAccount(t, repos, tpl.ID, owner.ID, "ext-scope-mine")
+	theirs := seedOwnedAccount(t, repos, tpl.ID, other.ID, "ext-scope-theirs")
+
+	seedPATExtPG(t, repos, mine.ID, "scope-mine-pat")
+	seedPATExtPG(t, repos, theirs.ID, "scope-theirs-pat")
+
+	// 供应商面：本人 ext 可读。
+	e, err := repos.GetOwnedAccountExt(scopeCtx(owner.ID), mine.ID)
+	require.NoError(t, err)
+	require.NotNil(t, e.CodexPATKey)
+	require.Equal(t, "scope-mine-pat", *e.CodexPATKey)
+
+	// 供应商面：他人 ext ⇒ ErrNotFound（**不读 ext**）。
+	_, err = repos.GetOwnedAccountExt(scopeCtx(owner.ID), theirs.ID)
+	require.ErrorIs(t, err, repository.ErrNotFound, "越域 ext 单读必须 ErrNotFound（C1）")
+
+	// 管理面：他人 ext 照常可读（既有语义不变）。
+	e, err = repos.GetOwnedAccountExt(context.Background(), theirs.ID)
+	require.NoError(t, err)
+	require.Equal(t, "scope-theirs-pat", *e.CodexPATKey)
+}
