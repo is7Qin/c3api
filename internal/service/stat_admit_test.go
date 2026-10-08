@@ -62,7 +62,7 @@ func newStatsAdmitSvc(t *testing.T, fs *fakeStore, ret domain.Retention, now tim
 	path := filepath.Join(dir, "stats.json")
 	logger, err := logx.New("warn", path)
 	require.NoError(t, err)
-	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: logger, EmailCodeStore: testEmailCodes, Retention: ret})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: logger, EmailCodeStore: testEmailCodes, Retention: ret})
 	svc.statsNow = func() time.Time { return now }
 	return svc, statsLogSink{log: logger, path: path}
 }

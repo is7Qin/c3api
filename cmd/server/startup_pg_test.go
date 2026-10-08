@@ -129,9 +129,9 @@ func TestStartupReloadAllPG(t *testing.T) {
 	// 编译源 Start 期结构注入（空源 = 字段缺席但已武装，与旧双 setter(nil)
 	// 等价：编译道照常发布计划，质量/价格输入为空）。
 	require.NoError(t, sched.Start(schedCtx, &scheduler.CompilerSources{}))
-	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
+	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, nil, true)
 	balances := billing.NewBalances(repos, nil)
-	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: ruleEngine, Keys: auth, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: ruleEngine, Auth: auth, Log: nil, EmailCodeStore: testEmailCodes})
 
 	reg := snapshot.New()
 	for _, s := range []snapshot.Snapshot{
@@ -259,7 +259,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
 	var seenCron atomic.Pointer[string]
 	obs := &observingKeyRepo{KeyRepo: repos.Keys, seen: &seenCron}
-	auth := proxy.NewAuth(obs, repos.Users, nil, true)
+	auth := proxy.NewAuth(obs, repos.Users, nil, nil, true)
 	inv := invalidate.New(invalidate.Config{
 		Window: time.Millisecond, Sched: sched, Clients: nopClients{},
 		Auth: auth, Rules: ruleEngine,
@@ -267,7 +267,7 @@ func TestSettingsTimingPG(t *testing.T) {
 	invCtx, stopInv := context.WithCancel(ctx)
 	t.Cleanup(stopInv)
 	require.NoError(t, inv.Start(invCtx))
-	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: nil, RuleReload: ruleEngine, Keys: auth, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: nil, RuleReload: ruleEngine, Auth: auth, Log: nil, EmailCodeStore: testEmailCodes})
 	obs.svc = svc // 回填（首次 LoadKeys 在注册表 ReloadAll 时）
 	auth.SetInstancesProvider(discoStub{})
 

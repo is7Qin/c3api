@@ -105,6 +105,18 @@ func (f KeyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) 
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.KeyMutation", m)
 }
 
+// The ManagementKeyFunc type is an adapter to allow the use of ordinary
+// function as ManagementKey mutator.
+type ManagementKeyFunc func(context.Context, *ent.ManagementKeyMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ManagementKeyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ManagementKeyMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ManagementKeyMutation", m)
+}
+
 // The PriceEntryFunc type is an adapter to allow the use of ordinary
 // function as PriceEntry mutator.
 type PriceEntryFunc func(context.Context, *ent.PriceEntryMutation) (ent.Value, error)

@@ -141,7 +141,7 @@ func TestQueryRoutingPlan_ObservedWindowRetentionCutoff(t *testing.T) {
 
 func TestQueryRoutingPlan_ObservedWindowNotWired(t *testing.T) {
 	plan := multiRoutePlan(t, 2)
-	svc := New(Deps{Store: &fakeStoreNoFacts{}, Scheduler: &fakeRoutingSched{plan: plan}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: &fakeStoreNoFacts{}, Scheduler: &fakeRoutingSched{plan: plan}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	from, to := routingBase, routingBase.Add(time.Hour)
 	_, err := svc.QueryRoutingPlan(context.Background(), RoutingPlanQuery{ObservedFrom: &from, ObservedTo: &to})
 	require.ErrorIs(t, err, errRoutingNotWired)

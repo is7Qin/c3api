@@ -4,7 +4,7 @@
 
 // Package auth 承载用户认证体系：bcrypt 密码哈希（与 sub2api 同参数）、
 // JWT 签发/验证（HS256，TTL 24h）与 RBAC 中间件（/user 组 RequireJWT +
-// 快照用户状态校验；/admin = 静态 token OR platform_admin JWT）。
+// 快照用户状态校验；/admin = platform_admin JWT OR platform_admin 管理 key）。
 package auth
 
 import (

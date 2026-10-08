@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
+	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/user"
 )
@@ -168,6 +169,21 @@ func (_c *UserCreate) AddKeys(v ...*Key) *UserCreate {
 		ids[i] = v[i].ID
 	}
 	return _c.AddKeyIDs(ids...)
+}
+
+// AddManagementKeyIDs adds the "management_keys" edge to the ManagementKey entity by IDs.
+func (_c *UserCreate) AddManagementKeyIDs(ids ...int64) *UserCreate {
+	_c.mutation.AddManagementKeyIDs(ids...)
+	return _c
+}
+
+// AddManagementKeys adds the "management_keys" edges to the ManagementKey entity.
+func (_c *UserCreate) AddManagementKeys(v ...*ManagementKey) *UserCreate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddManagementKeyIDs(ids...)
 }
 
 // AddTempBalanceIDs adds the "temp_balances" edge to the TempBalance entity by IDs.
@@ -393,6 +409,22 @@ func (_c *UserCreate) createSpec() (*User, *sqlgraph.CreateSpec) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(key.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
+	}
+	if nodes := _c.mutation.ManagementKeysIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ManagementKeysTable,
+			Columns: []string{user.ManagementKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(managementkey.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

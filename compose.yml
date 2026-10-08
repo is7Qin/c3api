@@ -4,8 +4,6 @@
 # 用法（compose 在根目录：自动发现 + 自动加载根目录 .env）：
 #   cp .env.example .env（并填写 AUTH_JWT_SECRET 等，见文件内注释）
 #   docker compose up -d --build
-#   # 或临时注入：ADMIN_TOKEN=$(openssl rand -hex 16) AUTH_JWT_SECRET=$(openssl rand -hex 32) \
-#   #   docker compose up -d --build
 #
 # GHCR 快速上手（预构建镜像，release 流水线发布）：docker pull ghcr.io/is7qin/c3api:beta
 #   （:beta 为浮动 tag = 最新 beta；版本固定用 ghcr.io/is7qin/c3api:v0.0.1-beta.1）
@@ -55,11 +53,9 @@ services:
       redis:
         condition: service_healthy
     environment:
-      # 敏感项走环境变量（config.Load 支持 C3API_ADMIN_TOKEN / C3API_DB_DSN /
-      # C3API_AUTH_JWT_SECRET / C3API_REDIS_ADDR 覆盖）
-      # admin token 可选（`:-` 空值注入空串 = 不启用静态 token，/api/admin 仅 platform_admin
-      # JWT；首个注册用户自动成为 admin——无需静态 token 也能登录管理面）
-      C3API_ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      # 敏感项走环境变量（config.Load 支持 C3API_DB_DSN / C3API_AUTH_JWT_SECRET /
+      # C3API_REDIS_ADDR 覆盖）。管理面鉴权：platform_admin 身份（首个注册用户
+      # 自动成为 platform_admin）或其管理 key（mk- 前缀，自签发）——无静态 token 配置项。
       C3API_AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?set AUTH_JWT_SECRET in .env (openssl rand -hex 32)}
       C3API_DB_DSN: postgres://postgres:${POSTGRES_PASSWORD:-c3api}@db:5432/c3api?sslmode=disable
       C3API_REDIS_ADDR: ${REDIS_ADDR:-redis:6379}

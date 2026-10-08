@@ -35,7 +35,7 @@ func codexImportTestAPI(t *testing.T) (*AdminAPI, *fakeStore, int64, int64) {
 	// pat 类型模板（模板类型错配 400 断言用——oauth 端点配用即拒）
 	store.tpls[2] = &domain.Template{ID: 2, Name: "codex-pat-tpl", CredentialType: credential.TypeCodexPAT,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}}
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	return New(svc), store, tpl.ID, g.ID
 }
 

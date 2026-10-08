@@ -45,7 +45,7 @@ func newEnabledFilterRouter(t *testing.T) (*enabledFilterHarness, *fakeStore, *h
 	store := newFakeStore()
 	store.tpls[1] = &domain.Template{ID: 1, Name: "tpl", CredentialType: "api_key"}
 	prober := &hProber{}
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store, RecoverProber: prober})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, RecoverProber: prober})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Mount("/", h.Router())
@@ -63,7 +63,7 @@ func serviceForDefaults(t *testing.T) *service.Service {
 	t.Helper()
 	store := newFakeStore()
 	store.tpls[1] = &domain.Template{ID: 1, Name: "tpl", CredentialType: "api_key"}
-	return service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store, DefaultMaxConcurrency: 7})
+	return service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, DefaultMaxConcurrency: 7})
 }
 
 func createDefaultAccount(svc *service.Service) (*domain.Account, error) {

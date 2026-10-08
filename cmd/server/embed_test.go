@@ -18,7 +18,7 @@ import (
 // 包装拒绝，不渲染 HTML 目录列表（go:embed all:dist 内容不可枚举）。若未来
 // dist 下出现 assets/ 目录且包装被移除，此测试立即捕获目录列表暴露。
 func TestEmbedAssetsNoDirectoryListing(t *testing.T) {
-	s := server.NewServer(server.Options{AdminToken: "tok", WebFS: webUI()})
+	s := server.NewServer(server.Options{WebFS: webUI()})
 
 	req := httptest.NewRequest(http.MethodGet, "/assets/", nil)
 	rec := httptest.NewRecorder()

@@ -29,6 +29,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/stretchr/testify/require"
 
+	jwtauth "github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
@@ -48,6 +49,18 @@ import (
 )
 
 func ptrI64(v int64) *int64 { return &v }
+
+// opsAdminUsers 静态快照 provider：任意 user 恒 platform_admin/active（ops 用例
+// 只需通过 /api/admin 组鉴权）。
+type opsAdminUsers struct{}
+
+func (opsAdminUsers) UserSnapshot(int64) (domain.UserSnapshot, bool) {
+	return domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RolePlatformAdmin}, true
+}
+
+func (opsAdminUsers) AuthenticateManagement(*http.Request) (domain.ManagementKeyMeta, bool) {
+	return domain.ManagementKeyMeta{}, false
+}
 
 func newOpsPGRepos(t *testing.T) (*repository.Repository, *pgxpool.Pool) {
 	t.Helper()
@@ -115,9 +128,9 @@ func TestOpsWorkersPG(t *testing.T) {
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval: time.Hour,
 	}, repos.Groups, ruleEngine, nil, nil, nil, nil)
-	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, true)
+	auth := proxy.NewAuth(repos.Keys, repos.Users, nil, nil, true)
 	balances := billing.NewBalances(repos, nil)
-	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: ruleEngine, Keys: auth, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: ruleEngine, Auth: auth, Log: nil, EmailCodeStore: testEmailCodes})
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour,
 	}, repos.Usages, nil)
@@ -189,8 +202,12 @@ func TestOpsWorkersPG(t *testing.T) {
 		Workers:   opsWorkers,
 		Snapshots: func() []handler.SnapshotState { return snapshotStates(reg.Status()) },
 	})
+	iss := jwtauth.NewIssuer("ops-pg-test-secret")
+	adminJWT, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
+	require.NoError(t, err)
 	srv := server.NewServer(server.Options{
-		AdminToken:   "tok",
+		JWTIssuer:    iss,
+		Auth:         opsAdminUsers{},
 		AdminHandler: ah.Router(),
 	})
 
@@ -222,7 +239,7 @@ func TestOpsWorkersPG(t *testing.T) {
 
 	// admin → 200 + typed struct 解码断言。
 	req = httptest.NewRequest(http.MethodGet, "/api/admin/ops/workers", nil)
-	req.Header.Set("Authorization", "Bearer tok")
+	req.Header.Set("Authorization", "Bearer "+adminJWT)
 	recw = httptest.NewRecorder()
 	srv.Handler().ServeHTTP(recw, req)
 	require.Equal(t, http.StatusOK, recw.Code)

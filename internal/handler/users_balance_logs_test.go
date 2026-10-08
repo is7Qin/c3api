@@ -25,7 +25,7 @@ import (
 func newBalanceLogsRouter(t *testing.T) (*fakeStore, func(method, path, token string) *httptest.ResponseRecorder) {
 	t.Helper()
 	store := newFakeStore()
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {

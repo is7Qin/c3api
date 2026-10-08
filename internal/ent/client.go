@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
+	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
@@ -63,6 +64,8 @@ type Client struct {
 	GroupAssignment *GroupAssignmentClient
 	// Key is the client for interacting with the Key builders.
 	Key *KeyClient
+	// ManagementKey is the client for interacting with the ManagementKey builders.
+	ManagementKey *ManagementKeyClient
 	// PriceEntry is the client for interacting with the PriceEntry builders.
 	PriceEntry *PriceEntryClient
 	// PriceVariant is the client for interacting with the PriceVariant builders.
@@ -116,6 +119,7 @@ func (c *Client) init() {
 	c.Group = NewGroupClient(c.config)
 	c.GroupAssignment = NewGroupAssignmentClient(c.config)
 	c.Key = NewKeyClient(c.config)
+	c.ManagementKey = NewManagementKeyClient(c.config)
 	c.PriceEntry = NewPriceEntryClient(c.config)
 	c.PriceVariant = NewPriceVariantClient(c.config)
 	c.RedemptionCode = NewRedemptionCodeClient(c.config)
@@ -233,6 +237,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		Group:                  NewGroupClient(cfg),
 		GroupAssignment:        NewGroupAssignmentClient(cfg),
 		Key:                    NewKeyClient(cfg),
+		ManagementKey:          NewManagementKeyClient(cfg),
 		PriceEntry:             NewPriceEntryClient(cfg),
 		PriceVariant:           NewPriceVariantClient(cfg),
 		RedemptionCode:         NewRedemptionCodeClient(cfg),
@@ -277,6 +282,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		Group:                  NewGroupClient(cfg),
 		GroupAssignment:        NewGroupAssignmentClient(cfg),
 		Key:                    NewKeyClient(cfg),
+		ManagementKey:          NewManagementKeyClient(cfg),
 		PriceEntry:             NewPriceEntryClient(cfg),
 		PriceVariant:           NewPriceVariantClient(cfg),
 		RedemptionCode:         NewRedemptionCodeClient(cfg),
@@ -324,10 +330,11 @@ func (c *Client) Close() error {
 func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
-		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
-		c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance, c.SupplierFrozenChunk,
-		c.SupplierReconciliation, c.SupplierSettlement, c.TempBalance, c.Template,
-		c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.GroupAssignment, c.Key, c.ManagementKey, c.PriceEntry, c.PriceVariant,
+		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance,
+		c.SupplierFrozenChunk, c.SupplierReconciliation, c.SupplierSettlement,
+		c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog,
+		c.UsageStat, c.User,
 	} {
 		n.Use(hooks...)
 	}
@@ -338,10 +345,11 @@ func (c *Client) Use(hooks ...Hook) {
 func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
-		c.GroupAssignment, c.Key, c.PriceEntry, c.PriceVariant, c.RedemptionCode,
-		c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance, c.SupplierFrozenChunk,
-		c.SupplierReconciliation, c.SupplierSettlement, c.TempBalance, c.Template,
-		c.TemplateExt, c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
+		c.GroupAssignment, c.Key, c.ManagementKey, c.PriceEntry, c.PriceVariant,
+		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance,
+		c.SupplierFrozenChunk, c.SupplierReconciliation, c.SupplierSettlement,
+		c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog,
+		c.UsageStat, c.User,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -366,6 +374,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.GroupAssignment.mutate(ctx, m)
 	case *KeyMutation:
 		return c.Key.mutate(ctx, m)
+	case *ManagementKeyMutation:
+		return c.ManagementKey.mutate(ctx, m)
 	case *PriceEntryMutation:
 		return c.PriceEntry.mutate(ctx, m)
 	case *PriceVariantMutation:
@@ -1642,6 +1652,155 @@ func (c *KeyClient) mutate(ctx context.Context, m *KeyMutation) (Value, error) {
 		return (&KeyDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown Key mutation op: %q", m.Op())
+	}
+}
+
+// ManagementKeyClient is a client for the ManagementKey schema.
+type ManagementKeyClient struct {
+	config
+}
+
+// NewManagementKeyClient returns a client for the ManagementKey from the given config.
+func NewManagementKeyClient(c config) *ManagementKeyClient {
+	return &ManagementKeyClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `managementkey.Hooks(f(g(h())))`.
+func (c *ManagementKeyClient) Use(hooks ...Hook) {
+	c.hooks.ManagementKey = append(c.hooks.ManagementKey, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `managementkey.Intercept(f(g(h())))`.
+func (c *ManagementKeyClient) Intercept(interceptors ...Interceptor) {
+	c.inters.ManagementKey = append(c.inters.ManagementKey, interceptors...)
+}
+
+// Create returns a builder for creating a ManagementKey entity.
+func (c *ManagementKeyClient) Create() *ManagementKeyCreate {
+	mutation := newManagementKeyMutation(c.config, OpCreate)
+	return &ManagementKeyCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of ManagementKey entities.
+func (c *ManagementKeyClient) CreateBulk(builders ...*ManagementKeyCreate) *ManagementKeyCreateBulk {
+	return &ManagementKeyCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ManagementKeyClient) MapCreateBulk(slice any, setFunc func(*ManagementKeyCreate, int)) *ManagementKeyCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ManagementKeyCreateBulk{err: fmt.Errorf("calling to ManagementKeyClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ManagementKeyCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ManagementKeyCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for ManagementKey.
+func (c *ManagementKeyClient) Update() *ManagementKeyUpdate {
+	mutation := newManagementKeyMutation(c.config, OpUpdate)
+	return &ManagementKeyUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ManagementKeyClient) UpdateOne(_m *ManagementKey) *ManagementKeyUpdateOne {
+	mutation := newManagementKeyMutation(c.config, OpUpdateOne, withManagementKey(_m))
+	return &ManagementKeyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ManagementKeyClient) UpdateOneID(id int64) *ManagementKeyUpdateOne {
+	mutation := newManagementKeyMutation(c.config, OpUpdateOne, withManagementKeyID(id))
+	return &ManagementKeyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for ManagementKey.
+func (c *ManagementKeyClient) Delete() *ManagementKeyDelete {
+	mutation := newManagementKeyMutation(c.config, OpDelete)
+	return &ManagementKeyDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ManagementKeyClient) DeleteOne(_m *ManagementKey) *ManagementKeyDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ManagementKeyClient) DeleteOneID(id int64) *ManagementKeyDeleteOne {
+	builder := c.Delete().Where(managementkey.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ManagementKeyDeleteOne{builder}
+}
+
+// Query returns a query builder for ManagementKey.
+func (c *ManagementKeyClient) Query() *ManagementKeyQuery {
+	return &ManagementKeyQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeManagementKey},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a ManagementKey entity by its id.
+func (c *ManagementKeyClient) Get(ctx context.Context, id int64) (*ManagementKey, error) {
+	return c.Query().Where(managementkey.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ManagementKeyClient) GetX(ctx context.Context, id int64) *ManagementKey {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// QueryUser queries the user edge of a ManagementKey.
+func (c *ManagementKeyClient) QueryUser(_m *ManagementKey) *UserQuery {
+	query := (&UserClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(managementkey.Table, managementkey.FieldID, id),
+			sqlgraph.To(user.Table, user.FieldID),
+			sqlgraph.Edge(sqlgraph.M2O, true, managementkey.UserTable, managementkey.UserColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
+// Hooks returns the client hooks.
+func (c *ManagementKeyClient) Hooks() []Hook {
+	return c.hooks.ManagementKey
+}
+
+// Interceptors returns the client interceptors.
+func (c *ManagementKeyClient) Interceptors() []Interceptor {
+	return c.inters.ManagementKey
+}
+
+func (c *ManagementKeyClient) mutate(ctx context.Context, m *ManagementKeyMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ManagementKeyCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ManagementKeyUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ManagementKeyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ManagementKeyDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown ManagementKey mutation op: %q", m.Op())
 	}
 }
 
@@ -3993,6 +4152,22 @@ func (c *UserClient) QueryKeys(_m *User) *KeyQuery {
 	return query
 }
 
+// QueryManagementKeys queries the management_keys edge of a User.
+func (c *UserClient) QueryManagementKeys(_m *User) *ManagementKeyQuery {
+	query := (&ManagementKeyClient{config: c.config}).Query()
+	query.path = func(context.Context) (fromV *sql.Selector, _ error) {
+		id := _m.ID
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, id),
+			sqlgraph.To(managementkey.Table, managementkey.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.ManagementKeysTable, user.ManagementKeysColumn),
+		)
+		fromV = sqlgraph.Neighbors(_m.driver.Dialect(), step)
+		return fromV, nil
+	}
+	return query
+}
+
 // QueryTempBalances queries the temp_balances edge of a User.
 func (c *UserClient) QueryTempBalances(_m *User) *TempBalanceQuery {
 	query := (&TempBalanceClient{config: c.config}).Query()
@@ -4054,15 +4229,15 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 type (
 	hooks struct {
 		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
-		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
-		SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
+		Key, ManagementKey, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse,
+		Rule, Setting, SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
 		SupplierSettlement, TempBalance, Template, TemplateExt, UsageEntityStat,
 		UsageLog, UsageStat, User []ent.Hook
 	}
 	inters struct {
 		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
-		Key, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse, Rule, Setting,
-		SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
+		Key, ManagementKey, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse,
+		Rule, Setting, SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
 		SupplierSettlement, TempBalance, Template, TemplateExt, UsageEntityStat,
 		UsageLog, UsageStat, User []ent.Interceptor
 	}

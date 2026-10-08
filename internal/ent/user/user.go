@@ -37,6 +37,8 @@ const (
 	FieldUpdatedAt = "updated_at"
 	// EdgeKeys holds the string denoting the keys edge name in mutations.
 	EdgeKeys = "keys"
+	// EdgeManagementKeys holds the string denoting the management_keys edge name in mutations.
+	EdgeManagementKeys = "management_keys"
 	// EdgeTempBalances holds the string denoting the temp_balances edge name in mutations.
 	EdgeTempBalances = "temp_balances"
 	// EdgeGroupAssignments holds the string denoting the group_assignments edge name in mutations.
@@ -50,6 +52,13 @@ const (
 	KeysInverseTable = "keys"
 	// KeysColumn is the table column denoting the keys relation/edge.
 	KeysColumn = "user_id"
+	// ManagementKeysTable is the table that holds the management_keys relation/edge.
+	ManagementKeysTable = "management_keys"
+	// ManagementKeysInverseTable is the table name for the ManagementKey entity.
+	// It exists in this package in order to avoid circular dependency with the "managementkey" package.
+	ManagementKeysInverseTable = "management_keys"
+	// ManagementKeysColumn is the table column denoting the management_keys relation/edge.
+	ManagementKeysColumn = "user_id"
 	// TempBalancesTable is the table that holds the temp_balances relation/edge.
 	TempBalancesTable = "temp_balances"
 	// TempBalancesInverseTable is the table name for the TempBalance entity.
@@ -233,6 +242,20 @@ func ByKeys(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
 	}
 }
 
+// ByManagementKeysCount orders the results by management_keys count.
+func ByManagementKeysCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newManagementKeysStep(), opts...)
+	}
+}
+
+// ByManagementKeys orders the results by management_keys terms.
+func ByManagementKeys(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newManagementKeysStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+
 // ByTempBalancesCount orders the results by temp_balances count.
 func ByTempBalancesCount(opts ...sql.OrderTermOption) OrderOption {
 	return func(s *sql.Selector) {
@@ -265,6 +288,13 @@ func newKeysStep() *sqlgraph.Step {
 		sqlgraph.From(Table, FieldID),
 		sqlgraph.To(KeysInverseTable, FieldID),
 		sqlgraph.Edge(sqlgraph.O2M, false, KeysTable, KeysColumn),
+	)
+}
+func newManagementKeysStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(ManagementKeysInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, ManagementKeysTable, ManagementKeysColumn),
 	)
 }
 func newTempBalancesStep() *sqlgraph.Step {

@@ -12,7 +12,7 @@
 // （窗口 429 → throttle、窗口 5xx → fail_account，fatal 场景演练入口）。
 //
 //	用法: go run ./tools/loadtest/setup \
-//	  -addr http://127.0.0.1:8080 -admin-token <C3API_ADMIN_TOKEN> \
+//	  -addr http://127.0.0.1:8080 -admin-jwt <platform_admin JWT> \
 //	  -upstream http://127.0.0.1:9100 \
 //	  -users 5000 -accounts 5000 -groups 20 -keys-out keys.txt \
 //	  -cost-multiplier 0.5-4 -cache-domains 64 -routing-rules
@@ -47,7 +47,7 @@ import (
 
 var (
 	addr        = flag.String("addr", "http://127.0.0.1:8080", "gateway base url")
-	adminToken  = flag.String("admin-token", "", "C3API_ADMIN_TOKEN (admin API auth)")
+	adminJWT    = flag.String("admin-jwt", "", "raw platform_admin JWT (admin API auth; empty = register bootstrap user on fresh DB)")
 	upstream    = flag.String("upstream", "http://127.0.0.1:9100", "fake upstream base url (bare root)")
 	upstreams   = flag.String("upstreams", "", "comma-separated upstream base urls, templates round-robin (empty = single -upstream)")
 	users       = flag.Int("users", 5000, "number of users")
@@ -124,10 +124,6 @@ type keyResp struct {
 
 func main() {
 	flag.Parse()
-	if *adminToken == "" {
-		fmt.Fprintln(os.Stderr, "-admin-token required (C3API_ADMIN_TOKEN)")
-		os.Exit(2)
-	}
 	// -billing-enabled：默认余额区间 + 全部模型池定价——用户有钱 + 模型有价是
 	// 计费压测前提（缺价 402 全拒/免费用户是事故，不是被测行为）；显式传参覆盖。
 	if *billingOn {
@@ -183,7 +179,25 @@ func main() {
 		}
 	}
 	admin := func(method, path string, body any, out any) {
-		call(method, path, "Bearer "+*adminToken, body, out)
+		call(method, path, "Bearer "+*adminJWT, body, out)
+	}
+	// 无 -admin-jwt：注册 bootstrap 用户（fresh DB 首个注册即 platform_admin）→ 取 JWT。
+	// 已 bootstrap 的库：该邮箱已存在（409）→ 探测 /api/admin/settings 确认；失败即退出。
+	if *adminJWT == "" {
+		const bootEmail = "loadtest-bootstrap@loadtest.test"
+		var reg loginResp
+		if err := callNoExit(http.MethodPost, "/api/user/auth/register", "",
+			map[string]any{"email": bootEmail, "password": "loadtest-pass-1"}, &reg); err != nil || reg.Token == "" {
+			// 注册失败（多半 409 已存在）：尝试登录现有 bootstrap 账号。
+			var login loginResp
+			if lerr := callNoExit(http.MethodPost, "/api/user/auth/login", "",
+				map[string]any{"email": bootEmail, "password": "loadtest-pass-1"}, &login); lerr != nil || login.Token == "" {
+				fmt.Fprintf(os.Stderr, "-admin-jwt 缺失且 bootstrap 失败: register=%v login=%v\n", err, lerr)
+				os.Exit(2)
+			}
+			reg = login
+		}
+		*adminJWT = reg.Token
 	}
 	rng := rand.New(rand.NewPCG(uint64(time.Now().UnixNano()), 1))
 

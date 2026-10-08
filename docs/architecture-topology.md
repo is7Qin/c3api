@@ -62,7 +62,7 @@ flowchart LR
 
 - 单二进制部署：前端 `web/` 构建产物经 `cmd/server/embed.go:14` 的 `go:embed all:dist` 内嵌进 Go 二进制；运行时 = `server` 进程 + 挂载 config（Dockerfile 三阶段：node → go → alpine 非 root）。
 - 部署面（一句话带过）：
-  - `compose.yml`：`db`（postgres:18-alpine，数据挂载 ./deploy/data/pg）+ `app`（单容器，`C3API_ADMIN_TOKEN`/`C3API_DB_DSN` 环境变量注入，config 只读挂载自 ./deploy/config.toml）。
+  - `compose.yml`：`db`（postgres:18-alpine，数据挂载 ./deploy/data/pg）+ `app`（单容器，`C3API_DB_DSN`/`C3API_AUTH_JWT_SECRET` 环境变量注入，config 只读挂载自 ./deploy/config.toml）。
   - `Dockerfile`：多阶段构建，`CGO_ENABLED=0` 静态单二进制。
   - `scripts/build.sh`：pnpm 构建 web → 拷入 `cmd/server/dist` → `go build -o bin/server`。
   - `tools/`：`tools/loadtest`（打压测，-mode stream/fill，交错跑 + 每请求 CPU）、`tools/fakeupstream`（假上游，chunks/latency 可配）、`tools/e2e`（端到端计费测试）。
@@ -87,7 +87,7 @@ flowchart LR
 | `internal/quality` | 路由质量观测：Recorder 内存归并 + `quality-sync` worker 落实例分钟表 | main 装配；scheduler 消费 |
 | `internal/rule` | 规则引擎：事件队列 worker（Name="rule-engine"）+ 状态动作 apply | scheduler 注入 apply 回调 |
 | `internal/credential` | 凭据类型注册表 + Provider 分发（api_key/responses-special/codex-oauth/codex-pat，`internal/credential/credential.go:24-33`） | proxy/scheduler 消费 |
-| `internal/auth` | JWT issuer/verify + RequireJWT 中间件 | server/user handler |
+| `internal/auth` | JWT issuer/verify + RequireJWT/RequireIdentity 中间件 | server/user handler |
 | `internal/billing` | 计费：价格矩阵纯函数、余额快照、批量扣费 Flusher | proxy/repository |
 | `internal/usage` | 明细 Recorder、err_logs 落盘 worker、retention worker、**stats-agg 离线聚合 worker** | proxy/billing/repository |
 | `internal/notify` | 多实例 NOTIFY 发布/监听（`Change` 载荷 + Dispatcher 接口） | main 装配（service/scheduler 发布） |
@@ -130,7 +130,7 @@ flowchart LR
 
 每个决策点：
 - **鉴权**（`internal/proxy/auth.go:146`）：`Authorization: Bearer` 或 `x-api-key`（Anthropic 口径）→ 快照按明文等值查（零 DB）；key 或归属用户禁用 → 401 即时失效。
-- **认证双路径**（`internal/server/middleware.go:49` adminAuth + `internal/server/server.go:71-82` /api/admin 组 Handle）：/api/admin 组 = 静态 admin token `Bearer <AdminToken>` **OR** platform_admin JWT（`JWTIssuer.Verify` + `claims.Role==platform_admin` + 快照用户状态 active 校验；JWT 路径注入 `adminUserIDKey`）；/api/user 组 = 内部公开分流（`internal/handler/user/router.go:24-52`：register/login/register-code/forgot-password/reset-password 公开，其余 RequireJWT）；AI 组 = key 鉴权（无 JWT）。
+- **认证**（`internal/server/middleware.go` adminAuth + `internal/server/server.go` /api/admin 组 Handle）：/api/admin 组 = platform_admin 身份（platform_admin JWT 或该身份的管理 key mk-：`JWTIssuer.Verify`/`AuthenticateManagement` + 快照 role==platform_admin + 状态 active 校验；注入 `adminUserIDKey` + FundsActor）；/api/user 组 = 内部公开分流（`internal/handler/user/router.go`：register/login/register-code/forgot-password/reset-password 公开，其余 RequireIdentity——JWT 或管理 key）；AI 组 = key 鉴权（无 JWT）。
 - **配额**：`quotaExhausted`（`internal/proxy/gate.go:331`）本地预算两原子读；耗尽才触发 DB 复核认领（`reclaim` `internal/proxy/gate.go:384`，慢路径单飞 + 10s 失败退避）；复核公式 `budget = consumed + ceil(remaining_eff/N)`（`allocBudget` `gate.go:439`；收敛修正，防复核无限续额）。
 - **余额预检**（`internal/proxy/pipeline.go:86-91`）：BillingCapture 门控快照读零 DB（滞后 ≤ balance_refresh_interval）；快照缺失/<0 且非免费组 → 402（余额 0 放行——临时额度由 FEFO 扣费消化）；免费组（EffectiveMultiplier==0）放行。
 - **并发门禁**：user → key 两级 CAS（`internal/proxy/gate.go:282-291`），key 失败回滚 user 计数；跨 reload 在途值继承。
@@ -318,8 +318,8 @@ flowchart LR
 | 路由 | 鉴权 | 说明 |
 |---|---|---|
 | `GET /healthz` | 无 | inflight/goroutines/heap（`internal/server/server.go:61-69`） |
-| `/api/admin/*` | 静态 admin token OR platform_admin JWT（`internal/server/server.go:71-82` + `middleware.go:49`） | 管理面（chi `Handle`，不剥离前缀） |
-| `/api/user/*` | `register`/`login`/`register-code`/`forgot-password`/`reset-password` 公开，其余 RequireJWT（`internal/handler/user/router.go:24-52`） | 用户面 |
+| `/api/admin/*` | platform_admin JWT OR platform_admin 管理 key（`internal/server/server.go:71-82` + `middleware.go:49`） | 管理面（chi `Handle`，不剥离前缀） |
+| `/api/user/*` | `register`/`login`/`register-code`/`forgot-password`/`reset-password` 公开，其余 RequireIdentity（JWT 或管理 key；`internal/handler/user/router.go`） | 用户面 |
 | `/v1/*` | AI key 鉴权（proxy） | 8 端点：chat/anthropic/responses + WS + images×2 + search + models（`internal/proxy/router.go:19-57`）。**用 `Handle("/v1/*")` 而非 `Mount("/")`**（`internal/server/server.go:89-101`）——通配挂载会吞掉 SPA 深链 |
 | `/assets/*`、`/favicon.svg`、`/`、SPA fallback | 无 | 网关内嵌 web/dist（`internal/server/server.go:103-137` + `cmd/server/embed.go:15`） |
 
@@ -336,7 +336,6 @@ flowchart LR
 |---|---|---|
 | `server` | server.NewServer + http.Server | addr/read_header_timeout/max_header_bytes/time_zone（IANA 名，空 = 进程本地；非法名启动失败） |
 | `log` | logx.New | level/output |
-| `admin` | server 静态 token | token（**空 = 不启用静态 token 鉴权**，/api/admin 仅接受 platform_admin JWT；非空时占位值被拒） |
 | `auth` | jwtauth.Issuer | jwt_secret（必填；`C3API_AUTH_JWT_SECRET` 亦可） |
 | `db` | repository.OpenPG | dsn（必填）/max_conns（20 = billing 8 + stats 8 worker + 余量）；**OpenPG 自动补丁**：lock_timeout=5s 会话级 + 计费结算事务 per-tx 10s 超时 + MaxConnLifetime=30m 滚动轮换——DSN 无需手工配置，用户 DSN 显式同名参数时尊重不覆盖；**不设会话级 statement_timeout**（与 admin 面大窗口聚合实测冲突，降级为计费路径 per-query 超时；`internal/config/config.go:58-61` + `internal/repository/repository.go:855-873`） |
 | **`redis`** | pkg/redisx → discovery / concSync | **必需依赖**（实例发现等易失协调态）：`addr` 必填，空/不可达启动即失败；env `C3API_REDIS_ADDR` / `C3API_REDIS_PASSWORD` / `C3API_REDIS_DB`；password 空 = 无鉴权（占位值被拒）；`db < 0` 非法 |
@@ -347,7 +346,7 @@ flowchart LR
 | `billing` | billing.NewFlusher + BillingHooks | enabled=true/flush_interval=250ms/balance_refresh_interval=10s |
 
 - **智能路由无独立配置段**（`config.example.toml:56-59` 注释）：Primary/Explore/Degraded 分层、探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 + 采购倍率 + 运行时健康派生，**无固定全局 SLO 阈值可配**；可调项在账号与规则面。
-- 必填校验（`internal/config/config.go:222-305` validate）：**必填字符串** = `auth.jwt_secret` / `db.dsn` / `redis.addr`（空 → fatal）；**占位值精确匹配拒绝** = `admin.token` / `auth.jwt_secret` / `redis.password`（change-me / change-me-too / dev-admin-token / dev-jwt-secret-for-local）——**`admin.token` 本身可空**（空 = 只走 JWT）。duration 除 `stats_agg_interval`（0 = 禁用）外均须 ≥ 1ms；int 下限 1（scheduler.default_max_concurrency / db.max_conns / proxy.failover_attempts / proxy.max_body_size）；failover_attempts 上限 8。
+- 必填校验（`internal/config/config.go` validate）：**必填字符串** = `auth.jwt_secret` / `db.dsn` / `redis.addr`（空 → fatal）；**占位值精确匹配拒绝** = `auth.jwt_secret` / `redis.password`（change-me / change-me-too / dev-jwt-secret-for-local）。duration 除 `stats_agg_interval`（0 = 禁用）外均须 ≥ 1ms；int 下限 1（scheduler.default_max_concurrency / db.max_conns / proxy.failover_attempts / proxy.max_body_size）；failover_attempts 上限 8。
 - 分区/保留/倍率等策略参数在 **DB settings 表**而非 config（`internal/domain/settings.go:13-45`）：signup 默认资源、price_source_url/price_sync_cron、service_tier_policy_*、mail.* 族、balance_warning.enabled。实例数 N **不在** settings——由 Redis 心跳活体数提供（§10）。
 
 ## 13. 架构决策记录（ADR）

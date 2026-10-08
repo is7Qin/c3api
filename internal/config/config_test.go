@@ -16,11 +16,9 @@ import (
 )
 
 // setenvRequired 注入必填密钥（auth.jwt_secret/db.dsn/redis.addr 校验已内聚到
-// Load——测试调用 Load 前必须先补环境，admin.token 已可空，仍注入保持
-// 既有用例语义）。
+// Load——测试调用 Load 前必须先补环境）。
 func setenvRequired(t *testing.T) {
 	t.Helper()
-	t.Setenv("C3API_ADMIN_TOKEN", "test-admin-token")
 	t.Setenv("C3API_AUTH_JWT_SECRET", "test-jwt-secret")
 	t.Setenv("C3API_DB_DSN", "postgres://test")
 	t.Setenv("C3API_REDIS_ADDR", "127.0.0.1:6379")
@@ -60,7 +58,6 @@ func TestDefaults(t *testing.T) {
 	require.Equal(t, int64(50000), c.Proxy.MaxInflight)
 	require.Equal(t, 500, c.Usage.BatchSize)
 	require.Equal(t, 8, c.Usage.FlushWorkers, "usage flush 并行 worker 默认 8（管道化）")
-	require.Equal(t, "test-admin-token", c.Admin.Token)
 	require.Equal(t, 30*time.Second, c.Scheduler.SyncInterval)
 	require.True(t, c.Billing.Enabled, "计费默认开（全链默认开启）")
 	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, " 游标轮询默认 250ms（spec-f2-ledger-cursor）")
@@ -83,7 +80,6 @@ func TestLoadFromTOML(t *testing.T) {
 	setenvRequired(t)
 	c, err := Load("../../config.example.toml")
 	require.NoError(t, err)
-	require.Equal(t, "test-admin-token", c.Admin.Token)
 	require.Equal(t, 500*time.Millisecond, c.Usage.FlushInterval)
 	require.Empty(t, c.Server.TimeZone, "example 的 time_zone 必须位于 server 内联表")
 
@@ -236,26 +232,24 @@ func TestLoadKeepsRetentionZeroSemantics(t *testing.T) {
 	}
 }
 
-// TestLoadRejectsPlaceholderSecrets：4 个已知占位值 × 3 字段（精确匹配拒绝；防
+// TestLoadRejectsPlaceholderSecrets：3 个已知占位值 × 2 字段（精确匹配拒绝；防
 // 原样部署鉴权绕过——config_test 旧断言"change-me 合法"是缺陷守护者，已改写；
 // redis.password 复用同校验，foundation spec §2.1）。
 func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
 	clearC3APIEnv(t)
-	for _, ph := range []string{"change-me", "change-me-too", "dev-admin-token", "dev-jwt-secret-for-local"} {
-		for _, field := range []string{"admin.token", "auth.jwt_secret", "redis.password"} {
+	for _, ph := range []string{"change-me", "change-me-too", "dev-jwt-secret-for-local"} {
+		for _, field := range []string{"auth.jwt_secret", "redis.password"} {
 			t.Run(field+"/"+ph, func(t *testing.T) {
-				admin, jwt, redisPwd := "real-admin-token", "real-jwt-secret", ""
+				jwt, redisPwd := "real-jwt-secret", ""
 				switch field {
-				case "admin.token":
-					admin = ph
 				case "auth.jwt_secret":
 					jwt = ph
 				default:
 					redisPwd = ph
 				}
 				// 不设对应 env（env 会覆盖 TOML 终值）；其余必填经 TOML 提供
-				toml := fmt.Sprintf("admin = { token = %q }\nauth = { jwt_secret = %q }\ndb = { dsn = %q }\nredis = { addr = %q, password = %q }",
-					admin, jwt, "postgres://test", "127.0.0.1:6379", redisPwd)
+				toml := fmt.Sprintf("auth = { jwt_secret = %q }\ndb = { dsn = %q }\nredis = { addr = %q, password = %q }",
+					jwt, "postgres://test", "127.0.0.1:6379", redisPwd)
 				_, err := Load(writeConfig(t, toml))
 				require.Error(t, err)
 				require.ErrorContains(t, err, field)
@@ -265,16 +259,15 @@ func TestLoadRejectsPlaceholderSecrets(t *testing.T) {
 }
 
 // TestLoadRequiresSecrets：必填校验（auth.jwt_secret/db.dsn 空值 → error；原
-// main.go:64-66，已内聚到 Load）。admin.token 已可空——空 = 不启用静态 token，
-// 不再报错（spec 2026-08-15）。
+// main.go:64-66，已内聚到 Load）。
 func TestLoadRequiresSecrets(t *testing.T) {
 	clearC3APIEnv(t)
 	for _, tc := range []struct {
 		path string
 		toml string
 	}{
-		{"auth.jwt_secret", "admin = { token = \"\" }\nauth = { jwt_secret = \"\" }\ndb = { dsn = \"postgres://test\" }\nredis = { addr = \"127.0.0.1:6379\" }"},
-		{"db.dsn", "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"\" }\nredis = { addr = \"127.0.0.1:6379\" }"},
+		{"auth.jwt_secret", "auth = { jwt_secret = \"\" }\ndb = { dsn = \"postgres://test\" }\nredis = { addr = \"127.0.0.1:6379\" }"},
+		{"db.dsn", "auth = { jwt_secret = \"s\" }\ndb = { dsn = \"\" }\nredis = { addr = \"127.0.0.1:6379\" }"},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			_, err := Load(writeConfig(t, tc.toml))
@@ -282,9 +275,6 @@ func TestLoadRequiresSecrets(t *testing.T) {
 			require.ErrorContains(t, err, tc.path)
 		})
 	}
-	// admin.token 空 + 其余必填齐 → 启动成功（空 = 不启用静态 token）
-	_, err := Load(writeConfig(t, "admin = { token = \"\" }\nauth = { jwt_secret = \"s\" }\ndb = { dsn = \"postgres://test\" }\nredis = { addr = \"127.0.0.1:6379\" }"))
-	require.NoError(t, err)
 }
 
 // TestLoadRejectsUnknownKeys：ErrorUnused 开启——拼写错误键

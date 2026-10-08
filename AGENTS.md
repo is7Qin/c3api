@@ -84,7 +84,8 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 
 ```bash
 # 本地开发（:18080 网关 + :5173 前端代理 /api）
-export C3API_ADMIN_TOKEN=local-admin-token
+# 管理面鉴权：首个注册用户自动成为 platform_admin（bootstrap 后登录即可），
+# 或自签发管理 key（mk- 前缀）。
 export C3API_AUTH_JWT_SECRET=$(openssl rand -hex 16)
 go run ./cmd/server -config config.toml
 cd web && pnpm install --config.node-linker=hoisted && pnpm run dev
@@ -108,7 +109,7 @@ TEST_DATABASE_URL="postgres://postgres:c3api@localhost:15432/postgres" \
 
 # 压测三件套
 go run ./tools/fakeupstream -addr :9100 -chunks 100 -latency 20ms
-go run ./tools/loadtest/setup -addr http://127.0.0.1:8080 -admin-token <tok> -upstream http://127.0.0.1:9100 -users 5000 -accounts 5000 -groups 20 -keys-out keys.txt
+go run ./tools/loadtest/setup -addr http://127.0.0.1:8080 -admin-jwt <platform_admin JWT> -upstream http://127.0.0.1:9100 -users 5000 -accounts 5000 -groups 20 -keys-out keys.txt
 go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -concurrency 10000 -duration 5m
 ```
 

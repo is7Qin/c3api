@@ -87,7 +87,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, g.ID),
-	}}, noopUserLoader{}, nil, true)
+	}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// 计费钩子：价格快照 + 余额快照；单写点：billable 行经 rec → repos.Usages

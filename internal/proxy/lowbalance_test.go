@@ -72,7 +72,7 @@ func guardProxy(tb testing.TB, capConc int, thresholdMilli int64, userMaxConc in
 	tb.Helper()
 	meta := activeKey(1, 1, 10)
 	meta.UserMaxConc = userMaxConc
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(tb, auth.Reload(context.Background()))
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour,

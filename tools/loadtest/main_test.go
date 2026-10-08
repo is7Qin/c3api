@@ -241,9 +241,9 @@ func readAll(t *testing.T, req *http.Request) string {
 // 其余测试依赖默认 mode=stream）。
 func fillFlag(t *testing.T, m, ft, tok string) {
 	t.Helper()
-	prevMode, prevType, prevTok := *mode, *fillType, *adminToken
-	*mode, *fillType, *adminToken = m, ft, tok
-	t.Cleanup(func() { *mode, *fillType, *adminToken = prevMode, prevType, prevTok })
+	prevMode, prevType, prevTok := *mode, *fillType, *adminJWT
+	*mode, *fillType, *adminJWT = m, ft, tok
+	t.Cleanup(func() { *mode, *fillType, *adminJWT = prevMode, prevType, prevTok })
 }
 
 func TestFillTypeMixedCycles(t *testing.T) {

@@ -6,9 +6,9 @@ package handler
 
 // supplier_admin.go 管理面结算审批 handler（spec 2026-10-09 §6.3/§6.4/§6.5）：
 // 列表 + 五态 CAS（approve/reject/claim/confirm-failed/paid）+ 代申请 + 余额列表/
-// PATCH。**资金命令一律要求具名 JWT 操作者（I5）**：静态 admin token 无 uid ⇒ 403。
-// handler 只做线格式投影与操作者提取；CAS/reject 退还/lifetime_paid/风控门在
-// repository 写事务内完成。
+// PATCH。**资金命令一律要求具名操作者（I5）**：platform_admin JWT 与 platform_admin
+// 管理 key 均注入 FundsActor；缺 FundsActor ⇒ 403。handler 只做线格式投影与操作者
+// 提取；CAS/reject 退还/lifetime_paid/风控门在 repository 写事务内完成。
 
 import (
 	"net/http"
@@ -17,17 +17,17 @@ import (
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// fundsActorFrom 读取资金操作者（管理面 JWT 鉴权路径注入）；缺省（静态 admin
-// token / 无鉴权）⇒ ok=false（handler 返回 403，§6.5 I5）。
+// fundsActorFrom 读取资金操作者（管理面鉴权路径注入：platform_admin JWT 与管理 key
+// 均经 FundsActor）；缺省（无具名操作者 / 无鉴权）⇒ ok=false（handler 返回 403，§6.5 I5）。
 func fundsActorFrom(r *http.Request) (domain.FundsActor, bool) {
 	return domain.FundsActorFrom(r.Context())
 }
 
-// requireFundsActor 提取资金操作者；缺失 ⇒ 403（静态 admin token 明确拒绝）。
+// requireFundsActor 提取资金操作者；缺失 ⇒ 403（无具名操作者明确拒绝）。
 func requireFundsActor(w http.ResponseWriter, r *http.Request) (domain.FundsActor, bool) {
 	actor, ok := fundsActorFrom(r)
 	if !ok {
-		httpface.WriteErr(w, http.StatusForbidden, "funds commands require a named JWT operator")
+		httpface.WriteErr(w, http.StatusForbidden, "funds commands require a named operator")
 		return domain.FundsActor{}, false
 	}
 	return actor, true

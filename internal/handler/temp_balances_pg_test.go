@@ -48,7 +48,7 @@ func tempBalancesPGTestDB(t *testing.T) *repository.Repository {
 func newTempBalancesPGRouter(t *testing.T) (*repository.Repository, func(method, path, body string) *httptest.ResponseRecorder) {
 	t.Helper()
 	repos := tempBalancesPGTestDB(t)
-	svc := service.New(service.Deps{Store: repos, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: repos, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件

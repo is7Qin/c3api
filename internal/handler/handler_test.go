@@ -38,6 +38,10 @@ func (f *fakeKeys) Upsert(hash string, meta domain.KeyMeta) {
 }
 func (f *fakeKeys) Delete(hash string) { f.deleted = append(f.deleted, hash) }
 
+// UpsertManagementKey/DeleteManagementKey 补全 service.AuthRegistrar（管理 key 面 no-op）。
+func (f *fakeKeys) UpsertManagementKey(string, domain.ManagementKeyMeta) {}
+func (f *fakeKeys) DeleteManagementKey(string)                           {}
+
 // testEmailCodes 无行为 service.EmailCodeStore（service.New 必选依赖的测试
 // 占位：被测路径不触验证码面；验证码行为由 newTestUserRouter 经 fake 真实现覆盖）。
 var testEmailCodes service.EmailCodeStore = testEmailCodeStore{}
@@ -63,7 +67,7 @@ func (testEmailCodeStore) DeleteEmailCode(ctx context.Context, email, purpose st
 func newTestHandler(t *testing.T) *AdminAPI {
 	t.Helper()
 	store := newFakeStore()
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	return New(svc)
 }
 
@@ -331,7 +335,7 @@ func TestGetErrLogsRequiresFromTo(t *testing.T) {
 // error_type/error_message/billing_tier 全值）。
 func TestGetErrLogs(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler {

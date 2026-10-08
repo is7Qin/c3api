@@ -21,6 +21,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
+	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/predicate"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
@@ -58,6 +59,7 @@ const (
 	TypeGroup                  = "Group"
 	TypeGroupAssignment        = "GroupAssignment"
 	TypeKey                    = "Key"
+	TypeManagementKey          = "ManagementKey"
 	TypePriceEntry             = "PriceEntry"
 	TypePriceVariant           = "PriceVariant"
 	TypeRedemptionCode         = "RedemptionCode"
@@ -8355,6 +8357,741 @@ func (m *KeyMutation) ResetEdge(name string) error {
 		return nil
 	}
 	return fmt.Errorf("unknown Key edge %s", name)
+}
+
+// ManagementKeyMutation represents an operation that mutates the ManagementKey nodes in the graph.
+type ManagementKeyMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *int64
+	name          *string
+	key_raw       *string
+	status        *managementkey.Status
+	created_at    *time.Time
+	updated_at    *time.Time
+	deleted_at    *time.Time
+	clearedFields map[string]struct{}
+	user          *int64
+	cleareduser   bool
+	done          bool
+	oldValue      func(context.Context) (*ManagementKey, error)
+	predicates    []predicate.ManagementKey
+}
+
+var _ ent.Mutation = (*ManagementKeyMutation)(nil)
+
+// managementkeyOption allows management of the mutation configuration using functional options.
+type managementkeyOption func(*ManagementKeyMutation)
+
+// newManagementKeyMutation creates new mutation for the ManagementKey entity.
+func newManagementKeyMutation(c config, op Op, opts ...managementkeyOption) *ManagementKeyMutation {
+	m := &ManagementKeyMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeManagementKey,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withManagementKeyID sets the ID field of the mutation.
+func withManagementKeyID(id int64) managementkeyOption {
+	return func(m *ManagementKeyMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *ManagementKey
+		)
+		m.oldValue = func(ctx context.Context) (*ManagementKey, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().ManagementKey.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withManagementKey sets the old ManagementKey of the mutation.
+func withManagementKey(node *ManagementKey) managementkeyOption {
+	return func(m *ManagementKeyMutation) {
+		m.oldValue = func(context.Context) (*ManagementKey, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m ManagementKeyMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m ManagementKeyMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// SetID sets the value of the id field. Note that this
+// operation is only accepted on creation of ManagementKey entities.
+func (m *ManagementKeyMutation) SetID(id int64) {
+	m.id = &id
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *ManagementKeyMutation) ID() (id int64, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *ManagementKeyMutation) IDs(ctx context.Context) ([]int64, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int64{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().ManagementKey.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetUserID sets the "user_id" field.
+func (m *ManagementKeyMutation) SetUserID(i int64) {
+	m.user = &i
+}
+
+// UserID returns the value of the "user_id" field in the mutation.
+func (m *ManagementKeyMutation) UserID() (r int64, exists bool) {
+	v := m.user
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUserID returns the old "user_id" field's value of the ManagementKey entity.
+// If the ManagementKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ManagementKeyMutation) OldUserID(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUserID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUserID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUserID: %w", err)
+	}
+	return oldValue.UserID, nil
+}
+
+// ResetUserID resets all changes to the "user_id" field.
+func (m *ManagementKeyMutation) ResetUserID() {
+	m.user = nil
+}
+
+// SetName sets the "name" field.
+func (m *ManagementKeyMutation) SetName(s string) {
+	m.name = &s
+}
+
+// Name returns the value of the "name" field in the mutation.
+func (m *ManagementKeyMutation) Name() (r string, exists bool) {
+	v := m.name
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldName returns the old "name" field's value of the ManagementKey entity.
+// If the ManagementKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ManagementKeyMutation) OldName(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldName is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldName requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldName: %w", err)
+	}
+	return oldValue.Name, nil
+}
+
+// ResetName resets all changes to the "name" field.
+func (m *ManagementKeyMutation) ResetName() {
+	m.name = nil
+}
+
+// SetKeyRaw sets the "key_raw" field.
+func (m *ManagementKeyMutation) SetKeyRaw(s string) {
+	m.key_raw = &s
+}
+
+// KeyRaw returns the value of the "key_raw" field in the mutation.
+func (m *ManagementKeyMutation) KeyRaw() (r string, exists bool) {
+	v := m.key_raw
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldKeyRaw returns the old "key_raw" field's value of the ManagementKey entity.
+// If the ManagementKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ManagementKeyMutation) OldKeyRaw(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldKeyRaw is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldKeyRaw requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldKeyRaw: %w", err)
+	}
+	return oldValue.KeyRaw, nil
+}
+
+// ResetKeyRaw resets all changes to the "key_raw" field.
+func (m *ManagementKeyMutation) ResetKeyRaw() {
+	m.key_raw = nil
+}
+
+// SetStatus sets the "status" field.
+func (m *ManagementKeyMutation) SetStatus(value managementkey.Status) {
+	m.status = &value
+}
+
+// Status returns the value of the "status" field in the mutation.
+func (m *ManagementKeyMutation) Status() (r managementkey.Status, exists bool) {
+	v := m.status
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldStatus returns the old "status" field's value of the ManagementKey entity.
+// If the ManagementKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ManagementKeyMutation) OldStatus(ctx context.Context) (v managementkey.Status, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldStatus is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldStatus requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldStatus: %w", err)
+	}
+	return oldValue.Status, nil
+}
+
+// ResetStatus resets all changes to the "status" field.
+func (m *ManagementKeyMutation) ResetStatus() {
+	m.status = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *ManagementKeyMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *ManagementKeyMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the ManagementKey entity.
+// If the ManagementKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ManagementKeyMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *ManagementKeyMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetUpdatedAt sets the "updated_at" field.
+func (m *ManagementKeyMutation) SetUpdatedAt(t time.Time) {
+	m.updated_at = &t
+}
+
+// UpdatedAt returns the value of the "updated_at" field in the mutation.
+func (m *ManagementKeyMutation) UpdatedAt() (r time.Time, exists bool) {
+	v := m.updated_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpdatedAt returns the old "updated_at" field's value of the ManagementKey entity.
+// If the ManagementKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ManagementKeyMutation) OldUpdatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpdatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpdatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpdatedAt: %w", err)
+	}
+	return oldValue.UpdatedAt, nil
+}
+
+// ResetUpdatedAt resets all changes to the "updated_at" field.
+func (m *ManagementKeyMutation) ResetUpdatedAt() {
+	m.updated_at = nil
+}
+
+// SetDeletedAt sets the "deleted_at" field.
+func (m *ManagementKeyMutation) SetDeletedAt(t time.Time) {
+	m.deleted_at = &t
+}
+
+// DeletedAt returns the value of the "deleted_at" field in the mutation.
+func (m *ManagementKeyMutation) DeletedAt() (r time.Time, exists bool) {
+	v := m.deleted_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldDeletedAt returns the old "deleted_at" field's value of the ManagementKey entity.
+// If the ManagementKey object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ManagementKeyMutation) OldDeletedAt(ctx context.Context) (v *time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldDeletedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldDeletedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldDeletedAt: %w", err)
+	}
+	return oldValue.DeletedAt, nil
+}
+
+// ClearDeletedAt clears the value of the "deleted_at" field.
+func (m *ManagementKeyMutation) ClearDeletedAt() {
+	m.deleted_at = nil
+	m.clearedFields[managementkey.FieldDeletedAt] = struct{}{}
+}
+
+// DeletedAtCleared returns if the "deleted_at" field was cleared in this mutation.
+func (m *ManagementKeyMutation) DeletedAtCleared() bool {
+	_, ok := m.clearedFields[managementkey.FieldDeletedAt]
+	return ok
+}
+
+// ResetDeletedAt resets all changes to the "deleted_at" field.
+func (m *ManagementKeyMutation) ResetDeletedAt() {
+	m.deleted_at = nil
+	delete(m.clearedFields, managementkey.FieldDeletedAt)
+}
+
+// ClearUser clears the "user" edge to the User entity.
+func (m *ManagementKeyMutation) ClearUser() {
+	m.cleareduser = true
+	m.clearedFields[managementkey.FieldUserID] = struct{}{}
+}
+
+// UserCleared reports if the "user" edge to the User entity was cleared.
+func (m *ManagementKeyMutation) UserCleared() bool {
+	return m.cleareduser
+}
+
+// UserIDs returns the "user" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// UserID instead. It exists only for internal usage by the builders.
+func (m *ManagementKeyMutation) UserIDs() (ids []int64) {
+	if id := m.user; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetUser resets all changes to the "user" edge.
+func (m *ManagementKeyMutation) ResetUser() {
+	m.user = nil
+	m.cleareduser = false
+}
+
+// Where appends a list predicates to the ManagementKeyMutation builder.
+func (m *ManagementKeyMutation) Where(ps ...predicate.ManagementKey) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the ManagementKeyMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *ManagementKeyMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.ManagementKey, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *ManagementKeyMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *ManagementKeyMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (ManagementKey).
+func (m *ManagementKeyMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *ManagementKeyMutation) Fields() []string {
+	fields := make([]string, 0, 7)
+	if m.user != nil {
+		fields = append(fields, managementkey.FieldUserID)
+	}
+	if m.name != nil {
+		fields = append(fields, managementkey.FieldName)
+	}
+	if m.key_raw != nil {
+		fields = append(fields, managementkey.FieldKeyRaw)
+	}
+	if m.status != nil {
+		fields = append(fields, managementkey.FieldStatus)
+	}
+	if m.created_at != nil {
+		fields = append(fields, managementkey.FieldCreatedAt)
+	}
+	if m.updated_at != nil {
+		fields = append(fields, managementkey.FieldUpdatedAt)
+	}
+	if m.deleted_at != nil {
+		fields = append(fields, managementkey.FieldDeletedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *ManagementKeyMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case managementkey.FieldUserID:
+		return m.UserID()
+	case managementkey.FieldName:
+		return m.Name()
+	case managementkey.FieldKeyRaw:
+		return m.KeyRaw()
+	case managementkey.FieldStatus:
+		return m.Status()
+	case managementkey.FieldCreatedAt:
+		return m.CreatedAt()
+	case managementkey.FieldUpdatedAt:
+		return m.UpdatedAt()
+	case managementkey.FieldDeletedAt:
+		return m.DeletedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *ManagementKeyMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case managementkey.FieldUserID:
+		return m.OldUserID(ctx)
+	case managementkey.FieldName:
+		return m.OldName(ctx)
+	case managementkey.FieldKeyRaw:
+		return m.OldKeyRaw(ctx)
+	case managementkey.FieldStatus:
+		return m.OldStatus(ctx)
+	case managementkey.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	case managementkey.FieldUpdatedAt:
+		return m.OldUpdatedAt(ctx)
+	case managementkey.FieldDeletedAt:
+		return m.OldDeletedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown ManagementKey field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ManagementKeyMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case managementkey.FieldUserID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUserID(v)
+		return nil
+	case managementkey.FieldName:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetName(v)
+		return nil
+	case managementkey.FieldKeyRaw:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetKeyRaw(v)
+		return nil
+	case managementkey.FieldStatus:
+		v, ok := value.(managementkey.Status)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetStatus(v)
+		return nil
+	case managementkey.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	case managementkey.FieldUpdatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpdatedAt(v)
+		return nil
+	case managementkey.FieldDeletedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetDeletedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown ManagementKey field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *ManagementKeyMutation) AddedFields() []string {
+	var fields []string
+	return fields
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *ManagementKeyMutation) AddedField(name string) (ent.Value, bool) {
+	switch name {
+	}
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *ManagementKeyMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown ManagementKey numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *ManagementKeyMutation) ClearedFields() []string {
+	var fields []string
+	if m.FieldCleared(managementkey.FieldDeletedAt) {
+		fields = append(fields, managementkey.FieldDeletedAt)
+	}
+	return fields
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *ManagementKeyMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *ManagementKeyMutation) ClearField(name string) error {
+	switch name {
+	case managementkey.FieldDeletedAt:
+		m.ClearDeletedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ManagementKey nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *ManagementKeyMutation) ResetField(name string) error {
+	switch name {
+	case managementkey.FieldUserID:
+		m.ResetUserID()
+		return nil
+	case managementkey.FieldName:
+		m.ResetName()
+		return nil
+	case managementkey.FieldKeyRaw:
+		m.ResetKeyRaw()
+		return nil
+	case managementkey.FieldStatus:
+		m.ResetStatus()
+		return nil
+	case managementkey.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	case managementkey.FieldUpdatedAt:
+		m.ResetUpdatedAt()
+		return nil
+	case managementkey.FieldDeletedAt:
+		m.ResetDeletedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown ManagementKey field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *ManagementKeyMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.user != nil {
+		edges = append(edges, managementkey.EdgeUser)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *ManagementKeyMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case managementkey.EdgeUser:
+		if id := m.user; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *ManagementKeyMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *ManagementKeyMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *ManagementKeyMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.cleareduser {
+		edges = append(edges, managementkey.EdgeUser)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *ManagementKeyMutation) EdgeCleared(name string) bool {
+	switch name {
+	case managementkey.EdgeUser:
+		return m.cleareduser
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *ManagementKeyMutation) ClearEdge(name string) error {
+	switch name {
+	case managementkey.EdgeUser:
+		m.ClearUser()
+		return nil
+	}
+	return fmt.Errorf("unknown ManagementKey unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *ManagementKeyMutation) ResetEdge(name string) error {
+	switch name {
+	case managementkey.EdgeUser:
+		m.ResetUser()
+		return nil
+	}
+	return fmt.Errorf("unknown ManagementKey edge %s", name)
 }
 
 // PriceEntryMutation represents an operation that mutates the PriceEntry nodes in the graph.
@@ -28674,6 +29411,9 @@ type UserMutation struct {
 	keys                         map[int64]struct{}
 	removedkeys                  map[int64]struct{}
 	clearedkeys                  bool
+	management_keys              map[int64]struct{}
+	removedmanagement_keys       map[int64]struct{}
+	clearedmanagement_keys       bool
 	temp_balances                map[int64]struct{}
 	removedtemp_balances         map[int64]struct{}
 	clearedtemp_balances         bool
@@ -29283,6 +30023,60 @@ func (m *UserMutation) ResetKeys() {
 	m.removedkeys = nil
 }
 
+// AddManagementKeyIDs adds the "management_keys" edge to the ManagementKey entity by ids.
+func (m *UserMutation) AddManagementKeyIDs(ids ...int64) {
+	if m.management_keys == nil {
+		m.management_keys = make(map[int64]struct{})
+	}
+	for i := range ids {
+		m.management_keys[ids[i]] = struct{}{}
+	}
+}
+
+// ClearManagementKeys clears the "management_keys" edge to the ManagementKey entity.
+func (m *UserMutation) ClearManagementKeys() {
+	m.clearedmanagement_keys = true
+}
+
+// ManagementKeysCleared reports if the "management_keys" edge to the ManagementKey entity was cleared.
+func (m *UserMutation) ManagementKeysCleared() bool {
+	return m.clearedmanagement_keys
+}
+
+// RemoveManagementKeyIDs removes the "management_keys" edge to the ManagementKey entity by IDs.
+func (m *UserMutation) RemoveManagementKeyIDs(ids ...int64) {
+	if m.removedmanagement_keys == nil {
+		m.removedmanagement_keys = make(map[int64]struct{})
+	}
+	for i := range ids {
+		delete(m.management_keys, ids[i])
+		m.removedmanagement_keys[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedManagementKeys returns the removed IDs of the "management_keys" edge to the ManagementKey entity.
+func (m *UserMutation) RemovedManagementKeysIDs() (ids []int64) {
+	for id := range m.removedmanagement_keys {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ManagementKeysIDs returns the "management_keys" edge IDs in the mutation.
+func (m *UserMutation) ManagementKeysIDs() (ids []int64) {
+	for id := range m.management_keys {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetManagementKeys resets all changes to the "management_keys" edge.
+func (m *UserMutation) ResetManagementKeys() {
+	m.management_keys = nil
+	m.clearedmanagement_keys = false
+	m.removedmanagement_keys = nil
+}
+
 // AddTempBalanceIDs adds the "temp_balances" edge to the TempBalance entity by ids.
 func (m *UserMutation) AddTempBalanceIDs(ids ...int64) {
 	if m.temp_balances == nil {
@@ -29728,9 +30522,12 @@ func (m *UserMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *UserMutation) AddedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.keys != nil {
 		edges = append(edges, user.EdgeKeys)
+	}
+	if m.management_keys != nil {
+		edges = append(edges, user.EdgeManagementKeys)
 	}
 	if m.temp_balances != nil {
 		edges = append(edges, user.EdgeTempBalances)
@@ -29748,6 +30545,12 @@ func (m *UserMutation) AddedIDs(name string) []ent.Value {
 	case user.EdgeKeys:
 		ids := make([]ent.Value, 0, len(m.keys))
 		for id := range m.keys {
+			ids = append(ids, id)
+		}
+		return ids
+	case user.EdgeManagementKeys:
+		ids := make([]ent.Value, 0, len(m.management_keys))
+		for id := range m.management_keys {
 			ids = append(ids, id)
 		}
 		return ids
@@ -29769,9 +30572,12 @@ func (m *UserMutation) AddedIDs(name string) []ent.Value {
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *UserMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.removedkeys != nil {
 		edges = append(edges, user.EdgeKeys)
+	}
+	if m.removedmanagement_keys != nil {
+		edges = append(edges, user.EdgeManagementKeys)
 	}
 	if m.removedtemp_balances != nil {
 		edges = append(edges, user.EdgeTempBalances)
@@ -29789,6 +30595,12 @@ func (m *UserMutation) RemovedIDs(name string) []ent.Value {
 	case user.EdgeKeys:
 		ids := make([]ent.Value, 0, len(m.removedkeys))
 		for id := range m.removedkeys {
+			ids = append(ids, id)
+		}
+		return ids
+	case user.EdgeManagementKeys:
+		ids := make([]ent.Value, 0, len(m.removedmanagement_keys))
+		for id := range m.removedmanagement_keys {
 			ids = append(ids, id)
 		}
 		return ids
@@ -29810,9 +30622,12 @@ func (m *UserMutation) RemovedIDs(name string) []ent.Value {
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *UserMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 3)
+	edges := make([]string, 0, 4)
 	if m.clearedkeys {
 		edges = append(edges, user.EdgeKeys)
+	}
+	if m.clearedmanagement_keys {
+		edges = append(edges, user.EdgeManagementKeys)
 	}
 	if m.clearedtemp_balances {
 		edges = append(edges, user.EdgeTempBalances)
@@ -29829,6 +30644,8 @@ func (m *UserMutation) EdgeCleared(name string) bool {
 	switch name {
 	case user.EdgeKeys:
 		return m.clearedkeys
+	case user.EdgeManagementKeys:
+		return m.clearedmanagement_keys
 	case user.EdgeTempBalances:
 		return m.clearedtemp_balances
 	case user.EdgeGroupAssignments:
@@ -29851,6 +30668,9 @@ func (m *UserMutation) ResetEdge(name string) error {
 	switch name {
 	case user.EdgeKeys:
 		m.ResetKeys()
+		return nil
+	case user.EdgeManagementKeys:
+		m.ResetManagementKeys()
 		return nil
 	case user.EdgeTempBalances:
 		m.ResetTempBalances()

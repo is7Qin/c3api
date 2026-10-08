@@ -96,6 +96,34 @@ func CanAccessSupplierSurface(r Role) bool {
 	return false
 }
 
+// roleRank 角色层级秩（user < supplier < platform_admin）；非法角色返回 -1。
+// AtLeast 的唯一事实源。角色是**层级**而非互斥（spec 2026-10-09 §2.1）。
+func roleRank(r Role) int {
+	switch r {
+	case RoleUser:
+		return 0
+	case RoleSupplier:
+		return 1
+	case RolePlatformAdmin:
+		return 2
+	}
+	return -1
+}
+
+// AtLeast 报告 role 是否达到 min 的层级（user ⊂ supplier ⊂ platform_admin；
+// spec 2026-10-09 §2.1）。管理 key 的可达面 = owner 角色在该层级下的闭包：
+// 供应商面 = AtLeast(supplier)、admin 面 = AtLeast(platform_admin)、user 面无门槛。
+// 非法角色 fail-closed：任一实参非法（!Role.Valid()）⇒ 返回 false。
+// **禁止**用 role == RoleSupplier 精确判等作面门槛（会错误拒绝 platform_admin）；
+// 仅最高级 RolePlatformAdmin 可用相等判定。
+func AtLeast(role, min Role) bool {
+	r, m := roleRank(role), roleRank(min)
+	if r < 0 || m < 0 {
+		return false
+	}
+	return r >= m
+}
+
 // UserStatus 用户状态。
 type UserStatus string
 
@@ -133,6 +161,23 @@ const (
 func (s KeyStatus) Valid() bool {
 	switch s {
 	case KeyStatusActive, KeyStatusDisabled:
+		return true
+	}
+	return false
+}
+
+// ManagementKeyStatus 管理 key（mk-）状态。active = 可用；disabled = 软禁用
+// （快照即时 401，可再启用），区别于删除（软删，不可逆撤销）。
+type ManagementKeyStatus string
+
+const (
+	ManagementKeyStatusActive   ManagementKeyStatus = "active"
+	ManagementKeyStatusDisabled ManagementKeyStatus = "disabled"
+)
+
+func (s ManagementKeyStatus) Valid() bool {
+	switch s {
+	case ManagementKeyStatusActive, ManagementKeyStatusDisabled:
 		return true
 	}
 	return false
@@ -746,6 +791,29 @@ type Key struct {
 
 // HasQuota 是否有额度上限（quota > 0）。热路径门禁/扣减短路标志。
 func (k *Key) HasQuota() bool { return k.Quota > 0 }
+
+// ManagementKey 管理 API key（前缀 mk-，独立表；spec 2026-10-09）：管理面
+// （/api/user、/api/user/supplier、/api/admin）鉴权，等价于「以 owner 身份登录」——
+// 可达 API = owner 角色闭包。明文常驻 key_raw（自托管权衡，与客户端 key 一致，
+// 列表页可见）。与 ck- 客户端 key 并存、互不通用。
+type ManagementKey struct {
+	ID        int64
+	UserID    int64 // owner（management_keys.user_id）
+	Name      string
+	KeyRaw    string // 明文，前缀 mk-
+	Status    ManagementKeyStatus
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt *time.Time // 软删除时间戳；nil = 存活（鉴权/列表过滤；GET 单个可查已删）
+}
+
+// ManagementKeyMeta 管理 key 鉴权快照条目（Auth 内存表元素：热路径零 DB，
+// 仅既有快照读锁；owner 状态由 UserSnapshot 统一校验，fail-closed）。
+type ManagementKeyMeta struct {
+	ID     int64
+	UserID int64
+	Status ManagementKeyStatus
+}
 
 // GroupAssignment private 组的授予记录（用户 ↔ 组多对多）。
 // PriceMultiplier 该用户在该组的专属价格倍率（万分数 修正：按组——

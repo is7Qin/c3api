@@ -63,6 +63,12 @@ const (
 	KeyStatusDisabled KeyStatus = "disabled"
 )
 
+// Defines values for ManagementKeyStatus.
+const (
+	ManagementKeyStatusActive   ManagementKeyStatus = "active"
+	ManagementKeyStatusDisabled ManagementKeyStatus = "disabled"
+)
+
 // Defines values for RedemptionType.
 const (
 	Balance     RedemptionType = "balance"
@@ -101,8 +107,8 @@ const (
 
 // Defines values for UserStatus.
 const (
-	UserStatusActive   UserStatus = "active"
-	UserStatusDisabled UserStatus = "disabled"
+	Active   UserStatus = "active"
+	Disabled UserStatus = "disabled"
 )
 
 // Defines values for GetUserKeysParamsOrder.
@@ -279,6 +285,43 @@ type KeyUpdate struct {
 	// Quota 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
 	Quota  *int64     `json:"quota,omitempty"`
 	Status *KeyStatus `json:"status,omitempty"`
+}
+
+// ManagementKey defines model for ManagementKey.
+type ManagementKey struct {
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	Id        *int64     `json:"id,omitempty"`
+
+	// KeyRaw 管理 key 明文（前缀 mk-；长期可查看/复制——自托管权衡）
+	KeyRaw *string `json:"key_raw,omitempty"`
+
+	// Name 备注/标识（非唯一）
+	Name      *string              `json:"name,omitempty"`
+	Status    *ManagementKeyStatus `json:"status,omitempty"`
+	UpdatedAt *time.Time           `json:"updated_at,omitempty"`
+
+	// UserId owner 用户 id
+	UserId *int64 `json:"user_id,omitempty"`
+}
+
+// ManagementKeyCreate defines model for ManagementKeyCreate.
+type ManagementKeyCreate struct {
+	// Name 备注/标识（非唯一，非空）
+	Name string `json:"name"`
+}
+
+// ManagementKeyListResponse defines model for ManagementKeyListResponse.
+type ManagementKeyListResponse struct {
+	Rows []ManagementKey `json:"rows"`
+}
+
+// ManagementKeyStatus defines model for ManagementKeyStatus.
+type ManagementKeyStatus string
+
+// ManagementKeyUpdate defines model for ManagementKeyUpdate.
+type ManagementKeyUpdate struct {
+	Name   *string              `json:"name,omitempty"`
+	Status *ManagementKeyStatus `json:"status,omitempty"`
 }
 
 // RedeemRequest defines model for RedeemRequest.
@@ -731,6 +774,12 @@ type PostUserKeysJSONRequestBody = KeyCreate
 // PutUserKeysIdJSONRequestBody defines body for PutUserKeysId for application/json ContentType.
 type PutUserKeysIdJSONRequestBody = KeyUpdate
 
+// PostUserManagementKeysJSONRequestBody defines body for PostUserManagementKeys for application/json ContentType.
+type PostUserManagementKeysJSONRequestBody = ManagementKeyCreate
+
+// PutUserManagementKeysIdJSONRequestBody defines body for PutUserManagementKeysId for application/json ContentType.
+type PutUserManagementKeysIdJSONRequestBody = ManagementKeyUpdate
+
 // PostUserRedemptionsJSONRequestBody defines body for PostUserRedemptions for application/json ContentType.
 type PostUserRedemptionsJSONRequestBody = RedeemRequest
 
@@ -787,6 +836,18 @@ type ServerInterface interface {
 	// 轮换 key（仅本人；新明文生效，旧 key 立即失效）
 	// (POST /api/user/keys/{id}/rotate)
 	PostUserKeysIdRotate(w http.ResponseWriter, r *http.Request, id int64)
+	// 我的管理 key 列表（软删过滤；含明文 mk-，与客户端 key 一致）
+	// (GET /api/user/management-keys)
+	GetUserManagementKeys(w http.ResponseWriter, r *http.Request)
+	// 创建管理 key（以自身身份鉴权管理面；返回明文 mk-）
+	// (POST /api/user/management-keys)
+	PostUserManagementKeys(w http.ResponseWriter, r *http.Request)
+	// 删除管理 key（仅本人；软删 + 本实例快照即时移除）
+	// (DELETE /api/user/management-keys/{id})
+	DeleteUserManagementKeysId(w http.ResponseWriter, r *http.Request, id int64)
+	// 更新管理 key（name/status；仅本人；disabled 即时 401 可再启用）
+	// (PUT /api/user/management-keys/{id})
+	PutUserManagementKeysId(w http.ResponseWriter, r *http.Request, id int64)
 	// 我的兑换记录（use 快照 + 码的 type/remark 联查；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/redemptions)
 	GetUserRedemptions(w http.ResponseWriter, r *http.Request, params GetUserRedemptionsParams)
@@ -913,6 +974,30 @@ func (_ Unimplemented) PutUserKeysId(w http.ResponseWriter, r *http.Request, id 
 // 轮换 key（仅本人；新明文生效，旧 key 立即失效）
 // (POST /api/user/keys/{id}/rotate)
 func (_ Unimplemented) PostUserKeysIdRotate(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 我的管理 key 列表（软删过滤；含明文 mk-，与客户端 key 一致）
+// (GET /api/user/management-keys)
+func (_ Unimplemented) GetUserManagementKeys(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 创建管理 key（以自身身份鉴权管理面；返回明文 mk-）
+// (POST /api/user/management-keys)
+func (_ Unimplemented) PostUserManagementKeys(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 删除管理 key（仅本人；软删 + 本实例快照即时移除）
+// (DELETE /api/user/management-keys/{id})
+func (_ Unimplemented) DeleteUserManagementKeysId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 更新管理 key（name/status；仅本人；disabled 即时 401 可再启用）
+// (PUT /api/user/management-keys/{id})
+func (_ Unimplemented) PutUserManagementKeysId(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1384,6 +1469,84 @@ func (siw *ServerInterfaceWrapper) PostUserKeysIdRotate(w http.ResponseWriter, r
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostUserKeysIdRotate(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUserManagementKeys operation middleware
+func (siw *ServerInterfaceWrapper) GetUserManagementKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserManagementKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUserManagementKeys operation middleware
+func (siw *ServerInterfaceWrapper) PostUserManagementKeys(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUserManagementKeys(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteUserManagementKeysId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteUserManagementKeysId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteUserManagementKeysId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutUserManagementKeysId operation middleware
+func (siw *ServerInterfaceWrapper) PutUserManagementKeysId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutUserManagementKeysId(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1880,6 +2043,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/user/keys/{id}/rotate", wrapper.PostUserKeysIdRotate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/management-keys", wrapper.GetUserManagementKeys)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/management-keys", wrapper.PostUserManagementKeys)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/user/management-keys/{id}", wrapper.DeleteUserManagementKeysId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/user/management-keys/{id}", wrapper.PutUserManagementKeysId)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/redemptions", wrapper.GetUserRedemptions)

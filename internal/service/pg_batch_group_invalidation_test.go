@@ -26,7 +26,7 @@ func newBatchGroupPG(t *testing.T) (*Service, *repository.Repository, *invRecord
 	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), false, pool)
 	require.NoError(t, err)
 	rec, pr := &invRecorder{}, &pubRecorder{}
-	svc := New(Deps{Store: repos, Scheduler: nil, Invalidate: rec, Publisher: pr, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: repos, Scheduler: nil, Invalidate: rec, Publisher: pr, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	return svc, repos, rec, pr
 }
 
