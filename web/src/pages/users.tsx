@@ -8,7 +8,7 @@ import { motion } from 'framer-motion'
 import { Plus, Pencil, Ban, CircleCheck, UserCog, Filter, UsersRound, X, Coins, History } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
-import { ApiUnauthorized } from '@/lib/api/client'
+import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { ListToolbar } from '@/components/list-toolbar'
 import { Pagination } from '@/components/pagination'
 import { SortableHeader, type SortOrder } from '@/components/sortable-header'
@@ -361,6 +361,14 @@ export default function Users() {
   }
 
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
+  // 用户表单（新建/编辑）：409 且为新建 = 邮箱已存在（编辑不改邮箱，其 409 是
+  // 罕见的并发 CAS 冲突，仍走服务端文案）。
+  const saveErrMsg = (): string | null => {
+    if (!save.isError) return null
+    if (save.error instanceof ApiUnauthorized) return null
+    if (!editing && save.error instanceof ApiError && save.error.status === 409) return t('users.emailExists')
+    return (save.error as Error)?.message ?? null
+  }
 
   return (
     <div className="space-y-6">
@@ -514,8 +522,8 @@ export default function Users() {
                 <Input id="usr-balance" type="number" min={0} step={0.01} value={form.balance} onChange={e => setForm(f => ({ ...f, balance: e.target.value }))} />
               </div>
             </div>
-            {save.isError && errMsg(save.error) && (
-              <p className="text-sm text-destructive">{errMsg(save.error)}</p>
+            {save.isError && saveErrMsg() && (
+              <p className="text-sm text-destructive">{saveErrMsg()}</p>
             )}
           </div>
           <DialogFooter>

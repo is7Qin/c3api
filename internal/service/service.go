@@ -32,6 +32,7 @@ var (
 	ErrNotFound              = serviceerr.ErrNotFound
 	ErrInvalidInput          = serviceerr.ErrInvalidInput
 	ErrConflict              = serviceerr.ErrConflict
+	ErrEmailExists           = serviceerr.ErrEmailExists
 	ErrPreconditionFailed    = serviceerr.ErrPreconditionFailed
 	ErrTooManyRequests       = serviceerr.ErrTooManyRequests
 	ErrMailNotConfigured     = serviceerr.ErrMailNotConfigured

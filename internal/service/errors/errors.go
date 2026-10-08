@@ -20,6 +20,11 @@ var (
 	ErrNotFound     = errors.New("service: not found")
 	ErrInvalidInput = errors.New("service: invalid input")
 	ErrConflict     = errors.New("service: conflict")
+	// ErrEmailExists 邮箱已被注册（自助注册 RegisterUser / 管理面 CreateUser）→
+	// 409。独立哨兵：Error() 面向客户端可读、刻意不含内部 "service: " 前缀；
+	// Unwrap 到 ErrConflict，故 httpface 的 409 映射与 errors.Is(err, ErrConflict)
+	// 判定均不变——仅把响应文案从裸哨兵换成清晰原因（"email already registered"）。
+	ErrEmailExists error = emailExistsError{}
 	// ErrPreconditionFailed 乐观锁前置条件不满足（PATCH 的 If-Match 陈旧 → 412）。
 	// 与 ErrConflict（body-CAS 陈旧 → 409，仅 recover 的 expected_revision）刻意
 	// 分码：header 前置条件与 body-CAS 是两类不同的陈旧判据。
@@ -31,6 +36,13 @@ var (
 	ErrMailQueueFull         = errors.New("service: mail queue full")
 	ErrMailChannelTestFailed = errors.New("service: mail channel test failed")
 )
+
+// emailExistsError 邮箱重复哨兵：干净文案 + Unwrap → ErrConflict（409）。零值
+// 结构体，哨兵以值比较（errors.Is(err, ErrEmailExists) 稳定）。
+type emailExistsError struct{}
+
+func (emailExistsError) Error() string { return "email already registered" }
+func (emailExistsError) Unwrap() error { return ErrConflict }
 
 // StatsWindowError 统计窗口拒绝的**线缆载体**（spec §4.4(d)：一个哨兵 + 一个
 // 载体类型）：判定属 domain.Admit（本类型不做任何判定），它只把该判定接到既有

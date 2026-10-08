@@ -97,6 +97,7 @@ func TestUserRegisterLoginMe(t *testing.T) {
 	// 重复注册 → 409
 	rec = do(http.MethodPost, "/api/user/auth/register", `{"email":"new@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusConflict, rec.Code, "dup register: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "email already registered", "重复注册须给明确文案，非裸 service: conflict")
 
 	// 登录成功
 	rec = do(http.MethodPost, "/api/user/auth/login", `{"email":"new@example.com","password":"s3cret-pass"}`, "")

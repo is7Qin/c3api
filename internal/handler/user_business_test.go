@@ -367,6 +367,7 @@ func TestAdminUsers(t *testing.T) {
 	rec = doAdmin(http.MethodPost, "/api/admin/users",
 		`{"email":"carol@example.com","password":"s3cret-pass"}`, "")
 	require.Equal(t, http.StatusConflict, rec.Code, "dup email: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "email already registered", "重复邮箱须给明确文案，非裸 service: conflict")
 
 	// 邮箱格式非法 → 400
 	rec = doAdmin(http.MethodPost, "/api/admin/users",
