@@ -112,37 +112,50 @@ func (w *CreditWorker) runOnce(ctx context.Context) {
 func (w *CreditWorker) runOnceLocked(ctx context.Context) {
 	// 存量释放：freeze_enabled=false ⇒ 不注册解冻 worker，须由本链释放（§5.4）。
 	// 必须在没有 usage 批时也执行——故置于批次之前且不因 backlog==0 跳过。
-	if !w.cfg.FreezeEnabled {
-		if n, err := w.store.ReleaseFrozenNoWait(ctx, w.batchLimit()); err != nil {
-			w.warn("supplier credit release frozen failed", logx.Error(err))
-		} else if n > 0 {
-			w.logInfo("supplier credit released frozen chunks", logx.Int("count", n))
-		}
+	if n, err := w.releaseFrozenOnce(ctx); err != nil {
+		w.warn("supplier credit release frozen failed", logx.Error(err))
+	} else if n > 0 {
+		w.logInfo("supplier credit released frozen chunks", logx.Int("count", n))
 	}
 
-	batch, err := w.store.FetchCreditBatch(ctx, w.batchLimit())
-	if err != nil {
-		w.warn("supplier credit fetch batch failed", logx.Error(err))
-		// 故障轮仍更新观测（陈旧状态）——不刷新则 lag 保持旧健康值，ops 看不到
-		// 记账链已停摆（spec I2）。
+	if _, err := w.consumeBatch(ctx); err != nil {
+		w.warn("supplier credit consume failed", logx.Error(err))
+		// 故障轮仍更新观测（陈旧状态）——置 stale，不刷新则 lag 保持旧健康值，
+		// ops 看不到记账链已停摆（spec I2）。
 		w.lagStale.Store(true)
 		return
 	}
-	if len(batch) > 0 {
-		uids := uniqueUIDs(batch)
-		freeze, ferr := w.store.FreezeHoursByUID(ctx, uids)
-		if ferr != nil {
-			w.warn("supplier credit freeze hours lookup failed", logx.Error(ferr))
-			w.lagStale.Store(true)
-			return
-		}
-		if aerr := w.applyWithRetry(ctx, batch, freeze); aerr != nil {
-			w.warn("supplier credit apply failed", logx.Error(aerr))
-			w.lagStale.Store(true)
-			return
-		}
-	}
 	w.refreshLag(ctx)
+}
+
+// consumeBatch 单批消费（fetch → freeze → apply），正常周期与排空共用。返回本次
+// 实际记账的行数（批为空 ⇒ 0）；任一阶段失败返回带阶段前缀的错误（调用方决定
+// 告警措辞与 stale 标记）。不改重试次数、释放顺序、总预算。
+func (w *CreditWorker) consumeBatch(ctx context.Context) (int, error) {
+	batch, err := w.store.FetchCreditBatch(ctx, w.batchLimit())
+	if err != nil {
+		return 0, fmt.Errorf("fetch batch: %w", err)
+	}
+	if len(batch) == 0 {
+		return 0, nil
+	}
+	freeze, err := w.store.FreezeHoursByUID(ctx, uniqueUIDs(batch))
+	if err != nil {
+		return 0, fmt.Errorf("freeze hours lookup: %w", err)
+	}
+	if err := w.applyWithRetry(ctx, batch, freeze); err != nil {
+		return 0, fmt.Errorf("apply: %w", err)
+	}
+	return len(batch), nil
+}
+
+// releaseFrozenOnce freeze_enabled=false 的存量释放一批（无 usage 批时亦执行；§5.4）。
+// freeze_enabled=true ⇒ no-op 返回 0。返回本批释放行数。
+func (w *CreditWorker) releaseFrozenOnce(ctx context.Context) (int, error) {
+	if w.cfg.FreezeEnabled {
+		return 0, nil
+	}
+	return w.store.ReleaseFrozenNoWait(ctx, w.batchLimit())
 }
 
 // applyWithRetry 有界重试 40P01/55P03（§5.7）。同一批重放幂等（标记计数守卫）。
@@ -219,35 +232,22 @@ func (w *CreditWorker) closeDrain(ctx context.Context) {
 		// freeze_enabled=false ⇒ 不注册解冻 worker，停机时须由本链释放存量
 		// （§5.4）：每轮先限量释放一批（忽略 available_at），**不因 usage
 		// backlog==0 提前退出**；只有 usage 批为空且本轮无存量释放才收敛。
-		released := 0
-		if !w.cfg.FreezeEnabled {
-			n, rerr := w.store.ReleaseFrozenNoWait(dctx, w.batchLimit())
-			if rerr != nil {
-				w.warn("supplier credit drain release frozen failed", logx.Error(rerr))
-				return
-			}
-			released = n
-		}
-		batch, err := w.store.FetchCreditBatch(dctx, w.batchLimit())
-		if err != nil {
-			w.warn("supplier credit drain fetch failed", logx.Error(err))
+		released, rerr := w.releaseFrozenOnce(dctx)
+		if rerr != nil {
+			w.warn("supplier credit drain release frozen failed", logx.Error(rerr))
 			return
 		}
-		if len(batch) == 0 {
+		rows, err := w.consumeBatch(dctx)
+		if err != nil {
+			w.warn("supplier credit drain consume failed", logx.Error(err))
+			return
+		}
+		if rows == 0 {
 			// 退出条件：usage 批为空 且（冻结启用 或 本轮无存量释放）。
 			if w.cfg.FreezeEnabled || released == 0 {
 				return
 			}
 			continue
-		}
-		freeze, ferr := w.store.FreezeHoursByUID(dctx, uniqueUIDs(batch))
-		if ferr != nil {
-			w.warn("supplier credit drain freeze lookup failed", logx.Error(ferr))
-			return
-		}
-		if aerr := w.applyWithRetry(dctx, batch, freeze); aerr != nil {
-			w.warn("supplier credit drain apply failed", logx.Error(aerr))
-			return
 		}
 	}
 }
