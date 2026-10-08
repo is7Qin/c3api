@@ -4543,6 +4543,15 @@ components:
         #     generation int64（已同步全局健康世代）, last_sync_ok_unix_ms int64
         #     （最近成功 Sync 时刻；0 = 从未）, sync_errors int64（Sync 失败累计
         #     ——视图冻结的可见痕迹）, last_tick_ok bool（最近 tick 成败）
+        #   supplier-credit（记账链，spec 2026-10-09 §7.2）: lag_head int64（头行
+        #     快速 lag，行数；高频）, lag_full int64（完整 backlog 行数；降频）,
+        #     lag_earn int64（完整 backlog Σ earn，millis；降频）
+        #   supplier-thaw（解冻链，spec 2026-10-09 §7.2/G7）: deleted_total int64
+        #     （累计删除桶行数）, cycles int64（周期数）
+        #   supplier-view（财务视图装载，spec 2026-10-09 §4.4/A13④）: attempts int64
+        #     （装载尝试累计）, success int64（成功装载累计）, snapshot object
+        #     （三态：loaded bool / revision int64 / last_success_unix_ms int64
+        #     （0 = 从未）/ stale_age_ms int64（-1 = 从未成功））
         stats:
           description: 各 worker 异构观测字段；完整字段清单见本 schema 上方 yaml 注释（与各 worker Stats() 实现同步维护）
     SnapshotState:

@@ -185,8 +185,9 @@ func TestCreditWorkerRunOnce(t *testing.T) {
 	w.runOnce(context.Background())
 	require.Equal(t, 1, fs.applied)
 	require.Equal(t, []int64{200, 100}, fs.appliedUIDs[0], "uid 去重（顺序 = 出现序）")
-	require.Equal(t, int64(3), w.Stats().LagHead)
-	require.Equal(t, int64(3), w.Stats().LagFull)
+	st := w.Stats().(CreditStats)
+	require.Equal(t, int64(3), st.LagHead)
+	require.Equal(t, int64(3), st.LagFull)
 	require.Equal(t, 0, fs.released, "freeze_enabled=true ⇒ 不释放存量")
 }
 

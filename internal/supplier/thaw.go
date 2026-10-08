@@ -126,12 +126,12 @@ func (w *ThawWorker) warn(msg string, fields ...logx.Field) {
 
 // ThawStats 解冻观测面快照。
 type ThawStats struct {
-	DeletedTotal int64
-	Cycles       int64
+	DeletedTotal int64 `json:"deleted_total"`
+	Cycles       int64 `json:"cycles"`
 }
 
-// Stats 返回观测面快照。
-func (w *ThawWorker) Stats() ThawStats {
+// Stats 返回观测面快照（实现 handler.StatsProvider——Name() + Stats() any）。
+func (w *ThawWorker) Stats() any {
 	return ThawStats{DeletedTotal: w.deleted.Load(), Cycles: w.cycles.Load()}
 }
 

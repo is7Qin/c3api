@@ -257,13 +257,15 @@ func (w *CreditWorker) logInfo(msg string, fields ...logx.Field) {
 
 // CreditStats 观测面快照。
 type CreditStats struct {
-	LagHead int64
-	LagFull int64
-	LagEarn int64
+	LagHead int64 `json:"lag_head"`
+	LagFull int64 `json:"lag_full"`
+	LagEarn int64 `json:"lag_earn"`
 }
 
-// Stats 返回观测面快照。
-func (w *CreditWorker) Stats() CreditStats {
+// Stats 返回观测面快照（实现 handler.StatsProvider——Name() + Stats() any；
+// 装配链路见 internal/handler/ops.go 文件头）。返回 any 与全仓其余 worker 一致，
+// 使 cmd/server 的类型断言能收进 /api/admin/ops/workers。
+func (w *CreditWorker) Stats() any {
 	return CreditStats{LagHead: w.lagHead.Load(), LagFull: w.lagFull.Load(), LagEarn: w.lagEarn.Load()}
 }
 

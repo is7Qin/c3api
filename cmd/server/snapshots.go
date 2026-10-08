@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"errors"
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/handler"
@@ -14,6 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/internal/snapshot"
+	"github.com/is7qin/c3api/internal/supplier"
 )
 
 // 五路快照 → snapshot.Snapshot 适配器（装配侧，与 schedGroupPub 同模式——
@@ -63,8 +65,26 @@ func (s pricingSnapshot) Reload(ctx context.Context) error {
 	return s.svc.ReloadPricingCtx(ctx)
 }
 
-// snapshotStates 注册表状态 → /api/admin/ops/workers 响应映射（LastError error
-// 接口 JSON 不可用 → 字符串；snapshot.Status 值拷贝，调用方安全持有）。
+// supplierViewSnapshot 供应商财务视图快照适配（spec 2026-10-09 §4.4/A13④）：
+// 把装载器纳入统一快照注册表（启动就绪 + Status 追踪），使「视图 NotReady」
+// 在 /ops snapshots 段（LastReload/LastError）可见。Reload 直调 LoadOnce——
+// 失败返回错误 ⇒ LastError 呈现 NotReady，而装载器自身保留旧视图 fail-safe。
+// 三态细分（loaded/revision/last_success/stale_age）另经 supplierViewLoader
+// 的 Stats（Obs 桥接）在 workers 段呈现。
+type supplierViewSnapshot struct{ loader *supplier.ViewLoader }
+
+func (s supplierViewSnapshot) Name() string     { return "supplier-view" }
+func (s supplierViewSnapshot) Scopes() []string { return nil }
+func (s supplierViewSnapshot) Reload(ctx context.Context) error {
+	if s.loader == nil {
+		return nil
+	}
+	if !s.loader.LoadOnce(ctx) {
+		return errors.New("supplier view not ready; keeping previous view (NotReady)")
+	}
+	return nil
+}
+
 func snapshotStates(st []snapshot.Status) []handler.SnapshotState {
 	out := make([]handler.SnapshotState, 0, len(st))
 	for _, s := range st {

@@ -370,6 +370,9 @@ func main() {
 		initCancel()
 		supplierViewSnap = proxy.NewSupplierSnapshot(supplierViewStaleThreshold)
 		supplierViewLoader = supplier.NewViewLoader(supplier.ViewConfig{Interval: cfg.Billing.BalanceRefreshInterval}, suppRepo, supplierViewSnap, log)
+		// 三态观测桥接：supplier 包不 import proxy，由组合根注入 Obs(now)
+		// （§4.4/A13④）——否则「功能开了但从未装载成功」在 ops 面不可见。
+		supplierViewLoader.SetObsProvider(func(now time.Time) any { return supplierViewSnap.Obs(now) })
 	}
 	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Keys: auth, Log: log, EmailCodeStore: verification.New(rdb),
 		SupplierViewReload: supplierViewReloader(supplierViewLoader),
@@ -410,6 +413,15 @@ func main() {
 	}
 	if billBalances != nil { // 与 invBalances 同纪律：billing 关闭不注册
 		if err := snapReg.Register(balanceSnapshot{billBalances}); err != nil {
+			fatalf("snapshot register: %v", err)
+		}
+	}
+	// 供应商财务视图快照登记（enabled=true 才构造）：使视图三态
+	// （loaded/revision/last_success/stale_age，§4.4/A13④）进入快照注册表——
+	// /ops snapshots 段呈现 LastReload/LastError（NotReady = 失败轮错误，保留
+	// 旧视图）；workers 段呈现 loader 计数 + Obs（见 supplierViewLoader）。
+	if supplierViewLoader != nil {
+		if err := snapReg.Register(supplierViewSnapshot{loader: supplierViewLoader}); err != nil {
 			fatalf("snapshot register: %v", err)
 		}
 	}
@@ -670,6 +682,12 @@ func main() {
 	managedWorkers = append(managedWorkers, rec, errlogW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
+	// 供应商财务视图装载器（独立于 billing.enabled 的 ticker，§6.4）不在
+	// managedWorkers 里（单独 wm.Register），须显式入候选才能在 /ops/workers
+	// 呈现装载计数 + 三态；nil（关闭态）不入列（避免 typed-nil 断言 panic）。
+	if supplierViewLoader != nil {
+		opsCandidates = append(opsCandidates, supplierViewLoader)
+	}
 	// （spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
 	// worker 合法，但启动期明确提示其不会出现在运维端点。
 	opsWorkers := statsProviders(opsCandidates, log)
