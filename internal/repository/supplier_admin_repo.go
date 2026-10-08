@@ -375,20 +375,19 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, reaso
 	return out, err
 }
 
-// encodePayeeSnapshot 严格校验收款目标快照（结构化：收款人/账号/单位均非空）并
-// 序列化为规范 JSON（§6.5 C4）：不得把自由文本当收款目标。
+// encodePayeeSnapshot 校验收款目标快照并序列化为规范 JSON（§6.5 C4）：纯输入规则
+// 复用 domain.SupplierPayeeSnapshot.NormalizeAndValidate（结构化：收款人/账号/单位
+// 均非空），不得把自由文本当收款目标。
 func encodePayeeSnapshot(p domain.SupplierPayeeSnapshot) (string, error) {
-	name := strings.TrimSpace(p.PayeeName)
-	account := strings.TrimSpace(p.Account)
-	unit := strings.TrimSpace(p.Unit)
-	if name == "" || account == "" || unit == "" {
-		return "", fmt.Errorf("%w: payee_snapshot requires payee_name/account/unit", ErrInvalidInput)
+	p, err := p.NormalizeAndValidate()
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	b, err := json.Marshal(struct {
 		PayeeName string `json:"payee_name"`
 		Account   string `json:"account"`
 		Unit      string `json:"unit"`
-	}{PayeeName: name, Account: account, Unit: unit})
+	}{PayeeName: p.PayeeName, Account: p.Account, Unit: p.Unit})
 	if err != nil {
 		return "", fmt.Errorf("%w: encode payee_snapshot: %v", ErrInvalidInput, err)
 	}
@@ -396,20 +395,20 @@ func encodePayeeSnapshot(p domain.SupplierPayeeSnapshot) (string, error) {
 }
 
 // encodePayoutFailureConfirmation 校验结构化「确定未支付」核验并序列化为 JSON
-// （§6.5 C4）：具名确认人（落 reviewer_user_id）+ 确定未支付结论 + 证据 + 旧执行
-// 已停止确认，任一缺失/false ⇒ 失败闭合（保留 paying）。
+// （§6.5 C4）：纯输入规则复用 domain.SupplierPayoutFailureConfirmation.Validate
+// （reason/evidence 非空 + 确定未支付 + 旧执行已停止），任一不符 ⇒ 失败闭合
+// （保留 paying）。
 func encodePayoutFailureConfirmation(in domain.SupplierPayoutFailureConfirmation) (string, error) {
-	reason := strings.TrimSpace(in.Reason)
-	evidence := strings.TrimSpace(in.Evidence)
-	if reason == "" || evidence == "" || !in.ConfirmedNotPaid || !in.OldExecutionStopped {
-		return "", fmt.Errorf("%w: confirm-failed requires reason, evidence and confirmed-not-paid/old-execution-stopped", ErrInvalidInput)
+	in, err := in.Validate()
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	b, err := json.Marshal(struct {
 		Reason              string `json:"reason"`
 		Evidence            string `json:"evidence"`
 		ConfirmedNotPaid    bool   `json:"confirmed_not_paid"`
 		OldExecutionStopped bool   `json:"old_execution_stopped"`
-	}{Reason: reason, Evidence: evidence, ConfirmedNotPaid: true, OldExecutionStopped: true})
+	}{Reason: in.Reason, Evidence: in.Evidence, ConfirmedNotPaid: true, OldExecutionStopped: true})
 	if err != nil {
 		return "", fmt.Errorf("%w: encode payout failure confirmation: %v", ErrInvalidInput, err)
 	}
@@ -420,18 +419,19 @@ func encodePayoutFailureConfirmation(in domain.SupplierPayoutFailureConfirmation
 // amount_millis**；结构化收款快照固定（首次认领固定、重试复用、不一致 ⇒ 拒绝）；
 // 生成/复用全局唯一 payment_key；判定付款风控门；原子持久化 risk_review。
 func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, risk domain.SupplierRiskEvidence, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if amountMillis <= 0 {
-		return nil, fmt.Errorf("%w: amount_millis must be > 0", ErrInvalidInput)
+	// 纯输入规则复用 domain 单一实现（金额 > 0、结构化收款目标、风险证据 non-empty +
+	// revision 绑定）；映射到 repository.ErrInvalidInput。
+	cmd, err := (domain.SupplierClaimCommand{
+		AmountMillis:     amountMillis,
+		ExpectedRevision: expectedRevision,
+		Payee:            payee,
+		Risk:             risk,
+	}).NormalizeAndValidate()
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
-	// 结构化风险证据（§6.5 C1/I8）：reference + summary 非空，且 approved_revision 必须
-	// == expected_revision（错 revision ⇒ 拒绝）；不得把自由文本当记录自动签为放行。
-	riskEvidence := supplier.Evidence{Reference: strings.TrimSpace(risk.Reference), Summary: strings.TrimSpace(risk.Summary)}
-	if riskEvidence.Reference == "" || riskEvidence.Summary == "" {
-		return nil, fmt.Errorf("%w: risk evidence reference and summary are required", ErrInvalidInput)
-	}
-	if risk.ApprovedRevision != expectedRevision {
-		return nil, fmt.Errorf("%w: risk approved_revision %d != expected %d", ErrInvalidInput, risk.ApprovedRevision, expectedRevision)
-	}
+	amountMillis, payee, risk = cmd.AmountMillis, cmd.Payee, cmd.Risk
+	riskEvidence := supplier.Evidence{Reference: risk.Reference, Summary: risk.Summary}
 	payeeSnapshot, err := encodePayeeSnapshot(payee)
 	if err != nil {
 		return nil, err
@@ -542,12 +542,12 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, record, actor.UserI
 // （未核验不得确认）；available 不变（申请已扣），lifetime_paid += amount，记
 // paid_operator_user_id / paid_at / external_ref。不重做风控门（已核验付款事实）。
 func (r *SupplierRepo) PaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	ref := strings.TrimSpace(externalRef)
-	if ref == "" {
-		return nil, fmt.Errorf("%w: external_ref is required to confirm paid", ErrInvalidInput)
+	ref, err := domain.NormalizeExternalRef(externalRef)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidInput, err)
 	}
 	var out *domain.SupplierSettlement
-	err := r.withFundsTx(ctx, actor, func(tx pgx.Tx) error {
+	err = r.withFundsTx(ctx, actor, func(tx pgx.Tx) error {
 		supplierUID, amount, _, _, err := readSettlementHead(ctx, tx, id)
 		if err != nil {
 			return err

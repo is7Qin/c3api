@@ -16,7 +16,6 @@ package service
 import (
 	"context"
 	"errors"
-	"strings"
 
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/domain"
@@ -90,20 +89,20 @@ func (s *Service) AdminRejectSettlement(ctx context.Context, id, expectedRevisio
 	return out, nil
 }
 
-// AdminClaimSettlement approved → paying（认领 + 风控门；§6.5）。金额必须 == 单据
-// 金额；收款目标快照结构化（收款人/账号/单位均非空）；风险证据结构化（reference +
-// summary 非空 + approved_revision == expected_revision）。
+// AdminClaimSettlement approved → paying（认领 + 风控门；§6.5）。输入规则（金额、
+// 收款目标、风险证据及 revision 绑定）走 domain 纯值层单一实现；锁内金额匹配、
+// DB 时间、操作者复核、状态/revision CAS 在 repository 事务内完成。
 func (s *Service) AdminClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, risk domain.SupplierRiskEvidence, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if amountMillis <= 0 {
+	cmd, err := (domain.SupplierClaimCommand{
+		AmountMillis:     amountMillis,
+		ExpectedRevision: expectedRevision,
+		Payee:            payee,
+		Risk:             risk,
+	}).NormalizeAndValidate()
+	if err != nil {
 		return nil, ErrInvalidInput
 	}
-	if strings.TrimSpace(payee.PayeeName) == "" || strings.TrimSpace(payee.Account) == "" || strings.TrimSpace(payee.Unit) == "" {
-		return nil, ErrInvalidInput
-	}
-	if strings.TrimSpace(risk.Reference) == "" || strings.TrimSpace(risk.Summary) == "" || risk.ApprovedRevision != expectedRevision {
-		return nil, ErrInvalidInput
-	}
-	out, err := s.store.ClaimSettlement(ctx, id, expectedRevision, amountMillis, payee, risk, actor)
+	out, err := s.store.ClaimSettlement(ctx, id, expectedRevision, cmd.AmountMillis, cmd.Payee, cmd.Risk, actor)
 	if err != nil {
 		if errors.Is(err, supplier.ErrPayoutGate) || errors.Is(err, supplier.ErrRiskReview) {
 			return nil, ErrInvalidInput
@@ -114,12 +113,13 @@ func (s *Service) AdminClaimSettlement(ctx context.Context, id, expectedRevision
 }
 
 // AdminConfirmFailedSettlement paying → approved（仅结构化「确定未支付」+「旧执行
-// 已停止」核验；未知 ⇒ 失败闭合保留 paying）。
+// 已停止」核验；未知 ⇒ 失败闭合保留 paying）。输入规则走 domain 纯值层。
 func (s *Service) AdminConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, in domain.SupplierPayoutFailureConfirmation, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if strings.TrimSpace(in.Reason) == "" || strings.TrimSpace(in.Evidence) == "" || !in.ConfirmedNotPaid || !in.OldExecutionStopped {
+	conf, err := in.Validate()
+	if err != nil {
 		return nil, ErrInvalidInput
 	}
-	out, err := s.store.ConfirmFailedSettlement(ctx, id, expectedRevision, in, actor)
+	out, err := s.store.ConfirmFailedSettlement(ctx, id, expectedRevision, conf, actor)
 	if err != nil {
 		return nil, mapSupplierAdminErr(err)
 	}
@@ -127,12 +127,13 @@ func (s *Service) AdminConfirmFailedSettlement(ctx context.Context, id, expected
 }
 
 // AdminPaidSettlement paying → paid（lifetime_paid 累加；不重做风控门；external_ref
-// 必须非空）。
+// 必须非空）。输入规则走 domain 纯值层。
 func (s *Service) AdminPaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if strings.TrimSpace(externalRef) == "" {
+	ref, err := domain.NormalizeExternalRef(externalRef)
+	if err != nil {
 		return nil, ErrInvalidInput
 	}
-	out, err := s.store.PaidSettlement(ctx, id, expectedRevision, externalRef, actor)
+	out, err := s.store.PaidSettlement(ctx, id, expectedRevision, ref, actor)
 	if err != nil {
 		return nil, mapSupplierAdminErr(err)
 	}
