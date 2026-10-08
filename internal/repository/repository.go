@@ -185,7 +185,7 @@ func (r *Repository) PatchSupplierBalance(ctx context.Context, uid int64, p doma
 	if r.supplier == nil {
 		return nil, errSupplierNoPool
 	}
-	return r.supplier.PatchSupplierBalance(ctx, uid, p.ShareBp, p.ClearShareBp, p.FreezeHours, p.ClearFreezeHours)
+	return r.supplier.PatchSupplierBalance(ctx, uid, p)
 }
 
 func (r *Repository) ApproveSettlement(ctx context.Context, id, expectedRevision int64, actor domain.FundsActor) (*domain.SupplierSettlement, error) {

@@ -756,11 +756,11 @@ func TestPGSupplierLiabilityAndPatch(t *testing.T) {
 
 	// PATCH：set + clear（回继承）。
 	shareBp := 2500
-	out, err := sr.PatchSupplierBalance(ctx, s.ID, &shareBp, false, nil, false)
+	out, err := sr.PatchSupplierBalance(ctx, s.ID, domain.SupplierBalancePatch{ShareBp: &shareBp})
 	require.NoError(t, err)
 	require.NotNil(t, out.ShareBp)
 	require.Equal(t, 2500, *out.ShareBp)
-	out, err = sr.PatchSupplierBalance(ctx, s.ID, nil, true, nil, false)
+	out, err = sr.PatchSupplierBalance(ctx, s.ID, domain.SupplierBalancePatch{ClearShareBp: true})
 	require.NoError(t, err)
 	require.Nil(t, out.ShareBp, "清空 ⇒ 回继承")
 

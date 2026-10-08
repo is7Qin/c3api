@@ -186,23 +186,23 @@ WHERE b.supplier_user_id = $1`
 }
 
 // PatchSupplierBalance PATCH 逐供应商配置（§6.7/§3.4：**仅** share_bp / freeze_hours，
-// 不接受金额）。nil 指针 = 不变；Specified + nil 值 = 清空（回继承，落 NULL）。
-func (r *SupplierRepo) PatchSupplierBalance(ctx context.Context, uid int64, shareBp *int, clearShareBp bool, freezeHours *int, clearFreezeHours bool) (*domain.SupplierBalance, error) {
+// 不接受金额）。指针非 nil = 落值；Clear* = 落 NULL（回继承）；两者同时给出时落值优先。
+func (r *SupplierRepo) PatchSupplierBalance(ctx context.Context, uid int64, p domain.SupplierBalancePatch) (*domain.SupplierBalance, error) {
 	if r.pool == nil {
 		return nil, errSupplierNoPool
 	}
 	sets := []string{}
 	args := []any{uid}
-	if shareBp != nil {
-		args = append(args, *shareBp)
+	if p.ShareBp != nil {
+		args = append(args, *p.ShareBp)
 		sets = append(sets, fmt.Sprintf("share_bp = $%d", len(args)))
-	} else if clearShareBp {
+	} else if p.ClearShareBp {
 		sets = append(sets, "share_bp = NULL")
 	}
-	if freezeHours != nil {
-		args = append(args, *freezeHours)
+	if p.FreezeHours != nil {
+		args = append(args, *p.FreezeHours)
 		sets = append(sets, fmt.Sprintf("freeze_hours = $%d", len(args)))
-	} else if clearFreezeHours {
+	} else if p.ClearFreezeHours {
 		sets = append(sets, "freeze_hours = NULL")
 	}
 	if len(sets) == 0 {
