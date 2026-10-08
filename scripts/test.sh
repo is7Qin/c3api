@@ -20,14 +20,11 @@ set -euo pipefail
 #
 # Usage: TEST_DATABASE_URL=postgres://... scripts/test.sh [extra go test flags]
 
-# Gate: no t.Parallel() calls. Comment lines are excluded (the repo has a few
-# comments that mention the literal t.Parallel()). It uses git grep — not
-# ripgrep — because this script runs on Linux (CI and dev hosts), where git is
-# always present, so the gate needs no tool the environment does not ship.
-parallel_hits="$(git grep -n -E -e 't\.Parallel\(\)' --and --not \( -e '^[[:space:]]*//' -o -e '^[[:space:]]*/\*' \) -- '*_test.go' || true)"
-if [ -n "$parallel_hits" ]; then
-	echo "scripts/test.sh: t.Parallel() is forbidden (AGENTS.md); found:" >&2
-	echo "$parallel_hits" >&2
+# Gate: no t.Parallel() calls (AGENTS.md). Runs on Linux (CI and dev hosts),
+# where grep is always present. The parens are matched as [(][)] so a comment
+# that merely names t.Parallel cannot trip the gate.
+if grep -rEn --include='*_test.go' 't\.Parallel[(][)]' .; then
+	echo "scripts/test.sh: t.Parallel() is forbidden (AGENTS.md)" >&2
 	exit 1
 fi
 
