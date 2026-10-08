@@ -128,6 +128,10 @@ func BenchmarkSupplierCreditThroughput(b *testing.B) {
 
 	const batch = 1000
 	seed(batch * 4)
+	// applied 只累计**真正提交**的记账行数：空批轮（补种数据）不计入吞吐，
+	// 否则 rows/s 会把没有 apply 的迭代也当作满批而高估（评审：空批补数据
+	// 不应计入吞吐）。补种发生在计时窗内，其成本如实落在 elapsed 上。
+	var applied int64
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		rows, err := sr.FetchCreditBatch(ctx, batch)
@@ -145,10 +149,11 @@ func BenchmarkSupplierCreditThroughput(b *testing.B) {
 		if err := sr.ApplyCreditTx(ctx, rows, freeze); err != nil {
 			b.Fatalf("apply: %v", err)
 		}
+		applied += int64(len(rows))
 	}
 	b.StopTimer()
-	if secs := b.Elapsed().Seconds(); secs > 0 {
-		b.ReportMetric(float64(batch*b.N)/secs, "rows/s")
+	if secs := b.Elapsed().Seconds(); secs > 0 && applied > 0 {
+		b.ReportMetric(float64(applied)/secs, "rows/s")
 	}
 }
 
