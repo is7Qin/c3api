@@ -22,6 +22,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 - **PostgreSQL integration tests clone a template database per test**: the suite runs through `scripts/test.sh`, which builds one migrated template database and clones a private database from it (`CREATE DATABASE ... TEMPLATE`) for each test. Migrations now run once instead of ~20×, and because tests no longer share a schema the package binaries can run concurrently again — the old `go test -p 1` serialisation is gone. The script also enforces the repo's no-`t.Parallel()` discipline and pre-checks that the test role can create databases.
 
+- **pgtest rebuilds an empty or half-built template instead of reusing it**: `internal/testsupport/pgtest` now marks a template ready with a database `COMMENT` (`pgtest:template-ready`) as the last step of a successful build, and reuses it only when the name exists *and* that marker is present and correct. A template left empty or half-migrated by a killed build (SIGKILL, a cancelled CI job, a crash) is now detected and rebuilt rather than mistaken for a fresh one — previously a stale empty template under the current source hash made every run fail with `relation "users" does not exist`. An unmarked override template (`C3API_TEST_TEMPLATE`) is likewise rebuilt unless it carries the marker. This supersedes the earlier "an existing template is reused without reading inside it" behaviour.
+
 ## [v0.0.1-beta.7] - 2026-09-28
 
 ### Breaking
