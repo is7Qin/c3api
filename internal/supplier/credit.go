@@ -195,22 +195,41 @@ func (w *CreditWorker) closeDrain(ctx context.Context) {
 	if budget <= 0 {
 		budget = 5 * time.Second
 	}
-	deadline := time.Now().Add(budget)
-	for time.Now().Before(deadline) && ctx.Err() == nil {
-		batch, err := w.store.FetchCreditBatch(ctx, w.batchLimit())
+	// 以 shutdown ctx 派生**总预算** timeout：单条 DB 操作也受总预算约束
+	// （不得只在循环入口比较时间而放任单条语句超预算，§5.5）。
+	dctx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	for dctx.Err() == nil {
+		// freeze_enabled=false ⇒ 不注册解冻 worker，停机时须由本链释放存量
+		// （§5.4）：每轮先限量释放一批（忽略 available_at），**不因 usage
+		// backlog==0 提前退出**；只有 usage 批为空且本轮无存量释放才收敛。
+		released := 0
+		if !w.cfg.FreezeEnabled {
+			n, rerr := w.store.ReleaseFrozenNoWait(dctx, w.batchLimit())
+			if rerr != nil {
+				w.warn("supplier credit drain release frozen failed", logx.Error(rerr))
+				return
+			}
+			released = n
+		}
+		batch, err := w.store.FetchCreditBatch(dctx, w.batchLimit())
 		if err != nil {
 			w.warn("supplier credit drain fetch failed", logx.Error(err))
 			return
 		}
 		if len(batch) == 0 {
-			return
+			// 退出条件：usage 批为空 且（冻结启用 或 本轮无存量释放）。
+			if w.cfg.FreezeEnabled || released == 0 {
+				return
+			}
+			continue
 		}
-		freeze, ferr := w.store.FreezeHoursByUID(ctx, uniqueUIDs(batch))
+		freeze, ferr := w.store.FreezeHoursByUID(dctx, uniqueUIDs(batch))
 		if ferr != nil {
 			w.warn("supplier credit drain freeze lookup failed", logx.Error(ferr))
 			return
 		}
-		if aerr := w.applyWithRetry(ctx, batch, freeze); aerr != nil {
+		if aerr := w.applyWithRetry(dctx, batch, freeze); aerr != nil {
 			w.warn("supplier credit drain apply failed", logx.Error(aerr))
 			return
 		}

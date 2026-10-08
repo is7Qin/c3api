@@ -109,6 +109,7 @@ type fakeStore struct {
 	freeze      map[int64]int
 	released    int
 	releaseN    int
+	releaseSeq  []int // 非空时按序返回（用于「最终收敛 / 预算边界」断言）
 	head        int64
 	fullRows    int64
 	fullSum     int64
@@ -137,6 +138,11 @@ func (f *fakeStore) ApplyCreditTx(ctx context.Context, batch []BatchRow, freeze 
 }
 func (f *fakeStore) ReleaseFrozenNoWait(ctx context.Context, limit int) (int, error) {
 	f.released++
+	if len(f.releaseSeq) > 0 {
+		n := f.releaseSeq[0]
+		f.releaseSeq = f.releaseSeq[1:]
+		return n, nil
+	}
 	return f.releaseN, nil
 }
 func (f *fakeStore) CreditLagHead(ctx context.Context) (int64, error) { return f.head, nil }
@@ -201,4 +207,24 @@ func TestCreditWorkerDrain(t *testing.T) {
 	w := NewCredit(CreditConfig{FreezeEnabled: true, DrainBudget: time.Second}, fs, nil)
 	require.NoError(t, w.Close(context.Background()))
 	require.Equal(t, 2, fs.applied)
+}
+
+// TestCreditWorkerCloseDrainsFrozenChunks 空 backlog + 存量 chunks ⇒ Close 仍排空
+// 冻结桶（§5.4/§5.5：freeze_enabled=false 时不得因 backlog==0 提前退出）。
+func TestCreditWorkerCloseDrainsFrozenChunks(t *testing.T) {
+	fs := &fakeStore{releaseSeq: []int{3, 2, 0}}
+	w := NewCredit(CreditConfig{FreezeEnabled: false, DrainBudget: time.Second}, fs, nil)
+	require.NoError(t, w.Close(context.Background()))
+	require.Equal(t, 3, fs.released, "Close 须每轮释放直到 released==0")
+	require.Equal(t, 0, fs.applied, "空 backlog ⇒ 不 apply")
+}
+
+// TestCreditWorkerCloseBudgetBounded 总预算到期必须退出（即使存量仍在释放）。
+func TestCreditWorkerCloseBudgetBounded(t *testing.T) {
+	fs := &fakeStore{releaseN: 1} // 永远释放 1 行（模拟持续存量）
+	w := NewCredit(CreditConfig{FreezeEnabled: false, DrainBudget: 50 * time.Millisecond}, fs, nil)
+	start := time.Now()
+	require.NoError(t, w.Close(context.Background()))
+	require.Less(t, time.Since(start), 5*time.Second, "总预算到期必须退出")
+	require.Greater(t, fs.released, 0)
 }
