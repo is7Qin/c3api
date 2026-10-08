@@ -134,7 +134,8 @@ func (r *SupplierRepo) SupplierEarnings(ctx context.Context, uid int64, limit, o
 
 const supplierSettlementColumns = `id, supplier_user_id, kind, amount_millis, period_start, period_end, status, revision,
   request_key, requested_at, requested_operator, reviewed_at, reviewer_user_id, payout_operator_user_id,
-  payout_started_at, external_ref, paid_at, paid_operator_user_id, payout_failure_reason, payout_failed_at, note, reject_reason`
+  payout_started_at, external_ref, paid_at, paid_operator_user_id, payout_failure_reason, payout_failed_at, note, reject_reason,
+  payment_key, payee_snapshot, risk_review`
 
 type scanTarget interface{ Scan(dest ...any) error }
 
@@ -143,7 +144,8 @@ func scanSupplierSettlement(s scanTarget) (*domain.SupplierSettlement, error) {
 	var kind, status string
 	err := s.Scan(&x.ID, &x.SupplierUserID, &kind, &x.AmountMillis, &x.PeriodStart, &x.PeriodEnd, &status, &x.Revision,
 		&x.RequestKey, &x.RequestedAt, &x.RequestedOperator, &x.ReviewedAt, &x.ReviewerUserID, &x.PayoutOperatorUserID,
-		&x.PayoutStartedAt, &x.ExternalRef, &x.PaidAt, &x.PaidOperatorUserID, &x.PayoutFailureReason, &x.PayoutFailedAt, &x.Note, &x.RejectReason)
+		&x.PayoutStartedAt, &x.ExternalRef, &x.PaidAt, &x.PaidOperatorUserID, &x.PayoutFailureReason, &x.PayoutFailedAt, &x.Note, &x.RejectReason,
+		&x.PaymentKey, &x.PayeeSnapshot, &x.RiskReview)
 	if err != nil {
 		return nil, err
 	}

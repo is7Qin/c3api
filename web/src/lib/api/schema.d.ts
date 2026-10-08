@@ -1979,6 +1979,12 @@ export interface components {
             payout_failure_reason?: string | null;
             /** Format: date-time */
             payout_failed_at?: string | null;
+            /** @description 首次 claim 生成、全局唯一、永久固定的付款键（重试/恢复复用不换键） */
+            payment_key?: string | null;
+            /** @description 固定收款目标快照（结构化 JSON） */
+            payee_snapshot?: string | null;
+            /** @description 风险核对记录（结构化 JSON） */
+            risk_review?: string | null;
             note?: string | null;
             reject_reason?: string | null;
         };
@@ -2007,26 +2013,47 @@ export interface components {
             expected_revision: number;
             reason?: string | null;
         };
-        /** @description 认领付款；收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at） */
+        /** @description 认领付款；金额必须等于单据金额 + 结构化收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at） */
         SettlementClaimBody: {
             /** Format: int64 */
             expected_revision: number;
-            /** @description 收款目标快照（副作用前固定） */
-            payee_snapshot: string;
-            /** @description 风险核对证据（非空；平台信用风险放行记录） */
+            /**
+             * Format: int64
+             * @description 认领金额，必须 == 单据 amount_millis（不符 ⇒ 400）
+             */
+            amount_millis: number;
+            payee_snapshot: components["schemas"]["SettlementPayeeSnapshot"];
+            /** @description 风险核对证据 reference（非空；平台信用风险放行记录） */
             risk_evidence: string;
         };
+        /** @description 收款目标快照（结构化；副作用前固定、重试复用、不一致拒绝） */
+        SettlementPayeeSnapshot: {
+            /** @description 收款人/开户名 */
+            payee_name: string;
+            /** @description 收款账号 */
+            account: string;
+            /** @description 金额单位/币种 */
+            unit: string;
+        };
+        /** @description paying→approved；仅接受结构化「确定未支付」+「旧执行已停止」核验（未知 ⇒ 失败闭合保留 paying） */
         SettlementConfirmFailedBody: {
             /** Format: int64 */
             expected_revision: number;
             /** @description 确定未支付的原因（网络失败不算） */
             reason: string;
+            /** @description 渠道/人工已核验「确定未支付」 */
+            confirmed_not_paid: boolean;
+            /** @description 核验证据 reference（非空） */
+            evidence: string;
+            /** @description 已确认旧外部执行已停止（回收/等待/具名确认） */
+            old_execution_stopped: boolean;
         };
+        /** @description 仅 paying→paid；必须提供非空银行/渠道回单号（未核验不得确认） */
         SettlementPaidBody: {
             /** Format: int64 */
             expected_revision: number;
-            /** @description 银行/渠道回单号 */
-            external_ref?: string | null;
+            /** @description 银行/渠道回单号（非空） */
+            external_ref: string;
         };
         AdminRequestSettlementBody: {
             /**

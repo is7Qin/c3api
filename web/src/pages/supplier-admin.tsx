@@ -15,6 +15,7 @@ import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -94,11 +95,17 @@ export default function SupplierAdmin() {
   // —— 带输入的资金命令：统一对话框 ——
   const [act, setAct] = useState<{ kind: ActionKind; row: SupplierSettlement } | null>(null)
   const [reason, setReason] = useState('')
-  const [payee, setPayee] = useState('')
+  const [payeeName, setPayeeName] = useState('')
+  const [payeeAccount, setPayeeAccount] = useState('')
+  const [payeeUnit, setPayeeUnit] = useState('')
   const [risk, setRisk] = useState('')
+  const [evidence, setEvidence] = useState('')
+  const [confirmedNotPaid, setConfirmedNotPaid] = useState(false)
+  const [oldExecutionStopped, setOldExecutionStopped] = useState(false)
   const [ref, setRef] = useState('')
   const openAct = (kind: ActionKind, row: SupplierSettlement) => {
-    setReason(''); setPayee(''); setRisk(''); setRef('')
+    setReason(''); setPayeeName(''); setPayeeAccount(''); setPayeeUnit(''); setRisk('')
+    setEvidence(''); setConfirmedNotPaid(false); setOldExecutionStopped(false); setRef('')
     setAct({ kind, row })
   }
   const runAct = useMutation({
@@ -108,12 +115,25 @@ export default function SupplierAdmin() {
       switch (act!.kind) {
         case 'reject': return api.rejectSettlement(s.id, { ...rev, ...(reason ? { reason } : {}) })
         case 'claim':
-          if (!payee.trim() || !risk.trim()) throw new Error(t('supplierAdmin.claim.required'))
-          return api.claimSettlement(s.id, { ...rev, payee_snapshot: payee.trim(), risk_evidence: risk.trim() })
-        case 'paid': return api.paidSettlement(s.id, { ...rev, ...(ref ? { external_ref: ref } : {}) })
+          if (!payeeName.trim() || !payeeAccount.trim() || !payeeUnit.trim() || !risk.trim()) throw new Error(t('supplierAdmin.claim.required'))
+          return api.claimSettlement(s.id, {
+            ...rev,
+            amount_millis: s.amount_millis,
+            payee_snapshot: { payee_name: payeeName.trim(), account: payeeAccount.trim(), unit: payeeUnit.trim() },
+            risk_evidence: risk.trim(),
+          })
+        case 'paid':
+          if (!ref.trim()) throw new Error(t('supplierAdmin.paid.required'))
+          return api.paidSettlement(s.id, { ...rev, external_ref: ref.trim() })
         case 'confirm-failed':
-          if (!reason.trim()) throw new Error(t('supplierAdmin.confirmFailed.required'))
-          return api.confirmFailedSettlement(s.id, { ...rev, reason: reason.trim() })
+          if (!reason.trim() || !evidence.trim() || !confirmedNotPaid || !oldExecutionStopped) throw new Error(t('supplierAdmin.confirmFailed.required'))
+          return api.confirmFailedSettlement(s.id, {
+            ...rev,
+            reason: reason.trim(),
+            evidence: evidence.trim(),
+            confirmed_not_paid: confirmedNotPaid,
+            old_execution_stopped: oldExecutionStopped,
+          })
       }
     },
     onSuccess: () => { afterMutate(t('supplierAdmin.actionSuccess')); setAct(null) },
@@ -313,24 +333,52 @@ export default function SupplierAdmin() {
             <DialogDescription>{act ? t('supplierAdmin.act.idDesc', { id: act.row.id, amount: formatQuotaMillis(act.row.amount_millis) }) : ''}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            {(act?.kind === 'reject' || act?.kind === 'confirm-failed') && (
+            {act?.kind === 'reject' && (
               <div className="space-y-1.5">
                 <Label htmlFor="act-reason">{t('supplierAdmin.field.reason')}</Label>
                 <Input id="act-reason" value={reason} onChange={e => setReason(e.target.value)} />
-                {act?.kind === 'confirm-failed' && <p className="text-xs text-muted-foreground">{t('supplierAdmin.confirmFailed.hint')}</p>}
               </div>
             )}
             {act?.kind === 'claim' && (
               <>
                 <div className="space-y-1.5">
-                  <Label htmlFor="act-payee">{t('supplierAdmin.field.payee')}</Label>
-                  <Input id="act-payee" value={payee} onChange={e => setPayee(e.target.value)} placeholder={t('supplierAdmin.field.payeePlaceholder')} />
+                  <Label htmlFor="act-payee-name">{t('supplierAdmin.field.payeeName')}</Label>
+                  <Input id="act-payee-name" value={payeeName} onChange={e => setPayeeName(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="act-payee-account">{t('supplierAdmin.field.payeeAccount')}</Label>
+                  <Input id="act-payee-account" value={payeeAccount} onChange={e => setPayeeAccount(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="act-payee-unit">{t('supplierAdmin.field.payeeUnit')}</Label>
+                  <Input id="act-payee-unit" value={payeeUnit} onChange={e => setPayeeUnit(e.target.value)} />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="act-risk">{t('supplierAdmin.field.risk')}</Label>
                   <Input id="act-risk" value={risk} onChange={e => setRisk(e.target.value)} />
                   <p className="text-xs text-muted-foreground">{t('supplierAdmin.claim.hint')}</p>
                 </div>
+              </>
+            )}
+            {act?.kind === 'confirm-failed' && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="act-reason">{t('supplierAdmin.field.reason')}</Label>
+                  <Input id="act-reason" value={reason} onChange={e => setReason(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="act-evidence">{t('supplierAdmin.field.evidence')}</Label>
+                  <Input id="act-evidence" value={evidence} onChange={e => setEvidence(e.target.value)} />
+                </div>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={confirmedNotPaid} onCheckedChange={c => setConfirmedNotPaid(c === true)} />
+                  {t('supplierAdmin.field.confirmedNotPaid')}
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <Checkbox checked={oldExecutionStopped} onCheckedChange={c => setOldExecutionStopped(c === true)} />
+                  {t('supplierAdmin.field.oldExecutionStopped')}
+                </label>
+                <p className="text-xs text-muted-foreground">{t('supplierAdmin.confirmFailed.hint')}</p>
               </>
             )}
             {act?.kind === 'paid' && (

@@ -619,28 +619,37 @@ type SupplierOverview struct {
 
 // SupplierSettlement defines model for SupplierSettlement.
 type SupplierSettlement struct {
-	AmountMillis         int64                    `json:"amount_millis"`
-	ExternalRef          *string                  `json:"external_ref"`
-	Id                   int64                    `json:"id"`
-	Kind                 SupplierSettlementKind   `json:"kind"`
-	Note                 *string                  `json:"note"`
-	PaidAt               *time.Time               `json:"paid_at"`
-	PaidOperatorUserId   *int64                   `json:"paid_operator_user_id"`
-	PayoutFailedAt       *time.Time               `json:"payout_failed_at"`
-	PayoutFailureReason  *string                  `json:"payout_failure_reason"`
-	PayoutOperatorUserId *int64                   `json:"payout_operator_user_id"`
-	PayoutStartedAt      *time.Time               `json:"payout_started_at"`
-	PeriodEnd            time.Time                `json:"period_end"`
-	PeriodStart          time.Time                `json:"period_start"`
-	RejectReason         *string                  `json:"reject_reason"`
-	RequestKey           string                   `json:"request_key"`
-	RequestedAt          time.Time                `json:"requested_at"`
-	RequestedOperator    int64                    `json:"requested_operator"`
-	ReviewedAt           *time.Time               `json:"reviewed_at"`
-	ReviewerUserId       *int64                   `json:"reviewer_user_id"`
-	Revision             int64                    `json:"revision"`
-	Status               SupplierSettlementStatus `json:"status"`
-	SupplierUserId       int64                    `json:"supplier_user_id"`
+	AmountMillis       int64                  `json:"amount_millis"`
+	ExternalRef        *string                `json:"external_ref"`
+	Id                 int64                  `json:"id"`
+	Kind               SupplierSettlementKind `json:"kind"`
+	Note               *string                `json:"note"`
+	PaidAt             *time.Time             `json:"paid_at"`
+	PaidOperatorUserId *int64                 `json:"paid_operator_user_id"`
+
+	// PayeeSnapshot 固定收款目标快照（结构化 JSON）
+	PayeeSnapshot *string `json:"payee_snapshot"`
+
+	// PaymentKey 首次 claim 生成、全局唯一、永久固定的付款键（重试/恢复复用不换键）
+	PaymentKey           *string    `json:"payment_key"`
+	PayoutFailedAt       *time.Time `json:"payout_failed_at"`
+	PayoutFailureReason  *string    `json:"payout_failure_reason"`
+	PayoutOperatorUserId *int64     `json:"payout_operator_user_id"`
+	PayoutStartedAt      *time.Time `json:"payout_started_at"`
+	PeriodEnd            time.Time  `json:"period_end"`
+	PeriodStart          time.Time  `json:"period_start"`
+	RejectReason         *string    `json:"reject_reason"`
+	RequestKey           string     `json:"request_key"`
+	RequestedAt          time.Time  `json:"requested_at"`
+	RequestedOperator    int64      `json:"requested_operator"`
+	ReviewedAt           *time.Time `json:"reviewed_at"`
+	ReviewerUserId       *int64     `json:"reviewer_user_id"`
+	Revision             int64      `json:"revision"`
+
+	// RiskReview 风险核对记录（结构化 JSON）
+	RiskReview     *string                  `json:"risk_review"`
+	Status         SupplierSettlementStatus `json:"status"`
+	SupplierUserId int64                    `json:"supplier_user_id"`
 }
 
 // SupplierSettlementKind defines model for SupplierSettlement.Kind.

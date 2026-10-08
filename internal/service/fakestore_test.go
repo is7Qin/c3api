@@ -2706,37 +2706,40 @@ func (f *fakeStore) RejectSettlement(_ context.Context, id, expectedRevision int
 	})
 }
 
-func (f *fakeStore) ClaimSettlement(_ context.Context, id, expectedRevision int64, payeeSnapshot, riskEvidence string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if payeeSnapshot == "" || riskEvidence == "" {
+func (f *fakeStore) ClaimSettlement(_ context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, riskEvidence string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if amountMillis <= 0 || payee.PayeeName == "" || payee.Account == "" || payee.Unit == "" || riskEvidence == "" {
 		return nil, repository.ErrInvalidInput
 	}
 	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
 		if s.Status != domain.SettlementApproved {
 			return repository.ErrStaleRevision
 		}
+		if amountMillis != s.AmountMillis {
+			return repository.ErrInvalidInput
+		}
 		s.Status = domain.SettlementPaying
 		return nil
 	})
 }
 
-func (f *fakeStore) ConfirmFailedSettlement(_ context.Context, id, expectedRevision int64, reason string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) ConfirmFailedSettlement(_ context.Context, id, expectedRevision int64, in domain.SupplierPayoutFailureConfirmation, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
 	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
 		if s.Status != domain.SettlementPaying {
 			return repository.ErrStaleRevision
 		}
 		s.Status = domain.SettlementApproved
-		s.PayoutFailureReason = &reason
+		s.PayoutFailureReason = &in.Reason
 		return nil
 	})
 }
 
-func (f *fakeStore) PaidSettlement(_ context.Context, id, expectedRevision int64, externalRef *string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) PaidSettlement(_ context.Context, id, expectedRevision int64, externalRef string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
 	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {
 		if s.Status != domain.SettlementPaying {
 			return repository.ErrStaleRevision
 		}
 		s.Status = domain.SettlementPaid
-		s.ExternalRef = externalRef
+		s.ExternalRef = &externalRef
 		if b, ok := f.supplierBalances[s.SupplierUserID]; ok {
 			b.LifetimePaid += s.AmountMillis
 		}

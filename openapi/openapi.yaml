@@ -2627,6 +2627,9 @@ components:
         paid_operator_user_id: { type: integer, format: int64, nullable: true }
         payout_failure_reason: { type: string, nullable: true }
         payout_failed_at: { type: string, format: date-time, nullable: true }
+        payment_key: { type: string, nullable: true, description: 首次 claim 生成、全局唯一、永久固定的付款键（重试/恢复复用不换键） }
+        payee_snapshot: { type: string, nullable: true, description: 固定收款目标快照（结构化 JSON） }
+        risk_review: { type: string, nullable: true, description: 风险核对记录（结构化 JSON） }
         note: { type: string, nullable: true }
         reject_reason: { type: string, nullable: true }
     SupplierSettlementList:
@@ -2657,24 +2660,38 @@ components:
         reason: { type: string, nullable: true }
     SettlementClaimBody:
       type: object
-      required: [expected_revision, payee_snapshot, risk_evidence]
-      description: 认领付款；收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at）
+      required: [expected_revision, amount_millis, payee_snapshot, risk_evidence]
+      description: 认领付款；金额必须等于单据金额 + 结构化收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at）
       properties:
         expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
-        payee_snapshot: { type: string, description: 收款目标快照（副作用前固定） }
-        risk_evidence: { type: string, description: 风险核对证据（非空；平台信用风险放行记录） }
+        amount_millis: { type: integer, format: int64, description: 认领金额，必须 == 单据 amount_millis（不符 ⇒ 400） }
+        payee_snapshot: { $ref: '#/components/schemas/SettlementPayeeSnapshot' }
+        risk_evidence: { type: string, description: 风险核对证据 reference（非空；平台信用风险放行记录） }
+    SettlementPayeeSnapshot:
+      type: object
+      required: [payee_name, account, unit]
+      description: 收款目标快照（结构化；副作用前固定、重试复用、不一致拒绝）
+      properties:
+        payee_name: { type: string, description: 收款人/开户名 }
+        account: { type: string, description: 收款账号 }
+        unit: { type: string, description: 金额单位/币种 }
     SettlementConfirmFailedBody:
       type: object
-      required: [expected_revision, reason]
+      required: [expected_revision, reason, confirmed_not_paid, evidence, old_execution_stopped]
+      description: paying→approved；仅接受结构化「确定未支付」+「旧执行已停止」核验（未知 ⇒ 失败闭合保留 paying）
       properties:
         expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
         reason: { type: string, description: 确定未支付的原因（网络失败不算） }
+        confirmed_not_paid: { type: boolean, description: 渠道/人工已核验「确定未支付」 }
+        evidence: { type: string, description: 核验证据 reference（非空） }
+        old_execution_stopped: { type: boolean, description: 已确认旧外部执行已停止（回收/等待/具名确认） }
     SettlementPaidBody:
       type: object
-      required: [expected_revision]
+      required: [expected_revision, external_ref]
+      description: 仅 paying→paid；必须提供非空银行/渠道回单号（未核验不得确认）
       properties:
         expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
-        external_ref: { type: string, nullable: true, description: 银行/渠道回单号 }
+        external_ref: { type: string, description: 银行/渠道回单号（非空） }
     AdminRequestSettlementBody:
       type: object
       required: [supplier_user_id, amount_millis, request_key]

@@ -1835,31 +1835,53 @@ type SettingUpdate struct {
 	Value string `json:"value"`
 }
 
-// SettlementClaimBody 认领付款；收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at）
+// SettlementClaimBody 认领付款；金额必须等于单据金额 + 结构化收款目标快照固定 + 风险核对证据（服务端派生 operator_id/decided_at/expires_at）
 type SettlementClaimBody struct {
+	// AmountMillis 认领金额，必须 == 单据 amount_millis（不符 ⇒ 400）
+	AmountMillis  int64 `json:"amount_millis"`
 	SettlementRev int64 `json:"expected_revision"`
 
-	// PayeeSnapshot 收款目标快照（副作用前固定）
-	PayeeSnapshot string `json:"payee_snapshot"`
+	// PayeeSnapshot 收款目标快照（结构化；副作用前固定、重试复用、不一致拒绝）
+	PayeeSnapshot SettlementPayeeSnapshot `json:"payee_snapshot"`
 
-	// RiskEvidence 风险核对证据（非空；平台信用风险放行记录）
+	// RiskEvidence 风险核对证据 reference（非空；平台信用风险放行记录）
 	RiskEvidence string `json:"risk_evidence"`
 }
 
-// SettlementConfirmFailedBody defines model for SettlementConfirmFailedBody.
+// SettlementConfirmFailedBody paying→approved；仅接受结构化「确定未支付」+「旧执行已停止」核验（未知 ⇒ 失败闭合保留 paying）
 type SettlementConfirmFailedBody struct {
-	SettlementRev int64 `json:"expected_revision"`
+	// ConfirmedNotPaid 渠道/人工已核验「确定未支付」
+	ConfirmedNotPaid bool `json:"confirmed_not_paid"`
+
+	// Evidence 核验证据 reference（非空）
+	Evidence      string `json:"evidence"`
+	SettlementRev int64  `json:"expected_revision"`
+
+	// OldExecutionStopped 已确认旧外部执行已停止（回收/等待/具名确认）
+	OldExecutionStopped bool `json:"old_execution_stopped"`
 
 	// Reason 确定未支付的原因（网络失败不算）
 	Reason string `json:"reason"`
 }
 
-// SettlementPaidBody defines model for SettlementPaidBody.
+// SettlementPaidBody 仅 paying→paid；必须提供非空银行/渠道回单号（未核验不得确认）
 type SettlementPaidBody struct {
 	SettlementRev int64 `json:"expected_revision"`
 
-	// ExternalRef 银行/渠道回单号
-	ExternalRef *string `json:"external_ref"`
+	// ExternalRef 银行/渠道回单号（非空）
+	ExternalRef string `json:"external_ref"`
+}
+
+// SettlementPayeeSnapshot 收款目标快照（结构化；副作用前固定、重试复用、不一致拒绝）
+type SettlementPayeeSnapshot struct {
+	// Account 收款账号
+	Account string `json:"account"`
+
+	// PayeeName 收款人/开户名
+	PayeeName string `json:"payee_name"`
+
+	// Unit 金额单位/币种
+	Unit string `json:"unit"`
 }
 
 // SettlementRejectBody defines model for SettlementRejectBody.
@@ -2004,28 +2026,37 @@ type SupplierBalancePatchBody struct {
 
 // SupplierSettlement defines model for SupplierSettlement.
 type SupplierSettlement struct {
-	AmountMillis         int64                    `json:"amount_millis"`
-	ExternalRef          *string                  `json:"external_ref"`
-	Id                   int64                    `json:"id"`
-	Kind                 SupplierSettlementKind   `json:"kind"`
-	Note                 *string                  `json:"note"`
-	PaidAt               *time.Time               `json:"paid_at"`
-	PaidOperatorUserId   *int64                   `json:"paid_operator_user_id"`
-	PayoutFailedAt       *time.Time               `json:"payout_failed_at"`
-	PayoutFailureReason  *string                  `json:"payout_failure_reason"`
-	PayoutOperatorUserId *int64                   `json:"payout_operator_user_id"`
-	PayoutStartedAt      *time.Time               `json:"payout_started_at"`
-	PeriodEnd            time.Time                `json:"period_end"`
-	PeriodStart          time.Time                `json:"period_start"`
-	RejectReason         *string                  `json:"reject_reason"`
-	RequestKey           string                   `json:"request_key"`
-	RequestedAt          time.Time                `json:"requested_at"`
-	RequestedOperator    int64                    `json:"requested_operator"`
-	ReviewedAt           *time.Time               `json:"reviewed_at"`
-	ReviewerUserId       *int64                   `json:"reviewer_user_id"`
-	Revision             int64                    `json:"revision"`
-	Status               SupplierSettlementStatus `json:"status"`
-	SupplierUserId       int64                    `json:"supplier_user_id"`
+	AmountMillis       int64                  `json:"amount_millis"`
+	ExternalRef        *string                `json:"external_ref"`
+	Id                 int64                  `json:"id"`
+	Kind               SupplierSettlementKind `json:"kind"`
+	Note               *string                `json:"note"`
+	PaidAt             *time.Time             `json:"paid_at"`
+	PaidOperatorUserId *int64                 `json:"paid_operator_user_id"`
+
+	// PayeeSnapshot 固定收款目标快照（结构化 JSON）
+	PayeeSnapshot *string `json:"payee_snapshot"`
+
+	// PaymentKey 首次 claim 生成、全局唯一、永久固定的付款键（重试/恢复复用不换键）
+	PaymentKey           *string    `json:"payment_key"`
+	PayoutFailedAt       *time.Time `json:"payout_failed_at"`
+	PayoutFailureReason  *string    `json:"payout_failure_reason"`
+	PayoutOperatorUserId *int64     `json:"payout_operator_user_id"`
+	PayoutStartedAt      *time.Time `json:"payout_started_at"`
+	PeriodEnd            time.Time  `json:"period_end"`
+	PeriodStart          time.Time  `json:"period_start"`
+	RejectReason         *string    `json:"reject_reason"`
+	RequestKey           string     `json:"request_key"`
+	RequestedAt          time.Time  `json:"requested_at"`
+	RequestedOperator    int64      `json:"requested_operator"`
+	ReviewedAt           *time.Time `json:"reviewed_at"`
+	ReviewerUserId       *int64     `json:"reviewer_user_id"`
+	Revision             int64      `json:"revision"`
+
+	// RiskReview 风险核对记录（结构化 JSON）
+	RiskReview     *string                  `json:"risk_review"`
+	Status         SupplierSettlementStatus `json:"status"`
+	SupplierUserId int64                    `json:"supplier_user_id"`
 }
 
 // SupplierSettlementKind defines model for SupplierSettlement.Kind.

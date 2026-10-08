@@ -179,7 +179,11 @@ func (h *AdminAPI) PostAdminSupplierSettlementsIdClaim(w http.ResponseWriter, r 
 		httpface.WriteErr(w, http.StatusBadRequest, "expected_revision is required")
 		return
 	}
-	s, err := h.svc.AdminClaimSettlement(r.Context(), id, body.SettlementRev, body.PayeeSnapshot, body.RiskEvidence, actor)
+	s, err := h.svc.AdminClaimSettlement(r.Context(), id, body.SettlementRev, body.AmountMillis, domain.SupplierPayeeSnapshot{
+		PayeeName: body.PayeeSnapshot.PayeeName,
+		Account:   body.PayeeSnapshot.Account,
+		Unit:      body.PayeeSnapshot.Unit,
+	}, body.RiskEvidence, actor)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -187,7 +191,8 @@ func (h *AdminAPI) PostAdminSupplierSettlementsIdClaim(w http.ResponseWriter, r 
 	httpface.WriteJSON(w, http.StatusOK, toAdminSupplierSettlement(s))
 }
 
-// PostAdminSupplierSettlementsIdConfirmFailed paying → approved（仅「确定未支付」）。
+// PostAdminSupplierSettlementsIdConfirmFailed paying → approved（仅结构化「确定未支付」
+// +「旧执行已停止」核验；未知 ⇒ 失败闭合保留 paying）。
 func (h *AdminAPI) PostAdminSupplierSettlementsIdConfirmFailed(w http.ResponseWriter, r *http.Request, id int64) {
 	actor, ok := requireFundsActor(w, r)
 	if !ok {
@@ -202,7 +207,12 @@ func (h *AdminAPI) PostAdminSupplierSettlementsIdConfirmFailed(w http.ResponseWr
 		httpface.WriteErr(w, http.StatusBadRequest, "expected_revision is required")
 		return
 	}
-	s, err := h.svc.AdminConfirmFailedSettlement(r.Context(), id, body.SettlementRev, body.Reason, actor)
+	s, err := h.svc.AdminConfirmFailedSettlement(r.Context(), id, body.SettlementRev, domain.SupplierPayoutFailureConfirmation{
+		Reason:              body.Reason,
+		Evidence:            body.Evidence,
+		ConfirmedNotPaid:    body.ConfirmedNotPaid,
+		OldExecutionStopped: body.OldExecutionStopped,
+	}, actor)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -210,7 +220,8 @@ func (h *AdminAPI) PostAdminSupplierSettlementsIdConfirmFailed(w http.ResponseWr
 	httpface.WriteJSON(w, http.StatusOK, toAdminSupplierSettlement(s))
 }
 
-// PostAdminSupplierSettlementsIdPaid 仅 paying → paid（lifetime_paid 累加）。
+// PostAdminSupplierSettlementsIdPaid 仅 paying → paid（lifetime_paid 累加；external_ref
+// 必须非空）。
 func (h *AdminAPI) PostAdminSupplierSettlementsIdPaid(w http.ResponseWriter, r *http.Request, id int64) {
 	actor, ok := requireFundsActor(w, r)
 	if !ok {
@@ -286,6 +297,9 @@ func toAdminSupplierSettlement(s *domain.SupplierSettlement) SupplierSettlement 
 		PaidOperatorUserId:   s.PaidOperatorUserID,
 		PayoutFailureReason:  s.PayoutFailureReason,
 		PayoutFailedAt:       s.PayoutFailedAt,
+		PaymentKey:           s.PaymentKey,
+		PayeeSnapshot:        s.PayeeSnapshot,
+		RiskReview:           s.RiskReview,
 		Note:                 s.Note,
 		RejectReason:         s.RejectReason,
 	}

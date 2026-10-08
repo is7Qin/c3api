@@ -75,8 +75,28 @@ type SupplierSettlement struct {
 	PaidOperatorUserID   *int64
 	PayoutFailureReason  *string
 	PayoutFailedAt       *time.Time
+	PaymentKey           *string
+	PayeeSnapshot        *string
+	RiskReview           *string
 	Note                 *string
 	RejectReason         *string
+}
+
+// SupplierPayeeSnapshot 收款目标快照（§6.5 C4）：结构化固定（收款人/账号/单位）。
+// 认领副作用前固定、重试/恢复复用，不一致 ⇒ 拒绝。
+type SupplierPayeeSnapshot struct {
+	PayeeName string
+	Account   string
+	Unit      string
+}
+
+// SupplierPayoutFailureConfirmation 结构化「确定未支付」核验（§6.5 C4）：具名确认人 +
+// 确定未支付结论 + 证据 + 旧执行已停止确认。任一缺失/false ⇒ 失败闭合（保留 paying）。
+type SupplierPayoutFailureConfirmation struct {
+	Reason              string
+	Evidence            string
+	ConfirmedNotPaid    bool
+	OldExecutionStopped bool
 }
 
 // ApplySettlementRequest 申请结算入参（供应商自申请 / 管理员代申请共用；§6.2）。

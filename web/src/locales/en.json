@@ -1988,18 +1988,25 @@
     },
     "field": {
       "reason": "Reason",
-      "payee": "Payee snapshot",
-      "payeePlaceholder": "Payee / account / currency",
-      "risk": "Risk-check evidence",
-      "externalRef": "External reference (optional)"
+      "payeeName": "Payee name",
+      "payeeAccount": "Payee account",
+      "payeeUnit": "Amount unit / currency",
+      "risk": "Risk-check evidence reference",
+      "evidence": "Verification evidence",
+      "confirmedNotPaid": "Confirmed not paid (definite)",
+      "oldExecutionStopped": "Previous execution stopped",
+      "externalRef": "External reference"
     },
     "claim": {
-      "required": "Payee snapshot and risk evidence are required",
+      "required": "Payee name, account, unit and risk evidence are required",
       "hint": "Claiming starts the external payout and fixes the payee."
     },
+    "paid": {
+      "required": "An external reference is required to confirm payment"
+    },
     "confirmFailed": {
-      "required": "A definite non-payment reason is required",
-      "hint": "Only a confirmed non-payment is accepted; network failures do not qualify."
+      "required": "Reason, evidence and both confirmations are required",
+      "hint": "Only a confirmed non-payment with the previous execution stopped is accepted; network failures do not qualify."
     },
     "request": {
       "button": "Request on behalf",

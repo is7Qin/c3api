@@ -19,6 +19,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -374,18 +375,70 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, reaso
 	return out, err
 }
 
-// ClaimSettlement approved → paying（认领 CAS；§6.5 C3）：生成/复用全局唯一
-// payment_key、固定 payee_snapshot（首次认领固定，重试复用；不一致 ⇒ 拒绝）、
-// 判定付款风控门、原子持久化 risk_review。
-func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision int64, payeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if payeeSnapshot == "" || riskEvidence == "" {
-		return nil, fmt.Errorf("%w: payee_snapshot and risk evidence are required", ErrInvalidInput)
+// encodePayeeSnapshot 严格校验收款目标快照（结构化：收款人/账号/单位均非空）并
+// 序列化为规范 JSON（§6.5 C4）：不得把自由文本当收款目标。
+func encodePayeeSnapshot(p domain.SupplierPayeeSnapshot) (string, error) {
+	name := strings.TrimSpace(p.PayeeName)
+	account := strings.TrimSpace(p.Account)
+	unit := strings.TrimSpace(p.Unit)
+	if name == "" || account == "" || unit == "" {
+		return "", fmt.Errorf("%w: payee_snapshot requires payee_name/account/unit", ErrInvalidInput)
+	}
+	b, err := json.Marshal(struct {
+		PayeeName string `json:"payee_name"`
+		Account   string `json:"account"`
+		Unit      string `json:"unit"`
+	}{PayeeName: name, Account: account, Unit: unit})
+	if err != nil {
+		return "", fmt.Errorf("%w: encode payee_snapshot: %v", ErrInvalidInput, err)
+	}
+	return string(b), nil
+}
+
+// encodePayoutFailureConfirmation 校验结构化「确定未支付」核验并序列化为 JSON
+// （§6.5 C4）：具名确认人（落 reviewer_user_id）+ 确定未支付结论 + 证据 + 旧执行
+// 已停止确认，任一缺失/false ⇒ 失败闭合（保留 paying）。
+func encodePayoutFailureConfirmation(in domain.SupplierPayoutFailureConfirmation) (string, error) {
+	reason := strings.TrimSpace(in.Reason)
+	evidence := strings.TrimSpace(in.Evidence)
+	if reason == "" || evidence == "" || !in.ConfirmedNotPaid || !in.OldExecutionStopped {
+		return "", fmt.Errorf("%w: confirm-failed requires reason, evidence and confirmed-not-paid/old-execution-stopped", ErrInvalidInput)
+	}
+	b, err := json.Marshal(struct {
+		Reason              string `json:"reason"`
+		Evidence            string `json:"evidence"`
+		ConfirmedNotPaid    bool   `json:"confirmed_not_paid"`
+		OldExecutionStopped bool   `json:"old_execution_stopped"`
+	}{Reason: reason, Evidence: evidence, ConfirmedNotPaid: true, OldExecutionStopped: true})
+	if err != nil {
+		return "", fmt.Errorf("%w: encode payout failure confirmation: %v", ErrInvalidInput, err)
+	}
+	return string(b), nil
+}
+
+// ClaimSettlement approved → paying（认领 CAS；§6.5 C3）：**金额必须 == 单据
+// amount_millis**；结构化收款快照固定（首次认领固定、重试复用、不一致 ⇒ 拒绝）；
+// 生成/复用全局唯一 payment_key；判定付款风控门；原子持久化 risk_review。
+func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if amountMillis <= 0 {
+		return nil, fmt.Errorf("%w: amount_millis must be > 0", ErrInvalidInput)
+	}
+	if strings.TrimSpace(riskEvidence) == "" {
+		return nil, fmt.Errorf("%w: risk evidence is required", ErrInvalidInput)
+	}
+	payeeSnapshot, err := encodePayeeSnapshot(payee)
+	if err != nil {
+		return nil, err
 	}
 	var out *domain.SupplierSettlement
-	err := r.withFundsTx(ctx, actor, func(tx pgx.Tx) error {
-		supplierUID, _, _, _, err := readSettlementHead(ctx, tx, id)
+	err = r.withFundsTx(ctx, actor, func(tx pgx.Tx) error {
+		supplierUID, amount, _, _, err := readSettlementHead(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		// claim 金额 == 单据金额（§6.5 C2）：不符 ⇒ 400，不得凭错金额认领。
+		if amountMillis != amount {
+			return fmt.Errorf("%w: claim amount %d != settlement amount %d", ErrInvalidInput, amountMillis, amount)
 		}
 		if _, err := lockSupplierBalanceRow(ctx, tx, supplierUID); err != nil {
 			return err
@@ -445,14 +498,16 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, payme
 	return out, err
 }
 
-// ConfirmFailedSettlement paying → approved（**仅接受「确定未支付」**的核验结果；
-// 网络失败不算；留证 payout_failure_reason + payout_failed_at）。§6.5。
-func (r *SupplierRepo) ConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, reason string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if reason == "" {
-		return nil, fmt.Errorf("%w: payout_failure_reason is required", ErrInvalidInput)
+// ConfirmFailedSettlement paying → approved（**仅接受结构化「确定未支付」**的核验
+// 结果；网络失败不算；具名确认人落 reviewer_user_id，留证 payout_failure_reason +
+// payout_failed_at）。§6.5。未知/无法确认 ⇒ 失败闭合（保持 paying）。
+func (r *SupplierRepo) ConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, in domain.SupplierPayoutFailureConfirmation, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	record, err := encodePayoutFailureConfirmation(in)
+	if err != nil {
+		return nil, err
 	}
 	var out *domain.SupplierSettlement
-	err := r.withFundsTx(ctx, actor, func(tx pgx.Tx) error {
+	err = r.withFundsTx(ctx, actor, func(tx pgx.Tx) error {
 		supplierUID, _, _, _, err := readSettlementHead(ctx, tx, id)
 		if err != nil {
 			return err
@@ -461,9 +516,9 @@ func (r *SupplierRepo) ConfirmFailedSettlement(ctx context.Context, id, expected
 			return err
 		}
 		row := tx.QueryRow(ctx, `UPDATE supplier_settlements
-SET status = 'approved', revision = revision + 1, payout_failure_reason = $3, payout_failed_at = clock_timestamp()
+SET status = 'approved', revision = revision + 1, payout_failure_reason = $3, payout_failed_at = clock_timestamp(), reviewer_user_id = $4
 WHERE id = $1 AND status = 'paying' AND revision = $2
-RETURNING `+supplierSettlementColumns, id, expectedRevision, reason)
+RETURNING `+supplierSettlementColumns, id, expectedRevision, record, actor.UserID)
 		s, err := scanSupplierSettlement(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("%w: settlement id=%d expected revision %d stale or not paying", ErrStaleRevision, id, expectedRevision)
@@ -477,10 +532,14 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, reason)
 	return out, err
 }
 
-// PaidSettlement paying → paid（**仅** paying；§6.3）：available 不变（申请已扣），
-// lifetime_paid += amount，记 paid_operator_user_id / paid_at / external_ref。
-// 不重做风控门（已核验付款事实）。
-func (r *SupplierRepo) PaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef *string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+// PaidSettlement paying → paid（**仅** paying；§6.3）：**external_ref 必须非空**
+// （未核验不得确认）；available 不变（申请已扣），lifetime_paid += amount，记
+// paid_operator_user_id / paid_at / external_ref。不重做风控门（已核验付款事实）。
+func (r *SupplierRepo) PaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	ref := strings.TrimSpace(externalRef)
+	if ref == "" {
+		return nil, fmt.Errorf("%w: external_ref is required to confirm paid", ErrInvalidInput)
+	}
 	var out *domain.SupplierSettlement
 	err := r.withFundsTx(ctx, actor, func(tx pgx.Tx) error {
 		supplierUID, amount, _, _, err := readSettlementHead(ctx, tx, id)
@@ -493,7 +552,7 @@ func (r *SupplierRepo) PaidSettlement(ctx context.Context, id, expectedRevision 
 		row := tx.QueryRow(ctx, `UPDATE supplier_settlements
 SET status = 'paid', revision = revision + 1, paid_at = clock_timestamp(), paid_operator_user_id = $3, external_ref = $4
 WHERE id = $1 AND status = 'paying' AND revision = $2
-RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, externalRef)
+RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, ref)
 		s, err := scanSupplierSettlement(row)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("%w: settlement id=%d expected revision %d stale or not paying", ErrStaleRevision, id, expectedRevision)

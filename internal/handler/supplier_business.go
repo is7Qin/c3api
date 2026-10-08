@@ -178,6 +178,9 @@ func toSupplierSettlement(s *domain.SupplierSettlement) supplier.SupplierSettlem
 		PaidOperatorUserId:   s.PaidOperatorUserID,
 		PayoutFailureReason:  s.PayoutFailureReason,
 		PayoutFailedAt:       s.PayoutFailedAt,
+		PaymentKey:           s.PaymentKey,
+		PayeeSnapshot:        s.PayeeSnapshot,
+		RiskReview:           s.RiskReview,
 		Note:                 s.Note,
 		RejectReason:         s.RejectReason,
 	}

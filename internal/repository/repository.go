@@ -202,21 +202,21 @@ func (r *Repository) RejectSettlement(ctx context.Context, id, expectedRevision 
 	return r.supplier.RejectSettlement(ctx, id, expectedRevision, reason, actor)
 }
 
-func (r *Repository) ClaimSettlement(ctx context.Context, id, expectedRevision int64, payeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (r *Repository) ClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if r.supplier == nil {
 		return nil, errSupplierNoPool
 	}
-	return r.supplier.ClaimSettlement(ctx, id, expectedRevision, payeeSnapshot, riskEvidence, actor)
+	return r.supplier.ClaimSettlement(ctx, id, expectedRevision, amountMillis, payee, riskEvidence, actor)
 }
 
-func (r *Repository) ConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, reason string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (r *Repository) ConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, in domain.SupplierPayoutFailureConfirmation, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if r.supplier == nil {
 		return nil, errSupplierNoPool
 	}
-	return r.supplier.ConfirmFailedSettlement(ctx, id, expectedRevision, reason, actor)
+	return r.supplier.ConfirmFailedSettlement(ctx, id, expectedRevision, in, actor)
 }
 
-func (r *Repository) PaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef *string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (r *Repository) PaidSettlement(ctx context.Context, id, expectedRevision int64, externalRef string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if r.supplier == nil {
 		return nil, errSupplierNoPool
 	}

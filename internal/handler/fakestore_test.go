@@ -2710,21 +2710,21 @@ func (f *fakeStore) RejectSettlement(_ context.Context, id, rev int64, _ *string
 	return f.supplierAdmin.Mutate(id, rev, domain.SettlementRejected, domain.FundsActor{})
 }
 
-func (f *fakeStore) ClaimSettlement(_ context.Context, id, rev int64, _, _ string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) ClaimSettlement(_ context.Context, id, rev, _ int64, _ domain.SupplierPayeeSnapshot, _ string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if f.supplierAdmin == nil {
 		return nil, repository.ErrNotFound
 	}
 	return f.supplierAdmin.Mutate(id, rev, domain.SettlementPaying, domain.FundsActor{})
 }
 
-func (f *fakeStore) ConfirmFailedSettlement(_ context.Context, id, rev int64, _ string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) ConfirmFailedSettlement(_ context.Context, id, rev int64, _ domain.SupplierPayoutFailureConfirmation, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if f.supplierAdmin == nil {
 		return nil, repository.ErrNotFound
 	}
 	return f.supplierAdmin.Mutate(id, rev, domain.SettlementApproved, domain.FundsActor{})
 }
 
-func (f *fakeStore) PaidSettlement(_ context.Context, id, rev int64, _ *string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) PaidSettlement(_ context.Context, id, rev int64, _ string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if f.supplierAdmin == nil {
 		return nil, repository.ErrNotFound
 	}

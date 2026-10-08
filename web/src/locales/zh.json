@@ -1988,18 +1988,25 @@
     },
     "field": {
       "reason": "原因",
-      "payee": "收款目标快照",
-      "payeePlaceholder": "收款人/账号/币种",
-      "risk": "风险核对证据",
-      "externalRef": "外部回单号（可选）"
+      "payeeName": "收款人",
+      "payeeAccount": "收款账号",
+      "payeeUnit": "金额单位/币种",
+      "risk": "风险核对证据 reference",
+      "evidence": "核验证据",
+      "confirmedNotPaid": "已确定未支付",
+      "oldExecutionStopped": "旧执行已停止",
+      "externalRef": "外部回单号"
     },
     "claim": {
-      "required": "收款目标与风险证据均必填",
+      "required": "收款人、账号、单位与风险证据均为必填",
       "hint": "认领后即开始外部打款；认领前固定收款目标。"
     },
+    "paid": {
+      "required": "确认付款必须提供外部回单号"
+    },
     "confirmFailed": {
-      "required": "必须填写确定未支付的原因",
-      "hint": "仅接受「确定未支付」的核验结果；网络失败不算。"
+      "required": "原因、证据与两项确认均必填",
+      "hint": "仅接受「确定未支付」且「旧执行已停止」的核验；网络失败不算。"
     },
     "request": {
       "button": "代申请",
