@@ -729,47 +729,16 @@ func (r *PartitionRepo) retireOneUsageLogPartition(ctx context.Context, name str
 		return nil, false, err
 	}
 	// 3. 未确认检查（与消费索引 ① 逻辑蕴含的同一组谓词）+ 未扣费事件保护。
-	ucRows := &entsql.Rows{}
-	if err := tx.Query(ctx, `SELECT COUNT(*) FROM `+name+` WHERE NOT supplier_credited AND supplier_earn_millis > 0`, []any{}, ucRows); err != nil {
+	//    持锁事实由 readPendingPartitionFacts 在**同一 tx** 内读取。
+	facts, err := readPendingPartitionFacts(ctx, tx, name)
+	if err != nil {
 		return nil, false, err
 	}
-	var ucCount int64
-	if ucRows.Next() {
-		if err := ucRows.Scan(&ucCount); err != nil {
-			ucRows.Close()
-			return nil, false, err
-		}
-	}
-	ucRows.Close()
-	oldRows := &entsql.Rows{}
-	if err := tx.Query(ctx, `SELECT MIN(created_at) FROM `+name+` WHERE NOT supplier_credited AND supplier_earn_millis > 0`, []any{}, oldRows); err != nil {
-		return nil, false, err
-	}
-	var oldest sql.NullTime
-	if oldRows.Next() {
-		if err := oldRows.Scan(&oldest); err != nil {
-			oldRows.Close()
-			return nil, false, err
-		}
-	}
-	oldRows.Close()
-	ubRows := &entsql.Rows{}
-	if err := tx.Query(ctx, `SELECT COUNT(*) FROM `+name+` WHERE NOT billed`, []any{}, ubRows); err != nil {
-		return nil, false, err
-	}
-	var ubCount int64
-	if ubRows.Next() {
-		if err := ubRows.Scan(&ubCount); err != nil {
-			ubRows.Close()
-			return nil, false, err
-		}
-	}
-	ubRows.Close()
-	if ucCount > 0 || ubCount > 0 {
+	if facts.UncreditedEarnRows > 0 || facts.UnbilledRows > 0 {
 		// 4. 未通过检查 ⇒ 禁止 DROP（事务仍持有锁，defer Rollback 释放）。
-		bp := &domain.BlockedPartition{Name: name, UncreditedEarnRows: ucCount, UnbilledRows: ubCount}
-		if oldest.Valid {
-			ms := oldest.Time.UnixMilli()
+		bp := &domain.BlockedPartition{Name: name, UncreditedEarnRows: facts.UncreditedEarnRows, UnbilledRows: facts.UnbilledRows}
+		if facts.OldestUncredited.Valid {
+			ms := facts.OldestUncredited.Time.UnixMilli()
 			bp.OldestUncredited = &ms
 		}
 		return bp, false, nil
@@ -807,6 +776,44 @@ func (r *PartitionRepo) retireOneUsageLogPartition(ctx context.Context, name str
 		return nil, false, err
 	}
 	return nil, true, nil
+}
+
+// pendingPartitionFacts 退休屏障在**持有 ACCESS EXCLUSIVE 锁的同一 tx** 内读取的
+// 判定事实（§3.11）：未确认正收益行数 + 其最早 created_at + 未扣费行数。
+type pendingPartitionFacts struct {
+	UncreditedEarnRows int64        // `NOT supplier_credited AND supplier_earn_millis > 0`
+	OldestUncredited   sql.NullTime // 同谓词的 MIN(created_at)
+	UnbilledRows       int64        // `NOT billed`
+}
+
+// readPendingPartitionFacts 持锁读取退休判定事实：同谓词的 COUNT 与 MIN(created_at)
+// 合并为单查询；未扣费 COUNT 独立查询（其谓词不同，合并会改变索引计划，故保留）。
+// 动态表名由受控分区名来源提供（非用户输入）。helper 与调用方复用同一 tx。
+func readPendingPartitionFacts(ctx context.Context, tx dialect.Tx, name string) (pendingPartitionFacts, error) {
+	var f pendingPartitionFacts
+	ucRows := &entsql.Rows{}
+	if err := tx.Query(ctx, `SELECT COUNT(*), MIN(created_at) FROM `+name+` WHERE NOT supplier_credited AND supplier_earn_millis > 0`, []any{}, ucRows); err != nil {
+		return f, err
+	}
+	if ucRows.Next() {
+		if err := ucRows.Scan(&f.UncreditedEarnRows, &f.OldestUncredited); err != nil {
+			ucRows.Close()
+			return f, err
+		}
+	}
+	ucRows.Close()
+	ubRows := &entsql.Rows{}
+	if err := tx.Query(ctx, `SELECT COUNT(*) FROM `+name+` WHERE NOT billed`, []any{}, ubRows); err != nil {
+		return f, err
+	}
+	if ubRows.Next() {
+		if err := ubRows.Scan(&f.UnbilledRows); err != nil {
+			ubRows.Close()
+			return f, err
+		}
+	}
+	ubRows.Close()
+	return f, nil
 }
 
 // retireReconSrc 源日封账聚合 CTE（§3.10）：谓词与记账链一致（earn>0、uid、
