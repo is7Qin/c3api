@@ -335,6 +335,40 @@ func TestPGSupplierSettlementPeriodChain(t *testing.T) {
 	require.False(t, st3.PeriodEnd.Before(st3.PeriodStart))
 }
 
+// TestPGRejectRefundRequiresBalanceRow A12①（⑥ 退还影响行数守卫）：余额行缺失时
+// reject 必须在**退款 UPDATE 0 行**处报错并整事务回滚——状态 CAS 一并撤回，单保持
+// pending（而不是被打成 rejected 却让在途负债从 I2 消失、available 不回）。
+func TestPGRejectRefundRequiresBalanceRow(t *testing.T) {
+	repos := newPGReposShared(t)
+	pool := pgSharedPool(t)
+	ctx := context.Background()
+	sr := repos.SupplierRepo(supplierRepoCfg())
+
+	s := seedSupplierUser(t, repos, "sup-reject-refund@example.com")
+	admin := seedPGUserRole(t, repos, "admin-reject-refund@example.com", domain.RolePlatformAdmin)
+	seedSupplierBalance(t, pool, s.ID, 10000)
+	sActor := domain.FundsActor{UserID: s.ID, TokenVersion: s.TokenVersion}
+	aActor := domain.FundsActor{UserID: admin.ID, TokenVersion: admin.TokenVersion}
+
+	st, err := sr.ApplySettlement(ctx, domain.ApplySettlementRequest{
+		OperatorUID: s.ID, SupplierUID: s.ID, Kind: domain.SettlementSupplierRequest, AmountMillis: 5000, RequestKey: "rr1",
+	}, sActor)
+	require.NoError(t, err)
+	require.Equal(t, domain.SettlementPending, st.Status)
+
+	// 余额行被人为删除（模拟余额行缺失）：退还 UPDATE 将命中 0 行。
+	pgExec(t, pool, `DELETE FROM supplier_balances WHERE supplier_user_id = $1`, s.ID)
+
+	_, err = sr.RejectSettlement(ctx, st.ID, st.Revision, nil, aActor)
+	require.ErrorIs(t, err, repository.ErrInvalidInput,
+		"余额行缺失时退还必须报错（0 行守卫），而非静默提交")
+
+	// 整事务回滚：单仍为 pending（状态 CAS 被撤回）。
+	var status string
+	require.NoError(t, pool.QueryRow(ctx, `SELECT status FROM supplier_settlements WHERE id=$1`, st.ID).Scan(&status))
+	require.Equal(t, string(domain.SettlementPending), status, "退款 0 行 ⇒ 状态迁移一并回滚（A12①）")
+}
+
 // ---- A11/A12/A22/A24 管理面五态 + 认领 + 风控门 ----
 
 func TestPGSupplierAdminStateMachine(t *testing.T) {
