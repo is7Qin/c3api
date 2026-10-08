@@ -5,8 +5,9 @@
 package repository
 
 // batch_owner_lock_internal_test.go N1 归属锁集合协议的**确定性**回归（真实 PG）。
-// 需要设置包内测试注入点 ownerLockSetTestBarrier，故本文件用内包 package repository
-// （外部的 repository_test 无法访问未导出变量）；自建独立 schema，不 DROP public。
+// 通过 accountRepo.updateAccountsBatch 的私有 afterOwnerRead 钩子注入交错
+// （不再使用包级可变全局），故本文件用内包 package repository（外部的
+// repository_test 无法访问未导出方法）；自建独立 schema，不 DROP public。
 //
 // 跑法：TEST_DATABASE_URL=... go test ./internal/repository/ -run 'BatchOwnerLockSet' -count=1 -v
 
@@ -80,21 +81,20 @@ func TestBatchOwnerLockSetInterleave(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	var barrierFired bool
-	ownerLockSetTestBarrier = func() {
-		if barrierFired {
+	var fired bool
+	afterOwnerRead := func() {
+		if fired {
 			return
 		}
-		barrierFired = true
-		ownerLockSetTestBarrier = nil // 只触发一次：内层调用不得重入（same goroutine）
+		fired = true
 		// 与批量读交错：读归属之后、锁 accounts 之前，用独立连接提交一次转属 O→T。
+		// 内层公共入口传 nil 钩子，故不重入。
 		_, xerr := repos.UpdateAccountsBatch(ctx, []int64{acc.ID}, AccountPatch{SupplierUserID: &target.ID})
 		require.NoError(t, xerr)
 	}
-	t.Cleanup(func() { ownerLockSetTestBarrier = nil })
 
 	enabled := true
-	results, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, AccountPatch{Enabled: &enabled})
+	results, err := repos.Accounts.updateAccountsBatch(ctx, []int64{acc.ID}, AccountPatch{Enabled: &enabled}, afterOwnerRead)
 	require.NoError(t, err, "转属交错下批量写必须重启收敛，不得报错/死锁")
 	require.Len(t, results, 1)
 	moved, err := repos.Accounts.GetAccount(ctx, acc.ID)

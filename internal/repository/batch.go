@@ -211,12 +211,16 @@ func lockSetHas(set []int64, uid int64) bool {
 	return false
 }
 
-// ownerLockSetTestBarrier 测试注入点（**prod 恒 nil**）：在「读当前归属」之后、
-// 「锁 users/accounts」之前触发——供 N1 交错测试在两读之间以独立连接提交一次转属
-// （无 sleep 的确定性屏障）。仅测试设置，非并发安全（测试串行执行）。
-var ownerLockSetTestBarrier func()
-
+// UpdateAccountsBatch 批量更新账号配置（公共入口，无测试钩子）。
 func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) ([]AccountWriteResult, error) {
+	return r.updateAccountsBatch(ctx, ids, p, nil)
+}
+
+// updateAccountsBatch 批量更新账号（公共入口的逻辑）。afterOwnerRead 是**私有测试
+// 钩子**（prod 恒 nil）：在「读当前归属」之后、「锁 users/accounts」之前触发——供
+// N1 交错测试在两读之间以独立连接提交一次转属（无 sleep 的确定性屏障）。hook 由调用
+// 方私有持有，不再是包级可变全局；内层公共调用（传入 nil）自然不继承 hook。
+func (r *AccountRepo) updateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch, afterOwnerRead func()) ([]AccountWriteResult, error) {
 	// 归属锁集合协议（N1，§2.5/§5.7）：users 锁集合必须在锁 accounts **之前**
 	// 确定并锁死（固定锁序 users → accounts，与「禁用/转属」同序）。无锁读得到的
 	// 当前 owner 可能陈旧（并发转属）——若在已持 accounts 后才发现最终 owner 不在
@@ -233,8 +237,8 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			if err != nil {
 				return err
 			}
-			if ownerLockSetTestBarrier != nil {
-				ownerLockSetTestBarrier()
+			if afterOwnerRead != nil {
+				afterOwnerRead()
 			}
 			lockSet := make([]int64, 0, len(currentOwners)+1+len(extraOwners))
 			lockSet = append(lockSet, currentOwners...)
