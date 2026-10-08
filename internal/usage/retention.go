@@ -193,7 +193,10 @@ func (w *RetentionWorker) runOnce() {
 					w.log.Warn("retention blocked usage_logs partition (unconfirmed liability)",
 						logx.String("partition", b.Name),
 						logx.Int64("uncredited_earn_rows", b.UncreditedEarnRows),
-						logx.Int64("unbilled_rows", b.UnbilledRows))
+						logx.Int64("unbilled_rows", b.UnbilledRows),
+						logx.Int64("recon_source_keys", b.ReconSourceKeys),
+						logx.Int64("recon_mismatch", b.ReconMismatch),
+						logx.Int64("recon_open_keys", b.ReconOpenKeys))
 				}
 			}
 		}

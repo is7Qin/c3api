@@ -606,12 +606,136 @@ func TestPGSupplierRetireBarrier(t *testing.T) {
 	require.GreaterOrEqual(t, blocked.UncreditedEarnRows, int64(1))
 	require.True(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName), "被挡分区不得 DROP")
 
-	// 确认债权（标为已记账）后退休成功。
+	// 确认债权但缺源日汇总行 ⇒ 仍禁止 DROP（§3.10：封账证据缺失不得清债务）。
 	pgExec(t, pool, `UPDATE `+partName+` SET supplier_credited = true WHERE request_id = 'retire-unc'`)
 	res, err = repos.Partitions.RetireUsageLogPartitions(ctx, day.AddDate(0, 0, 2))
 	require.NoError(t, err)
-	require.False(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName), "确认债权后 DROP 成功")
-	_ = res
+	blocked = nil
+	for i := range res.Blocked {
+		if res.Blocked[i].Name == partName {
+			blocked = &res.Blocked[i]
+		}
+	}
+	require.NotNil(t, blocked, "缺源日汇总行必须进入 blocked")
+	require.GreaterOrEqual(t, blocked.ReconMismatch, int64(1))
+	require.True(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName), "缺汇总行分区不得 DROP")
+
+	// 补齐一致的源日汇总行 ⇒ 退休成功并原子封账。
+	pgExec(t, pool, `INSERT INTO supplier_reconciliation (supplier_user_id, source_day, gross_cost, earned, row_count, state)
+		VALUES (7, $1::date, 10, 5, 1, 'open')`, day.Format("2006-01-02"))
+	res, err = repos.Partitions.RetireUsageLogPartitions(ctx, day.AddDate(0, 0, 2))
+	require.NoError(t, err)
+	require.False(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName), "封账一致后 DROP 成功")
+	require.Equal(t, "closed", pgText(t, pool, `SELECT state FROM supplier_reconciliation WHERE supplier_user_id = 7 AND source_day = $1::date`, day.Format("2006-01-02")), "封账状态须为 closed")
+	require.True(t, pgBool(t, pool, `SELECT closed_revision IS NOT NULL AND closed_at IS NOT NULL FROM supplier_reconciliation WHERE supplier_user_id = 7 AND source_day = $1::date`, day.Format("2006-01-02")))
+}
+
+// TestPGSupplierRetireReconciliation 源日封账矩阵（§3.10/§3.11/A20④⑤⑥⑦⑧）：
+// 缺汇总行 / 多汇总行 / 数值偏差 / earn=0 排除 / 晚到 INSERT ⇒ 不 DROP；
+// 一致 ⇒ DROP + 原子封账。
+func TestPGSupplierRetireReconciliation(t *testing.T) {
+	repos := newPGReposShared(t)
+	pool := pgSharedPool(t)
+	ctx := context.Background()
+
+	day := time.Now().UTC().AddDate(0, 0, -301).Truncate(24 * time.Hour)
+	partName := "usage_logs_" + day.Format("20060102")
+	require.NoError(t, repos.Partitions.EnsureUsageLogPartitions(ctx, day, day))
+	dayStr := day.Format("2006-01-02")
+
+	// earn>0 源行（uid=11，UTC 日=day）与一条 earn=0 排除行（cost>0）。
+	pgExec(t, pool, `INSERT INTO `+partName+`
+		(request_id, model, format, error_type, cost, created_at, supplier_user_id, supplier_earn_millis, supplier_credited, billed)
+		VALUES ('rec-a','m','openai-chat','none',100,$1,11,20,true,true),
+		       ('rec-zero','m','openai-chat','none',50,$1,11,0,true,true)`, day.Add(2*time.Hour))
+
+	retire := func() domain.UsageLogRetireResult {
+		t.Helper()
+		r, err := repos.Partitions.RetireUsageLogPartitions(ctx, day.AddDate(0, 0, 2))
+		require.NoError(t, err)
+		return r
+	}
+	blockedFor := func(r domain.UsageLogRetireResult) *domain.BlockedPartition {
+		for i := range r.Blocked {
+			if r.Blocked[i].Name == partName {
+				return &r.Blocked[i]
+			}
+		}
+		return nil
+	}
+
+	// ① 缺汇总行 ⇒ blocked（mismatch），分区仍在。
+	require.NotNil(t, blockedFor(retire()), "缺汇总行必须 blocked")
+	require.True(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName))
+
+	// ② 多汇总行（同 source_day 但非源内 uid）⇒ blocked，且不改该多出行。
+	pgExec(t, pool, `INSERT INTO supplier_reconciliation (supplier_user_id, source_day, gross_cost, earned, row_count, state)
+		VALUES (99, $1::date, 1, 1, 1, 'open')`, dayStr)
+	b := blockedFor(retire())
+	require.NotNil(t, b, "多汇总行必须 blocked")
+	require.GreaterOrEqual(t, b.ReconMismatch, int64(1))
+	require.Equal(t, "open", pgText(t, pool, `SELECT state FROM supplier_reconciliation WHERE supplier_user_id = 99`), "多出行不得被误封账")
+	require.True(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName))
+
+	// ③ 数值偏差（earned 少 1）⇒ blocked。
+	pgExec(t, pool, `DELETE FROM supplier_reconciliation WHERE supplier_user_id = 99`)
+	pgExec(t, pool, `INSERT INTO supplier_reconciliation (supplier_user_id, source_day, gross_cost, earned, row_count, state)
+		VALUES (11, $1::date, 100, 19, 1, 'open')`, dayStr)
+	b = blockedFor(retire())
+	require.NotNil(t, b, "数值偏差必须 blocked")
+	require.GreaterOrEqual(t, b.ReconMismatch, int64(1))
+
+	// ④ 晚到 INSERT（credit 未及记账的 earn>0 行）与已一致汇总并存 ⇒ 未确认屏障挡。
+	pgExec(t, pool, `DELETE FROM supplier_reconciliation WHERE supplier_user_id = 11`)
+	pgExec(t, pool, `INSERT INTO supplier_reconciliation (supplier_user_id, source_day, gross_cost, earned, row_count, state)
+		VALUES (11, $1::date, 100, 20, 1, 'open')`, dayStr)
+	pgExec(t, pool, `INSERT INTO `+partName+`
+		(request_id, model, format, error_type, cost, created_at, supplier_user_id, supplier_earn_millis, supplier_credited, billed)
+		VALUES ('rec-late','m','openai-chat','none',100,$1,11,20,false,true)`, day.Add(3*time.Hour))
+	b = blockedFor(retire())
+	require.NotNil(t, b, "晚到未记账行必须 blocked")
+	require.GreaterOrEqual(t, b.UncreditedEarnRows, int64(1))
+	require.True(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName))
+
+	// ⑤ 收尾：补正汇总（含晚到行）⇒ 一致 DROP + 源日键原子封账（earn=0 行不入 src）。
+	pgExec(t, pool, `DELETE FROM supplier_reconciliation WHERE supplier_user_id = 11`)
+	pgExec(t, pool, `UPDATE `+partName+` SET supplier_credited = true WHERE request_id = 'rec-late'`)
+	// 晚到行同 uid 同源日 ⇒ 同一 (uid, day) 键，聚合 = 200/40/2。
+	pgExec(t, pool, `INSERT INTO supplier_reconciliation (supplier_user_id, source_day, gross_cost, earned, row_count, state)
+		VALUES (11, $1::date, 200, 40, 2, 'open')`, dayStr)
+	r := retire()
+	require.Nil(t, blockedFor(r), "一致后必须 DROP：%+v", r.Blocked)
+	require.False(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName), "一致后 DROP 成功")
+	require.Equal(t, int64(1), pgInt(t, pool, `SELECT count(*) FROM supplier_reconciliation WHERE state='closed' AND closed_revision IS NOT NULL AND closed_at IS NOT NULL`))
+}
+
+// TestPGSupplierRetireReconciliationCrossDay 跨 UTC 日作用域（A20⑤）：同 uid 另一
+// 源日（另一分区）的汇总行存在时，退役本日分区不得被误判为「多汇总行」，且只封本日。
+func TestPGSupplierRetireReconciliationCrossDay(t *testing.T) {
+	repos := newPGReposShared(t)
+	pool := pgSharedPool(t)
+	ctx := context.Background()
+
+	day := time.Now().UTC().AddDate(0, 0, -302).Truncate(24 * time.Hour)
+	next := day.AddDate(0, 0, 1)
+	partName := "usage_logs_" + day.Format("20060102")
+	require.NoError(t, repos.Partitions.EnsureUsageLogPartitions(ctx, day, day))
+	// 本日分区源行（uid=21）。
+	pgExec(t, pool, `INSERT INTO `+partName+`
+		(request_id, model, format, error_type, cost, created_at, supplier_user_id, supplier_earn_millis, supplier_credited, billed)
+		VALUES ('xd-a','m','openai-chat','none',30,$1,21,7,true,true)`, day.Add(time.Hour))
+	// 另一源日汇总（uid=21, day+1）与本日汇总同时存在。
+	pgExec(t, pool, `INSERT INTO supplier_reconciliation (supplier_user_id, source_day, gross_cost, earned, row_count, state)
+		VALUES (21, $1::date, 999, 999, 9, 'open'), (21, $2::date, 30, 7, 1, 'open')`,
+		next.Format("2006-01-02"), day.Format("2006-01-02"))
+
+	res, err := repos.Partitions.RetireUsageLogPartitions(ctx, day.AddDate(0, 0, 3))
+	require.NoError(t, err)
+	require.Empty(t, res.Blocked, "另一源日汇总不得误判为本日多汇总行")
+	require.False(t, pgBool(t, pool, `SELECT to_regclass($1) IS NOT NULL`, partName))
+	// 本日已封账，另一源日保持 open。
+	require.Equal(t, "closed", pgText(t, pool, `SELECT state FROM supplier_reconciliation WHERE supplier_user_id = 21 AND source_day = $1::date`, day.Format("2006-01-02")))
+	require.Equal(t, "open", pgText(t, pool, `SELECT state FROM supplier_reconciliation WHERE supplier_user_id = 21 AND source_day = $1::date`, next.Format("2006-01-02")))
 }
 
 // ---- M2 DB CHECK ----

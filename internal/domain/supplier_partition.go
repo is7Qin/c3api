@@ -13,6 +13,12 @@ type BlockedPartition struct {
 	UncreditedEarnRows int64  // NOT supplier_credited AND supplier_earn_millis > 0 行数
 	UnbilledRows       int64  // NOT billed 行数（既有未扣费事件同受保护）
 	OldestUncredited   *int64 // 最老未确认债权行 created_at（UnixMilli；无 = nil）
+
+	// 源日封账核对证据（§3.10/§3.11）：源行（earn>0）按 (uid, UTC 源日) 聚合与
+	// supplier_reconciliation 的核对结果。全 0 = 未进入封账步（被前序未确认屏障挡）。
+	ReconSourceKeys int64 // 分区内 earn>0 源行聚合出的 (uid, source_day) 键数
+	ReconMismatch   int64 // 与 supplier_reconciliation 键集合/数值不一致的键数（缺/多/偏差）
+	ReconOpenKeys   int64 // 数值一致但仍 open 且未能在本事务原子封账的键数
 }
 
 // UsageLogRetireResult 单个 usage_logs 分区退休轮结果（§3.11）：Dropped =

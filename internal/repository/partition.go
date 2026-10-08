@@ -663,8 +663,13 @@ const retireLockTimeout = "5s"
 //  3. 未确认检查：用消费索引 ① 的同一组谓词 EXISTS / COUNT（NOT
 //     supplier_credited AND supplier_earn_millis > 0），并保护既有未扣费事件
 //     （NOT billed）；
-//  4. 锁内复检通过（两项均无）⇒ 同事务 DROP；否则**禁止 DROP**，记入 Blocked；
-//  5. 不得"先查空、再任意时间 DROP"（检查、锁、DROP 同一事务）。
+//     3b. 源日封账核对（§3.10）：按 earn>0、uid、UTC 源日聚合 Σcost/Σearn/
+//     row_count，与 supplier_reconciliation FULL JOIN 核缺键/多键/数值/状态；
+//     3c. 一致 ⇒ 原子置 state='closed' + closed_revision/closed_at（影响行数 ==
+//     需封账源日键数）；
+//  4. 锁内复检通过（未确认为空 + 封账一致）⇒ 同事务 DROP；否则**禁止 DROP**，
+//     记入 Blocked（不一致 / 仍 open 均 blocked 并持久留证）；
+//  5. 不得"先查空、再任意时间 DROP"（检查、封账、锁、DROP 同一事务）。
 //
 // 被挡分区由调用方（retention worker）呈现为独立持久告警 + ETA（Step 5）。
 func (r *PartitionRepo) RetireUsageLogPartitions(ctx context.Context, cutoff time.Time) (domain.UsageLogRetireResult, error) {
@@ -769,6 +774,28 @@ func (r *PartitionRepo) retireOneUsageLogPartition(ctx context.Context, name str
 		}
 		return bp, false, nil
 	}
+	// 3b. 源日封账核对（§3.10/§3.11）：按 earn>0、uid、UTC 源日聚合
+	//     Σcost/Σearn/row_count，与 supplier_reconciliation FULL JOIN 核缺键/
+	//     多键/数值。永久封账证据是本分区 DROP 前必须先对上的原始事实。
+	srcKeys, mismatch, openMatched, err := reconcilePartitionAggregates(ctx, tx, name)
+	if err != nil {
+		return nil, false, err
+	}
+	if mismatch > 0 {
+		// 键集合或数值不一致 ⇒ 禁止 DROP，留证（绝不静默清掉债务）。
+		return &domain.BlockedPartition{Name: name, ReconSourceKeys: srcKeys, ReconMismatch: mismatch}, false, nil
+	}
+	// 3c. 原子封账：仅 open 的匹配行置 closed；影响行数必须 == 需封账源日键数，
+	//     否则 blocked（不 DROP）。
+	if openMatched > 0 {
+		closed, cerr := closeReconciledSourceDays(ctx, tx, name, time.Now().UnixMilli())
+		if cerr != nil {
+			return nil, false, cerr
+		}
+		if closed != openMatched {
+			return &domain.BlockedPartition{Name: name, ReconSourceKeys: srcKeys, ReconOpenKeys: openMatched - closed}, false, nil
+		}
+	}
 	// 4. 锁内复检通过 ⇒ 同事务 DROP。
 	if err := tx.Exec(ctx, `DROP TABLE IF EXISTS `+name, []any{}, &res); err != nil {
 		if isMissingObject(err) {
@@ -780,6 +807,74 @@ func (r *PartitionRepo) retireOneUsageLogPartition(ctx context.Context, name str
 		return nil, false, err
 	}
 	return nil, true, nil
+}
+
+// retireReconSrc 源日封账聚合 CTE（§3.10）：谓词与记账链一致（earn>0、uid、
+// UTC 源日），与 supplier_reconciliation 的写入维度同源（credit 事务内按源行
+// created_at 的 UTC 日 upsert）。%s = 分区名（来自 pg 分区列表，非用户输入）。
+const retireReconSrc = `WITH src AS (
+ SELECT supplier_user_id AS uid,
+        (created_at AT TIME ZONE 'UTC')::date AS day,
+        SUM(cost)::bigint AS gross,
+        SUM(supplier_earn_millis)::bigint AS earned,
+        COUNT(*)::bigint AS cnt
+   FROM %s
+  WHERE supplier_earn_millis > 0 AND supplier_user_id IS NOT NULL
+  GROUP BY 1, 2
+)`
+
+// reconcilePartitionAggregates 分区源日聚合与 supplier_reconciliation 的核对
+// （§3.10/§3.11）：返回 (源聚合键数, 不一致键数, 数值一致且仍 open 的键数)。
+// 不一致 = 缺汇总行 / 多汇总行 / Σcost、Σearn、row_count 任一偏差。仅比对
+// 本分区出现过的 source_day（外层分区锁内，源日聚合与汇总不会被并发改写）。
+func reconcilePartitionAggregates(ctx context.Context, tx dialect.Tx, name string) (srcKeys, mismatch, openMatched int64, err error) {
+	q := fmt.Sprintf(retireReconSrc+`
+SELECT
+  (SELECT count(*)::bigint FROM src),
+  (SELECT count(*)::bigint
+     FROM src s
+     FULL OUTER JOIN (
+       SELECT r.supplier_user_id AS uid, r.source_day AS day, r.gross_cost AS gross,
+              r.earned AS earned, r.row_count AS cnt
+         FROM supplier_reconciliation r
+        WHERE r.source_day IN (SELECT day FROM src)
+     ) rec ON rec.uid = s.uid AND rec.day = s.day
+    WHERE s.uid IS NULL OR rec.uid IS NULL
+       OR s.gross <> rec.gross OR s.earned <> rec.earned OR s.cnt <> rec.cnt),
+  (SELECT count(*)::bigint
+     FROM src s
+     JOIN supplier_reconciliation r
+       ON r.supplier_user_id = s.uid AND r.source_day = s.day
+    WHERE r.state = 'open'
+      AND s.gross = r.gross_cost AND s.earned = r.earned AND s.cnt = r.row_count)`, name)
+	rows := &entsql.Rows{}
+	if err = tx.Query(ctx, q, []any{}, rows); err != nil {
+		return 0, 0, 0, err
+	}
+	defer rows.Close()
+	if rows.Next() {
+		if err = rows.Scan(&srcKeys, &mismatch, &openMatched); err != nil {
+			return 0, 0, 0, err
+		}
+	}
+	return srcKeys, mismatch, openMatched, rows.Err()
+}
+
+// closeReconciledSourceDays 原子封账本分区已核对的源日（§3.10）：仅 open 的匹配
+// 行置 state='closed' + closed_revision/closed_at，返回影响行数（调用方须断言
+// == 需封账源日键数）。已 closed 且数值一致的行不动（DROP 重试幂等）。
+func closeReconciledSourceDays(ctx context.Context, tx dialect.Tx, name string, revision int64) (int64, error) {
+	q := fmt.Sprintf(retireReconSrc+`
+UPDATE supplier_reconciliation r
+   SET state = 'closed', closed_revision = $1, closed_at = clock_timestamp()
+  FROM src s
+ WHERE r.supplier_user_id = s.uid AND r.source_day = s.day
+   AND r.state = 'open'`, name)
+	var res sql.Result
+	if err := tx.Exec(ctx, q, []any{revision}, &res); err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 // isLockNotAvailable 判断锁等待超时/锁不可用（55P03 lock_not_available；
