@@ -7,7 +7,8 @@ package handler
 // supplier_business.go 供应商业务面 handler（spec 2026-10-09 §6.1/§6.2）：
 // overview/earnings/chunks/settlements + 申请结算。作用域 = JWT 本人 uid（从
 // 已验证 claims 取；门控已由 RequireJWT+RequireRole 担保）。实现生成面
-// supplier.ServerInterface，路由在 SupplierSurfaceRouter 注册。
+// supplier.ServerInterface；路由由 openapi（tag `supplier`）生成，经
+// supplierSurface 适配器接到本实现（见 supplier_surface.go）。
 
 import (
 	"net/http"

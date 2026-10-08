@@ -697,9 +697,10 @@ func main() {
 
 	// 供应商面（/api/user/supplier/*）：仅在 enabled=true 时挂载（§6.4 关闭态短路
 	// 清单第 4 项）。门控 RequireJWT + 快照基 RequireRole(supplier|platform_admin)
-	// + 作用域注入 + default-deny 允许清单均在 NewSupplierSurface 内组装；账号
-	// 端点复用管理面生成路由（字段层零差异化），作用域由 repository 每处 WHERE
-	// AND 归属谓词（§2.5，T4/T7）。
+	// + 作用域注入均在 NewSupplierSurface 内组装；**暴露面由 openapi 里 tag
+	// `supplier` 的 path 决定**（codegen 生成，未登记者未注册 ⇒ 404），账号/分组/
+	// 模板 op 转发到管理面同一批 handler（字段层零差异化），作用域由 repository
+	// 每处 WHERE AND 归属谓词（§2.5）。
 	var supplierHandler http.Handler
 	if cfg.Supplier.Enabled {
 		supplierHandler = handler.NewSupplierSurface(h, iss, auth)

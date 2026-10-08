@@ -4,21 +4,24 @@
 
 package handler
 
-// 供应商面挂载骨架（spec 2026-10-09 §2.5/§6.1，T4）：第二 BaseURL
-// /api/user/supplier 复用同一生成路由实现（字段层零差异化），前置 **default-
-// deny 允许清单**（不暴露 /users、/settings、/pricing、/rules、/ops、/mail 等；
-// 新增管理端点默认不对供应商暴露）+ **作用域注入**（供应商面恒 {OwnerUID:
-// jwtUser, Set:true}）。
+// 供应商面挂载（spec 2026-10-09 §2.5/§2.6/§6.1）：第二 BaseURL
+// /api/user/supplier 的路由**由 openapi 契约生成**——tag `supplier` 的显式 path
+// （业务 5 op + 账号/分组/模板子集 17 op，共 22 op，生成到 internal/handler/supplier）。
 //
-// 本文件提供**可测的挂载原语**；真实挂载与 service 层作用域 AND 进 WHERE 由
-// T7 完成后接线（在作用域未落地前挂载会构成越权面，故此处不主动接入 server）。
+//   - **tag 即边界（结构性 default-deny）**：未登记为 supplier 的 path 不进生成面
+//     ⇒ 未注册 ⇒ 404（/users、/settings、/pricing、/rules、/ops、/mail、组写面/
+//     assignments、模板写面…）。**没有**手写允许清单/guard 需要维护——新增管理端点
+//     默认不对供应商暴露。
+//   - **字段层零差异化**：账号子集的 requestBody/响应/query 参数在 openapi 里
+//     $ref 复用管理面 components；运行时由生成的 wrapper 解析参数后**转发**到既有
+//     管理面 ServerInterfaceWrapper（同一批 AdminAPI handler、同一
+//     AccountConfigPatch/validateAccountPatch/accountFieldSpecs）。
+//   - **作用域注入**：供应商面恒 {OwnerUID: jwtUser, Set:true}（仓储层每处 WHERE
+//     AND 归属谓词，越域 ⇒ 404）。
 
 import (
 	"context"
 	"net/http"
-	"strings"
-
-	"github.com/go-chi/chi/v5"
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
@@ -26,80 +29,145 @@ import (
 	"github.com/is7qin/c3api/internal/handler/supplier"
 )
 
-// SupplierSurfaceBaseURL 供应商面第二 BaseURL。
+// SupplierSurfaceBaseURL 供应商面第二 BaseURL（openapi 里该 tag 的 path 前缀）。
 const SupplierSurfaceBaseURL = "/api/user/supplier"
 
-// supplierSurfaceRoutes 供应商面允许的路由（相对 BaseURL；method + chi pattern）。
-// 与 §2.5 路由子集一一对应：账号端点全量 + groups GET 只读候选 + templates GET 只读。
-// default-deny ⇒ 未列出者不可达（组写面/assignments、模板写面、其余管理资源）。
-var supplierSurfaceRoutes = []string{
-	"GET /accounts",
-	"POST /accounts",
-	"POST /accounts/batch-update",
-	"POST /accounts/batch-delete",
-	"POST /accounts/batch-import-codex-oauth",
-	"POST /accounts/batch-import-codex-pat",
-	"GET /accounts/usage",
-	"GET /accounts/{id}",
-	"PATCH /accounts/{id}",
-	"DELETE /accounts/{id}",
-	"GET /accounts/{id}/ext",
-	"PUT /accounts/{id}/ext",
-	"GET /accounts/{id}/groups",
-	"POST /accounts/{id}/recover",
-	// groups GET 只读候选列表（账号页「选择分组」依赖）；组写面/assignments 不在子集内。
-	"GET /groups",
-	// templates GET 只读（提交账号需选模板）；模板写面不在子集内。
-	"GET /templates",
-	"GET /templates/{id}",
-	// 供应商业务面（§6.1/§6.2）：概览/收益明细/冻结桶/结算单 + 申请结算。
-	"GET /overview",
-	"GET /earnings",
-	"GET /chunks",
-	"GET /settlements",
-	"POST /settlements",
+// supplierSurface 供应商面接口适配器：实现生成的 supplier.ServerInterface（22 op）。
+// 业务 op 直调 AdminAPI 自身方法（supplier_business.go）；账号/分组/模板 op 转发到
+// 管理面生成的 ServerInterfaceWrapper——**参数无需手工映射**：两面 path/query/header
+// 形状由同一批 components 定义，wrapper 自 `r` 解析（chi.URLParam 对 {id} 亦同名）。
+type supplierSurface struct {
+	api   *AdminAPI
+	admin *ServerInterfaceWrapper
 }
 
-// SupplierSurfaceAllowlist 返回允许清单副本（顺序 = 声明序）。
-func SupplierSurfaceAllowlist() []string {
-	out := make([]string, len(supplierSurfaceRoutes))
-	copy(out, supplierSurfaceRoutes)
-	return out
+// ---- 账号/分组/模板子集（§2.5）：转发管理面生成 wrapper。----
+
+// GetSupplierAccounts GET /api/user/supplier/accounts。
+func (s supplierSurface) GetSupplierAccounts(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierAccountsParams) {
+	s.admin.GetAccounts(w, r)
 }
 
-// allowedRouter 由允许清单构造的 chi 路由（仅用于 Match 判定，无实际 handler）。
-func allowedRouter() *chi.Mux {
-	r := chi.NewRouter()
-	for _, rt := range supplierSurfaceRoutes {
-		method, pattern, ok := strings.Cut(rt, " ")
-		if !ok {
-			continue
-		}
-		r.Method(method, pattern, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+// PostSupplierAccounts POST /api/user/supplier/accounts。
+func (s supplierSurface) PostSupplierAccounts(w http.ResponseWriter, r *http.Request) {
+	s.admin.PostAccounts(w, r)
+}
+
+// GetSupplierAccountsUsage GET /api/user/supplier/accounts/usage。
+func (s supplierSurface) GetSupplierAccountsUsage(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierAccountsUsageParams) {
+	s.admin.GetAccountsUsage(w, r)
+}
+
+// PostSupplierAccountsBatchUpdate POST /api/user/supplier/accounts/batch-update。
+func (s supplierSurface) PostSupplierAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	s.admin.PostAccountsBatchUpdate(w, r)
+}
+
+// PostSupplierAccountsBatchDelete POST /api/user/supplier/accounts/batch-delete。
+func (s supplierSurface) PostSupplierAccountsBatchDelete(w http.ResponseWriter, r *http.Request) {
+	s.admin.PostAccountsBatchDelete(w, r)
+}
+
+// PostSupplierAccountsBatchImportCodexOauth POST /api/user/supplier/accounts/batch-import-codex-oauth。
+func (s supplierSurface) PostSupplierAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+	s.admin.PostAccountsBatchImportCodexOauth(w, r)
+}
+
+// PostSupplierAccountsBatchImportCodexPat POST /api/user/supplier/accounts/batch-import-codex-pat。
+func (s supplierSurface) PostSupplierAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
+	s.admin.PostAccountsBatchImportCodexPat(w, r)
+}
+
+// GetSupplierAccountsId GET /api/user/supplier/accounts/{id}。
+func (s supplierSurface) GetSupplierAccountsId(w http.ResponseWriter, r *http.Request, _ int64) {
+	s.admin.GetAccountsId(w, r)
+}
+
+// PatchSupplierAccountsId PATCH /api/user/supplier/accounts/{id}（可选 If-Match 由
+// 管理面 wrapper 自请求头解析——两面契约同构）。
+func (s supplierSurface) PatchSupplierAccountsId(w http.ResponseWriter, r *http.Request, _ int64, _ supplier.PatchSupplierAccountsIdParams) {
+	s.admin.PatchAccountsId(w, r)
+}
+
+// DeleteSupplierAccountsId DELETE /api/user/supplier/accounts/{id}。
+func (s supplierSurface) DeleteSupplierAccountsId(w http.ResponseWriter, r *http.Request, _ int64) {
+	s.admin.DeleteAccountsId(w, r)
+}
+
+// GetSupplierAccountsIdExt GET /api/user/supplier/accounts/{id}/ext。
+func (s supplierSurface) GetSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, _ int64) {
+	s.admin.GetAccountsIdExt(w, r)
+}
+
+// PutSupplierAccountsIdExt PUT /api/user/supplier/accounts/{id}/ext。
+func (s supplierSurface) PutSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, _ int64) {
+	s.admin.PutAccountsIdExt(w, r)
+}
+
+// GetSupplierAccountsIdGroups GET /api/user/supplier/accounts/{id}/groups。
+func (s supplierSurface) GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request, _ int64) {
+	s.admin.GetAccountsIdGroups(w, r)
+}
+
+// PostSupplierAccountsIdRecover POST /api/user/supplier/accounts/{id}/recover。
+func (s supplierSurface) PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, _ int64) {
+	s.admin.PostAccountsIdRecover(w, r)
+}
+
+// GetSupplierGroups GET /api/user/supplier/groups（只读候选列表；组写面不登记）。
+func (s supplierSurface) GetSupplierGroups(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierGroupsParams) {
+	s.admin.GetGroups(w, r)
+}
+
+// GetSupplierTemplates GET /api/user/supplier/templates（只读；模板写面不登记）。
+func (s supplierSurface) GetSupplierTemplates(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierTemplatesParams) {
+	s.admin.GetTemplates(w, r)
+}
+
+// GetSupplierTemplatesId GET /api/user/supplier/templates/{id}（只读）。
+func (s supplierSurface) GetSupplierTemplatesId(w http.ResponseWriter, r *http.Request, _ int64) {
+	s.admin.GetTemplatesId(w, r)
+}
+
+// ---- 供应商业务面（§6.1/§6.2）：直调既有实现（supplier_business.go）。----
+
+// GetSupplierOverview GET /api/user/supplier/overview。
+func (s supplierSurface) GetSupplierOverview(w http.ResponseWriter, r *http.Request) {
+	s.api.GetSupplierOverview(w, r)
+}
+
+// GetSupplierEarnings GET /api/user/supplier/earnings（生成面 params 与业务实现
+// 同名同构，直透）。
+func (s supplierSurface) GetSupplierEarnings(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierEarningsParams) {
+	s.api.GetSupplierEarnings(w, r, params)
+}
+
+// GetSupplierChunks GET /api/user/supplier/chunks。
+func (s supplierSurface) GetSupplierChunks(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierChunksParams) {
+	s.api.GetSupplierChunks(w, r, params)
+}
+
+// GetSupplierSettlements GET /api/user/supplier/settlements。
+func (s supplierSurface) GetSupplierSettlements(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierSettlementsParams) {
+	s.api.GetSupplierSettlements(w, r, params)
+}
+
+// PostSupplierSettlement POST /api/user/supplier/settlements（申请结算）。
+func (s supplierSurface) PostSupplierSettlement(w http.ResponseWriter, r *http.Request) {
+	s.api.PostSupplierSettlement(w, r)
+}
+
+// SupplierSurfaceHandler 供应商面生成路由（tag `supplier` 的 22 op，绝对路径、
+// 无 BaseURL；故 HandlerWithOptions 直接按 spec 路径注册）。业务 op 走本包 handler，
+// 账号/分组/模板 op 走得同一批生成 wrapper——**暴露面唯一事实源 = openapi**。
+func (h *AdminAPI) SupplierSurfaceHandler() http.Handler {
+	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
+		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 	}
-	return r
-}
-
-// SupplierSurfaceGuard 返回 default-deny 中间件：仅放行允许清单内的方法+路径，
-// 其余 404（不泄漏存在性；新增管理端点默认不暴露）。full 为复用同一生成路由的
-// 处理器（第二 BaseURL 实现）。请求路径前缀 SupplierSurfaceBaseURL 会被剥离后匹配。
-func SupplierSurfaceGuard(full http.Handler) http.Handler {
-	allowed := allowedRouter()
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p := r.URL.Path
-		if after, ok := strings.CutPrefix(p, SupplierSurfaceBaseURL); ok {
-			p = after
-		}
-		if p == "" {
-			p = "/"
-		}
-		// 独立 RouteContext（seam 判定）：不污染请求真实路由上下文。
-		if !allowed.Match(chi.NewRouteContext(), r.Method, p) {
-			http.NotFound(w, r)
-			return
-		}
-		full.ServeHTTP(w, r)
-	})
+	return supplier.HandlerWithOptions(supplierSurface{
+		api:   h,
+		admin: &ServerInterfaceWrapper{Handler: h, ErrorHandlerFunc: badRequest},
+	}, supplier.ChiServerOptions{ErrorHandlerFunc: badRequest})
 }
 
 // 作用域注入键/读值下沉 domain（叶子包）——service/repository 与 handler 共用同一
@@ -126,66 +194,15 @@ func AccountScopeFrom(ctx context.Context) domain.AccountScope {
 	return domain.AccountScopeFrom(ctx)
 }
 
-// SupplierSurfaceRouter 供应商面复用路由（第二 BaseURL /api/user/supplier）：
-// 以**同一生成 ServerInterfaceWrapper** 注册允许清单内的账号/分组/模板端点——
-// 字段层**零差异化**（同一 AccountConfigPatch/validateAccountPatch/accountFieldSpecs），
-// 仅作用域由 ctx 注入（repository 每处 WHERE AND 归属谓词）。
-//
-// 仅注册 allowlist（default-deny）：未列出的管理端点（/users、/settings、
-// /pricing、/rules、/ops、/mail、组写面/assignments、模板写面）**根本不注册**
-// ⇒ 404（安全默认方向：新增管理端点默认不对供应商暴露）。
-func (h *AdminAPI) SupplierSurfaceRouter() http.Handler {
-	siw := &ServerInterfaceWrapper{
-		Handler: h,
-		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
-		},
-	}
-	r := chi.NewRouter()
-	// 账号端点全量（复用）。
-	r.Get("/api/user/supplier/accounts", siw.GetAccounts)
-	r.Post("/api/user/supplier/accounts", siw.PostAccounts)
-	r.Post("/api/user/supplier/accounts/batch-update", siw.PostAccountsBatchUpdate)
-	r.Post("/api/user/supplier/accounts/batch-delete", siw.PostAccountsBatchDelete)
-	r.Post("/api/user/supplier/accounts/batch-import-codex-oauth", siw.PostAccountsBatchImportCodexOauth)
-	r.Post("/api/user/supplier/accounts/batch-import-codex-pat", siw.PostAccountsBatchImportCodexPat)
-	r.Get("/api/user/supplier/accounts/usage", siw.GetAccountsUsage)
-	r.Get("/api/user/supplier/accounts/{id}", siw.GetAccountsId)
-	r.Patch("/api/user/supplier/accounts/{id}", siw.PatchAccountsId)
-	r.Delete("/api/user/supplier/accounts/{id}", siw.DeleteAccountsId)
-	r.Get("/api/user/supplier/accounts/{id}/ext", siw.GetAccountsIdExt)
-	r.Put("/api/user/supplier/accounts/{id}/ext", siw.PutAccountsIdExt)
-	r.Get("/api/user/supplier/accounts/{id}/groups", siw.GetAccountsIdGroups)
-	r.Post("/api/user/supplier/accounts/{id}/recover", siw.PostAccountsIdRecover)
-	// groups GET 只读候选列表（账号页「选择分组」依赖）；组写面/assignments 不注册。
-	r.Get("/api/user/supplier/groups", siw.GetGroups)
-	// templates GET 只读（提交账号需选模板）；模板写面不注册。
-	r.Get("/api/user/supplier/templates", siw.GetTemplates)
-	r.Get("/api/user/supplier/templates/{id}", siw.GetTemplatesId)
-	// 供应商业务面（§6.1/§6.2；生成面 supplier.ServerInterface，实现见
-	// supplier_business.go）。
-	bsiw := &supplier.ServerInterfaceWrapper{
-		Handler: h,
-		ErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
-			httpface.WriteErr(w, http.StatusBadRequest, err.Error())
-		},
-	}
-	r.Get("/api/user/supplier/overview", bsiw.GetSupplierOverview)
-	r.Get("/api/user/supplier/earnings", bsiw.GetSupplierEarnings)
-	r.Get("/api/user/supplier/chunks", bsiw.GetSupplierChunks)
-	r.Get("/api/user/supplier/settlements", bsiw.GetSupplierSettlements)
-	r.Post("/api/user/supplier/settlements", bsiw.PostSupplierSettlement)
-	return r
-}
-
 // NewSupplierSurface 组装供应商面完整链路（挂载于 /api/user/supplier/*）：
 //
 //	RequireJWT(iss,users) → RequireRole(users, SupplierSurfaceRoles...) →
-//	SupplierScopeInject → SupplierSurfaceGuard(default-deny) → 复用路由
+//	SupplierScopeInject → 生成路由（tag `supplier` 的 22 op）
 //
-// 门控可达集唯一事实源 = domain.SupplierSurfaceRoles()（§2.6）。
+// 可达集唯一事实源 = domain.SupplierSurfaceRoles()（§2.6）；暴露面唯一事实源 =
+// openapi 里 tag `supplier` 的登记（本函数不再持有任何手写路由清单/guard）。
 func NewSupplierSurface(api *AdminAPI, iss *auth.Issuer, users auth.UserStatusProvider) http.Handler {
-	var h http.Handler = SupplierSurfaceGuard(api.SupplierSurfaceRouter())
+	var h http.Handler = api.SupplierSurfaceHandler()
 	h = SupplierScopeInject(h)
 	h = auth.RequireRole(users, domain.SupplierSurfaceRoles()...)(h)
 	h = auth.RequireJWT(iss, users)(h)

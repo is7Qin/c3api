@@ -1474,6 +1474,249 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/supplier/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 账号列表（分页/筛选/排序，含运行时视图；作用域 = JWT 归属） */
+        get: operations["GetSupplierAccounts"];
+        put?: never;
+        /** 创建账号（归属恒为 JWT 本人；携带他人 supplier_user_id ⇒ 400） */
+        post: operations["PostSupplierAccounts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一） */
+        get: operations["GetSupplierAccountsUsage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/batch-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量更新账号（fields 为任意字段子集；字段层与管理面零差异化） */
+        post: operations["PostSupplierAccountsBatchUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/batch-delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量删除账号（事务，全成或全败；任一 id 越域 ⇒ 整事务失败） */
+        post: operations["PostSupplierAccountsBatchDelete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/batch-import-codex-oauth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量导入 codex-oauth 凭据（幂等组合键 codex_email + codex_account_id；行级失败不毁整批） */
+        post: operations["PostSupplierAccountsBatchImportCodexOauth"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/batch-import-codex-pat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；行级失败不毁整批） */
+        post: operations["PostSupplierAccountsBatchImportCodexPat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 账号（越域 id ⇒ 404，不泄漏存在性） */
+        get: operations["GetSupplierAccountsId"];
+        put?: never;
+        post?: never;
+        /** 删除账号（越域 id ⇒ 404） */
+        delete: operations["DeleteSupplierAccountsId"];
+        options?: never;
+        head?: never;
+        /**
+         * 部分更新账号（三态语义与管理面一致：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
+         * @description 复用管理面账号写面唯一更新入口（同一 AccountConfigPatch/validateAccountPatch/ accountFieldSpecs——**无供应商专属字段清单**）。前置条件 If-Match 可选：缺席 = 不做检查；命中 = 生效；陈旧 → 412；语法非法 → 400。
+         */
+        patch: operations["PatchSupplierAccountsId"];
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/{id}/ext": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 读取账号类型化鉴权扩展（仅 codex-oauth/codex-pat 账号有 ext 行） */
+        get: operations["GetSupplierAccountsIdExt"];
+        /** 幂等写入账号类型化鉴权扩展（Create/Update 合一；全列更新含 NULL 清空） */
+        put: operations["PutSupplierAccountsIdExt"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/{id}/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 读取账号的全部分组 id（编辑回显；不随账号列表返回） */
+        get: operations["GetSupplierAccountsIdGroups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/{id}/recover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
+         * @description 复用管理面恢复入口：CAS expected_revision 命中才清失效三字段并 +1，随后对新
+         *     revision 写通配 PROBING（探针环接管）。expected_revision 过期 → 409；本端点
+         *     不启用被禁用的账号（enabled 独立，经 PATCH /api/user/supplier/accounts/{id} 修改）。
+         */
+        post: operations["PostSupplierAccountsIdRecover"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 分组候选列表（分页/筛选/排序；只读——组写面不在供应商面） */
+        get: operations["GetSupplierGroups"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 模板列表（分页/筛选/排序；只读——模板写面不在供应商面） */
+        get: operations["GetSupplierTemplates"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/templates/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 模板（只读） */
+        get: operations["GetSupplierTemplatesId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/supplier/settlements": {
         parameters: {
             query?: never;
@@ -3945,6 +4188,19 @@ export interface components {
         };
     };
     parameters: {
+        /** @description 每页条数（上限 200，超限裁剪到 200） */
+        ListLimit: number;
+        ListOffset: number;
+        ListName: string;
+        ListSort: string;
+        ListOrderAccount: "asc" | "desc";
+        AccountTemplateId: number;
+        /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
+        AccountEnabled: boolean;
+        /** @description 绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To） */
+        StatsFrom: string;
+        /** @description 绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid` */
+        StatsTo: string;
         /**
          * @description 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
          *     给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
@@ -3990,11 +4246,12 @@ export interface operations {
     GetTemplates: {
         parameters: {
             query?: {
-                limit?: number;
-                offset?: number;
-                name?: string;
-                sort?: string;
-                order?: "asc" | "desc";
+                /** @description 每页条数（上限 200，超限裁剪到 200） */
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
+                name?: components["parameters"]["ListName"];
+                sort?: components["parameters"]["ListSort"];
+                order?: components["parameters"]["ListOrderAccount"];
             };
             header?: never;
             path?: never;
@@ -4215,13 +4472,15 @@ export interface operations {
     GetAccounts: {
         parameters: {
             query?: {
-                limit?: number;
-                offset?: number;
-                name?: string;
-                sort?: string;
-                order?: "asc" | "desc";
-                template_id?: number;
-                enabled?: boolean;
+                /** @description 每页条数（上限 200，超限裁剪到 200） */
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
+                name?: components["parameters"]["ListName"];
+                sort?: components["parameters"]["ListSort"];
+                order?: components["parameters"]["ListOrderAccount"];
+                template_id?: components["parameters"]["AccountTemplateId"];
+                /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
+                enabled?: components["parameters"]["AccountEnabled"];
             };
             header?: never;
             path?: never;
@@ -4270,8 +4529,10 @@ export interface operations {
         parameters: {
             query: {
                 account_ids: string;
-                from?: string;
-                to?: string;
+                /** @description 绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To） */
+                from?: components["parameters"]["StatsFrom"];
+                /** @description 绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid` */
+                to?: components["parameters"]["StatsTo"];
                 /**
                  * @description 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
                  *     给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
@@ -4606,11 +4867,12 @@ export interface operations {
     GetGroups: {
         parameters: {
             query?: {
-                limit?: number;
-                offset?: number;
-                name?: string;
-                sort?: string;
-                order?: "asc" | "desc";
+                /** @description 每页条数（上限 200，超限裁剪到 200） */
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
+                name?: components["parameters"]["ListName"];
+                sort?: components["parameters"]["ListSort"];
+                order?: components["parameters"]["ListOrderAccount"];
             };
             header?: never;
             path?: never;
@@ -6863,6 +7125,480 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SupplierSettlement"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierAccounts: {
+        parameters: {
+            query?: {
+                /** @description 每页条数（上限 200，超限裁剪到 200） */
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
+                name?: components["parameters"]["ListName"];
+                sort?: components["parameters"]["ListSort"];
+                order?: components["parameters"]["ListOrderAccount"];
+                template_id?: components["parameters"]["AccountTemplateId"];
+                /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
+                enabled?: components["parameters"]["AccountEnabled"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账号视图列表（仅本人归属） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountCreate"];
+            };
+        };
+        responses: {
+            /** @description 创建后的账号 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierAccountsUsage: {
+        parameters: {
+            query: {
+                account_ids: string;
+                /** @description 绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To） */
+                from?: components["parameters"]["StatsFrom"];
+                /** @description 绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid` */
+                to?: components["parameters"]["StatsTo"];
+                /**
+                 * @description 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
+                 *     给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
+                 *     服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`
+                 *     ⇒ 两端恒整点，命中卷积表的精确分支（零对齐位移、零桶丢失），这就是 UI 预设
+                 *     走这条形态的理由。
+                 *
+                 *     **只收时长，不收日历天**：`d` 不是 `time.ParseDuration` 的单位，`7d` → 400
+                 *     （`reason=window_invalid`）。理由：`24h` 与"一个日历天"在 DST 切换日不相等，
+                 *     而本 API 的唯一对齐基准是固定 1h 网格；另立 `AddDate` 日历语义会引入第二套
+                 *     窗口长度语义。预设即网格整倍数：24h / 168h / 720h / 2160h。
+                 */
+                window?: components["parameters"]["StatsWindow"];
+                /**
+                 * @description IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+                 *     仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+                 *     绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+                 *     但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+                 *     「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
+                 *
+                 *     窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+                 *     卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+                 *     取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+                 *     分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+                 *     8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+                 *     截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
+                 */
+                timezone?: components["parameters"]["StatsTimezone"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账号 usage items（恒 = account_ids 去重后全量——无记录账号 gateway 全 0） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountsUsageResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsBatchUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchUpdateAccountsBody"];
+            };
+        };
+        responses: {
+            /** @description 更新成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountBatchUpdateResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsBatchDelete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchDeleteBody"];
+            };
+        };
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchDeleteResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsBatchImportCodexOauth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexOAuthImportBody"];
+            };
+        };
+        responses: {
+            /** @description 导入结果（imported 新建 / updated 键存在更新凭据 / failed 行级 index+error——有失败行也 200） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsBatchImportCodexPat: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexPATImportBody"];
+            };
+        };
+        responses: {
+            /** @description 导入结果（imported 新建 / updated 键存在更新凭据 / failed 行级 index+error——有失败行也 200） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierAccountsId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账号 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    DeleteSupplierAccountsId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PatchSupplierAccountsId: {
+        parameters: {
+            query?: never;
+            header?: {
+                "If-Match"?: string;
+            };
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountConfigPatch"];
+            };
+        };
+        responses: {
+            /** @description 更新后账号（含新 lifecycle_revision） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            /** @description If-Match 陈旧（当前 lifecycle_revision 与前置条件不符） */
+            412: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierAccountsIdExt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账号 ext 配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountExt"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutSupplierAccountsIdExt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountExt"];
+            };
+        };
+        responses: {
+            /** @description 写入后的 ext 配置 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountExt"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierAccountsIdGroups: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分组 id 列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountGroupsResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsIdRecover: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountRecoverBody"];
+            };
+        };
+        responses: {
+            /** @description 恢复后的账号（含新 LifecycleRevision） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Account"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierGroups: {
+        parameters: {
+            query?: {
+                /** @description 每页条数（上限 200，超限裁剪到 200） */
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
+                name?: components["parameters"]["ListName"];
+                sort?: components["parameters"]["ListSort"];
+                order?: components["parameters"]["ListOrderAccount"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分组列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GroupListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierTemplates: {
+        parameters: {
+            query?: {
+                /** @description 每页条数（上限 200，超限裁剪到 200） */
+                limit?: components["parameters"]["ListLimit"];
+                offset?: components["parameters"]["ListOffset"];
+                name?: components["parameters"]["ListName"];
+                sort?: components["parameters"]["ListSort"];
+                order?: components["parameters"]["ListOrderAccount"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模板列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemplateListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierTemplatesId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 模板 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Template"];
                 };
             };
             default: components["responses"]["Error"];

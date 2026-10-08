@@ -32,8 +32,9 @@ type Options struct {
 	AdminHandler      http.Handler // 已挂 /api/admin/* 路由
 	UserHandler       http.Handler // 已挂 /api/user/* 路由（内部完成公开/JWT 分流）
 	// SupplierHandler 供应商面（/api/user/supplier/*）：RequireJWT + 快照基
-	// RequireRole(supplier|platform_admin) + 作用域注入 + default-deny 允许清单，
-	// 复用管理面账号/分组(只读)/模板(只读)端点（§2.5/§2.6；T4/T7）。nil = 不挂载。
+	// RequireRole(supplier|platform_admin) + 作用域注入 + **契约生成路由**
+	// （openapi 里 tag `supplier` 的 path；未登记者未注册 ⇒ 404），账号/分组(只读)/
+	// 模板(只读) op 转发到管理面同一批 handler（§2.5/§2.6）。nil = 不挂载。
 	SupplierHandler http.Handler
 	AIHandler       http.Handler // proxy 三个端点
 	WebFS           fs.FS        // 前端构建产物（nil = 不挂静态资源）
@@ -86,8 +87,9 @@ func NewServer(opts Options) *Server {
 	})
 
 	// 供应商面：挂在 /api/user 之前——更具体的静态前缀 /api/user/supplier/*
-	// 优先于 /api/user/*（chi 路由树按最长静态匹配）。门控/作用域/允许清单在
-	// SupplierHandler 内部完成（handler.NewSupplierSurface）。
+	// 优先于 /api/user/*（chi 路由树按最长静态匹配）。门控/作用域/**暴露面
+	// （openapi tag supplier 的登记）**在 SupplierHandler 内部完成
+	// （handler.NewSupplierSurface）。
 	if opts.SupplierHandler != nil {
 		r.Handle("/api/user/supplier/*", opts.SupplierHandler)
 	}

@@ -9,7 +9,20 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/oapi-codegen/nullable"
 	"github.com/oapi-codegen/runtime"
+)
+
+// Defines values for AccountExtCredentialType.
+const (
+	AccountExtCredentialTypeCodexOauth AccountExtCredentialType = "codex-oauth"
+	AccountExtCredentialTypeCodexPat   AccountExtCredentialType = "codex-pat"
+)
+
+// Defines values for AccountUsageItemUpstreamError.
+const (
+	AuthExpired         AccountUsageItemUpstreamError = "auth_expired"
+	UpstreamUnavailable AccountUsageItemUpstreamError = "upstream_unavailable"
 )
 
 // Defines values for ErrorResponseReason.
@@ -30,6 +43,26 @@ const (
 	Raw  ErrorResponseStorage = "raw"
 )
 
+// Defines values for GroupProtocolConvert.
+const (
+	ChatToMess GroupProtocolConvert = "chat_to_mess"
+	ChatToResp GroupProtocolConvert = "chat_to_resp"
+	MessToResp GroupProtocolConvert = "mess_to_resp"
+	RespToMess GroupProtocolConvert = "resp_to_mess"
+)
+
+// Defines values for GroupVisibility.
+const (
+	Private GroupVisibility = "private"
+	Public  GroupVisibility = "public"
+)
+
+// Defines values for ModelMappingEntryMode.
+const (
+	Explicit ModelMappingEntryMode = "explicit"
+	Implicit ModelMappingEntryMode = "implicit"
+)
+
 // Defines values for SupplierSettlementKind.
 const (
 	AdminRequest    SupplierSettlementKind = "admin_request"
@@ -45,6 +78,235 @@ const (
 	Rejected SupplierSettlementStatus = "rejected"
 )
 
+// Defines values for TemplateCredentialType.
+const (
+	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
+	TemplateCredentialTypeCodexOauth       TemplateCredentialType = "codex-oauth"
+	TemplateCredentialTypeCodexPat         TemplateCredentialType = "codex-pat"
+	TemplateCredentialTypeResponsesSpecial TemplateCredentialType = "responses-special"
+)
+
+// Defines values for TemplateSupportedFormats.
+const (
+	Anthropic         TemplateSupportedFormats = "anthropic"
+	OpenaiChat        TemplateSupportedFormats = "openai-chat"
+	OpenaiImages      TemplateSupportedFormats = "openai-images"
+	OpenaiResponses   TemplateSupportedFormats = "openai-responses"
+	OpenaiResponsesWs TemplateSupportedFormats = "openai-responses-ws"
+	OpenaiSearch      TemplateSupportedFormats = "openai-search"
+)
+
+// Defines values for ListOrderAccount.
+const (
+	ListOrderAccountAsc  ListOrderAccount = "asc"
+	ListOrderAccountDesc ListOrderAccount = "desc"
+)
+
+// Defines values for GetSupplierAccountsParamsOrder.
+const (
+	GetSupplierAccountsParamsOrderAsc  GetSupplierAccountsParamsOrder = "asc"
+	GetSupplierAccountsParamsOrderDesc GetSupplierAccountsParamsOrder = "desc"
+)
+
+// Defines values for GetSupplierGroupsParamsOrder.
+const (
+	GetSupplierGroupsParamsOrderAsc  GetSupplierGroupsParamsOrder = "asc"
+	GetSupplierGroupsParamsOrderDesc GetSupplierGroupsParamsOrder = "desc"
+)
+
+// Defines values for GetSupplierTemplatesParamsOrder.
+const (
+	GetSupplierTemplatesParamsOrderAsc  GetSupplierTemplatesParamsOrder = "asc"
+	GetSupplierTemplatesParamsOrderDesc GetSupplierTemplatesParamsOrder = "desc"
+)
+
+// Account defines model for Account.
+type Account struct {
+	// BaseURL credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template
+	BaseURL *string `json:"BaseURL"`
+
+	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段）
+	CacheDomain *string    `json:"CacheDomain"`
+	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
+
+	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
+	DeletedAt *time.Time `json:"DeletedAt"`
+
+	// Enabled 管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离）
+	Enabled *bool `json:"Enabled,omitempty"`
+
+	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）
+	FailedAt *time.Time `json:"FailedAt"`
+
+	// FailureSource 失效来源（rule/sdk 等；随 recover 清除）
+	FailureSource *string `json:"FailureSource"`
+	ID            *int64  `json:"ID,omitempty"`
+
+	// IdentityRevision 身份代际 K：仅身份类字段（template_id/base_url/upstream_key 及可轮换凭据）按值变更时 +1；SDK 自动 token 刷新不推进
+	IdentityRevision *int64     `json:"IdentityRevision,omitempty"`
+	LastError        *string    `json:"LastError"`
+	LastUsedAt       *time.Time `json:"LastUsedAt"`
+
+	// LifecycleRevision 配置代际 C（客户端 CAS 令牌 + DB 变更水位）：每次写面落库无条件 +1；PATCH 以 If-Match 作前置条件（陈旧 → 412），recover 以 body expected_revision（陈旧 → 409）
+	LifecycleRevision *int64     `json:"LifecycleRevision,omitempty"`
+	MaxConcurrency    *int       `json:"MaxConcurrency,omitempty"`
+	Name              *string    `json:"Name,omitempty"`
+	Template          *Template  `json:"Template,omitempty"`
+	TemplateID        *int64     `json:"TemplateID,omitempty"`
+	UpdatedAt         *time.Time `json:"UpdatedAt,omitempty"`
+
+	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）
+	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
+	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
+
+	// SupplierUserId 供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）
+	SupplierUserId *int64 `json:"supplier_user_id"`
+}
+
+// AccountBatchUpdateResponse 账号批量更新响应（独立 schema——不与 templates/groups 共用的 BatchUpdateResponse 合并）
+type AccountBatchUpdateResponse struct {
+	Items   []AccountRevision `json:"items"`
+	Updated int               `json:"updated"`
+}
+
+// AccountConfigPatch 账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）； 可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400； 可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。
+type AccountConfigPatch struct {
+	BaseUrl                nullable.Nullable[string]  `json:"base_url,omitempty"`
+	CacheDomain            nullable.Nullable[string]  `json:"cache_domain,omitempty"`
+	Enabled                nullable.Nullable[bool]    `json:"enabled,omitempty"`
+	GroupIds               *[]int64                   `json:"group_ids,omitempty"`
+	MaxConcurrency         nullable.Nullable[int]     `json:"max_concurrency,omitempty"`
+	Name                   nullable.Nullable[string]  `json:"name,omitempty"`
+	SupplierUserId         nullable.Nullable[int64]   `json:"supplier_user_id,omitempty"`
+	TemplateId             nullable.Nullable[int64]   `json:"template_id,omitempty"`
+	UpstreamCostMultiplier nullable.Nullable[float64] `json:"upstream_cost_multiplier,omitempty"`
+	UpstreamKey            nullable.Nullable[string]  `json:"upstream_key,omitempty"`
+}
+
+// AccountCreate 账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）； 可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400； 可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。
+type AccountCreate = AccountConfigPatch
+
+// AccountExt defines model for AccountExt.
+type AccountExt struct {
+	AccountId *int64 `json:"account_id,omitempty"`
+
+	// CodexAccountId 上游账号/空间标识；可留空——导入/单账号保存时自动识别（OAuth token claims 离线解析 / PAT whoami 查询）；识别失败：导入行拒绝、单账号保存留空且下次保存重试
+	CodexAccountId *string `json:"codex_account_id"`
+
+	// CodexEmail 管理标识：codex 账号登录邮箱（导入时由人工/上游提供，非自动生成——NewCodexIdentity 只生成 installation_id；可空）
+	CodexEmail *string `json:"codex_email"`
+
+	// CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）。仅 installation_id——会话级 session/thread/window 已退役为运行时槽状态，不再持久化/暴露。
+	CodexIdentity *CodexIdentity `json:"codex_identity,omitempty"`
+
+	// CodexOauthExpiresAt 凭据：oauth 访问令牌过期时间
+	CodexOauthExpiresAt *time.Time `json:"codex_oauth_expires_at"`
+
+	// CodexOauthRefreshToken 凭据：oauth 刷新令牌
+	CodexOauthRefreshToken *string `json:"codex_oauth_refresh_token"`
+
+	// CodexOauthToken 凭据：oauth 访问令牌（oauth 行必填——最小完整性）
+	CodexOauthToken *string `json:"codex_oauth_token"`
+
+	// CodexPatKey 凭据：pat
+	CodexPatKey *string `json:"codex_pat_key"`
+
+	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
+	CredentialType AccountExtCredentialType `json:"credential_type"`
+}
+
+// AccountExtCredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
+type AccountExtCredentialType string
+
+// AccountGroupsResponse defines model for AccountGroupsResponse.
+type AccountGroupsResponse struct {
+	GroupIds []int64 `json:"group_ids"`
+}
+
+// AccountListResponse defines model for AccountListResponse.
+type AccountListResponse struct {
+	Rows  []AccountView `json:"rows"`
+	Total int64         `json:"total"`
+}
+
+// AccountRecoverBody defines model for AccountRecoverBody.
+type AccountRecoverBody struct {
+	// ExpectedRevision CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409
+	ExpectedRevision int64 `json:"expected_revision"`
+}
+
+// AccountRevision 单账号更新后的配置代际（C = 客户端 CAS 令牌；与路由观测面的 identity_revision 不同）
+type AccountRevision struct {
+	AccountId         int64 `json:"account_id"`
+	LifecycleRevision int64 `json:"lifecycle_revision"`
+}
+
+// AccountUsageItem 账号 usage 视图 item（恒 = account_ids 去重后全量；upstream 为 codex 额度快照，api-key/无凭据账号恒 null）
+type AccountUsageItem struct {
+	AccountId int64 `json:"account_id"`
+
+	// Gateway 账号网关计费聚合（usage_logs 实时明细；毫分 /1e5 → USD；无记录账号全 0）
+	Gateway  UsageGatewayStats   `json:"gateway"`
+	Upstream *CodexUsageSnapshot `json:"upstream"`
+
+	// UpstreamError 上游快照失败分类（null = 无上游能力/快照成功；auth_expired = 凭据失效（fatal 类）；upstream_unavailable = 网络/5xx 等上游错误）
+	UpstreamError *AccountUsageItemUpstreamError `json:"upstream_error"`
+}
+
+// AccountUsageItemUpstreamError 上游快照失败分类（null = 无上游能力/快照成功；auth_expired = 凭据失效（fatal 类）；upstream_unavailable = 网络/5xx 等上游错误）
+type AccountUsageItemUpstreamError string
+
+// AccountView defines model for AccountView.
+type AccountView struct {
+	// BaseURL credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template
+	BaseURL *string `json:"BaseURL"`
+
+	// CacheDomain 共享缓存域（null = 账号私有域；软亲和一致性哈希的域标识；写面 PATCH /accounts/{id} 的 cache_domain 字段）
+	CacheDomain *string    `json:"CacheDomain"`
+	CreatedAt   *time.Time `json:"CreatedAt,omitempty"`
+
+	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
+	DeletedAt *time.Time `json:"DeletedAt"`
+
+	// Enabled 管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离）
+	Enabled *bool `json:"Enabled,omitempty"`
+
+	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）
+	FailedAt *time.Time `json:"FailedAt"`
+
+	// FailureSource 失效来源（rule/sdk 等；随 recover 清除）
+	FailureSource *string `json:"FailureSource"`
+	ID            *int64  `json:"ID,omitempty"`
+
+	// IdentityRevision 身份代际 K：仅身份类字段（template_id/base_url/upstream_key 及可轮换凭据）按值变更时 +1；SDK 自动 token 刷新不推进
+	IdentityRevision *int64     `json:"IdentityRevision,omitempty"`
+	LastError        *string    `json:"LastError"`
+	LastUsedAt       *time.Time `json:"LastUsedAt"`
+
+	// LifecycleRevision 配置代际 C（客户端 CAS 令牌 + DB 变更水位）：每次写面落库无条件 +1；PATCH 以 If-Match 作前置条件（陈旧 → 412），recover 以 body expected_revision（陈旧 → 409）
+	LifecycleRevision *int64     `json:"LifecycleRevision,omitempty"`
+	MaxConcurrency    *int       `json:"MaxConcurrency,omitempty"`
+	Name              *string    `json:"Name,omitempty"`
+	Template          *Template  `json:"Template,omitempty"`
+	TemplateID        *int64     `json:"TemplateID,omitempty"`
+	UpdatedAt         *time.Time `json:"UpdatedAt,omitempty"`
+
+	// UpstreamCostMultiplier 采购成本倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与 basis points 换算——存储 25000 ↔ 显示 2.5；写面 PATCH /accounts/{id} 的 upstream_cost_multiplier 字段）
+	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
+	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
+	Concurrency            *int64   `json:"concurrency,omitempty"`
+	ErrCount               *int     `json:"err_count,omitempty"`
+	ErrRate                *float64 `json:"err_rate,omitempty"`
+
+	// SupplierUserId 供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）
+	SupplierUserId *int64 `json:"supplier_user_id"`
+}
+
+// AccountsUsageResponse 账号用量聚合响应（items 顺序 = account_ids 去重后顺序）
+type AccountsUsageResponse struct {
+	Items []AccountUsageItem `json:"items"`
+}
+
 // ApplySettlementBody defines model for ApplySettlementBody.
 type ApplySettlementBody struct {
 	// AmountMillis 申请金额（> 0；受 available 条件扣约束）
@@ -53,6 +315,147 @@ type ApplySettlementBody struct {
 
 	// RequestKey 业务幂等键（客户端生成、重试复用；作用域 = 操作者 × key）
 	RequestKey string `json:"request_key"`
+}
+
+// BatchDeleteBody defines model for BatchDeleteBody.
+type BatchDeleteBody struct {
+	Ids []int64 `json:"ids"`
+}
+
+// BatchDeleteResponse defines model for BatchDeleteResponse.
+type BatchDeleteResponse struct {
+	Deleted int `json:"deleted"`
+}
+
+// BatchUpdateAccountsBody defines model for BatchUpdateAccountsBody.
+type BatchUpdateAccountsBody struct {
+	// Fields 账号写面唯一字段模型（创建 / PATCH / 批量共用）。三态：字段缺席 = 不变（永不清空）； 可空标量 null = 清空；集合 null = 不变、[] = 清空；不可空标量 null = 400； 可空标量 "" = 400（空串哨兵已取消——清空只有一个拼法 null）。
+	Fields AccountConfigPatch `json:"fields"`
+	Ids    []int64            `json:"ids"`
+}
+
+// CodexCredits 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位）
+type CodexCredits struct {
+	Balance *string `json:"balance"`
+}
+
+// CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）。仅 installation_id——会话级 session/thread/window 已退役为运行时槽状态，不再持久化/暴露。
+type CodexIdentity struct {
+	// InstallationId 身份：账号级唯一（UUIDv4；响应恒有——首次写入自动生成；空/缺省 → service 自动生成）
+	InstallationId *string `json:"installation_id,omitempty"`
+}
+
+// CodexOAuthImportBody 批量导入 codex-oauth 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-oauth——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
+type CodexOAuthImportBody struct {
+	// CacheDomain 可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）
+	CacheDomain *string `json:"cache_domain,omitempty"`
+
+	// Enabled 可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// GroupId 可选：新建账号归组（缺省不归组；不存在 → 行级 failed——FK 违反归行级不整批 400）
+	GroupId *int64                 `json:"group_id"`
+	Items   []CodexOAuthImportItem `json:"items"`
+
+	// SupplierUserId 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
+	SupplierUserId *int64 `json:"supplier_user_id"`
+
+	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-oauth）
+	TemplateId int64 `json:"template_id"`
+
+	// UpstreamCostMultiplier 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
+	UpstreamCostMultiplier *float64 `json:"upstream_cost_multiplier,omitempty"`
+}
+
+// CodexOAuthImportItem 批量导入 codex-oauth 单行（组合幂等键 codex_email + codex_account_id；token+refresh 成对必填）
+type CodexOAuthImportItem struct {
+	// CodexAccountId 组合幂等键②：上游账号/空间标识（必填）
+	CodexAccountId string `json:"codex_account_id"`
+
+	// CodexEmail 组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed）
+	CodexEmail string `json:"codex_email"`
+
+	// CodexOauthExpiresAt 凭据：oauth 访问令牌过期时间（可选；RFC3339 格式——解析失败 → 行级 failed）
+	CodexOauthExpiresAt *string `json:"codex_oauth_expires_at,omitempty"`
+
+	// CodexOauthRefreshToken 凭据：oauth 刷新令牌（必填；与 token 成对）
+	CodexOauthRefreshToken string `json:"codex_oauth_refresh_token"`
+
+	// CodexOauthToken 凭据：oauth 访问令牌（必填；与 refresh 成对）
+	CodexOauthToken string `json:"codex_oauth_token"`
+
+	// MaxConcurrency 可选；缺省 25（导入面裁决——非账号表默认 8）；<1 → 归 25
+	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+}
+
+// CodexPATImportBody 批量导入 codex-pat 请求体（items 1-100 原始条数——空/超限 → 400；template_id 必填——缺失 → 400 / 不存在 → 404；**credential_type 必须 == codex-pat——错配 → 400 整批拒绝**；group_id 可选——不存在 → 行级 failed）
+type CodexPATImportBody struct {
+	// CacheDomain 可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）
+	CacheDomain *string `json:"cache_domain,omitempty"`
+
+	// Enabled 可选：新建账号的管理面启停（缺省 true = 启用；仅新建行生效）
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// GroupId 可选：新建账号归组（不存在 → 行级 failed）
+	GroupId *int64               `json:"group_id"`
+	Items   []CodexPATImportItem `json:"items"`
+
+	// SupplierUserId 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
+	SupplierUserId *int64 `json:"supplier_user_id"`
+
+	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == 端点类型 codex-pat）
+	TemplateId int64 `json:"template_id"`
+
+	// UpstreamCostMultiplier 可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）
+	UpstreamCostMultiplier *float64 `json:"upstream_cost_multiplier,omitempty"`
+}
+
+// CodexPATImportItem 批量导入 codex-pat 单行（组合幂等键同上）
+type CodexPATImportItem struct {
+	// CodexAccountId 组合幂等键②：上游账号/空间标识（必填）
+	CodexAccountId string `json:"codex_account_id"`
+
+	// CodexEmail 组合幂等键①：codex 账号登录邮箱（必填；格式非法 → 行级 failed）
+	CodexEmail string `json:"codex_email"`
+
+	// CodexPatKey 凭据：pat（必填非空）
+	CodexPatKey string `json:"codex_pat_key"`
+
+	// MaxConcurrency 可选；缺省 25（导入面裁决）；<1 → 归 25
+	MaxConcurrency *int `json:"max_concurrency,omitempty"`
+}
+
+// CodexRateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
+type CodexRateLimit struct {
+	ResetAt     *time.Time `json:"reset_at"`
+	UsedPercent int        `json:"used_percent"`
+}
+
+// CodexSpendControl 消费控制额度（金额字符串）
+type CodexSpendControl struct {
+	Limit            string `json:"limit"`
+	Remaining        string `json:"remaining"`
+	RemainingPercent int    `json:"remaining_percent"`
+	Used             string `json:"used"`
+	UsedPercent      int    `json:"used_percent"`
+}
+
+// CodexUsageSnapshot 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度）
+type CodexUsageSnapshot struct {
+	// Credits 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位）
+	Credits  *CodexCredits `json:"credits,omitempty"`
+	PlanType *string       `json:"plan_type,omitempty"`
+
+	// RateLimit 主窗口用量（reset_at RFC3339——上游主窗口省略时 null，非虚假 0001-01-01）
+	RateLimit *CodexRateLimit `json:"rate_limit,omitempty"`
+
+	// SpendControl 消费控制额度（金额字符串）
+	SpendControl *CodexSpendControl `json:"spend_control,omitempty"`
+}
+
+// DeletedResponse defines model for DeletedResponse.
+type DeletedResponse struct {
+	Deleted bool `json:"deleted"`
 }
 
 // ErrorResponse defines model for ErrorResponse.
@@ -98,6 +501,65 @@ type ErrorResponseReason string
 
 // ErrorResponseStorage 判定所依据的实际存储（`window_invalid`/`window_ambiguous` 不携带）
 type ErrorResponseStorage string
+
+// Group defines model for Group.
+type Group struct {
+	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
+
+	// DeletedAt 软删除时间戳；null = 存活（列表/消费路径过滤已删；GET 单个可查已删项）
+	DeletedAt *time.Time `json:"DeletedAt"`
+	ID        *int64     `json:"ID,omitempty"`
+	Name      *string    `json:"Name,omitempty"`
+
+	// PriceMultiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）
+	PriceMultiplier *float64 `json:"PriceMultiplier,omitempty"`
+
+	// ProtocolConvert 协议转换方向集合（空数组 = off = 不转换；多方向按客户端格式命中）
+	ProtocolConvert *[]GroupProtocolConvert `json:"ProtocolConvert,omitempty"`
+	UpdatedAt       *time.Time              `json:"UpdatedAt,omitempty"`
+	Visibility      *GroupVisibility        `json:"Visibility,omitempty"`
+}
+
+// GroupListResponse defines model for GroupListResponse.
+type GroupListResponse struct {
+	Rows  []Group `json:"rows"`
+	Total int64   `json:"total"`
+}
+
+// GroupProtocolConvert 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
+type GroupProtocolConvert string
+
+// GroupVisibility defines model for GroupVisibility.
+type GroupVisibility string
+
+// ImportFailedItem 行级失败条目（index = items 原始下标——行级定位契约）
+type ImportFailedItem struct {
+	// Error 该行失败原因文案
+	Error string `json:"error"`
+
+	// Index items 原始下标
+	Index int `json:"index"`
+}
+
+// ImportResult 批量导入结果（单行失败不毁整批——整批不原子；有失败行也 200）
+type ImportResult struct {
+	Failed []ImportFailedItem `json:"failed"`
+
+	// Imported 新建账号数
+	Imported int `json:"imported"`
+
+	// Updated 键存在更新凭据数
+	Updated int `json:"updated"`
+}
+
+// ModelMappingEntry defines model for ModelMappingEntry.
+type ModelMappingEntry struct {
+	MappedModel string                `json:"mapped_model"`
+	Mode        ModelMappingEntryMode `json:"mode"`
+}
+
+// ModelMappingEntryMode defines model for ModelMappingEntry.Mode.
+type ModelMappingEntryMode string
 
 // SupplierChunk defines model for SupplierChunk.
 type SupplierChunk struct {
@@ -193,8 +655,147 @@ type SupplierSettlementList struct {
 	Total int64                `json:"total"`
 }
 
+// Template defines model for Template.
+type Template struct {
+	// BaseURL credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (non-empty override, or empty for default/route failure)
+	BaseURL   string    `json:"BaseURL"`
+	CreatedAt time.Time `json:"CreatedAt"`
+
+	// CredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
+	CredentialType *TemplateCredentialType `json:"CredentialType,omitempty"`
+
+	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
+	DeletedAt        *time.Time                    `json:"DeletedAt"`
+	FormatModels     *map[string][]string          `json:"FormatModels,omitempty"`
+	ID               int64                         `json:"ID"`
+	ModelMapping     *map[string]ModelMappingEntry `json:"ModelMapping,omitempty"`
+	Models           *[]string                     `json:"Models,omitempty"`
+	Name             string                        `json:"Name"`
+	SupportedFormats []TemplateSupportedFormats    `json:"SupportedFormats"`
+	UpdatedAt        time.Time                     `json:"UpdatedAt"`
+}
+
+// TemplateCredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
+type TemplateCredentialType string
+
+// TemplateSupportedFormats defines model for Template.SupportedFormats.
+type TemplateSupportedFormats string
+
+// TemplateListResponse defines model for TemplateListResponse.
+type TemplateListResponse struct {
+	Rows  []Template `json:"rows"`
+	Total int64      `json:"total"`
+}
+
+// UsageGatewayStats 账号网关计费聚合（usage_logs 实时明细；毫分 /1e5 → USD；无记录账号全 0）
+type UsageGatewayStats struct {
+	// CostUsd 计费成本（USD，毫分 /1e5）
+	CostUsd float64 `json:"cost_usd"`
+
+	// RawCostUsd 乘倍率前原始成本（USD，毫分 /1e5）
+	RawCostUsd float64 `json:"raw_cost_usd"`
+
+	// Requests 请求数（COUNT(*)）
+	Requests int64 `json:"requests"`
+
+	// TotalTokens 总 token（SUM(total_tokens)）
+	TotalTokens int64 `json:"total_tokens"`
+}
+
+// AccountEnabled defines model for AccountEnabled.
+type AccountEnabled = bool
+
+// AccountTemplateId defines model for AccountTemplateId.
+type AccountTemplateId = int64
+
+// ListLimit defines model for ListLimit.
+type ListLimit = int
+
+// ListName defines model for ListName.
+type ListName = string
+
+// ListOffset defines model for ListOffset.
+type ListOffset = int
+
+// ListOrderAccount defines model for ListOrderAccount.
+type ListOrderAccount string
+
+// ListSort defines model for ListSort.
+type ListSort = string
+
+// StatsFrom defines model for StatsFrom.
+type StatsFrom = time.Time
+
+// StatsTimezone defines model for StatsTimezone.
+type StatsTimezone = string
+
+// StatsTo defines model for StatsTo.
+type StatsTo = time.Time
+
+// StatsWindow defines model for StatsWindow.
+type StatsWindow = string
+
 // Error defines model for Error.
 type Error = ErrorResponse
+
+// GetSupplierAccountsParams defines parameters for GetSupplierAccounts.
+type GetSupplierAccountsParams struct {
+	// Limit 每页条数（上限 200，超限裁剪到 200）
+	Limit      *ListLimit                      `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset     *ListOffset                     `form:"offset,omitempty" json:"offset,omitempty"`
+	Name       *ListName                       `form:"name,omitempty" json:"name,omitempty"`
+	Sort       *ListSort                       `form:"sort,omitempty" json:"sort,omitempty"`
+	Order      *GetSupplierAccountsParamsOrder `form:"order,omitempty" json:"order,omitempty"`
+	TemplateId *AccountTemplateId              `form:"template_id,omitempty" json:"template_id,omitempty"`
+
+	// Enabled 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关）
+	Enabled *AccountEnabled `form:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// GetSupplierAccountsParamsOrder defines parameters for GetSupplierAccounts.
+type GetSupplierAccountsParamsOrder string
+
+// GetSupplierAccountsUsageParams defines parameters for GetSupplierAccountsUsage.
+type GetSupplierAccountsUsageParams struct {
+	AccountIds string `form:"account_ids" json:"account_ids"`
+
+	// From 绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）
+	From *StatsFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To 绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`
+	To *StatsTo `form:"to,omitempty" json:"to,omitempty"`
+
+	// Window 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
+	// 给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
+	// 服务端自持时钟：`to` = 当前时刻向上取整到 UTC 整点、`from` = `to` − `window`
+	// ⇒ 两端恒整点，命中卷积表的精确分支（零对齐位移、零桶丢失），这就是 UI 预设
+	// 走这条形态的理由。
+	//
+	// **只收时长，不收日历天**：`d` 不是 `time.ParseDuration` 的单位，`7d` → 400
+	// （`reason=window_invalid`）。理由：`24h` 与"一个日历天"在 DST 切换日不相等，
+	// 而本 API 的唯一对齐基准是固定 1h 网格；另立 `AddDate` 日历语义会引入第二套
+	// 窗口长度语义。预设即网格整倍数：24h / 168h / 720h / 2160h。
+	Window *StatsWindow `form:"window,omitempty" json:"window,omitempty"`
+
+	// Timezone IANA 时区名（如 Asia/Shanghai / America/New_York；控制台取浏览器时区）。
+	// 仅影响**分组读**：时间桶按该时区的本地小时/日界聚合。显式 from/to 恒为
+	// 绝对时刻直透，不受时区改写；排行/TTFT 等无分组数值端点接受并校验该参数
+	// 但不改变数值。空/缺省 = UTC（兼容旧客户端）；未知名 → 400。overview 的
+	// 「今日」日界仍按该时区本地零点计算（窗口是 days，不是 from/to）。
+	//
+	// 窗口上限**不是一个固定天数**：界不齐时服务端把两端向后取整到整点以换取
+	// 卷积表快路径（生效窗口用 X-Stats-Effective-From/To 回显），能否用卷积表
+	// 取决于**时区偏移是否恒整点且窗内无 DST 跳变**；DST 或 :30/:45 偏移时区的
+	// 分组读只能扫原始明细行。成本上限是保留期无关的纯常量（分组原始行固定
+	// 8 天、卷积表 90 天），覆盖上限另有 per-table 保留期闸门（起点早于保留
+	// 截止 → 400）。两者的**真实数值见 GET /api/admin/stats/capabilities**。
+	Timezone *StatsTimezone `form:"timezone,omitempty" json:"timezone,omitempty"`
+}
+
+// PatchSupplierAccountsIdParams defines parameters for PatchSupplierAccountsId.
+type PatchSupplierAccountsIdParams struct {
+	IfMatch *string `json:"If-Match,omitempty"`
+}
 
 // GetSupplierChunksParams defines parameters for GetSupplierChunks.
 type GetSupplierChunksParams struct {
@@ -208,23 +809,118 @@ type GetSupplierEarningsParams struct {
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// GetSupplierGroupsParams defines parameters for GetSupplierGroups.
+type GetSupplierGroupsParams struct {
+	// Limit 每页条数（上限 200，超限裁剪到 200）
+	Limit  *ListLimit                    `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *ListOffset                   `form:"offset,omitempty" json:"offset,omitempty"`
+	Name   *ListName                     `form:"name,omitempty" json:"name,omitempty"`
+	Sort   *ListSort                     `form:"sort,omitempty" json:"sort,omitempty"`
+	Order  *GetSupplierGroupsParamsOrder `form:"order,omitempty" json:"order,omitempty"`
+}
+
+// GetSupplierGroupsParamsOrder defines parameters for GetSupplierGroups.
+type GetSupplierGroupsParamsOrder string
+
 // GetSupplierSettlementsParams defines parameters for GetSupplierSettlements.
 type GetSupplierSettlementsParams struct {
 	Limit  *int `form:"limit,omitempty" json:"limit,omitempty"`
 	Offset *int `form:"offset,omitempty" json:"offset,omitempty"`
 }
 
+// GetSupplierTemplatesParams defines parameters for GetSupplierTemplates.
+type GetSupplierTemplatesParams struct {
+	// Limit 每页条数（上限 200，超限裁剪到 200）
+	Limit  *ListLimit                       `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *ListOffset                      `form:"offset,omitempty" json:"offset,omitempty"`
+	Name   *ListName                        `form:"name,omitempty" json:"name,omitempty"`
+	Sort   *ListSort                        `form:"sort,omitempty" json:"sort,omitempty"`
+	Order  *GetSupplierTemplatesParamsOrder `form:"order,omitempty" json:"order,omitempty"`
+}
+
+// GetSupplierTemplatesParamsOrder defines parameters for GetSupplierTemplates.
+type GetSupplierTemplatesParamsOrder string
+
+// PostSupplierAccountsJSONRequestBody defines body for PostSupplierAccounts for application/json ContentType.
+type PostSupplierAccountsJSONRequestBody = AccountCreate
+
+// PostSupplierAccountsBatchDeleteJSONRequestBody defines body for PostSupplierAccountsBatchDelete for application/json ContentType.
+type PostSupplierAccountsBatchDeleteJSONRequestBody = BatchDeleteBody
+
+// PostSupplierAccountsBatchImportCodexOauthJSONRequestBody defines body for PostSupplierAccountsBatchImportCodexOauth for application/json ContentType.
+type PostSupplierAccountsBatchImportCodexOauthJSONRequestBody = CodexOAuthImportBody
+
+// PostSupplierAccountsBatchImportCodexPatJSONRequestBody defines body for PostSupplierAccountsBatchImportCodexPat for application/json ContentType.
+type PostSupplierAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
+
+// PostSupplierAccountsBatchUpdateJSONRequestBody defines body for PostSupplierAccountsBatchUpdate for application/json ContentType.
+type PostSupplierAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
+
+// PatchSupplierAccountsIdJSONRequestBody defines body for PatchSupplierAccountsId for application/json ContentType.
+type PatchSupplierAccountsIdJSONRequestBody = AccountConfigPatch
+
+// PutSupplierAccountsIdExtJSONRequestBody defines body for PutSupplierAccountsIdExt for application/json ContentType.
+type PutSupplierAccountsIdExtJSONRequestBody = AccountExt
+
+// PostSupplierAccountsIdRecoverJSONRequestBody defines body for PostSupplierAccountsIdRecover for application/json ContentType.
+type PostSupplierAccountsIdRecoverJSONRequestBody = AccountRecoverBody
+
 // PostSupplierSettlementJSONRequestBody defines body for PostSupplierSettlement for application/json ContentType.
 type PostSupplierSettlementJSONRequestBody = ApplySettlementBody
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// 账号列表（分页/筛选/排序，含运行时视图；作用域 = JWT 归属）
+	// (GET /api/user/supplier/accounts)
+	GetSupplierAccounts(w http.ResponseWriter, r *http.Request, params GetSupplierAccountsParams)
+	// 创建账号（归属恒为 JWT 本人；携带他人 supplier_user_id ⇒ 400）
+	// (POST /api/user/supplier/accounts)
+	PostSupplierAccounts(w http.ResponseWriter, r *http.Request)
+	// 批量删除账号（事务，全成或全败；任一 id 越域 ⇒ 整事务失败）
+	// (POST /api/user/supplier/accounts/batch-delete)
+	PostSupplierAccountsBatchDelete(w http.ResponseWriter, r *http.Request)
+	// 批量导入 codex-oauth 凭据（幂等组合键 codex_email + codex_account_id；行级失败不毁整批）
+	// (POST /api/user/supplier/accounts/batch-import-codex-oauth)
+	PostSupplierAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request)
+	// 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；行级失败不毁整批）
+	// (POST /api/user/supplier/accounts/batch-import-codex-pat)
+	PostSupplierAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request)
+	// 批量更新账号（fields 为任意字段子集；字段层与管理面零差异化）
+	// (POST /api/user/supplier/accounts/batch-update)
+	PostSupplierAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
+	// 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
+	// (GET /api/user/supplier/accounts/usage)
+	GetSupplierAccountsUsage(w http.ResponseWriter, r *http.Request, params GetSupplierAccountsUsageParams)
+	// 删除账号（越域 id ⇒ 404）
+	// (DELETE /api/user/supplier/accounts/{id})
+	DeleteSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64)
+	// 账号（越域 id ⇒ 404，不泄漏存在性）
+	// (GET /api/user/supplier/accounts/{id})
+	GetSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64)
+	// 部分更新账号（三态语义与管理面一致：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
+	// (PATCH /api/user/supplier/accounts/{id})
+	PatchSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64, params PatchSupplierAccountsIdParams)
+	// 读取账号类型化鉴权扩展（仅 codex-oauth/codex-pat 账号有 ext 行）
+	// (GET /api/user/supplier/accounts/{id}/ext)
+	GetSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64)
+	// 幂等写入账号类型化鉴权扩展（Create/Update 合一；全列更新含 NULL 清空）
+	// (PUT /api/user/supplier/accounts/{id}/ext)
+	PutSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64)
+	// 读取账号的全部分组 id（编辑回显；不随账号列表返回）
+	// (GET /api/user/supplier/accounts/{id}/groups)
+	GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request, id int64)
+	// 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
+	// (POST /api/user/supplier/accounts/{id}/recover)
+	PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64)
 	// 冻结中明细（未解冻桶）
 	// (GET /api/user/supplier/chunks)
 	GetSupplierChunks(w http.ResponseWriter, r *http.Request, params GetSupplierChunksParams)
 	// 区间收益明细（分页；走报表索引 ②，窗口 = 保留期）
 	// (GET /api/user/supplier/earnings)
 	GetSupplierEarnings(w http.ResponseWriter, r *http.Request, params GetSupplierEarningsParams)
+	// 分组候选列表（分页/筛选/排序；只读——组写面不在供应商面）
+	// (GET /api/user/supplier/groups)
+	GetSupplierGroups(w http.ResponseWriter, r *http.Request, params GetSupplierGroupsParams)
 	// 供应商收益概览（可提领/冻结/累计/生效分成率与冻结小时/最晚解冻时刻/桶行数）
 	// (GET /api/user/supplier/overview)
 	GetSupplierOverview(w http.ResponseWriter, r *http.Request)
@@ -234,11 +930,101 @@ type ServerInterface interface {
 	// 申请结算（条件扣 available + 期间链 + request_key 幂等）
 	// (POST /api/user/supplier/settlements)
 	PostSupplierSettlement(w http.ResponseWriter, r *http.Request)
+	// 模板列表（分页/筛选/排序；只读——模板写面不在供应商面）
+	// (GET /api/user/supplier/templates)
+	GetSupplierTemplates(w http.ResponseWriter, r *http.Request, params GetSupplierTemplatesParams)
+	// 模板（只读）
+	// (GET /api/user/supplier/templates/{id})
+	GetSupplierTemplatesId(w http.ResponseWriter, r *http.Request, id int64)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
 
 type Unimplemented struct{}
+
+// 账号列表（分页/筛选/排序，含运行时视图；作用域 = JWT 归属）
+// (GET /api/user/supplier/accounts)
+func (_ Unimplemented) GetSupplierAccounts(w http.ResponseWriter, r *http.Request, params GetSupplierAccountsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 创建账号（归属恒为 JWT 本人；携带他人 supplier_user_id ⇒ 400）
+// (POST /api/user/supplier/accounts)
+func (_ Unimplemented) PostSupplierAccounts(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量删除账号（事务，全成或全败；任一 id 越域 ⇒ 整事务失败）
+// (POST /api/user/supplier/accounts/batch-delete)
+func (_ Unimplemented) PostSupplierAccountsBatchDelete(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量导入 codex-oauth 凭据（幂等组合键 codex_email + codex_account_id；行级失败不毁整批）
+// (POST /api/user/supplier/accounts/batch-import-codex-oauth)
+func (_ Unimplemented) PostSupplierAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量导入 codex-pat 凭据（幂等组合键 codex_email + codex_account_id；行级失败不毁整批）
+// (POST /api/user/supplier/accounts/batch-import-codex-pat)
+func (_ Unimplemented) PostSupplierAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量更新账号（fields 为任意字段子集；字段层与管理面零差异化）
+// (POST /api/user/supplier/accounts/batch-update)
+func (_ Unimplemented) PostSupplierAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
+// (GET /api/user/supplier/accounts/usage)
+func (_ Unimplemented) GetSupplierAccountsUsage(w http.ResponseWriter, r *http.Request, params GetSupplierAccountsUsageParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 删除账号（越域 id ⇒ 404）
+// (DELETE /api/user/supplier/accounts/{id})
+func (_ Unimplemented) DeleteSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 账号（越域 id ⇒ 404，不泄漏存在性）
+// (GET /api/user/supplier/accounts/{id})
+func (_ Unimplemented) GetSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 部分更新账号（三态语义与管理面一致：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
+// (PATCH /api/user/supplier/accounts/{id})
+func (_ Unimplemented) PatchSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64, params PatchSupplierAccountsIdParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 读取账号类型化鉴权扩展（仅 codex-oauth/codex-pat 账号有 ext 行）
+// (GET /api/user/supplier/accounts/{id}/ext)
+func (_ Unimplemented) GetSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 幂等写入账号类型化鉴权扩展（Create/Update 合一；全列更新含 NULL 清空）
+// (PUT /api/user/supplier/accounts/{id}/ext)
+func (_ Unimplemented) PutSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 读取账号的全部分组 id（编辑回显；不随账号列表返回）
+// (GET /api/user/supplier/accounts/{id}/groups)
+func (_ Unimplemented) GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
+// (POST /api/user/supplier/accounts/{id}/recover)
+func (_ Unimplemented) PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
 
 // 冻结中明细（未解冻桶）
 // (GET /api/user/supplier/chunks)
@@ -249,6 +1035,12 @@ func (_ Unimplemented) GetSupplierChunks(w http.ResponseWriter, r *http.Request,
 // 区间收益明细（分页；走报表索引 ②，窗口 = 保留期）
 // (GET /api/user/supplier/earnings)
 func (_ Unimplemented) GetSupplierEarnings(w http.ResponseWriter, r *http.Request, params GetSupplierEarningsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 分组候选列表（分页/筛选/排序；只读——组写面不在供应商面）
+// (GET /api/user/supplier/groups)
+func (_ Unimplemented) GetSupplierGroups(w http.ResponseWriter, r *http.Request, params GetSupplierGroupsParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -270,6 +1062,18 @@ func (_ Unimplemented) PostSupplierSettlement(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
+// 模板列表（分页/筛选/排序；只读——模板写面不在供应商面）
+// (GET /api/user/supplier/templates)
+func (_ Unimplemented) GetSupplierTemplates(w http.ResponseWriter, r *http.Request, params GetSupplierTemplatesParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 模板（只读）
+// (GET /api/user/supplier/templates/{id})
+func (_ Unimplemented) GetSupplierTemplatesId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
 // ServerInterfaceWrapper converts contexts to parameters.
 type ServerInterfaceWrapper struct {
 	Handler            ServerInterface
@@ -278,6 +1082,416 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetSupplierAccounts operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierAccounts(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSupplierAccountsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "name", r.URL.Query(), &params.Name)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "order" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "template_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "template_id", r.URL.Query(), &params.TemplateId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "template_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "enabled" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "enabled", r.URL.Query(), &params.Enabled)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "enabled", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierAccounts(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierAccounts operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierAccounts(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierAccounts(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierAccountsBatchDelete operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierAccountsBatchDelete(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierAccountsBatchDelete(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierAccountsBatchImportCodexOauth operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierAccountsBatchImportCodexOauth(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierAccountsBatchImportCodexPat operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierAccountsBatchImportCodexPat(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierAccountsBatchUpdate operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierAccountsBatchUpdate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSupplierAccountsUsage operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierAccountsUsage(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSupplierAccountsUsageParams
+
+	// ------------- Required query parameter "account_ids" -------------
+
+	if paramValue := r.URL.Query().Get("account_ids"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "account_ids"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "account_ids", r.URL.Query(), &params.AccountIds)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "account_ids", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "window" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "window", r.URL.Query(), &params.Window)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "window", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "timezone" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "timezone", r.URL.Query(), &params.Timezone)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "timezone", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierAccountsUsage(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSupplierAccountsId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSupplierAccountsId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSupplierAccountsId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSupplierAccountsId operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierAccountsId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierAccountsId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PatchSupplierAccountsId operation middleware
+func (siw *ServerInterfaceWrapper) PatchSupplierAccountsId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PatchSupplierAccountsIdParams
+
+	headers := r.Header
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch string
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandlerFunc(w, r, &TooManyValuesForParamError{ParamName: "If-Match", Count: n})
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false})
+		if err != nil {
+			siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "If-Match", Err: err})
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PatchSupplierAccountsId(w, r, id, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSupplierAccountsIdExt operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierAccountsIdExt(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSupplierAccountsIdExt operation middleware
+func (siw *ServerInterfaceWrapper) PutSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSupplierAccountsIdExt(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSupplierAccountsIdGroups operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierAccountsIdGroups(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierAccountsIdRecover operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierAccountsIdRecover(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // GetSupplierChunks operation middleware
 func (siw *ServerInterfaceWrapper) GetSupplierChunks(w http.ResponseWriter, r *http.Request) {
@@ -349,6 +1563,65 @@ func (siw *ServerInterfaceWrapper) GetSupplierEarnings(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetSupplierGroups operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierGroups(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSupplierGroupsParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "name", r.URL.Query(), &params.Name)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "order" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierGroups(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSupplierOverview operation middleware
 func (siw *ServerInterfaceWrapper) GetSupplierOverview(w http.ResponseWriter, r *http.Request) {
 
@@ -403,6 +1676,90 @@ func (siw *ServerInterfaceWrapper) PostSupplierSettlement(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostSupplierSettlement(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSupplierTemplates operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierTemplates(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetSupplierTemplatesParams
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "name" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "name", r.URL.Query(), &params.Name)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "name", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "sort" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "sort", r.URL.Query(), &params.Sort)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "sort", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "order" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierTemplates(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSupplierTemplatesId operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierTemplatesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierTemplatesId(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -526,10 +1883,55 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	}
 
 	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/accounts", wrapper.GetSupplierAccounts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/accounts", wrapper.PostSupplierAccounts)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/accounts/batch-delete", wrapper.PostSupplierAccountsBatchDelete)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/accounts/batch-import-codex-oauth", wrapper.PostSupplierAccountsBatchImportCodexOauth)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/accounts/batch-import-codex-pat", wrapper.PostSupplierAccountsBatchImportCodexPat)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/accounts/batch-update", wrapper.PostSupplierAccountsBatchUpdate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/accounts/usage", wrapper.GetSupplierAccountsUsage)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/user/supplier/accounts/{id}", wrapper.DeleteSupplierAccountsId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/accounts/{id}", wrapper.GetSupplierAccountsId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Patch(options.BaseURL+"/api/user/supplier/accounts/{id}", wrapper.PatchSupplierAccountsId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/accounts/{id}/ext", wrapper.GetSupplierAccountsIdExt)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/user/supplier/accounts/{id}/ext", wrapper.PutSupplierAccountsIdExt)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/accounts/{id}/groups", wrapper.GetSupplierAccountsIdGroups)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/accounts/{id}/recover", wrapper.PostSupplierAccountsIdRecover)
+	})
+	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/supplier/chunks", wrapper.GetSupplierChunks)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/supplier/earnings", wrapper.GetSupplierEarnings)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/groups", wrapper.GetSupplierGroups)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/supplier/overview", wrapper.GetSupplierOverview)
@@ -539,6 +1941,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/user/supplier/settlements", wrapper.PostSupplierSettlement)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/templates", wrapper.GetSupplierTemplates)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/templates/{id}", wrapper.GetSupplierTemplatesId)
 	})
 
 	return r

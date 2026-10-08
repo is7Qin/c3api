@@ -288,6 +288,12 @@ const (
 	UserStatusDisabled UserStatus = "disabled"
 )
 
+// Defines values for ListOrderAccount.
+const (
+	ListOrderAccountAsc  ListOrderAccount = "asc"
+	ListOrderAccountDesc ListOrderAccount = "desc"
+)
+
 // Defines values for GetAccountsParamsOrder.
 const (
 	GetAccountsParamsOrderAsc  GetAccountsParamsOrder = "asc"
@@ -413,8 +419,8 @@ const (
 
 // Defines values for GetUsersParamsOrder.
 const (
-	GetUsersParamsOrderAsc  GetUsersParamsOrder = "asc"
-	GetUsersParamsOrderDesc GetUsersParamsOrder = "desc"
+	Asc  GetUsersParamsOrder = "asc"
+	Desc GetUsersParamsOrder = "desc"
 )
 
 // Account defines model for Account.
@@ -2280,8 +2286,35 @@ type WorkersResponse struct {
 	Workers     []WorkerStatus  `json:"workers"`
 }
 
+// AccountEnabled defines model for AccountEnabled.
+type AccountEnabled = bool
+
+// AccountTemplateId defines model for AccountTemplateId.
+type AccountTemplateId = int64
+
+// ListLimit defines model for ListLimit.
+type ListLimit = int
+
+// ListName defines model for ListName.
+type ListName = string
+
+// ListOffset defines model for ListOffset.
+type ListOffset = int
+
+// ListOrderAccount defines model for ListOrderAccount.
+type ListOrderAccount string
+
+// ListSort defines model for ListSort.
+type ListSort = string
+
+// StatsFrom defines model for StatsFrom.
+type StatsFrom = time.Time
+
 // StatsTimezone defines model for StatsTimezone.
 type StatsTimezone = string
+
+// StatsTo defines model for StatsTo.
+type StatsTo = time.Time
 
 // StatsWindow defines model for StatsWindow.
 type StatsWindow = string
@@ -2291,13 +2324,16 @@ type Error = ErrorResponse
 
 // GetAccountsParams defines parameters for GetAccounts.
 type GetAccountsParams struct {
-	Limit      *int                    `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset     *int                    `form:"offset,omitempty" json:"offset,omitempty"`
-	Name       *string                 `form:"name,omitempty" json:"name,omitempty"`
-	Sort       *string                 `form:"sort,omitempty" json:"sort,omitempty"`
+	// Limit 每页条数（上限 200，超限裁剪到 200）
+	Limit      *ListLimit              `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset     *ListOffset             `form:"offset,omitempty" json:"offset,omitempty"`
+	Name       *ListName               `form:"name,omitempty" json:"name,omitempty"`
+	Sort       *ListSort               `form:"sort,omitempty" json:"sort,omitempty"`
 	Order      *GetAccountsParamsOrder `form:"order,omitempty" json:"order,omitempty"`
-	TemplateId *int64                  `form:"template_id,omitempty" json:"template_id,omitempty"`
-	Enabled    *bool                   `form:"enabled,omitempty" json:"enabled,omitempty"`
+	TemplateId *AccountTemplateId      `form:"template_id,omitempty" json:"template_id,omitempty"`
+
+	// Enabled 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关）
+	Enabled *AccountEnabled `form:"enabled,omitempty" json:"enabled,omitempty"`
 }
 
 // GetAccountsParamsOrder defines parameters for GetAccounts.
@@ -2305,9 +2341,13 @@ type GetAccountsParamsOrder string
 
 // GetAccountsUsageParams defines parameters for GetAccountsUsage.
 type GetAccountsUsageParams struct {
-	AccountIds string     `form:"account_ids" json:"account_ids"`
-	From       *time.Time `form:"from,omitempty" json:"from,omitempty"`
-	To         *time.Time `form:"to,omitempty" json:"to,omitempty"`
+	AccountIds string `form:"account_ids" json:"account_ids"`
+
+	// From 绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To）
+	From *StatsFrom `form:"from,omitempty" json:"from,omitempty"`
+
+	// To 绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid`
+	To *StatsTo `form:"to,omitempty" json:"to,omitempty"`
 
 	// Window 相对窗口（时长串，Go `time.ParseDuration` 形态，如 `24h`/`168h`/`2160h`）。
 	// 给出它时**必须**省略 `from`/`to`（同时给出 → 400 `reason=window_ambiguous`）。
@@ -2359,10 +2399,11 @@ type GetErrLogsParams struct {
 
 // GetGroupsParams defines parameters for GetGroups.
 type GetGroupsParams struct {
-	Limit  *int                  `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *int                  `form:"offset,omitempty" json:"offset,omitempty"`
-	Name   *string               `form:"name,omitempty" json:"name,omitempty"`
-	Sort   *string               `form:"sort,omitempty" json:"sort,omitempty"`
+	// Limit 每页条数（上限 200，超限裁剪到 200）
+	Limit  *ListLimit            `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *ListOffset           `form:"offset,omitempty" json:"offset,omitempty"`
+	Name   *ListName             `form:"name,omitempty" json:"name,omitempty"`
+	Sort   *ListSort             `form:"sort,omitempty" json:"sort,omitempty"`
 	Order  *GetGroupsParamsOrder `form:"order,omitempty" json:"order,omitempty"`
 }
 
@@ -2696,10 +2737,11 @@ type GetTempBalancesParamsOrder string
 
 // GetTemplatesParams defines parameters for GetTemplates.
 type GetTemplatesParams struct {
-	Limit  *int                     `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *int                     `form:"offset,omitempty" json:"offset,omitempty"`
-	Name   *string                  `form:"name,omitempty" json:"name,omitempty"`
-	Sort   *string                  `form:"sort,omitempty" json:"sort,omitempty"`
+	// Limit 每页条数（上限 200，超限裁剪到 200）
+	Limit  *ListLimit               `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset *ListOffset              `form:"offset,omitempty" json:"offset,omitempty"`
+	Name   *ListName                `form:"name,omitempty" json:"name,omitempty"`
+	Sort   *ListSort                `form:"sort,omitempty" json:"sort,omitempty"`
 	Order  *GetTemplatesParamsOrder `form:"order,omitempty" json:"order,omitempty"`
 }
 

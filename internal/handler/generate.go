@@ -9,7 +9,11 @@ package handler
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -exclude-tags user,supplier -package handler -o api.gen.go ../../openapi/openapi.yaml
 // 用户面（/user）：仅 user tag；独立包（共享 schema 类型在各自包内不冲突）。
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -include-tags user -package user -o user/api.gen.go ../../openapi/openapi.yaml
-// 供应商面（/api/user/supplier）：仅 supplier tag；独立包——业务端点路径为绝对
-// 路径（/api/user/supplier/*），故无独立 BaseURL，HandlerWithOptions 直接用 spec
-// 路径（与 user 面包同款）。账号端点复用管理面生成路由，不经本包（见 router.go）。
+// 供应商面（/api/user/supplier）：仅 supplier tag；独立包——该 tag 的 path 一律写
+// **绝对路径**（业务 5 op + §2.5 的账号/分组/模板子集 17 op，共 22 op），故**无独立
+// BaseURL**，HandlerWithOptions 直接用 spec 路径（与 user 面包同款）。账号/分组/模板
+// op 的 requestBody/响应/query 参数**全部 $ref 复用管理面 components**（零平行字段
+// 清单）；运行时由本包 wrapper 解析参数后转发到管理面 ServerInterfaceWrapper（同一批
+// AdminAPI handler——字段层零差异化）。**tag 即边界**：未登记为 supplier 的 path 不进
+// 本包 ⇒ 未注册 ⇒ 404（default-deny 是结构性的，不再有手写允许清单/guard）。
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -include-tags supplier -package supplier -o supplier/api.gen.go ../../openapi/openapi.yaml
