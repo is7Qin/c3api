@@ -13,9 +13,10 @@ package handler
 //     assignments、模板写面…）。**没有**手写允许清单/guard 需要维护——新增管理端点
 //     默认不对供应商暴露。
 //   - **字段层零差异化**：账号子集的 requestBody/响应/query 参数在 openapi 里
-//     $ref 复用管理面 components；运行时由生成的 wrapper 解析参数后**转发**到既有
-//     管理面 ServerInterfaceWrapper（同一批 AdminAPI handler、同一
-//     AccountConfigPatch/validateAccountPatch/accountFieldSpecs）。
+//     $ref 复用管理面 components；生成代码对同构标量生成同底层类型别名
+//     （ListLimit/AccountEnabled 等）。运行时由生成的 supplier wrapper 解析**一次**
+//     参数后，**类型化直调**同一批 AdminAPI handler（同一 AccountConfigPatch/
+//     validateAccountPatch/accountFieldSpecs）。
 //   - **作用域注入**：供应商面恒 {OwnerUID: jwtUser, Set:true}（仓储层每处 WHERE
 //     AND 归属谓词，越域 ⇒ 404）。
 
@@ -33,100 +34,126 @@ import (
 const SupplierSurfaceBaseURL = "/api/user/supplier"
 
 // supplierSurface 供应商面接口适配器：实现生成的 supplier.ServerInterface（22 op）。
-// 业务 op 直调 AdminAPI 自身方法（supplier_business.go）；账号/分组/模板 op 转发到
-// 管理面生成的 ServerInterfaceWrapper——**参数无需手工映射**：两面 path/query/header
-// 形状由同一批 components 定义，wrapper 自 `r` 解析（chi.URLParam 对 {id} 亦同名）。
+// 业务 op 直调 AdminAPI 自身方法（supplier_business.go）；账号/分组/模板 op 由生成的
+// supplier wrapper 解析**一次**参数后，**类型化直调**同一 AdminAPI 实现——id 透传、
+// query/header 显式映射到管理面参数类型，不再从 `r` 二次解析（消除两套生成路由的
+// chi 参数名 / query / header 规则长期同构的隐含耦合；编译器能发现映射遗漏）。
 type supplierSurface struct {
-	api   *AdminAPI
-	admin *ServerInterfaceWrapper
+	api *AdminAPI
 }
 
-// ---- 账号/分组/模板子集（§2.5）：转发管理面生成 wrapper。----
+// ---- 账号/分组/模板子集（§2.5）：类型化直调管理面 AdminAPI 实现。----
 
 // GetSupplierAccounts GET /api/user/supplier/accounts。
-func (s supplierSurface) GetSupplierAccounts(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierAccountsParams) {
-	s.admin.GetAccounts(w, r)
+func (s supplierSurface) GetSupplierAccounts(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierAccountsParams) {
+	s.api.GetAccounts(w, r, GetAccountsParams{
+		Limit:      params.Limit,
+		Offset:     params.Offset,
+		Name:       params.Name,
+		Sort:       params.Sort,
+		Order:      (*GetAccountsParamsOrder)(params.Order),
+		TemplateId: params.TemplateId,
+		Enabled:    params.Enabled,
+	})
 }
 
-// PostSupplierAccounts POST /api/user/supplier/accounts。
+// PostSupplierAccounts POST /api/user/supplier/accounts（body 由 AdminAPI 自 r 读一次）。
 func (s supplierSurface) PostSupplierAccounts(w http.ResponseWriter, r *http.Request) {
-	s.admin.PostAccounts(w, r)
+	s.api.PostAccounts(w, r)
 }
 
 // GetSupplierAccountsUsage GET /api/user/supplier/accounts/usage。
-func (s supplierSurface) GetSupplierAccountsUsage(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierAccountsUsageParams) {
-	s.admin.GetAccountsUsage(w, r)
+func (s supplierSurface) GetSupplierAccountsUsage(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierAccountsUsageParams) {
+	s.api.GetAccountsUsage(w, r, GetAccountsUsageParams{
+		AccountIds: params.AccountIds,
+		From:       params.From,
+		To:         params.To,
+		Window:     params.Window,
+		Timezone:   params.Timezone,
+	})
 }
 
 // PostSupplierAccountsBatchUpdate POST /api/user/supplier/accounts/batch-update。
 func (s supplierSurface) PostSupplierAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
-	s.admin.PostAccountsBatchUpdate(w, r)
+	s.api.PostAccountsBatchUpdate(w, r)
 }
 
 // PostSupplierAccountsBatchDelete POST /api/user/supplier/accounts/batch-delete。
 func (s supplierSurface) PostSupplierAccountsBatchDelete(w http.ResponseWriter, r *http.Request) {
-	s.admin.PostAccountsBatchDelete(w, r)
+	s.api.PostAccountsBatchDelete(w, r)
 }
 
 // PostSupplierAccountsBatchImportCodexOauth POST /api/user/supplier/accounts/batch-import-codex-oauth。
 func (s supplierSurface) PostSupplierAccountsBatchImportCodexOauth(w http.ResponseWriter, r *http.Request) {
-	s.admin.PostAccountsBatchImportCodexOauth(w, r)
+	s.api.PostAccountsBatchImportCodexOauth(w, r)
 }
 
 // PostSupplierAccountsBatchImportCodexPat POST /api/user/supplier/accounts/batch-import-codex-pat。
 func (s supplierSurface) PostSupplierAccountsBatchImportCodexPat(w http.ResponseWriter, r *http.Request) {
-	s.admin.PostAccountsBatchImportCodexPat(w, r)
+	s.api.PostAccountsBatchImportCodexPat(w, r)
 }
 
 // GetSupplierAccountsId GET /api/user/supplier/accounts/{id}。
-func (s supplierSurface) GetSupplierAccountsId(w http.ResponseWriter, r *http.Request, _ int64) {
-	s.admin.GetAccountsId(w, r)
+func (s supplierSurface) GetSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.GetAccountsId(w, r, id)
 }
 
-// PatchSupplierAccountsId PATCH /api/user/supplier/accounts/{id}（可选 If-Match 由
-// 管理面 wrapper 自请求头解析——两面契约同构）。
-func (s supplierSurface) PatchSupplierAccountsId(w http.ResponseWriter, r *http.Request, _ int64, _ supplier.PatchSupplierAccountsIdParams) {
-	s.admin.PatchAccountsId(w, r)
+// PatchSupplierAccountsId PATCH /api/user/supplier/accounts/{id}（可选 If-Match 显式
+// 映射到管理面参数——两面契约同构）。
+func (s supplierSurface) PatchSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64, params supplier.PatchSupplierAccountsIdParams) {
+	s.api.PatchAccountsId(w, r, id, PatchAccountsIdParams{IfMatch: params.IfMatch})
 }
 
 // DeleteSupplierAccountsId DELETE /api/user/supplier/accounts/{id}。
-func (s supplierSurface) DeleteSupplierAccountsId(w http.ResponseWriter, r *http.Request, _ int64) {
-	s.admin.DeleteAccountsId(w, r)
+func (s supplierSurface) DeleteSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.DeleteAccountsId(w, r, id)
 }
 
 // GetSupplierAccountsIdExt GET /api/user/supplier/accounts/{id}/ext。
-func (s supplierSurface) GetSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, _ int64) {
-	s.admin.GetAccountsIdExt(w, r)
+func (s supplierSurface) GetSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.GetAccountsIdExt(w, r, id)
 }
 
 // PutSupplierAccountsIdExt PUT /api/user/supplier/accounts/{id}/ext。
-func (s supplierSurface) PutSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, _ int64) {
-	s.admin.PutAccountsIdExt(w, r)
+func (s supplierSurface) PutSupplierAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.PutAccountsIdExt(w, r, id)
 }
 
 // GetSupplierAccountsIdGroups GET /api/user/supplier/accounts/{id}/groups。
-func (s supplierSurface) GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request, _ int64) {
-	s.admin.GetAccountsIdGroups(w, r)
+func (s supplierSurface) GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.GetAccountsIdGroups(w, r, id)
 }
 
 // PostSupplierAccountsIdRecover POST /api/user/supplier/accounts/{id}/recover。
-func (s supplierSurface) PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, _ int64) {
-	s.admin.PostAccountsIdRecover(w, r)
+func (s supplierSurface) PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.PostAccountsIdRecover(w, r, id)
 }
 
 // GetSupplierGroups GET /api/user/supplier/groups（只读候选列表；组写面不登记）。
-func (s supplierSurface) GetSupplierGroups(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierGroupsParams) {
-	s.admin.GetGroups(w, r)
+func (s supplierSurface) GetSupplierGroups(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierGroupsParams) {
+	s.api.GetGroups(w, r, GetGroupsParams{
+		Limit:  params.Limit,
+		Offset: params.Offset,
+		Name:   params.Name,
+		Sort:   params.Sort,
+		Order:  (*GetGroupsParamsOrder)(params.Order),
+	})
 }
 
 // GetSupplierTemplates GET /api/user/supplier/templates（只读；模板写面不登记）。
-func (s supplierSurface) GetSupplierTemplates(w http.ResponseWriter, r *http.Request, _ supplier.GetSupplierTemplatesParams) {
-	s.admin.GetTemplates(w, r)
+func (s supplierSurface) GetSupplierTemplates(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierTemplatesParams) {
+	s.api.GetTemplates(w, r, GetTemplatesParams{
+		Limit:  params.Limit,
+		Offset: params.Offset,
+		Name:   params.Name,
+		Sort:   params.Sort,
+		Order:  (*GetTemplatesParamsOrder)(params.Order),
+	})
 }
 
 // GetSupplierTemplatesId GET /api/user/supplier/templates/{id}（只读）。
-func (s supplierSurface) GetSupplierTemplatesId(w http.ResponseWriter, r *http.Request, _ int64) {
-	s.admin.GetTemplatesId(w, r)
+func (s supplierSurface) GetSupplierTemplatesId(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.GetTemplatesId(w, r, id)
 }
 
 // ---- 供应商业务面（§6.1/§6.2）：直调既有实现（supplier_business.go）。----
@@ -159,15 +186,13 @@ func (s supplierSurface) PostSupplierSettlement(w http.ResponseWriter, r *http.R
 
 // SupplierSurfaceHandler 供应商面生成路由（tag `supplier` 的 22 op，绝对路径、
 // 无 BaseURL；故 HandlerWithOptions 直接按 spec 路径注册）。业务 op 走本包 handler，
-// 账号/分组/模板 op 走得同一批生成 wrapper——**暴露面唯一事实源 = openapi**。
+// 账号/分组/模板 op 由生成 wrapper 解析一次参数后类型化直调同一批 AdminAPI 实现
+// ——**暴露面唯一事实源 = openapi**。
 func (h *AdminAPI) SupplierSurfaceHandler() http.Handler {
 	badRequest := func(w http.ResponseWriter, r *http.Request, err error) {
 		httpface.WriteErr(w, http.StatusBadRequest, err.Error())
 	}
-	return supplier.HandlerWithOptions(supplierSurface{
-		api:   h,
-		admin: &ServerInterfaceWrapper{Handler: h, ErrorHandlerFunc: badRequest},
-	}, supplier.ChiServerOptions{ErrorHandlerFunc: badRequest})
+	return supplier.HandlerWithOptions(supplierSurface{api: h}, supplier.ChiServerOptions{ErrorHandlerFunc: badRequest})
 }
 
 // 作用域注入键/读值下沉 domain（叶子包）——service/repository 与 handler 共用同一

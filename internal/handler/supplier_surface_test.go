@@ -191,6 +191,33 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 	}
 }
 
+// TestSupplierSurfaceParamContractPreserved S1：类型化直调后，非法 query / id /
+// header 仍由生成 wrapper 与 PatchAccountsId 的 parseIfMatch 判定，响应码与改造前
+// 一致（400），证明「同一次请求只解析一次」未改变对外契约。
+func TestSupplierSurfaceParamContractPreserved(t *testing.T) {
+	api := newTestHandler(t)
+	h := api.SupplierSurfaceHandler()
+
+	// 非法 query（limit 非整数）⇒ 生成 wrapper 绑定失败 ⇒ 400。
+	req := httptest.NewRequest(http.MethodGet, "/api/user/supplier/accounts?limit=abc", http.NoBody)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	// 非法 id（非整数）⇒ 400。
+	req = httptest.NewRequest(http.MethodGet, "/api/user/supplier/accounts/not-an-id", http.NoBody)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
+	// 非法 If-Match ⇒ PatchAccountsId 的 parseIfMatch 判定 ⇒ 400。
+	req = httptest.NewRequest(http.MethodPatch, "/api/user/supplier/accounts/1", strings.NewReader(`{"name":"x"}`))
+	req.Header.Set("If-Match", `"not-a-number"`)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+}
+
 // TestSupplierFundsStaticTokenForbidden §6.5 I5 / A24①：供应商面的资金写命令必须
 // **拒绝静态 admin token（403）**——改造前它在 RequireJWT 处先被 401 短死，永远到
 // 不了 handler 的 403；该凭证无 uid，无法担保资金事务内锁定并复核 users 行。
