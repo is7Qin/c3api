@@ -358,8 +358,15 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, reaso
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE supplier_balances SET available = available + $2, updated_at = now() WHERE supplier_user_id = $1`, supplierUID, amount); err != nil {
+		tag, err := tx.Exec(ctx, `UPDATE supplier_balances SET available = available + $2, updated_at = now() WHERE supplier_user_id = $1`, supplierUID, amount)
+		if err != nil {
 			return err
+		}
+		// 退还必须命中余额行：0 行 ⇒ 余额行缺失（`lockSupplierBalanceRow` 缺行返回
+		// (false,nil)），若就此提交，则单已被打成 rejected 而在途负债静默消失、
+		// available 不回（§6.3：状态迁移与退还同事务，0 行须整事务回滚）。
+		if tag.RowsAffected() == 0 {
+			return fmt.Errorf("%w: supplier_balances uid=%d missing while rejecting settlement", ErrInvalidInput, supplierUID)
 		}
 		out = s
 		return nil
