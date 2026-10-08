@@ -180,21 +180,35 @@ func (r *SupplierRepo) ListSupplierSettlements(ctx context.Context, uid int64, l
 	return out, total, rows.Err()
 }
 
-// ApplySettlement 申请结算单事务（§6.2；RC + clock_timestamp + request_key 幂等 I3 +
-// 写事务内复核操作者 I5）：
+// settlementRequestMode 申请结算事务的具名模式（§6.2/§6.3）：显式列出角色与余额前置，
+// 避免用 isAdmin bool 表达两个入口的差异。
+type settlementRequestMode struct {
+	name              string        // "supplier_request" / "admin_request"（错误上下文）
+	operatorRoles     []domain.Role // I5 锁内复核允许的角色；nil ⇒ lockFundsOperator 缺省 platform_admin
+	requireBalanceRow bool          // 代申请：目标须已有余额行（缺 ⇒ 404）+ 预锁
+}
+
+var (
+	// supplierRequestMode 供应商自申请：操作者须为供应商面可达具名用户；目标余额行缺失
+	// 由条件扣 0 行路径归为 400（不要求预存在）。
+	supplierRequestMode = settlementRequestMode{name: "supplier_request", operatorRoles: domain.SupplierSurfaceRoles()}
+	// adminRequestMode 管理员代申请：操作者缺省 = platform_admin；目标须已有余额行（404）。
+	adminRequestMode = settlementRequestMode{name: "admin_request", requireBalanceRow: true}
+)
+
+// applySettlementRequest 申请结算单事务执行器（supplier_request / admin_request 共用；
+// §6.2 ⓪→③）：单连接 + READ COMMITTED + 锁操作者（I5，按 mode 角色）→ [mode 要求时]
+// 预锁目标余额行（缺 ⇒ 404）→ applySettlementTx → 唯一冲突回滚后按 key 恢复。锁序：
+// 操作者 users → 目标 balances → settlements。applySettlementTx 内部步骤：
 //
-//	锁操作者 users 行（I5：status/role ∈ SupplierSurfaceRoles/token_version）；
-//	⓪ 扣款前按 key 预查（命中 ⇒ 校验参数 ⇒ 返回原单 / 409）；
+//	⓪ 扣款前按 key 预查（命中 ⇒ 校验参数 ⇒ 返回原单）；
 //	① 条件扣（UPDATE ... WHERE available >= amount RETURNING 的 FEFO idiom）；
 //	   0 行 ⇒ ①′ 用新 RC 语句重查 key；
 //	② 独立语句读期间起点（必须在 ① 之后，不得合并）；
 //	③ INSERT（status=pending, revision=1）；并发同 key 唯一冲突 ⇒ 回滚再读回原单。
-func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if req.AmountMillis <= 0 || req.RequestKey == "" || req.OperatorUID <= 0 || req.SupplierUID <= 0 {
-		return nil, ErrInvalidInput
-	}
+func (r *SupplierRepo) applySettlementRequest(ctx context.Context, mode settlementRequestMode, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if actor.UserID != req.OperatorUID {
-		return nil, fmt.Errorf("%w: operator mismatch", ErrFundsForbidden)
+		return nil, fmt.Errorf("%w: %s operator mismatch", ErrFundsForbidden, mode.name)
 	}
 	if r.pool == nil {
 		return nil, errSupplierNoPool
@@ -211,11 +225,20 @@ func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySett
 		return nil, err
 	}
 	defer tx.Rollback(ctx) // nolint:errcheck
-	// I5：写事务内复核操作者（supplier_request 的操作者须为供应商面可达的具名
-	// JWT 用户，且签名请求 token_version 与 DB 当前值一致）。静态 admin token 不
-	// 携 uid/ver，结构上无法构造 FundsActor ⇒ 供应商面天然拒绝。
-	if err := lockFundsOperator(ctx, tx, actor, domain.SupplierSurfaceRoles()...); err != nil {
+	// I5：写事务内复核操作者（supplier_request 须为供应商面可达具名 JWT 用户；admin_request
+	// 缺省 platform_admin）。静态 admin token 不携 uid/ver，结构上无法构造 FundsActor。
+	if err := lockFundsOperator(ctx, tx, actor, mode.operatorRoles...); err != nil {
 		return nil, err
+	}
+	if mode.requireBalanceRow {
+		// 目标余额行存在性（404）+ 预锁（锁序：操作者 users → 目标 balances 行）。
+		exists, err := lockSupplierBalanceRow(ctx, tx, req.SupplierUID)
+		if err != nil {
+			return nil, err
+		}
+		if !exists {
+			return nil, fmt.Errorf("%w: supplier_user_id=%d has no balance row", ErrNotFound, req.SupplierUID)
+		}
 	}
 	s, err := applySettlementTx(ctx, tx, req)
 	if err != nil {
@@ -223,17 +246,7 @@ func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySett
 		if errors.As(err, &kc) {
 			// 并发同 key 唯一冲突 ⇒ 回滚整事务，再按 key 读回原单（§6.2 I3）。
 			_ = tx.Rollback(ctx)
-			orig, ferr := r.getSettlementByKey(ctx, req.OperatorUID, req.RequestKey)
-			if ferr != nil {
-				return nil, ferr
-			}
-			if orig == nil {
-				return nil, err
-			}
-			if merr := matchSettlement(orig, req); merr != nil {
-				return nil, merr
-			}
-			return orig, nil
+			return r.recoverSettlementByKey(ctx, req, err)
 		}
 		return nil, err
 	}
@@ -241,6 +254,31 @@ func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySett
 		return nil, err
 	}
 	return s, nil
+}
+
+// recoverSettlementByKey 唯一冲突回滚后按 (operator, key) 读回原单并校验关键参数一致
+// （I3）；读不到 ⇒ 返回原冲突错误 conflictErr。
+func (r *SupplierRepo) recoverSettlementByKey(ctx context.Context, req domain.ApplySettlementRequest, conflictErr error) (*domain.SupplierSettlement, error) {
+	orig, err := r.getSettlementByKey(ctx, req.OperatorUID, req.RequestKey)
+	if err != nil {
+		return nil, err
+	}
+	if orig == nil {
+		return nil, conflictErr
+	}
+	if merr := matchSettlement(orig, req); merr != nil {
+		return nil, merr
+	}
+	return orig, nil
+}
+
+// ApplySettlement 供应商自申请结算单（§6.2；RC + clock_timestamp + request_key 幂等 I3
+// + 写事务内复核操作者 I5）：前置输入校验后委托 applySettlementRequest（supplierRequestMode）。
+func (r *SupplierRepo) ApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if req.AmountMillis <= 0 || req.RequestKey == "" || req.OperatorUID <= 0 || req.SupplierUID <= 0 {
+		return nil, ErrInvalidInput
+	}
+	return r.applySettlementRequest(ctx, supplierRequestMode, req, actor)
 }
 
 // applySettlementTx 申请结算单事务体（supplier_request / admin_request 共用；

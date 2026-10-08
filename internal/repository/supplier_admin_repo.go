@@ -581,65 +581,13 @@ RETURNING `+supplierSettlementColumns, id, expectedRevision, actor.UserID, ref)
 }
 
 // AdminApplySettlement 代申请（§6.3 admin_request）：与 supplier_request 共用同一
-// 条件扣/行锁/期间规则/五态流程，**仅 requested_operator = 管理员 uid**（§2.7-4）。
-// 目标须已有 supplier_balances 行（否则 404）——代申请不给无余额的新供应商创单。
-// 写事务内复核操作者（I5）。
+// 事务执行器（applySettlementRequest），**仅** 模式差异 = 操作者缺省 platform_admin +
+// 目标须已有 supplier_balances 行（否则 404）。requested_operator = 管理员 uid。
 func (r *SupplierRepo) AdminApplySettlement(ctx context.Context, req domain.ApplySettlementRequest, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if req.AmountMillis <= 0 || req.RequestKey == "" || req.SupplierUID <= 0 {
 		return nil, fmt.Errorf("%w: amount_millis must be > 0 and request_key required", ErrInvalidInput)
 	}
-	if actor.UserID != req.OperatorUID {
-		return nil, fmt.Errorf("%w: operator mismatch", ErrFundsForbidden)
-	}
-	if r.pool == nil {
-		return nil, errSupplierNoPool
-	}
-	ctx, cancel := context.WithTimeout(ctx, supplierTxTimeout)
-	defer cancel()
-	conn, err := r.pool.Acquire(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Release()
-	tx, err := conn.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback(ctx) // nolint:errcheck
-	if err := lockFundsOperator(ctx, tx, actor); err != nil {
-		return nil, err
-	}
-	// 目标余额行存在性（404）+ 预锁（锁序：操作者 users → 目标 balances 行）。
-	exists, err := lockSupplierBalanceRow(ctx, tx, req.SupplierUID)
-	if err != nil {
-		return nil, err
-	}
-	if !exists {
-		return nil, fmt.Errorf("%w: supplier_user_id=%d has no balance row", ErrNotFound, req.SupplierUID)
-	}
-	s, err := applySettlementTx(ctx, tx, req)
-	if err != nil {
-		var kc errSettlementKeyConflict
-		if errors.As(err, &kc) {
-			_ = tx.Rollback(ctx)
-			orig, ferr := r.getSettlementByKey(ctx, req.OperatorUID, req.RequestKey)
-			if ferr != nil {
-				return nil, ferr
-			}
-			if orig == nil {
-				return nil, err
-			}
-			if merr := matchSettlement(orig, req); merr != nil {
-				return nil, merr
-			}
-			return orig, nil
-		}
-		return nil, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, err
-	}
-	return s, nil
+	return r.applySettlementRequest(ctx, adminRequestMode, req, actor)
 }
 
 // billingProbe 扣费链健康探针（§6.5 新专用探针，单语句快照）：backlog 行数 +
