@@ -284,7 +284,7 @@ func (r *SupplierRepo) withFundsTx(ctx context.Context, actor domain.FundsActor,
 	return tx.Commit(ctx)
 }
 
-// readSettlementForUpdate 读取目标结算单（no-lock 取 supplier_user_id，供后续按
+// readSettlementHead 读取目标结算单（no-lock 取 supplier_user_id，供后续按
 // 锁序预锁 balances 行；status/revision/amount 由条件 UPDATE 复核）。
 func readSettlementHead(ctx context.Context, tx pgx.Tx, id int64) (supplierUID, amount, revision int64, status string, err error) {
 	err = tx.QueryRow(ctx, `SELECT supplier_user_id, amount_millis, revision, status FROM supplier_settlements WHERE id = $1`, id).

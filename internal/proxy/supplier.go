@@ -52,9 +52,10 @@ type SupplierView struct {
 	revision int64
 }
 
-// NewSupplierView 构造视图。shareBpDefault 用于「无行 / share_bp IS NULL」
-// 的显式默认注入（**不得依赖 map 零值**——Go map 零值 0 会把「无行」误判为
-// 「显式 0」⇒ 首个供应商永不产生收益 ⇒ 永不触发自动建行，§2.3）。
+// NewSupplierView 构造视图。传入的 share 已由装载器（repository.LoadSupplierView）
+// 对「无行 / share_bp IS NULL」显式注入默认分成率（§2.3）；本构造不依赖 map 零值
+// ——Go map 零值 0 会把「无行」误判为「显式 0」⇒ 首个供应商永不产生收益 ⇒
+// 永不触发自动建行。
 func NewSupplierView(owner map[int64]int64, share map[int64]int, revision int64) *SupplierView {
 	if owner == nil {
 		owner = map[int64]int64{}
@@ -220,9 +221,10 @@ func (s *SupplierSnapshot) AdmitSupplierAccount(accountID, ownerUID int64) (doma
 }
 
 // stampSupplier 收尾盖章 `usage_logs` 三收益列（出生定态；§4.2 四象限）。
-// 归属/分成来自**选中账号时捕获的**财务上下文（sel.SupplierFinance）——不在此
+// 归属/分成只取自**选中账号时捕获的**财务上下文（sel.SupplierFinance）——不在此
 // 回查 owner（视图换代/删除后收尾不再 Load/查 owner；转属/删除在途不改归属）。
-// 关闭态（p.supplier 未装配）→ uid 空、earn 0、credited true（新行不入收益索引）。
+// 未携带 Ready 财务（关闭态未装配 / 未归属 / sel 为 nil）→ uid 空、earn 0、
+// credited true（新行不入收益索引）。
 func (p *Proxy) stampSupplier(sel *scheduler.Selection, l *domain.UsageLog) {
 	if l == nil {
 		return

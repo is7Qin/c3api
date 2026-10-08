@@ -93,8 +93,9 @@ func (l *ViewLoader) Close(ctx context.Context) error { return nil }
 // Reload 外部触发的本地有界 Reload（accounts 写面失效路径 / 远端分派接入点）。
 func (l *ViewLoader) Reload(ctx context.Context) bool { return l.LoadOnce(ctx) }
 
-// LoadOnce 单次装载：成功 ⇒ Store 一次并清零 NotReady 计数；失败 ⇒ 保留旧视图 +
-// 限频 Warn（否则「功能开了但从未装载成功」表现为收益永远为零而无人察觉，§4.4）。
+// LoadOnce 单次装载：attempt 累计 +1；成功 ⇒ Store 一次并 success 累计 +1；
+// 失败 ⇒ 保留旧视图 + 限频 Warn（否则「功能开了但从未装载成功」表现为收益永远为
+// 零而无人察觉，§4.4）。attempt/success 均为单调累计计数（供 ops 面观测）。
 func (l *ViewLoader) LoadOnce(ctx context.Context) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
