@@ -138,6 +138,9 @@ var structFieldSpecs = []structFieldSpec{
 // 名字是可**重载**的：`expectedRevision` 在管理面前置条件里指 C，在运行时失效动词
 // 里指 K。故此处只声明"该名字存在且已被审阅"，"哪里读 C"由 cReadWhitelist 与
 // structFieldSpecs 按站点承担。
+//
+// 语义不同者应具名而非共用泛化名：结算单 CAS revision 用 `SettlementRevision` 显式
+// 命名（见下），不与账号代际 C/K 共用 `Revision` 这条泛化目，避免一条词表承载两种含义。
 var revisionVocabulary = map[string]string{
 	"AccountRevision":            "C：批量更新响应条目（回显）",
 	"ApprovedRevision":           "结算单审批的 CAS revision（风险评估核对绑定；非账号代际 C/K）",
@@ -158,6 +161,7 @@ var revisionVocabulary = map[string]string{
 	"Revision":                   "泛化名：healthEntry 的 Redis 记录槽位（值 = K）",
 	"SetIdentityRevision":        "K：ent 写入",
 	"SetLifecycleRevision":       "C：ent 写入",
+	"SettlementRevision":         "结算单 CAS revision：认领命令 approved→paying 前置条件（非账号代际 C/K）",
 	"expectedIdentityRevision":   "K：参数名（失效路径）",
 	"expectedRevision":           "可重载：管理面前置条件指 C，运行时失效动词指 K",
 	"identityRevision":           "K：参数/字段名（latch、continuation、失效重试）",

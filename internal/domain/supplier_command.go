@@ -26,16 +26,16 @@ var ErrSupplierInputInvalid = errors.New("supplier input invalid")
 // SupplierClaimCommand 认领（approved → paying）的纯输入命令（§6.5 C1/C2/C4）。
 // 只承载输入规则：金额、收款目标、风险证据。
 type SupplierClaimCommand struct {
-	AmountMillis int64
-	Revision     int64
-	Payee        SupplierPayeeSnapshot
-	Risk         SupplierRiskEvidence
+	AmountMillis       int64
+	SettlementRevision int64
+	Payee              SupplierPayeeSnapshot
+	Risk               SupplierRiskEvidence
 }
 
 // NormalizeAndValidate 规范化并校验认领命令（纯函数，无副作用）：
 //   - AmountMillis > 0；
 //   - 收款目标结构化非空（经 Payee.NormalizeAndValidate trim）；
-//   - 风险证据 reference/summary 非空（trim）且 ApprovedRevision == Revision。
+//   - 风险证据 reference/summary 非空（trim）且 ApprovedRevision == SettlementRevision。
 //
 // 返回规范化后的命令副本。金额与单据匹配等**事务内**判定不在此处。
 func (c SupplierClaimCommand) NormalizeAndValidate() (SupplierClaimCommand, error) {
@@ -46,7 +46,7 @@ func (c SupplierClaimCommand) NormalizeAndValidate() (SupplierClaimCommand, erro
 	if err != nil {
 		return c, err
 	}
-	risk, err := c.Risk.NormalizeAndValidate(c.Revision)
+	risk, err := c.Risk.NormalizeAndValidate(c.SettlementRevision)
 	if err != nil {
 		return c, err
 	}

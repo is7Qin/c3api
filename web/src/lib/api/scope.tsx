@@ -15,7 +15,7 @@
 // ApiClient 实现与 URL 不变，不复制 HTTP 客户端，不改鉴权逻辑。
 //
 // 默认值 = 管理端：未包 Provider 的既有路由（/app/accounts 等）行为逐字不变。
-import { createContext, useContext, type ReactNode } from 'react'
+import { createContext, useContext, useMemo, type ReactNode } from 'react'
 import { adminApi, type ApiClient } from './client'
 
 // SurfaceKind 当前页面所属的用户面。
@@ -23,6 +23,9 @@ export type SurfaceKind = 'admin' | 'supplier'
 
 // AccountApi 账户管理页实际使用的方法子集（能力接口缩小）。管理面与供应商面复用
 // 同一组件，故两面都只需这一子集；其余管理面/供应商面方法在类型上不可见。
+//
+// 这是**调用面约束**、非安全边界：窄接口只约束「页面代码可编译地调用什么」，服务端
+// 仍按 JWT 作用域注入归属并对越域请求返回 404；不得把前端的类型收窄当作鉴权/隔离依据。
 export type AccountApi = Pick<
   ApiClient,
   | 'listAccounts'
@@ -68,10 +71,11 @@ export function ApiScopeProvider({ value, children }: { value: SurfaceValue; chi
 }
 
 // useAccountSurface 账户页取「当前作用域（kind + 缩小的账户能力接口）」的唯一入口；
-// 后端按 JWT 作用域注入归属，前端仅负责把请求打到对应的 base 前缀。
+// 后端按 JWT 作用域注入归属，前端仅负责把请求打到对应的 base 前缀。用 useMemo 稳定
+// 返回对象，使其可安全用作 useEffect/useMemo 依赖而不引发多余重跑。
 export function useAccountSurface(): { kind: SurfaceKind; api: AccountApi } {
   const s = useContext(ApiScopeContext)
-  return { kind: s.kind, api: s.api }
+  return useMemo(() => ({ kind: s.kind, api: s.api }), [s.kind, s.api])
 }
 
 // useScopedApi 需要完整客户端能力（或自定义窄接口，如 SupplierConsoleApi）的组件入口。
