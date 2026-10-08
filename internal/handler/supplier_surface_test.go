@@ -18,6 +18,10 @@ import (
 	"github.com/is7qin/c3api/internal/service"
 )
 
+// staticAdminToken 测试用静态管理面 token（非 JWT）。用于验证供应商面资金入口
+// 的静态 token 拒绝（§6.5 I5 / A24①）。
+const staticAdminToken = "static-admin-token-for-test"
+
 // supplierRegisteredRoutes 供应商面**应有的**登记集（方法 + chi pattern），顺序无关。
 // 唯一事实源是 openapi 里 tag `supplier` 的 path；本表是它的守卫副本——任一侧漂移
 // （openapi 少/多登记一条，或生成面数量变化）都会让 A14④ 断言失败。
@@ -183,7 +187,7 @@ func TestSupplierUsageScopeDeniesForeignAccountIDs(t *testing.T) {
 
 	iss := auth.NewIssuer("s")
 	active := domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleSupplier}
-	h := NewSupplierSurface(api, iss, fakeUsers{sn: active})
+	h := NewSupplierSurface(api, iss, fakeUsers{sn: active}, staticAdminToken)
 
 	tok, err := iss.Issue(77, "s@example.com", string(domain.RoleSupplier), 0)
 	require.NoError(t, err)
@@ -251,7 +255,7 @@ func TestNewSupplierSurfaceGate(t *testing.T) {
 	api := newTestHandler(t)
 	iss := auth.NewIssuer("s")
 	active := domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleSupplier}
-	h := NewSupplierSurface(api, iss, fakeUsers{sn: active})
+	h := NewSupplierSurface(api, iss, fakeUsers{sn: active}, staticAdminToken)
 
 	// 未鉴权 ⇒ 401（RequireJWT 最外层）。
 	req := httptest.NewRequest(http.MethodGet, SupplierSurfaceBaseURL+"/accounts", http.NoBody)
@@ -271,10 +275,33 @@ func TestNewSupplierSurfaceGate(t *testing.T) {
 	// 非供应商角色（user）⇒ 403（RequireRole 快照基）。
 	userTok, err := iss.Issue(88, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
-	plain := NewSupplierSurface(api, iss, fakeUsers{sn: domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleUser}})
+	plain := NewSupplierSurface(api, iss, fakeUsers{sn: domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleUser}}, staticAdminToken)
 	req = httptest.NewRequest(http.MethodGet, SupplierSurfaceBaseURL+"/accounts", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+userTok)
 	rec = httptest.NewRecorder()
 	plain.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusForbidden, rec.Code, "user 角色不得进入供应商面")
+}
+
+// TestSupplierStaticTokenFundsForbidden 静态 admin token 命中供应商面**资金写命令**
+// ⇒ 403（§6.5 I5 / A24①）；打非资金路径仍按原鉴权链 ⇒ 401（不扩大 403 面）。
+func TestSupplierStaticTokenFundsForbidden(t *testing.T) {
+	api := newTestHandler(t)
+	iss := auth.NewIssuer("s")
+	active := domain.UserSnapshot{Status: domain.UserStatusActive, Role: domain.RoleSupplier}
+	h := NewSupplierSurface(api, iss, fakeUsers{sn: active}, staticAdminToken)
+
+	// 资金写命令 + 静态 token ⇒ 403（最外层资金门拒绝，不进生成面）。
+	req := httptest.NewRequest(http.MethodPost, SupplierSurfaceBaseURL+"/settlements", http.NoBody)
+	req.Header.Set("Authorization", "Bearer "+staticAdminToken)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusForbidden, rec.Code, "静态 admin token 不得执行资金命令")
+
+	// 非资金路径 + 静态 token ⇒ 交回既有鉴权链（非 JWT）⇒ 401（非 403）。
+	req = httptest.NewRequest(http.MethodGet, SupplierSurfaceBaseURL+"/settlements", http.NoBody)
+	req.Header.Set("Authorization", "Bearer "+staticAdminToken)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusUnauthorized, rec.Code, "静态 token 打非资金面应为 401")
 }

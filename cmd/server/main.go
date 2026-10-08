@@ -703,7 +703,7 @@ func main() {
 	// 每处 WHERE AND 归属谓词（§2.5）。
 	var supplierHandler http.Handler
 	if cfg.Supplier.Enabled {
-		supplierHandler = handler.NewSupplierSurface(h, iss, auth)
+		supplierHandler = handler.NewSupplierSurface(h, iss, auth, cfg.Admin.Token)
 	}
 
 	srv := server.NewServer(server.Options{
