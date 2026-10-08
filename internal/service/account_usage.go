@@ -21,9 +21,8 @@ import (
 // 不再 import sdkbridge。
 
 // AccountUsageCredential 账号 codex 凭据组装（纯数据面零上游调用）：
-// **先走 scoped 单读** store.GetAccount（供应商面越域 ⇒ ErrNotFound，既不读 ext
-// 也不探上游——§2.5 禁止「先按 id 取行、再应用层比归属」）→ store.GetAccountExt
-// 取 ext 行（api-key 无 ext 行 → ErrNotFound → nil/nil）
+// **单次 owner-scoped `store.GetOwnedAccountExt`**——归属谓词 AND 进同一条 SQL
+// （越域 / 账号缺失 / 无 ext 行 ⇒ nil/nil；§2.5 禁止「先按 id 取行、再应用层比归属」）
 // → CredentialFromExt 派生 cred（codex-oauth/codex-pat 列组）→ 非 codex
 // 凭据（全空）→ nil/nil。调用方（handler fan-out）凭 nil/non-nil 分流：
 // nil = 无上游能力（null 快照），non-nil = 调 prober。

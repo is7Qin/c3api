@@ -140,6 +140,7 @@ var structFieldSpecs = []structFieldSpec{
 // structFieldSpecs 按站点承担。
 var revisionVocabulary = map[string]string{
 	"AccountRevision":            "C：批量更新响应条目（回显）",
+	"ApprovedRevision":           "结算单审批的 CAS revision（风险评估核对绑定；非账号代际 C/K）",
 	"AddIdentityRevision":        "K：ent 相对自增",
 	"AddLifecycleRevision":       "C：ent 相对自增（水位必须无条件推进）",
 	"ErrMissingExpectedRevision": "名字含 C、语义是 K：失效事件的 K 缺失校验",
