@@ -85,7 +85,7 @@ var cReadWhitelist = map[string]string{
 	"internal/handler/convert.go#toAPIAccount":                     "回显：账号响应携带 C",
 	"internal/handler/convert.go#toAPIAccountView":                 "回显：账号视图携带 C",
 	"internal/repository/account_repo.go#CreateAccount":            "写入：创建时把入参 C 投影到行",
-	"internal/repository/batch.go#UpdateAccountsBatch":             "回显：批量写把行锁内重取的新 C 回传",
+	"internal/repository/batch.go#updateAccountsBatch":             "回显：批量写把行锁内重取的新 C 回传",
 	"internal/repository/group_repo.go#CompileStalenessSnapshot":   "水位：MAX(lifecycle_revision) 是重编译触发量",
 	"internal/repository/mapping.go#toDomainAccount":               "回显：行 → 域映射携带 C",
 	"internal/scheduler/compile_backstop.go#snapshotToProbeCounts": "水位：编译兜底探针的 C 上界",
