@@ -11,6 +11,9 @@ import (
 	"fmt"
 	"time"
 
+	"entgo.io/ent/dialect"
+	entsql "entgo.io/ent/dialect/sql"
+
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
@@ -22,7 +25,13 @@ import (
 // （持久身份 jsonb，仅 installation_id；service 导入时自动生成、持久复用）+
 // codex_oauth_* 组 + codex_pat_key 组；列组类型约束由 service 校验）。未来
 // claude oauth 等新类型 → 新增 ext_claude_repo.go 同构。
-type AccountExtRepo struct{ client *ent.Client }
+type AccountExtRepo struct {
+	client *ent.Client
+	// driver 为原始 dialect.Driver：TryInsert 的 owner 锁账号（SELECT ... FOR UPDATE）
+	// 走 raw SQL（ent 生成器无 FOR UPDATE 入口）；WithTx/tx 面事务驱动保证 raw SQL
+	// 与 ent 构建器同连接。
+	driver dialect.Driver
+}
 
 // extIdentityField 标识 ext 凭据面里参与"是否改身份"判定的字段。凭据面整体是
 // 身份类（spec §5.5 的 ext 行）：管理面换凭据即换账号身份 ⇒ 推进 K ⇒ 在途判定
@@ -236,39 +245,66 @@ func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.Account
 // false = 冲突（已有行），调用方应沿用存量身份后走 UpsertAccountExt 写令牌。
 // 账号缺 id（FK）/ 越域 → error（越域 ⇒ ErrNotFound）。
 //
-// **作用域（§2.5）**：插入与「账号归属可见性」在同一事务内完成——写入前以 owner
-// 谓词复核账号（越域 ⇒ ErrNotFound，不落 ext 行），故本方法即使被作用域上下文调用
-// 也不会给他人账号落 ext。
+// **作用域（§2.5）**：插入与「账号归属可见性」在同一事务与同一 owner 锁边界内完成
+// ——写前以 owner 谓词 `SELECT ... FOR UPDATE` **锁账号行**（越域/缺失 ⇒ ErrNotFound，
+// 不落 ext 行），再在同一事务内 INSERT。并发转属必须更新同一 accounts 行，故被本锁
+// 挡住、直到本事务结束——不存在「先无锁 Exist 通过、另一连接转属并提交、随后 INSERT
+// 不复核 owner」的窗口（spec S:139/S:826）。
 func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error) {
-	tx, err := r.client.Tx(ctx)
+	var inserted bool
+	err := withWriteTx(ctx, r.driver, func(client *ent.Client, txDrv dialect.Driver) error {
+		if err := lockOwnedAccountForUpdate(ctx, txDrv, e.AccountID); err != nil {
+			return err
+		}
+		err := client.AccountExt.Create().
+			SetAccountID(e.AccountID).
+			SetCredentialType(string(e.CredentialType)).
+			SetCodexIdentity(e.CodexIdentity).
+			SetNillableCodexOauthToken(e.CodexOAuthToken).
+			SetNillableCodexOauthRefreshToken(e.CodexOAuthRefreshToken).
+			SetNillableCodexOauthExpiresAt(e.CodexOAuthExpiresAt).
+			SetNillableCodexPatKey(e.CodexPATKey).
+			SetNillableCodexEmail(e.CodexEmail).
+			SetNillableCodexAccountID(e.CodexAccountID).
+			OnConflictColumns(accountext.FieldAccountID).
+			DoNothing().
+			Exec(ctx)
+		inserted = err == nil
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		return nil // err == sql.ErrNoRows：冲突，先写者已落行（不覆盖）
+	})
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback()
-	if err := requireOwnedAccountInTx(ctx, tx.Client(), e.AccountID); err != nil {
-		return false, err
+	return inserted, nil
+}
+
+// lockOwnedAccountForUpdate 在**写事务内**以 owner 谓词加 `FOR UPDATE` 锁账号行
+// （spec §2.5）：越域/缺失 ⇒ ErrNotFound（行数 0）。作用域未注入（管理面）时仅锁
+// 账号存在。持锁期间并发转属（UPDATE accounts ... supplier_user_id）会阻塞在行锁
+// 上，直到本事务结束——故「owner 复核」与「ext 写/读」之间无转属窗口。
+func lockOwnedAccountForUpdate(ctx context.Context, driver dialect.Driver, accountID int64) error {
+	query := `SELECT id FROM accounts WHERE id = $1`
+	args := []any{accountID}
+	if s := domain.AccountScopeFrom(ctx); s.Set {
+		args = append(args, s.OwnerUID)
+		query += fmt.Sprintf(" AND supplier_user_id = $%d", len(args))
 	}
-	err = tx.AccountExt.Create().
-		SetAccountID(e.AccountID).
-		SetCredentialType(string(e.CredentialType)).
-		SetCodexIdentity(e.CodexIdentity).
-		SetNillableCodexOauthToken(e.CodexOAuthToken).
-		SetNillableCodexOauthRefreshToken(e.CodexOAuthRefreshToken).
-		SetNillableCodexOauthExpiresAt(e.CodexOAuthExpiresAt).
-		SetNillableCodexPatKey(e.CodexPATKey).
-		SetNillableCodexEmail(e.CodexEmail).
-		SetNillableCodexAccountID(e.CodexAccountID).
-		OnConflictColumns(accountext.FieldAccountID).
-		DoNothing().
-		Exec(ctx)
-	inserted := err == nil
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, err
+	query += " FOR UPDATE"
+	rows := &entsql.Rows{}
+	if err := driver.Query(ctx, query, args, rows); err != nil {
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return false, err
+	defer rows.Close() // nolint:errcheck // Rows.Err reports iteration failures.
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("%w: account_id=%d missing or outside scope", ErrNotFound, accountID)
 	}
-	return inserted, nil // err == sql.ErrNoRows：冲突，先写者已落行（不覆盖）
+	return nil
 }
 
 // WriteOAuthRotation 轮转回写（SDK 接入 §1——SDK OnTokenRotated 回调落库
@@ -330,25 +366,22 @@ func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmai
 }
 
 // accountExtQuery ext 查询基座：作用域未注入（管理面全量）⇒ 不附加谓词；供应商面
-// ⇒ 限定在「本归属账号」集合内（`account_id IN (SELECT id FROM accounts
-// WHERE supplier_user_id=$n)`）。**与账号单读同谓词**：不额外过滤软删——软删判据
-// 由调用方按行内 `deleted_at` 自行决定（导入路径据此给出「账号已删除」的明确
-// 行级文案，而不是把已删行伪装成键冲突）。
+// ⇒ 限定在「本归属账号」内——owner 谓词经**关联子查询（EXISTS）AND 进同一条 SQL**，
+// 在 ext 查询**执行时**参与 WHERE。**不得**先执行 `accounts.IDs(ctx)` 再以物化旧
+// id 集独立查 ext（那会把 service 的 TOCTOU 搬到 repository：两条语句之间转属即读
+// 到他人 ext，违反 spec S:139/S:826）。
+//
+// **与账号单读同谓词**：不额外过滤软删——软删判据由调用方按行内 `deleted_at` 自行
+// 决定（导入路径据此给出「账号已删除」的明确行级文案，而不是把已删行伪装成键冲突）。
 func (r *AccountExtRepo) accountExtQuery(ctx context.Context) *ent.AccountExtQuery {
 	q := r.client.AccountExt.Query()
 	s := domain.AccountScopeFrom(ctx)
 	if !s.Set {
 		return q
 	}
-	owned, err := r.client.Account.Query().
-		Where(accountOwnerPred(ctx)...).
-		IDs(ctx)
-	if err != nil || len(owned) == 0 {
-		// 归属集取不到 ⇒ 空集（fail-closed：作用域已声明但归属不可判定一律看不到，
-		// 不放行全量）。
-		return q.Where(accountext.AccountIDIn())
-	}
-	return q.Where(accountext.AccountIDIn(owned...))
+	// 归属集由子查询判定：命中 0 行（无归属账号）自然看不到任何 ext（fail-closed，
+	// 与旧「空 id 集」同义，但不再有两次查询之间的转属窗口）。
+	return q.Where(accountext.HasAccountWith(accountOwnerPred(ctx)...))
 }
 
 // accountOwnerFilter 把归属谓词 AND 进 accounts 上的 UPDATE（`WHERE id = $1 AND
@@ -374,9 +407,11 @@ func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*d
 	return toDomainAccountExt(row), nil
 }
 
-// GetOwnedAccountExt 作用域内的 ext 单读（§2.5）：owner 谓词由子查询 AND 进
-// **同一条 SQL**（`account_id IN (SELECT id FROM accounts WHERE supplier_user_id=$n)`），
-// 越域 ⇒ 零行 ⇒ ErrNotFound——不存在「先读 ext、再应用层比归属」的窗口。
+// GetOwnedAccountExt 作用域内的 ext 单读（§2.5）：owner 谓词经**关联子查询
+// （EXISTS）AND 进同一条 SQL**，在 ext 查询**执行时**参与 WHERE——越域 ⇒ 零行 ⇒
+// ErrNotFound。不存在「先执行 accounts.IDs 取 owner 集合、再以物化旧 id 集独立查
+// ext」的两查询窗口（第二条 WHERE 不含 owner 时，两条语句之间转属即读到他人凭据，
+// 违反 spec S:139/S:826）。
 // 无 ext 行（api-key）同样 ErrNotFound（调用方按「无上游能力」处理，与
 // GetAccountExt 同族错误，不区分缺失原因以免泄漏归属）。
 //
@@ -384,15 +419,11 @@ func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*d
 func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	q := r.client.AccountExt.Query().Where(accountext.AccountIDEQ(accountID))
 	if s := domain.AccountScopeFrom(ctx); s.Set {
-		owned, err := r.client.Account.Query().
-			Where(account.ID(accountID)).
-			Where(accountOwnerPred(ctx)...).
-			Where(account.DeletedAtIsNil()).
-			IDs(ctx)
-		if err != nil {
-			return nil, err
-		}
-		q = q.Where(accountext.AccountIDIn(owned...))
+		q = q.Where(accountext.HasAccountWith(
+			account.ID(accountID),
+			account.SupplierUserID(s.OwnerUID),
+			account.DeletedAtIsNil(),
+		))
 	}
 	row, err := q.Only(ctx)
 	if err != nil {

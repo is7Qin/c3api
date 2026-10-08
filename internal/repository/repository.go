@@ -111,7 +111,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		Billing:        &BillingRepo{client: client, driver: drv, pool: pool},
 		Partitions:     &PartitionRepo{driver: drv},
 		TemplateExts:   &TemplateExtRepo{client: client},
-		AccountExts:    &AccountExtRepo{client: client},
+		AccountExts:    &AccountExtRepo{client: client, driver: drv},
 		EmailTemplates: &EmailTemplateRepo{client: client},
 		BalanceLogs:    &BalanceLogRepo{client: client},
 		Client:         client,
