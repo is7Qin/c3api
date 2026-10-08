@@ -88,8 +88,9 @@ const router = createBrowserRouter([
             // 整个供应商域注入 supplierApi（base /api/user/supplier）作用域。
             { element: <SupplierScope />, children: [
               { index: true, element: <SupplierConsole /> },
-              // 账号管理页**复用同一 Accounts 组件**（作用域参数化，只切 BaseURL）。
-              { path: 'accounts', element: <Accounts scope="supplier" /> },
+              // 账号管理页**复用同一 Accounts 组件**（作用域由 Provider 单一对象决定，
+              // 不再传 scope prop）。
+              { path: 'accounts', element: <Accounts /> },
             ] },
           ] },
         ],
@@ -119,11 +120,12 @@ function RequireSupplier() {
   return <Outlet />
 }
 
-// 供应商作用域注入：整个供应商域（控制台 + 账号页）的 useScopedApi() 返回
-// supplierApi（base /api/user/supplier）。账号页管理面/supplier 复用同一组件。
+// 供应商作用域注入：整个供应商域（控制台 + 账号页）的作用域对象为
+// { kind: 'supplier', api: supplierApi }（base /api/user/supplier）。账号页管理面/
+// supplier 复用同一组件，kind 与客户端同取自**一个对象**。
 function SupplierScope() {
   return (
-    <ApiScopeProvider client={supplierApi}>
+    <ApiScopeProvider value={{ kind: 'supplier', api: supplierApi }}>
       <Outlet />
     </ApiScopeProvider>
   )

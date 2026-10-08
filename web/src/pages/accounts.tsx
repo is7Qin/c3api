@@ -7,7 +7,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useScopedApi } from '@/lib/api/scope'
+import { useAccountSurface } from '@/lib/api/scope'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import { BatchBar } from '@/components/batch-bar'
@@ -347,15 +347,12 @@ const emptyBatchForm = (): BatchForm => ({
 // 作用域参数化（spec 2026-10-09 §6.1/§10）：**同一页面组件**在管理面（/app/accounts）与
 // 供应商控制台（/app 之外的 /user/supplier/accounts）复用，只切 API base 前缀——
 // 供应商面走 supplierApi（/api/user/supplier/*），管理面走 adminApi（/api/admin/*）。
+// 作用域（kind + 客户端）取自 ApiScopeProvider 的**单一对象**，不再有独立 scope prop。
 // 能力集完全一致（创建/编辑/批改/批删/启停/缓存域/倍率/ext Codex 凭据/批量导入/恢复/用量）；
 // 差异仅在：供应商面 `supplier_user_id` 不展示、不可编辑（服务端恒为 JWT 本人）。
-export interface AccountsProps {
-  scope?: 'admin' | 'supplier'
-}
-
-export default function Accounts({ scope = 'admin' }: AccountsProps = {}) {
-  const api = useScopedApi()
-  const isSupplierScope = scope === 'supplier'
+export default function Accounts() {
+  const { kind, api } = useAccountSurface()
+  const isSupplierScope = kind === 'supplier'
   const { t } = useTranslation()
   const qc = useQueryClient()
 
