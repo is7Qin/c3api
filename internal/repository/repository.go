@@ -378,10 +378,10 @@ func (r *Repository) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.A
 	return r.Accounts.ListAccounts(ctx, q)
 }
 
-// MissingOwnedAccountID 报告 ids 中第一个越出当前作用域的 id（usage 聚合面的整批
+// FindMissingOwnedAccountID 报告 ids 中第一个越出当前作用域的 id（usage 聚合面的整批
 // 前置校验；作用域未注入 = 管理面全量 ⇒ 恒 false）。
-func (r *Repository) MissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
-	return r.Accounts.MissingOwnedAccountID(ctx, ids)
+func (r *Repository) FindMissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
+	return r.Accounts.FindMissingOwnedAccountID(ctx, ids)
 }
 
 func (r *Repository) FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error {

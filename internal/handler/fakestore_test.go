@@ -487,8 +487,8 @@ func (f *fakeStore) GetOwnedAccountExt(ctx context.Context, accountID int64) (*d
 	return &c, nil
 }
 
-// MissingOwnedAccountID ids 中第一个越出当前作用域的 id 镜像（作用域未设 ⇒ 恒 false）。
-func (f *fakeStore) MissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
+// FindMissingOwnedAccountID ids 中第一个越出当前作用域的 id 镜像（作用域未设 ⇒ 恒 false）。
+func (f *fakeStore) FindMissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	scope := domain.AccountScopeFrom(ctx)

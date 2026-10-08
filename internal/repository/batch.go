@@ -194,6 +194,21 @@ func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p 
 func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) ([]AccountWriteResult, error) {
 	var results []AccountWriteResult
 	if err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		// 归属相关 users 行**先**锁（§5.7 固定锁序 users → accounts，与禁用路径
+		// 「users → 连带停账号」同序；反序会与禁用路径构成 ABBA 死锁面）。当前
+		// 归属用户也在锁定集合内，理由见下方最终态复核。
+		currentOwners, err := loadAccountOwners(ctx, client, ids)
+		if err != nil {
+			return err
+		}
+		lockSet := make([]int64, 0, len(currentOwners)+1)
+		lockSet = append(lockSet, currentOwners...)
+		if p.SupplierUserID != nil {
+			lockSet = append(lockSet, *p.SupplierUserID)
+		}
+		if err := lockOwnershipUsers(ctx, driver, lockSet); err != nil {
+			return err
+		}
 		locked, err := lockAccountsForUpdate(ctx, driver, ids)
 		if err != nil {
 			return err
@@ -230,11 +245,20 @@ func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p Ac
 				return err
 			}
 		}
-		// 归属写入（§2.5）：分配（&uid>0）时锁目标 users 行并校验；&0 = 清空
-		// （回平台自有）无需目标校验。
-		if p.SupplierUserID != nil && *p.SupplierUserID > 0 {
-			if err := validateOwnershipTarget(ctx, driver, *p.SupplierUserID); err != nil {
-				return err
+		// 归属最终态复核（§2.5/A13⑤）：**每个账号**按补丁合并后的最终归属判定
+		// ——不是只在补丁出现 supplier_user_id 时才查。普通 `{enabled:true}` 撞上
+		// 已被禁用/降权的归属供应商同样被拒（否则即「重新启用 disabled 供应商的
+		// 账号」，spec I1 反例）。users 行已在上方锁定，禁用路径无法在本事务期间
+		// 提交 ⇒ 无 TOCTOU。
+		for _, row := range locked {
+			finalOwner := row.SupplierUserID
+			if p.SupplierUserID != nil {
+				finalOwner = *p.SupplierUserID
+			}
+			if finalOwner > 0 {
+				if err := validateOwnershipTarget(ctx, driver, finalOwner); err != nil {
+					return err
+				}
 			}
 		}
 		pre := make(map[int64]AccountFieldValues, len(locked))
@@ -337,6 +361,30 @@ func (r *GroupRepo) UpdateGroupsBatch(ctx context.Context, ids []int64, p GroupP
 		}
 	}
 	return tx.Commit()
+}
+
+// loadAccountOwners 读出 ids 的当前归属（0 = 平台自有），用于「锁哪些 users 行」
+// 这一**锁集合**决策——不是写入判据（写入判据来自 FOR UPDATE 后回读的
+// AccountFieldValues）。无锁读：即使并发转属改了这一集合，最坏是多锁/少锁一个
+// users 行，而真正写入仍由锁内复核串行化保证正确。
+func loadAccountOwners(ctx context.Context, client *ent.Client, ids []int64) ([]int64, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	rows, err := client.Account.Query().
+		Where(account.IDIn(sortedUniqueIDs(ids)...)).
+		Select(account.FieldSupplierUserID).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		if row.SupplierUserID != nil {
+			out = append(out, *row.SupplierUserID)
+		}
+	}
+	return out, nil
 }
 
 // errMissingID 把 per-id 执行错误映射为 ErrNotFound 包装（与 diffMissing 同格式）。

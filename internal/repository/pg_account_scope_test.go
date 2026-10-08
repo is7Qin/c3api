@@ -62,6 +62,51 @@ func seedCodexKeyExtPG(t *testing.T, repos *repository.Repository, accountID int
 	require.NoError(t, err)
 }
 
+// TestPGAccountLifecycleLockOrder spec I1/A13⑤：普通 `{enabled:true}` 不得复活
+// 「已禁用供应商」名下账号——批量更新按 users → accounts 协议锁**当前与目标
+// owner**，并复核最终归属用户仍 active/可达。
+func TestPGAccountLifecycleLockOrder(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	owner := seedSupplierUser(t, repos, "lifecycle-owner@example.com")
+	other := seedSupplierUser(t, repos, "lifecycle-other@example.com")
+
+	acc := seedOwnedAccount(t, repos, tpl.ID, owner.ID, "lifecycle-acc")
+
+	// ① 正常态：普通配置写（enabled=true 幂等）通过。
+	enabled := true
+	_, err := repos.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{Enabled: &enabled})
+	require.NoError(t, err, "归属供应商 active 时照常可写")
+
+	// ② 禁用归属供应商（连带停其名下账号：user_repo 同事务 SetEnabled(false)）。
+	disabled := domain.UserStatusDisabled
+	_, err = repos.UpdateUser(ctx, &repository.UserPatch{ID: owner.ID, Status: &disabled})
+	require.NoError(t, err)
+	after, err := repos.GetAccount(ctx, acc.ID)
+	require.NoError(t, err)
+	require.False(t, after.Enabled, "禁用供应商 ⇒ 名下账号连带停用")
+
+	// ③ **重新启用** ⇒ 拒绝（否则即「disabled 供应商的 enabled 账号」复活）。
+	_, err = repos.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{Enabled: &enabled})
+	require.ErrorIs(t, err, repository.ErrInvalidInput,
+		"禁用供应商名下的账号不得被重新启用（spec I1）")
+	require.Contains(t, err.Error(), "active supplier-surface user")
+
+	// ④ 事务回滚：账号仍为 disabled（拒绝发生在写之前）。
+	after, err = repos.GetAccount(ctx, acc.ID)
+	require.NoError(t, err)
+	require.False(t, after.Enabled, "拒绝路径不得留下半套写入")
+
+	// ⑤ 转属给**有效**供应商仍需锁定当前（失效）owner 并复核目标：本条断言
+	// 「目标校验照旧生效」（active 目标可分配）。
+	_, err = repos.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{SupplierUserID: &other.ID})
+	require.NoError(t, err, "转属给 active 供应商应成功（当前 owner 失效不阻塞转出）")
+	moved, err := repos.GetAccount(ctx, acc.ID)
+	require.NoError(t, err)
+	require.Equal(t, other.ID, moved.SupplierUserID)
+}
+
 // TestPGAccountScopeOwnershipPredicate A14③：同一批 id 在管理面（无作用域）与供应商
 // 面（作用域）下返回不同的可见集——越域 id 0 行（ErrNotFound），不泄漏存在性。
 func TestPGAccountScopeOwnershipPredicate(t *testing.T) {
@@ -89,17 +134,17 @@ func TestPGAccountScopeOwnershipPredicate(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrNotFound, "越域单读必须 ErrNotFound")
 
 	// 整批作用域校验：全部本属 ⇒ 无缺失；混入他人 ⇒ 报出该 id。
-	_, missing, err := repos.MissingOwnedAccountID(scopeCtx(owner.ID), []int64{mine.ID})
+	_, missing, err := repos.FindMissingOwnedAccountID(scopeCtx(owner.ID), []int64{mine.ID})
 	require.NoError(t, err)
 	require.False(t, missing)
 
-	badID, missing, err := repos.MissingOwnedAccountID(scopeCtx(owner.ID), []int64{mine.ID, theirs.ID})
+	badID, missing, err := repos.FindMissingOwnedAccountID(scopeCtx(owner.ID), []int64{mine.ID, theirs.ID})
 	require.NoError(t, err)
 	require.True(t, missing, "混入他人 id 必须报缺失")
 	require.Equal(t, theirs.ID, badID)
 
 	// 管理面缺省作用域 ⇒ 恒无缺失（既有语义不变）。
-	_, missing, err = repos.MissingOwnedAccountID(ctx, []int64{theirs.ID})
+	_, missing, err = repos.FindMissingOwnedAccountID(ctx, []int64{theirs.ID})
 	require.NoError(t, err)
 	require.False(t, missing, "管理面无作用域 ⇒ 恒放行")
 }

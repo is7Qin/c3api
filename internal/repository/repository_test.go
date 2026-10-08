@@ -712,6 +712,14 @@ func TestUpdateAccountsBatch(t *testing.T) {
 	enabled := true
 
 	tr.pool.ExpectBegin()
+	// 锁集合决策读（无锁）：先看这批账号当前归属，决定要锁哪些 users 行——锁序
+	// 是 users → accounts（§5.7），故它必须发生在行锁 SELECT 之前。两账号均平台
+	// 自有（supplier_user_id = 0）⇒ 无 users 行需锁。
+	tr.pool.ExpectQuery(q(`SELECT "accounts"."id", "accounts"."supplier_user_id" FROM "accounts" WHERE`)).
+		WithArgs(int64(2), int64(5)).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "supplier_user_id"}).
+			AddRow(int64(2), nil).
+			AddRow(int64(5), nil))
 	// 行锁 SELECT 取回按值比较所需的**全部**旧值（字段集见 domain 声明表）：
 	// 身份类字段与配置类字段都从这一行读出，写入侧不再另行读旧值。
 	tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0) FROM accounts WHERE`)).
@@ -779,6 +787,11 @@ func TestUpdateAccountsBatchAdvancesIdentityRevisionOnlyOnValueChange(t *testing
 		t.Run(tc.name, func(t *testing.T) {
 			tr := newRepos(t)
 			tr.pool.ExpectBegin()
+			// 锁集合决策读（无锁；平台自有 → 无 users 行需锁），见
+			// TestUpdateAccountsBatch 的同款说明。
+			tr.pool.ExpectQuery(q(`SELECT "accounts"."id", "accounts"."supplier_user_id" FROM "accounts" WHERE`)).
+				WithArgs(int64(2)).
+				WillReturnRows(pgxmock.NewRows([]string{"id", "supplier_user_id"}).AddRow(int64(2), nil))
 			tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0) FROM accounts WHERE`)).
 				WithArgs(int64(2)).
 				WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url", "upstream_key", "name", "max_concurrency", "enabled", "cache_domain", "upstream_cost_multiplier_bp", "supplier_user_id"}).

@@ -34,6 +34,7 @@ var allowedAccountRepoMethods = []string{
 	"DeleteAccount",
 	"DeleteAccountsBatch",
 	"FailAccountCAS",
+	"FindMissingOwnedAccountID",
 	"GetAccount",
 	"GetAccountGroups",
 	"GetAccountWithTemplate",
@@ -56,10 +57,12 @@ var repositoryAccountSurface = []string{
 	"DeleteAccountsBatch",
 	"FailAccountCAS",
 	"FindAccountExtByCodexKey",
+	"FindMissingOwnedAccountID",
 	"GetAccount",
 	"GetAccountExt",
 	"GetAccountGroups",
 	"GetAccountWithTemplate",
+	"GetOwnedAccountExt",
 	"ListAccounts",
 	"LoadGroupAccounts",
 	"RecoverAccountCAS",
@@ -96,10 +99,12 @@ var allowedRepositoryAccountWrites = []string{
 // allowedRepositoryAccountReads 是门面上账号域读方法的显式允许集。
 var allowedRepositoryAccountReads = []string{
 	"FindAccountExtByCodexKey",
+	"FindMissingOwnedAccountID",
 	"GetAccount",
 	"GetAccountExt",
 	"GetAccountGroups",
 	"GetAccountWithTemplate",
+	"GetOwnedAccountExt",
 	"ListAccounts",
 	"LoadGroupAccounts",
 }

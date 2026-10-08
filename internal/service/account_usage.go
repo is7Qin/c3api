@@ -89,7 +89,7 @@ func (s *Service) AccountUsageFrozen(ctx context.Context, accountID int64) (bool
 // 出现零行补齐（不泄漏任何他人数值）。
 func (s *Service) AccountsGatewayUsage(ctx context.Context, ids []int64, from, to time.Time) ([]domain.AccountUsage, error) {
 	// 整批作用域前置校验（管理面缺省作用域 ⇒ 恒放行，既有语义不变）。
-	if _, missing, err := s.store.MissingOwnedAccountID(ctx, ids); err != nil {
+	if _, missing, err := s.store.FindMissingOwnedAccountID(ctx, ids); err != nil {
 		return nil, mapRepoErr(err)
 	} else if missing {
 		return nil, fmt.Errorf("%w: account_ids contains an account outside the current scope", ErrNotFound)

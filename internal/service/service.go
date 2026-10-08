@@ -168,9 +168,9 @@ type AccountStore interface {
 	// GetAccountGroups 账号的分组 id 列表（编辑回显；账号缺 id 由调用方先
 	// GetAccount 拦截）。
 	GetAccountGroups(ctx context.Context, accountID int64) ([]int64, error)
-	// MissingOwnedAccountID ids 中第一个越出当前作用域的 id（usage 聚合面的整批
+	// FindMissingOwnedAccountID ids 中第一个越出当前作用域的 id（usage 聚合面的整批
 	// 前置校验——§2.5「批量面任一越域即整事务失败」；作用域未注入 ⇒ 恒 false）。
-	MissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error)
+	FindMissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error)
 }
 
 type GroupStore interface {

@@ -66,3 +66,36 @@ func validateOwnershipTarget(ctx context.Context, driver dialect.Driver, uid int
 	}
 	return nil
 }
+
+// lockOwnershipUsers 按 **users → accounts** 协议先锁归属相关 users 行（§5.7
+// 固定锁序：与「禁用用户 → 连带停账号」（user_repo.UpdateUser 先在 users 上加行
+// 锁、再 UPDATE accounts）同序），升序 uid 去重后逐个 FOR UPDATE。
+//
+// 为什么必须在锁账号之前：反序（先 accounts 后 users）会与禁用路径构成 ABBA 死锁
+// 面；且「先读 active ⇒ 禁用提交 ⇒ 再写归属」的 TOCTOU 也只能由「同事务内先锁
+// users 行」消灭（禁用方拿不到该行 ⇒ 两边串行化）。
+//
+// 参数 uids 是本次写入**可能触碰到的全部归属**（当前归属 ∪ 目标归属，见
+// UpdateAccountsBatch）。uid<=0（平台自有）不锁——它不是任何 users 行。
+//
+// 本函数**只加锁**：行不存在也不报错（当前归属失效不该阻塞该账号的其它写入——
+// 「禁用供应商后仍可把账号转出/改配置」是合法操作）。能力判定（供应商面可达 +
+// active）由调用方按**最终归属**单独复核（validateOwnershipTarget）。
+func lockOwnershipUsers(ctx context.Context, driver dialect.Driver, uids []int64) error {
+	positive := make([]int64, 0, len(uids))
+	for _, uid := range uids {
+		if uid > 0 {
+			positive = append(positive, uid)
+		}
+	}
+	for _, uid := range sortedUniqueIDs(positive) {
+		// lockUserRow 在单条 SELECT ... FOR UPDATE 里完成加锁；缺行不报错。
+		if _, _, err := lockUserRow(ctx, driver, uid); err != nil {
+			if err == sql.ErrNoRows {
+				continue // 当前归属已失效：加锁已是既成事实，能力判定由调用方按最终归属做
+			}
+			return fmt.Errorf("lock supplier_user_id %d: %w", uid, err)
+		}
+	}
+	return nil
+}
