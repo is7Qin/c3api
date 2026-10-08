@@ -99,12 +99,13 @@ export default function SupplierAdmin() {
   const [payeeAccount, setPayeeAccount] = useState('')
   const [payeeUnit, setPayeeUnit] = useState('')
   const [risk, setRisk] = useState('')
+  const [riskSummary, setRiskSummary] = useState('')
   const [evidence, setEvidence] = useState('')
   const [confirmedNotPaid, setConfirmedNotPaid] = useState(false)
   const [oldExecutionStopped, setOldExecutionStopped] = useState(false)
   const [ref, setRef] = useState('')
   const openAct = (kind: ActionKind, row: SupplierSettlement) => {
-    setReason(''); setPayeeName(''); setPayeeAccount(''); setPayeeUnit(''); setRisk('')
+    setReason(''); setPayeeName(''); setPayeeAccount(''); setPayeeUnit(''); setRisk(''); setRiskSummary('')
     setEvidence(''); setConfirmedNotPaid(false); setOldExecutionStopped(false); setRef('')
     setAct({ kind, row })
   }
@@ -115,12 +116,12 @@ export default function SupplierAdmin() {
       switch (act!.kind) {
         case 'reject': return api.rejectSettlement(s.id, { ...rev, ...(reason ? { reason } : {}) })
         case 'claim':
-          if (!payeeName.trim() || !payeeAccount.trim() || !payeeUnit.trim() || !risk.trim()) throw new Error(t('supplierAdmin.claim.required'))
+          if (!payeeName.trim() || !payeeAccount.trim() || !payeeUnit.trim() || !risk.trim() || !riskSummary.trim()) throw new Error(t('supplierAdmin.claim.required'))
           return api.claimSettlement(s.id, {
             ...rev,
             amount_millis: s.amount_millis,
             payee_snapshot: { payee_name: payeeName.trim(), account: payeeAccount.trim(), unit: payeeUnit.trim() },
-            risk_evidence: risk.trim(),
+            risk_evidence: { reference: risk.trim(), summary: riskSummary.trim(), approved_revision: s.revision },
           })
         case 'paid':
           if (!ref.trim()) throw new Error(t('supplierAdmin.paid.required'))
@@ -356,6 +357,10 @@ export default function SupplierAdmin() {
                 <div className="space-y-1.5">
                   <Label htmlFor="act-risk">{t('supplierAdmin.field.risk')}</Label>
                   <Input id="act-risk" value={risk} onChange={e => setRisk(e.target.value)} />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="act-risk-summary">{t('supplierAdmin.field.riskSummary')}</Label>
+                  <Input id="act-risk-summary" value={riskSummary} onChange={e => setRiskSummary(e.target.value)} />
                   <p className="text-xs text-muted-foreground">{t('supplierAdmin.claim.hint')}</p>
                 </div>
               </>

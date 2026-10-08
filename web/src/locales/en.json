@@ -1992,13 +1992,14 @@
       "payeeAccount": "Payee account",
       "payeeUnit": "Amount unit / currency",
       "risk": "Risk-check evidence reference",
+      "riskSummary": "Risk-check summary",
       "evidence": "Verification evidence",
       "confirmedNotPaid": "Confirmed not paid (definite)",
       "oldExecutionStopped": "Previous execution stopped",
       "externalRef": "External reference"
     },
     "claim": {
-      "required": "Payee name, account, unit and risk evidence are required",
+      "required": "Payee name, account, unit, risk reference and summary are required",
       "hint": "Claiming starts the external payout and fixes the payee."
     },
     "paid": {

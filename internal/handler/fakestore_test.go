@@ -2710,7 +2710,7 @@ func (f *fakeStore) RejectSettlement(_ context.Context, id, rev int64, _ *string
 	return f.supplierAdmin.Mutate(id, rev, domain.SettlementRejected, domain.FundsActor{})
 }
 
-func (f *fakeStore) ClaimSettlement(_ context.Context, id, rev, _ int64, _ domain.SupplierPayeeSnapshot, _ string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (f *fakeStore) ClaimSettlement(_ context.Context, id, rev, _ int64, _ domain.SupplierPayeeSnapshot, _ domain.SupplierRiskEvidence, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if f.supplierAdmin == nil {
 		return nil, repository.ErrNotFound
 	}

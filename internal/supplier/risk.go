@@ -13,8 +13,9 @@ package supplier
 //
 // 服务端派生 operator_id（取资金 Actor，非客户端填）、decided_at（DB 时刻）、
 // expires_at（decided_at + risk_review_max_age）、scope/decision（固定值）；
-// 客户端只提供 evidence 文本。claim 在落库前对构建出的记录做**严格反序列化 +
-// 校验**（round-trip），保证持久化记录恒良构；任何非良构记录一律拒绝（失败闭合）。
+// 客户端只提供**结构化 evidence（reference + summary）**与 approved_revision。
+// claim 在落库前对构建出的记录做**严格反序列化 + 校验**（round-trip），保证持久化
+// 记录恒良构；任何非良构记录一律拒绝（失败闭合）。
 
 import (
 	"encoding/json"
@@ -34,12 +35,6 @@ const RiskReviewScope = "platform_credit_risk"
 
 // RiskReviewDecision 唯一允许的结论（放行平台信用风险）。
 const RiskReviewDecision = "approve_credit_risk"
-
-// riskReviewSummary 服务端派生的核对摘要（evidence.summary）。
-const riskReviewSummary = "platform credit risk approved"
-
-// riskReviewClockSkew 未来 decided_at 的时钟偏移容忍预算（各实例与 DB 时钟差异）。
-const riskReviewClockSkew = 5 * time.Second
 
 // Evidence 非空结构（证据 reference + 核对摘要）。两字段都不得为空串。
 type Evidence struct {
@@ -117,20 +112,25 @@ func ParseRiskReview(s string) (RiskReview, error) {
 
 // BuildRiskReview 由服务端派生权威字段构造记录：operator_id 取资金 Actor、
 // decided_at 取 DB 时刻、expires_at = decided_at + maxAge、scope/decision 固定；
-// evidence 由客户端提供的 reference 文本 + 派生摘要拼装（reference 非空）。
-func BuildRiskReview(actorID int64, evidenceRef string, expectedRevision int64, decidedAt time.Time, maxAge time.Duration) (RiskReview, error) {
-	ref := strings.TrimSpace(evidenceRef)
-	if ref == "" {
-		return RiskReview{}, fmt.Errorf("%w: evidence reference required", ErrRiskReview)
+// **客户端仅提供结构化 evidence（reference + summary，均非空）** 与 approved_revision。
+// 任意非空结构缺失 ⇒ 拒绝（不得把自由文本当证据自动签为放行）。
+func BuildRiskReview(actorID int64, evidence Evidence, approvedRevision int64, decidedAt time.Time, maxAge time.Duration) (RiskReview, error) {
+	ref := strings.TrimSpace(evidence.Reference)
+	summary := strings.TrimSpace(evidence.Summary)
+	if ref == "" || summary == "" {
+		return RiskReview{}, fmt.Errorf("%w: evidence reference and summary required", ErrRiskReview)
+	}
+	if approvedRevision < 1 {
+		return RiskReview{}, fmt.Errorf("%w: approved_revision required", ErrRiskReview)
 	}
 	return RiskReview{
 		OperatorID:       actorID,
 		DecidedAt:        decidedAt.UTC(),
 		Scope:            RiskReviewScope,
-		Evidence:         Evidence{Reference: ref, Summary: riskReviewSummary},
+		Evidence:         Evidence{Reference: ref, Summary: summary},
 		Decision:         RiskReviewDecision,
 		ExpiresAt:        decidedAt.Add(maxAge).UTC(),
-		ApprovedRevision: expectedRevision,
+		ApprovedRevision: approvedRevision,
 	}, nil
 }
 
@@ -149,7 +149,7 @@ func MarshalRiskReview(rr RiskReview) (string, error) {
 //   - decision == approve_credit_risk；
 //   - evidence.reference/summary 均非空；
 //   - approved_revision == expected_revision；
-//   - decided_at 不得在未来（> now + skew）；
+//   - decided_at 不得在未来（`now` 为权威 DB 时刻，无时钟偏移宽限）；
 //   - decided_at 不得早于 now - maxAge（过期）；
 //   - expires_at 不得超出 decided_at + maxAge（超长）；
 //   - expires_at 不得早于 now（已过期）。
@@ -169,7 +169,8 @@ func ValidateRiskReview(rr RiskReview, actorID, expectedRevision int64, now time
 	if rr.ApprovedRevision != expectedRevision {
 		return fmt.Errorf("%w: approved_revision %d != expected %d", ErrRiskReview, rr.ApprovedRevision, expectedRevision)
 	}
-	if rr.DecidedAt.After(now.Add(riskReviewClockSkew)) {
+	// A22「未来即拒绝」：所有权威时刻取自 DB，不接受实例时钟偏移宽限。
+	if rr.DecidedAt.After(now) {
 		return fmt.Errorf("%w: decided_at in the future", ErrRiskReview)
 	}
 	if now.Sub(rr.DecidedAt) > maxAge {

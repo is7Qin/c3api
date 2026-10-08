@@ -91,18 +91,19 @@ func (s *Service) AdminRejectSettlement(ctx context.Context, id, expectedRevisio
 }
 
 // AdminClaimSettlement approved → paying（认领 + 风控门；§6.5）。金额必须 == 单据
-// 金额；收款目标快照结构化（收款人/账号/单位均非空）；风控证据非空。
-func (s *Service) AdminClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+// 金额；收款目标快照结构化（收款人/账号/单位均非空）；风险证据结构化（reference +
+// summary 非空 + approved_revision == expected_revision）。
+func (s *Service) AdminClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, risk domain.SupplierRiskEvidence, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if amountMillis <= 0 {
 		return nil, ErrInvalidInput
 	}
 	if strings.TrimSpace(payee.PayeeName) == "" || strings.TrimSpace(payee.Account) == "" || strings.TrimSpace(payee.Unit) == "" {
 		return nil, ErrInvalidInput
 	}
-	if strings.TrimSpace(riskEvidence) == "" {
+	if strings.TrimSpace(risk.Reference) == "" || strings.TrimSpace(risk.Summary) == "" || risk.ApprovedRevision != expectedRevision {
 		return nil, ErrInvalidInput
 	}
-	out, err := s.store.ClaimSettlement(ctx, id, expectedRevision, amountMillis, payee, riskEvidence, actor)
+	out, err := s.store.ClaimSettlement(ctx, id, expectedRevision, amountMillis, payee, risk, actor)
 	if err != nil {
 		if errors.Is(err, supplier.ErrPayoutGate) || errors.Is(err, supplier.ErrRiskReview) {
 			return nil, ErrInvalidInput

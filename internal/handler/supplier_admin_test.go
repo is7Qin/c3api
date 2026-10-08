@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/service"
 )
 
 // TestAdminFundsCommandsRequireNamedJWT I5（spec 2026-10-09 §6.5）：所有资金命令
@@ -50,4 +51,45 @@ func TestFundsActorRoundTrip(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(7), actor.UserID)
 	require.Equal(t, int64(3), actor.TokenVersion)
+}
+
+// TestAdminClaimRequestStrictContract A22/I8：风险核对证据在**真实 claim 请求边界**
+// 严格拒绝——未知键/错类型（旧实现把任意 record 字符串当不透明 reference 放行）/
+// 缺 evidence/错 revision 均 400；只有结构化良构请求到达持久层。
+func TestAdminClaimRequestStrictContract(t *testing.T) {
+	store := newFakeStore()
+	store.supplierAdmin = &fakeSupplierAdminStore{
+		settlements: []*domain.SupplierSettlement{{ID: 1, Status: domain.SettlementApproved, Revision: 3, AmountMillis: 1000}},
+		balances:    map[int64]*domain.SupplierBalance{},
+	}
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Keys: &fakeKeys{}, EmailCodeStore: store})
+	api := New(svc)
+
+	post := func(body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/admin/supplier/settlements/1/claim", strings.NewReader(body))
+		req = req.WithContext(domain.WithFundsActor(req.Context(), domain.FundsActor{UserID: 7, TokenVersion: 1}))
+		rec := httptest.NewRecorder()
+		api.PostAdminSupplierSettlementsIdClaim(rec, req, 1)
+		return rec
+	}
+
+	// 良构结构化体 ⇒ 200（到达持久层）。
+	good := `{"expected_revision":3,"amount_millis":1000,"payee_snapshot":{"payee_name":"A","account":"1","unit":"millis"},"risk_evidence":{"reference":"r","summary":"s","approved_revision":3}}`
+	require.Equal(t, http.StatusOK, post(good).Code, "良构结构化体应放行")
+
+	// 未知键 ⇒ 400。
+	unknown := `{"expected_revision":3,"amount_millis":1000,"payee_snapshot":{"payee_name":"A","account":"1","unit":"millis"},"risk_evidence":{"reference":"r","summary":"s","approved_revision":3},"bogus":1}`
+	require.Equal(t, http.StatusBadRequest, post(unknown).Code, "未知键必须拒绝")
+
+	// 错类型：risk_evidence 传字符串（旧现状）⇒ 400，不得当不透明 reference 签为放行。
+	wrongType := `{"expected_revision":3,"amount_millis":1000,"payee_snapshot":{"payee_name":"A","account":"1","unit":"millis"},"risk_evidence":"plain-record-json"}`
+	require.Equal(t, http.StatusBadRequest, post(wrongType).Code, "自由文本证据必须拒绝")
+
+	// 缺 evidence（reference/summary 空）⇒ 400。
+	missingEvidence := `{"expected_revision":3,"amount_millis":1000,"payee_snapshot":{"payee_name":"A","account":"1","unit":"millis"},"risk_evidence":{"reference":"","summary":"","approved_revision":3}}`
+	require.Equal(t, http.StatusBadRequest, post(missingEvidence).Code, "缺 evidence 必须拒绝")
+
+	// 错 revision（approved_revision != expected_revision）⇒ 400。
+	wrongRev := `{"expected_revision":3,"amount_millis":1000,"payee_snapshot":{"payee_name":"A","account":"1","unit":"millis"},"risk_evidence":{"reference":"r","summary":"s","approved_revision":4}}`
+	require.Equal(t, http.StatusBadRequest, post(wrongRev).Code, "错 revision 必须拒绝")
 }

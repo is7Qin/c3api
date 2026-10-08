@@ -183,7 +183,11 @@ func (h *AdminAPI) PostAdminSupplierSettlementsIdClaim(w http.ResponseWriter, r 
 		PayeeName: body.PayeeSnapshot.PayeeName,
 		Account:   body.PayeeSnapshot.Account,
 		Unit:      body.PayeeSnapshot.Unit,
-	}, body.RiskEvidence, actor)
+	}, domain.SupplierRiskEvidence{
+		Reference:        body.RiskEvidence.Reference,
+		Summary:          body.RiskEvidence.Summary,
+		ApprovedRevision: body.RiskEvidence.ApprovedRevision,
+	}, actor)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return

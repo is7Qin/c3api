@@ -103,6 +103,13 @@ func TestRiskReviewValidateRejections(t *testing.T) {
 		bad.ExpiresAt = bad.DecidedAt.Add(maxAge)
 		require.ErrorIs(t, ValidateRiskReview(bad, 7, 3, now, maxAge), ErrRiskReview)
 	})
+	t.Run("future decided_at within old skew budget", func(t *testing.T) {
+		// A22「未来即拒绝」：不再接受 ≤5s 的时钟偏移宽限。
+		bad := base
+		bad.DecidedAt = now.Add(2 * time.Second)
+		bad.ExpiresAt = bad.DecidedAt.Add(maxAge)
+		require.ErrorIs(t, ValidateRiskReview(bad, 7, 3, now, maxAge), ErrRiskReview)
+	})
 	t.Run("expired decided_at", func(t *testing.T) {
 		bad := base
 		bad.DecidedAt = now.Add(-48 * time.Hour)
@@ -127,10 +134,16 @@ func TestRiskReviewBuildRoundTrip(t *testing.T) {
 	maxAge := 24 * time.Hour
 
 	// 空 evidence reference ⇒ 拒绝。
-	_, err := BuildRiskReview(7, "   ", 3, now, maxAge)
+	_, err := BuildRiskReview(7, Evidence{Reference: "   ", Summary: "s"}, 3, now, maxAge)
+	require.ErrorIs(t, err, ErrRiskReview)
+	// 空 evidence summary ⇒ 拒绝。
+	_, err = BuildRiskReview(7, Evidence{Reference: "r", Summary: "  "}, 3, now, maxAge)
+	require.ErrorIs(t, err, ErrRiskReview)
+	// approved_revision < 1 ⇒ 拒绝。
+	_, err = BuildRiskReview(7, Evidence{Reference: "r", Summary: "s"}, 0, now, maxAge)
 	require.ErrorIs(t, err, ErrRiskReview)
 
-	rr, err := BuildRiskReview(7, "bank-ref-1", 3, now, maxAge)
+	rr, err := BuildRiskReview(7, Evidence{Reference: "bank-ref-1", Summary: "ledger matches"}, 3, now, maxAge)
 	require.NoError(t, err)
 	raw, err := MarshalRiskReview(rr)
 	require.NoError(t, err)

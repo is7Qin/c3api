@@ -2023,8 +2023,7 @@ export interface components {
              */
             amount_millis: number;
             payee_snapshot: components["schemas"]["SettlementPayeeSnapshot"];
-            /** @description 风险核对证据 reference（非空；平台信用风险放行记录） */
-            risk_evidence: string;
+            risk_evidence: components["schemas"]["SettlementRiskEvidence"];
         };
         /** @description 收款目标快照（结构化；副作用前固定、重试复用、不一致拒绝） */
         SettlementPayeeSnapshot: {
@@ -2034,6 +2033,18 @@ export interface components {
             account: string;
             /** @description 金额单位/币种 */
             unit: string;
+        };
+        /** @description 风险核对证据（结构化；reference/摘要非空 + 绑定 approved revision；服务端派生 operator_id/decided_at/scope/decision/expires_at） */
+        SettlementRiskEvidence: {
+            /** @description 证据 reference（非空） */
+            reference: string;
+            /** @description 核对摘要（非空） */
+            summary: string;
+            /**
+             * Format: int64
+             * @description 必须 == expected_revision（锁内当前 approved revision）
+             */
+            approved_revision: number;
         };
         /** @description paying→approved；仅接受结构化「确定未支付」+「旧执行已停止」核验（未知 ⇒ 失败闭合保留 paying） */
         SettlementConfirmFailedBody: {

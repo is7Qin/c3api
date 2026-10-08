@@ -419,12 +419,18 @@ func encodePayoutFailureConfirmation(in domain.SupplierPayoutFailureConfirmation
 // ClaimSettlement approved → paying（认领 CAS；§6.5 C3）：**金额必须 == 单据
 // amount_millis**；结构化收款快照固定（首次认领固定、重试复用、不一致 ⇒ 拒绝）；
 // 生成/复用全局唯一 payment_key；判定付款风控门；原子持久化 risk_review。
-func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, risk domain.SupplierRiskEvidence, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if amountMillis <= 0 {
 		return nil, fmt.Errorf("%w: amount_millis must be > 0", ErrInvalidInput)
 	}
-	if strings.TrimSpace(riskEvidence) == "" {
-		return nil, fmt.Errorf("%w: risk evidence is required", ErrInvalidInput)
+	// 结构化风险证据（§6.5 C1/I8）：reference + summary 非空，且 approved_revision 必须
+	// == expected_revision（错 revision ⇒ 拒绝）；不得把自由文本当记录自动签为放行。
+	riskEvidence := supplier.Evidence{Reference: strings.TrimSpace(risk.Reference), Summary: strings.TrimSpace(risk.Summary)}
+	if riskEvidence.Reference == "" || riskEvidence.Summary == "" {
+		return nil, fmt.Errorf("%w: risk evidence reference and summary are required", ErrInvalidInput)
+	}
+	if risk.ApprovedRevision != expectedRevision {
+		return nil, fmt.Errorf("%w: risk approved_revision %d != expected %d", ErrInvalidInput, risk.ApprovedRevision, expectedRevision)
 	}
 	payeeSnapshot, err := encodePayeeSnapshot(payee)
 	if err != nil {
@@ -650,10 +656,10 @@ FROM usage_logs WHERE NOT billed AND error_type IN ('none','abort') AND cost > 0
 
 // buildRiskReview 结构化 risk_review（§6.5 严格 JSON）：服务端派生 operator_id
 // （取资金 Actor）/ decided_at（DB 时刻）/ scope（固定 platform_credit_risk）/
-// expires_at（decided_at + max_age），绑定 approved_revision；evidence 由客户端
-// 提供（非空 reference）。**落库前对构建出的记录做严格反序列化 + 校验
-// （round-trip）**——任何非良构记录失败闭合（A22 拒绝矩阵）。返回持久化文本。
-func buildRiskReview(actor domain.FundsActor, evidence string, expectedRevision int64, decidedAt time.Time, maxAge time.Duration) (string, error) {
+// expires_at（decided_at + max_age），绑定 approved_revision；evidence（reference +
+// summary）由客户端结构化提供并校验非空。**落库前对构建出的记录做严格反序列化 +
+// 校验（round-trip）**——任何非良构记录失败闭合（A22 拒绝矩阵）。返回持久化文本。
+func buildRiskReview(actor domain.FundsActor, evidence supplier.Evidence, expectedRevision int64, decidedAt time.Time, maxAge time.Duration) (string, error) {
 	rr, err := supplier.BuildRiskReview(actor.UserID, evidence, expectedRevision, decidedAt, maxAge)
 	if err != nil {
 		return "", err

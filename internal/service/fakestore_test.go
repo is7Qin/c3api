@@ -2706,8 +2706,8 @@ func (f *fakeStore) RejectSettlement(_ context.Context, id, expectedRevision int
 	})
 }
 
-func (f *fakeStore) ClaimSettlement(_ context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, riskEvidence string, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
-	if amountMillis <= 0 || payee.PayeeName == "" || payee.Account == "" || payee.Unit == "" || riskEvidence == "" {
+func (f *fakeStore) ClaimSettlement(_ context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, risk domain.SupplierRiskEvidence, _ domain.FundsActor) (*domain.SupplierSettlement, error) {
+	if amountMillis <= 0 || payee.PayeeName == "" || payee.Account == "" || payee.Unit == "" || risk.Reference == "" || risk.Summary == "" {
 		return nil, repository.ErrInvalidInput
 	}
 	return f.fakeSettlementMutation(id, expectedRevision, func(s *domain.SupplierSettlement) error {

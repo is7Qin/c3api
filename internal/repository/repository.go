@@ -202,11 +202,11 @@ func (r *Repository) RejectSettlement(ctx context.Context, id, expectedRevision 
 	return r.supplier.RejectSettlement(ctx, id, expectedRevision, reason, actor)
 }
 
-func (r *Repository) ClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, riskEvidence string, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
+func (r *Repository) ClaimSettlement(ctx context.Context, id, expectedRevision, amountMillis int64, payee domain.SupplierPayeeSnapshot, risk domain.SupplierRiskEvidence, actor domain.FundsActor) (*domain.SupplierSettlement, error) {
 	if r.supplier == nil {
 		return nil, errSupplierNoPool
 	}
-	return r.supplier.ClaimSettlement(ctx, id, expectedRevision, amountMillis, payee, riskEvidence, actor)
+	return r.supplier.ClaimSettlement(ctx, id, expectedRevision, amountMillis, payee, risk, actor)
 }
 
 func (r *Repository) ConfirmFailedSettlement(ctx context.Context, id, expectedRevision int64, in domain.SupplierPayoutFailureConfirmation, actor domain.FundsActor) (*domain.SupplierSettlement, error) {

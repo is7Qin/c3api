@@ -2666,7 +2666,7 @@ components:
         expected_revision: { type: integer, format: int64, x-go-name: SettlementRev }
         amount_millis: { type: integer, format: int64, description: 认领金额，必须 == 单据 amount_millis（不符 ⇒ 400） }
         payee_snapshot: { $ref: '#/components/schemas/SettlementPayeeSnapshot' }
-        risk_evidence: { type: string, description: 风险核对证据 reference（非空；平台信用风险放行记录） }
+        risk_evidence: { $ref: '#/components/schemas/SettlementRiskEvidence' }
     SettlementPayeeSnapshot:
       type: object
       required: [payee_name, account, unit]
@@ -2675,6 +2675,14 @@ components:
         payee_name: { type: string, description: 收款人/开户名 }
         account: { type: string, description: 收款账号 }
         unit: { type: string, description: 金额单位/币种 }
+    SettlementRiskEvidence:
+      type: object
+      required: [reference, summary, approved_revision]
+      description: 风险核对证据（结构化；reference/摘要非空 + 绑定 approved revision；服务端派生 operator_id/decided_at/scope/decision/expires_at）
+      properties:
+        reference: { type: string, description: 证据 reference（非空） }
+        summary: { type: string, description: 核对摘要（非空） }
+        approved_revision: { type: integer, format: int64, description: 必须 == expected_revision（锁内当前 approved revision） }
     SettlementConfirmFailedBody:
       type: object
       required: [expected_revision, reason, confirmed_not_paid, evidence, old_execution_stopped]

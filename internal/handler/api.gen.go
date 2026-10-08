@@ -1844,8 +1844,8 @@ type SettlementClaimBody struct {
 	// PayeeSnapshot 收款目标快照（结构化；副作用前固定、重试复用、不一致拒绝）
 	PayeeSnapshot SettlementPayeeSnapshot `json:"payee_snapshot"`
 
-	// RiskEvidence 风险核对证据 reference（非空；平台信用风险放行记录）
-	RiskEvidence string `json:"risk_evidence"`
+	// RiskEvidence 风险核对证据（结构化；reference/摘要非空 + 绑定 approved revision；服务端派生 operator_id/decided_at/scope/decision/expires_at）
+	RiskEvidence SettlementRiskEvidence `json:"risk_evidence"`
 }
 
 // SettlementConfirmFailedBody paying→approved；仅接受结构化「确定未支付」+「旧执行已停止」核验（未知 ⇒ 失败闭合保留 paying）
@@ -1888,6 +1888,18 @@ type SettlementPayeeSnapshot struct {
 type SettlementRejectBody struct {
 	SettlementRev int64   `json:"expected_revision"`
 	Reason        *string `json:"reason"`
+}
+
+// SettlementRiskEvidence 风险核对证据（结构化；reference/摘要非空 + 绑定 approved revision；服务端派生 operator_id/decided_at/scope/decision/expires_at）
+type SettlementRiskEvidence struct {
+	// ApprovedRevision 必须 == expected_revision（锁内当前 approved revision）
+	ApprovedRevision int64 `json:"approved_revision"`
+
+	// Reference 证据 reference（非空）
+	Reference string `json:"reference"`
+
+	// Summary 核对摘要（非空）
+	Summary string `json:"summary"`
 }
 
 // SettlementTransitionBody 状态迁移 CAS 令牌（陈旧 ⇒ 409；缺席 ⇒ 400）

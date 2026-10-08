@@ -1992,13 +1992,14 @@
       "payeeAccount": "收款账号",
       "payeeUnit": "金额单位/币种",
       "risk": "风险核对证据 reference",
+      "riskSummary": "风险核对摘要",
       "evidence": "核验证据",
       "confirmedNotPaid": "已确定未支付",
       "oldExecutionStopped": "旧执行已停止",
       "externalRef": "外部回单号"
     },
     "claim": {
-      "required": "收款人、账号、单位与风险证据均为必填",
+      "required": "收款人、账号、单位、风险证据与摘要均为必填",
       "hint": "认领后即开始外部打款；认领前固定收款目标。"
     },
     "paid": {

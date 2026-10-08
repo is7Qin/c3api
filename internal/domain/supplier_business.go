@@ -99,6 +99,15 @@ type SupplierPayoutFailureConfirmation struct {
 	OldExecutionStopped bool
 }
 
+// SupplierRiskEvidence 结构化风险核对证据（§6.5 C1/I8）：reference + summary（均非空）
+// + approved_revision（必须 == expected_revision）。服务端派生 operator_id/decided_at/
+// scope/decision/expires_at；不得把任意自由文本当证据自动签为放行。
+type SupplierRiskEvidence struct {
+	Reference        string
+	Summary          string
+	ApprovedRevision int64
+}
+
 // ApplySettlementRequest 申请结算入参（供应商自申请 / 管理员代申请共用；§6.2）。
 type ApplySettlementRequest struct {
 	// OperatorUID 请求操作者（supplier_request = supplier 本人；admin_request = 管理员）。
