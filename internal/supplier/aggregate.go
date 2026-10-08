@@ -59,7 +59,7 @@ func AggregateBatch(rows []BatchRow, freezeByUID map[int64]int) ([]UIDCredit, []
 			return nil, nil, fmt.Errorf("supplier: negative earn/cost in row %d", r.ID)
 		}
 		var err error
-		if rowsEarn, err = addChecked(rowsEarn, r.Earn); err != nil {
+		if rowsEarn, err = AddChecked(rowsEarn, r.Earn); err != nil {
 			return nil, nil, err
 		}
 		a := perUID[r.UID]
@@ -67,10 +67,10 @@ func AggregateBatch(rows []BatchRow, freezeByUID map[int64]int) ([]UIDCredit, []
 			a = &acc{}
 			perUID[r.UID] = a
 		}
-		if a.earn, err = addChecked(a.earn, r.Earn); err != nil {
+		if a.earn, err = AddChecked(a.earn, r.Earn); err != nil {
 			return nil, nil, err
 		}
-		if a.cost, err = addChecked(a.cost, r.Cost); err != nil {
+		if a.cost, err = AddChecked(a.cost, r.Cost); err != nil {
 			return nil, nil, err
 		}
 		day := r.CreatedAt.UTC().Truncate(24 * time.Hour)
@@ -80,13 +80,13 @@ func AggregateBatch(rows []BatchRow, freezeByUID map[int64]int) ([]UIDCredit, []
 			d = &DayRecon{UID: r.UID, SourceDay: day}
 			perDay[key] = d
 		}
-		if d.GrossCost, err = addChecked(d.GrossCost, r.Cost); err != nil {
+		if d.GrossCost, err = AddChecked(d.GrossCost, r.Cost); err != nil {
 			return nil, nil, err
 		}
-		if d.Earn, err = addChecked(d.Earn, r.Earn); err != nil {
+		if d.Earn, err = AddChecked(d.Earn, r.Earn); err != nil {
 			return nil, nil, err
 		}
-		if d.Rows, err = addChecked(d.Rows, 1); err != nil {
+		if d.Rows, err = AddChecked(d.Rows, 1); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -101,10 +101,10 @@ func AggregateBatch(rows []BatchRow, freezeByUID map[int64]int) ([]UIDCredit, []
 			uc.ToAvailable = a.earn
 		}
 		var err error
-		if sumAvail, err = addChecked(sumAvail, uc.ToAvailable); err != nil {
+		if sumAvail, err = AddChecked(sumAvail, uc.ToAvailable); err != nil {
 			return nil, nil, err
 		}
-		if sumFrozen, err = addChecked(sumFrozen, uc.ToFrozen); err != nil {
+		if sumFrozen, err = AddChecked(sumFrozen, uc.ToFrozen); err != nil {
 			return nil, nil, err
 		}
 		totals = append(totals, uc)
@@ -112,7 +112,7 @@ func AggregateBatch(rows []BatchRow, freezeByUID map[int64]int) ([]UIDCredit, []
 	sort.Slice(totals, func(i, j int) bool { return totals[i].UID < totals[j].UID })
 
 	// 金额守恒（M2）：Σto_available + Σto_frozen == Σ rows.Earn。
-	combined, err := addChecked(sumAvail, sumFrozen)
+	combined, err := AddChecked(sumAvail, sumFrozen)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -133,8 +133,9 @@ func AggregateBatch(rows []BatchRow, freezeByUID map[int64]int) ([]UIDCredit, []
 	return totals, recon, nil
 }
 
-// addChecked int64 加法溢出检查（失败闭合，不静默钳制）。
-func addChecked(a, b int64) (int64, error) {
+// AddChecked int64 加法溢出检查（失败闭合，不静默钳制）。导出供记账守恒与解冻聚合
+// 前置断言复用（§5.3 M1：UPDATE 前验证非负/无溢出）。
+func AddChecked(a, b int64) (int64, error) {
 	if b > 0 && a > math.MaxInt64-b {
 		return 0, fmt.Errorf("supplier: int64 overflow summing %d + %d", a, b)
 	}

@@ -252,6 +252,26 @@ func TestPGSupplierThawCoverageGuard(t *testing.T) {
 
 // ---- A9/A10/A21/I5 申请结算 ----
 
+// TestPGSupplierThawPartialMissingBalance 部分缺余额：两个 uid 有到期桶，仅一个有
+// 余额行 ⇒ 覆盖守卫触发、整事务回滚、两 uid 的 chunks 均未丢（§5.3 M1/A8②）。
+func TestPGSupplierThawPartialMissingBalance(t *testing.T) {
+	repos := newPGReposShared(t)
+	pool := pgSharedPool(t)
+	ctx := context.Background()
+	sr := repos.SupplierRepo(supplierRepoCfg())
+
+	s := seedSupplierUser(t, repos, "sup-thaw-partial@example.com")
+	seedSupplierBalance(t, pool, s.ID, 0) // 仅该 uid 有余额行
+	pgExec(t, pool, `INSERT INTO supplier_frozen_chunks (supplier_user_id, available_at, amount) VALUES ($1, now() - interval '1 hour', 500)`, s.ID)
+	pgExec(t, pool, `INSERT INTO supplier_frozen_chunks (supplier_user_id, available_at, amount) VALUES (525252, now() - interval '1 hour', 700)`)
+
+	_, err := sr.ThawDueChunks(ctx, 100)
+	require.Error(t, err, "部分缺余额 ⇒ 覆盖守卫失败（整事务回滚）")
+	require.Equal(t, int64(0), pgInt(t, pool, `SELECT available FROM supplier_balances WHERE supplier_user_id=$1`, s.ID), "回滚：available 未变")
+	require.Equal(t, int64(1), pgInt(t, pool, `SELECT COUNT(*) FROM supplier_frozen_chunks WHERE supplier_user_id=$1`, s.ID), "有余额 uid 的桶未删")
+	require.Equal(t, int64(1), pgInt(t, pool, `SELECT COUNT(*) FROM supplier_frozen_chunks WHERE supplier_user_id=525252`), "无余额 uid 的桶未删")
+}
+
 func TestPGSupplierSettlementApplyIdempotency(t *testing.T) {
 	repos := newPGReposShared(t)
 	pool := pgSharedPool(t)

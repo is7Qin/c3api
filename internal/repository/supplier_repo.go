@@ -492,10 +492,21 @@ RETURNING supplier_user_id, amount`
 			rows.Close()
 			return 0, err
 		}
+		// 前置断言（§5.3 M1）：uid 正向、`amount > 0`（DB CHECK 之外的防御），
+		// 聚合 delta 无溢出；任一不满足 ⇒ 失败闭合（UPDATE 前，chunks 未提交删除）。
+		if uid <= 0 || amt < 0 {
+			rows.Close()
+			return 0, fmt.Errorf("supplier thaw: invalid chunk uid=%d amount=%d", uid, amt)
+		}
 		if _, ok := deltaByUID[uid]; !ok {
 			order = append(order, uid)
 		}
-		deltaByUID[uid] += amt
+		sum, err := supplier.AddChecked(deltaByUID[uid], amt)
+		if err != nil {
+			rows.Close()
+			return 0, fmt.Errorf("supplier thaw: %w", err)
+		}
+		deltaByUID[uid] = sum
 		deleted++
 	}
 	if err := rows.Err(); err != nil {
@@ -521,11 +532,19 @@ RETURNING supplier_user_id, amount`
 	}
 
 	// ③ balances 变更（两参数等长 unnest，避免双 SRF 位置配对陷阱）。
+	// 数组边界前置断言（A8④ M1）：uids/deltas 等长且与 order 一致；delta 非负。
 	uids := make([]int64, 0, len(order))
 	deltas := make([]int64, 0, len(order))
 	for _, uid := range order {
+		d := deltaByUID[uid]
+		if d < 0 {
+			return 0, fmt.Errorf("supplier thaw: negative delta %d for uid %d", d, uid)
+		}
 		uids = append(uids, uid)
-		deltas = append(deltas, deltaByUID[uid])
+		deltas = append(deltas, d)
+	}
+	if len(uids) != len(deltas) || len(uids) != len(order) {
+		return 0, fmt.Errorf("supplier thaw: array length mismatch uids=%d deltas=%d order=%d", len(uids), len(deltas), len(order))
 	}
 	updated, err := scanUIDs(ctx, tx,
 		`UPDATE supplier_balances b

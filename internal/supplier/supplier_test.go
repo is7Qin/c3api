@@ -89,6 +89,24 @@ func TestAggregateBatchFailClosed(t *testing.T) {
 	require.Error(t, err, "负 earn ⇒ 错误")
 }
 
+// TestAddCheckedOverflowAndUnderflow 解冻聚合/记账守恒复用的溢出检查（M1）：
+// 越界 ⇒ 失败闭合（不静默钳制）；边界内 ⇒ 正常相加。
+func TestAddCheckedOverflowAndUnderflow(t *testing.T) {
+	if _, err := AddChecked(math.MaxInt64, 1); err == nil {
+		t.Fatal("MaxInt64 + 1 必须失败闭合")
+	}
+	if _, err := AddChecked(math.MinInt64, -1); err == nil {
+		t.Fatal("MinInt64 - 1 必须失败闭合")
+	}
+	got, err := AddChecked(100, 200)
+	require.NoError(t, err)
+	require.Equal(t, int64(300), got)
+	// 零/负增量不误报（delta 非负由调用方断言）。
+	got, err = AddChecked(math.MaxInt64, 0)
+	require.NoError(t, err)
+	require.Equal(t, int64(math.MaxInt64), got)
+}
+
 // TestIsRetryableTxErr 死锁/锁不可用可重试。
 func TestIsRetryableTxErr(t *testing.T) {
 	require.True(t, IsRetryableTxErr(&pgconn.PgError{Code: "40P01"}))
