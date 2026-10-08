@@ -1476,7 +1476,10 @@
       "account-conc-sync": "账号并发同步",
       "quality-sync": "路由质量同步",
       "quality-flow-owner": "质量流量折叠归属",
-      "runtime-health": "健康投影道"
+      "runtime-health": "健康投影道",
+      "supplier-credit": "供应商记账",
+      "supplier-thaw": "供应商解冻",
+      "supplier-view": "供应商财务视图"
     },
     "stats": {
       "dirty": "有待执行重载",
@@ -1593,7 +1596,30 @@
       "ready": "就绪",
       "generation": "世代",
       "last_sync_ok_unix_ms": "最近成功同步",
-      "sync_errors": "同步失败累计"
+      "sync_errors": "同步失败累计",
+      "lag_head": "记账滞后（头行）",
+      "lag_full": "记账滞后（全量）",
+      "lag_earn": "待记账收益（毫分）",
+      "lag_observed_unix_ms": "滞后观测时刻",
+      "lag_stale": "滞后值陈旧",
+      "deleted_total": "累计解冻行数",
+      "cycles": "解冻周期数",
+      "bucket_rows": "冻结桶行数",
+      "bucket_lag_seconds": "最老未解冻桶滞后（秒）",
+      "overdue_rows": "逾期未解冻行数",
+      "overdue_amount": "逾期未解冻金额（毫分）",
+      "thaw_rate_per_sec": "解冻速率（行/秒）",
+      "recovery_eta_seconds": "解冻追赶预计（秒）",
+      "bucket_stale": "冻结桶观测陈旧",
+      "attempts": "视图装载次数",
+      "success": "视图装载成功次数",
+      "snapshot": "视图快照状态",
+      "last_blocked_log_partitions": "最近被挡的日志分区",
+      "blocked_alert": "持久阻断告警",
+      "disk_free_bytes": "磁盘可用空间（字节）",
+      "disk_eta_seconds": "磁盘耗尽预计（秒）",
+      "capacity_blocked": "容量闸已关闭新供应商流量",
+      "disk_observed_unix_ms": "磁盘观测时刻"
     },
     "routing": {
       "title": "路由观测道",

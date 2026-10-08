@@ -1476,7 +1476,10 @@
       "account-conc-sync": "Account conc-view sync",
       "quality-sync": "Routing quality sync",
       "quality-flow-owner": "Quality flow owner",
-      "runtime-health": "Runtime health lane"
+      "runtime-health": "Runtime health lane",
+      "supplier-credit": "Supplier credit",
+      "supplier-thaw": "Supplier thaw",
+      "supplier-view": "Supplier finance view"
     },
     "stats": {
       "dirty": "Reload pending",
@@ -1593,7 +1596,30 @@
       "ready": "Ready",
       "generation": "Generation",
       "last_sync_ok_unix_ms": "Last sync OK",
-      "sync_errors": "Sync errors"
+      "sync_errors": "Sync errors",
+      "lag_head": "Credit lag (head row)",
+      "lag_full": "Credit lag (full)",
+      "lag_earn": "Uncredited earnings (millis)",
+      "lag_observed_unix_ms": "Lag observed at",
+      "lag_stale": "Lag value stale",
+      "deleted_total": "Thawed rows (total)",
+      "cycles": "Thaw cycles",
+      "bucket_rows": "Frozen bucket rows",
+      "bucket_lag_seconds": "Oldest bucket lag (s)",
+      "overdue_rows": "Overdue thaw rows",
+      "overdue_amount": "Overdue thaw amount (millis)",
+      "thaw_rate_per_sec": "Thaw rate (rows/s)",
+      "recovery_eta_seconds": "Thaw catch-up ETA (s)",
+      "bucket_stale": "Bucket observation stale",
+      "attempts": "View load attempts",
+      "success": "View load successes",
+      "snapshot": "View snapshot state",
+      "last_blocked_log_partitions": "Last blocked log partitions",
+      "blocked_alert": "Persistent blocked alert",
+      "disk_free_bytes": "Disk free (bytes)",
+      "disk_eta_seconds": "Disk exhaustion ETA (s)",
+      "capacity_blocked": "Capacity gate closed to new supplier traffic",
+      "disk_observed_unix_ms": "Disk observed at"
     },
     "routing": {
       "title": "Routing lanes",
