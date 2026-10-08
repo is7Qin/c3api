@@ -50,6 +50,46 @@ func openMaint(t *testing.T) *pgx.Conn {
 	return conn
 }
 
+// templateReadyMarker mirrors pgtest's unexported marker value so the tests can
+// assert the marker the production code writes without exporting it.
+const templateReadyMarker = "pgtest:template-ready"
+
+// newProbeTemplate creates the named probe database empty (no marker) and
+// registers its cleanup. Rebuild tests must drive pgtest through a
+// C3API_TEST_TEMPLATE override pointing at a dedicated probe name: under
+// go test -p other packages may be cloning the shared current-hash template
+// concurrently, so those tests must never DROP/recreate it (spec §7/A8).
+func newProbeTemplate(t *testing.T, raw *pgx.Conn, name string) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := raw.Exec(ctx, "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+	require.NoError(t, err)
+	_, err = raw.Exec(ctx, "CREATE DATABASE "+name)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = raw.Exec(context.Background(), "DROP DATABASE IF EXISTS "+name+" WITH (FORCE)")
+	})
+}
+
+// templateComment reads a database's comment (the readiness marker); an unmarked
+// database yields the zero sql.NullString (Valid == false).
+func templateComment(t *testing.T, raw *pgx.Conn, name string) sql.NullString {
+	t.Helper()
+	var c sql.NullString
+	require.NoError(t, raw.QueryRow(context.Background(),
+		`SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = $1`, name).Scan(&c))
+	return c
+}
+
+// setTemplateMarker writes the readiness marker, standing in for a completed
+// build when a test hand-builds a template.
+func setTemplateMarker(t *testing.T, raw *pgx.Conn, name string) {
+	t.Helper()
+	_, err := raw.Exec(context.Background(),
+		"COMMENT ON DATABASE "+name+" IS '"+templateReadyMarker+"'")
+	require.NoError(t, err)
+}
+
 // TestCloneIdempotentIsolated pins the per-test clone contract: repeated Clone
 // calls return the same DSN, and CloneEmpty gives an independent, unmigrated
 // database.
@@ -96,12 +136,12 @@ func dsnFor(t *testing.T, db string) string {
 	return u.String()
 }
 
-// TestCloneTopsUpDayPartitionsFromStaleTemplate pins acceptance A5: a template
-// carries only the day partitions that existed when it was built, and the
-// template is reused for as long as its source hash is unchanged. A clone made
-// from a template built on an earlier day must therefore have today's partition
-// created for it by the per-clone top-up (CloneEmpty skips that step, so this
-// exercises the Clone path).
+// TestCloneTopsUpDayPartitionsFromStaleTemplate pins acceptance A5/A6: a
+// template carries only the day partitions that existed when it was built, and
+// a template marked ready is reused while its source hash is unchanged. A clone
+// made from a template built on an earlier day must therefore have today's
+// partition created for it by the per-clone top-up (CloneEmpty skips that step,
+// so this exercises the Clone path).
 func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	skipNoPG(t)
 	ctx := context.Background()
@@ -132,9 +172,22 @@ func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	// Leave no resident connection on the template before cloning from it.
 	require.NoError(t, sqlDB.Close())
 
+	// Mark the hand-built template ready, standing in for a complete old
+	// template built before today: Clone must REUSE it (marker present) and only
+	// top up today's partitions on the clone, not rebuild it.
+	setTemplateMarker(t, m, staleName)
+	var oidBefore uint32
+	require.NoError(t, m.QueryRow(ctx,
+		`SELECT oid FROM pg_database WHERE datname = $1`, staleName).Scan(&oidBefore))
+
 	// Point pgtest at the stale template and clone from it.
 	t.Setenv("C3API_TEST_TEMPLATE", staleName)
 	dsn := pgtest.Clone(t)
+
+	var oidAfter uint32
+	require.NoError(t, m.QueryRow(ctx,
+		`SELECT oid FROM pg_database WHERE datname = $1`, staleName).Scan(&oidAfter))
+	require.Equal(t, oidBefore, oidAfter, "a marked template must be reused, not rebuilt")
 
 	conn, err := pgx.Connect(ctx, dsn)
 	require.NoError(t, err)
@@ -172,7 +225,86 @@ func TestTemplateReusedAcrossClones(t *testing.T) {
 
 	require.Len(t, oids, 2)
 	require.NotZero(t, oids[0])
-	require.Equal(t, oids[0], oids[1], "an existing template must be reused, not rebuilt")
+	require.Equal(t, oids[0], oids[1], "a ready template must be reused, not rebuilt")
+
+	// Reuse hinges on the marker: the template the second Clone reused must
+	// carry it.
+	marker := templateComment(t, m, name)
+	require.True(t, marker.Valid, "a reused template must be marked ready")
+	require.Equal(t, templateReadyMarker, marker.String)
+}
+
+// TestTemplateRebuiltWhenIncomplete pins acceptance A1: an empty template (the
+// name exists, nothing was migrated, no marker) is not reused. Clone rebuilds
+// it, so the clone carries the migrated schema and the template ends up marked
+// ready. It drives pgtest through a dedicated probe name (spec §7/A8): the
+// shared current-hash template belongs to every parallel package and must never
+// be dropped here.
+func TestTemplateRebuiltWhenIncomplete(t *testing.T) {
+	skipNoPG(t)
+	ctx := context.Background()
+	raw := openMaint(t)
+
+	const probe = "c3api_test_template_readiness_probe"
+	newProbeTemplate(t, raw, probe)
+
+	t.Setenv("C3API_TEST_TEMPLATE", probe)
+	dsn := pgtest.Clone(t)
+
+	pool := pgtest.OpenPool(t, dsn)
+	var hasUsers bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT to_regclass('public.users') IS NOT NULL`).Scan(&hasUsers))
+	require.True(t, hasUsers, "an empty template must be rebuilt into a migrated one")
+
+	marker := templateComment(t, raw, probe)
+	require.True(t, marker.Valid, "the rebuilt template must be marked ready")
+	require.Equal(t, templateReadyMarker, marker.String)
+}
+
+// TestTemplateRebuiltWhenWrongMarker pins acceptance A3: a template whose marker
+// is present but wrong (a stale or foreign comment) is rebuilt, not reused.
+func TestTemplateRebuiltWhenWrongMarker(t *testing.T) {
+	skipNoPG(t)
+	ctx := context.Background()
+	raw := openMaint(t)
+
+	const probe = "c3api_test_template_readiness_wrongmarker_probe"
+	newProbeTemplate(t, raw, probe)
+	_, err := raw.Exec(ctx, "COMMENT ON DATABASE "+probe+" IS 'stale'")
+	require.NoError(t, err)
+
+	t.Setenv("C3API_TEST_TEMPLATE", probe)
+	dsn := pgtest.Clone(t)
+
+	pool := pgtest.OpenPool(t, dsn)
+	var hasUsers bool
+	require.NoError(t, pool.QueryRow(ctx,
+		`SELECT to_regclass('public.users') IS NOT NULL`).Scan(&hasUsers))
+	require.True(t, hasUsers, "a wrong marker must trigger a rebuild")
+
+	marker := templateComment(t, raw, probe)
+	require.True(t, marker.Valid, "the rebuilt template must be marked ready")
+	require.Equal(t, templateReadyMarker, marker.String)
+}
+
+// TestTemplateMarkerNotInheritedByClone pins acceptance A4: the readiness marker
+// is a database COMMENT, and CREATE DATABASE ... TEMPLATE gives the clone a
+// fresh oid with no comment, so a clone is never itself mistaken for a ready
+// template.
+func TestTemplateMarkerNotInheritedByClone(t *testing.T) {
+	skipNoPG(t)
+	ctx := context.Background()
+
+	dsn := pgtest.Clone(t) // ensures the current template is built and marked
+	conn, err := pgx.Connect(ctx, dsn)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+
+	var comment sql.NullString
+	require.NoError(t, conn.QueryRow(ctx,
+		`SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = current_database()`).Scan(&comment))
+	require.False(t, comment.Valid, "a clone must not inherit the template's readiness marker")
 }
 
 // TestOpenPoolMaxConns pins the pool ceiling (dbPoolMax = 4).

@@ -19,8 +19,15 @@
 //   - pg_advisory_lock serialises template (re)creation across every test
 //     binary on the instance.
 //   - The template name embeds the content hash of the schema/migration
-//     sources, so "fresh" is simply "the database exists" and nothing inside the
-//     template is ever read.
+//     sources, so checkouts sharing the same sources agree on it. Readiness is
+//     not "the database exists" alone: a template is reused only when it also
+//     carries a build-complete marker (a database COMMENT, templateReadyMarker)
+//     written as the final step of a successful build. A database whose name
+//     matches but whose marker is absent or wrong — an empty/half-built
+//     template left by a killed build, or an unmarked override — is dropped
+//     and rebuilt, so a half-built template can never masquerade as fresh. This
+//     supersedes the earlier clone spec's "an existing template is reused
+//     without reading inside it" invariant (clone-spec §2.2/§8.2).
 //   - The template build opens its own database/sql connection and closes it
 //     before returning, so no connection is pointing at the template by the time
 //     any CREATE DATABASE ... TEMPLATE runs.
@@ -76,6 +83,11 @@ const (
 	// templateLockKey is the advisory-lock key that serialises template rebuilds
 	// across test binaries. Its value is arbitrary but fixed.
 	templateLockKey = int64(0x6333617069706774)
+	// templateReadyMarker is written as a COMMENT on a template database as the
+	// last step of a successful build. Its presence (and exact value) is what
+	// makes a template reusable; an empty or half-built template — one whose
+	// build was killed before this step — never carries it.
+	templateReadyMarker = "pgtest:template-ready"
 	// hashLen is how many hex digits of the source hash go into a template name.
 	hashLen = 12
 	// identMaxLen is PostgreSQL's identifier length limit in bytes.
@@ -454,9 +466,12 @@ func (c *clone) activeConnections(ctx context.Context) (int, error) {
 	return n, err
 }
 
-// ensureTemplate returns the migrated template's name, building it if the name
-// is absent. The whole check-and-build runs under the advisory lock so exactly
-// one binary builds a given template.
+// ensureTemplate returns the migrated template's name, (re)building it when the
+// name is absent or its readiness marker is missing or wrong. Reuse therefore
+// requires "exists ∧ ready", which supersedes the earlier clone spec's "an
+// existing template is reused without reading inside it" invariant (§2.2/§8.2).
+// The whole check-and-build runs under the advisory lock so exactly one binary
+// builds a given template.
 func ensureTemplate(t testing.TB, m *maint, e *testEnv, migrate func(ctx context.Context, dsn string) error) (string, error) {
 	t.Helper()
 	name, err := templateName(e)
@@ -473,17 +488,24 @@ func ensureTemplate(t testing.TB, m *maint, e *testEnv, migrate func(ctx context
 		}
 	}()
 
-	exists, err := databaseExists(ctx, m.conn, name)
+	exists, ready, err := templateState(ctx, m.conn, name)
 	if err != nil {
 		return "", err
 	}
-	if exists {
+	if exists && ready {
 		return name, nil
+	}
+	if exists {
+		// The name is present but the build did not finish (or an override was
+		// never marked): reuse would hand out an empty/half-built template. Drop
+		// it and rebuild from scratch.
+		t.Logf("pgtest: rebuilding template %q (present but not marked ready)", name)
 	}
 	if _, err := m.conn.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdent(name)+" WITH (FORCE)"); err != nil {
 		return "", fmt.Errorf("drop stale template %q: %w", name, err)
 	}
 	if _, err := m.conn.ExecContext(ctx, "CREATE DATABASE "+quoteIdent(name)); err != nil {
+		_, _ = m.conn.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdent(name)+" WITH (FORCE)")
 		return "", fmt.Errorf("create template %q: %w", name, err)
 	}
 	// migrate owns and closes its own connection to the template, so the
@@ -494,19 +516,34 @@ func ensureTemplate(t testing.TB, m *maint, e *testEnv, migrate func(ctx context
 		_, _ = m.conn.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdent(name)+" WITH (FORCE)")
 		return "", fmt.Errorf("migrate template %q: %w", name, err)
 	}
+	// Write the readiness marker last, through the maintenance connection (never
+	// a template connection), so "marker present ∧ value == marker" proves the
+	// migration — schema, partitions and seed — completed. CREATE DATABASE ...
+	// TEMPLATE does not copy a database COMMENT: a clone is a fresh oid with none.
+	if _, err := m.conn.ExecContext(ctx,
+		"COMMENT ON DATABASE "+quoteIdent(name)+" IS "+quoteLiteral(templateReadyMarker)); err != nil {
+		_, _ = m.conn.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdent(name)+" WITH (FORCE)")
+		return "", fmt.Errorf("mark template %q ready: %w", name, err)
+	}
 	return name, nil
 }
 
-func databaseExists(ctx context.Context, conn *sql.Conn, name string) (bool, error) {
-	var one int
-	err := conn.QueryRowContext(ctx, "SELECT 1 FROM pg_database WHERE datname = $1", name).Scan(&one)
+// templateState reports whether the database name exists and, when it does,
+// whether it carries the ready marker. The marker is a database COMMENT read
+// through the shared pg_shdescription catalog via shobj_description, so no
+// connection is ever opened against the template. An unmarked database scans as
+// NULL (sql.NullString.Valid == false).
+func templateState(ctx context.Context, conn *sql.Conn, name string) (exists, ready bool, err error) {
+	var comment sql.NullString
+	err = conn.QueryRowContext(ctx,
+		`SELECT shobj_description(oid, 'pg_database') FROM pg_database WHERE datname = $1`, name).Scan(&comment)
 	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
+		return false, false, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("check database %q: %w", name, err)
+		return false, false, fmt.Errorf("check database %q: %w", name, err)
 	}
-	return true, nil
+	return true, comment.Valid && comment.String == templateReadyMarker, nil
 }
 
 // TemplateName returns the name of the template the current sources build. The
@@ -579,8 +616,13 @@ func SweepStaleTemplates(ctx context.Context) ([]string, error) {
 		return nil, err
 	}
 	defer func() { _ = m.Close() }()
-	// Serialise against concurrent template builds so a template is never dropped
-	// while another test binary is creating a clone from it.
+	// Serialise against concurrent template builds: the advisory lock makes
+	// build and sweep mutually exclusive, so a sweep never races a rebuild of the
+	// same template. It does NOT cover clone creation — CREATE DATABASE ...
+	// TEMPLATE (createClone) runs outside the lock — so a checkout with a
+	// different source hash can still sweep a template this run is cloning from.
+	// That cross-hash edge is accepted: holding the lock across every clone would
+	// serialise the whole suite.
 	if _, err := m.conn.ExecContext(ctx, "SELECT pg_advisory_lock($1)", templateLockKey); err != nil {
 		return nil, fmt.Errorf("acquire template lock: %w", err)
 	}
@@ -704,6 +746,13 @@ func truncateIdent(name string) string {
 
 func quoteIdent(ident string) string {
 	return `"` + strings.ReplaceAll(ident, `"`, `""`) + `"`
+}
+
+// quoteLiteral quotes s as a PostgreSQL string literal (single-quote doubling).
+// COMMENT ... IS takes a literal, not an expression, so a bound parameter will
+// not do; the marker is a fixed constant, but quoting keeps it safe regardless.
+func quoteLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
 }
 
 func findRepoRoot() (string, error) {
