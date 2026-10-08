@@ -79,10 +79,17 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	if p.Enabled != nil {
 		a.Enabled = *p.Enabled
 	}
-	// 供应商面：归属由服务端钉死为 JWT 本人（§2.5 行层作用域；请求体无法指定——
-	// supplier_user_id 不在 AccountConfigPatch 写面内）。管理面（无作用域）⇒ 平台自有。
+	// 归属（§2.5 行层作用域的锚点）：
+	//   - 供应商面：服务端**钉死** JWT 本人（请求体出现该字段已由 handler 判 400，
+	//     故这里的 patch 值不可能来自供应商面请求体）。
+	//   - 管理面：投影**已验证的 patch owner**（`supplier_user_id` 是管理面把账号
+	//     分配给供应商的入口；前端创建表单就在发该字段）。值域校验（供应商面可达
+	//     + active）由仓储在**同一写事务内**锁 users 行后执行（ownership.go），
+	//     与禁用路径串行化——管理面单建因此与批量转属同纪律。
 	if sc := domain.AccountScopeFrom(ctx); sc.Set {
 		a.SupplierUserID = sc.OwnerUID
+	} else if p.SupplierUserID != nil && *p.SupplierUserID > 0 {
+		a.SupplierUserID = *p.SupplierUserID
 	}
 	created, err := s.store.CreateAccount(ctx, a)
 	if err != nil {

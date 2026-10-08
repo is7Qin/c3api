@@ -62,6 +62,37 @@ func seedCodexKeyExtPG(t *testing.T, repos *repository.Repository, accountID int
 	require.NoError(t, err)
 }
 
+// TestPGAdminCreateOwnership spec I3：管理面单建投影已验证的归属（仓储在同一写事务
+// 内锁目标 users 行并校验）；目标非可达/非 active ⇒ ErrInvalidInput。
+func TestPGAdminCreateOwnership(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	owner := seedSupplierUser(t, repos, "create-owner@example.com")
+
+	// ① 有效归属：落库为该 uid。
+	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
+		Name: "create-owned", TemplateID: tpl.ID, UpstreamKey: "sk-c", MaxConcurrency: 8, Enabled: true,
+		SupplierUserID: owner.ID})
+	require.NoError(t, err)
+	require.Equal(t, owner.ID, acc.SupplierUserID)
+
+	// ② 不存在的目标：拒绝（不得静默降为平台自有）。
+	_, err = repos.Accounts.CreateAccount(ctx, &domain.Account{
+		Name: "create-bad", TemplateID: tpl.ID, UpstreamKey: "sk-b", MaxConcurrency: 8, Enabled: true,
+		SupplierUserID: 999999})
+	require.ErrorIs(t, err, repository.ErrInvalidInput)
+
+	// ③ 已禁用目标：拒绝（能力谓词）。
+	disabled := domain.UserStatusDisabled
+	_, err = repos.UpdateUser(ctx, &repository.UserPatch{ID: owner.ID, Status: &disabled})
+	require.NoError(t, err)
+	_, err = repos.Accounts.CreateAccount(ctx, &domain.Account{
+		Name: "create-disabled", TemplateID: tpl.ID, UpstreamKey: "sk-d", MaxConcurrency: 8, Enabled: true,
+		SupplierUserID: owner.ID})
+	require.ErrorIs(t, err, repository.ErrInvalidInput, "禁用用户不得作为归属目标")
+}
+
 // TestPGAccountLifecycleLockOrder spec I1/A13⑤：普通 `{enabled:true}` 不得复活
 // 「已禁用供应商」名下账号——批量更新按 users → accounts 协议锁**当前与目标
 // owner**，并复核最终归属用户仍 active/可达。
