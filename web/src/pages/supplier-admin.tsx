@@ -12,10 +12,10 @@ import { Plus, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
+import { useFundsErrHandler } from '@/lib/api/funds-error'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,6 +24,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
+import { SettlementActionDialog, type ActionKind } from '@/components/supplier/settlement-action-dialog'
 import { formatDateTime, formatQuotaMillis, parseQuotaUSD } from '@/components/fmt'
 import type { components } from '@/lib/api/schema'
 
@@ -48,9 +49,6 @@ function StatusBadge({ status }: { status: SettlementStatus }) {
   return <Badge variant={STATUS_VARIANT[status]}>{t(`supplier.settlement.status.${status}`)}</Badge>
 }
 
-// 需要额外输入的资金命令（approve 无输入，单列）
-type ActionKind = 'reject' | 'claim' | 'paid' | 'confirm-failed'
-
 export default function SupplierAdmin() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -70,16 +68,7 @@ export default function SupplierAdmin() {
     queryFn: () => api.listSupplierBalances({ limit: 100 }),
   })
 
-  // 错误映射：陈旧 CAS → 409 提示 + 刷新；401 交给全局拦截。
-  const fundsErr = (e: unknown) => {
-    if (e instanceof ApiUnauthorized) return
-    if (e instanceof ApiError && e.status === 409) {
-      toast.add({ title: t('supplierAdmin.conflict'), type: 'error' })
-      qc.invalidateQueries({ queryKey: ['admin-supplier-settlements'] })
-      return
-    }
-    toast.add({ title: (e as Error)?.message ?? String(e), type: 'error' })
-  }
+  const fundsErr = useFundsErrHandler()
   const afterMutate = (msg: string) => {
     qc.invalidateQueries({ queryKey: ['admin-supplier-settlements'] })
     qc.invalidateQueries({ queryKey: ['admin-supplier-balances'] })
@@ -92,54 +81,9 @@ export default function SupplierAdmin() {
     onError: fundsErr,
   })
 
-  // —— 带输入的资金命令：统一对话框 ——
+  // —— 带输入的资金命令：打开哪个动作交给对话框；字段状态/校验/提交归对话框 ——
   const [act, setAct] = useState<{ kind: ActionKind; row: SupplierSettlement } | null>(null)
-  const [reason, setReason] = useState('')
-  const [payeeName, setPayeeName] = useState('')
-  const [payeeAccount, setPayeeAccount] = useState('')
-  const [payeeUnit, setPayeeUnit] = useState('')
-  const [risk, setRisk] = useState('')
-  const [riskSummary, setRiskSummary] = useState('')
-  const [evidence, setEvidence] = useState('')
-  const [confirmedNotPaid, setConfirmedNotPaid] = useState(false)
-  const [oldExecutionStopped, setOldExecutionStopped] = useState(false)
-  const [ref, setRef] = useState('')
-  const openAct = (kind: ActionKind, row: SupplierSettlement) => {
-    setReason(''); setPayeeName(''); setPayeeAccount(''); setPayeeUnit(''); setRisk(''); setRiskSummary('')
-    setEvidence(''); setConfirmedNotPaid(false); setOldExecutionStopped(false); setRef('')
-    setAct({ kind, row })
-  }
-  const runAct = useMutation({
-    mutationFn: async () => {
-      const s = act!.row
-      const rev = { expected_revision: s.revision }
-      switch (act!.kind) {
-        case 'reject': return api.rejectSettlement(s.id, { ...rev, ...(reason ? { reason } : {}) })
-        case 'claim':
-          if (!payeeName.trim() || !payeeAccount.trim() || !payeeUnit.trim() || !risk.trim() || !riskSummary.trim()) throw new Error(t('supplierAdmin.claim.required'))
-          return api.claimSettlement(s.id, {
-            ...rev,
-            amount_millis: s.amount_millis,
-            payee_snapshot: { payee_name: payeeName.trim(), account: payeeAccount.trim(), unit: payeeUnit.trim() },
-            risk_evidence: { reference: risk.trim(), summary: riskSummary.trim(), approved_revision: s.revision },
-          })
-        case 'paid':
-          if (!ref.trim()) throw new Error(t('supplierAdmin.paid.required'))
-          return api.paidSettlement(s.id, { ...rev, external_ref: ref.trim() })
-        case 'confirm-failed':
-          if (!reason.trim() || !evidence.trim() || !confirmedNotPaid || !oldExecutionStopped) throw new Error(t('supplierAdmin.confirmFailed.required'))
-          return api.confirmFailedSettlement(s.id, {
-            ...rev,
-            reason: reason.trim(),
-            evidence: evidence.trim(),
-            confirmed_not_paid: confirmedNotPaid,
-            old_execution_stopped: oldExecutionStopped,
-          })
-      }
-    },
-    onSuccess: () => { afterMutate(t('supplierAdmin.actionSuccess')); setAct(null) },
-    onError: fundsErr,
-  })
+  const openAct = (kind: ActionKind, row: SupplierSettlement) => setAct({ kind, row })
 
   // —— 代申请（admin_request）——
   const [reqOpen, setReqOpen] = useState(false)
@@ -326,80 +270,14 @@ export default function SupplierAdmin() {
         </TabsContent>
       </Tabs>
 
-      {/* 带输入的资金命令对话框 */}
-      <Dialog open={!!act} onOpenChange={v => { if (!v) setAct(null) }}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>{act ? t(`supplierAdmin.act.${act.kind === 'confirm-failed' ? 'confirmFailed' : act.kind}`) : ''}</DialogTitle>
-            <DialogDescription>{act ? t('supplierAdmin.act.idDesc', { id: act.row.id, amount: formatQuotaMillis(act.row.amount_millis) }) : ''}</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            {act?.kind === 'reject' && (
-              <div className="space-y-1.5">
-                <Label htmlFor="act-reason">{t('supplierAdmin.field.reason')}</Label>
-                <Input id="act-reason" value={reason} onChange={e => setReason(e.target.value)} />
-              </div>
-            )}
-            {act?.kind === 'claim' && (
-              <>
-                <div className="space-y-1.5">
-                  <Label htmlFor="act-payee-name">{t('supplierAdmin.field.payeeName')}</Label>
-                  <Input id="act-payee-name" value={payeeName} onChange={e => setPayeeName(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="act-payee-account">{t('supplierAdmin.field.payeeAccount')}</Label>
-                  <Input id="act-payee-account" value={payeeAccount} onChange={e => setPayeeAccount(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="act-payee-unit">{t('supplierAdmin.field.payeeUnit')}</Label>
-                  <Input id="act-payee-unit" value={payeeUnit} onChange={e => setPayeeUnit(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="act-risk">{t('supplierAdmin.field.risk')}</Label>
-                  <Input id="act-risk" value={risk} onChange={e => setRisk(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="act-risk-summary">{t('supplierAdmin.field.riskSummary')}</Label>
-                  <Input id="act-risk-summary" value={riskSummary} onChange={e => setRiskSummary(e.target.value)} />
-                  <p className="text-xs text-muted-foreground">{t('supplierAdmin.claim.hint')}</p>
-                </div>
-              </>
-            )}
-            {act?.kind === 'confirm-failed' && (
-              <>
-                <div className="space-y-1.5">
-                  <Label htmlFor="act-reason">{t('supplierAdmin.field.reason')}</Label>
-                  <Input id="act-reason" value={reason} onChange={e => setReason(e.target.value)} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="act-evidence">{t('supplierAdmin.field.evidence')}</Label>
-                  <Input id="act-evidence" value={evidence} onChange={e => setEvidence(e.target.value)} />
-                </div>
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={confirmedNotPaid} onCheckedChange={c => setConfirmedNotPaid(c === true)} />
-                  {t('supplierAdmin.field.confirmedNotPaid')}
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <Checkbox checked={oldExecutionStopped} onCheckedChange={c => setOldExecutionStopped(c === true)} />
-                  {t('supplierAdmin.field.oldExecutionStopped')}
-                </label>
-                <p className="text-xs text-muted-foreground">{t('supplierAdmin.confirmFailed.hint')}</p>
-              </>
-            )}
-            {act?.kind === 'paid' && (
-              <div className="space-y-1.5">
-                <Label htmlFor="act-ref">{t('supplierAdmin.field.externalRef')}</Label>
-                <Input id="act-ref" value={ref} onChange={e => setRef(e.target.value)} />
-              </div>
-            )}
-          </div>
-          {runAct.isError && !(runAct.error instanceof ApiUnauthorized) && <p className="text-sm text-destructive">{(runAct.error as Error).message}</p>}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setAct(null)}>{t('common.cancel')}</Button>
-            <Button onClick={() => runAct.mutate()} disabled={runAct.isPending}>{t('supplierAdmin.act.submit')}</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 带输入的资金命令对话框（状态/校验/提交归对话框；act=null 即卸载 ⇒ 状态自然清理） */}
+      {act && (
+        <SettlementActionDialog
+          act={act}
+          onClose={() => setAct(null)}
+          onSuccess={() => afterMutate(t('supplierAdmin.actionSuccess'))}
+        />
+      )}
 
       {/* 代申请 */}
       <Dialog open={reqOpen} onOpenChange={setReqOpen}>
