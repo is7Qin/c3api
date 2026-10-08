@@ -95,7 +95,7 @@ func TestPublishMatrix(t *testing.T) {
 
 		// 改额度（quota）→ Keys
 		q := int64(2000)
-		_, err = svc.UpdateKey(ctx, u.ID, created.ID, nil, nil, nil, &q)
+		_, err = svc.UpdateKey(ctx, u.ID, created.ID, nil, nil, nil, &q, nil)
 		require.NoError(t, err)
 		require.True(t, pr.last().Keys, "key 改额度 → Keys:true")
 

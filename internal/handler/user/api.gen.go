@@ -226,11 +226,14 @@ type Key struct {
 	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表/鉴权过滤已删；GET 单个可查已删项）
-	DeletedAt      *time.Time `json:"DeletedAt"`
-	GroupID        *int64     `json:"GroupID,omitempty"`
-	ID             *int64     `json:"ID,omitempty"`
-	MaxConcurrency *int       `json:"MaxConcurrency,omitempty"`
-	Name           *string    `json:"Name,omitempty"`
+	DeletedAt *time.Time `json:"DeletedAt"`
+	GroupID   *int64     `json:"GroupID,omitempty"`
+
+	// GroupName 归属分组名（只读投影；组非存活/未加载 → 空串，前端回退 `#<GroupID>`）
+	GroupName      *string `json:"GroupName,omitempty"`
+	ID             *int64  `json:"ID,omitempty"`
+	MaxConcurrency *int    `json:"MaxConcurrency,omitempty"`
+	Name           *string `json:"Name,omitempty"`
 
 	// Quota 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
 	Quota *int64 `json:"Quota,omitempty"`
@@ -268,6 +271,8 @@ type KeyStatus string
 
 // KeyUpdate defines model for KeyUpdate.
 type KeyUpdate struct {
+	// GroupId 切换归属分组（可选；缺省 = 不改组。可选性同创建——public 或已授予 private；缺失/软删 → 404，未授予 → 400，<=0 → 400）
+	GroupId        *int64  `json:"group_id,omitempty"`
 	MaxConcurrency *int    `json:"max_concurrency,omitempty"`
 	Name           *string `json:"name,omitempty"`
 

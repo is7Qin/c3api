@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { ApiUnauthorized, userApi } from '@/lib/api/client'
 import { KeyBox, copyText } from '@/components/key-box'
 import { Pagination } from '@/components/pagination'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -20,6 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { toast } from '@/components/ui/toast'
 import { formatDateTime, formatQuotaMillis, parseQuotaUSD, quotaMillisToInput } from '@/components/fmt'
 import type { components } from '@/lib/api/schema'
 
@@ -29,6 +31,14 @@ type KeyUpdate = components['schemas']['KeyUpdate']
 type KeyStatus = components['schemas']['KeyStatus']
 
 const STATUSES: KeyStatus[] = ['active', 'disabled']
+
+// 分组选项（弹层/编辑下拉共用）：name 为空（非存活组/未加载 → 服务端返回空串）→
+// 回退 `#<id>`，不得显示空白单元格。
+interface GroupOption {
+  id: number
+  name: string
+}
+const groupLabel = (name: string | null | undefined, id: number) => name || `#${id}`
 
 // 创建表单：name/group_id 必填；数值字段 '' = 不发送（后端缺省），0 = 不限。
 interface CreateForm {
@@ -42,9 +52,11 @@ const emptyCreateForm = (): CreateForm => ({ name: '', group_id: '', max_concurr
 
 // 编辑表单（KeyUpdate 全可选）：name/status 必有值总是发送（读改写幂等）；
 // 数值字段 '' = 不发送（后端视为未提供，保持不变）。quota 以 USD 字符串编辑。
+// group_id 预填当前组，仅在改变时并入 body。
 interface EditForm {
   name: string
   status: KeyStatus
+  group_id: string // Select value 为字符串，提交时转 number（仅改变时发送）
   max_concurrency: string
   quota: string
 }
@@ -53,6 +65,7 @@ function toEditForm(k: Key): EditForm {
   return {
     name: k.Name ?? '',
     status: k.Status ?? 'active',
+    group_id: k.GroupID == null ? '' : String(k.GroupID),
     max_concurrency: k.MaxConcurrency == null ? '' : String(k.MaxConcurrency),
     quota: k.Quota == null ? '' : quotaMillisToInput(k.Quota),
   }
@@ -126,6 +139,16 @@ export default function UserKeys() {
   const selectableGroups = (groups ?? []).filter(g => g.ID != null)
   // Select 必须用 items prop（Record<string, ReactNode>），否则 trigger 显示原始 value。
   const groupItems = Object.fromEntries(selectableGroups.map(g => [String(g.ID!), g.Name ?? String(g.ID!)]))
+  // 可选组并集（弹层/编辑下拉共用）：selectableGroups ∪ {当前组}——当前组若已不在
+  // 可选列表（撤授/软删），仍列出并高亮为当前组，避免编辑被迫重选；label 同款
+  // `name || '#'+id` 回退（非存活当前组 GroupName 空 → 回退，不显示空白）。
+  const groupOptionsFor = (currentID: number | null | undefined, currentName: string | null | undefined): GroupOption[] => {
+    const opts: GroupOption[] = selectableGroups.map(g => ({ id: g.ID!, name: groupLabel(g.Name, g.ID!) }))
+    if (currentID != null && !opts.some(o => o.id === currentID)) {
+      opts.push({ id: currentID, name: groupLabel(currentName, currentID) })
+    }
+    return opts
+  }
 
   // —— 创建（form → result 两阶段：成功后 KeyBox 展示明文，仅此一次） ——
   const [createOpen, setCreateOpen] = useState(false)
@@ -179,6 +202,20 @@ export default function UserKeys() {
       setEditOpen(false)
     },
   })
+
+  // —— 就地切换分组（列表分组单元格 Popover 提交；仅送出 group_id） ——
+  // switchingId 作用域到单行：仅禁用正在切换的那一行，不冻住全表（N3）。
+  const [switchingId, setSwitchingId] = useState<number | null>(null)
+  const switchGroup = useMutation({
+    mutationFn: (p: { id: number; groupID: number }) => userApi.updateUserKey(p.id, { group_id: p.groupID }),
+    onSuccess: () => {
+      toast.add({ title: t('user.keys.groupChanged'), type: 'success' })
+      qc.invalidateQueries({ queryKey: ['user', 'keys'] })
+    },
+    // 失败（组撤销/软删 → 400、缺失 → 404 等）不得静默：弹错误 toast 反馈。
+    onError: (e: Error) => toast.add({ title: errMsg(e) ?? t('user.keys.groupSwitchFailed'), type: 'error' }),
+    onSettled: () => setSwitchingId(null),
+  })
   const openEdit = (k: Key) => {
     setEditing(k)
     setEditForm(toEditForm(k))
@@ -195,6 +232,8 @@ export default function UserKeys() {
     if (editForm.max_concurrency !== '') body.max_concurrency = Number(editForm.max_concurrency)
     const quotaMillis = parseQuotaUSD(editForm.quota)
     if (quotaMillis != null) body.quota = quotaMillis
+    // 分组仅在改变时并入 body（缺省 = 不改组）。
+    if (editing && editForm.group_id !== String(editing.GroupID ?? '')) body.group_id = Number(editForm.group_id)
     update.mutate({ id: editing!.ID!, body })
   }
 
@@ -249,6 +288,51 @@ export default function UserKeys() {
     </div>
   )
 
+  // 分组单元格：显示分组名（空 → 回退 `#id`），点击弹层就地切换（并集含当前组，
+  // 当前组高亮只读；切换中禁用）。
+  const renderGroupCell = (k: Key) => {
+    const opts = groupOptionsFor(k.GroupID, k.GroupName)
+    const busy = switchingId === k.ID
+    const label = k.GroupID == null ? '—' : groupLabel(k.GroupName, k.GroupID)
+    return (
+      <Popover>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              disabled={busy}
+              title={t('user.keys.switchGroup')}
+              className="inline-flex max-w-40 items-center gap-1 rounded px-1.5 py-0.5 text-left hover:bg-accent disabled:opacity-60"
+            />
+          }
+        >
+          <span className="truncate">{label}</span>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-48 p-1">
+          {opts.map(o => {
+            const current = o.id === k.GroupID
+            return (
+              <button
+                key={o.id}
+                type="button"
+                disabled={busy || current}
+                onClick={() => { if (!current) { setSwitchingId(k.ID!); switchGroup.mutate({ id: k.ID!, groupID: o.id }) } }}
+                className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent disabled:opacity-60${current ? ' font-medium' : ''}`}
+              >
+                <span className="truncate">{o.name}</span>
+                {current && <Check className="size-4" />}
+              </button>
+            )
+          })}
+        </PopoverContent>
+      </Popover>
+    )
+  }
+
+  // 编辑弹窗分组下拉数据源：并集含当前组（label 同款回退）。
+  const editGroupOptions = groupOptionsFor(editing?.GroupID, editing?.GroupName)
+  const editGroupItems = Object.fromEntries(editGroupOptions.map(o => [String(o.id), o.name]))
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -284,7 +368,7 @@ export default function UserKeys() {
                   <TableHead>{t('user.keys.table.name')}</TableHead>
                   <TableHead>{t('user.keys.table.keyPrefix')}</TableHead>
                   <TableHead>{t('user.keys.table.status')}</TableHead>
-                  <TableHead>{t('user.keys.table.groupId')}</TableHead>
+                  <TableHead>{t('user.keys.table.group')}</TableHead>
                   <TableHead className="text-right">{t('user.keys.table.maxConcurrency')}</TableHead>
                   <TableHead className="text-right">{t('user.keys.table.quota')}</TableHead>
                   <TableHead>{t('user.keys.table.createdAt')}</TableHead>
@@ -298,7 +382,7 @@ export default function UserKeys() {
                     <TableCell className="max-w-40 truncate" title={k.Name}>{k.Name ?? '—'}</TableCell>
                     <TableCell><KeyCell raw={k.key} /></TableCell>
                     <TableCell><StatusBadge status={k.Status} /></TableCell>
-                    <TableCell className="tabular-nums">{k.GroupID ?? '—'}</TableCell>
+                    <TableCell>{renderGroupCell(k)}</TableCell>
                     <TableCell className="text-right tabular-nums">
                       {k.MaxConcurrency == null ? '—' : k.MaxConcurrency === 0 ? t('user.overview.unlimited') : k.MaxConcurrency}
                     </TableCell>
@@ -321,6 +405,9 @@ export default function UserKeys() {
                 <div className="flex items-center justify-between gap-2">
                   <KeyCell raw={k.key} />
                   <span className="shrink-0 tabular-nums">{quotaText(k)}</span>
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {t('user.keys.table.group')}: {k.GroupID == null ? '—' : groupLabel(k.GroupName, k.GroupID)}
                 </div>
                 {renderActions(k)}
               </Card>
@@ -407,6 +494,15 @@ export default function UserKeys() {
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {STATUSES.map(s => <SelectItem key={s} value={s} label={t(`status.${s}`)}>{t(`status.${s}`)}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t('user.keys.groupLabel')}</Label>
+              <Select items={editGroupItems} value={editForm.group_id} onValueChange={v => setEditForm(f => ({ ...f, group_id: v }))}>
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {editGroupOptions.map(o => <SelectItem key={o.id} value={String(o.id)} label={o.name}>{o.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

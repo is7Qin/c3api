@@ -74,7 +74,7 @@ func (h *UserAPI) PutUserKeysId(w http.ResponseWriter, r *http.Request, id int64
 		status = &st
 	}
 	k, err := h.svc.UpdateKey(r.Context(), currentUserID(r), id, in.Name, status,
-		in.MaxConcurrency, in.Quota)
+		in.MaxConcurrency, in.Quota, in.GroupId)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return

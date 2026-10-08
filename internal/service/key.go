@@ -59,6 +59,7 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 	if err != nil {
 		return nil, mapRepoErr(err) // key_raw 唯一冲突 → ErrConflict（409）
 	}
+	created.GroupName = g.Name                                 // 写路径行无组边（CreateKey 不做 eager-load）——显式回填组名
 	s.upsertKeyMetaInMemory(created, user, g.ProtocolConverts) // 写后注册纯内存（不可失败）
 	// key 创建是多实例缺口（不进 invalidate）：其余实例鉴权快照需全量
 	// Reload 覆盖（v1 不做增量定向）。
@@ -117,12 +118,17 @@ func (s *Service) ListKeys(ctx context.Context, userID int64, q repository.ListQ
 	return s.store.ListKeysByUser(ctx, userID, q)
 }
 
-// UpdateKey 更新自己的 key（name/status/max_concurrency/quota；nil 字段不变）。
-// patch 化：只把显式字段传给 repo（nil = 不改），不再全行快照写回——
-// 并发两个 PUT 改不同字段各自生效（不再静默覆盖先写者）。全 nil = 无变更，
-// 直接返回当前行（零写库零发布）。
+// UpdateKey 更新自己的 key（name/status/max_concurrency/quota/group_id；nil 字段
+// 不变）。patch 化：只把显式字段传给 repo（nil = 不改），不再全行快照写回——
+// 并发两个 PUT 改不同字段各自生效（不再静默覆盖先写者）。
+// 无变更短路（先于任何组读取）：name/status/max/quota 全 nil 且 group_id 缺省或
+// 等于当前组 → 直接返回当前行（零写库零发布零读组——即便当前组已软删也恒 200，
+// 保持既有 no-op PUT 语义）。
+// 改组：写库前预取目标组（变更组 → checkGroupEligible[public/已授予 private；
+// 缺失/软删 404、未授予 400]；仅改其它字段 → getGroupLive(cur.GroupID)），失败
+// → 更新零发生；写后以已取得组刷新鉴权快照（GroupID + ProtocolConverts）。
 // 变更后 Auth 增量 Upsert（禁用/额度调整即时生效的 key 级路径）。
-func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *string, status *domain.KeyStatus, maxConcurrency *int, quota *int64) (*domain.Key, error) {
+func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *string, status *domain.KeyStatus, maxConcurrency *int, quota *int64, groupID *int64) (*domain.Key, error) {
 	cur, err := s.ownedKey(ctx, userID, keyID)
 	if err != nil {
 		return nil, err
@@ -139,26 +145,47 @@ func (s *Service) UpdateKey(ctx context.Context, userID, keyID int64, name *stri
 	if quota != nil && (*quota < 0 || *quota > maxKeyQuotaMillis) {
 		return nil, ErrInvalidInput
 	}
-	if name == nil && status == nil && maxConcurrency == nil && quota == nil {
-		return cur, nil // 无变更：零写库（对齐"单字段 PUT 只改该字段"的惰性语义）
+	if groupID != nil && *groupID <= 0 {
+		return nil, ErrInvalidInput
 	}
-	// 组转换方向写库前预取（同款纪律——失败 → 更新零发生，无"写库
-	// 成功但内存未注册"窗口）；GetKey 不带组边（key_repo.go），组查询单点
-	// getGroupLive。低频路径，一次查询可接受。
-	g, err := s.getGroupLive(ctx, cur.GroupID)
+	// 无变更短路（先于任何组读取）：显式 group_id 等于当前组且其余字段全 nil
+	// → 零读组/零写/零发布（保持 no-op PUT 200，即便当前组已软删——A7 零回归）。
+	changed := name != nil || status != nil || maxConcurrency != nil || quota != nil ||
+		(groupID != nil && *groupID != cur.GroupID)
+	if !changed {
+		return cur, nil
+	}
+	// 写库前预取（同款纪律——失败 → 更新零发生，无"写库成功但内存未注册"
+	// 窗口）：① 组——变更组走可选性校验（返回组本身），仅改其它字段走
+	// getGroupLive（现状行为——仅此时当前组软删才 404）；② 用户门禁字段——
+	// GetUser 前置，写后注册退化为纯内存 Upsert 不可失败（对齐 CreateKey/
+	// RotateKey，见 key.go 同款注释）。
+	var g *domain.Group
+	if groupID != nil && *groupID != cur.GroupID {
+		g, err = s.checkGroupEligible(ctx, userID, *groupID)
+	} else {
+		g, err = s.getGroupLive(ctx, cur.GroupID)
+	}
 	if err != nil {
 		return nil, err
 	}
+	var user *domain.User
+	if s.keys != nil {
+		u, err := s.store.GetUser(ctx, userID)
+		if err != nil {
+			return nil, mapRepoErr(err)
+		}
+		user = u
+	}
 	updated, err := s.store.UpdateKey(ctx, &repository.KeyPatch{
-		ID: keyID, Name: name, Status: status, MaxConcurrency: maxConcurrency, Quota: quota,
+		ID: keyID, Name: name, Status: status, MaxConcurrency: maxConcurrency, Quota: quota, GroupID: groupID,
 	})
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
-	if err := s.upsertKeyMeta(ctx, updated, g.ProtocolConverts); err != nil {
-		return nil, err
-	}
-	s.publish(ctx, notify.Change{Keys: true}) // 改额度/状态 → 全实例 auth 快照全量 Reload
+	updated.GroupName = g.Name                                 // 写路径行无组边——显式回填组名（改组后回显新组名）
+	s.upsertKeyMetaInMemory(updated, user, g.ProtocolConverts) // 写后注册纯内存（不可失败）
+	s.publish(ctx, notify.Change{Keys: true})                  // 改额度/状态/组 → 全实例 auth 快照全量 Reload
 	return updated, nil
 }
 
@@ -191,6 +218,7 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.K
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
+	updated.GroupName = g.Name // 写路径行无组边——显式回填组名（明文/组名均回显）
 	if s.keys != nil {
 		s.keys.Delete(cur.KeyRaw)
 		s.upsertKeyMetaInMemory(updated, user, g.ProtocolConverts) // 写后注册纯内存（不可失败）
@@ -238,23 +266,8 @@ func (s *Service) ownedKey(ctx context.Context, userID, keyID int64) (*domain.Ke
 	return k, nil
 }
 
-// upsertKeyMeta 构造 KeyMeta 并增量注册到 Auth 鉴权快照（UpdateKey 用：
-// 路径：GetUser 失败 → 错误返回，快照靠全量 Reload 兜底 ≤60s 自愈）。
-// converts 组级转换方向（写库前预取，调用方保证与组一致）。
-func (s *Service) upsertKeyMeta(ctx context.Context, k *domain.Key, converts []domain.ProtocolConvert) error {
-	if s.keys == nil {
-		return nil
-	}
-	u, err := s.store.GetUser(ctx, k.UserID)
-	if err != nil {
-		return mapRepoErr(err)
-	}
-	s.upsertKeyMetaInMemory(k, u, converts)
-	return nil
-}
-
-// upsertKeyMetaInMemory 纯内存增量注册（不可失败）：CreateKey/RotateKey 的
-// 用户门禁字段已写库前预取——调用方保证 s.keys != nil 时 u 非 nil；
+// upsertKeyMetaInMemory 纯内存增量注册（不可失败）：CreateKey/UpdateKey/
+// RotateKey 的用户门禁字段已写库前预取——调用方保证 s.keys != nil 时 u 非 nil；
 // converts 同上（缺口字段补齐，全量路径 LoadKeys 经 WithGroup 同源）。
 func (s *Service) upsertKeyMetaInMemory(k *domain.Key, u *domain.User, converts []domain.ProtocolConvert) {
 	if s.keys == nil {

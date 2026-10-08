@@ -1693,6 +1693,9 @@ func (f *fakeStore) UpdateKey(ctx context.Context, p *repository.KeyPatch) (*dom
 			cur.QuotaUsed = 0 // 镜像真实 repo：额度显式设为 0（不限）→ 同步清零累计消耗
 		}
 	}
+	if p.GroupID != nil {
+		cur.GroupID = *p.GroupID // 镜像真实 repo：SetGroupID
+	}
 	c := *cur
 	return &c, nil
 }

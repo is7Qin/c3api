@@ -22,13 +22,19 @@ func toDomainUser(u *ent.User) *domain.User {
 }
 
 func toDomainKey(k *ent.Key) *domain.Key {
-	return &domain.Key{
+	d := &domain.Key{
 		ID: k.ID, UserID: k.UserID, GroupID: k.GroupID, Name: k.Name,
 		KeyRaw: k.KeyRaw,
 		Status: domain.KeyStatus(k.Status), MaxConcurrency: k.MaxConcurrency,
 		Quota: k.Quota, QuotaUsed: k.QuotaUsed,
 		CreatedAt: k.CreatedAt, UpdatedAt: k.UpdatedAt, DeletedAt: k.DeletedAt,
 	}
+	// 组名回填：仅当 eager-load 的组边非 nil（读路径经存活过滤挂边；写路径
+	// 无组边 → nil → 留空）。软删组被过滤 → nil → 前端回退 `#<GroupID>`。
+	if k.Edges.Group != nil {
+		d.GroupName = k.Edges.Group.Name
+	}
+	return d
 }
 
 func toDomainGroup(g *ent.Group) *domain.Group {

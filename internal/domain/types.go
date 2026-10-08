@@ -727,9 +727,12 @@ type User struct {
 
 // Key 客户端 API key（独立表，重建 group 内嵌 key 语义）。
 type Key struct {
-	ID             int64
-	UserID         int64
-	GroupID        int64
+	ID      int64
+	UserID  int64
+	GroupID int64
+	// GroupName 归属分组名（只读投影）：读路径经过滤式 eager-load 回填
+	// （组存活时非空；组非存活/未预加载 → 空串，前端回退 `#<GroupID>`）。
+	GroupName      string
 	Name           string
 	KeyRaw         string // 明文常驻（长期可查看/复制；DB 泄露即明文暴露——自托管权衡）
 	Status         KeyStatus

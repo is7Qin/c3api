@@ -93,6 +93,9 @@ type fakeStore struct {
 	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（
 	// 断言 handler 的 group_ids nil/[] 映射是否真正传到了 repo 层）。
 	lastPatch repository.AccountPatch
+	// updateKeyCalls 记录 UpdateKey 被调用次数（无变更短路"零写库"断言的
+	// 事实来源——短路路径不得触达 repo UpdateKey）。
+	updateKeyCalls int
 	// tempBalances 临时额度行（注册赠品断言用）。
 	tempBalances []fakeTempBalance
 	// tempBalanceErr 注入 CreateTempBalance 失败（注册不阻断）。
@@ -1485,6 +1488,7 @@ func (f *fakeStore) ListKeys(ctx context.Context, q repository.ListQuery) ([]*do
 func (f *fakeStore) UpdateKey(ctx context.Context, p *repository.KeyPatch) (*domain.Key, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.updateKeyCalls++
 	cur, ok := f.keys[p.ID]
 	if !ok {
 		return nil, missingErr(p.ID)
@@ -1503,6 +1507,9 @@ func (f *fakeStore) UpdateKey(ctx context.Context, p *repository.KeyPatch) (*dom
 		if *p.Quota == 0 {
 			cur.QuotaUsed = 0 // 镜像真实 repo：额度显式设为 0（不限）→ 同步清零累计消耗
 		}
+	}
+	if p.GroupID != nil {
+		cur.GroupID = *p.GroupID // 镜像真实 repo：SetGroupID
 	}
 	c := *cur
 	return &c, nil

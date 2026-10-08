@@ -18,6 +18,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
+	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/key"
 )
 
@@ -55,8 +56,15 @@ func (r *KeyRepo) CreateKey(ctx context.Context, k *domain.Key) (*domain.Key, er
 	return toDomainKey(row), nil
 }
 
+// GetKey 取单个 key（不过滤软删——GET 单个可查已删项）。走 Query/Only 而非
+// client.Key.Get：需 eager-load 组边（`Get` 不接受 `With*`），组边按软删过滤
+// （组存活时回填 GroupName，非存活 → nil → 空串）。ownedKey 写路径（Update/
+// Rotate/Delete）经此多一次组查询——低频，可接受。
 func (r *KeyRepo) GetKey(ctx context.Context, id int64) (*domain.Key, error) {
-	row, err := r.client.Key.Get(ctx, id)
+	row, err := r.client.Key.Query().
+		Where(key.IDEQ(id)).
+		WithGroup(func(q *ent.GroupQuery) { q.Where(group.DeletedAtIsNil()) }).
+		Only(ctx)
 	if err != nil {
 		return nil, errMissingID(err, id)
 	}
@@ -117,7 +125,11 @@ func (r *KeyRepo) ListKeys(ctx context.Context, q ListQuery) ([]*domain.Key, int
 	if q.Offset < 0 {
 		q.Offset = 0
 	}
-	rows, err := pred.Order(order).Offset(q.Offset).Limit(q.Limit).All(ctx)
+	// 组名回填：仅行查询挂存活过滤 eager-load（Count 复用 pred 不加边）；
+	// 软删组被过滤 → Edges.Group == nil → GroupName 留空。
+	rows, err := pred.
+		WithGroup(func(gq *ent.GroupQuery) { gq.Where(group.DeletedAtIsNil()) }).
+		Order(order).Offset(q.Offset).Limit(q.Limit).All(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -148,7 +160,10 @@ func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery)
 	if q.Offset < 0 {
 		q.Offset = 0
 	}
-	rows, err := pred.Order(order).Offset(q.Offset).Limit(q.Limit).All(ctx)
+	// 组名回填：仅行查询挂存活过滤 eager-load（Count 复用 pred 不加边）。
+	rows, err := pred.
+		WithGroup(func(gq *ent.GroupQuery) { gq.Where(group.DeletedAtIsNil()) }).
+		Order(order).Offset(q.Offset).Limit(q.Limit).All(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -165,7 +180,7 @@ func (r *KeyRepo) ListKeysByUser(ctx context.Context, userID int64, q ListQuery)
 // quota_used 不写——Recorder 派生计数器（核实：service 层无任何路径
 // 意图写该列，全字段写回会覆盖 AddQuotaUsed 增量 → 永久少记、gate 超用
 // 不 429）；ent Save re-SELECT 返回行 → 调用方拿到的 QuotaUsed 反为 DB 新鲜
-// 值，upsertKeyMeta 顺带同步最新。
+// 值，upsertKeyMetaInMemory 顺带同步最新。
 // **唯一例外**：Quota 显式设为 0（= 不限）时同步清零 quota_used——见 UpdateKey
 // （不限额度下"已用"无意义，且累计语义会让旧消耗带进下一次设额）。
 type KeyPatch struct {
@@ -174,10 +189,12 @@ type KeyPatch struct {
 	Status         *domain.KeyStatus
 	MaxConcurrency *int
 	Quota          *int64
+	GroupID        *int64
 }
 
-// UpdateKey 按 patch 更新 name/status/max_concurrency/quota（不写 key_raw——
+// UpdateKey 按 patch 更新 name/status/max_concurrency/quota/group_id（不写 key_raw——
 // 明文变更仅 CreateKey/RotateKey 路径）；仅 Set 非 nil 列，nil = 该列不动。
+// 组切换仅改 key.group_id（FK 指向存活组由 service 层 checkGroupEligible 保证）。
 func (r *KeyRepo) UpdateKey(ctx context.Context, p *KeyPatch) (*domain.Key, error) {
 	upd := r.client.Key.UpdateOneID(p.ID)
 	if p.Name != nil {
@@ -201,6 +218,9 @@ func (r *KeyRepo) UpdateKey(ctx context.Context, p *KeyPatch) (*domain.Key, erro
 		if *p.Quota == 0 {
 			upd.SetQuotaUsed(0)
 		}
+	}
+	if p.GroupID != nil {
+		upd.SetGroupID(*p.GroupID)
 	}
 	row, err := upd.Save(ctx)
 	if err != nil {

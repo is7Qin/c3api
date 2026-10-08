@@ -2565,6 +2565,8 @@ export interface components {
             UserID?: number;
             /** Format: int64 */
             GroupID?: number;
+            /** @description 归属分组名（只读投影；组非存活/未加载 → 空串，前端回退 `#<GroupID>`） */
+            GroupName?: string;
             Name?: string;
             /** @description key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决） */
             key?: string;
@@ -2611,6 +2613,11 @@ export interface components {
              * @description 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
              */
             quota?: number;
+            /**
+             * Format: int64
+             * @description 切换归属分组（可选；缺省 = 不改组。可选性同创建——public 或已授予 private；缺失/软删 → 404，未授予 → 400，<=0 → 400）
+             */
+            group_id?: number;
         };
         KeyListResponse: {
             /** Format: int64 */
@@ -2624,6 +2631,8 @@ export interface components {
             UserID?: number;
             /** Format: int64 */
             GroupID?: number;
+            /** @description 归属分组名（只读投影；组非存活/未加载 → 空串） */
+            GroupName?: string;
             Name?: string;
             Status?: components["schemas"]["KeyStatus"];
             MaxConcurrency?: number;

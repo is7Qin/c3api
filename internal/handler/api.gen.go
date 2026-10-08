@@ -612,12 +612,15 @@ type AccountsUsageResponse struct {
 
 // AdminKey defines model for AdminKey.
 type AdminKey struct {
-	CreatedAt      *time.Time `json:"CreatedAt,omitempty"`
-	DeletedAt      *time.Time `json:"DeletedAt"`
-	GroupID        *int64     `json:"GroupID,omitempty"`
-	ID             *int64     `json:"ID,omitempty"`
-	MaxConcurrency *int       `json:"MaxConcurrency,omitempty"`
-	Name           *string    `json:"Name,omitempty"`
+	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
+	DeletedAt *time.Time `json:"DeletedAt"`
+	GroupID   *int64     `json:"GroupID,omitempty"`
+
+	// GroupName 归属分组名（只读投影；组非存活/未加载 → 空串）
+	GroupName      *string `json:"GroupName,omitempty"`
+	ID             *int64  `json:"ID,omitempty"`
+	MaxConcurrency *int    `json:"MaxConcurrency,omitempty"`
+	Name           *string `json:"Name,omitempty"`
 
 	// Quota 累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限
 	Quota *int64 `json:"Quota,omitempty"`

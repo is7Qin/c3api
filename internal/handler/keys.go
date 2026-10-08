@@ -51,6 +51,7 @@ func toAPIAdminKey(k *domain.Key) AdminKey {
 		ID:             &k.ID,
 		UserID:         &k.UserID,
 		GroupID:        &k.GroupID,
+		GroupName:      &k.GroupName,
 		Name:           &k.Name,
 		Status:         &st,
 		MaxConcurrency: &k.MaxConcurrency,

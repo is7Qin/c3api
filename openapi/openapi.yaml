@@ -3214,6 +3214,7 @@ components:
         ID: { type: integer, format: int64 }
         UserID: { type: integer, format: int64 }
         GroupID: { type: integer, format: int64 }
+        GroupName: { type: string, description: 归属分组名（只读投影；组非存活/未加载 → 空串，前端回退 `#<GroupID>`） }
         Name: { type: string }
         key: { type: string, description: key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决） }
         Status: { $ref: '#/components/schemas/KeyStatus' }
@@ -3238,6 +3239,7 @@ components:
         status: { $ref: '#/components/schemas/KeyStatus' }
         max_concurrency: { type: integer }
         quota: { type: integer, format: int64, description: "累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限" }
+        group_id: { type: integer, format: int64, description: "切换归属分组（可选；缺省 = 不改组。可选性同创建——public 或已授予 private；缺失/软删 → 404，未授予 → 400，<=0 → 400）" }
     KeyListResponse:
       type: object
       required: [total, rows]
@@ -3252,6 +3254,7 @@ components:
         ID: { type: integer, format: int64 }
         UserID: { type: integer, format: int64 }
         GroupID: { type: integer, format: int64 }
+        GroupName: { type: string, description: 归属分组名（只读投影；组非存活/未加载 → 空串） }
         Name: { type: string }
         Status: { $ref: '#/components/schemas/KeyStatus' }
         MaxConcurrency: { type: integer }
