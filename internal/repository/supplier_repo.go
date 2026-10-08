@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -541,7 +542,7 @@ RETURNING supplier_user_id, amount`
 	}
 
 	// ② 按 uid 升序预锁 balances（★ 独立语句，锁顺序真实发生；§5.3/§5.7）。
-	sortInt64s(order)
+	slices.Sort(order)
 	lockRows, err := tx.Query(ctx,
 		`SELECT supplier_user_id FROM supplier_balances WHERE supplier_user_id = ANY($1) ORDER BY supplier_user_id FOR UPDATE`,
 		order)
@@ -654,12 +655,3 @@ func (r *SupplierRepo) AcquireSupplierLock(ctx context.Context) (release func(),
 
 // supplierCreditLockKey 记账链会话锁键（与 billing/stats 不同命名空间）。
 const supplierCreditLockKey int64 = 0x7375707063726564 // "suppcred" ASCII 前缀（避免与既有键碰撞的常数）
-
-// sortInt64s 升序（显式锁序；避免引入额外依赖）。
-func sortInt64s(v []int64) {
-	for i := 1; i < len(v); i++ {
-		for j := i; j > 0 && v[j-1] > v[j]; j-- {
-			v[j-1], v[j] = v[j], v[j-1]
-		}
-	}
-}
