@@ -10,6 +10,7 @@ package usage
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,20 @@ import (
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
+
+// DiskProbe 数据盘可用空间探针（spec §3.11）：返回可用字节数（best-effort）。
+// ok=false = 无法探测（保留旧值 / ETA unknown）。
+type DiskProbe func() (freeBytes int64, ok bool)
+
+// defaultDiskMinFreeBytes 容量处置默认下限（可用空间低于此值 ⇒ 停供应商新流量）。
+// 未配置时生效；spec 未给固定值，取保守 5 GiB。
+const defaultDiskMinFreeBytes = 5 << 30
+
+// NewDiskProbe 构造基于文件系统 statfs 的可用空间探针（path 所在卷）。非 unix
+// 平台恒 ok=false（ETA unknown）。path 由组合根按数据卷选择（best-effort）。
+func NewDiskProbe(path string) DiskProbe {
+	return func() (int64, bool) { return probeDiskFree(path) }
+}
 
 // PartitionManager 分区管理面（repository.Repository 实现）：保留策略只需
 // DROP 过期分区 + 预建未来分区，不感知分区表内部 DDL。now/until 由调用方
@@ -67,6 +82,16 @@ type RetentionConfig struct {
 	// （domain.RoutingObservationCutoff）。<= 0 = 不删除。
 	RoutingObservationRetentionDays int
 	TickerInterval                  time.Duration // 巡检周期（生产 1h；测试注入短周期；<= 0 兜底 1h）
+	// DiskProbe 数据盘可用空间探针（spec §3.11）：周期采样算容量 ETA 与处置；
+	// nil = 不观测（disk_eta_seconds = -1 / capacity_blocked = false）。
+	DiskProbe DiskProbe
+	// DiskMinFreeBytes 可用空间下限：低于此值 ⇒ 容量不足，触发 OnCapacityBlocked
+	// （边沿）。<=0 ⇒ defaultDiskMinFreeBytes。
+	DiskMinFreeBytes int64
+	// OnCapacityBlocked 容量不足处置回调（spec §3.11）：blocked=true ⇒ 组合根据此
+	// 停供应商新流量 / 拒绝入库；恢复（可用空间回到下限之上）回调 false。
+	// nil = 仅观测不处置。
+	OnCapacityBlocked func(blocked bool)
 }
 
 // RetentionWorker 按日分区保留 worker（worker.Worker 契约，Name="retention"）：
@@ -126,10 +151,61 @@ type RetentionWorker struct {
 	// 但 lastPatrol 仍推进——无此标记，/ops 会把旧数当新鲜数呈现。true = 当前
 	// 呈现的是过期值，下轮成功查询后归 false。
 	statsStale atomic.Bool
+
+	// 容量处置面（spec §3.11）——探针/下限/回调由装配侧注入。
+	diskProbe   DiskProbe
+	diskMinFree int64
+	onCapacity  func(bool)
+	// 磁盘观测：diskFreeBytes 最近采样可用空间；diskEtaSeconds 预计耗尽秒数
+	// （-1 = unknown）；capacityBlocked 低于下限的边沿状态；lastDisk* 上一样本
+	// （算增长速率）。
+	diskFreeBytes        atomic.Int64
+	diskObservedUnixMs   atomic.Int64
+	diskEtaSeconds       atomic.Int64
+	capacityBlocked      atomic.Bool
+	lastDiskFreeBytes    atomic.Int64
+	lastDiskSampleUnixMs atomic.Int64
+
+	// alert 持久 blocked 告警状态（§3.11）：跨巡检轮保留（阻断未解除即持续呈现），
+	// 解除轮清空。alertMu 保护（runOnce 写 / Stats 读）。
+	alertMu sync.Mutex
+	alert   *RetentionBlockedAlert
+}
+
+// RetentionBlockedAlert 持久 blocked 告警状态（spec §3.11）：被 §3.11 屏障挡下、
+// 拒绝 DROP 的 usage_logs 分区清单 + 首次被挡时刻 + 最老未确认债权时刻。跨巡检
+// 轮保留（未解除即持续出现），运维须扩容/恢复 credit·thaw 后重试；绝不默默清债。
+type RetentionBlockedAlert struct {
+	Partitions             []RetentionBlockedPartition `json:"partitions"`
+	FirstBlockedUnixMs     int64                       `json:"first_blocked_unix_ms"`
+	OldestUncreditedUnixMs int64                       `json:"oldest_uncredited_unix_ms"`
+}
+
+// RetentionBlockedPartition 单个被挡分区的告警证据（json 小写键，供前端/运维）。
+type RetentionBlockedPartition struct {
+	Name                   string `json:"name"`
+	UncreditedEarnRows     int64  `json:"uncredited_earn_rows"`
+	UnbilledRows           int64  `json:"unbilled_rows"`
+	OldestUncreditedUnixMs int64  `json:"oldest_uncredited_unix_ms"`
+	ReconSourceKeys        int64  `json:"recon_source_keys"`
+	ReconMismatch          int64  `json:"recon_mismatch"`
+	ReconOpenKeys          int64  `json:"recon_open_keys"`
 }
 
 func NewRetention(cfg RetentionConfig, parts PartitionManager, log *logx.Logger) *RetentionWorker {
-	return &RetentionWorker{cfg: cfg, parts: parts, log: log}
+	w := &RetentionWorker{
+		cfg:         cfg,
+		parts:       parts,
+		log:         log,
+		diskProbe:   cfg.DiskProbe,
+		diskMinFree: cfg.DiskMinFreeBytes,
+		onCapacity:  cfg.OnCapacityBlocked,
+	}
+	if w.diskMinFree <= 0 {
+		w.diskMinFree = defaultDiskMinFreeBytes
+	}
+	w.diskEtaSeconds.Store(-1)
+	return w
 }
 
 // Name worker.Worker 契约（注册顺序无依赖——DROP/预建均幂等）。
@@ -182,6 +258,8 @@ func (w *RetentionWorker) runOnce() {
 		} else {
 			w.lastDropLogs.Store(int64(res.Dropped))
 			w.lastBlockedLogs.Store(int64(len(res.Blocked)))
+			// 持久 blocked 告警状态（§3.11）：被挡分区跨巡检轮保留，解除轮清空。
+			w.updateBlockedAlert(now, res.Blocked)
 			if res.Dropped > 0 && w.log != nil {
 				w.log.Info("retention retired usage_logs partitions", logx.Int("count", res.Dropped))
 			}
@@ -341,7 +419,94 @@ func (w *RetentionWorker) runOnce() {
 			}
 		}
 	}
+	// 容量采样（spec §3.11）：可用空间 + 增长 ⇒ ETA；低于下限 ⇒ 处置。
+	w.sampleDisk(now)
 	w.lastPatrol.Store(now.UnixMilli())
+}
+
+// updateBlockedAlert 更新持久 blocked 告警状态：blocked 非空 ⇒ 保留（首次被挡
+// 时刻跨轮保留）；空 ⇒ 清空（阻断解除）。now 现取一次与巡检同钟。
+func (w *RetentionWorker) updateBlockedAlert(now time.Time, blocked []domain.BlockedPartition) {
+	if len(blocked) == 0 {
+		w.alertMu.Lock()
+		w.alert = nil
+		w.alertMu.Unlock()
+		return
+	}
+	view := &RetentionBlockedAlert{Partitions: make([]RetentionBlockedPartition, 0, len(blocked))}
+	var oldest int64
+	for _, b := range blocked {
+		p := RetentionBlockedPartition{
+			Name:               b.Name,
+			UncreditedEarnRows: b.UncreditedEarnRows,
+			UnbilledRows:       b.UnbilledRows,
+			ReconSourceKeys:    b.ReconSourceKeys,
+			ReconMismatch:      b.ReconMismatch,
+			ReconOpenKeys:      b.ReconOpenKeys,
+		}
+		if b.OldestUncredited != nil {
+			p.OldestUncreditedUnixMs = *b.OldestUncredited
+			if oldest == 0 || *b.OldestUncredited < oldest {
+				oldest = *b.OldestUncredited
+			}
+		}
+		view.Partitions = append(view.Partitions, p)
+	}
+	view.OldestUncreditedUnixMs = oldest
+	w.alertMu.Lock()
+	if w.alert != nil && w.alert.FirstBlockedUnixMs != 0 {
+		view.FirstBlockedUnixMs = w.alert.FirstBlockedUnixMs // 首次被挡时刻跨轮保留
+	} else {
+		view.FirstBlockedUnixMs = now.UnixMilli()
+	}
+	w.alert = view
+	w.alertMu.Unlock()
+}
+
+// sampleDisk 采样数据盘可用空间（spec §3.11）：算增长速率 ⇒ 容量 ETA；低于下限
+// ⇒ 处置（边沿回调 OnCapacityBlocked）。探针 nil / 探测失败 ⇒ 保留旧值（不处置）。
+func (w *RetentionWorker) sampleDisk(now time.Time) {
+	if w.diskProbe == nil {
+		return
+	}
+	free, ok := w.diskProbe()
+	if !ok {
+		return
+	}
+	nowMs := now.UnixMilli()
+	prevFree := w.lastDiskFreeBytes.Load()
+	prevMs := w.lastDiskSampleUnixMs.Load()
+	w.diskFreeBytes.Store(free)
+	w.diskObservedUnixMs.Store(nowMs)
+	if prevMs != 0 && nowMs > prevMs {
+		consumed := prevFree - free
+		if consumed > 0 {
+			elapsed := float64(nowMs-prevMs) / 1000.0
+			if bps := float64(consumed) / elapsed; bps > 0 {
+				w.diskEtaSeconds.Store(int64(float64(free) / bps))
+			}
+		} else {
+			w.diskEtaSeconds.Store(-1) // 未观测到消耗 ⇒ ETA unknown
+		}
+	}
+	w.lastDiskFreeBytes.Store(free)
+	w.lastDiskSampleUnixMs.Store(nowMs)
+	// 处置边沿：低于下限 ⇒ blocked；恢复 ⇒ 复位。回调只在状态翻转时触发一次。
+	blocked := free < w.diskMinFree
+	if blocked != w.capacityBlocked.Swap(blocked) {
+		if w.log != nil {
+			if blocked {
+				w.log.Warn("retention capacity below floor; stopping new supplier ingress",
+					logx.Int64("free_bytes", free), logx.Int64("floor_bytes", w.diskMinFree))
+			} else {
+				w.log.Info("retention capacity recovered; resuming supplier ingress",
+					logx.Int64("free_bytes", free))
+			}
+		}
+		if w.onCapacity != nil {
+			w.onCapacity(blocked)
+		}
+	}
 }
 
 // unixMilliOrZero 零值 time 归 0：零值 time 的 UnixMilli 是巨大负数（公元 1 年），

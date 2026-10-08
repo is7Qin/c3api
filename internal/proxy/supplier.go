@@ -97,6 +97,9 @@ type SupplierSnapshot struct {
 	lastSuccessUnixMs  atomic.Int64 // 0 = 从未成功
 	genSeq             atomic.Int64
 	staleWarnThreshold time.Duration
+	// capacityBlocked 数据盘容量不足（retention §3.11 处置）：置位后带归属账号
+	// 准入拒绝（停供应商新流量），平台自有账号不受影响；恢复后复位。
+	capacityBlocked atomic.Bool
 }
 
 // NewSupplierSnapshot 构造（staleWarnThreshold<=0 ⇒ 兜底 1m）。
@@ -165,6 +168,23 @@ func (p *Proxy) SetSupplierSnapshot(s *SupplierSnapshot) {
 	p.supplier = s
 }
 
+// SetCapacityBlocked 置/复位容量不足标记（retention §3.11 处置回调；main 装配）。
+// 置位 ⇒ AdmitSupplierAccount 对带归属账号拒绝（停供应商新流量），平台自有不受影响。
+func (s *SupplierSnapshot) SetCapacityBlocked(blocked bool) {
+	if s == nil {
+		return
+	}
+	s.capacityBlocked.Store(blocked)
+}
+
+// CapacityBlocked 返回当前容量不足标记（ops/测试读取）。
+func (s *SupplierSnapshot) CapacityBlocked() bool {
+	if s == nil {
+		return false
+	}
+	return s.capacityBlocked.Load()
+}
+
 // SupplierSnapshotRef 返回已装配的供应商快照（nil = 未装配；ops 面读取）。
 func (p *Proxy) SupplierSnapshotRef() *SupplierSnapshot {
 	return p.supplier
@@ -178,6 +198,11 @@ func (p *Proxy) SupplierSnapshotRef() *SupplierSnapshot {
 //     视图仍含旧归属（归属换代未发布）⇒ 拒绝，等 Reload（§4.6.3 发布屏障）；
 //     带归属账号仅当视图 owner 命中该 ownerUID ⇒ 放行并返回 UID/Bp/Rev。
 func (s *SupplierSnapshot) AdmitSupplierAccount(accountID, ownerUID int64) (domain.SupplierFinance, bool) {
+	// 容量不足处置（spec §3.11）：停供应商新流量——带归属账号一律拒绝，平台自有
+	// （ownerUID==0）不受影响（平台供给不依赖供应商磁盘预算）。
+	if s != nil && ownerUID != 0 && s.capacityBlocked.Load() {
+		return domain.SupplierFinance{}, false
+	}
 	v := s.Load() // nil 安全：未装配/未就绪 ⇒ 空视图
 	if ownerUID == 0 {
 		if _, ok := v.Owner(accountID); ok {

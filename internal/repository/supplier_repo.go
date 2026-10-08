@@ -442,6 +442,28 @@ func (r *SupplierRepo) ThawDueChunks(ctx context.Context, limit int) (int, error
 	return r.thawChunks(ctx, limit, true)
 }
 
+// ThawBucketStats 冻结桶物理观测（spec §7.2/G7）：单条聚合查询，零缓存。bucket_lag
+// = 最老未解冻桶 available_at 距 DB now 的秒数（全部未来 / 空 = 0，GREATEST 夹负）；
+// overdue = available_at <= now() 的桶。DAL 直读，供 thaw worker 每轮刷新 ops 面。
+func (r *SupplierRepo) ThawBucketStats(ctx context.Context) (supplier.ThawBucketSnapshot, error) {
+	if r.pool == nil {
+		return supplier.ThawBucketSnapshot{}, errSupplierNoPool
+	}
+	const q = `SELECT
+    COUNT(*)::bigint,
+    GREATEST(0, floor(extract(epoch from clock_timestamp() - MIN(available_at))))::bigint,
+    COUNT(*) FILTER (WHERE available_at <= now())::bigint,
+    COALESCE(SUM(amount) FILTER (WHERE available_at <= now()), 0)::bigint
+FROM supplier_frozen_chunks`
+	var st supplier.ThawBucketSnapshot
+	if err := r.pool.QueryRow(ctx, q).Scan(
+		&st.BucketRows, &st.BucketLagSeconds, &st.OverdueRows, &st.OverdueAmount,
+	); err != nil {
+		return supplier.ThawBucketSnapshot{}, err
+	}
+	return st, nil
+}
+
 // thawChunks 解冻链四步（单连接契约；§5.3）：① DELETE RETURNING → ② 按 uid 升序
 // 预锁 balances → ③ balances 变更 → ④ 覆盖守卫（deleted_uids ⊄ updated_uids ⇒
 // ROLLBACK）。dueOnly=true 仅取到期桶，否则忽略时间谓词（freeze_enabled=false

@@ -4505,6 +4505,17 @@ components:
         #     普通表无分区可 DROP，DELETE 失败即无界增长）,
         #     undated_partition_count int64（名解析失败的分区数；既不计数也不 DROP）,
         #     partition_stats_stale bool（true = 统计查询失败，当前值为上轮过期值）,
+        #     last_blocked_log_partitions int64（最近一轮 usage_logs 分区退休屏障
+        #     挡下的分区数——§3.11），
+        #     blocked_alert object（持久 blocked 告警：partitions[]（name /
+        #     uncredited_earn_rows / unbilled_rows / oldest_uncredited_unix_ms /
+        #     recon_source_keys / recon_mismatch / recon_open_keys）/
+        #     first_blocked_unix_ms / oldest_uncredited_unix_ms；nil = 无阻断。
+        #     跨巡检轮保留，解除轮清空——绝不默默清债）,
+        #     disk_free_bytes int64（数据盘可用空间；探针未装配 = 0）,
+        #     disk_eta_seconds int64（预计磁盘耗尽秒数；-1 = unknown）,
+        #     capacity_blocked bool（可用空间低于下限 ⇒ 停供应商新流量）,
+        #     disk_observed_unix_ms int64（最近一次磁盘采样时刻）,
         #     log_retention_days int, errlog_retention_days int, stats_retention_days int,
         #     routing_observation_retention_days int（oldest 的 cutoff 解释口径）
         #   notify: running bool, ready bool（LISTEN + FullRefresh 已完成——不漏增量的启动屏障）
@@ -4545,9 +4556,16 @@ components:
         #     ——视图冻结的可见痕迹）, last_tick_ok bool（最近 tick 成败）
         #   supplier-credit（记账链，spec 2026-10-09 §7.2）: lag_head int64（头行
         #     快速 lag，行数；高频）, lag_full int64（完整 backlog 行数；降频）,
-        #     lag_earn int64（完整 backlog Σ earn，millis；降频）
+        #     lag_earn int64（完整 backlog Σ earn，millis；降频）,
+        #     lag_observed_unix_ms int64（最近一次成功刷新 lag 的时刻；0 = 从未）,
+        #     lag_stale bool（true = 最近一轮刷新失败，呈现的是上轮旧值——不得当新鲜）
         #   supplier-thaw（解冻链，spec 2026-10-09 §7.2/G7）: deleted_total int64
-        #     （累计删除桶行数）, cycles int64（周期数）
+        #     （累计删除桶行数）, cycles int64（周期数）, bucket_rows int64（冻结桶
+        #     总行数）, bucket_lag_seconds int64（最老未解冻桶 available_at 距今秒数；
+        #     全部未来/空 = 0）, overdue_rows int64（已到期桶行数）, overdue_amount
+        #     int64（已到期桶金额 millis）, thaw_rate_per_sec number（滚动 5min 成功
+        #     删除行/s）, recovery_eta_seconds int64（到期桶数/速率，秒；-1 = unknown）,
+        #     bucket_stale bool（true = 桶观测查询失败，呈现上轮旧值）
         #   supplier-view（财务视图装载，spec 2026-10-09 §4.4/A13④）: attempts int64
         #     （装载尝试累计）, success int64（成功装载累计）, snapshot object
         #     （三态：loaded bool / revision int64 / last_success_unix_ms int64

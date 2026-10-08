@@ -185,3 +185,29 @@ func TestAdmitSupplierAccount(t *testing.T) {
 	_, ok = snap.AdmitSupplierAccount(7, 0)
 	require.True(t, ok)
 }
+
+// TestAdmitSupplierAccountCapacityBlocked spec §3.11 处置：容量不足置位后，带归属
+// 账号一律拒绝（停供应商新流量），平台自有账号不受影响；恢复后复位。
+func TestAdmitSupplierAccountCapacityBlocked(t *testing.T) {
+	snap := NewSupplierSnapshot(time.Minute)
+	snap.Store(map[int64]int64{7: 100}, map[int64]int{100: 7000}, time.Unix(0, 0))
+
+	// 置位：带归属拒绝，平台自有放行。
+	require.False(t, snap.CapacityBlocked())
+	snap.SetCapacityBlocked(true)
+	require.True(t, snap.CapacityBlocked())
+	_, ok := snap.AdmitSupplierAccount(7, 100)
+	require.False(t, ok, "容量不足 ⇒ 停供应商新流量（带归属拒绝）")
+	_, ok = snap.AdmitSupplierAccount(9, 0)
+	require.True(t, ok, "平台自有供给不受供应商磁盘预算影响")
+
+	// 复位：恢复准入。
+	snap.SetCapacityBlocked(false)
+	_, ok = snap.AdmitSupplierAccount(7, 100)
+	require.True(t, ok)
+
+	// nil 安全。
+	var nilSnap *SupplierSnapshot
+	nilSnap.SetCapacityBlocked(true)
+	require.False(t, nilSnap.CapacityBlocked())
+}

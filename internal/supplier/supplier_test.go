@@ -131,9 +131,13 @@ type fakeStore struct {
 	head        int64
 	fullRows    int64
 	fullSum     int64
+	fetchErr    error // 非 nil ⇒ FetchCreditBatch 返回该错误（失败轮观测断言）
 }
 
 func (f *fakeStore) FetchCreditBatch(ctx context.Context, limit int) ([]BatchRow, error) {
+	if f.fetchErr != nil {
+		return nil, f.fetchErr
+	}
 	if f.fetchIdx >= len(f.batches) {
 		return nil, nil
 	}
@@ -211,6 +215,34 @@ func TestCreditWorkerRetryOnDeadlock(t *testing.T) {
 	w := NewCredit(CreditConfig{FreezeEnabled: true}, fs, nil)
 	w.runOnce(context.Background())
 	require.Equal(t, 3, fs.applied, "两次可重试失败 + 一次成功")
+}
+
+// TestCreditWorkerFailureRoundMarksLagStale spec I2：失败轮（取批/apply 失败）
+// 必须仍更新观测——置 lag_stale，不得让故障期的旧健康值冒充新鲜。
+func TestCreditWorkerFailureRoundMarksLagStale(t *testing.T) {
+	// 成功轮：lag 新鲜。
+	ok := &fakeStore{batches: [][]BatchRow{nil}, head: 3, fullRows: 3, fullSum: 3}
+	w := NewCredit(CreditConfig{FreezeEnabled: true, LagFullEvery: 1}, ok, nil)
+	w.runOnce(context.Background())
+	st := w.Stats().(CreditStats)
+	require.False(t, st.LagStale)
+	require.Greater(t, st.LagObservedUnixMs, int64(0), "成功轮须记观测时刻")
+
+	// apply 失败轮：置 stale。
+	bad := &fakeStore{
+		batches:   [][]BatchRow{{{ID: 1, UID: 1, Cost: 10, Earn: 1}}},
+		freeze:    map[int64]int{1: 0},
+		applyErrs: []error{errors.New("boom")},
+	}
+	w2 := NewCredit(CreditConfig{FreezeEnabled: true}, bad, nil)
+	w2.runOnce(context.Background())
+	require.True(t, w2.Stats().(CreditStats).LagStale, "apply 失败轮必须标记 lag 陈旧")
+
+	// 取批失败轮：置 stale。
+	bad2 := &fakeStore{fetchErr: errors.New("fetch boom")}
+	w3 := NewCredit(CreditConfig{FreezeEnabled: true}, bad2, nil)
+	w3.runOnce(context.Background())
+	require.True(t, w3.Stats().(CreditStats).LagStale, "取批失败轮必须标记 lag 陈旧")
 }
 
 // TestCreditWorkerDrain Close 排空到 backlog==0。

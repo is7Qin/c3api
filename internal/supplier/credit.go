@@ -60,6 +60,11 @@ type CreditWorker struct {
 	lagFull    atomic.Int64 // 完整 backlog 行数
 	lagEarn    atomic.Int64 // 完整 backlog Σ earn
 	cycleCount atomic.Int64
+	// lagObservedUnixMs 最近一次成功刷新 lag 的时刻（0 = 从未）。
+	lagObservedUnixMs atomic.Int64
+	// lagStale true = 最近一轮周期未能成功刷新观测（取批/冻结查询/apply 失败），
+	// 当前呈现的 lag 可能是上轮旧值——不得把故障期的旧健康值当新鲜值（spec I2）。
+	lagStale atomic.Bool
 }
 
 // NewCredit 构造记账 worker。
@@ -118,6 +123,9 @@ func (w *CreditWorker) runOnceLocked(ctx context.Context) {
 	batch, err := w.store.FetchCreditBatch(ctx, w.batchLimit())
 	if err != nil {
 		w.warn("supplier credit fetch batch failed", logx.Error(err))
+		// 故障轮仍更新观测（陈旧状态）——不刷新则 lag 保持旧健康值，ops 看不到
+		// 记账链已停摆（spec I2）。
+		w.lagStale.Store(true)
 		return
 	}
 	if len(batch) > 0 {
@@ -125,10 +133,12 @@ func (w *CreditWorker) runOnceLocked(ctx context.Context) {
 		freeze, ferr := w.store.FreezeHoursByUID(ctx, uids)
 		if ferr != nil {
 			w.warn("supplier credit freeze hours lookup failed", logx.Error(ferr))
+			w.lagStale.Store(true)
 			return
 		}
 		if aerr := w.applyWithRetry(ctx, batch, freeze); aerr != nil {
 			w.warn("supplier credit apply failed", logx.Error(aerr))
+			w.lagStale.Store(true)
 			return
 		}
 	}
@@ -158,11 +168,16 @@ func (w *CreditWorker) applyWithRetry(ctx context.Context, batch []BatchRow, fre
 }
 
 // refreshLag 头行高频 + 全量降频（I3：COUNT/SUM 即使命中索引仍是 O(backlog)）。
+// 成功取到头行 ⇒ 记观测时刻并清除 stale；头行查询失败 ⇒ 置 stale（保留旧值但
+// 标陈旧，不冒充新鲜）。
 func (w *CreditWorker) refreshLag(ctx context.Context) {
 	if head, err := w.store.CreditLagHead(ctx); err != nil {
 		w.warn("supplier credit lag head failed", logx.Error(err))
+		w.lagStale.Store(true)
 	} else {
 		w.lagHead.Store(head)
+		w.lagObservedUnixMs.Store(time.Now().UnixMilli())
+		w.lagStale.Store(false)
 	}
 	n := w.cycleCount.Add(1)
 	every := w.cfg.LagFullEvery
@@ -174,6 +189,7 @@ func (w *CreditWorker) refreshLag(ctx context.Context) {
 	}
 	if rows, sum, err := w.store.CreditLagFull(ctx); err != nil {
 		w.warn("supplier credit lag full failed", logx.Error(err))
+		w.lagStale.Store(true)
 	} else {
 		w.lagFull.Store(rows)
 		w.lagEarn.Store(sum)
@@ -260,13 +276,23 @@ type CreditStats struct {
 	LagHead int64 `json:"lag_head"`
 	LagFull int64 `json:"lag_full"`
 	LagEarn int64 `json:"lag_earn"`
+	// LagObservedUnixMs 最近一次成功刷新 lag 的时刻（0 = 从未）。
+	LagObservedUnixMs int64 `json:"lag_observed_unix_ms"`
+	// LagStale true = 最近一轮刷新失败，呈现的是上轮旧值（不得当新鲜值）。
+	LagStale bool `json:"lag_stale"`
 }
 
 // Stats 返回观测面快照（实现 handler.StatsProvider——Name() + Stats() any；
 // 装配链路见 internal/handler/ops.go 文件头）。返回 any 与全仓其余 worker 一致，
 // 使 cmd/server 的类型断言能收进 /api/admin/ops/workers。
 func (w *CreditWorker) Stats() any {
-	return CreditStats{LagHead: w.lagHead.Load(), LagFull: w.lagFull.Load(), LagEarn: w.lagEarn.Load()}
+	return CreditStats{
+		LagHead:           w.lagHead.Load(),
+		LagFull:           w.lagFull.Load(),
+		LagEarn:           w.lagEarn.Load(),
+		LagObservedUnixMs: w.lagObservedUnixMs.Load(),
+		LagStale:          w.lagStale.Load(),
+	}
 }
 
 // uniqueUIDs 批内去重 uid（升序由 AggregateBatch 保证）。

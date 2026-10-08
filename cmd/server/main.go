@@ -238,11 +238,22 @@ func main() {
 	// 同源 config（usage_logs = usage.log_retention_days；err_logs =
 	// usage.errlog_retention_days 默认 7 天短保留——错误审计；usage_stats =
 	// usage.stats_retention_days 默认 180 天——聚合统计长保留）。
+	// 供应商财务视图快照（enabled=true 才构造；此处先声明以便 retention 的容量
+	// 处置回调经闭包桥接——回调运行时点晚于下面 enabled 分支的赋值）。
+	var supplierViewSnap *proxy.SupplierSnapshot
 	retention := usage.NewRetention(usage.RetentionConfig{
 		LogRetentionDays:                cfg.Usage.LogRetentionDays,
 		ErrLogRetentionDays:             cfg.Usage.ErrLogRetentionDays,
 		StatsRetentionDays:              cfg.Usage.StatsRetentionDays,
 		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
+		// 容量处置（spec §3.11）：数据盘可用空间探针（best-effort，"." 所在卷）；
+		// 低于下限 ⇒ 停供应商新流量（经回调置位视图快照的容量门）。
+		DiskProbe: usage.NewDiskProbe("."),
+		OnCapacityBlocked: func(blocked bool) {
+			if supplierViewSnap != nil {
+				supplierViewSnap.SetCapacityBlocked(blocked)
+			}
+		},
 	}, repos, log)
 	// 路由观测写面守卫同源：同一份 observation_retention_days 交给分区仓，
 	// UpsertFlowSnapshot 据此拒早于截止的快照（防 retention 删后重建）。
@@ -349,7 +360,6 @@ func main() {
 		PayoutMaxObserveAge:  cfg.Supplier.PayoutMaxObserveAge,
 		RiskReviewMaxAge:     cfg.Supplier.RiskReviewMaxAge,
 	})
-	var supplierViewSnap *proxy.SupplierSnapshot
 	var supplierViewLoader *supplier.ViewLoader
 	if !cfg.Supplier.Enabled {
 		// enabled=false 时停用 liability 校验（I6/A23，§5.5）：残留冻结/在途单/

@@ -237,6 +237,34 @@ func TestPGSupplierThaw(t *testing.T) {
 	require.Equal(t, int64(1200), pgInt(t, pool, `SELECT available FROM supplier_balances WHERE supplier_user_id=$1`, s.ID))
 }
 
+// TestPGSupplierThawBucketStats spec §7.2/G7：ThawBucketStats 单聚合查询——bucket_rows
+// 增量、到期行/金额、bucket_lag（最老未解冻桶距今秒数，夹负为 0）。用增量断言
+// 以容忍共享 PG 库中其它用例残留的桶行。
+func TestPGSupplierThawBucketStats(t *testing.T) {
+	repos := newPGReposShared(t)
+	pool := pgSharedPool(t)
+	ctx := context.Background()
+	sr := repos.SupplierRepo(supplierRepoCfg())
+
+	before, err := sr.ThawBucketStats(ctx)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, before.BucketRows, int64(0))
+	require.GreaterOrEqual(t, before.BucketLagSeconds, int64(0), "lag 恒非负（GREATEST 夹负）")
+
+	s := seedSupplierUser(t, repos, "sup-thawstats@example.com")
+	seedSupplierBalance(t, pool, s.ID, 0)
+	pgExec(t, pool, `INSERT INTO supplier_frozen_chunks (supplier_user_id, available_at, amount) VALUES ($1, now() - interval '2 hours', 500)`, s.ID)
+	pgExec(t, pool, `INSERT INTO supplier_frozen_chunks (supplier_user_id, available_at, amount) VALUES ($1, now() + interval '10 hours', 700)`, s.ID)
+	pgExec(t, pool, `INSERT INTO supplier_frozen_chunks (supplier_user_id, available_at, amount) VALUES ($1, now() + interval '11 hours', 700)`, s.ID)
+
+	after, err := sr.ThawBucketStats(ctx)
+	require.NoError(t, err)
+	require.Equal(t, before.BucketRows+3, after.BucketRows, "bucket_rows 增量 = 3")
+	require.Equal(t, before.OverdueRows+1, after.OverdueRows, "仅 1 个新桶到期")
+	require.Equal(t, before.OverdueAmount+500, after.OverdueAmount, "到期金额增量 = 500")
+	require.Greater(t, after.BucketLagSeconds, int64(0), "存在到期桶 ⇒ bucket_lag > 0")
+}
+
 func TestPGSupplierThawCoverageGuard(t *testing.T) {
 	repos := newPGReposShared(t)
 	pool := pgSharedPool(t)
