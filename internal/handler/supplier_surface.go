@@ -37,7 +37,8 @@ const SupplierSurfaceBaseURL = "/api/user/supplier"
 // 业务 op 直调 AdminAPI 自身方法（supplier_business.go）；账号/分组/模板 op 由生成的
 // supplier wrapper 解析**一次**参数后，**类型化直调**同一 AdminAPI 实现——id 透传、
 // query/header 显式映射到管理面参数类型，不再从 `r` 二次解析（消除两套生成路由的
-// chi 参数名 / query / header 规则长期同构的隐含耦合；编译器能发现映射遗漏）。
+// chi 参数名 / query / header 规则长期同构的隐含耦合；编译器能发现**字段名/类型**
+// 不匹配——但具名 struct literal 仍可省略字段，**字段遗漏由测试/评审兜底**）。
 type supplierSurface struct {
 	api *AdminAPI
 }
