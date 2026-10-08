@@ -59,7 +59,7 @@ func TestSupplierWorkersFor(t *testing.T) {
 // 跳过它们——/api/admin/ops/workers 看不到收益链。这里断言三者的 Stats() 返回
 // 各自的具名类型（与全仓 stats 断言语义一致）。
 func TestSupplierWorkersImplementStatsProvider(t *testing.T) {
-	credit := supplier.NewCredit(supplier.CreditConfig{}, nil, nil)
+	credit := supplier.NewCredit(supplier.CreditConfig{}, nil, nil, nil)
 	thaw := supplier.NewThaw(supplier.ThawConfig{}, nil, nil)
 	snap := proxy.NewSupplierSnapshot(time.Minute)
 	loader := supplier.NewViewLoader(supplier.ViewConfig{}, nil, snap, nil)

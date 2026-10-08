@@ -185,7 +185,7 @@ func TestCreditWorkerRunOnce(t *testing.T) {
 		fullRows: 3,
 		fullSum:  3,
 	}
-	w := NewCredit(CreditConfig{FreezeEnabled: true, LagFullEvery: 1}, fs, nil)
+	w := NewCredit(CreditConfig{FreezeEnabled: true, LagFullEvery: 1}, fs, nil, nil)
 	w.runOnce(context.Background())
 	require.Equal(t, 1, fs.applied)
 	require.Equal(t, []int64{200, 100}, fs.appliedUIDs[0], "uid 去重（顺序 = 出现序）")
@@ -199,7 +199,7 @@ func TestCreditWorkerRunOnce(t *testing.T) {
 // （即使无批）。
 func TestCreditWorkerFreezeDisabledReleases(t *testing.T) {
 	fs := &fakeStore{releaseN: 2}
-	w := NewCredit(CreditConfig{FreezeEnabled: false}, fs, nil)
+	w := NewCredit(CreditConfig{FreezeEnabled: false}, fs, nil, nil)
 	w.runOnce(context.Background())
 	require.Equal(t, 1, fs.released)
 	require.Equal(t, 0, fs.applied, "空批 ⇒ 不 apply")
@@ -212,7 +212,7 @@ func TestCreditWorkerRetryOnDeadlock(t *testing.T) {
 		freeze:    map[int64]int{1: 0},
 		applyErrs: []error{&pgconn.PgError{Code: "40P01"}, &pgconn.PgError{Code: "40P01"}},
 	}
-	w := NewCredit(CreditConfig{FreezeEnabled: true}, fs, nil)
+	w := NewCredit(CreditConfig{FreezeEnabled: true}, fs, nil, nil)
 	w.runOnce(context.Background())
 	require.Equal(t, 3, fs.applied, "两次可重试失败 + 一次成功")
 }
@@ -222,7 +222,7 @@ func TestCreditWorkerRetryOnDeadlock(t *testing.T) {
 func TestCreditWorkerFailureRoundMarksLagStale(t *testing.T) {
 	// 成功轮：lag 新鲜。
 	ok := &fakeStore{batches: [][]BatchRow{nil}, head: 3, fullRows: 3, fullSum: 3}
-	w := NewCredit(CreditConfig{FreezeEnabled: true, LagFullEvery: 1}, ok, nil)
+	w := NewCredit(CreditConfig{FreezeEnabled: true, LagFullEvery: 1}, ok, nil, nil)
 	w.runOnce(context.Background())
 	st := w.Stats().(CreditStats)
 	require.False(t, st.LagStale)
@@ -234,13 +234,13 @@ func TestCreditWorkerFailureRoundMarksLagStale(t *testing.T) {
 		freeze:    map[int64]int{1: 0},
 		applyErrs: []error{errors.New("boom")},
 	}
-	w2 := NewCredit(CreditConfig{FreezeEnabled: true}, bad, nil)
+	w2 := NewCredit(CreditConfig{FreezeEnabled: true}, bad, nil, nil)
 	w2.runOnce(context.Background())
 	require.True(t, w2.Stats().(CreditStats).LagStale, "apply 失败轮必须标记 lag 陈旧")
 
 	// 取批失败轮：置 stale。
 	bad2 := &fakeStore{fetchErr: errors.New("fetch boom")}
-	w3 := NewCredit(CreditConfig{FreezeEnabled: true}, bad2, nil)
+	w3 := NewCredit(CreditConfig{FreezeEnabled: true}, bad2, nil, nil)
 	w3.runOnce(context.Background())
 	require.True(t, w3.Stats().(CreditStats).LagStale, "取批失败轮必须标记 lag 陈旧")
 }
@@ -255,7 +255,7 @@ func TestCreditWorkerDrain(t *testing.T) {
 		},
 		freeze: map[int64]int{1: 0},
 	}
-	w := NewCredit(CreditConfig{FreezeEnabled: true, DrainBudget: time.Second}, fs, nil)
+	w := NewCredit(CreditConfig{FreezeEnabled: true, DrainBudget: time.Second}, fs, nil, nil)
 	require.NoError(t, w.Close(context.Background()))
 	require.Equal(t, 2, fs.applied)
 }
@@ -264,7 +264,7 @@ func TestCreditWorkerDrain(t *testing.T) {
 // 冻结桶（§5.4/§5.5：freeze_enabled=false 时不得因 backlog==0 提前退出）。
 func TestCreditWorkerCloseDrainsFrozenChunks(t *testing.T) {
 	fs := &fakeStore{releaseSeq: []int{3, 2, 0}}
-	w := NewCredit(CreditConfig{FreezeEnabled: false, DrainBudget: time.Second}, fs, nil)
+	w := NewCredit(CreditConfig{FreezeEnabled: false, DrainBudget: time.Second}, fs, nil, nil)
 	require.NoError(t, w.Close(context.Background()))
 	require.Equal(t, 3, fs.released, "Close 须每轮释放直到 released==0")
 	require.Equal(t, 0, fs.applied, "空 backlog ⇒ 不 apply")
@@ -273,9 +273,35 @@ func TestCreditWorkerCloseDrainsFrozenChunks(t *testing.T) {
 // TestCreditWorkerCloseBudgetBounded 总预算到期必须退出（即使存量仍在释放）。
 func TestCreditWorkerCloseBudgetBounded(t *testing.T) {
 	fs := &fakeStore{releaseN: 1} // 永远释放 1 行（模拟持续存量）
-	w := NewCredit(CreditConfig{FreezeEnabled: false, DrainBudget: 50 * time.Millisecond}, fs, nil)
+	w := NewCredit(CreditConfig{FreezeEnabled: false, DrainBudget: 50 * time.Millisecond}, fs, nil, nil)
 	start := time.Now()
 	require.NoError(t, w.Close(context.Background()))
 	require.Less(t, time.Since(start), 5*time.Second, "总预算到期必须退出")
 	require.Greater(t, fs.released, 0)
+}
+
+type fakeLocker struct {
+	acquired bool
+	calls    int
+}
+
+func (f *fakeLocker) AcquireSupplierLock(context.Context) (func(), bool, error) {
+	f.calls++
+	return func() {}, f.acquired, nil
+}
+
+// TestCreditWorkerExplicitLocker S13：leader 锁由构造**显式注入**；未获锁 ⇒ 跳过本周期
+// （不取批/不 apply）；nil ⇒ 具名 NoopLocker 恒执行。
+func TestCreditWorkerExplicitLocker(t *testing.T) {
+	fs := &fakeStore{batches: [][]BatchRow{{{ID: 1, UID: 1, Cost: 10, Earn: 1}}}, freeze: map[int64]int{1: 0}}
+	lk := &fakeLocker{acquired: false}
+	w := NewCredit(CreditConfig{FreezeEnabled: true}, fs, lk, nil)
+	w.runOnce(context.Background())
+	require.Equal(t, 1, lk.calls)
+	require.Equal(t, 0, fs.applied, "未获 leader 锁 ⇒ 跳过取批/apply")
+
+	fs2 := &fakeStore{batches: [][]BatchRow{{{ID: 1, UID: 1, Cost: 10, Earn: 1}}}, freeze: map[int64]int{1: 0}}
+	w2 := NewCredit(CreditConfig{FreezeEnabled: true}, fs2, nil, nil)
+	w2.runOnce(context.Background())
+	require.Equal(t, 1, fs2.applied, "nil locker ⇒ NoopLocker 恒执行")
 }

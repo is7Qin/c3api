@@ -52,6 +52,7 @@ type CreditConfig struct {
 type CreditWorker struct {
 	cfg     CreditConfig
 	store   CreditStore
+	locker  CreditLocker
 	log     *logx.Logger
 	started atomic.Bool
 
@@ -67,9 +68,14 @@ type CreditWorker struct {
 	lagStale atomic.Bool
 }
 
-// NewCredit 构造记账 worker。
-func NewCredit(cfg CreditConfig, store CreditStore, log *logx.Logger) *CreditWorker {
-	return &CreditWorker{cfg: cfg, store: store, log: log}
+// NewCredit 构造记账 worker。locker 为 leader/会话锁面：多实例传 repository 的
+// *SupplierRepo；单实例或测试传 NoopLocker（或 nil ⇒ NoopLocker）。**显式注入**使
+// 构造签名即可看出实际是否启用协调（不再依赖运行时类型断言）。
+func NewCredit(cfg CreditConfig, store CreditStore, locker CreditLocker, log *logx.Logger) *CreditWorker {
+	if locker == nil {
+		locker = NoopLocker{}
+	}
+	return &CreditWorker{cfg: cfg, store: store, locker: locker, log: log}
 }
 
 // Name worker.Worker 契约。
@@ -313,22 +319,26 @@ func uniqueUIDs(batch []BatchRow) []int64 {
 // 返回本哨兵 → 空转下轮。
 var ErrNotLeader = errors.New("supplier: not leader")
 
-// CreditLocker 记账链取批的 leader/会话锁面（repository *SupplierRepo 实现；
-// fake 不实现 ⇒ 视为单 leader，锁 no-op）。I4：多实例用会话锁取批，标记计数守卫
-// 继续作锁丢失后的安全后盾（§5.2）。
+// CreditLocker 记账链取批的 leader/会话锁面（repository *SupplierRepo 实现；单实例/
+// 测试用具名 NoopLocker）。I4：多实例用会话锁取批，标记计数守卫继续作锁丢失后的安全
+// 后盾（§5.2）。
 type CreditLocker interface {
 	AcquireSupplierLock(ctx context.Context) (release func(), ok bool, err error)
 }
 
-// withLeaderLock 取 leader 锁后执行 fn：store 非 locker（或单实例）⇒ 直接执行；
-// 抢锁失败（其他实例在消费）⇒ ok=false，跳过本周期。
+// NoopLocker 单实例/测试用 leader 锁：恒获取成功、release 为 no-op（与「未配置锁」
+// 等价，但不依赖类型断言）。
+type NoopLocker struct{}
+
+// AcquireSupplierLock 恒获取成功。
+func (NoopLocker) AcquireSupplierLock(context.Context) (func(), bool, error) {
+	return func() {}, true, nil
+}
+
+// withLeaderLock 取 leader 锁后执行 fn：抢锁失败（其他实例在消费）⇒ ok=false，跳过
+// 本周期。单实例/测试经 NoopLocker 恒执行。
 func (w *CreditWorker) withLeaderLock(ctx context.Context, fn func()) (ok bool) {
-	locker, isLocker := w.store.(CreditLocker)
-	if !isLocker {
-		fn()
-		return true
-	}
-	release, acquired, err := locker.AcquireSupplierLock(ctx)
+	release, acquired, err := w.locker.AcquireSupplierLock(ctx)
 	if err != nil {
 		w.warn("supplier credit leader lock failed", logx.Error(err))
 		return false

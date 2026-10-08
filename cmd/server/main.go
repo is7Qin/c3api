@@ -674,7 +674,7 @@ func main() {
 			DrainBudget:   supplierCreditDrainBudget,
 			FreezeEnabled: cfg.Supplier.FreezeEnabled,
 			LagFullEvery:  20,
-		}, suppRepo, log)
+		}, suppRepo, suppRepo, log)
 		var thawW worker.Worker
 		if cfg.Supplier.FreezeEnabled {
 			thawW = supplier.NewThaw(supplier.ThawConfig{
