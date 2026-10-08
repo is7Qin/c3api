@@ -4,6 +4,15 @@
 
 replicaCount: 1
 
+# --- Autoscaling (HPA) ---
+# When enabled, the Deployment omits its replica count and the HPA owns scaling.
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 80
+  targetMemoryUtilizationPercentage: 80
+
 image:
   repository: ghcr.io/is7qin/c3api
   tag: beta            # production: pin an immutable version, e.g. v1.2.3

@@ -73,7 +73,12 @@ helm install c3api ./deploy/helm \
 
 | Key | Description | Default |
 |---|---|---|
-| `replicaCount` | Number of app replicas | `1` |
+| `replicaCount` | Number of app replicas (ignored when `autoscaling.enabled`) | `1` |
+| `autoscaling.enabled` | Render an HPA; the HPA then owns the replica count | `false` |
+| `autoscaling.minReplicas` | HPA minimum replicas | `1` |
+| `autoscaling.maxReplicas` | HPA maximum replicas | `5` |
+| `autoscaling.targetCPUUtilizationPercentage` | HPA CPU target (needs CPU requests) | `80` |
+| `autoscaling.targetMemoryUtilizationPercentage` | HPA memory target (needs memory requests) | `80` |
 | `image.repository` | Image repository | `ghcr.io/is7qin/c3api` |
 | `image.tag` | Image tag (pin a version in production) | `beta` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
@@ -126,9 +131,13 @@ helm install c3api ./deploy/helm \
   override `app.port`, keep `config.content` consistent.
 - **Probes:** all three probes use `/healthz`, which reports process liveness
   only (not DB/Redis). The app fail-fasts on dependencies at startup.
-- **PodDisruptionBudget:** enabling it with `replicaCount=1` fails rendering
+- **PodDisruptionBudget:** enabling it with only one replica fails rendering
   (a PDB with `minAvailable=1` and a single replica blocks all voluntary
-  evictions); use `replicaCount > 1`.
+  evictions); use `replicaCount > 1` (or `autoscaling.minReplicas > 1`).
+- **Autoscaling:** `autoscaling.enabled=true` renders a `HorizontalPodAutoscaler`
+  and makes the Deployment omit its replica count so the HPA owns scaling. This
+  requires a metrics API (metrics-server) and CPU/memory **requests** on the
+  container (utilization targets are relative to requests).
 - **Secrets:** `secrets.*` and a literal `externalDatabase.dsn` are injected as
   plain env values (visible via `kubectl describe pod`). For production prefer
   `existingSecret`, and pin `image.tag` to an immutable version.
