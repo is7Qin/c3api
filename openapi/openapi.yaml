@@ -50,7 +50,7 @@ paths:
         - $ref: '#/components/parameters/ListOffset'
         - $ref: '#/components/parameters/ListName'
         - $ref: '#/components/parameters/ListSort'
-        - $ref: '#/components/parameters/ListOrderAccount'
+        - $ref: '#/components/parameters/ListOrder'
       responses:
         '200':
           description: 模板列表
@@ -195,7 +195,7 @@ paths:
         - $ref: '#/components/parameters/ListOffset'
         - $ref: '#/components/parameters/ListName'
         - $ref: '#/components/parameters/ListSort'
-        - $ref: '#/components/parameters/ListOrderAccount'
+        - $ref: '#/components/parameters/ListOrder'
         - $ref: '#/components/parameters/AccountTemplateId'
         - $ref: '#/components/parameters/AccountEnabled'
       responses:
@@ -451,7 +451,7 @@ paths:
         - $ref: '#/components/parameters/ListOffset'
         - $ref: '#/components/parameters/ListName'
         - $ref: '#/components/parameters/ListSort'
-        - $ref: '#/components/parameters/ListOrderAccount'
+        - $ref: '#/components/parameters/ListOrder'
       responses:
         '200':
           description: 分组列表
@@ -1988,7 +1988,7 @@ paths:
         - $ref: '#/components/parameters/ListOffset'
         - $ref: '#/components/parameters/ListName'
         - $ref: '#/components/parameters/ListSort'
-        - $ref: '#/components/parameters/ListOrderAccount'
+        - $ref: '#/components/parameters/ListOrder'
         - $ref: '#/components/parameters/AccountTemplateId'
         - $ref: '#/components/parameters/AccountEnabled'
       responses:
@@ -2244,7 +2244,7 @@ paths:
         - $ref: '#/components/parameters/ListOffset'
         - $ref: '#/components/parameters/ListName'
         - $ref: '#/components/parameters/ListSort'
-        - $ref: '#/components/parameters/ListOrderAccount'
+        - $ref: '#/components/parameters/ListOrder'
       responses:
         '200':
           description: 分组列表
@@ -2264,7 +2264,7 @@ paths:
         - $ref: '#/components/parameters/ListOffset'
         - $ref: '#/components/parameters/ListName'
         - $ref: '#/components/parameters/ListSort'
-        - $ref: '#/components/parameters/ListOrderAccount'
+        - $ref: '#/components/parameters/ListOrder'
       responses:
         '200':
           description: 模板列表
@@ -2481,7 +2481,7 @@ components:
       in: query
       required: false
       schema: { type: string }
-    ListOrderAccount:
+    ListOrder:
       name: order
       in: query
       required: false

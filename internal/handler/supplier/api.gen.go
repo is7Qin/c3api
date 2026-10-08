@@ -96,10 +96,10 @@ const (
 	OpenaiSearch      TemplateSupportedFormats = "openai-search"
 )
 
-// Defines values for ListOrderAccount.
+// Defines values for ListOrder.
 const (
-	ListOrderAccountAsc  ListOrderAccount = "asc"
-	ListOrderAccountDesc ListOrderAccount = "desc"
+	ListOrderAsc  ListOrder = "asc"
+	ListOrderDesc ListOrder = "desc"
 )
 
 // Defines values for GetSupplierAccountsParamsOrder.
@@ -726,8 +726,8 @@ type ListName = string
 // ListOffset defines model for ListOffset.
 type ListOffset = int
 
-// ListOrderAccount defines model for ListOrderAccount.
-type ListOrderAccount string
+// ListOrder defines model for ListOrder.
+type ListOrder string
 
 // ListSort defines model for ListSort.
 type ListSort = string

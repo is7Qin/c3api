@@ -7,12 +7,15 @@ package handler
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
@@ -23,33 +26,48 @@ import (
 // 的静态 token 拒绝（§6.5 I5 / A24①）。
 const staticAdminToken = "static-admin-token-for-test"
 
-// supplierRegisteredRoutes 供应商面**应有的**登记集（方法 + chi pattern），顺序无关。
-// 唯一事实源是 openapi 里 tag `supplier` 的 path；本表是它的守卫副本——任一侧漂移
-// （openapi 少/多登记一条，或生成面数量变化）都会让 A14④ 断言失败。
-var supplierRegisteredRoutes = []string{
-	"GET /api/user/supplier/accounts",
-	"POST /api/user/supplier/accounts",
-	"GET /api/user/supplier/accounts/usage",
-	"POST /api/user/supplier/accounts/batch-update",
-	"POST /api/user/supplier/accounts/batch-delete",
-	"POST /api/user/supplier/accounts/batch-import-codex-oauth",
-	"POST /api/user/supplier/accounts/batch-import-codex-pat",
-	"GET /api/user/supplier/accounts/{id}",
-	"PATCH /api/user/supplier/accounts/{id}",
-	"DELETE /api/user/supplier/accounts/{id}",
-	"GET /api/user/supplier/accounts/{id}/ext",
-	"PUT /api/user/supplier/accounts/{id}/ext",
-	"GET /api/user/supplier/accounts/{id}/groups",
-	"POST /api/user/supplier/accounts/{id}/recover",
-	"GET /api/user/supplier/groups",
-	"GET /api/user/supplier/templates",
-	"GET /api/user/supplier/templates/{id}",
-	// 业务面（§6.1/§6.2）。
-	"GET /api/user/supplier/overview",
-	"GET /api/user/supplier/earnings",
-	"GET /api/user/supplier/chunks",
-	"GET /api/user/supplier/settlements",
-	"POST /api/user/supplier/settlements",
+// openapiMethods OpenAPI path item 里的 HTTP 方法键（其余键如 parameters/summary
+// 是 path 级字段，不是操作）。
+var openapiMethods = map[string]struct{}{
+	"get": {}, "post": {}, "put": {}, "patch": {}, "delete": {},
+	"head": {}, "options": {}, "trace": {},
+}
+
+// openapiSupplierRoutes 供应商面**应有登记集**（method + path）的**唯一事实源**：
+// 直接解析 `openapi/openapi.yaml` 里 tag `supplier` 的操作（不再是与 yaml 并存的
+// 手抄守卫副本）。yaml 多挂一条而 Go 侧漂移也会被抓——只要 tag 是 supplier，
+// 生成面就必须登记；反之未登记的 op 不会出现在本清单里。只读测试用 yaml.v3
+// （生产包不依赖 yaml）。
+func openapiSupplierRoutes(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "openapi", "openapi.yaml"))
+	require.NoError(t, err, "读取 openapi 契约（供应商面登记集的唯一事实源）")
+	var doc struct {
+		Paths map[string]map[string]yaml.Node `yaml:"paths"`
+	}
+	require.NoError(t, yaml.Unmarshal(raw, &doc), "解析 openapi.yaml")
+	var out []string
+	for path, item := range doc.Paths {
+		for key, node := range item {
+			if _, ok := openapiMethods[key]; !ok {
+				continue
+			}
+			var op struct {
+				Tags []string `yaml:"tags"`
+			}
+			if err := node.Decode(&op); err != nil {
+				continue
+			}
+			for _, tag := range op.Tags {
+				if tag == "supplier" {
+					out = append(out, strings.ToUpper(key)+" "+path)
+					break
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // walkRoutes 收集已注册路由（method + pattern）。
@@ -73,8 +91,7 @@ func TestSupplierSurfaceRegisteredRoutes(t *testing.T) {
 	api := newTestHandler(t)
 	got := walkRoutes(t, api.SupplierSurfaceHandler())
 
-	want := append([]string(nil), supplierRegisteredRoutes...)
-	sort.Strings(want)
+	want := openapiSupplierRoutes(t)
 	require.Equal(t, want, got, "供应商面登记集必须 = openapi 中 tag supplier 的 path 集")
 }
 

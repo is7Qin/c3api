@@ -4231,7 +4231,7 @@ export interface components {
         ListOffset: number;
         ListName: string;
         ListSort: string;
-        ListOrderAccount: "asc" | "desc";
+        ListOrder: "asc" | "desc";
         AccountTemplateId: number;
         /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
         AccountEnabled: boolean;
@@ -4289,7 +4289,7 @@ export interface operations {
                 offset?: components["parameters"]["ListOffset"];
                 name?: components["parameters"]["ListName"];
                 sort?: components["parameters"]["ListSort"];
-                order?: components["parameters"]["ListOrderAccount"];
+                order?: components["parameters"]["ListOrder"];
             };
             header?: never;
             path?: never;
@@ -4515,7 +4515,7 @@ export interface operations {
                 offset?: components["parameters"]["ListOffset"];
                 name?: components["parameters"]["ListName"];
                 sort?: components["parameters"]["ListSort"];
-                order?: components["parameters"]["ListOrderAccount"];
+                order?: components["parameters"]["ListOrder"];
                 template_id?: components["parameters"]["AccountTemplateId"];
                 /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
                 enabled?: components["parameters"]["AccountEnabled"];
@@ -4910,7 +4910,7 @@ export interface operations {
                 offset?: components["parameters"]["ListOffset"];
                 name?: components["parameters"]["ListName"];
                 sort?: components["parameters"]["ListSort"];
-                order?: components["parameters"]["ListOrderAccount"];
+                order?: components["parameters"]["ListOrder"];
             };
             header?: never;
             path?: never;
@@ -7176,7 +7176,7 @@ export interface operations {
                 offset?: components["parameters"]["ListOffset"];
                 name?: components["parameters"]["ListName"];
                 sort?: components["parameters"]["ListSort"];
-                order?: components["parameters"]["ListOrderAccount"];
+                order?: components["parameters"]["ListOrder"];
                 template_id?: components["parameters"]["AccountTemplateId"];
                 /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
                 enabled?: components["parameters"]["AccountEnabled"];
@@ -7571,7 +7571,7 @@ export interface operations {
                 offset?: components["parameters"]["ListOffset"];
                 name?: components["parameters"]["ListName"];
                 sort?: components["parameters"]["ListSort"];
-                order?: components["parameters"]["ListOrderAccount"];
+                order?: components["parameters"]["ListOrder"];
             };
             header?: never;
             path?: never;
@@ -7599,7 +7599,7 @@ export interface operations {
                 offset?: components["parameters"]["ListOffset"];
                 name?: components["parameters"]["ListName"];
                 sort?: components["parameters"]["ListSort"];
-                order?: components["parameters"]["ListOrderAccount"];
+                order?: components["parameters"]["ListOrder"];
             };
             header?: never;
             path?: never;
