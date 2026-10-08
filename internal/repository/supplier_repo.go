@@ -96,10 +96,15 @@ func (r *SupplierRepo) LoadSupplierView(ctx context.Context) (map[int64]int64, m
 	}
 	defer rows.Close()
 	owner := make(map[int64]int64)
+	// share 只装 supplier_uid（≈ supplier_balances 行数），远小于 owner（≈ 归属账号数）
+	// ——**刻意不预分配**：旧式 make(..., len(rawShare)+len(owner)) 会按「归属账号规模」
+	// 过配（白占约万级桶），对只装百级项的 share 是纯浪费；按需增长即可。
 	share := make(map[int64]int)
+	// 扫描目标提到循环外复用：避免每行经 rows.Scan(dest ...any) 的接口装箱/逃逸分配
+	// （Scan 同步消费，下一轮覆盖旧值，无跨行引用）。
+	var kind int
+	var a, b int64
 	for rows.Next() {
-		var kind int
-		var a, b int64
 		if err := rows.Scan(&kind, &a, &b); err != nil {
 			return nil, nil, err
 		}
@@ -107,8 +112,8 @@ func (r *SupplierRepo) LoadSupplierView(ctx context.Context) (map[int64]int64, m
 		case 0:
 			owner[a] = b
 		case 1:
-			// b<0 = COALESCE(share_bp,-1) 的「显式 NULL」哨兵 ⇒ 注入默认；b>=0
-			// （含显式 0）保原值。直接落 share，省一张中间 map[int64]*int（去指针分配）。
+			// b<0 = COALESCE(share_bp,-1) 的保留哨兵(-1) ⇒ 显式 NULL ⇒ 注入默认；
+			// b>=0（含显式 0）保原值。
 			if b < 0 {
 				share[a] = r.cfg.ShareBpDefault
 			} else {
