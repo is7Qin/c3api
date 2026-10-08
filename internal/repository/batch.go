@@ -475,7 +475,7 @@ func checkTemplateExist(ctx context.Context, q func() *ent.TemplateQuery, ids []
 func checkAccountExist(ctx context.Context, q func() *ent.AccountQuery, ids []int64) error {
 	return checkIDsExist(ids, func(chunk []int64) ([]int64, error) {
 		// 作用域 AND 进存在性检查（§2.5）：越域 id 视为缺失 ⇒ 整事务失败（404）。
-		return q().Where(account.IDIn(chunk...)).Where(accountOwnerPred(ctx)...).IDs(ctx)
+		return q().Where(account.IDIn(chunk...)).Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).IDs(ctx)
 	})
 }
 

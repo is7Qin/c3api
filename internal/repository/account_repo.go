@@ -22,12 +22,13 @@ type AccountRepo struct {
 	driver dialect.Driver
 }
 
-// accountOwnerPred 供应商面归属作用域谓词（spec 2026-10-09 §2.5）：作用域从 ctx
-// 读取（domain.AccountScopeFrom），管理面/用户面缺省 ⇒ 空谓词（全量，行为不变）。
-// 必须 AND 进每一处账号 WHERE——禁止「先按 id 取行、再应用层比归属」（TOCTOU）。
-func accountOwnerPred(ctx context.Context) []predicate.Account {
-	if s := domain.AccountScopeFrom(ctx); s.Set {
-		return []predicate.Account{account.SupplierUserID(s.OwnerUID)}
+// accountOwnerPred 供应商面归属作用域谓词（spec 2026-10-09 §2.5）：作用域**显式入参**
+// （调用方从 ctx 提取一次），管理面/用户面缺省（Set=false）⇒ 空谓词（全量，行为不变）。
+// 必须 AND 进每一处账号 WHERE——禁止「先按 id 取行、再应用层比归属」（TOCTOU）。显式
+// 入参使新增查询的作者无法忽略「这是带作用域的数据入口」，作用域仍进入 SQL 而非读出后过滤。
+func accountOwnerPred(scope domain.AccountScope) []predicate.Account {
+	if scope.Set {
+		return []predicate.Account{account.SupplierUserID(scope.OwnerUID)}
 	}
 	return nil
 }
@@ -46,7 +47,7 @@ func (r *AccountRepo) FindMissingOwnedAccountID(ctx context.Context, ids []int64
 	uniq := sortedUniqueIDs(ids)
 	owned, err := r.client.Account.Query().
 		Where(account.IDIn(uniq...)).
-		Where(accountOwnerPred(ctx)...).
+		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
 		IDs(ctx)
 	if err != nil {
 		return 0, false, err
@@ -131,7 +132,7 @@ func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account
 	// 作用域 AND 进 WHERE（供应商面越域 id ⇒ 0 行 ⇒ ErrNotFound/404，不泄漏存在性）。
 	row, err := r.client.Account.Query().
 		Where(account.IDEQ(id)).
-		Where(accountOwnerPred(ctx)...).
+		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
 		Only(ctx)
 	if err != nil {
 		return nil, errMissingID(err, id)
@@ -142,7 +143,7 @@ func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account
 func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
 	row, err := r.client.Account.Query().
 		Where(account.IDEQ(id)).
-		Where(accountOwnerPred(ctx)...).
+		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
 		WithTemplate().Only(ctx)
 	if err != nil {
 		return nil, errMissingID(err, id)
@@ -152,7 +153,7 @@ func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*do
 
 func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.Account, int64, error) {
 	// 软删除：列表默认过滤已删（count 同谓词——pred 复用）；GET 单个不过滤。
-	pred := r.client.Account.Query().Where(account.DeletedAtIsNil()).Where(accountOwnerPred(ctx)...)
+	pred := r.client.Account.Query().Where(account.DeletedAtIsNil()).Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...)
 	if q.Name != "" {
 		pred = pred.Where(account.NameContainsFold(q.Name))
 	}
@@ -189,7 +190,7 @@ func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.
 
 func (r *AccountRepo) DeleteAccount(ctx context.Context, id int64) error {
 	// 作用域 AND 进 UPDATE 的 WHERE：越域 id ⇒ 0 行 ⇒ ErrNotFound/404。
-	n, err := r.client.Account.Update().Where(account.IDEQ(id)).Where(accountOwnerPred(ctx)...).SetDeletedAt(time.Now()).Save(ctx)
+	n, err := r.client.Account.Update().Where(account.IDEQ(id)).Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).SetDeletedAt(time.Now()).Save(ctx)
 	if err != nil {
 		return err
 	}
@@ -239,7 +240,7 @@ func (r *AccountRepo) SetAccountGroups(ctx context.Context, accountID int64, gro
 func (r *AccountRepo) GetAccountGroups(ctx context.Context, accountID int64) ([]int64, error) {
 	return r.client.Account.Query().
 		Where(account.ID(accountID)).
-		Where(accountOwnerPred(ctx)...).
+		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
 		QueryGroups().
 		IDs(ctx)
 }
@@ -296,7 +297,7 @@ var ErrStaleIdentityRevision = fmt.Errorf("%w: stale identity_revision", ErrConf
 func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedIdentityRevision int64, source string, failedAt time.Time, reason string) error {
 	u := r.client.Account.Update().
 		Where(account.IDEQ(id), account.IdentityRevisionEQ(expectedIdentityRevision), account.FailedAtIsNil()).
-		Where(accountOwnerPred(ctx)...).
+		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
 		AddLifecycleRevision(1).
 		SetFailedAt(failedAt).
 		SetFailureSource(source)
@@ -323,7 +324,7 @@ func (r *AccountRepo) FailAccountCAS(ctx context.Context, id int64, expectedIden
 func (r *AccountRepo) RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error {
 	n, err := r.client.Account.Update().
 		Where(account.IDEQ(id), account.LifecycleRevisionEQ(expectedRevision)).
-		Where(accountOwnerPred(ctx)...).
+		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
 		SetLifecycleRevision(expectedRevision + 1).
 		ClearFailedAt().ClearLastError().ClearFailureSource().
 		Save(ctx)

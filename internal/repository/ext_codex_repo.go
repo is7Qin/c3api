@@ -167,7 +167,7 @@ func bumpAccountGeneration(ctx context.Context, tx *ent.Client, accountID, expec
 func requireOwnedAccountInTx(ctx context.Context, client *ent.Client, accountID int64) error {
 	ok, err := client.Account.Query().
 		Where(account.IDEQ(accountID)).
-		Where(accountOwnerPred(ctx)...).
+		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
 		Exist(ctx)
 	if err != nil {
 		return err
@@ -381,7 +381,7 @@ func (r *AccountExtRepo) accountExtQuery(ctx context.Context) *ent.AccountExtQue
 	}
 	// 归属集由子查询判定：命中 0 行（无归属账号）自然看不到任何 ext（fail-closed，
 	// 与旧「空 id 集」同义，但不再有两次查询之间的转属窗口）。
-	return q.Where(accountext.HasAccountWith(accountOwnerPred(ctx)...))
+	return q.Where(accountext.HasAccountWith(accountOwnerPred(s)...))
 }
 
 // accountOwnerFilter 把归属谓词 AND 进 accounts 上的 UPDATE（`WHERE id = $1 AND
