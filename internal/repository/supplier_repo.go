@@ -95,8 +95,8 @@ func (r *SupplierRepo) LoadSupplierView(ctx context.Context) (map[int64]int64, m
 		return nil, nil, err
 	}
 	defer rows.Close()
-	owner := map[int64]int64{}
-	rawShare := map[int64]*int{}
+	owner := make(map[int64]int64)
+	share := make(map[int64]int)
 	for rows.Next() {
 		var kind int
 		var a, b int64
@@ -107,24 +107,17 @@ func (r *SupplierRepo) LoadSupplierView(ctx context.Context) (map[int64]int64, m
 		case 0:
 			owner[a] = b
 		case 1:
+			// b<0 = COALESCE(share_bp,-1) 的「显式 NULL」哨兵 ⇒ 注入默认；b>=0
+			// （含显式 0）保原值。直接落 share，省一张中间 map[int64]*int（去指针分配）。
 			if b < 0 {
-				rawShare[a] = nil // 显式 NULL ⇒ 继承
+				share[a] = r.cfg.ShareBpDefault
 			} else {
-				bp := int(b)
-				rawShare[a] = &bp
+				share[a] = int(b)
 			}
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, nil, err
-	}
-	share := make(map[int64]int, len(rawShare)+len(owner))
-	for uid, bp := range rawShare {
-		if bp == nil {
-			share[uid] = r.cfg.ShareBpDefault
-		} else {
-			share[uid] = *bp
-		}
 	}
 	// 归属存在但无 balances 行 ⇒ 默认（§2.3「无行 ⇒ 默认」；不得依赖 map 零值）。
 	for _, uid := range owner {
