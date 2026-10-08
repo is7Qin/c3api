@@ -14,9 +14,9 @@ db = { dsn = "postgres://user:pass@localhost:5432/c3api?sslmode=disable", max_co
 # / C3API_REDIS_DB。password 空 = 无鉴权（占位值 change-me 等会被拒绝）；db <0 非法。
 redis = { addr = "127.0.0.1:6379", password = "", db = 0 }
 proxy = {
-  # 请求体上限（字节，4 MiB）：读 body 时 http.MaxBytesReader 强制，超出即中断
+  # 请求体上限（字节，64 MiB）：读 body 时 http.MaxBytesReader 强制，超出即中断
   # 并按 413 类错误拒绝（含 vision base64 图片的大请求需相应调大）。
-  max_body_size = 4194304,
+  max_body_size = 67108864,
   # 全局在途请求上限（并发闸门，中间件层）：超限的新请求立即 429，不排队。
   # 0 = server 侧兜底为 50000（配置下限不校验，见 config.go validate 注释）。
   max_inflight = 50000,
