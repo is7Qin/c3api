@@ -10,7 +10,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Coins, Snowflake, Wallet, TrendingUp, Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { useScopedApi } from '@/lib/api/scope'
+import { useScopedApi, type SupplierConsoleApi } from '@/lib/api/scope'
 import { ApiUnauthorized } from '@/lib/api/client'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -61,7 +61,8 @@ function StatCard({ icon: Icon, label, value, hint }: { icon: typeof Coins; labe
 }
 
 export default function SupplierConsole() {
-  const api = useScopedApi()
+  // 供应商业务页用**独立小接口**（SupplierConsoleApi）；完整客户端在类型上不可见。
+  const api: SupplierConsoleApi = useScopedApi()
   const { t } = useTranslation()
   const qc = useQueryClient()
 
