@@ -62,6 +62,7 @@ func toAPIKey(k *domain.Key) Key {
 		ID:             &k.ID,
 		UserID:         &k.UserID,
 		GroupID:        &k.GroupID,
+		GroupName:      &k.GroupName,
 		Name:           &k.Name,
 		Key:            &k.KeyRaw,
 		Status:         &st,

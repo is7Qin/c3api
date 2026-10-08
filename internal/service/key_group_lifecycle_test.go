@@ -38,7 +38,7 @@ func TestSoftDeletedKeyNotResurrectable(t *testing.T) {
 	_, err = svc.GetKey(ctx, u.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound)
 	st := domain.KeyStatusDisabled
-	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, &st, nil, nil)
+	_, err = svc.UpdateKey(ctx, u.ID, k.ID, nil, &st, nil, nil, nil)
 	require.ErrorIs(t, err, ErrNotFound, "已删 key PUT → 404（修复前可复活）")
 	_, err = svc.RotateKey(ctx, u.ID, k.ID)
 	require.ErrorIs(t, err, ErrNotFound, "已删 key rotate → 404（修复前可复活）")
@@ -197,7 +197,7 @@ func TestUpdateKeyPatchSingleField(t *testing.T) {
 	require.NoError(t, err)
 
 	q := int64(2000)
-	updated, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q)
+	updated, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2000), updated.Quota, "quota 被改")
 	require.Equal(t, "k", updated.Name, "name 未被改动")
@@ -205,7 +205,7 @@ func TestUpdateKeyPatchSingleField(t *testing.T) {
 	require.Equal(t, domain.KeyStatusActive, updated.Status, "status 未被改动")
 
 	// 全 nil = 无变更：零写库直接返回当前行
-	noop, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, nil)
+	noop, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(2000), noop.Quota)
 }
@@ -227,20 +227,20 @@ func TestUpdateKeyQuotaZeroResetsUsed(t *testing.T) {
 
 	// 设成非 0：累计消耗保持
 	up := int64(2000)
-	kept, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &up)
+	kept, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &up, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(400), kept.QuotaUsed, "设非 0 不清零")
 
 	// 设成 0（不限）：清零
 	zero := int64(0)
-	reset, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &zero)
+	reset, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &zero, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), reset.Quota, "quota=0 = 不限")
 	require.Equal(t, int64(0), reset.QuotaUsed, "额度设为 0 → 累计消耗清零")
 
 	// 之后重新设额：从零起算（不被历史消耗挡住）
 	q2 := int64(500)
-	fresh, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q2)
+	fresh, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, nil, nil, &q2, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(500), fresh.Quota)
 	require.Equal(t, int64(0), fresh.QuotaUsed, "重新设额从零起算")
@@ -265,12 +265,12 @@ func TestUpdateKeyPatchConcurrent(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		_, err := svc.UpdateKey(ctx, u.ID, k.ID, &name, nil, nil, nil)
+		_, err := svc.UpdateKey(ctx, u.ID, k.ID, &name, nil, nil, nil, nil)
 		require.NoError(t, err)
 	}()
 	go func() {
 		defer wg.Done()
-		_, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, &st, nil, nil)
+		_, err := svc.UpdateKey(ctx, u.ID, k.ID, nil, &st, nil, nil, nil)
 		require.NoError(t, err)
 	}()
 	wg.Wait()

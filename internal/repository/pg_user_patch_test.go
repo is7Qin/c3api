@@ -221,7 +221,7 @@ func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10+20*5), got.QuotaUsed, "增量不丢：patch 无 quota_used 字段，不可能覆盖")
 
-	// 返回行 QuotaUsed = DB 新鲜值（ent Save re-SELECT → upsertKeyMeta 同步最新）
+	// 返回行 QuotaUsed = DB 新鲜值（ent Save re-SELECT → upsertKeyMetaInMemory 同步最新）
 	name := "kq"
 	updated, err := repos.UpdateKey(ctx, &repository.KeyPatch{ID: k.ID, Name: &name})
 	require.NoError(t, err)
