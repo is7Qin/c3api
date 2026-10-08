@@ -191,149 +191,207 @@ func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p 
 	})
 }
 
+// maxOwnershipLockRelocks 归属锁集合重启上限（N1）：每轮重启至少把一个新的最终
+// owner 纳入锁集合（单调增长 ⇒ 收敛），故正常 1–2 轮即定；上限防病态抖动
+// （持续转属）下的活锁。
+const maxOwnershipLockRelocks = 8
+
+// errOwnershipLockSetStale 内部哨兵（N1）：锁内读到的最终 owner 不在预锁 users
+// 集合内——需整体重启，在锁 accounts 前按统一升序把该 owner 也纳入预锁，避免
+// 「已持 accounts 后补锁 users」的 accounts→users 反序死锁面。
+var errOwnershipLockSetStale = errors.New("repository: ownership lock set stale")
+
+// lockSetHas 报告 uid 是否已在锁集合内（N1 重启判据；集合小、线性即可）。
+func lockSetHas(set []int64, uid int64) bool {
+	for _, v := range set {
+		if v == uid {
+			return true
+		}
+	}
+	return false
+}
+
+// ownerLockSetTestBarrier 测试注入点（**prod 恒 nil**）：在「读当前归属」之后、
+// 「锁 users/accounts」之前触发——供 N1 交错测试在两读之间以独立连接提交一次转属
+// （无 sleep 的确定性屏障）。仅测试设置，非并发安全（测试串行执行）。
+var ownerLockSetTestBarrier func()
+
 func (r *AccountRepo) UpdateAccountsBatch(ctx context.Context, ids []int64, p AccountPatch) ([]AccountWriteResult, error) {
-	var results []AccountWriteResult
-	if err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
-		// 归属相关 users 行**先**锁（§5.7 固定锁序 users → accounts，与禁用路径
-		// 「users → 连带停账号」同序；反序会与禁用路径构成 ABBA 死锁面）。当前
-		// 归属用户也在锁定集合内，理由见下方最终态复核。
-		currentOwners, err := loadAccountOwners(ctx, client, ids)
-		if err != nil {
-			return err
-		}
-		lockSet := make([]int64, 0, len(currentOwners)+1)
-		lockSet = append(lockSet, currentOwners...)
-		if p.SupplierUserID != nil {
-			lockSet = append(lockSet, *p.SupplierUserID)
-		}
-		if err := lockOwnershipUsers(ctx, driver, lockSet); err != nil {
-			return err
-		}
-		locked, err := lockAccountsForUpdate(ctx, driver, ids)
-		if err != nil {
-			return err
-		}
-		templateIDs := make([]int64, 0, len(locked)+1)
-		for _, row := range locked {
-			templateIDs = append(templateIDs, row.TemplateID)
-		}
-		if p.TemplateID != nil {
-			templateIDs = append(templateIDs, *p.TemplateID)
-		}
-		if err := lockTemplateWrites(ctx, driver, templateIDs); err != nil {
-			return err
-		}
-		templates, err := loadTemplates(ctx, client, templateIDs)
-		if err != nil {
-			return err
-		}
-		for _, row := range locked {
-			templateID := row.TemplateID
-			if p.TemplateID != nil {
-				templateID = *p.TemplateID
-			}
-			baseURL := row.BaseURL
-			if p.BaseURL != nil {
-				baseURL = p.BaseURL
-			}
-			if err := validateCodexAccountBaseURL(templates[templateID], baseURL); err != nil {
+	// 归属锁集合协议（N1，§2.5/§5.7）：users 锁集合必须在锁 accounts **之前**
+	// 确定并锁死（固定锁序 users → accounts，与「禁用/转属」同序）。无锁读得到的
+	// 当前 owner 可能陈旧（并发转属）——若在已持 accounts 后才发现最终 owner 不在
+	// 集合内并补锁 users，即 accounts→users 反序，与「禁用/转属持 users 后等
+	// accounts」构成 ABBA 死锁面。故这里：预锁 users（当前 owner ∪ 目标 owner ∪
+	// 历史发现的最终 owner）→ 锁 accounts → 锁内复核；一旦发现集合外的最终 owner
+	// 就**整体重启**（回滚释放已持锁），下轮把它并入预锁集合（单调增长 ⇒ 收敛），
+	// 绝不在持 accounts 后补锁 users。
+	extraOwners := make(map[int64]struct{})
+	for attempt := 0; ; attempt++ {
+		var results []AccountWriteResult
+		err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+			currentOwners, err := loadAccountOwners(ctx, client, ids)
+			if err != nil {
 				return err
 			}
-		}
-		if p.GroupIDs != nil && len(*p.GroupIDs) > 0 {
-			if err := checkGroupExist(ctx, client.Group.Query, *p.GroupIDs); err != nil {
-				return err
+			if ownerLockSetTestBarrier != nil {
+				ownerLockSetTestBarrier()
 			}
-		}
-		// 归属最终态复核（§2.5/A13⑤）：**每个账号**按补丁合并后的最终归属判定
-		// ——不是只在补丁出现 supplier_user_id 时才查。普通 `{enabled:true}` 撞上
-		// 已被禁用/降权的归属供应商同样被拒（否则即「重新启用 disabled 供应商的
-		// 账号」，spec I1 反例）。users 行已在上方锁定，禁用路径无法在本事务期间
-		// 提交 ⇒ 无 TOCTOU。
-		for _, row := range locked {
-			finalOwner := row.SupplierUserID
+			lockSet := make([]int64, 0, len(currentOwners)+1+len(extraOwners))
+			lockSet = append(lockSet, currentOwners...)
 			if p.SupplierUserID != nil {
-				finalOwner = *p.SupplierUserID
+				lockSet = append(lockSet, *p.SupplierUserID)
 			}
-			if finalOwner > 0 {
-				if err := validateOwnershipTarget(ctx, driver, finalOwner); err != nil {
+			for uid := range extraOwners {
+				lockSet = append(lockSet, uid)
+			}
+			if err := lockOwnershipUsers(ctx, driver, lockSet); err != nil {
+				return err
+			}
+			locked, err := lockAccountsForUpdate(ctx, driver, ids)
+			if err != nil {
+				return err
+			}
+			// 锁内回读的真实 owner 才是权威判据。最终 owner 不在预锁集合 ⇒ 不得在
+			// 持 accounts 后补锁 users；登记该 owner 并整体重启（下轮按统一升序预锁）。
+			for _, row := range locked {
+				finalOwner := row.SupplierUserID
+				if p.SupplierUserID != nil {
+					finalOwner = *p.SupplierUserID
+				}
+				if finalOwner > 0 && !lockSetHas(lockSet, finalOwner) {
+					extraOwners[finalOwner] = struct{}{}
+					return errOwnershipLockSetStale
+				}
+			}
+			templateIDs := make([]int64, 0, len(locked)+1)
+			for _, row := range locked {
+				templateIDs = append(templateIDs, row.TemplateID)
+			}
+			if p.TemplateID != nil {
+				templateIDs = append(templateIDs, *p.TemplateID)
+			}
+			if err := lockTemplateWrites(ctx, driver, templateIDs); err != nil {
+				return err
+			}
+			templates, err := loadTemplates(ctx, client, templateIDs)
+			if err != nil {
+				return err
+			}
+			for _, row := range locked {
+				templateID := row.TemplateID
+				if p.TemplateID != nil {
+					templateID = *p.TemplateID
+				}
+				baseURL := row.BaseURL
+				if p.BaseURL != nil {
+					baseURL = p.BaseURL
+				}
+				if err := validateCodexAccountBaseURL(templates[templateID], baseURL); err != nil {
 					return err
 				}
 			}
-		}
-		pre := make(map[int64]AccountFieldValues, len(locked))
-		for _, row := range locked {
-			pre[row.ID] = row
-		}
-		for _, id := range sortedUniqueIDs(ids) {
-			// C（配置代际）**无条件**推进：一次配置变更就是一个新代际，读-改-写的
-			// 客户端据此必然重读。K（身份代际）**按值**推进：仅当身份类字段真的变了
-			// 才推进——幂等重写不推进。二者分开是因为在途判定（失效判决 / latch /
-			// 健康记录 / continuation）围栏在 (I,K) 上：身份变了旧判定必须作废，而
-			// 普通配置变更不得白白作废它们。用**相对递增**而非先读后写：行已在本
-			// 事务内 lockAccountsForUpdate 锁定，故 pre 里的旧值即为判据且无
-			// lost-update 窗口。Save 回显新行 → 新 C/K 直接作为响应回显。
-			row := pre[id]
-			result := AccountWriteResult{AccountID: id, ChangedFields: ChangedFields(p, row)}
-			u := client.Account.UpdateOneID(id).AddLifecycleRevision(1)
-			if result.ChangedFields.IdentityChanged() {
-				u = u.AddIdentityRevision(1)
-			}
-			if p.Name != nil {
-				u = u.SetName(*p.Name)
-			}
-			if p.TemplateID != nil {
-				u = u.SetTemplateID(*p.TemplateID)
-			}
-			if p.UpstreamKey != nil {
-				u = u.SetUpstreamKey(*p.UpstreamKey)
-			}
-			if p.BaseURL != nil {
-				if *p.BaseURL == "" {
-					u = u.ClearBaseURL()
-				} else {
-					u = u.SetBaseURL(*p.BaseURL)
+			if p.GroupIDs != nil && len(*p.GroupIDs) > 0 {
+				if err := checkGroupExist(ctx, client.Group.Query, *p.GroupIDs); err != nil {
+					return err
 				}
 			}
-			if p.MaxConcurrency != nil {
-				u = u.SetMaxConcurrency(*p.MaxConcurrency)
-			}
-			if p.GroupIDs != nil {
-				u = u.ClearGroups().AddGroupIDs(*p.GroupIDs...)
-			}
-			if p.Enabled != nil {
-				u = u.SetEnabled(*p.Enabled)
-			}
-			if p.UpstreamCostMultiplierBp != nil {
-				u = u.SetUpstreamCostMultiplierBp(*p.UpstreamCostMultiplierBp)
-			}
-			if p.CacheDomain != nil {
-				if *p.CacheDomain == "" {
-					u = u.ClearCacheDomain()
-				} else {
-					u = u.SetCacheDomain(*p.CacheDomain)
+			// 归属最终态复核（§2.5/A13⑤）：**每个账号**按补丁合并后的最终归属判定
+			// ——不是只在补丁出现 supplier_user_id 时才查。普通 `{enabled:true}` 撞上
+			// 已被禁用/降权的归属供应商同样被拒（否则即「重新启用 disabled 供应商的
+			// 账号」，spec I1 反例）。users 行已在上方锁定，禁用路径无法在本事务期间
+			// 提交 ⇒ 无 TOCTOU。
+			for _, row := range locked {
+				finalOwner := row.SupplierUserID
+				if p.SupplierUserID != nil {
+					finalOwner = *p.SupplierUserID
+				}
+				if finalOwner > 0 {
+					if err := validateOwnershipTarget(ctx, driver, finalOwner); err != nil {
+						return err
+					}
 				}
 			}
-			// 归属（§2.5）：&0 = 清空（回平台自有，落 NULL）；&uid>0 = 分配。
-			if p.SupplierUserID != nil {
-				if *p.SupplierUserID == 0 {
-					u = u.ClearSupplierUserID()
-				} else {
-					u = u.SetSupplierUserID(*p.SupplierUserID)
+			pre := make(map[int64]AccountFieldValues, len(locked))
+			for _, row := range locked {
+				pre[row.ID] = row
+			}
+			for _, id := range sortedUniqueIDs(ids) {
+				// C（配置代际）**无条件**推进：一次配置变更就是一个新代际，读-改-写的
+				// 客户端据此必然重读。K（身份代际）**按值**推进：仅当身份类字段真的变了
+				// 才推进——幂等重写不推进。二者分开是因为在途判定（失效判决 / latch /
+				// 健康记录 / continuation）围栏在 (I,K) 上：身份变了旧判定必须作废，而
+				// 普通配置变更不得白白作废它们。用**相对递增**而非先读后写：行已在本
+				// 事务内 lockAccountsForUpdate 锁定，故 pre 里的旧值即为判据且无
+				// lost-update 窗口。Save 回显新行 → 新 C/K 直接作为响应回显。
+				row := pre[id]
+				result := AccountWriteResult{AccountID: id, ChangedFields: ChangedFields(p, row)}
+				u := client.Account.UpdateOneID(id).AddLifecycleRevision(1)
+				if result.ChangedFields.IdentityChanged() {
+					u = u.AddIdentityRevision(1)
 				}
+				if p.Name != nil {
+					u = u.SetName(*p.Name)
+				}
+				if p.TemplateID != nil {
+					u = u.SetTemplateID(*p.TemplateID)
+				}
+				if p.UpstreamKey != nil {
+					u = u.SetUpstreamKey(*p.UpstreamKey)
+				}
+				if p.BaseURL != nil {
+					if *p.BaseURL == "" {
+						u = u.ClearBaseURL()
+					} else {
+						u = u.SetBaseURL(*p.BaseURL)
+					}
+				}
+				if p.MaxConcurrency != nil {
+					u = u.SetMaxConcurrency(*p.MaxConcurrency)
+				}
+				if p.GroupIDs != nil {
+					u = u.ClearGroups().AddGroupIDs(*p.GroupIDs...)
+				}
+				if p.Enabled != nil {
+					u = u.SetEnabled(*p.Enabled)
+				}
+				if p.UpstreamCostMultiplierBp != nil {
+					u = u.SetUpstreamCostMultiplierBp(*p.UpstreamCostMultiplierBp)
+				}
+				if p.CacheDomain != nil {
+					if *p.CacheDomain == "" {
+						u = u.ClearCacheDomain()
+					} else {
+						u = u.SetCacheDomain(*p.CacheDomain)
+					}
+				}
+				// 归属（§2.5）：&0 = 清空（回平台自有，落 NULL）；&uid>0 = 分配。
+				if p.SupplierUserID != nil {
+					if *p.SupplierUserID == 0 {
+						u = u.ClearSupplierUserID()
+					} else {
+						u = u.SetSupplierUserID(*p.SupplierUserID)
+					}
+				}
+				updated, err := u.Save(ctx)
+				if err != nil {
+					return errMissingID(err, id)
+				}
+				result.LifecycleRevision = updated.LifecycleRevision
+				results = append(results, result)
 			}
-			updated, err := u.Save(ctx)
-			if err != nil {
-				return errMissingID(err, id)
+			return nil
+		})
+		if errors.Is(err, errOwnershipLockSetStale) {
+			if attempt >= maxOwnershipLockRelocks {
+				return nil, fmt.Errorf("%w: ownership changed repeatedly during batch update; retry", ErrConflict)
 			}
-			result.LifecycleRevision = updated.LifecycleRevision
-			results = append(results, result)
+			continue
 		}
-		return nil
-	}); err != nil {
-		return nil, err
+		if err != nil {
+			return nil, err
+		}
+		return results, nil
 	}
-	return results, nil
 }
 
 func (r *GroupRepo) UpdateGroupsBatch(ctx context.Context, ids []int64, p GroupPatch) error {
