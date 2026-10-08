@@ -305,3 +305,41 @@ func TestPGAccountScopeOwnedExtRead(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "scope-theirs-pat", *e.CodexPATKey)
 }
+
+// TestPGAccountExtScopedWriteC1 C1（ext 写面）：供应商面 ext 写（首写 TryInsert 与
+// 围栏 CAS）在同一事务先按 owner 谓词复核账号可见性——越域 ⇒ ErrNotFound，且**不落
+// ext 行**（账号存在性 + CAS + ext 变更落在同一 owner 谓词/同一事务边界内）。
+func TestPGAccountExtScopedWriteC1(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	tpl := seedPGTemplate(t, repos)
+	owner := seedSupplierUser(t, repos, "ext-write-owner@example.com")
+	other := seedSupplierUser(t, repos, "ext-write-other@example.com")
+	theirs := seedOwnedAccount(t, repos, tpl.ID, other.ID, "ext-write-theirs")
+
+	const iid = "11111111-2222-3333-4444-555555555555"
+
+	// 越域 TryInsert：不得给他人账号落 ext 行（ErrNotFound）。
+	inserted, err := repos.AccountExts.TryInsertAccountExt(scopeCtx(owner.ID), &domain.AccountExt{
+		AccountID: theirs.ID, CredentialType: credential.TypeCodexPAT,
+		CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtrPG("attacker"),
+	})
+	require.ErrorIs(t, err, repository.ErrNotFound, "越域首写必须 404（作用域复核先于落库）")
+	require.False(t, inserted)
+	_, err = repos.AccountExts.GetAccountExt(ctx, theirs.ID)
+	require.ErrorIs(t, err, repository.ErrNotFound, "越域首写不得落 ext 行")
+
+	// 越域 CAS：不得落 ext、不得推进他人 revision（ErrNotFound）。
+	acc, err := repos.Accounts.GetAccount(ctx, theirs.ID)
+	require.NoError(t, err)
+	_, err = repos.AccountExts.AdminUpsertAccountExtCAS(scopeCtx(owner.ID), &domain.AccountExt{
+		AccountID: theirs.ID, CredentialType: credential.TypeCodexPAT,
+		CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtrPG("attacker2"),
+	}, acc.LifecycleRevision)
+	require.ErrorIs(t, err, repository.ErrNotFound, "越域 CAS 必须 404（作用域复核先于落库）")
+	_, err = repos.AccountExts.GetAccountExt(ctx, theirs.ID)
+	require.ErrorIs(t, err, repository.ErrNotFound, "越域 CAS 不得落 ext 行")
+	after, err := repos.Accounts.GetAccount(ctx, theirs.ID)
+	require.NoError(t, err)
+	require.Equal(t, acc.LifecycleRevision, after.LifecycleRevision, "越域 CAS 不得推进他人 revision")
+}

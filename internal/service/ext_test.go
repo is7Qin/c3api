@@ -511,12 +511,11 @@ func TestAccountExtConcurrentFirstWrite(t *testing.T) {
 	}
 }
 
-// firstCallBarrierStore fakeStore 包装：对 GetAccountExt 的前 want 次调用设
+// firstCallBarrierStore fakeStore 包装：对 GetOwnedAccountExt 的前 want 次调用设
 // 屏障——先完成读，再等全部到齐后放行（之后不再拦）。并发首写测试中所有
-// 参与者的首次取行都在任何 TryInsert 之前完成（读全部返回"无存量行"）→
-// 冲突确定性发生在 TryInsert 路径（方向 3 直测，避免参与者误入存量行
-// 编辑路径——若只同步读起点，先到的读可抢先 TryInsert 落行，后到的读会看到
-// 赢者行）。
+// 参与者的首次取行都在任何写事务之前完成（读全部返回"无存量行"）→
+// 冲突确定性发生在围栏 CAS 写事务路径（方向 3 直测，避免参与者误入存量行
+// 编辑路径——若只同步读起点，先到的写可抢先落行，后到的读会看到赢者行）。
 type firstCallBarrierStore struct {
 	*fakeStore
 	mu     sync.Mutex
@@ -529,8 +528,8 @@ func newFirstCallBarrierStore(want int) *firstCallBarrierStore {
 	return &firstCallBarrierStore{fakeStore: newFakeStore(), want: want, gate: make(chan struct{})}
 }
 
-func (f *firstCallBarrierStore) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
-	e, err := f.fakeStore.GetAccountExt(ctx, accountID)
+func (f *firstCallBarrierStore) GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
+	e, err := f.fakeStore.GetOwnedAccountExt(ctx, accountID)
 	f.mu.Lock()
 	if f.arrive < f.want {
 		f.arrive++

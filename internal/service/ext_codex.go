@@ -96,12 +96,14 @@ func validateAccountExt(e *domain.AccountExt) error {
 	return nil
 }
 
-// GetAccountExt 账号 ext 行（编辑回显）。账号缺 id → 404。
+// GetAccountExt 账号 ext 行（编辑回显）。账号缺 id / 越域 / 无 ext 行 → 404。
+//
+// **作用域边界（C1，spec §2.5）**：改用 scoped 单读 GetOwnedAccountExt——owner
+// 谓词 AND 进**同一条 SQL**，越域 ⇒ 0 行 ⇒ 404；不再「先 GetAccount 再无作用域
+// GetAccountExt」的两查询窗口（两次查询之间的转属 TOCTOU）。管理面（无作用域）
+// 语义不变（GetOwnedAccountExt 在 {Set:false} 时退化为按 account_id 单读）。
 func (s *Service) GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
-	if _, err := s.store.GetAccount(ctx, accountID); err != nil {
-		return nil, mapRepoErr(err)
-	}
-	e, err := s.store.GetAccountExt(ctx, accountID)
+	e, err := s.store.GetOwnedAccountExt(ctx, accountID)
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
@@ -128,17 +130,22 @@ func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 	}
 }
 
-// UpsertAccountExt 幂等写入账号 ext 行。账号缺 id → 404。
+// UpsertAccountExt 幂等写入账号 ext 行。账号缺 id / 越域 → 404。
 // 类型一致性：ext 行 credential_type 必须与父行（账号所属模板）的
 // credential_type 一致（账号无独立类型列，类型继承自模板）——不一致 → 400。
 // 身份自动管理（持久身份现只含 installation_id）：无存量行 → NewCodexIdentity()
-// 生成 installation_id 并经 TryInsert（ON CONFLICT DO NOTHING 先写者胜）原子首写
-// ——并发双导入同一账号不覆盖不报错，冲突方完全采用赢者身份后走围栏 CAS 写令牌
-// （方向 3：显式身份只在首写成功路径生效）；后续写入缺省 → 沿用存量（持久复用，
-// 账号存在期间稳定）；调用方显式提供 → 采用。email 不在缺省沿用面——未提供 →
-// NULL 清空（契约）。
-// 校验先于落库：列组校验在 TryInsert 之前——被拒凭据零残留（400 前不写库）；
-// 终校验保留（冲突路径重改 e 后，早校验覆盖不到）。
+// 生成 installation_id，与凭据列一起经围栏 CAS 原子首写（ON CONFLICT DO NOTHING
+// 语义落在写事务内，见 AdminUpsertAccountExtCAS）——并发双导入同一账号不覆盖、
+// 不报错，冲突方完全采用赢者身份后重试（方向 3：显式身份只在首写成功路径生效）；
+// 后续写入缺省 → 沿用存量（持久复用，账号存在期间稳定）；调用方显式提供 → 采用。
+// email 不在缺省沿用面——未提供 → NULL 清空（契约）。
+// 校验先于落库：列组校验在写事务之前——被拒凭据零残留（400 前不写库）。
+//
+// **作用域边界（C1，spec §2.5）**：账号存在性校验（store.GetAccount 走 scoped
+// 单读）、存量 ext 读取（GetOwnedAccountExt，owner 谓词 AND 进同一 SQL）、CAS 与
+// ext 变更（AdminUpsertAccountExtCAS 在同一事务/同一 owner 谓词内复核账号可见性
+// 后再落 ext）三段都落在作用域谓词内，不再有「先取行再应用层判权」或两次查询
+// 之间的转属 TOCTOU 窗口。
 // 围栏写（d401b71）：终写必经 AdminUpsertAccountExtCAS（revision 原子递增，
 // 无绕围栏面、无双增）。并发首写参与者全部预读同一 revision——围栏过期 ≠
 // 内容冲突：CAS 败者重读最新 revision 与持久身份（漂移则再采用）后重试 CAS，
@@ -148,7 +155,7 @@ func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 // 成功写入后按账号写面统一失效面做组级定向重载 + NOTIFY（快照重载幂等：值
 // 相等即复用叶子，不打断在途计划，故无条件重载恒正确，无需按值判定）。
 func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
-	acc, err := s.store.GetAccount(ctx, e.AccountID)
+	acc, err := s.store.GetAccount(ctx, e.AccountID) // scoped 单读：越域/缺失 ⇒ 404
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
@@ -161,8 +168,10 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if tpl.CredentialType != e.CredentialType {
 		return nil, ErrInvalidInput // 父行（模板）类型与 ext 行类型必须一致
 	}
-	orig := *e // 首写冲突回退用（丢弃本请求生成的未用身份，回到显式输入）
-	cur, err := s.store.GetAccountExt(ctx, e.AccountID)
+	// 存量 ext 单读走 **scoped** 入口（C1）：owner 谓词 AND 进同一 SQL，越域不读
+	// 他人 ext。无存量行与越域同族 ErrNotFound；越域在 store.GetAccount 已被 404
+	// 拦截，故此处缺行即「首次创建」。
+	cur, err := s.store.GetOwnedAccountExt(ctx, e.AccountID)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, mapRepoErr(err) // 非缺行错误原样上抛（不误判为首次写入）
 	}
@@ -181,34 +190,16 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 		if err := validateAccountExt(e); err != nil {
 			return nil, err
 		}
-		// 首写原子性（I2）：ON CONFLICT DO NOTHING 先写者胜——冲突（并发已
-		// 首写）→ 回读赢者完全采用其身份（方向 3：显式身份只在首写成功
-		// 路径生效——败者派生值不得覆盖赢者，最终身份确定）
-		inserted, ierr := s.store.TryInsertAccountExt(ctx, e)
-		if ierr != nil {
-			return nil, mapRepoErr(ierr)
-		}
-		if !inserted {
-			winner, gerr := s.store.GetAccountExt(ctx, e.AccountID)
-			if gerr != nil {
-				return nil, mapRepoErr(gerr)
-			}
-			*e = orig
-			e.CodexIdentity = winner.CodexIdentity // 完全采用赢者身份
-			if e.CodexEmail == nil {
-				e.CodexEmail = winner.CodexEmail // 未提供 email → 沿用赢者（管理标识随首写者）
-			}
-		}
 	}
-	// 终校验（冲突路径重改 e 后，早校验覆盖不到）——校验失败不落库
+	// 终校验（已有行路径沿用存量身份后）——校验失败不落库
 	if err := validateAccountExt(e); err != nil {
 		return nil, err
 	}
-	// 围栏写：CAS revision 原子递增（身份已在 TryInsert 仲裁下定型，重试
-	// 永不改身份来源——只换围栏令牌）。并发首写参与者全部预读同一 revision，
-	// 先 CAS 者胜出、其余 stale——败者重读最新 revision 与持久行（身份漂移
-	// 则完全再采用，防混搭）后重试，并发首写永不返回 conflict。revision 未
-	// 推进的 conflict 非竞态（活锁守卫），原样上抛。
+	// 围栏写：CAS revision 原子递增，首写插入与 ext 变更都在写事务内完成（账号
+	// 可见性在同一事务按作用域复核，越域 ⇒ 404，早于任何 ext 写入）。并发首写
+	// 参与者全部预读同一 revision，先 CAS 者胜出、其余 stale——败者重读最新
+	// revision 与持久行（身份漂移则完全再采用，防混搭）后重试，并发首写永不返回
+	// conflict。revision 未推进的 conflict 非竞态（活锁守卫），原样上抛。
 	rev := expectedRevision
 	for {
 		saved, werr := s.store.AdminUpsertAccountExtCAS(ctx, e, rev)
@@ -227,7 +218,7 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 			return nil, mapRepoErr(werr) // 围栏未推进：非并发首写竞态，conflict 原样上抛
 		}
 		rev = fresh.LifecycleRevision
-		row, rerr := s.store.GetAccountExt(ctx, e.AccountID)
+		row, rerr := s.store.GetOwnedAccountExt(ctx, e.AccountID)
 		if rerr != nil && !errors.Is(rerr, repository.ErrNotFound) {
 			return nil, mapRepoErr(rerr)
 		}

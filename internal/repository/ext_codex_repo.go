@@ -150,6 +150,25 @@ func bumpAccountGeneration(ctx context.Context, tx *ent.Client, accountID, expec
 	return u.Save(ctx)
 }
 
+// requireOwnedAccountInTx 在**写事务内**以 owner 谓词复核账号存在且落在当前作用
+// 域内（C1，spec §2.5）：越域/缺失 ⇒ ErrNotFound，且**早于任何 ext 写入**——账号
+// 存在性、CAS 与 ext 变更因此落在同一事务边界与同一 owner 谓词内（不先取行再应用
+// 层判权，也不留两次查询之间的转属窗口）。作用域未注入（管理面）时谓词为空 ⇒
+// 仅校验账号存在。
+func requireOwnedAccountInTx(ctx context.Context, client *ent.Client, accountID int64) error {
+	ok, err := client.Account.Query().
+		Where(account.IDEQ(accountID)).
+		Where(accountOwnerPred(ctx)...).
+		Exist(ctx)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: account_id=%d missing or outside scope", ErrNotFound, accountID)
+	}
+	return nil
+}
+
 // UpsertAccountExt 幂等写入（同 TemplateExtRepo.UpsertTemplateExt 语义：
 // 冲突 UPDATE 显式 ClearX 清 NULL）。codex_identity 必存（nil 由 service
 // 生成/沿用——正常路径恒非 nil；jsonb NULL → ClearX 清空，身份无清空路径）；
@@ -215,9 +234,21 @@ func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.Account
 // 保持先写身份：ON CONFLICT (account_id) DO NOTHING，冲突行跳过不覆盖不报错）。
 // 返回是否实际插入：true = 本请求首写胜出（行已含本次全量字段）；
 // false = 冲突（已有行），调用方应沿用存量身份后走 UpsertAccountExt 写令牌。
-// 账号缺 id（FK）→ error。
+// 账号缺 id（FK）/ 越域 → error（越域 ⇒ ErrNotFound）。
+//
+// **作用域（§2.5）**：插入与「账号归属可见性」在同一事务内完成——写入前以 owner
+// 谓词复核账号（越域 ⇒ ErrNotFound，不落 ext 行），故本方法即使被作用域上下文调用
+// 也不会给他人账号落 ext。
 func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error) {
-	err := r.client.AccountExt.Create().
+	tx, err := r.client.Tx(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if err := requireOwnedAccountInTx(ctx, tx.Client(), e.AccountID); err != nil {
+		return false, err
+	}
+	err = tx.AccountExt.Create().
 		SetAccountID(e.AccountID).
 		SetCredentialType(string(e.CredentialType)).
 		SetCodexIdentity(e.CodexIdentity).
@@ -230,13 +261,14 @@ func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.Acco
 		OnConflictColumns(accountext.FieldAccountID).
 		DoNothing().
 		Exec(ctx)
-	if err == nil {
-		return true, nil
+	inserted := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return false, err
 	}
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil // 冲突：先写者已落行，本次跳过（不覆盖）
+	if err := tx.Commit(); err != nil {
+		return false, err
 	}
-	return false, err
+	return inserted, nil // err == sql.ErrNoRows：冲突，先写者已落行（不覆盖）
 }
 
 // WriteOAuthRotation 轮转回写（SDK 接入 §1——SDK OnTokenRotated 回调落库
@@ -445,12 +477,21 @@ func (r *AccountExtRepo) AdminWritePATKeyCAS(ctx context.Context, accountID int6
 // AdminUpsertAccountExtCAS 管理员 PUT /ext（fenced）：CAS revision，无条件推进 C，
 // 并在凭据面**按值变更**时推进 K；插入/更新 ext 与计数器同事务。幂等 PUT（值未变）
 // 只推进 C（spec §3.5：不做"端点调用即推进"）。
+//
+// **作用域边界（C1，spec §2.5）**：事务第一步即以 owner 谓词复核账号可见性——
+// 越域/缺失 ⇒ ErrNotFound/404，且早于任何 ext 读取与写入。首写插入由本方法内
+// 的 upsert（ON CONFLICT DO NOTHING 语义）完成，故「账号存在性 + CAS + ext 变更」
+// 全在同一事务与同一 owner 谓词内（不再有服务面先 TryInsert 落引、后 CAS 拒绝的
+// 转属窗口）。并发首写败者的 CAS 因 revision 不推进而失败并回滚，不会覆盖赢者身份。
 func (r *AccountExtRepo) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error) {
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	if err := requireOwnedAccountInTx(ctx, tx.Client(), e.AccountID); err != nil {
+		return nil, err
+	}
 	cur, err := loadAccountExtInTx(ctx, tx.Client(), e.AccountID)
 	if err != nil {
 		return nil, err
@@ -463,6 +504,10 @@ func (r *AccountExtRepo) AdminUpsertAccountExtCAS(ctx context.Context, e *domain
 		return nil, err
 	}
 	if n == 0 {
+		// 并发转属把账号移出当前作用域 ⇒ ErrNotFound（404）；否则 revision 陈旧。
+		if oerr := requireOwnedAccountInTx(ctx, tx.Client(), e.AccountID); oerr != nil {
+			return nil, oerr
+		}
 		return nil, fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, e.AccountID, expectedRevision)
 	}
 	// Upsert ext via tx
