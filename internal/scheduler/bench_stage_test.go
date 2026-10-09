@@ -18,6 +18,18 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
+// Final delivery scope (record only; the spec's frozen thresholds are NOT
+// changed here): the branch ships T1 (folded group-invalidation batch, shared
+// deadline, sticky retry) + T2 (single snapshotStatic constructor / cached
+// planKey) + T4 (candidate-build + cache-domain alloc trims). T3 (single-copy
+// decision encoding) was REVERTED under the spec's "未达即回退" clause (commit
+// 6c89167e): no T3 production change ships and NO encoder retained-buffer
+// reduction is claimed. The frozen T3 thresholds remain equal ≤1.2× /
+// changed ≤2.5× (recorded for history only; T3 acceptance no longer applies).
+// The retained-heap benchmark below therefore measures the BASE reusable
+// encoder buffer + the inline planKey retention, not any "de-duplicated"
+// encoding.
+
 // BenchmarkInvalidateSingleGroupStage is the M-times single-group CONTRAST for
 // BenchmarkInvalidateGroupsStage: the same topology driven as M separate
 // single-group batches, so the one-freeze batch's stage/newStaticView saving is
@@ -173,12 +185,13 @@ func TestInvalidateGroupsCodexPoolLedger(t *testing.T) {
 }
 
 // TestInvalidateGroupsStageCallStructure pins the call structure §4 requires as
-// a measurement rather than prose: invalidateGroupsLocked freezes/stages exactly
-// once (one stageLocked + one newStaticView) while invalidateOneIntoLocked
-// rebuilds the identity pool exactly once per successful group (so buildIdentityPools
-// is called M times for M groups). It is a STRUCTURAL proxy over call sites; the
-// runtime ledger (poolLedger) and the M-times single-group contrast cover the
-// dynamic side.
+// a STRUCTURAL PROXY (a STATIC call-SITE count — NOT a runtime call count):
+// invalidateGroupsLocked freezes/stages exactly once (one stageLocked call site +
+// one newStaticView call site) while invalidateOneIntoLocked rebuilds the
+// identity pool exactly once per successful group (so buildIdentityPools is
+// called M times for M groups). A call moved into a loop would still pass, so
+// this is explicitly a structural proxy; the dynamic side is covered by the
+// runtime ledger (poolLedger) and the M-times single-group contrast benchmark.
 func TestInvalidateGroupsStageCallStructure(t *testing.T) {
 	root := gateRoot(t)
 	fset := token.NewFileSet()
@@ -209,20 +222,23 @@ func TestInvalidateGroupsStageCallStructure(t *testing.T) {
 	}
 
 	batch := counts["invalidateGroupsLocked"]
-	require.Equal(t, 1, batch["stageLocked"], "the batch must stage exactly once")
-	require.Equal(t, 1, batch["newStaticView"], "the batch must freeze exactly once")
-	require.Equal(t, 0, batch["buildIdentityPools"], "the batch body must not rebuild pools once at the end")
+	require.Equal(t, 1, batch["stageLocked"], "structural proxy: the batch body has exactly one stageLocked call site")
+	require.Equal(t, 1, batch["newStaticView"], "structural proxy: the batch body has exactly one newStaticView call site")
+	require.Equal(t, 0, batch["buildIdentityPools"], "structural proxy: the batch body does not rebuild pools once at the end")
 
 	one := counts["invalidateOneIntoLocked"]
-	require.Equal(t, 1, one["buildIdentityPools"], "each successful group rebuilds pools once (M calls for M groups)")
+	require.Equal(t, 1, one["buildIdentityPools"], "structural proxy: each successful group has one buildIdentityPools call site (M calls for M groups)")
 }
 
 // TestPlanKeyRetainedHeapMeasured measures retained heap with live roots + GC
-// (never field reflection): build a 5000-account scheduler holding its planKeys
-// and the single held decision encoding, force GC, and confirm the held output
-// is exactly one canonical copy. The before/after
-// delta is computed as a SIGNED difference so a bucket that shrank (GC released
-// earlier garbage) can never underflow into a bogus large positive value.
+// (never field reflection): build a 5000-account scheduler holding its inline
+// planKeys and the BASE reusable encoder's retained bytes, force GC, and assert
+// the retained bytes equal the canonical decision encoding. Byte equality only
+// proves the held cache matches the canonical encoding — it does NOT prove how
+// many copies are held (the BASE encoder's reusable buffer remains). The
+// before/after delta is computed as a SIGNED difference so a bucket that shrank
+// (GC released earlier garbage) can never underflow into a bogus large positive
+// value.
 func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 	runtime.GC()
 	var before runtime.MemStats
@@ -247,13 +263,15 @@ func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 
 	dv := s.View().DecisionView()
 	require.NotNil(t, dv)
-	require.Equal(t, decisionViewBytes(dv), s.lastDecisionBytes, "exactly one canonical copy is held")
+	require.Equal(t, decisionViewBytes(dv), s.lastDecisionBytes,
+		"held cache must equal the canonical encoding (byte equality only; the BASE reusable encoder buffer remains)")
 
-	// Isolate the NEW planKey's retained contribution: it is stored inline in
-	// each snapshotStatic leaf, so its incremental cost is sizeof(planKey) per
-	// leaf. Reported so a BASE/HEAD retained differential can be interpreted.
+	// ESTIMATED inline planKey bytes: planKey is stored inline in each
+	// snapshotStatic leaf, so its logical contribution is sizeof(planKey) per
+	// leaf. This is an ESTIMATE from the field layout, NOT an isolated measured
+	// increment; it is logged so a BASE/HEAD retained differential can be read.
 	planKeyBytes := int(unsafe.Sizeof(planKey{})) * len(sv.byID)
-	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; isolated planKey increment = %d bytes (%d leaves × %d B); held bytes=%d; leaves=%d",
+	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; estimated inline planKey bytes = %d (%d leaves × %d B); held bytes=%d; leaves=%d",
 		retained, planKeyBytes, len(sv.byID), unsafe.Sizeof(planKey{}), len(s.lastDecisionBytes), len(sv.byID))
 }
 
