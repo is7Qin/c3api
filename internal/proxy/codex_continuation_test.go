@@ -24,7 +24,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// --- codex 续接入队限定（B2）：仅直连（客户端 Responses）入队；converted 不入队 ---
+// --- codex 续接入队限定：仅直连（客户端 Responses）入队；converted 不入队 ---
 
 // newCodexContProxy 构造装配了异步续接 store + worker 的 codex resp 代理（镜像
 // newTestCodexRespProxy，额外下发 Deps{Continuation, ContBind}）。pcs = KeyMeta

@@ -958,7 +958,7 @@ func selectCodexAccount(t *testing.T, p *Proxy, accountID int64) *scheduler.Sele
 	return sel
 }
 
-// TestCodexResponsesStream2xxNon200Normalized502 spec §4.4（A1）：SDK StreamBody
+// TestCodexResponsesStream2xxNon200Normalized502 spec §4.4：SDK StreamBody
 // 对所有非 200（含 201/204/206）返 *HTTPError；proxy 可达错误路径经
 // streamUpstreamStatus 归一为 502（不是 201/204 原样当 4xx）→ 交 pipeline → 耗尽 502。
 func TestCodexResponsesStream2xxNon200Normalized502(t *testing.T) {
@@ -988,7 +988,7 @@ func TestCodexResponsesStream2xxNon200Normalized502(t *testing.T) {
 	}
 }
 
-// TestCodexResponsesStreamTTFTOnlyOnRealPayload spec §2.5（A2）：TTFT 仅对真实
+// TestCodexResponsesStreamTTFTOnlyOnRealPayload spec §2.5：TTFT 仅对真实
 // payload 计时——纯注释帧 + [DONE]（无真实 data）→ TTFT nil；含真实帧 → 非 nil。
 func TestCodexResponsesStreamTTFTOnlyOnRealPayload(t *testing.T) {
 	run := func(t *testing.T, raw string) *captureLogStore {
