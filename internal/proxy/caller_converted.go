@@ -75,21 +75,15 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			return resp.StatusCode, rb, false, nil
 		}
 		writeSSEHeaders(w)
-		// ACK-before-visible：映射帧在响应 id 的 Redis 绑定确认前不得达客户端
-		// （仅 resp_to_mess 方向 + store 装配时上闸——其余方向零闸门零分配）。
-		var gate *contGateWriter
-		var sink http.ResponseWriter = w
-		if c.dir == domain.ProtocolConvertRespToMess && p.cont != nil {
-			gate = &contGateWriter{w: w}
-			sink = gate
-		}
-		var contErr *formatError
 		mapper := protoconv.NewStreamMapper(c.dir)
 		var it, ot, tt, cr, cc int64
 		// 首帧到达即记录 TTFT，Observer 仍按目标协议原始帧提取用量。
 		var ttft *int64
 		clientModel := sel.ClientResponseModel(reqModel)
-		err = sserelay.Relay(ctx, sink, resp.Body, sserelay.Config{
+		// 异步续接（仅 resp→mess 方向）：首个可续接映射结果 id 出现时快照入队
+		// 一次。id 由 mapper 显式返回（BindableID），不从映射帧机械解析。
+		var contEnqueued bool
+		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
@@ -122,50 +116,22 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				if clientModel != "" {
 					mapped = rewriteConvertedFrames(mapped, clientModel)
 				}
-				if gate != nil && contErr == nil {
-					released, failed := gate.gateState()
-					if failed {
-						contErr = errContUnavailable
-					} else if !released {
-						if id := contFrameID(mapped); id != "" {
-							if ferr := p.contBind(ctx, contProtocolREST, id, groupID); ferr != nil {
-								gate.markFailed()
-								contErr = ferr
-							} else {
-								if err := gate.release(); err != nil {
-									gate.markFailed()
-									contErr = errContUnavailable
-								}
-							}
-						}
+				if !contEnqueued && c.dir == domain.ProtocolConvertRespToMess {
+					if id := mapper.BindableID(); id != "" {
+						p.contEnqueue(ctx, contProtocolREST, id, groupID)
+						contEnqueued = true
 					}
 				}
 				return mapped, false
 			},
 		})
 		resp.Body.Close()
-		if err == nil && gate != nil && contErr == nil {
-			if released, failed := gate.gateState(); failed {
-				contErr = errContUnavailable
-			} else if !released {
-				if err := gate.release(); err != nil {
-					contErr = errContUnavailable
-				}
-			}
-		}
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
 		u := usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}
 		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
-		if contErr != nil {
-			outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(contErr.status), CommitUpstreamResponded, false, true, false))
-			p.observeDispatchOutcome(ctx, outcome, nil)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, contErr.status, domain.ErrAbort, u, start)))
-			writeErr(w, contErr)
-			return contErr.status, nil, true, nil
-		}
 		if err != nil {
 			// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
 			if errors.Is(err, context.Canceled) {

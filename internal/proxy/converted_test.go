@@ -804,10 +804,18 @@ func convTpl(id int64, url string) *domain.Template {
 // convContProxy resp_to_mess 转换代理 + 续接 store 装配（nil = 未装配）。
 func convContProxy(t *testing.T, accs map[int64][]*domain.Account, store *continuation.Store) *Proxy {
 	t.Helper()
+	return convContProxyBind(t, accs, store, nil)
+}
+
+// convContProxyBind 同 convContProxy，但一并装配异步绑定 worker（nil = REST
+// 流式绑定 no-op；调用方负责 worker 生命周期）。
+func convContProxyBind(t *testing.T, accs map[int64][]*domain.Account, store *continuation.Store, bind *ContBindWorker) *Proxy {
+	t.Helper()
 	p := newConvertedTestProxyAccs(t, accs, []domain.ProtocolConvert{domain.ProtocolConvertRespToMess})
 	if store != nil {
 		p.cont = store
 	}
+	p.contBinder = bind
 	return p
 }
 
@@ -842,33 +850,39 @@ func TestConvertedRespToMessJSONBindsContinuation(t *testing.T) {
 	require.Equal(t, int64(1), b.IdentityRevision)
 }
 
-func TestConvertedRespToMessStreamACKBeforeVisible(t *testing.T) {
-	_, s, hook := contFixture(t)
+// waitConvertedBinding polls until the async worker persisted a converted
+// (resp_to_mess) binding under the target-protocol route class.
+func waitConvertedBinding(t *testing.T, s *continuation.Store, id string) *continuation.Binding {
+	t.Helper()
+	var got *continuation.Binding
+	require.Eventually(t, func() bool {
+		b, ok := convContLookup(t, s, id)
+		if ok {
+			got = b
+		}
+		return ok
+	}, 5*time.Second, 5*time.Millisecond, "converted binding %s must land asynchronously", id)
+	return got
+}
+
+func TestConvertedRespToMessStreamFramesVisible(t *testing.T) {
+	_, s, _ := contFixture(t)
 	var hits atomic.Int32
 	up := convContUpstream(t, "msg_cv_stream", &hits)
 	defer up.Close()
 	tpl := convTpl(1, up.URL)
-	p := convContProxy(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s)
+	w := startTestContBind(t, s, ContBindConfig{})
+	p := convContProxyBind(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s, w)
 
-	gate := make(chan struct{})
-	hook.setGate(gate)
-	w := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi","stream":true}`))
-		req.Header.Set("Authorization", "Bearer ck-1")
-		p.HandleResponses(w, req)
-	}()
-
-	<-hook.started // 转换后 response.created 帧的 id 绑定 EVALSHA 在途…
-	require.Empty(t, w.Body.String(), "映射帧不得先于 Redis ACK 可见")
-	close(gate)
-	<-done
-	require.Contains(t, w.Body.String(), "msg_cv_stream", "ACK 后全流放出")
-	require.Contains(t, w.Body.String(), "response.completed")
-	_, ok := convContLookup(t, s, "msg_cv_stream")
-	require.True(t, ok)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi","stream":true}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	p.HandleResponses(rec, req)
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), "msg_cv_stream", "mapped frames must not wait for Redis")
+	require.Contains(t, rec.Body.String(), "response.completed")
+	b := waitConvertedBinding(t, s, "msg_cv_stream")
+	require.Equal(t, int64(1), b.AccountID)
 }
 
 func TestConvertedRespToMessJSONBindFailClosed(t *testing.T) {
@@ -894,27 +908,26 @@ func TestConvertedRespToMessJSONBindFailClosed(t *testing.T) {
 	require.EqualValues(t, 1, hits.Load(), "绑定失败终态不迁移、不重播")
 }
 
-func TestConvertedRespToMessStreamBindFailClosed(t *testing.T) {
+func TestConvertedRespToMessStreamRedisDownStillVisible(t *testing.T) {
 	mr, s, _ := contFixture(t)
 	var hits atomic.Int32
 	up := convContUpstream(t, "msg_cv_sdead", &hits)
 	defer up.Close()
 	tpl := convTpl(1, up.URL)
-	p := convContProxy(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s)
+	w := startTestContBind(t, s, ContBindConfig{})
+	p := convContProxyBind(t, map[int64][]*domain.Account{10: {convAcc(1, tpl)}}, s, w)
 
-	oldTO := contOpTimeout
-	contOpTimeout = 300 * time.Millisecond
-	t.Cleanup(func() { contOpTimeout = oldTO })
-	mr.Close()
+	mr.Close() // Redis 故障：绑定批次失败，但业务帧仍立即下行，失败只计数
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi","stream":true}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
-	w := httptest.NewRecorder()
-	p.HandleResponses(w, req)
+	rec := httptest.NewRecorder()
+	p.HandleResponses(rec, req)
 
-	require.Equal(t, http.StatusServiceUnavailable, w.Code, "闸门未放 → 归一错误可达")
-	require.NotContains(t, w.Body.String(), "msg_cv_sdead", "缓冲帧必须弃置")
-	require.NotContains(t, w.Body.String(), "response.created")
+	require.Equal(t, 200, rec.Code, "async bind failure must not rewrite the current response")
+	require.Contains(t, rec.Body.String(), "msg_cv_sdead", "unbound id still reaches the client (no gate)")
+	require.Contains(t, rec.Body.String(), "response.created")
+	require.Eventually(t, func() bool { return w.Failed() > 0 }, 5*time.Second, 5*time.Millisecond, "batch failure must be counted")
 }
 
 func TestConvertedNonResponsesClientZeroRedis(t *testing.T) {

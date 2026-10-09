@@ -1,0 +1,136 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Async continuation bind worker: enqueue snapshot / batch pipeline / drop +
+// conflict counting / Close drain; contEnqueue no-op semantics.
+package proxy
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/continuation"
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
+)
+
+// startTestContBind starts a worker over the fixture store with the given
+// config and arranges teardown (cancel + Close drain under a budget).
+func startTestContBind(t *testing.T, s *continuation.Store, cfg ContBindConfig) *ContBindWorker {
+	t.Helper()
+	w := NewContBindWorker(s, nil, cfg)
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, w.Start(ctx))
+	t.Cleanup(func() {
+		cancel()
+		cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer ccancel()
+		require.NoError(t, w.Close(cctx))
+	})
+	return w
+}
+
+// workerBindReq builds a snapshot for user 1 / group 10 (matching
+// contLookupBinding's key) bound to account 1.
+func workerBindReq(t *testing.T, id string) continuation.BindRequest {
+	t.Helper()
+	return continuation.BindRequest{
+		UserID:           1,
+		GroupID:          10,
+		RouteClassID:     contRouteID(t, domain.FormatOpenAIResponses, "gpt-4o", domain.OpResponses),
+		ProtocolTag:      contProtocolREST,
+		ContinuationID:   id,
+		AccountID:        1,
+		Fingerprint:      contFP(t, 1, "sk-acc1"),
+		IdentityRevision: 1,
+	}
+}
+
+func TestContBindWorkerEnqueuesAndBinds(t *testing.T) {
+	_, s, _ := contFixture(t)
+	w := startTestContBind(t, s, ContBindConfig{})
+	w.Enqueue(workerBindReq(t, "resp_w1"))
+	w.Enqueue(workerBindReq(t, "resp_w2"))
+	require.Eventually(t, func() bool { return w.Bound() == 2 }, 5*time.Second, 5*time.Millisecond)
+	require.Zero(t, w.Failed())
+	require.Zero(t, w.Dropped())
+	require.Zero(t, w.Conflicts())
+	for _, id := range []string{"resp_w1", "resp_w2"} {
+		b, ok := contLookupBinding(t, s, contProtocolREST, id)
+		require.True(t, ok)
+		require.Equal(t, int64(1), b.AccountID)
+	}
+}
+
+func TestContBindWorkerDropsWhenQueueFull(t *testing.T) {
+	_, s, _ := contFixture(t)
+	// Not started: nothing drains; capacity 1 → second enqueue drops.
+	w := NewContBindWorker(s, nil, ContBindConfig{QueueSize: 1, BatchWait: time.Hour})
+	w.Enqueue(workerBindReq(t, "resp_q1"))
+	w.Enqueue(workerBindReq(t, "resp_q2"))
+	require.Equal(t, int64(1), w.Dropped(), "queue full must drop + count")
+	require.Equal(t, 1, w.Queued())
+	// Close (no Start) must still drain the queued item.
+	require.NoError(t, w.Close(context.Background()))
+	require.Equal(t, int64(1), w.Bound())
+	b, ok := contLookupBinding(t, s, contProtocolREST, "resp_q1")
+	require.True(t, ok)
+	require.Equal(t, int64(1), b.AccountID)
+	// Enqueue after Close is dropped.
+	w.Enqueue(workerBindReq(t, "resp_q3"))
+	require.Equal(t, int64(2), w.Dropped())
+}
+
+func TestContBindWorkerCountsConflict(t *testing.T) {
+	_, s, _ := contFixture(t)
+	// Pre-bind the id to a foreign account identity: the worker write conflicts.
+	rid := contRouteID(t, domain.FormatOpenAIResponses, "gpt-4o", domain.OpResponses)
+	_, err := s.CreateOrRefresh(context.Background(), 1, 10, rid, contProtocolREST, "resp_c1", 999, contFP(t, 999, "sk-foreign"), 1)
+	require.NoError(t, err)
+	w := startTestContBind(t, s, ContBindConfig{})
+	w.Enqueue(workerBindReq(t, "resp_c1")) // account 1 ≠ 999 → conflict
+	require.Eventually(t, func() bool { return w.Conflicts() == 1 }, 5*time.Second, 5*time.Millisecond)
+	require.Zero(t, w.Bound())
+	// CAS conflict keeps the OLD binding (never claims a later 410).
+	b, ok := contLookupBinding(t, s, contProtocolREST, "resp_c1")
+	require.True(t, ok)
+	require.Equal(t, int64(999), b.AccountID)
+}
+
+func TestContBindWorkerCloseDrains(t *testing.T) {
+	_, s, _ := contFixture(t)
+	w := NewContBindWorker(s, nil, ContBindConfig{})
+	for _, id := range []string{"resp_d1", "resp_d2", "resp_d3"} {
+		w.Enqueue(workerBindReq(t, id))
+	}
+	require.Zero(t, w.Bound())
+	require.NoError(t, w.Close(context.Background()))
+	require.Equal(t, int64(3), w.Bound(), "Close must drain every queued request")
+	for _, id := range []string{"resp_d1", "resp_d2", "resp_d3"} {
+		_, ok := contLookupBinding(t, s, contProtocolREST, id)
+		require.True(t, ok)
+	}
+}
+
+func TestContEnqueueNoopWithoutDispatch(t *testing.T) {
+	_, s, _ := contFixture(t)
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: "https://cont.invalid", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	w := NewContBindWorker(s, nil, ContBindConfig{})
+	p := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", "https://cont.invalid")}, s, w)
+
+	// A bare context carries no dispatch observation / reqMeta: an un-attributable
+	// id must never be enqueued.
+	p.contEnqueue(context.Background(), contProtocolREST, "resp_nod", 10)
+	require.Zero(t, w.Queued())
+	require.Zero(t, w.Bound())
+	require.Zero(t, w.Dropped())
+}
+
+func TestContEnqueueNoopWhenUnwired(t *testing.T) {
+	_, s, _ := contFixture(t)
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: "https://cont.invalid", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	// No worker wired (ContBind nil): enqueue is a no-op, no panic.
+	p := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", "https://cont.invalid")}, s)
+	p.contEnqueue(context.Background(), contProtocolREST, "resp_x", 10)
+}

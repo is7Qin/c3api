@@ -57,20 +57,14 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			return resp.StatusCode, rb, false, nil
 		}
 		writeSSEHeaders(w)
-		// ACK-before-visible：响应 id 帧在 Redis 绑定确认前不得达客户端（仅
-		// store 装配时上闸——未装配零行为变化零分配）。
-		var gate *contGateWriter
-		var sink http.ResponseWriter = w
-		if p.cont != nil {
-			gate = &contGateWriter{w: w}
-			sink = gate
-		}
-		var contErr *formatError
 		var it, ot, tt, cr, cc int64
 		var img int64 // 图像调用计数旁路，仅 completed 帧最终覆盖
 		// TTFT 首帧语义：首个 SSE 事件写出后回调记录毫秒，已提交流无帧则保持 nil
 		var ttft *int64
-		err = sserelay.Relay(ctx, sink, resp.Body, sserelay.Config{
+		// 异步续接：首个有效响应 id 帧出现时快照入队一次（业务帧已直接写出，
+		// 不再等 Redis；绑定失败只由 worker 计数，绝不影响当前响应）。
+		var contEnqueued bool
+		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Mapper: newResponseModelSSEMapper(sel.ClientResponseModel(reqModel)),
 			Observer: func(ev sserelay.Event) {
 				// 首帧即 TTFT，Observer 在帧写出后触发，最接近客户端感知
@@ -88,53 +82,20 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						img = respImageCountCompleted(ev.Data)
 					}
 				}
-				if gate != nil && contErr == nil {
-					released, failed := gate.gateState()
-					if failed {
-						// 缓冲上限击穿（id 帧迟迟未现）→ fail-closed 弃流
-						contErr = errContUnavailable
-					} else if !released {
-						if id := contFrameID(ev.Data); id != "" {
-							if ferr := p.contBind(ctx, contProtocolREST, id, groupID); ferr != nil {
-								gate.markFailed()
-								contErr = ferr
-							} else {
-								// ACK 已回：缓冲帧此刻才对客户端可见。
-								if err := gate.release(); err != nil {
-									gate.markFailed()
-									contErr = errContUnavailable
-								}
-							}
-						}
+				if !contEnqueued {
+					if id := contFrameID(ev.Data); id != "" {
+						p.contEnqueue(ctx, contProtocolREST, id, groupID)
+						contEnqueued = true
 					}
 				}
 			},
 		})
 		resp.Body.Close()
-		if err == nil && gate != nil && contErr == nil && gate.notReleased() {
-			if releaseErr := gate.release(); releaseErr != nil {
-				contErr = errContUnavailable
-			}
-		}
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
 		// 观测器恰好一次归属：后续分支仅走 Cancel 或 Complete 之一
 		base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, tt, cr, cc, img))
-		if contErr != nil {
-			// 绑定失败/缓冲超限：闸门未放，客户端未见任何字节——错误可达，
-			// 已消耗用量按 abort 语义保留计费（与流中止同轨），终态不迁移。
-			out := base
-			out.Result = ResultFailed
-			out.HTTPStatus = AttemptStatus(contErr.status)
-			out.Commit = CommitUpstreamResponded
-			out.Terminal = true
-			out.BusinessFrameSent = false
-			p.observeDispatchOutcome(ctx, out, nil)
-			writeErr(w, contErr)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, contErr.status, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
-			return contErr.status, nil, true, nil
-		}
 		if err != nil {
 			// 客户端取消 vs 上游停滞：Canceled 为客户端断开，DeadlineExceeded 为上游超时，后者走失败分支
 			if errors.Is(err, context.Canceled) {
@@ -145,26 +106,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				out.HTTPStatus = 0
 				out.Terminal = true
 				out.BusinessFrameSent = true
-				if gate != nil && gate.notReleased() {
-					// 闸门未放 = 客户端实际未见任何帧（not_sent 语义）
-					out.Commit = CommitNotSent
-					out.BusinessFrameSent = false
-				}
 				p.observeDispatchOutcome(ctx, out, nil)
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 				return 0, nil, true, nil
-			}
-			if gate != nil && gate.notReleased() {
-				// id 帧前上游停滞/断流：无字节可见 → 归一 502 错误可达，终态。
-				out := base
-				out.Result = ResultFailed
-				out.HTTPStatus = http.StatusBadGateway
-				out.Commit = CommitUpstreamResponded
-				out.Terminal = true
-				p.observeDispatchOutcome(ctx, out, nil)
-				writeErr(w, &formatError{status: http.StatusBadGateway, msg: "upstream rejected request"})
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusBadGateway, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
-				return http.StatusBadGateway, nil, true, nil
 			}
 			// 上游流中止：同样保留已收集用量，按连接级/5xx 分类
 			out := base
