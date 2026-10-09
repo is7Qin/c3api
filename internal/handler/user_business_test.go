@@ -464,30 +464,88 @@ func TestAdminUsers(t *testing.T) {
 	}
 
 	// #8 role/surface × 大小写不同 email 组合、匹配/无匹配（等价 repo EmailContainsFold）。
-	require.Equal(t, []string{"dave@example.com"}, emailsOf(listUsers("?email=DAVE").Rows), "email 大小写不敏感")
-	require.Equal(t, []string{"carol@example.com"}, emailsOf(listUsers("?email=CaRoL").Rows), "email 大小写不敏感 2")
-	require.Equal(t, int64(0), listUsers("?email=zzz-no-match").Total, "email 无匹配")
-	require.Empty(t, listUsers("?email=zzz-no-match").Rows, "email 无匹配 → rows 空")
+	// 命中用例：一次响应同时锁定 Total、Len、精确角色多重集与精确邮箱集合。
+	got := listUsers("?email=DAVE")
+	require.Equal(t, int64(1), got.Total, "email=DAVE: total")
+	require.Len(t, got.Rows, 1, "email=DAVE: rows len")
+	require.ElementsMatch(t, []UserRole{"supplier"}, rolesOf(got.Rows), "email=DAVE: roles")
+	require.ElementsMatch(t, []string{"dave@example.com"}, emailsOf(got.Rows), "email=DAVE: emails")
 
-	require.Equal(t, []string{"dave@example.com"}, emailsOf(listUsers("?role=supplier&email=DAVE").Rows), "role+email 匹配")
-	require.Equal(t, int64(0), listUsers("?role=user&email=DAVE").Total, "role+email 无匹配")
-	require.Empty(t, listUsers("?role=user&email=DAVE").Rows, "role+email 无匹配 → rows 空")
+	got = listUsers("?email=CaRoL")
+	require.Equal(t, int64(1), got.Total, "email=CaRoL: total")
+	require.Len(t, got.Rows, 1, "email=CaRoL: rows len")
+	require.ElementsMatch(t, []UserRole{"platform_admin"}, rolesOf(got.Rows), "email=CaRoL: roles")
+	require.ElementsMatch(t, []string{"carol@example.com"}, emailsOf(got.Rows), "email=CaRoL: emails")
 
-	require.Equal(t, []string{"dave@example.com"}, emailsOf(listUsers("?supplier_surface=true&email=DAVE").Rows), "surface+email 匹配（supplier）")
-	require.Equal(t, []string{"carol@example.com"}, emailsOf(listUsers("?supplier_surface=true&email=CAROL").Rows), "surface+email 匹配（platform_admin）")
-	require.Equal(t, int64(0), listUsers("?supplier_surface=true&email=ERIN").Total, "surface+email 无匹配（user 被排除）")
-	require.Empty(t, listUsers("?supplier_surface=true&email=ERIN").Rows, "surface+email 无匹配 → rows 空")
+	got = listUsers("?email=zzz-no-match")
+	require.Equal(t, int64(0), got.Total, "email 无匹配: total")
+	require.Empty(t, got.Rows, "email 无匹配 → rows 空")
 
-	// #9 筛选后 total 为筛选全集，limit/offset 分页（集合断言，不依赖顺序）。
-	require.Len(t, listUsers("?limit=1&offset=0").Rows, 1, "limit=1 page0")
-	require.Equal(t, int64(3), listUsers("?limit=1&offset=1").Total, "total 为全集")
-	require.Len(t, listUsers("?limit=1&offset=1").Rows, 1, "limit=1 page1")
+	got = listUsers("?role=supplier&email=DAVE")
+	require.Equal(t, int64(1), got.Total, "role+email 匹配: total")
+	require.Len(t, got.Rows, 1, "role+email 匹配: rows len")
+	require.ElementsMatch(t, []UserRole{"supplier"}, rolesOf(got.Rows), "role+email 匹配: roles")
+	require.ElementsMatch(t, []string{"dave@example.com"}, emailsOf(got.Rows), "role+email 匹配: emails")
+
+	got = listUsers("?role=user&email=DAVE")
+	require.Equal(t, int64(0), got.Total, "role+email 无匹配: total")
+	require.Empty(t, got.Rows, "role+email 无匹配 → rows 空")
+
+	got = listUsers("?supplier_surface=true&email=DAVE")
+	require.Equal(t, int64(1), got.Total, "surface+email 匹配（supplier）: total")
+	require.Len(t, got.Rows, 1, "surface+email 匹配（supplier）: rows len")
+	require.ElementsMatch(t, []UserRole{"supplier"}, rolesOf(got.Rows), "surface+email 匹配（supplier）: roles")
+	require.ElementsMatch(t, []string{"dave@example.com"}, emailsOf(got.Rows), "surface+email 匹配（supplier）: emails")
+
+	got = listUsers("?supplier_surface=true&email=CAROL")
+	require.Equal(t, int64(1), got.Total, "surface+email 匹配（platform_admin）: total")
+	require.Len(t, got.Rows, 1, "surface+email 匹配（platform_admin）: rows len")
+	require.ElementsMatch(t, []UserRole{"platform_admin"}, rolesOf(got.Rows), "surface+email 匹配（platform_admin）: roles")
+	require.ElementsMatch(t, []string{"carol@example.com"}, emailsOf(got.Rows), "surface+email 匹配（platform_admin）: emails")
+
+	got = listUsers("?supplier_surface=true&email=ERIN")
+	require.Equal(t, int64(0), got.Total, "surface+email 无匹配（user 被排除）: total")
+	require.Empty(t, got.Rows, "surface+email 无匹配（user 被排除）→ rows 空")
+
+	// #9 筛选后 total 为筛选全集；分页用集合/计数断言（fake 无序，不断言页内/跨页 ID 顺序）。
+	// role=supplier 唯一候选 → 可精确断言角色。
+	got = listUsers("?role=supplier&limit=1&offset=0")
+	require.Equal(t, int64(1), got.Total, "role=supplier&limit=1: total")
+	require.Len(t, got.Rows, 1, "role=supplier&limit=1: rows len")
+	require.ElementsMatch(t, []UserRole{"supplier"}, rolesOf(got.Rows), "role=supplier&limit=1: roles")
+	got = listUsers("?role=supplier&limit=1&offset=1")
+	require.Equal(t, int64(1), got.Total, "role=supplier 越界: total 仍为全集")
+	require.Empty(t, got.Rows, "role=supplier 越界空")
+
+	// 既有 limit/offset 透传用例。
+	got = listUsers("?limit=1&offset=0")
+	require.Equal(t, int64(3), got.Total, "limit=1 page0: total")
+	require.Len(t, got.Rows, 1, "limit=1 page0: rows len")
+	got = listUsers("?limit=1&offset=1")
+	require.Equal(t, int64(3), got.Total, "limit=1 page1: total 为全集")
+	require.Len(t, got.Rows, 1, "limit=1 page1: rows len")
 	require.Len(t, listUsers("?limit=5").Rows, 3, "limit>total 返回全部")
-	require.Len(t, listUsers("?limit=1&offset=3").Rows, 0, "越界空")
-	require.Equal(t, int64(3), listUsers("?limit=1&offset=3").Total, "越界 total 仍为全集")
-	require.Len(t, listUsers("?supplier_surface=true&limit=1&offset=0").Rows, 1, "surface 分页 page0")
-	require.Equal(t, int64(2), listUsers("?supplier_surface=true&limit=1&offset=2").Total, "surface total 为筛选全集")
-	require.Len(t, listUsers("?supplier_surface=true&limit=1&offset=2").Rows, 0, "surface 越界空")
+	got = listUsers("?limit=1&offset=3")
+	require.Equal(t, int64(3), got.Total, "越界 total 仍为全集")
+	require.Empty(t, got.Rows, "越界空")
+
+	// surface 非空页：同时断言 Total、Len 与角色 ∈ {supplier, platform_admin}（不依赖顺序）。
+	got = listUsers("?supplier_surface=true&limit=1&offset=0")
+	require.Equal(t, int64(2), got.Total, "surface 分页 page0: total")
+	require.Len(t, got.Rows, 1, "surface 分页 page0: rows len")
+	for _, r := range got.Rows {
+		require.Contains(t, []UserRole{"supplier", "platform_admin"}, *r.Role, "surface 分页 page0: role 属供应商面")
+	}
+
+	// surface 全量（limit=2）：精确双角色多重集。
+	got = listUsers("?supplier_surface=true&limit=2")
+	require.Equal(t, int64(2), got.Total, "surface limit=2: total")
+	require.Len(t, got.Rows, 2, "surface limit=2: rows len")
+	require.ElementsMatch(t, []UserRole{"supplier", "platform_admin"}, rolesOf(got.Rows), "surface limit=2: 精确双角色")
+
+	got = listUsers("?supplier_surface=true&limit=1&offset=2")
+	require.Equal(t, int64(2), got.Total, "surface 越界: total 为筛选全集")
+	require.Empty(t, got.Rows, "surface 越界空")
 }
 
 // TestAdminPutUsersPatchSemantics patch 形态端到端：只改 balance 的 PUT

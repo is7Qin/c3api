@@ -216,8 +216,9 @@ func TestPGListUsersRoleAndSurfaceFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(3), tot1)
 	require.Equal(t, []int64{s2.ID}, idsOf(p1), "page1")
-	p2, _, err := repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 2})
+	p2, tot2, err := repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 2})
 	require.NoError(t, err)
+	require.Equal(t, int64(3), tot2)
 	require.Equal(t, []int64{s1.ID}, idsOf(p2), "page2")
 	p3, tot3, err := repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 3})
 	require.NoError(t, err)
@@ -238,8 +239,9 @@ func TestPGListUsersRoleAndSurfaceFilters(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(5), totA0)
 	require.Equal(t, []int64{u2.ID, u1.ID}, idsOf(a0), "all page0")
-	a2, _, err := repos.ListUsers(ctx, repository.ListQuery{Limit: 2, Offset: 2})
+	a2, totA2, err := repos.ListUsers(ctx, repository.ListQuery{Limit: 2, Offset: 2})
 	require.NoError(t, err)
+	require.Equal(t, int64(5), totA2)
 	require.Equal(t, []int64{a1.ID, s2.ID}, idsOf(a2), "all page1")
 }
 
