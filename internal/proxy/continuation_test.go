@@ -342,6 +342,66 @@ func TestContinuationStreamIdlessFramesVisible(t *testing.T) {
 	require.Equal(t, int64(1), b.AccountID)
 }
 
+func TestContinuationStreamRedisDownStillVisible(t *testing.T) {
+	mr, s, _ := contFixture(t)
+	var hits atomic.Int32
+	var authSeen atomic.Value
+	up := contUpstream(t, "resp_stream_down", "sk-acc1", "", &hits, &authSeen)
+	defer up.Close()
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	w := startTestContBind(t, s, ContBindConfig{})
+	p := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", up.URL)}, s, w)
+
+	mr.Close() // Redis 故障：绑定批次失败，但业务帧仍立即下行，失败只计数
+
+	rec := httptest.NewRecorder()
+	p.HandleResponses(rec, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
+	require.Equal(t, 200, rec.Code, "async bind failure must not rewrite the current response")
+	require.Contains(t, rec.Body.String(), "resp_stream_down", "unbound id still reaches the client (no gate)")
+	require.Contains(t, rec.Body.String(), "response.created")
+	require.Eventually(t, func() bool { return w.Failed() > 0 }, 5*time.Second, 5*time.Millisecond, "batch failure must be counted")
+}
+
+// TestContinuationStreamCrossInstancePin is the ① acceptance path: a STREAM is
+// produced on instance 1, its binding is persisted by the async worker (explicit
+// barrier), and instance 2 resolves previous_response_id to the bound account.
+func TestContinuationStreamCrossInstancePin(t *testing.T) {
+	mr, s1, _ := contFixture(t)
+	c2, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c2) })
+	s2, err := continuation.New(c2, "cont-test-secret-0123456789")
+	require.NoError(t, err)
+
+	var hits1, hits2 atomic.Int32
+	var auth1, auth2 atomic.Value
+	up1 := contUpstream(t, "resp_stream_gen", "sk-acc1", "", &hits1, &auth1)
+	defer up1.Close()
+	up2 := contUpstream(t, "resp_stream_other", "sk-acc2", "", &hits2, &auth2)
+	defer up2.Close()
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up1.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	acc1 := contAcc(1, tpl, "sk-acc1", up1.URL)
+	acc2 := contAcc(2, tpl, "sk-acc2", up2.URL)
+
+	// Instance 1 produces a STREAM; the worker persists the binding.
+	w := startTestContBind(t, s1, ContBindConfig{})
+	p1 := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{acc1, acc2}, s1, w)
+	rec := httptest.NewRecorder()
+	p1.HandleResponses(rec, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), "resp_stream_gen")
+	waitBinding(t, s1, contProtocolREST, "resp_stream_gen") // explicit write barrier
+
+	// Instance 2 continues: pinned to account 1 despite an acc2-first plan.
+	p2 := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{acc2, acc1}, s2)
+	w2 := httptest.NewRecorder()
+	p2.HandleResponses(w2, contResponsesReq(`{"model":"gpt-4o","input":"again","previous_response_id":"resp_stream_gen"}`))
+	require.Equal(t, 200, w2.Code, "body=%s", w2.Body.String())
+	require.EqualValues(t, 0, hits2.Load(), "pinned continuation must not touch the preferred-but-unbound account")
+	require.EqualValues(t, 2, hits1.Load(), "continuation must dispatch to the bound account")
+	require.Equal(t, "Bearer sk-acc1", auth1.Load().(string))
+}
+
 // --- REST continuation (lookup + pin) side ---
 
 func TestContinuationCrossInstancePin(t *testing.T) {

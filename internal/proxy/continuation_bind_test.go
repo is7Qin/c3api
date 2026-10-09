@@ -113,15 +113,27 @@ func TestContBindWorkerCloseDrains(t *testing.T) {
 	}
 }
 
-func TestContEnqueueNoopWithoutDispatch(t *testing.T) {
+func TestContEnqueueCountsUnattributed(t *testing.T) {
 	_, s, _ := contFixture(t)
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: "https://cont.invalid", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
 	w := NewContBindWorker(s, nil, ContBindConfig{})
 	p := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", "https://cont.invalid")}, s, w)
 
-	// A bare context carries no dispatch observation / reqMeta: an un-attributable
-	// id must never be enqueued.
-	p.contEnqueue(context.Background(), contProtocolREST, "resp_nod", 10)
+	// (a) missing dispatch observation (reqMeta present, dispatch absent).
+	rm := &reqMeta{meta: domain.KeyMeta{UserID: 1}}
+	ctxMeta := context.WithValue(context.Background(), ctxKeyReqMeta{}, rm)
+	p.contEnqueue(ctxMeta, contProtocolREST, "resp_nod", 10)
+	require.Equal(t, int64(1), w.Unattributed(), "missing dispatch must be counted")
+
+	// (b) missing reqMeta (dispatch present, reqMeta absent).
+	ctxDisp := context.WithValue(context.Background(), ctxKeyDispatch{}, &dispatchObservation{})
+	p.contEnqueue(ctxDisp, contProtocolREST, "resp_nod2", 10)
+	require.Equal(t, int64(2), w.Unattributed(), "missing reqMeta must be counted")
+
+	// (c) empty response id.
+	p.contEnqueue(ctxMeta, contProtocolREST, "", 10)
+	require.Equal(t, int64(3), w.Unattributed())
+
 	require.Zero(t, w.Queued())
 	require.Zero(t, w.Bound())
 	require.Zero(t, w.Dropped())
@@ -130,7 +142,11 @@ func TestContEnqueueNoopWithoutDispatch(t *testing.T) {
 func TestContEnqueueNoopWhenUnwired(t *testing.T) {
 	_, s, _ := contFixture(t)
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: "https://cont.invalid", CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
-	// No worker wired (ContBind nil): enqueue is a no-op, no panic.
+	// A constructed (but unwired) worker proves the unwired path counts nothing.
+	w := NewContBindWorker(s, nil, ContBindConfig{})
+	// store wired, worker NOT wired (ContBind nil): zero behaviour, no count, no panic.
 	p := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", "https://cont.invalid")}, s)
 	p.contEnqueue(context.Background(), contProtocolREST, "resp_x", 10)
+	require.Zero(t, w.Unattributed())
+	require.Zero(t, w.Queued())
 }

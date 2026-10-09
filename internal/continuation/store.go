@@ -275,8 +275,10 @@ type BindResult struct {
 
 // CreateOrRefreshBatch 与 CreateOrRefresh 同源校验/同源 key/payload，但把每个
 // EVAL 排进同一 pipeline，**一次 Exec** 完成（一次 Redis 往返）。逐条结果区分
-// created/refreshed/conflict 与逐条 I/O/编码错误；pipeline Exec 级错误（连接/
-// 协议）→ 外层 error（整批失败），此时返回 nil 切片。
+// created/refreshed/conflict 与逐条错误——逐条错误仅覆盖**排队前**的校验/key
+// 生成失败（不写 Redis）。pipeline Exec 级错误 → 外层 error（整批失败）：go-redis
+// 的 Pipeline.Exec 返回**任一命令**的首个错误（不限于连接/协议），故任一命令级
+// 失败也使整批返回 error（返回 nil 切片）。
 func (s *Store) CreateOrRefreshBatch(ctx context.Context, reqs []BindRequest) ([]BindResult, error) {
 	results := make([]BindResult, len(reqs))
 	if len(reqs) == 0 {

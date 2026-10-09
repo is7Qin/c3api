@@ -29,6 +29,7 @@ import (
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 const (
@@ -43,14 +44,15 @@ var (
 	// contOpTimeout bounds one Redis round trip (ACK or lookup). var = test
 	// seam (Redis-outage cases fail fast without sleeps).
 	contOpTimeout = 2 * time.Second
-	// contMaxBuffer caps bytes held invisible before the first response id is
-	// ACKed (WS pending buffer only — REST streams are ungated since ①).
-	// var = test seam.
-	contMaxBuffer = 1 << 20
 	// contWSAckTimeout bounds the upstream read while a WS session still has
 	// no ACKed binding (no overall WS stream timeout exists by design).
 	contWSAckTimeout = 10 * time.Second
 )
+
+// contMaxBuffer caps bytes held invisible before the first response id is ACKed.
+// WS pending buffer only — REST streams are ungated since ①. const: no test
+// rewrites it (unlike contOpTimeout/contWSAckTimeout).
+const contMaxBuffer = 1 << 20
 
 // Fail-closed continuation errors. Messages carry no raw ids, keys or
 // upstream detail (anti-pattern 7): the client learns the outcome class only.
@@ -101,26 +103,63 @@ func (p *Proxy) contBind(ctx context.Context, protocolTag, respID string, groupI
 	}
 }
 
+// contBindWired reports whether the REST streaming async bind path is wired
+// (store + worker). Call sites use it to keep the unwired path zero-behaviour
+// (no enqueue, no counting, no Mapper wrapper).
+func (p *Proxy) contBindWired() bool { return p.cont != nil && p.contBinder != nil }
+
+// contBindMapper wraps a Responses SSE mapper so the first valid response id is
+// snapshotted and enqueued BEFORE the frame is written (M1: the ① enqueue seam
+// is pre-write for both the native wrapped Mapper and the converted Mapper).
+// Unwired (store or worker nil) returns base unchanged — no wrapper, zero
+// behaviour change. base == nil (no model rewrite) still enqueues and forwards
+// the raw frame (matches sserelay's nil-Mapper pass-through).
+func (p *Proxy) contBindMapper(ctx context.Context, done *bool, groupID int64, base func(sserelay.Event) ([]byte, bool)) func(sserelay.Event) ([]byte, bool) {
+	if !p.contBindWired() {
+		return base
+	}
+	return func(ev sserelay.Event) ([]byte, bool) {
+		if !*done {
+			if id := contFrameID(ev.Data); id != "" {
+				p.contEnqueue(ctx, contProtocolREST, id, groupID)
+				*done = true
+			}
+		}
+		if base == nil {
+			return ev.Raw, false
+		}
+		return base(ev)
+	}
+}
+
 // contEnqueue snapshots the bindable response id at the SSE write seam and
-// hands it to the async bind worker. It is a no-op when the store or the
-// worker is unwired, when respID is empty, or when the caller's context carries
-// no loop-owned dispatch observation / request meta (direct-caller tests): an
-// un-attributable id is never enqueued. The snapshot is taken here (values are
-// copied) — the worker never sees the request ctx, dispatch or relay slices.
+// hands it to the async bind worker. Unwired (store or worker nil) is a no-op
+// with zero behaviour change. When wired, an id that cannot be attributed (empty
+// id, no loop-owned dispatch observation, no request meta, undecodable
+// fingerprint) is counted on the worker and never written to Redis. The snapshot
+// is taken here (values are copied) — the worker never sees the request ctx,
+// dispatch or relay slices.
 func (p *Proxy) contEnqueue(ctx context.Context, protocolTag, respID string, groupID int64) {
-	if p.cont == nil || p.contBinder == nil || respID == "" {
+	if p.cont == nil || p.contBinder == nil {
+		return
+	}
+	if respID == "" {
+		p.contBinder.DropUnattributed()
 		return
 	}
 	d := dispatchFromContext(ctx)
 	if d == nil {
+		p.contBinder.DropUnattributed()
 		return
 	}
 	rm, ok := ctx.Value(ctxKeyReqMeta{}).(*reqMeta)
 	if !ok || rm.meta.UserID <= 0 {
+		p.contBinder.DropUnattributed()
 		return
 	}
 	fpBytes, err := hex.DecodeString(string(d.base.Fingerprint))
 	if err != nil || len(fpBytes) != len(domain.CandidateFingerprintVal{}) {
+		p.contBinder.DropUnattributed()
 		return
 	}
 	var fp domain.CandidateFingerprintVal

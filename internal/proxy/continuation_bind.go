@@ -43,7 +43,21 @@ type ContBindConfig struct {
 	BatchTimeout time.Duration // 每批 Redis 操作超时
 }
 
-// ContBindWorker 异步绑定 worker（worker.Worker 契约，Name="cont-bind"）。
+// contBindStats /ops/workers 观测快照（handler.StatsProvider 形态）。json 键
+// 清单同步义务：openapi.yaml WorkerStatus.stats description + web locales
+// ops.stats.*（前端缺 key 兜底显示原始字段名）。
+type contBindStats struct {
+	Queued       int   `json:"queued"`       // 有界队列当前积压
+	QueueCap     int   `json:"queue_cap"`    // 队列容量
+	Bound        int64 `json:"bound"`        // created/refreshed 成功落库累计
+	Dropped      int64 `json:"dropped"`      // 队列满/已关闭丢弃累计
+	Failed       int64 `json:"failed"`       // 批量失败/逐条 I/O 错误累计
+	Conflicts    int64 `json:"conflicts"`    // CAS conflict 累计（保留旧绑定）
+	Unattributed int64 `json:"unattributed"` // 可归属拒绝累计（缺 dispatch/reqMeta/指纹）
+}
+
+// ContBindWorker 异步绑定 worker（worker.Worker + handler.StatsProvider 契约，
+// Name="cont-bind"）。
 type ContBindWorker struct {
 	store *continuation.Store
 	log   *logx.Logger
@@ -65,6 +79,9 @@ type ContBindWorker struct {
 	conflicts atomic.Int64 // CAS conflict（保留旧绑定；不得声称为必然 410）
 	failed    atomic.Int64 // 批量失败/逐条 I/O 错误（观测）
 	bound     atomic.Int64 // created/refreshed 成功落库计数
+	// unattributed 可归属拒绝：id 已在写出接缝取得，但缺 loop 派发观测/请求元
+	// 数据或指纹不可解码，故不写 Redis（M4 观测面；未装配路径不计数）。
+	unattributed atomic.Int64
 }
 
 // NewContBindWorker 构造异步绑定 worker；store 为绑定存储（须非 nil），
@@ -218,8 +235,10 @@ func (w *ContBindWorker) flush(base context.Context, batch []continuation.BindRe
 }
 
 // Close 幂等排空：置位 closed（此后 Enqueue 丢弃计数）→ 等 loop 退出（受 ctx
-// 预算约束）→ 排空剩余（每批 ≤ BatchSize，受 ctx 预算约束；预算耗尽 → 剩余
-// 丢弃计数）。未 Start 也安全（跳过 loop 等待直接排空）。
+// 预算约束）→ 排空剩余（每批 ≤ BatchSize，受 ctx 预算约束）。预算到期时：**已
+// 在手批次按 dropped 计**（未提交 Redis，等价于队列剩余丢弃——与已发给 Redis 的
+// 批次失败计 failed 区分），并对剩余条数 Warn 一次（对齐 errlog 停机截断先例）。
+// 未 Start 也安全（跳过 loop 等待直接排空）。
 func (w *ContBindWorker) Close(ctx context.Context) error {
 	w.closeOnce.Do(func() {
 		w.mu.Lock()
@@ -235,12 +254,19 @@ func (w *ContBindWorker) Close(ctx context.Context) error {
 			}
 		}
 		for {
-			if ctx.Err() != nil {
-				w.dropped.Add(int64(len(w.ch)))
-				break
-			}
 			batch := w.takeBatch()
 			if len(batch) == 0 {
+				break
+			}
+			if ctx.Err() != nil {
+				// 预算到期：本批（已在手）+ 队列剩余一并计入 dropped（未提交 Redis），
+				// 不当作 failed（failed 保留给"已发往 Redis 但落库失败"）。
+				remaining := len(batch) + len(w.ch)
+				w.dropped.Add(int64(remaining))
+				if w.log != nil {
+					w.log.Warn("cont-bind close: shutdown budget exceeded, truncated drain",
+						logx.Int("remaining", remaining))
+				}
 				break
 			}
 			w.flush(ctx, batch)
@@ -262,5 +288,25 @@ func (w *ContBindWorker) Failed() int64 { return w.failed.Load() }
 // Bound 成功落库（created/refreshed）计数（观测/测试）。
 func (w *ContBindWorker) Bound() int64 { return w.bound.Load() }
 
+// Unattributed 可归属拒绝计数（缺 dispatch/reqMeta/指纹；未装配路径不计数）。
+func (w *ContBindWorker) Unattributed() int64 { return w.unattributed.Load() }
+
+// DropUnattributed 记一条可归属拒绝（contEnqueue 在写出接缝取得 id 后，因缺少
+// loop 派发观测/请求元数据或指纹不可解码而未写 Redis）。
+func (w *ContBindWorker) DropUnattributed() { w.unattributed.Add(1) }
+
 // Queued 当前队列积压条数（背压观测）。
 func (w *ContBindWorker) Queued() int { return len(w.ch) }
+
+// Stats 满足 handler.StatsProvider（观测面：队列/落库/丢弃/失败/冲突/可归属拒绝）。
+func (w *ContBindWorker) Stats() any {
+	return contBindStats{
+		Queued:       w.Queued(),
+		QueueCap:     w.cfg.QueueSize,
+		Bound:        w.bound.Load(),
+		Dropped:      w.dropped.Load(),
+		Failed:       w.failed.Load(),
+		Conflicts:    w.conflicts.Load(),
+		Unattributed: w.unattributed.Load(),
+	}
+}

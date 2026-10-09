@@ -61,11 +61,13 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var img int64 // 图像调用计数旁路，仅 completed 帧最终覆盖
 		// TTFT 首帧语义：首个 SSE 事件写出后回调记录毫秒，已提交流无帧则保持 nil
 		var ttft *int64
-		// 异步续接：首个有效响应 id 帧出现时快照入队一次（业务帧已直接写出，
-		// 不再等 Redis；绑定失败只由 worker 计数，绝不影响当前响应）。
+		// 异步续接（M1：写出前点入队）：wrap 基础 Mapper——首个有效响应 id 帧在
+		// 写出前快照入队一次，再委托原映射输出。未装配（store/worker nil）不加
+		// wrap，保持零行为变化。Observer 的 TTFT/usage/图像计数保持 post-write 原样。
 		var contEnqueued bool
+		mapper := newResponseModelSSEMapper(sel.ClientResponseModel(reqModel))
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
-			Mapper: newResponseModelSSEMapper(sel.ClientResponseModel(reqModel)),
+			Mapper: p.contBindMapper(ctx, &contEnqueued, groupID, mapper),
 			Observer: func(ev sserelay.Event) {
 				// 首帧即 TTFT，Observer 在帧写出后触发，最接近客户端感知
 				if ttft == nil {
@@ -80,12 +82,6 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 					// 图像检测旁路：completed 帧恒在流末，最终计数覆盖
 					if respImageDetectOn(sel) {
 						img = respImageCountCompleted(ev.Data)
-					}
-				}
-				if !contEnqueued {
-					if id := contFrameID(ev.Data); id != "" {
-						p.contEnqueue(ctx, contProtocolREST, id, groupID)
-						contEnqueued = true
 					}
 				}
 			},

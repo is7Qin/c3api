@@ -116,7 +116,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				if clientModel != "" {
 					mapped = rewriteConvertedFrames(mapped, clientModel)
 				}
-				if !contEnqueued && c.dir == domain.ProtocolConvertRespToMess {
+				if !contEnqueued && p.contBindWired() && c.dir == domain.ProtocolConvertRespToMess {
 					if id := mapper.BindableID(); id != "" {
 						p.contEnqueue(ctx, contProtocolREST, id, groupID)
 						contEnqueued = true
