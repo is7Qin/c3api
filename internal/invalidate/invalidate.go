@@ -89,6 +89,9 @@ const DefaultWindow = 200 * time.Millisecond
 type SchedReloader interface {
 	InvalidateAll()
 	InvalidateGroup(groupID int64)
+	// InvalidateGroups 批量组失效（同一临界区内逐组单组重载后一次冻结发布）：
+	// Debouncer 窗口内多组失效合并为一次调用（替代逐组 InvalidateGroup）。
+	InvalidateGroups(ids []int64)
 }
 
 // ClientsReloader aiclient 工厂客户端失效（aiclient.Factory 实现）。
@@ -326,9 +329,13 @@ func (d *Debouncer) reloadAll(st *State) {
 		d.cfg.Sched.InvalidateAll()
 	}
 	if len(st.Groups) > 0 && st.Kinds&KindTemplates == 0 {
+		// 组级定向：窗口内多组失效合并为**一次** InvalidateGroups（同一
+		// publisher.mu 内逐组单组重载后一次冻结发布），替代逐组 InvalidateGroup。
+		ids := make([]int64, 0, len(st.Groups))
 		for gid := range st.Groups {
-			d.cfg.Sched.InvalidateGroup(gid)
+			ids = append(ids, gid)
 		}
+		d.cfg.Sched.InvalidateGroups(ids)
 	}
 	if st.Kinds&(KindTemplates|KindClients) != 0 {
 		d.cfg.Clients.InvalidateAll()

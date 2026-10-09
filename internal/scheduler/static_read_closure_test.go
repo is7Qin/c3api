@@ -38,7 +38,7 @@ const (
 var staticReaderFuncs = map[string]string{
 	"Classify":                   "事件分类：按账号的 template_id 归质量键",
 	"InvalidateAccount":          "取账号所属组集合做定向重载",
-	"InvalidateGroup":            "组级重载：复用/替换叶子并登记引用集",
+	"invalidateOneIntoLocked":    "单组折叠：复用/替换叶子并登记引用集",
 	"IsLatched":                  "latch 谓词按 (指纹, K) 判定",
 	"MarkResult":                 "运行结果记账：状态、K、template_id、事件组",
 	"ProbeAccount":               "探针：把整个账号交给候选指纹权威",
@@ -53,10 +53,11 @@ var staticReaderFuncs = map[string]string{
 	"indexRoutesForAccount":      "账号的组引用集登记",
 	"modelSet":                   "模型集合：模板的模型/映射/格式",
 	"newAccountSnapshot":         "叶子构造：账号 ID",
+	"newSnapshotStatic":          "唯一构造函数：一次派生并持有 planKey（读全部源字段，写 $S.key）",
 	"onRuleFailure":              "失效事件的 fail-closed fence（K）",
 	"payloadKeyOf":               "载荷投影",
 	"planKeyOf":                  "决策输入投影",
-	"reload":                     "全量重载：K 变化检测",
+	"reloadLocked":               "全量重载：K 变化检测",
 	"reserveOnView":              "预留谓词与 Selection 装配",
 	"staticKeyOf":                "叶子复用判据",
 }
@@ -121,6 +122,9 @@ var staticReadPaths = map[string]staticReadSpec{
 
 	// --- 组归属 ---
 	"$S.groupIDs": {staticPathField, "groupIDsDigest"},
+
+	// --- 派生缓存位点（写目标 + 读回；非源字段） ---
+	"$S.key": {staticPathDerived, "canonical digest 复用位点：newSnapshotStatic 单次 av.key=k 写入、planKeyOf 读回；源字段读经 $S.acc.*/$S.tpl.*/$S.groupIDs 完整登记"},
 }
 
 // payloadProjectionFuncs 是允许读**载荷**字段（OAuth 三元组）的函数全集：载荷只用于

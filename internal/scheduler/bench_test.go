@@ -353,9 +353,9 @@ func TestCompilerFixtureHashRejectsMutation(t *testing.T) {
 	require.True(t, ok)
 	st := snap.static.Load()
 	require.NotNil(t, st)
-	mutated := *st
-	mutated.acc.LifecycleRevision++
-	snap.static.Store(&mutated)
+	accRev := st.acc
+	accRev.LifecycleRevision++
+	snap.static.Store(newSnapshotStatic(accRev, st.tpl, st.groupIDs))
 
 	after, _ := hashCompilerFixture(s)
 	require.NotEqual(t, before, after)

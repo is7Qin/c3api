@@ -79,9 +79,9 @@ func TestMarkResultSkipsOnFingerprintError(t *testing.T) {
 	snap, ok := s.View().Account(1)
 	require.True(t, ok)
 	av := snap.static.Load()
-	mod := *av
-	mod.acc.Template = nil
-	snap.static.Store(&mod)
+	accNoTpl := av.acc
+	accNoTpl.Template = nil
+	snap.static.Store(newSnapshotStatic(accNoTpl, av.tpl, av.groupIDs))
 
 	require.Zero(t, s.fingerprintSkips.Load())
 	s.MarkResult(1, rule.Kind5xx, nil, 500, "boom", "m")

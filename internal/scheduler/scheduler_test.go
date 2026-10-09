@@ -412,7 +412,7 @@ func tplWith(ff domain.RequestFormat, models []string) *domain.Template {
 
 func TestBuildRoutesBucketsAndDefault(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"gpt-4o", "gpt-4o-mini"})
-	pool := []*accountSnapshot{newAccountSnapshot(&snapshotStatic{acc: domain.Account{ID: 1}, tpl: tpl}, &accState{status: domain.StatusActive})}
+	pool := []*accountSnapshot{newAccountSnapshot(newSnapshotStatic(domain.Account{ID: 1}, tpl, nil), &accState{status: domain.StatusActive})}
 	routes := buildRoutes(pool)
 	// 已知模型桶
 	_, ok := routes[routeKey{domain.FormatOpenAIChat, "gpt-4o"}]
@@ -431,7 +431,7 @@ func TestBuildRoutesFormatModelsLimit(t *testing.T) {
 		Models:           []string{"gpt-4o", "special"},
 		FormatModels:     map[domain.RequestFormat][]string{domain.FormatAnthropic: {"special"}},
 	}
-	pool := []*accountSnapshot{newAccountSnapshot(&snapshotStatic{acc: domain.Account{ID: 1}, tpl: tpl}, &accState{status: domain.StatusActive})}
+	pool := []*accountSnapshot{newAccountSnapshot(newSnapshotStatic(domain.Account{ID: 1}, tpl, nil), &accState{status: domain.StatusActive})}
 	routes := buildRoutes(pool)
 	// anthropic 只支持 special（format_models 限制）→ special 有桶
 	_, ok := routes[routeKey{domain.FormatAnthropic, "special"}]
