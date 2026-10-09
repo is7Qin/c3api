@@ -183,7 +183,11 @@ func (s *Store) RedisKey(userID, groupID int64, routeClassID domain.RouteClassID
 	return RedisPrefix + hex.EncodeToString(trunc), nil
 }
 
-var luaCAS = redis.NewScript(`
+// luaCASSource 是绑定 CAS 脚本源：同步路径经 luaCAS（Script.Run：EVALSHA +
+// NOSCRIPT 冷启回退）执行；批量路径把它作为**普通 EVAL** 排进 pipeline（不依赖
+// Script.Run 排队期 fallback——pipeline 内 EVALSHA 的 NOSCRIPT 在 Exec 时才出现，
+// 回退无法生效）。两条路径同源脚本、同 source 常量。
+const luaCASSource = `
 local v = redis.call('GET', KEYS[1])
 if not v then
   redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[2])
@@ -195,7 +199,9 @@ if v == ARGV[1] then
 else
   return 'conflict'
 end
-`)
+`
+
+var luaCAS = redis.NewScript(luaCASSource)
 
 var luaLookup = redis.NewScript(`
 local v = redis.call('GET', KEYS[1])
@@ -206,15 +212,26 @@ local ttl = redis.call('PTTL', KEYS[1])
 return {v, ttl}
 `)
 
-func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string, accountID int64, fingerprint domain.CandidateFingerprintVal, identityRevision int64) (string, error) {
+// validateBind 是绑定写入的共享前置校验（同步 CreateOrRefresh 与批量
+// CreateOrRefreshBatch 逐条同源）：accountID/identityRevision 必须为正、
+// fingerprint 非零。RedisKey 的非空校验（continuationID/protocolTag）在各调用
+// 内由 RedisKey 自身完成。
+func validateBind(accountID, identityRevision int64, fingerprint domain.CandidateFingerprintVal) error {
 	if accountID <= 0 {
-		return "", fmt.Errorf("continuation: invalid account_id %d", accountID)
+		return fmt.Errorf("continuation: invalid account_id %d", accountID)
 	}
 	if identityRevision <= 0 {
-		return "", fmt.Errorf("continuation: invalid identity revision %d", identityRevision)
+		return fmt.Errorf("continuation: invalid identity revision %d", identityRevision)
 	}
 	if fingerprint == (domain.CandidateFingerprintVal{}) {
-		return "", fmt.Errorf("continuation: zero fingerprint")
+		return fmt.Errorf("continuation: zero fingerprint")
+	}
+	return nil
+}
+
+func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string, accountID int64, fingerprint domain.CandidateFingerprintVal, identityRevision int64) (string, error) {
+	if err := validateBind(accountID, identityRevision, fingerprint); err != nil {
+		return "", err
 	}
 	rkey, err := s.RedisKey(userID, groupID, routeClassID, protocolTag, continuationID)
 	if err != nil {
@@ -232,6 +249,78 @@ func (s *Store) CreateOrRefresh(ctx context.Context, userID, groupID int64, rout
 	default:
 		return res, fmt.Errorf("continuation: unexpected lua result %q", res)
 	}
+}
+
+// BindRequest 是批量绑定的单条输入（异步 worker 的首帧快照）：与同步
+// CreateOrRefresh 的参数一一对应，但整条以值快照携带——worker 不得持有
+// dispatch/请求 ctx/relay 切片。
+type BindRequest struct {
+	UserID           int64
+	GroupID          int64
+	RouteClassID     domain.RouteClassIDVal
+	ProtocolTag      string
+	ContinuationID   string
+	AccountID        int64
+	Fingerprint      domain.CandidateFingerprintVal
+	IdentityRevision int64
+}
+
+// BindResult 是批量绑定的单条结果：Status ∈ {"created","refreshed","conflict"}；
+// 该条在排队前的校验/编码错误（此时 Status 为空，Err 非 nil）逐条隔离，不阻断
+// 其余条目。
+type BindResult struct {
+	Status string
+	Err    error
+}
+
+// CreateOrRefreshBatch 与 CreateOrRefresh 同源校验/同源 key/payload，但把每个
+// EVAL 排进同一 pipeline，**一次 Exec** 完成（一次 Redis 往返）。逐条结果区分
+// created/refreshed/conflict 与逐条 I/O/编码错误；pipeline Exec 级错误（连接/
+// 协议）→ 外层 error（整批失败），此时返回 nil 切片。
+func (s *Store) CreateOrRefreshBatch(ctx context.Context, reqs []BindRequest) ([]BindResult, error) {
+	results := make([]BindResult, len(reqs))
+	if len(reqs) == 0 {
+		return results, nil
+	}
+	pipe := s.client.Pipeline()
+	cmds := make([]*redis.Cmd, len(reqs))
+	queued := make([]bool, len(reqs))
+	for i := range reqs {
+		req := &reqs[i]
+		if err := validateBind(req.AccountID, req.IdentityRevision, req.Fingerprint); err != nil {
+			results[i] = BindResult{Err: err}
+			continue
+		}
+		rkey, err := s.RedisKey(req.UserID, req.GroupID, req.RouteClassID, req.ProtocolTag, req.ContinuationID)
+		if err != nil {
+			results[i] = BindResult{Err: err}
+			continue
+		}
+		b := Binding{AccountID: req.AccountID, Fingerprint: req.Fingerprint, IdentityRevision: req.IdentityRevision, RedisAcked: true}
+		payload := encodeWire(b)
+		cmds[i] = pipe.Eval(ctx, luaCASSource, []string{rkey}, string(payload), strconv.Itoa(ttlSeconds))
+		queued[i] = true
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		return nil, err
+	}
+	for i := range reqs {
+		if !queued[i] {
+			continue
+		}
+		res, err := cmds[i].Text()
+		if err != nil {
+			results[i] = BindResult{Err: err}
+			continue
+		}
+		switch res {
+		case "created", "refreshed", "conflict":
+			results[i] = BindResult{Status: res}
+		default:
+			results[i] = BindResult{Err: fmt.Errorf("continuation: unexpected lua result %q", res)}
+		}
+	}
+	return results, nil
 }
 
 func (s *Store) Lookup(ctx context.Context, userID, groupID int64, routeClassID domain.RouteClassIDVal, protocolTag, continuationID string) (*Binding, bool, error) {

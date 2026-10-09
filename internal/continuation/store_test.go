@@ -521,3 +521,149 @@ func TestContinuationLookupKeyDeletedReturnsNotFound(t *testing.T) {
 	require.False(t, ok, "deleted Redis key must return not-found even after a warm lookup")
 	require.Nil(t, b)
 }
+
+// batchHook counts pipeline executions (Exec) and queued commands separately —
+// the batch API proof is one pipeline Exec + N commands, not "N commands".
+type batchHook struct {
+	pipelines atomic.Int64
+	cmds      atomic.Int64
+}
+
+func (h *batchHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *batchHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return func(ctx context.Context, cmd redis.Cmder) error {
+		h.cmds.Add(1)
+		return next(ctx, cmd)
+	}
+}
+func (h *batchHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		h.pipelines.Add(1)
+		h.cmds.Add(int64(len(cmds)))
+		return next(ctx, cmds)
+	}
+}
+
+func newBatchStore(t *testing.T) (*Store, *batchHook) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c) })
+	h := &batchHook{}
+	c.AddHook(h)
+	s, err := New(c, "secret-batch-1234567890")
+	require.NoError(t, err)
+	return s, h
+}
+
+func TestCreateOrRefreshBatchSingleExec(t *testing.T) {
+	s, h := newBatchStore(t)
+	ctx := t.Context()
+	rid := routeID(t)
+	f := fp(t)
+	// Cold start: no SCRIPT LOAD warm — the batch uses plain EVAL.
+	results, err := s.CreateOrRefreshBatch(ctx, []BindRequest{
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_b1", AccountID: 10, Fingerprint: f, IdentityRevision: 1},
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_b2", AccountID: 10, Fingerprint: f, IdentityRevision: 1},
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_bad", AccountID: 0, Fingerprint: f, IdentityRevision: 1},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 3)
+	require.Equal(t, int64(1), h.pipelines.Load(), "batch must be a single pipeline Exec")
+	require.Equal(t, int64(2), h.cmds.Load(), "invalid item must not be queued (2 EVALs)")
+	require.Equal(t, "created", results[0].Status)
+	require.Equal(t, "created", results[1].Status)
+	require.Error(t, results[2].Err, "per-item validation error does not fail the batch")
+	for _, id := range []string{"resp_b1", "resp_b2"} {
+		b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", id)
+		require.NoError(t, err)
+		require.True(t, ok)
+		require.Equal(t, int64(10), b.AccountID)
+		require.Equal(t, f, b.Fingerprint)
+	}
+}
+
+func TestCreateOrRefreshBatchPerItemStatuses(t *testing.T) {
+	s, h := newBatchStore(t)
+	ctx := t.Context()
+	rid := routeID(t)
+	f := fp(t)
+	// Seed one binding so the next batch can refresh it / conflict on it.
+	_, err := s.CreateOrRefresh(ctx, 1, 1, rid, "responses", "resp_seed", 10, f, 1)
+	require.NoError(t, err)
+	h.pipelines.Store(0)
+	h.cmds.Store(0)
+	results, err := s.CreateOrRefreshBatch(ctx, []BindRequest{
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_seed", AccountID: 10, Fingerprint: f, IdentityRevision: 1},      // refreshed
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_seed", AccountID: 11, Fingerprint: fp2(t), IdentityRevision: 1}, // conflict
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_new", AccountID: 10, Fingerprint: f, IdentityRevision: 1},       // created
+	})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), h.pipelines.Load())
+	require.Equal(t, int64(3), h.cmds.Load())
+	require.Equal(t, "refreshed", results[0].Status)
+	require.Equal(t, "conflict", results[1].Status)
+	require.Equal(t, "created", results[2].Status)
+	// Conflict keeps the OLD binding (concurrent same-id writes: first wins).
+	b, ok, err := s.Lookup(ctx, 1, 1, rid, "responses", "resp_seed")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, int64(10), b.AccountID)
+}
+
+func TestCreateOrRefreshBatchMatchesSyncSemantics(t *testing.T) {
+	_, s := newMiniredisStore(t, "secret-batch-sync-12345")
+	ctx := t.Context()
+	rid := routeID(t)
+	f := fp(t)
+	// Sync create → batch refresh carries the same canonical wire/key.
+	st, err := s.CreateOrRefresh(ctx, 9, 2, rid, "responses", "resp_sync", 10, f, 3)
+	require.NoError(t, err)
+	require.Equal(t, "created", st)
+	results, err := s.CreateOrRefreshBatch(ctx, []BindRequest{
+		{UserID: 9, GroupID: 2, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_sync", AccountID: 10, Fingerprint: f, IdentityRevision: 3},
+	})
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	require.Equal(t, "refreshed", results[0].Status)
+	b, ok, err := s.Lookup(ctx, 9, 2, rid, "responses", "resp_sync")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, f, b.Fingerprint)
+	require.Equal(t, int64(3), b.IdentityRevision)
+}
+
+func TestCreateOrRefreshBatchEmptyAndAllInvalid(t *testing.T) {
+	_, s := newMiniredisStore(t, "secret-batch-empty-1234")
+	ctx := t.Context()
+	rid := routeID(t)
+	var zero domain.CandidateFingerprintVal
+	results, err := s.CreateOrRefreshBatch(ctx, nil)
+	require.NoError(t, err)
+	require.Empty(t, results)
+	results, err = s.CreateOrRefreshBatch(ctx, []BindRequest{
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "x", AccountID: 10, Fingerprint: zero, IdentityRevision: 1},
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "y", AccountID: 10, Fingerprint: fp(t), IdentityRevision: 0},
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "", AccountID: 10, Fingerprint: fp(t), IdentityRevision: 1},
+	})
+	require.NoError(t, err, "all-invalid batch must not surface a pipeline error")
+	require.Len(t, results, 3)
+	for i := range results {
+		require.Error(t, results[i].Err, "item %d", i)
+		require.Empty(t, results[i].Status)
+	}
+}
+
+func TestCreateOrRefreshBatchExecErrorIsBatchLevel(t *testing.T) {
+	mr, s := newMiniredisStore(t, "secret-batch-outage-12")
+	ctx := t.Context()
+	rid := routeID(t)
+	f := fp(t)
+	mr.Close() // Redis outage: the pipeline Exec fails → whole-batch error.
+	results, err := s.CreateOrRefreshBatch(ctx, []BindRequest{
+		{UserID: 1, GroupID: 1, RouteClassID: rid, ProtocolTag: "responses", ContinuationID: "resp_x", AccountID: 10, Fingerprint: f, IdentityRevision: 1},
+	})
+	require.Error(t, err)
+	require.Nil(t, results)
+}
