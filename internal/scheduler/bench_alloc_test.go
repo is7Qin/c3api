@@ -9,6 +9,12 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
+var (
+	benchmarkSnapshotStatic *snapshotStatic
+	benchmarkPlanKey        planKey
+	benchmarkCompareEqual   bool
+)
+
 // --- T1: batch-stage benchmark (M groups folded into one stage/freeze) ---
 
 // batchStageFixture builds a scheduler over `m` groups, each carrying
@@ -68,5 +74,50 @@ func BenchmarkInvalidateGroupsStage(b *testing.B) {
 				b.Fatalf("LoadGroupAccounts calls = %d, want %d (one per group in a single batch)", len(got), m)
 			}
 		})
+	}
+}
+
+// --- T2: snapshot digest first-build / reuse / changed ---
+
+func digestFixture() (domain.Account, *domain.Template, []int64) {
+	tp := tpl(1, domain.FormatOpenAIChat, []string{"m-a", "m-b"})
+	a := *acc(7, tp, 4)
+	a.Ext = &domain.AccountExt{CodexAccountID: strPtr("acct-up")}
+	return a, tp, []int64{3, 9}
+}
+
+// BenchmarkStaticDigestBuild measures the one-shot planKey derivation now done
+// by the unique constructor newSnapshotStatic (with -benchmem for the new
+// retained-key allocation).
+func BenchmarkStaticDigestBuild(b *testing.B) {
+	a, tp, gids := digestFixture()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkSnapshotStatic = newSnapshotStatic(a, tp, gids)
+	}
+}
+
+// BenchmarkStaticDigestReuse measures planKeyOf on the cached key (should be
+// allocation-free: the digest is derived once and held).
+func BenchmarkStaticDigestReuse(b *testing.B) {
+	a, tp, gids := digestFixture()
+	av := newSnapshotStatic(a, tp, gids)
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		benchmarkPlanKey = planKeyOf(av)
+	}
+}
+
+// BenchmarkStaticDigestChanged measures reconstructing a leaf whose inputs
+// changed (key recomputed) — the cost paid only on a real static change.
+func BenchmarkStaticDigestChanged(b *testing.B) {
+	a, tp, gids := digestFixture()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		a.IdentityRevision = int64(i)
+		benchmarkSnapshotStatic = newSnapshotStatic(a, tp, gids)
 	}
 }

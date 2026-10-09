@@ -32,6 +32,11 @@ type snapshotStatic struct {
 	acc      domain.Account
 	tpl      *domain.Template
 	groupIDs []int64 // 账号所属全部分组（多组账号共享实例的跨组引用集；组级重载时其它组引用替换依据）
+	// key 是 canonical digest 复用位点：由 newSnapshotStatic（唯一构造函数）
+	// 一次派生并随不可变叶持有——planKeyOf(av) 直接返回它，重载路径不再逐叶
+	// 现算五类摘要。key 在首次读取前有效、发布后只读；src 切片/映射只读，
+	// 禁止原地 canonicalization（digest 内部先拷贝/排序）。
+	key planKey
 }
 
 // eventGID 是事件投递归组用的单组代表值：**由 groupIDs 现算**，不是存储字段。

@@ -53,6 +53,7 @@ var staticReaderFuncs = map[string]string{
 	"indexRoutesForAccount":      "账号的组引用集登记",
 	"modelSet":                   "模型集合：模板的模型/映射/格式",
 	"newAccountSnapshot":         "叶子构造：账号 ID",
+	"newSnapshotStatic":          "唯一构造函数：一次派生并持有 planKey（读全部源字段，写 $S.key）",
 	"onRuleFailure":              "失效事件的 fail-closed fence（K）",
 	"payloadKeyOf":               "载荷投影",
 	"planKeyOf":                  "决策输入投影",
@@ -121,6 +122,9 @@ var staticReadPaths = map[string]staticReadSpec{
 
 	// --- 组归属 ---
 	"$S.groupIDs": {staticPathField, "groupIDsDigest"},
+
+	// --- 派生缓存位点（写目标 + 读回；非源字段） ---
+	"$S.key": {staticPathDerived, "canonical digest 复用位点：newSnapshotStatic 单次 av.key=k 写入、planKeyOf 读回；源字段读经 $S.acc.*/$S.tpl.*/$S.groupIDs 完整登记"},
 }
 
 // payloadProjectionFuncs 是允许读**载荷**字段（OAuth 三元组）的函数全集：载荷只用于

@@ -146,7 +146,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 			// newGids 中（原 gid 恰为被移除组，且是当时的最小值）——
 			// 沿用 ost.gid 会让 gid ∉ groupIDs，破坏「gid = min(groupIDs)」
 			// 不变量，事件投递归组会指向一个该账号已不属于的组。
-			newStatic := &snapshotStatic{acc: ost.acc, tpl: ost.tpl, groupIDs: newGids}
+			newStatic := newSnapshotStatic(ost.acc, ost.tpl, newGids)
 			newLeaf := &accountSnapshot{accountID: ost.acc.ID, runtime: os.runtime}
 			newLeaf.static.Store(newStatic)
 			byID[ost.acc.ID] = newLeaf
@@ -202,9 +202,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 			}
 		}
 		// New leaf is local (not yet published), safe to mutate static before publish.
-		nns := *nst
-		nns.groupIDs = append([]int64{gid}, otherGids...)
-		ns.static.Store(&nns)
+		ns.static.Store(newSnapshotStatic(nst.acc, nst.tpl, append([]int64{gid}, otherGids...)))
 		byID[nst.acc.ID] = ns
 		for _, og := range otherGids {
 			if _, ok := otherRefs[og]; ok {

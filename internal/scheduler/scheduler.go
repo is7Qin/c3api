@@ -566,7 +566,7 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		if acc.Template != nil && acc.Template.CredentialType.IsCodex() && acc.MaxConcurrency > maxIdentityPoolSlots {
 			acc.MaxConcurrency = maxIdentityPoolSlots
 		}
-		av := &snapshotStatic{acc: acc, tpl: a.Template, groupIDs: append([]int64(nil), inf.groupIDs...)}
+		av := newSnapshotStatic(acc, a.Template, inf.groupIDs)
 		if old, exists := oldByID[id]; exists {
 			oldAv := old.static.Load()
 			// 静态事实比较经 staticKeyOf（值类型，`==` 算子）——此前的
