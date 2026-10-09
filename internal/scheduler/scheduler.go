@@ -171,6 +171,14 @@ type Scheduler struct {
 	view      atomic.Pointer[RoutingView]
 	gen       atomic.Uint64
 	publisher *routingPublisher
+	// reloadRequired is the sticky retry obligation guarded by publisher.mu:
+	// any group load / full load failure sets it true; no local success or
+	// probe hit clears it; only a successful full loader + full stage clears
+	// it. The backstop tick reads it under the same lock to decide a forced
+	// full reload. Replaces the old "roll lastProbe back to prev" heuristic,
+	// which could not prove retry (probe-invisible membership swaps /
+	// superseding local successes / a failing full load again).
+	reloadRequired bool
 	// concView 集群账号并发视图（concsync.go worker 换入的第二 atomic 快照，
 	// spec conc-share-borrow-account）：超份额借位判定的对账聚合。nil / 陈旧 =
 	// 无共识 = fail-open 全额本地语义（结构性质，非错误分支）。
@@ -382,6 +390,16 @@ func (s *Scheduler) fireOnMinuteAdvance() {
 func (s *Scheduler) reload(ctx context.Context) error {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
+	return s.reloadLocked(ctx)
+}
+
+// reloadLocked is reload's body without taking publisher.mu; the caller must
+// hold it. Shared by the public reload and the backstop tick (which takes the
+// lock once to both decide and rebuild — a tick must NEVER call the locking
+// reload while already holding the lock). A successful full loader + full
+// stage clears the sticky reloadRequired obligation; a load failure returns an
+// error and leaves it to the caller to re-mark.
+func (s *Scheduler) reloadLocked(ctx context.Context) error {
 	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(ctx)
 	m, err := s.loader.LoadGroupsAccounts(ctx)
@@ -451,6 +469,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 	// full-fidelity fallback. Scope-first, then wake.
 	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)
 	s.RequestCompile()
+	s.reloadRequired = false
 	return nil
 }
 
@@ -700,196 +719,31 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 func (s *Scheduler) InvalidateGroup(groupID int64) {
 	s.publisher.mu.Lock()
 	defer s.publisher.mu.Unlock()
-	// refresh-first baseline (never after — see refreshProbeBaseline).
-	s.refreshProbeBaseline(context.Background())
-	accs, err := s.loader.LoadGroupAccounts(context.Background(), groupID)
-	if err != nil {
-		if s.log != nil {
-			s.log.Warn("group reload failed", logx.Int64("group_id", groupID), logx.Error(err))
-		}
-		return
-	}
-	cur := s.view.Load()
-	var m map[int64]*groupSnapshot
-	var byID map[int64]*accountSnapshot
-	if s.publisher.pending != nil {
-		m = s.publisher.pending.groups
-		byID = s.publisher.pending.byID
-	} else if cur != nil && cur.static != nil {
-		m = cur.static.groups
-		byID = cur.static.byID
-	} else {
-		m = map[int64]*groupSnapshot{}
-		byID = map[int64]*accountSnapshot{}
-	}
-	// byID 兼作复用查询源（oldByID）：组级重载同样复用旧实例——errRate/errCount
-	// 跨组级 NOTIFY 重载保留，静态字段 DB 权威同步。持 publisher.mu 读取安全。
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{groupID: accs}, byID)
-	newAccs := gs[groupID].accounts
-	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
-	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。
-	newM := make(map[int64]*groupSnapshot, len(m))
-	for k, v := range m {
-		newM[k] = v
-	}
-	newM[groupID] = gs[groupID]
-	newByID := make(map[int64]*accountSnapshot, len(byID)+len(newAccs))
-	for k, v := range byID {
-		newByID[k] = v
-	}
-	// 从组移除的账号（旧组有、新组无）：仍属其它组 → 保留实例并摘本组引用；
-	// 已不属于任何组 → 从 byID 删除（其它组引用随实例保留/删除，路由无需重建）。
-	// 先建 新组账号ID 索引再单遍扫描——嵌套循环对 50k 大组批量删
-	// 25k 是 ≈1.25e9 次比较 ≈1s 停顿（去抖单 goroutine 内拉大所有失效延迟/
-	// 新用户 402 窗口），索引后 O(旧组大小)。
-	// staged groups bound the scoped fire — the reloaded group plus
-	// every other group sharing its accounts (their snapshots are rebuilt
-	// with the new leaves, so their routes must recompute too).
-	scopeGroups := []int64{groupID}
-	if old, ok := m[groupID]; ok {
-		newIDs := make(map[int64]struct{}, len(newAccs))
-		for _, ns := range newAccs {
-			newIDs[ns.static.Load().acc.ID] = struct{}{}
-		}
-		// Track leaves needing other-group replacement for removed-but-still-present accounts.
-		removedOtherRefs := make(map[int64][]*accountSnapshot)
-		for _, os := range old.accounts {
-			ost := os.static.Load()
-			if _, stillIn := newIDs[ost.acc.ID]; stillIn {
-				continue
-			}
-			newGids := removeGid(append([]int64(nil), ost.groupIDs...), groupID)
-			if len(newGids) == 0 {
-				delete(newByID, ost.acc.ID)
-				continue
-			}
-			// Changed account gets new immutable static leaf sharing separate runtime, old root stable.
-			// gid 必须随 groupIDs 一起重派生：组被移除后，旧 gid 可能已不在
-			// newGids 中（原 gid 恰为被移除组，且是当时的最小值）——
-			// 沿用 ost.gid 会让 gid ∉ groupIDs，破坏「gid = min(groupIDs)」
-			// 不变量，事件投递归组会指向一个该账号已不属于的组。
-			newStatic := &snapshotStatic{acc: ost.acc, tpl: ost.tpl, groupIDs: newGids}
-			newLeaf := &accountSnapshot{accountID: ost.acc.ID, runtime: os.runtime}
-			newLeaf.static.Store(newStatic)
-			newByID[ost.acc.ID] = newLeaf
-			// Record for other group replacement.
-			for _, og := range newGids {
-				removedOtherRefs[og] = append(removedOtherRefs[og], newLeaf)
-			}
-		}
-		// Apply other-group replacements for removed accounts.
-		for og, leaves := range removedOtherRefs {
-			scopeGroups = append(scopeGroups, og)
-			ogp, ok := newM[og]
-			if !ok {
-				continue
-			}
-			repl := make([]*accountSnapshot, len(ogp.accounts))
-			copy(repl, ogp.accounts)
-			leafByID := make(map[int64]*accountSnapshot, len(leaves))
-			for _, lf := range leaves {
-				leafByID[lf.static.Load().acc.ID] = lf
-			}
-			for i, oas := range repl {
-				if nl, ok := leafByID[oas.static.Load().acc.ID]; ok {
-					repl[i] = nl
-				}
-			}
-			newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
-		}
-	}
-	// 新实例替换 byID + 其它组引用（多组账号：旧实例在其它组路由中的位置换成
-	// 新实例并重建该组路由——共享实例纪律；单组账号 otherGids 为空，零开销）。
-	// 其它组引用替换同禁嵌套扫描——每其它组先建 账号ID→位置 索引
-	// （O(该组大小)），替换 O(1)，总量 O(受影响组账号和)。
-	type ogRef struct {
-		gs  *groupSnapshot
-		idx map[int64]int
-	}
-	otherRefs := make(map[int64]*ogRef)
-	for _, ns := range newAccs {
-		var otherGids []int64
-		nst := ns.static.Load()
-		if oa, ok := byID[nst.acc.ID]; ok {
-			// Preserve other groupIDs from old immutable root.
-			for _, g := range oa.static.Load().groupIDs {
-				if g != groupID {
-					otherGids = append(otherGids, g)
-				}
-			}
-			// Share runtime: new leaf already shares oa.runtime via buildSnapshots,
-			// no extra Store needed. Ensure pointer sharing.
-			if ns.runtime != oa.runtime {
-				ns.runtime = oa.runtime
-			}
-		}
-		// New leaf is local (not yet published), safe to mutate static before publish.
-		nns := *nst
-		nns.groupIDs = append([]int64{groupID}, otherGids...)
-		ns.static.Store(&nns)
-		newByID[nst.acc.ID] = ns
-		for _, og := range otherGids {
-			if _, ok := otherRefs[og]; ok {
-				continue
-			}
-			ogp, ok := newM[og]
-			if !ok {
-				continue
-			}
-			ref := &ogRef{gs: ogp, idx: make(map[int64]int, len(ogp.accounts))}
-			for i, oas := range ogp.accounts {
-				ref.idx[oas.static.Load().acc.ID] = i
-			}
-			otherRefs[og] = ref
-		}
-	}
-	for og, ref := range otherRefs {
-		scopeGroups = append(scopeGroups, og)
-		repl := make([]*accountSnapshot, len(ref.gs.accounts))
-		copy(repl, ref.gs.accounts)
-		for _, ns := range newAccs {
-			if i, ok := ref.idx[ns.static.Load().acc.ID]; ok {
-				repl[i] = ns
-			}
-		}
-		newM[og] = &groupSnapshot{accounts: repl, routes: buildRoutes(repl)}
-	}
-	// codex 槽位池与静态叶**同一发布点**：组级重载同样按新 byID 重建注册表
-	// （P0-3）——否则调高 max_concurrency / 新增账号的窗口内门禁上限已变新而池
-	// 仍旧（新增账号无池 → 不注入身份；旧 K 槽不足 → claim==nil 兜底）。
-	pools := s.buildIdentityPools(newByID, s.prevIdentityPoolsLocked())
-	sv := newStaticView(newM, newByID, pools)
-	s.publisher.stageLocked(sv)
-	// this staging touches exactly scopeGroups — the lane recomputes
-	// only their routes. Scope-first, then wake.
-	s.enqueueCompileScope(scopeGroups, nil, scopeCauseGroup)
-	s.RequestCompile()
+	s.invalidateGroupsLocked([]int64{groupID})
 }
 
 // InvalidateAccount 单账号快照失效（SDK 接入 §1——轮转回写后同步
-// AccountExt 内存快照：下个会话重载新凭据，避免旧令牌 401 额外往返）。复用
-// 既有组级定向重载（InvalidateGroup——账号所属各组并集去重；旋转低频事件，
-// 组级重载成本可接受）。快照外账号（已移除/未知）→ no-op。与失效上报不同
-// 步（sdkbridge 轮转回调内调用；重载失败由 InvalidateGroup 内部 Warn 记录，
-// 不阻断——令牌已落库，下个会话经适配层 Auth 内存新 at 自愈）。
+// AccountExt 内存快照：下个会话重载新凭据，避免旧令牌 401 额外往返）。
+// 同一 publisher.mu 内 pending 优先、否则 published 取叶（无叶 → no-op）；
+// 自其 groupIDs 去重后走批路径私有本体 invalidateGroupsLocked——全程同一
+// 临界区（消除锁外读取陈旧视图，与批路径「锁内取 pending 优先根」纪律统一；
+// 单组路径从 DB 权威重载，「装回已删账号」路径不存在）。旋转低频；重载失败由
+// 批路径内部 Warn 记录 + 置 reloadRequired，不阻断——令牌已落库，下个会话经
+// 适配层 Auth 内存新 at 自愈。
 func (s *Scheduler) InvalidateAccount(accountID int64) {
-	v := s.view.Load()
-	if v == nil || v.StaticView() == nil {
-		return
+	s.publisher.mu.Lock()
+	defer s.publisher.mu.Unlock()
+	var as *accountSnapshot
+	if s.publisher.pending != nil {
+		as = s.publisher.pending.byID[accountID]
+	} else if cur := s.view.Load(); cur != nil && cur.static != nil {
+		as = cur.static.byID[accountID]
 	}
-	as, exists := v.Account(accountID)
-	if !exists {
+	if as == nil {
 		return
 	}
 	gids := append([]int64(nil), as.static.Load().groupIDs...)
-	seen := make(map[int64]struct{}, len(gids))
-	for _, g := range gids {
-		if _, dup := seen[g]; dup {
-			continue
-		}
-		seen[g] = struct{}{}
-		s.InvalidateGroup(g)
-	}
+	s.invalidateGroupsLocked(gids)
 }
 
 // minGID 返回组 ID 集合的最小值——snapshotStatic.gid 的确定性派生。
