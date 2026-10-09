@@ -275,7 +275,7 @@ func TestStreamImageZeroImagesSuccess(t *testing.T) {
 
 // TestStreamImageZeroEventSuccessBackfillsTTFT 零事件成功路径：ttft 在 commitOnce
 // 内才固化，而 timing 在其前构建（*int64 指针按值拷贝）→ 必须在 commitOnce 成功
-// 后回填，否则观测到的 AttemptTiming.TTFTMS 为 nil（r4 B：恢复 ① 行为）。
+// 后回填，否则观测到的 AttemptTiming.TTFTMS 为 nil（恢复零事件成功的 TTFT 记录行为）。
 func TestStreamImageZeroEventSuccessBackfillsTTFT(t *testing.T) {
 	p, _ := newImageStreamTestProxy(t, nil)
 	base := planBase(t, p)
