@@ -206,5 +206,9 @@ func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFa
 		}
 		out = append(out, fact)
 	}
+	// Drop the references held by the compacted-away tail so filtered-out leaf
+	// pointers (static/tpl) are not kept alive by the reuse of this backing
+	// array (spec §4 T4 tail clear).
+	clear(candidates[len(out):])
 	return out
 }
