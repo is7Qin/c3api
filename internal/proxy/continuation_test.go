@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -36,27 +35,15 @@ import (
 
 // --- fixtures ---
 
-// contHook counts Redis commands and can gate the first script run on a
-// channel (ACK-before-visible proofs, no sleeps).
+// contHook counts Redis commands (used by the non-stream command-count proofs).
 type contHook struct {
-	n       atomic.Int64
-	mu      sync.Mutex
-	gate    chan struct{} // non-nil = block script commands until closed
-	started chan struct{} // closed once when a gated command arrives
-	once    sync.Once
+	n atomic.Int64
 }
 
 func (h *contHook) DialHook(next redis.DialHook) redis.DialHook { return next }
 func (h *contHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
 	return func(ctx context.Context, cmd redis.Cmder) error {
 		h.n.Add(1)
-		h.mu.Lock()
-		gate := h.gate
-		h.mu.Unlock()
-		if gate != nil && (cmd.Name() == "evalsha" || cmd.Name() == "eval") {
-			h.once.Do(func() { close(h.started) })
-			<-gate
-		}
 		return next(ctx, cmd)
 	}
 }
@@ -67,12 +54,6 @@ func (h *contHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.Pro
 	}
 }
 
-func (h *contHook) setGate(gate chan struct{}) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.gate = gate
-}
-
 // contFixture wires a miniredis-backed continuation store plus the counting
 // hook, and warms both Lua scripts so production command counts are exact.
 func contFixture(t *testing.T) (*miniredis.Miniredis, *continuation.Store, *contHook) {
@@ -81,7 +62,7 @@ func contFixture(t *testing.T) (*miniredis.Miniredis, *continuation.Store, *cont
 	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
-	h := &contHook{started: make(chan struct{})}
+	h := &contHook{}
 	c.AddHook(h)
 	s, err := continuation.New(c, "cont-test-secret-0123456789")
 	require.NoError(t, err)
@@ -122,8 +103,16 @@ func contAcc(id int64, tpl *domain.Template, key, baseURL string) *domain.Accoun
 }
 
 // contProxy builds a Responses (or resp-ws) proxy over the given accounts with
-// the continuation store wired (nil store = unwired).
+// the continuation store wired (nil store = unwired) and no async bind worker
+// (REST stream binding no-op).
 func contProxy(t *testing.T, format domain.RequestFormat, accs []*domain.Account, store *continuation.Store) *Proxy {
+	t.Helper()
+	return contProxyBind(t, format, accs, store, nil)
+}
+
+// contProxyBind is contProxy plus an async bind worker (nil = REST stream
+// binding no-op). The caller owns the worker lifecycle (Start/Close).
+func contProxyBind(t *testing.T, format domain.RequestFormat, accs []*domain.Account, store *continuation.Store, bind *ContBindWorker) *Proxy {
 	t.Helper()
 	tpl := accs[0].Template
 	loader := noopLoader{accs: map[int64][]*domain.Account{10: accs}}
@@ -157,7 +146,7 @@ func contProxy(t *testing.T, format domain.RequestFormat, accs []*domain.Account
 	require.NoError(t, auth.Reload(context.Background()))
 	clients := aiclient.NewFactory(&http.Client{Transport: http.DefaultTransport}, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, noopErrLogStore{}, nil)
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Continuation: store})
+	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Continuation: store, ContBind: bind})
 	t.Cleanup(func() { _ = p.rec.Close(context.Background()) })
 	return p
 }
@@ -287,40 +276,45 @@ func TestContinuationOrdinaryRequestsZeroRedis(t *testing.T) {
 	require.Zero(t, hook.n.Load(), "ordinary chat requests must issue zero Redis commands")
 }
 
-func TestContinuationStreamFirstIDAckBeforeVisible(t *testing.T) {
-	mr, s, hook := contFixture(t)
-	_ = mr
+// waitBinding polls until the async bind worker has persisted a binding (explicit
+// write barrier — the handler returning no longer implies the binding landed).
+func waitBinding(t *testing.T, s *continuation.Store, tag, id string) *continuation.Binding {
+	t.Helper()
+	var got *continuation.Binding
+	require.Eventually(t, func() bool {
+		b, ok := contLookupBinding(t, s, tag, id)
+		if ok {
+			got = b
+		}
+		return ok
+	}, 5*time.Second, 5*time.Millisecond, "binding %s/%s must land asynchronously", tag, id)
+	return got
+}
+
+func TestContinuationStreamFramesVisibleImmediately(t *testing.T) {
+	_, s, _ := contFixture(t)
 	var hits atomic.Int32
 	var authSeen atomic.Value
 	up := contUpstream(t, "resp_stream_1", "sk-acc1", "", &hits, &authSeen)
 	defer up.Close()
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
-	p := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", up.URL)}, s)
+	w := startTestContBind(t, s, ContBindConfig{})
+	p := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", up.URL)}, s, w)
 
-	gate := make(chan struct{})
-	hook.setGate(gate)
-	w := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		p.HandleResponses(w, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
-	}()
-
-	<-hook.started // the create EVALSHA is in flight: the id frame was produced…
-	require.Empty(t, w.Body.String(), "no frame may become visible before the Redis ACK")
-	close(gate) // ACK proceeds
-	<-done
-	require.Contains(t, w.Body.String(), "resp_stream_1", "full stream delivered after ACK")
-	_, ok := contLookupBinding(t, s, contProtocolREST, "resp_stream_1")
-	require.True(t, ok)
+	rec := httptest.NewRecorder()
+	p.HandleResponses(rec, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
+	require.Equal(t, 200, rec.Code)
+	// No gate: business frames (and the id) are visible as soon as written.
+	require.Contains(t, rec.Body.String(), "resp_stream_1", "business frames must not wait for Redis")
+	require.Contains(t, rec.Body.String(), "response.created")
+	// Binding lands asynchronously via the worker (explicit barrier).
+	b := waitBinding(t, s, contProtocolREST, "resp_stream_1")
+	require.Equal(t, int64(1), b.AccountID)
 }
 
-func TestContinuationStreamBufferCapFailClosed(t *testing.T) {
-	old := contMaxBuffer
-	contMaxBuffer = 4096
-	t.Cleanup(func() { contMaxBuffer = old })
+func TestContinuationStreamIdlessFramesVisible(t *testing.T) {
 	_, s, _ := contFixture(t)
-	// Upstream streams > cap bytes of id-less frames before any response id.
+	// Upstream streams > the old gate cap of id-less frames before any response id.
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(200)
@@ -336,12 +330,76 @@ func TestContinuationStreamBufferCapFailClosed(t *testing.T) {
 	}))
 	defer up.Close()
 	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
-	p := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", up.URL)}, s)
+	w := startTestContBind(t, s, ContBindConfig{})
+	p := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", up.URL)}, s, w)
 
-	w := httptest.NewRecorder()
-	p.HandleResponses(w, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
-	require.NotContains(t, w.Body.String(), "resp_late", "buffered frames must be discarded on cap breach")
-	require.NotContains(t, w.Body.String(), "keepalive")
+	rec := httptest.NewRecorder()
+	p.HandleResponses(rec, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), "keepalive", "id-less frames must flow to the client immediately")
+	require.Contains(t, rec.Body.String(), "resp_late", "the late id frame must not be discarded")
+	b := waitBinding(t, s, contProtocolREST, "resp_late")
+	require.Equal(t, int64(1), b.AccountID)
+}
+
+func TestContinuationStreamRedisDownStillVisible(t *testing.T) {
+	mr, s, _ := contFixture(t)
+	var hits atomic.Int32
+	var authSeen atomic.Value
+	up := contUpstream(t, "resp_stream_down", "sk-acc1", "", &hits, &authSeen)
+	defer up.Close()
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	w := startTestContBind(t, s, ContBindConfig{})
+	p := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{contAcc(1, tpl, "sk-acc1", up.URL)}, s, w)
+
+	mr.Close() // Redis 故障：绑定批次失败，但业务帧仍立即下行，失败只计数
+
+	rec := httptest.NewRecorder()
+	p.HandleResponses(rec, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
+	require.Equal(t, 200, rec.Code, "async bind failure must not rewrite the current response")
+	require.Contains(t, rec.Body.String(), "resp_stream_down", "unbound id still reaches the client (no gate)")
+	require.Contains(t, rec.Body.String(), "response.created")
+	require.Eventually(t, func() bool { return w.Failed() > 0 }, 5*time.Second, 5*time.Millisecond, "batch failure must be counted")
+}
+
+// TestContinuationStreamCrossInstancePin is the ① acceptance path: a STREAM is
+// produced on instance 1, its binding is persisted by the async worker (explicit
+// barrier), and instance 2 resolves previous_response_id to the bound account.
+func TestContinuationStreamCrossInstancePin(t *testing.T) {
+	mr, s1, _ := contFixture(t)
+	c2, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c2) })
+	s2, err := continuation.New(c2, "cont-test-secret-0123456789")
+	require.NoError(t, err)
+
+	var hits1, hits2 atomic.Int32
+	var auth1, auth2 atomic.Value
+	up1 := contUpstream(t, "resp_stream_gen", "sk-acc1", "", &hits1, &auth1)
+	defer up1.Close()
+	up2 := contUpstream(t, "resp_stream_other", "sk-acc2", "", &hits2, &auth2)
+	defer up2.Close()
+	tpl := &domain.Template{ID: 1, Name: "t", BaseURL: up1.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}, Models: []string{"gpt-4o"}}
+	acc1 := contAcc(1, tpl, "sk-acc1", up1.URL)
+	acc2 := contAcc(2, tpl, "sk-acc2", up2.URL)
+
+	// Instance 1 produces a STREAM; the worker persists the binding.
+	w := startTestContBind(t, s1, ContBindConfig{})
+	p1 := contProxyBind(t, domain.FormatOpenAIResponses, []*domain.Account{acc1, acc2}, s1, w)
+	rec := httptest.NewRecorder()
+	p1.HandleResponses(rec, contResponsesReq(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), "resp_stream_gen")
+	waitBinding(t, s1, contProtocolREST, "resp_stream_gen") // explicit write barrier
+
+	// Instance 2 continues: pinned to account 1 despite an acc2-first plan.
+	p2 := contProxy(t, domain.FormatOpenAIResponses, []*domain.Account{acc2, acc1}, s2)
+	w2 := httptest.NewRecorder()
+	p2.HandleResponses(w2, contResponsesReq(`{"model":"gpt-4o","input":"again","previous_response_id":"resp_stream_gen"}`))
+	require.Equal(t, 200, w2.Code, "body=%s", w2.Body.String())
+	require.EqualValues(t, 0, hits2.Load(), "pinned continuation must not touch the preferred-but-unbound account")
+	require.EqualValues(t, 2, hits1.Load(), "continuation must dispatch to the bound account")
+	require.Equal(t, "Bearer sk-acc1", auth1.Load().(string))
 }
 
 // --- REST continuation (lookup + pin) side ---

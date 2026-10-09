@@ -1,14 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Hard-continuation wiring for the Responses REST/WS callers. The binding
-// authority is internal/continuation (single store, single key format): every
-// produced response id is bound to the canonical plan attempt identity
-// (account / candidate fingerprint / lifecycle revision) BEFORE the id becomes
-// visible to the client, and a previous_response_id request resolves that
-// binding and pins the dispatch to it — missing, expired, conflicting,
-// revision-stale or Redis-unavailable all fail closed, and a hard-continuation
-// request never migrates to another account. Ordinary requests (no
-// previous_response_id, non-Responses formats, codex credential branches)
-// issue zero Redis commands.
+// authority is internal/continuation (single store, single key format).
+//
+// REST streams are no longer gated: the first valid response id frame is
+// snapshotted at the write seam and enqueued to the async bind worker
+// (ContBindWorker) — business frames go out immediately, binding is batched
+// and best-effort, and its failures are only observable (never written back to
+// the current response). A previous_response_id request resolves that binding
+// and pins the dispatch to it — missing, expired, conflicting, revision-stale
+// or Redis-unavailable all fail closed, and a hard-continuation request never
+// migrates to another account. WS keeps its synchronous ACK-before-visible
+// gate (wsContFrame/ws_relay.go), and non-streaming Responses keep the
+// synchronous bind. Ordinary requests (no previous_response_id, non-Responses
+// formats, codex credential branches) issue zero Redis commands.
 
 package proxy
 
@@ -17,7 +21,6 @@ import (
 	"context"
 	"encoding/hex"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -26,6 +29,7 @@ import (
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 const (
@@ -40,13 +44,15 @@ var (
 	// contOpTimeout bounds one Redis round trip (ACK or lookup). var = test
 	// seam (Redis-outage cases fail fast without sleeps).
 	contOpTimeout = 2 * time.Second
-	// contMaxBuffer caps bytes held invisible before the first response id is
-	// ACKed (stream gate / WS pending buffer). var = test seam.
-	contMaxBuffer = 1 << 20
 	// contWSAckTimeout bounds the upstream read while a WS session still has
 	// no ACKed binding (no overall WS stream timeout exists by design).
 	contWSAckTimeout = 10 * time.Second
 )
+
+// contMaxBuffer caps bytes held invisible before the first response id is ACKed.
+// WS pending buffer only — REST streams are ungated since ①. const: no test
+// rewrites it (unlike contOpTimeout/contWSAckTimeout).
+const contMaxBuffer = 1 << 20
 
 // Fail-closed continuation errors. Messages carry no raw ids, keys or
 // upstream detail (anti-pattern 7): the client learns the outcome class only.
@@ -95,6 +101,79 @@ func (p *Proxy) contBind(ctx context.Context, protocolTag, respID string, groupI
 	default:
 		return errContUnavailable
 	}
+}
+
+// contBindWired reports whether the REST streaming async bind path is wired
+// (store + worker). Call sites use it to keep the unwired path zero-behaviour
+// (no enqueue, no counting, no Mapper wrapper).
+func (p *Proxy) contBindWired() bool { return p.cont != nil && p.contBinder != nil }
+
+// contBindMapper wraps a Responses SSE mapper so the first valid response id is
+// snapshotted and enqueued BEFORE the frame is written (both the native wrapped
+// Mapper and the converted Mapper enqueue pre-write).
+// Unwired (store or worker nil) returns base unchanged — no wrapper, zero
+// behaviour change. base == nil (no model rewrite) still enqueues and forwards
+// the raw frame (matches sserelay's nil-Mapper pass-through).
+func (p *Proxy) contBindMapper(ctx context.Context, done *bool, groupID int64, base func(sserelay.Event) ([]byte, bool)) func(sserelay.Event) ([]byte, bool) {
+	if !p.contBindWired() {
+		return base
+	}
+	return func(ev sserelay.Event) ([]byte, bool) {
+		if !*done {
+			if id := contFrameID(ev.Data); id != "" {
+				p.contEnqueue(ctx, contProtocolREST, id, groupID)
+				*done = true
+			}
+		}
+		if base == nil {
+			return ev.Raw, false
+		}
+		return base(ev)
+	}
+}
+
+// contEnqueue snapshots the bindable response id at the SSE write seam and
+// hands it to the async bind worker. Unwired (store or worker nil) is a no-op
+// with zero behaviour change. When wired, an id that cannot be attributed (empty
+// id, no loop-owned dispatch observation, no request meta, undecodable
+// fingerprint) is counted on the worker and never written to Redis. The snapshot
+// is taken here (values are copied) — the worker never sees the request ctx,
+// dispatch or relay slices.
+func (p *Proxy) contEnqueue(ctx context.Context, protocolTag, respID string, groupID int64) {
+	if p.cont == nil || p.contBinder == nil {
+		return
+	}
+	if respID == "" {
+		p.contBinder.DropUnattributed()
+		return
+	}
+	d := dispatchFromContext(ctx)
+	if d == nil {
+		p.contBinder.DropUnattributed()
+		return
+	}
+	rm, ok := ctx.Value(ctxKeyReqMeta{}).(*reqMeta)
+	if !ok || rm.meta.UserID <= 0 {
+		p.contBinder.DropUnattributed()
+		return
+	}
+	fpBytes, err := hex.DecodeString(string(d.base.Fingerprint))
+	if err != nil || len(fpBytes) != len(domain.CandidateFingerprintVal{}) {
+		p.contBinder.DropUnattributed()
+		return
+	}
+	var fp domain.CandidateFingerprintVal
+	copy(fp[:], fpBytes)
+	p.contBinder.Enqueue(continuation.BindRequest{
+		UserID:           rm.meta.UserID,
+		GroupID:          groupID,
+		RouteClassID:     domain.RouteClassIDVal(pipelineID(string(d.base.RouteClassID))),
+		ProtocolTag:      protocolTag,
+		ContinuationID:   respID,
+		AccountID:        d.base.AccountID,
+		Fingerprint:      fp,
+		IdentityRevision: int64(d.base.IdentityRevision),
+	})
 }
 
 // contResolve looks up the binding for a previous_response_id. The route class
@@ -171,111 +250,4 @@ func contFrameID(frame []byte) string {
 type wsContFrame struct {
 	typ   websocket.MessageType
 	frame []byte
-}
-
-// contGateWriter buffers every relay byte until the first response id is
-// ACKed (release) — ACK-before-visible for SSE streams. Header writes stay
-// uncommitted while gated, so a fail-closed path can still emit a JSON error.
-// Unwrap exposes the real writer to sserelay's ResponseController deadline
-// watcher exactly as an unwrapped relay would. sserelay invokes Write/Flush
-// from its flush-timer goroutine while the Observer (release/state) runs on
-// the relay goroutine outside the relay mutex — every field is mu-guarded and
-// all downstream writes are serialized through the same lock.
-type contGateWriter struct {
-	mu       sync.Mutex
-	w        http.ResponseWriter
-	buf      []byte
-	released bool
-	failed   bool
-}
-
-func (g *contGateWriter) Header() http.Header { return g.w.Header() }
-
-func (g *contGateWriter) WriteHeader(code int) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.released {
-		g.w.WriteHeader(code)
-	}
-}
-
-func (g *contGateWriter) Write(b []byte) (int, error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.released {
-		return g.w.Write(b)
-	}
-	if g.failed {
-		return 0, errContUnavailable
-	}
-	if len(g.buf)+len(b) > contMaxBuffer {
-		g.failed = true
-		return 0, errContUnavailable
-	}
-	g.buf = append(g.buf, b...)
-	return len(b), nil
-}
-
-func (g *contGateWriter) Flush() {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if !g.released {
-		return
-	}
-	if f, ok := g.w.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (g *contGateWriter) Unwrap() http.ResponseWriter { return g.w }
-
-// gateState snapshots the two flags the Observer discriminates on.
-func (g *contGateWriter) gateState() (released, failed bool) {
-	g.mu.Lock()
-	released, failed = g.released, g.failed
-	g.mu.Unlock()
-	return released, failed
-}
-
-// notReleased reports whether the gate still holds bytes invisible to the
-// client (nil gate = store unwired = never gated).
-func (g *contGateWriter) notReleased() bool {
-	if g == nil {
-		return false
-	}
-	g.mu.Lock()
-	r := g.released
-	g.mu.Unlock()
-	return !r
-}
-
-// markFailed poisons the gate (bind failure): buffered bytes are discarded on
-// the fail-closed terminal, further relay writes error out.
-func (g *contGateWriter) markFailed() {
-	g.mu.Lock()
-	g.failed = true
-	g.mu.Unlock()
-}
-
-// release flushes every buffered frame — the first point at which any byte of
-// the response (and its id) becomes visible to the client.
-func (g *contGateWriter) release() error {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if g.released || g.failed {
-		return nil
-	}
-	g.released = true
-	if len(g.buf) > 0 {
-		if _, err := g.w.Write(g.buf); err != nil {
-			g.failed = true
-			g.buf = nil
-			return err
-		}
-		g.buf = nil
-	}
-	if f, ok := g.w.(http.Flusher); ok {
-		f.Flush()
-	}
-	return nil
 }

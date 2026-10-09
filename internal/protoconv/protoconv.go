@@ -254,6 +254,13 @@ func (m *StreamMapper) itemID(index int64) string {
 	return "msg_" + m.id + "_" + fmt.Sprint(index)
 }
 
+// BindableID 显式返回当前 mapper 已产出的**客户端可续接响应 id**（即映射帧
+// 中作为 response.id 内嵌的那个 id；resp→mess 方向取自上游 message.id），在首个
+// 携带 id 的事件（message_start）之前为空串。续接绑定的调用方在写出接缝处
+// 读取本方法，而非反向解析映射帧字节——映射帧的 response_id/嵌套结构不构成
+// 可绑定 id 的权威（连续绑定键必须与真实响应对象 id 同源）。
+func (m *StreamMapper) BindableID() string { return m.id }
+
 // EncodeFrame 组装 SSE 帧字节：name 非空 → "event: name\n" 行；data 为 JSON
 // 载荷（marshal 为单行 data）。载荷不可 marshal（转换器仅产出 map/string 等
 // 可序列化值）→ 返回 nil，调用方按丢弃处理。

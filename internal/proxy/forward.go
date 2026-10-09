@@ -72,9 +72,13 @@ type Proxy struct {
 	// cont is the hard-continuation binding store (internal/continuation,
 	// main 经 Deps.Continuation 注入；nil = 未装配——Responses 请求零
 	// Redis，previous_response_id 请求 fail-closed）。
-	cont     *continuation.Store
-	inflight atomic.Int64
-	callers  map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
+	cont *continuation.Store
+	// contBinder 是 REST 流式的异步绑定 worker（main 经 Deps.ContBind 注入）；
+	// nil = 未装配——REST 流式绑定 no-op（测试友好）。字段名 contBinder 与同步方法
+	// contBind 区分。
+	contBinder *ContBindWorker
+	inflight   atomic.Int64
+	callers    map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
 	// imageGenerations/imageEdits images 端点调用器（同一格式
 	// openai-images 两个端点，上游子路径不同——handleFormat 按请求路径选
 	// 调用器，New 一次性构造免 per-request 分配）。
@@ -124,6 +128,9 @@ type Deps struct {
 	Recorder *quality.Recorder
 	// Continuation 硬续接绑定存储（nil = 未装配 → continuation 请求 fail-closed）。
 	Continuation *continuation.Store
+	// ContBind REST 流式异步绑定 worker（nil = 未装配 → REST 流式绑定 no-op，
+	// 未装配形态零行为变化；与 Continuation 同处注入）。
+	ContBind *ContBindWorker
 }
 
 // New 构造代理。creds 为凭据注册表（直接参数注入，编译期强制；
@@ -135,7 +142,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		log: log, bill: bill, errlog: errlog,
-		codex: deps.Codex, qualityRecorder: deps.Recorder, cont: deps.Continuation,
+		codex: deps.Codex, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
 		wsConns:             newWSRegistry(),
 	}

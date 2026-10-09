@@ -4582,6 +4582,11 @@ components:
         #     exempt_queue_cap int（豁免队列容量）, dropped_reject int64（拒绝行丢弃累计）,
         #     dropped_exempt int64（双轨行丢弃累计）, inserted int64（成功落盘累计）,
         #     warned_reject bool, warned_exempt bool（丢弃告警边沿）
+        #   cont-bind（REST 续接异步绑定 worker，阶段①）: queued int（有界队列积压）,
+        #     queue_cap int（队列容量）, bound int64（created/refreshed 成功落库累计）,
+        #     dropped int64（队列满/已关闭丢弃累计）, failed int64（批量失败/逐条
+        #     I/O 错误累计）, conflicts int64（CAS conflict 累计——保留旧绑定，非
+        #     必然 410）, unattributed int64（可归属拒绝累计：缺 dispatch/reqMeta/指纹）
         #   pricing-sync: running bool, last_sync_unix_ms int64（最近 fetch 尝试时刻）
         #   retention: last_patrol_unix_ms int64（最近巡检完成时刻）,
         #     last_dropped_log_partitions int64, last_dropped_errlog_partitions int64,
