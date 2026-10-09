@@ -689,8 +689,9 @@ func TestSchedulerCloseUnstartedSafe(t *testing.T) {
 
 // TestDecisionEncoderReuseNoContamination 复用编码器（编译道热路径）跨 fire
 // 不得互相污染：同一 encoder 交替编码两个视图，结果必须与一次性编码器逐字节
-// 一致（refs/ids 暂存与输出缓冲的 Reset 正确性；返回字节 alias 缓冲，消费方
-// 需自行拷贝——生产路径以 append 复用 lastDecisionBytes）。
+// 一致（refs/ids 暂存正确性）。T3 后每次 encode 产出**独立拥有的全新 slice**
+// （不经过跨 fire 复用的 bytes.Buffer），生产路径直接 `s.lastDecisionBytes = b`
+// 持有它——返回字节不再 alias 任何可复用缓冲，消费方无需再拷贝以隔离。
 func TestDecisionEncoderReuseNoContamination(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}

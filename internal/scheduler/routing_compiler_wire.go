@@ -222,7 +222,11 @@ func (s *Scheduler) compileOnce() {
 	}
 	if pendingSnap != nil {
 		published := s.publisher.publishPairLocked(target, dv)
-		if b != nil {
+		if !equal {
+			// Commit the freshly materialized bytes (the compare pass retained
+			// nothing). The unequal branch is the ONLY one with a new encoding;
+			// using !equal (not b != nil) also stores the nil encoding of a nil
+			// dv, so a change from non-empty to nil cannot keep a stale cache.
 			s.lastDecisionBytes = b
 		}
 		s.lastCompiledStatic = published
@@ -231,7 +235,7 @@ func (s *Scheduler) compileOnce() {
 	}
 	s.publisher.mu.Unlock()
 	if s.publisher.publishWithBase(baseGen, baseStatic, func(*RoutingView) *DecisionView { return dv }) {
-		if b != nil {
+		if !equal {
 			s.lastDecisionBytes = b
 		}
 		s.lastCompiledStatic = target
@@ -269,34 +273,27 @@ func (s *Scheduler) incidentEvaluator() IncidentEvalFunc {
 // differing offset. ONE concrete type (not an interface) so the per-write
 // `tmp[:n]` stack arrays never escape to the heap.
 //
-// Exactness: a first-byte difference short-circuits to unequal, which is
-// indistinguishable from a full byte compare for the equality predicate — never
-// a truncation / prefix / hash approximation. A shorter stream (remaining old
-// suffix), a longer stream and an empty old all compare unequal.
+// Exactness: the first differing byte short-circuits the equality predicate,
+// which is indistinguishable from a full byte compare — never a truncation /
+// prefix / hash approximation. A shorter stream (remaining old suffix), a
+// longer stream and an empty old all compare unequal.
 type encBuf struct {
-	buf     bytes.Buffer
-	compare bool
-	old     []byte
-	n       int  // bytes matched so far (== offset of the next written byte)
-	equal   bool // still equal so far (false once any byte differs)
+	buf       bytes.Buffer
+	compare   bool
+	old       []byte
+	n         int  // bytes matched so far (== offset of the next written byte)
+	total     int  // total bytes written (grows even after a mismatch)
+	equal     bool // still equal so far (false once any byte differs)
+	firstDiff int  // first differing offset; -1 while still equal
 }
 
 func (b *encBuf) Write(p []byte) (int, error) {
 	if !b.compare {
 		return b.buf.Write(p)
 	}
-	if b.equal && len(p) > 0 {
-		// Compare whole chunks with memcmp (bytes.Equal) instead of a byte
-		// loop; a chunk that overruns the old suffix is unequal by length.
-		if b.n+len(p) <= len(b.old) {
-			if !bytes.Equal(b.old[b.n:b.n+len(p)], p) {
-				b.equal = false
-			} else {
-				b.n += len(p)
-			}
-		} else {
-			b.equal = false
-		}
+	b.total += len(p)
+	if b.equal && len(p) > 0 && !b.compareChunk(p) {
+		b.equal = false
 	}
 	return len(p), nil
 }
@@ -305,18 +302,47 @@ func (b *encBuf) WriteString(s string) (int, error) {
 	if !b.compare {
 		return b.buf.WriteString(s)
 	}
-	if b.equal && len(s) > 0 {
-		if b.n+len(s) <= len(b.old) {
-			if !bytes.Equal(b.old[b.n:b.n+len(s)], sbytes(s)) {
-				b.equal = false
-			} else {
-				b.n += len(s)
-			}
-		} else {
-			b.equal = false
-		}
+	b.total += len(s)
+	if b.equal && len(s) > 0 && !b.compareChunk(sbytes(s)) {
+		b.equal = false
 	}
 	return len(s), nil
+}
+
+// compareChunk compares p against old[b.n:] with memcmp (bytes.Equal) instead
+// of a byte loop. On the first difference it records the true absolute offset
+// in firstDiff (the only place an offset is computed — never on the equal path)
+// and returns false. A chunk that overruns the old suffix is unequal by length:
+// the first divergence is then either inside the overlap or exactly at len(old).
+func (b *encBuf) compareChunk(p []byte) bool {
+	if b.n+len(p) <= len(b.old) {
+		if !bytes.Equal(b.old[b.n:b.n+len(p)], p) {
+			b.recordFirstDiff(p)
+			return false
+		}
+		b.n += len(p)
+		return true
+	}
+	overlap := len(b.old) - b.n
+	if overlap > 0 && !bytes.Equal(b.old[b.n:], p[:overlap]) {
+		b.recordFirstDiff(p[:overlap])
+		return false
+	}
+	// Everything overlapped equal but the new stream is longer.
+	b.firstDiff = len(b.old)
+	return false
+}
+
+// recordFirstDiff locates the first differing byte of p (whose bytes all lie
+// within old from offset b.n) and stores its absolute offset.
+func (b *encBuf) recordFirstDiff(p []byte) {
+	for i := 0; i < len(p); i++ {
+		if b.old[b.n+i] != p[i] {
+			b.firstDiff = b.n + i
+			return
+		}
+	}
+	b.firstDiff = b.n + len(p)
 }
 
 // sbytes returns a read-only byte view of s WITHOUT copying. Safe here: the
@@ -362,8 +388,15 @@ func (e *decisionEncoder) encode(d *DecisionView) []byte {
 // compareCanonical streams d's canonical encoding against old through a bounded
 // compare buffer (no output retained; exact; first-diff short-circuits) and
 // reports byte-equality. The compare pass never materializes the output.
+//
+// A nil DecisionView encodes to the empty byte string, so equality is exactly
+// `len(old) == 0` — preserving the d==nil vs empty-view distinction (spec §2
+// T3.9): nil vs non-empty old is UNEQUAL, never a panic.
 func (e *decisionEncoder) compareCanonical(d *DecisionView, old []byte) bool {
-	eb := encBuf{compare: true, old: old, equal: true}
+	if d == nil {
+		return len(old) == 0
+	}
+	eb := encBuf{compare: true, old: old, equal: true, firstDiff: -1}
 	e.writeCanonical(&eb, d)
 	return eb.result()
 }
@@ -372,7 +405,9 @@ func (e *decisionEncoder) compareCanonical(d *DecisionView, old []byte) bool {
 // into sink: routes sorted by full RouteRef identity, compiled lanes in
 // published order with request-independent metadata, weights sorted by account
 // ID. Shared by the compare sink (equality guard) and the materializing encoder.
-// Returned bytes alias sink (valid until the next encode) — retain via copy.
+// In compare mode the sink retains no output (only the matched prefix length and
+// the first differing offset); in materialize mode the sink's buffer bytes become
+// the fresh owned held slice — nothing returned here aliases any cross-fire buffer.
 func (e *decisionEncoder) writeCanonical(sink *encBuf, d *DecisionView) {
 	e.refs = e.refs[:0]
 	for k := range d.routes {
