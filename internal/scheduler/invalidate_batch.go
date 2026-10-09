@@ -4,10 +4,20 @@ package scheduler
 import (
 	"context"
 	"slices"
+	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/logx"
 )
+
+// batchStageTimeout bounds the single publisher.mu critical section of a folded
+// group-invalidation batch (T1): ONE shared deadline covers the refresh and
+// every per-group LoadGroupAccounts, so a slow data source cannot hold the
+// publish lock unbounded (spec §4 makes the single-batch lock-hold upper bound
+// an explicit acceptance item). Package-internal fixed bound — NOT a config key.
+// It is a var only so tests can substitute a short deadline; production never
+// rewrites it.
+var batchStageTimeout = 10 * time.Second
 
 // This file owns the folded group-invalidation path (T1): a debouncer window
 // that invalidates several groups collapses into ONE publisher.mu critical
@@ -33,6 +43,8 @@ func (s *Scheduler) InvalidateGroups(ids []int64) {
 // load 失败 → Warn + 同锁置位 s.reloadRequired（粘性，仅 full reload 清）+
 // 跳过该 gid 的直接 load/替换（不主动覆盖 m[gid]、不建空快照）但继续；失败
 // gid 仍可被后续成功 gid 的共享账号 fix-up 依单组规则修改其共享引用/池。
+// 全批共享一个 batchStageTimeout deadline（refresh + 各单组 load），步骤间复查；
+// 超时走同一失败分支（置位 + 跳过），不把失败响应当空组。
 // 仅当至少一组成功（succeeded）才 stage：一次 newStaticView + 一次 stage +
 // 一次 enqueueCompileScope（有序去重）+ 一次 RequestCompile（先 scope 后 wake）。
 func (s *Scheduler) invalidateGroupsLocked(ids []int64) {
@@ -40,13 +52,26 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64) {
 	if len(gids) == 0 {
 		return
 	}
+	// ONE shared deadline for the whole critical section: the refresh and every
+	// per-group load share it, and the loop re-checks it between steps so a
+	// stalled source cannot pin publisher.mu across unbounded DB round trips.
+	// A timeout takes the EXISTING failure branch (sets reloadRequired and skips
+	// that group) — it is never treated as a failed group's empty response.
+	ctx, cancel := context.WithTimeout(context.Background(), batchStageTimeout)
+	defer cancel()
 	// refresh-first baseline (never after — see refreshProbeBaseline).
-	s.refreshProbeBaseline(context.Background())
+	s.refreshProbeBaseline(ctx)
 	m, byID, pools := s.workingRootLocked()
 	var scope []int64
 	succeeded := false
 	for _, gid := range gids {
-		accs, err := s.loader.LoadGroupAccounts(context.Background(), gid)
+		if ctx.Err() != nil {
+			// Deadline exhausted between steps: stop issuing further loads,
+			// keep the sticky obligation so the next tick retries the rest.
+			s.reloadRequired = true
+			break
+		}
+		accs, err := s.loader.LoadGroupAccounts(ctx, gid)
 		if err != nil {
 			if s.log != nil {
 				s.log.Warn("group reload failed", logx.Int64("group_id", gid), logx.Error(err))
