@@ -253,7 +253,10 @@ func TestStickyForcesFullReloadOnProbeInvisibleSwap(t *testing.T) {
 // load FAILS while G2 SUCCEEDS and drops their SHARED account A. The batch must
 // keep the sticky obligation yet still fold G2's change — including the fix-up
 // of A's reference in the FAILED G1 (A retained in G1 only, a NEW leaf sharing
-// the runtime) — and the FINAL compiled published pair must reflect it.
+// the runtime) — and the FINAL compiled published pair must reflect it. It also
+// pins the two negatives the reviewer required: the enqueued scope is FIXED
+// (covers the failed group's shared-account fix-up) and the OLD published
+// pair/members are left untouched (the batch only stages).
 func TestPartialSuccessKeepsStickyObligation(t *testing.T) {
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	shared := acc(1, tp, 4) // A: shared by G1 and G2
@@ -268,7 +271,10 @@ func TestPartialSuccessKeepsStickyObligation(t *testing.T) {
 	wireSources(s, nil, nil)
 	s.compileOnce()
 	require.True(t, s.publishedViewWhole())
-	rtShared := s.View().ByID()[1].runtime
+	beforeView := s.View()
+	rtShared := beforeView.ByID()[1].runtime
+	beforeShared := beforeView.ByID()[1]
+	beforeG1Only := beforeView.ByID()[2]
 
 	// G1 load fails; G2 succeeds and drops the shared A (G2 -> {g2added}).
 	ldr.mu.Lock()
@@ -279,6 +285,24 @@ func TestPartialSuccessKeepsStickyObligation(t *testing.T) {
 	s.InvalidateGroups([]int64{1, 2})
 	require.True(t, s.reloadRequired, "a partial failure must keep the sticky obligation")
 	require.NotNil(t, s.publisher.pending, "the successful group must still stage")
+
+	// The OLD published pair and its members must be untouched: a partial-failure
+	// batch only stages a new root, it never republishes the old one.
+	require.Same(t, beforeView, s.View(), "a partial-failure batch must not disturb the published pair")
+	require.Same(t, beforeShared, s.View().ByID()[1], "the published shared leaf must stay stable")
+	require.Same(t, beforeG1Only, s.View().ByID()[2], "the published failed-group leaf must stay stable")
+
+	// The batched scope is FIXED and MUST cover the FAILED group G1: the successful
+	// G2 dropped the shared A, so A's retained leaf in the failed G1 needs its
+	// shared-account fix-up (scope in construction order: G2 then G1).
+	scopes, overflow := s.drainCompileScopes()
+	require.False(t, overflow)
+	require.Len(t, scopes, 1, "one batched staging yields exactly one scope")
+	require.Equal(t, scopeCauseGroup, scopes[0].cause)
+	require.Equal(t, []int64{2, 1}, scopes[0].groups,
+		"the scope must cover the failed group's shared-account fix-up (construction order)")
+	require.Nil(t, scopes[0].accounts)
+	s.requeueCompileScopes(scopes, overflow) // preserve the fire-owned scope for the compile below
 
 	// Compile and assert the FINAL published pair (not merely a staged signal).
 	s.compileOnce()
@@ -342,6 +366,70 @@ func TestStickySurvivesRepeatedFailuresThenClears(t *testing.T) {
 	require.Contains(t, byID, int64(3), "the swapped-in account must be published")
 }
 
+// TestStickySurvivesUnrelatedLocalSuccessThenHealthyTick covers failure
+// convergence (1)+(2) as the full SEQUENCE the reviewer required: a batch in
+// which G1's load FAILS but an UNRELATED G2 load SUCCEEDS. The unrelated local
+// success must NOT clear the sticky obligation, so a later probe-HIT healthy
+// tick still runs a REAL full loader (not merely a compile request) and the
+// FINAL published pair reflects both equal-count swaps. Every membership change
+// here is an EQUAL-COUNT swap, invisible to the count-only probe — only a real
+// full reload can converge it.
+func TestStickySurvivesUnrelatedLocalSuccessThenHealthyTick(t *testing.T) {
+	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	ldr := newT1Loader(map[int64][]*domain.Account{1: {acc(1, tp, 4)}, 2: {acc(2, tp, 4)}})
+	probe := &fakeStalenessProbe{counts: domain.CompileStaleness{Accounts: 2, Groups: 2, Templates: 1}}
+	s := New(Config{SyncInterval: time.Hour, StalenessProbe: probe}, ldr, newTestRuleEngine(t), nil, nil, nil, nil)
+	require.NoError(t, s.reload(context.Background()))
+	wireSources(s, nil, nil)
+	s.compileOnce()
+	require.True(t, s.publishedViewWhole())
+	beforeView := s.View()
+	require.Contains(t, beforeView.ByID(), int64(1))
+	require.Contains(t, beforeView.ByID(), int64(2))
+
+	// Probe-invisible equal-count swaps: G1 {a1}->{a3}, G2 {a2}->{a4}. G1's load
+	// fails, G2's succeeds — an UNRELATED local success inside the same batch.
+	ldr.mu.Lock()
+	ldr.byGroup[1] = []*domain.Account{acc(3, tp, 4)}
+	ldr.byGroup[2] = []*domain.Account{acc(4, tp, 4)}
+	ldr.failGroup[1] = true
+	ldr.mu.Unlock()
+
+	s.InvalidateGroups([]int64{1, 2})
+	require.True(t, s.reloadRequired, "an unrelated local success must NOT clear the sticky obligation")
+	require.Same(t, beforeView, s.View(), "the batch only stages; the published pair must stay put")
+
+	// The staged root holds the unrelated local success (G2) but not the failed
+	// group's swap (G1): G2's a4 in, a2 out; G1's a1 kept, a3 absent.
+	pending := s.publisher.pending
+	require.NotNil(t, pending, "the successful G2 must still stage a working root")
+	require.Contains(t, pending.byID, int64(4), "G2's unrelated success must fold into the staged root")
+	require.NotContains(t, pending.byID, int64(2), "G2's swapped-out account must leave the staged root")
+	require.Contains(t, pending.byID, int64(1), "the failed G1 must keep its old account in the staged root")
+	require.NotContains(t, pending.byID, int64(3), "the failed G1's swap must NOT be applied")
+
+	// Heal G1: a probe-HIT healthy tick must run a REAL full loader.
+	ldr.mu.Lock()
+	ldr.failGroup[1] = false
+	ldr.mu.Unlock()
+	ldr.reset()
+	s.backstopTick(context.Background())
+	require.Equal(t, 1, ldr.fullCount(), "the healthy tick must call the real full loader, not just request a compile")
+	require.False(t, s.reloadRequired, "a successful full reload clears the obligation")
+
+	// The FINAL compiled published pair must reflect BOTH swaps.
+	s.compileOnce()
+	require.True(t, s.publishedViewWhole(), "the final decision must be whole")
+	final := s.View()
+	require.NotContains(t, final.ByID(), int64(1), "G1's swapped-out account must be gone")
+	require.NotContains(t, final.ByID(), int64(2), "G2's swapped-out account must be gone")
+	require.Contains(t, final.ByID(), int64(3), "G1's swapped-in account must be published")
+	require.Contains(t, final.ByID(), int64(4), "G2's swapped-in account must be published")
+	require.Equal(t, []int64{3}, accountIDsOf(final.StaticView().groups[1]), "G1 must publish exactly its swapped-in account")
+	require.Equal(t, []int64{4}, accountIDsOf(final.StaticView().groups[2]), "G2 must publish exactly its swapped-in account")
+	require.NotNil(t, final.DecisionView(), "the published pair must carry a decision")
+}
+
 // --- I2: the batch shares one deadline and releases the publish lock ---
 
 // deadlineLoader blocks one group's load until the batch context is cancelled.
@@ -363,13 +451,53 @@ func (l *deadlineLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*do
 	return l.t1Loader.LoadGroupAccounts(ctx, id)
 }
 
+// gateProbe is a probe-entered/release handshake. Once arm() has been called,
+// its NEXT CompileStalenessSnapshot signals `entered` and then blocks until
+// `release` is closed. backstopTick calls the probe immediately before it takes
+// publisher.mu, so a received `entered` proves a tick has reached the tick body
+// (the last step before the lock) without any time-window guess; releasing it
+// lets the tick proceed to a lock it must then wait on.
+type gateProbe struct {
+	counts  domain.CompileStaleness
+	mu      sync.Mutex
+	armed   bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (p *gateProbe) arm() {
+	p.mu.Lock()
+	p.armed = true
+	p.mu.Unlock()
+}
+
+func (p *gateProbe) CompileStalenessSnapshot(ctx context.Context) (domain.CompileStaleness, error) {
+	p.mu.Lock()
+	gate := p.armed
+	if gate {
+		p.armed = false
+	}
+	p.mu.Unlock()
+	if gate {
+		select {
+		case p.entered <- struct{}{}:
+		default:
+		}
+		<-p.release
+	}
+	return p.counts, nil
+}
+
 // TestInvalidateGroupsBatchDeadlineReleasesLock proves the shared batch deadline
 // fires AND covers failure-convergence case (4): a REAL backstop tick started
 // while the batch holds publisher.mu (its loader stalled under the lock, i.e.
 // between the batch refresh and its failure handling) must BLOCK on the lock —
-// it cannot skip or rebuild until the batch returns. Once the deadline fires the
-// batch leaves the failure branch (sticky obligation set) and the unblocked tick
-// runs a real full reload.
+// it cannot skip or rebuild until the batch returns. Entry into the lock wait is
+// proven by a probe-entered/release channel handshake (NOT a 25ms time window):
+// the armed probe fires exactly at the tick body's pre-lock step while the batch
+// still holds the lock. Once the deadline fires the batch leaves the failure
+// branch (sticky obligation set) and the unblocked tick runs a real full reload
+// that finally publishes the probe-invisible equal-count swap.
 func TestInvalidateGroupsBatchDeadlineReleasesLock(t *testing.T) {
 	orig := batchStageTimeout
 	batchStageTimeout = 100 * time.Millisecond
@@ -378,13 +506,24 @@ func TestInvalidateGroupsBatchDeadlineReleasesLock(t *testing.T) {
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	base := newT1Loader(map[int64][]*domain.Account{10: {acc(1, tp, 4)}})
 	ldr := &deadlineLoader{t1Loader: base, blockGroup: 10, entered: make(chan struct{}, 1)}
-	probe := &fakeStalenessProbe{counts: domain.CompileStaleness{Accounts: 1, Groups: 1, Templates: 1}}
+	probe := &gateProbe{
+		counts:  domain.CompileStaleness{Accounts: 1, Groups: 1, Templates: 1},
+		entered: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
 	s := New(Config{SyncInterval: time.Hour, StalenessProbe: probe}, ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
 	require.True(t, s.publishedViewWhole())
+	require.Contains(t, s.View().ByID(), int64(1))
 	base.reset()
+
+	// Fixture change: an equal-count swap {a1}->{a2} the count-only probe cannot
+	// see, so only a real full reload (forced by the sticky obligation) converges.
+	ldr.mu.Lock()
+	ldr.byGroup[10] = []*domain.Account{acc(2, tp, 4)}
+	ldr.mu.Unlock()
 
 	done := make(chan struct{})
 	go func() {
@@ -397,19 +536,31 @@ func TestInvalidateGroupsBatchDeadlineReleasesLock(t *testing.T) {
 		t.Fatal("loader never entered the batch")
 	}
 
-	// A REAL tick started while the batch holds the lock must stay blocked on
-	// publisher.mu (it must not return while the batch is between its refresh
-	// and its failure handling).
+	// Arm the gate so the NEXT probe call (the tick's) blocks at the tick body's
+	// pre-lock step. A REAL tick started while the batch holds publisher.mu must
+	// reach that step; the handshake proves it (no time-window guess).
+	probe.arm()
 	tickDone := make(chan struct{})
 	go func() {
 		s.backstopTick(context.Background())
 		close(tickDone)
 	}()
 	select {
-	case <-tickDone:
-		t.Fatal("backstopTick returned while the batch still held publisher.mu")
-	case <-time.After(25 * time.Millisecond):
+	case <-probe.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick never reached the probe")
 	}
+	// The tick is at the pre-lock step while the batch still holds the lock, so
+	// the batch must not have returned yet.
+	select {
+	case <-done:
+		t.Fatal("batch returned before the tick reached the lock")
+	default:
+	}
+	// Release the probe: the tick now takes publisher.mu and must WAIT on it
+	// (the batch holds it until its shared deadline fires), so the tick's full
+	// reload can only run after the batch returns.
+	close(probe.release)
 
 	select {
 	case <-done:
@@ -430,6 +581,15 @@ func TestInvalidateGroupsBatchDeadlineReleasesLock(t *testing.T) {
 	cleared := !s.reloadRequired
 	s.publisher.mu.Unlock()
 	require.True(t, cleared, "the successful full reload clears the sticky obligation")
+
+	// The FINAL published pair must reflect the swap.
+	s.compileOnce()
+	require.True(t, s.publishedViewWhole(), "the final decision must be whole")
+	final := s.View()
+	require.NotContains(t, final.ByID(), int64(1), "the swapped-out account must be gone")
+	require.Contains(t, final.ByID(), int64(2), "the swapped-in account must be published")
+	require.Equal(t, []int64{2}, accountIDsOf(final.StaticView().groups[10]), "group 10 must publish exactly its swapped-in account")
+	require.NotNil(t, final.DecisionView(), "the published pair must carry a decision")
 
 	locked := make(chan struct{})
 	go func() {
@@ -636,4 +796,17 @@ func accountIDSet(byID map[int64]*accountSnapshot) []int64 {
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 	return ids
+}
+
+// accountIDsOf returns the sorted account IDs of one group snapshot.
+func accountIDsOf(gs *groupSnapshot) []int64 {
+	if gs == nil {
+		return nil
+	}
+	out := make([]int64, 0, len(gs.accounts))
+	for _, as := range gs.accounts {
+		out = append(out, as.static.Load().acc.ID)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
