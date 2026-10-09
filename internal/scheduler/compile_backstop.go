@@ -70,14 +70,17 @@ func (s *Scheduler) publishedViewWhole() bool {
 // load can only ever be stale-or-equal to what the load sees, so a commit
 // landing between the two causes at most one redundant reload, never a miss.
 // Refreshing after the load would open a miss window (baseline ahead of the
-// staged root). Nil probe (unwired) or query error: baseline untouched,
-// fail-safe Warn + old-view retention on every error path.
+// staged root). Nil probe (unwired): baseline untouched. Query error: baseline
+// untouched AND the sticky reloadRequired obligation is set (r8 §:147) so a
+// later healthy tick retries even though the probe-hit gate cannot see the
+// failure. The caller must hold publisher.mu (reloadRequired discipline).
 func (s *Scheduler) refreshProbeBaseline(ctx context.Context) {
 	if s.stalenessProbe == nil {
 		return
 	}
 	c, err := s.stalenessProbe(ctx)
 	if err != nil {
+		s.reloadRequired = true
 		if s.log != nil {
 			s.log.Warn("compile staleness baseline refresh failed; keeping previous baseline", logx.Error(err))
 		}
@@ -115,15 +118,13 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 			s.log.Warn("compile staleness probe failed; full reload fail-safe", logx.Error(err))
 		}
 		s.recordCompileFallback("probe-error", 0, 0, 0)
-		// Fail-safe full reload under publisher.mu; a load failure re-marks the
-		// sticky obligation so a subsequent healthy tick retries (probe errors
-		// leave the baseline untouched, so the retry is not probe-gated).
+		// Fail-safe full reload under publisher.mu; reloadLocked itself sets the
+		// sticky obligation on failure (single error source), so a subsequent
+		// healthy tick retries (probe errors leave the baseline untouched, so
+		// the retry is not probe-gated).
 		s.publisher.mu.Lock()
-		if rerr := s.reloadLocked(ctx); rerr != nil {
-			s.reloadRequired = true
-			if s.log != nil {
-				s.log.Warn("scheduler sync failed", logx.Error(rerr))
-			}
+		if rerr := s.reloadLocked(ctx); rerr != nil && s.log != nil {
+			s.log.Warn("scheduler sync failed", logx.Error(rerr))
 		}
 		s.publisher.mu.Unlock()
 		return
@@ -142,11 +143,8 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 		s.publisher.mu.Unlock()
 		return
 	}
-	if rerr := s.reloadLocked(ctx); rerr != nil {
-		s.reloadRequired = true
-		if s.log != nil {
-			s.log.Warn("scheduler sync failed", logx.Error(rerr))
-		}
+	if rerr := s.reloadLocked(ctx); rerr != nil && s.log != nil {
+		s.log.Warn("scheduler sync failed", logx.Error(rerr))
 	}
 	s.publisher.mu.Unlock()
 }

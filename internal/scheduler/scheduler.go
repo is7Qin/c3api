@@ -396,14 +396,20 @@ func (s *Scheduler) reload(ctx context.Context) error {
 // reloadLocked is reload's body without taking publisher.mu; the caller must
 // hold it. Shared by the public reload and the backstop tick (which takes the
 // lock once to both decide and rebuild — a tick must NEVER call the locking
-// reload while already holding the lock). A successful full loader + full
-// stage clears the sticky reloadRequired obligation; a load failure returns an
-// error and leaves it to the caller to re-mark.
+// reload while already holding the lock). The failure obligation is closed
+// HERE, at the single error source: a full-loader failure sets the sticky
+// reloadRequired before returning, so every caller (public reload / backstop
+// tick) is naturally closed and no caller has to re-mark. A successful full
+// loader + full stage clears the obligation.
 func (s *Scheduler) reloadLocked(ctx context.Context) error {
 	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(ctx)
 	m, err := s.loader.LoadGroupsAccounts(ctx)
 	if err != nil {
+		// Any full-load failure → sticky retry obligation (r8 §2 T1). Because
+		// the obligation lives at this single source, a caller must never rely
+		// on re-marking it; only a later successful full load+stage clears it.
+		s.reloadRequired = true
 		return err
 	}
 	cur := s.view.Load()
