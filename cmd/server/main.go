@@ -98,7 +98,7 @@ func main() {
 			}
 		}() // net/http/pprof 自动挂载
 	}
-	// 必填校验（admin.token/auth.jwt_secret/db.dsn/redis.addr）已内聚到 config.Load，
+	// 必填校验（auth.jwt_secret/db.dsn/redis.addr）已内聚到 config.Load，
 	// 此处只做错误处理。
 	// server.time_zone 仅服务定价/规则时间条件（pricing 保持既有 nil/进程本地
 	// 回落语义）——统计读取时区是请求级参数（浏览器 IANA 名，handler 边界解析），
@@ -259,7 +259,7 @@ func main() {
 	// UpsertFlowSnapshot 据此拒早于截止的快照（防 retention 删后重建）。
 	repos.Partitions.SetRoutingObservationRetentionDays(cfg.Routing.ObservationRetentionDays)
 
-	auth := proxy.NewAuth(repos.Keys, repos.Users, log, cfg.Billing.Enabled)
+	auth := proxy.NewAuth(repos.Keys, repos.Users, repos.ManagementKeys, log, cfg.Billing.Enabled)
 	hc := httpx.NewClient(httpx.TransportConfig{
 		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
 		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
@@ -384,7 +384,7 @@ func main() {
 		// 成功」在 ops 面不可见。
 		supplierViewLoader.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return supplierViewSnap.Obs(now) })
 	}
-	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Keys: auth, Log: log, EmailCodeStore: verification.New(rdb),
+	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Auth: auth, Log: log, EmailCodeStore: verification.New(rdb),
 		SupplierViewReload: supplierViewReloader(supplierViewLoader),
 		TimeLocation:       svcLoc,
 		// Retention 三表原件（不预先折 min：读 N 张表取最保守 floor 是
@@ -740,13 +740,12 @@ func main() {
 	// 每处 WHERE AND 归属谓词（§2.5）。
 	var supplierHandler http.Handler
 	if cfg.Supplier.Enabled {
-		supplierHandler = handler.NewSupplierSurface(h, iss, auth, cfg.Admin.Token)
+		supplierHandler = handler.NewSupplierSurface(h, iss, auth)
 	}
 
 	srv := server.NewServer(server.Options{
-		AdminToken:        cfg.Admin.Token,
 		JWTIssuer:         iss,
-		UserStatus:        auth,
+		Auth:              auth,
 		MaxInflight:       effectiveInflight,
 		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,

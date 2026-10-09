@@ -62,7 +62,7 @@ func TestAdminClaimRequestStrictContract(t *testing.T) {
 		settlements: []*domain.SupplierSettlement{{ID: 1, Status: domain.SettlementApproved, Revision: 3, AmountMillis: 1000}},
 		balances:    map[int64]*domain.SupplierBalance{},
 	}
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Keys: &fakeKeys{}, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Auth: &fakeKeys{}, EmailCodeStore: store})
 	api := New(svc)
 
 	post := func(body string) *httptest.ResponseRecorder {

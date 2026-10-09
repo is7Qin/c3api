@@ -49,6 +49,7 @@ type Store interface {
 	AccountStore
 	GroupStore
 	KeyStore
+	ManagementKeyStore
 	GroupAssignmentStore
 	UserStore
 	BalanceLogStore
@@ -127,6 +128,16 @@ type KeyStore interface {
 	DeleteKey(ctx context.Context, id int64) error
 	// DeleteKeysByGroup 组删除前置清理（key.group_id 外键约束；返回被删明文）。
 	DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error)
+}
+
+// ManagementKeyStore 管理 API key（mk-，spec 2026-10-09）持久化。owner-only：
+// 更新/删除带 owner 作用域（越域/缺失 → ErrNotFound）。
+type ManagementKeyStore interface {
+	CreateManagementKey(ctx context.Context, k *domain.ManagementKey) (*domain.ManagementKey, error)
+	// ListManagementKeysByUser 列 owner 自身的管理 key（软删过滤；含明文）。
+	ListManagementKeysByUser(ctx context.Context, userID int64) ([]*domain.ManagementKey, error)
+	UpdateManagementKey(ctx context.Context, p *repository.ManagementKeyPatch) (*domain.ManagementKey, error)
+	DeleteManagementKey(ctx context.Context, userID, id int64) (string, error)
 }
 
 // GroupAssignmentStore private 组授予持久化（/api/admin/groups/{id}/assignments +
@@ -379,6 +390,20 @@ type KeyRegistrar interface {
 	Delete(hash string)
 }
 
+// ManagementKeyRegistrar 由 proxy.Auth 实现，供管理 key（mk-）变更时增量刷新
+// 鉴权快照：创建/禁用/删除在本实例即时生效；跨实例经 NOTIFY → Auth.Reload 收敛。
+type ManagementKeyRegistrar interface {
+	UpsertManagementKey(raw string, meta domain.ManagementKeyMeta)
+	DeleteManagementKey(raw string)
+}
+
+// AuthRegistrar 合并客户端 key 与管理 key 的鉴权快照增量面（spec 2026-10-09 §4.3）：
+// proxy.Auth 同时实现两者——同一 auth 只传一次。
+type AuthRegistrar interface {
+	KeyRegistrar
+	ManagementKeyRegistrar
+}
+
 // SupplierViewReloader 供应商财务视图装载面（*supplier.ViewLoader 实现）：账号
 // **归属/启用**写成功后触发本地有界 Reload，使旧归属尽早从视图消失、新归属尽早
 // 入选（spec 2026-10-09 §4.6.3 发布屏障）。nil = 功能关闭/未装配（no-op）。
@@ -397,6 +422,9 @@ type Service struct {
 	pub        Publisher   // 多实例 NOTIFY 发布器（nil = 单实例/未装配，publish no-op）
 	ruleReload RuleReloader
 	keys       KeyRegistrar
+	// mgmtKeys 管理 key 鉴权快照增量面（*proxy.Auth 实现；nil = 不刷新——测试
+	// 降级路径）。管理 key 变更后本地 Upsert/Delete + publish(NOTIFY) 双写。
+	mgmtKeys ManagementKeyRegistrar
 	// supplierViewReload 财务视图装载面（账号归属/启用写成功后本地 Reload；
 	// §4.6.3 发布屏障）。nil = 功能关闭/未装配（见 Deps.SupplierViewReload）。
 	supplierViewReload SupplierViewReloader
@@ -467,8 +495,9 @@ type Deps struct {
 	Publisher Publisher
 	// RuleReload 规则重载面（规则写后触发；nil = 不重载）。
 	RuleReload RuleReloader
-	// Keys 客户端 key 增删的鉴权快照增量面（nil = 不刷新）。
-	Keys KeyRegistrar
+	// Auth 合并的鉴权快照增量面（客户端 key + 管理 key；*proxy.Auth 实现；
+	// nil = 不刷新）。同一 auth 只传一次（spec 2026-10-09 §4.3）。
+	Auth AuthRegistrar
 	// SupplierViewReload 供应商财务视图装载面（*supplier.ViewLoader 实现；
 	// 账号归属/启用写成功后本地 Reload——先让旧归属停止入选再换归属，§4.6.3）。
 	// nil = 功能关闭/未装配（no-op）。**注意 typed-nil**：调用方须传真 nil 接口，
@@ -532,7 +561,7 @@ func New(deps Deps) *Service {
 		panic("service: New(nil EmailCodeStore): Redis 是必选依赖，验证码存储无降级路径")
 	}
 	s := &Service{store: deps.Store, sched: deps.Scheduler, inv: deps.Invalidate, pub: deps.Publisher,
-		ruleReload: deps.RuleReload, keys: deps.Keys, log: deps.Log,
+		ruleReload: deps.RuleReload, keys: deps.Auth, mgmtKeys: deps.Auth, log: deps.Log,
 		supplierViewReload: deps.SupplierViewReload,
 		emailCodes:         deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,
 		recoverLatch: deps.RecoverLatch, recoverHealthClear: deps.RecoverHealthClear,
@@ -559,7 +588,7 @@ func New(deps Deps) *Service {
 // 后调用。失败忽略——NOTIFY 是事件提示，丢一条由 60s 周期兜底收敛（Publisher
 // 内部已 Warn），不回滚业务。pub 为 nil（过渡：main 未装配）→ no-op；
 // main 装配后必非 nil。
-// 空 Change：notify.Change.IsEmpty()（7 变更位全 false 且 Groups
+// 空 Change：notify.Change.IsEmpty()（9 变更位全 false 且 Groups
 // 空）→ 判空跳过不 Publish（no-op）。创建无分组 / 补丁无分组变更的空载荷在此
 // 统一覆盖（与 inv.Accounts 的空分组集 no-op 同语义）。
 // 发布脱离请求 ctx：请求 ctx 取消（客户端断开）不吞 NOTIFY——

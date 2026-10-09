@@ -309,6 +309,16 @@ export class ApiClient {
   adminRequestSettlement = (b: components['schemas']['AdminRequestSettlementBody']) => this.request<components['schemas']['SupplierSettlement']>('/supplier/settlements/admin-request', { method: 'POST', body: JSON.stringify(b) })
   listSupplierBalances = (p?: { limit?: number; offset?: number }) => this.request<components['schemas']['SupplierBalanceList']>('/supplier/balances', { params: toQuery(p) })
   patchSupplierBalance = (uid: number, b: components['schemas']['SupplierBalancePatchBody']) => this.request<components['schemas']['SupplierBalance']>(`/supplier/balances/${uid}`, { method: 'PATCH', body: JSON.stringify(b) })
+  // —— 管理 API key（mk-，spec 2026-10-09 统一化）：仅用户面使用（userApi），路径用**相对**
+  //    `/management-keys`（→ /api/user/management-keys）；key 以 owner 身份鉴权，owner 可见明文
+  //    key_raw（长期可复制）。
+  listManagementKeys = () => this.request<components['schemas']['ManagementKeyListResponse']>('/management-keys')
+  createManagementKey = (name: string) => this.request<components['schemas']['ManagementKey']>('/management-keys', {
+    method: 'POST',
+    body: JSON.stringify({ name } satisfies components['schemas']['ManagementKeyCreate']),
+  })
+  updateManagementKey = (id: number, b: components['schemas']['ManagementKeyUpdate']) => this.request<components['schemas']['ManagementKey']>(`/management-keys/${id}`, { method: 'PUT', body: JSON.stringify(b) })
+  deleteManagementKey = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/management-keys/${id}`, { method: 'DELETE' })
 }
 
 export class ApiUnauthorized extends Error {

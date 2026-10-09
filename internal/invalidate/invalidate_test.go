@@ -416,6 +416,15 @@ func TestNewBranches(t *testing.T) {
 				r.auth.calls(), r.bal.relCalls(), r.rules.calls(), r.sched.fullCalls())
 		}
 	})
+	t.Run("management_keys→auth 全量，不动其他", func(t *testing.T) {
+		r := newRig(t, &recAuth{})
+		r.markAndFire(KindManagementKeys, nil)
+		waitCalls(t, r.auth.calls, 1)
+		if r.bal.relCalls() != 0 || r.rules.calls() != 0 || r.sched.fullCalls() != 0 {
+			t.Fatalf("management_keys 只应 auth 全量：auth=%d bal=%d rules=%d schedFull=%d",
+				r.auth.calls(), r.bal.relCalls(), r.rules.calls(), r.sched.fullCalls())
+		}
+	})
 	t.Run("rules→rules 重载，不动 auth/sched", func(t *testing.T) {
 		r := newRig(t, &recAuth{})
 		r.markAndFire(KindRules, nil)

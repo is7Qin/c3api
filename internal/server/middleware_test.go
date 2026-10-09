@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -17,6 +18,24 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/logx"
 )
+
+// fakeMgmt 管理 key 快照 provider（adminAuth mk- 分支用例）：按 Bearer mk-… 明文
+// 查表；仅 status==active 命中（模拟 proxy.Auth.AuthenticateManagement 的禁用过滤）。
+type fakeMgmt struct {
+	metas map[string]domain.ManagementKeyMeta
+}
+
+func (f fakeMgmt) AuthenticateManagement(r *http.Request) (domain.ManagementKeyMeta, bool) {
+	raw, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok || !strings.HasPrefix(raw, "mk-") {
+		return domain.ManagementKeyMeta{}, false
+	}
+	m, ok := f.metas[raw]
+	if !ok || m.Status != domain.ManagementKeyStatusActive {
+		return domain.ManagementKeyMeta{}, false
+	}
+	return m, true
+}
 
 // newFileLogger creates a logger that writes JSON lines to a fresh temp
 // file and returns the logger plus the file path（复用 pkg/logx/logx_test.go
@@ -71,11 +90,11 @@ func TestAccessLogDebugFields(t *testing.T) {
 	}
 }
 
-// TestAdminAuthEmptyTokenContract admin.token 可空语义契约（spec 2026-08-15）：
-// 空 token = 不启用静态路径，/admin 仅接受 platform_admin JWT——任意非空
-// Bearer（含非 JWT 垃圾串/尾空值）恒 401；platform_admin JWT 通过；token
-// 非空时旧行为不变（匹配 → 通过，不匹配 → 401）。
-func TestAdminAuthEmptyTokenContract(t *testing.T) {
+// TestAdminAuth 管理面鉴权契约（静态 token 已删除，spec 2026-10-09）：/admin 仅
+// 接受 platform_admin JWT 或 platform_admin 身份的**管理 key mk-**；任意非空
+// Bearer（含非 JWT 垃圾串/尾空值/未知 mk-）恒 401（前缀先判、失败不回退）；mk-
+// owner 非 platform_admin 或 key 禁用 → 401；provider 缺失 → mk- 全拒。
+func TestAdminAuth(t *testing.T) {
 	iss := auth.NewIssuer("secret")
 	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
 	require.NoError(t, err)
@@ -83,26 +102,39 @@ func TestAdminAuthEmptyTokenContract(t *testing.T) {
 	require.NoError(t, err)
 	admin := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(200) })
 
+	snaps := fakeUserStatus{roles: map[int64]domain.Role{
+		1: domain.RolePlatformAdmin, // adminTok
+		3: domain.RolePlatformAdmin, // mk-admin owner
+		4: domain.RoleUser,          // mk-user owner
+	}}
+	mgmt := fakeMgmt{metas: map[string]domain.ManagementKeyMeta{
+		"mk-admin":    {ID: 10, UserID: 3, Status: domain.ManagementKeyStatusActive},
+		"mk-user":     {ID: 11, UserID: 4, Status: domain.ManagementKeyStatusActive},
+		"mk-disabled": {ID: 12, UserID: 3, Status: domain.ManagementKeyStatusDisabled},
+	}}
+
 	for _, tc := range []struct {
 		name string
 		opts Options
 		auth string
 		want int
 	}{
-		// 空 token：静态路径永不匹配 → 任意非 Bearer 前缀/Bearer 垃圾串 401
-		{"empty token: no header", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "", 401},
-		{"empty token: non-JWT garbage", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer garbage", 401},
-		{"empty token: bare Bearer", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer", 401},
-		// "Bearer "（尾空）在 httptest 直达头值（无 textproto 修剪）下，若无空
-		// 守卫会等于 "Bearer "+"" ——守卫即此回归点（h2 下真实存在，见 middleware.go 注释）
-		{"empty token: Bearer empty value", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer ", 401},
-		{"empty token: non-bearer scheme", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Basic xyz", 401},
-		// 快照 role 覆盖 claims.Role——user 1 快照角色 platform_admin 才放行
-		{"empty token: platform_admin JWT", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{roles: map[int64]domain.Role{1: domain.RolePlatformAdmin}}}, "Bearer " + adminTok, 200},
-		{"empty token: user JWT", Options{JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer " + userTok, 401},
-		// 非空 token：旧行为不变
-		{"token set: matching", Options{AdminToken: "tok", JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer tok", 200},
-		{"token set: mismatch", Options{AdminToken: "tok", JWTIssuer: iss, UserStatus: fakeUserStatus{}}, "Bearer nope", 401},
+		{"no header", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "", 401},
+		{"non-JWT garbage", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer garbage", 401},
+		{"bare Bearer", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer", 401},
+		// "Bearer "（尾空）在 httptest 直达头值（无 textproto 修剪）下，若无守卫会
+		// 等于 "Bearer "+""——守卫为回归点（h2 下真实存在，见 middleware.go 注释）
+		{"Bearer empty value", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer ", 401},
+		{"non-bearer scheme", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Basic xyz", 401},
+		// 快照 role 覆盖 claims.Role——user 1 快照 platform_admin 才放行
+		{"platform_admin JWT", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer " + adminTok, 200},
+		{"user JWT", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer " + userTok, 401},
+		// 管理 key：owner 快照 role 判定
+		{"mk platform_admin owner", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer mk-admin", 200},
+		{"mk user owner (降权)", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer mk-user", 401},
+		{"mk disabled", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer mk-disabled", 401},
+		{"mk unknown no fallback", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, mgmt}}, "Bearer mk-ghost", 401},
+		{"mk prefix but mgmt provider missing (merged fake, mgmt=false)", Options{JWTIssuer: iss, Auth: fakeSnapshot{snaps, fakeMgmt{}}}, "Bearer mk-admin", 401},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.opts.AdminHandler = admin

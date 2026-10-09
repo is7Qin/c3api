@@ -68,6 +68,9 @@ type Change struct {
 	// Pricing 定价快照变更（价格写面）→ 定价快照重载（缺价 402 窗口跨实例
 	// 收敛，不等重启）。
 	Pricing bool `json:"pricing,omitempty"`
+	// ManagementKeys 管理 key（mk-）CRUD/状态变更 → auth 快照全量 Reload
+	// （跨实例收敛；本实例写面已增量 Upsert/Delete）。
+	ManagementKeys bool `json:"management_keys,omitempty"`
 	// Groups 组级定向（账号变更的受影响组 id）。
 	Groups []int64 `json:"groups,omitempty"`
 	// Src 发布实例 ID：接收端跳过自播（省一次重复 reload）。Publisher 自动
@@ -75,13 +78,13 @@ type Change struct {
 	Src string `json:"src,omitempty"`
 }
 
-// IsEmpty 空载荷判定：8 个变更位全 false 且 Groups 为空。V/Src 不参与判定——
+// IsEmpty 空载荷判定：9 个变更位全 false 且 Groups 为空。V/Src 不参与判定——
 // V 恒存在（json 无 omitempty），Src 由 Publisher 发布时自动填充，调用方
 // 构造时均为空。service.publish 用此前置跳过无意义 NOTIFY（
 // 创建无分组 / 补丁无分组变更的空载荷在此统一覆盖）。
 func (c Change) IsEmpty() bool {
 	return !c.Users && !c.Templates && !c.Clients && !c.Multipliers &&
-		!c.Keys && !c.Settings && !c.Rules && !c.Pricing && len(c.Groups) == 0
+		!c.Keys && !c.Settings && !c.Rules && !c.Pricing && !c.ManagementKeys && len(c.Groups) == 0
 }
 
 // Marshal 序列化 Change（含载荷守卫）：估算 marshal 后长度 > maxPayloadBytes

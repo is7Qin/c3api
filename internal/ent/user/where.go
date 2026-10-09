@@ -528,6 +528,29 @@ func HasKeysWith(preds ...predicate.Key) predicate.User {
 	})
 }
 
+// HasManagementKeys applies the HasEdge predicate on the "management_keys" edge.
+func HasManagementKeys() predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, ManagementKeysTable, ManagementKeysColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasManagementKeysWith applies the HasEdge predicate on the "management_keys" edge with a given conditions (other predicates).
+func HasManagementKeysWith(preds ...predicate.ManagementKey) predicate.User {
+	return predicate.User(func(s *sql.Selector) {
+		step := newManagementKeysStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
+}
+
 // HasTempBalances applies the HasEdge predicate on the "temp_balances" edge.
 func HasTempBalances() predicate.User {
 	return predicate.User(func(s *sql.Selector) {

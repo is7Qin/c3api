@@ -37,6 +37,11 @@ func (f fakeUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 	return domain.UserSnapshot{Status: u.Status, Role: u.Role, TokenVersion: u.TokenVersion}, true
 }
 
+// AuthenticateManagement 补全 auth.SnapshotProvider（users-only → mgmt 恒 false）。
+func (f fakeUserStatus) AuthenticateManagement(*http.Request) (domain.ManagementKeyMeta, bool) {
+	return domain.ManagementKeyMeta{}, false
+}
+
 // newTestUserRouter /user 测试路由（真实 svc + fake store + 真实 Issuer）。
 // svc 一并返回：settings 快照测试需经 UpdateSetting（快照重载）改配置。
 func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *httptest.ResponseRecorder, *fakeStore, *auth.Issuer, *service.Service) {
@@ -45,7 +50,7 @@ func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *ht
 	// main 装配序（先快照 → worker → svc 一次注入，零回填）。
 	snap := settingssnap.New(store, nil)
 	mw := service.NewMailWorker(service.MailDeps{Settings: snap, Templates: store})
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
 	require.NoError(t, mw.Start(t.Context()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
 	iss := auth.NewIssuer("test-secret")

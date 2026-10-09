@@ -28,6 +28,7 @@ type Repository struct {
 	Groups         *GroupRepo
 	Users          *UserRepo
 	Keys           *KeyRepo
+	ManagementKeys *ManagementKeyRepo // 管理 API key（mk-，spec 2026-10-09）
 	Assignments    *GroupAssignmentRepo
 	Settings       *SettingRepo
 	Usages         *UsageRepo  // usage_logs 明细（消费面改名：log → usage 语义）
@@ -99,6 +100,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		Groups:         &GroupRepo{client: client, driver: drv},
 		Users:          &UserRepo{client: client, driver: drv},
 		Keys:           &KeyRepo{client: client, driver: drv},
+		ManagementKeys: &ManagementKeyRepo{client: client},
 		Assignments:    &GroupAssignmentRepo{client: client},
 		Settings:       &SettingRepo{client: client},
 		Usages:         &UsageRepo{client: client, pool: pool},
@@ -294,6 +296,12 @@ type TxStore interface {
 	// 守卫，litellm 行 → ErrConflict，守卫触发整体回滚变体零损伤；冒烟发现 2026-08-24）。
 	DeletePriceEntryManual(ctx context.Context, model string) error
 	DeletePriceVariantsByModel(ctx context.Context, model string) error
+	// 管理 API key（mk-）创建/列表/更新/删除的事务内使用（签名与 *Repository
+	// 一致，仅列入事务面白名单；创建随外层事务回滚而回滚——spec 2026-10-09）。
+	CreateManagementKey(ctx context.Context, k *domain.ManagementKey) (*domain.ManagementKey, error)
+	ListManagementKeysByUser(ctx context.Context, userID int64) ([]*domain.ManagementKey, error)
+	UpdateManagementKey(ctx context.Context, p *ManagementKeyPatch) (*domain.ManagementKey, error)
+	DeleteManagementKey(ctx context.Context, userID, id int64) (string, error)
 }
 
 // WithTx 在单事务内执行 fn：ent `Tx().Client()` 模式构造 tx 版 Repository
@@ -599,6 +607,24 @@ func (r *Repository) DeleteKey(ctx context.Context, id int64) error {
 
 func (r *Repository) DeleteKeysByGroup(ctx context.Context, groupID int64) ([]string, error) {
 	return r.Keys.DeleteKeysByGroup(ctx, groupID)
+}
+
+// --- 管理 API key（mk-，spec 2026-10-09） ---
+
+func (r *Repository) CreateManagementKey(ctx context.Context, k *domain.ManagementKey) (*domain.ManagementKey, error) {
+	return r.ManagementKeys.CreateManagementKey(ctx, k)
+}
+
+func (r *Repository) ListManagementKeysByUser(ctx context.Context, userID int64) ([]*domain.ManagementKey, error) {
+	return r.ManagementKeys.ListManagementKeysByUser(ctx, userID)
+}
+
+func (r *Repository) UpdateManagementKey(ctx context.Context, p *ManagementKeyPatch) (*domain.ManagementKey, error) {
+	return r.ManagementKeys.UpdateManagementKey(ctx, p)
+}
+
+func (r *Repository) DeleteManagementKey(ctx context.Context, userID, id int64) (string, error) {
+	return r.ManagementKeys.DeleteManagementKey(ctx, userID, id)
 }
 
 // --- 组授予 ---

@@ -59,7 +59,7 @@ c3api 处于 **beta**：功能齐全，但破坏性变更自由。
 **跑预构建镜像（pull）**——生产推荐：删除 `compose.yml` 里的 `build:` 块后 `up` 直接运行拉取的镜像：
 
 ```bash
-cp .env.example .env        # 填写 AUTH_JWT_SECRET（ADMIN_TOKEN 可选——见下文）
+cp .env.example .env        # 填写 AUTH_JWT_SECRET
 docker compose pull
 docker compose up -d
 ```
@@ -67,7 +67,7 @@ docker compose up -d
 **自建镜像（build）**——compose 本地构建（`image` 与 `build` 并存时 `build` 优先）：
 
 ```bash
-cp .env.example .env        # 填写 AUTH_JWT_SECRET（ADMIN_TOKEN 可选——见下文）
+cp .env.example .env        # 填写 AUTH_JWT_SECRET
 docker compose up -d --build
 ```
 
@@ -81,7 +81,8 @@ docker compose up -d --build
 
 ```bash
 # 0. 注入本地开发密钥（config.toml 留空值；占位符如 change-me 会被 Load 拒绝）
-export C3API_ADMIN_TOKEN=local-admin-token
+# 管理面鉴权：首个注册用户自动成为 platform_admin（bootstrap 后登录即可），
+# 或自签发管理 key（mk- 前缀）。
 export C3API_AUTH_JWT_SECRET=$(openssl rand -hex 16)
 
 # 1. 启动网关（默认 :18080）
@@ -149,17 +150,16 @@ cd web && pnpm install && pnpm run dev
 
 | 变量 | 说明 |
 |---|---|
-| `C3API_ADMIN_TOKEN` | 管理端 token（可选；留空 = 不启用静态 token 鉴权，`/api/admin` 仅接受 `platform_admin` JWT） |
 | `C3API_AUTH_JWT_SECRET` | 用户鉴权 JWT 密钥（必填；跨重启与多实例须稳定） |
 | `C3API_DB_DSN` | PostgreSQL 连接串 |
 | `C3API_REDIS_ADDR` | Redis 地址（必填；如 `127.0.0.1:6379`——实例发现、短时效验证码等易失状态） |
 
-完整配置项（server / log / admin / auth / db / redis / proxy / upstream / limit / scheduler / usage / billing）见 `config.example.toml`。
+完整配置项（server / log / auth / db / redis / proxy / upstream / limit / scheduler / usage / billing）见 `config.example.toml`。
 
 - **仅全新部署（不适配迁移）**——表结构与配置跨版本不向后兼容：升级即全新创建数据库、从零重核对配置（见上方"状态：Beta"说明）。
 - **纯 env 部署**（如 K8s）：传 `-config ""` 完全跳过配置文件——flag 默认 config.toml，无文件即启动失败。
 - **配置仅启动时读取**，变更需滚动重启（无热更新）。
-- **非法配置启动即报错**（含字段名）：duration/间隔 ≤0 或 <1ms、未知键（拼写错误/已移除旧键）、必填密钥缺失、占位符（change-me、dev-admin-token 等）一律拒绝。
+- **非法配置启动即报错**（含字段名）：duration/间隔 ≤0 或 <1ms、未知键（拼写错误/已移除旧键）、必填密钥缺失、占位符（change-me、dev-jwt-secret-for-local 等）一律拒绝。
 
 ## 部署
 

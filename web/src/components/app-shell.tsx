@@ -20,6 +20,7 @@ import {
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
 import AppSidebar from '@/components/app-sidebar'
+import { AccountMenuItems } from '@/components/account-menu-items'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 
@@ -79,6 +80,8 @@ function breadcrumbFor(pathname: string): { root: string; section: string; page:
   }
   if (pathname.startsWith('/user')) {
     if (pathname === '/user/profile') return { root: '/user', section: 'user.nav.userSection', page: 'user.nav.profile' }
+    // 管理 API key 页面已从 userNav 移除（入口改在账户菜单），面包屑需特判保留视觉。
+    if (pathname === '/user/management-keys') return { root: '/user', section: 'user.nav.userSection', page: 'user.nav.managementKeys' }
     const supplierItem = supplierNav.find((n) => n.to === pathname)
     if (supplierItem) return { root: '/user', section: 'user.nav.supplierSection', page: supplierItem.key }
     const item = userNav.find((n) => n.to === pathname)
@@ -158,6 +161,9 @@ export default function AppShell() {
                       ))}
                     </DropdownMenuGroup>
                   ))}
+                  {/* 账户条目（个人中心 / 管理 API key / 登出）——移动端（< md）亦可达。 */}
+                  <DropdownMenuSeparator />
+                  <AccountMenuItems />
                 </DropdownMenuContent>
               </DropdownMenu>
               <span className="hidden max-w-48 truncate text-sm text-muted-foreground xl:block">{me?.Email ?? ''}</span>

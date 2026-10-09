@@ -211,7 +211,7 @@ func TestJWTVerRoundTripAndRevocationMatrix(t *testing.T) {
 func TestRequireRole(t *testing.T) {
 	iss := NewIssuer("s")
 	token, _ := iss.Issue(7, "u@example.com", string(domain.RoleUser), 0)
-	adminToken, _ := iss.Issue(8, "a@example.com", string(domain.RolePlatformAdmin), 0)
+	adminJWT, _ := iss.Issue(8, "a@example.com", string(domain.RolePlatformAdmin), 0)
 	// 快照含两用户（active）——**快照基**：RequireRole 读快照 role（非
 	// claims.Role），fail-closed 下快照缺失 401。
 	users := fakeUserStatus{snapshots: map[int64]domain.UserSnapshot{
@@ -225,7 +225,7 @@ func TestRequireRole(t *testing.T) {
 	rec := doReq(t, mw, token)
 	require.Equal(t, http.StatusForbidden, rec.Code, "user 角色访问 platform 端点 → 403")
 	require.Equal(t, "{\"error\":\"forbidden\"}\n", rec.Body.String(), "403 信封 encoder 编码含尾换行")
-	rec = doReq(t, mw, adminToken)
+	rec = doReq(t, mw, adminJWT)
 	require.Equal(t, http.StatusOK, rec.Code, "platform_admin 放行")
 }
 

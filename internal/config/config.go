@@ -24,7 +24,6 @@ import (
 type Config struct {
 	Server    ServerConfig    `koanf:"server"`
 	Log       LogConfig       `koanf:"log"`
-	Admin     AdminConfig     `koanf:"admin"`
 	Auth      AuthConfig      `koanf:"auth"`
 	DB        DBConfig        `koanf:"db"`
 	Redis     RedisConfig     `koanf:"redis"`
@@ -60,10 +59,6 @@ type ServerConfig struct {
 type LogConfig struct {
 	Level  string `koanf:"level"`
 	Output string `koanf:"output"`
-}
-
-type AdminConfig struct {
-	Token string `koanf:"token"`
 }
 
 // AuthConfig JWT 密钥：强制（C3API_AUTH_JWT_SECRET），缺失启动失败——
@@ -247,8 +242,8 @@ func Load(path string) (*Config, error) {
 //     选择（errlog 无文档化"0=禁用"语义，取"全部 duration 字段"立场）；
 //   - 数值字段 ≥1：DefaultMaxConcurrency（silent 全坏面——从"健康地拒绝全流量"
 //     转启动即报错）、DB.MaxConns（puddle 层报 MaxSize 无法归因到 db.max_conns）；
-//   - 必填：auth.jwt_secret / db.dsn（自 main.go:64-66 移入内聚；admin.token
-//     已可空——空 = 不启用静态 token 鉴权，/admin 仅接受 platform_admin JWT）；
+//   - 必填：auth.jwt_secret / db.dsn（自 main.go:64-66 移入内聚；静态管理面
+//     token 配置键已删除——/admin 仅接受 platform_admin 身份（JWT 或其管理 key））；
 //   - 占位密钥精确匹配拒绝（change-me 系列防原样部署鉴权绕过；精确匹配防误杀恰
 //     以 change-me 开头的合法随机值，派生占位由"空值 + 强制 env"形态兜底）。
 //
@@ -340,14 +335,13 @@ func validate(c *Config) error {
 		path  string
 		value string
 	}{
-		{"admin.token", c.Admin.Token},
 		{"auth.jwt_secret", c.Auth.JWTSecret},
 		// redis.password 复用既有占位密钥校验（foundation spec §2.1）；空 = 无鉴权，合法。
 		{"redis.password", c.Redis.Password},
 	} {
 		switch p.value {
-		case "change-me", "change-me-too", "dev-admin-token", "dev-jwt-secret-for-local":
-			return fmt.Errorf("%s must not be a placeholder value (got %q); inject via C3API_ADMIN_TOKEN/C3API_AUTH_JWT_SECRET", p.path, p.value)
+		case "change-me", "change-me-too", "dev-jwt-secret-for-local":
+			return fmt.Errorf("%s must not be a placeholder value (got %q); inject via C3API_AUTH_JWT_SECRET", p.path, p.value)
 		}
 	}
 	if c.Redis.DB < 0 {

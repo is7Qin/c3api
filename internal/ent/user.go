@@ -47,13 +47,15 @@ type User struct {
 type UserEdges struct {
 	// Keys holds the value of the keys edge.
 	Keys []*Key `json:"keys,omitempty"`
+	// ManagementKeys holds the value of the management_keys edge.
+	ManagementKeys []*ManagementKey `json:"management_keys,omitempty"`
 	// TempBalances holds the value of the temp_balances edge.
 	TempBalances []*TempBalance `json:"temp_balances,omitempty"`
 	// GroupAssignments holds the value of the group_assignments edge.
 	GroupAssignments []*GroupAssignment `json:"group_assignments,omitempty"`
 	// loadedTypes holds the information for reporting if a
 	// type was loaded (or requested) in eager-loading or not.
-	loadedTypes [3]bool
+	loadedTypes [4]bool
 }
 
 // KeysOrErr returns the Keys value or an error if the edge
@@ -65,10 +67,19 @@ func (e UserEdges) KeysOrErr() ([]*Key, error) {
 	return nil, &NotLoadedError{edge: "keys"}
 }
 
+// ManagementKeysOrErr returns the ManagementKeys value or an error if the edge
+// was not loaded in eager-loading.
+func (e UserEdges) ManagementKeysOrErr() ([]*ManagementKey, error) {
+	if e.loadedTypes[1] {
+		return e.ManagementKeys, nil
+	}
+	return nil, &NotLoadedError{edge: "management_keys"}
+}
+
 // TempBalancesOrErr returns the TempBalances value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) TempBalancesOrErr() ([]*TempBalance, error) {
-	if e.loadedTypes[1] {
+	if e.loadedTypes[2] {
 		return e.TempBalances, nil
 	}
 	return nil, &NotLoadedError{edge: "temp_balances"}
@@ -77,7 +88,7 @@ func (e UserEdges) TempBalancesOrErr() ([]*TempBalance, error) {
 // GroupAssignmentsOrErr returns the GroupAssignments value or an error if the edge
 // was not loaded in eager-loading.
 func (e UserEdges) GroupAssignmentsOrErr() ([]*GroupAssignment, error) {
-	if e.loadedTypes[2] {
+	if e.loadedTypes[3] {
 		return e.GroupAssignments, nil
 	}
 	return nil, &NotLoadedError{edge: "group_assignments"}
@@ -191,6 +202,11 @@ func (_m *User) Value(name string) (ent.Value, error) {
 // QueryKeys queries the "keys" edge of the User entity.
 func (_m *User) QueryKeys() *KeyQuery {
 	return NewUserClient(_m.config).QueryKeys(_m)
+}
+
+// QueryManagementKeys queries the "management_keys" edge of the User entity.
+func (_m *User) QueryManagementKeys() *ManagementKeyQuery {
+	return NewUserClient(_m.config).QueryManagementKeys(_m)
 }
 
 // QueryTempBalances queries the "temp_balances" edge of the User entity.

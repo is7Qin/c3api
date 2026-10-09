@@ -44,7 +44,7 @@ func newTestGateRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 // newConcAuth 构造已 Reload 的 Auth（keys 快照就位 → gate 计数器与受限元数据可查）。
 func newConcAuth(t *testing.T, keys map[string]domain.KeyMeta) *Auth {
 	t.Helper()
-	a := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, true)
+	a := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, a.Reload(context.Background()))
 	return a
 }
@@ -459,7 +459,7 @@ func BenchmarkConcCollectAllocs(b *testing.B) {
 			KeyMaxConc: 8, UserMaxConc: 16,
 		}
 	}
-	a := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, true)
+	a := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, nil, true)
 	if err := a.Reload(context.Background()); err != nil {
 		b.Fatal(err)
 	}

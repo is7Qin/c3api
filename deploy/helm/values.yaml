@@ -28,9 +28,8 @@ fullnameOverride: ""
 # Set create=false to reference an externally managed Secret instead.
 secrets:
   create: true                 # true: render a Secret; false: use existingSecret
-  existingSecret: ""           # keys: auth-jwt-secret (required) / admin-token (optional)
+  existingSecret: ""           # keys: auth-jwt-secret (required)
   jwtSecret: ""                # required (empty -> template `required` fails)
-  adminToken: ""               # optional; empty = static admin token DISABLED (no key rendered)
 
 # --- External dependencies (connection info: pick ONE of each pair) ---
 # At least one of dsn/existingSecret (and one of addr/existingSecret) MUST be set,

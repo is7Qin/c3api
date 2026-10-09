@@ -42,6 +42,11 @@ func (f *fakeAuthUpsert) Delete(hash string) {
 	delete(f.keys, hash)
 }
 
+// UpsertManagementKey/DeleteManagementKey 补全 AuthRegistrar（管理 key 面 no-op：
+// 本用例只断言用户/客户端 key 快照路径）。
+func (f *fakeAuthUpsert) UpsertManagementKey(string, domain.ManagementKeyMeta) {}
+func (f *fakeAuthUpsert) DeleteManagementKey(string)                           {}
+
 func (f *fakeAuthUpsert) UpsertUser(userID int64, snap domain.UserSnapshot) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -81,7 +86,7 @@ func TestRegisterUser_ImmediateUserSnapshot(t *testing.T) {
 	fs := newFakeStore()
 	auth := newFakeAuthUpsert()
 	rec := &invRecorder{}
-	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: rec, Publisher: nil, RuleReload: nil, Keys: auth, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: rec, Publisher: nil, RuleReload: nil, Auth: auth, Log: nil, EmailCodeStore: testEmailCodes})
 	// 注册前 settings 默认 signup_enabled=true（fakeStore 未设 → DefaultSetting 回退）
 
 	u, err := svc.RegisterUser(context.Background(), "reg@example.com", "pw12345678")

@@ -12,6 +12,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
+	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
@@ -156,6 +157,18 @@ func init() {
 	keyDescCreatedAt := keyFields[11].Descriptor()
 	// key.DefaultCreatedAt holds the default value on creation for the created_at field.
 	key.DefaultCreatedAt = keyDescCreatedAt.Default.(func() time.Time)
+	managementkeyFields := schema.ManagementKey{}.Fields()
+	_ = managementkeyFields
+	// managementkeyDescCreatedAt is the schema descriptor for created_at field.
+	managementkeyDescCreatedAt := managementkeyFields[5].Descriptor()
+	// managementkey.DefaultCreatedAt holds the default value on creation for the created_at field.
+	managementkey.DefaultCreatedAt = managementkeyDescCreatedAt.Default.(func() time.Time)
+	// managementkeyDescUpdatedAt is the schema descriptor for updated_at field.
+	managementkeyDescUpdatedAt := managementkeyFields[6].Descriptor()
+	// managementkey.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	managementkey.DefaultUpdatedAt = managementkeyDescUpdatedAt.Default.(func() time.Time)
+	// managementkey.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	managementkey.UpdateDefaultUpdatedAt = managementkeyDescUpdatedAt.UpdateDefault.(func() time.Time)
 	priceentryFields := schema.PriceEntry{}.Fields()
 	_ = priceentryFields
 	// priceentryDescCreatedAt is the schema descriptor for created_at field.

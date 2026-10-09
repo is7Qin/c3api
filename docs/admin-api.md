@@ -5,7 +5,7 @@
 ## 通用约定
 
 - **Base URL**：`http://<gateway>/api/admin`
-- **认证**：两条路径任一通过即可。静态 admin token（`Authorization: Bearer <admin_token>`，`config.toml` 的 `admin.token` / 环境变量 `C3API_ADMIN_TOKEN`；**可选项**，空 = 不启用静态 token 鉴权）或 platform_admin JWT（与 `/api/user` 面同签发，快照角色覆盖 claims）。两者皆缺失/错误、或普通 `user` 角色 JWT → `401`（详见「鉴权与 created_by 约定」）。
+- **认证**：管理面仅认 `platform_admin` 身份——platform_admin JWT（与 `/api/user` 面同签发，快照角色覆盖 claims）或其**管理 key**（`Authorization: Bearer mk-...`，自签发；可达面 = owner 角色闭包）。凭证缺失/错误、或普通 `user` 角色 JWT → `401`（详见「鉴权与 created_by 约定」）。
 - **Content-Type**：请求体与响应均为 `application/json`（`rotate-key` 等无请求体操作除外）。
 - **错误格式**：非 2xx 响应体为 `{"error": "<消息>"}`。404 的消息含缺失资源 id（如 `service: not found: id=999 missing`），便于定位。
 - **ID**：路径参数 `{id}` 为模板/账号/分组的整数 ID。
@@ -755,7 +755,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 |---|---|
 | `200` | 分页列表（增强分页范式，与兑换码/模型价格同款） |
 | `400` | 非法 `sort` / `order` / `page_size` 越界 |
-| `401` | admin 凭据（静态 token 或 platform_admin JWT）缺失或错误；普通 `user` 角色 JWT 访问 |
+| `401` | admin 凭据（platform_admin JWT 或 platform_admin 管理 key）缺失或错误；普通 `user` 角色 JWT 访问 |
 
 ### 用户面：我的临时额度
 
@@ -1295,10 +1295,10 @@ flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incom
 
 | 路径 | 鉴权方式 | `created_by` 语义 |
 |---|---|---|
-| 静态 admin token（`Authorization: Bearer <admin.token>`） | `config.toml` 的 `admin.token` | 生成码时 `created_by = 0`（**0 = 系统**，未注入用户身份） |
 | platform_admin JWT（`Authorization: Bearer <jwt>`） | 与 /user 面同签发的 JWT，且 `role == platform_admin` | 生成码时 `created_by = 该用户 id`（>`0`） |
+| platform_admin 管理 key（`Authorization: Bearer mk-...`） | owner 快照 `role == platform_admin` 的管理 key | 生成码时 `created_by = owner 用户 id`（>`0`） |
 
-`/api/admin/*` 两条路径任一通过即可；普通 `user` 角色的 JWT 访问 `/api/admin/*` → `401`。`created_by` 用于审计"哪个管理员/系统创建了这批发码"。
+`/api/admin/*` 认平台管理员身份（JWT 或该身份的管理 key）；普通 `user` 角色的 JWT 访问 `/api/admin/*` → `401`。`created_by` 用于审计"哪个管理员创建了这批发码"。
 
 ---
 
@@ -1414,7 +1414,7 @@ billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval =
 | 状态码 | 场景 |
 |---|---|
 | `400` | 请求体非法 / 修改密码新密码为空或超 72 字节 / 路径 ID 非法 / 非法 `sort` 或 `order` / 非法 `status` 枚举 / 批量 `ids` 为空或超 100 条 / 批量 `fields` 为空 / 规则 `when`/`then` 校验失败 / 兑换码生成参数非法（`type` 非法、`value ≤ 0`、`temp_balance` 缺 `resource_expires_at`、`expires_at` 过去、`count` 越界）/ 兑换码无效（`invalid code`：不存在/失效/过期/用尽，统一不泄露细节）/ 价格负数或非负校验失败 / `fast_multiplier` 越界 / 倍率（组/用户-组专属 `price_multiplier`，正常值 `0`~`10`）越界 / `service_tier_policy_*` 非法值 / `source` 筛选非法 / `price_source_url` 未配置触发 sync |
-| `401` | admin 凭据（静态 token 或 platform_admin JWT）缺失或错误；普通 `user` 角色 JWT 访问 `/api/admin/*` |
+| `401` | admin 凭据（platform_admin JWT 或 platform_admin 管理 key）缺失或错误；普通 `user` 角色 JWT 访问 `/api/admin/*` |
 | `402` | **计费拒绝**（`error_type=billing`）：模型缺价 / 余额快照缺失或 ≤ 0（AI 请求面，非管理面） |
 | `404` | 资源不存在（单资源与批量均返回，消息含缺失 id，如 `service: not found: id=999 missing`） |
 | `409` | 规则 `priority`/`name` 唯一冲突 / 兑换码重复兑换（`already redeemed`）/ 删除 litellm 价格行 |

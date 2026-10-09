@@ -72,12 +72,6 @@ spec:
                 secretKeyRef:
                   name: {{ include "c3api.secretName" . }}
                   key: auth-jwt-secret
-            - name: C3API_ADMIN_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "c3api.secretName" . }}
-                  key: admin-token
-                  optional: true
             - name: C3API_DB_DSN
               {{- if .Values.externalDatabase.existingSecret }}
               valueFrom:

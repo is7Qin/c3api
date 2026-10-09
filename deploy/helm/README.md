@@ -29,7 +29,7 @@ helm install c3api ./deploy/helm \
 helm upgrade c3api ./deploy/helm -f my-values.yaml
 ```
 
-Changing `config.content` (or `secrets.jwtSecret`/`secrets.adminToken` when
+Changing `config.content` (or `secrets.jwtSecret` when
 `secrets.create=true`) updates a checksum annotation and triggers a rolling
 restart. The application creates its schema on first start (fresh setup only —
 no migration path); back up external PostgreSQL before upgrading.
@@ -61,8 +61,7 @@ helm install c3api ./deploy/helm \
   --set config.inline=false
 ```
 
-- `secrets.existingSecret` expects keys `auth-jwt-secret` (required) and
-  `admin-token` (optional).
+- `secrets.existingSecret` expects key `auth-jwt-secret` (required).
 - `externalDatabase.existingSecret` expects key `db-dsn`.
 - `externalRedis.existingSecret` expects key `redis-addr`.
 - `config.inline=false` renders no ConfigMap and starts the container with
@@ -88,7 +87,6 @@ helm install c3api ./deploy/helm \
 | `secrets.create` | Create a Secret from values | `true` |
 | `secrets.existingSecret` | Existing Secret name (when `create=false`) | `""` |
 | `secrets.jwtSecret` | JWT secret (required when `create=true`) | `""` |
-| `secrets.adminToken` | Static admin token; empty = disabled (key not rendered) | `""` |
 | `externalDatabase.dsn` | PostgreSQL DSN (or use existingSecret) | `""` |
 | `externalDatabase.existingSecret` | Secret with key `db-dsn` | `""` |
 | `externalRedis.addr` | Redis `host:port` (or use existingSecret) | `""` |
@@ -141,8 +139,9 @@ helm install c3api ./deploy/helm \
 - **Secrets:** `secrets.*` and a literal `externalDatabase.dsn` are injected as
   plain env values (visible via `kubectl describe pod`). For production prefer
   `existingSecret`, and pin `image.tag` to an immutable version.
-- **Admin token:** an empty `secrets.adminToken` disables the static admin token
-  (the key is not rendered); `/api/admin` then accepts `platform_admin` JWTs only.
+- **Admin auth:** management surfaces accept a `platform_admin` identity — either
+  a platform_admin JWT or a self-issued management key (mk- prefix). There is no
+  static admin token.
 - **Config content:** `config.content` is emitted verbatim — Helm does NOT
   re-template values, so `{{` inside it is safe. Prefer `-f values.yaml` over
   `--set` for multi-line TOML.

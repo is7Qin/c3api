@@ -14,7 +14,7 @@
 //	$env:C3API_REDIS_ADDR="127.0.0.1:16379"
 //	go test -tags e2e -run 'TestRoutingSmoke|TestIntelligentRoutingE2E' ./tools/e2e -v -timeout 600s
 //
-// 与 billing_e2e_test.go 同包：复用 e2eEnv/adminToken/jwtSecret/pollUntil/
+// 与 billing_e2e_test.go 同包：复用 e2eEnv/adminJWT/jwtSecret/pollUntil/
 // waitSnapshot/createUser/userKey/putPrice/jsonGet/stopGracefully/waitExit。
 // 本文件所有新增符号一律 rt 前缀，禁与 billing 文件重名。
 package e2e
@@ -141,7 +141,6 @@ func rtBoot(t *testing.T) (*e2eEnv, *exec.Cmd, *exec.Cmd, string) {
 	// 其余键与 billing harness 同构（未知键 fail-fast，禁私自加键）。
 	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
-admin = { token = "%s" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
 redis = { addr = "%s" }
@@ -150,7 +149,7 @@ upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeou
 scheduler = { default_max_concurrency = 8, sync_interval = "3s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
 billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, rtServerAddr, adminToken, jwtSecret, dsn, redisAddr)
+`, rtServerAddr, jwtSecret, dsn, redisAddr)
 	cfgPath := filepath.Join(env.tmp, "config.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
 
@@ -187,29 +186,11 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	return env, srv, up, dsn
 }
 
-// rtWaitReady 轮询 /api/admin/settings 直到 200（migrate + 分区 bootstrap 完成）。
+// rtWaitReady 无凭据引导就绪（spec 2026-10-09 §4.9）：/healthz → bootstrap
+// platform_admin JWT → /api/admin/settings 确认；写入 env.adminJWT（= 就绪）。
 func rtWaitReady(t *testing.T, env *e2eEnv, tmp string) {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
-	for {
-		req, err := http.NewRequest(http.MethodGet, env.adminURL("/settings"), nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return
-			}
-		}
-		if !time.Now().Before(deadline) {
-			if data, err := os.ReadFile(filepath.Join(tmp, "server.log")); err == nil {
-				t.Logf("--- server.log ---\n%s", data)
-			}
-			t.Fatal("routing gateway 未在 60s 内就绪")
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	env.adminJWT = env.bootstrapAdminJWT()
 }
 
 // rtPageMax 路由读面契约的 limit 上限（openapi `maximum: 200`）。三面缺省 limit

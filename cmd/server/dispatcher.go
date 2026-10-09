@@ -100,6 +100,9 @@ func (d *dispatcher) Apply(ctx context.Context, ch notify.Change) {
 	if ch.Keys {
 		d.inv.Keys()
 	}
+	if ch.ManagementKeys {
+		d.inv.ManagementKeys()
+	}
 	if ch.Settings {
 		// 即时重算时序：先同步刷新 settings 快照（ReloadSettings，
 		// N 立即入快照），再按 scope 精确重载声明方（auth Reload → gate.reload →

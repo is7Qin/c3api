@@ -14,6 +14,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
+	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/predicate"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/user"
@@ -27,6 +28,7 @@ type UserQuery struct {
 	inters               []Interceptor
 	predicates           []predicate.User
 	withKeys             *KeyQuery
+	withManagementKeys   *ManagementKeyQuery
 	withTempBalances     *TempBalanceQuery
 	withGroupAssignments *GroupAssignmentQuery
 	// intermediate query (i.e. traversal path).
@@ -80,6 +82,28 @@ func (_q *UserQuery) QueryKeys() *KeyQuery {
 			sqlgraph.From(user.Table, user.FieldID, selector),
 			sqlgraph.To(key.Table, key.FieldID),
 			sqlgraph.Edge(sqlgraph.O2M, false, user.KeysTable, user.KeysColumn),
+		)
+		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
+		return fromU, nil
+	}
+	return query
+}
+
+// QueryManagementKeys chains the current query on the "management_keys" edge.
+func (_q *UserQuery) QueryManagementKeys() *ManagementKeyQuery {
+	query := (&ManagementKeyClient{config: _q.config}).Query()
+	query.path = func(ctx context.Context) (fromU *sql.Selector, err error) {
+		if err := _q.prepareQuery(ctx); err != nil {
+			return nil, err
+		}
+		selector := _q.sqlQuery(ctx)
+		if err := selector.Err(); err != nil {
+			return nil, err
+		}
+		step := sqlgraph.NewStep(
+			sqlgraph.From(user.Table, user.FieldID, selector),
+			sqlgraph.To(managementkey.Table, managementkey.FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, user.ManagementKeysTable, user.ManagementKeysColumn),
 		)
 		fromU = sqlgraph.SetNeighbors(_q.driver.Dialect(), step)
 		return fromU, nil
@@ -324,6 +348,7 @@ func (_q *UserQuery) Clone() *UserQuery {
 		inters:               append([]Interceptor{}, _q.inters...),
 		predicates:           append([]predicate.User{}, _q.predicates...),
 		withKeys:             _q.withKeys.Clone(),
+		withManagementKeys:   _q.withManagementKeys.Clone(),
 		withTempBalances:     _q.withTempBalances.Clone(),
 		withGroupAssignments: _q.withGroupAssignments.Clone(),
 		// clone intermediate query.
@@ -340,6 +365,17 @@ func (_q *UserQuery) WithKeys(opts ...func(*KeyQuery)) *UserQuery {
 		opt(query)
 	}
 	_q.withKeys = query
+	return _q
+}
+
+// WithManagementKeys tells the query-builder to eager-load the nodes that are connected to
+// the "management_keys" edge. The optional arguments are used to configure the query builder of the edge.
+func (_q *UserQuery) WithManagementKeys(opts ...func(*ManagementKeyQuery)) *UserQuery {
+	query := (&ManagementKeyClient{config: _q.config}).Query()
+	for _, opt := range opts {
+		opt(query)
+	}
+	_q.withManagementKeys = query
 	return _q
 }
 
@@ -443,8 +479,9 @@ func (_q *UserQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*User, e
 	var (
 		nodes       = []*User{}
 		_spec       = _q.querySpec()
-		loadedTypes = [3]bool{
+		loadedTypes = [4]bool{
 			_q.withKeys != nil,
+			_q.withManagementKeys != nil,
 			_q.withTempBalances != nil,
 			_q.withGroupAssignments != nil,
 		}
@@ -471,6 +508,13 @@ func (_q *UserQuery) sqlAll(ctx context.Context, hooks ...queryHook) ([]*User, e
 		if err := _q.loadKeys(ctx, query, nodes,
 			func(n *User) { n.Edges.Keys = []*Key{} },
 			func(n *User, e *Key) { n.Edges.Keys = append(n.Edges.Keys, e) }); err != nil {
+			return nil, err
+		}
+	}
+	if query := _q.withManagementKeys; query != nil {
+		if err := _q.loadManagementKeys(ctx, query, nodes,
+			func(n *User) { n.Edges.ManagementKeys = []*ManagementKey{} },
+			func(n *User, e *ManagementKey) { n.Edges.ManagementKeys = append(n.Edges.ManagementKeys, e) }); err != nil {
 			return nil, err
 		}
 	}
@@ -506,6 +550,36 @@ func (_q *UserQuery) loadKeys(ctx context.Context, query *KeyQuery, nodes []*Use
 	}
 	query.Where(predicate.Key(func(s *sql.Selector) {
 		s.Where(sql.InValues(s.C(user.KeysColumn), fks...))
+	}))
+	neighbors, err := query.All(ctx)
+	if err != nil {
+		return err
+	}
+	for _, n := range neighbors {
+		fk := n.UserID
+		node, ok := nodeids[fk]
+		if !ok {
+			return fmt.Errorf(`unexpected referenced foreign-key "user_id" returned %v for node %v`, fk, n.ID)
+		}
+		assign(node, n)
+	}
+	return nil
+}
+func (_q *UserQuery) loadManagementKeys(ctx context.Context, query *ManagementKeyQuery, nodes []*User, init func(*User), assign func(*User, *ManagementKey)) error {
+	fks := make([]driver.Value, 0, len(nodes))
+	nodeids := make(map[int64]*User)
+	for i := range nodes {
+		fks = append(fks, nodes[i].ID)
+		nodeids[nodes[i].ID] = nodes[i]
+		if init != nil {
+			init(nodes[i])
+		}
+	}
+	if len(query.ctx.Fields) > 0 {
+		query.ctx.AppendFieldOnce(managementkey.FieldUserID)
+	}
+	query.Where(predicate.ManagementKey(func(s *sql.Selector) {
+		s.Where(sql.InValues(s.C(user.ManagementKeysColumn), fks...))
 	}))
 	neighbors, err := query.All(ctx)
 	if err != nil {

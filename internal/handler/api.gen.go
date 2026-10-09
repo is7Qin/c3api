@@ -1384,7 +1384,7 @@ type RedemptionCode struct {
 	Code      string    `json:"Code"`
 	CreatedAt time.Time `json:"CreatedAt"`
 
-	// CreatedBy 0 = 系统（静态 admin token）；>0 = platform_admin 用户 id
+	// CreatedBy platform_admin 用户 id（adminAuth 鉴权路径恒注入 owner id）；0 = 系统/无归属
 	CreatedBy int64 `json:"CreatedBy"`
 
 	// ExpiresAt 码未兑换即过期；null = 永久

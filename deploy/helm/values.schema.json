@@ -34,8 +34,7 @@
       "properties": {
         "create": { "type": "boolean" },
         "existingSecret": { "type": "string" },
-        "jwtSecret": { "type": "string" },
-        "adminToken": { "type": "string" }
+        "jwtSecret": { "type": "string" }
       }
     },
     "externalDatabase": {

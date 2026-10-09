@@ -92,7 +92,7 @@ func TestPostAccountsAdminProjectsSupplierUserID(t *testing.T) {
 		store := newFakeStore()
 		store.tpls[1] = &domain.Template{ID: 1, Name: "codex-tpl", CredentialType: credential.TypeCodexOAuth,
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}}
-		svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Keys: &fakeKeys{}, EmailCodeStore: store})
+		svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Auth: &fakeKeys{}, EmailCodeStore: store})
 		api := New(svc)
 
 		req := httptest.NewRequest(http.MethodPost, "/api/admin/accounts",

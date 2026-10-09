@@ -126,7 +126,7 @@ func (c *countingStore) ListUserEmails(ctx context.Context, ids []int64) (map[in
 // overviewPGRouter 真实 PG + 契约路由（admin token 中间件；count 可为 nil）。
 func overviewPGRouter(t *testing.T, st service.Store, sched service.RuntimeProvider, opts OpsOptions) (*AdminAPI, func(method, path string) *httptest.ResponseRecorder) {
 	t.Helper()
-	svc := service.New(service.Deps{Store: st, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := service.New(service.Deps{Store: st, Scheduler: sched, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
 	h := New(svc, opts)
 	r := chi.NewRouter()
 	r.Use(func(next http.Handler) http.Handler { // admin token 中间件
@@ -536,4 +536,9 @@ func (p pgUserStatus) UserSnapshot(userID int64) (domain.UserSnapshot, bool) {
 		return domain.UserSnapshot{}, false
 	}
 	return domain.UserSnapshot{Status: u.Status, Role: u.Role}, true
+}
+
+// AuthenticateManagement 补全 auth.SnapshotProvider（users-only → mgmt 恒 false）。
+func (p pgUserStatus) AuthenticateManagement(*http.Request) (domain.ManagementKeyMeta, bool) {
+	return domain.ManagementKeyMeta{}, false
 }

@@ -2,8 +2,8 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package server 装配 chi 路由：/api/admin/*（静态 token OR platform_admin JWT）+
-// /api/user/*（JWT 保护，register/login 公开）+ 三个 AI 端点 + /healthz。
+// Package server 装配 chi 路由：/api/admin/*（platform_admin JWT 或该身份的管理
+// key mk-）+ /api/user/*（身份鉴权，register/login 公开）+ 三个 AI 端点 + /healthz。
 // 架构约束：所有 API 统一收口于 /api/*，前端 SPA 占用根及 /api/user/*、/app/*，
 // 两者无前缀重叠，SPA fallback 可无歧义地回 index.html。
 package server
@@ -23,14 +23,16 @@ import (
 )
 
 type Options struct {
-	AdminToken        string
-	JWTIssuer         *auth.Issuer            // platform_admin JWT 鉴权（/api/admin 扩展）
-	UserStatus        auth.UserStatusProvider // 用户快照 status+role（JWT 鉴权路径禁用/降权即拒；nil = JWT 路径全拒）
+	JWTIssuer *auth.Issuer // platform_admin JWT 鉴权（/api/admin 扩展）
+	// Auth 单一鉴权快照面（users + mgmt 合并，proxy.Auth 实现）：adminAuth 的
+	// JWT 分支查用户快照（status+role+token_version），mk- 分支查管理 key + owner
+	// 快照；nil = 两条路径全拒（fail-closed）。
+	Auth              auth.SnapshotProvider
 	MaxInflight       int64
 	ReadHeaderTimeout time.Duration
 	MaxHeaderBytes    int
 	AdminHandler      http.Handler // 已挂 /api/admin/* 路由
-	UserHandler       http.Handler // 已挂 /api/user/* 路由（内部完成公开/JWT 分流）
+	UserHandler       http.Handler // 已挂 /api/user/* 路由（内部完成公开/身份分流）
 	// SupplierHandler 供应商面（/api/user/supplier/*）：RequireJWT + 快照基
 	// RequireRole(supplier|platform_admin) + 作用域注入 + **契约生成路由**
 	// （openapi 里 tag `supplier` 的 path；未登记者未注册 ⇒ 404），账号/分组(只读)/
@@ -74,9 +76,9 @@ func NewServer(opts Options) *Server {
 	})
 
 	r.Group(func(r chi.Router) {
-		// 管理面鉴权（adminAuth，定义见 middleware.go）：静态 admin token OR
-		// platform_admin JWT（两个都过才拒）。/api/admin/ops/workers 运维观测在
-		// AdminHandler 内（生成路由），同组鉴权。
+		// 管理面鉴权（adminAuth，定义见 middleware.go）：platform_admin JWT 或
+		// platform_admin 身份的管理 key mk-（两者都过才拒）。/api/admin/ops/workers
+		// 运维观测在 AdminHandler 内（生成路由），同组鉴权。
 		r.Use(adminAuth(opts))
 		if opts.AdminHandler != nil {
 			// 用 Handle 而非 Mount：chi v5.3.1 对同一 pattern 重复 Mount 会 panic，

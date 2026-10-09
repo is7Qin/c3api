@@ -396,6 +396,11 @@ func (k *fakeKeyRegistrar) Delete(hash string) {
 	k.deleted = append(k.deleted, hash)
 }
 
+// UpsertManagementKey/DeleteManagementKey 补全 AuthRegistrar（管理 key 面 no-op：
+// 本 fake 只记录客户端 key 快照增量）。
+func (k *fakeKeyRegistrar) UpsertManagementKey(string, domain.ManagementKeyMeta) {}
+func (k *fakeKeyRegistrar) DeleteManagementKey(string)                           {}
+
 func TestBatchDeleteGroupsKeyCleanup(t *testing.T) {
 	fs := newFakeStore()
 	keys := &fakeKeyRegistrar{}
