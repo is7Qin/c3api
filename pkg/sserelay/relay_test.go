@@ -66,30 +66,30 @@ func TestRelayVeryLongFrame(t *testing.T) {
 
 // TestRelayEOFFlushesFinalFrameWithoutBlankLine 回归：EOF 双返回
 // （"数据+io.EOF"，无末尾空行的关闭风格——第三方兼容上游）时末帧必须 flush
-// ——否则 Observer 看不到 completed 帧 → usage 提取落空 → cost=0 落账；
+// ——否则 OnEvent 看不到 completed 帧 → usage 提取落空 → cost=0 落账；
 // 输出字节必须完整原样（EOF 中途截断按 WHATWG 视同空行派发直写）。
 func TestRelayEOFFlushesFinalFrameWithoutBlankLine(t *testing.T) {
 	src := "data: {\"type\":\"response.completed\",\"usage\":{\"total_tokens\":9}}\n"
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
-	require.Len(t, got, 1, "EOF 无空行帧必须派发给 Observer（丢帧 = 计费为零）")
+	require.Len(t, got, 1, "EOF 无空行帧必须派发给 OnEvent（丢帧 = 计费为零）")
 	require.Equal(t, `{"type":"response.completed","usage":{"total_tokens":9}}`, string(got[0].Data))
 	require.Equal(t, src, rec.Body.String(), "输出字节必须完整原样转发")
 }
 
 // TestRelayEOFFlushesLongLineWithoutNewline 顺带覆盖：ErrBufferFull
 // + EOF 双返回的长行（> 8KiB bufio buffer、无末尾换行）——末帧由多段累积，
-// EOF 时必须整体 flush（字节完整 + Observer 可见），不可丢。
+// EOF 时必须整体 flush（字节完整 + OnEvent 可见），不可丢。
 func TestRelayEOFFlushesLongLineWithoutNewline(t *testing.T) {
 	long := strings.Repeat("x", 1<<20) // 1 MiB 单行
 	src := "data: " + long             // 无 \n
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "ErrBufferFull+EOF 长行必须派发为末帧")
 	require.Equal(t, long, string(got[0].Data), "长行 Data 必须全量命中（旧实现截断于首 chunk）")
@@ -117,7 +117,7 @@ func TestRelayLongLineDataFull(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "长行帧不得拆出多余空帧")
 	require.Equal(t, payload, string(got[0].Data), "Data 必须全量命中（截断 = usage 提取落空 = 计费归零）")
@@ -134,7 +134,7 @@ func TestRelayLongLineColonInContinuation(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, payload, string(got[0].Data), "续片含冒号必须原样并入 data")
@@ -148,7 +148,7 @@ func TestRelayCommentLinesNotInData(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "x", string(got[0].Data), "注释行不得进入 Data")
@@ -166,7 +166,7 @@ func TestRelayLongLineForkPoint8186(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "孤立 \n 尾 chunk 不得触发空帧 flush（gating 失效 = flushes=2+空帧）")
 	require.Equal(t, payload, string(got[0].Data))
@@ -181,7 +181,7 @@ func TestRelayLongLineCRLF(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, payload, string(got[0].Data), "CRLF 行终止符必须剥离")
@@ -196,18 +196,18 @@ func TestRelayMultiDataAndLongLineMixed(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "a\n"+long+"\nb", string(got[0].Data), "\n 合并语义不得被续片破坏")
 	require.Equal(t, src, rec.Body.String())
 }
 
-func TestRelayObserverReceivesTypedEvent(t *testing.T) {
+func TestRelayOnEventReceivesTypedEvent(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "event: message_delta\ndata: {\"usage\":{\"output_tokens\":5}}\n\n", Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "message_delta", string(got[0].Event))
@@ -215,22 +215,22 @@ func TestRelayObserverReceivesTypedEvent(t *testing.T) {
 	require.Contains(t, string(got[0].Raw), "event: message_delta")
 }
 
-func TestRelayObserverReceivesDone(t *testing.T) {
+func TestRelayOnEventReceivesDone(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "data: [DONE]\n\n", Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "", string(got[0].Event))
 	require.Equal(t, "[DONE]", string(got[0].Data))
 }
 
-func TestRelayMultiLineDataMergedInObserver(t *testing.T) {
+func TestRelayMultiLineDataMergedInOnEvent(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "data: a\ndata: b\n\n", Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "a\nb", string(got[0].Data)) // SSE 规范：多行 data 以 \n 连接
@@ -398,6 +398,34 @@ type errorWriter struct{}
 func (w *errorWriter) Header() http.Header         { return http.Header{} }
 func (w *errorWriter) Write(p []byte) (int, error) { return 0, errors.New("client gone") }
 func (w *errorWriter) WriteHeader(int)             {}
+
+// failAfterFirstWriteWriter 首次 Write 成功、其后失败：构造「首帧即时 flush 成功后，
+// 末次 drain flush 失败」的收尾路径。
+type failAfterFirstWriteWriter struct {
+	err   error
+	calls int
+}
+
+func (w *failAfterFirstWriteWriter) Header() http.Header { return http.Header{} }
+func (w *failAfterFirstWriteWriter) WriteHeader(int)     {}
+func (w *failAfterFirstWriteWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls > 1 {
+		return 0, w.err
+	}
+	return len(p), nil
+}
+
+// TestRelayFinalDrainErrorPropagates §3.8 解耦：Config{} 无 Cancel、首帧成功、
+// EOF 残帧入缓冲、末次 drain 失败 → Relay 返回非 nil（drain 错不丢弃、不依赖
+// 是否自取消）。
+func TestRelayFinalDrainErrorPropagates(t *testing.T) {
+	werr := errors.New("drain boom")
+	wr := &failAfterFirstWriteWriter{err: werr}
+	err := Relay(context.Background(), wr, strings.NewReader("data: a\n\ndata: b"), Config{})
+	require.ErrorIs(t, err, werr, "末次 drain 失败必须传播（即便 Config{} 无 Cancel）")
+	require.Equal(t, 2, wr.calls, "首帧写成功 + 末次 drain 写失败")
+}
 
 func TestRelayContextCancelStops(t *testing.T) {
 	rec := httptest.NewRecorder()

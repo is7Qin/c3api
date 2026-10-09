@@ -115,6 +115,13 @@ type ProxyConfig struct {
 	// LowBalanceThresholdUSD 触发阈值（USD，默认 10）；余额严格小于它时把
 	// 用户级并发上限钳为 LowBalanceMaxConcurrency。派生毫分 = ×1e5 取整。
 	LowBalanceThresholdUSD float64 `koanf:"low_balance_threshold_usd"`
+	// StreamKeepaliveInterval 客户端 SSE 无业务输出时的保活注释间隔
+	// （默认 10s；0 = 关闭通用定时心跳）。仅网关新增/维护的注释受控——
+	// 不改写上游透传字节。五路（chat/responses/anthropic/converted）与
+	// typed images（真上游 SSE 流）均受此键控制；仅 codex images 合成路径
+	//（上游非流、SDK 合成 keepalive+completed）由 SDK 自带 60s 保活驱动，
+	// 不受此键影响（60s 不满足最严 LB 的 ≤60s 读超时）。
+	StreamKeepaliveInterval time.Duration `koanf:"stream_keepalive_interval"`
 }
 
 type UpstreamConfig struct {
@@ -172,7 +179,7 @@ func defaults() *Config {
 		// 计费路径防卡死）由 OpenPG/SettleBalance·SettleFefo 统一补，DSN 无需手工写（用户
 		// 显式配置同名参数时尊重不覆盖；statement_timeout 不设会话级——副作用核实见 f1-impl-report.md）。
 		DB:        DBConfig{MaxConns: 20},
-		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10},
+		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10, StreamKeepaliveInterval: 10 * time.Second},
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
@@ -263,6 +270,9 @@ func validate(c *Config) error {
 	}{
 		{"proxy.upstream_timeout", c.Proxy.UpstreamTimeout, false},
 		{"proxy.upstream_stream_timeout", c.Proxy.UpstreamStreamTimeout, false},
+		// stream_keepalive_interval：0 = 关闭通用定时心跳（合法语义）；
+		// 非 0 必须 ≥1ms（防 ticker panic 面）。
+		{"proxy.stream_keepalive_interval", c.Proxy.StreamKeepaliveInterval, true},
 		{"scheduler.sync_interval", c.Scheduler.SyncInterval, false},
 		{"usage.flush_interval", c.Usage.FlushInterval, false},
 		{"usage.quota_flush_interval", c.Usage.QuotaFlushInterval, false},

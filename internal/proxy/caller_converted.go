@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -29,7 +28,7 @@ import (
 // 协议调用上游（与 responsesCaller/anthropicCaller 同构），响应反向转换回
 // 客户端协议：
 //   - 流式：每帧经 protoconv.StreamMapper 映射后写出（sserelay Mapper；
-//     Observer 仍见原始帧 → 用量提取与模板 caller 逐字同构）
+//     OnEvent 仍见原始帧 → 用量提取与模板 caller 逐字同构）
 //   - 非流式：上游响应 JSON 整体 ConvertResponse 转换
 //
 // 日志按客户端协议记录（buildLog format 参数 = 客户端格式——客户端视角的
@@ -72,19 +71,36 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			return resp.StatusCode, rb, false, nil
+			// 2xx-非-200 归一 502 再交 pipeline（attempt_outcome 拒绝 ResultFailed+2xx）。
+			return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 		}
 		writeSSEHeaders(w)
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
+		defer out.Release()
 		mapper := protoconv.NewStreamMapper(c.dir)
 		var it, ot, tt, cr, cc int64
-		// 首帧到达即记录 TTFT，Observer 仍按目标协议原始帧提取用量。
+		// 首帧到达即记录 TTFT（写出前 seam）；用量仍按目标协议原始帧提取。
 		var ttft *int64
 		clientModel := sel.ClientResponseModel(reqModel)
 		// 异步续接（仅 resp→mess 方向）：首个可续接映射结果 id 出现时快照入队
 		// 一次。id 由 mapper 显式返回（BindableID），不从映射帧机械解析。
 		var contEnqueued bool
+		var lastDrop bool
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
+			Output: out,
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
+				mapped, drop := mapper.Map(string(ev.Event), ev.Data)
+				lastDrop = drop
+				if drop {
+					return nil, true
+				}
+				if clientModel != "" {
+					mapped = rewriteConvertedFrames(mapped, clientModel)
+				}
+				return mapped, false
+			},
+			OnEvent: func(ev sserelay.Event) {
+				// 采样与续接入队统一到写出前 seam（含 drop 帧仍回调；用量走原始帧）。
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
@@ -109,20 +125,12 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						ot = anthropicDeltaOutput(ev.Data)
 					}
 				}
-				mapped, drop := mapper.Map(string(ev.Event), ev.Data)
-				if drop {
-					return nil, true
-				}
-				if clientModel != "" {
-					mapped = rewriteConvertedFrames(mapped, clientModel)
-				}
-				if !contEnqueued && p.contBindWired() && c.dir == domain.ProtocolConvertRespToMess {
+				if !lastDrop && !contEnqueued && p.contBindWired() && c.dir == domain.ProtocolConvertRespToMess {
 					if id := mapper.BindableID(); id != "" {
 						p.contEnqueue(ctx, contProtocolREST, id, groupID)
 						contEnqueued = true
 					}
 				}
-				return mapped, false
 			},
 		})
 		resp.Body.Close()
@@ -133,26 +141,35 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		usage := AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
-			// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
-			if errors.Is(err, context.Canceled) {
+			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
+			switch classifyStreamExit(ctx, out, err, usage, ttft) {
+			case streamExitClientCancel:
+				// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
 				outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
 				p.observeDispatchOutcome(ctx, outcome, nil)
 				// 计费落账由 p.finish 统一收口，routeLog 负责构建日志与用量。
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
+			case streamExitUncommitted:
+				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）
+				return statusOf(err), nil, false, err
+			default: // 写失败 / 已提交
+				if out.Committed() {
+					writeClientStreamError(out, client, err)
+				}
+				code := statusOf(err)
+				commit := CommitUpstreamResponded
+				business := false
+				if code == 0 {
+					commit = CommitSentAmbiguous
+					business = true
+				}
+				outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
+				health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
+				p.observeDispatchOutcome(ctx, outcome, health)
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)))
+				return 0, nil, true, nil
 			}
-			code := statusOf(err)
-			commit := CommitUpstreamResponded
-			business := false
-			if code == 0 {
-				commit = CommitSentAmbiguous
-				business = true
-			}
-			outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-			p.observeDispatchOutcome(ctx, outcome, health)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)))
-			return 0, nil, true, nil
 		}
 		tt = it + ot
 		usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}

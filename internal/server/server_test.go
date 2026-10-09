@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -25,6 +26,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/pkg/aiclient"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 func TestHealthz(t *testing.T) {
@@ -589,6 +591,71 @@ type deadlineRecorder struct {
 func (w *deadlineRecorder) SetWriteDeadline(t time.Time) error {
 	w.deadline <- t
 	return nil
+}
+
+// TestStatusWriterFlushError statusWriter.FlushError 转发语义（§3.6）：
+// 向内层转发；成功 flush 引发隐式 200 → 同步置 status/headersWritten（防
+// recoverer 误判未写头）；底层单独 FlushError 失败原样返回且不置标志；不支持
+// flush 的底层 → ErrNotSupported 且不置标志。
+func TestStatusWriterFlushError(t *testing.T) {
+	t.Run("success updates implicit 200", func(t *testing.T) {
+		fw := &flushOnlyWriter{}
+		sw := &statusWriter{ResponseWriter: fw}
+		require.NoError(t, sw.FlushError())
+		require.Equal(t, 1, fw.flushes, "必须向内层 flush")
+		require.True(t, sw.headersWritten, "隐式写头必须同步置标志")
+		require.Equal(t, http.StatusOK, sw.status)
+	})
+	t.Run("underlying FlushError error returned", func(t *testing.T) {
+		boom := errors.New("flush boom")
+		sw := &statusWriter{ResponseWriter: &flushErrWriter{err: boom}}
+		require.ErrorIs(t, sw.FlushError(), boom)
+		require.False(t, sw.headersWritten, "flush 失败不得置已写头标志")
+	})
+	t.Run("no flush support -> ErrNotSupported", func(t *testing.T) {
+		sw := &statusWriter{ResponseWriter: plainNoFlush{}}
+		require.ErrorIs(t, sw.FlushError(), http.ErrNotSupported)
+		require.False(t, sw.headersWritten)
+	})
+}
+
+type flushOnlyWriter struct{ flushes int }
+
+func (w *flushOnlyWriter) Header() http.Header         { return http.Header{} }
+func (w *flushOnlyWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (w *flushOnlyWriter) WriteHeader(int)             {}
+func (w *flushOnlyWriter) Flush()                      { w.flushes++ }
+
+type flushErrWriter struct{ err error }
+
+func (w *flushErrWriter) Header() http.Header         { return http.Header{} }
+func (w *flushErrWriter) Write(p []byte) (int, error) { return len(p), nil }
+func (w *flushErrWriter) WriteHeader(int)             {}
+func (w *flushErrWriter) FlushError() error           { return w.err }
+
+type plainNoFlush struct{}
+
+func (plainNoFlush) Header() http.Header         { return http.Header{} }
+func (plainNoFlush) Write(p []byte) (int, error) { return len(p), nil }
+func (plainNoFlush) WriteHeader(int)             {}
+
+// TestOutputThroughStatusWriterFlushError 真实包装层集成（statusWriter → Output）：
+// sserelay 的可返错 flush 探测链必须命中 statusWriter.FlushError（而非被包装层
+// 吞掉）。Write 成功但内层 FlushError 失败 → Output 置 writeFailed、取消上游；
+// 字节已过底层写边界（businessSent=true）但不推进可见调度。
+func TestOutputThroughStatusWriterFlushError(t *testing.T) {
+	boom := errors.New("flush boom")
+	sw := &statusWriter{ResponseWriter: &flushErrWriter{err: boom}}
+	var canceled atomic.Bool
+	out := sserelay.NewOutput(sw, 0, sserelay.OutputOptions{Cancel: func() { canceled.Store(true) }})
+	defer out.Release()
+
+	_, err := out.WriteFrame([]byte("data: x\n\n"))
+	require.ErrorIs(t, err, boom, "包装层 FlushError 必须被探测链命中并返错")
+	require.True(t, out.WriteFailed())
+	require.ErrorIs(t, out.IOErr(), boom)
+	require.True(t, canceled.Load(), "flush 失败必须取消上游 ctx")
+	require.True(t, out.BusinessFrameSent(), "字节已过底层写边界（Write 成功）→ 真实下行")
 }
 
 // --- recoverer：debug.Stack + 已写头静默关连接（受益面仅 SSE） ---

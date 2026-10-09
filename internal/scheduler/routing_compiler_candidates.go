@@ -192,7 +192,7 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 // StatusDisabled, plus leaf-freshness and concurrency CAS), which applies the
 // identical gates per attempt, strictly fresher, with skip-and-continue.
 // Compiled health additionally churned generations and invalidated in-flight
-// plans — deleting the class removes a harm (anti-harm clause).
+// plans — deleting the class removes a harm (anti-harm provision).
 func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFacts {
 	out := candidates[:0]
 	for _, fact := range candidates {

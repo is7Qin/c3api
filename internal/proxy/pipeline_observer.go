@@ -27,6 +27,12 @@ type ctxKeyDispatch struct{}
 type dispatchObservation struct {
 	observer *AttemptObserver
 	base     AttemptOutcome
+	// carriedUsage/carriedTTFT：caller 在「未提交 → 交 pipeline」出口（统一
+	// 出口 helper）写入的已采 usage/TTFT，供 observeDispatchFailure 合并进
+	// handled=false 结束观测（§3.7）。写读均在同一请求 goroutine
+	// 顺序发生（caller 先写、返回后 loop 再读），无需加锁。
+	carriedUsage AttemptUsage
+	carriedTTFT  *int64
 }
 
 func (d *dispatchObservation) abandon() {
@@ -407,15 +413,29 @@ func (p *Proxy) beginDispatch(ctx context.Context, sel *scheduler.Selection, att
 
 // observeDispatchFailure completes the owner observation for a handled=false
 // classification. Health marking stays with the loop's Classify→MarkResult
-// path (rule punish gating), so health is nil here.
+// path (rule punish gating), so health is nil here. Caller-collected usage/TTFT
+// written on the uncommitted exit (withCarriedUsage) are overlaid so a
+// pre-commit stream failure keeps the partial usage it already saw (§3.7).
 func (p *Proxy) observeDispatchFailure(ctx context.Context, d *dispatchObservation, code int) {
 	if d == nil || d.observer == nil {
 		return
 	}
 	if code == 0 && ctx.Err() != nil {
-		_ = d.observer.Cancel(dispatchFailureOutcome(d.base, 0, true, true))
+		_ = d.observer.Cancel(withCarriedUsage(dispatchFailureOutcome(d.base, 0, true, true), d))
 		return
 	}
 	terminal := code != 0 && code != http.StatusTooManyRequests
-	_ = d.observer.Complete(dispatchFailureOutcome(d.base, code, false, terminal), nil)
+	_ = d.observer.Complete(withCarriedUsage(dispatchFailureOutcome(d.base, code, false, terminal), d), nil)
+}
+
+// withCarriedUsage overlays caller-collected usage/TTFT (written by the
+// uncommitted exit helper) onto a handled=false failure outcome; nil observation
+// or unwritten fields leave the outcome unchanged (zero-value overlay).
+func withCarriedUsage(o AttemptOutcome, d *dispatchObservation) AttemptOutcome {
+	if d == nil {
+		return o
+	}
+	o.Usage = d.carriedUsage
+	o.Timing.TTFTMS = d.carriedTTFT
+	return o
 }

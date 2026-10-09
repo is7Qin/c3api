@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/pkg/logx"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // adminUserIDKey /admin 认证中间件写入的 platform_admin 用户 id（created_by 用，
@@ -175,6 +176,20 @@ func (w *statusWriter) Flush() {
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// FlushError 转发 flush 到内层（单一探测链实现见 sserelay.FlushWriter：
+// FlushError→Flusher→Unwrap，与 http.ResponseController 一致）；并在 flush 成功
+// 引发隐式写头（net/http 语义 = 首次 flush 前自动 WriteHeader(200)）时同步置
+// status/headersWritten——否则 recoverer 误判 "未写头" 仍写 500 body 污染已开始
+// 的流（与 Write 覆写同款）。flush 失败（如 ErrNotSupported，未真正写头）不置标志。
+func (w *statusWriter) FlushError() error {
+	err := sserelay.FlushWriter(w.ResponseWriter)
+	if err == nil && !w.headersWritten {
+		w.status = http.StatusOK
+		w.headersWritten = true
+	}
+	return err
 }
 
 // Hijack 委托给内层 writer（WS 升级必需——coder/websocket Accept 要求

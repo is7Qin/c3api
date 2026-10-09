@@ -39,7 +39,7 @@ func TestSserelayCompletedUsageLongLine(t *testing.T) {
 	var it, ot, tt, cr int64
 	rec := httptest.NewRecorder()
 	require.NoError(t, sserelay.Relay(context.Background(), rec, strings.NewReader(src), sserelay.Config{
-		Observer: func(ev sserelay.Event) {
+		OnEvent: func(ev sserelay.Event) {
 			// 镜像 caller_responses.go:89-92 消费链：EventName 判定 +
 			// responsesCompletedUsage 提取
 			if string(ev.EventName()) == "response.completed" {

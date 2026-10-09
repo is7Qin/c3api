@@ -22,7 +22,7 @@ import (
 // changed here): the branch ships T1 (folded group-invalidation batch, shared
 // deadline, sticky retry) + T2 (single snapshotStatic constructor / cached
 // planKey) + T4 (candidate-build + cache-domain alloc trims). T3 (single-copy
-// decision encoding) was REVERTED under the spec's "未达即回退" clause (commit
+// decision encoding) was REVERTED under the spec's "未达即回退" rule (commit
 // 6c89167e): no T3 production change ships and NO encoder retained-buffer
 // reduction is claimed. The frozen T3 thresholds remain equal ≤1.2× /
 // changed ≤2.5× (recorded for history only; T3 acceptance no longer applies).

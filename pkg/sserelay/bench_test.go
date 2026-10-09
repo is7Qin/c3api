@@ -114,8 +114,24 @@ func BenchmarkRelayBulk16K(b *testing.B) {
 	}
 }
 
+// BenchmarkRelayHeartbeatOff 保活关闭（Interval=0）生产长流形态：验证统一下行
+// Output 迁移相对迁移前未使用 Output 的基线 allocs/op、B/op 无新增。工作负载
+// 与 BenchmarkRelayTokenStream 相同（500 × ~180B token 帧），仅显式钉住
+// Interval=0 语义。
+func BenchmarkRelayHeartbeatOff(b *testing.B) {
+	src := sseFrames(500, 180)
+	dst := &benchFlusher{hdr: http.Header{}}
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		dst.buf.Reset()
+		if err := Relay(context.Background(), dst, bytes.NewReader(src), Config{Interval: 0}); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 // BenchmarkIOCopyFloor 同负载 io.Copy 下限：理想 dumb pipe 的 CPU/alloc 基线，
-// 用于计算 Relay 相对裸拷贝的开销倍数（含帧解析/Observer 视图/drain 机制）。
+// 用于计算 Relay 相对裸拷贝的开销倍数（含帧解析/OnEvent 视图/drain 机制）。
 func BenchmarkIOCopyFloor(b *testing.B) {
 	src := sseFrames(500, 180)
 	sink := &bytes.Buffer{}

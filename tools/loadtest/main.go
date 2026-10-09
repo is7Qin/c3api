@@ -11,9 +11,9 @@
 // -mode stream -keys keys.txt、一个 -mode fill，各自 -out 落盘。同机交错跑 +
 // 每请求 CPU 对比（压测机 loadavg 50+，单进程内混流会让 fill 请求被流式
 // 长连接饿死，双进程是简单可靠的分流）。
-// 相对 brief 原代码的修正（均标注在行内）：
+// 相对原设想的修正（均标注在行内）：
 //   - os import 用 -out 兜底：把 RESULT 摘要同时写入文件（验收记录留档）。
-//   - 采样 goroutine 的 elapsed 直接取真实经过时间（brief 里 time.Since 套
+//   - 采样 goroutine 的 elapsed 直接取真实经过时间（原设计里 time.Since 套
 //     time.Since 的表达式恒为 ~0s，属"简化输出"占位）。
 //   - 首字节采样从 sync.Map 改为 mutex map（并发 CAS 实测在 Go 1.26
 //     HashTrieMap 上高争用会活锁，压测卡死，见压测记录）。

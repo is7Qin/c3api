@@ -43,6 +43,14 @@ proxy = {
   # 默认开启（5 / 10）——升级后余额 < $10 的用户即时被钳为 5（原上限更大/不限者）。
   low_balance_max_concurrency = 5,
   low_balance_threshold_usd = 10,
+  # SSE 客户端保活：客户端长时间无业务输出时，网关按此间隔写出 `: keepalive\n`
+  # 注释帧以维持连接（默认 10s，规避 CF 524 等中间代理读超时）。0 = 关闭通用
+  # 定时心跳。仅网关新增/维护注释，不改写上游透传字节。五路（chat/responses/
+  # anthropic/converted）与 typed images 均受此键控制；仅 codex images 合成路径
+  #（上游非流、由 SDK 合成 keepalive+completed）不受此键影响——其保活由 SDK
+  # 自带 60s 驱动（注：60s 不满足最严 LB 的 ≤60s 读超时，需更短保活时该路径
+  # 无法通过本键收紧）。
+  stream_keepalive_interval = "10s",
 }
 upstream = {
   max_idle_conns = 8192,

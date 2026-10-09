@@ -399,7 +399,7 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 			lastErrMsg = domain.TruncateErrMsg(string(respBody))
 		}
 		// 5xx/0 分支统一走 Classify（seed-5xx/seed-network 恒命中 → 恒投递，
-		// 行为不变）。防呆 b（gate r4）：分支不拆 ≠ 恒传 Kind5xx——事件 kind
+		// 行为不变）。防呆 b：分支不拆 ≠ 恒传 Kind5xx——事件 kind
 		// 按单点分流 helper（code==0→network）计算，否则 code==0 事件不命中
 		// seed-network → 不投递 → 连接级冷却整体失效。
 		kind := scheduler.RuleKindOf(code)

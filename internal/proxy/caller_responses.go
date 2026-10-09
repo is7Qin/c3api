@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
@@ -54,22 +53,25 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			return resp.StatusCode, rb, false, nil
+			// 2xx-非-200 归一 502 再交 pipeline（attempt_outcome 拒绝 ResultFailed+2xx）。
+			return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 		}
 		writeSSEHeaders(w)
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
+		defer out.Release()
 		var it, ot, tt, cr, cc int64
 		var img int64 // 图像调用计数旁路，仅 completed 帧最终覆盖
-		// TTFT 首帧语义：首个 SSE 事件写出后回调记录毫秒，已提交流无帧则保持 nil
+		// TTFT 首帧语义：首个 SSE 事件（写出前 seam）记录毫秒，已提交流无帧则保持 nil
 		var ttft *int64
-		// 异步续接（M1：写出前点入队）：wrap 基础 Mapper——首个有效响应 id 帧在
-		// 写出前快照入队一次，再委托原映射输出。未装配（store/worker nil）不加
-		// wrap，保持零行为变化。Observer 的 TTFT/usage/图像计数保持 post-write 原样。
+		// 异步续接（§3.1：统一写出前 seam）：首个有效响应 id 帧在写出前快照入队
+		// 一次。未装配（store/worker nil）不加逻辑，保持零行为变化。
 		var contEnqueued bool
 		mapper := newResponseModelSSEMapper(sel.ClientResponseModel(reqModel))
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
-			Mapper: p.contBindMapper(ctx, &contEnqueued, groupID, mapper),
-			Observer: func(ev sserelay.Event) {
-				// 首帧即 TTFT，Observer 在帧写出后触发，最接近客户端感知
+			Output: out,
+			Mapper: mapper,
+			OnEvent: func(ev sserelay.Event) {
+				// 统一写出前采样 seam：TTFT/usage/图像计数 + 续接入队同点。
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
@@ -84,51 +86,65 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						img = respImageCountCompleted(ev.Data)
 					}
 				}
+				if !contEnqueued && p.contBindWired() {
+					if id := contFrameID(ev.Data); id != "" {
+						p.contEnqueue(ctx, contProtocolREST, id, groupID)
+						contEnqueued = true
+					}
+				}
 			},
 		})
 		resp.Body.Close()
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
-		// 观测器恰好一次归属：后续分支仅走 Cancel 或 Complete 之一
+		// 观测器恰好一次归属：后续分支仅走 Cancel / 失败 / 成功之一
 		base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, tt, cr, cc, img))
 		if err != nil {
-			// 客户端取消 vs 上游停滞：Canceled 为客户端断开，DeadlineExceeded 为上游超时，后者走失败分支
-			if errors.Is(err, context.Canceled) {
+			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
+			switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img}, ttft) {
+			case streamExitClientCancel:
 				// 已提交流用量保留：沿用断前已收到的 usage 帧，无则 0，记 200+ErrAbort 防丢日志
-				out := base
-				out.Result = ResultClientCancel
-				out.Commit = CommitResponseStarted
-				out.HTTPStatus = 0
-				out.Terminal = true
-				out.BusinessFrameSent = true
-				p.observeDispatchOutcome(ctx, out, nil)
+				oc := base
+				oc.Result = ResultClientCancel
+				oc.Commit = CommitResponseStarted
+				oc.HTTPStatus = 0
+				oc.Terminal = true
+				oc.BusinessFrameSent = true
+				p.observeDispatchOutcome(ctx, oc, nil)
+				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
+				return 0, nil, true, nil
+			case streamExitUncommitted:
+				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
+				return statusOf(err), nil, false, err
+			default: // 写失败 / 已提交
+				if out.Committed() {
+					writeClientStreamError(out, domain.FormatOpenAIResponses, err)
+				}
+				// 上游流中止：同样保留已收集用量，按连接级/5xx 分类
+				oc := base
+				oc.Result = ResultFailed
+				oc.HTTPStatus = 0
+				oc.Commit = CommitSentAmbiguous
+				oc.Terminal = true
+				oc.BusinessFrameSent = true
+				health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(statusOf(err)), ErrorMessage: err.Error()}
+				p.observeDispatchOutcome(ctx, oc, health)
+				if p.log != nil {
+					p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
+				}
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 				return 0, nil, true, nil
 			}
-			// 上游流中止：同样保留已收集用量，按连接级/5xx 分类
-			out := base
-			out.Result = ResultFailed
-			out.HTTPStatus = 0
-			out.Commit = CommitSentAmbiguous
-			out.Terminal = true
-			out.BusinessFrameSent = true
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(statusOf(err)), ErrorMessage: err.Error()}
-			p.observeDispatchOutcome(ctx, out, health)
-			if p.log != nil {
-				p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
-			}
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
-			return 0, nil, true, nil
 		}
-		out := base
-		out.Result = ResultSuccess
-		out.HTTPStatus = 200
-		out.Commit = CommitClientCommitted
-		out.Terminal = true
-		out.BusinessFrameSent = true
+		oc := base
+		oc.Result = ResultSuccess
+		oc.HTTPStatus = 200
+		oc.Commit = CommitClientCommitted
+		oc.Terminal = true
+		oc.BusinessFrameSent = true
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
-		p.observeDispatchOutcome(ctx, out, health)
+		p.observeDispatchOutcome(ctx, oc, health)
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 		return 200, nil, true, nil
 	}
