@@ -26,13 +26,15 @@ import (
 // ListQuery 列表查询：分页/筛选/排序。Sort 为白名单内字段名（如 "name"），
 // 非法值返回 ErrInvalidSort；Order 仅 "asc"/"desc"（空 = desc）。
 type ListQuery struct {
-	Limit      int    // <=0 → 20
-	Offset     int    // <0 → 0
-	Name       string // 模糊匹配（不区分大小写）
-	Email      string // 用户专属：邮箱模糊匹配
-	Sort       string // 空 → id
-	Order      string // asc/desc；空 → desc
-	TemplateID int64  // 账号专属：0 = 不过滤
+	Limit           int    // <=0 → 20
+	Offset          int    // <0 → 0
+	Name            string // 模糊匹配（不区分大小写）
+	Email           string // 用户专属：邮箱模糊匹配
+	Role            string // 用户专属：角色精确过滤（空 = 不过滤）；未知非空值 → 空列表
+	SupplierSurface bool   // 用户专属：true = 仅供应商面可达角色（domain.SupplierSurfaceRoles），覆盖 Role
+	Sort            string // 空 → id
+	Order           string // asc/desc；空 → desc
+	TemplateID      int64  // 账号专属：0 = 不过滤
 	// Enabled 账号专属三态过滤：nil = 不过滤；&true = 仅启用；&false = 仅禁用。
 	// 与运行时失效（failed_at）无关——管理面启停是独立维度。
 	Enabled *bool

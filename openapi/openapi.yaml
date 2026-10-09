@@ -548,6 +548,8 @@ paths:
         - { name: email, in: query, schema: { type: string } }
         - { name: sort, in: query, schema: { type: string } }
         - { name: order, in: query, schema: { type: string, enum: [asc, desc] } }
+        - { name: role, in: query, schema: { type: string, enum: [platform_admin, user, supplier], description: "按角色精确过滤（空 = 不过滤）；未知非空值 → 200 空列表（宽松，不报错）。当 supplier_surface=true 时不生效" } }
+        - { name: supplier_surface, in: query, schema: { type: boolean, description: "true = 仅供应商面可达角色（supplier/platform_admin；单一事实源 domain.SupplierSurfaceRoles）；缺省/false = 不过滤，此时按 role 过滤" } }
       responses:
         '200':
           description: 用户列表

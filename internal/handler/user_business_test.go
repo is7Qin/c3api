@@ -402,6 +402,39 @@ func TestAdminUsers(t *testing.T) {
 	// 缺失用户 → 404
 	rec = doAdmin(http.MethodPut, "/api/admin/users/99999", `{"role":"user"}`, "")
 	require.Equal(t, http.StatusNotFound, rec.Code, "missing user: %s", rec.Body.String())
+
+	// role / supplier_surface 过滤（生成路由透传 + fake 认 q.Role/q.SupplierSurface）。
+	// 追加 supplier 与 user 各一名，构成三角色样本（carol 上方已升级为 platform_admin）。
+	rec = doAdmin(http.MethodPost, "/api/admin/users",
+		`{"email":"dave@example.com","password":"s3cret-pass","role":"supplier"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code, "create supplier: %s", rec.Body.String())
+	rec = doAdmin(http.MethodPost, "/api/admin/users",
+		`{"email":"erin@example.com","password":"s3cret-pass","role":"user"}`, "")
+	require.Equal(t, http.StatusOK, rec.Code, "create user: %s", rec.Body.String())
+
+	listUsers := func(query string) UserListResponse {
+		r := doAdmin(http.MethodGet, "/api/admin/users"+query, "", "")
+		require.Equal(t, http.StatusOK, r.Code, "list %s: %s", query, r.Body.String())
+		var out UserListResponse
+		require.NoError(t, json.Unmarshal(r.Body.Bytes(), &out))
+		return out
+	}
+
+	require.Equal(t, int64(1), listUsers("?role=platform_admin").Total, "role=platform_admin 精确")
+	require.Equal(t, int64(1), listUsers("?role=supplier").Total, "role=supplier 精确")
+	require.Equal(t, int64(1), listUsers("?role=user").Total, "role=user 精确")
+	require.Equal(t, int64(3), listUsers("").Total, "缺省不过滤")
+	require.Equal(t, int64(3), listUsers("?role=").Total, "空 role 不过滤")
+	require.Equal(t, int64(0), listUsers("?role=bogus").Total, "未知非空 role → 200 空列表")
+
+	surf := listUsers("?supplier_surface=true")
+	require.Equal(t, int64(2), surf.Total, "surface = {supplier, platform_admin}")
+	for _, r := range surf.Rows {
+		require.Contains(t, []UserRole{"supplier", "platform_admin"}, *r.Role)
+	}
+	require.Equal(t, int64(2), listUsers("?role=user&supplier_surface=true").Total, "surface 覆盖 role")
+	require.Equal(t, int64(2), listUsers("?role=bogus&supplier_surface=true").Total, "surface 覆盖未知 role")
+	require.Equal(t, int64(1), listUsers("?role=supplier&supplier_surface=false").Total, "surface=false 退化为 role")
 }
 
 // TestAdminPutUsersPatchSemantics patch 形态端到端：只改 balance 的 PUT
