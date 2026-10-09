@@ -130,7 +130,7 @@ func collectImageLogs(t *testing.T, p *Proxy, store *captureLogStore) *domain.Us
 	return store.logs[len(store.logs)-1]
 }
 
-// TestStreamImagePassthrough 事件序列透传：keepalive → ": ping" 注释行；
+// TestStreamImagePassthrough 事件序列透传：keepalive → ": keepalive" 注释行；
 // completed 每张图一个 SSE 帧（b64_json 各自）；usage 仅末事件携带且 JSON
 // tag 直透；首事件即发响应头 + 每事件 Flush；流终计费落账（call_count 数
 // completed、usage 取末事件、ImageCost + 价格快照）。
@@ -163,7 +163,7 @@ func TestStreamImagePassthrough(t *testing.T) {
 	require.Empty(t, body)
 	require.True(t, headOK, "首事件即发响应头 + Flush（CF 524 免疫时序）")
 	// wire 形态：注释行 + 两帧（usage 仅末帧，JSON tag 直透）。
-	require.Equal(t, ": ping\n\n"+
+	require.Equal(t, ": keepalive\n"+
 		"event: image_generation.completed\ndata: {\"b64_json\":\"aGVsbG8=\"}\n\n"+
 		"event: image_generation.completed\ndata: {\"b64_json\":\"d29ybGQ=\",\"usage\":{\"input_tokens\":10,\"input_image_tokens\":100,\"output_tokens\":5,\"output_image_tokens\":50}}\n\n",
 		rec.Body.String())

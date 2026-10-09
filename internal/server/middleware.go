@@ -177,6 +177,38 @@ func (w *statusWriter) Flush() {
 	}
 }
 
+// FlushError 转发 flush 到内层，解析顺序 FlushError→Flusher→Unwrap（与
+// http.ResponseController 一致，但显式保留 FlushError 形态以便中间件链透传）；
+// 并在 flush 成功引发隐式写头（net/http 语义 = 首次 flush 前自动
+// WriteHeader(200)）时同步置 status/headersWritten——否则 recoverer 误判
+// "未写头"仍写 500 body 污染已开始的流（与 Write 覆写同款）。flush 失败
+// （如 ErrNotSupported，未真正写头）不置标志。
+func (w *statusWriter) FlushError() error {
+	err := flushErrorTo(w.ResponseWriter)
+	if err == nil && !w.headersWritten {
+		w.status = http.StatusOK
+		w.headersWritten = true
+	}
+	return err
+}
+
+// flushErrorTo 把 flush 沿 FlushError→Flusher→Unwrap 链下探到真实 writer：
+// 支持 FlushError 的底层原样返回其错误；仅 http.Flusher → 调用 Flush 且无错；
+// 否则沿 Unwrap 继续；全部缺失 → ErrNotSupported。
+func flushErrorTo(w http.ResponseWriter) error {
+	if fe, ok := w.(interface{ FlushError() error }); ok {
+		return fe.FlushError()
+	}
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+		return nil
+	}
+	if u, ok := w.(interface{ Unwrap() http.ResponseWriter }); ok {
+		return flushErrorTo(u.Unwrap())
+	}
+	return http.ErrNotSupported
+}
+
 // Hijack 委托给内层 writer（WS 升级必需——coder/websocket Accept 要求
 // http.Hijacker，补压测发现：accessLog 包裹后 resp-ws 全部升级被 501 拒）。
 // 纯转发不添加状态判定：header 是否已写等语义由底层 net/http 自带（实测

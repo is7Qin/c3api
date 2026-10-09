@@ -16,6 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/logx"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // imageStreamGenerator 流式生图能力，与 sdkbridge.Codex.GenerateImageStream 同签名。
@@ -38,43 +39,44 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			opTag = OperationTag(domain.OpImagesGenerations)
 		}
 	}
+	// 统一下行 owner：该路径始终关闭通用定时保活（SDK 60s 驱动）；Interval=0
+	// 不关 images SDK 自带保活。首事件时序保留：CommitAndFlush → caller 记
+	// TTFT → Heartbeat/WriteFrame；无事件成功也提交并 flush。Output 不采 TTFT。
+	out := sserelay.NewOutput(w, 0, sserelay.OutputOptions{Cancel: cancel})
+	defer out.Release()
 	var (
-		count       int64
-		usage       *domain.ImageUsage
-		headersSent bool
-		ttft        *int64
+		count int64
+		usage *domain.ImageUsage
+		ttft  *int64
 	)
-	writeFrame := func(frame []byte) error {
-		if !headersSent {
-			headersSent = true
-			writeSSEHeaders(w)
-			w.WriteHeader(http.StatusOK)
-			flushWriter(w)
-			if ttft == nil {
-				ms := time.Since(start).Milliseconds()
-				ttft = &ms
-			}
-		} else if ttft == nil {
+	commitOnce := func() {
+		if out.Committed() {
+			return
+		}
+		_ = out.Commit()
+		if ttft == nil {
 			ms := time.Since(start).Milliseconds()
 			ttft = &ms
 		}
-		if _, err := w.Write(frame); err != nil {
-			return err
-		}
-		flushWriter(w)
-		return nil
 	}
 
 	genErr := gen(ctx, cred, params, func(ev domain.ImageStreamEvent) error {
 		switch ev.Type {
 		case domain.ImageStreamEventKeepalive:
-			return writeFrame([]byte(": ping\n\n"))
+			// SDK 合成 keepalive → 网关统一注释帧（: keepalive\n）。
+			commitOnce()
+			return out.Heartbeat()
 		case domain.ImageStreamEventCompleted:
 			count++
 			if ev.Usage != nil {
 				usage = ev.Usage
 			}
-			return writeFrame(buildCompletedFrame(&ev))
+			commitOnce()
+			if _, err := out.WriteFrame(buildCompletedFrame(&ev)); err != nil {
+				return err
+			}
+			// 逐事件 Flush（与原 writeFrame 语义一致，保首字节/事件级延迟）。
+			return out.DrainFlush()
 		default:
 			if p.log != nil {
 				p.log.Warn("image stream: unknown event type skipped",
@@ -95,7 +97,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 
 	if genErr != nil {
-		if !headersSent {
+		if !out.Committed() {
 			if sdkbridge.IsFatal(genErr) {
 				code := statusOf(genErr)
 				if code == 0 {
@@ -105,11 +107,13 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			}
 			return statusOf(genErr), upstreamBody(genErr), false, genErr
 		}
-		// 响应头已发出后失败只能写 SSE error 帧；客户端断开与上游错误分开处理。
-		_, _ = w.Write(buildErrorFrame(streamErrMessage(genErr)))
-		flushWriter(w)
+		// 响应头已发出后失败只能写 SSE error 帧；客户端断开不补写，写失败后禁补写
+		// （对既有 :109 的有意变更）。
+		if r.Context().Err() == nil {
+			writeClientStreamError(out, genErr)
+		}
 		if r.Context().Err() != nil {
-			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, headersSent, true, false))
+			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
 			p.observeDispatchOutcome(ctx, outcome, nil)
 			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
@@ -128,16 +132,8 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		return 0, nil, true, nil
 	}
 
-	if !headersSent {
-		writeSSEHeaders(w)
-		w.WriteHeader(http.StatusOK)
-		flushWriter(w)
-		if ttft == nil {
-			ms := time.Since(start).Milliseconds()
-			ttft = &ms
-			timing.TTFTMS = ttft
-		}
-	}
+	// 无事件成功也提交并 flush。
+	commitOnce()
 	outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	p.observeDispatchOutcome(ctx, outcome, health)
@@ -150,21 +146,13 @@ func imagesStreamOutcome(reqID string, sel *scheduler.Selection, reqModel string
 }
 
 // writeSSEHeaders 设置 SSE 响应头三件套（text/event-stream）——单一 SSE 头
-// 助手，beginSSE 与所有响应头三件套站点共用。仅设置头、不提交状态码：提交
+// 助手，beginSSE 与所有响应头三件套站点共用（委托 sserelay.SetSSEHeaders，
+// 供 sserelay.Output.Commit 共用同一语义）。仅设置头、不提交状态码：提交
 // 时机交由首个 Write 或紧随的显式 WriteHeader 决定，保持「首帧前不提交头」
 // 的惰性语义（sserelay 站点首帧前失败仍可失败重分类；需立即提交的调用方
 // 自行 WriteHeader(200)）。
 func writeSSEHeaders(w http.ResponseWriter) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("X-Accel-Buffering", "no")
-}
-
-// flushWriter 逐事件 Flush。
-func flushWriter(w http.ResponseWriter) {
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
+	sserelay.SetSSEHeaders(w.Header())
 }
 
 // buildCompletedFrame 构造 completed 事件的 SSE 帧：

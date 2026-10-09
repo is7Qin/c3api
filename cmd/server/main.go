@@ -549,6 +549,7 @@ func main() {
 		// convert.go 余额毫分单位一致）。
 		LowBalanceConcCap:            cfg.Proxy.LowBalanceMaxConcurrency,
 		LowBalanceConcThresholdMilli: int64(math.Round(cfg.Proxy.LowBalanceThresholdUSD * 1e5)),
+		StreamKeepaliveInterval:      cfg.Proxy.StreamKeepaliveInterval,
 	}, sched, credential.New(), rec, clients, auth, log, billHooks, errlogW, proxy.Deps{
 		Codex:        codexAdapter,
 		Recorder:     qualityRecorder,

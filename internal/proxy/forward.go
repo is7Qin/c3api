@@ -51,6 +51,10 @@ type Config struct {
 	// LowBalanceConcThresholdMilli 触发阈值（毫分；config.proxy.low_balance_threshold_usd
 	// × 1e5 取整）。余额快照存在且严格小于它时把用户级上限钳为 LowBalanceConcCap。
 	LowBalanceConcThresholdMilli int64
+	// StreamKeepaliveInterval SSE 客户端保活注释间隔（config.proxy.stream_keepalive_interval
+	// 映射；默认 10s，0 = 关闭通用定时心跳）。五路 + images 经 Output 的保活由它
+	// 驱动（images 自身 SDK 保活不受影响）。
+	StreamKeepaliveInterval time.Duration
 }
 
 type Proxy struct {

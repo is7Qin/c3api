@@ -73,7 +73,7 @@ func TestRelayEOFFlushesFinalFrameWithoutBlankLine(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "EOF 无空行帧必须派发给 Observer（丢帧 = 计费为零）")
 	require.Equal(t, `{"type":"response.completed","usage":{"total_tokens":9}}`, string(got[0].Data))
@@ -89,7 +89,7 @@ func TestRelayEOFFlushesLongLineWithoutNewline(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "ErrBufferFull+EOF 长行必须派发为末帧")
 	require.Equal(t, long, string(got[0].Data), "长行 Data 必须全量命中（旧实现截断于首 chunk）")
@@ -117,7 +117,7 @@ func TestRelayLongLineDataFull(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "长行帧不得拆出多余空帧")
 	require.Equal(t, payload, string(got[0].Data), "Data 必须全量命中（截断 = usage 提取落空 = 计费归零）")
@@ -134,7 +134,7 @@ func TestRelayLongLineColonInContinuation(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, payload, string(got[0].Data), "续片含冒号必须原样并入 data")
@@ -148,7 +148,7 @@ func TestRelayCommentLinesNotInData(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "x", string(got[0].Data), "注释行不得进入 Data")
@@ -166,7 +166,7 @@ func TestRelayLongLineForkPoint8186(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1, "孤立 \n 尾 chunk 不得触发空帧 flush（gating 失效 = flushes=2+空帧）")
 	require.Equal(t, payload, string(got[0].Data))
@@ -181,7 +181,7 @@ func TestRelayLongLineCRLF(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, payload, string(got[0].Data), "CRLF 行终止符必须剥离")
@@ -196,7 +196,7 @@ func TestRelayMultiDataAndLongLineMixed(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, src, Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "a\n"+long+"\nb", string(got[0].Data), "\n 合并语义不得被续片破坏")
@@ -207,7 +207,7 @@ func TestRelayObserverReceivesTypedEvent(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "event: message_delta\ndata: {\"usage\":{\"output_tokens\":5}}\n\n", Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "message_delta", string(got[0].Event))
@@ -219,7 +219,7 @@ func TestRelayObserverReceivesDone(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "data: [DONE]\n\n", Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "", string(got[0].Event))
@@ -230,7 +230,7 @@ func TestRelayMultiLineDataMergedInObserver(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "data: a\ndata: b\n\n", Config{
-		Observer: func(e Event) { got = append(got, e) },
+		OnEvent: func(e Event) { got = append(got, e) },
 	}))
 	require.Len(t, got, 1)
 	require.Equal(t, "a\nb", string(got[0].Data)) // SSE 规范：多行 data 以 \n 连接

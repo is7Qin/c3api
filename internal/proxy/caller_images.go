@@ -7,7 +7,6 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"errors"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -79,11 +78,16 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			return resp.StatusCode, rb, false, nil
 		}
 		writeSSEHeaders(w)
-		// 首帧到达即记录 TTFT；每帧按 image 事件提取张数与 image tokens。
+		// images 路径不传通用保活间隔（design §8：「images 通用 10s」为非目标；
+		// images 保留 SDK/上游驱动）。仍经统一 Output 以获得写前 seam 与出口判定。
+		out := sserelay.NewOutput(w, 0, sserelay.OutputOptions{Cancel: cancel})
+		defer out.Release()
+		// 首帧到达即记录 TTFT（写出前 seam）；每帧按 image 事件提取张数与 image tokens。
 		var ttft *int64
 		var imgCount, imgII, imgIO int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
-			Observer: func(ev sserelay.Event) {
+			Output: out,
+			OnEvent: func(ev sserelay.Event) {
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
@@ -102,12 +106,21 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		usage := AttemptUsage{InputTokens: imgII, OutputTokens: imgIO, CallCount: imgCount}
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
-			// 图像流客户端断开不触发健康惩罚；上游错误按已写出字节记录 commit 状态。
-			if errors.Is(err, context.Canceled) {
+			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
+			kind := classifyStreamExit(out, err)
+			if kind == streamExitClientCancel {
+				// 图像流客户端断开不触发健康惩罚；保留已采 usage 记 200+ErrAbort。
 				outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, ttft != nil, true, false))
 				p.observeDispatchOutcome(ctx, outcome, nil)
 				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, http.StatusOK, domain.ErrAbort, u, start)))
 				return 0, nil, true, nil
+			}
+			if kind == streamExitUncommitted {
+				// 未提交 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
+				return statusOf(err), nil, false, err
+			}
+			if kind == streamExitCommitted {
+				writeClientStreamError(out, err)
 			}
 			code := statusOf(err)
 			commit := CommitUpstreamResponded

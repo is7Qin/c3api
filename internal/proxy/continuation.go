@@ -29,7 +29,6 @@ import (
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
-	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 const (
@@ -105,32 +104,8 @@ func (p *Proxy) contBind(ctx context.Context, protocolTag, respID string, groupI
 
 // contBindWired reports whether the REST streaming async bind path is wired
 // (store + worker). Call sites use it to keep the unwired path zero-behaviour
-// (no enqueue, no counting, no Mapper wrapper).
+// (no enqueue, no counting).
 func (p *Proxy) contBindWired() bool { return p.cont != nil && p.contBinder != nil }
-
-// contBindMapper wraps a Responses SSE mapper so the first valid response id is
-// snapshotted and enqueued BEFORE the frame is written (both the native wrapped
-// Mapper and the converted Mapper enqueue pre-write).
-// Unwired (store or worker nil) returns base unchanged — no wrapper, zero
-// behaviour change. base == nil (no model rewrite) still enqueues and forwards
-// the raw frame (matches sserelay's nil-Mapper pass-through).
-func (p *Proxy) contBindMapper(ctx context.Context, done *bool, groupID int64, base func(sserelay.Event) ([]byte, bool)) func(sserelay.Event) ([]byte, bool) {
-	if !p.contBindWired() {
-		return base
-	}
-	return func(ev sserelay.Event) ([]byte, bool) {
-		if !*done {
-			if id := contFrameID(ev.Data); id != "" {
-				p.contEnqueue(ctx, contProtocolREST, id, groupID)
-				*done = true
-			}
-		}
-		if base == nil {
-			return ev.Raw, false
-		}
-		return base(ev)
-	}
-}
 
 // contEnqueue snapshots the bindable response id at the SSE write seam and
 // hands it to the async bind worker. Unwired (store or worker nil) is a no-op

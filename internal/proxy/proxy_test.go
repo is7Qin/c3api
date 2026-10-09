@@ -802,6 +802,31 @@ func TestProxyStreamTimeoutMarksThrottle(t *testing.T) {
 	require.Equal(t, "", store.logs[0].MappedModel, "无映射 → MappedModel 空")
 }
 
+// TestProxyChatStreamKeepalive 保活：上游静默（stall-stream）时网关按
+// StreamKeepaliveInterval 写出统一注释帧 ": keepalive\n"（单换行；CF 524 免疫）。
+func TestProxyChatStreamKeepalive(t *testing.T) {
+	up := fakeOpenAI(t, "stall-stream")
+	defer up.Close()
+	store := &captureLogStore{}
+	tpl := &domain.Template{
+		ID: 1, Name: "t", BaseURL: up.URL,
+		CredentialType:   credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"},
+	}
+	// 小超时保证上游静默窗口在测试生命周期内结束；保活间隔远小于它。
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 150*time.Millisecond, store, nil)
+	p.cfg.StreamKeepaliveInterval = 20 * time.Millisecond
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleChat(rec, req)
+
+	require.Contains(t, rec.Body.String(), ": keepalive\n", "静默期必须发统一保活注释帧")
+	require.NotContains(t, rec.Body.String(), ": ping", "统一形态恒为 : keepalive\\n")
+}
+
 // 回归（评审 Minor）：流式 4xx 透传必须与非流式同语义——上游非 200 响应在
 // relay 之前就被检出，状态码 + 原始 body 原样写出、不 MarkResult（账号保持
 // active、不冷却）、并发槽释放、记一条用量。此前 fakes 的 "400" 模式只在
