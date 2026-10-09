@@ -10,13 +10,18 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// batchStageTimeout bounds the single publisher.mu critical section of a folded
-// group-invalidation batch (T1): ONE shared deadline covers the refresh and
-// every per-group LoadGroupAccounts, so a slow data source cannot hold the
-// publish lock unbounded (spec §4 makes the single-batch lock-hold upper bound
-// an explicit acceptance item). Package-internal fixed bound — NOT a config key.
-// It is a var only so tests can substitute a short deadline; production never
-// rewrites it.
+// batchStageTimeout is a COOPERATIVE deadline for the folded group-invalidation
+// batch (T1): ONE shared deadline covers the refresh and every per-group
+// LoadGroupAccounts. When it elapses the loop STOPS issuing further loads and
+// routes to the EXISTING failure branch (sticky reloadRequired + skip). It
+// bounds only the cooperative I/O (DB round trips that honor ctx); it is NOT a
+// hard upper bound on the publisher.mu hold — in-memory map copy/fold, pool
+// rebuild, the final freeze and any non-cooperative work still run to
+// completion under the lock after the deadline. The single-group paths
+// (InvalidateGroup / InvalidateAccount) run through invalidateGroupsLocked too
+// and therefore inherit this same deadline. Package-internal fixed bound — NOT
+// a config key. It is a var only so tests can substitute a short deadline;
+// production never rewrites it.
 var batchStageTimeout = 10 * time.Second
 
 // This file owns the folded group-invalidation path (T1): a debouncer window

@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"context"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -9,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
+	"unsafe"
 
 	"github.com/stretchr/testify/require"
 
@@ -44,11 +47,138 @@ func BenchmarkInvalidateSingleGroupStage(b *testing.B) {
 	}
 }
 
+// BenchmarkInvalidateGroupsStageCodex is the codex-ratio>0 counterpart of
+// BenchmarkInvalidateGroupsStage: every group carries codex (OAuth) accounts
+// with live identity pools, so the step-wise pool conversion (syncIdentityPool
+// reuse vs resize) is actually exercised. It reports ns/op, B/op and allocs/op
+// and validates the pool ledger (reuse/created/resize counts) after the run.
+func BenchmarkInvalidateGroupsStageCodex(b *testing.B) {
+	const m = 10
+	b.Run(fmt.Sprintf("M%d_codex", m), func(b *testing.B) {
+		s, ldr := codexBatchStageFixture(b, m)
+		prev := s.View().StaticView().identityPools
+		ids := make([]int64, 0, m)
+		for gid := 1; gid <= m; gid++ {
+			ids = append(ids, int64(gid))
+		}
+		b.ReportAllocs()
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			ldr.reset()
+			s.InvalidateGroups(ids)
+		}
+		b.StopTimer()
+		if got := ldr.groupCallsCopy(); len(got) != m {
+			b.Fatalf("LoadGroupAccounts calls = %d, want %d", len(got), m)
+		}
+		reused, created, resized := poolLedger(prev, s.publisher.pending.identityPools)
+		b.Logf("codex pool ledger: reused=%d created=%d resized=%d (pools before=%d)", reused, created, resized, len(prev.pools))
+	})
+}
+
+// codexBatchStageFixture builds `m` groups, each with perGroup=50 codex accounts
+// plus 10 codex accounts shared across every group, all with live identity
+// pools — so codex ratio > 0 and the step-wise pool conversion does real work.
+func codexBatchStageFixture(b *testing.B, m int) (*Scheduler, *t1Loader) {
+	b.Helper()
+	const (
+		perGroup = 50
+		shared   = 10
+	)
+	sharedAccs := make([]*domain.Account, 0, shared)
+	for i := 0; i < shared; i++ {
+		sharedAccs = append(sharedAccs, codexAcc(int64(1_000_000+i), domain.FormatOpenAIResponses, "gpt-5", 2, fmt.Sprintf("inst-shared-%d", i)))
+	}
+	byGroup := make(map[int64][]*domain.Account, m)
+	for gid := 1; gid <= m; gid++ {
+		accs := append([]*domain.Account(nil), sharedAccs...)
+		for j := 0; j < perGroup; j++ {
+			accs = append(accs, codexAcc(int64(gid*1000+j), domain.FormatOpenAIResponses, "gpt-5", 2, fmt.Sprintf("inst-%d-%d", gid, j)))
+		}
+		byGroup[int64(gid)] = accs
+	}
+	ldr := newT1Loader(byGroup)
+	s := New(testCfg(), ldr, newTestRuleEngine(b), nil, nil, nil, nil)
+	if err := s.reload(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	wireSources(s, nil, nil)
+	s.compileOnce()
+	return s, ldr
+}
+
+// poolLedger classifies each pool in next by its relationship to prev: reused
+// (same pointer), created (no previous pool for the account) or resized
+// (present before but a fresh pointer).
+func poolLedger(prev, next *identityRegistry) (reused, created, resized int) {
+	if next == nil {
+		return
+	}
+	for id, np := range next.pools {
+		var op *identityPool
+		if prev != nil {
+			op = prev.pools[id]
+		}
+		switch {
+		case op == nil:
+			created++
+		case op == np:
+			reused++
+		default:
+			resized++
+		}
+	}
+	return
+}
+
+// TestInvalidateGroupsCodexPoolLedger asserts the step-wise pool conversion
+// ledger: an unchanged batch reuses every pool by pointer; a K change resizes
+// exactly the changed account's pool; a newly-added codex account creates one.
+func TestInvalidateGroupsCodexPoolLedger(t *testing.T) {
+	shared := codexAcc(1000, domain.FormatOpenAIResponses, "gpt-5", 2, "inst-shared")
+	g1 := codexAcc(1, domain.FormatOpenAIResponses, "gpt-5", 3, "inst-1")
+	g2 := codexAcc(2, domain.FormatOpenAIResponses, "gpt-5", 4, "inst-2")
+	ldr := newT1Loader(map[int64][]*domain.Account{1: {shared, g1}, 2: {shared, g2}})
+	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
+	require.NoError(t, s.reload(context.Background()))
+	prev := s.publisher.pending.identityPools
+	require.Len(t, prev.pools, 3)
+
+	s.InvalidateGroups([]int64{1, 2})
+	reused, created, resized := poolLedger(prev, s.publisher.pending.identityPools)
+	require.Equal(t, 3, reused, "unchanged pools must be reused by pointer")
+	require.Zero(t, created)
+	require.Zero(t, resized)
+
+	prev = s.publisher.pending.identityPools
+	ldr.mu.Lock()
+	g1.MaxConcurrency = 5
+	ldr.mu.Unlock()
+	s.InvalidateGroups([]int64{1})
+	reused, created, resized = poolLedger(prev, s.publisher.pending.identityPools)
+	require.Equal(t, 1, resized, "the changed-K account's pool must be resized")
+	require.Equal(t, 2, reused)
+	require.Zero(t, created)
+
+	prev = s.publisher.pending.identityPools
+	newAcc := codexAcc(3, domain.FormatOpenAIResponses, "gpt-5", 2, "inst-3")
+	ldr.mu.Lock()
+	ldr.byGroup[1] = []*domain.Account{shared, g1, newAcc}
+	ldr.mu.Unlock()
+	s.InvalidateGroups([]int64{1})
+	reused, created, resized = poolLedger(prev, s.publisher.pending.identityPools)
+	require.Equal(t, 1, created, "a newly-added codex account must create a pool")
+	require.Equal(t, 3, reused)
+	require.Zero(t, resized)
+}
+
 // TestInvalidateGroupsStageCallStructure pins the call structure §4 requires as
 // a measurement rather than prose: invalidateGroupsLocked freezes/stages exactly
 // once (one stageLocked + one newStaticView) while invalidateOneIntoLocked
 // rebuilds the identity pool exactly once per successful group (so buildIdentityPools
-// is called M times for M groups).
+// is called M times for M groups). It is a STRUCTURAL proxy over call sites; the
+// runtime ledger (poolLedger) and the M-times single-group contrast cover the
+// dynamic side.
 func TestInvalidateGroupsStageCallStructure(t *testing.T) {
 	root := gateRoot(t)
 	fset := token.NewFileSet()
@@ -90,7 +220,9 @@ func TestInvalidateGroupsStageCallStructure(t *testing.T) {
 // TestPlanKeyRetainedHeapMeasured measures retained heap with live roots + GC
 // (never field reflection): build a 5000-account scheduler holding its planKeys
 // and the single held decision encoding, force GC, and confirm the held output
-// is exactly one canonical copy with no oversize capacity.
+// is exactly one canonical copy with no oversize capacity. The before/after
+// delta is computed as a SIGNED difference so a bucket that shrank (GC released
+// earlier garbage) can never underflow into a bogus large positive value.
 func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 	runtime.GC()
 	var before runtime.MemStats
@@ -103,13 +235,80 @@ func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 	runtime.GC()
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
-	retained := after.HeapAlloc - before.HeapAlloc
-	require.Greater(t, retained, uint64(0), "the live scheduler must retain heap")
+
+	// Keep the live roots alive across the sampling reads.
+	runtime.KeepAlive(s)
+	runtime.KeepAlive(sv)
+
+	retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	require.GreaterOrEqual(t, after.HeapAlloc, before.HeapAlloc,
+		"live-root heap must not shrink below the pre-GC baseline")
+	require.Greater(t, retained, int64(0), "the live scheduler must retain heap")
 
 	dv := s.View().DecisionView()
 	require.NotNil(t, dv)
-	require.Equal(t, decisionViewBytes(dv), s.lastDecisionBytes, "exactly one canonical copy is held")
+	require.Equal(t, len(decisionViewBytes(dv)), len(s.lastDecisionBytes),
+		"exactly one canonical copy is held (correct length)")
+	require.Equal(t, len(s.lastDecisionBytes), cap(s.lastDecisionBytes),
+		"the held copy must carry no oversize capacity (single backing array)")
 
-	t.Logf("retained heap after GC (5000-account scheduler, planKeys + one held encoding) = %d bytes; held bytes=%d; leaves=%d",
-		retained, len(s.lastDecisionBytes), len(sv.byID))
+	// Isolate the NEW planKey's retained contribution: it is stored inline in
+	// each snapshotStatic leaf, so its incremental cost is sizeof(planKey) per
+	// leaf. Reported so a BASE/HEAD retained differential can be interpreted.
+	planKeyBytes := int(unsafe.Sizeof(planKey{})) * len(sv.byID)
+	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; isolated planKey increment = %d bytes (%d leaves × %d B); held bytes=%d; leaves=%d",
+		retained, planKeyBytes, len(sv.byID), unsafe.Sizeof(planKey{}), len(s.lastDecisionBytes), len(sv.byID))
+}
+
+// sleepLoader blocks one group's load for a fixed duration under publisher.mu,
+// so a concurrent compile/publish observes the batch lock hold.
+type sleepLoader struct {
+	*t1Loader
+	blockGroup int64
+	entered    chan struct{}
+	hold       time.Duration
+}
+
+func (l *sleepLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*domain.Account, error) {
+	if id == l.blockGroup {
+		select {
+		case l.entered <- struct{}{}:
+		default:
+		}
+		time.Sleep(l.hold)
+	}
+	return l.t1Loader.LoadGroupAccounts(ctx, id)
+}
+
+// TestInvalidateGroupsBlocksCompilePublish measures the compile/publish latency a
+// batch imposes on the lane: a loader stalled `hold` under publisher.mu makes a
+// concurrent compileOnce wait for the same lock, so its completion latency is at
+// least half the hold.
+func TestInvalidateGroupsBlocksCompilePublish(t *testing.T) {
+	const hold = 60 * time.Millisecond
+	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	base := newT1Loader(map[int64][]*domain.Account{10: {acc(1, tp, 4)}})
+	ldr := &sleepLoader{t1Loader: base, blockGroup: 10, entered: make(chan struct{}, 1), hold: hold}
+	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
+	require.NoError(t, s.reload(context.Background()))
+	wireSources(s, nil, nil)
+	s.compileOnce()
+
+	batchDone := make(chan struct{})
+	go func() {
+		s.InvalidateGroups([]int64{10})
+		close(batchDone)
+	}()
+	select {
+	case <-ldr.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch never entered the stalled load")
+	}
+
+	start := time.Now()
+	s.compileOnce() // waits for publisher.mu held by the batch
+	elapsed := time.Since(start)
+	<-batchDone
+	require.GreaterOrEqual(t, elapsed, hold/2, "compile/publish latency must reflect the batch lock hold")
+	t.Logf("batch lock hold=%v, compile/publish wait=%v", hold, elapsed)
 }

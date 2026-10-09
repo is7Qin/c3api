@@ -98,12 +98,14 @@ func TestCompareSinkRecordsTrueFirstDiff(t *testing.T) {
 	require.False(t, eb2.result())
 	require.Equal(t, len(shorter), eb2.firstDiff, "stream longer than old: divergence at end of old")
 
-	// Old longer than stream: unequal by length alone; no byte differed.
+	// Old longer than stream: the new stream is a proper prefix of old ⇒ an
+	// unequal length is recorded as firstDiff == total (the new stream length),
+	// not the -1 equal sentinel.
 	longer := append(append([]byte(nil), old...), 0x00)
 	eb3 := encBuf{compare: true, old: longer, equal: true, firstDiff: -1}
 	e2.writeCanonical(&eb3, dv)
 	require.False(t, eb3.result())
-	require.Equal(t, -1, eb3.firstDiff, "no byte differed — only the length")
+	require.Equal(t, len(old), eb3.firstDiff, "new stream is a prefix of old — firstDiff is the new stream length")
 	require.Equal(t, len(old), eb3.total, "total stream length still recorded")
 }
 
@@ -255,6 +257,84 @@ func TestCompareSinkSupersededCompileKeepsHeldBytes(t *testing.T) {
 	require.Equal(t, held, s.lastDecisionBytes, "a superseded compile must not touch the byte cache")
 }
 
+// nilCompiler is a compile-lane seam that SUCCEEDS with a nil decision view
+// (whose canonical encoding is the empty byte string).
+type nilCompiler struct{}
+
+func (nilCompiler) Compile(CompilerInputs) (*DecisionView, error) { return nil, nil }
+
+// TestCompareSinkNilDecisionCommitsNilCache: a SUCCESSFUL compile whose decision
+// view is nil encodes to the empty byte string; the cache must commit that nil
+// (replacing a previously non-empty held slice), so a non-empty→nil change can
+// never keep a stale, non-empty cache. The published view is fail-closed (nil
+// decision).
+func TestCompareSinkNilDecisionCommitsNilCache(t *testing.T) {
+	s := schedulerWithAccounts(t, 200, domain.ModelMapping{})
+	require.NotEmpty(t, s.lastDecisionBytes, "precondition: a non-empty decision is held")
+	require.NoError(t, s.reload(context.Background())) // stage a fresh pending root
+	s.compiler = nilCompiler{}
+	s.compileOnce()
+	require.Nil(t, s.View().DecisionView(), "a nil decision publishes fail-closed")
+	require.Nil(t, s.lastDecisionBytes, "the nil encoding must be committed, not skipped")
+}
+
+// TestCompareSinkPublishBaseFailureIsolatesCache: on the decision-only publish
+// path (no staged root) the compile captures the published base under
+// publisher.mu, releases it, compiles, then calls publishWithBase. If that base
+// changed in the meantime, publishWithBase fails, re-arms a compile and the
+// fresh (unequal) encoding must be DISCARDED — the held byte cache survives
+// untouched (spec §2 T3.7).
+func TestCompareSinkPublishBaseFailureIsolatesCache(t *testing.T) {
+	s := schedulerWithAccounts(t, 200, domain.ModelMapping{})
+	require.True(t, s.publishedViewWhole())
+	require.Nil(t, s.publisher.pending, "precondition: no staged root (decision-only path)")
+	before := s.lastDecisionBytes
+	require.NotEmpty(t, before)
+	baseStatic := s.View().StaticView()
+
+	// Real dynamic drift (quality appears for account 1) so the fire is NOT
+	// skipped and the recompile's bytes DIFFER from the held encoding.
+	accs := make([]*domain.Account, 0, len(s.View().ByID()))
+	for _, as := range s.View().ByID() {
+		a := as.static.Load().acc
+		accs = append(accs, &a)
+	}
+	wireSources(s, buildQuality(10, domain.FormatOpenAIChat, mappingRequestModel,
+		map[int64]CandidateQualityInput{1: qualityInput(30, 3, 100, 100)}, accs), nil)
+
+	bc := &blockingCompiler{entered: make(chan struct{}, 1), release: make(chan struct{}), inner: NewRoutingCompiler()}
+	s.compiler = bc
+	t.Cleanup(func() {
+		select {
+		case <-bc.release:
+		default:
+			close(bc.release)
+		}
+	})
+
+	done := make(chan struct{})
+	go func() {
+		s.compileOnce()
+		close(done)
+	}()
+	<-bc.entered
+
+	// Bump the published generation while the compile is in flight so the base
+	// captured before the compile goes stale.
+	s.publisher.mu.Lock()
+	cur := s.view.Load()
+	s.view.Store(&RoutingView{generation: cur.generation + 1, static: cur.static, decision: cur.decision})
+	s.gen.Store(cur.generation + 1)
+	s.publisher.mu.Unlock()
+
+	close(bc.release)
+	<-done
+
+	require.Same(t, baseStatic, s.View().StaticView(), "a failed decision-only publish must not touch the static root")
+	require.True(t, sameBacking(before, s.lastDecisionBytes),
+		"a failed publishWithBase must not update the byte cache")
+}
+
 // TestDecisionEncoderHoldsNoOutputBuffer: the encoder must not retain any output
 // buffer across fires (T3 removes the ~64MB resident bytes.Buffer). Only the
 // refs/ids scratch slices remain.
@@ -306,20 +386,68 @@ func BenchmarkDecisionViewCompareChanged(b *testing.B) {
 	}
 }
 
-// BenchmarkDecisionViewRootOnlyChange: bytes are identical but the static root
-// changed. The compare still streams the full encoding (equal); the publish path
-// then re-uses the held bytes without re-encoding.
-func BenchmarkDecisionViewRootOnlyChange(b *testing.B) {
+// BenchmarkDecisionViewCompareChangedTail measures the changed path when the
+// FIRST difference is at the LAST byte (the compare must stream the whole old
+// encoding before the mismatch) — compare + encode + hold, like the mid-stream
+// bench. Reported alongside the mid-stream changed number for both thresholds.
+func BenchmarkDecisionViewCompareChangedTail(b *testing.B) {
 	s := schedulerWithAccounts(b, 5000, domain.ModelMapping{})
 	dv := s.View().DecisionView()
 	if dv == nil {
 		b.Fatal("missing decision view")
 	}
 	old := decisionViewBytes(dv)
+	old[len(old)-1] ^= 0xff // first difference at the final byte
 	var e decisionEncoder
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		benchmarkCompareEqual = e.compareCanonical(dv, old)
+		if !e.compareCanonical(dv, old) {
+			benchmarkHeldBytes = e.encode(dv)
+		}
+	}
+}
+
+// BenchmarkDecisionViewRootOnlyChange drives the real root-only publish path:
+// bytes stay byte-identical while the static root changes, so the sink must
+// publish once per iteration (generation advances) WITHOUT re-encoding (the
+// held slice is reused). It asserts publish count == b.N and held-slice
+// identity stability instead of micro-benching an equal-only compare loop.
+func BenchmarkDecisionViewRootOnlyChange(b *testing.B) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 4)}})
+	s := New(testCfg(), m, newTestRuleEngine(b), nil, nil, nil, nil)
+	if err := s.reload(context.Background()); err != nil {
+		b.Fatal(err)
+	}
+	wireSources(s, nil, nil)
+	s.compileOnce()
+	held := s.lastDecisionBytes
+	if len(held) == 0 {
+		b.Fatal("missing held bytes")
+	}
+	gen0 := s.View().Generation()
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Root-only change: the account's lifecycle revision moves but every
+		// canonical decision byte stays identical.
+		m.mu.Lock()
+		a := accWithEnabled(1, tpl, true, 4)
+		a.LifecycleRevision = int64(i + 2)
+		m.byGroup[10] = []*domain.Account{a}
+		m.mu.Unlock()
+		if err := s.reload(context.Background()); err != nil {
+			b.Fatal(err)
+		}
+		s.compileOnce()
+	}
+	b.StopTimer()
+	if publishes := int(s.View().Generation() - gen0); publishes != b.N {
+		b.Fatalf("root-only publishes = %d, want %d (one per iteration)", publishes, b.N)
+	}
+	if !sameBacking(held, s.lastDecisionBytes) {
+		b.Fatal("root-only equal bytes must reuse the held slice (re-encode count must be 0)")
 	}
 }

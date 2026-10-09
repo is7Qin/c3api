@@ -248,43 +248,76 @@ func TestStickyForcesFullReloadOnProbeInvisibleSwap(t *testing.T) {
 	require.Contains(t, byID, int64(3), "swapped-in account must appear")
 }
 
-// TestPartialSuccessKeepsStickyObligation covers failure convergence (2): a
-// successful unrelated group in the same batch must not clear the obligation
-// set by a failing group.
+// TestPartialSuccessKeepsStickyObligation covers failure convergence (2) AND the
+// shared-account fix-up under partial failure (spec §2 T1.3 / spec:312): G1's
+// load FAILS while G2 SUCCEEDS and drops their SHARED account A. The batch must
+// keep the sticky obligation yet still fold G2's change — including the fix-up
+// of A's reference in the FAILED G1 (A retained in G1 only, a NEW leaf sharing
+// the runtime) — and the FINAL compiled published pair must reflect it.
 func TestPartialSuccessKeepsStickyObligation(t *testing.T) {
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	shared := acc(1, tp, 4) // A: shared by G1 and G2
+	g1only := acc(2, tp, 4)
+	g2added := acc(3, tp, 4)
 	ldr := newT1Loader(map[int64][]*domain.Account{
-		1: {acc(1, tp, 4)},
-		2: {acc(2, tp, 4)},
+		1: {shared, g1only},
+		2: {shared},
 	})
 	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
-	before := s.publisher.pending
+	wireSources(s, nil, nil)
+	s.compileOnce()
+	require.True(t, s.publishedViewWhole())
+	rtShared := s.View().ByID()[1].runtime
 
+	// G1 load fails; G2 succeeds and drops the shared A (G2 -> {g2added}).
 	ldr.mu.Lock()
 	ldr.failGroup[1] = true
-	ldr.byGroup[2] = []*domain.Account{acc(2, tp, 4), acc(3, tp, 4)}
+	ldr.byGroup[2] = []*domain.Account{g2added}
 	ldr.mu.Unlock()
 
 	s.InvalidateGroups([]int64{1, 2})
 	require.True(t, s.reloadRequired, "a partial failure must keep the sticky obligation")
-	require.NotSame(t, before, s.publisher.pending, "the successful group must still stage")
-	_, ok := s.publisher.pending.byID[3]
-	require.True(t, ok, "the successful group's change must be folded in")
+	require.NotNil(t, s.publisher.pending, "the successful group must still stage")
+
+	// Compile and assert the FINAL published pair (not merely a staged signal).
+	s.compileOnce()
+	byID := s.View().ByID()
+	require.Contains(t, byID, int64(3), "G2's added account must be published")
+	require.Contains(t, byID, int64(1), "the shared account must survive in the failed group")
+	require.Equal(t, []int64{1}, byID[1].static.Load().groupIDs,
+		"shared A, dropped by the successful G2, must retain only the failed G1")
+	require.Contains(t, byID, int64(2), "G1's load failed, so its exclusive account is kept")
+	require.Same(t, rtShared, byID[1].runtime, "the shared runtime must survive the partial-failure fix-up")
+	// The failed G1 must reference the retained A leaf (its shared fix-up ran).
+	var g1HasA bool
+	for _, as := range s.View().StaticView().groups[1].accounts {
+		if as.static.Load().acc.ID == 1 {
+			require.Same(t, byID[1], as, "the failed group must point at A's retained leaf")
+			g1HasA = true
+		}
+	}
+	require.True(t, g1HasA, "the failed group must still contain A")
 }
 
 // TestStickySurvivesRepeatedFailuresThenClears covers failure convergence (3):
 // a repeated full-load failure keeps the obligation; the next success clears it.
+// The change is a probe-INVISIBLE equal-count membership swap, so only a real
+// full reload can converge it — asserted against the FINAL compiled pair.
 func TestStickySurvivesRepeatedFailuresThenClears(t *testing.T) {
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
-	ldr := newT1Loader(map[int64][]*domain.Account{10: {acc(1, tp, 4)}})
-	probe := &fakeStalenessProbe{counts: domain.CompileStaleness{Accounts: 1, Groups: 1, Templates: 1}}
+	ldr := newT1Loader(map[int64][]*domain.Account{10: {acc(1, tp, 4), acc(2, tp, 4)}})
+	probe := &fakeStalenessProbe{counts: domain.CompileStaleness{Accounts: 2, Groups: 1, Templates: 1}}
 	s := New(Config{SyncInterval: time.Hour, StalenessProbe: probe}, ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
+	require.True(t, s.publishedViewWhole())
+	require.Contains(t, s.View().ByID(), int64(1))
 
+	// Probe-invisible equal-count swap (1,2)->(2,3) with the full load failing.
 	ldr.mu.Lock()
+	ldr.byGroup[10] = []*domain.Account{acc(2, tp, 4), acc(3, tp, 4)}
 	ldr.failFull = true
 	ldr.mu.Unlock()
 	require.Error(t, s.InvalidateAllSyncCtx(context.Background()))
@@ -294,6 +327,7 @@ func TestStickySurvivesRepeatedFailuresThenClears(t *testing.T) {
 	require.Equal(t, 1, ldr.fullCount())
 	require.True(t, s.reloadRequired, "a repeated full-load failure keeps the obligation")
 
+	// Heal: the next tick succeeds and the swap must finally take effect.
 	ldr.mu.Lock()
 	ldr.failFull = false
 	ldr.mu.Unlock()
@@ -301,6 +335,11 @@ func TestStickySurvivesRepeatedFailuresThenClears(t *testing.T) {
 	s.backstopTick(context.Background())
 	require.Equal(t, 1, ldr.fullCount())
 	require.False(t, s.reloadRequired, "a successful full reload clears the obligation")
+
+	s.compileOnce()
+	byID := s.View().ByID()
+	require.NotContains(t, byID, int64(1), "the swapped-out account must be gone after convergence")
+	require.Contains(t, byID, int64(3), "the swapped-in account must be published")
 }
 
 // --- I2: the batch shares one deadline and releases the publish lock ---
@@ -325,18 +364,27 @@ func (l *deadlineLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*do
 }
 
 // TestInvalidateGroupsBatchDeadlineReleasesLock proves the shared batch deadline
-// fires: a load that waits on ctx.Done returns, the batch leaves the failure
-// branch (sticky obligation set) and publisher.mu is released.
+// fires AND covers failure-convergence case (4): a REAL backstop tick started
+// while the batch holds publisher.mu (its loader stalled under the lock, i.e.
+// between the batch refresh and its failure handling) must BLOCK on the lock —
+// it cannot skip or rebuild until the batch returns. Once the deadline fires the
+// batch leaves the failure branch (sticky obligation set) and the unblocked tick
+// runs a real full reload.
 func TestInvalidateGroupsBatchDeadlineReleasesLock(t *testing.T) {
 	orig := batchStageTimeout
-	batchStageTimeout = 50 * time.Millisecond
+	batchStageTimeout = 100 * time.Millisecond
 	defer func() { batchStageTimeout = orig }()
 
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	base := newT1Loader(map[int64][]*domain.Account{10: {acc(1, tp, 4)}})
 	ldr := &deadlineLoader{t1Loader: base, blockGroup: 10, entered: make(chan struct{}, 1)}
-	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
+	probe := &fakeStalenessProbe{counts: domain.CompileStaleness{Accounts: 1, Groups: 1, Templates: 1}}
+	s := New(Config{SyncInterval: time.Hour, StalenessProbe: probe}, ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
+	wireSources(s, nil, nil)
+	s.compileOnce()
+	require.True(t, s.publishedViewWhole())
+	base.reset()
 
 	done := make(chan struct{})
 	go func() {
@@ -349,12 +397,39 @@ func TestInvalidateGroupsBatchDeadlineReleasesLock(t *testing.T) {
 		t.Fatal("loader never entered the batch")
 	}
 
+	// A REAL tick started while the batch holds the lock must stay blocked on
+	// publisher.mu (it must not return while the batch is between its refresh
+	// and its failure handling).
+	tickDone := make(chan struct{})
+	go func() {
+		s.backstopTick(context.Background())
+		close(tickDone)
+	}()
+	select {
+	case <-tickDone:
+		t.Fatal("backstopTick returned while the batch still held publisher.mu")
+	case <-time.After(25 * time.Millisecond):
+	}
+
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("batch did not return after the shared deadline")
 	}
-	require.True(t, s.reloadRequired, "a timed-out batch must set the sticky obligation")
+
+	select {
+	case <-tickDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("backstopTick did not complete after the batch released the lock")
+	}
+	// The probe returns the same counts as the baseline, so the ONLY reason the
+	// unblocked tick did not skip is that the timed-out batch set the sticky
+	// obligation — a real full reload proves it (and that it was then cleared).
+	require.Equal(t, 1, base.fullCount(), "the unblocked tick must run a real full reload (implies the batch set the sticky obligation)")
+	s.publisher.mu.Lock()
+	cleared := !s.reloadRequired
+	s.publisher.mu.Unlock()
+	require.True(t, cleared, "the successful full reload clears the sticky obligation")
 
 	locked := make(chan struct{})
 	go func() {
@@ -429,10 +504,11 @@ func TestInvalidateGroupsPoolLifecycle(t *testing.T) {
 
 // --- T2: delete-group (old :771) and clone (old :826) leaf-key paths ---
 
-// TestInvalidateGroupLeafKeysMatchFrozenOracle exercises both the delete-group
-// strip path (an account removed from one group but retained in another) and the
-// clone/replace path (a still-present account getting new groupIDs), asserting
-// each new leaf's cached planKey equals the frozen oracle over its own groupIDs.
+// TestInvalidateGroupLeafKeysMatchFrozenOracle exercises the retained-strip path
+// (invalidate_batch.go:174 — an account REMOVED from the reloaded group but
+// still retained in another group), asserting the new leaf's cached planKey
+// equals the frozen oracle over its own (stripped) groupIDs, that it is a NEW
+// immutable leaf sharing the old runtime, and that the other group points at it.
 func TestInvalidateGroupLeafKeysMatchFrozenOracle(t *testing.T) {
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
 	a1 := acc(1, tp, 4) // shared G1+G2
@@ -442,28 +518,47 @@ func TestInvalidateGroupLeafKeysMatchFrozenOracle(t *testing.T) {
 	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 
-	// G1 loses a1 (strip path) and gains a4 (clone path: a1 still in G2).
+	oldA1 := s.publisher.pending.byID[1]
+	oldLeaf := oldA1
+	require.ElementsMatch(t, []int64{1, 2}, oldLeaf.static.Load().groupIDs)
+	rtA1 := oldLeaf.runtime
+
+	// G1 loses a1 (a1 REMAINS in G2 → retained strip) and gains a4.
 	a4 := acc(4, tp, 4)
 	ldr.mu.Lock()
-	ldr.byGroup[1] = []*domain.Account{a1, a4}
+	ldr.byGroup[1] = []*domain.Account{a2, a4}
 	ldr.mu.Unlock()
 	s.InvalidateGroups([]int64{1})
 
 	sv := s.publisher.pending
 	require.NotNil(t, sv)
 
-	// a2 removed everywhere → gone.
-	_, ok := sv.byID[2]
-	require.False(t, ok, "account removed from every group must leave byID")
+	// a1 removed from G1 but retained → NEW leaf, only G2, sharing runtime.
+	st1 := sv.byID[1].static.Load()
+	require.Equal(t, []int64{2}, st1.groupIDs, "a1 removed from G1 must retain only G2 (retained-strip branch)")
+	require.NotSame(t, oldLeaf, sv.byID[1], "the strip must build a new immutable leaf (not clone in place)")
+	require.Same(t, rtA1, sv.byID[1].runtime, "the strip must preserve the shared runtime")
+	require.Equal(t, frozenPlanKey(*a1, a1.Template, []int64{2}), planKeyOf(st1),
+		"the stripped leaf key must equal the frozen oracle over its own groupIDs")
 
-	// Every retained leaf's key matches the frozen oracle over its own groupIDs.
-	for id, acc := range map[int64]*domain.Account{1: a1, 3: a3, 4: a4} {
+	// a2 still in G1; a4 added.
+	require.Equal(t, []int64{1}, sv.byID[2].static.Load().groupIDs)
+	require.Equal(t, []int64{1}, sv.byID[4].static.Load().groupIDs)
+	// Remaining retained leaves' keys also match the frozen oracle.
+	for id, a := range map[int64]*domain.Account{2: a2, 3: a3, 4: a4} {
 		st := sv.byID[id].static.Load()
-		require.Equal(t, frozenPlanKey(*acc, acc.Template, st.groupIDs), planKeyOf(st),
+		require.Equal(t, frozenPlanKey(*a, a.Template, st.groupIDs), planKeyOf(st),
 			"leaf %d cached key must equal the frozen oracle", id)
 	}
-	require.Equal(t, []int64{1, 2}, sv.byID[1].static.Load().groupIDs, "shared account groupIDs follow construction order (gid first, then others)")
-	require.Equal(t, []int64{1}, sv.byID[4].static.Load().groupIDs)
+	// G2 must now reference a1's NEW retained leaf (shared-instance discipline).
+	var g2HasA1 bool
+	for _, as := range sv.groups[2].accounts {
+		if as.static.Load().acc.ID == 1 {
+			require.Same(t, sv.byID[1], as, "G2 must point at the retained a1 leaf")
+			g2HasA1 = true
+		}
+	}
+	require.True(t, g2HasA1, "G2 must still contain a1")
 }
 
 // --- T1: differential observables + independent full-rebuild oracle ---

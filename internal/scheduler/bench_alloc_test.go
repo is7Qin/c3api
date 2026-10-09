@@ -21,6 +21,9 @@ var (
 // perGroup=50 own accounts plus shared=10 accounts shared across EVERY group.
 // Setup (mem loader + full reload + compile) stays outside the timer; the
 // benchmark measures only InvalidateGroups (per-group loads + fold + one freeze).
+// It uses api_key accounts (codex ratio = 0 → no identity pools); the ratio>0
+// counterpart with a pool reuse/created/resize ledger is
+// codexBatchStageFixture + BenchmarkInvalidateGroupsStageCodex in bench_stage_test.go.
 func batchStageFixture(b *testing.B, m int) (*Scheduler, *t1Loader) {
 	b.Helper()
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})

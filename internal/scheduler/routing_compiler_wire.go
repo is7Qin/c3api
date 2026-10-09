@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"slices"
 	"sort"
 	"time"
 	"unsafe"
@@ -345,8 +346,13 @@ func (b *encBuf) recordFirstDiff(p []byte) {
 	b.firstDiff = b.n + len(p)
 }
 
-// sbytes returns a read-only byte view of s WITHOUT copying. Safe here: the
-// view is immediately consumed by bytes.Equal and never retained or mutated.
+// sbytes returns a read-only byte view of s WITHOUT copying (unsafe.Slice over
+// unsafe.StringData). Safe ONLY because: (a) the view is immediately consumed
+// by bytes.Equal inside compareChunk and is never retained beyond that call;
+// (b) it is never mutated; (c) it leans on Go 1.20+ semantics — strings are
+// immutable and StringData is stable for the lifetime of the string, so the
+// slice neither aliases a mutable buffer nor outlives its backing store. Never
+// store the result across a compare chunk.
 func sbytes(s string) []byte {
 	if len(s) == 0 {
 		return nil
@@ -355,8 +361,19 @@ func sbytes(s string) []byte {
 }
 
 // result reports whether the compared stream was byte-identical to old: every
-// byte matched AND the total length matched.
-func (b *encBuf) result() bool { return b.equal && b.n == len(b.old) }
+// byte matched AND the total length matched. A LENGTH-ONLY mismatch where the
+// new stream is a proper prefix of old (equal so far, total < len(old)) is
+// recorded as firstDiff == total — the new stream's length, i.e. the first
+// index at which the streams diverge by absence — matching the spec's "first
+// difference" semantics. A byte-identical run (total == len(old)) keeps the -1
+// sentinel. A stream that overran old already recorded firstDiff == len(old) in
+// compareChunk; the equal flag is false there, so this never overwrites it.
+func (b *encBuf) result() bool {
+	if b.equal && b.total < len(b.old) {
+		b.firstDiff = b.total
+	}
+	return b.equal && b.n == len(b.old)
+}
 
 // decisionEncoder 是编译道单所有者（compileOnce 串行调用）的编码 scratch：
 // 仅保留 refs/ids 暂存跨 fire 复用（varint 零分配）。**不保留输出缓冲**——旧实现
@@ -382,7 +399,10 @@ func (e *decisionEncoder) encode(d *DecisionView) []byte {
 	}
 	var eb encBuf
 	e.writeCanonical(&eb, d)
-	return eb.buf.Bytes()
+	// Trim the capacity to the length: the fresh owned slice is the SINGLE
+	// long-lived copy, so carrying bytes.Buffer's oversize growth capacity would
+	// pin otherwise-free heap for the whole inter-publish window. Zero-copy.
+	return slices.Clip(eb.buf.Bytes())
 }
 
 // compareCanonical streams d's canonical encoding against old through a bounded
