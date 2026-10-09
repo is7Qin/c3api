@@ -179,11 +179,10 @@ func imagesStreamOutcome(reqID string, sel *scheduler.Selection, reqModel string
 }
 
 // writeSSEHeaders 设置 SSE 响应头三件套（text/event-stream）——单一 SSE 头
-// 助手，beginSSE 与所有响应头三件套站点共用（委托 sserelay.SetSSEHeaders，
-// 供 sserelay.Output.Commit 共用同一语义）。仅设置头、不提交状态码：提交
-// 时机交由首个 Write 或紧随的显式 WriteHeader 决定，保持「首帧前不提交头」
-// 的惰性语义（sserelay 站点首帧前失败仍可失败重分类；需立即提交的调用方
-// 自行 WriteHeader(200)）。
+// 助手，所有响应头三件套站点与 sserelay.Output.Commit 共用（委托
+// sserelay.SetSSEHeaders）。仅设置头、不提交状态码：提交时机交由首个 Write 或
+// 紧随的显式 WriteHeader 决定，保持「首帧前不提交头」的惰性语义（sserelay
+// 站点首帧前失败仍可失败重分类；需立即提交的调用方自行 WriteHeader(200)）。
 func writeSSEHeaders(w http.ResponseWriter) {
 	sserelay.SetSSEHeaders(w.Header())
 }

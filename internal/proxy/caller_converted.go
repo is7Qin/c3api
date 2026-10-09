@@ -286,7 +286,7 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 	cred := domain.CredentialFromExt(sel.Ext)
 	cm := sel.ClientResponseModel(reqModel)
 	if stream {
-		return p.streamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
+		return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, codexConvertedStreamPlan(dir, cm))
 	}
 	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
 }

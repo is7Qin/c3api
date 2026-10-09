@@ -100,6 +100,12 @@ type Config struct {
 	// 触发）。映射帧字节生命周期仅限本帧：Mapper 返回后 relay 立即写出，调用
 	// 方可复用缓冲。
 	Mapper func(Event) (frame []byte, drop bool)
+	// Terminal 可选：正常 EOF（读循环无错误结束）时调用一次，返回的帧（非空）
+	// 在末次 drain 之后、deadline watcher 停止之前写出并 drain——用于 mapper
+	// 无法自产的协议终止帧（如 converted 源 [DONE] 无 completed 时补发的目标
+	// 终止帧）。放在此收尾生命周期内，阻塞写仍受取消/超时写 deadline 解阻保护。
+	// 错误路径不调用；写失败以错误返回（与末次 drain 同语义）。不新增采样回调。
+	Terminal func() []byte
 	// Output 由调用方构造的统一下行 owner（五路 + images）。nil 时 Relay 自建
 	// 一个包装 dst 的 Output（用 Interval/Cancel），结束后自行 Release。
 	Output *Output
@@ -183,6 +189,17 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	if err == nil && !out.WriteFailed() {
 		if derr := out.DrainFlush(); derr != nil {
 			err = derr
+		}
+	}
+	// 正常 EOF 的协议终止帧（调用方注入）：在 deadline watcher 仍存活时写出，
+	// 使阻塞写同样受取消/超时解阻（watcher 在 stopWatcher 才停止——见上）。
+	if err == nil && cfg.Terminal != nil {
+		if frame := cfg.Terminal(); len(frame) > 0 {
+			if _, werr := out.WriteFrame(frame); werr != nil {
+				err = werr
+			} else if derr := out.DrainFlush(); derr != nil {
+				err = derr
+			}
 		}
 	}
 	// 保存的 I/O 错优先返回（§3.8 自取消路径不折叠为 context.Canceled；正常结束
