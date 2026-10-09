@@ -112,10 +112,17 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	if genErr == nil {
 		if err := commitOnce(); err != nil {
 			genErr = err
-		} else if out.WriteFailed() {
-			genErr = out.IOErr()
-			if genErr == nil {
-				genErr = errStreamWriteFailed
+		} else {
+			// 零事件成功路径：ttft 在 commitOnce 内才固化，而 timing 在此前构建
+			//（*int64 指针按值拷贝），须回填否则 TTFT 丢失（恢复 ① 行为）。
+			timing.TTFTMS = ttft
+			if out.WriteFailed() {
+				genErr = out.IOErr()
+				if genErr == nil {
+					// 纯防御：WriteFailed()==true 蕴含 IOErr()!=nil（failLocked 是唯一
+					// 起点且恒带非 nil 错误），此分支理论上不可达。
+					genErr = errStreamWriteFailed
+				}
 			}
 		}
 	}

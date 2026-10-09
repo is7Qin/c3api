@@ -273,6 +273,25 @@ func TestStreamImageZeroImagesSuccess(t *testing.T) {
 	require.Nil(t, l.PricePerCallMillis, "0 张无 per-image 价快照")
 }
 
+// TestStreamImageZeroEventSuccessBackfillsTTFT 零事件成功路径：ttft 在 commitOnce
+// 内才固化，而 timing 在其前构建（*int64 指针按值拷贝）→ 必须在 commitOnce 成功
+// 后回填，否则观测到的 AttemptTiming.TTFTMS 为 nil（r4 B：恢复 ① 行为）。
+func TestStreamImageZeroEventSuccessBackfillsTTFT(t *testing.T) {
+	p, _ := newImageStreamTestProxy(t, nil)
+	base := planBase(t, p)
+	var got AttemptOutcome
+	obs := NewAttemptObserver(nil, nil, func(o AttemptOutcome) { got = o }, nil)
+	d := &dispatchObservation{observer: obs, base: base}
+	ctx := context.WithValue(context.Background(), ctxKeyDispatch{}, d)
+	r, rec := streamImageReq(t, nil)
+	code, _, handled, err := p.streamImageGeneration(ctx, rec, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen(nil, nil, nil))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, code)
+	require.True(t, handled)
+	require.Equal(t, ResultSuccess, got.Result)
+	require.NotNil(t, got.Timing.TTFTMS, "零事件成功路径 TTFT 必须回填（commitOnce 成功后）")
+}
+
 // TestStreamImagePreHeaderError 首事件前失败：响应头未发 → 错误原样透传
 // （信封 StatusCode/RawJSON 可用——HTTP 状态可用路径）。
 func TestStreamImagePreHeaderError(t *testing.T) {
@@ -545,7 +564,8 @@ func TestStreamImageFirstCompletedFlushFails(t *testing.T) {
 	r, rec := streamImageReq(t, nil)
 	b64a := "aGVsbG8="
 	boom := errors.New("event flush boom")
-	// Commit 的首次 flush 成功，completed 事件的 DrainFlush 失败（第 2 次）。
+	// Commit 的首次 flush 成功；completed 事件的 WriteFrame 首帧即时 flush
+	//（第 2 次 flush）失败（DrainFlush 在其后，未触达）。
 	fw := &flushFailWriter{ResponseRecorder: rec, err: boom, failAt: 2}
 	events := []domain.ImageStreamEvent{{Type: domain.ImageStreamEventCompleted, B64JSON: &b64a}}
 	code, _, handled, err := p.streamImageGeneration(context.Background(), fw, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen(events, nil, nil))

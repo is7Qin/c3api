@@ -382,6 +382,112 @@ func TestOutputReleaseIdempotent(t *testing.T) {
 	require.True(t, o2.BusinessFrameSent(), "池复用后 Output 仍可用")
 }
 
+// partialWriteWriter 前 failAt-1 次底层 Write 全成功，第 failAt 次返回部分写出
+// （n=len/2）+ 错误；FlushError 恒成功——隔离出「底层 Write 部分失败」这一阶段。
+// 累积真实下行字节供断言（心跳/错误帧是否误下行）。
+type partialWriteWriter struct {
+	err    error
+	failAt int
+	calls  int
+	buf    bytes.Buffer
+}
+
+func (w *partialWriteWriter) Header() http.Header { return http.Header{} }
+func (w *partialWriteWriter) WriteHeader(int)     {}
+func (w *partialWriteWriter) FlushError() error   { return nil }
+func (w *partialWriteWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls >= w.failAt {
+		n := len(p) / 2
+		w.buf.Write(p[:n])
+		return n, w.err
+	}
+	w.buf.Write(p)
+	return len(p), nil
+}
+
+// TestOutputHeartbeatDrainPartialFailureSettlesBusiness：心跳写前须先排空残余业务；
+// 该排空 flush 部分失败（隐式/排空 flush 只下行一半业务字节）→ pendingBusiness 扣除
+// 已真实下行的字节、businessSent 反映真实下行、心跳帧不得下行。
+func TestOutputHeartbeatDrainPartialFailureSettlesBusiness(t *testing.T) {
+	boom := errors.New("partial write")
+	fw := &partialWriteWriter{err: boom, failAt: 2}
+	o := NewOutput(fw, time.Hour, OutputOptions{FlushBytes: 1 << 20})
+	defer o.Release()
+	// 首帧即时 flush（第 1 次底层 Write 成功）。
+	if _, err := o.WriteFrame([]byte("data: a\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	require.Equal(t, 0, o.pendingBusiness)
+	require.True(t, o.BusinessFrameSent())
+	// 第二小帧仅入缓冲（阈值巨大，未下行）。
+	f2 := []byte("data: b\n\n")
+	if _, err := o.WriteFrame(f2); err != nil {
+		t.Fatal(err)
+	}
+	require.Equal(t, len(f2), o.pendingBusiness)
+	// 心跳：先排空残余业务 → 排空 flush 部分失败（第 2 次底层 Write 只写一半）。
+	err := o.Heartbeat()
+	require.ErrorIs(t, err, boom)
+	require.True(t, o.WriteFailed())
+	require.ErrorIs(t, o.IOErr(), boom)
+	require.Equal(t, len(f2)-len(f2)/2, o.pendingBusiness, "已下行的业务字节须从 pendingBusiness 扣除")
+	require.True(t, o.BusinessFrameSent(), "部分下行的业务字节仍计真实下行")
+	require.NotContains(t, fw.buf.String(), "keepalive", "排空失败即终止，心跳帧不得下行")
+}
+
+// TestOutputWriteErrorDrainPartialFailureSettlesBusiness：错误帧写前须先排空残余业务；
+// 排空 flush 部分失败 → pendingBusiness 扣除已下行字节、businessSent 保留下行事实、
+// 错误帧不得下行。
+func TestOutputWriteErrorDrainPartialFailureSettlesBusiness(t *testing.T) {
+	boom := errors.New("partial write")
+	fw := &partialWriteWriter{err: boom, failAt: 2}
+	o := NewOutput(fw, 0, OutputOptions{FlushBytes: 1 << 20})
+	defer o.Release()
+	if _, err := o.WriteFrame([]byte("data: a\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	require.True(t, o.Committed())
+	f2 := []byte("data: b\n\n")
+	if _, err := o.WriteFrame(f2); err != nil {
+		t.Fatal(err)
+	}
+	require.Equal(t, len(f2), o.pendingBusiness)
+	err := o.WriteError([]byte("event: error\ndata: {\"message\":\"x\"}\n\n"))
+	require.ErrorIs(t, err, boom)
+	require.True(t, o.WriteFailed())
+	require.Equal(t, len(f2)-len(f2)/2, o.pendingBusiness, "已下行的业务字节须从 pendingBusiness 扣除")
+	require.True(t, o.BusinessFrameSent())
+	require.NotContains(t, fw.buf.String(), "event: error", "排空失败即终止，错误帧不得下行")
+}
+
+// TestOutputWriteFrameFullBufferZeroAcceptPartialFailure：缓冲已满（阈值>缓冲容量，
+// 业务先占满缓冲）时新帧触发隐式 flush（先冲旧业务再接受，n==0）；该隐式 flush 部分
+// 失败 → 旧业务已下行字节须结算（n==0 也不得跳过），新帧未接受不得误计。
+func TestOutputWriteFrameFullBufferZeroAcceptPartialFailure(t *testing.T) {
+	boom := errors.New("partial write")
+	fw := &partialWriteWriter{err: boom, failAt: 2}
+	o := NewOutput(fw, 0, OutputOptions{FlushBytes: 1 << 20})
+	defer o.Release()
+	// 第一帧精确填满缓冲（首帧即时 flush；底层 Write #1 成功）。
+	if _, err := o.WriteFrame(bytes.Repeat([]byte("a"), 4096)); err != nil {
+		t.Fatal(err)
+	}
+	// 第二帧再次精确填满缓冲（未达阈值，驻留缓冲）。
+	if _, err := o.WriteFrame(bytes.Repeat([]byte("b"), 4096)); err != nil {
+		t.Fatal(err)
+	}
+	require.Equal(t, 4096, o.pendingBusiness, "两帧共 4096 业务字节驻留缓冲")
+	// 第三帧：缓冲满 → bufio 先隐式 flush 旧业务（第 2 次底层 Write 部分失败、n==0）。
+	_, err := o.WriteFrame([]byte("data: c\n\n"))
+	require.ErrorIs(t, err, boom)
+	require.True(t, o.WriteFailed())
+	require.True(t, o.Committed())
+	require.Equal(t, 2048, o.pendingBusiness, "隐式 flush 下行的 2048 字节须从 pendingBusiness 扣除（n==0 不得跳过结算）")
+	require.True(t, o.BusinessFrameSent(), "部分下行的业务字节仍计真实下行")
+	require.NotContains(t, fw.buf.String(), "data: c", "n==0 的新帧未被接受，不得下行")
+}
+
 // TestOutputClientCancelBeforeWriteFailure：客户端先取消（ctx 已取消）后写失败
 // → 不计 selfCanceled（避免把客户端取消误记为写失败出口）。
 func TestOutputClientCancelBeforeWriteFailure(t *testing.T) {

@@ -185,9 +185,12 @@ func (o *Output) WriteFrame(frame []byte) (bool, error) {
 	n, err := o.bw.Write(frame)
 	if n > 0 {
 		o.pending += n
-		// 缓冲内恒为业务字节；本次落点 = 操作前缓冲 + 接受字节 − 操作后缓冲。
-		o.settleWireLocked(buffered+n, buffered+n, o.bw.Buffered())
 	}
+	// 任何返回路径先结算：缓冲余量不足时 bufio 会先隐式 flush 既有业务字节再接受
+	// 本次字节，该隐式 flush 可能已部分下行并返错——无论 n 是否为零、err 是否非
+	// nil，都须按「操作前缓冲 + 本次接受字节 − 操作后缓冲」结清真实下行业务字节。
+	// 写缓冲在此调用点恒为业务字节，故 business == wire == buffered + n。
+	o.settleWireLocked(buffered+n, buffered+n, o.bw.Buffered())
 	if err != nil {
 		o.failLocked(err)
 		return false, err
@@ -220,19 +223,28 @@ func (o *Output) Heartbeat() error {
 	return o.writeHeartbeatLocked()
 }
 
-// writeHeartbeatLocked 独立心跳写：写注释帧 → flush → 按底层写边界结算业务下行
-// （缓冲恒以业务字节打头、心跳追加于尾部，故顺带 flush 的业务字节按 FIFO 核算）
-// → 重置 nextHeartbeat。flush 失败不得视为可见成功（不更新 nextHeartbeat）。须持 mu。
+// writeHeartbeatLocked 独立心跳写：先排空残余业务（使心跳字节不与业务字节混批）
+// → 写注释帧 → flush → 结算（businessBefore 恒为 0，心跳字节不计业务）→ 重置
+// nextHeartbeat。flush 失败不得视为可见成功（不更新 nextHeartbeat）。须持 mu。
 func (o *Output) writeHeartbeatLocked() error {
-	bufferedBusiness := o.bw.Buffered() // 心跳追加前缓冲内业务字节数（FIFO 前端）
-	if _, err := o.bw.WriteString(heartbeatFrame); err != nil {
+	// 心跳字节不计业务：先排空残余业务（若有），使本次心跳写入即便触发隐式 flush
+	// 也不含业务字节，业务/心跳字节在结算时界限分明。
+	if o.bw.Buffered() > 0 {
+		if err := o.flushLocked(); err != nil {
+			return err // flushLocked 内部已 failLocked
+		}
+	}
+	// 排空后缓冲应为空；仍以实测 businessBefore（FIFO 前端）结算，防御性正确。
+	businessBefore := o.bw.Buffered()
+	n, err := o.bw.WriteString(heartbeatFrame)
+	o.settleWireLocked(businessBefore, businessBefore+n, o.bw.Buffered())
+	if err != nil {
 		o.failLocked(err)
 		return err
 	}
 	o.committed = true
-	wireBuffered := bufferedBusiness + len(heartbeatFrame)
-	err := o.bw.Flush()
-	o.settleWireLocked(bufferedBusiness, wireBuffered, o.bw.Buffered())
+	err = o.bw.Flush()
+	o.settleWireLocked(businessBefore, businessBefore+n, o.bw.Buffered())
 	if err != nil {
 		o.failLocked(err)
 		return err
@@ -281,15 +293,23 @@ func (o *Output) WriteError(frame []byte) error {
 		// 不承诺 SSE error 必达，禁补写。
 		return nil
 	}
-	bufferedBusiness := o.bw.Buffered() // 错误帧追加前缓冲内业务字节数
-	if _, err := o.bw.Write(frame); err != nil {
-		o.failLocked(err)
-		return err
+	// 错误帧字节不计业务：先排空残余业务（若有），使错误帧写入即便触发隐式 flush
+	// 也不含业务字节。
+	if o.bw.Buffered() > 0 {
+		if err := o.flushLocked(); err != nil {
+			return err // flushLocked 内部已 failLocked
+		}
+	}
+	businessBefore := o.bw.Buffered() // 排空后应为 0；防御性实测
+	n, werr := o.bw.Write(frame)
+	o.settleWireLocked(businessBefore, businessBefore+n, o.bw.Buffered())
+	if werr != nil {
+		o.failLocked(werr)
+		return werr
 	}
 	o.committed = true
-	wireBuffered := bufferedBusiness + len(frame)
 	err := o.bw.Flush()
-	o.settleWireLocked(bufferedBusiness, wireBuffered, o.bw.Buffered())
+	o.settleWireLocked(businessBefore, businessBefore+n, o.bw.Buffered())
 	if err != nil {
 		o.failLocked(err)
 		return err
