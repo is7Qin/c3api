@@ -134,6 +134,19 @@ func attachCompilerFacts(byID map[int64]*accountSnapshot) map[int64]compilerAcco
 
 func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]compilerAccountFacts, rk routeKey, op domain.OperationTag) []compilerCandidateFacts {
 	facts := make([]compilerCandidateFacts, 0, len(candidates))
+	// quality hex is a pure function of (format, model, op) — and format/op are
+	// fixed for this call — so memoize it compile-locally and keep the account
+	// loop free of repeated sha256+hex. The memo does not affect QualityRaw
+	// (the canonical wire field just holds the same string).
+	qualityMemo := make(map[string]string, 4)
+	qualityFor := func(model string) string {
+		if h, ok := qualityMemo[model]; ok {
+			return h
+		}
+		h := qualityClassHexForWithOp(rk.format, model, op)
+		qualityMemo[model] = h
+		return h
+	}
 	for _, account := range candidates {
 		fact := compilerCandidateFacts{requestedModel: rk.model, mappedModel: rk.model}
 		if account == nil {
@@ -153,15 +166,25 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 				fact.mappingMode = mapping.Mode
 			}
 		}
-		format := rk.format
-		fact.quality = qualityClassHexForWithOp(format, fact.mappedModel, op)
-		fact.qualityRaw = qualityClassHexForWithOp(format, fact.requestedModel, op)
+		fact.quality = qualityFor(fact.mappedModel)
+		if fact.mappedModel == fact.requestedModel {
+			// Identity mapping ⇒ the quality class is the same; reuse the raw
+			// value (no second memo probe / recompute).
+			fact.qualityRaw = fact.quality
+		} else {
+			fact.qualityRaw = qualityFor(fact.requestedModel)
+		}
 		facts = append(facts, fact)
 	}
 	return facts
 }
 
-// filterCandidates keeps statically eligible candidates only.
+// filterCandidates keeps statically eligible candidates only, compacting them
+// IN PLACE (stable order preserved).
+//
+// CONSUMING CONTRACT: after this call the input slice MUST NOT be used again —
+// its backing array is overwritten with the surviving entries (zero extra
+// allocation). A caller that needs the original entries must copy first.
 //
 // v5-§5.1A (COMPILED-HEALTH-FREE): the health/latch branches are DELETED —
 // serving gates live solely in the live reserveOnView path
@@ -171,7 +194,7 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 // Compiled health additionally churned generations and invalidated in-flight
 // plans — deleting the class removes a harm (anti-harm clause).
 func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFacts {
-	out := make([]compilerCandidateFacts, 0, len(candidates))
+	out := candidates[:0]
 	for _, fact := range candidates {
 		// The `< 0` arm is dead defence: identity_revision is a non-negative
 		// generation (>=1 in practice), unlike the lifecycle token it replaced.
