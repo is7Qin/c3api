@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"time"
 
@@ -21,6 +22,9 @@ import (
 
 // imageStreamGenerator 流式生图能力，与 sdkbridge.Codex.GenerateImageStream 同签名。
 type imageStreamGenerator func(ctx context.Context, cred *domain.AccountCredential, p *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error
+
+// errStreamWriteFailed 兜底错误：WriteFailed 已置但无保存的 I/O 错时的失败出口用。
+var errStreamWriteFailed = errors.New("image stream write failed")
 
 func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, params *domain.ImageGenParams, gen imageStreamGenerator) (int, []byte, bool, error) {
 	// 首事件前保留 HTTP 错误语义；首事件后只能写 SSE error 帧，计费使用已收集的图片和令牌。
@@ -49,29 +53,36 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		usage *domain.ImageUsage
 		ttft  *int64
 	)
-	commitOnce := func() {
+	commitOnce := func() error {
 		if out.Committed() {
-			return
+			return nil
 		}
-		_ = out.Commit()
+		if err := out.Commit(); err != nil {
+			return err
+		}
 		if ttft == nil {
 			ms := time.Since(start).Milliseconds()
 			ttft = &ms
 		}
+		return nil
 	}
 
 	genErr := gen(ctx, cred, params, func(ev domain.ImageStreamEvent) error {
 		switch ev.Type {
 		case domain.ImageStreamEventKeepalive:
 			// SDK 合成 keepalive → 网关统一注释帧（: keepalive\n）。
-			commitOnce()
+			if err := commitOnce(); err != nil {
+				return err // 传播 Commit/FlushError 失败（不得吞掉）
+			}
 			return out.Heartbeat()
 		case domain.ImageStreamEventCompleted:
 			count++
 			if ev.Usage != nil {
 				usage = ev.Usage
 			}
-			commitOnce()
+			if err := commitOnce(); err != nil {
+				return err // 传播 Commit/FlushError 失败（不得吞掉）
+			}
 			if _, err := out.WriteFrame(buildCompletedFrame(&ev)); err != nil {
 				return err
 			}
@@ -95,6 +106,19 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	u := usageTuple{ii: ii, io: io, tt: ii + io, calls: count}
 	usageObs := AttemptUsage{InputTokens: ii, OutputTokens: io, CallCount: count}
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
+
+	// 无事件成功也提交并 flush；Commit/FlushError 失败（含零事件路径）须进失败
+	// 出口，不得记成功——最终观测前复核 WriteFailed/IOErr。
+	if genErr == nil {
+		if err := commitOnce(); err != nil {
+			genErr = err
+		} else if out.WriteFailed() {
+			genErr = out.IOErr()
+			if genErr == nil {
+				genErr = errStreamWriteFailed
+			}
+		}
+	}
 
 	if genErr != nil {
 		// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
@@ -136,8 +160,6 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		}
 	}
 
-	// 无事件成功也提交并 flush。
-	commitOnce()
 	outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultSuccess, 200, CommitResponseStarted, true, true, false))
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	p.observeDispatchOutcome(ctx, outcome, health)

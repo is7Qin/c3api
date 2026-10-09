@@ -399,6 +399,34 @@ func (w *errorWriter) Header() http.Header         { return http.Header{} }
 func (w *errorWriter) Write(p []byte) (int, error) { return 0, errors.New("client gone") }
 func (w *errorWriter) WriteHeader(int)             {}
 
+// failAfterFirstWriteWriter 首次 Write 成功、其后失败：构造「首帧即时 flush 成功后，
+// 末次 drain flush 失败」的收尾路径。
+type failAfterFirstWriteWriter struct {
+	err   error
+	calls int
+}
+
+func (w *failAfterFirstWriteWriter) Header() http.Header { return http.Header{} }
+func (w *failAfterFirstWriteWriter) WriteHeader(int)     {}
+func (w *failAfterFirstWriteWriter) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls > 1 {
+		return 0, w.err
+	}
+	return len(p), nil
+}
+
+// TestRelayFinalDrainErrorPropagates §3.8 解耦：Config{} 无 Cancel、首帧成功、
+// EOF 残帧入缓冲、末次 drain 失败 → Relay 返回非 nil（drain 错不丢弃、不依赖
+// 是否自取消）。
+func TestRelayFinalDrainErrorPropagates(t *testing.T) {
+	werr := errors.New("drain boom")
+	wr := &failAfterFirstWriteWriter{err: werr}
+	err := Relay(context.Background(), wr, strings.NewReader("data: a\n\ndata: b"), Config{})
+	require.ErrorIs(t, err, werr, "末次 drain 失败必须传播（即便 Config{} 无 Cancel）")
+	require.Equal(t, 2, wr.calls, "首帧写成功 + 末次 drain 写失败")
+}
+
 func TestRelayContextCancelStops(t *testing.T) {
 	rec := httptest.NewRecorder()
 	ctx, cancel := context.WithCancel(context.Background())

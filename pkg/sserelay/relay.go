@@ -178,14 +178,17 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	// 阻塞、后续 drain 失保护。watcher 活到心跳汇合与最终写全部完成。
 	out.StopTimer()
 	// 取消/错误路径不额外 drain（残余业务字节直接丢弃）；正常结束（EOF）且未
-	// 写失败时才 flush 残余。drain 自身失败经 failLocked 记录为 I/O 错误。
+	// 写失败时才 flush 残余。末次 drain 的错误**必须传播**（不丢弃、不依赖是否
+	// 自取消——即便 Config{} 无 Cancel 也要返回）。
 	if err == nil && !out.WriteFailed() {
-		_ = out.DrainFlush()
+		if derr := out.DrainFlush(); derr != nil {
+			err = derr
+		}
 	}
-	// 心跳/写失败时优先返回已保存的 I/O 错误（不折叠为 context.Canceled）；
-	// 仅在写失败确由 Output 自身取消引发时覆盖，避免把「客户端先取消」误记为
-	// 写失败出口。
-	if le := out.IOErr(); le != nil && out.SelfCanceled() {
+	// 保存的 I/O 错优先返回（§3.8 自取消路径不折叠为 context.Canceled；正常结束
+	// 但出现写/心跳失败而当前无其他错误时同样返回）。「I/O 错传播」与「是否自
+	// 取消」解耦。
+	if le := out.IOErr(); le != nil && (err == nil || out.SelfCanceled()) {
 		err = le
 	}
 	r.stopWatcher()

@@ -51,6 +51,29 @@ type failWriter struct {
 
 func (w *failWriter) Write([]byte) (int, error) { return 0, errors.New("client closed") }
 
+// flushFailWriter 让 Write 成功但第 failAt 次 flush 失败（探测链命中 FlushError）。
+type flushFailWriter struct {
+	*httptest.ResponseRecorder
+	err    error
+	failAt int
+	calls  int
+}
+
+func (w *flushFailWriter) Flush() { w.ResponseRecorder.Flush() }
+
+func (w *flushFailWriter) FlushError() error {
+	w.calls++
+	at := w.failAt
+	if at <= 0 {
+		at = 1
+	}
+	if w.calls >= at {
+		return w.err
+	}
+	w.ResponseRecorder.Flush()
+	return nil
+}
+
 // fakeEnvelope 信封错误替身（信封协议：StatusCode() + RawJSON()）。
 type fakeEnvelope struct {
 	status int
@@ -495,4 +518,41 @@ func TestSSEHeaderHelpers_LazySetVsEagerCommit(t *testing.T) {
 	require.Equal(t, "text/event-stream", eager.Header().Get("Content-Type"))
 	require.True(t, eager.wroteHeader, "beginSSE must commit the status code")
 	require.Equal(t, http.StatusOK, eager.Code)
+}
+
+// TestStreamImageZeroEventCommitFlushFails 零事件成功的 Commit/FlushError 失败必须
+// 进失败出口（不得记 ResultSuccess/ErrNone）。
+func TestStreamImageZeroEventCommitFlushFails(t *testing.T) {
+	testHealthSink.reset()
+	p, store := newImageStreamTestProxy(t, nil)
+	r, rec := streamImageReq(t, nil)
+	boom := errors.New("commit flush boom")
+	fw := &flushFailWriter{ResponseRecorder: rec, err: boom, failAt: 1}
+	code, _, handled, err := p.streamImageGeneration(context.Background(), fw, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen(nil, nil, nil))
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	require.True(t, handled)
+	l := collectImageLogs(t, p, store)
+	require.Equal(t, domain.ErrAbort, l.ErrorType, "Commit/FlushError 失败不得记成功")
+	require.Equal(t, int64(0), l.CallCount)
+}
+
+// TestStreamImageFirstCompletedFlushFails 首个 completed 的事件级 flush 失败必须进
+// 失败出口（不得静默成功）；已收集张数仍落账。
+func TestStreamImageFirstCompletedFlushFails(t *testing.T) {
+	testHealthSink.reset()
+	p, store := newImageStreamTestProxy(t, nil)
+	r, rec := streamImageReq(t, nil)
+	b64a := "aGVsbG8="
+	boom := errors.New("event flush boom")
+	// Commit 的首次 flush 成功，completed 事件的 DrainFlush 失败（第 2 次）。
+	fw := &flushFailWriter{ResponseRecorder: rec, err: boom, failAt: 2}
+	events := []domain.ImageStreamEvent{{Type: domain.ImageStreamEventCompleted, B64JSON: &b64a}}
+	code, _, handled, err := p.streamImageGeneration(context.Background(), fw, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen(events, nil, nil))
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	require.True(t, handled)
+	l := collectImageLogs(t, p, store)
+	require.Equal(t, domain.ErrAbort, l.ErrorType, "completed 事件 flush 失败不得静默成功")
+	require.Equal(t, int64(1), l.CallCount, "已收集张数仍落账")
 }

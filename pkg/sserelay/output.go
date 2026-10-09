@@ -26,12 +26,13 @@ func SetSSEHeaders(h http.Header) {
 	h.Set("X-Accel-Buffering", "no")
 }
 
-// flushResponseWriter 触发真实 wire 的 flush 并返回可诊断错误：按
-// FlushError → Flusher → Unwrap 顺序探测（与 http.ResponseController 一致；
-// Go 1.26 的 *http.response 实现 FlushError，故真实响应可返错）。探测链全缺
-// （无 Flusher 的旧兼容 writer）→ http.ErrNotSupported，调用方按「无需 flush」
-// 的旧行为处理、不算失败。零分配（仅接口类型断言）。
-func flushResponseWriter(w http.ResponseWriter) error {
+// FlushWriter 触发真实 wire 的 flush 并返回可诊断错误：按 FlushError →
+// Flusher → Unwrap 顺序探测（与 http.ResponseController 一致；Go 1.26 的
+// *http.response 实现 FlushError，故真实响应可返错）。探测链全缺（无 Flusher
+// 的旧兼容 writer）→ http.ErrNotSupported，调用方按「无需 flush」的旧行为处理、
+// 不算失败。零分配（仅接口类型断言）。internal/server 的 statusWriter 转发
+// FlushError 复用本函数（单一探测链实现）。
+func FlushWriter(w http.ResponseWriter) error {
 	if fe, ok := w.(interface{ FlushError() error }); ok {
 		return fe.FlushError()
 	}
@@ -40,7 +41,7 @@ func flushResponseWriter(w http.ResponseWriter) error {
 		return nil
 	}
 	if u, ok := w.(interface{ Unwrap() http.ResponseWriter }); ok {
-		return flushResponseWriter(u.Unwrap())
+		return FlushWriter(u.Unwrap())
 	}
 	return http.ErrNotSupported
 }
@@ -52,7 +53,10 @@ type OutputOptions struct {
 	// 时禁补写的门禁。nil = 不联动。
 	Ctx context.Context
 	// Cancel 是实际上游请求 ctx 的 cancel（须在请求发出前建立）。心跳写/flush
-	// 失败时 Output 调用它解除在读的上游请求；nil = 不联动。
+	// 失败时 Output 调用它解除在读的上游请求。**建议必填**：为 nil 时 Output
+	// 无法解除在途上游读，仅能记录 writeFailed（Relay 收尾仍按 writeFailed/
+	// IOErr 传播 I/O 错，但阻塞在写的在途 goroutine 需依赖请求取消/流总超时
+	// 解除）。
 	Cancel context.CancelFunc
 	// FlushBytes 缓冲阈值；<=0 时默认 4096。
 	FlushBytes int
@@ -172,15 +176,17 @@ func (o *Output) WriteFrame(frame []byte) (bool, error) {
 		return false, nil
 	}
 	// 提交态在真实底层写前置位：帧超过缓冲余量时 bufio 会经底层 Write 直写
-	//（首帧即隐式提交 200）。实际写出的业务字节按 bufio 返回 n 结算，部分写
-	// 出（n>0 且 err!=nil）不得漏记。
+	//（首帧即隐式提交 200）。业务字节按「真正到达底层写边界」核算——不得把
+	// bufio.Write 的 n 当作已下行（大帧可能直写底层，小帧仅入缓冲）。
+	buffered := o.bw.Buffered()
 	if len(frame) > o.bw.Available() {
 		o.committed = true
 	}
 	n, err := o.bw.Write(frame)
 	if n > 0 {
 		o.pending += n
-		o.pendingBusiness += n
+		// 缓冲内恒为业务字节；本次落点 = 操作前缓冲 + 接受字节 − 操作后缓冲。
+		o.settleWireLocked(buffered+n, buffered+n, o.bw.Buffered())
 	}
 	if err != nil {
 		o.failLocked(err)
@@ -214,16 +220,20 @@ func (o *Output) Heartbeat() error {
 	return o.writeHeartbeatLocked()
 }
 
-// writeHeartbeatLocked 独立心跳写：写注释帧 → flush → 结算 pending（含顺带
-// flush 已缓冲业务字节：置 businessSent、清 pendingBusiness）→ 重置
-// nextHeartbeat。flush 失败不得视为可见成功（不更新 nextHeartbeat）。须持 mu。
+// writeHeartbeatLocked 独立心跳写：写注释帧 → flush → 按底层写边界结算业务下行
+// （缓冲恒以业务字节打头、心跳追加于尾部，故顺带 flush 的业务字节按 FIFO 核算）
+// → 重置 nextHeartbeat。flush 失败不得视为可见成功（不更新 nextHeartbeat）。须持 mu。
 func (o *Output) writeHeartbeatLocked() error {
+	bufferedBusiness := o.bw.Buffered() // 心跳追加前缓冲内业务字节数（FIFO 前端）
 	if _, err := o.bw.WriteString(heartbeatFrame); err != nil {
 		o.failLocked(err)
 		return err
 	}
 	o.committed = true
-	if err := o.bw.Flush(); err != nil {
+	wireBuffered := bufferedBusiness + len(heartbeatFrame)
+	err := o.bw.Flush()
+	o.settleWireLocked(bufferedBusiness, wireBuffered, o.bw.Buffered())
+	if err != nil {
 		o.failLocked(err)
 		return err
 	}
@@ -231,13 +241,8 @@ func (o *Output) writeHeartbeatLocked() error {
 		o.failLocked(err)
 		return err
 	}
-	if o.pendingBusiness > 0 {
-		o.businessSent = true
-		o.pendingBusiness = 0
-	}
 	o.pending = 0
-	now := time.Now()
-	o.nextHeartbeat = now.Add(o.interval)
+	o.nextHeartbeat = time.Now().Add(o.interval)
 	return nil
 }
 
@@ -276,22 +281,22 @@ func (o *Output) WriteError(frame []byte) error {
 		// 不承诺 SSE error 必达，禁补写。
 		return nil
 	}
+	bufferedBusiness := o.bw.Buffered() // 错误帧追加前缓冲内业务字节数
 	if _, err := o.bw.Write(frame); err != nil {
 		o.failLocked(err)
 		return err
 	}
 	o.committed = true
-	if err := o.bw.Flush(); err != nil {
+	wireBuffered := bufferedBusiness + len(frame)
+	err := o.bw.Flush()
+	o.settleWireLocked(bufferedBusiness, wireBuffered, o.bw.Buffered())
+	if err != nil {
 		o.failLocked(err)
 		return err
 	}
 	if err := o.flushWireLocked(); err != nil {
 		o.failLocked(err)
 		return err
-	}
-	if o.pendingBusiness > 0 {
-		o.businessSent = true
-		o.pendingBusiness = 0
 	}
 	o.pending = 0
 	o.finished = true // 终态：关闭写生命周期
@@ -396,8 +401,10 @@ func (o *Output) IOErr() error {
 	return o.lastErr
 }
 
-// failLocked 记录首个 I/O 错误、置 writeFailed 并取消上游 ctx。仅当取消前
-// ctx 仍存活（未被客户端先取消）时标记 selfCanceled。须持 mu。
+// failLocked 记录首个 I/O 错误、置 writeFailed 并取消上游 ctx。selfCanceled
+// 语义不依赖 cancel 是否非 nil：只要写失败发生在 ctx 仍存活（或 ctx 未知）时，
+// 即视为「Output 自身引发的写失败」（区别于客户端先取消），据此 Relay 可安全
+// 优先返回保存的 I/O 错而无需等待 cancel 回灌。须持 mu。
 func (o *Output) failLocked(err error) {
 	if o.writeFailed {
 		return
@@ -406,10 +413,10 @@ func (o *Output) failLocked(err error) {
 	if o.lastErr == nil {
 		o.lastErr = err
 	}
+	if o.ctx == nil || o.ctx.Err() == nil {
+		o.selfCanceled = true
+	}
 	if o.cancel != nil {
-		if o.ctx == nil || o.ctx.Err() == nil {
-			o.selfCanceled = true
-		}
 		o.cancel()
 	}
 }
@@ -417,32 +424,53 @@ func (o *Output) failLocked(err error) {
 // flushWireLocked 触发真实 wire flush；无 Flusher 的旧兼容 writer 的
 // ErrNotSupported 视为无需 flush（不算失败）。须持 mu。
 func (o *Output) flushWireLocked() error {
-	err := flushResponseWriter(o.w)
+	err := FlushWriter(o.w)
 	if errors.Is(err, http.ErrNotSupported) {
 		return nil
 	}
 	return err
 }
 
+// settleWireLocked 于底层写边界核算业务下行：businessBuffered 为本次 flush 前
+// 缓冲内的业务字节数（缓冲恒以业务字节打头），wireBuffered 为缓冲总字节数
+// （业务 + 本次追加的心跳/错误帧），after 为 flush 后剩余缓冲字节数。真正下行
+// 字节 = wireBuffered − after；其中业务部分 = min(wired, businessBuffered)
+// （FIFO——业务字节先于尾部的心跳/错误帧下行）。据此更新 businessSent（真实
+// 下行事实，部分写失败也保留）与 pendingBusiness（未下行字节）。须持 mu。
+func (o *Output) settleWireLocked(businessBuffered, wireBuffered, after int) {
+	wired := wireBuffered - after
+	businessWired := wired
+	if businessWired > businessBuffered {
+		businessWired = businessBuffered
+	}
+	if businessWired > 0 {
+		o.businessSent = true
+	}
+	remain := businessBuffered - businessWired
+	if remain < 0 {
+		remain = 0
+	}
+	o.pendingBusiness = remain
+}
+
 // flushLocked 批量 flush（阈值/drain/结束残余触发）：pending>0 时 flush +
-// wire flush，结算 pending 与业务下行标记，并重置 nextHeartbeat。flush 失败
-// 不得视为可见成功（不更新 nextHeartbeat）。
+// wire flush，按底层写边界结算业务下行并重置 nextHeartbeat。flush 失败不得
+// 视为可见成功（不更新 nextHeartbeat）。
 func (o *Output) flushLocked() error {
 	if o.pending <= 0 {
 		return nil
 	}
 	o.committed = true
-	if err := o.bw.Flush(); err != nil {
+	buffered := o.bw.Buffered()
+	err := o.bw.Flush()
+	o.settleWireLocked(buffered, buffered, o.bw.Buffered())
+	if err != nil {
 		o.failLocked(err)
 		return err
 	}
 	if err := o.flushWireLocked(); err != nil {
 		o.failLocked(err)
 		return err
-	}
-	if o.pendingBusiness > 0 {
-		o.businessSent = true
-		o.pendingBusiness = 0
 	}
 	if o.interval > 0 {
 		o.nextHeartbeat = time.Now().Add(o.interval)
@@ -454,17 +482,16 @@ func (o *Output) flushLocked() error {
 // flushNoResetLocked 只 flush 不重置 pending：首事件 latency flush 专用。
 func (o *Output) flushNoResetLocked() error {
 	o.committed = true
-	if err := o.bw.Flush(); err != nil {
+	buffered := o.bw.Buffered()
+	err := o.bw.Flush()
+	o.settleWireLocked(buffered, buffered, o.bw.Buffered())
+	if err != nil {
 		o.failLocked(err)
 		return err
 	}
 	if err := o.flushWireLocked(); err != nil {
 		o.failLocked(err)
 		return err
-	}
-	if o.pendingBusiness > 0 {
-		o.businessSent = true
-		o.pendingBusiness = 0
 	}
 	if o.interval > 0 {
 		o.nextHeartbeat = time.Now().Add(o.interval)

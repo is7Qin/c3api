@@ -272,20 +272,21 @@ func (w *partialErrWriter) Write(p []byte) (int, error) {
 }
 
 // TestOutputFlushErrorFailsAndGates：flush 可返错——Write 成功但 FlushError 失败
-// → writeFailed + 取消上游 ctx，且不得视为可见成功（businessSent 不置位）；
-// 失败后禁写。
+// → writeFailed + 取消上游 ctx、禁写；字节虽已过底层写边界（businessSent=true）
+// 但不得推进可见调度（nextHeartbeat 不更新）。
 func TestOutputFlushErrorFailsAndGates(t *testing.T) {
 	boom := errors.New("flush boom")
 	fw := &flushErrWriter{err: boom}
 	var canceled atomic.Bool
-	o := NewOutput(fw, 0, OutputOptions{Cancel: func() { canceled.Store(true) }})
+	o := NewOutput(fw, time.Hour, OutputOptions{Cancel: func() { canceled.Store(true) }})
 	defer o.Release()
 	_, err := o.WriteFrame([]byte("data: x\n\n"))
 	require.ErrorIs(t, err, boom)
 	require.True(t, o.WriteFailed())
 	require.ErrorIs(t, o.IOErr(), boom)
 	require.True(t, canceled.Load(), "flush 失败必须取消上游 ctx")
-	require.False(t, o.BusinessFrameSent(), "flush 失败不得视为可见成功")
+	require.True(t, o.BusinessFrameSent(), "字节已过底层写边界（Write 成功）→ 真实下行")
+	require.True(t, o.nextHeartbeat.IsZero(), "flush 失败不得推进可见调度（nextHeartbeat）")
 	wrote, err := o.WriteFrame([]byte("data: y\n\n"))
 	require.False(t, wrote)
 	require.NoError(t, err)
@@ -293,7 +294,8 @@ func TestOutputFlushErrorFailsAndGates(t *testing.T) {
 }
 
 // TestOutputLargeFramePartialWriteFailure：>4KB 首帧直写底层前即置提交态；
-// 部分写出（n>0 + err）的业务字节不得漏结算。
+// 部分写出（n>0 + err）的业务字节已过底层写边界 → 计入真实下行（businessSent），
+// 不再计未下行（pendingBusiness）。
 func TestOutputLargeFramePartialWriteFailure(t *testing.T) {
 	boom := errors.New("big frame write failed")
 	fw := &partialErrWriter{err: boom}
@@ -305,8 +307,30 @@ func TestOutputLargeFramePartialWriteFailure(t *testing.T) {
 	require.ErrorIs(t, err, boom)
 	require.True(t, o.WriteFailed())
 	require.True(t, o.Committed(), "大帧直写底层前即置提交态")
-	require.Equal(t, len(big)/2, o.pendingBusiness, "部分写出的业务字节不得漏结算")
+	require.Equal(t, 0, o.pendingBusiness, "部分写出的字节已过底层写边界，不再计未下行")
+	require.True(t, o.BusinessFrameSent(), "部分写失败仍保留真实下行事实")
 	require.True(t, canceled.Load())
+}
+
+// TestOutputBusinessBoundaryAccounting：小帧仅入缓冲（未下行）→ businessSent 不置位、
+// pendingBusiness 计未下行；成功 flush 后才计真实下行并清零未下行。
+func TestOutputBusinessBoundaryAccounting(t *testing.T) {
+	sw := &safeWriter{}
+	o := NewOutput(sw, 0, OutputOptions{FlushBytes: 1 << 20})
+	defer o.Release()
+	frame := []byte("data: x\n\n")
+	if _, err := o.WriteFrame(frame); err != nil {
+		t.Fatal(err)
+	}
+	// 首帧即时 flush → 已下行；再写一小帧仅入缓冲（阈值远大于 pending）。
+	if _, err := o.WriteFrame(frame); err != nil {
+		t.Fatal(err)
+	}
+	require.Equal(t, len(frame), o.pendingBusiness, "小帧未下行 → 计入 pendingBusiness")
+	require.True(t, o.BusinessFrameSent(), "首帧已下行")
+	require.NoError(t, o.DrainFlush())
+	require.Equal(t, 0, o.pendingBusiness, "成功 flush 后未下行清零")
+	require.True(t, o.BusinessFrameSent())
 }
 
 // TestOutputFinishDisablesDrainFlush：首帧 flush → 缓冲小帧 → Finish →

@@ -35,6 +35,13 @@ const (
 //
 // 区分「心跳/下行写失败自取消」（out.SelfCanceled → 写失败出口，不误记客户端
 // 取消的健康惩罚）与「客户端先取消」（ctx 取消 → 客户端取消出口）。
+//
+// ctx 仅用于 (a) 识别客户端断开（ctx.Err()==Canceled）与 (b) 未提交分支读取
+// owner dispatch 观测（carryStreamUsage）。五路传内部派生 ctx（生产路径为请求
+// ctx 的子 ctx，二者取消同源且携带 dispatch 值）；codex images 合成路径传
+// r.Context()——其 genErr 未必携带 context.Canceled、且生产路径内部超时 ctx
+// 的取消同样源自 r.Context()，故仅取「取消信号」而放弃 carry（该路径未提交时
+// 张数本为 0，无回归）。ctx 来源差异对判定无害。
 func classifyStreamExit(ctx context.Context, out *sserelay.Output, err error, usage AttemptUsage, ttft *int64) streamExitKind {
 	switch {
 	case out.SelfCanceled():

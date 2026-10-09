@@ -150,7 +150,8 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	if resp.StatusCode != http.StatusOK {
 		rb := readUpstreamBody(resp)
 		resp.Body.Close()
-		return streamUpstreamStatus(resp.StatusCode), rb, false, nil
+		// 非流式透传：归一 502 仅用于流式站点（非流式语义属 spec 非目标）。
+		return resp.StatusCode, rb, false, nil
 	}
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()

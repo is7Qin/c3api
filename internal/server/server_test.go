@@ -641,8 +641,8 @@ func (plainNoFlush) WriteHeader(int)             {}
 
 // TestOutputThroughStatusWriterFlushError 真实包装层集成（statusWriter → Output）：
 // sserelay 的可返错 flush 探测链必须命中 statusWriter.FlushError（而非被包装层
-// 吞掉）。Write 成功但内层 FlushError 失败 → Output 置 writeFailed、取消上游、
-// 不视为可见成功；statusWriter 因 flush 失败不置已写头标志。
+// 吞掉）。Write 成功但内层 FlushError 失败 → Output 置 writeFailed、取消上游；
+// 字节已过底层写边界（businessSent=true）但不推进可见调度。
 func TestOutputThroughStatusWriterFlushError(t *testing.T) {
 	boom := errors.New("flush boom")
 	sw := &statusWriter{ResponseWriter: &flushErrWriter{err: boom}}
@@ -655,7 +655,7 @@ func TestOutputThroughStatusWriterFlushError(t *testing.T) {
 	require.True(t, out.WriteFailed())
 	require.ErrorIs(t, out.IOErr(), boom)
 	require.True(t, canceled.Load(), "flush 失败必须取消上游 ctx")
-	require.False(t, out.BusinessFrameSent(), "flush 失败不得视为可见成功")
+	require.True(t, out.BusinessFrameSent(), "字节已过底层写边界（Write 成功）→ 真实下行")
 }
 
 // --- recoverer：debug.Stack + 已写头静默关连接（受益面仅 SSE） ---
