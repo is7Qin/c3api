@@ -5,14 +5,18 @@ package proxy
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/redisx"
 )
 
 // startTestContBind starts a worker over the fixture store with the given
@@ -149,4 +153,61 @@ func TestContEnqueueNoopWhenUnwired(t *testing.T) {
 	p.contEnqueue(context.Background(), contProtocolREST, "resp_x", 10)
 	require.Zero(t, w.Unattributed())
 	require.Zero(t, w.Queued())
+}
+
+// stallPipelineHook 令"已武装"的整批 pipeline Exec 阻塞到 ctx 到期后以 ctx.Err()
+// 返回——模拟"Redis 连接存活但响应停滞"（对齐 B7：ContextTimeoutEnabled 生效后，
+// 停滞下命令应在 deadline 返回，而非退化为无界等待）。未武装时透传。
+type stallPipelineHook struct{ armed atomic.Bool }
+
+func (h *stallPipelineHook) DialHook(next redis.DialHook) redis.DialHook { return next }
+func (h *stallPipelineHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
+	return next
+}
+func (h *stallPipelineHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		if !h.armed.Load() {
+			return next(ctx, cmds)
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
+}
+
+// TestContBindWorkerBatchBoundedByBatchTimeout（B7）：停滞 Redis 下，一批绑定落库
+// 须在 BatchTimeout 预算内结束并按批计失败计数，而非无限阻塞。注入短 BatchTimeout
+// （150ms）保持快速、自终止——无 sleep 轮询（require.Eventually 内部用阻塞探针）。
+func TestContBindWorkerBatchBoundedByBatchTimeout(t *testing.T) {
+	mr := miniredis.RunT(t)
+	c, err := redisx.Open(redisx.Options{Addr: mr.Addr()})
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = redisx.Close(c) })
+	st, err := continuation.New(c, "cont-test-secret-0123456789")
+	require.NoError(t, err)
+
+	hook := &stallPipelineHook{}
+	c.AddHook(hook)
+
+	const budget = 150 * time.Millisecond
+	w := NewContBindWorker(st, nil, ContBindConfig{BatchSize: 256, BatchWait: time.Millisecond, BatchTimeout: budget})
+	hook.armed.Store(true) // 武装于 Start 之前：首个批次即遇停滞
+
+	ctx, cancel := context.WithCancel(context.Background())
+	require.NoError(t, w.Start(ctx))
+	t.Cleanup(func() {
+		cancel()
+		cctx, ccancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer ccancel()
+		require.NoError(t, w.Close(cctx))
+	})
+
+	w.Enqueue(workerBindReq(t, "resp_stall"))
+
+	start := time.Now()
+	require.Eventually(t, func() bool { return w.Failed() == 1 }, 5*time.Second, 5*time.Millisecond,
+		"停滞 Redis 下批次须在 BatchTimeout 内失败计数，而非无限阻塞")
+	elapsed := time.Since(start)
+	require.GreaterOrEqual(t, elapsed, budget, "须至少耗尽 BatchTimeout 预算（证明确为停滞而非假成功）")
+	require.Less(t, elapsed, 2*time.Second, "须受 BatchTimeout 预算约束")
+	require.Zero(t, w.Bound())
 }
