@@ -512,10 +512,9 @@
     },
     "ungroupedNotice": "未分配分组的账号不接流量：请在账号「编辑」里为其选择至少一个分组，否则该账号不会服务任何请求、也不会产生收益。",
     "owner": {
-      "label": "归属供应商 user_id（可选）",
-      "placeholder": "留空 = 平台自有",
-      "hint": "将该账号分配给某供应商（须为 active 的 supplier/platform_admin）。留空表示平台自有／不改变现有归属。",
-      "invalid": "归属供应商 user_id 必须为正整数",
+      "label": "归属供应商（按邮箱搜索）",
+      "placeholder": "按邮箱搜索供应商",
+      "hint": "按邮箱搜索 active 的供应商／平台管理员；留空表示平台自有／不改变现有归属。",
       "clear": "清空归属（回平台自有）"
     }
   },
@@ -2075,12 +2074,12 @@
     "request": {
       "button": "代申请",
       "title": "代供应商申请结算",
-      "desc": "管理员代供应商发起结算申请（复用同一通道）。",
-      "uid": "供应商 user_id",
+      "desc": "管理员代供应商发起结算申请（按邮箱搜索；复用同一通道）。",
+      "uid": "供应商",
       "amount": "金额（USD）",
       "note": "备注（可选）",
       "success": "已代申请",
-      "invalidUid": "供应商 user_id 无效",
+      "requiredUid": "请先选择供应商",
       "invalidAmount": "金额无效",
       "notFound": "目标供应商无余额行"
     },
@@ -2124,5 +2123,14 @@
       "freezeHours": "冻结期",
       "buckets": "桶行数"
     }
+  },
+  "supplierPicker": {
+    "placeholder": "按邮箱搜索供应商",
+    "searching": "搜索中…",
+    "noMatch": "无匹配供应商",
+    "error": "供应商加载失败",
+    "retry": "重试",
+    "inactive": "已禁用",
+    "allInactive": "无匹配的活跃供应商，请细化搜索"
   }
 }

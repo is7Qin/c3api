@@ -36,6 +36,7 @@ import { compositeMaxSpanSeconds } from '@/lib/stats-capabilities'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
+import { SupplierPicker } from '@/components/supplier/supplier-picker'
 
 type AccountView = components['schemas']['AccountView']
 type AccountCreate = components['schemas']['AccountCreate']
@@ -825,8 +826,8 @@ export default function Accounts() {
         await api.putAccountExt(id, extBody)
       }
       // 归属供应商（仅管理面作用域；供应商面恒隐含 JWT 本人）。空 = 不发送。
+      // 值由 SupplierPicker 唯一写入（只产出数字串或 ''），无需再校验。
       const ownerRaw = isSupplierScope ? '' : f.supplier_user_id.trim()
-      if (ownerRaw !== '' && !/^\d+$/.test(ownerRaw)) throw new Error(t('accounts.owner.invalid'))
       const ownerUID = ownerRaw === '' ? null : Number(ownerRaw)
       if (!editing) {
         // 创建：一次 POST 落全部字段（倍率非 ×1 时随体带，无补写腿）
@@ -1294,13 +1295,13 @@ export default function Accounts() {
             {!isSupplierScope && (
               <div className="space-y-1.5">
                 <Label htmlFor="acc-owner">{t('accounts.owner.label')}</Label>
-                <Input
+                <SupplierPicker
                   id="acc-owner"
-                  inputMode="numeric"
                   value={form.supplier_user_id}
-                  disabled={form.clearOwner}
+                  onChange={v => setForm(f => ({ ...f, supplier_user_id: v }))}
                   placeholder={t('accounts.owner.placeholder')}
-                  onChange={e => setForm(f => ({ ...f, supplier_user_id: e.target.value }))}
+                  disabled={form.clearOwner}
+                  disableInactive
                 />
                 <p className="text-xs text-muted-foreground">{t('accounts.owner.hint')}</p>
                 {editing && (

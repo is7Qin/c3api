@@ -512,10 +512,9 @@
     },
     "ungroupedNotice": "Accounts without a group receive no traffic: assign at least one group in the account Edit dialog, otherwise the account serves no requests and earns nothing.",
     "owner": {
-      "label": "Owning supplier user_id (optional)",
-      "placeholder": "Empty = platform-owned",
-      "hint": "Assign this account to a supplier (must be an active supplier/platform_admin). Empty keeps platform-owned / leaves ownership unchanged.",
-      "invalid": "Owning supplier user_id must be a positive integer",
+      "label": "Owning supplier (search by email)",
+      "placeholder": "Search supplier by email",
+      "hint": "Search an active supplier/platform_admin by email; empty keeps platform-owned / leaves ownership unchanged.",
       "clear": "Clear ownership (back to platform-owned)"
     }
   },
@@ -2075,12 +2074,12 @@
     "request": {
       "button": "Request on behalf",
       "title": "Request settlement on behalf",
-      "desc": "An admin files a settlement request for a supplier (same channel).",
-      "uid": "Supplier user_id",
+      "desc": "An admin files a settlement request for a supplier (search by email; same channel).",
+      "uid": "Supplier",
       "amount": "Amount (USD)",
       "note": "Note (optional)",
       "success": "Request submitted",
-      "invalidUid": "Invalid supplier user_id",
+      "requiredUid": "Select a supplier first",
       "invalidAmount": "Invalid amount",
       "notFound": "Target supplier has no balance row"
     },
@@ -2124,5 +2123,14 @@
       "freezeHours": "Freeze",
       "buckets": "Buckets"
     }
+  },
+  "supplierPicker": {
+    "placeholder": "Search supplier by email",
+    "searching": "Searching…",
+    "noMatch": "No matching supplier",
+    "error": "Failed to load suppliers",
+    "retry": "Retry",
+    "inactive": "Inactive",
+    "allInactive": "No active suppliers match; refine your search"
   }
 }
