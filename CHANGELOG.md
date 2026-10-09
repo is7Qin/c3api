@@ -24,6 +24,8 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 - **pgtest rebuilds an empty or half-built template instead of reusing it**: `internal/testsupport/pgtest` now marks a template ready with a database `COMMENT` (`pgtest:template-ready`) as the last step of a successful build, and reuses it only when the name exists *and* that marker is present and correct. A template left empty or half-migrated by a killed build (SIGKILL, a cancelled CI job, a crash) is now detected and rebuilt rather than mistaken for a fresh one — previously a stale empty template under the current source hash made every run fail with `relation "users" does not exist`. An unmarked override template (`C3API_TEST_TEMPLATE`) is likewise rebuilt unless it carries the marker. This supersedes the earlier "an existing template is reused without reading inside it" behaviour.
 
+- **codex-sdk updated to `321d435`**: `StreamBody` returns the raw streaming response body (only `200` is accepted; any other status — including `3xx` — and redirects are not followed, the body is read to completion and closed, and the status is returned as an error). Codex responses now stream through the shared raw-body relay instead of re-framing SDK payloads, so verbatim passthrough, keepalive, async continuation binding and pre-write usage/TTFT sampling apply to the Codex path as they do to the native Responses path.
+
 ## [v0.0.1-beta.7] - 2026-09-28
 
 ### Breaking

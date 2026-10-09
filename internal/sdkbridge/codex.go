@@ -243,35 +243,10 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, payl
 	return resp, nil
 }
 
-// StreamResponses 流式 responses SSE 透传（§1）：cred → 缓存取 HTTPClient →
-// c.Stream(ctx, payload, fn)（SSE data: 行逐帧交付零拷贝——SDK 回调 raw 指向
-// scanner 复用缓冲，**仅回调执行期间有效**：fn 必须立即消费，不得跨回调保留
-// 切片）。sess/meta 同 Responses（伪装身份；nil = 未配置——SDK 仍恒带
-// turn_id）。clientTurnState 同 Responses（透传优先）。流式无
-// HTTPResponse 返回面——签发值回读 SDK 池级捕获（Stream 内部已
-// captureTurnState，http.go:144——2xx 响应头非空才覆盖）→ held 回写。错误翻译
-// 同 Responses。fn 返回错误 → SDK 终止读取并原样透传（网关写出失败/客户端断
-// 开路径——translateError 对非 SDK 错误不过滤）。
-func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string, fn func(raw []byte) error) error {
-	ts := clientTurnState
-	if ts == "" {
-		ts = a.turnStateOf(cred.AccountID)
-	}
-	e, client, err := a.clientFor(cred, sess, meta, ts)
-	if err != nil {
-		return err
-	}
-	if err := client.Stream(ctx, payload, fn); err != nil {
-		return a.translateError(e, err)
-	}
-	a.captureTurnState(e, client.TurnState())
-	return nil
-}
-
 // StreamBody 流式 responses **raw body** 透传：cred → 缓存取 HTTPClient →
 // c.StreamBody(ctx, payload) 返回**未关闭**的 *http.Response（body 归调用方，
 // proxy 侧经 sserelay.Relay 消费后**恰好关闭一次**）。sess/meta/clientTurnState
-// 语义同 StreamResponses（伪装身份 + 透传优先）。成功后**直接读本次
+// 语义同 Responses（伪装身份 + 透传优先）。成功后**直接读本次
 // resp.Header** 回写 held turn-state——不读共享 client.TurnState()（并发响应
 // 可互相覆盖，http.go captureTurnState 为池级最近值）。错误翻译同 Responses
 // （translateError——信封/fatal 统一回调双源去重/RefreshError 分类复用）。

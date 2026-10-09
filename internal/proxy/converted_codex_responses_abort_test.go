@@ -61,11 +61,11 @@ func newCodexAbortUpstream(t *testing.T, frame string) (*httptest.Server, *int32
 	return srv, &calls
 }
 
-// TestConvertedCodexDropFrameThenUpstreamError502 spec §3 第 3 项（I1）：chat_to_resp
+// TestConvertedCodexDropFrameThenUpstreamError502 spec §3 第 3 项：chat_to_resp
 // 转换路径，上游先投一帧 response.in_progress（被映射器 drop、未写任何字节）再
-// 中断报错：framesWritten 仍为 false ⇒ core 折返 (code, body, false, err) ⇒
-// failover 分类为 502。缺陷场景（修复前）：把「已 drop 一帧」误判为已写出 → 走
-// abort/ResultClientCancel（错误地 200）。
+// 读中断：Output 未提交（Committed()==false）⇒ classifyStreamExit = uncommitted
+// ⇒ core 折返 (code, body, false, err) ⇒ failover 分类为 502。缺陷场景（修复前）：
+// 把「已 drop 一帧」误判为已写出 → 走 abort（错误地 200）。
 func TestConvertedCodexDropFrameThenUpstreamError502(t *testing.T) {
 	up, calls := newCodexAbortUpstream(t, convCodexRespInProgress)
 	defer up.Close()
@@ -79,10 +79,10 @@ func TestConvertedCodexDropFrameThenUpstreamError502(t *testing.T) {
 	require.GreaterOrEqual(t, atomic.LoadInt32(calls), int32(1), "上游被触达（非前置拒绝）")
 }
 
-// TestConvertedCodexAbortAfterFrameWritten spec §3 第 4 项（I1 反向对照）：chat_to_resp
-// 转换路径，上游先投一帧 response.output_text.delta（映射为可见 chat chunk、确写）
-// 再中断报错：framesWritten true ⇒ 走「已写出后 abort」分支（ResultFailed +
-// recordStreamAbort），200 已定型不折返 failover。
+// TestConvertedCodexAbortAfterFrameWritten spec §3 第 4 项：chat_to_resp
+// 转换路径，上游先投一帧 response.output_text.delta（映射为可见 chat chunk、确写
+// → Output 已提交）再读中断：classifyStreamExit = committed ⇒ 已提交出口
+// （客户端协议 SSE error + recordStreamAbort），200 已定型不折返 failover。
 func TestConvertedCodexAbortAfterFrameWritten(t *testing.T) {
 	up, calls := newCodexAbortUpstream(t, convCodexRespDelta)
 	defer up.Close()
@@ -94,6 +94,8 @@ func TestConvertedCodexAbortAfterFrameWritten(t *testing.T) {
 	rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`, nil)
 	require.Equal(t, http.StatusOK, rec.Code, "首帧已写出 → 200 已定型（abort 分支，不折返 failover）；body=%s", rec.Body.String())
 	require.Contains(t, rec.Body.String(), `"object":"chat.completion.chunk"`, "首帧确写（可见 chat chunk）")
+	require.Contains(t, rec.Body.String(), `event: error`, "已提交 → 客户端协议 SSE error 帧")
+	require.Contains(t, rec.Body.String(), `"type":"server_error"`, "error 帧 OpenAI 形态")
 	require.Equal(t, int32(1), atomic.LoadInt32(calls), "已写出 → 不 failover（仅一次上游调用）")
 
 	require.NoError(t, p.rec.Close(context.Background()))

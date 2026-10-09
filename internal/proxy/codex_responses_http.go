@@ -29,7 +29,7 @@ import (
 // 分支插入点 = responsesCaller.Call 入口按 sel.CredentialType 分流
 // （caller_responses.go）；typed 段（api_key/responses-special）零改动。与 WS
 // 变体（codex_responses_ws.go）同形态编排，差异在传输面：HTTP = SDK
-// HTTPClient（Responses/StreamResponses——sdkbridge 扩展），WS = SDK Dial。
+// HTTPClient（Responses/StreamBody——sdkbridge 扩展），WS = SDK Dial。
 
 // errCodexResponsesNotIntegrated 501：codex 适配层未装配（SetCodex 未调用——
 // main 装配缺失的显式拒绝，不让凭据缺失路径误报 502/network；与 images/WS
@@ -302,8 +302,10 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			return 0, nil, false, r.Context().Err()
 		}
 		// 首帧前信封错误（4xx 透传 / 429/5xx failover / fatal）：未写出任何
-		// 字节，HTTP 状态可用，交 failover 循环分类。
-		return statusOf(err), upstreamBody(err), false, err
+		// 字节，HTTP 状态可用，交 failover 循环分类。SDK StreamBody 对所有非
+		// 200 返 *HTTPError（含 201/204/3xx）——上游 2xx-非-200 归一 502
+		// （streamUpstreamStatus），不可直接 statusOf 当 4xx 处理。
+		return streamUpstreamStatus(statusOf(err)), upstreamBody(err), false, err
 	}
 	// SDK StreamBody 仅 200 放行；防御性再校验（上游 2xx-非-200 归一 502）。
 	if resp.StatusCode != http.StatusOK {
@@ -326,9 +328,11 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		Output: out,
 		Mapper: plan.mapper,
 		OnEvent: func(ev sserelay.Event) {
-			// 唯一写出前采样 seam（含 drop 帧）：TTFT 先于写出记录（保真
-			// 「输出前、drop 帧也记」——首个上游载荷即计时）。
-			if ttft == nil {
+			// 唯一写出前采样 seam（含 drop 帧）：TTFT 仅对**真实 payload** 计时
+			// （旧 SDK 只对真实 data 行回调——纯注释/控制帧、仅 [DONE] 不计；
+			// 保真「输出前、drop 帧也记」）。
+			claim := bytes.TrimSpace(ev.Data)
+			if ttft == nil && len(claim) != 0 && !bytes.Equal(claim, []byte("[DONE]")) {
 				ms := time.Since(start).Milliseconds()
 				ttft = &ms
 			}
@@ -351,16 +355,10 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 				turnCallSeen = true
 			}
 			// 续接入队：与 native 同一 seam（首个有效响应 id 写出前快照入队
-			// 一次）。direct 取上游帧响应 id；converted 取 mapper 显式返回的
-			// 客户端可续接 id（不从映射帧机械解析）。
-			if !contEnqueued && p.contBindWired() {
-				id := ""
-				if plan.bindableID != nil {
-					id = plan.bindableID()
-				} else {
-					id = contFrameID(ev.Data)
-				}
-				if id != "" {
+			// 一次）。仅**直连**（客户端 Responses）入队——converted 客户端为
+			// Chat/Messages，无法消费 Responses 续接 id（native 同款限定）。
+			if !contEnqueued && plan.contEligible && p.contBindWired() {
+				if id := contFrameID(ev.Data); id != "" {
 					p.contEnqueue(ctx, contProtocolREST, id, groupID)
 					contEnqueued = true
 				}
@@ -513,20 +511,23 @@ type codexStreamPlan struct {
 	mapper func(sserelay.Event) ([]byte, bool)
 	// finish 流末按「目标终止帧尚未产生」条件补发（converted 专用；direct = nil）。
 	finish func() []byte
-	// bindableID converted 续接 id（direct = nil——direct 走 contFrameID 解析上游帧）。
-	bindableID func() string
+	// contEligible 是否允许异步续接入队：仅直连（客户端 Responses，id 可被
+	// 客户端消费）为 true；converted（客户端 Chat/Messages）为 false。仅此
+	// 开关联合 `contFrameID`——不回退到映射帧 id。
+	contEligible bool
 	// logFormat 日志 Format 口径。
 	logFormat domain.RequestFormat
 }
 
 // codexDirectStreamPlan 直连 verbatim plan：无 mapper/finish（上游原始字节含
-// event:/[DONE]），日志口径 openai-responses。
+// event:/[DONE]），日志口径 openai-responses；直连客户端为 Responses → 允许续接。
 func codexDirectStreamPlan() codexStreamPlan {
-	return codexStreamPlan{logFormat: domain.FormatOpenAIResponses}
+	return codexStreamPlan{contEligible: true, logFormat: domain.FormatOpenAIResponses}
 }
 
 // codexConvertedStreamPlan 协议转换 plan：经 protoconv.StreamMapper 适配
 // sserelay seam（源协议 [DONE] 由适配层过滤），流末按目标终止帧条件补发。
+// 客户端为 Chat/Messages → 不允许续接入队。
 func codexConvertedStreamPlan(dir domain.ProtocolConvert, clientModel string) codexStreamPlan {
 	a := &codexConvertedStreamMapper{
 		mapper:      protoconv.NewStreamMapper(dir),
@@ -534,10 +535,9 @@ func codexConvertedStreamPlan(dir domain.ProtocolConvert, clientModel string) co
 	}
 	client, _ := clientAndTargetOf(dir)
 	return codexStreamPlan{
-		mapper:     a.mapEvent,
-		finish:     a.finish,
-		bindableID: a.mapper.BindableID,
-		logFormat:  client,
+		mapper:    a.mapEvent,
+		finish:    a.finish,
+		logFormat: client,
 	}
 }
 
