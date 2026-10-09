@@ -5,6 +5,7 @@
 package scheduler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -56,6 +57,34 @@ func TestInvalidateAccountUnknownNoop(t *testing.T) {
 	})
 	byID := s.View().ByID()
 	require.Same(t, ext, byID[1].static.Load().acc.Ext, "未知账号失效不影响既有快照")
+}
+
+// TestInvalidateAccountPrefersPendingAndDoesNotResurrectDeletedMembership: the
+// account's groups are read from the PENDING leaf when one exists, so a
+// membership deleted by an earlier batch is not re-added by a later
+// InvalidateAccount for that account.
+func TestInvalidateAccountPrefersPendingAndDoesNotResurrectDeletedMembership(t *testing.T) {
+	tp := tpl(1, domain.FormatOpenAIChat, []string{"m"})
+	a1 := acc(1, tp, 4) // groups 10 and 20
+	ldr := newT1Loader(map[int64][]*domain.Account{10: {a1}, 20: {a1}})
+	s := New(testCfg(), ldr, newTestRuleEngine(t), nil, nil, nil, nil)
+	require.NoError(t, s.reload(context.Background()))
+
+	// Server deletes a1 from group 20; the batch stages a pending leaf [10].
+	ldr.mu.Lock()
+	ldr.byGroup[20] = nil
+	ldr.mu.Unlock()
+	s.InvalidateGroups([]int64{20})
+	require.Equal(t, []int64{10}, s.publisher.pending.byID[1].static.Load().groupIDs)
+
+	// InvalidateAccount must read the pending leaf → reload group 10 only.
+	ldr.reset()
+	s.InvalidateAccount(1)
+	require.Equal(t, []int64{10}, ldr.groupCallsCopy(), "must reload only the pending leaf's groups")
+
+	// Group 20 must not be re-added.
+	require.Equal(t, []int64{10}, s.publisher.pending.byID[1].static.Load().groupIDs)
+	require.Contains(t, s.publisher.pending.groups, int64(10))
 }
 
 // strPtrT 测试用字符串指针。
