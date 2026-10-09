@@ -114,7 +114,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			genErr = err
 		} else {
 			// 零事件成功路径：ttft 在 commitOnce 内才固化，而 timing 在此前构建
-			//（*int64 指针按值拷贝），须回填否则 TTFT 丢失（恢复 ① 行为）。
+			//（*int64 指针按值拷贝），须回填否则 TTFT 丢失。
 			timing.TTFTMS = ttft
 			if out.WriteFailed() {
 				genErr = out.IOErr()

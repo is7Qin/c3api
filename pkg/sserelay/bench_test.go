@@ -115,7 +115,7 @@ func BenchmarkRelayBulk16K(b *testing.B) {
 }
 
 // BenchmarkRelayHeartbeatOff 保活关闭（Interval=0）生产长流形态：验证统一下行
-// Output 迁移相对 ① 完成态（无 Output）基线 allocs/op、B/op 无新增。工作负载
+// Output 迁移相对迁移前未使用 Output 的基线 allocs/op、B/op 无新增。工作负载
 // 与 BenchmarkRelayTokenStream 相同（500 × ~180B token 帧），仅显式钉住
 // Interval=0 语义。
 func BenchmarkRelayHeartbeatOff(b *testing.B) {
