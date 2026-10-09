@@ -2129,7 +2129,7 @@
     "searching": "搜索中…",
     "noMatch": "无匹配供应商",
     "error": "供应商加载失败",
-    "retry": "重试",
+    "retry": "重试当前搜索",
     "inactive": "已禁用",
     "allInactive": "无匹配的活跃供应商，请细化搜索"
   }

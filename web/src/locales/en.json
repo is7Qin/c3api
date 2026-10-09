@@ -2129,7 +2129,7 @@
     "searching": "Searching…",
     "noMatch": "No matching supplier",
     "error": "Failed to load suppliers",
-    "retry": "Retry",
+    "retry": "Retry current search",
     "inactive": "Inactive",
     "allInactive": "No active suppliers match; refine your search"
   }

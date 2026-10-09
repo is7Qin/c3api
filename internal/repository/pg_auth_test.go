@@ -106,23 +106,29 @@ func TestPGUserCRUD(t *testing.T) {
 }
 
 // TestPGListUsersRoleAndSurfaceFilters 真实 PG：/users 的 role / supplier_surface
-// 过滤矩阵（spec 2026-10-09 §4 #1–#9）——断言 rows/total 与 RoleEQ/RoleIn 谓词、
-// surface 覆盖 role、未知值宽松空列表、大小写子串、分页。
+// 过滤矩阵（spec 2026-10-09 §4 #1–#9）——每行同时锁定 total 与 rows 身份（ID 集合 +
+// 角色多重集）、surface 覆盖 role、未知值宽松空列表、大小写子串、筛选后分页的具体
+// ID 与页间不重叠。
 func TestPGListUsersRoleAndSurfaceFilters(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	// 三角色样本 + 大小写邮箱（含大小写不同的域名，验证 ContainsFold）。
 	// 供应商 s2 置为 disabled：证明 role/surface 过滤不看 active（spec §4 #1）。
-	seedPGUserRole(t, repos, "s1@Example.com", domain.RoleSupplier)
+	s1 := seedPGUserRole(t, repos, "s1@Example.com", domain.RoleSupplier)
 	s2 := seedPGUserRole(t, repos, "s2@example.com", domain.RoleSupplier)
-	seedPGUserRole(t, repos, "a1@example.com", domain.RolePlatformAdmin)
-	seedPGUserRole(t, repos, "u1@example.com", domain.RoleUser)
-	seedPGUserRole(t, repos, "u2@example.com", domain.RoleUser)
+	a1 := seedPGUserRole(t, repos, "a1@example.com", domain.RolePlatformAdmin)
+	u1 := seedPGUserRole(t, repos, "u1@example.com", domain.RoleUser)
+	u2 := seedPGUserRole(t, repos, "u2@example.com", domain.RoleUser)
 	disabled := domain.UserStatusDisabled
 	_, err := repos.UpdateUser(ctx, &repository.UserPatch{ID: s2.ID, Status: &disabled})
 	require.NoError(t, err)
 
+	// repo 默认排序 id desc；据此给出各筛选集的期望 ID（用于 rows 身份与分页断言）。
+	allIDs := []int64{u2.ID, u1.ID, a1.ID, s2.ID, s1.ID}
+	surfaceIDs := []int64{a1.ID, s2.ID, s1.ID} // {supplier, platform_admin}
+	supplierIDs := []int64{s2.ID, s1.ID}
+	userIDs := []int64{u2.ID, u1.ID}
 
 	rolesOf := func(rows []*domain.User) []domain.Role {
 		out := make([]domain.Role, 0, len(rows))
@@ -131,96 +137,110 @@ func TestPGListUsersRoleAndSurfaceFilters(t *testing.T) {
 		}
 		return out
 	}
+	idsOf := func(rows []*domain.User) []int64 {
+		out := make([]int64, 0, len(rows))
+		for _, r := range rows {
+			out = append(out, r.ID)
+		}
+		return out
+	}
+	// 每行同时断言 total、rows 的 Len、精确 ID 集合与角色多重集。
+	check := func(name string, q repository.ListQuery, wantTotal int64, wantIDs []int64, wantRoles []domain.Role) {
+		t.Helper()
+		rows, total, err := repos.ListUsers(ctx, q)
+		require.NoError(t, err, name)
+		require.Equal(t, wantTotal, total, "%s: total", name)
+		require.Len(t, rows, int(wantTotal), "%s: rows len", name)
+		require.ElementsMatch(t, wantIDs, idsOf(rows), "%s: rows ids", name)
+		require.ElementsMatch(t, wantRoles, rolesOf(rows), "%s: rows roles", name)
+	}
 
 	// #1 各有效 role 精确过滤（含禁用状态的供应商亦计入——role 过滤不看 active）
-	rows, total, err := repos.ListUsers(ctx, repository.ListQuery{Role: "supplier", Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(2), total)
-	require.ElementsMatch(t, []domain.Role{domain.RoleSupplier, domain.RoleSupplier}, rolesOf(rows))
-
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "platform_admin", Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), total)
-	require.Equal(t, []domain.Role{domain.RolePlatformAdmin}, rolesOf(rows))
-
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "user", Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(2), total)
-	require.Equal(t, []domain.Role{domain.RoleUser, domain.RoleUser}, rolesOf(rows))
+	check("role=supplier", repository.ListQuery{Role: "supplier", Limit: 20}, 2, supplierIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier})
+	check("role=platform_admin", repository.ListQuery{Role: "platform_admin", Limit: 20}, 1, []int64{a1.ID},
+		[]domain.Role{domain.RolePlatformAdmin})
+	check("role=user", repository.ListQuery{Role: "user", Limit: 20}, 2, userIDs,
+		[]domain.Role{domain.RoleUser, domain.RoleUser})
 
 	// #2 两参数缺省、role="" → 无角色过滤（5 名全量）
-	_, total, err = repos.ListUsers(ctx, repository.ListQuery{Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(5), total, "缺省不过滤")
-	_, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "", Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(5), total, "空 role 不得发 RoleEQ")
+	check("缺省不过滤", repository.ListQuery{Limit: 20}, 5, allIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier, domain.RolePlatformAdmin, domain.RoleUser, domain.RoleUser})
+	check("role= 空", repository.ListQuery{Role: "", Limit: 20}, 5, allIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier, domain.RolePlatformAdmin, domain.RoleUser, domain.RoleUser})
 
-	// #3 role=bogus（未知非空）+ surface 缺省/false → 空、total=0
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "bogus", Limit: 20})
-	require.NoError(t, err)
-	require.Zero(t, total)
-	require.Empty(t, rows)
-	_, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "bogus", SupplierSurface: false, Limit: 20})
-	require.NoError(t, err)
-	require.Zero(t, total)
+	// #3 role=bogus（未知非空）+ surface 缺省/false → 空、total=0、rows 空
+	check("role=bogus", repository.ListQuery{Role: "bogus", Limit: 20}, 0, []int64{}, []domain.Role{})
+	check("role=bogus&surface=false", repository.ListQuery{Role: "bogus", SupplierSurface: false, Limit: 20}, 0,
+		[]int64{}, []domain.Role{})
 
 	// #4 supplier_surface=true → {supplier, platform_admin}，排除 user
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.ElementsMatch(t, []domain.Role{domain.RoleSupplier, domain.RoleSupplier, domain.RolePlatformAdmin}, rolesOf(rows))
+	check("surface=true", repository.ListQuery{SupplierSurface: true, Limit: 20}, 3, surfaceIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier, domain.RolePlatformAdmin})
 
 	// #5 role=user & surface=true → 供应商面集（证明 surface 覆盖 role）
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "user", SupplierSurface: true, Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.ElementsMatch(t, []domain.Role{domain.RoleSupplier, domain.RoleSupplier, domain.RolePlatformAdmin}, rolesOf(rows))
+	check("role=user&surface=true", repository.ListQuery{Role: "user", SupplierSurface: true, Limit: 20}, 3, surfaceIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier, domain.RolePlatformAdmin})
 
 	// #6 role=bogus & surface=true → 供应商面集（同上，未知值不生效）
-	_, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "bogus", SupplierSurface: true, Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
+	check("role=bogus&surface=true", repository.ListQuery{Role: "bogus", SupplierSurface: true, Limit: 20}, 3, surfaceIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier, domain.RolePlatformAdmin})
 
 	// #7 role=supplier & surface=false → 仅 supplier
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{Role: "supplier", SupplierSurface: false, Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(2), total)
-	require.Equal(t, []domain.Role{domain.RoleSupplier, domain.RoleSupplier}, rolesOf(rows))
+	check("role=supplier&surface=false", repository.ListQuery{Role: "supplier", SupplierSurface: false, Limit: 20}, 2, supplierIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier})
 
-	// #8 大小写不同邮箱子串组合、匹配/无匹配
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{Email: "S1@", Limit: 20})
-	require.NoError(t, err)
-	require.Equal(t, int64(1), total, "大小写不敏感子串")
-	require.Equal(t, "s1@Example.com", rows[0].Email)
+	// #8 大小写不同邮箱子串组合、匹配/无匹配（等价 repo EmailContainsFold）
+	check("email=S1@", repository.ListQuery{Email: "S1@", Limit: 20}, 1, []int64{s1.ID},
+		[]domain.Role{domain.RoleSupplier})
+	check("email=S&role=supplier", repository.ListQuery{Email: "S", Role: "supplier", Limit: 20}, 2, supplierIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier})
+	check("email=U&role=user", repository.ListQuery{Email: "U", Role: "user", Limit: 20}, 2, userIDs,
+		[]domain.Role{domain.RoleUser, domain.RoleUser})
+	check("email=U&role=supplier 无匹配", repository.ListQuery{Email: "U", Role: "supplier", Limit: 20}, 0,
+		[]int64{}, []domain.Role{})
+	check("email=S&surface=true", repository.ListQuery{Email: "S", SupplierSurface: true, Limit: 20}, 2, supplierIDs,
+		[]domain.Role{domain.RoleSupplier, domain.RoleSupplier})
+	check("email=A1&surface=true", repository.ListQuery{Email: "A1", SupplierSurface: true, Limit: 20}, 1, []int64{a1.ID},
+		[]domain.Role{domain.RolePlatformAdmin})
+	check("email=U&surface=true 无匹配（user 被排除）", repository.ListQuery{Email: "U", SupplierSurface: true, Limit: 20}, 0,
+		[]int64{}, []domain.Role{})
+	check("email=no-such@ 无匹配", repository.ListQuery{Email: "no-such@", Limit: 20}, 0, []int64{}, []domain.Role{})
 
-	_, total, err = repos.ListUsers(ctx, repository.ListQuery{Email: "U", Role: "user", Limit: 20})
+	// #9 筛选后 total 为全集，limit/offset 每页具体 ID（id desc）且页间不重叠。
+	p0, tot0, err := repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 0})
 	require.NoError(t, err)
-	require.Equal(t, int64(2), total, "role + email 组合")
+	require.Equal(t, int64(3), tot0, "surface total = 筛选全集")
+	require.Equal(t, []int64{a1.ID}, idsOf(p0), "page0 = id desc 首行")
+	p1, tot1, err := repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 1})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), tot1)
+	require.Equal(t, []int64{s2.ID}, idsOf(p1), "page1")
+	p2, _, err := repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 2})
+	require.NoError(t, err)
+	require.Equal(t, []int64{s1.ID}, idsOf(p2), "page2")
+	p3, tot3, err := repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 3})
+	require.NoError(t, err)
+	require.Equal(t, int64(3), tot3, "越界 total 仍为全集")
+	require.Empty(t, p3, "越界空")
+	// 页间不重叠 + 并集 = 筛选全集。
+	seen := map[int64]int{}
+	for _, id := range append(append(append([]int64{}, idsOf(p0)...), idsOf(p1)...), idsOf(p2)...) {
+		seen[id]++
+	}
+	require.Len(t, seen, 3, "各页具体 ID 互不重复")
+	for _, id := range surfaceIDs {
+		require.Equal(t, 1, seen[id], "id %d 恰出现一次", id)
+	}
 
-	_, total, err = repos.ListUsers(ctx, repository.ListQuery{Email: "U", Role: "supplier", Limit: 20})
+	// 全量分页（limit=2）同样按 id desc 切页，total 恒为 5。
+	a0, totA0, err := repos.ListUsers(ctx, repository.ListQuery{Limit: 2, Offset: 0})
 	require.NoError(t, err)
-	require.Zero(t, total, "组合无匹配")
-
-	_, total, err = repos.ListUsers(ctx, repository.ListQuery{Email: "no-such@", Limit: 20})
+	require.Equal(t, int64(5), totA0)
+	require.Equal(t, []int64{u2.ID, u1.ID}, idsOf(a0), "all page0")
+	a2, _, err := repos.ListUsers(ctx, repository.ListQuery{Limit: 2, Offset: 2})
 	require.NoError(t, err)
-	require.Zero(t, total, "邮箱无匹配")
-
-	// #9 筛选后 total 与 limit/offset 分页正确（total 反映筛选全集，非页大小）
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 0})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), total, "total = 筛选全集")
-	require.Len(t, rows, 1)
-
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 1})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), total)
-	require.Len(t, rows, 1)
-
-	rows, total, err = repos.ListUsers(ctx, repository.ListQuery{SupplierSurface: true, Limit: 1, Offset: 3})
-	require.NoError(t, err)
-	require.Equal(t, int64(3), total, "越界仍返回全集 total")
-	require.Empty(t, rows)
+	require.Equal(t, []int64{a1.ID, s2.ID}, idsOf(a2), "all page1")
 }
 
 func TestPGKeyLifecycle(t *testing.T) {
