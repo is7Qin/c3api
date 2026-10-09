@@ -261,6 +261,36 @@ func (m *StreamMapper) itemID(index int64) string {
 // 可绑定 id 的权威（连续绑定键必须与真实响应对象 id 同源）。
 func (m *StreamMapper) BindableID() string { return m.id }
 
+// Done 报告 mapper 是否已产出目标协议终止帧（completed / failed 事件置位——
+// 见各方向 map 的 m.done 去重）。codex converted 适配层在流末据此判定是否需
+// 补发终止帧（恰补一次：源协议仅 [DONE] 或无 [DONE] 正常 EOF 时 mapper 未产
+// 终止帧 → 补发）。
+func (m *StreamMapper) Done() bool { return m.done }
+
+// Finish 按方向返回**与目标 mapper 自产终止相同**的终止帧（流末补发用）。
+// 仅 codex converted 命中的两方向有定义：
+//   - MessToResp（client=Messages）→ mirror mapRespToMess 的 response.completed
+//     收尾：message_delta{stop_reason:"", stop_sequence:nil, usage:respUsageToMess(nil)}
+//     ++ message_stop；
+//   - ChatToResp（client=Chat）→ mirror mapRespToChat 终止：`data: [DONE]\n\n`。
+//
+// 其余方向 → nil（非 codex native converted 不在适配层覆盖内）。调用方须先查
+// Done()，仅在目标终止帧尚未产生时补发。
+func (m *StreamMapper) Finish() []byte {
+	switch m.dir {
+	case domain.ProtocolConvertMessToResp:
+		f := EncodeFrame("message_delta", map[string]any{
+			"type":  "message_delta",
+			"delta": map[string]any{"stop_reason": "", "stop_sequence": nil},
+			"usage": respUsageToMess(nil),
+		})
+		return append(f, EncodeFrame("message_stop", map[string]any{"type": "message_stop"})...)
+	case domain.ProtocolConvertChatToResp:
+		return []byte("data: [DONE]\n\n")
+	}
+	return nil
+}
+
 // EncodeFrame 组装 SSE 帧字节：name 非空 → "event: name\n" 行；data 为 JSON
 // 载荷（marshal 为单行 data）。载荷不可 marshal（转换器仅产出 map/string 等
 // 可序列化值）→ 返回 nil，调用方按丢弃处理。

@@ -11,8 +11,9 @@
 // or Redis-unavailable all fail closed, and a hard-continuation request never
 // migrates to another account. WS keeps its synchronous ACK-before-visible
 // gate (wsContFrame/ws_relay.go), and non-streaming Responses keep the
-// synchronous bind. Ordinary requests (no previous_response_id, non-Responses
-// formats, codex credential branches) issue zero Redis commands.
+// synchronous bind. Codex streaming (direct and protocol-converted) shares the
+// same write-seam async bind as native Responses. Ordinary requests (no
+// previous_response_id, non-Responses formats) issue zero Redis commands.
 
 package proxy
 

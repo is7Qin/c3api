@@ -853,6 +853,35 @@ func TestCodexResponsesIdentityTurnIDOverride(t *testing.T) {
 	require.NotEqual(t, "tid-keep", got, "客户端 turn_id 应被覆盖")
 }
 
+// TestCodexStreamBodyPassthrough StreamBody 透传：cred → 缓存取 HTTPClient →
+// 返回**未关闭**的 raw body（上游原始 SSE 字节含 data: 前缀与 [DONE]——verbatim，
+// 与 Stream 的逐 data: 载荷不同）；turn-state 取**本次响应头**回写 held（下次
+// 未带请求注入）。
+func TestCodexStreamBodyPassthrough(t *testing.T) {
+	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespDone}, turnState: "st-body"})
+	defer up.Close()
+	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
+	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-body"}
+
+	resp, err := a.StreamBody(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, nil, "")
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "仅 200 返回未关闭 body")
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Contains(t, string(body), "data: "+t6RespCreated+"\n\n", "raw 帧原样（data: 前缀保留）")
+	require.Contains(t, string(body), "data: [DONE]", "原始 [DONE] 保留（verbatim）")
+	require.Equal(t, "Bearer pat-body", c.auth(0), "凭据透传")
+
+	// turn-state：本次响应头回写 held → 下次未带请求注入（不读共享 TurnState）。
+	resp2, err := a.StreamBody(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, nil, "")
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp2.Body)
+	_ = resp2.Body.Close()
+	require.Equal(t, "", c.turnState(0), "轮首未带 turn-state")
+	require.Equal(t, "st-body", c.turnState(1), "held 回写本次响应头 → 下次注入")
+}
+
 // TestCodexStreamResponsesIdentityMetadata 流式路径同注入（Stream 统
 // 一注入点——Responses 内部走 Stream，两路径不重复）。
 func TestCodexStreamResponsesIdentityMetadata(t *testing.T) {

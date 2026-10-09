@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // fakeStreamGen 模拟适配层 GenerateImageStream（同签名——mock 替身不落
@@ -506,7 +507,8 @@ func TestStreamImageGroupMultiplier(t *testing.T) {
 }
 
 // sseHeaderSpy 记录是否显式提交状态码，用于区分 writeSSEHeaders 的惰性置头
-// 与 beginSSE 的显式 200 提交（内嵌 ResponseRecorder 提供 Header/Write 实现）。
+// 与 sserelay.Output.Commit 的显式 200 提交（内嵌 ResponseRecorder 提供
+// Header/Write 实现）。
 type sseHeaderSpy struct {
 	*httptest.ResponseRecorder
 	wroteHeader bool
@@ -523,7 +525,7 @@ func newSSEHeaderSpy() *sseHeaderSpy {
 
 // TestSSEHeaderHelpers_LazySetVsEagerCommit 钉住 B3：单一 writeSSEHeaders 只设置
 // 三件套、不提交状态码（保持 sserelay 站点「首帧前不提交头」的惰性语义）；需要
-// 立即提交的 beginSSE 在其上显式 WriteHeader(200)。
+// 立即提交的 sserelay.Output.Commit 在其上显式 WriteHeader(200)。
 func TestSSEHeaderHelpers_LazySetVsEagerCommit(t *testing.T) {
 	lazy := newSSEHeaderSpy()
 	writeSSEHeaders(lazy)
@@ -533,9 +535,11 @@ func TestSSEHeaderHelpers_LazySetVsEagerCommit(t *testing.T) {
 	require.False(t, lazy.wroteHeader, "writeSSEHeaders must not commit the status code")
 
 	eager := newSSEHeaderSpy()
-	beginSSE(eager)
+	out := sserelay.NewOutput(eager, 0, sserelay.OutputOptions{})
+	require.NoError(t, out.Commit())
+	out.Release()
 	require.Equal(t, "text/event-stream", eager.Header().Get("Content-Type"))
-	require.True(t, eager.wroteHeader, "beginSSE must commit the status code")
+	require.True(t, eager.wroteHeader, "Output.Commit must commit the status code")
 	require.Equal(t, http.StatusOK, eager.Code)
 }
 

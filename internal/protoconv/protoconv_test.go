@@ -1257,3 +1257,31 @@ func TestAPIAlignDisableParallel(t *testing.T) {
 	require.NoError(t, err)
 	require.NotContains(t, obj(t, on), "parallel_tool_calls")
 }
+
+// TestStreamMapperDoneFinish 终止态查询与按方向补发帧（codex converted 适配层流末
+// 补发用）：Done() 仅在 completed/failed 后为真；Finish() 按方向返回与目标 mapper
+// 自产终止**相同形态**的帧（MessToResp → message_delta ++ message_stop；
+// ChatToResp → data: [DONE]；其余方向 → nil）。
+func TestStreamMapperDoneFinish(t *testing.T) {
+	// ChatToResp：初始 Done=false，Finish= data: [DONE]。
+	c := NewStreamMapper(domain.ProtocolConvertChatToResp)
+	require.False(t, c.Done(), "completed 前 Done=false")
+	require.Equal(t, "data: [DONE]\n\n", string(c.Finish()), "chat 终止帧 = data: [DONE]")
+	_, _ = c.Map("response.completed", []byte(`{"type":"response.completed","response":{"id":"r","status":"completed"}}`))
+	require.True(t, c.Done(), "completed 后 Done=true")
+
+	// MessToResp：Finish = message_delta{stop_reason:"", usage:respUsageToMess(nil)} ++ message_stop。
+	m := NewStreamMapper(domain.ProtocolConvertMessToResp)
+	require.False(t, m.Done())
+	fin := string(m.Finish())
+	require.Contains(t, fin, "event: message_delta")
+	require.Contains(t, fin, "event: message_stop")
+	require.Contains(t, fin, `"stop_reason":""`, "stop_reason 空（与 mess_resp.go completed 收尾镜像）")
+	require.Contains(t, fin, `"input_tokens":0`, "usage = respUsageToMess(nil)")
+	_, _ = m.Map("response.completed", []byte(`{"type":"response.completed","response":{"id":"r","status":"completed"}}`))
+	require.True(t, m.Done())
+
+	// 其余方向（非 codex converted）→ nil。
+	require.Nil(t, NewStreamMapper(domain.ProtocolConvertRespToMess).Finish())
+	require.Nil(t, NewStreamMapper(domain.ProtocolConvertChatToMess).Finish())
+}

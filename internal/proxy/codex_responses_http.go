@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // --- codex 类型 resp HTTP 分支（codex-oauth/codex-pat 类型
@@ -91,7 +92,8 @@ func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o
 
 // callCodexResponses codex-oauth/codex-pat 类型 resp 调用：非流式 →
 // 适配层 Responses（SDK 合成非流式——内部无条件 stream:true + SSE 事件聚合；
-// 网关以非流式语义消费）；流式 → StreamResponses（SDK 载荷重帧 SSE 透传）。
+// 网关以非流式语义消费）；流式 → StreamBody（SDK 返回原始 body）→ 复用 native
+// 字节级 relay（sserelay.Relay + Output）透传/转换。
 //
 // 预处理沿用 setModel 改写（ModelMapping 对 codex 账号生效，不静默
 // 失效）；不 stripImageTools（用户裁决：strip 仅针对 resp/resp-ws 的
@@ -200,7 +202,7 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // 提升到合成体顶层；无 type 字段）。turn-state：客户端自带 → 透传优先；未带 →
 // 网关注入 held（上游签发值——同轮回传）；合成体无工具调用项（轮结束）→
 // ClearTurnState（跨轮不回传）。日志 Format 由 out.LogFormat() 自报。
-func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespOutput) (int, []byte, bool, error) {
+func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody) (int, []byte, bool, error) {
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
 		return 0, nil, false, err
@@ -259,150 +261,171 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	return http.StatusOK, nil, true, nil
 }
 
-// streamCodexResponses 直连 codex resp 流式（薄封装 core：注入直连 output——SDK
-// 载荷重帧 `data: <payload>\n\n` 透传；日志口径 openai-responses）。直连路径
-// 逐字节不变（帧规格 / [DONE] 补发 / outcome / log 皆同现状）。
+// streamCodexResponses 直连 codex resp 流式（薄封装 core：注入直连 plan——上游
+// 原始 SSE 字节 verbatim 透传；日志口径 openai-responses）。
 func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
-	return p.streamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, cred, body, &codexDirectOutput{w: w})
+	return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, cred, body, codexDirectStreamPlan())
 }
 
-// streamCodexResponsesCore 流式 codex resp core（渲染经注入 output——core 体内
-// 无转换分支）：setModel 改写 → 适配层 StreamResponses（SDK 逐 data: 载荷零拷贝
-// 回调）→ out.Frame 渲染写出（直连 = 重帧 `data: <payload>\n\n` + flush；转换 =
-// 载荷经 protoconv.StreamMapper 映射为客户端协议完整 SSE 帧后直写 + 客户端模型
-// 回填）+ out.End 流末收尾（直连补 `data: [DONE]`；转换零帧防御提交头，终止帧由
-// 映射器自产：chat: [DONE] / mess: message_stop）。日志 Format 由 out.LogFormat()
-// 自报。
+// streamCodexResponsesCore 流式 codex resp core（渲染经注入 plan——core 体内无
+// 转换分支）：setModel 改写 → 适配层 StreamBody 取上游 raw body → 复用 native
+// 字节级 relay（sserelay.Relay + Output：完整帧转发 / 自适应批量 flush / 静默
+// 保活）：直连 verbatim（原始 SSE 字节含 event:/[DONE] 原样透传）；converted 经
+// plan.mapper（protoconv.StreamMapper 适配 sserelay seam，先过滤源协议 [DONE]）
+// 映射为客户端协议帧 + 客户端模型回填，流末按「目标终止帧尚未产生」补发
+// （plan.finish）。日志 Format 由 plan.logFormat 自报。
 //
-// 首帧响应头由 output 自管（直连 begin() 首次 Frame/End 提交；转换仅确写帧时
-// begin()——drop 帧不提交头）。首帧前失败 → 头未提交，HTTP 状态可用 →
-// (code, body, false) 交 failover 循环正常分类（4xx 透传 / 429/5xx 转移 /
-// 耗尽 502——typed 分支 ResponseStreamRaw 非 200 同语义）。
+// 采集统一在**唯一写出前 seam**（sserelay.Config.OnEvent，与 native 五路同一回调
+// 实例）：TTFT（保真「输出前、drop 帧也记」）/usage/图像计数/轮次 hooks/续接入队
+// 全在此采样，取消写后二次采样。
 //
-// 断开/超时收尾镜像 caller_responses.go 双分支：客户端断开
-// （r.Context().Err() != nil）→ 不 MarkResult（finish 200 ErrAbort——上游已消
-// 费请求，token 取断前已收 usage 帧）；上游超时/错误（帧已写出，200 已定型）
-// → recordStreamAbort 语义 + 连接级/5xx 分流。
+// 首帧响应头由 Output 自管（仅确写帧/Commit 时提交）。首帧前失败 → 头未提交，
+// HTTP 状态可用 → (code, body, false) 交 failover 循环正常分类（4xx 透传 /
+// 429/5xx 转移 / 耗尽 502）。
 //
-// usage 嗅探：fn 内精确判定 type 后读 response.usage（取首个命中帧——
-// completed 终态恒唯一，usage 只读一次）。TTFT 在 out.Frame 之前记录（drop 帧
-// 也记——现状）。framesWritten 由 Frame/End 回传的 wrote 复现（判据不变）。
-func (p *Proxy) streamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespOutput) (int, []byte, bool, error) {
+// 断开/超时/已提交错误收尾走统一出口判定 classifyStreamExit（§3.7）：客户端取消
+// → 不 MarkResult（200 ErrAbort——上游已消费请求，token 取断前已收 usage）；
+// 未提交读取失败 → pipeline；已提交 → 客户端协议 SSE error + recordStreamAbort。
+func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, plan codexStreamPlan) (int, []byte, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 	defer cancel()
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
 		return 0, nil, false, err
 	}
+	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
+	sess, meta := sel.CodexIdentity()
+	resp, err := p.codex.StreamBody(ctx, cred, streamBody, &sess, &meta, clientTurnState(r))
+	if err != nil {
+		// 客户端断开（上游响应前）优先归因。
+		if r.Context().Err() != nil {
+			return 0, nil, false, r.Context().Err()
+		}
+		// 首帧前信封错误（4xx 透传 / 429/5xx failover / fatal）：未写出任何
+		// 字节，HTTP 状态可用，交 failover 循环分类。
+		return statusOf(err), upstreamBody(err), false, err
+	}
+	// SDK StreamBody 仅 200 放行；防御性再校验（上游 2xx-非-200 归一 502）。
+	if resp.StatusCode != http.StatusOK {
+		rb := readUpstreamBody(resp)
+		_ = resp.Body.Close()
+		return streamUpstreamStatus(resp.StatusCode), rb, false, nil
+	}
+	writeSSEHeaders(w)
+	out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
+	defer out.Release()
 	var (
 		it, ot, tt, cr, cc int64
 		img                int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 		usageTaken         bool  // 首个 completed 帧已取（usage 只读一次）
-		framesWritten      bool  // 首帧已写出（头已提交；首帧前失败 → HTTP 状态可用）
 		turnCallSeen       bool  // 流中轮继续信号（工具调用输出项——轮边界）
 		ttft               *int64
+		contEnqueued       bool // 首个有效可续接 id 已入队（每流一次）
 	)
-	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
-	sess, meta := sel.CodexIdentity()
-	err = p.codex.StreamResponses(ctx, cred, streamBody, &sess, &meta, clientTurnState(r), func(raw []byte) error {
-		if !usageTaken {
+	err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
+		Output: out,
+		Mapper: plan.mapper,
+		OnEvent: func(ev sserelay.Event) {
+			// 唯一写出前采样 seam（含 drop 帧）：TTFT 先于写出记录（保真
+			// 「输出前、drop 帧也记」——首个上游载荷即计时）。
+			if ttft == nil {
+				ms := time.Since(start).Milliseconds()
+				ttft = &ms
+			}
 			// 热路径：字节扫描 type 精确判定（防正文含子串帧冻结）+
 			// response.usage（零分配）；首个命中后跳过（终态事件唯一）。
-			if hit, ok := sniffResponsesCompletedUsage(raw); ok {
-				it, ot, tt, cr, cc = hit.it, hit.ot, hit.tt, hit.cr, hit.cc
-				if respImageDetectOn(sel) {
-					img = respImageCountCompleted(raw)
+			if !usageTaken {
+				if hit, ok := sniffResponsesCompletedUsage(ev.Data); ok {
+					it, ot, tt, cr, cc = hit.it, hit.ot, hit.tt, hit.cr, hit.cc
+					if respImageDetectOn(sel) {
+						img = respImageCountCompleted(ev.Data)
+					}
+					// 轮次推进：成功取到 usage 时 Step 一次。
+					sel.AdvanceIdentity()
+					usageTaken = true
 				}
-				// 轮次推进：成功取到 usage 时 Step 一次。
-				sel.AdvanceIdentity()
-				usageTaken = true
 			}
-		}
-		// 轮边界嗅探：工具调用输出项 → 轮继续（同轮后续请求续传
-		// turn-state）；命中后跳过（每响应一次判定足够）。
-		if !turnCallSeen && sniffCodexTurnCallItem(raw) {
-			turnCallSeen = true
-		}
-		// TTFT 先于写出记录（drop 帧也记——现状）：out.Frame 的 drop 路径
-		// 不写任何字节，但 TTFT 仍按首个上游载荷计时。
-		if ttft == nil {
-			ms := time.Since(start).Milliseconds()
-			ttft = &ms
-		}
-		wrote, werr := out.Frame(raw)
-		framesWritten = framesWritten || wrote
-		return werr
+			// 轮边界嗅探：工具调用输出项 → 轮继续（同轮后续请求续传
+			// turn-state）；命中后跳过（每响应一次判定足够）。
+			if !turnCallSeen && sniffCodexTurnCallItem(ev.Data) {
+				turnCallSeen = true
+			}
+			// 续接入队：与 native 同一 seam（首个有效响应 id 写出前快照入队
+			// 一次）。direct 取上游帧响应 id；converted 取 mapper 显式返回的
+			// 客户端可续接 id（不从映射帧机械解析）。
+			if !contEnqueued && p.contBindWired() {
+				id := ""
+				if plan.bindableID != nil {
+					id = plan.bindableID()
+				} else {
+					id = contFrameID(ev.Data)
+				}
+				if id != "" {
+					p.contEnqueue(ctx, contProtocolREST, id, groupID)
+					contEnqueued = true
+				}
+			}
+		},
 	})
-	if err != nil {
-		// 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志防
-		// 线——caller_responses.go 语义）；按 abort 收尾不 MarkResult。
-		if r.Context().Err() != nil {
-			if framesWritten {
-				ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-				o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
-				o.Result = ResultClientCancel
-				o.HTTPStatus = 0
-				o.Commit = CommitResponseStarted
-				o.BusinessFrameSent = true
-				o.Terminal = true
-				emitCodexOutcome(ctx, p, sel, o, 0, "")
-				p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrAbort, ut, start)))
-				return 0, nil, true, nil
+	_ = resp.Body.Close()
+	// converted 终止帧补发（三情形恰一个目标终止帧）：仅正常结束（err==nil）且
+	// 目标终止帧尚未产生时补发（直连 verbatim 不补——上游原始字节含 [DONE]）。
+	// 补发帧在 relay 返回后写入，须显式 DrainFlush（relay 的流末 drain 不覆盖
+	// 此帧；首帧后小帧仅入 Output 写缓冲，不 drain 会被 Release 丢弃）。
+	if err == nil && plan.finish != nil {
+		if f := plan.finish(); f != nil {
+			if _, werr := out.WriteFrame(f); werr != nil {
+				err = werr
+			} else if derr := out.DrainFlush(); derr != nil {
+				err = derr
 			}
-			return 0, nil, false, r.Context().Err()
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) && r.Context().Err() == nil {
-			return statusOf(err), upstreamBody(err), false, err
-		}
-		// 首帧前信封错误（4xx 透传 / 429/5xx failover——typed 分支
-		// ResponseStreamRaw 非 200 同语义）：未写出任何帧，可返回 HTTP 状态由
-		// failover 循环分类。
-		if !framesWritten {
-			code := statusOf(err)
-			return code, upstreamBody(err), false, err
-		}
-		// 上游停滞/错误（流中止）：200 已写出——recordStreamAbort + 连接级/5xx 分流
-		// 中途失败为已发送业务帧后的网络中断，记为 ResponseStarted 的失败 outcome，保留健康观测。
-		ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
-		o.Result = ResultFailed
-		o.HTTPStatus = 0
-		o.Commit = CommitResponseStarted
-		o.BusinessFrameSent = true
-		o.Terminal = true
-		emitCodexOutcome(ctx, p, sel, o, rule.KindNetwork, err.Error())
-		p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, err)
-		return 0, nil, true, nil
 	}
-	// 轮结束清除：流正常结束且收到 completed 终态（usageTaken）且无
-	// 工具调用项（!turnCallSeen）→ 轮结束 → 清除 held（跨轮不回传）。错误/断开
-	// 路径不清（轮结束未知——不误清同轮续传值）。
-	if usageTaken && !turnCallSeen {
+	// 轮结束清除：正常结束且收到 completed 终态（usageTaken）且无工具调用项
+	// （!turnCallSeen）→ 轮结束 → 清除 held（跨轮不回传）。错误/断开路径不清
+	// （轮结束未知——不误清同轮续传值）。
+	if err == nil && usageTaken && !turnCallSeen {
 		p.codex.ClearTurnState(sel.AccountID)
 	}
-	logCtx := ctx
 	if ttft != nil {
-		logCtx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
-	}
-	// 流末收尾（out.End）：直连补发 data: [DONE]\n\n + flush（补发失败 = 客户端
-	// 断开 → 按 abort 收尾，上游已正常完成——usage 照记）；转换零帧防御（病态
-	// 上游仅发 [DONE]——Frame 从未调用、头未提交）：此刻才提交头；终止帧由映射器
-	// 自产（chat: [DONE] / mess: message_stop），core 不补。
-	wrote, endErr := out.End()
-	framesWritten = framesWritten || wrote
-	if endErr != nil {
-		ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
-		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
-		o.Result = ResultClientCancel
-		o.HTTPStatus = 0
-		o.Commit = CommitResponseStarted
-		o.BusinessFrameSent = true
-		o.Terminal = true
-		emitCodexOutcome(ctx, p, sel, o, 0, "")
-		p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrAbort, ut, start)))
-		return 0, nil, true, nil
+		ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 	}
 	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+	if err != nil {
+		// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
+		switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img}, ttft) {
+		case streamExitClientCancel:
+			// 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志
+			// 防线）；按 abort 收尾不 MarkResult。
+			o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
+			o.Result = ResultClientCancel
+			o.HTTPStatus = 0
+			o.Commit = CommitResponseStarted
+			o.BusinessFrameSent = true
+			o.Terminal = true
+			emitCodexOutcome(ctx, p, sel, o, 0, "")
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrAbort, ut, start)))
+			return 0, nil, true, nil
+		case streamExitUncommitted:
+			// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
+			return statusOf(err), nil, false, err
+		default: // 写失败 / 已提交
+			if out.Committed() {
+				writeClientStreamError(out, plan.logFormat, err)
+			}
+			// 上游停滞/错误（流中止）：200 已写出——recordStreamAbort + 连接级/5xx
+			// 分流，保留健康观测。
+			o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
+			o.Result = ResultFailed
+			o.HTTPStatus = 0
+			o.Commit = CommitResponseStarted
+			o.BusinessFrameSent = true
+			o.Terminal = true
+			emitCodexOutcome(ctx, p, sel, o, rule.KindNetwork, err.Error())
+			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, err)
+			return 0, nil, true, nil
+		}
+	}
 	o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 	o.Result = ResultSuccess
 	o.HTTPStatus = AttemptStatus(http.StatusOK)
@@ -410,28 +433,19 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, r *http.Request, r
 	o.BusinessFrameSent = true
 	o.Terminal = true
 	emitCodexOutcome(ctx, p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrNone, ut, start)))
+	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
 
-// --- codex responses 输出渲染 seam（注入式 output 策略） ---
+// --- codex responses 输出渲染 seam ---
 //
-// codexRespOutput 渲染 codex responses 上游响应给客户端：
-//   - 直连 = 合成体/载荷原样重帧透传；
+// codexRespBody 渲染 codex responses 上游**非流式**响应给客户端（Body/LogFormat
+// 两方法；流式已改走 sserelay raw relay，不再经此 seam 逐帧重帧）：
+//   - 直连 = 合成体原样透传；
 //   - 协议转换 = protoconv 反向映射回客户端协议。
 //
 // core 只拨号/取用量/记 outcome，渲染经此注入——core 体内无任何转换分支。
-// 首帧响应头由实现自管（含零帧防御）；Frame/End 回传 wrote 供 core 复现
-// framesWritten 语义（分类客户端断开 / 首帧前信封错误 / 零帧防御）。
-type codexRespOutput interface {
-	// Frame 渲染并写出一个流式载荷（SDK 交付的 bare JSON）。
-	//   提交/写出字节 → (true, err)；按映射语义丢弃（drop，未写任何字节）→ (false, nil)
-	//   （供 core 判「首帧前失败」：drop 不当成已写出）。
-	Frame(raw []byte) (wrote bool, err error)
-	// End 流末收尾：直连补 data: [DONE]；转换空操作（终止帧由映射器自产）。
-	// 仍负责零帧时的响应头提交（上游正常结束但从未回调 → 至少提交 SSE 头）。
-	//   提交/写出字节 → true；写出错误 → err（直连 [DONE] 失败 = 客户端断开）。
-	End() (wrote bool, err error)
+type codexRespBody interface {
 	// Body 写出非流式合成体。仅「转换前置失败」（ConvertResponse 出错、字节未写出）
 	// 返回 error（→ 500）；写出阶段错误按现状忽略（响应已定型）。
 	Body(raw []byte) error
@@ -439,23 +453,9 @@ type codexRespOutput interface {
 	LogFormat() domain.RequestFormat
 }
 
-// codexDirectOutput 直连渲染（现状默认）：合成体/载荷原样透传；started 自管头
-// 提交（首次 Frame/End 时提交 SSE 头——首帧前失败不提交，HTTP 状态可用）。
+// codexDirectOutput 直连非流式渲染：合成体原样透传。
 type codexDirectOutput struct {
-	w       http.ResponseWriter
-	started bool
-}
-
-func (o *codexDirectOutput) begin() { beginSSEOnce(o.w, &o.started) }
-
-func (o *codexDirectOutput) Frame(raw []byte) (bool, error) {
-	o.begin()
-	return true, writeCodexSSEFrame(o.w, raw) // begin 已提交头 ⇒ 恒 true
-}
-
-func (o *codexDirectOutput) End() (bool, error) {
-	o.begin()
-	return true, writeCodexSSEFrame(o.w, sseDonePayload)
+	w http.ResponseWriter
 }
 
 func (o *codexDirectOutput) Body(raw []byte) error {
@@ -463,48 +463,23 @@ func (o *codexDirectOutput) Body(raw []byte) error {
 	o.w.WriteHeader(http.StatusOK)
 	// 写出阶段错误按现状忽略：WriteHeader(200) 已定型响应，状态码/头不可再改，
 	// 无 failover 可分类路径（非流式无「首帧前失败」语义）。与 caller_chat /
-	// caller_responses / caller_images 非流式写路径同款（见 codexRespOutput.Body 契约）。
+	// caller_responses / caller_images 非流式写路径同款（见 codexRespBody.Body 契约）。
 	_, _ = o.w.Write(raw)
 	return nil
 }
 
 func (o *codexDirectOutput) LogFormat() domain.RequestFormat { return domain.FormatOpenAIResponses }
 
-// codexConvertedOutput 协议转换渲染：上游 responses 输出经 protoconv 反向映射回
-// 客户端协议（mapper 懒建——非流式路径不分配）；clientModel 非空 → 逐帧/合成体
-// 回填客户端模型。started 自管头提交（仅确写帧/End 时提交——drop 帧不提交头）。
+// codexConvertedOutput 协议转换非流式渲染：上游 responses 合成体经 protoconv 反向
+// 映射回客户端协议；clientModel 非空 → 回填客户端模型。
 type codexConvertedOutput struct {
 	w           http.ResponseWriter
 	dir         domain.ProtocolConvert
 	clientModel string
-	mapper      *protoconv.StreamMapper // 懒建：仅流式首个 Frame 建一次
-	started     bool
 }
 
 func newCodexConvertedOutput(w http.ResponseWriter, dir domain.ProtocolConvert, clientModel string) *codexConvertedOutput {
 	return &codexConvertedOutput{w: w, dir: dir, clientModel: clientModel}
-}
-
-func (o *codexConvertedOutput) begin() { beginSSEOnce(o.w, &o.started) }
-
-func (o *codexConvertedOutput) Frame(raw []byte) (bool, error) {
-	if o.mapper == nil {
-		o.mapper = protoconv.NewStreamMapper(o.dir)
-	}
-	frame, drop := o.mapper.Map("", raw)
-	if drop {
-		return false, nil // 未写任何字节（不提交头）
-	}
-	if o.clientModel != "" {
-		frame = rewriteConvertedFrames(frame, o.clientModel)
-	}
-	o.begin()
-	return true, writeSSEFrameRaw(o.w, frame)
-}
-
-func (o *codexConvertedOutput) End() (bool, error) {
-	o.begin()
-	return true, nil
 }
 
 func (o *codexConvertedOutput) Body(raw []byte) error {
@@ -518,7 +493,7 @@ func (o *codexConvertedOutput) Body(raw []byte) error {
 	o.w.Header().Set("Content-Type", "application/json")
 	o.w.WriteHeader(http.StatusOK)
 	// 写出阶段错误按现状忽略：响应已由 WriteHeader(200) 定型，无恢复路径（转换
-	// 前置失败已在入口返回 error → 500，见 codexRespOutput.Body 契约）。
+	// 前置失败已在入口返回 error → 500，见 codexRespBody.Body 契约）。
 	_, _ = o.w.Write(conv)
 	return nil
 }
@@ -528,62 +503,78 @@ func (o *codexConvertedOutput) LogFormat() domain.RequestFormat {
 	return c
 }
 
-// SSE 帧常量（codex 流式分支专用——SDK 交付载荷重帧；typed 面由 sserelay 全
-// 帧原样透传含 event:/[DONE]，线格式不同）。
-var (
-	sseDataPrefix  = []byte("data: ")
-	sseFrameSuffix = []byte("\n\n")
-	sseDonePayload = []byte("[DONE]")
-)
-
-// beginSSE 提交 SSE 响应头：writeSSEHeaders 三件套 + 显式 WriteHeader(200)
-// （SDK 载荷直写无 sserelay 首帧隐式写头，须显式下发）。提交后不可再改状态码，
-// 仅在确知要写首帧时调用（首帧前失败不调用 → 头未提交，HTTP 状态可由 failover
-// 循环正常分类）。
-func beginSSE(w http.ResponseWriter) {
-	writeSSEHeaders(w)
-	w.WriteHeader(http.StatusOK)
+// --- codex responses 流式下行 plan ---
+//
+// codexStreamPlan 描述 codex responses 流式下行：直连 verbatim 或经协议转换适配
+// 后写入 sserelay 统一 relay（完整帧转发/保活/采样）。
+type codexStreamPlan struct {
+	// mapper sserelay 逐帧转换器；nil = 直连 verbatim（上游原始 SSE 字节含
+	// event:/[DONE] 原样透传）。
+	mapper func(sserelay.Event) ([]byte, bool)
+	// finish 流末按「目标终止帧尚未产生」条件补发（converted 专用；direct = nil）。
+	finish func() []byte
+	// bindableID converted 续接 id（direct = nil——direct 走 contFrameID 解析上游帧）。
+	bindableID func() string
+	// logFormat 日志 Format 口径。
+	logFormat domain.RequestFormat
 }
 
-// beginSSEOnce 幂等提交 SSE 头：首个确写帧/End 时调用一次，之后置 sent 短路。
-// codexDirectOutput 与 codexConvertedOutput 的自管头提交共用此单一实现。
-func beginSSEOnce(w http.ResponseWriter, sent *bool) {
-	if !*sent {
-		beginSSE(w)
-		*sent = true
+// codexDirectStreamPlan 直连 verbatim plan：无 mapper/finish（上游原始字节含
+// event:/[DONE]），日志口径 openai-responses。
+func codexDirectStreamPlan() codexStreamPlan {
+	return codexStreamPlan{logFormat: domain.FormatOpenAIResponses}
+}
+
+// codexConvertedStreamPlan 协议转换 plan：经 protoconv.StreamMapper 适配
+// sserelay seam（源协议 [DONE] 由适配层过滤），流末按目标终止帧条件补发。
+func codexConvertedStreamPlan(dir domain.ProtocolConvert, clientModel string) codexStreamPlan {
+	a := &codexConvertedStreamMapper{
+		mapper:      protoconv.NewStreamMapper(dir),
+		clientModel: clientModel,
+	}
+	client, _ := clientAndTargetOf(dir)
+	return codexStreamPlan{
+		mapper:     a.mapEvent,
+		finish:     a.finish,
+		bindableID: a.mapper.BindableID,
+		logFormat:  client,
 	}
 }
 
-// writeCodexSSEFrame 逐帧重帧写出（`data: <payload>\n\n` + flush——SDK
-// 交付的是载荷非完整 SSE 行，event: 行不重建）。零分配：三段直写（前缀/载荷/
-// 后缀——前缀后缀为包级字节常量复用）。fn 内立即调用（SDK 回调切片仅回调期
-// 有效）。
-func writeCodexSSEFrame(w http.ResponseWriter, payload []byte) error {
-	if _, err := w.Write(sseDataPrefix); err != nil {
-		return err
-	}
-	if _, err := w.Write(payload); err != nil {
-		return err
-	}
-	if _, err := w.Write(sseFrameSuffix); err != nil {
-		return err
-	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
-	}
-	return nil
+// codexConvertedStreamMapper 适配 codex converted 流式：先消费/过滤源协议
+// [DONE]，再经 protoconv.StreamMapper 映射，客户端模型回填；流末按「目标终止
+// 帧尚未产生」条件补发目标终止帧。过滤不搬进 StreamMapper.Map（它须保持纯
+// name→frame，被非 codex native converted 复用——本 wrapper 仅覆盖 codex）。
+type codexConvertedStreamMapper struct {
+	mapper      *protoconv.StreamMapper
+	clientModel string
 }
 
-// writeSSEFrameRaw 直写完整 SSE 帧字节（映射帧已含 data:/event: 行与结尾空行）
-// + flush。与 writeCodexSSEFrame 区分：后者把 SDK 载荷重包 `data: ` 前缀；映射
-// 分支的帧由 protoconv 组装为完整帧，直写不得再包前缀。fn 内立即调用（映射帧
-// 复用 mapper 缓冲，仅本次 Map 调用期有效）。
-func writeSSEFrameRaw(w http.ResponseWriter, frame []byte) error {
-	if _, err := w.Write(frame); err != nil {
-		return err
+// mapEvent sserelay.Mapper：源协议 [DONE] 丢弃（目标终止帧归目标 mapper / 适配层
+// 流末补发）；其余经 StreamMapper 映射 + 客户端模型回填。
+func (a *codexConvertedStreamMapper) mapEvent(ev sserelay.Event) ([]byte, bool) {
+	if isSourceSSEDone(ev) {
+		return nil, true
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	frame, drop := a.mapper.Map(string(ev.Event), ev.Data)
+	if drop {
+		return nil, true
 	}
-	return nil
+	if a.clientModel != "" {
+		frame = rewriteConvertedFrames(frame, a.clientModel)
+	}
+	return frame, false
+}
+
+// finish 流末补发（目标终止帧尚未产生时）：镜像目标 mapper 自产终止帧。
+func (a *codexConvertedStreamMapper) finish() []byte {
+	if a.mapper.Done() {
+		return nil
+	}
+	return a.mapper.Finish()
+}
+
+// isSourceSSEDone 判定帧是否为源协议 [DONE]（data 载荷命中；event 名无关）。
+func isSourceSSEDone(ev sserelay.Event) bool {
+	return bytes.Equal(ev.Data, []byte("[DONE]"))
 }

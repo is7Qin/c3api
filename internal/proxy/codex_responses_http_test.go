@@ -492,6 +492,7 @@ func TestCodexResponsesMockStreamPassthrough(t *testing.T) {
 	require.Equal(t, int64(2), lg.CacheReadTokens)
 	require.Equal(t, int64(4), lg.CacheCreationTokens)
 	require.Equal(t, domain.FormatOpenAIResponses, lg.Format)
+	require.NotNil(t, lg.TTFTMS, "TTFT 在唯一写出前 seam 采样")
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "成功路径必须释放并发槽")
@@ -873,23 +874,32 @@ func TestCodexResponsesStreamFailoverExhausted(t *testing.T) {
 
 // --- 流式收尾双分支（直接调用——编排级 failover 循环外的流中止语义） ---
 
-// frameFailWriter 第 failFrom 次 Write 起失败（首帧写成功、后续帧写失败的流
-// 中止路径测试替身；Flush 计数供逐帧 flush 断言）。
+// frameFailWriter 在首个内容命中 failContains 的 Write（或第 failFrom 次 Write）
+// 起失败（首帧写成功、后续帧写失败的流中止路径测试替身；Flush 计数供 flush
+// 断言）。Write 隐含 200（模拟 net/http：Write 触发 WriteHeader）——sserelay
+// Output 不再显式 WriteHeader，提交由首帧 Write 隐式完成。
 type frameFailWriter struct {
-	header   http.Header
-	status   int
-	writes   int
-	failFrom int
-	flushes  int
-	body     bytes.Buffer
+	header       http.Header
+	status       int
+	writes       int
+	failFrom     int
+	failContains []byte
+	flushes      int
+	body         bytes.Buffer
 }
 
-func (w *frameFailWriter) Header() http.Header  { return w.header }
-func (w *frameFailWriter) WriteHeader(code int) { w.status = code }
+func (w *frameFailWriter) Header() http.Header { return w.header }
+func (w *frameFailWriter) WriteHeader(code int) {
+	w.status = code
+}
 func (w *frameFailWriter) Write(b []byte) (int, error) {
 	w.writes++
-	if w.writes >= w.failFrom {
+	if (w.failFrom > 0 && w.writes >= w.failFrom) ||
+		(len(w.failContains) > 0 && bytes.Contains(b, w.failContains)) {
 		return 0, errors.New("client write failed")
+	}
+	if w.status == 0 {
+		w.status = http.StatusOK // 模拟 net/http 隐式 200
 	}
 	return w.body.Write(b)
 }
@@ -904,12 +914,14 @@ func selectCodexAccount(t *testing.T, p *Proxy, accountID int64) *scheduler.Sele
 	return sel
 }
 
-// TestCodexResponsesStreamMidstreamWriteError 流中止（fn 写出失败——客户端断开
-// 等价症状但 r.Context() 存活 = 上游侧问题）：recordStreamAbort + 连接级/5xx 分流
-// + 不补发 [DONE]；200 已写出（statusOf(err)=0 归连接级）。
+// TestCodexResponsesStreamMidstreamWriteError 流中止（上游单帧后连接中断 = 已提交
+// 后读错误）：recordStreamAbort + 连接级/5xx 分流 + 不补发 [DONE]；200 已写出。
+// 用 newCodexAbortUpstream（hijack 手写 Content-Length 大于实际 → 读中途 EOF）
+// 确定性构造「先投一帧、再读错误」（raw relay 下多帧会被批 flush，写失败时机
+// 不确定；读错误则确定）。
 func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 	testHealthSink.reset()
-	up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+	up, _ := newCodexAbortUpstream(t, convCodexRespInProgress)
 	defer up.Close()
 	store := &captureLogStore{}
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
@@ -917,7 +929,7 @@ func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 		up.URL, nil, nil, store)
 	sel := selectCodexAccount(t, p, 10)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	w := &frameFailWriter{header: make(http.Header), failFrom: 4} // 帧1（3 写）成功，帧2 首写失败
+	w := &frameFailWriter{header: make(http.Header)}
 
 	code, respBody, handled, callErr := p.callCodexResponses(req.Context(), w, req, "req-1", 10, time.Now(), sel, []byte(`{"model":"gpt-4o","stream":true}`), true)
 	require.True(t, handled, "流中止已收尾（handled）")
@@ -925,9 +937,7 @@ func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 	require.Nil(t, respBody)
 	require.NoError(t, callErr, "流中止按记录收尾，错误不返回到 failover 循环")
 	require.Equal(t, http.StatusOK, w.status, "200 已写出（流已开始）")
-	require.Equal(t, 4, w.writes, "首帧 3 段直写成功 + 帧2 首段写失败（失败调用计入）")
 	require.NotContains(t, w.body.String(), "[DONE]", "上游错误不补发 [DONE]")
-	require.GreaterOrEqual(t, w.flushes, 1, "每帧 flush")
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(10)
@@ -943,10 +953,11 @@ func TestCodexResponsesStreamMidstreamWriteError(t *testing.T) {
 	require.Zero(t, store.logs[0].TotalTokens, "completed 帧未送达（中止前未收 usage 帧）→ 0")
 }
 
-// TestCodexResponsesStreamDoneWriteAbort 流正常结束（SDK 已消费 [DONE]/EOF）
-// 但补发 [DONE] 帧写出失败（客户端已断）：按 abort 收尾——usage 照记（completed
-// 帧已嗅探）+ 不 MarkResult（客户端行为非上游错误）+ [DONE] 未送达。
+// TestCodexResponsesStreamDoneWriteAbort 流正常结束但上游原始 [DONE] 帧写出失败
+// （客户端已断）：按 abort 收尾——usage 照记（completed 已在写出前 seam 采样——
+// 保真「completed 已到但写失败仍保留用量」）+ 连接级健康观测 + [DONE] 未送达。
 func TestCodexResponsesStreamDoneWriteAbort(t *testing.T) {
+	testHealthSink.reset()
 	up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 	store := &captureLogStore{}
@@ -955,22 +966,23 @@ func TestCodexResponsesStreamDoneWriteAbort(t *testing.T) {
 		up.URL, nil, nil, store)
 	sel := selectCodexAccount(t, p, 10)
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	// 3 帧 × 3 写 = 9 写成功，[DONE] 帧首写（第 10 写）失败
-	w := &frameFailWriter{header: make(http.Header), failFrom: 10}
+	// 写 [DONE] 帧时失败（raw relay 逐帧转发；content-based 判据不受批 flush 影响）。
+	w := &frameFailWriter{header: make(http.Header), failContains: []byte("[DONE]")}
 
 	code, respBody, handled, callErr := p.callCodexResponses(req.Context(), w, req, "req-1", 10, time.Now(), sel, []byte(`{"model":"gpt-4o","stream":true}`), true)
 	require.True(t, handled)
 	require.Equal(t, 0, code)
 	require.Nil(t, respBody)
 	require.NoError(t, callErr)
-	require.Equal(t, 10, w.writes, "3 载荷帧 9 段直写成功 + [DONE] 首段写失败（失败调用计入）")
-	require.NotContains(t, w.body.String(), "[DONE]", "[DONE] 未送达（客户端已断）")
+	require.Equal(t, http.StatusOK, w.status, "首帧已写出（200 提交）")
+	require.NotContains(t, w.body.String(), "[DONE]", "[DONE] 未送达（写失败）")
 	require.NotContains(t, w.body.String(), "event:", "event: 行不出现")
 
 	p.sched.FlushRules()
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
-	require.Equal(t, domain.StatusActive, ri.Status, "客户端断开不 MarkResult（不冷却）")
+	require.Len(t, testHealthSink.throttlesFor(10), 1, "已提交写失败 → 连接级健康观测")
+	require.Zero(t, ri.Concurrency, "收尾释放并发槽")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -1010,6 +1022,9 @@ func (w *gateWriter) Write(b []byte) (int, error) {
 	if w.ctx != nil && w.ctx.Err() != nil {
 		return 0, w.ctx.Err() // 客户端已断——确定性走 abort 分支
 	}
+	if w.status == 0 {
+		w.status = http.StatusOK // 模拟 net/http 隐式 200
+	}
 	return w.body.Write(b)
 }
 func (w *gateWriter) Flush() { w.flushes++ }
@@ -1041,7 +1056,8 @@ func TestCodexResponsesStreamClientDisconnect(t *testing.T) {
 	<-done
 	require.True(t, handled)
 	require.Equal(t, 0, code)
-	require.Equal(t, http.StatusOK, w.status)
+	require.Equal(t, "text/event-stream", w.header.Get("Content-Type"), "SSE 头已设置（惰性）")
+	require.Zero(t, w.status, "客户端取消：首帧写失败，头未提交")
 
 	p.sched.FlushRules()
 	ri, ok := p.sched.Runtime(10)

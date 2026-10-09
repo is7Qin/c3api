@@ -268,6 +268,30 @@ func (a *Codex) StreamResponses(ctx context.Context, cred *domain.AccountCredent
 	return nil
 }
 
+// StreamBody 流式 responses **raw body** 透传：cred → 缓存取 HTTPClient →
+// c.StreamBody(ctx, payload) 返回**未关闭**的 *http.Response（body 归调用方，
+// proxy 侧经 sserelay.Relay 消费后**恰好关闭一次**）。sess/meta/clientTurnState
+// 语义同 StreamResponses（伪装身份 + 透传优先）。成功后**直接读本次
+// resp.Header** 回写 held turn-state——不读共享 client.TurnState()（并发响应
+// 可互相覆盖，http.go captureTurnState 为池级最近值）。错误翻译同 Responses
+// （translateError——信封/fatal 统一回调双源去重/RefreshError 分类复用）。
+func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string) (*http.Response, error) {
+	ts := clientTurnState
+	if ts == "" {
+		ts = a.turnStateOf(cred.AccountID)
+	}
+	e, client, err := a.clientFor(cred, sess, meta, ts)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.StreamBody(ctx, payload)
+	if err != nil {
+		return nil, a.translateError(e, err)
+	}
+	a.captureTurnState(e, resp.Header.Get(codexsdk.HeaderTurnState))
+	return resp, nil
+}
+
 // entryFor cred → 账号级缓存条目（构造冷面——每账号首次/凭据变更后；互斥锁
 // + 签名比对，同账号并发请求单飞构造——对齐 SDK OAuth 单飞 refresh 语义）：
 //   - 同账号复用（Auth 内 at 缓存/轮转状态保持；sig 相同直接返回）
