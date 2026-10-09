@@ -12,7 +12,6 @@ import (
 var (
 	benchmarkSnapshotStatic *snapshotStatic
 	benchmarkPlanKey        planKey
-	benchmarkCompareEqual   bool
 )
 
 // --- T1: batch-stage benchmark (M groups folded into one stage/freeze) ---

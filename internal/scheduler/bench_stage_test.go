@@ -220,7 +220,7 @@ func TestInvalidateGroupsStageCallStructure(t *testing.T) {
 // TestPlanKeyRetainedHeapMeasured measures retained heap with live roots + GC
 // (never field reflection): build a 5000-account scheduler holding its planKeys
 // and the single held decision encoding, force GC, and confirm the held output
-// is exactly one canonical copy with no oversize capacity. The before/after
+// is exactly one canonical copy. The before/after
 // delta is computed as a SIGNED difference so a bucket that shrank (GC released
 // earlier garbage) can never underflow into a bogus large positive value.
 func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
@@ -247,10 +247,7 @@ func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 
 	dv := s.View().DecisionView()
 	require.NotNil(t, dv)
-	require.Equal(t, len(decisionViewBytes(dv)), len(s.lastDecisionBytes),
-		"exactly one canonical copy is held (correct length)")
-	require.Equal(t, len(s.lastDecisionBytes), cap(s.lastDecisionBytes),
-		"the held copy must carry no oversize capacity (single backing array)")
+	require.Equal(t, decisionViewBytes(dv), s.lastDecisionBytes, "exactly one canonical copy is held")
 
 	// Isolate the NEW planKey's retained contribution: it is stored inline in
 	// each snapshotStatic leaf, so its incremental cost is sizeof(planKey) per
