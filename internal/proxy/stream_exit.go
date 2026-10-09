@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
@@ -74,7 +75,8 @@ func carryStreamUsage(ctx context.Context, usage AttemptUsage, ttft *int64) {
 }
 
 // writeClientStreamError 写客户端协议 SSE error 帧（已提交且写侧可用时）；
-// WriteFailed 由 Output.WriteError 内部短路（不补写）。
-func writeClientStreamError(out *sserelay.Output, err error) {
-	_ = out.WriteError(buildErrorFrame(streamErrMessage(err)))
+// WriteFailed 由 Output.WriteError 内部短路（不补写）。format 为客户端协议
+// （Chat/Responses/Images = OpenAI 形态；Anthropic = type:error 信封）。
+func writeClientStreamError(out *sserelay.Output, format domain.RequestFormat, err error) {
+	_ = out.WriteError(buildErrorFrame(format, streamErrMessage(err)))
 }

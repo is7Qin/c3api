@@ -833,7 +833,7 @@ func TestRequestPathZeroLoaderCalls(t *testing.T) {
 	require.Equal(t, before, cl.loadsN(), "请求期（Select/MarkResult/Release）零加载器触达——热路径零 DB")
 }
 
-// —— RuleKindOf 单点分流（gate r3/r5） ——
+// —— RuleKindOf 单点分流 ——
 
 func TestRuleKindOf(t *testing.T) {
 	cases := []struct {

@@ -14,6 +14,7 @@ import (
 	"github.com/openai/openai-go"
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -102,7 +103,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 				return statusOf(err), nil, false, err
 			default: // 写失败 / 已提交
 				if out.Committed() {
-					writeClientStreamError(out, err)
+					writeClientStreamError(out, domain.FormatOpenAIChat, err)
 				}
 				// 上游流中断：保留已采集 usage 走网络错误观测。
 				outcome := chatOutcomeForAbort(base, out.BusinessFrameSent(), usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, false)

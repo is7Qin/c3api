@@ -324,7 +324,7 @@ func TestStreamImagePostHeaderError(t *testing.T) {
 	require.NoError(t, err, "响应头已发后失败不返回错误——帧内透传")
 	require.Equal(t, 0, code)
 	require.True(t, handled)
-	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"message\":\"upstream exploded\"}\n\n", "SSE error 帧 + EOF")
+	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"error\":{\"message\":\"upstream exploded\",\"type\":\"server_error\"}}\n\n", "SSE error 帧 + EOF")
 	// 计费走 recordStreamAbort：已收集 1 张照常落账（200 + abort 语义）。
 	l := collectImageLogs(t, p, store)
 	require.Equal(t, domain.ErrAbort, l.ErrorType)
@@ -345,7 +345,7 @@ func TestStreamImageAbortNoCompleted(t *testing.T) {
 	code, _, _, err := p.streamImageGeneration(context.Background(), rec, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen([]domain.ImageStreamEvent{{Type: domain.ImageStreamEventKeepalive}}, genErr, nil))
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
-	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"message\":\"upstream connection error\"}\n\n", "SSE error 帧固定文案（连接级内部文本不上用户帧）")
+	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"error\":{\"message\":\"upstream connection error\",\"type\":\"server_error\"}}\n\n", "SSE error 帧固定文案（连接级内部文本不上用户帧）")
 	l := collectImageLogs(t, p, store)
 	require.Equal(t, domain.ErrAbort, l.ErrorType)
 	require.Zero(t, l.CallCount, "无 completed → 0 张落账")

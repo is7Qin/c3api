@@ -155,7 +155,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				return statusOf(err), nil, false, err
 			default: // 写失败 / 已提交
 				if out.Committed() {
-					writeClientStreamError(out, err)
+					writeClientStreamError(out, client, err)
 				}
 				code := statusOf(err)
 				commit := CommitUpstreamResponded

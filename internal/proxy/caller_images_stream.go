@@ -150,7 +150,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			return streamUpstreamStatus(statusOf(genErr)), upstreamBody(genErr), false, genErr
 		default: // 写失败 / 已提交
 			if out.Committed() {
-				writeClientStreamError(out, genErr)
+				writeClientStreamError(out, domain.FormatOpenAIImages, genErr)
 			}
 			code := statusOf(genErr)
 			commit := CommitUpstreamResponded
@@ -215,13 +215,30 @@ func buildCompletedFrame(ev *domain.ImageStreamEvent) []byte {
 	return buf.Bytes()
 }
 
-// buildErrorFrame 生成失败 SSE error 帧：
-func buildErrorFrame(message string) []byte {
-	buf := bytes.NewBuffer(make([]byte, 0, len("event: error\ndata: ")+len(message)+32))
-	buf.WriteString("event: error\ndata: ")
-	m, _ := json.Marshal(map[string]string{"message": message})
+// buildErrorFrame 生成客户端协议 SSE error 帧。载荷按客户端协议（§2.3）：
+//   - OpenAI（Chat/Responses/Images）：`event: error` + 顶层 `error` 键
+//     （`{"error":{"message":…,"type":"server_error"}}`）——openai-go `ssestream`
+//     以此判失败（packages/ssestream/ssestream.go:169/181）；
+//   - Anthropic：`event: error` + `{"type":"error","error":{"type":"api_error",
+//     "message":…}}`。
+//
+// 不得只发 `{"message":…}`：SDK 不将其识别为失败，截断会被当作正常结束。
+func buildErrorFrame(format domain.RequestFormat, message string) []byte {
+	if format == domain.FormatAnthropic {
+		buf := bytes.NewBuffer(make([]byte, 0, len("event: error\ndata: ")+len(message)+64))
+		buf.WriteString(`event: error` + "\ndata: ")
+		buf.WriteString(`{"type":"error","error":{"type":"api_error","message":`)
+		m, _ := json.Marshal(message)
+		buf.Write(m)
+		buf.WriteString("}}\n\n")
+		return buf.Bytes()
+	}
+	buf := bytes.NewBuffer(make([]byte, 0, len("event: error\ndata: ")+len(message)+48))
+	buf.WriteString(`event: error` + "\ndata: ")
+	buf.WriteString(`{"error":{"message":`)
+	m, _ := json.Marshal(message)
 	buf.Write(m)
-	buf.WriteString("\n\n")
+	buf.WriteString(`,"type":"server_error"}}` + "\n\n")
 	return buf.Bytes()
 }
 

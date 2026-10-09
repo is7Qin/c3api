@@ -7,7 +7,7 @@
 import type { components } from './schema.d.ts'
 import { userAuth } from '@/lib/auth'
 
-// 类实现（brief 原为 type 别名，但 throw new ApiError(...) 需要运行时值）
+// 类实现（原设计为 type 别名，但 throw new ApiError(...) 需要运行时值）
 export class ApiError extends Error {
   status: number
   // 统计窗口拒绝的机读字段（spec §4.4(c)）：服务端在 400 体里把"哪个原因、

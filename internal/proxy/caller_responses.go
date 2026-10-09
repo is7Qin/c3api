@@ -119,7 +119,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				return statusOf(err), nil, false, err
 			default: // 写失败 / 已提交
 				if out.Committed() {
-					writeClientStreamError(out, err)
+					writeClientStreamError(out, domain.FormatOpenAIResponses, err)
 				}
 				// 上游流中止：同样保留已收集用量，按连接级/5xx 分类
 				oc := base

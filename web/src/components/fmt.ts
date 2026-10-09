@@ -3,7 +3,7 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // 展示格式化工具（页面共享，放 components/ 以便与提交范围一致）。
-// 后端 err_rate 为比率（0~1），按 brief 以百分比展示。
+// 后端 err_rate 为比率（0~1），以百分比展示。
 export function formatPercent(v?: number): string {
   return v == null ? '—' : `${(v * 100).toFixed(1)}%`
 }

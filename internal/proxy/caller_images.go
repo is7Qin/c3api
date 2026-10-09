@@ -121,7 +121,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 				return statusOf(err), nil, false, err
 			}
 			if kind == streamExitCommitted {
-				writeClientStreamError(out, err)
+				writeClientStreamError(out, domain.FormatOpenAIImages, err)
 			}
 			code := statusOf(err)
 			commit := CommitUpstreamResponded

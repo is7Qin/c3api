@@ -410,7 +410,7 @@ func TestImagesStreamingSSE(t *testing.T) {
 }
 
 // TestImagesStreamingKeepalive typed images（真上游 SSE 流）随五路传通用保活
-// 间隔（spec §3 r1 澄清）：上游发出首帧后静默 → 网关按 StreamKeepaliveInterval
+// 间隔（spec §3）：上游发出首帧后静默 → 网关按 StreamKeepaliveInterval
 // 写 ": keepalive\n"；业务帧照常透传。
 func TestImagesStreamingKeepalive(t *testing.T) {
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
