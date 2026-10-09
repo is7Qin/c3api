@@ -559,6 +559,32 @@ func TestRelayCancelUnblocksDeadClientWrite(t *testing.T) {
 	close(src.block)
 }
 
+// TestRelayTerminalFrameWriteProtectedByDeadlineWatcher 回归：Config.Terminal
+// 注入的流末协议终止帧在 deadline watcher 停止**之前**写出——半开客户端
+// （写阻塞）时取消必须解阻 Relay 退出；若补帧写在 watcher 停止之后，阻塞写
+// 永久挂起（泄漏 goroutine）。空源 → 唯一写出即终止帧，隔离该路径。
+func TestRelayTerminalFrameWriteProtectedByDeadlineWatcher(t *testing.T) {
+	wr := &deadClientWriter{entered: make(chan struct{}, 1), deadlineCh: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- Relay(ctx, wr, strings.NewReader(""),
+			Config{Terminal: func() []byte { return []byte("data: [DONE]\n\n") }})
+	}()
+	select {
+	case <-wr.entered:
+	case <-time.After(time.Second):
+		t.Fatal("流末终止帧未进入底层写（测试前置失败：Terminal 未被调用或未写出）")
+	}
+	cancel()
+	select {
+	case err := <-errCh:
+		require.Error(t, err, "取消后阻塞的终止帧写必须以写错误失败退出")
+	case <-time.After(2 * time.Second):
+		t.Fatal("终止帧阻塞写未受 watcher 解阻：Relay 未退出（补帧写在 watcher 停止之后）")
+	}
+}
+
 // plainWriter 只实现 http.ResponseWriter 的 Header/Write/WriteHeader，
 // 刻意不提供 Flush 方法，用于覆盖 dst 无 Flusher 的路径。
 type plainWriter struct{ buf bytes.Buffer }

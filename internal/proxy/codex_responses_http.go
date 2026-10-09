@@ -325,8 +325,9 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		contEnqueued       bool // 首个有效可续接 id 已入队（每流一次）
 	)
 	err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
-		Output: out,
-		Mapper: plan.mapper,
+		Output:   out,
+		Mapper:   plan.mapper,
+		Terminal: plan.finish,
 		OnEvent: func(ev sserelay.Event) {
 			// 唯一写出前采样 seam（含 drop 帧）：TTFT 仅对**真实 payload** 计时
 			// （旧 SDK 只对真实 data 行回调——纯注释/控制帧、仅 [DONE] 不计；
@@ -366,19 +367,6 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		},
 	})
 	_ = resp.Body.Close()
-	// converted 终止帧补发（三情形恰一个目标终止帧）：仅正常结束（err==nil）且
-	// 目标终止帧尚未产生时补发（直连 verbatim 不补——上游原始字节含 [DONE]）。
-	// 补发帧在 relay 返回后写入，须显式 DrainFlush（relay 的流末 drain 不覆盖
-	// 此帧；首帧后小帧仅入 Output 写缓冲，不 drain 会被 Release 丢弃）。
-	if err == nil && plan.finish != nil {
-		if f := plan.finish(); f != nil {
-			if _, werr := out.WriteFrame(f); werr != nil {
-				err = werr
-			} else if derr := out.DrainFlush(); derr != nil {
-				err = derr
-			}
-		}
-	}
 	// 轮结束清除：正常结束且收到 completed 终态（usageTaken）且无工具调用项
 	// （!turnCallSeen）→ 轮结束 → 清除 held（跨轮不回传）。错误/断开路径不清
 	// （轮结束未知——不误清同轮续传值）。
