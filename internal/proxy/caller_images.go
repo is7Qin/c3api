@@ -78,9 +78,9 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			return resp.StatusCode, rb, false, nil
 		}
 		writeSSEHeaders(w)
-		// images 路径不传通用保活间隔（design §8：「images 通用 10s」为非目标；
-		// images 保留 SDK/上游驱动）。仍经统一 Output 以获得写前 seam 与出口判定。
-		out := sserelay.NewOutput(w, 0, sserelay.OutputOptions{Cancel: cancel})
+		// typed images（真上游 SSE 流）随五路传通用保活间隔（可静默 → 需通用
+		// 保活；spec §3 r1 澄清）。仍经统一 Output 获得写前 seam 与出口判定。
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Cancel: cancel})
 		defer out.Release()
 		// 首帧到达即记录 TTFT（写出前 seam）；每帧按 image 事件提取张数与 image tokens。
 		var ttft *int64
@@ -107,7 +107,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
 			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
-			kind := classifyStreamExit(out, err)
+			kind := classifyStreamExit(ctx, out, err, usage, ttft)
 			if kind == streamExitClientCancel {
 				// 图像流客户端断开不触发健康惩罚；保留已采 usage 记 200+ErrAbort。
 				outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, ttft != nil, true, false))

@@ -409,6 +409,39 @@ func TestImagesStreamingSSE(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 }
 
+// TestImagesStreamingKeepalive typed images（真上游 SSE 流）随五路传通用保活
+// 间隔（spec §3 r1 澄清）：上游发出首帧后静默 → 网关按 StreamKeepaliveInterval
+// 写 ": keepalive\n"；业务帧照常透传。
+func TestImagesStreamingKeepalive(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(200)
+		fl := w.(http.Flusher)
+		fmt.Fprintf(w, "data: %s\n\n", `{"type":"image_generation.completed","data":[{"b64_json":"QUJD"}]}`)
+		fl.Flush()
+		<-r.Context().Done() // 首帧后静默，直到上游超时/取消
+	}))
+	defer up.Close()
+	tpl := &domain.Template{
+		ID: 1, Name: "t", BaseURL: up.URL,
+		CredentialType:   credential.TypeAPIKey,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIImages},
+		Models:           []string{"gpt-image-1"},
+	}
+	store := &captureLogStore{}
+	p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 150*time.Millisecond, store, nil)
+	p.cfg.StreamKeepaliveInterval = 20 * time.Millisecond
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
+		`{"model":"gpt-image-1","prompt":"a cat","stream":true}`))
+	req.Header.Set("Authorization", "Bearer ck-1")
+	rec := httptest.NewRecorder()
+	p.HandleImagesGenerations(rec, req)
+
+	require.Contains(t, rec.Body.String(), ": keepalive\n", "typed images 静默期必须发通用保活")
+	require.Contains(t, rec.Body.String(), `"type":"image_generation.completed"`, "业务帧照常透传")
+}
+
 // TestImagesStreamDirectBilling 直连流式 images 计费接线：api_key 模板 +
 // stream:true 上游 SSE completed 帧（含 usage image_tokens）→ Observer 逐帧提取
 // → 流终落账非零——count = completed 帧数累积、ii/io 取最后一个 completed 帧的

@@ -141,7 +141,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
 			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
-			switch classifyStreamExit(out, err) {
+			switch classifyStreamExit(ctx, out, err, usage, ttft) {
 			case streamExitClientCancel:
 				// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
 				outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false))

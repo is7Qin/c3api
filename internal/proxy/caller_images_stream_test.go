@@ -185,6 +185,24 @@ func TestStreamImagePassthrough(t *testing.T) {
 	require.Equal(t, int64(11030), l.Cost, "100×800000/1e6 + 50×3000000/1e6 + 2×5400（ImageCost 口径不变）")
 }
 
+// TestStreamImageNoGenericHeartbeat codex images 合成路径（caller_images_stream.go）
+// 始终关闭通用定时心跳：即便 p.cfg.StreamKeepaliveInterval 有值，事件间静默也
+// 不产生网关通用 ": keepalive"（仅 SDK 自带 keepalive 经 Output.Heartbeat）。
+func TestStreamImageNoGenericHeartbeat(t *testing.T) {
+	p, _ := newImageStreamTestProxy(t, nil)
+	p.cfg.StreamKeepaliveInterval = 10 * time.Millisecond
+	r, rec := streamImageReq(t, nil)
+	gen := func(ctx context.Context, cred *domain.AccountCredential, prm *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error {
+		// 无事件、静默窗口远大于通用间隔：通用 timer 生效则会出现 ": keepalive"。
+		time.Sleep(60 * time.Millisecond)
+		return nil
+	}
+	code, _, _, err := p.streamImageGeneration(context.Background(), rec, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), gen)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, code)
+	require.NotContains(t, rec.Body.String(), ": keepalive", "codex images 合成路径不得启用通用定时心跳")
+}
+
 // TestBuildCompletedFrameNilB64JSON completed 帧 B64JSON=nil（*string——keepalive
 // 恒 nil 的防御边界）→ b64_json 字段字节输出字面 null（与 json.Marshal(nil
 // *string) 等价——手写引号改写不得改变字节）；非 nil 路径字节不变（回归锚）。

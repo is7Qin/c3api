@@ -90,7 +90,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
 			// 客户端断开/上游中断均经 typed outcome 统一收敛，保证 exactly-one 观测。
 			base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
-			switch classifyStreamExit(out, err) {
+			switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ttft) {
 			case streamExitClientCancel:
 				// 客户端断开：上游已消费请求，仍保留已采集的 usage/TTFT 并记 200+ErrAbort，避免成功请求丢日志。
 				outcome := chatOutcomeForAbort(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, true)

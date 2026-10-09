@@ -101,7 +101,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, tt, cr, cc, img))
 		if err != nil {
 			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
-			switch classifyStreamExit(out, err) {
+			switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img}, ttft) {
 			case streamExitClientCancel:
 				// 已提交流用量保留：沿用断前已收到的 usage 帧，无则 0，记 200+ErrAbort 防丢日志
 				oc := base
