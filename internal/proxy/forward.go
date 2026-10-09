@@ -74,8 +74,8 @@ type Proxy struct {
 	// Redis，previous_response_id 请求 fail-closed）。
 	cont *continuation.Store
 	// contBinder 是 REST 流式的异步绑定 worker（main 经 Deps.ContBind 注入）；
-	// nil = 未装配——REST 流式绑定 no-op（测试友好）。字段名用 contBinder（非
-	// brief 字面的 contBind）以避开已有方法 contBind 的同名冲突。
+	// nil = 未装配——REST 流式绑定 no-op（测试友好）。字段名 contBinder 与同步方法
+	// contBind 区分。
 	contBinder *ContBindWorker
 	inflight   atomic.Int64
 	callers    map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）

@@ -39,7 +39,7 @@ type Options struct {
 // 运行期连接丢失 ≠ 此处失败：连接池自带重连，降级语义由消费方定义。
 // 密码永不入日志/错误链——错误只含 addr。
 //
-// ContextTimeoutEnabled: true 是硬超时保证（spec 2026-10-09 §2.2b，裁决 A）：go-redis
+// ContextTimeoutEnabled: true 是硬超时保证：go-redis
 // v9 默认忽略命令级 ctx deadline，"每批 Redis 操作 2s"与既有 contOpTimeout=2s 都靠它
 // 才真正生效。全局生效——所有 Redis 消费者共享该客户端。
 func Open(opt Options) (*redis.Client, error) {

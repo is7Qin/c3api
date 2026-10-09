@@ -80,7 +80,7 @@ type ContBindWorker struct {
 	failed    atomic.Int64 // 批量失败/逐条 I/O 错误（观测）
 	bound     atomic.Int64 // created/refreshed 成功落库计数
 	// unattributed 可归属拒绝：id 已在写出接缝取得，但缺 loop 派发观测/请求元
-	// 数据或指纹不可解码，故不写 Redis（M4 观测面；未装配路径不计数）。
+	// 数据或指纹不可解码，故不写 Redis（未装配路径不计数）。
 	unattributed atomic.Int64
 }
 

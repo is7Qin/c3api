@@ -109,8 +109,8 @@ func (p *Proxy) contBind(ctx context.Context, protocolTag, respID string, groupI
 func (p *Proxy) contBindWired() bool { return p.cont != nil && p.contBinder != nil }
 
 // contBindMapper wraps a Responses SSE mapper so the first valid response id is
-// snapshotted and enqueued BEFORE the frame is written (M1: the ① enqueue seam
-// is pre-write for both the native wrapped Mapper and the converted Mapper).
+// snapshotted and enqueued BEFORE the frame is written (both the native wrapped
+// Mapper and the converted Mapper enqueue pre-write).
 // Unwired (store or worker nil) returns base unchanged — no wrapper, zero
 // behaviour change. base == nil (no model rewrite) still enqueues and forwards
 // the raw frame (matches sserelay's nil-Mapper pass-through).

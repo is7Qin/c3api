@@ -494,7 +494,7 @@ func main() {
 	}
 	// REST 流式异步绑定 worker：删闸门后首个响应 id 帧在写出接缝快照入队，
 	// 本 worker 常驻批量落库（容量/批节奏内部默认；纳管由 managedWorkers 下方
-	// 统一 wm.Register 负责 Start，反向排空在 errlog 之后、rec 之前无强依赖）。
+	// 统一 wm.Register 负责 Start；反向排空顺序：contBindW 先于 errlogW/rec 关闭（无强依赖）。
 	contBindW := proxy.NewContBindWorker(contStore, log, proxy.ContBindConfig{})
 	// codex SDK 适配层装配（§3——统一失效回调先落生图路径；全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
