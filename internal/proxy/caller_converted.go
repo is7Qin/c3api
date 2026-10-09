@@ -28,7 +28,7 @@ import (
 // 协议调用上游（与 responsesCaller/anthropicCaller 同构），响应反向转换回
 // 客户端协议：
 //   - 流式：每帧经 protoconv.StreamMapper 映射后写出（sserelay Mapper；
-//     Observer 仍见原始帧 → 用量提取与模板 caller 逐字同构）
+//     OnEvent 仍见原始帧 → 用量提取与模板 caller 逐字同构）
 //   - 非流式：上游响应 JSON 整体 ConvertResponse 转换
 //
 // 日志按客户端协议记录（buildLog format 参数 = 客户端格式——客户端视角的
@@ -71,10 +71,11 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			return resp.StatusCode, rb, false, nil
+			// 2xx-非-200 归一 502 再交 pipeline（attempt_outcome 拒绝 ResultFailed+2xx）。
+			return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 		}
 		writeSSEHeaders(w)
-		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Cancel: cancel})
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
 		defer out.Release()
 		mapper := protoconv.NewStreamMapper(c.dir)
 		var it, ot, tt, cr, cc int64

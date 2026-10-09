@@ -53,10 +53,11 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			return resp.StatusCode, rb, false, nil
+			// 2xx-非-200 归一 502 再交 pipeline（attempt_outcome 拒绝 ResultFailed+2xx）。
+			return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 		}
 		writeSSEHeaders(w)
-		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Cancel: cancel})
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
 		defer out.Release()
 		var it, ot, tt, cr, cc int64
 		var img int64 // 图像调用计数旁路，仅 completed 帧最终覆盖

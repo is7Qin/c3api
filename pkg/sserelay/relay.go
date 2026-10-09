@@ -155,7 +155,7 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	out := cfg.Output
 	owned := false
 	if out == nil {
-		out = NewOutput(dst, cfg.Interval, OutputOptions{Cancel: cfg.Cancel, FlushBytes: cfg.FlushBytes})
+		out = NewOutput(dst, cfg.Interval, OutputOptions{Ctx: ctx, Cancel: cfg.Cancel, FlushBytes: cfg.FlushBytes})
 		owned = true
 	}
 
@@ -172,17 +172,23 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	r.startDeadlineWatcher()
 
 	err := r.run()
-	r.stopWatcher()
-	// 读循环退出（watcher 已汇合）后汇合在途心跳，再 flush 残余并归还读侧；
-	// 心跳/写失败时优先返回已保存的 I/O 错误（不折叠为 context.Canceled），
-	// 且跳过残余 flush。
+	// 读循环退出后**不得先停 deadline watcher**：在途心跳可能阻塞在下行 Write
+	// 上（bw.Flush 持 out.mu、无 ctx 感知），需 watcher 仍存活——取消/超时时它
+	// 设立即过期写 deadline 才能解除阻塞、完成 StopTimer 汇合；否则汇合可永久
+	// 阻塞、后续 drain 失保护。watcher 活到心跳汇合与最终写全部完成。
 	out.StopTimer()
-	if le := out.IOErr(); le != nil {
-		err = le
-	}
-	if !out.WriteFailed() {
+	// 取消/错误路径不额外 drain（残余业务字节直接丢弃）；正常结束（EOF）且未
+	// 写失败时才 flush 残余。drain 自身失败经 failLocked 记录为 I/O 错误。
+	if err == nil && !out.WriteFailed() {
 		_ = out.DrainFlush()
 	}
+	// 心跳/写失败时优先返回已保存的 I/O 错误（不折叠为 context.Canceled）；
+	// 仅在写失败确由 Output 自身取消引发时覆盖，避免把「客户端先取消」误记为
+	// 写失败出口。
+	if le := out.IOErr(); le != nil && out.SelfCanceled() {
+		err = le
+	}
+	r.stopWatcher()
 	if owned {
 		out.Release()
 	}

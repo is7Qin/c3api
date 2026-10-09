@@ -89,18 +89,19 @@ func TestOutputHeartbeatShapeAndCadence(t *testing.T) {
 }
 
 // TestOutputVisibleOutputResetsHeartbeat：成功可见输出（业务帧真实下行）重置
-// 保活调度——持续下行期间无心跳。
+// 保活调度——持续下行期间无心跳。间隔取远大于逐帧写入节律（消除调度抖动），
+// 窗口覆盖多个间隔周期，若未重置则必现心跳。
 func TestOutputVisibleOutputResetsHeartbeat(t *testing.T) {
 	sw := &safeWriter{}
-	o := NewOutput(sw, 40*time.Millisecond, OutputOptions{})
+	o := NewOutput(sw, 250*time.Millisecond, OutputOptions{})
 	defer o.Release()
-	stop := time.Now().Add(140 * time.Millisecond)
-	for time.Now().Before(stop) {
+	deadline := time.Now().Add(1 * time.Second)
+	for time.Now().Before(deadline) {
 		if _, err := o.WriteFrame([]byte("data: x\n\n")); err != nil {
 			t.Fatalf("WriteFrame: %v", err)
 		}
 		_ = o.DrainFlush() // 模拟 relay flush-on-drain：帧真实可见
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(2 * time.Millisecond)
 	}
 	require.NotContains(t, sw.String(), "keepalive", "持续可见下行必须持续重置调度")
 	require.True(t, o.BusinessFrameSent())
@@ -249,3 +250,127 @@ type errorOnceWriter struct {
 func (w *errorOnceWriter) Header() http.Header         { return http.Header{} }
 func (w *errorOnceWriter) WriteHeader(int)             {}
 func (w *errorOnceWriter) Write(p []byte) (int, error) { w.calls++; return 0, w.err }
+
+// flushErrWriter 写成功但 flush 失败：探测链命中的是 FlushError（可返错 flush）。
+type flushErrWriter struct {
+	err   error
+	calls int
+}
+
+func (w *flushErrWriter) Header() http.Header         { return http.Header{} }
+func (w *flushErrWriter) WriteHeader(int)             {}
+func (w *flushErrWriter) Write(p []byte) (int, error) { w.calls++; return len(p), nil }
+func (w *flushErrWriter) FlushError() error           { return w.err }
+
+// partialErrWriter 大帧直写时部分写出（n>0）+ 错误。
+type partialErrWriter struct{ err error }
+
+func (w *partialErrWriter) Header() http.Header { return http.Header{} }
+func (w *partialErrWriter) WriteHeader(int)     {}
+func (w *partialErrWriter) Write(p []byte) (int, error) {
+	return len(p) / 2, w.err
+}
+
+// TestOutputFlushErrorFailsAndGates：flush 可返错——Write 成功但 FlushError 失败
+// → writeFailed + 取消上游 ctx，且不得视为可见成功（businessSent 不置位）；
+// 失败后禁写。
+func TestOutputFlushErrorFailsAndGates(t *testing.T) {
+	boom := errors.New("flush boom")
+	fw := &flushErrWriter{err: boom}
+	var canceled atomic.Bool
+	o := NewOutput(fw, 0, OutputOptions{Cancel: func() { canceled.Store(true) }})
+	defer o.Release()
+	_, err := o.WriteFrame([]byte("data: x\n\n"))
+	require.ErrorIs(t, err, boom)
+	require.True(t, o.WriteFailed())
+	require.ErrorIs(t, o.IOErr(), boom)
+	require.True(t, canceled.Load(), "flush 失败必须取消上游 ctx")
+	require.False(t, o.BusinessFrameSent(), "flush 失败不得视为可见成功")
+	wrote, err := o.WriteFrame([]byte("data: y\n\n"))
+	require.False(t, wrote)
+	require.NoError(t, err)
+	require.Equal(t, 1, fw.calls, "失败后禁再写底层")
+}
+
+// TestOutputLargeFramePartialWriteFailure：>4KB 首帧直写底层前即置提交态；
+// 部分写出（n>0 + err）的业务字节不得漏结算。
+func TestOutputLargeFramePartialWriteFailure(t *testing.T) {
+	boom := errors.New("big frame write failed")
+	fw := &partialErrWriter{err: boom}
+	var canceled atomic.Bool
+	o := NewOutput(fw, 0, OutputOptions{Cancel: func() { canceled.Store(true) }})
+	defer o.Release()
+	big := []byte("data: " + strings.Repeat("x", 6000) + "\n\n")
+	_, err := o.WriteFrame(big)
+	require.ErrorIs(t, err, boom)
+	require.True(t, o.WriteFailed())
+	require.True(t, o.Committed(), "大帧直写底层前即置提交态")
+	require.Equal(t, len(big)/2, o.pendingBusiness, "部分写出的业务字节不得漏结算")
+	require.True(t, canceled.Load())
+}
+
+// TestOutputFinishDisablesDrainFlush：首帧 flush → 缓冲小帧 → Finish →
+// DrainFlush 不再写（DrainFlush 亦须检查 finished）。
+func TestOutputFinishDisablesDrainFlush(t *testing.T) {
+	sw := &safeWriter{}
+	o := NewOutput(sw, 0, OutputOptions{FlushBytes: 1 << 20})
+	defer o.Release()
+	if _, err := o.WriteFrame([]byte("data: a\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	calls := sw.WriteCalls() // 首帧即时 flush 后的底层写次数
+	if _, err := o.WriteFrame([]byte("data: b\n\n")); err != nil {
+		t.Fatal(err)
+	}
+	o.Finish()
+	require.NoError(t, o.DrainFlush())
+	require.Equal(t, calls, sw.WriteCalls(), "Finish 后 DrainFlush 不得再写底层")
+}
+
+// TestOutputWriteErrorClosesLifecycle：错误帧写成功后关闭写生命周期——此后
+// 业务帧/心跳/DrainFlush 均被拒；缓冲业务状态结算。
+func TestOutputWriteErrorClosesLifecycle(t *testing.T) {
+	sw := &safeWriter{}
+	o := NewOutput(sw, 0, OutputOptions{})
+	defer o.Release()
+	require.NoError(t, o.Commit())
+	require.NoError(t, o.WriteError([]byte("event: error\ndata: {\"message\":\"x\"}\n\n")))
+	require.Contains(t, sw.String(), "event: error")
+	before := sw.String()
+	wrote, err := o.WriteFrame([]byte("data: later\n\n"))
+	require.False(t, wrote)
+	require.NoError(t, err)
+	require.NoError(t, o.Heartbeat())
+	require.NoError(t, o.DrainFlush())
+	require.Equal(t, before, sw.String(), "错误帧写成功后不得再写任何字节")
+}
+
+// TestOutputReleaseIdempotent：Release 真幂等——重复调用不再二次 Put。
+func TestOutputReleaseIdempotent(t *testing.T) {
+	sw := &safeWriter{}
+	o := NewOutput(sw, 0, OutputOptions{})
+	o.Release()
+	require.NotPanics(t, func() { o.Release() }, "重复 Release 不得 panic/二次入池")
+	o2 := NewOutput(sw, 0, OutputOptions{})
+	defer o2.Release()
+	_, err := o2.WriteFrame([]byte("data: x\n\n"))
+	require.NoError(t, err)
+	require.True(t, o2.BusinessFrameSent(), "池复用后 Output 仍可用")
+}
+
+// TestOutputClientCancelBeforeWriteFailure：客户端先取消（ctx 已取消）后写失败
+// → 不计 selfCanceled（避免把客户端取消误记为写失败出口）。
+func TestOutputClientCancelBeforeWriteFailure(t *testing.T) {
+	bctx, bcancel := context.WithCancel(context.Background())
+	bcancel() // 客户端先取消
+	boom := errors.New("client gone")
+	fw := &errorOnceWriter{err: boom}
+	var selfCanceledCalled atomic.Bool
+	o := NewOutput(fw, 0, OutputOptions{Ctx: bctx, Cancel: func() { selfCanceledCalled.Store(true) }})
+	defer o.Release()
+	_, err := o.WriteFrame([]byte("data: x\n\n"))
+	require.ErrorIs(t, err, boom)
+	require.True(t, o.WriteFailed())
+	require.False(t, o.SelfCanceled(), "客户端先取消 → 不得标记 selfCanceled")
+	require.True(t, selfCanceledCalled.Load(), "仍尝试取消上游（幂等 no-op）")
+}

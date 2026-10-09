@@ -42,7 +42,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	// 统一下行 owner：该路径始终关闭通用定时保活（SDK 60s 驱动）；Interval=0
 	// 不关 images SDK 自带保活。首事件时序保留：CommitAndFlush → caller 记
 	// TTFT → Heartbeat/WriteFrame；无事件成功也提交并 flush。Output 不采 TTFT。
-	out := sserelay.NewOutput(w, 0, sserelay.OutputOptions{Cancel: cancel})
+	out := sserelay.NewOutput(w, 0, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
 	defer out.Release()
 	var (
 		count int64
@@ -97,39 +97,43 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 	timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 
 	if genErr != nil {
-		if !out.Committed() {
+		// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
+		// 出口判定用请求 ctx 识别客户端断开（r.Context 与内部超时 ctx 的取消在
+		// 生产路径同源；genErr 未必携带 context.Canceled）。
+		switch classifyStreamExit(r.Context(), out, genErr, usageObs, ttft) {
+		case streamExitClientCancel:
+			// 客户端断开：已收集张数照常计费落账，不 MarkResult（不可转移）。
+			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
+			p.observeDispatchOutcome(ctx, outcome, nil)
+			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
+			return 0, nil, true, nil
+		case streamExitUncommitted:
+			// 未提交失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
 			if sdkbridge.IsFatal(genErr) {
-				code := statusOf(genErr)
+				code := streamUpstreamStatus(statusOf(genErr))
 				if code == 0 {
 					code = http.StatusBadGateway
 				}
 				return code, upstreamBody(genErr), false, genErr
 			}
-			return statusOf(genErr), upstreamBody(genErr), false, genErr
-		}
-		// 响应头已发出后失败只能写 SSE error 帧；客户端断开不补写，写失败后禁补写
-		// （对既有 :109 的有意变更）。
-		if r.Context().Err() == nil {
-			writeClientStreamError(out, genErr)
-		}
-		if r.Context().Err() != nil {
-			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
-			p.observeDispatchOutcome(ctx, outcome, nil)
+			return streamUpstreamStatus(statusOf(genErr)), upstreamBody(genErr), false, genErr
+		default: // 写失败 / 已提交
+			if out.Committed() {
+				writeClientStreamError(out, genErr)
+			}
+			code := statusOf(genErr)
+			commit := CommitUpstreamResponded
+			business := false
+			if code == 0 {
+				commit = CommitSentAmbiguous
+				business = true
+			}
+			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, business, true, false))
+			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: genErr.Error()}
+			p.observeDispatchOutcome(ctx, outcome, health)
 			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
 			return 0, nil, true, nil
 		}
-		code := statusOf(genErr)
-		commit := CommitUpstreamResponded
-		business := false
-		if code == 0 {
-			commit = CommitSentAmbiguous
-			business = true
-		}
-		outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, business, true, false))
-		health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: genErr.Error()}
-		p.observeDispatchOutcome(ctx, outcome, health)
-		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
-		return 0, nil, true, nil
 	}
 
 	// 无事件成功也提交并 flush。

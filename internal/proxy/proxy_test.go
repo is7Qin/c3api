@@ -855,6 +855,27 @@ func TestProxyChatStreamingPassthrough4xx(t *testing.T) {
 	require.Zero(t, p.rec.Pending(), "4xx 透传不产生明细 pending（err_logs 承载）")
 }
 
+// TestProxyChatStreamUpstream2xxNon200NormalizedTo502 上游对 SSE 请求返回
+// 2xx-非-200（201/204）不是合法流式接受态：caller 交 pipeline 前归一为 502，
+// 不得以「失败 + 2xx」落入 attempt_outcome 拒绝路径。
+func TestProxyChatStreamUpstream2xxNon200NormalizedTo502(t *testing.T) {
+	for _, code := range []int{http.StatusCreated, http.StatusNoContent} {
+		t.Run(fmt.Sprintf("status-%d", code), func(t *testing.T) {
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(code)
+			}))
+			defer up.Close()
+			p := newTestProxy(t, up.URL, 1)
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+				`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec := httptest.NewRecorder()
+			p.HandleChat(rec, req)
+			require.Equal(t, http.StatusBadGateway, rec.Code, "2xx-非-200 归一 502 后交 pipeline（body=%s）", rec.Body.String())
+		})
+	}
+}
+
 // failingResponseWriter 模拟客户端断开：所有写出都失败。
 type failingResponseWriter struct{}
 

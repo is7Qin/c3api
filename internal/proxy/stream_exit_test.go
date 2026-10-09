@@ -28,7 +28,7 @@ func planBase(t *testing.T, p *Proxy) AttemptOutcome {
 }
 
 // TestObserveDispatchFailureCarriesCallerUsage 未提交交 pipeline 时携带已采
-// usage/TTFT（阶段② §3.7 clause 3）：carryStreamUsage 写入 owner 观测 →
+// usage/TTFT（§3.7）：carryStreamUsage 写入 owner 观测 →
 // observeDispatchFailure 合并进 handled=false 结束观测（usage/timing 不再恒空）。
 func TestObserveDispatchFailureCarriesCallerUsage(t *testing.T) {
 	up := fakeOpenAI(t, "")
@@ -103,5 +103,26 @@ func TestClassifyStreamExitCarriesOnlyWhenUncommitted(t *testing.T) {
 		require.Equal(t, streamExitCommitted, kind)
 		require.Zero(t, d.carriedUsage.InputTokens)
 		require.Nil(t, d.carriedTTFT)
+	})
+
+	t.Run("self-cancel write failure maps to writeFailed", func(t *testing.T) {
+		// 写失败触发 Output 自取消上游 → 归写失败出口（不误记客户端取消）。
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		o := sserelay.NewOutput(failingResponseWriter{}, 0, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
+		defer o.Release()
+		_, _ = o.WriteFrame([]byte("data: x\n\n")) // 写失败 → selfCanceled
+		require.True(t, o.SelfCanceled())
+		kind := classifyStreamExit(ctx, o, errors.New("io boom"), AttemptUsage{}, nil)
+		require.Equal(t, streamExitWriteFailed, kind)
+	})
+
+	t.Run("client-canceled ctx maps to clientCancel", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel() // 客户端先取消
+		o := sserelay.NewOutput(httptest.NewRecorder(), 0, sserelay.OutputOptions{Ctx: ctx})
+		defer o.Release()
+		kind := classifyStreamExit(ctx, o, errors.New("client closed"), AttemptUsage{}, nil)
+		require.Equal(t, streamExitClientCancel, kind)
 	})
 }

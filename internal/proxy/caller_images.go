@@ -75,12 +75,13 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			return resp.StatusCode, rb, false, nil
+			// 2xx-非-200 归一 502 再交 pipeline（attempt_outcome 拒绝 ResultFailed+2xx）。
+			return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 		}
 		writeSSEHeaders(w)
 		// typed images（真上游 SSE 流）随五路传通用保活间隔（可静默 → 需通用
-		// 保活；spec §3 r1 澄清）。仍经统一 Output 获得写前 seam 与出口判定。
-		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Cancel: cancel})
+		// 保活）。仍经统一 Output 获得写前 seam 与出口判定。
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
 		defer out.Release()
 		// 首帧到达即记录 TTFT（写出前 seam）；每帧按 image 事件提取张数与 image tokens。
 		var ttft *int64
@@ -149,7 +150,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	if resp.StatusCode != http.StatusOK {
 		rb := readUpstreamBody(resp)
 		resp.Body.Close()
-		return resp.StatusCode, rb, false, nil
+		return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 	}
 	data, err := io.ReadAll(resp.Body)
 	resp.Body.Close()

@@ -117,7 +117,10 @@ type ProxyConfig struct {
 	LowBalanceThresholdUSD float64 `koanf:"low_balance_threshold_usd"`
 	// StreamKeepaliveInterval 客户端 SSE 无业务输出时的保活注释间隔
 	// （默认 10s；0 = 关闭通用定时心跳）。仅网关新增/维护的注释受控——
-	// 不改写上游透传字节；images 由 SDK 自带 60s 保活驱动，不受此键影响。
+	// 不改写上游透传字节。五路（chat/responses/anthropic/converted）与
+	// typed images（真上游 SSE 流）均受此键控制；仅 codex images 合成路径
+	//（上游非流、SDK 合成 keepalive+completed）由 SDK 自带 60s 保活驱动，
+	// 不受此键影响（60s 不满足最严 LB 的 ≤60s 读超时）。
 	StreamKeepaliveInterval time.Duration `koanf:"stream_keepalive_interval"`
 }
 

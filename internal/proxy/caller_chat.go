@@ -49,11 +49,12 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			return resp.StatusCode, rb, false, nil
+			// 2xx-非-200 归一 502 再交 pipeline（attempt_outcome 拒绝 ResultFailed+2xx）。
+			return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 		}
 		// SSE 响应头与旧 sseWriter 一致（relay 只转发字节，不代设头）
 		writeSSEHeaders(w)
-		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Cancel: cancel})
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
 		defer out.Release()
 		var it, ot, tt, cr, cc int64
 		// TTFT 采集（首 token 时间毫秒）：首个 SSE 帧（任意事件）到达时间——

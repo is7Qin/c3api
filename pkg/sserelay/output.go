@@ -7,6 +7,7 @@ package sserelay
 import (
 	"bufio"
 	"context"
+	"errors"
 	"net/http"
 	"sync"
 	"time"
@@ -25,8 +26,31 @@ func SetSSEHeaders(h http.Header) {
 	h.Set("X-Accel-Buffering", "no")
 }
 
+// flushResponseWriter 触发真实 wire 的 flush 并返回可诊断错误：按
+// FlushError → Flusher → Unwrap 顺序探测（与 http.ResponseController 一致；
+// Go 1.26 的 *http.response 实现 FlushError，故真实响应可返错）。探测链全缺
+// （无 Flusher 的旧兼容 writer）→ http.ErrNotSupported，调用方按「无需 flush」
+// 的旧行为处理、不算失败。零分配（仅接口类型断言）。
+func flushResponseWriter(w http.ResponseWriter) error {
+	if fe, ok := w.(interface{ FlushError() error }); ok {
+		return fe.FlushError()
+	}
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+		return nil
+	}
+	if u, ok := w.(interface{ Unwrap() http.ResponseWriter }); ok {
+		return flushResponseWriter(u.Unwrap())
+	}
+	return http.ErrNotSupported
+}
+
 // OutputOptions 构造 Output 的可选项。
 type OutputOptions struct {
+	// Ctx 是实际上游请求 ctx（须在请求发出前建立）。用于区分「Output 自身因
+	// 写失败取消上游」与「客户端先取消」，并作为写 deadline 已失效（取消/超时）
+	// 时禁补写的门禁。nil = 不联动。
+	Ctx context.Context
 	// Cancel 是实际上游请求 ctx 的 cancel（须在请求发出前建立）。心跳写/flush
 	// 失败时 Output 调用它解除在读的上游请求；nil = 不联动。
 	Cancel context.CancelFunc
@@ -44,7 +68,6 @@ type OutputOptions struct {
 // Relay 自行 Release）。
 type Output struct {
 	w  http.ResponseWriter
-	fl http.Flusher
 	bw *bufio.Writer
 
 	mu              sync.Mutex
@@ -54,18 +77,19 @@ type Output struct {
 	committed       bool // 实际底层已写头/字节
 	businessSent    bool // 业务帧真实下行
 	writeFailed     bool // 真实 I/O 失败
+	selfCanceled    bool // writeFailed 由 Output 自身取消上游 ctx 引发（非客户端先取消）
 	finished        bool // 禁一切写
+	released        bool // 已归还池（Release 幂等）
 	lastErr         error
 
 	flushBytes    int
 	interval      time.Duration
+	ctx           context.Context
 	cancel        context.CancelFunc
-	lastVisible   time.Time
 	nextHeartbeat time.Time
 
 	stopCh  chan struct{}
 	timerWG sync.WaitGroup
-	started bool
 }
 
 // outputPool 池化 Output 本体（含写缓冲与状态），使 Interval<=0 路径相对迁移前零新增
@@ -73,14 +97,10 @@ type Output struct {
 var outputPool = sync.Pool{New: func() any { return &Output{bw: bufio.NewWriterSize(nil, 4096)} }}
 
 // NewOutput 构造一个下行 Output（复用池）。w 为真实 wire；interval<=0 关闭通用
-// 定时保活（零新增分配——不建 timer/goroutine）。opts.Cancel 见 OutputOptions。
+// 定时保活（零新增分配——不建 timer/goroutine）。opts.Ctx/Cancel 见 OutputOptions。
 func NewOutput(w http.ResponseWriter, interval time.Duration, opts OutputOptions) *Output {
 	o := outputPool.Get().(*Output)
 	o.w = w
-	o.fl = nil
-	if f, ok := w.(http.Flusher); ok {
-		o.fl = f
-	}
 	o.bw.Reset(w)
 	o.pending = 0
 	o.pendingBusiness = 0
@@ -88,21 +108,21 @@ func NewOutput(w http.ResponseWriter, interval time.Duration, opts OutputOptions
 	o.committed = false
 	o.businessSent = false
 	o.writeFailed = false
+	o.selfCanceled = false
 	o.finished = false
+	o.released = false
 	o.lastErr = nil
 	o.flushBytes = opts.FlushBytes
 	if o.flushBytes <= 0 {
 		o.flushBytes = 4096
 	}
 	o.interval = interval
+	o.ctx = opts.Ctx
 	o.cancel = opts.Cancel
-	o.lastVisible = time.Time{}
 	o.nextHeartbeat = time.Time{}
 	o.stopCh = nil
-	o.started = false
 	if interval > 0 {
 		o.stopCh = make(chan struct{})
-		o.started = true
 		o.timerWG.Add(1)
 		go o.heartbeatLoop(o.stopCh)
 	}
@@ -140,22 +160,32 @@ func (o *Output) fireHeartbeat() {
 }
 
 // WriteFrame 完整帧同步消费/复制进自有写缓冲（不必已可见）。返回是否写入及
-// 错误。映射帧复用切片由 Mapper 返回前复制（见 relay）。
+// 错误。映射帧复用切片由 Mapper 返回前复制（见 relay）。finished/writeFailed
+// 后拒绝写。
 func (o *Output) WriteFrame(frame []byte) (bool, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.finished {
+	if o.finished || o.writeFailed {
 		return false, nil
 	}
 	if len(frame) == 0 {
 		return false, nil
 	}
-	if _, err := o.bw.Write(frame); err != nil {
+	// 提交态在真实底层写前置位：帧超过缓冲余量时 bufio 会经底层 Write 直写
+	//（首帧即隐式提交 200）。实际写出的业务字节按 bufio 返回 n 结算，部分写
+	// 出（n>0 且 err!=nil）不得漏记。
+	if len(frame) > o.bw.Available() {
+		o.committed = true
+	}
+	n, err := o.bw.Write(frame)
+	if n > 0 {
+		o.pending += n
+		o.pendingBusiness += n
+	}
+	if err != nil {
 		o.failLocked(err)
 		return false, err
 	}
-	o.pending += len(frame)
-	o.pendingBusiness += len(frame)
 	if !o.firstFlushed {
 		o.firstFlushed = true
 		// 首事件立即 flush，保证首字节延迟；不重置 pending——首事件字节仍计入
@@ -173,8 +203,8 @@ func (o *Output) WriteFrame(frame []byte) (bool, error) {
 	return true, nil
 }
 
-// Heartbeat 写 `: keepalive\n`；成功可见后更新 lastVisible/nextHeartbeat。到点
-// 外的显式调用（images SDK 驱动）也走此路径。
+// Heartbeat 写 `: keepalive\n`；成功可见后更新 nextHeartbeat。到点外的显式
+// 调用（images SDK 驱动）也走此路径。finished/writeFailed 后拒绝写。
 func (o *Output) Heartbeat() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -186,7 +216,7 @@ func (o *Output) Heartbeat() error {
 
 // writeHeartbeatLocked 独立心跳写：写注释帧 → flush → 结算 pending（含顺带
 // flush 已缓冲业务字节：置 businessSent、清 pendingBusiness）→ 重置
-// lastVisible/nextHeartbeat。须持 mu。
+// nextHeartbeat。flush 失败不得视为可见成功（不更新 nextHeartbeat）。须持 mu。
 func (o *Output) writeHeartbeatLocked() error {
 	if _, err := o.bw.WriteString(heartbeatFrame); err != nil {
 		o.failLocked(err)
@@ -197,8 +227,9 @@ func (o *Output) writeHeartbeatLocked() error {
 		o.failLocked(err)
 		return err
 	}
-	if o.fl != nil {
-		o.fl.Flush()
+	if err := o.flushWireLocked(); err != nil {
+		o.failLocked(err)
+		return err
 	}
 	if o.pendingBusiness > 0 {
 		o.businessSent = true
@@ -206,58 +237,76 @@ func (o *Output) writeHeartbeatLocked() error {
 	}
 	o.pending = 0
 	now := time.Now()
-	o.lastVisible = now
 	o.nextHeartbeat = now.Add(o.interval)
 	return nil
 }
 
-// Commit 写 SSE 头三件套 + WriteHeader(200)；committed 在实际上层回调前置位。
+// Commit 写 SSE 头三件套 + WriteHeader(200)；committed 在实际上层回调前置位；
+// flush 失败即失败（不更新可见性）。
 func (o *Output) Commit() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	if o.finished || o.committed {
+	if o.finished || o.writeFailed || o.committed {
 		return nil
 	}
 	SetSSEHeaders(o.w.Header())
 	o.committed = true
 	o.w.WriteHeader(http.StatusOK)
-	if o.fl != nil {
-		o.fl.Flush()
+	if err := o.flushWireLocked(); err != nil {
+		o.failLocked(err)
+		return err
 	}
-	now := time.Now()
-	o.lastVisible = now
 	if o.interval > 0 {
-		o.nextHeartbeat = now.Add(o.interval)
+		o.nextHeartbeat = time.Now().Add(o.interval)
 	}
 	return nil
 }
 
-// WriteError 写终态错误帧（须已提交且未写失败、未 finish）。
+// WriteError 写终态错误帧（须已提交且未写失败/未 finish）。写成功后关闭写
+// 生命周期（此后业务帧/心跳不得再写）、结算缓冲业务状态。写 deadline 已失效
+// （ctx 已取消/超时）时禁补写。
 func (o *Output) WriteError(frame []byte) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	if o.finished || o.writeFailed || !o.committed {
 		return nil
 	}
+	if o.ctx != nil && o.ctx.Err() != nil {
+		// 写 deadline 已失效（取消/总超时后 relay 设立即过期写 deadline）：
+		// 不承诺 SSE error 必达，禁补写。
+		return nil
+	}
 	if _, err := o.bw.Write(frame); err != nil {
 		o.failLocked(err)
 		return err
 	}
+	o.committed = true
 	if err := o.bw.Flush(); err != nil {
 		o.failLocked(err)
 		return err
 	}
-	if o.fl != nil {
-		o.fl.Flush()
+	if err := o.flushWireLocked(); err != nil {
+		o.failLocked(err)
+		return err
 	}
+	if o.pendingBusiness > 0 {
+		o.businessSent = true
+		o.pendingBusiness = 0
+	}
+	o.pending = 0
+	o.finished = true // 终态：关闭写生命周期
 	return nil
 }
 
 // DrainFlush flush-on-drain：读缓冲耗尽、即将阻塞等新数据前调用，flush 已写入
-// 的完整帧（同一读批多帧 = 一次写系统调用）。空 pending 为 no-op。
+// 的完整帧（同一读批多帧 = 一次写系统调用）。空 pending / 已 finish / 写失败为
+// no-op（禁写一致）。
 func (o *Output) DrainFlush() error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
+	if o.finished || o.writeFailed {
+		return nil
+	}
 	if o.pending <= 0 {
 		return nil
 	}
@@ -291,13 +340,19 @@ func (o *Output) Finish() {
 }
 
 // Release 归还 Output 到池（先 StopTimer/Finish 语义；解除 wire/缓冲引用）。
+// 幂等：重复调用不再二次 Put（防同对象双入池并发复用）。
 func (o *Output) Release() {
 	o.StopTimer()
 	o.mu.Lock()
+	if o.released {
+		o.mu.Unlock()
+		return
+	}
+	o.released = true
 	o.finished = true
 	o.bw.Reset(nil)
 	o.w = nil
-	o.fl = nil
+	o.ctx = nil
 	o.cancel = nil
 	o.pending = 0
 	o.pendingBusiness = 0
@@ -326,6 +381,14 @@ func (o *Output) WriteFailed() bool {
 	return o.writeFailed
 }
 
+// SelfCanceled 报告 writeFailed 是否由 Output 自身取消上游 ctx 引发（区别于
+// 客户端先取消）。Relay 据此优先返回保存的 I/O 错、出口判定据此归写失败。
+func (o *Output) SelfCanceled() bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.selfCanceled
+}
+
 // IOErr 返回首个真实 I/O 错误（若有）。
 func (o *Output) IOErr() error {
 	o.mu.Lock()
@@ -333,7 +396,8 @@ func (o *Output) IOErr() error {
 	return o.lastErr
 }
 
-// failLocked 记录首个 I/O 错误、置 writeFailed 并取消上游 ctx。须持 mu。
+// failLocked 记录首个 I/O 错误、置 writeFailed 并取消上游 ctx。仅当取消前
+// ctx 仍存活（未被客户端先取消）时标记 selfCanceled。须持 mu。
 func (o *Output) failLocked(err error) {
 	if o.writeFailed {
 		return
@@ -343,12 +407,26 @@ func (o *Output) failLocked(err error) {
 		o.lastErr = err
 	}
 	if o.cancel != nil {
+		if o.ctx == nil || o.ctx.Err() == nil {
+			o.selfCanceled = true
+		}
 		o.cancel()
 	}
 }
 
+// flushWireLocked 触发真实 wire flush；无 Flusher 的旧兼容 writer 的
+// ErrNotSupported 视为无需 flush（不算失败）。须持 mu。
+func (o *Output) flushWireLocked() error {
+	err := flushResponseWriter(o.w)
+	if errors.Is(err, http.ErrNotSupported) {
+		return nil
+	}
+	return err
+}
+
 // flushLocked 批量 flush（阈值/drain/结束残余触发）：pending>0 时 flush +
-// fl.Flush，结算 pending 与业务下行标记，并重置 lastVisible/nextHeartbeat。
+// wire flush，结算 pending 与业务下行标记，并重置 nextHeartbeat。flush 失败
+// 不得视为可见成功（不更新 nextHeartbeat）。
 func (o *Output) flushLocked() error {
 	if o.pending <= 0 {
 		return nil
@@ -358,17 +436,16 @@ func (o *Output) flushLocked() error {
 		o.failLocked(err)
 		return err
 	}
-	if o.fl != nil {
-		o.fl.Flush()
+	if err := o.flushWireLocked(); err != nil {
+		o.failLocked(err)
+		return err
 	}
 	if o.pendingBusiness > 0 {
 		o.businessSent = true
 		o.pendingBusiness = 0
 	}
-	now := time.Now()
-	o.lastVisible = now
 	if o.interval > 0 {
-		o.nextHeartbeat = now.Add(o.interval)
+		o.nextHeartbeat = time.Now().Add(o.interval)
 	}
 	o.pending = 0
 	return nil
@@ -381,17 +458,16 @@ func (o *Output) flushNoResetLocked() error {
 		o.failLocked(err)
 		return err
 	}
-	if o.fl != nil {
-		o.fl.Flush()
+	if err := o.flushWireLocked(); err != nil {
+		o.failLocked(err)
+		return err
 	}
 	if o.pendingBusiness > 0 {
 		o.businessSent = true
 		o.pendingBusiness = 0
 	}
-	now := time.Now()
-	o.lastVisible = now
 	if o.interval > 0 {
-		o.nextHeartbeat = now.Add(o.interval)
+		o.nextHeartbeat = time.Now().Add(o.interval)
 	}
 	return nil
 }

@@ -66,7 +66,7 @@ func TestRelayVeryLongFrame(t *testing.T) {
 
 // TestRelayEOFFlushesFinalFrameWithoutBlankLine 回归：EOF 双返回
 // （"数据+io.EOF"，无末尾空行的关闭风格——第三方兼容上游）时末帧必须 flush
-// ——否则 Observer 看不到 completed 帧 → usage 提取落空 → cost=0 落账；
+// ——否则 OnEvent 看不到 completed 帧 → usage 提取落空 → cost=0 落账；
 // 输出字节必须完整原样（EOF 中途截断按 WHATWG 视同空行派发直写）。
 func TestRelayEOFFlushesFinalFrameWithoutBlankLine(t *testing.T) {
 	src := "data: {\"type\":\"response.completed\",\"usage\":{\"total_tokens\":9}}\n"
@@ -75,14 +75,14 @@ func TestRelayEOFFlushesFinalFrameWithoutBlankLine(t *testing.T) {
 	require.NoError(t, relayStream(rec, src, Config{
 		OnEvent: func(e Event) { got = append(got, e) },
 	}))
-	require.Len(t, got, 1, "EOF 无空行帧必须派发给 Observer（丢帧 = 计费为零）")
+	require.Len(t, got, 1, "EOF 无空行帧必须派发给 OnEvent（丢帧 = 计费为零）")
 	require.Equal(t, `{"type":"response.completed","usage":{"total_tokens":9}}`, string(got[0].Data))
 	require.Equal(t, src, rec.Body.String(), "输出字节必须完整原样转发")
 }
 
 // TestRelayEOFFlushesLongLineWithoutNewline 顺带覆盖：ErrBufferFull
 // + EOF 双返回的长行（> 8KiB bufio buffer、无末尾换行）——末帧由多段累积，
-// EOF 时必须整体 flush（字节完整 + Observer 可见），不可丢。
+// EOF 时必须整体 flush（字节完整 + OnEvent 可见），不可丢。
 func TestRelayEOFFlushesLongLineWithoutNewline(t *testing.T) {
 	long := strings.Repeat("x", 1<<20) // 1 MiB 单行
 	src := "data: " + long             // 无 \n
@@ -203,7 +203,7 @@ func TestRelayMultiDataAndLongLineMixed(t *testing.T) {
 	require.Equal(t, src, rec.Body.String())
 }
 
-func TestRelayObserverReceivesTypedEvent(t *testing.T) {
+func TestRelayOnEventReceivesTypedEvent(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "event: message_delta\ndata: {\"usage\":{\"output_tokens\":5}}\n\n", Config{
@@ -215,7 +215,7 @@ func TestRelayObserverReceivesTypedEvent(t *testing.T) {
 	require.Contains(t, string(got[0].Raw), "event: message_delta")
 }
 
-func TestRelayObserverReceivesDone(t *testing.T) {
+func TestRelayOnEventReceivesDone(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "data: [DONE]\n\n", Config{
@@ -226,7 +226,7 @@ func TestRelayObserverReceivesDone(t *testing.T) {
 	require.Equal(t, "[DONE]", string(got[0].Data))
 }
 
-func TestRelayMultiLineDataMergedInObserver(t *testing.T) {
+func TestRelayMultiLineDataMergedInOnEvent(t *testing.T) {
 	var got []Event
 	rec := httptest.NewRecorder()
 	require.NoError(t, relayStream(rec, "data: a\ndata: b\n\n", Config{

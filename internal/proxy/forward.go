@@ -677,6 +677,16 @@ func statusOf(err error) int {
 	return 0 // 连接级/超时错误
 }
 
+// streamUpstreamStatus 归一「流式非接受响应」交 pipeline 前的状态码：上游
+// 2xx-非-200（201/204/206…）不是合法 SSE 接受态，归一为 502，避免 pipeline
+// 收到「失败 + 2xx」被 attempt_outcome 拒绝（§3.7）。其余状态原样透传。
+func streamUpstreamStatus(code int) int {
+	if code >= 200 && code <= 299 && code != http.StatusOK {
+		return http.StatusBadGateway
+	}
+	return code
+}
+
 // upstreamBody 提取上游错误响应的原始 body：openai.Error / anthropic.Error 的
 // RawJSON() 即收到的未修改 JSON 原文（apierror.Error.JSON.raw），4xx 透传用。
 // 连接级/超时错误无 body，返回 nil。
