@@ -554,6 +554,8 @@
     },
     "new": "新建用户",
     "searchEmail": "搜索邮箱",
+    "filterRole": "按角色筛选",
+    "allRoles": "全部角色",
     "emptyTitle": "暂无用户",
     "emptyDesc": "创建用户后可为其发放客户端密钥",
     "filterEmpty": "没有符合条件的用户",

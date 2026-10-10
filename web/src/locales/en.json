@@ -554,6 +554,8 @@
     },
     "new": "New user",
     "searchEmail": "Search email",
+    "filterRole": "Filter by role",
+    "allRoles": "All roles",
     "emptyTitle": "No users yet",
     "emptyDesc": "Create a user to issue client keys",
     "filterEmpty": "No users match the filters",
