@@ -184,6 +184,14 @@ export default function Users() {
   }
   const hasFilters = email !== '' || role !== 'all'
   const clearFilters = () => { setEmail(''); setRole('all'); resetPage() }
+  // 角色筛选项（单一事实来源）：items（供 SelectValue 解析并显示标签）与下拉项共用，避免两处漂移
+  const roleOptions: { value: 'all' | UserRole; label: string }[] = [
+    { value: 'all', label: t('users.allRoles') },
+    { value: 'platform_admin', label: t('users.role.platform_admin') },
+    { value: 'user', label: t('users.role.user') },
+    { value: 'supplier', label: t('users.role.supplier') },
+  ]
+  const roleItems = Object.fromEntries(roleOptions.map((o) => [o.value, o.label]))
 
   // —— 创建/编辑 ——
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -392,19 +400,14 @@ export default function Users() {
         placeholder={t('users.searchEmail')}
       >
         {/* 角色筛选（all = 不过滤） */}
-        <Select
-          items={{ all: t('users.allRoles'), platform_admin: t('users.role.platform_admin'), user: t('users.role.user'), supplier: t('users.role.supplier') }}
-          value={role}
-          onValueChange={changeRole}
-        >
+        <Select items={roleItems} value={role} onValueChange={changeRole}>
           <SelectTrigger size="default" className="w-40 data-[size=default]:h-9" aria-label={t('users.filterRole')}>
-            <SelectValue placeholder={t('users.filterRole')} />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all" label={t('users.allRoles')}>{t('users.allRoles')}</SelectItem>
-            <SelectItem value="platform_admin" label={t('users.role.platform_admin')}>{t('users.role.platform_admin')}</SelectItem>
-            <SelectItem value="user" label={t('users.role.user')}>{t('users.role.user')}</SelectItem>
-            <SelectItem value="supplier" label={t('users.role.supplier')}>{t('users.role.supplier')}</SelectItem>
+            {roleOptions.map((o) => (
+              <SelectItem key={o.value} value={o.value} label={o.label}>{o.label}</SelectItem>
+            ))}
           </SelectContent>
         </Select>
       </ListToolbar>
