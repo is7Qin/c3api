@@ -5,15 +5,15 @@
 // loadtest 对网关打压测：固定并发 goroutine 持续请求，支持流式首字节和非流式完整响应延迟。
 // 用法: go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -concurrency 10000 -duration 5m -healthz http://127.0.0.1:8080/healthz
 //
-//	go run ./tools/loadtest -mode fill -fill-type users -admin-token <C3API_ADMIN_TOKEN> -concurrency 2000 -duration 5m
+//	go run ./tools/loadtest -mode fill -fill-type users -admin-jwt <platform_admin JWT> -concurrency 2000 -duration 5m
 //
 // 混合压测（模型请求 + 填充 API 并发）：开两个 loadtest 进程同时跑——一个
 // -mode stream -keys keys.txt、一个 -mode fill，各自 -out 落盘。同机交错跑 +
 // 每请求 CPU 对比（压测机 loadavg 50+，单进程内混流会让 fill 请求被流式
 // 长连接饿死，双进程是简单可靠的分流）。
-// 相对 brief 原代码的修正（均标注在行内）：
+// 相对原设想的修正（均标注在行内）：
 //   - os import 用 -out 兜底：把 RESULT 摘要同时写入文件（验收记录留档）。
-//   - 采样 goroutine 的 elapsed 直接取真实经过时间（brief 里 time.Since 套
+//   - 采样 goroutine 的 elapsed 直接取真实经过时间（原设计里 time.Since 套
 //     time.Since 的表达式恒为 ~0s，属"简化输出"占位）。
 //   - 首字节采样从 sync.Map 改为 mutex map（并发 CAS 实测在 Go 1.26
 //     HashTrieMap 上高争用会活锁，压测卡死，见压测记录）。
@@ -58,7 +58,8 @@ var (
 	pprof       = flag.String("pprof", "", "listen addr for /debug/pprof (goroutine dump on hang)")
 	mode        = flag.String("mode", "stream", "request mode: stream, chat, fill, models, api-admin or api-user")
 	// fill 模式（管理面填充 API 压测）：并发创建用户/key/账号/组/模板/定价。
-	adminToken   = flag.String("admin-token", "", "C3API_ADMIN_TOKEN (fill/api-admin mode admin APIs; keys fill 走用户面不需要)")
+	// -admin-jwt 取**裸 JWT 串**（platform_admin），工具内部补 `Bearer ` 前缀。
+	adminJWT     = flag.String("admin-jwt", "", "raw platform_admin JWT (fill/api-admin mode admin APIs; keys fill 走用户面不需要)")
 	fillType     = flag.String("fill-type", "users", "fill mode entity: users, keys, accounts, groups, templates, pricing or mixed")
 	fillUser     = flag.String("fill-user", "user0@loadtest.test:loadtest-pass-1", "keys fill: 登录账号 email:password（-fill-user-file 为空时兜底）")
 	fillUserFile = flag.String("fill-user-file", "", "keys fill: 每行 email:password 的账号文件，随机挑（分散登录压力，对齐 setup 用户命名）")
@@ -119,8 +120,8 @@ func main() {
 		validateFillFlags()
 	}
 	if *mode == "api-admin" {
-		if *adminToken == "" {
-			fmt.Fprintln(os.Stderr, "-mode api-admin requires -admin-token (C3API_ADMIN_TOKEN)")
+		if *adminJWT == "" {
+			fmt.Fprintln(os.Stderr, "-mode api-admin requires -admin-jwt (raw platform_admin JWT)")
 			os.Exit(2)
 		}
 		if *codesIn != "" {
@@ -590,13 +591,13 @@ func loadFillUserFile() {
 	fmt.Printf("loaded %d fill users from %s\n", len(fillUserPool), *fillUserFile)
 }
 
-// validateFillFlags fill 模式启动校验：fill-type 枚举 + admin token 依赖 +
+// validateFillFlags fill 模式启动校验：fill-type 枚举 + admin JWT 依赖 +
 // 登录账号文件加载。
 func validateFillFlags() {
 	switch *fillType {
 	case "users", "accounts", "groups", "templates", "pricing", "mixed":
-		if *adminToken == "" {
-			fmt.Fprintf(os.Stderr, "-mode fill with -fill-type %s requires -admin-token (C3API_ADMIN_TOKEN)\n", *fillType)
+		if *adminJWT == "" {
+			fmt.Fprintf(os.Stderr, "-mode fill with -fill-type %s requires -admin-jwt (raw platform_admin JWT)\n", *fillType)
 			os.Exit(2)
 		}
 	case "keys":
@@ -631,7 +632,7 @@ func newFillRequest(client *http.Client, rng *rand.Rand) (req *http.Request, pre
 	mk := func(method, path string, body any) *http.Request {
 		b, _ := json.Marshal(body)
 		req, _ := http.NewRequest(method, *addr+path, bytes.NewReader(b))
-		req.Header.Set("Authorization", "Bearer "+*adminToken)
+		req.Header.Set("Authorization", "Bearer "+*adminJWT)
 		req.Header.Set("Content-Type", "application/json")
 		return req
 	}

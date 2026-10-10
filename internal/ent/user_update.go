@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/schema/field"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
+	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/predicate"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/user"
@@ -206,6 +207,21 @@ func (_u *UserUpdate) AddKeys(v ...*Key) *UserUpdate {
 	return _u.AddKeyIDs(ids...)
 }
 
+// AddManagementKeyIDs adds the "management_keys" edge to the ManagementKey entity by IDs.
+func (_u *UserUpdate) AddManagementKeyIDs(ids ...int64) *UserUpdate {
+	_u.mutation.AddManagementKeyIDs(ids...)
+	return _u
+}
+
+// AddManagementKeys adds the "management_keys" edges to the ManagementKey entity.
+func (_u *UserUpdate) AddManagementKeys(v ...*ManagementKey) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddManagementKeyIDs(ids...)
+}
+
 // AddTempBalanceIDs adds the "temp_balances" edge to the TempBalance entity by IDs.
 func (_u *UserUpdate) AddTempBalanceIDs(ids ...int64) *UserUpdate {
 	_u.mutation.AddTempBalanceIDs(ids...)
@@ -260,6 +276,27 @@ func (_u *UserUpdate) RemoveKeys(v ...*Key) *UserUpdate {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveKeyIDs(ids...)
+}
+
+// ClearManagementKeys clears all "management_keys" edges to the ManagementKey entity.
+func (_u *UserUpdate) ClearManagementKeys() *UserUpdate {
+	_u.mutation.ClearManagementKeys()
+	return _u
+}
+
+// RemoveManagementKeyIDs removes the "management_keys" edge to ManagementKey entities by IDs.
+func (_u *UserUpdate) RemoveManagementKeyIDs(ids ...int64) *UserUpdate {
+	_u.mutation.RemoveManagementKeyIDs(ids...)
+	return _u
+}
+
+// RemoveManagementKeys removes "management_keys" edges to ManagementKey entities.
+func (_u *UserUpdate) RemoveManagementKeys(v ...*ManagementKey) *UserUpdate {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveManagementKeyIDs(ids...)
 }
 
 // ClearTempBalances clears all "temp_balances" edges to the TempBalance entity.
@@ -447,6 +484,51 @@ func (_u *UserUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(key.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ManagementKeysCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ManagementKeysTable,
+			Columns: []string{user.ManagementKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(managementkey.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedManagementKeysIDs(); len(nodes) > 0 && !_u.mutation.ManagementKeysCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ManagementKeysTable,
+			Columns: []string{user.ManagementKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(managementkey.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ManagementKeysIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ManagementKeysTable,
+			Columns: []string{user.ManagementKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(managementkey.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {
@@ -739,6 +821,21 @@ func (_u *UserUpdateOne) AddKeys(v ...*Key) *UserUpdateOne {
 	return _u.AddKeyIDs(ids...)
 }
 
+// AddManagementKeyIDs adds the "management_keys" edge to the ManagementKey entity by IDs.
+func (_u *UserUpdateOne) AddManagementKeyIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.AddManagementKeyIDs(ids...)
+	return _u
+}
+
+// AddManagementKeys adds the "management_keys" edges to the ManagementKey entity.
+func (_u *UserUpdateOne) AddManagementKeys(v ...*ManagementKey) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddManagementKeyIDs(ids...)
+}
+
 // AddTempBalanceIDs adds the "temp_balances" edge to the TempBalance entity by IDs.
 func (_u *UserUpdateOne) AddTempBalanceIDs(ids ...int64) *UserUpdateOne {
 	_u.mutation.AddTempBalanceIDs(ids...)
@@ -793,6 +890,27 @@ func (_u *UserUpdateOne) RemoveKeys(v ...*Key) *UserUpdateOne {
 		ids[i] = v[i].ID
 	}
 	return _u.RemoveKeyIDs(ids...)
+}
+
+// ClearManagementKeys clears all "management_keys" edges to the ManagementKey entity.
+func (_u *UserUpdateOne) ClearManagementKeys() *UserUpdateOne {
+	_u.mutation.ClearManagementKeys()
+	return _u
+}
+
+// RemoveManagementKeyIDs removes the "management_keys" edge to ManagementKey entities by IDs.
+func (_u *UserUpdateOne) RemoveManagementKeyIDs(ids ...int64) *UserUpdateOne {
+	_u.mutation.RemoveManagementKeyIDs(ids...)
+	return _u
+}
+
+// RemoveManagementKeys removes "management_keys" edges to ManagementKey entities.
+func (_u *UserUpdateOne) RemoveManagementKeys(v ...*ManagementKey) *UserUpdateOne {
+	ids := make([]int64, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveManagementKeyIDs(ids...)
 }
 
 // ClearTempBalances clears all "temp_balances" edges to the TempBalance entity.
@@ -1010,6 +1128,51 @@ func (_u *UserUpdateOne) sqlSave(ctx context.Context) (_node *User, err error) {
 			Bidi:    false,
 			Target: &sqlgraph.EdgeTarget{
 				IDSpec: sqlgraph.NewFieldSpec(key.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
+	if _u.mutation.ManagementKeysCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ManagementKeysTable,
+			Columns: []string{user.ManagementKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(managementkey.FieldID, field.TypeInt64),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedManagementKeysIDs(); len(nodes) > 0 && !_u.mutation.ManagementKeysCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ManagementKeysTable,
+			Columns: []string{user.ManagementKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(managementkey.FieldID, field.TypeInt64),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.ManagementKeysIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   user.ManagementKeysTable,
+			Columns: []string{user.ManagementKeysColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(managementkey.FieldID, field.TypeInt64),
 			},
 		}
 		for _, k := range nodes {

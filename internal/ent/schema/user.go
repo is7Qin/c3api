@@ -38,6 +38,7 @@ func (User) Fields() []ent.Field {
 func (User) Edges() []ent.Edge {
 	return []ent.Edge{
 		edge.To("keys", Key.Type),
+		edge.To("management_keys", ManagementKey.Type),
 		edge.To("temp_balances", TempBalance.Type),
 		edge.To("group_assignments", GroupAssignment.Type),
 	}

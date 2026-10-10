@@ -270,6 +270,38 @@ var (
 			},
 		},
 	}
+	// ManagementKeysColumns holds the columns for the "management_keys" table.
+	ManagementKeysColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "name", Type: field.TypeString},
+		{Name: "key_raw", Type: field.TypeString, Unique: true},
+		{Name: "status", Type: field.TypeEnum, Enums: []string{"active", "disabled"}, Default: "active"},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "deleted_at", Type: field.TypeTime, Nullable: true},
+		{Name: "user_id", Type: field.TypeInt64},
+	}
+	// ManagementKeysTable holds the schema information for the "management_keys" table.
+	ManagementKeysTable = &schema.Table{
+		Name:       "management_keys",
+		Columns:    ManagementKeysColumns,
+		PrimaryKey: []*schema.Column{ManagementKeysColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "management_keys_users_management_keys",
+				Columns:    []*schema.Column{ManagementKeysColumns[7]},
+				RefColumns: []*schema.Column{UsersColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "managementkey_user_id_deleted_at",
+				Unique:  false,
+				Columns: []*schema.Column{ManagementKeysColumns[7], ManagementKeysColumns[6]},
+			},
+		},
+	}
 	// PriceEntriesColumns holds the columns for the "price_entries" table.
 	PriceEntriesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -837,6 +869,7 @@ var (
 		GroupsTable,
 		GroupAssignmentsTable,
 		KeysTable,
+		ManagementKeysTable,
 		PriceEntriesTable,
 		PriceVariantsTable,
 		RedemptionCodesTable,
@@ -865,6 +898,7 @@ func init() {
 	GroupAssignmentsTable.ForeignKeys[1].RefTable = UsersTable
 	KeysTable.ForeignKeys[0].RefTable = GroupsTable
 	KeysTable.ForeignKeys[1].RefTable = UsersTable
+	ManagementKeysTable.ForeignKeys[0].RefTable = UsersTable
 	RedemptionUsesTable.ForeignKeys[0].RefTable = RedemptionCodesTable
 	SupplierBalancesTable.Annotation = &entsql.Annotation{}
 	SupplierBalancesTable.Annotation.Checks = map[string]string{

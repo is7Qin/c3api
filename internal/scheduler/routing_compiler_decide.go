@@ -211,7 +211,7 @@ func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr Ro
 	if len(weights) == 0 {
 		weights = nil
 	}
-	ring, _, accounts, err := compileCacheDomainPlan(filtered)
+	ring, accounts, err := compileCacheDomainPlan(filtered)
 	if err != nil {
 		return nil, err
 	}
@@ -263,7 +263,7 @@ func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr Ro
 	return decision, nil
 }
 
-func compileCacheDomainPlan(filtered []compilerCandidateFacts) (CacheDomainRing, []string, []CacheDomainAccount, error) {
+func compileCacheDomainPlan(filtered []compilerCandidateFacts) (CacheDomainRing, []CacheDomainAccount, error) {
 	domains := make([]string, 0, len(filtered))
 	accounts := make([]CacheDomainAccount, 0, len(filtered))
 	seen := make(map[int64]struct{}, len(filtered))
@@ -278,5 +278,8 @@ func compileCacheDomainPlan(filtered []compilerCandidateFacts) (CacheDomainRing,
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].AccountID < accounts[j].AccountID })
 	ring, err := buildCacheDomainRing(domains)
-	return ring, append([]string(nil), ring.Domains...), accounts, err
+	// ring.Domains is a fresh sorted slice owned by the ring; the caller
+	// discarded the old defensive copy of it (only the ring + accounts are
+	// consumed), so it is dropped here.
+	return ring, accounts, err
 }

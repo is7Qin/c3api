@@ -50,7 +50,7 @@ func setMailSettings(t *testing.T, fs *fakeStore, svc *Service, m map[string]str
 func newMailService(t *testing.T, fs *fakeStore) *Service {
 	t.Helper()
 	// 验证码存储经构造参数注入（fake 即实现，spec §3.7）。
-	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: fs, MailEnqueue: func(MailSendTask) error { return nil }})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: fs, MailEnqueue: func(MailSendTask) error { return nil }})
 	require.NoError(t, svc.ReloadSettings(context.Background()))
 	return svc
 }
@@ -67,7 +67,7 @@ func newMailServiceWithWorker(t *testing.T, fs *fakeStore) (*Service, *MailWorke
 	// main 装配序（先快照 → worker → svc 一次注入，零回填）。
 	snap := settingssnap.New(fs, nil)
 	mw := NewMailWorker(MailDeps{Settings: snap, Templates: fs})
-	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: fs, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: fs, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
 	require.NoError(t, svc.ReloadSettings(context.Background()))
 	// short backoff for tests
 	origBackoff := mailRetryBackoff

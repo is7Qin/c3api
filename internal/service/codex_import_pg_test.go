@@ -33,7 +33,7 @@ func newCodexImportPG(t *testing.T) (*Service, *repository.Repository) {
 	t.Cleanup(func() { _ = db.Close() })
 	repos, err := repository.NewWithPG(t.Context(), entsql.OpenDB(dialect.Postgres, db), false, pool)
 	require.NoError(t, err)
-	svc := New(Deps{Store: repos, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: repos, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	return svc, repos
 }
 

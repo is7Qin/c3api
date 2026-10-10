@@ -31,6 +31,37 @@
     "ops": "Ops",
     "supplierWorkbench": "Settlement Workbench"
   },
+  "managementKeys": {
+    "title": "Management Keys",
+    "subtitle": "Create keys that act as your identity on the management surfaces",
+    "new": "New Key",
+    "emptyTitle": "No management keys yet",
+    "emptyDesc": "Create a key to call the management API as yourself",
+    "table": {
+      "owner": "Owner",
+      "name": "Name",
+      "keyPrefix": "Key",
+      "status": "Status",
+      "createdAt": "Created at",
+      "actions": "Actions"
+    },
+    "createTitle": "New Management Key",
+    "createDesc": "Give the key a name; it authenticates management surfaces as your identity",
+    "createdTitle": "Management key created",
+    "createdDesc": "Your plaintext key is ready — view and copy it anytime from the key list",
+    "editTitle": "Edit management key #{{id}}",
+    "editDesc": "Update the key's name and status",
+    "nameLabel": "Name",
+    "namePlaceholder": "e.g. ci-bot",
+    "statusLabel": "Status",
+    "statusHint": "Disabled = immediately rejected; enable to restore",
+    "deleteTitle": "Delete management key",
+    "deleteDesc": "Delete management key \"{{name}}\"? It will be invalidated immediately.",
+    "deletedToast": "Management key deleted",
+    "secretTitle": "Plaintext key",
+    "secretHint": "View and copy it anytime from the key list",
+    "formInvalid": "Name is required"
+  },
   "theme": {
     "toggle": "Toggle theme",
     "light": "Light",
@@ -481,10 +512,9 @@
     },
     "ungroupedNotice": "Accounts without a group receive no traffic: assign at least one group in the account Edit dialog, otherwise the account serves no requests and earns nothing.",
     "owner": {
-      "label": "Owning supplier user_id (optional)",
-      "placeholder": "Empty = platform-owned",
-      "hint": "Assign this account to a supplier (must be an active supplier/platform_admin). Empty keeps platform-owned / leaves ownership unchanged.",
-      "invalid": "Owning supplier user_id must be a positive integer",
+      "label": "Owning supplier (search by email)",
+      "placeholder": "Search supplier by email",
+      "hint": "Search an active supplier/platform_admin by email; empty keeps platform-owned / leaves ownership unchanged.",
       "clear": "Clear ownership (back to platform-owned)"
     }
   },
@@ -1463,6 +1493,7 @@
       "rule-engine": "Rule engine",
       "usage": "Usage flusher",
       "errlog": "Error-log auditor",
+      "cont-bind": "Continuation bind",
       "pricing-sync": "Price sync",
       "retention": "Partition retention",
       "stats-agg": "Stats aggregation",
@@ -1514,6 +1545,9 @@
       "dropped_reject": "Dropped (reject)",
       "dropped_exempt": "Dropped (exempt)",
       "inserted": "Inserted",
+      "bound": "Bound",
+      "conflicts": "Conflicts",
+      "unattributed": "Unattributed",
       "warned_reject": "Warned (reject)",
       "warned_exempt": "Warned (exempt)",
       "running": "Running",
@@ -1691,6 +1725,7 @@
       "overview": "Overview",
       "profile": "Profile",
       "keys": "Keys",
+      "managementKeys": "Management Keys",
       "logs": "Logs",
       "stats": "Stats",
       "redemptions": "Redeem",
@@ -2043,12 +2078,12 @@
     "request": {
       "button": "Request on behalf",
       "title": "Request settlement on behalf",
-      "desc": "An admin files a settlement request for a supplier (same channel).",
-      "uid": "Supplier user_id",
+      "desc": "An admin files a settlement request for a supplier (search by email; same channel).",
+      "uid": "Supplier",
       "amount": "Amount (USD)",
       "note": "Note (optional)",
       "success": "Request submitted",
-      "invalidUid": "Invalid supplier user_id",
+      "requiredUid": "Select a supplier first",
       "invalidAmount": "Invalid amount",
       "notFound": "Target supplier has no balance row"
     },
@@ -2092,5 +2127,14 @@
       "freezeHours": "Freeze",
       "buckets": "Buckets"
     }
+  },
+  "supplierPicker": {
+    "placeholder": "Search supplier by email",
+    "searching": "Searching…",
+    "noMatch": "No matching supplier",
+    "error": "Failed to load suppliers",
+    "retry": "Retry current search",
+    "inactive": "Inactive",
+    "allInactive": "No active suppliers match; refine your search"
   }
 }

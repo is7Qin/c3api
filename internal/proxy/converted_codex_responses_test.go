@@ -86,7 +86,7 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	key.ProtocolConverts = pcs
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": key,
-	}}, noopUserLoader{}, nil, true)
+	}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{
@@ -154,19 +154,6 @@ func TestConvertedCodexChatToRespStreaming(t *testing.T) {
 		up.URL, nil, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, store)
 
 	rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"stream":true}`, nil)
-	// 先红后绿证据（历史）：修复前此处 502 且 err detail =
-	// `Post "/v1/responses": unsupported protocol scheme ""`（空 base 走通用
-	// aiclient）。修复后恒 200，本诊断分支不触发（保留以固化回归语义）。
-	if rec.Code != http.StatusOK {
-		time.Sleep(200 * time.Millisecond)
-		store.mu.Lock()
-		for _, lg := range store.logs {
-			if lg.ErrorMessage != nil {
-				t.Logf("先红证据（修复前 err detail）: %s", *lg.ErrorMessage)
-			}
-		}
-		store.mu.Unlock()
-	}
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
 	got := rec.Body.String()
@@ -442,7 +429,7 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": key}}, noopUserLoader{}, nil, true)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": key}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})

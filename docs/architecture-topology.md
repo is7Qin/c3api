@@ -62,7 +62,7 @@ flowchart LR
 
 - 单二进制部署：前端 `web/` 构建产物经 `cmd/server/embed.go:14` 的 `go:embed all:dist` 内嵌进 Go 二进制；运行时 = `server` 进程 + 挂载 config（Dockerfile 三阶段：node → go → alpine 非 root）。
 - 部署面（一句话带过）：
-  - `compose.yml`：`db`（postgres:18-alpine，数据挂载 ./deploy/data/pg）+ `app`（单容器，`C3API_ADMIN_TOKEN`/`C3API_DB_DSN` 环境变量注入，config 只读挂载自 ./deploy/config.toml）。
+  - `compose.yml`：`db`（postgres:18-alpine，数据挂载 ./deploy/data/pg）+ `app`（单容器，`C3API_DB_DSN`/`C3API_AUTH_JWT_SECRET` 环境变量注入，config 只读挂载自 ./deploy/config.toml）。
   - `Dockerfile`：多阶段构建，`CGO_ENABLED=0` 静态单二进制。
   - `scripts/build.sh`：pnpm 构建 web → 拷入 `cmd/server/dist` → `go build -o bin/server`。
   - `tools/`：`tools/loadtest`（打压测，-mode stream/fill，交错跑 + 每请求 CPU）、`tools/fakeupstream`（假上游，chunks/latency 可配）、`tools/e2e`（端到端计费测试）。
@@ -87,7 +87,7 @@ flowchart LR
 | `internal/quality` | 路由质量观测：Recorder 内存归并 + `quality-sync` worker 落实例分钟表 | main 装配；scheduler 消费 |
 | `internal/rule` | 规则引擎：事件队列 worker（Name="rule-engine"）+ 状态动作 apply | scheduler 注入 apply 回调 |
 | `internal/credential` | 凭据类型注册表 + Provider 分发（api_key/responses-special/codex-oauth/codex-pat，`internal/credential/credential.go:24-33`） | proxy/scheduler 消费 |
-| `internal/auth` | JWT issuer/verify + RequireJWT 中间件 | server/user handler |
+| `internal/auth` | JWT issuer/verify + RequireJWT/RequireIdentity 中间件 | server/user handler |
 | `internal/billing` | 计费：价格矩阵纯函数、余额快照、批量扣费 Flusher | proxy/repository |
 | `internal/usage` | 明细 Recorder、err_logs 落盘 worker、retention worker、**stats-agg 离线聚合 worker** | proxy/billing/repository |
 | `internal/notify` | 多实例 NOTIFY 发布/监听（`Change` 载荷 + Dispatcher 接口） | main 装配（service/scheduler 发布） |
@@ -96,10 +96,10 @@ flowchart LR
 | `internal/protoconv` | 协议转换（四方向，纯标准库） | proxy（convertedCaller） |
 | `internal/worker` | worker.Worker 契约 + Manager（顺序启动/反向排空/panic 栈日志/Go 托管） | cmd/server 装配 |
 | `internal/snapshot` | 快照注册表（已合并）：Registry/ReloadAll/Status + scope 精确分发 | cmd/server 装配（dispatcher 消费） |
-| `internal/sdkbridge` | codex-sdk 适配层（生图/Responses/Stream/WS/Search/Dial + 凭据派生 clientFor + 失效回调 + OAuth 轮转回写，`internal/sdkbridge/codex.go:27`） | proxy |
+| `internal/sdkbridge` | codex-sdk 适配层（生图/Responses/StreamBody/WS/Search/Dial + 凭据派生 clientFor + 失效回调 + OAuth 轮转回写，`internal/sdkbridge/codex.go:27`） | proxy |
 | `pkg/aiclient` | openai/anthropic SDK 客户端懒构建工厂（**非唯一引用点**——proxy 各 caller 直接 import SDK 类型，第三 SDK codex-sdk 经 sdkbridge） | proxy |
 | `pkg/httpx` | 共享上游 http.Transport（连接池参数；Proxy 默认 nil 直连） | main → aiclient/sdkbridge/pricing |
-| `pkg/sserelay` | 字节级 SSE relay（帧原样透传 + Observer 旁路 + Mapper 挂载） | proxy 流式路径 |
+| `pkg/sserelay` | 字节级 SSE relay（统一 Output：帧原样透传/协议转换 + 静默保活 + 写出前采样 seam） | proxy 流式路径 |
 | `pkg/redisx` | Redis 客户端（连接/哨兵/重连；**非缓存层**——只服务实例发现心跳与短时验证码） | main → discovery/proxy/scheduler |
 | `pkg/cryptox` / `pkg/logx` | 客户端 key 生成（ck- 前缀随机 hex，明文落库，见 key_raw 设计） / 结构化日志 | 各处 |
 
@@ -130,7 +130,7 @@ flowchart LR
 
 每个决策点：
 - **鉴权**（`internal/proxy/auth.go:146`）：`Authorization: Bearer` 或 `x-api-key`（Anthropic 口径）→ 快照按明文等值查（零 DB）；key 或归属用户禁用 → 401 即时失效。
-- **认证双路径**（`internal/server/middleware.go:49` adminAuth + `internal/server/server.go:71-82` /api/admin 组 Handle）：/api/admin 组 = 静态 admin token `Bearer <AdminToken>` **OR** platform_admin JWT（`JWTIssuer.Verify` + `claims.Role==platform_admin` + 快照用户状态 active 校验；JWT 路径注入 `adminUserIDKey`）；/api/user 组 = 内部公开分流（`internal/handler/user/router.go:24-52`：register/login/register-code/forgot-password/reset-password 公开，其余 RequireJWT）；AI 组 = key 鉴权（无 JWT）。
+- **认证**（`internal/server/middleware.go` adminAuth + `internal/server/server.go` /api/admin 组 Handle）：/api/admin 组 = platform_admin 身份（platform_admin JWT 或该身份的管理 key mk-：`JWTIssuer.Verify`/`AuthenticateManagement` + 快照 role==platform_admin + 状态 active 校验；注入 `adminUserIDKey` + FundsActor）；/api/user 组 = 内部公开分流（`internal/handler/user/router.go`：register/login/register-code/forgot-password/reset-password 公开，其余 RequireIdentity——JWT 或管理 key）；AI 组 = key 鉴权（无 JWT）。
 - **配额**：`quotaExhausted`（`internal/proxy/gate.go:331`）本地预算两原子读；耗尽才触发 DB 复核认领（`reclaim` `internal/proxy/gate.go:384`，慢路径单飞 + 10s 失败退避）；复核公式 `budget = consumed + ceil(remaining_eff/N)`（`allocBudget` `gate.go:439`；收敛修正，防复核无限续额）。
 - **余额预检**（`internal/proxy/pipeline.go:86-91`）：BillingCapture 门控快照读零 DB（滞后 ≤ balance_refresh_interval）；快照缺失/<0 且非免费组 → 402（余额 0 放行——临时额度由 FEFO 扣费消化）；免费组（EffectiveMultiplier==0）放行。
 - **并发门禁**：user → key 两级 CAS（`internal/proxy/gate.go:282-291`），key 失败回滚 user 计数；跨 reload 在途值继承。
@@ -138,7 +138,7 @@ flowchart LR
 - **选号**：`internal/scheduler/selection.go` + `attempt_plan*.go` 执行后台 RoutingCompiler 预编译的不可变计划（Primary/Degraded 按编译序、Explore 按累计权重 + 完整 fallback tail），逐项 RuntimeHealth 有效态 + 并发 CAS 准入；`AttemptPlan` 固定 [8] attempted-ID 集跨账号去重（failover_attempts 1..8）。请求路径零质量计算/零排序/零分配/零远程访问；协议转换只补差（`internal/proxy/caller.go:47` `convertedRoute`，off 零开销）。
 - **缺价预检**：failover 循环内每轮调用 `precheckPrice`（`internal/proxy/caller.go:417`）——images 查 `price_entries` 的 image 分量、其余查 token 分量，缺价 402 释放槽。
 - **codex 分流**（`internal/proxy/caller.go:344-358`）：按 `sel.CredentialType` 换 codexImagesCaller（:353 codex 类型跳单字符串凭据走 sel.Ext → AccountCredential 直供适配层）。
-- **流式透传**：aiclient 流式入口经 `pkg/sserelay` 字节级 relay + Observer 旁路提取 usage；批次能力：EOF 末帧 flush（无末尾空行上游丢 completed 帧 → cost=0 修复）、deadline watcher、normalize 错误分类（三态可分）、relayBufio 池、按需武装 flush timer（均见 `pkg/sserelay/relay.go`）；WS 1:1 透传（`internal/proxy/ws_relay.go:54`）。
+- **流式透传**：所有 SSE 路径（五路 caller + 协议转换 + codex responses）经 `pkg/sserelay` 字节级 relay + 统一下行 owner `sserelay.Output`；TTFT/usage/图像计数/轮次钩子与续接入队统一在**唯一写出前 seam** `OnEvent`（`Mapper` 变换 → `OnEvent` 见原始事件 → 写出；drop 帧也回调——取代旧 post-write `Observer` 旁路）；`Output` 负责自有写缓冲/自适应批量 Flush/静默保活（心跳恒 `: keepalive\n`，间隔 `proxy.stream_keepalive_interval`，默认 10s）/提交态与终态错误帧，出口判定统一 `classifyStreamExit`（`internal/proxy/stream_exit.go`）。批次能力：EOF 末帧 flush（无末尾空行上游丢 completed 帧 → cost=0 修复）、deadline watcher、normalize 错误分类（三态可分）、relayBufio 池（均见 `pkg/sserelay/relay.go`）；WS 1:1 透传（`internal/proxy/ws_relay.go:54`）。
 - **usage 计费**：`finish`（`internal/proxy/forward.go:189`）→ `routeLog`（`forward.go:420`）分表路由——放行行（error_type ∈ {none, abort}）billed → Flusher / 非 billed → rec.Record；拒绝路径走 `recordRejected`（`forward.go:375`——401/429/402 → err_logs 不进 usage_logs）；images/search 按次计费 `applyImageBilling`/`applyFunctionBilling`（`forward.go:266,293`，call_count）。
 
 **热路径纪律**（改这里先读）：
@@ -162,9 +162,9 @@ flowchart LR
 
 pkg 职责边界：
 - `pkg/aiclient`（`pkg/aiclient/aiclient.go:5-13`）：**openai/anthropic 官方 SDK 客户端懒构建工厂**——鉴权头注入（格式决定头名：openai → `Authorization: Bearer`、anthropic → `x-api-key`）+ typed 面非流式超时（UpstreamTimeout）；**非唯一引用点**——proxy 各 caller 直接 import openai-go/anthropic-sdk 类型（`caller_chat.go`、`caller_anthropic.go`、`caller_responses.go`、`caller_converted.go`），第三 SDK codex-sdk 经 sdkbridge 适配。
-- `internal/sdkbridge`（`internal/sdkbridge/codex.go:27`）：**codex-sdk 唯一适配层**——GenerateImage/GenerateImageStream/Responses/StreamResponses/Search/Dial + 凭据派生 clientFor + 失效回调 + 轮转回写 WriteOAuthRotation；codex 非流式超时各自包 ctx WithTimeout（`codex_responses_http.go:90-92`、`caller_images_codex.go:107-112`——HTTPClient.Timeout 不可用，流式/非流式四方法共享，`forward.go:38` 注释）。
+- `internal/sdkbridge`（`internal/sdkbridge/codex.go:27`）：**codex-sdk 唯一适配层**——GenerateImage/GenerateImageStream/Responses/StreamBody/Search/Dial + 凭据派生 clientFor + 失效回调 + 轮转回写 WriteOAuthRotation；codex 非流式超时各自包 ctx WithTimeout（`codex_responses_http.go:90-92`、`caller_images_codex.go:107-112`——HTTPClient.Timeout 不可用，流式/非流式四方法共享，`forward.go:38` 注释）。
 - `pkg/httpx`：共享 `http.Transport`（连接池参数：max_idle_conns 8192、per_host 2048、force_http2、idle_conn_timeout 90s、dial_timeout 10s，`config.example.toml`）；openai-go/anthropic-sdk 共用同一 `*http.Client`（`cmd/server/main.go:244`）；**codex SDK 另有独立 transport**（`main.go:443`：httpx 网关同形态 + MaxConnsPerHost 显式上界，补压测修复 MaxIdleConnsPerHost=2 连接风暴）；**httpx.Proxy 默认 nil 直连**（`pkg/httpx/httpx.go:24-28,33`——不再隐式 ProxyFromEnvironment 防 HTTP_PROXY 静默改道）。
-- `pkg/sserelay`：字节级 SSE relay——增量读帧原样转发 + 自适应批量 Flush + Observer 旁路（仅 usage 提取，不参与转发决策；`pkg/sserelay/relay.go:5-7`）+ EOF 末帧 flush + deadline watcher + normalize 错误分类 + relayBufio 池 + **Mapper 挂载**（转换，`relay.go:89-93`，Observer 仍见原始帧）。
+- `pkg/sserelay`：字节级 SSE relay——`Relay` 读循环（增量读帧/`Mapper` 挂载/写出前 `OnEvent` 采样 seam）+ 统一下行 owner `Output`（`pkg/sserelay/output.go`：自有写缓冲 + 自适应批量 Flush + 静默保活 `: keepalive\n` + 提交态/写失败/自取消态 + 终态错误帧 + 可返错 Flush）+ EOF 末帧 flush + deadline watcher（取消/超时联动写侧 deadline）+ `Config.Terminal`（正常 EOF 在 watcher 存活期内补写协议终止帧）+ normalize 错误分类 + relayBufio 池。
 - 凭据抽象 `internal/credential`：Provider 只返回凭据值，不感知请求格式（`internal/credential/credential.go:9-11` 正交原则）；未知类型显式报错不静默 fallback（`internal/proxy/forward.go:748` credentialFor）；**codex 复合凭据不进注册表**——走 `sel.Ext` → AccountCredential 直供适配层（`caller.go:344-358` 注释，单字符串表达不了）。
 
 加新格式 = 1 个 caller 文件 + `internal/proxy/forward.go:76-80,151-152` 注册表一行（callers + convCallers 四方向 + images/codexImages 双调用器）+ router.go 一个端点（现 8 端点，`router.go:19-57`）；images 同格式双端点 + codex 双调用器为既有格局之外的特例。
@@ -172,7 +172,7 @@ pkg 职责边界：
 ## 5. 协议转换层（internal/protoconv）
 
 - 边界（`internal/protoconv/protoconv.go:5-13` 包注释）：**纯标准库**（encoding/json），与 OpenAI/Anthropic SDK 零耦合；按 `groups.protocol_convert` 快照值分派（off 不经过本包——热路径分支在 proxy 判定）；WS 帧流转换不做（resp-ws 1:1 透传）。
-- 四方向（`internal/protoconv/protoconv.go:29`）：`ConvertRequest`（chat→resp / mess→resp / resp→mess / chat→mess）+ `ConvertResponse`（非流式）；`NewStreamMapper`（流式 SSE 事件映射，`internal/protoconv/protoconv.go:62`）；四方向常量在 `domain/types.go:627-631`。
+- 四方向（`internal/protoconv/protoconv.go:29`）：`ConvertRequest`（chat→resp / mess→resp / resp→mess / chat→mess）+ `ConvertResponse`（非流式）；`NewStreamMapper`（流式 SSE 事件映射，`internal/protoconv/protoconv.go:62`）+ `StreamMapper.Done()/Finish()`（目标终止帧查询与流末补发——codex converted 适配层在源协议仅 `[DONE]` 或无 `[DONE]` 正常 EOF 时按方向镜像补发）；四方向常量在 `domain/types.go:627-631`。
 - **字节级纪律**（`internal/protoconv/jsraw.go:20-25`）：gjson 预筛（`gjsonKeyEq` 长度校验 + 逐字节比较零分配）→ `gjson.Result.Raw` 零拷贝切片直接拼入输出 → 单缓冲复用（`StreamMapper` 的 buf/dbuf，`internal/protoconv/protoconv.go:84`；帧返回后下一帧覆盖，调用方不得跨帧保留）；chat→resp 方向字节级组装，其余方向 map 组装（`EncodeFrame`）。
 - 缺名帧处理（教训）：无 `event:` 名帧从 data 的 `type` 字段推断（**已上提到共享实现** `pkg/sserelay/relay.go:46` `InferEventName`，protoconv 在 `internal/protoconv/protoconv.go:120` 调用），无法推断原样透传。
 - 转换 on/off 开销实证（`docs/superpowers/plans/2026-08-11-w3-loadtest.md` §二 与 `docs/superpowers/plans/2026-08-11-protoconv-opt-loadtest.md` §一，均压测机（内部环境，IP 存部署清单） 实证）：
@@ -318,8 +318,8 @@ flowchart LR
 | 路由 | 鉴权 | 说明 |
 |---|---|---|
 | `GET /healthz` | 无 | inflight/goroutines/heap（`internal/server/server.go:61-69`） |
-| `/api/admin/*` | 静态 admin token OR platform_admin JWT（`internal/server/server.go:71-82` + `middleware.go:49`） | 管理面（chi `Handle`，不剥离前缀） |
-| `/api/user/*` | `register`/`login`/`register-code`/`forgot-password`/`reset-password` 公开，其余 RequireJWT（`internal/handler/user/router.go:24-52`） | 用户面 |
+| `/api/admin/*` | platform_admin JWT OR platform_admin 管理 key（`internal/server/server.go:71-82` + `middleware.go:49`） | 管理面（chi `Handle`，不剥离前缀） |
+| `/api/user/*` | `register`/`login`/`register-code`/`forgot-password`/`reset-password` 公开，其余 RequireIdentity（JWT 或管理 key；`internal/handler/user/router.go`） | 用户面 |
 | `/v1/*` | AI key 鉴权（proxy） | 8 端点：chat/anthropic/responses + WS + images×2 + search + models（`internal/proxy/router.go:19-57`）。**用 `Handle("/v1/*")` 而非 `Mount("/")`**（`internal/server/server.go:89-101`）——通配挂载会吞掉 SPA 深链 |
 | `/assets/*`、`/favicon.svg`、`/`、SPA fallback | 无 | 网关内嵌 web/dist（`internal/server/server.go:103-137` + `cmd/server/embed.go:15`） |
 
@@ -336,18 +336,17 @@ flowchart LR
 |---|---|---|
 | `server` | server.NewServer + http.Server | addr/read_header_timeout/max_header_bytes/time_zone（IANA 名，空 = 进程本地；非法名启动失败） |
 | `log` | logx.New | level/output |
-| `admin` | server 静态 token | token（**空 = 不启用静态 token 鉴权**，/api/admin 仅接受 platform_admin JWT；非空时占位值被拒） |
 | `auth` | jwtauth.Issuer | jwt_secret（必填；`C3API_AUTH_JWT_SECRET` 亦可） |
 | `db` | repository.OpenPG | dsn（必填）/max_conns（20 = billing 8 + stats 8 worker + 余量）；**OpenPG 自动补丁**：lock_timeout=5s 会话级 + 计费结算事务 per-tx 10s 超时 + MaxConnLifetime=30m 滚动轮换——DSN 无需手工配置，用户 DSN 显式同名参数时尊重不覆盖；**不设会话级 statement_timeout**（与 admin 面大窗口聚合实测冲突，降级为计费路径 per-query 超时；`internal/config/config.go:58-61` + `internal/repository/repository.go:855-873`） |
 | **`redis`** | pkg/redisx → discovery / concSync | **必需依赖**（实例发现等易失协调态）：`addr` 必填，空/不可达启动即失败；env `C3API_REDIS_ADDR` / `C3API_REDIS_PASSWORD` / `C3API_REDIS_DB`；password 空 = 无鉴权（占位值被拒）；`db < 0` 非法 |
-| `proxy` | proxy.New | max_body_size/max_inflight/upstream_timeout/upstream_stream_timeout/failover_attempts（合法域 1..8，越界启动失败）/usage_capture/behind_cdn |
+| `proxy` | proxy.New | max_body_size/max_inflight/upstream_timeout/upstream_stream_timeout/failover_attempts（合法域 1..8，越界启动失败）/usage_capture/behind_cdn/stream_keepalive_interval（客户端 SSE 保活注释间隔，默认 10s；0=关闭通用定时保活） |
 | `upstream` | httpx.TransportConfig | 连接池参数（max_idle_conns 8192 / max_idle_conns_per_host 2048 / force_http2 / idle_conn_timeout 90s / dial_timeout 10s） |
 | `scheduler` | scheduler.Config | default_max_concurrency/sync_interval |
 | `usage` | usage.Recorder + StatsAggWorker + ErrLogWorker + RetentionWorker | batch_size/flush_interval/log_retention_days=30/quota_flush_interval/stats_agg_interval（默认 5m，0=禁用聚合）/flush_workers=8/errlog_* 族（注释内默认 4096/500/500ms/7 天）/stats_retention_days=180 |
 | `billing` | billing.NewFlusher + BillingHooks | enabled=true/flush_interval=250ms/balance_refresh_interval=10s |
 
 - **智能路由无独立配置段**（`config.example.toml:56-59` 注释）：Primary/Explore/Degraded 分层、探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 + 采购倍率 + 运行时健康派生，**无固定全局 SLO 阈值可配**；可调项在账号与规则面。
-- 必填校验（`internal/config/config.go:222-305` validate）：**必填字符串** = `auth.jwt_secret` / `db.dsn` / `redis.addr`（空 → fatal）；**占位值精确匹配拒绝** = `admin.token` / `auth.jwt_secret` / `redis.password`（change-me / change-me-too / dev-admin-token / dev-jwt-secret-for-local）——**`admin.token` 本身可空**（空 = 只走 JWT）。duration 除 `stats_agg_interval`（0 = 禁用）外均须 ≥ 1ms；int 下限 1（scheduler.default_max_concurrency / db.max_conns / proxy.failover_attempts / proxy.max_body_size）；failover_attempts 上限 8。
+- 必填校验（`internal/config/config.go` validate）：**必填字符串** = `auth.jwt_secret` / `db.dsn` / `redis.addr`（空 → fatal）；**占位值精确匹配拒绝** = `auth.jwt_secret` / `redis.password`（change-me / change-me-too / dev-jwt-secret-for-local）。duration 除 `stats_agg_interval`（0 = 禁用）外均须 ≥ 1ms；int 下限 1（scheduler.default_max_concurrency / db.max_conns / proxy.failover_attempts / proxy.max_body_size）；failover_attempts 上限 8。
 - 分区/保留/倍率等策略参数在 **DB settings 表**而非 config（`internal/domain/settings.go:13-45`）：signup 默认资源、price_source_url/price_sync_cron、service_tier_policy_*、mail.* 族、balance_warning.enabled。实例数 N **不在** settings——由 Redis 心跳活体数提供（§10）。
 
 ## 13. 架构决策记录（ADR）
@@ -366,6 +365,7 @@ flowchart LR
 10. **ent migrate 跳过分区表**——分区 DDL 由 bootstrap 独占管理。为什么：atlas 对分区表 diff 规划期必失败（真实 PG 实测，ent v0.14.6 + atlas v0.36.2 + PG18）。来源：`internal/repository/partition.go:660-676`。
 11. **2026-08-14/15 批次裁决**——① billing 默认开启（用户裁决）；② 使用量统计走离线聚合（stats-agg worker + stats_agg_watermark 表）；③ 价格内部统一按 per-million 毫分口径；④ 额度回写周期键为 `quota_flush_interval`；⑤ `/stats` + `/user/stats` 计费字段以 USD 下发、TTFT 指标重写；⑥ 账号级 `base_url`。
 12. **2026-08-23 ~ 09-23 批次裁决**——① **Redis 是必需依赖**：实例发现心跳 + 短时验证码，**非缓存层**；实例数 N 由心跳活体数提供；② `usage_entity_stats` 分区表承载实体维度 trend/top；③ 价格面为 `price_entries` + `price_variants` 双表；④ 计费结算为 **v2 三车道拓扑**（Balance/Temp 双车道语句化结算，扣减与标记一体）；⑤ 统计查询按形状分四个端点：`/stats/trend|top|entity-trend|ttft`；⑥ `upstream_cost_multiplier_bp` 用 `*int` 承载，以区分**显式 ×0** 与未提供；⑦ codex 批量导入支持 body 级账号配置（`enabled`/`cache_domain`/`upstream_cost_multiplier`，仅新建行生效）；⑧ key 额度设为 `0` 同步清零 `quota_used`（`AddQuotaUsed` 带 `WHERE "quota" > 0` 守卫）。
+13. **2026-10-09/10 批次裁决 —— SSE 统一输出 + 续接异步绑定 + codex raw relay**：① 客户端 SSE 静默保活——无业务输出时网关按 `proxy.stream_keepalive_interval`（默认 10s）写心跳注释，字节恒 `: keepalive\n`（单换行，规避上层 SDK 对 `\n\n` 的解码错误）；② REST Responses 续接取消 **ACK-before-visible 闸门**：首个有效响应 id 在写出前 seam 快照、经常驻 worker 有界队列**异步绑定**（业务帧即刻可见；绑定失败仅观测，不回写当前响应）；WS 保留同步 ACK 门、非流式 Responses 保留同步绑定；③ 采样与出口统一——所有流式 caller 的 TTFT/usage/图像计数/轮次钩子收敛到**唯一写出前 seam**（`sserelay.Config.OnEvent`，取代 post-write `Observer`；drop 帧也采），出口判定收敛为单一 `classifyStreamExit`（取消/写失败不补写、未提交交 pipeline、已提交补客户端协议 error 帧）；④ codex responses 改由 SDK 返回 **raw body**（`StreamBody`：仅 200 接受、非 200 读尽关闭返 `*HTTPError`、禁跟随重定向、turn-state 取本次响应头），复用 native responses 流式（直连 verbatim / converted 经 `StreamMapper` 适配），删净流式手写重帧、保留非流式 renderer 与 codex 身份/轮次 hooks；⑤ `pkg/redisx` 启用 `ContextTimeoutEnabled`（Redis 超时硬生效）。来源：`pkg/sserelay/output.go`、`pkg/sserelay/relay.go`、`internal/proxy/stream_exit.go`、`internal/proxy/continuation_bind.go`、`internal/proxy/codex_responses_http.go`、`internal/sdkbridge/codex.go`、`pkg/redisx`。
 
 ## 14. 性能基准
 

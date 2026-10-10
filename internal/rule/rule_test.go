@@ -835,7 +835,7 @@ func TestClassifyWindowRulePossibleHit(t *testing.T) {
 	require.True(t, pu, "窗口规则可能命中 → 保守 punish（投递后 worker 精确判）")
 }
 
-// TestWindowErrBucket4xx5xxNetwork 窗口计数防呆（gate r4）：枚举重构后
+// TestWindowErrBucket4xx5xxNetwork 窗口计数防呆：枚举重构后
 // Kind4xx/Kind5xx/KindNetwork 事件必须进 failure 桶——count_failure_ge 规则经
 // 完整引擎路径命中（漏加 case 则静默失真）。
 func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {

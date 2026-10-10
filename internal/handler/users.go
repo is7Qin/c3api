@@ -21,11 +21,13 @@ import (
 // ServerInterface）。
 func (h *AdminAPI) GetUsers(w http.ResponseWriter, r *http.Request, params GetUsersParams) {
 	q := repository.ListQuery{
-		Limit:  httpface.ClampLimit(int(httpface.Deref(params.Limit))),
-		Offset: int(httpface.Deref(params.Offset)),
-		Email:  httpface.Deref(params.Email),
-		Sort:   httpface.Deref(params.Sort),
-		Order:  string(httpface.Deref(params.Order)),
+		Limit:           httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset:          int(httpface.Deref(params.Offset)),
+		Email:           httpface.Deref(params.Email),
+		Role:            string(httpface.Deref(params.Role)),
+		SupplierSurface: httpface.Deref(params.SupplierSurface),
+		Sort:            httpface.Deref(params.Sort),
+		Order:           string(httpface.Deref(params.Order)),
 	}
 	rows, total, err := h.svc.ListUsers(r.Context(), q)
 	if err != nil {

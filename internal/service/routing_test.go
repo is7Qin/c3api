@@ -112,7 +112,7 @@ func routingFixturePlan() (*scheduler.RoutingPlan, string, scheduler.RoutingPlan
 
 func routingSvc(t *testing.T, fs *fakeStore, plan *scheduler.RoutingPlan) *Service {
 	t.Helper()
-	return New(Deps{Store: fs, Scheduler: &fakeRoutingSched{plan: plan}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
+	return New(Deps{Store: fs, Scheduler: &fakeRoutingSched{plan: plan}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 }
 
 func withRoutingLoss(t *testing.T, incomplete, overflow int64) {
@@ -148,7 +148,7 @@ func TestRoutingPlan_PassesThroughCurrentProjection(t *testing.T) {
 }
 
 func TestRoutingPlan_NotWired(t *testing.T) {
-	svc := New(Deps{Store: newFakeStore(), Scheduler: &fakeRuntimeProvider{}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: newFakeStore(), Scheduler: &fakeRuntimeProvider{}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	_, err := svc.RoutingPlanExplanation()
 	require.ErrorIs(t, err, errRoutingNotWired)
 	svcNil := &Service{store: newFakeStore()}
@@ -192,7 +192,7 @@ func TestRoutingFlow_RouteCatalogValidation(t *testing.T) {
 
 func TestRoutingFlow_NotWired(t *testing.T) {
 	plan, idHex, _ := routingFixturePlan()
-	svc := New(Deps{Store: &fakeStoreNoFacts{}, Scheduler: &fakeRoutingSched{plan: plan}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: &fakeStoreNoFacts{}, Scheduler: &fakeRoutingSched{plan: plan}, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	_, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour)})
 	require.ErrorIs(t, err, errRoutingNotWired)
 }

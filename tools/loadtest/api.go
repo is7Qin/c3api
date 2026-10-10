@@ -147,7 +147,7 @@ func adminScenarios() []apiScenario {
 				if bodyFn != nil {
 					body = bodyFn(rng, tag)
 				}
-				return apiReq(method, pathFn(rng), body, "Bearer "+*adminToken)
+				return apiReq(method, pathFn(rng), body, "Bearer "+*adminJWT)
 			}}
 	}
 	return []apiScenario{
@@ -615,7 +615,7 @@ func (w *apiWorker) relogin() {
 func apiBootstrapAdmin(client *http.Client) {
 	req, err := apiReq(http.MethodPost, "/api/admin/groups",
 		map[string]any{"name": fmt.Sprintf("stress-root-%d", fillProc), "visibility": "public"},
-		"Bearer "+*adminToken)
+		"Bearer "+*adminJWT)
 	if err != nil {
 		stressGID.Store(*fillGroupID)
 		return

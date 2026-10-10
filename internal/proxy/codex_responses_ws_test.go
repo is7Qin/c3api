@@ -231,7 +231,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil, true)
+	}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{
@@ -527,7 +527,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil, true)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": activeKey(1, 1, 10)}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})

@@ -37,6 +37,16 @@ func toDomainKey(k *ent.Key) *domain.Key {
 	return d
 }
 
+// toDomainManagementKey ent 行 → domain.ManagementKey（管理 key 面全量映射；
+// 无 eager-load 边——owner 由 user_id 标量承载）。
+func toDomainManagementKey(m *ent.ManagementKey) *domain.ManagementKey {
+	return &domain.ManagementKey{
+		ID: m.ID, UserID: m.UserID, Name: m.Name, KeyRaw: m.KeyRaw,
+		Status:    domain.ManagementKeyStatus(m.Status),
+		CreatedAt: m.CreatedAt, UpdatedAt: m.UpdatedAt, DeletedAt: m.DeletedAt,
+	}
+}
+
 func toDomainGroup(g *ent.Group) *domain.Group {
 	return &domain.Group{
 		ID: g.ID, Name: g.Name, Visibility: domain.GroupVisibility(g.Visibility),

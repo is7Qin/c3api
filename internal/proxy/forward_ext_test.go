@@ -125,6 +125,19 @@ func fakeAnthropic(t *testing.T, failMode string) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": "bad request"}})
 			return
 		}
+		// "abort-stream"：已发出部分 Anthropic 事件后 panic 断开连接——代理 relay
+		// 读到读错误（chunked 未终结 → io.ErrUnexpectedEOF），触发已提交流的中止
+		// 路径（客户端协议 error 帧补写回归用）。
+		if failMode == "abort-stream" && stream {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(200)
+			fl := w.(http.Flusher)
+			fmt.Fprint(w, `event: message_start`+"\n"+`data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"gpt-4o","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0}}}`+"\n\n")
+			fl.Flush()
+			fmt.Fprint(w, `event: content_block_delta`+"\n"+`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}`+"\n\n")
+			fl.Flush()
+			panic("abort-stream: connection cut mid-stream")
+		}
 		if stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(200)
@@ -212,7 +225,7 @@ func newTestProxyFormatLogs(t *testing.T, upstream string, format domain.Request
 	}, logs, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil, true)
+	}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{

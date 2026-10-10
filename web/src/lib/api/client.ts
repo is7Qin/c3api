@@ -7,7 +7,7 @@
 import type { components } from './schema.d.ts'
 import { userAuth } from '@/lib/auth'
 
-// 类实现（brief 原为 type 别名，但 throw new ApiError(...) 需要运行时值）
+// 类实现（原设计为 type 别名，但 throw new ApiError(...) 需要运行时值）
 export class ApiError extends Error {
   status: number
   // 统计窗口拒绝的机读字段（spec §4.4(c)）：服务端在 400 体里把"哪个原因、
@@ -199,7 +199,7 @@ export class ApiClient {
   getStatsCapabilities = () =>
     this.request<components['schemas']['StatsCapabilities']>('/stats/capabilities')
   // —— 用户管理 ——
-  listUsers = (p?: { limit?: number; offset?: number; email?: string; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['UserListResponse']>('/users', { params: toQuery(p) })
+  listUsers = (p?: { limit?: number; offset?: number; email?: string; role?: components['schemas']['UserRole']; supplier_surface?: boolean; sort?: string; order?: 'asc' | 'desc' }) => this.request<components['schemas']['UserListResponse']>('/users', { params: toQuery(p) })
   createUser = (b: components['schemas']['UserCreate']) => this.request<components['schemas']['User']>('/users', { method: 'POST', body: JSON.stringify(b) })
   updateUser = (id: number, b: components['schemas']['UserUpdate']) => this.request<components['schemas']['User']>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(b) })
   setGroupAssignments = (id: number, b: components['schemas']['GroupAssignmentsBody']) => this.request<components['schemas']['GroupAssignmentsResponse']>(`/groups/${id}/assignments`, { method: 'PUT', body: JSON.stringify(b) })
@@ -309,6 +309,16 @@ export class ApiClient {
   adminRequestSettlement = (b: components['schemas']['AdminRequestSettlementBody']) => this.request<components['schemas']['SupplierSettlement']>('/supplier/settlements/admin-request', { method: 'POST', body: JSON.stringify(b) })
   listSupplierBalances = (p?: { limit?: number; offset?: number }) => this.request<components['schemas']['SupplierBalanceList']>('/supplier/balances', { params: toQuery(p) })
   patchSupplierBalance = (uid: number, b: components['schemas']['SupplierBalancePatchBody']) => this.request<components['schemas']['SupplierBalance']>(`/supplier/balances/${uid}`, { method: 'PATCH', body: JSON.stringify(b) })
+  // —— 管理 API key（mk-，spec 2026-10-09 统一化）：仅用户面使用（userApi），路径用**相对**
+  //    `/management-keys`（→ /api/user/management-keys）；key 以 owner 身份鉴权，owner 可见明文
+  //    key_raw（长期可复制）。
+  listManagementKeys = () => this.request<components['schemas']['ManagementKeyListResponse']>('/management-keys')
+  createManagementKey = (name: string) => this.request<components['schemas']['ManagementKey']>('/management-keys', {
+    method: 'POST',
+    body: JSON.stringify({ name } satisfies components['schemas']['ManagementKeyCreate']),
+  })
+  updateManagementKey = (id: number, b: components['schemas']['ManagementKeyUpdate']) => this.request<components['schemas']['ManagementKey']>(`/management-keys/${id}`, { method: 'PUT', body: JSON.stringify(b) })
+  deleteManagementKey = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/management-keys/${id}`, { method: 'DELETE' })
 }
 
 export class ApiUnauthorized extends Error {

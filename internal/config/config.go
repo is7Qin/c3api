@@ -24,7 +24,6 @@ import (
 type Config struct {
 	Server    ServerConfig    `koanf:"server"`
 	Log       LogConfig       `koanf:"log"`
-	Admin     AdminConfig     `koanf:"admin"`
 	Auth      AuthConfig      `koanf:"auth"`
 	DB        DBConfig        `koanf:"db"`
 	Redis     RedisConfig     `koanf:"redis"`
@@ -60,10 +59,6 @@ type ServerConfig struct {
 type LogConfig struct {
 	Level  string `koanf:"level"`
 	Output string `koanf:"output"`
-}
-
-type AdminConfig struct {
-	Token string `koanf:"token"`
 }
 
 // AuthConfig JWT 密钥：强制（C3API_AUTH_JWT_SECRET），缺失启动失败——
@@ -120,6 +115,13 @@ type ProxyConfig struct {
 	// LowBalanceThresholdUSD 触发阈值（USD，默认 10）；余额严格小于它时把
 	// 用户级并发上限钳为 LowBalanceMaxConcurrency。派生毫分 = ×1e5 取整。
 	LowBalanceThresholdUSD float64 `koanf:"low_balance_threshold_usd"`
+	// StreamKeepaliveInterval 客户端 SSE 无业务输出时的保活注释间隔
+	// （默认 10s；0 = 关闭通用定时心跳）。仅网关新增/维护的注释受控——
+	// 不改写上游透传字节。五路（chat/responses/anthropic/converted）与
+	// typed images（真上游 SSE 流）均受此键控制；仅 codex images 合成路径
+	//（上游非流、SDK 合成 keepalive+completed）由 SDK 自带 60s 保活驱动，
+	// 不受此键影响（60s 不满足最严 LB 的 ≤60s 读超时）。
+	StreamKeepaliveInterval time.Duration `koanf:"stream_keepalive_interval"`
 }
 
 type UpstreamConfig struct {
@@ -177,7 +179,7 @@ func defaults() *Config {
 		// 计费路径防卡死）由 OpenPG/SettleBalance·SettleFefo 统一补，DSN 无需手工写（用户
 		// 显式配置同名参数时尊重不覆盖；statement_timeout 不设会话级——副作用核实见 f1-impl-report.md）。
 		DB:        DBConfig{MaxConns: 20},
-		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10},
+		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10, StreamKeepaliveInterval: 10 * time.Second},
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
@@ -247,8 +249,8 @@ func Load(path string) (*Config, error) {
 //     选择（errlog 无文档化"0=禁用"语义，取"全部 duration 字段"立场）；
 //   - 数值字段 ≥1：DefaultMaxConcurrency（silent 全坏面——从"健康地拒绝全流量"
 //     转启动即报错）、DB.MaxConns（puddle 层报 MaxSize 无法归因到 db.max_conns）；
-//   - 必填：auth.jwt_secret / db.dsn（自 main.go:64-66 移入内聚；admin.token
-//     已可空——空 = 不启用静态 token 鉴权，/admin 仅接受 platform_admin JWT）；
+//   - 必填：auth.jwt_secret / db.dsn（自 main.go:64-66 移入内聚；静态管理面
+//     token 配置键已删除——/admin 仅接受 platform_admin 身份（JWT 或其管理 key））；
 //   - 占位密钥精确匹配拒绝（change-me 系列防原样部署鉴权绕过；精确匹配防误杀恰
 //     以 change-me 开头的合法随机值，派生占位由"空值 + 强制 env"形态兜底）。
 //
@@ -268,6 +270,9 @@ func validate(c *Config) error {
 	}{
 		{"proxy.upstream_timeout", c.Proxy.UpstreamTimeout, false},
 		{"proxy.upstream_stream_timeout", c.Proxy.UpstreamStreamTimeout, false},
+		// stream_keepalive_interval：0 = 关闭通用定时心跳（合法语义）；
+		// 非 0 必须 ≥1ms（防 ticker panic 面）。
+		{"proxy.stream_keepalive_interval", c.Proxy.StreamKeepaliveInterval, true},
 		{"scheduler.sync_interval", c.Scheduler.SyncInterval, false},
 		{"usage.flush_interval", c.Usage.FlushInterval, false},
 		{"usage.quota_flush_interval", c.Usage.QuotaFlushInterval, false},
@@ -340,14 +345,13 @@ func validate(c *Config) error {
 		path  string
 		value string
 	}{
-		{"admin.token", c.Admin.Token},
 		{"auth.jwt_secret", c.Auth.JWTSecret},
 		// redis.password 复用既有占位密钥校验（foundation spec §2.1）；空 = 无鉴权，合法。
 		{"redis.password", c.Redis.Password},
 	} {
 		switch p.value {
-		case "change-me", "change-me-too", "dev-admin-token", "dev-jwt-secret-for-local":
-			return fmt.Errorf("%s must not be a placeholder value (got %q); inject via C3API_ADMIN_TOKEN/C3API_AUTH_JWT_SECRET", p.path, p.value)
+		case "change-me", "change-me-too", "dev-jwt-secret-for-local":
+			return fmt.Errorf("%s must not be a placeholder value (got %q); inject via C3API_AUTH_JWT_SECRET", p.path, p.value)
 		}
 	}
 	if c.Redis.DB < 0 {

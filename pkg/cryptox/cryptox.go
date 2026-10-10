@@ -19,3 +19,14 @@ func NewGroupKey() string {
 	}
 	return "ck-" + hex.EncodeToString(b)
 }
+
+// NewManagementKey 生成管理 API key 明文：raw = "mk-" + 32hex（16B 随机，长度 35）。
+// mk- = management key；前缀是管理面鉴权的唯一判别符（eyJ=JWT、ck-=客户端 key、
+// mk-=管理 key，三者不重叠）。明文直接落库（唯一约束 + 鉴权等值查）。
+func NewManagementKey() string {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		panic("cryptox: rand read failed: " + err.Error())
+	}
+	return "mk-" + hex.EncodeToString(b)
+}

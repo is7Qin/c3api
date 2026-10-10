@@ -15,17 +15,18 @@ import (
 // + Src + V）。
 func TestChangeRoundtrip(t *testing.T) {
 	c := Change{
-		V:           1,
-		Users:       true,
-		Templates:   true,
-		Clients:     true,
-		Multipliers: true,
-		Keys:        true,
-		Settings:    true,
-		Rules:       true,
-		Pricing:     true,
-		Groups:      []int64{12, 34, 56},
-		Src:         "i-1",
+		V:              1,
+		Users:          true,
+		Templates:      true,
+		Clients:        true,
+		Multipliers:    true,
+		Keys:           true,
+		Settings:       true,
+		Rules:          true,
+		Pricing:        true,
+		ManagementKeys: true,
+		Groups:         []int64{12, 34, 56},
+		Src:            "i-1",
 	}
 	got, err := Unmarshal(Marshal(c))
 	require.NoError(t, err)
@@ -163,4 +164,12 @@ func TestChangePricingIsEmpty(t *testing.T) {
 	require.False(t, Change{Pricing: true}.IsEmpty(), "Pricing:true 必须非空")
 	require.True(t, Change{}.IsEmpty(), "零值仍空")
 	require.False(t, Change{V: 1, Pricing: true}.IsEmpty(), "V 不参与判定")
+}
+
+// TestChangeManagementKeysIsEmpty 管理 key（mk-）跨实例失效：ManagementKeys
+// 置位 → 非空载荷（publish 前置放行；否则 service.publish 会直接丢弃）。
+func TestChangeManagementKeysIsEmpty(t *testing.T) {
+	require.False(t, Change{ManagementKeys: true}.IsEmpty(), "ManagementKeys:true 必须非空")
+	require.False(t, Change{V: 1, ManagementKeys: true}.IsEmpty(), "V 不参与判定")
+	require.True(t, Change{}.IsEmpty(), "零值仍空")
 }

@@ -15,7 +15,7 @@
 //	$env:C3API_REDIS_ADDR="127.0.0.1:16379"
 //	go test -tags e2e -count=1 -run TestIntelligentRoutingMultiInstanceE2E ./tools/e2e -v -timeout 1200s
 //
-// 与 billing/routing 单实例同包：复用 e2eEnv/adminToken/jwtSecret/pollUntil/
+// 与 billing/routing 单实例同包：复用 e2eEnv/adminJWT/jwtSecret/pollUntil/
 // waitSnapshot/createUser/userKey/putPrice/jsonGet/stopGracefully/waitExit +
 // rt 前缀路由 helpers（rtPlan/rtFindRoute/rtWaitRoute/rtWaitGenBump/rtPollLong/
 // rtSetRuleEnabled/rtCreateRule/rtRevision/rtAccountRead/rtAuditEntry）。
@@ -221,7 +221,6 @@ func rmStartInstance(t *testing.T, c *rmCluster, addr, tag string) (*e2eEnv, *ex
 	require.NoError(t, os.MkdirAll(tmp, 0o755))
 	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
-admin = { token = "%s" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
 redis = { addr = "%s" }
@@ -230,7 +229,7 @@ upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeou
 scheduler = { default_max_concurrency = 8, sync_interval = "3s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
 billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, addr, adminToken, jwtSecret, c.dsn, c.redisAddr)
+`, addr, jwtSecret, c.dsn, c.redisAddr)
 	cfgPath := filepath.Join(tmp, "config.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
 	srv := exec.Command(c.srvBin, "-config", cfgPath)
@@ -264,29 +263,12 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 	return env, srv, tmp
 }
 
-// rmWaitReady 轮询 /api/admin/settings 直到 200（migrate + 分区 bootstrap）。
+// rmWaitReady 无凭据引导就绪（spec 2026-10-09 §4.9）：/healthz → bootstrap
+// platform_admin JWT（共享库：实例 1 注册，后续实例登录）→ /api/admin/settings
+// 确认；写入 env.adminJWT（= 就绪）。
 func rmWaitReady(t *testing.T, env *e2eEnv, tmp, tag string) {
 	t.Helper()
-	deadline := time.Now().Add(90 * time.Second)
-	for {
-		req, err := http.NewRequest(http.MethodGet, env.adminURL("/settings"), nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				return
-			}
-		}
-		if !time.Now().Before(deadline) {
-			if data, err := os.ReadFile(filepath.Join(tmp, "server.log")); err == nil {
-				t.Logf("--- %s server.log ---\n%s", tag, data)
-			}
-			t.Fatalf("实例 %s 未在 90s 内就绪", tag)
-		}
-		time.Sleep(500 * time.Millisecond)
-	}
+	env.adminJWT = env.bootstrapAdminJWT()
 }
 
 // rmStopGraceful 优雅停机（CTRL_BREAK/SIGTERM + Wait 零退出码），成功后摘收殓。

@@ -42,7 +42,6 @@ import (
 )
 
 const (
-	adminToken  = "e2e-admin-token"
 	jwtSecret   = "e2e-jwt-secret-change-me"
 	serverAddr  = "127.0.0.1:18090" // 避开本机 VPN/代理已占用端口段（18080-18089 曾被占）
 	serverAddr2 = "127.0.0.1:18091" // 辅助实例：billing off 短路验证（独立配置/独立端口）
@@ -103,12 +102,66 @@ type e2eEnv struct {
 	pg   *pgxpool.Pool // c3api_e2e 库（SQL 断言）
 	tmp  string
 	addr string // 网关监听地址（主实例=serverAddr；辅助实例=18091/18092）
+	// adminJWT 本环境引导得到的 platform_admin JWT（bootstrapAdminJWT 设置；
+	// 静态 admin token 已删除，spec 2026-10-09 §4.9）。env.admin 用它鉴权。
+	adminJWT string
+}
+
+// bootstrapAdminJWT 无凭据引导（spec 2026-10-09 §4.9）：等待 /healthz 就绪 → 注册
+// 首个用户（fresh DB 首个注册即 platform_admin → JWT）；409/无 token → 登录后校验
+// /api/admin/settings 确认为 platform_admin；均失败 → Fatalf。返回 JWT（= 就绪）。
+func (e *e2eEnv) bootstrapAdminJWT() string {
+	e.t.Helper()
+	base := "http://" + e.addr
+	healthDeadline := time.Now().Add(60 * time.Second)
+	for {
+		resp, err := http.Get(base + "/healthz")
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				break
+			}
+		}
+		if time.Now().After(healthDeadline) {
+			e.t.Fatalf("server %s /healthz 未在 60s 内就绪", e.addr)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	const email = "e2e-bootstrap@loadtest.test"
+	post := func(path string) (string, int) {
+		b, _ := json.Marshal(map[string]any{"email": email, "password": "loadtest-pass-1"})
+		resp, err := http.Post(base+path, "application/json", bytes.NewReader(b))
+		e.t.Helper()
+		require.NoError(e.t, err)
+		defer resp.Body.Close()
+		buf := new(bytes.Buffer)
+		_, _ = buf.ReadFrom(resp.Body)
+		var out struct {
+			Token string `json:"token"`
+		}
+		_ = json.Unmarshal(buf.Bytes(), &out)
+		return out.Token, resp.StatusCode
+	}
+	token, code := post("/api/user/auth/register")
+	if token == "" || code == http.StatusConflict {
+		// 409 email exists ≠ 已 bootstrap（该邮箱可能只是普通用户）：登录后校验。
+		token, _ = post("/api/user/auth/login")
+	}
+	require.NotEmpty(e.t, token, "bootstrap 未取得 JWT（register/login 失败）")
+	req, err := http.NewRequest(http.MethodGet, e.adminURL("/settings"), nil)
+	require.NoError(e.t, err)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(e.t, err)
+	resp.Body.Close()
+	require.Equal(e.t, http.StatusOK, resp.StatusCode, "bootstrap user is not platform_admin")
+	return token
 }
 
 // admin 管理面请求：body nil = 无请求体；返回状态码 + 响应体。
 func (e *e2eEnv) admin(method, path string, body any) (int, string) {
 	e.t.Helper()
-	return e.req(method, e.adminURL(path), "Bearer "+adminToken, body)
+	return e.req(method, e.adminURL(path), "Bearer "+e.adminJWT, body)
 }
 
 // user 用户面请求（JWT）；key 为 AI 请求（/v1）鉴权 key 时走 ai。
@@ -309,7 +362,6 @@ func TestBillingE2E(t *testing.T) {
 
 	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
-admin = { token = "%s" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
 redis = { addr = "%s" }
@@ -318,7 +370,7 @@ upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeou
 scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "5s" }
 billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, serverAddr, adminToken, jwtSecret, dsn, redisAddr)
+`, serverAddr, jwtSecret, dsn, redisAddr)
 	cfgPath := filepath.Join(env.tmp, "config.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
 
@@ -346,31 +398,9 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 		_ = srvLog.Close()
 	})
 
-	// 就绪：轮询 /api/admin/settings 直到 200（ent migrate + 分区 bootstrap 完成）。
-	// 就绪前连接被拒属正常（启动中），原始请求不中断测试；须带 admin token
-	// （否则 401 恒不满足）。
-	ready := false
-	deadline := time.Now().Add(60 * time.Second)
-	for !ready && time.Now().Before(deadline) {
-		req, err := http.NewRequest(http.MethodGet, env.adminURL("/settings"), nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			ready = resp.StatusCode == http.StatusOK
-		}
-		if !ready {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-	if !ready { // 失败诊断：进程状态 + 服务日志
-		t.Logf("server ProcessState=%v", srv.ProcessState)
-		if data, err := os.ReadFile(filepath.Join(env.tmp, "server.log")); err == nil {
-			t.Logf("--- server.log ---\n%s", data)
-		}
-		t.Fatalf("server 未在 60s 内就绪")
-	}
+	// 就绪 + 引导（spec 2026-10-09 §4.9）：/healthz 就绪 → 注册首个用户
+	// （fresh DB 即 platform_admin）→ 取 JWT；再探 /api/admin/settings 确认。
+	env.adminJWT = env.bootstrapAdminJWT()
 
 	// 失败诊断（收尾）：任何场景失败 → 转储内置网关 server.log 与最新
 	// usage_logs 行（flusher 落库时序/DB 状态疑点直接可见——此前失败无日志
@@ -1170,7 +1200,6 @@ func startAuxGateway(t *testing.T, env *e2eEnv, srvBin, dsn, redisAddr string, b
 	t.Helper()
 	cfg := fmt.Sprintf(`server = { addr = "%s", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
-admin = { token = "%s" }
 auth = { jwt_secret = "%s" }
 db = { dsn = "%s", max_conns = 10 }
 redis = { addr = "%s" }
@@ -1179,7 +1208,7 @@ upstream = { max_idle_conns = 64, max_idle_conns_per_host = 16, idle_conn_timeou
 scheduler = { default_max_concurrency = 8, sync_interval = "10s" }
 usage = { batch_size = 500, flush_interval = "300ms", log_retention_days = 2, quota_flush_interval = "1s" }
 billing = { enabled = %v, flush_interval = "300ms", balance_refresh_interval = "500ms" }
-`, env.addr, adminToken, jwtSecret, dsn, redisAddr, usageCaptureOn, billingOn)
+`, env.addr, jwtSecret, dsn, redisAddr, usageCaptureOn, billingOn)
 	cfgPath := filepath.Join(env.tmp, "config.toml")
 	require.NoError(t, os.WriteFile(cfgPath, []byte(cfg), 0o644))
 	srv := exec.Command(srvBin, "-config", cfgPath)
@@ -1197,28 +1226,9 @@ billing = { enabled = %v, flush_interval = "300ms", balance_refresh_interval = "
 		}
 		_ = srvLog.Close()
 	})
-	// 就绪：轮询 admin settings 200（migrate/分区对已建库为幂等快路径）。
-	ready := false
-	deadline := time.Now().Add(60 * time.Second)
-	for !ready && time.Now().Before(deadline) {
-		req, err := http.NewRequest(http.MethodGet, env.adminURL("/settings"), nil)
-		require.NoError(t, err)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			ready = resp.StatusCode == http.StatusOK
-		}
-		if !ready {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-	if !ready {
-		if data, err := os.ReadFile(filepath.Join(env.tmp, "server.log")); err == nil {
-			t.Fatalf("辅助网关未在 60s 内就绪（%s）:\n%s", env.addr, data)
-		}
-		t.Fatalf("辅助网关未在 60s 内就绪（%s）", env.addr)
-	}
+	// 就绪 + 引导（migrate/分区对已建库为幂等快路径）：共享库首个用户已存
+	// → bootstrap 走登录；env.adminJWT 刷新为本实例可用 JWT（spec §4.9）。
+	env.adminJWT = env.bootstrapAdminJWT()
 	return srv
 }
 

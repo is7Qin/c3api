@@ -116,7 +116,7 @@ func TestServiceAccountExtTransferInterleave(t *testing.T) {
 	// 无 ext 行 ⇒ 走首写路径（旧实现会先 TryInsert 落引、后 CAS 拒绝）。
 
 	bar := &barrierExtCASStore{Repository: repos, ready: make(chan struct{}), proceed: make(chan struct{})}
-	svc := New(Deps{Store: bar, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: testEmailCodes})
+	svc := New(Deps{Store: bar, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 
 	var wg sync.WaitGroup
 	var werr error

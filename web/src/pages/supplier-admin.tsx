@@ -25,6 +25,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
 import { SettlementActionDialog, type ActionKind } from '@/components/supplier/settlement-action-dialog'
+import { SupplierPicker } from '@/components/supplier/supplier-picker'
 import { formatDateTime, formatQuotaMillis, parseQuotaUSD } from '@/components/fmt'
 import type { components } from '@/lib/api/schema'
 
@@ -98,7 +99,7 @@ export default function SupplierAdmin() {
   const adminRequest = useMutation({
     mutationFn: async () => {
       const millis = parseQuotaUSD(reqAmount)
-      if (!/^\d+$/.test(reqUid.trim())) throw new Error(t('supplierAdmin.request.invalidUid'))
+      if (!reqUid) throw new Error(t('supplierAdmin.request.requiredUid'))
       if (millis == null || millis <= 0) throw new Error(t('supplierAdmin.request.invalidAmount'))
       return api.adminRequestSettlement({ supplier_user_id: Number(reqUid.trim()), amount_millis: millis, request_key: reqKey, ...(reqNote ? { note: reqNote } : {}) })
     },
@@ -289,7 +290,7 @@ export default function SupplierAdmin() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="req-uid">{t('supplierAdmin.request.uid')}</Label>
-              <Input id="req-uid" inputMode="numeric" value={reqUid} onChange={e => setReqUid(e.target.value)} />
+              <SupplierPicker id="req-uid" value={reqUid} onChange={setReqUid} placeholder={t('supplierPicker.placeholder')} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="req-amount">{t('supplierAdmin.request.amount')}</Label>
@@ -303,7 +304,7 @@ export default function SupplierAdmin() {
           {adminRequest.isError && !(adminRequest.error instanceof ApiUnauthorized) && <p className="text-sm text-destructive">{(adminRequest.error as Error).message}</p>}
           <DialogFooter>
             <Button variant="outline" onClick={() => setReqOpen(false)}>{t('common.cancel')}</Button>
-            <Button onClick={() => adminRequest.mutate()} disabled={adminRequest.isPending}>{t('supplierAdmin.act.submit')}</Button>
+            <Button onClick={() => adminRequest.mutate()} disabled={adminRequest.isPending || !reqUid}>{t('supplierAdmin.act.submit')}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

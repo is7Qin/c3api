@@ -14,9 +14,10 @@ import (
 // --- fake 重载目标（记录各自被调用的重载方式；后沿测试可阻塞） ---
 
 type recSched struct {
-	mu     sync.Mutex
-	full   int
-	groups []int64
+	mu      sync.Mutex
+	full    int
+	groups  []int64
+	batches int // InvalidateGroups 调用次数（批路径合并断言）
 }
 
 func (r *recSched) InvalidateAll() {
@@ -29,10 +30,21 @@ func (r *recSched) InvalidateGroup(gid int64) {
 	r.groups = append(r.groups, gid)
 	r.mu.Unlock()
 }
+func (r *recSched) InvalidateGroups(ids []int64) {
+	r.mu.Lock()
+	r.groups = append(r.groups, ids...)
+	r.batches++
+	r.mu.Unlock()
+}
 func (r *recSched) groupCalls() []int64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]int64(nil), r.groups...)
+}
+func (r *recSched) batchCalls() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.batches
 }
 func (r *recSched) fullCalls() int {
 	r.mu.Lock()
@@ -314,6 +326,9 @@ func TestGroupMergeAndSubsume(t *testing.T) {
 		if got := r.sched.groupCalls(); len(got) != 2 || !contains(got, 5) || !contains(got, 6) {
 			t.Fatalf("组级并集 = %v, want {5,6}", got)
 		}
+		if got := r.sched.batchCalls(); got != 1 {
+			t.Fatalf("组级并集应合并为一次 InvalidateGroups, got %d 次", got)
+		}
 	})
 	t.Run("模板全量包含组级", func(t *testing.T) {
 		r := newRig(t, &recAuth{})
@@ -413,6 +428,15 @@ func TestNewBranches(t *testing.T) {
 		waitCalls(t, r.auth.calls, 1)
 		if r.bal.relCalls() != 0 || r.rules.calls() != 0 || r.sched.fullCalls() != 0 {
 			t.Fatalf("keys 只应 auth 全量：auth=%d bal=%d rules=%d schedFull=%d",
+				r.auth.calls(), r.bal.relCalls(), r.rules.calls(), r.sched.fullCalls())
+		}
+	})
+	t.Run("management_keys→auth 全量，不动其他", func(t *testing.T) {
+		r := newRig(t, &recAuth{})
+		r.markAndFire(KindManagementKeys, nil)
+		waitCalls(t, r.auth.calls, 1)
+		if r.bal.relCalls() != 0 || r.rules.calls() != 0 || r.sched.fullCalls() != 0 {
+			t.Fatalf("management_keys 只应 auth 全量：auth=%d bal=%d rules=%d schedFull=%d",
 				r.auth.calls(), r.bal.relCalls(), r.rules.calls(), r.sched.fullCalls())
 		}
 	})

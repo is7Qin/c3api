@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // fakeStreamGen 模拟适配层 GenerateImageStream（同签名——mock 替身不落
@@ -50,6 +51,29 @@ type failWriter struct {
 }
 
 func (w *failWriter) Write([]byte) (int, error) { return 0, errors.New("client closed") }
+
+// flushFailWriter 让 Write 成功但第 failAt 次 flush 失败（探测链命中 FlushError）。
+type flushFailWriter struct {
+	*httptest.ResponseRecorder
+	err    error
+	failAt int
+	calls  int
+}
+
+func (w *flushFailWriter) Flush() { w.ResponseRecorder.Flush() }
+
+func (w *flushFailWriter) FlushError() error {
+	w.calls++
+	at := w.failAt
+	if at <= 0 {
+		at = 1
+	}
+	if w.calls >= at {
+		return w.err
+	}
+	w.ResponseRecorder.Flush()
+	return nil
+}
 
 // fakeEnvelope 信封错误替身（信封协议：StatusCode() + RawJSON()）。
 type fakeEnvelope struct {
@@ -130,7 +154,7 @@ func collectImageLogs(t *testing.T, p *Proxy, store *captureLogStore) *domain.Us
 	return store.logs[len(store.logs)-1]
 }
 
-// TestStreamImagePassthrough 事件序列透传：keepalive → ": ping" 注释行；
+// TestStreamImagePassthrough 事件序列透传：keepalive → ": keepalive" 注释行；
 // completed 每张图一个 SSE 帧（b64_json 各自）；usage 仅末事件携带且 JSON
 // tag 直透；首事件即发响应头 + 每事件 Flush；流终计费落账（call_count 数
 // completed、usage 取末事件、ImageCost + 价格快照）。
@@ -163,7 +187,7 @@ func TestStreamImagePassthrough(t *testing.T) {
 	require.Empty(t, body)
 	require.True(t, headOK, "首事件即发响应头 + Flush（CF 524 免疫时序）")
 	// wire 形态：注释行 + 两帧（usage 仅末帧，JSON tag 直透）。
-	require.Equal(t, ": ping\n\n"+
+	require.Equal(t, ": keepalive\n"+
 		"event: image_generation.completed\ndata: {\"b64_json\":\"aGVsbG8=\"}\n\n"+
 		"event: image_generation.completed\ndata: {\"b64_json\":\"d29ybGQ=\",\"usage\":{\"input_tokens\":10,\"input_image_tokens\":100,\"output_tokens\":5,\"output_image_tokens\":50}}\n\n",
 		rec.Body.String())
@@ -183,6 +207,24 @@ func TestStreamImagePassthrough(t *testing.T) {
 	require.NotNil(t, l.PricePerCallMillis)
 	require.Equal(t, int64(5400), *l.PricePerCallMillis)
 	require.Equal(t, int64(11030), l.Cost, "100×800000/1e6 + 50×3000000/1e6 + 2×5400（ImageCost 口径不变）")
+}
+
+// TestStreamImageNoGenericHeartbeat codex images 合成路径（caller_images_stream.go）
+// 始终关闭通用定时心跳：即便 p.cfg.StreamKeepaliveInterval 有值，事件间静默也
+// 不产生网关通用 ": keepalive"（仅 SDK 自带 keepalive 经 Output.Heartbeat）。
+func TestStreamImageNoGenericHeartbeat(t *testing.T) {
+	p, _ := newImageStreamTestProxy(t, nil)
+	p.cfg.StreamKeepaliveInterval = 10 * time.Millisecond
+	r, rec := streamImageReq(t, nil)
+	gen := func(ctx context.Context, cred *domain.AccountCredential, prm *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error {
+		// 无事件、静默窗口远大于通用间隔：通用 timer 生效则会出现 ": keepalive"。
+		time.Sleep(60 * time.Millisecond)
+		return nil
+	}
+	code, _, _, err := p.streamImageGeneration(context.Background(), rec, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), gen)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, code)
+	require.NotContains(t, rec.Body.String(), ": keepalive", "codex images 合成路径不得启用通用定时心跳")
 }
 
 // TestBuildCompletedFrameNilB64JSON completed 帧 B64JSON=nil（*string——keepalive
@@ -232,6 +274,25 @@ func TestStreamImageZeroImagesSuccess(t *testing.T) {
 	require.Nil(t, l.PricePerCallMillis, "0 张无 per-image 价快照")
 }
 
+// TestStreamImageZeroEventSuccessBackfillsTTFT 零事件成功路径：ttft 在 commitOnce
+// 内才固化，而 timing 在其前构建（*int64 指针按值拷贝）→ 必须在 commitOnce 成功
+// 后回填，否则观测到的 AttemptTiming.TTFTMS 为 nil（恢复零事件成功的 TTFT 记录行为）。
+func TestStreamImageZeroEventSuccessBackfillsTTFT(t *testing.T) {
+	p, _ := newImageStreamTestProxy(t, nil)
+	base := planBase(t, p)
+	var got AttemptOutcome
+	obs := NewAttemptObserver(nil, nil, func(o AttemptOutcome) { got = o }, nil)
+	d := &dispatchObservation{observer: obs, base: base}
+	ctx := context.WithValue(context.Background(), ctxKeyDispatch{}, d)
+	r, rec := streamImageReq(t, nil)
+	code, _, handled, err := p.streamImageGeneration(ctx, rec, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen(nil, nil, nil))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, code)
+	require.True(t, handled)
+	require.Equal(t, ResultSuccess, got.Result)
+	require.NotNil(t, got.Timing.TTFTMS, "零事件成功路径 TTFT 必须回填（commitOnce 成功后）")
+}
+
 // TestStreamImagePreHeaderError 首事件前失败：响应头未发 → 错误原样透传
 // （信封 StatusCode/RawJSON 可用——HTTP 状态可用路径）。
 func TestStreamImagePreHeaderError(t *testing.T) {
@@ -264,7 +325,7 @@ func TestStreamImagePostHeaderError(t *testing.T) {
 	require.NoError(t, err, "响应头已发后失败不返回错误——帧内透传")
 	require.Equal(t, 0, code)
 	require.True(t, handled)
-	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"message\":\"upstream exploded\"}\n\n", "SSE error 帧 + EOF")
+	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"error\":{\"message\":\"upstream exploded\",\"type\":\"server_error\"}}\n\n", "SSE error 帧 + EOF")
 	// 计费走 recordStreamAbort：已收集 1 张照常落账（200 + abort 语义）。
 	l := collectImageLogs(t, p, store)
 	require.Equal(t, domain.ErrAbort, l.ErrorType)
@@ -285,7 +346,7 @@ func TestStreamImageAbortNoCompleted(t *testing.T) {
 	code, _, _, err := p.streamImageGeneration(context.Background(), rec, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen([]domain.ImageStreamEvent{{Type: domain.ImageStreamEventKeepalive}}, genErr, nil))
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
-	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"message\":\"upstream connection error\"}\n\n", "SSE error 帧固定文案（连接级内部文本不上用户帧）")
+	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"error\":{\"message\":\"upstream connection error\",\"type\":\"server_error\"}}\n\n", "SSE error 帧固定文案（连接级内部文本不上用户帧）")
 	l := collectImageLogs(t, p, store)
 	require.Equal(t, domain.ErrAbort, l.ErrorType)
 	require.Zero(t, l.CallCount, "无 completed → 0 张落账")
@@ -446,7 +507,8 @@ func TestStreamImageGroupMultiplier(t *testing.T) {
 }
 
 // sseHeaderSpy 记录是否显式提交状态码，用于区分 writeSSEHeaders 的惰性置头
-// 与 beginSSE 的显式 200 提交（内嵌 ResponseRecorder 提供 Header/Write 实现）。
+// 与 sserelay.Output.Commit 的显式 200 提交（内嵌 ResponseRecorder 提供
+// Header/Write 实现）。
 type sseHeaderSpy struct {
 	*httptest.ResponseRecorder
 	wroteHeader bool
@@ -463,7 +525,7 @@ func newSSEHeaderSpy() *sseHeaderSpy {
 
 // TestSSEHeaderHelpers_LazySetVsEagerCommit 钉住 B3：单一 writeSSEHeaders 只设置
 // 三件套、不提交状态码（保持 sserelay 站点「首帧前不提交头」的惰性语义）；需要
-// 立即提交的 beginSSE 在其上显式 WriteHeader(200)。
+// 立即提交的 sserelay.Output.Commit 在其上显式 WriteHeader(200)。
 func TestSSEHeaderHelpers_LazySetVsEagerCommit(t *testing.T) {
 	lazy := newSSEHeaderSpy()
 	writeSSEHeaders(lazy)
@@ -473,8 +535,48 @@ func TestSSEHeaderHelpers_LazySetVsEagerCommit(t *testing.T) {
 	require.False(t, lazy.wroteHeader, "writeSSEHeaders must not commit the status code")
 
 	eager := newSSEHeaderSpy()
-	beginSSE(eager)
+	out := sserelay.NewOutput(eager, 0, sserelay.OutputOptions{})
+	require.NoError(t, out.Commit())
+	out.Release()
 	require.Equal(t, "text/event-stream", eager.Header().Get("Content-Type"))
-	require.True(t, eager.wroteHeader, "beginSSE must commit the status code")
+	require.True(t, eager.wroteHeader, "Output.Commit must commit the status code")
 	require.Equal(t, http.StatusOK, eager.Code)
+}
+
+// TestStreamImageZeroEventCommitFlushFails 零事件成功的 Commit/FlushError 失败必须
+// 进失败出口（不得记 ResultSuccess/ErrNone）。
+func TestStreamImageZeroEventCommitFlushFails(t *testing.T) {
+	testHealthSink.reset()
+	p, store := newImageStreamTestProxy(t, nil)
+	r, rec := streamImageReq(t, nil)
+	boom := errors.New("commit flush boom")
+	fw := &flushFailWriter{ResponseRecorder: rec, err: boom, failAt: 1}
+	code, _, handled, err := p.streamImageGeneration(context.Background(), fw, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen(nil, nil, nil))
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	require.True(t, handled)
+	l := collectImageLogs(t, p, store)
+	require.Equal(t, domain.ErrAbort, l.ErrorType, "Commit/FlushError 失败不得记成功")
+	require.Equal(t, int64(0), l.CallCount)
+}
+
+// TestStreamImageFirstCompletedFlushFails 首个 completed 的事件级 flush 失败必须进
+// 失败出口（不得静默成功）；已收集张数仍落账。
+func TestStreamImageFirstCompletedFlushFails(t *testing.T) {
+	testHealthSink.reset()
+	p, store := newImageStreamTestProxy(t, nil)
+	r, rec := streamImageReq(t, nil)
+	b64a := "aGVsbG8="
+	boom := errors.New("event flush boom")
+	// Commit 的首次 flush 成功；completed 事件的 WriteFrame 首帧即时 flush
+	//（第 2 次 flush）失败（DrainFlush 在其后，未触达）。
+	fw := &flushFailWriter{ResponseRecorder: rec, err: boom, failAt: 2}
+	events := []domain.ImageStreamEvent{{Type: domain.ImageStreamEventCompleted, B64JSON: &b64a}}
+	code, _, handled, err := p.streamImageGeneration(context.Background(), fw, r, "req-1", 10, time.Now(), streamImageSel(), "gpt-image-2", streamImageCred(), streamImageParams(), fakeStreamGen(events, nil, nil))
+	require.NoError(t, err)
+	require.Equal(t, 0, code)
+	require.True(t, handled)
+	l := collectImageLogs(t, p, store)
+	require.Equal(t, domain.ErrAbort, l.ErrorType, "completed 事件 flush 失败不得静默成功")
+	require.Equal(t, int64(1), l.CallCount, "已收集张数仍落账")
 }

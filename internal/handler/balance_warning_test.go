@@ -23,7 +23,7 @@ import (
 
 func TestUserBalanceWarningThreshold_Handler(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: store})
 	// seed user
 	u, err := store.CreateUser(nil, &domain.User{Email: "u@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive})
 	require.NoError(t, err)
@@ -116,6 +116,11 @@ func (f *fakeUserProviderBW) UserSnapshot(id int64) (domain.UserSnapshot, bool) 
 	return s, ok
 }
 
+// AuthenticateManagement 补全 auth.SnapshotProvider（users-only → mgmt 恒 false）。
+func (f *fakeUserProviderBW) AuthenticateManagement(*http.Request) (domain.ManagementKeyMeta, bool) {
+	return domain.ManagementKeyMeta{}, false
+}
+
 type bwAuthedHandler struct {
 	r     http.Handler
 	token string
@@ -128,7 +133,7 @@ func (a *bwAuthedHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func TestMailChannelTest_IsolationAndAuth(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: store})
 	adminAPI := New(svc)
 	u, err := store.CreateUser(nil, &domain.User{Email: "u2@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive, Balance: 50000, BalanceWarningThreshold: 100000})
 	require.NoError(t, err)
@@ -166,7 +171,7 @@ func TestMailChannelTest_IsolationAndAuth(t *testing.T) {
 
 func TestUserBalanceWarningThreshold_OverflowViaHandler(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: store})
 	u, err := store.CreateUser(nil, &domain.User{Email: "ovh@example.com", PasswordHash: "x", Role: domain.RoleUser, Status: domain.UserStatusActive, BalanceWarningThreshold: 500000})
 	require.NoError(t, err)
 	iss := auth.NewIssuer("test-secret-bw")
@@ -211,9 +216,14 @@ func (f fakeAdminStatus) UserSnapshot(id int64) (domain.UserSnapshot, bool) {
 	return domain.UserSnapshot{Status: domain.UserStatusActive, Role: role, TokenVersion: 0}, true
 }
 
+// AuthenticateManagement 补全 auth.SnapshotProvider（users-only → mgmt 恒 false）。
+func (f fakeAdminStatus) AuthenticateManagement(*http.Request) (domain.ManagementKeyMeta, bool) {
+	return domain.ManagementKeyMeta{}, false
+}
+
 func TestMailChannelTest_AdminAuthViaServer(t *testing.T) {
 	store := newFakeStore()
-	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: nil, Log: nil, EmailCodeStore: store})
+	svc := service.New(service.Deps{Store: store, Scheduler: nil, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: store})
 	adminAPI := New(svc)
 	iss := auth.NewIssuer("test-secret")
 	adminTok, err := iss.Issue(1, "admin@example.com", string(domain.RolePlatformAdmin), 0)
@@ -221,9 +231,8 @@ func TestMailChannelTest_AdminAuthViaServer(t *testing.T) {
 	userTok, err := iss.Issue(2, "user@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
 	s := server.NewServer(server.Options{
-		AdminToken:   "admin-tok",
 		JWTIssuer:    iss,
-		UserStatus:   fakeAdminStatus{roles: map[int64]domain.Role{1: domain.RolePlatformAdmin}},
+		Auth:         fakeAdminStatus{roles: map[int64]domain.Role{1: domain.RolePlatformAdmin}},
 		AdminHandler: adminAPI.Router(),
 	})
 	do := func(auth string) *httptest.ResponseRecorder {
@@ -239,6 +248,5 @@ func TestMailChannelTest_AdminAuthViaServer(t *testing.T) {
 	require.Equal(t, http.StatusUnauthorized, do("").Code, "no token must 401")
 	require.Equal(t, http.StatusUnauthorized, do("Bearer wrong").Code, "wrong token must 401")
 	require.Equal(t, http.StatusUnauthorized, do("Bearer "+userTok).Code, "non-admin JWT must 401")
-	require.Equal(t, http.StatusInternalServerError, do("Bearer admin-tok").Code, "valid admin token reaches handler (mail not configured => 500)")
 	require.Equal(t, http.StatusInternalServerError, do("Bearer "+adminTok).Code, "platform_admin JWT reaches handler => 500")
 }

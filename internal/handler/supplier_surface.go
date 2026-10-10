@@ -220,78 +220,23 @@ func AccountScopeFrom(ctx context.Context) domain.AccountScope {
 	return domain.AccountScopeFrom(ctx)
 }
 
-// SupplierFundsPaths 供应商面上**资金写命令**的方法 + 路径集合（spec §6.5 I5 /
-// A24①）：这些命令一律要求具名 JWT 操作者，静态 admin token 明确 403。
-//
-// 供应商面（openapi tag `supplier`，22 op）目前只登记一条资金命令——
-// `POST /api/user/supplier/settlements`（supplier_request）。其余六条
-// （approve/reject/claim/confirmed-failed/paid/admin-request）只在管理面
-// `/api/admin/supplier/*` 上，由 `requireFundsActor`（supplier_admin.go）逐条 403。
-// 本表是「供应商面资金入口」的唯一事实源：新增资金 op 到供应商面时须一并登记，
-// 否则它会绕过本 middleware 的静态 token 拒绝（落到 RequireJWT 的 401，而非
-// 契约要求的 403）。
-var SupplierFundsPaths = []struct {
-	Method string
-	Path   string
-}{
-	{http.MethodPost, SupplierSurfaceBaseURL + "/settlements"},
-}
-
-// supplierFundsPathSet 资金路径查表（`METHOD PATH` → 命中）。
-var supplierFundsPathSet = func() map[string]struct{} {
-	m := make(map[string]struct{}, len(SupplierFundsPaths))
-	for _, p := range SupplierFundsPaths {
-		m[p.Method+" "+p.Path] = struct{}{}
-	}
-	return m
-}()
-
-// SupplierStaticTokenFundsGate 资金入口的静态 admin token 拒绝（§6.5 I5 / A24①）：
-// 请求携带**已配置的静态 admin token** 且命中资金写命令 ⇒ **403**（该凭证无 uid，
-// 无法担保在资金事务内锁定并复核 users 行）。
-//
-// 为什么必须在本 middleware 而不是资金 handler 里：供应商面最外层是
-// RequireJWT（非 JWT 凭据 ⇒ 401），静态 admin token 不是 JWT ⇒ 在到达生成面之前
-// 就已被 401 短死，永远到不了 handler 的 403。契约要求的「七种资金命令逐条 403」
-// 因此只能在**鉴权链最外层**兑现。
-//
-// 其他无效凭证仍走 401（门控语义不变：不泄漏「该 token 是资金入口专用」）；未配置
-// 静态 token（空）时本 middleware 恒不放行任何请求到 403 分支——空值守卫与
-// adminAuth 同款（空 token 永不匹配）。
-func SupplierStaticTokenFundsGate(adminToken string) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if adminToken == "" || r.Header.Get("Authorization") != "Bearer "+adminToken {
-				next.ServeHTTP(w, r)
-				return
-			}
-			if _, ok := supplierFundsPathSet[r.Method+" "+r.URL.Path]; !ok {
-				// 静态 token 打非资金面：交回既有鉴权链 ⇒ 401（与改造前一致，
-				// 不扩大 403 面）。
-				next.ServeHTTP(w, r)
-				return
-			}
-			httpface.WriteErr(w, http.StatusForbidden, "funds commands require a named JWT operator")
-		})
-	}
-}
-
 // NewSupplierSurface 组装供应商面完整链路（挂载于 /api/user/supplier/*）：
 //
-//	SupplierStaticTokenFundsGate(adminToken) → RequireJWT(iss,users) →
-//	RequireRole(users, SupplierSurfaceRoles...) →
+//	RequireIdentity(iss,p) → RequireRole(p, SupplierSurfaceRoles...) →
 //	SupplierScopeInject → 生成路由（tag `supplier` 的 22 op）
 //
 // 可达集唯一事实源 = domain.SupplierSurfaceRoles()（§2.6）；暴露面唯一事实源 =
-// openapi 里 tag `supplier` 的登记（本函数不再持有任何手写路由清单/guard）；资金
-// 入口的静态 token 拒绝面唯一事实源 = SupplierFundsPaths（见其注释）。
+// openapi 里 tag `supplier` 的登记（本函数不再持有任何手写路由清单/guard）。p 为
+// 单一鉴权快照面（users + mgmt 合并，proxy.Auth 实现）。
 //
-// adminToken = 部署配置的静态管理面 token（空 = 未启用静态鉴权）。
-func NewSupplierSurface(api *AdminAPI, iss *auth.Issuer, users auth.UserStatusProvider, adminToken string) http.Handler {
+// 资金命令（POST /api/user/supplier/settlements）与 JWT 同权（spec 2026-10-09 A5）：
+// RequireIdentity 两条分支（JWT / 管理 key mk-）均注入 FundsActor（actor = owner，
+// token_version = owner 快照当前值），写事务内复核通过——静态 token 专用资金门与
+// 其 403 语义已随静态管理面 token 删除（§4.5）。
+func NewSupplierSurface(api *AdminAPI, iss *auth.Issuer, p auth.SnapshotProvider) http.Handler {
 	var h http.Handler = api.SupplierSurfaceHandler()
 	h = SupplierScopeInject(h)
-	h = auth.RequireRole(users, domain.SupplierSurfaceRoles()...)(h)
-	h = auth.RequireJWT(iss, users)(h)
-	h = SupplierStaticTokenFundsGate(adminToken)(h)
+	h = auth.RequireRole(p, domain.SupplierSurfaceRoles()...)(h)
+	h = auth.RequireIdentity(iss, p)(h)
 	return h
 }

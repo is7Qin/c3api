@@ -199,7 +199,7 @@ func TestProxyBillingDisabledSkipsKeyQuota(t *testing.T) {
 	meta := activeKey(1, 1, 10)
 	meta.HasQuota = true
 	meta.Quota = 1
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, false)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, nil, false)
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// When
@@ -215,7 +215,7 @@ func TestProxyBillingDisabledSkipsKeyQuota(t *testing.T) {
 func TestProxyNoQuotaSkipsKeyQuotaWork(t *testing.T) {
 	// Given
 	meta := activeKey(1, 1, 10)
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// When
@@ -233,7 +233,7 @@ func TestProxyZeroCostSkipsKeyQuotaWork(t *testing.T) {
 	meta := activeKey(1, 1, 10)
 	meta.HasQuota = true
 	meta.Quota = 100
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// When
@@ -249,7 +249,7 @@ func TestProxyDeductQuotaReturnsEachDelta(t *testing.T) {
 	meta := activeKey(1, 1, 10)
 	meta.HasQuota = true
 	meta.Quota = 500
-	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, true)
+	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": meta}}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background()))
 
 	// When
@@ -1312,7 +1312,7 @@ func newTestProxyBillingKeys(t *testing.T, keys map[string]domain.KeyMeta, accs 
 		QuotaFlushInterval: time.Hour,
 		QuotaWriter:        qw,
 	}, logs, nil)
-	auth := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, true)
+	auth := NewAuth(noopKeyLoader{keys: keys}, noopUserLoader{}, nil, nil, true)
 	require.NoError(t, auth.Reload(context.Background())) // 构造不再自载——测试显式首刷（快照注册表单一入口）
 	hc := &http.Client{Transport: http.DefaultTransport}
 	clients := aiclient.NewFactory(hc, aiclient.Config{

@@ -1,11 +1,10 @@
 # 生产配置模板（compose 挂载，只读）。敏感项由环境变量
-# C3API_ADMIN_TOKEN / C3API_DB_DSN / C3API_AUTH_JWT_SECRET 注入覆盖（见 compose.yml），
+# C3API_DB_DSN / C3API_AUTH_JWT_SECRET / C3API_REDIS_ADDR 注入覆盖（见 compose.yml），
 # 此处留空即可。配置仅启动时读取，变更需滚动重启（无热更新）。
 server = { addr = ":18080", read_header_timeout = "10s", max_header_bytes = 1048576, time_zone = "" } # IANA 名（如 Asia/Shanghai）；空=进程本地
 log = { level = "info", output = "stdout" }
-# admin.token 可选——空 = 不启用静态 token，/admin 仅接受 platform_admin JWT
-# （首个注册用户自动成为 platform_admin，注册后即可登录管理面）
-admin = { token = "" }
+# 管理面鉴权：platform_admin 身份（首个注册用户自动成为 platform_admin，注册后即可
+# 登录管理面）或其管理 key（mk- 前缀，自签发）。
 # JWT 密钥（强制——缺失启动失败；生产必须经 env C3API_AUTH_JWT_SECRET 注入，
 # 随机生成 = 重启全失效 + 多实例不一致）
 auth = { jwt_secret = "" }
@@ -34,6 +33,12 @@ proxy = {
   # 默认开启（5 / 10）——升级后余额 < $10 的用户即时被钳为 5（原上限更大/不限者）。
   low_balance_max_concurrency = 5,
   low_balance_threshold_usd = 10,
+  # SSE 客户端保活：客户端长时间无业务输出时，网关按此间隔写出 `: keepalive\n`
+  # 注释帧以维持连接（默认 10s）。0 = 关闭通用定时心跳。五路（chat/responses/
+  # anthropic/converted）与 typed images 均受此键控制；仅 codex images 合成路径
+  #（上游非流、由 SDK 合成 keepalive+completed）不受此键影响——其保活由 SDK
+  # 自带 60s 驱动（60s 不满足最严 LB 的 ≤60s 读超时）。
+  stream_keepalive_interval = "10s",
 }
 upstream = {
   max_idle_conns = 8192,

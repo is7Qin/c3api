@@ -3,16 +3,15 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 import { useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
-import { ChevronDown, ChevronsUpDown, CircleUser, LogOut, type LucideIcon } from 'lucide-react'
+import { NavLink } from 'react-router-dom'
+import { ChevronDown, ChevronsUpDown, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { userAuth } from '@/lib/auth'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { AccountMenuItems } from '@/components/account-menu-items'
 import {
   DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
@@ -32,15 +31,10 @@ interface NavGroup {
 // 管理端（/app）与用户端（/user）共享的侧边栏：品牌 + 可折叠分组 + 底部用户卡。
 // 分组标题（有 titleKey 时）为可点击按钮，默认展开、点击收起；用户卡展示 email，菜单内退出登录。
 export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; userEmail?: string }) {
-  const navTo = useNavigate()
   const { t } = useTranslation()
   // titleKey -> 是否折叠；不在集合内即默认展开
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
-  const logout = () => {
-    userAuth.clear()
-    navTo('/user/login')
-  }
   const avatarInitial = userEmail ? userEmail.charAt(0).toUpperCase() : ''
 
   const renderItems = (items: NavItem[]) =>
@@ -107,15 +101,9 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
               <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{userEmail ?? ''}</span>
             </div>
             <DropdownMenuSeparator />
-            {/* 个人中心入口在底部用户卡内（用户裁决 2026-08-15——不放侧边栏导航）；
-                登出独立成组（分隔线隔开——参考 ui 仓库 nav-user 形态） */}
-            <DropdownMenuItem onClick={() => navTo('/user/profile')}>
-              <CircleUser /> {t('user.nav.profile')}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={logout}>
-              <LogOut /> {t('common.logout')}
-            </DropdownMenuItem>
+            {/* 账户条目（个人中心 / 管理 API key / 登出）由共享 AccountMenuItems 渲染
+                （用户裁决 2026-08-15——入口不放侧边栏导航；登出独立成组） */}
+            <AccountMenuItems />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

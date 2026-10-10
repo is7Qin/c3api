@@ -423,6 +423,13 @@ const (
 	Desc GetUsersParamsOrder = "desc"
 )
 
+// Defines values for GetUsersParamsRole.
+const (
+	GetUsersParamsRolePlatformAdmin GetUsersParamsRole = "platform_admin"
+	GetUsersParamsRoleSupplier      GetUsersParamsRole = "supplier"
+	GetUsersParamsRoleUser          GetUsersParamsRole = "user"
+)
+
 // Account defines model for Account.
 type Account struct {
 	// BaseURL credential-type conditional: if template is codex-oauth/codex-pat must be null (non-empty forbidden); if api_key/responses-special non-empty overrides template
@@ -1384,7 +1391,7 @@ type RedemptionCode struct {
 	Code      string    `json:"Code"`
 	CreatedAt time.Time `json:"CreatedAt"`
 
-	// CreatedBy 0 = 系统（静态 admin token）；>0 = platform_admin 用户 id
+	// CreatedBy platform_admin 用户 id（adminAuth 鉴权路径恒注入 owner id）；0 = 系统/无归属
 	CreatedBy int64 `json:"CreatedBy"`
 
 	// ExpiresAt 码未兑换即过期；null = 永久
@@ -2811,15 +2818,20 @@ type GetUsageLogsParams struct {
 
 // GetUsersParams defines parameters for GetUsers.
 type GetUsersParams struct {
-	Limit  *int                 `form:"limit,omitempty" json:"limit,omitempty"`
-	Offset *int                 `form:"offset,omitempty" json:"offset,omitempty"`
-	Email  *string              `form:"email,omitempty" json:"email,omitempty"`
-	Sort   *string              `form:"sort,omitempty" json:"sort,omitempty"`
-	Order  *GetUsersParamsOrder `form:"order,omitempty" json:"order,omitempty"`
+	Limit           *int                 `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset          *int                 `form:"offset,omitempty" json:"offset,omitempty"`
+	Email           *string              `form:"email,omitempty" json:"email,omitempty"`
+	Sort            *string              `form:"sort,omitempty" json:"sort,omitempty"`
+	Order           *GetUsersParamsOrder `form:"order,omitempty" json:"order,omitempty"`
+	Role            *GetUsersParamsRole  `form:"role,omitempty" json:"role,omitempty"`
+	SupplierSurface *bool                `form:"supplier_surface,omitempty" json:"supplier_surface,omitempty"`
 }
 
 // GetUsersParamsOrder defines parameters for GetUsers.
 type GetUsersParamsOrder string
+
+// GetUsersParamsRole defines parameters for GetUsers.
+type GetUsersParamsRole string
 
 // GetAdminUsersTopParams defines parameters for GetAdminUsersTop.
 type GetAdminUsersTopParams struct {
@@ -6608,6 +6620,22 @@ func (siw *ServerInterfaceWrapper) GetUsers(w http.ResponseWriter, r *http.Reque
 	err = runtime.BindQueryParameter("form", true, false, "order", r.URL.Query(), &params.Order)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "order", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "role" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "role", r.URL.Query(), &params.Role)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "role", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "supplier_surface" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "supplier_surface", r.URL.Query(), &params.SupplierSurface)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "supplier_surface", Err: err})
 		return
 	}
 

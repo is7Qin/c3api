@@ -5,7 +5,7 @@ go 1.26.5
 require (
 	entgo.io/ent v0.14.6
 	github.com/adhocore/gronx v1.20.4
-	github.com/anthropics/anthropic-sdk-go v1.75.0
+	github.com/anthropics/anthropic-sdk-go v1.76.0
 	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.3.2
 	github.com/golang-jwt/jwt/v5 v5.3.1
@@ -55,7 +55,7 @@ require (
 	github.com/google/go-cmp v0.6.0 // indirect
 	github.com/hashicorp/hcl/v2 v2.18.1 // indirect
 	github.com/invopop/jsonschema v0.14.0 // indirect
-	github.com/is7Qin/codex-sdk v0.0.0-20261001134104-41976b9cdd20
+	github.com/is7Qin/codex-sdk v0.0.0-20261009222922-f79e2ac2f755
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect

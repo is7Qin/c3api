@@ -33,6 +33,11 @@ func (r *recSched2) InvalidateGroup(g int64) {
 	r.groups = append(r.groups, g)
 	r.mu.Unlock()
 }
+func (r *recSched2) InvalidateGroups(ids []int64) {
+	r.mu.Lock()
+	r.groups = append(r.groups, ids...)
+	r.mu.Unlock()
+}
 func (r *recSched2) InvalidateAllSyncCtx(ctx context.Context) error {
 	r.mu.Lock()
 	r.full++

@@ -45,7 +45,7 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 		LastError: &reason, LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: intPtr(25000), CacheDomain: &dom,
 	}
 	prober := &hProber{}
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Keys: &fakeKeys{}, Log: nil, EmailCodeStore: store, RecoverProber: prober})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, RecoverProber: prober})
 	h := New(svc)
 	r := chi.NewRouter()
 	r.Mount("/", h.Router())

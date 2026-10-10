@@ -5,7 +5,7 @@
 ## 通用约定
 
 - **Base URL**：`http://<gateway>/api/admin`
-- **认证**：两条路径任一通过即可。静态 admin token（`Authorization: Bearer <admin_token>`，`config.toml` 的 `admin.token` / 环境变量 `C3API_ADMIN_TOKEN`；**可选项**，空 = 不启用静态 token 鉴权）或 platform_admin JWT（与 `/api/user` 面同签发，快照角色覆盖 claims）。两者皆缺失/错误、或普通 `user` 角色 JWT → `401`（详见「鉴权与 created_by 约定」）。
+- **认证**：管理面仅认 `platform_admin` 身份——platform_admin JWT（与 `/api/user` 面同签发，快照角色覆盖 claims）或其**管理 key**（`Authorization: Bearer mk-...`，自签发；可达面 = owner 角色闭包）。凭证缺失/错误、或普通 `user` 角色 JWT → `401`（详见「鉴权与 created_by 约定」）。
 - **Content-Type**：请求体与响应均为 `application/json`（`rotate-key` 等无请求体操作除外）。
 - **错误格式**：非 2xx 响应体为 `{"error": "<消息>"}`。404 的消息含缺失资源 id（如 `service: not found: id=999 missing`），便于定位。
 - **ID**：路径参数 `{id}` 为模板/账号/分组的整数 ID。
@@ -173,7 +173,8 @@
 
 **流式语义（无全流缓冲，逐帧改写）：**
 - REST 成功 = 上游返回 2xx 前的成功响应；SSE 成功 = 上游返回 `200` 后逐帧可识别数据帧实时改写，后续流中止不回滚已发出帧；WS 成功 = 上游接受首帧后逐帧可识别上游文本帧实时改写，二进制/不透明帧不改。
-- **SSE 顺序**：原生 `sserelay` 调用方若同时配置 `Mapper` 与 `Observer`，`Mapper` 先执行，非丢弃输出先写入客户端，再以原始未修改事件回调 `Observer`；被丢弃帧仅回调 `Observer` 不写出，写入失败则在 `Observer` 前返回；转换流式当前无 `Observer`，TTFT 与用量提取在 `Mapper` 内以原始 `ev.Data` 于 `StreamMapper.Map` 之前发生，顺序不变。已改变的 SSE 负载保留全部非 `data:` 行（`event`/`id`/`retry`/注释及顺序），仅替换逻辑 `data`，仅在真实 implicit 改写时才可能将多 `data:` 行归一为一行。
+- **SSE 顺序**：`sserelay` 调用方配置 `Mapper` 时逐帧先经 `Mapper`（协议转换 + implicit 模型改写），随后在**写出前 seam** `OnEvent` 以**原始未修改事件**回调（TTFT/usage/图像计数/轮次钩子与续接入队统一在此采样，drop 帧也回调；取代旧 post-write `Observer`），再写出（drop 帧不写）。五路 caller、协议转换与 codex responses 走同一 seam。已改变的 SSE 负载保留全部非 `data:` 行（`event`/`id`/`retry`/注释及顺序），仅替换逻辑 `data`，仅在真实 implicit 改写时才可能将多 `data:` 行归一为一行。
+- **已提交流中止的错误帧**：客户端已收到 `200`/帧后上游读取失败，网关补写客户端协议 SSE `error` 帧——OpenAI（Chat/Responses/Images）为顶层 `error` 键（`type: server_error`），Anthropic 为 `event: error` + `type:error` 信封（内层 `api_error`）；openai-go 共享 `ssestream` 以顶层 `error` 键判流失败。取消 / 写侧不可用（写失败）不补写。
 - **WS 顺序**：上游→客户端文本帧在 `frameHook`/fatal 鉴权与用量/图片嗅探（原始字节）之后、客户端写出之前重写；显式/未映射路径不安装 mapper，不做响应扫描。
 - **转换顺序**：原始上游观测 → `ConvertResponse`/`StreamMapper` 协议转换 → 最终面向客户端输出的 implicit 重写 → 客户端写出。转换流式 `StreamMapper.Map` 可能返回零/一/多完整 SSE 帧，helper 遍历整个返回切片逐帧重写，保留帧边界/顺序/元数据与 `[DONE]` 语义。
 - 共享 helper 在 `override` 为空、无已识别字符串路径或全部值已相等时返回原切片；已改变 SSE 帧才重建。
@@ -755,7 +756,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 |---|---|
 | `200` | 分页列表（增强分页范式，与兑换码/模型价格同款） |
 | `400` | 非法 `sort` / `order` / `page_size` 越界 |
-| `401` | admin 凭据（静态 token 或 platform_admin JWT）缺失或错误；普通 `user` 角色 JWT 访问 |
+| `401` | admin 凭据（platform_admin JWT 或 platform_admin 管理 key）缺失或错误；普通 `user` 角色 JWT 访问 |
 
 ### 用户面：我的临时额度
 
@@ -1295,10 +1296,10 @@ flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incom
 
 | 路径 | 鉴权方式 | `created_by` 语义 |
 |---|---|---|
-| 静态 admin token（`Authorization: Bearer <admin.token>`） | `config.toml` 的 `admin.token` | 生成码时 `created_by = 0`（**0 = 系统**，未注入用户身份） |
 | platform_admin JWT（`Authorization: Bearer <jwt>`） | 与 /user 面同签发的 JWT，且 `role == platform_admin` | 生成码时 `created_by = 该用户 id`（>`0`） |
+| platform_admin 管理 key（`Authorization: Bearer mk-...`） | owner 快照 `role == platform_admin` 的管理 key | 生成码时 `created_by = owner 用户 id`（>`0`） |
 
-`/api/admin/*` 两条路径任一通过即可；普通 `user` 角色的 JWT 访问 `/api/admin/*` → `401`。`created_by` 用于审计"哪个管理员/系统创建了这批发码"。
+`/api/admin/*` 认平台管理员身份（JWT 或该身份的管理 key）；普通 `user` 角色的 JWT 访问 `/api/admin/*` → `401`。`created_by` 用于审计"哪个管理员创建了这批发码"。
 
 ---
 
@@ -1414,7 +1415,7 @@ billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval =
 | 状态码 | 场景 |
 |---|---|
 | `400` | 请求体非法 / 修改密码新密码为空或超 72 字节 / 路径 ID 非法 / 非法 `sort` 或 `order` / 非法 `status` 枚举 / 批量 `ids` 为空或超 100 条 / 批量 `fields` 为空 / 规则 `when`/`then` 校验失败 / 兑换码生成参数非法（`type` 非法、`value ≤ 0`、`temp_balance` 缺 `resource_expires_at`、`expires_at` 过去、`count` 越界）/ 兑换码无效（`invalid code`：不存在/失效/过期/用尽，统一不泄露细节）/ 价格负数或非负校验失败 / `fast_multiplier` 越界 / 倍率（组/用户-组专属 `price_multiplier`，正常值 `0`~`10`）越界 / `service_tier_policy_*` 非法值 / `source` 筛选非法 / `price_source_url` 未配置触发 sync |
-| `401` | admin 凭据（静态 token 或 platform_admin JWT）缺失或错误；普通 `user` 角色 JWT 访问 `/api/admin/*` |
+| `401` | admin 凭据（platform_admin JWT 或 platform_admin 管理 key）缺失或错误；普通 `user` 角色 JWT 访问 `/api/admin/*` |
 | `402` | **计费拒绝**（`error_type=billing`）：模型缺价 / 余额快照缺失或 ≤ 0（AI 请求面，非管理面） |
 | `404` | 资源不存在（单资源与批量均返回，消息含缺失 id，如 `service: not found: id=999 missing`） |
 | `409` | 规则 `priority`/`name` 唯一冲突 / 兑换码重复兑换（`already redeemed`）/ 删除 litellm 价格行 |

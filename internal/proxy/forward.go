@@ -51,6 +51,10 @@ type Config struct {
 	// LowBalanceConcThresholdMilli 触发阈值（毫分；config.proxy.low_balance_threshold_usd
 	// × 1e5 取整）。余额快照存在且严格小于它时把用户级上限钳为 LowBalanceConcCap。
 	LowBalanceConcThresholdMilli int64
+	// StreamKeepaliveInterval SSE 客户端保活注释间隔（config.proxy.stream_keepalive_interval
+	// 映射；默认 10s，0 = 关闭通用定时心跳）。五路 + images 经 Output 的保活由它
+	// 驱动（images 自身 SDK 保活不受影响）。
+	StreamKeepaliveInterval time.Duration
 }
 
 type Proxy struct {
@@ -72,9 +76,13 @@ type Proxy struct {
 	// cont is the hard-continuation binding store (internal/continuation,
 	// main 经 Deps.Continuation 注入；nil = 未装配——Responses 请求零
 	// Redis，previous_response_id 请求 fail-closed）。
-	cont     *continuation.Store
-	inflight atomic.Int64
-	callers  map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
+	cont *continuation.Store
+	// contBinder 是 REST 流式的异步绑定 worker（main 经 Deps.ContBind 注入）；
+	// nil = 未装配——REST 流式绑定 no-op（测试友好）。字段名 contBinder 与同步方法
+	// contBind 区分。
+	contBinder *ContBindWorker
+	inflight   atomic.Int64
+	callers    map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
 	// imageGenerations/imageEdits images 端点调用器（同一格式
 	// openai-images 两个端点，上游子路径不同——handleFormat 按请求路径选
 	// 调用器，New 一次性构造免 per-request 分配）。
@@ -124,6 +132,9 @@ type Deps struct {
 	Recorder *quality.Recorder
 	// Continuation 硬续接绑定存储（nil = 未装配 → continuation 请求 fail-closed）。
 	Continuation *continuation.Store
+	// ContBind REST 流式异步绑定 worker（nil = 未装配 → REST 流式绑定 no-op，
+	// 未装配形态零行为变化；与 Continuation 同处注入）。
+	ContBind *ContBindWorker
 }
 
 // New 构造代理。creds 为凭据注册表（直接参数注入，编译期强制；
@@ -135,7 +146,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		log: log, bill: bill, errlog: errlog,
-		codex: deps.Codex, qualityRecorder: deps.Recorder, cont: deps.Continuation,
+		codex: deps.Codex, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
 		wsConns:             newWSRegistry(),
 	}
@@ -664,6 +675,16 @@ func statusOf(err error) int {
 		}
 	}
 	return 0 // 连接级/超时错误
+}
+
+// streamUpstreamStatus 归一「流式非接受响应」交 pipeline 前的状态码：上游
+// 2xx-非-200（201/204/206…）不是合法 SSE 接受态，归一为 502，避免 pipeline
+// 收到「失败 + 2xx」被 attempt_outcome 拒绝（§3.7）。其余状态原样透传。
+func streamUpstreamStatus(code int) int {
+	if code >= 200 && code <= 299 && code != http.StatusOK {
+		return http.StatusBadGateway
+	}
+	return code
 }
 
 // upstreamBody 提取上游错误响应的原始 body：openai.Error / anthropic.Error 的

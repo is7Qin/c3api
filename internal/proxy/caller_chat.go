@@ -8,13 +8,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"time"
 
 	"github.com/openai/openai-go"
 	"github.com/tidwall/gjson"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -50,19 +50,23 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
 			resp.Body.Close()
-			return resp.StatusCode, rb, false, nil
+			// 2xx-非-200 归一 502 再交 pipeline（attempt_outcome 拒绝 ResultFailed+2xx）。
+			return streamUpstreamStatus(resp.StatusCode), rb, false, nil
 		}
 		// SSE 响应头与旧 sseWriter 一致（relay 只转发字节，不代设头）
 		writeSSEHeaders(w)
+		out := sserelay.NewOutput(w, p.cfg.StreamKeepaliveInterval, sserelay.OutputOptions{Ctx: ctx, Cancel: cancel})
+		defer out.Release()
 		var it, ot, tt, cr, cc int64
 		// TTFT 采集（首 token 时间毫秒）：首个 SSE 帧（任意事件）到达时间——
-		// Observer 在帧原样写出后回调，与客户端感知首 chunk 最接近；单帧旁路
-		// 零成本（time.Now 一次 + 毫秒换算）。首帧后写入 ctx（logWithCtx 读取）；
-		// 无首 token 路径（Relay 前失败）不写入 → nil。
+		// 统一写出前 seam 回调（Mapper 之后、写缓冲之前），与客户端感知首 chunk
+		// 最接近；单帧旁路零成本（time.Now 一次 + 毫秒换算）。首帧后写入 ctx
+		// （logWithCtx 读取）；无首 token 路径（Relay 前失败）不写入 → nil。
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
+			Output: out,
 			Mapper: newResponseModelSSEMapper(sel.ClientResponseModel(reqModel)),
-			Observer: func(ev sserelay.Event) {
+			OnEvent: func(ev sserelay.Event) {
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
 					ttft = &ms
@@ -85,21 +89,27 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
 		if err != nil {
-			// 流式结束分流：仅 context.Canceled 判为客户端断开，上游停滞超时（UpstreamStreamTimeout）为 DeadlineExceeded，走上游错误分支，不可误判或 failover；
+			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
 			// 客户端断开/上游中断均经 typed outcome 统一收敛，保证 exactly-one 观测。
-			if errors.Is(err, context.Canceled) {
+			base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
+			switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ttft) {
+			case streamExitClientCancel:
 				// 客户端断开：上游已消费请求，仍保留已采集的 usage/TTFT 并记 200+ErrAbort，避免成功请求丢日志。
-				base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 				outcome := chatOutcomeForAbort(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, true)
 				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
 				return 0, nil, true, nil
+			case streamExitUncommitted:
+				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
+				return statusOf(err), nil, false, err
+			default: // 写失败 / 已提交
+				if out.Committed() {
+					writeClientStreamError(out, domain.FormatOpenAIChat, err)
+				}
+				// 上游流中断：保留已采集 usage 走网络错误观测。
+				outcome := chatOutcomeForAbort(base, out.BusinessFrameSent(), usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, false)
+				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
+				return 0, nil, true, nil
 			}
-			// 上游流中断：按是否已首帧（ttft != nil）区分已发送，保留已采集 usage 走网络错误观测。
-			sent := ttft != nil
-			base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
-			outcome := chatOutcomeForAbort(base, sent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, false)
-			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
-			return 0, nil, true, nil
 		}
 		// 流式成功：携带 TTFT 与已聚合的 usage 经 typed outcome 统一记录，保证 exactly-one 观测与记录归一。
 		base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))

@@ -31,6 +31,7 @@ type fakeStore struct {
 	groups      map[int64]*domain.Group
 	accGroups   map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
 	keys        map[int64]*domain.Key
+	mgmtKeys    map[int64]*domain.ManagementKey // 管理 API key（mk-，spec 2026-10-09）
 	users       map[int64]*domain.User
 	settings    map[string]*domain.Setting
 	rules       map[int64]domain.Rule
@@ -84,7 +85,7 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		tpls: make(map[int64]*domain.Template), accs: make(map[int64]*domain.Account),
 		groups: make(map[int64]*domain.Group), accGroups: make(map[int64][]int64),
-		keys: make(map[int64]*domain.Key), users: make(map[int64]*domain.User),
+		keys: make(map[int64]*domain.Key), mgmtKeys: make(map[int64]*domain.ManagementKey), users: make(map[int64]*domain.User),
 		settings: make(map[string]*domain.Setting), rules: make(map[int64]domain.Rule),
 		assign: make(map[int64][]int64), assignMult: make(map[[2]int64]*int),
 		codes: make(map[int64]*domain.RedemptionCode),
@@ -1431,7 +1432,14 @@ func (f *fakeStore) ListUsers(ctx context.Context, q repository.ListQuery) ([]*d
 	defer f.mu.Unlock()
 	var out []*domain.User
 	for _, u := range f.users {
-		if q.Email != "" && !strings.Contains(u.Email, q.Email) {
+		if q.Email != "" && !strings.Contains(strings.ToLower(u.Email), strings.ToLower(q.Email)) {
+			continue
+		}
+		if q.SupplierSurface {
+			if !domain.CanAccessSupplierSurface(u.Role) {
+				continue
+			}
+		} else if q.Role != "" && string(u.Role) != q.Role {
 			continue
 		}
 		c := *u
@@ -1728,6 +1736,62 @@ func (f *fakeStore) DeleteKey(ctx context.Context, id int64) error {
 	return nil
 }
 
+// --- 管理 API key（mk-，spec 2026-10-09）---
+
+func (f *fakeStore) CreateManagementKey(ctx context.Context, k *domain.ManagementKey) (*domain.ManagementKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k.ID = f.nextID
+	f.nextID++
+	c := *k
+	f.mgmtKeys[k.ID] = &c
+	out := c
+	return &out, nil
+}
+
+func (f *fakeStore) ListManagementKeysByUser(ctx context.Context, userID int64) ([]*domain.ManagementKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []*domain.ManagementKey
+	for _, k := range f.mgmtKeys {
+		if k.DeletedAt != nil || k.UserID != userID {
+			continue
+		}
+		c := *k
+		out = append(out, &c)
+	}
+	return out, nil
+}
+
+func (f *fakeStore) UpdateManagementKey(ctx context.Context, p *repository.ManagementKeyPatch) (*domain.ManagementKey, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, ok := f.mgmtKeys[p.ID]
+	if !ok || k.UserID != p.UserID || k.DeletedAt != nil {
+		return nil, missingErr(p.ID)
+	}
+	if p.Name != nil {
+		k.Name = *p.Name
+	}
+	if p.Status != nil {
+		k.Status = *p.Status
+	}
+	c := *k
+	return &c, nil
+}
+
+func (f *fakeStore) DeleteManagementKey(ctx context.Context, userID, id int64) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	k, ok := f.mgmtKeys[id]
+	if !ok || k.UserID != userID || k.DeletedAt != nil {
+		return "", missingErr(id)
+	}
+	now := time.Now()
+	k.DeletedAt = &now
+	return k.KeyRaw, nil
+}
+
 func (f *fakeStore) GrantGroup(ctx context.Context, groupID, userID int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -1824,6 +1888,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		users:       cloneUserMap(f.users),
 		temps:       slices.Clone(f.temps),
 		nextID:      f.nextID,
+		mgmtKeys:    cloneMgmtKeyMap(f.mgmtKeys),
 		balanceLogs: slices.Clone(f.balanceLogs),
 		// 授予面（assignment 替换循环入事务）
 		assign:     cloneAssignMap(f.assign),
@@ -1844,7 +1909,63 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 	f.assign, f.assignMult = tx.assign, tx.assignMult
 	f.accs, f.accExts, f.accGroups = tx.accs, tx.accExts, tx.accGroups
 	f.priceEntries, f.priceVariants = tx.priceEntries, tx.priceVariants
+	f.mgmtKeys = tx.mgmtKeys
 	return nil
+}
+
+func cloneMgmtKeyMap(m map[int64]*domain.ManagementKey) map[int64]*domain.ManagementKey {
+	out := make(map[int64]*domain.ManagementKey, len(m))
+	for k, v := range m {
+		c := *v
+		out[k] = &c
+	}
+	return out
+}
+
+func (f *fakeTx) CreateManagementKey(ctx context.Context, k *domain.ManagementKey) (*domain.ManagementKey, error) {
+	k.ID = f.nextID
+	f.nextID++
+	c := *k
+	f.mgmtKeys[k.ID] = &c
+	out := c
+	return &out, nil
+}
+
+func (f *fakeTx) ListManagementKeysByUser(ctx context.Context, userID int64) ([]*domain.ManagementKey, error) {
+	var out []*domain.ManagementKey
+	for _, k := range f.mgmtKeys {
+		if k.DeletedAt != nil || k.UserID != userID {
+			continue
+		}
+		c := *k
+		out = append(out, &c)
+	}
+	return out, nil
+}
+
+func (f *fakeTx) UpdateManagementKey(ctx context.Context, p *repository.ManagementKeyPatch) (*domain.ManagementKey, error) {
+	k, ok := f.mgmtKeys[p.ID]
+	if !ok || k.UserID != p.UserID || k.DeletedAt != nil {
+		return nil, missingErr(p.ID)
+	}
+	if p.Name != nil {
+		k.Name = *p.Name
+	}
+	if p.Status != nil {
+		k.Status = *p.Status
+	}
+	c := *k
+	return &c, nil
+}
+
+func (f *fakeTx) DeleteManagementKey(ctx context.Context, userID, id int64) (string, error) {
+	k, ok := f.mgmtKeys[id]
+	if !ok || k.UserID != userID || k.DeletedAt != nil {
+		return "", missingErr(id)
+	}
+	now := time.Now()
+	k.DeletedAt = &now
+	return k.KeyRaw, nil
 }
 
 func cloneAssignMap(m map[int64][]int64) map[int64][]int64 {
@@ -1886,6 +2007,8 @@ type fakeTx struct {
 	users  map[int64]*domain.User
 	temps  []*fakeTempRow
 	nextID int64
+	// mgmtKeys 管理 API key 暂存（创建随外层事务提交/回滚，spec 2026-10-09）。
+	mgmtKeys map[int64]*domain.ManagementKey
 	// balanceLogs 余额变动记录暂存（提交/回滚同 WithTx）。
 	balanceLogs []*domain.BalanceLog
 	// 授予面：assign/assignMult 同 fakeStore 语义。

@@ -67,6 +67,9 @@ const (
 	// （service.UpdateSetting）/远端 dispatcher 各自负责——本 mark 只承担
 	// scope 声明方（当前 = auth，snapshots.go:30）重载。
 	KindSettings
+	// KindManagementKeys 管理 key（mk-）CRUD/状态变更（多实例缺口）→ auth
+	// 快照全量 Reload（跨实例收敛；本实例写面已增量 Upsert/Delete）。
+	KindManagementKeys
 )
 
 // State 一次到点执行的合并脏集合（同窗口多实体变更并集）。
@@ -86,6 +89,9 @@ const DefaultWindow = 200 * time.Millisecond
 type SchedReloader interface {
 	InvalidateAll()
 	InvalidateGroup(groupID int64)
+	// InvalidateGroups 批量组失效（同一临界区内逐组单组重载后一次冻结发布）：
+	// Debouncer 窗口内多组失效合并为一次调用（替代逐组 InvalidateGroup）。
+	InvalidateGroups(ids []int64)
 }
 
 // ClientsReloader aiclient 工厂客户端失效（aiclient.Factory 实现）。
@@ -223,6 +229,11 @@ func (d *Debouncer) Rules() { d.mark(KindRules, nil) }
 // scope 声明方（当前 = auth，snapshots.go:30）重载。
 func (d *Debouncer) Settings() { d.mark(KindSettings, nil) }
 
+// ManagementKeys 管理 key（mk-）CRUD/状态变更：auth 快照全量 Reload（跨实例
+// 收敛——本实例写面已增量 Upsert/Delete；其余实例需全量覆盖）。供 notify
+// Dispatcher 远端变更转发。
+func (d *Debouncer) ManagementKeys() { d.mark(KindManagementKeys, nil) }
+
 // Accounts 账号变更（创建/更新/删除/批量）：sched 组级定向重载受影响组
 // （gids；与全量位同窗口时被包含跳过）；keyChanged（身份类字段变更：模板 /
 // 生效 origin / upstream_key）→ clients 失效（连接缓存键内含这些事实）。
@@ -299,11 +310,12 @@ func (d *Debouncer) flush() {
 // 刷新。全部 fail-safe：Warn + 保留旧快照（调度器 ≤30s 同步 /
 // BalanceRefreshInterval ticker 兜底收敛）。
 func (d *Debouncer) reloadAll(st *State) {
-	if st.Kinds&(KindUsers|KindKeys|KindSettings) != 0 {
+	if st.Kinds&(KindUsers|KindKeys|KindSettings|KindManagementKeys) != 0 {
 		// auth 快照全量：用户 CRUD/余额变更（KindUsers）与 key CRUD（KindKeys，
 		// 多实例 key 缺口——key 变更不影响余额）与本地 settings 变更
 		// （KindSettings：settings 快照已由发布端同步刷新，此处只重载 scope
-		// 声明方 = auth，gate 预算按新 N 重算）共用同一调用。
+		// 声明方 = auth，gate 预算按新 N 重算）与管理 key（KindManagementKeys）
+		// 共用同一调用。
 		// Auth.Reload 内部已对失败打 Warn（覆盖 NewAuth 启动/无 logger 调用方），
 		// 此处 Debug 防双 Warn；错误本身仍由内部 Warn 报告。
 		if err := d.cfg.Auth.Reload(context.Background()); err != nil && d.cfg.Log != nil {
@@ -317,9 +329,13 @@ func (d *Debouncer) reloadAll(st *State) {
 		d.cfg.Sched.InvalidateAll()
 	}
 	if len(st.Groups) > 0 && st.Kinds&KindTemplates == 0 {
+		// 组级定向：窗口内多组失效合并为**一次** InvalidateGroups（同一
+		// publisher.mu 内逐组单组重载后一次冻结发布），替代逐组 InvalidateGroup。
+		ids := make([]int64, 0, len(st.Groups))
 		for gid := range st.Groups {
-			d.cfg.Sched.InvalidateGroup(gid)
+			ids = append(ids, gid)
 		}
+		d.cfg.Sched.InvalidateGroups(ids)
 	}
 	if st.Kinds&(KindTemplates|KindClients) != 0 {
 		d.cfg.Clients.InvalidateAll()

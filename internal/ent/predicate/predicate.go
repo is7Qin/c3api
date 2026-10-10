@@ -30,6 +30,9 @@ type GroupAssignment func(*sql.Selector)
 // Key is the predicate function for key builders.
 type Key func(*sql.Selector)
 
+// ManagementKey is the predicate function for managementkey builders.
+type ManagementKey func(*sql.Selector)
+
 // PriceEntry is the predicate function for priceentry builders.
 type PriceEntry func(*sql.Selector)
 

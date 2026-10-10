@@ -666,7 +666,7 @@ func TestCodexIncompleteNotReportedTwice(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Responses / StreamResponses 面（resp 接入——SSE mock 上游；fixture 对齐
+// Responses 面（resp 接入——SSE mock 上游；fixture 对齐
 // codex-sdk responses_test.go 事件形态）
 // ---------------------------------------------------------------------------
 
@@ -853,19 +853,38 @@ func TestCodexResponsesIdentityTurnIDOverride(t *testing.T) {
 	require.NotEqual(t, "tid-keep", got, "客户端 turn_id 应被覆盖")
 }
 
-// TestCodexStreamResponsesIdentityMetadata 流式路径同注入（Stream 统
-// 一注入点——Responses 内部走 Stream，两路径不重复）。
-func TestCodexStreamResponsesIdentityMetadata(t *testing.T) {
-	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+// TestCodexStreamBodyPassthrough StreamBody 透传：cred → 缓存取 HTTPClient →
+// 返回**未关闭**的 raw body（上游原始 SSE 字节含 data: 前缀与 [DONE]——verbatim，
+// 与 Stream 的逐 data: 载荷不同）；turn-state 取**本次响应头**回写 held（下次
+// 未带请求注入）。
+func TestCodexStreamBodyPassthrough(t *testing.T) {
+	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespDone}, turnState: "st-body"})
 	defer up.Close()
 	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
-	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-si"}
+	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-body"}
 
-	err := a.StreamResponses(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, "", func(raw []byte) error { return nil })
+	resp, err := a.StreamBody(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, "")
 	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "仅 200 返回未关闭 body")
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Contains(t, string(body), "data: "+t6RespCreated+"\n\n", "raw 帧原样（data: 前缀保留）")
+	require.Contains(t, string(body), "data: [DONE]", "原始 [DONE] 保留（verbatim）")
+	require.Equal(t, "Bearer pat-body", c.auth(0), "凭据透传")
+	// 伪装身份注入（等价流式路径覆盖）：client_metadata 恒带 installation_id +
+	// 自动 turn_id。
 	cm := gjson.GetBytes(c.body(0), "client_metadata")
-	require.Equal(t, "inst-s", cm.Get("x-codex-installation-id").String(), "流式路径同样注入")
+	require.Equal(t, "inst-s", cm.Get("x-codex-installation-id").String(), "StreamBody 路径同样注入伪装身份")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id 恒带")
+
+	// turn-state：本次响应头回写 held → 下次未带请求注入（不读共享 TurnState）。
+	resp2, err := a.StreamBody(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, nil, "")
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp2.Body)
+	_ = resp2.Body.Close()
+	require.Equal(t, "", c.turnState(0), "轮首未带 turn-state")
+	require.Equal(t, "st-body", c.turnState(1), "held 回写本次响应头 → 下次注入")
 }
 
 // TestCodexResponsesIdentityChangeRebuild identity 变化 → 重建 HTTPClient
@@ -901,23 +920,6 @@ func TestCodexResponsesIdentityChangeRebuild(t *testing.T) {
 	require.NotSame(t, c1, testCachedClient(a.entries[9], sig2), "identity 变化 → 新条目客户端")
 	require.Same(t, c1, testCachedClient(a.entries[9], sig1), "identity 变化不扰动旧条目客户端（多条目复用）")
 	a.mu.Unlock()
-}
-
-// TestCodexStreamResponsesPassthrough 流式透传：fn 收到逐 data: 载荷（零拷贝
-// 语义——字节与原事件一致）；[DONE] 不回调（SDK 消费语义——网关自行补发）。
-func TestCodexStreamResponsesPassthrough(t *testing.T) {
-	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
-	defer up.Close()
-	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
-	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-s"}
-
-	var got []string
-	err := a.StreamResponses(context.Background(), cred, []byte(`{"model":"m","stream":true}`), nil, nil, "", func(raw []byte) error {
-		got = append(got, string(raw)) // 测试内立即拷贝（回调外切片失效语义）
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, []string{t6RespCreated, t6RespItemEv, t6RespDone}, got, "逐载荷透传（[DONE] 不回调）")
 }
 
 // t6RespCallItem 工具调用输出项 fixture（轮继续信号判定面——item.type
@@ -1201,21 +1203,6 @@ func TestCodexResponsesFatal(t *testing.T) {
 	a.mu.Lock()
 	require.Len(t, a.entries, 0, "fatal 上报后失效剔除——缓存条目摘除")
 	a.mu.Unlock()
-}
-
-// TestCodexStreamResponsesFnError fn 回调错误（网关写出失败/客户端断开路径）
-// → SDK 终止读取并原样透传（非 SDK 错误不过滤）。
-func TestCodexStreamResponsesFnError(t *testing.T) {
-	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
-	defer up.Close()
-	a := NewCodex(nil, newOfficialRewriteTransport(t, up.URL), RotationDeps{})
-	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-fn"}
-
-	sentinel := errors.New("client write failed")
-	err := a.StreamResponses(context.Background(), cred, []byte(`{}`), nil, nil, "", func(raw []byte) error {
-		return sentinel
-	})
-	require.ErrorIs(t, err, sentinel, "fn 回调错误原样透传")
 }
 
 // TestCodexTransportPoolReuse 补压测修复回归（连接风暴）：SDK 默认 transport

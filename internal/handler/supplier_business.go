@@ -133,7 +133,7 @@ func (h *AdminAPI) PostSupplierSettlement(w http.ResponseWriter, r *http.Request
 	}
 	actor, ok := supplierFundsActor(r)
 	if !ok {
-		httpface.WriteErr(w, http.StatusForbidden, "funds commands require a named JWT operator")
+		httpface.WriteErr(w, http.StatusForbidden, "funds commands require a named operator")
 		return
 	}
 	var body supplier.PostSupplierSettlementJSONRequestBody

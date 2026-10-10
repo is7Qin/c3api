@@ -28,6 +28,8 @@ type Tx struct {
 	GroupAssignment *GroupAssignmentClient
 	// Key is the client for interacting with the Key builders.
 	Key *KeyClient
+	// ManagementKey is the client for interacting with the ManagementKey builders.
+	ManagementKey *ManagementKeyClient
 	// PriceEntry is the client for interacting with the PriceEntry builders.
 	PriceEntry *PriceEntryClient
 	// PriceVariant is the client for interacting with the PriceVariant builders.
@@ -201,6 +203,7 @@ func (tx *Tx) init() {
 	tx.Group = NewGroupClient(tx.config)
 	tx.GroupAssignment = NewGroupAssignmentClient(tx.config)
 	tx.Key = NewKeyClient(tx.config)
+	tx.ManagementKey = NewManagementKeyClient(tx.config)
 	tx.PriceEntry = NewPriceEntryClient(tx.config)
 	tx.PriceVariant = NewPriceVariantClient(tx.config)
 	tx.RedemptionCode = NewRedemptionCodeClient(tx.config)

@@ -96,7 +96,7 @@ func benchProxy(tb testing.TB, upstream string) *Proxy {
 	}, noopLogStore{}, nil)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{
 		"ck-1": activeKey(1, 1, 10),
-	}}, noopUserLoader{}, nil, true)
+	}}, noopUserLoader{}, nil, nil, true)
 	if err := auth.Reload(context.Background()); err != nil { // 构造不再自载——显式首刷（快照注册表单一入口）
 		panic(err)
 	}

@@ -286,5 +286,38 @@ func TestRoutingCompiler_candidateFactsStayConsistentAcrossFilterAndCompile(t *t
 	require.Equal(t, facts[0].qualityRaw, compiled[0].QualityRaw)
 
 	// v5-§5.1A: health OPEN no longer filters — the same facts compile through.
-	require.Len(t, filterCandidates(facts), 1)
+	// filterCandidates is CONSUMING (in-place compaction): a second call must
+	// rebuild facts (never reuse the previously filtered backing array).
+	require.Len(t, filterCandidates(buildCandidateFacts([]*accountSnapshot{snapshot}, s.View().StaticView().facts, route, op)), 1)
+}
+
+// TestFilterCandidatesCompactsInPlace pins the CONSUMING contract of the T4
+// in-place stable compaction: the returned slice aliases the input's backing
+// array, so the input is overwritten and MUST NOT be reused afterwards.
+func TestFilterCandidatesCompactsInPlace(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	disabled := accWithEnabled(2, tpl, false, 10000) // filtered out
+	enabled := accWithEnabled(1, tpl, true, 10000)   // survives
+
+	rootFacts := map[int64]compilerAccountFacts{}
+	mk := func(a *domain.Account) *accountSnapshot {
+		st := newSnapshotStatic(*a, a.Template, []int64{10})
+		snap := newAccountSnapshot(st, &accState{status: domain.StatusActive})
+		rootFacts[a.ID] = deriveCompilerAccountFacts(snap, st)
+		return snap
+	}
+	// disabled FIRST so an in-place compaction visibly overwrites index 0.
+	facts := buildCandidateFacts(
+		[]*accountSnapshot{mk(disabled), mk(enabled)}, rootFacts,
+		routeKey{format: domain.FormatOpenAIChat, model: "m"}, domain.OpChatCompletions,
+	)
+	require.Len(t, facts, 2)
+	require.Equal(t, int64(2), facts[0].accountID)
+
+	filtered := filterCandidates(facts)
+	require.Len(t, filtered, 1)
+	require.Equal(t, int64(1), filtered[0].accountID)
+	// Same backing array (in place): the input's first entry is now the survivor.
+	require.True(t, &facts[0] == &filtered[0], "filterCandidates must compact in place (consuming contract)")
+	require.Equal(t, int64(1), facts[0].accountID, "the input is overwritten; reading it after filtering is a bug")
 }

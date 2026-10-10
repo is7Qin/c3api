@@ -70,14 +70,17 @@ func (s *Scheduler) publishedViewWhole() bool {
 // load can only ever be stale-or-equal to what the load sees, so a commit
 // landing between the two causes at most one redundant reload, never a miss.
 // Refreshing after the load would open a miss window (baseline ahead of the
-// staged root). Nil probe (unwired) or query error: baseline untouched,
-// fail-safe Warn + old-view retention on every error path.
+// staged root). Nil probe (unwired): baseline untouched. Query error: baseline
+// untouched AND the sticky reloadRequired obligation is set (r8 §:147) so a
+// later healthy tick retries even though the probe-hit gate cannot see the
+// failure. The caller must hold publisher.mu (reloadRequired discipline).
 func (s *Scheduler) refreshProbeBaseline(ctx context.Context) {
 	if s.stalenessProbe == nil {
 		return
 	}
 	c, err := s.stalenessProbe(ctx)
 	if err != nil {
+		s.reloadRequired = true
 		if s.log != nil {
 			s.log.Warn("compile staleness baseline refresh failed; keeping previous baseline", logx.Error(err))
 		}
@@ -115,19 +118,33 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 			s.log.Warn("compile staleness probe failed; full reload fail-safe", logx.Error(err))
 		}
 		s.recordCompileFallback("probe-error", 0, 0, 0)
-		if rerr := s.reload(ctx); rerr != nil && s.log != nil {
+		// Fail-safe full reload under publisher.mu; reloadLocked itself sets the
+		// sticky obligation on failure (single error source), so a subsequent
+		// healthy tick retries (probe errors leave the baseline untouched, so
+		// the retry is not probe-gated).
+		s.publisher.mu.Lock()
+		if rerr := s.reloadLocked(ctx); rerr != nil && s.log != nil {
 			s.log.Warn("scheduler sync failed", logx.Error(rerr))
 		}
+		s.publisher.mu.Unlock()
 		return
 	}
-	if last := s.lastProbe.Load(); last != nil && *last == c && s.publishedViewWhole() {
+	// Decide-and-rebuild under ONE publisher.mu hold: the skip check must
+	// observe reloadRequired atomically with the published root, else a failed
+	// load that is probe-invisible (equal-count membership swap) could be
+	// skipped forever. probe-before-load is preserved (refresh-first baseline
+	// never runs ahead of a successful load).
+	s.publisher.mu.Lock()
+	if last := s.lastProbe.Load(); last != nil && *last == c && !s.reloadRequired && s.publishedViewWhole() {
 		// Probe-hit skip applies ONLY to whole views. A partial (scoped-carry)
 		// view may carry forward holes from its carry, and DB-quiet would
 		// otherwise freeze them forever — fall through to the full path
 		// instead. This is NOT a periodic full recompile: whole views skip.
+		s.publisher.mu.Unlock()
 		return
 	}
-	if err := s.reload(ctx); err != nil && s.log != nil {
-		s.log.Warn("scheduler sync failed", logx.Error(err))
+	if rerr := s.reloadLocked(ctx); rerr != nil && s.log != nil {
+		s.log.Warn("scheduler sync failed", logx.Error(rerr))
 	}
+	s.publisher.mu.Unlock()
 }

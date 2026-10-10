@@ -27,6 +27,20 @@ jobs:
           go-version-file: go.mod
       - name: vet
         run: go vet ./...
+      - name: no static admin token residue
+        # A6（spec 2026-10-09 §4.7）：静态管理 token 机制全量删除；对受跟踪文件
+        # 搜残留（排除 .omo/** 设计叙述；放行 CHANGELOG.md 历史条目；排除本文件自身
+        # ——它含搜索模式的字面量，否则会自匹配导致本步恒失败）。
+        run: |
+          set -euo pipefail
+          hits=$(git ls-files -z | xargs -0 rg -n --no-heading \
+            --glob '!.omo/**' --glob '!CHANGELOG.md' --glob '!.github/workflows/ci.yml' \
+            'ADMIN_TOKEN|adminToken|AdminToken|admin-token|admin\.token' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
+            echo "::error::static admin token residue found (see above)"
+            exit 1
+          fi
       - name: build
         run: go build ./...
       - name: test
@@ -50,7 +64,7 @@ jobs:
       - name: go generate (handler + ent)
         run: go generate ./internal/handler/ ./internal/ent/
       - name: no drift in api.gen.go / ent generated code
-        run: git diff --exit-code -- internal/handler/api.gen.go internal/handler/user/api.gen.go internal/ent
+        run: git diff --exit-code -- internal/handler/api.gen.go internal/handler/user/api.gen.go internal/handler/supplier/api.gen.go internal/ent
       - uses: pnpm/action-setup@v6
         with:
           version: 11.20.0

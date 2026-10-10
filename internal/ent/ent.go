@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
+	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
@@ -105,6 +106,7 @@ func checkColumn(t, c string) error {
 			group.Table:                  group.ValidColumn,
 			groupassignment.Table:        groupassignment.ValidColumn,
 			key.Table:                    key.ValidColumn,
+			managementkey.Table:          managementkey.ValidColumn,
 			priceentry.Table:             priceentry.ValidColumn,
 			pricevariant.Table:           pricevariant.ValidColumn,
 			redemptioncode.Table:         redemptioncode.ValidColumn,

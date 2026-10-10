@@ -203,9 +203,11 @@ func TestStaticKeyGuardDetectsPointerField(t *testing.T) {
 // 同时也锁住「切片/映射事实按规范序比较」：groupIDs/Models 的顺序不同但集合
 // 相同 ⇒ 键相等（规范序摘要）。
 func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
-	build := func() *snapshotStatic {
-		// 每次调用都分配全新对象：tpl 与 Ext 都是新指针，模拟 buildSnapshots
-		// 每轮重载的行为。
+	// inputs 每次调用都分配全新对象（tpl + Ext 都是新指针），模拟 buildSnapshots
+	// 每轮重载的行为。构造统一走 newSnapshotStatic（唯一构造函数）——**先变更输入
+	// 再构造**：key 在构造期一次派生并缓存，若沿用旧的"构造后突变源字段"闭包，
+	// 敏感性断言会在缓存下恒假通过（或变红）。
+	inputs := func() (domain.Account, *domain.Template, []int64) {
 		tp := &domain.Template{
 			BaseURL:          "https://tpl.example/v1",
 			CredentialType:   "api_key",
@@ -232,7 +234,11 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 				},
 			},
 		}
-		return &snapshotStatic{acc: a, tpl: tp, groupIDs: []int64{3, 9}}
+		return a, tp, []int64{3, 9}
+	}
+	build := func() *snapshotStatic {
+		a, tp, gids := inputs()
+		return newSnapshotStatic(a, tp, gids)
 	}
 
 	oldAv, newAv := build(), build()
@@ -246,45 +252,49 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		"identical facts in distinct objects must yield equal keys — otherwise the reuse branch is inert again")
 
 	// 顺序无关：groupIDs 排列不同、集合相同 ⇒ 键相等（规范序）。
-	reordered := build()
-	reordered.groupIDs = []int64{9, 3}
+	a2, tp2, _ := inputs()
+	reordered := newSnapshotStatic(a2, tp2, []int64{9, 3})
 	require.True(t, staticKeyOf(oldAv) == staticKeyOf(reordered), "groupIDs order must not affect the key")
 
-	// 但**真的**变了就要不等。逐项验证键对这些事实是敏感的。
+	// 但**真的**变了就要不等。逐项验证键对这些事实是敏感的——每例**先变更输入
+	// 再构造**新叶。
 	for _, tc := range []struct {
 		name   string
-		mutate func(*snapshotStatic)
+		mutate func(a *domain.Account, tp *domain.Template, gids *[]int64)
 	}{
-		{"identityRevision (K)", func(s *snapshotStatic) { s.acc.IdentityRevision = 6 }},
-		{"name", func(s *snapshotStatic) { s.acc.Name = "other" }},
-		{"templateID", func(s *snapshotStatic) { s.acc.TemplateID = 4 }},
-		{"effective baseURL (account override)", func(s *snapshotStatic) { s.acc.BaseURL = strPtr("https://override/v1") }},
-		{"template baseURL", func(s *snapshotStatic) { s.tpl.BaseURL = "https://tpl2.example/v1" }},
-		{"upstreamKey", func(s *snapshotStatic) { s.acc.UpstreamKey = "sk2" }},
-		{"maxConcurrency", func(s *snapshotStatic) { s.acc.MaxConcurrency = 8 }},
-		{"enabled", func(s *snapshotStatic) { s.acc.Enabled = false }},
-		{"cacheDomain", func(s *snapshotStatic) { s.acc.CacheDomain = nil }},
-		{"upstreamCostMultiplierBp", func(s *snapshotStatic) { s.acc.UpstreamCostMultiplierBp = intPtr(9000) }},
-		{"groupIDs set", func(s *snapshotStatic) { s.groupIDs = []int64{3} }},
-		{"codexAccountID", func(s *snapshotStatic) { s.acc.Ext.CodexAccountID = strPtr("other") }},
-		{"codexInstallation", func(s *snapshotStatic) { s.acc.Ext.CodexIdentity.InstallationID = "inst2" }},
-		{"credentialType", func(s *snapshotStatic) { s.tpl.CredentialType = "codex_oauth" }},
-		{"stripImageTools", func(s *snapshotStatic) { s.tpl.StripImageTools = false }},
-		{"models set", func(s *snapshotStatic) { s.tpl.Models = []string{"m-a"} }},
-		{"supportedFormats set", func(s *snapshotStatic) { s.tpl.SupportedFormats = []domain.RequestFormat{"openai_chat"} }},
-		{"formatModels", func(s *snapshotStatic) {
-			s.tpl.FormatModels = map[domain.RequestFormat][]string{"openai_chat": {"m-a"}}
+		{"identityRevision (K)", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.IdentityRevision = 6 }},
+		{"name", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Name = "other" }},
+		{"templateID", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.TemplateID = 4 }},
+		{"effective baseURL (account override)", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.BaseURL = strPtr("https://override/v1") }},
+		{"template baseURL", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.BaseURL = "https://tpl2.example/v1" }},
+		{"upstreamKey", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.UpstreamKey = "sk2" }},
+		{"maxConcurrency", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.MaxConcurrency = 8 }},
+		{"enabled", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Enabled = false }},
+		{"cacheDomain", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.CacheDomain = nil }},
+		{"upstreamCostMultiplierBp", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.UpstreamCostMultiplierBp = intPtr(9000) }},
+		{"groupIDs set", func(_ *domain.Account, _ *domain.Template, gids *[]int64) { *gids = []int64{3} }},
+		{"codexAccountID", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Ext.CodexAccountID = strPtr("other") }},
+		{"codexInstallation", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Ext.CodexIdentity.InstallationID = "inst2" }},
+		{"credentialType", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.CredentialType = "codex_oauth" }},
+		{"stripImageTools", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.StripImageTools = false }},
+		{"models set", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.Models = []string{"m-a"} }},
+		{"supportedFormats set", func(_ *domain.Account, tp *domain.Template, _ *[]int64) {
+			tp.SupportedFormats = []domain.RequestFormat{"openai_chat"}
 		}},
-		{"modelMapping", func(s *snapshotStatic) {
-			s.tpl.ModelMapping = domain.ModelMapping{"alias": {MappedModel: "up2", Mode: domain.ModelMappingModeExplicit}}
+		{"formatModels", func(_ *domain.Account, tp *domain.Template, _ *[]int64) {
+			tp.FormatModels = map[domain.RequestFormat][]string{"openai_chat": {"m-a"}}
 		}},
-		{"modelMapping mode only", func(s *snapshotStatic) {
-			s.tpl.ModelMapping = domain.ModelMapping{"alias": {MappedModel: "up", Mode: domain.ModelMappingModeImplicit}}
+		{"modelMapping", func(_ *domain.Account, tp *domain.Template, _ *[]int64) {
+			tp.ModelMapping = domain.ModelMapping{"alias": {MappedModel: "up2", Mode: domain.ModelMappingModeExplicit}}
+		}},
+		{"modelMapping mode only", func(_ *domain.Account, tp *domain.Template, _ *[]int64) {
+			tp.ModelMapping = domain.ModelMapping{"alias": {MappedModel: "up", Mode: domain.ModelMappingModeImplicit}}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			m := build()
-			tc.mutate(m)
+			a, tp, gids := inputs()
+			tc.mutate(&a, tp, &gids)
+			m := newSnapshotStatic(a, tp, gids)
 			require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "key must be sensitive to %s", tc.name)
 		})
 	}
@@ -296,29 +306,33 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 	// 注意「token 刷新不作废在途计划」由 planKey 承担，与本键的叶子复用判据
 	// 是两个比较——这正是两枚子键必须分开的原因。
 	t.Run("codexPATKey rotation MUST change the key", func(t *testing.T) {
-		m := build()
+		a, tp, gids := inputs()
 		other := "pat-rotated"
-		m.acc.Ext.CodexPATKey = &other
+		a.Ext.CodexPATKey = &other
+		m := newSnapshotStatic(a, tp, gids)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated credential must change the key (it is consumed from the leaf)")
 		require.False(t, planKeyOf(oldAv) == planKeyOf(m), "pat rotation changes the candidate fingerprint, so it must invalidate in-flight plans")
 	})
 	t.Run("codexOAuthToken rotation MUST change the key", func(t *testing.T) {
-		m := build()
+		a, tp, gids := inputs()
 		tok := "at-rotated"
-		m.acc.Ext.CodexOAuthToken = &tok
+		a.Ext.CodexOAuthToken = &tok
+		m := newSnapshotStatic(a, tp, gids)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated OAuth token must change the key (upstream auth consumes it)")
 		require.True(t, planKeyOf(oldAv) == planKeyOf(m), "rotated OAuth token must NOT invalidate in-flight plans (payload only)")
 	})
 	t.Run("codexOAuthRefreshToken rotation MUST change the key", func(t *testing.T) {
-		m := build()
+		a, tp, gids := inputs()
 		rt := "rt-rotated"
-		m.acc.Ext.CodexOAuthRefreshToken = &rt
+		a.Ext.CodexOAuthRefreshToken = &rt
+		m := newSnapshotStatic(a, tp, gids)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "rotated refresh token must change the key")
 		require.True(t, planKeyOf(oldAv) == planKeyOf(m), "rotated refresh token must NOT invalidate in-flight plans (payload only)")
 	})
 	t.Run("codexEmail edit MUST change the key", func(t *testing.T) {
-		m := build()
-		m.acc.Ext.CodexEmail = strPtr("e@example.com")
+		a, tp, gids := inputs()
+		a.Ext.CodexEmail = strPtr("e@example.com")
+		m := newSnapshotStatic(a, tp, gids)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "email is reachable via Selection.Ext, so it must not be served stale")
 		require.False(t, planKeyOf(oldAv) == planKeyOf(m), "email is a decision input (read by the fingerprint path), so it invalidates in-flight plans")
 	})
@@ -329,7 +343,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 func TestStaticKeyNilSnapshotIsZeroKey(t *testing.T) {
 	var zero staticKey
 	require.True(t, staticKeyOf(nil) == zero)
-	require.False(t, staticKeyOf(nil) == staticKeyOf(&snapshotStatic{acc: domain.Account{ID: 1}}))
+	require.False(t, staticKeyOf(nil) == staticKeyOf(newSnapshotStatic(domain.Account{ID: 1}, nil, nil)))
 }
 
 // TestMinGIDIsDeterministic 锁住 gid 的确定性派生：多组账号取最小组 ID，

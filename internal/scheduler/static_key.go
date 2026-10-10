@@ -114,17 +114,18 @@ type staticKey struct {
 	payloadKey
 }
 
-// planKeyOf 由快照静态视图派生计划有效性判据。av 为 nil（首轮无旧快照）时
-// 返回零值键；调用方不得依赖零值比较做缺席判定——fence 必须显式处理缺席。
+// newSnapshotStatic 是 snapshotStatic 的**唯一构造函数**：一次派生全部 planKey
+// 并随不可变叶持有（planKeyOf 直接返回 av.key）。派生**内联**在本函数内（不得抽
+// 独立函数——否则静态读闭包门禁的读者归属变为该函数名）；先组装局部 k 再**单次**
+// av.key = k 赋值（不得逐字段写 av.key.x = …，否则门禁新增 $S.key.* 读路径）。
+// tpl 可为 nil：模板侧摘要取零值（保留零键契约，不 panic）。
 //
-// 生效 baseURL 与编译器同源（routing_compiler_candidates.go 的 baseURL 派生）：模板值为底，
-// 账号覆盖非空时优先。两者必须是同一套优先级，否则判据会在编译器认为「变化了」的
-// 场景下判等（或反之），复用分支与编译事实就此分叉。
-func planKeyOf(av *snapshotStatic) planKey {
+// 生效 baseURL 与编译器同源（routing_compiler_candidates.go 的 baseURL 派生）：模板
+// 值为底，账号覆盖非空时优先。两者必须是同一套优先级，否则判据会在编译器认为
+// 「变化了」的场景下判等（或反之），复用分支与编译事实就此分叉。
+func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int64) *snapshotStatic {
+	av := &snapshotStatic{acc: acc, tpl: tpl, groupIDs: append([]int64(nil), groupIDs...)}
 	var k planKey
-	if av == nil {
-		return k
-	}
 	k.accountID = av.acc.ID
 	k.name = av.acc.Name
 	k.templateID = av.acc.TemplateID
@@ -158,7 +159,18 @@ func planKeyOf(av *snapshotStatic) planKey {
 		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
 	}
 	k.groupIDsDigest = digestInt64s(av.groupIDs)
-	return k
+	av.key = k
+	return av
+}
+
+// planKeyOf 由快照静态视图读取计划有效性判据（canonical digest 复用：直接返回
+// newSnapshotStatic 一次派生的 av.key）。av 为 nil（首轮无旧快照）时返回零值键；
+// 调用方不得依赖零值比较做缺席判定——fence 必须显式处理缺席。
+func planKeyOf(av *snapshotStatic) planKey {
+	if av == nil {
+		return planKey{}
+	}
+	return av.key
 }
 
 // payloadKeyOf 由快照静态视图派生载荷判据：只读 OAuth 令牌三元组。av 为 nil
@@ -291,7 +303,7 @@ func digestParts(n int, part func(i int) []byte) [32]byte {
 		h.Write(p)
 	}
 	var out [32]byte
-	copy(out[:], h.Sum(nil))
+	h.Sum(out[:0])
 	return out
 }
 

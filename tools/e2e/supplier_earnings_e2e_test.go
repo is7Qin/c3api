@@ -45,10 +45,9 @@ const supplierE2EDB = "c3api_supplier_e2e"
 
 // supplierCfgTOML 供应商 e2e 网关配置（freeze_hours=0 ⇒ 收益直接入 available，
 // 免等冻结期；share_bp_default=1000 = 10%）。
-func supplierCfgTOML(addr, adminTok, jwtSecret, dsn, redisAddr string, supplierEnabled bool) string {
+func supplierCfgTOML(addr, jwtSecret, dsn, redisAddr string, supplierEnabled bool) string {
 	return `server = { addr = "` + addr + `", read_header_timeout = "10s", max_header_bytes = 1048576 }
 log = { level = "warn", output = "stdout" }
-admin = { token = "` + adminTok + `" }
 auth = { jwt_secret = "` + jwtSecret + `" }
 db = { dsn = "` + dsn + `", max_conns = 10 }
 redis = { addr = "` + redisAddr + `" }
@@ -159,7 +158,7 @@ func TestSupplierEarningsE2E(t *testing.T) {
 
 	cfgPath := filepath.Join(env.tmp, "supplier-config.toml")
 	require.NoError(t, os.WriteFile(cfgPath,
-		[]byte(supplierCfgTOML(supplierE2EAddr, adminToken, jwtSecret, dsn, redisAddr, true)), 0o644))
+		[]byte(supplierCfgTOML(supplierE2EAddr, jwtSecret, dsn, redisAddr, true)), 0o644))
 
 	srv := exec.Command(srvBin, "-config", cfgPath)
 	srvLog, err := os.Create(filepath.Join(env.tmp, "supplier-server.log"))
@@ -177,27 +176,9 @@ func TestSupplierEarningsE2E(t *testing.T) {
 		_ = srvLog.Close()
 	})
 
-	// 就绪。
-	ready := false
-	deadline := time.Now().Add(60 * time.Second)
-	for !ready && time.Now().Before(deadline) {
-		req, _ := http.NewRequest(http.MethodGet, env.adminURL("/settings"), nil)
-		req.Header.Set("Authorization", "Bearer "+adminToken)
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			resp.Body.Close()
-			ready = resp.StatusCode == http.StatusOK
-		}
-		if !ready {
-			time.Sleep(500 * time.Millisecond)
-		}
-	}
-	if !ready {
-		if data, err := os.ReadFile(filepath.Join(env.tmp, "supplier-server.log")); err == nil {
-			t.Fatalf("网关未就绪:\n%s", data)
-		}
-		t.Fatalf("网关未在 60s 内就绪")
-	}
+	// 就绪 + 引导（spec 2026-10-09 §4.9）：/healthz → 注册首个用户（fresh 库即
+	// platform_admin）→ 取 JWT；再探 /api/admin/settings 确认（写入 env.adminJWT）。
+	env.adminJWT = env.bootstrapAdminJWT()
 
 	// --- 2. 供应商 / 管理员 / 消费者用户 ---
 	s1 := createRoleUser(t, env, "sup1@example.com", "supplier", 0)
@@ -289,11 +270,7 @@ func TestSupplierEarningsE2E(t *testing.T) {
 		map[string]any{"amount_millis": avail * 1000, "request_key": "e2e-key-big"})
 	require.Equal(t, 400, c, "余额不足 ⇒ 400")
 
-	// --- 7. A24：资金命令具名操作者 —— 静态 admin token ⇒ 403 ---
-	c, _ = env.admin(http.MethodPost, "/supplier/settlements/"+itoa(sid)+"/approve",
-		map[string]any{"expected_revision": rev})
-	require.Equal(t, 403, c, "静态 admin token 资金命令 ⇒ 403")
-
+	// --- 7. A24：资金命令具名操作者（静态 token 机制已删除）---
 	// 无 JWT 访问供应商结算申请 ⇒ 401/403。
 	c, _ = env.req(http.MethodPost, env.aiURL("/api/user/supplier/settlements"), "", applyBody)
 	require.Contains(t, []int{401, 403}, c, "无名申请结算 ⇒ 401/403")
@@ -350,7 +327,7 @@ func TestSupplierEarningsE2E(t *testing.T) {
 	require.Greater(t, liab, int64(0), "liability 非零（用于 A23 前置）")
 	disabledCfg := filepath.Join(env.tmp, "supplier-disabled.toml")
 	require.NoError(t, os.WriteFile(disabledCfg,
-		[]byte(supplierCfgTOML(supplierE2EDisabledAddr, adminToken, jwtSecret, dsn, redisAddr, false)), 0o644))
+		[]byte(supplierCfgTOML(supplierE2EDisabledAddr, jwtSecret, dsn, redisAddr, false)), 0o644))
 	cmd := exec.Command(srvBin, "-config", disabledCfg)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	require.NoError(t, cmd.Start())
