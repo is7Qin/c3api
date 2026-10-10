@@ -627,7 +627,7 @@ export default function Groups() {
       <Dialog open={!!editTarget} onOpenChange={o => { if (!o && !rename.isPending) setEditTarget(null) }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t('groups.editTitle', { id: editTarget?.ID })}</DialogTitle>
+            <DialogTitle>{t('groups.editTitle', { id: editTarget?.ID ?? 0 })}</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
@@ -686,7 +686,7 @@ export default function Groups() {
           <DialogHeader>
             <DialogTitle>{t('groups.deleteTitle')}</DialogTitle>
             <DialogDescription>
-              {t('groups.deleteDesc', { name: deleting?.Name })}
+              {t('groups.deleteDesc', { name: deleting?.Name ?? '' })}
             </DialogDescription>
           </DialogHeader>
           {remove.isError && errMsg(remove.error) && (
@@ -739,7 +739,7 @@ export default function Groups() {
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             {/* public：公开组无「授予」概念，弹窗 = 专属倍率管理；private：授予权限语义 */}
-            <DialogTitle>{t(assignIsPublic ? 'groups.assignPublicTitle' : 'groups.assignTitle', { name: assignTarget?.Name })}</DialogTitle>
+            <DialogTitle>{t(assignIsPublic ? 'groups.assignPublicTitle' : 'groups.assignTitle', { name: assignTarget?.Name ?? '' })}</DialogTitle>
             <DialogDescription>{t(assignIsPublic ? 'groups.assignPublicDesc' : 'groups.assignDesc')}</DialogDescription>
             <p className="text-xs text-muted-foreground">{t('groups.assignMultiplierHint')}</p>
             {assignPrefilled && assignChecked.length > 0 && (

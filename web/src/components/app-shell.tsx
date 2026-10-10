@@ -8,7 +8,7 @@ import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
-import { setLang, type AppLang } from '@/lib/i18n'
+import { setLang, type AppLang, type DynamicKey } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
 import { ModeToggle } from '@/components/mode-toggle'
 import { cn } from '@/lib/utils'
@@ -130,12 +130,12 @@ export default function AppShell() {
                 <BreadcrumbList>
                   <BreadcrumbItem className="hidden md:block">
                     <Link to={crumb.root} className="text-sm text-muted-foreground transition-colors hover:text-foreground">
-                      {t(crumb.section)}
+                      {t(crumb.section as DynamicKey)}
                     </Link>
                   </BreadcrumbItem>
                   <BreadcrumbSeparator className="hidden md:block" />
                   <BreadcrumbItem>
-                    <BreadcrumbPage className="font-semibold text-foreground">{t(crumb.page)}</BreadcrumbPage>
+                    <BreadcrumbPage className="font-semibold text-foreground">{t(crumb.page as DynamicKey)}</BreadcrumbPage>
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
@@ -152,11 +152,11 @@ export default function AppShell() {
                   {navs.map((group, groupIndex) => (
                     <DropdownMenuGroup key={group.titleKey ?? group.items[0]?.to}>
                       {groupIndex > 0 && <DropdownMenuSeparator />}
-                      {group.titleKey && <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold tracking-wide text-[#6e6e73] dark:text-[#b8b8c0]">{t(group.titleKey)}</DropdownMenuLabel>}
+                      {group.titleKey && <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold tracking-wide text-[#6e6e73] dark:text-[#b8b8c0]">{t(group.titleKey as DynamicKey)}</DropdownMenuLabel>}
                       {group.items.map(({ to, key, icon: Icon }) => (
                         <DropdownMenuItem key={to} render={<Link to={to} />} className="min-h-10 rounded-[9px] text-[#1d1d1f] focus:bg-[#e8e8ed] focus:text-[#1d1d1f] dark:text-[#f5f5f7] dark:focus:bg-white/12 dark:focus:text-white">
                           <Icon className="size-4" />
-                          {t(key)}
+                          {t(key as DynamicKey)}
                         </DropdownMenuItem>
                       ))}
                     </DropdownMenuGroup>

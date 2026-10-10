@@ -7,6 +7,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, ScrollText, Ban, CircleCheck } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
+import type { DynamicKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
@@ -255,10 +257,10 @@ const TEMPLATES: TemplatePreset[] = [
 ]
 
 // —— 摘要渲染 ——
-function WhenSummary({ w, t }: { w: Rule['When']; t: (k: string) => string }) {
+function WhenSummary({ w, t }: { w: Rule['When']; t: TFunction }) {
   if (!w || Object.keys(w).length === 0) return <span className="text-muted-foreground">—</span>
   const parts: string[] = []
-  if (typeof w.kind === 'string') parts.push(t(`rules.kind.${w.kind}`))
+  if (typeof w.kind === 'string') parts.push(t(`rules.kind.${w.kind}` as DynamicKey))
   if (typeof w.http_status === 'number') parts.push(`HTTP ${w.http_status}`)
   if (Array.isArray((w as Record<string, unknown>).http_status_in)) parts.push(`HTTP [${((w as Record<string, unknown>).http_status_in as unknown[]).join(',')}]`)
   if (typeof w.error_message_contains === 'string') parts.push(t('rules.when.errorContains') + ` "${w.error_message_contains}"`)
@@ -278,13 +280,13 @@ function WhenSummary({ w, t }: { w: Rule['When']; t: (k: string) => string }) {
   return <span className="block max-w-64 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
 }
 
-function ThenSummary({ th, t }: { th: Rule['Then']; t: (k: string, opts?: Record<string, unknown>) => string }) {
+function ThenSummary({ th, t }: { th: Rule['Then']; t: TFunction }) {
   if (!th || Object.keys(th).length === 0) return <span className="text-muted-foreground">—</span>
   const parts: string[] = []
   const t5 = parseThrottle(th.throttle)
   if (t5) parts.push(`${t('rules.then.summaryThrottle')} ${t5.scope}/${t5.mode}${t5.durationMs ? ` ${t5.durationMs}ms` : ''}`)
   if (th.fail_account === true) parts.push(t('rules.then.summaryFail'))
-  if (typeof th.response_code === 'number') parts.push(t('rules.then.overrideSummary', { code: th.response_code } as unknown as Record<string, unknown>))
+  if (typeof th.response_code === 'number') parts.push(t('rules.then.overrideSummary', { code: th.response_code }))
   if (typeof th.custom_message === 'string' && th.custom_message !== '') parts.push(t('rules.then.fixedMessage'))
   return <span className="block max-w-40 truncate text-xs" title={parts.join(' · ')}>{parts.join(' · ') || '—'}</span>
 }
@@ -417,7 +419,7 @@ export default function Rules() {
     ]
     for (const [a, b] of exclusivePairs) {
       if (when[a] !== undefined && when[b] !== undefined) {
-        setWhenErr(t('rules.whenErrMutual', { a, b } as unknown as Record<string, unknown>) || `${a} and ${b} are mutually exclusive`)
+        setWhenErr(t('rules.whenErrMutual', { a, b }) || `${a} and ${b} are mutually exclusive`)
         return
       }
     }
@@ -452,7 +454,7 @@ export default function Rules() {
         }
       }
       if (new Set(arr).size !== arr.length) {
-        setWhenErr(t('rules.whenErrDuplicate', { field: s.key } as unknown as Record<string, unknown>) || `${s.key} contains duplicate value`)
+        setWhenErr(t('rules.whenErrDuplicate', { field: s.key }) || `${s.key} contains duplicate value`)
         return
       }
     }
@@ -568,7 +570,7 @@ export default function Rules() {
               <div className="flex flex-wrap gap-2">
                 {TEMPLATES.map(tp => (
                   <Button key={tp.id} variant="outline" size="sm" onClick={() => applyTemplate(tp)}>
-                    {t(`rules.templates.${tp.id}`)}
+                    {t(`rules.templates.${tp.id}` as DynamicKey)}
                   </Button>
                 ))}
               </div>
@@ -628,14 +630,14 @@ export default function Rules() {
                   <div key={i} className="flex items-center gap-2">
                     <span className="w-6 shrink-0 text-sm text-muted-foreground">{t('rules.condOf')}</span>
                     <Select
-                      items={Object.fromEntries(rowOptions.map(f => [f.key, t(whenFieldLabel(f.key))]))}
+                      items={Object.fromEntries(rowOptions.map(f => [f.key, t(whenFieldLabel(f.key) as DynamicKey)]))}
                       value={r.field}
                       onValueChange={v => v && setRowField(i, v as WhenField)}
                     >
                       <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {rowOptions.map(f => (
-                          <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key))}>{t(whenFieldLabel(f.key))}</SelectItem>
+                          <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key) as DynamicKey)}>{t(whenFieldLabel(f.key) as DynamicKey)}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -655,7 +657,7 @@ export default function Rules() {
               {/* 添加条件：kindFilter - 已用字段；行数上限 10 */}
               <div className="flex items-center gap-2">
                 <Select
-                  items={Object.fromEntries(addOptions.map(f => [f.key, t(whenFieldLabel(f.key))]))}
+                  items={Object.fromEntries(addOptions.map(f => [f.key, t(whenFieldLabel(f.key) as DynamicKey)]))}
                   value={addField}
                   onValueChange={v => {
                     setAddField(null)
@@ -667,7 +669,7 @@ export default function Rules() {
                   </SelectTrigger>
                   <SelectContent>
                     {addOptions.map(f => (
-                      <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key))}>{t(whenFieldLabel(f.key))}</SelectItem>
+                      <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key) as DynamicKey)}>{t(whenFieldLabel(f.key) as DynamicKey)}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -819,7 +821,7 @@ export default function Rules() {
           <DialogHeader>
             <DialogTitle>{t('rules.deleteTitle')}</DialogTitle>
             <DialogDescription>
-              {t('rules.deleteDesc', { name: deleting?.Name })}
+              {t('rules.deleteDesc', { name: deleting?.Name ?? '' })}
             </DialogDescription>
           </DialogHeader>
           {remove.isError && errMsg(remove.error) && (

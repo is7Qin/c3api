@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Settings as SettingsIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { DynamicKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
 import { Button } from '@/components/ui/button'
@@ -111,15 +112,15 @@ function SettingRow({ setting }: { setting: Setting }) {
   const controlId = `setting-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   const control =
     typ === 'switch' ? (
-      <Switch id={controlId} checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(`settings.labels.${key}`)} />
+      <Switch id={controlId} checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(`settings.labels.${key}` as DynamicKey)} />
     ) : isTier ? (
       <Select items={{ passthrough: t('settings.policies.passthrough'), strip: t('settings.policies.strip'), reject: t('settings.policies.reject') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}` as DynamicKey)}><SelectValue /></SelectTrigger>
         <SelectContent>{TIER_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.policies.${v}`)}>{t(`settings.policies.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : isTls ? (
       <Select items={{ starttls: t('settings.tlsOptions.starttls'), implicit: t('settings.tlsOptions.implicit'), none: t('settings.tlsOptions.none') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}` as DynamicKey)}><SelectValue /></SelectTrigger>
         <SelectContent>{TLS_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.tlsOptions.${v}`)}>{t(`settings.tlsOptions.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : typ === 'number' ? (
@@ -130,8 +131,8 @@ function SettingRow({ setting }: { setting: Setting }) {
   return (
     <div className="flex flex-col gap-3 py-3 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(`settings.labels.${key}`)}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
-        <p className="text-xs text-muted-foreground">{t(`settings.descs.${key}`)}</p>
+        <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(`settings.labels.${key}` as DynamicKey)}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
+        <p className="text-xs text-muted-foreground">{t(`settings.descs.${key}` as DynamicKey)}</p>
         {isUsd && !err && <p className="text-xs text-muted-foreground"><span className="whitespace-nowrap">{t('settings.usdHint')}</span></p>}
         {err && <p className="text-xs text-destructive">{err}</p>}
       </div>
@@ -193,7 +194,7 @@ function MailTemplateCard({ purpose }: { purpose: string }) {
   const hintId = `mail-template-${purpose}-hint`
   return (
     <Card className="p-4 space-y-3">
-      <div className="font-medium">{t(`settings.mailTemplate.${purpose}`)}</div>
+      <div className="font-medium">{t(`settings.mailTemplate.${purpose}` as DynamicKey)}</div>
       <div className="space-y-1"><Label htmlFor={subjectId} className="text-sm">{t('settings.mailTemplate.subject')}</Label><Input id={subjectId} value={subject} onChange={e => setSubject(e.target.value)} placeholder={subjectPh} aria-describedby={hintId} /></div>
       <div className="space-y-1"><Label htmlFor={bodyId} className="text-sm">{t('settings.mailTemplate.body')}</Label><textarea id={bodyId} className="w-full min-h-24 rounded-md border border-input bg-black/[0.04] px-3 py-2 text-sm" value={body} onChange={e => setBody(e.target.value)} placeholder={bodyPh} aria-describedby={hintId} /></div>
       <p id={hintId} className="text-xs text-muted-foreground">{t(hintKey)}</p>
@@ -214,13 +215,13 @@ export default function SettingsPage() {
         <Tabs defaultValue="signup">
           <ScrollArea className="max-w-full [&_[data-slot=scroll-area-scrollbar][data-orientation=vertical]]:hidden" showHorizontal>
             <TabsList className="w-max min-w-full">
-              {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}`)}</TabsTrigger>)}
+              {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}` as DynamicKey)}</TabsTrigger>)}
             </TabsList>
           </ScrollArea>
           {GROUPS.map(g => {
             const rows = g.keys.map(k => byKey.get(k)).filter((s): s is Setting => !!s)
             const smtpCard = rows.length > 0 && (
-              <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}`)}</CardTitle></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>
+              <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}` as DynamicKey)}</CardTitle></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>
             )
             return (
               <TabsContent key={g.id} value={g.id} className="space-y-4 pt-4">

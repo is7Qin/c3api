@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Activity, AlertTriangle, Boxes, Coins, FolderOpen, Gauge, PowerOff, Users, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { DynamicKey } from '@/lib/i18n'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { api } from '@/App'
@@ -198,7 +199,7 @@ export default function Dashboard() {
                 <Card className="@container/card h-full">
                   <CardHeader>
                     <CardDescription className="flex items-center gap-1.5">
-                      <Icon className="size-4" /> {t(descKey)}
+                      <Icon className="size-4" /> {t(descKey as DynamicKey)}
                     </CardDescription>
                     <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
                       {statusCounts[key]}

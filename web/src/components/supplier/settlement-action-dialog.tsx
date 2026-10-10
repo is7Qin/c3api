@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatQuotaMillis } from '@/components/fmt'
+import type { DynamicKey } from '@/lib/i18n'
 import type { components } from '@/lib/api/schema'
 
 type SupplierSettlement = components['schemas']['SupplierSettlement']
@@ -93,7 +94,7 @@ export function SettlementActionDialog({
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t(ACT_TITLE_KEY[act.kind])}</DialogTitle>
+          <DialogTitle>{t(ACT_TITLE_KEY[act.kind] as DynamicKey)}</DialogTitle>
           <DialogDescription>{t('supplierAdmin.act.idDesc', { id: act.row.id, amount: formatQuotaMillis(act.row.amount_millis) })}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

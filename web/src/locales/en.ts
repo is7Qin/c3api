@@ -1,4 +1,4 @@
-{
+export default {
   "common": {
     "appTitle": "Gateway Admin",
     "cancel": "Cancel",
@@ -2139,4 +2139,4 @@
     "inactive": "Inactive",
     "allInactive": "No active suppliers match; refine your search"
   }
-}
+} as const;

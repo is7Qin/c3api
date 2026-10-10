@@ -210,7 +210,7 @@ function VariantsDialog({
     }
     if (r.dow_mask != null) {
       const bools = dowMaskToBools(r.dow_mask)
-      const labels = bools.map((v, i) => (v ? t(`pricing.variants.${DOW_KEYS[i]}`) : null)).filter((v): v is string => v !== null)
+      const labels = bools.flatMap((v, i) => (v ? [t(`pricing.variants.${DOW_KEYS[i]}`)] : []))
       if (labels.length) parts.push(labels.join(','))
     }
     return parts.length ? parts.join(' · ') : '—'
@@ -1301,7 +1301,7 @@ export default function PricingPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{t('pricing.deleteTitle')}</DialogTitle>
-            <DialogDescription>{t('pricing.deleteDesc', { model: deleting?.Model })}</DialogDescription>
+            <DialogDescription>{t('pricing.deleteDesc', { model: deleting?.Model ?? '' })}</DialogDescription>
           </DialogHeader>
           {del.isError && errMsg(del.error) && (
             <p className="text-sm text-destructive">{errMsg(del.error)}</p>
@@ -1319,7 +1319,7 @@ export default function PricingPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{t('pricing.deleteTitle')}</DialogTitle>
-            <DialogDescription>{t('pricing.deleteDesc', { model: imgDeleting?.Model })}</DialogDescription>
+            <DialogDescription>{t('pricing.deleteDesc', { model: imgDeleting?.Model ?? '' })}</DialogDescription>
           </DialogHeader>
           {imgDel.isError && errMsg(imgDel.error) && (
             <p className="text-sm text-destructive">{errMsg(imgDel.error)}</p>
@@ -1337,7 +1337,7 @@ export default function PricingPage() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{t('pricing.deleteTitle')}</DialogTitle>
-            <DialogDescription>{t('pricing.deleteDesc', { model: fnDeleting?.Model })}</DialogDescription>
+            <DialogDescription>{t('pricing.deleteDesc', { model: fnDeleting?.Model ?? '' })}</DialogDescription>
           </DialogHeader>
           {fnDel.isError && errMsg(fnDel.error) && (
             <p className="text-sm text-destructive">{errMsg(fnDel.error)}</p>

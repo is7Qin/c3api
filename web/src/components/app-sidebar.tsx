@@ -7,6 +7,7 @@ import { NavLink } from 'react-router-dom'
 import { ChevronDown, ChevronsUpDown, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import type { DynamicKey } from '@/lib/i18n'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AccountMenuItems } from '@/components/account-menu-items'
 import {
@@ -47,7 +48,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
           `group relative flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm font-medium transition-all duration-200 ${isActive ? 'bg-white text-[#1d1d1f] shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.06] dark:bg-white/[0.11] dark:text-white dark:ring-white/10 dark:shadow-none' : 'text-[#6e6e73] hover:bg-black/[0.04] hover:text-[#1d1d1f] dark:text-[#a1a1a6] dark:hover:bg-white/[0.07] dark:hover:text-white'}`
         }
       >
-        <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {t(key)}
+        <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {t(key as DynamicKey)}
       </NavLink>
     ))
 
@@ -70,7 +71,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
                   onClick={() => setCollapsed(prev => ({ ...prev, [group.titleKey!]: !prev[group.titleKey!] }))}
                   className="flex h-8 w-full items-center justify-between rounded-[8px] px-3 text-[11px] font-semibold tracking-wide text-[#6e6e73] transition-colors hover:bg-[#e8e8ed] hover:text-[#1d1d1f] dark:text-[#b8b8c0] dark:hover:bg-white/8 dark:hover:text-white"
                 >
-                  {t(group.titleKey)}
+                  {t(group.titleKey as DynamicKey)}
                   <ChevronDown
                     className={cn('h-3.5 w-3.5 transition-transform duration-200', collapsed[group.titleKey] ? '' : 'rotate-180')}
                   />

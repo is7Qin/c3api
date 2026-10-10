@@ -264,7 +264,7 @@ export default function UserManagementKeys() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t('managementKeys.editTitle', { id: editing?.id })}</DialogTitle>
+            <DialogTitle>{t('managementKeys.editTitle', { id: editing?.id ?? 0 })}</DialogTitle>
             <DialogDescription>{t('managementKeys.editDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -299,7 +299,7 @@ export default function UserManagementKeys() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{t('managementKeys.deleteTitle')}</DialogTitle>
-            <DialogDescription>{t('managementKeys.deleteDesc', { name: deleting?.name })}</DialogDescription>
+            <DialogDescription>{t('managementKeys.deleteDesc', { name: deleting?.name ?? '' })}</DialogDescription>
           </DialogHeader>
           {del.isError && errMsg(del.error) && <p className="text-sm text-destructive">{errMsg(del.error)}</p>}
           <DialogFooter>
