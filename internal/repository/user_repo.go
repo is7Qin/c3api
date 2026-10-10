@@ -232,6 +232,16 @@ func (r *UserRepo) ListUsers(ctx context.Context, q ListQuery) ([]*domain.User, 
 	if q.Email != "" {
 		pred = pred.Where(user.EmailContainsFold(q.Email))
 	}
+	if q.SupplierSurface {
+		roles := domain.SupplierSurfaceRoles() // 单一事实源，不得重抄角色名
+		in := make([]user.Role, len(roles))
+		for i, r := range roles {
+			in[i] = user.Role(r)
+		}
+		pred = pred.Where(user.RoleIn(in...))
+	} else if q.Role != "" {
+		pred = pred.Where(user.RoleEQ(user.Role(q.Role)))
+	}
 	total, err := pred.Count(ctx)
 	if err != nil {
 		return nil, 0, err

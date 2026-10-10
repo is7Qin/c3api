@@ -5164,6 +5164,8 @@ export interface operations {
                 email?: string;
                 sort?: string;
                 order?: "asc" | "desc";
+                role?: "platform_admin" | "user" | "supplier";
+                supplier_surface?: boolean;
             };
             header?: never;
             path?: never;

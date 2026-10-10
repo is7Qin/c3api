@@ -1432,7 +1432,14 @@ func (f *fakeStore) ListUsers(ctx context.Context, q repository.ListQuery) ([]*d
 	defer f.mu.Unlock()
 	var out []*domain.User
 	for _, u := range f.users {
-		if q.Email != "" && !strings.Contains(u.Email, q.Email) {
+		if q.Email != "" && !strings.Contains(strings.ToLower(u.Email), strings.ToLower(q.Email)) {
+			continue
+		}
+		if q.SupplierSurface {
+			if !domain.CanAccessSupplierSurface(u.Role) {
+				continue
+			}
+		} else if q.Role != "" && string(u.Role) != q.Role {
 			continue
 		}
 		c := *u
