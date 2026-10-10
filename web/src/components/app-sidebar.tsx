@@ -7,6 +7,7 @@ import { NavLink } from 'react-router-dom'
 import { ChevronDown, ChevronsUpDown, type LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import type { DynamicKey } from '@/lib/i18n'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { AccountMenuItems } from '@/components/account-menu-items'
 import {
@@ -16,28 +17,28 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-interface NavItem {
+export interface NavItem {
   to: string
-  key: string
+  key: DynamicKey
   icon: LucideIcon
   end?: boolean
 }
 
-interface NavGroup {
-  titleKey?: string
-  items: NavItem[]
+export interface NavGroup {
+  titleKey?: DynamicKey
+  items: readonly NavItem[]
 }
 
 // 管理端（/app）与用户端（/user）共享的侧边栏：品牌 + 可折叠分组 + 底部用户卡。
 // 分组标题（有 titleKey 时）为可点击按钮，默认展开、点击收起；用户卡展示 email，菜单内退出登录。
-export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; userEmail?: string }) {
+export default function AppSidebar({ navs, userEmail }: { navs: readonly NavGroup[]; userEmail?: string }) {
   const { t } = useTranslation()
   // titleKey -> 是否折叠；不在集合内即默认展开
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
   const avatarInitial = userEmail ? userEmail.charAt(0).toUpperCase() : ''
 
-  const renderItems = (items: NavItem[]) =>
+  const renderItems = (items: readonly NavItem[]) =>
     items.map(({ to, key, icon: Icon, end }) => (
       <NavLink
         key={to}

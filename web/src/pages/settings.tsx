@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Settings as SettingsIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { DynamicKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
 import { Button } from '@/components/ui/button'
@@ -31,15 +32,15 @@ const TIER_VALUES = ['passthrough', 'strip', 'reject'] as const
 const TLS_KEY = 'mail.tls'
 const TLS_VALUES = ['starttls', 'implicit', 'none'] as const
 
-const GROUPS: { id: string; keys: string[] }[] = [
+const GROUPS = [
   { id: 'signup', keys: ['signup_enabled'] },
   { id: 'defaults', keys: ['default_user_max_concurrency', 'default_user_balance', 'default_user_temp_balance', 'default_user_temp_balance_ttl_days'] },
   { id: 'pricingSync', keys: ['price_source_url', 'price_sync_cron'] },
   { id: 'tierPolicy', keys: ['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'] },
   { id: 'mail', keys: ['mail.enabled', 'mail.register_verification', 'mail.smtp_host', 'mail.smtp_port', 'mail.smtp_username', 'mail.smtp_password', 'mail.from_address', 'mail.tls'] },
   { id: 'balanceWarning', keys: ['balance_warning.enabled'] },
-]
-const GROUPED_KEYS = new Set(GROUPS.flatMap(g => g.keys))
+] as const
+const GROUPED_KEYS = new Set<string>(GROUPS.flatMap(g => g.keys))
 
 const isPlainInt = (v: string) => /^\d+$/.test(v)
 const isUsdText = (v: string) => v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0
@@ -111,15 +112,15 @@ function SettingRow({ setting }: { setting: Setting }) {
   const controlId = `setting-${key.replace(/[^a-zA-Z0-9_-]/g, '-')}`
   const control =
     typ === 'switch' ? (
-      <Switch id={controlId} checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(`settings.labels.${key}`)} />
+      <Switch id={controlId} checked={draft === 'true'} disabled={save.isPending} onCheckedChange={c => { setDraft(String(c)); doSave(String(c)) }} aria-label={t(`settings.labels.${key}` as DynamicKey)} />
     ) : isTier ? (
       <Select items={{ passthrough: t('settings.policies.passthrough'), strip: t('settings.policies.strip'), reject: t('settings.policies.reject') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-44 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}` as DynamicKey)}><SelectValue /></SelectTrigger>
         <SelectContent>{TIER_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.policies.${v}`)}>{t(`settings.policies.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : isTls ? (
       <Select items={{ starttls: t('settings.tlsOptions.starttls'), implicit: t('settings.tlsOptions.implicit'), none: t('settings.tlsOptions.none') }} value={draft} onValueChange={v => { setDraft(v); doSave(v) }} disabled={save.isPending}>
-        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}`)}><SelectValue /></SelectTrigger>
+        <SelectTrigger id={controlId} className="w-full max-w-full lg:w-56 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" aria-label={t(`settings.labels.${key}` as DynamicKey)}><SelectValue /></SelectTrigger>
         <SelectContent>{TLS_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.tlsOptions.${v}`)}>{t(`settings.tlsOptions.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : typ === 'number' ? (
@@ -130,8 +131,8 @@ function SettingRow({ setting }: { setting: Setting }) {
   return (
     <div className="flex flex-col gap-3 py-3 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(`settings.labels.${key}`)}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
-        <p className="text-xs text-muted-foreground">{t(`settings.descs.${key}`)}</p>
+        <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(`settings.labels.${key}` as DynamicKey)}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
+        <p className="text-xs text-muted-foreground">{t(`settings.descs.${key}` as DynamicKey)}</p>
         {isUsd && !err && <p className="text-xs text-muted-foreground"><span className="whitespace-nowrap">{t('settings.usdHint')}</span></p>}
         {err && <p className="text-xs text-destructive">{err}</p>}
       </div>
@@ -140,7 +141,7 @@ function SettingRow({ setting }: { setting: Setting }) {
   )
 }
 
-function MailTemplateCard({ purpose }: { purpose: string }) {
+function MailTemplateCard({ purpose }: { purpose: 'register_code' | 'reset_code' | 'balance_warning' }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['mail-templates'], queryFn: () => api.getMailTemplates() })

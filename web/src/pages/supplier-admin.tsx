@@ -313,7 +313,7 @@ export default function SupplierAdmin() {
       <Dialog open={!!bal} onOpenChange={v => { if (!v) setBal(null) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t('supplierAdmin.balance.title', { uid: bal?.supplier_user_id })}</DialogTitle>
+            <DialogTitle>{t('supplierAdmin.balance.title', { uid: bal?.supplier_user_id ?? 0 })}</DialogTitle>
             <DialogDescription>{t('supplierAdmin.balance.desc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

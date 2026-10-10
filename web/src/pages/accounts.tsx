@@ -7,6 +7,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
@@ -1282,7 +1283,7 @@ export default function Accounts() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? t('accounts.editTitle', { id: editing.ID }) : t('accounts.newTitle')}</DialogTitle>
+            <DialogTitle>{editing ? t('accounts.editTitle', { id: editing.ID ?? 0 }) : t('accounts.newTitle')}</DialogTitle>
             <DialogDescription>{t('accounts.dialogDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -1473,7 +1474,7 @@ export default function Accounts() {
                 groups={groups}
                 value={form.group_ids}
                 onChange={v => setForm(f => ({ ...f, group_ids: v }))}
-                disabled={editing && !groupsLoaded}
+                disabled={!!editing && !groupsLoaded}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.groupHint')}</p>
               {editing && groupsEcho.isError && (
@@ -1498,10 +1499,10 @@ export default function Accounts() {
                 (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
                 (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
                 (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
-                (editing && !groupsLoaded) ||
+                (!!editing && !groupsLoaded) ||
                 // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
                 // 会使 account id 回退到 null，PUT 全列更新将清空已存值（groups 同款门禁）
-                (editing && isSelCodex && extEcho.isLoading)
+                (!!editing && isSelCodex && extEcho.isLoading)
               }
             >
               {save.isPending ? t('common.saving') : editing ? t('common.saveChanges') : t('common.create')}
@@ -1516,7 +1517,7 @@ export default function Accounts() {
           <DialogHeader>
             <DialogTitle>{t('accounts.deleteTitle')}</DialogTitle>
             <DialogDescription>
-              {t('accounts.deleteDesc', { name: deleting?.Name })}
+              {t('accounts.deleteDesc', { name: deleting?.Name ?? '' })}
             </DialogDescription>
           </DialogHeader>
           {remove.isError && errMsg(remove.error) && (
@@ -1646,7 +1647,7 @@ export default function Accounts() {
       <Dialog open={!!extTarget} onOpenChange={o => { if (!o && !extSave.isPending) setExtTarget(null) }}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t('accounts.ext.title', { id: extTarget?.ID })}</DialogTitle>
+            <DialogTitle>{t('accounts.ext.title', { id: extTarget?.ID ?? 0 })}</DialogTitle>
             <DialogDescription>{t('accounts.ext.desc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -1745,8 +1746,8 @@ export default function Accounts() {
       <Dialog open={!!usageDetail} onOpenChange={o => { if (!o) setUsageDetail(null) }}>
         <DialogContent className="flex max-h-[85vh] w-[calc(100vw-2rem)] flex-col overflow-hidden p-0 sm:max-w-2xl">
           <DialogHeader className="shrink-0 px-6 pt-6">
-            <DialogTitle>{t('accounts.usageDetail.title', { name: usageDetail?.Name ?? '—', id: usageDetail?.ID })}</DialogTitle>
-            <DialogDescription>{t(`accounts.usageDetail.range.${activeKey}`)}</DialogDescription>
+            <DialogTitle>{t('accounts.usageDetail.title', { name: usageDetail?.Name ?? '—', id: usageDetail?.ID ?? 0 })}</DialogTitle>
+            <DialogDescription>{t(`accounts.usageDetail.range.${activeKey}` as DynamicKey)}</DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <div className="space-y-4">
@@ -1861,7 +1862,7 @@ export default function Accounts() {
       <Dialog open={!!multTarget} onOpenChange={o => { if (!o && !multSave.isPending) setMultTarget(null) }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t('accounts.multiplier.title', { name: multTarget?.Name ?? '—', id: multTarget?.ID })}</DialogTitle>
+            <DialogTitle>{t('accounts.multiplier.title', { name: multTarget?.Name ?? '—', id: multTarget?.ID ?? 0 })}</DialogTitle>
             <DialogDescription>{t('accounts.multiplier.desc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">
@@ -1898,7 +1899,7 @@ export default function Accounts() {
       <Dialog open={!!domainTarget} onOpenChange={o => { if (!o && !domainSave.isPending) setDomainTarget(null) }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t('accounts.cacheDomain.title', { name: domainTarget?.Name ?? '—', id: domainTarget?.ID })}</DialogTitle>
+            <DialogTitle>{t('accounts.cacheDomain.title', { name: domainTarget?.Name ?? '—', id: domainTarget?.ID ?? 0 })}</DialogTitle>
             <DialogDescription>{t('accounts.cacheDomain.desc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-1.5">

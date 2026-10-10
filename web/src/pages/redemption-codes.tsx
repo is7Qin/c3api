@@ -358,7 +358,7 @@ export default function RedemptionCodes() {
                     <TableCell className="tabular-nums">{c.UsedCount} / {c.MaxUses}</TableCell>
                     <TableCell><CodeStatusBadge status={c.Status} /></TableCell>
                     <TableCell>
-                      <div className="text-sm">{formatDateTime(c.ExpiresAt)}</div>
+                      <div className="text-sm">{formatDateTime(c.ExpiresAt ?? undefined)}</div>
                       {c.ResourceExpiresAt && (
                         <div className="text-xs text-muted-foreground">
                           {t('redemptions.table.resourceExpiresAt')}: {formatDateTime(c.ResourceExpiresAt)}
@@ -502,7 +502,7 @@ export default function RedemptionCodes() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{t('redemptions.deactivateTitle')}</DialogTitle>
-            <DialogDescription>{t('redemptions.deactivateDesc', { code: deactivating?.Code })}</DialogDescription>
+            <DialogDescription>{t('redemptions.deactivateDesc', { code: deactivating?.Code ?? '' })}</DialogDescription>
           </DialogHeader>
           {deactivate.isError && errMsg(deactivate.error) && (
             <p className="text-sm text-destructive">{errMsg(deactivate.error)}</p>
@@ -520,7 +520,7 @@ export default function RedemptionCodes() {
       <Dialog open={!!usesFor} onOpenChange={o => { if (!o) setUsesFor(null) }}>
         <DialogContent className="sm:max-w-lg overflow-hidden">
           <DialogHeader>
-            <DialogTitle>{t('redemptions.usesTitle', { code: usesFor?.Code })}</DialogTitle>
+            <DialogTitle>{t('redemptions.usesTitle', { code: usesFor?.Code ?? '' })}</DialogTitle>
             <DialogDescription>{t('redemptions.usesDesc')}</DialogDescription>
           </DialogHeader>
           {usesQ.isError ? (

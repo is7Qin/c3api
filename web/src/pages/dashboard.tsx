@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Activity, AlertTriangle, Boxes, Coins, FolderOpen, Gauge, PowerOff, Users, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { DynamicKey } from '@/lib/i18n'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
 import { api } from '@/App'
@@ -89,12 +90,12 @@ export default function Dashboard() {
     requests: { label: t('dashboard.tableRequests'), color: 'var(--primary)' },
   } satisfies ChartConfig
 
-  const statusCards: { key: keyof typeof statusCounts; icon: typeof Activity; descKey: string }[] = [
+  const statusCards = [
     { key: 'active', icon: Activity, descKey: 'dashboard.statusCards.active' },
     { key: 'unhealthy', icon: AlertTriangle, descKey: 'dashboard.statusCards.unhealthy' },
     { key: '429', icon: Gauge, descKey: 'dashboard.statusCards.429' },
     { key: 'disabled', icon: PowerOff, descKey: 'dashboard.statusCards.disabled' },
-  ]
+  ] as const satisfies readonly { key: keyof typeof statusCounts; icon: typeof Activity; descKey: DynamicKey }[]
 
   // 今日汇总卡（USD 口径——API 边界已 /1e5 换算；spec 2026-08-14：call_count
   // 按次调用与 requests 并列——图片生成 = 张数、search = 1）。

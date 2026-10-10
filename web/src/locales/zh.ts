@@ -1,4 +1,4 @@
-{
+export default {
   "common": {
     "appTitle": "网关管理台",
     "cancel": "取消",
@@ -2139,4 +2139,4 @@
     "inactive": "已禁用",
     "allInactive": "无匹配的活跃供应商，请细化搜索"
   }
-}
+} as const;

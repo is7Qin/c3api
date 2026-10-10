@@ -426,7 +426,7 @@ export default function UserKeys() {
           </DialogHeader>
           {created ? (
             <>
-              <KeyBox title={t('user.keys.secretTitle')} value={created.key} hint={t('user.keys.secretHint')} />
+              <KeyBox title={t('user.keys.secretTitle')} value={created.key ?? ''} hint={t('user.keys.secretHint')} />
               <DialogFooter>
                 <Button onClick={() => setCreateOpen(false)}>{t('common.done')}</Button>
               </DialogFooter>
@@ -480,7 +480,7 @@ export default function UserKeys() {
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{t('user.keys.editTitle', { id: editing?.ID })}</DialogTitle>
+            <DialogTitle>{t('user.keys.editTitle', { id: editing?.ID ?? 0 })}</DialogTitle>
             <DialogDescription>{t('user.keys.editDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -535,7 +535,7 @@ export default function UserKeys() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{t('user.keys.deleteTitle')}</DialogTitle>
-            <DialogDescription>{t('user.keys.deleteDesc', { name: deleting?.Name })}</DialogDescription>
+            <DialogDescription>{t('user.keys.deleteDesc', { name: deleting?.Name ?? '' })}</DialogDescription>
           </DialogHeader>
           {del.isError && errMsg(del.error) && <p className="text-sm text-destructive">{errMsg(del.error)}</p>}
           <DialogFooter>
@@ -556,7 +556,7 @@ export default function UserKeys() {
                 <DialogTitle>{t('user.keys.rotatedTitle')}</DialogTitle>
                 <DialogDescription>{t('user.keys.rotatedDesc')}</DialogDescription>
               </DialogHeader>
-              <KeyBox title={t('user.keys.secretTitle')} value={rotated.key} hint={t('user.keys.secretHint')} />
+              <KeyBox title={t('user.keys.secretTitle')} value={rotated.key ?? ''} hint={t('user.keys.secretHint')} />
               <DialogFooter>
                 <Button onClick={() => { setRotating(null); setRotated(null) }}>{t('common.done')}</Button>
               </DialogFooter>
@@ -565,7 +565,7 @@ export default function UserKeys() {
             <>
               <DialogHeader>
                 <DialogTitle>{t('user.keys.rotateTitle')}</DialogTitle>
-                <DialogDescription>{t('user.keys.rotateDesc', { name: rotating?.Name })}</DialogDescription>
+                <DialogDescription>{t('user.keys.rotateDesc', { name: rotating?.Name ?? '' })}</DialogDescription>
               </DialogHeader>
               {rotate.isError && errMsg(rotate.error) && <p className="text-sm text-destructive">{errMsg(rotate.error)}</p>}
               <DialogFooter>

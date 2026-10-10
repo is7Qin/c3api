@@ -306,11 +306,11 @@ export default function Stats() {
           ) : (
             <>
               <div className="grid grid-cols-3 gap-4">
-                {[
+                {([
                   { key: 'avg', labelKey: 'stats.ttft.avg', value: ttftQ.data?.AvgMS ?? 0 },
                   { key: 'p95', labelKey: 'stats.ttft.p95', value: ttftQ.data?.P95MS ?? 0 },
                   { key: 'p99', labelKey: 'stats.ttft.p99', value: ttftQ.data?.P99MS ?? 0 },
-                ].map(({ key, labelKey, value }) => (
+                ] as const).map(({ key, labelKey, value }) => (
                   <div key={key}>
                     <div className="text-sm text-muted-foreground">{t(labelKey)}</div>
                     <div className="text-2xl font-semibold tabular-nums">{fmtTTFT(value)}</div>
@@ -702,7 +702,7 @@ function FlowCard({ flowQ, offset, limit, onOffsetChange, onLimitChange }: {
             {!conserved && (
               <Alert variant="destructive">
                 <AlertTitle>{t('stats.routing.conservationAlertTitle')}</AlertTitle>
-                <AlertDescription>{t('stats.routing.conservationAlertDesc', { first: data?.first_dispatch_chains.toLocaleString(), terminal: data?.terminal_chains.toLocaleString() })}</AlertDescription>
+                <AlertDescription>{t('stats.routing.conservationAlertDesc', { first: data?.first_dispatch_chains.toLocaleString() ?? '', terminal: data?.terminal_chains.toLocaleString() ?? '' })}</AlertDescription>
               </Alert>
             )}
             {conserved && sankeyData ? (

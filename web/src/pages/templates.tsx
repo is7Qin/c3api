@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Boxes, Pencil, Plus, Settings2, Trash2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
@@ -160,7 +161,7 @@ function mappingOf(rows: MappingRow[]): Record<string, ModelMappingEntry> {
   return out
 }
 
-function validateMappingRows(rows: MappingRow[], tr: (k: string, o?: Record<string, unknown>) => string): string | null {
+function validateMappingRows(rows: MappingRow[], tr: TFunction): string | null {
   const seen = new Set<string>()
   for (const r of rows) {
     const aliasTrim = r.alias.trim()
@@ -969,7 +970,7 @@ export default function Templates() {
       <Dialog open={!!extTarget} onOpenChange={o => { if (!o && !extSave.isPending) setExtTarget(null) }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
-            <DialogTitle>{tr('templates.ext.title', { id: extTarget?.ID })}</DialogTitle>
+            <DialogTitle>{tr('templates.ext.title', { id: extTarget?.ID ?? 0 })}</DialogTitle>
             <DialogDescription>{tr('templates.ext.desc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -1011,7 +1012,7 @@ export default function Templates() {
           <DialogHeader>
             <DialogTitle>{tr('templates.deleteTitle')}</DialogTitle>
             <DialogDescription>
-              {tr('templates.deleteDesc', { name: deleting?.Name })}
+              {tr('templates.deleteDesc', { name: deleting?.Name ?? '' })}
             </DialogDescription>
           </DialogHeader>
           {remove.isError && errMsg(remove.error) && (

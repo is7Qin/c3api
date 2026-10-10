@@ -130,7 +130,7 @@ export default function UserProfile() {
                 <div className="space-y-2">
                   {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-8" />)}
                 </div>
-              ) : tempQ.data.rows.length === 0 ? (
+              ) : !tempQ.data || tempQ.data.rows.length === 0 ? (
                 <p className="py-6 text-center text-sm text-muted-foreground">{t('user.profile.tempEmpty')}</p>
               ) : (
                 <Table>

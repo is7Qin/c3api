@@ -489,7 +489,7 @@ export default function Users() {
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{editing ? t('users.editTitle', { id: editing.ID }) : t('users.newTitle')}</DialogTitle>
+            <DialogTitle>{editing ? t('users.editTitle', { id: editing.ID ?? 0 }) : t('users.newTitle')}</DialogTitle>
             <DialogDescription>{t('users.dialogDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -565,7 +565,7 @@ export default function Users() {
       <Dialog open={!!tempUser} onOpenChange={o => { if (!o) { setTempUser(null) } }}>
         <DialogContent className="sm:max-w-lg overflow-hidden">
           <DialogHeader>
-            <DialogTitle>{t('users.tempBalances.title', { name: tempUser?.Email })}</DialogTitle>
+            <DialogTitle>{t('users.tempBalances.title', { name: tempUser?.Email ?? '' })}</DialogTitle>
             <DialogDescription>{t('users.tempBalances.desc')}</DialogDescription>
             {/* 空态不渲染合计（对齐 profile 参考形态） */}
             {tempRows.length > 0 && (
@@ -613,7 +613,7 @@ export default function Users() {
       <Dialog open={!!logUser} onOpenChange={o => { if (!o) setLogUser(null) }}>
         <DialogContent className="sm:max-w-2xl overflow-hidden">
           <DialogHeader>
-            <DialogTitle>{t('users.balanceLogs.title', { name: logUser?.Email })}</DialogTitle>
+            <DialogTitle>{t('users.balanceLogs.title', { name: logUser?.Email ?? '' })}</DialogTitle>
             <DialogDescription>{t('users.balanceLogs.desc')}</DialogDescription>
           </DialogHeader>
           {logQ.isLoading ? (
@@ -669,7 +669,7 @@ export default function Users() {
       <Dialog open={!!groupsTarget} onOpenChange={o => { if (!o && !saveUserGroups.isPending && !clearUserGroups.isPending) { setGroupsTarget(null); setClearGroupsOpen(false) } }}>
         <DialogContent className="sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle>{t('users.groups.title', { name: groupsTarget?.Email })}</DialogTitle>
+            <DialogTitle>{t('users.groups.title', { name: groupsTarget?.Email ?? '' })}</DialogTitle>
             <DialogDescription>{t('users.groups.desc')}</DialogDescription>
             <p className="text-sm font-medium">{t('users.groups.count', { count: grantedCount })}</p>
             {groupsEchoLoading && <p className="text-xs text-muted-foreground">{t('users.groups.echoLoading')}</p>}
@@ -754,7 +754,7 @@ export default function Users() {
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{t('users.groups.clearAll')}</DialogTitle>
-            <DialogDescription>{t('users.groups.clearAllDesc', { name: groupsTarget?.Email })}</DialogDescription>
+            <DialogDescription>{t('users.groups.clearAllDesc', { name: groupsTarget?.Email ?? '' })}</DialogDescription>
           </DialogHeader>
           {clearUserGroups.isError && errMsg(clearUserGroups.error) && (
             <p className="text-sm text-destructive">{errMsg(clearUserGroups.error)}</p>

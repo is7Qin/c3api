@@ -9,15 +9,26 @@ import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
+// Base UI 的 onValueChange 会以 `Multiple=true ? Value[] : Value | null` 调用（单选清空时传
+// null）。本项目 Select 恒为受控且选项为显式项，故：单选忽略 null，多选透传数组——在包装器
+// 层按 Multiple 精确收窄回调类型，避免把 Value[] 当单值传出。
+type SelectChangeValue<Value, Multiple extends boolean | undefined> =
+  Multiple extends true ? Value[] : Value
+
 type SelectProps<Value, Multiple extends boolean | undefined = false> =
-  SelectPrimitive.Root.Props<Value, Multiple> & {
+  Omit<SelectPrimitive.Root.Props<Value, Multiple>, "onValueChange"> & {
     items: NonNullable<SelectPrimitive.Root.Props<Value, Multiple>["items"]>
+    onValueChange?: (value: SelectChangeValue<Value, Multiple>) => void
   }
 
-function Select<Value, Multiple extends boolean | undefined = false>(
-  props: SelectProps<Value, Multiple>
-): React.JSX.Element {
-  return <SelectPrimitive.Root {...props} />
+function Select<Value, Multiple extends boolean | undefined = false>({
+  onValueChange,
+  ...props
+}: SelectProps<Value, Multiple>): React.JSX.Element {
+  const handleValueChange: SelectPrimitive.Root.Props<Value, Multiple>["onValueChange"] = onValueChange
+    ? (value) => { if (value != null) onValueChange(value as SelectChangeValue<Value, Multiple>) }
+    : undefined
+  return <SelectPrimitive.Root {...props} onValueChange={handleValueChange} />
 }
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
