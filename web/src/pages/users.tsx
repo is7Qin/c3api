@@ -152,14 +152,15 @@ export default function Users() {
   // —— 列表：筛选/分页状态归 queryKey（排序白名单：id/email/role/status/
   // max_concurrency/created_at/updated_at——balance 不可排）——
   const [email, setEmail] = useState('')
+  const [role, setRole] = useState<'all' | UserRole>('all')
   const [activeSort, setActiveSort] = useState<string | null>(null) // null = 无主动排序（默认 id desc）
   const [order, setOrder] = useState<SortOrder>('desc')
   const [offset, setOffset] = useState(0)
   const [limit, setLimit] = useState(20)
 
   const { data, isLoading, isError, error } = useQuery({
-    queryKey: ['users', { limit, offset, email, sort: activeSort ?? 'id', order }],
-    queryFn: () => api.listUsers({ limit, offset, email: email || undefined, sort: activeSort ?? 'id', order }),
+    queryKey: ['users', { limit, offset, email, role, sort: activeSort ?? 'id', order }],
+    queryFn: () => api.listUsers({ limit, offset, email: email || undefined, role: role === 'all' ? undefined : role, sort: activeSort ?? 'id', order }),
   })
   const rows = data?.rows ?? []
 
@@ -167,6 +168,7 @@ export default function Users() {
   // 每页条数变化 → 重置 offset。
   const changeLimit = (l: number) => { setLimit(l); resetPage() }
   const changeEmail = (v: string) => { setEmail(v); resetPage() }
+  const changeRole = (v: string) => { setRole(v as 'all' | UserRole); resetPage() }
   // 列头三态：新列 → 降序；同列降序 → 升序；同列升序 → 取消（回默认 id desc）
   const onColumnToggle = (col: string) => {
     resetPage()
@@ -180,8 +182,16 @@ export default function Users() {
       setOrder('desc')
     }
   }
-  const hasFilters = email !== ''
-  const clearFilters = () => { setEmail(''); resetPage() }
+  const hasFilters = email !== '' || role !== 'all'
+  const clearFilters = () => { setEmail(''); setRole('all'); resetPage() }
+  // 角色筛选项（单一事实来源）：items（供 SelectValue 解析并显示标签）与下拉项共用，避免两处漂移
+  const roleOptions: { value: 'all' | UserRole; label: string }[] = [
+    { value: 'all', label: t('users.allRoles') },
+    { value: 'platform_admin', label: t('users.role.platform_admin') },
+    { value: 'user', label: t('users.role.user') },
+    { value: 'supplier', label: t('users.role.supplier') },
+  ]
+  const roleItems = Object.fromEntries(roleOptions.map((o) => [o.value, o.label]))
 
   // —— 创建/编辑 ——
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -388,7 +398,19 @@ export default function Users() {
         name={email}
         onNameChange={changeEmail}
         placeholder={t('users.searchEmail')}
-      />
+      >
+        {/* 角色筛选（all = 不过滤） */}
+        <Select items={roleItems} value={role} onValueChange={changeRole}>
+          <SelectTrigger size="default" className="w-40 data-[size=default]:h-9" aria-label={t('users.filterRole')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {roleOptions.map((o) => (
+              <SelectItem key={o.value} value={o.value} label={o.label}>{o.label}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </ListToolbar>
 
       {isError ? (
         <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p>
