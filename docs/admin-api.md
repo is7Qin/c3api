@@ -173,7 +173,8 @@
 
 **流式语义（无全流缓冲，逐帧改写）：**
 - REST 成功 = 上游返回 2xx 前的成功响应；SSE 成功 = 上游返回 `200` 后逐帧可识别数据帧实时改写，后续流中止不回滚已发出帧；WS 成功 = 上游接受首帧后逐帧可识别上游文本帧实时改写，二进制/不透明帧不改。
-- **SSE 顺序**：原生 `sserelay` 调用方若同时配置 `Mapper` 与 `Observer`，`Mapper` 先执行，非丢弃输出先写入客户端，再以原始未修改事件回调 `Observer`；被丢弃帧仅回调 `Observer` 不写出，写入失败则在 `Observer` 前返回；转换流式当前无 `Observer`，TTFT 与用量提取在 `Mapper` 内以原始 `ev.Data` 于 `StreamMapper.Map` 之前发生，顺序不变。已改变的 SSE 负载保留全部非 `data:` 行（`event`/`id`/`retry`/注释及顺序），仅替换逻辑 `data`，仅在真实 implicit 改写时才可能将多 `data:` 行归一为一行。
+- **SSE 顺序**：`sserelay` 调用方配置 `Mapper` 时逐帧先经 `Mapper`（协议转换 + implicit 模型改写），随后在**写出前 seam** `OnEvent` 以**原始未修改事件**回调（TTFT/usage/图像计数/轮次钩子与续接入队统一在此采样，drop 帧也回调；取代旧 post-write `Observer`），再写出（drop 帧不写）。五路 caller、协议转换与 codex responses 走同一 seam。已改变的 SSE 负载保留全部非 `data:` 行（`event`/`id`/`retry`/注释及顺序），仅替换逻辑 `data`，仅在真实 implicit 改写时才可能将多 `data:` 行归一为一行。
+- **已提交流中止的错误帧**：客户端已收到 `200`/帧后上游读取失败，网关补写客户端协议 SSE `error` 帧——OpenAI（Chat/Responses/Images）为顶层 `error` 键（`type: server_error`），Anthropic 为 `event: error` + `type:error` 信封（内层 `api_error`）；openai-go 共享 `ssestream` 以顶层 `error` 键判流失败。取消 / 写侧不可用（写失败）不补写。
 - **WS 顺序**：上游→客户端文本帧在 `frameHook`/fatal 鉴权与用量/图片嗅探（原始字节）之后、客户端写出之前重写；显式/未映射路径不安装 mapper，不做响应扫描。
 - **转换顺序**：原始上游观测 → `ConvertResponse`/`StreamMapper` 协议转换 → 最终面向客户端输出的 implicit 重写 → 客户端写出。转换流式 `StreamMapper.Map` 可能返回零/一/多完整 SSE 帧，helper 遍历整个返回切片逐帧重写，保留帧边界/顺序/元数据与 `[DONE]` 语义。
 - 共享 helper 在 `override` 为空、无已识别字符串路径或全部值已相等时返回原切片；已改变 SSE 帧才重建。
