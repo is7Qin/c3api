@@ -4,6 +4,10 @@ minimumReleaseAgeExclude:
   - lucide-react@1.29.0
   - shadcn@4.16.2
 overrides:
+  # CVE-2026-93749（GHSA-68fv-2mgg-jv7q）：source-map-js <1.2.2 在按 indexed section
+  # 偏移取源时触发事件循环 DoS——@tailwindcss/node 链（dev/build，不进生产 bundle），
+  # 强制全链到 1.2.2。
+  source-map-js: 1.2.2
   # CVE-2026-59870（!!omap ReDoS）+ maxTotalMergeKeys 对空 merge 源不设 CPU 上限：
   # redocly/openapi-core pin 精确 4.3.0，故强制全链升级到 4.3.2（dev 构建链，
   # 不打包进生产 bundle）。
