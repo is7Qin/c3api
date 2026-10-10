@@ -11,8 +11,8 @@ github.com/agext/levenshtein v1.2.3 h1:YB2fHEn0UJagG8T1rrWknE3ZQzWM06O8AMAatNn7l
 github.com/agext/levenshtein v1.2.3/go.mod h1:JEDfjyjHDjOF/1e4FlBE/PkbqA9OfWu2ki2W0IB5558=
 github.com/alicebob/miniredis/v2 v2.39.0 h1:M7WbmV5BmV56L8KTG0rw6vEQ+woTOghpDgin2xv4A0g=
 github.com/alicebob/miniredis/v2 v2.39.0/go.mod h1:TcL7YfarKPGDAthEtl5NBeHZfeUQj6OXMm/+iu5cLMM=
-github.com/anthropics/anthropic-sdk-go v1.75.0 h1:2oajsgiYwI0Hc8E6K9GttVe6CLwZlfhdxaqFqKVUnvA=
-github.com/anthropics/anthropic-sdk-go v1.75.0/go.mod h1:x+lPk/cCl48uRegeP0hlYYBN1b7bEBTveInIMgLicnY=
+github.com/anthropics/anthropic-sdk-go v1.76.0 h1:auC/FEfMDc750IMXLCIFHQdwjlLyhzH5Mg8qGmhBMnw=
+github.com/anthropics/anthropic-sdk-go v1.76.0/go.mod h1:x+lPk/cCl48uRegeP0hlYYBN1b7bEBTveInIMgLicnY=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0 h1:axGnT1gRIfimI7gJifB699GoE/oq+F2MU7Dml6nw9rQ=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0/go.mod h1:lvDnEdqiQrp0O42VQGgmlKpxL1AP2+08jFMw88y4klk=
 github.com/apparentlymart/go-textseg/v15 v15.0.0 h1:uYvfpb3DyLSCGWnctWKGj857c6ew1u1fNQOlOtuGxQY=
@@ -67,10 +67,6 @@ github.com/inconshreveable/mousetrap v1.1.0 h1:wN+x4NVGpMsO7ErUn/mUI3vEoE6Jt13X2
 github.com/inconshreveable/mousetrap v1.1.0/go.mod h1:vpF70FUmC8bwa3OWnCshd2FqLfsEA9PFc4w1p2J65bw=
 github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8iyZjg=
 github.com/invopop/jsonschema v0.14.0/go.mod h1:ygm6C2EaVNMBDPpaPlnOA2pFAxBnxGjFlMZABxm9n2I=
-github.com/is7Qin/codex-sdk v0.0.0-20260930145109-4187837fc190 h1:eNyxJrfgEz7RTQRYY+dELpPmjuD9UGacFVmt+eNfodM=
-github.com/is7Qin/codex-sdk v0.0.0-20260930145109-4187837fc190/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
-github.com/is7Qin/codex-sdk v0.0.0-20260930162657-8e184503ad96 h1:2MiQDA6JAVAXJSFw4QFjrNQXKWcUEHxK0cQIUw1/WOQ=
-github.com/is7Qin/codex-sdk v0.0.0-20260930162657-8e184503ad96/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
 github.com/is7Qin/codex-sdk v0.0.0-20261001134104-41976b9cdd20 h1:D+stqYlTaxigNyDbYkHVCJ/mokjSMZAgjVgozszCOYc=
 github.com/is7Qin/codex-sdk v0.0.0-20261001134104-41976b9cdd20/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
 github.com/is7Qin/codex-sdk v0.0.0-20261009213254-4b282571461f h1:9o68GgFbyDsyNNxgO2RnnGvzEHyNCVYtarVJZhm0lwg=
