@@ -6,7 +6,6 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, XAxis, YAxis } from 'recharts'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { ChartContainer, ChartLegend, ChartLegendContent, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
@@ -314,13 +313,13 @@ export default function UserStats() {
           ) : (
             <>
               <div className="grid grid-cols-3 gap-4">
-                {[
+                {([
                   { key: 'avg', labelKey: 'user.stats.ttft.avg', value: ttftQ.data?.AvgMS ?? 0 },
                   { key: 'p95', labelKey: 'user.stats.ttft.p95', value: ttftQ.data?.P95MS ?? 0 },
                   { key: 'p99', labelKey: 'user.stats.ttft.p99', value: ttftQ.data?.P99MS ?? 0 },
-                ].map(({ key, labelKey, value }) => (
+                ] as const).map(({ key, labelKey, value }) => (
                   <div key={key}>
-                    <div className="text-sm text-muted-foreground">{t(labelKey as DynamicKey)}</div>
+                    <div className="text-sm text-muted-foreground">{t(labelKey)}</div>
                     <div className="text-2xl font-semibold tabular-nums">{fmtTTFT(value)}</div>
                   </div>
                 ))}

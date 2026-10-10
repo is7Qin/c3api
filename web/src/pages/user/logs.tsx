@@ -377,7 +377,7 @@ export default function UserLogs() {
                           <span className={cn('size-2 rounded-full', latencyColor(l.TTFTMS).dot)} />
                           <span className="text-muted-foreground">{t('logs.latency.ttft')} {fmtDuration(l.TTFTMS)}</span>
                         </div>
-                        <div className="text-muted-foreground/60">{t('logs.latency.total')} {fmtDuration(l.LatencyMS ?? 0)}</div>
+                        <div className="text-muted-foreground/60">{t('logs.latency.total')} {l.LatencyMS != null ? fmtDuration(l.LatencyMS) : '—'}</div>
                       </div>
                     ) : l.LatencyMS != null ? (
                       <span className="text-muted-foreground">{fmtDuration(l.LatencyMS)}</span>

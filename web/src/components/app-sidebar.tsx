@@ -17,28 +17,28 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-interface NavItem {
+export interface NavItem {
   to: string
-  key: string
+  key: DynamicKey
   icon: LucideIcon
   end?: boolean
 }
 
-interface NavGroup {
-  titleKey?: string
-  items: NavItem[]
+export interface NavGroup {
+  titleKey?: DynamicKey
+  items: readonly NavItem[]
 }
 
 // 管理端（/app）与用户端（/user）共享的侧边栏：品牌 + 可折叠分组 + 底部用户卡。
 // 分组标题（有 titleKey 时）为可点击按钮，默认展开、点击收起；用户卡展示 email，菜单内退出登录。
-export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; userEmail?: string }) {
+export default function AppSidebar({ navs, userEmail }: { navs: readonly NavGroup[]; userEmail?: string }) {
   const { t } = useTranslation()
   // titleKey -> 是否折叠；不在集合内即默认展开
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
 
   const avatarInitial = userEmail ? userEmail.charAt(0).toUpperCase() : ''
 
-  const renderItems = (items: NavItem[]) =>
+  const renderItems = (items: readonly NavItem[]) =>
     items.map(({ to, key, icon: Icon, end }) => (
       <NavLink
         key={to}
@@ -48,7 +48,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
           `group relative flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm font-medium transition-all duration-200 ${isActive ? 'bg-white text-[#1d1d1f] shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.06] dark:bg-white/[0.11] dark:text-white dark:ring-white/10 dark:shadow-none' : 'text-[#6e6e73] hover:bg-black/[0.04] hover:text-[#1d1d1f] dark:text-[#a1a1a6] dark:hover:bg-white/[0.07] dark:hover:text-white'}`
         }
       >
-        <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {t(key as DynamicKey)}
+        <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {t(key)}
       </NavLink>
     ))
 
@@ -71,7 +71,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: NavGroup[]; user
                   onClick={() => setCollapsed(prev => ({ ...prev, [group.titleKey!]: !prev[group.titleKey!] }))}
                   className="flex h-8 w-full items-center justify-between rounded-[8px] px-3 text-[11px] font-semibold tracking-wide text-[#6e6e73] transition-colors hover:bg-[#e8e8ed] hover:text-[#1d1d1f] dark:text-[#b8b8c0] dark:hover:bg-white/8 dark:hover:text-white"
                 >
-                  {t(group.titleKey as DynamicKey)}
+                  {t(group.titleKey)}
                   <ChevronDown
                     className={cn('h-3.5 w-3.5 transition-transform duration-200', collapsed[group.titleKey] ? '' : 'rotate-180')}
                   />

@@ -87,15 +87,15 @@ const WHEN_FIELDS: WhenFieldMeta[] = [
 const MAX_CONDITIONS = 10
 
 // WhenField key → locale 键（rules.whenFields.*）。
-const WHEN_FIELD_LOCALE: Record<WhenField, string> = {
+const WHEN_FIELD_LOCALE = {
   http_status: 'httpStatus', http_status_in: 'httpStatusIn',
   error_message_contains: 'errorContains', error_message_contains_in: 'errorContainsIn',
   account_id: 'accountId', template_id: 'templateId', group_id: 'groupId',
   model: 'model', model_in: 'modelIn', window_seconds: 'windowSeconds', count_total_ge: 'countTotal',
   count_429_ge: 'count429', ratio_429_ge: 'ratio429',
   count_failure_ge: 'countFailure', ratio_failure_ge: 'ratioFailure', count_ok_ge: 'countOK',
-}
-const whenFieldLabel = (k: WhenField) => `rules.whenFields.${WHEN_FIELD_LOCALE[k]}`
+} as const satisfies Record<WhenField, string>
+const whenFieldLabel = (k: WhenField) => `rules.whenFields.${WHEN_FIELD_LOCALE[k]}` as const
 
 // kind 相关性过滤（"添加条件"与行内字段下拉共用）。
 // kind=''（不限）→ 全部字段；否则只留归属含该 kind 的字段——
@@ -630,14 +630,14 @@ export default function Rules() {
                   <div key={i} className="flex items-center gap-2">
                     <span className="w-6 shrink-0 text-sm text-muted-foreground">{t('rules.condOf')}</span>
                     <Select
-                      items={Object.fromEntries(rowOptions.map(f => [f.key, t(whenFieldLabel(f.key) as DynamicKey)]))}
+                      items={Object.fromEntries(rowOptions.map(f => [f.key, t(whenFieldLabel(f.key))]))}
                       value={r.field}
                       onValueChange={v => v && setRowField(i, v as WhenField)}
                     >
                       <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {rowOptions.map(f => (
-                          <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key) as DynamicKey)}>{t(whenFieldLabel(f.key) as DynamicKey)}</SelectItem>
+                          <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key))}>{t(whenFieldLabel(f.key))}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
@@ -657,7 +657,7 @@ export default function Rules() {
               {/* 添加条件：kindFilter - 已用字段；行数上限 10 */}
               <div className="flex items-center gap-2">
                 <Select
-                  items={Object.fromEntries(addOptions.map(f => [f.key, t(whenFieldLabel(f.key) as DynamicKey)]))}
+                  items={Object.fromEntries(addOptions.map(f => [f.key, t(whenFieldLabel(f.key))]))}
                   value={addField}
                   onValueChange={v => {
                     setAddField(null)
@@ -669,7 +669,7 @@ export default function Rules() {
                   </SelectTrigger>
                   <SelectContent>
                     {addOptions.map(f => (
-                      <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key) as DynamicKey)}>{t(whenFieldLabel(f.key) as DynamicKey)}</SelectItem>
+                      <SelectItem key={f.key} value={f.key} label={t(whenFieldLabel(f.key))}>{t(whenFieldLabel(f.key))}</SelectItem>
                     ))}
                   </SelectContent>
                 </Select>

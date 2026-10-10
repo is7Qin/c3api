@@ -90,12 +90,12 @@ export default function Dashboard() {
     requests: { label: t('dashboard.tableRequests'), color: 'var(--primary)' },
   } satisfies ChartConfig
 
-  const statusCards: { key: keyof typeof statusCounts; icon: typeof Activity; descKey: string }[] = [
+  const statusCards = [
     { key: 'active', icon: Activity, descKey: 'dashboard.statusCards.active' },
     { key: 'unhealthy', icon: AlertTriangle, descKey: 'dashboard.statusCards.unhealthy' },
     { key: '429', icon: Gauge, descKey: 'dashboard.statusCards.429' },
     { key: 'disabled', icon: PowerOff, descKey: 'dashboard.statusCards.disabled' },
-  ]
+  ] as const satisfies readonly { key: keyof typeof statusCounts; icon: typeof Activity; descKey: DynamicKey }[]
 
   // 今日汇总卡（USD 口径——API 边界已 /1e5 换算；spec 2026-08-14：call_count
   // 按次调用与 requests 并列——图片生成 = 张数、search = 1）。
@@ -199,7 +199,7 @@ export default function Dashboard() {
                 <Card className="@container/card h-full">
                   <CardHeader>
                     <CardDescription className="flex items-center gap-1.5">
-                      <Icon className="size-4" /> {t(descKey as DynamicKey)}
+                      <Icon className="size-4" /> {t(descKey)}
                     </CardDescription>
                     <CardTitle className="text-2xl font-semibold tabular-nums @[250px]/card:text-3xl">
                       {statusCounts[key]}

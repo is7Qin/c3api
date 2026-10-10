@@ -29,12 +29,12 @@ export type ActionKind = 'reject' | 'claim' | 'paid' | 'confirm-failed'
 // ActionKind → 标题 i18n key。用静态映射而非动态模板 `supplierAdmin.act.${kind}`：
 // 后者会被 i18next-cli 从 `kind` 的联合类型误抽出不存在的键
 // `supplierAdmin.act.confirm-failed`（1.74.8+ 抽取更严，CI check:i18n 失败）。
-const ACT_TITLE_KEY: Record<ActionKind, string> = {
+const ACT_TITLE_KEY = {
   reject: 'supplierAdmin.act.reject',
   claim: 'supplierAdmin.act.claim',
   paid: 'supplierAdmin.act.paid',
   'confirm-failed': 'supplierAdmin.act.confirmFailed',
-}
+} as const satisfies Record<ActionKind, DynamicKey>
 
 export function SettlementActionDialog({
   act,
@@ -94,7 +94,7 @@ export function SettlementActionDialog({
     <Dialog open onOpenChange={v => { if (!v) onClose() }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t(ACT_TITLE_KEY[act.kind] as DynamicKey)}</DialogTitle>
+          <DialogTitle>{t(ACT_TITLE_KEY[act.kind])}</DialogTitle>
           <DialogDescription>{t('supplierAdmin.act.idDesc', { id: act.row.id, amount: formatQuotaMillis(act.row.amount_millis) })}</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

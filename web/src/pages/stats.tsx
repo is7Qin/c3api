@@ -6,7 +6,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BarChart3, Workflow } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import type { DynamicKey } from '@/lib/i18n'
 import { Area, AreaChart, Bar, BarChart, CartesianGrid, Line, Sankey, Scatter, ScatterChart, XAxis, YAxis, ZAxis } from 'recharts'
 import { api } from '@/App'
 import type { components } from '@/lib/api/schema'
@@ -307,13 +306,13 @@ export default function Stats() {
           ) : (
             <>
               <div className="grid grid-cols-3 gap-4">
-                {[
+                {([
                   { key: 'avg', labelKey: 'stats.ttft.avg', value: ttftQ.data?.AvgMS ?? 0 },
                   { key: 'p95', labelKey: 'stats.ttft.p95', value: ttftQ.data?.P95MS ?? 0 },
                   { key: 'p99', labelKey: 'stats.ttft.p99', value: ttftQ.data?.P99MS ?? 0 },
-                ].map(({ key, labelKey, value }) => (
+                ] as const).map(({ key, labelKey, value }) => (
                   <div key={key}>
-                    <div className="text-sm text-muted-foreground">{t(labelKey as DynamicKey)}</div>
+                    <div className="text-sm text-muted-foreground">{t(labelKey)}</div>
                     <div className="text-2xl font-semibold tabular-nums">{fmtTTFT(value)}</div>
                   </div>
                 ))}

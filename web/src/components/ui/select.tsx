@@ -9,22 +9,24 @@ import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
-// Base UI 的 onValueChange 会以 `Value | null` 调用（清空时传 null）。本项目 Select 恒为
-// 受控且选项为显式项，null 只可能来自程序化清空——此处收窄为 `Value`，忽略 null，
-// 避免把 null 灌入调用方的 string 状态。
+// Base UI 的 onValueChange 会以 `Multiple=true ? Value[] : Value | null` 调用（单选清空时传
+// null）。本项目 Select 恒为受控且选项为显式项，故：单选忽略 null，多选透传数组——在包装器
+// 层按 Multiple 精确收窄回调类型，避免把 Value[] 当单值传出。
+type SelectChangeValue<Value, Multiple extends boolean | undefined> =
+  Multiple extends true ? Value[] : Value
+
 type SelectProps<Value, Multiple extends boolean | undefined = false> =
   Omit<SelectPrimitive.Root.Props<Value, Multiple>, "onValueChange"> & {
     items: NonNullable<SelectPrimitive.Root.Props<Value, Multiple>["items"]>
-    onValueChange?: (value: Value) => void
+    onValueChange?: (value: SelectChangeValue<Value, Multiple>) => void
   }
 
 function Select<Value, Multiple extends boolean | undefined = false>({
   onValueChange,
   ...props
 }: SelectProps<Value, Multiple>): React.JSX.Element {
-  // 收窄 Base UI 的 `Value | Value[] | null` 回调：忽略 null（清空），仅透传显式选中值。
   const handleValueChange: SelectPrimitive.Root.Props<Value, Multiple>["onValueChange"] = onValueChange
-    ? (value) => { if (value != null) onValueChange(value as Value) }
+    ? (value) => { if (value != null) onValueChange(value as SelectChangeValue<Value, Multiple>) }
     : undefined
   return <SelectPrimitive.Root {...props} onValueChange={handleValueChange} />
 }

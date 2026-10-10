@@ -39,7 +39,7 @@ export default function UserLogin() {
     try {
       const res = await userApi.login({ email: email.trim(), password })
       userAuth.setToken(res.token)
-      if (res.user.Role) userAuth.setRole(res.user.Role)
+      userAuth.setRole(res.user.Role ?? 'user')
       nav('/user')
     } catch (e) {
       // 服务端 error 字段直接展示；网络异常等统一兜底文案

@@ -32,15 +32,15 @@ const TIER_VALUES = ['passthrough', 'strip', 'reject'] as const
 const TLS_KEY = 'mail.tls'
 const TLS_VALUES = ['starttls', 'implicit', 'none'] as const
 
-const GROUPS: { id: string; keys: string[] }[] = [
+const GROUPS = [
   { id: 'signup', keys: ['signup_enabled'] },
   { id: 'defaults', keys: ['default_user_max_concurrency', 'default_user_balance', 'default_user_temp_balance', 'default_user_temp_balance_ttl_days'] },
   { id: 'pricingSync', keys: ['price_source_url', 'price_sync_cron'] },
   { id: 'tierPolicy', keys: ['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'] },
   { id: 'mail', keys: ['mail.enabled', 'mail.register_verification', 'mail.smtp_host', 'mail.smtp_port', 'mail.smtp_username', 'mail.smtp_password', 'mail.from_address', 'mail.tls'] },
   { id: 'balanceWarning', keys: ['balance_warning.enabled'] },
-]
-const GROUPED_KEYS = new Set(GROUPS.flatMap(g => g.keys))
+] as const
+const GROUPED_KEYS = new Set<string>(GROUPS.flatMap(g => g.keys))
 
 const isPlainInt = (v: string) => /^\d+$/.test(v)
 const isUsdText = (v: string) => v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0
@@ -141,7 +141,7 @@ function SettingRow({ setting }: { setting: Setting }) {
   )
 }
 
-function MailTemplateCard({ purpose }: { purpose: string }) {
+function MailTemplateCard({ purpose }: { purpose: 'register_code' | 'reset_code' | 'balance_warning' }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
   const { data } = useQuery({ queryKey: ['mail-templates'], queryFn: () => api.getMailTemplates() })
@@ -194,7 +194,7 @@ function MailTemplateCard({ purpose }: { purpose: string }) {
   const hintId = `mail-template-${purpose}-hint`
   return (
     <Card className="p-4 space-y-3">
-      <div className="font-medium">{t(`settings.mailTemplate.${purpose}` as DynamicKey)}</div>
+      <div className="font-medium">{t(`settings.mailTemplate.${purpose}`)}</div>
       <div className="space-y-1"><Label htmlFor={subjectId} className="text-sm">{t('settings.mailTemplate.subject')}</Label><Input id={subjectId} value={subject} onChange={e => setSubject(e.target.value)} placeholder={subjectPh} aria-describedby={hintId} /></div>
       <div className="space-y-1"><Label htmlFor={bodyId} className="text-sm">{t('settings.mailTemplate.body')}</Label><textarea id={bodyId} className="w-full min-h-24 rounded-md border border-input bg-black/[0.04] px-3 py-2 text-sm" value={body} onChange={e => setBody(e.target.value)} placeholder={bodyPh} aria-describedby={hintId} /></div>
       <p id={hintId} className="text-xs text-muted-foreground">{t(hintKey)}</p>
@@ -215,13 +215,13 @@ export default function SettingsPage() {
         <Tabs defaultValue="signup">
           <ScrollArea className="max-w-full [&_[data-slot=scroll-area-scrollbar][data-orientation=vertical]]:hidden" showHorizontal>
             <TabsList className="w-max min-w-full">
-              {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}` as DynamicKey)}</TabsTrigger>)}
+              {GROUPS.map(g => <TabsTrigger key={g.id} value={g.id} className="flex-1">{t(`settings.groups.${g.id}`)}</TabsTrigger>)}
             </TabsList>
           </ScrollArea>
           {GROUPS.map(g => {
             const rows = g.keys.map(k => byKey.get(k)).filter((s): s is Setting => !!s)
             const smtpCard = rows.length > 0 && (
-              <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}` as DynamicKey)}</CardTitle></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>
+              <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}`)}</CardTitle></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>
             )
             return (
               <TabsContent key={g.id} value={g.id} className="space-y-4 pt-4">
