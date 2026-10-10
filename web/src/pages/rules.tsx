@@ -243,7 +243,7 @@ function toBody(f: FormState): RuleCreate {
 
 // —— 预设模板（点击覆盖条件行 + 动作，name/priority/enabled 保留）——
 interface TemplatePreset {
-  id: string
+  id: 'throttle429' | 'throttleRoute429' | 'escalate' | 'failFatal' | 'overload503'
   when: { [key: string]: unknown }
   then: ThenForm
 }
@@ -570,7 +570,7 @@ export default function Rules() {
               <div className="flex flex-wrap gap-2">
                 {TEMPLATES.map(tp => (
                   <Button key={tp.id} variant="outline" size="sm" onClick={() => applyTemplate(tp)}>
-                    {t(`rules.templates.${tp.id}` as DynamicKey)}
+                    {t(`rules.templates.${tp.id}`)}
                   </Button>
                 ))}
               </div>
