@@ -9,15 +9,24 @@ import { cn } from "@/lib/utils"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ChevronDownIcon, CheckIcon, ChevronUpIcon } from "lucide-react"
 
+// Base UI 的 onValueChange 会以 `Value | null` 调用（清空时传 null）。本项目 Select 恒为
+// 受控且选项为显式项，null 只可能来自程序化清空——此处收窄为 `Value`，忽略 null，
+// 避免把 null 灌入调用方的 string 状态。
 type SelectProps<Value, Multiple extends boolean | undefined = false> =
-  SelectPrimitive.Root.Props<Value, Multiple> & {
+  Omit<SelectPrimitive.Root.Props<Value, Multiple>, "onValueChange"> & {
     items: NonNullable<SelectPrimitive.Root.Props<Value, Multiple>["items"]>
+    onValueChange?: (value: Value) => void
   }
 
-function Select<Value, Multiple extends boolean | undefined = false>(
-  props: SelectProps<Value, Multiple>
-): React.JSX.Element {
-  return <SelectPrimitive.Root {...props} />
+function Select<Value, Multiple extends boolean | undefined = false>({
+  onValueChange,
+  ...props
+}: SelectProps<Value, Multiple>): React.JSX.Element {
+  // 收窄 Base UI 的 `Value | Value[] | null` 回调：忽略 null（清空），仅透传显式选中值。
+  const handleValueChange: SelectPrimitive.Root.Props<Value, Multiple>["onValueChange"] = onValueChange
+    ? (value) => { if (value != null) onValueChange(value as Value) }
+    : undefined
+  return <SelectPrimitive.Root {...props} onValueChange={handleValueChange} />
 }
 
 function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {

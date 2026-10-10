@@ -278,7 +278,7 @@ export default function Logs() {
     enabled: filterOpen.user,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
-    select: r => r.rows.map(u => ({ id: u.ID, label: u.Email ?? `#${u.ID}` })),
+    select: r => r.rows.flatMap(u => u.ID === undefined ? [] : [{ id: u.ID, label: u.Email ?? `#${u.ID}` }]),
   })
   const groupCandidates = useQuery({
     queryKey: ['logs-filter', 'groups', { term: debouncedSearch.group }],
@@ -286,7 +286,7 @@ export default function Logs() {
     enabled: filterOpen.group,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
-    select: r => r.rows.map(g => ({ id: g.ID, label: g.Name || `#${g.ID}` })),
+    select: r => r.rows.flatMap(g => g.ID === undefined ? [] : [{ id: g.ID, label: g.Name || `#${g.ID}` }]),
   })
   const accountCandidates = useQuery({
     queryKey: ['logs-filter', 'accounts', { term: debouncedSearch.account }],
@@ -294,7 +294,7 @@ export default function Logs() {
     enabled: filterOpen.account,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
-    select: r => r.rows.map(a => ({ id: a.ID, label: a.Name || `#${a.ID}` })),
+    select: r => r.rows.flatMap(a => a.ID === undefined ? [] : [{ id: a.ID, label: a.Name || `#${a.ID}` }]),
   })
   // key 候选：已选 user/group 筛选条件下候选限缩（关联收窄；name 搜索同构）
   const keyCandidates = useQuery({
@@ -308,7 +308,7 @@ export default function Logs() {
     enabled: filterOpen.key,
     placeholderData: keepPreviousData,
     staleTime: 60_000,
-    select: r => r.rows.map(k => ({ id: k.ID, label: k.Name || `#${k.ID}` })),
+    select: r => r.rows.flatMap(k => k.ID === undefined ? [] : [{ id: k.ID, label: k.Name || `#${k.ID}` }]),
   })
 
   // —— 列可见性（localStorage 持久化）——
@@ -685,7 +685,7 @@ export default function Logs() {
                           <span className={cn('size-2 rounded-full', latencyColor(l.TTFTMS))} />
                           <span className="text-muted-foreground">{t('logs.latency.ttft')} {fmtDuration(l.TTFTMS)}</span>
                         </div>
-                        <div className="text-muted-foreground/60">{t('logs.latency.total')} {fmtDuration(l.LatencyMS)}</div>
+                        <div className="text-muted-foreground/60">{t('logs.latency.total')} {l.LatencyMS != null ? fmtDuration(l.LatencyMS) : '—'}</div>
                       </div>
                     ) : l.LatencyMS != null ? (
                       <span className="text-muted-foreground">{fmtDuration(l.LatencyMS)}</span>

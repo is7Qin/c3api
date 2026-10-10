@@ -358,7 +358,7 @@ export default function RedemptionCodes() {
                     <TableCell className="tabular-nums">{c.UsedCount} / {c.MaxUses}</TableCell>
                     <TableCell><CodeStatusBadge status={c.Status} /></TableCell>
                     <TableCell>
-                      <div className="text-sm">{formatDateTime(c.ExpiresAt)}</div>
+                      <div className="text-sm">{formatDateTime(c.ExpiresAt ?? undefined)}</div>
                       {c.ResourceExpiresAt && (
                         <div className="text-xs text-muted-foreground">
                           {t('redemptions.table.resourceExpiresAt')}: {formatDateTime(c.ResourceExpiresAt)}

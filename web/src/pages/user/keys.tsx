@@ -426,7 +426,7 @@ export default function UserKeys() {
           </DialogHeader>
           {created ? (
             <>
-              <KeyBox title={t('user.keys.secretTitle')} value={created.key} hint={t('user.keys.secretHint')} />
+              <KeyBox title={t('user.keys.secretTitle')} value={created.key ?? ''} hint={t('user.keys.secretHint')} />
               <DialogFooter>
                 <Button onClick={() => setCreateOpen(false)}>{t('common.done')}</Button>
               </DialogFooter>
@@ -556,7 +556,7 @@ export default function UserKeys() {
                 <DialogTitle>{t('user.keys.rotatedTitle')}</DialogTitle>
                 <DialogDescription>{t('user.keys.rotatedDesc')}</DialogDescription>
               </DialogHeader>
-              <KeyBox title={t('user.keys.secretTitle')} value={rotated.key} hint={t('user.keys.secretHint')} />
+              <KeyBox title={t('user.keys.secretTitle')} value={rotated.key ?? ''} hint={t('user.keys.secretHint')} />
               <DialogFooter>
                 <Button onClick={() => { setRotating(null); setRotated(null) }}>{t('common.done')}</Button>
               </DialogFooter>

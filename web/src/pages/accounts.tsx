@@ -1473,7 +1473,7 @@ export default function Accounts() {
                 groups={groups}
                 value={form.group_ids}
                 onChange={v => setForm(f => ({ ...f, group_ids: v }))}
-                disabled={editing && !groupsLoaded}
+                disabled={!!editing && !groupsLoaded}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.groupHint')}</p>
               {editing && groupsEcho.isError && (
@@ -1498,10 +1498,10 @@ export default function Accounts() {
                 (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
                 (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
                 (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
-                (editing && !groupsLoaded) ||
+                (!!editing && !groupsLoaded) ||
                 // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
                 // 会使 account id 回退到 null，PUT 全列更新将清空已存值（groups 同款门禁）
-                (editing && isSelCodex && extEcho.isLoading)
+                (!!editing && isSelCodex && extEcho.isLoading)
               }
             >
               {save.isPending ? t('common.saving') : editing ? t('common.saveChanges') : t('common.create')}
