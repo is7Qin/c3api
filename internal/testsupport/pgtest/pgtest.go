@@ -366,11 +366,11 @@ func cloneKey(m *sync.Map, t testing.TB) string {
 		if _, ok := m.Load(p); ok {
 			return p
 		}
-		i := strings.LastIndexByte(p, '/')
-		if i < 0 {
+		before, _, found := strings.CutLast(p, "/")
+		if !found {
 			return name
 		}
-		p = p[:i]
+		p = before
 	}
 }
 
