@@ -4,6 +4,7 @@ package ent
 
 import (
 	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"strings"
 	"time"
@@ -47,7 +48,7 @@ type PriceEntry struct {
 	// SupportsPromptCaching holds the value of the "supports_prompt_caching" field.
 	SupportsPromptCaching *bool `json:"supports_prompt_caching,omitempty"`
 	// Raw holds the value of the "raw" field.
-	Raw json.RawMessage `json:"raw,omitempty"`
+	Raw jsontext.Value `json:"raw,omitempty"`
 	// Source holds the value of the "source" field.
 	Source priceentry.Source `json:"source,omitempty"`
 	// CreatedAt holds the value of the "created_at" field.

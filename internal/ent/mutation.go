@@ -4,7 +4,7 @@ package ent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"sync"
@@ -9178,8 +9178,8 @@ type PriceEntryMutation struct {
 	max_output_tokens       *int64
 	addmax_output_tokens    *int64
 	supports_prompt_caching *bool
-	raw                     *json.RawMessage
-	appendraw               json.RawMessage
+	raw                     *jsontext.Value
+	appendraw               jsontext.Value
 	source                  *priceentry.Source
 	created_at              *time.Time
 	updated_at              *time.Time
@@ -10164,13 +10164,13 @@ func (m *PriceEntryMutation) ResetSupportsPromptCaching() {
 }
 
 // SetRaw sets the "raw" field.
-func (m *PriceEntryMutation) SetRaw(jm json.RawMessage) {
-	m.raw = &jm
+func (m *PriceEntryMutation) SetRaw(j jsontext.Value) {
+	m.raw = &j
 	m.appendraw = nil
 }
 
 // Raw returns the value of the "raw" field in the mutation.
-func (m *PriceEntryMutation) Raw() (r json.RawMessage, exists bool) {
+func (m *PriceEntryMutation) Raw() (r jsontext.Value, exists bool) {
 	v := m.raw
 	if v == nil {
 		return
@@ -10181,7 +10181,7 @@ func (m *PriceEntryMutation) Raw() (r json.RawMessage, exists bool) {
 // OldRaw returns the old "raw" field's value of the PriceEntry entity.
 // If the PriceEntry object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *PriceEntryMutation) OldRaw(ctx context.Context) (v json.RawMessage, err error) {
+func (m *PriceEntryMutation) OldRaw(ctx context.Context) (v jsontext.Value, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldRaw is only allowed on UpdateOne operations")
 	}
@@ -10195,13 +10195,13 @@ func (m *PriceEntryMutation) OldRaw(ctx context.Context) (v json.RawMessage, err
 	return oldValue.Raw, nil
 }
 
-// AppendRaw adds jm to the "raw" field.
-func (m *PriceEntryMutation) AppendRaw(jm json.RawMessage) {
-	m.appendraw = append(m.appendraw, jm...)
+// AppendRaw adds j to the "raw" field.
+func (m *PriceEntryMutation) AppendRaw(j jsontext.Value) {
+	m.appendraw = append(m.appendraw, j...)
 }
 
 // AppendedRaw returns the list of values that were appended to the "raw" field in this mutation.
-func (m *PriceEntryMutation) AppendedRaw() (json.RawMessage, bool) {
+func (m *PriceEntryMutation) AppendedRaw() (jsontext.Value, bool) {
 	if len(m.appendraw) == 0 {
 		return nil, false
 	}
@@ -10622,7 +10622,7 @@ func (m *PriceEntryMutation) SetField(name string, value ent.Value) error {
 		m.SetSupportsPromptCaching(v)
 		return nil
 	case priceentry.FieldRaw:
-		v, ok := value.(json.RawMessage)
+		v, ok := value.(jsontext.Value)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
