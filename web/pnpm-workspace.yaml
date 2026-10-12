@@ -21,3 +21,7 @@ overrides:
   #   brace-expansion：2.x 的 `{a},b}` 重写二次方膨胀 CPU DoS——minimatch@5
   #   （openapi-typescript 链）。仅约束 2.x 段，5.x 实例（glob/ts-morph）不动。
   "brace-expansion@>=2.0.0 <2.1.7": 2.1.7
+  # 待修（暂留 Dependabot 告警；上游无修复版）：braces <= 3.0.3 深层嵌套 pattern
+  # 栈耗尽 DoS——CVE-2026-93687 / GHSA-vfj7-8cjw-p6xm，shadcn → fast-glob → micromatch
+  # 链。patched 为 null，无法 override；待上游发布修复版后再补 override。
+  # 仅构建/工具链，不进生产 bundle。
