@@ -5,6 +5,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -171,27 +172,27 @@ func TestQualityRecorder_SnapshotImmutability(t *testing.T) {
 }
 
 func TestQualityRecorder_CloseWaitsZeroWithoutMissedCloseRace(t *testing.T) {
-	r, err := NewRecorder(50000)
-	require.NoError(t, err)
-	f := fp(130)
-	q := qc(130)
-	k := keyOf(f, q)
-	cell := r.GetOrCreateCell(k)
-	var ctx AttemptContext
-	require.True(t, r.InitAttemptContext(cell, &ctx))
-	done := make(chan struct{})
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		tt := int64(100)
-		ctx.Complete(true, &tt, 1, 0, 0)
-	}()
-	start := time.Now()
-	err = r.CloseWithContext(context.Background())
-	require.NoError(t, err)
-	elapsed := time.Since(start)
-	require.GreaterOrEqual(t, elapsed, 40*time.Millisecond)
-	close(done)
-	snap := r.Snapshot()
-	require.NotNil(t, snap)
-	require.NotNil(t, r.finalSnapshot.Load())
+	synctest.Test(t, func(t *testing.T) {
+		r, err := NewRecorder(50000)
+		require.NoError(t, err)
+		f := fp(130)
+		q := qc(130)
+		k := keyOf(f, q)
+		cell := r.GetOrCreateCell(k)
+		var ctx AttemptContext
+		require.True(t, r.InitAttemptContext(cell, &ctx))
+		go func() {
+			synctest.Sleep(50 * time.Millisecond)
+			tt := int64(100)
+			ctx.Complete(true, &tt, 1, 0, 0)
+		}()
+		start := time.Now()
+		err = r.CloseWithContext(context.Background())
+		require.NoError(t, err)
+		elapsed := time.Since(start)
+		require.GreaterOrEqual(t, elapsed, 40*time.Millisecond)
+		snap := r.Snapshot()
+		require.NotNil(t, snap)
+		require.NotNil(t, r.finalSnapshot.Load())
+	})
 }

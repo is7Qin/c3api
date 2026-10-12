@@ -9,6 +9,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/require"
@@ -39,24 +40,27 @@ func (r *recAuthN) calls() int                       { r.mu.Lock(); defer r.mu.U
 // TestAuthSyncPeriodicReload 短周期（5ms）实测：周期到点调用 Auth.Reload
 // （≥2 次）；Close 后不再增长。
 func TestAuthSyncPeriodicReload(t *testing.T) {
-	auth := &recAuthN{}
-	w := newAuthSync(auth, 5*time.Millisecond, nil)
-	require.Equal(t, "auth-sync", w.Name())
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	require.NoError(t, w.Start(ctx))
-	require.Error(t, w.Start(ctx), "重复 Start 返回错误（worker 契约）")
+	synctest.Test(t, func(t *testing.T) {
+		auth := &recAuthN{}
+		w := newAuthSync(auth, 5*time.Millisecond, nil)
+		require.Equal(t, "auth-sync", w.Name())
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		require.NoError(t, w.Start(ctx))
+		require.Error(t, w.Start(ctx), "重复 Start 返回错误（worker 契约）")
 
-	require.Eventually(t, func() bool { return auth.calls() >= 2 }, time.Second, 10*time.Millisecond,
-		"周期到点应触发 ≥2 次 Reload")
+		// 等两个周期（2×5ms）：周期到点应触发 ≥2 次 Reload（虚拟时钟）。
+		synctest.Sleep(10 * time.Millisecond)
+		require.GreaterOrEqual(t, auth.calls(), 2, "周期到点应触发 ≥2 次 Reload")
 
-	require.NoError(t, w.Close(ctx))
-	// 循环随 Start ctx 取消退出（Close no-op，与 invalidate/scheduler 同契约）
-	cancel()
-	time.Sleep(50 * time.Millisecond) // 等循环退出（select 上 ctx.Done 立即返回）
-	before := auth.calls()
-	time.Sleep(50 * time.Millisecond)
-	require.Equal(t, before, auth.calls(), "ctx 取消后循环退出，不再 reload")
+		require.NoError(t, w.Close(ctx))
+		// 循环随 Start ctx 取消退出（Close no-op，与 invalidate/scheduler 同契约）
+		cancel()
+		synctest.Sleep(50 * time.Millisecond) // 等循环退出（select 上 ctx.Done 立即返回）
+		before := auth.calls()
+		synctest.Sleep(50 * time.Millisecond)
+		require.Equal(t, before, auth.calls(), "ctx 取消后循环退出，不再 reload")
+	})
 }
 
 // TestAuthSyncNotStartedCloseSafe 未 Start 的 Close 安全（worker 契约）。
@@ -116,21 +120,22 @@ func (r *hangAuthN) calls() int { r.mu.Lock(); defer r.mu.Unlock(); return r.n }
 // 超时（生产 30s）后循环必须回 select 继续触发——60s 兜底不因单次挂起永久停摆
 // （此前用生命周期 ctx 无超时，循环卡死即永久失效）。
 func TestAuthSyncReloadTimeoutUnblocksLoop(t *testing.T) {
-	auth := &hangAuthN{}
-	w := newAuthSync(auth, 5*time.Millisecond, nil)
-	w.timeout = 50 * time.Millisecond // 缩短 per-attempt 超时（生产 authSyncTimeout=30s）
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	require.NoError(t, w.Start(ctx))
+	synctest.Test(t, func(t *testing.T) {
+		auth := &hangAuthN{}
+		w := newAuthSync(auth, 5*time.Millisecond, nil)
+		w.timeout = 50 * time.Millisecond // 缩短 per-attempt 超时（生产 authSyncTimeout=30s）
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		require.NoError(t, w.Start(ctx))
 
-	// calls 在 Reload 入口自增、失败在超时后才记录——直接轮询 Stats 的失败计数
-	// （≥3 = 已发生 ≥3 次完整超时周期，循环确实回到 select 继续触发）。
-	require.Eventually(t, func() bool { return w.Stats().(authSyncStats).Failures >= 3 }, 2*time.Second, 20*time.Millisecond,
-		"DB 挂起时 per-attempt 超时（50ms）后循环必须回到 select 继续触发")
-	st := w.Stats().(authSyncStats)
-	require.GreaterOrEqual(t, st.Failures, int64(3), "每次超时都应计失败")
-	require.Zero(t, st.LastReloadUnixMs, "挂起超时全部失败 → last_reload 不前移")
-	require.Greater(t, st.LastFailureUnixMs, int64(0), "最近失败时刻应被记录")
+		// 每个周期：tick 触发 Reload 阻塞 → 50ms per-attempt 超时后计失败、循环回 select
+		// 继续触发。虚拟时钟推进 ≥3 个超时周期（≥1 个 bootstrap tick + 3×50ms）。
+		synctest.Sleep(200 * time.Millisecond)
+		st := w.Stats().(authSyncStats)
+		require.GreaterOrEqual(t, st.Failures, int64(3), "每次超时都应计失败")
+		require.Zero(t, st.LastReloadUnixMs, "挂起超时全部失败 → last_reload 不前移")
+		require.Greater(t, st.LastFailureUnixMs, int64(0), "最近失败时刻应被记录")
+	})
 }
 
 // panicAuthN：Reload 恒 panic（注入）。
