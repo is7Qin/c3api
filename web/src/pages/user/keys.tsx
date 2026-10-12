@@ -303,7 +303,7 @@ export default function UserKeys() {
         >
           <span className="truncate">{label}</span>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-64 p-1">
+        <PopoverContent align="start" className="w-80 p-1">
           {opts.map(o => {
             const current = o.id === k.GroupID
             return (
