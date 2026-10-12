@@ -18,7 +18,7 @@ func TestRed_Blocker1_ImagesDistinct(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	c := NewRoutingCompiler()
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	genRC, _ := domain.RouteClassID(10, domain.FormatOpenAIImages, "m", domain.OpImagesGenerations)
 	editRC, _ := domain.RouteClassID(10, domain.FormatOpenAIImages, "m", domain.OpImagesEdits)
@@ -73,7 +73,7 @@ func TestRed_Blocker2_HealthResolvedMappedModel(t *testing.T) {
 	acc.LifecycleRevision = 1
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc}})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"req": price, "resolved": price}
 	logged := math.Log(100)
 	routeRC, _ := domain.RouteClassID(10, domain.FormatOpenAIChat, "req", domain.OpChatCompletions)
@@ -124,7 +124,7 @@ func TestRed_Blocker3_UnrelatedQualityNotExclude(t *testing.T) {
 	acc.LifecycleRevision = 1
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc}})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m1": price, "m2": price}
 	logged := math.Log(100)
 	routeRC, _ := domain.RouteClassID(10, domain.FormatOpenAIChat, "m1", domain.OpChatCompletions)
@@ -164,7 +164,7 @@ func TestRed_Blocker4_LatchedFalseNoExclude(t *testing.T) {
 	acc.LifecycleRevision = 1
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc}})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	routeRC, _ := domain.RouteClassID(10, domain.FormatOpenAIChat, "m", domain.OpChatCompletions)
 	fpStr, _ := candidateFingerprint(acc)
@@ -196,7 +196,7 @@ func TestRed_Blocker5_ViewImmutability(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100)}, accs)
 	c := NewRoutingCompiler()
@@ -263,7 +263,7 @@ func TestRoutingCompiler_candidateFactsStayConsistentAcrossFilterAndCompile(t *t
 		{RouteClassID: routeClass, Fingerprint: facts[0].identityFingerprint}: qualityInput(30, 29, 2900, 2900),
 	}
 	decision, err := compileRouteDecision(filtered, route, domain.RouteClassIDVal(routeClass), quality, map[string]domain.ResolvedPrices{
-		"requested": {InputPerM: pricePtr(1000)},
+		"requested": {InputPerM: new(int64(1000))},
 	}, rr)
 
 	// Then

@@ -126,7 +126,7 @@ func TestProxyRawCostSearchMultiplier(t *testing.T) {
 	}, nil)
 	require.NoError(t, bal.Reload(context.Background()))
 	bill := &BillingHooks{
-		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500)}}},
+		Resolver: &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: new(int64(2500))}}},
 		Balances: bal,
 	}
 	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},

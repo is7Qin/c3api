@@ -23,9 +23,9 @@ func TestManualEntryModels_PG(t *testing.T) {
 	// clean slate: create two entries via manual and litellm
 	manualModel := "pg-guard-manual-model"
 	liteModel := "pg-guard-lite-model"
-	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: manualModel, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
+	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: manualModel, Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000))})
 	require.NoError(t, err)
-	_, err = repos.PriceEntries.UpsertFromLiteLLM(ctx, []*domain.PriceEntry{{Model: liteModel, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceLitellm}})
+	_, err = repos.PriceEntries.UpsertFromLiteLLM(ctx, []*domain.PriceEntry{{Model: liteModel, Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000)), Source: domain.PricingSourceLitellm}})
 	require.NoError(t, err)
 	models, err := repos.PriceEntries.ManualEntryModels(ctx)
 	require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestVariantGuard_ManualEntrySurvives_PG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-variant-guard-model"
-	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
+	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000))})
 	require.NoError(t, err)
 	// custom admin variants
 	adminMult := 5000
@@ -79,7 +79,7 @@ func TestDeletePriceEntryCascadeManual_PG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-cascade-manual-model"
-	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
+	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000))})
 	require.NoError(t, err)
 	mult := 5000
 	_, err = repos.PriceVariants.ReplaceBatch(ctx, model, []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: &mult}, {Model: model, Seq: 2, MultBP: &mult}})
@@ -104,7 +104,7 @@ func TestVariantImageOverridesRoundTrip_PG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-variant-image-model"
-	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeImage, ImgInTokPerM: int64Ptr(100), ImgOutTokPerM: int64Ptr(200), PricePerImage: int64Ptr(300)})
+	_, err := repos.PriceEntries.UpsertManual(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeImage, ImgInTokPerM: new(int64(100)), ImgOutTokPerM: new(int64(200)), PricePerImage: new(int64(300))})
 	require.NoError(t, err)
 	imgIn := int64(111)
 	imgOut := int64(222)
@@ -160,7 +160,7 @@ func TestDeletePriceEntryCascadeLitellmConflict_PG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 	model := "pg-cascade-litellm-model"
-	_, err := repos.PriceEntries.UpsertFromLiteLLM(ctx, []*domain.PriceEntry{{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceLitellm}})
+	_, err := repos.PriceEntries.UpsertFromLiteLLM(ctx, []*domain.PriceEntry{{Model: model, Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000)), Source: domain.PricingSourceLitellm}})
 	require.NoError(t, err)
 	mult := 7000
 	_, err = repos.PriceVariants.ReplaceBatch(ctx, model, []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: &mult}})

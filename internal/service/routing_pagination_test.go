@@ -302,10 +302,10 @@ func staleFixtureRows(t *testing.T) []repository.RoutingFlowStat {
 		// min_gen-7 当前代：ordinal1 首发两行（acct1 5 链、acct2 3 链）+ ordinal2 terminal。
 		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
 		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", IsTerminal: false, MinGeneration: 7, ChainCount: 3},
-		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: new(int64(2)), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
 		// min_gen-6 旧代际行：首发 + terminal 各一。
 		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 2},
-		{Ordinal: 2, Lane: "degraded", AccountID: 3, PreviousAccountID: ptrInt64(1), PreviousOutcome: "success", TransitionReason: "drain", Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 4},
+		{Ordinal: 2, Lane: "degraded", AccountID: 3, PreviousAccountID: new(int64(1)), PreviousOutcome: "success", TransitionReason: "drain", Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 4},
 	}
 	return rows
 }
@@ -350,7 +350,7 @@ func TestRoutingFlow_CompleteSetTotalsAndStaleBoolean(t *testing.T) {
 	// A15 负方向：仅当前代际（plan generation 7）→ 布尔为假。
 	fs.routingFlowRows = []repository.RoutingFlowStat{
 		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
-		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(1), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: new(int64(1)), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
 	}
 	cur, err := svc.QueryRoutingFlow(context.Background(), RoutingFlowQuery{RouteID: idHex, From: routingBase, To: routingBase.Add(time.Hour), Limit: 200})
 	require.NoError(t, err)

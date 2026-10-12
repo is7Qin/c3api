@@ -323,7 +323,7 @@ func TestRoutingFlowSnapshotPG(t *testing.T) {
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	rows := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 3, PreviousOutcome: "", TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-B", ChainCount: 1},
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 4, PreviousAccountID: ptrInt64(3), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-B", ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 4, PreviousAccountID: new(int64(3)), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-B", ChainCount: 1},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-B", now, 1, 10, rows))
 	var cnt int64
@@ -534,7 +534,7 @@ func TestRoutingFlowSnapshotSuccessPG(t *testing.T) {
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	rows := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 10, PreviousAccountID: nil, PreviousOutcome: "", TransitionReason: "init", Outcome: "success", IsTerminal: false, Generation: 1, InstanceSrc: "src-RF", AbsoluteSequence: 1, ChainCount: 1},
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 20, PreviousAccountID: ptrInt64(10), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-RF", AbsoluteSequence: 1, ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 20, PreviousAccountID: new(int64(10)), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: "src-RF", AbsoluteSequence: 1, ChainCount: 1},
 	}
 	// S3 起快照直写合并层，无重算中间道。
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-RF", now, 1, 1, rows))

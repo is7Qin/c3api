@@ -22,7 +22,7 @@ func TestRoutingCompilerEmptyAndAllIneligible(t *testing.T) {
 	accs2 := m2.byGroup[10]
 	qraw := map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100)}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs2)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	// v5-§5.1A: OPEN health no longer excludes account 2 — only the statically
 	// disabled account 1 stays out. Serving gates live in reserveOnView.
 	hk := compilerHealthKeyFor(accs2[1], domain.FormatOpenAIChat, "m")
@@ -45,7 +45,7 @@ func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
 	// in the plan; reserveOnView owns serving exclusion (suite-pinned
 	// unmodified by TestSchedulerReserveAttemptUsesDynamicCandidateGates).
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000), accWithEnabled(3, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
@@ -70,7 +70,7 @@ func TestRoutingCompilerHealthLatchExclusion(t *testing.T) {
 
 func TestRoutingViewRebaseWithCompiler(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)

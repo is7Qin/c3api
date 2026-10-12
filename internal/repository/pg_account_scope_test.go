@@ -253,7 +253,7 @@ func TestPGCodexKeyScopeIsolation(t *testing.T) {
 	_, err = repos.AccountExts.UpsertAccountExt(context.Background(), &domain.AccountExt{
 		AccountID: b.ID, CredentialType: credential.TypeCodexPAT,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
-		CodexEmail:    strPtrPG(email), CodexAccountID: strPtrPG(acctID), CodexPATKey: new("other-pat"),
+		CodexEmail:    new(email), CodexAccountID: new(acctID), CodexPATKey: new("other-pat"),
 	})
 	require.Error(t, err, "跨归属同组合键必须撞唯一索引（row-level failed，不是改他人行）")
 

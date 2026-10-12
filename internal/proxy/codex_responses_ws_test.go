@@ -504,7 +504,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	_, err := frs.CreateRule(context.Background(), domain.Rule{
 		Name: "custom-dial-401", Enabled: true, Priority: 5,
 		When: domain.RuleWhen{Kind: &kind4xx, HTTPStatus: new(401)},
-		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(5000)}, CustomMessage: &customMsg},
+		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000))}, CustomMessage: &customMsg},
 	})
 	require.NoError(t, err)
 	require.NoError(t, re.Reload(context.Background()))

@@ -425,8 +425,8 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 	seedAggWindow(t, repos, h, h.Add(3*time.Hour))
 
 	rng := rand.New(rand.NewPCG(20260823, 42))
-	ttftPool := []*int64{nil, ip(7), ip(49), ip(50), ip(99), ip(100), ip(399), ip(800),
-		ip(1599), ip(1600), ip(6399), ip(12799), ip(12800), ip(30000)}
+	ttftPool := []*int64{nil, new(int64(7)), new(int64(49)), new(int64(50)), new(int64(99)), new(int64(100)), new(int64(399)), new(int64(800)),
+		new(int64(1599)), new(int64(1600)), new(int64(6399)), new(int64(12799)), new(int64(12800)), new(int64(30000))}
 	models := []string{"gpt-4o", "claude-x", ""}
 	groups := []int64{0, 1, 2}
 	accounts := []int64{0, 11, 12}
@@ -502,7 +502,7 @@ func TestPGStatsAggV2EntityEquivalence(t *testing.T) {
 	seedAggWindow(t, repos, h, h.Add(3*time.Hour))
 
 	rng := rand.New(rand.NewPCG(20260823, 77))
-	ttftPool := []*int64{nil, ip(30), ip(60), ip(120), ip(900), ip(20000)}
+	ttftPool := []*int64{nil, new(int64(30)), new(int64(60)), new(int64(120)), new(int64(900)), new(int64(20000))}
 	models := []string{"gpt-4o", "claude-x", ""}
 	ids := []int64{0, 101, 102, 103} // 0 = NULL（丢弃探针）
 

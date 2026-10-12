@@ -14,7 +14,7 @@ import (
 )
 
 func TestRulePersist_PanicContainedAndNextProcessed(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	var calls atomic.Int32
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 4}, newFakeRuleStore(), nil, sink, func(ctx context.Context, item PersistItem) error {
@@ -45,7 +45,7 @@ func TestRulePersist_PanicContainedAndNextProcessed(t *testing.T) {
 }
 
 func TestRulePersist_NeverNegativeUnderLoad(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(64)
 	e := New(Config{EventQueueSize: 64, PersistQueueSize: 8}, newFakeRuleStore(), nil, sink, func(ctx context.Context, item PersistItem) error { return nil })
 	e.rulesMu.Lock()
@@ -95,7 +95,7 @@ func TestRulePersist_NeverNegativeUnderLoad(t *testing.T) {
 }
 
 func TestRulePersist_QueueFullRollbackExact(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink, nil)
 	e.rulesMu.Lock()

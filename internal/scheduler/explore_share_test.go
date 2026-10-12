@@ -66,7 +66,7 @@ func TestExploreShare_compilerSteadyStateBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 10, Successes: 5}, InputTokens: 500, OutputTokens: 500},
@@ -86,7 +86,7 @@ func TestExploreShare_compilerNoUnknownBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
@@ -112,7 +112,7 @@ func TestExploreShare_compilerProportionalBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	raw := map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 	}
@@ -136,7 +136,7 @@ func TestExploreShare_scopedMatchesFullBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 10, Successes: 5}, InputTokens: 500, OutputTokens: 500},

@@ -30,7 +30,7 @@ func TestNotifyRoutingDirtyReloadRepublishesCompiledPlan(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 10000)}})
 	s := newSched(t, m)
-	wireSources(s, nil, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, nil, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 	require.Zero(t, s.Stats().(SchedulerStats).CompilePending, "构造期 reload 未 armed，触发不得入队")
 
 	// 远端静态变更（NOTIFY → 去抖器 → 全量重载消费面）：组 20 新增账号。

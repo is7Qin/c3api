@@ -48,7 +48,7 @@ func TestThrottleAccountWildcard(t *testing.T) {
 	_ = mr
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
 	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 5, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: "q1"}
-	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
+	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000)), UseReset: false}
 	require.NoError(t, sink.Throttle(ev, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "any", testIdentity, 5))
@@ -60,7 +60,7 @@ func TestThrottleAccountWildcard(t *testing.T) {
 func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
-	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
+	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000)), UseReset: false}
 	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
 	require.Equal(t, StateReady, h.EffectiveState(2, "q1", testIdentity, 3))
@@ -168,7 +168,7 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 	require.NoError(t, re.Reload(context.Background()))
 	s := New(testCfg(), m, re, h, nil, ls, hub)
 	require.NoError(t, s.reload(context.Background()))
-	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(3000), UseReset: false}
+	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(3000)), UseReset: false}
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {

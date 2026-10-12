@@ -50,11 +50,11 @@ func TestUsageLogSnapshotColumnsRoundtripPG(t *testing.T) {
 
 	// 有值 roundtrip：5 列全填（价格 = 每 M token 毫分，pricing 同款单位）
 	l1 := usageLogFor("snap-1", time.Now().UTC())
-	l1.TTFTMS = int64Ptr(88)
-	l1.PriceInputMillis = int64Ptr(1e7)  // $100 / 1M
-	l1.PriceOutputMillis = int64Ptr(2e7) // $200 / 1M
-	l1.PriceCacheReadMillis = int64Ptr(1234)
-	l1.PriceCacheCreationMillis = int64Ptr(5678)
+	l1.TTFTMS = new(int64(88))
+	l1.PriceInputMillis = new(int64(1e7))  // $100 / 1M
+	l1.PriceOutputMillis = new(int64(2e7)) // $200 / 1M
+	l1.PriceCacheReadMillis = new(int64(1234))
+	l1.PriceCacheCreationMillis = new(int64(5678))
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{l1}))
 
 	rows, err := repos.QueryUsages(ctx, repository.UsageQuery{Limit: 100})

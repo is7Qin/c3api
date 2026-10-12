@@ -29,7 +29,7 @@ func TestRoutingFlowSnapshotAtomicRollbackPG(t *testing.T) {
 	// Seed seq1 full rows.
 	seq1 := []repository.RoutingFlowRow{
 		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 3, TransitionReason: "initial", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: src, ChainCount: 1},
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 4, PreviousAccountID: ptrInt64(3), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: src, ChainCount: 1},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 2, Lane: "primary", AccountID: 4, PreviousAccountID: new(int64(3)), PreviousOutcome: "success", TransitionReason: "retry", Outcome: "success", IsTerminal: true, Generation: 1, InstanceSrc: src, ChainCount: 1},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, src, now, 1, 1, seq1))
 

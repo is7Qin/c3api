@@ -13,10 +13,10 @@ package domain
 var DefaultSettings = []Setting{
 	{Key: "signup_enabled", Type: SettingTypeSwitch, Value: "true"},
 	// 新用户初始资源：公开注册路径应用；管理面 CreateUser 不套默认（显式传值）。
-	{Key: "default_user_max_concurrency", Type: SettingTypeNumber, Value: "0", Min: i64p(0)}, // 0 = 不限
-	{Key: "default_user_balance", Type: SettingTypeNumber, Value: "0", Min: i64p(0)},         // 最小单位
-	{Key: "default_user_temp_balance", Type: SettingTypeNumber, Value: "0", Min: i64p(0)},    // 0 = 不送
-	{Key: "default_user_temp_balance_ttl_days", Type: SettingTypeNumber, Value: "30", Min: i64p(0)},
+	{Key: "default_user_max_concurrency", Type: SettingTypeNumber, Value: "0", Min: new(int64(0))}, // 0 = 不限
+	{Key: "default_user_balance", Type: SettingTypeNumber, Value: "0", Min: new(int64(0))},         // 最小单位
+	{Key: "default_user_temp_balance", Type: SettingTypeNumber, Value: "0", Min: new(int64(0))},    // 0 = 不送
+	{Key: "default_user_temp_balance_ttl_days", Type: SettingTypeNumber, Value: "30", Min: new(int64(0))},
 	// litellm 模型价格同步（计费价格来源）：worker 定期拉取 + 管理端手动设价。
 	{Key: "price_source_url", Type: SettingTypeString,
 		Value: "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"},
@@ -35,7 +35,7 @@ var DefaultSettings = []Setting{
 	{Key: "mail.enabled", Type: SettingTypeSwitch, Value: "false"},
 	{Key: "mail.register_verification", Type: SettingTypeSwitch, Value: "false"},
 	{Key: "mail.smtp_host", Type: SettingTypeString, Value: ""},
-	{Key: "mail.smtp_port", Type: SettingTypeNumber, Value: "465", Min: i64p(1), Max: i64p(65535)},
+	{Key: "mail.smtp_port", Type: SettingTypeNumber, Value: "465", Min: new(int64(1)), Max: new(int64(65535))},
 	{Key: "mail.smtp_username", Type: SettingTypeString, Value: ""},
 	{Key: "mail.smtp_password", Type: SettingTypeString, Value: ""},
 	{Key: "mail.from_address", Type: SettingTypeString, Value: ""},

@@ -108,8 +108,8 @@ func TestRoutingFlowEdgeIdentityPG(t *testing.T) {
 	require.NoError(t, repos.Partitions.EnsureRoutingPartitions(ctx, now))
 	rc := mustRouteClassVal(t, 1, domain.FormatOpenAIChat, "gpt-4o", domain.OpChatCompletions)
 	rows := []repository.RoutingFlowRow{
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 5, PreviousAccountID: ptrInt64(3), PreviousOutcome: "ok", TransitionReason: "retry", Outcome: "success", IsTerminal: false, Generation: 2, InstanceSrc: "src-Ident", ChainCount: 7},
-		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 5, PreviousAccountID: ptrInt64(3), PreviousOutcome: "fail", TransitionReason: "fallback", Outcome: "success", IsTerminal: false, Generation: 2, InstanceSrc: "src-Ident", ChainCount: 7},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 5, PreviousAccountID: new(int64(3)), PreviousOutcome: "ok", TransitionReason: "retry", Outcome: "success", IsTerminal: false, Generation: 2, InstanceSrc: "src-Ident", ChainCount: 7},
+		{IdentityVersion: 1, RouteClassID: rc, TerminalMinute: now, Ordinal: 1, Lane: "primary", AccountID: 5, PreviousAccountID: new(int64(3)), PreviousOutcome: "fail", TransitionReason: "fallback", Outcome: "success", IsTerminal: false, Generation: 2, InstanceSrc: "src-Ident", ChainCount: 7},
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-Ident", now, 1, 1, rows))
 	var cnt int64

@@ -48,7 +48,7 @@ func fullLogFor(userID int64, requestID string) *domain.UsageLog {
 	l.CacheReadTokens = 1
 	l.CacheCreationTokens = 2
 	l.CallCount = 2
-	l.PricePerCallMillis = int64Ptr(5_400) // 毫分/单元（例外单位——per-call 不走 /1e6）
+	l.PricePerCallMillis = new(int64(5_400)) // 毫分/单元（例外单位——per-call 不走 /1e6）
 	l.RawCost = 7_700
 	l.ClientIP = "9.9.9.9"
 	msg := "err:" + requestID

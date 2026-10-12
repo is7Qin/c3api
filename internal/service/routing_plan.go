@@ -156,10 +156,7 @@ func (s *Service) QueryRoutingPlan(ctx context.Context, q RoutingPlanQuery) (*Ro
 		candTotal := int64(len(cands))
 		page := []scheduler.RoutingPlanCandidate{}
 		if candLimit > 0 {
-			clo := max(q.CandidatesOffset, 0)
-			if clo > len(cands) {
-				clo = len(cands)
-			}
+			clo := min(max(q.CandidatesOffset, 0), len(cands))
 			chi := min(clo+candLimit, len(cands))
 			page = cands[clo:chi]
 		}

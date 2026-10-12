@@ -92,7 +92,7 @@ func waitSignals(t *testing.T, ch chan struct{}, n int) {
 // --- Validate malformed union and duration/use_reset truth table ---
 
 func TestRuleThrottle_Validate_MalformedUnion(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	cases := []struct {
 		name string
 		then domain.RuleThen
@@ -122,15 +122,15 @@ func TestRuleThrottle_Validate_DurationUseResetConflicts(t *testing.T) {
 	}{
 		{"retry_after requires use_reset true", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, UseReset: false}, false},
 		{"retry_after with use_reset true and nil duration ok fallback", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, UseReset: true}, true},
-		{"retry_after with positive duration ok", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, DurationMs: int64Ptr(5000), UseReset: true}, true},
-		{"retry_after with zero duration rejected", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, DurationMs: int64Ptr(0), UseReset: true}, false},
-		{"retry_after with negative duration rejected", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, DurationMs: int64Ptr(-1), UseReset: true}, false},
-		{"open requires use_reset false", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: true}, false},
+		{"retry_after with positive duration ok", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, DurationMs: new(int64(5000)), UseReset: true}, true},
+		{"retry_after with zero duration rejected", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, DurationMs: new(int64(0)), UseReset: true}, false},
+		{"retry_after with negative duration rejected", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, DurationMs: new(int64(-1)), UseReset: true}, false},
+		{"open requires use_reset false", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: true}, false},
 		{"open requires duration>0 nil rejected", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, UseReset: false}, false},
-		{"open requires duration>0 zero rejected", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(0), UseReset: false}, false},
-		{"open valid", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(30000), UseReset: false}, true},
-		{"invalid scope", domain.ThrottleAction{Scope: "bad", Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}, false},
-		{"invalid mode", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: "bad", DurationMs: int64Ptr(1000), UseReset: false}, false},
+		{"open requires duration>0 zero rejected", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(0)), UseReset: false}, false},
+		{"open valid", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(30000)), UseReset: false}, true},
+		{"invalid scope", domain.ThrottleAction{Scope: "bad", Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}, false},
+		{"invalid mode", domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: "bad", DurationMs: new(int64(1000)), UseReset: false}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -150,7 +150,7 @@ func int64Ptr(v int64) *int64 { return new(v) }
 // --- Account route missing IDs ---
 
 func TestRuleThrottle_AccountRouteMissingIDs(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(5000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000)), UseReset: false}
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "throttle-route", Enabled: true, Priority: 10,
@@ -170,7 +170,7 @@ func TestRuleThrottle_AccountRouteMissingIDs(t *testing.T) {
 }
 
 func TestRuleThrottle_AccountWildcard(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, UseReset: true, DurationMs: int64Ptr(2000)}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeRetryAfter, UseReset: true, DurationMs: new(int64(2000))}
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "throttle-account", Enabled: true, Priority: 10,
@@ -187,7 +187,7 @@ func TestRuleThrottle_AccountWildcard(t *testing.T) {
 // --- Window 429 threshold ---
 
 func TestRuleWindow_ThrottleThresholdNotYetHit(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "window-throttle", Enabled: true, Priority: 10,
@@ -234,7 +234,7 @@ func TestRuleQueueFull_AdmissionDropped(t *testing.T) {
 // --- Persistence queue full / write failure / local before async ---
 
 func TestRuleQueueFull_PersistDroppedAndLocalBeforePersist(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "persist-full", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: new("429")},
@@ -288,7 +288,7 @@ func TestRuleFailAccount_QueueFullWriteFailure(t *testing.T) {
 // --- Worker/request nonblocking (Enqueue and HandleEvent never block on persist full) ---
 
 func TestRuleQueueFull_WorkerNonblocking(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	e := New(Config{EventQueueSize: 2, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink, nil)
 	e.rulesMu.Lock()
@@ -321,7 +321,7 @@ func TestRuleMetrics_FourDistinct(t *testing.T) {
 	e := New(Config{EventQueueSize: 1, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink, func(_ context.Context, item PersistItem) error { return fmt.Errorf("fail") })
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{
-		{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}},
+		{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}}},
 	}
 	e.rulesMu.Unlock()
 	// Admission drop (one slot filled, one dropped)
@@ -337,7 +337,7 @@ func TestRuleMetrics_FourDistinct(t *testing.T) {
 	e2 := New(Config{EventQueueSize: 16, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink2, func(_ context.Context, item PersistItem) error { return fmt.Errorf("fail") })
 	e2.rulesMu.Lock()
 	e2.rules = []compiledRule{
-		{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}},
+		{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}}},
 	}
 	e2.rulesMu.Unlock()
 	e2.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(2)})
@@ -373,7 +373,7 @@ func TestRule_ResponseShapingUnchanged(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "Upstream request failed", msg)
 	// typed throttle with shaping
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	e2, _ := newTestEngine(t, domain.Rule{
 		Name: "typed-shape", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{Kind: new("429")},

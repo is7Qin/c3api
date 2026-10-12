@@ -113,7 +113,7 @@ func TestStartupReloadAllPG(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = repos.UpsertPriceEntryManual(ctx, &repository.PriceEntryManual{
-		Model: "gpt-4o", Mode: domain.PriceModeToken, InputPerM: ptrI64Startup(250_000), OutputPerM: ptrI64Startup(1_000_000),
+		Model: "gpt-4o", Mode: domain.PriceModeToken, InputPerM: new(int64(250_000)), OutputPerM: new(int64(1_000_000)),
 	})
 	require.NoError(t, err)
 

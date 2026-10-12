@@ -293,7 +293,7 @@ func TestWindowCleanup(t *testing.T) {
 
 func TestMatch(t *testing.T) {
 	okEv := func(kind Kind) Event { return Event{AccountID: 1, TemplateID: 2, Model: "m1", Kind: kind} }
-	gid := i64Ptr(7)
+	gid := new(int64(7))
 	http500 := 500
 	http429 := 429
 	cases := []struct {
@@ -312,9 +312,9 @@ func TestMatch(t *testing.T) {
 			Event{ErrorMessage: "upstream 429 rate limited"}, windowSnapshot{}, true},
 		{"message not contains", domain.RuleWhen{ErrorMessageContains: new("timeout")},
 			Event{ErrorMessage: "upstream 429 rate limited"}, windowSnapshot{}, false},
-		{"account id", domain.RuleWhen{AccountID: i64Ptr(1)}, okEv(KindOK), windowSnapshot{}, true},
-		{"account id mismatch", domain.RuleWhen{AccountID: i64Ptr(9)}, okEv(KindOK), windowSnapshot{}, false},
-		{"template id", domain.RuleWhen{TemplateID: i64Ptr(2)}, okEv(KindOK), windowSnapshot{}, true},
+		{"account id", domain.RuleWhen{AccountID: new(int64(1))}, okEv(KindOK), windowSnapshot{}, true},
+		{"account id mismatch", domain.RuleWhen{AccountID: new(int64(9))}, okEv(KindOK), windowSnapshot{}, false},
+		{"template id", domain.RuleWhen{TemplateID: new(int64(2))}, okEv(KindOK), windowSnapshot{}, true},
 		{"model", domain.RuleWhen{Model: new("m1")}, okEv(KindOK), windowSnapshot{}, true},
 		{"model mismatch", domain.RuleWhen{Model: new("m2")}, okEv(KindOK), windowSnapshot{}, false},
 		{"group id ev nil", domain.RuleWhen{GroupID: gid}, okEv(KindOK), windowSnapshot{}, false},

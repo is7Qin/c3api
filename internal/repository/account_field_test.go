@@ -30,7 +30,7 @@ func TestChangedFieldsCoversEveryDeclaredField(t *testing.T) {
 	// 完备性断言失败。
 	cases := map[domain.AccountField]repository.AccountPatch{
 		domain.FieldName:                   {Name: new("renamed")},
-		domain.FieldTemplateID:             {TemplateID: int64Ptr(8)},
+		domain.FieldTemplateID:             {TemplateID: new(int64(8))},
 		domain.FieldBaseURL:                {BaseURL: new("https://new.example.com")},
 		domain.FieldUpstreamKey:            {UpstreamKey: new("sk-new")},
 		domain.FieldMaxConcurrency:         {MaxConcurrency: new(9)},
@@ -38,7 +38,7 @@ func TestChangedFieldsCoversEveryDeclaredField(t *testing.T) {
 		domain.FieldEnabled:                {Enabled: new(false)},
 		domain.FieldCacheDomain:            {CacheDomain: new("new-domain")},
 		domain.FieldUpstreamCostMultiplier: {UpstreamCostMultiplierBp: new(25000)},
-		domain.FieldSupplierUserID:         {SupplierUserID: int64Ptr(9)},
+		domain.FieldSupplierUserID:         {SupplierUserID: new(int64(9))},
 	}
 	declared := domain.AccountFieldSpecs()
 	require.Len(t, cases, len(declared), "every declared field needs a change case")
@@ -84,7 +84,7 @@ func TestChangedFieldsIdentityClassification(t *testing.T) {
 		{"groups only", repository.AccountPatch{GroupIDs: &[]int64{1}}, false},
 		{"cache domain", repository.AccountPatch{CacheDomain: new("d")}, false},
 		{"cost multiplier", repository.AccountPatch{UpstreamCostMultiplierBp: new(2)}, false},
-		{"template", repository.AccountPatch{TemplateID: int64Ptr(8)}, true},
+		{"template", repository.AccountPatch{TemplateID: new(int64(8))}, true},
 		{"upstream key", repository.AccountPatch{UpstreamKey: new("sk-new")}, true},
 		{"base url set", repository.AccountPatch{BaseURL: new("https://x.example.com")}, true},
 	} {

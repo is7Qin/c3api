@@ -94,7 +94,7 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100),
 	}, memAccs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	wireSources(s, q, prices)
 	s.compileOnce()
 	cc := &countingCompiler{inner: NewRoutingCompiler(), calls: make(chan struct{}, 64)}

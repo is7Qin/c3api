@@ -48,10 +48,7 @@ func compileRouteQualityCandidates(filtered []compilerCandidateFacts, routeRC do
 				cost = math.MaxInt64
 				known = false
 			} else {
-				mult := max(facts.upstreamCostMultiplierBp, 0)
-				if mult > 100000 {
-					mult = 100000
-				}
+				mult := min(max(facts.upstreamCostMultiplierBp, 0), 100000)
 				cost = max(InputUnitPurchaseCost(uint64(mult), uint64(billable), uint64(cached), NonNegPrice(price.InputPerM), NonNegPrice(price.CacheReadPerM), uint64(denom)), 0)
 			}
 		} else {

@@ -568,7 +568,7 @@ func TestSingleDeleteNotFoundMapping(t *testing.T) {
 func TestCreateAccountMissingTemplate(t *testing.T) {
 	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: nil}
 	_, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
-		Name: new("a"), UpstreamKey: new("k"), TemplateID: int64Ptr(999), MaxConcurrency: new(4),
+		Name: new("a"), UpstreamKey: new("k"), TemplateID: new(int64(999)), MaxConcurrency: new(4),
 	})
 	require.ErrorIs(t, err, ErrNotFound, "模板缺 id → 404")
 	require.Contains(t, err.Error(), "999", "404 消息含缺失 id")

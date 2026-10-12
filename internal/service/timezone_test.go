@@ -27,7 +27,7 @@ func TestResolvePrices_TimeZone_Differential(t *testing.T) {
 
 	fs := newFakeStore()
 	_, err = fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "tz-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceManual},
+		{Model: "tz-model", Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000)), Source: domain.PricingSourceManual},
 	})
 	require.NoError(t, err)
 
@@ -78,7 +78,7 @@ func TestResolvePrices_TimeZone_TimeOnly(t *testing.T) {
 	require.NoError(t, err)
 	fs := newFakeStore()
 	_, err = fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "tz-time-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceManual},
+		{Model: "tz-time-model", Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000)), Source: domain.PricingSourceManual},
 	})
 	require.NoError(t, err)
 	m1 := 20000

@@ -273,7 +273,7 @@ func TestSearchStaticPassthroughBilling(t *testing.T) {
 	store := &captureLogStore{}
 	p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream"}},
 		up.URL, searchBillingHooks(&fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{
-			"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500), Source: domain.PricingSourceManual},
+			"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: new(int64(2500)), Source: domain.PricingSourceManual},
 		}}), store)
 
 	srv := httptest.NewServer(AIRouter(p))

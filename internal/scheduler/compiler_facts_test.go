@@ -58,7 +58,6 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 	ft := reflect.TypeFor[compilerAccountFacts]()
 	var names []string
 	for fl := range ft.Fields() {
-		fl := fl
 		names = append(names, fl.Name)
 		switch fl.Type.Kind() {
 		case reflect.Int, reflect.Int64, reflect.String, reflect.Array:

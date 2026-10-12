@@ -18,7 +18,7 @@ func int64PtrD(v int64) *int64 { return new(v) }
 func intPtrD(v int) *int { return new(v) }
 
 func TestResolveEntryPrices_SetPricePerCall(t *testing.T) {
-	entry := &PriceEntry{Model: "search-m", Mode: PriceModeCall, PricePerCall: int64PtrD(1000)}
+	entry := &PriceEntry{Model: "search-m", Mode: PriceModeCall, PricePerCall: new(int64(1000))}
 	custom := int64(9999)
 	variants := []*PriceVariant{{Model: "search-m", Seq: 1, SetPricePerCall: &custom}}
 	rp, ok := ResolveEntryPrices(entry, variants, "auto", 0, time.Now())
@@ -28,7 +28,7 @@ func TestResolveEntryPrices_SetPricePerCall(t *testing.T) {
 }
 
 func TestResolveEntryPrices_ImageOverrides(t *testing.T) {
-	entry := &PriceEntry{Model: "img-m", Mode: PriceModeImage, ImgInTokPerM: int64PtrD(100), ImgOutTokPerM: int64PtrD(200), PricePerImage: int64PtrD(300)}
+	entry := &PriceEntry{Model: "img-m", Mode: PriceModeImage, ImgInTokPerM: new(int64(100)), ImgOutTokPerM: new(int64(200)), PricePerImage: new(int64(300))}
 	imgIn := int64(111)
 	imgOut := int64(222)
 	perImg := int64(333)
@@ -41,7 +41,7 @@ func TestResolveEntryPrices_ImageOverrides(t *testing.T) {
 }
 
 func TestResolveEntryPrices_CacheOverrides(t *testing.T) {
-	entry := &PriceEntry{Model: "tok-m", Mode: PriceModeToken, InputPerM: int64PtrD(1000), OutputPerM: int64PtrD(2000), CacheReadPerM: int64PtrD(3000), CacheWritePerM: int64PtrD(4000)}
+	entry := &PriceEntry{Model: "tok-m", Mode: PriceModeToken, InputPerM: new(int64(1000)), OutputPerM: new(int64(2000)), CacheReadPerM: new(int64(3000)), CacheWritePerM: new(int64(4000))}
 	cr := int64(999)
 	cw := int64(888)
 	variants := []*PriceVariant{{Model: "tok-m", Seq: 1, SetCacheReadPerM: &cr, SetCacheCreationPerM: &cw}}

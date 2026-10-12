@@ -23,7 +23,7 @@ func TestRuleMatched_TypedOnly(t *testing.T) {
 	require.Equal(t, int64(0), e2.MatchedActions(), "shaping-only must not count")
 
 	// Typed Throttle should count exactly once when accepted.
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	e3, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "typed", Enabled: true, Priority: 10,
@@ -46,7 +46,7 @@ func TestRuleMatched_TypedOnly(t *testing.T) {
 	require.Equal(t, int64(1), e4.MatchedActions())
 
 	// Account_route missing IDs => not matched, so not counted
-	thRoute := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	thRoute := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink5 := newFakeSink(10)
 	e5, _ := newTestEngineWithSink(t, sink5, nil, domain.Rule{
 		Name: "route", Enabled: true, Priority: 10,
@@ -59,7 +59,7 @@ func TestRuleMatched_TypedOnly(t *testing.T) {
 
 // Defect 2 & 3: context-aware persist + pending + Close join.
 func TestRulePersist_PendingAndJoin(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	started := make(chan struct{}, 1)
 	unblock := make(chan struct{})
@@ -129,7 +129,7 @@ func TestRulePersist_FlushWithoutStartPending(t *testing.T) {
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 4}, newFakeRuleStore(), nil, sink, func(_ context.Context, _ PersistItem) error { return nil })
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{
-		{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}},
+		{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}}},
 	}
 	e.rulesMu.Unlock()
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})

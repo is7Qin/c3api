@@ -39,7 +39,7 @@ func TestCompileEvent_SupersedeDropRequeuesScopes(t *testing.T) {
 	a1 := accWithEnabled(1, tpl, true, 10000)
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1}})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1})
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 	require.True(t, s.publishedViewWhole(), "converged full compile publishes a whole view")
 
@@ -104,7 +104,7 @@ func TestCompileEvent_WholenessPartialHealsViaBackstop(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1}, 20: {a2}})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1})
 	maps.Copy(q, buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}))
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, cl := newProbedSched(t, m, q, prices)
 	require.True(t, s.publishedViewWhole(), "full fallback publishes a whole view")
 

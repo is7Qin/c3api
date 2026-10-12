@@ -171,7 +171,7 @@ func TestErrClassifyUserCase401Balance(t *testing.T) {
 		domain.Rule{Name: "balance-401", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(401),
 				ErrorMessageContains: new("balance")},
-			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(30 * 60 * 1000)}, ResponseCode: new(502), CustomMessage: new("upstream rejected request")}},
+			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(30 * 60 * 1000))}, ResponseCode: new(502), CustomMessage: new("upstream rejected request")}},
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(

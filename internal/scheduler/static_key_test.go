@@ -21,7 +21,6 @@ func flattenKeyFields(t reflect.Type) []reflect.StructField {
 	var walk func(rt reflect.Type)
 	walk = func(rt reflect.Type) {
 		for fl := range rt.Fields() {
-			fl := fl
 			if fl.Anonymous && fl.Type.Kind() == reflect.Struct {
 				walk(fl.Type)
 				continue

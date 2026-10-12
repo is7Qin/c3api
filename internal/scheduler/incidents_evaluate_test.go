@@ -323,7 +323,7 @@ func incidentLaneFixture(t *testing.T) (*Scheduler, *memLoader, map[CandidateQua
 	for k := range q {
 		base[k] = incidentCounts(60, 55)
 	}
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 	boundary := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	s.sources = &CompilerSources{

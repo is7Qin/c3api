@@ -209,7 +209,7 @@ func TestRoutingFlow_ConservationAndLossSeparation(t *testing.T) {
 	fs.routingFlowRows = []repository.RoutingFlowStat{
 		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
 		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", IsTerminal: false, MinGeneration: 7, ChainCount: 3},
-		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: ptrInt64(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: new(int64(2)), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
 		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 6, ChainCount: 2},
 	}
 	withRoutingLoss(t, 11, 13)
@@ -322,7 +322,7 @@ func TestRoutingFrontier_Semantics(t *testing.T) {
 	require.Len(t, route.Candidates, 3)
 	fs := newFakeStore()
 	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(1000), OutputPerM: int64Ptr(2000), CacheReadPerM: int64Ptr(100), Source: domain.PricingSourceLitellm},
+		{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(1000)), OutputPerM: new(int64(2000)), CacheReadPerM: new(int64(100)), Source: domain.PricingSourceLitellm},
 	})
 	require.NoError(t, err)
 	svc := routingSvc(t, fs, plan)

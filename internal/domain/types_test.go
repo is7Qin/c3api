@@ -76,7 +76,7 @@ func TestTruncateErrMsg(t *testing.T) {
 func exportedFieldNames(rt reflect.Type) []string {
 	names := make([]string, 0, rt.NumField())
 	for f := range rt.Fields() {
-		if f := f; f.IsExported() {
+		if f.IsExported() {
 			names = append(names, f.Name)
 		}
 	}
@@ -114,7 +114,6 @@ func TestAccountStatusIsRuntimeOnlyType(t *testing.T) {
 	for _, v := range []any{Account{}, RuleThen{}, CodexOAuthImportItem{}, CodexPATImportItem{}} {
 		rt := reflect.TypeOf(v)
 		for f := range rt.Fields() {
-			f := f
 			require.NotEqual(t, statusT, f.Type, "%s.%s", rt.Name(), f.Name)
 			require.NotEqual(t, statusPT, f.Type, "%s.%s", rt.Name(), f.Name)
 		}

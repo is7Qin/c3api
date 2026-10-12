@@ -61,12 +61,12 @@ func TestCreateAccountOwnedTriggersSupplierViewReload(t *testing.T) {
 	reload := &fakeSupplierViewReloader{}
 	svc.supplierViewReload = reload
 
-	_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: new("ownless"), TemplateID: int64Ptr(1), UpstreamKey: new("k")})
+	_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: new("ownless"), TemplateID: new(int64(1)), UpstreamKey: new("k")})
 	require.NoError(t, err)
 	require.Zero(t, reload.calls, "平台自有创建不触发视图换代")
 
 	owner := int64(7)
-	_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: new("owned"), TemplateID: int64Ptr(1), UpstreamKey: new("k2"), SupplierUserID: &owner})
+	_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: new("owned"), TemplateID: new(int64(1)), UpstreamKey: new("k2"), SupplierUserID: &owner})
 	require.NoError(t, err)
 	require.Equal(t, 1, reload.calls, "带归属创建须触发视图换代")
 }
