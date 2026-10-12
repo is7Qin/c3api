@@ -26,9 +26,10 @@ export function formatGroupMultiplier(m: number | null | undefined, t: TFunction
 
 // 组选项展示：名称 + 价格倍率（右）+ 描述次行（muted，空/纯空白描述隐藏）。
 // 外层用 span（Select 的 ItemText 亦为 span，避免 div 嵌 span）；flex 行内需
-// flex-1 min-w-0。名称单行截断（保持倍率右对齐、行高一致）；**描述过长自动换行**
-// （多行完整展示，不截断、不溢出盖住倍率——外层显式 whitespace-normal 覆盖
-// SelectItem.ItemText 继承的 whitespace-nowrap）。返回值让 TS 推断（不用 JSX.Element）。
+// flex-1 min-w-0。名称单行截断（保持倍率右对齐、行高一致）；**描述过长自动换行 +
+// 保留作者输入的换行**（`whitespace-pre-line`：`\n` 显示为换行、其余空白折叠，仍可
+// 按宽度自动折行；外层 `whitespace-normal` 覆盖 SelectItem.ItemText 继承的
+// whitespace-nowrap）。返回值让 TS 推断（不用 JSX.Element）。
 export function GroupOptionMeta({ choice, className }: { choice: GroupChoice; className?: string }) {
   const { t } = useTranslation()
   const desc = choice.description?.trim()
@@ -38,7 +39,7 @@ export function GroupOptionMeta({ choice, className }: { choice: GroupChoice; cl
         <span className="min-w-0 truncate">{choice.name}</span>
         <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatGroupMultiplier(choice.multiplier, t)}</span>
       </span>
-      {desc && <span className="text-xs break-words text-muted-foreground">{desc}</span>}
+      {desc && <span className="text-xs break-words whitespace-pre-line text-muted-foreground">{desc}</span>}
     </span>
   )
 }

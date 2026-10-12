@@ -528,7 +528,7 @@ export default function Groups() {
                     </TableCell>
                     <TableCell className="tabular-nums">{g.ID}</TableCell>
                     <TableCell className="max-w-36 truncate" title={g.Name}>{g.Name}</TableCell>
-                    <TableCell className="max-w-48 truncate" title={g.Description}>{g.Description || '—'}</TableCell>
+                    <TableCell className="max-w-48 whitespace-pre-line break-words line-clamp-2" title={g.Description}>{g.Description || '—'}</TableCell>
                     <TableCell><VisibilityBadge visibility={g.Visibility} /></TableCell>
                     <TableCell className="tabular-nums">{formatMultiplier(g.PriceMultiplier, t)}</TableCell>
                     <TableCell>
