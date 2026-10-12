@@ -34,7 +34,8 @@ func importFixture(t *testing.T) (*Service, *fakeStore, *invRecorder) {
 	return svc, store, rec
 }
 
-func mcPtr(v int) *int { return &v }
+//go:fix inline
+func mcPtr(v int) *int { return new(v) }
 
 // TestImportCodexOAuthAccountsIdempotent 幂等矩阵（oauth）：新建 → imported；
 // 同键重导 → updated（凭据更新、身份沿用、并发不动）；不同键共存；批内
@@ -156,7 +157,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 
 	res, err = svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 		{CodexEmail: "p@example.com", CodexAccountID: "p-1", CodexPATKey: "pat-2",
-			MaxConcurrency: mcPtr(3)},
+			MaxConcurrency: new(3)},
 	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 0, res.Imported)
@@ -476,9 +477,9 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 			{CodexEmail: "cfg@example.com", CodexAccountID: "cfg-1",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 		}, &tplID, nil, domain.CodexImportConfig{
-			Enabled:                  boolPtr(false),
-			CacheDomain:              strPtr("shared.example.com"),
-			UpstreamCostMultiplierBp: intPtr(25000),
+			Enabled:                  new(false),
+			CacheDomain:              new("shared.example.com"),
+			UpstreamCostMultiplierBp: new(25000),
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
@@ -514,7 +515,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "empty@example.com", CodexAccountID: "empty-1",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &tplID, nil, domain.CodexImportConfig{CacheDomain: strPtr("")})
+		}, &tplID, nil, domain.CodexImportConfig{CacheDomain: new("")})
 		require.NoError(t, err)
 		ext, err := store.FindAccountExtByCodexKey(ctx, "empty@example.com", "empty-1")
 		require.NoError(t, err)
@@ -530,17 +531,17 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 			CodexOAuthToken: "at-1", CodexOAuthRefreshToken: "rt-1",
 		}}
 		_, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, domain.CodexImportConfig{
-			Enabled:                  boolPtr(false),
-			CacheDomain:              strPtr("first.example.com"),
-			UpstreamCostMultiplierBp: intPtr(25000),
+			Enabled:                  new(false),
+			CacheDomain:              new("first.example.com"),
+			UpstreamCostMultiplierBp: new(25000),
 		})
 		require.NoError(t, err)
 
 		item[0].CodexOAuthToken = "at-2"
 		res, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, domain.CodexImportConfig{
-			Enabled:                  boolPtr(true),
-			CacheDomain:              strPtr("second.example.com"),
-			UpstreamCostMultiplierBp: intPtr(10000),
+			Enabled:                  new(true),
+			CacheDomain:              new("second.example.com"),
+			UpstreamCostMultiplierBp: new(10000),
 		})
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Updated)
@@ -561,7 +562,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		_, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 			{CodexEmail: "free@example.com", CodexAccountID: "free-1",
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
-		}, &tplID, nil, domain.CodexImportConfig{UpstreamCostMultiplierBp: intPtr(0)})
+		}, &tplID, nil, domain.CodexImportConfig{UpstreamCostMultiplierBp: new(0)})
 		require.NoError(t, err)
 		ext, err := store.FindAccountExtByCodexKey(ctx, "free@example.com", "free-1")
 		require.NoError(t, err)
@@ -577,17 +578,17 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 			CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt",
 		}}
 		for _, cfg := range []domain.CodexImportConfig{
-			{CacheDomain: strPtr("Bad_Domain")},
-			{CacheDomain: strPtr("UPPER.example.com")},
-			{UpstreamCostMultiplierBp: intPtr(-1)},
-			{UpstreamCostMultiplierBp: intPtr(100001)},
+			{CacheDomain: new("Bad_Domain")},
+			{CacheDomain: new("UPPER.example.com")},
+			{UpstreamCostMultiplierBp: new(-1)},
+			{UpstreamCostMultiplierBp: new(100001)},
 		} {
 			_, err := svc.ImportCodexOAuthAccounts(ctx, item, &tplID, nil, cfg)
 			require.ErrorIs(t, err, ErrInvalidInput)
 		}
 		_, err := svc.ImportCodexPATAccounts(ctx, []domain.CodexPATImportItem{
 			{CodexEmail: "bad@example.com", CodexAccountID: "bad-1", CodexPATKey: "pk"},
-		}, &tplID, nil, domain.CodexImportConfig{CacheDomain: strPtr("Bad_Domain")})
+		}, &tplID, nil, domain.CodexImportConfig{CacheDomain: new("Bad_Domain")})
 		require.ErrorIs(t, err, ErrInvalidInput)
 		require.Empty(t, store.accs, "整批拒绝：零落库")
 	})

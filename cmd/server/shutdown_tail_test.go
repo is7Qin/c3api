@@ -38,7 +38,7 @@ func readShutdownLog(t *testing.T, path string) []shutdownLogLine {
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
 	var lines []shutdownLogLine
-	for _, ln := range strings.Split(string(content), "\n") {
+	for ln := range strings.SplitSeq(string(content), "\n") {
 		ln = strings.TrimSpace(ln)
 		if ln == "" {
 			continue

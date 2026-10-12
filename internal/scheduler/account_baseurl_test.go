@@ -20,7 +20,7 @@ func TestSelectBaseURLPriority(t *testing.T) {
 
 	t.Run("账号级非空覆盖模板级", func(t *testing.T) {
 		a := acc(1, tplA, 4)
-		a.BaseURL = strPtrT("https://acc.example.com")
+		a.BaseURL = new("https://acc.example.com")
 		s := newTestScheduler(t, []*domain.Account{a})
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
@@ -39,7 +39,7 @@ func TestSelectBaseURLPriority(t *testing.T) {
 
 	t.Run("账号级空串回退模板级", func(t *testing.T) {
 		a := acc(3, tplA, 4)
-		a.BaseURL = strPtrT("")
+		a.BaseURL = new("")
 		s := newTestScheduler(t, []*domain.Account{a})
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)

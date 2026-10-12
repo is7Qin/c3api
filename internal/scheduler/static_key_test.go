@@ -20,8 +20,8 @@ func flattenKeyFields(t reflect.Type) []reflect.StructField {
 	var out []reflect.StructField
 	var walk func(rt reflect.Type)
 	walk = func(rt reflect.Type) {
-		for i := 0; i < rt.NumField(); i++ {
-			fl := rt.Field(i)
+		for fl := range rt.Fields() {
+			fl := fl
 			if fl.Anonymous && fl.Type.Kind() == reflect.Struct {
 				walk(fl.Type)
 				continue
@@ -57,7 +57,7 @@ func flattenKeyFieldNames(t reflect.Type) []string {
 //
 // 因此：[32]byte（reflect.Array，值语义）是唯一允许的复合事实载体。
 func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
-	kt := reflect.TypeOf(staticKey{})
+	kt := reflect.TypeFor[staticKey]()
 	require.Greater(t, len(flattenKeyFields(kt)), 0, "staticKey must not be empty")
 
 	names := flattenKeyFieldNames(kt)
@@ -66,7 +66,7 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 		case reflect.Int, reflect.Int64, reflect.Int32, reflect.Uint8,
 			reflect.String, reflect.Bool, reflect.Array:
 			// 值语义，可比较。
-		case reflect.Ptr, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan:
+		case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan:
 			t.Fatalf("staticKey.%s has non-value kind %s: the key must stay comparable by == over VALUES; "+
 				"a pointer here compares addresses (rebuilt every reload => key never equal), and slice/map/func "+
 				"are not comparable at all, which would make the struct uncompilable or the reuse branch inert", fl.Name, fl.Type.Kind())
@@ -97,8 +97,8 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 		"update it deliberately together with spec §5.5/§5.5b, not incidentally")
 	// 归属 tripwire：同一处同时钉住"字段集"与"字段归属"——载荷三元组必须在
 	// payloadKey，其余必须在 planKey。字段挪错组即改判据语义。
-	require.Equal(t, declaredPlanKeyFields, flattenKeyFieldNames(reflect.TypeOf(planKey{})), "planKey must carry exactly the decision inputs")
-	require.Equal(t, declaredPayloadKeyFields, flattenKeyFieldNames(reflect.TypeOf(payloadKey{})), "payloadKey must carry exactly the OAuth credential triple")
+	require.Equal(t, declaredPlanKeyFields, flattenKeyFieldNames(reflect.TypeFor[planKey]()), "planKey must carry exactly the decision inputs")
+	require.Equal(t, declaredPayloadKeyFields, flattenKeyFieldNames(reflect.TypeFor[payloadKey]()), "payloadKey must carry exactly the OAuth credential triple")
 }
 
 // TestStaticKeyCoversEveryDeclaredAccountField 是字段声明表与静态键之间的机械
@@ -122,7 +122,7 @@ func TestStaticKeyCoversEveryDeclaredAccountField(t *testing.T) {
 		domain.FieldUpstreamCostMultiplier: "upstreamCostMultiplierBp",
 		domain.FieldSupplierUserID:         "supplierUserID",
 	}
-	kt := reflect.TypeOf(staticKey{})
+	kt := reflect.TypeFor[staticKey]()
 	keyFields := make(map[string]bool)
 	for _, name := range flattenKeyFieldNames(kt) {
 		keyFields[name] = true
@@ -156,10 +156,10 @@ func TestStaticKeyGuardDetectsPointerField(t *testing.T) {
 		accountID int64
 		tpl       *domain.Template // ← 每次重载新建 => 地址恒不等
 	}
-	pt := reflect.TypeOf(poisoned{})
+	pt := reflect.TypeFor[poisoned]()
 	var found bool
-	for i := 0; i < pt.NumField(); i++ {
-		if pt.Field(i).Type.Kind() == reflect.Ptr {
+	for field := range pt.Fields() {
+		if field.Type.Kind() == reflect.Pointer {
 			found = true
 		}
 	}
@@ -172,7 +172,7 @@ func TestStaticKeyGuardDetectsPointerField(t *testing.T) {
 			switch fl.Type.Kind() {
 			case reflect.Int, reflect.Int64, reflect.Int32, reflect.Uint8,
 				reflect.String, reflect.Bool, reflect.Array:
-			case reflect.Ptr, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan:
+			case reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan:
 				return false
 			default:
 				return false
@@ -181,7 +181,7 @@ func TestStaticKeyGuardDetectsPointerField(t *testing.T) {
 		return true
 	}
 	require.False(t, guardPasses(pt), "guard must REJECT a struct carrying a pointer field")
-	require.True(t, guardPasses(reflect.TypeOf(staticKey{})), "guard must ACCEPT the real staticKey")
+	require.True(t, guardPasses(reflect.TypeFor[staticKey]()), "guard must ACCEPT the real staticKey")
 
 	// 内嵌下钻的反向证明：指针藏在内嵌 struct 里时，展平后的守卫同样必须拦。
 	// 若展平只是跳过内嵌结构而不下钻，这条即为空洞通过。
@@ -193,7 +193,7 @@ func TestStaticKeyGuardDetectsPointerField(t *testing.T) {
 		embeddedPoison
 		name string
 	}
-	require.False(t, guardPasses(reflect.TypeOf(outerPoison{})), "guard must REJECT a struct with a pointer field hidden inside an embedded struct")
+	require.False(t, guardPasses(reflect.TypeFor[outerPoison]()), "guard must REJECT a struct with a pointer field hidden inside an embedded struct")
 }
 
 // TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts 是 required demo ii：
@@ -223,11 +223,11 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		a := domain.Account{
 			ID: 7, Name: "acct-7", TemplateID: 3,
 			UpstreamKey: "sk", MaxConcurrency: 4, Enabled: true,
-			CacheDomain: strPtr("cache.example"), UpstreamCostMultiplierBp: intPtr(12000),
+			CacheDomain: new("cache.example"), UpstreamCostMultiplierBp: new(12000),
 			IdentityRevision: 5,
 			Template:         tp,
 			Ext: &domain.AccountExt{
-				CodexAccountID: strPtr("acct-up"),
+				CodexAccountID: new("acct-up"),
 				CodexPATKey:    &pat, // 凭据明文：**不进键**（§5.5b(2)：digest 已由 upstreamKey|patKey 覆盖，且 token 刷新不该改身份）
 				CodexIdentity: &domain.CodexIdentity{
 					InstallationID: "inst",
@@ -265,15 +265,15 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 		{"identityRevision (K)", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.IdentityRevision = 6 }},
 		{"name", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Name = "other" }},
 		{"templateID", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.TemplateID = 4 }},
-		{"effective baseURL (account override)", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.BaseURL = strPtr("https://override/v1") }},
+		{"effective baseURL (account override)", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.BaseURL = new("https://override/v1") }},
 		{"template baseURL", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.BaseURL = "https://tpl2.example/v1" }},
 		{"upstreamKey", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.UpstreamKey = "sk2" }},
 		{"maxConcurrency", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.MaxConcurrency = 8 }},
 		{"enabled", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Enabled = false }},
 		{"cacheDomain", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.CacheDomain = nil }},
-		{"upstreamCostMultiplierBp", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.UpstreamCostMultiplierBp = intPtr(9000) }},
+		{"upstreamCostMultiplierBp", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.UpstreamCostMultiplierBp = new(9000) }},
 		{"groupIDs set", func(_ *domain.Account, _ *domain.Template, gids *[]int64) { *gids = []int64{3} }},
-		{"codexAccountID", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Ext.CodexAccountID = strPtr("other") }},
+		{"codexAccountID", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Ext.CodexAccountID = new("other") }},
 		{"codexInstallation", func(a *domain.Account, _ *domain.Template, _ *[]int64) { a.Ext.CodexIdentity.InstallationID = "inst2" }},
 		{"credentialType", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.CredentialType = "codex_oauth" }},
 		{"stripImageTools", func(_ *domain.Account, tp *domain.Template, _ *[]int64) { tp.StripImageTools = false }},
@@ -331,7 +331,7 @@ func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 	})
 	t.Run("codexEmail edit MUST change the key", func(t *testing.T) {
 		a, tp, gids := inputs()
-		a.Ext.CodexEmail = strPtr("e@example.com")
+		a.Ext.CodexEmail = new("e@example.com")
 		m := newSnapshotStatic(a, tp, gids)
 		require.False(t, staticKeyOf(oldAv) == staticKeyOf(m), "email is reachable via Selection.Ext, so it must not be served stale")
 		require.False(t, planKeyOf(oldAv) == planKeyOf(m), "email is a decision input (read by the fingerprint path), so it invalidates in-flight plans")

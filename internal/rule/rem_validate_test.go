@@ -49,7 +49,7 @@ func TestValidateWhen_EmptyInRejected(t *testing.T) {
 func TestValidateWhen_NilInPasses(t *testing.T) {
 	// nil means dimension not filtered → valid
 	require.NoError(t, ValidateWhen(domain.RuleWhen{}))
-	require.NoError(t, ValidateWhen(domain.RuleWhen{Kind: strPtr("4xx")}))
+	require.NoError(t, ValidateWhen(domain.RuleWhen{Kind: new("4xx")}))
 }
 
 func TestValidateWhen_EmptyIn_JSONDistinguishesNilVsEmpty(t *testing.T) {
@@ -104,7 +104,7 @@ func TestValidateThen_PurePassthroughJSONRoundTrip(t *testing.T) {
 	require.Equal(t, "{}", string(marshaled))
 
 	// Full domain.Rule round-trip with Then{} empty
-	rule := domain.Rule{Name: "passthrough", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)}, Then: domain.RuleThen{}}
+	rule := domain.Rule{Name: "passthrough", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(400)}, Then: domain.RuleThen{}}
 	b2, err := json.Marshal(rule)
 	require.NoError(t, err)
 	var rule2 domain.Rule
@@ -141,10 +141,10 @@ func TestClassify_PurePassthrough_EquivalenceWithSeed(t *testing.T) {
 	// User rule Then{} must behave identically to seed-4xx-400: empty actions + punish=false
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "user-passthrough", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
+		When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(400)},
 		Then: domain.RuleThen{},
 	})
-	ev := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(400), ErrorMessage: "bad request"}
+	ev := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: new(400), ErrorMessage: "bad request"}
 	then, punish := e.Classify(ev)
 	require.Nil(t, then.Throttle)
 	require.False(t, then.FailAccount)
@@ -166,7 +166,7 @@ func TestClassify_PurePassthrough_EquivalenceWithSeed(t *testing.T) {
 	require.Equal(t, punish, punishSeed)
 
 	// Non-matching event should fallback to default 502, not passthrough
-	evOther := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(403), ErrorMessage: "forbidden"}
+	evOther := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: new(403), ErrorMessage: "forbidden"}
 	thenOther, punishOther := e.Classify(evOther)
 	require.NotNil(t, thenOther.ResponseCode)
 	require.Equal(t, 502, *thenOther.ResponseCode)
@@ -177,10 +177,10 @@ func TestClassify_PurePassthrough_HandleEventNoPunish(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "user-passthrough", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
+		When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(400)},
 		Then: domain.RuleThen{},
 	})
-	ev := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(400), OccurredAt: at(0), ErrorMessage: "bad"}
+	ev := Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: new(400), OccurredAt: at(0), ErrorMessage: "bad"}
 	e.HandleEvent(nil, ev)
 	// Then{} has no typed action → sink never called; punish=false in proxy path.
 	require.Equal(t, 0, sink.countThrottle())

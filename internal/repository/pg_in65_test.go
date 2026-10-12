@@ -233,7 +233,7 @@ func TestPGDeactivateCodesChunked(t *testing.T) {
 
 	const n = 66000 // > PG 参数上限：分片 UPDATE 必须全量失效
 	codes := make([]*domain.RedemptionCode, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		codes = append(codes, &domain.RedemptionCode{
 			Code: fmt.Sprintf("CODE-%06d", i), Type: domain.RedemptionTypeBalance,
 			Value: 1000, MaxUses: 1, UsedCount: 0,

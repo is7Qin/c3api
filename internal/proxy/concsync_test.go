@@ -453,7 +453,7 @@ func TestConcWorkerStats(t *testing.T) {
 // 空形态，故播种在途后才度量真实 targets 路径。
 func BenchmarkConcCollectAllocs(b *testing.B) {
 	keys := make(map[string]domain.KeyMeta, 5000)
-	for i := 0; i < 5000; i++ {
+	for i := range 5000 {
 		keys["ck-"+strconv.Itoa(i)] = domain.KeyMeta{
 			KeyID: int64(i + 1), UserID: int64(i/5 + 1),
 			KeyMaxConc: 8, UserMaxConc: 16,
@@ -465,7 +465,7 @@ func BenchmarkConcCollectAllocs(b *testing.B) {
 	}
 	w := NewConcSyncWorker(a, nil, "inst", nil)
 	snap := a.gate.store.Load()
-	for i := 0; i < 250; i++ {
+	for i := range 250 {
 		if c, ok := snap.keys[int64(i+1)]; ok && c != nil {
 			c.Store(3)
 		}

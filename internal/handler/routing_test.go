@@ -123,7 +123,8 @@ func routingFixturePlan(t *testing.T) (*scheduler.RoutingPlan, string) {
 	return plan, idHex
 }
 
-func i64p(v int64) *int64 { return &v }
+//go:fix inline
+func i64p(v int64) *int64 { return new(v) }
 
 // --- /routing/flow ---
 

@@ -120,12 +120,13 @@ func (f *fakeImagePriceLookup) ResolvePrices(model string, promptTokens int64, t
 func perImagePriceRow(model string) *domain.PriceEntry {
 	return &domain.PriceEntry{
 		Model: model, Mode: domain.PriceModeImage,
-		PricePerImage: ptr(int64(5400)),
+		PricePerImage: new(int64(5400)),
 		Source:        domain.PricingSourceManual,
 	}
 }
 
-func ptr[T any](v T) *T { return &v }
+//go:fix inline
+func ptr[T any](v T) *T { return new(v) }
 
 // TestImagesGenerationsJSONDirect generations JSON 非流式直连：api_key 类型
 // 模板 → 转发模板 base_url + /v1/images/generations；JSON 形态 setModel 模型

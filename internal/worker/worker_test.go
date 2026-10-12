@@ -164,7 +164,7 @@ func TestRegisterConcurrentWithStartAll(t *testing.T) {
 	var wg sync.WaitGroup
 	var errs []error
 	var errMu sync.Mutex
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		wg.Add(1)
 		go func(n int) {
 			defer wg.Done()

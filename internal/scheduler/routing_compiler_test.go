@@ -3,7 +3,7 @@ package scheduler
 
 import (
 	"math"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,7 +15,7 @@ import (
 func accWithEnabled(id int64, tpl *domain.Template, enabled bool, mult int) *domain.Account {
 	a := acc(id, tpl, 10)
 	a.Enabled = enabled
-	a.UpstreamCostMultiplierBp = intPtr(mult)
+	a.UpstreamCostMultiplierBp = new(mult)
 	a.LifecycleRevision = 1
 	return a
 }
@@ -33,7 +33,8 @@ func qualityInput(attempts, successes int, inTok, outTok int64) CandidateQuality
 	return CandidateQualityInput{Counts: cnt, InputTokens: inTok, OutputTokens: outTok}
 }
 
-func pricePtr(v int64) *int64 { return &v }
+//go:fix inline
+func pricePtr(v int64) *int64 { return new(v) }
 
 func qualityKeyFor(gid int64, format domain.RequestFormat, model string, acc *domain.Account) CandidateQualityKey {
 	op := operationTagForFormat(string(format))
@@ -149,7 +150,7 @@ func TestRoutingCompilerLaneClassificationAndWeightsTail(t *testing.T) {
 	require.True(t, ok)
 	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
 	all = append(all, compiledAccountIDs(rd.Degraded)...)
-	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	slices.Sort(all)
 	require.Equal(t, []int64{1, 2, 3}, all)
 	require.Len(t, rd.Primary, 1)
 	require.Contains(t, compiledAccountIDs(rd.Primary), int64(1))

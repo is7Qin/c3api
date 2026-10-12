@@ -24,7 +24,7 @@ func testPolicy() codexsdk.RotatePolicy {
 // newTestPool 构造容量 k 的池（installation "inst"）。
 func newTestPool(k int, p codexsdk.RotatePolicy) *identityPool {
 	pool := &identityPool{installationID: "inst", slots: make([]*identitySlot, k)}
-	for i := 0; i < k; i++ {
+	for i := range k {
 		pool.slots[i] = newIdentitySlot("inst", p)
 	}
 	return pool
@@ -170,11 +170,9 @@ func TestReleaseFreesSlotBeforeConcurrencyDecrement(t *testing.T) {
 
 	var ephemeral, successes int64
 	var wg sync.WaitGroup
-	for g := 0; g < 32; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 2000; i++ {
+	for range 32 {
+		wg.Go(func() {
+			for range 2000 {
 				sel, err := s.Select(10, domain.FormatOpenAIResponses, "m")
 				if err != nil {
 					continue // 门禁满（预期 ErrNoAvailable）
@@ -185,7 +183,7 @@ func TestReleaseFreesSlotBeforeConcurrencyDecrement(t *testing.T) {
 				}
 				sel.Release()
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	require.Positive(t, atomic.LoadInt64(&successes), "并发至少成功预留一次（否则用例空转）")
@@ -198,7 +196,7 @@ func TestIdentityPoolClaimReleaseNoCrossSlot(t *testing.T) {
 	pool := newTestPool(3, testPolicy())
 	seen := map[*identitySlot]bool{}
 	threads := map[string]bool{}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		s := pool.claim()
 		require.NotNil(t, s)
 		require.False(t, seen[s], "槽不得重复认领")
@@ -308,7 +306,7 @@ func TestAdvanceIdentityOrderInvariant(t *testing.T) {
 	interRetire := 0
 	n := 0
 	for r := 0; r < k/users && interRetire == 0; r++ {
-		for u := 0; u < users; u++ {
+		for range users {
 			n++
 			if step(inter) {
 				interRetire = n
@@ -346,7 +344,7 @@ func TestIdentityPoolResizeMigratesMin(t *testing.T) {
 	busyPool := newTestPool(2, testPolicy())
 	busy := busyPool.claim()
 	var got *identitySlot
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		if busyPool.slots[i] == busy {
 			got = busyPool.slots[i]
 		}
@@ -380,10 +378,8 @@ func TestIdentityPoolConcurrentClaimUnique(t *testing.T) {
 	var mu sync.Mutex
 	claimed := map[*identitySlot]int{}
 	success := 0
-	for i := 0; i < g; i++ {
-		done.Add(1)
-		go func() {
-			defer done.Done()
+	for range g {
+		done.Go(func() {
 			start.Wait() // 屏障：全部就绪后同时认领，最大化 CAS 争用
 			s := pool.claim()
 			if s == nil {
@@ -393,7 +389,7 @@ func TestIdentityPoolConcurrentClaimUnique(t *testing.T) {
 			claimed[s]++
 			success++
 			mu.Unlock()
-		}()
+		})
 	}
 	start.Done()
 	done.Wait()
@@ -419,15 +415,13 @@ func TestIdentitySlotConcurrentAdvanceNoLostUpdate(t *testing.T) {
 	var start sync.WaitGroup
 	start.Add(1)
 	var done sync.WaitGroup
-	for i := 0; i < g; i++ {
-		done.Add(1)
-		go func() {
-			defer done.Done()
+	for range g {
+		done.Go(func() {
 			start.Wait()
-			for j := 0; j < m; j++ {
+			for range m {
 				sel.AdvanceIdentity()
 			}
-		}()
+		})
 	}
 	start.Done()
 	done.Wait()

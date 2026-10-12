@@ -123,7 +123,7 @@ func TestRecorder_FlowConcurrentSameMinuteRequestsAreConserved(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(i int) {
 			defer wg.Done()
 			<-start

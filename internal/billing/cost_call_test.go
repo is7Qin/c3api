@@ -12,7 +12,8 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
 func TestCallCostFromResolved_ZeroPrice_NoPanic(t *testing.T) {
 	rp := domain.ResolvedPrices{PricePerCall: int64Ptr(0)}

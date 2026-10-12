@@ -224,7 +224,7 @@ func TestAttemptObserverMatrix_successFeedsQualityAndFlow(t *testing.T) {
 			defer c.CloseNow()
 			require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 				[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-			for i := 0; i < 4; i++ {
+			for range 4 {
 				_ = readResponsesWSFrame(t, c)
 			}
 			readResponsesWSClose(t, c, websocket.StatusNormalClosure)
@@ -247,7 +247,7 @@ func TestAttemptObserverMatrix_successFeedsQualityAndFlow(t *testing.T) {
 			defer c.CloseNow()
 			require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 				[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-			for i := 0; i < 4; i++ {
+			for range 4 {
 				_ = readResponsesWSFrame(t, c)
 			}
 			readResponsesWSClose(t, c, websocket.StatusNormalClosure)

@@ -86,7 +86,7 @@ func TestFactoryConcurrentBuildAndInvalidate(t *testing.T) {
 	for _, tpl := range tpls {
 		go func(tp *domain.Template) {
 			defer wg.Done()
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				_, err := f.fullURLOf(tp.ID, tp.BaseURL, "chat/completions")
 				require.NoError(t, err)
 				require.NotNil(t, f.chat(tp))
@@ -94,7 +94,7 @@ func TestFactoryConcurrentBuildAndInvalidate(t *testing.T) {
 		}(tpl)
 		go func(tp *domain.Template) {
 			defer wg.Done()
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				_, err := f.fullURLOf(tp.ID, tp.BaseURL, "v1/messages")
 				require.NoError(t, err)
 				require.NotNil(t, f.responses(tp))
@@ -102,13 +102,13 @@ func TestFactoryConcurrentBuildAndInvalidate(t *testing.T) {
 		}(tpl)
 		go func(tp *domain.Template) {
 			defer wg.Done()
-			for i := 0; i < 50; i++ {
+			for range 50 {
 				require.NotNil(t, f.anthropic(tp))
 			}
 		}(tpl)
 		go func(tp *domain.Template) {
 			defer wg.Done()
-			for i := 0; i < 10; i++ {
+			for range 10 {
 				f.InvalidateAll()
 			}
 		}(tpl)

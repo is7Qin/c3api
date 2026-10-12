@@ -32,25 +32,25 @@ func fieldPatchForSpec(t *testing.T, repos *repository.Repository, spec domain.A
 	t.Helper()
 	switch spec.Field {
 	case domain.FieldName:
-		return repository.AccountPatch{Name: strPtr("renamed-" + spec.Name)}
+		return repository.AccountPatch{Name: new("renamed-" + spec.Name)}
 	case domain.FieldTemplateID:
 		alt := seedPGTemplateNamed(t, repos, "tpl-alt-"+spec.Name)
 		return repository.AccountPatch{TemplateID: &alt.ID}
 	case domain.FieldBaseURL:
-		return repository.AccountPatch{BaseURL: strPtr("https://acc-" + spec.Name + ".example.com")}
+		return repository.AccountPatch{BaseURL: new("https://acc-" + spec.Name + ".example.com")}
 	case domain.FieldUpstreamKey:
-		return repository.AccountPatch{UpstreamKey: strPtr("sk-rotated-" + spec.Name)}
+		return repository.AccountPatch{UpstreamKey: new("sk-rotated-" + spec.Name)}
 	case domain.FieldMaxConcurrency:
-		return repository.AccountPatch{MaxConcurrency: intPtr(16)}
+		return repository.AccountPatch{MaxConcurrency: new(16)}
 	case domain.FieldGroupIDs:
 		g := seedPGGroup(t, repos, "g-"+spec.Name)
 		return repository.AccountPatch{GroupIDs: &[]int64{g.ID}}
 	case domain.FieldEnabled:
-		return repository.AccountPatch{Enabled: boolPtr(false)}
+		return repository.AccountPatch{Enabled: new(false)}
 	case domain.FieldCacheDomain:
-		return repository.AccountPatch{CacheDomain: strPtr("cache-" + spec.Name + ".example")}
+		return repository.AccountPatch{CacheDomain: new("cache-" + spec.Name + ".example")}
 	case domain.FieldUpstreamCostMultiplier:
-		return repository.AccountPatch{UpstreamCostMultiplierBp: intPtr(25000)}
+		return repository.AccountPatch{UpstreamCostMultiplierBp: new(25000)}
 	case domain.FieldSupplierUserID:
 		owner := seedPGUserRole(t, repos, "owner-"+spec.Name, domain.RoleSupplier)
 		return repository.AccountPatch{SupplierUserID: &owner.ID}
@@ -112,7 +112,6 @@ func TestPGAccountFieldPatchAdvancesGeneration(t *testing.T) {
 	specs := domain.AccountFieldSpecs()
 	require.NotEmpty(t, specs, "field declaration table must not be empty")
 	for _, spec := range specs {
-		spec := spec
 		t.Run(spec.Name, func(t *testing.T) {
 			tpl := seedPGTemplateNamed(t, repos, "tpl-"+spec.Name)
 			acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{

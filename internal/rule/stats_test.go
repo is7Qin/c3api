@@ -19,7 +19,7 @@ func TestRuleEngineStats(t *testing.T) {
 	require.Zero(t, st.Queued)
 	require.Equal(t, 2, st.QueueCap)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		e.Enqueue(Event{AccountID: int64(i)})
 	}
 	st = e.Stats().(RuleEngineStats)

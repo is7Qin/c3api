@@ -198,8 +198,8 @@ func TestConvertedMappingSSE(t *testing.T) {
 			require.Contains(t, body, "client-model")
 			require.NotContains(t, body, "upstream-model")
 			require.Contains(t, body, "data:")
-			frames := strings.Split(strings.TrimSpace(body), "\n\n")
-			for _, f := range frames {
+			frames := strings.SplitSeq(strings.TrimSpace(body), "\n\n")
+			for f := range frames {
 				if strings.TrimSpace(f) == "" {
 					continue
 				}

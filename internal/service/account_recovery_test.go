@@ -59,7 +59,7 @@ func TestRecoverAccountAuditLog(t *testing.T) {
 	svc := &Service{store: fs, inv: &invRecorder{}, log: logger}
 
 	// 改名经唯一写点 → 失效字段保持、无恢复留痕（恢复唯一入口 = fenced recover）
-	_, err = svc.PatchAccount(ctx, created.ID, repository.AccountPatch{Name: strPtr("renamed")}, nil)
+	_, err = svc.PatchAccount(ctx, created.ID, repository.AccountPatch{Name: new("renamed")}, nil)
 	require.NoError(t, err)
 	require.NotContains(t, read(), "account recovered", "改名不是恢复入口，不留痕")
 

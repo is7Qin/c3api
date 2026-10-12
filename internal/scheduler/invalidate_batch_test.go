@@ -4,7 +4,8 @@ package scheduler
 import (
 	"context"
 	"errors"
-	"sort"
+	"maps"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -38,9 +39,7 @@ func (l *t1Loader) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain.
 		return nil, errors.New("t1Loader: full load failed")
 	}
 	out := make(map[int64][]*domain.Account, len(l.byGroup))
-	for k, v := range l.byGroup {
-		out[k] = v
-	}
+	maps.Copy(out, l.byGroup)
 	return out, nil
 }
 
@@ -794,7 +793,7 @@ func accountIDSet(byID map[int64]*accountSnapshot) []int64 {
 	for id := range byID {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids
 }
 
@@ -807,6 +806,6 @@ func accountIDsOf(gs *groupSnapshot) []int64 {
 	for _, as := range gs.accounts {
 		out = append(out, as.static.Load().acc.ID)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }

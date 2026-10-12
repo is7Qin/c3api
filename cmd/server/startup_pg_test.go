@@ -306,4 +306,5 @@ type discoStub struct{}
 
 func (discoStub) ClusterInstances() int { return 1 }
 
-func ptrI64Startup(v int64) *int64 { return &v }
+//go:fix inline
+func ptrI64Startup(v int64) *int64 { return new(v) }

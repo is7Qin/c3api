@@ -151,7 +151,7 @@ func TestRed_CloseBoundedDrainContinuesUntilEmpty(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "red-close-drain", BatchSize: 10}, nil, nil)
 	w.SetClock(func() time.Time { return fixed })
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		k := keyOf(fp(byte(210+i)), qc(byte(210+i)))
 		qm := NewQualityMinute(fixed.Unix(), k)
 		qm.SetAttempts(int64(i + 1))

@@ -125,7 +125,7 @@ func TestQueryStatsTop_whenParamsInvalid_thenSentinel(t *testing.T) {
 // seedEntities n 个独立账号单桶（排行截断探针）。
 func seedEntities(fs *fakeStore, n int) {
 	fs.entityStats = make([]*domain.EntityStatBucket, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		fs.entityStats = append(fs.entityStats, &domain.EntityStatBucket{
 			BucketTime: statsTestFrom, EntityType: "account", EntityID: int64(i + 1), RequestCount: 1,
 		})

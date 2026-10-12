@@ -95,14 +95,14 @@ func benchSettleRounds(t *testing.T, tag string, repos *repository.Repository, t
 	t.Helper()
 	ctx := context.Background()
 	durations := make([]time.Duration, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		u := seedPGUser(t, repos, fmt.Sprintf("bench-%s-%d-%d-%d@example.com", tag, tempRows, perTx, i))
 		require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, 1_000_000_000))
-		for k := 0; k < tempRows; k++ {
+		for range tempRows {
 			seedTempBalance(t, repos, u.ID, 100_000, nil)
 		}
 		logs := make([]*domain.UsageLog, 0, perTx)
-		for j := 0; j < perTx; j++ {
+		for j := range perTx {
 			logs = append(logs, benchLogFor(u.ID, fmt.Sprintf("bench-%s-%d-%d-%d-%d", tag, tempRows, perTx, i, j)))
 		}
 		require.NoError(t, repos.Usages.InsertBatch(ctx, logs)) // 种子 unbilled 行先行
@@ -137,9 +137,9 @@ func benchRoundTrips(t *testing.T, pool *pgxpool.Pool, n, rounds int) []time.Dur
 	require.NoError(t, err)
 	defer conn.Release()
 	durations := make([]time.Duration, 0, rounds)
-	for i := 0; i < rounds; i++ {
+	for range rounds {
 		start := time.Now()
-		for j := 0; j < n; j++ {
+		for range n {
 			var one int
 			require.NoError(t, conn.QueryRow(ctx, `SELECT 1`).Scan(&one))
 		}

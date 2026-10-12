@@ -239,8 +239,8 @@ func TestSettleFefoPartialLastRowAndSpill(t *testing.T) {
 	// 场景 A：120000 成本 vs 30000+50000+70000 池——覆盖点在永久行内（部分扣 40000）
 	uA := seedPGUser(t, repos, "partial-a@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, uA.ID, 100000))
-	a1 := seedTempBalance(t, repos, uA.ID, 30000, ptrTime(time.Now().Add(time.Hour)))
-	a2 := seedTempBalance(t, repos, uA.ID, 50000, ptrTime(time.Now().Add(24*time.Hour)))
+	a1 := seedTempBalance(t, repos, uA.ID, 30000, new(time.Now().Add(time.Hour)))
+	a2 := seedTempBalance(t, repos, uA.ID, 50000, new(time.Now().Add(24*time.Hour)))
 	ap := seedTempBalance(t, repos, uA.ID, 70000, nil)
 	logA := logFor(uA.ID, "pa")
 	logA.Cost = 120000
@@ -258,8 +258,8 @@ func TestSettleFefoPartialLastRowAndSpill(t *testing.T) {
 	// 场景 B：180000 成本 vs 150000 池——全池耗尽 + spill 30000 进余额条件扣
 	uB := seedPGUser(t, repos, "partial-b@example.com")
 	require.NoError(t, repos.UpdateUserBalance(ctx, uB.ID, 100000))
-	b1 := seedTempBalance(t, repos, uB.ID, 30000, ptrTime(time.Now().Add(time.Hour)))
-	b2 := seedTempBalance(t, repos, uB.ID, 50000, ptrTime(time.Now().Add(24*time.Hour)))
+	b1 := seedTempBalance(t, repos, uB.ID, 30000, new(time.Now().Add(time.Hour)))
+	b2 := seedTempBalance(t, repos, uB.ID, 50000, new(time.Now().Add(24*time.Hour)))
 	bp := seedTempBalance(t, repos, uB.ID, 70000, nil)
 	logB := logFor(uB.ID, "pb")
 	logB.Cost = 180000
@@ -437,13 +437,11 @@ func TestSettleBalanceConcurrentSameUser(t *testing.T) {
 	}
 	results := make(chan result, 2)
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 2 {
+		wg.Go(func() {
 			res, err := repos.SettleBalanceBatch(ctx, 10, 1, 0)
 			results <- result{res: res, err: err}
-		}()
+		})
 	}
 	wg.Wait()
 	close(results)

@@ -140,7 +140,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 
 		// 创建带组：gids = 新建分组；keyChanged=false（新 key 无既有客户端）
 		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
-			Name: strPtr("a1"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			Name: new("a1"), TemplateID: new(tpl.ID), UpstreamKey: new("sk-1"),
 			GroupIDs: &[]int64{g1.ID, g2.ID},
 		})
 		require.NoError(t, err)
@@ -151,7 +151,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 
 		// 更新移组 g1→g2：旧组 ∪ 新组都重载；upstream_key 变更 → keyChanged
 		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{
-			UpstreamKey: strPtr("sk-2"), GroupIDs: &[]int64{g2.ID},
+			UpstreamKey: new("sk-2"), GroupIDs: &[]int64{g2.ID},
 		}, nil)
 		require.NoError(t, err)
 		got = rec.last()
@@ -185,12 +185,12 @@ func TestInvalidatorMatrix(t *testing.T) {
 		g2, err := svc.CreateGroup(ctx, "g2", "", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
 		a1, err := svc.CreateAccount(ctx, repository.AccountPatch{
-			Name: strPtr("a1"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			Name: new("a1"), TemplateID: new(tpl.ID), UpstreamKey: new("sk-1"),
 			GroupIDs: &[]int64{g1.ID},
 		})
 		require.NoError(t, err)
 		a2, err := svc.CreateAccount(ctx, repository.AccountPatch{
-			Name: strPtr("a2"), TemplateID: int64Ptr(tpl.ID), UpstreamKey: strPtr("sk-1"),
+			Name: new("a2"), TemplateID: new(tpl.ID), UpstreamKey: new("sk-1"),
 			GroupIDs: &[]int64{g1.ID},
 		})
 		require.NoError(t, err)
@@ -240,7 +240,7 @@ func TestInvalidatorMatrix(t *testing.T) {
 		require.NoError(t, err)
 		before := rec.countKind("multipliers")
 		// 授予 + 设专属倍率（万分数 5000 = ×0.5）→ Multipliers()
-		applied, _, err := svc.SetGroupAssignments(ctx, g.ID, []int64{u.ID}, map[int64]*int{u.ID: intPtr(5000)})
+		applied, _, err := svc.SetGroupAssignments(ctx, g.ID, []int64{u.ID}, map[int64]*int{u.ID: new(5000)})
 		require.NoError(t, err)
 		require.Equal(t, []int64{u.ID}, applied)
 		require.Equal(t, before+1, rec.countKind("multipliers"), "group_assignment CRUD → Multipliers()")

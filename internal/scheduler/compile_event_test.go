@@ -142,9 +142,7 @@ func TestCompileEvent_ScopeIdentityPointerReuseAndOracle(t *testing.T) {
 	a2 := accWithEnabled(2, tpl, true, 10000)
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1}, 20: {a2}})
 	q1 := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1})
-	for k, v := range buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}) {
-		q1[k] = v
-	}
+	maps.Copy(q1, buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}))
 	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
 	s, _ := newProbedSched(t, m, q1, prices)
 
@@ -189,9 +187,7 @@ func TestCompileEvent_AccountsScopeResolvesViaMembership(t *testing.T) {
 	a2 := accWithEnabled(2, tpl, true, 10000)
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1}, 20: {a2}})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1})
-	for k, v := range buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}) {
-		q[k] = v
-	}
+	maps.Copy(q, buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}))
 	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
 	s, _ := newProbedSched(t, m, q, prices)
 
@@ -243,7 +239,7 @@ func TestCompileEvent_FallbackRecorded(t *testing.T) {
 
 	// Overflow: burst past scopeChCap degrades to FULL + recorded (exact,
 	// never a miss).
-	for i := 0; i < scopeChCap+1; i++ {
+	for range scopeChCap + 1 {
 		s.enqueueCompileScope([]int64{999}, nil, scopeCauseGroup)
 	}
 	s.compileOnce()

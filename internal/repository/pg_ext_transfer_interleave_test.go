@@ -148,11 +148,9 @@ func TestPGExtOwnedReadTransferBarrier(t *testing.T) {
 		got *domain.AccountExt
 		err error
 	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		got, err = brepos.GetOwnedAccountExt(scopeCtx(owner.ID), acc.ID)
-	}()
+	})
 
 	<-bar.reached // 仓储已到 ext 查询边界（旧实现此处已物化 owner id 集）
 	_, xerr := repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{SupplierUserID: &target.ID})
@@ -191,11 +189,9 @@ func TestPGExtCodexKeyTransferBarrier(t *testing.T) {
 		got *domain.AccountExt
 		err error
 	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		got, err = brepos.FindAccountExtByCodexKey(scopeCtx(owner.ID), email, acctID)
-	}()
+	})
 
 	<-bar.reached
 	_, xerr := repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{SupplierUserID: &target.ID})
@@ -231,14 +227,12 @@ func TestPGExtTryInsertTransferBarrier(t *testing.T) {
 		inserted bool
 		err      error
 	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		inserted, err = brepos.AccountExts.TryInsertAccountExt(scopeCtx(owner.ID), &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
-			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtrPG("owner-pat"),
+			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: new("owner-pat"),
 		})
-	}()
+	})
 
 	<-bar.reached // 仓储已持 owner 行锁、即将 INSERT
 	// 并发转属（独立连接）必须在 owner 行锁上阻塞：短 lock_timeout ⇒ 确定性失败。

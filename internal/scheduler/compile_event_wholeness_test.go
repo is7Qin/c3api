@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"maps"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -102,9 +103,7 @@ func TestCompileEvent_WholenessPartialHealsViaBackstop(t *testing.T) {
 	a2 := accWithEnabled(2, tpl, true, 10000)
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1}, 20: {a2}})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1})
-	for k, v := range buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}) {
-		q[k] = v
-	}
+	maps.Copy(q, buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}))
 	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
 	s, cl := newProbedSched(t, m, q, prices)
 	require.True(t, s.publishedViewWhole(), "full fallback publishes a whole view")

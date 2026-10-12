@@ -54,10 +54,10 @@ func createBatchGroupAccount(t *testing.T, svc *Service, tpl *domain.Template, n
 	t.Helper()
 	ctx := context.Background()
 	acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr(name),
-		TemplateID:     int64Ptr(tpl.ID),
-		UpstreamKey:    strPtr("sk-" + name),
-		MaxConcurrency: intPtr(8),
+		Name:           new(name),
+		TemplateID:     new(tpl.ID),
+		UpstreamKey:    new("sk-" + name),
+		MaxConcurrency: new(8),
 		GroupIDs:       &gids,
 	})
 	require.NoError(t, err)

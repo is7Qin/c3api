@@ -6,6 +6,7 @@ package repository_test
 
 import (
 	"context"
+	"slices"
 	"testing"
 	"time"
 
@@ -48,13 +49,7 @@ func TestVariantGuard_ManualEntrySurvives_PG(t *testing.T) {
 	// Here we verify that ManualEntryModels correctly identifies manual model so service would filter.
 	manuals, err := repos.PriceEntries.ManualEntryModels(ctx)
 	require.NoError(t, err)
-	isManual := false
-	for _, m := range manuals {
-		if m == model {
-			isManual = true
-			break
-		}
-	}
+	isManual := slices.Contains(manuals, model)
 	require.True(t, isManual, "manual entry should be recognized")
 	// ensure variants still exist and are admin's
 	vars, err := repos.PriceVariants.ListByModel(ctx, model)

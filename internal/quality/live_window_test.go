@@ -29,7 +29,7 @@ func liveSum(rows map[int64]map[Key]*QualityMinute, k Key) (attempts, successes 
 
 func liveComplete(t *testing.T, r *Recorder, k Key, success bool, ttft int64, n int) {
 	t.Helper()
-	for i := 0; i < n; i++ {
+	for range n {
 		obs := Observation{Success: success, ErrClass: ErrClass5xx}
 		if success {
 			v := ttft

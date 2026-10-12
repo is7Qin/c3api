@@ -80,7 +80,7 @@ func TestPGAssignmentMultiplierRoundtrip(t *testing.T) {
 	require.Nil(t, as[0].PriceMultiplier, "Create 未设置 → nil")
 
 	// 设置专属倍率 15000
-	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g1.ID, u.ID, intPtr(15000)))
+	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g1.ID, u.ID, new(15000)))
 	as, err = repos.ListAssignmentsByGroup(ctx, g1.ID)
 	require.NoError(t, err)
 	require.NotNil(t, as[0].PriceMultiplier)
@@ -98,13 +98,13 @@ func TestPGAssignmentMultiplierRoundtrip(t *testing.T) {
 	require.Nil(t, as[0].PriceMultiplier, "nil 清除为未设置")
 
 	// 设置 0 = 免费
-	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g1.ID, u.ID, intPtr(0)))
+	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g1.ID, u.ID, new(0)))
 	as, err = repos.ListAssignmentsByGroup(ctx, g1.ID)
 	require.NoError(t, err)
 	require.Equal(t, 0, *as[0].PriceMultiplier, "0 = 免费是已设置值")
 
 	// 授予行缺失 → ErrNotFound
-	require.ErrorIs(t, repos.SetAssignmentMultiplier(ctx, g1.ID, 999999, intPtr(10000)), repository.ErrNotFound)
+	require.ErrorIs(t, repos.SetAssignmentMultiplier(ctx, g1.ID, 999999, new(10000)), repository.ErrNotFound)
 }
 
 // TestPGLoadAssignmentMultipliers LoadAssignmentMultipliers：仅 price_multiplier
@@ -122,8 +122,8 @@ func TestPGLoadAssignmentMultipliers(t *testing.T) {
 	require.NoError(t, repos.GrantGroup(ctx, g1.ID, u2.ID))
 	require.NoError(t, repos.GrantGroup(ctx, g2.ID, u1.ID))
 	// u1 在 g1 设 0（免费，合法值必须入 map）；u1 在 g2 设 20000；u2 未设置
-	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g1.ID, u1.ID, intPtr(0)))
-	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g2.ID, u1.ID, intPtr(20000)))
+	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g1.ID, u1.ID, new(0)))
+	require.NoError(t, repos.SetAssignmentMultiplier(ctx, g2.ID, u1.ID, new(20000)))
 
 	mults, err := repos.Groups.LoadAssignmentMultipliers(ctx)
 	require.NoError(t, err)
@@ -157,4 +157,5 @@ func TestPGLoadBalances(t *testing.T) {
 	require.Equal(t, int64(70000), bals[u2.ID])
 }
 
-func intPtr(v int) *int { return &v }
+//go:fix inline
+func intPtr(v int) *int { return new(v) }

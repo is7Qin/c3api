@@ -37,7 +37,8 @@ func (f *fakePriceFetcher) Fetch(ctx context.Context, sourceURL string) (*pricin
 	return f.res, nil
 }
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
 func TestPriceEntrySnapshotLoad(t *testing.T) {
 	fs := newFakeStore()
@@ -72,7 +73,7 @@ func TestResolvePricesWithVariant(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = fs.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{
-		{Model: "m", Seq: 1, ServiceTier: strPtr("priority"), SetInputPerM: int64Ptr(150000)},
+		{Model: "m", Seq: 1, ServiceTier: new("priority"), SetInputPerM: int64Ptr(150000)},
 	})
 	require.NoError(t, err)
 	svc := newPricingSvc(t, fs)
@@ -120,7 +121,7 @@ func TestResolvedPricesByModel(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = fs.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{
-		{Model: "m", Seq: 1, ServiceTier: strPtr("priority"), SetInputPerM: int64Ptr(150000)},
+		{Model: "m", Seq: 1, ServiceTier: new("priority"), SetInputPerM: int64Ptr(150000)},
 	})
 	require.NoError(t, err)
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))

@@ -66,7 +66,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: iid},
-		CodexOAuthToken: strPtrPG("at-1"), CodexOAuthRefreshToken: strPtrPG("rt-1"),
+		CodexOAuthToken: new("at-1"), CodexOAuthRefreshToken: new("rt-1"),
 	})
 	require.NoError(t, err)
 

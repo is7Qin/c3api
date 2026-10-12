@@ -35,12 +35,12 @@ func TestFindAccountExtByCodexKeyPG(t *testing.T) {
 		e := &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: ct,
 			CodexIdentity: &domain.CodexIdentity{InstallationID: "i-" + name},
-			CodexEmail:    strPtrPG(email), CodexAccountID: accID,
+			CodexEmail:    new(email), CodexAccountID: accID,
 		}
 		if ct == credential.TypeCodexOAuth {
-			e.CodexOAuthToken = strPtrPG("at")
+			e.CodexOAuthToken = new("at")
 		} else {
-			e.CodexPATKey = strPtrPG("pat")
+			e.CodexPATKey = new("pat")
 		}
 		_, err := repos.AccountExts.UpsertAccountExt(ctx, e)
 		require.NoError(t, err)
@@ -48,8 +48,8 @@ func TestFindAccountExtByCodexKeyPG(t *testing.T) {
 	}
 
 	// 同 email 双 account_id（组合键语义——不误命中）
-	seed("k1", "k@example.com", strPtrPG("ka-1"), credential.TypeCodexOAuth)
-	seed("k2", "k@example.com", strPtrPG("ka-2"), credential.TypeCodexOAuth)
+	seed("k1", "k@example.com", new("ka-1"), credential.TypeCodexOAuth)
+	seed("k2", "k@example.com", new("ka-2"), credential.TypeCodexOAuth)
 
 	got, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "ka-1")
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestFindAccountExtByCodexKeyPG(t *testing.T) {
 	require.True(t, errors.Is(err, repository.ErrNotFound), "缺行 → ErrNotFound: %v", err)
 
 	// 同 account_id 多 email（组合键另一维度）——pat 行共存
-	seed("k3", "k3@example.com", strPtrPG("kb-1"), credential.TypeCodexPAT)
+	seed("k3", "k3@example.com", new("kb-1"), credential.TypeCodexPAT)
 	got3, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k3@example.com", "kb-1")
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexPAT, got3.CredentialType, "pat 行命中")

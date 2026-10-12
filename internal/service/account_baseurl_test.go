@@ -29,7 +29,7 @@ func TestAccountBaseURLInvalidation(t *testing.T) {
 	})
 	require.NoError(t, err)
 	acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name: strPtr("a1"), TemplateID: &tpl.ID, UpstreamKey: strPtr("sk-1"),
+		Name: new("a1"), TemplateID: &tpl.ID, UpstreamKey: new("sk-1"),
 	})
 	require.NoError(t, err)
 
@@ -69,8 +69,8 @@ func TestAccountBaseURLInvalidation(t *testing.T) {
 // TestValidateAccountPatchBaseURL 补丁 base_url 校验：空串放行（repo 层清空编码，
 // 合法）；非空时复用 validateBaseURL；nil = 不变不校验。
 func TestValidateAccountPatchBaseURL(t *testing.T) {
-	require.NoError(t, validateAccountPatch(repository.AccountPatch{BaseURL: strPtr("")}), "空串 = 清空编码，合法")
-	require.NoError(t, validateAccountPatch(repository.AccountPatch{BaseURL: strPtr("https://api.example.com")}))
-	require.ErrorIs(t, validateAccountPatch(repository.AccountPatch{BaseURL: strPtr("no-scheme")}), ErrInvalidInput)
-	require.NoError(t, validateAccountPatch(repository.AccountPatch{Name: strPtr("x")}), "字段缺省 = 不变（补丁非空即可）")
+	require.NoError(t, validateAccountPatch(repository.AccountPatch{BaseURL: new("")}), "空串 = 清空编码，合法")
+	require.NoError(t, validateAccountPatch(repository.AccountPatch{BaseURL: new("https://api.example.com")}))
+	require.ErrorIs(t, validateAccountPatch(repository.AccountPatch{BaseURL: new("no-scheme")}), ErrInvalidInput)
+	require.NoError(t, validateAccountPatch(repository.AccountPatch{Name: new("x")}), "字段缺省 = 不变（补丁非空即可）")
 }

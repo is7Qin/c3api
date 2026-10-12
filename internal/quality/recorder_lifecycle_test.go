@@ -45,7 +45,7 @@ func TestQualityRecorder_ConcurrentRetirePinPressure(t *testing.T) {
 	require.NoError(t, err)
 	const N = 200
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(seed int) {
 			defer wg.Done()
@@ -93,7 +93,7 @@ func TestQualityRecorder_CloseAdmissionRace(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 20; i++ {
+		for i := range 20 {
 			k2 := keyOf(fp(byte(120+i)), qc(byte(120+i)))
 			ac := r.Begin(k2)
 			if !ac.IsZero() {

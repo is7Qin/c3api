@@ -19,7 +19,9 @@ import (
 // SetGroupAssignments 校验（见 assignment 测试）。
 
 // intPtr *int 构造（service 包既有 ptr 为 string 专用）。
-func intPtr(v int) *int { return &v }
+//
+//go:fix inline
+func intPtr(v int) *int { return new(v) }
 
 func TestGroupMultiplierValidation(t *testing.T) {
 	fs := newFakeStore()
@@ -32,17 +34,17 @@ func TestGroupMultiplierValidation(t *testing.T) {
 	g, err := svc.CreateGroup(ctx, "g0", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, 10000, g.PriceMultiplier, "nil = 未指定 → ×1")
-	g, err = svc.CreateGroup(ctx, "g1", "", domain.GroupVisibilityPublic, intPtr(20000), nil)
+	g, err = svc.CreateGroup(ctx, "g1", "", domain.GroupVisibilityPublic, new(20000), nil)
 	require.NoError(t, err)
 	require.Equal(t, 20000, g.PriceMultiplier)
-	g, err = svc.CreateGroup(ctx, "g-free", "", domain.GroupVisibilityPublic, intPtr(0), nil)
+	g, err = svc.CreateGroup(ctx, "g-free", "", domain.GroupVisibilityPublic, new(0), nil)
 	require.NoError(t, err)
 	require.Equal(t, 0, g.PriceMultiplier, "显式 0 = 免费组（恒写入）")
 
 	// 创建/更新超界 → 400
-	_, err = svc.CreateGroup(ctx, "g2", "", domain.GroupVisibilityPublic, intPtr(-1), nil)
+	_, err = svc.CreateGroup(ctx, "g2", "", domain.GroupVisibilityPublic, new(-1), nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.CreateGroup(ctx, "g3", "", domain.GroupVisibilityPublic, intPtr(100001), nil)
+	_, err = svc.CreateGroup(ctx, "g3", "", domain.GroupVisibilityPublic, new(100001), nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
 	g.PriceMultiplier = 100001
 	_, err = svc.UpdateGroup(ctx, g)

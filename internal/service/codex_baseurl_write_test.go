@@ -24,11 +24,11 @@ func TestNonCodexBaseURLWritesRemainAccepted(t *testing.T) {
 		require.NoError(t, err)
 		accountURL := "https://account.example.com"
 		account, err := svc.CreateAccount(ctx, repository.AccountPatch{
-			Name:           strPtr("account-" + string(typ)),
-			TemplateID:     int64Ptr(tpl.ID),
+			Name:           new("account-" + string(typ)),
+			TemplateID:     new(tpl.ID),
 			BaseURL:        &accountURL,
-			UpstreamKey:    strPtr("sk-test"),
-			MaxConcurrency: intPtr(8),
+			UpstreamKey:    new("sk-test"),
+			MaxConcurrency: new(8),
 		})
 		require.NoError(t, err)
 		batchURL := "https://batch.example.com"
@@ -93,18 +93,18 @@ func TestCodexAccountCreateAndFullUpdateRejectBaseURL(t *testing.T) {
 		tpl, err := svc.CreateTemplate(ctx, codexWriteTemplate("tpl-"+string(typ), typ, ""))
 		require.NoError(t, err)
 		for _, baseURL := range []string{"https://override.example.com", "   "} {
-			_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: strPtr("bad"), TemplateID: int64Ptr(tpl.ID), BaseURL: &baseURL})
+			_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: new("bad"), TemplateID: new(tpl.ID), BaseURL: &baseURL})
 			require.ErrorIs(t, err, ErrInvalidInput)
 		}
-		account, err := svc.CreateAccount(ctx, repository.AccountPatch{Name: strPtr("nil"), TemplateID: int64Ptr(tpl.ID)})
+		account, err := svc.CreateAccount(ctx, repository.AccountPatch{Name: new("nil"), TemplateID: new(tpl.ID)})
 		require.NoError(t, err)
 		empty := ""
-		_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: strPtr("empty"), TemplateID: int64Ptr(tpl.ID), BaseURL: &empty})
+		_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: new("empty"), TemplateID: new(tpl.ID), BaseURL: &empty})
 		require.NoError(t, err)
 		override := "https://override.example.com"
 		_, err = svc.PatchAccount(ctx, account.ID, repository.AccountPatch{BaseURL: &override}, nil)
 		require.ErrorIs(t, err, ErrInvalidInput)
-		_, err = svc.PatchAccount(ctx, account.ID, repository.AccountPatch{BaseURL: strPtr("")}, nil)
+		_, err = svc.PatchAccount(ctx, account.ID, repository.AccountPatch{BaseURL: new("")}, nil)
 		require.NoError(t, err)
 	}
 }
@@ -118,17 +118,17 @@ func TestCodexAccountTemplateTransitionsValidatePostPatchState(t *testing.T) {
 	require.NoError(t, err)
 	override := "https://override.example.com"
 	account, err := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("account"),
-		TemplateID:     int64Ptr(apiTemplate.ID),
+		Name:           new("account"),
+		TemplateID:     new(apiTemplate.ID),
 		BaseURL:        &override,
-		UpstreamKey:    strPtr("sk-test"),
-		MaxConcurrency: intPtr(8),
+		UpstreamKey:    new("sk-test"),
+		MaxConcurrency: new(8),
 	})
 	require.NoError(t, err)
 
 	_, err = svc.PatchAccount(ctx, account.ID, repository.AccountPatch{TemplateID: &codexTemplate.ID}, nil)
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.PatchAccount(ctx, account.ID, repository.AccountPatch{BaseURL: strPtr("")}, nil)
+	_, err = svc.PatchAccount(ctx, account.ID, repository.AccountPatch{BaseURL: new("")}, nil)
 	require.NoError(t, err)
 
 	_, err = svc.PatchAccount(ctx, account.ID, repository.AccountPatch{TemplateID: &apiTemplate.ID, BaseURL: &override}, nil)
@@ -158,7 +158,7 @@ func TestCodexAccountBatchRejectsBaseURLForOAuthAndPAT(t *testing.T) {
 			svc := &Service{store: newFakeStore(), inv: &invRecorder{}}
 			tpl, err := svc.CreateTemplate(ctx, codexWriteTemplate("codex", typ, ""))
 			require.NoError(t, err)
-			account, err := svc.CreateAccount(ctx, repository.AccountPatch{Name: strPtr("account"), TemplateID: int64Ptr(tpl.ID)})
+			account, err := svc.CreateAccount(ctx, repository.AccountPatch{Name: new("account"), TemplateID: new(tpl.ID)})
 			require.NoError(t, err)
 			override := "https://override.example.com"
 			_, err = svc.UpdateAccountsBatch(ctx, []int64{account.ID}, repository.AccountPatch{BaseURL: &override})
@@ -177,11 +177,11 @@ func TestTemplateSwitchToCodexRejectsReferencedAccountOverride(t *testing.T) {
 	require.NoError(t, err)
 	override := "https://override.example.com"
 	_, err = svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("account"),
-		TemplateID:     int64Ptr(tpl.ID),
+		Name:           new("account"),
+		TemplateID:     new(tpl.ID),
 		BaseURL:        &override,
-		UpstreamKey:    strPtr("sk-test"),
-		MaxConcurrency: intPtr(8),
+		UpstreamKey:    new("sk-test"),
+		MaxConcurrency: new(8),
 	})
 	require.NoError(t, err)
 

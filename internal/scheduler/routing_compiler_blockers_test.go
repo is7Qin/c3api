@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"maps"
 	"math"
 	"testing"
 
@@ -45,12 +46,8 @@ func TestRoutingCompilerModelOperationSeparation(t *testing.T) {
 	}
 	// Merge both route qualities into one map (complete key preserves separation)
 	merged := make(map[CandidateQualityKey]CandidateQualityInput, len(chatQ)+len(respQ))
-	for k, v := range chatQ {
-		merged[k] = v
-	}
-	for k, v := range respQ {
-		merged[k] = v
-	}
+	maps.Copy(merged, chatQ)
+	maps.Copy(merged, respQ)
 	c := NewRoutingCompiler()
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: merged, Prices: prices})
 	require.NoError(t, err)

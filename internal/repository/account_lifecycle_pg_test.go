@@ -34,7 +34,7 @@ func TestPGAccountCostCreateExplicitZero(t *testing.T) {
 
 	free, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
 		Name: "cost-free", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8,
-		Enabled: true, UpstreamCostMultiplierBp: intPtr(0),
+		Enabled: true, UpstreamCostMultiplierBp: new(0),
 	})
 	require.NoError(t, err)
 	require.Equal(t, 0, domain.MultBp(free.UpstreamCostMultiplierBp), "显式 ×0（免费）不得被存储默认吞掉")
@@ -287,7 +287,7 @@ func TestPGCreateAccountWithDomainStaysEnabled(t *testing.T) {
 	require.NotNil(t, got.CacheDomain)
 	require.Equal(t, dom, *got.CacheDomain)
 
-	costly, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, UpstreamCostMultiplierBp: intPtr(25000), Enabled: true})
+	costly, err := repos.Accounts.CreateAccount(ctx, &domain.Account{Name: "with-cost", TemplateID: tpl.ID, UpstreamKey: "sk-x", MaxConcurrency: 8, UpstreamCostMultiplierBp: new(25000), Enabled: true})
 	require.NoError(t, err)
 	require.True(t, costly.Enabled, "创建即带采购倍率必须默认启用（回显）")
 	gotCost, err := repos.Accounts.GetAccount(ctx, costly.ID)

@@ -376,11 +376,11 @@ func TestFoldCounterFidelity_ConcurrentAddsAreExact(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(m)
-	for g := 0; g < m; g++ {
+	for range m {
 		go func() {
 			defer wg.Done()
 			<-start
-			for i := 0; i < k; i++ {
+			for range k {
 				owner.FoldChain(bucket, 1, func(_ int) (
 					domain.RouteClassIDVal, int64, int64, int64, uint8, string, string, string, bool, bool,
 				) {

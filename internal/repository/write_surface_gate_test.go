@@ -333,7 +333,6 @@ func TestWritePATKeyRemoved(t *testing.T) {
 func TestDownstreamStoreInterfacesNarrowed(t *testing.T) {
 	base := repoPackageDir(t)
 	for _, tc := range downstreamStoreInterfaces {
-		tc := tc
 		t.Run(tc.iface, func(t *testing.T) {
 			got := interfaceMethods(t, parseSingleGoFile(t, filepath.Join(base, tc.file)), tc.iface)
 			require.Equal(t, tc.methods, got,

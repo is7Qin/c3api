@@ -7,6 +7,7 @@ package proxy
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -26,7 +27,7 @@ func TestAuthReloadConcurrentUpsert(t *testing.T) {
 	var wg sync.WaitGroup
 
 	// 写者：并发 Upsert/Delete（模拟多管理请求同时改 key）
-	for w := 0; w < 8; w++ {
+	for w := range 8 {
 		wg.Add(1)
 		go func(w int) {
 			defer wg.Done()
@@ -45,10 +46,8 @@ func TestAuthReloadConcurrentUpsert(t *testing.T) {
 		}(w)
 	}
 	// 重载者：Reload（loader 每次返回全新 map）
-	for r := 0; r < 3; r++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 3 {
+		wg.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -57,7 +56,7 @@ func TestAuthReloadConcurrentUpsert(t *testing.T) {
 				}
 				_ = a.Reload(context.Background())
 			}
-		}()
+		})
 	}
 
 	time.Sleep(500 * time.Millisecond)
@@ -76,8 +75,6 @@ func (l *mutKeyLoader) LoadKeys(ctx context.Context) (map[string]domain.KeyMeta,
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	out := make(map[string]domain.KeyMeta, len(l.keys))
-	for k, v := range l.keys {
-		out[k] = v
-	}
+	maps.Copy(out, l.keys)
 	return out, nil
 }

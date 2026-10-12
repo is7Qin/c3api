@@ -18,9 +18,9 @@ func TestValidateWhenCompositeMutualExclusive(t *testing.T) {
 		name string
 		w    domain.RuleWhen
 	}{
-		{"http_status exclusive", domain.RuleWhen{HTTPStatus: intPtr(500), HTTPStatusIn: []int{500}}},
-		{"model exclusive", domain.RuleWhen{Model: strPtr("m1"), ModelIn: []string{"m1"}}},
-		{"contains exclusive", domain.RuleWhen{ErrorMessageContains: strPtr("boom"), ErrorMessageContainsIn: []string{"boom"}}},
+		{"http_status exclusive", domain.RuleWhen{HTTPStatus: new(500), HTTPStatusIn: []int{500}}},
+		{"model exclusive", domain.RuleWhen{Model: new("m1"), ModelIn: []string{"m1"}}},
+		{"contains exclusive", domain.RuleWhen{ErrorMessageContains: new("boom"), ErrorMessageContainsIn: []string{"boom"}}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -87,7 +87,7 @@ func TestValidateWhenCompositeOutOfRange(t *testing.T) {
 }
 
 func TestValidateWhen_KindOK_Rejects_ContainsIn(t *testing.T) {
-	w := domain.RuleWhen{Kind: strPtr("ok"), ErrorMessageContainsIn: []string{"overload"}}
+	w := domain.RuleWhen{Kind: new("ok"), ErrorMessageContainsIn: []string{"overload"}}
 	err := ValidateWhen(w)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "incompatible")
@@ -172,7 +172,7 @@ func TestModelIn_ThreeFaces(t *testing.T) {
 	mapped := "gpt-4o"
 	reqModel := "gpt-4"
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{mapped}}, Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("hit")}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{mapped}}, Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: new(502), CustomMessage: new("hit")}},
 	)
 	// final model = mapped => hit
 	evFinal := Event{Kind: Kind5xx, Model: mapped}
@@ -194,7 +194,7 @@ func TestClassifyCompositeAndAcrossFields(t *testing.T) {
 		domain.Rule{
 			Name: "r1", Enabled: true, Priority: 10,
 			When: domain.RuleWhen{
-				Kind: strPtr("5xx"), HTTPStatusIn: []int{500, 502}, ErrorMessageContainsIn: []string{"overload"},
+				Kind: new("5xx"), HTTPStatusIn: []int{500, 502}, ErrorMessageContainsIn: []string{"overload"},
 			},
 			Then: domain.RuleThen{Throttle: openThrottle()},
 		},
@@ -221,8 +221,8 @@ func TestClassifyCompositeAndAcrossFields(t *testing.T) {
 
 func TestClassifyCompositePriority(t *testing.T) {
 	e := mustEngineWithRules(t,
-		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"m1", "m2"}}, Then: domain.RuleThen{Throttle: openThrottle(), CustomMessage: strPtr("first")}},
-		domain.Rule{Name: "r2", Enabled: true, Priority: 20, When: domain.RuleWhen{ModelIn: []string{"m1"}}, Then: domain.RuleThen{Throttle: openThrottle(), CustomMessage: strPtr("second")}},
+		domain.Rule{Name: "r1", Enabled: true, Priority: 10, When: domain.RuleWhen{ModelIn: []string{"m1", "m2"}}, Then: domain.RuleThen{Throttle: openThrottle(), CustomMessage: new("first")}},
+		domain.Rule{Name: "r2", Enabled: true, Priority: 20, When: domain.RuleWhen{ModelIn: []string{"m1"}}, Then: domain.RuleThen{Throttle: openThrottle(), CustomMessage: new("second")}},
 	)
 	ev := Event{Kind: Kind5xx, Model: "m1"}
 	then, _ := e.Classify(ev)
@@ -248,17 +248,17 @@ func TestClassifyFallbackStill502(t *testing.T) {
 
 func TestMatchWithInAndSingleSemantics(t *testing.T) {
 	// single == nil && len(in)==0 => true (no filter) via Match
-	require.True(t, Match(domain.RuleWhen{}, Event{Kind: Kind5xx, HTTPStatus: intPtr(500)}, windowSnapshot{}))
+	require.True(t, Match(domain.RuleWhen{}, Event{Kind: Kind5xx, HTTPStatus: new(500)}, windowSnapshot{}))
 	require.True(t, Match(domain.RuleWhen{}, Event{Kind: Kind5xx, Model: "any"}, windowSnapshot{}))
 	require.True(t, Match(domain.RuleWhen{}, Event{Kind: Kind5xx, ErrorMessage: "any"}, windowSnapshot{}))
 	// single !=nil -> exact / substring
-	require.True(t, Match(domain.RuleWhen{Model: strPtr("a")}, Event{Kind: Kind5xx, Model: "a"}, windowSnapshot{}))
-	require.False(t, Match(domain.RuleWhen{Model: strPtr("b")}, Event{Kind: Kind5xx, Model: "a"}, windowSnapshot{}))
-	require.True(t, Match(domain.RuleWhen{ErrorMessageContains: strPtr("world")}, Event{Kind: Kind5xx, ErrorMessage: "hello world"}, windowSnapshot{}))
-	require.False(t, Match(domain.RuleWhen{ErrorMessageContains: strPtr("world")}, Event{Kind: Kind5xx, ErrorMessage: "hello"}, windowSnapshot{}))
+	require.True(t, Match(domain.RuleWhen{Model: new("a")}, Event{Kind: Kind5xx, Model: "a"}, windowSnapshot{}))
+	require.False(t, Match(domain.RuleWhen{Model: new("b")}, Event{Kind: Kind5xx, Model: "a"}, windowSnapshot{}))
+	require.True(t, Match(domain.RuleWhen{ErrorMessageContains: new("world")}, Event{Kind: Kind5xx, ErrorMessage: "hello world"}, windowSnapshot{}))
+	require.False(t, Match(domain.RuleWhen{ErrorMessageContains: new("world")}, Event{Kind: Kind5xx, ErrorMessage: "hello"}, windowSnapshot{}))
 	// in path: any hit
-	require.True(t, Match(domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Event{Kind: Kind5xx, HTTPStatus: intPtr(502)}, windowSnapshot{}))
-	require.False(t, Match(domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Event{Kind: Kind5xx, HTTPStatus: intPtr(503)}, windowSnapshot{}))
+	require.True(t, Match(domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Event{Kind: Kind5xx, HTTPStatus: new(502)}, windowSnapshot{}))
+	require.False(t, Match(domain.RuleWhen{HTTPStatusIn: []int{500, 502}}, Event{Kind: Kind5xx, HTTPStatus: new(503)}, windowSnapshot{}))
 }
 
 func mustEngineWithRules(t *testing.T, rules ...domain.Rule) *RuleEngine {

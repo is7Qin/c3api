@@ -64,7 +64,7 @@ func TestSyncPricingGuardsManualVariants_PG(t *testing.T) {
 			{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(999), OutputPerM: int64Ptr(999), Source: domain.PricingSourceLitellm},
 			{Model: "pg-svc-new-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(1000), OutputPerM: int64Ptr(2000), Source: domain.PricingSourceLitellm},
 		},
-		Variants: []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: intPtr(20000)}},
+		Variants: []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: new(20000)}},
 	}}
 	w := pricing.NewSyncWorker(pricing.SyncWorkerConfig{
 		Fetcher: fetcher, Repo: svc.store.(*repository.Repository), Settings: svc,

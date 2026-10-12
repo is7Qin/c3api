@@ -235,9 +235,7 @@ func TestConcurrentRegisterAndReload(t *testing.T) {
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 
-	wg.Add(1)
-	go func() { // 并发注册
-		defer wg.Done()
+	wg.Go(func() { // 并发注册
 		for i := 0; ; i++ {
 			select {
 			case <-stop:
@@ -247,11 +245,9 @@ func TestConcurrentRegisterAndReload(t *testing.T) {
 				_ = reg.Register(newRec("s"+strconv.FormatInt(id, 10), "x"))
 			}
 		}
-	}()
-	for w := 0; w < 4; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	})
+	for range 4 {
+		wg.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -262,7 +258,7 @@ func TestConcurrentRegisterAndReload(t *testing.T) {
 					_ = reg.Status()
 				}
 			}
-		}()
+		})
 	}
 	time.Sleep(100 * time.Millisecond)
 	close(stop)

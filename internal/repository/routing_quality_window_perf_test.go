@@ -3,7 +3,7 @@ package repository_test
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
@@ -40,7 +40,7 @@ func TestRoutingQualityWindowP99PG(t *testing.T) {
 	qc[0] = 0xB2
 	keys := make([]repository.WindowHotKey, 0, nhot)
 	batch := &pgx.Batch{}
-	for i := 0; i < ncand; i++ {
+	for i := range ncand {
 		var fp domain.CandidateFingerprintVal
 		fp[0] = byte(i)
 		fp[1] = byte(i >> 8)
@@ -48,7 +48,7 @@ func TestRoutingQualityWindowP99PG(t *testing.T) {
 		if i < nhot {
 			keys = append(keys, repository.WindowHotKey{RouteClassID: rc, Fingerprint: fp})
 		}
-		for h := 0; h < nrows; h++ {
+		for h := range nrows {
 			minute := m.Add(-time.Duration(6+h*110) * time.Minute)
 			batch.Queue(
 				`INSERT INTO routing_quality_fact
@@ -84,12 +84,12 @@ func TestRoutingQualityWindowP99PG(t *testing.T) {
 	round()
 	const rounds = 30
 	durations := make([]time.Duration, 0, rounds)
-	for i := 0; i < rounds; i++ {
+	for range rounds {
 		start := time.Now()
 		round()
 		durations = append(durations, time.Since(start))
 	}
-	sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
+	slices.Sort(durations)
 	p50 := durations[len(durations)/2]
 	p90 := durations[int(float64(len(durations))*0.9)]
 	p99 := durations[len(durations)-1] // n=30: nearest-rank p99 == max

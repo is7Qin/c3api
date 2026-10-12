@@ -40,7 +40,7 @@ func TestP99Empty(t *testing.T) {
 func TestP99BucketsCrossing(t *testing.T) {
 	// 100 个 500ms + 100 个 900ms：99% 分位 = 900ms 桶（90*10）
 	m := &metrics{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		storeSample(m, 500)
 		storeSample(m, 900)
 	}
@@ -50,7 +50,7 @@ func TestP99BucketsCrossing(t *testing.T) {
 func TestP99BoundaryBucketClampsOversize(t *testing.T) {
 	// ≥10.24s 延迟进边界桶 1023，p99 返回 1023*10 = 10230（超界不精确，结构兼容）
 	m := &metrics{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		storeSample(m, 20000) // 20s，超出 0-10.24s 覆盖区间
 	}
 	require.Equal(t, int64(10230), p99(m))
@@ -214,7 +214,7 @@ func TestAffinityTemplateRotation(t *testing.T) {
 	*affinityKeys, *mode, *format = 3, "chat", "chat"
 	buildReqTemplate()
 	require.Len(t, affinityTmpls, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		req := newRequestFromTemplate("ck-test", i)
 		b := readAll(t, req)
 		require.Contains(t, b, fmt.Sprintf("affinity-%d", i), "轮转下标 %d 命中对应亲和域", i)
@@ -276,7 +276,7 @@ func TestFillRequestNamesUniquePerRequest(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 1))
 	// 序号推进：同一进程内实体名必不重复（重复创建 409 归类错误明细的前提）
 	names := map[string]bool{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		req, preErr := newFillRequest(&http.Client{Timeout: time.Second}, rng)
 		require.Empty(t, preErr)
 		var body map[string]any
@@ -293,7 +293,7 @@ func TestPickFillUser(t *testing.T) {
 	t.Cleanup(func() { *fillUser, fillUserPool = prevUser, prevPool })
 	rng := rand.New(rand.NewPCG(1, 1))
 	seen := map[string]bool{}
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		email, pw := pickFillUser(rng)
 		seen[email+":"+pw] = true
 	}
@@ -412,7 +412,7 @@ func TestDoRequestNon200DrainsBodyForReuse(t *testing.T) {
 			// 窗口被交错放大，精确断言会 flake（评审 1M），故用顺序形态。
 			// 不排空则每请求重拨 160 条 = 压测实证的 429 拨号风暴。
 			rng := rand.New(rand.NewPCG(1, 1))
-			for i := 0; i < n; i++ {
+			for range n {
 				doRequest(client, m, rng, true)
 			}
 			require.LessOrEqual(t, conns.Load(), int64(2))

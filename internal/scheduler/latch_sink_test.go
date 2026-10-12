@@ -190,4 +190,5 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 	require.Equal(t, StateOPEN, h.EffectiveState(1, "*", testIdentity, 1))
 }
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }

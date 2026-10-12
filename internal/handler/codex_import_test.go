@@ -253,7 +253,7 @@ func TestPostAccountsBatchImportCodexStructural400(t *testing.T) {
 	t.Run("over 100 items 400", func(t *testing.T) {
 		var sb strings.Builder
 		sb.WriteString(`{"items": [`)
-		for i := 0; i < 101; i++ {
+		for i := range 101 {
 			if i > 0 {
 				sb.WriteString(",")
 			}

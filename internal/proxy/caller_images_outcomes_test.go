@@ -135,13 +135,11 @@ func TestImagesOutcomes_exactlyOneObservation(t *testing.T) {
 	require.NoError(t, base.Validate())
 	var wg sync.WaitGroup
 	start := make(chan struct{})
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 8 {
+		wg.Go(func() {
 			<-start
 			_ = observer.Complete(base, &AttemptHealthEvent{Kind: rule.KindOK})
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

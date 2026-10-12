@@ -15,7 +15,7 @@ func TestSetContains_NilDefense(t *testing.T) {
 	require.NotPanics(t, func() {
 		var s *intSet
 		require.False(t, s.contains(nil))
-		require.False(t, s.contains(intPtr(1)))
+		require.False(t, s.contains(new(1)))
 	})
 	require.NotPanics(t, func() {
 		var s *stringSet
@@ -32,7 +32,7 @@ func TestSetContains_NilDefense(t *testing.T) {
 		s, err := newIntSet(nil)
 		require.NoError(t, err)
 		require.Nil(t, s)
-		require.False(t, s.contains(intPtr(500)))
+		require.False(t, s.contains(new(500)))
 	})
 	require.NotPanics(t, func() {
 		s, err := newStringSet(nil)
@@ -65,33 +65,33 @@ func TestSetSmallExpand(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, s1)
 	require.Nil(t, s1.m, "len 1 走 vals 不建 map")
-	require.True(t, s1.contains(intPtr(500)))
-	require.False(t, s1.contains(intPtr(501)))
+	require.True(t, s1.contains(new(500)))
+	require.False(t, s1.contains(new(501)))
 	require.False(t, s1.contains(nil))
 
 	// 2 元素：vals 分支
 	s2, err := newIntSet([]int{500, 502})
 	require.NoError(t, err)
 	require.Nil(t, s2.m, "len 2 走 vals")
-	require.True(t, s2.contains(intPtr(500)))
-	require.True(t, s2.contains(intPtr(502)))
-	require.False(t, s2.contains(intPtr(503)))
+	require.True(t, s2.contains(new(500)))
+	require.True(t, s2.contains(new(502)))
+	require.False(t, s2.contains(new(503)))
 
 	// 4 元素：阈值边界 vals 分支
 	s4, err := newIntSet([]int{400, 401, 500, 502})
 	require.NoError(t, err)
 	require.Nil(t, s4.m, "len 4 阈值内走 vals")
 	for _, v := range []int{400, 401, 500, 502} {
-		require.True(t, s4.contains(intPtr(v)), "hit %d", v)
+		require.True(t, s4.contains(new(v)), "hit %d", v)
 	}
-	require.False(t, s4.contains(intPtr(503)))
+	require.False(t, s4.contains(new(503)))
 
 	// >4 元素：map 分支
 	s5, err := newIntSet([]int{400, 401, 500, 502, 503})
 	require.NoError(t, err)
 	require.NotNil(t, s5.m, "len 5 走 map")
-	require.True(t, s5.contains(intPtr(503)))
-	require.False(t, s5.contains(intPtr(504)))
+	require.True(t, s5.contains(new(503)))
+	require.False(t, s5.contains(new(504)))
 
 	// stringSet 同阈值
 	str1, _ := newStringSet([]string{"a"})

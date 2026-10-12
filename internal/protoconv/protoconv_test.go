@@ -437,7 +437,7 @@ func validateFrames(t *testing.T, frame []byte) {
 	if len(frame) < 2 || frame[len(frame)-1] != '\n' || frame[len(frame)-2] != '\n' {
 		t.Fatalf("帧必须以空行终止: %q", frame)
 	}
-	for _, f := range bytes.Split(frame, []byte("\n\n")) {
+	for f := range bytes.SplitSeq(frame, []byte("\n\n")) {
 		if len(f) == 0 {
 			continue
 		}

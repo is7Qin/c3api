@@ -320,7 +320,7 @@ func TestContinuationStreamIdlessFramesVisible(t *testing.T) {
 		w.WriteHeader(200)
 		fl := w.(http.Flusher)
 		junk := strings.Repeat("x", 2048)
-		for i := 0; i < 8; i++ {
+		for range 8 {
 			fmt.Fprintf(w, "event: response.keepalive\ndata: {\"type\":\"response.keepalive\",\"pad\":%q}\n\n", junk)
 			fl.Flush()
 		}
@@ -741,7 +741,7 @@ func TestContinuationWSCreateACK(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, c.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, f, err := c.Read(ctx)
 		require.NoError(t, err)
 		require.NotContains(t, string(f), `"type":"error"`)
@@ -775,7 +775,7 @@ func TestContinuationWSPinAndMissingFailClosed(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	require.NoError(t, c.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, _, err := c.Read(ctx)
 		require.NoError(t, err)
 	}
@@ -787,7 +787,7 @@ func TestContinuationWSPinAndMissingFailClosed(t *testing.T) {
 	srv2 := contWSServer(t, p2)
 	c2conn := contWSDial(t, srv2)
 	require.NoError(t, c2conn.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-4o","input":"again","previous_response_id":"rsp_ws_a"}`)))
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, _, err := c2conn.Read(ctx)
 		require.NoError(t, err)
 	}

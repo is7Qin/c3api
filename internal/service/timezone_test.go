@@ -14,7 +14,8 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func strPtrTZ(v string) *string { return &v }
+//go:fix inline
+func strPtrTZ(v string) *string { return new(v) }
 
 func TestResolvePrices_TimeZone_Differential(t *testing.T) {
 	// Fixed UTC instant crossing date boundary: 2026-08-23T23:30:00Z
@@ -35,7 +36,7 @@ func TestResolvePrices_TimeZone_Differential(t *testing.T) {
 	// Variant seq 1: matches only when time 07:00-08:00 AND Monday
 	dowMonday := 1 << 1 // Monday = weekday 1 (Sun=0)
 	_, err = fs.ReplacePriceVariants(context.Background(), "tz-model", []*domain.PriceVariant{
-		{Model: "tz-model", Seq: 1, TimeStart: strPtrTZ("07:00"), TimeEnd: strPtrTZ("08:00"), DowMask: &dowMonday, MultBP: &equal},
+		{Model: "tz-model", Seq: 1, TimeStart: new("07:00"), TimeEnd: new("08:00"), DowMask: &dowMonday, MultBP: &equal},
 		{Model: "tz-model", Seq: 2, MultBP: &other}, // fallback catch-all
 	})
 	require.NoError(t, err)
@@ -83,7 +84,7 @@ func TestResolvePrices_TimeZone_TimeOnly(t *testing.T) {
 	m1 := 20000
 	m2 := 10000
 	_, err = fs.ReplacePriceVariants(context.Background(), "tz-time-model", []*domain.PriceVariant{
-		{Model: "tz-time-model", Seq: 1, TimeStart: strPtrTZ("07:00"), TimeEnd: strPtrTZ("08:00"), MultBP: &m1},
+		{Model: "tz-time-model", Seq: 1, TimeStart: new("07:00"), TimeEnd: new("08:00"), MultBP: &m1},
 		{Model: "tz-time-model", Seq: 2, MultBP: &m2},
 	})
 	require.NoError(t, err)

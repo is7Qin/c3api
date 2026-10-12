@@ -33,7 +33,7 @@ func TestAccountUsageCredentialDispatch(t *testing.T) {
 	f := svc.store.(*fakeStore)
 	f.accExts[2] = &domain.AccountExt{
 		AccountID: 2, CredentialType: credential.TypeCodexOAuth,
-		CodexOAuthToken: strPtr("at"), CodexOAuthRefreshToken: strPtr("rt"), CodexOAuthExpiresAt: &exp,
+		CodexOAuthToken: new("at"), CodexOAuthRefreshToken: new("rt"), CodexOAuthExpiresAt: &exp,
 	}
 	cred, err = svc.AccountUsageCredential(ctx, 2)
 	require.NoError(t, err)
@@ -43,7 +43,7 @@ func TestAccountUsageCredentialDispatch(t *testing.T) {
 	require.Equal(t, "rt", cred.OAuthRefreshToken, "oauth 列组派生 cred")
 
 	// codex-pat：pat 列组派生 cred
-	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-x")}
+	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-x")}
 	cred, err = svc.AccountUsageCredential(ctx, 3)
 	require.NoError(t, err)
 	require.NotNil(t, cred)

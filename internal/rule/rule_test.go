@@ -187,17 +187,17 @@ func TestValidateThen(t *testing.T) {
 		ok   bool
 	}{
 		{"no action pure-passthrough", domain.RuleThen{}, true},
-		{"custom_message only", domain.RuleThen{CustomMessage: strPtr("rate limited")}, true},
-		{"response_code only 502", domain.RuleThen{ResponseCode: intPtr(502)}, true},
-		{"response_code 400 ok", domain.RuleThen{ResponseCode: intPtr(400)}, true},
-		{"response_code 599 ok", domain.RuleThen{ResponseCode: intPtr(599)}, true},
-		{"response_code 200 rejected", domain.RuleThen{ResponseCode: intPtr(200)}, false},
-		{"response_code 399 rejected", domain.RuleThen{ResponseCode: intPtr(399)}, false},
-		{"response_code 600 rejected", domain.RuleThen{ResponseCode: intPtr(600)}, false},
-		{"response_code -1 rejected", domain.RuleThen{ResponseCode: intPtr(-1)}, false},
-		{"custom_message empty rejected", domain.RuleThen{CustomMessage: strPtr("")}, false},
+		{"custom_message only", domain.RuleThen{CustomMessage: new("rate limited")}, true},
+		{"response_code only 502", domain.RuleThen{ResponseCode: new(502)}, true},
+		{"response_code 400 ok", domain.RuleThen{ResponseCode: new(400)}, true},
+		{"response_code 599 ok", domain.RuleThen{ResponseCode: new(599)}, true},
+		{"response_code 200 rejected", domain.RuleThen{ResponseCode: new(200)}, false},
+		{"response_code 399 rejected", domain.RuleThen{ResponseCode: new(399)}, false},
+		{"response_code 600 rejected", domain.RuleThen{ResponseCode: new(600)}, false},
+		{"response_code -1 rejected", domain.RuleThen{ResponseCode: new(-1)}, false},
+		{"custom_message empty rejected", domain.RuleThen{CustomMessage: new("")}, false},
 		{"typed throttle open valid", domain.RuleThen{Throttle: openThrottle()}, true},
-		{"typed throttle + shaping valid", domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502)}, true},
+		{"typed throttle + shaping valid", domain.RuleThen{Throttle: openThrottle(), ResponseCode: new(502)}, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -212,8 +212,12 @@ func TestValidateThen(t *testing.T) {
 }
 
 // intPtr 由 engine.go 提供（同包）。
-func f64Ptr(v float64) *float64 { return &v }
-func i64Ptr(v int64) *int64     { return &v }
+//
+//go:fix inline
+func f64Ptr(v float64) *float64 { return new(v) }
+
+//go:fix inline
+func i64Ptr(v int64) *int64 { return new(v) }
 
 // —— 窗口 ——
 
@@ -300,32 +304,32 @@ func TestMatch(t *testing.T) {
 		want bool
 	}{
 		{"empty when matches everything", domain.RuleWhen{}, okEv(KindOK), windowSnapshot{}, true},
-		{"kind match", domain.RuleWhen{Kind: strPtr("5xx")}, okEv(Kind5xx), windowSnapshot{}, true},
-		{"kind mismatch", domain.RuleWhen{Kind: strPtr("5xx")}, okEv(KindOK), windowSnapshot{}, false},
+		{"kind match", domain.RuleWhen{Kind: new("5xx")}, okEv(Kind5xx), windowSnapshot{}, true},
+		{"kind mismatch", domain.RuleWhen{Kind: new("5xx")}, okEv(KindOK), windowSnapshot{}, false},
 		{"http status nil event", domain.RuleWhen{HTTPStatus: &http500}, okEv(Kind5xx), windowSnapshot{}, false},
 		{"http status equal", domain.RuleWhen{HTTPStatus: &http429}, Event{HTTPStatus: &http429}, windowSnapshot{}, true},
-		{"message contains", domain.RuleWhen{ErrorMessageContains: strPtr("rate limit")},
+		{"message contains", domain.RuleWhen{ErrorMessageContains: new("rate limit")},
 			Event{ErrorMessage: "upstream 429 rate limited"}, windowSnapshot{}, true},
-		{"message not contains", domain.RuleWhen{ErrorMessageContains: strPtr("timeout")},
+		{"message not contains", domain.RuleWhen{ErrorMessageContains: new("timeout")},
 			Event{ErrorMessage: "upstream 429 rate limited"}, windowSnapshot{}, false},
 		{"account id", domain.RuleWhen{AccountID: i64Ptr(1)}, okEv(KindOK), windowSnapshot{}, true},
 		{"account id mismatch", domain.RuleWhen{AccountID: i64Ptr(9)}, okEv(KindOK), windowSnapshot{}, false},
 		{"template id", domain.RuleWhen{TemplateID: i64Ptr(2)}, okEv(KindOK), windowSnapshot{}, true},
-		{"model", domain.RuleWhen{Model: strPtr("m1")}, okEv(KindOK), windowSnapshot{}, true},
-		{"model mismatch", domain.RuleWhen{Model: strPtr("m2")}, okEv(KindOK), windowSnapshot{}, false},
+		{"model", domain.RuleWhen{Model: new("m1")}, okEv(KindOK), windowSnapshot{}, true},
+		{"model mismatch", domain.RuleWhen{Model: new("m2")}, okEv(KindOK), windowSnapshot{}, false},
 		{"group id ev nil", domain.RuleWhen{GroupID: gid}, okEv(KindOK), windowSnapshot{}, false},
-		{"count 429 below", domain.RuleWhen{Count429GE: intPtr(2)}, okEv(Kind429), windowSnapshot{t429: 1}, false},
-		{"count 429 ok", domain.RuleWhen{Count429GE: intPtr(2)}, okEv(Kind429), windowSnapshot{t429: 2}, true},
-		{"count failure ok", domain.RuleWhen{CountFailureGE: intPtr(2)}, okEv(Kind5xx), windowSnapshot{failure: 3}, true},
-		{"count ok below", domain.RuleWhen{CountOKGE: intPtr(2)}, okEv(KindOK), windowSnapshot{ok: 1}, false},
-		{"count total below", domain.RuleWhen{CountTotalGE: intPtr(4)}, okEv(KindOK), windowSnapshot{ok: 2, failure: 1}, false},
-		{"ratio below threshold", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
+		{"count 429 below", domain.RuleWhen{Count429GE: new(2)}, okEv(Kind429), windowSnapshot{t429: 1}, false},
+		{"count 429 ok", domain.RuleWhen{Count429GE: new(2)}, okEv(Kind429), windowSnapshot{t429: 2}, true},
+		{"count failure ok", domain.RuleWhen{CountFailureGE: new(2)}, okEv(Kind5xx), windowSnapshot{failure: 3}, true},
+		{"count ok below", domain.RuleWhen{CountOKGE: new(2)}, okEv(KindOK), windowSnapshot{ok: 1}, false},
+		{"count total below", domain.RuleWhen{CountTotalGE: new(4)}, okEv(KindOK), windowSnapshot{ok: 2, failure: 1}, false},
+		{"ratio below threshold", domain.RuleWhen{Ratio429GE: new(0.5), CountTotalGE: new(4)},
 			okEv(Kind429), windowSnapshot{t429: 1, ok: 3}, false},
-		{"ratio at threshold", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
+		{"ratio at threshold", domain.RuleWhen{Ratio429GE: new(0.5), CountTotalGE: new(4)},
 			okEv(Kind429), windowSnapshot{t429: 2, ok: 2}, true},
-		{"ratio total below floor", domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4)},
+		{"ratio total below floor", domain.RuleWhen{Ratio429GE: new(0.5), CountTotalGE: new(4)},
 			okEv(Kind429), windowSnapshot{t429: 1, ok: 1}, false},
-		{"ratio failure ok", domain.RuleWhen{RatioFailureGE: f64Ptr(0.75), CountTotalGE: intPtr(4)},
+		{"ratio failure ok", domain.RuleWhen{RatioFailureGE: new(0.75), CountTotalGE: new(4)},
 			okEv(Kind5xx), windowSnapshot{failure: 3, ok: 1}, true},
 	}
 	for _, tc := range cases {
@@ -344,8 +348,8 @@ func TestReloadNeedsOKEvents(t *testing.T) {
 		needs bool
 	}{
 		{"kind nil", domain.RuleWhen{}, true},
-		{"kind ok", domain.RuleWhen{Kind: strPtr("ok")}, true},
-		{"kind 5xx", domain.RuleWhen{Kind: strPtr("5xx")}, false},
+		{"kind ok", domain.RuleWhen{Kind: new("ok")}, true},
+		{"kind 5xx", domain.RuleWhen{Kind: new("5xx")}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -428,10 +432,10 @@ func TestPriorityHitOrder(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil,
 		domain.Rule{Name: "low", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("5xx")},
+			When: domain.RuleWhen{Kind: new("5xx")},
 			Then: domain.RuleThen{Throttle: openThrottleMs(5000)}},
 		domain.Rule{Name: "high", Enabled: true, Priority: 20,
-			When: domain.RuleWhen{Kind: strPtr("5xx")},
+			When: domain.RuleWhen{Kind: new("5xx")},
 			Then: domain.RuleThen{Throttle: openThrottleMs(30000)}},
 	)
 
@@ -449,7 +453,7 @@ func TestDisabledRuleNotLoaded(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "off", Enabled: false, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("5xx")},
+		When: domain.RuleWhen{Kind: new("5xx")},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	require.False(t, e.NeedsOKEvents())
@@ -463,7 +467,7 @@ func TestHitKeepsCountsThenDecays(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(2), WindowSeconds: intPtr(30)},
+		When: domain.RuleWhen{Kind: new("5xx"), CountFailureGE: new(2), WindowSeconds: new(30)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 
@@ -483,7 +487,7 @@ func TestRatioMatchWithTotalFloor(t *testing.T) {
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "hot-account", Enabled: true, Priority: 10,
 		When: domain.RuleWhen{
-			Kind: nil, Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4), WindowSeconds: intPtr(30),
+			Kind: nil, Ratio429GE: new(0.5), CountTotalGE: new(4), WindowSeconds: new(30),
 		},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
@@ -499,7 +503,7 @@ func TestRatioMatchWithTotalFloor(t *testing.T) {
 	sink2 := newFakeSink(10)
 	e2, _ := newTestEngineWithSink(t, sink2, nil, domain.Rule{
 		Name: "hot2", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Ratio429GE: f64Ptr(0.5), CountTotalGE: intPtr(4), WindowSeconds: intPtr(30)},
+		When: domain.RuleWhen{Ratio429GE: new(0.5), CountTotalGE: new(4), WindowSeconds: new(30)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	e2.HandleEvent(context.Background(), evAt(Kind429, 0))
@@ -534,7 +538,7 @@ func TestCloseDrainsQueue(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("5xx")},
+		When: domain.RuleWhen{Kind: new("5xx")},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	// 未 Start：Close 直接排空
@@ -550,7 +554,7 @@ func TestStartConsumesThenCloseDrains(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "fail", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("5xx")},
+		When: domain.RuleWhen{Kind: new("5xx")},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 
@@ -637,13 +641,13 @@ func TestEnqueueDropWarnEdge(t *testing.T) {
 	e.log = logger
 
 	// 第一轮风暴（无消费方，队列满 → 92 丢弃 ≥ 50 阈值）→ 恰好一次 Warn
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		e.Enqueue(evAt(Kind5xx, 0))
 	}
 	require.Equal(t, uint64(92), e.dropped.Load(), "丢弃计数 = 到达 - 队列容量")
 	e.Flush(context.Background()) // 排空队列 → 告警边沿回落
 	// 第二轮风暴 → 再次 Warn
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		e.Enqueue(evAt(Kind5xx, 0))
 	}
 	require.Equal(t, uint64(184), e.dropped.Load(), "丢弃计数跨风暴累计（只回落边沿，不清计数）")
@@ -680,17 +684,17 @@ func TestClassify(t *testing.T) {
 	http400, http401 := 400, 401
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "r4xx-401", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http401},
-			Then: domain.RuleThen{Throttle: openThrottleMs(30 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: &http401},
+			Then: domain.RuleThen{Throttle: openThrottleMs(30 * 60 * 1000), ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 		domain.Rule{Name: "r4xx-400-passthrough", Enabled: true, Priority: 15,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: &http400},
 			Then: domain.RuleThen{}},
 		domain.Rule{Name: "r5xx", Enabled: true, Priority: 20,
-			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("5xx")},
+			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 		domain.Rule{Name: "rnet", Enabled: true, Priority: 25,
-			When: domain.RuleWhen{Kind: strPtr("network")},
-			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("network")},
+			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 	)
 	ev := func(kind Kind, code int, msg string) Event {
 		var hp *int
@@ -751,20 +755,20 @@ func TestClassifyThrottlePunish(t *testing.T) {
 	http400, http402 := 400, 402
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "th-only", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("429")},
-			Then: domain.RuleThen{Throttle: openThrottleMs(5 * 60 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("429")},
+			Then: domain.RuleThen{Throttle: openThrottleMs(5 * 60 * 60 * 1000), ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 		domain.Rule{Name: "fail-429", Enabled: true, Priority: 20,
-			When: domain.RuleWhen{Kind: strPtr("429"), HTTPStatus: intPtr(401)},
-			Then: domain.RuleThen{FailAccount: true, ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("429"), HTTPStatus: new(401)},
+			Then: domain.RuleThen{FailAccount: true, ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 		domain.Rule{Name: "shaping-only", Enabled: true, Priority: 30,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: &http400},
 			Then: domain.RuleThen{}},
 		domain.Rule{Name: "th-passthrough", Enabled: true, Priority: 40,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http402},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: &http402},
 			Then: domain.RuleThen{Throttle: openThrottle()}},
 		domain.Rule{Name: "window-th", Enabled: true, Priority: 50,
-			When: domain.RuleWhen{Kind: strPtr("5xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
-			Then: domain.RuleThen{Throttle: openThrottleMs(5 * 60 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("5xx"), CountFailureGE: new(5), WindowSeconds: new(60)},
+			Then: domain.RuleThen{Throttle: openThrottleMs(5 * 60 * 60 * 1000), ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 	)
 	ev := func(kind Kind, code int) Event {
 		var hp *int
@@ -806,7 +810,7 @@ func TestClassifyThrottlePunish(t *testing.T) {
 func TestClassifyMessageContains(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "balance", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), ErrorMessageContains: strPtr("balance")},
+			When: domain.RuleWhen{Kind: new("4xx"), ErrorMessageContains: new("balance")},
 			Then: domain.RuleThen{Throttle: openThrottle()}},
 	)
 	ev := func(msg string) Event {
@@ -825,8 +829,8 @@ func TestClassifyMessageContains(t *testing.T) {
 func TestClassifyWindowRulePossibleHit(t *testing.T) {
 	e, _ := newTestEngine(t,
 		domain.Rule{Name: "escalate", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), CountFailureGE: intPtr(5), WindowSeconds: intPtr(60)},
-			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("4xx"), CountFailureGE: new(5), WindowSeconds: new(60)},
+			Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 	)
 	code := 401
 	then, pu := e.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: &code, ErrorMessage: "x"})
@@ -842,7 +846,7 @@ func TestWindowErrBucket4xx5xxNetwork(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "escalate", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{CountFailureGE: intPtr(3), WindowSeconds: intPtr(30)},
+		When: domain.RuleWhen{CountFailureGE: new(3), WindowSeconds: new(30)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 
@@ -866,8 +870,8 @@ func TestClassifyModelSemantics(t *testing.T) {
 	rawModel := "gpt-5"
 	// Event 使用最终模型（映射后），Kind 任意——仅测 Model 维度等值匹配（大小写敏感）。
 	ev := Event{AccountID: 1, Kind: Kind5xx, Model: finalModel, OccurredAt: at(0)}
-	whenFinal := domain.RuleWhen{Model: strPtr(finalModel)}
-	whenRaw := domain.RuleWhen{Model: strPtr(rawModel)}
+	whenFinal := domain.RuleWhen{Model: new(finalModel)}
+	whenRaw := domain.RuleWhen{Model: new(rawModel)}
 
 	// —— Match 面：精确等值，大小写敏感 ——
 	require.True(t, Match(whenFinal, ev, windowSnapshot{}), "when.model=gpt-5-0611 命中最终模型事件")
@@ -882,7 +886,7 @@ func TestClassifyModelSemantics(t *testing.T) {
 	// rule when.model=gpt-5-0611 的引擎：最终模型事件应 punish=true
 	eFinal, _ := newTestEngine(t, domain.Rule{
 		Name: "final-model", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Model: strPtr(finalModel)},
+		When: domain.RuleWhen{Model: new(finalModel)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	_, pu := eFinal.Classify(ev)
@@ -895,7 +899,7 @@ func TestClassifyModelSemantics(t *testing.T) {
 	// rule when.model=gpt-5 的引擎：最终模型事件不命中
 	eRaw, _ := newTestEngine(t, domain.Rule{
 		Name: "raw-model", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Model: strPtr(rawModel)},
+		When: domain.RuleWhen{Model: new(rawModel)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	_, pu = eRaw.Classify(ev)

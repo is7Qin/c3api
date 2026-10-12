@@ -4,6 +4,7 @@ package scheduler
 import (
 	"context"
 	"crypto/sha256"
+	"maps"
 	"math"
 	"testing"
 	"time"
@@ -74,9 +75,7 @@ func TestRoutingCompilerWireDeterministicBytes(t *testing.T) {
 	// Insert quality in two different map orders; compiled bytes must match.
 	q1 := buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs)
 	q2 := make(map[CandidateQualityKey]CandidateQualityInput, len(q1))
-	for k, v := range q1 {
-		q2[k] = v
-	}
+	maps.Copy(q2, q1)
 	for k, v := range q1 {
 		delete(q2, k)
 		q2[k] = v
@@ -543,7 +542,7 @@ func TestRoutingCompilerWireDebounceCoalesces(t *testing.T) {
 		defer close(loopDone)
 		s.compileLoop(ctx)
 	}()
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		s.RequestCompile()
 	}
 	select {
@@ -569,7 +568,7 @@ func TestRoutingCompilerWireRequestCompileNonBlocking(t *testing.T) {
 	wireSources(s, nil, nil)
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			s.RequestCompile()
 		}
 		close(done)

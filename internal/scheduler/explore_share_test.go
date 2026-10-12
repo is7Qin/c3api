@@ -159,7 +159,7 @@ func TestExploreShare_laneDistribution(t *testing.T) {
 	dec := shareDecision()
 	const n = 10000
 	exploreFirst := 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		id := AttemptPlanIdentity{RequestID: fmt.Sprintf("dist-%d", i), UserID: int64(i % 97)}
 		plan, err := NewAttemptPlan(id, dec)
 		require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestExploreShare_coldStartExploreFirst(t *testing.T) {
 		},
 		Degraded: ccDegraded(4),
 	}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		ids, lanes := walkAll(t, AttemptPlanIdentity{RequestID: fmt.Sprintf("cold-%d", i)}, dec)
 		require.Equal(t, AttemptLaneExplore, lanes[0], "cold start must lead with explore")
 		require.Equal(t, AttemptLaneDegraded, lanes[len(lanes)-1])
@@ -229,7 +229,7 @@ func TestExploreShare_unsetBPStaysPrimaryFirst(t *testing.T) {
 		},
 		Degraded: ccDegraded(4),
 	}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		plan, err := NewAttemptPlan(AttemptPlanIdentity{RequestID: fmt.Sprintf("bp0-%d", i)}, dec)
 		require.NoError(t, err)
 		require.False(t, plan.exploreFirst)

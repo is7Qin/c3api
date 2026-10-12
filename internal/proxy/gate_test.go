@@ -228,7 +228,7 @@ func TestGateMixedUnlimitedLimitedConcurrent(t *testing.T) {
 
 	// 限 8 用户占满 8 槽（持锁不释放）
 	held := make([]int, 0, 8)
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		lvl, ok := g.acquire(lim)
 		require.True(t, ok)
 		held = append(held, lvl)
@@ -260,25 +260,21 @@ func TestGateMixedUnlimitedLimitedConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var unlOK, overOK atomic.Int32
-	for i := 0; i < nUnl; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range nUnl {
+		wg.Go(func() {
 			if lvl, ok := g.acquire(unl); ok {
 				unlOK.Add(1)
 				g.release(unl, lvl)
 			}
-		}()
+		})
 	}
-	for i := 0; i < nOver; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range nOver {
+		wg.Go(func() {
 			if lvl, ok := g.acquire(lim); ok {
 				overOK.Add(1)
 				g.release(lim, lvl)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(done)
@@ -379,7 +375,7 @@ func TestGateN1EquivalentToSingleInstance(t *testing.T) {
 	g.reload(map[string]domain.KeyMeta{"q": meta})
 	q := g.store.Load().quotas[1]
 	require.Equal(t, int64(100), q.budget.Load(), "N=1：budget = 10 + ceil(90/1) = 100")
-	for i := 0; i < 90; i++ {
+	for range 90 {
 		g.deductQuota(1, 1)
 	}
 	require.True(t, g.quotaExhausted(meta), "消耗 90 后与单实例同点 429（无复核能力）")
@@ -399,7 +395,7 @@ func TestGateN1ReclaimerLagNoOverrun(t *testing.T) {
 	q := g.store.Load().quotas[1]
 	require.Equal(t, int64(100), q.budget.Load(), "N=1 初始 budget = quota（快照相等）")
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		g.deductQuota(1, 1)
 	}
 	// 本地预算耗尽 → 复核：DB 仍显示 used=0（flush 滞后）→ unreported =
@@ -423,7 +419,7 @@ func TestGateReclaimReplenishes(t *testing.T) {
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
 	g.reload(map[string]domain.KeyMeta{"q": meta}) // 快照 quota_used=0 → budget = ceil(100/3) = 34
 
-	for i := 0; i < 34; i++ {
+	for range 34 {
 		g.deductQuota(1, 1)
 	}
 	require.False(t, g.quotaExhausted(meta), "复核成功续额放行")
@@ -464,12 +460,12 @@ func TestGateReclaimTrueExhaustionShortCircuit(t *testing.T) {
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
 	g.reload(map[string]domain.KeyMeta{"q": meta})
 
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		g.deductQuota(1, 1)
 	}
 	require.True(t, g.quotaExhausted(meta), "复核确认真尽 → 429")
 	require.Equal(t, 1, reader.callCount())
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		require.True(t, g.quotaExhausted(meta))
 	}
 	require.Equal(t, 1, reader.callCount(), "exhausted 短路后不再发起复核")
@@ -484,17 +480,15 @@ func TestGateReclaimSingleFlight(t *testing.T) {
 	g.setReclaimer(reader)
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
 	g.reload(map[string]domain.KeyMeta{"q": meta})
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		g.deductQuota(1, 1)
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 16 {
+		wg.Go(func() {
 			g.quotaExhausted(meta)
-		}()
+		})
 	}
 	// 复核者已进 DB（被 block 卡住），其余并发到达按旧预算判定返回
 	require.Eventually(t, func() bool { return reader.callCount() == 1 }, time.Second, 10*time.Millisecond)
@@ -515,7 +509,7 @@ func TestGateReclaimDBErrorAllowAndRetry(t *testing.T) {
 	g.setReclaimer(reader)
 	meta := domain.KeyMeta{KeyID: 1, HasQuota: true, Quota: 100}
 	g.reload(map[string]domain.KeyMeta{"q": meta})
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		g.deductQuota(1, 1)
 	}
 

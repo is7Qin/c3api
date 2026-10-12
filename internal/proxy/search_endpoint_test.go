@@ -226,7 +226,9 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 }
 
 // i64ptr 测试 int64 指针 helper（FunctionPrice.PricePerCall 构造用）。
-func i64ptr(v int64) *int64 { return &v }
+//
+//go:fix inline
+func i64ptr(v int64) *int64 { return new(v) }
 
 // postSearch 向网关发 /v1/alpha/search 请求（Bearer ck-1 + 可选
 // x-codex-turn-metadata——静态路径的如实透传断言面）。
@@ -574,7 +576,7 @@ func TestSearchIndependentSelection(t *testing.T) {
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		resp := postSearch(t, srv, searchReqBody, "")
 		b, _ := io.ReadAll(resp.Body)
 		require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", string(b))

@@ -1672,12 +1672,9 @@ func (f *fakeStore) ListGroupsForUser(ctx context.Context, userID int64) ([]*dom
 			out = append(out, &c)
 			continue
 		}
-		for _, u := range f.assign[g.ID] {
-			if u == userID {
-				c := *g
-				out = append(out, &c)
-				break
-			}
+		if slices.Contains(f.assign[g.ID], userID) {
+			c := *g
+			out = append(out, &c)
 		}
 	}
 	return out, nil

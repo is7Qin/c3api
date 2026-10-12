@@ -40,7 +40,8 @@ import (
 // TestResponsesWSBillingPG）**逐字节一致**——usage_logs 行 5 计数 + cost 130
 // + format/error_type/model 全同。独立 schema 与 repository 包隔离。
 
-func strPtrPG(s string) *string { return &s }
+//go:fix inline
+func strPtrPG(s string) *string { return new(s) }
 
 func TestCodexResponsesWSBillingPG(t *testing.T) {
 	dsn := pgtest.Clone(t)
@@ -77,7 +78,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
-		CodexPATKey:   strPtrPG("pat-pg-1"),
+		CodexPATKey:   new("pat-pg-1"),
 	})
 	require.NoError(t, err)
 
@@ -132,7 +133,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	} {
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
 	}
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)

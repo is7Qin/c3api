@@ -43,8 +43,7 @@ func TestRuntimeHealthStartInjectsProbe(t *testing.T) {
 	require.Error(t, err, "nil probe must fail-closed")
 
 	called := false
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	require.NoError(t, h.Start(ctx, func(_ context.Context, key HealthKey) error {
 		require.Equal(t, int64(1), key.AccountID)
 		called = true

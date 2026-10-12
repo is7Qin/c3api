@@ -93,7 +93,7 @@ func TestPrecheckPriceMappingModel(t *testing.T) {
 	targetPriced := func() map[string]*domain.PriceEntry {
 		return map[string]*domain.PriceEntry{"upstream-b": {
 			Model: "upstream-b", Mode: domain.PriceModeToken,
-			InputPerM: ptr(int64(1e8)), OutputPerM: ptr(int64(2e8)),
+			InputPerM: new(int64(1e8)), OutputPerM: new(int64(2e8)),
 			Source: domain.PricingSourceManual,
 		}}
 	}

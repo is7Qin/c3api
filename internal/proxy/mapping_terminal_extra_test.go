@@ -22,7 +22,7 @@ func TestPrecheckNoMapAndExplicitIdentity(t *testing.T) {
 	clientPriced := map[string]*domain.PriceEntry{"gpt-4o": proxyPricingEntry()}
 	targetPriced := map[string]*domain.PriceEntry{"upstream-b": {
 		Model: "upstream-b", Mode: domain.PriceModeToken,
-		InputPerM: ptr(int64(1e8)), OutputPerM: ptr(int64(2e8)),
+		InputPerM: new(int64(1e8)), OutputPerM: new(int64(2e8)),
 		Source: domain.PricingSourceManual,
 	}}
 	t.Run("无映射 按客户端模型预检+计价", func(t *testing.T) {

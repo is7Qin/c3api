@@ -22,9 +22,11 @@ type fakeSnapshot struct {
 
 func (s *fakeSnapshot) PriceModels() map[string]struct{} { return s.models }
 
-func intPtr(v int) *int { return &v }
+//go:fix inline
+func intPtr(v int) *int { return new(v) }
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
 // TestSyncNowGuardsManualVariants 手工定价优先（自 service 侧迁移的核心回归）：
 // fetcher 变体中同名手工模型行被过滤，liteLLM 模型行落库；统计口径 Rows=拉取
@@ -33,8 +35,8 @@ func TestSyncNowGuardsManualVariants(t *testing.T) {
 	f := &fakeFetcher{result: &FetchResult{
 		PriceEntries: []*domain.PriceEntry{{Model: "guard-model", Mode: domain.PriceModeToken, Source: domain.PricingSourceLitellm}},
 		Variants: []*domain.PriceVariant{
-			{Model: "guard-model", Seq: 1, MultBP: intPtr(20000)},
-			{Model: "litellm-model", Seq: 1, MultBP: intPtr(30000)},
+			{Model: "guard-model", Seq: 1, MultBP: new(20000)},
+			{Model: "litellm-model", Seq: 1, MultBP: new(30000)},
 		},
 		Skipped: 2,
 	}}

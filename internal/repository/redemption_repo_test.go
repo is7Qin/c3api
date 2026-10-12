@@ -257,13 +257,11 @@ func TestIncrementUsedConcurrentPG(t *testing.T) {
 	}
 	results := make(chan result, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range n {
+		wg.Go(func() {
 			ok, err := repos.IncrementUsed(ctx, got.ID)
 			results <- result{ok, err}
-		}()
+		})
 	}
 	wg.Wait()
 	close(results)
@@ -301,12 +299,10 @@ func TestUserResourceUpdatePG(t *testing.T) {
 	const workers = 5
 	errs := make(chan error, workers)
 	var wg sync.WaitGroup
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workers {
+		wg.Go(func() {
 			errs <- repos.UpdateUserBalance(ctx, u.ID, 10)
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)

@@ -10,7 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"runtime"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 	"unsafe"
@@ -283,7 +283,7 @@ func hashCompilerFixture(s *Scheduler) (string, int) {
 	for id := range sv.byID {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var buf []byte
 	appendHashStr := func(str string) {
 		buf = binary.AppendUvarint(buf, uint64(len(str)))

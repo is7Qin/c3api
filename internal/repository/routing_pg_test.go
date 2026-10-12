@@ -681,4 +681,6 @@ func poolQueryExists(ctx context.Context, pool *pgxpool.Pool, name string, out *
 	*out = n > 0
 	return nil
 }
-func ptrInt64(v int64) *int64 { return &v }
+
+//go:fix inline
+func ptrInt64(v int64) *int64 { return new(v) }

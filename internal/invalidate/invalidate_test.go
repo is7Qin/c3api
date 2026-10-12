@@ -6,6 +6,7 @@ package invalidate
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -402,8 +403,7 @@ func TestNoMarkNoReload(t *testing.T) {
 // TestBillingDisabled 余额目标 nil（billing.enabled=false）：用户/倍率变更
 // 跳过余额路径，其余正常。
 func TestBillingDisabled(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	sched, cl, auth, bal := &recSched{}, &recClients{}, &recAuth{}, &recBal{}
 	d := New(Config{Window: time.Hour, Sched: sched, Clients: cl, Auth: auth, Log: nil})
 	d.newTimer = func(time.Duration) <-chan time.Time {
@@ -487,8 +487,7 @@ func TestSettingsBranch(t *testing.T) {
 
 // TestNewBranchesNilReloader rules reloader 未注入（nil）→ 分支跳过，不 panic。
 func TestNewBranchesNilReloader(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	sched, cl, auth := &recSched{}, &recClients{}, &recAuth{}
 	d := New(Config{Window: time.Hour, Sched: sched, Clients: cl, Auth: auth, Log: nil}) // 无 Rules
 	clock := &fakeClock{}
@@ -505,10 +504,5 @@ func TestNewBranchesNilReloader(t *testing.T) {
 }
 
 func contains(ids []int64, want int64) bool {
-	for _, id := range ids {
-		if id == want {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ids, want)
 }

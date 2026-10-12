@@ -115,7 +115,7 @@ func acquireN(t *testing.T, p *Proxy, hold int) []int {
 func acquireNPre(t *testing.T, p *Proxy, hold int, precheck bool) []int {
 	t.Helper()
 	levels := make([]int, 0, hold)
-	for i := 0; i < hold; i++ {
+	for i := range hold {
 		code, body, level, ok := guardOncePre(t, p, precheck)
 		require.True(t, ok, "第 %d 个并发须放行（code=%d body=%s）", i+1, code, body)
 		levels = append(levels, level)

@@ -141,7 +141,7 @@ func groupsForTarget(t *testing.T, target int) []int64 {
 		groups = append(groups, 12345678)
 	case rem > 0:
 		last := groups[len(groups)-1]
-		for i := 0; i < rem; i++ {
+		for range rem {
 			last *= 10 // 8 位 → 8+rem 位（rem ≤ 8 → ≤ 16 位，int64 内）
 		}
 		groups[len(groups)-1] = last

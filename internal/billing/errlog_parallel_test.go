@@ -58,11 +58,11 @@ func TestFlusherErrlogWorkerParallelIsolated(t *testing.T) {
 	ew := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, errs, nil)
 
 	var wg sync.WaitGroup
-	for g := 0; g < 4; g++ {
+	for g := range 4 {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			for i := 0; i < rejected/4; i++ {
+			for range rejected / 4 {
 				ew.EnqueueRejected(&domain.UsageLog{
 					RequestID: "rej", Model: "m",
 					StatusCode: 429, ErrorType: domain.Err429, CreatedAt: time.Now(),

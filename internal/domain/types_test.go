@@ -75,8 +75,8 @@ func TestTruncateErrMsg(t *testing.T) {
 // exportedFieldNames 导出字段名升序集合（结构契约枚举用）。
 func exportedFieldNames(rt reflect.Type) []string {
 	names := make([]string, 0, rt.NumField())
-	for i := 0; i < rt.NumField(); i++ {
-		if f := rt.Field(i); f.IsExported() {
+	for f := range rt.Fields() {
+		if f := f; f.IsExported() {
 			names = append(names, f.Name)
 		}
 	}
@@ -92,7 +92,7 @@ func TestAccountDomainContractFieldSet(t *testing.T) {
 		"FailedAt", "FailureSource", "GroupIDs", "ID", "IdentityRevision", "LastError",
 		"LastUsedAt", "LifecycleRevision", "MaxConcurrency", "Name", "SupplierUserID",
 		"Template", "TemplateID", "UpdatedAt", "UpstreamCostMultiplierBp", "UpstreamKey",
-	}, exportedFieldNames(reflect.TypeOf(Account{})))
+	}, exportedFieldNames(reflect.TypeFor[Account]()))
 }
 
 func TestCodexImportItemContractFieldSets(t *testing.T) {
@@ -100,21 +100,21 @@ func TestCodexImportItemContractFieldSets(t *testing.T) {
 	require.Equal(t, []string{
 		"CodexAccountID", "CodexEmail", "CodexOAuthExpiresAt",
 		"CodexOAuthRefreshToken", "CodexOAuthToken", "MaxConcurrency",
-	}, exportedFieldNames(reflect.TypeOf(CodexOAuthImportItem{})))
+	}, exportedFieldNames(reflect.TypeFor[CodexOAuthImportItem]()))
 	require.Equal(t, []string{
 		"CodexAccountID", "CodexEmail", "CodexPATKey", "MaxConcurrency",
-	}, exportedFieldNames(reflect.TypeOf(CodexPATImportItem{})))
+	}, exportedFieldNames(reflect.TypeFor[CodexPATImportItem]()))
 }
 
 func TestAccountStatusIsRuntimeOnlyType(t *testing.T) {
 	// AccountStatus 只允许作为内存调度视图（RuntimeInfo 等）的字段类型；
 	// 账号持久/API 契约结构与规则动作契约一律不得携带该类型字段。
-	statusT := reflect.TypeOf(AccountStatus(""))
-	statusPT := reflect.TypeOf((*AccountStatus)(nil))
+	statusT := reflect.TypeFor[AccountStatus]()
+	statusPT := reflect.TypeFor[*AccountStatus]()
 	for _, v := range []any{Account{}, RuleThen{}, CodexOAuthImportItem{}, CodexPATImportItem{}} {
 		rt := reflect.TypeOf(v)
-		for i := 0; i < rt.NumField(); i++ {
-			f := rt.Field(i)
+		for f := range rt.Fields() {
+			f := f
 			require.NotEqual(t, statusT, f.Type, "%s.%s", rt.Name(), f.Name)
 			require.NotEqual(t, statusPT, f.Type, "%s.%s", rt.Name(), f.Name)
 		}

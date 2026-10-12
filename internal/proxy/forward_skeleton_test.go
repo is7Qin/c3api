@@ -223,9 +223,9 @@ func TestSkeletonLargeBodyExtraction(t *testing.T) {
 // plan-only 契约下无模型请求没有 canonical attempt 身份——默认桶命中的
 // Attempt 校验失败，选号 fail-closed 404（绝不以伪造身份派生请求）。
 func TestSkeletonModelNullLikeMissing(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer up.Close()
@@ -238,7 +238,7 @@ func TestSkeletonModelNullLikeMissing(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 	require.Equal(t, http.StatusNotFound, rec.Code, "model-less request fails closed, never 400, body=%s", rec.Body.String())
-	require.Zero(t, atomic.LoadInt32(&hits), "no dispatch without canonical identity")
+	require.Zero(t, hits.Load(), "no dispatch without canonical identity")
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "failed reservation releases its lease")

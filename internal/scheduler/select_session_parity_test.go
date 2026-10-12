@@ -33,7 +33,7 @@ func driveSession(t *testing.T, s *Scheduler, id AttemptPlanIdentity, route Rout
 	plan, err := s.NewAttemptPlan(id, route)
 	require.NoError(t, err)
 	var out []string
-	for i := 0; i < n; i++ {
+	for range n {
 		sel, a, err := s.ReserveAttempt(&plan)
 		if err != nil {
 			switch {
@@ -89,7 +89,7 @@ func TestSelectSessionParity_responsesExploreDegraded(t *testing.T) {
 	var got []string
 	plan, err := s.NewAttemptPlan(AttemptPlanIdentity{RequestID: "req-r1"}, route)
 	require.NoError(t, err)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		sel, a, rerr := s.ReserveAttempt(&plan)
 		if rerr != nil {
 			got = append(got, "ERR:exhausted")

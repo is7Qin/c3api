@@ -106,17 +106,17 @@ func TestPGAdminTempBalances(t *testing.T) {
 			amount    int64
 			expiresAt *time.Time
 			note      *string
-		}{amount: 300000, expiresAt: ptrT(now.AddDate(0, 0, 5)), note: &noteBonus},
+		}{amount: 300000, expiresAt: new(now.AddDate(0, 0, 5)), note: &noteBonus},
 		struct {
 			amount    int64
 			expiresAt *time.Time
 			note      *string
-		}{amount: 200000, expiresAt: ptrT(now.AddDate(0, 0, -1)), note: &noteRedeem}, // 已过期
+		}{amount: 200000, expiresAt: new(now.AddDate(0, 0, -1)), note: &noteRedeem}, // 已过期
 		struct {
 			amount    int64
 			expiresAt *time.Time
 			note      *string
-		}{amount: 0, expiresAt: ptrT(now.AddDate(0, 0, 30)), note: &noteBonus}, // 已用尽
+		}{amount: 0, expiresAt: new(now.AddDate(0, 0, 30)), note: &noteBonus}, // 已用尽
 	)
 	u2 := seedTempBalancesPG(t, repos, "tb2@example.com",
 		struct {
@@ -198,4 +198,6 @@ func TestPGAdminTempBalances(t *testing.T) {
 }
 
 // ptrT 时间指针（nil = 永久额度）。
-func ptrT(t time.Time) *time.Time { return &t }
+//
+//go:fix inline
+func ptrT(t time.Time) *time.Time { return new(t) }

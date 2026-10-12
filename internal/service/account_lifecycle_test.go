@@ -20,22 +20,22 @@ func TestAccountValidationCostCache(t *testing.T) {
 	require.NoError(t, err)
 
 	// negative multiplier -> invalid
-	_, err = svc.CreateAccount(context.Background(), repository.AccountPatch{Name: strPtr("a"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x"), UpstreamCostMultiplierBp: intPtr(-1)})
+	_, err = svc.CreateAccount(context.Background(), repository.AccountPatch{Name: new("a"), TemplateID: int64Ptr(1), UpstreamKey: new("sk-x"), UpstreamCostMultiplierBp: new(-1)})
 	require.ErrorIs(t, err, ErrInvalidInput)
 
 	// invalid domain -> invalid
 	bad := "not a domain!"
-	_, err = svc.CreateAccount(context.Background(), repository.AccountPatch{Name: strPtr("a2"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x"), CacheDomain: &bad})
+	_, err = svc.CreateAccount(context.Background(), repository.AccountPatch{Name: new("a2"), TemplateID: int64Ptr(1), UpstreamKey: new("sk-x"), CacheDomain: &bad})
 	require.ErrorIs(t, err, ErrInvalidInput)
 
 	// valid shared domain
 	good := "shared.example.com"
-	acc, err := svc.CreateAccount(context.Background(), repository.AccountPatch{Name: strPtr("a3"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x"), CacheDomain: &good, UpstreamCostMultiplierBp: intPtr(25000)})
+	acc, err := svc.CreateAccount(context.Background(), repository.AccountPatch{Name: new("a3"), TemplateID: int64Ptr(1), UpstreamKey: new("sk-x"), CacheDomain: &good, UpstreamCostMultiplierBp: new(25000)})
 	require.NoError(t, err)
 	require.Equal(t, 25000, domain.MultBp(acc.UpstreamCostMultiplierBp))
 
 	// empty domain (nil) allowed - private
-	acc2, err := svc.CreateAccount(context.Background(), repository.AccountPatch{Name: strPtr("a4"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x")})
+	acc2, err := svc.CreateAccount(context.Background(), repository.AccountPatch{Name: new("a4"), TemplateID: int64Ptr(1), UpstreamKey: new("sk-x")})
 	require.NoError(t, err)
 	require.NotNil(t, acc2)
 
@@ -58,14 +58,14 @@ func TestCreateAccountExplicitZeroMultiplier(t *testing.T) {
 	require.NoError(t, err)
 
 	free, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
-		Name: strPtr("free"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-x"),
-		UpstreamCostMultiplierBp: intPtr(0),
+		Name: new("free"), TemplateID: int64Ptr(1), UpstreamKey: new("sk-x"),
+		UpstreamCostMultiplierBp: new(0),
 	})
 	require.NoError(t, err)
 	require.Equal(t, 0, domain.MultBp(free.UpstreamCostMultiplierBp), "显式 ×0（免费）不得被创建默认吞掉")
 
 	def, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
-		Name: strPtr("unset"), TemplateID: int64Ptr(1), UpstreamKey: strPtr("sk-y"),
+		Name: new("unset"), TemplateID: int64Ptr(1), UpstreamKey: new("sk-y"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, 10000, domain.MultBp(def.UpstreamCostMultiplierBp), "未提供 → 创建默认 ×1")
@@ -135,7 +135,7 @@ func seedLifecycleAccount(t *testing.T, fs *fakeStore) *domain.Account {
 	acc, err := fs.CreateAccount(ctx, &domain.Account{
 		Name: "a", TemplateID: 1, UpstreamKey: "sk-a",
 		Enabled: true, FailedAt: &failed, FailureSource: &src, LastError: &reason,
-		LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: intPtr(25000), CacheDomain: &dom,
+		LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: new(25000), CacheDomain: &dom,
 	})
 	require.NoError(t, err)
 	return acc

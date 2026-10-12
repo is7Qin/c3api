@@ -104,7 +104,7 @@ func TestRelayLongLineDataFull(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString(`{"type":"response.completed","response":{"id":"r","output":[`)
 	item := `{"type":"function_call","name":"f","arguments":"aaaa"}`
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
@@ -321,7 +321,7 @@ func TestRelayBatchesUntilThreshold(t *testing.T) {
 	// 3 个各 2056B 的事件，阈值 4096：首事件立即 flush（不重置累计，2056 仍计入阈值），
 	// 第 2 个使累计 4112 >= 4096 触发 flush 并归零，第 3 个未达阈值，由流结束残余 flush
 	var src strings.Builder
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		src.WriteString("data: ")
 		src.WriteString(strings.Repeat("y", 2048))
 		src.WriteString("\n\n")
@@ -601,13 +601,11 @@ func TestRelayNoFlusherStillWrites(t *testing.T) {
 
 func TestRelayConcurrentStreams(t *testing.T) {
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			rec := httptest.NewRecorder()
 			require.NoError(t, relayStream(rec, "data: x\n\ndata: y\n\n", Config{FlushBytes: 1024}))
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -618,7 +616,7 @@ func TestRelayConcurrentStreams(t *testing.T) {
 func TestRelayDrainFlushCoalescesFrames(t *testing.T) {
 	var sb strings.Builder
 	const frames = 64
-	for i := 0; i < frames; i++ {
+	for range frames {
 		sb.WriteString("data: {\"i\":1}\n\n")
 	}
 	rec := &flusherRecorder{ResponseRecorder: httptest.NewRecorder()}

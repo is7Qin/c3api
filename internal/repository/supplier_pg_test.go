@@ -166,7 +166,7 @@ func TestPGSupplierCreditConcurrentOnce(t *testing.T) {
 	// 或守卫失败或撞锁（40P01/55P03）——终态恒为「只记账一次」。
 	var wg sync.WaitGroup
 	errs := make([]error, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

@@ -191,9 +191,9 @@ func TestPublishMatrix(t *testing.T) {
 		require.NoError(t, err)
 
 		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
-			Name:        strPtr("a1"),
-			TemplateID:  int64Ptr(tpl.ID),
-			UpstreamKey: strPtr("sk-1"),
+			Name:        new("a1"),
+			TemplateID:  new(tpl.ID),
+			UpstreamKey: new("sk-1"),
 			GroupIDs:    &[]int64{g1.ID, g2.ID},
 		})
 		require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestPublishMatrix(t *testing.T) {
 		// 移组 g1→g2 + upstream_key 变更：Groups（旧+新）+ Clients 同一条
 		before := pr.total()
 		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{
-			UpstreamKey: strPtr("sk-2"), GroupIDs: &[]int64{g2.ID},
+			UpstreamKey: new("sk-2"), GroupIDs: &[]int64{g2.ID},
 		}, nil)
 		require.NoError(t, err)
 		got = pr.last()
@@ -267,7 +267,7 @@ func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	require.True(t, pr.last().Keys, "组更新（含 protocol_convert 变更）→ Keys:true——旧 key meta 即时收敛")
 
 	u := seedUser(t, fs, "am@example.com", 0, 0)
-	_, _, err = svc.SetGroupAssignments(ctx, g.ID, []int64{u.ID}, map[int64]*int{u.ID: intPtr(5000)})
+	_, _, err = svc.SetGroupAssignments(ctx, g.ID, []int64{u.ID}, map[int64]*int{u.ID: new(5000)})
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "assignment 专属倍率 → Multipliers:true")
 
@@ -306,9 +306,9 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		require.NoError(t, err)
 		before := pr.total() // 上一步创建模板已发布 1 条（Templates:true）
 		_, err = svc.CreateAccount(ctx, repository.AccountPatch{
-			Name:        strPtr("a1"),
-			TemplateID:  int64Ptr(tpl.ID),
-			UpstreamKey: strPtr("sk-1"),
+			Name:        new("a1"),
+			TemplateID:  new(tpl.ID),
+			UpstreamKey: new("sk-1"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无分组账号 → 空 Change 跳过，不发布")
@@ -324,9 +324,9 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		// 无分组账号（创建时无 GroupIDs → 发布跳过，计数不变）
 		before := pr.total() // 上一步模板创建已发布 1 条（Templates:true）
 		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
-			Name:        strPtr("a1"),
-			TemplateID:  int64Ptr(tpl.ID),
-			UpstreamKey: strPtr("sk-1"),
+			Name:        new("a1"),
+			TemplateID:  new(tpl.ID),
+			UpstreamKey: new("sk-1"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无分组账号创建 → 空 Change 跳过")
@@ -334,7 +334,7 @@ func TestPublishEmptyChangeSkipped(t *testing.T) {
 		// GroupIDs nil = 不变（账号无组 → oldGroups 空），UpstreamKey 相同
 		// → keyChanged false → gids 空 → 空 Change 跳过
 		before = pr.total()
-		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: strPtr("sk-1")}, nil)
+		_, err = svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: new("sk-1")}, nil)
 		require.NoError(t, err)
 		require.Equal(t, before, pr.total(), "无变更更新 → 空 Change 跳过，不发布")
 	})

@@ -80,7 +80,7 @@ func waitSignals(t *testing.T, ch chan struct{}, n int) {
 	t.Helper()
 	timeout := time.NewTimer(2 * time.Second)
 	defer timeout.Stop()
-	for i := 0; i < n; i++ {
+	for range n {
 		select {
 		case <-ch:
 		case <-timeout.C:
@@ -144,7 +144,8 @@ func TestRuleThrottle_Validate_DurationUseResetConflicts(t *testing.T) {
 	}
 }
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
 // --- Account route missing IDs ---
 
@@ -153,7 +154,7 @@ func TestRuleThrottle_AccountRouteMissingIDs(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "throttle-route", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("429")},
+		When: domain.RuleWhen{Kind: new("429")},
 		Then: domain.RuleThen{Throttle: th},
 	})
 	// missing RouteClassID
@@ -173,7 +174,7 @@ func TestRuleThrottle_AccountWildcard(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "throttle-account", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("429")},
+		When: domain.RuleWhen{Kind: new("429")},
 		Then: domain.RuleThen{Throttle: th},
 	})
 	// account scope ignores route IDs (even if empty or present)
@@ -190,7 +191,7 @@ func TestRuleWindow_ThrottleThresholdNotYetHit(t *testing.T) {
 	sink := newFakeSink(10)
 	e, _ := newTestEngineWithSink(t, sink, nil, domain.Rule{
 		Name: "window-throttle", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("429"), Count429GE: intPtr(3), WindowSeconds: intPtr(60)},
+		When: domain.RuleWhen{Kind: new("429"), Count429GE: new(3), WindowSeconds: new(60)},
 		Then: domain.RuleThen{Throttle: th},
 	})
 	// 2 events below threshold -> no match, local sink not reached
@@ -236,7 +237,7 @@ func TestRuleQueueFull_PersistDroppedAndLocalBeforePersist(t *testing.T) {
 	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "persist-full", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("429")},
+		When: domain.RuleWhen{Kind: new("429")},
 		Then: domain.RuleThen{Throttle: th},
 	})
 	// No Start, persistCh not drained -> bounded queue with cap 1024 initially, reduce to 1 for test
@@ -249,7 +250,7 @@ func TestRuleQueueFull_PersistDroppedAndLocalBeforePersist(t *testing.T) {
 	// We'll use e2 with injected rule
 	_, _ = e, th // keep e for lint
 	e2.rulesMu.Lock()
-	e2.rules = []compiledRule{{Rule: domain.Rule{Name: "persist-full", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
+	e2.rules = []compiledRule{{Name: "persist-full", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: th}}}
 	e2.rulesMu.Unlock()
 	// First handle -> local sink immediate, persist enqueue succeeds
 	e2.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})
@@ -269,7 +270,7 @@ func TestRuleFailAccount_QueueFullWriteFailure(t *testing.T) {
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 4}, newFakeRuleStore(), nil, sink, func(_ context.Context, item PersistItem) error { return fmt.Errorf("injected write failure") })
 	// Need rule with FailAccount
 	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "fail-acc", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{FailAccount: true}}}}
+	e.rules = []compiledRule{{Name: "fail-acc", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("5xx")}, Then: domain.RuleThen{FailAccount: true}}}
 	e.rulesMu.Unlock()
 	e.HandleEvent(context.Background(), Event{AccountID: 42, Kind: Kind5xx, OccurredAt: at(0), ExpectedIdentityRevision: 7})
 	require.Equal(t, 1, sink.countFail(), "local FailAccount must be applied immediately")
@@ -291,7 +292,7 @@ func TestRuleQueueFull_WorkerNonblocking(t *testing.T) {
 	sink := newFakeSink(10)
 	e := New(Config{EventQueueSize: 2, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink, nil)
 	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "nb", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
+	e.rules = []compiledRule{{Name: "nb", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: th}}}
 	e.rulesMu.Unlock()
 	// Fill persist queue
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})
@@ -320,7 +321,7 @@ func TestRuleMetrics_FourDistinct(t *testing.T) {
 	e := New(Config{EventQueueSize: 1, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink, func(_ context.Context, item PersistItem) error { return fmt.Errorf("fail") })
 	e.rulesMu.Lock()
 	e.rules = []compiledRule{
-		{Rule: domain.Rule{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}}},
+		{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}},
 	}
 	e.rulesMu.Unlock()
 	// Admission drop (one slot filled, one dropped)
@@ -336,7 +337,7 @@ func TestRuleMetrics_FourDistinct(t *testing.T) {
 	e2 := New(Config{EventQueueSize: 16, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink2, func(_ context.Context, item PersistItem) error { return fmt.Errorf("fail") })
 	e2.rulesMu.Lock()
 	e2.rules = []compiledRule{
-		{Rule: domain.Rule{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}}},
+		{Name: "throttle", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}}},
 	}
 	e2.rulesMu.Unlock()
 	e2.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(2)})
@@ -359,10 +360,10 @@ func TestRuleMetrics_FourDistinct(t *testing.T) {
 func TestRule_ResponseShapingUnchanged(t *testing.T) {
 	e, _ := newTestEngine(t, domain.Rule{
 		Name: "shape", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("5xx")},
-		Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
+		When: domain.RuleWhen{Kind: new("5xx")},
+		Then: domain.RuleThen{Throttle: openThrottle(), ResponseCode: new(502), CustomMessage: new("Upstream request failed")},
 	})
-	ev := Event{AccountID: 1, Kind: Kind5xx, HTTPStatus: intPtr(500), ErrorMessage: "boom"}
+	ev := Event{AccountID: 1, Kind: Kind5xx, HTTPStatus: new(500), ErrorMessage: "boom"}
 	then, punish := e.Classify(ev)
 	require.True(t, punish)
 	require.NotNil(t, then.ResponseCode)
@@ -375,10 +376,10 @@ func TestRule_ResponseShapingUnchanged(t *testing.T) {
 	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
 	e2, _ := newTestEngine(t, domain.Rule{
 		Name: "typed-shape", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("429")},
-		Then: domain.RuleThen{Throttle: th, ResponseCode: intPtr(429), CustomMessage: strPtr("rate limited")},
+		When: domain.RuleWhen{Kind: new("429")},
+		Then: domain.RuleThen{Throttle: th, ResponseCode: new(429), CustomMessage: new("rate limited")},
 	})
-	then2, punish2 := e2.Classify(Event{AccountID: 1, Kind: Kind429, HTTPStatus: intPtr(429)})
+	then2, punish2 := e2.Classify(Event{AccountID: 1, Kind: Kind429, HTTPStatus: new(429)})
 	require.True(t, punish2)
 	require.NotNil(t, then2.Throttle)
 	require.Equal(t, 429, *then2.ResponseCode)
@@ -391,7 +392,7 @@ func TestRuleFailAccount_BasicAndExpectedRevision(t *testing.T) {
 	sink := newFakeSink(10)
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 16}, newFakeRuleStore(), nil, sink, nil)
 	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "fail", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{FailAccount: true}}}}
+	e.rules = []compiledRule{{Name: "fail", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("5xx")}, Then: domain.RuleThen{FailAccount: true}}}
 	e.rulesMu.Unlock()
 	ev := Event{AccountID: 99, Kind: Kind5xx, OccurredAt: at(0), ExpectedIdentityRevision: 42}
 	e.HandleEvent(context.Background(), ev)
@@ -427,7 +428,7 @@ func TestRuleFailAccountCountsSinkFailure(t *testing.T) {
 	sink := &failingFailSink{}
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 16}, newFakeRuleStore(), nil, sink, nil)
 	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "fail", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{FailAccount: true}}}}
+	e.rules = []compiledRule{{Name: "fail", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("5xx")}, Then: domain.RuleThen{FailAccount: true}}}
 	e.rulesMu.Unlock()
 	logger, out := newTestRuleLogger(t)
 	e.log = logger

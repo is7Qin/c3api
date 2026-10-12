@@ -108,9 +108,9 @@ func TestQueryObservedRouteClassesPlanPG(t *testing.T) {
 	)
 	from := m.Add(-time.Duration(windowMinutes) * time.Minute)
 	batch := &pgx.Batch{}
-	for min := 0; min < windowMinutes; min++ {
+	for min := range windowMinutes {
 		minute := from.Add(time.Duration(min) * time.Minute)
-		for c := 0; c < noiseClasses; c++ {
+		for c := range noiseClasses {
 			rc := observedRouteClass(0xD0)
 			rc[1] = byte(c)
 			rc[2] = byte(c >> 8)

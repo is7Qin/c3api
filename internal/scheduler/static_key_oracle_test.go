@@ -60,7 +60,7 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 	tpl.FormatModels = map[domain.RequestFormat][]string{domain.FormatOpenAIChat: {"m-a"}}
 	tpl.ModelMapping = map[string]domain.ModelMappingEntry{"m-a": {MappedModel: "x", Mode: domain.ModelMappingModeExplicit}}
 	a := *acc(7, tpl, 4)
-	a.Ext = &domain.AccountExt{CodexAccountID: strPtr("cid"), CodexEmail: strPtr("e@x"), CodexPATKey: strPtr("pat")}
+	a.Ext = &domain.AccountExt{CodexAccountID: new("cid"), CodexEmail: new("e@x"), CodexPATKey: new("pat")}
 	a.SupplierUserID = 42
 
 	cases := []struct {
@@ -105,8 +105,8 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 		"model content change must change the key")
 	// payloadKey (OAuth rotation) must NOT affect planKey.
 	aRot := a
-	aRot.Ext = &domain.AccountExt{CodexAccountID: strPtr("cid"), CodexEmail: strPtr("e@x"), CodexPATKey: strPtr("pat"),
-		CodexOAuthToken: strPtr("new-at")}
+	aRot.Ext = &domain.AccountExt{CodexAccountID: new("cid"), CodexEmail: new("e@x"), CodexPATKey: new("pat"),
+		CodexOAuthToken: new("new-at")}
 	require.Equal(t,
 		planKeyOf(newSnapshotStatic(a, tpl, nil)),
 		planKeyOf(newSnapshotStatic(aRot, tpl, nil)),

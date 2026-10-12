@@ -147,7 +147,7 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	require.NoError(t, repos.UpdateUserBalance(ctx, u.ID, base))
 
 	// 种子 nDeducts 行 unbilled（usage flusher 单写点形态），并发排空消费
-	for i := 0; i < nDeducts; i++ {
+	for i := range nDeducts {
 		seedUnbilled(t, repos, costLogFor(u.ID, fmt.Sprintf("race%d", i), perDeduct))
 	}
 	drainDone := make(chan struct{})
@@ -159,7 +159,7 @@ func TestPGUpdateUserPatchConcurrentDeduct(t *testing.T) {
 	}()
 	// 条件写：重读重试 ≤3（对齐 service 语义），成功后退出
 	ok := false
-	for attempt := 0; attempt < 4; attempt++ {
+	for range 4 {
 		cur, err := repos.GetUser(ctx, u.ID)
 		require.NoError(t, err)
 		newBal := cur.Balance + 5000
@@ -203,14 +203,12 @@ func TestPGUpdateKeyVsAddQuotaUsedInterleave(t *testing.T) {
 	// （patch 化：patch 无 quota_used 字段——增量不可能被覆盖，比旧
 	// "剥离 SetQuotaUsed" 更强）
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 20; i++ {
+	wg.Go(func() {
+		for range 20 {
 			require.NoError(t, repos.Keys.AddQuotaUsed(ctx, map[int64]int64{k.ID: 5}))
 		}
-	}()
-	for i := 0; i < 10; i++ {
+	})
+	for i := range 10 {
 		name := fmt.Sprintf("kq-%d", i)
 		_, err := repos.UpdateKey(ctx, &repository.KeyPatch{ID: k.ID, Name: &name})
 		require.NoError(t, err)

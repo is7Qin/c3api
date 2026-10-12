@@ -40,7 +40,7 @@ func TestPGAccountOwnershipNoDeadlock(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, len(ids)*iters*3)
 	for _, id := range ids {
-		for i := 0; i < iters; i++ {
+		for range iters {
 			wg.Add(3)
 			accID := id
 			go func() { // 转属 → B

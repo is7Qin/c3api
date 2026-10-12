@@ -134,7 +134,8 @@ func mustFP(t *testing.T, hexStr string) domain.CandidateFingerprintVal {
 	return domain.CandidateFingerprintVal(raw)
 }
 
-func ptrInt64(v int64) *int64 { return &v }
+//go:fix inline
+func ptrInt64(v int64) *int64 { return new(v) }
 
 // --- plan explanation ---
 

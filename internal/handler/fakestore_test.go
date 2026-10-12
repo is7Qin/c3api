@@ -215,7 +215,9 @@ func (f *fakeStore) DeleteTemplate(ctx context.Context, id int64) error {
 }
 
 // intPtr 整数指针（存在性字段的写入意图：nil 与 0 必须可区分）。
-func intPtr(v int) *int { return &v }
+//
+//go:fix inline
+func intPtr(v int) *int { return new(v) }
 
 func (f *fakeStore) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
 	f.mu.Lock()
@@ -771,9 +773,7 @@ func (f *fakeStore) UpdateTemplatesBatch(ctx context.Context, ids []int64, p rep
 		}
 		if p.ModelMapping != nil {
 			m := make(map[string]domain.ModelMappingEntry, len(*p.ModelMapping))
-			for k, v := range *p.ModelMapping {
-				m[k] = v
-			}
+			maps.Copy(m, *p.ModelMapping)
 			t.ModelMapping = m
 		}
 	}
@@ -1631,10 +1631,7 @@ func paginate[T any](rows []T, q repository.ListQuery) []T {
 	if q.Offset >= total {
 		return nil
 	}
-	end := q.Offset + q.Limit
-	if end > total {
-		end = total
-	}
+	end := min(q.Offset+q.Limit, total)
 	return rows[q.Offset:end]
 }
 
@@ -1864,12 +1861,9 @@ func (f *fakeStore) ListGroupsForUser(ctx context.Context, userID int64) ([]*dom
 			out = append(out, &c)
 			continue
 		}
-		for _, u := range f.assign[g.ID] {
-			if u == userID {
-				c := *g
-				out = append(out, &c)
-				break
-			}
+		if slices.Contains(f.assign[g.ID], userID) {
+			c := *g
+			out = append(out, &c)
 		}
 	}
 	return out, nil

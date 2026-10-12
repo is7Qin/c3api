@@ -7,6 +7,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -34,9 +35,7 @@ func (m *memLoader) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make(map[int64][]*domain.Account, len(m.byGroup))
-	for k, v := range m.byGroup {
-		out[k] = v
-	}
+	maps.Copy(out, m.byGroup)
 	return out, nil
 }
 
@@ -112,8 +111,11 @@ func (f *fakeRuleStore) CountRules(ctx context.Context) (int64, error) {
 
 var _ repository.RuleStore = (*fakeRuleStore)(nil)
 
-func intPtr(v int) *int       { return &v }
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func intPtr(v int) *int { return new(v) }
+
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 func tpl(id int64, format domain.RequestFormat, models []string) *domain.Template {
 	return &domain.Template{ID: id, BaseURL: "https://u/v1", CredentialType: credential.TypeAPIKey,
@@ -260,7 +262,7 @@ func TestInvalidateGroupReloads(t *testing.T) {
 	s.compileOnce()       // 组级重载后重编译决策视图
 	// 两账号并发上限各 4，不释放地连续选 5 次必须全部成功，且两账号都至少被选中一次。
 	var sels []*Selection
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 		require.NoError(t, err, "5 selects must succeed with both accounts in pool")
 		sels = append(sels, sel)
@@ -290,7 +292,7 @@ func TestInvalidateGroupByIDRebuild(t *testing.T) {
 
 	// 占满并发：两账号各上限 2、总容量 4 → 4 次选择后各持 2 个槽。
 	var sels []*Selection
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 		require.NoError(t, err)
 		sels = append(sels, sel)
@@ -570,20 +572,18 @@ func TestSelectConcurrentCASRace(t *testing.T) {
 		err error
 	}
 	const pairs = 200
-	for i := 0; i < pairs; i++ {
+	for i := range pairs {
 		start := make(chan struct{})
 		ready := make(chan struct{}, 2)
 		results := make(chan pairResult, 2)
 		var wg sync.WaitGroup
-		for j := 0; j < 2; j++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 2 {
+			wg.Go(func() {
 				ready <- struct{}{}
 				<-start
 				sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 				results <- pairResult{sel: sel, err: err}
-			}()
+			})
 		}
 		<-ready
 		<-ready
@@ -824,7 +824,7 @@ func TestRequestPathZeroLoaderCalls(t *testing.T) {
 	wireSources(s, nil, nil)
 	s.compileOnce()
 	before := cl.loadsN()
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		sel, err := s.Select(10, domain.FormatOpenAIResponsesWS, "gpt-4o")
 		require.NoError(t, err)
 		sel.Release()
@@ -865,14 +865,14 @@ func TestSchedulerClassify(t *testing.T) {
 	dur := int64(30 * 60 * 1000)
 	_, err := rstore.CreateRule(context.Background(), domain.Rule{
 		Name: "transmit-400", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http400},
+		When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: &http400},
 		Then: domain.RuleThen{},
 	})
 	require.NoError(t, err)
 	_, err = rstore.CreateRule(context.Background(), domain.Rule{
 		Name: "punish-401", Enabled: true, Priority: 20,
-		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: &http401},
-		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: &dur}, ResponseCode: intPtr(502), CustomMessage: strPtr("upstream rejected request")},
+		When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: &http401},
+		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: &dur}, ResponseCode: new(502), CustomMessage: new("upstream rejected request")},
 	})
 	require.NoError(t, err)
 	re := rule.New(rule.Config{}, rstore, nil, nil, nil)
@@ -1028,10 +1028,8 @@ func TestReuseConcurrentSelectReloadRace(t *testing.T) {
 	s := newSched(t, m)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 8000; i++ {
+	wg.Go(func() {
+		for range 8000 {
 			sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 			if err != nil {
 				continue
@@ -1040,13 +1038,11 @@ func TestReuseConcurrentSelectReloadRace(t *testing.T) {
 			s.MarkResult(sel.AccountID, rule.KindOK, nil, 200, "", "")
 			s.Classify(rule.Event{AccountID: sel.AccountID, Kind: rule.Kind5xx})
 		}
-	}()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 400; i++ {
+	})
+	wg.Go(func() {
+		for range 400 {
 			require.NoError(t, s.reload(context.Background()))
 		}
-	}()
+	})
 	wg.Wait()
 }

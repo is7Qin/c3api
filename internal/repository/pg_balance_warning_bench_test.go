@@ -145,11 +145,9 @@ func settleWarningBuckets(buckets int, settle func(int) (domain.SettlementSummar
 	errs := make([]error, buckets)
 	var wait sync.WaitGroup
 	for bucket := range buckets {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
+		wait.Go(func() {
 			results[bucket], errs[bucket] = settle(bucket)
-		}()
+		})
 	}
 	wait.Wait()
 	var total domain.SettlementSummary

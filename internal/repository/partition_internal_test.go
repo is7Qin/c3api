@@ -36,7 +36,7 @@ func ddlColumnNames(ddls ...string) []string {
 			names = append(names, m[1])
 			continue
 		}
-		for _, line := range strings.Split(ddl, "\n") {
+		for line := range strings.SplitSeq(ddl, "\n") {
 			m := lineRe.FindStringSubmatch(line)
 			if m == nil || m[1] == "create" || m[1] == "primary" {
 				continue

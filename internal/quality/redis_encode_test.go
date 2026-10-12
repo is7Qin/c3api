@@ -74,7 +74,7 @@ func TestAppendQualityFieldMatchesHexJoin(t *testing.T) {
 func TestAppendQualityCellJSONReusedBuffer(t *testing.T) {
 	var buf []byte
 	var vals [][]byte
-	for i := 0; i < 300; i++ {
+	for i := range 300 {
 		k := encodeTestKey(byte(i))
 		start := len(buf)
 		buf = appendQualityCellJSON(buf, "h", 42, int64(i), k, encodeTestMinute(k))

@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -103,9 +104,7 @@ type gatedMgmtLoader struct {
 
 func (g *gatedMgmtLoader) LoadManagementKeys(context.Context) (map[string]domain.ManagementKeyMeta, error) {
 	out := make(map[string]domain.ManagementKeyMeta, len(g.m))
-	for k, v := range g.m {
-		out[k] = v
-	}
+	maps.Copy(out, g.m)
 	close(g.read) // 已读 DB 快照（Reload 随后才拿 a.mu）
 	<-g.release   // 等测试完成本地变更后放行
 	return out, nil

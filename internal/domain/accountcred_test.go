@@ -13,7 +13,8 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 )
 
-func strP(s string) *string { return &s }
+//go:fix inline
+func strP(s string) *string { return new(s) }
 
 // CredentialFromExt 派生单测（§4：AccountExt → AccountCredential 两形态投影）。
 func TestCredentialFromExt(t *testing.T) {
@@ -22,8 +23,8 @@ func TestCredentialFromExt(t *testing.T) {
 	t.Run("codex-oauth 取 oauth 列组", func(t *testing.T) {
 		e := &AccountExt{
 			AccountID: 7, CredentialType: credential.TypeCodexOAuth,
-			CodexOAuthToken: strP("at"), CodexOAuthRefreshToken: strP("rt"), CodexOAuthExpiresAt: &exp,
-			CodexPATKey: strP("patshould-not-leak"), CodexAccountID: strP("acc-7"),
+			CodexOAuthToken: new("at"), CodexOAuthRefreshToken: new("rt"), CodexOAuthExpiresAt: &exp,
+			CodexPATKey: new("patshould-not-leak"), CodexAccountID: new("acc-7"),
 		}
 		c := CredentialFromExt(e)
 		require.Equal(t, int64(7), c.AccountID)
@@ -37,9 +38,9 @@ func TestCredentialFromExt(t *testing.T) {
 	t.Run("codex-pat 取 pat 列组", func(t *testing.T) {
 		e := &AccountExt{
 			AccountID: 8, CredentialType: credential.TypeCodexPAT,
-			CodexPATKey:     strP("pk"),
-			CodexOAuthToken: strP("at-should-not-leak"),
-			CodexAccountID:  strP("acc-8"),
+			CodexPATKey:     new("pk"),
+			CodexOAuthToken: new("at-should-not-leak"),
+			CodexAccountID:  new("acc-8"),
 		}
 		c := CredentialFromExt(e)
 		require.Equal(t, int64(8), c.AccountID)

@@ -20,7 +20,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
@@ -88,11 +88,8 @@ func p99(samples []time.Duration) time.Duration {
 	if len(samples) == 0 {
 		return 0
 	}
-	sort.Slice(samples, func(i, j int) bool { return samples[i] < samples[j] })
-	idx := int(float64(len(samples))*0.99) - 1
-	if idx < 0 {
-		idx = 0
-	}
+	slices.Sort(samples)
+	idx := max(int(float64(len(samples))*0.99)-1, 0)
 	if idx >= len(samples) {
 		idx = len(samples) - 1
 	}
@@ -114,7 +111,7 @@ func BenchmarkSupplierCreditThroughput(b *testing.B) {
 		q := `INSERT INTO usage_logs (request_id, model, format, error_type, cost, created_at, supplier_user_id, supplier_earn_millis, supplier_credited, billed) VALUES `
 		args := make([]any, 0, n*5)
 		now := time.Now().UTC()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			seq++
 			if i > 0 {
 				q += ","
@@ -166,27 +163,27 @@ func BenchmarkSupplierUsageInsertAndMark(b *testing.B) {
 	const n = 2000
 
 	offIns := make([]time.Duration, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		t0 := time.Now()
 		benchExec(b, pool, `INSERT INTO usage_logs (request_id, model, format, error_type, cost, created_at, supplier_credited, billed)
 			VALUES ($1,'m','openai-chat','none',10,$2,true,false)`, fmt.Sprintf("off-%d", i), now)
 		offIns = append(offIns, time.Since(t0))
 	}
 	onIns := make([]time.Duration, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		t0 := time.Now()
 		benchExec(b, pool, `INSERT INTO usage_logs (request_id, model, format, error_type, cost, created_at, supplier_user_id, supplier_earn_millis, supplier_credited, billed)
 			VALUES ($1,'m','openai-chat','none',1000,$2,90001,100,false,false)`, fmt.Sprintf("on-%d", i), now)
 		onIns = append(onIns, time.Since(t0))
 	}
 	offMark := make([]time.Duration, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		t0 := time.Now()
 		benchExec(b, pool, `UPDATE usage_logs SET billed = true WHERE request_id = $1 AND NOT billed`, fmt.Sprintf("off-%d", i))
 		offMark = append(offMark, time.Since(t0))
 	}
 	onMark := make([]time.Duration, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		t0 := time.Now()
 		benchExec(b, pool, `UPDATE usage_logs SET billed = true WHERE request_id = $1 AND NOT billed`, fmt.Sprintf("on-%d", i))
 		onMark = append(onMark, time.Since(t0))

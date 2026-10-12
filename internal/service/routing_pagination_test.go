@@ -132,7 +132,7 @@ func TestRoutingFlow_PaginationDecoupledFromTotalsAndSankey(t *testing.T) {
 	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
 	rows := make([]repository.RoutingFlowStat, 0, 6)
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		rows = append(rows, repository.RoutingFlowStat{
 			Ordinal: 1, Lane: "primary", AccountID: int64(i%3 + 1),
 			Outcome: "success", IsTerminal: true, MinGeneration: 7,
@@ -180,7 +180,7 @@ func TestRoutingFlow_AccountsParamFoldsGraphOnly(t *testing.T) {
 	plan, idHex, _ := routingFixturePlan()
 	fs := newFakeStore()
 	rows := make([]repository.RoutingFlowStat, 0, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		rows = append(rows, repository.RoutingFlowStat{
 			Ordinal: 1, Lane: "primary", AccountID: int64(i + 1),
 			Outcome: "success", IsTerminal: true, MinGeneration: 7,
@@ -208,11 +208,11 @@ func TestRoutingFlow_AccountsParamFoldsGraphOnly(t *testing.T) {
 func multiRoutePlan(t *testing.T, n int) *scheduler.RoutingPlan {
 	t.Helper()
 	routes := make([]scheduler.RoutingPlanRoute, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		rc, err := domain.RouteClassID(int64(i+1), domain.FormatOpenAIChat, fmt.Sprintf("m%d", i), domain.OpChatCompletions)
 		require.NoError(t, err)
 		cands := make([]scheduler.RoutingPlanCandidate, 0, 5)
-		for c := 0; c < 5; c++ {
+		for c := range 5 {
 			cands = append(cands, scheduler.RoutingPlanCandidate{
 				AccountID:           int64(c + 1),
 				IdentityFingerprint: fpHex(byte(c + 1)),

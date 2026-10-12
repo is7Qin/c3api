@@ -279,13 +279,11 @@ func TestCodexResponsesSlotIdentitySequentialAcquireDistinctThread(t *testing.T)
 
 	var wg sync.WaitGroup
 	start := func() {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			resp := postResponses(t, srv, `{"model":"gpt-4o","input":"hi"}`)
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
-		}()
+		})
 	}
 	start()
 	waitCodexSlotReady(t, ready)
@@ -625,7 +623,7 @@ func TestCodexResponsesTurnStateStreamCarryAndClear(t *testing.T) {
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		resp := postResponsesTS(t, srv, `{"model":"gpt-4o","stream":true,"input":"hi"}`, "")
 		defer resp.Body.Close()
 		b, _ := io.ReadAll(resp.Body)
@@ -963,7 +961,6 @@ func selectCodexAccount(t *testing.T, p *Proxy, accountID int64) *scheduler.Sele
 // streamUpstreamStatus 归一为 502（不是 201/204 原样当 4xx）→ 交 pipeline → 耗尽 502。
 func TestCodexResponsesStream2xxNon200Normalized502(t *testing.T) {
 	for _, code := range []int{http.StatusCreated, http.StatusNoContent, http.StatusPartialContent} {
-		code := code
 		t.Run(http.StatusText(code), func(t *testing.T) {
 			up, upc := newCodexHTTPUpstream(t, codexHTTPStep{status: code, body: `{"detail":"weird"}`})
 			defer up.Close()

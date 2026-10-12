@@ -143,7 +143,7 @@ func TestUsageRepoInsertBatch_R8_ConcurrentSameBatchReplay(t *testing.T) {
 	start := make(chan struct{})
 	errs := make([]error, 2)
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()

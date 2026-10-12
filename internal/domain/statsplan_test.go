@@ -149,7 +149,7 @@ func planProbeCase(r *rand.Rand) (zone *time.Location, from, to time.Time) {
 func TestAdmit_N1BackwardBounded(t *testing.T) {
 	r := rand.New(rand.NewSource(20260925))
 	ret := Retention{}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		zone, from, to := planProbeCase(r)
 		exec, werr := Admit(KindTrend, ret, zone, from, to, statsPlanNow)
 		require.Nil(t, werr, "case %d zone=%v", i, zone)
@@ -165,7 +165,7 @@ func TestAdmit_N2Idempotent(t *testing.T) {
 	r := rand.New(rand.NewSource(7))
 	ret := Retention{}
 	sawCube, sawShifted, sawRaw := false, false, false
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		zone, from, to := planProbeCase(r)
 		exec, werr := Admit(KindTrend, ret, zone, from, to, statsPlanNow)
 		require.Nil(t, werr, "case %d", i)
@@ -211,7 +211,7 @@ func TestAdmit_N3SpanWithinCap(t *testing.T) {
 		}
 	}
 	r := rand.New(rand.NewSource(99))
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		zone, from, to := planProbeCase(r)
 		exec, werr := Admit(KindTrend, Retention{}, zone, from, to, statsPlanNow)
 		require.Nil(t, werr, "case %d", i)
@@ -297,7 +297,7 @@ func TestAdmit_N5NeverEmpty(t *testing.T) {
 
 	t.Run("随机 200 组恒非空", func(t *testing.T) {
 		r := rand.New(rand.NewSource(4242))
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			zone, from, to := planProbeCase(r)
 			exec, werr := Admit(KindTrend, Retention{}, zone, from, to, statsPlanNow)
 			require.Nil(t, werr, "case %d", i)

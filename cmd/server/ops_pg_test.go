@@ -48,7 +48,8 @@ import (
 	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
 )
 
-func ptrI64(v int64) *int64 { return &v }
+//go:fix inline
+func ptrI64(v int64) *int64 { return new(v) }
 
 // opsAdminUsers 静态快照 provider：任意 user 恒 platform_admin/active（ops 用例
 // 只需通过 /api/admin 组鉴权）。
@@ -155,7 +156,7 @@ func TestOpsWorkersPG(t *testing.T) {
 
 	// --- 1) usage pending 增长：不 Start（无 flush），Record 5 条 → 指标 5 ---
 	base := time.Now().UTC().Truncate(time.Hour)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		rec.Record(&domain.UsageLog{
 			RequestID: fmt.Sprintf("ops-%d", i), UserID: u.ID, Model: "gpt-4o",
 			Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone,

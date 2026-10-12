@@ -178,14 +178,14 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 	h, store := newUsageTestHandler(t, now, &hUsageSnap{
 		snaps: map[int64]*domain.CodexUsageSnapshot{2: {
 			PlanType:  "chatgpt-plus",
-			Credits:   &domain.CodexCredits{Balance: strPtr("12.50")},
+			Credits:   &domain.CodexCredits{Balance: new("12.50")},
 			RateLimit: &domain.CodexRateLimit{UsedPercent: 42}, // ResetAt nil（零值守卫）
 		}},
 		errs: map[int64]error{3: sdkbridge.ErrAuthExpired, 4: sdkbridge.ErrUpstream},
 	})
-	store.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
-	store.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-bad")}
-	store.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-net")}
+	store.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
+	store.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-bad")}
+	store.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-net")}
 
 	rec := getUsage(h, "account_ids=1,2,3,4&window=24h")
 	require.Equal(t, 200, rec.Code, "单账号快照失败不整批失败: %s", rec.Body.String())
@@ -228,7 +228,7 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 func TestGetAccountsUsageNilProber(t *testing.T) {
 	now := time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC)
 	h, store := newUsageTestHandler(t, now, nil)
-	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
 
 	rec := getUsage(h, "account_ids=1&window=24h")
 	require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
@@ -246,7 +246,7 @@ func TestAssembleUpstreamStoreErrorIsolated(t *testing.T) {
 	h, store := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), &hUsageSnap{
 		snaps: map[int64]*domain.CodexUsageSnapshot{1: {PlanType: "chatgpt-plus"}},
 	})
-	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
 	store.accExtErr[2] = errors.New("store down") // 非 ErrNotFound store 故障
 
 	items := []domain.AccountUsage{{AccountID: 1}, {AccountID: 2}}
@@ -310,7 +310,7 @@ func TestAssembleUpstreamParallel(t *testing.T) {
 	}
 	h, store := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), snap)
 	for i := int64(1); i <= 8; i++ {
-		store.accExts[i] = &domain.AccountExt{AccountID: i, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-ok")}
+		store.accExts[i] = &domain.AccountExt{AccountID: i, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
 	}
 	items := make([]domain.AccountUsage, 0, 8)
 	for i := int64(1); i <= 8; i++ {
@@ -349,7 +349,9 @@ func TestAssembleUpstreamParallel(t *testing.T) {
 		require.Nil(t, items[i].UpstreamError)
 	}
 }
-func strPtr(s string) *string { return &s }
+
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 // TestGetAccountsUsageFrozenFailedAccountSkipsProbe 冻结：运行时失效
 // （failed_at 置位）的 codex 账号不打上游额度端点（prober 零调用）；upstream_error
@@ -368,7 +370,7 @@ func TestGetAccountsUsageFrozenFailedAccountSkipsProbe(t *testing.T) {
 	store.accs[2] = &domain.Account{ID: 2, Enabled: true, FailedAt: &failedAt, FailureSource: &sdkSrc}
 	store.accs[3] = &domain.Account{ID: 3, Enabled: true, FailedAt: &failedAt, FailureSource: &ruleSrc}
 	for id := int64(1); id <= 3; id++ {
-		store.accExts[id] = &domain.AccountExt{AccountID: id, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat-" + strconv.FormatInt(id, 10))}
+		store.accExts[id] = &domain.AccountExt{AccountID: id, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-" + strconv.FormatInt(id, 10))}
 	}
 
 	rec := getUsage(h, "account_ids=1,2,3&window=24h")

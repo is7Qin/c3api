@@ -57,7 +57,7 @@ func TestSelectSessionParity_threadedFailoverSequence(t *testing.T) {
 	got = append(got, rec(attempt))
 	sel.Release()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		nextSel, nextAttempt, err := p.selectNextWithPlan(&plan)
 		if err != nil {
 			require.ErrorIs(t, err, scheduler.ErrAttemptsExhausted)

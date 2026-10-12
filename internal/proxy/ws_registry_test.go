@@ -59,7 +59,7 @@ func TestWSRegistryConcurrentBarrier(t *testing.T) {
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(idx int) {
 			defer wg.Done()
 			<-start
@@ -72,7 +72,7 @@ func TestWSRegistryConcurrentBarrier(t *testing.T) {
 	// Barrier-synced remove
 	start2 := make(chan struct{})
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(idx int) {
 			defer wg.Done()
 			<-start2

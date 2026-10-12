@@ -27,7 +27,7 @@ func TestInvalidateAccountReloadsExt(t *testing.T) {
 
 	// 轮转回写落库后 loader 数据已变（新凭据）
 	extNew := &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}, CodexOAuthToken: strPtrT("at-new"), CodexOAuthRefreshToken: strPtrT("rt-new")}
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "inst-1"}, CodexOAuthToken: new("at-new"), CodexOAuthRefreshToken: new("rt-new")}
 	m.mu.Lock()
 	m.byGroup[10][0].Ext = extNew
 	m.mu.Unlock()
@@ -88,4 +88,6 @@ func TestInvalidateAccountPrefersPendingAndDoesNotResurrectDeletedMembership(t *
 }
 
 // strPtrT 测试用字符串指针。
-func strPtrT(s string) *string { return &s }
+//
+//go:fix inline
+func strPtrT(s string) *string { return new(s) }

@@ -406,7 +406,7 @@ func TestConvertedCodexAdvanceIdentityDrivesWindow(t *testing.T) {
 
 	// windowSpan ∈ [48,96]（codexsdk/windowSpan），100 次成功推进必跨至少一窗。
 	const n = 100
-	for i := 0; i < n; i++ {
+	for i := range n {
 		rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, nil)
 		require.Equal(t, http.StatusOK, rec.Code, "第 %d 次请求 body=%s", i, rec.Body.String())
 	}

@@ -81,12 +81,12 @@ func TestSnapshotIsOwnedCopy(t *testing.T) {
 func TestConcurrentAccess(t *testing.T) {
 	l := NewLatchStore()
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			id := int64(i%3 + 1)
-			for j := 0; j < 200; j++ {
+			for j := range 200 {
 				l.TryAcquire(id, "fp", int64(j%4+1))
 				l.IsLatched(id, "fp", int64(j%4+1))
 				l.Snapshot()

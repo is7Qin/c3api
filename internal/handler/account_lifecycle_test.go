@@ -42,7 +42,7 @@ func newLifecycleTestHandler(t *testing.T) (*AdminAPI, *fakeStore, *hProber, fun
 	store.accs[1] = &domain.Account{
 		ID: 1, Name: "acc1", TemplateID: 1, UpstreamKey: "sk-a",
 		MaxConcurrency: 4, Enabled: true, FailedAt: &failed, FailureSource: &src,
-		LastError: &reason, LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: intPtr(25000), CacheDomain: &dom,
+		LastError: &reason, LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: new(25000), CacheDomain: &dom,
 	}
 	prober := &hProber{}
 	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, RecoverProber: prober})

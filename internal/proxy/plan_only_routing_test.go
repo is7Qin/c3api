@@ -49,9 +49,9 @@ func TestSelectWithPlan_NoCompiledDecision_FailsClosedWithTypedError(t *testing.
 }
 
 func TestHandleAnthropic_NoCompiledDecision_RejectsWithoutDispatch(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer up.Close()
@@ -66,7 +66,7 @@ func TestHandleAnthropic_NoCompiledDecision_RejectsWithoutDispatch(t *testing.T)
 	p.HandleAnthropic(w, req)
 
 	require.Equal(t, http.StatusNotFound, w.Code, "absent compiled plan fails closed as 404")
-	require.Zero(t, atomic.LoadInt32(&hits), "no upstream dispatch without a plan")
+	require.Zero(t, hits.Load(), "no upstream dispatch without a plan")
 	require.Empty(t, fc.snapshot())
 	require.Zero(t, snapshotQualityAttempts(rec))
 	// Atomic publication: the staged anthropic account stays invisible until
@@ -82,9 +82,9 @@ func TestHandleAnthropic_NoCompiledDecision_RejectsWithoutDispatch(t *testing.T)
 // Attempt carries no canonical model identity: the plan execution is invalid
 // and must fail closed — never dispatch under a fabricated identity.
 func TestHandleChat_ModellessRequest_FailsClosedWithoutDispatch(t *testing.T) {
-	var hits int32
+	var hits atomic.Int32
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
+		hits.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer up.Close()
@@ -98,7 +98,7 @@ func TestHandleChat_ModellessRequest_FailsClosedWithoutDispatch(t *testing.T) {
 	p.HandleChat(w, req)
 
 	require.Equal(t, http.StatusNotFound, w.Code, "invalid attempt identity fails closed as 404")
-	require.Zero(t, atomic.LoadInt32(&hits))
+	require.Zero(t, hits.Load())
 	require.Empty(t, fc.snapshot(), "no observation may be recorded without canonical identity")
 	require.Zero(t, snapshotQualityAttempts(rec))
 	ri, ok := p.sched.Runtime(1)

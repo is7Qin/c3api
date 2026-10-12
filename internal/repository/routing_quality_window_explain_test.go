@@ -64,7 +64,7 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 	qc[0] = 0xB2
 	hotRC, hotFP := make([]string, 0, nhot), make([]string, 0, nhot)
 	batch := &pgx.Batch{}
-	for i := 0; i < ncand; i++ {
+	for i := range ncand {
 		fp := make([]byte, 32)
 		fp[0] = byte(i)
 		fp[1] = byte(i >> 8)
@@ -73,7 +73,7 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 			hotRC = append(hotRC, hex.EncodeToString(rc))
 			hotFP = append(hotFP, hex.EncodeToString(fp))
 		}
-		for h := 0; h < nrows; h++ {
+		for h := range nrows {
 			minute := m.Add(-time.Duration(6+h*110) * time.Minute)
 			batch.Queue(
 				`INSERT INTO routing_quality_fact
@@ -147,7 +147,7 @@ func TestRoutingQualityWindowPlanPG(t *testing.T) {
 
 	// Row-count bound: one row per hot (route, fp) at most.
 	keys := make([]WindowHotKey, 0, nhot)
-	for i := 0; i < nhot; i++ {
+	for i := range nhot {
 		var rcV domain.RouteClassIDVal
 		copy(rcV[:], rc)
 		fpb, err := hex.DecodeString(hotFP[i])

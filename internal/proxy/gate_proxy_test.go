@@ -119,7 +119,7 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		waitGateKey(t, p, 1, 1) // 第一请求占住唯一并发槽
 
 		const storm = 300 // 风暴：并发超限 429
-		for i := 0; i < storm; i++ {
+		for range storm {
 			recw := httptest.NewRecorder()
 			p.HandleChat(recw, chatReq("ck-1"))
 			require.Equal(t, http.StatusTooManyRequests, recw.Code, "body=%s", recw.Body.String())
@@ -161,7 +161,7 @@ func TestProxyRejectionStormNoPending(t *testing.T) {
 		waitGateKey(t, p, 1, 1)
 
 		const storm = 300 // 风暴：并发超限 429（UserID>0 → 修复前全部漏斗到 billed flusher）
-		for i := 0; i < storm; i++ {
+		for range storm {
 			recw := httptest.NewRecorder()
 			p.HandleChat(recw, chatReq("ck-1"))
 			require.Equal(t, http.StatusTooManyRequests, recw.Code, "body=%s", recw.Body.String())
@@ -227,7 +227,7 @@ func TestProxyQuotaExhaustedAndDeduct(t *testing.T) {
 	meta.Quota = 260 // 计费价格由测试默认 proxy helper 提供：每轮 Cost=130
 	p.auth.Upsert("ck-1", meta)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rec := httptest.NewRecorder()
 		p.HandleChat(rec, chatReq("ck-1"))
 		require.Equal(t, http.StatusOK, rec.Code, "第 %d 轮: %s", i+1, rec.Body.String())
@@ -248,7 +248,7 @@ func TestProxyNoQuotaKeyZeroCost(t *testing.T) {
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1) // activeKey 默认 HasQuota=false
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		rec := httptest.NewRecorder()
 		p.HandleChat(rec, chatReq("ck-1"))
 		require.Equal(t, http.StatusOK, rec.Code)
