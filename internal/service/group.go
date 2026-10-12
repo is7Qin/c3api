@@ -20,7 +20,7 @@ import (
 // 不转换）——off 元素归一剔除（空/仅 off → 空数组）；非法方向/重复方向/
 // 同客户端格式多方向 → 400。创建后 Multipliers()：新组倍率须即刻进余额倍率
 // 快照（缺失 = ×1 计费窗口，组倍率矩阵——组创建即倍率设定）。
-func (s *Service) CreateGroup(ctx context.Context, name string, visibility domain.GroupVisibility, priceMultiplier *int, protocolConverts []domain.ProtocolConvert) (*domain.Group, error) {
+func (s *Service) CreateGroup(ctx context.Context, name string, description string, visibility domain.GroupVisibility, priceMultiplier *int, protocolConverts []domain.ProtocolConvert) (*domain.Group, error) {
 	if name == "" {
 		return nil, ErrInvalidInput
 	}
@@ -38,7 +38,7 @@ func (s *Service) CreateGroup(ctx context.Context, name string, visibility domai
 		}
 		mult = *priceMultiplier
 	}
-	g := &domain.Group{Name: name, Visibility: visibility, PriceMultiplier: mult, ProtocolConverts: converts}
+	g := &domain.Group{Name: name, Description: description, Visibility: visibility, PriceMultiplier: mult, ProtocolConverts: converts}
 	created, err := s.store.CreateGroup(ctx, g)
 	if err != nil {
 		return nil, mapRepoErr(err) // name 唯一冲突 → ErrConflict（409）

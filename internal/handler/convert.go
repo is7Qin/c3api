@@ -147,6 +147,7 @@ func toAPIGroup(g *domain.Group) Group {
 	return Group{
 		ID:              &g.ID,
 		Name:            &g.Name,
+		Description:     httpface.Ptr(g.Description),
 		Visibility:      &v,
 		PriceMultiplier: httpface.Ptr(multToNormal(g.PriceMultiplier)),
 		ProtocolConvert: &converts,

@@ -3514,6 +3514,7 @@ components:
       required: [name]
       properties:
         name: { type: string }
+        description: { type: string, nullable: true, description: 分组描述（可选）。POST：缺省/null = 空；PUT：缺省/null = 保持原值，显式空串 = 清空 }
         visibility: { $ref: '#/components/schemas/GroupVisibility' }
         price_multiplier: { type: number, format: double, minimum: 0, maximum: 10, nullable: true, description: 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）。缺省/null = 不设置（×1）；显式 0 = 免费组；PUT 显式写（含 0） }
         protocol_convert:
@@ -3643,6 +3644,7 @@ components:
       properties:
         ID: { type: integer, format: int64 }
         Name: { type: string }
+        Description: { type: string, description: 分组描述（空串 = 无描述） }
         Visibility: { $ref: '#/components/schemas/GroupVisibility' }
         PriceMultiplier: { type: number, format: double, description: 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5） }
         ProtocolConvert:

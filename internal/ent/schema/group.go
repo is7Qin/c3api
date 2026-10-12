@@ -16,6 +16,10 @@ func (Group) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("id"),
 		field.String("name").Unique(),
+		// description 分组描述（自由文本）：非空列 + 默认空串（空串 = 无描述）。
+		// 先例 setting.go:19（普通表非空字符串列 + Default("")）；groups 非分区表 →
+		// auto-migrate ADD COLUMN description ... NOT NULL DEFAULT ''，旧行回填 ""。
+		field.String("description").Default(""),
 		field.Enum("visibility").Values("public", "private").Default("public"),
 		field.Int("price_multiplier").Default(10000), // 万分数（T3.5 价格倍率）：组默认 ×1；0 = 免费
 		// protocol_convert 分组级协议转换（只补差，W5 消费）：JSON 数组，空数组 =

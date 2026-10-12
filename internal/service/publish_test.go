@@ -80,7 +80,7 @@ func TestPublishMatrix(t *testing.T) {
 	t.Run("key CRUD 缺口 → Keys:true，一次操作一条", func(t *testing.T) {
 		svc, fs, pr := newPubSvc()
 		u := seedUser(t, fs, "k@example.com", 0, 0)
-		g, err := svc.CreateGroup(ctx, "g", domain.GroupVisibilityPublic, nil, nil)
+		g, err := svc.CreateGroup(ctx, "g", "", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
 
 		// 创建（quota 门禁字段落库 + Auth 增量注册）→ Keys
@@ -185,9 +185,9 @@ func TestPublishMatrix(t *testing.T) {
 			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 		})
 		require.NoError(t, err)
-		g1, err := svc.CreateGroup(ctx, "g1", domain.GroupVisibilityPublic, nil, nil)
+		g1, err := svc.CreateGroup(ctx, "g1", "", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
-		g2, err := svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, nil, nil)
+		g2, err := svc.CreateGroup(ctx, "g2", "", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
 
 		acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
@@ -256,7 +256,7 @@ func TestReloadSettings(t *testing.T) {
 func TestPublishMultipliersAndGroupDelete(t *testing.T) {
 	ctx := context.Background()
 	svc, fs, pr := newPubSvc()
-	g, err := svc.CreateGroup(ctx, "g", domain.GroupVisibilityPublic, nil, nil)
+	g, err := svc.CreateGroup(ctx, "g", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	require.True(t, pr.last().Multipliers, "创建组 → Multipliers:true")
 	require.False(t, pr.last().Keys, "组创建无 key → 不置 Keys（创建后建 key 的即时性由 增量注册保证）")

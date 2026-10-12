@@ -175,6 +175,7 @@ var (
 	GroupsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "name", Type: field.TypeString, Unique: true},
+		{Name: "description", Type: field.TypeString, Default: ""},
 		{Name: "visibility", Type: field.TypeEnum, Enums: []string{"public", "private"}, Default: "public"},
 		{Name: "price_multiplier", Type: field.TypeInt, Default: 10000},
 		{Name: "protocol_convert", Type: field.TypeJSON},

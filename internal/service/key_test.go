@@ -23,7 +23,7 @@ func TestKeyMetaProtocolConvertsIncremental(t *testing.T) {
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "conv-k@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
 	require.NoError(t, err)
 	converts := []domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp}
-	g, err := svc.CreateGroup(ctx, "conv-g", domain.GroupVisibilityPublic, nil, converts)
+	g, err := svc.CreateGroup(ctx, "conv-g", "", domain.GroupVisibilityPublic, nil, converts)
 	require.NoError(t, err)
 	require.Equal(t, converts, g.ProtocolConverts, "归一后组快照携带转换方向")
 
@@ -57,7 +57,7 @@ func TestKeyMetaProtocolConvertsEmpty(t *testing.T) {
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "conv-off@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
 	require.NoError(t, err)
-	g, err := svc.CreateGroup(ctx, "off-g", domain.GroupVisibilityPublic, nil, []domain.ProtocolConvert{domain.ProtocolConvertOff})
+	g, err := svc.CreateGroup(ctx, "off-g", "", domain.GroupVisibilityPublic, nil, []domain.ProtocolConvert{domain.ProtocolConvertOff})
 	require.NoError(t, err)
 	require.Empty(t, g.ProtocolConverts, "仅 off → 归一剔除为空")
 
@@ -77,7 +77,7 @@ func TestKeyQuotaMaxSafeIntegerBoundary(t *testing.T) {
 
 	u, err := fs.CreateUser(ctx, &domain.User{Email: "quota-bound@example.com", Role: domain.RoleUser, Status: domain.UserStatusActive})
 	require.NoError(t, err)
-	g, err := svc.CreateGroup(ctx, "qb-g", domain.GroupVisibilityPublic, nil, nil)
+	g, err := svc.CreateGroup(ctx, "qb-g", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 
 	// create：上限放行、超限 400、负数 400（既有）

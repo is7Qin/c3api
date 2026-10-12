@@ -614,6 +614,7 @@ export default {
     "emptyDesc": "创建分组以划分客户端访问范围",
     "table": {
       "name": "名称",
+      "description": "描述",
       "visibility": "可见性",
       "priceMultiplier": "价格倍率",
       "protocolConvert": "协议转换",
@@ -622,7 +623,7 @@ export default {
     },
     "createdSuccess": "分组已创建",
     "newTitle": "新建分组",
-    "newDesc": "设置名称、可见性与协议转换；价格倍率留空 = ×1",
+    "newDesc": "设置名称、描述、可见性与协议转换；价格倍率留空 = ×1",
     "protocolConvertLabel": "协议转换",
     "protocolConvert": {
       "off": "关闭",
@@ -641,6 +642,8 @@ export default {
     "protocolConvertHint": "多方向可同时勾选；全不勾 = 关闭（不转换）",
     "nameLabel": "名称",
     "namePlaceholder": "如 prod-web",
+    "descriptionLabel": "描述",
+    "descriptionPlaceholder": "可选；向用户说明该分组的用途",
     "visibilityLabel": "可见性",
     "visibilityPublic": "公开",
     "visibilityPrivate": "私有",

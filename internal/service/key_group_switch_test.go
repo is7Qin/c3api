@@ -106,7 +106,7 @@ func TestUpdateKeyNoChangeShortCircuit(t *testing.T) {
 	ctx := context.Background()
 
 	u := seedUser(t, fs, "noop@example.com", 0, 0)
-	g, err := svc.CreateGroup(ctx, "noop-g", domain.GroupVisibilityPublic, nil, nil)
+	g, err := svc.CreateGroup(ctx, "noop-g", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	created, err := svc.CreateKey(ctx, u.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)

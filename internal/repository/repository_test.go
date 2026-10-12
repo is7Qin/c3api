@@ -305,9 +305,10 @@ func TestAccountAndGroup(t *testing.T) {
 
 	// Group create（无 key 字段，visibility 默认 public；
 	// price_multiplier 恒写入：service 归一缺省为 10000，显式 0 = 免费组；
-	// protocol_convert 恒写入——JSON 数组列：空数组 = off（service 归一缺省）
+	// protocol_convert 恒写入——JSON 数组列：空数组 = off（service 归一缺省）；
+	// description 恒写入（空串 = 无描述）
 	tr.pool.ExpectQuery(q(`INSERT INTO "groups"`)).
-		WithArgs("g1", group.VisibilityPublic, pgxmock.AnyArg(), json.RawMessage(`[]`), pgxmock.AnyArg(), pgxmock.AnyArg()).
+		WithArgs("g1", "", group.VisibilityPublic, pgxmock.AnyArg(), json.RawMessage(`[]`), pgxmock.AnyArg(), pgxmock.AnyArg()).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(3)))
 
 	// SetAccountGroups -> checkGroupExist 预校验（SELECT groups）+ 自动 Tx（M2M

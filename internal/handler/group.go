@@ -42,7 +42,12 @@ func (h *AdminAPI) PostGroups(w http.ResponseWriter, r *http.Request) {
 			pcs = append(pcs, domain.ProtocolConvert(pc))
 		}
 	}
-	g, err := h.svc.CreateGroup(r.Context(), in.Name, visibility, mult, pcs)
+	// description 可选（自由文本）：nil/null 与显式 "" 均得 ""（空串 = 无描述）。
+	desc := ""
+	if in.Description != nil {
+		desc = *in.Description
+	}
+	g, err := h.svc.CreateGroup(r.Context(), in.Name, desc, visibility, mult, pcs)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -95,6 +100,11 @@ func (h *AdminAPI) PutGroupsId(w http.ResponseWriter, r *http.Request, id int64)
 		return
 	}
 	g.Name = in.Name
+	// description 缺省（null/省略）= 保持原值（读改写路径携带原值自然保留）；
+	// 显式 ""（含非空）= 覆盖/清空，与 visibility/multiplier/protocol 同款语义。
+	if in.Description != nil {
+		g.Description = *in.Description
+	}
 	if in.Visibility != nil {
 		g.Visibility = domain.GroupVisibility(*in.Visibility)
 	}
