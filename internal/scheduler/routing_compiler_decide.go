@@ -4,6 +4,7 @@ package scheduler
 import (
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -40,30 +41,18 @@ func compileRouteQualityCandidates(filtered []compilerCandidateFacts, routeRC do
 		known := hasPrice && cnt.Successes > 0
 		var cost int64
 		if known {
-			billable := inTok
-			if billable < 0 {
-				billable = 0
-			}
-			cached := crTok
-			if cached < 0 {
-				cached = 0
-			}
+			billable := max(inTok, 0)
+			cached := max(crTok, 0)
 			denom := billable + cached
 			if denom == 0 {
 				cost = math.MaxInt64
 				known = false
 			} else {
-				mult := facts.upstreamCostMultiplierBp
-				if mult < 0 {
-					mult = 0
-				}
+				mult := max(facts.upstreamCostMultiplierBp, 0)
 				if mult > 100000 {
 					mult = 100000
 				}
-				cost = InputUnitPurchaseCost(uint64(mult), uint64(billable), uint64(cached), NonNegPrice(price.InputPerM), NonNegPrice(price.CacheReadPerM), uint64(denom))
-				if cost < 0 {
-					cost = 0
-				}
+				cost = max(InputUnitPurchaseCost(uint64(mult), uint64(billable), uint64(cached), NonNegPrice(price.InputPerM), NonNegPrice(price.CacheReadPerM), uint64(denom)), 0)
 			}
 		} else {
 			cost = math.MaxInt64
@@ -137,7 +126,7 @@ func compileExplorePlan(filteredCount int, cl QualityClassification) (exploreBP 
 			for i, qc := range cl.Explore {
 				exploreIDs[i] = qc.AccountID
 			}
-			sort.Slice(exploreIDs, func(i, j int) bool { return exploreIDs[i] < exploreIDs[j] })
+			slices.Sort(exploreIDs)
 		} else {
 			sort.Slice(exploreCandidates, func(i, j int) bool { return exploreCandidates[i].AccountID < exploreCandidates[j].AccountID })
 			cumulative = make([]uint64, len(exploreCandidates))

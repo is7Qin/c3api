@@ -353,15 +353,15 @@ func (r *relay) run() error {
 
 // splitField 解析 "name: value" 行；无冒号或注释行返回 ("", nil)。
 func splitField(line []byte) ([]byte, []byte) {
-	i := bytes.IndexByte(line, ':')
-	if i < 0 {
+	before, after, ok := bytes.Cut(line, []byte{':'})
+	if !ok {
 		return nil, nil
 	}
-	name := line[:i]
+	name := before
 	if len(name) == 0 || name[0] == ':' { // 注释行
 		return nil, nil
 	}
-	val := line[i+1:]
+	val := after
 	if len(val) > 0 && val[0] == ' ' {
 		val = val[1:]
 	}

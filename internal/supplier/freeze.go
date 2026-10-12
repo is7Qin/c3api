@@ -48,9 +48,6 @@ func MaxActiveBuckets(g time.Duration, freezeHours int) int64 {
 	if gs <= 0 {
 		gs = 1
 	}
-	h := int64(freezeHours) * 3600
-	if h < 0 {
-		h = 0
-	}
+	h := max(int64(freezeHours)*3600, 0)
 	return (h+gs-1)/gs + 1
 }

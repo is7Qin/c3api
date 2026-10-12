@@ -256,7 +256,7 @@ func (e *RuleEngine) NeedsOKEvents() bool { return e.needsOK.Load() }
 // Reload 全量加载 enabled 规则（priority 升序）；空表先写种子（seedRules）。
 // 失败返回 error——规则表是状态管理唯一路径，main 收到错误即 fatalf。
 func (e *RuleEngine) Reload(ctx context.Context) error {
-	rules, err := e.store.ListRules(ctx, boolPtr(true))
+	rules, err := e.store.ListRules(ctx, new(true))
 	if err != nil {
 		return fmt.Errorf("rule engine reload: %w", err)
 	}
@@ -264,7 +264,7 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 		if err := e.seedRules(ctx); err != nil {
 			return err
 		}
-		rules, err = e.store.ListRules(ctx, boolPtr(true))
+		rules, err = e.store.ListRules(ctx, new(true))
 		if err != nil {
 			return fmt.Errorf("rule engine reload after seed: %w", err)
 		}
@@ -332,28 +332,28 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 	seeds := []domain.Rule{
 		{
 			Name: "seed-429", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtr("429")},
-			Then: domain.RuleThen{Throttle: throttleRetry, CustomMessage: strPtr("rate limited")},
+			When: domain.RuleWhen{Kind: new("429")},
+			Then: domain.RuleThen{Throttle: throttleRetry, CustomMessage: new("rate limited")},
 		},
 		{
 			Name: "seed-4xx-400", Enabled: true, Priority: 15,
-			When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(400)},
 			Then: domain.RuleThen{}, // ResponseCode nil + CustomMessage nil = 全透（种子特例，直插）
 		},
 		{
 			Name: "seed-5xx-503-overload", Enabled: true, Priority: 16,
-			When: domain.RuleWhen{Kind: strPtr("5xx"), HTTPStatus: intPtr(503), ErrorMessageContains: strPtr("overload")},
+			When: domain.RuleWhen{Kind: new("5xx"), HTTPStatus: new(503), ErrorMessageContains: new("overload")},
 			Then: domain.RuleThen{}, // 503 overload 全透：码/文原样过，不惩罚不归一
 		},
 		{
 			Name: "seed-5xx", Enabled: true, Priority: 20,
-			When: domain.RuleWhen{Kind: strPtr("5xx")},
-			Then: domain.RuleThen{Throttle: throttleOpen(10 * 60 * 1000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
+			When: domain.RuleWhen{Kind: new("5xx")},
+			Then: domain.RuleThen{Throttle: throttleOpen(10 * 60 * 1000), ResponseCode: new(502), CustomMessage: new("Upstream request failed")},
 		},
 		{
 			Name: "seed-network", Enabled: true, Priority: 25,
-			When: domain.RuleWhen{Kind: strPtr("network")},
-			Then: domain.RuleThen{Throttle: throttleOpen(5000), ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
+			When: domain.RuleWhen{Kind: new("network")},
+			Then: domain.RuleThen{Throttle: throttleOpen(5000), ResponseCode: new(502), CustomMessage: new("Upstream request failed")},
 		},
 	}
 	for _, s := range seeds {
@@ -526,9 +526,14 @@ func (e *RuleEngine) persistDoneChan() <-chan struct{} {
 	return e.persistDone
 }
 
-func boolPtr(b bool) *bool    { return &b }
-func intPtr(v int) *int       { return &v }
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func boolPtr(b bool) *bool { return new(b) }
+
+//go:fix inline
+func intPtr(v int) *int { return new(v) }
+
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 // Classify 事件分类决策（错误分支响应/投递决策——scheduler 包装调用，用户面
 // err_logs 行级脱敏亦复用）：遍历 enabled 规则（priority 升序首中），首个
@@ -562,7 +567,7 @@ func (e *RuleEngine) Classify(ev Event) (then domain.RuleThen, punish bool) {
 	if ev.Kind == KindOK {
 		return domain.RuleThen{}, false
 	}
-	return domain.RuleThen{ResponseCode: intPtr(502), CustomMessage: strPtr("upstream rejected request")}, false
+	return domain.RuleThen{ResponseCode: new(502), CustomMessage: new("upstream rejected request")}, false
 }
 
 // UnifiedMessage 统一公式 msg=CustomMessage!=nil?*CustomMessage:upstream，响应

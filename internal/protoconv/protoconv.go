@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/sserelay"
@@ -464,9 +465,10 @@ func joinStrings(parts []string, sep string) string {
 	if len(parts) == 0 {
 		return ""
 	}
-	out := parts[0]
+	var out strings.Builder
+	out.WriteString(parts[0])
 	for _, p := range parts[1:] {
-		out += sep + p
+		out.WriteString(sep + p)
 	}
-	return out
+	return out.String()
 }

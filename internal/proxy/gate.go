@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"context"
+	"maps"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -236,9 +237,7 @@ func (g *concurrencyGate) delete(keyID int64) {
 
 func cloneCounters[T any](m map[int64]*T) map[int64]*T {
 	out := make(map[int64]*T, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
+	maps.Copy(out, m)
 	return out
 }
 
@@ -414,10 +413,9 @@ func (g *concurrencyGate) reclaim(meta domain.KeyMeta, q *keyQuota) bool {
 		// ≤ quota - used(DB) + 基线差（与初始份额无关）；多实例 + DB 恒滞后
 		// 病理形态总量有界 ≈2Q - U（生产 flush 推进 U，总量 ≈ Q + N×flush
 		// 窗口滞后）。
-		unreported := q.consumed.Load() - q.quotaUsedAtReclaim.Load()
-		if unreported < 0 {
-			unreported = 0 // 其他实例回写使 DB 值领先于本地 → 无未反映消耗
-		}
+		unreported := max(q.consumed.Load()-q.quotaUsedAtReclaim.Load(),
+			// 其他实例回写使 DB 值领先于本地 → 无未反映消耗
+			0)
 		if remainingEff := remaining - unreported; remainingEff > 0 {
 			q.quotaUsedAtReclaim.Store(used) // 基准前移：本次复核读到的 DB 值
 			q.budget.Store(q.consumed.Load() + ceilDiv(remainingEff, int64(g.instancesN())))

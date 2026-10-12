@@ -54,7 +54,7 @@ func ResolveStatsWindow(from, to *time.Time, window *string, now time.Time) (tim
 			// 语法裁决：只收时长（`7d` 走这里）；不可解析 → 参数非法，
 			// 与"必填/倒序"同类（window_invalid 只发 reason，不带伪造的生效窗口）。
 			return time.Time{}, time.Time{}, &serviceerr.StatsWindowError{
-				StatsWindowError: domain.StatsWindowError{Reject: domain.StatsRejectWindowInvalid},
+				Reject: domain.StatsRejectWindowInvalid,
 			}
 		}
 		// 双界整点（domain.WindowFromDuration 用与 Admit 同一个 ceilHour），
@@ -63,6 +63,6 @@ func ResolveStatsWindow(from, to *time.Time, window *string, now time.Time) (tim
 		return f, t, nil
 	}
 	return time.Time{}, time.Time{}, &serviceerr.StatsWindowError{
-		StatsWindowError: domain.StatsWindowError{Reject: domain.StatsRejectWindowAmbiguous},
+		Reject: domain.StatsRejectWindowAmbiguous,
 	}
 }

@@ -217,7 +217,7 @@ func main() {
 	var tplIDs []int64
 	if *reuseTpls != "" {
 		// 复用既有模板：模板名按格式确定性生成，同库多次 setup 二次创建必撞 409
-		for _, s := range strings.Split(*reuseTpls, ",") {
+		for s := range strings.SplitSeq(*reuseTpls, ",") {
 			id, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "-reuse-template-ids: bad id %q\n", s)
@@ -385,7 +385,7 @@ func main() {
 				// 用户是预热建的（慢于快照周期），重试仅覆盖 setup 冷启动。
 				keysCall := func() error {
 					var e error
-					for attempt := 0; attempt < 3; attempt++ {
+					for attempt := range 3 {
 						if attempt > 0 {
 							time.Sleep(300 * time.Millisecond)
 						}
@@ -418,7 +418,7 @@ func main() {
 func pickModels(rng *rand.Rand, n int) []string {
 	out := make([]string, n)
 	perm := rng.Perm(len(modelPool))
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out[i] = modelPool[perm[i]]
 	}
 	return out

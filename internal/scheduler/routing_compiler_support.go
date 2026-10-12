@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"encoding/binary"
+	"slices"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
@@ -44,12 +45,7 @@ func callerKindForFormat(f domain.RequestFormat) domain.CallerKind {
 }
 
 func tplSupportsFormat(tpl *domain.Template, format domain.RequestFormat) bool {
-	for _, f := range tpl.SupportedFormats {
-		if f == format {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(tpl.SupportedFormats, format)
 }
 
 func candidateIdentityFingerprint(fingerprint string, accountID int64) domain.CandidateFingerprintVal {

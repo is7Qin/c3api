@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -153,7 +154,7 @@ func sortedGroupIDs(m map[int64]*groupSnapshot) []int64 {
 	for gid := range m {
 		ids = append(ids, gid)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids
 }
 

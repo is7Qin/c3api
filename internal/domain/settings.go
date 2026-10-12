@@ -45,7 +45,9 @@ var DefaultSettings = []Setting{
 }
 
 // i64p 注册表数值值域指针辅助（Min/Max 域字面量；nil = 无限制，见 Setting 注释）。
-func i64p(v int64) *int64 { return &v }
+//
+//go:fix inline
+func i64p(v int64) *int64 { return new(v) }
 
 // DefaultSetting 返回内置 key 的默认设置；未知 key 返回 nil。
 func DefaultSetting(key string) *Setting {

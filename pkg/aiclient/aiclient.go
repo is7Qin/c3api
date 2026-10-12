@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"strings"
@@ -250,9 +251,7 @@ func (f *Factory) fullURLOf(templateID int64, baseURL, path string) (*url.URL, e
 // O(n) 拷贝可忽略）。
 func cloneAdd[K comparable, V any](m map[K]V, k K, v V) map[K]V {
 	nm := make(map[K]V, len(m)+1)
-	for kk, vv := range m {
-		nm[kk] = vv
-	}
+	maps.Copy(nm, m)
 	nm[k] = v
 	return nm
 }

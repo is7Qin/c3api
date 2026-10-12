@@ -173,8 +173,7 @@ func (e *creditConsumeError) Unwrap() error { return e.err }
 // 笼统名（不吞错误、不改控制流）。
 func creditConsumeFailedEvent(err error, drain bool) string {
 	suffix := "consume failed"
-	var ce *creditConsumeError
-	if errors.As(err, &ce) {
+	if ce, ok := errors.AsType[*creditConsumeError](err); ok {
 		switch ce.stage {
 		case stageFetch:
 			if drain {
@@ -232,7 +231,7 @@ func (w *CreditWorker) releaseFrozenOnce(ctx context.Context) (int, error) {
 func (w *CreditWorker) applyWithRetry(ctx context.Context, batch []BatchRow, freeze map[int64]int) error {
 	const maxAttempts = 5
 	var err error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := range maxAttempts {
 		if err = w.store.ApplyCreditTx(ctx, batch, freeze); err == nil {
 			return nil
 		}

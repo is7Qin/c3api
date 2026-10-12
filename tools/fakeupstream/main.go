@@ -223,7 +223,7 @@ func writeChatStream(w http.ResponseWriter, fl http.Flusher, latency time.Durati
 	base["usage"] = map[string]any{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
 	rawLast, _ := json.Marshal(base)
 	last := append(append([]byte("data: "), rawLast...), '\n', '\n')
-	for i := 0; i < n; i++ {
+	for i := range n {
 		time.Sleep(latency)
 		data := frame
 		if i == n-1 {
@@ -244,7 +244,7 @@ func modelsHandler(w http.ResponseWriter, r *http.Request) {
 
 func splitKeys(s string) map[string]bool {
 	out := make(map[string]bool)
-	for _, k := range strings.Split(s, ",") {
+	for k := range strings.SplitSeq(s, ",") {
 		if k = strings.TrimSpace(k); k != "" {
 			out[k] = true
 		}

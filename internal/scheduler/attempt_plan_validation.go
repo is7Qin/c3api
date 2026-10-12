@@ -53,7 +53,7 @@ func validateRouteDecision(decision *RouteDecision) error {
 		if int(fallbackIndex) >= len(decision.Explore.Ordered) {
 			return &InvalidRouteDecisionError{Field: fmt.Sprintf("explore.fallback[%d]", i), Index: i, FallbackIndex: fallbackIndex}
 		}
-		for j := 0; j < i; j++ {
+		for j := range i {
 			if decision.Explore.Fallback[j] == fallbackIndex {
 				return &InvalidRouteDecisionError{Field: fmt.Sprintf("explore.fallback[%d]", i), Index: i, FallbackIndex: fallbackIndex}
 			}

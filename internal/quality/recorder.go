@@ -451,28 +451,28 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		out.cell = nil
 		out.recorder = nil
 		out.gen = 0
-		atomic.StoreUint32(&out.done, 0)
+		out.done.Store(0)
 		return false
 	}
 	if r.isClosed() {
 		out.cell = nil
 		out.recorder = nil
 		out.gen = 0
-		atomic.StoreUint32(&out.done, 0)
+		out.done.Store(0)
 		return false
 	}
 	if r.finalSnapshot.Load() != nil {
 		out.cell = nil
 		out.recorder = nil
 		out.gen = 0
-		atomic.StoreUint32(&out.done, 0)
+		out.done.Store(0)
 		return false
 	}
 	if !r.tryIncAdmission() {
 		out.cell = nil
 		out.recorder = nil
 		out.gen = 0
-		atomic.StoreUint32(&out.done, 0)
+		out.done.Store(0)
 		return false
 	}
 	if cell.owner != r.id {
@@ -480,7 +480,7 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		out.cell = nil
 		out.recorder = nil
 		out.gen = 0
-		atomic.StoreUint32(&out.done, 0)
+		out.done.Store(0)
 		return false
 	}
 	if cell.gen == 0 {
@@ -488,7 +488,7 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		out.cell = nil
 		out.recorder = nil
 		out.gen = 0
-		atomic.StoreUint32(&out.done, 0)
+		out.done.Store(0)
 		return false
 	}
 	if !cell.tryPin() {
@@ -496,13 +496,13 @@ func (r *Recorder) InitAttemptContext(cell *Cell, out *AttemptContext) bool {
 		out.cell = nil
 		out.recorder = nil
 		out.gen = 0
-		atomic.StoreUint32(&out.done, 0)
+		out.done.Store(0)
 		return false
 	}
 	out.cell = cell
 	out.recorder = r
 	out.gen = cell.gen
-	atomic.StoreUint32(&out.done, 0)
+	out.done.Store(0)
 	return true
 }
 
@@ -1009,7 +1009,7 @@ type AttemptContext struct {
 	cell     *Cell
 	recorder *Recorder
 	gen      uint64
-	done     uint32
+	done     atomic.Uint32
 }
 
 func (a *AttemptContext) IsZero() bool { return a == nil || a.cell == nil }
@@ -1018,7 +1018,7 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 	if a == nil || a.cell == nil || a.recorder == nil || a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
 		return
 	}
-	if !atomic.CompareAndSwapUint32(&a.done, 0, 1) {
+	if !a.done.CompareAndSwap(0, 1) {
 		return
 	}
 	if a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
@@ -1050,10 +1050,7 @@ func (a *AttemptContext) completeCommon(obs Observation) {
 	if obs.Success {
 		c.successes.Add(1)
 		if obs.TTFTMs != nil {
-			v := *obs.TTFTMs
-			if v < 1 {
-				v = 1
-			}
+			v := max(*obs.TTFTMs, 1)
 			c.ttftCount.Add(1)
 			c.sumQ32.Add(toQ32(v))
 			c.sumSq.Add(toSqQ32(v))
@@ -1129,7 +1126,7 @@ func (a *AttemptContext) Cancel() {
 	if a == nil || a.cell == nil || a.recorder == nil || a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
 		return
 	}
-	if !atomic.CompareAndSwapUint32(&a.done, 0, 1) {
+	if !a.done.CompareAndSwap(0, 1) {
 		return
 	}
 	if a.gen == 0 || a.gen != a.cell.gen || a.cell.gen == 0 {
@@ -1158,5 +1155,5 @@ func (a *AttemptContext) IsCompleted() bool {
 	if a == nil {
 		return false
 	}
-	return atomic.LoadUint32(&a.done) == 1
+	return a.done.Load() == 1
 }

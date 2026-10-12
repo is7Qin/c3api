@@ -7,6 +7,7 @@ package scheduler
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"slices"
 	"sort"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -226,7 +227,7 @@ func digestStrings(items []string) [32]byte {
 // digestInt64s 对 int64 列表取规范序摘要（排序 + 长度前缀串联 + sha256）。
 func digestInt64s(items []int64) [32]byte {
 	cp := append([]int64(nil), items...)
-	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
+	slices.Sort(cp)
 	var buf [8]byte
 	return digestParts(len(cp), func(i int) []byte {
 		binary.BigEndian.PutUint64(buf[:], uint64(cp[i]))
@@ -238,7 +239,7 @@ func digestInt64s(items []int64) [32]byte {
 // 的元素语义一致）。
 func digestFormats(items []domain.RequestFormat) [32]byte {
 	cp := append([]domain.RequestFormat(nil), items...)
-	sort.Slice(cp, func(i, j int) bool { return cp[i] < cp[j] })
+	slices.Sort(cp)
 	return digestParts(len(cp), func(i int) []byte { return []byte(cp[i]) })
 }
 
@@ -296,7 +297,7 @@ func digestParts(n int, part func(i int) []byte) [32]byte {
 	var lenBuf [8]byte
 	binary.BigEndian.PutUint64(lenBuf[:], uint64(n))
 	h.Write(lenBuf[:])
-	for i := 0; i < n; i++ {
+	for i := range n {
 		p := part(i)
 		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(p)))
 		h.Write(lenBuf[:])

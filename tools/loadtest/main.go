@@ -146,7 +146,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "read -keys %s: %v\n", *keysFile, err)
 			os.Exit(2)
 		}
-		for _, line := range strings.Split(string(b), "\n") {
+		for line := range strings.SplitSeq(string(b), "\n") {
 			if line = strings.TrimSpace(line); line != "" {
 				keyPool = append(keyPool, line)
 			}
@@ -233,50 +233,51 @@ func main() {
 	}()
 
 	wg.Wait()
-	result := fmt.Sprintf("\n=== RESULT ===\nmode=%s\n", *mode)
+	var result strings.Builder
+	result.WriteString(fmt.Sprintf("\n=== RESULT ===\nmode=%s\n", *mode))
 	if *mode == "stream" || *mode == "chat" {
 		// 模型请求模式带 format（images 的 JSON/SSE 两形态结果必须可区分归档）。
-		result += fmt.Sprintf("format=%s\n", *format)
+		result.WriteString(fmt.Sprintf("format=%s\n", *format))
 		if n := m.dialN.Load(); n > 0 {
-			result += fmt.Sprintf("dial_n=%d dial_avg_ms=%.2f dial_gt1s=%d\n",
-				n, float64(m.dialUS.Load())/float64(n)/1000, m.dialSlow.Load())
+			result.WriteString(fmt.Sprintf("dial_n=%d dial_avg_ms=%.2f dial_gt1s=%d\n",
+				n, float64(m.dialUS.Load())/float64(n)/1000, m.dialSlow.Load()))
 		}
 		if n := m.connWaitN.Load(); n > 0 {
-			result += fmt.Sprintf("conn_wait_n=%d conn_wait_avg_ms=%d\n", n, m.connWaitMS.Load()/n)
+			result.WriteString(fmt.Sprintf("conn_wait_n=%d conn_wait_avg_ms=%d\n", n, m.connWaitMS.Load()/n))
 		}
 	}
 	if *mode == "fill" {
-		result += fmt.Sprintf("fill_type=%s\n", *fillType)
+		result.WriteString(fmt.Sprintf("fill_type=%s\n", *fillType))
 	}
 	if isAPI {
-		result += apiResultSection()
+		result.WriteString(apiResultSection())
 	} else {
-		result += fmt.Sprintf("total=%d errs=%d\n", m.total.Load(), m.errs.Load())
+		result.WriteString(fmt.Sprintf("total=%d errs=%d\n", m.total.Load(), m.errs.Load()))
 		if *mode == "chat" || *mode == "models" || *mode == "fill" {
-			result += fmt.Sprintf("avg_latency_ms=%.1f\n", float64(m.latencyMS.Load())/float64(max(1, m.total.Load()-m.errs.Load())))
-			result += fmt.Sprintf("p99_latency_ms=%d\n", p99Latency(m))
+			result.WriteString(fmt.Sprintf("avg_latency_ms=%.1f\n", float64(m.latencyMS.Load())/float64(max(1, m.total.Load()-m.errs.Load()))))
+			result.WriteString(fmt.Sprintf("p99_latency_ms=%d\n", p99Latency(m)))
 		} else {
-			result += fmt.Sprintf("avg_first_byte_ms=%.1f\n", float64(m.firstByteMS.Load())/float64(max(1, m.total.Load()-m.errs.Load())))
-			result += fmt.Sprintf("p99_first_byte_ms=%d\n", p99(m))
+			result.WriteString(fmt.Sprintf("avg_first_byte_ms=%.1f\n", float64(m.firstByteMS.Load())/float64(max(1, m.total.Load()-m.errs.Load()))))
+			result.WriteString(fmt.Sprintf("p99_first_byte_ms=%d\n", p99(m)))
 		}
 	}
-	result += fmt.Sprintf("elapsed=%s concurrency=%d\n", time.Since(start).Round(time.Second), *concurrency)
+	result.WriteString(fmt.Sprintf("elapsed=%s concurrency=%d\n", time.Since(start).Round(time.Second), *concurrency))
 	if isAPI {
 		for _, line := range apiMergedErrDetails() {
-			result += line + "\n"
+			result.WriteString(line + "\n")
 		}
 	} else {
 		m.mu.Lock()
 		for d, c := range m.errDetail {
 			if c >= 1 {
-				result += fmt.Sprintf("err_detail: %d x %s\n", c, d)
+				result.WriteString(fmt.Sprintf("err_detail: %d x %s\n", c, d))
 			}
 		}
 		m.mu.Unlock()
 	}
-	fmt.Print(result)
+	fmt.Print(result.String())
 	if *out != "" {
-		if err := os.WriteFile(*out, []byte(result), 0o644); err != nil {
+		if err := os.WriteFile(*out, []byte(result.String()), 0o644); err != nil {
 			fmt.Fprintf(os.Stderr, "write %s: %v\n", *out, err)
 		}
 	}
@@ -579,7 +580,7 @@ func loadFillUserFile() {
 		fmt.Fprintf(os.Stderr, "read -fill-user-file %s: %v\n", *fillUserFile, err)
 		os.Exit(2)
 	}
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			fillUserPool = append(fillUserPool, line)
 		}

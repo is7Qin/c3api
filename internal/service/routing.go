@@ -111,10 +111,7 @@ func normalizePage(offset, limit, def, cap, n int) (int, int) {
 	if limit > cap {
 		limit = cap
 	}
-	hi := offset + limit
-	if hi > n {
-		hi = n
-	}
+	hi := min(offset+limit, n)
 	return offset, hi
 }
 

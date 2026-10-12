@@ -679,8 +679,7 @@ func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, opts .
 // （Refreshed 保留）；其余（refresh 失败裸错误）复用 translateError 双分支
 // （fatal → 统一回调 + 原样；RefreshError/网络 → 原样 → 网关 failover 分类）。
 func (a *Codex) translateDialError(e *codexEntry, err error) error {
-	var de *codexsdk.DialError
-	if errors.As(err, &de) {
+	if de, ok := errors.AsType[*codexsdk.DialError](err); ok {
 		env := NewEnvelopeError(de.StatusCode, "", de)
 		env.Refreshed = de.Refreshed
 		return env
@@ -886,8 +885,7 @@ func (a *Codex) translateError(e *codexEntry, err error) error {
 		a.reportFatal(e, f)
 		return err
 	}
-	var he *codexsdk.HTTPError
-	if errors.As(err, &he) {
+	if he, ok := errors.AsType[*codexsdk.HTTPError](err); ok {
 		return NewEnvelopeError(he.StatusCode, string(he.Raw), he)
 	}
 	return err

@@ -122,8 +122,7 @@ type errBody struct {
 // 引入前逐字节一致。
 func writeInvalidInput(w http.ResponseWriter, err error) {
 	body := errBody{Error: err.Error()}
-	var werr *serviceerr.StatsWindowError
-	if errors.As(err, &werr) {
+	if werr, ok := errors.AsType[*serviceerr.StatsWindowError](err); ok {
 		// reason 词汇表以 §4.4(d) 映射表为唯一来源，此处不重复枚举。
 		body.Reason = werr.Reject.String()
 		if werr.CarriesWindowFields() {

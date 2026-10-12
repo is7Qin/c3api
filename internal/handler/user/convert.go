@@ -8,7 +8,6 @@ import (
 	"math"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/rule"
 )
 
@@ -34,7 +33,7 @@ func toAPIUser(u *domain.User) User {
 		Role:           &r,
 		Status:         &st,
 		MaxConcurrency: &u.MaxConcurrency,
-		Balance:        httpface.Ptr(float64(u.Balance) / 1e5),
+		Balance:        new(float64(u.Balance) / 1e5),
 		CreatedAt:      &u.CreatedAt,
 		UpdatedAt:      &u.UpdatedAt,
 	}
@@ -47,9 +46,9 @@ func toAPIGroup(g *domain.Group) Group {
 	return Group{
 		ID:              &g.ID,
 		Name:            &g.Name,
-		Description:     httpface.Ptr(g.Description),
+		Description:     new(g.Description),
 		Visibility:      &v,
-		PriceMultiplier: httpface.Ptr(float64(g.PriceMultiplier) / 10000.0),
+		PriceMultiplier: new(float64(g.PriceMultiplier) / 10000.0),
 		CreatedAt:       &g.CreatedAt,
 		UpdatedAt:       &g.UpdatedAt,
 		DeletedAt:       g.DeletedAt, // 软删除时间戳（只读字段；已删组不进可选列表）
@@ -245,9 +244,9 @@ func toAPIStatTrendPoint(b *domain.StatBucket) StatTrendPoint {
 		TotalTokens:         &b.TotalTokens,
 		CacheReadTokens:     &b.CacheReadTokens,
 		CacheCreationTokens: &b.CacheCreationTokens,
-		Cost:                httpface.Ptr(float64(b.Cost) / 1e5),
-		RawCost:             httpface.Ptr(float64(b.RawCost) / 1e5),
-		TTFTAvgMS:           httpface.Ptr(avg),
+		Cost:                new(float64(b.Cost) / 1e5),
+		RawCost:             new(float64(b.RawCost) / 1e5),
+		TTFTAvgMS:           new(avg),
 		TTFTMaxMS:           &b.TTFTMaxMS,
 	}
 }
@@ -267,9 +266,9 @@ func toAPIEntityStatTrendPoint(b *domain.EntityStatBucket) StatTrendPoint {
 		TotalTokens:         &b.TotalTokens,
 		CacheReadTokens:     &b.CacheReadTokens,
 		CacheCreationTokens: &b.CacheCreationTokens,
-		Cost:                httpface.Ptr(float64(b.Cost) / 1e5),
-		RawCost:             httpface.Ptr(float64(b.RawCost) / 1e5),
-		TTFTAvgMS:           httpface.Ptr(avg),
+		Cost:                new(float64(b.Cost) / 1e5),
+		RawCost:             new(float64(b.RawCost) / 1e5),
+		TTFTAvgMS:           new(avg),
 		TTFTMaxMS:           &b.TTFTMaxMS,
 	}
 }

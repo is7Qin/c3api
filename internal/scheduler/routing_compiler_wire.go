@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"slices"
 	"sort"
 	"time"
 
@@ -295,7 +296,7 @@ func (e *decisionEncoder) encode(d *DecisionView) []byte {
 		for id := range rd.Explore.Weights {
 			e.ids = append(e.ids, id)
 		}
-		sort.Slice(e.ids, func(i, j int) bool { return e.ids[i] < e.ids[j] })
+		slices.Sort(e.ids)
 		writeUvarint(&e.buf, uint64(len(e.ids)))
 		for _, id := range e.ids {
 			writeVarint(&e.buf, id)

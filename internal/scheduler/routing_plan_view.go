@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"slices"
 	"sort"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -137,7 +138,7 @@ func routePlanCandidates(rd *RouteDecision, facts map[int64]compilerAccountFacts
 	for id := range byID {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	out := make([]RoutingPlanCandidate, 0, len(ids))
 	for _, id := range ids {
 		c := byID[id]

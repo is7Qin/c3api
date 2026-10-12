@@ -242,8 +242,7 @@ func (r *SupplierRepo) applySettlementRequest(ctx context.Context, mode settleme
 	}
 	s, err := applySettlementTx(ctx, tx, req)
 	if err != nil {
-		var kc errSettlementKeyConflict
-		if errors.As(err, &kc) {
+		if _, ok := errors.AsType[errSettlementKeyConflict](err); ok {
 			// 并发同 key 唯一冲突 ⇒ 回滚整事务，再按 key 读回原单（§6.2 I3）。
 			_ = tx.Rollback(ctx)
 			return r.recoverSettlementByKey(ctx, req, err)

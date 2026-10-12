@@ -7,6 +7,7 @@ package rule
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
@@ -81,15 +82,11 @@ func ValidateWhen(w domain.RuleWhen) error {
 	if w.Kind != nil && kindFromString(*w.Kind) == KindOK && len(w.ErrorMessageContainsIn) > 0 {
 		return errors.New("when.error_message_contains_in is incompatible with when.kind=ok")
 	}
-	for _, s := range w.ModelIn {
-		if s == "" {
-			return errors.New("model_in must not contain empty string")
-		}
+	if slices.Contains(w.ModelIn, "") {
+		return errors.New("model_in must not contain empty string")
 	}
-	for _, s := range w.ErrorMessageContainsIn {
-		if s == "" {
-			return errors.New("error_message_contains_in must not contain empty string")
-		}
+	if slices.Contains(w.ErrorMessageContainsIn, "") {
+		return errors.New("error_message_contains_in must not contain empty string")
 	}
 	if len(w.HTTPStatusIn) > 0 {
 		seen := make(map[int]struct{}, len(w.HTTPStatusIn))

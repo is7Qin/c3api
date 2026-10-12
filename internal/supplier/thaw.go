@@ -178,7 +178,7 @@ func (w *ThawWorker) recoveryEtaSeconds() int64 {
 func (w *ThawWorker) thawWithRetry(ctx context.Context) (int, error) {
 	const maxAttempts = 5
 	var err error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := range maxAttempts {
 		var n int
 		if n, err = w.store.ThawDueChunks(ctx, w.batchLimit()); err == nil {
 			return n, nil

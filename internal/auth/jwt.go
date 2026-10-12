@@ -54,14 +54,12 @@ func NewIssuer(secret string) *Issuer {
 func (i *Issuer) Issue(userID int64, email, role string, ver int64) (string, error) {
 	now := time.Now()
 	claims := Claims{
-		UserID: userID,
-		Email:  email,
-		Role:   role,
-		Ver:    ver,
-		RegisteredClaims: jwt.RegisteredClaims{
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(i.ttl)),
-		},
+		UserID:    userID,
+		Email:     email,
+		Role:      role,
+		Ver:       ver,
+		IssuedAt:  jwt.NewNumericDate(now),
+		ExpiresAt: jwt.NewNumericDate(now.Add(i.ttl)),
 	}
 	return jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(i.secret)
 }

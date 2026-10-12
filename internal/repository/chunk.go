@@ -26,12 +26,9 @@ func chunkIDs[T any](ids []T, size int) [][]T {
 	}
 	n := (len(ids) + size - 1) / size
 	out := make([][]T, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		lo := i * size
-		hi := lo + size
-		if hi > len(ids) {
-			hi = len(ids)
-		}
+		hi := min(lo+size, len(ids))
 		out = append(out, ids[lo:hi])
 	}
 	return out

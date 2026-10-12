@@ -72,7 +72,7 @@ func (p *identityPool) claim() *identitySlot {
 	}
 	k := uint64(len(p.slots))
 	base := p.cursor.Add(1)
-	for i := uint64(0); i < k; i++ {
+	for i := range k {
 		s := p.slots[(base+i)%k]
 		if s.busy.CompareAndSwap(false, true) {
 			return s
