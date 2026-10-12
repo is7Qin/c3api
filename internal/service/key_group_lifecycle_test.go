@@ -107,9 +107,9 @@ func TestDeleteGroupWithAccountsConflict(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 	})
 	require.NoError(t, err)
-	emptyG, err := svc.CreateGroup(ctx, "f1-empty", domain.GroupVisibilityPublic, nil, nil)
+	emptyG, err := svc.CreateGroup(ctx, "f1-empty", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
-	g, err := svc.CreateGroup(ctx, "f1-acc", domain.GroupVisibilityPublic, nil, nil)
+	g, err := svc.CreateGroup(ctx, "f1-acc", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	k, err := svc.CreateKey(ctx, u.ID, "k", g.ID, 0, 0)
 	require.NoError(t, err)
@@ -152,9 +152,9 @@ func TestDeleteGroupsBatchPreScanConflict(t *testing.T) {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 	})
 	require.NoError(t, err)
-	g1, err := svc.CreateGroup(ctx, "f1b-1", domain.GroupVisibilityPublic, nil, nil)
+	g1, err := svc.CreateGroup(ctx, "f1b-1", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
-	g2, err := svc.CreateGroup(ctx, "f1b-2", domain.GroupVisibilityPublic, nil, nil)
+	g2, err := svc.CreateGroup(ctx, "f1b-2", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	k, err := svc.CreateKey(ctx, u.ID, "k", g1.ID, 0, 0)
 	require.NoError(t, err)

@@ -614,6 +614,7 @@ export default {
     "emptyDesc": "Create a group to organize client access",
     "table": {
       "name": "Name",
+      "description": "Description",
       "visibility": "Visibility",
       "priceMultiplier": "Price multiplier",
       "protocolConvert": "Protocol conversion",
@@ -622,7 +623,7 @@ export default {
     },
     "createdSuccess": "Group created",
     "newTitle": "New group",
-    "newDesc": "Set name, visibility and protocol conversion; leave the price multiplier empty for ×1",
+    "newDesc": "Set name, description, visibility and protocol conversion; leave the price multiplier empty for ×1",
     "protocolConvertLabel": "Protocol conversion",
     "protocolConvert": {
       "off": "Off",
@@ -641,6 +642,8 @@ export default {
     "protocolConvertHint": "Multiple directions can be selected at once; none selected = off (no conversion)",
     "nameLabel": "Name",
     "namePlaceholder": "e.g. prod-web",
+    "descriptionLabel": "Description",
+    "descriptionPlaceholder": "Optional; explain what this group is for",
     "visibilityLabel": "Visibility",
     "visibilityPublic": "Public",
     "visibilityPrivate": "Private",

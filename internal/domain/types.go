@@ -676,9 +676,12 @@ type AccountUsage struct {
 }
 
 type Group struct {
-	ID         int64
-	Name       string
-	Visibility GroupVisibility
+	ID   int64
+	Name string
+	// Description 分组描述（自由文本，向用户说明该分组用途）。空串 = 无描述
+	// （无三态；用户面空描述不渲染次行）。与 name 同口径不设长度上限。
+	Description string
+	Visibility  GroupVisibility
 	// PriceMultiplier 万分数（价格倍率）：组默认 10000 = ×1；0 = 免费。
 	// 写路径语义：Create 缺省（nil，service 归一为 10000）恒写入；Update 恒写入
 	// （PUT 全量替换）。API 边界（handler/convert.go）与正常值 float64 换算

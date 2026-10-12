@@ -209,8 +209,11 @@ type Group struct {
 
 	// DeletedAt 软删除时间戳；null = 存活（列表/消费路径过滤已删；GET 单个可查已删项）
 	DeletedAt *time.Time `json:"DeletedAt"`
-	ID        *int64     `json:"ID,omitempty"`
-	Name      *string    `json:"Name,omitempty"`
+
+	// Description 分组描述（空串 = 无描述）
+	Description *string `json:"Description,omitempty"`
+	ID          *int64  `json:"ID,omitempty"`
+	Name        *string `json:"Name,omitempty"`
 
 	// PriceMultiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）
 	PriceMultiplier *float64 `json:"PriceMultiplier,omitempty"`

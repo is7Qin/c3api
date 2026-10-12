@@ -27,7 +27,7 @@ import { Badge } from '@/components/ui/badge'
 import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatUSD } from '@/components/fmt'
-import type { TFunction } from 'i18next'
+import { formatGroupMultiplier as formatMultiplier } from '@/components/group-option'
 import type { components } from '@/lib/api/schema'
 
 type User = components['schemas']['User']
@@ -69,14 +69,6 @@ function RoleBadge({ role }: { role?: UserRole }) {
 // 分组管理行内专属倍率态：mult = 输入框文本（'' = 未填）；cleared = 用户显式点过
 // 「清除为未设置」（提交 null）；勾选留空且未清除 = 省略键（沿用当前值）。
 interface AssignRowMult { mult: string; cleared: boolean }
-
-// 组价格倍率（正常值，API 边界已换算）→ 展示：null = 未设置（—）；0 = 免费；
-// 其余 ×N（1 = ×1.0，1.5 = ×1.5）。
-const formatMultiplier = (m: number | null | undefined, t: TFunction): string => {
-  if (m == null) return '—'
-  if (m === 0) return t('groups.free')
-  return `×${m.toFixed(1)}`
-}
 
 // 组可见性小标：public 绿点 / private 灰点（与 RoleBadge 同风格）。
 function GroupVisibilityDot({ visibility }: { visibility?: GroupVisibility }) {

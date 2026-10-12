@@ -2860,6 +2860,8 @@ export interface components {
         };
         GroupCreate: {
             name: string;
+            /** @description 分组描述（可选）。POST：缺省/null = 空；PUT：缺省/null = 保持原值，显式空串 = 清空 */
+            description?: string | null;
             visibility?: components["schemas"]["GroupVisibility"];
             /**
              * Format: double
@@ -2994,6 +2996,8 @@ export interface components {
             /** Format: int64 */
             ID?: number;
             Name?: string;
+            /** @description 分组描述（空串 = 无描述） */
+            Description?: string;
             Visibility?: components["schemas"]["GroupVisibility"];
             /**
              * Format: double

@@ -100,10 +100,10 @@ func TestTemplateCredentialTypeDefaultAndValid(t *testing.T) {
 func TestCreateGroupFlow(t *testing.T) {
 	fs := newFakeStore()
 	svc := &Service{store: fs, inv: &invRecorder{}, log: nil}
-	g, err := svc.CreateGroup(context.Background(), "g1", domain.GroupVisibilityPublic, nil, nil)
+	g, err := svc.CreateGroup(context.Background(), "g1", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, domain.GroupVisibilityPublic, g.Visibility, "visibility 落库")
-	g2, err := svc.CreateGroup(context.Background(), "g2", domain.GroupVisibilityPrivate, nil, nil)
+	g2, err := svc.CreateGroup(context.Background(), "g2", "", domain.GroupVisibilityPrivate, nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, domain.GroupVisibilityPrivate, g2.Visibility)
 	got, err := svc.GetGroup(context.Background(), g.ID)
@@ -217,9 +217,9 @@ func TestCreateAccountGroups(t *testing.T) {
 	svc := &Service{store: fs, inv: rec, log: nil}
 	ctx := context.Background()
 	tpl := seedTemplate(t, svc, "t")
-	g1, err := svc.CreateGroup(ctx, "g1", domain.GroupVisibilityPublic, nil, nil)
+	g1, err := svc.CreateGroup(ctx, "g1", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
-	g2, err := svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, nil, nil)
+	g2, err := svc.CreateGroup(ctx, "g2", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 
 	// 创建带分组
@@ -287,7 +287,7 @@ func TestBatchUpdateAccountsGroupIDs(t *testing.T) {
 	svc := &Service{store: fs, inv: rec, log: nil}
 	ctx := context.Background()
 	tpl := seedTemplate(t, svc, "t")
-	g1, err := svc.CreateGroup(ctx, "g1", domain.GroupVisibilityPublic, nil, nil)
+	g1, err := svc.CreateGroup(ctx, "g1", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	a1 := seedAccount(t, svc, tpl.ID, "a1")
 	a2 := seedAccount(t, svc, tpl.ID, "a2")
@@ -407,9 +407,9 @@ func TestBatchDeleteGroupsKeyCleanup(t *testing.T) {
 	rec := &invRecorder{}
 	svc := &Service{store: fs, inv: rec, keys: keys, log: nil}
 	ctx := context.Background()
-	g1, err := svc.CreateGroup(ctx, "g1", domain.GroupVisibilityPublic, nil, nil)
+	g1, err := svc.CreateGroup(ctx, "g1", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
-	g2, err := svc.CreateGroup(ctx, "g2", domain.GroupVisibilityPublic, nil, nil)
+	g2, err := svc.CreateGroup(ctx, "g2", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	before := rec.total()
 	require.NoError(t, svc.DeleteGroupsBatch(ctx, []int64{g1.ID, g2.ID}))
@@ -432,7 +432,7 @@ func TestBatchUpdateGroups(t *testing.T) {
 	rec := &invRecorder{}
 	svc := &Service{store: fs, inv: rec, log: nil}
 	ctx := context.Background()
-	g, err := svc.CreateGroup(ctx, "g1", domain.GroupVisibilityPublic, nil, nil)
+	g, err := svc.CreateGroup(ctx, "g1", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	name := "renamed"
 	before := rec.total()

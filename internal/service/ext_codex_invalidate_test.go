@@ -50,7 +50,7 @@ func TestUpsertAccountExtInvalidates(t *testing.T) {
 	rec, pr := &invRecorder{}, &pubRecorder{}
 	svc := &Service{store: fs, inv: rec, pub: pr, log: nil}
 	tpl := seedExtTemplate(t, svc, "t-oauth-inv", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
-	g, err := svc.CreateGroup(ctx, "g-ext-inv", domain.GroupVisibilityPublic, nil, nil)
+	g, err := svc.CreateGroup(ctx, "g-ext-inv", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	acc := seedGroupedExtAccount(t, svc, tpl.ID, g.ID)
 
@@ -95,7 +95,7 @@ func TestUpsertAccountExtFailureLeavesNoInvalidation(t *testing.T) {
 		rec, pr := &invRecorder{}, &pubRecorder{}
 		svc := &Service{store: &alwaysStaleExtCASStore{fakeStore: fs}, inv: rec, pub: pr, log: nil}
 		tpl := seedExtTemplate(t, svc, "t-oauth-stale", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
-		g, err := svc.CreateGroup(ctx, "g-ext-stale", domain.GroupVisibilityPublic, nil, nil)
+		g, err := svc.CreateGroup(ctx, "g-ext-stale", "", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
 		acc := seedGroupedExtAccount(t, svc, tpl.ID, g.ID)
 		// 预置存量行：失败路径走已有行分支（无 TryInsert 首写），被拒写入不
@@ -128,7 +128,7 @@ func TestUpsertAccountExtFailureLeavesNoInvalidation(t *testing.T) {
 		rec, pr := &invRecorder{}, &pubRecorder{}
 		svc := &Service{store: fs, inv: rec, pub: pr, log: nil}
 		tpl := seedExtTemplate(t, svc, "t-oauth-bad", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
-		g, err := svc.CreateGroup(ctx, "g-ext-bad", domain.GroupVisibilityPublic, nil, nil)
+		g, err := svc.CreateGroup(ctx, "g-ext-bad", "", domain.GroupVisibilityPublic, nil, nil)
 		require.NoError(t, err)
 		acc := seedGroupedExtAccount(t, svc, tpl.ID, g.ID)
 

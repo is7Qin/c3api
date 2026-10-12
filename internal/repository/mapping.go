@@ -49,7 +49,8 @@ func toDomainManagementKey(m *ent.ManagementKey) *domain.ManagementKey {
 
 func toDomainGroup(g *ent.Group) *domain.Group {
 	return &domain.Group{
-		ID: g.ID, Name: g.Name, Visibility: domain.GroupVisibility(g.Visibility),
+		ID: g.ID, Name: g.Name, Description: g.Description,
+		Visibility:       domain.GroupVisibility(g.Visibility),
 		PriceMultiplier:  g.PriceMultiplier,
 		ProtocolConverts: toDomainProtocolConverts(g.ProtocolConvert),
 		CreatedAt:        g.CreatedAt, UpdatedAt: g.UpdatedAt, DeletedAt: g.DeletedAt,

@@ -39,11 +39,11 @@ func seedBatchGroupPG(t *testing.T, svc *Service) (tpl *domain.Template, gA, gB,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 	})
 	require.NoError(t, err)
-	gA, err = svc.CreateGroup(ctx, "batch-inv-a", domain.GroupVisibilityPublic, nil, nil)
+	gA, err = svc.CreateGroup(ctx, "batch-inv-a", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
-	gB, err = svc.CreateGroup(ctx, "batch-inv-b", domain.GroupVisibilityPublic, nil, nil)
+	gB, err = svc.CreateGroup(ctx, "batch-inv-b", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
-	gC, err = svc.CreateGroup(ctx, "batch-inv-c", domain.GroupVisibilityPublic, nil, nil)
+	gC, err = svc.CreateGroup(ctx, "batch-inv-c", "", domain.GroupVisibilityPublic, nil, nil)
 	require.NoError(t, err)
 	return tpl, gA, gB, gC
 }

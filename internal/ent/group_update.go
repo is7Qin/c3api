@@ -46,6 +46,20 @@ func (_u *GroupUpdate) SetNillableName(v *string) *GroupUpdate {
 	return _u
 }
 
+// SetDescription sets the "description" field.
+func (_u *GroupUpdate) SetDescription(v string) *GroupUpdate {
+	_u.mutation.SetDescription(v)
+	return _u
+}
+
+// SetNillableDescription sets the "description" field if the given value is not nil.
+func (_u *GroupUpdate) SetNillableDescription(v *string) *GroupUpdate {
+	if v != nil {
+		_u.SetDescription(*v)
+	}
+	return _u
+}
+
 // SetVisibility sets the "visibility" field.
 func (_u *GroupUpdate) SetVisibility(v group.Visibility) *GroupUpdate {
 	_u.mutation.SetVisibility(v)
@@ -307,6 +321,9 @@ func (_u *GroupUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(group.FieldName, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.Description(); ok {
+		_spec.SetField(group.FieldDescription, field.TypeString, value)
+	}
 	if value, ok := _u.mutation.Visibility(); ok {
 		_spec.SetField(group.FieldVisibility, field.TypeEnum, value)
 	}
@@ -501,6 +518,20 @@ func (_u *GroupUpdateOne) SetName(v string) *GroupUpdateOne {
 func (_u *GroupUpdateOne) SetNillableName(v *string) *GroupUpdateOne {
 	if v != nil {
 		_u.SetName(*v)
+	}
+	return _u
+}
+
+// SetDescription sets the "description" field.
+func (_u *GroupUpdateOne) SetDescription(v string) *GroupUpdateOne {
+	_u.mutation.SetDescription(v)
+	return _u
+}
+
+// SetNillableDescription sets the "description" field if the given value is not nil.
+func (_u *GroupUpdateOne) SetNillableDescription(v *string) *GroupUpdateOne {
+	if v != nil {
+		_u.SetDescription(*v)
 	}
 	return _u
 }
@@ -795,6 +826,9 @@ func (_u *GroupUpdateOne) sqlSave(ctx context.Context) (_node *Group, err error)
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(group.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.Description(); ok {
+		_spec.SetField(group.FieldDescription, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.Visibility(); ok {
 		_spec.SetField(group.FieldVisibility, field.TypeEnum, value)

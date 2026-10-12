@@ -47,6 +47,7 @@ func toAPIGroup(g *domain.Group) Group {
 	return Group{
 		ID:              &g.ID,
 		Name:            &g.Name,
+		Description:     httpface.Ptr(g.Description),
 		Visibility:      &v,
 		PriceMultiplier: httpface.Ptr(float64(g.PriceMultiplier) / 10000.0),
 		CreatedAt:       &g.CreatedAt,

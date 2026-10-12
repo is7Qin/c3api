@@ -31,6 +31,20 @@ func (_c *GroupCreate) SetName(v string) *GroupCreate {
 	return _c
 }
 
+// SetDescription sets the "description" field.
+func (_c *GroupCreate) SetDescription(v string) *GroupCreate {
+	_c.mutation.SetDescription(v)
+	return _c
+}
+
+// SetNillableDescription sets the "description" field if the given value is not nil.
+func (_c *GroupCreate) SetNillableDescription(v *string) *GroupCreate {
+	if v != nil {
+		_c.SetDescription(*v)
+	}
+	return _c
+}
+
 // SetVisibility sets the "visibility" field.
 func (_c *GroupCreate) SetVisibility(v group.Visibility) *GroupCreate {
 	_c.mutation.SetVisibility(v)
@@ -193,6 +207,10 @@ func (_c *GroupCreate) ExecX(ctx context.Context) {
 
 // defaults sets the default values of the builder before save.
 func (_c *GroupCreate) defaults() {
+	if _, ok := _c.mutation.Description(); !ok {
+		v := group.DefaultDescription
+		_c.mutation.SetDescription(v)
+	}
 	if _, ok := _c.mutation.Visibility(); !ok {
 		v := group.DefaultVisibility
 		_c.mutation.SetVisibility(v)
@@ -219,6 +237,9 @@ func (_c *GroupCreate) defaults() {
 func (_c *GroupCreate) check() error {
 	if _, ok := _c.mutation.Name(); !ok {
 		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "Group.name"`)}
+	}
+	if _, ok := _c.mutation.Description(); !ok {
+		return &ValidationError{Name: "description", err: errors.New(`ent: missing required field "Group.description"`)}
 	}
 	if _, ok := _c.mutation.Visibility(); !ok {
 		return &ValidationError{Name: "visibility", err: errors.New(`ent: missing required field "Group.visibility"`)}
@@ -276,6 +297,10 @@ func (_c *GroupCreate) createSpec() (*Group, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.Name(); ok {
 		_spec.SetField(group.FieldName, field.TypeString, value)
 		_node.Name = value
+	}
+	if value, ok := _c.mutation.Description(); ok {
+		_spec.SetField(group.FieldDescription, field.TypeString, value)
+		_node.Description = value
 	}
 	if value, ok := _c.mutation.Visibility(); ok {
 		_spec.SetField(group.FieldVisibility, field.TypeEnum, value)
@@ -410,6 +435,18 @@ func (u *GroupUpsert) SetName(v string) *GroupUpsert {
 // UpdateName sets the "name" field to the value that was provided on create.
 func (u *GroupUpsert) UpdateName() *GroupUpsert {
 	u.SetExcluded(group.FieldName)
+	return u
+}
+
+// SetDescription sets the "description" field.
+func (u *GroupUpsert) SetDescription(v string) *GroupUpsert {
+	u.Set(group.FieldDescription, v)
+	return u
+}
+
+// UpdateDescription sets the "description" field to the value that was provided on create.
+func (u *GroupUpsert) UpdateDescription() *GroupUpsert {
+	u.SetExcluded(group.FieldDescription)
 	return u
 }
 
@@ -556,6 +593,20 @@ func (u *GroupUpsertOne) SetName(v string) *GroupUpsertOne {
 func (u *GroupUpsertOne) UpdateName() *GroupUpsertOne {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateName()
+	})
+}
+
+// SetDescription sets the "description" field.
+func (u *GroupUpsertOne) SetDescription(v string) *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetDescription(v)
+	})
+}
+
+// UpdateDescription sets the "description" field to the value that was provided on create.
+func (u *GroupUpsertOne) UpdateDescription() *GroupUpsertOne {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateDescription()
 	})
 }
 
@@ -882,6 +933,20 @@ func (u *GroupUpsertBulk) SetName(v string) *GroupUpsertBulk {
 func (u *GroupUpsertBulk) UpdateName() *GroupUpsertBulk {
 	return u.Update(func(s *GroupUpsert) {
 		s.UpdateName()
+	})
+}
+
+// SetDescription sets the "description" field.
+func (u *GroupUpsertBulk) SetDescription(v string) *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.SetDescription(v)
+	})
+}
+
+// UpdateDescription sets the "description" field to the value that was provided on create.
+func (u *GroupUpsertBulk) UpdateDescription() *GroupUpsertBulk {
+	return u.Update(func(s *GroupUpsert) {
+		s.UpdateDescription()
 	})
 }
 

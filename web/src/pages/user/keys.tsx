@@ -9,6 +9,7 @@ import { Check, Copy, KeyRound, Pencil, Plus, RefreshCcw, Trash2 } from 'lucide-
 import { useTranslation } from 'react-i18next'
 import { ApiUnauthorized, userApi } from '@/lib/api/client'
 import { KeyBox, copyText } from '@/components/key-box'
+import { GroupOptionMeta, type GroupChoice } from '@/components/group-option'
 import { Pagination } from '@/components/pagination'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { StatusBadge } from '@/components/status-badge'
@@ -32,12 +33,6 @@ type KeyStatus = components['schemas']['KeyStatus']
 
 const STATUSES: KeyStatus[] = ['active', 'disabled']
 
-// 分组选项（弹层/编辑下拉共用）：name 为空（非存活组/未加载 → 服务端返回空串）→
-// 回退 `#<id>`，不得显示空白单元格。
-interface GroupOption {
-  id: number
-  name: string
-}
 const groupLabel = (name: string | null | undefined, id: number) => name || `#${id}`
 
 // 创建表单：name/group_id 必填；数值字段 '' = 不发送（后端缺省），0 = 不限。
@@ -142,8 +137,8 @@ export default function UserKeys() {
   // 可选组并集（弹层/编辑下拉共用）：selectableGroups ∪ {当前组}——当前组若已不在
   // 可选列表（撤授/软删），仍列出并高亮为当前组，避免编辑被迫重选；label 同款
   // `name || '#'+id` 回退（非存活当前组 GroupName 空 → 回退，不显示空白）。
-  const groupOptionsFor = (currentID: number | null | undefined, currentName: string | null | undefined): GroupOption[] => {
-    const opts: GroupOption[] = selectableGroups.map(g => ({ id: g.ID!, name: groupLabel(g.Name, g.ID!) }))
+  const groupOptionsFor = (currentID: number | null | undefined, currentName: string | null | undefined): GroupChoice[] => {
+    const opts: GroupChoice[] = selectableGroups.map(g => ({ id: g.ID!, name: groupLabel(g.Name, g.ID!), description: g.Description, multiplier: g.PriceMultiplier }))
     if (currentID != null && !opts.some(o => o.id === currentID)) {
       opts.push({ id: currentID, name: groupLabel(currentName, currentID) })
     }
@@ -308,7 +303,7 @@ export default function UserKeys() {
         >
           <span className="truncate">{label}</span>
         </PopoverTrigger>
-        <PopoverContent align="start" className="w-48 p-1">
+        <PopoverContent align="start" className="w-64 p-1">
           {opts.map(o => {
             const current = o.id === k.GroupID
             return (
@@ -319,8 +314,8 @@ export default function UserKeys() {
                 onClick={() => { if (!current) { setSwitchingId(k.ID!); switchGroup.mutate({ id: k.ID!, groupID: o.id }) } }}
                 className={`flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent disabled:opacity-60${current ? ' font-medium' : ''}`}
               >
-                <span className="truncate">{o.name}</span>
-                {current && <Check className="size-4" />}
+                <GroupOptionMeta choice={o} />
+                {current && <Check className="size-4 shrink-0" />}
               </button>
             )
           })}
@@ -444,7 +439,9 @@ export default function UserKeys() {
                     <SelectTrigger className="w-full"><SelectValue placeholder={t('user.keys.groupPlaceholder')} /></SelectTrigger>
                     <SelectContent>
                       {selectableGroups.map(g => (
-                        <SelectItem key={g.ID} value={String(g.ID)} label={g.Name ?? String(g.ID)}>{g.Name ?? String(g.ID)}</SelectItem>
+                        <SelectItem key={g.ID} value={String(g.ID)} label={g.Name ?? String(g.ID)}>
+                          <GroupOptionMeta choice={{ id: g.ID!, name: g.Name ?? String(g.ID), description: g.Description, multiplier: g.PriceMultiplier }} />
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -502,7 +499,7 @@ export default function UserKeys() {
               <Select items={editGroupItems} value={editForm.group_id} onValueChange={v => setEditForm(f => ({ ...f, group_id: v }))}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {editGroupOptions.map(o => <SelectItem key={o.id} value={String(o.id)} label={o.name}>{o.name}</SelectItem>)}
+                  {editGroupOptions.map(o => <SelectItem key={o.id} value={String(o.id)} label={o.name}><GroupOptionMeta choice={o} /></SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

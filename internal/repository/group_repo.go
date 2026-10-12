@@ -40,6 +40,7 @@ func (r *GroupRepo) CreateGroup(ctx context.Context, g *domain.Group) (*domain.G
 	// 跳过落列）。DB 默认 10000 为兜底。
 	q := r.client.Group.Create().
 		SetName(g.Name).
+		SetDescription(g.Description).
 		SetVisibility(group.Visibility(g.Visibility)).
 		SetPriceMultiplier(g.PriceMultiplier).
 		// protocol_convert 恒写入（service 层把缺省归一为空数组；JSON 列自动
@@ -99,6 +100,7 @@ func (r *GroupRepo) UpdateGroup(ctx context.Context, g *domain.Group) (*domain.G
 	// 改 name/visibility → 写回，未触及倍率时携带原值自然保留；显式 0 = 免费组）。
 	row, err := r.client.Group.UpdateOneID(g.ID).
 		SetName(g.Name).
+		SetDescription(g.Description).
 		SetVisibility(group.Visibility(g.Visibility)).
 		SetPriceMultiplier(g.PriceMultiplier).
 		SetProtocolConvert(protocolConvertStrings(g.ProtocolConverts)).

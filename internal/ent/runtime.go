@@ -109,22 +109,26 @@ func init() {
 	errlog.DefaultCreatedAt = errlogDescCreatedAt.Default.(func() time.Time)
 	groupFields := schema.Group{}.Fields()
 	_ = groupFields
+	// groupDescDescription is the schema descriptor for description field.
+	groupDescDescription := groupFields[2].Descriptor()
+	// group.DefaultDescription holds the default value on creation for the description field.
+	group.DefaultDescription = groupDescDescription.Default.(string)
 	// groupDescPriceMultiplier is the schema descriptor for price_multiplier field.
-	groupDescPriceMultiplier := groupFields[3].Descriptor()
+	groupDescPriceMultiplier := groupFields[4].Descriptor()
 	// group.DefaultPriceMultiplier holds the default value on creation for the price_multiplier field.
 	group.DefaultPriceMultiplier = groupDescPriceMultiplier.Default.(int)
 	// groupDescProtocolConvert is the schema descriptor for protocol_convert field.
-	groupDescProtocolConvert := groupFields[4].Descriptor()
+	groupDescProtocolConvert := groupFields[5].Descriptor()
 	// group.DefaultProtocolConvert holds the default value on creation for the protocol_convert field.
 	group.DefaultProtocolConvert = groupDescProtocolConvert.Default.([]string)
 	// groupDescUpdatedAt is the schema descriptor for updated_at field.
-	groupDescUpdatedAt := groupFields[5].Descriptor()
+	groupDescUpdatedAt := groupFields[6].Descriptor()
 	// group.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	group.DefaultUpdatedAt = groupDescUpdatedAt.Default.(func() time.Time)
 	// group.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	group.UpdateDefaultUpdatedAt = groupDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// groupDescCreatedAt is the schema descriptor for created_at field.
-	groupDescCreatedAt := groupFields[7].Descriptor()
+	groupDescCreatedAt := groupFields[8].Descriptor()
 	// group.DefaultCreatedAt holds the default value on creation for the created_at field.
 	group.DefaultCreatedAt = groupDescCreatedAt.Default.(func() time.Time)
 	groupassignmentFields := schema.GroupAssignment{}.Fields()
