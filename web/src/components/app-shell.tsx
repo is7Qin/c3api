@@ -32,6 +32,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 const userNav: readonly NavItem[] = [
   { to: '/user', key: 'user.nav.overview', icon: LayoutDashboard, end: true },
   { to: '/user/keys', key: 'user.nav.keys', icon: KeyRound, end: false },
+  { to: '/user/models', key: 'user.nav.models', icon: Boxes, end: false },
   { to: '/user/logs', key: 'user.nav.logs', icon: FileText, end: false },
   { to: '/user/stats', key: 'user.nav.stats', icon: BarChart3, end: false },
   { to: '/user/redemptions', key: 'user.nav.redemptions', icon: Ticket, end: false },

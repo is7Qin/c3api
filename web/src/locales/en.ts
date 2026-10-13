@@ -1730,6 +1730,7 @@ export default {
       "overview": "Overview",
       "profile": "Profile",
       "keys": "Keys",
+      "models": "Models",
       "managementKeys": "Management Keys",
       "logs": "Logs",
       "stats": "Stats",
@@ -1739,6 +1740,25 @@ export default {
     "common": {
       "loading": "Loading…",
       "error": "Failed to load"
+    },
+    "models": {
+      "title": "Models / Pricing",
+      "subtitle": "Available models and prices for each group; final price = price × your effective multiplier",
+      "searchPlaceholder": "Search models",
+      "empty": "Nothing here yet",
+      "emptySearch": "No matching models",
+      "error": "Failed to load",
+      "retry": "Refresh",
+      "promptCaching": "Prompt caching",
+      "variants": "Conditional variants",
+      "input": "Input",
+      "output": "Output",
+      "cacheRead": "Cache read",
+      "cacheWrite": "Cache write",
+      "perCall": "Per call",
+      "imgIn": "Image input",
+      "imgOut": "Image output",
+      "perImage": "Per image"
     },
     "keys": {
       "title": "My Keys",

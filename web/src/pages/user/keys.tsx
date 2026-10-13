@@ -138,7 +138,7 @@ export default function UserKeys() {
   // 可选列表（撤授/软删），仍列出并高亮为当前组，避免编辑被迫重选；label 同款
   // `name || '#'+id` 回退（非存活当前组 GroupName 空 → 回退，不显示空白）。
   const groupOptionsFor = (currentID: number | null | undefined, currentName: string | null | undefined): GroupChoice[] => {
-    const opts: GroupChoice[] = selectableGroups.map(g => ({ id: g.ID!, name: groupLabel(g.Name, g.ID!), description: g.Description, multiplier: g.PriceMultiplier }))
+    const opts: GroupChoice[] = selectableGroups.map(g => ({ id: g.ID!, name: groupLabel(g.Name, g.ID!), description: g.Description, multiplier: g.EffectiveMultiplier ?? g.PriceMultiplier }))
     if (currentID != null && !opts.some(o => o.id === currentID)) {
       opts.push({ id: currentID, name: groupLabel(currentName, currentID) })
     }
@@ -440,7 +440,7 @@ export default function UserKeys() {
                     <SelectContent>
                       {selectableGroups.map(g => (
                         <SelectItem key={g.ID} value={String(g.ID)} label={g.Name ?? String(g.ID)}>
-                          <GroupOptionMeta choice={{ id: g.ID!, name: g.Name ?? String(g.ID), description: g.Description, multiplier: g.PriceMultiplier }} />
+                          <GroupOptionMeta choice={{ id: g.ID!, name: g.Name ?? String(g.ID), description: g.Description, multiplier: g.EffectiveMultiplier ?? g.PriceMultiplier }} />
                         </SelectItem>
                       ))}
                     </SelectContent>

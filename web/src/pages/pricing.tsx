@@ -28,6 +28,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatPricePerMillion } from '@/components/fmt'
+import { DOW_KEYS, boolsToDowMask, condSummary, dowMaskToBools, effectSummary } from '@/lib/price-variant'
 import type { components } from '@/lib/api/schema'
 
 type PriceEntry = components['schemas']['PriceEntry']
@@ -60,19 +61,8 @@ const isNonNegNum = (v: string) => v === '' || (Number.isFinite(Number(v)) && Nu
 // ── Variants (price tier) helpers ──
 type PriceVariant = components['schemas']['PriceVariant']
 type PriceVariantUpsert = components['schemas']['PriceVariantUpsert']
-const DOW_KEYS = ['dowSun', 'dowMon', 'dowTue', 'dowWed', 'dowThu', 'dowFri', 'dowSat'] as const
 const PROVIDERS = ['openai', 'anthropic', 'azure', 'vertex_ai', 'bedrock', 'deepseek', 'mistral', 'cohere', 'xai', 'openrouter', 'groq', 'together_ai', 'fireworks_ai', 'replicate', 'huggingface', 'moonshot', 'zhipu', 'baidu', 'alibaba', 'meta', 'nvidia', 'cerebras', 'perplexity'] as const
 const TIME_RE = /^\d{2}:\d{2}$/
-const dowMaskToBools = (mask: number | null | undefined): boolean[] =>
-  Array.from({ length: 7 }, (_, i) => mask != null && (mask & (1 << i)) !== 0)
-const boolsToDowMask = (bools: boolean[]): number | undefined => {
-  const m = bools.reduce((acc, v, i) => (v ? acc | (1 << i) : acc), 0)
-  return m === 0 ? undefined : m
-}
-const fmtMult = (m: number | null | undefined): string => {
-  if (m == null) return ''
-  return `×${Number.isInteger(m) ? String(m) : m.toFixed(4).replace(/\.?0+$/, '')}`
-}
 
 type VariantsTarget = {
   model: string
@@ -192,42 +182,6 @@ function VariantsDialog({
   }, [open])
 
   const sortedLocal = [...localRows].sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0))
-
-  const condSummary = (r: PriceVariantUpsert) => {
-    const parts: string[] = []
-    if (r.service_tier) parts.push(r.service_tier)
-    if (r.ctx_min != null || r.ctx_max != null) {
-      if (r.ctx_min != null && r.ctx_max != null) parts.push(`${r.ctx_min}–${r.ctx_max}`)
-      else if (r.ctx_min != null) parts.push(`≥${r.ctx_min}`)
-      else parts.push(`≤${r.ctx_max}`)
-    }
-    if (r.time_start || r.time_end) {
-      if (r.time_start && r.time_end) parts.push(`${r.time_start}–${r.time_end}`)
-      else {
-        const single = r.time_start ?? r.time_end
-        if (single) parts.push(single)
-      }
-    }
-    if (r.dow_mask != null) {
-      const bools = dowMaskToBools(r.dow_mask)
-      const labels = bools.flatMap((v, i) => (v ? [t(`pricing.variants.${DOW_KEYS[i]}`)] : []))
-      if (labels.length) parts.push(labels.join(','))
-    }
-    return parts.length ? parts.join(' · ') : '—'
-  }
-  const effectSummary = (r: PriceVariantUpsert) => {
-    const parts: string[] = []
-    if (r.multiplier != null) parts.push(fmtMult(r.multiplier))
-    if (r.set_input_per_m != null) parts.push(`in $${r.set_input_per_m}/M`)
-    if (r.set_output_per_m != null) parts.push(`out $${r.set_output_per_m}/M`)
-    if (r.set_cache_read_per_m != null) parts.push(`cacheRead $${r.set_cache_read_per_m}/M`)
-    if (r.set_cache_creation_per_m != null) parts.push(`cacheWrite $${r.set_cache_creation_per_m}/M`)
-    if (r.set_price_per_call != null) parts.push(`call $${r.set_price_per_call}`)
-    if (r.set_img_in_tok_per_m != null) parts.push(`imgIn $${r.set_img_in_tok_per_m}/M`)
-    if (r.set_img_out_tok_per_m != null) parts.push(`imgOut $${r.set_img_out_tok_per_m}/M`)
-    if (r.set_price_per_image != null) parts.push(`perImg $${r.set_price_per_image}`)
-    return parts.length ? parts.join(' · ') : '—'
-  }
 
   const validateDraft = (): string | null => {
     const seqNum = Number(seqStr)
@@ -425,7 +379,7 @@ function VariantsDialog({
                   {sortedLocal.map(r => (
                     <TableRow key={r.seq}>
                       <TableCell className="font-mono text-sm">{r.seq}</TableCell>
-                      <TableCell className="text-xs max-w-64 truncate" title={condSummary(r)}>{condSummary(r)}</TableCell>
+                      <TableCell className="text-xs max-w-64 truncate" title={condSummary(t, r)}>{condSummary(t, r)}</TableCell>
                       <TableCell className="text-xs">{effectSummary(r)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">

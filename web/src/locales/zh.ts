@@ -1730,6 +1730,7 @@ export default {
       "overview": "总览",
       "profile": "个人中心",
       "keys": "Keys",
+      "models": "模型",
       "managementKeys": "管理密钥",
       "logs": "日志",
       "stats": "统计",
@@ -1739,6 +1740,25 @@ export default {
     "common": {
       "loading": "加载中…",
       "error": "加载失败"
+    },
+    "models": {
+      "title": "模型 / 定价",
+      "subtitle": "各分组的可用模型与价格；最终价 = 价格 × 你的有效倍率",
+      "searchPlaceholder": "搜索模型",
+      "empty": "暂无",
+      "emptySearch": "没有匹配的模型",
+      "error": "加载失败",
+      "retry": "刷新",
+      "promptCaching": "支持 Prompt 缓存",
+      "variants": "条件变体",
+      "input": "输入",
+      "output": "输出",
+      "cacheRead": "缓存读",
+      "cacheWrite": "缓存写",
+      "perCall": "按次",
+      "imgIn": "图像输入",
+      "imgOut": "图像输出",
+      "perImage": "按张"
     },
     "keys": {
       "title": "我的 Keys",

@@ -17,6 +17,7 @@ import UserRegister from '@/pages/user/register'
 import ForgotPassword from '@/pages/user/forgot-password'
 import UserOverview from '@/pages/user/overview'
 import UserKeys from '@/pages/user/keys'
+import UserModels from '@/pages/user/models'
 import UserManagementKeys from '@/pages/user/management-keys'
 import UserLogs from '@/pages/user/logs'
 import UserStats from '@/pages/user/stats'
@@ -81,6 +82,7 @@ const router = createBrowserRouter([
           { index: true, element: <UserOverview /> },
           { path: 'profile', element: <UserProfile /> },
           { path: 'keys', element: <UserKeys /> },
+          { path: 'models', element: <UserModels /> },
           { path: 'management-keys', element: <UserManagementKeys /> },
           { path: 'logs', element: <UserLogs /> },
           { path: 'stats', element: <UserStats /> },
