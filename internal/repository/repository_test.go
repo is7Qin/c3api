@@ -620,11 +620,11 @@ func TestLogsAndStats(t *testing.T) {
 
 	logs := []*domain.UsageLog{
 		{RequestID: "r1", GroupID: 1, AccountID: 2, TemplateID: 3, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, LatencyMS: 10, TotalTokens: 100, CacheReadTokens: 4, CacheCreationTokens: 2,
-			TTFTMS:                   int64Ptr(88),
-			PriceInputMillis:         int64Ptr(1e7),
-			PriceOutputMillis:        int64Ptr(2e7),
-			PriceCacheReadMillis:     int64Ptr(1234),
-			PriceCacheCreationMillis: int64Ptr(5678),
+			TTFTMS:                   new(int64(88)),
+			PriceInputMillis:         new(int64(1e7)),
+			PriceOutputMillis:        new(int64(2e7)),
+			PriceCacheReadMillis:     new(int64(1234)),
+			PriceCacheCreationMillis: new(int64(5678)),
 			RawCost:                  7700},
 		{RequestID: "r2", GroupID: 1, AccountID: 2, TemplateID: 3, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 500, ErrorType: domain.Err5xx, LatencyMS: 20, TotalTokens: 0, CacheReadTokens: 5, CacheCreationTokens: 3},
 	}
@@ -828,4 +828,5 @@ func TestUpdateAccountsBatchAdvancesIdentityRevisionOnlyOnValueChange(t *testing
 	}
 }
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }

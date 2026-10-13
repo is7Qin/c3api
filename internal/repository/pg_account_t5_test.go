@@ -40,8 +40,8 @@ func seedPGOAuthExt(t *testing.T, repos *repository.Repository, name string, at,
 	ext := &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "inst-" + name},
-		CodexOAuthToken: strPtrPG(at), CodexOAuthRefreshToken: strPtrPG(rt), CodexOAuthExpiresAt: expires,
-		CodexEmail: strPtrPG("a@" + name + ".x"),
+		CodexOAuthToken: new(at), CodexOAuthRefreshToken: new(rt), CodexOAuthExpiresAt: expires,
+		CodexEmail: new("a@" + name + ".x"),
 	}
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, ext)
 	require.NoError(t, err)

@@ -144,7 +144,7 @@ func TestTTFTCache_WaitersGetFnError(t *testing.T) {
 	arrived := make([]chan struct{}, n)
 	var wg sync.WaitGroup
 	errs := make([]error, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		arrived[i] = make(chan struct{})
 		wg.Add(1)
 		go func(i int) {
@@ -164,7 +164,7 @@ func TestTTFTCache_WaitersGetFnError(t *testing.T) {
 
 	close(f.gate)
 	wg.Wait()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.ErrorIs(t, errs[i], ErrInvalidInput, "等待方必须收到同一错误")
 	}
 	require.Equal(t, int32(1), f.calls.Load())
@@ -180,7 +180,7 @@ func TestTTFTCache_InflightDedup(t *testing.T) {
 	arrived := make([]chan struct{}, n)
 	var wg sync.WaitGroup
 	results := make([]*domain.TTFTSummary, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		arrived[i] = make(chan struct{})
 		wg.Add(1)
 		go func(i int) {
@@ -202,7 +202,7 @@ func TestTTFTCache_InflightDedup(t *testing.T) {
 	close(f.gate) // 放行唯一执行者
 	wg.Wait()
 	require.Equal(t, int32(1), f.calls.Load(), "雷鸣群必须去重为一次落库")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NotNil(t, results[i])
 		require.Equal(t, int64(9), results[i].Count)
 	}

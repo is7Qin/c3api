@@ -136,7 +136,7 @@ func benchStreamEvents(n int) []benchEv {
 		{"response.created", []byte(`{"type":"response.created","response":{"id":"rsp_1","object":"response","created_at":1750000000,"status":"in_progress","model":"gpt-4o","output":[],"usage":null}}`)},
 		{"response.output_item.added", []byte(`{"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"get_weather","arguments":"","status":"in_progress"}}`)},
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		evs = append(evs, benchEv{"response.output_text.delta", []byte(`{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"chunk token text "}`)})
 	}
 	evs = append(evs, benchEv{"response.function_call_arguments.delta", []byte(`{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":1,"delta":"{\"city\": \"x\"}"}`)})

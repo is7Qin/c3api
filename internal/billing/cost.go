@@ -152,10 +152,7 @@ func ImageCostFromResolved(rp domain.ResolvedPrices, inTok, outTok, count int64)
 		}
 		perImage = count * perP
 	}
-	total := tokenCost + perImage
-	if total > imageTotalCap {
-		total = imageTotalCap
-	}
+	total := min(tokenCost+perImage, imageTotalCap)
 	return total
 }
 

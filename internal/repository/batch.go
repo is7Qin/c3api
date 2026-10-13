@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"entgo.io/ent/dialect"
@@ -203,12 +204,7 @@ var errOwnershipLockSetStale = errors.New("repository: ownership lock set stale"
 
 // lockSetHas 报告 uid 是否已在锁集合内（N1 重启判据；集合小、线性即可）。
 func lockSetHas(set []int64, uid int64) bool {
-	for _, v := range set {
-		if v == uid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(set, uid)
 }
 
 // UpdateAccountsBatch 批量更新账号配置（公共入口，无测试钩子）。

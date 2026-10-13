@@ -338,7 +338,7 @@ func TestAdmitWarnThrottle(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		call(ist)
 	}
 	require.Equal(t, 1, sink.count(t, "stats: falling back to raw rows"), "同键 5 次只 1 条")

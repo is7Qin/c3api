@@ -24,8 +24,8 @@ func TestRuleBaseline(t *testing.T) {
 	// Window first-match: two rules same kind, priority decides
 	sink2 := newFakeSink(10)
 	e2, _ := newTestEngineWithSink(t, sink2, nil,
-		domain.Rule{Name: "p10", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{Throttle: openThrottleMs(5000)}},
-		domain.Rule{Name: "p20", Enabled: true, Priority: 20, When: domain.RuleWhen{Kind: strPtr("5xx")}, Then: domain.RuleThen{Throttle: openThrottleMs(30000)}},
+		domain.Rule{Name: "p10", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("5xx")}, Then: domain.RuleThen{Throttle: openThrottleMs(5000)}},
+		domain.Rule{Name: "p20", Enabled: true, Priority: 20, When: domain.RuleWhen{Kind: new("5xx")}, Then: domain.RuleThen{Throttle: openThrottleMs(30000)}},
 	)
 	e2.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind5xx, OccurredAt: at(0)})
 	require.Equal(t, 1, sink2.countThrottle(), "首中即停，只执行一次")
@@ -35,7 +35,7 @@ func TestRuleBaseline(t *testing.T) {
 	sink3 := newFakeSink(10)
 	e3, _ := newTestEngineWithSink(t, sink3, nil, domain.Rule{
 		Name: "win", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("429"), Count429GE: intPtr(2), WindowSeconds: intPtr(60)},
+		When: domain.RuleWhen{Kind: new("429"), Count429GE: new(2), WindowSeconds: new(60)},
 		Then: domain.RuleThen{Throttle: openThrottle()},
 	})
 	e3.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})
@@ -46,10 +46,10 @@ func TestRuleBaseline(t *testing.T) {
 	// Response shaping unchanged: passthrough vs custom via Classify (punish false for pure shaping)
 	e4, _ := newTestEngine(t, domain.Rule{
 		Name: "shape", Enabled: true, Priority: 10,
-		When: domain.RuleWhen{Kind: strPtr("4xx"), HTTPStatus: intPtr(400)},
-		Then: domain.RuleThen{ResponseCode: intPtr(502), CustomMessage: strPtr("Upstream request failed")},
+		When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(400)},
+		Then: domain.RuleThen{ResponseCode: new(502), CustomMessage: new("Upstream request failed")},
 	})
-	then, punish := e4.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: intPtr(400), ErrorMessage: "x"})
+	then, punish := e4.Classify(Event{AccountID: 1, Kind: Kind4xx, HTTPStatus: new(400), ErrorMessage: "x"})
 	require.False(t, punish, "pure shaping rule has no punish")
 	require.Equal(t, 502, *then.ResponseCode)
 	require.Equal(t, "Upstream request failed", *then.CustomMessage)

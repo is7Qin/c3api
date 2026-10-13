@@ -11,11 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func int64PtrD(v int64) *int64 { return &v }
-func intPtrD(v int) *int       { return &v }
+//go:fix inline
+func int64PtrD(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func intPtrD(v int) *int { return new(v) }
 
 func TestResolveEntryPrices_SetPricePerCall(t *testing.T) {
-	entry := &PriceEntry{Model: "search-m", Mode: PriceModeCall, PricePerCall: int64PtrD(1000)}
+	entry := &PriceEntry{Model: "search-m", Mode: PriceModeCall, PricePerCall: new(int64(1000))}
 	custom := int64(9999)
 	variants := []*PriceVariant{{Model: "search-m", Seq: 1, SetPricePerCall: &custom}}
 	rp, ok := ResolveEntryPrices(entry, variants, "auto", 0, time.Now())
@@ -25,7 +28,7 @@ func TestResolveEntryPrices_SetPricePerCall(t *testing.T) {
 }
 
 func TestResolveEntryPrices_ImageOverrides(t *testing.T) {
-	entry := &PriceEntry{Model: "img-m", Mode: PriceModeImage, ImgInTokPerM: int64PtrD(100), ImgOutTokPerM: int64PtrD(200), PricePerImage: int64PtrD(300)}
+	entry := &PriceEntry{Model: "img-m", Mode: PriceModeImage, ImgInTokPerM: new(int64(100)), ImgOutTokPerM: new(int64(200)), PricePerImage: new(int64(300))}
 	imgIn := int64(111)
 	imgOut := int64(222)
 	perImg := int64(333)
@@ -38,7 +41,7 @@ func TestResolveEntryPrices_ImageOverrides(t *testing.T) {
 }
 
 func TestResolveEntryPrices_CacheOverrides(t *testing.T) {
-	entry := &PriceEntry{Model: "tok-m", Mode: PriceModeToken, InputPerM: int64PtrD(1000), OutputPerM: int64PtrD(2000), CacheReadPerM: int64PtrD(3000), CacheWritePerM: int64PtrD(4000)}
+	entry := &PriceEntry{Model: "tok-m", Mode: PriceModeToken, InputPerM: new(int64(1000)), OutputPerM: new(int64(2000)), CacheReadPerM: new(int64(3000)), CacheWritePerM: new(int64(4000))}
 	cr := int64(999)
 	cw := int64(888)
 	variants := []*PriceVariant{{Model: "tok-m", Seq: 1, SetCacheReadPerM: &cr, SetCacheCreationPerM: &cw}}
@@ -52,30 +55,30 @@ func TestResolveEntryPrices_CacheOverrides(t *testing.T) {
 
 func TestResolveEntryPrices_MultBPClamp(t *testing.T) {
 	base := int64(1000000)
-	entry := &PriceEntry{Model: "m", Mode: PriceModeToken, InputPerM: int64PtrD(base), OutputPerM: int64PtrD(base)}
+	entry := &PriceEntry{Model: "m", Mode: PriceModeToken, InputPerM: new(base), OutputPerM: new(base)}
 	// large valid price with mult 100000 should stay non-negative (no overflow wrap)
 	large := int64(1_000_000_000)
-	entry2 := &PriceEntry{Model: "m2", Mode: PriceModeToken, InputPerM: int64PtrD(large), OutputPerM: int64PtrD(large)}
-	variants := []*PriceVariant{{Model: "m2", Seq: 1, MultBP: intPtrD(100000)}}
+	entry2 := &PriceEntry{Model: "m2", Mode: PriceModeToken, InputPerM: new(large), OutputPerM: new(large)}
+	variants := []*PriceVariant{{Model: "m2", Seq: 1, MultBP: new(100000)}}
 	rp, ok := ResolveEntryPrices(entry2, variants, "auto", 0, time.Now())
 	require.True(t, ok)
 	require.NotNil(t, rp.InputPerM)
 	require.GreaterOrEqual(t, *rp.InputPerM, int64(0))
 	// mult negative should be clamped to 0 => price 0, not negative
-	variantsNeg := []*PriceVariant{{Model: "m", Seq: 1, MultBP: intPtrD(-5000)}}
+	variantsNeg := []*PriceVariant{{Model: "m", Seq: 1, MultBP: new(-5000)}}
 	rp, ok = ResolveEntryPrices(entry, variantsNeg, "auto", 0, time.Now())
 	require.True(t, ok)
 	require.NotNil(t, rp.InputPerM)
 	require.Equal(t, int64(0), *rp.InputPerM)
 	// mult >100000 should be clamped to 100000
-	variantsHuge := []*PriceVariant{{Model: "m", Seq: 1, MultBP: intPtrD(999999)}}
+	variantsHuge := []*PriceVariant{{Model: "m", Seq: 1, MultBP: new(999999)}}
 	rp, ok = ResolveEntryPrices(entry, variantsHuge, "auto", 0, time.Now())
 	require.True(t, ok)
 	require.NotNil(t, rp.InputPerM)
 	// 100000 means ×10: 1_000_000 *10 =10_000_000
 	require.Equal(t, int64(10000000), *rp.InputPerM)
 	// mult 5000 means ×0.5 (with round): 1_000_000*5000/10000=500000
-	variantsHalf := []*PriceVariant{{Model: "m", Seq: 1, MultBP: intPtrD(5000)}}
+	variantsHalf := []*PriceVariant{{Model: "m", Seq: 1, MultBP: new(5000)}}
 	rp, ok = ResolveEntryPrices(entry, variantsHalf, "auto", 0, time.Now())
 	require.True(t, ok)
 	require.Equal(t, int64(500000), *rp.InputPerM)

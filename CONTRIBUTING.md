@@ -4,7 +4,7 @@ Thanks for considering a contribution! This project follows an **issue-first wor
 
 ## Development environment
 
-- **Go 1.26** (see `go.mod`).
+- **Go 1.27** (see `go.mod`).
 - **Node.js + pnpm** for the admin console (`web/`). On Windows, install dependencies with `pnpm install --config.node-linker=hoisted` (this machine's junction limitation); on Linux/CI the standard linker is fine.
 - **Real PostgreSQL 18** for tests that exercise the repository layer. Start the dedicated test database once:
 

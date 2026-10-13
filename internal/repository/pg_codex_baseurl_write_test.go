@@ -128,7 +128,7 @@ func TestPGBatchAccountTemplateIDDriftCannotEscapeLockedTemplates(t *testing.T) 
 				return err
 			},
 			func() error {
-				_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{fullUpdate.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID, BaseURL: strPtr("")})
+				_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{fullUpdate.ID}, repository.AccountPatch{TemplateID: &codexTemplate.ID, BaseURL: new("")})
 				return err
 			},
 		)

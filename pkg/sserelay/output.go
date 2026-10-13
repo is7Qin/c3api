@@ -459,17 +459,11 @@ func (o *Output) flushWireLocked() error {
 // 下行事实，部分写失败也保留）与 pendingBusiness（未下行字节）。须持 mu。
 func (o *Output) settleWireLocked(businessBuffered, wireBuffered, after int) {
 	wired := wireBuffered - after
-	businessWired := wired
-	if businessWired > businessBuffered {
-		businessWired = businessBuffered
-	}
+	businessWired := min(wired, businessBuffered)
 	if businessWired > 0 {
 		o.businessSent = true
 	}
-	remain := businessBuffered - businessWired
-	if remain < 0 {
-		remain = 0
-	}
+	remain := max(businessBuffered-businessWired, 0)
 	o.pendingBusiness = remain
 }
 

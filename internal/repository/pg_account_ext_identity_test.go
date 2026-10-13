@@ -25,8 +25,8 @@ func seedCodexAccountWithExt(t *testing.T, repos *repository.Repository, name st
 		AccountID:       acc.ID,
 		CredentialType:  "codex-oauth",
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i1"},
-		CodexOAuthToken: strPtr("tok-1"), CodexOAuthRefreshToken: strPtr("rt-1"),
-		CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("ca-1"),
+		CodexOAuthToken: new("tok-1"), CodexOAuthRefreshToken: new("rt-1"),
+		CodexEmail: new("a@example.com"), CodexAccountID: new("ca-1"),
 	}
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, ext)
 	require.NoError(t, err)
@@ -67,8 +67,8 @@ func TestPGAdminCredentialWriteAdvancesIdentityOnlyOnValueChange(t *testing.T) {
 	_, err = repos.AccountExts.AdminUpsertAccountExtCAS(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: "codex-oauth",
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i1"},
-		CodexOAuthToken: strPtr("tok-rotated"), CodexOAuthRefreshToken: strPtr("rt-rotated"),
-		CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("ca-1"),
+		CodexOAuthToken: new("tok-rotated"), CodexOAuthRefreshToken: new("rt-rotated"),
+		CodexEmail: new("a@example.com"), CodexAccountID: new("ca-1"),
 	}, 3)
 	require.NoError(t, err)
 	idemUpsert, err := repos.Accounts.GetAccount(ctx, acc.ID)
@@ -80,8 +80,8 @@ func TestPGAdminCredentialWriteAdvancesIdentityOnlyOnValueChange(t *testing.T) {
 	_, err = repos.AccountExts.AdminUpsertAccountExtCAS(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: "codex-oauth",
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i2"},
-		CodexOAuthToken: strPtr("tok-rotated"), CodexOAuthRefreshToken: strPtr("rt-rotated"),
-		CodexEmail: strPtr("a@example.com"), CodexAccountID: strPtr("ca-1"),
+		CodexOAuthToken: new("tok-rotated"), CodexOAuthRefreshToken: new("rt-rotated"),
+		CodexEmail: new("a@example.com"), CodexAccountID: new("ca-1"),
 	}, 4)
 	require.NoError(t, err)
 	newIdentity, err := repos.Accounts.GetAccount(ctx, acc.ID)

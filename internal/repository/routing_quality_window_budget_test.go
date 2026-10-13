@@ -45,7 +45,7 @@ func TestRoutingQualityWindowBaselineBudgetPG(t *testing.T) {
 
 	const nhot = 1000
 	keys := make([]repository.WindowHotKey, 0, nhot+2)
-	for i := 0; i < nhot; i++ {
+	for i := range nhot {
 		keys = append(keys, repository.WindowHotKey{RouteClassID: rc, Fingerprint: mkFP(0xC3, i)})
 	}
 	// 两枚稀疏键只为练回落路径，不计入测量主体：partial 前缀内 20（<30）须回落
@@ -102,7 +102,7 @@ func TestRoutingQualityWindowBaselineBudgetPG(t *testing.T) {
 	const timedRounds = 3
 	twoPhaseDurs := make([]time.Duration, 0, timedRounds)
 	var twoPhaseRes []repository.WindowBaselineStat
-	for i := 0; i < timedRounds; i++ {
+	for range timedRounds {
 		start := time.Now()
 		twoPhaseRes, err = repos.Partitions.QueryBaselineTruncated(ctx, m, keys)
 		require.NoError(t, err)
@@ -110,7 +110,7 @@ func TestRoutingQualityWindowBaselineBudgetPG(t *testing.T) {
 	}
 	fullDurs := make([]time.Duration, 0, timedRounds)
 	var fullRes []repository.WindowBaselineStat
-	for i := 0; i < timedRounds; i++ {
+	for range timedRounds {
 		start := time.Now()
 		fullRes = queryFullLookbackBaseline(t, pool, m, keys)
 		fullDurs = append(fullDurs, time.Since(start))

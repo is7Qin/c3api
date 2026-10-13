@@ -129,7 +129,7 @@ func TestErrLogWorkerRejectStormSamplesAndExemptSurvives(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < rejectN; i++ {
+		for i := range rejectN {
 			w.EnqueueRejected(rejectLog(i))
 		}
 	}()
@@ -140,7 +140,7 @@ func TestErrLogWorkerRejectStormSamplesAndExemptSurvives(t *testing.T) {
 	}
 
 	// 双轨行（豁免通道）恒入队：无消费方 + 风暴后仍全部进豁免队列
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		w.EnqueueError(errorLog(i))
 	}
 	require.Equal(t, int64(rejectN-64), w.DroppedReject(), "拒绝行丢弃计数 = 到达 - 队列容量")
@@ -158,7 +158,7 @@ func TestErrLogWorkerRejectStormSamplesAndExemptSurvives(t *testing.T) {
 func TestErrLogWorkerBatches(t *testing.T) {
 	store := &captureErrLogInserter{}
 	w := NewErrLogWorker(ErrLogConfig{QueueSize: 4096, BatchSize: 50, FlushInterval: time.Hour}, store, nil)
-	for i := 0; i < 120; i++ {
+	for i := range 120 {
 		w.EnqueueRejected(rejectLog(i))
 	}
 	require.NoError(t, w.Close(context.Background()))
@@ -187,7 +187,7 @@ func (s *slowErrLogInserter) InsertBatch(ctx context.Context, logs []*domain.Usa
 func TestErrLogWorkerCloseTruncatesOnBudget(t *testing.T) {
 	w := NewErrLogWorker(ErrLogConfig{QueueSize: 4096, BatchSize: 100, FlushInterval: time.Hour},
 		&slowErrLogInserter{latency: 30 * time.Millisecond}, nil)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		w.EnqueueRejected(rejectLog(i))
 	}
 	logger, out := newTestErrLogLogger(t)
@@ -212,10 +212,10 @@ func TestErrLogWorkerCloseTruncatesOnBudget(t *testing.T) {
 func TestErrLogWorkerCloseTruncationCountsQueueBacklog(t *testing.T) {
 	w := NewErrLogWorker(ErrLogConfig{QueueSize: 4096, BatchSize: 100, FlushInterval: time.Hour},
 		&captureErrLogInserter{}, nil)
-	for i := 0; i < 250; i++ {
+	for i := range 250 {
 		w.EnqueueRejected(rejectLog(i))
 	}
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		w.EnqueueError(errorLog(i))
 	}
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
@@ -271,10 +271,10 @@ func TestErrLogWorkerInsertFailureRequuesForRetry(t *testing.T) {
 func TestErrLogWorkerMixedBatchFailure(t *testing.T) {
 	store := &captureErrLogInserter{fail: true}
 	w := newTestErrLogWorker(store, 64)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		w.EnqueueError(errorLog(i))
 	}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		w.EnqueueRejected(rejectLog(i))
 	}
 	w.flush()
@@ -298,12 +298,12 @@ func TestErrLogWorkerMixedBatchFailure(t *testing.T) {
 func TestErrLogWorkerPersistentFailureBoundedBackpressure(t *testing.T) {
 	store := &captureErrLogInserter{fail: true}
 	w := NewErrLogWorker(ErrLogConfig{QueueSize: 64, ExemptQueueSize: 8, BatchSize: 50, FlushInterval: time.Hour}, store, nil)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		w.EnqueueError(errorLog(i))
 	}
 	require.Equal(t, int64(92), w.DroppedExempt(), "豁免队列溢出按既有采样语义丢弃")
 	require.Equal(t, 8, len(w.exemptQ), "豁免队列有界")
-	for i := 0; i < 10; i++ { // 持续故障多轮 flush：回灌恒 ≤ 容量，不增长
+	for range 10 { // 持续故障多轮 flush：回灌恒 ≤ 容量，不增长
 		w.flush()
 		require.LessOrEqual(t, len(w.exemptQ), 8, "回灌不产生无限增长（内存上界）")
 		require.Zero(t, w.DroppedReject())
@@ -327,7 +327,7 @@ func TestErrLogWorkerCloseTailWindowNoSilentLoss(t *testing.T) {
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 	wg.Add(4)
-	for g := 0; g < 4; g++ {
+	for g := range 4 {
 		go func(g int) {
 			defer wg.Done()
 			i := 0
@@ -369,12 +369,12 @@ func TestErrLogWorkerDropWarnEdge(t *testing.T) {
 	w.log = logger
 
 	// 第一轮风暴（无消费方）→ 一次 Warn
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		w.EnqueueRejected(rejectLog(i))
 	}
 	w.flush() // 排空队列 → 告警边沿回落
 	// 第二轮风暴 → 再次 Warn
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		w.EnqueueRejected(rejectLog(i))
 	}
 	w.flush()

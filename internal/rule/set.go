@@ -4,6 +4,8 @@
 
 package rule
 
+import "slices"
+
 import "strings"
 
 const smallSetThreshold = 4
@@ -37,12 +39,7 @@ func (s *intSet) contains(v *int) bool {
 		_, ok := s.m[*v]
 		return ok
 	}
-	for _, x := range s.vals {
-		if x == *v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.vals, *v)
 }
 
 type stringSet struct {
@@ -74,12 +71,7 @@ func (s *stringSet) contains(v string) bool {
 		_, ok := s.m[v]
 		return ok
 	}
-	for _, x := range s.vals {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s.vals, v)
 }
 
 type substringSet struct {

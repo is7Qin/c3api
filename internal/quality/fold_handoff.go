@@ -11,7 +11,7 @@ package quality
 
 import (
 	"encoding/json"
-	"sort"
+	"slices"
 )
 
 // flowPayloadState 是 redisPayload 的返回态：无内容 / rows 载荷 / 空快照标记。
@@ -92,7 +92,7 @@ func (o *FlowOwner) pgCandidateMinutes() []int64 {
 			out = append(out, minute)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 
@@ -112,7 +112,7 @@ func (o *FlowOwner) redisCandidateMinutes(curMinute int64) []int64 {
 			out = append(out, minute)
 		}
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 

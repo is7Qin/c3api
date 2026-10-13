@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strconv"
 	"strings"
 	"sync"
@@ -615,9 +616,7 @@ func (h *RuntimeHealth) View() map[HealthKey]healthEntry {
 		return nil
 	}
 	out := make(map[HealthKey]healthEntry, len(v.entries))
-	for k, e := range v.entries {
-		out[k] = e
-	}
+	maps.Copy(out, v.entries)
 	return out
 }
 
@@ -724,10 +723,10 @@ func (h *RuntimeHealth) syncResolveRunID(ctx context.Context) (string, error) {
 		infoStr = fallback
 	}
 	var runID string
-	for _, line := range strings.Split(infoStr, "\n") {
+	for line := range strings.SplitSeq(infoStr, "\n") {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "run_id:") {
-			runID = strings.TrimSpace(strings.TrimPrefix(line, "run_id:"))
+		if after, ok := strings.CutPrefix(line, "run_id:"); ok {
+			runID = strings.TrimSpace(after)
 			break
 		}
 		if strings.HasPrefix(line, "master_replid:") && runID == "" {

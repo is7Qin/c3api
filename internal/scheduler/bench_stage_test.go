@@ -98,13 +98,13 @@ func codexBatchStageFixture(b *testing.B, m int) (*Scheduler, *t1Loader) {
 		shared   = 10
 	)
 	sharedAccs := make([]*domain.Account, 0, shared)
-	for i := 0; i < shared; i++ {
+	for i := range shared {
 		sharedAccs = append(sharedAccs, codexAcc(int64(1_000_000+i), domain.FormatOpenAIResponses, "gpt-5", 2, fmt.Sprintf("inst-shared-%d", i)))
 	}
 	byGroup := make(map[int64][]*domain.Account, m)
 	for gid := 1; gid <= m; gid++ {
 		accs := append([]*domain.Account(nil), sharedAccs...)
-		for j := 0; j < perGroup; j++ {
+		for j := range perGroup {
 			accs = append(accs, codexAcc(int64(gid*1000+j), domain.FormatOpenAIResponses, "gpt-5", 2, fmt.Sprintf("inst-%d-%d", gid, j)))
 		}
 		byGroup[int64(gid)] = accs

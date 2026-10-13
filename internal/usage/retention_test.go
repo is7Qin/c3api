@@ -357,8 +357,7 @@ func TestRetentionWorkerCloseIdempotent(t *testing.T) {
 func TestRetentionWorkerStartTwiceFails(t *testing.T) {
 	pm := &fakePartitionManager{}
 	w := NewRetention(RetentionConfig{LogRetentionDays: 30}, pm, nil)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	require.NoError(t, w.Start(ctx))
 	require.Error(t, w.Start(ctx))
 }

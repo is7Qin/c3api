@@ -41,13 +41,13 @@ func BenchmarkFlowOwnerDuplicateMergeSteadyState(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			for i := 0; i < retained; i++ {
+			for i := range retained {
 				if err := foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{flowTestRow(fixed, 1, int64(i), "success", true)}); err != nil {
 					b.Fatal(err)
 				}
 			}
 			dup := make([]repository.RoutingFlowRow, 0, 8)
-			for i := 0; i < 8; i++ {
+			for i := range 8 {
 				dup = append(dup, flowTestRow(fixed, 1, int64(i), "success", true))
 			}
 			b.ReportAllocs()

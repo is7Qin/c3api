@@ -42,8 +42,8 @@ func TestModelsHandler_returnsHealthyResponse(t *testing.T) {
 // sseDataLines 提取 SSE 响应里每个事件的 data 载荷（帧间以空行分隔）。
 func sseDataLines(body string) []string {
 	var out []string
-	for _, frame := range strings.Split(body, "\n\n") {
-		for _, line := range strings.Split(frame, "\n") {
+	for frame := range strings.SplitSeq(body, "\n\n") {
+		for line := range strings.SplitSeq(frame, "\n") {
 			if v, ok := strings.CutPrefix(line, "data: "); ok {
 				out = append(out, v)
 			}

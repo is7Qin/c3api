@@ -108,7 +108,7 @@ func TestWSOutcome_singleObserverExactlyOnceBarrier(t *testing.T) {
 	startCh := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(8)
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		go func() {
 			defer wg.Done()
 			<-startCh

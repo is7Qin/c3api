@@ -4,7 +4,7 @@ package ent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -369,13 +369,13 @@ func (_u *PriceEntryUpdate) ClearSupportsPromptCaching() *PriceEntryUpdate {
 }
 
 // SetRaw sets the "raw" field.
-func (_u *PriceEntryUpdate) SetRaw(v json.RawMessage) *PriceEntryUpdate {
+func (_u *PriceEntryUpdate) SetRaw(v jsontext.Value) *PriceEntryUpdate {
 	_u.mutation.SetRaw(v)
 	return _u
 }
 
 // AppendRaw appends value to the "raw" field.
-func (_u *PriceEntryUpdate) AppendRaw(v json.RawMessage) *PriceEntryUpdate {
+func (_u *PriceEntryUpdate) AppendRaw(v jsontext.Value) *PriceEntryUpdate {
 	_u.mutation.AppendRaw(v)
 	return _u
 }
@@ -975,13 +975,13 @@ func (_u *PriceEntryUpdateOne) ClearSupportsPromptCaching() *PriceEntryUpdateOne
 }
 
 // SetRaw sets the "raw" field.
-func (_u *PriceEntryUpdateOne) SetRaw(v json.RawMessage) *PriceEntryUpdateOne {
+func (_u *PriceEntryUpdateOne) SetRaw(v jsontext.Value) *PriceEntryUpdateOne {
 	_u.mutation.SetRaw(v)
 	return _u
 }
 
 // AppendRaw appends value to the "raw" field.
-func (_u *PriceEntryUpdateOne) AppendRaw(v json.RawMessage) *PriceEntryUpdateOne {
+func (_u *PriceEntryUpdateOne) AppendRaw(v jsontext.Value) *PriceEntryUpdateOne {
 	_u.mutation.AppendRaw(v)
 	return _u
 }

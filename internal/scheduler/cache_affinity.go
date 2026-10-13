@@ -56,7 +56,7 @@ func buildCacheDomainRing(domains []string) (CacheDomainRing, error) {
 	sort.Strings(ordered)
 	nodes := make([]CacheDomainNode, 0, len(ordered)*CacheDomainVirtualNodes)
 	for _, domain := range ordered {
-		for vnode := 0; vnode < CacheDomainVirtualNodes; vnode++ {
+		for vnode := range CacheDomainVirtualNodes {
 			nodes = append(nodes, CacheDomainNode{Hash: cacheDomainNodeHash(domain, vnode), Domain: domain})
 		}
 	}

@@ -23,9 +23,9 @@ func oauthRotationFixture(t *testing.T, token, refresh string) (*Scheduler, *mem
 	a.Ext = &domain.AccountExt{
 		AccountID: 1, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity:          &domain.CodexIdentity{InstallationID: "inst-1"},
-		CodexAccountID:         strPtrT("ca-1"),
-		CodexOAuthToken:        strPtrT(token),
-		CodexOAuthRefreshToken: strPtrT(refresh),
+		CodexAccountID:         new("ca-1"),
+		CodexOAuthToken:        new(token),
+		CodexOAuthRefreshToken: new(refresh),
 	}
 	m := newMemLoader(map[int64][]*domain.Account{10: {a}})
 	s := newSched(t, m)
@@ -42,8 +42,8 @@ func rotateTokenKNeutral(m *memLoader, token, refresh string) {
 	defer m.mu.Unlock()
 	old := m.byGroup[10][0].Ext
 	next := *old
-	next.CodexOAuthToken = strPtrT(token)
-	next.CodexOAuthRefreshToken = strPtrT(refresh)
+	next.CodexOAuthToken = new(token)
+	next.CodexOAuthRefreshToken = new(refresh)
 	m.byGroup[10][0].Ext = &next
 }
 

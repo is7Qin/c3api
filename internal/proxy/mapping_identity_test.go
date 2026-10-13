@@ -93,7 +93,7 @@ func TestPrecheckPriceMappingModel(t *testing.T) {
 	targetPriced := func() map[string]*domain.PriceEntry {
 		return map[string]*domain.PriceEntry{"upstream-b": {
 			Model: "upstream-b", Mode: domain.PriceModeToken,
-			InputPerM: ptr(int64(1e8)), OutputPerM: ptr(int64(2e8)),
+			InputPerM: new(int64(1e8)), OutputPerM: new(int64(2e8)),
 			Source: domain.PricingSourceManual,
 		}}
 	}
@@ -442,7 +442,7 @@ func TestSearchMappedModelPreserved(t *testing.T) {
 		p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream",
 			mapping: map[string]domain.ModelMappingEntry{"gpt-4o": {MappedModel: "upstream-b", Mode: domain.ModelMappingModeImplicit}}}},
 			up.URL, searchBillingHooks(&fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{
-				"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500), Source: domain.PricingSourceManual},
+				"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: new(int64(2500)), Source: domain.PricingSourceManual},
 			}}), store)
 		srv := httptest.NewServer(AIRouter(p))
 		defer srv.Close()

@@ -51,12 +51,12 @@ func TestPGListUserTempBalances(t *testing.T) {
 		expiresAt *time.Time
 		note      *string
 	}{
-		{amount: 300000, expiresAt: ptrTime(now.AddDate(0, 0, 5)), note: &noteBonus},    // 5 天后到期
-		{amount: 150000, expiresAt: ptrTime(now.AddDate(0, 0, 2)), note: &noteRedeem},   // 2 天后到期（先扣）
-		{amount: 500000, expiresAt: nil, note: &noteBonus},                              // 永久（最后）
-		{amount: 400000, expiresAt: ptrTime(now.AddDate(0, 0, -1)), note: &noteBonus},   // 已过期 → 隐藏
-		{amount: 0, expiresAt: ptrTime(now.AddDate(0, 0, 30)), note: &noteRedeem},       // 已用尽 → 隐藏
-		{amount: -100000, expiresAt: ptrTime(now.AddDate(0, 0, 30)), note: &noteRedeem}, // 负扣减记录 → 隐藏
+		{amount: 300000, expiresAt: new(now.AddDate(0, 0, 5)), note: &noteBonus},    // 5 天后到期
+		{amount: 150000, expiresAt: new(now.AddDate(0, 0, 2)), note: &noteRedeem},   // 2 天后到期（先扣）
+		{amount: 500000, expiresAt: nil, note: &noteBonus},                          // 永久（最后）
+		{amount: 400000, expiresAt: new(now.AddDate(0, 0, -1)), note: &noteBonus},   // 已过期 → 隐藏
+		{amount: 0, expiresAt: new(now.AddDate(0, 0, 30)), note: &noteRedeem},       // 已用尽 → 隐藏
+		{amount: -100000, expiresAt: new(now.AddDate(0, 0, 30)), note: &noteRedeem}, // 负扣减记录 → 隐藏
 	})
 
 	rows, err := repos.ListUserTempBalances(ctx, u.ID)
@@ -90,10 +90,10 @@ func TestPGListTempBalances(t *testing.T) {
 		expiresAt *time.Time
 		note      *string
 	}{
-		{amount: 100000, expiresAt: ptrTime(now.AddDate(0, 0, 5)), note: &note},
-		{amount: 200000, expiresAt: ptrTime(now.AddDate(0, 0, -1)), note: &note}, // 已过期——全量视角仍可见
-		{amount: 0, expiresAt: ptrTime(now.AddDate(0, 0, 30)), note: &note},      // 已用尽——仍可见
-		{amount: -50000, expiresAt: nil, note: &note},                            // 负扣减——仍可见
+		{amount: 100000, expiresAt: new(now.AddDate(0, 0, 5)), note: &note},
+		{amount: 200000, expiresAt: new(now.AddDate(0, 0, -1)), note: &note}, // 已过期——全量视角仍可见
+		{amount: 0, expiresAt: new(now.AddDate(0, 0, 30)), note: &note},      // 已用尽——仍可见
+		{amount: -50000, expiresAt: nil, note: &note},                        // 负扣减——仍可见
 	})
 	seedPGTempBalanceRows(t, repos, u2.ID, []struct {
 		amount    int64

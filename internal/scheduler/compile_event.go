@@ -387,9 +387,7 @@ func (s *Scheduler) compileScopedRoutes(f *compileFire) (*DecisionView, error) {
 		return nil, errScopedUnsupported
 	}
 	merged := make(map[RouteRef]*RouteDecision, len(f.carry.routes)+len(f.affected))
-	for k, v := range f.carry.routes {
-		merged[k] = v
-	}
+	maps.Copy(merged, f.carry.routes)
 	for ref := range f.affected {
 		rk := routeKey{format: domain.RequestFormat(ref.Format), model: ref.Model}
 		op := domain.OperationTag(ref.OperationTag)

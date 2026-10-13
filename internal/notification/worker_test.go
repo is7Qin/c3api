@@ -130,7 +130,7 @@ func TestWorkerTrySubmitReturnsQuicklyEvenWithSlowRedis(t *testing.T) {
 	slowClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", DialTimeout: 400 * time.Millisecond})
 	t.Cleanup(func() { _ = slowClient.Close() })
 	w := New(NewCooldown(slowClient), enabledTrue(), func(domain.BalanceWarningEvent, func(error)) error { return nil }, nil)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		start := time.Now()
 		ok := w.TrySubmit(warningEvent(int64(100+i), 100000, "q@example.com"))
 		elapsed := time.Since(start)
@@ -151,7 +151,7 @@ func TestWorkerQueueFullDroppedLocally(t *testing.T) {
 	require.NoError(t, err)
 	w := New(NewCooldown(client), enabledTrue(), func(domain.BalanceWarningEvent, func(error)) error { return nil }, logger)
 
-	for i := 0; i < queueCap; i++ {
+	for i := range queueCap {
 		ev := warningEvent(int64(1000+i), 100000, "u@example.com")
 		require.True(t, w.TrySubmit(ev), "fill %d must succeed", i)
 	}
@@ -233,7 +233,7 @@ func TestWorkerDisabledDoesNotOccupyQueue(t *testing.T) {
 	var flag atomic.Bool
 	flag.Store(true)
 	w := New(NewCooldown(client), flag.Load, func(domain.BalanceWarningEvent, func(error)) error { return nil }, nil)
-	for i := 0; i < queueCap; i++ {
+	for i := range queueCap {
 		require.True(t, w.TrySubmit(warningEvent(int64(5000+i), 100000, "fill@example.com")), "fill %d must succeed", i)
 	}
 	flag.Store(false)
@@ -384,7 +384,7 @@ func TestWorkerConcurrentSameThresholdDedupedByConsumer(t *testing.T) {
 	require.True(t, w.TrySubmit(ev))
 	require.True(t, w.TrySubmit(ev))
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		select {
 		case <-processedCh:
 		case <-time.After(3 * time.Second):
@@ -419,7 +419,7 @@ func TestWorkerConcurrentBurstDedupedByConsumer(t *testing.T) {
 	ev := warningEvent(99, 100000, "burst@example.com")
 	var wg sync.WaitGroup
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			defer wg.Done()
 			w.TrySubmit(ev)
@@ -427,7 +427,7 @@ func TestWorkerConcurrentBurstDedupedByConsumer(t *testing.T) {
 	}
 	wg.Wait()
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		select {
 		case <-processedCh:
 		case <-time.After(3 * time.Second):
@@ -458,7 +458,7 @@ func TestWorkerDifferentThresholdIndependent(t *testing.T) {
 	require.True(t, w.TrySubmit(ev1))
 	require.True(t, w.TrySubmit(ev2))
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		waitForHook(t, processed, 3*time.Second)
 	}
 	require.Equal(t, int64(2), sent.Load())
@@ -483,7 +483,7 @@ func TestWorkerDifferentUserIndependent(t *testing.T) {
 	require.True(t, w.TrySubmit(ev1))
 	require.True(t, w.TrySubmit(ev2))
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		waitForHook(t, processed, 3*time.Second)
 	}
 	require.Equal(t, int64(2), sent.Load())
@@ -528,7 +528,7 @@ func TestWorkerFinalDeliveryFailureReleasesClaim(t *testing.T) {
 func TestWorkerAuthQueueIsolation(t *testing.T) {
 	client, _ := newTestRedis(t)
 	w := newTestWorker(t, client, enabledTrue(), func(domain.BalanceWarningEvent, func(error)) error { return nil })
-	for i := 0; i < queueCap; i++ {
+	for i := range queueCap {
 		ev := warningEvent(int64(2000+i), 100000, "w@example.com")
 		require.True(t, w.TrySubmit(ev))
 	}
@@ -539,7 +539,7 @@ func TestWorkerAuthQueueIsolation(t *testing.T) {
 	require.Equal(t, queueCap, w.Stats().(notificationStats).Queued)
 
 	authCh := make(chan string, 256)
-	for i := 0; i < 256; i++ {
+	for range 256 {
 		authCh <- "auth"
 	}
 	require.Equal(t, 256, len(authCh))
@@ -596,7 +596,7 @@ func TestWorkerShutdownBoundedDrain(t *testing.T) {
 		close(drained)
 	}()
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		w.TrySubmit(warningEvent(int64(3000+i), 100000, "s@example.com"))
 	}
 
@@ -676,7 +676,7 @@ func TestWorkerConcurrentClose(t *testing.T) {
 		return nil
 	})
 	require.NoError(t, w.Start(context.Background()))
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.True(t, w.TrySubmit(warningEvent(int64(4000+i), 100000, "cc@example.com")))
 	}
 

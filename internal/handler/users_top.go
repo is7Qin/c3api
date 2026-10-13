@@ -57,7 +57,7 @@ func (h *AdminAPI) GetAdminUsersTop(w http.ResponseWriter, r *http.Request, para
 		other += u.c
 	}
 	ids := make([]int64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ids[i] = users[i].uid
 	}
 	emails, err := h.svc.UserEmails(r.Context(), ids)

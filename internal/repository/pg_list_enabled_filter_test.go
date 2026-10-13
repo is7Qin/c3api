@@ -51,14 +51,14 @@ func TestPGListAccountsEnabledFilter(t *testing.T) {
 	all := names(repository.ListQuery{})
 	require.ElementsMatch(t, []string{"enabled-a", "enabled-b", "disabled-a"}, all, "nil = 不过滤")
 
-	onlyEnabled := names(repository.ListQuery{Enabled: boolPtr(true)})
+	onlyEnabled := names(repository.ListQuery{Enabled: new(true)})
 	require.ElementsMatch(t, []string{"enabled-a", "enabled-b"}, onlyEnabled,
 		"true = 仅启用（运行时失效的账号管理面仍启用，故仍在列）")
 
-	onlyDisabled := names(repository.ListQuery{Enabled: boolPtr(false)})
+	onlyDisabled := names(repository.ListQuery{Enabled: new(false)})
 	require.Equal(t, []string{"disabled-a"}, onlyDisabled, "false = 仅禁用")
 
 	// 与其它谓词叠加：启用 + 名称过滤。
-	combined := names(repository.ListQuery{Enabled: boolPtr(true), Name: "enabled-a"})
+	combined := names(repository.ListQuery{Enabled: new(true), Name: "enabled-a"})
 	require.Equal(t, []string{"enabled-a"}, combined)
 }

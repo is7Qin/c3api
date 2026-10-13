@@ -59,7 +59,7 @@ func TestServiceAccountExtScope(t *testing.T) {
 	_, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
-		CodexOAuthToken: strPtr2("owner-token"),
+		CodexOAuthToken: new("owner-token"),
 	})
 	require.NoError(t, err)
 
@@ -76,7 +76,7 @@ func TestServiceAccountExtScope(t *testing.T) {
 	_, err = svc.UpsertAccountExt(scopeCtxSvc(other.ID), &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
-		CodexOAuthToken: strPtr2("attacker"),
+		CodexOAuthToken: new("attacker"),
 	})
 	require.ErrorIs(t, err, ErrNotFound, "越域 ext 写必须 404（C1）")
 
@@ -120,14 +120,12 @@ func TestServiceAccountExtTransferInterleave(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var werr error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, werr = svc.UpsertAccountExt(scopeCtxSvc(owner.ID), &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-			CodexOAuthToken: strPtr2("tok-owner"),
+			CodexOAuthToken: new("tok-owner"),
 		})
-	}()
+	})
 
 	<-bar.ready // 服务已通过作用域读，正要进入写事务
 	// 转属：把账号移出 owner 作用域（→ target，独立管理面连接）。

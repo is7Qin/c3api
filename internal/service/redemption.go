@@ -65,7 +65,7 @@ const codeCharset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 // 真实资源，禁用可预测的 math/rand）。
 func randomCode() (string, error) {
 	b := make([]byte, 19)
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		if i == 4 || i == 9 || i == 14 {
 			b[i] = '-'
 			continue
@@ -95,7 +95,7 @@ func (s *Service) GenerateCodes(ctx context.Context, req GenerateRequest, create
 	if count <= 0 {
 		count = 1
 	}
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := range 5 {
 		codes := make([]*domain.RedemptionCode, 0, count)
 		for i := 0; i < count; i++ {
 			code, err := randomCode()

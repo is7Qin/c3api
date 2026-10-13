@@ -85,7 +85,6 @@ func (h *AdminAPI) assembleUpstream(ctx context.Context, items []domain.AccountU
 	var g errgroup.Group
 	g.SetLimit(8) // 批内并行度（与适配层 usage 并发上限 8 / sdkbridge.usageFetchConcurrency 语义对齐）
 	for i := range items {
-		i := i
 		g.Go(func() error {
 			cred, err := h.svc.AccountUsageCredential(ctx, items[i].AccountID)
 			if err != nil {

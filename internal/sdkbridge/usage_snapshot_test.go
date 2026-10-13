@@ -162,7 +162,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	e.sig = credKey{oauthToken: "corrupted-sig"}
 	a.mu.Unlock()
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		got, err := a.GetUsageSnapshot(ctx, cred)
 		require.NoError(t, err)
 		require.Same(t, snap, got, "TTL 内命中返回缓存实例（零上游）")
@@ -232,7 +232,7 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 	require.ErrorIs(t, err, ErrUpstream, "500 → ErrUpstream 分类")
 	require.Equal(t, 1, c.callsN())
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := a.GetUsageSnapshot(ctx, cred)
 		require.ErrorIs(t, err, ErrUpstream, "冷却内直接返回分类错误（零上游）")
 	}
@@ -338,7 +338,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 	results := make([]*domain.CodexUsageSnapshot, n)
 	errs := make([]error, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -358,7 +358,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 	wg.Wait()
 
 	require.Equal(t, usageFetchConcurrency, c.callsN(), "同账号 N 并发首拉 → 上游恰 8 次（in-flight 突发有界 + 双检防级联——无双检则 20 次级联全拉）")
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NoError(t, errs[i])
 		// 8 个 in-flight 各自产出自有实例（最后写者胜入缓存）；等待者双检/快查
 		// 命中缓存实例——内容一律相同（同一上游响应），指针可比性仅限 TTL 命

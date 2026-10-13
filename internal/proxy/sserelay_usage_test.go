@@ -26,7 +26,7 @@ func TestSserelayCompletedUsageLongLine(t *testing.T) {
 	var sb strings.Builder
 	sb.WriteString(`{"type":"response.completed","response":{"id":"r","model":"m","output":[`)
 	item := `{"type":"function_call","name":"f","arguments":"aaaa"}`
-	for i := 0; i < 400; i++ {
+	for i := range 400 {
 		if i > 0 {
 			sb.WriteByte(',')
 		}

@@ -170,9 +170,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		}
 	}
 
-	wg.Add(1)
-	go func() { // 客户端 → 上游（客户端帧中继；codex 面由传输适配层按 codex 形状归一；写失败 = 上游侧问题）
-		defer wg.Done()
+	wg.Go(func() { // 客户端 → 上游（客户端帧中继；codex 面由传输适配层按 codex 形状归一；写失败 = 上游侧问题）
 		defer relayRecover("client-loop", &upErr) // panic 按身份入槽：本 goroutine 故障归上游侧
 		for {
 			typ, f, err := client.Read(r.Context())
@@ -187,12 +185,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				return
 			}
 		}
-	}()
+	})
 
 	upLoopDone := make(chan struct{})
-	wg.Add(1)
-	go func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
-		defer wg.Done()
+	wg.Go(func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer close(upLoopDone)                   // 编排等本读者退出后再分类，保证记录可见性
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
 		for {
@@ -209,8 +205,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			}
 			if err != nil {
 				// 读失败分类：关闭帧进独立槽优先级最高，其余网络错误进 upErr，槽位分离避免覆盖
-				var ce websocket.CloseError
-				if errors.As(err, &ce) {
+				if _, ok := errors.AsType[websocket.CloseError](err); ok {
 					recordClose(err)
 				} else {
 					setErr(&upErr, err)
@@ -297,12 +292,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				return
 			}
 		}
-	}()
+	})
 
 	hbDone := make(chan struct{})
-	wg.Add(1)
-	go func() { // 心跳：向上游周期 Ping，pong 超时视为上游失联按网络错误收尾
-		defer wg.Done()
+	wg.Go(func() { // 心跳：向上游周期 Ping，pong 超时视为上游失联按网络错误收尾
 		defer close(hbDone)                             // 编排等本侧退出后再快照——pingErr 写入 happens-before 本关闭
 		defer relayRecover("heartbeat", &pingErr)       // panic 按身份入槽：心跳失败归 pingErr
 		ticker := time.NewTicker(p.wsHeartbeatInterval) // 可注入缩短以便测试
@@ -322,7 +315,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				return
 			}
 		}
-	}()
+	})
 
 	<-endCh
 	// 幂等取消先行：exit 的 relayCancel 滞后于 endCh 信号——先取消，此后所有

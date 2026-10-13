@@ -25,7 +25,7 @@ RUN pnpm build
 # 在构建机原生执行（Go 交叉编译无需目标平台模拟）——与 web 阶段合计，QEMU
 # 模拟面降到零。本地 docker build（compose build）无注入时为空 → 本机平台，
 # 行为不变。
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine AS gobuild
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS gobuild
 ARG C3API_VERSION=dev
 ARG TARGETOS
 ARG TARGETARCH

@@ -443,9 +443,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 	var inflight, peak atomic.Int64
 	var wg sync.WaitGroup
 	for range 8 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 50 {
 				sel, err := concSelect(s)
 				if err != nil {
@@ -461,7 +459,7 @@ func TestAccConcReleaseShapeAndBorrowCapRace(t *testing.T) {
 				sel.Release()
 				inflight.Add(-1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	require.LessOrEqual(t, peak.Load(), int64(4), "CAS 封顶：并发双借不过真上限")

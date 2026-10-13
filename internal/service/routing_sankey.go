@@ -14,6 +14,8 @@ package service
 //
 // 折叠是纯拓扑操作，不重算任何服务端统计量（Wilson/frontier/守恒判定都不在此）。
 
+import "slices"
+
 import "sort"
 
 // RoutingFlowGraphEdge 一条桑基边（已按 (ordinal, lane, account, outcome,
@@ -218,6 +220,6 @@ func sortedInt64Set(m map[int64]struct{}) []int64 {
 	for k := range m {
 		out = append(out, k)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }

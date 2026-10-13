@@ -358,7 +358,7 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
 	}
 	var got []string
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		got = append(got, string(readResponsesWSFrame(t, c)))
 	}
 	require.Equal(t, `{"type":"response.created","response":{"id":"rsp_ws_1","model":"gpt-4o"}}`, got[0])
@@ -503,8 +503,8 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	customMsg := "dial-4xx-custom"
 	_, err := frs.CreateRule(context.Background(), domain.Rule{
 		Name: "custom-dial-401", Enabled: true, Priority: 5,
-		When: domain.RuleWhen{Kind: &kind4xx, HTTPStatus: intPtrT(401)},
-		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(5000)}, CustomMessage: &customMsg},
+		When: domain.RuleWhen{Kind: &kind4xx, HTTPStatus: new(401)},
+		Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000))}, CustomMessage: &customMsg},
 	})
 	require.NoError(t, err)
 	require.NoError(t, re.Reload(context.Background()))
@@ -645,7 +645,7 @@ func TestCodexWSDial429Failover(t *testing.T) {
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
 	}
 	// 事件流 3 帧 + 回声 3 帧（读满 6——上游 frameLimit=3 后 1000 关闭）
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
@@ -743,7 +743,7 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 	// 事件流（判死帧 + created + completed）+ 3 回声——判死帧照常透传客户端
 	//（错误事件属业务流），上游 3 帧后 1000 关闭
 	got := make([]string, 0, 6)
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		got = append(got, string(readResponsesWSFrame(t, c)))
 	}
 	require.Contains(t, got[0], `"type":"error"`)
@@ -1031,7 +1031,7 @@ func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	// 事件流 3 帧（created/delta/completed）+ 1 回声——只需握手头被上游观测即可。
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		readResponsesWSFrame(t, c)
 	}
 

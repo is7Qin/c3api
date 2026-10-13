@@ -204,7 +204,7 @@ func TestRecordNeverBlocks(t *testing.T) {
 	const n = 30000 // 旧 cap 16384 之上
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < n; i++ {
+		for range n {
 			r.Record(log)
 		}
 		close(done)
@@ -228,14 +228,12 @@ func TestRecordConcurrentNeverBlocks(t *testing.T) {
 	const g = 32
 	const per = 2000
 	var wg sync.WaitGroup
-	for i := 0; i < g; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < per; j++ {
+	for range g {
+		wg.Go(func() {
+			for range per {
 				r.Record(log)
 			}
-		}()
+		})
 	}
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done) }()
@@ -287,7 +285,7 @@ func TestLogFlushBatchedWrites(t *testing.T) {
 	ls := &countLogStore{}
 	r := New(UsageConfig{BatchSize: 500, Workers: 1}, ls, nil)
 	now := time.Now()
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		r.Record(&domain.UsageLog{RequestID: "x", Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: now})
 	}
 	flushed := r.flushLogs(context.Background())
@@ -305,7 +303,7 @@ func TestLogFlushParallelWorkers(t *testing.T) {
 	ls := &countLogStore{}
 	r := New(UsageConfig{BatchSize: 100, Workers: 4}, ls, nil)
 	now := time.Now()
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		r.Record(&domain.UsageLog{RequestID: "x", UserID: int64(i % 100), Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: now})
 	}
 	flushed := r.flushLogs(context.Background())
@@ -343,7 +341,7 @@ func TestLogRefillOnFailure(t *testing.T) {
 	ls.fail.Store(true)
 	r := New(UsageConfig{BatchSize: 100, Workers: 1}, ls, nil)
 	now := time.Now()
-	for i := 0; i < 250; i++ {
+	for range 250 {
 		r.Record(&domain.UsageLog{RequestID: "x", Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: now})
 	}
 	// 首次 flush：chunk1(100) 首调失败 → 二分探测重试全量成功（瞬态失败不丢行
@@ -388,7 +386,7 @@ func TestLogPoisonRowIsolatedByBisect(t *testing.T) {
 	ls := &poisonRowLogStore{poison: "poison-3"}
 	r := New(UsageConfig{BatchSize: 8, Workers: 1}, ls, logger)
 	now := time.Now()
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		req := fmt.Sprintf("req-%d", i)
 		if i == 3 {
 			req = "poison-3"
@@ -441,13 +439,13 @@ func TestLogDBFailureRefillsNoProgressiveDrop(t *testing.T) {
 	ls := &dbDownLogStore{fail: true}
 	r := New(UsageConfig{BatchSize: 4, Workers: 1}, ls, logger)
 	now := time.Now()
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		r.Record(&domain.UsageLog{RequestID: fmt.Sprintf("req-%d", i), Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: now})
 	}
 
 	// 故障期多轮 flush（6 轮 > 旧阈值 5，旧实现此处已丢弃 chunk）：全部回灌不丢
 	// + 失败计数不累计（无任何触发丢弃）
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		require.Zero(t, r.flushLogs(context.Background()))
 		require.Equal(t, 4, r.Pending(), "整库故障回灌不丢（无进行式丢弃）")
 		require.Zero(t, r.failCounts[0], "整库故障不累计失败计数")
@@ -803,7 +801,7 @@ func TestCloseDrainsFully(t *testing.T) {
 	q := &fakeQuotaWriter{}
 	r := New(UsageConfig{BatchSize: 500, Workers: 2, QuotaWriter: q}, ls, logger)
 	now := time.Now().Truncate(time.Hour)
-	for i := 0; i < 1200; i++ {
+	for i := range 1200 {
 		r.Record(&domain.UsageLog{RequestID: "x", UserID: int64(i % 50), GroupID: 1, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, TotalTokens: 1, KeyID: 1, CreatedAt: now})
 	}
 	r.AddQuota(1, 1200) // 显式 quota delta（Record 不再推导）
@@ -828,7 +826,7 @@ func TestCloseTruncatesOnBudget(t *testing.T) {
 	logger, out := usageTestLogger(t)
 	r := New(UsageConfig{BatchSize: 10, Workers: 1, QuotaWriter: &fakeQuotaWriter{}}, &countLogStore{}, logger) // 额度面截断 Warn 的前提（nil writer 无告警面）
 	now := time.Now().Truncate(time.Hour)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		r.Record(&domain.UsageLog{RequestID: "x", UserID: 1, GroupID: 1, Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, TotalTokens: 1, KeyID: 1, CreatedAt: now})
 	}
 	r.AddQuota(1, 5) // 显式 delta 保留额度面截断前提（Record 不再推导）
@@ -859,7 +857,7 @@ func TestWaterlineWarns(t *testing.T) {
 	defer func() { pendingWaterline = old }()
 
 	now := time.Now()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		r.Record(&domain.UsageLog{RequestID: "x", Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: now})
 	}
 	require.NoError(t, logger.Sync())
@@ -875,7 +873,7 @@ func TestWaterlineWarns(t *testing.T) {
 	require.NoError(t, err)
 	n := countOccurrences(b, "usage pending exceeds waterline")
 	require.Equal(t, 1, n)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		r.Record(&domain.UsageLog{RequestID: "x", Model: "m", Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: now})
 	}
 	require.NoError(t, logger.Sync())

@@ -43,7 +43,7 @@ func TestObserveDispatchFailureCarriesCallerUsage(t *testing.T) {
 
 	carryStreamUsage(ctx,
 		AttemptUsage{InputTokens: 5, OutputTokens: 7, CacheReadTokens: 3, CacheCreationTokens: 4, CallCount: 2},
-		ptr(int64(321)))
+		new(int64(321)))
 	p.observeDispatchFailure(ctx, d, 502)
 
 	require.Equal(t, ResultFailed, got.Result)

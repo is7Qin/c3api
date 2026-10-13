@@ -14,8 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
@@ -122,7 +121,7 @@ func accessLog(log *logx.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			reqID := r.Header.Get("X-Request-Id")
 			if reqID == "" {
-				reqID = uuid.NewString()
+				reqID = uuid.New().String()
 			}
 			r.Header.Set("X-Request-Id", reqID)
 			sw := &statusWriter{ResponseWriter: w, status: 200}

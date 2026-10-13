@@ -34,7 +34,7 @@ func seedPATExtPG(t *testing.T, repos *repository.Repository, accountID int64, p
 	_, err := repos.AccountExts.UpsertAccountExt(context.Background(), &domain.AccountExt{
 		AccountID: accountID, CredentialType: credential.TypeCodexPAT,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
-		CodexPATKey:   strPtrPG(pat),
+		CodexPATKey:   new(pat),
 	})
 	require.NoError(t, err)
 }
@@ -57,7 +57,7 @@ func seedCodexKeyExtPG(t *testing.T, repos *repository.Repository, accountID int
 	_, err := repos.AccountExts.UpsertAccountExt(context.Background(), &domain.AccountExt{
 		AccountID: accountID, CredentialType: credential.TypeCodexPAT,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
-		CodexEmail:    strPtrPG(email), CodexAccountID: strPtrPG(codexAccountID), CodexPATKey: strPtrPG(pat),
+		CodexEmail:    new(email), CodexAccountID: new(codexAccountID), CodexPATKey: new(pat),
 	})
 	require.NoError(t, err)
 }
@@ -253,7 +253,7 @@ func TestPGCodexKeyScopeIsolation(t *testing.T) {
 	_, err = repos.AccountExts.UpsertAccountExt(context.Background(), &domain.AccountExt{
 		AccountID: b.ID, CredentialType: credential.TypeCodexPAT,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
-		CodexEmail:    strPtrPG(email), CodexAccountID: strPtrPG(acctID), CodexPATKey: strPtrPG("other-pat"),
+		CodexEmail:    new(email), CodexAccountID: new(acctID), CodexPATKey: new("other-pat"),
 	})
 	require.Error(t, err, "跨归属同组合键必须撞唯一索引（row-level failed，不是改他人行）")
 
@@ -322,7 +322,7 @@ func TestPGAccountExtScopedWriteC1(t *testing.T) {
 	// 越域 TryInsert：不得给他人账号落 ext 行（ErrNotFound）。
 	inserted, err := repos.AccountExts.TryInsertAccountExt(scopeCtx(owner.ID), &domain.AccountExt{
 		AccountID: theirs.ID, CredentialType: credential.TypeCodexPAT,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtrPG("attacker"),
+		CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: new("attacker"),
 	})
 	require.ErrorIs(t, err, repository.ErrNotFound, "越域首写必须 404（作用域复核先于落库）")
 	require.False(t, inserted)
@@ -334,7 +334,7 @@ func TestPGAccountExtScopedWriteC1(t *testing.T) {
 	require.NoError(t, err)
 	_, err = repos.AccountExts.AdminUpsertAccountExtCAS(scopeCtx(owner.ID), &domain.AccountExt{
 		AccountID: theirs.ID, CredentialType: credential.TypeCodexPAT,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtrPG("attacker2"),
+		CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: new("attacker2"),
 	}, acc.LifecycleRevision)
 	require.ErrorIs(t, err, repository.ErrNotFound, "越域 CAS 必须 404（作用域复核先于落库）")
 	_, err = repos.AccountExts.GetAccountExt(ctx, theirs.ID)

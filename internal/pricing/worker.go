@@ -215,10 +215,7 @@ func (w *SyncWorker) nextDelay() (time.Duration, error) {
 	if err != nil {
 		return 0, err
 	}
-	d := next.Sub(w.now())
-	if d < 0 {
-		d = 0
-	}
+	d := max(next.Sub(w.now()), 0)
 	return d, nil
 }
 

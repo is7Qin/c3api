@@ -383,7 +383,7 @@ func TestDispatcherApplyFailureTolerated(t *testing.T) {
 		Rules:    &recRules2{},
 	})
 	settings := &errSettings2{}
-	failSnap := &errSnap2{recSnap: recSnap{name: "auth", scopes: []string{snapshot.ScopeSettings}}}
+	failSnap := &errSnap2{name: "auth", scopes: []string{snapshot.ScopeSettings}}
 	reg := snapshot.New()
 	require.NoError(t, reg.Register(failSnap))
 	d := &dispatcher{inv: inv, svc: settings, snapshots: reg, log: nil} // log nil = 静默（测试）

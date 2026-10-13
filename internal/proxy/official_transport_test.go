@@ -77,14 +77,12 @@ func TestProxyOfficialRewriteTransport_ConcurrentNoHangAndMismatch(t *testing.T)
 	tr := newProxyOfficialRewriteTransportWithAssert(t, srv.URL)
 	var wg sync.WaitGroup
 	errs := make(chan error, 32)
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 32 {
+		wg.Go(func() {
 			req, _ := http.NewRequest("GET", "https://chatgpt.com/backend-api/codex/responses", nil)
 			_, err := tr.RoundTrip(req)
 			errs <- err
-		}()
+		})
 	}
 	done := make(chan struct{})
 	go func() { wg.Wait(); close(done); close(errs) }()

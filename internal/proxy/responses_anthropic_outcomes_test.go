@@ -207,10 +207,8 @@ func TestResponsesAnthropic_Outcomes_ConcurrentExactlyOnce(t *testing.T) {
 	var wg sync.WaitGroup
 	var done atomic.Int32
 	barrier := make(chan struct{})
-	for i := 0; i < 16; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 16 {
+		wg.Go(func() {
 			<-barrier
 			req := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"model":"gpt-4o","input":"hi"}`))
 			req.Header.Set("Authorization", "Bearer ck-1")
@@ -219,7 +217,7 @@ func TestResponsesAnthropic_Outcomes_ConcurrentExactlyOnce(t *testing.T) {
 			if rec.Code == 200 || rec.Code == 429 {
 				done.Add(1)
 			}
-		}()
+		})
 	}
 	close(barrier)
 	wg.Wait()

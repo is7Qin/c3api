@@ -24,7 +24,7 @@ import (
 // TestPGGroupDescriptionMigration pins the no-destructive-migration contract on
 // real PostgreSQL: a `groups` table that predates the `description` column, with
 // an already-present row, gains the column on the next migrate with a NOT NULL
-// DEFAULT '' (old rows backfilled to the empty string, never NULL). The old
+// DEFAULT ” (old rows backfilled to the empty string, never NULL). The old
 // schema is reproduced by dropping the column from a migrated clone. Runs the
 // real entry point repository.NewWithPG(ctx, drv, true, pool). Skips without
 // TEST_DATABASE_URL (skip never counts as pass).
@@ -74,8 +74,8 @@ func TestPGGroupDescriptionMigration(t *testing.T) {
 
 // requireGroupDescriptionColumnContract asserts the live groups.description
 // column is NOT NULL with an empty-string default. PostgreSQL normalises the
-// default expression to a cast form ("''::character varying"); the cast suffix
-// is stripped so the assertion names the value the spec cares about: ''.
+// default expression to a cast form ("”::character varying"); the cast suffix
+// is stripped so the assertion names the value the spec cares about: ”.
 func requireGroupDescriptionColumnContract(t *testing.T, ctx context.Context, conn *pgx.Conn) {
 	t.Helper()
 	var isNullable, colDefault string

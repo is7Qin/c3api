@@ -28,10 +28,17 @@ import (
 
 // —— 错误分类与透传策略（S-F）端到端 ——
 
-func strPtrT(s string) *string                                { return &s }
-func intPtrT(v int) *int                                      { return &v }
-func int64PtrT(v int64) *int64                                { return &v }
-func statusPtrT(s domain.AccountStatus) *domain.AccountStatus { return &s }
+//go:fix inline
+func strPtrT(s string) *string { return new(s) }
+
+//go:fix inline
+func intPtrT(v int) *int { return new(v) }
+
+//go:fix inline
+func int64PtrT(v int64) *int64 { return new(v) }
+
+//go:fix inline
+func statusPtrT(s domain.AccountStatus) *domain.AccountStatus { return new(s) }
 
 // recordingHealthSink 是 proxy 测试包的规则引擎 HealthSink 记录面。cutover 后
 // 惩罚动作（typed Throttle/FailAccount）不再回写调度器运行时状态机（unhealthy/
@@ -162,9 +169,9 @@ func TestErrClassifyUserCase401Balance(t *testing.T) {
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "balance-401", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(401),
-				ErrorMessageContains: strPtrT("balance")},
-			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(30 * 60 * 1000)}, ResponseCode: intPtrT(502), CustomMessage: strPtrT("upstream rejected request")}},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(401),
+				ErrorMessageContains: new("balance")},
+			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(30 * 60 * 1000))}, ResponseCode: new(502), CustomMessage: new("upstream rejected request")}},
 	)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
@@ -245,7 +252,7 @@ func TestErrClassifyTransmitRulePassthrough(t *testing.T) {
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "tx-403", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(403)},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(403)},
 			Then: domain.RuleThen{}},
 	)
 

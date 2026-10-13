@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 
@@ -388,22 +389,13 @@ func (p *selectSession) hasStaticChange(v *RoutingView) bool {
 		}
 		return fact.planKey != c.PlanKey
 	}
-	for _, c := range p.route.Primary {
-		if check(c) {
-			return true
-		}
+	if slices.ContainsFunc(p.route.Primary, check) {
+		return true
 	}
-	for _, c := range p.route.Explore.Ordered {
-		if check(c) {
-			return true
-		}
+	if slices.ContainsFunc(p.route.Explore.Ordered, check) {
+		return true
 	}
-	for _, c := range p.route.Degraded {
-		if check(c) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(p.route.Degraded, check)
 }
 
 // cachedStaticVerdict is the SINGLE fence-site entry for the static-change

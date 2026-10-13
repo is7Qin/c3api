@@ -138,14 +138,12 @@ func TestLeaseReloadRaceBarrier(t *testing.T) {
 	s := newSched(t, m)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 200; i++ {
+	wg.Go(func() {
+		for range 200 {
 			_ = s.reload(context.Background())
 		}
-	}()
-	for i := 0; i < 500; i++ {
+	})
+	for range 500 {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "m")
 		if err != nil {
 			continue

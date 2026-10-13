@@ -160,14 +160,8 @@ func (s *Service) frontierCost(requestedModel string, row repository.RoutingQual
 	if !hasPrice {
 		return 0, false
 	}
-	billable := row.InputTokens
-	if billable < 0 {
-		billable = 0
-	}
-	cached := row.CacheReadTokens
-	if cached < 0 {
-		cached = 0
-	}
+	billable := max(row.InputTokens, 0)
+	cached := max(row.CacheReadTokens, 0)
 	denom := billable + cached
 	if denom == 0 {
 		return 0, false

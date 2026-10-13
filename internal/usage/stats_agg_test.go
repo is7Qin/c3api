@@ -245,10 +245,10 @@ func TestStatsAggDisabledInterval(t *testing.T) {
 
 func TestStatsAggWorkerCloseWaitsForInFlightRun(t *testing.T) {
 	store := &blockingStatsAggStore{
-		fakeStatsAggStore: fakeStatsAggStore{lockOK: true},
-		entered:           make(chan struct{}),
-		release:           make(chan struct{}),
-		released:          make(chan struct{}),
+		lockOK:   true,
+		entered:  make(chan struct{}),
+		release:  make(chan struct{}),
+		released: make(chan struct{}),
 	}
 	w := NewStatsAgg(StatsAggConfig{Interval: time.Hour, Lag: time.Minute}, store, nil)
 	require.NoError(t, w.Start(context.Background()))

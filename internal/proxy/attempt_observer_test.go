@@ -38,12 +38,10 @@ func TestAttemptObserver_concurrentCompletionRecordsEachSideEffectOnce(t *testin
 	start := make(chan struct{})
 	var wg sync.WaitGroup
 	for range 16 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			require.NoError(t, observer.Complete(outcome, health))
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

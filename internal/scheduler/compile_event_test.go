@@ -80,7 +80,7 @@ func TestCompileEvent_ProbeHitSkipsAllWork(t *testing.T) {
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100),
 	}, accs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, cl := newProbedSched(t, m, q, prices)
 	cc := &countingCompiler{inner: NewRoutingCompiler(), calls: make(chan struct{}, 64)}
 	s.compiler = cc
@@ -109,7 +109,7 @@ func TestCompileEvent_StalenessBoundRecoversWithinSLO(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, cl := newProbedSched(t, m, q, prices)
 	gen := s.View().Generation()
 	loads := cl.loadsN()
@@ -142,10 +142,8 @@ func TestCompileEvent_ScopeIdentityPointerReuseAndOracle(t *testing.T) {
 	a2 := accWithEnabled(2, tpl, true, 10000)
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1}, 20: {a2}})
 	q1 := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1})
-	for k, v := range buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}) {
-		q1[k] = v
-	}
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	maps.Copy(q1, buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}))
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q1, prices)
 
 	ref20 := RouteRefFor(20, string(domain.FormatOpenAIChat), "m")
@@ -189,10 +187,8 @@ func TestCompileEvent_AccountsScopeResolvesViaMembership(t *testing.T) {
 	a2 := accWithEnabled(2, tpl, true, 10000)
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1}, 20: {a2}})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, []*domain.Account{a1})
-	for k, v := range buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}) {
-		q[k] = v
-	}
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	maps.Copy(q, buildQuality(20, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{2: qualityInput(30, 29, 100, 100)}, []*domain.Account{a2}))
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 
 	ref10 := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
@@ -237,13 +233,13 @@ func TestCompileEvent_FallbackRecorded(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 	base := s.fallbackCount.Load()
 
 	// Overflow: burst past scopeChCap degrades to FULL + recorded (exact,
 	// never a miss).
-	for i := 0; i < scopeChCap+1; i++ {
+	for range scopeChCap + 1 {
 		s.enqueueCompileScope([]int64{999}, nil, scopeCauseGroup)
 	}
 	s.compileOnce()
@@ -310,7 +306,7 @@ func TestCompileEvent_IdleRecheckSkips(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 	base := s.fallbackCount.Load()
 	gen := s.View().Generation()
@@ -332,7 +328,7 @@ func TestCompileEvent_SkipThenDriftDetected(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 
 	s.compileOnce()
@@ -354,7 +350,7 @@ func TestCompileEvent_SkipRetainsFullForFirstCompileAndStagedRoot(t *testing.T) 
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 	require.Equal(t, uint64(1), s.fallbackCount.Load(), "first compile (no carry) is FULL")
 	require.Zero(t, s.skipCount.Load())

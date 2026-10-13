@@ -263,7 +263,7 @@ func TestRed_BoundPruneLongLivedMaps(t *testing.T) {
 	w.SetClock(func() time.Time { return base })
 
 	// Simulate many distinct minutes of successful publication to grow maps
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		minute := base.Add(time.Duration(i) * time.Minute)
 		w.SetClock(func() time.Time { return minute })
 		k := keyOf(fpByte(byte(i)), qcByte(byte(i)))

@@ -16,7 +16,7 @@ import (
 // 100 个 chunk 的典型高频流（对应压测 fakeupstream 100 × 20ms 的流形态）
 func sseStream100() string {
 	var b strings.Builder
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		b.WriteString(`data: {"id":"c1","object":"chat.completion.chunk","choices":[{"delta":{"content":"x"},"index":0}]}`)
 		b.WriteString("\n\n")
 	}
@@ -60,7 +60,7 @@ func (w *benchFlusher) Flush()                      {}
 func sseFrames(n, size int) []byte {
 	payload := strings.Repeat("x", size)
 	var b strings.Builder
-	for i := 0; i < n; i++ {
+	for range n {
 		b.WriteString(`data: {"id":"c1","choices":[{"delta":{"content":"`)
 		b.WriteString(payload)
 		b.WriteString(`"}]}]}` + "\n\n")

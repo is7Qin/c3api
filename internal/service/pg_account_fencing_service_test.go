@@ -73,7 +73,7 @@ func TestServiceExtPutFencing(t *testing.T) {
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// Admin ext PUT
-	e := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: ext.CodexIdentity, CodexOAuthToken: strPtr2("tok-admin"), CodexOAuthRefreshToken: strPtr2("rt-admin"), CodexOAuthExpiresAt: nil, CodexEmail: ext.CodexEmail, CodexAccountID: ext.CodexAccountID}
+	e := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: ext.CodexIdentity, CodexOAuthToken: new("tok-admin"), CodexOAuthRefreshToken: new("rt-admin"), CodexOAuthExpiresAt: nil, CodexEmail: ext.CodexEmail, CodexAccountID: ext.CodexAccountID}
 	saved, err := svc.UpsertAccountExt(ctx, e)
 	require.NoError(t, err)
 	require.Equal(t, "tok-admin", *saved.CodexOAuthToken)
@@ -88,15 +88,15 @@ func TestServiceAccountPutFencing(t *testing.T) {
 	// use helper seed
 	tpl2 := seedPGTemplateForFencing(t, repos)
 	acc, err := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("put-fence"),
-		TemplateID:     int64Ptr(tpl2.ID),
-		UpstreamKey:    strPtr("sk-old"),
-		MaxConcurrency: intPtr(8),
+		Name:           new("put-fence"),
+		TemplateID:     new(tpl2.ID),
+		UpstreamKey:    new("sk-old"),
+		MaxConcurrency: new(8),
 	})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// upstream_key 变更经唯一写点 → 无条件推进 C
-	updated, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: strPtr("sk-new")}, nil)
+	updated, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: new("sk-new")}, nil)
 	require.NoError(t, err)
 	require.Equal(t, "sk-new", updated.UpstreamKey)
 	got, _ := repos.Accounts.GetAccount(ctx, acc.ID)
@@ -117,16 +117,16 @@ func TestServiceBatchFencing(t *testing.T) {
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
 	a1, _ := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("batch1"),
-		TemplateID:     int64Ptr(tpl.ID),
-		UpstreamKey:    strPtr("sk-1"),
-		MaxConcurrency: intPtr(8),
+		Name:           new("batch1"),
+		TemplateID:     new(tpl.ID),
+		UpstreamKey:    new("sk-1"),
+		MaxConcurrency: new(8),
 	})
 	a2, _ := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("batch2"),
-		TemplateID:     int64Ptr(tpl.ID),
-		UpstreamKey:    strPtr("sk-2"),
-		MaxConcurrency: intPtr(8),
+		Name:           new("batch2"),
+		TemplateID:     new(tpl.ID),
+		UpstreamKey:    new("sk-2"),
+		MaxConcurrency: new(8),
 	})
 	require.Equal(t, int64(1), a1.LifecycleRevision)
 	newKey := "sk-batch"
@@ -145,10 +145,10 @@ func TestServiceRecoveryFencing(t *testing.T) {
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
 	acc, _ := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("rec-fence"),
-		TemplateID:     int64Ptr(tpl.ID),
-		UpstreamKey:    strPtr("sk-x"),
-		MaxConcurrency: intPtr(8),
+		Name:           new("rec-fence"),
+		TemplateID:     new(tpl.ID),
+		UpstreamKey:    new("sk-x"),
+		MaxConcurrency: new(8),
 	})
 	// fail via CAS
 	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", getFixedTime(), "boom"))
@@ -205,7 +205,7 @@ func TestServiceStaleExtPutNotUpdate(t *testing.T) {
 	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale-ext2@example.com", "stale-ext2-1")
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
-	e := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: ext.CodexIdentity, CodexOAuthToken: strPtr2("tok2"), CodexOAuthRefreshToken: strPtr2("rt2"), CodexEmail: ext.CodexEmail, CodexAccountID: ext.CodexAccountID}
+	e := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: ext.CodexIdentity, CodexOAuthToken: new("tok2"), CodexOAuthRefreshToken: new("rt2"), CodexEmail: ext.CodexEmail, CodexAccountID: ext.CodexAccountID}
 	_, err := svc.UpsertAccountExt(ctx, e)
 	require.NoError(t, err)
 	acc2, _ := repos.Accounts.GetAccount(ctx, acc.ID)
@@ -222,13 +222,13 @@ func TestServiceStaleAccountPutNotUpdate(t *testing.T) {
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
 	acc, _ := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("stale-put"),
-		TemplateID:     int64Ptr(tpl.ID),
-		UpstreamKey:    strPtr("sk-old"),
-		MaxConcurrency: intPtr(8),
+		Name:           new("stale-put"),
+		TemplateID:     new(tpl.ID),
+		UpstreamKey:    new("sk-old"),
+		MaxConcurrency: new(8),
 	})
 	require.Equal(t, int64(1), acc.LifecycleRevision)
-	_, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: strPtr("sk-new")}, nil)
+	_, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: new("sk-new")}, nil)
 	require.NoError(t, err)
 	got, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), got.LifecycleRevision)
@@ -242,17 +242,17 @@ func TestServiceCombinedSingleIncrement(t *testing.T) {
 	ctx := context.Background()
 	tpl := seedPGTemplateForFencing(t, repos)
 	acc, _ := svc.CreateAccount(ctx, repository.AccountPatch{
-		Name:           strPtr("combined-svc"),
-		TemplateID:     int64Ptr(tpl.ID),
-		UpstreamKey:    strPtr("sk-old"),
-		MaxConcurrency: intPtr(8),
+		Name:           new("combined-svc"),
+		TemplateID:     new(tpl.ID),
+		UpstreamKey:    new("sk-old"),
+		MaxConcurrency: new(8),
 	})
 	require.NoError(t, repos.Accounts.FailAccountCAS(ctx, acc.ID, 1, "rule", getFixedTime(), "boom"))
 	afterFail, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), afterFail.LifecycleRevision)
 	// Credential PUT on a failed account: increments exactly once (2->3) and
 	// never touches failure fields — recovery is fenced-endpoint-only.
-	_, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: strPtr("sk-new-combined")}, nil)
+	_, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{UpstreamKey: new("sk-new-combined")}, nil)
 	require.NoError(t, err)
 	after, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(3), after.LifecycleRevision, "配置写入恰好推进一次 C")
@@ -265,7 +265,8 @@ func TestServiceCombinedSingleIncrement(t *testing.T) {
 	require.Equal(t, int64(4), recovered.LifecycleRevision)
 }
 
-func strPtr2(s string) *string { return &s }
+//go:fix inline
+func strPtr2(s string) *string { return new(s) }
 
 func seedPGTemplateForFencing(t *testing.T, repos *repository.Repository) *domain.Template {
 	t.Helper()

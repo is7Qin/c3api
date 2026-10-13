@@ -52,8 +52,11 @@ func errRow(et domain.ErrorType, code int, msg string) *domain.UsageLog {
 	}
 }
 
-func strPtrS(s string) *string { return &s }
-func intPtrS(v int) *int       { return &v }
+//go:fix inline
+func strPtrS(s string) *string { return new(s) }
+
+//go:fix inline
+func intPtrS(v int) *int { return new(v) }
 
 // newTestUserAPI 规则引擎注入版 UserAPI（种子表；rules 非 nil → 行级脱敏生效）。
 func newTestUserAPI(t *testing.T, rules ...domain.Rule) *UserAPI {
@@ -106,7 +109,7 @@ func TestUserErrLogSanitize(t *testing.T) {
 func TestUserErrLogSanitizeTransmitRule(t *testing.T) {
 	h := newTestUserAPI(t,
 		domain.Rule{Name: "tx-401", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrS("4xx"), HTTPStatus: intPtrS(401)},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(401)},
 			Then: domain.RuleThen{}},
 	)
 	e := h.toAPIErrLog(errRow(domain.Err4xx, 401, "balance detail for user debugging"))
@@ -120,7 +123,7 @@ func TestUserErrLogSanitizeAccountScoped(t *testing.T) {
 	aid := int64(1)
 	h := newTestUserAPI(t,
 		domain.Rule{Name: "acc-1-tx", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrS("4xx"), HTTPStatus: intPtrS(401), AccountID: &aid},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(401), AccountID: &aid},
 			Then: domain.RuleThen{}},
 	)
 	// 账号 1 的 401 行 → 全透规则命中 → 原文

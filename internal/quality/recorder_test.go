@@ -93,7 +93,7 @@ func TestQualityRecorder_HotPath_NoLock_0Alloc(t *testing.T) {
 	cell := r.GetOrCreateCell(k)
 	var ctx AttemptContext
 	tt := int64(100)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		r.InitAttemptContext(cell, &ctx)
 		ctx.Complete(true, &tt, 1, 0, 0)
 	}
@@ -241,8 +241,8 @@ func TestQualityRecorder_Retire_PinnedNeverEvicted_UnpinnedCap(t *testing.T) {
 	r.pendingCapBytes = 10 * EstimatedCellBytes
 	r.minuteCap = 10
 	var pinned []*Cell
-	var ctxs []AttemptContext
-	for i := 0; i < 5; i++ {
+	var ctxs []*AttemptContext
+	for i := range 5 {
 		f := fp(byte(60 + i))
 		q := qc(byte(60 + i))
 		k := keyOf(f, q)
@@ -250,7 +250,7 @@ func TestQualityRecorder_Retire_PinnedNeverEvicted_UnpinnedCap(t *testing.T) {
 		pinned = append(pinned, cell)
 		var ctx AttemptContext
 		r.InitAttemptContext(cell, &ctx)
-		ctxs = append(ctxs, ctx)
+		ctxs = append(ctxs, &ctx)
 		r.Retire(k)
 	}
 	require.Equal(t, 5, r.RetiredCount())
@@ -295,7 +295,7 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	require.NoError(t, err)
 	r.minuteCap = 2
 	r.pendingCapBytes = 2 * EstimatedFlowMinuteBytes
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		k := keyOf(fp(byte(80+i)), qc(byte(80+i)))
 		r.AddQualityRow(int64(1000+i), k)
 	}
@@ -303,7 +303,7 @@ func TestQualityRecorder_Bounds_PendingBytes_256MiB_4096Minutes(t *testing.T) {
 	require.Greater(t, r.QualityOverflow(), int64(0))
 	// the flow lane carries live consumer rows. Five distinct minutes fold
 	// and drain into five retained shells.
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.NoError(t, foldConsumerRows(r.FlowOwner(), int64(2000+i), []repository.RoutingFlowRow{ownerTestRow(int64(i + 1))}))
 		_, ok := r.FlowMinute(int64(2000 + i))
 		require.True(t, ok)
@@ -354,7 +354,7 @@ func TestQualityRecorder_Race(t *testing.T) {
 	require.NoError(t, err)
 	const N = 100
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
+	for i := range N {
 		wg.Add(1)
 		go func(seed int) {
 			defer wg.Done()
@@ -379,15 +379,15 @@ func TestQualityRecorder_PinnedGaugeBoundedByEffectiveMax(t *testing.T) {
 	eff := int64(10)
 	r, err := NewRecorder(eff)
 	require.NoError(t, err)
-	var ctxs []AttemptContext
-	for i := 0; i < 10; i++ {
+	var ctxs []*AttemptContext
+	for i := range 10 {
 		f := fp(byte(100 + i))
 		q := qc(byte(100 + i))
 		k := keyOf(f, q)
 		cell := r.GetOrCreateCell(k)
 		var ctx AttemptContext
 		r.InitAttemptContext(cell, &ctx)
-		ctxs = append(ctxs, ctx)
+		ctxs = append(ctxs, &ctx)
 		r.Retire(k)
 	}
 	require.LessOrEqual(t, r.PinnedGauge(), eff)
@@ -417,8 +417,7 @@ func TestQualityRecorder_GenerationFencing(t *testing.T) {
 	inflightBefore := r.GlobalInflight()
 	require.Equal(t, int64(1), inflightBefore)
 
-	stale := valid
-	stale.gen = valid.gen + 1
+	stale := AttemptContext{cell: valid.cell, recorder: valid.recorder, gen: valid.gen + 1}
 	tt := int64(100)
 	stale.Complete(true, &tt, 10, 1, 0)
 	a, _, _, _, _, _, _, _, _, _, ok := r.CellStats(k)
@@ -426,15 +425,13 @@ func TestQualityRecorder_GenerationFencing(t *testing.T) {
 	require.Equal(t, int64(0), a)
 	require.Equal(t, inflightBefore, r.GlobalInflight(), "mismatched generation must not release")
 
-	zeroGen := valid
-	zeroGen.gen = 0
+	zeroGen := AttemptContext{cell: valid.cell, recorder: valid.recorder, gen: 0}
 	zeroGen.Complete(true, &tt, 10, 1, 0)
 	a2, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
 	require.Equal(t, int64(0), a2)
 	require.Equal(t, inflightBefore, r.GlobalInflight())
 
-	staleCancel := valid
-	staleCancel.gen = 9999
+	staleCancel := AttemptContext{cell: valid.cell, recorder: valid.recorder, gen: 9999}
 	staleCancel.Cancel()
 	a3, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
 	require.Equal(t, int64(0), a3)
@@ -474,8 +471,7 @@ func TestQualityRecorder_GenerationFencing(t *testing.T) {
 	a7, _, _, _, _, _, _, _, _, _, _ := r.CellStats(k)
 	require.Equal(t, int64(1), a7, "Cancel must not record")
 
-	staleAfter := valid2
-	staleAfter.gen = valid2.gen + 1
+	staleAfter := AttemptContext{cell: valid2.cell, recorder: valid2.recorder, gen: valid2.gen + 1}
 	staleAfter.Cancel()
 	require.Equal(t, int64(0), r.GlobalInflight())
 }

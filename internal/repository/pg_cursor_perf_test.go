@@ -122,7 +122,7 @@ func TestPGCursorPerfBounded(t *testing.T) {
 func measureUsagePage(t *testing.T, pool *pgxpool.Pool, q string, from, to string, cursor *int64) time.Duration {
 	t.Helper()
 	best := time.Duration(1 << 62)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		args := []any{from, to}
 		if cursor != nil {
 			args = append(args, *cursor)

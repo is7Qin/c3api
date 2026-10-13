@@ -126,7 +126,7 @@ func foldHash(f attemptFact) uint64 {
 		}
 	}
 	mixU64 := func(v uint64) {
-		for i := 0; i < 8; i++ {
+		for i := range 8 {
 			mix(byte(v >> (8 * i)))
 		}
 	}
@@ -267,10 +267,7 @@ func (t *foldCellTable) growIfNeeded() {
 		s.mu.Lock()
 		cur := len(s.slots)
 		if cur < foldCellShardCapMax && (s.overflow.Load() > 0 || t.loadPctLocked(s) >= foldCellGrowLoad) {
-			next := cur * 2
-			if next > foldCellShardCapMax {
-				next = foldCellShardCapMax
-			}
+			next := min(cur*2, foldCellShardCapMax)
 			s.slots = make([]foldSlot, next)
 			s.mask = uint64(next - 1)
 			t.grown.Add(1)

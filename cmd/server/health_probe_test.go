@@ -223,8 +223,7 @@ func TestHealthProbeRecoverySurface(t *testing.T) {
 	c := newAssemblyRedis(t)
 	h := scheduler.NewRuntimeHealth(c, "self-a", func() []string { return []string{"self-a"} }, nil)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	require.NoError(t, h.Start(ctx, newHealthProber(probeLookup(map[int64]*domain.Account{
 		1: probeAcc(1, pat, 5, "http://unused.invalid"),
 	}), probeRuntimeActive(), codex, time.Second)))

@@ -11,7 +11,6 @@ import (
 	"strconv"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -30,7 +29,7 @@ func toAPITemplate(t *domain.Template) Template {
 		ID:               t.ID,
 		Name:             t.Name,
 		BaseURL:          t.BaseURL,
-		CredentialType:   httpface.Ptr(TemplateCredentialType(t.CredentialType)),
+		CredentialType:   new(TemplateCredentialType(t.CredentialType)),
 		SupportedFormats: formats,
 		Models:           &t.Models,
 		FormatModels:     toAPITemplateFormatModels(t.FormatModels),
@@ -86,7 +85,7 @@ func toAPIAccount(a *domain.Account) Account {
 		FailureSource:          a.FailureSource,
 		LifecycleRevision:      &a.LifecycleRevision,
 		IdentityRevision:       &a.IdentityRevision,
-		UpstreamCostMultiplier: httpface.Ptr(multToNormal(domain.MultBp(a.UpstreamCostMultiplierBp))), // bp → 正常值（组倍率边界换算同构）
+		UpstreamCostMultiplier: new(multToNormal(domain.MultBp(a.UpstreamCostMultiplierBp))), // bp → 正常值（组倍率边界换算同构）
 		CacheDomain:            a.CacheDomain,
 		SupplierUserId:         supplierUserIDPtr(a.SupplierUserID), // 0 = 平台自有 ⇒ null
 		CreatedAt:              &a.CreatedAt,
@@ -147,9 +146,9 @@ func toAPIGroup(g *domain.Group) Group {
 	return Group{
 		ID:              &g.ID,
 		Name:            &g.Name,
-		Description:     httpface.Ptr(g.Description),
+		Description:     new(g.Description),
 		Visibility:      &v,
-		PriceMultiplier: httpface.Ptr(multToNormal(g.PriceMultiplier)),
+		PriceMultiplier: new(multToNormal(g.PriceMultiplier)),
 		ProtocolConvert: &converts,
 		CreatedAt:       &g.CreatedAt,
 		UpdatedAt:       &g.UpdatedAt,
@@ -332,7 +331,7 @@ func toAPIUser(u *domain.User) User {
 		Role:           &r,
 		Status:         &st,
 		MaxConcurrency: &u.MaxConcurrency,
-		Balance:        httpface.Ptr(millisToUSD(u.Balance)),
+		Balance:        new(millisToUSD(u.Balance)),
 		CreatedAt:      &u.CreatedAt,
 		UpdatedAt:      &u.UpdatedAt,
 	}

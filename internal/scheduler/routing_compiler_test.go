@@ -3,7 +3,7 @@ package scheduler
 
 import (
 	"math"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,7 +15,7 @@ import (
 func accWithEnabled(id int64, tpl *domain.Template, enabled bool, mult int) *domain.Account {
 	a := acc(id, tpl, 10)
 	a.Enabled = enabled
-	a.UpstreamCostMultiplierBp = intPtr(mult)
+	a.UpstreamCostMultiplierBp = new(mult)
 	a.LifecycleRevision = 1
 	return a
 }
@@ -33,7 +33,8 @@ func qualityInput(attempts, successes int, inTok, outTok int64) CandidateQuality
 	return CandidateQualityInput{Counts: cnt, InputTokens: inTok, OutputTokens: outTok}
 }
 
-func pricePtr(v int64) *int64 { return &v }
+//go:fix inline
+func pricePtr(v int64) *int64 { return new(v) }
 
 func qualityKeyFor(gid int64, format domain.RequestFormat, model string, acc *domain.Account) CandidateQualityKey {
 	op := operationTagForFormat(string(format))
@@ -99,7 +100,7 @@ func compilerLatchKeyFor(acc *domain.Account) latch.LatchKey {
 
 func TestRoutingCompilerDeterministicMapOrder(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}
 	m1 := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(2, tpl, true, 10000), accWithEnabled(1, tpl, true, 10000)}})
 	s1 := newSched(t, m1)
 	m2 := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}})
@@ -129,7 +130,7 @@ func TestRoutingCompilerDeterministicMapOrder(t *testing.T) {
 
 func TestRoutingCompilerLaneClassificationAndWeightsTail(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000), accWithEnabled(3, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
@@ -149,7 +150,7 @@ func TestRoutingCompilerLaneClassificationAndWeightsTail(t *testing.T) {
 	require.True(t, ok)
 	all := append(append([]int64{}, compiledAccountIDs(rd.Primary)...), compiledAccountIDs(rd.Explore.Ordered)...)
 	all = append(all, compiledAccountIDs(rd.Degraded)...)
-	sort.Slice(all, func(i, j int) bool { return all[i] < all[j] })
+	slices.Sort(all)
 	require.Equal(t, []int64{1, 2, 3}, all)
 	require.Len(t, rd.Primary, 1)
 	require.Contains(t, compiledAccountIDs(rd.Primary), int64(1))
@@ -168,7 +169,7 @@ func TestRoutingCompilerLaneClassificationAndWeightsTail(t *testing.T) {
 
 func TestRoutingCompilerCostTieBreakDeterministic(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}
 	accs := []*domain.Account{accWithEnabled(3, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000), accWithEnabled(1, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
@@ -198,7 +199,7 @@ func TestRoutingCompilerMissingPriceUnknown(t *testing.T) {
 		2: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 29, SumLog: math.Log(100) * 29, SumSq: math.Log(100) * math.Log(100) * 29}, InputTokens: 2900, OutputTokens: 2900},
 	}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs)
-	prices := map[string]domain.ResolvedPrices{"other": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"other": {InputPerM: new(int64(1000))}}
 	c := NewRoutingCompiler()
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
@@ -221,7 +222,7 @@ func TestRoutingCompilerInvalidInputs(t *testing.T) {
 	s := newSched(t, m)
 	qraw := map[int64]CandidateQualityInput{1: {Counts: Counts{Attempts: -1, Successes: -1}}}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", qraw, []*domain.Account{a})
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	view, err = c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
 	rd, ok := view.routes[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
@@ -232,7 +233,7 @@ func TestRoutingCompilerInvalidInputs(t *testing.T) {
 func TestRoutingCompilerImmutability(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	qraw := map[int64]CandidateQualityInput{
@@ -247,7 +248,7 @@ func TestRoutingCompilerImmutability(t *testing.T) {
 	rr := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 	orig := append([]int64(nil), compiledAccountIDs(view.routes[rr].Primary)...)
 	q[qualityKeyFor(10, domain.FormatOpenAIChat, "m", accs[0])] = CandidateQualityInput{Counts: Counts{Attempts: 100, Successes: 100}}
-	prices["m"] = domain.ResolvedPrices{InputPerM: pricePtr(9999)}
+	prices["m"] = domain.ResolvedPrices{InputPerM: new(int64(9999))}
 	require.Equal(t, orig, compiledAccountIDs(view.routes[rr].Primary))
 	if len(orig) > 0 {
 		view.routes[rr].Primary[0] = CompiledCandidate{AccountID: 999}
@@ -255,7 +256,7 @@ func TestRoutingCompilerImmutability(t *testing.T) {
 	view2, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: math.Log(100) * 30, SumSq: math.Log(100) * math.Log(100) * 30}, InputTokens: 100, OutputTokens: 100},
 		2: {Counts: Counts{Attempts: 10, Successes: 5}, InputTokens: 50, OutputTokens: 50},
-	}, accs), Prices: map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}})
+	}, accs), Prices: map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}})
 	require.NoError(t, err)
 	require.NotEqual(t, view.routes[rr].Primary, view2.routes[rr].Primary)
 }
@@ -269,7 +270,7 @@ func TestRoutingCompilerUnitCost(t *testing.T) {
 			CacheReadTokens: cache,
 		}
 	}
-	price := domain.ResolvedPrices{InputPerM: pricePtr(3_000_000), CacheReadPerM: pricePtr(300_000), OutputPerM: pricePtr(9_000_000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(3_000_000)), CacheReadPerM: new(int64(300_000)), OutputPerM: new(int64(9_000_000))}
 	openAI := map[int64]CandidateQualityInput{1: same(10, 500), 2: same(50, 0)}
 	primary := compileUnitCost(t, openAI, 10000, 10000, price)
 	require.Equal(t, []int64{1, 2}, primary)

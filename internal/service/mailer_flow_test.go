@@ -294,7 +294,7 @@ func TestRegisterWithCodeWrongExpiredAttempts(t *testing.T) {
 		_, err := fs.UpsertEmailCode(ctx, email, string(domain.EmailCodeRegister), hashForTest("999999"), time.Now().Add(10*time.Minute))
 		require.NoError(t, err)
 		// 5 wrong attempts
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			_, err = svc.RegisterUserWithCode(ctx, email, "pass1234", "000000")
 			require.Error(t, err)
 		}

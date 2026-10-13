@@ -730,8 +730,8 @@ func validateCacheDomain(s string) error {
 	if len(s) != len(strings.Trim(s, ".")) {
 		return ErrInvalidInput
 	}
-	labels := strings.Split(s, ".")
-	for _, lab := range labels {
+	labels := strings.SplitSeq(s, ".")
+	for lab := range labels {
 		if len(lab) == 0 || len(lab) > 63 {
 			return ErrInvalidInput
 		}

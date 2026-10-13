@@ -237,7 +237,7 @@ func snapRoots(fn *ast.FuncDecl) map[string]bool {
 // 因为别名可以链式（`id := ext.CodexIdentity`）。
 func snapAliases(fn *ast.FuncDecl, roots map[string]bool) map[string]string {
 	alias := map[string]string{}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		changed := false
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			as, ok := n.(*ast.AssignStmt)

@@ -167,13 +167,13 @@ func TestAttemptPlan_fallbackIndexResolvesCanonicalCandidate(t *testing.T) {
 }
 
 func TestExploreDecision_hasOneCompiledCandidateTable(t *testing.T) {
-	typ := reflect.TypeOf(ExploreDecision{})
+	typ := reflect.TypeFor[ExploreDecision]()
 	ordered, ok := typ.FieldByName("Ordered")
 	require.True(t, ok)
 	fallback, ok := typ.FieldByName("Fallback")
 	require.True(t, ok)
-	require.Equal(t, reflect.TypeOf([]CompiledCandidate{}), ordered.Type)
-	require.Equal(t, reflect.TypeOf([]uint16{}), fallback.Type)
+	require.Equal(t, reflect.TypeFor[[]CompiledCandidate](), ordered.Type)
+	require.Equal(t, reflect.TypeFor[[]uint16](), fallback.Type)
 	dec := ExploreDecision{Ordered: ccExplore(1, 2, 3), Weights: map[int64]int{1: 1, 2: 1, 3: 1}, Cumulative: []uint64{1, 2, 3}, Total: 3, Fallback: fallbackIndexes(2, 1, 0)}
 	require.Equal(t, []int64{3, 2, 1}, fallbackIDs(dec))
 	for _, idx := range dec.Fallback {

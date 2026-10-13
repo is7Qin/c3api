@@ -83,12 +83,12 @@ func TestPGUserTempBalances(t *testing.T) {
 		expiresAt *time.Time
 		note      *string
 	}{
-		{amount: 300000, expiresAt: ptrT(now.AddDate(0, 0, 5)), note: &noteBonus},
-		{amount: 150000, expiresAt: ptrT(now.AddDate(0, 0, 2)), note: &noteRedeem},
+		{amount: 300000, expiresAt: new(now.AddDate(0, 0, 5)), note: &noteBonus},
+		{amount: 150000, expiresAt: new(now.AddDate(0, 0, 2)), note: &noteRedeem},
 		{amount: 500000, expiresAt: nil, note: &noteBonus},
-		{amount: 400000, expiresAt: ptrT(now.AddDate(0, 0, -1)), note: &noteBonus},   // 已过期 → 隐藏
-		{amount: 0, expiresAt: ptrT(now.AddDate(0, 0, 30)), note: &noteRedeem},       // 已用尽 → 隐藏
-		{amount: -100000, expiresAt: ptrT(now.AddDate(0, 0, 30)), note: &noteRedeem}, // 负扣减 → 隐藏
+		{amount: 400000, expiresAt: new(now.AddDate(0, 0, -1)), note: &noteBonus},   // 已过期 → 隐藏
+		{amount: 0, expiresAt: new(now.AddDate(0, 0, 30)), note: &noteRedeem},       // 已用尽 → 隐藏
+		{amount: -100000, expiresAt: new(now.AddDate(0, 0, 30)), note: &noteRedeem}, // 负扣减 → 隐藏
 	} {
 		require.NoError(t, repos.CreateTempBalance(ctx, uid, r.amount, r.expiresAt, r.note))
 	}

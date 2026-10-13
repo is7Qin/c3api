@@ -204,7 +204,7 @@ func readRESPCommand(r *bufio.Reader) ([]string, error) {
 		return nil, err
 	}
 	args := make([]string, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		bulk, err := r.ReadString('\n')
 		if err != nil {
 			return nil, err

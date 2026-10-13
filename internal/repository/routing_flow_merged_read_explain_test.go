@@ -86,8 +86,8 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 	hotRC[0] = 0xC1
 	instancesSrc := []string{"src-M1", "src-M2"}
 	batch := &pgx.Batch{}
-	for inst := 0; inst < instances; inst++ {
-		for min := 0; min < windowMinutes; min++ {
+	for inst := range instances {
+		for min := range windowMinutes {
 			minute := from.Add(time.Duration(min) * time.Minute)
 			// 热类：每 (实例, 分钟) 恰一条边身份——扇出上界 = 实例数 × 窗口分钟数。
 			batch.Queue(`INSERT INTO routing_flow_fact
@@ -97,7 +97,7 @@ func TestRoutingFlowMergedReadPlanPG(t *testing.T) {
 				VALUES ($1, $2, 1, 'primary', 10, '', 'init', 'success', true, $3, 1, 5, now())`,
 				hotRC, minute, instancesSrc[inst])
 			// 噪声：其余路由类在同一窗口内同样铺满。
-			for c := 0; c < noiseClasses; c++ {
+			for c := range noiseClasses {
 				rc := make([]byte, 32)
 				rc[0] = 0xD0
 				rc[1] = byte(c)

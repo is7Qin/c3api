@@ -69,7 +69,9 @@ func Deref[T any](p *T) T {
 }
 
 // Ptr 返回指向 v 的指针（响应契约字段赋值用）。
-func Ptr[T any](v T) *T { return &v }
+//
+//go:fix inline
+func Ptr[T any](v T) *T { return new(v) }
 
 // LogLimit 明细（usage_logs/err_logs）分页 limit 归一：≤0 → 缺省 20；>200 →
 // 上限 200（走 ClampLimit——分页上限钳制唯一来源）。四处明细 handler 共用。

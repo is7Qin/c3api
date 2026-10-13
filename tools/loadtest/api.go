@@ -528,7 +528,7 @@ func reloadCodesLocked() {
 		return
 	}
 	var all []string
-	for _, line := range strings.Split(string(b), "\n") {
+	for line := range strings.SplitSeq(string(b), "\n") {
 		if line = strings.TrimSpace(line); line != "" {
 			all = append(all, line)
 		}

@@ -53,7 +53,7 @@ func TestChunkIDs(t *testing.T) {
 	t.Run("preserves order and duplicates", func(t *testing.T) {
 		// 跨块重复（重复值落在不同块）：分片不合并不去重，块间按输入顺序。
 		ids := make([]int64, 0, inChunkSize+2)
-		for i := 0; i < inChunkSize+1; i++ {
+		for i := range inChunkSize + 1 {
 			ids = append(ids, int64(i))
 		}
 		ids = append(ids, 0) // 与首元素重复

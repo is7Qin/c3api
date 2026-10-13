@@ -120,4 +120,5 @@ func TestRED_SearchPreResponseMustNotDuplicate(t *testing.T) {
 	require.Empty(t, outcomes, "pre-response search failure handled=false must not emit outcome (pipeline owns)")
 }
 
-func stringPtr(s string) *string { return &s }
+//go:fix inline
+func stringPtr(s string) *string { return new(s) }

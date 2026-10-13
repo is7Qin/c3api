@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -471,8 +472,8 @@ func (w *SyncWorker) collectRedisDeltaLocked(curMinuteUnix int64) map[int64]map[
 // revertRedisCursorLocked 逆向回放本轮 flush 的游标撤销日志（调用方须持有
 // w.mu；失败路径专用）。成功路径无需回放——日志在下轮 collect 起点清空。
 func (w *SyncWorker) revertRedisCursorLocked() {
-	for i := len(w.redisUndo) - 1; i >= 0; i-- {
-		u := w.redisUndo[i]
+	for _, u := range slices.Backward(w.redisUndo) {
+
 		if u.had {
 			w.lastCell[u.key] = u.prev
 		} else {
@@ -554,9 +555,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 
 	// merge activeAll + pending for each minute
 	mergedByMinute := make(map[int64]map[Key]*QualityMinute)
-	for minute, rows := range pendingByMinute {
-		mergedByMinute[minute] = rows
-	}
+	maps.Copy(mergedByMinute, pendingByMinute)
 	foldMinuteMap(mergedByMinute, activeAll)
 	if len(mergedByMinute) == 0 && len(flowIDs) == 0 {
 		// empty pass must not refresh freshness
@@ -891,10 +890,7 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 	w.stats.BatchFlow = batchFlow
 	oldest := w.oldestPendingMinute(pendQ, flowIDs)
 	if oldest != 0 {
-		w.stats.LagMs = w.clock().Sub(time.Unix(oldest, 0)).Milliseconds()
-		if w.stats.LagMs < 0 {
-			w.stats.LagMs = 0
-		}
+		w.stats.LagMs = max(w.clock().Sub(time.Unix(oldest, 0)).Milliseconds(), 0)
 	}
 	w.stats.PendingQuality = w.rec.MinuteBucketCount()
 	w.stats.PendingBytes = w.rec.PendingBytes()
@@ -983,10 +979,7 @@ func (w *SyncWorker) flushQualityBatch(ctx context.Context, rows []qRow, start t
 				failed = append(failed, shard[i:]...)
 				break
 			}
-			end := i + w.cfg.BatchSize
-			if end > len(shard) {
-				end = len(shard)
-			}
+			end := min(i+w.cfg.BatchSize, len(shard))
 			chunk := shard[i:end]
 			unpersisted, err := w.insertQualityChunk(ctx, chunk)
 			if err != nil {
@@ -1044,12 +1037,10 @@ func isRowDataError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var rde *RowDataError
-	if errors.As(err, &rde) {
+	if _, ok := errors.AsType[*RowDataError](err); ok {
 		return true
 	}
-	var pgErr *pgconn.PgError
-	if errors.As(err, &pgErr) {
+	if pgErr, ok := errors.AsType[*pgconn.PgError](err); ok {
 		if len(pgErr.Code) >= 2 {
 			prefix := pgErr.Code[:2]
 			if prefix == "22" || prefix == "23" {
@@ -1089,8 +1080,7 @@ func (w *SyncWorker) insertQualityChunk(ctx context.Context, chunk []qRow) ([]qR
 		}
 		if err := w.pg.UpsertQualityRow(ctx, row); err != nil {
 			if isRowDataError(err) {
-				var rde *RowDataError
-				if !errors.As(err, &rde) {
+				if _, ok := errors.AsType[*RowDataError](err); !ok {
 					return chunk[i:], &RowDataError{Msg: err.Error(), Cause: err}
 				}
 			}

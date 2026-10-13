@@ -58,10 +58,10 @@ func TestPGCursorCrossPartition(t *testing.T) {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	tomorrow := today.AddDate(0, 0, 1)
 
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor(fmt.Sprintf("cp-%d", i), today.Add(time.Duration(i)*time.Minute))}))
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor(fmt.Sprintf("cp-t-%d", i), tomorrow.Add(time.Duration(i)*time.Minute))}))
 	}
 
@@ -94,7 +94,7 @@ func TestPGCursorFilterWindowCombined(t *testing.T) {
 	now := time.Now().UTC()
 	base := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 
-	for i := 0; i < 6; i++ {
+	for i := range 6 {
 		l := usageLogFor(fmt.Sprintf("f-%d", i), base.Add(time.Duration(i)*time.Minute))
 		if i%2 == 0 {
 			l.Model = "gpt-4o"
@@ -199,7 +199,7 @@ func TestPGCursorProbeLimitPlusOne(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	base := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{usageLogFor(fmt.Sprintf("pr-%d", i), base.Add(time.Duration(i)*time.Minute))}))
 	}
 	from := base.Add(-time.Hour)
@@ -260,7 +260,7 @@ func TestPGCursorErrLogsCrossPartition(t *testing.T) {
 	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
 	tomorrow := today.AddDate(0, 0, 1)
 
-	for i := 0; i < 7; i++ {
+	for i := range 7 {
 		l := errLogFor(fmt.Sprintf("ce-%d", i), today.Add(time.Duration(i)*time.Minute))
 		if i%2 == 0 {
 			l.StatusCode = 429
@@ -271,7 +271,7 @@ func TestPGCursorErrLogsCrossPartition(t *testing.T) {
 		}
 		require.NoError(t, repos.InsertErrLogBatch(ctx, []*domain.UsageLog{l}))
 	}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		l := errLogFor(fmt.Sprintf("ce-t-%d", i), tomorrow.Add(time.Duration(i)*time.Minute))
 		if i%2 == 0 {
 			l.StatusCode = 429

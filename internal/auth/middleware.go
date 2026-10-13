@@ -7,6 +7,7 @@ package auth
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -83,11 +84,9 @@ func RequireRole(users UserStatusProvider, roles ...domain.Role) func(http.Handl
 				writeUnauthorized(w)
 				return
 			}
-			for _, role := range roles {
-				if sn.Role == role {
-					next.ServeHTTP(w, r)
-					return
-				}
+			if slices.Contains(roles, sn.Role) {
+				next.ServeHTTP(w, r)
+				return
 			}
 			httpface.WriteErr(w, http.StatusForbidden, "forbidden")
 		})

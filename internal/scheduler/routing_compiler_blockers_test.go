@@ -2,6 +2,7 @@
 package scheduler
 
 import (
+	"maps"
 	"math"
 	"testing"
 
@@ -17,7 +18,7 @@ func TestRoutingCompilerModelOperationSeparation(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	// Chat: account 1 high success -> should be Primary, account 2 low -> Degraded
 	chatQ := map[CandidateQualityKey]CandidateQualityInput{}
@@ -45,12 +46,8 @@ func TestRoutingCompilerModelOperationSeparation(t *testing.T) {
 	}
 	// Merge both route qualities into one map (complete key preserves separation)
 	merged := make(map[CandidateQualityKey]CandidateQualityInput, len(chatQ)+len(respQ))
-	for k, v := range chatQ {
-		merged[k] = v
-	}
-	for k, v := range respQ {
-		merged[k] = v
-	}
+	maps.Copy(merged, chatQ)
+	maps.Copy(merged, respQ)
 	c := NewRoutingCompiler()
 	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: merged, Prices: prices})
 	require.NoError(t, err)
@@ -80,7 +77,7 @@ func TestRoutingCompilerCandidateFingerprintSeparation(t *testing.T) {
 	// Same model but different fingerprints; quality per fingerprint distinct
 	m := newMemLoader(map[int64][]*domain.Account{10: {a1, a2}})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	q := make(map[CandidateQualityKey]CandidateQualityInput)
 	for _, a := range []*domain.Account{a1, a2} {
@@ -131,7 +128,7 @@ func TestRoutingCompilerHealthLatchFencing(t *testing.T) {
 	accs[1].LifecycleRevision = 1
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100)}, accs)
 	c := NewRoutingCompiler()
@@ -176,7 +173,7 @@ func TestRoutingCompilerZeroMultiplierUnion(t *testing.T) {
 	accs := []*domain.Account{a1, a2, a3}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: qualityInput(10, 5, 100, 100),
@@ -202,7 +199,7 @@ func TestRoutingCompilerOverflowUnionNotTruncated(t *testing.T) {
 	}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	raw := make(map[int64]CandidateQualityInput)
 	for i := 1; i <= 10; i++ {
@@ -225,7 +222,7 @@ func TestRoutingCompilerImmutabilityDeep(t *testing.T) {
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
-	price := domain.ResolvedPrices{InputPerM: pricePtr(1000)}
+	price := domain.ResolvedPrices{InputPerM: new(int64(1000))}
 	prices := map[string]domain.ResolvedPrices{"m": price}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100)}, accs)
 	c := NewRoutingCompiler()
@@ -251,7 +248,7 @@ func TestRoutingCompilerRouteRefCollisions(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	c := NewRoutingCompiler()
-	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Prices: map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}})
+	view, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Prices: map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}})
 	require.NoError(t, err)
 	rrResp := RouteRefFor(10, string(domain.FormatOpenAIResponses), "m")
 	rrWS := RouteRefFor(10, string(domain.FormatOpenAIResponsesWS), "m")

@@ -74,8 +74,8 @@ func TestPassthroughCustomCode(t *testing.T) {
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "custom-403", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(403)},
-			Then: domain.RuleThen{ResponseCode: intPtrT(404), CustomMessage: strPtrT("custom msg")}},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(403)},
+			Then: domain.RuleThen{ResponseCode: new(404), CustomMessage: new("custom msg")}},
 	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -93,8 +93,8 @@ func TestPassthroughHeaderWithCodePassthrough(t *testing.T) {
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "overwrite-429", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrT("429")},
-			Then: domain.RuleThen{ResponseCode: intPtrT(502), CustomMessage: strPtrT("Upstream request failed")}},
+			When: domain.RuleWhen{Kind: new("429")},
+			Then: domain.RuleThen{ResponseCode: new(502), CustomMessage: new("Upstream request failed")}},
 	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
@@ -123,7 +123,7 @@ func TestPassthroughWindowRulePassthroughDirect(t *testing.T) {
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "window-400", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(400), WindowSeconds: &ws, CountFailureGE: &cnt},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(400), WindowSeconds: &ws, CountFailureGE: &cnt},
 			Then: domain.RuleThen{}},
 	)
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))

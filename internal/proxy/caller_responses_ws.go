@@ -395,8 +395,7 @@ func relayClassify(upClose *websocket.CloseError, upErr, clientErr, pingErr erro
 
 // wsCloseStatus 从错误提取对端关闭码（非关闭帧错误 → 内部错误 1011，传播语义）。
 func wsCloseStatus(err error) websocket.StatusCode {
-	var ce websocket.CloseError
-	if errors.As(err, &ce) {
+	if ce, ok := errors.AsType[websocket.CloseError](err); ok {
 		return ce.Code
 	}
 	return websocket.StatusInternalError
@@ -413,7 +412,7 @@ func isWebSocketUpgrade(r *http.Request) bool {
 // headerHasToken 头值按逗号拆 token 匹配（RFC 7230 列表语义；case-insensitive）。
 func headerHasToken(h http.Header, key, token string) bool {
 	for _, v := range h.Values(key) {
-		for _, part := range strings.Split(v, ",") {
+		for part := range strings.SplitSeq(v, ",") {
 			if strings.EqualFold(strings.TrimSpace(part), token) {
 				return true
 			}

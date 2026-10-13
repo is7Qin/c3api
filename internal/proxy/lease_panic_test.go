@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"context"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -25,9 +26,7 @@ func (m *leaseMemLoader) LoadGroupsAccounts(ctx context.Context) (map[int64][]*d
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	out := make(map[int64][]*domain.Account, len(m.byGroup))
-	for k, v := range m.byGroup {
-		out[k] = v
-	}
+	maps.Copy(out, m.byGroup)
 	return out, nil
 }
 func (m *leaseMemLoader) LoadGroupAccounts(ctx context.Context, id int64) ([]*domain.Account, error) {

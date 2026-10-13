@@ -87,10 +87,7 @@ func (f *fakeStore) ListPriceEntries(_ context.Context, q repository.ListQuery, 
 		return all[i].Model < all[j].Model
 	})
 	total := int64(len(all))
-	start := q.Offset
-	if start < 0 {
-		start = 0
-	}
+	start := max(q.Offset, 0)
 	end := start + q.Limit
 	if q.Limit <= 0 {
 		end = start + 20

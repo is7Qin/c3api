@@ -101,7 +101,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 		b.Run(fmt.Sprintf("model_hit_%02d", n), func(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
-				When: domain.RuleWhen{Kind: strPtr("5xx"), ModelIn: models},
+				When: domain.RuleWhen{Kind: new("5xx"), ModelIn: models},
 				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, Model: hitModel}
@@ -117,7 +117,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 		b.Run(fmt.Sprintf("model_miss_%02d", n), func(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
-				When: domain.RuleWhen{Kind: strPtr("5xx"), ModelIn: models},
+				When: domain.RuleWhen{Kind: new("5xx"), ModelIn: models},
 				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, Model: missModel}
@@ -133,7 +133,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 		b.Run(fmt.Sprintf("status_hit_%02d", n), func(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
-				When: domain.RuleWhen{Kind: strPtr("5xx"), HTTPStatusIn: statuses},
+				When: domain.RuleWhen{Kind: new("5xx"), HTTPStatusIn: statuses},
 				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, HTTPStatus: &hitCode}
@@ -149,7 +149,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 		b.Run(fmt.Sprintf("status_miss_%02d", n), func(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
-				When: domain.RuleWhen{Kind: strPtr("5xx"), HTTPStatusIn: statuses},
+				When: domain.RuleWhen{Kind: new("5xx"), HTTPStatusIn: statuses},
 				Then: domain.RuleThen{Throttle: openThrottle()},
 			})
 			ev := Event{Kind: Kind5xx, HTTPStatus: &missCode}
@@ -175,7 +175,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
 				When: domain.RuleWhen{
-					Kind:                   strPtr("5xx"),
+					Kind:                   new("5xx"),
 					HTTPStatusIn:           statuses,
 					ModelIn:                models,
 					ErrorMessageContainsIn: subs,
@@ -197,7 +197,7 @@ func BenchmarkClassifyComposite(b *testing.B) {
 			e := benchEngine(b, domain.Rule{
 				Name: "bench", Enabled: true, Priority: 10,
 				When: domain.RuleWhen{
-					Kind:                   strPtr("5xx"),
+					Kind:                   new("5xx"),
 					HTTPStatusIn:           statuses,
 					ModelIn:                models,
 					ErrorMessageContainsIn: subs,

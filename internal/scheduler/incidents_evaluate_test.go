@@ -3,6 +3,7 @@ package scheduler
 
 import (
 	"context"
+	"maps"
 	"math"
 	"testing"
 	"time"
@@ -38,11 +39,9 @@ func incidentFacts(ids []int64, baseURL string) []compilerCandidateFacts {
 		fp[0] = byte(id)
 		fp[1] = 0xF1
 		out = append(out, compilerCandidateFacts{
-			compilerAccountFacts: compilerAccountFacts{
-				accountID:           id,
-				baseURL:             baseURL,
-				identityFingerprint: fp,
-			},
+			accountID:           id,
+			baseURL:             baseURL,
+			identityFingerprint: fp,
 		})
 	}
 	return out
@@ -318,15 +317,13 @@ func incidentLaneFixture(t *testing.T) (*Scheduler, *memLoader, map[CandidateQua
 	}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m",
 		map[int64]CandidateQualityInput{1: badInput(), 2: badInput(), 3: badInput()}, []*domain.Account{a1, a2, a3})
-	for k, v := range buildQuality(20, domain.FormatOpenAIChat, "m",
-		map[int64]CandidateQualityInput{4: okInput(), 5: okInput()}, []*domain.Account{b1, b2}) {
-		q[k] = v
-	}
+	maps.Copy(q, buildQuality(20, domain.FormatOpenAIChat, "m",
+		map[int64]CandidateQualityInput{4: okInput(), 5: okInput()}, []*domain.Account{b1, b2}))
 	base := make(map[CandidateQualityKey]Counts, len(q))
 	for k := range q {
 		base[k] = incidentCounts(60, 55)
 	}
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}}
 	s, _ := newProbedSched(t, m, q, prices)
 	boundary := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	s.sources = &CompilerSources{
@@ -411,7 +408,7 @@ func TestRouteIncidentPruneOnFull(t *testing.T) {
 	delete(m.byGroup, 20)
 	m.mu.Unlock()
 	require.NoError(t, s.reload(context.Background()))
-	for i := 0; i < scopeChCap+1; i++ {
+	for range scopeChCap + 1 {
 		s.enqueueCompileScope([]int64{10}, nil, "prune-test")
 	}
 	s.compileOnce()

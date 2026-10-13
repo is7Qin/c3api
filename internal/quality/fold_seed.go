@@ -94,10 +94,7 @@ func makeFact(seed foldSeed, bucket int64) (attemptFact, error) {
 // at least one. Identity outside the codebooks or version drift is a
 // programming error, never a silent widening.
 func rowToSeed(row repository.RoutingFlowRow) (foldSeed, int64, error) {
-	delta := row.ChainCount
-	if delta < 1 {
-		delta = 1
-	}
+	delta := max(row.ChainCount, 1)
 	if row.Ordinal < 1 || row.Ordinal > foldMaxOrdinal {
 		return foldSeed{}, 0, errors.New("fold: ordinal out of bounds")
 	}

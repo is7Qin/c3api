@@ -21,7 +21,7 @@ func BenchmarkWindowedQualityProvider5000(b *testing.B) {
 	cur := make([]WindowSettledCurrent, 0, ncand)
 	base := make(map[CandidateQualityKey]WindowSettledBaseline, nhot)
 	liveRows := make([]WindowLiveRow, 0, ncand)
-	for i := 0; i < ncand; i++ {
+	for i := range ncand {
 		var fp domain.CandidateFingerprintVal
 		fp[0] = byte(i)
 		fp[1] = byte(i >> 8)

@@ -2,7 +2,7 @@
 package scheduler
 
 import (
-	"sort"
+	"slices"
 
 	"github.com/is7qin/c3api/internal/domain"
 )
@@ -36,7 +36,7 @@ func fullCandidateUnion(gs *groupSnapshot, rootFacts map[int64]compilerAccountFa
 	for id := range seen {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	out := make([]*accountSnapshot, 0, len(ids))
 	for _, id := range ids {
 		out = append(out, seen[id])

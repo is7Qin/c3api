@@ -63,10 +63,7 @@ func (w *windowMap) reset(maxWindow time.Duration, trackOK bool) {
 	w.nextAt = time.Time{}
 	w.trackOK = trackOK
 	w.lastSeen = make(map[int64]time.Time)
-	w.retention = 2 * time.Duration(len(w.buckets)) * width
-	if w.retention < time.Minute {
-		w.retention = time.Minute
-	}
+	w.retention = max(2*time.Duration(len(w.buckets))*width, time.Minute)
 }
 
 // bucketWidth 取 maxWindow 的整数切片粒度：从细到粗挑首个桶数 ≤ ringBuckets

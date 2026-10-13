@@ -4,7 +4,7 @@ package ent
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"time"
@@ -204,7 +204,7 @@ func (_c *PriceEntryCreate) SetNillableSupportsPromptCaching(v *bool) *PriceEntr
 }
 
 // SetRaw sets the "raw" field.
-func (_c *PriceEntryCreate) SetRaw(v json.RawMessage) *PriceEntryCreate {
+func (_c *PriceEntryCreate) SetRaw(v jsontext.Value) *PriceEntryCreate {
 	_c.mutation.SetRaw(v)
 	return _c
 }
@@ -791,7 +791,7 @@ func (u *PriceEntryUpsert) ClearSupportsPromptCaching() *PriceEntryUpsert {
 }
 
 // SetRaw sets the "raw" field.
-func (u *PriceEntryUpsert) SetRaw(v json.RawMessage) *PriceEntryUpsert {
+func (u *PriceEntryUpsert) SetRaw(v jsontext.Value) *PriceEntryUpsert {
 	u.Set(priceentry.FieldRaw, v)
 	return u
 }
@@ -1243,7 +1243,7 @@ func (u *PriceEntryUpsertOne) ClearSupportsPromptCaching() *PriceEntryUpsertOne 
 }
 
 // SetRaw sets the "raw" field.
-func (u *PriceEntryUpsertOne) SetRaw(v json.RawMessage) *PriceEntryUpsertOne {
+func (u *PriceEntryUpsertOne) SetRaw(v jsontext.Value) *PriceEntryUpsertOne {
 	return u.Update(func(s *PriceEntryUpsert) {
 		s.SetRaw(v)
 	})
@@ -1870,7 +1870,7 @@ func (u *PriceEntryUpsertBulk) ClearSupportsPromptCaching() *PriceEntryUpsertBul
 }
 
 // SetRaw sets the "raw" field.
-func (u *PriceEntryUpsertBulk) SetRaw(v json.RawMessage) *PriceEntryUpsertBulk {
+func (u *PriceEntryUpsertBulk) SetRaw(v jsontext.Value) *PriceEntryUpsertBulk {
 	return u.Update(func(s *PriceEntryUpsert) {
 		s.SetRaw(v)
 	})

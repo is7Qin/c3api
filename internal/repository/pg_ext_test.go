@@ -24,9 +24,11 @@ import (
 // 基座见 pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
 
-func boolPtr(b bool) *bool { return &b }
+//go:fix inline
+func boolPtr(b bool) *bool { return new(b) }
 
-func strPtrPG(s string) *string { return &s }
+//go:fix inline
+func strPtrPG(s string) *string { return new(s) }
 
 // TestTemplateExtPG 模板 ext：strip_image_tools（三类型公共能力开关）读写 +
 // 幂等 upsert（同父 id 再写 = 单行覆盖，NULL 清空）+ FK（父模板缺失报错）+
@@ -39,7 +41,7 @@ func TestTemplateExtPG(t *testing.T) {
 	t.Run("strip_image_tools roundtrip", func(t *testing.T) {
 		saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtr(true),
+			StripImageTools: new(true),
 		})
 		require.NoError(t, err)
 		require.Equal(t, tpl.ID, saved.TemplateID)
@@ -55,7 +57,7 @@ func TestTemplateExtPG(t *testing.T) {
 		// 幂等 upsert：再写（改值）→ 仍单行、值更新
 		saved, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-			StripImageTools: boolPtr(false),
+			StripImageTools: new(false),
 		})
 		require.NoError(t, err)
 		require.False(t, *saved.StripImageTools)
@@ -79,7 +81,7 @@ func TestTemplateExtPG(t *testing.T) {
 		// 类型一致性——service 层负责）
 		for _, ct := range []credential.Type{credential.TypeCodexOAuth, credential.TypeCodexPAT} {
 			saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
-				TemplateID: tpl.ID, CredentialType: ct, StripImageTools: boolPtr(true),
+				TemplateID: tpl.ID, CredentialType: ct, StripImageTools: new(true),
 			})
 			require.NoError(t, err)
 			require.Equal(t, ct, saved.CredentialType)
@@ -118,8 +120,8 @@ func TestAccountExtPG(t *testing.T) {
 		exp := time.Now().Add(time.Hour).UTC().Truncate(time.Microsecond)
 		saved, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexEmail: strPtrPG("user@example.com"),
-			CodexOAuthToken: strPtrPG("at"), CodexOAuthRefreshToken: strPtrPG("rt"), CodexOAuthExpiresAt: &exp,
+			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexEmail: new("user@example.com"),
+			CodexOAuthToken: new("at"), CodexOAuthRefreshToken: new("rt"), CodexOAuthExpiresAt: &exp,
 		})
 		require.NoError(t, err)
 		require.Equal(t, acc.ID, saved.AccountID)
@@ -137,7 +139,7 @@ func TestAccountExtPG(t *testing.T) {
 	t.Run("pat roundtrip and oauth cleared", func(t *testing.T) {
 		saved, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
-			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtrPG("pat"),
+			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: new("pat"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, "pat", *saved.CodexPATKey)
@@ -180,7 +182,7 @@ func TestAccountExtTryInsertPG(t *testing.T) {
 	// 首次插入 → true
 	inserted, err := repos.AccountExts.TryInsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: iidA}, CodexOAuthToken: strPtrPG("at"),
+		CodexIdentity: &domain.CodexIdentity{InstallationID: iidA}, CodexOAuthToken: new("at"),
 	})
 	require.NoError(t, err)
 	require.True(t, inserted, "首次插入成功")
@@ -188,7 +190,7 @@ func TestAccountExtTryInsertPG(t *testing.T) {
 	// 已存在 → false，身份保持先写者（不覆盖）
 	inserted, err = repos.AccountExts.TryInsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: iidB}, CodexOAuthToken: strPtrPG("at2"),
+		CodexIdentity: &domain.CodexIdentity{InstallationID: iidB}, CodexOAuthToken: new("at2"),
 	})
 	require.NoError(t, err)
 	require.False(t, inserted, "冲突跳过（先写者胜）")
@@ -204,19 +206,19 @@ func TestAccountExtTryInsertPG(t *testing.T) {
 	var wg sync.WaitGroup
 	ins := make([]bool, 2)
 	errs := make([]error, 2)
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			ins[i], errs[i] = repos.AccountExts.TryInsertAccountExt(ctx, &domain.AccountExt{
 				AccountID: acc2.ID, CredentialType: credential.TypeCodexOAuth,
 				CodexIdentity:   &domain.CodexIdentity{InstallationID: map[int]string{0: iidC, 1: iidD}[i]},
-				CodexOAuthToken: strPtrPG("at"),
+				CodexOAuthToken: new("at"),
 			})
 		}(i)
 	}
 	wg.Wait()
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		require.NoError(t, errs[i], "并发首写不报错")
 	}
 	require.True(t, ins[0] != ins[1], "恰好一个成功一个幂等跳过（ins=%v）", ins)
@@ -350,8 +352,8 @@ func TestPGAccountExtSnapshotLoad(t *testing.T) {
 		_, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexIdentity:   &domain.CodexIdentity{InstallationID: iid},
-			CodexEmail:      strPtrPG("user@example.com"),
-			CodexOAuthToken: strPtrPG("at"), CodexOAuthRefreshToken: strPtrPG("rt"), CodexOAuthExpiresAt: &exp,
+			CodexEmail:      new("user@example.com"),
+			CodexOAuthToken: new("at"), CodexOAuthRefreshToken: new("rt"), CodexOAuthExpiresAt: &exp,
 		})
 		require.NoError(t, err)
 		got := snapshotExtOf(t, repos, g.ID, acc.ID)
@@ -369,7 +371,7 @@ func TestPGAccountExtSnapshotLoad(t *testing.T) {
 	t.Run("ext update reflected after reload", func(t *testing.T) {
 		_, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
-			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtrPG("pat-new"),
+			CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: new("pat-new"),
 		})
 		require.NoError(t, err)
 		got := snapshotExtOf(t, repos, g.ID, acc.ID)
@@ -395,7 +397,7 @@ func TestAccountExtIdentityJSONBPG(t *testing.T) {
 		saved, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexIdentity:   &domain.CodexIdentity{InstallationID: iid},
-			CodexOAuthToken: strPtrPG("at"),
+			CodexOAuthToken: new("at"),
 		})
 		require.NoError(t, err)
 		require.Equal(t, iid, saved.CodexIdentity.InstallationID, "jsonb 落库后回读等值（installation）")
@@ -410,7 +412,7 @@ func TestAccountExtIdentityJSONBPG(t *testing.T) {
 		// 全量 upsert 写 nil 身份 → 冲突路径 ClearX 清 NULL；回读 nil
 		saved, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-			CodexOAuthToken: strPtrPG("at2"),
+			CodexOAuthToken: new("at2"),
 		})
 		require.NoError(t, err)
 		require.Nil(t, saved.CodexIdentity, "nil 身份 → jsonb NULL")
@@ -450,8 +452,8 @@ func TestAccountExtCodexAccountIDUniquePG(t *testing.T) {
 		_, err := repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexIdentity:   &domain.CodexIdentity{InstallationID: "i-" + name},
-			CodexOAuthToken: strPtrPG("at"),
-			CodexEmail:      strPtrPG(email),
+			CodexOAuthToken: new("at"),
+			CodexEmail:      new(email),
 			CodexAccountID:  accID,
 		})
 		require.NoError(t, err)
@@ -459,22 +461,22 @@ func TestAccountExtCodexAccountIDUniquePG(t *testing.T) {
 	}
 
 	// 不同键共存：同 email 不同 codex_account_id → 两行并存
-	seed("u-a1", "a@example.com", strPtrPG("acc-1"))
-	seed("u-a2", "a@example.com", strPtrPG("acc-2"))
+	seed("u-a1", "a@example.com", new("acc-1"))
+	seed("u-a2", "a@example.com", new("acc-2"))
 	rows, err := repos.Client.AccountExt.Query().Count(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, rows, "同 email 不同 codex_account_id 共存")
 
 	// 同键冲突：同 (email, codex_account_id) 不同账号第二行 → 唯一索引拒绝
 	//（同账号重复写 = 幂等 upsert 收敛，不触发——见既有 upsert 测试）
-	seed("u-b1", "b@example.com", strPtrPG("acc-1"))
+	seed("u-b1", "b@example.com", new("acc-1"))
 	accB2 := seedPGAccount(t, repos, tpl.ID, "u-b2")
 	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accB2.ID, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "i-b2"},
-		CodexOAuthToken: strPtrPG("at"),
-		CodexEmail:      strPtrPG("b@example.com"),
-		CodexAccountID:  strPtrPG("acc-1"),
+		CodexOAuthToken: new("at"),
+		CodexEmail:      new("b@example.com"),
+		CodexAccountID:  new("acc-1"),
 	})
 	require.Error(t, err, "同 (codex_email, codex_account_id) 不同账号第二行必须唯一冲突")
 	require.NotErrorIs(t, err, repository.ErrNotFound)

@@ -21,7 +21,7 @@ import (
 func TestContBindWorkerSatisfiesStatsProvider(t *testing.T) {
 	w := proxy.NewContBindWorker(nil, nil, proxy.ContBindConfig{})
 
-	_, ok := interface{}(w).(handler.StatsProvider)
+	_, ok := any(w).(handler.StatsProvider)
 	require.True(t, ok, "cont-bind worker must implement handler.StatsProvider")
 
 	providers := statsProviders([]worker.Worker{w}, nil)

@@ -70,8 +70,8 @@ func TestFailoverPipeline_observed4xxPreservesFinishAndMarkResult(t *testing.T) 
 	defer up.Close()
 	p := newTestProxyRules(t, up.URL, domain.FormatOpenAIChat,
 		domain.Rule{Name: "balance-401", Enabled: true, Priority: 10,
-			When: domain.RuleWhen{Kind: strPtrT("4xx"), HTTPStatus: intPtrT(401)},
-			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64PtrT(60 * 1000)}, ResponseCode: intPtrT(502), CustomMessage: strPtrT("upstream rejected request")}},
+			When: domain.RuleWhen{Kind: new("4xx"), HTTPStatus: new(401)},
+			Then: domain.RuleThen{Throttle: &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(60 * 1000))}, ResponseCode: new(502), CustomMessage: new("upstream rejected request")}},
 	)
 	sel, plan, attempt, err := p.selectWithPlan(10, domain.FormatOpenAIChat, "gpt-4o",
 		scheduler.AttemptPlanIdentity{RequestID: "req-4xx", UserID: 1})

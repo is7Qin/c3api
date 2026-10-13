@@ -85,7 +85,7 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle se
 		mu    sync.Mutex
 		total domain.SettlementSummary
 	)
-	for bucket := 0; bucket < settleParallelism; bucket++ {
+	for bucket := range settleParallelism {
 		if failed != nil && (*failed)[bucket] {
 			continue
 		}

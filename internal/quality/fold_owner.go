@@ -133,7 +133,7 @@ func (o *FlowOwner) FoldChain(bucket int64, n int, next func(i int) (
 	terminal, hasPrev bool,
 )) {
 	if o.closed.Load() || o.rec.finalized() {
-		for i := 0; i < n; i++ {
+		for range n {
 			o.edgeRowsDropped.Add(1)
 			o.overflowed.Add(1)
 		}

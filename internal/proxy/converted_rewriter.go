@@ -93,10 +93,10 @@ func extractSSEData(frame []byte) []byte {
 			contentEnd--
 		}
 		line := frame[pos:contentEnd]
-		if colon := bytes.IndexByte(line, ':'); colon >= 0 {
-			name := line[:colon]
+		if before, after, ok := bytes.Cut(line, []byte{':'}); ok {
+			name := before
 			if len(name) > 0 && name[0] != ':' && bytes.Equal(name, []byte("data")) {
-				val := line[colon+1:]
+				val := after
 				if len(val) > 0 && val[0] == ' ' {
 					val = val[1:]
 				}

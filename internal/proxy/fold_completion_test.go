@@ -197,10 +197,7 @@ func TestFoldCompletion_SettlePanickedNonterminalCountsIncomplete(t *testing.T) 
 func TestFoldCompletion_AppendBeyondCapCountsOverflow(t *testing.T) {
 	rec, f := foldCompletionRecorder(t)
 	for i := uint8(1); i <= 9; i++ {
-		ordinal := i
-		if ordinal > 8 {
-			ordinal = 8
-		}
+		ordinal := min(i, 8)
 		f.arm(foldCompletionAttempt(ordinal, nil))
 		f.append(foldCompletionOutcome("success", i == 8))
 	}

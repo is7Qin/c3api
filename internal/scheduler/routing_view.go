@@ -13,9 +13,7 @@ import (
 // 的 NotNil 断言，故不用 maps.Clone 其 nil→nil 语义）。
 func cloneSnapMap[K comparable, V any](in map[K]V) map[K]V {
 	out := make(map[K]V, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 

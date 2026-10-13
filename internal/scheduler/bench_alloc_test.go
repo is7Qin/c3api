@@ -31,13 +31,13 @@ func batchStageFixture(b *testing.B, m int) (*Scheduler, *t1Loader) {
 		shared   = 10
 	)
 	sharedAccs := make([]*domain.Account, 0, shared)
-	for i := 0; i < shared; i++ {
+	for i := range shared {
 		sharedAccs = append(sharedAccs, acc(int64(1_000_000+i), tp, 4))
 	}
 	byGroup := make(map[int64][]*domain.Account, m)
 	for gid := 1; gid <= m; gid++ {
 		accs := append([]*domain.Account(nil), sharedAccs...)
-		for j := 0; j < perGroup; j++ {
+		for j := range perGroup {
 			accs = append(accs, acc(int64(gid*1000+j), tp, 4))
 		}
 		byGroup[int64(gid)] = accs
@@ -84,7 +84,7 @@ func BenchmarkInvalidateGroupsStage(b *testing.B) {
 func digestFixture() (domain.Account, *domain.Template, []int64) {
 	tp := tpl(1, domain.FormatOpenAIChat, []string{"m-a", "m-b"})
 	a := *acc(7, tp, 4)
-	a.Ext = &domain.AccountExt{CodexAccountID: strPtr("acct-up")}
+	a.Ext = &domain.AccountExt{CodexAccountID: new("acct-up")}
 	return a, tp, []int64{3, 9}
 }
 

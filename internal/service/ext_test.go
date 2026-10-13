@@ -139,7 +139,7 @@ func TestTemplateExtValidation(t *testing.T) {
 	// special 行：strip_image_tools 公共开关 roundtrip
 	saved, err := svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-		StripImageTools: boolPtr(true),
+		StripImageTools: new(true),
 	})
 	require.NoError(t, err)
 	require.Equal(t, tpl.ID, saved.TemplateID)
@@ -161,7 +161,7 @@ func TestTemplateExtValidation(t *testing.T) {
 	tplO := seedExtTemplate(t, svc, "t-oauth", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
 	saved, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplO.ID, CredentialType: credential.TypeCodexOAuth,
-		StripImageTools: boolPtr(true),
+		StripImageTools: new(true),
 	})
 	require.NoError(t, err)
 	require.True(t, *saved.StripImageTools, "oauth 模板 strip 开关可配置（三类型公共能力）")
@@ -173,7 +173,7 @@ func TestTemplateExtValidation(t *testing.T) {
 	// 幂等 upsert：同 template_id 再写（strip=false）→ 仍单行、值覆盖
 	saved, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplO.ID, CredentialType: credential.TypeCodexOAuth,
-		StripImageTools: boolPtr(false),
+		StripImageTools: new(false),
 	})
 	require.NoError(t, err)
 	require.False(t, *saved.StripImageTools, "幂等 upsert 覆盖（改值）")
@@ -195,7 +195,7 @@ func TestTemplateExtValidation(t *testing.T) {
 	tplP := seedExtTemplate(t, svc, "t-pat", credential.TypeCodexPAT, domain.FormatOpenAIResponses)
 	saved, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplP.ID, CredentialType: credential.TypeCodexPAT,
-		StripImageTools: boolPtr(true),
+		StripImageTools: new(true),
 	})
 	require.NoError(t, err)
 	require.True(t, *saved.StripImageTools, "pat 模板 strip 开关可配置")
@@ -235,7 +235,7 @@ func TestUpsertTemplateExtInvalidates(t *testing.T) {
 	before := rec.countKind("templates")
 	_, err := svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-		StripImageTools: boolPtr(true),
+		StripImageTools: new(true),
 	})
 	require.NoError(t, err)
 	require.Equal(t, before+1, rec.countKind("templates"), "写入 ext 行必须失效模板快照")
@@ -243,7 +243,7 @@ func TestUpsertTemplateExtInvalidates(t *testing.T) {
 	// 幂等重写同值：ext 行是全列更新，写入即变更 → 仍须失效（不按值比较）。
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
-		StripImageTools: boolPtr(true),
+		StripImageTools: new(true),
 	})
 	require.NoError(t, err)
 	require.Equal(t, before+2, rec.countKind("templates"))
@@ -275,7 +275,7 @@ func TestAccountExtValidation(t *testing.T) {
 	// installation UUIDv4 形状；email 非自动生成（人工/上游导入）。
 	saved, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexOAuthToken: strPtr("at"), CodexOAuthRefreshToken: strPtr("rt"), CodexOAuthExpiresAt: &exp,
+		CodexOAuthToken: new("at"), CodexOAuthRefreshToken: new("rt"), CodexOAuthExpiresAt: &exp,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "at", *saved.CodexOAuthToken)
@@ -294,7 +294,7 @@ func TestAccountExtValidation(t *testing.T) {
 
 	// 后续写入缺省身份 → 沿用存量（持久复用，账号存在期间稳定）+ 缺省列清空
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, CodexOAuthToken: strPtr("at2"),
+		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, CodexOAuthToken: new("at2"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, "at2", *saved.CodexOAuthToken)
@@ -303,7 +303,7 @@ func TestAccountExtValidation(t *testing.T) {
 
 	// 类型一致性：oauth 模板账号挂 pat 行 → 400（父模板类型不一致）
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtr("pat"),
+		AccountID: accO.ID, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: new("pat"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "oauth 模板账号 ext 行类型必须一致（pat 拒绝）")
 
@@ -311,13 +311,13 @@ func TestAccountExtValidation(t *testing.T) {
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT,
 		CodexIdentity: &domain.CodexIdentity{InstallationID: iid},
-		CodexEmail:    strPtr("user@example.com"), CodexPATKey: strPtr("pat"),
+		CodexEmail:    new("user@example.com"), CodexPATKey: new("pat"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, iid, saved.CodexIdentity.InstallationID)
 	require.Equal(t, "user@example.com", *saved.CodexEmail, "email roundtrip")
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat2"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat2"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, iid, saved.CodexIdentity.InstallationID, "显式提供后缺省沿用")
@@ -325,11 +325,11 @@ func TestAccountExtValidation(t *testing.T) {
 
 	// 列组约束
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: strPtr("p"),
+		AccountID: accO.ID, CredentialType: credential.TypeCodexOAuth, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexPATKey: new("p"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "oauth 行 pat 列必须为空")
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexOAuthToken: strPtr("t"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexIdentity: &domain.CodexIdentity{InstallationID: iid}, CodexOAuthToken: new("t"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "pat 行 oauth 列必须为空")
 
@@ -352,7 +352,7 @@ func TestAccountExtValidation(t *testing.T) {
 	accBad := seedExtAccount(t, svc, tplP.ID)
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: accBad.ID, CredentialType: credential.TypeCodexPAT,
-		CodexPATKey: strPtr("leaked-pat"), CodexOAuthToken: strPtr("t"),
+		CodexPATKey: new("leaked-pat"), CodexOAuthToken: new("t"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "pat 行 oauth 列必须为空")
 	_, err = svc.GetAccountExt(ctx, accBad.ID)
@@ -384,13 +384,13 @@ func TestAccountExtValidation(t *testing.T) {
 	// email 清空往返：提供 → 写入；未提供 → NULL 清空（全列更新含
 	// NULL 清空契约；修复前 fillIdentityDefaults 恒回填存量 email → 不可清空）
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat3"),
-		CodexEmail: strPtr("again@example.com"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat3"),
+		CodexEmail: new("again@example.com"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, "again@example.com", *saved.CodexEmail, "提供 email → 写入")
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: strPtr("pat3"),
+		AccountID: accP.ID, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat3"),
 	})
 	require.NoError(t, err)
 	require.Nil(t, saved.CodexEmail, "未提供 email → NULL 清空（不再持久复用）")
@@ -419,12 +419,12 @@ func TestAccountExtNilIdentityRejected(t *testing.T) {
 	// 损坏行：存量身份 NULL（模拟手工 SQL 注入）
 	svc.store.(*fakeStore).accExts[acc.ID] = &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexOAuthToken: strPtr("at"),
+		CodexOAuthToken: new("at"),
 	}
 	// 已有行路径：身份缺省 → 无法沿用（存量也缺）→ 终校验 400，不落库
 	_, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexOAuthToken: strPtr("at2"),
+		CodexOAuthToken: new("at2"),
 	})
 	require.ErrorIs(t, err, ErrInvalidInput, "存量身份缺失 + 请求缺省身份 → 400（loud 拒绝）")
 	got, err := svc.store.GetAccountExt(ctx, acc.ID)
@@ -435,7 +435,7 @@ func TestAccountExtNilIdentityRejected(t *testing.T) {
 	saved, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
 		CodexIdentity:   &domain.CodexIdentity{InstallationID: "11111111-2222-3333-4444-555555555555"},
-		CodexOAuthToken: strPtr("at3"),
+		CodexOAuthToken: new("at3"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, "11111111-2222-3333-4444-555555555555", saved.CodexIdentity.InstallationID, "显式 installation 修复损坏行")
@@ -453,14 +453,14 @@ func TestAccountExtIdentityInstallationOnly(t *testing.T) {
 	// 显式 installation → 采用
 	saved, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexIdentity: &domain.CodexIdentity{InstallationID: "i-explicit"}, CodexOAuthToken: strPtr("at"),
+		CodexIdentity: &domain.CodexIdentity{InstallationID: "i-explicit"}, CodexOAuthToken: new("at"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, "i-explicit", saved.CodexIdentity.InstallationID)
 
 	// 后续写入缺省 installation → 沿用存量
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth, CodexOAuthToken: strPtr("at"),
+		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth, CodexOAuthToken: new("at"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, "i-explicit", saved.CodexIdentity.InstallationID, "缺省 → 沿用存量 installation")
@@ -468,7 +468,7 @@ func TestAccountExtIdentityInstallationOnly(t *testing.T) {
 	// 空 installation → 自动生成 UUIDv4
 	acc2 := seedExtAccount(t, svc, tpl.ID)
 	saved, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
-		AccountID: acc2.ID, CredentialType: credential.TypeCodexOAuth, CodexOAuthToken: strPtr("at"),
+		AccountID: acc2.ID, CredentialType: credential.TypeCodexOAuth, CodexOAuthToken: new("at"),
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, saved.CodexIdentity.InstallationID, "空 installation → 自动生成")
@@ -489,24 +489,24 @@ func TestAccountExtConcurrentFirstWrite(t *testing.T) {
 	results := make([]*domain.AccountExt, n)
 	errs := make([]error, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			results[i], errs[i] = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 				AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-				CodexOAuthToken: strPtr("at"),
+				CodexOAuthToken: new("at"),
 			})
 		}(i)
 	}
 	wg.Wait()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NoError(t, errs[i], "并发首写不报错")
 		require.NotNil(t, results[i], "并发首写都有返回值")
 	}
 	got, err := svc.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, got.CodexIdentity.InstallationID, results[i].CodexIdentity.InstallationID, "单份身份不覆盖（i=%d）", i)
 	}
 }
@@ -560,26 +560,26 @@ func TestAccountExtConflictLoserAdoptsWinnerIdentity(t *testing.T) {
 	results := make([]*domain.AccountExt, n)
 	errs := make([]error, n)
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	for i := range n {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
 			e := &domain.AccountExt{
 				AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-				CodexOAuthToken: strPtr("at"),
+				CodexOAuthToken: new("at"),
 				CodexIdentity:   &domain.CodexIdentity{InstallationID: fmt.Sprintf("inst-%d", i)},
 			}
 			results[i], errs[i] = svc.UpsertAccountExt(ctx, e)
 		}(i)
 	}
 	wg.Wait()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NoError(t, errs[i], "并发首写不报错")
 	}
 	got, err := svc.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	require.NotEmpty(t, got.CodexIdentity.InstallationID)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.Equal(t, got.CodexIdentity.InstallationID, results[i].CodexIdentity.InstallationID, "败者 installation 必须完全采用赢者（i=%d）", i)
 		require.Equal(t, "at", *results[i].CodexOAuthToken, "败者凭据（令牌）按本次请求写")
 	}
@@ -713,15 +713,17 @@ func TestGroupProtocolConvert(t *testing.T) {
 
 // --- helpers ---
 
-func boolPtr(b bool) *bool { return &b }
+//go:fix inline
+func boolPtr(b bool) *bool { return new(b) }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 // seedAccount 建账号（ext 测试用；api_key 静态 key 语义）。
 func seedExtAccount(t *testing.T, svc *Service, tplID int64) *domain.Account {
 	t.Helper()
 	a, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
-		Name: strPtr("a"), TemplateID: &tplID, UpstreamKey: strPtr("sk-a"), MaxConcurrency: intPtr(8),
+		Name: new("a"), TemplateID: &tplID, UpstreamKey: new("sk-a"), MaxConcurrency: new(8),
 	})
 	require.NoError(t, err)
 	return a

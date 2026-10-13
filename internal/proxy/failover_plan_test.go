@@ -276,9 +276,9 @@ func TestSelectWithPlan_LateEligibleOverflowAccount(t *testing.T) {
 }
 
 func TestFailoverLoop_PlanDispatchBoundedByMaxAttempts(t *testing.T) {
-	var hits int64
+	var hits atomic.Int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&hits, 1)
+		hits.Add(1)
 		w.WriteHeader(http.StatusTooManyRequests)
 		_, _ = w.Write([]byte(`{"error":{"message":"slow down"}}`))
 	}))
@@ -291,7 +291,7 @@ func TestFailoverLoop_PlanDispatchBoundedByMaxAttempts(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
-	require.Equal(t, int64(2), atomic.LoadInt64(&hits), "dispatch must stop at max attempts")
+	require.Equal(t, int64(2), hits.Load(), "dispatch must stop at max attempts")
 	for id := int64(1); id <= 4; id++ {
 		ri, ok := p.sched.Runtime(id)
 		require.True(t, ok)
@@ -302,9 +302,9 @@ func TestFailoverLoop_PlanDispatchBoundedByMaxAttempts(t *testing.T) {
 // Replay safety: an upstream 5xx terminates the plan-driven failover — no
 // second dispatch, even with attempt budget left (no proven idempotency).
 func TestFailoverLoop_Plan5xxTerminatesWithoutRetry(t *testing.T) {
-	var hits int64
+	var hits atomic.Int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt64(&hits, 1)
+		hits.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"message":"boom"}}`))
 	}))
@@ -317,7 +317,7 @@ func TestFailoverLoop_Plan5xxTerminatesWithoutRetry(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
-	require.Equal(t, int64(1), atomic.LoadInt64(&hits), "5xx must not replay across accounts")
+	require.Equal(t, int64(1), hits.Load(), "5xx must not replay across accounts")
 	for id := int64(1); id <= 4; id++ {
 		ri, ok := p.sched.Runtime(id)
 		require.True(t, ok)

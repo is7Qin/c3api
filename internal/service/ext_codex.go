@@ -42,7 +42,7 @@ func newUUIDv4() string {
 func formatUUID(b []byte) string {
 	const hex = "0123456789abcdef"
 	out := make([]byte, 36)
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		out[i*2] = hex[b[i]>>4]
 		out[i*2+1] = hex[b[i]&0x0f]
 	}

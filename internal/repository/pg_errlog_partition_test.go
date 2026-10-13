@@ -165,7 +165,7 @@ func TestErrLogPartitionConcurrentBootstrapPG(t *testing.T) {
 
 	var wg sync.WaitGroup
 	errs := make([]error, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()

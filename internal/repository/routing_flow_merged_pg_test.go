@@ -122,14 +122,14 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 	fixtureFP := make([]byte, 32)
 	fixtureFP[0] = 0x7A
 	edges := make([]repository.RoutingFlowRow, 0, fixtureEdges)
-	for e := 0; e < fixtureEdges; e++ {
+	for e := range fixtureEdges {
 		edges = append(edges, repository.RoutingFlowRow{
 			IdentityVersion: 1, RouteClassID: rc, Ordinal: int16(e + 1), Lane: "primary",
 			AccountID: int64(100 + e), PreviousOutcome: "", TransitionReason: "init",
 			Outcome: "success", IsTerminal: true, Generation: fixtureGen, ChainCount: 5,
 		})
 	}
-	for i := 0; i < fixtureMinutes; i++ {
+	for i := range fixtureMinutes {
 		minute := m.Add(time.Duration(i) * time.Minute)
 		require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-A7", minute, 1, 1, edges))
 	}
@@ -178,9 +178,9 @@ func TestRoutingFlowMergedRowCountDropPG(t *testing.T) {
 		UNIQUE NULLS NOT DISTINCT (terminal_minute, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, route_class_id, identity_version)
 	)`)
 	require.NoError(t, err)
-	for i := 0; i < fixtureMinutes; i++ {
+	for i := range fixtureMinutes {
 		minute := m.Add(time.Duration(i) * time.Minute)
-		for e := 0; e < fixtureEdges; e++ {
+		for e := range fixtureEdges {
 			_, err = pool.Exec(ctx, `INSERT INTO baseline_flow_instance
 				(terminal_minute, ordinal, lane, account_id, previous_outcome, transition_reason, outcome, is_terminal, generation, candidate_fingerprint, instance_src, identity_version, route_class_id, chain_count)
 				VALUES ($1,$2,'primary',$3,'','init','success',true,$4,$5,'src-A7',1,$6,5)`,

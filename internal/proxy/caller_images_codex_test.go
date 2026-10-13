@@ -311,7 +311,7 @@ func TestImagesCodexCredPassing(t *testing.T) {
 			}
 		}
 	}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 			`{"model":"gpt-image-2","prompt":"x"}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
@@ -733,7 +733,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,
 	}, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(
 			`{"model":"gpt-image-2","prompt":"x"}`))
 		req.Header.Set("Authorization", "Bearer ck-1")

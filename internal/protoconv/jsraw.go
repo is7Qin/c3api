@@ -464,7 +464,7 @@ func bytesEq(b []byte, s string) bool {
 	if len(b) != len(s) {
 		return false
 	}
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		if b[i] != s[i] {
 			return false
 		}

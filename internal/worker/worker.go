@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -68,9 +69,9 @@ func (m *Manager) StartAll(ctx context.Context) error {
 	for _, w := range ws {
 		if err := w.Start(ctx); err != nil {
 			started = append(started, w)
-			for i := len(started) - 1; i >= 0; i-- {
-				if cerr := started[i].Close(ctx); cerr != nil && m.log != nil {
-					m.log.Warn("worker close failed on start rollback", logx.String("worker", started[i].Name()), logx.Error(cerr))
+			for _, s := range slices.Backward(started) {
+				if cerr := s.Close(ctx); cerr != nil && m.log != nil {
+					m.log.Warn("worker close failed on start rollback", logx.String("worker", s.Name()), logx.Error(cerr))
 				}
 			}
 			return fmt.Errorf("worker %s start: %w", w.Name(), err)
@@ -89,8 +90,8 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var firstErr error
-	for i := len(m.workers) - 1; i >= 0; i-- {
-		w := m.workers[i]
+	for _, w := range slices.Backward(m.workers) {
+
 		if err := w.Close(ctx); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("worker %s close: %w", w.Name(), err)
@@ -121,9 +122,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 // recover 兜底返回 500——回调无消费者。m.log==nil 时静默（New 恒注入，
 // 现状全调用点恒非 nil）。
 func (m *Manager) Go(ctx context.Context, name string, fn func(ctx context.Context)) {
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done() // defer LIFO：recover 分支先执行，Done 在其后
+	m.wg.Go(func() {
 		defer func() {
 			if r := recover(); r != nil && m.log != nil {
 				m.log.Warn("worker goroutine panicked",
@@ -134,5 +133,5 @@ func (m *Manager) Go(ctx context.Context, name string, fn func(ctx context.Conte
 			}
 		}()
 		fn(ctx)
-	}()
+	})
 }

@@ -73,11 +73,11 @@ func TestRed_FlowAccumulatorDuplicateMergeBytesScaleWithIncomingOnly(t *testing.
 	measure := func(retained int) (bytesPerOp, allocsPerOp float64) {
 		rec, err := NewRecorder(50000)
 		require.NoError(t, err)
-		for i := 0; i < retained; i++ {
+		for i := range retained {
 			require.NoError(t, foldConsumerRows(rec.FlowOwner(), minute, []repository.RoutingFlowRow{redFlowRow(fixed, int64(i))}))
 		}
 		dup := make([]repository.RoutingFlowRow, 0, 8)
-		for i := 0; i < 8; i++ {
+		for i := range 8 {
 			dup = append(dup, redFlowRow(fixed, int64(i)))
 		}
 		res := testing.Benchmark(func(b *testing.B) {
@@ -249,8 +249,7 @@ func TestRed_FlowSyncCloseLoopDoneTimeoutSealsLaterSubmissionResidual(t *testing
 	w.SetClock(func() time.Time { return fixed })
 	m := fixed.Truncate(time.Minute).Unix()
 	require.NoError(t, foldConsumerRows(rec.FlowOwner(), m, []repository.RoutingFlowRow{ownerTestRow(11)}))
-	liveCtx, stopLoop := context.WithCancel(context.Background())
-	defer stopLoop()
+	liveCtx := t.Context()
 	require.NoError(t, w.Start(liveCtx))
 	redFlowWait(t, entered, "sync loop Redis publish")
 

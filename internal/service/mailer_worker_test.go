@@ -170,7 +170,7 @@ func TestMailWorkerQueueFullDropped(t *testing.T) {
 	svc := newMailService(t, fs)
 	mw := newTestMailWorker(svc)
 	// Do NOT start -> ch not drained, fill to capacity
-	for i := 0; i < mailQueueCap; i++ {
+	for range mailQueueCap {
 		require.NoError(t, mw.Enqueue(MailSendTask{To: "a@example.com", Purpose: domain.EmailTemplateRegisterCode, Code: "123456", TTLMin: 10}))
 	}
 	err := mw.Enqueue(MailSendTask{To: "overflow@example.com", Purpose: domain.EmailTemplateRegisterCode, Code: "999999", TTLMin: 10})
@@ -207,7 +207,7 @@ func TestMailWorkerShutdownDrain(t *testing.T) {
 		"mail.from_address": "from@example.com", "mail.tls": "none",
 	})
 	// enqueue 3 tasks
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		require.NoError(t, mw.Enqueue(MailSendTask{To: "u" + strconv.Itoa(i) + "@example.com", Purpose: domain.EmailTemplateRegisterCode, Code: "code" + strconv.Itoa(i), TTLMin: 10}))
 	}
 	// brief wait for at least one to be processed, then Close with budget
@@ -246,7 +246,7 @@ func TestMailWorkerEnqueueAfterQuitDroppedCount(t *testing.T) {
 	require.NoError(t, mw.Start(context.Background()))
 	// close then try many enqueues, all dropped
 	require.NoError(t, mw.Close(context.Background()))
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		err := mw.Enqueue(MailSendTask{To: "x@example.com", Purpose: domain.EmailTemplateRegisterCode, Code: strings.Repeat("1", 6), TTLMin: 10})
 		require.ErrorIs(t, err, ErrMailQueueFull)
 	}

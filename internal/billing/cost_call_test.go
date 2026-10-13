@@ -12,10 +12,11 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
 func TestCallCostFromResolved_ZeroPrice_NoPanic(t *testing.T) {
-	rp := domain.ResolvedPrices{PricePerCall: int64Ptr(0)}
+	rp := domain.ResolvedPrices{PricePerCall: new(int64(0))}
 	require.NotPanics(t, func() {
 		require.Equal(t, int64(0), CallCostFromResolved(rp, 10))
 		require.Equal(t, int64(0), CallCostFromResolved(rp, 0))
@@ -26,14 +27,14 @@ func TestCallCostFromResolved_ZeroPrice_NoPanic(t *testing.T) {
 }
 
 func TestCallCostFromResolved_NegativePrice_Defense(t *testing.T) {
-	rp := domain.ResolvedPrices{PricePerCall: int64Ptr(-5)}
+	rp := domain.ResolvedPrices{PricePerCall: new(int64(-5))}
 	require.Equal(t, int64(0), CallCostFromResolved(rp, 10))
-	rp2 := domain.ResolvedPrices{PricePerCall: int64Ptr(-1 << 60)}
+	rp2 := domain.ResolvedPrices{PricePerCall: new(int64(-1 << 60))}
 	require.Equal(t, int64(0), CallCostFromResolved(rp2, 1<<30))
 }
 
 func TestImageCostFromResolved_ZeroPrice_NoPanic(t *testing.T) {
-	rp := domain.ResolvedPrices{PricePerImage: int64Ptr(0), ImgInTokPerM: int64Ptr(0), ImgOutTokPerM: int64Ptr(0)}
+	rp := domain.ResolvedPrices{PricePerImage: new(int64(0)), ImgInTokPerM: new(int64(0)), ImgOutTokPerM: new(int64(0))}
 	require.Equal(t, int64(0), ImageCostFromResolved(rp, 100, 100, 10))
 }
 

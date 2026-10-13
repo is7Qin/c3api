@@ -32,8 +32,8 @@ func (f *alwaysStaleExtCASStore) AdminUpsertAccountExtCAS(ctx context.Context, e
 func seedGroupedExtAccount(t *testing.T, svc *Service, tplID int64, gids ...int64) *domain.Account {
 	t.Helper()
 	a, err := svc.CreateAccount(context.Background(), repository.AccountPatch{
-		Name: strPtr("a"), TemplateID: &tplID, UpstreamKey: strPtr("sk-a"),
-		MaxConcurrency: intPtr(8), GroupIDs: &gids,
+		Name: new("a"), TemplateID: &tplID, UpstreamKey: new("sk-a"),
+		MaxConcurrency: new(8), GroupIDs: &gids,
 	})
 	require.NoError(t, err)
 	return a
@@ -58,7 +58,7 @@ func TestUpsertAccountExtInvalidates(t *testing.T) {
 	beforeInv, beforePub := rec.countKind("accounts"), pr.total()
 	saved, err := svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexOAuthToken: strPtr("at"),
+		CodexOAuthToken: new("at"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, "at", *saved.CodexOAuthToken)
@@ -77,7 +77,7 @@ func TestUpsertAccountExtInvalidates(t *testing.T) {
 	beforeInv, beforePub = rec.countKind("accounts"), pr.total()
 	_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 		AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-		CodexOAuthToken: strPtr("at-rotated"),
+		CodexOAuthToken: new("at-rotated"),
 	})
 	require.NoError(t, err)
 	require.Equal(t, beforeInv+1, rec.countKind("accounts"), "ext 更新成功必须组级定向重载")
@@ -105,7 +105,7 @@ func TestUpsertAccountExtFailureLeavesNoInvalidation(t *testing.T) {
 			CodexIdentity: &domain.CodexIdentity{
 				InstallationID: "11111111-2222-3333-4444-555555555555",
 			},
-			CodexOAuthToken: strPtr("at-old"),
+			CodexOAuthToken: new("at-old"),
 		})
 		require.NoError(t, err)
 		require.True(t, inserted)
@@ -113,7 +113,7 @@ func TestUpsertAccountExtFailureLeavesNoInvalidation(t *testing.T) {
 		beforeInv, beforePub := rec.total(), pr.total()
 		_, err = svc.UpsertAccountExt(ctx, &domain.AccountExt{
 			AccountID: acc.ID, CredentialType: credential.TypeCodexOAuth,
-			CodexOAuthToken: strPtr("at-new"),
+			CodexOAuthToken: new("at-new"),
 		})
 		require.ErrorIs(t, err, ErrConflict)
 		require.Equal(t, beforeInv, rec.total(), "a rolled-back write must not mark any snapshot dirty")

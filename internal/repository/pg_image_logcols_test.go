@@ -139,7 +139,7 @@ func imageLogFor(userID int64, requestID string) *domain.UsageLog {
 	l.OutputTokens = 20000
 	l.TotalTokens = 25000
 	l.CallCount = 2
-	l.PricePerCallMillis = int64Ptr(5_400) // 毫分/张（例外单位——per-call 不走 /1e6）
+	l.PricePerCallMillis = new(int64(5_400)) // 毫分/张（例外单位——per-call 不走 /1e6）
 	return l
 }
 
@@ -253,7 +253,7 @@ func TestUsageLogSearchBillingCursorPG(t *testing.T) {
 	l := logFor(u.ID, "search-1")
 	l.Format = domain.FormatOpenAISearch
 	l.CallCount = 1
-	l.PricePerCallMillis = int64Ptr(2_000_000) // 毫分/次（search 按次价快照形态）
+	l.PricePerCallMillis = new(int64(2_000_000)) // 毫分/次（search 按次价快照形态）
 	seedUnbilled(t, repos, l)
 	rows := fetchAllUnbilled(t, repos)
 	require.Len(t, rows, 1)

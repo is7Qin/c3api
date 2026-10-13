@@ -111,8 +111,8 @@ func TestSDKRefreshDoesNotVoidFailureVerdict(t *testing.T) {
 	// 刷新令牌的语义等价物：ext 行变了、accounts 行不变。
 	store.acct.Ext = &domain.AccountExt{
 		CredentialType:         credential.TypeCodexOAuth,
-		CodexOAuthToken:        strPtrSDK("rotated-access"),
-		CodexOAuthRefreshToken: strPtrSDK("rotated-refresh"),
+		CodexOAuthToken:        new("rotated-access"),
+		CodexOAuthRefreshToken: new("rotated-refresh"),
 	}
 
 	require.NoError(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
@@ -120,7 +120,8 @@ func TestSDKRefreshDoesNotVoidFailureVerdict(t *testing.T) {
 	require.Equal(t, []int64{2}, store.gotExpect)
 }
 
-func strPtrSDK(s string) *string { return &s }
+//go:fix inline
+func strPtrSDK(s string) *string { return new(s) }
 
 // TestHandleFailureNeedsTemplateCapableStore 钉住围栏路径的**存储前提**：判决的
 // 候选指纹与凭据判别符都读模板，而 GetAccount 不预载模板的实现（repository 的

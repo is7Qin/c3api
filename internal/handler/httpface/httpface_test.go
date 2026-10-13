@@ -88,29 +88,29 @@ func TestWriteServiceErrWindowFields(t *testing.T) {
 	}{
 		{
 			"window_invalid 只报 reason",
-			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+			&serviceerr.StatsWindowError{
 				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowInvalid,
-				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+				EffectiveFrom: effFrom, EffectiveTo: effTo},
 			"{\"error\":\"service: stats window invalid: from/to must be set and from \\u003c to, or window must be a duration string\",\"reason\":\"window_invalid\"}\n",
 		},
 		{
 			// 上限秒数取自矩阵常量（本包不出现裸的上限秒值字面量——A16'② 的
 			// 零命中审计覆盖 internal/handler 全部文件；绝对值金标准在 internal/domain）。
 			"window_too_long 携带 storage/limit_seconds/effective_*",
-			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+			&serviceerr.StatsWindowError{
 				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowTooLong,
 				Storage: domain.StatsStorageRaw, LimitSeconds: groupedRawCapSec,
-				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+				EffectiveFrom: effFrom, EffectiveTo: effTo},
 			"{\"error\":\"service: stats window too long: trend raw supports windows up to 192h0m0s\"," +
 				"\"reason\":\"window_too_long\",\"storage\":\"raw\",\"limit_seconds\":" + capSecText + "," +
 				"\"effective_from\":\"2026-08-01T00:00:00Z\",\"effective_to\":\"2026-08-09T00:00:00Z\"}\n",
 		},
 		{
 			"raw_horizon 携带 retention_days 而非 limit_seconds",
-			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+			&serviceerr.StatsWindowError{
 				Kind: domain.KindUsageList, Reject: domain.StatsRejectRawHorizon,
 				Storage: domain.StatsStorageRaw, Cutoff: effFrom, RetentionDays: 2,
-				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+				EffectiveFrom: effFrom, EffectiveTo: effTo},
 			"{\"error\":\"service: stats raw window starts before retained partitions" +
 				" (cutoff 2026-08-01T00:00:00Z, retention 2d)\",\"reason\":\"raw_horizon\",\"storage\":\"raw\"," +
 				"\"effective_from\":\"2026-08-01T00:00:00Z\",\"effective_to\":\"2026-08-09T00:00:00Z\"," +
@@ -118,10 +118,10 @@ func TestWriteServiceErrWindowFields(t *testing.T) {
 		},
 		{
 			"cube_horizon storage=cube",
-			&serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
+			&serviceerr.StatsWindowError{
 				Kind: domain.KindTop, Reject: domain.StatsRejectCubeHorizon,
 				Storage: domain.StatsStorageCube, Cutoff: effFrom, RetentionDays: 30,
-				EffectiveFrom: effFrom, EffectiveTo: effTo}},
+				EffectiveFrom: effFrom, EffectiveTo: effTo},
 			"{\"error\":\"service: stats cube window starts before retained partitions" +
 				" (cutoff 2026-08-01T00:00:00Z, retention 30d)\",\"reason\":\"cube_horizon\",\"storage\":\"cube\"," +
 				"\"effective_from\":\"2026-08-01T00:00:00Z\",\"effective_to\":\"2026-08-09T00:00:00Z\"," +
@@ -129,8 +129,8 @@ func TestWriteServiceErrWindowFields(t *testing.T) {
 		},
 		{
 			"包装链上的载体仍被 errors.As 取到（禁字符串嗅探）",
-			fmt.Errorf("query failed: %w", &serviceerr.StatsWindowError{StatsWindowError: domain.StatsWindowError{
-				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowInvalid}}),
+			fmt.Errorf("query failed: %w", &serviceerr.StatsWindowError{
+				Kind: domain.KindTrend, Reject: domain.StatsRejectWindowInvalid}),
 			"{\"error\":\"query failed: service: stats window invalid: from/to must be set and from " +
 				"\\u003c to, or window must be a duration string\",\"reason\":\"window_invalid\"}\n",
 		},

@@ -112,7 +112,7 @@ func TestQualitySync_QualityPendingSwapRetainsBudgetExceeded(t *testing.T) {
 	w := NewSyncWorker(rec, rdb, pg, SyncConfig{InstanceSrc: "src-budget", BatchSize: 5}, nil, nil)
 	w.SetClock(func() time.Time { return clk })
 	// fill beyond pg budget: 30 rows across 3 minutes
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		k := keyOf(fp(byte(10+i)), qc(byte(10+i)))
 		qm := NewQualityMinute(fixed.Unix()+int64(i%3), k)
 		qm.SetAttempts(1)
@@ -133,7 +133,7 @@ func TestQualitySync_QualityPendingSwapRetainsBudgetExceeded(t *testing.T) {
 	rec2, _ := NewRecorder(50000)
 	w2 := NewSyncWorker(rec2, rdb, pg2, SyncConfig{InstanceSrc: "src-budget2", BatchSize: 5}, nil, nil)
 	w2.SetClock(func() time.Time { return clk })
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		k := keyOf(fp(byte(20+i)), qc(byte(20+i)))
 		qm := NewQualityMinute(fixed.Unix(), k)
 		qm.SetAttempts(int64(i + 1))
@@ -439,7 +439,7 @@ func TestQualitySync_RefillRespectsCapacity(t *testing.T) {
 	fixed := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	w.SetClock(func() time.Time { return fixed })
 	// fill capacity
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		k := keyOf(fp(byte(30+i)), qc(byte(30+i)))
 		qm := NewQualityMinute(int64(1000+i), k)
 		qm.SetAttempts(1)

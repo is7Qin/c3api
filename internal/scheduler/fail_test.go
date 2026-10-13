@@ -137,7 +137,7 @@ func TestMarkResultFailAccountUsesLifecycleRevision(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
 	store := &fakeRuleStore{rules: map[int64]domain.Rule{
 		1: {ID: 1, Name: "fail-5xx", Enabled: true, Priority: 1,
-			When: domain.RuleWhen{Kind: strPtr("5xx")},
+			When: domain.RuleWhen{Kind: new("5xx")},
 			Then: domain.RuleThen{FailAccount: true}},
 	}, next: 2}
 	// 构造期接线（无回填）：latch/hub 先行 → sink → rule → sched（New 内订阅）。
@@ -211,7 +211,7 @@ func TestFailAccountIdempotentDisabled(t *testing.T) {
 // 终态确定性 disabled（每轮全新调度器放大竞态）。
 func TestFailAccountConcurrentAbsorbing(t *testing.T) {
 	const rounds = 200
-	for i := 0; i < rounds; i++ {
+	for i := range rounds {
 		m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
 		s := newSched(t, m)
 

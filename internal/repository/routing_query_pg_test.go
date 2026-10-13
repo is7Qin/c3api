@@ -133,7 +133,7 @@ func TestRoutingFlowRollupQueryPG(t *testing.T) {
 	// Given: minute 1 edges e1(ord1,acct10)+e2(ord2,acct20,prev10); snapshot writes merged rows directly.
 	rows1 := []repository.RoutingFlowRow{
 		edge(1, 10, nil, "", "init", "success", false, 1, base, 2),
-		edge(2, 20, ptrInt64(10), "success", "retry", "success", true, 1, base, 5),
+		edge(2, 20, new(int64(10)), "success", "retry", "success", true, 1, base, 5),
 	}
 	require.NoError(t, repos.Partitions.UpsertFlowSnapshot(ctx, "src-RF", base, 1, 1, rows1))
 

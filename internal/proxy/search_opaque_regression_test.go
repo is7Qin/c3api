@@ -28,7 +28,7 @@ func TestSearchOpaqueMappingRegression(t *testing.T) {
 		store := &captureLogStore{}
 		p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream", mapping: mappingExplicit}},
 			up.URL, searchBillingHooks(&fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{
-				"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(2500), Source: domain.PricingSourceManual},
+				"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: new(int64(2500)), Source: domain.PricingSourceManual},
 			}}), store)
 		srv := httptest.NewServer(AIRouter(p))
 		defer srv.Close()
@@ -62,7 +62,7 @@ func TestSearchOpaqueMappingRegression(t *testing.T) {
 		store := &captureLogStore{}
 		p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream", mapping: mappingImplicit}},
 			up.URL, searchBillingHooks(&fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{
-				"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(1800), Source: domain.PricingSourceManual},
+				"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: new(int64(1800)), Source: domain.PricingSourceManual},
 			}}), store)
 		srv := httptest.NewServer(AIRouter(p))
 		defer srv.Close()
@@ -211,8 +211,8 @@ func TestSearchOpaqueMappingRegression(t *testing.T) {
 		store := &captureLogStore{}
 		// 定价表仅为 upstream-b 配高 token 价，若 search 误用映射身份计费会受其影响
 		fake := &fakeFunctionPriceLookup{entries: map[string]*domain.PriceEntry{
-			"upstream-b":   {Model: "upstream-b", Mode: domain.PriceModeToken, InputPerM: i64ptr(9e9), OutputPerM: i64ptr(9e9), Source: domain.PricingSourceManual},
-			"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: i64ptr(1234), Source: domain.PricingSourceManual},
+			"upstream-b":   {Model: "upstream-b", Mode: domain.PriceModeToken, InputPerM: new(int64(9e9)), OutputPerM: new(int64(9e9)), Source: domain.PricingSourceManual},
+			"codex-search": {Model: "codex-search", Mode: domain.PriceModeCall, PricePerCall: new(int64(1234)), Source: domain.PricingSourceManual},
 		}}
 		p, _ := newTestSearchProxy(t, []searchTestAcct{{id: 10, tplID: 1, credType: credential.TypeAPIKey, key: "sk-upstream", mapping: mappingImplicit}},
 			up.URL, searchBillingHooks(fake), store)

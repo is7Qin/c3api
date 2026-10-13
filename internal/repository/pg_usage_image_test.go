@@ -58,7 +58,7 @@ func TestPGUsageLogImageColumnsRoundTrip(t *testing.T) {
 	require.Len(t, res.Balances, 1)
 	require.Equal(t, int64(1000000-l.Cost), res.Balances[0].Balance, "按 image 分量 cost 扣减（口径不变）")
 
-	out, err := repos.QueryUsages(ctx, repository.UsageQuery{UserID: u.ID, From: ptrTime(time.Now().Add(-time.Hour)), To: ptrTime(time.Now().Add(time.Hour))})
+	out, err := repos.QueryUsages(ctx, repository.UsageQuery{UserID: u.ID, From: new(time.Now().Add(-time.Hour)), To: new(time.Now().Add(time.Hour))})
 	require.NoError(t, err)
 	require.Len(t, out, 1)
 	got := out[0]
@@ -73,4 +73,5 @@ func TestPGUsageLogImageColumnsRoundTrip(t *testing.T) {
 	require.Equal(t, l.RequestID, got.RequestID)
 }
 
-func ptrTime(t time.Time) *time.Time { return &t }
+//go:fix inline
+func ptrTime(t time.Time) *time.Time { return new(t) }

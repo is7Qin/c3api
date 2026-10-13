@@ -14,7 +14,7 @@ import (
 )
 
 func TestRulePersist_PanicContainedAndNextProcessed(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	var calls atomic.Int32
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 4}, newFakeRuleStore(), nil, sink, func(ctx context.Context, item PersistItem) error {
@@ -22,7 +22,7 @@ func TestRulePersist_PanicContainedAndNextProcessed(t *testing.T) {
 		panic("injected panic for test")
 	})
 	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
+	e.rules = []compiledRule{{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: th}}}
 	e.rulesMu.Unlock()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -45,11 +45,11 @@ func TestRulePersist_PanicContainedAndNextProcessed(t *testing.T) {
 }
 
 func TestRulePersist_NeverNegativeUnderLoad(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(64)
 	e := New(Config{EventQueueSize: 64, PersistQueueSize: 8}, newFakeRuleStore(), nil, sink, func(ctx context.Context, item PersistItem) error { return nil })
 	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
+	e.rules = []compiledRule{{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: th}}}
 	e.rulesMu.Unlock()
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, e.Start(ctx))
@@ -63,14 +63,14 @@ func TestRulePersist_NeverNegativeUnderLoad(t *testing.T) {
 	// Producer
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 50; i++ {
+		for i := range 50 {
 			e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(i)})
 		}
 	}()
 	// Sampler barrier (no sleep)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			if q := e.PersistQueued(); q < 0 {
 				t.Errorf("PersistQueued negative: %d", q)
 			}
@@ -95,11 +95,11 @@ func TestRulePersist_NeverNegativeUnderLoad(t *testing.T) {
 }
 
 func TestRulePersist_QueueFullRollbackExact(t *testing.T) {
-	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: int64Ptr(1000), UseReset: false}
+	th := &domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(1000)), UseReset: false}
 	sink := newFakeSink(10)
 	e := New(Config{EventQueueSize: 16, PersistQueueSize: 1}, newFakeRuleStore(), nil, sink, nil)
 	e.rulesMu.Lock()
-	e.rules = []compiledRule{{Rule: domain.Rule{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: strPtr("429")}, Then: domain.RuleThen{Throttle: th}}}}
+	e.rules = []compiledRule{{Name: "typed", Enabled: true, Priority: 10, When: domain.RuleWhen{Kind: new("429")}, Then: domain.RuleThen{Throttle: th}}}
 	e.rulesMu.Unlock()
 	// No Start, so persist not consumed; pending reflects queued only
 	e.HandleEvent(context.Background(), Event{AccountID: 1, Kind: Kind429, OccurredAt: at(0)})

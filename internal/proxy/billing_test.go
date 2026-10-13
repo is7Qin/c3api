@@ -33,20 +33,21 @@ import (
 func proxyPricingEntry() *domain.PriceEntry {
 	return &domain.PriceEntry{
 		Model: "gpt-4o", Mode: domain.PriceModeToken,
-		InputPerM:  ptr(int64(1e7)),
-		OutputPerM: ptr(int64(2e7)),
+		InputPerM:  new(int64(1e7)),
+		OutputPerM: new(int64(2e7)),
 		Source:     domain.PricingSourceManual,
 	}
 }
 
 func proxyPricingVariants() []*domain.PriceVariant {
 	return []*domain.PriceVariant{
-		{Seq: 1, ServiceTier: strPtr("priority"), SetInputPerM: ptr(int64(2e7)), SetOutputPerM: ptr(int64(3e7))},
-		{Seq: 2, ServiceTier: strPtr("fast"), MultBP: ptr(20000)},
+		{Seq: 1, ServiceTier: new("priority"), SetInputPerM: new(int64(2e7)), SetOutputPerM: new(int64(3e7))},
+		{Seq: 2, ServiceTier: new("fast"), MultBP: new(20000)},
 	}
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 // 兼容旧名：proxyPricing 返回基底 entry（变体需另配 variants map）。
 func proxyPricing() *domain.PriceEntry { return proxyPricingEntry() }
@@ -178,7 +179,7 @@ func TestProxyBilledQuotaUsesFinalCost(t *testing.T) {
 	}}}, bal, store)
 
 	// When
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
@@ -308,7 +309,7 @@ func TestProxyFinishQuotaWritesBackWithoutUsageCapture(t *testing.T) {
 	p.cfg.UsageCapture = false
 
 	// When: 两次请求（每次最终 Cost=130）
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","messages":[]}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
 		rec := httptest.NewRecorder()
@@ -573,7 +574,7 @@ func TestProxyQuotaDeductsFinalCostAfterMultiplier(t *testing.T) {
 	probe := &proxyQuotaProbe{p: p}
 
 	// When/Then：260+260 放行，第三笔 429（无复核能力 → 耗尽即拦）
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		rec := httptest.NewRecorder()
 		p.HandleChat(rec, chatReq("ck-1"))
 		require.Equal(t, http.StatusOK, rec.Code, "request %d body=%s", i+1, rec.Body.String())

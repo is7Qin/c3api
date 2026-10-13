@@ -64,11 +64,9 @@ func TestInvalidateGroupSerializesLoadBarrier(t *testing.T) {
 	s.loader = bl
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		s.InvalidateGroup(10)
-	}()
+	})
 
 	select {
 	case <-started:

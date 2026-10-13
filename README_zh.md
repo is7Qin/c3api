@@ -9,7 +9,7 @@
 [![Release](https://img.shields.io/github/v/release/is7Qin/c3api?color=2563eb)](https://github.com/is7Qin/c3api/releases)
 [![Stars](https://img.shields.io/github/stars/is7Qin/c3api?color=2563eb)](https://github.com/is7Qin/c3api)
 [![License](https://img.shields.io/badge/license-AGPL--3.0--or--later%20%2B%20Commercial-2563eb)](./LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.26-2563eb)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.27-2563eb)](https://go.dev/)
 
 [![OpenAI Responses API](https://img.shields.io/badge/OpenAI%20Responses%20API-✓-10a37f)](https://platform.openai.com/docs/api-reference/responses)
 [![Anthropic Messages API](https://img.shields.io/badge/Anthropic%20Messages%20API-✓-d97757)](https://docs.anthropic.com/en/api/messages)

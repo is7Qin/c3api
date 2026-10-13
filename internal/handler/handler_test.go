@@ -556,7 +556,7 @@ func TestGetUsageLogsLimitClip(t *testing.T) {
 	base := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	store.mu.Lock()
 	store.logs = make([]*domain.UsageLog, 0, 201)
-	for i := 0; i < 201; i++ {
+	for i := range 201 {
 		store.logs = append(store.logs, &domain.UsageLog{
 			ID: int64(i + 1), UserID: 7, Model: "gpt-4o", Format: domain.FormatOpenAIChat,
 			StatusCode: 200, ErrorType: domain.ErrNone, CreatedAt: base.Add(time.Duration(i) * time.Minute),

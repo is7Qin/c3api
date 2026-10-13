@@ -13,7 +13,7 @@ package repository_test
 import (
 	"context"
 	"fmt"
-	"sort"
+	"slices"
 	"testing"
 	"time"
 
@@ -60,8 +60,8 @@ func runConservationScenario(t *testing.T, tag string, repos *repository.Reposit
 	require.NoError(t, repos.UpdateUserBalance(ctx, poor.ID, 50_000))
 
 	// temp-active 种群：FEFO 车道独占（balance 车道谓词排除）
-	e1 := seedTempBalance(t, repos, fefo.ID, 30_000, ptrTime(time.Now().Add(time.Hour)))
-	e2 := seedTempBalance(t, repos, fefo.ID, 50_000, ptrTime(time.Now().Add(24*time.Hour)))
+	e1 := seedTempBalance(t, repos, fefo.ID, 30_000, new(time.Now().Add(time.Hour)))
+	e2 := seedTempBalance(t, repos, fefo.ID, 50_000, new(time.Now().Add(24*time.Hour)))
 	ep := seedTempBalance(t, repos, fefo.ID, 70_000, nil)
 
 	seedCursorRows(t, repos, fefo.ID, 3, 60_000) // delta 180000 → drawn 150000 + spill 30000
@@ -95,7 +95,7 @@ func runConservationScenario(t *testing.T, tag string, repos *repository.Reposit
 	for _, tid := range []int64{e1, e2, ep} {
 		st.tempRemaining = append(st.tempRemaining, tempBalanceAmount(t, repos, tid))
 	}
-	sort.Slice(st.tempRemaining, func(i, j int) bool { return st.tempRemaining[i] < st.tempRemaining[j] })
+	slices.Sort(st.tempRemaining)
 	require.Equal(t, []int64{0, 0, 0}, st.tempRemaining, "FEFO 全档消耗")
 
 	// 每行恰标记一次（无复活无丢失）+ od 列按用户整组对齐

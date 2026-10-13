@@ -223,7 +223,7 @@ func TestGetCodeUses(t *testing.T) {
 	// 翻页取全（此前 GetCodeUses 空 query 恒 20 行截断、Total 失真；同一用户
 	// 复兑同一码 → 409 已兑换）。
 	gen := genOne(t, svc, GenerateRequest{Type: domain.RedemptionTypeBalance, Value: 100, MaxUses: 100}, 0)
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		u2 := seedUser(t, fs, fmt.Sprintf("p%d@example.com", i), 0, 0)
 		_, err = svc.Redeem(ctx, gen.Code, u2.ID)
 		require.NoError(t, err)

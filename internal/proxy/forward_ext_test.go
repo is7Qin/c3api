@@ -638,7 +638,7 @@ func parseAnthropicSSE(t *testing.T, body string) []string {
 		types []string
 		cur   string
 	)
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		switch {
 		case strings.HasPrefix(line, "event: "):
 			cur = strings.TrimPrefix(line, "event: ")

@@ -123,7 +123,8 @@ func routingFixturePlan(t *testing.T) (*scheduler.RoutingPlan, string) {
 	return plan, idHex
 }
 
-func i64p(v int64) *int64 { return &v }
+//go:fix inline
+func i64p(v int64) *int64 { return new(v) }
 
 // --- /routing/flow ---
 
@@ -133,7 +134,7 @@ func Test_RoutingFlow_ValidMappingAndLossFields(t *testing.T) {
 	store.flowRows = []repository.RoutingFlowStat{
 		{Ordinal: 1, Lane: "primary", AccountID: 1, Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 5},
 		{Ordinal: 1, Lane: "primary", AccountID: 2, Outcome: "5xx", MinGeneration: 7, ChainCount: 3},
-		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: i64p(2), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
+		{Ordinal: 2, Lane: "degraded", AccountID: 2, PreviousAccountID: new(int64(2)), PreviousOutcome: "5xx", TransitionReason: "failover", Outcome: "success", IsTerminal: true, MinGeneration: 7, ChainCount: 3},
 	}
 	h := routingRouter(store, plan)
 

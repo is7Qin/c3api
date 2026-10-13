@@ -425,8 +425,8 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 	seedAggWindow(t, repos, h, h.Add(3*time.Hour))
 
 	rng := rand.New(rand.NewPCG(20260823, 42))
-	ttftPool := []*int64{nil, ip(7), ip(49), ip(50), ip(99), ip(100), ip(399), ip(800),
-		ip(1599), ip(1600), ip(6399), ip(12799), ip(12800), ip(30000)}
+	ttftPool := []*int64{nil, new(int64(7)), new(int64(49)), new(int64(50)), new(int64(99)), new(int64(100)), new(int64(399)), new(int64(800)),
+		new(int64(1599)), new(int64(1600)), new(int64(6399)), new(int64(12799)), new(int64(12800)), new(int64(30000))}
 	models := []string{"gpt-4o", "claude-x", ""}
 	groups := []int64{0, 1, 2}
 	accounts := []int64{0, 11, 12}
@@ -435,7 +435,7 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 	etypes := []domain.ErrorType{domain.ErrNone, domain.ErrNone, domain.ErrNone, domain.ErrAbort, domain.Err5xx}
 
 	logs := make([]*domain.UsageLog, 0, 120)
-	for i := 0; i < 120; i++ {
+	for i := range 120 {
 		at := h.Add(time.Duration(rng.IntN(180)) * time.Minute)
 		logs = append(logs, usageLogRow(
 			"eq-u-"+itoa(i), at, etypes[rng.IntN(len(etypes))],
@@ -448,7 +448,7 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 	}
 	errLogs := make([]*domain.UsageLog, 0, 40)
 	errEtypes := []domain.ErrorType{domain.ErrNone, domain.Err4xx, domain.Err5xx, domain.ErrNetwork}
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		at := h.Add(time.Duration(rng.IntN(180)) * time.Minute)
 		errLogs = append(errLogs, errLogRow(
 			"eq-e-"+itoa(i), at, errEtypes[rng.IntN(len(errEtypes))],
@@ -502,12 +502,12 @@ func TestPGStatsAggV2EntityEquivalence(t *testing.T) {
 	seedAggWindow(t, repos, h, h.Add(3*time.Hour))
 
 	rng := rand.New(rand.NewPCG(20260823, 77))
-	ttftPool := []*int64{nil, ip(30), ip(60), ip(120), ip(900), ip(20000)}
+	ttftPool := []*int64{nil, new(int64(30)), new(int64(60)), new(int64(120)), new(int64(900)), new(int64(20000))}
 	models := []string{"gpt-4o", "claude-x", ""}
 	ids := []int64{0, 101, 102, 103} // 0 = NULL（丢弃探针）
 
 	logs := make([]*domain.UsageLog, 0, 100)
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		at := h.Add(time.Duration(rng.IntN(180)) * time.Minute)
 		logs = append(logs, usageLogRow(
 			"en-u-"+itoa(i), at,
@@ -519,7 +519,7 @@ func TestPGStatsAggV2EntityEquivalence(t *testing.T) {
 			ttftPool[rng.IntN(len(ttftPool))]))
 	}
 	errLogs := make([]*domain.UsageLog, 0, 30)
-	for i := 0; i < 30; i++ {
+	for i := range 30 {
 		at := h.Add(time.Duration(rng.IntN(180)) * time.Minute)
 		errLogs = append(errLogs, errLogRow(
 			"en-e-"+itoa(i), at,
@@ -618,7 +618,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 
 	// cycle 1 窗口行（h+1m..h+8m；created_at 固定过去时刻，worker 滞后即可消费）
 	logs1 := make([]*domain.UsageLog, 0, 8)
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		logs1 = append(logs1, usageLogRow("c1-"+itoa(i), h.Add(time.Duration(i+1)*time.Minute),
 			domain.ErrNone, 1, 0, 42, 0, "gpt-4o", 1, 1, 0, 0, 0, 0, 0, nil))
 	}
@@ -640,7 +640,7 @@ func TestPGStatsAsyncAggregation(t *testing.T) {
 
 	// 同小时追加行（h+25m..h+27m）→ 下周期整小时桶重建（部分小时桶不截断）
 	logs2 := make([]*domain.UsageLog, 0, 3)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		logs2 = append(logs2, usageLogRow("c2-"+itoa(i), h.Add(time.Duration(25+i)*time.Minute),
 			domain.ErrNone, 1, 0, 42, 0, "gpt-4o", 1, 1, 0, 0, 0, 0, 0, nil))
 	}
@@ -885,7 +885,9 @@ func TestPGStatsSummarizeNoData(t *testing.T) {
 // —— 小工具 ——
 
 // ip int64 指针字面量（fixture 用）。
-func ip(v int64) *int64 { return &v }
+//
+//go:fix inline
+func ip(v int64) *int64 { return new(v) }
 
 // itoa 微型整数转字符串（fixture request_id 后缀；避免引 fmt 拉全格式化栈）。
 func itoa(i int) string {

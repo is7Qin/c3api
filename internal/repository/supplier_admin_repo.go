@@ -24,8 +24,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -457,7 +457,7 @@ func (r *SupplierRepo) ClaimSettlement(ctx context.Context, id, expectedRevision
 			Scan(&existingKey, &existingPayee); err != nil {
 			return err
 		}
-		paymentKey := uuid.NewString()
+		paymentKey := uuid.New().String()
 		if existingKey != nil && *existingKey != "" {
 			paymentKey = *existingKey
 		}

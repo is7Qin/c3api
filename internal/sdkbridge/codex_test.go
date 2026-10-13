@@ -174,8 +174,8 @@ func TestCodexConversions(t *testing.T) {
 	sdk := &codexsdk.ImageResponse{
 		Created:      1720000000,
 		Background:   &background,
-		Data:         []codexsdk.Image{{B64JSON: strPtr("QUJD")}, {B64JSON: strPtr("REVG")}},
-		OutputFormat: strPtr("png"),
+		Data:         []codexsdk.Image{{B64JSON: new("QUJD")}, {B64JSON: new("REVG")}},
+		OutputFormat: new("png"),
 		Quality:      &quality,
 		Size:         &size,
 		Usage: &codexsdk.ImageUsage{
@@ -185,10 +185,10 @@ func TestCodexConversions(t *testing.T) {
 	d := fromSDKResponse(sdk)
 	require.Equal(t, int64(1720000000), d.Created)
 	require.Equal(t, &background, d.Background)
-	require.Equal(t, strPtr("png"), d.OutputFormat)
+	require.Equal(t, new("png"), d.OutputFormat)
 	require.Len(t, d.Data, 2)
-	require.Equal(t, strPtr("QUJD"), d.Data[0].B64JSON)
-	require.Equal(t, strPtr("REVG"), d.Data[1].B64JSON)
+	require.Equal(t, new("QUJD"), d.Data[0].B64JSON)
+	require.Equal(t, new("REVG"), d.Data[1].B64JSON)
 	require.NotNil(t, d.Usage)
 	require.Equal(t, int64(1), d.Usage.InputImageTokens)
 	require.Equal(t, int64(2), d.Usage.OutputImageTokens)
@@ -215,7 +215,8 @@ func TestCodexConversions(t *testing.T) {
 	require.Equal(t, "", jsonGetStr(t, wire3, "usage.input_tokens_details.image_tokens"), "0 image token → details 不输出")
 }
 
-func strPtr(s string) *string { return &s }
+//go:fix inline
+func strPtr(s string) *string { return new(s) }
 
 func jsonGetInt(t *testing.T, b []byte, path string) int64 {
 	t.Helper()
@@ -283,7 +284,7 @@ func TestCodexHTTPClientCacheIsBoundedLRU(t *testing.T) {
 	a := NewCodex(nil, nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-lru"}
 	total := codexHTTPClientCacheMax + 20
-	for i := 0; i < total; i++ {
+	for i := range total {
 		meta := &codexsdk.CodexMeta{InstallationID: fmt.Sprintf("inst-%d", i)}
 		_, _, err := a.clientFor(cred, nil, meta, "")
 		require.NoError(t, err)
@@ -387,10 +388,8 @@ func TestCodexCacheConcurrentReuse(t *testing.T) {
 	var wg sync.WaitGroup
 	errs := make(chan error, 32)
 	clients := make(chan *codexEntry, 32)
-	for i := 0; i < 32; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 32 {
+		wg.Go(func() {
 			_, err := a.GenerateImage(context.Background(), cred, p)
 			errs <- err
 			a.mu.Lock()
@@ -399,7 +398,7 @@ func TestCodexCacheConcurrentReuse(t *testing.T) {
 			if e != nil {
 				clients <- e
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -658,7 +657,7 @@ func TestCodexIncompleteNotReportedTwice(t *testing.T) {
 	handler := &recordingHandler{}
 	a := NewCodex(handler.add, nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 7}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := a.GenerateImage(context.Background(), cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 		require.Error(t, err)
 	}
@@ -1282,13 +1281,11 @@ func TestCodexTransportPoolReuse(t *testing.T) {
 
 		var wg sync.WaitGroup
 		errs := make(chan error, n)
-		for i := 0; i < n; i++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range n {
+			wg.Go(func() {
 				_, err := a.GenerateImage(context.Background(), cred, p)
 				errs <- err
-			}()
+			})
 		}
 
 		// 等 n 个 handler 全到达（释放前：n 条连接同时在用——拨号恰 n：每条在

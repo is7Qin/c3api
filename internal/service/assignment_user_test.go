@@ -39,11 +39,11 @@ func TestGetGroupAssignments(t *testing.T) {
 	// u1 有专属倍率、u2 无 → ids 全量、mults 只含 u1
 	require.NoError(t, fs.GrantGroup(ctx, g.ID, u1.ID))
 	require.NoError(t, fs.GrantGroup(ctx, g.ID, u2.ID))
-	require.NoError(t, fs.SetAssignmentMultiplier(ctx, g.ID, u1.ID, intPtr(5000)))
+	require.NoError(t, fs.SetAssignmentMultiplier(ctx, g.ID, u1.ID, new(5000)))
 	ids, mults, err = svc.GetGroupAssignments(ctx, g.ID)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []int64{u1.ID, u2.ID}, ids)
-	require.Equal(t, map[int64]*int{u1.ID: intPtr(5000)}, mults, "无专属倍率的用户不出现")
+	require.Equal(t, map[int64]*int{u1.ID: new(5000)}, mults, "无专属倍率的用户不出现")
 }
 
 // TestGetUserGroups 用户维度读取（GET /users/{id}/groups）：缺失用户 → 404；
@@ -65,11 +65,11 @@ func TestGetUserGroups(t *testing.T) {
 
 	require.NoError(t, fs.GrantGroup(ctx, g1.ID, u.ID))
 	require.NoError(t, fs.GrantGroup(ctx, g2.ID, u.ID))
-	require.NoError(t, fs.SetAssignmentMultiplier(ctx, g1.ID, u.ID, intPtr(20000)))
+	require.NoError(t, fs.SetAssignmentMultiplier(ctx, g1.ID, u.ID, new(20000)))
 	ids, mults, err := svc.GetUserGroups(ctx, u.ID)
 	require.NoError(t, err)
 	require.ElementsMatch(t, []int64{g1.ID, g2.ID}, ids)
-	require.Equal(t, map[int64]*int{g1.ID: intPtr(20000)}, mults, "无专属倍率的组不出现")
+	require.Equal(t, map[int64]*int{g1.ID: new(20000)}, mults, "无专属倍率的组不出现")
 }
 
 // TestSetUserGroups 用户维度写（PUT /users/{id}/groups）：
@@ -91,20 +91,20 @@ func TestSetUserGroups(t *testing.T) {
 	require.NoError(t, err)
 
 	// 授予 g1+g2，g1 专属倍率 1.5（15000）→ 响应回显 + 组维度读取交叉验证
-	applied, post, err := svc.SetUserGroups(ctx, u1.ID, []int64{g1.ID, g2.ID}, map[int64]*int{g1.ID: intPtr(15000)})
+	applied, post, err := svc.SetUserGroups(ctx, u1.ID, []int64{g1.ID, g2.ID}, map[int64]*int{g1.ID: new(15000)})
 	require.NoError(t, err)
 	require.Equal(t, []int64{g1.ID, g2.ID}, applied)
-	require.Equal(t, map[int64]*int{g1.ID: intPtr(15000), g2.ID: nil}, post, "g2 未设倍率 → nil")
+	require.Equal(t, map[int64]*int{g1.ID: new(15000), g2.ID: nil}, post, "g2 未设倍率 → nil")
 	ids, mults, err := svc.GetGroupAssignments(ctx, g1.ID)
 	require.NoError(t, err)
 	require.Equal(t, []int64{u1.ID}, ids)
-	require.Equal(t, map[int64]*int{u1.ID: intPtr(15000)}, mults, "用户维度写入 ↔ 组维度读取一致")
+	require.Equal(t, map[int64]*int{u1.ID: new(15000)}, mults, "用户维度写入 ↔ 组维度读取一致")
 
 	// 未列出的组撤销：只留 g1（g2 撤销）；mults 不含 g1 → 倍率沿用当前值
 	applied, post, err = svc.SetUserGroups(ctx, u1.ID, []int64{g1.ID}, nil)
 	require.NoError(t, err)
 	require.Equal(t, []int64{g1.ID}, applied)
-	require.Equal(t, map[int64]*int{g1.ID: intPtr(15000)}, post, "未在 mults 的组沿用当前倍率")
+	require.Equal(t, map[int64]*int{g1.ID: new(15000)}, post, "未在 mults 的组沿用当前倍率")
 	rows, err := fs.ListAssignmentsByUser(ctx, u1.ID)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
@@ -129,15 +129,15 @@ func TestSetUserGroups(t *testing.T) {
 
 	// 组内其他用户不受影响：u2 在 g1 有专属倍率，u1 的写入不改动它
 	require.NoError(t, fs.GrantGroup(ctx, g1.ID, u2.ID))
-	require.NoError(t, fs.SetAssignmentMultiplier(ctx, g1.ID, u2.ID, intPtr(9000)))
-	_, _, err = svc.SetUserGroups(ctx, u1.ID, []int64{g1.ID}, map[int64]*int{g1.ID: intPtr(20000)})
+	require.NoError(t, fs.SetAssignmentMultiplier(ctx, g1.ID, u2.ID, new(9000)))
+	_, _, err = svc.SetUserGroups(ctx, u1.ID, []int64{g1.ID}, map[int64]*int{g1.ID: new(20000)})
 	require.NoError(t, err)
 	rows, err = fs.ListAssignmentsByGroup(ctx, g1.ID)
 	require.NoError(t, err)
 	require.Len(t, rows, 2, "组内其他用户保留")
 	for _, a := range rows {
 		if a.UserID == u2.ID {
-			require.Equal(t, intPtr(9000), a.PriceMultiplier, "其他用户专属倍率不受影响")
+			require.Equal(t, new(9000), a.PriceMultiplier, "其他用户专属倍率不受影响")
 		}
 	}
 
@@ -151,8 +151,8 @@ func TestSetUserGroups(t *testing.T) {
 		{"重复 group_id", []int64{g1.ID, g1.ID}, nil, ErrInvalidInput},
 		{"非法 id 0", []int64{0}, nil, ErrInvalidInput},
 		{"组缺失", []int64{99999}, nil, ErrNotFound},
-		{"multipliers key 不在 group_ids", []int64{g1.ID}, map[int64]*int{g2.ID: intPtr(5000)}, ErrInvalidInput},
-		{"倍率越界", []int64{g1.ID}, map[int64]*int{g1.ID: intPtr(100001)}, ErrInvalidInput},
+		{"multipliers key 不在 group_ids", []int64{g1.ID}, map[int64]*int{g2.ID: new(5000)}, ErrInvalidInput},
+		{"倍率越界", []int64{g1.ID}, map[int64]*int{g1.ID: new(100001)}, ErrInvalidInput},
 		{"组数超限", make([]int64, 101), nil, ErrInvalidInput},
 	}
 	for _, tc := range tests {

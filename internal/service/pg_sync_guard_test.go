@@ -50,7 +50,7 @@ func TestSyncPricingGuardsManualVariants_PG(t *testing.T) {
 	_, svc := newPGServiceRepos(t)
 	ctx := context.Background()
 	model := "pg-svc-guard-model"
-	_, err := svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000)})
+	_, err := svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: model, Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000))})
 	require.NoError(t, err)
 	mult := 5000
 	_, err = svc.ReplacePriceVariants(ctx, model, []*domain.PriceVariant{{Model: model, Seq: 99, MultBP: &mult}})
@@ -61,10 +61,10 @@ func TestSyncPricingGuardsManualVariants_PG(t *testing.T) {
 	// fake fetcher emits variants for guard model + a brand-new model
 	fetcher := &fakePriceFetcher{res: &pricing.FetchResult{
 		PriceEntries: []*domain.PriceEntry{
-			{Model: model, Mode: domain.PriceModeToken, InputPerM: int64Ptr(999), OutputPerM: int64Ptr(999), Source: domain.PricingSourceLitellm},
-			{Model: "pg-svc-new-model", Mode: domain.PriceModeToken, InputPerM: int64Ptr(1000), OutputPerM: int64Ptr(2000), Source: domain.PricingSourceLitellm},
+			{Model: model, Mode: domain.PriceModeToken, InputPerM: new(int64(999)), OutputPerM: new(int64(999)), Source: domain.PricingSourceLitellm},
+			{Model: "pg-svc-new-model", Mode: domain.PriceModeToken, InputPerM: new(int64(1000)), OutputPerM: new(int64(2000)), Source: domain.PricingSourceLitellm},
 		},
-		Variants: []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: intPtr(20000)}},
+		Variants: []*domain.PriceVariant{{Model: model, Seq: 1, MultBP: new(20000)}},
 	}}
 	w := pricing.NewSyncWorker(pricing.SyncWorkerConfig{
 		Fetcher: fetcher, Repo: svc.store.(*repository.Repository), Settings: svc,

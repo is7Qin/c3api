@@ -3,7 +3,7 @@ package scheduler
 
 import (
 	"reflect"
-	"sort"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,22 +15,22 @@ func ownershipFixture(t *testing.T) *Scheduler {
 	t.Helper()
 	t1 := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o", "other-model"})
 	a1 := acc(1, t1, 100000)
-	a1.UpstreamCostMultiplierBp = intPtr(12000)
+	a1.UpstreamCostMultiplierBp = new(12000)
 	t2 := tpl(2, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	a2 := acc(2, t2, 100000)
-	a2.BaseURL = strPtr("https://override/v1")
+	a2.BaseURL = new("https://override/v1")
 	// 候选内容代际是 K（identity_revision），不是客户端 CAS 令牌 C
 	// （routing_compiler_candidates.go：f.revision = st.acc.IdentityRevision）。
 	// 本行原本设 LifecycleRevision，在 改名后已与 f.revision 脱钩——留着
 	// 只会让「代际流动」这条断言退化为对 0 的比较。
 	a2.IdentityRevision = 2
-	a2.UpstreamCostMultiplierBp = intPtr(8000)
+	a2.UpstreamCostMultiplierBp = new(8000)
 	t3 := tpl(3, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	t3.ModelMapping = domain.ModelMapping{
 		"gpt-4o": {MappedModel: "upstream-gpt-4o", Mode: domain.ModelMappingModeExplicit},
 	}
 	a3 := acc(3, t3, 100000)
-	a3.UpstreamCostMultiplierBp = intPtr(15000)
+	a3.UpstreamCostMultiplierBp = new(15000)
 	return newTestScheduler(t, []*domain.Account{a1, a2, a3})
 }
 
@@ -39,7 +39,7 @@ func sortedFactIDs(facts map[int64]compilerAccountFacts) []int64 {
 	for id := range facts {
 		ids = append(ids, id)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	return ids
 }
 
@@ -55,16 +55,15 @@ func TestCompiledCandidateOwnershipDoesNotCrossRoutesOrStaticRoots(t *testing.T)
 	// slice may alias mutable account/template backing data. Only the two
 	// immutable leaf/static pointers are shared, plus scalars, the
 	// fixed-size identity array, and the value-semantic plan key.
-	ft := reflect.TypeOf(compilerAccountFacts{})
+	ft := reflect.TypeFor[compilerAccountFacts]()
 	var names []string
-	for i := 0; i < ft.NumField(); i++ {
-		fl := ft.Field(i)
+	for fl := range ft.Fields() {
 		names = append(names, fl.Name)
 		switch fl.Type.Kind() {
 		case reflect.Int, reflect.Int64, reflect.String, reflect.Array:
 		case reflect.Struct:
 			require.Equal(t, "scheduler.planKey", fl.Type.String(), fl.Name)
-		case reflect.Ptr:
+		case reflect.Pointer:
 			require.Contains(t, []string{"*scheduler.accountSnapshot", "*scheduler.snapshotStatic"}, fl.Type.String(), fl.Name)
 		default:
 			t.Fatalf("mutable aliasing risk: field %s kind %s", fl.Name, fl.Type.Kind())

@@ -1041,7 +1041,7 @@ func TestPGSettleBucketDisjointness(t *testing.T) {
 
 	totalRows := int64(0)
 	seenUIDs := map[int64]bool{}
-	for b := 0; b < 4; b++ {
+	for b := range 4 {
 		res, err := repos.SettleBalanceBatch(ctx, 2000, 4, b)
 		require.NoError(t, err)
 		require.Equal(t, int64(len(bucketUIDs[b])*rowsPerUser), res.BatchRows,
@@ -1162,7 +1162,7 @@ func TestPGSettleBucketBoundaryNULL(t *testing.T) {
 	require.Len(t, anonIDs, anonRows)
 
 	// K=4 逐桶单遍：匿名行只可能命中 bucket 0（COALESCE(NULL,0)%4=0）
-	for b := 0; b < 4; b++ {
+	for b := range 4 {
 		res, err := repos.SettleBalanceBatch(ctx, 2000, 4, b)
 		require.NoError(t, err)
 		require.Equal(t, res.BatchRows, res.Marked, "bucket %d 批内全标记", b)

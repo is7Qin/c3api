@@ -70,10 +70,7 @@ func litellmUpsertBatches(ctx context.Context, total int, logPrefix string, opts
 	totalRows := 0
 	var firstErr error
 	for start := 0; start < total; start += opts.BatchSize {
-		end := start + opts.BatchSize
-		if end > total {
-			end = total
-		}
+		end := min(start+opts.BatchSize, total)
 		n, err := litellmExecBatchWithRetry(ctx, opts, func(ctx context.Context) (int, error) {
 			return exec(ctx, start, end)
 		})

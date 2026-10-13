@@ -13,6 +13,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -139,7 +140,7 @@ func (s *fakeLedgerStore) FetchUnbilledBatch(ctx context.Context, limit int) ([]
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	if len(ids) > limit {
 		ids = ids[:limit]
 	}
@@ -183,7 +184,7 @@ func (s *fakeLedgerStore) settleLocked(limit, k, bucket int, fefo bool) (domain.
 			ids = append(ids, id)
 		}
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	var cands []domain.LedgerRow
 	for _, id := range ids { // 车道谓词互斥：balance NOT-IN / fefo IN temp-active；桶谓词 uid%k=bucket
 		r := s.rows[id]

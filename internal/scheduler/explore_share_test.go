@@ -66,7 +66,7 @@ func TestExploreShare_compilerSteadyStateBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 10, Successes: 5}, InputTokens: 500, OutputTokens: 500},
@@ -86,7 +86,7 @@ func TestExploreShare_compilerNoUnknownBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
@@ -112,7 +112,7 @@ func TestExploreShare_compilerProportionalBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	raw := map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 	}
@@ -136,7 +136,7 @@ func TestExploreShare_scopedMatchesFullBP(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	logged := math.Log(100)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 10, Successes: 5}, InputTokens: 500, OutputTokens: 500},
@@ -159,7 +159,7 @@ func TestExploreShare_laneDistribution(t *testing.T) {
 	dec := shareDecision()
 	const n = 10000
 	exploreFirst := 0
-	for i := 0; i < n; i++ {
+	for i := range n {
 		id := AttemptPlanIdentity{RequestID: fmt.Sprintf("dist-%d", i), UserID: int64(i % 97)}
 		plan, err := NewAttemptPlan(id, dec)
 		require.NoError(t, err)
@@ -202,7 +202,7 @@ func TestExploreShare_coldStartExploreFirst(t *testing.T) {
 		},
 		Degraded: ccDegraded(4),
 	}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		ids, lanes := walkAll(t, AttemptPlanIdentity{RequestID: fmt.Sprintf("cold-%d", i)}, dec)
 		require.Equal(t, AttemptLaneExplore, lanes[0], "cold start must lead with explore")
 		require.Equal(t, AttemptLaneDegraded, lanes[len(lanes)-1])
@@ -229,7 +229,7 @@ func TestExploreShare_unsetBPStaysPrimaryFirst(t *testing.T) {
 		},
 		Degraded: ccDegraded(4),
 	}
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		plan, err := NewAttemptPlan(AttemptPlanIdentity{RequestID: fmt.Sprintf("bp0-%d", i)}, dec)
 		require.NoError(t, err)
 		require.False(t, plan.exploreFirst)

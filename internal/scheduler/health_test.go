@@ -163,7 +163,7 @@ func TestHealthRunReset(t *testing.T) {
 	require.NoError(t, h2.Sync(context.Background()))
 	require.Contains(t, h2.View(), shortKey, "repeated empty must retain PROBING")
 	require.Equal(t, StateProbing, h2.View()[shortKey].State)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		require.NoError(t, h2.Sync(context.Background()))
 		require.Contains(t, h2.View(), shortKey, "never clear on same-run empty before probe")
 	}
@@ -213,7 +213,7 @@ func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 	require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", testIdentity, 7))
 
 	baseCmd := mr.CommandCount()
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		require.Equal(t, StateOPEN, h.EffectiveState(42, "qual1", testIdentity, 7))
 	}
 	require.Equal(t, baseCmd, mr.CommandCount(), "EffectiveState must not issue Redis commands (lock-free)")
@@ -229,16 +229,14 @@ func TestHealthLockFreeReadUnderBlockedRedis(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var successCount atomic.Int64
-	for i := 0; i < 20; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for j := 0; j < 1000; j++ {
+	for range 20 {
+		wg.Go(func() {
+			for range 1000 {
 				if h2.EffectiveState(1, "q", testIdentity, 1) == StateOPEN {
 					successCount.Add(1)
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	require.Equal(t, int64(20*1000), successCount.Load())
@@ -355,7 +353,7 @@ func TestHealthProbeWindowHonoredNoEarlyProbe(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(context.Background()))
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		h.probeTick(context.Background())
 	}
 	require.Zero(t, probeCount.Load(), "窗口内 OPEN/RETRY_AFTER 绝不被探测（不得提前清除）")
@@ -479,12 +477,10 @@ func TestHealthProbeOnePermit(t *testing.T) {
 	require.NoError(t, h.Sync(context.Background()))
 
 	var wg sync.WaitGroup
-	for i := 0; i < 5; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 5 {
+		wg.Go(func() {
 			h.probeTick(context.Background())
-		}()
+		})
 	}
 	deadline := time.After(2 * time.Second)
 	got := 0
@@ -676,7 +672,7 @@ func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 	require.Equal(t, "run-1", h.ViewRunID(), "view stays old during retention")
 	require.Equal(t, "run-2", h.runID)
 	// Repeated empty at same fakeNow before deadline: retain all OPEN
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		require.NoError(t, h.Sync(context.Background()))
 		for _, k := range keys {
 			require.Contains(t, h.View(), k, "repeated empty before deadline must retain every prior OPEN/RETRY")
@@ -693,7 +689,7 @@ func TestHealthRunResetRepeatedEmptiesDeadlineProbe(t *testing.T) {
 		require.Equal(t, StateProbing, h.View()[k].State, "explicit transition to PROBING at deadline")
 	}
 	// Repeated same-run empty after deadline must retain PROBING until real probe, never clear
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		require.NoError(t, h.Sync(context.Background()))
 		for _, k := range keys {
 			require.Contains(t, h.View(), k, "never clear on same-run empty before probe")
@@ -791,7 +787,7 @@ func TestHealthCurGenInterleaving(t *testing.T) {
 	h2.probeFn = func(_ context.Context, k HealthKey) error { probeFields <- k; return nil }
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 5; i++ {
+		for i := range 5 {
 			_, _ = h2.Throttle(context.Background(), healthKeyFor(int64(100+i), "q", 1), StateProbing, 5*time.Second) // 探针只服务 PROBING（本段验证 probeTick 与 gen 递增并发）
 		}
 	}()
@@ -982,7 +978,7 @@ func TestHealthActualRunIDChangeRepeatedEmptyDeadline(t *testing.T) {
 		require.Contains(t, h.View(), k, "run-change repeated empty must retain OPEN before deadline")
 		require.Equal(t, StateOPEN, h.View()[k].State)
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		require.NoError(t, h.Sync(context.Background()))
 		for _, k := range keys {
 			require.Equal(t, StateOPEN, h.View()[k].State, "repeated empty before deadline retains OPEN")
@@ -994,7 +990,7 @@ func TestHealthActualRunIDChangeRepeatedEmptyDeadline(t *testing.T) {
 	for _, k := range keys {
 		require.Equal(t, StateProbing, h.View()[k].State, "after ExpiresAt must become PROBING")
 	}
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		require.NoError(t, h.Sync(context.Background()))
 		for _, k := range keys {
 			require.Equal(t, StateProbing, h.View()[k].State, "same-run repeated empty retains PROBING until probe")
@@ -1094,7 +1090,7 @@ func TestHealthExpiresAtNotExtended(t *testing.T) {
 	origExpires := h.View()[key].ExpiresAt
 	origUpdated := h.View()[key].UpdatedAt
 	require.Equal(t, fakeNow.UnixMilli()+200, origExpires)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		fakeNow = fakeNow.Add(20 * time.Millisecond)
 		h.now = func() time.Time { return fakeNow }
 		require.NoError(t, h.Sync(context.Background()))

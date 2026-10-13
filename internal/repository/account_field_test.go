@@ -19,26 +19,26 @@ func TestChangedFieldsCoversEveryDeclaredField(t *testing.T) {
 		ID:                       1,
 		Name:                     "acc",
 		TemplateID:               7,
-		BaseURL:                  strPtr("https://old.example.com"),
+		BaseURL:                  new("https://old.example.com"),
 		UpstreamKey:              "sk-old",
 		MaxConcurrency:           4,
 		Enabled:                  true,
-		CacheDomain:              strPtr("old-domain"),
+		CacheDomain:              new("old-domain"),
 		UpstreamCostMultiplierBp: 10000,
 	}
 	// 每个声明字段一条"改这一个字段"的补丁；表新增字段而未补用例 → 下面的
 	// 完备性断言失败。
 	cases := map[domain.AccountField]repository.AccountPatch{
-		domain.FieldName:                   {Name: strPtr("renamed")},
-		domain.FieldTemplateID:             {TemplateID: int64Ptr(8)},
-		domain.FieldBaseURL:                {BaseURL: strPtr("https://new.example.com")},
-		domain.FieldUpstreamKey:            {UpstreamKey: strPtr("sk-new")},
-		domain.FieldMaxConcurrency:         {MaxConcurrency: intPtr(9)},
+		domain.FieldName:                   {Name: new("renamed")},
+		domain.FieldTemplateID:             {TemplateID: new(int64(8))},
+		domain.FieldBaseURL:                {BaseURL: new("https://new.example.com")},
+		domain.FieldUpstreamKey:            {UpstreamKey: new("sk-new")},
+		domain.FieldMaxConcurrency:         {MaxConcurrency: new(9)},
 		domain.FieldGroupIDs:               {GroupIDs: &[]int64{3}},
-		domain.FieldEnabled:                {Enabled: boolPtr(false)},
-		domain.FieldCacheDomain:            {CacheDomain: strPtr("new-domain")},
-		domain.FieldUpstreamCostMultiplier: {UpstreamCostMultiplierBp: intPtr(25000)},
-		domain.FieldSupplierUserID:         {SupplierUserID: int64Ptr(9)},
+		domain.FieldEnabled:                {Enabled: new(false)},
+		domain.FieldCacheDomain:            {CacheDomain: new("new-domain")},
+		domain.FieldUpstreamCostMultiplier: {UpstreamCostMultiplierBp: new(25000)},
+		domain.FieldSupplierUserID:         {SupplierUserID: new(int64(9))},
 	}
 	declared := domain.AccountFieldSpecs()
 	require.Len(t, cases, len(declared), "every declared field needs a change case")
@@ -52,14 +52,14 @@ func TestChangedFieldsCoversEveryDeclaredField(t *testing.T) {
 
 	// 幂等重写（补丁带全部字段、值与旧值逐一相同）不得产生任何变更位。
 	same := repository.AccountPatch{
-		Name:                     strPtr(base.Name),
-		TemplateID:               int64Ptr(base.TemplateID),
-		BaseURL:                  strPtr(*base.BaseURL),
-		UpstreamKey:              strPtr(base.UpstreamKey),
-		MaxConcurrency:           intPtr(base.MaxConcurrency),
-		Enabled:                  boolPtr(base.Enabled),
-		CacheDomain:              strPtr(*base.CacheDomain),
-		UpstreamCostMultiplierBp: intPtr(base.UpstreamCostMultiplierBp),
+		Name:                     new(base.Name),
+		TemplateID:               new(base.TemplateID),
+		BaseURL:                  new(*base.BaseURL),
+		UpstreamKey:              new(base.UpstreamKey),
+		MaxConcurrency:           new(base.MaxConcurrency),
+		Enabled:                  new(base.Enabled),
+		CacheDomain:              new(*base.CacheDomain),
+		UpstreamCostMultiplierBp: new(base.UpstreamCostMultiplierBp),
 	}
 	require.Empty(t, repository.ChangedFields(same, base).Fields(), "idempotent rewrite is not a change")
 }
@@ -80,13 +80,13 @@ func TestChangedFieldsIdentityClassification(t *testing.T) {
 		patch repository.AccountPatch
 		want  bool
 	}{
-		{"config only", repository.AccountPatch{Name: strPtr("x"), Enabled: boolPtr(false)}, false},
+		{"config only", repository.AccountPatch{Name: new("x"), Enabled: new(false)}, false},
 		{"groups only", repository.AccountPatch{GroupIDs: &[]int64{1}}, false},
-		{"cache domain", repository.AccountPatch{CacheDomain: strPtr("d")}, false},
-		{"cost multiplier", repository.AccountPatch{UpstreamCostMultiplierBp: intPtr(2)}, false},
-		{"template", repository.AccountPatch{TemplateID: int64Ptr(8)}, true},
-		{"upstream key", repository.AccountPatch{UpstreamKey: strPtr("sk-new")}, true},
-		{"base url set", repository.AccountPatch{BaseURL: strPtr("https://x.example.com")}, true},
+		{"cache domain", repository.AccountPatch{CacheDomain: new("d")}, false},
+		{"cost multiplier", repository.AccountPatch{UpstreamCostMultiplierBp: new(2)}, false},
+		{"template", repository.AccountPatch{TemplateID: new(int64(8))}, true},
+		{"upstream key", repository.AccountPatch{UpstreamKey: new("sk-new")}, true},
+		{"base url set", repository.AccountPatch{BaseURL: new("https://x.example.com")}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.want, repository.ChangedFields(tc.patch, base).IdentityChanged())
@@ -94,9 +94,9 @@ func TestChangedFieldsIdentityClassification(t *testing.T) {
 	}
 
 	// 清空 base_url（&"" = 落 NULL）是身份变更：旧值非 NULL 时清空换了生效 origin。
-	cleared := repository.ChangedFields(repository.AccountPatch{BaseURL: strPtr("")}, repository.AccountFieldValues{BaseURL: strPtr("https://x.example.com")})
+	cleared := repository.ChangedFields(repository.AccountPatch{BaseURL: new("")}, repository.AccountFieldValues{BaseURL: new("https://x.example.com")})
 	require.True(t, cleared.IdentityChanged(), "clearing a set base_url changes the effective origin")
 	// 旧值本就是 NULL 时"清空"是幂等重写。
-	idempotent := repository.ChangedFields(repository.AccountPatch{BaseURL: strPtr("")}, repository.AccountFieldValues{BaseURL: nil})
+	idempotent := repository.ChangedFields(repository.AccountPatch{BaseURL: new("")}, repository.AccountFieldValues{BaseURL: nil})
 	require.False(t, idempotent.IdentityChanged(), "clearing an already-NULL base_url is not a change")
 }

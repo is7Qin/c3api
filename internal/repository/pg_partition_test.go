@@ -292,7 +292,7 @@ func TestUsageLogPartitionConcurrentBootstrapPG(t *testing.T) {
 	repos, err := repository.New(entsql.OpenDB(dialect.Postgres, db), true)
 	require.NoError(t, err)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		if i > 0 { // 首轮 schema 已清空；后续轮次重建
 			_, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)
 			require.NoError(t, err)
@@ -302,7 +302,7 @@ func TestUsageLogPartitionConcurrentBootstrapPG(t *testing.T) {
 		start := make(chan struct{})
 		errs := make([]error, 2)
 		var wg sync.WaitGroup
-		for g := 0; g < 2; g++ {
+		for g := range 2 {
 			wg.Add(1)
 			go func(g int) {
 				defer wg.Done()

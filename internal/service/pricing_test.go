@@ -37,13 +37,14 @@ func (f *fakePriceFetcher) Fetch(ctx context.Context, sourceURL string) (*pricin
 	return f.res, nil
 }
 
-func int64Ptr(v int64) *int64 { return &v }
+//go:fix inline
+func int64Ptr(v int64) *int64 { return new(v) }
 
 func TestPriceEntrySnapshotLoad(t *testing.T) {
 	fs := newFakeStore()
 	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "gpt-4o", Mode: domain.PriceModeToken, InputPerM: int64Ptr(250000), OutputPerM: int64Ptr(1000000), Source: domain.PricingSourceLitellm},
-		{Model: "img-m", Mode: domain.PriceModeImage, PricePerImage: int64Ptr(5400), Source: domain.PricingSourceLitellm},
+		{Model: "gpt-4o", Mode: domain.PriceModeToken, InputPerM: new(int64(250000)), OutputPerM: new(int64(1000000)), Source: domain.PricingSourceLitellm},
+		{Model: "img-m", Mode: domain.PriceModeImage, PricePerImage: new(int64(5400)), Source: domain.PricingSourceLitellm},
 	})
 	require.NoError(t, err)
 	svc := newPricingSvc(t, fs)
@@ -59,20 +60,20 @@ func TestPriceEntryManualValidation(t *testing.T) {
 	svc := newPricingSvc(t, fs)
 	_, err := svc.UpsertPriceEntry(context.Background(), &repository.PriceEntryManual{Model: "", Mode: domain.PriceModeToken})
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.UpsertPriceEntry(context.Background(), &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100)})
+	_, err = svc.UpsertPriceEntry(context.Background(), &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(100))})
 	require.ErrorIs(t, err, ErrInvalidInput)
-	_, err = svc.UpsertPriceEntry(context.Background(), &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)})
+	_, err = svc.UpsertPriceEntry(context.Background(), &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(100)), OutputPerM: new(int64(200))})
 	require.NoError(t, err)
 }
 
 func TestResolvePricesWithVariant(t *testing.T) {
 	fs := newFakeStore()
 	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceManual},
+		{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000)), Source: domain.PricingSourceManual},
 	})
 	require.NoError(t, err)
 	_, err = fs.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{
-		{Model: "m", Seq: 1, ServiceTier: strPtr("priority"), SetInputPerM: int64Ptr(150000)},
+		{Model: "m", Seq: 1, ServiceTier: new("priority"), SetInputPerM: new(int64(150000))},
 	})
 	require.NoError(t, err)
 	svc := newPricingSvc(t, fs)
@@ -92,15 +93,15 @@ func TestPricingChangeNotifiesCompiler(t *testing.T) {
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
 	ctx := context.Background()
 
-	_, err := svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)})
+	_, err := svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(100)), OutputPerM: new(int64(200))})
 	require.NoError(t, err)
 	require.Equal(t, 1, calls, "真实价格变化必须通知编译")
 
-	_, err = svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)})
+	_, err = svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(100)), OutputPerM: new(int64(200))})
 	require.NoError(t, err)
 	require.Equal(t, 1, calls, "同值 PUT（解析价格不变）必须静默")
 
-	_, err = svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(300), OutputPerM: int64Ptr(200)})
+	_, err = svc.UpsertPriceEntry(ctx, &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(300)), OutputPerM: new(int64(200))})
 	require.NoError(t, err)
 	require.Equal(t, 2, calls, "价格变更必须再次通知编译")
 
@@ -116,11 +117,11 @@ func TestResolvedPricesByModel(t *testing.T) {
 	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes})
 	require.Nil(t, svc.ResolvedPricesByModel(time.Now()), "unloaded snapshot = nil (compile lane treats as no prices)")
 	_, err := fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100000), OutputPerM: int64Ptr(200000), Source: domain.PricingSourceManual},
+		{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(100000)), OutputPerM: new(int64(200000)), Source: domain.PricingSourceManual},
 	})
 	require.NoError(t, err)
 	_, err = fs.ReplacePriceVariants(context.Background(), "m", []*domain.PriceVariant{
-		{Model: "m", Seq: 1, ServiceTier: strPtr("priority"), SetInputPerM: int64Ptr(150000)},
+		{Model: "m", Seq: 1, ServiceTier: new("priority"), SetInputPerM: new(int64(150000))},
 	})
 	require.NoError(t, err)
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
@@ -161,7 +162,7 @@ func TestReplacePriceVariants_CallSetPricePerCall(t *testing.T) {
 	require.NoError(t, err)
 	// also resolver yields that price
 	_, err = fs.UpsertPriceEntriesFromLiteLLM(context.Background(), []*domain.PriceEntry{
-		{Model: "m-call", Mode: domain.PriceModeCall, PricePerCall: int64Ptr(1000), Source: domain.PricingSourceManual},
+		{Model: "m-call", Mode: domain.PriceModeCall, PricePerCall: new(int64(1000)), Source: domain.PricingSourceManual},
 	})
 	require.NoError(t, err)
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
@@ -180,7 +181,7 @@ func TestReplacePriceVariants_CallSetPricePerCall(t *testing.T) {
 // 路径）保持 publish-free。
 func TestPricingWritePublishesPricingChange(t *testing.T) {
 	ctx := context.Background()
-	manual := &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: int64Ptr(100), OutputPerM: int64Ptr(200)}
+	manual := &repository.PriceEntryManual{Model: "m", Mode: domain.PriceModeToken, InputPerM: new(int64(100)), OutputPerM: new(int64(200))}
 
 	t.Run("降级路径（compileNotify nil）仍发布", func(t *testing.T) {
 		svc, _, pr := newPubSvc()

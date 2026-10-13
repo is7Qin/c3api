@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -72,11 +73,8 @@ func openapiSupplierRoutes(t *testing.T) []string {
 			if err := node.Decode(&op); err != nil {
 				continue
 			}
-			for _, tag := range op.Tags {
-				if tag == "supplier" {
-					out = append(out, strings.ToUpper(key)+" "+path)
-					break
-				}
+			if slices.Contains(op.Tags, "supplier") {
+				out = append(out, strings.ToUpper(key)+" "+path)
 			}
 		}
 	}

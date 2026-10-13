@@ -110,12 +110,12 @@ func TestUserStatsRelativeWindow(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, logs.Code, "usage_logs 不接受 window: %s", logs.Body.String())
 	errLogs := do(http.MethodGet, "/api/user/err_logs?window=24h", "", reg.Token)
 	require.Equal(t, http.StatusBadRequest, errLogs.Code, "err_logs 不接受 window: %s", errLogs.Body.String())
-	_, ok := reflect.TypeOf(userapi.GetUserUsageLogsParams{}).FieldByName("Window")
+	_, ok := reflect.TypeFor[userapi.GetUserUsageLogsParams]().FieldByName("Window")
 	require.False(t, ok)
-	_, ok = reflect.TypeOf(userapi.GetUserErrLogsParams{}).FieldByName("Window")
+	_, ok = reflect.TypeFor[userapi.GetUserErrLogsParams]().FieldByName("Window")
 	require.False(t, ok)
 	require.IsType(t, time.Time{}, userapi.GetUserUsageLogsParams{}.From)
-	_, ok = reflect.TypeOf(userapi.GetUserStatsParams{}).FieldByName("Window")
+	_, ok = reflect.TypeFor[userapi.GetUserStatsParams]().FieldByName("Window")
 	require.True(t, ok, "纳入端点必须有 Window，防止断言写反")
 }
 

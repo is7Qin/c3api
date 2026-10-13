@@ -29,7 +29,7 @@ func TestListEndpointsLimitClamp(t *testing.T) {
 	token, uid := registerAndGet(t, doUser, "clamp@example.com")
 
 	store.mu.Lock()
-	for i := 0; i < 201; i++ {
+	for i := range 201 {
 		id := store.nextID
 		store.nextID++
 		store.tpls[id] = &domain.Template{ID: id, Name: fmt.Sprintf("tpl-%d", i)}
@@ -98,7 +98,7 @@ func TestRedemptionUsesPagination(t *testing.T) {
 	gen := genCodes(t, doAdmin, `{"type":"balance","value":1,"max_uses":100}`)
 	c := gen.Codes[0]
 	// 同一用户复兑同一码 → 409；25 个不同用户各兑一次 → 25 条。
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		uToken, _ := registerAndGet(t, doUser, fmt.Sprintf("uses-p%d@example.com", i))
 		rec := doUser(http.MethodPost, "/api/user/redemptions", `{"code":"`+c.Code+`"}`, uToken)
 		require.Equal(t, 200, rec.Code, "redeem %d: %s", i, rec.Body.String())

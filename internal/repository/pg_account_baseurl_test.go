@@ -43,7 +43,7 @@ func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	require.Equal(t, b, *got.BaseURL)
 
 	// 清空：空串 → NULL 往返（继承模板）
-	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{BaseURL: strPtr("")})
+	_, err = repos.Accounts.UpdateAccountsBatch(ctx, []int64{acc.ID}, repository.AccountPatch{BaseURL: new("")})
 	require.NoError(t, err)
 	got, err = repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)

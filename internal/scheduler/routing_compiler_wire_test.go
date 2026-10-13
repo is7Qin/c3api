@@ -4,6 +4,7 @@ package scheduler
 import (
 	"context"
 	"crypto/sha256"
+	"maps"
 	"math"
 	"testing"
 	"time"
@@ -64,7 +65,7 @@ func TestRoutingCompilerWireDeterministicBytes(t *testing.T) {
 	s := newSched(t, m)
 	logged := math.Log(100)
 	loggedSlow := math.Log(500)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}}
 	qraw := map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 30, Successes: 15, TTFTCount: 30, SumLog: loggedSlow * 30, SumSq: loggedSlow * loggedSlow * 30}, InputTokens: 1500, OutputTokens: 1500},
@@ -74,9 +75,7 @@ func TestRoutingCompilerWireDeterministicBytes(t *testing.T) {
 	// Insert quality in two different map orders; compiled bytes must match.
 	q1 := buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs)
 	q2 := make(map[CandidateQualityKey]CandidateQualityInput, len(q1))
-	for k, v := range q1 {
-		q2[k] = v
-	}
+	maps.Copy(q2, q1)
 	for k, v := range q1 {
 		delete(q2, k)
 		q2[k] = v
@@ -109,7 +108,7 @@ func TestRoutingCompilerWireGoldenSHA(t *testing.T) {
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},
 		2: {Counts: Counts{Attempts: 10, Successes: 5}, InputTokens: 500, OutputTokens: 500},
 	}, accs)
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000), OutputPerM: pricePtr(2000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000)), OutputPerM: new(int64(2000))}}
 	c := NewRoutingCompiler()
 	v, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q, Prices: prices})
 	require.NoError(t, err)
@@ -148,7 +147,7 @@ func TestRoutingCompilerWirePublishesCompiledView(t *testing.T) {
 		1: qualityInput(30, 29, 100, 100),
 		2: qualityInput(30, 29, 100, 100),
 	}, accs)
-	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 
 	before := s.View()
 	require.Nil(t, before.DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")])
@@ -171,7 +170,7 @@ func TestRoutingCompilerWireByteEqualityNoPublish(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 
 	s.compileOnce()
 	gen1 := s.View().Generation()
@@ -180,7 +179,7 @@ func TestRoutingCompilerWireByteEqualityNoPublish(t *testing.T) {
 
 	// Changed inputs must publish again.
 	q2 := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 10, 100, 100)}, accs)
-	wireSources(s, q2, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q2, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 	s.compileOnce()
 	require.Greater(t, s.View().Generation(), gen1, "changed bytes must publish")
 }
@@ -230,7 +229,7 @@ func TestRoutingCompilerWireInitialPairKeepsStaticOnlyRootImmutable(t *testing.T
 	m := newMemLoader(map[int64][]*domain.Account{10: {accWithEnabled(1, tpl, true, 4)}})
 	s := newSchedStatic(t, m)
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, m.byGroup[10])
-	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 	route := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
 
 	before := s.View()
@@ -271,7 +270,7 @@ func TestRoutingCompilerWireCompileFailureKeepsOldView(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 	s.compileOnce()
 	good := s.View()
 	require.NotEmpty(t, good.DecisionView().Routes())
@@ -449,7 +448,7 @@ func TestRoutingCompilerWireHealthLatchExclusion(t *testing.T) {
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100), 3: qualityInput(30, 29, 100, 100),
 	}, accs)
-	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 
 	// Account 2 OPEN via live RuntimeHealth view; account 3 latched.
 	h := NewRuntimeHealth(nil, "self", nil, nil)
@@ -482,7 +481,7 @@ func TestRoutingCompilerWireResolvedModelQualityIdentity(t *testing.T) {
 	q := buildQuality(10, domain.FormatOpenAIChat, "req", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900},
 	}, []*domain.Account{acc})
-	wireSources(s, q, map[string]domain.ResolvedPrices{"req": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"req": {InputPerM: new(int64(1000))}})
 
 	op := operationTagForFormat(string(domain.FormatOpenAIChat))
 	qcResolved, _ := domain.QualityClassID(callerKindForFormat(domain.FormatOpenAIChat), domain.FormatOpenAIChat, "resolved", op)
@@ -512,7 +511,7 @@ func TestRoutingCompilerWireFullUnionOverflowTail(t *testing.T) {
 	}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
-	wireSources(s, buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs), map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, buildQuality(10, domain.FormatOpenAIChat, "m", qraw, accs), map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 
 	s.compileOnce()
 	rd, ok := s.View().DecisionView().Routes()[RouteRefFor(10, string(domain.FormatOpenAIChat), "m")]
@@ -532,7 +531,7 @@ func TestRoutingCompilerWireDebounceCoalesces(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 	cc := &countingCompiler{inner: NewRoutingCompiler(), calls: make(chan struct{}, 16)}
 	s.compiler = cc
 
@@ -543,7 +542,7 @@ func TestRoutingCompilerWireDebounceCoalesces(t *testing.T) {
 		defer close(loopDone)
 		s.compileLoop(ctx)
 	}()
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		s.RequestCompile()
 	}
 	select {
@@ -569,7 +568,7 @@ func TestRoutingCompilerWireRequestCompileNonBlocking(t *testing.T) {
 	wireSources(s, nil, nil)
 	done := make(chan struct{})
 	go func() {
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			s.RequestCompile()
 		}
 		close(done)
@@ -591,7 +590,7 @@ func TestRoutingCompilerWireStatsCompileLane(t *testing.T) {
 	fixed := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	s.timeNow = func() time.Time { return fixed }
 	q := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{1: qualityInput(30, 29, 100, 100)}, accs)
-	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}})
+	wireSources(s, q, map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}})
 
 	st := s.Stats().(SchedulerStats)
 	require.Equal(t, 1, st.CompileCap, "compile trigger channel is cap-1 coalescing")
@@ -654,7 +653,7 @@ func TestSchedulerCloseJoinsCompileLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	require.NoError(t, s.Start(ctx, &CompilerSources{
 		Prices: func() map[string]domain.ResolvedPrices {
-			return map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+			return map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 		},
 	}))
 	s.RequestCompile()
@@ -697,7 +696,7 @@ func TestDecisionEncoderReuseNoContamination(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
 	s := newSched(t, m)
 	c := NewRoutingCompiler()
-	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: pricePtr(1000)}}
+	prices := map[string]domain.ResolvedPrices{"m": {InputPerM: new(int64(1000))}}
 	logged := math.Log(100)
 	full := buildQuality(10, domain.FormatOpenAIChat, "m", map[int64]CandidateQualityInput{
 		1: {Counts: Counts{Attempts: 30, Successes: 29, TTFTCount: 30, SumLog: logged * 30, SumSq: logged * logged * 30}, InputTokens: 2900, OutputTokens: 2900},

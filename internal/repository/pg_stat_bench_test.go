@@ -31,9 +31,9 @@ func BenchmarkStatsTrendPushdown(b *testing.B) {
 
 	// 30 天 × 24 小时 × 4 组 × 3 模型 = 8640 桶（唯一键不撞）
 	cube := make([]*domain.StatBucket, 0, 8640)
-	for d := 0; d < 30; d++ {
+	for d := range 30 {
 		day := base.AddDate(0, 0, -d)
-		for h := 0; h < 24; h++ {
+		for h := range 24 {
 			bt := day.Add(time.Duration(h) * time.Hour)
 			for g := int64(1); g <= 4; g++ {
 				for m, model := range []string{"gpt-4o", "claude-x", "gemini-y"} {

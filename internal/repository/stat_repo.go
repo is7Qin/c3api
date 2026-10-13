@@ -78,13 +78,7 @@ func TTFTPercentileMS(hist []int64, n int64, p float64) int64 {
 	if n <= 0 {
 		return 0
 	}
-	rank := int64(math.Ceil(p * float64(n)))
-	if rank < 1 {
-		rank = 1
-	}
-	if rank > n {
-		rank = n
-	}
+	rank := min(max(int64(math.Ceil(p*float64(n))), 1), n)
 	var cum int64
 	for i, cnt := range hist {
 		if i >= len(ttftHistBounds) {

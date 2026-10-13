@@ -30,7 +30,7 @@ func TestClientReusesTransport(t *testing.T) {
 		DialTimeout:         5 * time.Second,
 		ForceHTTP2:          false,
 	})
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		resp, err := c.Get(srv.URL)
 		require.NoError(t, err)
 		resp.Body.Close()

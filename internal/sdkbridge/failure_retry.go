@@ -166,7 +166,7 @@ func (w *FailureRetryWorker) requeueWithBackoff(task failureRetryTask) {
 // backoffForAttempts 指数退避封顶（调用方持 w.mu）。
 func (w *FailureRetryWorker) backoffForAttempts(attempts int) time.Duration {
 	d := w.backoff
-	for i := 0; i < attempts; i++ {
+	for range attempts {
 		d *= 2
 		if d >= w.maxBackoff {
 			return w.maxBackoff

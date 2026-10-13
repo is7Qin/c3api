@@ -53,7 +53,7 @@ func TestUsageInitialRoutingPreservesPending(t *testing.T) {
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
 	far := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC)
 	orig := make([]*domain.UsageLog, 4)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		at := now
 		if i >= 2 {
 			at = far
@@ -91,7 +91,7 @@ func TestUsageInitialRoutingLaterChunkPartialSuccess(t *testing.T) {
 	}
 	r := New(UsageConfig{BatchSize: 2, Workers: 1}, fake, logger)
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		r.Record(&domain.UsageLog{RequestID: fmt.Sprintf("k-%d", i), Model: "m", Format: domain.FormatOpenAIChat, CreatedAt: now, TotalTokens: 1})
 	}
 	drained := r.flushLogs(context.Background())
@@ -172,7 +172,7 @@ func TestUsageRoutingDoesNotAlterSuccessPath(t *testing.T) {
 	fake := &routingDecisionStore{}
 	r := New(UsageConfig{BatchSize: 2, Workers: 1}, fake, nil)
 	now := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		r.Record(&domain.UsageLog{RequestID: fmt.Sprintf("ok-%d", i), Model: "m", Format: domain.FormatOpenAIChat, CreatedAt: now})
 	}
 	drained := r.flushLogs(context.Background())

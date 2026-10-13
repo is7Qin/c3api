@@ -88,12 +88,7 @@ func SupplierSurfaceRoles() []Role {
 // CanAccessSupplierSurface 报告角色是否可访问供应商面（= 可达集成员）。
 // 门控与归属值域校验的能力谓词。
 func CanAccessSupplierSurface(r Role) bool {
-	for _, rr := range SupplierSurfaceRoles() {
-		if r == rr {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(SupplierSurfaceRoles(), r)
 }
 
 // roleRank 角色层级秩（user < supplier < platform_admin）；非法角色返回 -1。

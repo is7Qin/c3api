@@ -204,7 +204,7 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 
 	// 事件流 + 回声 + 关闭帧（上游已消费 3 帧 → 正常完成路径）。
 	var got []string
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		got = append(got, string(readResponsesWSFrame(t, c)))
 	}
 	require.Equal(t, `{"type":"response.created","response":{"id":"rsp_ws_1","model":"gpt-4o"}}`, got[0])
@@ -288,7 +288,7 @@ func TestResponsesWSModelMapping(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 4; i++ { // created/delta/completed/echo → 关闭
+	for range 4 { // created/delta/completed/echo → 关闭
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
@@ -318,7 +318,7 @@ func TestResponsesWSClientAbortRecordsUsage(t *testing.T) {
 	c := dialResponsesWS(t, srv)
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 3; i++ { // created/delta/completed 后立即关闭（echo 不等）
+	for range 3 { // created/delta/completed 后立即关闭（echo 不等）
 		_ = readResponsesWSFrame(t, c)
 	}
 	require.NoError(t, c.Close(websocket.StatusNormalClosure, "")) // 客户端主动结束会话
@@ -537,7 +537,7 @@ func TestResponsesWSHandshakeUnderShortTimeout(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 4; i++ { // created/delta/completed/echo → 关闭
+	for range 4 { // created/delta/completed/echo → 关闭
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
@@ -841,7 +841,7 @@ func TestResponsesWSConcurrentWriteClose(t *testing.T) {
 	}()
 
 	seenCompleted := false
-	for i := 0; i < 4; i++ { // created/delta/completed/echo 完整透传
+	for range 4 { // created/delta/completed/echo 完整透传
 		f := readResponsesWSFrame(t, c)
 		if strings.Contains(string(f), `"type":"response.completed"`) {
 			seenCompleted = true
@@ -883,7 +883,7 @@ func TestResponsesWSBillingTierFast(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","service_tier":"fast","input":"hi"}`)))
-	for i := 0; i < 4; i++ { // created/delta/completed/echo → 关闭
+	for range 4 { // created/delta/completed/echo → 关闭
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
@@ -913,7 +913,7 @@ func TestResponsesWSBillingTierAuto(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
@@ -945,7 +945,7 @@ func TestResponsesWSQuotaDeductedByFinalCost(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
@@ -971,7 +971,7 @@ func TestResponsesWSBillingTierStrip(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","service_tier":"fast","input":"hi"}`)))
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_ = readResponsesWSFrame(t, c)
 	}
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)

@@ -38,7 +38,7 @@ func TestRandIntRange(t *testing.T) {
 	require.False(t, ok)
 	// 下限 0 的区间：部分实体取到 0 = 不设（"随机挑选填充"语义），部分有值
 	var zero, set int
-	for i := 0; i < 1000; i++ {
+	for range 1000 {
 		v, ok := randIntRange(rng, "0-4")
 		if !ok {
 			zero++
@@ -62,7 +62,7 @@ func TestRandUSD(t *testing.T) {
 
 func TestRandomModels(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 1))
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		models := randomModels(rng)
 		require.InDelta(t, 10.5, len(models), 10) // 1-20 个
 		seen := map[string]bool{}
@@ -93,7 +93,7 @@ func TestModelsForFormat(t *testing.T) {
 		req := tplRequiredModel[f]
 		require.NotEmpty(t, req, f) // 池外模型（gpt-image-1）也须有必含项
 		require.Contains(t, modelPool, req, "billing-enabled must price every fixed loadtest model")
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			models := modelsForFormat(rng, f)
 			require.Contains(t, models, req)
 			seen := map[string]bool{}
