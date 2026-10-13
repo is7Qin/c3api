@@ -4811,13 +4811,12 @@ components:
         ttft_p99_ms: { type: integer, format: int64 }
     OverviewAccounts:
       type: object
-      required: [active, unhealthy, "429", disabled, concurrency, max_concurrency]
-      description: 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致）
+      required: [active, failed, disabled, concurrency, max_concurrency]
+      description: 账号健康分布（两轴三桶：手动停用 / 运行时失效 / 正常服务；调度器快照同源——与账号列表运行时视图一致）+ 并发水位
       properties:
-        active: { type: integer }
-        unhealthy: { type: integer }
-        "429": { type: integer }
-        disabled: { type: integer }
+        active: { type: integer, description: 正常服务（enabled 且未失效） }
+        failed: { type: integer, description: 运行时失效（enabled 且 failed_at 置位） }
+        disabled: { type: integer, description: 手动停用（enabled=false） }
         concurrency: { type: integer, format: int64, description: 在途并发合计 }
         max_concurrency: { type: integer, description: 并发上限合计（水位 = concurrency / max_concurrency） }
     OverviewResources:

@@ -4,7 +4,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Activity, AlertTriangle, Boxes, Coins, FolderOpen, Gauge, PowerOff, Users, Zap } from 'lucide-react'
+import { Activity, AlertTriangle, Boxes, Coins, FolderOpen, PowerOff, Users, Zap } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
@@ -50,8 +50,7 @@ export default function Dashboard() {
   const accounts = ov?.accounts
   const statusCounts = {
     active: accounts?.active ?? 0,
-    unhealthy: accounts?.unhealthy ?? 0,
-    '429': accounts?.['429'] ?? 0,
+    failed: accounts?.failed ?? 0,
     disabled: accounts?.disabled ?? 0,
   } as const
 
@@ -92,8 +91,7 @@ export default function Dashboard() {
 
   const statusCards = [
     { key: 'active', icon: Activity, descKey: 'dashboard.statusCards.active' },
-    { key: 'unhealthy', icon: AlertTriangle, descKey: 'dashboard.statusCards.unhealthy' },
-    { key: '429', icon: Gauge, descKey: 'dashboard.statusCards.429' },
+    { key: 'failed', icon: AlertTriangle, descKey: 'dashboard.statusCards.failed' },
     { key: 'disabled', icon: PowerOff, descKey: 'dashboard.statusCards.disabled' },
   ] as const satisfies readonly { key: keyof typeof statusCounts; icon: typeof Activity; descKey: DynamicKey }[]
 
@@ -193,7 +191,7 @@ export default function Dashboard() {
           </div>
 
           {/* 状态计数卡片（dashboard-01 section-cards 结构：描述 + 大数字 + 状态徽章） */}
-          <div className={`${cardGrid} sm:grid-cols-2 xl:grid-cols-4`}>
+          <div className={`${cardGrid} sm:grid-cols-2 xl:grid-cols-3`}>
             {statusCards.map(({ key, icon: Icon, descKey }, i) => (
               <motion.div key={key} {...fadeUp} transition={{ duration: 0.25, delay: 0.18 + i * 0.06 }}>
                 <Card className="@container/card h-full">

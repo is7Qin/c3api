@@ -818,11 +818,12 @@ func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
 
 // AccountRuntime 账号运行时视图（/api/admin/overview 聚合专用；含账号名——err_top
 // 为账号维度，name = 账号名）。与 RuntimeInfo 同源（快照 EWMA/并发原子读），
-// 仅多带聚合所需字段。
+// 仅多带聚合所需字段（含 Enabled——手动启停轴）。
 type AccountRuntime struct {
 	AccountID      int64
 	Name           string
 	Status         domain.AccountStatus
+	Enabled        bool
 	MaxConcurrency int
 	Concurrency    int64
 	ErrRate        float64
@@ -846,6 +847,7 @@ func (s *Scheduler) Runtimes() []AccountRuntime {
 			AccountID:      id,
 			Name:           av.acc.Name,
 			Status:         st.status,
+			Enabled:        av.acc.Enabled,
 			MaxConcurrency: av.acc.MaxConcurrency,
 			Concurrency:    a.runtime.concurrency.Load(),
 			ErrRate:        float64(a.runtime.errRate.Load()) / errRateScale,

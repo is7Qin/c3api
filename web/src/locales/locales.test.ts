@@ -28,6 +28,8 @@ const DYNAMIC_SENTINELS = [
   'user.nav.userSection',
   'ops.stats.dirty',
   'supplierAdmin.act.confirmFailed',
+  'status.failed',
+  'dashboard.statusCards.failed',
 ]
 
 describe('locales 资源完整性', () => {
@@ -45,6 +47,14 @@ describe('locales 资源完整性', () => {
     for (const k of DYNAMIC_SENTINELS) {
       assert.ok(enKeys.has(k), `en 缺少动态 key: ${k}`)
       assert.ok(zhKeys.has(k), `zh 缺少动态 key: ${k}`)
+    }
+  })
+
+  it('dashboard 三桶命名空间无已删 key 残留', () => {
+    const dead = ['status.unhealthy', 'status.429', 'dashboard.statusCards.unhealthy', 'dashboard.statusCards.429']
+    for (const k of dead) {
+      assert.ok(!enKeys.has(k), `en 残留 key: ${k}`)
+      assert.ok(!zhKeys.has(k), `zh 残留 key: ${k}`)
     }
   })
 })

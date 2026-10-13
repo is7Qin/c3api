@@ -69,9 +69,8 @@ export default {
     "system": "跟随系统"
   },
   "status": {
-    "429": "限流中",
     "active": "可用",
-    "unhealthy": "不健康",
+    "failed": "运行时失效",
     "disabled": "已禁用"
   },
   "errorType": {
@@ -131,9 +130,8 @@ export default {
       "max": "TTFT 最大"
     },
     "statusCards": {
-      "429": "被上游限流",
       "active": "正常服务",
-      "unhealthy": "上游异常",
+      "failed": "运行时失效",
       "disabled": "手动停用"
     },
     "totalCards": {

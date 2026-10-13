@@ -958,7 +958,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
       "ttft_avg_ms": 610.2, "ttft_max_ms": 3500,
       "ttft_p50_ms": 490, "ttft_p90_ms": 1400, "ttft_p95_ms": 2000, "ttft_p99_ms": 3200 }
   ],
-  "accounts": { "active": 12, "unhealthy": 1, "429": 0, "disabled": 2,
+  "accounts": { "active": 12, "failed": 1, "disabled": 2,
                 "concurrency": 3, "max_concurrency": 40 },
   "resources": { "templates": 8, "groups": 4, "users": 15 },
   "err_top": [ { "name": "account-01", "err_rate": 0.05, "err_count": 12 } ],
@@ -968,7 +968,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 
 - `summary`：今日汇总（请求 `timezone` 时区日界，缺省 = UTC），`cost_usd` 为 USD（毫分 /1e5），`ttft_*` 口径同 `/api/admin/stats/ttft`
 - `trend`：近 N 天日桶（SQL 侧按请求时区日界聚合；`tokens` = input+output+cache 合并；DST/半小时偏移时区扫原始明细，超上限 = 400——上限见 `/api/admin/stats/capabilities` 的 `summary`/`days`）
-- `accounts`：账号健康分布 + 并发水位（**调度器快照同源**——与账号列表运行时视图一致；运行时状态只在内存，DB 无第二份）
+- `accounts`：账号健康分布（两轴三桶：`active`=正常服务 / `failed`=运行时失效（`failed_at` 置位）/ `disabled`=手动停用（`enabled=false`））+ 并发水位（**调度器快照同源**——与账号列表运行时视图一致；运行时状态只在内存，DB 无第二份）
 - `err_top`：账号维度错误率 Top5（调度器 EWMA，`name` = 账号名）
 - `alerts`：billing 游标积压观测（lag 族——`billing_lag_ms` 时滞毫秒 / `billing_unbilled_rows` 未扣费行数 / `billing_quarantined_rows` 隔离行数累计）
 - 聚合结果内部 TTL 30s 缓存（键含 `days`/`group_id`、请求 `timezone` 与该时区日界）；统计本身为离线聚合产物（≤5 分钟陈旧）

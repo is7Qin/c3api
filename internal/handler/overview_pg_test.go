@@ -198,10 +198,10 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	seedUsersPG(t, repos, 2)
 
 	sched := stubSched{rt: []scheduler.AccountRuntime{
-		{AccountID: 1, Name: "account-01", Status: domain.StatusActive, MaxConcurrency: 20, Concurrency: 3, ErrRate: 0.05, ErrCount: 12},
-		{AccountID: 2, Name: "account-02", Status: domain.StatusUnhealthy, MaxConcurrency: 10, Concurrency: 1, ErrRate: 0.02, ErrCount: 5},
-		{AccountID: 3, Name: "account-03", Status: domain.Status429, MaxConcurrency: 5, Concurrency: 0, ErrRate: 0, ErrCount: 0},
-		{AccountID: 4, Name: "account-04", Status: domain.StatusDisabled, MaxConcurrency: 8, Concurrency: 0, ErrRate: 0.09, ErrCount: 3},
+		{AccountID: 1, Name: "account-01", Status: domain.StatusActive, Enabled: true, MaxConcurrency: 20, Concurrency: 3, ErrRate: 0.05, ErrCount: 12},
+		{AccountID: 2, Name: "account-02", Status: domain.StatusDisabled, Enabled: true, MaxConcurrency: 10, Concurrency: 1, ErrRate: 0.02, ErrCount: 5},
+		{AccountID: 3, Name: "account-03", Status: domain.StatusActive, Enabled: false, MaxConcurrency: 5, Concurrency: 0, ErrRate: 0, ErrCount: 0},
+		{AccountID: 4, Name: "account-04", Status: domain.StatusDisabled, Enabled: false, MaxConcurrency: 8, Concurrency: 0, ErrRate: 0.09, ErrCount: 3},
 	}}
 	_, router := overviewPGRouter(t, repos, sched, OpsOptions{
 		BillingAlerts: func() BillingAlerts { return BillingAlerts{LagMs: 12345, UnbilledRows: 123, QuarantinedRows: 2} },
@@ -255,11 +255,12 @@ func TestPGOverviewSummaryAndTrend(t *testing.T) {
 	require.Equal(t, int64(10), resp.Trend[2].CallCount, "今日趋势 call_count")
 	require.InDelta(t, 70.0, resp.Trend[2].TtftAvgMs, 1e-9)
 
-	// accounts：调度器快照分布 + 水位（concurrency / max_concurrency 合计）
+	// accounts：两轴三桶分布 + 水位（concurrency / max_concurrency 合计，全量）
 	require.Equal(t, 1, resp.Accounts.Active)
-	require.Equal(t, 1, resp.Accounts.Unhealthy)
-	require.Equal(t, 1, resp.Accounts.N429)
-	require.Equal(t, 1, resp.Accounts.Disabled)
+	require.Equal(t, 1, resp.Accounts.Failed)
+	require.Equal(t, 2, resp.Accounts.Disabled)
+	// 完备性不变量：三桶互斥完备，求和 == 快照（已分组账号）条数
+	require.Equal(t, len(sched.rt), resp.Accounts.Active+resp.Accounts.Failed+resp.Accounts.Disabled)
 	require.Equal(t, int64(4), resp.Accounts.Concurrency)
 	require.Equal(t, 43, resp.Accounts.MaxConcurrency)
 

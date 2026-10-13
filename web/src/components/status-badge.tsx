@@ -7,15 +7,14 @@ import { useTranslation } from 'react-i18next'
 import { Badge } from '@/components/ui/badge'
 import { cn } from '@/lib/utils'
 
-// BadgeStatus 徽章状态词表：账号运行时健康分布（dashboard 四态，源自调度器
+// BadgeStatus 徽章状态词表：账号运行时健康分布（dashboard 三态，源自调度器
 // 快照——持久 status 列已删除）与 user/key 生命周期（active/disabled）共用。
-export type BadgeStatus = 'active' | 'unhealthy' | '429' | 'disabled'
+export type BadgeStatus = 'active' | 'failed' | 'disabled'
 
 // 状态徽章：小圆点携带状态色 + 文字同色（均带 dark: 变体），chip 用 secondary 底随主题自适应。
 const STATUS_META: Record<BadgeStatus, { dot: string; text: string }> = {
   active: { dot: 'bg-emerald-500', text: 'text-emerald-700 dark:text-emerald-400' },
-  unhealthy: { dot: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-400' },
-  '429': { dot: 'bg-orange-500', text: 'text-orange-600 dark:text-orange-400' },
+  failed: { dot: 'bg-amber-500', text: 'text-amber-700 dark:text-amber-400' },
   disabled: { dot: 'bg-muted-foreground/60', text: 'text-muted-foreground' },
 }
 

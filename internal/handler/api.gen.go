@@ -1129,18 +1129,22 @@ type ModelMappingEntry struct {
 // ModelMappingEntryMode defines model for ModelMappingEntry.Mode.
 type ModelMappingEntryMode string
 
-// OverviewAccounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致）
+// OverviewAccounts 账号健康分布（两轴三桶：手动停用 / 运行时失效 / 正常服务；调度器快照同源——与账号列表运行时视图一致）+ 并发水位
 type OverviewAccounts struct {
-	N429   int `json:"429"`
+	// Active 正常服务（enabled 且未失效）
 	Active int `json:"active"`
 
 	// Concurrency 在途并发合计
 	Concurrency int64 `json:"concurrency"`
-	Disabled    int   `json:"disabled"`
+
+	// Disabled 手动停用（enabled=false）
+	Disabled int `json:"disabled"`
+
+	// Failed 运行时失效（enabled 且 failed_at 置位）
+	Failed int `json:"failed"`
 
 	// MaxConcurrency 并发上限合计（水位 = concurrency / max_concurrency）
 	MaxConcurrency int `json:"max_concurrency"`
-	Unhealthy      int `json:"unhealthy"`
 }
 
 // OverviewAlerts 告警面（billing 游标消费者 lag 族观测，ledger-cursor；注入面读取，未装配 = 全零）
@@ -1173,7 +1177,7 @@ type OverviewResources struct {
 
 // OverviewResponse defines model for OverviewResponse.
 type OverviewResponse struct {
-	// Accounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致）
+	// Accounts 账号健康分布（两轴三桶：手动停用 / 运行时失效 / 正常服务；调度器快照同源——与账号列表运行时视图一致）+ 并发水位
 	Accounts OverviewAccounts `json:"accounts"`
 
 	// Alerts 告警面（billing 游标消费者 lag 族观测，ledger-cursor；注入面读取，未装配 = 全零）

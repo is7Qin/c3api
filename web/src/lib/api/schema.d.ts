@@ -4312,11 +4312,13 @@ export interface components {
             /** Format: int64 */
             ttft_p99_ms: number;
         };
-        /** @description 账号健康分布 + 并发水位（调度器快照同源——与账号列表运行时视图一致） */
+        /** @description 账号健康分布（两轴三桶：手动停用 / 运行时失效 / 正常服务；调度器快照同源——与账号列表运行时视图一致）+ 并发水位 */
         OverviewAccounts: {
-            429: number;
+            /** @description 正常服务（enabled 且未失效） */
             active: number;
-            unhealthy: number;
+            /** @description 运行时失效（enabled 且 failed_at 置位） */
+            failed: number;
+            /** @description 手动停用（enabled=false） */
             disabled: number;
             /**
              * Format: int64

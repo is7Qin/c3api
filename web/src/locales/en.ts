@@ -69,9 +69,8 @@ export default {
     "system": "System"
   },
   "status": {
-    "429": "Rate limited",
     "active": "Available",
-    "unhealthy": "Unhealthy",
+    "failed": "Runtime failed",
     "disabled": "Disabled"
   },
   "errorType": {
@@ -131,9 +130,8 @@ export default {
       "max": "TTFT max"
     },
     "statusCards": {
-      "429": "Rate limited by upstream",
       "active": "Serving normally",
-      "unhealthy": "Upstream error",
+      "failed": "Runtime failed",
       "disabled": "Manually disabled"
     },
     "totalCards": {

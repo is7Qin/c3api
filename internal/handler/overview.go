@@ -106,8 +106,7 @@ func overviewResponse(d *service.OverviewData, alerts func() BillingAlerts) Over
 		Trend:   trend,
 		Accounts: OverviewAccounts{
 			Active:         d.Accounts.Active,
-			Unhealthy:      d.Accounts.Unhealthy,
-			N429:           d.Accounts.N429,
+			Failed:         d.Accounts.Failed,
 			Disabled:       d.Accounts.Disabled,
 			Concurrency:    d.Accounts.Concurrency,
 			MaxConcurrency: int(d.Accounts.MaxConcurrency),

@@ -17,13 +17,14 @@ import (
 // —— /api/admin/overview 聚合面（spec 2026-08-14；全冷面：聚合查询 + 快照遍历，
 // 门禁/计费面零改动） ——
 
-// OverviewAccounts 账号健康分布 + 并发水位（调度器快照同源——与账号列表
-// 运行时视图 ListAccountViews 一致：状态取快照 EWMA 状态，并发/水位取快照
-// 原子计数器）。
+// OverviewAccounts 账号健康分布（两轴三桶）+ 并发水位（调度器快照同源——与账号
+// 列表运行时视图 ListAccountViews 一致：状态取快照 EWMA 状态，并发/水位取快照
+// 原子计数器）。三桶互斥完备：Disabled=enabled=false（手动停用）、
+// Failed=enabled 且 Status==disabled（运行时失效）、Active=其余；三者之和 =
+// 快照内已分组账号数。Concurrency/MaxConcurrency 仍对全部（已分组）runtime 累加。
 type OverviewAccounts struct {
 	Active         int
-	Unhealthy      int
-	N429           int
+	Failed         int
 	Disabled       int
 	Concurrency    int64
 	MaxConcurrency int64
@@ -107,15 +108,13 @@ func (s *Service) Overview(ctx context.Context, day time.Time, days int, groupID
 	var errTop []OverviewErrTop
 	if s.sched != nil {
 		for _, rt := range s.sched.Runtimes() {
-			switch rt.Status {
-			case domain.StatusActive:
-				acc.Active++
-			case domain.StatusUnhealthy:
-				acc.Unhealthy++
-			case domain.Status429:
-				acc.N429++
-			case domain.StatusDisabled:
+			switch {
+			case !rt.Enabled:
 				acc.Disabled++
+			case rt.Status == domain.StatusDisabled:
+				acc.Failed++
+			default:
+				acc.Active++
 			}
 			acc.Concurrency += rt.Concurrency
 			acc.MaxConcurrency += int64(rt.MaxConcurrency)
