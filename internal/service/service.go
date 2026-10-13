@@ -384,6 +384,15 @@ type RuntimeProvider interface {
 	Runtimes() []scheduler.AccountRuntime
 }
 
+// RouteModelsProvider 组可路由模型能力（实现 = *scheduler.Scheduler）。与
+// RuntimeProvider 同一注入实例，经既有 Scheduler 面**能力探测**获取
+// （s.sched.(RouteModelsProvider)）——不新增装配参数，同 routing.go 的
+// RoutingPlanProvider 先例；不支持/未装配 → Service.RouteModels 降级 (nil,false)。
+type RouteModelsProvider interface {
+	// GroupModels 组的可路由模型（去重排序）；快照未加载/组不存在 → (nil,false)。
+	GroupModels(groupID int64) ([]string, bool)
+}
+
 // KeyRegistrar 由 proxy.Auth 实现，供客户端 key 变更时增量刷新鉴权快照。
 type KeyRegistrar interface {
 	Upsert(hash string, meta domain.KeyMeta)
@@ -488,6 +497,7 @@ type Deps struct {
 	// Store 复合持久化面（repository.Repository 实现）。
 	Store Store
 	// Scheduler 账号运行时视图（overview/列表运行时视图；nil = 未装配）。
+	// 亦承载模型目录的组可路由模型能力（RouteModelsProvider 能力探测）。
 	Scheduler RuntimeProvider
 	// Invalidate 管理面变更去抖失效（nil = 不失效）。
 	Invalidate Invalidator
@@ -560,7 +570,8 @@ func New(deps Deps) *Service {
 	if deps.EmailCodeStore == nil {
 		panic("service: New(nil EmailCodeStore): Redis 是必选依赖，验证码存储无降级路径")
 	}
-	s := &Service{store: deps.Store, sched: deps.Scheduler, inv: deps.Invalidate, pub: deps.Publisher,
+	s := &Service{store: deps.Store, sched: deps.Scheduler,
+		inv: deps.Invalidate, pub: deps.Publisher,
 		ruleReload: deps.RuleReload, keys: deps.Auth, mgmtKeys: deps.Auth, log: deps.Log,
 		supplierViewReload: deps.SupplierViewReload,
 		emailCodes:         deps.EmailCodeStore, tzLoc: deps.TimeLocation, recoverProber: deps.RecoverProber,

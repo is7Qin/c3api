@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/handler/httpface"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -157,12 +158,12 @@ func toAPIGroup(g *domain.Group) Group {
 }
 
 // multToNormal 万分数 → 正常值（API 展示换算：15000 → 1.5；1 USD = 100,000
-// 毫分同构——内部存储恒万分数，仅 API 边界换算）。
-func multToNormal(v int) float64 { return float64(v) / 10000.0 }
+// 毫分同构——内部存储恒万分数，仅 API 边界换算）。委托 httpface 共享实现。
+func multToNormal(v int) float64 { return httpface.MultBPToNormalValue(v) }
 
 // normalToMult 正常值 → 万分数（API 输入换算：1.5 → 15000；math.Round 消除
-// 浮点取整误差）。
-func normalToMult(v float64) int { return int(math.Round(v * 10000)) }
+// 浮点取整误差）。委托 httpface 共享实现。
+func normalToMult(v float64) int { return httpface.NormalToMultBP(v) }
 
 // apiMultiplierToMillis 生成类型倍率（正常值 *float64，nil = 未指定）→ 万分数
 // *int；越界（<0 或 >10）→ 错误（400 文案）。
@@ -222,21 +223,16 @@ func toAPIMultipliers(m map[int64]*int) *map[string]*float64 {
 }
 
 // millisToUSD 毫分 → USD float64（1 USD = 100,000 毫分；handler 边界展示换算，
-// 内部存储恒毫分）。
-func millisToUSD(millis int64) float64 { return float64(millis) / 1e5 }
+// 内部存储恒毫分）。委托 httpface 共享实现（用户面模型目录同口径）。
+func millisToUSD(millis int64) float64 { return httpface.MillisToUSD(millis) }
 
 // usdToMillis USD float64 → 毫分（math.Round 消除浮点取整误差；API 输入边界
-// 换算，内部存储恒毫分）。
-func usdToMillis(usd float64) int64 { return int64(math.Round(usd * 1e5)) }
+// 换算，内部存储恒毫分）。委托 httpface 共享实现。
+func usdToMillis(usd float64) int64 { return httpface.USDToMillis(usd) }
 
 // millisToUSDPtr *int64（毫分）→ *float64（USD）；nil 透传（价格矩阵可选列）。
-func millisToUSDPtr(v *int64) *float64 {
-	if v == nil {
-		return nil
-	}
-	f := millisToUSD(*v)
-	return &f
-}
+// 委托 httpface 共享实现。
+func millisToUSDPtr(v *int64) *float64 { return httpface.MillisToUSDPtr(v) }
 
 // usdToMillisPtr *float64（USD）→ *int64（毫分）；nil 透传（缺省 = 清空该价）。
 func usdToMillisPtr(v *float64) *int64 {
@@ -268,20 +264,15 @@ func multI64ToNormalPtr(v *int64) *float64 {
 // 语义独立——按张 flat 计费，防混用）。实现与 usdToMillis 共用（同系数同取整）。
 func usdPerImageToMilli(usd float64) int64 { return usdToMillis(usd) }
 
-// milliPerImageToUSD 毫分/张 → USD/张（/1e5；API 展示换算）。
-func milliPerImageToUSD(millis int64) float64 { return float64(millis) / 1e5 }
+// milliPerImageToUSD 毫分/张 → USD/张（/1e5；API 展示换算）。委托 httpface 共享实现。
+func milliPerImageToUSD(millis int64) float64 { return httpface.MillisToUSD(millis) }
 
 // usdPerImageToMilliPtr *float64（USD/张）→ *int64（毫分/张）；nil 透传。
 func usdPerImageToMilliPtr(v *float64) *int64 { return usdToMillisPtr(v) }
 
 // milliPerImageToUSDPtr *int64（毫分/张）→ *float64（USD/张）；nil 透传。
-func milliPerImageToUSDPtr(v *int64) *float64 {
-	if v == nil {
-		return nil
-	}
-	f := milliPerImageToUSD(*v)
-	return &f
-}
+// 委托 httpface 共享实现。
+func milliPerImageToUSDPtr(v *int64) *float64 { return httpface.MillisToUSDPtr(v) }
 
 // --- 按单元价 API 边界换算（价格表三件套；单位规则独立，函数自文档化） ---
 //
@@ -294,21 +285,16 @@ func milliPerImageToUSDPtr(v *int64) *float64 {
 func usdPerCallToMilli(usd float64) int64 { return usdToMillis(usd) }
 
 // milliPerCallToUSD 毫分/次 → USD/次（/1e5；API 展示换算，回显 litellm 原生
-// 口径 input_cost_per_query）。
-func milliPerCallToUSD(millis int64) float64 { return float64(millis) / 1e5 }
+// 口径 input_cost_per_query）。委托 httpface 共享实现。
+func milliPerCallToUSD(millis int64) float64 { return httpface.MillisToUSD(millis) }
 
 // usdPerCallToMilliPtr *float64（USD/次，litellm 原生口径）→ *int64（毫分/次）；
 // nil 透传。
 func usdPerCallToMilliPtr(v *float64) *int64 { return usdToMillisPtr(v) }
 
 // milliPerCallToUSDPtr *int64（毫分/次）→ *float64（USD/次）；nil 透传。
-func milliPerCallToUSDPtr(v *int64) *float64 {
-	if v == nil {
-		return nil
-	}
-	f := milliPerCallToUSD(*v)
-	return &f
-}
+// 委托 httpface 共享实现。
+func milliPerCallToUSDPtr(v *int64) *float64 { return httpface.MillisToUSDPtr(v) }
 
 // normalToMultI64Ptr *float64（正常值）→ *int64（万分数）；nil 透传。
 func normalToMultI64Ptr(v *float64) *int64 {
