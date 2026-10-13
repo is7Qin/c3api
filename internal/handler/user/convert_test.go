@@ -6,7 +6,9 @@ package user
 
 import (
 	"context"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -142,4 +144,46 @@ func TestUserErrLogNoRulesNil(t *testing.T) {
 	e := h.toAPIErrLog(errRow(domain.Err4xx, 401, "raw detail"))
 	require.NotNil(t, e.ErrorMessage)
 	require.Equal(t, "raw detail", *e.ErrorMessage)
+}
+
+// TestToAPIUserGroupMirrorsGroup UserGroup（openapi allOf: Group + EffectiveMultiplier）
+// 的**漂移护栏**：UserGroup 每个导出字段必须与 toAPIGroup(g) 同名字段逐值相等——Group
+// 契约未来新增字段时，toAPIUserGroup 的手工复制若漏搬 → 立即失败（防静默丢字段）；
+// 且 UserGroup 仅比 Group 多 EffectiveMultiplier 一个字段（无多余字段）。
+func TestToAPIUserGroupMirrorsGroup(t *testing.T) {
+	ts := time.Unix(1700000000, 0).UTC()
+	g := &domain.Group{
+		ID:              7,
+		Name:            "grp",
+		Description:     "desc",
+		Visibility:      domain.GroupVisibilityPublic,
+		PriceMultiplier: 15000,
+		CreatedAt:       ts,
+		UpdatedAt:       ts.Add(time.Second),
+	}
+
+	base := toAPIGroup(g)
+	ug := toAPIUserGroup(g, nil)
+
+	bt := reflect.TypeOf(base)
+	bv := reflect.ValueOf(base)
+	uv := reflect.ValueOf(ug)
+	for i := 0; i < bt.NumField(); i++ {
+		name := bt.Field(i).Name
+		f := uv.FieldByName(name)
+		require.True(t, f.IsValid(), "UserGroup 缺少 Group 字段 %q（契约漂移，需同步 toAPIUserGroup）", name)
+		require.Equal(t, bv.Field(i).Interface(), f.Interface(), "字段 %q 未从 Group 镜像", name)
+	}
+	require.Nil(t, ug.EffectiveMultiplier)
+
+	// 反向：UserGroup 字段集 = Group 字段集 ∪ {EffectiveMultiplier}，无预期外字段。
+	ut := reflect.TypeOf(ug)
+	extra := 0
+	for i := 0; i < ut.NumField(); i++ {
+		if _, ok := bt.FieldByName(ut.Field(i).Name); !ok {
+			extra++
+			require.Equal(t, "EffectiveMultiplier", ut.Field(i).Name, "UserGroup 出现预期外的额外字段")
+		}
+	}
+	require.Equal(t, 1, extra, "UserGroup 应恰好多出 EffectiveMultiplier 一个字段")
 }

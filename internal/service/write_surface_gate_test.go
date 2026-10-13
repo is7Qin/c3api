@@ -31,7 +31,8 @@ import (
 //   - 软删除 DeleteAccount 与 DeleteAccountsBatch 只写删除标记，不推进代际，
 //     不是配置或身份写入。
 //   - 其余各项是读、其它实体的写入或纯编排 helper（键、组、用户、模板、规则、
-//     定价、兑换、邮件、统计、用量、路由观测），不触账号配置或身份代际。
+//     定价、模型目录读（RouteModels/GroupMultiplierOverrides/PriceDisplayForModels）、
+//     兑换、邮件、统计、用量、路由观测），不触账号配置或身份代际。
 var allowedServiceMethods = []string{
 	"AccountUsageCredential",
 	"AccountUsageFrozen",
@@ -85,6 +86,7 @@ var allowedServiceMethods = []string{
 	"GetUser",
 	"GetUserGroups",
 	"GetUserMe",
+	"GroupMultiplierOverrides",
 	"ImportCodexOAuthAccounts",
 	"ImportCodexPATAccounts",
 	"ListAccountViews",
@@ -109,6 +111,7 @@ var allowedServiceMethods = []string{
 	"MailConfig",
 	"Overview",
 	"PatchAccount",
+	"PriceDisplayForModels",
 	"PriceModels",
 	"PriceSourceURL",
 	"PriceSyncCron",
@@ -134,6 +137,7 @@ var allowedServiceMethods = []string{
 	"ResolvePrices",
 	"ResolvedPricesByModel",
 	"RotateKey",
+	"RouteModels",
 	"RoutingPlanExplanation",
 	"SendForgotPasswordCode",
 	"SendMailChannelTest",

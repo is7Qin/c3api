@@ -55,6 +55,25 @@ func toAPIGroup(g *domain.Group) Group {
 	}
 }
 
+// toAPIUserGroup 组领域对象 → 契约类型（Group 全部字段 + 附加式用户级有效倍率）。
+// eff 为已换算的正常值（nil = 有效倍率不可得 → JSON 显式 null，前端回落
+// Group.PriceMultiplier）。描述只谈倍率，不含时区句（spec §3.4）。
+func toAPIUserGroup(g *domain.Group, eff *float64) UserGroup {
+	base := toAPIGroup(g)
+	return UserGroup{
+		ID:                  base.ID,
+		Name:                base.Name,
+		Description:         base.Description,
+		Visibility:          base.Visibility,
+		PriceMultiplier:     base.PriceMultiplier,
+		ProtocolConvert:     base.ProtocolConvert,
+		CreatedAt:           base.CreatedAt,
+		UpdatedAt:           base.UpdatedAt,
+		DeletedAt:           base.DeletedAt,
+		EffectiveMultiplier: eff,
+	}
+}
+
 // toAPIKey key 领域对象 → 契约类型（明文长期回显——列表/详情/创建/轮换）。
 func toAPIKey(k *domain.Key) Key {
 	st := KeyStatus(k.Status)

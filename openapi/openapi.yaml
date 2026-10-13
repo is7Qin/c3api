@@ -1206,12 +1206,27 @@ paths:
       summary: 可选组列表（public 全部 + 已授予 private；只读，key 创建时选组）
       responses:
         '200':
-          description: 分组列表
+          description: 分组列表（含该用户在该组的有效倍率——附加式扩展）
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: '#/components/schemas/Group' }
+                items: { $ref: '#/components/schemas/UserGroup' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/models:
+    get:
+      operationId: GetUserModels
+      tags: [user]
+      summary: 可见分组的可路由模型及其价格（只读快照投影；展示基底价与全部条件变体，最终价由用户按有效倍率自算）
+      responses:
+        '200':
+          description: 分组→模型目录（每组真实可路由模型 + 价格分量 + 条件变体）
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CatalogGroup' }
         default:
           $ref: '#/components/responses/Error'
   /api/user/keys:
@@ -3654,6 +3669,59 @@ components:
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表/消费路径过滤已删；GET 单个可查已删项） }
+    UserGroup:
+      allOf:
+        - $ref: '#/components/schemas/Group'
+        - type: object
+          properties:
+            EffectiveMultiplier: { type: number, format: double, nullable: true, description: "该用户在该组的有效倍率（正常值，1.5 = ×1.5；含用户专属覆盖）。null = 不可得（provider 未装配或 billing 快照未载入）→ 前端回落 Group.PriceMultiplier。" }
+    CatalogGroup:
+      type: object
+      required: [Group, Models]
+      properties:
+        Group: { $ref: '#/components/schemas/UserGroup' }
+        Models:
+          type: array
+          items: { $ref: '#/components/schemas/CatalogModel' }
+    CatalogModel:
+      type: object
+      required: [Model, Variants]
+      properties:
+        Model: { type: string }
+        Mode: { type: string, nullable: true, description: "主计费方式（token/call/image）；null = 无价模型（无价格条目）→ 前端价格区显示 —" }
+        InputPerM: { type: number, format: double, nullable: true }
+        OutputPerM: { type: number, format: double, nullable: true }
+        CacheReadPerM: { type: number, format: double, nullable: true }
+        CacheWritePerM: { type: number, format: double, nullable: true }
+        PricePerCall: { type: number, format: double, nullable: true }
+        ImgInTokPerM: { type: number, format: double, nullable: true }
+        ImgOutTokPerM: { type: number, format: double, nullable: true }
+        PricePerImage: { type: number, format: double, nullable: true }
+        Provider: { type: string, nullable: true, description: "上游厂商（自由字符串，不做 enum 校验——与 PriceEntry.Provider 的 enum schema 口径不同）" }
+        SupportsPromptCaching: { type: boolean, nullable: true }
+        Variants:
+          type: array
+          items: { $ref: '#/components/schemas/CatalogVariant' }
+    CatalogVariant:
+      type: object
+      required: [Seq]
+      properties:
+        Seq: { type: integer, description: 升序序号 }
+        ServiceTier: { type: string, nullable: true }
+        CtxMin: { type: integer, format: int64, nullable: true }
+        CtxMax: { type: integer, format: int64, nullable: true }
+        TimeStart: { type: string, nullable: true, description: "HH:MM（服务端本地时间，无时区下发）" }
+        TimeEnd: { type: string, nullable: true, description: "HH:MM（服务端本地时间，无时区下发）" }
+        DowMask: { type: integer, nullable: true, description: "位数掩码；bit i = 星期 i（Sun=0..Sat=6）" }
+        multiplier: { type: number, format: double, nullable: true, description: "条件倍率（正常值，mult_bp/1e4）" }
+        SetInputPerM: { type: number, format: double, nullable: true }
+        SetOutputPerM: { type: number, format: double, nullable: true }
+        SetCacheReadPerM: { type: number, format: double, nullable: true }
+        SetCacheCreationPerM: { type: number, format: double, nullable: true, description: "覆盖缓存写价（对应基底列 CacheWritePerM——命名沿 PriceVariant 既有列）" }
+        SetPricePerCall: { type: number, format: double, nullable: true }
+        SetImgInTokPerM: { type: number, format: double, nullable: true }
+        SetImgOutTokPerM: { type: number, format: double, nullable: true }
+        SetPricePerImage: { type: number, format: double, nullable: true }
     AccountGroupsResponse:
       type: object
       required: [group_ids]

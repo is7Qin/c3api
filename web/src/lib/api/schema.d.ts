@@ -870,6 +870,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 可见分组的可路由模型及其价格（只读快照投影；展示基底价与全部条件变体，最终价由用户按有效倍率自算） */
+        get: operations["GetUserModels"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/keys": {
         parameters: {
             query?: never;
@@ -3015,6 +3032,81 @@ export interface components {
              * @description 软删除时间戳；null = 存活（列表/消费路径过滤已删；GET 单个可查已删项）
              */
             DeletedAt?: string | null;
+        };
+        UserGroup: components["schemas"]["Group"] & {
+            /**
+             * Format: double
+             * @description 该用户在该组的有效倍率（正常值，1.5 = ×1.5；含用户专属覆盖）。null = 不可得（provider 未装配或 billing 快照未载入）→ 前端回落 Group.PriceMultiplier。
+             */
+            EffectiveMultiplier?: number | null;
+        };
+        CatalogGroup: {
+            Group: components["schemas"]["UserGroup"];
+            Models: components["schemas"]["CatalogModel"][];
+        };
+        CatalogModel: {
+            Model: string;
+            /** @description 主计费方式（token/call/image）；null = 无价模型（无价格条目）→ 前端价格区显示 — */
+            Mode?: string | null;
+            /** Format: double */
+            InputPerM?: number | null;
+            /** Format: double */
+            OutputPerM?: number | null;
+            /** Format: double */
+            CacheReadPerM?: number | null;
+            /** Format: double */
+            CacheWritePerM?: number | null;
+            /** Format: double */
+            PricePerCall?: number | null;
+            /** Format: double */
+            ImgInTokPerM?: number | null;
+            /** Format: double */
+            ImgOutTokPerM?: number | null;
+            /** Format: double */
+            PricePerImage?: number | null;
+            /** @description 上游厂商（自由字符串，不做 enum 校验——与 PriceEntry.Provider 的 enum schema 口径不同） */
+            Provider?: string | null;
+            SupportsPromptCaching?: boolean | null;
+            Variants: components["schemas"]["CatalogVariant"][];
+        };
+        CatalogVariant: {
+            /** @description 升序序号 */
+            Seq: number;
+            ServiceTier?: string | null;
+            /** Format: int64 */
+            CtxMin?: number | null;
+            /** Format: int64 */
+            CtxMax?: number | null;
+            /** @description HH:MM（服务端本地时间，无时区下发） */
+            TimeStart?: string | null;
+            /** @description HH:MM（服务端本地时间，无时区下发） */
+            TimeEnd?: string | null;
+            /** @description 位数掩码；bit i = 星期 i（Sun=0..Sat=6） */
+            DowMask?: number | null;
+            /**
+             * Format: double
+             * @description 条件倍率（正常值，mult_bp/1e4）
+             */
+            multiplier?: number | null;
+            /** Format: double */
+            SetInputPerM?: number | null;
+            /** Format: double */
+            SetOutputPerM?: number | null;
+            /** Format: double */
+            SetCacheReadPerM?: number | null;
+            /**
+             * Format: double
+             * @description 覆盖缓存写价（对应基底列 CacheWritePerM——命名沿 PriceVariant 既有列）
+             */
+            SetCacheCreationPerM?: number | null;
+            /** Format: double */
+            SetPricePerCall?: number | null;
+            /** Format: double */
+            SetImgInTokPerM?: number | null;
+            /** Format: double */
+            SetImgOutTokPerM?: number | null;
+            /** Format: double */
+            SetPricePerImage?: number | null;
         };
         AccountGroupsResponse: {
             group_ids: number[];
@@ -6117,13 +6209,34 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 分组列表 */
+            /** @description 分组列表（含该用户在该组的有效倍率——附加式扩展） */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Group"][];
+                    "application/json": components["schemas"]["UserGroup"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUserModels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分组→模型目录（每组真实可路由模型 + 价格分量 + 条件变体） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogGroup"][];
                 };
             };
             default: components["responses"]["Error"];

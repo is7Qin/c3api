@@ -141,6 +141,65 @@ type BalanceWarningThresholdUpdate struct {
 	BalanceWarningThreshold float64 `json:"balance_warning_threshold"`
 }
 
+// CatalogGroup defines model for CatalogGroup.
+type CatalogGroup struct {
+	Group  UserGroup      `json:"Group"`
+	Models []CatalogModel `json:"Models"`
+}
+
+// CatalogModel defines model for CatalogModel.
+type CatalogModel struct {
+	CacheReadPerM  *float64 `json:"CacheReadPerM"`
+	CacheWritePerM *float64 `json:"CacheWritePerM"`
+	ImgInTokPerM   *float64 `json:"ImgInTokPerM"`
+	ImgOutTokPerM  *float64 `json:"ImgOutTokPerM"`
+	InputPerM      *float64 `json:"InputPerM"`
+
+	// Mode 主计费方式（token/call/image）；null = 无价模型（无价格条目）→ 前端价格区显示 —
+	Mode          *string  `json:"Mode"`
+	Model         string   `json:"Model"`
+	OutputPerM    *float64 `json:"OutputPerM"`
+	PricePerCall  *float64 `json:"PricePerCall"`
+	PricePerImage *float64 `json:"PricePerImage"`
+
+	// Provider 上游厂商（自由字符串，不做 enum 校验——与 PriceEntry.Provider 的 enum schema 口径不同）
+	Provider              *string          `json:"Provider"`
+	SupportsPromptCaching *bool            `json:"SupportsPromptCaching"`
+	Variants              []CatalogVariant `json:"Variants"`
+}
+
+// CatalogVariant defines model for CatalogVariant.
+type CatalogVariant struct {
+	CtxMax *int64 `json:"CtxMax"`
+	CtxMin *int64 `json:"CtxMin"`
+
+	// DowMask 位数掩码；bit i = 星期 i（Sun=0..Sat=6）
+	DowMask *int `json:"DowMask"`
+
+	// Seq 升序序号
+	Seq         int     `json:"Seq"`
+	ServiceTier *string `json:"ServiceTier"`
+
+	// SetCacheCreationPerM 覆盖缓存写价（对应基底列 CacheWritePerM——命名沿 PriceVariant 既有列）
+	SetCacheCreationPerM *float64 `json:"SetCacheCreationPerM"`
+	SetCacheReadPerM     *float64 `json:"SetCacheReadPerM"`
+	SetImgInTokPerM      *float64 `json:"SetImgInTokPerM"`
+	SetImgOutTokPerM     *float64 `json:"SetImgOutTokPerM"`
+	SetInputPerM         *float64 `json:"SetInputPerM"`
+	SetOutputPerM        *float64 `json:"SetOutputPerM"`
+	SetPricePerCall      *float64 `json:"SetPricePerCall"`
+	SetPricePerImage     *float64 `json:"SetPricePerImage"`
+
+	// TimeEnd HH:MM（服务端本地时间，无时区下发）
+	TimeEnd *string `json:"TimeEnd"`
+
+	// TimeStart HH:MM（服务端本地时间，无时区下发）
+	TimeStart *string `json:"TimeStart"`
+
+	// Multiplier 条件倍率（正常值，mult_bp/1e4）
+	Multiplier *float64 `json:"multiplier"`
+}
+
 // ChangePasswordResponse defines model for ChangePasswordResponse.
 type ChangePasswordResponse struct {
 	Updated bool `json:"updated"`
@@ -552,6 +611,30 @@ type UserErrLogsResponse struct {
 	Rows       []UserErrLog `json:"rows"`
 }
 
+// UserGroup defines model for UserGroup.
+type UserGroup struct {
+	CreatedAt *time.Time `json:"CreatedAt,omitempty"`
+
+	// DeletedAt 软删除时间戳；null = 存活（列表/消费路径过滤已删；GET 单个可查已删项）
+	DeletedAt *time.Time `json:"DeletedAt"`
+
+	// Description 分组描述（空串 = 无描述）
+	Description *string `json:"Description,omitempty"`
+
+	// EffectiveMultiplier 该用户在该组的有效倍率（正常值，1.5 = ×1.5；含用户专属覆盖）。null = 不可得（provider 未装配或 billing 快照未载入）→ 前端回落 Group.PriceMultiplier。
+	EffectiveMultiplier *float64 `json:"EffectiveMultiplier"`
+	ID                  *int64   `json:"ID,omitempty"`
+	Name                *string  `json:"Name,omitempty"`
+
+	// PriceMultiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）
+	PriceMultiplier *float64 `json:"PriceMultiplier,omitempty"`
+
+	// ProtocolConvert 协议转换方向集合（空数组 = off = 不转换；多方向按客户端格式命中）
+	ProtocolConvert *[]GroupProtocolConvert `json:"ProtocolConvert,omitempty"`
+	UpdatedAt       *time.Time              `json:"UpdatedAt,omitempty"`
+	Visibility      *GroupVisibility        `json:"Visibility,omitempty"`
+}
+
 // UserLogsResponse defines model for UserLogsResponse.
 type UserLogsResponse struct {
 	// NextCursor 下一页游标（本页最后一条 id）；null = 无更多行
@@ -851,6 +934,9 @@ type ServerInterface interface {
 	// 更新管理 key（name/status；仅本人；disabled 即时 401 可再启用）
 	// (PUT /api/user/management-keys/{id})
 	PutUserManagementKeysId(w http.ResponseWriter, r *http.Request, id int64)
+	// 可见分组的可路由模型及其价格（只读快照投影；展示基底价与全部条件变体，最终价由用户按有效倍率自算）
+	// (GET /api/user/models)
+	GetUserModels(w http.ResponseWriter, r *http.Request)
 	// 我的兑换记录（use 快照 + 码的 type/remark 联查；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/redemptions)
 	GetUserRedemptions(w http.ResponseWriter, r *http.Request, params GetUserRedemptionsParams)
@@ -1001,6 +1087,12 @@ func (_ Unimplemented) DeleteUserManagementKeysId(w http.ResponseWriter, r *http
 // 更新管理 key（name/status；仅本人；disabled 即时 401 可再启用）
 // (PUT /api/user/management-keys/{id})
 func (_ Unimplemented) PutUserManagementKeysId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 可见分组的可路由模型及其价格（只读快照投影；展示基底价与全部条件变体，最终价由用户按有效倍率自算）
+// (GET /api/user/models)
+func (_ Unimplemented) GetUserModels(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1559,6 +1651,20 @@ func (siw *ServerInterfaceWrapper) PutUserManagementKeysId(w http.ResponseWriter
 	handler.ServeHTTP(w, r)
 }
 
+// GetUserModels operation middleware
+func (siw *ServerInterfaceWrapper) GetUserModels(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserModels(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUserRedemptions operation middleware
 func (siw *ServerInterfaceWrapper) GetUserRedemptions(w http.ResponseWriter, r *http.Request) {
 
@@ -2058,6 +2164,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/user/management-keys/{id}", wrapper.PutUserManagementKeysId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/models", wrapper.GetUserModels)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/redemptions", wrapper.GetUserRedemptions)
