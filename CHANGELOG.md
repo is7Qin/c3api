@@ -10,6 +10,10 @@ During the **beta** phase, versions are `v0.x.0-beta.N` (N increments with each 
 
 ## [Unreleased]
 
+### Breaking
+
+- **The overview account-status split is redefined into two axes and three buckets, and `accounts.disabled` has reversed meaning**: `GET /api/admin/overview`'s `accounts` object no longer carries `unhealthy` and `429` (both were permanently zero — the backing `StatusUnhealthy` / `Status429` states have no producer) and gains `failed`. `active` / `failed` / `disabled` are now an exhaustive, mutually exclusive split of the routable (assigned-to-a-group) account pool along the two real axes — manual enable/disable (`enabled`) and runtime failure (`failed_at`): `disabled` = manually disabled (`enabled = false`), `failed` = enabled but runtime-failed (`failed_at` set), `active` = the rest; the three always sum to the number of grouped accounts. **`disabled` is a same-name semantic reversal**: it previously counted runtime-failed accounts (what `failed` now counts) and now counts manually-disabled ones, so any out-of-repo admin client that reads `disabled` silently receives the opposite meaning. Only the dashboard consumes this object in-repo and is updated in the same change; manually-disabled accounts were previously miscounted as `active`. The cards read from the scheduler snapshot and remain subject to the endpoint's internal 30s cache plus the dashboard's 30s poll (~60s worst-case convergence).
+
 ## [v0.0.1-beta.8] - 2026-10-12
 
 ### Breaking
