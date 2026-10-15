@@ -272,7 +272,7 @@ func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 	// leaf. This is an ESTIMATE from the field layout, NOT an isolated measured
 	// increment; it is logged so a BASE/HEAD retained differential can be read.
 	planKeyBytes := int(unsafe.Sizeof(planKey{})) * len(sv.byID)
-	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; estimated inline planKey bytes = %d (%d leaves × %d B); held digest bytes=%d; leaves=%d",
+	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; estimated inline planKey bytes = %d (%d leaves × %d B); canonical stream length bytes=%d (the guard stores only a 32-byte digest + count, not the encoding); leaves=%d",
 		retained, planKeyBytes, len(sv.byID), unsafe.Sizeof(planKey{}), s.lastDigest.count, len(sv.byID))
 }
 

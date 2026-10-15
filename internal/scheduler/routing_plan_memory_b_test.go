@@ -224,3 +224,69 @@ func TestRPM_B3_NoEncodingSizedBuffer(t *testing.T) {
 		require.NotContains(t, string(raw), "decisionEncoder", name)
 	}
 }
+
+// --- B2 nil publication protocol ---
+
+// rpmNilCompiler is a CUSTOM TEST SEAM that returns a nil decision with no
+// error. A nil DecisionView is not a production promise here — the production
+// compiler always returns a non-nil view or an error — but the publish guard is
+// nil-aware by design (spec §4), so this seam pins those branches. It
+// deliberately implements neither scoped seam, so a scope-triggered fire takes
+// the exact full-fidelity fallback and still returns nil.
+type rpmNilCompiler struct{}
+
+func (rpmNilCompiler) Compile(CompilerInputs) (*DecisionView, error) { return nil, nil }
+
+// TestRPM_B2_NilDecisionPendingPairProtocol pins the publication protocol for a
+// successful nil decision (custom seam): the first pending pair publishes and
+// tracks the publisher-RETURNED static wrapper; an equal nil decision against
+// the same static root does not republish (digest+root guard); an equal nil
+// decision against a freshly staged root publishes. This is the same protocol
+// BASE implements with `bytes.Equal(lastDecisionBytes, b) && lastCompiledStatic
+// == target` (raw BASE evidence: .omo/reports/routing-plan-memory-fix-r1.md).
+func TestRPM_B2_NilDecisionPendingPairProtocol(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
+	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000)}
+	m := newMemLoader(map[int64][]*domain.Account{10: accs})
+	s := newSchedStatic(t, m)
+	s.compiler = rpmNilCompiler{}
+
+	var dig decisionDigester
+	nilDigest := dig.digest(nil)
+	require.True(t, nilDigest.isNil)
+	require.Zero(t, nilDigest.count)
+
+	// The first pending-pair publish: a static root is staged and no decision
+	// has ever been published, so the nil decision must still publish. The
+	// published static root is the publisher-RETURNED wrapper, not the staged
+	// input root (publishPairLocked re-wraps an already-published static root).
+	staged := s.publisher.pending
+	require.NotNil(t, staged, "reload stages a pending static root")
+	require.Nil(t, s.View().DecisionView())
+	gen0 := s.View().Generation()
+	s.compileOnce()
+	require.Greater(t, s.View().Generation(), gen0, "first nil decision must publish via the pending pair")
+	require.Nil(t, s.View().DecisionView())
+	require.Nil(t, s.publisher.pending, "a paired publish clears the staged root")
+	require.Same(t, s.View().StaticView(), s.lastCompiledStatic,
+		"the guard must track the publisher-returned static root")
+	require.NotSame(t, staged, s.lastCompiledStatic,
+		"the published wrapper is not the staged input root")
+	require.True(t, s.lastDigestSet)
+	require.Equal(t, nilDigest, s.lastDigest)
+
+	// Equal nil / same root: the guard must skip the republish. Force a route
+	// scope so the fire is not a fireSkip and actually reaches the digest guard.
+	gen1 := s.View().Generation()
+	s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
+	s.compileOnce()
+	require.Equal(t, gen1, s.View().Generation(), "equal nil + same root must not republish")
+	require.Equal(t, nilDigest, s.lastDigest)
+
+	// Equal nil / fresh staged root: the root changed, so it must publish.
+	require.NoError(t, s.reload(context.Background()))
+	s.compileOnce()
+	require.Greater(t, s.View().Generation(), gen1, "equal nil + changed root must publish")
+	require.Nil(t, s.View().DecisionView())
+	require.Equal(t, nilDigest, s.lastDigest)
+}

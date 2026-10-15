@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package scheduler
 
-// Fixed routing-plan-memory fixtures (spec §6). BASE-COMPATIBLE: this file uses
-// only symbols that exist at BASE commit d0d59648 (plus Go stdlib), so the same
-// fixture/harness source can be copied into the BASE worktree for interleaved
-// BASE/HEAD measurement. It never touches the DB or production.
+// Fixed routing-plan-memory fixtures (spec §6 r3). BASE-COMPATIBLE: this file
+// uses only symbols that exist at BASE commit d0d59648 (plus Go stdlib), so the
+// same fixture/harness source can be copied into the BASE worktree for
+// interleaved BASE/HEAD measurement. It never touches the DB or production.
 //
-// Formats: the spec's four single-operation formats are responses / chat /
-// messages / search, but scheduler search is an OPAQUE topology that does not
-// build a routing bucket (see search_opaque_topology_test.go), so search cannot
-// produce a sortedRouteKeys route. Per parent direction the fourth single-op
-// format is responses-ws (FormatOpenAIResponsesWS, single operation).
+// Formats: spec r3 fixes the four single-operation formats to
+// responses / chat / messages / responses-ws (FormatOpenAIResponses,
+// FormatOpenAIChat, FormatAnthropic, FormatOpenAIResponsesWS); bare "search" is
+// not a standalone routing format in this fixture.
+//
+// Clock: the fixture injects a fixed time (spec §6), never the wall clock, so
+// both sides compile under the same minute/window boundary.
 
 import (
 	"context"
@@ -18,6 +20,7 @@ import (
 	"os"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -133,21 +136,32 @@ func rpmHeterogeneousScheduler(tb testing.TB, models []string) (*Scheduler, *mem
 	return s, m
 }
 
-// rpmLoadScheduler reloads the static root and runs one full compile fire.
+// rpmFixedClock is the injected wall-clock anchor for every fixture scheduler:
+// a fixed minute so both BASE and HEAD compile under identical time/window
+// boundaries and neither measures wall-clock drift (spec §6 "固定时间").
+var rpmFixedClock = time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
+
+// rpmLoadScheduler reloads the static root and runs one full compile fire with
+// a fixed injected clock. The scheduler is Closed at test cleanup so a probe
+// never leaves an idle root behind between cases.
 func rpmLoadScheduler(tb testing.TB, m *memLoader) *Scheduler {
 	tb.Helper()
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(tb, re.Reload(context.Background()))
 	s := New(testCfg(), m, re, nil, nil, nil, nil)
+	s.timeNow = func() time.Time { return rpmFixedClock }
+	tb.Cleanup(func() { _ = s.Close(context.Background()) })
 	require.NoError(tb, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
 	return s
 }
 
-// TestRPMFixtureTopology pins the r3 fixture obligation: exact route count
-// (2 groups × 4 single-op formats × M models) and exactly the four format
-// identities, so BASE and HEAD measure the same topology.
+// TestRPMFixtureTopology pins the r3 fixture obligations: exact route count
+// (2 groups × 4 single-op formats × M models), exactly the four format
+// identities, and the homogeneous candidate/domain shape (every route serves
+// all 85 accounts, so D=85 private domains) so BASE and HEAD measure the same
+// topology.
 func TestRPMFixtureTopology(t *testing.T) {
 	const models = 100
 	s, _ := rpmHomogeneousScheduler(t, rpmModels(models))
@@ -161,5 +175,14 @@ func TestRPMFixtureTopology(t *testing.T) {
 	for _, f := range rpmSingleOpFormats() {
 		_, ok := formats[string(f)]
 		require.True(t, ok, "missing fixture format %s", f)
+	}
+	// Homogeneous shape (spec §6): D=85 distinct private domains and 85
+	// candidate accounts per route, all groups/formats modelled.
+	for ref, rd := range dv.routes {
+		require.NotNil(t, rd, "route %v", ref)
+		require.Len(t, rd.CacheDomainRing.Domains, rpmAccounts, "D=85 per route %v", ref)
+		require.Len(t, rd.CacheDomainAccounts, rpmAccounts, "85 account mappings per route %v", ref)
+		got := len(rd.Primary) + len(rd.Degraded) + len(rd.Explore.Ordered)
+		require.Equal(t, rpmAccounts, got, "85 candidate accounts per route %v", ref)
 	}
 }

@@ -6,7 +6,10 @@ package scheduler
 // (public accessors intentionally clone).
 
 import (
+	"context"
+	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"unsafe"
 
@@ -184,35 +187,254 @@ func rpmSharedDomainScheduler(tb testing.TB, models []string, dom string) (*Sche
 	return s, m
 }
 
-func TestRPM_A3_ScopedSharesCarryAndStableU(t *testing.T) {
+// domainsOf returns a copy of a route's ordered actual domain set (nil route →
+// nil), so assertions never alias the shared backing.
+func domainsOf(rd *RouteDecision) []string {
+	if rd == nil {
+		return nil
+	}
+	return append([]string(nil), rd.CacheDomainRing.Domains...)
+}
+
+// TestRPM_A3_ScopedQualityPublishesShareCarryRing drives THREE real publishing
+// scoped quality updates on group 10 (alternating two quality inputs so each
+// fire changes canonical content while the actual domain set is preserved).
+// Each fire must: advance the generation (a real publish, not the equal-digest
+// skip), replace the affected route's decision pointer, keep the unaffected
+// group-20 route pointer identical (carry), and keep affected<>unaffected rings
+// on the SAME Nodes/Domains backing with a flat U=1. A fresh full compile of
+// identical inputs must reproduce the scoped canonical bytes exactly.
+//
+// Mutation sensitivity: deleting the carry seed (`sess.seedFromView(f.carry)` in
+// compile_event.go) makes the affected route build its own ring, so the
+// shared-backing assertion fails (verified during the fix; restored after).
+func TestRPM_A3_ScopedQualityPublishesShareCarryRing(t *testing.T) {
 	const dom = "shared.example"
-	s, _ := rpmSharedDomainScheduler(t, rpmModels(1), dom)
+	s, m := rpmSharedDomainScheduler(t, rpmModels(1), dom)
+	accs := m.byGroup[10]
 	ref10 := RouteRefFor(10, string(domain.FormatOpenAIChat), "m000")
 	ref20 := RouteRefFor(20, string(domain.FormatOpenAIChat), "m000")
-	oldView := s.View()
+	prices := map[string]domain.ResolvedPrices{"m000": {InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}}
+	qA := buildQuality(10, domain.FormatOpenAIChat, "m000", map[int64]CandidateQualityInput{
+		1: qualityInput(30, 29, 100, 100), 2: qualityInput(30, 29, 100, 100),
+	}, accs)
+	qB := buildQuality(10, domain.FormatOpenAIChat, "m000", map[int64]CandidateQualityInput{
+		1: qualityInput(10, 5, 100, 100), 2: qualityInput(10, 5, 100, 100),
+	}, accs)
 
+	// Baseline full compile with qA+prices so the following fires differ ONLY in
+	// quality (prices stay equal, so the affected set is exactly ref10).
+	wireSources(s, qA, prices)
+	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)
+	s.compileOnce()
+
+	dv := s.View().DecisionView()
+	rd10 := dv.routes[ref10]
+	rd20 := dv.routes[ref20]
+	require.NotNil(t, rd10)
+	require.NotNil(t, rd20)
+	wantNodes := rpmNodesBacking(rd10.CacheDomainRing)
+	wantDomains := rpmDomainsBacking(rd10.CacheDomainRing)
+	require.Equal(t, wantNodes, rpmNodesBacking(rd20.CacheDomainRing), "fixture must start fully shared")
+	require.Equal(t, wantDomains, rpmDomainsBacking(rd20.CacheDomainRing))
+	require.Equal(t, 1, rpmUniqueNodesBackings(dv))
+
+	prevGen := s.View().Generation()
 	for fire := 0; fire < 3; fire++ {
-		s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
+		q := qB
+		if fire%2 == 1 {
+			q = qA
+		}
+		wireSources(s, q, prices)
 		s.compileOnce()
-		dv := s.View().DecisionView()
-		rd10 := dv.routes[ref10]
-		rd20 := dv.routes[ref20]
-		require.NotNil(t, rd10)
-		require.NotNil(t, rd20)
-		require.Equal(t, rpmNodesBacking(rd10.CacheDomainRing), rpmNodesBacking(rd20.CacheDomainRing),
-			"affected route must reuse the carry ring backing (fire %d)", fire)
-		require.Equal(t, rpmDomainsBacking(rd10.CacheDomainRing), rpmDomainsBacking(rd20.CacheDomainRing))
-		require.Equal(t, 1, rpmUniqueNodesBackings(dv), "U must not grow across fires (fire %d)", fire)
+
+		require.Greater(t, s.View().Generation(), prevGen,
+			"scoped quality update %d must publish a new generation", fire)
+		cur := s.View().DecisionView()
+		n10 := cur.routes[ref10]
+		n20 := cur.routes[ref20]
+		require.NotNil(t, n10)
+		require.NotNil(t, n20)
+		require.NotSame(t, rd10, n10, "fire %d: affected decision pointer must change", fire)
+		require.Same(t, rd20, n20, "fire %d: unaffected carry decision pointer must be identical", fire)
+		require.Equal(t, wantNodes, rpmNodesBacking(n10.CacheDomainRing),
+			"fire %d: affected route must reuse the carry Nodes backing", fire)
+		require.Equal(t, wantNodes, rpmNodesBacking(n20.CacheDomainRing), "fire %d", fire)
+		require.Equal(t, wantDomains, rpmDomainsBacking(n10.CacheDomainRing), "fire %d", fire)
+		require.Equal(t, wantDomains, rpmDomainsBacking(n20.CacheDomainRing), "fire %d", fire)
+		require.Equal(t, 1, rpmUniqueNodesBackings(cur), "fire %d: U must stay flat", fire)
+
+		prevGen = s.View().Generation()
+		rd10, rd20 = n10, n20
 	}
 
-	// Old snapshot kept alive and unchanged.
-	require.NotNil(t, oldView.DecisionView().routes[ref10])
-	require.Equal(t, []string{dom}, oldView.DecisionView().routes[ref10].CacheDomainRing.Domains)
+	// Full-recompile oracle: an identical fresh fixture compiled fully with the
+	// same inputs must reproduce the scoped canonical bytes exactly.
+	scopedBytes := decisionViewBytes(s.View().DecisionView())
+	s2, _ := rpmSharedDomainScheduler(t, rpmModels(1), dom)
+	wireSources(s2, qB, prices)
+	s2.enqueueCompileScope(nil, nil, scopeCauseFullStage)
+	s2.compileOnce()
+	require.True(t, s2.View().DecisionView().whole)
+	require.Equal(t, scopedBytes, decisionViewBytes(s2.View().DecisionView()),
+		"scoped canonical bytes must equal a fresh full compile of identical inputs")
+}
 
-	// External clone mutation must not poison the shared internal ring.
-	internal := s.View().DecisionView().routes[ref10]
-	clone := cloneRouteDecision(internal)
-	clone.CacheDomainRing.Nodes[0].Domain = "HACKED"
+// TestRPM_A3_DomainSetLifecycle covers the spec §5 A3 sub-coverage: an old set
+// disappears then reappears, a different set is added, a model is added/removed,
+// an account is deleted (route gone), a stale snapshot stays byte-stable, and no
+// interner session outlives its compile fire.
+func TestRPM_A3_DomainSetLifecycle(t *testing.T) {
+	ctx := context.Background()
+	mk := func(models []string) *domain.Template {
+		return &domain.Template{ID: 1, BaseURL: "https://u/v1", CredentialType: "api_key",
+			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: models}
+	}
+	d1, d2, d3 := "d1", "d2", "d3"
+	a1 := acc(1, mk([]string{"m"}), 10)
+	a1.CacheDomain = &d1
+	a2 := acc(2, mk([]string{"m"}), 10)
+	a2.CacheDomain = &d2
+	m := newMemLoader(map[int64][]*domain.Account{10: {a1, a2}})
+	s := newSched(t, m)
+	ref := RouteRefFor(10, string(domain.FormatOpenAIChat), "m")
+	ref2 := RouteRefFor(10, string(domain.FormatOpenAIChat), "m2")
+
+	old := s.View()
+	oldRing := cloneCacheDomainRing(old.DecisionView().routes[ref].CacheDomainRing)
+	require.Equal(t, []string{"d1", "d2"}, domainsOf(s.View().DecisionView().routes[ref]))
+
+	step := func() { require.NoError(t, s.reload(ctx)); s.compileOnce() }
+
+	// The old set disappears ({d1}) then reappears ({d1,d2}); the stale snapshot
+	// is unchanged throughout.
+	m.byGroup[10] = []*domain.Account{a1}
+	step()
+	require.Equal(t, []string{"d1"}, domainsOf(s.View().DecisionView().routes[ref]))
+	m.byGroup[10] = []*domain.Account{a1, a2}
+	step()
+	require.Equal(t, []string{"d1", "d2"}, domainsOf(s.View().DecisionView().routes[ref]))
+	require.Equal(t, oldRing, old.DecisionView().routes[ref].CacheDomainRing,
+		"old snapshot value must not change after recompiles")
+
+	// A different set is added ({d1,d3}).
+	a2b := acc(2, mk([]string{"m"}), 10)
+	a2b.CacheDomain = &d3
+	m.byGroup[10] = []*domain.Account{a1, a2b}
+	step()
+	require.Equal(t, []string{"d1", "d3"}, domainsOf(s.View().DecisionView().routes[ref]))
+
+	// Add a model: both routes share one ring (U flat for the two-route set).
+	a1m := acc(1, mk([]string{"m", "m2"}), 10)
+	a1m.CacheDomain = &d1
+	a2m := acc(2, mk([]string{"m", "m2"}), 10)
+	a2m.CacheDomain = &d3
+	m.byGroup[10] = []*domain.Account{a1m, a2m}
+	step()
+	dv := s.View().DecisionView()
+	require.NotNil(t, dv.routes[ref2])
+	require.Equal(t, []string{"d1", "d3"}, domainsOf(dv.routes[ref2]))
+	require.Equal(t, rpmNodesBacking(dv.routes[ref].CacheDomainRing), rpmNodesBacking(dv.routes[ref2].CacheDomainRing),
+		"routes with the same actual set share one ring")
+	require.Equal(t, 1, rpmUniqueNodesBackings(dv))
+
+	// Remove the model (route gone).
+	m.byGroup[10] = []*domain.Account{a1, a2b}
+	step()
+	require.Nil(t, s.View().DecisionView().routes[ref2], "removed model's route must disappear")
+
+	// Delete the accounts (route gone); the stale snapshot stays intact.
+	m.byGroup[10] = nil
+	step()
+	require.Nil(t, s.View().DecisionView().routes[ref], "empty group must drop the route")
+	require.Equal(t, oldRing, old.DecisionView().routes[ref].CacheDomainRing)
+
+	// Restore.
+	m.byGroup[10] = []*domain.Account{a1, a2}
+	step()
+	require.Equal(t, []string{"d1", "d2"}, domainsOf(s.View().DecisionView().routes[ref]))
+
+	// No interner session residue: a fresh session starts empty and the Scheduler
+	// owns no interner field (the session dies with each compile fire).
+	sessA := newRingInterner()
+	_, err := sessA.intern([]string{"x"})
+	require.NoError(t, err)
+	require.NotEmpty(t, sessA.rings)
+	require.Empty(t, newRingInterner().rings)
+	rt := reflect.TypeOf(Scheduler{})
+	for i := range rt.NumField() {
+		require.NotContains(t, rt.Field(i).Type.String(), "ringInterner",
+			"session state must not live on the Scheduler (field %s)", rt.Field(i).Name)
+	}
+}
+
+// TestRPM_A3_PublicCloneIsolation asserts the PUBLIC Routes()/Route() accessors
+// clone the shared ring, so a caller mutating the returned value cannot poison
+// the internal shared backing (spec §5 A3 "对外 clone 修改不能污染共享环").
+func TestRPM_A3_PublicCloneIsolation(t *testing.T) {
+	const dom = "shared.example"
+	s, _ := rpmSharedDomainScheduler(t, rpmModels(1), dom)
+	view := s.View()
+	ref10 := RouteRefFor(10, string(domain.FormatOpenAIChat), "m000")
+	ref20 := RouteRefFor(20, string(domain.FormatOpenAIChat), "m000")
+	internal := view.DecisionView().routes[ref10]
+	require.NotNil(t, internal)
+
+	// Routes() clones every decision (including Nodes/Domains).
+	routes := view.DecisionView().Routes()
+	require.NotNil(t, routes[ref10])
+	routes[ref10].CacheDomainRing.Nodes[0].Domain = "HACKED"
+	routes[ref20].CacheDomainRing.Domains[0] = "HACKED-D"
 	require.NotEqual(t, "HACKED", internal.CacheDomainRing.Nodes[0].Domain)
-	require.NotEqual(t, "HACKED", s.View().DecisionView().routes[ref20].CacheDomainRing.Nodes[0].Domain)
+	require.NotEqual(t, "HACKED-D", internal.CacheDomainRing.Domains[0])
+	require.Equal(t, dom, internal.CacheDomainRing.Domains[0])
+
+	// Route() clones too.
+	got, ok := view.DecisionView().Route(10, string(domain.FormatOpenAIChat), "m000")
+	require.True(t, ok)
+	got.CacheDomainRing.Nodes[0].Domain = "HACKED2"
+	require.NotEqual(t, "HACKED2", internal.CacheDomainRing.Nodes[0].Domain)
+	require.Equal(t, dom, internal.CacheDomainRing.Nodes[0].Domain)
+}
+
+// TestRPM_A3_HeterogeneousStructure wires the §6 heterogeneous fixture and
+// asserts the structural formula: each actual domain set has exactly one Nodes
+// backing (U distinct backings for U sets), each set reports its real D_i, and
+// the node payload is Σ_i cap(Nodes_i)×sizeof(CacheDomainNode).
+func TestRPM_A3_HeterogeneousStructure(t *testing.T) {
+	const models = 100
+	s, _ := rpmHeterogeneousScheduler(t, rpmModels(models))
+	dv := s.View().DecisionView()
+	require.Equal(t, 2*4*models, len(dv.routes))
+
+	type setStat struct {
+		backing uintptr
+		domains int
+		routes  int
+	}
+	sets := map[string]setStat{}
+	for _, rd := range dv.routes {
+		require.NotNil(t, rd)
+		key := strings.Join(rd.CacheDomainRing.Domains, "\x00")
+		st, ok := sets[key]
+		if !ok {
+			st = setStat{backing: rpmNodesBacking(rd.CacheDomainRing), domains: len(rd.CacheDomainRing.Domains)}
+		} else {
+			require.Equal(t, st.backing, rpmNodesBacking(rd.CacheDomainRing),
+				"one Nodes backing per actual domain set (set %q)", key)
+		}
+		st.routes++
+		sets[key] = st
+	}
+	require.Len(t, sets, 4, "U=4 actual domain sets")
+	payload := 0
+	for key, st := range sets {
+		require.Equal(t, 1, st.domains, "real D_i for set %q", key)
+		require.Equal(t, 2*4*(models/4), st.routes, "set %q route count", key)
+		payload += CacheDomainVirtualNodes * int(unsafe.Sizeof(CacheDomainNode{}))
+	}
+	require.Equal(t, 4, rpmUniqueNodesBackings(dv), "U unique Nodes backings")
+	require.Equal(t, 4*CacheDomainVirtualNodes*int(unsafe.Sizeof(CacheDomainNode{})), payload)
+	t.Logf("RPM_HETERO_STRUCTURE models=%d routes=%d U=%d D_i=1 node_payload_bytes=%d",
+		models, len(dv.routes), len(sets), payload)
 }
