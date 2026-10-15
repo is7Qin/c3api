@@ -264,7 +264,7 @@ func TestRoutingCompiler_candidateFactsStayConsistentAcrossFilterAndCompile(t *t
 	}
 	decision, err := compileRouteDecision(filtered, route, domain.RouteClassIDVal(routeClass), quality, map[string]domain.ResolvedPrices{
 		"requested": {InputPerM: new(int64(1000))},
-	}, rr)
+	}, rr, newRingInterner())
 
 	// Then
 	require.NoError(t, err)

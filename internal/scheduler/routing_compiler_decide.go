@@ -10,13 +10,13 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices, rr RouteRef) (*RouteDecision, error) {
+func compileRouteDecision(filtered []compilerCandidateFacts, rk routeKey, routeRC domain.RouteClassIDVal, quality map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices, rr RouteRef, sess *ringInterner) (*RouteDecision, error) {
 	qcs, costKnown := compileRouteQualityCandidates(filtered, routeRC, quality, prices, rk)
 	cl := classifyRouteCandidates(qcs, costKnown)
 	exploreBP, weights, cumulative, total, exploreIDs := compileExplorePlan(len(filtered), cl)
 	fallbackIDs := compileFallbackIDs(cl.Explore, exploreIDs)
 	primaryIDs, degradedIDs := compileLaneIDs(cl.Primary, cl.Degraded)
-	return assembleRouteDecision(filtered, rk, rr, primaryIDs, degradedIDs, exploreIDs, fallbackIDs, weights, cumulative, total, exploreBP)
+	return assembleRouteDecision(filtered, rk, rr, primaryIDs, degradedIDs, exploreIDs, fallbackIDs, weights, cumulative, total, exploreBP, sess)
 }
 
 // compileRouteQualityCandidates maps every filtered candidate fact to a
@@ -184,7 +184,7 @@ func compileLaneIDs(primary, degraded []QualityCandidate) ([]int64, []int64) {
 
 // assembleRouteDecision normalizes empty explore slices to nil, builds the cache
 // domain plan and compiled lanes, and assembles/validates the RouteDecision.
-func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr RouteRef, primaryIDs, degradedIDs, exploreIDs, fallbackIDs []int64, weights map[int64]int, cumulative []uint64, total uint64, exploreBP int) (*RouteDecision, error) {
+func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr RouteRef, primaryIDs, degradedIDs, exploreIDs, fallbackIDs []int64, weights map[int64]int, cumulative []uint64, total uint64, exploreBP int, sess *ringInterner) (*RouteDecision, error) {
 	if len(exploreIDs) == 0 {
 		exploreIDs = nil
 	}
@@ -197,7 +197,7 @@ func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr Ro
 	if len(weights) == 0 {
 		weights = nil
 	}
-	ring, accounts, err := compileCacheDomainPlan(filtered)
+	ring, accounts, err := compileCacheDomainPlan(filtered, sess)
 	if err != nil {
 		return nil, err
 	}
@@ -249,7 +249,12 @@ func assembleRouteDecision(filtered []compilerCandidateFacts, rk routeKey, rr Ro
 	return decision, nil
 }
 
-func compileCacheDomainPlan(filtered []compilerCandidateFacts) (CacheDomainRing, []CacheDomainAccount, error) {
+// compileCacheDomainPlan builds the per-route account→domain projection and the
+// shared cache-domain ring. The ring is interned through the session by its
+// actual-domain-set key (immutable Nodes/Domains backing shared across routes);
+// the account mapping stays per-route because it is keyed by accountID and
+// cannot be reconstructed from the ring.
+func compileCacheDomainPlan(filtered []compilerCandidateFacts, sess *ringInterner) (CacheDomainRing, []CacheDomainAccount, error) {
 	domains := make([]string, 0, len(filtered))
 	accounts := make([]CacheDomainAccount, 0, len(filtered))
 	seen := make(map[int64]struct{}, len(filtered))
@@ -263,7 +268,7 @@ func compileCacheDomainPlan(filtered []compilerCandidateFacts) (CacheDomainRing,
 		accounts = append(accounts, CacheDomainAccount{AccountID: facts.accountID, Domain: domain})
 	}
 	sort.Slice(accounts, func(i, j int) bool { return accounts[i].AccountID < accounts[j].AccountID })
-	ring, err := buildCacheDomainRing(domains)
+	ring, err := sess.intern(domains)
 	// ring.Domains is a fresh sorted slice owned by the ring; the caller
 	// discarded the old defensive copy of it (only the ring + accounts are
 	// consumed), so it is dropped here.

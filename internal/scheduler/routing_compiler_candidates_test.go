@@ -126,7 +126,7 @@ func TestCompileCacheDomainPlanDedupOrder(t *testing.T) {
 		_ = snap
 		return compilerCandidateFacts{compilerAccountFacts: facts}
 	}
-	_, accounts, err := compileCacheDomainPlan([]compilerCandidateFacts{mk(3), mk(1), mk(3), mk(2), mk(1)})
+	_, accounts, err := compileCacheDomainPlan([]compilerCandidateFacts{mk(3), mk(1), mk(3), mk(2), mk(1)}, newRingInterner())
 	require.NoError(t, err)
 	require.Len(t, accounts, 3, "duplicate account IDs must be de-duplicated")
 	require.Equal(t, int64(1), accounts[0].AccountID)

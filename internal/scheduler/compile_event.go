@@ -365,6 +365,14 @@ type scopedRouteCompiler interface {
 	compileSingleRoute(in CompilerInputs, gid int64, rk routeKey, op domain.OperationTag) (*RouteDecision, error)
 }
 
+// sessionRouteCompiler is the optional session-aware seam layered on
+// scopedRouteCompiler. The native batch path uses it to share one ring
+// interner across the affected routes (seeded from carry); test doubles that
+// only satisfy scopedRouteCompiler keep the independent-construction path.
+type sessionRouteCompiler interface {
+	compileSingleRouteIn(in CompilerInputs, gid int64, rk routeKey, op domain.OperationTag, sess *ringInterner) (*RouteDecision, error)
+}
+
 // errScopedUnsupported is the defensive seam failure inside
 // compileScopedRoutes (resolveCompileScope checks the seam first, so this is
 // unreachable in the lane — a full recompile stays exact, never partial).
@@ -386,12 +394,29 @@ func (s *Scheduler) compileScopedRoutes(f *compileFire) (*DecisionView, error) {
 	if !ok {
 		return nil, errScopedUnsupported
 	}
+	// The native compiler shares one ring interner across the affected routes,
+	// seeded from the still-live carry rings so an affected route whose actual
+	// domain set matches an unaffected survivor reuses its Nodes/Domains
+	// backing (U stays flat across fires). The session dies at return; test
+	// doubles without the session seam keep independent construction.
+	sessioned, hasSession := s.compiler.(sessionRouteCompiler)
+	var sess *ringInterner
+	if hasSession {
+		sess = newRingInterner()
+		sess.seedFromView(f.carry)
+	}
 	merged := make(map[RouteRef]*RouteDecision, len(f.carry.routes)+len(f.affected))
 	maps.Copy(merged, f.carry.routes)
 	for ref := range f.affected {
 		rk := routeKey{format: domain.RequestFormat(ref.Format), model: ref.Model}
 		op := domain.OperationTag(ref.OperationTag)
-		dec, err := src.compileSingleRoute(f.input, ref.GroupID, rk, op)
+		var dec *RouteDecision
+		var err error
+		if hasSession {
+			dec, err = sessioned.compileSingleRouteIn(f.input, ref.GroupID, rk, op, sess)
+		} else {
+			dec, err = src.compileSingleRoute(f.input, ref.GroupID, rk, op)
+		}
 		if err != nil {
 			return nil, err
 		}

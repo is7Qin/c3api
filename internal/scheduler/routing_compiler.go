@@ -58,6 +58,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 	}
 	groupIDs := sortedGroupIDs(in.Static.groups)
 	routes := make(map[RouteRef]*RouteDecision)
+	sess := newRingInterner()
 	for _, gid := range groupIDs {
 		gs := in.Static.groups[gid]
 		if gs == nil {
@@ -74,7 +75,7 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 				// the table key stays normalized (no hex); the
 				// decision value keeps rr.RouteClassID as the interned hex.
 				key := normRouteRef(rr)
-				dec, err := c.compileSingleRoute(in, gid, rk, op)
+				dec, err := c.compileSingleRouteIn(in, gid, rk, op, sess)
 				if err != nil {
 					return nil, err
 				}
@@ -95,7 +96,18 @@ func (c *RoutingCompiler) Compile(in CompilerInputs) (*DecisionView, error) {
 // scoped evaluate through the input's IncidentEval, frozen evaluations reuse
 // stored lane state). Returns (nil, nil) when the route is gone from the
 // static root (scoped caller drops it; the full loop skips it as before).
+//
+// This single-route entry is the test seam: with no session it constructs
+// independently (no cross-route ring sharing). Native batch paths pass an
+// explicit session through compileSingleRouteIn.
 func (c *RoutingCompiler) compileSingleRoute(in CompilerInputs, gid int64, rk routeKey, op domain.OperationTag) (*RouteDecision, error) {
+	return c.compileSingleRouteIn(in, gid, rk, op, nil)
+}
+
+// compileSingleRouteIn is the session-aware per-route body: the compile lane's
+// own session (full Compile or scoped fire) is threaded as an explicit
+// parameter, never stored on the immutable inputs or the stateless compiler.
+func (c *RoutingCompiler) compileSingleRouteIn(in CompilerInputs, gid int64, rk routeKey, op domain.OperationTag, sess *ringInterner) (*RouteDecision, error) {
 	static := in.Static
 	gs := static.groups[gid]
 	if gs == nil {
@@ -127,7 +139,7 @@ func (c *RoutingCompiler) compileSingleRoute(in CompilerInputs, gid int64, rk ro
 		}
 		return decision, nil
 	}
-	dec, err := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices, rr)
+	dec, err := compileRouteDecision(filtered, rk, rcVal, in.Quality, in.Prices, rr, sess)
 	if err != nil {
 		return nil, err
 	}
