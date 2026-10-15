@@ -273,7 +273,7 @@ type decisionDigest struct {
 type canonicalSink struct {
 	scratch [digestScratchSize]byte
 	n       int
-	written int
+	written int // flushed bytes; count includes the current scratch contents
 	h       hash.Hash
 	collect bool
 	out     []byte
@@ -308,11 +308,11 @@ func (s *canonicalSink) flush() {
 	} else {
 		_, _ = s.h.Write(s.scratch[:s.n])
 	}
+	s.written += s.n
 	s.n = 0
 }
 
 func (s *canonicalSink) writeBytes(b []byte) {
-	s.written += len(b)
 	if len(b) <= len(s.scratch)-s.n {
 		s.n += copy(s.scratch[s.n:], b)
 		return
@@ -329,6 +329,18 @@ func (s *canonicalSink) writeBytes(b []byte) {
 
 // writeString emits the canonical string form: length-prefixed bytes.
 func (s *canonicalSink) writeString(str string) {
+	// Most fields have a one-byte length. Reserve prefix and payload together
+	// so their common path needs only one capacity check and no scalar call.
+	n := s.n
+	if len(str) < 128 && len(str) < len(s.scratch)-n {
+		s.scratch[n] = byte(len(str))
+		s.n = n + 1 + copy(s.scratch[n+1:], str)
+		return
+	}
+	s.writeStringSlow(str)
+}
+
+func (s *canonicalSink) writeStringSlow(str string) {
 	s.writeUvarint(uint64(len(str)))
 	s.writeStringRaw(str)
 }
@@ -337,7 +349,6 @@ func (s *canonicalSink) writeString(str string) {
 // (copy accepts a string source directly), so it never allocates regardless of
 // length.
 func (s *canonicalSink) writeStringRaw(str string) {
-	s.written += len(str)
 	if len(str) <= len(s.scratch)-s.n {
 		s.n += copy(s.scratch[s.n:], str)
 		return
@@ -358,7 +369,6 @@ func (s *canonicalSink) writeUvarint(v uint64) {
 	}
 	n := binary.PutUvarint(s.scratch[s.n:], v)
 	s.n += n
-	s.written += n
 }
 
 func (s *canonicalSink) writeVarint(v int64) {
@@ -367,11 +377,10 @@ func (s *canonicalSink) writeVarint(v int64) {
 	}
 	n := binary.PutVarint(s.scratch[s.n:], v)
 	s.n += n
-	s.written += n
 }
 
 // count is the total canonical stream length written so far.
-func (s *canonicalSink) count() int { return s.written }
+func (s *canonicalSink) count() int { return s.written + s.n }
 
 func (s *canonicalSink) sum() [32]byte {
 	s.flush()
