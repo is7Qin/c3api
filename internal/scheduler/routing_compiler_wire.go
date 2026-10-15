@@ -313,6 +313,10 @@ func (s *canonicalSink) flush() {
 
 func (s *canonicalSink) writeBytes(b []byte) {
 	s.written += len(b)
+	if len(b) <= len(s.scratch)-s.n {
+		s.n += copy(s.scratch[s.n:], b)
+		return
+	}
 	for len(b) > 0 {
 		if s.n == len(s.scratch) {
 			s.flush()
@@ -334,6 +338,10 @@ func (s *canonicalSink) writeString(str string) {
 // length.
 func (s *canonicalSink) writeStringRaw(str string) {
 	s.written += len(str)
+	if len(str) <= len(s.scratch)-s.n {
+		s.n += copy(s.scratch[s.n:], str)
+		return
+	}
 	for len(str) > 0 {
 		if s.n == len(s.scratch) {
 			s.flush()
@@ -345,13 +353,21 @@ func (s *canonicalSink) writeStringRaw(str string) {
 }
 
 func (s *canonicalSink) writeUvarint(v uint64) {
-	var tmp [binary.MaxVarintLen64]byte
-	s.writeBytes(tmp[:binary.PutUvarint(tmp[:], v)])
+	if len(s.scratch)-s.n < binary.MaxVarintLen64 {
+		s.flush()
+	}
+	n := binary.PutUvarint(s.scratch[s.n:], v)
+	s.n += n
+	s.written += n
 }
 
 func (s *canonicalSink) writeVarint(v int64) {
-	var tmp [binary.MaxVarintLen64]byte
-	s.writeBytes(tmp[:binary.PutVarint(tmp[:], v)])
+	if len(s.scratch)-s.n < binary.MaxVarintLen64 {
+		s.flush()
+	}
+	n := binary.PutVarint(s.scratch[s.n:], v)
+	s.n += n
+	s.written += n
 }
 
 // count is the total canonical stream length written so far.
