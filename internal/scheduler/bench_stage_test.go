@@ -23,12 +23,10 @@ import (
 // deadline, sticky retry) + T2 (single snapshotStatic constructor / cached
 // planKey) + T4 (candidate-build + cache-domain alloc trims). T3 (single-copy
 // decision encoding) was REVERTED under the spec's "未达即回退" rule (commit
-// 6c89167e): no T3 production change ships and NO encoder retained-buffer
-// reduction is claimed. The frozen T3 thresholds remain equal ≤1.2× /
-// changed ≤2.5× (recorded for history only; T3 acceptance no longer applies).
-// The retained-heap benchmark below therefore measures the BASE reusable
-// encoder buffer + the inline planKey retention, not any "de-duplicated"
-// encoding.
+// 6c89167e). The routing-plan-memory branch replaces the retained encoder
+// buffer + lastDecisionBytes copy with a bounded streaming SHA-256 digest, so
+// the retained-heap benchmark below measures the inline planKey retention plus
+// the fixed 32 KiB digest scratch (never an encoding-sized buffer).
 
 // BenchmarkInvalidateSingleGroupStage is the M-times single-group CONTRAST for
 // BenchmarkInvalidateGroupsStage: the same topology driven as M separate
@@ -263,16 +261,19 @@ func TestPlanKeyRetainedHeapMeasured(t *testing.T) {
 
 	dv := s.View().DecisionView()
 	require.NotNil(t, dv)
-	require.Equal(t, decisionViewBytes(dv), s.lastDecisionBytes,
-		"held cache must equal the canonical encoding (byte equality only; the BASE reusable encoder buffer remains)")
+	var dig decisionDigester
+	want := dig.digest(dv)
+	require.True(t, s.lastDigestSet, "a successful publish must arm the digest guard")
+	require.Equal(t, want, s.lastDigest,
+		"held digest must equal the canonical digest of the published view (the bounded sink retains no encoding-sized buffer)")
 
 	// ESTIMATED inline planKey bytes: planKey is stored inline in each
 	// snapshotStatic leaf, so its logical contribution is sizeof(planKey) per
 	// leaf. This is an ESTIMATE from the field layout, NOT an isolated measured
 	// increment; it is logged so a BASE/HEAD retained differential can be read.
 	planKeyBytes := int(unsafe.Sizeof(planKey{})) * len(sv.byID)
-	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; estimated inline planKey bytes = %d (%d leaves × %d B); held bytes=%d; leaves=%d",
-		retained, planKeyBytes, len(sv.byID), unsafe.Sizeof(planKey{}), len(s.lastDecisionBytes), len(sv.byID))
+	t.Logf("retained heap after GC (5000-account scheduler) = %d bytes; estimated inline planKey bytes = %d (%d leaves × %d B); held digest bytes=%d; leaves=%d",
+		retained, planKeyBytes, len(sv.byID), unsafe.Sizeof(planKey{}), s.lastDigest.count, len(sv.byID))
 }
 
 // sleepLoader blocks one group's load for a fixed duration under publisher.mu,

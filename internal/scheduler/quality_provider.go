@@ -27,7 +27,7 @@ import (
 // the next minute. Bounded memory: two maps ≤ the active candidate count.
 //
 // Lane ownership: the returned closure is compile-lane-confined (no mutex),
-// like lastQuality/lastDecisionBytes.
+// like lastQuality/lastDigest.
 
 // windowQ32Scale converts Q32 fixed-point TTFT log sums to float (same scale
 // the recorder writes and the old live-cell adapter read).

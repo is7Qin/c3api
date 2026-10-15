@@ -686,11 +686,10 @@ func TestSchedulerCloseUnstartedSafe(t *testing.T) {
 	require.NoError(t, s.Close(context.Background()))
 }
 
-// TestDecisionEncoderReuseNoContamination 复用编码器（编译道热路径）跨 fire
-// 不得互相污染：同一 encoder 交替编码两个视图，结果必须与一次性编码器逐字节
-// 一致（refs/ids 暂存与输出缓冲的 Reset 正确性；返回字节 alias 缓冲，消费方
-// 需自行拷贝——生产路径以 append 复用 lastDecisionBytes）。
-func TestDecisionEncoderReuseNoContamination(t *testing.T) {
+// TestDecisionDigestReuseNoContamination 复用摘要 sink（编译道热路径）跨 fire
+// 不得互相污染：同一 digester 交替摘要两个视图，结果必须与一次性收集编码的
+// SHA-256 一致（scratch 与 refs/ids 暂存的 Reset 正确性）。
+func TestDecisionDigestReuseNoContamination(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"m"})
 	accs := []*domain.Account{accWithEnabled(1, tpl, true, 10000), accWithEnabled(2, tpl, true, 10000)}
 	m := newMemLoader(map[int64][]*domain.Account{10: accs})
@@ -710,12 +709,12 @@ func TestDecisionEncoderReuseNoContamination(t *testing.T) {
 	vThin, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: thin, Prices: prices})
 	require.NoError(t, err)
 
-	var e decisionEncoder
-	gotFull := append([]byte(nil), e.encode(vFull)...)
-	gotThin := append([]byte(nil), e.encode(vThin)...)
-	gotFull2 := append([]byte(nil), e.encode(vFull)...)
-	require.Equal(t, decisionViewBytes(vFull), gotFull)
-	require.Equal(t, decisionViewBytes(vThin), gotThin)
-	require.Equal(t, gotFull, gotFull2, "reuse must not contaminate a later encode of the same view")
+	var d decisionDigester
+	gotFull := d.digest(vFull)
+	gotThin := d.digest(vThin)
+	gotFull2 := d.digest(vFull)
+	require.Equal(t, sha256.Sum256(decisionViewBytes(vFull)), gotFull.sum)
+	require.Equal(t, sha256.Sum256(decisionViewBytes(vThin)), gotThin.sum)
+	require.Equal(t, gotFull, gotFull2, "reuse must not contaminate a later digest of the same view")
 	require.NotEqual(t, gotFull, gotThin, "different views must not collide")
 }

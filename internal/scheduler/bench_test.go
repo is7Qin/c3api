@@ -380,19 +380,19 @@ func BenchmarkDecisionViewBytes(b *testing.B) {
 
 var benchmarkDecisionBytes int
 
-// BenchmarkDecisionViewEncodeReused measures the production path: the
-// lane-owned encoder reuses its output buffer and refs/ids scratch across
-// fires (steady-state zero allocation).
-func BenchmarkDecisionViewEncodeReused(b *testing.B) {
+// BenchmarkDecisionViewDigestReused measures the production guard path: the
+// compile-lane-owned digester reuses its fixed 32 KiB scratch and sort scratch
+// across fires (steady state bounded, no encoding-sized buffer).
+func BenchmarkDecisionViewDigestReused(b *testing.B) {
 	s := schedulerWithAccounts(b, 5000, domain.ModelMapping{})
 	dv := s.View().DecisionView()
 	if dv == nil {
 		b.Fatal("missing decision view")
 	}
-	var e decisionEncoder
+	var d decisionDigester
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		benchmarkDecisionBytes = len(e.encode(dv))
+		benchmarkDecisionBytes = int(d.digest(dv).count)
 	}
 }
