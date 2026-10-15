@@ -11,6 +11,13 @@ package scheduler
 // All benchmarks: single process, serial, warm (3 pre-timer iterations), setup
 // outside the timer. Run per §6 pre-registration: GOMAXPROCS=1 GOGC=100, ≥5
 // ABBA interleaved groups per model size, ≥1s benchtime.
+//
+// O5 harness guard: every measured loop asserts its expected outcome equals
+// b.N (commits / publishes / equal_skips), each real-fire loop captured the
+// skipCount before timing and asserts a zero delta afterwards (so a fireSkip
+// never silently replaces the measured guard work), and each warm-up is
+// asserted to have actually executed (published for changed, executed the
+// guard without publishing and without fireSkip for equal).
 
 import (
 	"testing"
@@ -102,6 +109,7 @@ func BenchmarkRPMGuardChanged(b *testing.B) {
 	var d decisionDigester
 	last := d.digest(dvA)
 	commits := 0
+	skips0 := s.skipCount.Load()
 	for range 3 {
 		last = d.digest(dvA)
 		last = d.digest(dvB)
@@ -125,6 +133,8 @@ func BenchmarkRPMGuardChanged(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+	require.Equal(b, b.N, commits, "every alternation must commit a changed digest")
+	require.Zero(b, s.skipCount.Load()-skips0, "the guard microbenchmark must not fireSkip")
 	b.ReportMetric(float64(commits), "commits")
 }
 
@@ -136,10 +146,15 @@ func BenchmarkRPMFireEqualGuarded(b *testing.B) {
 	models := rpmModels(rpmBenchModels())
 	s, _ := rpmHomogeneousScheduler(b, models)
 	skips := 0
+	genWarm0 := s.View().Generation()
+	skipsWarm0 := s.skipCount.Load()
 	for range 3 {
 		s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 		s.compileOnce()
 	}
+	require.Zero(b, s.skipCount.Load()-skipsWarm0, "equal warm-up must execute real fires (no fireSkip)")
+	require.Equal(b, genWarm0, s.View().Generation(), "equal warm-up must not publish")
+	skips0 := s.skipCount.Load()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -151,6 +166,8 @@ func BenchmarkRPMFireEqualGuarded(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+	require.Equal(b, b.N, skips, "every equal fire must hit the guard and skip publication")
+	require.Zero(b, s.skipCount.Load()-skips0, "no fireSkip in the measured loop")
 	b.ReportMetric(float64(skips), "equal_skips")
 }
 
@@ -172,11 +189,16 @@ func BenchmarkRPMFireChangedGuarded(b *testing.B) {
 		s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 		s.compileOnce()
 	}
+	genWarm0 := s.View().Generation()
+	skipsWarm0 := s.skipCount.Load()
 	for range 3 {
 		warm(srcB)
 		warm(srcA)
 	}
+	require.Greater(b, s.View().Generation(), genWarm0, "changed warm-up must execute real publishing fires")
+	require.Zero(b, s.skipCount.Load()-skipsWarm0, "changed warm-up must not fireSkip")
 	pubs := 0
+	skips0 := s.skipCount.Load()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -193,6 +215,8 @@ func BenchmarkRPMFireChangedGuarded(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+	require.Equal(b, b.N, pubs, "every alternated changed fire must publish")
+	require.Zero(b, s.skipCount.Load()-skips0, "no fireSkip in the measured loop")
 	b.ReportMetric(float64(pubs), "publishes")
 }
 
@@ -210,13 +234,18 @@ func BenchmarkRPMScopedChangedSmall(b *testing.B) {
 	srcB := rpmQualitySources(qB, prices)
 	s.sources = srcA
 	s.compileOnce()
+	genWarm0 := s.View().Generation()
+	skipsWarm0 := s.skipCount.Load()
 	for range 3 {
 		s.sources = srcB
 		s.compileOnce()
 		s.sources = srcA
 		s.compileOnce()
 	}
+	require.Greater(b, s.View().Generation(), genWarm0, "scoped warm-up must execute real publishing fires")
+	require.Zero(b, s.skipCount.Load()-skipsWarm0, "scoped warm-up must not fireSkip")
 	pubs := 0
+	skips0 := s.skipCount.Load()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -232,6 +261,8 @@ func BenchmarkRPMScopedChangedSmall(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+	require.Equal(b, b.N, pubs, "every alternated scoped change must publish")
+	require.Zero(b, s.skipCount.Load()-skips0, "no fireSkip in the measured loop")
 	b.ReportMetric(float64(pubs), "publishes")
 }
 
@@ -242,10 +273,15 @@ func BenchmarkRPMFullFireEqualGuarded(b *testing.B) {
 	models := rpmModels(rpmBenchModels())
 	s, _ := rpmHomogeneousScheduler(b, models)
 	skips := 0
+	genWarm0 := s.View().Generation()
+	skipsWarm0 := s.skipCount.Load()
 	for range 3 {
 		s.scopeOverflow.Store(true)
 		s.compileOnce()
 	}
+	require.Zero(b, s.skipCount.Load()-skipsWarm0, "full equal warm-up must execute real fires (no fireSkip)")
+	require.Equal(b, genWarm0, s.View().Generation(), "full equal warm-up must not publish")
+	skips0 := s.skipCount.Load()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -257,6 +293,8 @@ func BenchmarkRPMFullFireEqualGuarded(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+	require.Equal(b, b.N, skips, "every full equal fire must hit the guard and skip publication")
+	require.Zero(b, s.skipCount.Load()-skips0, "no fireSkip in the measured loop")
 	b.ReportMetric(float64(skips), "equal_skips")
 }
 
@@ -278,11 +316,16 @@ func BenchmarkRPMFullFireChangedGuarded(b *testing.B) {
 		s.scopeOverflow.Store(true)
 		s.compileOnce()
 	}
+	genWarm0 := s.View().Generation()
+	skipsWarm0 := s.skipCount.Load()
 	for range 3 {
 		warm(srcB)
 		warm(srcA)
 	}
+	require.Greater(b, s.View().Generation(), genWarm0, "full changed warm-up must execute real publishing fires")
+	require.Zero(b, s.skipCount.Load()-skipsWarm0, "full changed warm-up must not fireSkip")
 	pubs := 0
+	skips0 := s.skipCount.Load()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -299,6 +342,8 @@ func BenchmarkRPMFullFireChangedGuarded(b *testing.B) {
 		}
 	}
 	b.StopTimer()
+	require.Equal(b, b.N, pubs, "every alternated full changed fire must publish")
+	require.Zero(b, s.skipCount.Load()-skips0, "no fireSkip in the measured loop")
 	b.ReportMetric(float64(pubs), "publishes")
 }
 
@@ -316,6 +361,7 @@ func BenchmarkRPMFullCompileDigest(b *testing.B) {
 		require.NoError(b, err)
 		benchmarkRPMCount = int(d.digest(dv).count)
 	}
+	require.Positive(b, benchmarkRPMCount, "warm compile must encode a non-empty plan")
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
