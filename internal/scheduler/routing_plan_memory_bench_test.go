@@ -78,18 +78,23 @@ func BenchmarkRPMGuardEqual(b *testing.B) {
 	for range 3 {
 		last = d.digest(dv)
 	}
+	matches := 0
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cur := d.digest(dv)
 		if cur == last {
 			benchmarkRPMBool = true
+			matches++
 		} else {
 			last = cur
 			benchmarkRPMDigest = cur
 			benchmarkRPMBool = false
 		}
 	}
+	b.StopTimer()
+	require.Equal(b, b.N, matches, "every equal-guard iteration must compare equal")
+	b.ReportMetric(float64(matches), "matches")
 }
 
 // BenchmarkRPMGuardChanged alternates two distinct equal-scale plans, forcing a
