@@ -15,6 +15,8 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"os"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -25,6 +27,27 @@ import (
 )
 
 const rpmAccounts = 85
+
+// rpmBenchModels is the env-selected model count for the spec matrix
+// (100/300/693). Shared by BASE and HEAD so both sides measure the same size.
+func rpmBenchModels() int {
+	if v := os.Getenv("RPM_MODELS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 100
+}
+
+// rpmPrices returns a known purchase price for every model, so candidate cost
+// is known (primaries exist) rather than degrading every candidate to explore.
+func rpmPrices(models []string) map[string]domain.ResolvedPrices {
+	p := make(map[string]domain.ResolvedPrices, len(models))
+	for _, m := range models {
+		p[m] = domain.ResolvedPrices{InputPerM: new(int64(1000)), OutputPerM: new(int64(1000))}
+	}
+	return p
+}
 
 func rpmSingleOpFormats() []domain.RequestFormat {
 	return []domain.RequestFormat{

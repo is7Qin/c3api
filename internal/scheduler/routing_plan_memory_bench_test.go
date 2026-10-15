@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 package scheduler
 
-// HEAD-side routing-plan-memory performance harness (spec §6). The fixture
-// builders live in routing_plan_memory_fixture_test.go and are BASE-compatible;
-// the measured loops here use HEAD-only symbols (decisionDigester). The BASE
-// twin measures the same fixture with encode+bytes.Equal; see the implementation
-// report for the frozen BASE harness source and the interleaved run commands.
+// HEAD-side routing-plan-memory performance harness (spec §6). Fixture builders
+// and the env-selected model matrix (RPM_MODELS, default 100; spec matrix
+// 100/300/693) live in routing_plan_memory_fixture_test.go and are
+// BASE-COMPATIBLE; the measured loops here use HEAD-only symbols
+// (decisionDigester). The BASE twin measures the same fixture with
+// encode+bytes.Equal and the same forced-scope fire structure.
 //
-// All benchmarks are single-process, serial, fixed-fixture, warm (3 pre-timer
-// iterations) and setup outside the timer. Run per §6 pre-registration:
-// GOMAXPROCS=1 GOGC=100, ≥5 ABBA interleaved groups, ≥1s benchtime.
+// All benchmarks: single process, serial, warm (3 pre-timer iterations), setup
+// outside the timer. Run per §6 pre-registration: GOMAXPROCS=1 GOGC=100, ≥5
+// ABBA interleaved groups per model size, ≥1s benchtime.
 
 import (
 	"testing"
@@ -20,11 +21,14 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-var benchmarkRPMCount int
+var (
+	benchmarkRPMCount  int
+	benchmarkRPMBool   bool
+	benchmarkRPMDigest decisionDigest
+)
 
 // rpmQuality builds a quality map for one (group, format, model) route over the
-// given accounts, so the compiled candidate metadata (and therefore the
-// canonical digest) differs from an unqualified compile.
+// given accounts; with rpmPrices the candidates are cost-known (primaries).
 func rpmQuality(gid int64, format domain.RequestFormat, model string, accs []*domain.Account, attempts, successes int) map[CandidateQualityKey]CandidateQualityInput {
 	raw := make(map[int64]CandidateQualityInput, len(accs))
 	for _, a := range accs {
@@ -33,80 +37,134 @@ func rpmQuality(gid int64, format domain.RequestFormat, model string, accs []*do
 	return buildQuality(gid, format, model, raw, accs)
 }
 
-// BenchmarkRPMGuardEqual measures the production equal-path guard: one
-// SHA-256 digest over the published view per iteration (no fireSkip, the guard
-// always executes). Warm loop reuses the sink's refs/ids scratch.
-func BenchmarkRPMGuardEqual(b *testing.B) {
-	s, _ := rpmHomogeneousScheduler(b, rpmModels(100))
-	dv := s.View().DecisionView()
-	require.NotNil(b, dv)
+// rpmAssertDigestDiffers fails the benchmark if qA/qB do not actually change the
+// canonical digest — otherwise the "changed" scenarios would silently measure
+// equal iterations.
+func rpmAssertDigestDiffers(b *testing.B, s *Scheduler, qA, qB map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) {
+	b.Helper()
+	c := NewRoutingCompiler()
+	dvA, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: qA, Prices: prices})
+	require.NoError(b, err)
+	dvB, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: qB, Prices: prices})
+	require.NoError(b, err)
 	var d decisionDigester
-	for range 3 {
-		benchmarkRPMCount = int(d.digest(dv).count)
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		benchmarkRPMCount = int(d.digest(dv).count)
+	require.NotEqual(b, d.digest(dvA), d.digest(dvB), "qA/qB must produce different canonical digests")
+}
+
+func rpmQualitySources(q map[CandidateQualityKey]CandidateQualityInput, prices map[string]domain.ResolvedPrices) *CompilerSources {
+	return &CompilerSources{
+		Quality: func(time.Time) WindowedQuality { return WindowedQuality{Current: q} },
+		Prices:  func() map[string]domain.ResolvedPrices { return prices },
 	}
 }
 
-// BenchmarkRPMGuardChanged alternates two distinct equal-scale plans, forcing a
-// full digest commit each iteration.
-func BenchmarkRPMGuardChanged(b *testing.B) {
-	s, m := rpmHomogeneousScheduler(b, rpmModels(100))
-	c := NewRoutingCompiler()
-	q := rpmQuality(10, domain.FormatOpenAIChat, "m000", m.byGroup[10], 30, 29)
-	dvA, err := c.Compile(CompilerInputs{Static: s.View().StaticView()})
-	require.NoError(b, err)
-	dvB, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: q})
-	require.NoError(b, err)
+// BenchmarkRPMGuardEqual measures the production equal-path guard: SHA-256
+// digest + equality compare over the published view each iteration (the guard
+// always executes; no fireSkip). The retained digest is a value commit.
+func BenchmarkRPMGuardEqual(b *testing.B) {
+	models := rpmModels(rpmBenchModels())
+	s, _ := rpmHomogeneousScheduler(b, models)
+	dv := s.View().DecisionView()
+	require.NotNil(b, dv)
 	var d decisionDigester
+	last := d.digest(dv)
 	for range 3 {
-		benchmarkRPMCount = int(d.digest(dvA).count)
-		benchmarkRPMCount = int(d.digest(dvB).count)
+		last = d.digest(dv)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if i&1 == 0 {
-			benchmarkRPMCount = int(d.digest(dvA).count)
+		cur := d.digest(dv)
+		if cur == last {
+			benchmarkRPMBool = true
 		} else {
-			benchmarkRPMCount = int(d.digest(dvB).count)
+			last = cur
+			benchmarkRPMDigest = cur
+			benchmarkRPMBool = false
 		}
 	}
 }
 
-// BenchmarkRPMFireEqualGuarded measures one real equal fire end-to-end: a group
-// scope forces a scoped recompute (never fireSkip) whose digest matches the
-// last published digest, so the fire recompiles + digests but does not publish.
-// enqueueCompileScope is used directly (no static-root staging), so the fire
-// stays an equal-digest same-root fire.
-func BenchmarkRPMFireEqualGuarded(b *testing.B) {
-	s, _ := rpmHomogeneousScheduler(b, rpmModels(100))
-	warm := func() {
-		s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
-		s.compileOnce()
-	}
+// BenchmarkRPMGuardChanged alternates two distinct equal-scale plans, forcing a
+// real digest compare + commit (value copy) each iteration.
+func BenchmarkRPMGuardChanged(b *testing.B) {
+	models := rpmModels(rpmBenchModels())
+	s, m := rpmHomogeneousScheduler(b, models)
+	prices := rpmPrices(models)
+	qA := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 30, 29)
+	qB := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 10, 5)
+	rpmAssertDigestDiffers(b, s, qA, qB, prices)
+	c := NewRoutingCompiler()
+	dvA, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: qA, Prices: prices})
+	require.NoError(b, err)
+	dvB, err := c.Compile(CompilerInputs{Static: s.View().StaticView(), Quality: qB, Prices: prices})
+	require.NoError(b, err)
+	var d decisionDigester
+	last := d.digest(dvA)
+	commits := 0
 	for range 3 {
-		warm()
+		last = d.digest(dvA)
+		last = d.digest(dvB)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		var cur decisionDigest
+		if i&1 == 0 {
+			cur = d.digest(dvA)
+		} else {
+			cur = d.digest(dvB)
+		}
+		if cur == last {
+			benchmarkRPMBool = true
+		} else {
+			last = cur
+			benchmarkRPMDigest = cur
+			benchmarkRPMBool = false
+			commits++
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(commits), "commits")
+}
+
+// BenchmarkRPMFireEqualGuarded measures one real equal fire end-to-end: a group
+// scope forces a scoped recompute (never fireSkip, no root staging) whose digest
+// matches the last published digest, so the fire recompiles + digests but does
+// not publish.
+func BenchmarkRPMFireEqualGuarded(b *testing.B) {
+	models := rpmModels(rpmBenchModels())
+	s, _ := rpmHomogeneousScheduler(b, models)
+	skips := 0
+	for range 3 {
 		s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 		s.compileOnce()
 	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		before := s.View().Generation()
+		s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
+		s.compileOnce()
+		if s.View().Generation() == before {
+			skips++
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(skips), "equal_skips")
 }
 
-// BenchmarkRPMFireChangedGuarded alternates two equal-scale quality inputs so
-// each fire commits a new digest and publishes.
+// BenchmarkRPMFireChangedGuarded alternates two equal-scale quality inputs over
+// a whole group so each fire commits a new digest and publishes.
 func BenchmarkRPMFireChangedGuarded(b *testing.B) {
-	s, m := rpmHomogeneousScheduler(b, rpmModels(100))
-	qA := rpmQuality(10, domain.FormatOpenAIChat, "m000", m.byGroup[10], 30, 29)
-	qB := rpmQuality(10, domain.FormatOpenAIChat, "m000", m.byGroup[10], 10, 5)
-	srcA := &CompilerSources{Quality: func(time.Time) WindowedQuality { return WindowedQuality{Current: qA} }}
-	srcB := &CompilerSources{Quality: func(time.Time) WindowedQuality { return WindowedQuality{Current: qB} }}
+	models := rpmModels(rpmBenchModels())
+	s, m := rpmHomogeneousScheduler(b, models)
+	prices := rpmPrices(models)
+	qA := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 30, 29)
+	qB := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 10, 5)
+	rpmAssertDigestDiffers(b, s, qA, qB, prices)
+	srcA := rpmQualitySources(qA, prices)
+	srcB := rpmQualitySources(qB, prices)
 	s.sources = srcA
 	s.compileOnce()
 	warm := func(src *CompilerSources) {
@@ -118,9 +176,11 @@ func BenchmarkRPMFireChangedGuarded(b *testing.B) {
 		warm(srcB)
 		warm(srcA)
 	}
+	pubs := 0
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		before := s.View().Generation()
 		if i&1 == 0 {
 			s.sources = srcB
 		} else {
@@ -128,15 +188,128 @@ func BenchmarkRPMFireChangedGuarded(b *testing.B) {
 		}
 		s.enqueueCompileScope([]int64{10}, nil, scopeCauseGroup)
 		s.compileOnce()
+		if s.View().Generation() > before {
+			pubs++
+		}
 	}
+	b.StopTimer()
+	b.ReportMetric(float64(pubs), "publishes")
 }
 
-// BenchmarkRPMFullCompileDigest measures a full compile of the whole plan plus
-// the production digest (the guard's new work), setup excluded.
+// BenchmarkRPMScopedChangedSmall isolates the scoped seed overhead: only ONE
+// route's quality changes, so the session seeds from carry (O(U) key builds over
+// R carry routes) and recomputes a single route.
+func BenchmarkRPMScopedChangedSmall(b *testing.B) {
+	models := rpmModels(rpmBenchModels())
+	s, m := rpmHomogeneousScheduler(b, models)
+	prices := rpmPrices(models)
+	qA := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 30, 29)
+	qB := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 10, 5)
+	rpmAssertDigestDiffers(b, s, qA, qB, prices)
+	srcA := rpmQualitySources(qA, prices)
+	srcB := rpmQualitySources(qB, prices)
+	s.sources = srcA
+	s.compileOnce()
+	for range 3 {
+		s.sources = srcB
+		s.compileOnce()
+		s.sources = srcA
+		s.compileOnce()
+	}
+	pubs := 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		before := s.View().Generation()
+		if i&1 == 0 {
+			s.sources = srcB
+		} else {
+			s.sources = srcA
+		}
+		s.compileOnce()
+		if s.View().Generation() > before {
+			pubs++
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(pubs), "publishes")
+}
+
+// BenchmarkRPMFullFireEqualGuarded forces the full-fidelity fallback
+// (scopeOverflow) each fire: full compile of the whole plan + digest + equal
+// guard skip, no publish.
+func BenchmarkRPMFullFireEqualGuarded(b *testing.B) {
+	models := rpmModels(rpmBenchModels())
+	s, _ := rpmHomogeneousScheduler(b, models)
+	skips := 0
+	for range 3 {
+		s.scopeOverflow.Store(true)
+		s.compileOnce()
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		before := s.View().Generation()
+		s.scopeOverflow.Store(true)
+		s.compileOnce()
+		if s.View().Generation() == before {
+			skips++
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(skips), "equal_skips")
+}
+
+// BenchmarkRPMFullFireChangedGuarded forces a full compile + changed digest +
+// publish (commit copy) each fire; the spec's full end-to-end path.
+func BenchmarkRPMFullFireChangedGuarded(b *testing.B) {
+	models := rpmModels(rpmBenchModels())
+	s, m := rpmHomogeneousScheduler(b, models)
+	prices := rpmPrices(models)
+	qA := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 30, 29)
+	qB := rpmQuality(10, domain.FormatOpenAIChat, models[0], m.byGroup[10], 10, 5)
+	rpmAssertDigestDiffers(b, s, qA, qB, prices)
+	srcA := rpmQualitySources(qA, prices)
+	srcB := rpmQualitySources(qB, prices)
+	s.sources = srcA
+	s.compileOnce()
+	warm := func(src *CompilerSources) {
+		s.sources = src
+		s.scopeOverflow.Store(true)
+		s.compileOnce()
+	}
+	for range 3 {
+		warm(srcB)
+		warm(srcA)
+	}
+	pubs := 0
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		before := s.View().Generation()
+		if i&1 == 0 {
+			s.sources = srcB
+		} else {
+			s.sources = srcA
+		}
+		s.scopeOverflow.Store(true)
+		s.compileOnce()
+		if s.View().Generation() > before {
+			pubs++
+		}
+	}
+	b.StopTimer()
+	b.ReportMetric(float64(pubs), "publishes")
+}
+
+// BenchmarkRPMFullCompileDigest is the component view: full RoutingCompiler
+// compile of the whole plan + production digest (no publish), setup excluded.
 func BenchmarkRPMFullCompileDigest(b *testing.B) {
-	s, _ := rpmHomogeneousScheduler(b, rpmModels(100))
+	models := rpmModels(rpmBenchModels())
+	s, _ := rpmHomogeneousScheduler(b, models)
+	prices := rpmPrices(models)
 	c := NewRoutingCompiler()
-	in := CompilerInputs{Static: s.View().StaticView()}
+	in := CompilerInputs{Static: s.View().StaticView(), Prices: prices}
 	var d decisionDigester
 	for range 3 {
 		dv, err := c.Compile(in)
@@ -150,6 +323,6 @@ func BenchmarkRPMFullCompileDigest(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		benchmarkRPMCount = int(d.digest(dv).count)
+		benchmarkRPMDigest = d.digest(dv)
 	}
 }
