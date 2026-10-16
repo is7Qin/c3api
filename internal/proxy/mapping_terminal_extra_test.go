@@ -165,19 +165,23 @@ func TestTerminalOutcomesAllMappings(t *testing.T) {
 			}
 		})
 		t.Run("已接受流中止/"+tc.name, func(t *testing.T) {
-			up := fakeOpenAI(t, "abort-stream")
+			up, rec := fakeAcceptedAbortOpenAI(t)
 			defer up.Close()
 			store := &captureLogStore{}
 			p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, tc.mapping), 1, true, 30*time.Second, store, nil)
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 			req.Header.Set("Authorization", "Bearer ck-1")
-			rec := httptest.NewRecorder()
+
 			p.HandleChat(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code)
+			require.Contains(t, rec.Body.String(), `"content":"hi"`, "先接受业务帧再中止")
+			require.Contains(t, rec.Body.String(), "event: error\ndata: ", "真实读取错误必须产生流错误帧")
 			p.sched.FlushRules()
 			require.NoError(t, p.rec.Close(context.Background()))
 			store.mu.Lock()
 			defer store.mu.Unlock()
 			require.Len(t, store.logs, 1)
+			require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
 			require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType)
 			require.Equal(t, "gpt-4o", store.logs[0].Model)
 			require.Equal(t, tc.wantMapped, store.logs[0].MappedModel, "已接受流中止 MappedModel 必须等于当轮用量身份")

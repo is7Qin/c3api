@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,10 +33,43 @@ import (
 // "500" = 每个非流式请求都返回 500（测 连接级/5xx 分流→502）；
 // "400" = 每个非流式请求都返回 400（测 4xx 透传、不转移）；
 // "400-stream" = 每个流式请求都返回 400（测流式 4xx 透传）；
-// "abort-stream" = 流式响应发完一部分后 panic 断开连接（chunked 帧未终结 →
-// relay 读到读错误，测中止路径；旧实现靠非法 JSON 事件触发 SDK 解码失败）；
+// 已接受流中止使用 fakeAcceptedAbortOpenAI：下游确认首帧后截断响应体。
 // "stall-stream" = 流式首帧后不再发送任何字节（测 UpstreamStreamTimeout 超时）。
 func fakeOpenAI(t *testing.T, failMode string) *httptest.Server {
+	require.NotEqual(t, "abort-stream", failMode, "accepted abort requires fakeAcceptedAbortOpenAI")
+	return fakeOpenAIUntil(t, failMode, nil)
+}
+
+// acceptedAbortRecorder acknowledges a flushed business frame, never just headers
+// or a keepalive. The upstream cannot abort until the scenario's premise is true.
+type acceptedAbortRecorder struct {
+	*httptest.ResponseRecorder
+	accepted chan struct{}
+	once     sync.Once
+}
+
+func (r *acceptedAbortRecorder) Flush() {
+	r.ResponseRecorder.Flush()
+	if strings.Contains(r.Body.String(), `"content":"hi"`) {
+		r.once.Do(func() { close(r.accepted) })
+	}
+}
+
+func fakeAcceptedAbortOpenAI(t *testing.T) (*httptest.Server, *acceptedAbortRecorder) {
+	t.Helper()
+	rec := &acceptedAbortRecorder{ResponseRecorder: httptest.NewRecorder(), accepted: make(chan struct{})}
+	up := fakeOpenAIUntil(t, "abort-stream", rec.accepted)
+	t.Cleanup(func() {
+		select {
+		case <-rec.accepted:
+		default:
+			t.Error("upstream abort requires a flushed downstream business frame")
+		}
+	})
+	return up, rec
+}
+
+func fakeOpenAIUntil(t *testing.T, failMode string, accepted <-chan struct{}) *httptest.Server {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
 			w.WriteHeader(404)
@@ -85,16 +119,39 @@ func fakeOpenAI(t *testing.T, failMode string) *httptest.Server {
 			return
 		}
 		if failMode == "abort-stream" && stream {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.WriteHeader(200)
-			fl := w.(http.Flusher)
-			fmt.Fprint(w, `data: {"id":"c1","object":"chat.completion.chunk","choices":[{"delta":{"content":"hi"}}],"usage":null}`+"\n\n")
-			fl.Flush()
-			// 已发出部分流后 panic：连接被服务器强制关闭，relay 读到读错误
-			// （chunked 传输未写终结帧 → io.ErrUnexpectedEOF）。relay 原样
-			// 转发字节不解析事件，必须用真实读错误触发中止路径。
-			panic("abort-stream: connection cut mid-stream")
+			// Hijack before writing: net/http finishes its pending-read cleanup
+			// before the response, rather than racing it with panic teardown.
+			if _, err := io.Copy(io.Discard, r.Body); err != nil {
+				t.Errorf("drain abort request: %v", err)
+				return
+			}
+			conn, rw, err := w.(http.Hijacker).Hijack()
+			if err != nil {
+				t.Errorf("hijack abort response: %v", err)
+				return
+			}
+			defer conn.Close()
+			payload := `data: {"id":"c1","object":"chat.completion.chunk","choices":[{"delta":{"content":"hi"}}],"usage":null}` + "\n\n"
+			// One missing byte makes EOF a real truncated-body read error.
+			if _, err := fmt.Fprintf(rw, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s", len(payload)+1, payload); err != nil {
+				t.Errorf("write abort response: %v", err)
+				return
+			}
+			if err := rw.Flush(); err != nil {
+				t.Errorf("flush abort response: %v", err)
+				return
+			}
+			// Upstream Flush is not downstream acceptance. Close only after
+			// the business frame is flushed to the downstream recorder.
+			select {
+			case <-accepted:
+			case <-t.Context().Done():
+			case <-time.After(5 * time.Second):
+				t.Error("downstream did not acknowledge abort-stream business frame")
+			}
+			return
 		}
+
 		if stream {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.WriteHeader(200)
@@ -742,17 +799,17 @@ func TestProxyPassthrough4xx(t *testing.T) {
 	require.Equal(t, domain.Err4xx, store.logs[0].ErrorType)
 }
 
-// 流式中止：上游在流中途发非法事件（解码失败）→ 连接级/5xx 分流 + 释放并发槽 + ErrAbort 记录。
+// 流式中止：下游接受业务帧后上游截断连接 → 连接级/5xx 分流 + 释放并发槽 + ErrAbort 记录。
 func TestProxyStreamAbortFreesSlot(t *testing.T) {
 	testHealthSink.reset()
-	up := fakeOpenAI(t, "abort-stream")
+	up, rec := fakeAcceptedAbortOpenAI(t)
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
-	rec := httptest.NewRecorder()
+
 	p.HandleChat(rec, req)
 
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空

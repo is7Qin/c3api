@@ -204,14 +204,14 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 		}
 	})
 	t.Run("已接受流中止", func(t *testing.T) {
-		up := fakeOpenAI(t, "abort-stream")
+		up, rec := fakeAcceptedAbortOpenAI(t)
 		defer up.Close()
 		store := &captureLogStore{}
 		p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, implicitMapping), 1, true, 30*time.Second, store, nil)
 		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 			`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 		req.Header.Set("Authorization", "Bearer ck-1")
-		rec := httptest.NewRecorder()
+
 		p.HandleChat(rec, req)
 		p.sched.FlushRules()
 		require.NoError(t, p.rec.Close(context.Background()))

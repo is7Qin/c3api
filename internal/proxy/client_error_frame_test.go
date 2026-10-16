@@ -45,18 +45,18 @@ func decodeOpenAISSE[T any](body string) (int, error) {
 }
 
 // TestChatStreamErrorFrameConsumedByOpenAISDK §2.3：真实
-// openai-go SDK 消费「业务帧 → 上游读取失败 → 错误帧」——上游中途 panic 断流，
+// openai-go SDK 消费「业务帧 → 上游读取失败 → 错误帧」——下游接受首帧后上游截断，
 // 网关补写客户端协议 error 帧，SDK 必须 Stream.Err() != nil（此前只发
 // {"message":…}：SDK 当普通 chunk 解码成功 → Err()==nil → 截断被当正常结束）。
 func TestChatStreamErrorFrameConsumedByOpenAISDK(t *testing.T) {
-	up := fakeOpenAI(t, "abort-stream")
+	up, rec := fakeAcceptedAbortOpenAI(t)
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
 		`{"model":"gpt-4o","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
 	req.Header.Set("Authorization", "Bearer ck-1")
-	rec := httptest.NewRecorder()
+
 	p.HandleChat(rec, req)
 
 	body := rec.Body.String()
