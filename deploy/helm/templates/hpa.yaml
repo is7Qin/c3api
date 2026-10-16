@@ -21,6 +21,9 @@ spec:
           type: Utilization
           averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
     {{- end }}
+    {{- /* 0 (or unset) disables the memory metric: resident memory is dominated by
+           the compiled routing plan, a per-pod fixed cost that does not shrink
+           with more replicas, so it is a poor scaling signal. */}}
     {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
     - type: Resource
       resource:

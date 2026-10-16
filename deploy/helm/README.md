@@ -77,7 +77,7 @@ helm install c3api ./deploy/helm \
 | `autoscaling.minReplicas` | HPA minimum replicas | `1` |
 | `autoscaling.maxReplicas` | HPA maximum replicas | `5` |
 | `autoscaling.targetCPUUtilizationPercentage` | HPA CPU target (needs CPU requests) | `80` |
-| `autoscaling.targetMemoryUtilizationPercentage` | HPA memory target (needs memory requests) | `80` |
+| `autoscaling.targetMemoryUtilizationPercentage` | HPA memory target; `0` disables the metric (needs memory requests) | `0` |
 | `image.repository` | Image repository | `ghcr.io/is7qin/c3api` |
 | `image.tag` | Image tag (pin a version in production) | `beta` |
 | `image.pullPolicy` | Image pull policy | `IfNotPresent` |
@@ -135,7 +135,10 @@ helm install c3api ./deploy/helm \
 - **Autoscaling:** `autoscaling.enabled=true` renders a `HorizontalPodAutoscaler`
   and makes the Deployment omit its replica count so the HPA owns scaling. This
   requires a metrics API (metrics-server) and CPU/memory **requests** on the
-  container (utilization targets are relative to requests).
+  container (utilization targets are relative to requests). The memory target is
+  **disabled by default** (`targetMemoryUtilizationPercentage: 0`): resident
+  memory is dominated by the compiled routing plan, a per-pod fixed cost that
+  every replica rebuilds, so it does not shrink with more replicas — scale on CPU.
 - **Secrets:** `secrets.*` and a literal `externalDatabase.dsn` are injected as
   plain env values (visible via `kubectl describe pod`). For production prefer
   `existingSecret`, and pin `image.tag` to an immutable version.
