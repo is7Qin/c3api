@@ -12,6 +12,8 @@ import {
   extFormFields,
   nonEmptyPaths,
   pathsEchoBlocked,
+  pathsForFormats,
+  saveTargetID,
   shouldSyncEcho,
 } from './template-extensions.ts'
 
@@ -132,6 +134,47 @@ describe('nonEmptyPaths', () => {
   })
 })
 
+describe('pathsForFormats', () => {
+  const stored = {
+    'openai-chat': 'chat/completions',
+    anthropic: 'v1/messages',
+    'openai-images.edits': 'images/edits',
+  }
+
+  it('只保留当前 supported_formats 内的键（后端按 supported_formats 校验）', () => {
+    assert.deepEqual(pathsForFormats(stored, ['openai-chat']), { 'openai-chat': 'chat/completions' })
+  })
+
+  it('图片两键同属 openai-images：勾了该格式两个都保留', () => {
+    assert.deepEqual(pathsForFormats(stored, ['openai-images']), { 'openai-images.edits': 'images/edits' })
+  })
+
+  it('取消的格式在保存时被丢弃（否则整次保存会被 400 挡回）', () => {
+    assert.deepEqual(
+      pathsForFormats(stored, ['openai-chat', 'anthropic']),
+      { 'openai-chat': 'chat/completions', anthropic: 'v1/messages' },
+    )
+    assert.equal(pathsForFormats(stored, []), undefined, '全部未勾选 → 不写路径列')
+  })
+
+  it('未知键不上送（后端只接受 7 个键）', () => {
+    assert.equal(pathsForFormats({ 'bogus-key': 'x' }, ['openai-chat']), undefined)
+  })
+})
+
+describe('saveTargetID', () => {
+  // 回归：模板与 ext 是两次调用，ext 写失败时模板行已存在。若重试仍判定为
+  // 「新建」，会留孤儿模板并再造一个。
+  it('ext 写失败后的重试落在同一个模板上（update 而非再建）', () => {
+    assert.equal(saveTargetID(null, 42), 42, '新建后 ext 失败 → 重试 update 42')
+    assert.equal(saveTargetID(7, 42), 7, '正在编辑的模板优先')
+  })
+
+  it('真正的新建返回 null（只有这时才允许 create）', () => {
+    assert.equal(saveTargetID(null, null), null)
+  })
+})
+
 describe('CUSTOM_PATH_FIELDS', () => {
   it('7 个键与后端键集合一致且唯一', () => {
     const keys = CUSTOM_PATH_FIELDS.map(f => f.key)
@@ -177,5 +220,24 @@ describe('templates 页面接线 tripwire（源码形状）', () => {
     assert.notEqual(guard, -1, '保存前必须有 echoBlocked 门禁')
     assert.notEqual(write, -1, '找不到 api.updateTemplate')
     assert.ok(guard < write, '门禁必须在 updateTemplate 之前，否则会「模板已改、却报没保存」')
+  })
+})
+
+describe('templates 页面接线 tripwire（保存侧）', () => {
+  const page = readFileSync(new URL('../pages/templates.tsx', import.meta.url), 'utf8')
+
+  it('保存目标由 saveTargetID 决定，且创建成功后立刻记住 pending id', () => {
+    assert.match(page, /let id = saveTargetID\(editing\?\.ID \?\? null, pendingTemplateID\)/,
+      '目标 id 必须走 saveTargetID，否则 ext 写失败后的重试会再建一个模板')
+    const create = page.indexOf('api.createTemplate(')
+    const remember = page.indexOf('setPendingTemplateID(id)')
+    assert.notEqual(create, -1, '找不到 api.createTemplate')
+    assert.notEqual(remember, -1, '创建成功后必须 setPendingTemplateID(id)')
+    assert.ok(create < remember, '必须在 createTemplate 之后立刻记住 id（ext 写失败也要记住）')
+  })
+
+  it('提交的路径按当前 supported_formats 过滤', () => {
+    assert.match(page, /body\.upstream_paths = pathsForFormats\(f\.upstream_paths, f\.supported_formats\)/,
+      '路径必须经 pathsForFormats 过滤，否则取消格式后保存会被后端 400 挡回')
   })
 })

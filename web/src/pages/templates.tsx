@@ -13,9 +13,11 @@ import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
 import {
   CUSTOM_PATH_FIELDS,
+  CUSTOM_PATH_FORMAT,
   extFormFields,
-  nonEmptyPaths,
+  pathsForFormats,
   pathsEchoBlocked as echoBlocked,
+  saveTargetID,
   shouldSyncEcho,
 } from '@/lib/template-extensions'
 import { BatchBar } from '@/components/batch-bar'
@@ -377,8 +379,11 @@ function FormFields({
             <div className="space-y-0.5">
               <Label>{t('templates.ext.customPaths')}</Label>
               <p className="text-xs text-muted-foreground">{t('templates.ext.customPathsHint')}</p>
+              {CUSTOM_PATH_FIELDS.some(f => !form.supported_formats.includes(CUSTOM_PATH_FORMAT[f.key] as TemplateFormat)) && (
+                <p className="text-xs text-muted-foreground">{t('templates.ext.customPathsSelectedOnly')}</p>
+              )}
             </div>
-            {CUSTOM_PATH_FIELDS.map(f => (
+            {CUSTOM_PATH_FIELDS.filter(f => form.supported_formats.includes(CUSTOM_PATH_FORMAT[f.key] as TemplateFormat)).map(f => (
               <div key={f.key} className="grid grid-cols-[15rem_1fr] items-center gap-2">
                 <code className="text-xs text-muted-foreground">{f.key}</code>
                 <Input
@@ -594,6 +599,9 @@ export default function Templates() {
   // 会复用同一份 data 引用（structural sharing），effect 不重跑，而 openEdit 已
   // 把 form 重置成空表——只查 isLoading 会把「刚被重置的空表单」当成已回显。
   const [pathsSyncedFor, setPathsSyncedFor] = useState<number | null>(null)
+  // pendingTemplateID 记录「表单对应的模板行已经落库、但链式写 ext 失败」的 id：
+  // 此时 editing 仍为 null（新建），重试必须走 update，否则会再建一个重复模板。
+  const [pendingTemplateID, setPendingTemplateID] = useState<number | null>(null)
   // 批量更新时若选中任一 codex 模板则禁用 BaseURL（混合/全 Codex 均不发送已知无效请求；api_key/responses-special 保持可编辑；stale 行 fail-closed）
   const isBatchCodex = useMemo(() => {
     if (selected.length === 0) return false
@@ -664,6 +672,7 @@ export default function Templates() {
     setEditing(null)
     setForm(emptyForm())
     setPathsSyncedFor(null) // 新建无既有路径；清掉上次的同步标记
+    setPendingTemplateID(null)
     setValidationMsg(null)
     setDialogOpen(true)
   }
@@ -673,6 +682,7 @@ export default function Templates() {
     // 表单刚被重置成空表：在回显 effect 重新灌入之前一律视为未同步，否则
     // 「关闭→重开→保存」会在表单尚空的瞬间把全部路径写成 NULL。
     setPathsSyncedFor(null)
+    setPendingTemplateID(null)
     setValidationMsg(null)
     setDialogOpen(true)
   }
@@ -733,11 +743,15 @@ export default function Templates() {
       if (echoBlocked(ct, editing?.ID ?? null, pathsSyncedFor)) {
         throw new Error(tr('templates.ext.echoRequired'))
       }
-      let id = editing?.ID
-      if (!editing) {
-        id = (await api.createTemplate(toBody(f))).ID
+      let id = saveTargetID(editing?.ID ?? null, pendingTemplateID)
+      if (id === null) {
+        const created = await api.createTemplate(toBody(f))
+        id = created.ID
+        // 模板行已落库：之后的重试必须走 update（否则一次 ext 写失败会留下一个
+        // 孤儿模板，重试再建一个）。
+        setPendingTemplateID(id)
       } else {
-        await api.updateTemplate(editing.ID, toBody(f))
+        await api.updateTemplate(id, toBody(f))
       }
       if (id && (ECO_CREDENTIAL_TYPES.includes(ct) || ct === 'custom')) {
         const body: TemplateExt = {
@@ -746,16 +760,24 @@ export default function Templates() {
           strip_image_tools: f.strip_image_tools,
         }
         if (ct === 'custom') {
-          // 留空的键不上送：后端 nil = 未配置 = 该格式走默认端点
-          body.upstream_paths = nonEmptyPaths(f.upstream_paths)
+          // 留空的键不上送（后端 nil = 未配置 = 该格式走默认端点）；并按当前勾选
+          // 的 supported_formats 过滤——后端要求键属于 supported_formats，原样上送
+          // 已取消格式的旧路径会让一次普通保存被 400 挡回。
+          body.upstream_paths = pathsForFormats(f.upstream_paths, f.supported_formats)
         }
-        await api.putTemplateExt(id, body)
+        try {
+          await api.putTemplateExt(id, body)
+        } catch (e) {
+          // 模板行已写成功：文案必须说清，否则运维会以为什么都没保存而重复操作。
+          throw new Error(tr('templates.ext.partialFailure', { message: errMsg(e) ?? String(e) }))
+        }
       }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['templates'] })
       // 后端会把路径归一后落库（剥前导 /、裁空白），下次打开要显示归一值
       qc.invalidateQueries({ queryKey: ['template-ext-echo'] })
+      setPendingTemplateID(null)
       setDialogOpen(false)
     },
   })

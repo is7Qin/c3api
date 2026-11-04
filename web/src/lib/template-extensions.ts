@@ -81,6 +81,52 @@ export function pathsEchoBlocked(
   return syncedFor !== editingId
 }
 
+/**
+ * 保存要打的目标模板 id：正在编辑的模板优先，其次是「模板行已落库、但链式写
+ * ext 失败」的 pending id。返回 null 表示需要新建（只有真正的新建才允许 create）。
+ *
+ * 为什么需要它：模板与 ext 是两次调用，ext 写失败时模板行已经存在；若重试仍按
+ * 「editing 为空 ⇒ 新建」判断，就会留下一个孤儿模板并再建一个。
+ */
+export function saveTargetID(editingId: number | null, pendingId: number | null): number | null {
+  return editingId ?? pendingId ?? null
+}
+
+/** 路径键 → 该键所属的模板格式（图片两键同属 openai-images）。 */
+export const CUSTOM_PATH_FORMAT: Record<string, string> = {
+  'openai-chat': 'openai-chat',
+  'openai-responses': 'openai-responses',
+  'openai-responses-ws': 'openai-responses-ws',
+  anthropic: 'anthropic',
+  'openai-search': 'openai-search',
+  'openai-images.generations': 'openai-images',
+  'openai-images.edits': 'openai-images',
+}
+
+/**
+ * 只保留当前 supported_formats 内的路径键。
+ *
+ * 后端在写入时校验「键必须属于本模板 supported_formats」，而 PUT 是全列替换。
+ * 若把已从 supported_formats 里去掉的格式的旧路径原样上送，一次普通保存会被
+ * 400 挡回（运维只想删一个格式，却要先手动清空对应输入框）。因此保存时按当前
+ * 勾选过滤：通过 UI 收窄格式 = 一并丢该格式的覆盖（与本接口的全列替换语义
+ * 一致）；通过管理 API 单独改 supported_formats 则保留为死配置、放宽后复活。
+ */
+export function pathsForFormats(
+  rec: Record<string, string>,
+  formats: readonly string[],
+): Record<string, string> | undefined {
+  const allowed = new Set(formats)
+  const kept: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rec)) {
+    const f = CUSTOM_PATH_FORMAT[k]
+    // 未知键一并丢弃：后端只认 7 个键，上送只会换来一次 400。
+    if (f === undefined || !allowed.has(f)) continue
+    kept[k] = v
+  }
+  return nonEmptyPaths(kept)
+}
+
 /** 空白键不上送（后端 nil = 未配置 = 该格式回落官方默认端点）。 */
 export function nonEmptyPaths(rec: Record<string, string>): Record<string, string> | undefined {
   const out: Record<string, string> = {}

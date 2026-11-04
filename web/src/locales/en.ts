@@ -244,6 +244,8 @@ export default {
       "stripImageToolsHint": "Strips image tools from this template's account responses; unset = off",
       "customPaths": "Upstream request paths (optional)",
       "customPathsHint": "Override the endpoint path per format; leave blank to use that format's default endpoint. A query string is allowed (e.g. ?api-version=2024-10-21); do not include a host or scheme.",
+              "customPathsSelectedOnly": "Only formats enabled below are listed; unchecking a format drops its path override when you save.",
+              "partialFailure": "Template saved, but writing the path configuration failed: {{message}}. Fix it and save again — no duplicate template will be created.",
       "echoRequired": "Could not load the stored path configuration; saving is disabled so it cannot be cleared. Please retry.",
       "saveSuccess": "Extensions saved",
       "loadFailed": "Failed to load extensions: {{message}}"
