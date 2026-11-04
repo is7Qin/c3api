@@ -2921,7 +2921,7 @@ components:
         # credential_type 模板级：一个模板 = 一种号池；缺省 = api_key。
         # 生态三类型（responses-special/codex-oauth/codex-pat）只支持 resp / resp-ws /
         # openai-images / openai-search 格式（service 校验）；类型化配置走 /templates/{id}/ext。
-        credential_type: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat], default: api_key }
+        credential_type: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat, custom], default: api_key }
         supported_formats:
           type: array
           minItems: 1
@@ -2951,7 +2951,7 @@ components:
         ID: { type: integer, format: int64 }
         Name: { type: string }
         BaseURL: { type: string, description: "credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (non-empty override, or empty for default/route failure)" }
-        CredentialType: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat], description: 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式 }
+        CredentialType: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat, custom], description: 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式 }
         SupportedFormats:
           type: array
           items: { type: string, enum: [openai-chat, openai-responses, openai-responses-ws, openai-images, openai-search, anthropic] }
@@ -3084,10 +3084,19 @@ components:
       properties:
         # template_id 只读（响应）；请求体忽略——路径 {id} 为准。
         template_id: { type: integer, format: int64 }
-        credential_type: { type: string, enum: [responses-special, codex-oauth, codex-pat], description: "类型声明；必须与父模板 credential_type 一致（不一致 → 400）" }
+        credential_type: { type: string, enum: [responses-special, codex-oauth, codex-pat, custom], description: "类型声明；必须与父模板 credential_type 一致（不一致 → 400）" }
         # 模板是共享配置面：唯一可配置列 strip_image_tools（三类型公共能力开关）——
         # 凭据列组（oauth/pat）一律在账号级 account_ext（账号私有）。
         strip_image_tools: { type: boolean, nullable: true, description: "三类型公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）" }
+        # custom 专用：逐格式自定义上游路径。键 ∈ {openai-chat, openai-responses,
+        # openai-responses-ws, anthropic, openai-search, openai-images.generations,
+        # openai-images.edits}；值 = aiclient 内部 path 词法（可带 query），未配置的键
+        # 回落官方默认端点。非 custom 类型提交 → 400。
+        upstream_paths:
+          type: object
+          nullable: true
+          additionalProperties: { type: string }
+          description: "custom 专用逐格式路径；键见描述，nil/缺省 = 未配置 = 全部回落默认端点"
     AccountExt:
       type: object
       required: [credential_type]

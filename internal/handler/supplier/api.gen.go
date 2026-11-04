@@ -83,6 +83,7 @@ const (
 	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
 	TemplateCredentialTypeCodexOauth       TemplateCredentialType = "codex-oauth"
 	TemplateCredentialTypeCodexPat         TemplateCredentialType = "codex-pat"
+	TemplateCredentialTypeCustom           TemplateCredentialType = "custom"
 	TemplateCredentialTypeResponsesSpecial TemplateCredentialType = "responses-special"
 )
 

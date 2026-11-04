@@ -227,6 +227,7 @@ const (
 	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
 	TemplateCredentialTypeCodexOauth       TemplateCredentialType = "codex-oauth"
 	TemplateCredentialTypeCodexPat         TemplateCredentialType = "codex-pat"
+	TemplateCredentialTypeCustom           TemplateCredentialType = "custom"
 	TemplateCredentialTypeResponsesSpecial TemplateCredentialType = "responses-special"
 )
 
@@ -245,6 +246,7 @@ const (
 	TemplateCreateCredentialTypeApiKey           TemplateCreateCredentialType = "api_key"
 	TemplateCreateCredentialTypeCodexOauth       TemplateCreateCredentialType = "codex-oauth"
 	TemplateCreateCredentialTypeCodexPat         TemplateCreateCredentialType = "codex-pat"
+	TemplateCreateCredentialTypeCustom           TemplateCreateCredentialType = "custom"
 	TemplateCreateCredentialTypeResponsesSpecial TemplateCreateCredentialType = "responses-special"
 )
 
@@ -262,6 +264,7 @@ const (
 const (
 	TemplateExtCredentialTypeCodexOauth       TemplateExtCredentialType = "codex-oauth"
 	TemplateExtCredentialTypeCodexPat         TemplateExtCredentialType = "codex-pat"
+	TemplateExtCredentialTypeCustom           TemplateExtCredentialType = "custom"
 	TemplateExtCredentialTypeResponsesSpecial TemplateExtCredentialType = "responses-special"
 )
 
@@ -2154,6 +2157,9 @@ type TemplateExt struct {
 	// StripImageTools 三类型公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）
 	StripImageTools *bool  `json:"strip_image_tools"`
 	TemplateId      *int64 `json:"template_id,omitempty"`
+
+	// UpstreamPaths custom 专用逐格式路径；键见描述，nil/缺省 = 未配置 = 全部回落默认端点
+	UpstreamPaths *map[string]string `json:"upstream_paths"`
 }
 
 // TemplateExtCredentialType 类型声明；必须与父模板 credential_type 一致（不一致 → 400）

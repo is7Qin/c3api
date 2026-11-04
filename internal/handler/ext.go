@@ -52,6 +52,9 @@ func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 		CredentialType:  credential.Type(in.CredentialType),
 		StripImageTools: in.StripImageTools,
 	}
+	if in.UpstreamPaths != nil {
+		e.UpstreamPaths = *in.UpstreamPaths // nil = 未配置（清列由 service/repo 语义决定）
+	}
 	saved, err := h.svc.UpsertTemplateExt(r.Context(), e)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
@@ -62,9 +65,14 @@ func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 
 // toAPITemplateExt 模板 ext 领域对象 → 契约类型（template_id 只读，响应带）。
 func toAPITemplateExt(e *domain.TemplateExt) TemplateExt {
-	return TemplateExt{
+	out := TemplateExt{
 		TemplateId:      &e.TemplateID,
 		CredentialType:  TemplateExtCredentialType(e.CredentialType),
 		StripImageTools: e.StripImageTools,
 	}
+	if e.UpstreamPaths != nil {
+		paths := e.UpstreamPaths
+		out.UpstreamPaths = &paths
+	}
+	return out
 }
