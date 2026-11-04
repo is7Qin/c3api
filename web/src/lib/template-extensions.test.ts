@@ -12,6 +12,7 @@ import {
   extFormFields,
   nonEmptyPaths,
   pathsEchoBlocked,
+  shouldSyncEcho,
 } from './template-extensions.ts'
 
 describe('extFormFields', () => {
@@ -90,6 +91,23 @@ describe('pathsEchoBlocked', () => {
   it('重开同一模板但表单被重置 → 仍拦（门禁看同步状态，不看查询状态）', () => {
     const reopeningSameTemplate = { editingId: 7, syncedFor: null }
     assert.equal(pathsEchoBlocked('custom', reopeningSameTemplate.editingId, reopeningSameTemplate.syncedFor), true)
+  })
+})
+
+describe('shouldSyncEcho', () => {
+  it('只有「有模板 + 对话框打开 + 读取成功」三者同时成立才回显', () => {
+    assert.equal(shouldSyncEcho({ editingId: 7, dialogOpen: true, extReadOk: true }), true)
+    assert.equal(shouldSyncEcho({ editingId: null, dialogOpen: true, extReadOk: true }), false, '新建无 ext')
+    assert.equal(shouldSyncEcho({ editingId: 7, dialogOpen: false, extReadOk: true }), false, '关闭时不必灌表单')
+    assert.equal(shouldSyncEcho({ editingId: 7, dialogOpen: true, extReadOk: false }), false, '读失败不得回显')
+  })
+
+  // 回归：关掉再打开同一模板要重灌一次表单（dialogOpen 是触发器，见页面 effect）。
+  it('重开（dialogOpen false → true）在缓存命中时仍会触发回显', () => {
+    const closed = shouldSyncEcho({ editingId: 7, dialogOpen: false, extReadOk: true })
+    const reopened = shouldSyncEcho({ editingId: 7, dialogOpen: true, extReadOk: true })
+    assert.equal(closed, false)
+    assert.equal(reopened, true)
   })
 })
 
