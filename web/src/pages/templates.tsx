@@ -690,18 +690,18 @@ export default function Templates() {
     // ext 行，否则回切后输入框是空的，一次保存就把路径全清掉。
     enabled: !!editing && dialogOpen,
   })
+  const editingID = editing?.ID ?? null
   useEffect(() => {
-    if (!editing || !templateExtEcho.isSuccess) return
+    // 对话框关闭时不必灌表单；dialogOpen 同时是「重开要重新灌一次」的触发器。
+    if (editingID === null || !dialogOpen || !templateExtEcho.isSuccess) return
     const fields = extFormFields(templateExtEcho.data ?? null)
     if (!fields) return // 没有可回显的数据：保持表单原样，也不标记已同步
     setForm(f => ({ ...f, ...fields }))
-    setPathsSyncedFor(editing.ID)
-    // dialogOpen 必须在依赖里：关闭再打开同一模板要重新灌一次表单（否则
-    // openEdit 的 reset 会把输入框清空，一次保存就把全部路径写成 NULL）。
-  }, [editing?.ID, dialogOpen, templateExtEcho.isSuccess, templateExtEcho.data])
+    setPathsSyncedFor(editingID)
+  }, [editingID, dialogOpen, templateExtEcho.isSuccess, templateExtEcho.data])
 
   // 自定义模板的路径依赖 ext 回显：当前模板尚未同步过既有配置时不得保存。
-  const pathsEchoBlocked = echoBlocked(form.credential_type, editing?.ID ?? null, pathsSyncedFor)
+  const pathsEchoBlocked = echoBlocked(form.credential_type, editingID, pathsSyncedFor)
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
     setBatchOpen(false)
