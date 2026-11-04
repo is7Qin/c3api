@@ -158,7 +158,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, withProtocolDefaults(r.Header, false))
+	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, r.Header)
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

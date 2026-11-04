@@ -208,7 +208,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	case domain.FormatAnthropic:
 		path, authHeader, auth = pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred
 	}
-	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, withProtocolDefaults(r.Header, target == domain.FormatAnthropic))
+	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header)
 	if upstreamErr != nil {
 		return statusOf(upstreamErr), nil, false, upstreamErr
 	}

@@ -59,6 +59,10 @@ func (s *anthropicVersionSpy) snapshot() (int, []string) {
 // 客户端带了 → 原值透传（客户端覆盖默认，SDK 同款语义）；客户端没带 → 网关补
 // 默认值。直连与转换两条非流路径都要成立。
 func TestNonStreamAnthropicVersionHeader(t *testing.T) {
+	// anthropicDefaultVersionForTest 是 SDK DefaultVersion 的独立字面量（不引用生产
+	// 常量）：默认值若被改动，这里必须一起改，否则测试变红——这是有意的冗余。
+	const anthropicDefaultVersionForTest = "2023-06-01"
+
 	const messBody = `{"id":"msg_1","type":"message","role":"assistant","model":"gpt-4o","content":[{"type":"text","text":"hi"}],"stop_reason":"end_turn","stop_sequence":null,"usage":{"input_tokens":3,"output_tokens":5}}`
 
 	cases := []struct {
@@ -72,7 +76,7 @@ func TestNonStreamAnthropicVersionHeader(t *testing.T) {
 		{
 			name: "直连 anthropic，客户端未带头 → 网关补默认", clientPath: "/v1/messages",
 			body:        `{"model":"gpt-4o","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`,
-			wantVersion: anthropicDefaultVersion,
+			wantVersion: anthropicDefaultVersionForTest,
 		},
 		{
 			name: "直连 anthropic，客户端带头 → 原值透传", clientPath: "/v1/messages",
@@ -84,13 +88,13 @@ func TestNonStreamAnthropicVersionHeader(t *testing.T) {
 			name: "转换 chat→mess（客户端从不带头）→ 网关补默认", clientPath: "/v1/chat/completions",
 			body:        `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 			dir:         domain.ProtocolConvertChatToMess,
-			wantVersion: anthropicDefaultVersion,
+			wantVersion: anthropicDefaultVersionForTest,
 		},
 		{
 			name: "转换 resp→mess（客户端从不带头）→ 网关补默认", clientPath: "/v1/responses",
 			body:        `{"model":"gpt-4o","input":"hi"}`,
 			dir:         domain.ProtocolConvertRespToMess,
-			wantVersion: anthropicDefaultVersion,
+			wantVersion: anthropicDefaultVersionForTest,
 		},
 	}
 	for _, tc := range cases {

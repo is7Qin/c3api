@@ -803,16 +803,25 @@ func keyEquals(raw []byte, want string) bool {
 	return string(decodeUnicodeEscapes(raw)) == want
 }
 
+// sensitiveBodyKeys 参与「重复即拒」的顶层键：两者都决定路由或出栈形态，重复
+// 出现会让「网关看到的」与「上游执行的」分叉。包级切片而非变参：调用点每请求
+// 都跑，变参会把参数切片堆分配（实测 2 allocs/请求）。
+var sensitiveBodyKeys = []string{"model", "stream"}
+
 // duplicateTopLevelKey 返回 body 顶层**重复出现**的敏感键名（无重复 → 空串）。
 // 前置：json.Valid + 根为 object（handleFormat 已保证）；这里只做单遍字节扫描，
 // 复用 strip_scan.go 的字符串/值跳过原语（零分配）。
-func duplicateTopLevelKey(body []byte, keys ...string) string {
+// keys 上限 64（uint64 位图）：超过即错判重复，属实现约束而非运行时分支——当前
+// 唯一调用点传 sensitiveBodyKeys（2 个键），扩容前必须同步改实现。
+func duplicateTopLevelKey(body []byte, keys []string) string {
 	i := skipSpace(body, 0)
 	if i >= len(body) || body[i] != '{' {
 		return ""
 	}
 	i++
-	var seen map[string]struct{} // 惰性分配：绝大多数请求没有这些键，热路径零分配
+	// 命中位图而非 map：键表是包级固定小切片（当前 2 个），map 会为「model 存在」
+	// 这种常见情况分配 hmap+bucket（实测 2 allocs/请求）。位图零分配。
+	var seenMask uint64
 	for {
 		i = skipSpace(body, i)
 		if i >= len(body) {
@@ -840,17 +849,15 @@ func duplicateTopLevelKey(body []byte, keys ...string) string {
 			if valEnd < 0 {
 				return ""
 			}
-			for _, k := range keys {
+			for ki, k := range keys {
 				if !keyEquals(key, k) {
 					continue
 				}
-				if _, dup := seen[k]; dup {
+				bit := uint64(1) << uint(ki)
+				if seenMask&bit != 0 {
 					return k
 				}
-				if seen == nil {
-					seen = make(map[string]struct{}, len(keys))
-				}
-				seen[k] = struct{}{}
+				seenMask |= bit
 			}
 			i = valEnd
 		default:

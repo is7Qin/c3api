@@ -23,6 +23,10 @@ import (
 // Factory 读取**：非流式改原始出栈后，deadline 由调用方 ctx 施加
 // （internal/proxy/forward.go 的 rawJSON），流式 backstop 一直由调用方 ctx 传入。
 // 保形不改签名是为了不在一次改动里动 30+ 处构造调用；清理时连同参数一起删。
+// defaultAnthropicVersion anthropic-sdk-go v1.76.0 的 DefaultVersion：SDK 在
+// 客户端未显式提供时写入 `Anthropic-Version: 2023-06-01`，原始出栈必须补回。
+const defaultAnthropicVersion = "2023-06-01"
+
 type Config struct {
 	// Deprecated: 由调用方 ctx 控制（非流 deadline 在 proxy 层）。
 	UpstreamTimeout time.Duration
@@ -238,6 +242,18 @@ func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path
 	}
 	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(authHeader, auth)
+	// 协议默认头：SDK 时代由各 SDK 客户端补，改原始出栈后必须由网关补回，否则
+	//   - 缺 Anthropic-Version：anthropic 上游直接 400（转换方向客户端从不带）；
+	//   - 缺 Accept：部分上游据此选响应表示。
+	// 在**出栈 map 上**就地补（RelayHeaders 已产新 map），不复制、不多分配。
+	// 客户端带了就沿用（SDK 同款「默认先写、客户端头覆盖」语义）。authHeader ==
+	// "x-api-key" 是本仓唯一的 anthropic 判定（端点鉴权头由调用方显式选定）。
+	if _, ok := req.Header["Accept"]; !ok {
+		req.Header.Set("Accept", "application/json")
+	}
+	if authHeader == "x-api-key" && req.Header.Get("Anthropic-Version") == "" {
+		req.Header.Set("Anthropic-Version", defaultAnthropicVersion)
+	}
 	req = req.WithContext(ctx)
 	return f.hc.Do(req)
 }

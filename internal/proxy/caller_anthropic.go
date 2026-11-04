@@ -148,7 +148,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 交 pipeline 按 4xx 归一（落 err_logs + 原样透出错误体），不在此处直接写出。
 		return 400, []byte(`{"error":{"message":"` + anthropicStreamingRequiredText + `","type":"upstream_error"}}`), false, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, withProtocolDefaults(r.Header, true))
+	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header)
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}
