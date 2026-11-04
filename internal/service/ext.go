@@ -39,8 +39,9 @@ var upstreamPathRE = regexp.MustCompile(`^(?:v1/)?[A-Za-z0-9._~-]+(?:/[A-Za-z0-9
 var upstreamQueryRE = regexp.MustCompile(`^[A-Za-z0-9._~=&-]+$`)
 
 // validateUpstreamPaths 校验 custom 的逐格式路径：键必须属于全集且对应格式在
-// supported_formats 内；值长度 1..1024、去至多一个前导 `/` 后过白名单、
-// query 非空且解码后过白名单、任何路径段不得为 `.` 或 `..`。
+// supported_formats 内；值按固定顺序规范化——trim → 剥至多一个前导 `/` →
+// 长度 1..1024 → 白名单；query 非空且解码后过白名单；任何路径段不得为 `.` 或
+// `..`。返回**归一后**的 map（调用方必须用它落库）。
 // nil/空 map = 未配置（合法）。
 func validateUpstreamPaths(paths map[string]string, supported map[domain.RequestFormat]bool) (map[string]string, error) {
 	out := make(map[string]string, len(paths))
@@ -53,10 +54,10 @@ func validateUpstreamPaths(paths map[string]string, supported map[domain.Request
 			return nil, ErrInvalidInput
 		}
 		v := strings.TrimSpace(raw)
+		v = strings.TrimPrefix(v, "/") // 至多剥一个（`//x` 仍会被白名单拒）
 		if len(v) < 1 || len(v) > upstreamPathMaxLen {
 			return nil, ErrInvalidInput
 		}
-		v = strings.TrimPrefix(v, "/")
 		if v == "" || !upstreamPathRE.MatchString(v) {
 			return nil, ErrInvalidInput
 		}

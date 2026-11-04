@@ -42,6 +42,9 @@ func TestValidateUpstreamPathsMatrix(t *testing.T) {
 		{"anthropic": "v1/messages?beta=true&x=a-b_c.d~e"},
 		{"openai-chat": "chat/completions?x=%2e%2e"}, // query 值里的点段无害（非路径）
 		{"openai-chat": "  chat/completions  "},      // 首尾空白被裁掉
+		// 长度上限作用在归一后的值：剥掉前导 / 后恰好 1024 仍合法（顺序：
+		// trim → 剥一个 / → 长度 → 白名单）
+		{"openai-chat": "/" + strings.Repeat("a", 1024)},
 	}
 	for _, tc := range accept {
 		_, err := validateUpstreamPaths(tc, all)
