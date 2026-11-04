@@ -276,7 +276,6 @@ func digestFormatModels(m map[domain.RequestFormat][]string) [32]byte {
 	return digestParts(len(parts), func(i int) []byte { return parts[i] })
 }
 
-// digestModelMapping 对模型映射取规范序摘要（键排序；条目的映射目标与模式都入摘要）。
 // digestUpstreamPaths 对 custom 路径表取规范序摘要：键排序后每项贡献「键」
 // 与「值」两个 part，配合 digestParts 的 8 字节大端长度前缀消除拼接歧义
 // （裸拼接会让 {"ab":"c"} 与 {"a":"bc"} 同摘要，改路径后计划不失效）。
@@ -296,6 +295,7 @@ func digestUpstreamPaths(m map[string]string) [32]byte {
 	return digestParts(len(parts), func(i int) []byte { return parts[i] })
 }
 
+// digestModelMapping 对模型映射取规范序摘要（键排序；条目的映射目标与模式都入摘要）。
 func digestModelMapping(m domain.ModelMapping) [32]byte {
 	if len(m) == 0 {
 		return digestParts(0, nil)
