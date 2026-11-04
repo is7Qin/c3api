@@ -68,14 +68,17 @@ type leaseToken struct {
 }
 
 type Selection struct {
-	AccountID            int64
-	TemplateID           int64
-	BaseURL              string
-	Format               domain.RequestFormat
-	UpstreamKey          string
-	CredentialType       credential.Type
-	Model                string // 已应用模型映射
-	StripImageTools      bool
+	AccountID       int64
+	TemplateID      int64
+	BaseURL         string
+	Format          domain.RequestFormat
+	UpstreamKey     string
+	CredentialType  credential.Type
+	Model           string // 已应用模型映射
+	StripImageTools bool
+	// UpstreamPaths custom 的逐格式自定义上游路径（只读引用快照 map，不复制、
+	// 不修改；nil = 未配置 = 全部回落官方默认端点）。
+	UpstreamPaths        map[string]string
 	Ext                  *domain.AccountExt
 	CandidateFingerprint string
 	lease                *leaseToken

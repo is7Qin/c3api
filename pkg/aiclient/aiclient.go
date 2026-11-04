@@ -167,9 +167,15 @@ func cloneAdd[K comparable, V any](m map[K]V, k K, v V) map[K]V {
 // parseFullURL 由模板 base_url 与格式路径派生完整 URL：路径自带 v1/ 前缀
 // （v1/messages、v1/responses）→ 不补 /v1；其余 openai 系路径裸根 + /v1。
 func parseFullURL(base, path string) (*url.URL, error) {
+	// query 必须先切分：url.JoinPath 会把 "?" 百分号转义成 %3F（实测），
+	// 直接塞进 JoinPath 会产出错误 URL。
+	pathPart, query := path, ""
+	if i := strings.IndexByte(path, '?'); i >= 0 {
+		pathPart, query = path[:i], path[i+1:]
+	}
 	// 路径自带 v1 前缀（anthropic v1/messages、resp-ws v1/responses——真实端点
 	// 无 /ws 后缀）→ 不再补 /v1；其余 openai 系路径裸根 + /v1。
-	if !strings.HasPrefix(path, "v1/") {
+	if !strings.HasPrefix(pathPart, "v1/") {
 		base = openaiBaseURL(base)
 	}
 	u, err := url.Parse(base)
@@ -178,12 +184,15 @@ func parseFullURL(base, path string) (*url.URL, error) {
 	}
 	// 统一 JoinPath：openai → /v1/chat/completions；anthropic → /v1/messages。
 	// 不做 Parse 尾段替换——那是对 base 约定含 /v1 时代的 hack，约定根除后不再需要。
-	full := u.JoinPath(path)
+	full := u.JoinPath(pathPart)
 	// JoinPath 对空路径 base（anthropic 裸根）产出无前导斜杠的 Path
 	// （"v1/messages"）——RequestURI 直接拼进请求行会变非法请求行。旧实现经
 	// NewRequestWithContext 重解析字符串天然补回前导斜杠；此处显式归一。
 	if full.Path != "" && full.Path[0] != '/' {
 		full.Path = "/" + full.Path
+	}
+	if query != "" {
+		full.RawQuery = query
 	}
 	return full, nil
 }

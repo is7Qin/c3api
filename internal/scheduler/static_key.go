@@ -76,6 +76,9 @@ type planKey struct {
 	formatModelsKey  [32]byte
 	supportedFormats [32]byte
 	modelMappingKey  [32]byte
+	// upstreamPathsKey custom 的逐格式路径（credential_type=custom 专用）。
+	// 路径直接决定上游 URL，改配置必须换新计划，否则旧计划继续打到旧端点。
+	upstreamPathsKey [32]byte
 
 	// --- §5.5 group_ids 行（Slice 类事实以规范序摘要入键） ---
 	groupIDsDigest [32]byte
@@ -158,6 +161,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 		k.formatModelsKey = digestFormatModels(tpl.FormatModels)
 		k.supportedFormats = digestFormats(tpl.SupportedFormats)
 		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
+		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
 	}
 	k.groupIDsDigest = digestInt64s(av.groupIDs)
 	av.key = k
@@ -273,6 +277,25 @@ func digestFormatModels(m map[domain.RequestFormat][]string) [32]byte {
 }
 
 // digestModelMapping 对模型映射取规范序摘要（键排序；条目的映射目标与模式都入摘要）。
+// digestUpstreamPaths 对 custom 路径表取规范序摘要：键排序后每项贡献「键」
+// 与「值」两个 part，配合 digestParts 的 8 字节大端长度前缀消除拼接歧义
+// （裸拼接会让 {"ab":"c"} 与 {"a":"bc"} 同摘要，改路径后计划不失效）。
+func digestUpstreamPaths(m map[string]string) [32]byte {
+	if len(m) == 0 {
+		return digestParts(0, nil)
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([][]byte, 0, len(keys)*2)
+	for _, k := range keys {
+		parts = append(parts, []byte(k), []byte(m[k]))
+	}
+	return digestParts(len(parts), func(i int) []byte { return parts[i] })
+}
+
 func digestModelMapping(m domain.ModelMapping) [32]byte {
 	if len(m) == 0 {
 		return digestParts(0, nil)

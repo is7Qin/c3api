@@ -46,6 +46,8 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) planK
 		k.formatModelsKey = digestFormatModels(tpl.FormatModels)
 		k.supportedFormats = digestFormats(tpl.SupportedFormats)
 		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
+		// custom 路径同样进键（编码由 TestDigestUpstreamPaths 单独冻结）
+		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
 	}
 	k.groupIDsDigest = digestInt64s(gids)
 	return k

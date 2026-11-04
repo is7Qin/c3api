@@ -119,6 +119,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.tpl.FormatModels":     {staticPathField, "formatModelsKey"},
 	"$S.tpl.SupportedFormats": {staticPathField, "supportedFormats"},
 	"$S.tpl.ModelMapping":     {staticPathField, "modelMappingKey"},
+	"$S.tpl.UpstreamPaths":    {staticPathField, "upstreamPathsKey"},
 
 	// --- 组归属 ---
 	"$S.groupIDs": {staticPathField, "groupIDsDigest"},

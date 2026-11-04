@@ -85,6 +85,7 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 			"codexEmail", "codexPATKey",
 			"credentialType", "stripImageTools", "modelsDigest", "formatModelsKey",
 			"supportedFormats", "modelMappingKey",
+			"upstreamPathsKey", // custom 路径进 planKey：改路径必须换新计划
 			"groupIDsDigest",
 		}
 		declaredPayloadKeyFields = []string{

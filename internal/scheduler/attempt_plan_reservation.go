@@ -214,7 +214,7 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		AccountID: curAv.acc.ID, TemplateID: curAv.tpl.ID, BaseURL: candidate.BaseURL,
 		Format: domain.RequestFormat(plan.route.Format), UpstreamKey: curAv.acc.UpstreamKey,
 		CredentialType: curAv.tpl.CredentialType, Model: mapped,
-		StripImageTools: curAv.tpl.StripImageTools, Ext: curAv.acc.Ext,
+		StripImageTools: curAv.tpl.StripImageTools, UpstreamPaths: curAv.tpl.UpstreamPaths, Ext: curAv.acc.Ext,
 		CandidateFingerprint: candidate.Fingerprint, lease: &leaseToken{acc: cur},
 		ModelMappingMode: mappingMode,
 	}
