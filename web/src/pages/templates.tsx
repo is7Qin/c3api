@@ -13,9 +13,8 @@ import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
 import {
   CUSTOM_PATH_FIELDS,
-  CUSTOM_PATH_FORMAT,
   extFormFields,
-  pathsForFormats,
+  nonEmptyPaths,
   pathsEchoBlocked as echoBlocked,
   saveTargetID,
   shouldSyncEcho,
@@ -379,11 +378,8 @@ function FormFields({
             <div className="space-y-0.5">
               <Label>{t('templates.ext.customPaths')}</Label>
               <p className="text-xs text-muted-foreground">{t('templates.ext.customPathsHint')}</p>
-              {CUSTOM_PATH_FIELDS.some(f => !form.supported_formats.includes(CUSTOM_PATH_FORMAT[f.key] as TemplateFormat)) && (
-                <p className="text-xs text-muted-foreground">{t('templates.ext.customPathsSelectedOnly')}</p>
-              )}
             </div>
-            {CUSTOM_PATH_FIELDS.filter(f => form.supported_formats.includes(CUSTOM_PATH_FORMAT[f.key] as TemplateFormat)).map(f => (
+            {CUSTOM_PATH_FIELDS.map(f => (
               <div key={f.key} className="grid grid-cols-[15rem_1fr] items-center gap-2">
                 <code className="text-xs text-muted-foreground">{f.key}</code>
                 <Input
@@ -760,10 +756,9 @@ export default function Templates() {
           strip_image_tools: f.strip_image_tools,
         }
         if (ct === 'custom') {
-          // 留空的键不上送（后端 nil = 未配置 = 该格式走默认端点）；并按当前勾选
-          // 的 supported_formats 过滤——后端要求键属于 supported_formats，原样上送
-          // 已取消格式的旧路径会让一次普通保存被 400 挡回。
-          body.upstream_paths = pathsForFormats(f.upstream_paths, f.supported_formats)
+          // 留空的键不上送（后端 nil = 未配置 = 该格式走默认端点）。键与
+          // supported_formats 不联动：已取消格式的旧路径原样带回，保留为死配置。
+          body.upstream_paths = nonEmptyPaths(f.upstream_paths)
         }
         try {
           await api.putTemplateExt(id, body)

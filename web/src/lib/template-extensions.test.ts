@@ -12,7 +12,6 @@ import {
   extFormFields,
   nonEmptyPaths,
   pathsEchoBlocked,
-  pathsForFormats,
   saveTargetID,
   shouldSyncEcho,
 } from './template-extensions.ts'
@@ -134,34 +133,6 @@ describe('nonEmptyPaths', () => {
   })
 })
 
-describe('pathsForFormats', () => {
-  const stored = {
-    'openai-chat': 'chat/completions',
-    anthropic: 'v1/messages',
-    'openai-images.edits': 'images/edits',
-  }
-
-  it('只保留当前 supported_formats 内的键（后端按 supported_formats 校验）', () => {
-    assert.deepEqual(pathsForFormats(stored, ['openai-chat']), { 'openai-chat': 'chat/completions' })
-  })
-
-  it('图片两键同属 openai-images：勾了该格式两个都保留', () => {
-    assert.deepEqual(pathsForFormats(stored, ['openai-images']), { 'openai-images.edits': 'images/edits' })
-  })
-
-  it('取消的格式在保存时被丢弃（否则整次保存会被 400 挡回）', () => {
-    assert.deepEqual(
-      pathsForFormats(stored, ['openai-chat', 'anthropic']),
-      { 'openai-chat': 'chat/completions', anthropic: 'v1/messages' },
-    )
-    assert.equal(pathsForFormats(stored, []), undefined, '全部未勾选 → 不写路径列')
-  })
-
-  it('未知键不上送（后端只接受 7 个键）', () => {
-    assert.equal(pathsForFormats({ 'bogus-key': 'x' }, ['openai-chat']), undefined)
-  })
-})
-
 describe('saveTargetID', () => {
   // 回归：模板与 ext 是两次调用，ext 写失败时模板行已存在。若重试仍判定为
   // 「新建」，会留孤儿模板并再造一个。
@@ -236,8 +207,4 @@ describe('templates 页面接线 tripwire（保存侧）', () => {
     assert.ok(create < remember, '必须在 createTemplate 之后立刻记住 id（ext 写失败也要记住）')
   })
 
-  it('提交的路径按当前 supported_formats 过滤', () => {
-    assert.match(page, /body\.upstream_paths = pathsForFormats\(f\.upstream_paths, f\.supported_formats\)/,
-      '路径必须经 pathsForFormats 过滤，否则取消格式后保存会被后端 400 挡回')
-  })
 })
