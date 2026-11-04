@@ -65,8 +65,8 @@ func TestNonStreamAnthropicVersionHeader(t *testing.T) {
 		name        string
 		clientPath  string
 		body        string
-		clientHdr   string // 客户端自带的 anthropic-version（空 = 不带）
-		convert     bool   // 是否走「openai 客户端 → anthropic 上游」转换面
+		clientHdr   string                 // 客户端自带的 anthropic-version（空 = 不带）
+		dir         domain.ProtocolConvert // 非空 = 走「openai 客户端 → anthropic 上游」的该转换方向
 		wantVersion string
 	}{
 		{
@@ -83,7 +83,13 @@ func TestNonStreamAnthropicVersionHeader(t *testing.T) {
 		{
 			name: "转换 chat→mess（客户端从不带头）→ 网关补默认", clientPath: "/v1/chat/completions",
 			body:        `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-			convert:     true,
+			dir:         domain.ProtocolConvertChatToMess,
+			wantVersion: anthropicDefaultVersion,
+		},
+		{
+			name: "转换 resp→mess（客户端从不带头）→ 网关补默认", clientPath: "/v1/responses",
+			body:        `{"model":"gpt-4o","input":"hi"}`,
+			dir:         domain.ProtocolConvertRespToMess,
 			wantVersion: anthropicDefaultVersion,
 		},
 	}
@@ -91,9 +97,9 @@ func TestNonStreamAnthropicVersionHeader(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			up, spy := newAnthropicVersionSpy(t, messBody)
 			var p *Proxy
-			if tc.convert {
+			if tc.dir != "" {
 				p = newConvertedTestProxyLogs(t, up.URL, []domain.RequestFormat{domain.FormatAnthropic},
-					[]domain.ProtocolConvert{domain.ProtocolConvertChatToMess}, &captureLogStore{}, 30*time.Second)
+					[]domain.ProtocolConvert{tc.dir}, &captureLogStore{}, 30*time.Second)
 			} else {
 				tpl := mappingTpl(up.URL, nil)
 				tpl.SupportedFormats = []domain.RequestFormat{domain.FormatAnthropic}
@@ -107,9 +113,12 @@ func TestNonStreamAnthropicVersionHeader(t *testing.T) {
 				req.Header.Set("Anthropic-Version", tc.clientHdr)
 			}
 			rec := httptest.NewRecorder()
-			if tc.convert || tc.clientPath == "/v1/chat/completions" {
+			switch tc.clientPath {
+			case "/v1/chat/completions":
 				p.HandleChat(rec, req)
-			} else {
+			case "/v1/responses":
+				p.HandleResponses(rec, req)
+			default:
 				p.HandleAnthropic(rec, req)
 			}
 
