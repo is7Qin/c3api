@@ -52,9 +52,10 @@ func messToRespResponse(body []byte) ([]byte, error) {
 // outputTokens)。
 //
 // thinking / redacted_thinking 块 → 独立 reasoning item，**排在其余项之前**
-// （保持 Claude 的块顺序：thinking 恒在最前）。Anthropic 签名无处直接表达，
-// 以信封形式放进 encrypted_content，客户端（codex 等）原样回传后即可解回原块
-// （resp_to_mess 请求侧还原，spec §2.1）。无签名无文本的块丢弃。
+// （保持 Claude 的块顺序：thinking 恒在最前）。产出受 R1 支配（spec §2.4）：
+// 只有能经信封往返的块才产出 item —— 客户端会把 reasoning item 原样写回历史，
+// 一旦产出加密内容缺失的 item，下一轮必被判不可回放，思考会被永久关闭。R1
+// 不成立 → 连 summary 一起不发。
 func messContentToRespOutput(msg map[string]any) ([]any, int64, int64) {
 	var thinks, rest []any
 	var textParts []any
@@ -70,30 +71,28 @@ func messContentToRespOutput(msg map[string]any) ([]any, int64, int64) {
 		case "thinking":
 			t, _ := str(bm, "thinking")
 			sig, _ := str(bm, "signature")
-			if t == "" && sig == "" {
+			// sealThinking 内置 canReplay（产出侧与回放侧同一个谓词）：无签名 /
+			// 原文超 256 KiB / 信封超 512 KiB → ""。
+			enc := sealThinking(thinkingBlock{Type: "thinking", Thinking: t, Signature: sig})
+			if enc == "" {
 				continue
 			}
-			item := map[string]any{
-				"type": "reasoning", "id": "rs_" + msgID + "_" + strconv.Itoa(len(thinks)),
-			}
-			if t != "" {
-				item["summary"] = []any{map[string]any{"type": "summary_text", "text": t}}
-			} else {
-				item["summary"] = []any{}
-			}
-			if sig != "" {
-				item["encrypted_content"] = sealThinking(thinkingBlock{Type: "thinking", Thinking: t, Signature: sig})
-			}
-			thinks = append(thinks, item)
+			thinks = append(thinks, map[string]any{
+				"type":              "reasoning",
+				"id":                "rs_" + msgID + "_" + strconv.Itoa(len(thinks)),
+				"summary":           reasoningSummary(t),
+				"encrypted_content": enc,
+			})
 		case "redacted_thinking":
 			data, _ := str(bm, "data")
-			if data == "" {
+			enc := sealThinking(thinkingBlock{Type: "redacted_thinking", Data: data})
+			if enc == "" {
 				continue
 			}
 			thinks = append(thinks, map[string]any{
 				"type": "reasoning", "id": "rs_" + msgID + "_" + strconv.Itoa(len(thinks)),
 				"summary":           []any{},
-				"encrypted_content": sealThinking(thinkingBlock{Type: "redacted_thinking", Data: data}),
+				"encrypted_content": enc,
 			})
 		case "text":
 			if t, ok := str(bm, "text"); ok {
@@ -125,6 +124,15 @@ func messContentToRespOutput(msg map[string]any) ([]any, int64, int64) {
 		ot = intOr0(u, "output_tokens")
 	}
 	return output, it, ot
+}
+
+// reasoningSummary thinking 文本 → reasoning item 的 summary 数组（文本为空 →
+// 空数组，例如 redacted 块与只带信封的块）。
+func reasoningSummary(text string) []any {
+	if text == "" {
+		return []any{}
+	}
+	return []any{map[string]any{"type": "summary_text", "text": text}}
 }
 
 // messUsageToResp anthropic usage → resp usage。anthropic input_tokens 是 net，

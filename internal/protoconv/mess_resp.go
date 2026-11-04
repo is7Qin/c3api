@@ -22,8 +22,10 @@ import (
 //   - resp 无对应参数（stop_sequences/thinking 等）→ 按规范丢弃
 //
 // respToMessResponse resp 响应对象 → anthropic message 对象（非流式）：
-// output message 项 → text 块；function_call → tool_use 块（arguments JSON
-// 字符串 → input 对象）；usage → input/output/cache 字段。
+// output reasoning 项 → thinking 块（encrypted_content 封进 signature 的
+// reasoning_ref 臂，spec §2.5）；message 项 → text 块；function_call →
+// tool_use 块（arguments JSON 字符串 → input 对象）；usage → input/output/cache
+// 字段。
 func respToMessResponse(body []byte) ([]byte, error) {
 	r, err := decodeObj(body)
 	if err != nil {
@@ -44,12 +46,11 @@ func respToMessResponse(body []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// respOutputToMessBlocks resp output → anthropic 内容块（thinking / redacted_thinking
-// → thinking 块，text → text 块，function_call → tool_use 块）。
+// respOutputToMessBlocks resp output → anthropic 内容块（thinking → thinking 块，
+// text → text 块，function_call → tool_use 块）。
 //
 // thinking 块**恒排在其余块之前**（Anthropic 要求 assistant turn 里 thinking 在
-// 最前，否则回放时被拒）。reasoning item 带本包信封 → 原块往返（签名保留）；
-// 否则按约束 B 输出无签名 thinking（客户端不校验签名），无文本则丢。
+// 最前，否则回放时被拒），多个 reasoning item 之间保持上游顺序。
 func respOutputToMessBlocks(r map[string]any) []any {
 	var think, rest []any
 	if output, ok := arr(r, "output"); ok {
@@ -60,15 +61,24 @@ func respOutputToMessBlocks(r map[string]any) []any {
 			}
 			switch im["type"] {
 			case "reasoning":
-				if blk, ok := thinkingFromReasoningItem(im); ok {
-					think = append(think, thinkingBlockMap(blk))
+				// reasoning item → thinking 块（spec §4.2 / §2.5）：encrypted_content
+				// 非空 → signature 放 reasoning_ref 臂（放内容原文会与 Anthropic
+				// 签名混淆），客户端原样回传后 mess_to_resp 请求侧即可还原同一个
+				// item；空/缺失 → 按约束 B 输出 signature:""（字段必须在，缺失才被
+				// 拒）。文本 summary[].text 优先、content[].reasoning_text 兜底；
+				// 文本与臂都没有 → 该块无可承载的内容，丢。
+				text := respReasoningTextOf(im)
+				sig := ""
+				if enc, _ := str(im, "encrypted_content"); enc != "" {
+					id, _ := str(im, "id")
+					sig = sealReasoningRef(reasoningRef{EncryptedContent: enc, ID: id})
+				}
+				if text == "" && sig == "" {
 					continue
 				}
-				if t := respReasoningTextOf(im); t != "" {
-					think = append(think, map[string]any{
-						"type": "thinking", "thinking": t, "signature": "",
-					})
-				}
+				think = append(think, thinkingBlockMap(thinkingBlock{
+					Type: "thinking", Thinking: text, Signature: sig,
+				}))
 			case "message":
 				if content, ok := arr(im, "content"); ok {
 					for _, part := range content {
