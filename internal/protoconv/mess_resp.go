@@ -180,6 +180,18 @@ func (m *StreamMapper) thinkBlockIndex(key blockKey, oi int64) (int64, bool) {
 	return index, true
 }
 
+// doneThinkIndex output_item.done(reasoning) → content index。有 id 时与 delta
+// 路径同口径（可惰性建块，兼容只发 done 的非规范上游）；**id 缺失时只查不建**：
+// 凭 (output_index, thinking) 新分配会在 output_index 与 delta 的 item_id 不一致
+// 时凭空多出一个 thinking 块（信封落在新块、正文留在原块）。查不到 → 整帧丢弃。
+func (m *StreamMapper) doneThinkIndex(id string, oi int64) (int64, bool) {
+	if id != "" {
+		return m.thinkBlockIndex(blockKeyOf(id, oi, kindThinking), oi)
+	}
+	idx, ok := m.itemIndex[blockKeyOf("", oi, kindThinking)]
+	return idx, ok
+}
+
 // stopBlock content_block_stop 帧：已 start 且未 stop 才发，置位防二次 stop
 // （spec §4.5 第 5 条）。调用方据 nil 判定「无帧可发」。
 func (m *StreamMapper) stopBlock(index int64) []byte {
@@ -352,9 +364,10 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		}
 		oi := intOr0(ev, "output_index")
 		itemID, _ := str(item, "id")
-		index, ok := m.thinkBlockIndex(blockKeyOf(itemID, oi, kindThinking), oi)
+		index, ok := m.doneThinkIndex(itemID, oi)
 		if !ok || m.thinkBlocks[index] == nil || m.blockStopped[index] {
-			// 门丢弃 / 该 index 不是 thinking 块 / 已 stop（同一 index 只 stop 一次）。
+			// 门丢弃 / id 缺失且查不到块 / 该 index 不是 thinking 块 / 已 stop
+			// （同一 index 只 stop 一次）。
 			//
 			// thinkBlocks 判据不可省：id 形态的身份键不含 kind，reasoning item 的 id
 			// 一旦与某个 message / function_call 的 id 撞车（非规范中转会发生），
@@ -414,7 +427,7 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			usage = respUsageToMess(resp)
 			reason = respToMessStopReason(resp)
 		}
-		f := m.closeOpenThinkBlocks() // 兜底：上游未发 output_item.done 时补 stop
+		f := m.closeOpenBlocks() // 兜底：上游未发 *␣*.done 时补 stop（全部块类型）
 		f = append(f, EncodeFrame("message_delta", map[string]any{
 			"type":  "message_delta",
 			"delta": map[string]any{"stop_reason": reason, "stop_sequence": nil},

@@ -349,12 +349,15 @@ func (m *StreamMapper) thinkID(index int64) string {
 	return "rs_" + m.id + "_" + fmt.Sprint(index)
 }
 
-// closeOpenThinkBlocks 关闭仍打开的 thinking 块（resp→mess 兜底：上游可能不发
-// output_item.done）。按 content index 升序产出，保证帧序确定。
-func (m *StreamMapper) closeOpenThinkBlocks() []byte {
+// closeOpenBlocks 关闭仍打开的内容块（resp→mess 兜底：上游可能不发
+// output_item.done / output_text.done / function_call_arguments.done，或流被截断
+// 时由 Finish 收尾）。**按 index 升序遍历全部已 start 且未 stop 的块**
+// （text / tool_use / thinking 一视同仁）——只兜 thinking 会让正文与工具块永不
+// 收尾。thinking 块只补 stop，不补 signature_delta（签名只在上游 done 里可信）。
+func (m *StreamMapper) closeOpenBlocks() []byte {
 	var idx []int64
-	for i, b := range m.thinkBlocks {
-		if b != nil && m.blockStarted[i] && !m.blockStopped[i] {
+	for i, started := range m.blockStarted {
+		if started && !m.blockStopped[i] {
 			idx = append(idx, i)
 		}
 	}
@@ -395,11 +398,15 @@ func (m *StreamMapper) Done() bool { return m.done }
 func (m *StreamMapper) Finish() []byte {
 	switch m.dir {
 	case domain.ProtocolConvertMessToResp:
-		f := EncodeFrame("message_delta", map[string]any{
+		// 正常 EOF（上游截断 / 只发 [DONE] / 缺 response.completed）时这是唯一的
+		// 收尾出口：与 mapRespToMess 的 response.completed 同口径，先把所有未闭合
+		// 的块 stop 掉，再发 message_delta ++ message_stop。
+		f := m.closeOpenBlocks()
+		f = append(f, EncodeFrame("message_delta", map[string]any{
 			"type":  "message_delta",
 			"delta": map[string]any{"stop_reason": "", "stop_sequence": nil},
 			"usage": respUsageToMess(nil),
-		})
+		})...)
 		return append(f, EncodeFrame("message_stop", map[string]any{"type": "message_stop"})...)
 	case domain.ProtocolConvertChatToResp:
 		return []byte("data: [DONE]\n\n")

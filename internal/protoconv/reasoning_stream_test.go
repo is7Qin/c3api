@@ -549,6 +549,87 @@ func TestReasoningStreamMessToRespDoneIDCollision(t *testing.T) {
 		"不得凭空 start 出 thinking 块")
 }
 
+// --- 流末收尾：Finish()（正常 EOF）与 completed 兜底必须关掉所有未闭合块 ---
+
+func TestReasoningStreamFinishClosesOpenBlocks(t *testing.T) {
+	// G：上游只发 added + delta 就 EOF（客户端 mess / 上游 resp 方向），Finish()
+	// 是唯一收尾出口
+	m := NewStreamMapper(domain.ProtocolConvertMessToResp)
+	for _, ev := range []benchEv{
+		{"response.created", []byte(`{"type":"response.created","response":{"id":"rsp_f","object":"response","status":"in_progress","model":"gpt","output":[]}}`)},
+		{"response.output_item.added", []byte(`{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_f","type":"reasoning","summary":[]}}`)},
+		{"response.reasoning_summary_text.delta", []byte(`{"type":"response.reasoning_summary_text.delta","item_id":"rs_f","output_index":0,"summary_index":0,"delta":"想"}`)},
+	} {
+		if frame, drop := m.Map(ev.name, ev.data); !drop {
+			validateFrames(t, frame)
+		}
+	}
+	frame := m.Finish()
+	validateFrames(t, frame)
+
+	frames := parseSSEFrames(t, frame)
+	var order []string
+	for _, fr := range frames {
+		order = append(order, frameType(fr))
+	}
+	require.Equal(t, []string{"content_block_stop", "message_delta", "message_stop"}, order,
+		"Finish 必须先补 stop 再发 message_delta ++ message_stop")
+	require.EqualValues(t, 0, frameIndexOf(t, frames[0]), "补的是该 thinking 块的 index")
+}
+
+func TestReasoningStreamCompletedClosesAllBlockKinds(t *testing.T) {
+	// H①：text「delta + completed」→ 有且仅有一次 stop
+	textFrames := runStream(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_t","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
+		"response.output_text.delta", `{"type":"response.output_text.delta","item_id":"msg_t","output_index":0,"delta":"答"}`,
+		"response.completed", `{"type":"response.completed","response":{"id":"rsp_t","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":2}}}`,
+	)
+	textStops := framesOfType(textFrames, "content_block_stop")
+	require.Len(t, textStops, 1, "text 块也要兜底 stop（此前只有 thinking 有兜底）")
+	require.EqualValues(t, 0, frameIndexOf(t, textStops[0]))
+	require.Equal(t, map[float64]string{0: "text"}, blockKindMap(t, textFrames))
+
+	// H②：function_call「added + delta + completed」→ 有且仅有一次 stop
+	fcFrames := runStream(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_fc","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
+		"response.output_item.added", `{"type":"response.output_item.added","output_index":1,"item":{"id":"fc_1","type":"function_call","call_id":"call_1","name":"f","arguments":""}}`,
+		"response.function_call_arguments.delta", `{"type":"response.function_call_arguments.delta","item_id":"fc_1","output_index":1,"delta":"{}"}`,
+		"response.completed", `{"type":"response.completed","response":{"id":"rsp_fc","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":2}}}`,
+	)
+	fcStops := framesOfType(fcFrames, "content_block_stop")
+	require.Len(t, fcStops, 1, "tool_use 块也要兜底 stop")
+	require.EqualValues(t, 1, frameIndexOf(t, fcStops[0]))
+
+	// H③：已有 output_text.done 的流不得出现二次 stop（回归保护）
+	doneFrames := runStream(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_d","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
+		"response.output_text.delta", `{"type":"response.output_text.delta","item_id":"msg_d","output_index":0,"delta":"答"}`,
+		"response.output_text.done", `{"type":"response.output_text.done","item_id":"msg_d","output_index":0,"text":"答"}`,
+		"response.completed", `{"type":"response.completed","response":{"id":"rsp_d","status":"completed","output":[],"usage":{"input_tokens":1,"output_tokens":2}}}`,
+	)
+	require.Len(t, framesOfType(doneFrames, "content_block_stop"), 1, "已 stop 的块不得二次 stop")
+}
+
+func TestReasoningStreamDoneWithoutIDDoesNotSpawnBlock(t *testing.T) {
+	// I：done 无 id 且 output_index 与 delta 的 item_id 不一致 → 不得凭空多一个块
+	const enc = "gAAAA-noid"
+	respFrames := runStream(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_n","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
+		"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"rs_n","type":"reasoning","summary":[]}}`,
+		"response.reasoning_summary_text.delta", `{"type":"response.reasoning_summary_text.delta","item_id":"rs_n","output_index":0,"summary_index":0,"delta":"想"}`,
+		// id 缺失 + output_index 错配（1，而正文块在 0）
+		"response.output_item.done", `{"type":"response.output_item.done","output_index":1,"item":{"type":"reasoning","summary":[],"encrypted_content":"`+enc+`"}}`,
+	)
+	require.Equal(t, map[float64]string{0: "thinking"}, blockKindMap(t, respFrames),
+		"id 缺失不得凭 output_index 新分配 thinking 块")
+	for _, fr := range framesOfType(respFrames, "content_block_delta") {
+		require.NotEqual(t, "signature_delta", deltaPayload(t, fr)["type"],
+			"整帧丢弃：不得把信封塞进原块或新块")
+	}
+	require.Empty(t, framesOfType(respFrames, "content_block_stop"),
+		"该帧被丢弃后没有任何块被它收尾")
+}
+
 // --- 反向撞车：thinking 块先占 index，正文 item 复用同一 id ---
 
 func TestReasoningStreamMessToRespReverseIDCollision(t *testing.T) {
