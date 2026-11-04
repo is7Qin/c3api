@@ -240,6 +240,15 @@ func (p *Proxy) readAndParseFormatBody(format domain.RequestFormat, w http.Respo
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: invalid JSON"}})
 			return
 		}
+		// 顶层重复的 model/stream 一律拒：路由与改写按**首个**取值，而上游多按
+		// **末个**生效 ⇒ `{"model":"allowed","model":"other"}` 会被批准成
+		// allowed、改写因首值已达标而短路、上游却执行 other，模型白名单与计价被
+		// 绕过。放在这里而不是各 caller：这是唯一的 JSON 入口，流式/非流式、原生/
+		// 转换、codex 与图片 JSON 一次覆盖（multipart 分支在 if 外，形态无此问题）。
+		if k := duplicateTopLevelKey(body, "model", "stream"); k != "" {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: duplicate " + k + " key"}})
+			return
+		}
 		var vals [6][]byte
 		scanKeys(body, requestAffinityKeys, vals[:])
 		streamRaw, modelRaw, tierRaw := vals[0], vals[1], vals[2]

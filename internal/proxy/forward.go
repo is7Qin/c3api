@@ -777,20 +777,14 @@ var (
 )
 
 // validateNonStreamBody 非流请求的本地校验（原 SDK 反序列化的最小必要面）：
-// 根必须是 JSON object、`model` 必须是字符串、且 `model`/`stream` 不得重复。
+// 根必须是 JSON object、`model` 必须是字符串。
 //
-// 重复键为什么必须拒（而不是「真实客户端不会发」）：路由与改写读的是**首个**
-// `model`（gjson 语义），而相当多上游（以及 Go 的 json.Unmarshal）按**末个**
-// 生效。于是 `{"model":"allowed","model":"other"}` 会被批准成 allowed、
-// setModel 因「首值已是目标」短路不改写，上游却执行 other —— 模型白名单与
-// 计价被绕过。SDK 时代的 typed 出栈天然只序列化一个 model 键，改原始出栈后
-// 必须显式拦截。
+// 顶层重复的 `model`/`stream` 不在这里判——那一条在 <b>handleFormat 入口</b>
+// 统一拒（caller.go 的 JSON 分支），覆盖流式与非流式、原生与转换；此处再判一遍
+// 只会让每请求多扫一份 body。
 func validateNonStreamBody(body []byte) error {
 	if !isJSONObjectRoot(body) || gjson.GetBytes(body, "model").Type != gjson.String {
 		return errBodyModelString
-	}
-	if k := duplicateTopLevelKey(body, "model", "stream"); k != "" {
-		return fmt.Errorf("duplicate %s key", k)
 	}
 	return nil
 }

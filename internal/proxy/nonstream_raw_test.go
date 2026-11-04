@@ -398,6 +398,8 @@ func TestNonStreamRejectsDuplicateSensitiveKeys(t *testing.T) {
 		// 会放过这类重复（外部评审实测的绕过点）。
 		{"转义重复 model", `{"model":"gpt-4o","\u006dodel":"other-model","messages":[]}`},
 		{"转义重复 stream", `{"model":"gpt-4o","stream":false,"\u0073tream":true,"messages":[]}`},
+		// 流式分支同款洞：改写同样按首个值短路，重复键必须在入口就拒（覆盖两条分支）。
+		{"流式重复 model", `{"model":"gpt-4o","model":"other-model","stream":true,"messages":[]}`},
 		{"model 出现在后段仍算重复", `{"messages":[],"temperature":1,"model":"gpt-4o","model":"gpt-4o"}`},
 	}
 	for _, tc := range cases {

@@ -370,6 +370,13 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 // reqModel 不同 → sjson 改写 model（改写失败/帧非合法 JSON → 原样转发，上游自行
 // 校验）；写失败 → CloseNow 并返回截断错误文本（failed=true，调用方按连接级错误
 // 转移，保留可重试语义）。
+//
+// ⚠ 已知缺口（HTTP 入口已修，WS 未修）：首帧若出现**重复的 model 键**，
+// sjson 只改首个出现，而多数上游按末个生效 ⇒ 「路由看首个、上游执行末个」。
+// 未在此处一并拒绝是因为 WS 没有 4xx 出口：要么写错误帧并直拆（需要定义收尾
+// 与计费/记录语义），要么改写全部出现（sjson 不支持）。HTTPS 入口
+// （caller.go 的 JSON 分支）已用 duplicateTopLevelKey 拒绝该形态；WS 的等价
+// 处理列为后续项，不要只看 HTTP 面就认为整体已闭合。
 func relayWSFirstFrame(up wsRelayTransport, r *http.Request, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (fwMsg string, failed bool) {
 	// 首帧未送达视为上游未消费，不可记业务帧已见，保留可重试语义。
 	frame := first
