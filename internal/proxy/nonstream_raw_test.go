@@ -31,6 +31,7 @@ type upstreamSpy struct {
 	auth   string
 	apiKey string
 	ua     string
+	accept string
 	body   []byte
 }
 
@@ -39,7 +40,7 @@ func (s *upstreamSpy) snapshot() upstreamSpy {
 	defer s.mu.Unlock()
 	return upstreamSpy{
 		hits: s.hits, path: s.path, query: s.query,
-		auth: s.auth, apiKey: s.apiKey, ua: s.ua, body: s.body,
+		auth: s.auth, apiKey: s.apiKey, ua: s.ua, accept: s.accept, body: s.body,
 	}
 }
 
@@ -56,6 +57,7 @@ func newUpstreamSpy(t *testing.T, status int, respBody string) (*httptest.Server
 		spy.auth = r.Header.Get("Authorization")
 		spy.apiKey = r.Header.Get("x-api-key")
 		spy.ua = r.Header.Get("User-Agent")
+		spy.accept = r.Header.Get("Accept")
 		spy.body = raw
 		spy.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
@@ -134,6 +136,7 @@ func TestNonStreamCallSitesPathAuthBody(t *testing.T) {
 			require.Empty(t, got.query, "默认端点不带 query")
 			require.Equal(t, tc.wantAuth, got.auth, "openai 系鉴权头口径")
 			require.Equal(t, tc.wantAPIKey, got.apiKey, "anthropic 鉴权头口径")
+			require.Equal(t, "application/json", got.accept, "SDK 默认 Accept 必须补回（客户端没带时）")
 
 			var sent map[string]any
 			require.NoError(t, json.Unmarshal(got.body, &sent), "上游收到合法 JSON：%s", got.body)
