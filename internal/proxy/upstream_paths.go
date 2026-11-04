@@ -9,8 +9,12 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-// 自定义上游路径的键集合与默认值（spec §4.3，键名必须与 service 层校验一致）。
-// 默认值即去 SDK 前各格式硬编码的 path 参数，未配置时逐字节不变。
+// 自定义上游路径的键集合与默认尾段（spec §4.3，键名必须与 service 层校验一致）。
+//
+// 默认值只是**端点尾段**，不含 /v1：base_url 是裸根约定（模板校验禁止以 /v1
+// 结尾），/v1 是协议段，由 targetPath 在「走内置端点」时拼一次。默认值里不出现
+// 协议段，是因为它不属于配置面——custom 路径写什么就打什么（见 targetPath），
+// 两者互不影响。
 const (
 	pathKeyChat        = "openai-chat"
 	pathKeyResponses   = "openai-responses"
@@ -22,25 +26,31 @@ const (
 
 	defaultPathChat        = "chat/completions"
 	defaultPathResponses   = "responses"
-	defaultPathResponsesWS = "v1/responses"
-	defaultPathAnthropic   = "v1/messages"
+	defaultPathResponsesWS = "responses"
+	defaultPathAnthropic   = "messages"
 	defaultPathSearch      = "alpha/search"
 	defaultPathImagesGen   = "images/generations"
 	defaultPathImagesEdits = "images/edits"
 )
 
-// pathOf 取该键的生效路径：模板配置优先，未配置回落默认常量。
-// 热路径约束：一次 map 读 + 常量回落，不查 DB、不加锁、不复制 map；
-// 配置 map 在快照内不可变，此处只读。
-func pathOf(sel *scheduler.Selection, key, def string) string {
-	// 仅 custom 模板可覆盖路径：类型被改回 api_key 等时，即使快照里残留配置也
-	// 必须回落默认，避免请求静默打到旧的自定义端点。
+// targetPath 取该格式最终拼进 URL 的路径（热路径：一次 map 读 + 常量回落，
+// 不查 DB、不加锁、不复制 map；配置 map 在快照内不可变，此处只读）。
+//
+//   - custom 模板配置了该键 → **原样返回**：自定义路径就是用户对上游路径的完整
+//     表达，这里不做任何补全/改写（"补 /v1" 是内置端点的协议适配，与 custom
+//     无关；要打 /v1/x 就写 v1/x，要打 /x 就写 x）。
+//   - 其余（非 custom，或 custom 未配置该键）→ 内置默认端点："/v1/" + 尾段。
+//     裸根 base_url 下得 base/v1/chat/completions 等，与去 SDK 前逐字节一致。
+//
+// 仅 custom 模板可覆盖：类型被改回 api_key 等时，即使快照里残留配置也必须回落
+// 默认，避免请求静默打到旧的自定义端点。
+func targetPath(sel *scheduler.Selection, key, tail string) string {
 	if sel != nil && sel.CredentialType == credential.TypeCustom && sel.UpstreamPaths != nil {
 		if v := sel.UpstreamPaths[key]; v != "" {
 			return v
 		}
 	}
-	return def
+	return "/v1/" + tail
 }
 
 // anthropicStreamingRequiredText anthropic-sdk-go v1.76.0 client.go:316 的原文。

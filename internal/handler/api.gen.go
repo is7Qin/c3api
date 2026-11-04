@@ -2158,7 +2158,7 @@ type TemplateExt struct {
 	StripImageTools *bool  `json:"strip_image_tools"`
 	TemplateId      *int64 `json:"template_id,omitempty"`
 
-	// UpstreamPaths custom 专用逐格式路径。PUT 为全列替换：**缺省或 null 即清空**（与 strip_image_tools 同语义），要保留请原样带回已读取的值。键见描述；未配置的键回落该格式默认端点。
+	// UpstreamPaths custom 专用逐格式路径（原样拼到 base_url 之后，不补 /v1）。PUT 为全列替换：**缺省或 null 即清空**（与 strip_image_tools 同语义），要保留请原样带回已读取的值。键见描述；未配置的键回落该格式默认端点。
 	UpstreamPaths *map[string]string `json:"upstream_paths"`
 }
 

@@ -27,15 +27,15 @@ import (
 // 不能共用），未配置回落 imagesCaller 自带默认。
 func (c *imagesCaller) upstreamPath(sel *scheduler.Selection) string {
 	if c.op == domain.OpImagesEdits {
-		return pathOf(sel, pathKeyImagesEdits, c.path)
+		return targetPath(sel, pathKeyImagesEdits, c.path)
 	}
-	return pathOf(sel, pathKeyImagesGen, c.path)
+	return targetPath(sel, pathKeyImagesGen, c.path)
 }
 
 // imagesCaller 是 openai-images 格式的 UpstreamCaller：
-// 转发模板 base_url + /v1/images/<path>（generations|edits）。api_key /
-// responses-special 两类型直连；images 直连不经 strip_image_tools。codex 类型分流
-// 到 codexImagesCaller。双协议：
+// 内置端点转发模板 base_url + /v1/images/<path>（generations|edits）；custom 模板
+// 配了该键则原样透传（targetPath）。api_key / responses-special 两类型直连；
+// images 直连不经 strip_image_tools。codex 类型分流到 codexImagesCaller。双协议：
 //   - JSON：model 顶层提取 + setModel 模型映射改写 + stream 探测（SSE 透传）
 //   - multipart：body 原样透传（含图片文件字节与 boundary，Content-Type 保留）；
 //     不做 JSON 重写，form model 原样透传

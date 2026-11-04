@@ -35,7 +35,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header)
+		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -148,7 +148,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 交 pipeline 按 4xx 归一（落 err_logs + 原样透出错误体），不在此处直接写出。
 		return 400, []byte(`{"error":{"message":"` + anthropicStreamingRequiredText + `","type":"upstream_error"}}`), false, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header)
+	data, code, errBody, err := p.rawJSON(ctx, sel, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header)
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

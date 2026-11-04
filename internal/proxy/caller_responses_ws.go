@@ -286,7 +286,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// r.Context() 同时取消 → 499 语义不变。每 attempt 一次（与 aiclient
 	// UpstreamTimeout wrap 同级），非每帧。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
-	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, pathOf(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header))
+	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header))
 	cancel()
 	if dialErr == nil {
 		// stripTier 删除动作（现状 relay 内部）上移调用方（spec 修订）：与

@@ -6,15 +6,22 @@
 // 「必须先读回既有配置才能保存」的门禁）。抽成纯函数是为了能被 node --test
 // 直接覆盖——页面级测试不在本项目的能力范围内，而门禁判断错了会静默清空配置。
 
-/** custom 类型的逐格式路径键（与后端 service / openapi 键集合一致）。 */
+/**
+ * custom 类型的逐格式路径键（与后端 service / openapi 键集合一致）。
+ *
+ * 输入框里的值会**原样**拼到模板 base_url 之后（不做任何补全：写 chat/completions
+ * 就打 /chat/completions，写 v1/chat/completions 就打 /v1/chat/completions）。
+ * placeholder 只是「留空时该格式默认端点」的示例，方便直接照抄；它不是格式要求，
+ * 也不限制前缀。
+ */
 export const CUSTOM_PATH_FIELDS: { key: string; placeholder: string }[] = [
-  { key: 'openai-chat', placeholder: 'chat/completions' },
-  { key: 'openai-responses', placeholder: 'responses' },
+  { key: 'openai-chat', placeholder: 'v1/chat/completions' },
+  { key: 'openai-responses', placeholder: 'v1/responses' },
   { key: 'openai-responses-ws', placeholder: 'v1/responses' },
   { key: 'anthropic', placeholder: 'v1/messages' },
-  { key: 'openai-search', placeholder: 'alpha/search' },
-  { key: 'openai-images.generations', placeholder: 'images/generations' },
-  { key: 'openai-images.edits', placeholder: 'images/edits' },
+  { key: 'openai-search', placeholder: 'v1/alpha/search' },
+  { key: 'openai-images.generations', placeholder: 'v1/images/generations' },
+  { key: 'openai-images.edits', placeholder: 'v1/images/edits' },
 ]
 
 /** GET /templates/{id}/ext 的响应形态；null = 没有 ext 行。 */

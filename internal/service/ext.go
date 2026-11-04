@@ -44,6 +44,10 @@ var upstreamQueryRE = regexp.MustCompile(`^[A-Za-z0-9._~=&-]+$`)
 // 不得为 `.` 或 `..`。返回**归一后**的 map（调用方必须用它落库）。
 // nil/空 map = 未配置（合法）。
 //
+// 存下来的值是**原样拼到模板 base_url 之后**的自定义路径：这里不做任何协议补全
+// （比如不因为缺 v1 就补上），补 /v1 只发生在「未配置 → 回落内置默认端点」那条
+// 路上，两者互不干扰。
+//
 // 为什么不与 supported_formats 联动：本接口是全列替换，若拒绝「当前格式集之外」
 // 的键，那么运维通过 API 收窄格式后，任何一次普通保存（哪怕只改个名字）都会把
 // 这些残留覆盖永久删掉——而它们本应作为死配置保留、放宽后复活。键与格式的映射
@@ -78,8 +82,9 @@ func validateUpstreamPaths(paths map[string]string) (map[string]string, error) {
 				return nil, ErrInvalidInput
 			}
 		}
-		// 归一结果落库：只校验不归一，会让 "/v1/messages" 或带空白的值通过校验
-		// 却在上游拼成 /v1/v1/messages、%20...，运维得到一个 404 模板。
+		// 归一结果落库：剥前导斜杠/首尾空白只是把同一落点的多种写法收敛成一种
+		// （值是原样拼到 base_url 之后的自定义路径，"/v1/x" 与 "v1/x" 打出去
+		// 相同），避免库里留下「看着不同、效果一样」的重复值。
 		out[k] = v
 	}
 	return out, nil

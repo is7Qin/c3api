@@ -16,11 +16,9 @@ import (
 // 帧是 JSON 文本事件，本层只做传输（握手/压缩/心跳），零协议解析——帧内容
 // 由网关编排层嗅探（response.completed usage），解析面最小化。
 
-// responsesWSPath 上游 WS 端点路径：与 POST /v1/responses 同端点（用户核实
-// codex 真实实现 responses_websocket.rs：websocket_url_for_path("responses")
-// 仅做 http→ws/https→wss 协议替换，无 /ws 后缀）。模板 base_url 为裸根约定，
-// 与 v1/messages 同款自带 v1 前缀，parseFullURL 不再补 /v1。
-const responsesWSPath = "v1/responses"
+// 上游 WS 端点与 POST /v1/responses 同路径（用户核实 codex 真实实现
+// responses_websocket.rs：websocket_url_for_path("responses") 只做
+// http→ws/https→wss 协议替换，无 /ws 后缀）——路径由 proxy.targetPath 给出。
 
 // ResponsesWSBetaHeader 上游握手 beta 头（现役唯一：responses_websockets=
 // 2026-02-06，OpenAI 随版本滚动；网关固定最新值，客户端自带旧值被覆盖）。

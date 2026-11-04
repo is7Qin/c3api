@@ -243,7 +243,7 @@ export default {
       "stripImageTools": "剥离图像 tool（strip_image_tools）",
       "stripImageToolsHint": "开启后剥离该模板账号响应中的图像 tool；未配置 = 关闭",
       "customPaths": "上游请求路径（可选）",
-      "customPathsHint": "按格式分别指定上游端点路径；留空即使用该格式的官方默认端点。可带 query（如 ?api-version=2024-10-21），不要写主机或协议。",
+      "customPathsHint": "按格式分别指定上游端点路径，值会原样拼到 base_url 之后（不自动补 /v1，也不改写）；留空即使用该格式的官方默认端点。可带 query（如 ?api-version=2024-10-21），不要写主机或协议。",
               "partialFailure": "模板已保存，但路径配置写入失败：{{message}}。修正后再次保存即可（不会重复创建模板）。",
       "echoRequired": "无法读取已有的路径配置，已禁止保存以免清空；请稍后重试",
       "saveSuccess": "扩展配置已保存",

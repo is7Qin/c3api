@@ -113,8 +113,8 @@ func (f *Factory) ResponseRaw(ctx context.Context, templateID int64, baseURL, pa
 
 // SearchRaw codex search 端点直连透传（spec 2026-08-13：api_key/responses-
 // special 静态路径——Bearer upstream key 直连上游，复用既有静态 key 通道零新
-// 机制）。URL 派生 = 裸根 + /v1/alpha/search（openaiBaseURL 约定——与 responses
-// 端点 base/v1/responses 尾段 → /alpha/search 派生同语义，见 parseFullURL）。
+// 机制）。URL 派生 = base_url + 调用方给的完整尾段（内置端点传
+// "/v1/alpha/search"，custom 路径原样透传，见 parseFullURL）。
 func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
 	return f.rawPost(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
 }
@@ -131,13 +131,6 @@ func (f *Factory) AnthMessageRaw(ctx context.Context, templateID int64, baseURL,
 
 func (f *Factory) ImagesRaw(ctx context.Context, templateID int64, baseURL, path, key, contentType string, body []byte, in http.Header) (*http.Response, error) {
 	return f.rawPostCT(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, contentType, body, in)
-}
-
-// openaiBaseURL 规范化 openai 系 SDK 的 BaseURL：openai-go 约定 BaseURL 含 /v1
-// （内部拼接 "chat/completions"）。模板 base_url 约定为**裸根**（不含 /v1——
-// /v1 是协议细节，由本层按格式追加，见模板校验），故 openai 系在此补 /v1。
-func openaiBaseURL(base string) string {
-	return strings.TrimSuffix(base, "/") + "/v1"
 }
 
 // fullURLOf 取模板的完整请求 URL（懒缓存：键 = 模板 ID + base_url 快照 + 格式
@@ -174,8 +167,10 @@ func cloneAdd[K comparable, V any](m map[K]V, k K, v V) map[K]V {
 	return out
 }
 
-// parseFullURL 由模板 base_url 与格式路径派生完整 URL：路径自带 v1/ 前缀
-// （v1/messages、v1/responses）→ 不补 /v1；其余 openai 系路径裸根 + /v1。
+// parseFullURL 由模板 base_url 与 path 派生完整 URL。path 是**完整尾段**，本层
+// 原样拼接、不做任何协议补全：是否带 /v1 完全由调用方决定——内置默认端点由
+// proxy 层拼好 "/v1/…"（v1 是协议细节，只在那处出现一次），custom 自定义路径
+// 则原样透传（用户写 /x 就打 /x，写 /v1/x 就打 /v1/x，与自动补全无关）。
 func parseFullURL(base, path string) (*url.URL, error) {
 	// query 必须先切分：url.JoinPath 会把 "?" 百分号转义成 %3F（实测），
 	// 直接塞进 JoinPath 会产出错误 URL。
@@ -183,21 +178,14 @@ func parseFullURL(base, path string) (*url.URL, error) {
 	if i := strings.IndexByte(path, '?'); i >= 0 {
 		pathPart, query = path[:i], path[i+1:]
 	}
-	// 路径自带 v1 前缀（anthropic v1/messages、resp-ws v1/responses——真实端点
-	// 无 /ws 后缀）→ 不再补 /v1；其余 openai 系路径裸根 + /v1。
-	if !strings.HasPrefix(pathPart, "v1/") {
-		base = openaiBaseURL(base)
-	}
 	u, err := url.Parse(base)
 	if err != nil {
 		return nil, err
 	}
-	// 统一 JoinPath：openai → /v1/chat/completions；anthropic → /v1/messages。
-	// 不做 Parse 尾段替换——那是对 base 约定含 /v1 时代的 hack，约定根除后不再需要。
 	full := u.JoinPath(pathPart)
-	// JoinPath 对空路径 base（anthropic 裸根）产出无前导斜杠的 Path
-	// （"v1/messages"）——RequestURI 直接拼进请求行会变非法请求行。旧实现经
-	// NewRequestWithContext 重解析字符串天然补回前导斜杠；此处显式归一。
+	// JoinPath 对空路径 base（裸根）产出无前导斜杠的 Path——RequestURI 直接拼进
+	// 请求行会变非法请求行。旧实现经 NewRequestWithContext 重解析字符串天然补回
+	// 前导斜杠；此处显式归一。
 	if full.Path != "" && full.Path[0] != '/' {
 		full.Path = "/" + full.Path
 	}

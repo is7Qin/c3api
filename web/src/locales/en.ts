@@ -243,7 +243,7 @@ export default {
       "stripImageTools": "Strip image tools (strip_image_tools)",
       "stripImageToolsHint": "Strips image tools from this template's account responses; unset = off",
       "customPaths": "Upstream request paths (optional)",
-      "customPathsHint": "Override the endpoint path per format; leave blank to use that format's default endpoint. A query string is allowed (e.g. ?api-version=2024-10-21); do not include a host or scheme.",
+      "customPathsHint": "Override the endpoint path per format. The value is appended to base_url verbatim (no /v1 is added and nothing is rewritten); leave blank to use that format's default endpoint. A query string is allowed (e.g. ?api-version=2024-10-21); do not include a host or scheme.",
               "partialFailure": "Template saved, but writing the path configuration failed: {{message}}. Fix it and save again — no duplicate template will be created.",
       "echoRequired": "Could not load the stored path configuration; saving is disabled so it cannot be cleared. Please retry.",
       "saveSuccess": "Extensions saved",

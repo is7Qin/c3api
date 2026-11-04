@@ -40,9 +40,9 @@ func BenchmarkDuplicateTopLevelKey(b *testing.B) {
 	}
 }
 
-// BenchmarkPathOf 路径覆盖查找的成本（custom 模板命中一次 map 读；未配置回落
-// 常量）。热路径每次上游调用一次。
-func BenchmarkPathOf(b *testing.B) {
+// BenchmarkTargetPath 路径覆盖查找的成本（custom 模板命中一次 map 读；未配置回落
+// 默认端点）。热路径每次上游调用一次。
+func BenchmarkTargetPath(b *testing.B) {
 	custom := &scheduler.Selection{
 		CredentialType: credential.TypeCustom,
 		UpstreamPaths:  map[string]string{pathKeyChat: "v1/chat/completions"},
@@ -51,7 +51,7 @@ func BenchmarkPathOf(b *testing.B) {
 	b.Run("custom-hit", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if got := pathOf(custom, pathKeyChat, defaultPathChat); got != "v1/chat/completions" {
+			if got := targetPath(custom, pathKeyChat, defaultPathChat); got != "v1/chat/completions" {
 				b.Fatalf("got %q", got)
 			}
 		}
@@ -59,7 +59,7 @@ func BenchmarkPathOf(b *testing.B) {
 	b.Run("unconfigured", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if got := pathOf(plain, pathKeyChat, defaultPathChat); got != defaultPathChat {
+			if got := targetPath(plain, pathKeyChat, defaultPathChat); got != "/v1/"+defaultPathChat {
 				b.Fatalf("got %q", got)
 			}
 		}

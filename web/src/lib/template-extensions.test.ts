@@ -160,6 +160,18 @@ describe('CUSTOM_PATH_FIELDS', () => {
     ])
     assert.equal(new Set(keys).size, keys.length)
   })
+
+  // 门禁：placeholder 是「留空时该格式默认端点」的照抄示例，因此必须是相对尾段
+  // ——不带主机/协议/前导斜杠。前缀不受约束：custom 路径原样拼到 base_url 之后，
+  // 带不带 v1/ 由用户自己决定，页面不做规范要求。
+  it('placeholder 是可直接照抄的相对尾段', () => {
+    assert.equal(CUSTOM_PATH_FIELDS.length, 7, '7 个键必须全部覆盖')
+    for (const f of CUSTOM_PATH_FIELDS) {
+      assert.ok(f.placeholder.length > 0, `${f.key} 的 placeholder 不能为空`)
+      assert.ok(!f.placeholder.startsWith('/'), `${f.key} 的 placeholder ${f.placeholder} 不应带前导斜杠`)
+      assert.ok(!f.placeholder.includes('://'), `${f.key} 的 placeholder ${f.placeholder} 不应含协议`)
+    }
+  })
 })
 
 // 接线层 tripwire：本项目没有 jsdom / 渲染测试，纯函数覆盖不到「页面有没有按这些

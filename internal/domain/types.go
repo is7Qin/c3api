@@ -384,8 +384,8 @@ type Template struct {
 	StripImageTools bool
 	// UpstreamPaths 逐格式自定义上游路径（credential_type=custom 专用；
 	// template_ext.upstream_paths 快照合并）。nil/空 = 全部回落官方默认端点。
-	// 路径词法 = aiclient 内部 path 参数（如 "chat/completions"、"v1/messages"），
-	// 可带 query；未配置不影响任何既有类型。
+	// 值**原样**拼到模板 base_url 之后（不自动补 /v1、不改写），可带 query；
+	// 未配置不影响任何既有类型。
 	UpstreamPaths map[string]string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
