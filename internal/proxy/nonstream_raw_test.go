@@ -167,6 +167,7 @@ func TestNonStreamStatusMatrix(t *testing.T) {
 		{"204 空 body", http.StatusNoContent, http.StatusBadGateway, ""},
 		{"299 非标准 2xx", 299, http.StatusBadGateway, ""},
 		{"101 升级", 101, http.StatusBadGateway, ""},
+		{"302 残余重定向", http.StatusFound, http.StatusBadGateway, ""},
 		{"400 规则透传", http.StatusBadRequest, http.StatusBadRequest, "upstream said no"},
 		{"500 归一", http.StatusInternalServerError, http.StatusBadGateway, ""},
 	}
@@ -280,7 +281,7 @@ func TestNonStreamConvertedCallSites(t *testing.T) {
 			require.Equal(t, tc.wantAuth, got.auth, "目标 resp 用 Bearer")
 			require.Equal(t, tc.wantAPIKey, got.apiKey, "目标 anthropic 用 x-api-key")
 			require.Equal(t, "gpt-4o", gjson.GetBytes(got.body, "model").String(), "转换面模型改写后送达")
-			require.False(t, gjson.GetBytes(got.body, "stream").Bool(), "非流转换不得把 stream 置真")
+			require.NotContains(t, string(got.body), `"stream"`, "非流转换不得携带 stream 字段（值判 false 会放过 false 注入）")
 
 			// 客户端拿到的是转换后的自身协议（chat 响应 / resp 响应）
 			require.True(t, gjson.Valid(rec.Body.String()), "客户端协议响应必须是合法 JSON：%s", rec.Body.String())
@@ -304,4 +305,76 @@ func TestNonStreamErrorBodyBounded(t *testing.T) {
 
 	require.Equal(t, http.StatusBadRequest, rec.Code, "截断不得改变状态码")
 	require.Len(t, rec.Body.Bytes(), 1<<20, "错误体按 1 MiB 有界截断")
+}
+
+// TestNonStreamModelRewriteReachesUpstream 逐调用点断言「映射后的模型真的到达
+// 上游」：无映射时 model 不变，`setModel` 短路会让「改写丢失」的回归逃过检查，
+// 所以必须用显式映射（mapped ≠ client）覆盖三种非流格式。响应侧按映射模式分叉：
+// 显式映射保留上游模型（客户端看得见上游模型名），隐式映射改写回客户端模型。
+func TestNonStreamModelRewriteReachesUpstream(t *testing.T) {
+	const clientModel, upstreamModel = "client-model", "upstream-model"
+	cases := []struct {
+		name       string
+		format     domain.RequestFormat
+		clientPath string
+		body       string
+		wantAuth   string
+		wantAPIKey string
+	}{
+		{
+			name: "chat 非流", format: domain.FormatOpenAIChat, clientPath: "/v1/chat/completions",
+			body: `{"model":"client-model","messages":[]}`, wantAuth: "Bearer sk-upstream",
+		},
+		{
+			name: "responses 非流", format: domain.FormatOpenAIResponses, clientPath: "/v1/responses",
+			body: `{"model":"client-model","input":"hi"}`, wantAuth: "Bearer sk-upstream",
+		},
+		{
+			name: "anthropic 非流", format: domain.FormatAnthropic, clientPath: "/v1/messages",
+			body:       `{"model":"client-model","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`,
+			wantAPIKey: "sk-upstream",
+		},
+	}
+	modes := []struct {
+		name         string
+		mode         domain.ModelMappingMode
+		wantRespBody string
+	}{
+		{"explicit", domain.ModelMappingModeExplicit, upstreamModel},
+		{"implicit", domain.ModelMappingModeImplicit, clientModel},
+	}
+	for _, tc := range cases {
+		for _, m := range modes {
+			t.Run(tc.name+"/"+m.name, func(t *testing.T) {
+				up, spy := newUpstreamSpy(t, http.StatusOK,
+					`{"id":"x1","model":"`+upstreamModel+`","usage":{"input_tokens":1,"output_tokens":2,"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`)
+				tpl := mappingTpl(up.URL, map[string]domain.ModelMappingEntry{
+					clientModel: {MappedModel: upstreamModel, Mode: m.mode},
+				})
+				tpl.SupportedFormats = []domain.RequestFormat{tc.format}
+				tpl.Models = []string{clientModel}
+				p := newTestProxyTplTimeoutLogs(t, tpl, 1, true, 30*time.Second, &captureLogStore{}, nil)
+
+				req := httptest.NewRequest(http.MethodPost, tc.clientPath, strings.NewReader(tc.body))
+				req.Header.Set("Authorization", "Bearer ck-1")
+				req.Header.Set("x-api-key", "ck-1")
+				rec := httptest.NewRecorder()
+				switch tc.format {
+				case domain.FormatOpenAIChat:
+					p.HandleChat(rec, req)
+				case domain.FormatOpenAIResponses:
+					p.HandleResponses(rec, req)
+				default:
+					p.HandleAnthropic(rec, req)
+				}
+				require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+
+				got := spy.snapshot()
+				require.Equal(t, upstreamModel, gjson.GetBytes(got.body, "model").String(),
+					"映射后的模型必须到达上游（mapping 丢失时这里还是 client-model）")
+				require.Equal(t, m.wantRespBody, gjson.Get(rec.Body.String(), "model").String(),
+					"响应模型按映射模式分叉：explicit 保留上游名，implicit 改写回客户端名")
+			})
+		}
+	}
 }
