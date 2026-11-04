@@ -3096,7 +3096,7 @@ components:
           type: object
           nullable: true
           additionalProperties: { type: string }
-          description: "custom 专用逐格式路径；键见描述，nil/缺省 = 未配置 = 全部回落默认端点"
+          description: "custom 专用逐格式路径。PUT 为全列替换：**缺省或 null 即清空**（与 strip_image_tools 同语义），要保留请原样带回已读取的值。键见描述；未配置的键回落该格式默认端点。"
     AccountExt:
       type: object
       required: [credential_type]

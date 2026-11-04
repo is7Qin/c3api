@@ -193,8 +193,13 @@
 | `GET /api/admin/templates/{id}` | 单个模板 | `200`：模板对象；`404` 不存在 |
 | `PUT /api/admin/templates/{id}` | 全量更新（字段同创建） | `200`：更新后模板对象 |
 | `DELETE /api/admin/templates/{id}` | 删除 | `200`：`{"deleted": true}`；`404` 资源不存在（消息含缺失 id）；仍被账号引用时返回 `500`（DB 外键约束） |
-| `GET /api/admin/templates/{id}/ext` | 读取模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行） | `200`：ext 配置 |
-| `PUT /api/admin/templates/{id}/ext` | 幂等写入模板类型化扩展（Create/Update 合一；全列更新含 NULL 清空） | `200`：写入后的 ext 配置 |
+| `GET /api/admin/templates/{id}/ext` | 读取模板类型化扩展（编辑回显；生态三类型与 `custom` 模板有 ext 行） | `200`：ext 配置；`404` 无 ext 行 |
+| `PUT /api/admin/templates/{id}/ext` | 幂等写入模板类型化扩展（Create/Update 合一；**全列替换**：缺省字段即 NULL 清空） | `200`：写入后的 ext 配置 |
+
+> `custom` 模板的 `upstream_paths` 是逐格式可选覆盖：键 ∈ `openai-chat` / `openai-responses` / `openai-responses-ws` / `anthropic` / `openai-search` / `openai-images.generations` / `openai-images.edits`，值为该格式的上游路径（可带 query），**留空的键回落该格式默认端点**。
+> 注意 `PUT` 是全列替换：只想改 `strip_image_tools` 时，必须把 `GET` 到的 `upstream_paths` 原样带回，否则路径会被一并清空并导致全部端点回落厂商默认。
+> 校验：路径先 trim、剥至多一个前导 `/`、限长 1..1024，再过白名单（拒 `\`、`;`、`#`、`@`、空格、控制字符、空段、`.`/`..` 段）；归一后的值落库，避免出现 `/v1/v1/...`。
+> 键必须属于本模板 `supported_formats`（写入时校验）。**收窄 `supported_formats` 不会删除已存的键**：这些键成为死配置（对应格式不再被路由），重新放宽后自动复活，不会导致请求错误。
 
 > 模板变更（含 base_url / supported_formats / format_models / model_mapping）通过 invalidate 回调即时生效于调度器快照与上游 SDK 客户端（无需重启）。
 
