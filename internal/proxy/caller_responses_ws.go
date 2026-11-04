@@ -119,6 +119,14 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		p.record(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, statusClientClosedRequest, domain.ErrAbort, 0, usageTuple{}, start)
 		return
 	}
+	// 顶层重复的 model/stream：与 HTTP 入口（caller.go 的 JSON 分支）同一条规则——
+	// 路由与改写按首个取值、上游多按末个生效，重复键会让「批准 A、执行 B」。此处
+	// 是选号与拨号**之前**的最后一个无副作用窗口：没有账号槽、没有上游消费、没有
+	// 计费行，拒绝只需一个错误帧（与 service_tier 类型错误同轨，无记录）。
+	if k := duplicateTopLevelKey(first, "model", "stream"); k != "" {
+		wsWriteError(client, "invalid request body: duplicate "+k+" key")
+		return
+	}
 	reqModel := gjson.GetBytes(first, "model").String()
 	rm.AffinityHash, rm.HasAffinity = affinityIdentityFromFrame(first)
 

@@ -1075,3 +1075,41 @@ func TestResponsesWSBillingTierTypeError(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Empty(t, store.logs, "类型错误不产生任何记录（usage_logs + err_logs 均无）")
 }
+
+// TestResponsesWSDuplicateModelKey 首帧顶层重复 model/stream：与 HTTP 入口同一
+// 条规则（路由读首个、上游多按末个生效 ⇒ 模型白名单可被绕过）。拒绝点在选号与
+// 拨号之前：只回一个错误帧 + 正常关闭，零上游帧、零账号槽、零记录。
+func TestResponsesWSDuplicateModelKey(t *testing.T) {
+	hooks := &fakeWSHooks{}
+	up := fakeResponsesWS(t, hooks)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","model":"other-model","input":"hi"}`)))
+
+	frame := readResponsesWSFrame(t, c)
+	var ev struct {
+		Type  string `json:"type"`
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, json.Unmarshal(frame, &ev))
+	require.Equal(t, "error", ev.Type)
+	require.Equal(t, "invalid request body: duplicate model key", ev.Error.Message)
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	hooks.mu.Lock()
+	require.Empty(t, hooks.frames, "重复键不得拨号上游")
+	hooks.mu.Unlock()
+	require.Zero(t, p.rec.Pending(), "重复键无记录（与 HTTP 400 同语义）")
+	require.NoError(t, p.rec.Close(context.Background()))
+	require.NoError(t, p.errlog.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Empty(t, store.logs, "拒绝不产生任何记录")
+}

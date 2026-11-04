@@ -371,12 +371,14 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 // 校验）；写失败 → CloseNow 并返回截断错误文本（failed=true，调用方按连接级错误
 // 转移，保留可重试语义）。
 //
-// ⚠ 已知缺口（HTTP 入口已修，WS 未修）：首帧若出现**重复的 model 键**，
-// sjson 只改首个出现，而多数上游按末个生效 ⇒ 「路由看首个、上游执行末个」。
-// 未在此处一并拒绝是因为 WS 没有 4xx 出口：要么写错误帧并直拆（需要定义收尾
-// 与计费/记录语义），要么改写全部出现（sjson 不支持）。HTTPS 入口
-// （caller.go 的 JSON 分支）已用 duplicateTopLevelKey 拒绝该形态；WS 的等价
-// 处理列为后续项，不要只看 HTTP 面就认为整体已闭合。
+// 重复键：首帧的重复 model/stream 在**更上游**就被拒了——caller_responses_ws.go
+// 读帧之后、选号与拨号之前用 duplicateTopLevelKey 校验并回错误帧（与 HTTP 入口
+// caller.go 同一条规则）。不在这里处理的原因：此函数只有 up.Write 一个出口，
+// 拒绝需要选号前的无副作用窗口。
+//
+// ⚠ 范围限定：该守卫只覆盖**首帧**（request.create）。后续客户端帧按字节原样
+// 转发（本文件上方 client-loop），它们的 model 不参与路由、也不做重复键校验；
+// 因此不要把首帧守卫描述成「整个 WS 会话的模型身份已强制」。
 func relayWSFirstFrame(up wsRelayTransport, r *http.Request, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (fwMsg string, failed bool) {
 	// 首帧未送达视为上游未消费，不可记业务帧已见，保留可重试语义。
 	frame := first
