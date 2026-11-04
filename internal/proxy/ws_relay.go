@@ -376,7 +376,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 // caller.go 同一条规则）。不在这里处理的原因：此函数只有 up.Write 一个出口，
 // 拒绝需要选号前的无副作用窗口。
 //
-// ⚠ 范围限定：该守卫只覆盖**首帧**（request.create）。后续客户端帧按字节原样
+// ⚠ 范围限定：该守卫只覆盖**首帧**（response.create）。后续客户端帧按字节原样
 // 转发（本文件上方 client-loop），它们的 model 不参与路由、也不做重复键校验；
 // 因此不要把首帧守卫描述成「整个 WS 会话的模型身份已强制」。
 func relayWSFirstFrame(up wsRelayTransport, r *http.Request, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (fwMsg string, failed bool) {
