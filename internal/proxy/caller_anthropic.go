@@ -141,13 +141,12 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	// 非流式长任务上限：anthropic SDK 在客户端本地拒绝 expectedTime > 10min 的
-	// 非流式请求（max_tokens > 128000/6 ≈ 21333，client.go:307-317）。去 SDK 后
-	// 该守卫必须由网关显式保留，否则同一请求会改为打到上游并可能长时间挂起。
-	if mt := gjson.GetBytes(body, "max_tokens"); mt.Type == gjson.Number && mt.Int() > 21333 {
-		// 交 pipeline 按 4xx 归一（与原 SDK 错误同路径：落 err_logs + 原样透出
-		// 错误体），不在此处直接写出。
-		return 400, []byte(`{"error":{"message":"streaming is required for operations that may take longer than 10 minutes","type":"upstream_error"}}`), false, nil
+	// 非流式长任务上限：anthropic SDK 在客户端本地拒绝 expectedTime > 10min 或
+	// 命中模型级上限的非流请求（client.go:307-317 + shared/constant/constants.go）。
+	// 去 SDK 后必须显式保留，否则原先本地 400 的请求会打到上游并可挂满上游超时。
+	if anthropicRequiresStreaming(sel.Model, gjson.GetBytes(body, "max_tokens").Int()) {
+		// 交 pipeline 按 4xx 归一（落 err_logs + 原样透出错误体），不在此处直接写出。
+		return 400, []byte(`{"error":{"message":"` + anthropicStreamingRequiredText + `","type":"upstream_error"}}`), false, nil
 	}
 	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header)
 	if err != nil {

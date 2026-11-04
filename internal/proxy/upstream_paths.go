@@ -42,3 +42,31 @@ func pathOf(sel *scheduler.Selection, key, def string) string {
 	}
 	return def
 }
+
+// anthropicStreamingRequiredText anthropic-sdk-go v1.76.0 client.go:316 的原文。
+const anthropicStreamingRequiredText = "streaming is required for operations that may take longer than 10 minutes"
+
+// anthropicNonStreamModelLimit 复刻 anthropic-sdk-go v1.76.0
+// shared/constant/constants.go:9-17 的 ModelNonStreamingTokens 表（升级 SDK 须同步）。
+var anthropicNonStreamModelLimit = map[string]int64{
+	"claude-opus-4-20250514":                  8192,
+	"claude-4-opus-20250514":                  8192,
+	"claude-opus-4-0":                         8192,
+	"anthropic.claude-opus-4-20250514-v1:0":   8192,
+	"claude-opus-4@20250514":                  8192,
+	"anthropic.claude-opus-4-1-20250805-v1:0": 8192,
+	"claude-opus-4-1@20250805":                8192,
+}
+
+// anthropicRequiresStreaming 与 SDK 同判据：expectedTime = 1h*maxTokens/128000
+// 超过 10min（等价 maxTokens > 128000/6，即 > 21333）或命中模型上限表。
+// 用映射后的上游模型名判定（SDK 用的是 params.Model，等价 sel.Model）。
+func anthropicRequiresStreaming(model string, maxTokens int64) bool {
+	if maxTokens > 21333 { // 1h*maxTokens/128000 > 10min
+		return true
+	}
+	if lim, ok := anthropicNonStreamModelLimit[model]; ok && maxTokens > lim {
+		return true
+	}
+	return false
+}

@@ -192,6 +192,11 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		sel.Release()
 		return 400, nil, true, nil
 	}
+	// 转换到 anthropic 的非流请求同样受 anthropic SDK 的非流上限约束（旧实现走
+	// clients.AnthMessage，该守卫隐式生效）；去 SDK 后必须显式保留。
+	if target == domain.FormatAnthropic && anthropicRequiresStreaming(sel.Model, gjson.GetBytes(body, "max_tokens").Int()) {
+		return 400, []byte(`{"error":{"message":"` + anthropicStreamingRequiredText + `","type":"upstream_error"}}`), false, nil
+	}
 	var path, authHeader, auth string
 	switch target {
 	case domain.FormatOpenAIResponses:

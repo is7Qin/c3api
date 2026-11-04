@@ -93,3 +93,26 @@ func TestPathOfFallsBackWhenUnset(t *testing.T) {
 	apiKey := &scheduler.Selection{CredentialType: credential.TypeAPIKey, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
 	require.Equal(t, defaultPathChat, pathOf(apiKey, pathKeyChat, defaultPathChat), "非 custom 忽略路径")
 }
+
+// TestAnthropicRequiresStreaming 复刻 SDK 判据：时间规则 + 模型级上限表。
+// 缺表会让 claude-opus-4* 的 8193..21333 请求从「本地 400」变成「打到上游」，
+// 上游可能挂满超时并把客户端参数问题记成账号网络惩罚。
+func TestAnthropicRequiresStreaming(t *testing.T) {
+	cases := []struct {
+		model     string
+		maxTokens int64
+		want      bool
+	}{
+		{"claude-sonnet-4-20250514", 21333, false},
+		{"claude-sonnet-4-20250514", 21334, true}, // 时间规则
+		{"claude-opus-4-20250514", 8192, false},   // 表内上限边界
+		{"claude-opus-4-20250514", 8193, true},    // 表内超限
+		{"claude-opus-4-0", 9000, true},
+		{"anthropic.claude-opus-4-1-20250805-v1:0", 9000, true},
+		{"claude-opus-4-1@20250805", 8193, true},
+		{"claude-3-5-sonnet", 8000, false},
+	}
+	for _, tc := range cases {
+		require.Equal(t, tc.want, anthropicRequiresStreaming(tc.model, tc.maxTokens), "%s/%d", tc.model, tc.maxTokens)
+	}
+}
