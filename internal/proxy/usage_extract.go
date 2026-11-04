@@ -8,9 +8,6 @@ import (
 	"bytes"
 	"strconv"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/responses"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -248,9 +245,13 @@ func scanIntValue(raw []byte) int64 {
 // （input − cached − cache_write）；tt 信任
 // 上游 TotalTokens 原值（数值不变量：归一不改 total）。上游 total 与 in+out 的
 // 既有分歧维持现状（不收敛也不扩大）。
-func chatUsageFromResponse(u openai.CompletionUsage) (it, ot, tt, cr, cc int64) {
-	it, ot, tt, cr, cc = u.PromptTokens, u.CompletionTokens, u.TotalTokens,
-		u.PromptTokensDetails.CachedTokens, cacheWriteFromRaw(u.RawJSON(), chatCacheWritePath)
+func chatUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
+	u := gjson.GetBytes(data, "usage")
+	if u.Type != gjson.JSON {
+		return 0, 0, 0, 0, 0
+	}
+	it, ot, tt = u.Get("prompt_tokens").Int(), u.Get("completion_tokens").Int(), u.Get("total_tokens").Int()
+	cr, cc = u.Get("prompt_tokens_details.cached_tokens").Int(), u.Get("prompt_tokens_details.cache_write_tokens").Int()
 	return deductCacheTokens(it, cr, cc), ot, tt, cr, cc
 }
 
@@ -259,17 +260,26 @@ func chatUsageFromResponse(u openai.CompletionUsage) (it, ot, tt, cr, cc int64) 
 // deductCacheTokens 归一（spec 2026-08-25 + P0-2）——tt 先按原始 in+out 定值
 // 再归一 it
 // （数值不变量：归一不改 total）。
-func responsesUsageFromResponse(u responses.ResponseUsage) (it, ot, tt, cr, cc int64) {
-	it, ot, tt = u.InputTokens, u.OutputTokens, u.InputTokens+u.OutputTokens
-	cr, cc = u.InputTokensDetails.CachedTokens, cacheWriteFromRaw(u.RawJSON(), responsesCacheWritePath)
+func responsesUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
+	u := gjson.GetBytes(data, "usage")
+	if u.Type != gjson.JSON {
+		return 0, 0, 0, 0, 0
+	}
+	it, ot = u.Get("input_tokens").Int(), u.Get("output_tokens").Int()
+	tt = it + ot
+	cr, cc = u.Get("input_tokens_details.cached_tokens").Int(), u.Get("input_tokens_details.cache_write_tokens").Int()
 	return deductCacheTokens(it, cr, cc), ot, tt, cr, cc
 }
 
 // anthropicUsageFromResponse 非流式 Anthropic 响应用量：SDK v1.56.0 Usage
 // 结构体直读（CacheRead/CacheCreationInputTokens 字段存在）。
-func anthropicUsageFromResponse(u anthropic.Usage) (it, ot, tt, cr, cc int64) {
-	return u.InputTokens, u.OutputTokens, u.InputTokens + u.OutputTokens,
-		u.CacheReadInputTokens, u.CacheCreationInputTokens
+func anthropicUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
+	u := gjson.GetBytes(data, "usage")
+	if u.Type != gjson.JSON {
+		return 0, 0, 0, 0, 0
+	}
+	it, ot = u.Get("input_tokens").Int(), u.Get("output_tokens").Int()
+	return it, ot, it + ot, u.Get("cache_read_input_tokens").Int(), u.Get("cache_creation_input_tokens").Int()
 }
 
 // --- resp/resp-ws 响应侧 image 检测旁路（spec §6；检测开关判定 + 计数提取） ---

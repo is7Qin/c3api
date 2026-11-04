@@ -7,11 +7,9 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
-	"github.com/openai/openai-go"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -43,7 +41,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ChatCompletionStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+		resp, err := p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -118,25 +116,26 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		return 200, nil, true, nil
 	}
 
-	var params openai.ChatCompletionNewParams
-	if err := json.Unmarshal(body, &params); err != nil {
-		// 本地拒绝（handled=true，无记录）：非流式 params 解析失败记本地 400，不记日志；
-		// 已占并发槽必须释放（Release-only，与 finish(nil) 等价，直接 Release 更显式）。
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
+	reqModel := gjson.GetBytes(body, "model").String()
+	if gjson.GetBytes(body, "model").Type != gjson.String || !isJSONObjectRoot(body) {
+		// 本地拒绝（handled=true，无记录）：请求体形状非法记本地 400，不记日志；
+		// 已占并发槽必须释放。
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	// 客户端请求模型快照：下一行覆盖前取值（零额外分配，与 gjson 值等价）。
-	reqModel := params.Model
-	params.Model = sel.Model
-	tpl := tplOf(sel) // 非流式 SDK 路径（GC 削减 流式原始请求路径已免模板对象分配）
-	resp, err := p.clients.ChatCompletion(ctx, tpl, cred, params, r.Header)
-	if err != nil {
-		return statusOf(err), upstreamBody(err), false, err
+	upBody, setErr := setModel(body, sel.Model)
+	if setErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
+		sel.Release()
+		return 400, nil, true, nil
 	}
-	data, err := json.Marshal(resp)
+	data, code, errBody, err := p.rawJSON(ctx, sel, "chat/completions", "Authorization", "Bearer "+cred, upBody, r.Header)
 	if err != nil {
-		return 0, nil, false, err
+		return statusOf(err), nil, false, err
+	}
+	if code != 0 {
+		return code, errBody, false, nil
 	}
 	if m := sel.ClientResponseModel(reqModel); m != "" {
 		data = rewriteResponseModelJSON(data, m)
@@ -144,11 +143,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
-	var it, ot, tt, cr, cc int64
-	if resp.JSON.Usage.Valid() {
-		// 非流式用量：cr 直读 SDK 结构体，cc 从 RawJSON 原始字节聚合。
-		it, ot, tt, cr, cc = chatUsageFromResponse(resp.Usage)
-	}
+	it, ot, tt, cr, cc := chatUsageFromResponse(data) // 缺失/null → 全 0
 	// 非流式成功经 typed outcome 统一收敛，保证 exactly-one 观测与记录归一。
 	base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 	outcome := chatOutcomeForSuccess(base, nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})

@@ -8,11 +8,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"time"
 
-	"github.com/openai/openai-go/responses"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -37,7 +35,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		body = stripImageTools(body)
 	}
 	if stream {
-		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 ResponseStreamRaw 直透
+		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 ResponseRaw 直透
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
@@ -46,7 +44,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ResponseStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+		resp, err := p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -148,37 +146,32 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start)))
 		return 200, nil, true, nil
 	}
-	var params responses.ResponseNewParams
-	if err := json.Unmarshal(body, &params); err != nil {
-		// 本地拒绝：参数校验失败，已占并发槽仅释放不计健康与用量
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
+	reqModel := gjson.GetBytes(body, "model").String()
+	if gjson.GetBytes(body, "model").Type != gjson.String || !isJSONObjectRoot(body) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	// 客户端请求模型快照：覆盖前取值用于日志与观测，零额外分配
-	reqModel := params.Model
-	params.Model = responses.ResponsesModel(sel.Model)
-	tpl := tplOf(sel) // 非流式走 SDK 模板路径
-	resp, err := p.clients.Response(ctx, tpl, cred, params, r.Header)
-	if err != nil {
-		return statusOf(err), upstreamBody(err), false, err
+	upBody, setErr := setModel(body, sel.Model)
+	if setErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
+		sel.Release()
+		return 400, nil, true, nil
 	}
-	data, err := json.Marshal(resp)
+	data, code, errBody, err := p.rawJSON(ctx, sel, "responses", "Authorization", "Bearer "+cred, upBody, r.Header)
 	if err != nil {
-		return 0, nil, false, err
+		return statusOf(err), nil, false, err
+	}
+	if code != 0 {
+		return code, errBody, false, nil
 	}
 	if m := sel.ClientResponseModel(reqModel); m != "" {
 		data = rewriteResponseModelJSON(data, m)
 	}
-	var it, ot, tt, cr, cc int64
+	it, ot, tt, cr, cc := responsesUsageFromResponse(data)
 	var img int64 // 图像调用计数旁路
-	if resp.JSON.Usage.Valid() {
-		// 非流式用量：Responses 的 cache_creation 恒为 0 预期，直接读取 usage，cr/cc 同步落库
-		it, ot, tt, cr, cc = responsesUsageFromResponse(resp.Usage)
-	}
-	// 响应侧图像检测旁路：基于 SDK 保留的上游原始 RawJSON，与缓存用量同款 raw 消费路径，受开关门控
 	if respImageDetectOn(sel) {
-		img = respImageCountBody([]byte(resp.RawJSON()))
+		img = respImageCountBody(data)
 	}
 	base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, string(reqModel), start, nil, it, ot, tt, cr, cc, img))
 	// ACK-before-visible：响应 id 在 Redis 绑定确认前不得写出（store 未装配

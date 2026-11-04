@@ -7,11 +7,9 @@ package proxy
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -28,7 +26,7 @@ type anthropicCaller struct{ p *Proxy }
 func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	if stream {
-		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 AnthMessageStreamRaw 直透
+		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 AnthMessageRaw 直透
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
@@ -37,7 +35,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.AnthMessageStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -131,24 +129,32 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
 		return 200, nil, true, nil
 	}
-	var params anthropic.MessageNewParams
-	if err := json.Unmarshal(body, &params); err != nil {
-		// 本地拒绝：参数校验失败，已占并发槽仅释放不计健康与用量
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
+	reqModel := gjson.GetBytes(body, "model").String()
+	if gjson.GetBytes(body, "model").Type != gjson.String || !isJSONObjectRoot(body) {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	// 客户端请求模型快照：覆盖前取值用于日志与观测，零额外分配
-	reqModel := params.Model
-	params.Model = sel.Model
-	tpl := tplOf(sel) // 非流式走 SDK 模板路径
-	resp, err := p.clients.AnthMessage(ctx, tpl, cred, params, r.Header)
-	if err != nil {
-		return statusOf(err), upstreamBody(err), false, err
+	upBody, setErr := setModel(body, sel.Model)
+	if setErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
+		sel.Release()
+		return 400, nil, true, nil
 	}
-	data, err := json.Marshal(resp)
+	// 非流式长任务上限：anthropic SDK 在客户端本地拒绝 expectedTime > 10min 的
+	// 非流式请求（max_tokens > 128000/6 ≈ 21333，client.go:307-317）。去 SDK 后
+	// 该守卫必须由网关显式保留，否则同一请求会改为打到上游并可能长时间挂起。
+	if mt := gjson.GetBytes(body, "max_tokens"); mt.Type == gjson.Number && mt.Int() > 21333 {
+		// 交 pipeline 按 4xx 归一（与原 SDK 错误同路径：落 err_logs + 原样透出
+		// 错误体），不在此处直接写出。
+		return 400, []byte(`{"error":{"message":"streaming is required for operations that may take longer than 10 minutes","type":"upstream_error"}}`), false, nil
+	}
+	data, code, errBody, err := p.rawJSON(ctx, sel, "v1/messages", "x-api-key", cred, upBody, r.Header)
 	if err != nil {
-		return 0, nil, false, err
+		return statusOf(err), nil, false, err
+	}
+	if code != 0 {
+		return code, errBody, false, nil
 	}
 	if m := sel.ClientResponseModel(reqModel); m != "" {
 		data = rewriteResponseModelJSON(data, m)
@@ -156,11 +162,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
-	var it, ot, tt, cr, cc int64
-	if resp.JSON.Usage.Valid() {
-		// 非流式用量：直接读取响应 usage，输入/缓存与输出同库
-		it, ot, tt, cr, cc = anthropicUsageFromResponse(resp.Usage)
-	}
+	it, ot, tt, cr, cc := anthropicUsageFromResponse(data)
 	base := mergeDispatchBase(ctx, anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, nil, it, ot, cr, cc))
 	out := base
 	out.Result = ResultSuccess

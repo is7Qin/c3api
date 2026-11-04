@@ -2,35 +2,21 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// Package aiclient 是 openai/anthropic 官方 SDK 的唯一引用点：客户端懒构建 +
-// 鉴权头注入 + 非流式超时策略。协议类型（params/response/stream）直接透传为
-// 调用签名——它们是协议本身，隐藏它们等于重写协议（违背"用现成库"）。
-//
-// 版本说明（openai-go v1.12.0 / anthropic-sdk-go v1.56.0）：客户端选项在
-// option 子包（option.WithBaseURL/WithHTTPClient/WithHeader）；流式入口
-// NewStreaming 在请求选项层注入 "stream": true，参数里不再有 Stream 字段。
-// 调用方按原始请求体里的 stream 字段决定走 SDK 非流式（本文件）还是原始
-// 流式请求（StreamRaw 系列，流式 SSE relay 用，见下方）。
+// Package aiclient 负责上游 HTTP 出栈：URL 派生、懒缓存、凭据头注入与客户端头
+// 中转。所有协议面（流式/非流式/图片/search/ws）统一走网关自己构造的原始请求，
+// 不再经由 openai-go / anthropic-sdk-go 客户端——SDK 只作为测试依赖，用于验证
+// 真实客户端能正确消费本网关产出的字节。
 package aiclient
 
 import (
 	"bytes"
 	"context"
 	"io"
-	"maps"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync/atomic"
 	"time"
-
-	anthropic "github.com/anthropics/anthropic-sdk-go"
-	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
-	"github.com/openai/openai-go"
-	openaioption "github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/responses"
-
-	"github.com/is7qin/c3api/internal/domain"
 )
 
 type Config struct {
@@ -54,7 +40,6 @@ type Factory struct {
 // 心智模型。
 type clientCache struct {
 	gen  int64
-	byT  map[int64]*TemplateClients
 	urls map[urlKey]*url.URL
 }
 
@@ -72,17 +57,10 @@ type urlKey struct {
 // 至多每格式一条、体积可忽略。管理 API 变更链路（invalidate 成对失效）
 // 不受影响。
 
-type TemplateClients struct {
-	chat      *openai.Client
-	responses *openai.Client
-	anthropic *anthropic.Client
-}
-
 func NewFactory(hc *http.Client, cfg Config) *Factory {
 	f := &Factory{hc: hc, cfg: cfg}
 	f.cc.Store(&clientCache{
 		gen:  0,
-		byT:  make(map[int64]*TemplateClients),
 		urls: make(map[urlKey]*url.URL),
 	})
 	return f
@@ -95,7 +73,6 @@ func (f *Factory) InvalidateAll() {
 		cur := f.cc.Load()
 		if f.cc.CompareAndSwap(cur, &clientCache{
 			gen:  cur.gen + 1,
-			byT:  make(map[int64]*TemplateClients),
 			urls: make(map[urlKey]*url.URL),
 		}) {
 			return
@@ -103,80 +80,10 @@ func (f *Factory) InvalidateAll() {
 	}
 }
 
-// --- openai chat/completions ---
-
-// ChatCompletion 非流式调用（内部注入鉴权头 + 超时）。客户端头经 relayOptions
-// 如实上行（同 raw 面：只过全仓唯一清单 relayDeny，不做任何映射），账号鉴权头
-// 在末位写 ⇒ 网关声明后写覆盖赢（不变量）。
-func (f *Factory) ChatCompletion(ctx context.Context, tpl *domain.Template, key string, params openai.ChatCompletionNewParams, in http.Header) (*openai.ChatCompletion, error) {
-	ctx, cancel := context.WithTimeout(ctx, f.cfg.UpstreamTimeout)
-	defer cancel()
-	opts := append(relayOptions(in), openaioption.WithHeader("Authorization", "Bearer "+key))
-	return f.chat(tpl).Chat.Completions.New(ctx, params, opts...)
-}
-
-// --- openai responses ---
-
-// Response 非流式调用（openai responses 格式）；头策略同 ChatCompletion。
-func (f *Factory) Response(ctx context.Context, tpl *domain.Template, key string, params responses.ResponseNewParams, in http.Header) (*responses.Response, error) {
-	ctx, cancel := context.WithTimeout(ctx, f.cfg.UpstreamTimeout)
-	defer cancel()
-	opts := append(relayOptions(in), openaioption.WithHeader("Authorization", "Bearer "+key))
-	return f.responses(tpl).Responses.New(ctx, params, opts...)
-}
-
-// --- anthropic messages ---
-
-// AnthMessage 非流式调用（anthropic messages 格式）；头策略同 ChatCompletion，
-// 但走 anthropic 自己的 option 包（两包互不兼容 ⇒ 两个 helper，共用同一份
-// RelayHeaders 产物，绝不设第二份清单）。
-func (f *Factory) AnthMessage(ctx context.Context, tpl *domain.Template, key string, params anthropic.MessageNewParams, in http.Header) (*anthropic.Message, error) {
-	ctx, cancel := context.WithTimeout(ctx, f.cfg.UpstreamTimeout)
-	defer cancel()
-	opts := append(relayAnthropicOptions(in), anthropicoption.WithHeader("x-api-key", key))
-	return f.anthropic(tpl).Messages.New(ctx, params, opts...)
-}
-
-// relayOpts 把 relay 产物转成 SDK 请求选项：单值键 WithHeader；多值键首个
-// WithHeader + 其余逐个 WithHeaderAdd。openai 与 anthropic 的 option 包互不
-// 兼容 ⇒ 以 withHeader/withHeaderAdd 函数参数收敛同一循环（同一份 RelayHeaders
-// 产物，绝不设第二份清单）。
-//
-// 多值必须分开写：WithHeader 内部是 Header.Set（openai-go
-// option/requestoption.go:111），一律 WithHeader 会把同键两值压成只剩末值 =
-// 静默丢客户端事实；WithHeaderAdd 是 Header.Add（:120）。
-//
-// 位置即语义：SDK 先设自己的默认头（requestconfig.go:155-164，含
-// User-Agent: OpenAI/Go <ver>），再 cfg.Apply(opts...) ⇒ 这里产出的 WithHeader
-// 压过 SDK 默认（客户端 UA 顶掉 SDK UA 属 §9-2「允许覆盖」裁决）。
-func relayOpts[T any](in http.Header, withHeader func(string, string) T, withHeaderAdd func(string, string) T) []T {
-	relayed := RelayHeaders(in)
-	if len(relayed) == 0 {
-		return nil
-	}
-	opts := make([]T, 0, len(relayed))
-	for k, vs := range relayed {
-		if len(vs) == 0 {
-			continue
-		}
-		opts = append(opts, withHeader(k, vs[0]))
-		for _, v := range vs[1:] {
-			opts = append(opts, withHeaderAdd(k, v))
-		}
-	}
-	return opts
-}
-
-// relayOptions openai 面：relayOpts 的 openai 实例化。
-func relayOptions(in http.Header) []openaioption.RequestOption {
-	return relayOpts(in, openaioption.WithHeader, openaioption.WithHeaderAdd)
-}
-
-// relayAnthropicOptions anthropic 面：relayOpts 的 anthropic 实例化（同一份
-// RelayHeaders，WithHeader/WithHeaderAdd 语义与 openai 包一致：
-// option/requestoption.go:229,238）。
-func relayAnthropicOptions(in http.Header) []anthropicoption.RequestOption {
-	return relayOpts(in, anthropicoption.WithHeader, anthropicoption.WithHeaderAdd)
+// RawPost 通用原始 POST：非流式与流式共用同一出栈（路径、鉴权头名由调用方
+// 按格式显式选定；status 检查与 body 关闭由调用方负责）。
+func (f *Factory) RawPost(ctx context.Context, templateID int64, baseURL, path, authHeader, auth string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, path, authHeader, auth, body, in)
 }
 
 // --- 流式原始请求（SSE relay 用） ---
@@ -186,11 +93,11 @@ func relayAnthropicOptions(in http.Header) []anthropicoption.RequestOption {
 // 签名收 (templateID, baseURL) 而非 *domain.Template（GC 削减 调用方免
 // tplOf 每请求模板对象分配；URL 在 Factory.urls 懒缓存，键含 base_url 快照）。
 
-func (f *Factory) ChatCompletionStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
+func (f *Factory) ChatCompletionRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
 	return f.rawPost(ctx, templateID, baseURL, "chat/completions", "Authorization", "Bearer "+key, body, in)
 }
 
-func (f *Factory) ResponseStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
+func (f *Factory) ResponseRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
 	return f.rawPost(ctx, templateID, baseURL, "responses", "Authorization", "Bearer "+key, body, in)
 }
 
@@ -202,7 +109,7 @@ func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, key 
 	return f.rawPost(ctx, templateID, baseURL, "alpha/search", "Authorization", "Bearer "+key, body, in)
 }
 
-func (f *Factory) AnthMessageStreamRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
+func (f *Factory) AnthMessageRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
 	return f.rawPost(ctx, templateID, baseURL, "v1/messages", "x-api-key", key, body, in)
 }
 
@@ -239,23 +146,26 @@ func (f *Factory) fullURLOf(templateID int64, baseURL, path string) (*url.URL, e
 		if err != nil {
 			return nil, err
 		}
-		if f.cc.CompareAndSwap(cur, &clientCache{gen: cur.gen, byT: cur.byT, urls: cloneAdd(cur.urls, k, u)}) {
+		if f.cc.CompareAndSwap(cur, &clientCache{gen: cur.gen, urls: cloneAdd(cur.urls, k, u)}) {
 			return u, nil
 		}
 		// 并发插入/失效：重试，命中检查会吃掉他人已缓存的同键
 	}
 }
 
-// cloneAdd 复制 map 快照并写入一个额外条目（缓存 COW 回写共用——客户端与
-// URL 两张缓存同构；规模 = 模板×格式，量级数十至百，未命中仅在预热期发生，
-// O(n) 拷贝可忽略）。
+// cloneAdd 复制 map 快照并写入一个额外条目（URL 缓存 COW 回写；规模 = 模板×
+// 格式，量级数十至百，未命中仅在预热期发生，O(n) 拷贝可忽略）。
 func cloneAdd[K comparable, V any](m map[K]V, k K, v V) map[K]V {
-	nm := make(map[K]V, len(m)+1)
-	maps.Copy(nm, m)
-	nm[k] = v
-	return nm
+	out := make(map[K]V, len(m)+1)
+	for kk, vv := range m {
+		out[kk] = vv
+	}
+	out[k] = v
+	return out
 }
 
+// parseFullURL 由模板 base_url 与格式路径派生完整 URL：路径自带 v1/ 前缀
+// （v1/messages、v1/responses）→ 不补 /v1；其余 openai 系路径裸根 + /v1。
 func parseFullURL(base, path string) (*url.URL, error) {
 	// 路径自带 v1 前缀（anthropic v1/messages、resp-ws v1/responses——真实端点
 	// 无 /ws 后缀）→ 不再补 /v1；其余 openai 系路径裸根 + /v1。
@@ -315,77 +225,4 @@ func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path
 	req.Header.Set(authHeader, auth)
 	req = req.WithContext(ctx)
 	return f.hc.Do(req)
-}
-
-// --- 客户端懒构建（每模板最多 3 个，共享 http.Client，规格 §6.1） ---
-
-// lazyClient 客户端懒构建（chat/responses/anthropic 三入口同构）：快照命中
-// 直返（零锁零分配）；未命中锁外构建 + 字段级合并（保留同模板其余已建客户端
-// ——并发构建 chat+responses 时后写者不得抹掉先写者）+ CAS-COW 回写，gen 变化
-// （并发 InvalidateAll）即弃件重试——构建无 I/O，重复构建无害。get/set 选定
-// TemplateClients 的字段，build 构造 SDK 客户端。
-func lazyClient[T any](f *Factory, tpl *domain.Template, get func(*TemplateClients) *T, set func(*TemplateClients, *T), build func() T) *T {
-	for {
-		cur := f.cc.Load()
-		tc := cur.byT[tpl.ID]
-		if tc != nil {
-			if c := get(tc); c != nil {
-				return c
-			}
-		}
-		c := build()
-		merged := &TemplateClients{}
-		if tc != nil {
-			*merged = *tc
-		}
-		set(merged, &c)
-		nm := cloneAdd(cur.byT, tpl.ID, merged)
-		if f.cc.CompareAndSwap(cur, &clientCache{gen: cur.gen, byT: nm, urls: cur.urls}) {
-			return &c
-		}
-	}
-}
-
-func (f *Factory) chat(tpl *domain.Template) *openai.Client {
-	return lazyClient(f, tpl,
-		func(tc *TemplateClients) *openai.Client { return tc.chat },
-		func(tc *TemplateClients, c *openai.Client) { tc.chat = c },
-		func() openai.Client {
-			// 关闭 SDK 内置重试：转移/退避由调度器统一控制（规格 §5），
-			// SDK 在单次调用内静默重试会让 429 背压放大并阻塞热路径。
-			return openai.NewClient(
-				openaioption.WithBaseURL(openaiBaseURL(tpl.BaseURL)),
-				openaioption.WithHTTPClient(f.hc),
-				openaioption.WithMaxRetries(0),
-			)
-		},
-	)
-}
-
-func (f *Factory) responses(tpl *domain.Template) *openai.Client {
-	return lazyClient(f, tpl,
-		func(tc *TemplateClients) *openai.Client { return tc.responses },
-		func(tc *TemplateClients, c *openai.Client) { tc.responses = c },
-		func() openai.Client {
-			return openai.NewClient(
-				openaioption.WithBaseURL(openaiBaseURL(tpl.BaseURL)),
-				openaioption.WithHTTPClient(f.hc),
-				openaioption.WithMaxRetries(0),
-			)
-		},
-	)
-}
-
-func (f *Factory) anthropic(tpl *domain.Template) *anthropic.Client {
-	return lazyClient(f, tpl,
-		func(tc *TemplateClients) *anthropic.Client { return tc.anthropic },
-		func(tc *TemplateClients, c *anthropic.Client) { tc.anthropic = c },
-		func() anthropic.Client {
-			return anthropic.NewClient(
-				anthropicoption.WithBaseURL(tpl.BaseURL),
-				anthropicoption.WithHTTPClient(f.hc),
-				anthropicoption.WithMaxRetries(0),
-			)
-		},
-	)
 }

@@ -6,14 +6,10 @@ package proxy
 
 import (
 	"bytes"
-	"encoding/json"
 	"math"
 	"testing"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/openai/openai-go"
-	"github.com/openai/openai-go/responses"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
@@ -63,24 +59,25 @@ func TestChatStreamUsage(t *testing.T) {
 // —— chat 非流式（SDK UnmarshalJSON → PromptTokensDetails 直读 + RawJSON gjson） ——
 
 func TestChatUsageFromResponse(t *testing.T) {
-	raw := `{"id":"x","object":"chat.completion","model":"m","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":3}}}`
-	var resp openai.ChatCompletion
-	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
-	require.True(t, resp.JSON.Usage.Valid())
-	pt, ct, tt, cr, cc := chatUsageFromResponse(resp.Usage)
+	raw := []byte(`{"id":"x","object":"chat.completion","model":"m","choices":[],"usage":{"prompt_tokens":10,"completion_tokens":20,"total_tokens":30,"prompt_tokens_details":{"cached_tokens":5,"cache_write_tokens":3}}}`)
+	pt, ct, tt, cr, cc := chatUsageFromResponse(raw)
 	require.Equal(t, int64(2), pt, "可计费输入 = prompt − cached − cache_write（P0-2）")
 	require.Equal(t, int64(20), ct)
-	require.Equal(t, int64(30), tt, "tt 信任上游 TotalTokens 原值")
-	require.Equal(t, int64(5), cr, "SDK PromptTokensDetails.CachedTokens 直读")
-	require.Equal(t, int64(3), cc, "RawJSON → prompt_tokens_details.cache_write_tokens")
+	require.Equal(t, int64(30), tt, "tt 信任上游 total_tokens 原值")
+	require.Equal(t, int64(5), cr, "prompt_tokens_details.cached_tokens")
+	require.Equal(t, int64(3), cc, "prompt_tokens_details.cache_write_tokens")
 
 	// 无 cache 字段 → 0
-	plain := `{"id":"x","object":"chat.completion","model":"m","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`
-	var p openai.ChatCompletion
-	require.NoError(t, json.Unmarshal([]byte(plain), &p))
-	_, _, _, cr, cc = chatUsageFromResponse(p.Usage)
+	plain := []byte(`{"id":"x","object":"chat.completion","model":"m","choices":[],"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}}`)
+	_, _, _, cr, cc = chatUsageFromResponse(plain)
 	require.Zero(t, cr)
 	require.Zero(t, cc)
+
+	// usage 缺失 / 显式 null → 全 0（不 panic、不误计费）
+	pt, ct, tt, cr, cc = chatUsageFromResponse([]byte(`{"id":"x","choices":[]}`))
+	require.Zero(t, pt+ct+tt+cr+cc)
+	pt, ct, tt, cr, cc = chatUsageFromResponse([]byte(`{"id":"x","usage":null}`))
+	require.Zero(t, pt+ct+tt+cr+cc)
 }
 
 // —— Anthropic 流式（message.usage.* 前缀） ——
@@ -112,16 +109,19 @@ func TestAnthropicStreamUsage(t *testing.T) {
 // —— Anthropic 非流式（SDK 结构体直读） ——
 
 func TestAnthropicUsageFromResponse(t *testing.T) {
-	raw := `{"id":"x","type":"message","role":"assistant","model":"m","content":[],"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":7,"cache_creation_input_tokens":3}}`
-	var resp anthropic.Message
-	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
-	require.True(t, resp.JSON.Usage.Valid())
-	pt, ct, tt, cr, cc := anthropicUsageFromResponse(resp.Usage)
+	raw := []byte(`{"id":"x","type":"message","role":"assistant","model":"m","content":[],"usage":{"input_tokens":10,"output_tokens":20,"cache_read_input_tokens":7,"cache_creation_input_tokens":3}}`)
+	pt, ct, tt, cr, cc := anthropicUsageFromResponse(raw)
 	require.Equal(t, int64(10), pt)
 	require.Equal(t, int64(20), ct)
 	require.Equal(t, int64(30), tt)
 	require.Equal(t, int64(7), cr)
 	require.Equal(t, int64(3), cc)
+
+	// usage 缺失 / null → 全 0
+	pt, ct, tt, cr, cc = anthropicUsageFromResponse([]byte(`{"id":"x","content":[]}`))
+	require.Zero(t, pt+ct+tt+cr+cc)
+	pt, ct, tt, cr, cc = anthropicUsageFromResponse([]byte(`{"id":"x","usage":null}`))
+	require.Zero(t, pt+ct+tt+cr+cc)
 }
 
 // —— Responses 流式（response.usage.* 前缀） ——
@@ -425,16 +425,19 @@ func TestUsageExtractZeroAlloc(t *testing.T) {
 // —— Responses 非流式（直读 + RawJSON） ——
 
 func TestResponsesUsageFromResponse(t *testing.T) {
-	raw := `{"id":"r","object":"response","model":"m","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5,"cache_write_tokens":3}},"output":[]}`
-	var resp responses.Response
-	require.NoError(t, json.Unmarshal([]byte(raw), &resp))
-	require.True(t, resp.JSON.Usage.Valid())
-	pt, ct, tt, cr, cc := responsesUsageFromResponse(resp.Usage)
+	raw := []byte(`{"id":"r","object":"response","model":"m","status":"completed","usage":{"input_tokens":10,"output_tokens":20,"total_tokens":30,"input_tokens_details":{"cached_tokens":5,"cache_write_tokens":3}},"output":[]}`)
+	pt, ct, tt, cr, cc := responsesUsageFromResponse(raw)
 	require.Equal(t, int64(2), pt, "可计费输入 = input − cached − cache_write（P0-2）")
 	require.Equal(t, int64(20), ct)
 	require.Equal(t, int64(30), tt, "tt 先按原始 in+out 定值再归一——数值不变量")
-	require.Equal(t, int64(5), cr, "SDK InputTokensDetails.CachedTokens 直读")
-	require.Equal(t, int64(3), cc, "RawJSON → input_tokens_details.cache_write_tokens")
+	require.Equal(t, int64(5), cr, "input_tokens_details.cached_tokens")
+	require.Equal(t, int64(3), cc, "input_tokens_details.cache_write_tokens")
+
+	// usage 缺失 / null → 全 0
+	pt, ct, tt, cr, cc = responsesUsageFromResponse([]byte(`{"id":"r","output":[]}`))
+	require.Zero(t, pt+ct+tt+cr+cc)
+	pt, ct, tt, cr, cc = responsesUsageFromResponse([]byte(`{"id":"r","usage":null}`))
+	require.Zero(t, pt+ct+tt+cr+cc)
 }
 
 // —— deductCacheTokens 归一边界（spec 2026-08-25 + P0-2 验收） ——

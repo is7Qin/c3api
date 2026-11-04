@@ -253,7 +253,7 @@ func (specialKeyProvider) Credential(_ context.Context, in credential.Credential
 }
 
 // TestProxyResponsesStripImageToolsOnStream 开关开启 + 流式：原始请求路径
-// （ResponseStreamRaw）——上游收到剥离后帧（图像工具删、tool_choice 删、其余
+// （ResponseRaw）——上游收到剥离后帧（图像工具删、tool_choice 删、其余
 // 字段保留）。
 func TestProxyResponsesStripImageToolsOnStream(t *testing.T) {
 	up, got := fakeResponsesCaptured(t)

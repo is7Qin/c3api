@@ -7,13 +7,10 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"time"
 
-	"github.com/anthropics/anthropic-sdk-go"
-	"github.com/openai/openai-go/responses"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -61,9 +58,9 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var resp *http.Response
 		switch target {
 		case domain.FormatOpenAIResponses:
-			resp, err = p.clients.ResponseStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		case domain.FormatAnthropic:
-			resp, err = p.clients.AnthMessageStreamRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
 		}
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
@@ -184,44 +181,35 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	reqModel := gjson.GetBytes(body, "model").String()
 	var data []byte
 	var it, ot, tt, cr, cc int64
-	tpl := tplOf(sel)
-	var upstreamErr error
+	if !isJSONObjectRoot(body) || gjson.GetBytes(body, "model").Type != gjson.String {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
+		sel.Release()
+		return 400, nil, true, nil
+	}
+	upBody, setErr := setModel(body, sel.Model)
+	if setErr != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + setErr.Error()}})
+		sel.Release()
+		return 400, nil, true, nil
+	}
+	var path, authHeader, auth string
 	switch target {
 	case domain.FormatOpenAIResponses:
-		var params responses.ResponseNewParams
-		if err := json.Unmarshal(body, &params); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
-			sel.Release()
-			return 400, nil, true, nil
-		}
-		params.Model = responses.ResponsesModel(sel.Model)
-		var resp *responses.Response
-		resp, upstreamErr = p.clients.Response(ctx, tpl, cred, params, r.Header)
-		if upstreamErr == nil {
-			data, upstreamErr = json.Marshal(resp)
-			if resp.JSON.Usage.Valid() {
-				it, ot, tt, cr, cc = responsesUsageFromResponse(resp.Usage)
-			}
-		}
+		path, authHeader, auth = "responses", "Authorization", "Bearer "+cred
 	case domain.FormatAnthropic:
-		var params anthropic.MessageNewParams
-		if err := json.Unmarshal(body, &params); err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
-			sel.Release()
-			return 400, nil, true, nil
-		}
-		params.Model = sel.Model
-		var resp *anthropic.Message
-		resp, upstreamErr = p.clients.AnthMessage(ctx, tpl, cred, params, r.Header)
-		if upstreamErr == nil {
-			data, upstreamErr = json.Marshal(resp)
-			if resp.JSON.Usage.Valid() {
-				it, ot, tt, cr, cc = anthropicUsageFromResponse(resp.Usage)
-			}
-		}
+		path, authHeader, auth = "v1/messages", "x-api-key", cred
 	}
+	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header)
 	if upstreamErr != nil {
-		return statusOf(upstreamErr), upstreamBody(upstreamErr), false, upstreamErr
+		return statusOf(upstreamErr), nil, false, upstreamErr
+	}
+	if code != 0 {
+		return code, errBody, false, nil
+	}
+	if target == domain.FormatAnthropic {
+		it, ot, tt, cr, cc = anthropicUsageFromResponse(data)
+	} else {
+		it, ot, tt, cr, cc = responsesUsageFromResponse(data)
 	}
 	conv, err := protoconv.ConvertResponse(data, c.dir)
 	if err != nil {

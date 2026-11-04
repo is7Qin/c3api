@@ -714,6 +714,35 @@ func upstreamErrMsg(body []byte) string {
 	return s
 }
 
+// rawJSON 非流式原始出栈：按 spec §3.3 状态矩阵归一。
+//
+//	200            → data 非 nil，code 0
+//	201..299、101、3xx 残留、其他非 4xx → code 502（上游协议异常，与流式同口径）
+//	>=400          → code 原状态，upBody 为上游错误体（1 MiB 有界）
+//	传输错误        → err 非 nil（调用方按 statusOf(err) 归类）
+func (p *Proxy) rawJSON(ctx context.Context, sel *scheduler.Selection, path, authHeader, auth string, body []byte, in http.Header) ([]byte, int, []byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
+	defer cancel()
+	resp, err := p.clients.RawPost(ctx, sel.TemplateID, sel.BaseURL, path, authHeader, auth, body, in)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	defer resp.Body.Close()
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		data, rerr := io.ReadAll(resp.Body)
+		if rerr != nil {
+			return nil, 0, nil, rerr
+		}
+		return data, 0, nil, nil
+	case resp.StatusCode >= 400:
+		return nil, resp.StatusCode, readUpstreamBody(resp), nil
+	default:
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return nil, http.StatusBadGateway, nil, nil
+	}
+}
+
 // readUpstreamBody 读取并关闭非 200 响应的 body（4xx/5xx 透传用）。
 func readUpstreamBody(resp *http.Response) []byte {
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -794,12 +823,4 @@ func (p *Proxy) credentialFor(ctx context.Context, sel *scheduler.Selection) (st
 	return p.creds.For(sel.CredentialType).Credential(ctx, credential.CredentialInput{
 		AccountID: sel.AccountID, Type: sel.CredentialType, APIKey: sel.UpstreamKey,
 	})
-}
-
-// tplOf 从 Selection 构造轻量模板对象（仅用于 aiclient 取 SDK 客户端）。
-// base_url 变更生效链路（main.go 组合注入）：管理端变更 → service 的 invalidate
-// 回调 → 调度器 InvalidateAll 重载快照（新 base_url 随 Selection 下发）+ aiclient
-// Factory.InvalidateAll 丢弃按旧 base_url 构建的 SDK 客户端（懒构建，下次使用重建）。
-func tplOf(sel *scheduler.Selection) *domain.Template {
-	return &domain.Template{ID: sel.TemplateID, BaseURL: sel.BaseURL}
 }

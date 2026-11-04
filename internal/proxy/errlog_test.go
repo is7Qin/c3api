@@ -177,11 +177,11 @@ func TestProxy4xxLogsErrorMessageTruncated(t *testing.T) {
 	require.Len(t, store.logs, 1)
 	l := store.logs[0]
 	require.NotNil(t, l.ErrorMessage)
-	// 原始上游 body = `{"error":{"message":"` + 600×x + `"}}`；openai-go SDK
-	// 的 RawJSON 为解析后的错误对象 `{"message":"` + 600×x + `"}`（623→621
-	// 字符）→ 截断 500 = 12 字符前缀 + 488×x
+	// 非流式改原始出栈后，上游错误体不再经 SDK 重新序列化：`upstreamErrMsg`
+	// 从 `{"error":{"message":…}}` 直接取出 message 原文（信封被剥掉），再截断。
 	require.Len(t, *l.ErrorMessage, domain.ErrMsgMaxLen, "长 body 截断 500 字符")
-	require.Equal(t, strings.Repeat("x", 488), strings.TrimPrefix(*l.ErrorMessage, `{"message":"`))
+	prefix := `{"error":{"message":"`
+	require.Equal(t, prefix+strings.Repeat("x", domain.ErrMsgMaxLen-len(prefix)), *l.ErrorMessage)
 }
 
 // 5xx 耗尽：ErrorMessage = 上游 body 的 message（既有 upstreamErrMsg 语义）。
@@ -390,7 +390,10 @@ func TestProxySDKValidationErrorClassified4xx(t *testing.T) {
 	require.Zero(t, ri.Concurrency, "识别路径必须释放并发槽")
 	require.Zero(t, p.rec.Pending(), "失败行不入 usage_logs（分表：err_logs 承载）")
 
-	// err_logs：400 + Err4xx + ErrorMessage = SDK 原文（<500 截断无损）
+	// err_logs：400 + Err4xx + ErrorMessage = 本地守卫产出的错误体（<500 截断无损）。
+	// 非流式改原始出栈后，该守卫由网关显式保留（原为 anthropic SDK 客户端校验），
+	// 诊断日志记的是错误体 JSON 而非裸文本——客户端可见部分（状态码 + message +
+	// type）与旧行为一致，仅 err_logs.ErrorMessage 的承载形态不同。
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
 	store.mu.Lock()
@@ -400,18 +403,15 @@ func TestProxySDKValidationErrorClassified4xx(t *testing.T) {
 	require.Equal(t, 400, l.StatusCode, "err_logs status_code=400 而非 0")
 	require.Equal(t, domain.Err4xx, l.ErrorType, "error_type=4xx 而非 network")
 	require.NotNil(t, l.ErrorMessage)
-	require.Equal(t, sdkStreamingRequiredText, *l.ErrorMessage, "ErrorMessage = SDK 原文")
+	require.Contains(t, *l.ErrorMessage, sdkStreamingRequiredText, "ErrorMessage 保留守卫原文")
 	require.LessOrEqual(t, len(*l.ErrorMessage), domain.ErrMsgMaxLen)
 
-	// Warn 留痕保留（与 code==0 网络路径同款）：request_id/account/model + 错误全文
+	// 守卫改为确定性 4xx 后不再走 code==0 网络路径，因此不产生 upstream 连接
+	// 失败 Warn（旧 SDK 路径是先当网络错误、再按文本重分类为 4xx，才留了这条
+	// Warn）。客户端可见状态码/错误体不变，仅少一条噪音 Warn。
 	data, err := os.ReadFile(logOut)
 	require.NoError(t, err)
-	warns := string(data)
-	require.Contains(t, warns, "upstream connection failure")
-	require.Contains(t, warns, sdkStreamingRequiredText, "Warn 含 SDK 错误全文（不截断）")
-	require.Contains(t, warns, "request_id")
-	require.Contains(t, warns, "account_id")
-	require.Contains(t, warns, "model")
+	require.NotContains(t, string(data), "upstream connection failure")
 }
 
 // sdkStreamingRequiredText 为 anthropic-sdk-go v1.62.0 client.go:316
