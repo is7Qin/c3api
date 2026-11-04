@@ -625,6 +625,9 @@ export default function Templates() {
   const [deleting, setDeleting] = useState<Template | null>(null)
 
   // —— 扩展配置（生态三类型；GET 404 = 无 ext 行 → 空表单；strip_image_tools 三态：未配置/开/关） ——
+  // custom 模板不在此弹窗里维护：它的 upstream_paths 属于主表单（需要 7 个格式
+  // 输入框与回显门控），而本弹窗只有 strip_image_tools，对 custom 开放会让一次
+  // 保存带走整份路径配置——行操作入口因此按 ECO 三类型门控。
   const [extTarget, setExtTarget] = useState<Template | null>(null)
   const [extStrip, setExtStrip] = useState<boolean | null>(null)
   const extQ = useQuery({
@@ -656,8 +659,6 @@ export default function Templates() {
         credential_type: tpl.CredentialType as TemplateExt['credential_type'],
         strip_image_tools: extStrip,
       }
-      // custom 模板的路径由主表单维护；此处必须原样带回，否则会清空已有配置
-      if (tpl.CredentialType === 'custom') body.upstream_paths = extQ.data?.upstream_paths ?? undefined
       return api.putTemplateExt(tpl.ID, body)
     },
     onSuccess: () => {
@@ -690,9 +691,9 @@ export default function Templates() {
         throw e
       }
     },
-    enabled: !!editing && dialogOpen
-      && (ECO_CREDENTIAL_TYPES.includes(editing?.CredentialType as TemplateCredentialType)
-        || editing?.CredentialType === 'custom'),
+    // 不按已持久化类型门控：从 api_key 切到 custom 时也要读回该模板可能残留的
+    // ext 行，否则回切后输入框是空的，一次保存就把路径全清掉。
+    enabled: !!editing && dialogOpen,
   })
   useEffect(() => {
     if (!editing || templateExtEcho.isLoading) return
@@ -704,6 +705,11 @@ export default function Templates() {
       upstream_paths: { ...paths }, // 回显；未配置的键不出现，输入框留空即默认
     }))
   }, [editing?.ID, templateExtEcho.isLoading, templateExtEcho.data])
+
+  // 自定义模板的路径依赖 ext 回显；回显未完成或失败时不得保存。
+  const pathsEchoBlocked = !!editing
+    && form.credential_type === 'custom'
+    && (templateExtEcho.isLoading || templateExtEcho.isError)
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
     setBatchOpen(false)
@@ -732,6 +738,11 @@ export default function Templates() {
         await api.updateTemplate(editing.ID, toBody(f))
       }
       if (id && (ECO_CREDENTIAL_TYPES.includes(ct) || ct === 'custom')) {
+        // 自定义路径必须建立在「已读回既有配置」之上：回显未完成就写，会把已有
+        // 路径整体清空（7 个端点全部回落厂商默认，运维侧表现为 404）。
+        if (ct === 'custom' && editing && !templateExtEcho.isSuccess) {
+          throw new Error(tr('templates.ext.echoRequired'))
+        }
         const body: TemplateExt = {
           template_id: id,
           credential_type: ct as TemplateExt['credential_type'],
@@ -993,10 +1004,13 @@ export default function Templates() {
             {save.isError && errMsg(save.error) && (
               <p className="text-sm text-destructive">{errMsg(save.error)}</p>
             )}
+            {pathsEchoBlocked && (
+              <p className="text-sm text-destructive">{tr('templates.ext.echoRequired')}</p>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{tr('common.cancel')}</Button>
-            <Button onClick={submit} disabled={save.isPending}>
+            <Button onClick={submit} disabled={save.isPending || pathsEchoBlocked}>
               {save.isPending ? tr('common.saving') : editing ? tr('common.saveChanges') : tr('common.create')}
             </Button>
           </DialogFooter>

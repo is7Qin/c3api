@@ -244,6 +244,7 @@ export default {
       "stripImageToolsHint": "开启后剥离该模板账号响应中的图像 tool；未配置 = 关闭",
       "customPaths": "上游请求路径（可选）",
       "customPathsHint": "按格式分别指定上游端点路径；留空即使用该格式的官方默认端点。可带 query（如 ?api-version=2024-10-21），不要写主机或协议。",
+      "echoRequired": "无法读取已有的路径配置，已禁止保存以免清空；请稍后重试",
       "saveSuccess": "扩展配置已保存",
       "loadFailed": "读取扩展配置失败：{{message}}"
     },
