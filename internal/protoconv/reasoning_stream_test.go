@@ -494,6 +494,52 @@ func TestReasoningStreamMessToRespDoneWithoutAdded(t *testing.T) {
 	require.Equal(t, reasoningRef{Type: reasoningRefType, EncryptedContent: enc, ID: "rs_x"}, back)
 }
 
+// --- 身份键撞车回归：reasoning 与 message 同 id 时不得污染正文块 ---
+
+func TestReasoningStreamMessToRespDoneIDCollision(t *testing.T) {
+	const enc = "gAAAA-collided"
+	// 非规范上游：message item 与 reasoning item 共用同一个 id "shared"。
+	// id 形态的身份键不含 kind，若 done 分支不做「该 index 是不是 thinking 块」
+	// 的归属判据，就会把 signature_delta 塞进 text 块并提前 stop —— 之后的正文
+	// delta 全被丢弃，客户端拿到半截正文。
+	frames := runStream(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_c","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
+		"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"shared","type":"message","role":"assistant","content":[]}}`,
+		"response.output_text.delta", `{"type":"response.output_text.delta","item_id":"shared","output_index":0,"delta":"前半"}`,
+		// 撞车的 reasoning 文本 delta 也不得落进正文块
+		"response.reasoning_summary_text.delta", `{"type":"response.reasoning_summary_text.delta","item_id":"shared","output_index":0,"summary_index":0,"delta":"错位的思考"}`,
+		"response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"id":"shared","type":"reasoning","summary":[],"encrypted_content":"`+enc+`"}}`,
+		"response.output_text.delta", `{"type":"response.output_text.delta","item_id":"shared","output_index":0,"delta":"后半"}`,
+		"response.output_text.done", `{"type":"response.output_text.done","item_id":"shared","output_index":0,"text":"前半后半"}`,
+	)
+
+	// ① 正文块不得收到 signature_delta / thinking_delta
+	for _, fr := range framesOfType(frames, "content_block_delta") {
+		dt := deltaPayload(t, fr)["type"]
+		require.NotEqual(t, "signature_delta", dt,
+			"id 撞车时 reasoning done 必须整帧丢弃，不得把签名塞进正文块")
+		require.NotEqual(t, "thinking_delta", dt,
+			"id 撞车时 reasoning 文本 delta 也不得落进正文块")
+	}
+
+	// ② 正文块不得被提前 stop：done 之后的 delta 仍要出帧
+	var texts []string
+	for _, fr := range framesOfType(frames, "content_block_delta") {
+		if deltaPayload(t, fr)["type"] == "text_delta" {
+			texts = append(texts, deltaPayload(t, fr)["text"].(string))
+		}
+	}
+	require.Equal(t, []string{"前半", "后半"}, texts, "撞车不得截断正文")
+
+	// ③ 总正文与上游一致，且只有一个 stop（来自 output_text.done）
+	require.Equal(t, "前半后半", strings.Join(texts, ""))
+	stops := framesOfType(frames, "content_block_stop")
+	require.Len(t, stops, 1, "只有正文块 stop 一次")
+	require.EqualValues(t, 0, frameIndexOf(t, stops[0]))
+	require.Equal(t, map[float64]string{0: "text"}, blockKindMap(t, frames),
+		"不得凭空 start 出 thinking 块")
+}
+
 // --- §6.3 #30：thinking 门（先 text 后 reasoning → 整块丢弃）---
 
 func TestReasoningStreamMessToRespThinkingGate(t *testing.T) {

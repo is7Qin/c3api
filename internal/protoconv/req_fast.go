@@ -549,7 +549,12 @@ func messToRespRequest(body []byte) ([]byte, error) {
 
 // includeReasoningEncrypted 上层不透明思考的回传必须被显式索取：没有这个
 // include，上游只回摘要，signature 里的 reasoning_ref 臂就成了空壳（spec §2.5）。
-const includeReasoningEncrypted = `"reasoning.encrypted_content"`
+const (
+	// includeReasoningEncryptedValue include 元素的解码值（去重比较用）。
+	includeReasoningEncryptedValue = "reasoning.encrypted_content"
+	// includeReasoningEncrypted 同一元素的 JSON 字面量（写出用）。
+	includeReasoningEncrypted = `"` + includeReasoningEncryptedValue + `"`
+)
 
 // appendIncludeMerged 顶层 "include"：客户端原有元素在前（去重），末尾补
 // reasoning.encrypted_content。合并而非覆盖——覆盖会凭空丢掉客户端明确要的
@@ -562,29 +567,33 @@ func appendIncludeMerged(out []byte, first *bool, clientInclude gjson.Result) []
 	}
 	*first = false
 	out = append(out, `"include":[`...)
-	var seen []string
-	add := func(raw string) {
-		for _, s := range seen {
-			if s == raw {
+	// 去重按**解码后**的元素比较（"reasoning\u002eencrypted_content" 与
+	// reasoning.encrypted_content 是同一个值），写出仍用原始字节形态（保留客户端
+	// 的转义写法）。
+	var keys, raws []string
+	add := func(decoded, raw string) {
+		for _, k := range keys {
+			if k == decoded {
 				return
 			}
 		}
-		seen = append(seen, raw)
+		keys = append(keys, decoded)
+		raws = append(raws, raw)
 	}
 	switch {
 	case clientInclude.IsArray():
 		clientInclude.ForEach(func(_, v gjson.Result) bool {
 			if v.Type == gjson.String {
-				add(v.Raw)
+				add(v.Str, v.Raw)
 			}
 			return true
 		})
 	case clientInclude.Type == gjson.String:
 		// 单字符串形态：按单元素并入，不能丢客户端原值。
-		add(clientInclude.Raw)
+		add(clientInclude.Str, clientInclude.Raw)
 	}
-	add(includeReasoningEncrypted)
-	for i, s := range seen {
+	add(includeReasoningEncryptedValue, includeReasoningEncrypted)
+	for i, s := range raws {
 		if i > 0 {
 			out = append(out, ',')
 		}

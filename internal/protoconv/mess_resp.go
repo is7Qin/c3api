@@ -319,7 +319,10 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		oi := intOr0(ev, "output_index")
 		itemID, _ := str(ev, "item_id")
 		index, ok := m.thinkBlockIndex(blockKeyOf(itemID, oi, kindThinking), oi)
-		if !ok || m.blockStopped[index] {
+		if !ok || m.thinkBlocks[index] == nil || m.blockStopped[index] {
+			// 与 done 分支同一条归属判据：id 形态的身份键不含 kind，reasoning 事件
+			// 的 item_id 一旦与 message / function_call 撞车，解析出的 index 属于
+			// text/tool_use 块——往里塞 thinking_delta 会污染该块。
 			return nil, true
 		}
 		delta, _ := str(ev, "delta")
@@ -348,8 +351,14 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		oi := intOr0(ev, "output_index")
 		itemID, _ := str(item, "id")
 		index, ok := m.thinkBlockIndex(blockKeyOf(itemID, oi, kindThinking), oi)
-		if !ok || m.blockStopped[index] {
-			// 门丢弃 / 已 stop（同一 index 只 stop 一次）。
+		if !ok || m.thinkBlocks[index] == nil || m.blockStopped[index] {
+			// 门丢弃 / 该 index 不是 thinking 块 / 已 stop（同一 index 只 stop 一次）。
+			//
+			// thinkBlocks 判据不可省：id 形态的身份键不含 kind，reasoning item 的 id
+			// 一旦与某个 message / function_call 的 id 撞车（非规范中转会发生），
+			// thinkBlockIndex 就返回 text/tool_use 块的 index——在这里发
+			// signature_delta + stop 会把正文块提前关掉，后续正文 delta 全被丢弃，
+			// 客户端只拿到半截正文。
 			return nil, true
 		}
 		var f []byte

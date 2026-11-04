@@ -117,11 +117,19 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 	}
 	// reasoning.summary 必须带 "auto"：只发 effort 时上游仅回 encrypted_content，
 	// chat 客户端看不到任何思考文本（issue 46）。
-	reasoningOn := false
-	if effort := reasoningEffortRaw(reasoningEffort); effort != "" {
+	effort := reasoningEffortRaw(reasoningEffort)
+	if effort != "" {
+		// reasoning 字段对所有白名单值原样写出（含 "none"：忠实透传给上游，OpenAI
+		// 侧接受该值）。
 		out = appendField(out, &first, "reasoning", `{"effort":`+effort+`,"summary":"auto"}`)
-		reasoningOn = true
 	}
+	// 采样参数的丢弃只发生在 reasoning **真正开启**时："none" 等价于不开启
+	// （与 chat→mess 的「none/minimal → 不开启 thinking」同口径），此时客户端
+	// 的 temperature / top_p 必须原样保留。
+	//
+	// 注意 reasoningEffortRaw 返回的是**带引号的原始文本**（直接拼进 JSON），
+	// 故用 rawStrEq 比较而不是字符串字面量比较。
+	reasoningOn := effort != "" && !rawStrEq(effort, "none")
 	if rawNotNull(store) {
 		out = appendField(out, &first, "store", store)
 	}

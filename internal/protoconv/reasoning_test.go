@@ -293,6 +293,16 @@ func TestReasoningRespTargetDropsSampling(t *testing.T) {
 	require.Equal(t, float64(0.4), out["temperature"])
 	require.Equal(t, float64(0.5), out["top_p"])
 
+	// reasoning_effort:"none" 等价于不开启（与 chat→mess 同口径）：reasoning 字段
+	// 仍忠实透传，但采样参数必须保留
+	body = `{"model":"m","messages":[` + chatUserMsg + `],"reasoning_effort":"none",` +
+		`"temperature":0.4,"top_p":0.5}`
+	out = requestOf(t, domain.ProtocolConvertChatToResp, body)
+	require.Equal(t, map[string]any{"effort": "none", "summary": "auto"}, out["reasoning"],
+		"none 仍原样透传给上游")
+	require.Equal(t, float64(0.4), out["temperature"], "none 不算开启 → 保留 temperature")
+	require.Equal(t, float64(0.5), out["top_p"], "none 不算开启 → 保留 top_p")
+
 	// resp 目标**不**因 reasoning 对 tool_choice 降级（OpenAI 侧支持强制工具调用）
 	body = `{"model":"m","messages":[` + chatUserMsg + `],"reasoning_effort":"high",` +
 		`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],` +
@@ -595,6 +605,13 @@ func TestReasoningMessToRespIncludeMerged(t *testing.T) {
 	require.Equal(t, []any{"message.output_text.logprobs", "reasoning.encrypted_content"},
 		arrOf(t, requestOf(t, domain.ProtocolConvertMessToResp, body), "include"),
 		"字符串形态也要保留原值")
+
+	// 转义点：客户端元素的**解码值**与我们相同 → 只保留一次（写出的原始形态保留）
+	body = `{"model":"m","max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":16384},` +
+		`"include":["reasoning\u002eencrypted_content"],"messages":[` + messUserMsg + `]}`
+	inc := arrOf(t, requestOf(t, domain.ProtocolConvertMessToResp, body), "include")
+	require.Len(t, inc, 1, "解码后相同的元素只保留一次")
+	require.Equal(t, "reasoning.encrypted_content", inc[0])
 
 	// 既非字符串也非数组 → 只发自己的元素（不丢弃整条 include）
 	body = `{"model":"m","max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":16384},` +
