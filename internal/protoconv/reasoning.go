@@ -208,10 +208,9 @@ func thinkingValue(effort string, maxTokens int64) string {
 // 小数（4096.9）、指数（1e20）、下划线分组（1_000）、JSON 字符串（"4096"）一律
 // 非法，由调用方按「该字段不参与」处理（§3.1 逐字段判定）。
 //
-// 判据落在 strconv.ParseInt(raw, 10, 64)：它只接受可选正负号 + 十进制数字，
-// 但它**容忍前导零与前导 '+'**，所以 `04096` / `+4096`（两者都不是合法 JSON
-// 数字字面量）当前会被接受并归一为 4096。若要严格到 `-?[0-9]+`，需在此额外
-// 做首字符 / 前导零校验——改判据属语义变更，未做。
+// Raw 必须是纯十进制整数字面量 `-?[0-9]+`：strconv.ParseInt 虽只接受可选符号 +
+// 十进制数字，但它**容忍前导零与前导 '+'**（`04096` / `+4096` 都不是合法 JSON
+// 数字字面量），故在此显式拒绝。
 //
 // 不复用 gjsonNumInt：它会把 4096.9 截成 4096，导致「写出值」与「budget 基数」
 // 不同源。
@@ -221,6 +220,10 @@ func validMaxTokens(v gjson.Result) (int64, bool) {
 	}
 	raw := v.Raw
 	if raw == "" || strings.ContainsAny(raw, ".eE") {
+		return 0, false
+	}
+	// 纯十进制字面量：拒绝前导 '+' 与前导零（`-0` 由 n<1 兜住）。
+	if raw[0] == '+' || (raw[0] == '0' && len(raw) > 1) {
 		return 0, false
 	}
 	n, err := strconv.ParseInt(raw, 10, 64)

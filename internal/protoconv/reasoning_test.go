@@ -805,9 +805,14 @@ func TestReasoningValues(t *testing.T) {
 	_, ok = validMaxTokens(gjson.Parse("1000000001"))
 	require.False(t, ok, "超过 1e9")
 
-	// 非标准数字字面量：Raw 必须能被 ParseInt 当十进制整数读入，1_000 不可
+	// 非标准数字字面量：Raw 必须是纯十进制字面量（-?[0-9]+）；1_000 / 04096 /
+	// +4096 都不是合法 JSON 数字字面量，一律非法。
 	_, ok = validMaxTokens(gjson.Parse("1_000"))
 	require.False(t, ok, "1_000 视为非法（→ 调用方按缺失处理，写出 4096）")
+	for _, raw := range []string{"04096", "+4096", "-0"} {
+		_, ok = validMaxTokens(gjson.Parse(raw))
+		require.False(t, ok, "%s 视为非法", raw)
+	}
 
 	// 逐字段判定：非法继续下一字段；全非法 → 4096
 	n, ok = maxTokensField(gjson.Parse("null"), gjson.Parse("8000"))
