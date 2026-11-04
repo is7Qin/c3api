@@ -142,7 +142,7 @@ paths:
     get:
       operationId: GetTemplatesIdExt
       tags: [templates]
-      summary: 读取模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行）
+      summary: 读取模板类型化扩展（编辑回显；生态三类型与 custom 模板有 ext 行）
       responses:
         '200':
           description: 模板 ext 配置
@@ -3085,9 +3085,9 @@ components:
         # template_id 只读（响应）；请求体忽略——路径 {id} 为准。
         template_id: { type: integer, format: int64 }
         credential_type: { type: string, enum: [responses-special, codex-oauth, codex-pat, custom], description: "类型声明；必须与父模板 credential_type 一致（不一致 → 400）" }
-        # 模板是共享配置面：唯一可配置列 strip_image_tools（三类型公共能力开关）——
-        # 凭据列组（oauth/pat）一律在账号级 account_ext（账号私有）。
-        strip_image_tools: { type: boolean, nullable: true, description: "三类型公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）" }
+        # 模板是共享配置面：可空列 strip_image_tools（公共能力开关，生态三类型与
+        # custom 均可配）——凭据列组（oauth/pat）一律在账号级 account_ext（账号私有）。
+        strip_image_tools: { type: boolean, nullable: true, description: "公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）" }
         # custom 专用：逐格式自定义上游路径。键 ∈ {openai-chat, openai-responses,
         # openai-responses-ws, anthropic, openai-search, openai-images.generations,
         # openai-images.edits}；值 = aiclient 内部 path 词法（可带 query），未配置的键

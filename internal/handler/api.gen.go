@@ -2154,11 +2154,11 @@ type TemplateExt struct {
 	// CredentialType 类型声明；必须与父模板 credential_type 一致（不一致 → 400）
 	CredentialType TemplateExtCredentialType `json:"credential_type"`
 
-	// StripImageTools 三类型公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）
+	// StripImageTools 公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）
 	StripImageTools *bool  `json:"strip_image_tools"`
 	TemplateId      *int64 `json:"template_id,omitempty"`
 
-	// UpstreamPaths custom 专用逐格式路径；键见描述，nil/缺省 = 未配置 = 全部回落默认端点
+	// UpstreamPaths custom 专用逐格式路径。PUT 为全列替换：**缺省或 null 即清空**（与 strip_image_tools 同语义），要保留请原样带回已读取的值。键见描述；未配置的键回落该格式默认端点。
 	UpstreamPaths *map[string]string `json:"upstream_paths"`
 }
 
@@ -3206,7 +3206,7 @@ type ServerInterface interface {
 
 	// (PUT /templates/{id})
 	PutTemplatesId(w http.ResponseWriter, r *http.Request, id int64)
-	// 读取模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行）
+	// 读取模板类型化扩展（编辑回显；生态三类型与 custom 模板有 ext 行）
 	// (GET /templates/{id}/ext)
 	GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64)
 	// 幂等写入模板类型化扩展（Create/Update 合一；全列更新含 NULL 清空）
@@ -3689,7 +3689,7 @@ func (_ Unimplemented) PutTemplatesId(w http.ResponseWriter, r *http.Request, id
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 读取模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行）
+// 读取模板类型化扩展（编辑回显；生态三类型与 custom 模板有 ext 行）
 // (GET /templates/{id}/ext)
 func (_ Unimplemented) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)

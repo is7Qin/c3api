@@ -25,8 +25,8 @@ func decodeLenient(r *http.Request, v any) error {
 	return dec.Decode(v)
 }
 
-// GetTemplatesIdExt 模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行，
-// ServerInterface）。模板缺 id / 无 ext 行 → 404。
+// GetTemplatesIdExt 模板类型化扩展（编辑回显；生态三类型与 custom 模板有 ext
+// 行，ServerInterface）。模板缺 id / 无 ext 行 → 404。
 func (h *AdminAPI) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	e, err := h.svc.GetTemplateExt(r.Context(), id)
 	if err != nil {
@@ -39,8 +39,8 @@ func (h *AdminAPI) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 // PutTemplatesIdExt 幂等写入模板类型化扩展（Create/Update 合一；全列更新含
 // NULL 清空，ServerInterface）。credential_type 必填；类型一致性（ext 行类型
 // 必须 == 父模板类型）与模板缺 id → 400/404（service 校验）。模板是共享配置
-// 面：唯一可配置列 strip_image_tools（三类型公共能力开关）——凭据（oauth/pat）
-// 一律在账号级 account_ext。
+// 面：可空列 strip_image_tools（公共能力开关）+ custom 的 upstream_paths——
+// 凭据（oauth/pat）一律在账号级 account_ext。
 func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	var in TemplateExt
 	if err := decodeLenient(r, &in); err != nil {

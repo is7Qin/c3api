@@ -83,7 +83,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** 读取模板类型化扩展（编辑回显；仅生态三类型模板有 ext 行） */
+        /** 读取模板类型化扩展（编辑回显；生态三类型与 custom 模板有 ext 行） */
         get: operations["GetTemplatesIdExt"];
         /** 幂等写入模板类型化扩展（Create/Update 合一；全列更新含 NULL 清空） */
         put: operations["PutTemplatesIdExt"];
@@ -2429,7 +2429,7 @@ export interface components {
              * @enum {string}
              */
             credential_type: "responses-special" | "codex-oauth" | "codex-pat" | "custom";
-            /** @description 三类型公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭） */
+            /** @description 公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭） */
             strip_image_tools?: boolean | null;
             /** @description custom 专用逐格式路径。PUT 为全列替换：**缺省或 null 即清空**（与 strip_image_tools 同语义），要保留请原样带回已读取的值。键见描述；未配置的键回落该格式默认端点。 */
             upstream_paths?: {
