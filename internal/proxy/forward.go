@@ -804,7 +804,7 @@ func duplicateTopLevelKey(body []byte, keys ...string) string {
 		return ""
 	}
 	i++
-	seen := make(map[string]struct{}, len(keys))
+	var seen map[string]struct{} // 惰性分配：绝大多数请求没有这些键，热路径零分配
 	for {
 		i = skipSpace(body, i)
 		if i >= len(body) {
@@ -836,6 +836,9 @@ func duplicateTopLevelKey(body []byte, keys ...string) string {
 				if string(key) == k {
 					if _, dup := seen[k]; dup {
 						return k
+					}
+					if seen == nil {
+						seen = make(map[string]struct{}, len(keys))
 					}
 					seen[k] = struct{}{}
 				}
