@@ -199,7 +199,7 @@
 > `custom` 模板的 `upstream_paths` 是逐格式可选覆盖：键 ∈ `openai-chat` / `openai-responses` / `openai-responses-ws` / `anthropic` / `openai-search` / `openai-images.generations` / `openai-images.edits`，值为该格式的上游路径（可带 query），**留空的键回落该格式默认端点**。
 > 注意 `PUT` 是全列替换：只想改 `strip_image_tools` 时，必须把 `GET` 到的 `upstream_paths` 原样带回，否则路径会被一并清空并导致全部端点回落厂商默认。
 > 校验：路径先 trim、剥至多一个前导 `/`、限长 1..1024，再过白名单（拒 `\`、`;`、`#`、`@`、空格、控制字符、空段、`.`/`..` 段）；归一后的值落库，避免出现 `/v1/v1/...`。
-> 键必须属于本模板 `supported_formats`（写入时校验）。**通过本接口收窄 `supported_formats` 不会删除已存的键**：它们成为死配置（对应格式不再被路由），重新放宽后自动复活，不会导致请求错误。注意控制台的保存会按当前勾选的格式过滤路径（因为本接口是全列替换）：在控制台取消某格式并保存，等于丢弃该格式的覆盖；只想保留配置请用本接口单独改 `supported_formats`。
+> 键必须属于上面 7 个之一。**键与 `supported_formats` 不联动**：收窄格式不会删除已存的键，它们成为死配置（对应格式不再被路由），重新放宽后自动生效，也不会让保存失败——控制台保存时原样带回这些键。
 
 > 模板变更（含 base_url / supported_formats / format_models / model_mapping / upstream_paths）通过 invalidate 回调即时生效于调度器快照（无需重启）。非流请求由网关自己直发上游、不再经厂商 SDK 客户端；流式与 WS 仍走客户端工厂，同样随 invalidate 重建。
 

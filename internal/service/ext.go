@@ -38,19 +38,20 @@ var upstreamPathRE = regexp.MustCompile(`^(?:v1/)?[A-Za-z0-9._~-]+(?:/[A-Za-z0-9
 // upstreamQueryRE 解码后的 query 白名单（`%` 不再允许——已解码完成）。
 var upstreamQueryRE = regexp.MustCompile(`^[A-Za-z0-9._~=&-]+$`)
 
-// validateUpstreamPaths 校验 custom 的逐格式路径：键必须属于全集且对应格式在
-// supported_formats 内；值按固定顺序规范化——trim → 剥至多一个前导 `/` →
-// 长度 1..1024 → 白名单；query 非空且解码后过白名单；任何路径段不得为 `.` 或
-// `..`。返回**归一后**的 map（调用方必须用它落库）。
+// validateUpstreamPaths 校验 custom 的逐格式路径：键必须属于 7 键全集（**不要求**
+// 对应格式在 supported_formats 内——见下）；值按固定顺序规范化——trim → 剥至多
+// 一个前导 `/` → 长度 1..1024 → 白名单；query 非空且解码后过白名单；任何路径段
+// 不得为 `.` 或 `..`。返回**归一后**的 map（调用方必须用它落库）。
 // nil/空 map = 未配置（合法）。
-func validateUpstreamPaths(paths map[string]string, supported map[domain.RequestFormat]bool) (map[string]string, error) {
+//
+// 为什么不与 supported_formats 联动：本接口是全列替换，若拒绝「当前格式集之外」
+// 的键，那么运维通过 API 收窄格式后，任何一次普通保存（哪怕只改个名字）都会把
+// 这些残留覆盖永久删掉——而它们本应作为死配置保留、放宽后复活。键与格式的映射
+// 是固定的，非当前格式的键只是永不生效，不构成可用性风险。
+func validateUpstreamPaths(paths map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(paths))
 	for k, raw := range paths {
-		f, ok := upstreamPathFormat[k]
-		if !ok {
-			return nil, ErrInvalidInput
-		}
-		if supported != nil && !supported[f] {
+		if _, ok := upstreamPathFormat[k]; !ok {
 			return nil, ErrInvalidInput
 		}
 		v := strings.TrimSpace(raw)
@@ -133,11 +134,7 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) 
 		if e.CredentialType != credential.TypeCustom {
 			return nil, ErrInvalidInput // 仅 custom 可配路径
 		}
-		supported := make(map[domain.RequestFormat]bool, len(tpl.SupportedFormats))
-		for _, f := range tpl.SupportedFormats {
-			supported[f] = true
-		}
-		normalized, err := validateUpstreamPaths(e.UpstreamPaths, supported)
+		normalized, err := validateUpstreamPaths(e.UpstreamPaths)
 		if err != nil {
 			return nil, err
 		}

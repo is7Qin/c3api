@@ -3091,7 +3091,9 @@ components:
         # custom 专用：逐格式自定义上游路径。键 ∈ {openai-chat, openai-responses,
         # openai-responses-ws, anthropic, openai-search, openai-images.generations,
         # openai-images.edits}；值 = aiclient 内部 path 词法（可带 query），未配置的键
-        # 回落官方默认端点。非 custom 类型提交 → 400。
+        # 回落官方默认端点。键与 supported_formats **不联动**（收窄格式不删除已存键，
+        # 也不因此拒绝写入）——否则一次普通保存会把死配置永久删掉。
+        # 非 custom 类型提交 → 400。
         upstream_paths:
           type: object
           nullable: true
