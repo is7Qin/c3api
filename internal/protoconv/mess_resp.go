@@ -44,9 +44,14 @@ func respToMessResponse(body []byte) ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// respOutputToMessBlocks resp output → anthropic 内容块（text/tool_use）。
+// respOutputToMessBlocks resp output → anthropic 内容块（thinking / redacted_thinking
+// → thinking 块，text → text 块，function_call → tool_use 块）。
+//
+// thinking 块**恒排在其余块之前**（Anthropic 要求 assistant turn 里 thinking 在
+// 最前，否则回放时被拒）。reasoning item 带本包信封 → 原块往返（签名保留）；
+// 否则按约束 B 输出无签名 thinking（客户端不校验签名），无文本则丢。
 func respOutputToMessBlocks(r map[string]any) []any {
-	var blocks []any
+	var think, rest []any
 	if output, ok := arr(r, "output"); ok {
 		for _, item := range output {
 			im, ok := item.(map[string]any)
@@ -54,12 +59,22 @@ func respOutputToMessBlocks(r map[string]any) []any {
 				continue
 			}
 			switch im["type"] {
+			case "reasoning":
+				if blk, ok := thinkingFromReasoningItem(im); ok {
+					think = append(think, thinkingBlockMap(blk))
+					continue
+				}
+				if t := respReasoningTextOf(im); t != "" {
+					think = append(think, map[string]any{
+						"type": "thinking", "thinking": t, "signature": "",
+					})
+				}
 			case "message":
 				if content, ok := arr(im, "content"); ok {
 					for _, part := range content {
 						if pm, ok := part.(map[string]any); ok {
 							if t, ok := str(pm, "text"); ok {
-								blocks = append(blocks, map[string]any{"type": "text", "text": t})
+								rest = append(rest, map[string]any{"type": "text", "text": t})
 							}
 						}
 					}
@@ -67,12 +82,13 @@ func respOutputToMessBlocks(r map[string]any) []any {
 			case "function_call":
 				id := toolCallID(im) // call_id 优先（tool_result.tool_use_id 匹配键）
 				name, _ := str(im, "name")
-				blocks = append(blocks, map[string]any{
+				rest = append(rest, map[string]any{
 					"type": "tool_use", "id": id, "name": name, "input": parseJSON(im["arguments"]),
 				})
 			}
 		}
 	}
+	blocks := append(think, rest...)
 	if len(blocks) == 0 {
 		return []any{}
 	}
@@ -191,7 +207,26 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		return nil, true
 	case "response.output_item.added":
 		item, ok := ev["item"].(map[string]any)
-		if !ok || item["type"] != "function_call" {
+		if !ok {
+			return nil, true
+		}
+		if item["type"] == "reasoning" {
+			// reasoning item → thinking 块（Anthropic 要求 thinking 在 assistant
+			// turn 内最先出现；上游 item 顺序已保证）。
+			index := m.contentIndex(intOr0(ev, "output_index"))
+			if m.thinkBlocks[index] == nil {
+				m.thinkBlocks[index] = &thinkingBlock{Type: "thinking"}
+			}
+			if !m.blockStarted[index] {
+				m.blockStarted[index] = true
+				return EncodeFrame("content_block_start", map[string]any{
+					"type": "content_block_start", "index": index,
+					"content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""},
+				}), false
+			}
+			return nil, true
+		}
+		if item["type"] != "function_call" {
 			return nil, true
 		}
 		index := m.contentIndex(intOr0(ev, "output_index"))
@@ -205,6 +240,53 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			}), false
 		}
 		return nil, true
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		// resp 的思考文本 → Anthropic thinking_delta（块惰性 start，兼容缺
+		// output_item.added 的非规范上游）。
+		delta, _ := str(ev, "delta")
+		index := m.contentIndex(intOr0(ev, "output_index"))
+		if m.thinkBlocks[index] == nil {
+			m.thinkBlocks[index] = &thinkingBlock{Type: "thinking"}
+		}
+		var f []byte
+		if !m.blockStarted[index] {
+			m.blockStarted[index] = true
+			f = EncodeFrame("content_block_start", map[string]any{
+				"type": "content_block_start", "index": index,
+				"content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""},
+			})
+		}
+		f = append(f, EncodeFrame("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": index,
+			"delta": map[string]any{"type": "thinking_delta", "thinking": delta},
+		})...)
+		return f, false
+	case "response.output_item.done":
+		// thinking 块收尾：信封可解则先发 signature_delta（Anthropic 要求签名在
+		// 块 stop 之前），再 content_block_stop。
+		item, ok := ev["item"].(map[string]any)
+		if !ok || item["type"] != "reasoning" {
+			return nil, true
+		}
+		index := m.contentIndex(intOr0(ev, "output_index"))
+		if m.thinkBlocks[index] == nil {
+			return nil, true
+		}
+		var f []byte
+		if blk, ok := thinkingFromReasoningItem(item); ok && blk.Signature != "" {
+			f = EncodeFrame("content_block_delta", map[string]any{
+				"type": "content_block_delta", "index": index,
+				"delta": map[string]any{"type": "signature_delta", "signature": blk.Signature},
+			})
+		}
+		if m.blockStarted[index] && !m.blockStopped[index] {
+			m.blockStopped[index] = true
+			f = append(f, EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})...)
+		}
+		if len(f) == 0 {
+			return nil, true
+		}
+		return f, false
 	case "response.function_call_arguments.delta":
 		delta, _ := str(ev, "delta")
 		index := m.contentIndex(intOr0(ev, "output_index"))
@@ -230,11 +312,12 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			usage = respUsageToMess(resp)
 			reason = respToMessStopReason(resp)
 		}
-		f := EncodeFrame("message_delta", map[string]any{
+		f := m.closeOpenThinkBlocks() // 兜底：上游未发 output_item.done 时补 stop
+		f = append(f, EncodeFrame("message_delta", map[string]any{
 			"type":  "message_delta",
 			"delta": map[string]any{"stop_reason": reason, "stop_sequence": nil},
 			"usage": usage,
-		})
+		})...)
 		return append(f, EncodeFrame("message_stop", map[string]any{"type": "message_stop"})...), false
 	case "response.failed":
 		if m.done {

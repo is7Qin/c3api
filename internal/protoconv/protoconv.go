@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -77,6 +78,7 @@ func (m *StreamMapper) ensureBlocks() {
 		m.fcIDs = make(map[int64]string)
 		m.itemIndex = make(map[int64]int64)
 		m.owner = make(map[int64]int64)
+		m.thinkBlocks = make(map[int64]*thinkingBlock)
 	}
 }
 
@@ -218,6 +220,12 @@ type StreamMapper struct {
 	fcNames      map[int64]string
 	fcIDs        map[int64]string
 	blockOrder   []int64 // 内容块出现顺序（output items 保持顺序）
+
+	// thinking 块级状态（content index 键；存在 = 该 index 是 thinking /
+	// redacted_thinking 块）。text 与 signature_delta 累积、redacted 的 data 原样
+	// 保存——mess→resp 在 message_stop 用它产出 reasoning item 与信封；
+	// resp→mess 用它判定 index 是否为 thinking 块并承接信封签名。
+	thinkBlocks map[int64]*thinkingBlock
 }
 
 // Map 把一个模板协议 SSE 事件映射为客户端协议帧；drop=true 丢弃该帧。
@@ -253,6 +261,33 @@ func (m *StreamMapper) Map(name string, data []byte) ([]byte, bool) {
 // itemID 合成 resp output item id（message item 专用；确定性，无需随机源）。
 func (m *StreamMapper) itemID(index int64) string {
 	return "msg_" + m.id + "_" + fmt.Sprint(index)
+}
+
+// thinkID 合成 resp reasoning item id（thinking 块专用；确定性、与 content
+// index 一一对应，流式输出项与 delta 事件的 item_id 同源）。
+func (m *StreamMapper) thinkID(index int64) string {
+	return "rs_" + m.id + "_" + fmt.Sprint(index)
+}
+
+// closeOpenThinkBlocks 关闭仍打开的 thinking 块（resp→mess 兜底：上游可能不发
+// output_item.done）。按 content index 升序产出，保证帧序确定。
+func (m *StreamMapper) closeOpenThinkBlocks() []byte {
+	var idx []int64
+	for i, b := range m.thinkBlocks {
+		if b != nil && m.blockStarted[i] && !m.blockStopped[i] {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) == 0 {
+		return nil
+	}
+	slices.Sort(idx)
+	var f []byte
+	for _, i := range idx {
+		m.blockStopped[i] = true
+		f = append(f, EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": i})...)
+	}
+	return f
 }
 
 // BindableID 显式返回当前 mapper 已产出的**客户端可续接响应 id**（即映射帧

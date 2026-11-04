@@ -7,7 +7,12 @@ package protoconv
 // 三条请求转换的字节路径：gjson 单遍取字段，值原样拼进一个输出缓冲。
 // 语义与原 map+json.Marshal 版一致（测试钉住）。chat→resp 仍在 chat_resp.go。
 
-import "github.com/tidwall/gjson"
+import (
+	"strconv"
+	"strings"
+
+	"github.com/tidwall/gjson"
+)
 
 func chatToMessRequest(body []byte) ([]byte, error) {
 	root, err := parseRoot(body)
@@ -15,8 +20,8 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	var (
-		msgs, maxCT, maxT, stop, tools, toolChoice gjson.Result
-		model, temperature, topP, stream, metadata string
+		msgs, maxCT, maxT, stop, tools, toolChoice, effort gjson.Result
+		model, temperature, topP, stream, metadata         string
 	)
 	if root.IsObject() {
 		root.ForEach(func(k, v gjson.Result) bool {
@@ -27,6 +32,8 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 				maxCT = v
 			case gjsonKeyEq(k, "max_tokens"):
 				maxT = v
+			case gjsonKeyEq(k, "reasoning_effort"):
+				effort = v
 			case gjsonKeyEq(k, "stop"):
 				stop = v
 			case gjsonKeyEq(k, "tools"):
@@ -47,16 +54,23 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 			return true
 		})
 	}
+	// 上限归一化（spec §3.1）：写出值 = budget 基数（同一个变量）。逐字段判定：
+	// 非法/缺失 → 继续下一字段；全部不合法 → 4096。
+	maxTok, _ := maxTokensField(maxCT, maxT)
+	// reasoning_effort → thinking（no_raise：只按上限压 budget，绝不抬高）。
+	// chat 无签名通道 → 历史含 tool_calls 时不开启（否则「要求回放」的
+	// Anthropic 端点该轮必 422）；强制 tool_choice 与 thinking 冲突时保留强制意图。
+	think := ""
+	if e := chatEffort(effort); e != "" && !chatHistoryHasToolCalls(msgs) {
+		think = thinkingValue(e, maxTok)
+	}
+	if think != "" && messToolChoiceForces(chatToolChoiceToMess(toolChoice)) {
+		think = ""
+	}
 	out := make([]byte, 0, len(body)+64)
 	out = append(out, '{')
 	first := true
-	if maxCT.Exists() {
-		out = appendField(out, &first, "max_tokens", maxCT.Raw)
-	} else if maxT.Exists() {
-		out = appendField(out, &first, "max_tokens", maxT.Raw)
-	} else {
-		out = appendField(out, &first, "max_tokens", "4096")
-	}
+	out = appendField(out, &first, "max_tokens", strconv.FormatInt(maxTok, 10))
 	if msgs.IsArray() {
 		out = appendChatMessMessages(out, &first, msgs)
 	}
@@ -75,8 +89,12 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 	if sys := chatSystemRaw(msgs); sys != "" {
 		out = appendField(out, &first, "system", sys)
 	}
-	if rawNotNull(temperature) {
+	// thinking 开启时 Anthropic 只接受默认采样参数 → 丢弃 temperature/top_p。
+	if think == "" && rawNotNull(temperature) {
 		out = appendField(out, &first, "temperature", temperature)
+	}
+	if think != "" {
+		out = appendField(out, &first, "thinking", think)
 	}
 	if tc := chatToolChoiceToMess(toolChoice); tc != "" {
 		out = appendField(out, &first, "tool_choice", tc)
@@ -90,7 +108,7 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 		out = appendToolsMapped(out, tools, toolsMessFromChat)
 		out = append(out, ']')
 	}
-	if rawNotNull(topP) {
+	if think == "" && rawNotNull(topP) {
 		out = appendField(out, &first, "top_p", topP)
 	}
 	return append(out, '}'), nil
@@ -431,9 +449,10 @@ func messToRespRequest(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	var (
-		sys, msgs, maxT, tools, toolChoice gjson.Result
-		model, temperature, topP           string
-		stream, metadata                   string
+		sys, msgs, maxT, tools, toolChoice, thinking, outputConfig gjson.Result
+		clientInclude                                              gjson.Result
+		model, temperature, topP                                   string
+		stream, metadata                                           string
 	)
 	if root.IsObject() {
 		root.ForEach(func(k, v gjson.Result) bool {
@@ -458,6 +477,12 @@ func messToRespRequest(body []byte) ([]byte, error) {
 				stream = v.Raw
 			case gjsonKeyEq(k, "metadata"):
 				metadata = v.Raw
+			case gjsonKeyEq(k, "thinking"):
+				thinking = v
+			case gjsonKeyEq(k, "output_config"):
+				outputConfig = v
+			case gjsonKeyEq(k, "include"):
+				clientInclude = v
 			}
 			return true
 		})
@@ -465,7 +490,19 @@ func messToRespRequest(body []byte) ([]byte, error) {
 	out := make([]byte, 0, len(body)+64)
 	out = append(out, '{')
 	first := true
+	// thinking{type,budget_tokens} → reasoning{effort,summary}：budget 反查
+	// effort（无 budget 的 adaptive → 只发 summary），output_config.effort 优先。
+	rv := reasoningValue(thinking, outputConfig)
+	if rv != "" {
+		// 要拿到上游的加密思考才能在 signature 里往返（spec §2.5）：合并去重
+		// 追加 reasoning.encrypted_content（不能覆盖客户端已有元素）。
+		out = appendIncludeMerged(out, &first, clientInclude)
+		out = appendField(out, &first, "reasoning", rv)
+	}
 	if msgs.IsArray() {
+		if !first {
+			out = append(out, ',')
+		}
 		first = false
 		out = append(out, `"input":`...)
 		out = appendMessInput(out, msgs)
@@ -507,6 +544,57 @@ func messToRespRequest(body []byte) ([]byte, error) {
 		out = appendField(out, &first, "top_p", topP)
 	}
 	return append(out, '}'), nil
+}
+
+// includeReasoningEncrypted 上层不透明思考的回传必须被显式索取：没有这个
+// include，上游只回摘要，signature 里的 reasoning_ref 臂就成了空壳（spec §2.5）。
+const includeReasoningEncrypted = `"reasoning.encrypted_content"`
+
+// appendIncludeMerged 顶层 "include"：客户端原有元素在前（去重），末尾补
+// reasoning.encrypted_content。合并而非覆盖——覆盖会凭空丢掉客户端明确要的
+// message.output_text.logprobs 之类元素（spec §4.2）。调用方仅在请求开启
+// thinking 时走到这里（否则上游的加密思考无处承载）。
+func appendIncludeMerged(out []byte, first *bool, clientInclude gjson.Result) []byte {
+	if !*first {
+		out = append(out, ',')
+	}
+	*first = false
+	out = append(out, `"include":[`...)
+	var seen []string
+	add := func(raw string) {
+		for _, s := range seen {
+			if s == raw {
+				return
+			}
+		}
+		seen = append(seen, raw)
+	}
+	if clientInclude.IsArray() {
+		clientInclude.ForEach(func(_, v gjson.Result) bool {
+			if v.Type == gjson.String {
+				add(v.Raw)
+			}
+			return true
+		})
+	}
+	add(includeReasoningEncrypted)
+	for i, s := range seen {
+		if i > 0 {
+			out = append(out, ',')
+		}
+		out = append(out, s...)
+	}
+	return append(out, ']')
+}
+
+// quotedSealPrefix 信封在 JSON 原文里的前缀。快路径判定用：未命中就不解码
+// （spec §5 性能约定：信封解码只在 c3a1: 命中时发生）。
+const quotedSealPrefix = `"` + sealPrefix
+
+// isThinkingKind 内容块是否 Anthropic 的思考类块（thinking / redacted_thinking）。
+func isThinkingKind(blk gjson.Result) bool {
+	t := blk.Get("type").Raw
+	return rawStrEq(t, "thinking") || rawStrEq(t, "redacted_thinking")
 }
 
 func fieldRaw(obj gjson.Result, name string) gjson.Result {
@@ -622,6 +710,28 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 			if !content.IsArray() {
 				return true
 			}
+			// thinking / redacted_thinking 块：signature 若是 reasoning_ref 臂，
+			// 把上游不透明的 encrypted_content 还原成 reasoning item 排在本轮
+			// 内容**之前**（spec §2.5 / §4.2）。真 Anthropic 签名 / 空串 / 其他
+			// type → 丢（约束 A：既不伪造签名，也不把 Anthropic 签名当
+			// encrypted_content 发给 Responses 上游）。逐块独立裁决——全有或全无
+			// 只属于 resp_to_mess 方向。
+			content.ForEach(func(_, blk gjson.Result) bool {
+				if !isThinkingKind(blk) {
+					return true
+				}
+				sig := blk.Get("signature")
+				if !strings.HasPrefix(sig.Raw, quotedSealPrefix) {
+					return true
+				}
+				r, ok := openReasoningRef(sig.Str)
+				if !ok {
+					return true
+				}
+				out, n = appendComma(out, n)
+				out = appendReasoningRefItem(out, r)
+				return true
+			})
 			textN := 0
 			started := false
 			start := 0
@@ -715,9 +825,9 @@ func respToMessRequest(body []byte) ([]byte, error) {
 		return nil, err
 	}
 	var (
-		input, maxOut, tools, toolChoice       gjson.Result
-		instructions, model, temperature, topP string
-		stream, metadata                       string
+		input, maxOut, tools, toolChoice, reasoning gjson.Result
+		instructions, model, temperature, topP      string
+		stream, metadata                            string
 	)
 	if root.IsObject() {
 		root.ForEach(func(k, v gjson.Result) bool {
@@ -742,21 +852,35 @@ func respToMessRequest(body []byte) ([]byte, error) {
 				stream = v.Raw
 			case gjsonKeyEq(k, "metadata"):
 				metadata = v.Raw
+			case gjsonKeyEq(k, "reasoning"):
+				reasoning = v
 			}
 			return true
 		})
 	}
+	// 上限归一化（spec §3.1）：写出值与 budget 基数同源。
+	maxTok, _ := maxTokensField(maxOut)
+	// 回放裁决（spec §2.3）：input 里每一个 reasoning item 都能解出可往返的块、
+	// 且都在所属轮正文/工具调用之前，才允许回放 thinking。否则整请求不带思考
+	// （部分剥离会让 Anthropic 判 prefix_binding_mismatch → 该会话此后每轮 400）。
+	replay := scanRespThinking(input)
+	// reasoning.effort → thinking（no_raise）；none/minimal/缺失/未知 → 不开启。
+	// 强制 tool_choice 与 thinking 冲突时保留强制意图（§3.2）。
+	tc := respToolChoiceToMess(toolChoice)
+	think := ""
+	if e := reasoningEffortFromBody(reasoning); e != "" && replay {
+		think = thinkingValue(e, maxTok)
+	}
+	if think != "" && messToolChoiceForces(tc) {
+		think = ""
+	}
 	out := make([]byte, 0, len(body)+64)
 	out = append(out, '{')
 	first := true
-	if maxOut.Exists() {
-		out = appendField(out, &first, "max_tokens", maxOut.Raw)
-	} else {
-		out = appendField(out, &first, "max_tokens", "4096")
-	}
+	out = appendField(out, &first, "max_tokens", strconv.FormatInt(maxTok, 10))
 	switch {
 	case input.IsArray():
-		out = appendRespMessMessages(out, &first, input)
+		out = appendRespMessMessages(out, &first, input, replay)
 	case input.Type == gjson.String:
 		if !first {
 			out = append(out, ',')
@@ -778,10 +902,13 @@ func respToMessRequest(body []byte) ([]byte, error) {
 	if sys := respSystemRaw(instructions, input); sys != "" {
 		out = appendField(out, &first, "system", sys)
 	}
-	if rawNotNull(temperature) {
+	if think == "" && rawNotNull(temperature) {
 		out = appendField(out, &first, "temperature", temperature)
 	}
-	if tc := respToolChoiceToMess(toolChoice); tc != "" {
+	if think != "" {
+		out = appendField(out, &first, "thinking", think)
+	}
+	if tc != "" {
 		out = appendField(out, &first, "tool_choice", tc)
 	}
 	if tools.IsArray() {
@@ -793,7 +920,7 @@ func respToMessRequest(body []byte) ([]byte, error) {
 		out = appendToolsMapped(out, tools, toolsMessFromResp)
 		out = append(out, ']')
 	}
-	if rawNotNull(topP) {
+	if think == "" && rawNotNull(topP) {
 		out = appendField(out, &first, "top_p", topP)
 	}
 	return append(out, '}'), nil
@@ -826,7 +953,10 @@ func respSystemRaw(instructions string, input gjson.Result) string {
 	return string(buf)
 }
 
-func appendRespMessMessages(out []byte, first *bool, input gjson.Result) []byte {
+// appendRespMessMessages resp input → Messages messages。replay=false（§2.3 判定
+// 不可回放）时 thinking 块整体不写出——部分剥离会让 Anthropic 判会话前缀失配，
+// 该会话此后每轮 400。
+func appendRespMessMessages(out []byte, first *bool, input gjson.Result, replay bool) []byte {
 	if !*first {
 		out = append(out, ',')
 	}
@@ -843,7 +973,7 @@ func appendRespMessMessages(out []byte, first *bool, input gjson.Result) []byte 
 			return true
 		}
 		typ := item.Get("type")
-		if asstOpen && !rawStrEq(typ.Raw, "function_call") {
+		if asstOpen && !rawStrEq(typ.Raw, "function_call") && !rawStrEq(typ.Raw, "reasoning") {
 			closeAsst()
 		}
 		switch {
@@ -909,6 +1039,29 @@ func appendRespMessMessages(out []byte, first *bool, input gjson.Result) []byte 
 			out = append(out, `,"name":`...)
 			out = append(out, strOrEmpty(item.Get("name"))...)
 			out = append(out, `,"type":"tool_use"}`...)
+		case rawStrEq(typ.Raw, "reasoning"):
+			// reasoning item → thinking 块：只有本包信封（encrypted_content 内带
+			// Anthropic 原始签名）才可回放；且 §2.3 判定为全有或全无（replay）时
+			// 才整体回放，否则一个块都不写（不伪造无签名块）。
+			if !replay {
+				return true
+			}
+			enc := item.Get("encrypted_content")
+			if enc.Type != gjson.String {
+				return true
+			}
+			blk, ok := openThinking(enc.Str)
+			if !ok {
+				return true
+			}
+			if !asstOpen {
+				out, n = appendComma(out, n)
+				out = append(out, `{"content":[`...)
+				asstOpen = true
+			} else if out[len(out)-1] != '[' {
+				out = append(out, ',')
+			}
+			out = appendThinkingBlock(out, blk)
 		case rawStrEq(typ.Raw, "function_call_output"):
 			t, ok := blockTextRaw(item.Get("output"), "input_text", "text")
 			if !ok {

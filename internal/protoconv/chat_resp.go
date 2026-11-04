@@ -115,8 +115,10 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 	if rawNotNull(parallel) {
 		out = appendField(out, &first, "parallel_tool_calls", parallel)
 	}
+	// reasoning.summary 必须带 "auto"：只发 effort 时上游仅回 encrypted_content，
+	// chat 客户端看不到任何思考文本（issue 46）。
 	if effort := reasoningEffortRaw(reasoningEffort); effort != "" {
-		out = appendField(out, &first, "reasoning", `{"effort":`+effort+`}`)
+		out = appendField(out, &first, "reasoning", `{"effort":`+effort+`,"summary":"auto"}`)
 	}
 	if rawNotNull(store) {
 		out = appendField(out, &first, "store", store)
@@ -483,8 +485,13 @@ func respToChatResponse(body []byte) ([]byte, error) {
 	out = append(out, `{"choices":[{"finish_reason":`...)
 	out = append(out, finish...)
 	out = append(out, `,"index":0,"message":{"content":`...)
-	var tcs []byte
-	out, tcs = appendChatMessageBody(out, tcs, r.Get("output"))
+	var tcs, rc []byte
+	out, rc, tcs = appendChatMessageBody(out, nil, nil, r.Get("output"))
+	if len(rc) > 0 {
+		out = append(out, `,"reasoning_content":"`...)
+		out = append(out, rc...)
+		out = append(out, '"')
+	}
 	out = append(out, `,"role":"assistant"`...)
 	if tcs != nil {
 		out = append(out, `,"tool_calls":[`...)
@@ -509,14 +516,20 @@ func respToChatResponse(body []byte) ([]byte, error) {
 // appendChatMessageBody resp output → chat assistant message 的 content 文本
 // 拼接（message 项 text 部件 join ""，恒为合法 JSON 字符串——修复：
 // 部件 raw 剥离首尾引号拼接，转义逐字符保持，concat 即等价转义）与 tool_calls
-// 数组字节。无文本 → JSON null（纯工具调用）；有文本时仍为字符串。返回 (out, tcs)。
-func appendChatMessageBody(out, tcs []byte, output gjson.Result) ([]byte, []byte) {
+// 数组字节；reasoning item 的文本另存 rc（去引号片段，caller 负责加引号）。
+// 无文本 → content 为 JSON null（纯工具调用）；有文本时仍为字符串。
+// 返回 (out, rc, tcs)。
+func appendChatMessageBody(out, rc, tcs []byte, output gjson.Result) ([]byte, []byte, []byte) {
 	hasText := false
 	output.ForEach(func(_, item gjson.Result) bool {
 		if !item.IsObject() {
 			return true
 		}
 		switch {
+		case rawStrEq(item.Get("type").Raw, "reasoning"):
+			// reasoning item → message.reasoning_content（chat 只有纯文本通道）：
+			// summary[].text 优先，content[].reasoning_text 兜底。
+			rc = appendReasoningStripes(rc, item)
 		case rawStrEq(item.Get("type").Raw, "message"):
 			if content := item.Get("content"); content.IsArray() {
 				content.ForEach(func(_, part gjson.Result) bool {
@@ -554,7 +567,7 @@ func appendChatMessageBody(out, tcs []byte, output gjson.Result) ([]byte, []byte
 	} else {
 		out = append(out, '"')
 	}
-	return out, tcs
+	return out, rc, tcs
 }
 
 // hasRespFunctionCall output 数组是否含 function_call 项。
@@ -583,6 +596,15 @@ func appendChatUsage(buf []byte, u gjson.Result) []byte {
 	tt := gjsonNumInt(u.Get("total_tokens"))
 	buf = append(buf, `{"completion_tokens":`...)
 	buf = appendInt64(buf, ot)
+	// reasoning_tokens：resp 侧 output_tokens_details.reasoning_tokens 透传到
+	// chat 的 completion_tokens_details（>0 才出现，无明细不多出零值键）。
+	if d := u.Get("output_tokens_details"); d.IsObject() {
+		if r := gjsonNumInt(d.Get("reasoning_tokens")); r > 0 {
+			buf = append(buf, `,"completion_tokens_details":{"reasoning_tokens":`...)
+			buf = appendInt64(buf, r)
+			buf = append(buf, '}')
+		}
+	}
 	buf = append(buf, `,"prompt_tokens":`...)
 	buf = appendInt64(buf, it)
 	if d := u.Get("input_tokens_details"); d.IsObject() {
@@ -642,6 +664,13 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 			m.dbuf = append(m.dbuf, `}]}`...)
 			return m.chatChunkFrame(m.dbuf, nil, nil), false
 		}
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		if raw, _, ok := literalTop(data, "delta", ""); ok {
+			m.dbuf = append(m.dbuf[:0], `{"reasoning_content":`...)
+			m.dbuf = append(m.dbuf, raw...)
+			m.dbuf = append(m.dbuf, '}')
+			return m.chatChunkFrame(m.dbuf, nil, nil), false
+		}
 	}
 	if !json.Valid(data) {
 		return nil, true
@@ -669,6 +698,13 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 		return m.chatChunkFrame(m.dbuf, nil, nil), false
 	case "response.output_text.delta":
 		m.dbuf = append(m.dbuf[:0], `{"content":`...)
+		m.dbuf = append(m.dbuf, strOrEmpty(ev.Get("delta"))...)
+		m.dbuf = append(m.dbuf, '}')
+		return m.chatChunkFrame(m.dbuf, nil, nil), false
+	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
+		// resp 的思考文本 → chat 的 delta.reasoning_content（chat 只有纯文本
+		// 通道；encrypted_content 无处表达，丢弃）。
+		m.dbuf = append(m.dbuf[:0], `{"reasoning_content":`...)
 		m.dbuf = append(m.dbuf, strOrEmpty(ev.Get("delta"))...)
 		m.dbuf = append(m.dbuf, '}')
 		return m.chatChunkFrame(m.dbuf, nil, nil), false

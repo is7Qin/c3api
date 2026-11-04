@@ -52,10 +52,10 @@ func messToChatResponse(body []byte) ([]byte, error) {
 }
 
 // messToChatMessage anthropic content → chat assistant message（text 块拼接
-// content；tool_use → tool_calls）。
+// content；thinking → reasoning_content；tool_use → tool_calls）。
 func messToChatMessage(msg map[string]any) map[string]any {
 	m := map[string]any{"role": "assistant", "content": nil}
-	var text []string
+	var text, think []string
 	var tcs []any
 	if content, ok := arr(msg, "content"); ok {
 		for _, blk := range content {
@@ -67,6 +67,12 @@ func messToChatMessage(msg map[string]any) map[string]any {
 			case "text":
 				if t, ok := str(bm, "text"); ok {
 					text = append(text, t)
+				}
+			case "thinking":
+				// chat 只有纯文本通道（无签名位）：思考文本落 reasoning_content；
+				// redacted_thinking 的 data 不可读 → 无文本可给，丢弃。
+				if t, ok := str(bm, "thinking"); ok && t != "" {
+					think = append(think, t)
 				}
 			case "tool_use":
 				id, _ := str(bm, "id")
@@ -80,6 +86,9 @@ func messToChatMessage(msg map[string]any) map[string]any {
 	}
 	if len(text) > 0 {
 		m["content"] = joinStrings(text, "")
+	}
+	if len(think) > 0 {
+		m["reasoning_content"] = joinStrings(think, "")
 	}
 	if len(tcs) > 0 {
 		m["tool_calls"] = tcs
@@ -176,6 +185,14 @@ func (m *StreamMapper) mapMessToChat(name string, data []byte) ([]byte, bool) {
 			return nil, true
 		}
 		switch delta["type"] {
+		case "thinking_delta":
+			// Anthropic 的 thinking_delta → chat 的 delta.reasoning_content
+			// （chat 只有纯文本通道；signature_delta 无载体，丢弃）。
+			text, _ := str(delta, "thinking")
+			if text == "" {
+				return nil, true
+			}
+			return m.chatFrame(map[string]any{"reasoning_content": text}, nil, nil), false
 		case "text_delta":
 			text, _ := str(delta, "text")
 			return m.chatFrame(map[string]any{"content": text}, nil, nil), false
