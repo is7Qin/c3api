@@ -8,7 +8,6 @@ package protoconv
 // 语义与原 map+json.Marshal 版一致（测试钉住）。chat→resp 仍在 chat_resp.go。
 
 import (
-	"strconv"
 	"strings"
 
 	"github.com/tidwall/gjson"
@@ -70,7 +69,7 @@ func chatToMessRequest(body []byte) ([]byte, error) {
 	out := make([]byte, 0, len(body)+64)
 	out = append(out, '{')
 	first := true
-	out = appendField(out, &first, "max_tokens", strconv.FormatInt(maxTok, 10))
+	out = appendIntField(out, &first, "max_tokens", maxTok)
 	if msgs.IsArray() {
 		out = appendChatMessMessages(out, &first, msgs)
 	}
@@ -877,7 +876,7 @@ func respToMessRequest(body []byte) ([]byte, error) {
 	out := make([]byte, 0, len(body)+64)
 	out = append(out, '{')
 	first := true
-	out = appendField(out, &first, "max_tokens", strconv.FormatInt(maxTok, 10))
+	out = appendIntField(out, &first, "max_tokens", maxTok)
 	switch {
 	case input.IsArray():
 		out = appendRespMessMessages(out, &first, input, replay)

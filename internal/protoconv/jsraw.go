@@ -196,6 +196,20 @@ func appendInt64(out []byte, n int64) []byte {
 	return strconv.AppendInt(out, n, 10)
 }
 
+// appendIntField 组装顶层 "key":<int>（首个字段无前导逗号）。等价于
+// appendField(out, first, key, strconv.FormatInt(n, 10))，但省掉 FormatInt 的
+// 字符串分配——请求侧上限归一化后每请求都写该字段，值得零分配。
+func appendIntField(out []byte, first *bool, key string, n int64) []byte {
+	if !*first {
+		out = append(out, ',')
+	}
+	*first = false
+	out = append(out, '"')
+	out = append(out, key...)
+	out = append(out, `":`...)
+	return appendInt64(out, n)
+}
+
 // parseRoot 合法对象只解析一次。结构不闭合直接 invalid JSON；闭合但不是对象时
 // 再 json.Valid，区分非法与顶层 null（null 与 map 版对齐，输出 {}）。
 func parseRoot(body []byte) (gjson.Result, error) {

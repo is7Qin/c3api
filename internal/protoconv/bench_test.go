@@ -155,3 +155,83 @@ func BenchmarkStreamRespToChat(b *testing.B) {
 		}
 	}
 }
+
+// --- reasoning 路径（issue 46）：请求侧 thinking 形态与流式思考 delta ---
+
+// benchThinkingEnv 请求侧 thinking 形态用的信封（thinking 块 → encrypted_content）。
+var benchThinkingEnv = sealThinking(thinkingBlock{
+	Type: "thinking", Thinking: "我需要先列目录", Signature: "sig_bench",
+})
+
+// benchRespThinkingReqBody resp→mess 请求（reasoning item + effort + tools）：
+// 压测 effort→budget 换算与信封解码（spec §5：换算 0 分配；解码只在 c3a1: 命中
+// 时发生）。
+func benchRespThinkingReqBody() []byte {
+	return []byte(`{
+		"model": "claude-3-5-sonnet",
+		"max_output_tokens": 32000,
+		"reasoning": {"effort": "high"},
+		"stream": true,
+		"input": [
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"run ls"}]},
+			{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"` + benchThinkingEnv + `"},
+			{"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{}"},
+			{"type":"function_call_output","call_id":"call_1","output":"a.txt"}
+		],
+		"tools": [{"type":"function","name":"exec_command","description":"d","parameters":{"type":"object"}}]
+	}`)
+}
+
+func BenchmarkConvertRequestRespToMessThinking(b *testing.B) {
+	benchReq(b, benchRespThinkingReqBody(), domain.ProtocolConvertRespToMess)
+}
+
+// benchMessStreamEvents 构造 n 个 delta 的 mess 流（kind = "thinking" / "text"）。
+// 两条路径事件数相同，allocs/op 可直接对比（「流式无逐帧新增分配」）。
+func benchMessStreamEvents(kind string, n int) []benchEv {
+	evs := []benchEv{
+		{"message_start", []byte(`{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude","content":[],"usage":{"input_tokens":10,"output_tokens":0}}}`)},
+	}
+	if kind == "thinking" {
+		evs = append(evs, benchEv{"content_block_start", []byte(`{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}}`)})
+		for range n {
+			evs = append(evs, benchEv{"content_block_delta", []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"思考片段 "}}`)})
+		}
+		evs = append(evs,
+			benchEv{"content_block_delta", []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_bench"}}`)},
+			benchEv{"content_block_stop", []byte(`{"type":"content_block_stop","index":0}`)},
+		)
+	} else {
+		evs = append(evs, benchEv{"content_block_start", []byte(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)})
+		for range n {
+			evs = append(evs, benchEv{"content_block_delta", []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"正文片段 "}}`)})
+		}
+		evs = append(evs, benchEv{"content_block_stop", []byte(`{"type":"content_block_stop","index":0}`)})
+	}
+	evs = append(evs, benchEv{"message_stop", []byte(`{"type":"message_stop"}`)})
+	return evs
+}
+
+// benchMessStream 跑一遍 mess→resp 流（每轮新建 mapper：模拟一条真实流）。
+func benchMessStream(b *testing.B, events []benchEv) {
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		m := NewStreamMapper(domain.ProtocolConvertRespToMess)
+		for _, ev := range events {
+			frame, _ := m.Map(ev.name, ev.data)
+			benchSink = frame
+		}
+	}
+}
+
+// BenchmarkStreamMessToRespThinkingDelta 思考块（start + 100 thinking_delta +
+// signature_delta + stop）；与下面的 text 对照用例比 allocs/op。
+func BenchmarkStreamMessToRespThinkingDelta(b *testing.B) {
+	benchMessStream(b, benchMessStreamEvents("thinking", 100))
+}
+
+// BenchmarkStreamMessToRespTextDelta 正文块（start + 100 text_delta + stop）：
+// thinking 路径的对照基线。
+func BenchmarkStreamMessToRespTextDelta(b *testing.B) {
+	benchMessStream(b, benchMessStreamEvents("text", 100))
+}
