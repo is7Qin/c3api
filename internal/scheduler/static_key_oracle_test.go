@@ -105,6 +105,26 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 		planKeyOf(newSnapshotStatic(a, tpl, nil)),
 		planKeyOf(newSnapshotStatic(a, &tplModels, nil)),
 		"model content change must change the key")
+	// custom upstream paths are part of the key: content and presence both count
+	// (the encoding itself is frozen separately by TestDigestUpstreamPaths; here we
+	// only pin that the constructor actually folds the field in).
+	tplPaths := *tpl
+	tplPaths.UpstreamPaths = map[string]string{"openai-chat": "v1/chat/completions"}
+	tplPathsOther := *tpl
+	tplPathsOther.UpstreamPaths = map[string]string{"openai-chat": "v2/chat/completions"}
+	require.NotEqual(t,
+		planKeyOf(newSnapshotStatic(a, tpl, nil)),
+		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
+		"setting an upstream path must change the key")
+	require.NotEqual(t,
+		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
+		planKeyOf(newSnapshotStatic(a, &tplPathsOther, nil)),
+		"changing an upstream path must change the key")
+	require.Equal(t,
+		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
+		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
+		"identical upstream paths must not change the key")
+
 	// payloadKey (OAuth rotation) must NOT affect planKey.
 	aRot := a
 	aRot.Ext = &domain.AccountExt{CodexAccountID: new("cid"), CodexEmail: new("e@x"), CodexPATKey: new("pat"),
