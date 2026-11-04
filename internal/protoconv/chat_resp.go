@@ -123,9 +123,8 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 		// 侧接受该值）。
 		out = appendField(out, &first, "reasoning", `{"effort":`+effort+`,"summary":"auto"}`)
 	}
-	// 采样参数的丢弃只发生在 reasoning **真正开启**时："none" 等价于不开启
-	// （与 chat→mess 的「none/minimal → 不开启 thinking」同口径），此时客户端
-	// 的 temperature / top_p 必须原样保留。
+	// 采样参数的丢弃只发生在 reasoning **真正开启**时：`none` ≡ 关闭推理，此时
+	// 客户端的 temperature / top_p 必须原样保留（`minimal` 及以上仍算开启）。
 	//
 	// 注意 reasoningEffortRaw 返回的是**带引号的原始文本**（直接拼进 JSON），
 	// 故用 rawStrEq 比较而不是字符串字面量比较。

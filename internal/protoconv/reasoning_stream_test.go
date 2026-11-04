@@ -506,12 +506,21 @@ func TestReasoningStreamMessToRespDoneIDCollision(t *testing.T) {
 		"response.created", `{"type":"response.created","response":{"id":"rsp_c","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
 		"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"shared","type":"message","role":"assistant","content":[]}}`,
 		"response.output_text.delta", `{"type":"response.output_text.delta","item_id":"shared","output_index":0,"delta":"前半"}`,
+		// 撞车的 reasoning added（thinking 门关闭 → 整块丢弃，且不得写负索引占位）
+		"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"shared","type":"reasoning","summary":[]}}`,
 		// 撞车的 reasoning 文本 delta 也不得落进正文块
 		"response.reasoning_summary_text.delta", `{"type":"response.reasoning_summary_text.delta","item_id":"shared","output_index":0,"summary_index":0,"delta":"错位的思考"}`,
 		"response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"id":"shared","type":"reasoning","summary":[],"encrypted_content":"`+enc+`"}}`,
 		"response.output_text.delta", `{"type":"response.output_text.delta","item_id":"shared","output_index":0,"delta":"后半"}`,
 		"response.output_text.done", `{"type":"response.output_text.done","item_id":"shared","output_index":0,"text":"前半后半"}`,
 	)
+
+	// ④ 所有帧的 index 必须非负（内部占位常量不得外泄）
+	for _, fr := range frames {
+		if idx, ok := fr.data["index"]; ok {
+			require.GreaterOrEqual(t, idx.(float64), float64(0), "帧 index 不得为负: %s", fr.raw)
+		}
+	}
 
 	// ① 正文块不得收到 signature_delta / thinking_delta
 	for _, fr := range framesOfType(frames, "content_block_delta") {
@@ -538,6 +547,75 @@ func TestReasoningStreamMessToRespDoneIDCollision(t *testing.T) {
 	require.EqualValues(t, 0, frameIndexOf(t, stops[0]))
 	require.Equal(t, map[float64]string{0: "text"}, blockKindMap(t, frames),
 		"不得凭空 start 出 thinking 块")
+}
+
+// --- 反向撞车：thinking 块先占 index，正文 item 复用同一 id ---
+
+func TestReasoningStreamMessToRespReverseIDCollision(t *testing.T) {
+	const enc = "gAAAA-reverse"
+	arm := sealReasoningRef(reasoningRef{EncryptedContent: enc, ID: "shared"})
+	frames := runStream(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_r","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
+		// thinking 先拿到 index 0（id=shared）
+		"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"shared","type":"reasoning","summary":[]}}`,
+		"response.reasoning_summary_text.delta", `{"type":"response.reasoning_summary_text.delta","item_id":"shared","output_index":0,"summary_index":0,"delta":"想"}`,
+		// 正文 item 复用同一个 id：不得落进 thinking 块，必须另立 index
+		"response.output_item.added", `{"type":"response.output_item.added","output_index":0,"item":{"id":"shared","type":"message","role":"assistant","content":[]}}`,
+		"response.output_text.delta", `{"type":"response.output_text.delta","item_id":"shared","output_index":0,"delta":"正文"}`,
+		"response.output_text.done", `{"type":"response.output_text.done","item_id":"shared","output_index":0,"text":"正文"}`,
+		// thinking 的收尾（信封不得因正文 done 丢失）
+		"response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"id":"shared","type":"reasoning","summary":[],"encrypted_content":"`+enc+`"}}`,
+	)
+
+	kinds := blockKindMap(t, frames)
+	require.Len(t, kinds, 2, "thinking 与正文必须各占一个 index")
+	var thinkIdx, textIdx float64 = -1, -1
+	for idx, kind := range kinds {
+		switch kind {
+		case "thinking":
+			thinkIdx = idx
+		case "text":
+			textIdx = idx
+		}
+	}
+	require.GreaterOrEqual(t, thinkIdx, float64(0))
+	require.GreaterOrEqual(t, textIdx, float64(0))
+	require.NotEqual(t, thinkIdx, textIdx, "正文不得复用 thinking 的 index")
+
+	// ② 各自 delta 只落在自己块内
+	for _, fr := range framesOfType(frames, "content_block_delta") {
+		dt, _ := deltaPayload(t, fr)["type"].(string)
+		idx := frameIndexOf(t, fr)
+		switch dt {
+		case "thinking_delta", "signature_delta":
+			require.Equal(t, thinkIdx, idx, "%s 必须落在 thinking 块", dt)
+		case "text_delta":
+			require.Equal(t, textIdx, idx, "%s 必须落在正文块", dt)
+		}
+	}
+
+	// ③ 两个块各自 start / stop 恰好一次
+	started := make(map[float64]int)
+	for _, fr := range framesOfType(frames, "content_block_start") {
+		started[frameIndexOf(t, fr)]++
+	}
+	require.Equal(t, map[float64]int{thinkIdx: 1, textIdx: 1}, started)
+	stopped := make(map[float64]int)
+	for _, fr := range framesOfType(frames, "content_block_stop") {
+		stopped[frameIndexOf(t, fr)]++
+	}
+	require.Equal(t, map[float64]int{thinkIdx: 1, textIdx: 1}, stopped, "每块只 stop 一次")
+
+	// ④ thinking 的信封仍然发出（正文 done 不得吞掉它）
+	var sigSeen bool
+	for _, fr := range framesOfType(frames, "content_block_delta") {
+		if deltaPayload(t, fr)["type"] != "signature_delta" {
+			continue
+		}
+		sigSeen = true
+		require.Equal(t, arm, deltaPayload(t, fr)["signature"])
+	}
+	require.True(t, sigSeen, "thinking 块的信封必须仍在 thinking 块上发出")
 }
 
 // --- §6.3 #30：thinking 门（先 text 后 reasoning → 整块丢弃）---

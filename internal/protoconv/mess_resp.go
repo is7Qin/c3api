@@ -157,18 +157,20 @@ func respUsageToMess(r map[string]any) map[string]any {
 func (m *StreamMapper) eventBlockIndex(ev map[string]any, kind string) int64 {
 	oi := intOr0(ev, "output_index")
 	itemID, _ := str(ev, "item_id")
-	return m.blockIndex(blockKeyOf(itemID, oi, kind), oi, kind)
+	return m.ownBlockIndex(blockKeyOf(itemID, oi, kind), oi, kind)
 }
 
 // thinkBlockIndex reasoning 事件 → content index。ok=false 表示该块被 thinking
 // 门丢弃（迟到的 thinking 块整块丢弃，spec §4.5 第 4 条）。
+//
+// 丢弃**不写** itemIndex：键是 (id|output_index, kind)，正文事件可能与 reasoning
+// 共用 id，写负索引占位会让正文落到非法 index 上（负 index 是协议外值）。重复
+// 丢弃由 nonThinkSeen 门 + 调用方的 thinkBlocks 归属判据共同保证。
 func (m *StreamMapper) thinkBlockIndex(key blockKey, oi int64) (int64, bool) {
 	if idx, ok := m.itemIndex[key]; ok {
-		return idx, idx != droppedBlockIndex
+		return idx, true
 	}
 	if m.nonThinkSeen {
-		m.ensureIndexes()
-		m.itemIndex[key] = droppedBlockIndex
 		return 0, false
 	}
 	index := m.blockIndex(key, oi, kindThinking)
@@ -274,10 +276,10 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		case "reasoning":
 			key := blockKeyOf(itemID, oi, kindThinking)
 			if m.nonThinkSeen {
-				// thinking 门：该响应已有非 thinking 块 → 整块丢弃（记占位，让同
-				// 一个 item 的 delta / done 一并丢，spec §4.5 第 4 条）。
-				m.ensureIndexes()
-				m.itemIndex[key] = droppedBlockIndex
+				// thinking 门：该响应已有非 thinking 块 → 整块丢弃（spec §4.5 第 4
+				// 条）。**不写** itemIndex：键与正文共享 id 空间，占位值会让正文事件
+				// 解到非法/别的块的 index 上；后续 delta / done 由同一扇门与归属判据
+				// 拦下。
 				return nil, true
 			}
 			index := m.blockIndex(key, oi, kindThinking)
@@ -295,11 +297,11 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			// 登记身份映射（后续 text delta 用同一 index）；块 start 仍惰性在首个
 			// delta（保持既有帧序列）。message 项即文本块 → 门关闭。
 			m.nonThinkSeen = true
-			m.blockIndex(blockKeyOf(itemID, oi, kindText), oi, kindText)
+			m.ownBlockIndex(blockKeyOf(itemID, oi, kindText), oi, kindText)
 			return nil, true
 		case "function_call":
 			m.nonThinkSeen = true
-			index := m.blockIndex(blockKeyOf(itemID, oi, kindToolUse), oi, kindToolUse)
+			index := m.ownBlockIndex(blockKeyOf(itemID, oi, kindToolUse), oi, kindToolUse)
 			if m.blockStarted[index] {
 				return nil, true
 			}

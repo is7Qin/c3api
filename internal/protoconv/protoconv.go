@@ -98,10 +98,6 @@ const (
 	kindThinking = "thinking"
 )
 
-// droppedBlockIndex 被 thinking 门丢弃的块在 itemIndex 里的占位值：同一 item
-// 后续的 delta / done 一律丢弃（spec §4.5 第 4 条：迟到 thinking 块整块丢弃）。
-const droppedBlockIndex int64 = -1
-
 // allocKey content index 的分配键 = (output_index, kind)：同一 output_index 上
 // 不同 kind 必须拿到不同 content index（spec §4.5 第 1 条）。
 type allocKey struct {
@@ -109,19 +105,23 @@ type allocKey struct {
 	kind string
 }
 
-// blockKey 内容块的跨事件身份键：item id 优先（spec §4.5 第 2 条：delta 用
-// item_id、done 用 item.id）。上游省略 id 时退化为 (output_index, kind)——任何
-// 情况下都不裸用 output_index 作身份，否则 text_delta 会落进 thinking 块。
+// blockKey 内容块的跨事件身份键：(item id 或 output_index) + **kind**（spec
+// §4.5 第 2 条：delta 用 item_id、done 用 item.id；kind 见第 1 条）。
+//
+// kind 必须进键：id 只在同一 kind 内唯一，非规范中转会让 reasoning item 与
+// message / function_call 共用同一个 id，键不含 kind 就会把一个块的事件解到
+// 另一个块的 index 上（正文被塞进 thinking 块、或 thinking 的 done 关掉正文块）。
 type blockKey struct {
 	id   string
 	oi   int64
 	kind string
 }
 
-// blockKeyOf 事件 → 跨事件身份键（见 blockKey）。
+// blockKeyOf 事件 → 跨事件身份键（id 优先，缺失时退化为 output_index；两者都带
+// kind，任何情况下都不裸用 output_index 作身份）。
 func blockKeyOf(id string, oi int64, kind string) blockKey {
 	if id != "" {
-		return blockKey{id: id}
+		return blockKey{id: id, kind: kind}
 	}
 	return blockKey{oi: oi, kind: kind}
 }
@@ -162,6 +162,28 @@ func (m *StreamMapper) blockIndex(key blockKey, oi int64, kind string) int64 {
 	idx := m.contentIndex(oi, kind)
 	m.itemIndex[key] = idx
 	return idx
+}
+
+// ownBlockIndex 与 blockIndex 相同，但要求命中的 index **确实属于本 kind**：被
+// 其他 kind 占用（典型：该 index 已是 thinking 块）时按 (output_index, kind)
+// 重新分配并覆写映射——撞车的 id 不得让正文 delta 落进 thinking 块。被顶掉的
+// 那个块保持自己的 index 不动（它的 thinkBlocks / 状态都没被改写）。
+func (m *StreamMapper) ownBlockIndex(key blockKey, oi int64, kind string) int64 {
+	if idx, ok := m.itemIndex[key]; ok && m.indexOwnedBy(idx, kind) {
+		return idx
+	}
+	idx := m.contentIndex(oi, kind)
+	m.itemIndex[key] = idx
+	return idx
+}
+
+// indexOwnedBy content index 是否由该 kind 持有（且不是 thinking 块占用的）。
+func (m *StreamMapper) indexOwnedBy(index int64, kind string) bool {
+	if m.thinkBlocks[index] != nil {
+		return kind == kindThinking
+	}
+	holder, taken := m.owner[index]
+	return taken && holder.kind == kind
 }
 
 // --- Responses / Anthropic usage 口径（唯一真相；改动前必读）---
