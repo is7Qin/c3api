@@ -159,8 +159,8 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 		domain.FormatOpenAIResponses: &responsesCaller{p: p},
 		domain.FormatAnthropic:       &anthropicCaller{p: p},
 	}
-	p.imageGenerations = &imagesCaller{p: p, path: "images/generations", op: domain.OpImagesGenerations}
-	p.imageEdits = &imagesCaller{p: p, path: "images/edits", op: domain.OpImagesEdits}
+	p.imageGenerations = &imagesCaller{p: p, path: defaultPathImagesGen, op: domain.OpImagesGenerations}
+	p.imageEdits = &imagesCaller{p: p, path: defaultPathImagesEdits, op: domain.OpImagesEdits}
 	p.callers[domain.FormatOpenAIImages] = p.imageGenerations
 	// 协议转换路径：每方向一 convertedCaller（构造期一次性建好；
 	// 热路径分支只读 map，off 组不触达）。
