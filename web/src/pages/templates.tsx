@@ -57,11 +57,33 @@ const FORMAT_LABELS: Record<TemplateFormat, string> = {
 const FORMATS = Object.keys(FORMAT_LABELS) as TemplateFormat[]
 
 // 凭据类型（模板级：一个模板 = 一种号池，账号继承）
-const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-special', 'codex-oauth', 'codex-pat']
+const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-special', 'codex-oauth', 'codex-pat', 'custom']
 // 生态三类型：走 SDK 类型化端点；模板格式联动限制为 resp / resp-ws / images /
 // search（service 校验前置——与 validateTemplate 白名单一致）
 const ECO_CREDENTIAL_TYPES: TemplateCredentialType[] = ['responses-special', 'codex-oauth', 'codex-pat']
 const ECO_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws', 'openai-images', 'openai-search']
+
+// custom 类型的逐格式路径键（与后端 service/openapi 键集合一致）。placeholder 即
+// 该格式的官方默认端点——留空 = 不写该键 = 使用默认。
+const CUSTOM_PATH_FIELDS: { key: string; placeholder: string }[] = [
+  { key: 'openai-chat', placeholder: 'chat/completions' },
+  { key: 'openai-responses', placeholder: 'responses' },
+  { key: 'openai-responses-ws', placeholder: 'v1/responses' },
+  { key: 'anthropic', placeholder: 'v1/messages' },
+  { key: 'openai-search', placeholder: 'alpha/search' },
+  { key: 'openai-images.generations', placeholder: 'images/generations' },
+  { key: 'openai-images.edits', placeholder: 'images/edits' },
+]
+
+// 空串不上送：留空的格式必须回落到默认端点（后端 nil = 未配置）。
+function nonEmptyPaths(rec: Record<string, string>): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rec)) {
+    const t = v.trim()
+    if (t) out[k] = t
+  }
+  return Object.keys(out).length ? out : undefined
+}
 const isCodexCredential = (v: string) => v === 'codex-oauth' || v === 'codex-pat'
 const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> = {
   'responses-special': 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
@@ -105,6 +127,8 @@ interface FormState {
   model_mapping: MappingRow[]
   // 模板级图像 tool 剥离（生态类型；false = 未配置 = 关闭——保存时链式写 ext）
   strip_image_tools: boolean
+  // custom 专用逐格式路径（键 → 路径；空串/缺键 = 用默认端点）
+  upstream_paths: Record<string, string>
 }
 
 const emptyForm = (): FormState => ({
@@ -116,6 +140,7 @@ const emptyForm = (): FormState => ({
   format_models: [],
   model_mapping: [],
   strip_image_tools: false,
+  upstream_paths: {},
 })
 
 function toForm(t: Template): FormState {
@@ -137,6 +162,7 @@ function toForm(t: Template): FormState {
     })),
     // 编辑回显经 GET /templates/{id}/ext 拉取填充（见 dialog 挂载 effect）
     strip_image_tools: false,
+    upstream_paths: {},
   }
 }
 
@@ -357,6 +383,27 @@ function FormFields({
               onCheckedChange={c => setForm(f => ({ ...f, strip_image_tools: c }))}
               aria-label={t('templates.ext.stripImageTools')}
             />
+          </div>
+        )}
+        {form.credential_type === 'custom' && (
+          <div className="space-y-2 rounded-md border p-3">
+            <div className="space-y-0.5">
+              <Label>{t('templates.ext.customPaths')}</Label>
+              <p className="text-xs text-muted-foreground">{t('templates.ext.customPathsHint')}</p>
+            </div>
+            {CUSTOM_PATH_FIELDS.map(f => (
+              <div key={f.key} className="grid grid-cols-[15rem_1fr] items-center gap-2">
+                <code className="text-xs text-muted-foreground">{f.key}</code>
+                <Input
+                  value={form.upstream_paths[f.key] ?? ''}
+                  placeholder={f.placeholder}
+                  onChange={e => setForm(prev => ({
+                    ...prev,
+                    upstream_paths: { ...prev.upstream_paths, [f.key]: e.target.value },
+                  }))}
+                />
+              </div>
+            ))}
           </div>
         )}
         </>
@@ -609,6 +656,8 @@ export default function Templates() {
         credential_type: tpl.CredentialType as TemplateExt['credential_type'],
         strip_image_tools: extStrip,
       }
+      // custom 模板的路径由主表单维护；此处必须原样带回，否则会清空已有配置
+      if (tpl.CredentialType === 'custom') body.upstream_paths = extQ.data?.upstream_paths ?? undefined
       return api.putTemplateExt(tpl.ID, body)
     },
     onSuccess: () => {
@@ -641,12 +690,19 @@ export default function Templates() {
         throw e
       }
     },
-    enabled: !!editing && dialogOpen && ECO_CREDENTIAL_TYPES.includes(editing?.CredentialType as TemplateCredentialType),
+    enabled: !!editing && dialogOpen
+      && (ECO_CREDENTIAL_TYPES.includes(editing?.CredentialType as TemplateCredentialType)
+        || editing?.CredentialType === 'custom'),
   })
   useEffect(() => {
     if (!editing || templateExtEcho.isLoading) return
     const target = templateExtEcho.data?.strip_image_tools ?? false
-    setForm(f => (f.strip_image_tools === target ? f : { ...f, strip_image_tools: target }))
+    const paths = templateExtEcho.data?.upstream_paths ?? {}
+    setForm(f => ({
+      ...f,
+      strip_image_tools: target,
+      upstream_paths: { ...paths }, // 回显；未配置的键不出现，输入框留空即默认
+    }))
   }, [editing?.ID, templateExtEcho.isLoading, templateExtEcho.data])
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
@@ -675,11 +731,15 @@ export default function Templates() {
       } else {
         await api.updateTemplate(editing.ID, toBody(f))
       }
-      if (id && ECO_CREDENTIAL_TYPES.includes(ct)) {
+      if (id && (ECO_CREDENTIAL_TYPES.includes(ct) || ct === 'custom')) {
         const body: TemplateExt = {
           template_id: id,
           credential_type: ct as TemplateExt['credential_type'],
           strip_image_tools: f.strip_image_tools,
+        }
+        if (ct === 'custom') {
+          // 留空的键不上送：后端 nil = 未配置 = 该格式走默认端点
+          body.upstream_paths = nonEmptyPaths(f.upstream_paths)
         }
         await api.putTemplateExt(id, body)
       }

@@ -192,7 +192,8 @@ export default {
       "api_key": "API Key",
       "responses-special": "Responses Special",
       "codex-oauth": "Codex OAuth",
-      "codex-pat": "Codex PAT"
+      "codex-pat": "Codex PAT",
+      "custom": "Advanced custom"
     },
     "ecoFormatHint": "Ecosystem types support only OpenAI Responses / Responses (WS) / Images / Search formats",
     "nameLabel": "Name",
@@ -241,6 +242,8 @@ export default {
       "credentialType": "Credential type",
       "stripImageTools": "Strip image tools (strip_image_tools)",
       "stripImageToolsHint": "Strips image tools from this template's account responses; unset = off",
+      "customPaths": "Upstream request paths (optional)",
+      "customPathsHint": "Override the endpoint path per format; leave blank to use that format's default endpoint. A query string is allowed (e.g. ?api-version=2024-10-21); do not include a host or scheme.",
       "saveSuccess": "Extensions saved",
       "loadFailed": "Failed to load extensions: {{message}}"
     },

@@ -192,7 +192,8 @@ export default {
       "api_key": "API Key",
       "responses-special": "Responses 专属",
       "codex-oauth": "Codex OAuth",
-      "codex-pat": "Codex PAT"
+      "codex-pat": "Codex PAT",
+      "custom": "高级自定义"
     },
     "ecoFormatHint": "生态类型只支持 OpenAI Responses / Responses (WS) / Images / Search 格式",
     "nameLabel": "名称",
@@ -241,6 +242,8 @@ export default {
       "credentialType": "号池类型",
       "stripImageTools": "剥离图像 tool（strip_image_tools）",
       "stripImageToolsHint": "开启后剥离该模板账号响应中的图像 tool；未配置 = 关闭",
+      "customPaths": "上游请求路径（可选）",
+      "customPathsHint": "按格式分别指定上游端点路径；留空即使用该格式的官方默认端点。可带 query（如 ?api-version=2024-10-21），不要写主机或协议。",
       "saveSuccess": "扩展配置已保存",
       "loadFailed": "读取扩展配置失败：{{message}}"
     },

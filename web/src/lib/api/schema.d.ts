@@ -2242,7 +2242,7 @@ export interface components {
              * @default api_key
              * @enum {string}
              */
-            credential_type: "api_key" | "responses-special" | "codex-oauth" | "codex-pat";
+            credential_type: "api_key" | "responses-special" | "codex-oauth" | "codex-pat" | "custom";
             supported_formats: ("openai-chat" | "openai-responses" | "openai-responses-ws" | "openai-images" | "openai-search" | "anthropic")[];
             models?: string[];
             format_models?: {
@@ -2267,7 +2267,7 @@ export interface components {
              * @description 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
              * @enum {string}
              */
-            CredentialType?: "api_key" | "responses-special" | "codex-oauth" | "codex-pat";
+            CredentialType?: "api_key" | "responses-special" | "codex-oauth" | "codex-pat" | "custom";
             SupportedFormats: ("openai-chat" | "openai-responses" | "openai-responses-ws" | "openai-images" | "openai-search" | "anthropic")[];
             Models?: string[];
             FormatModels?: {
@@ -2428,9 +2428,13 @@ export interface components {
              * @description 类型声明；必须与父模板 credential_type 一致（不一致 → 400）
              * @enum {string}
              */
-            credential_type: "responses-special" | "codex-oauth" | "codex-pat";
+            credential_type: "responses-special" | "codex-oauth" | "codex-pat" | "custom";
             /** @description 三类型公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭） */
             strip_image_tools?: boolean | null;
+            /** @description custom 专用逐格式路径；键见描述，nil/缺省 = 未配置 = 全部回落默认端点 */
+            upstream_paths?: {
+                [key: string]: string;
+            } | null;
         };
         AccountExt: {
             /** Format: int64 */
