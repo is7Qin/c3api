@@ -204,9 +204,17 @@ func thinkingValue(effort string, maxTokens int64) string {
 	return `{"type":"enabled","budget_tokens":` + strconv.FormatInt(b, 10) + `}`
 }
 
-// validMaxTokens 合法输出上限：JSON Number、原始文本不含小数点/指数、1..1e9。
-// 不复用 gjsonNumInt（它会把 4096.9 截成 4096，导致「写出值」与「budget 基数」
-// 不同源）。
+// validMaxTokens 合法输出上限：JSON Number、1..1e9，且 Raw 不含小数点/指数。
+// 小数（4096.9）、指数（1e20）、下划线分组（1_000）、JSON 字符串（"4096"）一律
+// 非法，由调用方按「该字段不参与」处理（§3.1 逐字段判定）。
+//
+// 判据落在 strconv.ParseInt(raw, 10, 64)：它只接受可选正负号 + 十进制数字，
+// 但它**容忍前导零与前导 '+'**，所以 `04096` / `+4096`（两者都不是合法 JSON
+// 数字字面量）当前会被接受并归一为 4096。若要严格到 `-?[0-9]+`，需在此额外
+// 做首字符 / 前导零校验——改判据属语义变更，未做。
+//
+// 不复用 gjsonNumInt：它会把 4096.9 截成 4096，导致「写出值」与「budget 基数」
+// 不同源。
 func validMaxTokens(v gjson.Result) (int64, bool) {
 	if v.Type != gjson.Number {
 		return 0, false
@@ -317,16 +325,32 @@ func isTurnOutputItem(item gjson.Result) bool {
 	return strings.HasSuffix(item.Get("type").Str, "_output")
 }
 
+// isContentItem 该 item 是否算「同轮正文」——只有 assistant message 与
+// function_call 才算（spec §2.3）。
+//
+// 其余 item 既不切轮也不记正文：web_search_call / item_reference /
+// computer_call / mcp_* 之类是 Responses 的内建工具或引用项，把它们当正文会让
+// 「reasoning 在正文之前」的判据误命中，进而把整个请求降级成不带思考
+// （一次降级还会自锁后续轮）。轮边界另有 isTurnOutputItem 负责。
+func isContentItem(item gjson.Result) bool {
+	typ := item.Get("type").Raw
+	if rawStrEq(typ, "function_call") {
+		return true
+	}
+	return rawStrEq(typ, "message") && rawStrEq(item.Get("role").Raw, "assistant")
+}
+
 // scanRespThinking spec §2.3 的「全有或全无」预扫：input 里每个 reasoning item
 // 都能回放、且都出现在所属轮的工具调用/正文之前，才允许回放 thinking。
 //
-// 轮边界 = user message 或任意 *_output 项（单遍扫描，不改变写出顺序）。
+// 轮边界 = user message 或任意 *_output 项；正文 = assistant message 或
+// function_call（isContentItem）；其余未知 item 忽略。单遍扫描，不改变写出顺序。
 func scanRespThinking(input gjson.Result) bool {
 	if !input.IsArray() {
 		return true
 	}
 	replayable := true
-	seenContent := false // 当前轮已出现非 reasoning 内容
+	seenContent := false // 当前轮已出现正文（assistant message / function_call）
 	input.ForEach(func(_, item gjson.Result) bool {
 		if !item.IsObject() {
 			return true
@@ -352,7 +376,9 @@ func scanRespThinking(input gjson.Result) bool {
 			}
 			return true
 		}
-		seenContent = true
+		if isContentItem(item) {
+			seenContent = true
+		}
 		return true
 	})
 	return replayable

@@ -180,7 +180,7 @@ func TestReasoningRequestNoRaise(t *testing.T) {
 // --- §6.1 #4：全字段非法 → 写出 4096 且 budget 3072（同一个变量）---
 
 func TestReasoningRequestNormalizeWhenAllFieldsInvalid(t *testing.T) {
-	invalids := []string{`"4096"`, `4096.9`, `1e20`, `null`, `0`, `-5`}
+	invalids := []string{`"4096"`, `"1_000"`, `"04096"`, `"+4096"`, `4096.9`, `1e20`, `null`, `0`, `-5`}
 	for _, bad := range invalids {
 		body := `{"model":"m","reasoning_effort":"medium",` +
 			`"max_completion_tokens":` + bad + `,"max_tokens":` + bad + `,` +
@@ -260,6 +260,46 @@ func TestReasoningRequestCompanionRewrites(t *testing.T) {
 	out = requestOf(t, domain.ProtocolConvertChatToMess, body)
 	require.NotNil(t, thinkingOf(t, out))
 	require.NotContains(t, out, "temperature", "chat→mess: thinking 开启 → 丢 temperature")
+}
+
+// --- §3.2（扩展口径：所有目标方向）：resp 目标开启 reasoning 时同样丢 sampling ---
+
+func TestReasoningRespTargetDropsSampling(t *testing.T) {
+	// mess_to_resp：thinking 开启 → 丢 temperature / top_p
+	body := `{"model":"m","max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":16384},` +
+		`"temperature":0.3,"top_p":0.9,"messages":[` + messUserMsg + `]}`
+	out := requestOf(t, domain.ProtocolConvertMessToResp, body)
+	require.Contains(t, out, "reasoning", "reasoning 仍要开启")
+	require.NotContains(t, out, "temperature", "reasoning 开启 → 丢 temperature")
+	require.NotContains(t, out, "top_p", "reasoning 开启 → 丢 top_p")
+
+	// 未开启 reasoning → 原样透传
+	body = `{"model":"m","max_tokens":32000,"temperature":0.3,"top_p":0.9,"messages":[` + messUserMsg + `]}`
+	out = requestOf(t, domain.ProtocolConvertMessToResp, body)
+	require.Equal(t, float64(0.3), out["temperature"])
+	require.Equal(t, float64(0.9), out["top_p"])
+
+	// chat_to_resp：reasoning_effort 开启 → 丢 temperature / top_p
+	body = `{"model":"m","messages":[` + chatUserMsg + `],"reasoning_effort":"high",` +
+		`"temperature":0.4,"top_p":0.5}`
+	out = requestOf(t, domain.ProtocolConvertChatToResp, body)
+	require.Contains(t, out, "reasoning", "reasoning 仍要开启")
+	require.NotContains(t, out, "temperature", "reasoning 开启 → 丢 temperature")
+	require.NotContains(t, out, "top_p", "reasoning 开启 → 丢 top_p")
+
+	// 未开启 → 透传
+	body = `{"model":"m","messages":[` + chatUserMsg + `],"temperature":0.4,"top_p":0.5}`
+	out = requestOf(t, domain.ProtocolConvertChatToResp, body)
+	require.Equal(t, float64(0.4), out["temperature"])
+	require.Equal(t, float64(0.5), out["top_p"])
+
+	// resp 目标**不**因 reasoning 对 tool_choice 降级（OpenAI 侧支持强制工具调用）
+	body = `{"model":"m","messages":[` + chatUserMsg + `],"reasoning_effort":"high",` +
+		`"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],` +
+		`"tool_choice":"required"}`
+	out = requestOf(t, domain.ProtocolConvertChatToResp, body)
+	require.Contains(t, out, "reasoning", "强制 tool_choice 不得关掉 reasoning")
+	require.Equal(t, "required", out["tool_choice"], "强制意图原样保留")
 }
 
 // --- §6.1 #7：信封回放（原顺序进 assistant 轮，逐字节相等）---
@@ -416,6 +456,72 @@ func TestReasoningScanRespThinkingTurnBoundary(t *testing.T) {
 	require.True(t, scanRespThinking(gjson.Parse(`[]`)))
 }
 
+// TestReasoningScanRespThinkingIgnoresUnknownItems 只有 assistant message 与
+// function_call 算正文：内建工具 / 引用类 item（web_search_call /
+// item_reference / computer_call / mcp_*）不得让同轮 reasoning 被判「顺序不可
+// 修复」（否则整请求降级成不带思考）。
+func TestReasoningScanRespThinkingIgnoresUnknownItems(t *testing.T) {
+	enc := sealOf("thinking", "想", "sig_1", "")
+	unknowns := []string{
+		`{"type":"web_search_call","id":"ws_1","status":"completed"}`,
+		`{"type":"item_reference","id":"ref_1"}`,
+		`{"type":"computer_call","call_id":"cc_1","action":{}}`,
+		`{"type":"mcp_call","id":"mcp_1","name":"tool"}`,
+		`{"type":"mcp_list_tools","id":"mcp_2"}`,
+	}
+	for _, mid := range unknowns {
+		// [user, r, 未知项, r] → 两个 reasoning 都算轮首，全部可回放
+		body := `[` + respUserInput + `,` +
+			`{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"` + enc + `"},` +
+			mid + `,` +
+			`{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"` + enc + `"}]`
+		require.True(t, scanRespThinking(gjson.Parse(body)), "%s 不算正文", mid)
+
+		// [user, 未知项, r] → 同样回放
+		body = `[` + respUserInput + `,` + mid +
+			`,{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"` + enc + `"}]`
+		require.True(t, scanRespThinking(gjson.Parse(body)), "%s 也不切轮", mid)
+	}
+
+	// 反面对照：assistant message 仍算正文 → 其后的 reasoning 不可回放
+	body := `[` + respUserInput + `,` +
+		`{"type":"message","role":"assistant","content":[{"type":"output_text","text":"答"}]},` +
+		`{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"` + enc + `"}]`
+	require.False(t, scanRespThinking(gjson.Parse(body)), "assistant 正文之后的 reasoning 不可回放")
+
+	// 请求级：未知项夹在两个 reasoning 之间时，两块都要真的回放成 thinking 块
+	encA := sealOf("thinking", "第一段", "sig_a", "")
+	encB := sealOf("thinking", "第二段", "sig_b", "")
+	reqBody := `{"model":"m","max_output_tokens":32000,"reasoning":{"effort":"high"},"input":[` +
+		respUserInput + `,` +
+		`{"type":"reasoning","id":"rs_1","summary":[],"encrypted_content":"` + encA + `"},` +
+		`{"type":"web_search_call","id":"ws_1"},` +
+		`{"type":"reasoning","id":"rs_2","summary":[],"encrypted_content":"` + encB + `"}]}`
+	out := requestOf(t, domain.ProtocolConvertRespToMess, reqBody)
+	require.Equal(t, 2, thinkingBlockCount(t, out), "不得因未知 item 降级")
+	// 两块都按原顺序写出（未知 item 会让 assistant 轮另起一段，Anthropic 会合并
+	// 连续同角色消息，故只钉文本顺序）
+	var texts []string
+	for _, mv := range arrOf(t, out, "messages") {
+		msg, ok := mv.(map[string]any)
+		if !ok {
+			continue
+		}
+		content, ok := msg["content"].([]any)
+		if !ok {
+			continue
+		}
+		for _, blk := range content {
+			bm, ok := blk.(map[string]any)
+			if !ok || bm["type"] != "thinking" {
+				continue
+			}
+			texts = append(texts, bm["thinking"].(string))
+		}
+	}
+	require.Equal(t, []string{"第一段", "第二段"}, texts)
+}
+
 // --- §6.1 #12：mess→resp 的 thinking / output_config.effort ---
 
 func TestReasoningMessToRespThinkingParam(t *testing.T) {
@@ -480,6 +586,19 @@ func TestReasoningMessToRespIncludeMerged(t *testing.T) {
 	// 客户端未带 include → 只写加密思考
 	body = `{"model":"m","max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":16384},` +
 		`"messages":[` + messUserMsg + `]}`
+	require.Equal(t, []any{"reasoning.encrypted_content"},
+		arrOf(t, requestOf(t, domain.ProtocolConvertMessToResp, body), "include"))
+
+	// 客户端把 include 写成单个字符串（合法但少见）→ 按单元素并入，不丢原值
+	body = `{"model":"m","max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":16384},` +
+		`"include":"message.output_text.logprobs","messages":[` + messUserMsg + `]}`
+	require.Equal(t, []any{"message.output_text.logprobs", "reasoning.encrypted_content"},
+		arrOf(t, requestOf(t, domain.ProtocolConvertMessToResp, body), "include"),
+		"字符串形态也要保留原值")
+
+	// 既非字符串也非数组 → 只发自己的元素（不丢弃整条 include）
+	body = `{"model":"m","max_tokens":32000,"thinking":{"type":"enabled","budget_tokens":16384},` +
+		`"include":{"k":1},"messages":[` + messUserMsg + `]}`
 	require.Equal(t, []any{"reasoning.encrypted_content"},
 		arrOf(t, requestOf(t, domain.ProtocolConvertMessToResp, body), "include"))
 
@@ -685,6 +804,10 @@ func TestReasoningValues(t *testing.T) {
 	require.EqualValues(t, 8000, n)
 	_, ok = validMaxTokens(gjson.Parse("1000000001"))
 	require.False(t, ok, "超过 1e9")
+
+	// 非标准数字字面量：Raw 必须能被 ParseInt 当十进制整数读入，1_000 不可
+	_, ok = validMaxTokens(gjson.Parse("1_000"))
+	require.False(t, ok, "1_000 视为非法（→ 调用方按缺失处理，写出 4096）")
 
 	// 逐字段判定：非法继续下一字段；全非法 → 4096
 	n, ok = maxTokensField(gjson.Parse("null"), gjson.Parse("8000"))

@@ -117,8 +117,10 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 	}
 	// reasoning.summary 必须带 "auto"：只发 effort 时上游仅回 encrypted_content，
 	// chat 客户端看不到任何思考文本（issue 46）。
+	reasoningOn := false
 	if effort := reasoningEffortRaw(reasoningEffort); effort != "" {
 		out = appendField(out, &first, "reasoning", `{"effort":`+effort+`,"summary":"auto"}`)
+		reasoningOn = true
 	}
 	if rawNotNull(store) {
 		out = appendField(out, &first, "store", store)
@@ -126,7 +128,9 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 	if rawNotNull(stream) {
 		out = appendField(out, &first, "stream", stream)
 	}
-	if rawNotNull(temperature) {
+	// reasoning 开启时丢弃 temperature / top_p（spec §3.2：所有目标方向同口径）
+	// ——思考与自定义采样不兼容，同时带上游行为不可预期。
+	if !reasoningOn && rawNotNull(temperature) {
 		out = appendField(out, &first, "temperature", temperature)
 	}
 	if tc := chatToolChoiceRaw(toolChoice); tc != "" {
@@ -144,7 +148,7 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 		out = appendToolsMapped(out, tools, toolsRespFromChat)
 		out = append(out, ']')
 	}
-	if rawNotNull(topP) {
+	if !reasoningOn && rawNotNull(topP) {
 		out = appendField(out, &first, "top_p", topP)
 	}
 	if rawNotNull(user) {

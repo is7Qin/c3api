@@ -524,7 +524,9 @@ func messToRespRequest(body []byte) ([]byte, error) {
 	if rawNotNull(stream) {
 		out = appendField(out, &first, "stream", stream)
 	}
-	if rawNotNull(temperature) {
+	// reasoning 开启时丢弃 temperature / top_p（spec §3.2：所有目标方向同口径）。
+	// 思考与自定义采样不兼容；OpenAI 侧虽不报错，但带上会让思考行为不可预期。
+	if rv == "" && rawNotNull(temperature) {
 		out = appendField(out, &first, "temperature", temperature)
 	}
 	if tc := messToolChoiceRaw(toolChoice); tc != "" {
@@ -539,7 +541,7 @@ func messToRespRequest(body []byte) ([]byte, error) {
 		out = appendToolsMapped(out, tools, toolsRespFromMess)
 		out = append(out, ']')
 	}
-	if rawNotNull(topP) {
+	if rv == "" && rawNotNull(topP) {
 		out = appendField(out, &first, "top_p", topP)
 	}
 	return append(out, '}'), nil
@@ -551,8 +553,9 @@ const includeReasoningEncrypted = `"reasoning.encrypted_content"`
 
 // appendIncludeMerged 顶层 "include"：客户端原有元素在前（去重），末尾补
 // reasoning.encrypted_content。合并而非覆盖——覆盖会凭空丢掉客户端明确要的
-// message.output_text.logprobs 之类元素（spec §4.2）。调用方仅在请求开启
-// thinking 时走到这里（否则上游的加密思考无处承载）。
+// message.output_text.logprobs 之类元素（spec §4.2）。客户端把 include 写成
+// 单个字符串（合法但少见）时按单元素并入；既非字符串也非数组则只发自己的
+// 元素。调用方仅在请求开启 thinking 时走到这里（否则上游的加密思考无处承载）。
 func appendIncludeMerged(out []byte, first *bool, clientInclude gjson.Result) []byte {
 	if !*first {
 		out = append(out, ',')
@@ -568,13 +571,17 @@ func appendIncludeMerged(out []byte, first *bool, clientInclude gjson.Result) []
 		}
 		seen = append(seen, raw)
 	}
-	if clientInclude.IsArray() {
+	switch {
+	case clientInclude.IsArray():
 		clientInclude.ForEach(func(_, v gjson.Result) bool {
 			if v.Type == gjson.String {
 				add(v.Raw)
 			}
 			return true
 		})
+	case clientInclude.Type == gjson.String:
+		// 单字符串形态：按单元素并入，不能丢客户端原值。
+		add(clientInclude.Raw)
 	}
 	add(includeReasoningEncrypted)
 	for i, s := range seen {

@@ -348,17 +348,27 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		oi := intOr0(ev, "output_index")
 		itemID, _ := str(item, "id")
 		index, ok := m.thinkBlockIndex(blockKeyOf(itemID, oi, kindThinking), oi)
-		if !ok || m.thinkBlocks[index] == nil || m.blockStopped[index] {
-			// 门丢弃 / 从未 start / 已 stop（同一 index 只 stop 一次）。
+		if !ok || m.blockStopped[index] {
+			// 门丢弃 / 已 stop（同一 index 只 stop 一次）。
 			return nil, true
 		}
 		var f []byte
+		if !m.blockStarted[index] {
+			// 上游只发 done（无 added、无 delta）时必须补惰性 start：否则
+			// signature_delta / stop 会落在从未 start 的 index 上，客户端组不出
+			// 合法块（§4.5 第 5 条、门禁 §6.3 #28）。与 delta 路径同一口径。
+			m.blockStarted[index] = true
+			f = EncodeFrame("content_block_start", map[string]any{
+				"type": "content_block_start", "index": index,
+				"content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""},
+			})
+		}
 		if enc, _ := str(item, "encrypted_content"); enc != "" {
 			if arm := sealReasoningRef(reasoningRef{EncryptedContent: enc, ID: itemID}); arm != "" {
-				f = EncodeFrame("content_block_delta", map[string]any{
+				f = append(f, EncodeFrame("content_block_delta", map[string]any{
 					"type": "content_block_delta", "index": index,
 					"delta": map[string]any{"type": "signature_delta", "signature": arm},
-				})
+				})...)
 			}
 		}
 		m.blockStopped[index] = true

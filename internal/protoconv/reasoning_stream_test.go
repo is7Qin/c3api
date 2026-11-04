@@ -449,6 +449,51 @@ func TestReasoningStreamMessToRespOmittedOutputIndex(t *testing.T) {
 	}
 }
 
+// --- §4.5 第 5 条 / §6.3 #28：上游只发 done（无 added、无 delta）---
+
+func TestReasoningStreamMessToRespDoneWithoutAdded(t *testing.T) {
+	const enc = "gAAAA-done-only"
+	arm := sealReasoningRef(reasoningRef{EncryptedContent: enc, ID: "rs_x"})
+	frames := runStream(t, domain.ProtocolConvertMessToResp,
+		"response.created", `{"type":"response.created","response":{"id":"rsp_x","object":"response","status":"in_progress","model":"gpt","output":[]}}`,
+		"response.output_item.done", `{"type":"response.output_item.done","output_index":0,"item":{"id":"rs_x","type":"reasoning","summary":[{"type":"summary_text","text":"只有 done"}],"encrypted_content":"`+enc+`"}}`,
+	)
+
+	// 帧序必须是 start → signature_delta → stop（缺 start 客户端组不出合法块）
+	var order []string
+	for _, fr := range frames {
+		switch frameType(fr) {
+		case "content_block_start":
+			order = append(order, "start")
+		case "content_block_delta":
+			order = append(order, deltaPayload(t, fr)["type"].(string))
+		case "content_block_stop":
+			order = append(order, "stop")
+		}
+	}
+	require.Equal(t, []string{"start", "signature_delta", "stop"}, order,
+		"没有 added/delta 时必须惰性补 start，且先于 signature_delta 与 stop")
+
+	// start 是 thinking 块（与 delta 路径同口径的空块头）
+	start := framesOfType(frames, "content_block_start")[0]
+	block, ok := start.data["content_block"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "thinking", block["type"])
+	require.Equal(t, "", block["thinking"])
+	require.Equal(t, "", block["signature"])
+
+	// 三帧同 index，签名是 reasoning_ref 臂且可解回原 encrypted_content
+	startIdx := frameIndexOf(t, start)
+	sig := framesOfType(frames, "content_block_delta")[0]
+	stop := framesOfType(frames, "content_block_stop")[0]
+	require.Equal(t, startIdx, frameIndexOf(t, sig))
+	require.Equal(t, startIdx, frameIndexOf(t, stop))
+	require.Equal(t, arm, deltaPayload(t, sig)["signature"])
+	back, ok := openReasoningRef(deltaPayload(t, sig)["signature"].(string))
+	require.True(t, ok)
+	require.Equal(t, reasoningRef{Type: reasoningRefType, EncryptedContent: enc, ID: "rs_x"}, back)
+}
+
 // --- §6.3 #30：thinking 门（先 text 后 reasoning → 整块丢弃）---
 
 func TestReasoningStreamMessToRespThinkingGate(t *testing.T) {
