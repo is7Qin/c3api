@@ -23,6 +23,15 @@ import (
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
+// upstreamPath 图片端点路径：generations 与 edits 各有一键（同一格式两个端点，
+// 不能共用），未配置回落 imagesCaller 自带默认。
+func (c *imagesCaller) upstreamPath(sel *scheduler.Selection) string {
+	if c.op == domain.OpImagesEdits {
+		return pathOf(sel, pathKeyImagesEdits, c.path)
+	}
+	return pathOf(sel, pathKeyImagesGen, c.path)
+}
+
 // imagesCaller 是 openai-images 格式的 UpstreamCaller：
 // 转发模板 base_url + /v1/images/<path>（generations|edits）。api_key /
 // responses-special 两类型直连；images 直连不经 strip_image_tools。codex 类型分流
@@ -68,7 +77,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	if stream {
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
-		resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.path, cred, upCT, upBody, r.Header)
+		resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.upstreamPath(sel), cred, upCT, upBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -143,7 +152,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 		return 200, nil, true, nil
 	}
 
-	resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.path, cred, upCT, upBody, r.Header)
+	resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.upstreamPath(sel), cred, upCT, upBody, r.Header)
 	if err != nil {
 		return statusOf(err), upstreamBody(err), false, err
 	}

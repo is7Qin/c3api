@@ -41,7 +41,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+		resp, err := p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, pathOf(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -130,7 +130,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, "chat/completions", "Authorization", "Bearer "+cred, upBody, r.Header)
+	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred, upBody, r.Header)
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

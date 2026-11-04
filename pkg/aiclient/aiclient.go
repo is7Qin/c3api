@@ -93,24 +93,24 @@ func (f *Factory) RawPost(ctx context.Context, templateID int64, baseURL, path, 
 // 签名收 (templateID, baseURL) 而非 *domain.Template（GC 削减 调用方免
 // tplOf 每请求模板对象分配；URL 在 Factory.urls 懒缓存，键含 base_url 快照）。
 
-func (f *Factory) ChatCompletionRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "chat/completions", "Authorization", "Bearer "+key, body, in)
+func (f *Factory) ChatCompletionRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
 }
 
-func (f *Factory) ResponseRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "responses", "Authorization", "Bearer "+key, body, in)
+func (f *Factory) ResponseRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
 }
 
 // SearchRaw codex search 端点直连透传（spec 2026-08-13：api_key/responses-
 // special 静态路径——Bearer upstream key 直连上游，复用既有静态 key 通道零新
 // 机制）。URL 派生 = 裸根 + /v1/alpha/search（openaiBaseURL 约定——与 responses
 // 端点 base/v1/responses 尾段 → /alpha/search 派生同语义，见 parseFullURL）。
-func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "alpha/search", "Authorization", "Bearer "+key, body, in)
+func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
 }
 
-func (f *Factory) AnthMessageRaw(ctx context.Context, templateID int64, baseURL, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, "v1/messages", "x-api-key", key, body, in)
+func (f *Factory) AnthMessageRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPost(ctx, templateID, baseURL, path, "x-api-key", key, body, in)
 }
 
 // --- openai images（直连面） ---

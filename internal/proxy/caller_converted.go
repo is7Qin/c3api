@@ -58,9 +58,9 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var resp *http.Response
 		switch target {
 		case domain.FormatOpenAIResponses:
-			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, pathOf(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header)
 		case domain.FormatAnthropic:
-			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header)
 		}
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
@@ -195,9 +195,9 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	var path, authHeader, auth string
 	switch target {
 	case domain.FormatOpenAIResponses:
-		path, authHeader, auth = "responses", "Authorization", "Bearer "+cred
+		path, authHeader, auth = pathOf(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred
 	case domain.FormatAnthropic:
-		path, authHeader, auth = "v1/messages", "x-api-key", cred
+		path, authHeader, auth = pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred
 	}
 	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header)
 	if upstreamErr != nil {

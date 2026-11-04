@@ -35,7 +35,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, cred, streamBody, r.Header)
+		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -149,7 +149,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 错误体），不在此处直接写出。
 		return 400, []byte(`{"error":{"message":"streaming is required for operations that may take longer than 10 minutes","type":"upstream_error"}}`), false, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, "v1/messages", "x-api-key", cred, upBody, r.Header)
+	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header)
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

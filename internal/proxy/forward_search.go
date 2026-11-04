@@ -262,7 +262,7 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	// 转移
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, cred, body, r.Header)
+	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, pathOf(sel, pathKeySearch, defaultPathSearch), cred, body, r.Header)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
