@@ -378,3 +378,45 @@ func TestNonStreamModelRewriteReachesUpstream(t *testing.T) {
 		}
 	}
 }
+
+// TestNonStreamRejectsDuplicateSensitiveKeys 顶层 model/stream 重复必须拒：
+// 路由与改写读首个值，而不少上游按末个生效——`{"model":"gpt-4o",
+// "model":"other"}` 会被批准成 gpt-4o、setModel 因首值已达标而短路，上游却
+// 执行 other，模型白名单与计价被绕过。SDK 时代的 typed 出栈天然只写一个
+// model 键，改原始出栈后这条由显式校验接管。
+func TestNonStreamRejectsDuplicateSensitiveKeys(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"重复 model", `{"model":"gpt-4o","model":"other-model","messages":[]}`},
+		{"重复 stream", `{"model":"gpt-4o","stream":false,"stream":true,"messages":[]}`},
+		{"model 出现在后段仍算重复", `{"messages":[],"temperature":1,"model":"gpt-4o","model":"gpt-4o"}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			up, spy := newUpstreamSpy(t, http.StatusOK, `{}`)
+			p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, nil), 1, true, 30*time.Second, &captureLogStore{}, nil)
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(tc.body))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			rec := httptest.NewRecorder()
+			p.HandleChat(rec, req)
+			require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", tc.body)
+			require.Contains(t, rec.Body.String(), "duplicate", "错误文案要点明重复键：%s", rec.Body.String())
+			require.Zero(t, spy.snapshot().hits, "本地拒绝不得触达上游")
+		})
+	}
+
+	// 嵌套对象里的同名键不算顶层重复（别把正常请求误拒）。
+	t.Run("嵌套同名键放行", func(t *testing.T) {
+		up, spy := newUpstreamSpy(t, http.StatusOK, `{"id":"c1"}`)
+		p := newTestProxyTplTimeoutLogs(t, mappingTpl(up.URL, nil), 1, true, 30*time.Second, &captureLogStore{}, nil)
+		req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(
+			`{"model":"gpt-4o","messages":[],"metadata":{"model":"inner","stream":true}}`))
+		req.Header.Set("Authorization", "Bearer ck-1")
+		rec := httptest.NewRecorder()
+		p.HandleChat(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+		require.Equal(t, 1, spy.snapshot().hits)
+	})
+}

@@ -130,8 +130,8 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		return 200, nil, true, nil
 	}
 	reqModel := gjson.GetBytes(body, "model").String()
-	if gjson.GetBytes(body, "model").Type != gjson.String || !isJSONObjectRoot(body) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
+	if err := validateNonStreamBody(body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
@@ -148,7 +148,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 交 pipeline 按 4xx 归一（落 err_logs + 原样透出错误体），不在此处直接写出。
 		return 400, []byte(`{"error":{"message":"` + anthropicStreamingRequiredText + `","type":"upstream_error"}}`), false, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, r.Header)
+	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred, upBody, withProtocolDefaults(r.Header, true))
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

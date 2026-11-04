@@ -237,10 +237,9 @@ func scanIntValue(raw []byte) int64 {
 	return n
 }
 
-// chatUsageFromResponse 非流式 chat 响应用量：cr 直读 SDK 结构体字段
-// （PromptTokensDetails.CachedTokens，v1.12.0 有该字段）；cc 从 RawJSON()
-// （SDK 保留的上游原始字节）读 prompt_tokens_details.cache_write_tokens。
-// 调用方已用 resp.JSON.Usage.Valid() 防护。
+// chatUsageFromResponse 非流式 chat 响应用量：直接读上游原始 JSON 字节
+// （去 SDK 后不再有结构体/RawJSON 之分）——cr = prompt_tokens_details.cached_tokens、
+// cc = prompt_tokens_details.cache_write_tokens。调用方已保证 200 响应体是 JSON。
 // 出口施加 deductCacheTokens 归一（spec 2026-08-25 + P0-2）——it 为可计费输入
 // （input − cached − cache_write）；tt 信任
 // 上游 TotalTokens 原值（数值不变量：归一不改 total）。上游 total 与 in+out 的
@@ -255,8 +254,8 @@ func chatUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
 	return deductCacheTokens(it, cr, cc), ot, tt, cr, cc
 }
 
-// responsesUsageFromResponse 非流式 Responses 响应用量：cr 直读 SDK 结构体
-// 字段，cc 从 RawJSON() 读 input_tokens_details.cache_write_tokens。出口施加
+// responsesUsageFromResponse 非流式 Responses 响应用量：读上游原始 JSON 字节
+// （input_tokens_details.cached_tokens / cache_write_tokens）。出口施加
 // deductCacheTokens 归一（spec 2026-08-25 + P0-2）——tt 先按原始 in+out 定值
 // 再归一 it
 // （数值不变量：归一不改 total）。
@@ -271,8 +270,8 @@ func responsesUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
 	return deductCacheTokens(it, cr, cc), ot, tt, cr, cc
 }
 
-// anthropicUsageFromResponse 非流式 Anthropic 响应用量：SDK v1.56.0 Usage
-// 结构体直读（CacheRead/CacheCreationInputTokens 字段存在）。
+// anthropicUsageFromResponse 非流式 Anthropic 响应用量：读上游原始 JSON 字节
+// （cache_read_input_tokens / cache_creation_input_tokens）。
 func anthropicUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
 	u := gjson.GetBytes(data, "usage")
 	if u.Type != gjson.JSON {

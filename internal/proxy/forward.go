@@ -770,6 +770,83 @@ func isJSONObjectRoot(body []byte) bool {
 	return false // 空/全空白体：json.Valid 已拒绝，防御性 false
 }
 
+// 非流本地校验的错误文案（去 SDK 后本地校验只剩这几条；文案与 SDK 时代保持
+// 一致，避免客户端按文本分支失效）。
+var (
+	errBodyModelString = errors.New("model must be a string")
+)
+
+// validateNonStreamBody 非流请求的本地校验（原 SDK 反序列化的最小必要面）：
+// 根必须是 JSON object、`model` 必须是字符串、且 `model`/`stream` 不得重复。
+//
+// 重复键为什么必须拒（而不是「真实客户端不会发」）：路由与改写读的是**首个**
+// `model`（gjson 语义），而相当多上游（以及 Go 的 json.Unmarshal）按**末个**
+// 生效。于是 `{"model":"allowed","model":"other"}` 会被批准成 allowed、
+// setModel 因「首值已是目标」短路不改写，上游却执行 other —— 模型白名单与
+// 计价被绕过。SDK 时代的 typed 出栈天然只序列化一个 model 键，改原始出栈后
+// 必须显式拦截。
+func validateNonStreamBody(body []byte) error {
+	if !isJSONObjectRoot(body) || gjson.GetBytes(body, "model").Type != gjson.String {
+		return errBodyModelString
+	}
+	if k := duplicateTopLevelKey(body, "model", "stream"); k != "" {
+		return fmt.Errorf("duplicate %s key", k)
+	}
+	return nil
+}
+
+// duplicateTopLevelKey 返回 body 顶层**重复出现**的敏感键名（无重复 → 空串）。
+// 前置：json.Valid + 根为 object（handleFormat 已保证）；这里只做单遍字节扫描，
+// 复用 strip_scan.go 的字符串/值跳过原语（零分配）。
+func duplicateTopLevelKey(body []byte, keys ...string) string {
+	i := skipSpace(body, 0)
+	if i >= len(body) || body[i] != '{' {
+		return ""
+	}
+	i++
+	seen := make(map[string]struct{}, len(keys))
+	for {
+		i = skipSpace(body, i)
+		if i >= len(body) {
+			return ""
+		}
+		switch body[i] {
+		case '}':
+			return ""
+		case ',':
+			i++
+		case '"':
+			key, next := parseJSONString(body, i)
+			if next < 0 {
+				return ""
+			}
+			j := skipSpace(body, next)
+			if j >= len(body) || body[j] != ':' {
+				return ""
+			}
+			j = skipSpace(body, j+1)
+			if j >= len(body) {
+				return ""
+			}
+			valEnd := skipValue(body, j)
+			if valEnd < 0 {
+				return ""
+			}
+			for _, k := range keys {
+				if string(key) == k {
+					if _, dup := seen[k]; dup {
+						return k
+					}
+					seen[k] = struct{}{}
+				}
+			}
+			i = valEnd
+		default:
+			return ""
+		}
+	}
+}
+
 // setModel 把原始请求体里的 "model" 字段改写为调度器选定的上游模型名
 // （ModelMapping 已应用，见 scheduler.Select 的 Selection.Model）。原始转发
 // 必须沿用 SDK 路径 params.Model = sel.Model 的改写语义，否则映射配置在
@@ -795,8 +872,9 @@ func setModel(body []byte, model string) ([]byte, error) {
 // splice，精度/键序/转义保真同 setModel）。sjson 单次调用仅支持单路径，故为
 // 两次 SetBytes 调用（stream、model 顶层路径不相交，次序无关，最终字节一致）；
 // sjson 对缺失路径默认加字段（stream/model 缺失时行为 = map 版本补字段，一
-// 致）。重复键边界：sjson 只改首个出现（map 版本为 last-wins 去重）——上游
-// JSON 合法重复键实际不可达（RFC 8259 SHOULD 唯一，真实 SDK 客户端不产生）。
+// 致）。重复键边界：sjson 只改首个出现（map 版本为 last-wins 去重）——因此非流
+// 入口用 validateNonStreamBody 直接拒掉顶层重复的 model/stream，不让「首个 vs
+// 末个」的语义分歧到达上游（该函数是本函数的调用前置，不是建议）。
 func setStreamAndModel(body []byte, stream bool, model string) ([]byte, error) {
 	sc := gjson.GetBytes(body, "stream")
 	streamOK := (stream && sc.Type == gjson.True) || (!stream && sc.Type == gjson.False)

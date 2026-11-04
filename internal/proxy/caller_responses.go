@@ -147,8 +147,8 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		return 200, nil, true, nil
 	}
 	reqModel := gjson.GetBytes(body, "model").String()
-	if gjson.GetBytes(body, "model").Type != gjson.String || !isJSONObjectRoot(body) {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
+	if err := validateNonStreamBody(body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
@@ -158,7 +158,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, r.Header)
+	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, withProtocolDefaults(r.Header, false))
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

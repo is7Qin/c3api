@@ -18,8 +18,9 @@ import (
 )
 
 // chatCaller 是 openai-chat 格式的 UpstreamCaller 实现（从 tryChat 迁移，
-// 行为逐行等价）：流式走 SDK 原始请求 + sserelay，非流式走 SDK 参数路径；
-// 记录职责全在本实现（finish/buildLog/recordStreamAbort/MarkResult）。
+// 行为逐行等价）：流式走 SDK 原始请求 + sserelay，非流式走网关自己的 rawJSON
+// （去 SDK，见 forward.go）；记录职责全在本实现
+// （finish/buildLog/recordStreamAbort/MarkResult）。
 type chatCaller struct{ p *Proxy }
 
 func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
@@ -117,10 +118,10 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	}
 
 	reqModel := gjson.GetBytes(body, "model").String()
-	if gjson.GetBytes(body, "model").Type != gjson.String || !isJSONObjectRoot(body) {
+	if err := validateNonStreamBody(body); err != nil {
 		// 本地拒绝（handled=true，无记录）：请求体形状非法记本地 400，不记日志；
 		// 已占并发槽必须释放。
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
@@ -130,7 +131,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred, upBody, r.Header)
+	data, code, errBody, err := p.rawJSON(ctx, sel, pathOf(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred, upBody, withProtocolDefaults(r.Header, false))
 	if err != nil {
 		return statusOf(err), nil, false, err
 	}

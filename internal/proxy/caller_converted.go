@@ -181,8 +181,8 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	reqModel := gjson.GetBytes(body, "model").String()
 	var data []byte
 	var it, ot, tt, cr, cc int64
-	if !isJSONObjectRoot(body) || gjson.GetBytes(body, "model").Type != gjson.String {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: model must be a string"}})
+	if err := validateNonStreamBody(body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
 		return 400, nil, true, nil
 	}
@@ -204,7 +204,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	case domain.FormatAnthropic:
 		path, authHeader, auth = pathOf(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred
 	}
-	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header)
+	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, withProtocolDefaults(r.Header, target == domain.FormatAnthropic))
 	if upstreamErr != nil {
 		return statusOf(upstreamErr), nil, false, upstreamErr
 	}
