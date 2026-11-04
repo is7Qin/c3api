@@ -795,6 +795,20 @@ func validateNonStreamBody(body []byte) error {
 	return nil
 }
 
+// keyEquals 判定 JSON 键名（parseJSONString 返回的裸字节，转义原样保留）是否
+// 等于目标字面量。必须先解码 \uXXXX 再比较：`"\\u006dodel"` 与 `"model"` 在
+// 上游眼里是同一个键，直接比裸字节会放过这类重复（实测绕过）。
+// 无转义时走零分配比较，只有含 \u 的键才解码。
+func keyEquals(raw []byte, want string) bool {
+	if string(raw) == want {
+		return true
+	}
+	if !bytes.ContainsRune(raw, '\\') {
+		return false
+	}
+	return string(decodeUnicodeEscapes(raw)) == want
+}
+
 // duplicateTopLevelKey 返回 body 顶层**重复出现**的敏感键名（无重复 → 空串）。
 // 前置：json.Valid + 根为 object（handleFormat 已保证）；这里只做单遍字节扫描，
 // 复用 strip_scan.go 的字符串/值跳过原语（零分配）。
@@ -833,15 +847,16 @@ func duplicateTopLevelKey(body []byte, keys ...string) string {
 				return ""
 			}
 			for _, k := range keys {
-				if string(key) == k {
-					if _, dup := seen[k]; dup {
-						return k
-					}
-					if seen == nil {
-						seen = make(map[string]struct{}, len(keys))
-					}
-					seen[k] = struct{}{}
+				if !keyEquals(key, k) {
+					continue
 				}
+				if _, dup := seen[k]; dup {
+					return k
+				}
+				if seen == nil {
+					seen = make(map[string]struct{}, len(keys))
+				}
+				seen[k] = struct{}{}
 			}
 			i = valEnd
 		default:

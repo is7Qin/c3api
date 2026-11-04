@@ -394,6 +394,10 @@ func TestNonStreamRejectsDuplicateSensitiveKeys(t *testing.T) {
 	}{
 		{"重复 model", `{"model":"gpt-4o","model":"other-model","messages":[]}`},
 		{"重复 stream", `{"model":"gpt-4o","stream":false,"stream":true,"messages":[]}`},
+		// 转义形态的键名在 JSON 语义上是同一个键：上游按末个生效，裸字节比较
+		// 会放过这类重复（外部评审实测的绕过点）。
+		{"转义重复 model", `{"model":"gpt-4o","\u006dodel":"other-model","messages":[]}`},
+		{"转义重复 stream", `{"model":"gpt-4o","stream":false,"\u0073tream":true,"messages":[]}`},
 		{"model 出现在后段仍算重复", `{"messages":[],"temperature":1,"model":"gpt-4o","model":"gpt-4o"}`},
 	}
 	for _, tc := range cases {
