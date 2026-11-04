@@ -387,13 +387,6 @@ func respReasoningTextOf(item map[string]any) string {
 	return joinStrings(parts, "")
 }
 
-// thinkingFromReasoningItem Responses reasoning item → thinking 块（信封解出的
-// 原块）。无信封 / 解不开 → false（约束 A：不伪造签名）。
-func thinkingFromReasoningItem(item map[string]any) (thinkingBlock, bool) {
-	enc, _ := str(item, "encrypted_content")
-	return openThinking(enc)
-}
-
 // thinkingBlockMap thinking 块的 map 形态（map 组装路径用；键序无关）。
 func thinkingBlockMap(b thinkingBlock) map[string]any {
 	if b.Type == "redacted_thinking" {

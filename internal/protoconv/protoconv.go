@@ -76,38 +76,91 @@ func (m *StreamMapper) ensureBlocks() {
 		m.argsByIndex = make(map[int64]string)
 		m.fcNames = make(map[int64]string)
 		m.fcIDs = make(map[int64]string)
-		m.itemIndex = make(map[int64]int64)
-		m.owner = make(map[int64]int64)
 		m.thinkBlocks = make(map[int64]*thinkingBlock)
+		m.ensureIndexes()
 	}
 }
 
-// contentIndex 把 resp output_index 分配成 anthropic content index。
-// 同一 output_index 只分配一次：优先用 output_index 本身，已被占用则用
-// max(已占用)+1。output_index 缺省为 0（调用方 intOr0）。
-func (m *StreamMapper) contentIndex(outputIndex int64) int64 {
-	if m.itemIndex == nil {
-		m.itemIndex = make(map[int64]int64)
-		m.owner = make(map[int64]int64)
+// ensureIndexes 懒初始化 content index 分配表与跨事件身份表（resp→mess 方向；
+// 只有用得上 index 映射的路径才付这份分配）。
+func (m *StreamMapper) ensureIndexes() {
+	if m.allocIndex == nil {
+		m.allocIndex = make(map[allocKey]int64)
+		m.owner = make(map[int64]allocKey)
+		m.itemIndex = make(map[blockKey]int64)
 	}
-	if idx, ok := m.itemIndex[outputIndex]; ok {
+}
+
+// 流式中内容块的 kind（content index 分配键的一半，spec §4.5 第 1 条）。
+const (
+	kindText     = "text"
+	kindToolUse  = "tool_use"
+	kindThinking = "thinking"
+)
+
+// droppedBlockIndex 被 thinking 门丢弃的块在 itemIndex 里的占位值：同一 item
+// 后续的 delta / done 一律丢弃（spec §4.5 第 4 条：迟到 thinking 块整块丢弃）。
+const droppedBlockIndex int64 = -1
+
+// allocKey content index 的分配键 = (output_index, kind)：同一 output_index 上
+// 不同 kind 必须拿到不同 content index（spec §4.5 第 1 条）。
+type allocKey struct {
+	oi   int64
+	kind string
+}
+
+// blockKey 内容块的跨事件身份键：item id 优先（spec §4.5 第 2 条：delta 用
+// item_id、done 用 item.id）。上游省略 id 时退化为 (output_index, kind)——任何
+// 情况下都不裸用 output_index 作身份，否则 text_delta 会落进 thinking 块。
+type blockKey struct {
+	id   string
+	oi   int64
+	kind string
+}
+
+// blockKeyOf 事件 → 跨事件身份键（见 blockKey）。
+func blockKeyOf(id string, oi int64, kind string) blockKey {
+	if id != "" {
+		return blockKey{id: id}
+	}
+	return blockKey{oi: oi, kind: kind}
+}
+
+// contentIndex 把 resp output_index 分配成 anthropic content index：基值取
+// output_index 本身，已被其他 (output_index, kind) 占用则取 nextIndex（保持
+// TestAPIAlignRespMessStreamIndex 语义）。
+func (m *StreamMapper) contentIndex(oi int64, kind string) int64 {
+	m.ensureIndexes()
+	key := allocKey{oi: oi, kind: kind}
+	if idx, ok := m.allocIndex[key]; ok {
 		return idx
 	}
-	idx := outputIndex
-	if holder, taken := m.owner[idx]; taken && holder != outputIndex {
+	idx := oi
+	if holder, taken := m.owner[idx]; taken && holder != key {
 		idx = m.nextIndex
 	}
 	for {
-		if holder, taken := m.owner[idx]; !taken || holder == outputIndex {
+		if holder, taken := m.owner[idx]; !taken || holder == key {
 			break
 		}
 		idx++
 	}
-	m.itemIndex[outputIndex] = idx
-	m.owner[idx] = outputIndex
+	m.allocIndex[key] = idx
+	m.owner[idx] = key
 	if idx >= m.nextIndex {
 		m.nextIndex = idx + 1
 	}
+	return idx
+}
+
+// blockIndex 跨事件身份键 → content index：已知则复用（同一块的所有事件落同一
+// index），未知则按 (output_index, kind) 新分配并登记。
+func (m *StreamMapper) blockIndex(key blockKey, oi int64, kind string) int64 {
+	if idx, ok := m.itemIndex[key]; ok {
+		return idx
+	}
+	idx := m.contentIndex(oi, kind)
+	m.itemIndex[key] = idx
 	return idx
 }
 
@@ -199,10 +252,15 @@ type StreamMapper struct {
 	cacheCreate int64 // mess cache_creation_input_tokens（不计入 cached_tokens）
 	reason      string
 
-	// resp→mess：output_index → content index，以及 content index → 占用它的 output_index。
-	itemIndex map[int64]int64
-	owner     map[int64]int64
-	nextIndex int64
+	// resp→mess：content index 分配（键 = (output_index, kind)）与跨事件身份
+	// （item id → content index；spec §4.5）。
+	allocIndex map[allocKey]int64
+	owner      map[int64]allocKey
+	itemIndex  map[blockKey]int64
+	nextIndex  int64
+	// nonThinkSeen 该响应已出现非 thinking 块 → thinking 门关闭（spec §4.5
+	// 第 4 条：thinking / redacted_thinking 只允许出现在首个非 thinking 块之前）。
+	nonThinkSeen bool
 
 	// 字节级帧组装复用缓冲（chat→resp 流式路径）：buf = 输出帧；dbuf =
 	// delta/usage 预组装；ubuf = completed 帧上从 dbuf 拷出的 usage，

@@ -152,21 +152,66 @@ func respUsageToMess(r map[string]any) map[string]any {
 	}
 }
 
+// eventBlockIndex resp 事件 → content index：跨事件身份优先用 item_id（spec
+// §4.5 第 2 条），output_index 只作分配基值。
+func (m *StreamMapper) eventBlockIndex(ev map[string]any, kind string) int64 {
+	oi := intOr0(ev, "output_index")
+	itemID, _ := str(ev, "item_id")
+	return m.blockIndex(blockKeyOf(itemID, oi, kind), oi, kind)
+}
+
+// thinkBlockIndex reasoning 事件 → content index。ok=false 表示该块被 thinking
+// 门丢弃（迟到的 thinking 块整块丢弃，spec §4.5 第 4 条）。
+func (m *StreamMapper) thinkBlockIndex(key blockKey, oi int64) (int64, bool) {
+	if idx, ok := m.itemIndex[key]; ok {
+		return idx, idx != droppedBlockIndex
+	}
+	if m.nonThinkSeen {
+		m.ensureIndexes()
+		m.itemIndex[key] = droppedBlockIndex
+		return 0, false
+	}
+	index := m.blockIndex(key, oi, kindThinking)
+	if m.thinkBlocks[index] == nil {
+		m.thinkBlocks[index] = &thinkingBlock{Type: "thinking"}
+	}
+	return index, true
+}
+
+// stopBlock content_block_stop 帧：已 start 且未 stop 才发，置位防二次 stop
+// （spec §4.5 第 5 条）。调用方据 nil 判定「无帧可发」。
+func (m *StreamMapper) stopBlock(index int64) []byte {
+	if !m.blockStarted[index] || m.blockStopped[index] {
+		return nil
+	}
+	m.blockStopped[index] = true
+	return EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})
+}
+
 // mapRespToMess 流式：resp SSE 事件 → anthropic messages 流。事件映射表：
 //
 //	response.created                 → message_start（usage.input_tokens 在响应
 //	                                  完成前不可知 → 0，补差映射已知取舍；网关
 //	                                  计费独立于客户端用量展示）
-//	response.output_text.delta       → content_block_start(按 output_index 分配) 惰性 +
-//	                                  content_block_delta(text_delta)
+//	response.output_item.added(reasoning) → content_block_start(thinking)，受
+//	                                  thinking 门约束（§4.5 第 4 条）
+//	response.reasoning_summary_text.delta / reasoning_text.delta
+//	                                 → content_block_delta(thinking_delta)
+//	response.output_item.done(reasoning) → signature_delta（= reasoning_ref 臂，
+//	                                  仅 encrypted_content 非空）++ content_block_stop
+//	response.output_text.delta       → content_block_start(按 item id / output_index
+//	                                  分配) 惰性 + content_block_delta(text_delta)
 //	response.output_text.done        → content_block_stop(同一 content index)
-//	response.output_item.added(FC)   → content_block_start(按 output_index 分配, tool_use)
+//	response.output_item.added(FC)   → content_block_start(tool_use)
 //	response.function_call_arguments.delta → content_block_delta(input_json_delta)
 //	response.function_call_arguments.done  → content_block_stop(同一 content index)
 //	response.completed               → message_delta（stop_reason + 按 P1-3 换算的 usage）
-//	                                  + message_stop。message_start 的 input_tokens 仍为 0
+//	                                  + message_stop；未收尾的 thinking 块补 stop
 //	response.failed                  → error 事件（无 error 时 message 为空字符串）
 //	其余 → 丢弃
+//
+// 跨事件身份一律用 item id 查表（§4.5 第 2 条），output_index 只作 content
+// index 的候选基值——上游省略/错配 output_index 时 text_delta 不会落进 thinking 块。
 func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 	m.ensureBlocks() // 块级累积 map 懒初始化
 	ev, err := decodeObj(data)
@@ -194,7 +239,11 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		}), false
 	case "response.output_text.delta":
 		delta, _ := str(ev, "delta")
-		index := m.contentIndex(intOr0(ev, "output_index"))
+		index := m.eventBlockIndex(ev, kindText)
+		m.nonThinkSeen = true // 文本块开始 → thinking 门关闭
+		if m.blockStopped[index] {
+			return nil, true
+		}
 		var f []byte
 		if !m.blockStarted[index] {
 			m.blockStarted[index] = true
@@ -209,10 +258,9 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		})...)
 		return f, false
 	case "response.output_text.done":
-		index := m.contentIndex(intOr0(ev, "output_index"))
-		if m.blockStarted[index] && !m.blockStopped[index] {
-			m.blockStopped[index] = true
-			return EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": index}), false
+		m.nonThinkSeen = true
+		if f := m.stopBlock(m.eventBlockIndex(ev, kindText)); f != nil {
+			return f, false
 		}
 		return nil, true
 	case "response.output_item.added":
@@ -220,30 +268,44 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		if !ok {
 			return nil, true
 		}
-		if item["type"] == "reasoning" {
-			// reasoning item → thinking 块（Anthropic 要求 thinking 在 assistant
-			// turn 内最先出现；上游 item 顺序已保证）。
-			index := m.contentIndex(intOr0(ev, "output_index"))
-			if m.thinkBlocks[index] == nil {
-				m.thinkBlocks[index] = &thinkingBlock{Type: "thinking"}
+		oi := intOr0(ev, "output_index")
+		itemID, _ := str(item, "id")
+		switch item["type"] {
+		case "reasoning":
+			key := blockKeyOf(itemID, oi, kindThinking)
+			if m.nonThinkSeen {
+				// thinking 门：该响应已有非 thinking 块 → 整块丢弃（记占位，让同
+				// 一个 item 的 delta / done 一并丢，spec §4.5 第 4 条）。
+				m.ensureIndexes()
+				m.itemIndex[key] = droppedBlockIndex
+				return nil, true
 			}
-			if !m.blockStarted[index] {
-				m.blockStarted[index] = true
-				return EncodeFrame("content_block_start", map[string]any{
-					"type": "content_block_start", "index": index,
-					"content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""},
-				}), false
+			index := m.blockIndex(key, oi, kindThinking)
+			if m.blockStarted[index] {
+				return nil, true
 			}
-			return nil, true
-		}
-		if item["type"] != "function_call" {
-			return nil, true
-		}
-		index := m.contentIndex(intOr0(ev, "output_index"))
-		id := toolCallID(item) // call_id 优先（tool_result.tool_use_id 匹配键）
-		name, _ := str(item, "name")
-		if !m.blockStarted[index] {
 			m.blockStarted[index] = true
+			m.thinkBlocks[index] = &thinkingBlock{Type: "thinking"}
+			// added 是 in-progress 展示项，客户端不写历史 → R1 不适用（§2.4）。
+			return EncodeFrame("content_block_start", map[string]any{
+				"type": "content_block_start", "index": index,
+				"content_block": map[string]any{"type": "thinking", "thinking": "", "signature": ""},
+			}), false
+		case "message":
+			// 登记身份映射（后续 text delta 用同一 index）；块 start 仍惰性在首个
+			// delta（保持既有帧序列）。message 项即文本块 → 门关闭。
+			m.nonThinkSeen = true
+			m.blockIndex(blockKeyOf(itemID, oi, kindText), oi, kindText)
+			return nil, true
+		case "function_call":
+			m.nonThinkSeen = true
+			index := m.blockIndex(blockKeyOf(itemID, oi, kindToolUse), oi, kindToolUse)
+			if m.blockStarted[index] {
+				return nil, true
+			}
+			m.blockStarted[index] = true
+			id := toolCallID(item) // call_id 优先（tool_result.tool_use_id 匹配键）
+			name, _ := str(item, "name")
 			return EncodeFrame("content_block_start", map[string]any{
 				"type": "content_block_start", "index": index,
 				"content_block": map[string]any{"type": "tool_use", "id": id, "name": name, "input": map[string]any{}},
@@ -251,13 +313,16 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		}
 		return nil, true
 	case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
-		// resp 的思考文本 → Anthropic thinking_delta（块惰性 start，兼容缺
-		// output_item.added 的非规范上游）。
-		delta, _ := str(ev, "delta")
-		index := m.contentIndex(intOr0(ev, "output_index"))
-		if m.thinkBlocks[index] == nil {
-			m.thinkBlocks[index] = &thinkingBlock{Type: "thinking"}
+		// resp 的思考文本 → Anthropic thinking_delta。块身份用 item_id 查表
+		// （spec §4.5 第 2 条），块 start 惰性发出（兼容缺 output_item.added 的
+		// 非规范上游）。
+		oi := intOr0(ev, "output_index")
+		itemID, _ := str(ev, "item_id")
+		index, ok := m.thinkBlockIndex(blockKeyOf(itemID, oi, kindThinking), oi)
+		if !ok || m.blockStopped[index] {
+			return nil, true
 		}
+		delta, _ := str(ev, "delta")
 		var f []byte
 		if !m.blockStarted[index] {
 			m.blockStarted[index] = true
@@ -272,43 +337,49 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 		})...)
 		return f, false
 	case "response.output_item.done":
-		// thinking 块收尾：信封可解则先发 signature_delta（Anthropic 要求签名在
-		// 块 stop 之前），再 content_block_stop。
+		// thinking 块收尾：encrypted_content 非空 → 先发 signature_delta（值 =
+		// reasoning_ref 臂，spec §2.5）再 content_block_stop（mess.txt:8332：签名
+		// 必须在块 stop 之前）；空/缺失 → 只 stop。已 stop 的 index 不再补。
 		item, ok := ev["item"].(map[string]any)
 		if !ok || item["type"] != "reasoning" {
+			// 其余项的收尾走 output_text.done / function_call_arguments.done。
 			return nil, true
 		}
-		index := m.contentIndex(intOr0(ev, "output_index"))
-		if m.thinkBlocks[index] == nil {
+		oi := intOr0(ev, "output_index")
+		itemID, _ := str(item, "id")
+		index, ok := m.thinkBlockIndex(blockKeyOf(itemID, oi, kindThinking), oi)
+		if !ok || m.thinkBlocks[index] == nil || m.blockStopped[index] {
+			// 门丢弃 / 从未 start / 已 stop（同一 index 只 stop 一次）。
 			return nil, true
 		}
 		var f []byte
-		if blk, ok := thinkingFromReasoningItem(item); ok && blk.Signature != "" {
-			f = EncodeFrame("content_block_delta", map[string]any{
-				"type": "content_block_delta", "index": index,
-				"delta": map[string]any{"type": "signature_delta", "signature": blk.Signature},
-			})
+		if enc, _ := str(item, "encrypted_content"); enc != "" {
+			if arm := sealReasoningRef(reasoningRef{EncryptedContent: enc, ID: itemID}); arm != "" {
+				f = EncodeFrame("content_block_delta", map[string]any{
+					"type": "content_block_delta", "index": index,
+					"delta": map[string]any{"type": "signature_delta", "signature": arm},
+				})
+			}
 		}
-		if m.blockStarted[index] && !m.blockStopped[index] {
-			m.blockStopped[index] = true
-			f = append(f, EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": index})...)
-		}
-		if len(f) == 0 {
+		m.blockStopped[index] = true
+		return append(f, EncodeFrame("content_block_stop", map[string]any{
+			"type": "content_block_stop", "index": index,
+		})...), false
+	case "response.function_call_arguments.delta":
+		m.nonThinkSeen = true
+		index := m.eventBlockIndex(ev, kindToolUse)
+		if m.blockStopped[index] {
 			return nil, true
 		}
-		return f, false
-	case "response.function_call_arguments.delta":
 		delta, _ := str(ev, "delta")
-		index := m.contentIndex(intOr0(ev, "output_index"))
 		return EncodeFrame("content_block_delta", map[string]any{
 			"type": "content_block_delta", "index": index,
 			"delta": map[string]any{"type": "input_json_delta", "partial_json": delta},
 		}), false
 	case "response.function_call_arguments.done":
-		index := m.contentIndex(intOr0(ev, "output_index"))
-		if m.blockStarted[index] && !m.blockStopped[index] {
-			m.blockStopped[index] = true
-			return EncodeFrame("content_block_stop", map[string]any{"type": "content_block_stop", "index": index}), false
+		m.nonThinkSeen = true
+		if f := m.stopBlock(m.eventBlockIndex(ev, kindToolUse)); f != nil {
+			return f, false
 		}
 		return nil, true
 	case "response.completed":

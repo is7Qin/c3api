@@ -208,12 +208,15 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 		}
 		switch block["type"] {
 		case "thinking":
-			if m.blockStarted[index] {
+			// thinking 门（§4.5 第 4 条）：已有非 thinking 块 → 整块丢弃（不发
+			// added、不入流、不产 item）。
+			if m.nonThinkSeen || m.blockStarted[index] {
 				return nil, true
 			}
 			m.blockStarted[index] = true
 			m.blockOrder = append(m.blockOrder, index)
 			m.thinkBlocks[index] = &thinkingBlock{Type: "thinking"}
+			// added 是 in-progress 展示项，客户端不写历史 → R1 不适用（§2.4）。
 			return EncodeFrame("response.output_item.added", map[string]any{
 				"type": "response.output_item.added", "output_index": index,
 				"item": map[string]any{
@@ -222,18 +225,21 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 				},
 			}), false
 		case "redacted_thinking":
-			// 不透明块没有 delta：added + done 一次发完，done 的 item 带信封
-			// （客户端原样回传，resp_to_mess 请求侧可解回原块）。
+			// 不透明块没有 delta：added + done 一次发完。done 的 item 受 R1 支配
+			// ——不可往返（data 空/超限）就连 added 都不发，避免留下孤儿展示项。
 			data, _ := str(block, "data")
-			if data == "" || m.blockStarted[index] {
+			if m.nonThinkSeen || m.blockStarted[index] {
+				return nil, true
+			}
+			blk := &thinkingBlock{Type: "redacted_thinking", Data: data}
+			item, ok := m.reasoningItem(index, blk)
+			if !ok {
 				return nil, true
 			}
 			m.blockStarted[index] = true
 			m.blockStopped[index] = true
 			m.blockOrder = append(m.blockOrder, index)
-			blk := &thinkingBlock{Type: "redacted_thinking", Data: data}
 			m.thinkBlocks[index] = blk
-			item := m.reasoningItem(index, blk)
 			f := EncodeFrame("response.output_item.added", map[string]any{
 				"type": "response.output_item.added", "output_index": index,
 				"item": map[string]any{
@@ -248,6 +254,7 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 			if m.blockStarted[index] {
 				return nil, true
 			}
+			m.nonThinkSeen = true // 非 thinking 块出现 → thinking 门关闭
 			m.blockStarted[index] = true
 			m.blockOrder = append(m.blockOrder, index)
 			item := map[string]any{
@@ -262,6 +269,7 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 			if m.blockStarted[index] {
 				return nil, true
 			}
+			m.nonThinkSeen = true // 非 thinking 块出现 → thinking 门关闭
 			m.blockStarted[index] = true
 			m.blockOrder = append(m.blockOrder, index)
 			id, _ := str(block, "id")
@@ -285,24 +293,34 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 		}
 		switch delta["type"] {
 		case "thinking_delta":
-			t, _ := str(delta, "thinking")
-			if b := m.thinkBlocks[index]; b != nil {
-				b.Thinking += t
+			// 块不在（被 thinking 门丢弃 / 从未 start）或已 stop → 丢（§4.5 第 5 条）。
+			b := m.thinkBlocks[index]
+			if b == nil || m.blockStopped[index] {
+				return nil, true
 			}
+			t, _ := str(delta, "thinking")
+			b.Thinking += t
 			return EncodeFrame("response.reasoning_summary_text.delta", map[string]any{
 				"type": "response.reasoning_summary_text.delta", "item_id": m.thinkID(index),
 				"output_index": index, "summary_index": 0, "delta": t,
 			}), false
 		case "signature_delta":
 			// Anthropic 签名是「块级收尾」信息，没有对应的 resp 流事件：累积到
-			// message_stop 的 output item 信封里回给客户端。
-			if b := m.thinkBlocks[index]; b != nil {
-				if s, ok := str(delta, "signature"); ok {
-					b.Signature += s
-				}
+			// content_block_stop 的 output item 信封里回给客户端（客户端取
+			// encrypted_content 的唯一权威通道，spec §4.3）。
+			b := m.thinkBlocks[index]
+			if b == nil || m.blockStopped[index] {
+				return nil, true
+			}
+			if s, ok := str(delta, "signature"); ok {
+				b.Signature += s
 			}
 			return nil, true
 		case "text_delta":
+			m.nonThinkSeen = true
+			if m.blockStopped[index] {
+				return nil, true
+			}
 			text, _ := str(delta, "text")
 			m.textByIndex[index] += text
 			return EncodeFrame("response.output_text.delta", map[string]any{
@@ -310,6 +328,10 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 				"output_index": index, "content_index": 0, "delta": text,
 			}), false
 		case "input_json_delta":
+			m.nonThinkSeen = true
+			if m.blockStopped[index] {
+				return nil, true
+			}
 			partial, _ := str(delta, "partial_json")
 			m.argsByIndex[index] += partial
 			return EncodeFrame("response.function_call_arguments.delta", map[string]any{
@@ -318,6 +340,30 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 			}), false
 		}
 		return nil, true
+	case "content_block_stop":
+		// thinking 块收尾：R1 成立 → 发 output_item.done（客户端取
+		// encrypted_content 的唯一权威通道，resp.txt:3421-3425）；不成立 → 只置
+		// stopped，不发 done（客户端不会把 encrypted_content:null 写进历史）。
+		index := intOr0(ev, "index")
+		if m.blockStopped[index] {
+			return nil, true
+		}
+		b := m.thinkBlocks[index]
+		if b == nil {
+			// 非 thinking 块：resp 客户端不需要该帧，置位只为丢弃迟到 delta。
+			if m.blockStarted[index] {
+				m.blockStopped[index] = true
+			}
+			return nil, true
+		}
+		m.blockStopped[index] = true
+		item, ok := m.reasoningItem(index, b)
+		if !ok {
+			return nil, true
+		}
+		return EncodeFrame("response.output_item.done", map[string]any{
+			"type": "response.output_item.done", "output_index": index, "item": item,
+		}), false
 	case "message_delta":
 		if u, ok := ev["usage"].(map[string]any); ok {
 			m.ot = intOr0(u, "output_tokens")
@@ -356,33 +402,33 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 }
 
 // reasoningItem thinking 块累积状态 → reasoning item（summary 文本 + 信封
-// encrypted_content）。流式 added/done 与 message_stop 的 output 项共用。
-func (m *StreamMapper) reasoningItem(index int64, b *thinkingBlock) map[string]any {
-	item := map[string]any{
+// encrypted_content）。流式 done 与 completed 的 output 项共用。
+//
+// R1（spec §2.4）：只有能经信封往返的块才产出 item（sealThinking 内置
+// canReplay）——ok=false 时调用方必须不发 item，否则客户端会把
+// encrypted_content:null 写进历史，下一轮必被判不可回放，思考被永久关闭。
+func (m *StreamMapper) reasoningItem(index int64, b *thinkingBlock) (map[string]any, bool) {
+	enc := sealThinking(*b)
+	if enc == "" {
+		return nil, false
+	}
+	return map[string]any{
 		"id": m.thinkID(index), "type": "reasoning", "status": "completed",
-	}
-	if b.Thinking != "" {
-		item["summary"] = []any{map[string]any{"type": "summary_text", "text": b.Thinking}}
-	} else {
-		item["summary"] = []any{}
-	}
-	// 信封只对可回放的块有意义：thinking 需签名，redacted 需 data。
-	if b.Type == "redacted_thinking" && b.Data != "" {
-		item["encrypted_content"] = sealThinking(*b)
-	} else if b.Type == "thinking" && b.Signature != "" {
-		item["encrypted_content"] = sealThinking(*b)
-	}
-	return item
+		"summary": reasoningSummary(b.Thinking), "encrypted_content": enc,
+	}, true
 }
 
 // messOutputItems 累积的块级输出 → response.completed 的 output 数组
 // （reasoning 项补全 summary + 信封、message 项补全文本、function_call 项补全
-// arguments + completed 状态）。
+// arguments + completed 状态）。R1 不成立的 thinking 块在这里被过滤掉——绝不
+// 让缺信封的 reasoning item 进入 completed.output[]（spec §2.4 / §6.3 #25）。
 func (m *StreamMapper) messOutputItems() []any {
 	var output []any
 	for _, index := range m.blockOrder {
 		if b := m.thinkBlocks[index]; b != nil {
-			output = append(output, m.reasoningItem(index, b))
+			if item, ok := m.reasoningItem(index, b); ok {
+				output = append(output, item)
+			}
 			continue
 		}
 		if name, ok := m.fcNames[index]; ok {
