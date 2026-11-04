@@ -88,6 +88,7 @@ func toDomainTemplateExt(e *ent.TemplateExt) *domain.TemplateExt {
 		TemplateID:      e.TemplateID,
 		CredentialType:  credential.Type(e.CredentialType),
 		StripImageTools: e.StripImageTools,
+		UpstreamPaths:   e.UpstreamPaths,
 	}
 }
 
@@ -145,6 +146,10 @@ func toDomainTemplate(t *ent.Template) *domain.Template {
 	// 经 template_ext 端点单独读写，不合并进模板对象。
 	if len(t.Edges.Ext) > 0 && t.Edges.Ext[0].StripImageTools != nil {
 		d.StripImageTools = *t.Edges.Ext[0].StripImageTools
+	}
+	// 逐格式自定义路径同款快照合并（custom 专用）；无 ext 边/未配置 → nil。
+	if len(t.Edges.Ext) > 0 {
+		d.UpstreamPaths = t.Edges.Ext[0].UpstreamPaths
 	}
 	return d
 }

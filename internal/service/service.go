@@ -695,7 +695,9 @@ func validateTemplate(t *domain.Template) error {
 	// 为用户裁决：responses-special 与 api_key 同支持两图片端点，codex 类型
 	// 走 SDK 生图；search 为用户裁决：search 端点四类型分派全可达——
 	// codex 类型走 SDK Search、api_key/responses-special 静态透传）；api_key 类型全部格式任意。
-	if t.CredentialType != credential.TypeAPIKey {
+	// 生态三类型限定 resp/resp-ws/images/search；api_key 与 custom 支持全部格式
+	// （custom = 静态 Key + 自定义路径，路径本身不改变协议形状）。
+	if t.CredentialType != credential.TypeAPIKey && t.CredentialType != credential.TypeCustom {
 		for _, f := range t.SupportedFormats {
 			if f != domain.FormatOpenAIResponses && f != domain.FormatOpenAIResponsesWS && f != domain.FormatOpenAIImages && f != domain.FormatOpenAISearch {
 				return ErrInvalidInput

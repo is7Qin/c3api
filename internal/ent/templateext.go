@@ -3,6 +3,7 @@
 package ent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -23,6 +24,8 @@ type TemplateExt struct {
 	CredentialType string `json:"credential_type,omitempty"`
 	// StripImageTools holds the value of the "strip_image_tools" field.
 	StripImageTools *bool `json:"strip_image_tools,omitempty"`
+	// UpstreamPaths holds the value of the "upstream_paths" field.
+	UpstreamPaths map[string]string `json:"upstream_paths,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the TemplateExtQuery when eager-loading is set.
 	Edges        TemplateExtEdges `json:"edges"`
@@ -54,6 +57,8 @@ func (*TemplateExt) scanValues(columns []string) ([]any, error) {
 	values := make([]any, len(columns))
 	for i := range columns {
 		switch columns[i] {
+		case templateext.FieldUpstreamPaths:
+			values[i] = new([]byte)
 		case templateext.FieldStripImageTools:
 			values[i] = new(sql.NullBool)
 		case templateext.FieldID, templateext.FieldTemplateID:
@@ -99,6 +104,14 @@ func (_m *TemplateExt) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.StripImageTools = new(bool)
 				*_m.StripImageTools = value.Bool
+			}
+		case templateext.FieldUpstreamPaths:
+			if value, ok := values[i].(*[]byte); !ok {
+				return fmt.Errorf("unexpected type %T for field upstream_paths", values[i])
+			} else if value != nil && len(*value) > 0 {
+				if err := json.Unmarshal(*value, &_m.UpstreamPaths); err != nil {
+					return fmt.Errorf("unmarshal field upstream_paths: %w", err)
+				}
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -151,6 +164,9 @@ func (_m *TemplateExt) String() string {
 		builder.WriteString("strip_image_tools=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
+	builder.WriteString(", ")
+	builder.WriteString("upstream_paths=")
+	builder.WriteString(fmt.Sprintf("%v", _m.UpstreamPaths))
 	builder.WriteByte(')')
 	return builder.String()
 }

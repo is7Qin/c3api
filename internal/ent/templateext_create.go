@@ -48,6 +48,12 @@ func (_c *TemplateExtCreate) SetNillableStripImageTools(v *bool) *TemplateExtCre
 	return _c
 }
 
+// SetUpstreamPaths sets the "upstream_paths" field.
+func (_c *TemplateExtCreate) SetUpstreamPaths(v map[string]string) *TemplateExtCreate {
+	_c.mutation.SetUpstreamPaths(v)
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *TemplateExtCreate) SetID(v int64) *TemplateExtCreate {
 	_c.mutation.SetID(v)
@@ -142,6 +148,10 @@ func (_c *TemplateExtCreate) createSpec() (*TemplateExt, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.StripImageTools(); ok {
 		_spec.SetField(templateext.FieldStripImageTools, field.TypeBool, value)
 		_node.StripImageTools = &value
+	}
+	if value, ok := _c.mutation.UpstreamPaths(); ok {
+		_spec.SetField(templateext.FieldUpstreamPaths, field.TypeJSON, value)
+		_node.UpstreamPaths = value
 	}
 	if nodes := _c.mutation.TemplateIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -254,6 +264,24 @@ func (u *TemplateExtUpsert) ClearStripImageTools() *TemplateExtUpsert {
 	return u
 }
 
+// SetUpstreamPaths sets the "upstream_paths" field.
+func (u *TemplateExtUpsert) SetUpstreamPaths(v map[string]string) *TemplateExtUpsert {
+	u.Set(templateext.FieldUpstreamPaths, v)
+	return u
+}
+
+// UpdateUpstreamPaths sets the "upstream_paths" field to the value that was provided on create.
+func (u *TemplateExtUpsert) UpdateUpstreamPaths() *TemplateExtUpsert {
+	u.SetExcluded(templateext.FieldUpstreamPaths)
+	return u
+}
+
+// ClearUpstreamPaths clears the value of the "upstream_paths" field.
+func (u *TemplateExtUpsert) ClearUpstreamPaths() *TemplateExtUpsert {
+	u.SetNull(templateext.FieldUpstreamPaths)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
 // Using this option is equivalent to using:
 //
@@ -348,6 +376,27 @@ func (u *TemplateExtUpsertOne) UpdateStripImageTools() *TemplateExtUpsertOne {
 func (u *TemplateExtUpsertOne) ClearStripImageTools() *TemplateExtUpsertOne {
 	return u.Update(func(s *TemplateExtUpsert) {
 		s.ClearStripImageTools()
+	})
+}
+
+// SetUpstreamPaths sets the "upstream_paths" field.
+func (u *TemplateExtUpsertOne) SetUpstreamPaths(v map[string]string) *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.SetUpstreamPaths(v)
+	})
+}
+
+// UpdateUpstreamPaths sets the "upstream_paths" field to the value that was provided on create.
+func (u *TemplateExtUpsertOne) UpdateUpstreamPaths() *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.UpdateUpstreamPaths()
+	})
+}
+
+// ClearUpstreamPaths clears the value of the "upstream_paths" field.
+func (u *TemplateExtUpsertOne) ClearUpstreamPaths() *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.ClearUpstreamPaths()
 	})
 }
 
@@ -610,6 +659,27 @@ func (u *TemplateExtUpsertBulk) UpdateStripImageTools() *TemplateExtUpsertBulk {
 func (u *TemplateExtUpsertBulk) ClearStripImageTools() *TemplateExtUpsertBulk {
 	return u.Update(func(s *TemplateExtUpsert) {
 		s.ClearStripImageTools()
+	})
+}
+
+// SetUpstreamPaths sets the "upstream_paths" field.
+func (u *TemplateExtUpsertBulk) SetUpstreamPaths(v map[string]string) *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.SetUpstreamPaths(v)
+	})
+}
+
+// UpdateUpstreamPaths sets the "upstream_paths" field to the value that was provided on create.
+func (u *TemplateExtUpsertBulk) UpdateUpstreamPaths() *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.UpdateUpstreamPaths()
+	})
+}
+
+// ClearUpstreamPaths clears the value of the "upstream_paths" field.
+func (u *TemplateExtUpsertBulk) ClearUpstreamPaths() *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.ClearUpstreamPaths()
 	})
 }
 

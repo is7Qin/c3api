@@ -642,6 +642,7 @@ var (
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "credential_type", Type: field.TypeString},
 		{Name: "strip_image_tools", Type: field.TypeBool, Nullable: true},
+		{Name: "upstream_paths", Type: field.TypeJSON, Nullable: true},
 		{Name: "template_id", Type: field.TypeInt64},
 	}
 	// TemplateExtsTable holds the schema information for the "template_exts" table.
@@ -652,7 +653,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "template_exts_templates_ext",
-				Columns:    []*schema.Column{TemplateExtsColumns[3]},
+				Columns:    []*schema.Column{TemplateExtsColumns[4]},
 				RefColumns: []*schema.Column{TemplatesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -661,7 +662,7 @@ var (
 			{
 				Name:    "templateext_template_id",
 				Unique:  true,
-				Columns: []*schema.Column{TemplateExtsColumns[3]},
+				Columns: []*schema.Column{TemplateExtsColumns[4]},
 			},
 		},
 	}

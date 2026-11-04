@@ -173,6 +173,16 @@ func StripImageToolsNotNil() predicate.TemplateExt {
 	return predicate.TemplateExt(sql.FieldNotNull(FieldStripImageTools))
 }
 
+// UpstreamPathsIsNil applies the IsNil predicate on the "upstream_paths" field.
+func UpstreamPathsIsNil() predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldIsNull(FieldUpstreamPaths))
+}
+
+// UpstreamPathsNotNil applies the NotNil predicate on the "upstream_paths" field.
+func UpstreamPathsNotNil() predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldNotNull(FieldUpstreamPaths))
+}
+
 // HasTemplate applies the HasEdge predicate on the "template" edge.
 func HasTemplate() predicate.TemplateExt {
 	return predicate.TemplateExt(func(s *sql.Selector) {

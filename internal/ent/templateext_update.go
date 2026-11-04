@@ -76,6 +76,18 @@ func (_u *TemplateExtUpdate) ClearStripImageTools() *TemplateExtUpdate {
 	return _u
 }
 
+// SetUpstreamPaths sets the "upstream_paths" field.
+func (_u *TemplateExtUpdate) SetUpstreamPaths(v map[string]string) *TemplateExtUpdate {
+	_u.mutation.SetUpstreamPaths(v)
+	return _u
+}
+
+// ClearUpstreamPaths clears the value of the "upstream_paths" field.
+func (_u *TemplateExtUpdate) ClearUpstreamPaths() *TemplateExtUpdate {
+	_u.mutation.ClearUpstreamPaths()
+	return _u
+}
+
 // SetTemplate sets the "template" edge to the Template entity.
 func (_u *TemplateExtUpdate) SetTemplate(v *Template) *TemplateExtUpdate {
 	return _u.SetTemplateID(v.ID)
@@ -147,6 +159,12 @@ func (_u *TemplateExtUpdate) sqlSave(ctx context.Context) (_node int, err error)
 	}
 	if _u.mutation.StripImageToolsCleared() {
 		_spec.ClearField(templateext.FieldStripImageTools, field.TypeBool)
+	}
+	if value, ok := _u.mutation.UpstreamPaths(); ok {
+		_spec.SetField(templateext.FieldUpstreamPaths, field.TypeJSON, value)
+	}
+	if _u.mutation.UpstreamPathsCleared() {
+		_spec.ClearField(templateext.FieldUpstreamPaths, field.TypeJSON)
 	}
 	if _u.mutation.TemplateCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -242,6 +260,18 @@ func (_u *TemplateExtUpdateOne) SetNillableStripImageTools(v *bool) *TemplateExt
 // ClearStripImageTools clears the value of the "strip_image_tools" field.
 func (_u *TemplateExtUpdateOne) ClearStripImageTools() *TemplateExtUpdateOne {
 	_u.mutation.ClearStripImageTools()
+	return _u
+}
+
+// SetUpstreamPaths sets the "upstream_paths" field.
+func (_u *TemplateExtUpdateOne) SetUpstreamPaths(v map[string]string) *TemplateExtUpdateOne {
+	_u.mutation.SetUpstreamPaths(v)
+	return _u
+}
+
+// ClearUpstreamPaths clears the value of the "upstream_paths" field.
+func (_u *TemplateExtUpdateOne) ClearUpstreamPaths() *TemplateExtUpdateOne {
+	_u.mutation.ClearUpstreamPaths()
 	return _u
 }
 
@@ -346,6 +376,12 @@ func (_u *TemplateExtUpdateOne) sqlSave(ctx context.Context) (_node *TemplateExt
 	}
 	if _u.mutation.StripImageToolsCleared() {
 		_spec.ClearField(templateext.FieldStripImageTools, field.TypeBool)
+	}
+	if value, ok := _u.mutation.UpstreamPaths(); ok {
+		_spec.SetField(templateext.FieldUpstreamPaths, field.TypeJSON, value)
+	}
+	if _u.mutation.UpstreamPathsCleared() {
+		_spec.ClearField(templateext.FieldUpstreamPaths, field.TypeJSON)
 	}
 	if _u.mutation.TemplateCleared() {
 		edge := &sqlgraph.EdgeSpec{

@@ -22411,6 +22411,7 @@ type TemplateExtMutation struct {
 	id                *int64
 	credential_type   *string
 	strip_image_tools *bool
+	upstream_paths    *map[string]string
 	clearedFields     map[string]struct{}
 	template          *int64
 	clearedtemplate   bool
@@ -22644,6 +22645,55 @@ func (m *TemplateExtMutation) ResetStripImageTools() {
 	delete(m.clearedFields, templateext.FieldStripImageTools)
 }
 
+// SetUpstreamPaths sets the "upstream_paths" field.
+func (m *TemplateExtMutation) SetUpstreamPaths(value map[string]string) {
+	m.upstream_paths = &value
+}
+
+// UpstreamPaths returns the value of the "upstream_paths" field in the mutation.
+func (m *TemplateExtMutation) UpstreamPaths() (r map[string]string, exists bool) {
+	v := m.upstream_paths
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldUpstreamPaths returns the old "upstream_paths" field's value of the TemplateExt entity.
+// If the TemplateExt object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TemplateExtMutation) OldUpstreamPaths(ctx context.Context) (v map[string]string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldUpstreamPaths is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldUpstreamPaths requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldUpstreamPaths: %w", err)
+	}
+	return oldValue.UpstreamPaths, nil
+}
+
+// ClearUpstreamPaths clears the value of the "upstream_paths" field.
+func (m *TemplateExtMutation) ClearUpstreamPaths() {
+	m.upstream_paths = nil
+	m.clearedFields[templateext.FieldUpstreamPaths] = struct{}{}
+}
+
+// UpstreamPathsCleared returns if the "upstream_paths" field was cleared in this mutation.
+func (m *TemplateExtMutation) UpstreamPathsCleared() bool {
+	_, ok := m.clearedFields[templateext.FieldUpstreamPaths]
+	return ok
+}
+
+// ResetUpstreamPaths resets all changes to the "upstream_paths" field.
+func (m *TemplateExtMutation) ResetUpstreamPaths() {
+	m.upstream_paths = nil
+	delete(m.clearedFields, templateext.FieldUpstreamPaths)
+}
+
 // ClearTemplate clears the "template" edge to the Template entity.
 func (m *TemplateExtMutation) ClearTemplate() {
 	m.clearedtemplate = true
@@ -22705,7 +22755,7 @@ func (m *TemplateExtMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TemplateExtMutation) Fields() []string {
-	fields := make([]string, 0, 3)
+	fields := make([]string, 0, 4)
 	if m.template != nil {
 		fields = append(fields, templateext.FieldTemplateID)
 	}
@@ -22714,6 +22764,9 @@ func (m *TemplateExtMutation) Fields() []string {
 	}
 	if m.strip_image_tools != nil {
 		fields = append(fields, templateext.FieldStripImageTools)
+	}
+	if m.upstream_paths != nil {
+		fields = append(fields, templateext.FieldUpstreamPaths)
 	}
 	return fields
 }
@@ -22729,6 +22782,8 @@ func (m *TemplateExtMutation) Field(name string) (ent.Value, bool) {
 		return m.CredentialType()
 	case templateext.FieldStripImageTools:
 		return m.StripImageTools()
+	case templateext.FieldUpstreamPaths:
+		return m.UpstreamPaths()
 	}
 	return nil, false
 }
@@ -22744,6 +22799,8 @@ func (m *TemplateExtMutation) OldField(ctx context.Context, name string) (ent.Va
 		return m.OldCredentialType(ctx)
 	case templateext.FieldStripImageTools:
 		return m.OldStripImageTools(ctx)
+	case templateext.FieldUpstreamPaths:
+		return m.OldUpstreamPaths(ctx)
 	}
 	return nil, fmt.Errorf("unknown TemplateExt field %s", name)
 }
@@ -22773,6 +22830,13 @@ func (m *TemplateExtMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetStripImageTools(v)
+		return nil
+	case templateext.FieldUpstreamPaths:
+		v, ok := value.(map[string]string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetUpstreamPaths(v)
 		return nil
 	}
 	return fmt.Errorf("unknown TemplateExt field %s", name)
@@ -22810,6 +22874,9 @@ func (m *TemplateExtMutation) ClearedFields() []string {
 	if m.FieldCleared(templateext.FieldStripImageTools) {
 		fields = append(fields, templateext.FieldStripImageTools)
 	}
+	if m.FieldCleared(templateext.FieldUpstreamPaths) {
+		fields = append(fields, templateext.FieldUpstreamPaths)
+	}
 	return fields
 }
 
@@ -22827,6 +22894,9 @@ func (m *TemplateExtMutation) ClearField(name string) error {
 	case templateext.FieldStripImageTools:
 		m.ClearStripImageTools()
 		return nil
+	case templateext.FieldUpstreamPaths:
+		m.ClearUpstreamPaths()
+		return nil
 	}
 	return fmt.Errorf("unknown TemplateExt nullable field %s", name)
 }
@@ -22843,6 +22913,9 @@ func (m *TemplateExtMutation) ResetField(name string) error {
 		return nil
 	case templateext.FieldStripImageTools:
 		m.ResetStripImageTools()
+		return nil
+	case templateext.FieldUpstreamPaths:
+		m.ResetUpstreamPaths()
 		return nil
 	}
 	return fmt.Errorf("unknown TemplateExt field %s", name)

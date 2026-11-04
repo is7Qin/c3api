@@ -31,6 +31,7 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 		SetTemplateID(e.TemplateID).
 		SetCredentialType(string(e.CredentialType)).
 		SetNillableStripImageTools(e.StripImageTools). // nil = no-op（插入路径缺列 → NULL）
+		SetUpstreamPaths(e.UpstreamPaths).             // nil → NULL（JSON 列零值即 nil）
 		OnConflictColumns(templateext.FieldTemplateID).
 		Update(func(u *ent.TemplateExtUpsert) {
 			u.SetCredentialType(string(e.CredentialType))
@@ -39,6 +40,11 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 				u.SetStripImageTools(*e.StripImageTools)
 			} else {
 				u.ClearStripImageTools()
+			}
+			if e.UpstreamPaths != nil {
+				u.SetUpstreamPaths(e.UpstreamPaths)
+			} else {
+				u.ClearUpstreamPaths()
 			}
 		}).
 		ID(ctx)

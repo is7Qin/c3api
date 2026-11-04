@@ -382,9 +382,14 @@ type Template struct {
 	// tool_choice 悬挂；input 内嵌 v1 图像内容不做）。热路径快照布尔读 + 分支
 	// 零开销；false = 未配置/关闭（nil 与 false 同语义，快照收敛为 bool）。
 	StripImageTools bool
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-	DeletedAt       *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
+	// UpstreamPaths 逐格式自定义上游路径（credential_type=custom 专用；
+	// template_ext.upstream_paths 快照合并）。nil/空 = 全部回落官方默认端点。
+	// 路径词法 = aiclient 内部 path 参数（如 "chat/completions"、"v1/messages"），
+	// 可带 query；未配置不影响任何既有类型。
+	UpstreamPaths map[string]string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+	DeletedAt     *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
 }
 
 // FormatsFor 模板支持的格式列表。
@@ -510,12 +515,15 @@ func MultBp(v *int) int {
 // TemplateExt 模板类型化扩展配置（template_ext 子表，1:1）：credential_type
 // ∈ {responses-special, codex-oauth, codex-pat} 的模板才有 ext 行（api_key 主列
 // 类型无 ext 行）。模板是共享配置面：只承载类型声明 + StripImageTools 公共
-// 能力开关（三类型通用）——凭据列组（oauth/pat）一律在账号级 account_ext
-// （账号私有）。nil = 未配置（NULL 落库）。
+// 能力开关（三类型通用）+ custom 的逐格式路径——凭据列组（oauth/pat）一律在
+// 账号级 account_ext（账号私有）。nil = 未配置（NULL 落库）。
 type TemplateExt struct {
 	TemplateID      int64
 	CredentialType  credential.Type
 	StripImageTools *bool // 三类型公共能力开关：模板级图像 tool 剥离（消费）
+	// UpstreamPaths 逐格式自定义上游路径（custom 专用）。nil = 未配置（NULL
+	// 落库）；空 map 与 nil 等价。键集合与默认值见 spec §4.3。
+	UpstreamPaths map[string]string
 }
 
 // CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 序列化

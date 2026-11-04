@@ -6,7 +6,11 @@ package service
 
 import (
 	"context"
+	"net/url"
+	"regexp"
+	"strings"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
 )
@@ -14,6 +18,66 @@ import (
 // —— 模板类型化扩展（template_ext 1:1；通用框架：表结构/CRUD 骨架/类型枚举
 // 校验。数据层 CRUD + 契约；codex 专属类型/列组见
 // ext_codex.go，未来 claude oauth 等新类型 → 新增 ext_claude.go 同构） ——
+
+// upstreamPathFormat 自定义路径键 → 需要的格式（键集合固定，见 spec §4.3）。
+var upstreamPathFormat = map[string]domain.RequestFormat{
+	"openai-chat":               domain.FormatOpenAIChat,
+	"openai-responses":          domain.FormatOpenAIResponses,
+	"openai-responses-ws":       domain.FormatOpenAIResponsesWS,
+	"anthropic":                 domain.FormatAnthropic,
+	"openai-search":             domain.FormatOpenAISearch,
+	"openai-images.generations": domain.FormatOpenAIImages,
+	"openai-images.edits":       domain.FormatOpenAIImages,
+}
+
+const upstreamPathMaxLen = 1024
+
+// upstreamPathRE 白名单：黑名单枚举不出 `\`、`;`、`%00` 等分隔符变体。
+var upstreamPathRE = regexp.MustCompile(`^(?:v1/)?[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*(?:\?[A-Za-z0-9._~=&%-]+)?$`)
+
+// upstreamQueryRE 解码后的 query 白名单（`%` 不再允许——已解码完成）。
+var upstreamQueryRE = regexp.MustCompile(`^[A-Za-z0-9._~=&-]+$`)
+
+// validateUpstreamPaths 校验 custom 的逐格式路径：键必须属于全集且对应格式在
+// supported_formats 内；值长度 1..1024、去至多一个前导 `/` 后过白名单、
+// query 非空且解码后过白名单、任何路径段不得为 `.` 或 `..`。
+// nil/空 map = 未配置（合法）。
+func validateUpstreamPaths(paths map[string]string, supported map[domain.RequestFormat]bool) error {
+	for k, raw := range paths {
+		f, ok := upstreamPathFormat[k]
+		if !ok {
+			return ErrInvalidInput
+		}
+		if supported != nil && !supported[f] {
+			return ErrInvalidInput
+		}
+		v := strings.TrimSpace(raw)
+		if len(v) < 1 || len(v) > upstreamPathMaxLen {
+			return ErrInvalidInput
+		}
+		v = strings.TrimPrefix(v, "/")
+		if v == "" || !upstreamPathRE.MatchString(v) {
+			return ErrInvalidInput
+		}
+		pathPart, query := v, ""
+		if i := strings.IndexByte(v, '?'); i >= 0 {
+			pathPart, query = v[:i], v[i+1:]
+			if query == "" {
+				return ErrInvalidInput
+			}
+			dec, err := url.QueryUnescape(query)
+			if err != nil || !upstreamQueryRE.MatchString(dec) {
+				return ErrInvalidInput
+			}
+		}
+		for _, seg := range strings.Split(pathPart, "/") {
+			if seg == "." || seg == ".." {
+				return ErrInvalidInput
+			}
+		}
+	}
+	return nil
+}
 
 // validateTemplateExt 校验模板 ext 行：credential_type ∈ {responses-special,
 // codex-oauth, codex-pat}（api_key 主列类型无 ext 行；类型一致性——ext 行类型
@@ -58,6 +122,18 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) 
 	}
 	if err := validateTemplateExt(e); err != nil {
 		return nil, err
+	}
+	if len(e.UpstreamPaths) > 0 {
+		if e.CredentialType != credential.TypeCustom {
+			return nil, ErrInvalidInput // 仅 custom 可配路径
+		}
+		supported := make(map[domain.RequestFormat]bool, len(tpl.SupportedFormats))
+		for _, f := range tpl.SupportedFormats {
+			supported[f] = true
+		}
+		if err := validateUpstreamPaths(e.UpstreamPaths, supported); err != nil {
+			return nil, err
+		}
 	}
 	saved, err := s.store.UpsertTemplateExt(ctx, e)
 	if err != nil {

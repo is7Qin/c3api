@@ -18,6 +18,8 @@ const (
 	FieldCredentialType = "credential_type"
 	// FieldStripImageTools holds the string denoting the strip_image_tools field in the database.
 	FieldStripImageTools = "strip_image_tools"
+	// FieldUpstreamPaths holds the string denoting the upstream_paths field in the database.
+	FieldUpstreamPaths = "upstream_paths"
 	// EdgeTemplate holds the string denoting the template edge name in mutations.
 	EdgeTemplate = "template"
 	// Table holds the table name of the templateext in the database.
@@ -37,6 +39,7 @@ var Columns = []string{
 	FieldTemplateID,
 	FieldCredentialType,
 	FieldStripImageTools,
+	FieldUpstreamPaths,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).

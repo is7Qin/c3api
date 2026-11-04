@@ -21,6 +21,9 @@ func (TemplateExt) Fields() []ent.Field {
 		field.String("credential_type"),
 		// 三类型公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）
 		field.Bool("strip_image_tools").Optional().Nillable(),
+		// custom 专用：逐格式自定义上游路径（NULL/空 = 全回落官方默认）。
+		// 键集合与校验见 spec §4.3/§4.4；仅 credential_type=custom 可写。
+		field.JSON("upstream_paths", map[string]string{}).Optional(),
 	}
 }
 

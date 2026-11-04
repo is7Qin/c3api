@@ -204,7 +204,7 @@ func QualityClassID(callerKind CallerKind, upstreamFormat RequestFormat, resolve
 
 func stableCredentialDigest(credType credential.Type, upstreamKey string, patKey string) ([]byte, error) {
 	switch credType {
-	case credential.TypeAPIKey, credential.TypeResponsesSpecial:
+	case credential.TypeAPIKey, credential.TypeResponsesSpecial, credential.TypeCustom:
 		if upstreamKey == "" {
 			return nil, fmt.Errorf("routing: upstream key empty for %s", credType)
 		}

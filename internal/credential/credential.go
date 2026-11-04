@@ -31,6 +31,10 @@ const (
 	TypeCodexOAuth Type = "codex-oauth"
 	// TypeCodexPAT Codex PAT 账号池模板/账号；配置挂 ext 子表，鉴权接 SDK ws。
 	TypeCodexPAT Type = "codex-pat"
+	// TypeCustom 高级自定义：静态 Key + 逐格式自定义上游路径（配置挂
+	// template_ext.upstream_paths）。支持全部 6 种格式；路径未配置时回落官方
+	// 默认端点，因此行为与 api_key 在未配置路径时完全一致。
+	TypeCustom Type = "custom"
 )
 
 // Valid 类型是否已注册可用的凭据类型（模板主列 credential_type 全量：api_key
@@ -38,7 +42,7 @@ const (
 // 空串）→ false。
 func (t Type) Valid() bool {
 	switch t {
-	case TypeAPIKey, TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT:
+	case TypeAPIKey, TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom:
 		return true
 	}
 	return false
@@ -48,7 +52,7 @@ func (t Type) Valid() bool {
 // 表达静态 Key 语义）。
 func (t Type) ValidTemplateExt() bool {
 	switch t {
-	case TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT:
+	case TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom:
 		return true
 	}
 	return false
@@ -110,6 +114,7 @@ func New() *Registry {
 	r := &Registry{m: make(map[Type]Provider)}
 	r.Register(staticKeyProvider{TypeAPIKey})
 	r.Register(staticKeyProvider{TypeResponsesSpecial})
+	r.Register(staticKeyProvider{TypeCustom})
 	return r
 }
 
