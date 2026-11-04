@@ -1113,3 +1113,34 @@ func TestResponsesWSDuplicateModelKey(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Empty(t, store.logs, "拒绝不产生任何记录")
 }
+
+// TestResponsesWSInvalidJSONFirstFrame 首帧非法 JSON → 错误帧 + 正常关闭、零上游
+// 拨号、零记录（与 HTTP 入口「invalid JSON」400 同语义）。这条同时是扫描器
+// （duplicateTopLevelKey）与 gjson 的 json.Valid 前置假设的显式兑现：否则畸形帧
+// 会退化成「model 提取为空 → 路由 fail-closed」，错误面模糊。
+func TestResponsesWSInvalidJSONFirstFrame(t *testing.T) {
+	hooks := &fakeWSHooks{}
+	up := fakeResponsesWS(t, hooks)
+	defer up.Close()
+	store := &captureLogStore{}
+	p, srv := wsTestProxy(t, up.URL, domain.FormatOpenAIResponsesWS, store)
+
+	c := dialResponsesWS(t, srv)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":`)))
+
+	frame := readResponsesWSFrame(t, c)
+	require.Contains(t, string(frame), "invalid request body: invalid JSON")
+	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+
+	hooks.mu.Lock()
+	require.Empty(t, hooks.frames, "畸形帧不得拨号上游")
+	hooks.mu.Unlock()
+	require.Zero(t, p.rec.Pending())
+	require.NoError(t, p.rec.Close(context.Background()))
+	require.NoError(t, p.errlog.Close(context.Background()))
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	require.Empty(t, store.logs)
+}
