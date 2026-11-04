@@ -30,11 +30,18 @@ export type ExtFormFields = {
 }
 
 /**
- * ext 回显 → 表单字段。返回 null 表示「没有可回显的数据」（查询未成功或读取
- * 失败）：调用方**不得**据此清空表单，也不得据此认为已同步。
+ * ext 回显 → 表单字段。
+ *
+ * 三种输入必须区分开（合并它们会把两种相反的处境当成一回事）：
+ * - `undefined` = **没读取到**（查询未成功/进行中/失败）→ 返回 null，调用方既不得
+ *   清空表单，也不得认为已同步（否则一次保存就把已有路径写成 NULL）；
+ * - `null` = 读取成功但**没有 ext 行**（如只用 API 建过的 custom 模板）→ 空字段，
+ *   这确实就是「未配置」，可以标记已同步（否则这类模板会永远存不进去）；
+ * - 对象 = 正常回显。
  */
-export function extFormFields(ext: TemplateExtEcho): ExtFormFields | null {
-  if (ext === null) return null
+export function extFormFields(ext: TemplateExtEcho | undefined): ExtFormFields | null {
+  if (ext === undefined) return null
+  if (ext === null) return { strip_image_tools: false, upstream_paths: {} }
   return {
     strip_image_tools: ext.strip_image_tools === true,
     // 未配置的键不出现：输入框留空 = 该格式走默认端点

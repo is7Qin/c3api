@@ -693,9 +693,11 @@ export default function Templates() {
   const editingID = editing?.ID ?? null
   useEffect(() => {
     // 对话框关闭时不必灌表单；dialogOpen 同时是「重开要重新灌一次」的触发器。
-    if (editingID === null || !dialogOpen || !templateExtEcho.isSuccess) return
-    const fields = extFormFields(templateExtEcho.data ?? null)
-    if (!fields) return // 没有可回显的数据：保持表单原样，也不标记已同步
+    if (editingID === null || !dialogOpen) return
+    // 读取成功才回显：isSuccess 为真时 data 只能是对象（有 ext 行）或 null（无
+    // ext 行 = 确实未配置 = 可以标记已同步）；未成功时传 undefined 表示「不知道」。
+    const fields = extFormFields(templateExtEcho.isSuccess ? (templateExtEcho.data ?? null) : undefined)
+    if (!fields) return // 没读到：保持表单原样，也不标记已同步
     setForm(f => ({ ...f, ...fields }))
     setPathsSyncedFor(editingID)
   }, [editingID, dialogOpen, templateExtEcho.isSuccess, templateExtEcho.data])

@@ -27,15 +27,31 @@ describe('extFormFields', () => {
     )
   })
 
-  it('无 ext 行 → 空表（该模板确实没有配置）', () => {
+  it('无 ext 行 → 空表（该模板确实没有配置，可以标记已同步）', () => {
     assert.deepEqual(
-      extFormFields({ upstream_paths: null, strip_image_tools: null }),
+      extFormFields(null),
       { strip_image_tools: false, upstream_paths: {} },
     )
   })
 
-  it('读取失败（null）→ 不产出任何值，调用方不得据此清空表单', () => {
-    assert.equal(extFormFields(null), null)
+  it('没读到（undefined）→ 不产出任何值，调用方不得据此清空表单', () => {
+    assert.equal(extFormFields(undefined), null)
+  })
+
+  // 回归：只用管理 API 建过的 custom 模板没有 ext 行（GET 404 → null）。把
+  // 「无行」与「没读到」当成同一件事，会让这类模板永远同步不上 ⇒ 门禁永久拦截。
+  it('custom 模板没有 ext 行时仍视为已回显（可保存）', () => {
+    const fields = extFormFields(null)
+    assert.notEqual(fields, null)
+    assert.deepEqual(fields?.upstream_paths, {})
+    assert.equal(fields?.strip_image_tools, false)
+  })
+
+  it('存在 ext 行但字段全为 null → 未配置', () => {
+    assert.deepEqual(
+      extFormFields({ upstream_paths: null, strip_image_tools: null }),
+      { strip_image_tools: false, upstream_paths: {} },
+    )
   })
 
   it('返回副本：改表单不会写回缓存对象', () => {
