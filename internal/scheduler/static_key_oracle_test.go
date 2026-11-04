@@ -120,9 +120,13 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
 		planKeyOf(newSnapshotStatic(a, &tplPathsOther, nil)),
 		"changing an upstream path must change the key")
+	// Same content in a *different* map instance must not change the key either
+	// (comparing one instance with itself would assert nothing).
+	tplPathsSame := *tpl
+	tplPathsSame.UpstreamPaths = map[string]string{"openai-chat": "v1/chat/completions"}
 	require.Equal(t,
 		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
-		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
+		planKeyOf(newSnapshotStatic(a, &tplPathsSame, nil)),
 		"identical upstream paths must not change the key")
 
 	// payloadKey (OAuth rotation) must NOT affect planKey.

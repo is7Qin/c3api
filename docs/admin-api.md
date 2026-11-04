@@ -201,7 +201,7 @@
 > 校验：路径先 trim、剥至多一个前导 `/`、限长 1..1024，再过白名单（拒 `\`、`;`、`#`、`@`、空格、控制字符、空段、`.`/`..` 段）；归一后的值落库，避免出现 `/v1/v1/...`。
 > 键必须属于本模板 `supported_formats`（写入时校验）。**收窄 `supported_formats` 不会删除已存的键**：这些键成为死配置（对应格式不再被路由），重新放宽后自动复活，不会导致请求错误。
 
-> 模板变更（含 base_url / supported_formats / format_models / model_mapping）通过 invalidate 回调即时生效于调度器快照与上游 SDK 客户端（无需重启）。
+> 模板变更（含 base_url / supported_formats / format_models / model_mapping / upstream_paths）通过 invalidate 回调即时生效于调度器快照（无需重启）。非流请求由网关自己直发上游、不再经厂商 SDK 客户端；流式与 WS 仍走客户端工厂，同样随 invalidate 重建。
 
 ---
 
