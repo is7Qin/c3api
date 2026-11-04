@@ -1,0 +1,70 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
+// custom 模板的逐格式上游路径：与后端约定共享的纯逻辑（键集合、留空不上送、
+// 「必须先读回既有配置才能保存」的门禁）。抽成纯函数是为了能被 node --test
+// 直接覆盖——页面级测试不在本项目的能力范围内，而门禁判断错了会静默清空配置。
+
+/** custom 类型的逐格式路径键（与后端 service / openapi 键集合一致）。 */
+export const CUSTOM_PATH_FIELDS: { key: string; placeholder: string }[] = [
+  { key: 'openai-chat', placeholder: 'chat/completions' },
+  { key: 'openai-responses', placeholder: 'responses' },
+  { key: 'openai-responses-ws', placeholder: 'v1/responses' },
+  { key: 'anthropic', placeholder: 'v1/messages' },
+  { key: 'openai-search', placeholder: 'alpha/search' },
+  { key: 'openai-images.generations', placeholder: 'images/generations' },
+  { key: 'openai-images.edits', placeholder: 'images/edits' },
+]
+
+/** GET /templates/{id}/ext 的响应形态；null = 没有 ext 行。 */
+export type TemplateExtEcho = {
+  upstream_paths?: Record<string, string> | null
+  strip_image_tools?: boolean | null
+} | null
+
+/** 表单里与 ext 对应的两个字段。 */
+export type ExtFormFields = {
+  strip_image_tools: boolean
+  upstream_paths: Record<string, string>
+}
+
+/**
+ * ext 回显 → 表单字段。返回 null 表示「没有可回显的数据」（查询未成功或读取
+ * 失败）：调用方**不得**据此清空表单，也不得据此认为已同步。
+ */
+export function extFormFields(ext: TemplateExtEcho): ExtFormFields | null {
+  if (ext === null) return null
+  return {
+    strip_image_tools: ext.strip_image_tools === true,
+    // 未配置的键不出现：输入框留空 = 该格式走默认端点
+    upstream_paths: { ...(ext.upstream_paths ?? {}) },
+  }
+}
+
+/**
+ * 保存前是否必须拦住：custom 模板且表单还没同步过该模板的既有路径。
+ *
+ * 判据是「syncedFor === editingId」而不是查询状态：关闭再打开同一模板时缓存
+ * 数据引用不变、effect 不重跑，而表单已被重置成空表——只看 isLoading 会把
+ * 「被重置的空表单」当成已回显，一次保存就把全部路径写成 NULL。
+ */
+export function pathsEchoBlocked(
+  credentialType: string,
+  editingId: number | null,
+  syncedFor: number | null,
+): boolean {
+  if (editingId === null) return false // 新建：没有既有配置可清空
+  if (credentialType !== 'custom') return false // 其余类型不写路径
+  return syncedFor !== editingId
+}
+
+/** 空白键不上送（后端 nil = 未配置 = 该格式回落官方默认端点）。 */
+export function nonEmptyPaths(rec: Record<string, string>): Record<string, string> | undefined {
+  const out: Record<string, string> = {}
+  for (const [k, v] of Object.entries(rec)) {
+    const t = v.trim()
+    if (t) out[k] = t
+  }
+  return Object.keys(out).length ? out : undefined
+}

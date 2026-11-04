@@ -11,6 +11,12 @@ import type { TFunction } from 'i18next'
 import { api } from '@/App'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
+import {
+  CUSTOM_PATH_FIELDS,
+  extFormFields,
+  nonEmptyPaths,
+  pathsEchoBlocked as echoBlocked,
+} from '@/lib/template-extensions'
 import { BatchBar } from '@/components/batch-bar'
 import { commaList, formatDateTime, truncate } from '@/components/fmt'
 import { ListToolbar } from '@/components/list-toolbar'
@@ -63,27 +69,7 @@ const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-specia
 const ECO_CREDENTIAL_TYPES: TemplateCredentialType[] = ['responses-special', 'codex-oauth', 'codex-pat']
 const ECO_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws', 'openai-images', 'openai-search']
 
-// custom 类型的逐格式路径键（与后端 service/openapi 键集合一致）。placeholder 即
-// 该格式的官方默认端点——留空 = 不写该键 = 使用默认。
-const CUSTOM_PATH_FIELDS: { key: string; placeholder: string }[] = [
-  { key: 'openai-chat', placeholder: 'chat/completions' },
-  { key: 'openai-responses', placeholder: 'responses' },
-  { key: 'openai-responses-ws', placeholder: 'v1/responses' },
-  { key: 'anthropic', placeholder: 'v1/messages' },
-  { key: 'openai-search', placeholder: 'alpha/search' },
-  { key: 'openai-images.generations', placeholder: 'images/generations' },
-  { key: 'openai-images.edits', placeholder: 'images/edits' },
-]
-
-// 空串不上送：留空的格式必须回落到默认端点（后端 nil = 未配置）。
-function nonEmptyPaths(rec: Record<string, string>): Record<string, string> | undefined {
-  const out: Record<string, string> = {}
-  for (const [k, v] of Object.entries(rec)) {
-    const t = v.trim()
-    if (t) out[k] = t
-  }
-  return Object.keys(out).length ? out : undefined
-}
+// 路径键与「留空不上送」在 lib/template-extensions.ts（纯函数，node --test 覆盖）
 const isCodexCredential = (v: string) => v === 'codex-oauth' || v === 'codex-pat'
 const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> = {
   'responses-special': 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
@@ -602,6 +588,11 @@ export default function Templates() {
   const [editing, setEditing] = useState<Template | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
+  // pathsSyncedFor 记录「表单已按哪个模板 ID 同步过 ext 回显」（custom 保存门禁用）。
+  // 门禁必须挂在表单状态上而不是查询状态上：关闭再打开同一模板时 react-query
+  // 会复用同一份 data 引用（structural sharing），effect 不重跑，而 openEdit 已
+  // 把 form 重置成空表——只查 isLoading 会把「刚被重置的空表单」当成已回显。
+  const [pathsSyncedFor, setPathsSyncedFor] = useState<number | null>(null)
   // 批量更新时若选中任一 codex 模板则禁用 BaseURL（混合/全 Codex 均不发送已知无效请求；api_key/responses-special 保持可编辑；stale 行 fail-closed）
   const isBatchCodex = useMemo(() => {
     if (selected.length === 0) return false
@@ -671,12 +662,16 @@ export default function Templates() {
   const openCreate = () => {
     setEditing(null)
     setForm(emptyForm())
+    setPathsSyncedFor(null) // 新建无既有路径；清掉上次的同步标记
     setValidationMsg(null)
     setDialogOpen(true)
   }
   const openEdit = (t: Template) => {
     setEditing(t)
     setForm(toForm(t))
+    // 表单刚被重置成空表：在回显 effect 重新灌入之前一律视为未同步，否则
+    // 「关闭→重开→保存」会在表单尚空的瞬间把全部路径写成 NULL。
+    setPathsSyncedFor(null)
     setValidationMsg(null)
     setDialogOpen(true)
   }
@@ -696,20 +691,17 @@ export default function Templates() {
     enabled: !!editing && dialogOpen,
   })
   useEffect(() => {
-    if (!editing || templateExtEcho.isLoading) return
-    const target = templateExtEcho.data?.strip_image_tools ?? false
-    const paths = templateExtEcho.data?.upstream_paths ?? {}
-    setForm(f => ({
-      ...f,
-      strip_image_tools: target,
-      upstream_paths: { ...paths }, // 回显；未配置的键不出现，输入框留空即默认
-    }))
-  }, [editing?.ID, templateExtEcho.isLoading, templateExtEcho.data])
+    if (!editing || !templateExtEcho.isSuccess) return
+    const fields = extFormFields(templateExtEcho.data ?? null)
+    if (!fields) return // 没有可回显的数据：保持表单原样，也不标记已同步
+    setForm(f => ({ ...f, ...fields }))
+    setPathsSyncedFor(editing.ID)
+    // dialogOpen 必须在依赖里：关闭再打开同一模板要重新灌一次表单（否则
+    // openEdit 的 reset 会把输入框清空，一次保存就把全部路径写成 NULL）。
+  }, [editing?.ID, dialogOpen, templateExtEcho.isSuccess, templateExtEcho.data])
 
-  // 自定义模板的路径依赖 ext 回显；回显未完成或失败时不得保存。
-  const pathsEchoBlocked = !!editing
-    && form.credential_type === 'custom'
-    && (templateExtEcho.isLoading || templateExtEcho.isError)
+  // 自定义模板的路径依赖 ext 回显：当前模板尚未同步过既有配置时不得保存。
+  const pathsEchoBlocked = echoBlocked(form.credential_type, editing?.ID ?? null, pathsSyncedFor)
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
     setBatchOpen(false)
@@ -731,6 +723,12 @@ export default function Templates() {
   const save = useMutation({
     mutationFn: async (f: FormState) => {
       const ct = (f.credential_type || 'api_key') as TemplateCredentialType
+      // 自定义路径必须建立在「已读回既有配置」之上：回显未完成就写，会把已有
+      // 路径整体清空（7 个端点全部回落厂商默认，运维侧表现为 404）。门禁前置到
+      // 任何写之前——放在 updateTemplate 之后会变成「模板已改、却报没保存」。
+      if (echoBlocked(ct, editing?.ID ?? null, pathsSyncedFor)) {
+        throw new Error(tr('templates.ext.echoRequired'))
+      }
       let id = editing?.ID
       if (!editing) {
         id = (await api.createTemplate(toBody(f))).ID
@@ -738,11 +736,6 @@ export default function Templates() {
         await api.updateTemplate(editing.ID, toBody(f))
       }
       if (id && (ECO_CREDENTIAL_TYPES.includes(ct) || ct === 'custom')) {
-        // 自定义路径必须建立在「已读回既有配置」之上：回显未完成就写，会把已有
-        // 路径整体清空（7 个端点全部回落厂商默认，运维侧表现为 404）。
-        if (ct === 'custom' && editing && !templateExtEcho.isSuccess) {
-          throw new Error(tr('templates.ext.echoRequired'))
-        }
         const body: TemplateExt = {
           template_id: id,
           credential_type: ct as TemplateExt['credential_type'],
@@ -757,6 +750,8 @@ export default function Templates() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['templates'] })
+      // 后端会把路径归一后落库（剥前导 /、裁空白），下次打开要显示归一值
+      qc.invalidateQueries({ queryKey: ['template-ext-echo'] })
       setDialogOpen(false)
     },
   })
