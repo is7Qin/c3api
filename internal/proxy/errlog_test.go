@@ -177,8 +177,10 @@ func TestProxy4xxLogsErrorMessageTruncated(t *testing.T) {
 	require.Len(t, store.logs, 1)
 	l := store.logs[0]
 	require.NotNil(t, l.ErrorMessage)
-	// 非流式改原始出栈后，上游错误体不再经 SDK 重新序列化：`upstreamErrMsg`
-	// 从 `{"error":{"message":…}}` 直接取出 message 原文（信封被剥掉），再截断。
+	// 非流式改原始出栈后，上游错误体不再经 SDK 重新序列化：err_logs 的
+	// ErrorMessage 直接承载**上游原始 body**（`{"error":{"message":…}}` 信封
+	// 保留），仅按 ErrMsgMaxLen 截断——而 SDK 时代是它解析后的
+	// `{"message":…}`（信封被 SDK 剥掉）。客户端可见部分不变。
 	require.Len(t, *l.ErrorMessage, domain.ErrMsgMaxLen, "长 body 截断 500 字符")
 	prefix := `{"error":{"message":"`
 	require.Equal(t, prefix+strings.Repeat("x", domain.ErrMsgMaxLen-len(prefix)), *l.ErrorMessage)
