@@ -181,6 +181,10 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	reqModel := gjson.GetBytes(body, "model").String()
 	var data []byte
 	var it, ot, tt, cr, cc int64
+	// 注：这里校验的是**转换后**的请求体（caller.go 先 ConvertRequest 再派发）。
+	// 客户端原始体里的重复 model 键由转换器按 last-wins 收敛成单键，随后必然经过
+	// setModel 改写成路由选定的 sel.Model（两者不同则改写，相同则本就一致），因此
+	// 不存在「路由看首个、上游执行末个」的分叉；原生格式则在校验里直接拒掉重复键。
 	if err := validateNonStreamBody(body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: " + err.Error()}})
 		sel.Release()
