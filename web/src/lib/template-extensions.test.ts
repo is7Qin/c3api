@@ -6,6 +6,7 @@
 // 运行：`node --test`（Node 内置运行器原生跑 TS，零新依赖）。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import {
   CUSTOM_PATH_FIELDS,
   extFormFields,
@@ -126,5 +127,37 @@ describe('CUSTOM_PATH_FIELDS', () => {
       'openai-images.edits',
     ])
     assert.equal(new Set(keys).size, keys.length)
+  })
+})
+
+// 接线层 tripwire：本项目没有 jsdom / 渲染测试，纯函数覆盖不到「页面有没有按这些
+// 规则接线」。这三条检查直接读页面源码——它们不是行为测试，只守最容易静默回归的
+// 三处接线（重开清标记、effect 依赖对话框状态、门禁在任何写之前）。故意写得窄：
+// 改动页面结构时会失败，提醒作者确认语义而不是删掉测试。
+describe('templates 页面接线 tripwire（源码形状）', () => {
+  const page = readFileSync(new URL('../pages/templates.tsx', import.meta.url), 'utf8')
+
+  it('openEdit / openCreate 都会清掉「已同步」标记', () => {
+    for (const handler of ['const openCreate = () => {', 'const openEdit = (t: Template) => {']) {
+      const re = new RegExp(
+        handler.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[\\s\\S]*?setPathsSyncedFor\\(null\\)[\\s\\S]*?\\n  \\}',
+      )
+      assert.match(page, re, `${handler} 必须 setPathsSyncedFor(null)，否则重置后的空表单会被当成已回显`)
+    }
+  })
+
+  it('回显 effect 通过 shouldSyncEcho 判定，且依赖含 dialogOpen', () => {
+    assert.match(page, /shouldSyncEcho\(\{[^}]*dialogOpen[^}]*\}\)/,
+      'effect 判据必须走 shouldSyncEcho（含 dialogOpen），否则重开不会重灌表单')
+    assert.match(page, /\[editingID, dialogOpen, templateExtEcho\.isSuccess, templateExtEcho\.data\]/,
+      'effect 依赖必须含 dialogOpen，否则缓存命中时不会重跑')
+  })
+
+  it('门禁在写模板之前执行', () => {
+    const guard = page.indexOf('echoBlocked(ct,')
+    const write = page.indexOf('api.updateTemplate(')
+    assert.notEqual(guard, -1, '保存前必须有 echoBlocked 门禁')
+    assert.notEqual(write, -1, '找不到 api.updateTemplate')
+    assert.ok(guard < write, '门禁必须在 updateTemplate 之前，否则会「模板已改、却报没保存」')
   })
 })

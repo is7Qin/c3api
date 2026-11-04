@@ -50,6 +50,21 @@ export function extFormFields(ext: TemplateExtEcho | undefined): ExtFormFields |
 }
 
 /**
+ * 回显 effect 是否该把 ext 结果写回表单。
+ *
+ * 三个条件必须同时成立：有正在编辑的模板、对话框打开、读取成功。`dialogOpen`
+ * 在条件里是有意的：关掉再打开同一模板时缓存数据引用不变、effect 不重跑，
+ * 只有把「对话框打开」也当作触发条件，重置后的表单才会被重新灌一次。
+ */
+export function shouldSyncEcho(opts: {
+  editingId: number | null
+  dialogOpen: boolean
+  extReadOk: boolean
+}): boolean {
+  return opts.editingId !== null && opts.dialogOpen && opts.extReadOk
+}
+
+/**
  * 保存前是否必须拦住：custom 模板且表单还没同步过该模板的既有路径。
  *
  * 判据是「syncedFor === editingId」而不是查询状态：关闭再打开同一模板时缓存

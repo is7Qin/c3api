@@ -16,6 +16,7 @@ import {
   extFormFields,
   nonEmptyPaths,
   pathsEchoBlocked as echoBlocked,
+  shouldSyncEcho,
 } from '@/lib/template-extensions'
 import { BatchBar } from '@/components/batch-bar'
 import { commaList, formatDateTime, truncate } from '@/components/fmt'
@@ -692,8 +693,9 @@ export default function Templates() {
   })
   const editingID = editing?.ID ?? null
   useEffect(() => {
-    // 对话框关闭时不必灌表单；dialogOpen 同时是「重开要重新灌一次」的触发器。
-    if (editingID === null || !dialogOpen) return
+    // dialogOpen 在判据里是有意的：关掉再打开同一模板时缓存引用不变、effect 不
+    // 重跑，只有把「对话框打开」也当触发条件，重置后的表单才会被重灌一次。
+    if (!shouldSyncEcho({ editingId: editingID, dialogOpen, extReadOk: templateExtEcho.isSuccess })) return
     // 读取成功才回显：isSuccess 为真时 data 只能是对象（有 ext 行）或 null（无
     // ext 行 = 确实未配置 = 可以标记已同步）；未成功时传 undefined 表示「不知道」。
     const fields = extFormFields(templateExtEcho.isSuccess ? (templateExtEcho.data ?? null) : undefined)
