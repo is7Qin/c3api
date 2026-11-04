@@ -19,9 +19,15 @@ import (
 	"time"
 )
 
+// Config 保留构造期参数（既有调用点仍按此形状传值），但**两个超时字段已不再被
+// Factory 读取**：非流式改原始出栈后，deadline 由调用方 ctx 施加
+// （internal/proxy/forward.go 的 rawJSON），流式 backstop 一直由调用方 ctx 传入。
+// 保形不改签名是为了不在一次改动里动 30+ 处构造调用；清理时连同参数一起删。
 type Config struct {
-	UpstreamTimeout       time.Duration // 非流式调用超时
-	UpstreamStreamTimeout time.Duration // 流式 backstop（由调用方以 ctx 传入）
+	// Deprecated: 由调用方 ctx 控制（非流 deadline 在 proxy 层）。
+	UpstreamTimeout time.Duration
+	// Deprecated: 由调用方 ctx 控制（流式 backstop）。
+	UpstreamStreamTimeout time.Duration
 }
 
 type Factory struct {
