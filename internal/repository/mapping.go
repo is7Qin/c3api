@@ -147,8 +147,10 @@ func toDomainTemplate(t *ent.Template) *domain.Template {
 	if len(t.Edges.Ext) > 0 && t.Edges.Ext[0].StripImageTools != nil {
 		d.StripImageTools = *t.Edges.Ext[0].StripImageTools
 	}
-	// 逐格式自定义路径同款快照合并（custom 专用）；无 ext 边/未配置 → nil。
-	if len(t.Edges.Ext) > 0 {
+	// 逐格式自定义路径同款快照合并（**仅 custom 模板**）：类型从 custom 改成别的
+	// 类型时陈旧 ext 行不会被删除，若无条件合并，api_key 模板会继承旧路径并把
+	// 请求打到非预期端点。按模板类型门控后，陈旧行对其它类型完全无效。
+	if d.CredentialType == credential.TypeCustom && len(t.Edges.Ext) > 0 {
 		d.UpstreamPaths = t.Edges.Ext[0].UpstreamPaths
 	}
 	return d

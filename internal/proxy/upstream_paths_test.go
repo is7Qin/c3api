@@ -87,5 +87,9 @@ func TestPathOfFallsBackWhenUnset(t *testing.T) {
 	require.Equal(t, defaultPathChat, pathOf(nil, pathKeyChat, defaultPathChat))
 	require.Equal(t, defaultPathChat, pathOf(&scheduler.Selection{}, pathKeyChat, defaultPathChat), "nil map 回落默认")
 	require.Equal(t, defaultPathChat, pathOf(&scheduler.Selection{UpstreamPaths: map[string]string{pathKeyChat: ""}}, pathKeyChat, defaultPathChat), "空值等同未配置")
-	require.Equal(t, "v1/x", pathOf(&scheduler.Selection{UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}, pathKeyChat, defaultPathChat))
+	custom := &scheduler.Selection{CredentialType: credential.TypeCustom, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
+	require.Equal(t, "v1/x", pathOf(custom, pathKeyChat, defaultPathChat))
+	// 非 custom 类型即使快照里残留配置也必须回落默认（防类型切换后打到旧端点）
+	apiKey := &scheduler.Selection{CredentialType: credential.TypeAPIKey, UpstreamPaths: map[string]string{pathKeyChat: "v1/x"}}
+	require.Equal(t, defaultPathChat, pathOf(apiKey, pathKeyChat, defaultPathChat), "非 custom 忽略路径")
 }
