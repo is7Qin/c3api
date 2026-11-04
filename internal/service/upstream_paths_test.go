@@ -44,7 +44,8 @@ func TestValidateUpstreamPathsMatrix(t *testing.T) {
 		{"openai-chat": "  chat/completions  "},      // 首尾空白被裁掉
 	}
 	for _, tc := range accept {
-		require.NoError(t, validateUpstreamPaths(tc, all), "应接受: %#v", tc)
+		_, err := validateUpstreamPaths(tc, all)
+		require.NoError(t, err, "应接受: %#v", tc)
 	}
 
 	reject := []map[string]string{
@@ -71,14 +72,18 @@ func TestValidateUpstreamPathsMatrix(t *testing.T) {
 		{"openai-chat": "chat/completions?x=" + strings.Repeat("a", 1024)},
 	}
 	for _, tc := range reject {
-		require.ErrorIs(t, validateUpstreamPaths(tc, all), ErrInvalidInput, "应拒绝: %#v", tc)
+		_, err := validateUpstreamPaths(tc, all)
+		require.ErrorIs(t, err, ErrInvalidInput, "应拒绝: %#v", tc)
 	}
 
 	// 格式不在 supported_formats → 拒绝（图片键需要 openai-images）。
 	onlyChat := map[domain.RequestFormat]bool{domain.FormatOpenAIChat: true}
-	require.NoError(t, validateUpstreamPaths(map[string]string{"openai-chat": "chat/completions"}, onlyChat))
-	require.ErrorIs(t, validateUpstreamPaths(map[string]string{"anthropic": "v1/messages"}, onlyChat), ErrInvalidInput)
-	require.ErrorIs(t, validateUpstreamPaths(map[string]string{"openai-images.edits": "images/edits"}, onlyChat), ErrInvalidInput)
+	_, err := validateUpstreamPaths(map[string]string{"openai-chat": "chat/completions"}, onlyChat)
+	require.NoError(t, err)
+	_, err = validateUpstreamPaths(map[string]string{"anthropic": "v1/messages"}, onlyChat)
+	require.ErrorIs(t, err, ErrInvalidInput)
+	_, err = validateUpstreamPaths(map[string]string{"openai-images.edits": "images/edits"}, onlyChat)
+	require.ErrorIs(t, err, ErrInvalidInput)
 }
 
 // TestValidateTemplateCustomAcceptsAllFormats custom 与 api_key 一样支持全部格式；
@@ -108,4 +113,25 @@ func TestValidateTemplateCustomAcceptsAllFormats(t *testing.T) {
 		CredentialType:   credential.TypeResponsesSpecial,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 	}), ErrInvalidInput)
+}
+
+// TestValidateUpstreamPathsNormalizes 校验必须**回写归一结果**：只判定不归一，
+// "/v1/messages" 与带空白的值会通过校验但在上游拼成 /v1/v1/messages 或 %20…。
+func TestValidateUpstreamPathsNormalizes(t *testing.T) {
+	all := map[domain.RequestFormat]bool{
+		domain.FormatOpenAIChat:      true,
+		domain.FormatOpenAIResponses: true,
+		domain.FormatAnthropic:       true,
+	}
+	cases := []struct{ in, want string }{
+		{"/v1/messages", "v1/messages"},
+		{"  chat/completions  ", "chat/completions"},
+		{" /responses", "responses"},
+		{"v1/messages?beta=true", "v1/messages?beta=true"},
+	}
+	for _, tc := range cases {
+		got, err := validateUpstreamPaths(map[string]string{"anthropic": tc.in}, all)
+		require.NoError(t, err, "in=%q", tc.in)
+		require.Equal(t, tc.want, got["anthropic"], "落库值必须已归一（in=%q）", tc.in)
+	}
 }

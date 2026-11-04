@@ -42,47 +42,52 @@ var upstreamQueryRE = regexp.MustCompile(`^[A-Za-z0-9._~=&-]+$`)
 // supported_formats 内；值长度 1..1024、去至多一个前导 `/` 后过白名单、
 // query 非空且解码后过白名单、任何路径段不得为 `.` 或 `..`。
 // nil/空 map = 未配置（合法）。
-func validateUpstreamPaths(paths map[string]string, supported map[domain.RequestFormat]bool) error {
+func validateUpstreamPaths(paths map[string]string, supported map[domain.RequestFormat]bool) (map[string]string, error) {
+	out := make(map[string]string, len(paths))
 	for k, raw := range paths {
 		f, ok := upstreamPathFormat[k]
 		if !ok {
-			return ErrInvalidInput
+			return nil, ErrInvalidInput
 		}
 		if supported != nil && !supported[f] {
-			return ErrInvalidInput
+			return nil, ErrInvalidInput
 		}
 		v := strings.TrimSpace(raw)
 		if len(v) < 1 || len(v) > upstreamPathMaxLen {
-			return ErrInvalidInput
+			return nil, ErrInvalidInput
 		}
 		v = strings.TrimPrefix(v, "/")
 		if v == "" || !upstreamPathRE.MatchString(v) {
-			return ErrInvalidInput
+			return nil, ErrInvalidInput
 		}
 		pathPart, query := v, ""
 		if i := strings.IndexByte(v, '?'); i >= 0 {
 			pathPart, query = v[:i], v[i+1:]
 			if query == "" {
-				return ErrInvalidInput
+				return nil, ErrInvalidInput
 			}
 			dec, err := url.QueryUnescape(query)
 			if err != nil || !upstreamQueryRE.MatchString(dec) {
-				return ErrInvalidInput
+				return nil, ErrInvalidInput
 			}
 		}
 		for _, seg := range strings.Split(pathPart, "/") {
 			if seg == "." || seg == ".." {
-				return ErrInvalidInput
+				return nil, ErrInvalidInput
 			}
 		}
+		// 归一结果落库：只校验不归一，会让 "/v1/messages" 或带空白的值通过校验
+		// 却在上游拼成 /v1/v1/messages、%20...，运维得到一个 404 模板。
+		out[k] = v
 	}
-	return nil
+	return out, nil
 }
 
 // validateTemplateExt 校验模板 ext 行：credential_type ∈ {responses-special,
-// codex-oauth, codex-pat}（api_key 主列类型无 ext 行；类型一致性——ext 行类型
-// 必须 == 父模板类型——由 UpsertTemplateExt 校验）。模板是共享配置面：唯一
-// 可空列 strip_image_tools（三类型公共能力开关，nil = 未配置 = 关闭）。
+// codex-oauth, codex-pat, custom}（api_key 主列类型无 ext 行；类型一致性——
+// ext 行类型必须 == 父模板类型——由 UpsertTemplateExt 校验）。模板是共享配置面：
+// 可空列 strip_image_tools（四类型公共能力开关，nil = 未配置 = 关闭）与
+// upstream_paths（仅 custom 有意义，nil = 全部按格式默认端点）。
 func validateTemplateExt(e *domain.TemplateExt) error {
 	if e.TemplateID <= 0 {
 		return ErrInvalidInput
@@ -131,9 +136,16 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) 
 		for _, f := range tpl.SupportedFormats {
 			supported[f] = true
 		}
-		if err := validateUpstreamPaths(e.UpstreamPaths, supported); err != nil {
+		normalized, err := validateUpstreamPaths(e.UpstreamPaths, supported)
+		if err != nil {
 			return nil, err
 		}
+		e.UpstreamPaths = normalized
+	} else {
+		// 空 map 与 nil 同义（都表示「未配置任何覆盖」）：归一到 nil，让「清空」
+		// 落成 JSON NULL 而不是 `{}`——否则同一语义有两种落库形态，回显与
+		// 运维排查会出现「明明清空了却还看到 {}」的噪音。
+		e.UpstreamPaths = nil
 	}
 	saved, err := s.store.UpsertTemplateExt(ctx, e)
 	if err != nil {
