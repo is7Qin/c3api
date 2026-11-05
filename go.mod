@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	entgo.io/ent v0.14.6
 	github.com/adhocore/gronx v1.20.5
-	github.com/alicebob/miniredis/v2 v2.39.0
+	github.com/alicebob/miniredis/v2 v2.40.0
 	github.com/anthropics/anthropic-sdk-go v1.76.0
 	github.com/coder/websocket v1.8.15
 	github.com/go-chi/chi/v5 v5.5.0
