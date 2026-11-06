@@ -38,6 +38,8 @@ import PricingPage from '@/pages/pricing'
 import SettingsPage from '@/pages/settings'
 import Ops from '@/pages/ops'
 import SupplierConsole from '@/pages/supplier/console'
+import SupplierProxies from '@/pages/supplier/proxies'
+import Proxies from '@/pages/proxies'
 import SupplierAdmin from '@/pages/supplier-admin'
 
 // 唯一登录态 userAuth：管理端 api 与用户端 userApi 同源取 token，
@@ -64,6 +66,7 @@ const router = createBrowserRouter([
           { path: 'dashboard', element: <Dashboard /> },
           { path: 'templates', element: <Templates /> },
           { path: 'accounts', element: <Accounts /> },
+          { path: 'proxies', element: <Proxies /> },
           { path: 'users', element: <Users /> },
           { path: 'groups', element: <Groups /> },
           { path: 'logs', element: <Logs /> },
@@ -95,6 +98,9 @@ const router = createBrowserRouter([
               // 账号管理页**复用同一 Accounts 组件**（作用域由 Provider 单一对象决定，
               // 不再传 scope prop）。
               { path: 'accounts', element: <Accounts /> },
+              // 供应商面出口代理池（spec proxy-pool §7）：同一个代理页组件，作用域由
+              // SupplierScope 注入（base /api/user/supplier ⇒ /api/user/supplier/proxies）。
+              { path: 'proxies', element: <SupplierProxies /> },
             ] },
           ] },
         ],

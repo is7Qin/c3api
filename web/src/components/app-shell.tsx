@@ -4,7 +4,7 @@
 
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3, ScrollText, Ticket, Coins, Settings, KeyRound, Cpu, Menu, Wallet, HandCoins } from 'lucide-react'
+import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3, ScrollText, Ticket, Coins, Settings, KeyRound, Cpu, Menu, Wallet, HandCoins, Network } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
@@ -46,6 +46,9 @@ const adminNav: readonly NavItem[] = [
   { to: '/app/dashboard', key: 'nav.overview', icon: LayoutDashboard },
   { to: '/app/templates', key: 'nav.templates', icon: Boxes },
   { to: '/app/accounts', key: 'nav.accounts', icon: Users },
+  // 出口代理池（spec proxy-pool §7）：与账号同域（上游资源的第三维：出口），
+  // 紧跟账号而非跟模板——代理是账号级绑定。
+  { to: '/app/proxies', key: 'nav.proxies', icon: Network },
   { to: '/app/rules', key: 'nav.rules', icon: ScrollText },
   { to: '/app/users', key: 'nav.users', icon: UserCog },
   { to: '/app/groups', key: 'nav.groups', icon: FolderOpen },
@@ -63,6 +66,8 @@ const adminNav: readonly NavItem[] = [
 const supplierNav: readonly NavItem[] = [
   { to: '/user/supplier', key: 'supplier.nav.console', icon: Wallet, end: true },
   { to: '/user/supplier/accounts', key: 'supplier.nav.accounts', icon: Users, end: false },
+  // 供应商面出口代理池（spec §3.6：只能看/写自己名下的条目）
+  { to: '/user/supplier/proxies', key: 'supplier.nav.proxies', icon: Network, end: false },
 ]
 
 const LANGS: { code: AppLang; label: string }[] = [

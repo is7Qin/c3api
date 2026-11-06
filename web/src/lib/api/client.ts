@@ -143,6 +143,24 @@ export class ApiClient {
   // —— 失效恢复（/recover）：清 failed_at/last_error/failure_source；expected_revision 过期 → 409，
   // 前端须重读账号后重试；响应回显新代际 Account ——
   recoverAccount = (id: number, b: components['schemas']['AccountRecoverBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/recover`, { method: 'POST', body: JSON.stringify(b) })
+  // —— 出口代理池（spec proxy-pool §6）——
+  // 管理面 = adminApi（'/api/admin/proxies'，六个 op 走 admin tag）；
+  // 供应商面 = supplierApi（base '/api/user/supplier' ⇒ '/api/user/supplier/proxies'，
+  // 六个 op 走 supplier tag）。两条路径互不重叠（tag 结构性 default-deny），但**请求形状
+  // 完全相同**，故这里只写一份相对路径方法——切 base 即切作用域（与账号页同款惯例）。
+  // 三态（password/username/enabled/remark 缺省 = 不变）由 lib/proxy-form 的
+  // buildProxyPayload 投影，本层只负责发请求。
+  listProxies = () => this.request<components['schemas']['ProxyListResponse']>('/proxies')
+  createProxy = (b: components['schemas']['ProxyConfig']) =>
+    this.request<components['schemas']['Proxy']>('/proxies', { method: 'POST', body: JSON.stringify(b) })
+  updateProxy = (id: number, b: components['schemas']['ProxyConfig']) =>
+    this.request<components['schemas']['Proxy']>(`/proxies/${id}`, { method: 'PUT', body: JSON.stringify(b) })
+  deleteProxy = (id: number) =>
+    this.request<components['schemas']['DeletedResponse']>(`/proxies/${id}`, { method: 'DELETE' })
+  // 探测：拨不通**不是** API 错误（后端 200 + last_probe_ok=false + 已脱敏错误），
+  // 调用方把结论显示在行内，不要弹失败 toast。
+  probeProxy = (id: number) =>
+    this.request<components['schemas']['Proxy']>(`/proxies/${id}/probe`, { method: 'POST' })
   // —— 分组 ——
   listGroups = (p?: GroupListParams) => this.request<components['schemas']['GroupListResponse']>('/groups', { params: toQuery(p) })
   createGroup = (b: components['schemas']['GroupCreate']) => this.request<components['schemas']['Group']>('/groups', { method: 'POST', body: JSON.stringify(b) })

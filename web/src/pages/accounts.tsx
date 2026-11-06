@@ -11,6 +11,18 @@ import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
+import {
+  PROXY_DIRECT_VALUE,
+  PROXY_UNCHANGED_VALUE,
+  buildAccountPatch,
+  buildBatchProxyFields,
+  echoMayHideBinding,
+  parseBatchProxyValue,
+  parseProxySelectValue,
+  proxySelectItems,
+  proxySelectValue,
+  proxySelectionOf,
+} from '@/lib/account-proxy'
 import { BatchBar } from '@/components/batch-bar'
 import { ListToolbar } from '@/components/list-toolbar'
 import { Pagination } from '@/components/pagination'
@@ -216,6 +228,11 @@ interface FormState {
   // 清空归属哨兵（对齐 clearCacheDomain）：编辑态勾选 ⇒ 显式发送 supplier_user_id:
   // null（回平台自有）；供应商面不展示该控件（服务端恒为 JWT 本人）。
   clearOwner: boolean
+  // 出口代理（spec proxy-pool §3.6/§7）：Select 值 = 哨兵 PROXY_DIRECT_VALUE 或代理 id。
+  // **三态靠「与回显相比是否变化」表达**（buildAccountPatch 是唯一实现）——
+  // 用户没动这个选择器 ⇒ 请求体里不会有 proxy_id 键（也就不会把管理员绑的、
+  // 而读面不可见的平台代理静默解绑）。
+  proxy: string
 }
 
 const emptyForm = (): FormState => ({
@@ -235,6 +252,7 @@ const emptyForm = (): FormState => ({
   codex_account_id: '',
   supplier_user_id: '',
   clearOwner: false,
+  proxy: PROXY_DIRECT_VALUE,
 })
 
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
@@ -265,6 +283,10 @@ function toForm(a: AccountView): FormState {
     // 空 = 平台自有；勾选 clearOwner 显式清空（发送 null）。
     supplier_user_id: a.supplier_user_id != null ? String(a.supplier_user_id) : '',
     clearOwner: false,
+    // 出口代理回显：proxy_id 非 null ⇒ 该代理对当前调用方可见；null ⇒ 直连**或**
+    // 绑着一条当前调用方看不见的代理（供应商面的平台代理），两种情形在 UI 上无法区分，
+    // 故回显为 null 时永远只展示「直连」且不改动就不发键（buildAccountPatch 守卫）。
+    proxy: proxySelectValue(proxySelectionOf(a.proxy_id)),
   }
 }
 
@@ -329,6 +351,7 @@ interface BatchForm {
   cache_domain: string
   clearCacheDomain: boolean // 三态哨兵（对齐 clearBaseURL）：勾选发送 cache_domain: null = 清空回账号私有域
   multiplier: string // 空 = 不变（不发送）
+  proxy: string // 三态：PROXY_UNCHANGED_VALUE = 不变（不发键）/ PROXY_DIRECT_VALUE = null（解绑）/ 代理 id = 绑定
 }
 
 const emptyBatchForm = (): BatchForm => ({
@@ -344,6 +367,7 @@ const emptyBatchForm = (): BatchForm => ({
   cache_domain: '',
   clearCacheDomain: false,
   multiplier: '',
+  proxy: PROXY_UNCHANGED_VALUE,
 })
 
 // 作用域参数化（spec 2026-10-09 §6.1/§10）：**同一页面组件**在管理面（/app/accounts）与
@@ -696,6 +720,8 @@ export default function Accounts() {
     if (batchForm.clearCacheDomain) fields.cache_domain = null
     else if (dom) fields.cache_domain = dom
     if (mult !== null) fields.upstream_cost_multiplier = mult
+    // 出口代理批量三态（投影唯一实现 = buildBatchProxyFields）：「不变」⇒ 不发键。
+    Object.assign(fields, buildBatchProxyFields(parseBatchProxyValue(batchForm.proxy)))
     if (Object.keys(fields).length === 0) {
       setBatchFormErr(t('accounts.batchUpdateEmpty'))
       return
@@ -778,6 +804,32 @@ export default function Accounts() {
     setDialogOpen(true)
   }
 
+  // 出口代理候选（spec proxy-pool §7）：管理面 = GET /proxies（全部，含平台与各供应商
+  // 私池），供应商面 = GET /api/user/supplier/proxies（只有自己的）。同一批相对路径方法，
+  // 切 base 即切作用域。仅在两个对话框打开时拉取（列表本身不显示代理名）。
+  const proxiesQ = useQuery({
+    queryKey: ['proxies', kind],
+    queryFn: () => api.listProxies(),
+    enabled: dialogOpen || batchUpdateOpen,
+  })
+  const proxyItems = useMemo(
+    () => {
+      const items = proxySelectItems(proxiesQ.data?.rows ?? [], {
+        directLabel: t('accounts.proxy.direct'),
+        unchangedLabel: t('accounts.proxy.unchanged'),
+        // 停用代理仍可选，但选项上要能看出来（否则用户会把「账号不接流量」当 bug）
+        disabledSuffix: t('accounts.proxy.disabledSuffix'),
+      })
+      // 回显兜底：候选列表还没到时，已绑定的值仍要能显示（否则闭合态是空白）。
+      const bound = editing?.proxy_id
+      if (bound != null && items[String(bound)] === undefined) {
+        items[String(bound)] = editing?.proxy_name ?? `#${bound}`
+      }
+      return items
+    },
+    [proxiesQ.data, editing, t],
+  )
+
   // 表单直填凭据：codex 类型账号本体（upstream_key 可空）+ 链式 PUT account_ext
   // （codex_oauth_* 列组 / codex_pat_key 按模板类型分流；与「扩展配置」弹窗共用写路径）。
   // 创建与编辑各一次请求落全部字段（含倍率与缓存域）：创建走 POST /accounts，
@@ -854,6 +906,10 @@ export default function Accounts() {
         else if (ownerUID != null) patch.supplier_user_id = ownerUID
         else if (currentOwner != null) patch.supplier_user_id = null
       }
+      // 出口代理三态（投影唯一实现 = buildAccountPatch）：与回显相同、或回显为 null
+      // （可能绑着对当前调用方不可见的代理）且用户没选中具体代理 ⇒ 请求体**不含**
+      // proxy_id 键。这两条一起构成「整表单覆盖不得静默解绑管理员配置」的防线。
+      Object.assign(patch, buildAccountPatch(editing.proxy_id, parseProxySelectValue(f.proxy)))
       await api.updateAccount(id, patch, editing.LifecycleRevision)
       await saveCodexExt(id)
       return
@@ -1432,6 +1488,33 @@ export default function Accounts() {
                 <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
               </div>
             )}
+            {/* 出口代理（spec proxy-pool §7）：选项 = 直连 + 当前调用方可见的代理列表。
+                **codex 账号同样可选**（v7 已覆盖 codex 面）——此处刻意不按凭据类型置灰。
+                未改动 ⇒ 请求体不含 proxy_id（buildAccountPatch 是唯一投影）。 */}
+            {editing && (
+              <div className="space-y-1.5">
+                <Label>{t('accounts.proxy.label')}</Label>
+                <Select
+                  items={proxyItems}
+                  value={form.proxy}
+                  onValueChange={v => setForm(f => ({ ...f, proxy: v }))}
+                >
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={PROXY_DIRECT_VALUE} label={t('accounts.proxy.direct')}>{t('accounts.proxy.direct')}</SelectItem>
+                    {Object.entries(proxyItems)
+                      .filter(([v]) => v !== PROXY_DIRECT_VALUE && v !== PROXY_UNCHANGED_VALUE)
+                      .map(([v, label]) => (
+                        <SelectItem key={v} value={v} label={label}>{label}</SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{t('accounts.proxy.hint')}</p>
+                {echoMayHideBinding(kind, editing.proxy_id) && (
+                  <p className="text-xs text-muted-foreground">{t('accounts.proxy.invisibleHint')}</p>
+                )}
+              </div>
+            )}
             {/* 生命周期直配（创建/编辑表单）：倍率默认 ×1，缓存域留空 =
                 账号私有域。随创建/PATCH 请求体一次落库（编辑态仅变化项才带）；
                 列表行内弹窗保留（点击倍率/缓存域单元格）。 */}
@@ -1620,6 +1703,28 @@ export default function Accounts() {
                 <Label htmlFor="ba-mult">{t('accounts.multiplier.label')}</Label>
                 <Input id="ba-mult" type="number" min={0} max={10} step="0.0001" value={batchForm.multiplier} placeholder={t('list.unchanged')} onChange={e => setBatchForm(f => ({ ...f, multiplier: e.target.value }))} />
               </div>
+            </div>
+            <div className="space-y-1.5">
+              <Label>{t('accounts.proxy.label')}</Label>
+              {/* 批量三态：默认「不变」（不发键）；直连 ⇒ proxy_id: null；具体代理 ⇒ 该 id。
+                  不把「读面回显 null」当成要解绑（那是逐账号的语义，批量面拿不到回显）。 */}
+              <Select
+                items={proxyItems}
+                value={batchForm.proxy}
+                onValueChange={v => setBatchForm(f => ({ ...f, proxy: v }))}
+              >
+                <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={PROXY_UNCHANGED_VALUE} label={t('accounts.proxy.unchanged')}>{t('accounts.proxy.unchanged')}</SelectItem>
+                  <SelectItem value={PROXY_DIRECT_VALUE} label={t('accounts.proxy.direct')}>{t('accounts.proxy.direct')}</SelectItem>
+                  {Object.entries(proxyItems)
+                    .filter(([v]) => v !== PROXY_DIRECT_VALUE && v !== PROXY_UNCHANGED_VALUE)
+                    .map(([v, label]) => (
+                      <SelectItem key={v} value={v} label={label}>{label}</SelectItem>
+                    ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">{t('accounts.proxy.batchHint')}</p>
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-domain">{t('accounts.cacheDomain.label')}</Label>
