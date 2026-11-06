@@ -78,7 +78,11 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
+	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// 请求会绕过测试替身直接打真实 codex 端点）。
+	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -102,7 +106,7 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 	return p, store
 }
@@ -426,7 +430,10 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的 transport
+	// 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线）。
+	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": key}}, noopUserLoader{}, nil, nil, true)
@@ -435,6 +442,6 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	store := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
 	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, nil, Deps{Codex: codex})
 }

@@ -220,6 +220,10 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		// 出口 client：快照期已解析好的指针（恒非 nil）——热路径一次字段读，
 		// 没有"代理是否可用"的判断（那是装载/编译期的事实，不是每次选号的活）。
 		Egress: curAv.egress,
+		// 绑定行 id：与 Egress **同一次字段读**（同一来源 acc.ProxyID），只给
+		// 失败面的 err_logs.message 用（`proxy_id=<id>`，spec §5.1）。不进决策：
+		// 可用性位在 Routable，出口在 Egress。nil = 直连（失败日志不写 proxy_id）。
+		ProxyID: curAv.acc.ProxyID,
 	}
 	// 认领槽身份（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
 	// 内**，避免后置校验异常路径泄漏槽）。仅 codex 凭据认领（claimIdentitySlot

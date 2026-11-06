@@ -198,7 +198,11 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
+	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// 请求会绕过测试替身直接打真实 codex 端点）。
+	egPool := testEgressPool(newEgressRewriteTransport(t, upstream))
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -213,7 +217,7 @@ func newTestSearchProxy(t *testing.T, accts []searchTestAcct, upstream string, b
 	})
 	store := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{
 		QueueSize: 4096, BatchSize: 100,
 		FlushInterval: 20 * time.Millisecond,

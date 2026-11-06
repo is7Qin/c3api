@@ -39,7 +39,15 @@ func AcceptResponsesWS(w http.ResponseWriter, r *http.Request) (*websocket.Conn,
 // 调用方须传私有副本（库内 dial 会再 Clone 一次，防御边界在库，此处不再
 // Clone）。返回 resp 仅在握手失败时非 nil（含上游拒绝 body，调用方按状态码
 // 分类 429/4xx）。压缩同 Accept 侧协商。
-func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL, path, key string, header http.Header) (*websocket.Conn, *http.Response, error) {
+//
+// hc 为本条出栈的出口 client（必填；直连也是同一个抽象）：WS 面的出口只能靠
+// 它——`DialOptions.HTTPClient` 的 `Transport.Proxy` 是代理唯一的注入点
+// （coder/websocket 的握手走 `HTTPClient.Do`）。空值是跨包契约违例（同 rawPostCT
+// 的唯一防御点）：返回 errNilEgressClient，不 panic、不静默退回底座。
+func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL, path, key string, header http.Header, hc *http.Client) (*websocket.Conn, *http.Response, error) {
+	if hc == nil {
+		return nil, nil, errNilEgressClient
+	}
 	full, err := f.fullURLOf(templateID, baseURL, path)
 	if err != nil {
 		return nil, nil, err
@@ -47,7 +55,7 @@ func (f *Factory) ResponsesWSDial(ctx context.Context, templateID int64, baseURL
 	header.Set("Authorization", "Bearer "+key)
 	header.Set("Responses-Websockets", ResponsesWSBetaHeader)
 	return websocket.Dial(ctx, full.String(), &websocket.DialOptions{
-		HTTPClient:      f.hc,
+		HTTPClient:      hc,
 		HTTPHeader:      header,
 		CompressionMode: websocket.CompressionContextTakeover,
 	})

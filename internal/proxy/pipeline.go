@@ -154,8 +154,9 @@ type attemptState struct {
 //     经骨架"直取原文"回退落盘，防 gjson 提取吃空）
 //   - callErr：连接级/凭据错（code==0）或 WS 拨号 4xx（dialErr 全文——分
 //     通道：SDK 文本不进 respBody，帧面与落盘面解耦）时非 nil；Warn 由
-//     attempt 内部代发（Warn 文案两版本保留不统一——循环不代发；WS code==0
-//     恒 callErr=nil 不新增 Warn）
+//     attempt 内部代发（Warn 文案两版本保留不统一——循环不代发）。
+//     **code==0 必须带 callErr**：typed retry matrix 的网络判据就是
+//     `code==0 && callErr != nil`（retryOutcomeForAttempt），缺它 = 不迁移。
 type upstreamAttempt interface {
 	call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (code int, respBody []byte, hdr http.Header, handled bool, callErr error)
 }
@@ -386,10 +387,9 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 		// 5xx：上游 body message（既有语义）。连接级/凭据错（code==0）：
 		// err.Error() 全文填 last_error 与耗尽记录（域内截断 500）——Warn
 		// 由 attempt 内部代发（文案两版本保留不统一，循环不代发）。
-		// code==0 且 callErr==nil（WS 拨号/首帧转发失败）：错误文本经
-		// respBody 传递（可能为纯文本——upstreamErrMsg 只认 JSON 键，
-		// gjson 提取吃空）→ 直取原文（复审实证；chat/search 该分支不可达
-		// ——code==0 恒带 callErr，零影响）。
+		// code==0 时 callErr 恒非 nil（HTTP 面 caller 直接透传传输错误；WS 面
+		// 拨号/首帧失败把 dialErr 回传——M3 修掉了旧的"吐成 nil"），它是
+		// not_sent+network ⇒ CanRetry 的判据，也是本条 last_error 的首选文案。
 		lastErrMsg = upstreamErrMsg(respBody)
 		if code == 0 && callErr != nil {
 			lastErrMsg = domain.TruncateErrMsg(callErr.Error())
@@ -397,6 +397,14 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 			lastErrMsg = domain.TruncateErrMsg(lastErrMsg)
 		} else if len(respBody) > 0 {
 			lastErrMsg = domain.TruncateErrMsg(string(respBody))
+		}
+		if code == 0 {
+			// 出口注解（spec §5.1）：网络级失败已经在上面按既有写法归一，这里只
+			// 追加脱敏的出口标识（`proxy_id=7 socks5://h:p`）——代理链路失败
+			// （拒连/握手或认证失败/CONNECT 407/目标不可达/errNilEgressClient）
+			// 全部走这同一条 network 路，不新增 kind、不新增 error_type。
+			// 直连（ProxyID == nil）恒为 no-op：零代理部署的 message 不变。
+			lastErrMsg = withEgressNote(lastErrMsg, sel)
 		}
 		// 5xx/0 分支统一走 Classify（seed-5xx/seed-network 恒命中 → 恒投递，
 		// 行为不变）。防呆 b：分支不拆 ≠ 恒传 Kind5xx——事件 kind

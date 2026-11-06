@@ -190,7 +190,11 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
+	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// 请求会绕过测试替身直接打真实 codex 端点）。
+	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -208,7 +212,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	// 统一失效回调（装配形态）：落库替身 + 真实调度器摘除（FailAccount——
 	// 失效标记断言依赖真实摘除，路由"不重试同账号"才成立）。
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
 	return p, store
 }
@@ -713,7 +717,11 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, &captureLogStore{}, nil)
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的 transport
+	// 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——请求会绕过测试替身
+	// 直接打真实 codex 端点）。
+	egPool := testEgressPool(newEgressRewriteTransport(t, codexUp.URL))
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -727,7 +735,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil)
 	fs := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: fs, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, codexUp.URL), sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,

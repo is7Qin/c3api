@@ -70,12 +70,20 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	}
 	cred2 := domain.CredentialFromExt(sel.Ext)
 	if stream {
-		return p.streamImageGeneration(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred2, params, p.codex.GenerateImageStream)
+		// 出口在**这一跳**绑定进 seam：`imageStreamGenerator` 是流式状态机的测试
+		// 替身面（五路共用），不该被塞进一个对替身毫无意义的出口参数；真实能力
+		// `GenerateImageStream` 多了 egress 形参，方法值不再可直接赋值，故用闭包
+		// 捕获本次出口（eg 恒非 nil；闭包只捕获两个指针，不逃逸出本调用）。
+		eg := sel.Egress
+		gen := func(ctx context.Context, cred *domain.AccountCredential, prm *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error {
+			return p.codex.GenerateImageStream(ctx, cred, eg, prm, fn)
+		}
+		return p.streamImageGeneration(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred2, params, gen)
 	}
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
 	opTag := codexImagesOpTag(r)
-	img, err := p.codex.GenerateImage(ctx, &cred2, params)
+	img, err := p.codex.GenerateImage(ctx, &cred2, sel.Egress, params)
 	if err != nil {
 		if sdkbridge.IsFatal(err) {
 			code := statusOf(err)

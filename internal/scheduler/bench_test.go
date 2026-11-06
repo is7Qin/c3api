@@ -152,7 +152,11 @@ func TestSelectionSizeAMD64(t *testing.T) {
 	// §4.2/§4.6；随尝试携带，收尾不再回查 owner）。
 	// +8：Egress 出口 client 指针（spec-proxy-pool §4.3：快照期解析好，出栈只读
 	// 指针——这笔 8 字节是"热路径零判断/零 map 读"的全部代价，有意登记）。
-	require.Equal(t, uintptr(200), unsafe.Sizeof(Selection{}))
+	// +8：ProxyID 绑定行 id 指针（spec-proxy-pool §5.1/§5.2：网络级失败要在
+	// err_logs.message 写 `proxy_id=<id>`，而 `egress.Spec` 是按 Key 复用的连接
+	// 规格、按设计不带行 id ⇒ id 只能随 Selection 携带）。它与 Egress 同一次字段
+	// 读取得来，热路径**不读**它（只有失败面读）——有意登记，不是顺手加宽。
+	require.Equal(t, uintptr(208), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {

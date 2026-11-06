@@ -106,6 +106,12 @@ type Selection struct {
 	// 快照期已解析好，出栈处只读这个指针并把它交给 aiclient/sdkbridge（M3）——
 	// 0 次 nil 判断、0 次 map 读、0 分配（spec §4.2 的 G5 零开销要求）。
 	Egress *egress.Client
+	// ProxyID 本次选中账号绑定的出口代理行 id（nil = 直连）。与 Egress **同一次
+	// 快照读**取（同一字段来源 `acc.ProxyID`），只服务失败面的可观测性：网络级
+	// 失败时 err_logs.message 要写 `proxy_id=<id>`（spec §5.1/§5.2），而 Spec 是
+	// 摘要值化后的连接规格、按设计不带行 id（同规格不同行会共用同一个 client）。
+	// 它**不参与**任何决策：可用性由 `Routable` 一位决定，出口由 `Egress` 决定。
+	ProxyID *int64
 }
 
 func (s *Selection) Release() {

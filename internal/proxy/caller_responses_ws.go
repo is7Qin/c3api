@@ -226,8 +226,9 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // 错误文本回传（分通道）：4xx respBody 只放上游 body message（无则空——
 // 帧侧 wsSink emOr 回退固定网关文案），dialErr 全文走 callErr 通道（循环 4xx
 // 分支以 callErr 回退落盘保全文）；0/5xx/429 保持 msg 归一兜底（上游 message
-// → dialErr 文本回退——纯落盘用途，不达用户帧）；code==0 恒 callErr=nil
-// （WS 不新增 Warn——gate Minor 2b）。
+// → dialErr 文本回退——纯落盘用途，不达用户帧）；**code==0 也回传 dialErr**
+// （M3：typed retry matrix 的 not_sent+network 判据要求 callErr 非 nil，吞掉
+// 会让代理/网络失败不迁移；循环本身不为 code==0 代发 Warn，gate Minor 2b 不变）。
 type wsAttempt struct{ p *Proxy }
 
 func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
@@ -286,7 +287,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	// r.Context() 同时取消 → 499 语义不变。每 attempt 一次（与 aiclient
 	// UpstreamTimeout wrap 同级），非每帧。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
-	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header))
+	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header), sel.Egress.HTTP)
 	cancel()
 	if dialErr == nil {
 		// stripTier 删除动作（现状 relay 内部）上移调用方（spec 修订）：与
@@ -328,7 +329,15 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		msg = dialErr.Error()
 	}
 	if code < 400 || code >= 600 {
-		code = 0 // 连接级或非标准拒绝，归网络错误语义
+		// 连接级或非标准拒绝：code 归 0（not_sent 语义）——**dialErr 必须交给循环**。
+		// 此前这里 return nil 把拨号错误吞成"无错误"：typed retry matrix 的判据是
+		// `code==0 && callErr != nil`（retryOutcomeForAttempt），吞掉后 terminal 恒
+		// true ⇒ 不迁移（WS 面的代理失败/拒连因此不会 failover，只剩原地重试）。
+		// HTTP 面的同一处置是 caller 直接 `return ..., err`；此处对齐成一致语义
+		// （spec §5.1 最后一行：WS 面不得吞 dialErr）。文案不变（msg 已是 dialErr
+		// 全文），且循环对 code==0 不代发 Warn（既有 gate Minor 2b 保持）。
+		code = 0
+		return code, []byte(msg), nil, false, dialErr
 	}
 	return code, []byte(msg), nil, false, nil
 }

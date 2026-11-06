@@ -33,7 +33,7 @@ func TestChatCompletionRawHeadersAndPath(t *testing.T) {
 	f := NewFactory(srv.Client(), Config{})
 	// path 是完整尾段（/v1 由 proxy.targetPath 按「内置端点 vs custom 原样」
 	// 决定），本层只做 base_url + path，不再自行补 /v1。
-	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil)
+	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -56,7 +56,7 @@ func TestAnthMessageRawUsesXAPIKeyAndV1Path(t *testing.T) {
 	defer srv.Close()
 
 	f := NewFactory(srv.Client(), Config{})
-	resp, err := f.AnthMessageRaw(context.Background(), 1, srv.URL, "v1/messages", "sk-anth", []byte(`{"stream":true}`), nil)
+	resp, err := f.AnthMessageRaw(context.Background(), 1, srv.URL, "v1/messages", "sk-anth", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -76,7 +76,7 @@ func TestResponseRawPath(t *testing.T) {
 	defer srv.Close()
 
 	f := NewFactory(srv.Client(), Config{})
-	resp, err := f.ResponseRaw(context.Background(), 1, srv.URL, "v1/responses", "sk-test", []byte(`{"stream":true}`), nil)
+	resp, err := f.ResponseRaw(context.Background(), 1, srv.URL, "v1/responses", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -92,7 +92,7 @@ func TestStreamRawPreservesRequestBody(t *testing.T) {
 	defer srv.Close()
 
 	f := NewFactory(srv.Client(), Config{})
-	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"model":"gpt-4o","stream":true}`), nil)
+	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"model":"gpt-4o","stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, "gpt-4o", gotBody["model"])
@@ -107,7 +107,7 @@ func TestStreamRawNon200ResponseReturnsResponse(t *testing.T) {
 	defer srv.Close()
 
 	f := NewFactory(srv.Client(), Config{})
-	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil)
+	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
@@ -126,7 +126,7 @@ func TestStreamRawBaseURLWithTrailingSlash(t *testing.T) {
 
 	f := NewFactory(srv.Client(), Config{})
 	// 尾斜杠：base 末尾多一个 "/" 仍拼出同样的 URL（JoinPath 归一）
-	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL+"/", "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil)
+	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL+"/", "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -151,21 +151,21 @@ func TestStreamRawBaseURLChangeConverges(t *testing.T) {
 	defer newSrv.Close()
 
 	f := NewFactory(oldSrv.Client(), Config{})
-	resp, err := f.ChatCompletionRaw(context.Background(), 1, oldSrv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil)
+	resp, err := f.ChatCompletionRaw(context.Background(), 1, oldSrv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "old", hit.Load(), "首访打旧上游")
 
 	// 同模板 ID、新 base_url（DB 直改后周期同步下发的新快照）→ 必须收敛到新地址
-	resp, err = f.ChatCompletionRaw(context.Background(), 1, newSrv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil)
+	resp, err = f.ChatCompletionRaw(context.Background(), 1, newSrv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "new", hit.Load(), "缓存键含 baseURL：新快照立即收敛，不得打旧上游")
 
 	// 旧快照键仍可复用（无重建）——语义等价旧实现按快照解析
-	resp, err = f.ChatCompletionRaw(context.Background(), 1, oldSrv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil)
+	resp, err = f.ChatCompletionRaw(context.Background(), 1, oldSrv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -182,7 +182,7 @@ func TestStreamRawContextTimeout(t *testing.T) {
 	f := NewFactory(srv.Client(), Config{})
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	_, err := f.ChatCompletionRaw(ctx, 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil)
+	_, err := f.ChatCompletionRaw(ctx, 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), nil, hcOf(f))
 	require.Error(t, err)
 }
 
@@ -228,7 +228,7 @@ func TestRawRelayClientHeadersArrive(t *testing.T) {
 		"Authorization":      {"Bearer client-side-gateway-key"},
 		"Cookie":             {"tenant=leak"},
 	}
-	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), in)
+	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test", []byte(`{"stream":true}`), in, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -259,7 +259,7 @@ func TestRawRelayNoUserAgentWhenClientSendsNone(t *testing.T) {
 	capRt := &headerCapture{base: srv.Client().Transport}
 	f := NewFactory(&http.Client{Transport: capRt}, Config{})
 	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test",
-		[]byte(`{"stream":true}`), http.Header{"X-Opencode-Session": {"oc-1"}})
+		[]byte(`{"stream":true}`), http.Header{"X-Opencode-Session": {"oc-1"}}, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 
@@ -291,7 +291,7 @@ func TestRawRelayStripsInboundFootprint(t *testing.T) {
 		in[k] = []string{"client-value"}
 	}
 	resp, err := f.ChatCompletionRaw(context.Background(), 1, srv.URL, "v1/chat/completions", "sk-test",
-		[]byte(`{"stream":true}`), in)
+		[]byte(`{"stream":true}`), in, hcOf(f))
 	require.NoError(t, err)
 	defer resp.Body.Close()
 

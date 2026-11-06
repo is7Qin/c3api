@@ -219,7 +219,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	defer cancel()
 	// SDK 路径结构上不采客户端头：x-codex-turn-metadata 到此不转发（静态路径
 	// 走 RelayHeaders，该键如实透传——见 callStaticSearch）
-	resp, err := p.codex.Search(ctx, &cred, body)
+	resp, err := p.codex.Search(ctx, &cred, sel.Egress, body)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -262,7 +262,7 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	// 转移
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeySearch, defaultPathSearch), cred, body, r.Header)
+	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeySearch, defaultPathSearch), cred, body, r.Header, sel.Egress.HTTP)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()

@@ -427,7 +427,11 @@ func newCodexWSProxyWithMapping(t *testing.T, upstream string, mode domain.Model
 	}
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
+	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// 请求会绕过测试替身直接打真实 codex 端点）。
+	egPool := testEgressPool(newEgressRewriteTransport(t, upstream))
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -449,7 +453,7 @@ func newCodexWSProxyWithMapping(t *testing.T, upstream string, mode domain.Model
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codex := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, upstream), sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 	return p, store
 }

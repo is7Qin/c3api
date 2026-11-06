@@ -42,7 +42,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header)
+		resp, err := p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}

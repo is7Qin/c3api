@@ -11,6 +11,7 @@ package aiclient
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -18,6 +19,17 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+// errNilEgressClient 出栈 client 缺失（跨包契约违例）。
+//
+// 每个出栈入口的末参 `hc *http.Client` 是**本次出口**（调度器快照上已解析好的
+// `Selection.Egress.HTTP`，直连也走同一条抽象）：本包不认识"代理"，只认识
+// client。`hc == nil` 意味着调用方漏了接线——那是装配错误，必须变成可诊断的
+// network 失败而不是 nil 指针 panic。
+//
+// 这条判断**不是**"要不要用代理"的分支：直连同样过这里（spec §4.4 的 G5
+// 零判断指"不为代理与否分支"，与出口是否装配无关）。
+var errNilEgressClient = errors.New("aiclient: nil egress client")
 
 // Config 保留构造期参数（既有调用点仍按此形状传值），但**两个超时字段已不再被
 // Factory 读取**：非流式改原始出栈后，deadline 由调用方 ctx 施加
@@ -92,8 +104,9 @@ func (f *Factory) InvalidateAll() {
 
 // RawPost 通用原始 POST：非流式与流式共用同一出栈（路径、鉴权头名由调用方
 // 按格式显式选定；status 检查与 body 关闭由调用方负责）。
-func (f *Factory) RawPost(ctx context.Context, templateID int64, baseURL, path, authHeader, auth string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, path, authHeader, auth, body, in)
+// hc 为本条出栈的出口 client（必填：直连 = 调度器池的 Direct()）。
+func (f *Factory) RawPost(ctx context.Context, templateID int64, baseURL, path, authHeader, auth string, body []byte, in http.Header, hc *http.Client) (*http.Response, error) {
+	return f.rawPost(hc, ctx, templateID, baseURL, path, authHeader, auth, body, in)
 }
 
 // --- 流式原始请求（SSE relay 用） ---
@@ -103,24 +116,24 @@ func (f *Factory) RawPost(ctx context.Context, templateID int64, baseURL, path, 
 // 签名收 (templateID, baseURL) 而非 *domain.Template（GC 削减 调用方免
 // tplOf 每请求模板对象分配；URL 在 Factory.urls 懒缓存，键含 base_url 快照）。
 
-func (f *Factory) ChatCompletionRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
+func (f *Factory) ChatCompletionRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header, hc *http.Client) (*http.Response, error) {
+	return f.rawPost(hc, ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
 }
 
-func (f *Factory) ResponseRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
+func (f *Factory) ResponseRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header, hc *http.Client) (*http.Response, error) {
+	return f.rawPost(hc, ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
 }
 
 // SearchRaw codex search 端点直连透传（spec 2026-08-13：api_key/responses-
 // special 静态路径——Bearer upstream key 直连上游，复用既有静态 key 通道零新
 // 机制）。URL 派生 = base_url + 调用方给的完整尾段（内置端点传
 // "/v1/alpha/search"，custom 路径原样透传，见 parseFullURL）。
-func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
+func (f *Factory) SearchRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header, hc *http.Client) (*http.Response, error) {
+	return f.rawPost(hc, ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, body, in)
 }
 
-func (f *Factory) AnthMessageRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPost(ctx, templateID, baseURL, path, "x-api-key", key, body, in)
+func (f *Factory) AnthMessageRaw(ctx context.Context, templateID int64, baseURL, path, key string, body []byte, in http.Header, hc *http.Client) (*http.Response, error) {
+	return f.rawPost(hc, ctx, templateID, baseURL, path, "x-api-key", key, body, in)
 }
 
 // --- openai images（直连面） ---
@@ -129,8 +142,8 @@ func (f *Factory) AnthMessageRaw(ctx context.Context, templateID int64, baseURL,
 // application/json。无 SDK 参数路径——直连语义 = 原始请求原样转发（响应
 // 零改写零损失；上游路径 /v1/images/generations|edits 由调用方传 path）。
 
-func (f *Factory) ImagesRaw(ctx context.Context, templateID int64, baseURL, path, key, contentType string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPostCT(ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, contentType, body, in)
+func (f *Factory) ImagesRaw(ctx context.Context, templateID int64, baseURL, path, key, contentType string, body []byte, in http.Header, hc *http.Client) (*http.Response, error) {
+	return f.rawPostCT(hc, ctx, templateID, baseURL, path, "Authorization", "Bearer "+key, contentType, body, in)
 }
 
 // fullURLOf 取模板的完整请求 URL（懒缓存：键 = 模板 ID + base_url 快照 + 格式
@@ -200,8 +213,8 @@ func parseFullURL(base, path string) (*url.URL, error) {
 // 语义，WithContext 保留 ctx 取消语义）。authHeader 为承载凭据的请求头名
 // （openai 系 Authorization、anthropic x-api-key），auth 为其值——鉴权头名
 // 由调用方按端点显式选定（此前的 path=="v1/messages" 内部分派已上移）。
-func (f *Factory) rawPost(ctx context.Context, templateID int64, baseURL, path, authHeader, auth string, body []byte, in http.Header) (*http.Response, error) {
-	return f.rawPostCT(ctx, templateID, baseURL, path, authHeader, auth, "", body, in)
+func (f *Factory) rawPost(hc *http.Client, ctx context.Context, templateID int64, baseURL, path, authHeader, auth string, body []byte, in http.Header) (*http.Response, error) {
+	return f.rawPostCT(hc, ctx, templateID, baseURL, path, authHeader, auth, "", body, in)
 }
 
 // rawPostCT rawPost 的 Content-Type 定制变体（images multipart 需要
@@ -212,7 +225,13 @@ func (f *Factory) rawPost(ctx context.Context, templateID int64, baseURL, path, 
 // 翻译成上游头，也不丢弃除 relayDeny 之外的客户端头；in 为 nil 时出栈只剩
 // 网关声明（与 relay 前的现状逐字节等价）。清单与根规则见 relay.go（WS 静态
 // 面直接调 RelayHeaders，共用同一份）。
-func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path, authHeader, auth, contentType string, body []byte, in http.Header) (*http.Response, error) {
+// hc 为本条出栈的出口 client（唯一防御点：跨包契约违例 → errNilEgressClient；
+// 直连也过这里，它与是否用代理无关）。Factory.hc 不再是出栈 client，只作为底座
+// 喂 `egress.NewPool`（main 装配），本函数不再读它。
+func (f *Factory) rawPostCT(hc *http.Client, ctx context.Context, templateID int64, baseURL, path, authHeader, auth, contentType string, body []byte, in http.Header) (*http.Response, error) {
+	if hc == nil {
+		return nil, errNilEgressClient
+	}
 	full, err := f.fullURLOf(templateID, baseURL, path)
 	if err != nil {
 		return nil, err
@@ -243,5 +262,5 @@ func (f *Factory) rawPostCT(ctx context.Context, templateID int64, baseURL, path
 		req.Header.Set("Anthropic-Version", defaultAnthropicVersion)
 	}
 	req = req.WithContext(ctx)
-	return f.hc.Do(req)
+	return hc.Do(req)
 }

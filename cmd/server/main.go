@@ -520,9 +520,12 @@ func main() {
 	contBindW := proxy.NewContBindWorker(contStore, log, proxy.ContBindConfig{})
 	// codex SDK 适配层装配（§3——统一失效回调先落生图路径；全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
-	// 调度摘除 + 审计契约）。transport/rotation 同构造期一次给齐（构造后
-	// 不存在半装配形态）：transport 用 httpx 网关同形态（SDK 默认
-	// MaxIdleConnsPerHost=2 有压测连接风暴史；Proxy=nil 直连防劫持）；
+	// 调度摘除 + 审计契约）。egressPool/rotation 同构造期一次给齐（构造后
+	// 不存在半装配形态）：出口池就是调度器那一个——**同一个池**才能让 codex
+	// 面的 transport 与 HTTP 面共享同一条连接池（`sel.Egress.HTTP.Transport`
+	// 与 `Pool.For(spec)` 同源，spec-proxy-pool §4.6）；池的底座是 httpx 网关
+	// 同形态的 client（SDK 默认 MaxIdleConnsPerHost=2 有压测连接风暴史；
+	// Proxy=nil 直连防劫持），直连出口即那份底座。
 	// rotation Upsert 部分更新（codex_oauth_token/refresh/expires_at 保旧）+
 	// 回写后失效调度器 AccountExt 快照条目（下个会话重载新凭据）。
 	// Latch/Publisher 必须装配：SDK 失效链据此走**围栏路径**（先锁存 → 以身份
@@ -534,15 +537,7 @@ func main() {
 		Log:       log,
 		Latch:     latchStore,
 		Publisher: schedGroupPub{pub},
-	}), httpx.NewTransport(httpx.TransportConfig{
-		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
-		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
-		MaxConnsPerHost:     cfg.Upstream.MaxIdleConnsPerHost,
-		IdleConnTimeout:     cfg.Upstream.IdleConnTimeout,
-		DialTimeout:         cfg.Upstream.DialTimeout,
-		ForceHTTP2:          cfg.Upstream.ForceHTTP2,
-		Proxy:               nil,
-	}), sdkbridge.RotationDeps{
+	}), egressPool, sdkbridge.RotationDeps{
 		Store:              repos.AccountExts,
 		InvalidateSnapshot: sched.InvalidateAccount,
 		Log:                log,

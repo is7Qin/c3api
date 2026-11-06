@@ -79,7 +79,11 @@ func TestCodexFatalChainPG(t *testing.T) {
 	// PG + FailAccount 快照摘除 + 经 writebackLoop 落库 status=disabled）
 	re := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	require.NoError(t, re.Reload(ctx))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour}, repos.Groups, re, nil, nil, nil, nil)
+	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
+	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// 请求会绕过测试替身直接打真实 codex 端点）。
+	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
+	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, repos.Groups, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -87,13 +91,13 @@ func TestCodexFatalChainPG(t *testing.T) {
 	require.NoError(t, sched.Start(sctx, nil))
 	t.Cleanup(scancel)
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: repos.Accounts, Failer: sched, Log: nil})
-	adapter := sdkbridge.NewCodex(failure, newProxyOfficialRewriteTransportWithAssert(t, up.URL), sdkbridge.RotationDeps{})
+	adapter := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
 
 	// 触发：fatal（refresh 判死）→ 统一回调全链路
 	ext, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	cred := domain.CredentialFromExt(ext)
-	_, err = adapter.GenerateImage(ctx, &cred, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
+	_, err = adapter.GenerateImage(ctx, &cred, adapter.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refresh 被拒绝", "RefreshOAuthError 透传")
 

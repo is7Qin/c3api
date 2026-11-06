@@ -100,6 +100,28 @@ func TestProxyOfficialRewriteTransport_ConcurrentNoHangAndMismatch(t *testing.T)
 	require.Contains(t, err.Error(), "unexpected official URL")
 }
 
+// newEgressRewriteTransport 出口池专用的上游指针：**官方 codex 端点**重写到本地
+// 替身，其余请求原样放行（走 http.DefaultTransport）。
+//
+// 为什么需要它：混合类型夹具（同组内 codex 账号 + api_key 账号）里，api_key 面
+// 的出栈目标是本地替身 URL（`Template.BaseURL` = 替身），它不在官方端点白名单里；
+// 而 M3 起**两条面共用同一个出口池**（`sel.Egress.HTTP` 对 codex SDK 与 aiclient
+// 是同一个 transport），所以夹具的池必须两种流量都能承载。codex-only 夹具继续用
+// `...WithAssert`（只认官方端点，多了就是接线错）。
+func newEgressRewriteTransport(t *testing.T, target string) http.RoundTripper {
+	t.Helper()
+	u, err := url.Parse(target)
+	require.NoError(t, err)
+	return roundTripperFuncProxy(func(req *http.Request) (*http.Response, error) {
+		clone := req.Clone(req.Context())
+		if proxyOfficialURLs[req.URL.String()] {
+			clone.URL.Scheme = u.Scheme
+			clone.URL.Host = u.Host
+		}
+		return http.DefaultTransport.RoundTrip(clone)
+	})
+}
+
 type roundTripperFuncProxy func(*http.Request) (*http.Response, error)
 
 func (f roundTripperFuncProxy) RoundTrip(req *http.Request) (*http.Response, error) { return f(req) }

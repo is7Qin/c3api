@@ -92,7 +92,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 	// 转移（零新分支；wrapped ctx 取消不向上传播，不落 499）。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
 	defer cancel()
-	return p.codex.Dial(ctx, &cred, opts...)
+	return p.codex.Dial(ctx, &cred, sel.Egress, opts...)
 }
 
 // handleCodexDialError codex WS 拨号失败分类与收尾（返回

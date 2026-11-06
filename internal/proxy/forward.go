@@ -720,10 +720,14 @@ func upstreamErrMsg(body []byte) string {
 //	201..299、101、3xx 残留、其他非 4xx → code 502（上游协议异常，与流式同口径）
 //	>=400          → code 原状态，upBody 为上游错误体（1 MiB 有界）
 //	传输错误        → err 非 nil（调用方按 statusOf(err) 归类）
+//
+// 出口 client 从 sel 上取（`sel.Egress.HTTP`，快照期已解析好、恒非 nil）——
+// 本 helper 是四个非流式面（chat/responses/anthropic/converted）共用的一条出栈，
+// 所以出口只在这一个地方交给 aiclient。
 func (p *Proxy) rawJSON(ctx context.Context, sel *scheduler.Selection, path, authHeader, auth string, body []byte, in http.Header) ([]byte, int, []byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	resp, err := p.clients.RawPost(ctx, sel.TemplateID, sel.BaseURL, path, authHeader, auth, body, in)
+	resp, err := p.clients.RawPost(ctx, sel.TemplateID, sel.BaseURL, path, authHeader, auth, body, in, sel.Egress.HTTP)
 	if err != nil {
 		return nil, 0, nil, err
 	}

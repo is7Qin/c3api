@@ -35,7 +35,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header)
+		resp, err := p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP)
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
 		}
