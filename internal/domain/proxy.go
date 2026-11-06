@@ -50,7 +50,9 @@ type Proxy struct {
 	Remark         string
 	LastProbeAt    *time.Time // nil = 从未探测
 	LastProbeOK    bool
-	LastProbeError string // 已脱敏的错误文本（§5.2）
+	LastProbeError string    // 已脱敏的错误文本（§5.2）
+	CreatedAt      time.Time // 管理面读模型回显（§6.1）；不参与任何判定
+	UpdatedAt      time.Time // 同上
 }
 
 // String 返回脱敏摘要：只出 id / name / scheme / host:port。**用户名与密码恒不出**

@@ -158,6 +158,22 @@ const (
 	ProviderZhipu       Provider = "zhipu"
 )
 
+// Defines values for ProxyScheme.
+const (
+	ProxySchemeHttp    ProxyScheme = "http"
+	ProxySchemeHttps   ProxyScheme = "https"
+	ProxySchemeSocks5  ProxyScheme = "socks5"
+	ProxySchemeSocks5h ProxyScheme = "socks5h"
+)
+
+// Defines values for ProxyConfigScheme.
+const (
+	ProxyConfigSchemeHttp    ProxyConfigScheme = "http"
+	ProxyConfigSchemeHttps   ProxyConfigScheme = "https"
+	ProxyConfigSchemeSocks5  ProxyConfigScheme = "socks5"
+	ProxyConfigSchemeSocks5h ProxyConfigScheme = "socks5h"
+)
+
 // Defines values for RedemptionStatus.
 const (
 	RedemptionStatusActive   RedemptionStatus = "active"
@@ -1397,6 +1413,69 @@ type PricingSyncResponse struct {
 
 // Provider 主流厂商枚举（litellm_provider 实际字符串，服务前端下拉框）。**litellm_provider 动态**——litellm 更新会加新厂商，此 enum 为主流集合；新厂商出现时扩 enum（DB 筛选不受限——自由字符串等值）
 type Provider string
+
+// Proxy 代理条目读模型（密码恒不出，只有 has_password）
+type Proxy struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Enabled 唯一可用性开关；探测结论不影响它
+	Enabled bool `json:"enabled"`
+
+	// HasPassword 只回显"是否设了密码"，密码本身永不出现在任何响应里
+	HasPassword bool `json:"has_password"`
+
+	// Host IPv6 不带方括号
+	Host string `json:"host"`
+	Id   int64  `json:"id"`
+
+	// LastProbeAt null = 从未探测
+	LastProbeAt *time.Time `json:"last_probe_at"`
+
+	// LastProbeError 已脱敏的探测错误（凭据恒被替换）
+	LastProbeError *string `json:"last_probe_error"`
+	LastProbeOk    bool    `json:"last_probe_ok"`
+
+	// Name trim 后 1..64；与未软删条目唯一
+	Name string `json:"name"`
+
+	// Port 1..65535
+	Port   int    `json:"port"`
+	Remark string `json:"remark"`
+
+	// Scheme 原样落库（socks5h 不归一成 socks5）
+	Scheme    ProxyScheme `json:"scheme"`
+	UpdatedAt time.Time   `json:"updated_at"`
+
+	// Username 非密（原样回显）；null = 无认证
+	Username *string `json:"username"`
+}
+
+// ProxyScheme 原样落库（socks5h 不归一成 socks5）
+type ProxyScheme string
+
+// ProxyConfig 代理条目写面（POST 创建 / PUT 全量更新共用）。name/scheme/host/port 必填； 凭据与 enabled/remark 三态：缺席 = 不变；null = 清空；有值 = 落值； 可空标量 \"\" = 400（清空只有一个拼法 null，与账号写面同一口径）。 Create 缺省 enabled=true。
+type ProxyConfig struct {
+	Enabled nullable.Nullable[bool] `json:"enabled,omitempty"`
+
+	// Host 非空；拒绝 / @ 空白与控制字符；IPv6 去方括号；≤253
+	Host string `json:"host"`
+
+	// Name trim 后 1..64
+	Name     string                    `json:"name"`
+	Password nullable.Nullable[string] `json:"password,omitempty"`
+	Port     int                       `json:"port"`
+	Remark   nullable.Nullable[string] `json:"remark,omitempty"`
+	Scheme   ProxyConfigScheme         `json:"scheme"`
+	Username nullable.Nullable[string] `json:"username,omitempty"`
+}
+
+// ProxyConfigScheme defines model for ProxyConfig.Scheme.
+type ProxyConfigScheme string
+
+// ProxyListResponse defines model for ProxyListResponse.
+type ProxyListResponse struct {
+	Rows []Proxy `json:"rows"`
+}
 
 // RedemptionCode defines model for RedemptionCode.
 type RedemptionCode struct {
@@ -2911,6 +2990,12 @@ type PutPriceEntryJSONRequestBody = PriceEntryUpsert
 // PutPriceVariantsJSONRequestBody defines body for PutPriceVariants for application/json ContentType.
 type PutPriceVariantsJSONRequestBody = PriceVariantListRequest
 
+// PostProxiesJSONRequestBody defines body for PostProxies for application/json ContentType.
+type PostProxiesJSONRequestBody = ProxyConfig
+
+// PutProxiesIdJSONRequestBody defines body for PutProxiesId for application/json ContentType.
+type PutProxiesIdJSONRequestBody = ProxyConfig
+
 // PostRedemptionCodesJSONRequestBody defines body for PostRedemptionCodes for application/json ContentType.
 type PostRedemptionCodesJSONRequestBody = GenerateRequest
 
@@ -3096,6 +3181,24 @@ type ServerInterface interface {
 	// 预览价格同步（零写库 diff 报告）
 	// (POST /pricing/sync/preview)
 	PostPricingSyncPreview(w http.ResponseWriter, r *http.Request)
+	// 代理条目列表（无分页，id 升序稳定序）
+	// (GET /proxies)
+	GetProxies(w http.ResponseWriter, r *http.Request)
+	// 新建代理条目（name 唯一；冲突 → 409；缺省 enabled=true）
+	// (POST /proxies)
+	PostProxies(w http.ResponseWriter, r *http.Request)
+	// 软删 + 同事务解绑（绑定该代理的账号回落直连）
+	// (DELETE /proxies/{id})
+	DeleteProxiesId(w http.ResponseWriter, r *http.Request, id int64)
+	// 单个代理条目（不存在/已软删 → 404）
+	// (GET /proxies/{id})
+	GetProxiesId(w http.ResponseWriter, r *http.Request, id int64)
+	// 全量更新非密字段 + 凭据三态（不改 last_probe_*：探测结论只由 probe 端点写）
+	// (PUT /proxies/{id})
+	PutProxiesId(w http.ResponseWriter, r *http.Request, id int64)
+	// TCP 探测（5s）+ 写回 last_probe_*，返回最新条目
+	// (POST /proxies/{id}/probe)
+	PostProxiesIdProbe(w http.ResponseWriter, r *http.Request, id int64)
 	// 兑换码列表（增强分页范式 page/page_size；type/status 筛选；sort 白名单）
 	// (GET /redemption-codes)
 	GetRedemptionCodes(w http.ResponseWriter, r *http.Request, params GetRedemptionCodesParams)
@@ -3468,6 +3571,42 @@ func (_ Unimplemented) PostPricingSync(w http.ResponseWriter, r *http.Request) {
 // 预览价格同步（零写库 diff 报告）
 // (POST /pricing/sync/preview)
 func (_ Unimplemented) PostPricingSyncPreview(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 代理条目列表（无分页，id 升序稳定序）
+// (GET /proxies)
+func (_ Unimplemented) GetProxies(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 新建代理条目（name 唯一；冲突 → 409；缺省 enabled=true）
+// (POST /proxies)
+func (_ Unimplemented) PostProxies(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 软删 + 同事务解绑（绑定该代理的账号回落直连）
+// (DELETE /proxies/{id})
+func (_ Unimplemented) DeleteProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 单个代理条目（不存在/已软删 → 404）
+// (GET /proxies/{id})
+func (_ Unimplemented) GetProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 全量更新非密字段 + 凭据三态（不改 last_probe_*：探测结论只由 probe 端点写）
+// (PUT /proxies/{id})
+func (_ Unimplemented) PutProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// TCP 探测（5s）+ 写回 last_probe_*，返回最新条目
+// (POST /proxies/{id}/probe)
+func (_ Unimplemented) PostProxiesIdProbe(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5015,6 +5154,134 @@ func (siw *ServerInterfaceWrapper) PostPricingSyncPreview(w http.ResponseWriter,
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostPricingSyncPreview(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProxies operation middleware
+func (siw *ServerInterfaceWrapper) GetProxies(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProxies(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostProxies operation middleware
+func (siw *ServerInterfaceWrapper) PostProxies(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostProxies(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteProxiesId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteProxiesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteProxiesId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetProxiesId operation middleware
+func (siw *ServerInterfaceWrapper) GetProxiesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetProxiesId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutProxiesId operation middleware
+func (siw *ServerInterfaceWrapper) PutProxiesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutProxiesId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostProxiesIdProbe operation middleware
+func (siw *ServerInterfaceWrapper) PostProxiesIdProbe(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostProxiesIdProbe(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7055,6 +7322,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/pricing/sync/preview", wrapper.PostPricingSyncPreview)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/proxies", wrapper.GetProxies)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/proxies", wrapper.PostProxies)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/proxies/{id}", wrapper.DeleteProxiesId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/proxies/{id}", wrapper.GetProxiesId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/proxies/{id}", wrapper.PutProxiesId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/proxies/{id}/probe", wrapper.PostProxiesIdProbe)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/redemption-codes", wrapper.GetRedemptionCodes)

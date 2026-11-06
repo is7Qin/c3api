@@ -716,6 +716,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proxies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 代理条目列表（无分页，id 升序稳定序） */
+        get: operations["GetProxies"];
+        put?: never;
+        /** 新建代理条目（name 唯一；冲突 → 409；缺省 enabled=true） */
+        post: operations["PostProxies"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proxies/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 单个代理条目（不存在/已软删 → 404） */
+        get: operations["GetProxiesId"];
+        /** 全量更新非密字段 + 凭据三态（不改 last_probe_*：探测结论只由 probe 端点写） */
+        put: operations["PutProxiesId"];
+        post?: never;
+        /** 软删 + 同事务解绑（绑定该代理的账号回落直连） */
+        delete: operations["DeleteProxiesId"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/proxies/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * TCP 探测（5s）+ 写回 last_probe_*，返回最新条目
+         * @description 只拨 TCP，不验证认证与出口 IP；结果不影响 enabled（唯一可用性开关）。 **拨不通不是 API 错误**：仍是 200，body 里 last_probe_ok=false + 已脱敏的 last_probe_error。只有条目不存在（404）或写回失败才是错误。
+         */
+        post: operations["PostProxiesIdProbe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/auth/register": {
         parameters: {
             query?: never;
@@ -4395,6 +4456,58 @@ export interface components {
              */
             other_concurrency: number;
         };
+        /** @description 代理条目读模型（密码恒不出，只有 has_password） */
+        Proxy: {
+            /** Format: int64 */
+            id: number;
+            /** @description trim 后 1..64；与未软删条目唯一 */
+            name: string;
+            /**
+             * @description 原样落库（socks5h 不归一成 socks5）
+             * @enum {string}
+             */
+            scheme: "socks5" | "socks5h" | "http" | "https";
+            /** @description IPv6 不带方括号 */
+            host: string;
+            /** @description 1..65535 */
+            port: number;
+            /** @description 非密（原样回显）；null = 无认证 */
+            username?: string | null;
+            /** @description 只回显"是否设了密码"，密码本身永不出现在任何响应里 */
+            has_password: boolean;
+            /** @description 唯一可用性开关；探测结论不影响它 */
+            enabled: boolean;
+            remark: string;
+            /**
+             * Format: date-time
+             * @description null = 从未探测
+             */
+            last_probe_at?: string | null;
+            last_probe_ok: boolean;
+            /** @description 已脱敏的探测错误（凭据恒被替换） */
+            last_probe_error?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description 代理条目写面（POST 创建 / PUT 全量更新共用）。name/scheme/host/port 必填； 凭据与 enabled/remark 三态：缺席 = 不变；null = 清空；有值 = 落值； 可空标量 \"\" = 400（清空只有一个拼法 null，与账号写面同一口径）。 Create 缺省 enabled=true。 */
+        ProxyConfig: {
+            /** @description trim 后 1..64 */
+            name: string;
+            /** @enum {string} */
+            scheme: "socks5" | "socks5h" | "http" | "https";
+            /** @description 非空；拒绝 / @ 空白与控制字符；IPv6 去方括号；≤253 */
+            host: string;
+            port: number;
+            username?: string | null;
+            password?: string | null;
+            enabled?: boolean;
+            remark?: string | null;
+        };
+        ProxyListResponse: {
+            rows: components["schemas"]["Proxy"][];
+        };
     };
     responses: {
         /** @description 错误响应 */
@@ -5986,6 +6099,148 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeletedResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetProxies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 代理条目列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostProxies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxyConfig"];
+            };
+        };
+        responses: {
+            /** @description 创建后的条目（含新 id 与探测三列初值） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetProxiesId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 代理条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutProxiesId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxyConfig"];
+            };
+        };
+        responses: {
+            /** @description 更新后的条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    DeleteProxiesId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostProxiesIdProbe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
                 };
             };
             default: components["responses"]["Error"];

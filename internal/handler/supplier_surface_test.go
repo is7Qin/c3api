@@ -192,6 +192,15 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 		{"POST", "/api/user/supplier/templates/batch-delete"},
 		// 反向断言：假设新增一个管理端点 ⇒ 默认不对供应商暴露（未登记）。
 		{"GET", "/api/user/supplier/brand-new-admin-thing"},
+		// 代理池（spec-proxy-pool §6.1）：管理面资源，**有意登记为不可达**。
+		// 理由：供应商可否自建/绑定代理是未决项（spec §13 的 D7 升级版），而
+		// tag 只有 proxies ⇒ 生成面未注册 ⇒ 结构性 404。将来若上供应商面，
+		// 这条断言会先失败，逼出「先决策、再改门禁」而不是悄悄放开。
+		{"GET", "/api/user/supplier/proxies"},
+		{"POST", "/api/user/supplier/proxies"},
+		{"PUT", "/api/user/supplier/proxies/1"},
+		{"DELETE", "/api/user/supplier/proxies/1"},
+		{"POST", "/api/user/supplier/proxies/1/probe"},
 	}
 	for _, tc := range blocked {
 		req := httptest.NewRequest(tc.method, tc.path, http.NoBody)

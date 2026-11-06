@@ -8,6 +8,10 @@ servers:
 tags:
   - name: templates
   - name: accounts
+  # 代理池（spec-proxy-pool §6.1）：管理面维护出口代理条目。**只有这个 tag** ——
+  # 供应商面（tag supplier）不登记这些 op，故在供应商面结构性地 404（未登记即未
+  # 注册，default-deny 由 tag 机制保证；供应商能否自建代理属未决项，见 spec §13）。
+  - name: proxies
   - name: groups
   - name: keys
   - name: users
@@ -1043,6 +1047,101 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DeletedResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  # ---- 代理池管理面（spec-proxy-pool §6.1）：tag 只有 proxies ⇒ 供应商面结构性 404 ----
+  # 列表无分页：条目数是十到百量级的小表（不是流量表），全量回显 + id 稳定序。
+  /proxies:
+    get:
+      operationId: GetProxies
+      tags: [proxies]
+      summary: 代理条目列表（无分页，id 升序稳定序）
+      responses:
+        '200':
+          description: 代理条目列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProxyListResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: PostProxies
+      tags: [proxies]
+      summary: 新建代理条目（name 唯一；冲突 → 409；缺省 enabled=true）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyConfig' }
+      responses:
+        '200':
+          description: 创建后的条目（含新 id 与探测三列初值）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
+        default:
+          $ref: '#/components/responses/Error'
+  /proxies/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      operationId: GetProxiesId
+      tags: [proxies]
+      summary: 单个代理条目（不存在/已软删 → 404）
+      responses:
+        '200':
+          description: 代理条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: PutProxiesId
+      tags: [proxies]
+      summary: 全量更新非密字段 + 凭据三态（不改 last_probe_*：探测结论只由 probe 端点写）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyConfig' }
+      responses:
+        '200':
+          description: 更新后的条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: DeleteProxiesId
+      tags: [proxies]
+      summary: 软删 + 同事务解绑（绑定该代理的账号回落直连）
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /proxies/{id}/probe:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: PostProxiesIdProbe
+      tags: [proxies]
+      summary: TCP 探测（5s）+ 写回 last_probe_*，返回最新条目
+      description: >-
+        只拨 TCP，不验证认证与出口 IP；结果不影响 enabled（唯一可用性开关）。
+        **拨不通不是 API 错误**：仍是 200，body 里 last_probe_ok=false +
+        已脱敏的 last_probe_error。只有条目不存在（404）或写回失败才是错误。
+      responses:
+        '200':
+          description: 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
         default:
           $ref: '#/components/responses/Error'
   # --- /user 面（tag: user；生成到 internal/handler/user 独立 ServerInterface） ---
@@ -4898,3 +4997,74 @@ components:
           type: array
           items: { $ref: '#/components/schemas/UsersTopEntry' }
         other_concurrency: { type: integer, format: int64, description: 其余在途用户合计（TopN 之外；非伪用户条目） }
+    # ---- 代理池（spec-proxy-pool §3.3/§6.1）----
+    # 读模型：密码**永不出**，只有 has_password；用户名非密、原样回显。
+    Proxy:
+      type: object
+      description: 代理条目读模型（密码恒不出，只有 has_password）
+      required: [id, name, scheme, host, port, has_password, enabled, remark, last_probe_ok, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string, description: trim 后 1..64；与未软删条目唯一 }
+        scheme: { type: string, enum: [socks5, socks5h, http, https], description: 原样落库（socks5h 不归一成 socks5） }
+        host: { type: string, description: IPv6 不带方括号 }
+        port: { type: integer, description: 1..65535 }
+        username: { type: string, nullable: true, description: 非密（原样回显）；null = 无认证 }
+        has_password: { type: boolean, description: 只回显"是否设了密码"，密码本身永不出现在任何响应里 }
+        enabled: { type: boolean, description: 唯一可用性开关；探测结论不影响它 }
+        remark: { type: string }
+        last_probe_at: { type: string, format: date-time, nullable: true, description: null = 从未探测 }
+        last_probe_ok: { type: boolean }
+        last_probe_error: { type: string, nullable: true, description: 已脱敏的探测错误（凭据恒被替换） }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    ProxyConfig:
+      type: object
+      description: >-
+        代理条目写面（POST 创建 / PUT 全量更新共用）。name/scheme/host/port 必填；
+        凭据与 enabled/remark 三态：缺席 = 不变；null = 清空；有值 = 落值；
+        可空标量 \"\" = 400（清空只有一个拼法 null，与账号写面同一口径）。
+        Create 缺省 enabled=true。
+      required: [name, scheme, host, port]
+      properties:
+        name: { type: string, description: trim 后 1..64 }
+        scheme: { type: string, enum: [socks5, socks5h, http, https] }
+        host: { type: string, description: 非空；拒绝 / @ 空白与控制字符；IPv6 去方括号；≤253 }
+        port: { type: integer, minimum: 1, maximum: 65535 }
+        # 凭据两列同一份三态语义（spec §3.3）：缺席 = 不变；null = 清空；非空 = 落值；"" = 400。
+        # 三态载体与账号写面一致：nullable.Nullable[T]（*T 无法区分 null 与缺席）。
+        username:
+          x-omitempty: true
+          type: string
+          nullable: true
+          x-go-type: nullable.Nullable[string]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        password:
+          x-omitempty: true
+          type: string
+          nullable: true
+          x-go-type: nullable.Nullable[string]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        # 不可空标量：缺席 = 不变；null = 400（null 不是 enabled 的一种状态）。
+        enabled:
+          x-omitempty: true
+          type: boolean
+          x-go-type: nullable.Nullable[bool]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+        remark:
+          x-omitempty: true
+          type: string
+          nullable: true
+          x-go-type: nullable.Nullable[string]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
+    ProxyListResponse:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/Proxy' }
