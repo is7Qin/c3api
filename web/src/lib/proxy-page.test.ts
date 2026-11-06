@@ -235,3 +235,56 @@ describe('地址判据只在后端（C3：删掉前端第二套 IP 分类器）'
     }
   })
 })
+
+// 批量导入（spec-proxy-import）的接线：解析、路径、文案分流各自**只有一处**实现。
+describe('批量导入接线（spec-proxy-import）', () => {
+  it('页面把请求交给 api.importProxies，不自己拼路径（切 base 即切作用域）', () => {
+    assert.match(proxyPage, /api\.importProxies\(/)
+    assert.ok(!proxyPage.includes('/proxies/import'), '页面不得自己拼路径')
+    assert.match(client, /importProxies = \(rows:[\s\S]{0,120}?'\/proxies\/import'/)
+  })
+
+  it('粘贴文本的拆分只发生在 lib/proxy-form（页面不自己 split/正则）', () => {
+    assert.match(proxyPage, /parseProxyImportLines\(/)
+    assert.ok(!proxyPage.includes(".split('\\n')"), '文本拆分只在 lib/proxy-form 一处')
+  })
+
+  it('派生 name 复用 proxyEndpoint（与列表展示同一拼法，不另写一份）', () => {
+    assert.match(proxyForm, /const name = proxyEndpoint\(\{ scheme, host, port \}\)/)
+  })
+
+  it('失败行按 reason 分流：conflict 用本地化文案，其余透出后端原文', () => {
+    assert.match(proxyPage, /r\.reason === 'conflict' \? t\('proxies\.nameConflict'\) : \(r\.error \?\?/)
+  })
+
+  it('上限与空态都挡住提交（不在服务端才发现超限）', () => {
+    assert.match(proxyPage, /importable\.length > PROXY_IMPORT_MAX_ROWS/)
+    assert.match(proxyPage, /disabled=\{importMut\.isPending \|\| importable\.length === 0 \|\| overCap\}/)
+  })
+
+  it('结果表用提交时的行快照标回原文行号（响应只有请求下标）', () => {
+    assert.match(proxyPage, /const at = submitted\[r\.index\]/)
+    assert.match(proxyPage, /setSubmitted\(importable\.map/)
+  })
+
+  it('i18n 两侧同批：导入文案键集在 en/zh 一致', () => {
+    const keys = (src: string) => {
+      const start = src.indexOf('"importTitle"')
+      assert.notEqual(start, -1, '找不到 importTitle')
+      const end = src.indexOf('"importErrors"', start)
+      assert.notEqual(end, -1, '找不到 importErrors')
+      return [...src.slice(start, end).matchAll(/"([A-Za-z]+)":/g)].map(m => m[1]).sort()
+    }
+    assert.deepEqual(keys(enLocale), keys(zhLocale))
+    // 解析错误码也必须两侧齐全（页面按 DynamicKey 拼，缺一条就是运行时露出原始 key）。
+    const errKeys = (src: string) => {
+      const start = src.indexOf('"importErrors"')
+      const end = src.indexOf('}', start)
+      return [...src.slice(start, end).matchAll(/"([A-Za-z]+)":/g)].map(m => m[1]).sort()
+    }
+    assert.deepEqual(errKeys(enLocale), errKeys(zhLocale))
+    assert.deepEqual(errKeys(enLocale), [
+      'badHost', 'badPort', 'badScheme', 'emptyHost', 'emptyUsername', 'importErrors', 'nameTooLong', 'needPort',
+    ])
+  })
+})

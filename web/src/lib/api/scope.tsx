@@ -44,13 +44,14 @@ export type AccountApi = Pick<
   | 'getStatsCapabilities'
   | 'getStatsEntityTrend'
   // 出口代理（spec proxy-pool §6/§7）：账号页的「出口代理」选择器要读可见代理列表，
-  // 代理池页（管理面 / 供应商面共用同一组件）要整套 CRUD + 探测。
+  // 代理池页（管理面 / 供应商面共用同一组件）要整套 CRUD + 探测 + 批量导入。
   // 同一批相对路径方法，切 base 即切作用域（adminApi ↔ supplierApi）。
   | 'listProxies'
   | 'createProxy'
   | 'updateProxy'
   | 'deleteProxy'
   | 'probeProxy'
+  | 'importProxies'
 >
 
 // SupplierConsoleApi 供应商控制台（业务页）实际使用的方法子集（独立小接口）。

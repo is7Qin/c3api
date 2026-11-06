@@ -14,23 +14,32 @@
 //
 // 三态纪律（与后端同口径，唯一实现在 lib/proxy-form 的 buildProxyPayload）：
 // 未触碰的 username/password/enabled/remark 一律不出现在请求体里；「清除」是显式 null。
+//
+// 批量导入（spec-proxy-import）也在这一个组件里：两面复用同一批 API 方法，切 base 即切
+// 作用域；粘贴文本的解析是 lib/proxy-form 的 parseProxyImportLines（纯函数、可单测），
+// 本文件只管状态与展示。
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Radar, Lock, Network, CircleCheck, Ban } from 'lucide-react'
+import { Plus, Pencil, Trash2, Radar, Lock, Network, CircleCheck, Ban, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import {
+  PROXY_IMPORT_MAX_ROWS,
   PROXY_SCHEMES,
   buildProxyPayload,
   emptyProxyDraft,
+  parseProxyImportLines,
   proxyDraftOf,
   proxyEndpoint,
   validateProxyForm,
+  type ProxyConfig,
   type ProxyField,
   type ProxyFormErrors,
+  type ProxyImportRowResult,
+  type ProxyScheme,
   type ProxyView,
 } from '@/lib/proxy-form'
 import { Badge } from '@/components/ui/badge'
@@ -44,6 +53,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/components/ui/toast'
 import { formatDateTime, truncate } from '@/components/fmt'
 
@@ -111,6 +121,53 @@ export default function ProxyPoolPage() {
     onSuccess: () => { void invalidate() },
   })
 
+  // —— 批量导入（spec-proxy-import）——
+  // `submitted` 是**提交那一刻**的行快照（行号 + 派生名）：响应的 index 是请求下标，
+  // 只有靠它才能把结果标回原文那一行。失败行留在框里让人改完再提，故结果面板不清空。
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importScheme, setImportScheme] = useState<ProxyScheme>('http')
+  const [importEnabled, setImportEnabled] = useState(true)
+  const [submitted, setSubmitted] = useState<{ line: number; name: string }[]>([])
+
+  const parsed = useMemo(() => parseProxyImportLines(importText, importScheme), [importText, importScheme])
+  const importable = useMemo(() => parsed.filter(r => r.config !== undefined), [parsed])
+  const broken = parsed.length - importable.length
+  const overCap = importable.length > PROXY_IMPORT_MAX_ROWS
+
+  const importMut = useMutation({
+    mutationFn: (rows: ProxyConfig[]) => api.importProxies(rows.map(r => ({ ...r, enabled: importEnabled }))),
+    onSuccess: res => {
+      void invalidate()
+      if (res.failed === 0) {
+        toast.add({ title: t('proxies.importSuccess', { count: res.created }), type: 'success' })
+        setImportOpen(false)
+        setImportText('')
+        setSubmitted([])
+      }
+    },
+  })
+
+  const openImport = () => {
+    setImportText('')
+    setSubmitted([])
+    setImportScheme('http')
+    setImportEnabled(true)
+    importMut.reset()
+    setImportOpen(true)
+  }
+
+  const submitImport = () => {
+    const rows = importable.map(r => r.config as ProxyConfig)
+    setSubmitted(importable.map(r => ({ line: r.line, name: (r.config as ProxyConfig).name })))
+    importMut.mutate(rows)
+  }
+
+  // 失败行只按 reason 分流文案：conflict 有本地化说法，其余（invalid/internal）透出后端
+  // 原文——那才是能定位问题的信息（行内错误带字段级说明，见 spec-proxy-import §4）。
+  const importReasonText = (r: ProxyImportRowResult) =>
+    r.reason === 'conflict' ? t('proxies.nameConflict') : (r.error ?? t('proxies.importRowFailed'))
+
   const submit = () => {
     const errs = validateProxyForm(draft)
     setErrors(errs)
@@ -135,7 +192,10 @@ export default function ProxyPoolPage() {
             {t(isSupplier ? 'proxies.subtitleSupplier' : 'proxies.subtitleAdmin')}
           </p>
         </div>
-        <Button onClick={openCreate}><Plus /> {t('proxies.new')}</Button>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" onClick={openImport}><Upload /> {t('proxies.import')}</Button>
+          <Button onClick={openCreate}><Plus /> {t('proxies.new')}</Button>
+        </div>
       </div>
 
       {q.isError ? (
@@ -342,6 +402,93 @@ export default function ProxyPoolPage() {
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{t('common.cancel')}</Button>
             <Button onClick={submit} disabled={save.isPending}>
               {save.isPending ? t('common.saving') : editing ? t('common.saveChanges') : t('common.create')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* —— 批量导入（spec-proxy-import）：粘贴 → 预览 → 逐行结果 —— */}
+      <Dialog open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>{t('proxies.importTitle')}</DialogTitle>
+            <DialogDescription>{t('proxies.importDesc')}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea
+              data-od-id="proxy-import-text"
+              className="min-h-32 font-mono text-xs"
+              placeholder={t('proxies.importPlaceholder')}
+              value={importText}
+              onChange={e => setImportText(e.target.value)}
+            />
+            <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>{t('proxies.importDefaultScheme')}</Label>
+                <Select items={schemeItems} value={importScheme} onValueChange={v => setImportScheme(v as ProxyScheme)}>
+                  <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {PROXY_SCHEMES.map(s => <SelectItem key={s} value={s} label={s}>{s}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <label className="flex cursor-pointer items-center gap-2.5 py-2">
+                <Checkbox checked={importEnabled} onCheckedChange={c => setImportEnabled(c === true)} />
+                <span className="text-sm">{t('proxies.importEnabled')}</span>
+              </label>
+            </div>
+
+            {parsed.length > 0 && (
+              <div className="max-h-52 overflow-auto rounded-md border">
+                <table className="w-full text-xs">
+                  <tbody>
+                    {parsed.map(r => (
+                      <tr key={r.line} className="border-t first:border-t-0">
+                        <td className="w-12 px-2 py-1 tabular-nums text-muted-foreground">L{r.line}</td>
+                        <td className="max-w-[16rem] truncate px-2 py-1 font-mono" title={r.raw}>{r.raw}</td>
+                        <td className="px-2 py-1">
+                          {r.error
+                            ? <span className="text-destructive">{t(`proxies.importErrors.${r.error}` as DynamicKey)}</span>
+                            : <span className="text-muted-foreground">{r.config?.name}</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              {t('proxies.importParsed', { ok: importable.length, bad: broken })}
+              {overCap ? ` · ${t('proxies.importOverCap', { max: PROXY_IMPORT_MAX_ROWS })}` : ''}
+            </p>
+
+            {importMut.isError && errMsg(importMut.error) && (
+              <p className="text-sm text-destructive">{errMsg(importMut.error)}</p>
+            )}
+
+            {/* 逐行结果：下标是**请求下标**，行号来自提交时的快照（submitted）。 */}
+            {importMut.data && (
+              <div className="max-h-40 space-y-0.5 overflow-auto rounded-md border p-2 text-xs">
+                {importMut.data.rows.map(r => {
+                  const at = submitted[r.index]
+                  return (
+                    <div key={r.index} className="flex items-center gap-2">
+                      <span className="w-10 shrink-0 tabular-nums text-muted-foreground">L{at?.line ?? r.index + 1}</span>
+                      <span className={r.ok ? 'shrink-0 text-emerald-600 dark:text-emerald-400' : 'shrink-0 text-destructive'}>
+                        {r.ok ? t('proxies.importRowOK') : importReasonText(r)}
+                      </span>
+                      <span className="truncate font-mono text-muted-foreground" title={at?.name ?? r.name}>{at?.name ?? r.name}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)}>{t('common.cancel')}</Button>
+            <Button onClick={submitImport} disabled={importMut.isPending || importable.length === 0 || overCap}>
+              {importMut.isPending ? t('common.saving') : t('proxies.importSubmit', { count: importable.length })}
             </Button>
           </DialogFooter>
         </DialogContent>

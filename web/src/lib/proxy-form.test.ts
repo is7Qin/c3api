@@ -14,12 +14,14 @@ import {
   PROXY_NAME_MAX,
   PROXY_SCHEMES,
   buildProxyPayload,
+  parseProxyImportLines,
   emptyProxyDraft,
   normalizeProxyHost,
   proxyDraftOf,
   proxyEndpoint,
   validateProxyForm,
   type ProxyDraft,
+  type ProxyScheme,
   type ProxyView,
 } from './proxy-form.ts'
 
@@ -179,5 +181,91 @@ describe('proxyEndpoint', () => {
   it('IPv6 展示必须加回方括号', () => {
     assert.equal(proxyEndpoint({ scheme: 'http', host: '::1', port: 8080 }), 'http://[::1]:8080')
     assert.equal(proxyEndpoint({ scheme: 'socks5', host: 'p.example.com', port: 1080 }), 'socks5://p.example.com:1080')
+  })
+})
+
+// —— 批量导入的粘贴语法（spec-proxy-import §5）——
+//
+// 这段只判"能否构成请求"（结构）：不判地址值是否合法（私网/回环、host 字符集仍只有后端
+// 一份判据）。name 由端点派生，与 proxyEndpoint 同拼法。
+describe('parseProxyImportLines', () => {
+  const parse1 = (line: string, scheme: ProxyScheme = 'http') => {
+    const rows = parseProxyImportLines(line, scheme)
+    assert.equal(rows.length, 1, `应当只解析出一行：${line}`)
+    return rows[0]
+  }
+
+  it('完整 URI：scheme/host/port 各自落位，name 按端点派生', () => {
+    const row = parse1('socks5://10.1.1.1:1080')
+    assert.deepEqual(row.config, { name: 'socks5://10.1.1.1:1080', scheme: 'socks5', host: '10.1.1.1', port: 1080 })
+    assert.equal(row.line, 1)
+    assert.equal(row.raw, 'socks5://10.1.1.1:1080')
+  })
+
+  it('省略 scheme ⇒ 用调用方给的默认协议（不猜）', () => {
+    assert.equal(parse1('10.1.1.1:1080', 'socks5h').config?.scheme, 'socks5h')
+    assert.equal(parse1('10.1.1.1:1080', 'socks5h').config?.name, 'socks5h://10.1.1.1:1080')
+  })
+
+  it('scheme 大小写归一；不在白名单 ⇒ badScheme', () => {
+    assert.equal(parse1('SOCKS5://h.example.com:1080').config?.scheme, 'socks5')
+    assert.equal(parse1('socks4://h.example.com:1080').error, 'badScheme')
+  })
+
+  it('凭据：最后一个 @ 分隔，userinfo 的第一个 : 分用户名/密码', () => {
+    const row = parse1('socks5://u:p@ss@w0rd@10.1.1.1:1080')
+    assert.equal(row.config?.username, 'u')
+    assert.equal(row.config?.password, 'p@ss@w0rd', '密码里的 @ 必须原样保留')
+    assert.equal(row.config?.host, '10.1.1.1')
+  })
+
+  it('密码可含冒号；`u:` 视为无密码', () => {
+    assert.equal(parse1('socks5://u:p:q@h.example.com:1080').config?.password, 'p:q')
+    const row = parse1('socks5://u:@h.example.com:1080')
+    assert.equal(row.config?.username, 'u')
+    assert.ok(!('password' in (row.config ?? {})), '空密码不发（后端允许有用户名无密码）')
+  })
+
+  it('只有 @ 没有用户名 ⇒ emptyUsername', () => {
+    assert.equal(parse1('socks5://:p@h.example.com:1080').error, 'emptyUsername')
+  })
+
+  it('IPv6 必须写方括号；裸 IPv6 报 badHost（端口边界不可判）', () => {
+    assert.equal(parse1('http://[2001:db8::1]:8080').config?.host, '2001:db8::1')
+    assert.equal(parse1('http://[2001:db8::1]:8080').config?.name, 'http://[2001:db8::1]:8080')
+    assert.equal(parse1('http://::1:8080').error, 'badHost')
+    assert.equal(parse1('http://[2001:db8::1:8080').error, 'badHost')
+  })
+
+  it('缺端口 / 端口不是数字 / 越界 / 缺主机', () => {
+    assert.equal(parse1('http://h.example.com').error, 'needPort')
+    assert.equal(parse1('http://h.example.com:abc').error, 'badPort')
+    assert.equal(parse1('http://h.example.com:0').error, 'badPort')
+    assert.equal(parse1('http://h.example.com:65536').error, 'badPort')
+    assert.equal(parse1('http://:8080').error, 'emptyHost')
+  })
+
+  it('派生 name 超过 64 字符 ⇒ nameTooLong（不静默截断）', () => {
+    const host = 'a'.repeat(PROXY_NAME_MAX)
+    assert.equal(parse1(`http://${host}:80`).error, 'nameTooLong')
+  })
+
+  it('空行与 # 整行注释跳过，但行号按原文计', () => {
+    const rows = parseProxyImportLines(['# 这是注释', '', 'http://a.example.com:8080', '   ', 'b.example.com:1080'].join('\n'), 'socks5')
+    assert.equal(rows.length, 2)
+    assert.equal(rows[0].line, 3, '注释与空行占原文行号，但不进结果')
+    assert.equal(rows[1].line, 5)
+    assert.equal(rows[1].config?.scheme, 'socks5')
+  })
+
+  it('行尾不解析注释（密码里可以有 #）', () => {
+    assert.equal(parse1('http://u:p#1@h.example.com:8080').config?.password, 'p#1')
+  })
+
+  it('单个非法行不影响其余行：结果逐行给出', () => {
+    const rows = parseProxyImportLines('http://ok.example.com:8080\nnot-a-proxy', 'http')
+    assert.equal(rows.length, 2)
+    assert.ok(rows[0].config)
+    assert.equal(rows[1].error, 'needPort')
   })
 })

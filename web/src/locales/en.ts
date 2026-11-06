@@ -591,7 +591,28 @@ export default {
       "hostChars": "Host must not contain spaces, \"/\" or \"@\"",
       "portInteger": "Port must be an integer",
       "portRange": "Port must be between 1 and 65535"
-    }
+    },
+    "import": "Import",
+    "importTitle": "Import proxies",
+    "importDesc": "One per line: scheme://[user[:pass]@]host:port; blank lines and lines starting with # are ignored; names are derived from the endpoint",
+    "importPlaceholder": "socks5://10.1.1.1:1080\nsocks5h://user:pass@10.1.1.2:1080\nhttp://[2001:db8::1]:8080",
+    "importDefaultScheme": "Default scheme (for lines without one)",
+    "importEnabled": "Enabled after import",
+    "importParsed": "{{ok}} line(s) ready · {{bad}} need fixing",
+    "importOverCap": "At most {{max}} lines per import",
+    "importSubmit": "Import {{count}} line(s)",
+    "importSuccess": "Imported {{count}} proxies",
+    "importRowOK": "Created",
+    "importRowFailed": "Failed",
+    "importErrors": {
+      "needPort": "Missing port (host:port)",
+      "badPort": "Port must be an integer between 1 and 65535",
+      "emptyHost": "Missing host",
+      "badHost": "Bad host (bracket IPv6 as [::1])",
+      "badScheme": "Scheme must be socks5 / socks5h / http / https",
+      "nameTooLong": "Derived name exceeds 64 characters; use a shorter host",
+      "emptyUsername": "An @ was given but the username is empty"
+    },
   },
   "users": {
     "title": "Users",

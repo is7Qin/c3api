@@ -591,7 +591,28 @@ export default {
       "hostChars": "主机不得含空格、\"/\" 或 \"@\"",
       "portInteger": "端口必须是整数",
       "portRange": "端口需在 1-65535"
-    }
+    },
+    "import": "批量导入",
+    "importTitle": "批量导入代理",
+    "importDesc": "每行一条：scheme://[user[:pass]@]host:port；空行与 # 开头的行忽略；名称按端点自动生成",
+    "importPlaceholder": "socks5://10.1.1.1:1080\nsocks5h://user:pass@10.1.1.2:1080\nhttp://[2001:db8::1]:8080",
+    "importDefaultScheme": "默认协议（行内未写 scheme 时使用）",
+    "importEnabled": "创建后启用",
+    "importParsed": "可导入 {{ok}} 行 · {{bad}} 行待修正",
+    "importOverCap": "单次最多 {{max}} 行",
+    "importSubmit": "导入 {{count}} 行",
+    "importSuccess": "已导入 {{count}} 条代理",
+    "importRowOK": "已创建",
+    "importRowFailed": "失败",
+    "importErrors": {
+      "needPort": "缺少端口（host:port）",
+      "badPort": "端口必须是 1-65535 的整数",
+      "emptyHost": "缺少主机",
+      "badHost": "主机格式有误（IPv6 需写成 [::1]）",
+      "badScheme": "协议必须是 socks5 / socks5h / http / https",
+      "nameTooLong": "自动生成的名称超过 64 字符，请换更短的 host",
+      "emptyUsername": "写了 @ 但用户名是空的"
+    },
   },
   "users": {
     "title": "用户",

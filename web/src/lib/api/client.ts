@@ -161,6 +161,13 @@ export class ApiClient {
   // 调用方把结论显示在行内，不要弹失败 toast。
   probeProxy = (id: number) =>
     this.request<components['schemas']['Proxy']>(`/proxies/${id}/probe`, { method: 'POST' })
+  // 批量导入（spec-proxy-import）：请求体是 `{rows}`，行 = ProxyConfig（没有第二个写模型）。
+  // 响应**恒 200**（请求合法即成功）：逐行结果在 body 里，失败的行看 rows[i].reason/error。
+  importProxies = (rows: components['schemas']['ProxyConfig'][]) =>
+    this.request<components['schemas']['ProxyImportResponse']>('/proxies/import', {
+      method: 'POST',
+      body: JSON.stringify({ rows }),
+    })
   // —— 分组 ——
   listGroups = (p?: GroupListParams) => this.request<components['schemas']['GroupListResponse']>('/groups', { params: toQuery(p) })
   createGroup = (b: components['schemas']['GroupCreate']) => this.request<components['schemas']['Group']>('/groups', { method: 'POST', body: JSON.stringify(b) })
