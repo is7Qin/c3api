@@ -290,10 +290,10 @@ func rowsChatToResp() []row {
 		{sh: shCUserImgData, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shCUserImgBare64, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shCUserAudio, roles: rmUser, kind: kindItem, pol: polDrop},
-		{sh: shCUserFileData, roles: rmUser, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shCUserFileData, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shCUserFileID, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shCAsstText, roles: rmAsst, kind: kindItem, name: "message", pol: polMap, ann: true},
-		{sh: shCAsstRefusal, roles: rmAsst, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shCAsstRefusal, roles: rmAsst, kind: kindItem, name: "message", pol: polMap},
 		{sh: shCAsstOtherParts, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shCAsstToolFunction, roles: rmAsst, kind: kindItem, name: "function_call", pol: polMap},
 		{sh: shCAsstToolCustom, roles: rmAsst, kind: kindItem, pol: polDrop},
@@ -315,7 +315,7 @@ func rowsChatToMess() []row {
 		{sh: shCMUserFileData, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shCMUserFileID, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shCMAsstText, roles: rmAsst, kind: kindItem, name: "message", pol: polMap},
-		{sh: shCMAsstRefusal, roles: rmAsst, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shCMAsstRefusal, roles: rmAsst, kind: kindItem, name: "message", pol: polTextDegrade},
 		{sh: shCMAsstOtherParts, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shCMAsstToolFunction, roles: rmAsst, kind: kindItem, name: "message", pol: polMap},
 		{sh: shCMAsstToolCustom, roles: rmAsst, kind: kindItem, pol: polDrop},
@@ -332,15 +332,15 @@ func rowsMessToResp() []row {
 	return []row{
 		{sh: shMUserText, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shMAsstText, roles: rmAsst, kind: kindItem, name: "message", pol: polMap},
-		{sh: shMUserImgBase64, roles: rmUser, kind: kindItem, name: "message", pol: polDrop},
-		{sh: shMUserImgURL, roles: rmUser, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shMUserImgBase64, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
+		{sh: shMUserImgURL, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shMUserImgFileID, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shMAsstImgBase64, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shMAsstImgURL, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shMAsstImgFileID, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shMUserDocB64TextContent, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shMUserDocFileID, roles: rmUser, kind: kindItem, pol: polDrop},
-		{sh: shMUserDocURL, roles: rmUser, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shMUserDocURL, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shMUserSearchResult, roles: rmUser, kind: kindItem, name: "message", pol: polDrop},
 		{sh: shMAsstSearchResult, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shMAsstToolUse, roles: rmAsst, kind: kindItem, name: "function_call", pol: polMap},
@@ -368,13 +368,13 @@ func rowsRespToMess() []row {
 		{sh: shRMsgUserImgDataURL, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shRMsgUserImgOther, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shRMsgUserImgFileID, roles: rmUser, kind: kindItem, pol: polDrop},
-		{sh: shRMsgUserFileURL, roles: rmUser, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shRMsgUserFileURL, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
 		{sh: shRMsgUserFileID, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shRMsgUserFileData, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shRMsgUserInputAudio, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shRMsgSysdevText, roles: rmSystem | rmDeveloper, kind: kindItem, pol: polOmit},
 		{sh: shRMsgAsstOutputText, roles: rmAsst, kind: kindItem, name: "message", pol: polMap},
-		{sh: shRMsgAsstRefusal, roles: rmAsst, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shRMsgAsstRefusal, roles: rmAsst, kind: kindItem, name: "message", pol: polTextDegrade},
 		{sh: shRMsgAsstMedia, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shRFunctionCall, roles: rmAsst, kind: kindItem, name: "function_call", pol: polMap},
 		{sh: shRReasoning, roles: rmAsst, kind: kindItem, name: "reasoning", pol: polMap},
@@ -390,7 +390,7 @@ func rowsRespToMess() []row {
 func rowsRespToChat() []row {
 	return []row{
 		{sh: shXMessageOutputText, roles: rmAsst, kind: kindChatKey, name: "content", pol: polMap},
-		{sh: shXMessageRefusal, roles: rmAsst, kind: kindChatKey, name: "content", pol: polDrop},
+		{sh: shXMessageRefusal, roles: rmAsst, kind: kindChatKey, name: "content", pol: polMap},
 		{sh: shXFunctionCall, roles: rmAsst, kind: kindChatKey, name: "tool_calls", pol: polMap},
 		{sh: shXReasoning, roles: rmAsst, kind: kindChatKey, name: "reasoning_content", pol: polMap},
 		{sh: shXMessageMedia, roles: rmAsst, kind: kindChatKey, pol: polDrop},
@@ -402,7 +402,7 @@ func rowsRespToChat() []row {
 func rowsRespToMessResp() []row {
 	return []row{
 		{sh: shYOutputText, roles: rmAsst, kind: kindPart, name: "text", pol: polMap},
-		{sh: shYRefusal, roles: rmAsst, kind: kindPart, name: "text", pol: polDrop},
+		{sh: shYRefusal, roles: rmAsst, kind: kindPart, name: "text", pol: polTextDegrade},
 		{sh: shYFunctionCall, roles: rmAsst, kind: kindPart, name: "tool_use", pol: polMap},
 		{sh: shYReasoning, roles: rmAsst, kind: kindPart, name: "thinking", pol: polMap},
 		{sh: shYTail, anyRole: true, kind: kindPart, pol: polDrop},
@@ -652,10 +652,20 @@ func lookup(d direction, sh shape, r role) (row, bool) {
 	return rw, true
 }
 
-// mapsTo 该 (dir, shape, role) 是否按 name 写出（唯一的「要不要写」判据）。
+// mapsTo 该 (dir, shape, role) 是否按 name 原样写出（唯一的「要不要写」判据）。
 func mapsTo(d direction, sh shape, r role) (row, bool) {
 	rw, ok := lookup(d, sh, r)
 	if !ok || rw.pol != polMap {
+		return rw, false
+	}
+	return rw, true
+}
+
+// emits 该行是否**写出内容**：polMap（按 name 原样）与 polTextDegrade（降级为
+// text 块）都写出，只是形态不同；其余策略（drop/omit/empty/unknown）不写。
+func emits(d direction, sh shape, r role) (row, bool) {
+	rw, ok := lookup(d, sh, r)
+	if !ok || (rw.pol != polMap && rw.pol != polTextDegrade) {
 		return rw, false
 	}
 	return rw, true

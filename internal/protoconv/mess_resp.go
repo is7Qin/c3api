@@ -89,7 +89,15 @@ func respOutputToMessBlocks(r map[string]any) []any {
 						if !ok {
 							continue
 						}
-						if _, ok := mapsTo(dirRespToMessResp, respMessBlockShape(pm), roleAssistant); !ok {
+						sh := respMessBlockShape(pm)
+						if _, ok := emits(dirRespToMessResp, sh, roleAssistant); !ok {
+							continue
+						}
+						if sh == shYRefusal {
+							// refusal 在 Messages 响应里降级为 text 块（J6/L12）
+							if rf, ok := str(pm, "refusal"); ok {
+								rest = append(rest, map[string]any{"type": "text", "text": rf})
+							}
 							continue
 						}
 						if t, ok := str(pm, "text"); ok {
@@ -129,19 +137,40 @@ func respMessBlockShape(pm map[string]any) shape {
 	return shYTail
 }
 
-// respToMessStopReason resp 状态/输出 → anthropic stop_reason。status 已经是
-// incomplete 时只看 incomplete_details.reason，不再看 function_call。
+// respToMessStopReason resp 状态/输出 → anthropic stop_reason。判定顺序
+// （spec §2.4）：incomplete → refusal（无 function_call）→ function_call →
+// end_turn。status 已经是 incomplete 时只看 incomplete_details.reason。
 func respToMessStopReason(r map[string]any) string {
 	if status, _ := str(r, "status"); status == "incomplete" {
 		reason, _ := str(mapOrEmpty(r["incomplete_details"]), "reason")
 		return messStopFromIncomplete(reason)
 	}
-	if output, ok := arr(r, "output"); ok {
-		for _, item := range output {
-			if im, ok := item.(map[string]any); ok && im["type"] == "function_call" {
-				return "tool_use"
+	output, _ := arr(r, "output")
+	hasCall, hasRefusal := false, false
+	for _, item := range output {
+		im, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch im["type"] {
+		case "function_call":
+			hasCall = true
+		case "message":
+			if content, ok := arr(im, "content"); ok {
+				for _, part := range content {
+					if pm, ok := part.(map[string]any); ok && pm["type"] == "refusal" {
+						hasRefusal = true
+					}
+				}
 			}
 		}
+	}
+	if hasCall {
+		return "tool_use"
+	}
+	if hasRefusal {
+		// 上游拒绝但不是工具调用 → anthropic 的 refusal 停因
+		return "refusal"
 	}
 	return "end_turn"
 }
@@ -275,7 +304,8 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 				"usage": map[string]any{"input_tokens": 0, "output_tokens": 0},
 			},
 		}), false
-	case "response.output_text.delta":
+	case "response.output_text.delta", "response.refusal.delta":
+		// refusal 的增量在 Messages 侧降级为 text_delta（J6/L12，§5.1#9）
 		delta, _ := str(ev, "delta")
 		index := m.eventBlockIndex(ev, kindText)
 		m.nonThinkSeen = true // 文本块开始 → thinking 门关闭
@@ -295,7 +325,7 @@ func (m *StreamMapper) mapRespToMess(name string, data []byte) ([]byte, bool) {
 			"delta": map[string]any{"type": "text_delta", "text": delta},
 		})...)
 		return f, false
-	case "response.output_text.done":
+	case "response.output_text.done", "response.refusal.done":
 		m.nonThinkSeen = true
 		if f := m.stopBlock(m.eventBlockIndex(ev, kindText)); f != nil {
 			return f, false

@@ -1,1 +1,1 @@
-{"input":[{"content":[{"annotations":[],"text":"answer","type":"output_text"}],"role":"assistant","type":"message"}]}
+{"input":[{"content":[{"annotations":[],"text":"answer","type":"output_text"},{"refusal":"no","type":"refusal"}],"role":"assistant","type":"message"}]}

@@ -240,6 +240,10 @@ func appendChatMessMessages(out []byte, first *bool, msgs gjson.Result) []byte {
 			if rawStrEq(role.Raw, "function") {
 				id = strOrEmpty(mv.Get("name"))
 			}
+			if !chatDeclaresToolCall(msgs, id) {
+				// 孤儿 tool_result：没有对应的 tool_use 就丢弃（不合成 call，J11）
+				return true
+			}
 			out, n = appendComma(out, n)
 			out = appendToolResult(out, tgtMess, id, t, true)
 		}
@@ -263,7 +267,7 @@ func appendChatPartsMess(out []byte, content gjson.Result, r role) ([]byte, int)
 			return true
 		}
 		sh := chatMessPartShape(r, p)
-		if _, ok := mapsTo(dirChatToMess, sh, r); !ok {
+		if _, ok := emits(dirChatToMess, sh, r); !ok {
 			return true
 		}
 		switch sh {
@@ -272,6 +276,14 @@ func appendChatPartsMess(out []byte, content gjson.Result, r role) ([]byte, int)
 				out, n = appendComma(out, n)
 				out = append(out, `{"text":`...)
 				out = append(out, t.Raw...)
+				out = append(out, `,"type":"text"}`...)
+			}
+		case shCMAsstRefusal:
+			// refusal 在 Messages 目标降级为 text（J6/L12）
+			if rf := p.Get("refusal"); rf.Type == gjson.String {
+				out, n = appendComma(out, n)
+				out = append(out, `{"text":`...)
+				out = append(out, rf.Raw...)
 				out = append(out, `,"type":"text"}`...)
 			}
 		case shCMUserImgURL, shCMUserImgData:
@@ -295,8 +307,11 @@ func appendChatPartsMess(out []byte, content gjson.Result, r role) ([]byte, int)
 func chatMessPartShape(r role, p gjson.Result) shape {
 	typ := p.Get("type")
 	if r == roleAssistant {
-		if rawStrEq(typ.Raw, "text") {
+		switch {
+		case rawStrEq(typ.Raw, "text"):
 			return shCMAsstText
+		case rawStrEq(typ.Raw, "refusal"):
+			return shCMAsstRefusal
 		}
 		return shCMAsstOtherParts
 	}
@@ -324,6 +339,56 @@ func chatMessPartShape(r role, p gjson.Result) shape {
 		return shCMUserFileData
 	}
 	return shCMTail
+}
+
+// chatDeclaresToolCall 请求里是否有 assistant 消息声明了该 tool 调用
+// （J11：不合成 call，孤儿 tool_result 丢弃）。消息数很小，逐条比对即可；
+// gjson.Parse 只去引号，零分配。
+func chatDeclaresToolCall(msgs gjson.Result, callID string) bool {
+	if !msgs.IsArray() {
+		return false
+	}
+	want := gjson.Parse(callID).Str
+	found := false
+	msgs.ForEach(func(_, mv gjson.Result) bool {
+		if !rawStrEq(mv.Get("role").Raw, "assistant") {
+			return true
+		}
+		tcs := mv.Get("tool_calls")
+		if !tcs.IsArray() {
+			return true
+		}
+		tcs.ForEach(func(_, tc gjson.Result) bool {
+			if gjson.Parse(strOrEmpty(tc.Get("id"))).Str == want {
+				found = true
+				return false
+			}
+			return true
+		})
+		return !found
+	})
+	return found
+}
+
+// respDeclaresCall resp 请求的 input 里是否有 function_call 项声明了该调用
+// （匹配键取 call_id 优先、id 兜底，与 fcIDRaw 同口径）。
+func respDeclaresCall(input gjson.Result, callID string) bool {
+	if !input.IsArray() {
+		return false
+	}
+	want := gjson.Parse(callID).Str
+	found := false
+	input.ForEach(func(_, item gjson.Result) bool {
+		if !rawStrEq(item.Get("type").Raw, "function_call") {
+			return true
+		}
+		if gjson.Parse(fcIDRaw(item)).Str == want {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
 }
 
 func chatStopRaw(v gjson.Result) string {
@@ -717,8 +782,6 @@ func messInputPartShape(r role, blk gjson.Result) shape {
 			return shMAsstText
 		}
 		return shMUserText
-	case rawStrEq(typ.Raw, "tool_result"):
-		return messToolResultShape(blk.Get("content"))
 	case rawStrEq(typ.Raw, "image"):
 		src := blk.Get("source.type")
 		switch {
@@ -759,34 +822,42 @@ func messInputPartShape(r role, blk gjson.Result) shape {
 }
 
 // messToolResultShape tool_result.content 的成员形状：缺席 / 字符串 / 数组含
-// text / 数组不含 text（含媒体或不含媒体）。
-func messToolResultShape(c gjson.Result) shape {
+// text / 数组无 text 且非空（嵌套媒体等不可搬运块）/ 空数组。
+//
+// hasText 由调用方一次算出（blockTextRaw 只会被调用一次）；「非空」用数组长度
+// 判定而不重扫内容——重扫的闭包会逃逸成一次堆分配，热路径不允许。
+func messToolResultShape(c gjson.Result, hasText bool) shape {
 	switch {
 	case c.Type == gjson.String:
 		return shMToolResultString
 	case c.IsArray():
-		hasText, hasMedia := false, false
-		c.ForEach(func(_, p gjson.Result) bool {
-			if !p.IsObject() {
-				return true
-			}
-			switch {
-			case rawStrEq(p.Get("type").Raw, "text"):
-				hasText = true
-			case rawStrEq(p.Get("type").Raw, "image"), rawStrEq(p.Get("type").Raw, "document"):
-				hasMedia = true
-			}
-			return true
-		})
 		switch {
 		case hasText:
 			return shMToolResultArrayText
-		case hasMedia:
+		case c.Get("#").Int() > 0:
 			return shMToolResultNestedMedia
 		}
 		return shMToolResultArrayNoText
 	}
 	return shMToolResultNoContent
+}
+
+// messImageDataURL image{source:{type:"base64",media_type,data}} → 「data URL」
+// 的 JSON 字符串字面量（resp 的 input_image.image_url 只接受 URL 或 data
+// URL，resp.txt:187）。
+func messImageDataURL(blk gjson.Result) (string, bool) {
+	mt := blk.Get("source.media_type")
+	data := blk.Get("source.data")
+	if mt.Type != gjson.String || data.Type != gjson.String || len(mt.Raw) <= 2 || len(data.Raw) <= 2 {
+		return "", false
+	}
+	buf := make([]byte, 0, len(mt.Raw)+len(data.Raw)+24)
+	buf = append(buf, `"data:`...)
+	buf = append(buf, mt.Raw[1:len(mt.Raw)-1]...)
+	buf = append(buf, `;base64,`...)
+	buf = append(buf, data.Raw[1:len(data.Raw)-1]...)
+	buf = append(buf, '"')
+	return string(buf), true
 }
 
 // appendMessInput Messages 消息 → resp input 项（dirMessToResp 表分派）。
@@ -802,7 +873,7 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 		r := roleOf(role.Raw)
 		switch {
 		case r == roleUser:
-			var texts []string
+			var texts, imgURLs, docURLs []string
 			type toolOut struct{ id, output string }
 			var toolsOut []toolOut
 			if content.Type == gjson.String {
@@ -814,6 +885,21 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 					if !blk.IsObject() {
 						return true
 					}
+					if rawStrEq(blk.Get("type").Raw, "tool_result") {
+						// tool_result.content 可缺席/字符串/数组（mess.txt:584）；
+						// 无文本 → ""（function_call_output.output 必填，L16）。
+						c := blk.Get("content")
+						t, hasText := blockTextRaw(c, "text")
+						sh := messToolResultShape(c, hasText)
+						if _, ok := mapsTo(dirMessToResp, sh, r); !ok {
+							return true
+						}
+						if !hasText {
+							t = `""`
+						}
+						toolsOut = append(toolsOut, toolOut{strOrEmpty(blk.Get("tool_use_id")), t})
+						return true
+					}
 					switch messInputPartShape(r, blk) {
 					case shMUserText:
 						if _, ok := mapsTo(dirMessToResp, shMUserText, r); !ok {
@@ -822,33 +908,63 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 						if t := blk.Get("text"); t.Type == gjson.String {
 							texts = append(texts, t.Raw)
 						}
-					case shMToolResultString, shMToolResultArrayText, shMToolResultArrayNoText,
-						shMToolResultNoContent, shMToolResultNestedMedia:
-						if _, ok := mapsTo(dirMessToResp, shMToolResultString, r); !ok {
+					case shMUserImgBase64:
+						// image{base64,media_type} → input_image{image_url: data URL}
+						// （与 chat 的 data URL 形态逐字节相同，§5.1#7）
+						if _, ok := mapsTo(dirMessToResp, shMUserImgBase64, r); !ok {
 							return true
 						}
-						// tool_result.content 可缺席（mess.txt:584）；无文本 → ""
-						// （function_call_output.output 必填，L16）。
-						t, hasText := blockTextRaw(blk.Get("content"), "text")
-						if !hasText {
-							t = `""`
+						if u, ok := messImageDataURL(blk); ok {
+							imgURLs = append(imgURLs, u)
 						}
-						toolsOut = append(toolsOut, toolOut{strOrEmpty(blk.Get("tool_use_id")), t})
+					case shMUserImgURL:
+						if _, ok := mapsTo(dirMessToResp, shMUserImgURL, r); !ok {
+							return true
+						}
+						if u := blk.Get("source.url"); u.Type == gjson.String && len(u.Raw) > 2 {
+							imgURLs = append(imgURLs, u.Raw)
+						}
+					case shMUserDocURL:
+						// J5：document{source:url} → input_file{file_url}
+						if _, ok := mapsTo(dirMessToResp, shMUserDocURL, r); !ok {
+							return true
+						}
+						if u := blk.Get("source.url"); u.Type == gjson.String && len(u.Raw) > 2 {
+							docURLs = append(docURLs, u.Raw)
+						}
 					}
 					return true
 				})
 			}
-			if len(texts) > 0 {
-				rw, _ := lookup(dirMessToResp, shMUserText, r)
+			if len(texts) > 0 || len(imgURLs) > 0 || len(docURLs) > 0 {
+				sh := shMUserText
+				if len(texts) == 0 {
+					sh = shMUserImgURL
+					if len(imgURLs) == 0 {
+						sh = shMUserDocURL
+					}
+				}
+				rw, _ := lookup(dirMessToResp, sh, r)
 				out, n = appendComma(out, n)
 				out = append(out, `{"content":[`...)
-				for i, t := range texts {
-					if i > 0 {
-						out = append(out, ',')
-					}
+				parts := 0
+				for _, t := range texts {
+					out, parts = appendComma(out, parts)
 					out = append(out, `{"text":`...)
 					out = append(out, t...)
 					out = append(out, `,"type":"input_text"}`...)
+				}
+				for _, u := range imgURLs {
+					out, parts = appendComma(out, parts)
+					out = append(out, `{"image_url":`...)
+					out = append(out, u...)
+					out = append(out, `,"type":"input_image"}`...)
+				}
+				for _, u := range docURLs {
+					out, parts = appendComma(out, parts)
+					out = append(out, `{"file_url":`...)
+					out = append(out, u...)
+					out = append(out, `,"type":"input_file"}`...)
 				}
 				out = append(out, `],"role":"user","type":`...)
 				out = appendQuoted(out, rw.name)
@@ -885,6 +1001,10 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 					return true
 				}
 				sig := blk.Get("signature")
+				if rawStrEq(blk.Get("type").Raw, "redacted_thinking") {
+					// 不透明块的载荷在 data 里；只有本包信封才能往返（§2.5）
+					sig = blk.Get("data")
+				}
 				if !strings.HasPrefix(sig.Raw, quotedSealPrefix) {
 					return true
 				}
@@ -1206,24 +1326,16 @@ func respFileShape(p gjson.Result) shape {
 	return shRMsgUserFileData
 }
 
-// respFcoShape function_call_output.output 的成员形状（resp.txt:1082 的
-// 字符串 / 数组两形态；数组里有 text 才当作可搬运文本）。
-func respFcoShape(output gjson.Result) shape {
-	if output.IsArray() {
-		hasText := false
-		output.ForEach(func(_, p gjson.Result) bool {
-			if p.IsObject() && rawStrEq(p.Get("type").Raw, "input_text") {
-				hasText = true
-				return false
-			}
-			return true
-		})
-		if hasText {
-			return shRFcoArrayText
-		}
-		return shRFcoArrayNoText
+// respFcoShape function_call_output.output 的成员形状（resp.txt:1082 的字符串 /
+// 数组两形态）。hasText 由调用方一次算出（blockTextRaw 只调用一次）。
+func respFcoShape(output gjson.Result, hasText bool) shape {
+	if !output.IsArray() {
+		return shRFcoString
 	}
-	return shRFcoString
+	if hasText {
+		return shRFcoArrayText
+	}
+	return shRFcoArrayNoText
 }
 
 // appendRespMessMessages resp input → Messages messages。replay=false（§2.3 判定
@@ -1267,7 +1379,7 @@ func appendRespMessMessages(out []byte, first *bool, input gjson.Result, replay 
 					sh := respMessPartShape(r, p)
 					// r_msg_asst_media 是 polDrop：assistant 的 image/file/audio
 					// 部件不进 Messages（J2，§5.1#3 两个 mess 方向同口径）。
-					if _, ok := mapsTo(dirRespToMess, sh, r); !ok {
+					if _, ok := emits(dirRespToMess, sh, r); !ok {
 						return true
 					}
 					switch sh {
@@ -1278,8 +1390,24 @@ func appendRespMessMessages(out []byte, first *bool, input gjson.Result, replay 
 							out = append(out, t.Raw...)
 							out = append(out, `,"type":"text"}`...)
 						}
+					case shRMsgAsstRefusal:
+						// resp 的 refusal 在 Messages 目标降级为 text 块（J6/L12）
+						if rf := p.Get("refusal"); rf.Type == gjson.String {
+							out, blocks = appendComma(out, blocks)
+							out = append(out, `{"text":`...)
+							out = append(out, rf.Raw...)
+							out = append(out, `,"type":"text"}`...)
+						}
 					case shRMsgUserImgURL, shRMsgUserImgDataURL:
 						out, blocks = appendImageBlock(out, blocks, p)
+					case shRMsgUserFileURL:
+						// J5：input_file{file_url} → document{source:{type:url}}
+						if u := p.Get("file_url"); u.Type == gjson.String && len(u.Raw) > 2 {
+							out, blocks = appendComma(out, blocks)
+							out = append(out, `{"source":{"type":"url","url":`...)
+							out = append(out, u.Raw...)
+							out = append(out, `},"type":"document"}`...)
+						}
 					}
 					return true
 				})
@@ -1340,10 +1468,17 @@ func appendRespMessMessages(out []byte, first *bool, input gjson.Result, replay 
 			}
 			out = appendThinkingBlock(out, blk)
 		case rawStrEq(typ.Raw, "function_call_output"):
-			if _, ok := mapsTo(dirRespToMess, respFcoShape(item.Get("output")), roleUser); !ok {
+			// 文本与形状一次算出（blockTextRaw 只调用一次；形状不重扫数组——
+			// 重扫的闭包会逃逸成一次堆分配）。
+			output := item.Get("output")
+			t, hasText := blockTextRaw(output, "input_text", "text")
+			if _, ok := mapsTo(dirRespToMess, respFcoShape(output, hasText), roleUser); !ok {
 				return true
 			}
-			t, hasText := blockTextRaw(item.Get("output"), "input_text", "text")
+			if !respDeclaresCall(input, strOrEmpty(item.Get("call_id"))) {
+				// 孤儿 tool_result：不合成 call（J11 / §3.3 不变量 1）
+				return true
+			}
 			if !hasText {
 				t = `""`
 			}
