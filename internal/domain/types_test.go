@@ -87,10 +87,16 @@ func exportedFieldNames(rt reflect.Type) []string {
 func TestAccountDomainContractFieldSet(t *testing.T) {
 	// 账号实体 = 持久/API 契约面；运行时调度态一律由 scheduler 内存视图承载，
 	// 不进本结构。
+	//
+	// 出口代理三字段是 spec proxy-pool §3.4 显式引入的契约面，均非调度运行态：
+	// ProxyID 是持久列（account.proxy_id）、Proxy 是装载展开（回显/排障）、
+	// Routable 是装载期派生的**单一决策位**（账号能否被派发）——没有计数器、
+	// 没有窗口、没有锁态。
 	require.Equal(t, []string{
 		"BaseURL", "CacheDomain", "CreatedAt", "DeletedAt", "Enabled", "Ext",
 		"FailedAt", "FailureSource", "GroupIDs", "ID", "IdentityRevision", "LastError",
-		"LastUsedAt", "LifecycleRevision", "MaxConcurrency", "Name", "SupplierUserID",
+		"LastUsedAt", "LifecycleRevision", "MaxConcurrency", "Name",
+		"Proxy", "ProxyID", "Routable", "SupplierUserID",
 		"Template", "TemplateID", "UpdatedAt", "UpstreamCostMultiplierBp", "UpstreamKey",
 	}, exportedFieldNames(reflect.TypeFor[Account]()))
 }

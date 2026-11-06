@@ -48,6 +48,8 @@ type Account struct {
 	CacheDomain *string `json:"cache_domain,omitempty"`
 	// SupplierUserID holds the value of the "supplier_user_id" field.
 	SupplierUserID *int64 `json:"supplier_user_id,omitempty"`
+	// ProxyID holds the value of the "proxy_id" field.
+	ProxyID *int64 `json:"proxy_id,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.
@@ -109,7 +111,7 @@ func (*Account) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case account.FieldEnabled:
 			values[i] = new(sql.NullBool)
-		case account.FieldID, account.FieldTemplateID, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldIdentityRevision, account.FieldUpstreamCostMultiplierBp, account.FieldSupplierUserID:
+		case account.FieldID, account.FieldTemplateID, account.FieldMaxConcurrency, account.FieldLifecycleRevision, account.FieldIdentityRevision, account.FieldUpstreamCostMultiplierBp, account.FieldSupplierUserID, account.FieldProxyID:
 			values[i] = new(sql.NullInt64)
 		case account.FieldName, account.FieldBaseURL, account.FieldUpstreamKey, account.FieldLastError, account.FieldFailureSource, account.FieldCacheDomain:
 			values[i] = new(sql.NullString)
@@ -232,6 +234,13 @@ func (_m *Account) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.SupplierUserID = new(int64)
 				*_m.SupplierUserID = value.Int64
+			}
+		case account.FieldProxyID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field proxy_id", values[i])
+			} else if value.Valid {
+				_m.ProxyID = new(int64)
+				*_m.ProxyID = value.Int64
 			}
 		case account.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
@@ -359,6 +368,11 @@ func (_m *Account) String() string {
 	builder.WriteString(", ")
 	if v := _m.SupplierUserID; v != nil {
 		builder.WriteString("supplier_user_id=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
+	builder.WriteString(", ")
+	if v := _m.ProxyID; v != nil {
+		builder.WriteString("proxy_id=")
 		builder.WriteString(fmt.Sprintf("%v", *v))
 	}
 	builder.WriteString(", ")

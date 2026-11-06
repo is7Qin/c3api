@@ -39,6 +39,9 @@ type PriceEntry func(*sql.Selector)
 // PriceVariant is the predicate function for pricevariant builders.
 type PriceVariant func(*sql.Selector)
 
+// Proxy is the predicate function for proxy builders.
+type Proxy func(*sql.Selector)
+
 // RedemptionCode is the predicate function for redemptioncode builders.
 type RedemptionCode func(*sql.Selector)
 

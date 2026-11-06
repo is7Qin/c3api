@@ -246,6 +246,7 @@ func TestAccountFreshSchemaColumns(t *testing.T) {
 		"max_concurrency", "last_error", "last_used_at", "failed_at",
 		"failure_source", "enabled", "lifecycle_revision", "identity_revision",
 		"upstream_cost_multiplier_bp", "cache_domain", "supplier_user_id",
+		"proxy_id", // 出口代理绑定（spec proxy-pool §3.2）：NULL = 直连
 		"updated_at", "deleted_at", "created_at",
 	}, got, "账号列集必须与 fresh 契约允许全集一致")
 }

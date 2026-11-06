@@ -178,6 +178,7 @@ type AccountConfigPatch struct {
 	GroupIds               *[]int64                   `json:"group_ids,omitempty"`
 	MaxConcurrency         nullable.Nullable[int]     `json:"max_concurrency,omitempty"`
 	Name                   nullable.Nullable[string]  `json:"name,omitempty"`
+	ProxyId                nullable.Nullable[int64]   `json:"proxy_id,omitempty"`
 	SupplierUserId         nullable.Nullable[int64]   `json:"supplier_user_id,omitempty"`
 	TemplateId             nullable.Nullable[int64]   `json:"template_id,omitempty"`
 	UpstreamCostMultiplier nullable.Nullable[float64] `json:"upstream_cost_multiplier,omitempty"`

@@ -26,6 +26,7 @@ var (
 		{Name: "upstream_cost_multiplier_bp", Type: field.TypeInt, Default: 10000},
 		{Name: "cache_domain", Type: field.TypeString, Nullable: true},
 		{Name: "supplier_user_id", Type: field.TypeInt64, Nullable: true},
+		{Name: "proxy_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},
@@ -39,7 +40,7 @@ var (
 		ForeignKeys: []*schema.ForeignKey{
 			{
 				Symbol:     "accounts_templates_accounts",
-				Columns:    []*schema.Column{AccountsColumns[18]},
+				Columns:    []*schema.Column{AccountsColumns[19]},
 				RefColumns: []*schema.Column{TemplatesColumns[0]},
 				OnDelete:   schema.NoAction,
 			},
@@ -366,6 +367,30 @@ var (
 				Columns: []*schema.Column{PriceVariantsColumns[1], PriceVariantsColumns[2]},
 			},
 		},
+	}
+	// ProxiesColumns holds the columns for the "proxies" table.
+	ProxiesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "name", Type: field.TypeString, Unique: true},
+		{Name: "scheme", Type: field.TypeString},
+		{Name: "host", Type: field.TypeString},
+		{Name: "port", Type: field.TypeInt},
+		{Name: "username", Type: field.TypeString, Nullable: true},
+		{Name: "password", Type: field.TypeString, Nullable: true},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "remark", Type: field.TypeString, Nullable: true},
+		{Name: "last_probe_at", Type: field.TypeTime, Nullable: true},
+		{Name: "last_probe_ok", Type: field.TypeBool, Default: false},
+		{Name: "last_probe_error", Type: field.TypeString, Default: ""},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "deleted_at", Type: field.TypeTime, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+	}
+	// ProxiesTable holds the schema information for the "proxies" table.
+	ProxiesTable = &schema.Table{
+		Name:       "proxies",
+		Columns:    ProxiesColumns,
+		PrimaryKey: []*schema.Column{ProxiesColumns[0]},
 	}
 	// RedemptionCodesColumns holds the columns for the "redemption_codes" table.
 	RedemptionCodesColumns = []*schema.Column{
@@ -874,6 +899,7 @@ var (
 		ManagementKeysTable,
 		PriceEntriesTable,
 		PriceVariantsTable,
+		ProxiesTable,
 		RedemptionCodesTable,
 		RedemptionUsesTable,
 		RulesTable,

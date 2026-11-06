@@ -34,6 +34,8 @@ type Tx struct {
 	PriceEntry *PriceEntryClient
 	// PriceVariant is the client for interacting with the PriceVariant builders.
 	PriceVariant *PriceVariantClient
+	// Proxy is the client for interacting with the Proxy builders.
+	Proxy *ProxyClient
 	// RedemptionCode is the client for interacting with the RedemptionCode builders.
 	RedemptionCode *RedemptionCodeClient
 	// RedemptionUse is the client for interacting with the RedemptionUse builders.
@@ -206,6 +208,7 @@ func (tx *Tx) init() {
 	tx.ManagementKey = NewManagementKeyClient(tx.config)
 	tx.PriceEntry = NewPriceEntryClient(tx.config)
 	tx.PriceVariant = NewPriceVariantClient(tx.config)
+	tx.Proxy = NewProxyClient(tx.config)
 	tx.RedemptionCode = NewRedemptionCodeClient(tx.config)
 	tx.RedemptionUse = NewRedemptionUseClient(tx.config)
 	tx.Rule = NewRuleClient(tx.config)

@@ -54,6 +54,9 @@ func fieldPatchForSpec(t *testing.T, repos *repository.Repository, spec domain.A
 	case domain.FieldSupplierUserID:
 		owner := seedPGUserRole(t, repos, "owner-"+spec.Name, domain.RoleSupplier)
 		return repository.AccountPatch{SupplierUserID: &owner.ID}
+	case domain.FieldProxyID:
+		id := seedPGProxyNamed(t, repos, "proxy-"+spec.Name)
+		return repository.AccountPatch{ProxyID: &id}
 	default:
 		t.Fatalf("declared field %q has no patch constructor: add one, do not skip", spec.Name)
 		return repository.AccountPatch{}
@@ -88,6 +91,9 @@ func idempotentPatchForSpec(spec domain.AccountFieldSpec, got *domain.Account, g
 		}
 		uid := got.SupplierUserID
 		return repository.AccountPatch{SupplierUserID: &uid}
+	case domain.FieldProxyID:
+		// nil = 直连 = 不变（传 nil 即不变）；非 nil = 同值重写。
+		return repository.AccountPatch{ProxyID: got.ProxyID}
 	default:
 		return repository.AccountPatch{}
 	}

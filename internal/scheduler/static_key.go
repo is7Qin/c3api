@@ -12,6 +12,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/egress"
 )
 
 // planKey 是编译计划/决策的有效性判据（值语义）：已编译候选在预留与复用
@@ -45,6 +46,11 @@ type planKey struct {
 	// 快照未就绪时不得入选调度。落在键内使归属变更换新叶子 ⇒ 预留谓词读到的是
 	// 当前归属（否则叶子复用会带来陈旧归属读，正是静态读闭包门要防的缺陷）。
 	supplierUserID int64
+	// proxyDigest 出口代理规格摘要（spec-proxy-pool §3.4/§4.1）：scheme/host/
+	// port/认证四项的 egress.Spec.Key()。**身份类**（换出口 = 换上游看到的身份
+	// 第三维 ⇒ 本来就会推 K），但摘要仍独立进键：K 只证「变过」，计划还需要
+	// 「现在走哪条线」这一事实；未绑定 = 零值 Spec 的摘要（与任何真实代理不同）。
+	proxyDigest [16]byte
 
 	// --- 凭据面消费子集（决策输入部分） ---
 	//
@@ -82,6 +88,16 @@ type planKey struct {
 
 	// --- §5.5 group_ids 行（Slice 类事实以规范序摘要入键） ---
 	groupIDsDigest [32]byte
+}
+
+// specOfDomain 把领域代理对象降为出口规格值（egress.Spec）——**唯一的转换点**：
+// 摘要与（M3 的）Dial 参数都从这一条规格派生，不得在别处重新拼 scheme/host/port。
+// nil（未绑定）= 零值 Spec（摘要 = 空规格摘要，直连是一个确定状态，不是缺失）。
+func specOfDomain(p *domain.Proxy) egress.Spec {
+	if p == nil {
+		return egress.Spec{}
+	}
+	return egress.New(string(p.Scheme), p.Host, p.Port, p.Username, p.Password)
 }
 
 // payloadKey 是只影响"叶子内容是否新鲜"的载荷：OAuth 访问令牌三元组只用于
@@ -146,6 +162,8 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.upstreamCostMultiplierBp = domain.MultBp(av.acc.UpstreamCostMultiplierBp)
 	k.identityRevision = av.acc.IdentityRevision
 	k.supplierUserID = av.acc.SupplierUserID
+	av.proxyDigest = specOfDomain(av.acc.Proxy).Key()
+	k.proxyDigest = av.proxyDigest
 	if ext := av.acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)
 		k.codexEmail = derefString(ext.CodexEmail)

@@ -485,9 +485,23 @@ type Account struct {
 	// **供给准入门**（§4.6）的静态判据：带归属账号在财务快照未就绪时不得入选
 	// 调度 ⇒ 落在静态键（planKey.supplierUserID）内，归属变更即换新叶子。
 	SupplierUserID int64
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
-	DeletedAt      *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
+	// ProxyID 出口代理绑定（spec-proxy-pool §3.2 持久列 account.proxy_id）：
+	// nil = 直连；非 nil = 绑定该代理条目。指针即"有/无绑定"这一正交事实，
+	// 与可用性（Proxy.Enabled）分开存放——可用性决策只读 Routable（下方）。
+	ProxyID *int64
+	// Proxy 绑定展开（装载期按 ProxyID 回填，供回显/排障）。绑定缺失——未绑定，
+	// 或绑定的代理已软删/不存在——时为 nil。本阶段（M1a）恒 nil：装载在 M2
+	// 接线，写入面只搬 ProxyID。
+	Proxy *Proxy
+	// Routable 派生的**唯一决策位**：enabled && (未绑定 ∨ 绑定可用)。可用性判定
+	// 只读它；"为什么不可用"由 ProxyID != nil && Proxy == nil（绑定缺失）与
+	// Proxy != nil && !Proxy.Enabled（条目禁用）在日志/回显处派生，不压成状态机。
+	// 本阶段（M1a）只声明不计算（M2 装载期定型）：默认 false 不影响现有行为
+	// ——现有消费路径无人读它。
+	Routable  bool
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	DeletedAt *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
 	// GroupIDs 写路径（创建/更新）专用：nil = 不设置/不变；非 nil = 替换账号
 	// 全部分组（含空数组 = 清空）。读路径忽略——编辑回显走 GetAccountGroups
 	// 独立查询（toDomainAccount 不填充该字段）。

@@ -130,6 +130,11 @@ func SupplierUserID(v int64) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldSupplierUserID, v))
 }
 
+// ProxyID applies equality check predicate on the "proxy_id" field. It's identical to ProxyIDEQ.
+func ProxyID(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldProxyID, v))
+}
+
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldUpdatedAt, v))
@@ -913,6 +918,56 @@ func SupplierUserIDIsNil() predicate.Account {
 // SupplierUserIDNotNil applies the NotNil predicate on the "supplier_user_id" field.
 func SupplierUserIDNotNil() predicate.Account {
 	return predicate.Account(sql.FieldNotNull(FieldSupplierUserID))
+}
+
+// ProxyIDEQ applies the EQ predicate on the "proxy_id" field.
+func ProxyIDEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldProxyID, v))
+}
+
+// ProxyIDNEQ applies the NEQ predicate on the "proxy_id" field.
+func ProxyIDNEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldProxyID, v))
+}
+
+// ProxyIDIn applies the In predicate on the "proxy_id" field.
+func ProxyIDIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldProxyID, vs...))
+}
+
+// ProxyIDNotIn applies the NotIn predicate on the "proxy_id" field.
+func ProxyIDNotIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldProxyID, vs...))
+}
+
+// ProxyIDGT applies the GT predicate on the "proxy_id" field.
+func ProxyIDGT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldProxyID, v))
+}
+
+// ProxyIDGTE applies the GTE predicate on the "proxy_id" field.
+func ProxyIDGTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldProxyID, v))
+}
+
+// ProxyIDLT applies the LT predicate on the "proxy_id" field.
+func ProxyIDLT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldProxyID, v))
+}
+
+// ProxyIDLTE applies the LTE predicate on the "proxy_id" field.
+func ProxyIDLTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldProxyID, v))
+}
+
+// ProxyIDIsNil applies the IsNil predicate on the "proxy_id" field.
+func ProxyIDIsNil() predicate.Account {
+	return predicate.Account(sql.FieldIsNull(FieldProxyID))
+}
+
+// ProxyIDNotNil applies the NotNil predicate on the "proxy_id" field.
+func ProxyIDNotNil() predicate.Account {
+	return predicate.Account(sql.FieldNotNull(FieldProxyID))
 }
 
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.

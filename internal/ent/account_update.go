@@ -318,6 +318,33 @@ func (_u *AccountUpdate) ClearSupplierUserID() *AccountUpdate {
 	return _u
 }
 
+// SetProxyID sets the "proxy_id" field.
+func (_u *AccountUpdate) SetProxyID(v int64) *AccountUpdate {
+	_u.mutation.ResetProxyID()
+	_u.mutation.SetProxyID(v)
+	return _u
+}
+
+// SetNillableProxyID sets the "proxy_id" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableProxyID(v *int64) *AccountUpdate {
+	if v != nil {
+		_u.SetProxyID(*v)
+	}
+	return _u
+}
+
+// AddProxyID adds value to the "proxy_id" field.
+func (_u *AccountUpdate) AddProxyID(v int64) *AccountUpdate {
+	_u.mutation.AddProxyID(v)
+	return _u
+}
+
+// ClearProxyID clears the value of the "proxy_id" field.
+func (_u *AccountUpdate) ClearProxyID() *AccountUpdate {
+	_u.mutation.ClearProxyID()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *AccountUpdate) SetUpdatedAt(v time.Time) *AccountUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -579,6 +606,15 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if _u.mutation.SupplierUserIDCleared() {
 		_spec.ClearField(account.FieldSupplierUserID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.ProxyID(); ok {
+		_spec.SetField(account.FieldProxyID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedProxyID(); ok {
+		_spec.AddField(account.FieldProxyID, field.TypeInt64, value)
+	}
+	if _u.mutation.ProxyIDCleared() {
+		_spec.ClearField(account.FieldProxyID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)
@@ -1018,6 +1054,33 @@ func (_u *AccountUpdateOne) ClearSupplierUserID() *AccountUpdateOne {
 	return _u
 }
 
+// SetProxyID sets the "proxy_id" field.
+func (_u *AccountUpdateOne) SetProxyID(v int64) *AccountUpdateOne {
+	_u.mutation.ResetProxyID()
+	_u.mutation.SetProxyID(v)
+	return _u
+}
+
+// SetNillableProxyID sets the "proxy_id" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableProxyID(v *int64) *AccountUpdateOne {
+	if v != nil {
+		_u.SetProxyID(*v)
+	}
+	return _u
+}
+
+// AddProxyID adds value to the "proxy_id" field.
+func (_u *AccountUpdateOne) AddProxyID(v int64) *AccountUpdateOne {
+	_u.mutation.AddProxyID(v)
+	return _u
+}
+
+// ClearProxyID clears the value of the "proxy_id" field.
+func (_u *AccountUpdateOne) ClearProxyID() *AccountUpdateOne {
+	_u.mutation.ClearProxyID()
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *AccountUpdateOne) SetUpdatedAt(v time.Time) *AccountUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -1309,6 +1372,15 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if _u.mutation.SupplierUserIDCleared() {
 		_spec.ClearField(account.FieldSupplierUserID, field.TypeInt64)
+	}
+	if value, ok := _u.mutation.ProxyID(); ok {
+		_spec.SetField(account.FieldProxyID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedProxyID(); ok {
+		_spec.AddField(account.FieldProxyID, field.TypeInt64, value)
+	}
+	if _u.mutation.ProxyIDCleared() {
+		_spec.ClearField(account.FieldProxyID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)

@@ -31,6 +31,9 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) planK
 	k.upstreamCostMultiplierBp = domain.MultBp(acc.UpstreamCostMultiplierBp)
 	k.identityRevision = acc.IdentityRevision
 	k.supplierUserID = acc.SupplierUserID
+	// 出口规格摘要：编码由 pkg/egress 的 TestEgressSpecOf 单独冻结；这里只断言
+	// 构造函数与冻结推导同源。
+	k.proxyDigest = specOfDomain(acc.Proxy).Key()
 	if ext := acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)
 		k.codexEmail = derefString(ext.CodexEmail)

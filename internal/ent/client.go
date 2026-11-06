@@ -26,6 +26,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
+	"github.com/is7qin/c3api/internal/ent/proxy"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
@@ -70,6 +71,8 @@ type Client struct {
 	PriceEntry *PriceEntryClient
 	// PriceVariant is the client for interacting with the PriceVariant builders.
 	PriceVariant *PriceVariantClient
+	// Proxy is the client for interacting with the Proxy builders.
+	Proxy *ProxyClient
 	// RedemptionCode is the client for interacting with the RedemptionCode builders.
 	RedemptionCode *RedemptionCodeClient
 	// RedemptionUse is the client for interacting with the RedemptionUse builders.
@@ -122,6 +125,7 @@ func (c *Client) init() {
 	c.ManagementKey = NewManagementKeyClient(c.config)
 	c.PriceEntry = NewPriceEntryClient(c.config)
 	c.PriceVariant = NewPriceVariantClient(c.config)
+	c.Proxy = NewProxyClient(c.config)
 	c.RedemptionCode = NewRedemptionCodeClient(c.config)
 	c.RedemptionUse = NewRedemptionUseClient(c.config)
 	c.Rule = NewRuleClient(c.config)
@@ -240,6 +244,7 @@ func (c *Client) Tx(ctx context.Context) (*Tx, error) {
 		ManagementKey:          NewManagementKeyClient(cfg),
 		PriceEntry:             NewPriceEntryClient(cfg),
 		PriceVariant:           NewPriceVariantClient(cfg),
+		Proxy:                  NewProxyClient(cfg),
 		RedemptionCode:         NewRedemptionCodeClient(cfg),
 		RedemptionUse:          NewRedemptionUseClient(cfg),
 		Rule:                   NewRuleClient(cfg),
@@ -285,6 +290,7 @@ func (c *Client) BeginTx(ctx context.Context, opts *sql.TxOptions) (*Tx, error) 
 		ManagementKey:          NewManagementKeyClient(cfg),
 		PriceEntry:             NewPriceEntryClient(cfg),
 		PriceVariant:           NewPriceVariantClient(cfg),
+		Proxy:                  NewProxyClient(cfg),
 		RedemptionCode:         NewRedemptionCodeClient(cfg),
 		RedemptionUse:          NewRedemptionUseClient(cfg),
 		Rule:                   NewRuleClient(cfg),
@@ -331,10 +337,10 @@ func (c *Client) Use(hooks ...Hook) {
 	for _, n := range []interface{ Use(...Hook) }{
 		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
 		c.GroupAssignment, c.Key, c.ManagementKey, c.PriceEntry, c.PriceVariant,
-		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance,
-		c.SupplierFrozenChunk, c.SupplierReconciliation, c.SupplierSettlement,
-		c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog,
-		c.UsageStat, c.User,
+		c.Proxy, c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting,
+		c.SupplierBalance, c.SupplierFrozenChunk, c.SupplierReconciliation,
+		c.SupplierSettlement, c.TempBalance, c.Template, c.TemplateExt,
+		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Use(hooks...)
 	}
@@ -346,10 +352,10 @@ func (c *Client) Intercept(interceptors ...Interceptor) {
 	for _, n := range []interface{ Intercept(...Interceptor) }{
 		c.Account, c.AccountExt, c.BalanceLog, c.EmailTemplate, c.ErrLog, c.Group,
 		c.GroupAssignment, c.Key, c.ManagementKey, c.PriceEntry, c.PriceVariant,
-		c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting, c.SupplierBalance,
-		c.SupplierFrozenChunk, c.SupplierReconciliation, c.SupplierSettlement,
-		c.TempBalance, c.Template, c.TemplateExt, c.UsageEntityStat, c.UsageLog,
-		c.UsageStat, c.User,
+		c.Proxy, c.RedemptionCode, c.RedemptionUse, c.Rule, c.Setting,
+		c.SupplierBalance, c.SupplierFrozenChunk, c.SupplierReconciliation,
+		c.SupplierSettlement, c.TempBalance, c.Template, c.TemplateExt,
+		c.UsageEntityStat, c.UsageLog, c.UsageStat, c.User,
 	} {
 		n.Intercept(interceptors...)
 	}
@@ -380,6 +386,8 @@ func (c *Client) Mutate(ctx context.Context, m Mutation) (Value, error) {
 		return c.PriceEntry.mutate(ctx, m)
 	case *PriceVariantMutation:
 		return c.PriceVariant.mutate(ctx, m)
+	case *ProxyMutation:
+		return c.Proxy.mutate(ctx, m)
 	case *RedemptionCodeMutation:
 		return c.RedemptionCode.mutate(ctx, m)
 	case *RedemptionUseMutation:
@@ -2067,6 +2075,139 @@ func (c *PriceVariantClient) mutate(ctx context.Context, m *PriceVariantMutation
 		return (&PriceVariantDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
 	default:
 		return nil, fmt.Errorf("ent: unknown PriceVariant mutation op: %q", m.Op())
+	}
+}
+
+// ProxyClient is a client for the Proxy schema.
+type ProxyClient struct {
+	config
+}
+
+// NewProxyClient returns a client for the Proxy from the given config.
+func NewProxyClient(c config) *ProxyClient {
+	return &ProxyClient{config: c}
+}
+
+// Use adds a list of mutation hooks to the hooks stack.
+// A call to `Use(f, g, h)` equals to `proxy.Hooks(f(g(h())))`.
+func (c *ProxyClient) Use(hooks ...Hook) {
+	c.hooks.Proxy = append(c.hooks.Proxy, hooks...)
+}
+
+// Intercept adds a list of query interceptors to the interceptors stack.
+// A call to `Intercept(f, g, h)` equals to `proxy.Intercept(f(g(h())))`.
+func (c *ProxyClient) Intercept(interceptors ...Interceptor) {
+	c.inters.Proxy = append(c.inters.Proxy, interceptors...)
+}
+
+// Create returns a builder for creating a Proxy entity.
+func (c *ProxyClient) Create() *ProxyCreate {
+	mutation := newProxyMutation(c.config, OpCreate)
+	return &ProxyCreate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// CreateBulk returns a builder for creating a bulk of Proxy entities.
+func (c *ProxyClient) CreateBulk(builders ...*ProxyCreate) *ProxyCreateBulk {
+	return &ProxyCreateBulk{config: c.config, builders: builders}
+}
+
+// MapCreateBulk creates a bulk creation builder from the given slice. For each item in the slice, the function creates
+// a builder and applies setFunc on it.
+func (c *ProxyClient) MapCreateBulk(slice any, setFunc func(*ProxyCreate, int)) *ProxyCreateBulk {
+	rv := reflect.ValueOf(slice)
+	if rv.Kind() != reflect.Slice {
+		return &ProxyCreateBulk{err: fmt.Errorf("calling to ProxyClient.MapCreateBulk with wrong type %T, need slice", slice)}
+	}
+	builders := make([]*ProxyCreate, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		builders[i] = c.Create()
+		setFunc(builders[i], i)
+	}
+	return &ProxyCreateBulk{config: c.config, builders: builders}
+}
+
+// Update returns an update builder for Proxy.
+func (c *ProxyClient) Update() *ProxyUpdate {
+	mutation := newProxyMutation(c.config, OpUpdate)
+	return &ProxyUpdate{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOne returns an update builder for the given entity.
+func (c *ProxyClient) UpdateOne(_m *Proxy) *ProxyUpdateOne {
+	mutation := newProxyMutation(c.config, OpUpdateOne, withProxy(_m))
+	return &ProxyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// UpdateOneID returns an update builder for the given id.
+func (c *ProxyClient) UpdateOneID(id int64) *ProxyUpdateOne {
+	mutation := newProxyMutation(c.config, OpUpdateOne, withProxyID(id))
+	return &ProxyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// Delete returns a delete builder for Proxy.
+func (c *ProxyClient) Delete() *ProxyDelete {
+	mutation := newProxyMutation(c.config, OpDelete)
+	return &ProxyDelete{config: c.config, hooks: c.Hooks(), mutation: mutation}
+}
+
+// DeleteOne returns a builder for deleting the given entity.
+func (c *ProxyClient) DeleteOne(_m *Proxy) *ProxyDeleteOne {
+	return c.DeleteOneID(_m.ID)
+}
+
+// DeleteOneID returns a builder for deleting the given entity by its id.
+func (c *ProxyClient) DeleteOneID(id int64) *ProxyDeleteOne {
+	builder := c.Delete().Where(proxy.ID(id))
+	builder.mutation.id = &id
+	builder.mutation.op = OpDeleteOne
+	return &ProxyDeleteOne{builder}
+}
+
+// Query returns a query builder for Proxy.
+func (c *ProxyClient) Query() *ProxyQuery {
+	return &ProxyQuery{
+		config: c.config,
+		ctx:    &QueryContext{Type: TypeProxy},
+		inters: c.Interceptors(),
+	}
+}
+
+// Get returns a Proxy entity by its id.
+func (c *ProxyClient) Get(ctx context.Context, id int64) (*Proxy, error) {
+	return c.Query().Where(proxy.ID(id)).Only(ctx)
+}
+
+// GetX is like Get, but panics if an error occurs.
+func (c *ProxyClient) GetX(ctx context.Context, id int64) *Proxy {
+	obj, err := c.Get(ctx, id)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+// Hooks returns the client hooks.
+func (c *ProxyClient) Hooks() []Hook {
+	return c.hooks.Proxy
+}
+
+// Interceptors returns the client interceptors.
+func (c *ProxyClient) Interceptors() []Interceptor {
+	return c.inters.Proxy
+}
+
+func (c *ProxyClient) mutate(ctx context.Context, m *ProxyMutation) (Value, error) {
+	switch m.Op() {
+	case OpCreate:
+		return (&ProxyCreate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdate:
+		return (&ProxyUpdate{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpUpdateOne:
+		return (&ProxyUpdateOne{config: c.config, hooks: c.Hooks(), mutation: m}).Save(ctx)
+	case OpDelete, OpDeleteOne:
+		return (&ProxyDelete{config: c.config, hooks: c.Hooks(), mutation: m}).Exec(ctx)
+	default:
+		return nil, fmt.Errorf("ent: unknown Proxy mutation op: %q", m.Op())
 	}
 }
 
@@ -4229,16 +4370,16 @@ func (c *UserClient) mutate(ctx context.Context, m *UserMutation) (Value, error)
 type (
 	hooks struct {
 		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
-		Key, ManagementKey, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse,
-		Rule, Setting, SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
-		SupplierSettlement, TempBalance, Template, TemplateExt, UsageEntityStat,
-		UsageLog, UsageStat, User []ent.Hook
+		Key, ManagementKey, PriceEntry, PriceVariant, Proxy, RedemptionCode,
+		RedemptionUse, Rule, Setting, SupplierBalance, SupplierFrozenChunk,
+		SupplierReconciliation, SupplierSettlement, TempBalance, Template, TemplateExt,
+		UsageEntityStat, UsageLog, UsageStat, User []ent.Hook
 	}
 	inters struct {
 		Account, AccountExt, BalanceLog, EmailTemplate, ErrLog, Group, GroupAssignment,
-		Key, ManagementKey, PriceEntry, PriceVariant, RedemptionCode, RedemptionUse,
-		Rule, Setting, SupplierBalance, SupplierFrozenChunk, SupplierReconciliation,
-		SupplierSettlement, TempBalance, Template, TemplateExt, UsageEntityStat,
-		UsageLog, UsageStat, User []ent.Interceptor
+		Key, ManagementKey, PriceEntry, PriceVariant, Proxy, RedemptionCode,
+		RedemptionUse, Rule, Setting, SupplierBalance, SupplierFrozenChunk,
+		SupplierReconciliation, SupplierSettlement, TempBalance, Template, TemplateExt,
+		UsageEntityStat, UsageLog, UsageStat, User []ent.Interceptor
 	}
 )

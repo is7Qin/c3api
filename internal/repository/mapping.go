@@ -181,12 +181,42 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 	if a.SupplierUserID != nil {
 		d.SupplierUserID = *a.SupplierUserID
 	}
+	// 出口代理绑定（spec-proxy-pool §3.2）：列 NULL = 直连（nil）。绑定展开
+	// （d.Proxy）不在读路径回填——M2 的快照装载按 ProxyID 批量查 proxies 后
+	// 装配，管理面 CRUD 不需要它。
+	d.ProxyID = a.ProxyID
 	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts
 	// ——全表/子查询扫描后内存装配 Edges.Ext）会带 account_ext 边；其余路径
 	// 无 ext 边 → nil（与 Template.StripImageTools 同款合并先例，定死
 	// 路线）。
 	if len(a.Edges.Ext) > 0 {
 		d.Ext = toDomainAccountExt(a.Edges.Ext[0])
+	}
+	return d
+}
+
+// toDomainProxy ent 行 → domain.Proxy（可空列：nil 落零值——空串即无认证，
+// 消费面无需区分 nil 与 ""；探测时刻保持指针，never-probed 必须可区分）。
+func toDomainProxy(p *ent.Proxy) domain.Proxy {
+	d := domain.Proxy{
+		ID:             p.ID,
+		Name:           p.Name,
+		Scheme:         domain.ProxyScheme(p.Scheme),
+		Host:           p.Host,
+		Port:           p.Port,
+		Enabled:        p.Enabled,
+		LastProbeAt:    p.LastProbeAt,
+		LastProbeOK:    p.LastProbeOk,
+		LastProbeError: p.LastProbeError,
+	}
+	if p.Username != nil {
+		d.Username = *p.Username
+	}
+	if p.Password != nil {
+		d.Password = *p.Password
+	}
+	if p.Remark != nil {
+		d.Remark = *p.Remark
 	}
 	return d
 }

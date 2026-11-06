@@ -23,6 +23,13 @@ const (
 	// FieldSupplierUserID 归属（供应商 user id；spec §2.5 行层作用域锚点）。非身份
 	// 类（Identity=false）：归属是账务属性，变更不推进 K（不作废在途工件/缓存）。
 	FieldSupplierUserID
+	// FieldProxyID 出口代理（spec-proxy-pool §3.4）。**身份类**：本仓对身份的定义
+	// 是「按值变更即更换路由目标身份」（见下方 IdentityChanged 注释）——端点
+	// （base_url）与凭据（upstream_key）之外，**出口 IP 是上游看到的身份第三维**
+	// （风控按 IP 绑会话是常态）。判非身份会得出「换代理只是改配置」的错误结论，
+	// 并逼出互相矛盾的限制（绑定不破、但计划 fence 会破 ⇒ 硬续接必然失败）。
+	// 判身份后语义自洽：换出口 ⇒ K++ ⇒ 在途工件与 continuation 一律作废。
+	FieldProxyID
 )
 
 // FieldSet 是 AccountField 的位集合：一次写入**真实变更**到的字段。
@@ -94,6 +101,9 @@ var accountFieldSpecs = [...]AccountFieldSpec{
 	// 唯一字段级例外）；管理面经此字段「把账号分配给供应商」（值域能力谓词 + users
 	// 行锁串行化）。
 	{FieldSupplierUserID, "supplier_user_id", false},
+	// 出口代理（spec-proxy-pool §3.4）：**身份类**——端点 / 凭据 / 出口是上游看到
+	// 的身份三维，换出口即换身份（K++ ⇒ 在途工件与 continuation 作废）。
+	{FieldProxyID, "proxy_id", true},
 }
 
 // AccountFieldSpecs 返回声明表的副本（顺序 = 枚举序）。

@@ -23,6 +23,7 @@ import (
 // Repository 聚合各实体仓库（绑定单一 client + driver；WithTx 复用同一构造函数
 // newRepository 构造 tx 版实例）。
 type Repository struct {
+	Proxies        *ProxyRepo // 出口代理条目（proxy；spec-proxy-pool M1a 数据层）
 	Templates      *TemplateRepo
 	Accounts       *AccountRepo
 	Groups         *GroupRepo
@@ -95,6 +96,7 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *Repository {
 	accounts := &AccountRepo{client: client, driver: drv}
 	return &Repository{
+		Proxies:        &ProxyRepo{client: client, driver: drv},
 		Templates:      &TemplateRepo{client: client, driver: drv},
 		Accounts:       accounts,
 		Groups:         &GroupRepo{client: client, driver: drv},

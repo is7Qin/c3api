@@ -38,6 +38,10 @@ type AccountFieldValues struct {
 	UpstreamCostMultiplierBp int
 	// SupplierUserID 归属旧值（0 = 平台自有 / NULL；spec §2.5）。
 	SupplierUserID int64
+	// ProxyID 出口代理绑定旧值（0 = NULL = 直连）。三态比较的原料：补丁的 &0 与
+	// 旧值的 0 同码，故列一律 COALESCE 成 0 读出（否则「解绑」在 NULL 旧值上会
+	// 被误判为变更）。
+	ProxyID int64
 }
 
 // sameNullableString 可空字符串按值相等（nil 与 nil 相等；nil 与 &"" 不等）。
@@ -101,6 +105,12 @@ func ChangedFields(p AccountPatch, old AccountFieldValues) domain.FieldSet {
 	if p.SupplierUserID != nil && *p.SupplierUserID != old.SupplierUserID {
 		s = s.With(domain.FieldSupplierUserID)
 	}
+	// 出口代理（spec-proxy-pool §3.4）：三态按值比较——nil = 不变（不判）；
+	// &0 = 目标 NULL，旧值 0 即 NULL ⇒ 相等不算变更（幂等解绑）；&id>0 = 绑定。
+	// 身份类：换出口即换身份，由声明表决定 K 推进，此处只判值真的变了。
+	if p.ProxyID != nil && *p.ProxyID != old.ProxyID {
+		s = s.With(domain.FieldProxyID)
+	}
 	return s
 }
 
@@ -142,7 +152,7 @@ func lockAccountsForUpdate(ctx context.Context, driver dialect.Driver, ids []int
 		args = append(args, s.OwnerUID)
 		ownerFilter = fmt.Sprintf(" AND supplier_user_id = $%d", len(args))
 	}
-	query := `SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0) FROM accounts WHERE id IN (` + strings.Join(placeholders, ",") + `)` + ownerFilter + ` ORDER BY id FOR UPDATE`
+	query := `SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0), COALESCE(proxy_id, 0) FROM accounts WHERE id IN (` + strings.Join(placeholders, ",") + `)` + ownerFilter + ` ORDER BY id FOR UPDATE`
 	rows := &entsql.Rows{}
 	if err := driver.Query(ctx, query, args, rows); err != nil {
 		return nil, err
@@ -152,7 +162,7 @@ func lockAccountsForUpdate(ctx context.Context, driver dialect.Driver, ids []int
 	for rows.Next() {
 		var row AccountFieldValues
 		var baseURL, cacheDomain sql.NullString
-		if err := rows.Scan(&row.ID, &row.TemplateID, &baseURL, &row.UpstreamKey, &row.Name, &row.MaxConcurrency, &row.Enabled, &cacheDomain, &row.UpstreamCostMultiplierBp, &row.SupplierUserID); err != nil {
+		if err := rows.Scan(&row.ID, &row.TemplateID, &baseURL, &row.UpstreamKey, &row.Name, &row.MaxConcurrency, &row.Enabled, &cacheDomain, &row.UpstreamCostMultiplierBp, &row.SupplierUserID, &row.ProxyID); err != nil {
 			return nil, err
 		}
 		if baseURL.Valid {

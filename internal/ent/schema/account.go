@@ -43,6 +43,12 @@ func (Account) Fields() []ent.Field {
 		// 无迁移逻辑——ent auto-migrate 自动加列（accounts 非分区表），旧行
 		// NULL = 平台自有。
 		field.Int64("supplier_user_id").Optional().Nillable(),
+		// proxy_id 出口代理绑定（spec-proxy-pool §3.2）：NULL = 直连。
+		// **不建 edge、不建外键**——删除全是软删，DB 级联永不触发；解绑由
+		// service 在删除代理的同事务内显式完成（§6.1），加载期把「已软删的
+		// 代理」视为不可用（§4.1）。无迁移逻辑——ent auto-migrate 自动加列
+		// （accounts 非分区表），旧行 NULL = 直连（旧行为天然成立）。
+		field.Int64("proxy_id").Optional().Nillable(),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		field.Time("deleted_at").Optional().Nillable(), // 软删除时间戳（nil = 存活）；null 语义 = 未删除
 		field.Time("created_at").Default(time.Now),

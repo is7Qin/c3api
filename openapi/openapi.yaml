@@ -3873,6 +3873,18 @@ components:
           x-go-type: nullable.Nullable[int64]
           x-go-type-import: { path: github.com/oapi-codegen/nullable }
           x-go-type-skip-optional-pointer: true
+        # 出口代理绑定（spec-proxy-pool §3.2/§3.5）。三态与 supplier_user_id **同款**
+        # （共用同一个 nullableInt64 投影，不另立一套 wire 语义）：缺省 = 不变；
+        # 显式 null = 解绑（落 NULL = 直连）；>0 = 绑定该代理（service 校验存在且
+        # 未软删，否则 404）；<=0 且非 null ⇒ 400（use null to clear）。
+        proxy_id:
+          x-omitempty: true
+          type: integer
+          format: int64
+          nullable: true
+          x-go-type: nullable.Nullable[int64]
+          x-go-type-import: { path: github.com/oapi-codegen/nullable }
+          x-go-type-skip-optional-pointer: true
     GroupPatch:
       type: object
       properties:

@@ -85,6 +85,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.tpl":                   {staticPathContainer, "模板指针：nil 检查与前缀"},
 	"$S.acc.Ext":               {staticPathContainer, "凭据扩展指针：nil 检查 + 装配到 Selection.Ext 的穿透把手（收窄属计划 fence 消费面收口的范围）"},
 	"$S.acc.Ext.CodexIdentity": {staticPathContainer, "身份四元组指针：nil 检查与前缀"},
+	"$S.acc.Proxy":             {staticPathContainer, "出口代理展开指针：nil 检查 + 整交给 specOfDomain（摘要由 egress.Spec.Key 唯一构造）"},
 
 	// --- 账号侧标量 ---
 	"$S.acc.ID":                       {staticPathField, "accountID"},
@@ -98,6 +99,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.UpstreamCostMultiplierBp": {staticPathField, "upstreamCostMultiplierBp"},
 	"$S.acc.IdentityRevision":         {staticPathField, "identityRevision"},
 	"$S.acc.SupplierUserID":           {staticPathField, "supplierUserID"},
+	"$S.proxyDigest":                  {staticPathField, "proxyDigest"}, // 出口规格摘要：由 $S.acc.Proxy 派生、随叶持有
 
 	// --- 账号凭据面（决策输入子集） ---
 	"$S.acc.Ext.CodexAccountID":               {staticPathField, "codexAccountID"},

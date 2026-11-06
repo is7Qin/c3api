@@ -58,6 +58,10 @@ type AccountPatch struct {
 	// 不变；&0 = 清空（回平台自有，落 NULL）；&uid(>0) = 分配给该用户（值域校验：
 	// 目标须为供应商面可达用户，且与禁用路径锁同一 users 行）。
 	SupplierUserID *int64
+	// ProxyID 出口代理（spec-proxy-pool §3.2）：nil = 不变；&0 = 解绑（落 NULL，
+	// 回落直连）；&id(>0) = 绑定该代理（存在性与可用性由 service 校验——仓库层
+	// 只搬值，B 端 0 与"C 端 null"不可区分，故沿用 supplier_user_id 的 &0 先例）。
+	ProxyID *int64
 }
 
 type GroupPatch struct {
@@ -370,6 +374,15 @@ func (r *AccountRepo) updateAccountsBatch(ctx context.Context, ids []int64, p Ac
 						u = u.ClearSupplierUserID()
 					} else {
 						u = u.SetSupplierUserID(*p.SupplierUserID)
+					}
+				}
+				// 出口代理（spec-proxy-pool §3.2 三态）：&0 = 解绑（落 NULL = 直连）；
+				// &id>0 = 绑定。存在性/可用性由 service 校验，仓库只落值。
+				if p.ProxyID != nil {
+					if *p.ProxyID == 0 {
+						u = u.ClearProxyID()
+					} else {
+						u = u.SetProxyID(*p.ProxyID)
 					}
 				}
 				updated, err := u.Save(ctx)

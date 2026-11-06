@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
+	"github.com/is7qin/c3api/internal/ent/proxy"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
@@ -109,6 +110,7 @@ func checkColumn(t, c string) error {
 			managementkey.Table:          managementkey.ValidColumn,
 			priceentry.Table:             priceentry.ValidColumn,
 			pricevariant.Table:           pricevariant.ValidColumn,
+			proxy.Table:                  proxy.ValidColumn,
 			redemptioncode.Table:         redemptioncode.ValidColumn,
 			redemptionuse.Table:          redemptionuse.ValidColumn,
 			rule.Table:                   rule.ValidColumn,

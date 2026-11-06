@@ -32,6 +32,11 @@ type snapshotStatic struct {
 	acc      domain.Account
 	tpl      *domain.Template
 	groupIDs []int64 // 账号所属全部分组（多组账号共享实例的跨组引用集；组级重载时其它组引用替换依据）
+	// proxyDigest 出口代理规格摘要（egress.Spec.Key）：与 key.proxyDigest 同源
+	// ——由 newSnapshotStatic 一次派生。独立留一份是为了让「读了 acc.Proxy 却
+	// 不在键里」在静态读闭包门里成为可枚举的事实（.proxyDigest 是字段类读
+	// 路径，.acc.Proxy 是整指针读），而不是藏在构造函数内部。
+	proxyDigest [16]byte
 	// key 是 canonical digest 复用位点：由 newSnapshotStatic（唯一构造函数）
 	// 一次派生并随不可变叶持有——planKeyOf(av) 直接返回它，重载路径不再逐叶
 	// 现算五类摘要。key 在首次读取前有效、发布后只读；src 切片/映射只读，

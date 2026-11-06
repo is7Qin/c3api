@@ -723,11 +723,11 @@ func TestUpdateAccountsBatch(t *testing.T) {
 			AddRow(int64(5), nil))
 	// 行锁 SELECT 取回按值比较所需的**全部**旧值（字段集见 domain 声明表）：
 	// 身份类字段与配置类字段都从这一行读出，写入侧不再另行读旧值。
-	tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0) FROM accounts WHERE`)).
+	tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0), COALESCE(proxy_id, 0) FROM accounts WHERE`)).
 		WithArgs(int64(2), int64(5)).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url", "upstream_key", "name", "max_concurrency", "enabled", "cache_domain", "upstream_cost_multiplier_bp", "supplier_user_id"}).
-			AddRow(int64(2), int64(1), nil, "sk-a", "acc-a", 4, true, nil, 10000, 0).
-			AddRow(int64(5), int64(1), nil, "sk-b", "acc-b", 4, true, nil, 10000, 0))
+		WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url", "upstream_key", "name", "max_concurrency", "enabled", "cache_domain", "upstream_cost_multiplier_bp", "supplier_user_id", "proxy_id"}).
+			AddRow(int64(2), int64(1), nil, "sk-a", "acc-a", 4, true, nil, 10000, 0, 0).
+			AddRow(int64(5), int64(1), nil, "sk-b", "acc-b", 4, true, nil, 10000, 0, 0))
 	tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
 	tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 	// 批量配置写入：每 id 一条 UPDATE_ONE（UpdateOneID + Save 回显新 C，共 6
@@ -793,10 +793,10 @@ func TestUpdateAccountsBatchAdvancesIdentityRevisionOnlyOnValueChange(t *testing
 			tr.pool.ExpectQuery(q(`SELECT "accounts"."id", "accounts"."supplier_user_id" FROM "accounts" WHERE`)).
 				WithArgs(int64(2)).
 				WillReturnRows(pgxmock.NewRows([]string{"id", "supplier_user_id"}).AddRow(int64(2), nil))
-			tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0) FROM accounts WHERE`)).
+			tr.pool.ExpectQuery(q(`SELECT id, template_id, base_url, upstream_key, name, max_concurrency, enabled, cache_domain, upstream_cost_multiplier_bp, COALESCE(supplier_user_id, 0), COALESCE(proxy_id, 0) FROM accounts WHERE`)).
 				WithArgs(int64(2)).
-				WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url", "upstream_key", "name", "max_concurrency", "enabled", "cache_domain", "upstream_cost_multiplier_bp", "supplier_user_id"}).
-					AddRow(int64(2), int64(1), nil, "sk-a", "acc-a", 4, true, nil, 10000, 0))
+				WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "base_url", "upstream_key", "name", "max_concurrency", "enabled", "cache_domain", "upstream_cost_multiplier_bp", "supplier_user_id", "proxy_id"}).
+					AddRow(int64(2), int64(1), nil, "sk-a", "acc-a", 4, true, nil, 10000, 0, 0))
 			tr.pool.ExpectExec(q(`SELECT pg_advisory_xact_lock`)).WithArgs(pgxmock.AnyArg()).WillReturnResult(pgxmock.NewResult("SELECT", 1))
 			tr.pool.ExpectQuery(q(`FROM "templates" WHERE`)).WithArgs(int64(1)).WillReturnRows(templateRow())
 			update := q(`UPDATE "accounts" SET`)

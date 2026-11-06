@@ -44,6 +44,8 @@ const (
 	FieldCacheDomain = "cache_domain"
 	// FieldSupplierUserID holds the string denoting the supplier_user_id field in the database.
 	FieldSupplierUserID = "supplier_user_id"
+	// FieldProxyID holds the string denoting the proxy_id field in the database.
+	FieldProxyID = "proxy_id"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
 	// FieldDeletedAt holds the string denoting the deleted_at field in the database.
@@ -97,6 +99,7 @@ var Columns = []string{
 	FieldUpstreamCostMultiplierBp,
 	FieldCacheDomain,
 	FieldSupplierUserID,
+	FieldProxyID,
 	FieldUpdatedAt,
 	FieldDeletedAt,
 	FieldCreatedAt,
@@ -218,6 +221,11 @@ func ByCacheDomain(opts ...sql.OrderTermOption) OrderOption {
 // BySupplierUserID orders the results by the supplier_user_id field.
 func BySupplierUserID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldSupplierUserID, opts...).ToFunc()
+}
+
+// ByProxyID orders the results by the proxy_id field.
+func ByProxyID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldProxyID, opts...).ToFunc()
 }
 
 // ByUpdatedAt orders the results by the updated_at field.

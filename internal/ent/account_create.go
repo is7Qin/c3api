@@ -211,6 +211,20 @@ func (_c *AccountCreate) SetNillableSupplierUserID(v *int64) *AccountCreate {
 	return _c
 }
 
+// SetProxyID sets the "proxy_id" field.
+func (_c *AccountCreate) SetProxyID(v int64) *AccountCreate {
+	_c.mutation.SetProxyID(v)
+	return _c
+}
+
+// SetNillableProxyID sets the "proxy_id" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableProxyID(v *int64) *AccountCreate {
+	if v != nil {
+		_c.SetProxyID(*v)
+	}
+	return _c
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_c *AccountCreate) SetUpdatedAt(v time.Time) *AccountCreate {
 	_c.mutation.SetUpdatedAt(v)
@@ -482,6 +496,10 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.SupplierUserID(); ok {
 		_spec.SetField(account.FieldSupplierUserID, field.TypeInt64, value)
 		_node.SupplierUserID = &value
+	}
+	if value, ok := _c.mutation.ProxyID(); ok {
+		_spec.SetField(account.FieldProxyID, field.TypeInt64, value)
+		_node.ProxyID = &value
 	}
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(account.FieldUpdatedAt, field.TypeTime, value)
@@ -845,6 +863,30 @@ func (u *AccountUpsert) AddSupplierUserID(v int64) *AccountUpsert {
 // ClearSupplierUserID clears the value of the "supplier_user_id" field.
 func (u *AccountUpsert) ClearSupplierUserID() *AccountUpsert {
 	u.SetNull(account.FieldSupplierUserID)
+	return u
+}
+
+// SetProxyID sets the "proxy_id" field.
+func (u *AccountUpsert) SetProxyID(v int64) *AccountUpsert {
+	u.Set(account.FieldProxyID, v)
+	return u
+}
+
+// UpdateProxyID sets the "proxy_id" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateProxyID() *AccountUpsert {
+	u.SetExcluded(account.FieldProxyID)
+	return u
+}
+
+// AddProxyID adds v to the "proxy_id" field.
+func (u *AccountUpsert) AddProxyID(v int64) *AccountUpsert {
+	u.Add(account.FieldProxyID, v)
+	return u
+}
+
+// ClearProxyID clears the value of the "proxy_id" field.
+func (u *AccountUpsert) ClearProxyID() *AccountUpsert {
+	u.SetNull(account.FieldProxyID)
 	return u
 }
 
@@ -1229,6 +1271,34 @@ func (u *AccountUpsertOne) UpdateSupplierUserID() *AccountUpsertOne {
 func (u *AccountUpsertOne) ClearSupplierUserID() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearSupplierUserID()
+	})
+}
+
+// SetProxyID sets the "proxy_id" field.
+func (u *AccountUpsertOne) SetProxyID(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetProxyID(v)
+	})
+}
+
+// AddProxyID adds v to the "proxy_id" field.
+func (u *AccountUpsertOne) AddProxyID(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddProxyID(v)
+	})
+}
+
+// UpdateProxyID sets the "proxy_id" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateProxyID() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateProxyID()
+	})
+}
+
+// ClearProxyID clears the value of the "proxy_id" field.
+func (u *AccountUpsertOne) ClearProxyID() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearProxyID()
 	})
 }
 
@@ -1786,6 +1856,34 @@ func (u *AccountUpsertBulk) UpdateSupplierUserID() *AccountUpsertBulk {
 func (u *AccountUpsertBulk) ClearSupplierUserID() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearSupplierUserID()
+	})
+}
+
+// SetProxyID sets the "proxy_id" field.
+func (u *AccountUpsertBulk) SetProxyID(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetProxyID(v)
+	})
+}
+
+// AddProxyID adds v to the "proxy_id" field.
+func (u *AccountUpsertBulk) AddProxyID(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddProxyID(v)
+	})
+}
+
+// UpdateProxyID sets the "proxy_id" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateProxyID() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateProxyID()
+	})
+}
+
+// ClearProxyID clears the value of the "proxy_id" field.
+func (u *AccountUpsertBulk) ClearProxyID() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.ClearProxyID()
 	})
 }
 

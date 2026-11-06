@@ -141,6 +141,18 @@ func (f PriceVariantFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PriceVariantMutation", m)
 }
 
+// The ProxyFunc type is an adapter to allow the use of ordinary
+// function as Proxy mutator.
+type ProxyFunc func(context.Context, *ent.ProxyMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f ProxyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.ProxyMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ProxyMutation", m)
+}
+
 // The RedemptionCodeFunc type is an adapter to allow the use of ordinary
 // function as RedemptionCode mutator.
 type RedemptionCodeFunc func(context.Context, *ent.RedemptionCodeMutation) (ent.Value, error)

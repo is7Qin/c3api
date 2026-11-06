@@ -80,7 +80,7 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 		declaredPlanKeyFields = []string{
 			"accountID", "name", "templateID", "baseURL", "upstreamKey",
 			"maxConcurrency", "enabled", "cacheDomain", "upstreamCostMultiplierBp",
-			"identityRevision", "supplierUserID",
+			"identityRevision", "supplierUserID", "proxyDigest",
 			"codexAccountID", "codexInstallation",
 			"codexEmail", "codexPATKey",
 			"credentialType", "stripImageTools", "modelsDigest", "formatModelsKey",
@@ -110,6 +110,10 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 // 断言，不由下面的映射覆盖。
 func TestStaticKeyCoversEveryDeclaredAccountField(t *testing.T) {
 	// 声明字段 → 静态键里承载它的字段名（值语义载体；集合类以规范序摘要承载）。
+	//
+	// proxy_id 的承载字段是 proxyDigest：单纯依赖「身份类 ⇒ 必推 K」不够——K 只
+	// 证明「变过」，而计划需要「现在走哪条线」这一事实本身（egress 规格摘要）。
+	// 摘要与 K 冗余是**有意**的：任一失效路径单独失守都不会让旧计划继续打旧出口。
 	carrier := map[domain.AccountField]string{
 		domain.FieldName:                   "name",
 		domain.FieldTemplateID:             "templateID",
@@ -121,6 +125,7 @@ func TestStaticKeyCoversEveryDeclaredAccountField(t *testing.T) {
 		domain.FieldCacheDomain:            "cacheDomain",
 		domain.FieldUpstreamCostMultiplier: "upstreamCostMultiplierBp",
 		domain.FieldSupplierUserID:         "supplierUserID",
+		domain.FieldProxyID:                "proxyDigest",
 	}
 	kt := reflect.TypeFor[staticKey]()
 	keyFields := make(map[string]bool)
@@ -377,4 +382,33 @@ func TestBuildSnapshotsGIDIsMinOfGroupIDs(t *testing.T) {
 	require.ElementsMatch(t, []int64{2, 5, 9}, st.groupIDs)
 	// 不变量：gid 必须始终是成员之一。
 	require.Contains(t, st.groupIDs, st.eventGID(), "eventGID must be a member of groupIDs")
+}
+
+// TestPlanKeyCarriesEgressSpec 钉住出口摘要的判据语义（spec proxy-pool §9.1
+// 「Identity 语义」的键侧半边）：绑定的代理规格一变，planKey 必须变。这里**刻意
+// 把 K 钉成同值**——证明 proxyDigest 独立承载"现在走哪条线"这一事实，而不是蹭
+// identityRevision（K 只证明变过，不描述变成什么）。
+func TestPlanKeyCarriesEgressSpec(t *testing.T) {
+	tpl := tplWith(domain.FormatOpenAIChat, []string{"m-a"})
+	base := *acc(7, tpl, 4)
+	withProxy := func(p *domain.Proxy) planKey {
+		a := base
+		a.Proxy = p
+		a.IdentityRevision = 5 // 同值：K 不得成为唯一承载
+		return planKeyOf(newSnapshotStatic(a, tpl, nil))
+	}
+
+	direct := withProxy(nil)
+	socks := withProxy(&domain.Proxy{ID: 1, Scheme: domain.ProxySchemeSOCKS5, Host: "127.0.0.1", Port: 1080})
+	otherPort := withProxy(&domain.Proxy{ID: 1, Scheme: domain.ProxySchemeSOCKS5, Host: "127.0.0.1", Port: 1081})
+	withAuth := withProxy(&domain.Proxy{ID: 1, Scheme: domain.ProxySchemeSOCKS5, Host: "127.0.0.1", Port: 1080, Username: "u", Password: "p"})
+	httpScheme := withProxy(&domain.Proxy{ID: 2, Scheme: domain.ProxySchemeHTTP, Host: "127.0.0.1", Port: 1080})
+	sameSpecNewPointer := withProxy(&domain.Proxy{ID: 1, Scheme: domain.ProxySchemeSOCKS5, Host: "127.0.0.1", Port: 1080})
+
+	require.True(t, direct == withProxy(nil), "同一事实必须同键：nil 代理每次构造都同键")
+	require.True(t, socks == sameSpecNewPointer, "键是值语义：同规格的不同 *domain.Proxy 必须同键（否则每次重载换新叶）")
+	require.False(t, direct == socks, "直连 ≠ 走代理")
+	require.False(t, socks == otherPort, "换端口 = 换出口线")
+	require.False(t, socks == withAuth, "同 host:port 不同认证 = 不同出口线")
+	require.False(t, socks == httpScheme, "换 scheme = 换出口线")
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/managementkey"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
+	"github.com/is7qin/c3api/internal/ent/proxy"
 	"github.com/is7qin/c3api/internal/ent/redemptioncode"
 	"github.com/is7qin/c3api/internal/ent/redemptionuse"
 	"github.com/is7qin/c3api/internal/ent/rule"
@@ -58,13 +59,13 @@ func init() {
 	// account.DefaultUpstreamCostMultiplierBp holds the default value on creation for the upstream_cost_multiplier_bp field.
 	account.DefaultUpstreamCostMultiplierBp = accountDescUpstreamCostMultiplierBp.Default.(int)
 	// accountDescUpdatedAt is the schema descriptor for updated_at field.
-	accountDescUpdatedAt := accountFields[16].Descriptor()
+	accountDescUpdatedAt := accountFields[17].Descriptor()
 	// account.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	account.DefaultUpdatedAt = accountDescUpdatedAt.Default.(func() time.Time)
 	// account.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	account.UpdateDefaultUpdatedAt = accountDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// accountDescCreatedAt is the schema descriptor for created_at field.
-	accountDescCreatedAt := accountFields[18].Descriptor()
+	accountDescCreatedAt := accountFields[19].Descriptor()
 	// account.DefaultCreatedAt holds the default value on creation for the created_at field.
 	account.DefaultCreatedAt = accountDescCreatedAt.Default.(func() time.Time)
 	balancelogFields := schema.BalanceLog{}.Fields()
@@ -197,6 +198,30 @@ func init() {
 	pricevariant.DefaultUpdatedAt = pricevariantDescUpdatedAt.Default.(func() time.Time)
 	// pricevariant.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	pricevariant.UpdateDefaultUpdatedAt = pricevariantDescUpdatedAt.UpdateDefault.(func() time.Time)
+	proxyFields := schema.Proxy{}.Fields()
+	_ = proxyFields
+	// proxyDescEnabled is the schema descriptor for enabled field.
+	proxyDescEnabled := proxyFields[7].Descriptor()
+	// proxy.DefaultEnabled holds the default value on creation for the enabled field.
+	proxy.DefaultEnabled = proxyDescEnabled.Default.(bool)
+	// proxyDescLastProbeOk is the schema descriptor for last_probe_ok field.
+	proxyDescLastProbeOk := proxyFields[10].Descriptor()
+	// proxy.DefaultLastProbeOk holds the default value on creation for the last_probe_ok field.
+	proxy.DefaultLastProbeOk = proxyDescLastProbeOk.Default.(bool)
+	// proxyDescLastProbeError is the schema descriptor for last_probe_error field.
+	proxyDescLastProbeError := proxyFields[11].Descriptor()
+	// proxy.DefaultLastProbeError holds the default value on creation for the last_probe_error field.
+	proxy.DefaultLastProbeError = proxyDescLastProbeError.Default.(string)
+	// proxyDescUpdatedAt is the schema descriptor for updated_at field.
+	proxyDescUpdatedAt := proxyFields[12].Descriptor()
+	// proxy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	proxy.DefaultUpdatedAt = proxyDescUpdatedAt.Default.(func() time.Time)
+	// proxy.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	proxy.UpdateDefaultUpdatedAt = proxyDescUpdatedAt.UpdateDefault.(func() time.Time)
+	// proxyDescCreatedAt is the schema descriptor for created_at field.
+	proxyDescCreatedAt := proxyFields[14].Descriptor()
+	// proxy.DefaultCreatedAt holds the default value on creation for the created_at field.
+	proxy.DefaultCreatedAt = proxyDescCreatedAt.Default.(func() time.Time)
 	redemptioncodeFields := schema.RedemptionCode{}.Fields()
 	_ = redemptioncodeFields
 	// redemptioncodeDescMaxUses is the schema descriptor for max_uses field.
