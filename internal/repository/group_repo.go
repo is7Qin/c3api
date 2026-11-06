@@ -383,8 +383,10 @@ func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 // 同理）。代理是小表（十到百条），全表扫描零参数、与账号数无关；用
 // `WHERE id IN (...)` 反而把参数数绑到代理数上，且要先收集 id——没有收益。
 //
-// 失败即返回错误（不降级为"全部直连"）：代理展开缺失会让 `Routable` 判定把
-// "绑定但查不到"和"未绑定"混成同一形态，等于把装配错误静默吞成直连。
+// 失败即返回错误（不降级成空索引）：空索引会让每条"已绑定"账号的展开值都是 nil，
+// 于是 `routable` 恒 false——一次装载错误被放大成**整批出口中断**，而它在运行期与
+// "代理真的被删掉了"完全不可区分。这里 fail-closed 恰好意味着**不能**降级：降级不会
+// 退化成直连（"绑定但查不到"永远不路由），只会把一次错变成一片不可用。
 func (r *GroupRepo) proxyIndexByID(ctx context.Context) (map[int64]*domain.Proxy, error) {
 	rows, err := r.client.Proxy.Query().Where(proxy.DeletedAtIsNil()).All(ctx)
 	if err != nil {
@@ -401,9 +403,10 @@ func (r *GroupRepo) proxyIndexByID(ctx context.Context) (map[int64]*domain.Proxy
 // expandAccountProxy 按 `ProxyID` 回填展开字段。指向已软删/不存在的行 ⇒ `Proxy`
 // 留 nil（"绑定缺失"的可判定形态，与 §4.1 的四状态表同语义）。
 //
-// **不碰可用性位**：`routable` 是快照事实（C2/S7 从领域对象搬走），唯一派生点是 scheduler 的
-// `newSnapshotStatic`（装载器只提供原料：ProxyID + 展开的 Proxy + Enabled）。
-// 放装载器会让几十处测试 fixture（Enabled=true、Proxy=nil）恒不可路由。
+// **不碰可用性位**：`routable` 是快照事实（C2/S7 从领域对象搬走），唯一派生点是
+// scheduler 的 `newSnapshotStatic`——装载器只提供原料（ProxyID + 展开的 Proxy +
+// Enabled）。这不是"怕改坏测试"：一个事实只能有一个派生点，装载器再算一次就是第二份
+// 判据，两者迟早不一致；而且装载器算出来的位不在键里，改了 enabled 不会换叶子。
 func expandAccountProxy(d *domain.Account, byID map[int64]*domain.Proxy) {
 	if d == nil || d.ProxyID == nil {
 		return

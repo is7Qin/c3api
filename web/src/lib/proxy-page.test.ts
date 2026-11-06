@@ -205,7 +205,9 @@ describe('accounts 页面接线（源码形状）', () => {
 })
 
 describe('地址判据只在后端（C3：删掉前端第二套 IP 分类器）', () => {
-  // 只查**代码**，不查注释：注释里出现「已删 isPrivateEgressHost」是好事，不该让门禁误报。
+  // 只查**代码**：下面剥掉块注释与**整行**行注释（注释里出现「已删 isPrivateEgressHost」
+  // 是好事，不该让门禁误报）。注意行尾的行注释（`x = 1 // 备注`）仍留在代码串里会被
+  // 扫到——所以私网段/特殊名不要写进行尾注释。
   const proxyFormCode = proxyForm.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
 
   it('proxy-form.ts 不再导出私网判定，也不再解析 IPv4/IPv6', () => {

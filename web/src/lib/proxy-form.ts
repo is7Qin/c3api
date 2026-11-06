@@ -5,9 +5,11 @@
 // 代理条目表单的纯逻辑：廉价格式校验 + 请求体三态投影。
 //
 // 纪律：
-// - **校验只为体验**。真判据在后端 `internal/service/proxy.go` 的 `normalizeProxyInput`
-//   （name trim 后 1..64 / scheme 小写白名单 / host 形态 / port 1..65535 / 私网出口拒绝）；
-//   本文件只做**格式**反馈，不替代它——前端放过去的东西后端仍会 400。
+// - **校验只为体验**。真判据在后端，且是**两步**：`internal/service/proxy.go` 的
+//   `normalizeProxyInput`（name trim 后 1..64 / scheme 小写白名单 / host 形态 /
+//   port 1..65535 / 凭据控制字符）与紧随其后的 `checkSupplierEgressHost`
+//   （**仅供应商面**的私网/回环/链路本地拒绝；管理员不受此限）。本文件只做**格式**
+//   反馈，两步都不替代——前端放过去的东西后端仍会 400。
 // - **本文件不做 IP 分类**（C3 已删 `isPrivateEgressHost`）：前端曾经自己解析
 //   IPv4/IPv6/mapped 并维护私网段名单，与后端口径漂移（前端去尾点、认 `.localhost`，
 //   后端都不认）。私网/回环/链路本地只有一份判据，在后端；前端只留一句固定说明

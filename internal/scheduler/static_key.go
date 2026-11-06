@@ -115,9 +115,13 @@ func specOfDomain(p *domain.Proxy) egress.Spec {
 // !Proxy.Enabled`（禁用）现推，只用于日志与回显（spec §4.7、§5.1）。
 //
 // 形参是**值/指针本身**而不是 `*snapshotStatic`：让 `Proxy.Enabled` 这一跳发生在
-// 纯函数里，不进快照的静态读观测面。spec §9.2 明令禁止 `$S.acc.Proxy.*` 下钻
-// （决策只读一位，代理细节不得成为消费面），而决策又**必须**看 `Proxy.Enabled`
-// ——把下钻关在这个函数里是两者唯一的相容解。
+// 纯函数里，调用点因此可以把整指针交进来，不必自己下钻成 `$S.acc.Proxy.Enabled`。
+//
+// 但函数边界**本身不是门禁**：`routableFor(av.acc.Proxy.Enabled, ...)` 一样编译通过，
+// 扫描器也不会追进形参——把"原料只许在 reload 期读"寄托在这条约定上是不成立的。
+// 真正拦住它的是 static_read_closure_test.go 的"路径 × 函数"断言
+// （proxyMaterialPathFuncs）：谁在消费期读 `$S.acc.Proxy` / `$S.acc.ProxyID` /
+// `$S.acc.Enabled`，那条断言就红，除非在表里写明理由。
 func routableFor(enabled bool, proxyID *int64, px *domain.Proxy) bool {
 	if !enabled {
 		return false

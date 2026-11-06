@@ -181,9 +181,10 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 	if a.SupplierUserID != nil {
 		d.SupplierUserID = *a.SupplierUserID
 	}
-	// 出口代理绑定（spec-proxy-pool §3.2）：列 NULL = 直连（nil）。绑定展开
-	// （d.Proxy）不在读路径回填——M2 的快照装载按 ProxyID 批量查 proxies 后
-	// 装配，管理面 CRUD 不需要它。
+	// 出口代理绑定（spec-proxy-pool §3.2）：列 NULL = 直连（nil）。本函数**只**投影
+	// ProxyID 这一列，`d.Proxy` 恒留 nil——展开由快照装载在 toDomainAccount 之后调
+	// expandAccountProxy 完成（批量查 proxies 后按 id 回填，一处实现）；管理面 CRUD
+	// 不调它，故那里的 Proxy 恒 nil 且无人读。
 	d.ProxyID = a.ProxyID
 	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts
 	// ——全表/子查询扫描后内存装配 Edges.Ext）会带 account_ext 边；其余路径
