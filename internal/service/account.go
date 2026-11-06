@@ -50,6 +50,11 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 			return nil, err // 组缺 id → 404
 		}
 	}
+	// 出口代理绑定（spec-proxy-pool §3.5 第 6 条）：>0 必须指向**存活**条目，否则
+	// 404；0/未提供 = 直连（创建即不落列）。与 supplier_user_id 同一处、同一形态。
+	if err := s.checkProxyExists(ctx, p.ProxyID); err != nil {
+		return nil, err
+	}
 	// 倍率：补丁未提供 → 显式落创建默认 ×1（10000）；提供 → 精确落值（含 0 = 免费）。
 	multBp := 10000
 	if p.UpstreamCostMultiplierBp != nil {
@@ -78,6 +83,11 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	}
 	if p.Enabled != nil {
 		a.Enabled = *p.Enabled
+	}
+	// 出口代理绑定落列（>0 已在上方校验存在；0/未提供 = 直连，不落列）。
+	if p.ProxyID != nil && *p.ProxyID > 0 {
+		v := *p.ProxyID
+		a.ProxyID = &v
 	}
 	// 归属（§2.5 行层作用域的锚点）：
 	//   - 供应商面：服务端**钉死** JWT 本人（请求体出现该字段已由 handler 判 400，
@@ -173,6 +183,11 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 		if err := s.checkGroupsExist(ctx, *p.GroupIDs); err != nil {
 			return nil, err // 组缺 id → 404
 		}
+	}
+	// 出口代理绑定三态（spec-proxy-pool §3.5 第 6 条）：nil = 不变（不校验）；&0 =
+	// 解绑（无需存在）；&id>0 = 必须指向存活条目（已软删 = 不存在 → 404）。
+	if err := s.checkProxyExists(ctx, p.ProxyID); err != nil {
+		return nil, err
 	}
 	// 失效判据来自 repository 回显的**真实变更集**（身份类字段按值变更），
 	// 不在本层重写字段清单。
@@ -272,6 +287,11 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 		return nil, err
 	}
 	if err := validateAccountPatch(p); err != nil {
+		return nil, err
+	}
+	// 出口代理绑定（spec-proxy-pool §3.5 第 6 条）：批量面同一处、同一形态——
+	// 任一 id 不存在/已软删 → 整批 404（与组/模板的批量前置校验同语义）。
+	if err := s.checkProxyExists(ctx, p.ProxyID); err != nil {
 		return nil, err
 	}
 	// 变更前逐个查旧组 + 替换目标组并集（upstream_key 批量变更 →

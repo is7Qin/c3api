@@ -46,6 +46,7 @@ const EmailVerificationRequired = "email verification required"
 
 type Store interface {
 	TemplateStore
+	ProxyStore
 	AccountStore
 	GroupStore
 	KeyStore
@@ -164,6 +165,23 @@ type TemplateStore interface {
 	DeleteTemplate(ctx context.Context, id int64) error
 	DeleteTemplatesBatch(ctx context.Context, ids []int64) error
 	UpdateTemplatesBatch(ctx context.Context, ids []int64, p repository.TemplatePatch) error
+}
+
+// ProxyStore 出口代理条目持久化（spec-proxy-pool M1b 写面）。
+//
+// UpdateProxy 的密码是**独立形参**（nil = 不变；&"" = 清空；&v = 落值）：三态必须
+// 在一条 UPDATE 里原子表达，故仓库不提供「先读旧密码再整体写回」的路径（那会开
+// read-modify-write 窗口，把并发的另一次改密码静默回滚）。
+type ProxyStore interface {
+	CreateProxy(ctx context.Context, p domain.Proxy) (int64, error)
+	ListProxies(ctx context.Context) ([]domain.Proxy, error)
+	// GetProxy 已软删视同不存在（repository.ErrNotFound → service.ErrNotFound）。
+	GetProxy(ctx context.Context, id int64) (domain.Proxy, error)
+	UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error
+	// DeleteProxy 软删 + **同事务**解绑（account.proxy_id → NULL，回落直连）。
+	DeleteProxy(ctx context.Context, id int64) error
+	// WriteProxyProbe 探测三列（at/ok/error）的唯一写者：全量更新不碰它们。
+	WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error
 }
 
 type AccountStore interface {
@@ -851,7 +869,7 @@ func validateAccountPatch(p repository.AccountPatch) error {
 	if p.Name == nil && p.TemplateID == nil && p.UpstreamKey == nil &&
 		p.BaseURL == nil && p.MaxConcurrency == nil && p.GroupIDs == nil &&
 		p.Enabled == nil && p.UpstreamCostMultiplierBp == nil && p.CacheDomain == nil &&
-		p.SupplierUserID == nil {
+		p.SupplierUserID == nil && p.ProxyID == nil {
 		return ErrInvalidInput
 	}
 	if p.Name != nil && *p.Name == "" {
@@ -902,6 +920,13 @@ func validateAccountPatch(p repository.AccountPatch) error {
 	// 归属（§2.5）：nil = 不变；&0 = 清空（回平台自有）；&uid>0 = 分配给该用户
 	// （目标值域校验在 repository 写入事务内锁 users 行后进行，见 ownership.go）。
 	if p.SupplierUserID != nil && *p.SupplierUserID < 0 {
+		return ErrInvalidInput
+	}
+	// 出口代理（spec-proxy-pool §3.5 第 6 条）：nil = 不变；&0 = 解绑（合法）；
+	// &id>0 = 绑定——存在性（存活/未软删）校验在写面各处，不在本函数（本函数是
+	// 纯值域校验，与 supplier_user_id 同分工：值域在此，存在性在 repository 或
+	// 写面的前置读）。&id<0 两个层面都无意义 ⇒ 400。
+	if p.ProxyID != nil && *p.ProxyID < 0 {
 		return ErrInvalidInput
 	}
 	return nil

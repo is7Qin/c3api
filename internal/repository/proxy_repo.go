@@ -84,14 +84,53 @@ func (r *ProxyRepo) GetProxy(ctx context.Context, id int64) (domain.Proxy, error
 	return toDomainProxy(row), nil
 }
 
-// UpdateProxy 全量更新（幂等：以补丁值整体覆盖，不依赖旧值）。软删行视同不存在；
-// name 撞其它存活/已软删条目一律 ErrConflict（唯一索引不含 deleted_at——与 template
-// 同语义）。UpdatedAt 由列默认/更新默认处理，不在入参里。
+// ProxyCredential 代理条目的**凭据列**写面：两列都是三态（nil = 不变；&"" = 清空；
+// &v = 落值）。
+//
+// 为什么两列一起三态而不是只给 password：它们是**同一对**凭据，"不变"必须同样原子。
+// 只给 password 三态、让 username 走"先读旧值再整体写回"，就把 read-modify-write
+// 窗口留给了 username——并发的另一次改凭据会被这次用读到的旧值静默回滚，而调用方
+// 以为自己只是改了个备注。两个同类型指针并排也容易写反，故用命名结构体。
+type ProxyCredential struct {
+	Username *string
+	Password *string
+}
+
+// applyProxySecret 把凭据三态落到 UPDATE 的 SET 列表：非 nil 的列才出现，
+// nil 的列根本不进语句 ⇒ 数据库层面"不变"，与并发写不冲突。
+func applyProxySecret(u *ent.ProxyUpdate, c ProxyCredential) {
+	if c.Username != nil {
+		if *c.Username == "" {
+			u.ClearUsername()
+		} else {
+			u.SetUsername(*c.Username)
+		}
+	}
+	if c.Password != nil {
+		if *c.Password == "" {
+			u.ClearPassword()
+		} else {
+			u.SetPassword(*c.Password)
+		}
+	}
+}
+
+// UpdateProxy 全量更新非密字段 + **凭据三态**（见 ProxyCredential）。三态在
+// **同一条 UPDATE** 语句里表达（非 nil 的列才进 SET），故不需要「先读旧值再整体
+// 写回」——后者有 read-modify-write 窗口：并发的另一次改凭据会被这次写回用读到的
+// 旧值覆盖（静默回滚），而 spec §6.1 的 PUT 语义要求三态原子。
+//
+// p.Username / p.Password 在本函数里**被忽略**（只有 CreateProxy 用它们）：更新面
+// 的凭据只经 ProxyCredential 表达，避免"两处都能设凭据"。
+//
+// 其余字段仍按补丁值整体覆盖（幂等、不依赖旧值）。软删行视同不存在；name 撞其它
+// 存活/已软删条目一律 ErrConflict（唯一索引不含 deleted_at——与 template 同语义）。
+// UpdatedAt 由列默认/更新默认处理，不在入参里。
 //
 // **不写 last_probe_\* 三列**：探测结果由 WriteProxyProbe 独占写（一个事实一个写者）。
 // 若让全量更新也写它们，管理面 PUT 就会把上一次探测结论静默抹成「从未探测」——
 // 而探测结论是运维唯一的现场证据，不能因为改个备注而丢。
-func (r *ProxyRepo) UpdateProxy(ctx context.Context, p domain.Proxy) error {
+func (r *ProxyRepo) UpdateProxy(ctx context.Context, p domain.Proxy, credential ProxyCredential) error {
 	u := r.client.Proxy.Update().
 		Where(proxy.IDEQ(p.ID), proxy.DeletedAtIsNil()).
 		SetName(p.Name).
@@ -99,17 +138,8 @@ func (r *ProxyRepo) UpdateProxy(ctx context.Context, p domain.Proxy) error {
 		SetHost(p.Host).
 		SetPort(p.Port).
 		SetEnabled(p.Enabled)
-	// 可空列的三态落值归一（空串 = 无 → NULL），与 CreateProxy 同口径。
-	if p.Username != "" {
-		u = u.SetUsername(p.Username)
-	} else {
-		u = u.ClearUsername()
-	}
-	if p.Password != "" {
-		u = u.SetPassword(p.Password)
-	} else {
-		u = u.ClearPassword()
-	}
+	// 凭据两列的三态在同一语句里落值（nil 的列不进 SET ⇒ 不变）。
+	applyProxySecret(u, credential)
 	if p.Remark != "" {
 		u = u.SetRemark(p.Remark)
 	} else {

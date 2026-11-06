@@ -75,11 +75,13 @@ func TestPGProxyCRUD(t *testing.T) {
 	got.Scheme = domain.ProxySchemeHTTP
 	got.Host = "proxy.example.com"
 	got.Port = 8080
-	got.Username = ""
-	got.Password = ""
 	got.Remark = ""
 	got.Enabled = false
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got))
+	// 凭据三态：两列各给 &"" 才清空（本轮要清掉 u1/p1 的认证）。凭据不走
+	// domain.Proxy 的字段（更新面只有 ProxyCredential 能设凭据）。
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{
+		Username: new(""), Password: new(""),
+	}))
 
 	updated, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
@@ -92,8 +94,8 @@ func TestPGProxyCRUD(t *testing.T) {
 	require.Empty(t, updated.Password)
 	require.Empty(t, updated.Remark)
 
-	// 更新幂等：同值再写一遍不报错、结果不变。
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updated))
+	// 更新幂等：同值再写一遍不报错、结果不变（password=nil = 不变）。
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updated, repository.ProxyCredential{}))
 	again, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, updated.Name, again.Name)
@@ -109,7 +111,7 @@ func TestPGProxyCRUD(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrNotFound)
 	require.ErrorIs(t, repos.Proxies.DeleteProxy(ctx, id), repository.ErrNotFound)
 	// 软删行不可更新。
-	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, updated), repository.ErrNotFound)
+	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, updated, repository.ProxyCredential{}), repository.ErrNotFound)
 }
 
 // TestPGProxyNameUnique 钉住 name 唯一的**既有语义**（与 template/group 同）：
@@ -137,7 +139,7 @@ func TestPGProxyNameUnique(t *testing.T) {
 	second, err := repos.Proxies.GetProxy(ctx, secondID)
 	require.NoError(t, err)
 	second.Name = "dup"
-	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, second), repository.ErrConflict)
+	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, second, repository.ProxyCredential{}), repository.ErrConflict)
 
 	// 软删后同名仍不可用（唯一索引与 deleted_at 无关——与 template 语义一致）。
 	require.NoError(t, repos.Proxies.DeleteProxy(ctx, id))
@@ -255,7 +257,7 @@ func TestPGProxyUpdateKeepsProbeOwnership(t *testing.T) {
 	cur.LastProbeAt = nil
 	cur.LastProbeOK = false
 	cur.LastProbeError = ""
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, cur))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, cur, repository.ProxyCredential{}))
 
 	after, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
@@ -264,4 +266,74 @@ func TestPGProxyUpdateKeepsProbeOwnership(t *testing.T) {
 	require.True(t, after.LastProbeAt.Equal(probedAt), "探测时刻原样保留")
 	require.True(t, after.LastProbeOK, "探测结论原样保留")
 	require.Empty(t, after.LastProbeError)
+}
+
+// TestPGProxyUpdatePasswordTriState 钉住密码三态（spec §6.1 PUT 语义）：nil = 不变、
+// &"" = 清空、&"v" = 落值；三态**不牵动**非密字段的「全量覆盖」语义，也不写探测
+// 三列（探测列仍由 WriteProxyProbe 独占）。
+//
+// 为什么仓库层必须原子表达「不变」：若 service 用「先读旧密码再整体写回」，并发
+// 的另一次改密码会被这次写回用读到的旧值静默覆盖（read-modify-write 窗口）。
+func TestPGProxyUpdatePasswordTriState(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	id, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
+		Name: "tri-1", Scheme: domain.ProxySchemeSOCKS5, Host: "10.1.1.1", Port: 1080,
+		Username: "user1", Password: "pass1", Enabled: true,
+	})
+	require.NoError(t, err)
+
+	probedAt := time.Date(2026, 8, 4, 7, 8, 9, 0, time.UTC)
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, probedAt, true, ""))
+
+	// 1) password = nil：旧密码原样保留，非密字段照改。
+	cur, err := repos.Proxies.GetProxy(ctx, id)
+	require.NoError(t, err)
+	cur.Host = "10.2.2.2"
+	cur.Port = 1081
+	cur.Remark = "edited"
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, cur, repository.ProxyCredential{}))
+
+	got, err := repos.Proxies.GetProxy(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "10.2.2.2", got.Host, "非密字段照改")
+	require.Equal(t, 1081, got.Port)
+	require.Equal(t, "edited", got.Remark)
+	require.Equal(t, "pass1", got.Password, "password=nil ⇒ 不变（旧密码原样保留）")
+	require.Equal(t, "user1", got.Username)
+	require.NotNil(t, got.LastProbeAt, "全量更新不写探测三列")
+	require.True(t, got.LastProbeOK)
+
+	// 2) password = &""：清空（落 NULL → 读回空串）。
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{Password: new("")}))
+	got, err = repos.Proxies.GetProxy(ctx, id)
+	require.NoError(t, err)
+	require.Empty(t, got.Password, "password 指向空串 ⇒ 清空")
+	require.Equal(t, "user1", got.Username, "清密码不动 username")
+
+	// 3) password = &"pass2"：落值。
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{Password: new("pass2")}))
+	got, err = repos.Proxies.GetProxy(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "pass2", got.Password)
+	require.NotNil(t, got.LastProbeAt, "三态任一分支都不得写探测列")
+	require.True(t, got.LastProbeOK)
+
+	// 4) username 也是三态（与 password 同一对凭据，规矩必须一样）：
+	//    nil ⇒ 不动它；只改 password 不影响 username。
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{Password: new("pass3")}))
+	got, err = repos.Proxies.GetProxy(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, "user1", got.Username, "credential.Username = nil ⇒ username 不进 SET")
+	require.Equal(t, "pass3", got.Password)
+
+	// 5) username = &""：清空 username，password 同批落值（两列可在一次 UPDATE 里各自三态）。
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{
+		Username: new(""), Password: new("pass4"),
+	}))
+	got, err = repos.Proxies.GetProxy(ctx, id)
+	require.NoError(t, err)
+	require.Empty(t, got.Username, "username 指向空串 ⇒ 清空")
+	require.Equal(t, "pass4", got.Password)
+	require.NotNil(t, got.LastProbeAt, "清 username 同样不得写探测列")
 }
