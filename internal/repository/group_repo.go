@@ -401,7 +401,7 @@ func (r *GroupRepo) proxyIndexByID(ctx context.Context) (map[int64]*domain.Proxy
 // expandAccountProxy 按 `ProxyID` 回填展开字段。指向已软删/不存在的行 ⇒ `Proxy`
 // 留 nil（"绑定缺失"的可判定形态，与 §4.1 的四状态表同语义）。
 //
-// **不碰 `Routable`**：它是派生决策位，唯一派生点是 scheduler 的
+// **不碰可用性位**：`routable` 是快照事实（C2/S7 从领域对象搬走），唯一派生点是 scheduler 的
 // `newSnapshotStatic`（装载器只提供原料：ProxyID + 展开的 Proxy + Enabled）。
 // 放装载器会让几十处测试 fixture（Enabled=true、Proxy=nil）恒不可路由。
 func expandAccountProxy(d *domain.Account, byID map[int64]*domain.Proxy) {

@@ -70,6 +70,9 @@ func (r *AccountRepo) FindMissingOwnedAccountID(ctx context.Context, ids []int64
 // 直接构造 domain.Account 的仓库层调用方必须显式给出 Enabled（可用账号
 // 写 true）；创建默认（enabled=true、倍率 ×1、默认并发、代际 C=1/K=1）
 // 由 service.CreateAccount 收口统一施加。
+// 读契约（spec-proxy-pool §3.6，C2 之后由本层独占）：返回体的 `Proxy` 已按**调用方 scope**
+// 展开（`expandProxies`）；调用方看不见的代理不会出现，故 `ProxyID != nil` 而 `Proxy == nil`
+// 即「绑定缺失/不可见」。上层（handler）只投影这两个字段，不再重判可见性。
 func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error) {
 	var row *ent.Account
 	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
@@ -138,6 +141,9 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 	return created, nil
 }
 
+// 读契约（spec-proxy-pool §3.6，C2 之后由本层独占）：返回体的 `Proxy` 已按**调用方 scope**
+// 展开（`expandProxies`）；调用方看不见的代理不会出现，故 `ProxyID != nil` 而 `Proxy == nil`
+// 即「绑定缺失/不可见」。上层（handler）只投影这两个字段，不再重判可见性。
 func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account, error) {
 	// 作用域 AND 进 WHERE（供应商面越域 id ⇒ 0 行 ⇒ ErrNotFound/404，不泄漏存在性）。
 	row, err := r.client.Account.Query().
@@ -150,6 +156,9 @@ func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account
 	return r.accountWithProxy(ctx, toDomainAccount(row))
 }
 
+// 读契约（spec-proxy-pool §3.6，C2 之后由本层独占）：返回体的 `Proxy` 已按**调用方 scope**
+// 展开（`expandProxies`）；调用方看不见的代理不会出现，故 `ProxyID != nil` 而 `Proxy == nil`
+// 即「绑定缺失/不可见」。上层（handler）只投影这两个字段，不再重判可见性。
 func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
 	row, err := r.client.Account.Query().
 		Where(account.IDEQ(id)).
@@ -161,6 +170,9 @@ func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*do
 	return r.accountWithProxy(ctx, toDomainAccount(row))
 }
 
+// 读契约（spec-proxy-pool §3.6，C2 之后由本层独占）：返回体的 `Proxy` 已按**调用方 scope**
+// 展开（`expandProxies`）；调用方看不见的代理不会出现，故 `ProxyID != nil` 而 `Proxy == nil`
+// 即「绑定缺失/不可见」。上层（handler）只投影这两个字段，不再重判可见性。
 func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.Account, int64, error) {
 	// 软删除：列表默认过滤已删（count 同谓词——pred 复用）；GET 单个不过滤。
 	pred := r.client.Account.Query().Where(account.DeletedAtIsNil()).Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...)
@@ -214,6 +226,8 @@ func (r *AccountRepo) accountWithProxy(ctx context.Context, a *domain.Account) (
 // Account.Proxy。回显代理名字需要条目，而账号表只有 proxy_id 一列——让 handler
 // 各自再查一次会把列表页变成 N+1，并把可见性判断拆到两个地方。
 //
+// **可见性判定只在这里**（C2/S6）：handler 的投影只问"展开了吗"，不重判 owner。
+//
 // **展开必须 scope-aware**（本阶段最容易做错的一处）：可见性谓词复用 proxyOwnerPred
 // ——无 scope（管理员）⇒ 指向的行存在就展开；供应商 scope ⇒ 只有
 // `owner_uid = scope.OwnerUID` 的行才展开，平台代理（`owner_uid IS NULL`）即使被
@@ -221,8 +235,8 @@ func (r *AccountRepo) accountWithProxy(ctx context.Context, a *domain.Account) (
 // 绑定事实（proxy_id 列）不因此改写，只是不装配回显——与「绑定指向已软删/不存在行
 // ⇒ nil」是同一个形状（调用方一律按「绑定缺失」处理）。
 //
-// 不在这里算 Routable（§4.1：它在快照构造函数里由 enabled + 绑定可用性派生）；
-// 归属与可见性同样**不进任何键**。
+// 不在这里算可用性（§4.1：`routable` 是**快照事实**，唯一派生点是 scheduler 的
+// `newSnapshotStatic`：enabled + 绑定可用性）；归属与可见性同样**不进任何键**。
 func (r *AccountRepo) expandProxies(ctx context.Context, accs []*domain.Account) error {
 	ids := make([]int64, 0, len(accs))
 	seen := make(map[int64]struct{}, len(accs))

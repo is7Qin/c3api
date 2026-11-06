@@ -196,13 +196,13 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFacts {
 	out := candidates[:0]
 	for _, fact := range candidates {
-		// 可用性决策**只读一位** Routable（= enabled ∧（未绑定 ∨ 绑定可用），
-		// 装载期在 newSnapshotStatic 一次定型，spec §4.7/§9.2）：出口代理禁用
+		// 可用性决策**只读一位** `static.routable`（= enabled ∧（未绑定 ∨ 绑定
+		// 可用），newSnapshotStatic 一次定型，spec §4.7/§9.2）：出口代理禁用
 		// 或绑定缺失与 !enabled 是同一类"不可派发"，此处不再分原因、也不再
 		// 单独判 Proxy/ProxyID（判据散开就会分叉）。
 		// The `< 0` arm is dead defence: identity_revision is a non-negative
 		// generation (>=1 in practice), unlike the lifecycle token it replaced.
-		if fact.static == nil || !fact.static.acc.Routable || fact.static.acc.IdentityRevision < 0 {
+		if fact.static == nil || !fact.static.routable || fact.static.acc.IdentityRevision < 0 {
 			continue
 		}
 		if fact.static.tpl == nil || (fact.static.tpl.CredentialType != "" && !fact.static.tpl.CredentialType.Valid()) {

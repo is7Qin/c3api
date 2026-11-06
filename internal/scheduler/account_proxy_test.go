@@ -88,7 +88,7 @@ func TestSelectSkipsUnroutableProxy(t *testing.T) {
 		require.Error(t, err, "禁用的代理 ⇒ 账号不可派发")
 		// 决策位定型正确（快照层面直读，避免只凭 Select 的报错类型推断）。
 		av := s.view.Load().static.byID[1].static.Load()
-		require.False(t, av.acc.Routable)
+		require.False(t, av.routable)
 		require.Equal(t, int64(7), *av.acc.ProxyID, "绑定关系仍在（只是不可用）")
 	})
 
@@ -101,7 +101,7 @@ func TestSelectSkipsUnroutableProxy(t *testing.T) {
 		_, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.Error(t, err, "绑定缺失 ⇒ fail-closed（spec L8）")
 		av := s.view.Load().static.byID[1].static.Load()
-		require.False(t, av.acc.Routable)
+		require.False(t, av.routable)
 		require.Nil(t, av.acc.Proxy)
 		require.Same(t, pool.Direct(), av.egress, "不可用也要有出口指针（恒非 nil，指向直连）")
 	})
@@ -127,7 +127,7 @@ func TestProxyRoutesToUsableProxy(t *testing.T) {
 	require.NoError(t, err)
 	defer sel.Release()
 	require.Equal(t, int64(1), sel.AccountID)
-	require.True(t, s.view.Load().static.byID[1].static.Load().acc.Routable)
+	require.True(t, s.view.Load().static.byID[1].static.Load().routable)
 }
 
 // TestProxyPlanKeySensitivity 钉住键的两个出口相关性：

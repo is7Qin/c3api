@@ -33,6 +33,11 @@ type snapshotStatic struct {
 	acc      domain.Account
 	tpl      *domain.Template
 	groupIDs []int64 // 账号所属全部分组（多组账号共享实例的跨组引用集；组级重载时其它组引用替换依据）
+	// routable 账号当前**能不能被派发**（唯一决策位，spec §4.7）：构造期由
+	// enabled ∧（未绑定 ∨ 绑定可用）一次定型。它是**快照事实**而不是领域对象
+	// 字段——可用性依赖装载期展开的 `Proxy`，普通读路径不计算它（C2/S7）。消费面
+	// 只有候选过滤（每次请求都读），故同值落入 planKey.routable（键变了才换叶子）。
+	routable bool
 	// egress 出口 client（spec-proxy-pool §4.3）：**恒非 nil**——未绑定 =
 	// Pool.Direct()，绑定 = Pool.For(规格)。解析只发生在 buildSnapshots 一次，
 	// 热路径只读这个指针交给 Selection（0 次 map 读、0 次 nil 判断）。

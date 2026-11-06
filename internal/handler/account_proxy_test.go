@@ -36,9 +36,10 @@ const (
 	proxyTestPrivateName  = "pool-supplier-exit"
 )
 
-// seedHandlerProxy 在替身里建一条代理（owner>0 ⇒ 该供应商私池；0 ⇒ 平台代理）。
-// 走替身的 CreateProxy：归属由作用域钉死，与真实仓库同形状。
-func seedHandlerProxy(t *testing.T, store *fakeStore, owner int64, name string) int64 {
+// seedHandlerProxy 在替身里建一条代理（owner>0 ⇒ 该供应商私池；0 ⇒ 平台代理），
+// 并把落库行一并返回：handler 用例需要它以"仓储展开后的条目"身份出现在账号行上
+// （见 stageAccountProxy）。
+func seedHandlerProxy(t *testing.T, store *fakeStore, owner int64, name string) (int64, *domain.Proxy) {
 	t.Helper()
 	ctx := context.Background()
 	if owner > 0 {
@@ -48,7 +49,16 @@ func seedHandlerProxy(t *testing.T, store *fakeStore, owner int64, name string) 
 		Name: name, Scheme: domain.ProxySchemeHTTP, Host: "proxy.example.com", Port: 3128, Enabled: true,
 	})
 	require.NoError(t, err)
-	return id
+	row := store.proxies[id].p // 落库行（归属已由作用域钉死）
+	return id, &row
+}
+
+// stageAccountProxy 表达「仓储已按调用方 scope 展开（或未展开）这一条」：`Account.Proxy`
+// 是**读面装配的结果**，规则只有一处（repository 的 expandProxies，spec §3.6），门禁是
+// `TestPGAccountReadExpandsProxy`。handler 只把它投影出去（C2/S6 之后这里没有第二份
+// 可见性判定），故用例直接给出读路径该看到的输入：px = nil 即"对本调用方不可见/绑定缺失"。
+func stageAccountProxy(store *fakeStore, accID int64, px *domain.Proxy) {
+	store.accs[accID].Proxy = px
 }
 
 // seedHandlerAccount 直接在替身里插一个账号（owner 0 = 平台自有）。
@@ -66,6 +76,9 @@ type accountProxyFixture struct {
 	store    *fakeStore
 	platform int64
 	private  int64
+	// platformRow/privateRow 两条代理的落库行：用例以它们充当「仓储展开后的条目」。
+	platformRow *domain.Proxy
+	privateRow  *domain.Proxy
 }
 
 func newAccountProxyFixture(t *testing.T) accountProxyFixture {
@@ -75,11 +88,15 @@ func newAccountProxyFixture(t *testing.T) accountProxyFixture {
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses}}
 	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{},
 		Auth: &fakeKeys{}, EmailCodeStore: store})
+	platform, platformRow := seedHandlerProxy(t, store, 0, proxyTestPlatformName)
+	private, privateRow := seedHandlerProxy(t, store, proxyTestSupplierUID, proxyTestPrivateName)
 	return accountProxyFixture{
-		api:      New(svc),
-		store:    store,
-		platform: seedHandlerProxy(t, store, 0, proxyTestPlatformName),
-		private:  seedHandlerProxy(t, store, proxyTestSupplierUID, proxyTestPrivateName),
+		api:         New(svc),
+		store:       store,
+		platform:    platform,
+		private:     private,
+		platformRow: platformRow,
+		privateRow:  privateRow,
 	}
 }
 
@@ -89,6 +106,8 @@ func TestAccountProxyAdminPatch(t *testing.T) {
 	seedHandlerAccount(f.store, 1, "acc-admin", 0)
 
 	t.Run("bind echoes id and name", func(t *testing.T) {
+		// 读路径输入：管理面（无 scope）⇒ 仓储展开这条行（expandProxies）。
+		stageAccountProxy(f.store, 1, f.platformRow)
 		rec := doImport(t, f.api, http.MethodPatch, "/api/admin/accounts/1",
 			`{"proxy_id":`+itoa(f.platform)+`}`)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -149,6 +168,7 @@ func TestAccountProxyListEchoesBoth(t *testing.T) {
 	f := newAccountProxyFixture(t)
 	seedHandlerAccount(f.store, 1, "acc-list-bound", 0)
 	seedHandlerAccount(f.store, 2, "acc-list-free", 0)
+	stageAccountProxy(f.store, 1, f.platformRow) // 仓储已展开（管理面）
 	rec := doImport(t, f.api, http.MethodPatch, "/api/admin/accounts/1", `{"proxy_id":`+itoa(f.platform)+`}`)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
@@ -196,6 +216,8 @@ func TestAccountProxySupplierSurface(t *testing.T) {
 
 	t.Run("binds its own proxy", func(t *testing.T) {
 		seedHandlerAccount(f.store, 10, "acc-sup-own", proxyTestSupplierUID)
+		// 仓储对"供应商本人的代理"照常展开（TestPGAccountReadExpandsProxy）。
+		stageAccountProxy(f.store, 10, f.privateRow)
 		rec := call(http.MethodPatch, "/accounts/10", `{"proxy_id":`+itoa(f.private)+`}`)
 		require.Equal(t, http.StatusOK, rec.Code,
 			"供应商绑自己的代理是合法写（不是 400）：%s", rec.Body.String())
@@ -228,7 +250,11 @@ func TestAccountProxySupplierSurface(t *testing.T) {
 			`{"proxy_id":`+itoa(f.platform)+`}`)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
-		// 供应商读这一行：两个键都是 null，且响应体里**不出现**该代理名。
+		// 供应商读这一行：仓储**不展开**（expandProxies 的 scope 谓词——平台池不是公共
+		// 池），于是输入是 `ProxyID 非 nil + Proxy nil`。这里把这个输入摆在行上，
+		// 断言 handler 不再自己判一遍（C2/S6 删掉了那份 owner 判断）：两个键都是 null，
+		// 且响应体里**不出现**该代理名。
+		stageAccountProxy(f.store, 12, nil)
 		rec = call(http.MethodGet, "/accounts/12", "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		body := rec.Body.String()
@@ -245,7 +271,9 @@ func TestAccountProxySupplierSurface(t *testing.T) {
 		require.NotNil(t, f.store.accs[12].ProxyID)
 		require.Equal(t, f.platform, *f.store.accs[12].ProxyID)
 
-		// 管理面读同一行：看得见（差异只由主体决定）。
+		// 管理面读同一行：仓储展开 ⇒ 看得见。差异只由**仓储的作用域谓词**决定，handler
+		// 对同一份输入只做同一次投影（若这层还留着第二份判定，这里就会是 null）。
+		stageAccountProxy(f.store, 12, f.platformRow)
 		rec = doImport(t, f.api, http.MethodGet, "/api/admin/accounts/12", "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &acc))
@@ -254,11 +282,23 @@ func TestAccountProxySupplierSurface(t *testing.T) {
 	})
 
 	t.Run("supplier list page hides the platform proxy per row", func(t *testing.T) {
+		// 一页两行：10 = 自己的代理（仓储展开），12 = 平台代理（仓储对供应商不展开）。
+		stageAccountProxy(f.store, 10, f.privateRow)
+		stageAccountProxy(f.store, 12, nil)
 		rec := call(http.MethodGet, "/accounts", "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		body := rec.Body.String()
 		require.NotContains(t, body, proxyTestPlatformName, "列表页同样是泄漏面：%s", body)
 		require.Contains(t, body, proxyTestPrivateName, "自己的代理名照常回显：%s", body)
+	})
+
+	t.Run("create response projects the same way", func(t *testing.T) {
+		// 创建面的响应体走的是 toAPIAccount（与单读同一函数），故"仓储未展开 ⇒ 两个
+		// null"在此按投影本身钉住：POST 面不可能绕过那份契约（它没有第二条装配路径）。
+		pid := f.platform
+		created := toAPIAccount(&domain.Account{ID: 99, Name: "acc-created", ProxyID: &pid})
+		require.Nil(t, created.ProxyId, "创建响应：仓储未展开 ⇒ proxy_id 为 null")
+		require.Nil(t, created.ProxyName, "创建响应：仓储未展开 ⇒ proxy_name 为 null")
 	})
 }
 

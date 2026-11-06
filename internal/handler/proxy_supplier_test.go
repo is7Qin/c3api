@@ -18,6 +18,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -28,6 +29,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -227,29 +229,24 @@ func TestSupplierProxyCrossScopeIs404(t *testing.T) {
 	require.Nil(t, other.LastProbeAt, "越域 probe 不得产生任何副作用")
 }
 
-// TestSupplierProxyDeleteUnbindsOnlyOwnAccounts ④ 删除自己的 ⇒ 200，且解绑范围**随归属**：
-// 只解绑自己的账号；同一代理上若有越权绑定（平台账号），那一行**不受影响**——这条在
-// 数据层就成立（§3.6「删私池代理只解绑该供应商的账号」），不依赖绑定谓词是否被绕过。
-func TestSupplierProxyDeleteUnbindsOnlyOwnAccounts(t *testing.T) {
+// TestSupplierProxyDeleteSoftDeletes ④ 删除自己的 ⇒ 200 + `deleted=true`，此后本主
+// 单取/再删一律 404（软删 = 视同不存在）。
+//
+// **解绑连坐的范围不在本层**（C2/S8）：私池代理解绑其主自己的账号、平台代理解绑所有
+// 引用，是仓储同事务的职责——门禁 `TestPGDeletePrivateProxyUnbindScope`。替身里那套
+// 连坐模拟是第二套数据库，已删；handler 面能证的只有软删语义与作用域可见性。
+func TestSupplierProxyDeleteSoftDeletes(t *testing.T) {
 	h := newProxySupplierHarness(t)
 	proxyID := h.createSupplierProxy(t, supplierUIDM4c, "private")
 
-	mine := proxyID
-	// 正常绑定：自己的账号。
-	h.store.accs[1] = &domain.Account{ID: 1, Name: "mine-acct", Enabled: true,
-		SupplierUserID: supplierUIDM4c, ProxyID: &mine}
-	// 越权绑定：平台账号（supplier_user_id = 0）指向了私池代理——谓词上不可能出现，
-	// 但解绑连坐的范围必须**在数据层**就正确，不能指望上游不写出这种行。
-	h.store.accs[2] = &domain.Account{ID: 2, Name: "platform-acct", Enabled: true, ProxyID: &mine}
+	// 另一个租户看不到这条（作用域过滤仍在本层：越域一律 404）。
+	rec := h.call(t, otherUIDM4c, http.MethodGet, "/proxies/"+strconv.FormatInt(proxyID, 10), "")
+	require.Equal(t, http.StatusNotFound, rec.Code, "越域不可见（404 不泄漏存在性）：%s", rec.Body.String())
 
-	rec := h.call(t, supplierUIDM4c, http.MethodDelete, "/proxies/"+strconv.FormatInt(proxyID, 10), "")
+	rec = h.call(t, supplierUIDM4c, http.MethodDelete, "/proxies/"+strconv.FormatInt(proxyID, 10), "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	deleted := decodeProxyBody(t, rec)
 	require.Equal(t, true, deleted["deleted"])
-
-	require.Nil(t, h.store.accs[1].ProxyID, "自己账号必须解绑（回落直连）")
-	require.NotNil(t, h.store.accs[2].ProxyID, "平台账号的绑定不受私池删除影响（解绑范围随归属）")
-	require.Equal(t, proxyID, *h.store.accs[2].ProxyID)
 
 	// 软删后本主也读不到（= 「软删视同不存在」）。
 	_, err := h.readProxyAs(t, supplierUIDM4c, proxyID)
@@ -308,37 +305,33 @@ func TestSupplierProxyRejectsPrivateHosts(t *testing.T) {
 	require.NoError(t, err, "管理员建内网出口是合理需求（判据只在供应商分支生效）")
 }
 
-// TestSupplierProxyNameUniquePerOwner ⑦ name 唯一域 = **每归属**（§2.5）：
-//   - 同一供应商内重名 ⇒ 409；
-//   - **两个供应商可以同名**（互不干扰，也不构成「猜别人有没有这条代理」的探测面）；
-//   - 平台池内自己唯一（`owner_uid IS NULL` 那一组）；
-//   - 跨租户看不到对方的条目（所以「同名是否冲突」这条信道本身也不再泄漏存在性）。
-func TestSupplierProxyNameUniquePerOwner(t *testing.T) {
+// TestSupplierProxyConflictIsMapped 409 只验证**映射**：名字唯一的语义（唯一域 =
+// 每归属：同供应商内重名冲突、跨供应商可同名、平台池自成一组、软删不释放名字）由
+// 仓储的部分唯一索引裁决——门禁 `TestPGProxyNameUnique`（C2/S8 把替身里那套"每归属
+// 唯一"模拟删掉了，它本来是第二套数据库）。
+//
+// 本层仍能证两件事：① 仓储回 ErrConflict ⇒ 409（建面与改面各一次）；② 列表按归属
+// 隔离（作用域过滤保留在替身里，那是"中间件注入 → 仓储谓词"的接缝）。
+func TestSupplierProxyConflictIsMapped(t *testing.T) {
 	h := newProxySupplierHarness(t)
-	h.createSupplierProxy(t, supplierUIDM4c, "dup")
 
-	// 同一供应商重名 ⇒ 409。
+	// ① 建面：仓储冲突 ⇒ 409（不是 500，也不是 400）。
+	h.store.proxyCreateErr = fmt.Errorf("%w: name=%q", repository.ErrConflict, "dup")
 	rec := h.call(t, supplierUIDM4c, http.MethodPost, "/proxies",
-		`{"name":"dup","scheme":"http","host":"dup2.example.com","port":8080}`)
-	require.Equal(t, http.StatusConflict, rec.Code, "同一供应商内重名必须 409：%s", rec.Body.String())
+		`{"name":"dup","scheme":"http","host":"dup.example.com","port":8080}`)
+	require.Equal(t, http.StatusConflict, rec.Code, "仓储冲突必须映射成 409：%s", rec.Body.String())
+	h.store.proxyCreateErr = nil
 
-	// **跨供应商同名 ⇒ 允许**（本阶段的核心改动）。
-	h.createSupplierProxy(t, otherUIDM4c, "dup")
-
-	// 平台池是另一组：管理员可用这个名字，且平台池内自己仍唯一。
-	h.createPlatformProxy(t, "dup")
-	_, err := h.svc.CreateProxy(context.Background(), service.ProxyInput{
-		Name: "dup", Scheme: domain.ProxySchemeHTTP, Host: "p2.example.com", Port: 8080,
-	})
-	require.ErrorIs(t, err, service.ErrConflict, "平台池内重名仍冲突（唯一域 = 每归属，不是取消唯一）")
-
-	// 改名撞同一归属内的已有 name ⇒ 409。
+	// ② 改面：同样只验映射。
 	otherID := h.createSupplierProxy(t, supplierUIDM4c, "second")
+	h.store.proxyUpdateErr = fmt.Errorf("%w: name=%q", repository.ErrConflict, "dup")
 	rec = h.call(t, supplierUIDM4c, http.MethodPut, "/proxies/"+strconv.FormatInt(otherID, 10),
 		`{"name":"dup","scheme":"http","host":"second.example.com","port":8080}`)
-	require.Equal(t, http.StatusConflict, rec.Code, "改名撞同归属已有 name 必须 409：%s", rec.Body.String())
+	require.Equal(t, http.StatusConflict, rec.Code, "改名的仓储冲突同样 409：%s", rec.Body.String())
+	h.store.proxyUpdateErr = nil
 
-	// 两组各自一条 "dup"，互不干扰（列表按归属隔离，谁的 dup 只出现在谁那里）。
+	// ③ 列表隔离：两个租户各自只看到自己的条目（同名互不干扰）。
+	h.createSupplierProxy(t, otherUIDM4c, "dup")
 	namesOf := func(uid int64) []string {
 		rec := h.call(t, uid, http.MethodGet, "/proxies", "")
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -353,8 +346,8 @@ func TestSupplierProxyNameUniquePerOwner(t *testing.T) {
 		}
 		return out
 	}
-	require.ElementsMatch(t, []string{"dup", "second"}, namesOf(supplierUIDM4c))
-	require.Equal(t, []string{"dup"}, namesOf(otherUIDM4c), "别人的 dup 不出现在这里")
+	require.Equal(t, []string{"second"}, namesOf(supplierUIDM4c))
+	require.Equal(t, []string{"dup"}, namesOf(otherUIDM4c), "别人的同名条目不出现在这里")
 }
 
 // TestSupplierProxyBodyCannotSetOwner 供应商面**不接受** `owner_uid`：写模型 ProxyConfig

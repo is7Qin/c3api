@@ -31,15 +31,19 @@ type fakeStore struct {
 	groups    map[int64]*domain.Group
 	accGroups map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
 	// proxies 出口代理条目（spec-proxy-pool M1b）：软删只置 deletedAt，读面过滤。
-	proxies     map[int64]*fakeProxyRow
-	keys        map[int64]*domain.Key
-	mgmtKeys    map[int64]*domain.ManagementKey // 管理 API key（mk-，spec 2026-10-09）
-	users       map[int64]*domain.User
-	settings    map[string]*domain.Setting
-	rules       map[int64]domain.Rule
-	logs        []*domain.UsageLog
-	stats       []*domain.StatBucket
-	entityStats []*domain.EntityStatBucket
+	proxies map[int64]*fakeProxyRow
+	// proxyCreateErr/proxyUpdateErr 注入代理写面的仓储错误：owner 内唯一索引冲突的
+	// **语义**归仓储（TestPGProxyNameUnique），handler 只验证「仓储说冲突 ⇒ 409」。
+	proxyCreateErr error
+	proxyUpdateErr error
+	keys           map[int64]*domain.Key
+	mgmtKeys       map[int64]*domain.ManagementKey // 管理 API key（mk-，spec 2026-10-09）
+	users          map[int64]*domain.User
+	settings       map[string]*domain.Setting
+	rules          map[int64]domain.Rule
+	logs           []*domain.UsageLog
+	stats          []*domain.StatBucket
+	entityStats    []*domain.EntityStatBucket
 	// lastTrendZone/lastEntityTrendZone/lastSummaryZone/lastDaysZone 统计读族
 	// 最近一次收到的请求时区（request-tz 透传断言面；fake 分组模拟恒 UTC，
 	// cube/raw 路由与时区桶界真实性由 repository PG 测试钉）。
@@ -246,7 +250,10 @@ func (f *fakeStore) GetAccount(ctx context.Context, id int64) (*domain.Account, 
 	if !ok {
 		return nil, missingErr(id)
 	}
-	return f.accountReadLocked(ctx, a), nil
+	// 读面**副本**：真实仓库的 expandProxies 只装配读面对象、不落库。`Proxy` 不再由
+	// 本层推导（C2/S8）——它是仓储按调用方 scope 裁好的输入，替身原样带出即可。
+	c := *a
+	return &c, nil
 }
 
 func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error) {
@@ -258,7 +265,8 @@ func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([
 		if q.Enabled != nil && a.Enabled != *q.Enabled {
 			continue
 		}
-		out = append(out, f.accountReadLocked(ctx, a))
+		c := *a // 读面副本（同 GetAccount）
+		out = append(out, &c)
 	}
 	return paginate(out, q), int64(len(out)), nil
 }
@@ -920,32 +928,6 @@ func proxyIDValue(id *int64) int64 {
 		return 0
 	}
 	return *id
-}
-
-// accountReadLocked 账号读路径的出口展开替身（镜像**真实仓库** expandProxies 的
-// scope-aware 谓词，spec-proxy-pool §3.6）：管理面（无 scope）指向的行存活即展开；
-// 供应商 scope 只展开 `owner_uid = 本人` 的行——平台代理即使被管理员绑到该供应商
-// 账号上也不展开（Proxy 留 nil）。软删视同不存在。
-//
-// 返回**副本**：展开是读面装配，不落库（真实仓库同形状）。
-func (f *fakeStore) accountReadLocked(ctx context.Context, a *domain.Account) *domain.Account {
-	c := *a
-	c.Proxy = nil
-	if a.ProxyID == nil {
-		return &c
-	}
-	row, ok := f.proxies[*a.ProxyID]
-	if !ok || row.deletedAt != nil {
-		return &c
-	}
-	if scope := domain.AccountScopeFrom(ctx); scope.Set {
-		if row.p.OwnerUID == nil || *row.p.OwnerUID != scope.OwnerUID {
-			return &c
-		}
-	}
-	p := row.p
-	c.Proxy = &p
-	return &c
 }
 
 func (f *fakeStore) DeleteGroupsBatch(ctx context.Context, ids []int64) error {
@@ -2992,29 +2974,21 @@ func proxyOwnerVisible(ctx context.Context, p domain.Proxy) bool {
 	return p.OwnerUID != nil && *p.OwnerUID == scope.OwnerUID
 }
 
-// sameProxyOwner 两个归属是否同一域（nil = 平台池那一组）。
-func sameProxyOwner(a, b *int64) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
 func (f *fakeStore) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	// 归属由作用域钉死（镜像真实仓库与 service 侧替身，spec §3.6）。
+	// 名字唯一的**语义**不在本层（C2/S8）：唯一域 = 每归属，由仓储的部分唯一索引
+	// 裁决（门禁 TestPGProxyNameUnique）。替身只保留「冲突 ⇒ 错误」这条缝，供用例
+	// 注入 repository.ErrConflict 验证 handler 的 409 映射。
+	if f.proxyCreateErr != nil {
+		return 0, f.proxyCreateErr
+	}
+	// 归属由作用域钉死（镜像真实仓库与 service 侧替身，spec §3.6）：这条**保留**——
+	// 它测的是「作用域中间件 + 直调 → 仓储谓词」的接缝，不是数据库。
 	p.OwnerUID = nil
 	if scope := domain.AccountScopeFrom(ctx); scope.Set {
 		owner := scope.OwnerUID
 		p.OwnerUID = &owner
-	}
-	for _, row := range f.proxies {
-		// name 唯一域 = **每归属**（spec §2.5）：只和同一归属的条目比；索引谓词不含
-		// deleted_at ⇒ 软删不释放名字（与 template 同语义）。
-		if row.p.Name == p.Name && sameProxyOwner(row.p.OwnerUID, p.OwnerUID) {
-			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
-		}
 	}
 	p.ID = f.nextID
 	f.nextID++
@@ -3069,11 +3043,9 @@ func (f *fakeStore) UpdateProxy(ctx context.Context, p domain.Proxy, credential 
 	if !ok || row.deletedAt != nil || !proxyOwnerVisible(ctx, row.p) {
 		return missingErr(p.ID)
 	}
-	for _, other := range f.proxies {
-		// 唯一域 = 每归属（§2.5）：归属列不进 SET，故比的是目标行既有的 owner。
-		if other.p.ID != p.ID && other.p.Name == p.Name && sameProxyOwner(other.p.OwnerUID, row.p.OwnerUID) {
-			return fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
-		}
+	// 改名撞同归属已有 name ⇒ 409 同样由仓储裁决（C2/S8），这里只暴露注入点。
+	if f.proxyUpdateErr != nil {
+		return f.proxyUpdateErr
 	}
 	next := p
 	// 归属不由更新面改写（真实仓库的 SET 列表里没有 owner_uid）。
@@ -3103,17 +3075,8 @@ func (f *fakeStore) DeleteProxy(ctx context.Context, id int64) error {
 	}
 	now := time.Now()
 	row.deletedAt = &now
-	// 同事务解绑连坐（镜像真实仓库）：范围**随归属**——私池只解绑其主自己的账号，
-	// 平台代理解绑所有引用（spec §3.6）。
-	for _, a := range f.accs {
-		if a.ProxyID == nil || *a.ProxyID != id {
-			continue
-		}
-		if row.p.OwnerUID != nil && a.SupplierUserID != *row.p.OwnerUID {
-			continue
-		}
-		a.ProxyID = nil
-	}
+	// 解绑连坐**不在本层**（C2/S8）：范围随归属（私池只解绑其主自己的账号，平台代理
+	// 解绑所有引用）是仓储同事务的职责，门禁 TestPGDeletePrivateProxyUnbindScope。
 	return nil
 }
 

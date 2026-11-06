@@ -180,8 +180,8 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	av := &snapshotStatic{acc: acc, tpl: tpl, groupIDs: append([]int64(nil), groupIDs...), egress: eg}
 	// 唯一决策位在**构造期一次定型**（不是装载器的活儿，也不是热路径的判断）：
 	// 之后候选过滤与计划 fence 都只读这一个 bool。放在 key 派生之前，使
-	// `k.routable = av.acc.Routable` 与字段派生同源、不可能失配。
-	av.acc.Routable = routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)
+	// `k.routable = av.routable` 与字段派生同源、不可能失配。
+	av.routable = routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)
 	var k planKey
 	k.accountID = av.acc.ID
 	k.name = av.acc.Name
@@ -200,7 +200,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.identityRevision = av.acc.IdentityRevision
 	k.supplierUserID = av.acc.SupplierUserID
 	k.proxyDigest = specOfDomain(av.acc.Proxy).Key()
-	k.routable = av.acc.Routable
+	k.routable = av.routable
 	if ext := av.acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)
 		k.codexEmail = derefString(ext.CodexEmail)

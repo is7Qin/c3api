@@ -487,18 +487,14 @@ type Account struct {
 	SupplierUserID int64
 	// ProxyID 出口代理绑定（spec-proxy-pool §3.2 持久列 account.proxy_id）：
 	// nil = 直连；非 nil = 绑定该代理条目。指针即"有/无绑定"这一正交事实，
-	// 与可用性（Proxy.Enabled）分开存放——可用性决策只读 Routable（下方）。
+	// 与可用性（Proxy.Enabled）分开存放——可用性决策位在调度快照里派生
+	// （`snapshotStatic.routable`，spec §4.7），**不是领域对象的一部分**：
+	// 普通读路径不计算它，字段留在对象上会让含义依赖对象来历（C2/S7）。
 	ProxyID *int64
 	// Proxy 绑定展开（装载期按 ProxyID 回填，供回显/排障）。绑定缺失——未绑定，
 	// 或绑定的代理已软删/不存在——时为 nil。本阶段（M1a）恒 nil：装载在 M2
 	// 接线，写入面只搬 ProxyID。
-	Proxy *Proxy
-	// Routable 派生的**唯一决策位**：enabled && (未绑定 ∨ 绑定可用)。可用性判定
-	// 只读它；"为什么不可用"由 ProxyID != nil && Proxy == nil（绑定缺失）与
-	// Proxy != nil && !Proxy.Enabled（条目禁用）在日志/回显处派生，不压成状态机。
-	// 本阶段（M1a）只声明不计算（M2 装载期定型）：默认 false 不影响现有行为
-	// ——现有消费路径无人读它。
-	Routable  bool
+	Proxy     *Proxy
 	CreatedAt time.Time
 	UpdatedAt time.Time
 	DeletedAt *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）

@@ -6,6 +6,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -194,18 +196,24 @@ func TestProxyCredentialTriState(t *testing.T) {
 // TestProxyConflict404AndSoftDelete name 冲突 ⇒ 409；不存在/已软删 ⇒ 404；
 // 软删后再取同一 id ⇒ 404（软删 = 视同不存在）。
 func TestProxyConflict404AndSoftDelete(t *testing.T) {
-	r, _ := newProxyRouter(t)
+	r, store := newProxyRouter(t)
 	body := `{"name":"dup","scheme":"socks5","host":"10.0.0.1","port":1080}`
 	id := createProxy(t, r, body)
 
-	// 同名再建（大小写/空白归一后同名同样冲突：service 归一后落库，唯一索引裁决）。
+	// 名字冲突的**语义**（唯一域 = 每归属、软删不释放名字、大小写/空白归一后比对）
+	// 归仓储的部分唯一索引，门禁 TestPGProxyNameUnique（C2/S8 从替身里删掉了那份模拟）。
+	// 本层能证的只有映射：仓储说冲突 ⇒ 409。注入即可。
+	store.proxyCreateErr = fmt.Errorf("%w: name=dup", repository.ErrConflict)
 	require.Equal(t, http.StatusConflict, doProxy(r, http.MethodPost, "/api/admin/proxies", body).Code)
+	store.proxyCreateErr = nil
 
-	// 改名撞别人 ⇒ 409。
+	// 改名撞别人 ⇒ 同样由仓储裁决，同样只验 409 映射。
 	other := createProxy(t, r, `{"name":"other","scheme":"http","host":"10.0.0.2","port":8080}`)
+	store.proxyUpdateErr = fmt.Errorf("%w: name=dup", repository.ErrConflict)
 	rec := doProxy(r, http.MethodPut, "/api/admin/proxies/"+strconv.FormatInt(other, 10),
 		`{"name":"dup","scheme":"http","host":"10.0.0.2","port":8080}`)
 	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
+	store.proxyUpdateErr = nil
 
 	// 不存在的 id：四个带 id 的端点全 404（probe 也不例外：条目不存在才是错误）。
 	missing := "/api/admin/proxies/9999"

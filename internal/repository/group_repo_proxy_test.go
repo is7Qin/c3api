@@ -16,17 +16,18 @@ import (
 )
 
 // 装载展开的四状态矩阵（spec-proxy-pool §4.1 / §9.2 第 1 行）：**两个装载器**都必须
-// 按 `proxy_id` 把 `Proxy` 展开好，且**都不决定 `Routable`**。
+// 按 `proxy_id` 把 `Proxy` 展开好，且**都不决定可用性**。
 //
-//	状态              | ProxyID | Proxy            | Routable（本层恒 false，派生在 scheduler）
-//	未绑定            | nil     | nil              | false
-//	绑定且可用        | id      | 非 nil,Enabled=T | false
-//	绑定但禁用        | id      | 非 nil,Enabled=F | false
-//	绑定但缺失/已软删 | id      | nil              | false
+//	状态              | ProxyID | Proxy
+//	未绑定            | nil     | nil
+//	绑定且可用        | id      | 非 nil,Enabled=T
+//	绑定但禁用        | id      | 非 nil,Enabled=F
+//	绑定但缺失/已软删 | id      | nil
 //
-// `Routable=false` 不是"装载器认为不可用"，而是"装载器不碰这个位"——它唯一的派生
-// 点在 scheduler 的 `newSnapshotStatic`（brief §1）。这条断言正是把"别在装载器里
-// 顺手算一个"钉死：一旦有人在本层写它，四个状态里至少一个会变 true。
+// 可用性（enabled ∧（未绑定 ∨ 绑定可用））**不在领域对象上**：唯一派生点是 scheduler
+// 的 `newSnapshotStatic` → `snapshotStatic.routable`（C2/S7 搬过去）。此前这里靠
+// 「四个状态都必须 false」把"别在装载器里顺手算一个"钉死；字段没了之后这条纪律是
+// **结构性的**（本层没有可写的位），故断言退化为上表四行的展开矩阵本身。
 func TestPGLoadAccountsExpandsProxy(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -109,7 +110,6 @@ func TestPGLoadAccountsExpandsProxy(t *testing.T) {
 			a := byID[direct.ID]
 			require.Nil(t, a.ProxyID, "未绑定：proxy_id 为 NULL")
 			require.Nil(t, a.Proxy, "未绑定：不展开")
-			require.False(t, a.Routable, "装载器不得决定 Routable")
 
 			// ② 绑定且可用 ⇒ 展开全字段（含凭据）。
 			a = byID[bound.ID]
@@ -123,7 +123,6 @@ func TestPGLoadAccountsExpandsProxy(t *testing.T) {
 			require.Equal(t, "u-exp", a.Proxy.Username)
 			require.Equal(t, "p-exp", a.Proxy.Password, "展开必须带凭据（M3 的 Dial 用它）")
 			require.True(t, a.Proxy.Enabled)
-			require.False(t, a.Routable, "装载器不得决定 Routable")
 
 			// ③ 绑定但禁用 ⇒ 行仍展开（enabled=false 是可判定的回显事实）。
 			a = byID[disabledBound.ID]
@@ -131,14 +130,12 @@ func TestPGLoadAccountsExpandsProxy(t *testing.T) {
 			require.NotNil(t, a.Proxy, "禁用 ≠ 缺失：行还在，必须保留回显")
 			require.Equal(t, disabledProxy, a.Proxy.ID)
 			require.False(t, a.Proxy.Enabled)
-			require.False(t, a.Routable, "装载器不得决定 Routable（禁用由 Routable 派生）")
 
 			// ④ 绑定但已软删 ⇒ Proxy 留 nil（"绑定缺失"的可判定形态）。
 			a = byID[missingBound.ID]
 			require.NotNil(t, a.ProxyID, "残留窗口里 proxy_id 仍非空")
 			require.Equal(t, missingProxy, *a.ProxyID)
 			require.Nil(t, a.Proxy, "已软删 ⇒ 不展开（缺失，与未绑定靠 ProxyID 区分）")
-			require.False(t, a.Routable)
 		})
 	}
 }
