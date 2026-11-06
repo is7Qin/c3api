@@ -3150,6 +3150,8 @@ export interface components {
             upstream_cost_multiplier?: number;
             /** Format: int64 */
             supplier_user_id?: number | null;
+            /** Format: int64 */
+            proxy_id?: number | null;
         };
         GroupPatch: {
             name?: string;
