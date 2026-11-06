@@ -10,7 +10,8 @@ package handler
 // 用户面（/user）：仅 user tag；独立包（共享 schema 类型在各自包内不冲突）。
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -include-tags user -package user -o user/api.gen.go ../../openapi/openapi.yaml
 // 供应商面（/api/user/supplier）：仅 supplier tag；独立包——该 tag 的 path 一律写
-// **绝对路径**（业务 5 op + §2.5 的账号/分组/模板子集 17 op，共 22 op），故**无独立
+// **绝对路径**（业务 5 op + §2.5 的账号/分组/模板子集 17 op + spec-proxy-pool 的代理池
+// 6 op，共 28 op），故**无独立
 // BaseURL**，HandlerWithOptions 直接用 spec 路径（与 user 面包同款）。账号/分组/模板
 // op 的 requestBody/响应/query 参数**全部 $ref 复用管理面 components**（零平行字段
 // 清单）；生成的 supplier wrapper **仅供路由绑定**——解析参数**一次**后，supplier surface

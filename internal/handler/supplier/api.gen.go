@@ -63,6 +63,22 @@ const (
 	Implicit ModelMappingEntryMode = "implicit"
 )
 
+// Defines values for ProxyScheme.
+const (
+	ProxySchemeHttp    ProxyScheme = "http"
+	ProxySchemeHttps   ProxyScheme = "https"
+	ProxySchemeSocks5  ProxyScheme = "socks5"
+	ProxySchemeSocks5h ProxyScheme = "socks5h"
+)
+
+// Defines values for ProxyConfigScheme.
+const (
+	ProxyConfigSchemeHttp    ProxyConfigScheme = "http"
+	ProxyConfigSchemeHttps   ProxyConfigScheme = "https"
+	ProxyConfigSchemeSocks5  ProxyConfigScheme = "socks5"
+	ProxyConfigSchemeSocks5h ProxyConfigScheme = "socks5h"
+)
+
 // Defines values for SupplierSettlementKind.
 const (
 	AdminRequest    SupplierSettlementKind = "admin_request"
@@ -578,6 +594,72 @@ type ModelMappingEntry struct {
 // ModelMappingEntryMode defines model for ModelMappingEntry.Mode.
 type ModelMappingEntryMode string
 
+// Proxy 代理条目读模型（密码恒不出，只有 has_password）
+type Proxy struct {
+	CreatedAt time.Time `json:"created_at"`
+
+	// Enabled 唯一可用性开关；探测结论不影响它
+	Enabled bool `json:"enabled"`
+
+	// HasPassword 只回显"是否设了密码"，密码本身永不出现在任何响应里
+	HasPassword bool `json:"has_password"`
+
+	// Host IPv6 不带方括号
+	Host string `json:"host"`
+	Id   int64  `json:"id"`
+
+	// LastProbeAt null = 从未探测
+	LastProbeAt *time.Time `json:"last_probe_at"`
+
+	// LastProbeError 已脱敏的探测错误（凭据恒被替换）
+	LastProbeError *string `json:"last_probe_error"`
+	LastProbeOk    bool    `json:"last_probe_ok"`
+
+	// Name trim 后 1..64；与未软删条目唯一
+	Name string `json:"name"`
+
+	// OwnerUid 只读；null = 平台代理，非 null = 该供应商自建（归属由作用域决定，写体不可指定）
+	OwnerUid *int64 `json:"owner_uid"`
+
+	// Port 1..65535
+	Port   int    `json:"port"`
+	Remark string `json:"remark"`
+
+	// Scheme 原样落库（socks5h 不归一成 socks5）
+	Scheme    ProxyScheme `json:"scheme"`
+	UpdatedAt time.Time   `json:"updated_at"`
+
+	// Username 非密（原样回显）；null = 无认证
+	Username *string `json:"username"`
+}
+
+// ProxyScheme 原样落库（socks5h 不归一成 socks5）
+type ProxyScheme string
+
+// ProxyConfig 代理条目写面（POST 创建 / PUT 全量更新共用）。name/scheme/host/port 必填； 凭据与 enabled/remark 三态：缺席 = 不变；null = 清空；有值 = 落值； 可空标量 \"\" = 400（清空只有一个拼法 null，与账号写面同一口径）。 Create 缺省 enabled=true。
+type ProxyConfig struct {
+	Enabled nullable.Nullable[bool] `json:"enabled,omitempty"`
+
+	// Host 非空；拒绝 / @ 空白与控制字符；IPv6 去方括号；≤253
+	Host string `json:"host"`
+
+	// Name trim 后 1..64
+	Name     string                    `json:"name"`
+	Password nullable.Nullable[string] `json:"password,omitempty"`
+	Port     int                       `json:"port"`
+	Remark   nullable.Nullable[string] `json:"remark,omitempty"`
+	Scheme   ProxyConfigScheme         `json:"scheme"`
+	Username nullable.Nullable[string] `json:"username,omitempty"`
+}
+
+// ProxyConfigScheme defines model for ProxyConfig.Scheme.
+type ProxyConfigScheme string
+
+// ProxyListResponse defines model for ProxyListResponse.
+type ProxyListResponse struct {
+	Rows []Proxy `json:"rows"`
+}
+
 // SupplierChunk defines model for SupplierChunk.
 type SupplierChunk struct {
 	Amount      int64     `json:"amount"`
@@ -891,6 +973,12 @@ type PutSupplierAccountsIdExtJSONRequestBody = AccountExt
 // PostSupplierAccountsIdRecoverJSONRequestBody defines body for PostSupplierAccountsIdRecover for application/json ContentType.
 type PostSupplierAccountsIdRecoverJSONRequestBody = AccountRecoverBody
 
+// PostSupplierProxiesJSONRequestBody defines body for PostSupplierProxies for application/json ContentType.
+type PostSupplierProxiesJSONRequestBody = ProxyConfig
+
+// PutSupplierProxiesIdJSONRequestBody defines body for PutSupplierProxiesId for application/json ContentType.
+type PutSupplierProxiesIdJSONRequestBody = ProxyConfig
+
 // PostSupplierSettlementJSONRequestBody defines body for PostSupplierSettlement for application/json ContentType.
 type PostSupplierSettlementJSONRequestBody = ApplySettlementBody
 
@@ -950,6 +1038,24 @@ type ServerInterface interface {
 	// 供应商收益概览（可提领/冻结/累计/生效分成率与冻结小时/最晚解冻时刻/桶行数）
 	// (GET /api/user/supplier/overview)
 	GetSupplierOverview(w http.ResponseWriter, r *http.Request)
+	// 自己的代理条目列表（无分页，id 升序；仅 owner_uid = JWT 本人）
+	// (GET /api/user/supplier/proxies)
+	GetSupplierProxies(w http.ResponseWriter, r *http.Request)
+	// 新建自己的代理条目（归属恒为 JWT 本人；同归属重名 → 409；私网/回环地址 → 400）
+	// (POST /api/user/supplier/proxies)
+	PostSupplierProxies(w http.ResponseWriter, r *http.Request)
+	// 软删自己的条目 + 同事务解绑（只解绑该供应商自己的账号）
+	// (DELETE /api/user/supplier/proxies/{id})
+	DeleteSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64)
+	// 自己的单个代理条目（不存在/已软删/属于别人或平台 → 404）
+	// (GET /api/user/supplier/proxies/{id})
+	GetSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64)
+	// 全量更新自己的条目 + 凭据三态（不改 last_probe_*；改地址同样拒私网）
+	// (PUT /api/user/supplier/proxies/{id})
+	PutSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64)
+	// TCP 探测自己的条目（5s）+ 写回 last_probe_*，返回最新条目
+	// (POST /api/user/supplier/proxies/{id}/probe)
+	PostSupplierProxiesIdProbe(w http.ResponseWriter, r *http.Request, id int64)
 	// 我的结算单（分页）
 	// (GET /api/user/supplier/settlements)
 	GetSupplierSettlements(w http.ResponseWriter, r *http.Request, params GetSupplierSettlementsParams)
@@ -1073,6 +1179,42 @@ func (_ Unimplemented) GetSupplierGroups(w http.ResponseWriter, r *http.Request,
 // 供应商收益概览（可提领/冻结/累计/生效分成率与冻结小时/最晚解冻时刻/桶行数）
 // (GET /api/user/supplier/overview)
 func (_ Unimplemented) GetSupplierOverview(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 自己的代理条目列表（无分页，id 升序；仅 owner_uid = JWT 本人）
+// (GET /api/user/supplier/proxies)
+func (_ Unimplemented) GetSupplierProxies(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 新建自己的代理条目（归属恒为 JWT 本人；同归属重名 → 409；私网/回环地址 → 400）
+// (POST /api/user/supplier/proxies)
+func (_ Unimplemented) PostSupplierProxies(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 软删自己的条目 + 同事务解绑（只解绑该供应商自己的账号）
+// (DELETE /api/user/supplier/proxies/{id})
+func (_ Unimplemented) DeleteSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 自己的单个代理条目（不存在/已软删/属于别人或平台 → 404）
+// (GET /api/user/supplier/proxies/{id})
+func (_ Unimplemented) GetSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 全量更新自己的条目 + 凭据三态（不改 last_probe_*；改地址同样拒私网）
+// (PUT /api/user/supplier/proxies/{id})
+func (_ Unimplemented) PutSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// TCP 探测自己的条目（5s）+ 写回 last_probe_*，返回最新条目
+// (POST /api/user/supplier/proxies/{id}/probe)
+func (_ Unimplemented) PostSupplierProxiesIdProbe(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1662,6 +1804,134 @@ func (siw *ServerInterfaceWrapper) GetSupplierOverview(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// GetSupplierProxies operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierProxies(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierProxies(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierProxies operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierProxies(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierProxies(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// DeleteSupplierProxiesId operation middleware
+func (siw *ServerInterfaceWrapper) DeleteSupplierProxiesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.DeleteSupplierProxiesId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetSupplierProxiesId operation middleware
+func (siw *ServerInterfaceWrapper) GetSupplierProxiesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetSupplierProxiesId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutSupplierProxiesId operation middleware
+func (siw *ServerInterfaceWrapper) PutSupplierProxiesId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutSupplierProxiesId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostSupplierProxiesIdProbe operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierProxiesIdProbe(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierProxiesIdProbe(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetSupplierSettlements operation middleware
 func (siw *ServerInterfaceWrapper) GetSupplierSettlements(w http.ResponseWriter, r *http.Request) {
 
@@ -1961,6 +2231,24 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/supplier/overview", wrapper.GetSupplierOverview)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/proxies", wrapper.GetSupplierProxies)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/proxies", wrapper.PostSupplierProxies)
+	})
+	r.Group(func(r chi.Router) {
+		r.Delete(options.BaseURL+"/api/user/supplier/proxies/{id}", wrapper.DeleteSupplierProxiesId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/supplier/proxies/{id}", wrapper.GetSupplierProxiesId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Put(options.BaseURL+"/api/user/supplier/proxies/{id}", wrapper.PutSupplierProxiesId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/proxies/{id}/probe", wrapper.PostSupplierProxiesIdProbe)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/supplier/settlements", wrapper.GetSupplierSettlements)

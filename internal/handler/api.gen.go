@@ -1450,6 +1450,9 @@ type Proxy struct {
 	// Name trim 后 1..64；与未软删条目唯一
 	Name string `json:"name"`
 
+	// OwnerUid 只读；null = 平台代理，非 null = 该供应商自建（归属由作用域决定，写体不可指定）
+	OwnerUid *int64 `json:"owner_uid"`
+
 	// Port 1..65535
 	Port   int    `json:"port"`
 	Remark string `json:"remark"`

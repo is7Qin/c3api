@@ -1795,6 +1795,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/supplier/proxies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 自己的代理条目列表（无分页，id 升序；仅 owner_uid = JWT 本人） */
+        get: operations["GetSupplierProxies"];
+        put?: never;
+        /** 新建自己的代理条目（归属恒为 JWT 本人；同归属重名 → 409；私网/回环地址 → 400） */
+        post: operations["PostSupplierProxies"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/proxies/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 自己的单个代理条目（不存在/已软删/属于别人或平台 → 404） */
+        get: operations["GetSupplierProxiesId"];
+        /** 全量更新自己的条目 + 凭据三态（不改 last_probe_*；改地址同样拒私网） */
+        put: operations["PutSupplierProxiesId"];
+        post?: never;
+        /** 软删自己的条目 + 同事务解绑（只解绑该供应商自己的账号） */
+        delete: operations["DeleteSupplierProxiesId"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/proxies/{id}/probe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * TCP 探测自己的条目（5s）+ 写回 last_probe_*，返回最新条目
+         * @description 与管理面同一实现：只拨 TCP，不验证认证与出口 IP；结果不影响 enabled。 拨不通仍是 200（body 里 last_probe_ok=false + 已脱敏错误）；只有条目不存在 （含越域/已软删，一律 404）或写回失败才是错误。
+         */
+        post: operations["PostSupplierProxiesIdProbe"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/supplier/settlements": {
         parameters: {
             query?: never;
@@ -4484,6 +4545,11 @@ export interface components {
             has_password: boolean;
             /** @description 唯一可用性开关；探测结论不影响它 */
             enabled: boolean;
+            /**
+             * Format: int64
+             * @description 只读；null = 平台代理，非 null = 该供应商自建（归属由作用域决定，写体不可指定）
+             */
+            owner_uid?: number | null;
             remark: string;
             /**
              * Format: date-time
@@ -8104,6 +8170,148 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Template"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierProxies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 代理条目列表（仅本人归属；含只读 owner_uid 回显） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierProxies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxyConfig"];
+            };
+        };
+        responses: {
+            /** @description 创建后的条目（含新 id、owner_uid = 本人、探测三列初值） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetSupplierProxiesId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 代理条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutSupplierProxiesId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxyConfig"];
+            };
+        };
+        responses: {
+            /** @description 更新后的条目 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    DeleteSupplierProxiesId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 删除成功 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletedResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierProxiesIdProbe: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Proxy"];
                 };
             };
             default: components["responses"]["Error"];

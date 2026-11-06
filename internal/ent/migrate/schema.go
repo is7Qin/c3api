@@ -371,7 +371,7 @@ var (
 	// ProxiesColumns holds the columns for the "proxies" table.
 	ProxiesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
-		{Name: "name", Type: field.TypeString, Unique: true},
+		{Name: "name", Type: field.TypeString},
 		{Name: "owner_uid", Type: field.TypeInt64, Nullable: true},
 		{Name: "scheme", Type: field.TypeString},
 		{Name: "host", Type: field.TypeString},
@@ -392,6 +392,24 @@ var (
 		Name:       "proxies",
 		Columns:    ProxiesColumns,
 		PrimaryKey: []*schema.Column{ProxiesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "proxy_name",
+				Unique:  true,
+				Columns: []*schema.Column{ProxiesColumns[1]},
+				Annotation: &entsql.IndexAnnotation{
+					Where: "owner_uid IS NULL",
+				},
+			},
+			{
+				Name:    "proxy_owner_uid_name",
+				Unique:  true,
+				Columns: []*schema.Column{ProxiesColumns[2], ProxiesColumns[1]},
+				Annotation: &entsql.IndexAnnotation{
+					Where: "owner_uid IS NOT NULL",
+				},
+			},
+		},
 	}
 	// RedemptionCodesColumns holds the columns for the "redemption_codes" table.
 	RedemptionCodesColumns = []*schema.Column{

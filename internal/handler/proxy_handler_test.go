@@ -303,9 +303,13 @@ func TestProxyProbe(t *testing.T) {
 	require.NotNil(t, kept["last_probe_at"])
 }
 
-// TestProxiesKeepOffSupplierSurface 供应商面**不得**出现 `/proxies`：tag 机制的
-// 结构性保证，用两处断言钉住（源文本 + 路由可达性），防止将来有人把 path 标成
-// 两个 tag 而无人察觉。
+// TestProxiesKeepOffSupplierSurface **管理面**代理池路径不得出现在供应商面/用户面
+// 生成物里：tag 机制的结构性保证，用两处断言钉住（源文本 + 可达性），防止将来有人把
+// path 标成两个 tag 而无人察觉。
+//
+// M4c 之后供应商面有了**自己的**代理池路径（`/api/user/supplier/proxies`，tag supplier），
+// 故断言从「源文本里没有 /proxies 子串」收紧为「源文本里没有**管理面前缀**的 /proxies
+// 注册」「没有 /api/admin/ 前缀」——管理面那六条 op 依然只在 proxies tag 下。
 func TestProxiesKeepOffSupplierSurface(t *testing.T) {
 	for _, file := range []string{
 		filepath.Join("supplier", "api.gen.go"),
@@ -313,8 +317,14 @@ func TestProxiesKeepOffSupplierSurface(t *testing.T) {
 	} {
 		raw, err := os.ReadFile(file)
 		require.NoError(t, err)
-		require.NotContains(t, string(raw), "/proxies",
-			"%s 是 -include-tags 生成物：/proxies 只属 proxies tag，不得进入", file)
+		// 管理面生成物里的注册行是 `options.BaseURL+"/proxies"`（BaseURL = /admin）：
+		// 这个字面量出现在供应商面/用户面即说明 /proxies 混进了别的 tag。
+		require.NotContains(t, string(raw), `options.BaseURL+"/proxies"`,
+			"%s 是 -include-tags 生成物：管理面 /proxies 只属 proxies tag，不得进入", file)
+		// 管理面代理池的**路径字面量**同样不得出现（注释里提到别的管理端点属正常文档，
+		// 故这里只钉路径字面量，不钉 "/api/admin/" 子串）。
+		require.NotContains(t, string(raw), `"/api/admin/proxies`,
+			"%s 不得出现管理面代理池路径", file)
 	}
 	// 结构层面（未登记 ⇒ 未注册 ⇒ 404）由 TestSupplierSurfaceStructuralDefaultDeny
 	// 的 blocked 清单覆盖；这里补一条「openapi 里 /proxies 的 tag 恰为 [proxies]」，

@@ -114,12 +114,19 @@ func TestPGProxyCRUD(t *testing.T) {
 	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, updated, repository.ProxyCredential{}), repository.ErrNotFound)
 }
 
-// TestPGProxyNameUnique 钉住 name 唯一的**既有语义**（与 template/group 同）：
-// 唯一索引不含 deleted_at ⇒ 软删后同名仍冲突（删除只影响可见性，不释放名字）。
+// TestPGProxyNameUnique 钉住 name 唯一的**每归属**语义（spec-proxy-pool §2.5）：
+// 平台池（`owner_uid IS NULL`）内互不同名；私池同一供应商内互不同名，**不同供应商
+// 可以同名**（否则 B 建不了 A 已用的名字，且一次尝试就构成「猜别人有没有这条代理」
+// 的探测面）。软删语义不变：两个部分唯一索引的谓词都不含 deleted_at ⇒ 删条目不释放
+// 名字（与 template 同语义）。
 func TestPGProxyNameUnique(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
+	// 两个供应商的作用域 ctx（同一 uid = 同租户；不同 uid = 跨租户）。
+	ownerA := domain.WithAccountScope(ctx, domain.SupplierAccountScope(9001))
+	ownerB := domain.WithAccountScope(ctx, domain.SupplierAccountScope(9002))
 
+	// ---- 平台池（无 scope ⇒ owner_uid IS NULL）：彼此仍唯一 ----
 	id, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeSOCKS5, Host: "h1", Port: 1080, Enabled: true,
 	})
@@ -128,26 +135,48 @@ func TestPGProxyNameUnique(t *testing.T) {
 	_, err = repos.Proxies.CreateProxy(ctx, domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeHTTP, Host: "h2", Port: 8080, Enabled: true,
 	})
-	require.ErrorIs(t, err, repository.ErrConflict, "重复 name → ErrConflict（service 映射 409）")
+	require.ErrorIs(t, err, repository.ErrConflict, "平台池内重复 name → ErrConflict（service 映射 409）")
 	require.Contains(t, err.Error(), `name="dup"`, "冲突详情含 name")
 
-	// 改名撞已有 name 同样冲突。
-	secondID, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
-		Name: "dup-2", Scheme: domain.ProxySchemeHTTP, Host: "h3", Port: 8080, Enabled: true,
+	// ---- 跨归属同名：允许（本阶段的核心改动）----
+	_, err = repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+		Name: "dup", Scheme: domain.ProxySchemeSOCKS5, Host: "a1", Port: 1080, Enabled: true,
+	})
+	require.NoError(t, err, "供应商 A 可以用平台池已占用的名字（唯一域是每归属）")
+	_, err = repos.Proxies.CreateProxy(ownerB, domain.Proxy{
+		Name: "dup", Scheme: domain.ProxySchemeSOCKS5, Host: "b1", Port: 1080, Enabled: true,
+	})
+	require.NoError(t, err, "供应商 B 也能用同一个名字：既非跨租户命名冲突，也不构成存在性探测面")
+
+	// ---- 同一供应商内重名：冲突 ----
+	_, err = repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+		Name: "dup", Scheme: domain.ProxySchemeHTTP, Host: "a2", Port: 8080, Enabled: true,
+	})
+	require.ErrorIs(t, err, repository.ErrConflict, "同一供应商内重复 name → ErrConflict")
+	require.Contains(t, err.Error(), `name="dup"`, "冲突详情含 name")
+
+	// ---- 改名撞**同一归属**内的已有 name：冲突 ----
+	secondID, err := repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+		Name: "dup-2", Scheme: domain.ProxySchemeHTTP, Host: "a3", Port: 8080, Enabled: true,
 	})
 	require.NoError(t, err)
-	second, err := repos.Proxies.GetProxy(ctx, secondID)
+	second, err := repos.Proxies.GetProxy(ownerA, secondID)
 	require.NoError(t, err)
 	second.Name = "dup"
-	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, second, repository.ProxyCredential{}), repository.ErrConflict)
+	require.ErrorIs(t, repos.Proxies.UpdateProxy(ownerA, second, repository.ProxyCredential{}), repository.ErrConflict)
 
-	// 软删后同名仍不可用（唯一索引与 deleted_at 无关——与 template 语义一致）。
+	// ---- 软删后同一归属内同名仍不可用（唯一索引与 deleted_at 无关）----
 	require.NoError(t, repos.Proxies.DeleteProxy(ctx, id))
 	_, err = repos.Proxies.CreateProxy(ctx, domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeHTTP, Host: "h4", Port: 8080, Enabled: true,
 	})
 	require.ErrorIs(t, err, repository.ErrConflict,
 		"软删不释放 name：唯一索引不含 deleted_at（与 template 同语义）")
+	// 平台池软删掉的那条不影响别的归属用新名字（作用域隔离）。
+	_, err = repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+		Name: "dup-fresh", Scheme: domain.ProxySchemeHTTP, Host: "a4", Port: 8080, Enabled: true,
+	})
+	require.NoError(t, err)
 }
 
 // TestPGDeleteProxyUnbindsAccounts 钉住删除连坐（spec §6.1）：软删代理的**同一

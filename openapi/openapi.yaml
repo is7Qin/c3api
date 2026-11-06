@@ -1049,7 +1049,9 @@ paths:
               schema: { $ref: '#/components/schemas/DeletedResponse' }
         default:
           $ref: '#/components/responses/Error'
-  # ---- 代理池管理面（spec-proxy-pool §6.1）：tag 只有 proxies ⇒ 供应商面结构性 404 ----
+  # ---- 代理池管理面（spec-proxy-pool §6.1）：tag 只有 proxies（管理面全量，含 owner_uid
+  # 回显）。供应商面是**另一组 path**（`/api/user/supplier/proxies`，tag supplier，见下），
+  # 不是同一组 path 多挂一个 tag——两个前缀都未登记在对方 tag 下即结构性 404。
   # 列表无分页：条目数是十到百量级的小表（不是流量表），全量回显 + id 稳定序。
   /proxies:
     get:
@@ -2402,6 +2404,106 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Template' }
+        default:
+          $ref: '#/components/responses/Error'
+  # ---- 代理池供应商面（spec-proxy-pool §3.6 + §6.2 第 5 条；D7 = 供应商私池）----
+  # 与管理面 `/proxies` 六个 op **同形**：requestBody / 响应**全部 $ref 复用**同一批
+  # components（Proxy / ProxyConfig / ProxyListResponse），零平行字段清单。运行时由生成的
+  # supplier wrapper 解析**一次**参数后 typed 直调同一批 AdminAPI handler（字段层零差异化）。
+  # 可见/可写范围由作用域钉死（`SupplierScopeInject` 恒 {OwnerUID: jwt}）：只有自己的私池，
+  # 平台代理与别人的条目**一律 404**（不泄露存在性）。归属**只能由 scope 决定**——写体
+  # ProxyConfig 里没有 owner_uid，带上它会被严格解码拒绝（400），比「静默忽略」更硬的边界。
+  /api/user/supplier/proxies:
+    get:
+      operationId: GetSupplierProxies
+      tags: [supplier]
+      summary: 自己的代理条目列表（无分页，id 升序；仅 owner_uid = JWT 本人）
+      responses:
+        '200':
+          description: 代理条目列表（仅本人归属；含只读 owner_uid 回显）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProxyListResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+    post:
+      operationId: PostSupplierProxies
+      tags: [supplier]
+      summary: 新建自己的代理条目（归属恒为 JWT 本人；同归属重名 → 409；私网/回环地址 → 400）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyConfig' }
+      responses:
+        '200':
+          description: 创建后的条目（含新 id、owner_uid = 本人、探测三列初值）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/supplier/proxies/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      operationId: GetSupplierProxiesId
+      tags: [supplier]
+      summary: 自己的单个代理条目（不存在/已软删/属于别人或平台 → 404）
+      responses:
+        '200':
+          description: 代理条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
+        default:
+          $ref: '#/components/responses/Error'
+    put:
+      operationId: PutSupplierProxiesId
+      tags: [supplier]
+      summary: 全量更新自己的条目 + 凭据三态（不改 last_probe_*；改地址同样拒私网）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyConfig' }
+      responses:
+        '200':
+          description: 更新后的条目
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
+        default:
+          $ref: '#/components/responses/Error'
+    delete:
+      operationId: DeleteSupplierProxiesId
+      tags: [supplier]
+      summary: 软删自己的条目 + 同事务解绑（只解绑该供应商自己的账号）
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeletedResponse' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/supplier/proxies/{id}/probe:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    post:
+      operationId: PostSupplierProxiesIdProbe
+      tags: [supplier]
+      summary: TCP 探测自己的条目（5s）+ 写回 last_probe_*，返回最新条目
+      description: >-
+        与管理面同一实现：只拨 TCP，不验证认证与出口 IP；结果不影响 enabled。
+        拨不通仍是 200（body 里 last_probe_ok=false + 已脱敏错误）；只有条目不存在
+        （含越域/已软删，一律 404）或写回失败才是错误。
+      responses:
+        '200':
+          description: 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Proxy' }
         default:
           $ref: '#/components/responses/Error'
   # ---- 管理面结算审批（spec 2026-10-09 §6.3；tag admin-supplier）----
@@ -5020,6 +5122,14 @@ components:
         username: { type: string, nullable: true, description: 非密（原样回显）；null = 无认证 }
         has_password: { type: boolean, description: 只回显"是否设了密码"，密码本身永不出现在任何响应里 }
         enabled: { type: boolean, description: 唯一可用性开关；探测结论不影响它 }
+        # 归属回显（spec-proxy-pool §3.6）：null = 平台代理（只由管理员维护）；非 null =
+        # 该供应商自建。**只读**——写模型 ProxyConfig 里根本没有这个字段：归属只能由
+        # 作用域（调用者身份）决定，请求体指定归属即是越权面。
+        owner_uid:
+          type: integer
+          format: int64
+          nullable: true
+          description: 只读；null = 平台代理，非 null = 该供应商自建（归属由作用域决定，写体不可指定）
         remark: { type: string }
         last_probe_at: { type: string, format: date-time, nullable: true, description: null = 从未探测 }
         last_probe_ok: { type: boolean }

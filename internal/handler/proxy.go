@@ -161,6 +161,8 @@ func proxyInputFromBody(f *ProxyConfig) (service.ProxyInput, error) {
 //     判据（present/absent）区分「有认证」与「无认证」；
 //  3. last_probe_at / last_probe_error 的 never-probed / 无错误在 domain 侧是
 //     nil / ""，线格式统一折成 null（与 §6.1 读模型的可空字段一致）。
+//  4. **owner_uid 只读回显**（§3.6）：nil 原样落成 null（= 平台代理）。管理员靠它看出
+//     这条属于谁；供应商面看到的恒是自己的 uid（不构成泄露——它看不到别人的条目）。
 func toAPIProxy(p domain.Proxy) Proxy {
 	out := Proxy{
 		Id:          p.ID,
@@ -170,6 +172,7 @@ func toAPIProxy(p domain.Proxy) Proxy {
 		Port:        p.Port,
 		HasPassword: p.Password != "",
 		Enabled:     p.Enabled,
+		OwnerUid:    p.OwnerUID,
 		Remark:      p.Remark,
 		LastProbeAt: p.LastProbeAt,
 		LastProbeOk: p.LastProbeOK,

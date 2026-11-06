@@ -2981,20 +2981,40 @@ type fakeProxyRow struct {
 	deletedAt *time.Time
 }
 
+// proxyOwnerVisible 镜像真实仓库的 proxyOwnerPred（spec-proxy-pool §3.6）：管理面
+// （无 scope）看全部；供应商面只看 `owner_uid == scope.OwnerUID`——平台代理（NULL）
+// 在任何 Set 作用域下都不可见（平台池不是公共池）。
+func proxyOwnerVisible(ctx context.Context, p domain.Proxy) bool {
+	scope := domain.AccountScopeFrom(ctx)
+	if !scope.Set {
+		return true
+	}
+	return p.OwnerUID != nil && *p.OwnerUID == scope.OwnerUID
+}
+
+// sameProxyOwner 两个归属是否同一域（nil = 平台池那一组）。
+func sameProxyOwner(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func (f *fakeStore) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, row := range f.proxies {
-		// 唯一索引不含 deleted_at ⇒ 软删不释放名字（与 template 同语义）。
-		if row.p.Name == p.Name {
-			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
-		}
-	}
 	// 归属由作用域钉死（镜像真实仓库与 service 侧替身，spec §3.6）。
 	p.OwnerUID = nil
 	if scope := domain.AccountScopeFrom(ctx); scope.Set {
 		owner := scope.OwnerUID
 		p.OwnerUID = &owner
+	}
+	for _, row := range f.proxies {
+		// name 唯一域 = **每归属**（spec §2.5）：只和同一归属的条目比；索引谓词不含
+		// deleted_at ⇒ 软删不释放名字（与 template 同语义）。
+		if row.p.Name == p.Name && sameProxyOwner(row.p.OwnerUID, p.OwnerUID) {
+			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
+		}
 	}
 	p.ID = f.nextID
 	f.nextID++
@@ -3012,7 +3032,7 @@ func (f *fakeStore) ListProxies(ctx context.Context) ([]domain.Proxy, error) {
 	slices.Sort(ids)
 	out := make([]domain.Proxy, 0, len(ids))
 	for _, id := range ids {
-		if row := f.proxies[id]; row.deletedAt == nil {
+		if row := f.proxies[id]; row.deletedAt == nil && proxyOwnerVisible(ctx, row.p) {
 			out = append(out, row.p)
 		}
 	}
@@ -3023,7 +3043,8 @@ func (f *fakeStore) GetProxy(ctx context.Context, id int64) (domain.Proxy, error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	row, ok := f.proxies[id]
-	if !ok || row.deletedAt != nil {
+	// 越域与不存在**不可区分**（一律 missing），镜像真实仓库的 WHERE 谓词。
+	if !ok || row.deletedAt != nil || !proxyOwnerVisible(ctx, row.p) {
 		return domain.Proxy{}, missingErr(id)
 	}
 	return row.p, nil
@@ -3043,16 +3064,19 @@ func (f *fakeStore) LookupProxyForBinding(ctx context.Context, id int64) (reposi
 func (f *fakeStore) UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, row := range f.proxies {
-		if row.p.ID != p.ID && row.p.Name == p.Name {
+	row, ok := f.proxies[p.ID]
+	if !ok || row.deletedAt != nil || !proxyOwnerVisible(ctx, row.p) {
+		return missingErr(p.ID)
+	}
+	for _, other := range f.proxies {
+		// 唯一域 = 每归属（§2.5）：归属列不进 SET，故比的是目标行既有的 owner。
+		if other.p.ID != p.ID && other.p.Name == p.Name && sameProxyOwner(other.p.OwnerUID, row.p.OwnerUID) {
 			return fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
 		}
 	}
-	row, ok := f.proxies[p.ID]
-	if !ok || row.deletedAt != nil {
-		return missingErr(p.ID)
-	}
 	next := p
+	// 归属不由更新面改写（真实仓库的 SET 列表里没有 owner_uid）。
+	next.OwnerUID = row.p.OwnerUID
 	// 凭据三态（镜像真实仓库：nil = 该列不进 SET ⇒ 保持旧值），两列同规矩。
 	next.Username = row.p.Username
 	if credential.Username != nil {
@@ -3073,16 +3097,21 @@ func (f *fakeStore) DeleteProxy(ctx context.Context, id int64) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	row, ok := f.proxies[id]
-	if !ok || row.deletedAt != nil {
+	if !ok || row.deletedAt != nil || !proxyOwnerVisible(ctx, row.p) {
 		return missingErr(id)
 	}
 	now := time.Now()
 	row.deletedAt = &now
-	// 同事务解绑连坐（镜像真实仓库的 `UPDATE accounts SET proxy_id = NULL`）。
+	// 同事务解绑连坐（镜像真实仓库）：范围**随归属**——私池只解绑其主自己的账号，
+	// 平台代理解绑所有引用（spec §3.6）。
 	for _, a := range f.accs {
-		if a.ProxyID != nil && *a.ProxyID == id {
-			a.ProxyID = nil
+		if a.ProxyID == nil || *a.ProxyID != id {
+			continue
 		}
+		if row.p.OwnerUID != nil && a.SupplierUserID != *row.p.OwnerUID {
+			continue
+		}
+		a.ProxyID = nil
 	}
 	return nil
 }
@@ -3091,7 +3120,7 @@ func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	row, exists := f.proxies[id]
-	if !exists || row.deletedAt != nil {
+	if !exists || row.deletedAt != nil || !proxyOwnerVisible(ctx, row.p) {
 		return missingErr(id)
 	}
 	row.p.LastProbeAt = &at

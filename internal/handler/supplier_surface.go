@@ -6,7 +6,8 @@ package handler
 
 // 供应商面挂载（spec 2026-10-09 §2.5/§2.6/§6.1）：第二 BaseURL
 // /api/user/supplier 的路由**由 openapi 契约生成**——tag `supplier` 的显式 path
-// （业务 5 op + 账号/分组/模板子集 17 op，共 22 op，生成到 internal/handler/supplier）。
+// （业务 5 op + 账号/分组/模板子集 17 op + 代理池 6 op（spec-proxy-pool §6.2 第 5 条），
+// 共 28 op，生成到 internal/handler/supplier）。
 //
 //   - **tag 即边界（结构性 default-deny）**：未登记为 supplier 的 path 不进生成面
 //     ⇒ 未注册 ⇒ 404（/users、/settings、/pricing、/rules、/ops、/mail、组写面/
@@ -33,7 +34,7 @@ import (
 // SupplierSurfaceBaseURL 供应商面第二 BaseURL（openapi 里该 tag 的 path 前缀）。
 const SupplierSurfaceBaseURL = "/api/user/supplier"
 
-// supplierSurface 供应商面接口适配器：实现生成的 supplier.ServerInterface（22 op）。
+// supplierSurface 供应商面接口适配器：实现生成的 supplier.ServerInterface（28 op）。
 // 业务 op 直调 AdminAPI 自身方法（supplier_business.go）；账号/分组/模板 op 由生成的
 // supplier wrapper 解析**一次**参数后，**类型化直调**同一 AdminAPI 实现——id 透传、
 // query/header 显式映射到管理面参数类型，不再从 `r` 二次解析（消除两套生成路由的
@@ -157,6 +158,46 @@ func (s supplierSurface) GetSupplierTemplatesId(w http.ResponseWriter, r *http.R
 	s.api.GetTemplatesId(w, r, id)
 }
 
+// ---- 代理池子集（spec-proxy-pool §6.2 第 5 条）：与管理面 /proxies 同形，typed 直调。----
+//
+// 六个 op 与管理面共用**同一批** AdminAPI 实现（同一 service.ProxyInput、同一校验、
+// 同一探测语义），这里只做参数搬运——写第二套业务逻辑只会得到两套迟早不一致的判据。
+// 作用域**不在本层**：由 SupplierScopeInject 恒注入 {OwnerUID: jwt, Set:true}，仓储层
+// 每处 WHERE AND 归属谓词（越域 = 不存在 = 404，不泄露存在性）。故这里
+//   - **不**往 ctx 塞 scope；
+//   - **不**从 body 取归属（ProxyConfig 里没有 owner_uid，给了也不生效）；
+//   - **不**提供「把代理分配给别的账号」这类管理动作（那是账号写面的事，M1e 已就位）。
+
+// GetSupplierProxies GET /api/user/supplier/proxies（仅本人归属，id 升序）。
+func (s supplierSurface) GetSupplierProxies(w http.ResponseWriter, r *http.Request) {
+	s.api.GetProxies(w, r)
+}
+
+// PostSupplierProxies POST /api/user/supplier/proxies（归属恒为 JWT 本人；私网 ⇒ 400）。
+func (s supplierSurface) PostSupplierProxies(w http.ResponseWriter, r *http.Request) {
+	s.api.PostProxies(w, r)
+}
+
+// GetSupplierProxiesId GET /api/user/supplier/proxies/{id}（越域/已软删 ⇒ 404）。
+func (s supplierSurface) GetSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.GetProxiesId(w, r, id)
+}
+
+// PutSupplierProxiesId PUT /api/user/supplier/proxies/{id}（全量更新 + 凭据三态）。
+func (s supplierSurface) PutSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.PutProxiesId(w, r, id)
+}
+
+// DeleteSupplierProxiesId DELETE /api/user/supplier/proxies/{id}（软删 + 只解绑自己的账号）。
+func (s supplierSurface) DeleteSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.DeleteProxiesId(w, r, id)
+}
+
+// PostSupplierProxiesIdProbe POST /api/user/supplier/proxies/{id}/probe（拨不通仍 200）。
+func (s supplierSurface) PostSupplierProxiesIdProbe(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.PostProxiesIdProbe(w, r, id)
+}
+
 // ---- 供应商业务面（§6.1/§6.2）：直调既有实现（supplier_business.go）。----
 
 // GetSupplierOverview GET /api/user/supplier/overview。
@@ -185,7 +226,7 @@ func (s supplierSurface) PostSupplierSettlement(w http.ResponseWriter, r *http.R
 	s.api.PostSupplierSettlement(w, r)
 }
 
-// SupplierSurfaceHandler 供应商面生成路由（tag `supplier` 的 22 op，绝对路径、
+// SupplierSurfaceHandler 供应商面生成路由（tag `supplier` 的 28 op，绝对路径、
 // 无 BaseURL；故 HandlerWithOptions 直接按 spec 路径注册）。业务 op 走本包 handler，
 // 账号/分组/模板 op 由生成 wrapper 解析一次参数后类型化直调同一批 AdminAPI 实现
 // ——**暴露面唯一事实源 = openapi**。
@@ -223,7 +264,7 @@ func AccountScopeFrom(ctx context.Context) domain.AccountScope {
 // NewSupplierSurface 组装供应商面完整链路（挂载于 /api/user/supplier/*）：
 //
 //	RequireIdentity(iss,p) → RequireRole(p, SupplierSurfaceRoles...) →
-//	SupplierScopeInject → 生成路由（tag `supplier` 的 22 op）
+//	SupplierScopeInject → 生成路由（tag `supplier` 的 28 op）
 //
 // 可达集唯一事实源 = domain.SupplierSurfaceRoles()（§2.6）；暴露面唯一事实源 =
 // openapi 里 tag `supplier` 的登记（本函数不再持有任何手写路由清单/guard）。p 为

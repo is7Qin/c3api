@@ -129,6 +129,13 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 		{"PUT", "/api/user/supplier/accounts/1/ext"},
 		{"GET", "/api/user/supplier/accounts/1/groups"},
 		{"POST", "/api/user/supplier/accounts/1/recover"},
+		// 代理池六条（spec-proxy-pool M4c）：供应商管**自己的**私池，可达。
+		{"GET", "/api/user/supplier/proxies"},
+		{"POST", "/api/user/supplier/proxies"},
+		{"GET", "/api/user/supplier/proxies/1"},
+		{"PUT", "/api/user/supplier/proxies/1"},
+		{"DELETE", "/api/user/supplier/proxies/1"},
+		{"POST", "/api/user/supplier/proxies/1/probe"},
 		// groups GET 只读候选（可达）、templates GET 只读（可达）。
 		{"GET", "/api/user/supplier/groups"},
 		{"GET", "/api/user/supplier/templates"},
@@ -156,6 +163,8 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 		{"GET", "/api/user/supplier/accounts"},
 		{"GET", "/api/user/supplier/groups"},
 		{"GET", "/api/user/supplier/templates"},
+		// 代理池列表同理：证明登记的是**同一批**管理面实现（不是占位 stub）。
+		{"GET", "/api/user/supplier/proxies"},
 	} {
 		req := httptest.NewRequest(tc.method, tc.path, http.NoBody)
 		rec := httptest.NewRecorder()
@@ -192,15 +201,10 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 		{"POST", "/api/user/supplier/templates/batch-delete"},
 		// 反向断言：假设新增一个管理端点 ⇒ 默认不对供应商暴露（未登记）。
 		{"GET", "/api/user/supplier/brand-new-admin-thing"},
-		// 代理池（spec-proxy-pool §6.1）：管理面资源，**有意登记为不可达**。
-		// 理由：供应商可否自建/绑定代理是未决项（spec §13 的 D7 升级版），而
-		// tag 只有 proxies ⇒ 生成面未注册 ⇒ 结构性 404。将来若上供应商面，
-		// 这条断言会先失败，逼出「先决策、再改门禁」而不是悄悄放开。
-		{"GET", "/api/user/supplier/proxies"},
-		{"POST", "/api/user/supplier/proxies"},
-		{"PUT", "/api/user/supplier/proxies/1"},
-		{"DELETE", "/api/user/supplier/proxies/1"},
-		{"POST", "/api/user/supplier/proxies/1/probe"},
+		// 管理面代理池的**绝对路径**仍然不可达：供应商面是**另一组 path**
+		// （`/api/user/supplier/proxies`），不是 `/api/admin/proxies` 换前缀生成。
+		// tag 机制下这条要么未登记（404）要么只登记了别的路径（404/405），三者都算不可达。
+		{"GET", "/api/user/supplier/admin/proxies"},
 	}
 	for _, tc := range blocked {
 		req := httptest.NewRequest(tc.method, tc.path, http.NoBody)
@@ -210,6 +214,51 @@ func TestSupplierSurfaceStructuralDefaultDeny(t *testing.T) {
 		require.Contains(t, []int{http.StatusNotFound, http.StatusMethodNotAllowed}, rec.Code,
 			"%s %s 必须不可达（default-deny）", tc.method, tc.path)
 	}
+}
+
+// TestSupplierSurfaceProxiesRegistered M4c（spec-proxy-pool §6.2 第 7 条）：代理池六条 op
+// 挂在供应商生成面上，且生成物**源文本**里确实出现这六条供应商面路径；管理面前缀
+// （`/api/admin/…`）不得出现在供应商生成物里——两套 path 互不重叠，缺一即 404。
+//
+// 为什么源文本也要断言：M4a 的 default-deny 用例曾把 `/api/user/supplier/proxies*` 列为
+// blocked，依据是「yaml 里 tag 只有 proxies」。现在决策变了（D7 = 供应商私池），故这条
+// 用例把新事实**正向**钉住：不是靠「blocked 清单里恰好没它」，而是靠「它就在登记集里」。
+func TestSupplierSurfaceProxiesRegistered(t *testing.T) {
+	api := newTestHandler(t)
+	mux := api.SupplierSurfaceHandler().(chi.Routes)
+
+	six := []struct{ method, path string }{
+		{"GET", SupplierSurfaceBaseURL + "/proxies"},
+		{"POST", SupplierSurfaceBaseURL + "/proxies"},
+		{"GET", SupplierSurfaceBaseURL + "/proxies/{id}"},
+		{"PUT", SupplierSurfaceBaseURL + "/proxies/{id}"},
+		{"DELETE", SupplierSurfaceBaseURL + "/proxies/{id}"},
+		{"POST", SupplierSurfaceBaseURL + "/proxies/{id}/probe"},
+	}
+	for _, tc := range six {
+		require.True(t, mux.Match(chi.NewRouteContext(), tc.method, tc.path),
+			"%s %s 必须命中供应商生成面（六条 op 都在供应商面登记）", tc.method, tc.path)
+	}
+
+	raw, err := os.ReadFile(filepath.Join("supplier", "api.gen.go"))
+	require.NoError(t, err)
+	src := string(raw)
+	for _, want := range []string{
+		`"/api/user/supplier/proxies"`,
+		`"/api/user/supplier/proxies/{id}"`,
+		`"/api/user/supplier/proxies/{id}/probe"`,
+	} {
+		require.Contains(t, src, want, "供应商生成物必须出现路径字面量 %s", want)
+	}
+	// 管理员路径仍不在供应商面：前缀决定（不是同一组 path 换前缀，也不是多挂一个 tag）。
+	// 只钉**路径字面量**：注释里引用别的管理端点（如 stats/capabilities）属正常文档。
+	require.NotContains(t, src, `"/api/admin/proxies`,
+		"供应商面生成物不得出现管理面代理池路径：两面是**两组 path**，互不重叠")
+
+	adminRaw, err := os.ReadFile("api.gen.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(adminRaw), "/api/user/supplier/proxies",
+		"管理面生成物不得出现供应商面路径（-exclude-tags supplier）")
 }
 
 // TestSupplierSurfaceParamContractPreserved S1：类型化直调后，非法 query / id /
