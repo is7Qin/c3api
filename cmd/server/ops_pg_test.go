@@ -228,12 +228,25 @@ func TestOpsWorkersPG(t *testing.T) {
 		return statsAgg.Stats().(usage.StatsAggWorkerStats).LastDurationMs > 0
 	}, 3*time.Second, 10*time.Millisecond, "首轮聚合轮完成（含耗时观测）")
 	cancelStatsAgg()
+	// 停摆后等**两个来源同步**，不是等表自己冻结：内存观测（/ops 快照）与
+	// stats_agg_watermark 表由同一轮聚合先后更新（先写表、再发布统计），所以
+	// 仅比对"表两次读数相等"抓不到"最后一轮已经写完表、还没发布内存值"这个
+	// 中间态——本门此前因此在整轮测试里偶发失败（实测 41ms 偏差），单跑却全绿。
+	// 判据改成"内存观测 == 表值"：它才是下面 /ops 断言真正依赖的不变量。
+	require.Eventually(t, func() bool {
+		wm, err := repos.Stats.LoadStatsAggWatermark(ctx)
+		if err != nil {
+			return false
+		}
+		st, ok := statsAgg.Stats().(usage.StatsAggWorkerStats)
+		return ok && st.WatermarkUnixMs == wm.UnixMilli()
+	}, 3*time.Second, 20*time.Millisecond, "worker 已停摆且内存观测与表值一致")
 	require.Eventually(t, func() bool {
 		wm1, err1 := repos.Stats.LoadStatsAggWatermark(ctx)
 		time.Sleep(50 * time.Millisecond)
 		wm2, err2 := repos.Stats.LoadStatsAggWatermark(ctx)
 		return err1 == nil && err2 == nil && wm1.Equal(wm2)
-	}, 3*time.Second, 20*time.Millisecond, "worker 已停摆（watermark 冻结）")
+	}, 3*time.Second, 20*time.Millisecond, "水表已冻结（无在途轮次）")
 	wm, err := repos.Stats.LoadStatsAggWatermark(ctx)
 	require.NoError(t, err)
 	require.False(t, wm.IsZero(), "watermark 已初始化（首轮聚合推进）")
