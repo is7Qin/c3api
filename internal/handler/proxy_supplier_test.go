@@ -10,7 +10,7 @@ package handler
 // supplier 路由 → 类型化直调管理面 AdminAPI handler → service → 仓储）。
 //
 // 纪律：
-//   - 只用 require（不用 assert）；不 t.Parallel()（fakeStore 是共享可变状态）；
+//   - 只用 require（不用 assert）；不并行（fakeStore 是共享可变状态）；
 //   - **越域一律 404**：不是 403——404 不泄露「别人有这条代理」；
 //   - 断言「没有副作用」时**再读一次**（响应码绿灯不代表数据没被改）；
 //   - 不赌墙钟：探测只断言「非 null」。

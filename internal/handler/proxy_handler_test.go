@@ -29,7 +29,7 @@ import (
 //
 // 纪律：
 //   - 只用 require（不用 assert）；
-//   - 不 t.Parallel()（fakeStore 是共享可变状态，并行会互相踩）；
+//   - 不并行（fakeStore 是共享可变状态，并行会互相踩；见 AGENTS.md 测试纪律）；
 //   - **不赌墙钟**：探测时刻只断言「非 null」（`last_probe_at` 由 service 的注入
 //     时钟产生，时钟精度的确定性由 service 的 proxy_test.go 覆盖；handler 只做
 //     投影，断言具体时刻等于把两层的职责搅在一起）。

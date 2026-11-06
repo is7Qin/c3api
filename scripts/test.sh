@@ -21,8 +21,9 @@ set -euo pipefail
 # Usage: TEST_DATABASE_URL=postgres://... scripts/test.sh [extra go test flags]
 
 # Gate: no t.Parallel() calls (AGENTS.md). Runs on Linux (CI and dev hosts),
-# where grep is always present. The parens are matched as [(][)] so a comment
-# that merely names t.Parallel cannot trip the gate.
+# where grep is always present. The parens are matched as [(][)] but the match
+# is still plain text, so a *_test.go comment must not quote the call either —
+# prose says "不并行" and cites AGENTS.md instead.
 if grep -rEn --include='*_test.go' 't\.Parallel[(][)]' .; then
 	echo "scripts/test.sh: t.Parallel() is forbidden (AGENTS.md)" >&2
 	exit 1
