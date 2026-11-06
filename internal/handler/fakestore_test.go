@@ -2948,6 +2948,12 @@ func (f *fakeStore) CreateProxy(ctx context.Context, p domain.Proxy) (int64, err
 			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
 		}
 	}
+	// 归属由作用域钉死（镜像真实仓库与 service 侧替身，spec §3.6）。
+	p.OwnerUID = nil
+	if scope := domain.AccountScopeFrom(ctx); scope.Set {
+		owner := scope.OwnerUID
+		p.OwnerUID = &owner
+	}
 	p.ID = f.nextID
 	f.nextID++
 	f.proxies[p.ID] = &fakeProxyRow{p: p}
@@ -2979,6 +2985,17 @@ func (f *fakeStore) GetProxy(ctx context.Context, id int64) (domain.Proxy, error
 		return domain.Proxy{}, missingErr(id)
 	}
 	return row.p, nil
+}
+
+// LookupProxyForBinding 跨 scope 读取（镜像真实仓库：判「能不能绑」而非「能不能看」）。
+func (f *fakeStore) LookupProxyForBinding(ctx context.Context, id int64) (repository.ProxyBindingInfo, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.proxies[id]
+	if !ok || row.deletedAt != nil {
+		return repository.ProxyBindingInfo{}, missingErr(id)
+	}
+	return repository.ProxyBindingInfo{OwnerUID: row.p.OwnerUID, Enabled: row.p.Enabled}, nil
 }
 
 func (f *fakeStore) UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error {

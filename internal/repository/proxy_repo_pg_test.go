@@ -337,3 +337,199 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 	require.Equal(t, "pass4", got.Password)
 	require.NotNil(t, got.LastProbeAt, "清 username 同样不得写探测列")
 }
+
+// --- 归属与 scope（spec-proxy-pool §3.6，M1d） ---
+
+// seedPGProxyOwned 在**供应商作用域**下建条目：归属由 scope 钉死（请求体给不出 owner，
+// 与真实写面同路径——不是直接写列）。
+func seedPGProxyOwned(t *testing.T, repos *repository.Repository, uid int64, name string) int64 {
+	t.Helper()
+	id, err := repos.Proxies.CreateProxy(scopeCtx(uid), domain.Proxy{
+		Name: name, Scheme: domain.ProxySchemeHTTP, Host: "proxy.example.com", Port: 3128, Enabled: true,
+	})
+	require.NoError(t, err)
+	require.NotZero(t, id)
+	return id
+}
+
+// TestPGProxyScopeIsolation 归属作用域矩阵（§3.6）：供应商面只看得到/改得动/删得掉
+// **自己的**条目；平台代理（owner IS NULL）对供应商既不可见也不可写；管理面（无 scope）
+// 看全部。越域与不存在**同码**（ErrNotFound，不泄露「别人有这条代理」）。
+//
+// 另钉两件事：CreateProxy 的归属来自 scope（请求体里填别人的 uid 无效），
+// WriteProxyProbe 同样受作用域限制（供应商只能探测自己的出口）。
+func TestPGProxyScopeIsolation(t *testing.T) {
+	repos := newPGReposShared(t)
+	adminCtx := context.Background()
+	a := seedSupplierUser(t, repos, "scope-a@example.com")
+	b := seedSupplierUser(t, repos, "scope-b@example.com")
+	ctxA, ctxB := scopeCtx(a.ID), scopeCtx(b.ID)
+
+	platformProxy := seedPGProxyNamed(t, repos, "scope-platform")
+	proxyA := seedPGProxyOwned(t, repos, a.ID, "scope-a-proxy")
+	proxyB := seedPGProxyOwned(t, repos, b.ID, "scope-b-proxy")
+
+	// ① 请求体不可写归属：在 A 的作用域里把 OwnerUID 填成 B，落库仍是 A。
+	smuggled, err := repos.Proxies.CreateProxy(ctxA, domain.Proxy{
+		Name: "scope-smuggle", Scheme: domain.ProxySchemeSOCKS5, Host: "smuggle.example.com", Port: 1080,
+		Enabled: true, OwnerUID: &b.ID,
+	})
+	require.NoError(t, err)
+	got, err := repos.Proxies.GetProxy(adminCtx, smuggled)
+	require.NoError(t, err)
+	require.NotNil(t, got.OwnerUID)
+	require.Equal(t, a.ID, *got.OwnerUID, "归属恒由作用域决定，请求体改不动")
+
+	// ② 列表：供应商只出自己的；管理面看全部（含平台代理）。
+	listA, err := repos.Proxies.ListProxies(ctxA)
+	require.NoError(t, err)
+	require.Equal(t, []int64{proxyA, smuggled}, proxyIDsOf(listA), "A 只看得到自己的两条")
+	listB, err := repos.Proxies.ListProxies(ctxB)
+	require.NoError(t, err)
+	require.Equal(t, []int64{proxyB}, proxyIDsOf(listB))
+	all, err := repos.Proxies.ListProxies(adminCtx)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{platformProxy, proxyA, proxyB, smuggled}, proxyIDsOf(all))
+
+	// ③ 单读：越域与平台代理 ⇒ 同码 404；管理面读得到，且 owner 回显正确。
+	_, err = repos.Proxies.GetProxy(ctxA, proxyB)
+	require.ErrorIs(t, err, repository.ErrNotFound, "别人的私池 ⇒ 越域 404")
+	_, err = repos.Proxies.GetProxy(ctxA, platformProxy)
+	require.ErrorIs(t, err, repository.ErrNotFound, "平台代理不是公共池：供应商看不见")
+	adminPlatform, err := repos.Proxies.GetProxy(adminCtx, platformProxy)
+	require.NoError(t, err)
+	require.Nil(t, adminPlatform.OwnerUID, "平台代理 owner 为 NULL")
+
+	// ④ 更新：越域 ⇒ 404（连"存在"都不承认）。
+	foreign, err := repos.Proxies.GetProxy(adminCtx, proxyB)
+	require.NoError(t, err)
+	foreign.Name = "scope-b-renamed"
+	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctxA, foreign, repository.ProxyCredential{}), repository.ErrNotFound)
+	kept, err := repos.Proxies.GetProxy(adminCtx, proxyB)
+	require.NoError(t, err)
+	require.Equal(t, "scope-b-proxy", kept.Name, "越域更新不得落值")
+
+	// ⑤ 探测写回同样带作用域。
+	probeAt := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
+	require.ErrorIs(t, repos.Proxies.WriteProxyProbe(ctxA, proxyB, probeAt, true, ""), repository.ErrNotFound)
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctxA, proxyA, probeAt, true, ""))
+	probed, err := repos.Proxies.GetProxy(adminCtx, proxyA)
+	require.NoError(t, err)
+	require.True(t, probed.LastProbeOK)
+
+	// ⑥ 删除：越域 ⇒ 404 且条目仍在。
+	require.ErrorIs(t, repos.Proxies.DeleteProxy(ctxA, proxyB), repository.ErrNotFound)
+	_, err = repos.Proxies.GetProxy(adminCtx, proxyB)
+	require.NoError(t, err, "越域删除不得生效")
+	require.NoError(t, repos.Proxies.DeleteProxy(ctxA, proxyA), "自己的删得掉")
+	_, err = repos.Proxies.GetProxy(adminCtx, proxyA)
+	require.ErrorIs(t, err, repository.ErrNotFound)
+}
+
+// proxyIDsOf 列表投影（断言只看 id 序）。
+func proxyIDsOf(rows []domain.Proxy) []int64 {
+	out := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, row.ID)
+	}
+	return out
+}
+
+// TestPGDeletePrivateProxyUnbindScope 删除连坐的**范围随归属**（§3.6）：删私池代理只解绑
+// 该供应商的账号，别的供应商/平台账号的绑定原样保留；删平台代理仍解绑所有引用。
+//
+// 夹具里故意造出「B 的账号绑着 A 的代理」这种谓词禁止的状态：service 层拦住的是**新**
+// 绑定，而解绑连坐必须对**历史遗留状态**也说清范围——它按列解绑，不按谓词过滤。
+func TestPGDeletePrivateProxyUnbindScope(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	tpl := seedPGTemplateNamed(t, repos, "tpl-proxy-unbind-scope")
+	a := seedSupplierUser(t, repos, "unbind-scope-a@example.com")
+	b := seedSupplierUser(t, repos, "unbind-scope-b@example.com")
+	ctxA := scopeCtx(a.ID)
+
+	newAccount := func(name string, owner int64) int64 {
+		acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
+			Name: name, TemplateID: tpl.ID, UpstreamKey: "sk-" + name,
+			MaxConcurrency: 8, Enabled: true, SupplierUserID: owner,
+		})
+		require.NoError(t, err)
+		return acc.ID
+	}
+	bind := func(accID, proxyID int64) {
+		_, err := repos.Accounts.UpdateAccountsBatch(ctx, []int64{accID}, repository.AccountPatch{ProxyID: &proxyID})
+		require.NoError(t, err)
+	}
+	proxyIDOf := func(accID int64) *int64 {
+		acc, err := repos.Accounts.GetAccount(ctx, accID)
+		require.NoError(t, err)
+		return acc.ProxyID
+	}
+
+	ownedByA := newAccount("unbind-owned-a", a.ID)
+	ownedByB := newAccount("unbind-owned-b", b.ID)
+	platformAcc := newAccount("unbind-platform", 0)
+
+	privateProxyA := seedPGProxyOwned(t, repos, a.ID, "unbind-private-a")
+	bind(ownedByA, privateProxyA)
+	bind(ownedByB, privateProxyA)
+	bind(platformAcc, privateProxyA)
+
+	require.NoError(t, repos.Proxies.DeleteProxy(ctxA, privateProxyA), "供应商删自己的私池")
+	require.Nil(t, proxyIDOf(ownedByA), "其主的账号解绑")
+	require.NotNil(t, proxyIDOf(ownedByB), "别的供应商的绑定原样保留")
+	require.Equal(t, privateProxyA, *proxyIDOf(ownedByB))
+	require.NotNil(t, proxyIDOf(platformAcc), "平台账号的绑定同样原样保留")
+	require.Equal(t, privateProxyA, *proxyIDOf(platformAcc))
+
+	// 平台代理：既有行为——解绑所有引用（跨归属）。
+	platformProxy := seedPGProxyNamed(t, repos, "unbind-platform-proxy")
+	bind(ownedByA, platformProxy)
+	bind(ownedByB, platformProxy)
+	bind(platformAcc, platformProxy)
+	require.NoError(t, repos.Proxies.DeleteProxy(ctx, platformProxy))
+	require.Nil(t, proxyIDOf(ownedByA))
+	require.Nil(t, proxyIDOf(ownedByB))
+	require.Nil(t, proxyIDOf(platformAcc))
+}
+
+// TestPGLookupProxyForBinding 绑定谓词的事实读取（§3.6）：**跨 scope** 能读到别人的归属
+// ——它判的是「能不能绑」而不是「能不能看」；软删 ⇒ ErrNotFound（与 GetProxy 同哨兵）。
+func TestPGLookupProxyForBinding(t *testing.T) {
+	repos := newPGReposShared(t)
+	adminCtx := context.Background()
+	a := seedSupplierUser(t, repos, "lookup-a@example.com")
+	b := seedSupplierUser(t, repos, "lookup-b@example.com")
+
+	privateProxyA := seedPGProxyOwned(t, repos, a.ID, "lookup-private-a")
+	platformProxy := seedPGProxyNamed(t, repos, "lookup-platform")
+
+	// ① 跨 scope：B 的作用域里读 A 的私池，读到的是 A 的归属。
+	info, err := repos.Proxies.LookupProxyForBinding(scopeCtx(b.ID), privateProxyA)
+	require.NoError(t, err, "判据读取不受调用方作用域限制")
+	require.NotNil(t, info.OwnerUID)
+	require.Equal(t, a.ID, *info.OwnerUID)
+	require.True(t, info.Enabled)
+
+	// ② 平台代理：OwnerUID 为 nil（谓词第一条分支的判据）。
+	platformInfo, err := repos.Proxies.LookupProxyForBinding(scopeCtx(b.ID), platformProxy)
+	require.NoError(t, err)
+	require.Nil(t, platformInfo.OwnerUID, "平台代理 owner NULL ⇒ 只有管理员可分配")
+
+	// ③ 停用条目仍可读（Enabled 由 enabled 列给，绑定校验不因停用而"假装不存在"：
+	//    谓词只要求存在且未软删；可用性由 Routable 在装载期派生）。
+	disabled := domain.Proxy{
+		Name: "lookup-disabled", Scheme: domain.ProxySchemeHTTP, Host: "disabled.example.com", Port: 8080,
+		Enabled: false,
+	}
+	disabledID, err := repos.Proxies.CreateProxy(adminCtx, disabled)
+	require.NoError(t, err)
+	disabledInfo, err := repos.Proxies.LookupProxyForBinding(adminCtx, disabledID)
+	require.NoError(t, err)
+	require.False(t, disabledInfo.Enabled)
+
+	// ④ 软删 ⇒ 不存在。
+	require.NoError(t, repos.Proxies.DeleteProxy(adminCtx, disabledID))
+	_, err = repos.Proxies.LookupProxyForBinding(adminCtx, disabledID)
+	require.ErrorIs(t, err, repository.ErrNotFound, "已软删视同不存在")
+}

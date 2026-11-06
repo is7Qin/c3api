@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strconv"
 	"strings"
@@ -72,6 +73,11 @@ func (s *Service) CreateProxy(ctx context.Context, in ProxyInput) (int64, error)
 	if err != nil {
 		return 0, err
 	}
+	// 供应商自建出口的私网拒绝（spec §3.6）：判据只在「供应商创建」分支生效，
+	// 管理员建内网出口是合理需求（内网拨测/专线）。
+	if err := checkSupplierEgressHost(ctx, p.Host); err != nil {
+		return 0, err
+	}
 	// enabled：缺省 true（spec §3.1），显式 false 生效。
 	p.Enabled = true
 	if in.Enabled != nil {
@@ -102,6 +108,11 @@ func (s *Service) CreateProxy(ctx context.Context, in ProxyInput) (int64, error)
 func (s *Service) UpdateProxy(ctx context.Context, id int64, in ProxyInput) error {
 	p, err := normalizeProxyInput(in)
 	if err != nil {
+		return err
+	}
+	// 改地址同样过私网判据（§3.6）：否则「先建成公网域名再改成 127.0.0.1」就是
+	// 一条绕过创建面拦截的通路。
+	if err := checkSupplierEgressHost(ctx, p.Host); err != nil {
 		return err
 	}
 	cur, err := s.store.GetProxy(ctx, id)
@@ -296,21 +307,101 @@ func proxyRedactedError(err error, p domain.Proxy) string {
 	return text
 }
 
-// checkProxyExists 账号写面的绑定校验（spec §3.5 第 6 条）：
+// resolveBindableProxy 应用 spec §3.6 的**唯一绑定谓词**（一处实现，不散开）：
 //
-//	nil = 不变（不校验——`AccountPatch.ProxyID == nil` 已表达「不变」）
-//	&0 = 解绑（回落直连，无需目标存在）
-//	&id>0 = 绑定：目标必须**存在且未软删**（仓库 GetProxy 已把软删视同不存在），
-//	        否则 ErrNotFound（404，带 id 详情——与模板/组缺 id 的既有映射同形）
+//	nil      = 不变（不校验——`AccountPatch.ProxyID == nil` 已表达「不变」）
+//	&0       = 解绑（回落直连，无需目标存在）
+//	&id>0    = 绑定：目标必须存活 ∧ 命中下面这张表，否则 ErrNotFound（404）
+//
+//	bindable(proxy, targetAccount, callerScope) =
+//	    proxy 存在且未软删
+//	  ∧ ( proxy.owner_uid == NULL ? callerScope 为空（管理员）      // 平台代理：仅管理员可分配
+//	                             : targetAccount.supplier_user_id == *proxy.owner_uid )
+//	                                                       // 私池代理：只能承载其主的流量
+//
+// 三条后果，都是有意的：
+//   - 平台池**不是公共池**：供应商面（scope.Set）绑平台代理 ⇒ 404（看不见也绑不上）；
+//   - 私池代理**管理员也不能挪给别人**（targetSupplier 必须等于 owner），否则供应商
+//     控制的出口会承载别人的流量（信任倒挂）；
+//   - 平台账号的 supplier_user_id 是 0 ⇒ 谓词最后一行恒假 ⇒ 平台账号绑不上任何私池
+//     代理（等价于「平台账号只能绑平台代理」）。
+//
+// 越界一律 **404 而不是 403**：不泄露「别人有这条代理」这一事实。归属走
+// store.LookupProxyForBinding（跨 scope 读取——判的是「能不能绑」而非「能不能看」）。
+//
+// **谓词不看 enabled**（绑定校验因此不带它）：停用是运行期可用性，绑定关系是权限事实。
+// 允许「先绑好、后启用」的运维顺序，代价由 Routable 承担——停用条目的绑定会让账号
+// Routable=false 而不入选（§4.1），不会把流量送出去。
 //
 // 落点：三个账号写面（CreateAccount / PatchAccount / UpdateAccountsBatch）里紧跟
-// 在 checkGroupsExist 之后，与 supplier_user_id 的存在性/值域校验同一处、同一形态。
-func (s *Service) checkProxyExists(ctx context.Context, id *int64) error {
-	if id == nil || *id <= 0 {
+// checkGroupsExist 之后，与 supplier_user_id 的存在性/值域校验同一处、同一形态。
+func (s *Service) resolveBindableProxy(ctx context.Context, proxyID *int64, targetSupplierUserID int64) error {
+	if proxyID == nil || *proxyID <= 0 {
 		return nil
 	}
-	if _, err := s.store.GetProxy(ctx, *id); err != nil {
-		return mapRepoErr(err)
+	info, err := s.store.LookupProxyForBinding(ctx, *proxyID)
+	if err != nil {
+		return mapRepoErr(err) // 不存在/已软删 → 404
+	}
+	if info.OwnerUID == nil {
+		// 平台代理：只有管理员（无 scope）能分配，且可分配给任意账号。
+		if domain.AccountScopeFrom(ctx).Set {
+			return fmt.Errorf("%w: proxy_id=%d is not bindable", ErrNotFound, *proxyID)
+		}
+		return nil
+	}
+	// 私池代理：只能承载其主的账号（管理员也遵守）。归属不符与「不存在」同码。
+	if targetSupplierUserID != *info.OwnerUID {
+		return fmt.Errorf("%w: proxy_id=%d is not bindable", ErrNotFound, *proxyID)
 	}
 	return nil
+}
+
+// checkSupplierEgressHost 供应商自建出口的私网拒绝（spec §3.6）：只在 scope.Set 时生效
+// ——管理员建内网出口是合理需求（内网拨测/专线），供应商建就成了一个免费的**内网穿透
+// 跳板**。命中 ⇒ ErrInvalidInput（400）。
+//
+// **只对 IP 字面量生效，域名一律放行**：创建时不发 DNS 查询（解析本身是阻塞面，也是
+// 一条外泄面：把内网主机名丢给解析器就能探测域内命名），解析由代理侧在拨测/出栈时
+// 自己做。故 `internal.corp` 这类名字绕不过判据的说法是不准确的——它压根不在判据范围
+// 内；这条边界的代价（供应商可自建指向内网的域名出口）已记在 spec §3.6 的已知取舍里。
+func checkSupplierEgressHost(ctx context.Context, host string) error {
+	if !domain.AccountScopeFrom(ctx).Set {
+		return nil
+	}
+	if supplierForbiddenEgressHost(host) {
+		return ErrInvalidInput
+	}
+	return nil
+}
+
+// supplierForbiddenEgressHost 私网/回环/链路本地/保留地址判据（§3.6 列表）：`10/8`、
+// `172.16/12`、`192.168/16`、`127/8`、`169.254/16`、`100.64/10`、`0/8`、`::1`、
+// `fc00::/7`、`fe80::/10`、IPv4-mapped IPv6，以及字面量 `localhost` 与 `.local` 后缀。
+//
+// IPv4-mapped（`::ffff:10.0.0.1`）不需要单独分支：net.IP.To4() 会把映射地址还原成 4
+// 字节，后面的判定因此对两种写法一致。
+func supplierForbiddenEgressHost(host string) bool {
+	h := strings.ToLower(strings.TrimSpace(host))
+	// mDNS 后缀 `.local` 与字面量 localhost：两者在任何解析器下都指向本地/链路内。
+	if h == "localhost" || strings.HasSuffix(h, ".local") {
+		return true
+	}
+	ip := net.ParseIP(h)
+	if ip == nil {
+		return false // 域名：不解析 DNS，放行（见 checkSupplierEgressHost 注释）
+	}
+	if ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsPrivate() {
+		return true
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		if ip4[0] == 0 {
+			return true // 0/8（"本网络"，含 0.0.0.0 之外的写法）
+		}
+		if ip4[0] == 100 && ip4[1] >= 64 && ip4[1] <= 127 {
+			return true // 100.64/10 运营商级 NAT（云上常被当内网用）
+		}
+	}
+	return false
 }

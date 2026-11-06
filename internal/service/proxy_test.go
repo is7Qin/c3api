@@ -392,3 +392,92 @@ func closedTCPPort(t *testing.T) int {
 	require.NoError(t, err)
 	return port
 }
+
+// supplierScopeCtx 注入供应商面行层作用域（镜像 handler.SupplierScopeInject）：
+// spec §3.6 的两条判据都以它区分「供应商」与「管理员」。
+func supplierScopeCtx(uid int64) context.Context {
+	return domain.WithAccountScope(context.Background(), domain.SupplierAccountScope(uid))
+}
+
+// TestCreateProxySupplierPrivateHostRejected 供应商自建出口的私网拒绝（spec §3.6）：
+// 供应商面命中私网/回环/链路本地/保留/元数据地址 ⇒ ErrInvalidInput（400）且不落库；
+// 管理员面同地址放行（内网出口是合法需求）；域名两方都放行（创建期不解析 DNS）。
+func TestCreateProxySupplierPrivateHostRejected(t *testing.T) {
+	cases := []struct {
+		name      string
+		host      string
+		forbidden bool
+	}{
+		{"ipv4 10/8", "10.1.2.3", true},
+		{"ipv4 172.16/12", "172.16.5.4", true},
+		{"ipv4 172.31 edge", "172.31.255.254", true},
+		{"ipv4 192.168/16", "192.168.1.1", true},
+		{"ipv4 loopback", "127.0.0.1", true},
+		{"metadata 169.254/16", "169.254.169.254", true},
+		{"cgnat 100.64/10", "100.64.7.7", true},
+		{"ipv4 0/8", "0.1.2.3", true},
+		{"ipv6 loopback", "::1", true},
+		{"ipv6 ula fc00::/7", "fc00::1", true},
+		{"ipv6 link-local fe80::/10", "fe80::1", true},
+		{"ipv4-mapped ipv6", "::ffff:10.0.0.1", true},
+		{"localhost literal", "localhost", true},
+		{"localhost uppercase", "LocalHost", true},
+		{"dot local suffix", "printer.local", true},
+		// 放行：公网 IP 与域名（域名创建期不解析——DNS 查询本身是阻塞/外泄面）。
+		{"public ip", "203.0.113.9", false},
+		{"public ip 172.32", "172.32.0.1", false},
+		{"domain", "proxy.example.com", false},
+		{"domain-looking-localhost", "notlocalhost.example.com", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// 供应商面。
+			svc, _, rec := newProxyTestService()
+			in := validProxyInput()
+			in.Name = "sup-" + tc.name
+			in.Host = tc.host
+			before := rec.total()
+			_, err := svc.CreateProxy(supplierScopeCtx(41), in)
+			if tc.forbidden {
+				require.ErrorIs(t, err, ErrInvalidInput, "供应商建私网出口 ⇒ 400")
+				require.Equal(t, before, rec.total(), "拒绝路径不触发失效")
+				list, lErr := svc.ListProxies(context.Background())
+				require.NoError(t, lErr)
+				require.Empty(t, list, "拒绝路径不落库")
+			} else {
+				require.NoError(t, err, "域名/公网 IP 在供应商面放行")
+			}
+
+			// 管理员面：同一地址一律通过（含私网——内网拨测/专线是合法需求）。
+			adminSvc, _, _ := newProxyTestService()
+			adminIn := validProxyInput()
+			adminIn.Name = "admin-" + tc.name
+			adminIn.Host = tc.host
+			_, err = adminSvc.CreateProxy(context.Background(), adminIn)
+			require.NoError(t, err, "管理员建内网出口不得被拦")
+		})
+	}
+}
+
+// TestUpdateProxySupplierPrivateHostRejected 改地址同样过私网判据（§3.6）：否则
+// 「先建成公网域名、再改成 127.0.0.1」就是一条绕过创建面拦截的通路。
+func TestUpdateProxySupplierPrivateHostRejected(t *testing.T) {
+	svc, _, _ := newProxyTestService()
+	supplierCtx := supplierScopeCtx(41)
+
+	in := validProxyInput()
+	in.Name = "update-private"
+	in.Host = "proxy.example.com"
+	id, err := svc.CreateProxy(supplierCtx, in)
+	require.NoError(t, err, "公网域名先建成")
+
+	in.Host = "127.0.0.1"
+	require.ErrorIs(t, svc.UpdateProxy(supplierCtx, id, in), ErrInvalidInput,
+		"供应商把地址改成回环 ⇒ 400")
+	kept, err := svc.GetProxy(supplierCtx, id)
+	require.NoError(t, err)
+	require.Equal(t, "proxy.example.com", kept.Host, "拒绝路径不落值")
+
+	// 管理员改同样的地址：通过（同一判据只在供应商分支生效）。
+	require.NoError(t, svc.UpdateProxy(context.Background(), id, in), "管理员不受此限")
+}

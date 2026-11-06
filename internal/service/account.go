@@ -50,9 +50,18 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 			return nil, err // 组缺 id → 404
 		}
 	}
-	// 出口代理绑定（spec-proxy-pool §3.5 第 6 条）：>0 必须指向**存活**条目，否则
-	// 404；0/未提供 = 直连（创建即不落列）。与 supplier_user_id 同一处、同一形态。
-	if err := s.checkProxyExists(ctx, p.ProxyID); err != nil {
+	// 出口代理绑定（spec-proxy-pool §3.6 唯一绑定谓词）：目标账号的**归属**先算出来
+	// （下方落值处复用它——同一事实只能有一个表达式）：供应商面恒本人，管理面看
+	// 补丁的 supplier_user_id（未提供 = 平台账号 0）。私池代理只能承载其主的流量，
+	// 平台代理只有管理员能分配；越界一律 404。
+	scope := domain.AccountScopeFrom(ctx)
+	targetSupplier := int64(0)
+	if scope.Set {
+		targetSupplier = scope.OwnerUID
+	} else if p.SupplierUserID != nil && *p.SupplierUserID > 0 {
+		targetSupplier = *p.SupplierUserID
+	}
+	if err := s.resolveBindableProxy(ctx, p.ProxyID, targetSupplier); err != nil {
 		return nil, err
 	}
 	// 倍率：补丁未提供 → 显式落创建默认 ×1（10000）；提供 → 精确落值（含 0 = 免费）。
@@ -96,8 +105,8 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	//     分配给供应商的入口；前端创建表单就在发该字段）。值域校验（供应商面可达
 	//     + active）由仓储在**同一写事务内**锁 users 行后执行（ownership.go），
 	//     与禁用路径串行化——管理面单建因此与批量转属同纪律。
-	if sc := domain.AccountScopeFrom(ctx); sc.Set {
-		a.SupplierUserID = sc.OwnerUID
+	if scope.Set {
+		a.SupplierUserID = scope.OwnerUID
 	} else if p.SupplierUserID != nil && *p.SupplierUserID > 0 {
 		a.SupplierUserID = *p.SupplierUserID
 	}
@@ -184,9 +193,17 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 			return nil, err // 组缺 id → 404
 		}
 	}
-	// 出口代理绑定三态（spec-proxy-pool §3.5 第 6 条）：nil = 不变（不校验）；&0 =
-	// 解绑（无需存在）；&id>0 = 必须指向存活条目（已软删 = 不存在 → 404）。
-	if err := s.checkProxyExists(ctx, p.ProxyID); err != nil {
+	// 出口代理绑定三态（spec-proxy-pool §3.6 唯一绑定谓词）：nil = 不变（不校验）；
+	// &0 = 解绑（无需存在）；&id>0 = 必须存活 ∧ 命中谓词，否则 404。
+	//
+	// 目标归属取**落库后**的值：同一补丁可以一起转属 + 换出口，谓词要判的是写完之后
+	// 那一行的状态（用旧归属会拒绝一个最终状态完全合法的写入）。当前行已在上面读过
+	// （cur），不新开一次查询。
+	targetSupplier := cur.SupplierUserID
+	if p.SupplierUserID != nil {
+		targetSupplier = *p.SupplierUserID
+	}
+	if err := s.resolveBindableProxy(ctx, p.ProxyID, targetSupplier); err != nil {
 		return nil, err
 	}
 	// 失效判据来自 repository 回显的**真实变更集**（身份类字段按值变更），
@@ -289,10 +306,28 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	if err := validateAccountPatch(p); err != nil {
 		return nil, err
 	}
-	// 出口代理绑定（spec-proxy-pool §3.5 第 6 条）：批量面同一处、同一形态——
-	// 任一 id 不存在/已软删 → 整批 404（与组/模板的批量前置校验同语义）。
-	if err := s.checkProxyExists(ctx, p.ProxyID); err != nil {
-		return nil, err
+	// 出口代理绑定三态（spec-proxy-pool §3.6 唯一绑定谓词）：批量面**逐账号**判定
+	// ——不同账号可能归属不同供应商，故不能用一次全局校验代替（那会把「第一个账号
+	// 合法」误当成整批合法）。任一账号不命中谓词 ⇒ 整批 404，原绑定不变（写事务
+	// 尚未开始，仓库层单事务全成或全败）。
+	//
+	// 逐账号读（GetAccount）同时带来两件事：① 取到该行的 supplier_user_id；② 越域
+	// /缺失一律 404（作用域已 AND 进那条 SQL，与 supplier 面同纪律）。目标归属同样
+	// 取落库后的值（补丁可在同一批里转属）。
+	if p.ProxyID != nil && *p.ProxyID > 0 {
+		for _, id := range ids {
+			cur, err := s.store.GetAccount(ctx, id)
+			if err != nil {
+				return nil, mapRepoErr(err) // 缺 id/越域 → 404（整批不落）
+			}
+			targetSupplier := cur.SupplierUserID
+			if p.SupplierUserID != nil {
+				targetSupplier = *p.SupplierUserID
+			}
+			if err := s.resolveBindableProxy(ctx, p.ProxyID, targetSupplier); err != nil {
+				return nil, err
+			}
+		}
 	}
 	// 变更前逐个查旧组 + 替换目标组并集（upstream_key 批量变更 →
 	// clients 失效）。

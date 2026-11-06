@@ -59,6 +59,11 @@ func Name(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldName, v))
 }
 
+// OwnerUID applies equality check predicate on the "owner_uid" field. It's identical to OwnerUIDEQ.
+func OwnerUID(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldOwnerUID, v))
+}
+
 // Scheme applies equality check predicate on the "scheme" field. It's identical to SchemeEQ.
 func Scheme(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldScheme, v))
@@ -187,6 +192,56 @@ func NameEqualFold(v string) predicate.Proxy {
 // NameContainsFold applies the ContainsFold predicate on the "name" field.
 func NameContainsFold(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldContainsFold(FieldName, v))
+}
+
+// OwnerUIDEQ applies the EQ predicate on the "owner_uid" field.
+func OwnerUIDEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldOwnerUID, v))
+}
+
+// OwnerUIDNEQ applies the NEQ predicate on the "owner_uid" field.
+func OwnerUIDNEQ(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldOwnerUID, v))
+}
+
+// OwnerUIDIn applies the In predicate on the "owner_uid" field.
+func OwnerUIDIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldOwnerUID, vs...))
+}
+
+// OwnerUIDNotIn applies the NotIn predicate on the "owner_uid" field.
+func OwnerUIDNotIn(vs ...int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldOwnerUID, vs...))
+}
+
+// OwnerUIDGT applies the GT predicate on the "owner_uid" field.
+func OwnerUIDGT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldOwnerUID, v))
+}
+
+// OwnerUIDGTE applies the GTE predicate on the "owner_uid" field.
+func OwnerUIDGTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldOwnerUID, v))
+}
+
+// OwnerUIDLT applies the LT predicate on the "owner_uid" field.
+func OwnerUIDLT(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldOwnerUID, v))
+}
+
+// OwnerUIDLTE applies the LTE predicate on the "owner_uid" field.
+func OwnerUIDLTE(v int64) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldOwnerUID, v))
+}
+
+// OwnerUIDIsNil applies the IsNil predicate on the "owner_uid" field.
+func OwnerUIDIsNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldIsNull(FieldOwnerUID))
+}
+
+// OwnerUIDNotNil applies the NotNil predicate on the "owner_uid" field.
+func OwnerUIDNotNil() predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotNull(FieldOwnerUID))
 }
 
 // SchemeEQ applies the EQ predicate on the "scheme" field.

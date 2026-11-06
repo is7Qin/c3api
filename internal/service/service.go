@@ -182,6 +182,10 @@ type ProxyStore interface {
 	DeleteProxy(ctx context.Context, id int64) error
 	// WriteProxyProbe 探测三列（at/ok/error）的唯一写者：全量更新不碰它们。
 	WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error
+	// LookupProxyForBinding 绑定谓词所需的归属事实（spec §3.6）。**跨 scope 读取**：
+	// 判的是「能不能绑」而不是「能不能看」——供应商面要能判出「这条不是我的」，
+	// 管理员要能绑私池代理，两者都要求不被调用方作用域挡住。
+	LookupProxyForBinding(ctx context.Context, id int64) (repository.ProxyBindingInfo, error)
 }
 
 type AccountStore interface {

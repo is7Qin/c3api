@@ -28,6 +28,20 @@ func (_c *ProxyCreate) SetName(v string) *ProxyCreate {
 	return _c
 }
 
+// SetOwnerUID sets the "owner_uid" field.
+func (_c *ProxyCreate) SetOwnerUID(v int64) *ProxyCreate {
+	_c.mutation.SetOwnerUID(v)
+	return _c
+}
+
+// SetNillableOwnerUID sets the "owner_uid" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableOwnerUID(v *int64) *ProxyCreate {
+	if v != nil {
+		_c.SetOwnerUID(*v)
+	}
+	return _c
+}
+
 // SetScheme sets the "scheme" field.
 func (_c *ProxyCreate) SetScheme(v string) *ProxyCreate {
 	_c.mutation.SetScheme(v)
@@ -315,6 +329,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 		_spec.SetField(proxy.FieldName, field.TypeString, value)
 		_node.Name = value
 	}
+	if value, ok := _c.mutation.OwnerUID(); ok {
+		_spec.SetField(proxy.FieldOwnerUID, field.TypeInt64, value)
+		_node.OwnerUID = &value
+	}
 	if value, ok := _c.mutation.Scheme(); ok {
 		_spec.SetField(proxy.FieldScheme, field.TypeString, value)
 		_node.Scheme = value
@@ -428,6 +446,30 @@ func (u *ProxyUpsert) SetName(v string) *ProxyUpsert {
 // UpdateName sets the "name" field to the value that was provided on create.
 func (u *ProxyUpsert) UpdateName() *ProxyUpsert {
 	u.SetExcluded(proxy.FieldName)
+	return u
+}
+
+// SetOwnerUID sets the "owner_uid" field.
+func (u *ProxyUpsert) SetOwnerUID(v int64) *ProxyUpsert {
+	u.Set(proxy.FieldOwnerUID, v)
+	return u
+}
+
+// UpdateOwnerUID sets the "owner_uid" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateOwnerUID() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldOwnerUID)
+	return u
+}
+
+// AddOwnerUID adds v to the "owner_uid" field.
+func (u *ProxyUpsert) AddOwnerUID(v int64) *ProxyUpsert {
+	u.Add(proxy.FieldOwnerUID, v)
+	return u
+}
+
+// ClearOwnerUID clears the value of the "owner_uid" field.
+func (u *ProxyUpsert) ClearOwnerUID() *ProxyUpsert {
+	u.SetNull(proxy.FieldOwnerUID)
 	return u
 }
 
@@ -682,6 +724,34 @@ func (u *ProxyUpsertOne) SetName(v string) *ProxyUpsertOne {
 func (u *ProxyUpsertOne) UpdateName() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateName()
+	})
+}
+
+// SetOwnerUID sets the "owner_uid" field.
+func (u *ProxyUpsertOne) SetOwnerUID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetOwnerUID(v)
+	})
+}
+
+// AddOwnerUID adds v to the "owner_uid" field.
+func (u *ProxyUpsertOne) AddOwnerUID(v int64) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddOwnerUID(v)
+	})
+}
+
+// UpdateOwnerUID sets the "owner_uid" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateOwnerUID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateOwnerUID()
+	})
+}
+
+// ClearOwnerUID clears the value of the "owner_uid" field.
+func (u *ProxyUpsertOne) ClearOwnerUID() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearOwnerUID()
 	})
 }
 
@@ -1134,6 +1204,34 @@ func (u *ProxyUpsertBulk) SetName(v string) *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) UpdateName() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateName()
+	})
+}
+
+// SetOwnerUID sets the "owner_uid" field.
+func (u *ProxyUpsertBulk) SetOwnerUID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetOwnerUID(v)
+	})
+}
+
+// AddOwnerUID adds v to the "owner_uid" field.
+func (u *ProxyUpsertBulk) AddOwnerUID(v int64) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.AddOwnerUID(v)
+	})
+}
+
+// UpdateOwnerUID sets the "owner_uid" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateOwnerUID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateOwnerUID()
+	})
+}
+
+// ClearOwnerUID clears the value of the "owner_uid" field.
+func (u *ProxyUpsertBulk) ClearOwnerUID() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.ClearOwnerUID()
 	})
 }
 

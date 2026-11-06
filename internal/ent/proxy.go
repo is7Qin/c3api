@@ -19,6 +19,8 @@ type Proxy struct {
 	ID int64 `json:"id,omitempty"`
 	// Name holds the value of the "name" field.
 	Name string `json:"name,omitempty"`
+	// OwnerUID holds the value of the "owner_uid" field.
+	OwnerUID *int64 `json:"owner_uid,omitempty"`
 	// Scheme holds the value of the "scheme" field.
 	Scheme string `json:"scheme,omitempty"`
 	// Host holds the value of the "host" field.
@@ -55,7 +57,7 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case proxy.FieldEnabled, proxy.FieldLastProbeOk:
 			values[i] = new(sql.NullBool)
-		case proxy.FieldID, proxy.FieldPort:
+		case proxy.FieldID, proxy.FieldOwnerUID, proxy.FieldPort:
 			values[i] = new(sql.NullInt64)
 		case proxy.FieldName, proxy.FieldScheme, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldRemark, proxy.FieldLastProbeError:
 			values[i] = new(sql.NullString)
@@ -87,6 +89,13 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field name", values[i])
 			} else if value.Valid {
 				_m.Name = value.String
+			}
+		case proxy.FieldOwnerUID:
+			if value, ok := values[i].(*sql.NullInt64); !ok {
+				return fmt.Errorf("unexpected type %T for field owner_uid", values[i])
+			} else if value.Valid {
+				_m.OwnerUID = new(int64)
+				*_m.OwnerUID = value.Int64
 			}
 		case proxy.FieldScheme:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -209,6 +218,11 @@ func (_m *Proxy) String() string {
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("name=")
 	builder.WriteString(_m.Name)
+	builder.WriteString(", ")
+	if v := _m.OwnerUID; v != nil {
+		builder.WriteString("owner_uid=")
+		builder.WriteString(fmt.Sprintf("%v", *v))
+	}
 	builder.WriteString(", ")
 	builder.WriteString("scheme=")
 	builder.WriteString(_m.Scheme)

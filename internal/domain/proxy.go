@@ -39,8 +39,16 @@ func (s ProxyScheme) Valid() bool {
 // Routable 由它派生（§4.1），故装载期必须把 Enabled 带上——少了它就无法判定
 // 账号可用性。
 type Proxy struct {
-	ID             int64
-	Name           string
+	ID   int64
+	Name string
+	// OwnerUID 归属（spec-proxy-pool §3.6，D7 = C 模式）：nil = 平台代理（只由管理员
+	// 维护，也只有管理员能分配），非 nil = 该供应商自建（私池：只能承载其主的账号
+	// 流量，管理员也遵守这一条）。
+	//
+	// **写面/可见性事实，不进任何键**：调度判定不看它（Routable 只看 Enabled + 绑定
+	// 是否可用），egress 的 proxyDigest 也仍只是连接规格摘要——归属变化不换出口规格，
+	// 故它不得渗进任何静态键，否则同一条出口会因为换个主人而断连。
+	OwnerUID       *int64
 	Scheme         ProxyScheme
 	Host           string // IPv6 不带方括号
 	Port           int

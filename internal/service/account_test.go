@@ -166,3 +166,125 @@ func TestAccountPatchProxyIDOnlyIsNotEmpty(t *testing.T) {
 	// 空补丁仍然拒绝（无字段 = 无意义写）。
 	require.ErrorIs(t, validateAccountPatch(repository.AccountPatch{}), ErrInvalidInput)
 }
+
+// seedPrivateProxy 在供应商作用域下建**私池**代理（§3.6）：地址用公网域名——供应商
+// 建私网出口会被同一条 spec 的判据拒掉（那两个判据互不干扰，各自的用例各自覆盖）。
+func seedPrivateProxy(t *testing.T, svc *Service, uid int64, name string) int64 {
+	t.Helper()
+	in := validProxyInput()
+	in.Name = name
+	in.Host = "proxy-" + name + ".example.com"
+	id, err := svc.CreateProxy(supplierScopeCtx(uid), in)
+	require.NoError(t, err)
+	return id
+}
+
+// TestProxyBindingPredicate spec §3.6 的**唯一绑定谓词**四象限：
+//
+//	平台代理（owner NULL）  ⇒ 仅管理员可分配；可分配给平台账号或供应商账号
+//	私池代理（owner = X）   ⇒ 只能承载 X 自己的账号（管理员也遵守）
+//	平台账号（owner = 0）   ⇒ 谓词最后一行恒假 ⇒ 绑不上任何私池代理
+//
+// 越界一律 **404**（不是 403）：不泄露「别人有这条代理」。三个写面（创建/单改/批量）
+// 共用同一个谓词，故每个面都抽一条越界样本。
+func TestProxyBindingPredicate(t *testing.T) {
+	svc, _, _ := newProxyTestService()
+	adminCtx := context.Background()
+	const (
+		supplierA = int64(101)
+		supplierB = int64(202)
+	)
+	ctxA := supplierScopeCtx(supplierA)
+	tpl := seedTemplate(t, svc, "tpl-proxy-pred")
+
+	platformProxy := seedBindingProxy(t, svc, "pred-platform")
+	privateA := seedPrivateProxy(t, svc, supplierA, "pred-private-a")
+
+	newAccount := func(name string, owner int64) int64 {
+		p := repository.AccountPatch{Name: &name, TemplateID: &tpl.ID, UpstreamKey: new("k-" + name)}
+		if owner > 0 {
+			p.SupplierUserID = &owner
+		}
+		acc, err := svc.CreateAccount(adminCtx, p)
+		require.NoError(t, err)
+		return acc.ID
+	}
+	platformAcc := newAccount("pred-platform-acc", 0)
+	accA := newAccount("pred-a-acc", supplierA)
+	accB := newAccount("pred-b-acc", supplierB)
+
+	bind := func(ctx context.Context, accID, proxyID int64) error {
+		_, err := svc.PatchAccount(ctx, accID, repository.AccountPatch{ProxyID: &proxyID}, nil)
+		return err
+	}
+
+	// ① 平台代理 × 平台账号（管理员）⇒ ✅
+	require.NoError(t, bind(adminCtx, platformAcc, platformProxy))
+	// ② 平台代理 × 供应商账号（管理员）⇒ ✅（平台代理可分配给任何账号）
+	require.NoError(t, bind(adminCtx, accA, platformProxy))
+	// ③ 平台代理 × 供应商账号，但调用方是供应商自己 ⇒ 404（平台池不是公共池：
+	//    供应商看不见也绑不上，哪怕这条已经由管理员分配给过他）
+	require.ErrorIs(t, bind(ctxA, accA, platformProxy), ErrNotFound)
+	// ④ 私池 A × A 的账号（管理员）⇒ ✅
+	require.NoError(t, bind(adminCtx, accA, privateA))
+	// ⑤ 私池 A × A 的账号（A 自己）⇒ ✅
+	require.NoError(t, bind(ctxA, accA, privateA))
+	// ⑥ 私池 A × B 的账号（管理员）⇒ 404：私池只能承载其主的流量
+	require.ErrorIs(t, bind(adminCtx, accB, privateA), ErrNotFound)
+	require.Nil(t, accProxyID(t, svc, accB), "404 路径不得留下半套写入")
+	// ⑦ 私池 A × 平台账号（管理员）⇒ 404（平台账号 owner=0 恒不匹配）
+	require.ErrorIs(t, bind(adminCtx, platformAcc, privateA), ErrNotFound)
+	kept, err := svc.GetAccount(adminCtx, platformAcc)
+	require.NoError(t, err)
+	require.NotNil(t, kept.ProxyID)
+	require.Equal(t, platformProxy, *kept.ProxyID, "拒绝路径保持原绑定")
+
+	// ⑧ 同一补丁「转属给 A + 绑 A 的私池」⇒ 通过：谓词判的是**落库后**的归属
+	//    （否则会拒绝一个最终状态完全合法的写入）
+	ownerA := supplierA
+	_, err = svc.PatchAccount(adminCtx, accB, repository.AccountPatch{SupplierUserID: &ownerA, ProxyID: &privateA}, nil)
+	require.NoError(t, err, "转属与换出口同批落库 ⇒ 判写完那一行")
+
+	// ⑨ 创建面：私池 A 绑到 B 的新账号 ⇒ 404，且不建出账号
+	badName := "pred-create-bad"
+	_, err = svc.CreateAccount(adminCtx, repository.AccountPatch{
+		Name: &badName, TemplateID: &tpl.ID, UpstreamKey: new("k-bad"),
+		SupplierUserID: &[]int64{supplierB}[0], ProxyID: &privateA,
+	})
+	require.ErrorIs(t, err, ErrNotFound, "创建面共用同一谓词")
+	list, _, err := svc.ListAccounts(adminCtx, repository.ListQuery{})
+	require.NoError(t, err)
+	for _, acc := range list {
+		require.NotEqual(t, badName, acc.Name, "404 路径不得建出账号")
+	}
+
+	// ⑩ 软删的代理 ⇒ 404（不存在与越界同码）
+	goneProxy := seedPrivateProxy(t, svc, supplierA, "pred-private-gone")
+	require.NoError(t, svc.DeleteProxy(ctxA, goneProxy))
+	require.ErrorIs(t, bind(ctxA, accA, goneProxy), ErrNotFound, "已软删 ⇒ 404")
+
+	// ⑪ 批量面**逐账号**判定：一真一假 ⇒ 整批 404，原绑定不变
+	accA2 := newAccount("pred-a2-acc", supplierA)
+	accB2 := newAccount("pred-b2-acc", supplierB)
+	require.NoError(t, bind(adminCtx, accA2, platformProxy))
+	require.NoError(t, bind(adminCtx, accB2, platformProxy))
+	_, err = svc.UpdateAccountsBatch(adminCtx, []int64{accA2, accB2}, repository.AccountPatch{ProxyID: &privateA})
+	require.ErrorIs(t, err, ErrNotFound, "任一账号不命中谓词 ⇒ 整批 404")
+	for _, id := range []int64{accA2, accB2} {
+		acc, gErr := svc.GetAccount(adminCtx, id)
+		require.NoError(t, gErr)
+		require.NotNil(t, acc.ProxyID)
+		require.Equal(t, platformProxy, *acc.ProxyID, "整批失败不改变任何原绑定")
+	}
+	// 全真才落：两个都属于 A ⇒ 通过
+	_, err = svc.UpdateAccountsBatch(adminCtx, []int64{accA, accA2}, repository.AccountPatch{ProxyID: &privateA})
+	require.NoError(t, err)
+}
+
+// accProxyID 单条账号当前绑定（nil = 直连）。
+func accProxyID(t *testing.T, svc *Service, id int64) *int64 {
+	t.Helper()
+	acc, err := svc.GetAccount(context.Background(), id)
+	require.NoError(t, err)
+	return acc.ProxyID
+}

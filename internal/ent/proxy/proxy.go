@@ -15,6 +15,8 @@ const (
 	FieldID = "id"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
+	// FieldOwnerUID holds the string denoting the owner_uid field in the database.
+	FieldOwnerUID = "owner_uid"
 	// FieldScheme holds the string denoting the scheme field in the database.
 	FieldScheme = "scheme"
 	// FieldHost holds the string denoting the host field in the database.
@@ -49,6 +51,7 @@ const (
 var Columns = []string{
 	FieldID,
 	FieldName,
+	FieldOwnerUID,
 	FieldScheme,
 	FieldHost,
 	FieldPort,
@@ -100,6 +103,11 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 // ByName orders the results by the name field.
 func ByName(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldName, opts...).ToFunc()
+}
+
+// ByOwnerUID orders the results by the owner_uid field.
+func ByOwnerUID(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldOwnerUID, opts...).ToFunc()
 }
 
 // ByScheme orders the results by the scheme field.

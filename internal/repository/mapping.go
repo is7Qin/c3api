@@ -201,6 +201,7 @@ func toDomainProxy(p *ent.Proxy) domain.Proxy {
 	d := domain.Proxy{
 		ID:             p.ID,
 		Name:           p.Name,
+		OwnerUID:       p.OwnerUID,
 		Scheme:         domain.ProxyScheme(p.Scheme),
 		Host:           p.Host,
 		Port:           p.Port,

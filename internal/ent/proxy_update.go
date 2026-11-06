@@ -42,6 +42,33 @@ func (_u *ProxyUpdate) SetNillableName(v *string) *ProxyUpdate {
 	return _u
 }
 
+// SetOwnerUID sets the "owner_uid" field.
+func (_u *ProxyUpdate) SetOwnerUID(v int64) *ProxyUpdate {
+	_u.mutation.ResetOwnerUID()
+	_u.mutation.SetOwnerUID(v)
+	return _u
+}
+
+// SetNillableOwnerUID sets the "owner_uid" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillableOwnerUID(v *int64) *ProxyUpdate {
+	if v != nil {
+		_u.SetOwnerUID(*v)
+	}
+	return _u
+}
+
+// AddOwnerUID adds value to the "owner_uid" field.
+func (_u *ProxyUpdate) AddOwnerUID(v int64) *ProxyUpdate {
+	_u.mutation.AddOwnerUID(v)
+	return _u
+}
+
+// ClearOwnerUID clears the value of the "owner_uid" field.
+func (_u *ProxyUpdate) ClearOwnerUID() *ProxyUpdate {
+	_u.mutation.ClearOwnerUID()
+	return _u
+}
+
 // SetScheme sets the "scheme" field.
 func (_u *ProxyUpdate) SetScheme(v string) *ProxyUpdate {
 	_u.mutation.SetScheme(v)
@@ -306,6 +333,15 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(proxy.FieldName, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.OwnerUID(); ok {
+		_spec.SetField(proxy.FieldOwnerUID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedOwnerUID(); ok {
+		_spec.AddField(proxy.FieldOwnerUID, field.TypeInt64, value)
+	}
+	if _u.mutation.OwnerUIDCleared() {
+		_spec.ClearField(proxy.FieldOwnerUID, field.TypeInt64)
+	}
 	if value, ok := _u.mutation.Scheme(); ok {
 		_spec.SetField(proxy.FieldScheme, field.TypeString, value)
 	}
@@ -394,6 +430,33 @@ func (_u *ProxyUpdateOne) SetNillableName(v *string) *ProxyUpdateOne {
 	if v != nil {
 		_u.SetName(*v)
 	}
+	return _u
+}
+
+// SetOwnerUID sets the "owner_uid" field.
+func (_u *ProxyUpdateOne) SetOwnerUID(v int64) *ProxyUpdateOne {
+	_u.mutation.ResetOwnerUID()
+	_u.mutation.SetOwnerUID(v)
+	return _u
+}
+
+// SetNillableOwnerUID sets the "owner_uid" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillableOwnerUID(v *int64) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetOwnerUID(*v)
+	}
+	return _u
+}
+
+// AddOwnerUID adds value to the "owner_uid" field.
+func (_u *ProxyUpdateOne) AddOwnerUID(v int64) *ProxyUpdateOne {
+	_u.mutation.AddOwnerUID(v)
+	return _u
+}
+
+// ClearOwnerUID clears the value of the "owner_uid" field.
+func (_u *ProxyUpdateOne) ClearOwnerUID() *ProxyUpdateOne {
+	_u.mutation.ClearOwnerUID()
 	return _u
 }
 
@@ -690,6 +753,15 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(proxy.FieldName, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.OwnerUID(); ok {
+		_spec.SetField(proxy.FieldOwnerUID, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedOwnerUID(); ok {
+		_spec.AddField(proxy.FieldOwnerUID, field.TypeInt64, value)
+	}
+	if _u.mutation.OwnerUIDCleared() {
+		_spec.ClearField(proxy.FieldOwnerUID, field.TypeInt64)
 	}
 	if value, ok := _u.mutation.Scheme(); ok {
 		_spec.SetField(proxy.FieldScheme, field.TypeString, value)

@@ -201,25 +201,25 @@ func init() {
 	proxyFields := schema.Proxy{}.Fields()
 	_ = proxyFields
 	// proxyDescEnabled is the schema descriptor for enabled field.
-	proxyDescEnabled := proxyFields[7].Descriptor()
+	proxyDescEnabled := proxyFields[8].Descriptor()
 	// proxy.DefaultEnabled holds the default value on creation for the enabled field.
 	proxy.DefaultEnabled = proxyDescEnabled.Default.(bool)
 	// proxyDescLastProbeOk is the schema descriptor for last_probe_ok field.
-	proxyDescLastProbeOk := proxyFields[10].Descriptor()
+	proxyDescLastProbeOk := proxyFields[11].Descriptor()
 	// proxy.DefaultLastProbeOk holds the default value on creation for the last_probe_ok field.
 	proxy.DefaultLastProbeOk = proxyDescLastProbeOk.Default.(bool)
 	// proxyDescLastProbeError is the schema descriptor for last_probe_error field.
-	proxyDescLastProbeError := proxyFields[11].Descriptor()
+	proxyDescLastProbeError := proxyFields[12].Descriptor()
 	// proxy.DefaultLastProbeError holds the default value on creation for the last_probe_error field.
 	proxy.DefaultLastProbeError = proxyDescLastProbeError.Default.(string)
 	// proxyDescUpdatedAt is the schema descriptor for updated_at field.
-	proxyDescUpdatedAt := proxyFields[12].Descriptor()
+	proxyDescUpdatedAt := proxyFields[13].Descriptor()
 	// proxy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	proxy.DefaultUpdatedAt = proxyDescUpdatedAt.Default.(func() time.Time)
 	// proxy.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	proxy.UpdateDefaultUpdatedAt = proxyDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// proxyDescCreatedAt is the schema descriptor for created_at field.
-	proxyDescCreatedAt := proxyFields[14].Descriptor()
+	proxyDescCreatedAt := proxyFields[15].Descriptor()
 	// proxy.DefaultCreatedAt holds the default value on creation for the created_at field.
 	proxy.DefaultCreatedAt = proxyDescCreatedAt.Default.(func() time.Time)
 	redemptioncodeFields := schema.RedemptionCode{}.Fields()

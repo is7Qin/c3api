@@ -366,6 +366,12 @@ func (r *Repository) WriteProxyProbe(ctx context.Context, id int64, at time.Time
 	return r.Proxies.WriteProxyProbe(ctx, id, at, ok, errText)
 }
 
+// LookupProxyForBinding 绑定谓词的跨 scope 读取（§3.6）：判「能不能绑」而非「能不能
+// 看」，故不受调用方作用域限制——见 ProxyRepo.LookupProxyForBinding 注释。
+func (r *Repository) LookupProxyForBinding(ctx context.Context, id int64) (ProxyBindingInfo, error) {
+	return r.Proxies.LookupProxyForBinding(ctx, id)
+}
+
 func (r *Repository) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
 	return r.Templates.CreateTemplate(ctx, t)
 }

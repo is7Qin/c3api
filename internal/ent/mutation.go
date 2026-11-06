@@ -13160,6 +13160,8 @@ type ProxyMutation struct {
 	typ              string
 	id               *int64
 	name             *string
+	owner_uid        *int64
+	addowner_uid     *int64
 	scheme           *string
 	host             *string
 	port             *int
@@ -13318,6 +13320,76 @@ func (m *ProxyMutation) OldName(ctx context.Context) (v string, err error) {
 // ResetName resets all changes to the "name" field.
 func (m *ProxyMutation) ResetName() {
 	m.name = nil
+}
+
+// SetOwnerUID sets the "owner_uid" field.
+func (m *ProxyMutation) SetOwnerUID(i int64) {
+	m.owner_uid = &i
+	m.addowner_uid = nil
+}
+
+// OwnerUID returns the value of the "owner_uid" field in the mutation.
+func (m *ProxyMutation) OwnerUID() (r int64, exists bool) {
+	v := m.owner_uid
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldOwnerUID returns the old "owner_uid" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldOwnerUID(ctx context.Context) (v *int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldOwnerUID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldOwnerUID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldOwnerUID: %w", err)
+	}
+	return oldValue.OwnerUID, nil
+}
+
+// AddOwnerUID adds i to the "owner_uid" field.
+func (m *ProxyMutation) AddOwnerUID(i int64) {
+	if m.addowner_uid != nil {
+		*m.addowner_uid += i
+	} else {
+		m.addowner_uid = &i
+	}
+}
+
+// AddedOwnerUID returns the value that was added to the "owner_uid" field in this mutation.
+func (m *ProxyMutation) AddedOwnerUID() (r int64, exists bool) {
+	v := m.addowner_uid
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearOwnerUID clears the value of the "owner_uid" field.
+func (m *ProxyMutation) ClearOwnerUID() {
+	m.owner_uid = nil
+	m.addowner_uid = nil
+	m.clearedFields[proxy.FieldOwnerUID] = struct{}{}
+}
+
+// OwnerUIDCleared returns if the "owner_uid" field was cleared in this mutation.
+func (m *ProxyMutation) OwnerUIDCleared() bool {
+	_, ok := m.clearedFields[proxy.FieldOwnerUID]
+	return ok
+}
+
+// ResetOwnerUID resets all changes to the "owner_uid" field.
+func (m *ProxyMutation) ResetOwnerUID() {
+	m.owner_uid = nil
+	m.addowner_uid = nil
+	delete(m.clearedFields, proxy.FieldOwnerUID)
 }
 
 // SetScheme sets the "scheme" field.
@@ -13907,9 +13979,12 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 14)
+	fields := make([]string, 0, 15)
 	if m.name != nil {
 		fields = append(fields, proxy.FieldName)
+	}
+	if m.owner_uid != nil {
+		fields = append(fields, proxy.FieldOwnerUID)
 	}
 	if m.scheme != nil {
 		fields = append(fields, proxy.FieldScheme)
@@ -13960,6 +14035,8 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case proxy.FieldName:
 		return m.Name()
+	case proxy.FieldOwnerUID:
+		return m.OwnerUID()
 	case proxy.FieldScheme:
 		return m.Scheme()
 	case proxy.FieldHost:
@@ -13997,6 +14074,8 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 	switch name {
 	case proxy.FieldName:
 		return m.OldName(ctx)
+	case proxy.FieldOwnerUID:
+		return m.OldOwnerUID(ctx)
 	case proxy.FieldScheme:
 		return m.OldScheme(ctx)
 	case proxy.FieldHost:
@@ -14038,6 +14117,13 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetName(v)
+		return nil
+	case proxy.FieldOwnerUID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetOwnerUID(v)
 		return nil
 	case proxy.FieldScheme:
 		v, ok := value.(string)
@@ -14138,6 +14224,9 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *ProxyMutation) AddedFields() []string {
 	var fields []string
+	if m.addowner_uid != nil {
+		fields = append(fields, proxy.FieldOwnerUID)
+	}
 	if m.addport != nil {
 		fields = append(fields, proxy.FieldPort)
 	}
@@ -14149,6 +14238,8 @@ func (m *ProxyMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *ProxyMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case proxy.FieldOwnerUID:
+		return m.AddedOwnerUID()
 	case proxy.FieldPort:
 		return m.AddedPort()
 	}
@@ -14160,6 +14251,13 @@ func (m *ProxyMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *ProxyMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case proxy.FieldOwnerUID:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddOwnerUID(v)
+		return nil
 	case proxy.FieldPort:
 		v, ok := value.(int)
 		if !ok {
@@ -14175,6 +14273,9 @@ func (m *ProxyMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *ProxyMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(proxy.FieldOwnerUID) {
+		fields = append(fields, proxy.FieldOwnerUID)
+	}
 	if m.FieldCleared(proxy.FieldUsername) {
 		fields = append(fields, proxy.FieldUsername)
 	}
@@ -14204,6 +14305,9 @@ func (m *ProxyMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *ProxyMutation) ClearField(name string) error {
 	switch name {
+	case proxy.FieldOwnerUID:
+		m.ClearOwnerUID()
+		return nil
 	case proxy.FieldUsername:
 		m.ClearUsername()
 		return nil
@@ -14229,6 +14333,9 @@ func (m *ProxyMutation) ResetField(name string) error {
 	switch name {
 	case proxy.FieldName:
 		m.ResetName()
+		return nil
+	case proxy.FieldOwnerUID:
+		m.ResetOwnerUID()
 		return nil
 	case proxy.FieldScheme:
 		m.ResetScheme()

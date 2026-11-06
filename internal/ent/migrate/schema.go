@@ -372,6 +372,7 @@ var (
 	ProxiesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "name", Type: field.TypeString, Unique: true},
+		{Name: "owner_uid", Type: field.TypeInt64, Nullable: true},
 		{Name: "scheme", Type: field.TypeString},
 		{Name: "host", Type: field.TypeString},
 		{Name: "port", Type: field.TypeInt},

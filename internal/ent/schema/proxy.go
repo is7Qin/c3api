@@ -17,6 +17,12 @@ func (Proxy) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("id"),
 		field.String("name").Unique(),
+		// owner_uid 归属（spec-proxy-pool §3.6，D7 = C 模式）：NULL = 平台代理（只由
+		// 管理员维护），非 NULL = 该供应商自建（私池）。它决定**可见性与可绑定范围**
+		// ——平台池不是公共池：供应商既看不到也绑不上。**不建 edge/FK**（与整张表的
+		// 扁平纪律一致）；也**不进任何键**：调度只看 enabled + 绑定是否可用，
+		// proxyDigest 只是连接规格摘要（§3.6 末条）。
+		field.Int64("owner_uid").Optional().Nillable(),
 		// scheme ∈ {socks5, socks5h, http, https}：白名单校验在 service 层
 		// （domain.ProxyScheme.Valid），列只落小写原值——socks5h 不做归一改写。
 		field.String("scheme"),
