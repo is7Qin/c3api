@@ -51,6 +51,14 @@ type planKey struct {
 	// 第三维 ⇒ 本来就会推 K），但摘要仍独立进键：K 只证「变过」，计划还需要
 	// 「现在走哪条线」这一事实；未绑定 = 零值 Spec 的摘要（与任何真实代理不同）。
 	proxyDigest [16]byte
+	// routable 账号当前**能不能被派发**（唯一决策位，spec §3.4/§4.1/§4.7）。
+	// 派生规则：enabled ∧（未绑定 ∨ 绑定可用），由 newSnapshotStatic 一次定型。
+	//
+	// 为什么它必须进键：代理 `enabled` 翻转**不碰任何账号字段**（proxy 行自己变了，
+	// account 的 K/C 都不动）。若只有 proxyDigest 而没有这一位，"同一个 spec、可用性
+	// 从 true 变 false"的两次重载会键判等 ⇒ 复用旧叶子 ⇒ 旧叶子仍带着"可派发"的
+	// 结论继续入选。它是 K 与 proxyDigest 之外的**第三个变化源**，必须独立入键。
+	routable bool
 
 	// --- 凭据面消费子集（决策输入部分） ---
 	//
@@ -100,6 +108,28 @@ func specOfDomain(p *domain.Proxy) egress.Spec {
 	return egress.New(string(p.Scheme), p.Host, p.Port, p.Username, p.Password)
 }
 
+// routableFor 派生唯一决策位 Routable：**enabled ∧（未绑定 ∨ 绑定可用）**。
+//
+// 四个装载状态在这里收敛成一个 bool，不可用的**原因**（代理禁用 vs 绑定缺失）不
+// 进决策面——需要时按 `ProxyID != nil && Proxy == nil`（缺失）/ `Proxy != nil &&
+// !Proxy.Enabled`（禁用）现推，只用于日志与回显（spec §4.7、§5.1）。
+//
+// 形参是**值/指针本身**而不是 `*snapshotStatic`：让 `Proxy.Enabled` 这一跳发生在
+// 纯函数里，不进快照的静态读观测面。spec §9.2 明令禁止 `$S.acc.Proxy.*` 下钻
+// （决策只读一位，代理细节不得成为消费面），而决策又**必须**看 `Proxy.Enabled`
+// ——把下钻关在这个函数里是两者唯一的相容解。
+func routableFor(enabled bool, proxyID *int64, px *domain.Proxy) bool {
+	if !enabled {
+		return false
+	}
+	if proxyID == nil {
+		return true // 未绑定 = 直连（出口恒可用，不会"缺失"）
+	}
+	// 绑定：行被软删/不存在（px == nil）或代理被禁用 ⇒ 不可用（fail-closed，
+	// spec L8：残留窗口固定按不可用处置，与"删除即解绑"不冲突）。
+	return px != nil && px.Enabled
+}
+
 // payloadKey 是只影响"叶子内容是否新鲜"的载荷：OAuth 访问令牌三元组只用于
 // 上游鉴权（stableCredentialDigest 对 codex-oauth 返回常量，token/refresh/
 // expiry 完全不进指纹），不是任何路由决策的输入。载荷变化必须换新叶子
@@ -143,8 +173,15 @@ type staticKey struct {
 // 生效 baseURL 与编译器同源（routing_compiler_candidates.go 的 baseURL 派生）：模板
 // 值为底，账号覆盖非空时优先。两者必须是同一套优先级，否则判据会在编译器认为
 // 「变化了」的场景下判等（或反之），复用分支与编译事实就此分叉。
-func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int64) *snapshotStatic {
-	av := &snapshotStatic{acc: acc, tpl: tpl, groupIDs: append([]int64(nil), groupIDs...)}
+//
+// eg 是**已解析好的**出口 client（buildSnapshots 解析、恒非 nil）：把"解析"留在
+// 根不在静态读观测集内的 buildSnapshots，把"使用"留在热路径（spec §4.3）。
+func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int64, eg *egress.Client) *snapshotStatic {
+	av := &snapshotStatic{acc: acc, tpl: tpl, groupIDs: append([]int64(nil), groupIDs...), egress: eg}
+	// 唯一决策位在**构造期一次定型**（不是装载器的活儿，也不是热路径的判断）：
+	// 之后候选过滤与计划 fence 都只读这一个 bool。放在 key 派生之前，使
+	// `k.routable = av.acc.Routable` 与字段派生同源、不可能失配。
+	av.acc.Routable = routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)
 	var k planKey
 	k.accountID = av.acc.ID
 	k.name = av.acc.Name
@@ -164,6 +201,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.supplierUserID = av.acc.SupplierUserID
 	av.proxyDigest = specOfDomain(av.acc.Proxy).Key()
 	k.proxyDigest = av.proxyDigest
+	k.routable = av.acc.Routable
 	if ext := av.acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)
 		k.codexEmail = derefString(ext.CodexEmail)

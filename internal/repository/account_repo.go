@@ -112,6 +112,11 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if a.SupplierUserID > 0 {
 			b = b.SetSupplierUserID(a.SupplierUserID)
 		}
+		// 出口代理绑定（spec-proxy-pool §3.2）：nil = 不写该列（落 NULL = 直连）。
+		// 存在性/未软删由 service 写面校验（GetProxy），仓库只落值——与归属同分工。
+		if a.ProxyID != nil {
+			b = b.SetProxyID(*a.ProxyID)
+		}
 		// 身份纪元（K）按存在性写：缺省（0）= 不写 → 落 DB 默认 1（与
 		// LifecycleRevision 同款语义；§3.2 的创建默认由 service 收口显式给 1）。
 		if a.IdentityRevision != 0 {

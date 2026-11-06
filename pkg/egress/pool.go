@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
+package egress
+
+import (
+	"net/http"
+	"net/url"
+	"sync"
+)
+
+// Client 是一条出口：连接规格 + 专属 *http.Client。
+//
+// 专属的是 **Transport**（= 专属连接池）：换出口必须换连接池，否则同一条 upstream
+// keep-alive 连接会被跨出口复用——出口配置换了，实际走的连接没换。底座 client
+// 的其余行为（Timeout/CheckRedirect/Jar）按值克隆，出口不改它们的语义。
+//
+// Spec 是**值**且零值 = 直连：直连与代理走同一个类型，出栈处没有"有没有代理"
+// 的第二个分支（spec-proxy-pool §4.2 的核心）。
+type Client struct {
+	Spec Spec // 零值 = 直连
+	HTTP *http.Client
+}
+
+// Pool 是**进程级持久**的出口 client 注册表：按 Spec.Key() 复用，不随快照回收
+// （改 base_url 不该重建代理连接池），旧规格靠显式 Prune 关闭并移除。
+//
+// 生命周期纪律：For / Prune 只可能在快照期与管理面写后调用（低频）；热路径只
+// 读快照上已解析好的 *Client 指针——0 次 map 读、0 次分支、0 分配。
+type Pool struct {
+	mu     sync.Mutex
+	base   *http.Client // 克隆底座（与 aiclient Factory 共用同一个 client）
+	direct *Client      // 构造期单例（Spec 零值，base 原样）
+	byKey  map[[16]byte]*Client
+}
+
+// NewPool 建池。base 是直连底座（生产由 main 注入与 aiclient Factory 同一个
+// client）；nil ⇒ http.DefaultClient（仅测试路径会用到）。
+func NewPool(base *http.Client) *Pool {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	return &Pool{
+		base:   base,
+		direct: &Client{HTTP: base},
+		byKey:  make(map[[16]byte]*Client),
+	}
+}
+
+// Direct 返回直连出口（Spec 零值，构造期单例——未绑定账号的出口恒是这一个）。
+func (p *Pool) Direct() *Client { return p.direct }
+
+// For 按规格取/建出口 client：同键复用同一 *Client 指针（连接池因此跨快照重建
+// 保留）。零值 spec ⇒ Direct()。
+//
+// **仅快照期调用**（buildSnapshots / 管理面写后）；热路径不得调用（否则每次出栈
+// 多一次锁与 map 读，正是本设计要消灭的开销）。
+func (p *Pool) For(spec Spec) *Client {
+	if spec == (Spec{}) {
+		return p.Direct()
+	}
+	key := spec.Key()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if c, ok := p.byKey[key]; ok {
+		return c
+	}
+	c := &Client{Spec: spec, HTTP: p.newClient(spec)}
+	p.byKey[key] = c
+	return c
+}
+
+// Prune 关闭并移除不在 active 的规格 client：先 CloseIdleConnections 再删（不靠
+// GC 猜、不靠 finalizer），幂等。active 由调用方给出当前叶子引用到的摘要集。
+func (p *Pool) Prune(active map[[16]byte]struct{}) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	for key, c := range p.byKey {
+		if _, ok := active[key]; ok {
+			continue
+		}
+		c.HTTP.CloseIdleConnections()
+		delete(p.byKey, key)
+	}
+}
+
+// Size 返回当前注册的规格 client 数（不含直连）。装配处用它跳过"根本没配代理"
+// 的 prune（零代理部署的 reload 路径因此零开销）。
+func (p *Pool) Size() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.byKey)
+}
+
+// newClient 由底座克隆出**专属连接池**的 client：Transport 一律克隆（不可共享，
+// 否则 Proxy 会写到别人的连接池上），Proxy 指向本规格的代理 URL。
+//
+// schema 白名单校验在写面（§3.5）；这里按 Go 原生能力装配：socks5 / socks5h /
+// http / https 四种都经 Transport.Proxy（https 代理需 Go ≥1.24）。
+func (p *Pool) newClient(spec Spec) *http.Client {
+	tr := cloneTransport(p.base)
+	u := &url.URL{Scheme: spec.Scheme, Host: spec.Addr()}
+	if spec.Username != "" {
+		// 有用户名无密码 ⇒ url.User（URL 形态 `user@host`，不臆造一个空密码段）。
+		if spec.Password == "" {
+			u.User = url.User(spec.Username)
+		} else {
+			u.User = url.UserPassword(spec.Username, spec.Password)
+		}
+	}
+	tr.Proxy = http.ProxyURL(u)
+	hc := *p.base // 按值克隆：Timeout/CheckRedirect/Jar 沿用底座
+	hc.Transport = tr
+	return &hc
+}
+
+// cloneTransport 克隆底座 transport；底座没给 *http.Transport（或给了个包装
+// RoundTripper）时退回 http.DefaultTransport 的克隆——代理装配是"加一层
+// Proxy"，不该因底座类型未知而放弃。
+func cloneTransport(base *http.Client) *http.Transport {
+	if tr, ok := base.Transport.(*http.Transport); ok {
+		// 底座 Transport 若自带 Proxy 是本规格要覆盖的（main 显式直连）：克隆后
+		// 立刻覆盖，克隆本身只是为了拿到独立的连接池与参数。
+		return tr.Clone()
+	}
+	return http.DefaultTransport.(*http.Transport).Clone()
+}

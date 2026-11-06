@@ -150,7 +150,9 @@ func TestSelectionSizeAMD64(t *testing.T) {
 	// +8：codex 槽位池认领的 identitySlot 指针（slot-identity 注入/推进面）。
 	// +32：SupplierFinance（选中账号时捕获的不可变财务上下文，spec 2026-10-09
 	// §4.2/§4.6；随尝试携带，收尾不再回查 owner）。
-	require.Equal(t, uintptr(192), unsafe.Sizeof(Selection{}))
+	// +8：Egress 出口 client 指针（spec-proxy-pool §4.3：快照期解析好，出栈只读
+	// 指针——这笔 8 字节是"热路径零判断/零 map 读"的全部代价，有意登记）。
+	require.Equal(t, uintptr(200), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
@@ -355,7 +357,7 @@ func TestCompilerFixtureHashRejectsMutation(t *testing.T) {
 	require.NotNil(t, st)
 	accRev := st.acc
 	accRev.LifecycleRevision++
-	snap.static.Store(newSnapshotStatic(accRev, st.tpl, st.groupIDs))
+	snap.static.Store(newSnapshotStatic(accRev, st.tpl, st.groupIDs, directEgress()))
 
 	after, _ := hashCompilerFixture(s)
 	require.NotEqual(t, before, after)

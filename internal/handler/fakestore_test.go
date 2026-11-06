@@ -25,11 +25,13 @@ import (
 // （评审发现：测试必然失败或退化为恒真断言）。
 // 实现 service.Store 接口，供 handler 测试使用。
 type fakeStore struct {
-	mu          sync.Mutex
-	tpls        map[int64]*domain.Template
-	accs        map[int64]*domain.Account
-	groups      map[int64]*domain.Group
-	accGroups   map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
+	mu        sync.Mutex
+	tpls      map[int64]*domain.Template
+	accs      map[int64]*domain.Account
+	groups    map[int64]*domain.Group
+	accGroups map[int64][]int64 // accountID → groupIDs（账号侧绑定，Set/GetAccountGroups）
+	// proxies 出口代理条目（spec-proxy-pool M1b）：软删只置 deletedAt，读面过滤。
+	proxies     map[int64]*fakeProxyRow
 	keys        map[int64]*domain.Key
 	mgmtKeys    map[int64]*domain.ManagementKey // 管理 API key（mk-，spec 2026-10-09）
 	users       map[int64]*domain.User
@@ -85,7 +87,8 @@ func newFakeStore() *fakeStore {
 	return &fakeStore{
 		tpls: make(map[int64]*domain.Template), accs: make(map[int64]*domain.Account),
 		groups: make(map[int64]*domain.Group), accGroups: make(map[int64][]int64),
-		keys: make(map[int64]*domain.Key), mgmtKeys: make(map[int64]*domain.ManagementKey), users: make(map[int64]*domain.User),
+		proxies: make(map[int64]*fakeProxyRow),
+		keys:    make(map[int64]*domain.Key), mgmtKeys: make(map[int64]*domain.ManagementKey), users: make(map[int64]*domain.User),
 		settings: make(map[string]*domain.Setting), rules: make(map[int64]domain.Rule),
 		assign: make(map[int64][]int64), assignMult: make(map[[2]int64]*int),
 		codes: make(map[int64]*domain.RedemptionCode),
@@ -2921,4 +2924,119 @@ func (s *fakeSupplierAdminStore) AdminApply(req domain.ApplySettlementRequest) (
 		RequestKey: req.RequestKey, RequestedOperator: req.OperatorUID, Note: req.Note}
 	s.settlements = append(s.settlements, x)
 	return x, nil
+}
+
+// --- 出口代理条目（spec-proxy-pool M1b） ---
+//
+// handler 测试目前不触代理端点（/proxies 属 M1c），但 service.Store 已并入
+// ProxyStore ⇒ 替身必须补齐：缺一即编译失败，这正是「新增 Store 面必须有意接线」
+// 的门禁形状。语义与 service 侧 fakeStore 同：软删只置 deletedAt，读面按同一谓词
+// 过滤（钉「软删 = 不存在」）；全量更新不写探测三列（WriteProxyProbe 独占）。
+
+// fakeProxyRow 代理条目替身：domain.Proxy + 软删标记。
+type fakeProxyRow struct {
+	p         domain.Proxy
+	deletedAt *time.Time
+}
+
+func (f *fakeStore) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.proxies {
+		// 唯一索引不含 deleted_at ⇒ 软删不释放名字（与 template 同语义）。
+		if row.p.Name == p.Name {
+			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
+		}
+	}
+	p.ID = f.nextID
+	f.nextID++
+	f.proxies[p.ID] = &fakeProxyRow{p: p}
+	return p.ID, nil
+}
+
+func (f *fakeStore) ListProxies(ctx context.Context) ([]domain.Proxy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := make([]int64, 0, len(f.proxies))
+	for id := range f.proxies {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	out := make([]domain.Proxy, 0, len(ids))
+	for _, id := range ids {
+		if row := f.proxies[id]; row.deletedAt == nil {
+			out = append(out, row.p)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) GetProxy(ctx context.Context, id int64) (domain.Proxy, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.proxies[id]
+	if !ok || row.deletedAt != nil {
+		return domain.Proxy{}, missingErr(id)
+	}
+	return row.p, nil
+}
+
+func (f *fakeStore) UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, row := range f.proxies {
+		if row.p.ID != p.ID && row.p.Name == p.Name {
+			return fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
+		}
+	}
+	row, ok := f.proxies[p.ID]
+	if !ok || row.deletedAt != nil {
+		return missingErr(p.ID)
+	}
+	next := p
+	// 凭据三态（镜像真实仓库：nil = 该列不进 SET ⇒ 保持旧值），两列同规矩。
+	next.Username = row.p.Username
+	if credential.Username != nil {
+		next.Username = *credential.Username
+	}
+	next.Password = row.p.Password
+	if credential.Password != nil {
+		next.Password = *credential.Password
+	}
+	next.LastProbeAt = row.p.LastProbeAt
+	next.LastProbeOK = row.p.LastProbeOK
+	next.LastProbeError = row.p.LastProbeError
+	row.p = next
+	return nil
+}
+
+func (f *fakeStore) DeleteProxy(ctx context.Context, id int64) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.proxies[id]
+	if !ok || row.deletedAt != nil {
+		return missingErr(id)
+	}
+	now := time.Now()
+	row.deletedAt = &now
+	// 同事务解绑连坐（镜像真实仓库的 `UPDATE accounts SET proxy_id = NULL`）。
+	for _, a := range f.accs {
+		if a.ProxyID != nil && *a.ProxyID == id {
+			a.ProxyID = nil
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, exists := f.proxies[id]
+	if !exists || row.deletedAt != nil {
+		return missingErr(id)
+	}
+	row.p.LastProbeAt = &at
+	row.p.LastProbeOK = ok
+	row.p.LastProbeError = errText
+	return nil
 }

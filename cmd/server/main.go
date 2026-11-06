@@ -54,6 +54,7 @@ import (
 	"github.com/is7qin/c3api/internal/verification"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/aiclient"
+	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/httpx"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/redisx"
@@ -199,11 +200,43 @@ func main() {
 	persistFn := scheduler.NewRulePersistFunc(repos, latchStore, schedGroupPub{pub}, log)
 	// 规则引擎构造（不 Reload——New 只建结构；sink/persist 一次性注入）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log, latchSink, persistFn)
+	// 上游 client 与出口池**共用同一个底座**（spec-proxy-pool §4.4/§4.2）：直连
+	// 与"经代理"只在 transport 的 Proxy 一项上不同，连接参数/超时/HTTP2 全部同源。
+	// 提到 sched 之前是因为 scheduler.Config 要拿这个池。
+	hc := httpx.NewClient(httpx.TransportConfig{
+		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
+		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
+		IdleConnTimeout:     cfg.Upstream.IdleConnTimeout,
+		DialTimeout:         cfg.Upstream.DialTimeout,
+		ForceHTTP2:          cfg.Upstream.ForceHTTP2,
+		// Proxy 显式直连（防劫持）：HTTP_PROXY 环境变量不再静默改道
+		// 上游请求（含 x-api-key/Authorization 凭据，WS 升级大概率失败）；
+		// 压测行为不随部署环境漂移。
+		Proxy: nil,
+	})
+	egressPool := egress.NewPool(hc)
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,
 		StalenessProbe: repos.Groups,
 		RotatePolicy:   codexsdk.DefaultRotatePolicy(),
+		Egress:         egressPool,
 	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
+	// 启动期装配门（spec §4.7）：代理表里有启用条目、而调度器没拿到池 ⇒ 起不来。
+	// 热路径不写"代理是否可用"的分支，装配缺失只能在这里暴露；否则后果是绑了
+	// 代理的账号从本机 IP 出栈且无人知晓。
+	if proxies, perr := repos.ListProxies(startupCtx); perr != nil {
+		fatalDB("proxy pool wiring check", perr)
+	} else {
+		enabled := 0
+		for _, px := range proxies {
+			if px.Enabled {
+				enabled++
+			}
+		}
+		if enabled > 0 && !sched.EgressWired() {
+			fatalf("egress pool not wired but proxy table has %d enabled entries: pass egress.NewPool(hc) as scheduler.Config.Egress", enabled)
+		}
+	}
 	// 额度回写器只在计费开启时注入：BillingCapture=false 时 proxy finish
 	// 本就不产生 AddQuota 增量，此处等价停用 quota writer/flush 落库面；
 	// UsageCapture 与 quota 回写解耦（quota 走 Recorder 独立 flush 节奏）。
@@ -260,17 +293,6 @@ func main() {
 	repos.Partitions.SetRoutingObservationRetentionDays(cfg.Routing.ObservationRetentionDays)
 
 	auth := proxy.NewAuth(repos.Keys, repos.Users, repos.ManagementKeys, log, cfg.Billing.Enabled)
-	hc := httpx.NewClient(httpx.TransportConfig{
-		MaxIdleConns:        cfg.Upstream.MaxIdleConns,
-		MaxIdleConnsPerHost: cfg.Upstream.MaxIdleConnsPerHost,
-		IdleConnTimeout:     cfg.Upstream.IdleConnTimeout,
-		DialTimeout:         cfg.Upstream.DialTimeout,
-		ForceHTTP2:          cfg.Upstream.ForceHTTP2,
-		// Proxy 显式直连（防劫持）：HTTP_PROXY 环境变量不再静默改道
-		// 上游请求（含 x-api-key/Authorization 凭据，WS 升级大概率失败）；
-		// 压测行为不随部署环境漂移。
-		Proxy: nil,
-	})
 	clients := aiclient.NewFactory(hc, aiclient.Config{
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
 		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,

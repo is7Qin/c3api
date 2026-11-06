@@ -340,6 +340,32 @@ func execUpdate(ctx context.Context, drv dialect.Driver, u *entsql.UpdateBuilder
 
 // --- Store 门面：Repository 聚合全部实体仓库，实现 service.Store（装配入口用）。 ---
 
+// 出口代理条目（proxy；spec-proxy-pool M1b 写面）。UpdateProxy 的密码三态以
+// 独立形参原子的表达——见 ProxyRepo.UpdateProxy 的函数注释。
+func (r *Repository) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
+	return r.Proxies.CreateProxy(ctx, p)
+}
+
+func (r *Repository) ListProxies(ctx context.Context) ([]domain.Proxy, error) {
+	return r.Proxies.ListProxies(ctx)
+}
+
+func (r *Repository) GetProxy(ctx context.Context, id int64) (domain.Proxy, error) {
+	return r.Proxies.GetProxy(ctx, id)
+}
+
+func (r *Repository) UpdateProxy(ctx context.Context, p domain.Proxy, credential ProxyCredential) error {
+	return r.Proxies.UpdateProxy(ctx, p, credential)
+}
+
+func (r *Repository) DeleteProxy(ctx context.Context, id int64) error {
+	return r.Proxies.DeleteProxy(ctx, id)
+}
+
+func (r *Repository) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error {
+	return r.Proxies.WriteProxyProbe(ctx, id, at, ok, errText)
+}
+
 func (r *Repository) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
 	return r.Templates.CreateTemplate(ctx, t)
 }

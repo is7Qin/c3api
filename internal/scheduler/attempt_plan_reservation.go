@@ -217,6 +217,9 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		StripImageTools: curAv.tpl.StripImageTools, UpstreamPaths: curAv.tpl.UpstreamPaths, Ext: curAv.acc.Ext,
 		CandidateFingerprint: candidate.Fingerprint, lease: &leaseToken{acc: cur},
 		ModelMappingMode: mappingMode,
+		// 出口 client：快照期已解析好的指针（恒非 nil）——热路径一次字段读，
+		// 没有"代理是否可用"的判断（那是装载/编译期的事实，不是每次选号的活）。
+		Egress: curAv.egress,
 	}
 	// 认领槽身份（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
 	// 内**，避免后置校验异常路径泄漏槽）。仅 codex 凭据认领（claimIdentitySlot

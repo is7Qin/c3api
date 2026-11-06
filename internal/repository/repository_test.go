@@ -358,6 +358,12 @@ func TestAccountAndGroup(t *testing.T) {
 		WillReturnRows(pgxmock.NewRows([]string{"id", "account_id", "credential_type", "codex_identity",
 			"codex_oauth_token", "codex_oauth_refresh_token", "codex_oauth_expires_at",
 			"codex_pat_key", "codex_email", "codex_account_id"}))
+	// 出口代理全表扫描（spec-proxy-pool §4.1：`Account.ProxyID` → `Account.Proxy`
+	// 展开）。代理是小表，零参数全扫描；空结果 ⇒ 全部直连（Proxy 留 nil）。
+	tr.pool.ExpectQuery(q(`FROM "proxies"`)).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "scheme", "host", "port",
+			"username", "password", "enabled", "remark", "last_probe_at", "last_probe_ok",
+			"last_probe_error"}))
 	tr.pool.ExpectQuery(q(`FROM "groups"`)).
 		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(3)))
 	tr.pool.ExpectQuery(q(`SELECT account_id, group_id FROM account_groups`)).

@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/accountext"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
+	"github.com/is7qin/c3api/internal/ent/proxy"
 )
 
 // GroupRepo 承担调度器 Loader 的快照数据源（LoadGroupsAccounts/LoadGroupAccounts）。
@@ -151,8 +152,11 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 //     同成员关系：ext 的 FK 是 account_id，eager-load 生成 `WHERE account_id
 //     IN (全部账号 id)`——参数数 = 账号实体数，>65,535 触顶；全表扫描零参数，
 //     与账号全表扫描同一量级带宽。
+//  5. `SELECT * FROM proxies WHERE deleted_at IS NULL`——出口代理全表扫描 +
+//     内存 join（spec-proxy-pool §4.1：把 `Account.ProxyID` 展开成
+//     `Account.Proxy`）。代理是小表（十到百条），见 proxyIndexByID 注释。
 //
-// 四条语句参数数都与实体数量无关，任何规模（组/账号 >65,535）都不会触顶。
+// 五条语句参数数都与实体数量无关，任何规模（组/账号 >65,535）都不会触顶。
 // 结果语义与旧 eager-load 一致：所有组都在 map 中（无账号组为空切片），
 // 账号只出现在其所属组且带模板。（唯一窗口差异：组 id 扫描后被并发删除的
 // 组不会出现在结果中——见下方白名单守卫；旧 eager-load 同窗口行为。）
@@ -174,12 +178,18 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 	for _, e := range exts {
 		extByAccount[e.AccountID] = e
 	}
+	proxies, err := r.proxyIndexByID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load groups-accounts (proxy scan): %w", err)
+	}
 	byID := make(map[int64]*domain.Account, len(accs))
 	for _, a := range accs {
 		if e := extByAccount[a.ID]; e != nil {
 			a.Edges.Ext = []*ent.AccountExt{e}
 		}
-		byID[a.ID] = toDomainAccount(a)
+		d := toDomainAccount(a)
+		expandAccountProxy(d, proxies)
+		byID[a.ID] = d
 	}
 	gids, err := r.client.Group.Query().Where(group.DeletedAtIsNil()).IDs(ctx)
 	if err != nil {
@@ -350,11 +360,53 @@ func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 		extByAccount[e.AccountID] = e
 	}
 	out := make([]*domain.Account, 0, len(accs))
+	proxies, err := r.proxyIndexByID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load group accounts (proxy scan, group %d): %w", groupID, err)
+	}
 	for _, a := range accs {
 		if e := extByAccount[a.ID]; e != nil {
 			a.Edges.Ext = []*ent.AccountExt{e}
 		}
-		out = append(out, toDomainAccount(a))
+		d := toDomainAccount(a)
+		expandAccountProxy(d, proxies)
+		out = append(out, d)
 	}
 	return out, nil
+}
+
+// proxyIndexByID 全表扫 proxy（未软删）→ id 索引，供快照装载把 `Account.ProxyID`
+// 展开成 `Account.Proxy`（spec-proxy-pool §4.1）。
+//
+// **全表扫描是安全的**：`LoadGroupsAccounts` 上方那些「触顶」顾虑只针对与账号同
+// 规模的表（`account_ext` 的 FK 是 account_id，参数数随账号规模增长；`account_groups`
+// 同理）。代理是小表（十到百条），全表扫描零参数、与账号数无关；用
+// `WHERE id IN (...)` 反而把参数数绑到代理数上，且要先收集 id——没有收益。
+//
+// 失败即返回错误（不降级为"全部直连"）：代理展开缺失会让 `Routable` 判定把
+// "绑定但查不到"和"未绑定"混成同一形态，等于把装配错误静默吞成直连。
+func (r *GroupRepo) proxyIndexByID(ctx context.Context) (map[int64]*domain.Proxy, error) {
+	rows, err := r.client.Proxy.Query().Where(proxy.DeletedAtIsNil()).All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[int64]*domain.Proxy, len(rows))
+	for _, row := range rows {
+		p := toDomainProxy(row)
+		out[p.ID] = &p
+	}
+	return out, nil
+}
+
+// expandAccountProxy 按 `ProxyID` 回填展开字段。指向已软删/不存在的行 ⇒ `Proxy`
+// 留 nil（"绑定缺失"的可判定形态，与 §4.1 的四状态表同语义）。
+//
+// **不碰 `Routable`**：它是派生决策位，唯一派生点是 scheduler 的
+// `newSnapshotStatic`（装载器只提供原料：ProxyID + 展开的 Proxy + Enabled）。
+// 放装载器会让几十处测试 fixture（Enabled=true、Proxy=nil）恒不可路由。
+func expandAccountProxy(d *domain.Account, byID map[int64]*domain.Proxy) {
+	if d == nil || d.ProxyID == nil {
+		return
+	}
+	d.Proxy = byID[*d.ProxyID]
 }

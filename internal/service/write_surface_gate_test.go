@@ -30,6 +30,12 @@ import (
 //     RecoverAccount 是失效恢复的围栏恢复动词（清失效三字段）。
 //   - 软删除 DeleteAccount 与 DeleteAccountsBatch 只写删除标记，不推进代际，
 //     不是配置或身份写入。
+//   - 代理条目写面（spec-proxy-pool M1b）：CreateProxy / UpdateProxy / DeleteProxy /
+//     ProbeProxy / ListProxies / GetProxy。它们写的是 proxy 条目本身，不触账号配置
+//     或身份代际——代理 CRUD 的失效走**全量 reload**（KindTemplates →
+//     Sched.InvalidateAll，与模板变更同一条 seam），不推进 C/K；账号侧的绑定变更
+//     仍只能经收口三动词（CreateAccount/PatchAccount/UpdateAccountsBatch）落到
+//     account.proxy_id。
 //   - 其余各项是读、其它实体的写入或纯编排 helper（键、组、用户、模板、规则、
 //     定价、模型目录读（RouteModels/GroupMultiplierOverrides/PriceDisplayForModels）、
 //     兑换、邮件、统计、用量、路由观测），不触账号配置或身份代际。
@@ -53,6 +59,7 @@ var allowedServiceMethods = []string{
 	"CreateGroup",
 	"CreateKey",
 	"CreateManagementKey",
+	"CreateProxy",
 	"CreateRule",
 	"CreateTemplate",
 	"CreateUser",
@@ -65,6 +72,7 @@ var allowedServiceMethods = []string{
 	"DeleteKey",
 	"DeleteManagementKey",
 	"DeletePriceEntry",
+	"DeleteProxy",
 	"DeleteRule",
 	"DeleteRulesBatch",
 	"DeleteTemplate",
@@ -80,6 +88,7 @@ var allowedServiceMethods = []string{
 	"GetGroupAssignments",
 	"GetKey",
 	"GetPriceEntry",
+	"GetProxy",
 	"GetSettings",
 	"GetTemplate",
 	"GetTemplateExt",
@@ -101,6 +110,7 @@ var allowedServiceMethods = []string{
 	"ListMyRedemptions",
 	"ListPriceEntries",
 	"ListPriceVariants",
+	"ListProxies",
 	"ListRules",
 	"ListTempBalances",
 	"ListTemplates",
@@ -115,6 +125,7 @@ var allowedServiceMethods = []string{
 	"PriceModels",
 	"PriceSourceURL",
 	"PriceSyncCron",
+	"ProbeProxy",
 	"QueryEntityTrend",
 	"QueryErrLogs",
 	"QueryRoutingFlow",
@@ -157,6 +168,7 @@ var allowedServiceMethods = []string{
 	"UpdateKey",
 	"UpdateMailTemplate",
 	"UpdateManagementKey",
+	"UpdateProxy",
 	"UpdateRule",
 	"UpdateSetting",
 	"UpdateTemplate",

@@ -301,7 +301,7 @@ func TestFilterCandidatesCompactsInPlace(t *testing.T) {
 
 	rootFacts := map[int64]compilerAccountFacts{}
 	mk := func(a *domain.Account) *accountSnapshot {
-		st := newSnapshotStatic(*a, a.Template, []int64{10})
+		st := newSnapshotStatic(*a, a.Template, []int64{10}, directEgress())
 		snap := newAccountSnapshot(st, &accState{status: domain.StatusActive})
 		rootFacts[a.ID] = deriveCompilerAccountFacts(snap, st)
 		return snap

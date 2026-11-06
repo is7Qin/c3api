@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/egress"
 )
 
 // errRateScale 是错误率 EWMA 的定点缩放（0..1e6）。
@@ -37,6 +38,12 @@ type snapshotStatic struct {
 	// 不在键里」在静态读闭包门里成为可枚举的事实（.proxyDigest 是字段类读
 	// 路径，.acc.Proxy 是整指针读），而不是藏在构造函数内部。
 	proxyDigest [16]byte
+	// egress 出口 client（spec-proxy-pool §4.3）：**恒非 nil**——未绑定 =
+	// Pool.Direct()，绑定 = Pool.For(规格)。解析只发生在 buildSnapshots 一次，
+	// 热路径只读这个指针交给 Selection（0 次 map 读、0 次 nil 判断）。
+	// 它不进 staticKey：摘要（proxyDigest）已承载"走哪条线"，client 指针只是
+	// 同一事实的运行期载体（换规格 ⇒ 摘要变 ⇒ 新叶子 ⇒ 新指针）。
+	egress *egress.Client
 	// key 是 canonical digest 复用位点：由 newSnapshotStatic（唯一构造函数）
 	// 一次派生并随不可变叶持有——planKeyOf(av) 直接返回它，重载路径不再逐叶
 	// 现算五类摘要。key 在首次读取前有效、发布后只读；src 切片/映射只读，
