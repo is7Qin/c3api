@@ -43,37 +43,69 @@ func proxyOwnerPred(scope domain.AccountScope) []predicate.Proxy {
 	return nil
 }
 
+// ProxyFields 代理条目的**可写列**（创建与更新共用）：不含探测三列、不含归属、不含
+// 时间戳与 id。那四项各有唯一的产生方式——探测三列只由 WriteProxyProbe 写、归属只由
+// 调用方的 scope 钉、时间戳由列默认、id 自增。
+//
+// 为什么要有这个类型：此前创建/更新都拿完整的 `domain.Proxy` 当入参，"哪些字段真的
+// 会被写"只能靠注释宣布（"p.Username 在更新面被忽略"）——调用方看不出边界，看漏了也
+// 没有报错。把边界写进类型之后，越界的写是**编译错误**，而不是静默忽略。
+type ProxyFields struct {
+	Name    string
+	Scheme  domain.ProxyScheme
+	Host    string
+	Port    int
+	Enabled bool
+	Remark  string // 空 ⇒ 落 NULL
+}
+
+// ProxyCreate 创建入参：凭据是**值**（空串即无认证，落 NULL）。
+//
+// 归属不在入参里（§3.6）：供应商面（scope.Set）恒落 `owner_uid = scope.OwnerUID`，
+// 管理面（无 scope）恒落 NULL = 平台代理。即「谁能创建，谁就拥有」这唯一事实——
+// forge 一个 owner 把私池写成别人的、或把私池写成平台代理，在这个类型下无法表达。
+type ProxyCreate struct {
+	ProxyFields
+	Username string
+	Password string
+}
+
+// ProxyUpdate 更新入参：**id + 可写列 + 凭据三态**。凭据是唯一需要三态的列对
+// （nil = 该列不进 SET）——理由见 ProxyCredential。
+type ProxyUpdate struct {
+	ID int64
+	ProxyFields
+	Credential ProxyCredential
+}
+
 // CreateProxy 新建条目，返回新 id。name 唯一冲突映射为 ErrConflict（与 template/
 // group 同款：先读既有做法——不新造错误类型，service 侧映射 409）。
 //
-// 归属（§3.6）由**作用域钉死**，而不是由入参决定：供应商面（scope.Set）恒落
-// `owner_uid = scope.OwnerUID`（请求体里根本没有这个字段，`domain.Proxy.OwnerUID`
-// 即使被调用方填了也不采信——否则 forge 一个 owner 就能把私池变成别人的/写成平台
-// 代理）；管理面（无 scope）恒落 NULL = 平台代理。即「谁能创建，谁就拥有」这唯一事实。
-func (r *ProxyRepo) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
+// 归属（§3.6）由**作用域钉死**，见 ProxyCreate 注释。
+func (r *ProxyRepo) CreateProxy(ctx context.Context, in ProxyCreate) (int64, error) {
 	b := r.client.Proxy.Create().
-		SetName(p.Name).
-		SetScheme(string(p.Scheme)).
-		SetHost(p.Host).
-		SetPort(p.Port).
-		SetEnabled(p.Enabled)
+		SetName(in.Name).
+		SetScheme(string(in.Scheme)).
+		SetHost(in.Host).
+		SetPort(in.Port).
+		SetEnabled(in.Enabled)
 	if scope := domain.AccountScopeFrom(ctx); scope.Set {
 		b = b.SetOwnerUID(scope.OwnerUID)
 	}
 	// 认证与备注：空 = 无（落 NULL）。
-	if p.Username != "" {
-		b = b.SetUsername(p.Username)
+	if in.Username != "" {
+		b = b.SetUsername(in.Username)
 	}
-	if p.Password != "" {
-		b = b.SetPassword(p.Password)
+	if in.Password != "" {
+		b = b.SetPassword(in.Password)
 	}
-	if p.Remark != "" {
-		b = b.SetRemark(p.Remark)
+	if in.Remark != "" {
+		b = b.SetRemark(in.Remark)
 	}
 	row, err := b.Save(ctx)
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
-			return 0, fmt.Errorf("%w: name=%q", ErrConflict, p.Name)
+			return 0, fmt.Errorf("%w: name=%q", ErrConflict, in.Name)
 		}
 		return 0, err
 	}
@@ -143,46 +175,43 @@ func applyProxySecret(u *ent.ProxyUpdate, c ProxyCredential) {
 	}
 }
 
-// UpdateProxy 全量更新非密字段 + **凭据三态**（见 ProxyCredential）。三态在
+// UpdateProxy 全量更新可写列 + **凭据三态**（见 ProxyCredential）。三态在
 // **同一条 UPDATE** 语句里表达（非 nil 的列才进 SET），故不需要「先读旧值再整体
 // 写回」——后者有 read-modify-write 窗口：并发的另一次改凭据会被这次写回用读到的
 // 旧值覆盖（静默回滚），而 spec §6.1 的 PUT 语义要求三态原子。
 //
-// p.Username / p.Password 在本函数里**被忽略**（只有 CreateProxy 用它们）：更新面
-// 的凭据只经 ProxyCredential 表达，避免"两处都能设凭据"。
+// 入参是 ProxyUpdate：可写列由类型给出，**探测三列根本不在里面**——于是"PUT 不能把
+// 上一次探测结论静默抹成从未探测"不再是一条要靠注释维持的纪律（探测结论是运维唯一
+// 的现场证据，不能因为改个备注而丢）。
 //
-// 其余字段仍按补丁值整体覆盖（幂等、不依赖旧值）。软删行视同不存在；name 撞其它
+// 其余可写列按入参整体覆盖（幂等、不依赖旧值）。软删行视同不存在；name 撞其它
 // 存活/已软删条目一律 ErrConflict（唯一索引不含 deleted_at——与 template 同语义）。
 // UpdatedAt 由列默认/更新默认处理，不在入参里。
-//
-// **不写 last_probe_\* 三列**：探测结果由 WriteProxyProbe 独占写（一个事实一个写者）。
-// 若让全量更新也写它们，管理面 PUT 就会把上一次探测结论静默抹成「从未探测」——
-// 而探测结论是运维唯一的现场证据，不能因为改个备注而丢。
-func (r *ProxyRepo) UpdateProxy(ctx context.Context, p domain.Proxy, credential ProxyCredential) error {
+func (r *ProxyRepo) UpdateProxy(ctx context.Context, in ProxyUpdate) error {
 	u := r.client.Proxy.Update().
-		Where(proxy.IDEQ(p.ID), proxy.DeletedAtIsNil()).
+		Where(proxy.IDEQ(in.ID), proxy.DeletedAtIsNil()).
 		Where(proxyOwnerPred(domain.AccountScopeFrom(ctx))...).
-		SetName(p.Name).
-		SetScheme(string(p.Scheme)).
-		SetHost(p.Host).
-		SetPort(p.Port).
-		SetEnabled(p.Enabled)
+		SetName(in.Name).
+		SetScheme(string(in.Scheme)).
+		SetHost(in.Host).
+		SetPort(in.Port).
+		SetEnabled(in.Enabled)
 	// 凭据两列的三态在同一语句里落值（nil 的列不进 SET ⇒ 不变）。
-	applyProxySecret(u, credential)
-	if p.Remark != "" {
-		u = u.SetRemark(p.Remark)
+	applyProxySecret(u, in.Credential)
+	if in.Remark != "" {
+		u = u.SetRemark(in.Remark)
 	} else {
 		u = u.ClearRemark()
 	}
 	n, err := u.Save(ctx)
 	if err != nil {
 		if sqlgraph.IsUniqueConstraintError(err) {
-			return fmt.Errorf("%w: name=%q", ErrConflict, p.Name)
+			return fmt.Errorf("%w: name=%q", ErrConflict, in.Name)
 		}
 		return err
 	}
 	if n == 0 {
-		return fmt.Errorf("%w: id=%d missing", ErrNotFound, p.ID)
+		return fmt.Errorf("%w: id=%d missing", ErrNotFound, in.ID)
 	}
 	return nil
 }
@@ -267,6 +296,10 @@ type ProxyBindingInfo struct {
 // 字段只给归属：可用性（enabled）与出口规格都不在这里读——停用是运行期可用性，绑定是
 // 权限事实，「先绑好、后启用」是正常运维顺序，可用性由 Routable 在装载期派生（§4.1）。
 //
+// **只 SELECT id + owner_uid**（字段投影）：窄 DTO 替代不了窄查询——取完整实体再只
+// 用两个字段，凭据与地址照样被读进内存、进日志/panic 现场的引用面。存在性判定靠 id
+// 被选中即可（`Only` 无行 ⇒ ErrNotFound）。
+//
 // **跨 scope 读取**（故意不带 proxyOwnerPred）：这里的语义是「能不能绑」，不是「能不能看」。
 // 绑定校验必须能判断「这条代理是谁的」，判不了就会退化成静默的越权通路（管理员绑不了
 // 私池、供应商绑得上别人的）。可见性由 ListProxies/GetProxy 的 scope 谓词负责——
@@ -274,6 +307,7 @@ type ProxyBindingInfo struct {
 // 代理"不是这条读取要解决的问题，两个面各司其职。
 func (r *ProxyRepo) LookupProxyForBinding(ctx context.Context, id int64) (ProxyBindingInfo, error) {
 	row, err := r.client.Proxy.Query().
+		Select(proxy.FieldID, proxy.FieldOwnerUID).
 		Where(proxy.IDEQ(id), proxy.DeletedAtIsNil()).
 		Only(ctx)
 	if err != nil {

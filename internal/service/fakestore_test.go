@@ -2927,17 +2927,21 @@ func fakeProxyVisible(scope domain.AccountScope, p domain.Proxy) bool {
 	return p.OwnerUID != nil && *p.OwnerUID == scope.OwnerUID
 }
 
-func (f *fakeStore) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
+func (f *fakeStore) CreateProxy(ctx context.Context, in repository.ProxyCreate) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, row := range f.proxies {
 		// 唯一索引不含 deleted_at ⇒ 软删不释放名字（与 template 同语义）。
-		if row.p.Name == p.Name {
-			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
+		if row.p.Name == in.Name {
+			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, in.Name)
 		}
 	}
+	p := domain.Proxy{
+		Name: in.Name, Scheme: in.Scheme, Host: in.Host, Port: in.Port,
+		Enabled: in.Enabled, Remark: in.Remark,
+		Username: in.Username, Password: in.Password,
+	}
 	// 归属由作用域钉死（镜像真实的 CreateProxy）：供应商面恒本人，管理面落 NULL。
-	p.OwnerUID = nil
 	if scope := domain.AccountScopeFrom(ctx); scope.Set {
 		owner := scope.OwnerUID
 		p.OwnerUID = &owner
@@ -2989,34 +2993,34 @@ func (f *fakeStore) LookupProxyForBinding(ctx context.Context, id int64) (reposi
 	return repository.ProxyBindingInfo{OwnerUID: row.p.OwnerUID}, nil
 }
 
-func (f *fakeStore) UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error {
+func (f *fakeStore) UpdateProxy(ctx context.Context, in repository.ProxyUpdate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, row := range f.proxies {
-		if row.p.ID != p.ID && row.p.Name == p.Name {
-			return fmt.Errorf("%w: name=%q", repository.ErrConflict, p.Name)
+		if row.p.ID != in.ID && row.p.Name == in.Name {
+			return fmt.Errorf("%w: name=%q", repository.ErrConflict, in.Name)
 		}
 	}
-	row, ok := f.proxies[p.ID]
+	row, ok := f.proxies[in.ID]
 	if !ok || row.deletedAt != nil || !fakeProxyVisible(domain.AccountScopeFrom(ctx), row.p) {
-		return missingErr(p.ID)
+		return missingErr(in.ID)
 	}
-	next := p
-	// 归属不是可写字段（与真实仓库同）：全量更新不改 owner_uid。
-	next.OwnerUID = row.p.OwnerUID
+	// 从当前行出发，只覆盖 DTO 里的可写列：归属、探测三列、时间戳不在 DTO 里，
+	// 因此**不可能**被这次更新改写（与真实仓库的 SET 列表同形，但不再靠纪律维持）。
+	next := row.p
+	next.Name = in.Name
+	next.Scheme = in.Scheme
+	next.Host = in.Host
+	next.Port = in.Port
+	next.Enabled = in.Enabled
+	next.Remark = in.Remark
 	// 凭据三态（镜像真实仓库：nil = 该列不进 SET ⇒ 保持旧值），两列同规矩。
-	next.Username = row.p.Username
-	if credential.Username != nil {
-		next.Username = *credential.Username
+	if in.Credential.Username != nil {
+		next.Username = *in.Credential.Username
 	}
-	next.Password = row.p.Password
-	if credential.Password != nil {
-		next.Password = *credential.Password
+	if in.Credential.Password != nil {
+		next.Password = *in.Credential.Password
 	}
-	// 探测三列不由全量更新写（WriteProxyProbe 独占；真实仓库同纪律）。
-	next.LastProbeAt = row.p.LastProbeAt
-	next.LastProbeOK = row.p.LastProbeOK
-	next.LastProbeError = row.p.LastProbeError
 	row.p = next
 	return nil
 }

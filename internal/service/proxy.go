@@ -30,7 +30,7 @@ const proxyNameMaxRunes = 64
 // proxyHostMaxLen host 长度上限（DNS 线格式上限，spec §3.5 第 3 条；按字节计）。
 const proxyHostMaxLen = 253
 
-// ProxyInput 代理条目的写面入参（service 层）。
+// ProxyInput 代理条目的写面入参（service 层，线格式的直接投影）。
 //
 // **不复用 `domain.Proxy` 当补丁**：domain 类型带 ID 与探测三列，那三列由
 // WriteProxyProbe 独占写（spec §6.3 列的写者归属）；把它当入参只会让调用方以为
@@ -38,6 +38,9 @@ const proxyHostMaxLen = 253
 //
 //	Username/Password/Remark：nil = 不变；&"" = 清空；&v = 落值
 //	Enabled：nil = 不变（Create 缺省 true）
+//
+// 归一之后落到 repository.ProxyCreate / ProxyUpdate（同样是"只有可写列"的类型），
+// 故三态在 service 这一层就翻成了仓库认的形态，仓库不再需要"忽略某些字段"。
 type ProxyInput struct {
 	Name     string
 	Scheme   domain.ProxyScheme
@@ -69,76 +72,79 @@ func (s *Service) GetProxy(ctx context.Context, id int64) (domain.Proxy, error) 
 // repository.ErrConflict（→ 409，含 name 详情），与 template/group 同一条既有路径
 // （先查后写只多一个 TOCTOU 窗口，不多一个保证）。
 func (s *Service) CreateProxy(ctx context.Context, in ProxyInput) (int64, error) {
-	p, err := normalizeProxyInput(in)
+	c, err := normalizeProxyInput(in)
 	if err != nil {
 		return 0, err
 	}
 	// 供应商自建出口的私网拒绝（spec §3.6）：判据只在「供应商创建」分支生效，
 	// 管理员建内网出口是合理需求（内网拨测/专线）。
-	if err := checkSupplierEgressHost(ctx, p.Host); err != nil {
+	if err := checkSupplierEgressHost(ctx, c.Host); err != nil {
 		return 0, err
 	}
 	// enabled：缺省 true（spec §3.1），显式 false 生效。
-	p.Enabled = true
+	c.Enabled = true
 	if in.Enabled != nil {
-		p.Enabled = *in.Enabled
+		c.Enabled = *in.Enabled
 	}
 	if in.Remark != nil {
-		p.Remark = strings.TrimSpace(*in.Remark)
+		c.Remark = strings.TrimSpace(*in.Remark)
 	}
-	id, err := s.store.CreateProxy(ctx, p)
+	id, err := s.store.CreateProxy(ctx, c)
 	if err != nil {
 		return 0, mapRepoErr(err)
 	}
 	s.invalidateProxyPool(ctx)
 	if s.log != nil {
-		s.log.Info("proxy created", logx.Int64("id", id), logx.String("name", p.Name))
+		s.log.Info("proxy created", logx.Int64("id", id), logx.String("name", c.Name))
 	}
 	return id, nil
 }
 
-// UpdateProxy 全量更新非密字段 + 凭据三态（PUT 语义）。
+// UpdateProxy 全量更新可写列 + 凭据三态（PUT 语义）。
 //
 // 非密字段：补丁提供即落值、未提供（nil）即保持原值——故先读一次当前行，这次读
 // 同时给出 404/软删判定。
 //
 // **凭据两列都不允许「读旧值再整体写回」**：那会把并发的另一次改凭据用读到的旧值
 // 静默覆盖（read-modify-write 窗口）。三态因此交给仓库在同一条 UPDATE 里表达
-// （store.UpdateProxy 的 credential 形参：nil = 不变 / &"" = 清空 / &v = 落值）。
+// （ProxyUpdate.Credential：nil = 不变 / &"" = 清空 / &v = 落值）。
 func (s *Service) UpdateProxy(ctx context.Context, id int64, in ProxyInput) error {
-	p, err := normalizeProxyInput(in)
+	c, err := normalizeProxyInput(in)
 	if err != nil {
 		return err
 	}
 	// 改地址同样过私网判据（§3.6）：否则「先建成公网域名再改成 127.0.0.1」就是
 	// 一条绕过创建面拦截的通路。
-	if err := checkSupplierEgressHost(ctx, p.Host); err != nil {
+	if err := checkSupplierEgressHost(ctx, c.Host); err != nil {
 		return err
 	}
 	cur, err := s.store.GetProxy(ctx, id)
 	if err != nil {
 		return mapRepoErr(err) // 不存在/已软删 → 404
 	}
-	p.ID = id
-	p.Enabled = cur.Enabled
+	c.Enabled = cur.Enabled
 	if in.Enabled != nil {
-		p.Enabled = *in.Enabled
+		c.Enabled = *in.Enabled
 	}
-	p.Remark = cur.Remark
+	c.Remark = cur.Remark
 	if in.Remark != nil {
-		p.Remark = strings.TrimSpace(*in.Remark)
+		c.Remark = strings.TrimSpace(*in.Remark)
 	}
 	// 凭据走三态直传（用归一后的值 + 调用方的"是否提供"）：nil 的两列不进 UPDATE，
 	// 故不经过当前行，也就没有把别人刚改的凭据回滚的窗口。
 	var credential repository.ProxyCredential
 	if in.Username != nil {
-		credential.Username = &p.Username
+		credential.Username = &c.Username
 	}
 	if in.Password != nil {
-		credential.Password = &p.Password
+		credential.Password = &c.Password
 	}
-	// 改名撞已有 name → repository.ErrConflict → ErrConflict（409）。
-	if err := mapRepoErr(s.store.UpdateProxy(ctx, p, credential)); err != nil {
+	// 改名撞同归属已有 name → repository.ErrConflict → ErrConflict（409）。
+	if err := mapRepoErr(s.store.UpdateProxy(ctx, repository.ProxyUpdate{
+		ID:          id,
+		ProxyFields: c.ProxyFields,
+		Credential:  credential,
+	})); err != nil {
 		return err
 	}
 	s.invalidateProxyPool(ctx)
@@ -198,43 +204,49 @@ func (s *Service) invalidateProxyPool(ctx context.Context) {
 // normalizeProxyInput 按 spec §3.5 的**固定顺序**校验并归一（顺序即错误优先级）：
 // name → scheme → host → port → username/password。任何一条不通过 → ErrInvalidInput。
 //
+// 返回值是仓库的**创建** DTO（可写列 + 凭据值）：创建与更新共用同一份归一结果，
+// 更新面只是把它塞进 ProxyUpdate 并补上 id 与凭据三态——两条路因此校验同一份规则，
+// 不会出现"创建校验过、更新绕过去"的形状。
+//
 // scheme 只做小写归一，**不把 socks5h 折成 socks5**：两者在本项目语义相同（Go 标准库
 // 同样处理），但用户输入原样落库是契约（domain.ProxyScheme 注释）。
-func normalizeProxyInput(in ProxyInput) (domain.Proxy, error) {
+func normalizeProxyInput(in ProxyInput) (repository.ProxyCreate, error) {
 	// 1. name：trim 后 1..64（按 rune 计：它是人读标签）。
 	name := strings.TrimSpace(in.Name)
 	if name == "" || utf8.RuneCountInString(name) > proxyNameMaxRunes {
-		return domain.Proxy{}, ErrInvalidInput
+		return repository.ProxyCreate{}, ErrInvalidInput
 	}
 	// 2. scheme：小写后必须命中白名单。
 	scheme := domain.ProxyScheme(strings.ToLower(strings.TrimSpace(string(in.Scheme))))
 	if !scheme.Valid() {
-		return domain.Proxy{}, ErrInvalidInput
+		return repository.ProxyCreate{}, ErrInvalidInput
 	}
 	// 3. host。
 	host, err := normalizeProxyHost(in.Host)
 	if err != nil {
-		return domain.Proxy{}, err
+		return repository.ProxyCreate{}, err
 	}
 	// 4. port。
 	if in.Port < 1 || in.Port > 65535 {
-		return domain.Proxy{}, ErrInvalidInput
+		return repository.ProxyCreate{}, ErrInvalidInput
 	}
 	// 5. username/password：都空 = 无认证；username 非空时 password 可空——故这里
 	// 只做控制字符拒绝，不强制成对。凭据**不做 trim/归一**：它是原样拿去认证的字节。
 	username, err := normalizeProxyCredential(in.Username)
 	if err != nil {
-		return domain.Proxy{}, err
+		return repository.ProxyCreate{}, err
 	}
 	password, err := normalizeProxyCredential(in.Password)
 	if err != nil {
-		return domain.Proxy{}, err
+		return repository.ProxyCreate{}, err
 	}
-	return domain.Proxy{
-		Name:     name,
-		Scheme:   scheme,
-		Host:     host,
-		Port:     in.Port,
+	return repository.ProxyCreate{
+		ProxyFields: repository.ProxyFields{
+			Name:   name,
+			Scheme: scheme,
+			Host:   host,
+			Port:   in.Port,
+		},
 		Username: username,
 		Password: password,
 	}, nil
