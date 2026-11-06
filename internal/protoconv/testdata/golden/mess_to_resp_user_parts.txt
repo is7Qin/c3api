@@ -1,0 +1,1 @@
+{"input":[{"content":[{"image_url":"data:image/png;base64,AA","type":"input_image"},{"image_url":"https://e.com/i.png","type":"input_image"},{"file_url":"https://e.com/d.pdf","type":"input_file"}],"role":"user","type":"message"},{"content":[{"text":"out","type":"output_text"}],"role":"assistant","type":"message"}]}

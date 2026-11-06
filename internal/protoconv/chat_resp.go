@@ -22,7 +22,7 @@ import (
 // chatToRespRequest 客户端 chat 请求体 → resp 请求体。字段映射按 Responses
 // API 规范（语义与 map 版完全一致）：
 //   - messages → input：system / developer → developer 消息项（文本规则相同，
-//     assistant 历史仍写 input_text，EasyInputMessage 不使用 output_text）；
+//     assistant 历史的文本部件写 output_text 并附 annotations:[]（RT1/J3））；
 //     user/assistant → message 项；assistant tool_calls → 独立 function_call
 //     项；tool 消息 → function_call_output 项
 //   - max_tokens / max_completion_tokens → max_output_tokens（两者都给时以
@@ -166,7 +166,8 @@ func chatToRespRequest(body []byte) ([]byte, error) {
 }
 
 // appendChatInputItems messages 数组 → resp input 项数组（逐消息局部处理：
-// 角色/内容/工具调用按语义映射，内容值原字节透传）。
+// 角色/内容/工具调用按语义映射，内容值原字节透传）。每个分支先向内容模型
+// （dirChatToResp）要该 (形状, role) 的策略行，再由行名决定目标类型。
 func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 	out = append(out, '[')
 	n := 0
@@ -177,19 +178,26 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 		}
 		role := m.Get("role")
 		content := m.Get("content")
+		r := roleOf(role.Raw)
 		switch {
-		case rawStrEq(role.Raw, "system"), rawStrEq(role.Raw, "developer"):
+		case r == roleSystem || r == roleDeveloper:
 			// system / developer → developer 消息项（文本非空才产生，contentTextRaw 语义）
-			if t, ok, nonEmpty := contentTextRaw(content); ok && nonEmpty {
+			rw, ok := mapsTo(dirChatToResp, shCSysdevText, r)
+			if !ok {
+				return true
+			}
+			if t, hasText, nonEmpty := contentTextRaw(content); hasText && nonEmpty {
 				if n > 0 {
 					out = append(out, ',')
 				}
 				n++
-				out = append(out, `{"content":[{"text":`...)
-				out = append(out, t...)
-				out = append(out, `,"type":"input_text"}],"role":"developer","type":"message"}`...)
+				out = append(out, `{"content":[`...)
+				out = appendRespTextPart(out, t, rw)
+				out = append(out, `],"role":"developer","type":`...)
+				out = appendQuoted(out, rw.name)
+				out = append(out, '}')
 			}
-		case rawStrEq(role.Raw, "user"), rawStrEq(role.Raw, "assistant"):
+		case r == roleUser || r == roleAssistant:
 			// user/assistant → message 项（部件原字节映射；无部件 → 回退）
 			start := len(out)
 			if n > 0 {
@@ -197,50 +205,74 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 			}
 			out = append(out, `{"content":[`...)
 			var parts int
-			out, parts = appendContentParts(out, content)
+			out, parts = appendContentParts(out, content, r)
 			if parts == 0 {
 				out = out[:start]
 			} else {
+				// 项类型名由行数据提供（shCUserText/shCAsstText 均为 polMap）；
+				// 掩码外本不可达（chatTextShape 已按 role 选行），仍留显式兜底，
+				// 避免 rw.name=="" 写出 "type":""。
+				name := "message"
+				if rw, ok := mapsTo(dirChatToResp, chatTextShape(r), r); ok {
+					name = rw.name
+				}
 				out = append(out, `],"role":`...)
 				out = append(out, role.Raw...)
-				out = append(out, `,"type":"message"}`...)
+				out = append(out, `,"type":`...)
+				out = appendQuoted(out, name)
+				out = append(out, '}')
 				n++
 			}
 			// assistant tool_calls → 独立 function_call 项（保持原顺序）
-			if rawStrEq(role.Raw, "assistant") {
-				if tcs := m.Get("tool_calls"); tcs.IsArray() {
-					tcs.ForEach(func(_, tc gjson.Result) bool {
-						if !tc.IsObject() {
-							return true
-						}
-						fn := tc.Get("function")
-						if !fn.IsObject() {
-							return true
-						}
-						if n > 0 {
-							out = append(out, ',')
-						}
-						n++
-						// 请求方向取 id（与 map 版一致：chat tool_calls 仅 id；
-						// fcIDRaw 的 call_id 优先仅响应方向）
-						idRaw := strOrEmpty(tc.Get("id"))
-						out = append(out, `{"arguments":`...)
-						out = append(out, strOrEmpty(fn.Get("arguments"))...)
-						out = append(out, `,"call_id":`...)
-						out = append(out, idRaw...)
-						out = append(out, `,"id":`...)
-						out = append(out, idRaw...)
-						out = append(out, `,"name":`...)
-						out = append(out, strOrEmpty(fn.Get("name"))...)
-						out = append(out, `,"type":"function_call"}`...)
-						return true
-					})
+			if r == roleAssistant {
+				tcs := m.Get("tool_calls")
+				if !tcs.IsArray() {
+					return true
 				}
+				tcs.ForEach(func(_, tc gjson.Result) bool {
+					if !tc.IsObject() {
+						return true
+					}
+					fn := tc.Get("function")
+					if !fn.IsObject() {
+						return true
+					}
+					rw, ok := mapsTo(dirChatToResp, shCAsstToolFunction, r)
+					if !ok {
+						return true
+					}
+					if n > 0 {
+						out = append(out, ',')
+					}
+					n++
+					// 请求方向取 id（与 map 版一致：chat tool_calls 仅 id；
+					// fcIDRaw 的 call_id 优先仅响应方向）
+					idRaw := strOrEmpty(tc.Get("id"))
+					out = append(out, `{"arguments":`...)
+					out = append(out, strOrEmpty(fn.Get("arguments"))...)
+					out = append(out, `,"call_id":`...)
+					out = append(out, idRaw...)
+					out = append(out, `,"id":`...)
+					out = append(out, idRaw...)
+					out = append(out, `,"name":`...)
+					out = append(out, strOrEmpty(fn.Get("name"))...)
+					out = append(out, `,"type":`...)
+					out = appendQuoted(out, rw.name)
+					out = append(out, '}')
+					return true
+				})
 			}
-		case rawStrEq(role.Raw, "tool"), rawStrEq(role.Raw, "function"):
+		case r == roleTool:
 			// tool/function 消息 → function_call_output 项（call_id 取
 			// tool_call_id / name，与 map 版一致）
-			if t, ok, _ := contentTextRaw(content); ok {
+			sh := shCToolMsg
+			if rawStrEq(role.Raw, "function") {
+				sh = shCFunctionMsg
+			}
+			if _, ok := mapsTo(dirChatToResp, sh, r); !ok {
+				return true
+			}
+			if t, hasText, _ := contentTextRaw(content); hasText {
 				if n > 0 {
 					out = append(out, ',')
 				}
@@ -249,17 +281,35 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 				if rawStrEq(role.Raw, "function") {
 					callID = strOrEmpty(m.Get("name"))
 				}
-				out = append(out, `{"call_id":`...)
-				out = append(out, callID...)
-				out = append(out, `,"output":`...)
-				out = append(out, t...)
-				out = append(out, `,"type":"function_call_output"}`...)
+				out = appendToolResult(out, tgtResp, callID, t, true)
 			}
 		}
 		return true
 	})
 	out = append(out, ']')
 	return out
+}
+
+// chatTextShape 文本部件的形状（user 与 assistant 是不同成员：resp 目标的
+// assistant 文本只收 output_text，RT1）。
+func chatTextShape(r role) shape {
+	if r == roleAssistant {
+		return shCAsstText
+	}
+	return shCUserText
+}
+
+// appendRespTextPart 追加 resp 目标的单个文本部件：assistant 附 annotations
+// 并写 output_text（J3/RT1），其余角色写 input_text。
+func appendRespTextPart(out []byte, raw string, rw row) []byte {
+	if rw.ann {
+		out = append(out, `{"annotations":[],"text":`...)
+		out = append(out, raw...)
+		return append(out, `,"type":"output_text"}`...)
+	}
+	out = append(out, `{"text":`...)
+	out = append(out, raw...)
+	return append(out, `,"type":"input_text"}`...)
 }
 
 // contentTextRaw 返回 content 的文本 JSON 字符串字面量：字符串 → 原字节透传
@@ -307,17 +357,18 @@ func contentTextRaw(content gjson.Result) (string, bool, bool) {
 	return "", false, false
 }
 
-// appendContentParts content → resp 内容部件数组（直接写入 out）：字符串 →
-// 单 input_text（原字节，含 assistant 历史——EasyInputMessage 的 content 就是
-// input_text，不是 output_text）；text 部件 → input_text；image_url 部件 →
-// input_image（url 原字节，string 或 {url}；detail 为 auto|low|high 时原样写入）。
-// 其余部件按规范丢弃。返回 (out, 部件数)。
-func appendContentParts(out []byte, content gjson.Result) ([]byte, int) {
+// appendContentParts content → resp 内容部件数组（直接写入 out），按内容模型
+// （dirChatToResp）分派：文本部件 → resp 文本部件（assistant 是 output_text，
+// 其余 input_text），image_url 部件 → input_image（url 原字节，string 或
+// {url}；detail 为 auto|low|high 时原样写入）。行策略不是 polMap 的部件
+// （audio / file / assistant 的图片等）整块丢弃。返回 (out, 部件数)。
+func appendContentParts(out []byte, content gjson.Result, r role) ([]byte, int) {
 	if content.Type == gjson.String {
-		out = append(out, `{"text":`...)
-		out = append(out, content.Raw...)
-		out = append(out, `,"type":"input_text"}`...)
-		return out, 1
+		rw, ok := mapsTo(dirChatToResp, chatTextShape(r), r)
+		if !ok {
+			return out, 0
+		}
+		return appendRespTextPart(out, content.Raw, rw), 1
 	}
 	if !content.IsArray() {
 		return out, 0
@@ -327,18 +378,34 @@ func appendContentParts(out []byte, content gjson.Result) ([]byte, int) {
 		if !p.IsObject() {
 			return true
 		}
-		switch {
-		case rawStrEq(p.Get("type").Raw, "text"):
+		sh := chatRespPartShape(r, p)
+		rw, ok := mapsTo(dirChatToResp, sh, r)
+		if !ok {
+			return true
+		}
+		switch sh {
+		case shCUserText, shCAsstText:
 			if t := p.Get("text"); t.Type == gjson.String {
 				if n > 0 {
 					out = append(out, ',')
 				}
 				n++
-				out = append(out, `{"text":`...)
-				out = append(out, t.Raw...)
-				out = append(out, `,"type":"input_text"}`...)
+				out = appendRespTextPart(out, t.Raw, rw)
 			}
-		case rawStrEq(p.Get("type").Raw, "image_url"):
+		case shCAsstRefusal:
+			// refusal 是 resp 的合法输出部件（resp.txt:454），不得整项丢弃
+			if rf := p.Get("refusal"); rf.Type == gjson.String {
+				if n > 0 {
+					out = append(out, ',')
+				}
+				n++
+				out = append(out, `{"refusal":`...)
+				out = append(out, rf.Raw...)
+				out = append(out, `,"type":"refusal"}`...)
+			}
+		case shCUserFileData:
+			out, n = appendRespFilePart(out, n, p)
+		case shCUserImgURL, shCUserImgData, shCUserImgBare64:
 			if u, ok := imageURLRaw(p); ok {
 				if n > 0 {
 					out = append(out, ',')
@@ -358,6 +425,90 @@ func appendContentParts(out []byte, content gjson.Result) ([]byte, int) {
 		return true
 	})
 	return out, n
+}
+
+// chatRespPartShape chat 内容部件 → chat→resp 的成员形状。assistant 只有
+// 「文本」与「其它部件」两类（J2：assistant 不写 image/document，其它部件
+// 一律落 c_asst_other_parts 丢弃）；user 的图片按 url 形态分三个成员，
+// 未建模部件落 tail。
+func chatRespPartShape(r role, p gjson.Result) shape {
+	typ := p.Get("type")
+	if r == roleAssistant {
+		switch {
+		case rawStrEq(typ.Raw, "text"):
+			return shCAsstText
+		case rawStrEq(typ.Raw, "refusal"):
+			return shCAsstRefusal
+		}
+		return shCAsstOtherParts
+	}
+	switch {
+	case rawStrEq(typ.Raw, "text"):
+		return shCUserText
+	case rawStrEq(typ.Raw, "image_url"):
+		return chatImgShape(p)
+	case rawStrEq(typ.Raw, "input_audio"):
+		return shCUserAudio
+	case rawStrEq(typ.Raw, "file"):
+		if f := p.Get("file"); f.IsObject() {
+			// file_id 是 provider 侧句柄，永不跨协议（J10）→ 整块丢
+			if id := f.Get("file_id"); id.Type == gjson.String && len(id.Raw) > 2 {
+				return shCUserFileID
+			}
+		}
+		return shCUserFileData
+	}
+	return shCTail
+}
+
+// appendRespFilePart chat 的 file 部件 → resp input_file（J5：file_data /
+// filename 语义可搬运；两者都没有则整块丢弃，不写空壳）。
+func appendRespFilePart(out []byte, n int, p gjson.Result) ([]byte, int) {
+	f := p.Get("file")
+	if !f.IsObject() {
+		return out, n
+	}
+	data := f.Get("file_data")
+	name := f.Get("filename")
+	if data.Type != gjson.String && name.Type != gjson.String {
+		return out, n
+	}
+	if n > 0 {
+		out = append(out, ',')
+	}
+	n++
+	out = append(out, '{')
+	wrote := false
+	if data.Type == gjson.String {
+		out = append(out, `"file_data":`...)
+		out = append(out, data.Raw...)
+		wrote = true
+	}
+	if name.Type == gjson.String {
+		if wrote {
+			out = append(out, ',')
+		}
+		out = append(out, `"filename":`...)
+		out = append(out, name.Raw...)
+	}
+	return append(out, `,"type":"input_file"}`...), n
+}
+
+// chatImgShape chat 图片部件的 url 形态：http(s) → _img_url，data URL →
+// _img_data，裸 base64（chat.txt:162 允许）→ _img_bare64。
+func chatImgShape(p gjson.Result) shape {
+	u, ok := imageURLRaw(p)
+	if !ok {
+		return shCTail
+	}
+	s := gjson.Parse(u).Str
+	switch {
+	case len(s) >= 8 && s[:8] == "https://", len(s) >= 7 && s[:7] == "http://":
+		return shCUserImgURL
+	case len(s) >= 11 && s[:11] == "data:image/":
+		return shCUserImgData
+	}
+	return shCUserImgBare64
 }
 
 // imageURLRaw image_url 部件 → url JSON 字符串字面量：字符串形态原样透传；
@@ -491,6 +642,9 @@ func respToChatResponse(body []byte) ([]byte, error) {
 		finish = `"` + chatFinishFromIncomplete(r.Get("incomplete_details.reason").Str) + `"`
 	} else if hasRespFunctionCall(r.Get("output")) {
 		finish = `"tool_calls"`
+	} else if hasRespRefusal(r.Get("output")) {
+		// 上游拒绝且无工具调用 → content_filter（§2.4）
+		finish = `"content_filter"`
 	}
 	out := make([]byte, 0, len(body)+64)
 	out = append(out, `{"choices":[{"finish_reason":`...)
@@ -524,6 +678,23 @@ func respToChatResponse(body []byte) ([]byte, error) {
 	return out, nil
 }
 
+// chatRespOutputPartShape resp output message 的内容部件 → resp→chat 的成员
+// 形状。chat 目标只有纯文本通道：refusal 与媒体都没有承载（M2 把 refusal
+// 降级为正文，故 x_message_refusal 的行名已是 content）。
+func chatRespOutputPartShape(part gjson.Result) shape {
+	typ := part.Get("type")
+	switch {
+	case rawStrEq(typ.Raw, "output_text"), rawStrEq(typ.Raw, "text"):
+		return shXMessageOutputText
+	case rawStrEq(typ.Raw, "refusal"):
+		return shXMessageRefusal
+	case rawStrEq(typ.Raw, "input_image"), rawStrEq(typ.Raw, "input_file"),
+		rawStrEq(typ.Raw, "image"), rawStrEq(typ.Raw, "file"):
+		return shXMessageMedia
+	}
+	return shXTail
+}
+
 // appendChatMessageBody resp output → chat assistant message 的 content 文本
 // 拼接（message 项 text 部件 join ""，恒为合法 JSON 字符串——修复：
 // 部件 raw 剥离首尾引号拼接，转义逐字符保持，concat 即等价转义）与 tool_calls
@@ -540,14 +711,25 @@ func appendChatMessageBody(out, rc, tcs []byte, output gjson.Result) ([]byte, []
 		case rawStrEq(item.Get("type").Raw, "reasoning"):
 			// reasoning item → message.reasoning_content（chat 只有纯文本通道）：
 			// summary[].text 优先，content[].reasoning_text 兜底。
-			rc = appendReasoningStripes(rc, item)
+			if _, ok := mapsTo(dirRespToChat, shXReasoning, roleAssistant); ok {
+				rc = appendReasoningStripes(rc, item)
+			}
 		case rawStrEq(item.Get("type").Raw, "message"):
 			if content := item.Get("content"); content.IsArray() {
 				content.ForEach(func(_, part gjson.Result) bool {
 					if !part.IsObject() {
 						return true
 					}
-					if t := part.Get("text"); t.Type == gjson.String {
+					sh := chatRespOutputPartShape(part)
+					if _, ok := mapsTo(dirRespToChat, sh, roleAssistant); !ok {
+						return true
+					}
+					// refusal 与正文共用 chat 的纯文本通道（§5.1#4）
+					key := "text"
+					if sh == shXMessageRefusal {
+						key = "refusal"
+					}
+					if t := part.Get(key); t.Type == gjson.String {
 						if !hasText {
 							out = append(out, '"')
 							hasText = true
@@ -558,6 +740,9 @@ func appendChatMessageBody(out, rc, tcs []byte, output gjson.Result) ([]byte, []
 				})
 			}
 		case rawStrEq(item.Get("type").Raw, "function_call"):
+			if _, ok := mapsTo(dirRespToChat, shXFunctionCall, roleAssistant); !ok {
+				return true
+			}
 			if tcs == nil {
 				tcs = make([]byte, 0, 96)
 			} else {
@@ -593,6 +778,33 @@ func hasRespFunctionCall(output gjson.Result) bool {
 			return false
 		}
 		return true
+	})
+	return found
+}
+
+// hasRespRefusal output 数组里是否有 refusal 部件（chat 目标据此给
+// finish_reason=content_filter，§2.4）。
+func hasRespRefusal(output gjson.Result) bool {
+	if !output.IsArray() {
+		return false
+	}
+	found := false
+	output.ForEach(func(_, item gjson.Result) bool {
+		if !item.IsObject() || !rawStrEq(item.Get("type").Raw, "message") {
+			return true
+		}
+		content := item.Get("content")
+		if !content.IsArray() {
+			return true
+		}
+		content.ForEach(func(_, part gjson.Result) bool {
+			if part.IsObject() && rawStrEq(part.Get("type").Raw, "refusal") {
+				found = true
+				return false
+			}
+			return true
+		})
+		return !found
 	})
 	return found
 }
@@ -659,7 +871,8 @@ func appendChatPromptDetails(buf []byte, cr, cc int64) []byte {
 //	其余（in_progress/output_item.done/content_part.* 等）→ 丢弃
 func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 	switch name {
-	case "response.output_text.delta":
+	case "response.output_text.delta", "response.refusal.delta":
+		// refusal 的增量与正文共用 chat 的纯文本通道（§5.1#9）
 		if raw, _, ok := literalTop(data, "delta", ""); ok {
 			m.dbuf = append(m.dbuf[:0], `{"content":`...)
 			m.dbuf = append(m.dbuf, raw...)
@@ -707,7 +920,7 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 		}
 		m.dbuf = append(m.dbuf[:0], `{"content":"","role":"assistant"}`...)
 		return m.chatChunkFrame(m.dbuf, nil, nil), false
-	case "response.output_text.delta":
+	case "response.output_text.delta", "response.refusal.delta":
 		m.dbuf = append(m.dbuf[:0], `{"content":`...)
 		m.dbuf = append(m.dbuf, strOrEmpty(ev.Get("delta"))...)
 		m.dbuf = append(m.dbuf, '}')
@@ -754,6 +967,8 @@ func (m *StreamMapper) mapRespToChat(name string, data []byte) ([]byte, bool) {
 				finish = finishQuoted(chatFinishFromIncomplete(resp.Get("incomplete_details.reason").Str))
 			} else if hasRespFunctionCall(resp.Get("output")) {
 				finish = toolFinish
+			} else if hasRespRefusal(resp.Get("output")) {
+				finish = filtFinish
 			}
 			// 上游 usage 存在时单独成帧（choices 为空）。finish 帧省略 usage
 			// （不是 null）。中间 delta 不写 usage:null。usage 先写入 ubuf，

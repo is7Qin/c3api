@@ -63,6 +63,9 @@ func messToChatMessage(msg map[string]any) map[string]any {
 			if !ok {
 				continue
 			}
+			if _, ok := mapsTo(dirMessToChatResp, messChatBlockShape(bm), roleAssistant); !ok {
+				continue
+			}
 			switch bm["type"] {
 			case "text":
 				if t, ok := str(bm, "text"); ok {
@@ -94,6 +97,23 @@ func messToChatMessage(msg map[string]any) map[string]any {
 		m["tool_calls"] = tcs
 	}
 	return m
+}
+
+// messChatBlockShape Mess 响应的内容块 → mess→chat 的成员形状。媒体块
+// （image/document）在 chat 的 assistant message 里没有承载（z_media）；
+// redacted_thinking 的 data 不可读、其余未建模块落 z_tail。
+func messChatBlockShape(bm map[string]any) shape {
+	switch bm["type"] {
+	case "text":
+		return shZText
+	case "thinking":
+		return shZThinking
+	case "tool_use":
+		return shZToolUse
+	case "image", "document":
+		return shZMedia
+	}
+	return shZTail
 }
 
 // messToChatFinishReason anthropic stop_reason → chat finish_reason。

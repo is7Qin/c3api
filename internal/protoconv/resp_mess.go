@@ -35,14 +35,19 @@ func messToRespResponse(body []byte) ([]byte, error) {
 	id, _ := str(msg, "id")
 	model, _ := str(msg, "model")
 	output, it, ot := messContentToRespOutput(msg)
+	stop, _ := str(msg, "stop_reason")
+	status, details := respStatusFromMessStop(stop)
 	out := map[string]any{
 		"id":         id,
 		"object":     "response",
 		"created_at": 0, // anthropic message 无时间戳（转换器纯函数，不发明）
-		"status":     "completed",
+		"status":     status,
 		"model":      model,
 		"output":     output,
 		"usage":      messUsageToResp(msg, it, ot),
+	}
+	if details != nil {
+		out["incomplete_details"] = details
 	}
 	return json.Marshal(out)
 }
@@ -379,16 +384,23 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 		}
 		m.done = true
 		input := m.messInputTotal()
-		return EncodeFrame("response.completed", map[string]any{
-			"type": "response.completed",
-			"response": map[string]any{
-				"id": m.id, "object": "response", "created_at": 0, "status": "completed",
-				"model": m.model, "output": m.messOutputItems(),
-				"usage": map[string]any{
-					"input_tokens": input, "output_tokens": m.ot, "total_tokens": input + m.ot,
-					"input_tokens_details": respInputDetails(m.cached, m.cacheCreate),
-				},
+		// A4（§2.4）：Message 的 stop_reason 在 message_delta 已记录（m.reason），
+		// 收尾时落实成 resp 的 status + incomplete_details。
+		status, details := respStatusFromMessStop(m.reason)
+		resp := map[string]any{
+			"id": m.id, "object": "response", "created_at": 0, "status": status,
+			"model": m.model, "output": m.messOutputItems(),
+			"usage": map[string]any{
+				"input_tokens": input, "output_tokens": m.ot, "total_tokens": input + m.ot,
+				"input_tokens_details": respInputDetails(m.cached, m.cacheCreate),
 			},
+		}
+		if details != nil {
+			resp["incomplete_details"] = details
+		}
+		return EncodeFrame("response.completed", map[string]any{
+			"type":     "response.completed",
+			"response": resp,
 		}), false
 	case "error":
 		if e, ok := ev["error"].(map[string]any); ok {
@@ -399,6 +411,19 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 		return nil, true
 	}
 	return nil, true
+}
+
+// respStatusFromMessStop Messages stop_reason → resp 的 (status,
+// incomplete_details)。§2.4：max_tokens → incomplete+max_output_tokens、
+// refusal → incomplete+content_filter、其余 completed。
+func respStatusFromMessStop(reason string) (string, map[string]any) {
+	switch reason {
+	case "max_tokens", "model_context_window_exceeded":
+		return "incomplete", map[string]any{"reason": "max_output_tokens"}
+	case "refusal":
+		return "incomplete", map[string]any{"reason": "content_filter"}
+	}
+	return "completed", nil
 }
 
 // reasoningItem thinking 块累积状态 → reasoning item（summary 文本 + 信封

@@ -93,6 +93,11 @@ func TestConvertRequestChatToResp(t *testing.T) {
 	user := input[1].(map[string]any)
 	uc := arrOf(t, user, "content")[0].(map[string]any)
 	require.Equal(t, "input_text", uc["type"])
+	asst := input[2].(map[string]any)
+	require.Equal(t, "assistant", asst["role"])
+	ac := arrOf(t, asst, "content")[0].(map[string]any)
+	require.Equal(t, "output_text", ac["type"], "assistant 历史文本 → output_text（RT1）")
+	require.Equal(t, []any{}, ac["annotations"], "assistant 文本附 annotations:[]")
 	fc := input[3].(map[string]any)
 	require.Equal(t, "function_call", fc["type"])
 	require.Equal(t, "call_1", fc["call_id"])
@@ -1037,14 +1042,28 @@ func TestAPIAlignAssistantStringContent(t *testing.T) {
 	require.Empty(t, arrOf(t, obj(t, empty), "input"))
 }
 
+// TestAPIAlignFCOutputInputText function_call_output 的数组 output 里有文本 →
+// 文本被搬进 tool_result.content；但**孤儿** tool_result（没有对应 function_call）
+// 按 J11 丢弃，故必须与 function_call 一起给。
 func TestAPIAlignFCOutputInputText(t *testing.T) {
 	body := []byte(`{"model":"m","input":[
+		{"type":"function_call","call_id":"call_1","name":"f","arguments":"{}"},
 		{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"sunny"}]}
 	]}`)
 	out, err := ConvertRequest(body, domain.ProtocolConvertRespToMess)
 	require.NoError(t, err)
-	tr := arrOf(t, arrOf(t, obj(t, out), "messages")[0].(map[string]any), "content")[0].(map[string]any)
+	msgs := arrOf(t, obj(t, out), "messages")
+	require.Len(t, msgs, 2)
+	tr := arrOf(t, msgs[1].(map[string]any), "content")[0].(map[string]any)
 	require.Equal(t, "sunny", tr["content"])
+
+	// 孤儿形态（无 function_call）→ 整块不存在（§3.3 不变量 1）
+	orphan := []byte(`{"model":"m","input":[
+		{"type":"function_call_output","call_id":"call_1","output":[{"type":"input_text","text":"sunny"}]}
+	]}`)
+	out, err = ConvertRequest(orphan, domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	require.Empty(t, arrOf(t, obj(t, out), "messages"), "孤儿 tool_result 必须丢弃")
 }
 
 func TestAPIAlignDefaultMaxTokens(t *testing.T) {

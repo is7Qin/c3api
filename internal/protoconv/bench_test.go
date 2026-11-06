@@ -109,6 +109,29 @@ func BenchmarkConvertRequestChatToResp(b *testing.B) {
 	}
 }
 
+// benchChatMultiTextBody chat→resp 的多 text 部件形态：一条用户消息含 3 个
+// text 部件、一条 assistant 工具调用、一条 tool 消息（content 为数组）。内容
+// 模型（行表分派）改动的分配/字节回归基线。
+const benchChatMultiTextBody = `{
+	"model": "gpt-4o",
+	"messages": [
+		{"role": "system", "content": "you are helpful"},
+		{"role": "user", "content": [
+			{"type": "text", "text": "first part"},
+			{"type": "text", "text": "second part"},
+			{"type": "text", "text": "third part"}
+		]},
+		{"role": "assistant", "content": "ok", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{\"city\": \"x\"}"}}]},
+		{"role": "tool", "tool_call_id": "call_1", "content": [{"type": "text", "text": "{\"temp\": 20}"}]}
+	],
+	"max_completion_tokens": 200,
+	"stream": true
+}`
+
+func BenchmarkConvertRequestChatToRespMultiText(b *testing.B) {
+	benchReq(b, []byte(benchChatMultiTextBody), domain.ProtocolConvertChatToResp)
+}
+
 func BenchmarkConvertResponseRespToChat(b *testing.B) {
 	body := []byte(benchRespBody)
 	b.ReportAllocs()
