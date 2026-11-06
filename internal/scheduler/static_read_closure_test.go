@@ -5,6 +5,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"go/ast"
 	"sort"
 	"strings"
@@ -152,6 +153,77 @@ var staticReadPaths = map[string]staticReadSpec{
 var payloadProjectionFuncs = map[string]string{
 	"payloadKeyOf": "载荷投影：只读 OAuth 三元组",
 	"staticKeyOf":  "叶子复用判据：调用两个投影，自身不直接读",
+}
+
+// proxyMaterialPathFuncs 是**代理原料**路径的读者白名单：路径 → 函数 → 为什么它可以读。
+//
+// 为什么需要它（C5/S12）：上面 ①–④ 对载荷有函数级限制，对代理原料却只有路径级登记，
+// 于是下面这段可编译的代码不会让任何断言变红：
+//
+//	// 写进 reserveOnView（**已登记**在 staticReaderFuncs 里）
+//	if !routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy) {
+//	    return false
+//	}
+//
+// 三条路径都已登记（② 绿）、`proxyDigest` / `enabled` 都是键字段（③ 绿）、
+// `$S.acc.Proxy` 是 container 不进键字段账，而 routableFor 的形参不是 `*snapshotStatic`
+// 根——扫描器不追进去。于是"出口原料只许在 reload 期读、决策只许在构造函数里派生"这条
+// 删掉 `snapshotStatic.proxyDigest` 的前提，此前只是**声称**。
+//
+// 判据是**相等**（双向）：多一个读者 ⇒ 红（原料漏到消费期，或有人在消费期重新派生
+// 决策）；少一个 ⇒ 红（登记表腐化成"曾经读过"）。
+var proxyMaterialPathFuncs = map[string]map[string]string{
+	"$S.acc.Proxy": {
+		"newSnapshotStatic": "构造期：展开的代理整交给 routableFor 与 specOfDomain（可用性与摘要都在此时定型）",
+		"staticKeyOf":       "判据期：重算出口摘要（proxyDigest），叶子是否复用取决于它",
+	},
+	"$S.acc.ProxyID": {
+		"newSnapshotStatic": "构造期：区分「未绑定（nil）」与「绑定但展开缺失」，routableFor 的输入之一",
+		"reserveOnView":     "消费期：把**同一片叶子**上的 proxy_id 抄进 Selection 作审计证据（与 Selection.Egress 同代，不会指错出口）",
+	},
+	"$S.acc.Enabled": {
+		"newSnapshotStatic": "构造期：routable 的输入（enabled ∧（未绑定 ∨ 绑定可用）），决策的唯一派生点",
+		"Runtimes":          "消费期：管理面运行时视图**回显** enabled（展示事实，不参与派发判定）",
+	},
+}
+
+// proxyMaterialReaderViolations 比对扫描结果与白名单，返回违规清单（空 = 合规）。
+//
+// 返回清单而不是直接 require：S13 的负例要用**同一份判据**证明它会拒，而"捕获 require
+// 的失败"既别扭又脆弱；清单也让正例的失败消息直接点名越界的函数。
+func proxyMaterialReaderViolations(pathFuncs map[string]map[string]bool) []string {
+	var out []string
+	for path, allowed := range proxyMaterialPathFuncs {
+		readers := pathFuncs[path]
+		for fn, why := range allowed {
+			if strings.TrimSpace(why) == "" {
+				out = append(out, fmt.Sprintf("白名单缺理由：%s 读 %s", fn, path))
+			}
+			if !readers[fn] {
+				out = append(out, fmt.Sprintf("陈旧条目：白名单声称 %s 读 %s，但扫描面上它已不再读", fn, path))
+			}
+		}
+		for fn := range readers {
+			if _, ok := allowed[fn]; !ok {
+				out = append(out, fmt.Sprintf("未登记读者：%s 读 %s——原料只许在构造/判据期读，消费期请读键或派生位", fn, path))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// clonePathFuncs 深拷贝"路径 → 函数集"，供负例在真实扫描结果上做最小注入。
+func clonePathFuncs(in map[string]map[string]bool) map[string]map[string]bool {
+	out := make(map[string]map[string]bool, len(in))
+	for path, funcs := range in {
+		cp := make(map[string]bool, len(funcs))
+		for fn := range funcs {
+			cp[fn] = true
+		}
+		out[path] = cp
+	}
+	return out
 }
 
 // --- 静态读的语法解析 ---
@@ -330,9 +402,25 @@ func snapPaths(fn *ast.FuncDecl, roots map[string]bool, alias map[string]string)
 
 // --- 断言 ---
 
-// TestStaticReadClosureCoversEveryConsumerPath 枚举面上每一个静态读都必须落在
-// planKey ∪ payloadKey 的字段上，且键字段与消费字段必须**一一对上**。
-func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
+// staticReadScan 是一次扫描的全部产物：枚举结果（函数集 / 路径集 / 路径 × 函数）
+// 加两枚键的字段集。抽成结构体的原因不是"好看"——是**负例必须喂真实扫描结果**：
+// 只加正例等于自证，而负例若手搓一个 map，被测的就不是扫描器与判据的组合了。
+type staticReadScan struct {
+	funcs         map[string]bool            // 读过静态视图的函数全集
+	paths         map[string]bool            // 出现过的静态读路径全集
+	pathFuncs     map[string]map[string]bool // 路径 → 读者函数集
+	planFields    map[string]bool            // planKey 的字段集
+	payloadFields map[string]bool            // payloadKey 的字段集
+}
+
+// collectStaticReads 遍历扫描面，枚举每个函数读了哪些静态字段。
+//
+// 判据（顺序即下方 ①–④ 与 ⑤ 的输入）：
+//   - 函数内部按根绑定枚举（`*snapshotStatic` 参数/接收者、`.static.Load()` 绑定、
+//     `&snapshotStatic{}`），局部别名解析到规范路径 `$S`；
+//   - 只登记**具名根或实际路径**的函数（roots 恒含规范根，故只有内联链不算读）。
+func collectStaticReads(t *testing.T) staticReadScan {
+	t.Helper()
 	root := gateRoot(t)
 	srcs := gateSources(t, root, []string{"internal/scheduler"})
 
@@ -341,9 +429,19 @@ func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
 	payloadShape, ok := gateStructShape(t, srcs, "internal/scheduler", "payloadKey")
 	require.True(t, ok, "payloadKey 必须存在")
 
-	observedFuncs := map[string]bool{}
-	observedPaths := map[string]bool{}
-	pathFuncs := map[string]map[string]bool{}
+	scan := staticReadScan{
+		funcs:         map[string]bool{},
+		paths:         map[string]bool{},
+		pathFuncs:     map[string]map[string]bool{},
+		planFields:    make(map[string]bool, len(planShape.fields)),
+		payloadFields: make(map[string]bool, len(payloadShape.fields)),
+	}
+	for f := range planShape.fields {
+		scan.planFields[f] = true
+	}
+	for f := range payloadShape.fields {
+		scan.payloadFields[f] = true
+	}
 	for _, src := range srcs {
 		for _, decl := range src.file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -357,16 +455,24 @@ func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
 			if len(paths) == 0 && len(roots) == 1 {
 				continue
 			}
-			observedFuncs[fn.Name.Name] = true
+			scan.funcs[fn.Name.Name] = true
 			for p := range paths {
-				observedPaths[p] = true
-				if pathFuncs[p] == nil {
-					pathFuncs[p] = map[string]bool{}
+				scan.paths[p] = true
+				if scan.pathFuncs[p] == nil {
+					scan.pathFuncs[p] = map[string]bool{}
 				}
-				pathFuncs[p][fn.Name.Name] = true
+				scan.pathFuncs[p][fn.Name.Name] = true
 			}
 		}
 	}
+	return scan
+}
+
+// TestStaticReadClosureCoversEveryConsumerPath 枚举面上每一个静态读都必须落在
+// planKey ∪ payloadKey 的字段上，且键字段与消费字段必须**一一对上**。
+func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
+	scan := collectStaticReads(t)
+	observedFuncs, observedPaths, pathFuncs := scan.funcs, scan.paths, scan.pathFuncs
 
 	// ① 读静态视图的函数集必须**恰好**是声明的允许集。
 	gotFuncs := make([]string, 0, len(observedFuncs))
@@ -392,14 +498,7 @@ func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
 		"静态读路径集与声明路径集必须相等")
 
 	// ③ field 类路径的键字段必须存在，且覆盖面**恰好**等于两枚键的字段全集。
-	planFields := make(map[string]bool, len(planShape.fields))
-	for f := range planShape.fields {
-		planFields[f] = true
-	}
-	payloadFields := make(map[string]bool, len(payloadShape.fields))
-	for f := range payloadShape.fields {
-		payloadFields[f] = true
-	}
+	planFields, payloadFields := scan.planFields, scan.payloadFields
 	allKeyFields := map[string]bool{}
 	for f := range planFields {
 		allKeyFields[f] = true
@@ -451,6 +550,53 @@ func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
 		}
 		require.NotEmpty(t, funcs, "载荷路径 %s 必须真的被投影函数读到", p)
 	}
+
+	// ⑤ 代理原料的"路径 × 函数"白名单：原料（acc.Proxy / acc.ProxyID / acc.Enabled）
+	// 只许在构造/判据期读，消费期只能读键与派生位。① 只证明"函数登记过"，④ 只管载荷，
+	// 故这一条是"出口原料不漏到消费期"的唯一机械判据。
+	require.Empty(t, proxyMaterialReaderViolations(pathFuncs),
+		"代理原料的读者必须与白名单**相等**：新增读者要在这里登记并写明它为何必须在消费期读")
+}
+
+// TestProxyMaterialGateRejectsConsumptionTimeRead 负例：证明 ⑤ 的判据真的会拒。
+//
+// 只加正例等于自证——判据写反方向、或比对的两侧总是空集，正例一样是绿的。故这里从
+// **真实扫描结果**出发（不手搓 map），再注入两种真实存在的退化形状。
+func TestProxyMaterialGateRejectsConsumptionTimeRead(t *testing.T) {
+	scan := collectStaticReads(t)
+	require.Empty(t, proxyMaterialReaderViolations(scan.pathFuncs),
+		"真实扫描结果必须本来就合规，否则后面的负例证明不了任何东西")
+
+	t.Run("消费期重新派生 routable", func(t *testing.T) {
+		pathFuncs := clonePathFuncs(scan.pathFuncs)
+		// 等价于在 reserveOnView 里写 routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)：
+		// 扫描器追不进纯函数形参，只有本判据能拦。
+		//
+		// 报出来的是**新增**的两条（acc.Proxy / acc.Enabled）——acc.ProxyID 的
+		// reserveOnView 读者本来就在白名单里（Selection.ProxyID 的审计证据）。这不构成
+		// 缺口：光凭 ProxyID 推不出可用性（"绑定"不等于"可用"），要重算就必须再读
+		// Proxy 或 Enabled 之一，两者都会在这里红。
+		for _, path := range []string{"$S.acc.Proxy", "$S.acc.ProxyID", "$S.acc.Enabled"} {
+			pathFuncs[path]["reserveOnView"] = true
+		}
+		got := proxyMaterialReaderViolations(pathFuncs)
+		require.Len(t, got, 2, "只该报出新增的两条读者：%v", got)
+		for _, v := range got {
+			require.Contains(t, v, "reserveOnView")
+			require.Contains(t, v, "未登记读者")
+		}
+		require.NotContains(t, strings.Join(got, "\n"), "$S.acc.ProxyID",
+			"ProxyID 的这一个读者是既有的（审计证据），不该被当成新违规")
+	})
+
+	t.Run("登记表腐化", func(t *testing.T) {
+		pathFuncs := clonePathFuncs(scan.pathFuncs)
+		delete(pathFuncs["$S.acc.Proxy"], "staticKeyOf")
+		got := proxyMaterialReaderViolations(pathFuncs)
+		require.Len(t, got, 1, "只该报一条陈旧条目：%v", got)
+		require.Contains(t, got[0], "staticKeyOf")
+		require.Contains(t, got[0], "陈旧条目")
+	})
 }
 
 // TestEveryStaticLoadSiteIsDeclared `.static.Load()` 是取得静态视图的**唯一**入口。
