@@ -183,6 +183,14 @@ func (s supplierSurface) GetSupplierProxiesId(w http.ResponseWriter, r *http.Req
 	s.api.GetProxiesId(w, r, id)
 }
 
+// PostSupplierProxiesImport POST /api/user/supplier/proxies/import（批量导入，same impl）。
+//
+// 一行搬运：逐行私网拒绝、归属恒为 JWT 本人，全在 service 与仓储作用域谓词里；
+// 本层不重新解释"哪一行算失败"（那会得到第二套判据）。
+func (s supplierSurface) PostSupplierProxiesImport(w http.ResponseWriter, r *http.Request) {
+	s.api.PostProxiesImport(w, r)
+}
+
 // PutSupplierProxiesId PUT /api/user/supplier/proxies/{id}（全量更新 + 凭据三态）。
 func (s supplierSurface) PutSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64) {
 	s.api.PutProxiesId(w, r, id)

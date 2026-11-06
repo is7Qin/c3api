@@ -72,14 +72,32 @@ func (s *Service) GetProxy(ctx context.Context, id int64) (domain.Proxy, error) 
 // repository.ErrConflict（→ 409，含 name 详情），与 template/group 同一条既有路径
 // （先查后写只多一个 TOCTOU 窗口，不多一个保证）。
 func (s *Service) CreateProxy(ctx context.Context, in ProxyInput) (int64, error) {
-	c, err := normalizeProxyInput(in)
+	id, name, err := s.createProxyOnce(ctx, in)
 	if err != nil {
 		return 0, err
+	}
+	s.invalidateProxyPool(ctx)
+	if s.log != nil {
+		s.log.Info("proxy created", logx.Int64("id", id), logx.String("name", name))
+	}
+	return id, nil
+}
+
+// createProxyOnce 归一 → 供应商私网判据 → 落库，**不触发失效**。返回（id, 归一后的
+// name, err）；失败时 name 是能拿到的最接近输入的那个（name 本身非法 ⇒ 原始输入），
+// 供批量导入把结果标回原文那一行。
+//
+// 抽出来是为了让「单条创建」与「批量导入」走**完全同一条**判据链：唯一区别只是失效
+// 时机（单条立刻、批量收在循环之后）。没有任何一条有第二份规则。
+func (s *Service) createProxyOnce(ctx context.Context, in ProxyInput) (int64, string, error) {
+	c, err := normalizeProxyInput(in)
+	if err != nil {
+		return 0, strings.TrimSpace(in.Name), err
 	}
 	// 供应商自建出口的私网拒绝（spec §3.6）：判据只在「供应商创建」分支生效，
 	// 管理员建内网出口是合理需求（内网拨测/专线）。
 	if err := checkSupplierEgressHost(ctx, c.Host); err != nil {
-		return 0, err
+		return 0, c.Name, err
 	}
 	// enabled：缺省 true（spec §3.1），显式 false 生效。
 	c.Enabled = true
@@ -91,13 +109,57 @@ func (s *Service) CreateProxy(ctx context.Context, in ProxyInput) (int64, error)
 	}
 	id, err := s.store.CreateProxy(ctx, c)
 	if err != nil {
-		return 0, mapRepoErr(err)
+		return 0, c.Name, mapRepoErr(err)
 	}
-	s.invalidateProxyPool(ctx)
-	if s.log != nil {
-		s.log.Info("proxy created", logx.Int64("id", id), logx.String("name", c.Name))
+	return id, c.Name, nil
+}
+
+// proxyImportMaxRows 单次批量导入的行数上限（spec-proxy-import §2）：与代理表量级一致
+// （十到百条）。上限判在这里而不是 schema（`maxItems` 只是文档，生成物不校验）——
+// 一个判据一个实现点。
+const proxyImportMaxRows = 100
+
+// ProxyImportOutcome 批量导入里**单行**的结果：Index 是入参下标，Err 为 nil = 成功。
+//
+// Name 自带在结果里（而不是让调用方拿 Index 回请求体里捞）：导入的界面就是一张逐行
+// 结果表，"第几行、哪条、成没成"必须一次给全。
+type ProxyImportOutcome struct {
+	Index int
+	Name  string
+	ID    int64
+	Err   error
+}
+
+// ImportProxies 批量创建（管理面与供应商面共用，spec-proxy-import）。
+//
+// **部分成功**：每行独立归一/判据/落库，失败的行不影响其余行。返回切片与入参等长、同序；
+// 返回 error 只表示**请求本身**不合法（0 行、超过 proxyImportMaxRows）——逐行失败在
+// 结果里，不在 error 里（请求合法性与结果好坏是两件事）。
+//
+// **整批一次失效**：createProxyOnce 不触发重载；任何一行成功才在循环后调一次
+// invalidateProxyPool。这是这条端点存在的真正理由——N 个单条 POST 就是 N 次全量
+// 调度重载，而语义上只需要一次（把"何时失效"交给客户端去合并 = 客户端维护一份服务端
+// 知识，换个客户端就退化）。
+//
+// **逐行串行插入，不用 CreateBulk**：唯一约束冲突在批量插入里只报第一个、且无法归属到
+// 具体行；"第几行重名"恰是导入功能的全部价值（表是小表，几十次往返不是瓶颈）。
+func (s *Service) ImportProxies(ctx context.Context, rows []ProxyInput) ([]ProxyImportOutcome, error) {
+	if len(rows) == 0 || len(rows) > proxyImportMaxRows {
+		return nil, fmt.Errorf("%w: rows must be 1..%d", ErrInvalidInput, proxyImportMaxRows)
 	}
-	return id, nil
+	out := make([]ProxyImportOutcome, 0, len(rows))
+	created := 0
+	for i, in := range rows {
+		id, name, err := s.createProxyOnce(ctx, in)
+		out = append(out, ProxyImportOutcome{Index: i, Name: name, ID: id, Err: err})
+		if err == nil {
+			created++
+		}
+	}
+	if created > 0 {
+		s.invalidateProxyPool(ctx)
+	}
+	return out, nil
 }
 
 // UpdateProxy 全量更新可写列 + 凭据三态（PUT 语义）。
@@ -210,16 +272,19 @@ func (s *Service) invalidateProxyPool(ctx context.Context) {
 //
 // scheme 只做小写归一，**不把 socks5h 折成 socks5**：两者在本项目语义相同（Go 标准库
 // 同样处理），但用户输入原样落库是契约（domain.ProxyScheme 注释）。
+// 校验失败一律 `ErrInvalidInput`，但**带字段级说明**（spec-proxy-import §4）：单条创建时
+// 调用方刚从表单出来、知道自己在改哪一格；批量导入时一行只回一句 "invalid input"
+// 等于没说——几十行里没法定位。文案是给人读的，不是契约（测试只断言 ErrorIs）。
 func normalizeProxyInput(in ProxyInput) (repository.ProxyCreate, error) {
 	// 1. name：trim 后 1..64（按 rune 计：它是人读标签）。
 	name := strings.TrimSpace(in.Name)
 	if name == "" || utf8.RuneCountInString(name) > proxyNameMaxRunes {
-		return repository.ProxyCreate{}, ErrInvalidInput
+		return repository.ProxyCreate{}, fmt.Errorf("%w: name must be 1..%d characters after trim", ErrInvalidInput, proxyNameMaxRunes)
 	}
 	// 2. scheme：小写后必须命中白名单。
 	scheme := domain.ProxyScheme(strings.ToLower(strings.TrimSpace(string(in.Scheme))))
 	if !scheme.Valid() {
-		return repository.ProxyCreate{}, ErrInvalidInput
+		return repository.ProxyCreate{}, fmt.Errorf("%w: scheme must be one of socks5, socks5h, http, https", ErrInvalidInput)
 	}
 	// 3. host。
 	host, err := normalizeProxyHost(in.Host)
@@ -228,15 +293,15 @@ func normalizeProxyInput(in ProxyInput) (repository.ProxyCreate, error) {
 	}
 	// 4. port。
 	if in.Port < 1 || in.Port > 65535 {
-		return repository.ProxyCreate{}, ErrInvalidInput
+		return repository.ProxyCreate{}, fmt.Errorf("%w: port must be 1..65535", ErrInvalidInput)
 	}
 	// 5. username/password：都空 = 无认证；username 非空时 password 可空——故这里
 	// 只做控制字符拒绝，不强制成对。凭据**不做 trim/归一**：它是原样拿去认证的字节。
-	username, err := normalizeProxyCredential(in.Username)
+	username, err := normalizeProxyCredential("username", in.Username)
 	if err != nil {
 		return repository.ProxyCreate{}, err
 	}
-	password, err := normalizeProxyCredential(in.Password)
+	password, err := normalizeProxyCredential("password", in.Password)
 	if err != nil {
 		return repository.ProxyCreate{}, err
 	}
@@ -258,35 +323,38 @@ func normalizeProxyInput(in ProxyInput) (repository.ProxyCreate, error) {
 func normalizeProxyHost(raw string) (string, error) {
 	h := strings.TrimSpace(raw)
 	if h == "" {
-		return "", ErrInvalidInput
+		return "", fmt.Errorf("%w: host is required", ErrInvalidInput)
 	}
 	// 只剥**成对**的方括号：单个 '[' 是写错，不猜。
 	if len(h) >= 2 && strings.HasPrefix(h, "[") && strings.HasSuffix(h, "]") {
 		h = h[1 : len(h)-1]
 	}
-	if h == "" || len(h) > proxyHostMaxLen {
-		return "", ErrInvalidInput
+	if h == "" {
+		return "", fmt.Errorf("%w: host is required", ErrInvalidInput)
+	}
+	if len(h) > proxyHostMaxLen {
+		return "", fmt.Errorf("%w: host must be at most %d bytes", ErrInvalidInput, proxyHostMaxLen)
 	}
 	for _, r := range h {
 		// '/' 会被 URL 拼接读成路径，'@' 会被读成 userinfo 分隔符（凭据被劫持到
 		// host 段）；空白与控制字符能穿透到 Host 头/拨测串。残留的 '[' ']' 是
 		// 双重括号之类的手写错误（"[[::1]]"），同样拒绝。
 		if r == '/' || r == '@' || r == '[' || r == ']' || unicode.IsSpace(r) || unicode.IsControl(r) {
-			return "", ErrInvalidInput
+			return "", fmt.Errorf("%w: host must not contain '/', '@', brackets, spaces or control characters", ErrInvalidInput)
 		}
 	}
 	return h, nil
 }
 
 // normalizeProxyCredential 凭据归一：nil/空 = 无；控制字符 → 400。值本身原样保留
-// （认证字节，不 trim）。
-func normalizeProxyCredential(v *string) (string, error) {
+// （认证字节，不 trim）。field 只用于错误文案（"username"/"password"）。
+func normalizeProxyCredential(field string, v *string) (string, error) {
 	if v == nil || *v == "" {
 		return "", nil
 	}
 	for _, r := range *v {
 		if unicode.IsControl(r) {
-			return "", ErrInvalidInput
+			return "", fmt.Errorf("%w: %s must not contain control characters", ErrInvalidInput, field)
 		}
 	}
 	return *v, nil

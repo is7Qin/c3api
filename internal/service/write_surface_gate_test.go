@@ -36,6 +36,9 @@ import (
 //     Sched.InvalidateAll，与模板变更同一条 seam），不推进 C/K；账号侧的绑定变更
 //     仍只能经收口三动词（CreateAccount/PatchAccount/UpdateAccountsBatch）落到
 //     account.proxy_id。
+//   - 代理批量导入（spec-proxy-import）：ImportProxies 逐行走**同一个** createProxyOnce
+//     （归一 + 私网判据 + 落库），唯一区别是失效收在循环之后（N 行一次重载）。它没有
+//     自己的写语义，因此也不推进任何代际。
 //   - 其余各项是读、其它实体的写入或纯编排 helper（键、组、用户、模板、规则、
 //     定价、模型目录读（RouteModels/GroupMultiplierOverrides/PriceDisplayForModels）、
 //     兑换、邮件、统计、用量、路由观测），不触账号配置或身份代际。
@@ -98,6 +101,7 @@ var allowedServiceMethods = []string{
 	"GroupMultiplierOverrides",
 	"ImportCodexOAuthAccounts",
 	"ImportCodexPATAccounts",
+	"ImportProxies",
 	"ListAccountViews",
 	"ListAccounts",
 	"ListAdminKeys",

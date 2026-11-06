@@ -361,5 +361,5 @@ func TestProxiesKeepOffSupplierSurface(t *testing.T) {
 			seen++
 		}
 	}
-	require.Equal(t, 6, seen, "六个 op：GET/POST /proxies + GET/PUT/DELETE /proxies/{id} + POST /proxies/{id}/probe")
+	require.Equal(t, 7, seen, "七个 op：GET/POST /proxies + POST /proxies/import（批量导入，spec-proxy-import）+ GET/PUT/DELETE /proxies/{id} + POST /proxies/{id}/probe")
 }
