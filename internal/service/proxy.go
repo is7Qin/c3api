@@ -307,6 +307,16 @@ func proxyRedactedError(err error, p domain.Proxy) string {
 	return text
 }
 
+// proxyOwnerMatchesAccount 代理归属与目标账号归属的兼容性（spec §3.6 的共享子规则）：
+// 平台代理对任何账号成立；私池代理只对自己的账号成立。
+// 调用方各自负责「调用者有没有资格做这件事」与错误码，本函数只管归属兼容。
+func proxyOwnerMatchesAccount(owner *int64, targetSupplierUserID int64) bool {
+	if owner == nil {
+		return true // 平台代理：归属上不挑账号（"只有管理员能分配"是调用方的前置检查）
+	}
+	return targetSupplierUserID == *owner
+}
+
 // resolveBindableProxy 应用 spec §3.6 的**唯一绑定谓词**（一处实现，不散开）：
 //
 //	nil      = 不变（不校验——`AccountPatch.ProxyID == nil` 已表达「不变」）
@@ -319,11 +329,15 @@ func proxyRedactedError(err error, p domain.Proxy) string {
 //	                             : targetAccount.supplier_user_id == *proxy.owner_uid )
 //	                                                       // 私池代理：只能承载其主的流量
 //
+// 第二行（归属兼容）由 proxyOwnerMatchesAccount 承载，与转属守卫
+// checkTransferKeepsBinding 共用同一份实现；第一行（「调用者有没有资格分配平台代理」）
+// 是本入口自己的前置检查，错误码也只属于本入口（404）。
+//
 // 三条后果，都是有意的：
 //   - 平台池**不是公共池**：供应商面（scope.Set）绑平台代理 ⇒ 404（看不见也绑不上）；
 //   - 私池代理**管理员也不能挪给别人**（targetSupplier 必须等于 owner），否则供应商
 //     控制的出口会承载别人的流量（信任倒挂）；
-//   - 平台账号的 supplier_user_id 是 0 ⇒ 谓词最后一行恒假 ⇒ 平台账号绑不上任何私池
+//   - 平台账号的 supplier_user_id 是 0 ⇒ 私池分支恒假 ⇒ 平台账号绑不上任何私池
 //     代理（等价于「平台账号只能绑平台代理」）。
 //
 // 越界一律 **404 而不是 403**：不泄露「别人有这条代理」这一事实。归属走
@@ -343,15 +357,13 @@ func (s *Service) resolveBindableProxy(ctx context.Context, proxyID *int64, targ
 	if err != nil {
 		return mapRepoErr(err) // 不存在/已软删 → 404
 	}
-	if info.OwnerUID == nil {
-		// 平台代理：只有管理员（无 scope）能分配，且可分配给任意账号。
-		if domain.AccountScopeFrom(ctx).Set {
-			return fmt.Errorf("%w: proxy_id=%d is not bindable", ErrNotFound, *proxyID)
-		}
-		return nil
+	// 前置检查：平台代理只有管理员（无 scope）能分配。这不是归属兼容问题——私池代理
+	// 的分配资格由归属本身给出——所以留在本入口，且同样落 404（不泄露存在性）。
+	if info.OwnerUID == nil && domain.AccountScopeFrom(ctx).Set {
+		return fmt.Errorf("%w: proxy_id=%d is not bindable", ErrNotFound, *proxyID)
 	}
-	// 私池代理：只能承载其主的账号（管理员也遵守）。归属不符与「不存在」同码。
-	if targetSupplierUserID != *info.OwnerUID {
+	// 归属兼容（与转属守卫共用子规则）：私池代理只能承载其主的账号，管理员也遵守。
+	if !proxyOwnerMatchesAccount(info.OwnerUID, targetSupplierUserID) {
 		return fmt.Errorf("%w: proxy_id=%d is not bindable", ErrNotFound, *proxyID)
 	}
 	return nil
@@ -369,7 +381,11 @@ func (s *Service) resolveBindableProxy(ctx context.Context, proxyID *int64, targ
 // 而调用方只说了"转属"；让一个隐式副作用改掉流量路径，比让人补一个字段更糟。为什么不
 // 静默放过：那条越权状态会一直存在，直到有人碰巧改绑定。
 //
-// 平台代理不受此限：它是管理员分配的，转属后仍由管理员维护，没有跨租户信任问题。
+// 归属兼容与绑定入口共用 proxyOwnerMatchesAccount（同一条子规则、不同错误码：
+// 这里是 400 ⇒ 让调用方补字段；绑定入口是 404 ⇒ 不泄露存在性）。
+//
+// 平台代理不受此限：它是管理员分配的，转属后仍由管理员维护，没有跨租户信任问题
+// （子规则对 owner==nil 恒真，正是这一条）。
 func (s *Service) checkTransferKeepsBinding(ctx context.Context, proxyID *int64, fromSupplier, toSupplier int64) error {
 	if fromSupplier == toSupplier || proxyID == nil || *proxyID <= 0 {
 		return nil
@@ -378,11 +394,8 @@ func (s *Service) checkTransferKeepsBinding(ctx context.Context, proxyID *int64,
 	if err != nil {
 		return mapRepoErr(err)
 	}
-	if info.OwnerUID == nil {
-		return nil // 平台代理：任何归属的账号都能挂（只有管理员能挂上）
-	}
-	if *info.OwnerUID == toSupplier {
-		return nil
+	if proxyOwnerMatchesAccount(info.OwnerUID, toSupplier) {
+		return nil // 平台代理恒真；私池代理的归属正好等于新归属
 	}
 	return fmt.Errorf("%w: transferring the account would leave proxy_id=%d (owned by %d) bound to a %d account; clear proxy_id or bind a proxy owned by the new owner",
 		ErrInvalidInput, *proxyID, *info.OwnerUID, toSupplier)

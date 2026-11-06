@@ -153,7 +153,7 @@ func TestPGAccountReadExpandsProxy(t *testing.T) {
 			require.Equal(t, privateProxyA, row.Proxy.ID)
 			require.Equal(t, "expand-private-a", row.Proxy.Name)
 		}
-		require.NotSame(t, rows[0].Proxy, rows[1].Proxy, "每行各持一份指针（下游指针比较不得把两账号看成一个条目）")
+		require.NotSame(t, rows[0].Proxy, rows[1].Proxy, "每行各持一份指针：共用同一对象会让一行的就地改写泄漏成另一行的事实（可变对象别名，不是指针身份判等）")
 	})
 
 	t.Run("list page is scope-aware per row", func(t *testing.T) {

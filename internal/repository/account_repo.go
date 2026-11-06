@@ -254,8 +254,10 @@ func (r *AccountRepo) expandProxies(ctx context.Context, accs []*domain.Account)
 		if a == nil || a.ProxyID == nil {
 			continue
 		}
-		// 指针各取一份：同一代理可能被一页里的多个账号共用，别名一份会让下游
-		// 的指针比较（Routable 派生、日志）把两个账号看成同一个条目。
+		// 指针各取一份：同一代理可能被一页里的多个账号共用。共享同一个 *domain.Proxy
+		// 是**可变对象别名**问题——下游若有任何一处就地改写这个对象，改的会是另一个
+		// 账号看到的那一份（"一页里两行 = 一个值"的错觉）。下游今天只读
+		// nil/Enabled，所以这不是活跃缺陷，而是把别名留在数据边上迟早要付的账。
 		if p, ok := byID[*a.ProxyID]; ok {
 			attached := p
 			a.Proxy = &attached

@@ -533,20 +533,20 @@ func TestPGLookupProxyForBinding(t *testing.T) {
 	privateProxyA := seedPGProxyOwned(t, repos, a.ID, "lookup-private-a")
 	platformProxy := seedPGProxyNamed(t, repos, "lookup-platform")
 
-	// ① 跨 scope：B 的作用域里读 A 的私池，读到的是 A 的归属。
+	// ① 跨 scope：B 的作用域里读 A 的私池，读到的是 A 的归属。返回体只给归属这一个
+	//    事实（「能不能绑」的全部输入），不含可用性/出口规格。
 	info, err := repos.Proxies.LookupProxyForBinding(scopeCtx(b.ID), privateProxyA)
 	require.NoError(t, err, "判据读取不受调用方作用域限制")
 	require.NotNil(t, info.OwnerUID)
 	require.Equal(t, a.ID, *info.OwnerUID)
-	require.True(t, info.Enabled)
 
 	// ② 平台代理：OwnerUID 为 nil（谓词第一条分支的判据）。
 	platformInfo, err := repos.Proxies.LookupProxyForBinding(scopeCtx(b.ID), platformProxy)
 	require.NoError(t, err)
 	require.Nil(t, platformInfo.OwnerUID, "平台代理 owner NULL ⇒ 只有管理员可分配")
 
-	// ③ 停用条目仍可读（Enabled 由 enabled 列给，绑定校验不因停用而"假装不存在"：
-	//    谓词只要求存在且未软删；可用性由 Routable 在装载期派生）。
+	// ③ 停用条目仍可读：绑定校验只要求"存在且未软删"，停用不使它"假装不存在"
+	//    （可用性由 Routable 在装载期派生，不是绑定判据的输入）。
 	disabled := domain.Proxy{
 		Name: "lookup-disabled", Scheme: domain.ProxySchemeHTTP, Host: "disabled.example.com", Port: 8080,
 		Enabled: false,
@@ -554,8 +554,8 @@ func TestPGLookupProxyForBinding(t *testing.T) {
 	disabledID, err := repos.Proxies.CreateProxy(adminCtx, disabled)
 	require.NoError(t, err)
 	disabledInfo, err := repos.Proxies.LookupProxyForBinding(adminCtx, disabledID)
-	require.NoError(t, err)
-	require.False(t, disabledInfo.Enabled)
+	require.NoError(t, err, "停用条目的绑定校验仍读到行（存活即可判归属）")
+	require.Nil(t, disabledInfo.OwnerUID, "管理面创建 ⇒ 平台代理")
 
 	// ④ 软删 ⇒ 不存在。
 	require.NoError(t, repos.Proxies.DeleteProxy(adminCtx, disabledID))

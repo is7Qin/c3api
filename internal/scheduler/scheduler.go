@@ -521,7 +521,7 @@ func (s *Scheduler) reloadLocked(ctx context.Context) error {
 	s.publisher.stageLocked(sv)
 	// 出口 client 回收（spec §8 失效矩阵）：新快照成为唯一活跃根之后，池里不再被
 	// 任何叶子引用的规格 client 关闭并移除。零代理部署（所有既有基线）在
-	// pruneEgress 的第一行就返回——reload 路径因此一行都不多跑。
+	// pruneEgress 参数判空后即刻返回——不扫描账号、不分配活跃集合。
 	s.pruneEgress(byID)
 	// a full staging covers every route — the lane takes the
 	// full-fidelity fallback. Scope-first, then wake.
@@ -534,8 +534,9 @@ func (s *Scheduler) reloadLocked(ctx context.Context) error {
 // pruneEgress 回收当前快照不再引用到的出口 client（spec §8 失效矩阵：代理 CRUD /
 // 改绑后旧规格的连接池必须关闭并移除，不靠 GC 猜）。
 //
-// 池里没有规格 client（零代理部署）⇒ 直接返回：所有既有基线 bench 与 reload 路径
-// 因此一行都不多跑。有代理时才做一次 O(叶子数) 的摘要集合（非热路径，spec §8）。
+// 池里没有规格 client（零代理部署）⇒ 判空后直接返回：reload **不扫描账号、不分配活跃
+// 集合**。这一步很便宜但不是零——它读了池并调了带锁的 `Size()`（两次），所以别把它
+// 当成"零开销"来引用；有代理时才做一次 O(叶子数) 的摘要集合（非热路径，spec §8）。
 func (s *Scheduler) pruneEgress(byID map[int64]*accountSnapshot) {
 	pool := s.cfg.Egress
 	if pool == nil || pool.Size() == 0 {

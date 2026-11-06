@@ -3058,7 +3058,8 @@ func (f *fakeStore) LookupProxyForBinding(ctx context.Context, id int64) (reposi
 	if !ok || row.deletedAt != nil {
 		return repository.ProxyBindingInfo{}, missingErr(id)
 	}
-	return repository.ProxyBindingInfo{OwnerUID: row.p.OwnerUID, Enabled: row.p.Enabled}, nil
+	// 成功返回 = 行存活；字段只给归属（可用性不参与绑定判据，见 ProxyRepo 注释）。
+	return repository.ProxyBindingInfo{OwnerUID: row.p.OwnerUID}, nil
 }
 
 func (f *fakeStore) UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error {

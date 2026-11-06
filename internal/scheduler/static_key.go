@@ -199,8 +199,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.upstreamCostMultiplierBp = domain.MultBp(av.acc.UpstreamCostMultiplierBp)
 	k.identityRevision = av.acc.IdentityRevision
 	k.supplierUserID = av.acc.SupplierUserID
-	av.proxyDigest = specOfDomain(av.acc.Proxy).Key()
-	k.proxyDigest = av.proxyDigest
+	k.proxyDigest = specOfDomain(av.acc.Proxy).Key()
 	k.routable = av.acc.Routable
 	if ext := av.acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)
@@ -256,8 +255,17 @@ func payloadKeyOf(av *snapshotStatic) payloadKey {
 //
 // 两枚子键从**同一份**快照派生，字段归属只声明一次：planKeyOf 读决策输入，
 // payloadKeyOf 读载荷。
+//
+// 出口摘要这一项**从原料重算**（`specOfDomain(acc.Proxy).Key()`），不读 av.key 的
+// 缓存位：复用比较与构造期键因此各自独立地从 acc.Proxy 派生——任一处漏写出口都不会
+// 被另一处掩盖。其余字段仍是缓存键的读回（它们的源是标量/切片，构造期已一次定型；
+// 逐项重算只会把每次 reload 的成本翻倍，而不增加任何证据）。
 func staticKeyOf(av *snapshotStatic) staticKey {
-	return staticKey{planKey: planKeyOf(av), payloadKey: payloadKeyOf(av)}
+	k := staticKey{planKey: planKeyOf(av), payloadKey: payloadKeyOf(av)}
+	if av != nil {
+		k.planKey.proxyDigest = specOfDomain(av.acc.Proxy).Key()
+	}
+	return k
 }
 
 // normalizeCacheDomain 把 nil 与 "" 归并为同一个空串：cacheDomainForAccount

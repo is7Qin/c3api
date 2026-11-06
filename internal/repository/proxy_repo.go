@@ -255,24 +255,23 @@ func (r *ProxyRepo) WriteProxyProbe(ctx context.Context, id int64, at time.Time,
 
 // ProxyBindingInfo 绑定校验所需的代理事实（spec-proxy-pool §3.6 的唯一绑定谓词）。
 //
-// 只有两个字段，因为绑定校验只认这两个事实：归属（决定「能不能绑」）与可用性开关
-// （enabled 是**唯一**可用性开关，§6.3）。不返回凭据/地址：绑定校验不需要出口规格，
-// 多给一个字段就多一处泄漏面。
+// 只有一个字段，因为绑定校验只认这一个事实：归属（决定「能不能绑」）。不返回凭据/地址：
+// 绑定校验不需要出口规格，多给一个字段就多一处泄漏面。可用性开关（enabled）也不返回
+// ——它**不参与谓词**（见 LookupProxyForBinding 注释），返回它就只是给调用方一次
+// 「顺手用一下」的机会，而不是绑定判据的输入。
 type ProxyBindingInfo struct {
 	OwnerUID *int64 // nil = 平台代理（只有管理员可分配）
-	// Enabled **不参与谓词**（谓词只判存在与归属）：停用是运行期可用性，绑定是权限事实
-	// ——「先绑好、后启用」是正常运维顺序，可用性由 Routable 在装载期派生。它在这里是
-	// 因为「判据所需的事实」应当一次读全（调用方不必为同一个判断再查一次行）。
-	Enabled bool
 }
 
-// LookupProxyForBinding 读存活行的归属与可用性；不存在/已软删 ⇒ ErrNotFound。
+// LookupProxyForBinding 读存活行的归属；不存在/已软删 ⇒ ErrNotFound。**成功返回 = 行存活**，
+// 字段只给归属：可用性（enabled）与出口规格都不在这里读——停用是运行期可用性，绑定是
+// 权限事实，「先绑好、后启用」是正常运维顺序，可用性由 Routable 在装载期派生（§4.1）。
 //
-// **跨 scope 读取**（故意不带 proxyOwnerPred）：这里的语义是「能不能绑」，不是
-// 「能不能看」。绑定校验要能判断「这条代理是谁的」，否则管理员无 scope 时永远只看
-// 得到平台代理、供应商也永远判不出「这条不是我的」——两者都会退化成一条静默的
-// 越权通路（前者：管理员绑不了私池；后者：供应商绑得上别人的）。可见性由
-// ListProxies/GetProxy 的 scope 谓词负责，两条面各司其职。
+// **跨 scope 读取**（故意不带 proxyOwnerPred）：这里的语义是「能不能绑」，不是「能不能看」。
+// 绑定校验必须能判断「这条代理是谁的」，判不了就会退化成静默的越权通路（管理员绑不了
+// 私池、供应商绑得上别人的）。可见性由 ListProxies/GetProxy 的 scope 谓词负责——
+// 注意 `proxyOwnerPred` 在**无 scope 时返回空谓词（看全部）**，所以"管理员只能看到平台
+// 代理"不是这条读取要解决的问题，两个面各司其职。
 func (r *ProxyRepo) LookupProxyForBinding(ctx context.Context, id int64) (ProxyBindingInfo, error) {
 	row, err := r.client.Proxy.Query().
 		Where(proxy.IDEQ(id), proxy.DeletedAtIsNil()).
@@ -280,5 +279,5 @@ func (r *ProxyRepo) LookupProxyForBinding(ctx context.Context, id int64) (ProxyB
 	if err != nil {
 		return ProxyBindingInfo{}, errMissingID(err, id)
 	}
-	return ProxyBindingInfo{OwnerUID: row.OwnerUID, Enabled: row.Enabled}, nil
+	return ProxyBindingInfo{OwnerUID: row.OwnerUID}, nil
 }

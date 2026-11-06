@@ -28,6 +28,18 @@ import (
 // 为什么粒度必须是**标量解引用路径**而不是字段名：`av.acc` 这类整结构体读确实存在
 // （有 15 处，既是深路径的前缀也是真实读取），以字段名判定会把载荷算成"被读"，
 // 门不可执行。故路径终到标量，整结构体/指针/切片读单独分类（container / field）。
+//
+// **构造期 vs 消费期**（这条区分是删 `snapshotStatic.proxyDigest` 的前提，不许放宽）：
+// 本门按**函数**登记读路径，而"谁在什么时候读"分两类，判据相同但含义不同：
+//   - 构造/判据期：`newSnapshotStatic`（唯一构造函数）与 `staticKeyOf`（叶子复用判据）
+//     允许读**原料**（如 `$S.acc.Proxy` 整指针交给 `specOfDomain`）——它们跑的时机
+//     是 reload，叶子尚未发布或正在比较，读原料不构成陈旧读。
+//   - 消费期：发布之后的读者（`Select`/预留谓词/事件/编译事实）只允许读**已登记**
+//     的派生位（键字段或随叶定型的标量）——任何消费点想读原料（例如 `$S.acc.Proxy.*`
+//     下钻）都必须先在这里登记并声明它落在哪个键字段，否则本次断言（③ 的"键字段集与
+//     消费到的字段集相等"）直接失败。
+// 因此"删掉一个字段"只能通过**删掉它的读路径**来完成；登记表不会因为字段消失而
+// 自动放过任何消费点。
 
 const (
 	snapRootAlias = "$S" // 规范根名：所有 *snapshotStatic 根归一为它
@@ -86,7 +98,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.tpl":                   {staticPathContainer, "模板指针：nil 检查与前缀"},
 	"$S.acc.Ext":               {staticPathContainer, "凭据扩展指针：nil 检查 + 装配到 Selection.Ext 的穿透把手（收窄属计划 fence 消费面收口的范围）"},
 	"$S.acc.Ext.CodexIdentity": {staticPathContainer, "身份四元组指针：nil 检查与前缀"},
-	"$S.acc.Proxy":             {staticPathContainer, "出口代理展开指针：nil 检查 + 整交给 specOfDomain（摘要由 egress.Spec.Key 唯一构造）"},
+	"$S.acc.Proxy":             {staticPathContainer, "出口代理展开指针：**只有构造/判据期**读它（newSnapshotStatic 定型 routable、staticKeyOf 重算出口摘要），整交给 specOfDomain；消费期不得下钻（摘要入键后由 proxyDigest 承载）"},
 	"$S.acc.ProxyID":           {staticPathField, "proxyDigest"}, // 绑定关系（nil = 直连）与 $S.acc.Proxy 同源承载：绑定变化 ⇒ 摘要变；可用性位另见 $S.acc.Routable
 	"$S.acc.Routable":          {staticPathField, "routable"},    // 唯一可用性决策位：构造期一次定型（enabled ∧（未绑定 ∨ 绑定可用）），候选过滤只读它
 	"$S.egress":                {staticPathContainer, "恒非 nil 的出口 client 指针：直接交给 Selection（热路径零判断）、组级重派生时原样接续、prune 时取摘要"},
@@ -104,7 +116,6 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.UpstreamCostMultiplierBp": {staticPathField, "upstreamCostMultiplierBp"},
 	"$S.acc.IdentityRevision":         {staticPathField, "identityRevision"},
 	"$S.acc.SupplierUserID":           {staticPathField, "supplierUserID"},
-	"$S.proxyDigest":                  {staticPathField, "proxyDigest"}, // 出口规格摘要：由 $S.acc.Proxy 派生、随叶持有
 
 	// --- 账号凭据面（决策输入子集） ---
 	"$S.acc.Ext.CodexAccountID":               {staticPathField, "codexAccountID"},

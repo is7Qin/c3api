@@ -29,7 +29,8 @@ func egressNote(sel *scheduler.Selection) string {
 }
 
 // withEgressNote 把出口标识拼到网络失败文本尾部（`<原文> (proxy_id=7 socks5://h:p)`）。
-// 原文为空时只留标识；直连 ⇒ 原样返回。拼完再按域内上限截断（message 列有界）。
+// 原文为空时只留标识；直连 ⇒ 原样返回。**先给尾注预留预算、再截原文**（message 列有界，
+// 详见下面实现处的理由）。
 func withEgressNote(msg string, sel *scheduler.Selection) string {
 	note := egressNote(sel)
 	if note == "" {
