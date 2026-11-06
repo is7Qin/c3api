@@ -340,10 +340,10 @@ func execUpdate(ctx context.Context, drv dialect.Driver, u *entsql.UpdateBuilder
 
 // --- Store 门面：Repository 聚合全部实体仓库，实现 service.Store（装配入口用）。 ---
 
-// 出口代理条目（proxy；spec-proxy-pool M1b 写面）。UpdateProxy 的密码三态以
-// 独立形参原子的表达——见 ProxyRepo.UpdateProxy 的函数注释。
-func (r *Repository) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
-	return r.Proxies.CreateProxy(ctx, p)
+// 出口代理条目（proxy；spec-proxy-pool M1b 写面）。写面入参是 ProxyCreate /
+// ProxyUpdate（可写列 + 凭据三态），见 ProxyRepo 的 DTO 注释。
+func (r *Repository) CreateProxy(ctx context.Context, in ProxyCreate) (int64, error) {
+	return r.Proxies.CreateProxy(ctx, in)
 }
 
 func (r *Repository) ListProxies(ctx context.Context) ([]domain.Proxy, error) {
@@ -354,8 +354,8 @@ func (r *Repository) GetProxy(ctx context.Context, id int64) (domain.Proxy, erro
 	return r.Proxies.GetProxy(ctx, id)
 }
 
-func (r *Repository) UpdateProxy(ctx context.Context, p domain.Proxy, credential ProxyCredential) error {
-	return r.Proxies.UpdateProxy(ctx, p, credential)
+func (r *Repository) UpdateProxy(ctx context.Context, in ProxyUpdate) error {
+	return r.Proxies.UpdateProxy(ctx, in)
 }
 
 func (r *Repository) DeleteProxy(ctx context.Context, id int64) error {
@@ -366,7 +366,7 @@ func (r *Repository) WriteProxyProbe(ctx context.Context, id int64, at time.Time
 	return r.Proxies.WriteProxyProbe(ctx, id, at, ok, errText)
 }
 
-// LookupProxyForBinding 绑定谓词的跨 scope 读取（§3.6）：判「能不能绑」而非「能不能
+// LookupProxyForBinding 绑定谓词的跨 scope 窄读（§3.6）：判「能不能绑」而非「能不能
 // 看」，故不受调用方作用域限制——见 ProxyRepo.LookupProxyForBinding 注释。
 func (r *Repository) LookupProxyForBinding(ctx context.Context, id int64) (ProxyBindingInfo, error) {
 	return r.Proxies.LookupProxyForBinding(ctx, id)

@@ -15,14 +15,43 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
+// createOf / fieldsOf / updateOf 是本文件（及同包的 group_repo_proxy_test.go）的
+// **测试专用**投影：写面只认可写列（repository.ProxyCreate / ProxyUpdate），而用例的
+// 惯用写法是「给一个完整条目、或读回来改几个字段再写回」。
+//
+// 为什么不是生产 API：生产侧的投影只有一处——service.normalizeProxyInput（校验 + 归一）
+// 与 service.UpdateProxy（补 id 与凭据三态）。把同样的投影搬进 repository 就等于把刚
+// 删掉的"完整对象当补丁"放回来。
+//
+// 归属/探测三列/时间戳**不在**投影里：它们在 DTO 里根本不存在，故这些用例仍能证明
+// 「写面碰不到它们」——只是从"运行时忽略"变成了"表达不出来"。
+func createOf(p domain.Proxy) repository.ProxyCreate {
+	return repository.ProxyCreate{
+		ProxyFields: fieldsOf(p),
+		Username:    p.Username,
+		Password:    p.Password,
+	}
+}
+
+func fieldsOf(p domain.Proxy) repository.ProxyFields {
+	return repository.ProxyFields{
+		Name: p.Name, Scheme: p.Scheme, Host: p.Host, Port: p.Port,
+		Enabled: p.Enabled, Remark: p.Remark,
+	}
+}
+
+func updateOf(p domain.Proxy, c repository.ProxyCredential) repository.ProxyUpdate {
+	return repository.ProxyUpdate{ID: p.ID, ProxyFields: fieldsOf(p), Credential: c}
+}
+
 // seedPGProxyNamed 建一个启用的代理条目并返回其 id（名字唯一 ⇒ 每个子用例用自己的
 // 名字）。代理表无外键依赖，可在任何种子之前创建。
 func seedPGProxyNamed(t *testing.T, repos *repository.Repository, name string) int64 {
 	t.Helper()
-	id, err := repos.Proxies.CreateProxy(context.Background(), domain.Proxy{
+	id, err := repos.Proxies.CreateProxy(context.Background(), createOf(domain.Proxy{
 		Name: name, Scheme: domain.ProxySchemeSOCKS5, Host: "127.0.0.1", Port: 1080,
 		Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 	require.NotZero(t, id)
 	return id
@@ -35,15 +64,15 @@ func TestPGProxyCRUD(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 
-	id, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	id, err := repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "crud-1", Scheme: domain.ProxySchemeHTTPS, Host: "10.0.0.7", Port: 3128,
 		Username: "u1", Password: "p1", Enabled: true, Remark: "primary",
-	})
+	}))
 	require.NoError(t, err)
-	otherID, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	otherID, err := repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "crud-2", Scheme: domain.ProxySchemeSOCKS5H, Host: "10.0.0.8", Port: 1080,
 		Enabled: false,
-	})
+	}))
 	require.NoError(t, err)
 	require.Greater(t, otherID, id, "id 递增（列表 ORDER BY id 的稳定性前提）")
 
@@ -77,11 +106,11 @@ func TestPGProxyCRUD(t *testing.T) {
 	got.Port = 8080
 	got.Remark = ""
 	got.Enabled = false
-	// 凭据三态：两列各给 &"" 才清空（本轮要清掉 u1/p1 的认证）。凭据不走
-	// domain.Proxy 的字段（更新面只有 ProxyCredential 能设凭据）。
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{
+	// 凭据三态：两列各给 &"" 才清空（本轮要清掉 u1/p1 的认证）。凭据只经
+	// ProxyUpdate.Credential 表达（可写列里没有凭据字段，故"两处都能设凭据"不存在）。
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(got, repository.ProxyCredential{
 		Username: new(""), Password: new(""),
-	}))
+	})))
 
 	updated, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
@@ -95,7 +124,7 @@ func TestPGProxyCRUD(t *testing.T) {
 	require.Empty(t, updated.Remark)
 
 	// 更新幂等：同值再写一遍不报错、结果不变（password=nil = 不变）。
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updated, repository.ProxyCredential{}))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(updated, repository.ProxyCredential{})))
 	again, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, updated.Name, again.Name)
@@ -111,7 +140,7 @@ func TestPGProxyCRUD(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrNotFound)
 	require.ErrorIs(t, repos.Proxies.DeleteProxy(ctx, id), repository.ErrNotFound)
 	// 软删行不可更新。
-	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, updated, repository.ProxyCredential{}), repository.ErrNotFound)
+	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctx, updateOf(updated, repository.ProxyCredential{})), repository.ErrNotFound)
 }
 
 // TestPGProxyNameUnique 钉住 name 唯一的**每归属**语义（spec-proxy-pool §2.5）：
@@ -127,55 +156,55 @@ func TestPGProxyNameUnique(t *testing.T) {
 	ownerB := domain.WithAccountScope(ctx, domain.SupplierAccountScope(9002))
 
 	// ---- 平台池（无 scope ⇒ owner_uid IS NULL）：彼此仍唯一 ----
-	id, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	id, err := repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeSOCKS5, Host: "h1", Port: 1080, Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 
-	_, err = repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	_, err = repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeHTTP, Host: "h2", Port: 8080, Enabled: true,
-	})
+	}))
 	require.ErrorIs(t, err, repository.ErrConflict, "平台池内重复 name → ErrConflict（service 映射 409）")
 	require.Contains(t, err.Error(), `name="dup"`, "冲突详情含 name")
 
 	// ---- 跨归属同名：允许（本阶段的核心改动）----
-	_, err = repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+	_, err = repos.Proxies.CreateProxy(ownerA, createOf(domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeSOCKS5, Host: "a1", Port: 1080, Enabled: true,
-	})
+	}))
 	require.NoError(t, err, "供应商 A 可以用平台池已占用的名字（唯一域是每归属）")
-	_, err = repos.Proxies.CreateProxy(ownerB, domain.Proxy{
+	_, err = repos.Proxies.CreateProxy(ownerB, createOf(domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeSOCKS5, Host: "b1", Port: 1080, Enabled: true,
-	})
+	}))
 	require.NoError(t, err, "供应商 B 也能用同一个名字：既非跨租户命名冲突，也不构成存在性探测面")
 
 	// ---- 同一供应商内重名：冲突 ----
-	_, err = repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+	_, err = repos.Proxies.CreateProxy(ownerA, createOf(domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeHTTP, Host: "a2", Port: 8080, Enabled: true,
-	})
+	}))
 	require.ErrorIs(t, err, repository.ErrConflict, "同一供应商内重复 name → ErrConflict")
 	require.Contains(t, err.Error(), `name="dup"`, "冲突详情含 name")
 
 	// ---- 改名撞**同一归属**内的已有 name：冲突 ----
-	secondID, err := repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+	secondID, err := repos.Proxies.CreateProxy(ownerA, createOf(domain.Proxy{
 		Name: "dup-2", Scheme: domain.ProxySchemeHTTP, Host: "a3", Port: 8080, Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 	second, err := repos.Proxies.GetProxy(ownerA, secondID)
 	require.NoError(t, err)
 	second.Name = "dup"
-	require.ErrorIs(t, repos.Proxies.UpdateProxy(ownerA, second, repository.ProxyCredential{}), repository.ErrConflict)
+	require.ErrorIs(t, repos.Proxies.UpdateProxy(ownerA, updateOf(second, repository.ProxyCredential{})), repository.ErrConflict)
 
 	// ---- 软删后同一归属内同名仍不可用（唯一索引与 deleted_at 无关）----
 	require.NoError(t, repos.Proxies.DeleteProxy(ctx, id))
-	_, err = repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	_, err = repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "dup", Scheme: domain.ProxySchemeHTTP, Host: "h4", Port: 8080, Enabled: true,
-	})
+	}))
 	require.ErrorIs(t, err, repository.ErrConflict,
 		"软删不释放 name：唯一索引不含 deleted_at（与 template 同语义）")
 	// 平台池软删掉的那条不影响别的归属用新名字（作用域隔离）。
-	_, err = repos.Proxies.CreateProxy(ownerA, domain.Proxy{
+	_, err = repos.Proxies.CreateProxy(ownerA, createOf(domain.Proxy{
 		Name: "dup-fresh", Scheme: domain.ProxySchemeHTTP, Host: "a4", Port: 8080, Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 }
 
@@ -271,6 +300,9 @@ func TestPGWriteProxyProbe(t *testing.T) {
 // WriteProxyProbe 写，管理面全量更新（UpdateProxy）不得顺带抹掉探测结论。
 // 反例：改个 remark 就把 last_probe_* 清成「从未探测」——运维唯一的现场证据丢了，
 // 而 PUT 的入参里根本没有这三列，调用方无从察觉。
+//
+// C4/S10 之后这条形状**表达不出来**（ProxyUpdate 里没有探测列），断言因此只守
+// 仓库的 SET 列表这一侧：若有人手滑把 SetLastProbeX 加回 UpdateProxy，这里就红。
 func TestPGProxyUpdateKeepsProbeOwnership(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -279,14 +311,12 @@ func TestPGProxyUpdateKeepsProbeOwnership(t *testing.T) {
 	probedAt := time.Date(2026, 8, 3, 9, 30, 0, 0, time.UTC)
 	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, probedAt, true, ""))
 
-	// 全量更新：只改 remark（入参的探测三列是零值，若 UpdateProxy 写它们就会覆盖）。
+	// 全量更新：只改 remark。探测三列与归属**不在更新 DTO 里**，故这里连"故意填
+	// 零值试试"都写不出来——剩下的断言仍钉住它们没被清掉。
 	cur, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	cur.Remark = "edited"
-	cur.LastProbeAt = nil
-	cur.LastProbeOK = false
-	cur.LastProbeError = ""
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, cur, repository.ProxyCredential{}))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(cur, repository.ProxyCredential{})))
 
 	after, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
@@ -306,10 +336,10 @@ func TestPGProxyUpdateKeepsProbeOwnership(t *testing.T) {
 func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
-	id, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	id, err := repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "tri-1", Scheme: domain.ProxySchemeSOCKS5, Host: "10.1.1.1", Port: 1080,
 		Username: "user1", Password: "pass1", Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 
 	probedAt := time.Date(2026, 8, 4, 7, 8, 9, 0, time.UTC)
@@ -321,7 +351,7 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 	cur.Host = "10.2.2.2"
 	cur.Port = 1081
 	cur.Remark = "edited"
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, cur, repository.ProxyCredential{}))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(cur, repository.ProxyCredential{})))
 
 	got, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
@@ -334,14 +364,14 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 	require.True(t, got.LastProbeOK)
 
 	// 2) password = &""：清空（落 NULL → 读回空串）。
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{Password: new("")}))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(got, repository.ProxyCredential{Password: new("")})))
 	got, err = repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	require.Empty(t, got.Password, "password 指向空串 ⇒ 清空")
 	require.Equal(t, "user1", got.Username, "清密码不动 username")
 
 	// 3) password = &"pass2"：落值。
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{Password: new("pass2")}))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(got, repository.ProxyCredential{Password: new("pass2")})))
 	got, err = repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, "pass2", got.Password)
@@ -350,16 +380,16 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 
 	// 4) username 也是三态（与 password 同一对凭据，规矩必须一样）：
 	//    nil ⇒ 不动它；只改 password 不影响 username。
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{Password: new("pass3")}))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(got, repository.ProxyCredential{Password: new("pass3")})))
 	got, err = repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, "user1", got.Username, "credential.Username = nil ⇒ username 不进 SET")
 	require.Equal(t, "pass3", got.Password)
 
 	// 5) username = &""：清空 username，password 同批落值（两列可在一次 UPDATE 里各自三态）。
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, got, repository.ProxyCredential{
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(got, repository.ProxyCredential{
 		Username: new(""), Password: new("pass4"),
-	}))
+	})))
 	got, err = repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	require.Empty(t, got.Username, "username 指向空串 ⇒ 清空")
@@ -373,9 +403,9 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 // 与真实写面同路径——不是直接写列）。
 func seedPGProxyOwned(t *testing.T, repos *repository.Repository, uid int64, name string) int64 {
 	t.Helper()
-	id, err := repos.Proxies.CreateProxy(scopeCtx(uid), domain.Proxy{
+	id, err := repos.Proxies.CreateProxy(scopeCtx(uid), createOf(domain.Proxy{
 		Name: name, Scheme: domain.ProxySchemeHTTP, Host: "proxy.example.com", Port: 3128, Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 	require.NotZero(t, id)
 	return id
@@ -398,27 +428,31 @@ func TestPGProxyScopeIsolation(t *testing.T) {
 	proxyA := seedPGProxyOwned(t, repos, a.ID, "scope-a-proxy")
 	proxyB := seedPGProxyOwned(t, repos, b.ID, "scope-b-proxy")
 
-	// ① 请求体不可写归属：在 A 的作用域里把 OwnerUID 填成 B，落库仍是 A。
-	smuggled, err := repos.Proxies.CreateProxy(ctxA, domain.Proxy{
-		Name: "scope-smuggle", Scheme: domain.ProxySchemeSOCKS5, Host: "smuggle.example.com", Port: 1080,
-		Enabled: true, OwnerUID: &b.ID,
+	// ① 归属不可由入参给出：CreateProxy 认 repository.ProxyCreate，而它**没有** owner
+	// 字段——「在 A 的作用域里把 owner 填成 B」这种 forge 现在连写都写不出来（C4/S10
+	// 之前它是运行期被静默忽略的）。这里钉住落库事实：归属恒等于作用域。
+	supplierOwned, err := repos.Proxies.CreateProxy(ctxA, repository.ProxyCreate{
+		ProxyFields: repository.ProxyFields{
+			Name: "scope-supplier-owned", Scheme: domain.ProxySchemeSOCKS5,
+			Host: "smuggle.example.com", Port: 1080, Enabled: true,
+		},
 	})
 	require.NoError(t, err)
-	got, err := repos.Proxies.GetProxy(adminCtx, smuggled)
+	got, err := repos.Proxies.GetProxy(adminCtx, supplierOwned)
 	require.NoError(t, err)
 	require.NotNil(t, got.OwnerUID)
-	require.Equal(t, a.ID, *got.OwnerUID, "归属恒由作用域决定，请求体改不动")
+	require.Equal(t, a.ID, *got.OwnerUID, "归属恒由作用域决定")
 
 	// ② 列表：供应商只出自己的；管理面看全部（含平台代理）。
 	listA, err := repos.Proxies.ListProxies(ctxA)
 	require.NoError(t, err)
-	require.Equal(t, []int64{proxyA, smuggled}, proxyIDsOf(listA), "A 只看得到自己的两条")
+	require.Equal(t, []int64{proxyA, supplierOwned}, proxyIDsOf(listA), "A 只看得到自己的两条")
 	listB, err := repos.Proxies.ListProxies(ctxB)
 	require.NoError(t, err)
 	require.Equal(t, []int64{proxyB}, proxyIDsOf(listB))
 	all, err := repos.Proxies.ListProxies(adminCtx)
 	require.NoError(t, err)
-	require.ElementsMatch(t, []int64{platformProxy, proxyA, proxyB, smuggled}, proxyIDsOf(all))
+	require.ElementsMatch(t, []int64{platformProxy, proxyA, proxyB, supplierOwned}, proxyIDsOf(all))
 
 	// ③ 单读：越域与平台代理 ⇒ 同码 404；管理面读得到，且 owner 回显正确。
 	_, err = repos.Proxies.GetProxy(ctxA, proxyB)
@@ -433,7 +467,7 @@ func TestPGProxyScopeIsolation(t *testing.T) {
 	foreign, err := repos.Proxies.GetProxy(adminCtx, proxyB)
 	require.NoError(t, err)
 	foreign.Name = "scope-b-renamed"
-	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctxA, foreign, repository.ProxyCredential{}), repository.ErrNotFound)
+	require.ErrorIs(t, repos.Proxies.UpdateProxy(ctxA, updateOf(foreign, repository.ProxyCredential{})), repository.ErrNotFound)
 	kept, err := repos.Proxies.GetProxy(adminCtx, proxyB)
 	require.NoError(t, err)
 	require.Equal(t, "scope-b-proxy", kept.Name, "越域更新不得落值")
@@ -551,7 +585,7 @@ func TestPGLookupProxyForBinding(t *testing.T) {
 		Name: "lookup-disabled", Scheme: domain.ProxySchemeHTTP, Host: "disabled.example.com", Port: 8080,
 		Enabled: false,
 	}
-	disabledID, err := repos.Proxies.CreateProxy(adminCtx, disabled)
+	disabledID, err := repos.Proxies.CreateProxy(adminCtx, createOf(disabled))
 	require.NoError(t, err)
 	disabledInfo, err := repos.Proxies.LookupProxyForBinding(adminCtx, disabledID)
 	require.NoError(t, err, "停用条目的绑定校验仍读到行（存活即可判归属）")

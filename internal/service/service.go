@@ -169,15 +169,17 @@ type TemplateStore interface {
 
 // ProxyStore 出口代理条目持久化（spec-proxy-pool M1b 写面）。
 //
-// UpdateProxy 的密码是**独立形参**（nil = 不变；&"" = 清空；&v = 落值）：三态必须
-// 在一条 UPDATE 里原子表达，故仓库不提供「先读旧密码再整体写回」的路径（那会开
+// 写面入参是 repository 的 DTO（ProxyCreate / ProxyUpdate）：可写列由类型给出，
+// 探测三列与归属根本不在里面——"哪些字段会被写"因此是编译期事实，不是注释约定。
+// 凭据在 ProxyUpdate 里是**三态**（nil = 不变；&"" = 清空；&v = 落值）：三态必须在
+// 一条 UPDATE 里原子表达，故仓库不提供「先读旧密码再整体写回」的路径（那会开
 // read-modify-write 窗口，把并发的另一次改密码静默回滚）。
 type ProxyStore interface {
-	CreateProxy(ctx context.Context, p domain.Proxy) (int64, error)
+	CreateProxy(ctx context.Context, in repository.ProxyCreate) (int64, error)
 	ListProxies(ctx context.Context) ([]domain.Proxy, error)
 	// GetProxy 已软删视同不存在（repository.ErrNotFound → service.ErrNotFound）。
 	GetProxy(ctx context.Context, id int64) (domain.Proxy, error)
-	UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error
+	UpdateProxy(ctx context.Context, in repository.ProxyUpdate) error
 	// DeleteProxy 软删 + **同事务**解绑（account.proxy_id → NULL，回落直连）。
 	DeleteProxy(ctx context.Context, id int64) error
 	// WriteProxyProbe 探测三列（at/ok/error）的唯一写者：全量更新不碰它们。

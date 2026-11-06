@@ -2974,7 +2974,7 @@ func proxyOwnerVisible(ctx context.Context, p domain.Proxy) bool {
 	return p.OwnerUID != nil && *p.OwnerUID == scope.OwnerUID
 }
 
-func (f *fakeStore) CreateProxy(ctx context.Context, p domain.Proxy) (int64, error) {
+func (f *fakeStore) CreateProxy(ctx context.Context, in repository.ProxyCreate) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	// 名字唯一的**语义**不在本层（C2/S8）：唯一域 = 每归属，由仓储的部分唯一索引
@@ -2983,9 +2983,13 @@ func (f *fakeStore) CreateProxy(ctx context.Context, p domain.Proxy) (int64, err
 	if f.proxyCreateErr != nil {
 		return 0, f.proxyCreateErr
 	}
+	p := domain.Proxy{
+		Name: in.Name, Scheme: in.Scheme, Host: in.Host, Port: in.Port,
+		Enabled: in.Enabled, Remark: in.Remark,
+		Username: in.Username, Password: in.Password,
+	}
 	// 归属由作用域钉死（镜像真实仓库与 service 侧替身，spec §3.6）：这条**保留**——
 	// 它测的是「作用域中间件 + 直调 → 仓储谓词」的接缝，不是数据库。
-	p.OwnerUID = nil
 	if scope := domain.AccountScopeFrom(ctx); scope.Set {
 		owner := scope.OwnerUID
 		p.OwnerUID = &owner
@@ -3036,32 +3040,33 @@ func (f *fakeStore) LookupProxyForBinding(ctx context.Context, id int64) (reposi
 	return repository.ProxyBindingInfo{OwnerUID: row.p.OwnerUID}, nil
 }
 
-func (f *fakeStore) UpdateProxy(ctx context.Context, p domain.Proxy, credential repository.ProxyCredential) error {
+func (f *fakeStore) UpdateProxy(ctx context.Context, in repository.ProxyUpdate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	row, ok := f.proxies[p.ID]
+	row, ok := f.proxies[in.ID]
 	if !ok || row.deletedAt != nil || !proxyOwnerVisible(ctx, row.p) {
-		return missingErr(p.ID)
+		return missingErr(in.ID)
 	}
 	// 改名撞同归属已有 name ⇒ 409 同样由仓储裁决（C2/S8），这里只暴露注入点。
 	if f.proxyUpdateErr != nil {
 		return f.proxyUpdateErr
 	}
-	next := p
-	// 归属不由更新面改写（真实仓库的 SET 列表里没有 owner_uid）。
-	next.OwnerUID = row.p.OwnerUID
+	// 从当前行出发，只覆盖 DTO 里的可写列：归属、探测三列、时间戳不在 DTO 里，
+	// 因此**不可能**被这次更新改写（不再需要「先赋值再还原」那一套）。
+	next := row.p
+	next.Name = in.Name
+	next.Scheme = in.Scheme
+	next.Host = in.Host
+	next.Port = in.Port
+	next.Enabled = in.Enabled
+	next.Remark = in.Remark
 	// 凭据三态（镜像真实仓库：nil = 该列不进 SET ⇒ 保持旧值），两列同规矩。
-	next.Username = row.p.Username
-	if credential.Username != nil {
-		next.Username = *credential.Username
+	if in.Credential.Username != nil {
+		next.Username = *in.Credential.Username
 	}
-	next.Password = row.p.Password
-	if credential.Password != nil {
-		next.Password = *credential.Password
+	if in.Credential.Password != nil {
+		next.Password = *in.Credential.Password
 	}
-	next.LastProbeAt = row.p.LastProbeAt
-	next.LastProbeOK = row.p.LastProbeOK
-	next.LastProbeError = row.p.LastProbeError
 	row.p = next
 	return nil
 }

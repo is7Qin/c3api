@@ -17,6 +17,7 @@ import (
 	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
 )
 
@@ -45,8 +46,10 @@ func seedHandlerProxy(t *testing.T, store *fakeStore, owner int64, name string) 
 	if owner > 0 {
 		ctx = domain.WithAccountScope(ctx, domain.SupplierAccountScope(owner))
 	}
-	id, err := store.CreateProxy(ctx, domain.Proxy{
-		Name: name, Scheme: domain.ProxySchemeHTTP, Host: "proxy.example.com", Port: 3128, Enabled: true,
+	id, err := store.CreateProxy(ctx, repository.ProxyCreate{
+		ProxyFields: repository.ProxyFields{
+			Name: name, Scheme: domain.ProxySchemeHTTP, Host: "proxy.example.com", Port: 3128, Enabled: true,
+		},
 	})
 	require.NoError(t, err)
 	row := store.proxies[id].p // 落库行（归属已由作用域钉死）

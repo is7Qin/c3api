@@ -35,21 +35,21 @@ func TestPGLoadAccountsExpandsProxy(t *testing.T) {
 	g := seedPGGroup(t, repos, "grp-proxy-expand")
 
 	// ① 绑定且可用：凭据一并落库，展开必须带出来（M3 的 Dial 要用）。
-	boundProxy, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	boundProxy, err := repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "expand-bound", Scheme: domain.ProxySchemeSOCKS5H, Host: "10.9.9.9", Port: 1080,
 		Username: "u-exp", Password: "p-exp", Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 	// ② 绑定但 enabled=false：行仍存在 ⇒ Proxy 非 nil（回显/排障用），只是不可用。
-	disabledProxy, err := repos.Proxies.CreateProxy(ctx, domain.Proxy{
+	disabledProxy, err := repos.Proxies.CreateProxy(ctx, createOf(domain.Proxy{
 		Name: "expand-disabled", Scheme: domain.ProxySchemeHTTP, Host: "10.9.9.8", Port: 3128,
 		Enabled: true,
-	})
+	}))
 	require.NoError(t, err)
 	cur, err := repos.Proxies.GetProxy(ctx, disabledProxy)
 	require.NoError(t, err)
 	cur.Enabled = false
-	require.NoError(t, repos.Proxies.UpdateProxy(ctx, cur, repository.ProxyCredential{}))
+	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(cur, repository.ProxyCredential{})))
 	// ③ 绑定但缺失：行被软删**而绑定未清除**。仓库的 DeleteProxy 会在同事务里
 	// 解绑，所以这个状态只能由"删除解绑失败/残留窗口"（spec L6/L8）产生——测试
 	// 直接改 ent 行伪造该窗口（不经 DeleteProxy，才能留住 proxy_id）。
