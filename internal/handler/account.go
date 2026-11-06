@@ -36,7 +36,7 @@ func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(created))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(r.Context(), created))
 }
 
 // GetAccounts 账号列表（分页/筛选/排序，含运行时视图，ServerInterface）。
@@ -57,7 +57,7 @@ func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params Ge
 	}
 	out := make([]AccountView, 0, len(rows))
 	for _, v := range rows {
-		out = append(out, toAPIAccountView(v))
+		out = append(out, toAPIAccountView(r.Context(), v))
 	}
 	httpface.WriteJSON(w, http.StatusOK, AccountListResponse{Total: total, Rows: out})
 }
@@ -69,7 +69,7 @@ func (h *AdminAPI) GetAccountsId(w http.ResponseWriter, r *http.Request, id int6
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(r.Context(), acc))
 }
 
 // GetAccountsIdGroups 账号的全部分组 id（编辑回显；账号缺 id → 404，
@@ -107,7 +107,7 @@ func (h *AdminAPI) PatchAccountsId(w http.ResponseWriter, r *http.Request, id in
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(r.Context(), acc))
 }
 
 // parseIfMatch 解析 If-Match 前置条件：nil = 缺席（不做前置条件检查）。接受裸
@@ -203,7 +203,7 @@ func (h *AdminAPI) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request,
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(r.Context(), acc))
 }
 
 // accountPatchFromBody 生成类型补丁 → repo 补丁：唯一的**线格式投影**
@@ -272,6 +272,17 @@ func accountPatchFromBody(ctx context.Context, f *AccountConfigPatch) (repositor
 		return p, err
 	} else {
 		p.SupplierUserID = v
+	}
+	// 出口代理绑定（spec-proxy-pool §3.6 / §6.2 第 6 条）：投影与 supplier_user_id
+	// **同一份** nullableInt64（三态语义不另立一套）；但与归属不同，这一字段在供应商面
+	// **可写**——供应商绑自己的代理是合法写。越界不由 handler 判：绑定谓词只有一处
+	// 实现（service.resolveBindableProxy），它把「平台代理仅管理员可分配 / 私池代理只能
+	// 承载其主的账号」一并兜住并一律回 404（不泄露「别人有这条代理」）。在这里再 400
+	// 一次会把那条谓词劈成两半，且会把「绑自己的代理」误杀。
+	if v, err := nullableInt64(f.ProxyId, "proxy_id"); err != nil {
+		return p, err
+	} else {
+		p.ProxyID = v
 	}
 	return p, nil
 }

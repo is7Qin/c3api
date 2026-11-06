@@ -160,6 +160,12 @@ type Account struct {
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
 
+	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）
+	ProxyId *int64 `json:"proxy_id"`
+
+	// ProxyName 绑定的代理名（与 proxy_id 同生共死：对调用方不可见 ⇒ null。供应商面只回显 owner_uid = 本人的条目；平台代理即使被管理员绑到该供应商账号上也不回显）
+	ProxyName *string `json:"proxy_name"`
+
 	// SupplierUserId 供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）
 	SupplierUserId *int64 `json:"supplier_user_id"`
 }
@@ -299,6 +305,12 @@ type AccountView struct {
 	Concurrency            *int64   `json:"concurrency,omitempty"`
 	ErrCount               *int     `json:"err_count,omitempty"`
 	ErrRate                *float64 `json:"err_rate,omitempty"`
+
+	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）
+	ProxyId *int64 `json:"proxy_id"`
+
+	// ProxyName 绑定的代理名（与 proxy_id 同生共死：对调用方不可见 ⇒ null。供应商面只回显 owner_uid = 本人的条目；平台代理即使被管理员绑到该供应商账号上也不回显）
+	ProxyName *string `json:"proxy_name"`
 
 	// SupplierUserId 供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）
 	SupplierUserId *int64 `json:"supplier_user_id"`

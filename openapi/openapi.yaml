@@ -3097,6 +3097,11 @@ components:
         # 归属（spec 2026-10-09 §2.5）：只读回显当前归属（管理面列表可展示/清空入口依赖它）；
         # null = 平台自有；写面走 PATCH /accounts/{id} 的 supplier_user_id 字段。
         supplier_user_id: { type: integer, format: int64, nullable: true, description: "供应商归属（null = 平台自有；非空 = 归属该 supplier uid；只读回显，写面 PATCH /accounts/{id} 的 supplier_user_id）" }
+        # 出口代理绑定（spec-proxy-pool §3.6）：只读回显对**当前调用方可见**的代理；
+        # 两个字段同生共死——对调用方不可见的代理，proxy_id 与 proxy_name 一律 null
+        # （只把 name 置空等于承认"有个绑不上的代理"，仍是泄漏面）。
+        proxy_id: { type: integer, format: int64, nullable: true, description: "出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）" }
+        proxy_name: { type: string, nullable: true, description: "绑定的代理名（与 proxy_id 同生共死：对调用方不可见 ⇒ null。供应商面只回显 owner_uid = 本人的条目；平台代理即使被管理员绑到该供应商账号上也不回显）" }
         CreatedAt: { type: string, format: date-time }
         UpdatedAt: { type: string, format: date-time }
         DeletedAt: { type: string, format: date-time, nullable: true, description: 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项） }
@@ -3972,10 +3977,13 @@ components:
           x-go-type: nullable.Nullable[int64]
           x-go-type-import: { path: github.com/oapi-codegen/nullable }
           x-go-type-skip-optional-pointer: true
-        # 出口代理绑定（spec-proxy-pool §3.2/§3.5）。三态与 supplier_user_id **同款**
+        # 出口代理绑定（spec-proxy-pool §3.2/§3.5/§3.6）。三态与 supplier_user_id **同款**
         # （共用同一个 nullableInt64 投影，不另立一套 wire 语义）：缺省 = 不变；
-        # 显式 null = 解绑（落 NULL = 直连）；>0 = 绑定该代理（service 校验存在且
-        # 未软删，否则 404）；<=0 且非 null ⇒ 400（use null to clear）。
+        # 显式 null = 解绑（落 NULL = 直连）；>0 = 绑定该代理；<=0 且非 null ⇒ 400
+        # （use null to clear）。
+        # 与 supplier_user_id 的差别：**供应商面可写**——供应商绑自己的代理是合法写，
+        # 越界由 service 的唯一绑定谓词（§3.6）兜住并一律回 404（不泄露「别人有这条
+        # 代理」）：平台代理仅管理员可分配；私池代理只能承载其主的账号。
         proxy_id:
           x-omitempty: true
           type: integer

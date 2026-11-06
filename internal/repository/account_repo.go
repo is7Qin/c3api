@@ -15,6 +15,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
 	"github.com/is7qin/c3api/internal/ent/predicate"
+	"github.com/is7qin/c3api/internal/ent/proxy"
 )
 
 type AccountRepo struct {
@@ -130,7 +131,11 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 	if err != nil {
 		return nil, err
 	}
-	return toDomainAccount(row), nil
+	created := toDomainAccount(row)
+	if err := r.expandProxies(ctx, []*domain.Account{created}); err != nil {
+		return nil, err
+	}
+	return created, nil
 }
 
 func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account, error) {
@@ -142,7 +147,7 @@ func (r *AccountRepo) GetAccount(ctx context.Context, id int64) (*domain.Account
 	if err != nil {
 		return nil, errMissingID(err, id)
 	}
-	return toDomainAccount(row), nil
+	return r.accountWithProxy(ctx, toDomainAccount(row))
 }
 
 func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
@@ -153,7 +158,7 @@ func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*do
 	if err != nil {
 		return nil, errMissingID(err, id)
 	}
-	return toDomainAccount(row), nil
+	return r.accountWithProxy(ctx, toDomainAccount(row))
 }
 
 func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.Account, int64, error) {
@@ -190,7 +195,73 @@ func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.
 	for _, row := range rows {
 		out = append(out, toDomainAccount(row))
 	}
+	if err := r.expandProxies(ctx, out); err != nil {
+		return nil, 0, err
+	}
 	return out, int64(total), nil
+}
+
+// accountWithProxy 单读的出口展开包装（展开规则只有 expandProxies 一处）。
+func (r *AccountRepo) accountWithProxy(ctx context.Context, a *domain.Account) (*domain.Account, error) {
+	if err := r.expandProxies(ctx, []*domain.Account{a}); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// expandProxies 账号读路径的**批量**出口展开（spec-proxy-pool §3.6）：把这一页
+// distinct 的非 nil ProxyID 一次查出来（页大小有界，参数数不触顶），attach 到
+// Account.Proxy。回显代理名字需要条目，而账号表只有 proxy_id 一列——让 handler
+// 各自再查一次会把列表页变成 N+1，并把可见性判断拆到两个地方。
+//
+// **展开必须 scope-aware**（本阶段最容易做错的一处）：可见性谓词复用 proxyOwnerPred
+// ——无 scope（管理员）⇒ 指向的行存在就展开；供应商 scope ⇒ 只有
+// `owner_uid = scope.OwnerUID` 的行才展开，平台代理（`owner_uid IS NULL`）即使被
+// 管理员绑到该供应商的账号上，也**不展开**（Proxy 保持 nil）。「看不见就是看不见」：
+// 绑定事实（proxy_id 列）不因此改写，只是不装配回显——与「绑定指向已软删/不存在行
+// ⇒ nil」是同一个形状（调用方一律按「绑定缺失」处理）。
+//
+// 不在这里算 Routable（§4.1：它在快照构造函数里由 enabled + 绑定可用性派生）；
+// 归属与可见性同样**不进任何键**。
+func (r *AccountRepo) expandProxies(ctx context.Context, accs []*domain.Account) error {
+	ids := make([]int64, 0, len(accs))
+	seen := make(map[int64]struct{}, len(accs))
+	for _, a := range accs {
+		if a == nil || a.ProxyID == nil {
+			continue
+		}
+		if _, dup := seen[*a.ProxyID]; dup {
+			continue
+		}
+		seen[*a.ProxyID] = struct{}{}
+		ids = append(ids, *a.ProxyID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := r.client.Proxy.Query().
+		Where(proxy.IDIn(ids...), proxy.DeletedAtIsNil()).
+		Where(proxyOwnerPred(domain.AccountScopeFrom(ctx))...).
+		All(ctx)
+	if err != nil {
+		return err
+	}
+	byID := make(map[int64]domain.Proxy, len(rows))
+	for _, row := range rows {
+		byID[row.ID] = toDomainProxy(row)
+	}
+	for _, a := range accs {
+		if a == nil || a.ProxyID == nil {
+			continue
+		}
+		// 指针各取一份：同一代理可能被一页里的多个账号共用，别名一份会让下游
+		// 的指针比较（Routable 派生、日志）把两个账号看成同一个条目。
+		if p, ok := byID[*a.ProxyID]; ok {
+			attached := p
+			a.Proxy = &attached
+		}
+	}
+	return nil
 }
 
 func (r *AccountRepo) DeleteAccount(ctx context.Context, id int64) error {

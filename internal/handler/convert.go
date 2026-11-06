@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -64,7 +65,10 @@ func toAPIModelMapping(m domain.ModelMapping) *map[string]ModelMappingEntry {
 }
 
 // toAPIAccount 账号领域对象 → 契约类型（Template 字段由仓库预加载）。
-func toAPIAccount(a *domain.Account) Account {
+//
+// 需要 ctx 的唯一理由是出口代理的**可见性**（§3.6）服从调用方作用域：作用域是
+// ctx 上的行层事实，不是领域对象的一部分，故在投影处取一次。
+func toAPIAccount(ctx context.Context, a *domain.Account) Account {
 	var tpl *Template
 	if a.Template != nil {
 		t := toAPITemplate(a.Template)
@@ -88,10 +92,14 @@ func toAPIAccount(a *domain.Account) Account {
 		IdentityRevision:       &a.IdentityRevision,
 		UpstreamCostMultiplier: new(multToNormal(domain.MultBp(a.UpstreamCostMultiplierBp))), // bp → 正常值（组倍率边界换算同构）
 		CacheDomain:            a.CacheDomain,
-		SupplierUserId:         supplierUserIDPtr(a.SupplierUserID), // 0 = 平台自有 ⇒ null
-		CreatedAt:              &a.CreatedAt,
-		UpdatedAt:              &a.UpdatedAt,
-		DeletedAt:              a.DeletedAt, // 软删除时间戳（只读字段，入参不接收）
+		// 出口代理（spec-proxy-pool §3.6）：只回显对当前调用方可见的代理，两个字段
+		// 同生共死（规则见 visibleProxy——唯一一处）。
+		ProxyId:        proxyIDPtr(ctx, a),
+		ProxyName:      proxyNamePtr(ctx, a),
+		SupplierUserId: supplierUserIDPtr(a.SupplierUserID), // 0 = 平台自有 ⇒ null
+		CreatedAt:      &a.CreatedAt,
+		UpdatedAt:      &a.UpdatedAt,
+		DeletedAt:      a.DeletedAt, // 软删除时间戳（只读字段，入参不接收）
 	}
 }
 
@@ -103,10 +111,48 @@ func supplierUserIDPtr(uid int64) *int64 {
 	return &uid
 }
 
+// visibleProxy 出口代理的可见性判定（spec-proxy-pool §3.6 归属与可见性矩阵）——
+// **规则只写这一处**，proxyIDPtr / proxyNamePtr 都走它。
+//
+// 供应商面只回显对本人可见的代理：平台代理（owner_uid IS NULL）即使被管理员绑到
+// 该供应商的账号上也不回显——否则名字与存在性就是泄漏面。绑定事实（proxy_id 列）
+// 不因此改写：调用方看到的是「直连」，与「绑定指向已软删行」同形（既定语义：
+// 绑定缺失）。管理面（无 scope）指向的行存在即展开。
+func visibleProxy(ctx context.Context, acc *domain.Account) *domain.Proxy {
+	if acc.Proxy == nil || acc.ProxyID == nil {
+		return nil
+	}
+	scope := domain.AccountScopeFrom(ctx)
+	if scope.Set && (acc.Proxy.OwnerUID == nil || *acc.Proxy.OwnerUID != scope.OwnerUID) {
+		return nil
+	}
+	return acc.Proxy
+}
+
+// proxyIDPtr 出口代理 id 回显：不可见 ⇒ nil（**不是**只把 name 置空——只置空等于
+// 承认「有个绑不上的代理」，仍是泄漏面）。
+func proxyIDPtr(ctx context.Context, acc *domain.Account) *int64 {
+	if visibleProxy(ctx, acc) == nil {
+		return nil
+	}
+	id := *acc.ProxyID
+	return &id
+}
+
+// proxyNamePtr 出口代理名回显：与 proxyIDPtr 同生共死（同一个可见性判定）。
+func proxyNamePtr(ctx context.Context, acc *domain.Account) *string {
+	p := visibleProxy(ctx, acc)
+	if p == nil {
+		return nil
+	}
+	name := p.Name
+	return &name
+}
+
 // toAPIAccountView 账号运行时视图 → 契约类型（AccountView 是平铺结构，
 // 非 allOf 嵌入：所有 Account 字段内联 + concurrency/err_rate/err_count）。
-func toAPIAccountView(v *service.AccountView) AccountView {
-	base := toAPIAccount(v.Account)
+func toAPIAccountView(ctx context.Context, v *service.AccountView) AccountView {
+	base := toAPIAccount(ctx, v.Account)
 	return AccountView{
 		ID:         base.ID,
 		Name:       base.Name,
@@ -126,6 +172,8 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		IdentityRevision:       base.IdentityRevision,
 		UpstreamCostMultiplier: base.UpstreamCostMultiplier,
 		CacheDomain:            base.CacheDomain,
+		ProxyId:                base.ProxyId,        // 代理绑定回显（平铺逐字段拷贝，同款教训）
+		ProxyName:              base.ProxyName,      // 不可见的代理两者都 nil
 		SupplierUserId:         base.SupplierUserId, // 归属回显（列表展示/清空入口依赖）
 		CreatedAt:              base.CreatedAt,
 		UpdatedAt:              base.UpdatedAt,

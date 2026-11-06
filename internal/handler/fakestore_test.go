@@ -246,8 +246,7 @@ func (f *fakeStore) GetAccount(ctx context.Context, id int64) (*domain.Account, 
 	if !ok {
 		return nil, missingErr(id)
 	}
-	c := *a
-	return &c, nil
+	return f.accountReadLocked(ctx, a), nil
 }
 
 func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error) {
@@ -259,8 +258,7 @@ func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([
 		if q.Enabled != nil && a.Enabled != *q.Enabled {
 			continue
 		}
-		c := *a
-		out = append(out, &c)
+		out = append(out, f.accountReadLocked(ctx, a))
 	}
 	return paginate(out, q), int64(len(out)), nil
 }
@@ -875,6 +873,15 @@ func (f *fakeStore) UpdateAccountsBatch(ctx context.Context, ids []int64, p repo
 		if p.SupplierUserID != nil {
 			a.SupplierUserID = *p.SupplierUserID
 		}
+		// 出口代理三态（镜像真实 repo 的 batch.go：&0 = 解绑落 NULL；&id>0 = 绑定）。
+		if p.ProxyID != nil {
+			if *p.ProxyID == 0 {
+				a.ProxyID = nil
+			} else {
+				v := *p.ProxyID
+				a.ProxyID = &v
+			}
+		}
 		// 配置写入**无条件**推进 C（镜像真实 repo）；身份类字段真的变了才推进 K。
 		a.LifecycleRevision++
 		if changed.IdentityChanged() {
@@ -903,7 +910,42 @@ func accountFieldValues(a *domain.Account) repository.AccountFieldValues {
 		CacheDomain:              a.CacheDomain,
 		UpstreamCostMultiplierBp: domain.MultBp(a.UpstreamCostMultiplierBp),
 		SupplierUserID:           a.SupplierUserID,
+		ProxyID:                  proxyIDValue(a.ProxyID),
 	}
+}
+
+// proxyIDValue 镜像真实 repo 的 `COALESCE(proxy_id,0)` 读法（nil = NULL = 直连 ⇒ 0）。
+func proxyIDValue(id *int64) int64 {
+	if id == nil {
+		return 0
+	}
+	return *id
+}
+
+// accountReadLocked 账号读路径的出口展开替身（镜像**真实仓库** expandProxies 的
+// scope-aware 谓词，spec-proxy-pool §3.6）：管理面（无 scope）指向的行存活即展开；
+// 供应商 scope 只展开 `owner_uid = 本人` 的行——平台代理即使被管理员绑到该供应商
+// 账号上也不展开（Proxy 留 nil）。软删视同不存在。
+//
+// 返回**副本**：展开是读面装配，不落库（真实仓库同形状）。
+func (f *fakeStore) accountReadLocked(ctx context.Context, a *domain.Account) *domain.Account {
+	c := *a
+	c.Proxy = nil
+	if a.ProxyID == nil {
+		return &c
+	}
+	row, ok := f.proxies[*a.ProxyID]
+	if !ok || row.deletedAt != nil {
+		return &c
+	}
+	if scope := domain.AccountScopeFrom(ctx); scope.Set {
+		if row.p.OwnerUID == nil || *row.p.OwnerUID != scope.OwnerUID {
+			return &c
+		}
+	}
+	p := row.p
+	c.Proxy = &p
+	return &c
 }
 
 func (f *fakeStore) DeleteGroupsBatch(ctx context.Context, ids []int64) error {
