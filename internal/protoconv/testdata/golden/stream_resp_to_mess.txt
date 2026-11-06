@@ -1,0 +1,28 @@
+event: response.created
+data: {"response":{"created_at":0,"id":"msg_1","model":"m","object":"response","output":[],"status":"in_progress","usage":null},"type":"response.created"}
+
+
+---
+event: response.output_item.added
+data: {"item":{"content":[{"annotations":[],"text":"","type":"output_text"}],"id":"msg_msg_1_0","role":"assistant","status":"in_progress","type":"message"},"output_index":0,"type":"response.output_item.added"}
+
+
+---
+event: response.output_text.delta
+data: {"content_index":0,"delta":"he","item_id":"msg_msg_1_0","output_index":0,"type":"response.output_text.delta"}
+
+
+---
+event: response.output_item.added
+data: {"item":{"arguments":"","call_id":"tu1","id":"fc_tu1","name":"f","status":"in_progress","type":"function_call"},"output_index":1,"type":"response.output_item.added"}
+
+
+---
+event: response.function_call_arguments.delta
+data: {"delta":"{}","item_id":"fc_tu1","output_index":1,"type":"response.function_call_arguments.delta"}
+
+
+---
+event: response.completed
+data: {"response":{"created_at":0,"id":"msg_1","model":"m","object":"response","output":[{"content":[{"annotations":[],"text":"he","type":"output_text"}],"id":"msg_msg_1_0","role":"assistant","status":"completed","type":"message"},{"arguments":"{}","call_id":"tu1","id":"fc_tu1","name":"f","status":"completed","type":"function_call"}],"status":"completed","usage":{"input_tokens":3,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"total_tokens":5}},"type":"response.completed"}
+

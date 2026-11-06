@@ -1,0 +1,1 @@
+{"input":[{"content":[{"text":"p1","type":"input_text"},{"detail":"high","image_url":"https://e.com/i.png","type":"input_image"},{"image_url":"data:image/png;base64,QUJD","type":"input_image"},{"image_url":"QUJDRA==","type":"input_image"}],"role":"user","type":"message"}]}

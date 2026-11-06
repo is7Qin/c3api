@@ -191,6 +191,35 @@ func appendField(out []byte, first *bool, key, val string) []byte {
 	return out
 }
 
+// appendQuoted 追加一个 JSON 字符串：值来自内容模型的目标名（常量字符串，
+// 零分配）。目标名是表的数据，编码层不再持有类型字面量。
+func appendQuoted(out []byte, s string) []byte {
+	out = append(out, '"')
+	out = append(out, s...)
+	return append(out, '"')
+}
+
+// roleOf 源消息角色的原始文本 → role。未知角色 → roleInvalid：内容模型里没有
+// 对应成员，行为与既有实现一致（静默丢弃该消息）。
+//
+// 形参是 role 值的**原始字节**而非 gjson.Result：后者是 80 字节的结构体，
+// 逐消息按值传递会白白复制（热路径）。
+func roleOf(raw string) role {
+	switch {
+	case rawStrEq(raw, "system"):
+		return roleSystem
+	case rawStrEq(raw, "developer"):
+		return roleDeveloper
+	case rawStrEq(raw, "user"):
+		return roleUser
+	case rawStrEq(raw, "assistant"):
+		return roleAssistant
+	case rawStrEq(raw, "tool"), rawStrEq(raw, "function"):
+		return roleTool
+	}
+	return roleInvalid
+}
+
 // appendInt64 以十进制追加 int64（strconv.AppendInt，零分配）。
 func appendInt64(out []byte, n int64) []byte {
 	return strconv.AppendInt(out, n, 10)

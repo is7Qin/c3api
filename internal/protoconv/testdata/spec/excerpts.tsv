@@ -1,0 +1,39 @@
+chat	154	ChatCompletionContentPartImage object { image_url, type, prompt_cache_breakpoint }
+chat	162	Either a URL of the image or the base64 encoded image data.
+chat	190	ChatCompletionContentPartInputAudio object { input_audio, type, prompt_cache_breakpoint }
+chat	224	FileContentPart object { file, type, prompt_cache_breakpoint }
+chat	228	file: object { file_data, file_id, filename }
+chat	289	content: optional string or array of ChatCompletionContentPartText or ChatCompletionContentPartRefusal or null
+chat	299	An array of content parts with a defined type. Can be one or more of type `text`, or exactly one of type `refusal`.
+chat	305	ChatCompletionContentPartRefusal object { refusal, type }
+chat	367	ChatCompletionMessageCustomToolCall object { id, custom, type }
+chat	393	ChatCompletionToolMessageParam object { content, role, tool_call_id }
+chat	405	An array of content parts with a defined type. For tool messages, only type `text` is supported.
+mess	181	Using a `string` for `content` is shorthand for an array of one content block of type "text".
+mess	193	no "system" role for input messages in the Messages API
+mess	197	content: string or array of BetaContentBlockParam
+mess	205	type: "text"
+mess	354	BetaImageBlockParam object
+mess	368	media_type: "image/jpeg" or "image/png" or "image/gif" or "image/webp"
+mess	380	type: "url"
+mess	388	file_id: string
+mess	406	BetaRequestDocumentBlock object
+mess	410	source: BetaBase64PDFSource or BetaPlainTextSource or BetaContentBlockSource or 2 more
+mess	474	type: "search_result"
+mess	500	BetaThinkingBlockParam object
+mess	514	BetaRedactedThinkingBlockParam object
+mess	522	BetaToolUseBlockParam object
+mess	572	BetaToolResultBlockParam object
+mess	584	content: optional string or array of BetaTextBlockParam or BetaImageBlockParam or BetaSearchResultBlockParam or 3 more
+resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp	143	type: "input_text"
+resp	181	file_id: optional string or null
+resp	187	The URL of the image to be sent to the model. A fully qualified URL or base64 encoded image in a data URL.
+resp	219	file_data: optional string
+resp	227	file_url: optional string
+resp	245	role: "user" or "assistant" or "system" or "developer"
+resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+resp	450	The type of the output text. Always `output_text`.
+resp	454	ResponseOutputRefusal object { refusal, type }
+resp	1078	FunctionCallOutput object { output, type, id, 5 more }
+resp	1082	output: string or array of ResponseInputTextContent or ResponseInputImageContent or ResponseInputFileContent

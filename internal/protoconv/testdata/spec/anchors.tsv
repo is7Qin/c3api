@@ -1,0 +1,93 @@
+chat_to_resp	c_sysdev_text	resp	245	role: "user" or "assistant" or "system" or "developer"
+chat_to_resp	c_user_text	resp	143	type: "input_text"
+chat_to_resp	c_user_img_url	chat	154	ChatCompletionContentPartImage object { image_url, type, prompt_cache_breakpoint }
+chat_to_resp	c_user_img_data	resp	187	The URL of the image to be sent to the model. A fully qualified URL or base64 encoded image in a data URL.
+chat_to_resp	c_user_img_bare64	chat	162	Either a URL of the image or the base64 encoded image data.
+chat_to_resp	c_user_audio	chat	190	ChatCompletionContentPartInputAudio object { input_audio, type, prompt_cache_breakpoint }
+chat_to_resp	c_user_file_data	chat	228	file: object { file_data, file_id, filename }
+chat_to_resp	c_user_file_id	chat	224	FileContentPart object { file, type, prompt_cache_breakpoint }
+chat_to_resp	c_asst_text	resp	450	The type of the output text. Always `output_text`.
+chat_to_resp	c_asst_refusal	resp	454	ResponseOutputRefusal object { refusal, type }
+chat_to_resp	c_asst_other_parts	chat	289	content: optional string or array of ChatCompletionContentPartText or ChatCompletionContentPartRefusal or null
+chat_to_resp	c_asst_tool_function	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+chat_to_resp	c_asst_tool_custom	chat	367	ChatCompletionMessageCustomToolCall object { id, custom, type }
+chat_to_resp	c_tool_msg	resp	1078	FunctionCallOutput object { output, type, id, 5 more }
+chat_to_resp	c_function_msg	chat	393	ChatCompletionToolMessageParam object { content, role, tool_call_id }
+chat_to_resp	c_tail	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+chat_to_mess	cm_sysdev_text	mess	193	no "system" role for input messages in the Messages API
+chat_to_mess	cm_user_text	mess	181	Using a `string` for `content` is shorthand for an array of one content block of type "text".
+chat_to_mess	cm_user_img_url	mess	380	type: "url"
+chat_to_mess	cm_user_img_data	mess	368	media_type: "image/jpeg" or "image/png" or "image/gif" or "image/webp"
+chat_to_mess	cm_user_img_bare64	mess	354	BetaImageBlockParam object
+chat_to_mess	cm_user_audio	chat	190	ChatCompletionContentPartInputAudio object { input_audio, type, prompt_cache_breakpoint }
+chat_to_mess	cm_user_file_data	mess	406	BetaRequestDocumentBlock object
+chat_to_mess	cm_user_file_id	mess	388	file_id: string
+chat_to_mess	cm_asst_text	mess	205	type: "text"
+chat_to_mess	cm_asst_refusal	chat	305	ChatCompletionContentPartRefusal object { refusal, type }
+chat_to_mess	cm_asst_other_parts	chat	299	An array of content parts with a defined type. Can be one or more of type `text`, or exactly one of type `refusal`.
+chat_to_mess	cm_asst_tool_function	mess	522	BetaToolUseBlockParam object
+chat_to_mess	cm_asst_tool_custom	chat	367	ChatCompletionMessageCustomToolCall object { id, custom, type }
+chat_to_mess	cm_tool_msg	chat	405	An array of content parts with a defined type. For tool messages, only type `text` is supported.
+chat_to_mess	cm_function_msg	mess	572	BetaToolResultBlockParam object
+chat_to_mess	cm_tail	mess	197	content: string or array of BetaContentBlockParam
+mess_to_resp	m_user_text	mess	205	type: "text"
+mess_to_resp	m_asst_text	resp	450	The type of the output text. Always `output_text`.
+mess_to_resp	m_user_img_base64	mess	368	media_type: "image/jpeg" or "image/png" or "image/gif" or "image/webp"
+mess_to_resp	m_user_img_url	mess	380	type: "url"
+mess_to_resp	m_user_img_file_id	mess	388	file_id: string
+mess_to_resp	m_asst_img_base64	resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+mess_to_resp	m_asst_img_url	resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+mess_to_resp	m_asst_img_file_id	resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+mess_to_resp	m_user_doc_b64textcontent	mess	410	source: BetaBase64PDFSource or BetaPlainTextSource or BetaContentBlockSource or 2 more
+mess_to_resp	m_user_doc_file_id	mess	388	file_id: string
+mess_to_resp	m_user_doc_url	resp	227	file_url: optional string
+mess_to_resp	m_user_search_result	mess	474	type: "search_result"
+mess_to_resp	m_asst_search_result	resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+mess_to_resp	m_asst_tool_use	mess	522	BetaToolUseBlockParam object
+mess_to_resp	m_tool_result_string	mess	584	content: optional string or array of BetaTextBlockParam or BetaImageBlockParam or BetaSearchResultBlockParam or 3 more
+mess_to_resp	m_tool_result_array_text	mess	584	content: optional string or array of BetaTextBlockParam or BetaImageBlockParam or BetaSearchResultBlockParam or 3 more
+mess_to_resp	m_tool_result_array_notext	mess	584	content: optional string or array of BetaTextBlockParam or BetaImageBlockParam or BetaSearchResultBlockParam or 3 more
+mess_to_resp	m_tool_result_no_content	mess	584	content: optional string or array of BetaTextBlockParam or BetaImageBlockParam or BetaSearchResultBlockParam or 3 more
+mess_to_resp	m_tool_result_nested_media	mess	572	BetaToolResultBlockParam object
+mess_to_resp	m_thinking	mess	500	BetaThinkingBlockParam object
+mess_to_resp	m_redacted_thinking	mess	514	BetaRedactedThinkingBlockParam object
+mess_to_resp	m_tail	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+mess_to_resp	m_top_system	mess	193	no "system" role for input messages in the Messages API
+resp_to_mess	r_msg_user_input_text	resp	143	type: "input_text"
+resp_to_mess	r_msg_user_output_text	resp	450	The type of the output text. Always `output_text`.
+resp_to_mess	r_msg_asst_input_text	resp	245	role: "user" or "assistant" or "system" or "developer"
+resp_to_mess	r_msg_user_img_url	resp	187	The URL of the image to be sent to the model. A fully qualified URL or base64 encoded image in a data URL.
+resp_to_mess	r_msg_user_img_data_url	resp	187	The URL of the image to be sent to the model. A fully qualified URL or base64 encoded image in a data URL.
+resp_to_mess	r_msg_user_img_other	resp	187	The URL of the image to be sent to the model. A fully qualified URL or base64 encoded image in a data URL.
+resp_to_mess	r_msg_user_img_file_id	resp	181	file_id: optional string or null
+resp_to_mess	r_msg_user_file_url	resp	227	file_url: optional string
+resp_to_mess	r_msg_user_file_id	resp	181	file_id: optional string or null
+resp_to_mess	r_msg_user_file_data	resp	219	file_data: optional string
+resp_to_mess	r_msg_user_input_audio	chat	190	ChatCompletionContentPartInputAudio object { input_audio, type, prompt_cache_breakpoint }
+resp_to_mess	r_msg_sysdev_text	resp	245	role: "user" or "assistant" or "system" or "developer"
+resp_to_mess	r_msg_asst_output_text	resp	450	The type of the output text. Always `output_text`.
+resp_to_mess	r_msg_asst_refusal	resp	454	ResponseOutputRefusal object { refusal, type }
+resp_to_mess	r_msg_asst_media	resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+resp_to_mess	r_function_call	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_mess	r_reasoning	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_mess	r_item_reference	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_mess	r_tail	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_mess	r_fco_string	resp	1082	output: string or array of ResponseInputTextContent or ResponseInputImageContent or ResponseInputFileContent
+resp_to_mess	r_fco_array_text	resp	1082	output: string or array of ResponseInputTextContent or ResponseInputImageContent or ResponseInputFileContent
+resp_to_mess	r_fco_array_notext	resp	1082	output: string or array of ResponseInputTextContent or ResponseInputImageContent or ResponseInputFileContent
+resp_to_chat	x_message_output_text	resp	450	The type of the output text. Always `output_text`.
+resp_to_chat	x_message_refusal	resp	454	ResponseOutputRefusal object { refusal, type }
+resp_to_chat	x_function_call	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_chat	x_reasoning	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_chat	x_message_media	resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+resp_to_chat	x_tail	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_mess_resp	y_output_text	resp	450	The type of the output text. Always `output_text`.
+resp_to_mess_resp	y_refusal	resp	454	ResponseOutputRefusal object { refusal, type }
+resp_to_mess_resp	y_function_call	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_mess_resp	y_reasoning	resp	91	input: optional string or array of EasyInputMessage or object { content, role, status, type }
+resp_to_mess_resp	y_tail	resp	320	content: array of ResponseOutputText or ResponseOutputRefusal
+mess_to_chat_resp	z_text	mess	205	type: "text"
+mess_to_chat_resp	z_thinking	mess	500	BetaThinkingBlockParam object
+mess_to_chat_resp	z_tool_use	mess	522	BetaToolUseBlockParam object
+mess_to_chat_resp	z_media	mess	354	BetaImageBlockParam object
+mess_to_chat_resp	z_tail	mess	197	content: string or array of BetaContentBlockParam

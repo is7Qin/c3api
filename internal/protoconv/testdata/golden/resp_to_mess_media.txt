@@ -1,0 +1,1 @@
+{"max_tokens":4096,"messages":[{"content":[{"source":{"type":"url","url":"https://e.com/i.png"},"type":"image"},{"source":{"data":"QUJD","media_type":"image/png","type":"base64"},"type":"image"}],"role":"user"}]}

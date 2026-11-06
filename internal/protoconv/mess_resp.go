@@ -61,6 +61,9 @@ func respOutputToMessBlocks(r map[string]any) []any {
 			}
 			switch im["type"] {
 			case "reasoning":
+				if _, ok := mapsTo(dirRespToMessResp, shYReasoning, roleAssistant); !ok {
+					continue
+				}
 				// reasoning item → thinking 块（spec §4.2 / §2.5）：encrypted_content
 				// 非空 → signature 放 reasoning_ref 臂（放内容原文会与 Anthropic
 				// 签名混淆），客户端原样回传后 mess_to_resp 请求侧即可还原同一个
@@ -82,14 +85,22 @@ func respOutputToMessBlocks(r map[string]any) []any {
 			case "message":
 				if content, ok := arr(im, "content"); ok {
 					for _, part := range content {
-						if pm, ok := part.(map[string]any); ok {
-							if t, ok := str(pm, "text"); ok {
-								rest = append(rest, map[string]any{"type": "text", "text": t})
-							}
+						pm, ok := part.(map[string]any)
+						if !ok {
+							continue
+						}
+						if _, ok := mapsTo(dirRespToMessResp, respMessBlockShape(pm), roleAssistant); !ok {
+							continue
+						}
+						if t, ok := str(pm, "text"); ok {
+							rest = append(rest, map[string]any{"type": "text", "text": t})
 						}
 					}
 				}
 			case "function_call":
+				if _, ok := mapsTo(dirRespToMessResp, shYFunctionCall, roleAssistant); !ok {
+					continue
+				}
 				id := toolCallID(im) // call_id 优先（tool_result.tool_use_id 匹配键）
 				name, _ := str(im, "name")
 				rest = append(rest, map[string]any{
@@ -103,6 +114,19 @@ func respOutputToMessBlocks(r map[string]any) []any {
 		return []any{}
 	}
 	return blocks
+}
+
+// respMessBlockShape resp 响应的 message 部件 → resp→mess（响应面）的成员形状。
+// refusal 的落点是 text 块（J6/L12：Mess 目标把 refusal 降级为 text），接线在
+// M2；媒体部件在 Mess 响应里无承载（y_tail）。
+func respMessBlockShape(pm map[string]any) shape {
+	switch pm["type"] {
+	case "output_text", "text":
+		return shYOutputText
+	case "refusal":
+		return shYRefusal
+	}
+	return shYTail
 }
 
 // respToMessStopReason resp 状态/输出 → anthropic stop_reason。status 已经是
