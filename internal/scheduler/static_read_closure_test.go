@@ -57,6 +57,7 @@ var staticReaderFuncs = map[string]string{
 	"onRuleFailure":              "失效事件的 fail-closed fence（K）",
 	"payloadKeyOf":               "载荷投影",
 	"planKeyOf":                  "决策输入投影",
+	"pruneEgress":                "出口 client 回收：遍历叶子取 egress.Spec 摘要作为活跃集合（spec §8 失效矩阵）",
 	"reloadLocked":               "全量重载：K 变化检测",
 	"reserveOnView":              "预留谓词与 Selection 装配",
 	"staticKeyOf":                "叶子复用判据",
@@ -86,6 +87,10 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.Ext":               {staticPathContainer, "凭据扩展指针：nil 检查 + 装配到 Selection.Ext 的穿透把手（收窄属计划 fence 消费面收口的范围）"},
 	"$S.acc.Ext.CodexIdentity": {staticPathContainer, "身份四元组指针：nil 检查与前缀"},
 	"$S.acc.Proxy":             {staticPathContainer, "出口代理展开指针：nil 检查 + 整交给 specOfDomain（摘要由 egress.Spec.Key 唯一构造）"},
+	"$S.acc.ProxyID":           {staticPathField, "proxyDigest"}, // 绑定关系（nil = 直连）与 $S.acc.Proxy 同源承载：绑定变化 ⇒ 摘要变；可用性位另见 $S.acc.Routable
+	"$S.acc.Routable":          {staticPathField, "routable"},    // 唯一可用性决策位：构造期一次定型（enabled ∧（未绑定 ∨ 绑定可用）），候选过滤只读它
+	"$S.egress":                {staticPathContainer, "恒非 nil 的出口 client 指针：直接交给 Selection（热路径零判断）、组级重派生时原样接续、prune 时取摘要"},
+	"$S.egress.Spec":           {staticPathContainer, "整交给 egress.Spec.Key：摘要的唯一构造点在 pkg/egress（此处只做活跃集合登记，不读任何字段）"},
 
 	// --- 账号侧标量 ---
 	"$S.acc.ID":                       {staticPathField, "accountID"},

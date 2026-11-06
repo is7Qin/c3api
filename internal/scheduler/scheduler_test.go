@@ -136,9 +136,15 @@ func acc(id int64, t *domain.Template, maxConc int) *domain.Account {
 // 路由直接 ErrFormatUnavailable）。
 func newSched(t *testing.T, m *memLoader) *Scheduler {
 	t.Helper()
+	return newSchedWithCfg(t, testCfg(), m)
+}
+
+// newSchedWithCfg 同 newSched 但可注入 Config（出口池等装配面）。
+func newSchedWithCfg(t *testing.T, cfg Config, m *memLoader) *Scheduler {
+	t.Helper()
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))
-	s := New(testCfg(), m, re, nil, nil, nil, nil)
+	s := New(cfg, m, re, nil, nil, nil, nil)
 	require.NoError(t, s.reload(context.Background()))
 	wireSources(s, nil, nil)
 	s.compileOnce()
@@ -414,7 +420,7 @@ func tplWith(ff domain.RequestFormat, models []string) *domain.Template {
 
 func TestBuildRoutesBucketsAndDefault(t *testing.T) {
 	tpl := tplWith(domain.FormatOpenAIChat, []string{"gpt-4o", "gpt-4o-mini"})
-	pool := []*accountSnapshot{newAccountSnapshot(newSnapshotStatic(domain.Account{ID: 1}, tpl, nil), &accState{status: domain.StatusActive})}
+	pool := []*accountSnapshot{newAccountSnapshot(newSnapshotStatic(domain.Account{ID: 1}, tpl, nil, directEgress()), &accState{status: domain.StatusActive})}
 	routes := buildRoutes(pool)
 	// 已知模型桶
 	_, ok := routes[routeKey{domain.FormatOpenAIChat, "gpt-4o"}]
@@ -433,7 +439,7 @@ func TestBuildRoutesFormatModelsLimit(t *testing.T) {
 		Models:           []string{"gpt-4o", "special"},
 		FormatModels:     map[domain.RequestFormat][]string{domain.FormatAnthropic: {"special"}},
 	}
-	pool := []*accountSnapshot{newAccountSnapshot(newSnapshotStatic(domain.Account{ID: 1}, tpl, nil), &accState{status: domain.StatusActive})}
+	pool := []*accountSnapshot{newAccountSnapshot(newSnapshotStatic(domain.Account{ID: 1}, tpl, nil, directEgress()), &accState{status: domain.StatusActive})}
 	routes := buildRoutes(pool)
 	// anthropic 只支持 special（format_models 限制）→ special 有桶
 	_, ok := routes[routeKey{domain.FormatAnthropic, "special"}]

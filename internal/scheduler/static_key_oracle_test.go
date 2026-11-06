@@ -34,6 +34,9 @@ func frozenPlanKey(acc domain.Account, tpl *domain.Template, gids []int64) planK
 	// 出口规格摘要：编码由 pkg/egress 的 TestEgressSpecOf 单独冻结；这里只断言
 	// 构造函数与冻结推导同源。
 	k.proxyDigest = specOfDomain(acc.Proxy).Key()
+	// 可用性决策位：独立重述（不调用 routableFor——oracle 必须是**另一份**推导，
+	// 否则构造函数与 oracle 同源，比对就退化成自证）。
+	k.routable = acc.Enabled && (acc.ProxyID == nil || (acc.Proxy != nil && acc.Proxy.Enabled))
 	if ext := acc.Ext; ext != nil {
 		k.codexAccountID = derefString(ext.CodexAccountID)
 		k.codexEmail = derefString(ext.CodexEmail)
@@ -80,33 +83,33 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 		{"duplicates", a, tpl, []int64{1, 1, 2}},
 	}
 	for _, tc := range cases {
-		got := planKeyOf(newSnapshotStatic(tc.acc, tc.tpl, tc.gids))
+		got := planKeyOf(newSnapshotStatic(tc.acc, tc.tpl, tc.gids, directEgress()))
 		require.Equal(t, frozenPlanKey(tc.acc, tc.tpl, tc.gids), got, tc.name)
 	}
 
 	// Permutation of the same groupID set is invariant (canonical digest).
 	require.Equal(t,
-		planKeyOf(newSnapshotStatic(a, tpl, []int64{3, 1, 2})),
-		planKeyOf(newSnapshotStatic(a, tpl, []int64{1, 2, 3})),
+		planKeyOf(newSnapshotStatic(a, tpl, []int64{3, 1, 2}, directEgress())),
+		planKeyOf(newSnapshotStatic(a, tpl, []int64{1, 2, 3}, directEgress())),
 		"groupIDs permutation must not change the key")
 	// Raw duplicate elements are sensitive (digest does not de-dup).
 	require.NotEqual(t,
-		planKeyOf(newSnapshotStatic(a, tpl, []int64{1, 2})),
-		planKeyOf(newSnapshotStatic(a, tpl, []int64{1, 1, 2})))
+		planKeyOf(newSnapshotStatic(a, tpl, []int64{1, 2}, directEgress())),
+		planKeyOf(newSnapshotStatic(a, tpl, []int64{1, 1, 2}, directEgress())))
 
 	// Mapping-mode change is sensitive.
 	tplMode := *tpl
 	tplMode.ModelMapping = map[string]domain.ModelMappingEntry{"m-a": {MappedModel: "x", Mode: domain.ModelMappingModeImplicit}}
 	require.NotEqual(t,
-		planKeyOf(newSnapshotStatic(a, tpl, nil)),
-		planKeyOf(newSnapshotStatic(a, &tplMode, nil)),
+		planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress())),
+		planKeyOf(newSnapshotStatic(a, &tplMode, nil, directEgress())),
 		"mapping mode change must change the key")
 	// Model-content change is sensitive.
 	tplModels := *tpl
 	tplModels.Models = []string{"m-a", "m-c"}
 	require.NotEqual(t,
-		planKeyOf(newSnapshotStatic(a, tpl, nil)),
-		planKeyOf(newSnapshotStatic(a, &tplModels, nil)),
+		planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress())),
+		planKeyOf(newSnapshotStatic(a, &tplModels, nil, directEgress())),
 		"model content change must change the key")
 	// custom upstream paths are part of the key: content and presence both count
 	// (the encoding itself is frozen separately by TestDigestUpstreamPaths; here we
@@ -116,20 +119,20 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 	tplPathsOther := *tpl
 	tplPathsOther.UpstreamPaths = map[string]string{"openai-chat": "v2/chat/completions"}
 	require.NotEqual(t,
-		planKeyOf(newSnapshotStatic(a, tpl, nil)),
-		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
+		planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress())),
+		planKeyOf(newSnapshotStatic(a, &tplPaths, nil, directEgress())),
 		"setting an upstream path must change the key")
 	require.NotEqual(t,
-		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
-		planKeyOf(newSnapshotStatic(a, &tplPathsOther, nil)),
+		planKeyOf(newSnapshotStatic(a, &tplPaths, nil, directEgress())),
+		planKeyOf(newSnapshotStatic(a, &tplPathsOther, nil, directEgress())),
 		"changing an upstream path must change the key")
 	// Same content in a *different* map instance must not change the key either
 	// (comparing one instance with itself would assert nothing).
 	tplPathsSame := *tpl
 	tplPathsSame.UpstreamPaths = map[string]string{"openai-chat": "v1/chat/completions"}
 	require.Equal(t,
-		planKeyOf(newSnapshotStatic(a, &tplPaths, nil)),
-		planKeyOf(newSnapshotStatic(a, &tplPathsSame, nil)),
+		planKeyOf(newSnapshotStatic(a, &tplPaths, nil, directEgress())),
+		planKeyOf(newSnapshotStatic(a, &tplPathsSame, nil, directEgress())),
 		"identical upstream paths must not change the key")
 
 	// payloadKey (OAuth rotation) must NOT affect planKey.
@@ -137,7 +140,7 @@ func TestFrozenPlanKeyOracleMatchesConstructor(t *testing.T) {
 	aRot.Ext = &domain.AccountExt{CodexAccountID: new("cid"), CodexEmail: new("e@x"), CodexPATKey: new("pat"),
 		CodexOAuthToken: new("new-at")}
 	require.Equal(t,
-		planKeyOf(newSnapshotStatic(a, tpl, nil)),
-		planKeyOf(newSnapshotStatic(aRot, tpl, nil)),
+		planKeyOf(newSnapshotStatic(a, tpl, nil, directEgress())),
+		planKeyOf(newSnapshotStatic(aRot, tpl, nil, directEgress())),
 		"OAuth payload rotation must not change planKey")
 }

@@ -140,7 +140,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 	// Capture the pre-step source: oldGroup must be read before m[gid] is
 	// replaced by this step's fresh snapshot.
 	oldGroup := m[gid]
-	gs, _ := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID)
+	gs, _ := buildSnapshots(map[int64][]*domain.Account{gid: accs}, byID, s.cfg.Egress)
 	newAccs := gs[gid].accounts
 	// 直接复用 buildSnapshots 产出的快照：accounts 与 routes 一并生效，
 	// 避免组级重载后 routes 为 nil（编译车道枚举域断裂）。
@@ -176,7 +176,9 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 			// newGids 中（原 gid 恰为被移除组，且是当时的最小值）——
 			// 沿用 ost.gid 会让 gid ∉ groupIDs，破坏「gid = min(groupIDs)」
 			// 不变量，事件投递归组会指向一个该账号已不属于的组。
-			newStatic := newSnapshotStatic(ost.acc, ost.tpl, newGids)
+			// 出口 client 直接沿用旧叶的指针（不查池）：acc.Proxy 未变 ⇒ 规格摘要未变
+			// ⇒ 池里必是同一个 client；组归属变化与出口无关，多一次池查找只是白白加锁。
+			newStatic := newSnapshotStatic(ost.acc, ost.tpl, newGids, ost.egress)
 			newLeaf := &accountSnapshot{accountID: ost.acc.ID, runtime: os.runtime}
 			newLeaf.static.Store(newStatic)
 			byID[ost.acc.ID] = newLeaf
@@ -232,7 +234,8 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 			}
 		}
 		// New leaf is local (not yet published), safe to mutate static before publish.
-		ns.static.Store(newSnapshotStatic(nst.acc, nst.tpl, append([]int64{gid}, otherGids...)))
+		// 同款：出口指针随组归属重派生原样接续（本步只改 groupIDs，不动出口）。
+		ns.static.Store(newSnapshotStatic(nst.acc, nst.tpl, append([]int64{gid}, otherGids...), nst.egress))
 		byID[nst.acc.ID] = ns
 		for _, og := range otherGids {
 			if _, ok := otherRefs[og]; ok {

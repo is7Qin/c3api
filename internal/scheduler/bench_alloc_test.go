@@ -96,7 +96,7 @@ func BenchmarkStaticDigestBuild(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		benchmarkSnapshotStatic = newSnapshotStatic(a, tp, gids)
+		benchmarkSnapshotStatic = newSnapshotStatic(a, tp, gids, directEgress())
 	}
 }
 
@@ -104,7 +104,7 @@ func BenchmarkStaticDigestBuild(b *testing.B) {
 // allocation-free: the digest is derived once and held).
 func BenchmarkStaticDigestReuse(b *testing.B) {
 	a, tp, gids := digestFixture()
-	av := newSnapshotStatic(a, tp, gids)
+	av := newSnapshotStatic(a, tp, gids, directEgress())
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -120,6 +120,6 @@ func BenchmarkStaticDigestChanged(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		a.IdentityRevision = int64(i)
-		benchmarkSnapshotStatic = newSnapshotStatic(a, tp, gids)
+		benchmarkSnapshotStatic = newSnapshotStatic(a, tp, gids, directEgress())
 	}
 }

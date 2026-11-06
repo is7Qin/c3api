@@ -23,6 +23,7 @@ import (
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/worker"
+	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -40,6 +41,11 @@ var (
 	ErrMissingCandidateFingerprint  = errors.New("scheduler: candidate fingerprint required")
 	ErrCandidateFingerprintMismatch = errors.New("scheduler: candidate fingerprint mismatch")
 	ErrMissingExpectedRevision      = errors.New("scheduler: expected revision required")
+	// ErrEgressNotWired 是**装配违例**（不是运行期故障）：账号绑定了出口代理，
+	// 但 Config.Egress 从未注入。装载期直接报错并保留旧快照——绝不静默退化成
+	// 直连（那会让"配了代理"的账号从别人的 IP 出栈，且没人知道）。启动期由 main
+	// 的 "proxy 表有 enabled 条目 + 池未注入 ⇒ fatalf" 兜住（spec §4.7）。
+	ErrEgressNotWired = errors.New("scheduler: egress pool not wired but accounts are bound to proxies")
 )
 
 type Config struct {
@@ -48,6 +54,11 @@ type Config struct {
 	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口推进口径（按完成轮数、每窗口
 	// 随机 span）由 SDK 内部定。
 	RotatePolicy codexsdk.RotatePolicy
+	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
+	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
+	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
+	// 非 nil，但记住"外部没注入"这一事实——遇到已绑定代理的账号则装载期报错。
+	Egress *egress.Pool
 	// StalenessProbe 是 backstop 探针的 tuple 供应商（repo 层实现，
 	// 如 GroupRepo.CompileStalenessSnapshot；接口在 compile_backstop.go
 	// 定义，赋值即满足，无需命名类型）。构造期传入，nil = 不接线
@@ -91,6 +102,10 @@ type Selection struct {
 	// 随本 Selection 携带；收尾（含 failover 获胜尝试）只按该捕获值落账——
 	// 不再回查 owner。
 	SupplierFinance domain.SupplierFinance
+	// Egress 本次选中账号的**出口 client**（**恒非 nil**：未绑定 = Pool.Direct()）。
+	// 快照期已解析好，出栈处只读这个指针并把它交给 aiclient/sdkbridge（M3）——
+	// 0 次 nil 判断、0 次 map 读、0 分配（spec §4.2 的 G5 零开销要求）。
+	Egress *egress.Client
 }
 
 func (s *Selection) Release() {
@@ -167,13 +182,16 @@ type RuntimeInfo struct {
 }
 
 type Scheduler struct {
-	cfg       Config
-	loader    Loader
-	rule      *rule.RuleEngine
-	log       *logx.Logger
-	view      atomic.Pointer[RoutingView]
-	gen       atomic.Uint64
-	publisher *routingPublisher
+	cfg    Config
+	loader Loader
+	// egressWired 记录 Config.Egress 是否**由外部显式注入**（false ⇒ New 补的
+	// 空池）。只用于装载期装配违例判定（ErrEgressNotWired），不进热路径。
+	egressWired bool
+	rule        *rule.RuleEngine
+	log         *logx.Logger
+	view        atomic.Pointer[RoutingView]
+	gen         atomic.Uint64
+	publisher   *routingPublisher
 	// reloadRequired is the sticky retry obligation guarded by publisher.mu:
 	// any group load / full load failure sets it true; no local success or
 	// probe hit clears it; only a successful full loader + full stage clears
@@ -286,22 +304,30 @@ func (s *Scheduler) ProbeAccount(id int64) (*domain.Account, bool) {
 // （保测试兼容）；hub 非 nil 即在 New 内订阅 onRuleFailure（首个 MarkResult
 // 前完成——装配序保证），nil = 不订阅（无规则摘除面的纯选号测试）。
 // cfg.StalenessProbe 为空保持探针解线（backstop fail-safe 全量 reload）。
+// cfg.Egress 为空则补一个空底座池（**池恒非 nil ⇒ 快照的 egress 字段恒非 nil**，
+// 热路径因此不需要任何 nil 判断）；"外部没注入"这一事实单独记住，供装载期
+// 装配违例判定（有绑定代理的账号 ⇒ ErrEgressNotWired）。
 func New(cfg Config, loader Loader, ruleEngine *rule.RuleEngine, h *RuntimeHealth, log *logx.Logger, latchStore *latch.LatchStore, hub *latch.Hub) *Scheduler {
 	if latchStore == nil {
 		latchStore = latch.NewLatchStore()
 	}
+	wired := cfg.Egress != nil
+	if !wired {
+		cfg.Egress = egress.NewPool(nil)
+	}
 	s := &Scheduler{
-		cfg:       cfg,
-		loader:    loader,
-		rule:      ruleEngine,
-		health:    h,
-		log:       log,
-		timeNow:   time.Now,
-		latch:     latchStore,
-		compiler:  NewRoutingCompiler(),
-		compileCh: make(chan struct{}, 1),
-		scopeCh:   make(chan scopedCompileReq, scopeChCap),
-		incidents: newIncidentTracker(),
+		cfg:         cfg,
+		loader:      loader,
+		egressWired: wired,
+		rule:        ruleEngine,
+		health:      h,
+		log:         log,
+		timeNow:     time.Now,
+		latch:       latchStore,
+		compiler:    NewRoutingCompiler(),
+		compileCh:   make(chan struct{}, 1),
+		scopeCh:     make(chan scopedCompileReq, scopeChCap),
+		incidents:   newIncidentTracker(),
 	}
 	if hub != nil {
 		hub.Subscribe(s.onRuleFailure)
@@ -416,6 +442,18 @@ func (s *Scheduler) reloadLocked(ctx context.Context) error {
 		s.reloadRequired = true
 		return err
 	}
+	// 装配违例（不是运行期故障）：有账号绑定了代理，但池从未注入——此时快照只能
+	// 给出直连出口，等于静默改道。直接报错并保留旧快照；**不**置 reloadRequired
+	// （重试不会让装配回来，粘性重试只是空转；启动期由 main 的 fatalf 兜住）。
+	if !s.egressWired {
+		if accID, proxyID, bound := proxyBoundAccount(m); bound {
+			if s.log != nil {
+				s.log.Warn("egress pool not wired but accounts are bound to proxies; keeping previous snapshot",
+					logx.Int64("account_id", accID), logx.Int64("proxy_id", proxyID))
+			}
+			return fmt.Errorf("%w: account %d → proxy %d", ErrEgressNotWired, accID, proxyID)
+		}
+	}
 	cur := s.view.Load()
 	var oldByID map[int64]*accountSnapshot
 	if s.publisher.pending != nil {
@@ -423,7 +461,7 @@ func (s *Scheduler) reloadLocked(ctx context.Context) error {
 	} else if cur != nil && cur.static != nil {
 		oldByID = cur.static.byID
 	}
-	groups, byID := buildSnapshots(m, oldByID)
+	groups, byID := buildSnapshots(m, oldByID, s.cfg.Egress)
 	// codex 槽位池：与静态叶**同一发布点**（sv.identityPools）——门禁读的
 	// MaxConcurrency（byID 叶）与 request 认领的池 K 恒同源，杜绝「门禁上限
 	// 已变、池仍旧」的双发布路径。按当前账号集与容量重建注册表
@@ -475,12 +513,52 @@ func (s *Scheduler) reloadLocked(ctx context.Context) error {
 		}
 	}
 	s.publisher.stageLocked(sv)
+	// 出口 client 回收（spec §8 失效矩阵）：新快照成为唯一活跃根之后，池里不再被
+	// 任何叶子引用的规格 client 关闭并移除。零代理部署（所有既有基线）在
+	// pruneEgress 的第一行就返回——reload 路径因此一行都不多跑。
+	s.pruneEgress(byID)
 	// a full staging covers every route — the lane takes the
 	// full-fidelity fallback. Scope-first, then wake.
 	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)
 	s.RequestCompile()
 	s.reloadRequired = false
 	return nil
+}
+
+// pruneEgress 回收当前快照不再引用到的出口 client（spec §8 失效矩阵：代理 CRUD /
+// 改绑后旧规格的连接池必须关闭并移除，不靠 GC 猜）。
+//
+// 池里没有规格 client（零代理部署）⇒ 直接返回：所有既有基线 bench 与 reload 路径
+// 因此一行都不多跑。有代理时才做一次 O(叶子数) 的摘要集合（非热路径，spec §8）。
+func (s *Scheduler) pruneEgress(byID map[int64]*accountSnapshot) {
+	pool := s.cfg.Egress
+	if pool == nil || pool.Size() == 0 {
+		return
+	}
+	active := make(map[[16]byte]struct{}, pool.Size())
+	for _, as := range byID {
+		av := as.static.Load()
+		if av == nil || av.egress == nil {
+			continue
+		}
+		// 直连（零值 Spec）也进集合：它的摘要不在注册表里，多这一项无害，
+		// 却让"直连"与"某个真实规格"不靠特例区分。
+		active[av.egress.Spec.Key()] = struct{}{}
+	}
+	pool.Prune(active)
+}
+
+// proxyBoundAccount 返回第一个绑定了出口代理的账号（装配违例定位用）。装载结果
+// 是组→账号的 map（同一账号可能出现在多个组），故按账号 id 首次出现即可。
+func proxyBoundAccount(m map[int64][]*domain.Account) (accountID, proxyID int64, found bool) {
+	for _, accs := range m {
+		for _, a := range accs {
+			if a != nil && a.ProxyID != nil {
+				return a.ID, *a.ProxyID, true
+			}
+		}
+	}
+	return 0, 0, false
 }
 
 func (s *Scheduler) TryLatch(accountID int64, fingerprint string, identityRevision int64) bool {
@@ -514,6 +592,11 @@ func (s *Scheduler) IsLatched(accountID int64) bool {
 
 func (s *Scheduler) LatchStore() *latch.LatchStore { return s.latch }
 
+// EgressWired 报告出口 client 池是否**由外部显式注入**（Config.Egress != nil）。
+// 只给启动期装配门用（main：代理表里有启用条目而这里 false ⇒ fatalf，spec §4.7）：
+// 装配缺失要在一开始就炸，而不是等到第一个请求悄悄按直连出栈。
+func (s *Scheduler) EgressWired() bool { return s.egressWired }
+
 // runtimeStatusFor 从可持久生命周期字段推导账号装载时的运行时初始状态：
 // failed_at 置位 = 运行时 disabled（SDK/rule 判死的持久事实；恢复唯一入口
 // /recover 清 failed_at + revision +1，重载即回 active）。持久 status 列已
@@ -543,7 +626,11 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 // 快照中引用同一实例（评审实证修复）。发布后 leaves never mutate；
 // 变更账号分配全新 immutable leaf，共享 separate runtime/concurrency state，
 // old root stable。oldByID 来自旧 StaticView 的 byID（持 publisher.mu 读取安全）。
-func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
+//
+// pool 是出口 client 池（**恒非 nil**，由 cfg.Egress 保证）：这里做**唯一一次**
+// 规格解析——快照上存的是解析好的 `*egress.Client`，热路径只读指针。仍保持包级
+// 函数（不为了 pool 改成方法）：复用/发布的调用面太多，改接收者等于改一片。
+func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSnapshot, pool *egress.Pool) (map[int64]*groupSnapshot, map[int64]*accountSnapshot) {
 	// First pass: collect per-account group membership and latest Account object.
 	type accInfo struct {
 		acc      *domain.Account
@@ -576,7 +663,14 @@ func buildSnapshots(m map[int64][]*domain.Account, oldByID map[int64]*accountSna
 		if acc.Template != nil && acc.Template.CredentialType.IsCodex() && acc.MaxConcurrency > maxIdentityPoolSlots {
 			acc.MaxConcurrency = maxIdentityPoolSlots
 		}
-		av := newSnapshotStatic(acc, a.Template, inf.groupIDs)
+		// 出口解析：**只在这里发生一次**（快照期，非热路径）。未绑定 = 直连
+		// 单例；已绑定 = 按规格摘要取/建（同规格跨重载复用同一 client）。
+		// 池恒非 nil ⇒ 结果恒非 nil ⇒ 热路径无需任何 nil 判断。
+		eg := pool.Direct()
+		if acc.Proxy != nil {
+			eg = pool.For(specOfDomain(acc.Proxy))
+		}
+		av := newSnapshotStatic(acc, a.Template, inf.groupIDs, eg)
 		if old, exists := oldByID[id]; exists {
 			oldAv := old.static.Load()
 			// 静态事实比较经 staticKeyOf（值类型，`==` 算子）——此前的
