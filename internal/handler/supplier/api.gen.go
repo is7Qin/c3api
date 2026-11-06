@@ -79,6 +79,13 @@ const (
 	ProxyConfigSchemeSocks5h ProxyConfigScheme = "socks5h"
 )
 
+// Defines values for ProxyImportRowResultReason.
+const (
+	Conflict ProxyImportRowResultReason = "conflict"
+	Internal ProxyImportRowResultReason = "internal"
+	Invalid  ProxyImportRowResultReason = "invalid"
+)
+
 // Defines values for SupplierSettlementKind.
 const (
 	AdminRequest    SupplierSettlementKind = "admin_request"
@@ -655,6 +662,43 @@ type ProxyConfig struct {
 // ProxyConfigScheme defines model for ProxyConfig.Scheme.
 type ProxyConfigScheme string
 
+// ProxyImportRequest defines model for ProxyImportRequest.
+type ProxyImportRequest struct {
+	Rows []ProxyConfig `json:"rows"`
+}
+
+// ProxyImportResponse defines model for ProxyImportResponse.
+type ProxyImportResponse struct {
+	// Created 创建成功的行数
+	Created int `json:"created"`
+
+	// Failed 失败的行数
+	Failed int                    `json:"failed"`
+	Rows   []ProxyImportRowResult `json:"rows"`
+}
+
+// ProxyImportRowResult defines model for ProxyImportRowResult.
+type ProxyImportRowResult struct {
+	// Error 原始错误文本（排障用；ok=true 时不出现）
+	Error *string `json:"error,omitempty"`
+
+	// Id 成功时的新条目 id
+	Id *int64 `json:"id,omitempty"`
+
+	// Index 请求 rows 的下标（0 基）；行序与请求一致
+	Index int `json:"index"`
+
+	// Name 归一后的 name；name 本身非法时为原始输入，便于人对照
+	Name string `json:"name"`
+	Ok   bool   `json:"ok"`
+
+	// Reason 失败分类（ok=true 时不出现）
+	Reason *ProxyImportRowResultReason `json:"reason,omitempty"`
+}
+
+// ProxyImportRowResultReason 失败分类（ok=true 时不出现）
+type ProxyImportRowResultReason string
+
 // ProxyListResponse defines model for ProxyListResponse.
 type ProxyListResponse struct {
 	Rows []Proxy `json:"rows"`
@@ -976,6 +1020,9 @@ type PostSupplierAccountsIdRecoverJSONRequestBody = AccountRecoverBody
 // PostSupplierProxiesJSONRequestBody defines body for PostSupplierProxies for application/json ContentType.
 type PostSupplierProxiesJSONRequestBody = ProxyConfig
 
+// PostSupplierProxiesImportJSONRequestBody defines body for PostSupplierProxiesImport for application/json ContentType.
+type PostSupplierProxiesImportJSONRequestBody = ProxyImportRequest
+
 // PutSupplierProxiesIdJSONRequestBody defines body for PutSupplierProxiesId for application/json ContentType.
 type PutSupplierProxiesIdJSONRequestBody = ProxyConfig
 
@@ -1044,6 +1091,9 @@ type ServerInterface interface {
 	// 新建自己的代理条目（归属恒为 JWT 本人；同归属重名 → 409；私网/回环地址 → 400）
 	// (POST /api/user/supplier/proxies)
 	PostSupplierProxies(w http.ResponseWriter, r *http.Request)
+	// 批量创建自己的条目（1..100 行；私网行 → 该行 invalid，其余照建）
+	// (POST /api/user/supplier/proxies/import)
+	PostSupplierProxiesImport(w http.ResponseWriter, r *http.Request)
 	// 软删自己的条目 + 同事务解绑（只解绑该供应商自己的账号）
 	// (DELETE /api/user/supplier/proxies/{id})
 	DeleteSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64)
@@ -1191,6 +1241,12 @@ func (_ Unimplemented) GetSupplierProxies(w http.ResponseWriter, r *http.Request
 // 新建自己的代理条目（归属恒为 JWT 本人；同归属重名 → 409；私网/回环地址 → 400）
 // (POST /api/user/supplier/proxies)
 func (_ Unimplemented) PostSupplierProxies(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 批量创建自己的条目（1..100 行；私网行 → 该行 invalid，其余照建）
+// (POST /api/user/supplier/proxies/import)
+func (_ Unimplemented) PostSupplierProxiesImport(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1832,6 +1888,20 @@ func (siw *ServerInterfaceWrapper) PostSupplierProxies(w http.ResponseWriter, r 
 	handler.ServeHTTP(w, r)
 }
 
+// PostSupplierProxiesImport operation middleware
+func (siw *ServerInterfaceWrapper) PostSupplierProxiesImport(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostSupplierProxiesImport(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // DeleteSupplierProxiesId operation middleware
 func (siw *ServerInterfaceWrapper) DeleteSupplierProxiesId(w http.ResponseWriter, r *http.Request) {
 
@@ -2237,6 +2307,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/api/user/supplier/proxies", wrapper.PostSupplierProxies)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/supplier/proxies/import", wrapper.PostSupplierProxiesImport)
 	})
 	r.Group(func(r chi.Router) {
 		r.Delete(options.BaseURL+"/api/user/supplier/proxies/{id}", wrapper.DeleteSupplierProxiesId)

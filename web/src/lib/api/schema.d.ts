@@ -734,6 +734,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/proxies/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 批量创建（1..100 行，逐行结果，部分成功；整批一次重载） */
+        post: operations["PostProxiesImport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/proxies/{id}": {
         parameters: {
             query?: never;
@@ -1807,6 +1824,26 @@ export interface paths {
         put?: never;
         /** 新建自己的代理条目（归属恒为 JWT 本人；同归属重名 → 409；私网/回环地址 → 400） */
         post: operations["PostSupplierProxies"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/proxies/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 批量创建自己的条目（1..100 行；私网行 → 该行 invalid，其余照建）
+         * @description 与 `PostProxiesImport` **同一实现**：逐行独立校验与落库、部分成功、整批只触发一次 调度重载。`rows` 的行 = ProxyConfig（没有第二个写模型），归属恒由 JWT 决定 （写体里没有 owner_uid）。行序与请求一致；失败的 `reason` 三分类 （conflict / invalid / internal）。
+         */
+        post: operations["PostSupplierProxiesImport"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4581,6 +4618,35 @@ export interface components {
         ProxyListResponse: {
             rows: components["schemas"]["Proxy"][];
         };
+        ProxyImportRequest: {
+            rows: components["schemas"]["ProxyConfig"][];
+        };
+        ProxyImportRowResult: {
+            /** @description 请求 rows 的下标（0 基）；行序与请求一致 */
+            index: number;
+            ok: boolean;
+            /**
+             * Format: int64
+             * @description 成功时的新条目 id
+             */
+            id?: number;
+            /** @description 归一后的 name；name 本身非法时为原始输入，便于人对照 */
+            name: string;
+            /**
+             * @description 失败分类（ok=true 时不出现）
+             * @enum {string}
+             */
+            reason?: "conflict" | "invalid" | "internal";
+            /** @description 原始错误文本（排障用；ok=true 时不出现） */
+            error?: string;
+        };
+        ProxyImportResponse: {
+            /** @description 创建成功的行数 */
+            created: number;
+            /** @description 失败的行数 */
+            failed: number;
+            rows: components["schemas"]["ProxyImportRowResult"][];
+        };
     };
     responses: {
         /** @description 错误响应 */
@@ -6218,6 +6284,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostProxiesImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxyImportRequest"];
+            };
+        };
+        responses: {
+            /** @description 逐行结果（created/failed + rows；行序与请求一致） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyImportResponse"];
                 };
             };
             default: components["responses"]["Error"];
@@ -8216,6 +8307,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Proxy"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierProxiesImport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProxyImportRequest"];
+            };
+        };
+        responses: {
+            /** @description 逐行结果（created/failed + rows；行序与请求一致） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProxyImportResponse"];
                 };
             };
             default: components["responses"]["Error"];

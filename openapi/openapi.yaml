@@ -1083,6 +1083,29 @@ paths:
               schema: { $ref: '#/components/schemas/Proxy' }
         default:
           $ref: '#/components/responses/Error'
+  # 批量导入（spec-proxy-import）：逐行独立校验与落库，**部分成功**；整批只触发一次调度
+  # 重载（这是服务端必须有这条端点的真正理由——前端并发 N 个 POST 就是 N 次全量重载，
+  # 而语义上只需要一次）。200 恒表示"请求本身合法"，结果在 body；信封坏（rows 缺失/空/
+  # 超 100）或行内**线格式**错（未知字段、三态拼错如 username=""）才 400。归属仍只由
+  # 调用者作用域决定，写体里没有 owner_uid。
+  /proxies/import:
+    post:
+      operationId: PostProxiesImport
+      tags: [proxies]
+      summary: 批量创建（1..100 行，逐行结果，部分成功；整批一次重载）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyImportRequest' }
+      responses:
+        '200':
+          description: 逐行结果（created/failed + rows；行序与请求一致）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProxyImportResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /proxies/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -2441,6 +2464,29 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Proxy' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/supplier/proxies/import:
+    post:
+      operationId: PostSupplierProxiesImport
+      tags: [supplier]
+      summary: 批量创建自己的条目（1..100 行；私网行 → 该行 invalid，其余照建）
+      description: >-
+        与 `PostProxiesImport` **同一实现**：逐行独立校验与落库、部分成功、整批只触发一次
+        调度重载。`rows` 的行 = ProxyConfig（没有第二个写模型），归属恒由 JWT 决定
+        （写体里没有 owner_uid）。行序与请求一致；失败的 `reason` 三分类
+        （conflict / invalid / internal）。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProxyImportRequest' }
+      responses:
+        '200':
+          description: 逐行结果（created/failed + rows；行序与请求一致）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProxyImportResponse' }
         default:
           $ref: '#/components/responses/Error'
   /api/user/supplier/proxies/{id}:
@@ -5186,3 +5232,40 @@ components:
         rows:
           type: array
           items: { $ref: '#/components/schemas/Proxy' }
+    # ---- 批量导入（spec-proxy-import）----
+    # 行 = ProxyConfig（**没有第二个写模型**）：导入不是一种新的创建语义，只是把 N 次
+    # 创建合成一次请求、把失效通知收成一次。上限 100 的权威判定在 service（这里的
+    # minItems/maxItems 只是文档，生成物不校验）。
+    ProxyImportRequest:
+      type: object
+      required: [rows]
+      properties:
+        rows:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/ProxyConfig' }
+    ProxyImportRowResult:
+      type: object
+      required: [index, ok, name]
+      properties:
+        index: { type: integer, description: 请求 rows 的下标（0 基）；行序与请求一致 }
+        ok: { type: boolean }
+        id: { type: integer, format: int64, description: 成功时的新条目 id }
+        name: { type: string, description: 归一后的 name；name 本身非法时为原始输入，便于人对照 }
+        # 失败分类：UI 对 conflict 用本地化文案，其余透出 error 原文。**不给每行发 HTTP
+        # 状态码**——这一层不重造 HTTP 语义（与 probe 端点"拨不通仍是 200"同一条哲学）。
+        reason:
+          type: string
+          enum: [conflict, invalid, internal]
+          description: 失败分类（ok=true 时不出现）
+        error: { type: string, description: 原始错误文本（排障用；ok=true 时不出现） }
+    ProxyImportResponse:
+      type: object
+      required: [created, failed, rows]
+      properties:
+        created: { type: integer, description: 创建成功的行数 }
+        failed: { type: integer, description: 失败的行数 }
+        rows:
+          type: array
+          items: { $ref: '#/components/schemas/ProxyImportRowResult' }
