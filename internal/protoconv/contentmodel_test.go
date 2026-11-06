@@ -61,6 +61,32 @@ func (r row) anyRoleName() string {
 	return "false"
 }
 
+// --- 测试专用符号（生产代码零引用，故只活在测试编译单元里）---
+
+// dirTarget 方向 → 目标协议（(b2)/(d′) 取词表用）。
+func dirTarget(d direction) target {
+	switch d {
+	case dirChatToResp, dirMessToResp:
+		return tgtResp
+	case dirChatToMess, dirRespToMess, dirRespToMessResp:
+		return tgtMess
+	default:
+		return tgtChat
+	}
+}
+
+// shapeName shape → 成员名（冷路径：(a)/(b2) 断言与失败信息用；由成员常量表
+// 生成）。只被测试读取，故不进生产二进制的 BSS/init。
+var shapeName = func() [shapeCount]string {
+	var names [shapeCount]string
+	for d := direction(0); d < dirCount; d++ {
+		for _, m := range membersOf(d) {
+			names[m.sh] = m.name
+		}
+	}
+	return names
+}()
+
 // --- (a) 成员 ↔ 行 ↔ anchor（双向）---
 
 // TestMembersTSVInSync (a)①：testdata/members.tsv ↔ rowsXXX 逐方向一一对应。
@@ -70,9 +96,19 @@ func TestMembersTSVInSync(t *testing.T) {
 	if os.Getenv("TSV_UPDATE") == "1" {
 		var b strings.Builder
 		for d := direction(0); d < dirCount; d++ {
+			// 每个成员必须在 rowsOf(d) 里有行。原写法 `ok || !rw.anyRole` 是
+			// 恒真断言（掩码外 ok=false 且 anyRole=false ⇒ 条件恒成立），等于
+			// 没断言；这里改成「逐成员回读 rowsOf」的存在性判定。
+			rows := rowsOf(d)
 			for _, m := range membersOf(d) {
-				rw, ok := lookup(d, m.sh, roleInvalid)
-				require.True(t, ok || !rw.anyRole, "每个成员必须有行：%s", m.name)
+				found := false
+				for _, rw := range rows {
+					if rw.sh == m.sh {
+						found = true
+						break
+					}
+				}
+				require.True(t, found, "每个成员必须有行：%s", m.name)
 			}
 			for _, rw := range rowsOf(d) {
 				b.WriteString(strings.Join([]string{
@@ -216,7 +252,7 @@ func TestRowsStructuralEquality(t *testing.T) {
 			rowRole(shMUserDocB64TextContent, rmUser, kindItem, "", polDrop),
 			rowRole(shMUserDocFileID, rmUser, kindItem, "", polDrop),
 			rowRole(shMUserDocURL, rmUser, kindItem, "message", polMap),
-			rowRole(shMUserSearchResult, rmUser, kindItem, "message", polDrop),
+			rowRole(shMUserSearchResult, rmUser, kindItem, "", polDrop),
 			rowRole(shMAsstSearchResult, rmAsst, kindItem, "", polDrop),
 			rowRole(shMAsstToolUse, rmAsst, kindItem, "function_call", polMap),
 			rowRole(shMToolResultString, rmUser, kindItem, "function_call_output", polMap),
@@ -433,7 +469,48 @@ func TestVocabSelfComplete(t *testing.T) {
 
 // --- A4：停因表与既有换算函数一致 ---
 
+// TestStopMapMatchesLiveMapping A4 落点：换算函数现在直接查 contentmodel.go 的表，
+// 故「表 vs 函数」的循环必然等价；为避免它退化成恒真断言，前半段用**独立手写**
+// 的字面期望钉住表的语义（表里少一条/多一条/改错值都在这里红）。
 func TestStopMapMatchesLiveMapping(t *testing.T) {
+	// resp incomplete_details.reason → chat finish_reason
+	for _, c := range []struct{ reason, want string }{
+		{"content_filter", "content_filter"},
+		{"steered", "stop"},
+		{"max_output_tokens", "length"},
+		{"max_messages", "length"},
+		{"", "length"},               // 缺 reason
+		{"unknown_reason", "length"}, // 未登记 → 默认
+	} {
+		require.Equal(t, c.want, chatFinishFromIncomplete(c.reason), "chat finish_reason：%q", c.reason)
+	}
+	// resp incomplete_details.reason → mess stop_reason
+	for _, c := range []struct{ reason, want string }{
+		{"content_filter", "refusal"},
+		{"steered", "end_turn"},
+		{"max_output_tokens", "max_tokens"},
+		{"max_messages", "max_tokens"},
+		{"", "max_tokens"},
+		{"unknown_reason", "max_tokens"},
+	} {
+		require.Equal(t, c.want, messStopFromIncomplete(c.reason), "mess stop_reason：%q", c.reason)
+	}
+	// mess stop_reason → chat finish_reason
+	for _, c := range []struct{ reason, want string }{
+		{"tool_use", "tool_calls"},
+		{"max_tokens", "length"},
+		{"model_context_window_exceeded", "length"},
+		{"refusal", "content_filter"},
+		{"end_turn", "stop"},
+		{"stop_sequence", "stop"},
+		{"pause_turn", "stop"},
+		{"compaction", "stop"},
+		{"", "stop"},
+	} {
+		require.Equal(t, c.want, messStopToChatFinish(c.reason), "mess→chat 停因：%q", c.reason)
+	}
+
+	// 反向：表里每一行都必须真的被查表命中（行被删/被改都会与上面冲突）。
 	for _, r := range stopMapIncomplete {
 		require.Equal(t, r.chat, chatFinishFromIncomplete(r.incomplete), "chat finish_reason 与停因表不一致：%s", r.incomplete)
 		require.Equal(t, r.mess, messStopFromIncomplete(r.incomplete), "mess stop_reason 与停因表不一致：%s", r.incomplete)
@@ -683,7 +760,7 @@ func TestOutputStreamVocab(t *testing.T) {
 	}
 }
 
-// --- M1 三处缺陷修正的判别力（缺一即 FAIL）---
+// --- M1 四处缺陷修正的判别力（缺一即 FAIL）---
 
 // TestM1AssistantTextIsOutputText §4 修正 1：chat assistant 历史文本 →
 // resp output_text + annotations:[]（字节级，键序不得变）。
@@ -725,4 +802,72 @@ func TestM1ChatToMessAssistantMediaDropped(t *testing.T) {
 	require.NotContains(t, s, `"type":"image"`, "assistant 消息不得出现 image 块（J2）")
 	require.Contains(t, s, `{"content":[{"text":"kept","type":"text"}],"role":"assistant"}`, "文本块保留")
 	require.NotContains(t, s, `"source"`, "image-only 的 assistant 消息必须整条消失")
+}
+
+// TestM1RespToMessAssistantMediaDropped §4 修正 4（`r_msg_asst_media`）：resp→mess
+// 的 assistant 消息里不得出现 image 块，但同一条消息里的 `output_text` 仍要映射为
+// text 块 ⇒ **该消息不得整体消失**（这点与上面 chat→mess 的 image-only 情形不同）。
+//
+// 负例依据（自包含：本用例不读任何外部文件）：M0（`16766e22`）的
+// `appendRespMessMessages` 对 message 项里的 `input_image` **不看 role** 就写
+// image 块，同一输入在 M0 上得到
+//
+//	{"content":[{"source":{"type":"url","url":"https://example.com/a.png"},"type":"image"}],"role":"assistant"}
+//
+// 即 input_image 被当图片搬运（字节存证：`.omo/reports/protoconv-golden-resp_to_mess_media-M0.txt`，
+// 由 M0 代码产出）。把 `r_msg_asst_input_image` 的策略改回 polMap 时，下面的
+// 「不得出现 image 块」即红；把它改成 polDrop 整块丢弃（连文本一起）时，
+// 「assistant 消息必须保留」即红。
+func TestM1RespToMessAssistantMediaDropped(t *testing.T) {
+	out, err := ConvertRequest([]byte(`{"model":"m","input":[{"type":"message","role":"assistant","content":[
+		{"type":"input_image","image_url":"https://example.com/a.png"},
+		{"type":"output_text","text":"hi"}
+	]}]}`), domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+
+	// 断言用结构体反序列化（而非字节子串），才能区分「块没了」与「消息没了」。
+	var doc struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"content"`
+		} `json:"messages"`
+	}
+	require.NoError(t, json.Unmarshal(out, &doc))
+
+	asst := -1
+	for i, m := range doc.Messages {
+		if m.Role == "assistant" {
+			asst = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, asst, "assistant 消息必须保留（丢 image 块 ≠ 整条消息消失）")
+	require.NotEmpty(t, doc.Messages[asst].Content, "assistant 消息不得变成空 content")
+
+	var types []string
+	text := ""
+	for _, c := range doc.Messages[asst].Content {
+		types = append(types, c.Type)
+		if c.Type == "text" {
+			text = c.Text
+		}
+	}
+	require.NotContains(t, types, "image", "assistant 消息不得出现 image 块（J2 / §5.1#3）")
+	require.Contains(t, types, "text", "output_text 必须映射为 text 块")
+	require.Equal(t, "hi", text, "文本内容不得丢")
+	require.NotContains(t, string(out), `"source"`, "assistant 侧 image 块（source 信封）不得写出")
+
+	// 负例子断言（自包含）：同一个 `input_image` 在 **user** 角色下仍必须写成 image
+	// 块——这正是 M0 对**所有** role 的行为。两条合在一起才说明本用例的「无 image
+	// 块」是 role 判据生效，而不是 image 类部件整体没了。
+	userOut, err := ConvertRequest([]byte(`{"input":[{"type":"message","role":"user","content":[
+		{"type":"input_image","image_url":"https://example.com/a.png"}
+	]}]}`), domain.ProtocolConvertRespToMess)
+	require.NoError(t, err)
+	require.Contains(t, string(userOut),
+		`{"content":[{"source":{"type":"url","url":"https://example.com/a.png"},"type":"image"}],"role":"user"}`,
+		"user 角色的 input_image 仍映射为 image 块（M0 对所有 role 都这样写）")
 }

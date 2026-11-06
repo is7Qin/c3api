@@ -944,7 +944,12 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 						sh = shMUserDocURL
 					}
 				}
-				rw, _ := lookup(dirMessToResp, sh, r)
+				rw, ok := mapsTo(dirMessToResp, sh, r)
+				if !ok {
+					// 行策略不允许写 message 项（当前不可达：三个候选行均为
+					// polMap + rmUser）——显式跳过，不写半成品。
+					return true
+				}
 				out, n = appendComma(out, n)
 				out = append(out, `{"content":[`...)
 				parts := 0
@@ -1225,7 +1230,9 @@ func respSystemRaw(instructions string, input gjson.Result) string {
 	}
 	if input.IsArray() {
 		input.ForEach(func(_, item gjson.Result) bool {
-			if _, ok := lookup(dirRespToMess, shRMsgSysdevText, roleOf(item.Get("role").Raw)); !ok {
+			rw, ok := lookup(dirRespToMess, shRMsgSysdevText, roleOf(item.Get("role").Raw))
+			if !ok || rw.pol != polOmit {
+				// 该行必须是 polOmit（已折叠到顶层 system）：策略变了就不该在这里折叠。
 				return true
 			}
 			if ps := textPartsRaw(item.Get("content"), "input_text", "output_text", "text"); len(ps) > 0 {

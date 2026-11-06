@@ -43,6 +43,9 @@ const (
 
 // part 目标端内容部件/块类型的枚举。词表本身是字符串（§3.5），part 只为
 // 「同 shape 不同部件」的判据留位。
+//
+// 为 spec §3.1 类型集预留，**当前零消费者**（行数据用字符串 name 承载部件类型，
+// 见 §2.0-A1）——不是漏接线的 bug，不要当死代码删。
 type part uint8
 
 const (
@@ -75,7 +78,7 @@ const (
 	polMap                // 目标有等价承载 → 按 name 写出
 	polDrop               // 整块丢弃（不写任何字节）
 	polOmit               // 已折叠到别处，不在此处单独写出
-	polEmpty              // 目标必填容器写空值（L16：output 必填 → ""）
+	polEmpty              // 目标必填容器写空值（L16：output 必填 → ""）；为 §3.1 预留，当前零行使用
 	polTextDegrade        // 降级为 text 块（L12：mess 目标 refusal）
 )
 
@@ -94,8 +97,26 @@ const (
 	shapeBaseRespMess   shape = 501 // T6  y_*
 	shapeBaseMessChat   shape = 601 // T7  z_*
 
-	shapeCount shape = 608 // lookup 表宽（shape 直接作下标）
+	shapeCount shape = 608 // 全部 shape 的值域上界（shape 直接作下标，见 shapeName）
 )
+
+// segWidth lookup 表的段内宽度：各段成员数的最大值（T3 = 23）。段内偏移从 0 起
+// （第一个成员就是 segBase），"该槽位没有行"由回读 rw.sh != sh 判定，故没有哨兵
+// 槽位。新增成员超出时 init 会带消息 panic。
+const segWidth = 23
+
+// segBase 方向 → 该方向 shape 段的基值。lookup 用段内偏移 sh-segBase[d] 作下标，
+// 故表只需 [dirCount][segWidth]（7×23 行）而非 [dirCount][shapeCount]（7×608 行）
+// 的宽表——仍然是一次下标 + 一次比较，无扫描。
+var segBase = [dirCount]shape{
+	dirChatToResp:     shapeBaseChatToResp,
+	dirChatToMess:     shapeBaseChatToMess,
+	dirMessToResp:     shapeBaseMessToResp,
+	dirRespToMess:     shapeBaseRespToMess,
+	dirRespToChat:     shapeBaseRespToChat,
+	dirRespToMessResp: shapeBaseRespMess,
+	dirMessToChatResp: shapeBaseMessChat,
+}
 
 // T1 chat→resp 成员（spec §3.2，全部 kindItem）。
 const (
@@ -241,18 +262,6 @@ const (
 	tgtChat
 )
 
-// dirTarget 方向 → 目标协议。
-func dirTarget(d direction) target {
-	switch d {
-	case dirChatToResp, dirMessToResp:
-		return tgtResp
-	case dirChatToMess, dirRespToMess, dirRespToMessResp:
-		return tgtMess
-	default:
-		return tgtChat
-	}
-}
-
 // dirRoles 方向 → 该方向必须覆盖的源 role 集（(a3) 的期望集）。排除 anyRole
 // 哨兵行后，各行掩码的并集必须包含它；每行的掩码又必须落在它之内。
 var dirRoles = [dirCount]uint8{
@@ -341,7 +350,7 @@ func rowsMessToResp() []row {
 		{sh: shMUserDocB64TextContent, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shMUserDocFileID, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shMUserDocURL, roles: rmUser, kind: kindItem, name: "message", pol: polMap},
-		{sh: shMUserSearchResult, roles: rmUser, kind: kindItem, name: "message", pol: polDrop},
+		{sh: shMUserSearchResult, roles: rmUser, kind: kindItem, pol: polDrop},
 		{sh: shMAsstSearchResult, roles: rmAsst, kind: kindItem, pol: polDrop},
 		{sh: shMAsstToolUse, roles: rmAsst, kind: kindItem, name: "function_call", pol: polMap},
 		{sh: shMToolResultString, roles: rmUser, kind: kindItem, name: "function_call_output", pol: polMap},
@@ -608,24 +617,20 @@ var dirName = [dirCount]string{
 	dirMessToChatResp: "mess_to_chat_resp",
 }
 
-// shapeName shape → 成员名（冷路径：测试与 (a) 断言用；由成员常量表生成）。
-var shapeName = func() [shapeCount]string {
-	var names [shapeCount]string
-	for d := direction(0); d < dirCount; d++ {
-		for _, m := range membersOf(d) {
-			names[m.sh] = m.name
-		}
-	}
-	return names
-}()
-
-// lookupTable (dir, shape) → 行数据的静态数组（shape 全局唯一 ⇒ 直接下标，
-// 热路径零扫描零分配；零值行的 sh==0 表示「该方向无此成员」）。
-var lookupTable = func() [dirCount][shapeCount]row {
-	var t [dirCount][shapeCount]row
+// lookupTable (dir, shape) → 行数据的静态数组：index = sh - segBase[dir]（段基值
+// 见 segBase），一次下标零扫描零分配。空槽位（该方向没有这个 shape）由回读
+// rw.sh != sh 判定。
+var lookupTable = func() [dirCount][segWidth]row {
+	var t [dirCount][segWidth]row
 	for d := direction(0); d < dirCount; d++ {
 		for _, rw := range rowsOf(d) {
-			t[d][rw.sh] = rw
+			off := int(rw.sh) - int(segBase[d])
+			if off < 0 || off >= segWidth {
+				// 静态数据自检：新增成员却没抬 segWidth 时，这里给出比
+				// 「index out of range」更可读的失败（任何测试跑一次即暴露）。
+				panic("protoconv: shape 段内偏移越界，请抬 segWidth")
+			}
+			t[d][off] = rw
 		}
 	}
 	return t
@@ -636,11 +641,14 @@ var lookupTable = func() [dirCount][shapeCount]row {
 // polUnknown，不得返回 polDrop**——漏列 role 必须显形为未定义策略，而不是
 // 被当成合法丢弃。anyRole 行永不踩空（不受 role 限制）。
 func lookup(d direction, sh shape, r role) (row, bool) {
-	if sh == shapeNone || sh >= shapeCount {
+	off := int(sh) - int(segBase[d])
+	if off < 0 || off >= segWidth {
 		return row{}, false
 	}
-	rw := lookupTable[d][sh]
-	if rw.sh == shapeNone {
+	rw := lookupTable[d][off]
+	// 段内偏移会与其他段的 shape 撞值（如 T4 方向收到 T7 的 305 → off=4），
+	// 故必须回读 sh 判同，不能只看非零。
+	if rw.sh != sh {
 		return row{}, false
 	}
 	if rw.anyRole {

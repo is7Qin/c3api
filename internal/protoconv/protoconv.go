@@ -508,44 +508,39 @@ func intOr0(m map[string]any, key string) int64 {
 	return int64(f)
 }
 
-// messStopToChatFinish Messages stop_reason → Chat finish_reason。
+// messStopToChatFinish Messages stop_reason → Chat finish_reason（查 contentmodel.go
+// 的 messStopToChat 表；未登记 → messStopToChatDefault）。
 func messStopToChatFinish(reason string) string {
-	switch reason {
-	case "tool_use":
-		return "tool_calls"
-	case "max_tokens", "model_context_window_exceeded":
-		return "length"
-	case "refusal":
-		return "content_filter"
-	default:
-		// end_turn / stop_sequence / pause_turn / compaction / 缺省
-		return "stop"
+	for _, r := range messStopToChat {
+		if r.mess == reason {
+			return r.chat
+		}
 	}
+	// end_turn / stop_sequence / pause_turn / compaction / 缺省
+	return messStopToChatDefault
 }
 
-// chatFinishFromIncomplete Responses incomplete_details.reason → Chat finish_reason。
+// chatFinishFromIncomplete Responses incomplete_details.reason → Chat finish_reason
+// （查 contentmodel.go 的 stopMapIncomplete 表；未登记 → stopDefaultIncomplete）。
 func chatFinishFromIncomplete(reason string) string {
-	switch reason {
-	case "content_filter":
-		return "content_filter"
-	case "steered":
-		return "stop"
-	default:
-		// max_output_tokens / max_messages / 缺 reason
-		return "length"
+	for _, r := range stopMapIncomplete {
+		if r.incomplete == reason {
+			return r.chat
+		}
 	}
+	// max_output_tokens / max_messages / 缺 reason
+	return stopDefaultIncomplete.chat
 }
 
-// messStopFromIncomplete Responses incomplete_details.reason → Messages stop_reason。
+// messStopFromIncomplete Responses incomplete_details.reason → Messages stop_reason
+// （同一张 stopMapIncomplete 表的 mess 列）。
 func messStopFromIncomplete(reason string) string {
-	switch reason {
-	case "content_filter":
-		return "refusal"
-	case "steered":
-		return "end_turn"
-	default:
-		return "max_tokens"
+	for _, r := range stopMapIncomplete {
+		if r.incomplete == reason {
+			return r.mess
+		}
 	}
+	return stopDefaultIncomplete.mess
 }
 
 // marshalAny 任意值 → JSON 字符串（失败 → "{}"）；function_call arguments

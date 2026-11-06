@@ -22,7 +22,7 @@ import (
 // chatToRespRequest 客户端 chat 请求体 → resp 请求体。字段映射按 Responses
 // API 规范（语义与 map 版完全一致）：
 //   - messages → input：system / developer → developer 消息项（文本规则相同，
-//     assistant 历史仍写 input_text，EasyInputMessage 不使用 output_text）；
+//     assistant 历史的文本部件写 output_text 并附 annotations:[]（RT1/J3））；
 //     user/assistant → message 项；assistant tool_calls → 独立 function_call
 //     项；tool 消息 → function_call_output 项
 //   - max_tokens / max_completion_tokens → max_output_tokens（两者都给时以
@@ -209,11 +209,17 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 			if parts == 0 {
 				out = out[:start]
 			} else {
-				rw, _ := lookup(dirChatToResp, chatTextShape(r), r)
+				// 项类型名由行数据提供（shCUserText/shCAsstText 均为 polMap）；
+				// 掩码外本不可达（chatTextShape 已按 role 选行），仍留显式兜底，
+				// 避免 rw.name=="" 写出 "type":""。
+				name := "message"
+				if rw, ok := mapsTo(dirChatToResp, chatTextShape(r), r); ok {
+					name = rw.name
+				}
 				out = append(out, `],"role":`...)
 				out = append(out, role.Raw...)
 				out = append(out, `,"type":`...)
-				out = appendQuoted(out, rw.name)
+				out = appendQuoted(out, name)
 				out = append(out, '}')
 				n++
 			}
