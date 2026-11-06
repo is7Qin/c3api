@@ -119,9 +119,15 @@ func specOfDomain(p *domain.Proxy) egress.Spec {
 //
 // 但函数边界**本身不是门禁**：`routableFor(av.acc.Proxy.Enabled, ...)` 一样编译通过，
 // 扫描器也不会追进形参——把"原料只许在 reload 期读"寄托在这条约定上是不成立的。
-// 真正拦住它的是 static_read_closure_test.go 的"路径 × 函数"断言
-// （proxyMaterialPathFuncs）：谁在消费期读 `$S.acc.Proxy` / `$S.acc.ProxyID` /
-// `$S.acc.Enabled`，那条断言就红，除非在表里写明理由。
+// 拦住它的是 static_read_closure_test.go 的"路径 × 函数"断言（proxyMaterialPathFuncs）：
+// 谁在消费期读 `$S.acc.Proxy` / `$S.acc.ProxyID` / `$S.acc.Enabled`，那条断言就红，除非
+// 在表里写明理由。
+//
+// 那条断言管**形状**（谁读），管不了**用途**：已经为装配而读的字段可以被拿去做别的
+// 判断（`if av.acc.ProxyID != nil { return false }` 不新增任何读者）。所以"绑了可用代理
+// 的账号必须仍被选中、绑了不可用代理的必须不被选中"由行为用例断言
+// （TestSelectEgressAlwaysResolved / TestSelectSkipsUnroutableProxy）——改变结论的
+// 过滤器在那里红。门禁与用例各守一半，缺一不可。
 func routableFor(enabled bool, proxyID *int64, px *domain.Proxy) bool {
 	if !enabled {
 		return false

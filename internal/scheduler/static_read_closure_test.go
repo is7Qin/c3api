@@ -7,6 +7,8 @@ package scheduler
 import (
 	"fmt"
 	"go/ast"
+	"go/parser"
+	"go/token"
 	"sort"
 	"strings"
 	"testing"
@@ -158,20 +160,29 @@ var payloadProjectionFuncs = map[string]string{
 // proxyMaterialPathFuncs 是**代理原料**路径的读者白名单：路径 → 函数 → 为什么它可以读。
 //
 // 为什么需要它（C5/S12）：上面 ①–④ 对载荷有函数级限制，对代理原料却只有路径级登记，
-// 于是下面这段可编译的代码不会让任何断言变红：
+// 于是下面这几段可编译的代码不会让任何断言变红（都是真实评审给出的形状）：
 //
-//	// 写进 reserveOnView（**已登记**在 staticReaderFuncs 里）
-//	if !routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy) {
-//	    return false
-//	}
+//	// ① 写进 reserveOnView（**已登记**在 staticReaderFuncs 里）
+//	if !routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy) { return false }
+//	// ② 整账号逃逸：形参不是快照根，按名字根本看不见
+//	if !func(a domain.Account) bool { return routableFor(a.Enabled, a.ProxyID, a.Proxy) }(av.acc) { return false }
+//	// ③ 整指针拷贝：链为空，既不是根也不是别名
+//	m := av; _ = m.acc.Proxy
 //
 // 三条路径都已登记（② 绿）、`proxyDigest` / `enabled` 都是键字段（③ 绿）、
 // `$S.acc.Proxy` 是 container 不进键字段账，而 routableFor 的形参不是 `*snapshotStatic`
-// 根——扫描器不追进去。于是"出口原料只许在 reload 期读、决策只许在构造函数里派生"这条
-// 删掉 `snapshotStatic.proxyDigest` 的前提，此前只是**声称**。
+// 根——扫描器不追进去。于是"出口原料只许在 reload 期读"这条删掉
+// `snapshotStatic.proxyDigest` 的前提，此前只是**声称**。
 //
-// 判据是**相等**（双向）：多一个读者 ⇒ 红（原料漏到消费期，或有人在消费期重新派生
-// 决策）；少一个 ⇒ 红（登记表腐化成"曾经读过"）。
+// 判据是**相等**（双向）：多一个读者 ⇒ 红；少一个 ⇒ 红（登记表腐化成"曾经读过"）。
+//
+// **能力的边界（写在明处，别过度声称）**：本表钉的是"谁读"，钉不住"读了用来干什么"。
+// 一个已经为装配而读某字段的函数，可以把同一次读拿去做别的用途——典型例子是在
+// `reserveOnView` 里写 `if av.acc.ProxyID != nil { return false }`：它不新增任何读者，
+// 五条断言全绿，却把"绑了代理的账号"整批拒掉。这层由**行为用例**守，不是由本门守：
+// `TestSelectEgressAlwaysResolved`（绑了可用代理的账号必须被选中，且 Egress 是池内该规格
+// 的 client）与 `TestSelectSkipsUnroutableProxy`（绑了不可用代理的必须不被选中）——
+// 任何改变结论的过滤器都会让它们红。两边合起来才是完整判据：门禁管形状，用例管结论。
 var proxyMaterialPathFuncs = map[string]map[string]string{
 	"$S.acc.Proxy": {
 		"newSnapshotStatic": "构造期：展开的代理整交给 routableFor 与 specOfDomain（可用性与摘要都在此时定型）",
@@ -187,28 +198,48 @@ var proxyMaterialPathFuncs = map[string]map[string]string{
 	},
 }
 
-// proxyMaterialReaderViolations 比对扫描结果与白名单，返回违规清单（空 = 合规）。
+// proxyMaterialUnregisteredReaders 报告"读了原料但没在白名单里"的读者（空 = 合规）。
 //
-// 返回清单而不是直接 require：S13 的负例要用**同一份判据**证明它会拒，而"捕获 require
-// 的失败"既别扭又脆弱；清单也让正例的失败消息直接点名越界的函数。
-func proxyMaterialReaderViolations(pathFuncs map[string]map[string]bool) []string {
+// 两个方向拆成两个函数，因为它们能被证明的方式不同：
+//   - **未登记读者**可以用一小段真实源码证明（把绕过写成函数体、解析、扫描）——测的是
+//     扫描器与判据的组合；
+//   - **陈旧条目**（白名单声称某人读、代码里已经不读）在现实代码里不成立，只能用注入
+//     真实扫描结果来证明。
+//
+// 合成一条清单会让注入式负例把整张表都报成"陈旧"，所以这里不接受同一份输入判两件事。
+func proxyMaterialUnregisteredReaders(pathFuncs map[string]map[string]bool) []string {
 	var out []string
 	for path, allowed := range proxyMaterialPathFuncs {
-		readers := pathFuncs[path]
-		for fn, why := range allowed {
-			if strings.TrimSpace(why) == "" {
-				out = append(out, fmt.Sprintf("白名单缺理由：%s 读 %s", fn, path))
-			}
-			if !readers[fn] {
-				out = append(out, fmt.Sprintf("陈旧条目：白名单声称 %s 读 %s，但扫描面上它已不再读", fn, path))
-			}
-		}
-		for fn := range readers {
+		for fn := range pathFuncs[path] {
 			if _, ok := allowed[fn]; !ok {
 				out = append(out, fmt.Sprintf("未登记读者：%s 读 %s——原料只许在构造/判据期读，消费期请读键或派生位", fn, path))
 			}
 		}
 	}
+	sort.Strings(out)
+	return out
+}
+
+// proxyMaterialStaleEntries 报告"白名单声称读了、扫描面上却没读"的条目（空 = 合规）。
+func proxyMaterialStaleEntries(pathFuncs map[string]map[string]bool) []string {
+	var out []string
+	for path, allowed := range proxyMaterialPathFuncs {
+		for fn, why := range allowed {
+			if strings.TrimSpace(why) == "" {
+				out = append(out, fmt.Sprintf("白名单缺理由：%s 读 %s", fn, path))
+			}
+			if !pathFuncs[path][fn] {
+				out = append(out, fmt.Sprintf("陈旧条目：白名单声称 %s 读 %s，但扫描面上它已不再读", fn, path))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// proxyMaterialReaderViolations 是上面两条的合并（主断言用）：相等性判据必须双向。
+func proxyMaterialReaderViolations(pathFuncs map[string]map[string]bool) []string {
+	out := append(proxyMaterialUnregisteredReaders(pathFuncs), proxyMaterialStaleEntries(pathFuncs)...)
 	sort.Strings(out)
 	return out
 }
@@ -252,6 +283,36 @@ func snapStar(e ast.Expr) bool {
 	return ok && id.Name == "snapshotStatic"
 }
 
+// snapRootPrefix 报告一个**类型表达式**是不是"静态视图根"，并给出它的规范前缀：
+//
+//	*snapshotStatic / snapshotStatic  → "$S"
+//	domain.Account / *domain.Account  → "$S.acc"
+//
+// 为什么要认 `domain.Account`：这是"整账号逃逸"的形状。`av.acc` 本身就是已登记
+// 的 container 读，把整个账号交给一个局部闭包之后，闭包里的 `a.Proxy` 根标识符是
+// 形参名、既不是快照根也不是别名 —— 按名字枚举就完全看不见（绕过：在候选闭包里写
+// `func(a domain.Account) bool { return routableFor(a.Enabled, a.ProxyID, a.Proxy) }(av.acc)`）。
+// 把这类形参也登记成根，闭包内的字段读就仍归到**外层函数**名下，与直接读
+// `av.acc.Proxy` 同等对待。
+//
+// 同样的道理覆盖 `x := av` / `m := *av` 这类整指针/整结构体拷贝（见 snapRoots）。
+func snapRootPrefix(typ ast.Expr) (string, bool) {
+	if st, ok := typ.(*ast.StarExpr); ok {
+		typ = st.X
+	}
+	switch v := typ.(type) {
+	case *ast.Ident:
+		if v.Name == "snapshotStatic" {
+			return snapRootAlias, true
+		}
+	case *ast.SelectorExpr:
+		if pkg, ok := v.X.(*ast.Ident); ok && pkg.Name == "domain" && v.Sel.Name == "Account" {
+			return snapRootAlias + ".acc", true
+		}
+	}
+	return "", false
+}
+
 func snapComposite(e ast.Expr) bool {
 	if ue, ok := e.(*ast.UnaryExpr); ok {
 		e = ue.X
@@ -291,19 +352,34 @@ func snapChain(e ast.Expr) (root string, parts []string, ok bool) {
 	}
 }
 
-// snapRoots 收集函数内绑定为 *snapshotStatic 的根标识符。
-func snapRoots(fn *ast.FuncDecl) map[string]bool {
-	roots := map[string]bool{snapRootAlias: true}
+// snapRoots 收集函数内所有"静态视图根"，值是规范前缀（`$S`）。
+//
+// 登记面（缺一个就是一条绕过）：
+//   - 具名参数/接收者：`*snapshotStatic`、`snapshotStatic`；
+//   - `X := <recv>.static.Load()`、`X := &snapshotStatic{…}`；
+//   - **整拷贝**：`x := av`、`m := *av`（选择器链为空且右值解析到某个根）。
+//
+// 局部闭包的形参**不在这里**登记：它不是函数级事实而是**作用域级**事实（内层同名形参
+// 会遮蔽外层变量），放在这里会让整段函数体按内层类型解释。闭包形参见 snapPaths 的
+// 分作用域遍历。
+func snapRoots(fn *ast.FuncDecl) map[string]string {
+	roots := map[string]string{snapRootAlias: snapRootAlias}
 	for _, fl := range []*ast.FieldList{fn.Recv, fn.Type.Params} {
 		if fl == nil {
 			continue
 		}
 		for _, p := range fl.List {
-			if !snapStar(p.Type) {
+			prefix, ok := snapRootPrefix(p.Type)
+			// 顶层函数取 `*domain.Account` 时不认：它读的是调用方给的值，不是快照
+			// （`CandidateFingerprint` 这类纯领域函数正是如此）。整账号逃逸只在
+			// **闭包形参**上认，见 funcLitRoots。
+			if !ok || prefix != snapRootAlias {
 				continue
 			}
 			for _, nm := range p.Names {
-				roots[nm.Name] = true
+				if _, exists := roots[nm.Name]; !exists {
+					roots[nm.Name] = prefix
+				}
 			}
 		}
 	}
@@ -317,7 +393,14 @@ func snapRoots(fn *ast.FuncDecl) map[string]bool {
 			return true
 		}
 		if snapStaticLoadCall(as.Rhs[0]) || snapComposite(as.Rhs[0]) {
-			roots[lhs.Name] = true
+			roots[lhs.Name] = snapRootAlias
+			return true
+		}
+		// 整拷贝：`x := av` / `m := *av` —— 链为空但右值就是某个根。
+		if r, parts, ok := snapChain(as.Rhs[0]); ok && len(parts) == 0 {
+			if prefix := roots[r]; prefix != "" {
+				roots[lhs.Name] = prefix
+			}
 		}
 		return true
 	})
@@ -326,7 +409,7 @@ func snapRoots(fn *ast.FuncDecl) map[string]bool {
 
 // snapAliases 把局部别名（`ext := av.acc.Ext`）解析到规范路径。迭代到不动点，
 // 因为别名可以链式（`id := ext.CodexIdentity`）。
-func snapAliases(fn *ast.FuncDecl, roots map[string]bool) map[string]string {
+func snapAliases(fn *ast.FuncDecl, roots map[string]string) map[string]string {
 	alias := map[string]string{}
 	for range 8 {
 		changed := false
@@ -336,7 +419,7 @@ func snapAliases(fn *ast.FuncDecl, roots map[string]bool) map[string]string {
 				return true
 			}
 			lhs, ok := as.Lhs[0].(*ast.Ident)
-			if !ok || roots[lhs.Name] {
+			if !ok || roots[lhs.Name] != "" {
 				return true
 			}
 			r, parts, ok := snapChain(as.Rhs[0])
@@ -344,8 +427,8 @@ func snapAliases(fn *ast.FuncDecl, roots map[string]bool) map[string]string {
 				return true
 			}
 			var canon string
-			if roots[r] {
-				canon = snapRootAlias + "." + strings.Join(parts, ".")
+			if prefix := roots[r]; prefix != "" {
+				canon = prefix + "." + strings.Join(parts, ".")
 			} else {
 				a, ok := alias[r]
 				if !ok {
@@ -368,7 +451,12 @@ func snapAliases(fn *ast.FuncDecl, roots map[string]bool) map[string]string {
 
 // snapPaths 枚举函数内出现的全部静态读路径。作为方法调用接收者的选择器不算字段读
 // （`av.eventGID()` 是派生方法，不是快照字段）。
-func snapPaths(fn *ast.FuncDecl, roots map[string]bool, alias map[string]string) map[string]bool {
+//
+// **按作用域遍历**：进入 `func(…) {…}` 时用它的形参派生一个新的根集合（内层遮蔽外层），
+// 出闭包即丢弃。这是"整账号逃逸"（`func(a domain.Account) bool {…}(av.acc)`）被看见
+// 的唯一正确做法——按名字全局登记会把闭包外的同名局部变量（如 `a := byID[…]`）按内层
+// 类型解释，凭空造出 `$S.acc.static` 这类不存在的路径。读到的路径仍归到**外层函数**名下。
+func snapPaths(fn *ast.FuncDecl, roots map[string]string, alias map[string]string) map[string]bool {
 	callFuns := map[ast.Node]bool{}
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
 		if c, ok := n.(*ast.CallExpr); ok {
@@ -379,25 +467,64 @@ func snapPaths(fn *ast.FuncDecl, roots map[string]bool, alias map[string]string)
 		return true
 	})
 	paths := map[string]bool{}
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		se, ok := n.(*ast.SelectorExpr)
-		if !ok || callFuns[n] {
+	var walk func(n ast.Node, scope map[string]string)
+	walk = func(n ast.Node, scope map[string]string) {
+		ast.Inspect(n, func(node ast.Node) bool {
+			if node != n {
+				if fl, ok := node.(*ast.FuncLit); ok {
+					walk(fl.Body, funcLitRoots(scope, fl.Type.Params))
+					return false
+				}
+			}
+			se, ok := node.(*ast.SelectorExpr)
+			if !ok || callFuns[node] {
+				return true
+			}
+			r, parts, ok := snapChain(se)
+			if !ok || len(parts) == 0 {
+				return true
+			}
+			if prefix := scope[r]; prefix != "" {
+				paths[prefix+"."+strings.Join(parts, ".")] = true
+				return true
+			}
+			if a, ok := alias[r]; ok {
+				paths[a+"."+strings.Join(parts, ".")] = true
+			}
 			return true
-		}
-		r, parts, ok := snapChain(se)
-		if !ok || len(parts) == 0 {
-			return true
-		}
-		if roots[r] {
-			paths[snapRootAlias+"."+strings.Join(parts, ".")] = true
-			return true
-		}
-		if a, ok := alias[r]; ok {
-			paths[a+"."+strings.Join(parts, ".")] = true
-		}
-		return true
-	})
+		})
+	}
+	walk(fn.Body, roots)
 	return paths
+}
+
+// funcLitRoots 用闭包形参派生新的根集合（内层遮蔽外层，且**只**在闭包子树里生效）。
+// 认 `domain.Account` 是因为把整账号交给闭包后，闭包里的 `a.Proxy` 按名字找不到任何根；
+// 顶层函数取 `*domain.Account` 时不认（那是纯领域函数，读的是调用方给的值，不是快照）。
+func funcLitRoots(parent map[string]string, fl *ast.FieldList) map[string]string {
+	if fl == nil {
+		return parent
+	}
+	var out map[string]string // 惰性派生：闭包没有这类形参时直接复用父作用域
+	for _, p := range fl.List {
+		prefix, ok := snapRootPrefix(p.Type)
+		if !ok {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]string, len(parent)+1)
+			for k, v := range parent {
+				out[k] = v
+			}
+		}
+		for _, nm := range p.Names {
+			out[nm.Name] = prefix
+		}
+	}
+	if out == nil {
+		return parent
+	}
+	return out
 }
 
 // --- 断言 ---
@@ -553,50 +680,108 @@ func TestStaticReadClosureCoversEveryConsumerPath(t *testing.T) {
 
 	// ⑤ 代理原料的"路径 × 函数"白名单：原料（acc.Proxy / acc.ProxyID / acc.Enabled）
 	// 只许在构造/判据期读，消费期只能读键与派生位。① 只证明"函数登记过"，④ 只管载荷，
-	// 故这一条是"出口原料不漏到消费期"的唯一机械判据。
+	// 故这一条是"出口原料不漏到消费期"在**形状**上的机械判据（"读了用来干什么"由
+	// account_proxy_test.go 的行为用例守，见 proxyMaterialPathFuncs 注释的边界）。
 	require.Empty(t, proxyMaterialReaderViolations(pathFuncs),
 		"代理原料的读者必须与白名单**相等**：新增读者要在这里登记并写明它为何必须在消费期读")
 }
 
 // TestProxyMaterialGateRejectsConsumptionTimeRead 负例：证明 ⑤ 的判据真的会拒。
 //
-// 只加正例等于自证——判据写反方向、或比对的两侧总是空集，正例一样是绿的。故这里从
-// **真实扫描结果**出发（不手搓 map），再注入两种真实存在的退化形状。
+// 只加正例等于自证——判据写反方向、或比对的两侧总是空集，正例一样是绿的。故这里分两层：
+//   - **真实源码**：把绕过的函数体当成一段真代码解析出来，走完整的 解析 → roots → paths
+//     → pathFuncs 链，再交给同一个判据。测的是扫描器与判据的组合，而不只是比较器；
+//   - **登记表腐化**：这一侧只能用注入，因为现实里表是对的（"某个函数不再读了"只在
+//     有人删了读取点之后才发生），而它要证明的是"表跟着代码腐化时门会红"。
+//
+// 覆盖的形状（前两条是 oracle 第二轮/第三轮实际给出的可编译绕过）：
+//
+//	① 直接重派生：routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)
+//	② 整账号逃逸：func(a domain.Account) bool { … }(av.acc)   ← 形参不是快照根
+//	③ 整指针拷贝：m := av; _ = m.acc.Proxy                     ← 链为空但不是根
+//
+// 另有一个**对照**：同一层里读一个不在白名单上的普通字段（`av.acc.ID`）不报错——否则
+// "永远返回违规"的实现也能通过上面三条。
 func TestProxyMaterialGateRejectsConsumptionTimeRead(t *testing.T) {
 	scan := collectStaticReads(t)
 	require.Empty(t, proxyMaterialReaderViolations(scan.pathFuncs),
 		"真实扫描结果必须本来就合规，否则后面的负例证明不了任何东西")
 
-	t.Run("消费期重新派生 routable", func(t *testing.T) {
-		pathFuncs := clonePathFuncs(scan.pathFuncs)
-		// 等价于在 reserveOnView 里写 routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)：
-		// 扫描器追不进纯函数形参，只有本判据能拦。
-		//
-		// 报出来的是**新增**的两条（acc.Proxy / acc.Enabled）——acc.ProxyID 的
-		// reserveOnView 读者本来就在白名单里（Selection.ProxyID 的审计证据）。这不构成
-		// 缺口：光凭 ProxyID 推不出可用性（"绑定"不等于"可用"），要重算就必须再读
-		// Proxy 或 Enabled 之一，两者都会在这里红。
-		for _, path := range []string{"$S.acc.Proxy", "$S.acc.ProxyID", "$S.acc.Enabled"} {
-			pathFuncs[path]["reserveOnView"] = true
+	rejects := func(t *testing.T, body string, wantPaths ...string) {
+		t.Helper()
+		got := proxyMaterialUnregisteredReaders(proxyMaterialReadsOf(t, body))
+		require.NotEmpty(t, got, "这个函数体必须被拒：%s", body)
+		joined := strings.Join(got, "\n")
+		require.Contains(t, joined, "injected", "违规必须点名注入的函数：%s", joined)
+		for _, p := range wantPaths {
+			require.Contains(t, joined, p, "违规必须点名被越界读取的路径：%s", joined)
 		}
-		got := proxyMaterialReaderViolations(pathFuncs)
-		require.Len(t, got, 2, "只该报出新增的两条读者：%v", got)
-		for _, v := range got {
-			require.Contains(t, v, "reserveOnView")
-			require.Contains(t, v, "未登记读者")
-		}
-		require.NotContains(t, strings.Join(got, "\n"), "$S.acc.ProxyID",
-			"ProxyID 的这一个读者是既有的（审计证据），不该被当成新违规")
+	}
+
+	t.Run("直接重派生 routable", func(t *testing.T) {
+		rejects(t, `
+	if !routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy) {
+		return
+	}`, "$S.acc.Proxy", "$S.acc.Enabled")
+	})
+
+	t.Run("整账号逃逸到闭包", func(t *testing.T) {
+		rejects(t, `
+	if !func(a domain.Account) bool {
+		return routableFor(a.Enabled, a.ProxyID, a.Proxy)
+	}(av.acc) {
+		return
+	}`, "$S.acc.Proxy", "$S.acc.Enabled")
+	})
+
+	t.Run("整指针拷贝", func(t *testing.T) {
+		rejects(t, `
+	m := av
+	_ = m.acc.Proxy
+	_ = m.acc.Enabled`)
+	})
+
+	t.Run("对照：读非原料字段不报", func(t *testing.T) {
+		got := proxyMaterialUnregisteredReaders(proxyMaterialReadsOf(t, `
+	if av.acc.ID == 0 {
+		return
+	}
+	_ = av.tpl.ID`))
+		require.Empty(t, got, "普通字段读取与出口原料无关，不该被这条判据拦：%v", got)
 	})
 
 	t.Run("登记表腐化", func(t *testing.T) {
 		pathFuncs := clonePathFuncs(scan.pathFuncs)
 		delete(pathFuncs["$S.acc.Proxy"], "staticKeyOf")
-		got := proxyMaterialReaderViolations(pathFuncs)
+		got := proxyMaterialStaleEntries(pathFuncs)
 		require.Len(t, got, 1, "只该报一条陈旧条目：%v", got)
 		require.Contains(t, got[0], "staticKeyOf")
 		require.Contains(t, got[0], "陈旧条目")
 	})
+}
+
+// proxyMaterialReadsOf 把一段**函数体源码**送进真正的扫描链（解析 → snapRoots →
+// snapPaths），返回"路径 → 读者函数集"。函数名固定 `injected`，形参固定
+// `av *snapshotStatic`：这样注入体与 `reserveOnView` 的可见形状一致（都能拿到 av），
+// 但断言只关心"这个读者没有登记"。
+//
+// 不做类型检查（parser 不解析 import）：`domain.Account` 这类限定类型名在语法层就够
+// ——本门判的是语法形状，不是类型。
+func proxyMaterialReadsOf(t *testing.T, body string) map[string]map[string]bool {
+	t.Helper()
+	src := "package scheduler\n\nfunc injected(av *snapshotStatic) {\n" + body + "\n}\n"
+	f, err := parser.ParseFile(token.NewFileSet(), "injected.go", src, parser.SkipObjectResolution)
+	require.NoError(t, err)
+	require.Len(t, f.Decls, 1)
+	fn, ok := f.Decls[0].(*ast.FuncDecl)
+	require.True(t, ok, "注入的源码必须只有一处函数声明")
+	roots := snapRoots(fn)
+	paths := snapPaths(fn, roots, snapAliases(fn, roots))
+	out := make(map[string]map[string]bool, len(paths))
+	for p := range paths {
+		out[p] = map[string]bool{fn.Name.Name: true}
+	}
+	return out
 }
 
 // TestEveryStaticLoadSiteIsDeclared `.static.Load()` 是取得静态视图的**唯一**入口。

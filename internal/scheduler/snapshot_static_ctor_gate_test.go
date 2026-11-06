@@ -202,7 +202,9 @@ func scanSnapshotStaticConstructs(filename string, f *ast.File) []string {
 type scanCtx struct {
 	filename string
 	fnName   string // "" for package scope
-	roots    map[string]bool
+	// roots 是函数内绑定的根：名字 → 规范前缀（`$S` = *snapshotStatic，`$S.acc`
+	// = domain.Account）。本门只关心 `$S` 那一类，故判定一律与 snapRootAlias 比。
+	roots    map[string]string
 	vars     map[string]ast.Expr
 	out      *[]string
 	ctorLits int
@@ -283,12 +285,12 @@ func (c *scanCtx) derefTargetName(x ast.Expr) (string, bool) {
 		if !ok {
 			return "", false
 		}
-		if c.roots[base] || isSnapshotStaticPtrElem(c.vars, base) {
+		if c.roots[base] == snapRootAlias || isSnapshotStaticPtrElem(c.vars, base) {
 			return base, true
 		}
 		return "", false
 	}
-	if name, ok := rootIdent(x); ok && c.roots[name] {
+	if name, ok := rootIdent(x); ok && c.roots[name] == snapRootAlias {
 		return name, true
 	}
 	return "", false
