@@ -206,6 +206,13 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 	if err := s.resolveBindableProxy(ctx, p.ProxyID, targetSupplier); err != nil {
 		return nil, err
 	}
+	// 只转属、不显式给 proxy_id 时，既存绑定可能落在谓词之外（spec §3.6）——
+	// 要求调用方显式解绑/改绑，而不是让一个隐式副作用改掉出栈路径。
+	if p.ProxyID == nil {
+		if err := s.checkTransferKeepsBinding(ctx, cur.ProxyID, cur.SupplierUserID, targetSupplier); err != nil {
+			return nil, err
+		}
+	}
 	// 失效判据来自 repository 回显的**真实变更集**（身份类字段按值变更），
 	// 不在本层重写字段清单。
 	oldGroups, gErr := s.store.GetAccountGroups(ctx, id)
@@ -314,7 +321,9 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	// 逐账号读（GetAccount）同时带来两件事：① 取到该行的 supplier_user_id；② 越域
 	// /缺失一律 404（作用域已 AND 进那条 SQL，与 supplier 面同纪律）。目标归属同样
 	// 取落库后的值（补丁可在同一批里转属）。
-	if p.ProxyID != nil && *p.ProxyID > 0 {
+	// 需要逐账号判定归属的两种形状：① 显式绑定（谓词）；② 只转属（既存绑定守卫）。
+	// 两者都要读每一行的当前归属，故合成一次扫描。
+	if (p.ProxyID != nil && *p.ProxyID > 0) || p.SupplierUserID != nil {
 		for _, id := range ids {
 			cur, err := s.store.GetAccount(ctx, id)
 			if err != nil {
@@ -326,6 +335,11 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 			}
 			if err := s.resolveBindableProxy(ctx, p.ProxyID, targetSupplier); err != nil {
 				return nil, err
+			}
+			if p.ProxyID == nil {
+				if err := s.checkTransferKeepsBinding(ctx, cur.ProxyID, cur.SupplierUserID, targetSupplier); err != nil {
+					return nil, err
+				}
 			}
 		}
 	}

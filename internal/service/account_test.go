@@ -288,3 +288,95 @@ func accProxyID(t *testing.T, svc *Service, id int64) *int64 {
 	require.NoError(t, err)
 	return acc.ProxyID
 }
+
+// TestTransferKeepsBindingGuard 转属时的**既存绑定**守卫（spec §3.6 的第二个入口）。
+//
+// 谓词只在「显式给了 proxy_id」时执行，于是有一个漏洞形状：补丁只把账号从供应商 A
+// 转给 B（不碰 proxy_id），而该账号当前绑的是 A 的私池代理 —— 写完之后那一行落在谓词
+// 之外：B 的流量走 A 的出口。本门钉住处置：**400，要求调用方显式决定**（同一补丁里
+// 解绑或改绑新归属自己的代理），而不是静默解绑（隐式改掉出栈路径）或静默放过。
+func TestTransferKeepsBindingGuard(t *testing.T) {
+	svc, _, _ := newProxyTestService()
+	adminCtx := context.Background()
+	// 用变量而不是常量：补丁里的归属字段是 *int64，需要对它们取地址。
+	var (
+		supplierA = int64(303)
+		supplierB = int64(404)
+	)
+	tpl := seedTemplate(t, svc, "tpl-xfer")
+	privateA := seedPrivateProxy(t, svc, supplierA, "xfer-private-a")
+	privateB := seedPrivateProxy(t, svc, supplierB, "xfer-private-b")
+	platformProxy := seedBindingProxy(t, svc, "xfer-platform")
+
+	newAccount := func(name string, owner int64) int64 {
+		p := repository.AccountPatch{Name: &name, TemplateID: &tpl.ID, UpstreamKey: new("k-" + name)}
+		if owner > 0 {
+			p.SupplierUserID = &owner
+		}
+		acc, err := svc.CreateAccount(adminCtx, p)
+		require.NoError(t, err)
+		return acc.ID
+	}
+	bind := func(accID, proxyID int64) {
+		t.Helper()
+		_, err := svc.PatchAccount(adminCtx, accID, repository.AccountPatch{ProxyID: &proxyID}, nil)
+		require.NoError(t, err)
+	}
+	ownerOf := func(id int64) int64 {
+		t.Helper()
+		acc, err := svc.GetAccount(adminCtx, id)
+		require.NoError(t, err)
+		return acc.SupplierUserID
+	}
+
+	// ① 只转属、当前绑着 A 的私池代理 ⇒ 400，且归属与绑定都不动（不留半套写入）
+	acc := newAccount("xfer-acc", supplierA)
+	bind(acc, privateA)
+	_, err := svc.PatchAccount(adminCtx, acc, repository.AccountPatch{SupplierUserID: &supplierB}, nil)
+	require.ErrorIs(t, err, ErrInvalidInput, "只转属会把 A 的出口留给 B ⇒ 400")
+	require.Equal(t, supplierA, ownerOf(acc), "失败路径不得改归属")
+	require.Equal(t, privateA, *accProxyID(t, svc, acc), "失败路径不得动绑定")
+
+	// ② 同一补丁「转属 + 解绑」⇒ 成功（显式决定是这条路的唯一入口）
+	_, err = svc.PatchAccount(adminCtx, acc, repository.AccountPatch{
+		SupplierUserID: &supplierB, ProxyID: new(int64(0)),
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, supplierB, ownerOf(acc))
+	require.Nil(t, accProxyID(t, svc, acc), "解绑后回到直连")
+
+	// ③ 同一补丁「转属 + 改绑新归属自己的代理」⇒ 成功
+	acc2 := newAccount("xfer-acc2", supplierA)
+	bind(acc2, privateA)
+	_, err = svc.PatchAccount(adminCtx, acc2, repository.AccountPatch{
+		SupplierUserID: &supplierB, ProxyID: &privateB,
+	}, nil)
+	require.NoError(t, err)
+	require.Equal(t, supplierB, ownerOf(acc2))
+	require.Equal(t, privateB, *accProxyID(t, svc, acc2))
+
+	// ④ 平台代理绑定 + 只转属 ⇒ 成功：平台代理由管理员维护，转属后仍合规
+	acc3 := newAccount("xfer-acc3", supplierA)
+	bind(acc3, platformProxy)
+	_, err = svc.PatchAccount(adminCtx, acc3, repository.AccountPatch{SupplierUserID: &supplierB}, nil)
+	require.NoError(t, err)
+	require.Equal(t, supplierB, ownerOf(acc3))
+	require.Equal(t, platformProxy, *accProxyID(t, svc, acc3), "平台代理不受转属限制")
+
+	// ⑤ 批量面：一批两个账号、其中一个绑着 A 的私池 ⇒ 整批 400，两侧原绑定不变
+	ok1 := newAccount("xfer-ok1", supplierA)
+	bad := newAccount("xfer-bad", supplierA)
+	bind(ok1, privateA)
+	bind(bad, privateA)
+	_, err = svc.UpdateAccountsBatch(adminCtx, []int64{ok1, bad}, repository.AccountPatch{SupplierUserID: &supplierB})
+	require.ErrorIs(t, err, ErrInvalidInput, "批量转属同样要逐账号判定")
+	for _, id := range []int64{ok1, bad} {
+		require.Equal(t, supplierA, ownerOf(id), "整批失败不改归属")
+		require.Equal(t, privateA, *accProxyID(t, svc, id), "整批失败不改绑定")
+	}
+	// 同一批「转属 + 解绑」⇒ 通过
+	_, err = svc.UpdateAccountsBatch(adminCtx, []int64{ok1, bad}, repository.AccountPatch{
+		SupplierUserID: &supplierB, ProxyID: new(int64(0)),
+	})
+	require.NoError(t, err)
+}

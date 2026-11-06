@@ -357,6 +357,37 @@ func (s *Service) resolveBindableProxy(ctx context.Context, proxyID *int64, targ
 	return nil
 }
 
+// checkTransferKeepsBinding 归属转移时的**既存绑定**守卫（spec §3.6 的第二个入口）。
+//
+// 谓词只在「显式给了 proxy_id」时被执行，于是有一个漏洞形状：补丁只把账号从供应商
+// A 转给 B（不碰 proxy_id），而该账号当前绑的是 **A 的私池代理** —— 写完之后那一行
+// 就落在谓词之外：B 的流量走 A 的出口。这不是理论问题，`ownership` 面本来就把
+// "把账号分配给供应商"做成一个普通字段更新。
+//
+// 处置：**400，要求调用方显式决定**——同一补丁里解绑（`"proxy_id": null`）或改绑
+// 新归属自己的代理。为什么不静默解绑：解绑会改掉出栈事实（从供应商出口切回直连），
+// 而调用方只说了"转属"；让一个隐式副作用改掉流量路径，比让人补一个字段更糟。为什么不
+// 静默放过：那条越权状态会一直存在，直到有人碰巧改绑定。
+//
+// 平台代理不受此限：它是管理员分配的，转属后仍由管理员维护，没有跨租户信任问题。
+func (s *Service) checkTransferKeepsBinding(ctx context.Context, proxyID *int64, fromSupplier, toSupplier int64) error {
+	if fromSupplier == toSupplier || proxyID == nil || *proxyID <= 0 {
+		return nil
+	}
+	info, err := s.store.LookupProxyForBinding(ctx, *proxyID)
+	if err != nil {
+		return mapRepoErr(err)
+	}
+	if info.OwnerUID == nil {
+		return nil // 平台代理：任何归属的账号都能挂（只有管理员能挂上）
+	}
+	if *info.OwnerUID == toSupplier {
+		return nil
+	}
+	return fmt.Errorf("%w: transferring the account would leave proxy_id=%d (owned by %d) bound to a %d account; clear proxy_id or bind a proxy owned by the new owner",
+		ErrInvalidInput, *proxyID, *info.OwnerUID, toSupplier)
+}
+
 // checkSupplierEgressHost 供应商自建出口的私网拒绝（spec §3.6）：只在 scope.Set 时生效
 // ——管理员建内网出口是合理需求（内网拨测/专线），供应商建就成了一个免费的**内网穿透
 // 跳板**。命中 ⇒ ErrInvalidInput（400）。
