@@ -406,7 +406,7 @@ func (r *GroupRepo) proxyIndexByID(ctx context.Context) (map[int64]*domain.Proxy
 // **不碰可用性位**：`routable` 是快照事实（C2/S7 从领域对象搬走），唯一派生点是
 // scheduler 的 `newSnapshotStatic`——装载器只提供原料（ProxyID + 展开的 Proxy +
 // Enabled）。这不是"怕改坏测试"：一个事实只能有一个派生点，装载器再算一次就是第二份
-// 判据，两者迟早不一致；而且装载器算出来的位不在键里，改了 enabled 不会换叶子。
+// 判据，两者迟早不一致。
 func expandAccountProxy(d *domain.Account, byID map[int64]*domain.Proxy) {
 	if d == nil || d.ProxyID == nil {
 		return

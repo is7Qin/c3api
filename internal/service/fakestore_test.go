@@ -2927,12 +2927,30 @@ func fakeProxyVisible(scope domain.AccountScope, p domain.Proxy) bool {
 	return p.OwnerUID != nil && *p.OwnerUID == scope.OwnerUID
 }
 
+// fakeProxySameOwner 报告两条归属是否同一域（nil 与 nil 视为同一域 = 平台池）。
+//
+// 这个名字唯一的**域**是每归属（spec §2.5 的两条部分唯一索引）：平台池内互不同名、
+// 同一供应商内互不同名，**跨归属可同名**。替身必须同口径——按全局唯一模拟会让"供应商
+// B 用平台池/别人已占的名字"这一合法路径在替身上变成 409，用例于是测到一个不存在的约束。
+func fakeProxySameOwner(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
 func (f *fakeStore) CreateProxy(ctx context.Context, in repository.ProxyCreate) (int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// 归属由作用域钉死（镜像真实的 CreateProxy）：供应商面恒本人，管理面落 NULL。
+	var owner *int64
+	if scope := domain.AccountScopeFrom(ctx); scope.Set {
+		o := scope.OwnerUID
+		owner = &o
+	}
 	for _, row := range f.proxies {
 		// 唯一索引不含 deleted_at ⇒ 软删不释放名字（与 template 同语义）。
-		if row.p.Name == in.Name {
+		if row.p.Name == in.Name && fakeProxySameOwner(row.p.OwnerUID, owner) {
 			return 0, fmt.Errorf("%w: name=%q", repository.ErrConflict, in.Name)
 		}
 	}
@@ -2940,11 +2958,7 @@ func (f *fakeStore) CreateProxy(ctx context.Context, in repository.ProxyCreate) 
 		Name: in.Name, Scheme: in.Scheme, Host: in.Host, Port: in.Port,
 		Enabled: in.Enabled, Remark: in.Remark,
 		Username: in.Username, Password: in.Password,
-	}
-	// 归属由作用域钉死（镜像真实的 CreateProxy）：供应商面恒本人，管理面落 NULL。
-	if scope := domain.AccountScopeFrom(ctx); scope.Set {
-		owner := scope.OwnerUID
-		p.OwnerUID = &owner
+		OwnerUID: owner,
 	}
 	p.ID = f.nextID
 	f.nextID++
@@ -2996,14 +3010,17 @@ func (f *fakeStore) LookupProxyForBinding(ctx context.Context, id int64) (reposi
 func (f *fakeStore) UpdateProxy(ctx context.Context, in repository.ProxyUpdate) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, row := range f.proxies {
-		if row.p.ID != in.ID && row.p.Name == in.Name {
-			return fmt.Errorf("%w: name=%q", repository.ErrConflict, in.Name)
-		}
-	}
+	// 先存在性/可见性（= 真实 UPDATE 的 WHERE 子句）：命中 0 行 ⇒ ErrNotFound，且此时
+	// 索引根本不会被检查。顺序反了会让"更新一条越域/已删的条目"错报成 409。
 	row, ok := f.proxies[in.ID]
 	if !ok || row.deletedAt != nil || !fakeProxyVisible(domain.AccountScopeFrom(ctx), row.p) {
 		return missingErr(in.ID)
+	}
+	// 再唯一冲突（= 真实的部分唯一索引裁决），域是**每归属**。
+	for _, other := range f.proxies {
+		if other.p.ID != in.ID && other.p.Name == in.Name && fakeProxySameOwner(other.p.OwnerUID, row.p.OwnerUID) {
+			return fmt.Errorf("%w: name=%q", repository.ErrConflict, in.Name)
+		}
 	}
 	// 从当前行出发，只覆盖 DTO 里的可写列：归属、探测三列、时间戳不在 DTO 里，
 	// 因此**不可能**被这次更新改写（与真实仓库的 SET 列表同形，但不再靠纪律维持）。

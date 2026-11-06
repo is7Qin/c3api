@@ -182,9 +182,10 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 		d.SupplierUserID = *a.SupplierUserID
 	}
 	// 出口代理绑定（spec-proxy-pool §3.2）：列 NULL = 直连（nil）。本函数**只**投影
-	// ProxyID 这一列，`d.Proxy` 恒留 nil——展开由快照装载在 toDomainAccount 之后调
-	// expandAccountProxy 完成（批量查 proxies 后按 id 回填，一处实现）；管理面 CRUD
-	// 不调它，故那里的 Proxy 恒 nil 且无人读。
+	// ProxyID 这一列，`d.Proxy` 恒留 nil：展开是读路径的事，且只有两处——
+	// `account_repo.expandProxies`（账号读面：创建/单读/列表，scope-aware，「看不见的代理
+	// 就不展开」）与 `group_repo.expandAccountProxy`（快照装载，全量）。本函数属于
+	// "ent 行 → 领域对象"的最底层，把展开塞进来会让上面两处的口径混成一处。
 	d.ProxyID = a.ProxyID
 	// Ext 快照合并：仅调度器快照加载（LoadGroupsAccounts / LoadGroupAccounts
 	// ——全表/子查询扫描后内存装配 Edges.Ext）会带 account_ext 边；其余路径
