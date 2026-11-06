@@ -583,8 +583,7 @@ export default {
     "updateSuccess": "代理已更新",
     "deleteSuccess": "代理已删除",
     "nameConflict": "该名称已被占用",
-    "privateHostHint": "不得使用内网、回环或链路本地地址（10/8、172.16/12、192.168/16、127/8、169.254/16、::1、fc00::/7…）",
-    "privateHostRejected": "这是内网／回环地址 —— 供应商自建代理会被服务端拒绝",
+    "hostPolicyHint": "不得使用内网、回环或链路本地地址；后端会拒绝",
     "errors": {
       "required": "必填",
       "tooLong": "过长",

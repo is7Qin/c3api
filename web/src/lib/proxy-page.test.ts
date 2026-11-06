@@ -32,6 +32,9 @@ const client = read('../lib/api/client.ts')
 const schema = read('../lib/api/schema.d.ts')
 const accounts = read('../pages/accounts.tsx')
 const proxyPage = read('../components/proxy-pool-page.tsx')
+const proxyForm = read('../lib/proxy-form.ts')
+const enLocale = read('../locales/en.ts')
+const zhLocale = read('../locales/zh.ts')
 
 // 取 `const NAME ... = [ ... ]` 的数组字面量主体（导航项 source-text 断言的锚点）。
 function navBlock(src: string, name: string): string {
@@ -198,5 +201,34 @@ describe('accounts 页面接线（源码形状）', () => {
     assert.match(proxyPage, /queryKey: \['proxies', kind\]/)
     // 供应商面差异：无归属列、无「分配给账号」动作
     assert.match(proxyPage, /\{!isSupplier && <TableHead className="w-28">/)
+  })
+})
+
+describe('地址判据只在后端（C3：删掉前端第二套 IP 分类器）', () => {
+  // 只查**代码**，不查注释：注释里出现「已删 isPrivateEgressHost」是好事，不该让门禁误报。
+  const proxyFormCode = proxyForm.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '')
+
+  it('proxy-form.ts 不再导出私网判定，也不再解析 IPv4/IPv6', () => {
+    assert.ok(!/isPrivateEgressHost|parseIPv4|isPrivateIP/.test(proxyFormCode), '前端不得再维护 IP 分类器')
+    // 私网段名单是"第二份事实"的形状特征：出现在前端**代码**里就说明有人把它加回来了。
+    for (const hint of ['192.168', '172.16', '10.0.0', 'fc00::', 'fe80::', '.localhost', 'fe00']) {
+      assert.ok(!proxyFormCode.includes(hint), `proxy-form.ts 不得出现私网段/特殊名 ${hint}`)
+    }
+  })
+
+  it('供应商面的提示是固定说明（不随 host 输入变化），失败时透出后端 message', () => {
+    // 固定说明：键与 JSX 都只有一处，且不挂在任何"私网判定"状态上。
+    assert.match(proxyPage, /\{t\('proxies\.hostPolicyHint'\)\}/)
+    assert.ok(!/privateHost/.test(proxyPage), '页面不得再有 privateHost 提示状态')
+    // 400（内网/回环拒绝）没有字段级错误清单 ⇒ 展示后端 message。
+    assert.match(proxyPage, /errMsg\(save\.error\)/)
+  })
+
+  it('i18n 两侧同批：hostPolicyHint 存在、旧的两条私网提示已删净', () => {
+    for (const locale of [enLocale, zhLocale]) {
+      assert.ok(locale.includes('"hostPolicyHint"'), '两侧都要有 hostPolicyHint')
+      assert.ok(!locale.includes('"privateHostHint"'), '旧的 privateHostHint 必须删净')
+      assert.ok(!locale.includes('"privateHostRejected"'), '旧的 privateHostRejected 必须删净')
+    }
   })
 })

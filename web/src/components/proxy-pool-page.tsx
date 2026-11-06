@@ -8,7 +8,9 @@
 // - 管理面（/app/proxies，base /api/admin）：多一列 `owner_uid`（null = 平台代理），
 //   删除文案按归属分流（平台代理解绑所有引用；私池代理只解绑该供应商自己的账号）。
 // - 供应商面（/user/supplier/proxies，base /api/user/supplier）：没有归属列（都是自己的）、
-//   没有「分配给账号」动作；地址校验要提示「不得使用内网地址」（后端 400，前端同口径提示）。
+//   没有「分配给账号」动作；出口地址旁只挂一句**固定说明**（不得用内网/回环/链路本地，
+//   后端会拒绝），前端**不判定**某个地址是不是私网——判据只有后端一份（C3）。
+//   失败时把后端 400 的 message 原样透出（错误体没有字段级错误清单）。
 //
 // 三态纪律（与后端同口径，唯一实现在 lib/proxy-form 的 buildProxyPayload）：
 // 未触碰的 username/password/enabled/remark 一律不出现在请求体里；「清除」是显式 null。
@@ -24,7 +26,6 @@ import {
   PROXY_SCHEMES,
   buildProxyPayload,
   emptyProxyDraft,
-  isPrivateEgressHost,
   proxyDraftOf,
   proxyEndpoint,
   validateProxyForm,
@@ -123,7 +124,6 @@ export default function ProxyPoolPage() {
     return <p className="text-xs text-destructive">{t(`proxies.errors.${code}` as DynamicKey)}</p>
   }
   const schemeItems = useMemo(() => Object.fromEntries(PROXY_SCHEMES.map(s => [s, s])), [])
-  const privateHost = isSupplier && isPrivateEgressHost(draft.host)
   const schemaErr = save.isError && save.error instanceof ApiError && save.error.status === 409
 
   return (
@@ -282,10 +282,9 @@ export default function ProxyPoolPage() {
               <Label htmlFor="px-host">{t('proxies.hostLabel')}</Label>
               <Input id="px-host" value={draft.host} placeholder={t('proxies.hostPlaceholder')} onChange={e => setDraft(d => ({ ...d, host: e.target.value }))} />
               {fieldErr('host')}
+              {/* 固定说明，不随输入变化：地址是否可用由后端判（见下方 save 错误位）。 */}
               {isSupplier && (
-                <p className={privateHost ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
-                  {t(privateHost ? 'proxies.privateHostRejected' : 'proxies.privateHostHint')}
-                </p>
+                <p className="text-xs text-muted-foreground">{t('proxies.hostPolicyHint')}</p>
               )}
             </div>
             <div className="space-y-1.5">
@@ -331,6 +330,8 @@ export default function ProxyPoolPage() {
               <Label htmlFor="px-remark">{t('proxies.remarkLabel')}</Label>
               <Input id="px-remark" value={draft.remark} placeholder={t('proxies.remarkPlaceholder')} onChange={e => setDraft(d => ({ ...d, remark: e.target.value }))} />
             </div>
+            {/* 提交失败：409 有专门的冲突文案；其余（含 400 的内网/回环地址拒绝）直接
+                展示后端 message —— 错误体没有字段级错误清单，前端不猜是哪个字段。 */}
             {save.isError && (
               <p className="text-sm text-destructive">
                 {schemaErr ? t('proxies.nameConflict') : errMsg(save.error)}

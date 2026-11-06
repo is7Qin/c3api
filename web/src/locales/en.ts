@@ -583,8 +583,7 @@ export default {
     "updateSuccess": "Proxy updated",
     "deleteSuccess": "Proxy deleted",
     "nameConflict": "That name is already taken",
-    "privateHostHint": "Must not be a private, loopback or link-local address (10/8, 172.16/12, 192.168/16, 127/8, 169.254/16, ::1, fc00::/7…)",
-    "privateHostRejected": "This is a private/loopback address — the server rejects it for supplier-created proxies",
+    "hostPolicyHint": "Must not be a private, loopback or link-local address; the server rejects it",
     "errors": {
       "required": "Required",
       "tooLong": "Too long",

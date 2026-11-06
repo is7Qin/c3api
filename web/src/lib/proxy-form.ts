@@ -2,12 +2,16 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// 代理条目表单的纯逻辑：校验 + 请求体三态投影 + 私网出口判据。
+// 代理条目表单的纯逻辑：廉价格式校验 + 请求体三态投影。
 //
 // 纪律：
 // - **校验只为体验**。真判据在后端 `internal/service/proxy.go` 的 `normalizeProxyInput`
-//   （name trim 后 1..64 / scheme 小写白名单 / host 形态 / port 1..65535）；本文件与之
-//   同口径，但不替代它——前端放过去的东西后端仍会 400。
+//   （name trim 后 1..64 / scheme 小写白名单 / host 形态 / port 1..65535 / 私网出口拒绝）；
+//   本文件只做**格式**反馈，不替代它——前端放过去的东西后端仍会 400。
+// - **本文件不做 IP 分类**（C3 已删 `isPrivateEgressHost`）：前端曾经自己解析
+//   IPv4/IPv6/mapped 并维护私网段名单，与后端口径漂移（前端去尾点、认 `.localhost`，
+//   后端都不认）。私网/回环/链路本地只有一份判据，在后端；前端只留一句固定说明
+//   与后端 400 的 message 透出。
 // - **未触碰的字段绝不进请求体**。`ProxyConfig` 的三态是「缺席 = 不变 / null = 清空 /
 //   有值 = 落值」，故 `buildProxyPayload` 是这条投影的唯一实现，调用点不得自行拼装。
 // - 本模块不 import 任何运行时依赖（只有 type import），`node --test` 可直接执行。
@@ -174,68 +178,4 @@ export function buildProxyPayload(initial: ProxyView | null, draft: ProxyDraft, 
   if (enabledChanged) payload.enabled = draft.enabled
 
   return payload
-}
-
-// —— 私网/回环/链路本地/元数据地址判据 ——
-// 与后端 §3.6 同一份名单（10/8、172.16/12、192.168/16、127/8、169.254/16、100.64/10、
-// 0/8、::1、fc00::/7、fe80::/10、IPv4-mapped、localhost、.local）。
-// **只用于供应商面提示**：供应商自建代理拒私网是后端 400 的事，前端不得据此自行决定。
-export function isPrivateEgressHost(raw: string): boolean {
-  let host = normalizeProxyHost(raw).toLowerCase()
-  if (host === '') return false
-  // 完全限定名的尾点不影响解析结果
-  if (host.endsWith('.')) host = host.slice(0, -1)
-  if (host === '') return false
-
-  if (host === 'localhost' || host.endsWith('.localhost')) return true
-  if (host.endsWith('.local')) return true
-
-  if (host.includes(':')) return isPrivateIPv6(host)
-
-  const v4 = parseIPv4(host)
-  return v4 ? isPrivateIPv4(v4) : false
-}
-
-function parseIPv4(host: string): [number, number, number, number] | null {
-  const parts = host.split('.')
-  if (parts.length !== 4) return null
-  const octets: number[] = []
-  for (const part of parts) {
-    if (!/^\d{1,3}$/.test(part)) return null
-    const n = Number(part)
-    if (n > 255) return null
-    octets.push(n)
-  }
-  return [octets[0], octets[1], octets[2], octets[3]]
-}
-
-function isPrivateIPv4([a, b]: [number, number, number, number]): boolean {
-  if (a === 0) return true // 0/8（含 0.0.0.0）
-  if (a === 10) return true // 10/8
-  if (a === 127) return true // 127/8（回环）
-  if (a === 169 && b === 254) return true // 169.254/16（链路本地 / 云元数据）
-  if (a === 172 && b >= 16 && b <= 31) return true // 172.16/12（172.32 起是公网）
-  if (a === 192 && b === 168) return true // 192.168/16
-  if (a === 100 && b >= 64 && b <= 127) return true // 100.64/10（CGNAT）
-  return false
-}
-
-function isPrivateIPv6(host: string): boolean {
-  // 未指定地址：等价于 IPv4 的 0/8
-  if (host === '::' || host === '0:0:0:0:0:0:0:0') return true
-  // 回环：::1（含展开形态）
-  if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true
-  // IPv4-mapped：::ffff:a.b.c.d → 按内嵌 IPv4 判（点分形态；十六进制形态视为非私网，后端仍会拦）
-  const mapped = host.match(/^(?:0:0:0:0:0:ffff:|::ffff:)(\d{1,3}(?:\.\d{1,3}){3})$/)
-  if (mapped) {
-    const v4 = parseIPv4(mapped[1])
-    return v4 ? isPrivateIPv4(v4) : false
-  }
-  const first = host.split(':')[0]
-  if (first === '') return false
-  const hextet = Number.parseInt(first, 16)
-  if (Number.isNaN(hextet)) return false
-  if ((hextet & 0xfe00) === 0xfc00) return true // fc00::/7（唯一本地地址）
-  if ((hextet & 0xffc0) === 0xfe80) return true // fe80::/10（链路本地）
-  return false
 }

@@ -2,9 +2,11 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// 代理表单纯逻辑的门（spec proxy-pool §9.4「前端纯逻辑」）：校验矩阵 + 三态投影 +
-// 私网判据。项目没有 jsdom/渲染测试，所以「页面有没有按这些规则接线」由
-// proxy-page.test.ts 的源码 tripwire 守。
+// 代理表单纯逻辑的门（spec proxy-pool §9.4「前端纯逻辑」）：格式校验矩阵 + 三态投影。
+// **私网/回环/链路本地判据不在这里**（C3：前端不再维护第二份 IP 分类器，判据只有后端
+// `normalizeProxyInput` 一份）；这里也不留"从后端源码 grep 私网段"的影子断言。
+// 项目没有 jsdom/渲染测试，所以「页面有没有按这些规则接线」由 proxy-page.test.ts 的
+// 源码 tripwire 守。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import {
@@ -13,7 +15,6 @@ import {
   PROXY_SCHEMES,
   buildProxyPayload,
   emptyProxyDraft,
-  isPrivateEgressHost,
   normalizeProxyHost,
   proxyDraftOf,
   proxyEndpoint,
@@ -171,71 +172,6 @@ describe('buildProxyPayload 三态投影（未改 ⇒ 不出键）', () => {
     assert.equal(payload.scheme, 'socks5h')
     assert.equal(payload.host, '::1')
     assert.equal(payload.port, 1080)
-  })
-})
-
-describe('isPrivateEgressHost（只用于供应商面提示，判据仍在后端）', () => {
-  const priv = (host: string, want: boolean) =>
-    assert.equal(isPrivateEgressHost(host), want, `${host} 应为 ${want ? '私网' : '公网'}`)
-
-  it('IPv4 私网段逐个命中', () => {
-    priv('10.0.0.1', true)
-    priv('10.255.255.255', true)
-    priv('172.16.0.1', true)
-    priv('172.31.255.255', true)
-    priv('192.168.1.1', true)
-    priv('127.0.0.1', true)
-    priv('169.254.169.254', true) // 云元数据
-    priv('100.64.0.1', true) // CGNAT
-    priv('100.127.255.255', true)
-    priv('0.0.0.0', true)
-  })
-
-  it('相邻公网边界不误伤（172.31 vs 172.32、100.127 vs 100.128）', () => {
-    priv('172.32.0.1', false)
-    priv('172.15.255.255', false)
-    priv('100.128.0.1', false)
-    priv('100.63.255.255', false)
-    priv('11.0.0.1', false)
-    priv('192.169.0.1', false)
-    priv('8.8.8.8', false)
-  })
-
-  it('名字与后缀：localhost / .localhost / .local', () => {
-    priv('localhost', true)
-    priv('LOCALHOST', true)
-    priv('api.localhost', true)
-    priv('printer.local', true)
-    priv('example.com', false)
-    priv('local.example.com', false) // 只认 .local 后缀（local.example.com 结尾不是 .local）
-  })
-
-  it('IPv6：::1、fc00::/7、fe80::/10、IPv4-mapped', () => {
-    priv('::1', true)
-    priv('[::1]', true)
-    priv('::', true) // 未指定地址（等价 0/8）
-    priv('fc00::1', true)
-    priv('fd12:3456::1', true)
-    priv('fe80::1', true)
-    priv('febf::1', true)
-    priv('fec0::1', false) // site-local 不在名单内（且已废弃）
-    priv('2001:db8::1', false)
-    priv('::ffff:127.0.0.1', true)
-    priv('::ffff:10.1.2.3', true)
-    priv('::ffff:8.8.8.8', false)
-  })
-
-  it('畸形输入不误判为私网（判据在后端）', () => {
-    priv('', false)
-    priv('10.0.0', false)
-    priv('10.0.0.256', false)
-    priv('not an ip', false) // 含空格：不是 IP 也不是特殊名
-  })
-
-  it('尾点 FQDN 归一后仍命中', () => {
-    priv('localhost.', true)
-    priv('printer.local.', true)
-    priv('example.com.', false)
   })
 })
 
