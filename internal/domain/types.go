@@ -701,8 +701,9 @@ type Group struct {
 	// （1.5 ↔ 15000）。
 	PriceMultiplier int
 	// ProtocolConverts 分组级协议转换方向集合（只补差 消费；多方向并存按
-	// 客户端格式命中——chat 请求走 chat_to_*、anthropic 请求走 mess_to_resp、
-	// resp 请求走 resp_to_mess）：空集合 = off = 不转换（off 不进数组）。
+	// 客户端格式命中——**同一客户端格式至多一个方向**，冲突在 service 层 400）：
+	// chat 请求走 chat_to_*、anthropic 请求走 mess_to_*、resp 请求走 resp_to_*。
+	// 空集合 = off = 不转换（off 不进数组）。
 	// 写路径语义：Create 缺省（handler 归一为空数组）恒写入；Update 恒写入
 	// （service 校验集合——非法方向/重复方向/同客户端格式多方向 400；显式
 	// 空数组 = 清空）。
@@ -714,8 +715,8 @@ type Group struct {
 
 // ProtocolConvert 分组级协议转换方向枚举（补差语义：模板已支持客户端协议 →
 // 直接转发零转换；转换仅在协议不匹配时发生）。方向 = 客户端协议 → 模板协议；
-// off（不转换）不在枚举内——空集合表达（数组元素 ∈ 4 方向；集合校验在
-// service 层——非法方向/重复/同客户端格式多方向 400）。
+// off（不转换）不在枚举内——空集合表达（数组元素 ∈ AllProtocolConverts()；
+// 集合校验在 service 层——非法方向/重复/同客户端格式多方向/方向尚未 GA 均 400）。
 type ProtocolConvert string
 
 const (
@@ -729,12 +730,32 @@ const (
 	ProtocolConvertRespToMess ProtocolConvert = "resp_to_mess"
 	// ProtocolConvertChatToMess 客户端 chat → 模板 messages（anthropic）协议。
 	ProtocolConvertChatToMess ProtocolConvert = "chat_to_mess"
+	// ProtocolConvertMessToChat 客户端 messages（anthropic）→ 模板 chat 协议。
+	ProtocolConvertMessToChat ProtocolConvert = "mess_to_chat"
+	// ProtocolConvertRespToChat 客户端 resp → 模板 chat 协议。
+	ProtocolConvertRespToChat ProtocolConvert = "resp_to_chat"
 )
+
+// AllProtocolConverts 全部非 off 方向（声明顺序：4 个既有 + 2 个新增）。
+// 供门禁做穷举断言（Valid/Client/Target/convCallers/Capability 都要覆盖全集），
+// 避开"新增方向忘了在某张表里加一行"这类编译器看不见的漏洞。返回新切片，
+// 调用方可随意修改。
+func AllProtocolConverts() []ProtocolConvert {
+	return []ProtocolConvert{
+		ProtocolConvertChatToResp,
+		ProtocolConvertMessToResp,
+		ProtocolConvertRespToMess,
+		ProtocolConvertChatToMess,
+		ProtocolConvertMessToChat,
+		ProtocolConvertRespToChat,
+	}
+}
 
 func (p ProtocolConvert) Valid() bool {
 	switch p {
 	case ProtocolConvertChatToResp, ProtocolConvertMessToResp,
-		ProtocolConvertRespToMess, ProtocolConvertChatToMess:
+		ProtocolConvertRespToMess, ProtocolConvertChatToMess,
+		ProtocolConvertMessToChat, ProtocolConvertRespToChat:
 		return true
 	}
 	return false
@@ -745,9 +766,9 @@ func (p ProtocolConvert) Client() RequestFormat {
 	switch p {
 	case ProtocolConvertChatToResp, ProtocolConvertChatToMess:
 		return FormatOpenAIChat
-	case ProtocolConvertMessToResp:
+	case ProtocolConvertMessToResp, ProtocolConvertMessToChat:
 		return FormatAnthropic
-	case ProtocolConvertRespToMess:
+	case ProtocolConvertRespToMess, ProtocolConvertRespToChat:
 		return FormatOpenAIResponses
 	}
 	return ""
@@ -760,6 +781,8 @@ func (p ProtocolConvert) Target() RequestFormat {
 		return FormatOpenAIResponses
 	case ProtocolConvertRespToMess, ProtocolConvertChatToMess:
 		return FormatAnthropic
+	case ProtocolConvertMessToChat, ProtocolConvertRespToChat:
+		return FormatOpenAIChat
 	}
 	return ""
 }

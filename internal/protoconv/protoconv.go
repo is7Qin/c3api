@@ -16,6 +16,7 @@ package protoconv
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"slices"
@@ -24,6 +25,43 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
+
+// ErrUnsupportedDirection 方向尚未接线（能力表三项未全真）的唯一 sentinel。
+// 调用方必须用 errors.Is 判定，**禁止字符串匹配**——service 的配置校验、
+// proxy 的流式 fail-closed 守卫与门禁 (c3) 都靠它区分"未支持方向"与
+// "输入非法"这类普通错误。
+var ErrUnsupportedDirection = errors.New("protoconv: unsupported direction")
+
+// DirectionCaps 单方向的能力三元组：三项全真才算 GA（可对外宣称支持）。
+// 新增方向上线时逐里程碑打开（请求面 → 响应面 → 流式），避免"能配置但
+// 跑不了"的半成品窗口：service 用它拒绝未 GA 方向、proxy 用它做流式
+// fail-closed 400（在写 SSE 头之前）。
+type DirectionCaps struct {
+	Request  bool // ConvertRequest 已实现
+	Response bool // ConvertResponse 已实现（非流式）
+	Stream   bool // StreamMapper.Map / Finish 已实现（流式）
+}
+
+// dirCaps 方向能力表（按 **domain 值** 索引；生产侧不存在也不需要
+// domain→direction 映射）。未登记条目 → 零值（三项 false）→ fail-closed。
+var dirCaps = map[domain.ProtocolConvert]DirectionCaps{
+	// 既有 4 方向：早已 GA，三项恒 true。
+	domain.ProtocolConvertChatToResp: {Request: true, Response: true, Stream: true},
+	domain.ProtocolConvertMessToResp: {Request: true, Response: true, Stream: true},
+	domain.ProtocolConvertRespToMess: {Request: true, Response: true, Stream: true},
+	domain.ProtocolConvertChatToMess: {Request: true, Response: true, Stream: true},
+	// 新增 2 方向（mess/resp 客户端 → chat 上游）：M1 全 false，随 M2/M3 打开。
+	// 未 GA 时配置层直接 400，流式入口 fail-closed —— 宁可不支持，也不给客户端
+	// 200 + 空流（比 400 难排查得多）。
+	domain.ProtocolConvertMessToChat: {},
+	domain.ProtocolConvertRespToChat: {},
+}
+
+// Capability 方向能力查询（未登记 → 零值，即三项 false）。
+func Capability(dir domain.ProtocolConvert) DirectionCaps { return dirCaps[dir] }
+
+// StreamSupported 流式是否支持（proxy 流式入口的 fail-closed 守卫用它）。
+func StreamSupported(dir domain.ProtocolConvert) bool { return dirCaps[dir].Stream }
 
 // ConvertRequest 把客户端协议请求体转换为 dir 指向的模板协议请求体（返回的
 // 字节即模板协议上游请求体，可直接转发）。转换器按目标协议规范映射字段；
@@ -40,7 +78,7 @@ func ConvertRequest(body []byte, dir domain.ProtocolConvert) ([]byte, error) {
 	case domain.ProtocolConvertChatToMess:
 		return chatToMessRequest(body)
 	}
-	return nil, fmt.Errorf("protoconv: unsupported direction %q", dir)
+	return nil, fmt.Errorf("%w: %q", ErrUnsupportedDirection, dir)
 }
 
 // ConvertResponse 把模板协议的非流式响应 JSON 转换为客户端协议响应 JSON。
@@ -55,7 +93,7 @@ func ConvertResponse(body []byte, dir domain.ProtocolConvert) ([]byte, error) {
 	case domain.ProtocolConvertChatToMess:
 		return messToChatResponse(body)
 	}
-	return nil, fmt.Errorf("protoconv: unsupported direction %q", dir)
+	return nil, fmt.Errorf("%w: %q", ErrUnsupportedDirection, dir)
 }
 
 // NewStreamMapper 构造有状态的流式响应事件映射器（每 SSE 流一个实例；

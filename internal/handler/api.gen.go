@@ -69,7 +69,9 @@ const (
 const (
 	ChatToMess GroupProtocolConvert = "chat_to_mess"
 	ChatToResp GroupProtocolConvert = "chat_to_resp"
+	MessToChat GroupProtocolConvert = "mess_to_chat"
 	MessToResp GroupProtocolConvert = "mess_to_resp"
+	RespToChat GroupProtocolConvert = "resp_to_chat"
 	RespToMess GroupProtocolConvert = "resp_to_mess"
 )
 
@@ -1078,7 +1080,7 @@ type GroupCreate struct {
 	// PriceMultiplier 价格倍率（正常值，1 = ×1，0 = 免费，上限 10 = ×10；API 边界与万分数换算——存储 15000 ↔ 显示 1.5）。缺省/null = 不设置（×1）；显式 0 = 免费组；PUT 显式写（含 0）
 	PriceMultiplier *float64 `json:"price_multiplier"`
 
-	// ProtocolConvert 协议转换方向集合（多方向并存，按客户端格式命中——chat 请求走 chat_to_*、anthropic 请求走 mess_to_resp、resp 请求走 resp_to_mess）。空数组/缺省 = off = 不转换；同客户端格式多方向（chat_to_resp 与 chat_to_mess 并存）→ 400。PUT 语义：缺省（null/省略）= 保持原值；显式空数组 = 清空既有方向
+	// ProtocolConvert 协议转换方向集合（多方向并存，**同一客户端格式至多一个方向**——按 Client() 派生判定：chat 请求走 chat_to_*、anthropic 请求走 mess_to_*、resp 请求走 resp_to_*）。空数组/缺省 = off = 不转换；同客户端格式多方向（chat 对 / mess 对 / resp 对任一并存）→ 400；方向尚未 GA（网关能力表三项未全真）→ 400。PUT 语义：缺省（null/省略）= 保持原值；显式空数组 = 清空既有方向
 	ProtocolConvert *[]GroupProtocolConvert `json:"protocol_convert,omitempty"`
 	Visibility      *GroupVisibility        `json:"visibility,omitempty"`
 }
@@ -1095,7 +1097,7 @@ type GroupPatch struct {
 	Visibility *GroupVisibility `json:"visibility,omitempty"`
 }
 
-// GroupProtocolConvert 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
+// GroupProtocolConvert 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages；mess_to_chat = anthropic messages → chat；resp_to_chat = resp → chat。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）。方向是否可用还取决于网关能力表（未 GA 的方向配置即 400）
 type GroupProtocolConvert string
 
 // GroupVisibility defines model for GroupVisibility.

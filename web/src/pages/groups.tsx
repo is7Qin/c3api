@@ -39,7 +39,7 @@ type GroupAssignmentsBody = components['schemas']['GroupAssignmentsBody']
 
 // 协议转换方向（网关 internal/protoconv 消费）：4 方向可多选，全不勾 = off =
 // 不转换（off 不进数组，空勾选表达）
-const PROTOCOL_CONVERTS: GroupProtocolConvert[] = ['chat_to_resp', 'mess_to_resp', 'resp_to_mess', 'chat_to_mess']
+const PROTOCOL_CONVERTS: GroupProtocolConvert[] = ['chat_to_resp', 'mess_to_resp', 'resp_to_mess', 'chat_to_mess', 'mess_to_chat', 'resp_to_chat']
 
 // 协议转换多选切换：勾选 = 加入方向集合（同方向去重），取消 = 移除。
 const toggleConvert = (on: boolean, v: GroupProtocolConvert, cur: GroupProtocolConvert[]) =>

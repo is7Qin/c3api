@@ -726,14 +726,18 @@ export default {
       "chat_to_resp": "Chat → Responses",
       "mess_to_resp": "Messages → Responses",
       "resp_to_mess": "Responses → Messages",
-      "chat_to_mess": "Chat → Messages"
+      "chat_to_mess": "Chat → Messages",
+      "mess_to_chat": "Messages → Chat",
+      "resp_to_chat": "Responses → Chat"
     },
     "protocolConvertShort": {
       "off": "off",
       "chat_to_resp": "chat→resp",
       "mess_to_resp": "mess→resp",
       "resp_to_mess": "resp→mess",
-      "chat_to_mess": "chat→mess"
+      "chat_to_mess": "chat→mess",
+      "mess_to_chat": "mess→chat",
+      "resp_to_chat": "resp→chat"
     },
     "protocolConvertHint": "多方向可同时勾选；全不勾 = 关闭（不转换）",
     "nameLabel": "名称",

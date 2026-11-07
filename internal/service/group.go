@@ -10,6 +10,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
+	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -229,6 +230,27 @@ func normalizeProtocolConverts(pcs []domain.ProtocolConvert) ([]domain.ProtocolC
 	if _, hasChatToResp := seen[domain.ProtocolConvertChatToResp]; hasChatToResp {
 		if _, clash := seen[domain.ProtocolConvertChatToMess]; clash {
 			return nil, ErrInvalidInput // chat 客户端格式两方向并存 → 400
+		}
+	}
+	// 按客户端格式派生冲突判定（不再硬编码 chat 对）：路由按客户端格式命中
+	// 第一个匹配方向（proxy/convertedRoute），同客户端格式两方向并存即语义
+	// 歧义 ⇒ 400。chat×2 / mess×2 / resp×2 三对都要拦。
+	byClient := make(map[domain.RequestFormat]domain.ProtocolConvert, len(out))
+	for _, pc := range out {
+		client := pc.Client()
+		if client == "" {
+			return nil, ErrInvalidInput // 方向未登记客户端格式（枚举被改坏时的兜底）
+		}
+		if _, clash := byClient[client]; clash {
+			return nil, ErrInvalidInput // 同客户端格式多方向并存 → 400
+		}
+		byClient[client] = pc
+	}
+	// 能力表闸门：三项未全真（尚未 GA）的方向不允许被配置——否则会得到
+	// "能配置但请求 500/空流"的半成品窗口（spec §2.3）。
+	for _, pc := range out {
+		if c := protoconv.Capability(pc); !c.Request || !c.Response || !c.Stream {
+			return nil, ErrInvalidInput
 		}
 	}
 	return out, nil
