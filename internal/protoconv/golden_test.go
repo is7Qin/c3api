@@ -72,6 +72,32 @@ func goldenStream(dir domain.ProtocolConvert, events []benchEv) func(t *testing.
 	}
 }
 
+// goldenStreamEOF 与 goldenStream 相同，但**不喂 `[DONE]`**：模拟上游正常 EOF
+// （sserelay.Config.Terminal 被调用一次），用来钉住"无 [DONE] 也必须收尾"。
+func goldenStreamEOF(dir domain.ProtocolConvert, events []benchEv) func(t *testing.T) string {
+	return func(t *testing.T) string {
+		m := NewStreamMapper(dir)
+		var out []byte
+		for _, ev := range events {
+			frame, drop := m.Map(ev.name, ev.data)
+			if drop {
+				continue
+			}
+			if len(out) > 0 {
+				out = append(out, "\n---\n"...)
+			}
+			out = append(out, frame...)
+		}
+		if fin := m.Finish(); len(fin) > 0 {
+			if len(out) > 0 {
+				out = append(out, "\n---\n"...)
+			}
+			out = append(out, fin...)
+		}
+		return string(out)
+	}
+}
+
 // goldenCases 语料。每条用例的键是文件名的前缀，内容固定不变（改动会改期望
 // 字节，必须同时改这里与 testdata）。
 func goldenCases() []goldenCase {
@@ -396,40 +422,40 @@ func goldenCases() []goldenCase {
 			// M2c：chat → mess 响应面，纯文本（usage 走 §5.4 净额口径）。
 			name:  "chat_to_mess_resp_text",
 			vocab: dirChatToMessResp,
-			run: goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c1","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`),
+			run:   goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c1","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`),
 		},
 		{
 			// M2c：工具 + 思考 + 用量明细。thinking 块不写 signature（chat 无签名
 			// 通道），tool_use 的 input 由 arguments 解析而来。
 			name:  "chat_to_mess_resp_tools",
 			vocab: dirChatToMessResp,
-			run: goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c2","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"calling","reasoning_content":"think","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}},{"id":"c2","type":"function","function":{"name":"g","arguments":"{oops"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`),
+			run:   goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c2","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"calling","reasoning_content":"think","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}},{"id":"c2","type":"function","function":{"name":"g","arguments":"{oops"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`),
 		},
 		{
 			// M2c：length → max_tokens；空 content → **仍写一个空 text 块**
 			// （Messages 客户端对 content:[] 会报协议错）。
 			name:  "chat_to_mess_resp_length",
 			vocab: dirChatToMessResp,
-			run: goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":null},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":0}}`),
+			run:   goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":null},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":0}}`),
 		},
 		{
 			// M2c：chat → resp 响应面，纯文本（output 项 id 确定性合成）。
 			name:  "chat_to_resp_resp_text",
 			vocab: dirChatToRespResp,
-			run: goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c1","object":"chat.completion","created":99,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`),
+			run:   goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c1","object":"chat.completion","created":99,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`),
 		},
 		{
 			// M2c：工具 + 思考 + 用量明细。output 顺序固定 reasoning → message →
 			// function_call；input_tokens_details 的**两个键恒写**（官方必填）。
 			name:  "chat_to_resp_resp_tools",
 			vocab: dirChatToRespResp,
-			run: goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c2","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"calling","reasoning_content":"think","tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`),
+			run:   goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c2","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"calling","reasoning_content":"think","tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`),
 		},
 		{
 			// M2c：length → status:"incomplete" + incomplete_details.reason。
 			name:  "chat_to_resp_resp_incomplete",
 			vocab: dirChatToRespResp,
-			run: goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"trunc"},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":0}}`),
+			run:   goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"trunc"},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":0}}`),
 		},
 		{
 			name:   "stream_resp_to_chat",
@@ -486,14 +512,90 @@ func goldenCases() []goldenCase {
 				{"message_stop", []byte(`{"type":"message_stop"}`)},
 			}),
 		},
+		{
+			// M3：chat 上游纯文本流 → mess 帧（message_start 补发 + 文本块 +
+			// finish_reason 只记录 + usage 末帧 + [DONE] 收尾）。
+			name:   "chat_to_mess_stream_text",
+			vocab:  dirChatToMessResp,
+			stream: true,
+			run: goldenStream(domain.ProtocolConvertMessToChat, []benchEv{
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"he"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}`)},
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`)},
+				{"", []byte(`[DONE]`)},
+			}),
+		},
+		{
+			// M3：思考 + 分片工具调用（arguments 分两片）+ tool_calls 停因。
+			name:   "chat_to_mess_stream_tools",
+			vocab:  dirChatToMessResp,
+			stream: true,
+			run: goldenStream(domain.ProtocolConvertMessToChat, []benchEv{
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":"th"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"f","arguments":"{\"a\":"}}]},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"1}"}}]},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null}`)},
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":7,"completion_tokens":3,"total_tokens":10}}`)},
+				{"", []byte(`[DONE]`)},
+			}),
+		},
+		{
+			// M3：**上游不发 [DONE]** 的正常 EOF（走 Finish 收尾，恰好一次）。
+			name:   "chat_to_mess_stream_eof",
+			vocab:  dirChatToMessResp,
+			stream: true,
+			run: goldenStreamEOF(domain.ProtocolConvertMessToChat, []benchEv{
+				{"", []byte(`{"id":"c3","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"partial"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c3","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":null}`)},
+			}),
+		},
+		{
+			// M3：chat 上游纯文本流 → resp 帧（response.created + output_item +
+			// delta + done + completed）。
+			name:   "chat_to_resp_stream_text",
+			vocab:  dirChatToRespResp,
+			stream: true,
+			run: goldenStream(domain.ProtocolConvertRespToChat, []benchEv{
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"he"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}`)},
+				{"", []byte(`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`)},
+				{"", []byte(`[DONE]`)},
+			}),
+		},
+		{
+			// M3：思考 + 工具调用（resp 目标是 reasoning / function_call 两个项）。
+			name:   "chat_to_resp_stream_tools",
+			vocab:  dirChatToRespResp,
+			stream: true,
+			run: goldenStream(domain.ProtocolConvertRespToChat, []benchEv{
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"f","arguments":"{}"}}]},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c2","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}],"usage":null}`)},
+				{"", []byte(`[DONE]`)},
+			}),
+		},
+		{
+			// M3：length → status:"incomplete" + incomplete_details。
+			name:   "chat_to_resp_stream_length",
+			vocab:  dirChatToRespResp,
+			stream: true,
+			run: goldenStream(domain.ProtocolConvertRespToChat, []benchEv{
+				{"", []byte(`{"id":"c3","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"trunc"},"finish_reason":null}],"usage":null}`)},
+				{"", []byte(`{"id":"c3","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"length"}],"usage":null}`)},
+				{"", []byte(`[DONE]`)},
+			}),
+		},
 	}
 }
 
 // TestGoldenCorpusSize spec §8(g)：语料条数写死（不用变量派生），新增/删除用例
 // 必须同时改这里。当前 35 = 既有 21 + 两个请求面各 4（3 + 多轮配对）+ 两个响应面
-// 各 3；M3 加 6 条流式后为 41。
+// 各 3 + 两个 chat 源流式方向各 3（M3）。
 func TestGoldenCorpusSize(t *testing.T) {
-	require.Len(t, goldenCases(), 35)
+	require.Len(t, goldenCases(), 41)
 }
 
 // TestGoldenOutputs 逐字节钉住四个请求/响应方向与四个流式方向的输出。

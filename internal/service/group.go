@@ -207,6 +207,10 @@ func (s *Service) UpdateGroupsBatch(ctx context.Context, ids []int64, p reposito
 	return mapRepoErr(s.store.UpdateGroupsBatch(ctx, ids, p))
 }
 
+// convertCapability 能力查询的间接层（测试可替换）：闸门是"未 GA 方向不许配置"，
+// 但参数化后既能测"全 GA 时接受"，也能注入一个非 GA 方向验拒绝分支。
+var convertCapability = protoconv.Capability
+
 // normalizeProtocolConverts 校验并归一协议转换方向集合（Create/Update 共用）：
 // off 元素归一剔除（空/仅 off/nil → 空数组 = 不转换）；非法方向/重复方向 →
 // 400；同客户端格式多方向（chat_to_resp 与 chat_to_mess 并存——路由按客户端
@@ -249,7 +253,7 @@ func normalizeProtocolConverts(pcs []domain.ProtocolConvert) ([]domain.ProtocolC
 	// 能力表闸门：三项未全真（尚未 GA）的方向不允许被配置——否则会得到
 	// "能配置但请求 500/空流"的半成品窗口（spec §2.3）。
 	for _, pc := range out {
-		if c := protoconv.Capability(pc); !c.Request || !c.Response || !c.Stream {
+		if c := convertCapability(pc); !c.Request || !c.Response || !c.Stream {
 			return nil, ErrInvalidInput
 		}
 	}

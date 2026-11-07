@@ -792,9 +792,11 @@ func checkFrame(t *testing.T, tgt target, payload []byte) {
 		return
 	}
 	vocab := eventVocabOf(tgt)
-	if typ, ok := m["type"].(string); ok {
-		require.True(t, inVocab(vocab, typ), "事件类型 %q 不在 %s 事件域内", typ, targetName(tgt))
-	}
+	// spec §8(b2)：目标帧**必须**带字符串 type —— 写成 `if ok` 会让"漏了 type 的
+	// 帧"静默通过（等于该帧不参与任何词表校验）。
+	typ, ok := m["type"].(string)
+	require.True(t, ok, "目标帧必须带字符串 type 字段")
+	require.True(t, inVocab(vocab, typ), "事件类型 %q 不在 %s 事件域内", typ, targetName(tgt))
 	if tgt != tgtResp {
 		return
 	}

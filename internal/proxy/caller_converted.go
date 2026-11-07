@@ -35,6 +35,10 @@ type convertedCaller struct {
 	dir domain.ProtocolConvert
 }
 
+// streamSupported 流式能力查询的间接层（测试可替换）：未接线的方向必须在这里
+// fail-closed 成 400，而不是放行后给客户端一个 200 + 空流。
+var streamSupported = protoconv.StreamSupported
+
 // isChatSource 方向的上游是否为 chat（即“上游发的帧是 chat chunk”）。
 // 仅两个新方向成立；既有四方向均为 false ⇒ 它们完全不进 chat 相关分支，
 // 字节级行为零变化。
@@ -58,7 +62,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 流式 fail-closed 守卫：**必须在写 SSE 头之前**。未接线的流式
 		// 方向若放行，客户端会拿到 200 + 空流（StreamMapper.Map 对未注册
 		// 方向静默丢帧），比 400 难排查得多。
-		if !protoconv.StreamSupported(c.dir) {
+		if !streamSupported(c.dir) {
 			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "streaming is not supported for this protocol conversion"}})
 			sel.Release()
 			return http.StatusBadRequest, nil, true, nil
@@ -100,8 +104,17 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 一次。id 由 mapper 显式返回（BindableID），不从映射帧机械解析。
 		var contEnqueued bool
 		var lastDrop bool
+		// 正常 EOF 的终止帧：chat 上游**可能不发 `data: [DONE]`** 就关流（截断、
+		// 或某些实现在最后一帧后直接 FIN）。不给客户端补终止帧的后果：mess 侧
+		// 永远收不到 message_stop、resp 侧永远收不到 response.completed，客户端
+		// 只能靠超时判死。Finish 内部按 m.done 去重 ⇒ 与 [DONE] 恰好二选一。
+		var terminal func() []byte
+		if isChatSource(c.dir) {
+			terminal = func() []byte { return mapper.Finish() }
+		}
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
-			Output: out,
+			Output:   out,
+			Terminal: terminal,
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
 				mapped, drop := mapper.Map(string(ev.Event), ev.Data)
 				lastDrop = drop

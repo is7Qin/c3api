@@ -1,0 +1,22 @@
+event: response.created
+data: {"response":{"created_at":0,"id":"c1","model":"m","object":"response","output":[],"status":"in_progress","usage":null},"type":"response.created"}
+
+event: response.output_item.added
+data: {"item":{"content":[{"annotations":[],"text":"","type":"output_text"}],"id":"msg_c1_0","role":"assistant","status":"in_progress","type":"message"},"output_index":0,"type":"response.output_item.added"}
+
+event: response.output_text.delta
+data: {"content_index":0,"delta":"he","item_id":"msg_c1_0","output_index":0,"type":"response.output_text.delta"}
+
+
+---
+event: response.output_text.delta
+data: {"content_index":0,"delta":"llo","item_id":"msg_c1_0","output_index":0,"type":"response.output_text.delta"}
+
+
+---
+event: response.output_item.done
+data: {"item":{"content":[{"annotations":[],"text":"hello","type":"output_text"}],"id":"msg_c1_0","role":"assistant","status":"completed","type":"message"},"output_index":0,"type":"response.output_item.done"}
+
+event: response.completed
+data: {"response":{"created_at":0,"id":"c1","model":"m","object":"response","output":[{"content":[{"annotations":[],"text":"hello","type":"output_text"}],"id":"msg_c1_0","role":"assistant","status":"completed","type":"message"}],"status":"completed","usage":{"input_tokens":50,"input_tokens_details":{"cache_write_tokens":10,"cached_tokens":40},"output_tokens":20,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":70}},"type":"response.completed"}
+

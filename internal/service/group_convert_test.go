@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/protoconv"
 )
 
 // TestNormalizeProtocolConverts 集合归一与冲突判定：off 剔除、重复/非法 400、
@@ -61,26 +62,39 @@ func TestNormalizeProtocolConverts(t *testing.T) {
 	}
 }
 
-// TestNormalizeProtocolConvertsRejectsNotGA 能力表闸门：尚未 GA（三项未全真）
+// TestNormalizeProtocolConvertsCapabilityGate 能力表闸门：尚未 GA（三项未全真）
 // 的方向不允许被配置——否则会得到"能配置、首请求 500 或流式空流"的半成品窗口。
 //
-// **M2/M3 打开能力时改本测试**：M1 阶段新方向全 false ⇒ 单方向配置也必须 400。
-func TestNormalizeProtocolConvertsRejectsNotGA(t *testing.T) {
-	for _, pc := range []domain.ProtocolConvert{
-		domain.ProtocolConvertMessToChat,
-		domain.ProtocolConvertRespToChat,
-	} {
-		_, err := normalizeProtocolConverts([]domain.ProtocolConvert{pc})
-		require.ErrorIs(t, err, ErrInvalidInput, "未 GA 方向 %q 必须被配置层拒绝", pc)
-	}
-	// 反向：已 GA 的 4 个方向必须被接受（防止闸门写成"一律拒绝"）。
-	for _, pc := range []domain.ProtocolConvert{
-		domain.ProtocolConvertChatToResp,
-		domain.ProtocolConvertMessToResp,
-		domain.ProtocolConvertRespToMess,
-		domain.ProtocolConvertChatToMess,
-	} {
+// 六个方向现在全部 GA，故拒绝分支靠**注入**一个非 GA 方向来验（能力查询走
+// convertCapability 间接层，与 proxy 的 convertRequest 同款），而不是让这段
+// 判据在生产里变成死代码。
+func TestNormalizeProtocolConvertsCapabilityGate(t *testing.T) {
+	all := domain.AllProtocolConverts()
+	require.Len(t, all, 6, "方向全集变了：GA 账本必须同步")
+	for _, pc := range all {
 		_, err := normalizeProtocolConverts([]domain.ProtocolConvert{pc})
 		require.NoError(t, err, "已 GA 方向 %q 必须被接受", pc)
 	}
+
+	// 注入"流式尚未接线"的方向：必须被拒（且不是靠 client/target 冲突之类别的理由）。
+	orig := convertCapability
+	t.Cleanup(func() { convertCapability = orig })
+	convertCapability = func(pc domain.ProtocolConvert) protoconv.DirectionCaps {
+		c := orig(pc)
+		if pc == domain.ProtocolConvertMessToChat {
+			c.Stream = false
+		}
+		return c
+	}
+	_, err := normalizeProtocolConverts([]domain.ProtocolConvert{domain.ProtocolConvertMessToChat})
+	require.ErrorIs(t, err, ErrInvalidInput, "未 GA 方向必须被配置层拒绝")
+
+	// 三项全真才放行：只差 Response 也一样拒。
+	convertCapability = func(pc domain.ProtocolConvert) protoconv.DirectionCaps {
+		c := orig(pc)
+		c.Response = false
+		return c
+	}
+	_, err = normalizeProtocolConverts([]domain.ProtocolConvert{domain.ProtocolConvertMessToChat})
+	require.ErrorIs(t, err, ErrInvalidInput, "缺任一能力项都必须拒绝")
 }

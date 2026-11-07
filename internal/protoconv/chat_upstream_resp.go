@@ -237,8 +237,8 @@ func chatToRespOutput(id string, m map[string]any) []any {
 
 // respItemID 合成 Responses output item id（确定性：同一响应同一 index 恒同值，
 // 与 StreamMapper.itemID/thinkID 同源格式）。
-func respItemID(prefix, id string, index int) string {
-	return prefix + id + "_" + strconv.Itoa(index)
+func respItemID(prefix, id string, index int64) string {
+	return prefix + id + "_" + strconv.FormatInt(index, 10)
 }
 
 // messStopFromChat Chat finish_reason → Messages stop_reason（同一张表反查）。

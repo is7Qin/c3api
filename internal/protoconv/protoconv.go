@@ -53,9 +53,9 @@ var dirCaps = map[domain.ProtocolConvert]DirectionCaps{
 	// 新增 2 方向（mess/resp 客户端 → chat 上游）：逐里程碑打开（请求面 → 响应面
 	// → 流式）。未 GA（三项未全真）时配置层直接 400，流式入口 fail-closed ——
 	// 宁可不支持，也不给客户端 200 + 空流（比 400 难排查得多）。
-	// M2：两个方向的请求面 + 非流式响应面已接线；流式仍为 false（M3）。
-	domain.ProtocolConvertMessToChat: {Request: true, Response: true},
-	domain.ProtocolConvertRespToChat: {Request: true, Response: true},
+	// 两个方向的请求面 / 非流式响应面 / 流式全部接线（M2 + M3）⇒ GA。
+	domain.ProtocolConvertMessToChat: {Request: true, Response: true, Stream: true},
+	domain.ProtocolConvertRespToChat: {Request: true, Response: true, Stream: true},
 }
 
 // Capability 方向能力查询（未登记 → 零值，即三项 false）。
@@ -320,6 +320,15 @@ type StreamMapper struct {
 	cached      int64 // cache_read / cached_tokens
 	cacheCreate int64 // mess cache_creation_input_tokens（不计入 cached_tokens）
 	reason      string
+	// stopReason chat 源的原始 finish_reason（stop/length/tool_calls/...）：
+	// 收到就记、**不在此处翻译**（mess 走 messStopFromChat，resp 走 chatRespStatus）。
+	stopReason string
+
+	// chat 源（MessToChat / RespToChat）流式的块索引：text/thinking 各一个，
+	// 工具调用按 chat 的 tool_calls[i].index 映射。
+	thinkIdx int64
+	textIdx  int64
+	toolIdx  map[int64]int64
 
 	// resp→mess：content index 分配（键 = (output_index, kind)）与跨事件身份
 	// （item id → content index；spec §4.5）。
@@ -363,6 +372,11 @@ type StreamMapper struct {
 // 空帧（无字节可透传）→ 丢弃。chat 的 [DONE] 等终止帧由映射器自行产出，
 // 透传仅兜底非规范上游。
 func (m *StreamMapper) Map(name string, data []byte) ([]byte, bool) {
+	// chat 上游的帧既没有 event: 行也没有顶层 type，靠下面的推断必然失败并原样
+	// 透传（客户端会收到一堆非本协议的字节）。故 chat 源两方向直接自解析。
+	if m.dir == domain.ProtocolConvertMessToChat || m.dir == domain.ProtocolConvertRespToChat {
+		return m.mapChatChunk(data)
+	}
 	if name == "" {
 		name = string(sserelay.InferEventName(data))
 		if name == "" {
@@ -457,6 +471,11 @@ func (m *StreamMapper) Finish() []byte {
 		return append(f, EncodeFrame("message_stop", map[string]any{"type": "message_stop"})...)
 	case domain.ProtocolConvertChatToResp:
 		return []byte("data: [DONE]\n\n")
+	case domain.ProtocolConvertMessToChat, domain.ProtocolConvertRespToChat:
+		// 正常 EOF（上游没发 [DONE] 就关流）时 client 侧的收尾：与 chatTerminal
+		// 同一条出口，靠 m.done 保证无论 [DONE] 还是 EOF 都**恰好一次**。
+		// 调用方是 sserelay.Config.Terminal（见 proxy 的 streaming 装配）。
+		return m.chatTerminal()
 	}
 	return nil
 }

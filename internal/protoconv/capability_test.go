@@ -42,18 +42,20 @@ func TestCapabilityExistingDirectionsGA(t *testing.T) {
 	}
 }
 
-// TestCapabilityNewDirections 新增两方向的接线进度账本（M2a：mess→chat 的**请求面**
-// 已实现；响应面随 M2b、流式随 M3 打开）。每打开一面都必须同步改本表——它是
-// "半成品窗口"的显式账本，不是恒真断言。
+// TestCapabilityNewDirections 两个新方向三项全真（M2 请求/响应面 + M3 流式）。
+// 这张表是"接线进度"的显式账本：任何一项回到 false 都必须同步改这里（并说明
+// 为什么退回去），不是恒真断言。
 func TestCapabilityNewDirections(t *testing.T) {
-	for pc, want := range map[domain.ProtocolConvert]DirectionCaps{
-		domain.ProtocolConvertMessToChat: {Request: true, Response: true},
-		domain.ProtocolConvertRespToChat: {Request: true, Response: true},
+	for _, pc := range []domain.ProtocolConvert{
+		domain.ProtocolConvertMessToChat,
+		domain.ProtocolConvertRespToChat,
 	} {
-		require.Equal(t, want, Capability(pc), "%q 的能力三元组与接线进度不符", pc)
-		// 三项未全真 ⇒ 仍未 GA：配置层必须继续 400，流式必须继续 fail-closed。
-		require.False(t, want.Request && want.Response && want.Stream, "%q 尚未全真却当成 GA", pc)
-		require.False(t, StreamSupported(pc), "%q StreamSupported 应为 false", pc)
+		c := Capability(pc)
+		require.Equal(t, DirectionCaps{Request: true, Response: true, Stream: true}, c,
+			"%q 的能力三元组与接线进度不符", pc)
+		require.True(t, StreamSupported(pc), "%q StreamSupported 与能力表不一致", pc)
+		// 三项全真 ⇒ 已 GA：配置层不再拒绝（service 的闸门读同一张表）。
+		require.True(t, c.Request && c.Response && c.Stream, "%q 三项应全真", pc)
 	}
 }
 
