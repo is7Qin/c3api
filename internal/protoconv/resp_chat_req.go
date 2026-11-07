@@ -52,6 +52,7 @@ func respToChatRequest(body []byte) ([]byte, error) {
 	}
 	var (
 		input, maxOut, tools, toolChoice, reasoning, textFmt gjson.Result
+		streamOptions                                        gjson.Result
 		instructions, model, temperature, topP, parallel     string
 		stream, user                                         string
 	)
@@ -85,13 +86,21 @@ func respToChatRequest(body []byte) ([]byte, error) {
 			case gjsonKeyEq(k, "text"):
 				textFmt = v.Get("format")
 			case gjsonKeyEq(k, "stream_options"):
-				// chat 的 stream_options 由本方向自己生成（强制 include_usage），
-				// 源里的同名键不参与（resp 协议里没有它，出现即是野字段）。
-				noteDrop(domain.ProtocolConvertRespToChat, "stream_options")
+				// spec §4.2：**合并**而不是丢弃——客户端已有的键（include_obfuscation
+				// 等）原样保留，本方向只把 include_usage 强制置 true（否则上游流里
+				// 没有 usage 帧 → 客户端看到 0 token、服务端也计 0）。是否真是对象在
+				// 写出处判定（那里才知道 stream 是否为 true）。
+				streamOptions = v
+			case gjsonKeyEq(k, "service_tier"):
+				// resp 也有同名顶层字段（auto/default/flex/priority），但 chat 侧的
+				// service_tier 是另一套枚举，spec §4.2 的直传白名单里没有它 ⇒ 丢弃
+				// 并计数（不许静默）。响应面同样会丢 chat 响应里的 service_tier，
+				// 计数键带面维度（DropEvent），不会混桶。
+				noteReqDrop(domain.ProtocolConvertRespToChat, "service_tier")
 			default:
 				for _, f := range respChatDroppedFields {
 					if gjsonKeyEq(k, f) {
-						noteDrop(domain.ProtocolConvertRespToChat, f)
+						noteReqDrop(domain.ProtocolConvertRespToChat, f)
 						return true
 					}
 				}
@@ -120,7 +129,7 @@ func respToChatRequest(body []byte) ([]byte, error) {
 	out, nMsgs = appendRespChatMessages(out, instructions, input)
 	out = append(out, ']')
 	if nMsgs == 0 {
-		noteDrop(domain.ProtocolConvertRespToChat, "messages_empty")
+		noteReqDrop(domain.ProtocolConvertRespToChat, "messages_empty")
 	}
 	if rawNotNull(model) {
 		out = appendField(out, &first, "model", model)
@@ -138,10 +147,14 @@ func respToChatRequest(body []byte) ([]byte, error) {
 		out = appendField(out, &first, "stream", stream)
 	}
 	if stream == "true" {
-		out = appendStreamOptionsMerged(out, &first, gjson.Result{})
+		out = appendStreamOptionsMerged(out, &first, domain.ProtocolConvertRespToChat, streamOptions)
+	} else if streamOptions.Exists() && streamOptions.Type != gjson.Null {
+		// 非流式请求里的 stream_options 没有承载位（chat 只在 stream=true 时读它）。
+		noteReqDrop(domain.ProtocolConvertRespToChat, "stream_options")
 	}
-	// 与其余方向同口径：思考开启时丢弃 temperature/top_p（上游只接受默认采样）。
-	if effort == "" && rawNotNull(temperature) {
+	// spec §4.2：temperature / top_p 与源**同名直传**，不因 reasoning.effort 非空
+	// 而被删（旧实现连 effort:"none" 都删，等于悄悄改掉客户端的采样设置）。
+	if rawNotNull(temperature) {
 		out = appendField(out, &first, "temperature", temperature)
 	}
 	if raw := respChatToolChoice(toolChoice); raw != "" {
@@ -156,7 +169,7 @@ func respToChatRequest(body []byte) ([]byte, error) {
 		out = appendToolsMapped(out, tools, toolsChatFromResp)
 		out = append(out, ']')
 	}
-	if effort == "" && rawNotNull(topP) {
+	if rawNotNull(topP) {
 		out = appendField(out, &first, "top_p", topP)
 	}
 	if rawNotNull(user) && user[0] == '"' {
@@ -195,7 +208,7 @@ func respChatEffort(reasoning gjson.Result) string {
 	if raw := reasoningEffortRaw(v); raw != "" {
 		return raw
 	}
-	noteDrop(domain.ProtocolConvertRespToChat, "reasoning_effort")
+	noteReqDrop(domain.ProtocolConvertRespToChat, "reasoning_effort")
 	return ""
 }
 
@@ -218,7 +231,7 @@ func respChatResponseFormat(f gjson.Result) string {
 		name := f.Get("name")
 		schema := f.Get("schema")
 		if name.Type != gjson.String || name.Str == "" || !schema.IsObject() {
-			noteDrop(domain.ProtocolConvertRespToChat, "text_format_invalid")
+			noteReqDrop(domain.ProtocolConvertRespToChat, "text_format_invalid")
 			return ""
 		}
 		buf := make([]byte, 0, len(name.Raw)+len(schema.Raw)+64)
@@ -233,7 +246,7 @@ func respChatResponseFormat(f gjson.Result) string {
 		buf = append(buf, `},"type":"json_schema"}`...)
 		return string(buf)
 	}
-	noteDrop(domain.ProtocolConvertRespToChat, "text_format_invalid")
+	noteReqDrop(domain.ProtocolConvertRespToChat, "text_format_invalid")
 	return ""
 }
 
@@ -253,18 +266,18 @@ func respChatToolChoice(v gjson.Result) string {
 		case "auto", "none", "required":
 			return v.Raw
 		}
-		noteDrop(domain.ProtocolConvertRespToChat, "tool_choice_unsupported")
+		noteReqDrop(domain.ProtocolConvertRespToChat, "tool_choice_unsupported")
 		return ""
 	}
 	if v.Get("type").Str == "function" {
 		name := v.Get("name")
 		if name.Type != gjson.String || name.Str == "" {
-			noteDrop(domain.ProtocolConvertRespToChat, "tool_choice_unsupported")
+			noteReqDrop(domain.ProtocolConvertRespToChat, "tool_choice_unsupported")
 			return ""
 		}
 		return `{"function":{"name":` + name.Raw + `},"type":"function"}`
 	}
-	noteDrop(domain.ProtocolConvertRespToChat, "tool_choice_unsupported")
+	noteReqDrop(domain.ProtocolConvertRespToChat, "tool_choice_unsupported")
 	return ""
 }
 
@@ -280,7 +293,7 @@ func noteNonFunctionTools(tools gjson.Result) {
 		if typ, ok := lastField(tv, "type"); ok && rawStrEq(typ.Raw, "function") {
 			return true
 		}
-		noteDrop(domain.ProtocolConvertRespToChat, "tool_custom")
+		noteReqDrop(domain.ProtocolConvertRespToChat, "tool_custom")
 		return true
 	})
 }
@@ -336,10 +349,37 @@ func appendRespChatMessages(out []byte, instructions string, input gjson.Result)
 		out = append(out, input.Raw...)
 		out = append(out, `,"role":"user"}`...)
 	case input.IsArray():
-		var declared []string
+		// outs 是本组声明过的 call（声明顺序）与它们的结果。为什么结果要缓冲
+		// 而不是就地写：chat 要求 `role:"tool"` 紧跟在带 tool_calls 的
+		// assistant 消息之后，而那条消息是延迟 flush 的；就地写会插到它**前面**。
+		// 缓冲里存 gjson.Result 而不是已序列化的字节：省一次分配，且真正输出时
+		// 才写进目标缓冲区。
+		var outs []respChatToolOut
+		emitTools := func() {
+			for _, o := range outs {
+				if !o.out.Exists() {
+					continue
+				}
+				out, n = appendComma(out, n)
+				out = append(out, `{"content":`...)
+				out = appendRespChatOutputString(out, o.out)
+				out = append(out, `,"role":"tool","tool_call_id":`...)
+				out = append(out, o.id.Raw...)
+				out = append(out, '}')
+			}
+			outs = outs[:0]
+		}
+		// closeGroup：这一组 assistant item 到此结束（后面出现的是**会产出另一
+		// 条 chat 消息**的 item）⇒ 先写 assistant 消息，再写它声明的工具结果，
+		// 最后关闭配对窗口。没有产出物的 item（被丢弃的未知 item、encrypted
+		// reasoning）不关闭窗口：它们在上游眼里不存在，关掉只会多出孤儿。
+		closeGroup := func() {
+			flush()
+			emitTools()
+		}
 		input.ForEach(func(_, item gjson.Result) bool {
 			if !item.IsObject() {
-				noteDrop(domain.ProtocolConvertRespToChat, "item_unknown")
+				noteReqDrop(domain.ProtocolConvertRespToChat, "item_unknown")
 				return true
 			}
 			switch item.Get("type").Str {
@@ -350,13 +390,13 @@ func appendRespChatMessages(out []byte, instructions string, input gjson.Result)
 					asst.text, asst.nText = respChatTextParts(asst.text, asst.nText, item.Get("content"))
 					return true
 				}
-				flush()
+				closeGroup()
 				out, n = appendRespChatRoleMessage(out, n, r, item.Get("content"))
 			case "function_call":
 				id := item.Get("call_id")
 				name := item.Get("name")
 				if id.Type != gjson.String || name.Type != gjson.String {
-					noteDrop(domain.ProtocolConvertRespToChat, "item_unknown")
+					noteReqDrop(domain.ProtocolConvertRespToChat, "item_unknown")
 					return true
 				}
 				asst.open = true
@@ -367,8 +407,7 @@ func appendRespChatMessages(out []byte, instructions string, input gjson.Result)
 				if a := item.Get("arguments"); a.Type == gjson.String {
 					args = append([]byte(nil), a.Raw...)
 				}
-				asst.calls = appendToolCallComma(asst.calls, asst.nCalls)
-				asst.nCalls++
+				asst.calls, asst.nCalls = appendComma(asst.calls, asst.nCalls)
 				asst.calls = append(asst.calls, `{"function":{"arguments":`...)
 				asst.calls = append(asst.calls, args...)
 				asst.calls = append(asst.calls, `,"name":`...)
@@ -376,21 +415,25 @@ func appendRespChatMessages(out []byte, instructions string, input gjson.Result)
 				asst.calls = append(asst.calls, `},"id":`...)
 				asst.calls = append(asst.calls, id.Raw...)
 				asst.calls = append(asst.calls, `,"type":"function"}`...)
-				declared = append(declared, id.Str)
+				outs = append(outs, respChatToolOut{id: id})
 			case "function_call_output":
-				flush()
 				id := item.Get("call_id")
-				if id.Type != gjson.String || id.Str == "" || !chatCallDeclared(declared, id.Str) {
-					// 不合成对应 call（J11）：孤儿 tool 消息上游必 400。
-					noteDrop(domain.ProtocolConvertRespToChat, "tool_result_orphan")
+				idx := -1
+				if id.Type == gjson.String {
+					for i := range outs {
+						if outs[i].id.Str == id.Str {
+							idx = i
+							break
+						}
+					}
+				}
+				if idx < 0 || outs[idx].out.Exists() {
+					// 不合成对应 call（J11）：孤儿 tool 消息上游必 400。重复结果
+					// 同一次调用也无从表达（第二条会覆盖第一条），一并丢弃。
+					noteReqDrop(domain.ProtocolConvertRespToChat, "tool_result_orphan")
 					return true
 				}
-				out, n = appendComma(out, n)
-				out = append(out, `{"content":`...)
-				out = append(out, respChatOutputString(item.Get("output"))...)
-				out = append(out, `,"role":"tool","tool_call_id":`...)
-				out = append(out, id.Raw...)
-				out = append(out, '}')
+				outs[idx].out = item.Get("output")
 			case "reasoning":
 				asst.open = true
 				if ps := respChatReasoningTexts(item); len(ps) > 0 {
@@ -402,16 +445,16 @@ func appendRespChatMessages(out []byte, instructions string, input gjson.Result)
 				}
 				if enc := item.Get("encrypted_content"); enc.Type == gjson.String && enc.Str != "" {
 					// chat 没有签名/加密思考通道：丢内容是必然的，但必须可见。
-					noteDrop(domain.ProtocolConvertRespToChat, "encrypted_content")
+					noteReqDrop(domain.ProtocolConvertRespToChat, "encrypted_content")
 				}
 			default:
 				// Responses 的 item 是 20+ 成员开放联合（web_search_call /
 				// computer_call / mcp_call / image_generation_call …）：chat 无载体。
-				noteDrop(domain.ProtocolConvertRespToChat, "item_unknown")
+				noteReqDrop(domain.ProtocolConvertRespToChat, "item_unknown")
 			}
 			return true
 		})
-		flush()
+		closeGroup()
 	}
 	return out, n
 }
@@ -421,7 +464,7 @@ func appendRespChatMessages(out []byte, instructions string, input gjson.Result)
 // output_text 都是文本），图片走 image_url，文件无载体 ⇒ 丢弃并计数。
 func appendRespChatRoleMessage(out []byte, n int, r string, content gjson.Result) ([]byte, int) {
 	if r != "user" && r != "system" && r != "developer" {
-		noteDrop(domain.ProtocolConvertRespToChat, "role")
+		noteReqDrop(domain.ProtocolConvertRespToChat, "role")
 		return out, n
 	}
 	if content.Type == gjson.String {
@@ -440,24 +483,22 @@ func appendRespChatRoleMessage(out []byte, n int, r string, content gjson.Result
 			switch p.Get("type").Str {
 			case "input_text", "output_text", "text":
 				if t := p.Get("text"); t.Type == gjson.String {
-					parts = appendPartComma(parts, nParts)
-					nParts++
+					parts, nParts = appendComma(parts, nParts)
 					parts = append(parts, `{"text":`...)
 					parts = append(parts, t.Raw...)
 					parts = append(parts, `,"type":"text"}`...)
 				}
 			case "input_image":
 				if url, ok := respChatImageURL(p); ok {
-					parts = appendPartComma(parts, nParts)
-					nParts++
+					parts, nParts = appendComma(parts, nParts)
 					parts = append(parts, `{"image_url":{"url":`...)
 					parts = append(parts, string(appendJSONString(nil, url))...)
 					parts = append(parts, `},"type":"image_url"}`...)
 				}
 			case "input_file":
-				noteDrop(domain.ProtocolConvertRespToChat, "input_file")
+				noteReqDrop(domain.ProtocolConvertRespToChat, "input_file")
 			default:
-				noteDrop(domain.ProtocolConvertRespToChat, "item_unknown")
+				noteReqDrop(domain.ProtocolConvertRespToChat, "item_unknown")
 			}
 			return true
 		})
@@ -494,7 +535,7 @@ func respChatTextParts(buf []byte, n int, content gjson.Result) ([]byte, int) {
 					n++
 				}
 			default:
-				noteDrop(domain.ProtocolConvertRespToChat, "item_unknown")
+				noteReqDrop(domain.ProtocolConvertRespToChat, "item_unknown")
 			}
 			return true
 		})
@@ -503,16 +544,13 @@ func respChatTextParts(buf []byte, n int, content gjson.Result) ([]byte, int) {
 }
 
 // respChatImageURL input_image → chat image_url.url。`image_url` 是字符串（http(s)
-// 或 data URL）时原样；`file_id` 形态 chat 无载体 ⇒ 丢弃并计数。
+// 或 data URL）时原样；否则（`file_id` 形态或两者都缺）chat 无载体 ⇒ 丢弃并计数。
+// 计数点只留函数尾部这一处：每个未命中的 image 块恰好 +1。
 func respChatImageURL(p gjson.Result) (string, bool) {
 	if u := p.Get("image_url"); u.Type == gjson.String && u.Str != "" {
 		return u.Str, true
 	}
-	if id := p.Get("file_id"); id.Type == gjson.String && id.Str != "" {
-		noteDrop(domain.ProtocolConvertRespToChat, "image_file")
-		return "", false
-	}
-	noteDrop(domain.ProtocolConvertRespToChat, "image_file")
+	noteReqDrop(domain.ProtocolConvertRespToChat, "image_file")
 	return "", false
 }
 
@@ -546,26 +584,21 @@ func respChatReasoningTexts(item gjson.Result) []string {
 	return out
 }
 
-// respChatOutputString function_call_output.output → chat tool 消息的 content
-// 字符串。字符串原样（用反转义后的值）；对象/数组/数字 → 序列化成串（chat 的
-// tool content 只能是字符串，丢掉会让模型看不到工具结果）。
-func respChatOutputString(v gjson.Result) []byte {
-	switch {
-	case v.Type == gjson.String:
-		return appendJSONString(nil, v.Str)
-	case v.Exists() && v.Type != gjson.Null:
-		return appendJSONString(nil, v.Raw)
-	}
-	return appendJSONString(nil, "")
+// respChatToolOut 本组声明的一条 call 与它的结果（out 不存在 = 还没收到）。
+type respChatToolOut struct {
+	id  gjson.Result
+	out gjson.Result
 }
 
-// chatCallDeclared 该 call_id 是否已由前面的 assistant.function_call 声明。
-// 线性扫描（工具调用数是个位数）——比每次请求建一个 map 便宜。
-func chatCallDeclared(declared []string, id string) bool {
-	for _, d := range declared {
-		if d == id {
-			return true
-		}
+// appendRespChatOutputString function_call_output.output → chat tool 消息的 content
+// 字符串。字符串原样（用反转义后的值）；对象/数组/数字 → 序列化成串（chat 的
+// tool content 只能是字符串，丢掉会让模型看不到工具结果）。
+func appendRespChatOutputString(dst []byte, v gjson.Result) []byte {
+	switch {
+	case v.Type == gjson.String:
+		return appendJSONString(dst, v.Str)
+	case v.Exists() && v.Type != gjson.Null:
+		return appendJSONString(dst, v.Raw)
 	}
-	return false
+	return appendJSONString(dst, "")
 }

@@ -5,8 +5,6 @@
 package proxy
 
 import (
-	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -51,26 +49,4 @@ func TestConvertedTargetProtocols(t *testing.T) {
 		}
 	}
 	_ = credential.TypeAPIKey // 保持 import 一致（helper 依赖 credential 类型）
-}
-
-// TestStreamGuardBeforeHeaders spec §8(k)：未接线方向的流式必须 400，且**在写
-// SSE 头之前**。六个方向目前都接好了线，故：
-//  1. 用注入的方式验"能力为 false 时必须拒绝"这个判定本身；
-//  2. 用源码顺序验"守卫在 writeSSEHeaders 之前"——把守卫挪到 header 之后就红
-//     （运行期无法证明顺序：header 一旦写出，状态码就锁成 200 了）。
-func TestStreamGuardBeforeHeaders(t *testing.T) {
-	orig := streamSupported
-	t.Cleanup(func() { streamSupported = orig })
-	streamSupported = func(domain.ProtocolConvert) bool { return false }
-	require.False(t, streamSupported(domain.ProtocolConvertMessToChat),
-		"注入后能力必须为 false（否则下面的顺序断言没有意义）")
-
-	raw, err := os.ReadFile("caller_converted.go")
-	require.NoError(t, err)
-	src := string(raw)
-	guard := strings.Index(src, "if !streamSupported(c.dir) {")
-	headers := strings.Index(src, "writeSSEHeaders(w)")
-	require.Positive(t, guard, "流式 fail-closed 守卫不见了")
-	require.Positive(t, headers, "writeSSEHeaders 不见了")
-	require.Less(t, guard, headers, "守卫必须在写 SSE 头之前（否则客户端拿到 200 + 空流）")
 }

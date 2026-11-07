@@ -319,7 +319,14 @@ type StreamMapper struct {
 	it, ot      int64 // 用量（input/output tokens；mess 侧 it 是未含缓存的 input_tokens）
 	cached      int64 // cache_read / cached_tokens
 	cacheCreate int64 // mess cache_creation_input_tokens（不计入 cached_tokens）
-	reason      string
+	// createdSet chat 源流式：源帧是否携带过 created —— 存在才映射成
+	// created_at，缺省则**省略该字段**（转换器不发明时间戳，spec §5.5）。
+	createdSet bool
+	// reasoningTokens chat 源流式：completion_tokens_details.reasoning_tokens 的
+	// 最新值（覆盖语义，末帧为准）。resp 目标写进 output_tokens_details；
+	// mess 目标无承载位（终态由 messUsageOf 计一次丢弃）。
+	reasoningTokens int64
+	reason          string
 	// stopReason chat 源的原始 finish_reason（stop/length/tool_calls/...）：
 	// 收到就记、**不在此处翻译**（mess 走 messStopFromChat，resp 走 chatRespStatus）。
 	stopReason string
@@ -328,7 +335,11 @@ type StreamMapper struct {
 	// 工具调用按 chat 的 tool_calls[i].index 映射。
 	thinkIdx int64
 	textIdx  int64
-	toolIdx  map[int64]int64
+	// tools chat 工具调用块（列表顺序 = chatAlloc 分配序 = 首片到达序）；
+	// toolIdx 把 chat 的 tool_calls[i].index 映射到 tools 下标（同一块可能被
+	// 多个 index 指着）。
+	tools   []*chatToolBlock
+	toolIdx map[int64]int
 
 	// resp→mess：content index 分配（键 = (output_index, kind)）与跨事件身份
 	// （item id → content index；spec §4.5）。

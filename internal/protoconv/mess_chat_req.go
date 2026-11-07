@@ -5,6 +5,7 @@
 package protoconv
 
 import (
+	"sort"
 	"strings"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -70,6 +71,26 @@ func messToChatRequest(body []byte) ([]byte, error) {
 				thinking = v
 			case gjsonKeyEq(k, "output_config"):
 				outputConfig = v
+			// 以下五项 chat 侧无承载位（既没有同名字段，也没有可重排的等价结构），
+			// 以前是**静默丢弃**：线上只会表现为"那几台 MCP 服务/那个容器/那个
+			// 采样参数好像没生效"，无从排查（spec §7 I3）。
+			case gjsonKeyEq(k, "mcp_servers"):
+				noteReqDrop(domain.ProtocolConvertMessToChat, "mcp_servers")
+			case gjsonKeyEq(k, "container"):
+				noteReqDrop(domain.ProtocolConvertMessToChat, "container")
+			case gjsonKeyEq(k, "service_tier"):
+				// Anthropic 的 service_tier（auto/standard_only）与 chat 的同名字段
+				// 是两套枚举 ⇒ 丢弃并计数。响应面也会丢 chat 响应里的 service_tier，
+				// 但计数键带面维度（DropEvent），两者不会混成一个桶。
+				noteReqDrop(domain.ProtocolConvertMessToChat, "service_tier")
+			case gjsonKeyEq(k, "betas"):
+				// Anthropic 的 beta 特性开关（如 fine-grained-tool-streaming）：chat
+				// 没有 beta 通道，只能丢；丢了必须可见。
+				noteReqDrop(domain.ProtocolConvertMessToChat, "betas")
+			case gjsonKeyEq(k, "top_k"):
+				// chat 的采样参数只有 temperature/top_p（没有 top_k）⇒ 真的被丢弃，
+				// 计数。若将来给它找到承载位，这个 case 就该删掉（那时它不再被丢）。
+				noteReqDrop(domain.ProtocolConvertMessToChat, "top_k")
 			}
 			return true
 		})
@@ -93,7 +114,7 @@ func messToChatRequest(body []byte) ([]byte, error) {
 	if nMsgs == 0 {
 		// system 折叠为空 + 全是被丢块：messages 仍是必填键（写了空数组），但
 		// "这一单其实没有任何可发给模型的内容"必须可见（spec §4.1）。
-		noteDrop(domain.ProtocolConvertMessToChat, "messages_empty")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "messages_empty")
 	}
 	if rawNotNull(model) {
 		out = appendField(out, &first, "model", model)
@@ -111,7 +132,10 @@ func messToChatRequest(body []byte) ([]byte, error) {
 		out = appendField(out, &first, "stream", stream)
 	}
 	if stream == "true" {
-		out = appendStreamOptionsMerged(out, &first, clientSO)
+		out = appendStreamOptionsMerged(out, &first, domain.ProtocolConvertMessToChat, clientSO)
+	} else if clientSO.Exists() && clientSO.Type != gjson.Null {
+		// 非流式请求里的 stream_options 没有承载位（chat 只在 stream=true 时读它）。
+		noteReqDrop(domain.ProtocolConvertMessToChat, "stream_options")
 	}
 	// 思考与自定义采样不兼容（与其余方向同口径）：开启时丢弃 temperature/top_p。
 	if effort == "" && rawNotNull(temperature) {
@@ -161,14 +185,21 @@ func appendMessChatMessages(out []byte, sys, msgs gjson.Result) ([]byte, int) {
 	if !msgs.IsArray() {
 		return out, n
 	}
+	// prevAsst 是**紧邻的上一条 assistant 消息的 content 数组**，即 §4.3 配对
+	// 不变量的作用域：下一条 user 的 tool_result 只允许回指它声明的 tool_use，
+	// 且必须按声明顺序输出（chat 要求 tool 消息紧邻其 tool_calls 且保序）。
+	// 换成"别的角色/别的形态"就闭合窗口（invalid gjson 表示"没有声明"）。
+	var prevAsst gjson.Result
 	msgs.ForEach(func(_, m gjson.Result) bool {
 		if !m.IsObject() {
-			noteDrop(domain.ProtocolConvertMessToChat, "message")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "message")
+			prevAsst = gjson.Result{}
 			return true
 		}
 		role := m.Get("role").Str
 		if role != "user" && role != "assistant" {
-			noteDrop(domain.ProtocolConvertMessToChat, "role")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "role")
+			prevAsst = gjson.Result{}
 			return true
 		}
 		content := m.Get("content")
@@ -179,6 +210,7 @@ func appendMessChatMessages(out []byte, sys, msgs gjson.Result) ([]byte, int) {
 			out = append(out, `,"role":`...)
 			out = append(out, string(appendJSONString(nil, role))...)
 			out = append(out, '}')
+			prevAsst = gjson.Result{}
 			return true
 		}
 		if !content.IsArray() {
@@ -187,16 +219,43 @@ func appendMessChatMessages(out []byte, sys, msgs gjson.Result) ([]byte, int) {
 			out = append(out, `{"content":"","role":`...)
 			out = append(out, string(appendJSONString(nil, role))...)
 			out = append(out, '}')
+			prevAsst = gjson.Result{}
 			return true
 		}
 		if role == "user" {
-			out, n = appendMessChatUserTurn(out, n, content)
+			out, n = appendMessChatUserTurn(out, n, content, prevAsst)
+			prevAsst = gjson.Result{}
 			return true
 		}
 		out, n = appendMessChatAsstTurn(out, n, content)
+		prevAsst = content
 		return true
 	})
 	return out, n
+}
+
+// messToolUseEmitted 该 tool_use 会不会被写进 chat 的 tool_calls[]。判据与
+// appendMessChatAsstTurn 一致：必须有 string name 与**非空** string id。
+func messToolUseEmitted(blk gjson.Result) bool {
+	return blk.Get("type").Str == "tool_use" &&
+		blk.Get("name").Type == gjson.String &&
+		blk.Get("id").Type == gjson.String && blk.Get("id").Str != ""
+}
+
+// messDeclaresToolUse 上一条 assistant 是否声明过该 tool_use_id。
+func messDeclaresToolUse(prevAsst, id gjson.Result) bool {
+	if id.Type != gjson.String || id.Str == "" {
+		return false
+	}
+	found := false
+	prevAsst.ForEach(func(_, blk gjson.Result) bool {
+		if !messToolUseEmitted(blk) || blk.Get("id").Str != id.Str {
+			return true
+		}
+		found = true
+		return false
+	})
+	return found
 }
 
 // noteSystemBlockDrops 顶层 system 数组里**不是文本**的块逐块计数（chat 没有
@@ -213,67 +272,102 @@ func noteSystemBlockDrops(sys gjson.Result) {
 		if t := p.Get("text"); t.Type == gjson.String {
 			return true
 		}
-		noteDrop(domain.ProtocolConvertMessToChat, "system_block")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "system_block")
 		return true
 	})
 }
 
 // appendMessChatUserTurn user 轮：文本/图片 → content parts；tool_result →
-// 就地一条 role:"tool" 消息；tool_result 内的图片挪到紧随其后的 user 消息。
-func appendMessChatUserTurn(out []byte, n int, content gjson.Result) ([]byte, int) {
+// role:"tool" 消息（**按 prevAsst 的声明顺序**输出，不是源数组顺序）；
+// tool_result 内的图片挪到紧随其后的 user 消息。
+//
+// prevAsst 是上一条 assistant 的 content 数组：不在其中声明的 tool_result 是
+// 孤儿（上游必 400），同一 id 的第二个结果无从表达 ⇒ 都丢弃并计
+// `tool_result_orphan`，不合成对应 call（assemble.go 的 J11 决策）。
+//
+// 为什么不先摘一份 id 清单：这是请求热路径，多一块切片就多一次堆分配
+// （bench 门禁按 allocs/op 卡死），直接两遍扫 prevAsst 更省也更短。
+func appendMessChatUserTurn(out []byte, n int, content, prevAsst gjson.Result) ([]byte, int) {
 	var parts, toolMsgs, pendingImgs []byte
 	nParts, nTools, nImgs := 0, 0, 0
+	// ① 归属校验（只为计数，源顺序走一遍）。
+	content.ForEach(func(_, blk gjson.Result) bool {
+		if blk.Get("type").Str != "tool_result" {
+			return true
+		}
+		if !messDeclaresToolUse(prevAsst, blk.Get("tool_use_id")) {
+			noteReqDrop(domain.ProtocolConvertMessToChat, "tool_result_orphan")
+		}
+		return true
+	})
+	// ② 文本/图片/文档就地累积；tool_result 留给 ③。
 	content.ForEach(func(_, blk gjson.Result) bool {
 		switch blk.Get("type").Str {
 		case "text":
 			if t := blk.Get("text"); t.Type == gjson.String {
-				parts = appendPartComma(parts, nParts)
-				nParts++
+				parts, nParts = appendComma(parts, nParts)
 				parts = append(parts, `{"text":`...)
 				parts = append(parts, t.Raw...)
 				parts = append(parts, `,"type":"text"}`...)
 			}
 		case "image":
 			if url, ok := messChatImageURL(blk); ok {
-				parts = appendPartComma(parts, nParts)
-				nParts++
+				parts, nParts = appendComma(parts, nParts)
 				parts = append(parts, `{"image_url":{"url":`...)
 				parts = append(parts, string(appendJSONString(nil, url))...)
 				parts = append(parts, `},"type":"image_url"}`...)
 			}
 		case "tool_result":
-			id := blk.Get("tool_use_id")
-			if id.Type != gjson.String || id.Str == "" {
-				noteDrop(domain.ProtocolConvertMessToChat, "tool_result_orphan")
-				return true
-			}
-			toolMsgs = appendToolMsgComma(toolMsgs, nTools)
-			nTools++
-			toolMsgs = append(toolMsgs, `{"content":`...)
-			toolMsgs = append(toolMsgs, messChatToolResultContent(blk, &pendingImgs, &nImgs)...)
-			toolMsgs = append(toolMsgs, `,"role":"tool","tool_call_id":`...)
-			toolMsgs = append(toolMsgs, id.Raw...)
-			toolMsgs = append(toolMsgs, '}')
+			// 见 ③：结果必须排在它声明的 call 之后，所以不在这里输出。
 		case "document":
 			// 纯文本文档降级为文本部件（它本来就是文本，不构成污染）；其余源
 			// （base64 PDF / url PDF / content blocks / file）chat 无载体 → 丢弃。
 			if blk.Get("source.type").Str == "text" {
 				if d := blk.Get("source.data"); d.Type == gjson.String {
-					parts = appendPartComma(parts, nParts)
-					nParts++
+					parts, nParts = appendComma(parts, nParts)
 					parts = append(parts, `{"text":`...)
 					parts = append(parts, d.Raw...)
 					parts = append(parts, `,"type":"text"}`...)
 					return true
 				}
 			}
-			noteDrop(domain.ProtocolConvertMessToChat, "document")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "document")
 		case "thinking":
 			// user 轮里的 thinking 无意义（Anthropic 只允许 assistant 携带）。
-			noteDrop(domain.ProtocolConvertMessToChat, "thinking")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "thinking")
 		default:
-			noteDrop(domain.ProtocolConvertMessToChat, "block_unknown")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "block_unknown")
 		}
+		return true
+	})
+	// ③ 按声明顺序输出结果：源里 b,a 的两条 → 产物 a,b（chat 要求 tool 消息
+	// 紧邻其 tool_calls 且保序）。每个 id 只认源里第一条，其余是重复结果。
+	prevAsst.ForEach(func(_, decl gjson.Result) bool {
+		if !messToolUseEmitted(decl) {
+			return true
+		}
+		// 用声明里的**源字节**（含转义）而不是重新编码 id：tool_call_id 与
+		// tool_calls[].id 必须是同一个字符串，且这里不该多两次分配。
+		idJSON := decl.Get("id")
+		id := idJSON.Str
+		first := true
+		content.ForEach(func(_, blk gjson.Result) bool {
+			if blk.Get("type").Str != "tool_result" || blk.Get("tool_use_id").Str != id {
+				return true
+			}
+			if !first {
+				noteReqDrop(domain.ProtocolConvertMessToChat, "tool_result_orphan")
+				return true
+			}
+			first = false
+			toolMsgs, nTools = appendComma(toolMsgs, nTools)
+			toolMsgs = append(toolMsgs, `{"content":`...)
+			toolMsgs = append(toolMsgs, messChatToolResultContent(blk, &pendingImgs, &nImgs)...)
+			toolMsgs = append(toolMsgs, `,"role":"tool","tool_call_id":`...)
+			toolMsgs = append(toolMsgs, idJSON.Raw...)
+			toolMsgs = append(toolMsgs, '}')
+			return true
+		})
 		return true
 	})
 	out = appendFrag(out, toolMsgs)
@@ -325,12 +419,14 @@ func appendMessChatAsstTurn(out []byte, n int, content gjson.Result) ([]byte, in
 				think.WriteString(t.Str)
 			}
 		case "redacted_thinking":
-			noteDrop(domain.ProtocolConvertMessToChat, "redacted_thinking")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "redacted_thinking")
 		case "tool_use":
 			name := blk.Get("name")
 			id := blk.Get("id")
-			if name.Type != gjson.String || id.Type != gjson.String {
-				noteDrop(domain.ProtocolConvertMessToChat, "tool_use")
+			// id 空串的结果永远配不上（tool_use_id 也是空串），一并丢掉：
+			// 让"声明了什么"与 messDeclaresToolUse 的判据完全一致。
+			if name.Type != gjson.String || id.Type != gjson.String || id.Str == "" {
+				noteReqDrop(domain.ProtocolConvertMessToChat, "tool_use")
 				return true
 			}
 			// arguments 用**源字节**而不是重排后的紧凑 JSON：chat 把 arguments
@@ -338,12 +434,14 @@ func appendMessChatAsstTurn(out []byte, n int, content gjson.Result) ([]byte, in
 			// 悄悄改掉重复键的语义（上游 json.loads 是末键胜，重排会先合并）。
 			// 唯一要求是合法 JSON：input 缺失/null → "{}"；非 JSON（字符串等）
 			// 按原字面量传递。
-			args := []byte(`{}`)
+			// chat 的 function.arguments 是**字符串**（里面装着 JSON 文本）。缺省
+			// 因此必须是字符串字面量 `"{}"`，写成对象 `{}` 会让上游收到
+			// arguments:{} 而不是 arguments:"{}" —— 类型错，直接 400。
+			args := []byte(`"{}"`)
 			if in := blk.Get("input"); in.Exists() && in.Type != gjson.Null {
 				args = appendJSONString(nil, in.Raw)
 			}
-			calls = appendToolCallComma(calls, nCalls)
-			nCalls++
+			calls, nCalls = appendComma(calls, nCalls)
 			calls = append(calls, `{"function":{"arguments":`...)
 			calls = append(calls, args...)
 			calls = append(calls, `,"name":`...)
@@ -352,11 +450,11 @@ func appendMessChatAsstTurn(out []byte, n int, content gjson.Result) ([]byte, in
 			calls = append(calls, id.Raw...)
 			calls = append(calls, `,"type":"function"}`...)
 		case "image":
-			noteDrop(domain.ProtocolConvertMessToChat, "asst_image")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "asst_image")
 		case "document":
-			noteDrop(domain.ProtocolConvertMessToChat, "document")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "document")
 		default:
-			noteDrop(domain.ProtocolConvertMessToChat, "block_unknown")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "block_unknown")
 		}
 		return true
 	})
@@ -402,8 +500,7 @@ func messChatToolResultContent(blk gjson.Result, pending *[]byte, nPending *int)
 				}
 			case "image":
 				if url, ok := p.Get("source.url").Str, p.Get("source.url").Type == gjson.String; ok && url != "" {
-					*pending = appendPartComma(*pending, *nPending)
-					*nPending++
+					*pending, *nPending = appendComma(*pending, *nPending)
 					*pending = append(*pending, `{"image_url":{"url":`...)
 					*pending = append(*pending, string(appendJSONString(nil, url))...)
 					*pending = append(*pending, `},"type":"image_url"}`...)
@@ -412,21 +509,20 @@ func messChatToolResultContent(blk gjson.Result, pending *[]byte, nPending *int)
 					if mt == "" {
 						mt = "image/png"
 					}
-					*pending = appendPartComma(*pending, *nPending)
-					*nPending++
+					*pending, *nPending = appendComma(*pending, *nPending)
 					*pending = append(*pending, `{"image_url":{"url":`...)
 					*pending = append(*pending, string(appendJSONString(nil, "data:"+mt+";base64,"+d.Str))...)
 					*pending = append(*pending, `},"type":"image_url"}`...)
 				} else {
-					noteDrop(domain.ProtocolConvertMessToChat, "image_file")
+					noteReqDrop(domain.ProtocolConvertMessToChat, "image_file")
 				}
 			default:
-				noteDrop(domain.ProtocolConvertMessToChat, "tool_result_block")
+				noteReqDrop(domain.ProtocolConvertMessToChat, "tool_result_block")
 			}
 			return true
 		})
 	} else if c.Exists() && c.Type != gjson.Null {
-		noteDrop(domain.ProtocolConvertMessToChat, "tool_result_block")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "tool_result_block")
 	}
 	text := sb.String()
 	if text == "" && *nPending > imgsBefore {
@@ -446,7 +542,7 @@ func messChatImageURL(blk gjson.Result) (string, bool) {
 	case "base64":
 		d := src.Get("data")
 		if d.Type != gjson.String || d.Str == "" {
-			noteDrop(domain.ProtocolConvertMessToChat, "image_empty")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "image_empty")
 			return "", false
 		}
 		mt := src.Get("media_type").Str
@@ -458,13 +554,13 @@ func messChatImageURL(blk gjson.Result) (string, bool) {
 		if u := src.Get("url"); u.Type == gjson.String && u.Str != "" {
 			return u.Str, true
 		}
-		noteDrop(domain.ProtocolConvertMessToChat, "image_empty")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "image_empty")
 		return "", false
 	case "file":
-		noteDrop(domain.ProtocolConvertMessToChat, "image_file")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "image_file")
 		return "", false
 	default:
-		noteDrop(domain.ProtocolConvertMessToChat, "image_source")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "image_source")
 		return "", false
 	}
 }
@@ -486,7 +582,7 @@ func messChatStop(v gjson.Result) string {
 		return ""
 	}
 	if len(items) > maxChatStop {
-		noteDrop(domain.ProtocolConvertMessToChat, "stop_truncated")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "stop_truncated")
 		items = items[:maxChatStop]
 	}
 	if len(items) == 1 {
@@ -514,7 +610,7 @@ func messChatToolChoice(v gjson.Result) string {
 		case "required", "any":
 			return `"required"`
 		}
-		noteDrop(domain.ProtocolConvertMessToChat, "tool_choice")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "tool_choice")
 		return ""
 	}
 	switch v.Get("type").Str {
@@ -527,12 +623,12 @@ func messChatToolChoice(v gjson.Result) string {
 	case "tool":
 		name := v.Get("name")
 		if name.Type != gjson.String || name.Str == "" {
-			noteDrop(domain.ProtocolConvertMessToChat, "tool_choice")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "tool_choice")
 			return ""
 		}
 		return `{"function":{"name":` + name.Raw + `},"type":"function"}`
 	}
-	noteDrop(domain.ProtocolConvertMessToChat, "tool_choice")
+	noteReqDrop(domain.ProtocolConvertMessToChat, "tool_choice")
 	return ""
 }
 
@@ -544,7 +640,7 @@ func metadataUserID(raw string) string {
 	}
 	obj := gjson.Parse(raw)
 	if !obj.IsObject() {
-		noteDrop(domain.ProtocolConvertMessToChat, "metadata")
+		noteReqDrop(domain.ProtocolConvertMessToChat, "metadata")
 		return ""
 	}
 	keys := 0
@@ -555,27 +651,66 @@ func metadataUserID(raw string) string {
 	uid := obj.Get("user_id")
 	if uid.Type == gjson.String && uid.Str != "" {
 		if keys > 1 {
-			noteDrop(domain.ProtocolConvertMessToChat, "metadata")
+			noteReqDrop(domain.ProtocolConvertMessToChat, "metadata")
 		}
 		return uid.Raw
 	}
-	noteDrop(domain.ProtocolConvertMessToChat, "metadata")
+	noteReqDrop(domain.ProtocolConvertMessToChat, "metadata")
 	return ""
 }
 
-// appendStreamOptionsMerged chat 的 stream_options：**强制 include_usage=true**
-// （否则上游流里根本没有 usage 帧 → 客户端看到 0 token、服务端也计 0），客户端的
-// include_obfuscation 原样保留。键按字母序：include_obfuscation < include_usage。
-func appendStreamOptionsMerged(out []byte, first *bool, client gjson.Result) []byte {
+// streamOptKV 客户端 stream_options 的一个键值对（raw 保留源字节，不重编码）。
+type streamOptKV struct {
+	key string
+	raw string
+}
+
+// appendStreamOptionsMerged chat 的 stream_options：**对象合并**而不是整段覆盖——
+// 客户端已有的键（include_obfuscation 等）原样保留，只把 include_usage 强制置
+// true（否则上游流里根本没有 usage 帧 → 客户端看到 0 token、服务端也计 0）。
+//
+// 键序：客户端的键按**字母序**写出，`include_usage` 恒在最后（它是本方向的强制
+// 项，与客户端是否给了无关）。同一键在源里出现多次时**末键胜**——与上游
+// json.loads 的语义一致，不在这里改掉重复键的含义。
+//
+// 非对象形态（字符串/数组/数字）：chat 无法承载 ⇒ 整段丢弃并计 `stream_options`，
+// 但仍写强制项（不因为客户端给错形态就连 usage 观测一起丢）。
+//
+// 分配：只有客户端真给了 stream_options 对象才走收集+排序分支（一次切片），
+// 没有该键的请求（含基准载荷）只写一个常量串，零分配。
+func appendStreamOptionsMerged(out []byte, first *bool, dir domain.ProtocolConvert, client gjson.Result) []byte {
 	if !*first {
 		out = append(out, ',')
 	}
 	*first = false
 	out = append(out, `"stream_options":{`...)
-	if ob, ok := lastField(client, "include_obfuscation"); ok && (ob.Type == gjson.True || ob.Type == gjson.False) {
-		out = append(out, `"include_obfuscation":`...)
-		out = append(out, ob.Raw...)
-		out = append(out, ',')
+	if client.Type != gjson.Null && client.Exists() && !client.IsObject() {
+		noteReqDrop(dir, "stream_options")
+		return append(out, `"include_usage":true}`...)
+	}
+	if client.IsObject() {
+		kvs := make([]streamOptKV, 0, 4)
+		client.ForEach(func(k, v gjson.Result) bool {
+			if k.Type != gjson.String || k.Str == "include_usage" {
+				// include_usage 的取值由本方向决定（强制 true），客户端的值不参与。
+				return true
+			}
+			for i := range kvs {
+				if kvs[i].key == k.Str {
+					kvs[i].raw = v.Raw
+					return true
+				}
+			}
+			kvs = append(kvs, streamOptKV{key: k.Str, raw: v.Raw})
+			return true
+		})
+		sort.Slice(kvs, func(i, j int) bool { return kvs[i].key < kvs[j].key })
+		for _, kv := range kvs {
+			out = append(out, string(appendJSONString(nil, kv.key))...)
+			out = append(out, ':')
+			out = append(out, kv.raw...)
+			out = append(out, ',')
+		}
 	}
 	return append(out, `"include_usage":true}`...)
 }
@@ -589,26 +724,4 @@ func appendFrag(out, frag []byte) []byte {
 		out = append(out, ',')
 	}
 	return append(out, frag...)
-}
-
-// appendPartComma / appendToolMsgComma / appendToolCallComma：数组内逗号控制。
-func appendPartComma(b []byte, n int) []byte {
-	if n > 0 {
-		return append(b, ',')
-	}
-	return b
-}
-
-func appendToolMsgComma(b []byte, n int) []byte {
-	if n > 0 {
-		return append(b, ',')
-	}
-	return b
-}
-
-func appendToolCallComma(b []byte, n int) []byte {
-	if n > 0 {
-		return append(b, ',')
-	}
-	return b
 }

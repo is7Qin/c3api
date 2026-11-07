@@ -6,6 +6,7 @@ package protoconv
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -64,7 +65,7 @@ func TestChatStreamTerminalExactlyOnce(t *testing.T) {
 	// 终止后到达的帧：丢弃 + 计数。
 	_, drop := m.Map("", chatChunk("late"))
 	require.True(t, drop)
-	require.EqualValues(t, 1, DropCounts()[string(domain.ProtocolConvertMessToChat)+"|frame_after_terminal"])
+	require.EqualValues(t, 1, DropCounts()[string(domain.ProtocolConvertMessToChat)+"|resp|frame_after_terminal"])
 
 	// 反向：先 EOF（无 [DONE]），再收到 [DONE] 也不得再产帧。
 	m2 := NewStreamMapper(domain.ProtocolConvertRespToChat)
@@ -82,17 +83,15 @@ func TestChatStreamTerminalExactlyOnce(t *testing.T) {
 func TestChatUsageNullIsNotUsageFrame(t *testing.T) {
 	m := NewStreamMapper(domain.ProtocolConvertMessToChat)
 	_, _ = m.Map("", chatChunk("hi"))
-	it, ot, cached, write := m.chatStreamUsage()
-	require.Zero(t, it+ot+cached+write, "usage:null 不得被当成用量")
+	require.Zero(t, m.it+m.ot+m.cached+m.cacheCreate, "usage:null 不得被当成用量")
 
 	// 真正的用量帧（choices:[] + usage 对象）才更新。
 	_, drop := m.Map("", []byte(`{"id":"c1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`))
 	require.True(t, drop, "用量帧不产内容帧")
-	it, ot, cached, write = m.chatStreamUsage()
-	require.EqualValues(t, 100, it)
-	require.EqualValues(t, 20, ot)
-	require.EqualValues(t, 40, cached)
-	require.EqualValues(t, 10, write)
+	require.EqualValues(t, 100, m.it)
+	require.EqualValues(t, 20, m.ot)
+	require.EqualValues(t, 40, m.cached)
+	require.EqualValues(t, 10, m.cacheCreate)
 }
 
 // TestChatFinishReasonDoesNotTerminate oracle 的阻断项：见到 finish_reason 就收尾
@@ -110,15 +109,55 @@ func TestChatFinishReasonDoesNotTerminate(t *testing.T) {
 	require.Contains(t, string(term), `"stop_reason":"end_turn"`)
 }
 
-// TestChatStreamErrorFrame 上游 error 帧 → 先关块再报错（客户端才不会停在半截块）。
+// TestChatStreamErrorFrame 上游 error 帧 → 客户端拿到**失败终态**，且不再有正常完成。
+//
+// 两个目标各一条（spec §5.6/§5.7）：mess 发 `error`，resp 发 `response.failed`；
+// 两者都必须在报错前关掉已开的内容块（mess 由 `content_block_stop` 体现），
+// 且上游错误文本原样透传、不得换笼统文案。原来的 mess 单方向用例已并入这里。
 func TestChatStreamErrorFrame(t *testing.T) {
-	m := NewStreamMapper(domain.ProtocolConvertMessToChat)
-	_, _ = m.Map("", chatChunk("hi"))
-	out, drop := m.Map("", []byte(`{"error":{"message":"boom","type":"invalid_request_error"}}`))
-	require.False(t, drop)
-	s := string(out)
-	require.Contains(t, s, `"type":"content_block_stop"`, "报错前必须关块")
-	require.Contains(t, s, `"type":"error"`)
-	require.Contains(t, s, "boom")
-	require.True(t, m.Done())
+	errChunk := []byte(`{"error":{"message":"boom","type":"invalid_request_error"}}`)
+	for _, tc := range []struct {
+		name string
+		dir  domain.ProtocolConvert
+		// want 必须有、恰好一次；notWant 正常完成标记（不许出现）。
+		// failedStatus 非空时要求响应级 status 是该值（response.failed 的 status
+		// 是 "failed"；output[] 里已完成 item 自己的 status 不受此约束）。
+		want         string
+		notWant      string
+		failedStatus string
+		// ordered 需要证明顺序的两段：前者下标必须小于后者（空 = 不检查）。
+		ordered [2]string
+	}{
+		{
+			name: "mess_target", dir: domain.ProtocolConvertMessToChat,
+			want: `"type":"error"`, notWant: `"stop_reason":"end_turn"`,
+			ordered: [2]string{`"type":"content_block_stop"`, `"type":"error"`},
+		},
+		{
+			name: "resp_target", dir: domain.ProtocolConvertRespToChat,
+			want: `"type":"response.failed"`, notWant: `"type":"response.completed"`,
+			failedStatus: `"status":"failed"`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewStreamMapper(tc.dir)
+			_, _ = m.Map("", chatChunk("hi")) // 先打开一个内容块
+
+			out, drop := m.Map("", errChunk)
+			require.False(t, drop, "错误块不得被静默丢弃")
+			all := string(out) + string(m.Finish())
+
+			require.Equal(t, 1, strings.Count(all, tc.want), "失败终态恰好一次")
+			require.NotContains(t, all, tc.notWant, "错误结局不得声明正常完成")
+			require.Contains(t, all, "boom", "上游错误文本必须原样带给客户端")
+			if tc.failedStatus != "" {
+				require.Contains(t, all, tc.failedStatus, "失败终态的响应级 status 必须是 failed")
+			}
+			if tc.ordered[0] != "" {
+				require.Less(t,
+					strings.Index(all, tc.ordered[0]), strings.Index(all, tc.ordered[1]),
+					"关块必须早于报错（客户端才不会停在半截块）")
+			}
+		})
+	}
 }

@@ -1,5 +1,5 @@
 event: response.created
-data: {"response":{"created_at":0,"id":"c3","model":"m","object":"response","output":[],"status":"in_progress","usage":null},"type":"response.created"}
+data: {"response":{"id":"c3","model":"m","object":"response","output":[],"status":"in_progress","usage":null},"type":"response.created"}
 
 event: response.output_item.added
 data: {"item":{"content":[{"annotations":[],"text":"","type":"output_text"}],"id":"msg_c3_0","role":"assistant","status":"in_progress","type":"message"},"output_index":0,"type":"response.output_item.added"}
@@ -13,5 +13,5 @@ event: response.output_item.done
 data: {"item":{"content":[{"annotations":[],"text":"trunc","type":"output_text"}],"id":"msg_c3_0","role":"assistant","status":"completed","type":"message"},"output_index":0,"type":"response.output_item.done"}
 
 event: response.completed
-data: {"response":{"created_at":0,"id":"c3","incomplete_details":{"reason":"max_output_tokens"},"model":"m","object":"response","output":[{"content":[{"annotations":[],"text":"trunc","type":"output_text"}],"id":"msg_c3_0","role":"assistant","status":"completed","type":"message"}],"status":"incomplete","usage":{"input_tokens":0,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}},"type":"response.completed"}
+data: {"response":{"id":"c3","incomplete_details":{"reason":"max_output_tokens"},"model":"m","object":"response","output":[{"content":[{"annotations":[],"text":"trunc","type":"output_text"}],"id":"msg_c3_0","role":"assistant","status":"completed","type":"message"}],"status":"incomplete","usage":{"input_tokens":0,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}},"type":"response.completed"}
 

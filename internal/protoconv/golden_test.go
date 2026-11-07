@@ -12,6 +12,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 // 逐字节黄金：内容模型重构（行表分派）不得改变除 spec §4 列明的缺陷修正之外的
@@ -683,5 +684,90 @@ func TestGoldenReviewed(t *testing.T) {
 	}
 	for name := range reg {
 		require.True(t, live[name], "reviewed.tsv 登记了已不存在的用例 %q（删用例要同步删登记行）", name)
+	}
+}
+
+// streamReasoningChunks 与 golden 用例 chat_to_resp_stream_text 同源的一串 chat
+// 上游帧（末帧 usage 携带 completion_tokens_details.reasoning_tokens:7）。此处
+// **复制一份**而不是引用 goldenCases：本测试的证据力来自"不依赖 golden 语料"，
+// 夹具一旦被谁顺手改宽，那条 golden 会跟着变，而这里的期望值不会。
+func streamReasoningChunks() []string {
+	return []string{
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"role":"assistant","content":"he"},"finish_reason":null}],"usage":null}`,
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"llo"},"finish_reason":null}],"usage":null}`,
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":null}`,
+		`{"id":"c1","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`,
+	}
+}
+
+// lastCompletedUsage 从帧字节里摘出 response.completed 的 data 载荷，返回其
+// `response.usage`。整段 SSE 字节里有 `event:` 行，不是合法 JSON，gjson 不能
+// 直接吃，必须先按行取出 `data: ` 之后的部分。
+func lastCompletedUsage(t *testing.T, frames []byte) gjson.Result {
+	t.Helper()
+	var payload []byte
+	for _, line := range strings.Split(string(frames), "\n") {
+		body, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		if gjson.Get(body, "type").Str != "response.completed" {
+			continue
+		}
+		payload = []byte(body)
+	}
+	require.NotNil(t, payload, "收尾字节里没有 response.completed：%q", string(frames))
+	return gjson.GetBytes(payload, "response.usage")
+}
+
+// TestChatToRespStreamReasoningTokens oracle 终审 C15 的正面证据，**独立于 golden**。
+//
+// 断言：chat 上游末帧的 `usage.completion_tokens_details.reasoning_tokens` 必须
+// 真读真传，落到 Responses 终态 `response.completed` 的
+// `usage.output_tokens_details.reasoning_tokens`（该字段是计费/观测口径，恒写 0
+// 等于把上游的思考用量抹掉）。
+//
+// 为什么不并进 golden：修复前该值恒 0，chat_to_resp_stream_text.txt 也跟着一起
+// 错；一条会随 golden 重采一起漂移的断言当不了证据。这里直接喂帧、直接从收尾
+// 字节用 gjson 取，golden 被改坏也不影响它的红/绿。
+//
+// 两条收尾出口都要拧住：`[DONE]`（mapper 自产终止帧）与无 `[DONE]` 的正常 EOF
+// （`Finish` 补发，sserelay.Config.Terminal 的真实路径）。
+func TestChatToRespStreamReasoningTokens(t *testing.T) {
+	const want = int64(7)
+	for _, tc := range []struct {
+		name string
+		done bool
+	}{
+		{name: "terminal_on_done", done: true},
+		{name: "finish_on_eof", done: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := NewStreamMapper(domain.ProtocolConvertRespToChat)
+			var frames []byte
+			for _, chunk := range streamReasoningChunks() {
+				// 末帧 usage 与只带 finish_reason 的帧不产帧（drop），这与
+				// goldenStream 的拼接方式一致：这里只关心收尾字节里的用量。
+				frame, drop := m.Map("", []byte(chunk))
+				if drop {
+					continue
+				}
+				frames = append(frames, frame...)
+			}
+			require.NotEmpty(t, frames, "内容帧必须产出 response.created / delta 帧")
+			if tc.done {
+				frame, drop := m.Map("", []byte(`[DONE]`))
+				require.False(t, drop, "[DONE] 必须被消费成终止帧")
+				frames = append(frames, frame...)
+				require.Empty(t, m.Finish(), "终止帧已产出，Finish 不得重复收尾")
+			} else {
+				frames = append(frames, m.Finish()...)
+			}
+			usage := lastCompletedUsage(t, frames)
+			got := usage.Get("output_tokens_details.reasoning_tokens")
+			require.True(t, got.Exists(), "终态 usage 必须带 output_tokens_details.reasoning_tokens")
+			require.Equal(t, want, got.Int(), "C15：reasoning_tokens 必须搬上游真值，不得恒写 0")
+			require.Equal(t, int64(20), usage.Get("output_tokens").Int(), "output_tokens 仍应是上游 completion_tokens")
+		})
 	}
 }

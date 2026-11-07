@@ -1,5 +1,5 @@
 event: response.created
-data: {"response":{"created_at":0,"id":"c2","model":"m","object":"response","output":[],"status":"in_progress","usage":null},"type":"response.created"}
+data: {"response":{"id":"c2","model":"m","object":"response","output":[],"status":"in_progress","usage":null},"type":"response.created"}
 
 event: response.output_item.added
 data: {"item":{"id":"rs_c2_0","status":"in_progress","summary":[],"type":"reasoning"},"output_index":0,"type":"response.output_item.added"}
@@ -35,5 +35,5 @@ event: response.output_item.done
 data: {"item":{"arguments":"{}","call_id":"call_1","id":"fc_call_1","name":"f","status":"completed","type":"function_call"},"output_index":2,"type":"response.output_item.done"}
 
 event: response.completed
-data: {"response":{"created_at":0,"id":"c2","model":"m","object":"response","output":[{"id":"rs_c2_0","summary":[{"text":"think","type":"summary_text"}],"type":"reasoning"},{"content":[{"annotations":[],"text":"hi","type":"output_text"}],"id":"msg_c2_1","role":"assistant","status":"completed","type":"message"},{"arguments":"{}","call_id":"call_1","id":"fc_call_1","name":"f","status":"completed","type":"function_call"}],"status":"completed","usage":{"input_tokens":0,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}},"type":"response.completed"}
+data: {"response":{"id":"c2","model":"m","object":"response","output":[{"id":"rs_c2_0","summary":[{"text":"think","type":"summary_text"}],"type":"reasoning"},{"content":[{"annotations":[],"text":"hi","type":"output_text"}],"id":"msg_c2_1","role":"assistant","status":"completed","type":"message"},{"arguments":"{}","call_id":"call_1","id":"fc_call_1","name":"f","status":"completed","type":"function_call"}],"status":"completed","usage":{"input_tokens":0,"input_tokens_details":{"cache_write_tokens":0,"cached_tokens":0},"output_tokens":0,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":0}},"type":"response.completed"}
 

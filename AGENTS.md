@@ -59,7 +59,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 ## CONVENTIONS
 
 - **字节级(gjson)边界按请求/响应分开看**：**请求侧六方向全部字节级**（`internal/protoconv/req_fast.go` 的 `chatToMessRequest`/`messToRespRequest`/`respToMessRequest`，`chat_resp.go` 的 `chatToRespRequest`，`mess_chat_req.go` 的 `messToChatRequest`，`resp_chat_req.go` 的 `respToChatRequest`）；**响应侧只有 chat→resp 字节级**（`respToChatResponse`），`respToMessResponse`/`messToRespResponse`/`messToChatResponse`/`chatToMessResponse`/`chatToRespResponse` 仍是 `decodeObj` 的 map-based——响应侧不对称是有意的，别"统一"
-- **chat 源两方向（mess→chat / resp→chat）的丢弃必须计数**：内容模型判 `polDrop` 的块（document 非纯文本源、search_result、redacted_thinking、file 图片、input_file、加密思考）在转换里走 `noteDrop(dir, field)`，键是 `"<方向>|<字段>"`；有状态字段（`previous_response_id` 等）判 `polReject`，**整请求 400**，不许静默丢
+- **chat 源两方向（mess→chat / resp→chat）的丢弃必须计数**：内容模型判 `polDrop` 的块（document 非纯文本源、search_result、redacted_thinking、file 图片、input_file、加密思考）在转换里走 `noteReqDrop(dir, field)` / `noteRespDrop(dir, field)`（**按面选入口**：请求转换文件用前者、响应转换文件用后者），键是 `"<方向>|<面>|<字段>"`（面 ∈ `req`/`resp`）；有状态字段（`previous_response_id` 等）判 `polReject`，**整请求 400**，不许静默丢
 - **方向命名双轨**：`ProtocolConvertXToY`=客户端说 X 上游说 Y；转换函数按数据流命名(`respToChatResponse`)
 - **base_url 可带协议前缀**（如 `/zen`），但拒绝以 `/v1` 结尾（防 `/v1/v1/...` 404）；openai 族自动补 `/v1`
 - **配置 fail-fast**：未知键、时长<1ms、受控整数<1、占位密钥(change-me 等)全部启动即炸；改 TOML 键名=故意破坏性变更

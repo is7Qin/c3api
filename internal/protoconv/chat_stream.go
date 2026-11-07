@@ -4,9 +4,7 @@
 
 package protoconv
 
-import (
-	"github.com/is7qin/c3api/internal/domain"
-)
+import "github.com/is7qin/c3api/internal/domain"
 
 // chat 上游的 SSE 帧**没有 event: 行、顶层没有 type 字段**（官方 chunk 形如
 // `{"id":…,"object":"chat.completion.chunk","choices":[…]}`），所以现有
@@ -20,10 +18,10 @@ import (
 func (m *StreamMapper) mapChatChunk(data []byte) ([]byte, bool) {
 	if m.done {
 		// 终止帧已产出（[DONE] 或 Finish）：之后到达的任何帧一律丢弃并计数。
-		noteDrop(m.dir, "frame_after_terminal")
+		noteRespDrop(m.dir, "frame_after_terminal")
 		return nil, true
 	}
-	if isDoneData(data) {
+	if string(data) == "[DONE]" { // chat 流的唯一显式终止标记
 		return m.chatTerminal(), false
 	}
 	ev, err := decodeObj(data)
@@ -36,14 +34,6 @@ func (m *StreamMapper) mapChatChunk(data []byte) ([]byte, bool) {
 	return m.chatChunk(ev)
 }
 
-// isDoneData `data: [DONE]` 判定（chat 流的唯一显式终止标记）。
-func isDoneData(data []byte) bool {
-	if len(data) != 6 {
-		return false
-	}
-	return string(data) == "[DONE]"
-}
-
 // chatChunk 一个 chat.completion.chunk → 客户端帧。
 func (m *StreamMapper) chatChunk(ev map[string]any) ([]byte, bool) {
 	if id, ok := str(ev, "id"); ok && m.id == "" {
@@ -52,6 +42,14 @@ func (m *StreamMapper) chatChunk(ev map[string]any) ([]byte, bool) {
 	if model, ok := str(ev, "model"); ok && m.model == "" {
 		m.model = model
 	}
+	// I7：created 的判据是**源帧有没有这个键**，不是值是否为 0 —— 存在才映射成
+	// created_at，缺省就省略该字段（转换器不发明时间戳）。必须在这里、chatStart
+	// 之前读：response.created 首帧就要用到（末帧/EOF 收尾时也已就位）。
+	if !m.createdSet {
+		if v, ok := num(ev, "created"); ok {
+			m.created, m.createdSet = int64(v), true
+		}
+	}
 	// choices 缺失/空 ⇒ 只在 usage 是**对象**时取用量（include_usage 的末帧形态）。
 	// 注意（F17）：开了 include_usage 后其它帧都带 `"usage":null` —— 键存在、值
 	// 为 null，绝不能当用量帧处理，否则每帧都会刷新一次用量。
@@ -59,13 +57,12 @@ func (m *StreamMapper) chatChunk(ev map[string]any) ([]byte, bool) {
 	if !hasChoices || len(choices) == 0 {
 		if u, ok := ev["usage"].(map[string]any); ok && u != nil {
 			m.absorbChatUsage(u)
-			return nil, true
 		}
 		return nil, true
 	}
 	if len(choices) > 1 {
 		for i := 1; i < len(choices); i++ {
-			noteDrop(m.dir, "choices_nonzero")
+			noteRespDrop(m.dir, "choices_nonzero")
 		}
 	}
 	c, _ := choices[0].(map[string]any)
@@ -102,10 +99,10 @@ func (m *StreamMapper) chatStart() []byte {
 	if m.dir == domain.ProtocolConvertRespToChat {
 		return EncodeFrame("response.created", map[string]any{
 			"type": "response.created",
-			"response": map[string]any{
-				"id": m.id, "object": "response", "created_at": 0, "status": "in_progress",
+			"response": m.chatCreatedAt(map[string]any{
+				"id": m.id, "object": "response", "status": "in_progress",
 				"model": m.model, "output": []any{}, "usage": nil,
-			},
+			}),
 		})
 	}
 	return EncodeFrame("message_start", map[string]any{
@@ -223,15 +220,33 @@ func (m *StreamMapper) chatText(t string) []byte {
 // 用，两处写法必须相同，否则同一响应在流式与非流式下 id 不一致。
 func chatFCID(callID string) string { return "fc_" + callID }
 
+// chatToolBlock 一个 chat 工具调用块（内容 index + 元数据 + 已拼好的 arguments）。
+type chatToolBlock struct {
+	idx  int64  // 内容 index（chatAlloc 分配，块列表顺序即分配序）
+	id   string // call_id（迟到时回填）
+	name string // function.name（迟到时回填）
+	args string // arguments 累积
+}
+
 // chatToolCall 工具调用增量。chat 的 tool_calls 分片到达：首片带 id/name，之后
-// 只带 arguments 片段。键用 `tool_calls[i].index`（缺失时按数组下标兜底）——同一
-// 个工具的后续分片必须落回同一个内容块。
+// 只带 arguments 片段。
+//
+// 归并（I5）：块列表 + 一张 index 表，命中顺序 = 按 id 扫块列表 → 按
+// tool_calls[i].index 查表 → 都没有才新开块：
+//   - 同一工具的分片中途改了 index（非规范上游常见）时，按 id 落回原块，
+//     绝不开新块（否则一个应答被切成两个 tool_use）；
+//   - 只带 index、不带 id 的续片凭 index 表落回原块（第三片带的是**新**
+//     index，所以命中分支必须把新 index 登记回原块）；
+//   - 首片没带 id/name（迟到）时，后续分片的 id/name 写回块元数据，
+//     终态 output_item.done / response.completed 才不会带空 id/name。
+//
+// 新块的内容 index 由 chatAlloc 单调分配 ⇒ 块列表顺序即首片到达序，终态
+// output 次序不依赖 map 迭代顺序。
 func (m *StreamMapper) chatToolCall(pos int, tcm map[string]any) []byte {
-	key := intOr0(tcm, "index")
-	if _, ok := tcm["index"]; !ok {
-		key = int64(pos)
+	key := int64(pos)
+	if _, ok := tcm["index"]; ok {
+		key = intOr0(tcm, "index")
 	}
-	idx, seen := m.toolIdx[key]
 	id, _ := str(tcm, "id")
 	name := ""
 	args := ""
@@ -239,67 +254,111 @@ func (m *StreamMapper) chatToolCall(pos int, tcm map[string]any) []byte {
 		name, _ = str(fn, "name")
 		args, _ = str(fn, "arguments")
 	}
-	if !seen {
-		idx = m.chatAlloc()
-		m.toolIdx[key] = idx
-		m.blockStarted[idx] = true
-		m.fcIDs[idx] = id
-		m.fcNames[idx] = name
-		m.argsByIndex[idx] = args
-		if m.dir == domain.ProtocolConvertRespToChat {
-			out := EncodeFrame("response.output_item.added", map[string]any{
-				"type": "response.output_item.added", "output_index": idx,
-				"item": map[string]any{
-					"id": chatFCID(id), "type": "function_call", "call_id": id,
-					"name": name, "arguments": "", "status": "in_progress",
-				},
-			})
-			if args == "" {
-				return out
+	// 归并顺序：id 扫块列表 → index 表 → 都没有才新开块。空 id 的块不参与 id
+	// 命中（判据 b.id != ""），否则后续同样不带 id 的分片会撞上这个空键。
+	bi := -1
+	if id != "" {
+		for i, b := range m.tools {
+			if b.id != "" && b.id == id {
+				bi = i
+				break
 			}
-			return append(out, EncodeFrame("response.function_call_arguments.delta", map[string]any{
-				"type": "response.function_call_arguments.delta", "item_id": chatFCID(id),
-				"output_index": idx, "delta": args,
-			})...)
 		}
-		out := EncodeFrame("content_block_start", map[string]any{
-			"type": "content_block_start", "index": idx,
-			"content_block": map[string]any{"type": "tool_use", "id": id, "name": name, "input": map[string]any{}},
+	}
+	if bi < 0 {
+		if i, ok := m.toolIdx[key]; ok {
+			bi = i
+		}
+	}
+	if bi >= 0 {
+		b := m.tools[bi]
+		// 同一块可能被多个 chat index 指着：新 index 也必须登记，只带新 index、
+		// 不带 id 的续片才落得回原块。
+		m.toolIdx[key] = bi
+		// 迟到的 id/name 回填（终态 item 不能带空值）。
+		if b.id == "" {
+			b.id = id
+		}
+		if b.name == "" {
+			b.name = name
+		}
+		if args == "" {
+			return nil
+		}
+		b.args += args
+		if m.dir == domain.ProtocolConvertRespToChat {
+			return EncodeFrame("response.function_call_arguments.delta", map[string]any{
+				"type": "response.function_call_arguments.delta", "item_id": chatFCID(b.id),
+				"output_index": b.idx, "delta": args,
+			})
+		}
+		return EncodeFrame("content_block_delta", map[string]any{
+			"type": "content_block_delta", "index": b.idx,
+			"delta": map[string]any{"type": "input_json_delta", "partial_json": args},
+		})
+	}
+	b := &chatToolBlock{idx: m.chatAlloc(), id: id, name: name, args: args}
+	m.tools = append(m.tools, b)
+	m.toolIdx[key] = len(m.tools) - 1
+	// mess 目标的 content_block_stop 由这张表驱动（closeOpenBlocks）。
+	m.blockStarted[b.idx] = true
+	if m.dir == domain.ProtocolConvertRespToChat {
+		out := EncodeFrame("response.output_item.added", map[string]any{
+			"type": "response.output_item.added", "output_index": b.idx,
+			"item": map[string]any{
+				"id": chatFCID(b.id), "type": "function_call", "call_id": b.id,
+				"name": b.name, "arguments": "", "status": "in_progress",
+			},
 		})
 		if args == "" {
 			return out
 		}
-		return append(out, EncodeFrame("content_block_delta", map[string]any{
-			"type": "content_block_delta", "index": idx,
-			"delta": map[string]any{"type": "input_json_delta", "partial_json": args},
+		return append(out, EncodeFrame("response.function_call_arguments.delta", map[string]any{
+			"type": "response.function_call_arguments.delta", "item_id": chatFCID(b.id),
+			"output_index": b.idx, "delta": args,
 		})...)
 	}
-	if args == "" {
-		return nil
-	}
-	if id == "" {
-		id = m.fcIDs[idx]
-	}
-	m.argsByIndex[idx] += args
-	if m.dir == domain.ProtocolConvertRespToChat {
-		return EncodeFrame("response.function_call_arguments.delta", map[string]any{
-			"type": "response.function_call_arguments.delta", "item_id": chatFCID(id),
-			"output_index": idx, "delta": args,
-		})
-	}
-	return EncodeFrame("content_block_delta", map[string]any{
-		"type": "content_block_delta", "index": idx,
-		"delta": map[string]any{"type": "input_json_delta", "partial_json": args},
+	out := EncodeFrame("content_block_start", map[string]any{
+		"type": "content_block_start", "index": b.idx,
+		"content_block": map[string]any{"type": "tool_use", "id": b.id, "name": b.name, "input": map[string]any{}},
 	})
+	if args == "" {
+		return out
+	}
+	return append(out, EncodeFrame("content_block_delta", map[string]any{
+		"type": "content_block_delta", "index": b.idx,
+		"delta": map[string]any{"type": "input_json_delta", "partial_json": args},
+	})...)
+}
+
+// chatCreatedAt 只在源帧携带过 created 时写 created_at（I7）。
+func (m *StreamMapper) chatCreatedAt(obj map[string]any) map[string]any {
+	if m.createdSet {
+		obj["created_at"] = m.created
+	}
+	return obj
 }
 
 // absorbChatUsage 累加 chat 用量（覆盖语义：后到的末帧覆盖先到的值）。
+//
+// C15：completion_tokens_details.reasoning_tokens 必须真读真传 —— resp 客户端的
+// output_tokens_details.reasoning_tokens 是计费/观测口径，恒写 0 等于把上游的
+// 思考用量抹掉。Messages 协议**没有**这个承载位，故 chat→mess 方向改为丢弃计数
+// （键 `reasoning_tokens`，方向取本 mapper 的实际方向常量，与 chat_upstream_resp.go
+// 的非流式同向计数一致）。
 func (m *StreamMapper) absorbChatUsage(u map[string]any) {
 	m.it = intOr0(u, "prompt_tokens")
 	m.ot = intOr0(u, "completion_tokens")
 	if d, ok := u["prompt_tokens_details"].(map[string]any); ok && d != nil {
 		m.cached = intOr0(d, "cached_tokens")
 		m.cacheCreate = intOr0(d, "cache_write_tokens")
+	}
+	if d, ok := u["completion_tokens_details"].(map[string]any); ok && d != nil {
+		if _, has := d["reasoning_tokens"]; has {
+			// 只记录**值**。丢弃计数在终态（messUsageOf）做一次：逐帧计会把
+			// 「上游在每个 usage 帧都重复该明细」重复计成多次。
+			m.reasoningTokens = intOr0(d, "reasoning_tokens")
+		}
 	}
 }
 
@@ -318,11 +377,11 @@ func (m *StreamMapper) chatTerminal() []byte {
 		return m.chatRespTerminal()
 	}
 	out := m.chatStart()
-	out = append(out, m.closeChatBlocks()...)
+	out = append(out, m.closeOpenBlocks()...)
 	out = append(out, EncodeFrame("message_delta", map[string]any{
 		"type":  "message_delta",
 		"delta": map[string]any{"stop_reason": messStopFromChat(m.stopReason), "stop_sequence": nil},
-		"usage": m.chatMessUsage(),
+		"usage": messUsageOf(m.chatUsage(), m.dir),
 	})...)
 	return append(out, EncodeFrame("message_stop", map[string]any{"type": "message_stop"})...)
 }
@@ -341,15 +400,7 @@ func (m *StreamMapper) chatRespTerminal() []byte {
 		})...)
 	}
 	status, incomplete := chatRespStatus(m.stopReason)
-	// output 必须是 JSON 数组（[]any），不能是 []map[string]any 的接口值。
-	output := make([]any, 0, len(items))
-	for _, it := range items {
-		output = append(output, it)
-	}
-	resp := map[string]any{
-		"id": m.id, "object": "response", "created_at": 0, "status": status,
-		"model": m.model, "output": output, "usage": m.chatRespUsage(),
-	}
+	resp := m.chatRespEnvelope(status, items)
 	if incomplete != "" {
 		resp["incomplete_details"] = map[string]any{"reason": incomplete}
 	}
@@ -358,8 +409,25 @@ func (m *StreamMapper) chatRespTerminal() []byte {
 	})...)
 }
 
-// chatRespItems 已累积的 resp output 项（顺序：reasoning → message → function_call，
-// 与流内 added 的先后一致）。`__index` 是内部携带的 output_index（发帧时移除）。
+// chatRespEnvelope 终态 response 对象（completed / failed **同构**，I2）：output
+// 为已累积项快照（调用方已剥离 __index）、usage 为累计值。created_at 只在源帧
+// 携带过 created 时出现（I7：缺省不写、不编造）。
+func (m *StreamMapper) chatRespEnvelope(status string, items []map[string]any) map[string]any {
+	// output 必须是 JSON 数组（[]any），不能是 []map[string]any 的接口值。
+	output := make([]any, 0, len(items))
+	for _, it := range items {
+		output = append(output, it)
+	}
+	return m.chatCreatedAt(map[string]any{
+		"id": m.id, "object": "response", "status": status,
+		"model": m.model, "output": output, "usage": respUsageOf(m.chatUsage(), m.dir),
+	})
+}
+
+// chatRespItems 已累积的 resp output 项（顺序：reasoning → message → 工具块）。
+// 工具块按块列表序（= 内容 index 分配序 = 首片到达序）：绝不依赖 map 迭代顺序
+// （否则多个工具的输出次序每次跑都不同）。`__index` 是内部携带的 output_index
+// （发帧时移除）。
 func (m *StreamMapper) chatRespItems() []map[string]any {
 	var out []map[string]any
 	if m.thinkIdx >= 0 {
@@ -382,91 +450,75 @@ func (m *StreamMapper) chatRespItems() []map[string]any {
 			}},
 		})
 	}
-	for key, idx := range m.toolIdx {
-		id := m.fcIDs[idx]
+	for _, b := range m.tools {
 		out = append(out, map[string]any{
-			"__index": idx, "id": chatFCID(id), "type": "function_call",
-			"call_id": id, "name": m.fcNames[idx], "arguments": m.argsByIndex[idx],
+			"__index": b.idx, "id": chatFCID(b.id), "type": "function_call",
+			"call_id": b.id, "name": b.name, "arguments": b.args,
 			"status": "completed",
 		})
-		_ = key
 	}
 	return out
 }
 
-// closeChatBlocks mess 目标的关块：按 index 升序补 content_block_stop。
-func (m *StreamMapper) closeChatBlocks() []byte {
-	return m.closeOpenBlocks()
-}
-
-// chatMessUsage mess 目标的终态用量（三项恒写 + net 口径）。
-func (m *StreamMapper) chatMessUsage() map[string]any {
-	net := respInputNet(m.it, m.cached, m.cacheCreate)
-	if m.it < m.cached+m.cacheCreate {
-		noteDrop(m.dir, "usage_negative_clamped")
-	}
-	return map[string]any{
-		"input_tokens":                net,
-		"cache_read_input_tokens":     m.cached,
-		"cache_creation_input_tokens": m.cacheCreate,
-		"output_tokens":               m.ot,
-	}
-}
-
-// chatRespUsage resp 目标的终态用量（input_tokens_details 两键恒写）。
-func (m *StreamMapper) chatRespUsage() map[string]any {
-	net := respInputNet(m.it, m.cached, m.cacheCreate)
-	if m.it < m.cached+m.cacheCreate {
-		noteDrop(m.dir, "usage_negative_clamped")
-	}
-	return map[string]any{
-		"input_tokens": net,
-		"input_tokens_details": map[string]any{
-			"cached_tokens":      m.cached,
-			"cache_write_tokens": m.cacheCreate,
-		},
-		"output_tokens":         m.ot,
-		"total_tokens":          net + m.ot,
-		"output_tokens_details": map[string]any{"reasoning_tokens": 0},
+// chatUsage 当前累计值 → chatUsage（非流式侧从 JSON 读，流式侧从这里读）。
+// 口径（net 钳 0 计数、reasoning_tokens 丢弃计数）全部在 messUsageOf/respUsageOf
+// 里，与非流式共用同一份判据。
+func (m *StreamMapper) chatUsage() chatUsage {
+	return chatUsage{
+		gross: m.it, cached: m.cached, write: m.cacheCreate,
+		out: m.ot, reasoning: m.reasoningTokens,
 	}
 }
 
 // chatError 上游 error 帧 → 客户端错误帧（先关块再报，客户端才不会停在半截块）。
+//
+// 终态形态按目标协议（I2）：
+//   - resp 目标：`response.failed`（response 与 completed **同构**：带累计 output /
+//     usage / created_at，status:"failed"，error 里带 code+message）。只发这一条
+//     错误事件，且 m.done 已置位 ⇒ 之后不会再有 response.completed（客户端拿得到
+//     失败终态，而不是「一个通用 error + 静默结束」）；
+//   - mess 目标：保持原样的 error 事件（`{type, error:{type, message}}`），位置在
+//     关块之后（等价于 stop 帧之前）。
 func (m *StreamMapper) chatError(e map[string]any) []byte {
 	if m.done {
-		noteDrop(m.dir, "frame_after_terminal")
+		noteRespDrop(m.dir, "frame_after_terminal")
 		return nil
 	}
 	m.done = true
 	m.ensureChat()
 	msg, _ := str(e, "message")
 	if m.dir == domain.ProtocolConvertRespToChat {
+		items := m.chatRespItems()
+		for _, it := range items {
+			delete(it, "__index")
+		}
+		resp := m.chatRespEnvelope("failed", items)
+		code, _ := str(e, "code")
+		if code == "" {
+			code = "upstream_error"
+		}
+		resp["error"] = map[string]any{"code": code, "message": msg}
 		out := m.chatStart()
-		return append(out, EncodeFrame("error", map[string]any{
-			"type": "error", "code": "api_error", "message": msg,
+		return append(out, EncodeFrame("response.failed", map[string]any{
+			"type": "response.failed", "response": resp,
 		})...)
 	}
 	out := m.chatStart()
-	out = append(out, m.closeChatBlocks()...)
+	out = append(out, m.closeOpenBlocks()...)
 	return append(out, EncodeFrame("error", map[string]any{
 		"type": "error", "error": map[string]any{"type": "api_error", "message": msg},
 	})...)
 }
 
-// ensureChat chat 源方向的块状态懒初始化（与 ensureBlocks 同构，另加工具索引表）。
+// ensureChat chat 源方向的块状态懒初始化（与 ensureBlocks 同构）。
 func (m *StreamMapper) ensureChat() {
 	if m.toolIdx != nil {
 		return
 	}
 	m.ensureBlocks()
-	m.toolIdx = map[int64]int64{}
+	m.toolIdx = map[int64]int{}
 	m.thinkIdx = -1
 	m.textIdx = -1
-}
-
-// chatStreamUsage 当前累计的 chat 用量（测试读；映射本身不依赖它）。
-func (m *StreamMapper) chatStreamUsage() (it, ot, cached, write int64) {
-	return m.it, m.ot, m.cached, m.cacheCreate
 }
 
 // chatAlloc 单调分配内容 index（text / thinking / tool_use 共用一张表，与

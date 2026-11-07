@@ -108,9 +108,20 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 或某些实现在最后一帧后直接 FIN）。不给客户端补终止帧的后果：mess 侧
 		// 永远收不到 message_stop、resp 侧永远收不到 response.completed，客户端
 		// 只能靠超时判死。Finish 内部按 m.done 去重 ⇒ 与 [DONE] 恰好二选一。
+		//
+		// I1：终止帧同样要过 rewriteConvertedFrames —— 它内部是
+		// `response.completed.response.model`，不过这里就会被写成**上游**模型名，
+		// 而同一流前面的帧（response.created 等）已是客户端模型名，客户端读到的
+		// 模型名前后不一致。与 Mapper 分支同一处改写、同一判空。
 		var terminal func() []byte
 		if isChatSource(c.dir) {
-			terminal = func() []byte { return mapper.Finish() }
+			terminal = func() []byte {
+				fin := mapper.Finish()
+				if len(fin) == 0 || clientModel == "" {
+					return fin
+				}
+				return rewriteConvertedFrames(fin, clientModel)
+			}
 		}
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Output:   out,

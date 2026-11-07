@@ -33,7 +33,7 @@ func chatToMessResponse(body []byte) ([]byte, error) {
 		"content":       chatToMessBlocks(inner),
 		"stop_reason":   messStopFromChat(chatFinishReason(choice)),
 		"stop_sequence": nil,
-		"usage":         messUsageFromChat(msg, domain.ProtocolConvertMessToChat),
+		"usage":         messUsageOf(chatUsageFrom(msg), domain.ProtocolConvertMessToChat),
 	}
 	return json.Marshal(out)
 }
@@ -57,7 +57,7 @@ func chatToRespResponse(body []byte) ([]byte, error) {
 		"object": "response",
 		"model":  model,
 		"output": chatToRespOutput(id, inner),
-		"usage":  respUsageFromChat(msg, domain.ProtocolConvertRespToChat),
+		"usage":  respUsageOf(chatUsageFrom(msg), domain.ProtocolConvertRespToChat),
 	}
 	if created, ok := msg["created"]; ok && created != nil {
 		out["created_at"] = created
@@ -75,7 +75,7 @@ func chatToRespResponse(body []byte) ([]byte, error) {
 func chatChoice0(msg map[string]any, dir domain.ProtocolConvert) map[string]any {
 	for _, f := range []string{"system_fingerprint", "service_tier"} {
 		if v, ok := msg[f]; ok && v != nil {
-			noteDrop(dir, f)
+			noteRespDrop(dir, f)
 		}
 	}
 	choices, ok := arr(msg, "choices")
@@ -84,7 +84,7 @@ func chatChoice0(msg map[string]any, dir domain.ProtocolConvert) map[string]any 
 	}
 	if len(choices) > 1 {
 		for i := 1; i < len(choices); i++ {
-			noteDrop(dir, "choices_nonzero")
+			noteRespDrop(dir, "choices_nonzero")
 		}
 	}
 	c, _ := choices[0].(map[string]any)
@@ -92,7 +92,7 @@ func chatChoice0(msg map[string]any, dir domain.ProtocolConvert) map[string]any 
 		return map[string]any{}
 	}
 	if v, ok := c["logprobs"]; ok && v != nil {
-		noteDrop(dir, "logprobs")
+		noteRespDrop(dir, "logprobs")
 	}
 	return c
 }
@@ -159,7 +159,7 @@ func chatToolCallToMessBlock(tc map[string]any) map[string]any {
 		if ok {
 			parsed, ok := parseArgsObject(args)
 			if !ok {
-				noteDrop(domain.ProtocolConvertMessToChat, "bad_tool_arguments")
+				noteRespDrop(domain.ProtocolConvertMessToChat, "bad_tool_arguments")
 			}
 			input = parsed
 		}
@@ -187,8 +187,13 @@ func parseArgsObject(v any) (any, bool) {
 
 // chatToRespOutput chat assistant message → Responses 的 output[]（顺序
 // reasoning → message → function_call）。
+//
+// `output` 恒为**数组**（I6）：空响应（无文本、无 reasoning、无 tool_calls）
+// 也必须是 `[]`，不是 `null` —— nil `[]any` 经 json.Marshal 得 `null`，而 spec
+// 规定 Responses 的 `output` 是数组，客户端与官方 SDK 按数组反序列化，`null`
+// 直接是协议错。故用 make 初始化成空切片，**不得**退回 `var out []any`。
 func chatToRespOutput(id string, m map[string]any) []any {
-	var out []any
+	out := make([]any, 0, 3)
 	if t, ok := str(m, "reasoning_content"); ok && t != "" {
 		out = append(out, map[string]any{
 			"type": "reasoning",
@@ -220,12 +225,14 @@ func chatToRespOutput(id string, m map[string]any) []any {
 		}
 		callID, _ := str(tcm, "id")
 		name := ""
-		args := "{}"
+		// arguments 是「装着 JSON 的字符串」，Responses 侧的 function_call
+		// 要求**原样字符串**（spec §5.2）且不得编造（§7）：缺失/非字符串 →
+		// 空串 ""，空串照样原样透传。绝不在这里补 `{}`（补出来的 `{}` 是
+		// 客户端从未见过的参数，工具侧会按空参数执行）。
+		args := ""
 		if fn, ok := tcm["function"].(map[string]any); ok && fn != nil {
 			name, _ = str(fn, "name")
-			if a, ok := str(fn, "arguments"); ok && a != "" {
-				args = a
-			}
+			args, _ = str(fn, "arguments")
 		}
 		out = append(out, map[string]any{
 			"type": "function_call", "id": callID, "call_id": callID,
@@ -297,25 +304,23 @@ func chatUsageOf(m map[string]any) (chatUsage, bool) {
 func (u chatUsage) net(dir domain.ProtocolConvert) int64 {
 	net := respInputNet(u.gross, u.cached, u.write)
 	if u.gross < u.cached+u.write {
-		noteDrop(dir, "usage_negative_clamped")
+		noteRespDrop(dir, "usage_negative_clamped")
 	}
 	return net
 }
 
-// messUsageFromChat chat usage → Anthropic usage：三项恒写（含 0）。
+// messUsageOf chat usage → Anthropic usage：三项恒写（含 0）。
 // billing/cost.go 按 net + cache_read + cache_creation 分别计价，缺键即漏计。
-func messUsageFromChat(m map[string]any, dir domain.ProtocolConvert) map[string]any {
-	u, ok := chatUsageOf(m)
-	if !ok {
-		u = chatUsage{} // 上游没给 usage：三项恒写 0，绝不留缺键
-	}
-	if raw, ok := m["usage"].(map[string]any); ok && raw != nil {
-		if d, ok := raw["completion_tokens_details"].(map[string]any); ok && d != nil {
-			if _, has := d["reasoning_tokens"]; has {
-				// Messages 的 usage 没有推理 token 明细位；有值就必须可见。
-				noteDrop(dir, "reasoning_tokens")
-			}
-		}
+//
+// 这是 mess 目标**唯一**的用量构建器：流式（StreamMapper.chatMessUsage）与非流式
+// （messUsageFromChat）都走它，于是 net 钳 0 的计数与 reasoning_tokens 的丢弃计数
+// 只有一份判据（此前流式只在非零时计、非流式键存在就计 —— 同一份上游 payload
+// 会得到两种计数）。
+func messUsageOf(u chatUsage, dir domain.ProtocolConvert) map[string]any {
+	if u.reasoning != 0 {
+		// Messages 的 usage 没有推理 token 明细位；有**实际消耗**就必须可见
+		// （值为 0 不构成信息丢失，不计数）。
+		noteRespDrop(dir, "reasoning_tokens")
 	}
 	return map[string]any{
 		"input_tokens":                u.net(dir),
@@ -325,13 +330,12 @@ func messUsageFromChat(m map[string]any, dir domain.ProtocolConvert) map[string]
 	}
 }
 
-// respUsageFromChat chat usage → Responses usage。
+// respUsageOf chat usage → Responses usage。
 //
 // `input_tokens_details` 的**两个键恒写（含 0）**：这是官方必填语义（F14），
 // 与既有 respInputDetails（"write 仅 >0 时写"）故意不同 —— 旧方向不动，新方向
-// 按官方来。
-func respUsageFromChat(m map[string]any, dir domain.ProtocolConvert) map[string]any {
-	u, _ := chatUsageOf(m)
+// 按官方来。Responses 有 reasoning_tokens 的承载位，故不丢弃、原值搬。
+func respUsageOf(u chatUsage, dir domain.ProtocolConvert) map[string]any {
 	net := u.net(dir)
 	return map[string]any{
 		"input_tokens": net,
@@ -343,4 +347,11 @@ func respUsageFromChat(m map[string]any, dir domain.ProtocolConvert) map[string]
 		"total_tokens":          net + u.out,
 		"output_tokens_details": map[string]any{"reasoning_tokens": u.reasoning},
 	}
+}
+
+// chatUsageFrom 非流式：读 chat 响应的 usage 分量。上游没给 usage 时返回零值
+// （三个键照样恒写 0，绝不留缺键 —— 缺键即漏计费）。
+func chatUsageFrom(m map[string]any) chatUsage {
+	u, _ := chatUsageOf(m)
+	return u
 }

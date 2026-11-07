@@ -152,12 +152,22 @@ func TestMembersTSVInSync(t *testing.T) {
 	}
 
 	// (a)③ members.tsv 的 AnchorRef ↔ anchors.tsv 的 (dir, member) 双向 ElementsMatch
+	//
+	// **只对内容模型的三份规范生效**：spec §8(m) 的 contract_client_to_chat 锚点
+	// 指向契约表的**物理行**（`line` 是 TSV 行号、`member` 存 rule_id），不属于
+	// members.tsv 的成员全集；它由 contract_client_to_chat_test.go 的
+	// TestContractAnchorsVerified 单独核验（行存在性 / excerpt ⊆ expect / rule_id
+	// 是 assertRule 实参）。把两类锚点混在一起比对，会让"合同表加一行"这种
+	// 无关改动把成员表门禁打红。
 	var fromMembers, fromAnchors []string
 	for _, f := range rows {
 		fromMembers = append(fromMembers, f[4])
 	}
 	for _, f := range tsvRows(t, "testdata/spec/anchors.tsv") {
 		require.Len(t, f, 5, "anchors.tsv 每行五列：dir/member/spec_file/line/excerpt")
+		if f[2] == contractSpecFile {
+			continue
+		}
 		key := f[0] + "/" + f[1]
 		require.False(t, seenAnchor[key], "anchor 重复：%s", key)
 		seenAnchor[key] = true
@@ -168,7 +178,13 @@ func TestMembersTSVInSync(t *testing.T) {
 	// (a)④ anchors ⊆ excerpts（逐三元组）⑤ excerpts 每条至少被用一次 ⑥ 片段 ≤120B
 	used := map[string]bool{}
 	for _, f := range tsvRows(t, "testdata/spec/anchors.tsv") {
-		require.Contains(t, []string{"resp", "mess", "chat"}, f[2], "spec_file 只能是三份规范之一")
+		require.Contains(t, []string{"resp", "mess", "chat", contractSpecFile}, f[2],
+			"spec_file 只能是三份内容模型规范或契约表（§8(d) 白名单）")
+		if f[2] == contractSpecFile {
+			// 契约锚点的 excerpt 来自契约表 expect 列，与 excerpts.tsv 无关。
+			require.LessOrEqual(t, len(f[4]), 120, "anchor 片段必须 ≤120B：%s", f[1])
+			continue
+		}
 		triple := f[2] + "\t" + f[3] + "\t" + f[4]
 		used[triple] = true
 		require.LessOrEqual(t, len(f[4]), 120, "anchor 片段必须 ≤120B：%s", f[1])
