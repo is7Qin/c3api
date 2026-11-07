@@ -65,8 +65,17 @@ const fmtPricePerM = (millis: number): string => {
 const fmtPricePerUnit = (millis: number): string => {
   const usd = millis / 100_000
   if (usd === 0) return '$0'
-  return `$${(usd >= 0.01 ? usd.toFixed(4) : usd.toFixed(6)).replace(/\.?0+$/, '')}`
+  return `$${(usd >= 0.01 ? usd.toFixed(4) : usd.toFixed(6)).replace(/0+$/, '').replace(/\.$/, '')}`
 }
+
+// token 四件套全 0（openai-search 恒如此；上游未报 usage 的图片行亦然）时，
+// 悬停窗只呈现按次/成本/档位——外层门必须一并认按次，否则 ⓘ 不存在，按次行即死代码。
+const hasTokenUsage = (l: {
+  InputTokens?: number
+  OutputTokens?: number
+  CacheReadTokens?: number
+  CacheCreationTokens?: number
+}): boolean => !!(l.InputTokens || l.OutputTokens || l.CacheReadTokens || l.CacheCreationTokens)
 
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
@@ -282,8 +291,9 @@ export default function UserLogs() {
                   <TableCell><ErrorTypeBadge type={l.ErrorType} /></TableCell>
                   {/* token 合并列（管理端同款）：↓输入 ↑输出 + cache 第二行 + ⓘ 悬停大卡 */}
                   <TableCell className="text-right font-medium tabular-nums">
-                    {l.InputTokens || l.OutputTokens || l.CacheReadTokens || l.CacheCreationTokens ? (
+                    {hasTokenUsage(l) || (l.CallCount ?? 0) > 0 ? (
                       <span className="inline-flex items-center justify-end gap-1.5">
+                        {hasTokenUsage(l) && (
                         <span className="space-y-0.5 text-xs text-right">
                           <span className="inline-flex items-center gap-2 text-muted-foreground">
                             <span className="inline-flex items-center gap-0.5">
@@ -301,12 +311,14 @@ export default function UserLogs() {
                             </div>
                           ) : null}
                         </span>
+                        )}
                         <Tooltip>
                           <TooltipTrigger delay={0} render={<span className="inline-flex -m-1 size-4 shrink-0 cursor-help items-center justify-center rounded-full bg-muted p-1 text-muted-foreground text-[10px] leading-none" />}>
                             i
                           </TooltipTrigger>
                           <TooltipContent className="max-w-xs border bg-popover p-0 text-popover-foreground shadow-lg">
                             <div className="space-y-1.5 p-3 text-xs">
+                              {hasTokenUsage(l) && (<>
                               <div className="flex items-center justify-between gap-6">
                                 <span className="text-muted-foreground">{t('logs.tokens.input')}</span>
                                 <span className="flex items-baseline gap-2">
@@ -339,6 +351,7 @@ export default function UserLogs() {
                                   </span>
                                 </div>
                               ) : null}
+                              </>)}
                               {l.CallCount != null && l.CallCount > 0 && l.PricePerCallMillis != null && (
                                 <div className="flex items-center justify-between gap-6">
                                   <span className="text-muted-foreground">{t('logs.tokens.calls')}</span>
@@ -347,12 +360,14 @@ export default function UserLogs() {
                                   </span>
                                 </div>
                               )}
+                              {hasTokenUsage(l) && (
                               <div className="flex items-center justify-between gap-6 border-t pt-1.5">
                                 <span className="text-muted-foreground">{t('logs.tokens.total')}</span>
                                 <span className="font-semibold tabular-nums">
                                   {((l.InputTokens ?? 0) + (l.OutputTokens ?? 0) + (l.CacheReadTokens ?? 0) + (l.CacheCreationTokens ?? 0)).toLocaleString()}
                                 </span>
                               </div>
+                              )}
                               {/* A 原始成本（乘倍率前，毫分 → USD）；RawCost 0 = 未计费路径不显示 */}
                               {l.RawCost != null && l.RawCost > 0 && (
                                 <div className="flex items-center justify-between gap-6 border-t pt-1.5">
