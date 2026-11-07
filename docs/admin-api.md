@@ -11,7 +11,7 @@
 - **ID**：路径参数 `{id}` 为模板/账号/分组的整数 ID。
 - **更新语义**：`PUT` 为**全量替换**——请求体中的字段整体覆盖，未提供的字段清零（仅提供部分字段的 `PUT` 会把缺失字段重置为空/零值）。批量 `batch-update` 为**部分更新**（只改 `fields` 中提供的字段）。
 - **列表响应**：templates / accounts / groups 三个旧端点统一返回 `{"total": <满足筛选的总数>, "rows": [...]}`，支持 `limit` / `offset` 分页、筛选参数与白名单 `sort` / `order` 排序（非法 `sort` / `order` → `400`）。兑换码与模型价格为**增强分页范式**（`page` / `page_size`，1-based），见对应章节。
-- **金额单位（两个面，勿混）**：**明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs` 的 `Cost` / `RawCost`、价格快照 `Price*Millis`（每 M token 毫分）、key 的 `Quota` / `QuotaUsed`、`/routing/frontier` 的 `input_unit_cost`（毫分/1M 输入侧 token）；这些字段在 API 边界**原样下发，不做换算**。**聚合/账户面恒为 USD float64**——`users.balance`、`temp_balances.amount_usd` / `total_usd`、兑换码 `value`、`/stats/*` 与 `/overview` 的 `Cost` / `cost_usd` / `raw_cost_usd`；这些字段由服务端按 `毫分 / 1e5` 换算后下发。同一含义在两面的类型与量纲不同（如 `usage_logs.Cost` 是毫分 int64，`/stats/trend` 的 `Cost` 是 USD float64），客户端不得跨面直接比较或相加。
+- **金额单位（两个面，勿混）**：**明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs` 的 `Cost` / `RawCost`、价格快照 `Price*Millis`（**token 侧**每 M token 毫分；`PricePerCallMillis` 例外——**毫分/单元**：search 每次 / 图片每张，**不除 1e6**）、key 的 `Quota` / `QuotaUsed`、`/routing/frontier` 的 `input_unit_cost`（毫分/1M 输入侧 token）；这些字段在 API 边界**原样下发，不做换算**。**聚合/账户面恒为 USD float64**——`users.balance`、`temp_balances.amount_usd` / `total_usd`、兑换码 `value`、`/stats/*` 与 `/overview` 的 `Cost` / `cost_usd` / `raw_cost_usd`；这些字段由服务端按 `毫分 / 1e5` 换算后下发。同一含义在两面的类型与量纲不同（如 `usage_logs.Cost` 是毫分 int64，`/stats/trend` 的 `Cost` 是 USD float64），客户端不得跨面直接比较或相加。
 
 ## 枚举值
 
@@ -846,6 +846,8 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 |---|---|---|
 | `Cost` | int64 | 计费成本（**毫分**，1 USD = 100,000 毫分）；放行路径行可为 0（免费分组/0 token） |
 | `RawCost` | int64 | 原始成本（**毫分**，乘倍率前——免费组 `Cost`=0 但 `RawCost` 有值，"实际消耗"口径）；bill 未装配/无价防御路径恒 0 |
+| `CallCount` | int64 | 按次分量计数：图片生成 = 张数、search = 1；**不入** `TotalTokens`；0 = 无按次分量 |
+| `PricePerCallMillis` | int64 | 按单元价快照（**毫分/单元**——search 每次 / 图片每张，**不按**每 M token 口径除 1e6）；nullable，null = 无按单元分量 |
 | `BillingTier` | string | 请求 `service_tier` 归一化值：`priority` / `flex` / `fast` / `auto`（未知/空值归一 auto）；空 = 未计费路径（billing 关闭或未鉴权） |
 | `AboveHit` | bool | 任一分量超 `above_threshold` 命中分段计价 |
 | `Overdraft` | bool | 本次扣费透支（余额不足扣为负余额；`[billing]` 开启且允许透支时可能为 true） |
