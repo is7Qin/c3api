@@ -834,7 +834,10 @@ export default {
       "total": "总计",
       "cacheRead": "缓存读",
       "cacheWrite": "缓存写",
-      "rawCost": "原始成本"
+      "rawCost": "原始成本",
+      "calls": "按次",
+      "unitImage": "张",
+      "unitCall": "次"
     },
     "latency": {
       "ttft": "TTFT",

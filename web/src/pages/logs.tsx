@@ -64,6 +64,13 @@ const fmtPricePerM = (millis: number): string => {
   return `$${s}/M`
 }
 
+// 按次/按张单价：毫分/单元 → USD/单元（≥0.01 四位小数，否则六位，去尾零；0 = 免费，显示 $0）。
+const fmtPricePerUnit = (millis: number): string => {
+  const usd = millis / 100_000
+  if (usd === 0) return '$0'
+  return `$${(usd >= 0.01 ? usd.toFixed(4) : usd.toFixed(6)).replace(/\.?0+$/, '')}`
+}
+
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
 const FORMAT_ALL = '__all__'
@@ -636,6 +643,14 @@ export default function Logs() {
                                   </span>
                                 </div>
                               ) : null}
+                              {l.CallCount != null && l.CallCount > 0 && l.PricePerCallMillis != null && (
+                                <div className="flex items-center justify-between gap-6">
+                                  <span className="text-muted-foreground">{t('logs.tokens.calls')}</span>
+                                  <span className="font-medium tabular-nums">
+                                    {l.CallCount.toLocaleString()} × {fmtPricePerUnit(l.PricePerCallMillis)}/{t(l.Format === 'openai-search' ? 'logs.tokens.unitCall' : 'logs.tokens.unitImage')}
+                                  </span>
+                                </div>
+                              )}
                               <div className="flex items-center justify-between gap-6 border-t pt-1.5">
                                 <span className="text-muted-foreground">{t('logs.tokens.total')}</span>
                                 {/* 动态求和（不依赖 TotalTokens 字段——某行该字段缺失/为 null 时总计仍正确） */}

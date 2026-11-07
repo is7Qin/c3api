@@ -3795,6 +3795,16 @@ export interface components {
             PriceCacheCreationMillis?: number | null;
             /**
              * Format: int64
+             * @description 按次调用计数（图片生成 = 张数、search = 1；不入 TotalTokens）；0 = 无按次分量
+             */
+            CallCount?: number;
+            /**
+             * Format: int64
+             * @description 按单元价快照（毫分/单元——search 每次 / 图片每张；per-call 计费不走 /1e6 除法）；null = 无按单元分量
+             */
+            PricePerCallMillis?: number | null;
+            /**
+             * Format: int64
              * @description 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0
              */
             Cost?: number;
@@ -3872,6 +3882,16 @@ export interface components {
              * @description 缓存写单价快照（每 M token 毫分）；null = 该请求无缓存写或无缓存价
              */
             PriceCacheCreationMillis?: number | null;
+            /**
+             * Format: int64
+             * @description 按次调用计数（图片生成 = 张数、search = 1；不入 TotalTokens）；0 = 无按次分量
+             */
+            CallCount?: number;
+            /**
+             * Format: int64
+             * @description 按单元价快照（毫分/单元——search 每次 / 图片每张；per-call 计费不走 /1e6 除法）；null = 无按单元分量
+             */
+            PricePerCallMillis?: number | null;
             /**
              * Format: int64
              * @description 计费成本（毫分，1 USD = 100,000 毫分）；错误请求（402/4xx）为 0

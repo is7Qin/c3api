@@ -834,7 +834,10 @@ export default {
       "total": "Total",
       "cacheRead": "Cache read",
       "cacheWrite": "Cache write",
-      "rawCost": "Raw cost"
+      "rawCost": "Raw cost",
+      "calls": "Calls",
+      "unitImage": "image",
+      "unitCall": "call"
     },
     "latency": {
       "ttft": "TTFT",

@@ -395,6 +395,8 @@ func toAPIUsageLog(l *domain.UsageLog) UsageLog {
 		PriceCacheReadMillis:     l.PriceCacheReadMillis,
 		CacheCreationTokens:      &l.CacheCreationTokens,
 		PriceCacheCreationMillis: l.PriceCacheCreationMillis,
+		CallCount:                &l.CallCount,
+		PricePerCallMillis:       l.PricePerCallMillis,
 		Cost:                     &l.Cost,
 		RawCost:                  &l.RawCost,
 		BillingTier:              &l.BillingTier,
