@@ -344,15 +344,21 @@ func scanRoot(raw []byte) verdict {
 		return v
 	}
 	v.isObject = true
-	// 末个胜：从后往前标记末个，再按源顺序输出。
-	seen := make(map[string]struct{}, len(all))
+	// 末个胜：从后往前标记末个，再按源顺序输出。根键很少 ⇒ 线性查重
+	// （map 每次调用要分配，这里 O(k²) 更快且零分配）。
 	keep := make([]bool, len(all))
 	for i := len(all) - 1; i >= 0; i-- {
-		if _, dup := seen[all[i].name]; dup {
+		dup := false
+		for j := i + 1; j < len(all); j++ {
+			if keep[j] && all[j].name == all[i].name {
+				dup = true
+				break
+			}
+		}
+		if dup {
 			v.dupCount++
 			continue
 		}
-		seen[all[i].name] = struct{}{}
 		keep[i] = true
 	}
 	for i := range all {
@@ -454,15 +460,21 @@ func collectTables(b []byte) map[string]map[string]struct{} {
 		"definitions": {},
 	}
 	scanObject(b, 0, len(b), func(keyRaw []byte, vl, vh int) bool {
-		name := decodeRawKey(keyRaw)
-		if name != "$defs" && name != "definitions" {
+		// 外层只比原始字节：盲扫整个产物时每个键都解码是主要分配源。
+		var name string
+		switch {
+		case rawKeyEq(keyRaw, "$defs"):
+			name = "$defs"
+		case rawKeyEq(keyRaw, "definitions"):
+			name = "definitions"
+		default:
 			return true
 		}
 		if vl >= len(b) || b[vl] != '{' {
 			return true
 		}
 		scanObject(b, vl, vh, func(k2 []byte, _, _ int) bool {
-			tables[name][decodeRawKey(k2)] = struct{}{}
+			tables[name][decodeRawKey(k2)] = struct{}{} // 定义名必须解码（map 键）
 			return true
 		})
 		return true
@@ -489,16 +501,16 @@ func valveOK(b []byte) bool {
 		switch b[lo] {
 		case '{':
 			scanObject(b, lo, hi, func(keyRaw []byte, vl, vh int) bool {
-				name := decodeRawKey(keyRaw)
+				// 盲扫整个产物：键名一律按原始字节比较（解码是逐键分配）。
 				for _, bk := range bailKeys {
-					if name == bk {
+					if rawKeyEq(keyRaw, bk) {
 						ok = false
 						return false
 					}
 				}
 				isRef := false
 				for _, rk := range refKeys {
-					if name == rk {
+					if rawKeyEq(keyRaw, rk) {
 						isRef = true
 						break
 					}
@@ -781,12 +793,13 @@ func evalMessSchemaInner(src gjson.Result) evalResult {
 		// 会成为第二个文档基准）。
 		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
 	}
-	if !gjson.Valid(src.Raw) {
-		// 畸形 JSON：不能当文档基准（否则非法字节会原样上行）。只在这里判一次
-		// （请求体层面的 json.Valid 早已拦过，这里是防线内的兜底）。
-		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
-	}
 	if pInFast(src) {
+		// 只有这条路会把源字节**原样**写进产物，所以严格校验只放在这里：
+		// gjson 的视图遍历对 `{"a":1,}` 这类畸形串是宽松的（false positive 会把
+		// 非法 JSON 发给上游），而改写路径的产物是重新拼出来的，不受源畸形影响。
+		if !gjson.Valid(src.Raw) {
+			return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
+		}
 		return evalResult{raw: src.Raw, deg: degNone}
 	}
 	raw := []byte(src.Raw)
@@ -795,7 +808,7 @@ func evalMessSchemaInner(src gjson.Result) evalResult {
 		return evalResult{raw: src.Raw, deg: degNone}
 	}
 	doc := newSchemaDoc(raw)
-	out, st := flattenMessSchema(doc, raw)
+	out, st := flattenMessSchemaRoot(doc, v, raw)
 	if st == nil {
 		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
 	}
@@ -811,7 +824,7 @@ func evalMessSchemaInner(src gjson.Result) evalResult {
 	case st.hasCombo && st.allNonObj && st.branch0Empty && len(st.props) == 0:
 		st.reason("no-object-branch")
 		return evalResult{out: out, deg: degSimplify, reasons: st.reasons}
-	case !st.hasCombo && len(st.props) == 0 && len(propsOf(raw)) == 0 && !st.lossyUnres:
+	case !st.hasCombo && len(st.props) == 0 && rootPropsEmpty(raw, v) && !st.lossyUnres:
 		// 安全：源本来就没有约束（三互斥的第三个兄弟，不算退化、不发 hint）。
 		st.reason("empty-schema")
 	}
@@ -993,6 +1006,44 @@ func fieldSpanStr(obj, name string) (span, bool) {
 	return span{lo, hi}, found
 }
 
+// rootSpan 用根级判定（末个胜的键集合）定位某个根键的值区间，避免为根对象再扫一遍。
+func rootSpan(v verdict, name string) (span, bool) {
+	for _, k := range v.keys {
+		if k.name == name {
+			return span{k.valLo, k.valHi}, true
+		}
+	}
+	return span{}, false
+}
+
+// rootPropsEmpty 根 properties 是否"不存在或为空对象"。
+func rootPropsEmpty(raw []byte, v verdict) bool {
+	sp, ok := rootSpan(v, "properties")
+	if !ok || sp.lo >= len(raw) || raw[sp.lo] != '{' {
+		return true
+	}
+	empty := true
+	scanObject(raw, sp.lo, sp.hi, func(_ []byte, _, _ int) bool {
+		empty = false
+		return false
+	})
+	return empty
+}
+
+// rootRequiredEmpty 根 required 是否"不存在或为空数组"。
+func rootRequiredEmpty(raw []byte, v verdict) bool {
+	sp, ok := rootSpan(v, "required")
+	if !ok || sp.lo >= len(raw) || raw[sp.lo] != '[' {
+		return true
+	}
+	empty := true
+	scanArray(raw, sp.lo, sp.hi, func(_, _ int) bool {
+		empty = false
+		return false
+	})
+	return empty
+}
+
 // propsOf 取对象的 properties 成员（数组形式：名字 + 值原始字节），贡献者内部末个胜。
 func propsOf(obj []byte) []struct {
 	name string
@@ -1008,19 +1059,22 @@ func propsOf(obj []byte) []struct {
 	}
 	var all []ent
 	if !scanObjectPos(obj, sp.lo, sp.hi, func(kr []byte, _, _ int, vl, vh int) bool {
-		all = append(all, ent{name: decodeRawKey(kr), raw: append([]byte(nil), obj[vl:vh]...)})
+		// 只取源字节的**子切片**，不复制：源在整次转换内只读（输出写到另一个缓冲）。
+		all = append(all, ent{name: decodeRawKey(kr), raw: obj[vl:vh]})
 		return true
 	}) {
 		return nil
 	}
-	seen := map[string]struct{}{}
 	keep := make([]bool, len(all))
 	for i := len(all) - 1; i >= 0; i-- {
-		if _, dup := seen[all[i].name]; dup {
-			continue
+		dup := false
+		for j := i + 1; j < len(all); j++ {
+			if keep[j] && all[j].name == all[i].name {
+				dup = true
+				break
+			}
 		}
-		seen[all[i].name] = struct{}{}
-		keep[i] = true
+		keep[i] = !dup
 	}
 	var out []struct {
 		name string
@@ -1070,10 +1124,16 @@ const (
 // raw 必须是 src.Raw（源字节）；doc 是同一个文档基准。
 func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 	budget := maxFlattenCalls
-	return flattenMessSchemaDepth(doc, raw, 0, &budget)
+	return flattenMessSchemaDepth(doc, scanRoot(raw), raw, 0, &budget)
 }
 
-func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int, budget *int) ([]byte, *flattenState) {
+// flattenMessSchemaRoot 复用调用方已经算好的根级判定（省一趟整文档扫描）。
+func flattenMessSchemaRoot(doc *schemaDoc, v verdict, raw []byte) ([]byte, *flattenState) {
+	budget := maxFlattenCalls
+	return flattenMessSchemaDepth(doc, v, raw, 0, &budget)
+}
+
+func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, budget *int) ([]byte, *flattenState) {
 	st := &flattenState{propIndex: map[string]int{}, forceEmpty: map[string]bool{}, groupNonObj: map[int]bool{}}
 	if depth > maxFlattenDepth || *budget <= 0 {
 		// 无法在有限工作量内压平：这一层退化为"接受任意对象"（只放宽），并计 lossy。
@@ -1082,7 +1142,6 @@ func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int, budget *int) 
 		return []byte(`{"type":"object"}`), st
 	}
 	*budget--
-	v := scanRoot(raw)
 	if !v.isObject {
 		return []byte(`{"type":"object"}`), nil
 	}
@@ -1208,7 +1267,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int, budget *int) 
 			}
 		}
 	}
-	st.branch0Empty = len(propsOf(raw)) == 0 && len(requiredOf(raw)) == 0
+	st.branch0Empty = rootPropsEmpty(raw, v) && rootRequiredEmpty(raw, v)
 
 	// 第 6 步：合并
 	reqUnion := map[string]struct{}{}
@@ -1355,8 +1414,8 @@ func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int, budget *int) 
 			}
 			continue
 		}
-		nameRaw := append([]byte(nil), raw[k.keyLo:k.keyHi]...)
-		valRaw := append([]byte(nil), raw[k.valLo:k.valHi]...)
+		nameRaw := raw[k.keyLo:k.keyHi] // 源子切片：整次转换内只读
+		valRaw := raw[k.valLo:k.valHi]
 		if k.name == "$defs" || k.name == "definitions" {
 			valRaw = dedupeDefs(valRaw)
 		}
@@ -1435,7 +1494,7 @@ func flattenNested(doc *schemaDoc, raw []byte, st *flattenState, depth int, budg
 	if !hasComboKey(raw) {
 		return raw
 	}
-	sub, sst := flattenMessSchemaDepth(doc, raw, depth+1, budget)
+	sub, sst := flattenMessSchemaDepth(doc, scanRoot(raw), raw, depth+1, budget)
 	if sst != nil {
 		st.lossyUnres = st.lossyUnres || sst.lossyUnres
 		st.lossyDrop = st.lossyDrop || sst.lossyDrop
@@ -1477,11 +1536,26 @@ func dedupeDefs(val []byte) []byte {
 		valRaw  []byte
 	}
 	var all []ent
+	// 快路径：绝大多数 $defs 没有重名 ⇒ 直接原样返回（不建表、不复制）。
+	names := make([]string, 0, 8)
+	hasDup := false
+	scanObject(val, 0, len(val), func(kr []byte, _, _ int) bool {
+		n := decodeRawKey(kr)
+		for _, x := range names {
+			if x == n {
+				hasDup = true
+				return false
+			}
+		}
+		names = append(names, n)
+		return true
+	})
+	if !hasDup {
+		return val
+	}
+	all = all[:0]
 	if !scanObjectPos(val, 0, len(val), func(kr []byte, kLo, kHi, vl, vh int) bool {
-		all = append(all, ent{
-			nameRaw: append([]byte(nil), val[kLo:kHi]...),
-			valRaw:  append([]byte(nil), val[vl:vh]...),
-		})
+		all = append(all, ent{nameRaw: val[kLo:kHi], valRaw: val[vl:vh]})
 		return true
 	}) {
 		return val

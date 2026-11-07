@@ -58,6 +58,37 @@ func BenchmarkConvertRequestRespToMessTools20(b *testing.B) {
 	}
 }
 
+// toolsSchema20AllPIn 20 个工具**全部**满足 P_in（无根级组合关键字）⇒
+// 每个工具都走短路（锁"不该改的一个都不多花"）。
+func toolsSchema20AllPIn() string {
+	var sb strings.Builder
+	sb.WriteString(`{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[`)
+	for i := 0; i < 20; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, `{"type":"function","name":"t%d","description":"d","parameters":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"number"}},"required":["a"]}}`, i)
+	}
+	sb.WriteString(`]}`)
+	return sb.String()
+}
+
+var benchTools20Idle = toolsSchema20AllPIn()
+
+// BenchmarkConvertRequestRespToMessTools20AllPIn 全命中场景（真实流量的大多数）。
+func BenchmarkConvertRequestRespToMessTools20AllPIn(b *testing.B) {
+	body := []byte(benchTools20Idle)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	for i := 0; i < b.N; i++ {
+		out, err := ConvertRequest(body, domain.ProtocolConvertRespToMess)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchTools20Result = out
+	}
+}
+
 // BenchmarkToolsHandling 只做"现状工具字节处理"（ForEach + Get + append(Raw)），
 // 作为分母，不是门禁。
 func BenchmarkToolsHandling(b *testing.B) {

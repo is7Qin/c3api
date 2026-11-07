@@ -22,6 +22,7 @@ var schemaDocAllowedFuncs = map[string]struct{}{
 	"resolve":                {},
 	"resolveUncached":        {},
 	"flattenMessSchema":      {},
+	"flattenMessSchemaRoot":  {},
 	"flattenMessSchemaDepth": {},
 	// 只读辅助：只把 doc 当"解析器"用，不新建、不外传
 	"derefChain":    {},

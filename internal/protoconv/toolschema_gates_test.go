@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
@@ -288,28 +289,23 @@ func TestFlattenRecursionBounded(t *testing.T) {
 	}
 }
 
-// C-2：快路径不许把畸形 JSON 判成 P_in 成立（否则非法字节原样上行）。
-func TestPInFastStrict(t *testing.T) {
-	for _, in := range []string{
-		`{"type":"object",}`,
-		`{"type":"object" "properties":{}}`,
-		`{"type":"object","properties":}`,
-		`{"type":"object"`,
-		`{"type":"object","properties":{"a":}}`,
-	} {
-		// pInFast 自身对畸形串是宽松的（gjson 视图的已知行为）⇒ 由 evalMessSchema
-		// 的 gjson.Valid 前置把关，这里只断言端到端结果。
-		res := evalMessSchema(gjson.Parse(in))
-		out := res.raw
-		if out == "" {
-			out = string(res.out)
-		}
-		require.True(t, gjson.Valid(out), "畸形源的产物必须仍是合法 JSON：%s ⇒ %s", in, out)
-		require.Equal(t, `{"type":"object"}`, out, "畸形源必须兜底成空 schema：%s", in)
+// C-2：畸形 schema **绝不允许原样透传**。
+// 口径（spec L32）：请求体入口只做括号/引号配对检查（与既有宽容行为一致，
+// 不因畸形 body 整条拒绝）；而"原样透传源字节"这条路上必须严格校验，
+// 否则 {"type":"object",} 会被写进 input_schema。改写路径的产物是重新拼的，不受影响。
+func TestMalformedSchemaNeverPassedThrough(t *testing.T) {
+	bodies := []string{
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object",}}}]}`,
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object" "properties":{}}}}]}`,
+		`{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":}}}]}`,
 	}
-	// 端到端：畸形 parameters 的产物必须仍是合法 JSON
-	out := appendToolsMapped(nil, gjson.Parse(`[{"type":"function","function":{"name":"f","parameters":{"type":"object",}}}]`), toolsMessFromChat)
-	require.True(t, gjson.Valid(string(out)), "产物必须是合法 JSON：%s", out)
+	for _, b := range bodies {
+		out, err := ConvertRequest([]byte(b), domain.ProtocolConvertChatToMess)
+		require.NoError(t, err, "畸形 body 不整条拒绝（与既有宽容行为一致）：%s", b)
+		schema := gjson.Parse(string(out)).Get("tools.0.input_schema")
+		require.True(t, gjson.Valid(schema.Raw), "input_schema 必须是合法 JSON：%s ⇒ %s", b, schema.Raw)
+		require.Equal(t, `{"type":"object"}`, schema.Raw, "畸形 schema 必须兜底成空 schema：%s", b)
+	}
 }
 
 // C-3：工具对象里的重复键必须末个胜（gjson.Get 是首胜 ⇒ 收窄）。

@@ -1,18 +1,18 @@
-# M2 基准记录（toolschema 方言层，v22）
+# M3 基准记录（toolschema 方言层，v24：性能整轮）
 goos=windows
 goarch=amd64
 cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go a037b2e7ee7dc2e77843a0155867d4f0b307f7a951556af167c383da013f6dff
-src_sha256 toolschema_bench_test.go 6f7c766a5cd388f408ec46a43308bb9fa4a7ad9f4d0c297424908740967c87ed
+src_sha256 toolschema.go bdd67c922ecf68db27a8022eb0622ade3d0dbff00ceb945c9aaf9238e6d830c9
+src_sha256 toolschema_bench_test.go 72104923140677e5949f1513fbb23dfd18dbecc473e64f5f1bc3352bd57bfe57
 
-BenchmarkConvertRequestRespToMessTools20-16   1000  115900 ns/op   49230 B/op   302 allocs/op
-BenchmarkToolsHandling-16                     1000    5904 ns/op       8 B/op     0 allocs/op
-BenchmarkMessSchemaScan-16                    1000     278.8 ns/op     0 B/op     0 allocs/op
-BenchmarkMessSchemaFlatten-16                 1000    8195 ns/op    5704 B/op    84 allocs/op
-BenchmarkToolsRatio-16                        1000   14108 ns/op   0.87~5.64 fix/base   5717 B/op  84 allocs/op
+BenchmarkConvertRequestRespToMessTools20-16           1000   94809 ns/op   32519 B/op   213 allocs/op
+BenchmarkToolsHandling-16                            1000    5530 ns/op       8 B/op     0 allocs/op
+BenchmarkMessSchemaScan-16                           1000     290.0 ns/op     0 B/op     0 allocs/op
+BenchmarkMessSchemaFlatten-16                        1000    6412 ns/op    4688 B/op    64 allocs/op
+BenchmarkToolsRatio-16                               1000   12358 ns/op   0.71~3.00 fix/base   4701 B/op  64 allocs/op
 
 # 结论（诚实标注）
 # 1) 本机同会话对照（同一台机器、同一会话，HEAD=90e7f8b8 与 v21 各跑 5 次取最大值）：
@@ -25,3 +25,21 @@ BenchmarkToolsRatio-16                        1000   14108 ns/op   0.87~5.64 fix
 #    scanRoot 是 !pInFast 之后的慢路径，仍会分配键表，它不在本基准里。
 # 3) 仍待优化（未做）：flatten 的 dedupeDefs/propsOf 逐项复制 -> span 视图；
 #    T 路径每次仍要 scanRoot(raw) 两趟（evalMessSchema 判 P_in + flattenMessSchema 取键）。
+
+BenchmarkConvertRequestRespToMessTools20AllPIn-16     1000   28216 ns/op    6915 B/op     2 allocs/op
+
+# v24 的性能画像（同机同会话，5 次取中位）
+# 1) 20 个工具**全部**不需要改写（P_in 命中）：28.7~33 µs / **2 allocs**
+#    —— 与加方言层之前的基线（37.7 µs / 2 allocs）持平或更好：
+#    每个工具 0.5 µs、0 分配，短路是真的在短路。
+# 2) 20 个工具里有 1 个 10 KB schema 必须改写：95~99 µs / 213 allocs。
+#    多的 ~65 µs 全部花在那一个工具上：pInFast 扫描 + scanRoot + dedupeDefs 探测
+#    + 9b 盲扫 + collectTables + 产物重建，约 5 趟线性扫描（1.4 GB/s）。
+#    这是"必须重写 10 KB"的固有代价，不是短路失效。
+# 3) 本轮优化（相对 v23）：convert20 110→95 µs、302→213 allocs；
+#    大 schema 单工具 72→62 µs、300→216 allocs。做法：去掉 $defs/属性值的逐项复制
+#    （改源子切片）、复用已算好的根判定、根 properties/required 用 key span 定位、
+#    盲扫键名不再逐个解码、dedupeDefs 先探测重名（无重名直接原样返回）、
+#    scanRoot/propsOf 去掉每次调用的 map。
+# 4) 仍待优化（未做，按收益）：9b 的 collectTables 与盲扫可以合并成一趟（省 ~7 µs/大 schema）；
+#    flattenState 每次递归建 3 个 map，可懒建。
