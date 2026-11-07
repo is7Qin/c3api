@@ -58,7 +58,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 
 ## CONVENTIONS
 
-- **仅 chat→resp 方向是字节级(gjson)**，其余转换方向 map-based——优化不对称是有意的，别"统一"
+- **字节级(gjson)边界按请求/响应分开看**：**请求侧四方向全部字节级**（`internal/protoconv/req_fast.go` 的 `chatToMessRequest`/`messToRespRequest`/`respToMessRequest`，加 `chat_resp.go` 的 `chatToRespRequest`）；**响应侧只有 chat→resp 字节级**（`respToChatResponse`），`respToMessResponse`/`messToRespResponse`/`messToChatResponse` 仍是 `decodeObj` 的 map-based——响应侧不对称是有意的，别"统一"
 - **方向命名双轨**：`ProtocolConvertXToY`=客户端说 X 上游说 Y；转换函数按数据流命名(`respToChatResponse`)
 - **base_url 可带协议前缀**（如 `/zen`），但拒绝以 `/v1` 结尾（防 `/v1/v1/...` 404）；openai 族自动补 `/v1`
 - **配置 fail-fast**：未知键、时长<1ms、受控整数<1、占位密钥(change-me 等)全部启动即炸；改 TOML 键名=故意破坏性变更
