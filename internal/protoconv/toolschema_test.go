@@ -229,3 +229,26 @@ func TestRefNameWhitelist(t *testing.T) {
 		require.False(t, refNameOK(bad), bad)
 	}
 }
+
+// (g) 基准夹具与目标表的存在性 / 完整性（数值断言由 M0 记录 + 棘轮约定承担）。
+func TestBenchFixtures(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "spec", "protoconv-toolschema-bench-M0.txt"))
+	require.NoError(t, err)
+	txt := string(raw)
+	for _, must := range []string{"goos=", "goarch=", "cpu=", "pkg=", "-count=", "src_sha256 "} {
+		require.Contains(t, txt, must, "M0 记录缺 %s", must)
+	}
+	targets, err := os.ReadFile(filepath.Join("testdata", "spec", "bench_targets.tsv"))
+	require.NoError(t, err)
+	want := []string{
+		"BenchmarkConvertRequestRespToMessTools20",
+		"BenchmarkToolsHandling",
+		"BenchmarkMessSchemaScan",
+		"BenchmarkMessSchemaFlatten",
+		"BenchmarkToolsRatio",
+	}
+	for _, b := range want {
+		require.Contains(t, string(targets), b, "bench_targets.tsv 缺 %s", b)
+		require.Contains(t, txt, b, "M0 记录缺 %s 的实测行", b)
+	}
+}

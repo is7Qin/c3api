@@ -1,0 +1,6 @@
+benchmark	allocs_op	ns_ratio	round
+BenchmarkConvertRequestRespToMessTools20	397	-	M0
+BenchmarkToolsHandling	0	1.000	M0
+BenchmarkMessSchemaScan	11	0.254	M0
+BenchmarkMessSchemaFlatten	122	1.155	M0
+BenchmarkToolsRatio	122	0.232	M0

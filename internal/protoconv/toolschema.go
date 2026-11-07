@@ -635,10 +635,13 @@ func derefChain(doc *schemaDoc, raw []byte, visiting map[string]struct{}) ([]byt
 // evalMessSchema 返回 (原字节, 产物字节, 退化种类)：
 // 前两者恰有一个非空——P_in 成立时返回原始字符串视图（零分配），否则返回产物。
 func evalMessSchema(src gjson.Result) (string, []byte, degenerateKind) {
-	raw := []byte(src.Raw)
-	if len(raw) == 0 {
+	if src.Raw == "" {
 		return "", []byte(`{"type":"object"}`), degSimplify
 	}
+	if pInFast(src) {
+		return src.Raw, nil, degNone
+	}
+	raw := []byte(src.Raw)
 	v := scanRoot(raw)
 	if v.pIn(raw) {
 		return src.Raw, nil, degNone
@@ -1164,4 +1167,36 @@ var reasonWhitelist = map[string]struct{}{
 	"dropped-root-constraint": {}, "non-object-root": {}, "dropped-forbidden-key": {},
 	"required-without-property": {}, "degenerate-lossy": {}, "empty-schema": {},
 	"no-object-branch": {},
+}
+
+// pInFast 源侧后置条件的快路径：只用 gjson 的视图遍历（不复制、不解码），
+// 命中时直接 memcpy 原字节。只有它返回 false 才走 scanRoot 的完整判定。
+func pInFast(src gjson.Result) bool {
+	if !src.IsObject() {
+		return false
+	}
+	seen := make([]string, 0, 8)
+	ok := true
+	src.ForEach(func(k, v gjson.Result) bool {
+		name := k.Str
+		for _, s := range seen { // 根键很少，O(n²) 比较比建 map 便宜
+			if s == name {
+				ok = false
+				return false
+			}
+		}
+		seen = append(seen, name)
+		switch name {
+		case "oneOf", "anyOf", "allOf", "enum", "const", "not", "$ref":
+			ok = false
+			return false
+		case "type":
+			if v.Type != gjson.String || v.Str != "object" {
+				ok = false
+				return false
+			}
+		}
+		return true
+	})
+	return ok
 }
