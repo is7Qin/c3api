@@ -234,6 +234,50 @@ func rowCases(t *testing.T) map[direction][]rowCase {
 			{"y_tail", lit(`{"id":"r1","output":[{"type":"unknown_item"}]}`),
 				nil, []string{`"unknown_item"`}},
 		},
+		dirMessToChatReq: {
+			{"mc_sys_text", lit(`{"model":"m","system":"SYS","messages":[]}`),
+				[]string{`"role":"system"`, `SYS`}, nil},
+			{"mc_sys_block", lit(`{"system":[{"type":"text","text":"S1"},{"type":"image","source":{"type":"url","url":"https://e.com/s.png"}},{"type":"text","text":"S2"}],"messages":[]}`),
+				[]string{`"role":"system"`, `S1`, `S2`}, []string{`s.png`}},
+			{"mc_user_text", lit(`{"messages":[{"role":"user","content":[{"type":"text","text":"U1"}]}]}`),
+				[]string{`"text":"U1"`, `"role":"user"`}, nil},
+			{"mc_user_img_b64", lit(`{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]}]}`),
+				[]string{`data:image/png;base64,QUJD`}, nil},
+			{"mc_user_img_url", lit(`{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://e.com/i.png"}},{"type":"image","source":{"type":"file","file_id":"f_1"}}]}]}`),
+				[]string{`https://e.com/i.png`}, []string{`f_1`}},
+			{"mc_user_doc", lit(`{"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"DOCTXT"}},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"UERG"}},{"type":"search_result","content":"SR1"}]}]}`),
+				[]string{`DOCTXT`}, []string{`UERG`, `SR1`}},
+			{"mc_user_tr", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"R1"}]}]}`),
+				[]string{`"role":"tool"`, `"tool_call_id":"tu1"`, `R1`}, nil},
+			{"mc_user_tr_err", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":[{"type":"text","text":"BOOM"}]}]}]}`),
+				[]string{`"content":"Error: BOOM"`, `"tool_call_id":"tu1"`}, nil},
+			{"mc_user_tr_img", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]}]}]}`),
+				[]string{`"content":"[image]"`, `data:image/png;base64,QUJD`}, nil},
+			{"mc_asst_text", lit(`{"messages":[{"role":"assistant","content":[{"type":"text","text":"HELLO"}]}]}`),
+				[]string{`"content":"HELLO"`}, nil},
+			{"mc_asst_tooluse", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{"a":1}}]}]}`),
+				[]string{`"tool_calls"`, `"name":"f"`, `"id":"tu1"`}, nil},
+			{"mc_asst_thinking", lit(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"think","signature":"SIG"}]}]}`),
+				[]string{`"reasoning_content":"think"`}, []string{`SIG`}},
+			{"mc_asst_redacted", lit(`{"messages":[{"role":"assistant","content":[{"type":"redacted_thinking","data":"RED"},{"type":"unknown_block","text":"ZZZ"}]}]}`),
+				nil, []string{`RED`, `ZZZ`}},
+			{"mc_tools", lit(`{"messages":[],"tools":[{"name":"f","description":"d","input_schema":{"type":"object","properties":{"a":{"type":"string"}}}}]}`),
+				[]string{`"tools":[{"function":{`, `"parameters":{"type":"object"`, `"type":"function"`}, []string{`"input_schema"`}},
+			{"mc_tool_strict", lit(`{"messages":[],"tools":[{"name":"f","description":"d","strict":true,"input_schema":{"type":"object"}}]}`),
+				[]string{`"strict":true`}, nil},
+			{"mc_tool_choice_str", lit(`{"messages":[],"tool_choice":"any"}`),
+				[]string{`"tool_choice":"required"`}, nil},
+			{"mc_tool_choice_tool", lit(`{"messages":[],"tool_choice":{"type":"tool","name":"f"}}`),
+				[]string{`"tool_choice":{"function":{"name":"f"},"type":"function"}`}, nil},
+			{"mc_tool_choice_parallel", lit(`{"messages":[],"tool_choice":{"type":"auto","disable_parallel_tool_use":true}}`),
+				[]string{`"parallel_tool_calls":false`}, nil},
+			{"mc_max_tokens", lit(`{"max_tokens":128,"messages":[]}`),
+				[]string{`"max_completion_tokens":128`}, []string{`"max_tokens"`}},
+			{"mc_stop", lit(`{"messages":[],"stop_sequences":["A","B"]}`),
+				[]string{`"stop":["A","B"]`}, []string{`"stop_sequences"`}},
+			{"mc_meta_user", lit(`{"messages":[],"metadata":{"user_id":"u1"}}`),
+				[]string{`"user":"u1"`}, []string{`"metadata"`}},
+		},
 		dirMessToChatResp: {
 			{"z_text", lit(`{"id":"m1","content":[{"type":"text","text":"HELLO"}]}`),
 				[]string{`"content":"HELLO"`}, nil},
@@ -306,6 +350,8 @@ func dirToConvert(d direction) domain.ProtocolConvert {
 		return domain.ProtocolConvertMessToResp
 	case dirMessToChatResp:
 		return domain.ProtocolConvertChatToMess
+	case dirMessToChatReq:
+		return domain.ProtocolConvertMessToChat
 	}
 	return ""
 }

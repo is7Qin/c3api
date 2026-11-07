@@ -419,6 +419,7 @@ type toolsFieldMap struct {
 	schemaBeforeName bool       // 参数 schema 先于 name 输出
 	emitType         bool       // 目标追加 "type":"function"
 	copyStrict       bool       // 目标透传 strict
+	nestedOut        bool       // 目标把工具包进 {"function":{…},"type":"function"}（chat 形态）
 }
 
 var (
@@ -430,6 +431,10 @@ var (
 	toolsRespFromChat = toolsFieldMap{dir: dirChatToResp, nestedInput: true, inSchemaKey: "parameters", outSchemaFrag: `"parameters":`, mode: schemaModeExistence, emitType: true, copyStrict: true}
 	// resp tools（{type:"function",...}）→ Mess tools。
 	toolsMessFromResp = toolsFieldMap{dir: dirRespToMess, typeFunctionGate: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, mode: schemaModeMessDialect, schemaBeforeName: true}
+	// Mess tools（{name,description,input_schema}）→ chat tools（{type:"function",function:{…}}）。
+	// chat 是**嵌套**形态（与 resp 的扁平相反）；schema 走 objectOnly（chat 把缺省
+	// parameters 视为空对象，不发明默认 schema）。
+	toolsChatFromMess = toolsFieldMap{dir: dirMessToChatReq, inSchemaKey: "input_schema", outSchemaFrag: `"parameters":`, mode: schemaModeObjectOnly, nestedOut: true, copyStrict: true}
 )
 
 // lastField 取工具对象里某个成员的**末个**取值（末个胜，零分配）。工具级重复键
@@ -470,6 +475,9 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 		schemaStr, schemaBytes, deg := evalSchemaField(m, src)
 		out, n = appendComma(out, n)
 		out = append(out, '{')
+		if m.nestedOut {
+			out = append(out, `"function":{`...)
+		}
 		wrote := false
 		if d, ok := lastField(src, "description"); ok && d.Type == gjson.String {
 			out = append(out, `"description":`...)
@@ -522,12 +530,18 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 				wrote = true
 			}
 		}
-		if m.emitType {
+		switch {
+		case m.nestedOut:
+			// 嵌套形态：先闭合 function 对象，再补 "type":"function"（键序字母序：
+			// function < type），与 chat 官方 ChatCompletionTool 一致。
+			out = append(out, '}')
+			out = append(out, `,"type":"function"}`...)
+		case m.emitType:
 			if wrote {
 				out = append(out, ',')
 			}
 			out = append(out, `"type":"function"}`...)
-		} else {
+		default:
 			out = append(out, '}')
 		}
 		return true

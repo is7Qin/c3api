@@ -37,3 +37,24 @@ resp	450	The type of the output text. Always `output_text`.
 resp	454	ResponseOutputRefusal object { refusal, type }
 resp	1078	FunctionCallOutput object { output, type, id, 5 more }
 resp	1082	output: string or array of ResponseInputTextContent or ResponseInputImageContent or ResponseInputFileContent
+mess	11	system: string | Array<TextBlockParam>
+mess	12	system blocks: Array<TextBlockParam>
+mess	24	content: string | Array<ContentBlockParam>
+mess	30	source: { type: "base64", media_type, data }
+mess	31	source: { type: "url", url }
+mess	41	document source: base64_pdf | url_pdf | content | file
+mess	55	tool_result: { tool_use_id, content: string }
+mess	57	is_error: boolean
+mess	56	tool_result content: Array<text|image|document|search_result>
+mess	25	assistant content block: { type: "text", text }
+mess	65	tool_use: { type, id, name, input }
+mess	70	thinking: { type, thinking, signature }
+mess	71	redacted_thinking: { type, data }
+mess	90	tools: Array<ToolUnion>
+chat	350	strict: whether to enable strict schema adherence
+mess	100	tool_choice: { type: "auto" | "any" | "none" | "tool" }
+mess	101	tool_choice tool: { type: "tool", name }
+mess	102	disable_parallel_tool_use: boolean
+chat	60	max_completion_tokens: integer or null
+chat	65	stop: string / array / null, up to 4 sequences
+chat	70	user: a unique identifier representing your end-user

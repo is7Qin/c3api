@@ -7,6 +7,7 @@ package protoconv
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -17,7 +18,9 @@ import (
 // 任何输出字节。语料覆盖四个请求方向、四个响应方向与四个流式方向，每个用例的
 // 期望字节存在 testdata/golden/<name>.txt（由重构前的实现产出，见实现报告）。
 //
-// 更新方式：GOLDEN_UPDATE=1 go test ./internal/protoconv -run TestGoldenOutputs
+// 更新方式：新增用例先 `GOLDEN_UPDATE=1 go test ./internal/protoconv -run TestGoldenOutputs`
+// 只写未登记的 name，review 产物后 `REVIEW_UPDATE=1 go test -run TestGoldenReviewed`
+// 登记（spec §8(a2)）；已在册的用例禁止重采。
 
 const goldenDir = "testdata/golden"
 
@@ -294,6 +297,52 @@ func goldenCases() []goldenCase {
 				],"usage":{"input_tokens":5,"output_tokens":6,"cache_read_input_tokens":1,"cache_creation_input_tokens":2}}`),
 		},
 		{
+			// M2a：mess → chat 请求面，纯文本路径（顶层 system 折叠 + 多轮）。
+			name:  "mess_to_chat_req_text",
+			vocab: dirMessToChatReq,
+			run: goldenRequest(domain.ProtocolConvertMessToChat, `{"model":"m","max_tokens":64,"system":"be nice","messages":[
+				{"role":"user","content":"hello"},
+				{"role":"assistant","content":[{"type":"text","text":"hi "},{"type":"text","text":"there"}]},
+				{"role":"user","content":[{"type":"text","text":"again"}]}
+			]}`),
+		},
+		{
+			// M2a：工具路径。tool_use → tool_calls、tool_result → 就地 role:"tool"
+			// 消息、tool_result 内的图片挪到紧随其后的 user 消息、tools 走嵌套写法。
+			name:  "mess_to_chat_req_tools",
+			vocab: dirMessToChatReq,
+			run: goldenRequest(domain.ProtocolConvertMessToChat, `{"model":"m","messages":[
+				{"role":"user","content":"q"},
+				{"role":"assistant","content":[{"type":"text","text":"calling"},{"type":"tool_use","id":"tu1","name":"f","input":{"a":1}}]},
+				{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"text","text":"ok"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]},{"type":"text","text":"next"}]}
+			],"tools":[{"name":"f","description":"d","input_schema":{"type":"object","properties":{"a":{"type":"string"}}}}],"tool_choice":{"type":"auto"},"stop_sequences":["STOP"]}`),
+		},
+		{
+			// M2a：图片 + system 多块折叠 + 思考预算 + stop 截断 + 流式
+			// stream_options 合并（强制 include_usage）；effort 非空时丢弃
+			// temperature/top_p。
+			name:  "mess_to_chat_req_image_system",
+			vocab: dirMessToChatReq,
+			run: goldenRequest(domain.ProtocolConvertMessToChat, `{"model":"m","system":[{"type":"text","text":"s1"},{"type":"text","text":"s2"}],"thinking":{"type":"enabled","budget_tokens":2048},"messages":[
+				{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://e.com/i.png"}},{"type":"text","text":"what"}]}
+			],"stop_sequences":["a","b","c","d","e"],"temperature":0.7,"top_p":0.9,"metadata":{"user_id":"u1"},"stream":true,"stream_options":{"include_obfuscation":false}}`),
+		},
+		{
+			// M2a：多轮 tool_calls↔tool_result 配对（spec §8(a) 的"配对"用例）。
+			// 一条 assistant 带 2 个 tool_use ⇒ 紧随 2 条 role:"tool"；第二条
+			// tool_result 带 is_error ⇒ "Error: " 前缀；末轮 tool_result 后还有
+			// 文本 ⇒ 合成同一条 user 消息。
+			name:  "mess_to_chat_req_multiturn",
+			vocab: dirMessToChatReq,
+			run: goldenRequest(domain.ProtocolConvertMessToChat, `{"model":"m","max_tokens":256,"system":"sys","messages":[
+				{"role":"user","content":"u1"},
+				{"role":"assistant","content":[{"type":"text","text":"t1"},{"type":"tool_use","id":"a","name":"f","input":{"x":1}},{"type":"tool_use","id":"b","name":"g","input":{}}]},
+				{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":"ra"},{"type":"tool_result","tool_use_id":"b","is_error":true,"content":"rb"}]},
+				{"role":"assistant","content":[{"type":"text","text":"t2"},{"type":"tool_use","id":"c","name":"f","input":{"x":2}}]},
+				{"role":"user","content":[{"type":"tool_result","tool_use_id":"c","content":[{"type":"text","text":"rc"}]},{"type":"text","text":"u2"}]}
+			],"tools":[{"name":"f","description":"df","input_schema":{"type":"object","properties":{"x":{"type":"integer"}}}},{"name":"g","description":"dg","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto"},"stop_sequences":["END"],"metadata":{"user_id":"u9"}}`),
+		},
+		{
 			name:   "stream_resp_to_chat",
 			vocab:  dirRespToChat,
 			stream: true,
@@ -354,11 +403,18 @@ func goldenCases() []goldenCase {
 // TestGoldenOutputs 逐字节钉住四个请求/响应方向与四个流式方向的输出。
 func TestGoldenOutputs(t *testing.T) {
 	update := os.Getenv("GOLDEN_UPDATE") == "1"
+	reviewed := readReviewed(t)
 	for _, c := range goldenCases() {
 		t.Run(c.name, func(t *testing.T) {
 			got := c.run(t)
 			path := filepath.Join(goldenDir, c.name+".txt")
 			if update {
+				// spec §8(a2)：在册用例禁止重采。期望字节一旦被 review 过，就不能
+				// 用一条命令把"实现改坏了"变成"期望改对了"。
+				if _, ok := reviewed[c.name]; ok {
+					t.Fatalf("golden %q 已在 %s 登记，禁止用 GOLDEN_UPDATE=1 重采；"+
+						"确属规格变更时先删登记行再重采", c.name, reviewedPath)
+				}
 				require.NoError(t, os.MkdirAll(goldenDir, 0o755))
 				require.NoError(t, os.WriteFile(path, []byte(got), 0o644))
 				return
@@ -371,5 +427,63 @@ func TestGoldenOutputs(t *testing.T) {
 			}
 			require.Equal(t, string(want), got, "%s（%s）", note, c.name)
 		})
+	}
+}
+
+// reviewedPath 已 review 过的 golden 登记表（name + 文件字节的 sha256）。
+const reviewedPath = "testdata/golden/reviewed.tsv"
+
+// readReviewed 读登记表（name → sha256）。文件缺失视为空表。
+func readReviewed(t *testing.T) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(reviewedPath)
+	if os.IsNotExist(err) {
+		return map[string]string{}
+	}
+	require.NoError(t, err)
+	out := map[string]string{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		require.Len(t, f, 2, "reviewed.tsv 每行两列：name/sha256")
+		out[f[0]] = f[1]
+	}
+	return out
+}
+
+// TestGoldenReviewed spec §8(a2)：golden 防重采。
+//
+// 定位要说清：它是**提高作弊的可见成本**，不是独立真值（真值见 (a3) 契约表与
+// (f) 端到端）。所以它的断言只有三条：① 每个用例都登记过；② 磁盘上的字节与
+// 登记值一致；③ 登记表里没有指向已不存在用例的死行。
+//
+// 新增用例的正常流程：`GOLDEN_UPDATE=1 go test -run TestGoldenOutputs`（只写
+// 未登记的 name）→ 人工 review 产物 → `REVIEW_UPDATE=1 go test -run TestGoldenReviewed`
+// 把当前字节登记进表。
+func TestGoldenReviewed(t *testing.T) {
+	if os.Getenv("REVIEW_UPDATE") == "1" {
+		var b strings.Builder
+		for _, c := range goldenCases() {
+			sum, err := fileSHA256(filepath.Join(goldenDir, c.name+".txt"))
+			require.NoError(t, err, "用例 %q 还没有 golden 文件", c.name)
+			b.WriteString(c.name + "\t" + sum + "\n")
+		}
+		require.NoError(t, os.WriteFile(reviewedPath, []byte(b.String()), 0o644))
+		return
+	}
+	reg := readReviewed(t)
+	live := map[string]bool{}
+	for _, c := range goldenCases() {
+		live[c.name] = true
+		want, ok := reg[c.name]
+		require.True(t, ok, "golden %q 未在 %s 登记（新增用例须走 GOLDEN_UPDATE + REVIEW_UPDATE）", c.name, reviewedPath)
+		sum, err := fileSHA256(filepath.Join(goldenDir, c.name+".txt"))
+		require.NoError(t, err)
+		require.Equal(t, want, sum, "golden %q 的字节与登记值不一致：期望字节被改动过，必须由 review 显式确认", c.name)
+	}
+	for name := range reg {
+		require.True(t, live[name], "reviewed.tsv 登记了已不存在的用例 %q（删用例要同步删登记行）", name)
 	}
 }

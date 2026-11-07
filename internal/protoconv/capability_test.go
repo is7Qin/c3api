@@ -42,18 +42,17 @@ func TestCapabilityExistingDirectionsGA(t *testing.T) {
 	}
 }
 
-// TestCapabilityNewDirectionsNotGAYet M1 阶段：新增两方向能力全 false（配置层
-// 拒绝 + 流式 fail-closed）。M2 打开 Request/Response、M3 打开 Stream 时，
-// **必须同步改本测试**——它是"半成品窗口"的显式账本，不是恒真断言。
-func TestCapabilityNewDirectionsNotGAYet(t *testing.T) {
-	for _, pc := range []domain.ProtocolConvert{
-		domain.ProtocolConvertMessToChat,
-		domain.ProtocolConvertRespToChat,
+// TestCapabilityNewDirections 新增两方向的接线进度账本（M2a：mess→chat 的**请求面**
+// 已实现；响应面随 M2b、流式随 M3 打开）。每打开一面都必须同步改本表——它是
+// "半成品窗口"的显式账本，不是恒真断言。
+func TestCapabilityNewDirections(t *testing.T) {
+	for pc, want := range map[domain.ProtocolConvert]DirectionCaps{
+		domain.ProtocolConvertMessToChat: {Request: true},
+		domain.ProtocolConvertRespToChat: {},
 	} {
-		c := Capability(pc)
-		require.False(t, c.Request, "%q 请求面应尚未接线（M2 才打开；打开后改本断言）", pc)
-		require.False(t, c.Response, "%q 响应面应尚未接线（M2 才打开）", pc)
-		require.False(t, c.Stream, "%q 流式应尚未接线（M3 才打开）", pc)
+		require.Equal(t, want, Capability(pc), "%q 的能力三元组与接线进度不符", pc)
+		// 三项未全真 ⇒ 仍未 GA：配置层必须继续 400，流式必须继续 fail-closed。
+		require.False(t, want.Request && want.Response && want.Stream, "%q 尚未全真却当成 GA", pc)
 		require.False(t, StreamSupported(pc), "%q StreamSupported 应为 false", pc)
 	}
 }
@@ -61,13 +60,15 @@ func TestCapabilityNewDirectionsNotGAYet(t *testing.T) {
 // TestUnsupportedDirectionSentinel 未接线方向必须返回 **可 errors.Is 的 sentinel**
 // （调用方靠它区分"未支持方向"与"请求体非法"；字符串匹配会在改文案时静默失效）。
 func TestUnsupportedDirectionSentinel(t *testing.T) {
+	// 请求面：resp→chat 尚未接线。
+	_, err := ConvertRequest([]byte(`{"model":"m"}`), domain.ProtocolConvertRespToChat)
+	require.ErrorIs(t, err, ErrUnsupportedDirection, "ConvertRequest(%q)", domain.ProtocolConvertRespToChat)
+	// 响应面：两个新方向都尚未接线（M2b/M2c 才打开）。
 	for _, pc := range []domain.ProtocolConvert{
 		domain.ProtocolConvertMessToChat,
 		domain.ProtocolConvertRespToChat,
 	} {
-		_, err := ConvertRequest([]byte(`{"model":"m"}`), pc)
-		require.ErrorIs(t, err, ErrUnsupportedDirection, "ConvertRequest(%q)", pc)
-		_, err = ConvertResponse([]byte(`{"id":"x"}`), pc)
+		_, err := ConvertResponse([]byte(`{"id":"x"}`), pc)
 		require.ErrorIs(t, err, ErrUnsupportedDirection, "ConvertResponse(%q)", pc)
 	}
 	// 已接线方向绝不能返回该 sentinel（否则会把正常请求误判成"方向不支持"）。
@@ -76,6 +77,7 @@ func TestUnsupportedDirectionSentinel(t *testing.T) {
 		domain.ProtocolConvertMessToResp,
 		domain.ProtocolConvertRespToMess,
 		domain.ProtocolConvertChatToMess,
+		domain.ProtocolConvertMessToChat,
 	} {
 		_, err := ConvertRequest([]byte(`{"model":"m","messages":[]}`), pc)
 		require.False(t, errors.Is(err, ErrUnsupportedDirection), "已接线方向 %q 不应返回 ErrUnsupportedDirection", pc)

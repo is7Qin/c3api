@@ -5,7 +5,7 @@ cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go 5574ecf71e64b2d6e7303543d76f8af0826f23c7773bec0ab74ea13fd899126a
+src_sha256 toolschema.go 8985695bced8f3f8f977028726e2b9e7fbd1a31a0651591654e4f4be0e009d0b
 src_sha256 toolschema_bench_test.go 72104923140677e5949f1513fbb23dfd18dbecc473e64f5f1bc3352bd57bfe57
 
 BenchmarkConvertRequestRespToMessTools20-16           2000   85835 ns/op   28899 B/op   111 allocs/op
@@ -56,3 +56,10 @@ BenchmarkConvertRequestRespToMessTools20AllPIn-16     2000   28819 ns/op    6913
 # 4c 分类按原始键字节做（不再为每个分支建一次 key 表、解一次名）。
 # 仍待优化（收益递减，未做）：scanRoot/propsOf 仍为每个键 decode 一次名字
 # （改成 rawKeyEqual 需要动 verdict 的公开字段）；scanObject 的回调闭包无法避免。
+
+# sha256 刷新记录（数字未动）
+# 1) 2026-11-08 M1/M2a：`toolschema.go` 只多了 `schemaModeFor` 的一个 case
+#    （dirMessToChatReq）与 init 校验列表的一项，热路径零改动 ⇒ 上面所有 ns/op、
+#    allocs/op 的实测值仍在门禁范围内（同机同会话复跑 TestBenchGates 通过）。
+#    棘轮因此只更新 src_sha256，不重采数字；理由写在这里，避免下一个人误以为
+#    "sha 变了就等于数字也变了"而顺手放宽上界。

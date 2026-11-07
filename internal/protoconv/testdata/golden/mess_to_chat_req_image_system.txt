@@ -1,0 +1,1 @@
+{"messages":[{"content":"s1\ns2","role":"system"},{"content":[{"image_url":{"url":"https://e.com/i.png"},"type":"image_url"},{"text":"what","type":"text"}],"role":"user"}],"model":"m","reasoning_effort":"low","stop":["a","b","c","d"],"stream":true,"stream_options":{"include_obfuscation":false,"include_usage":true},"user":"u1"}

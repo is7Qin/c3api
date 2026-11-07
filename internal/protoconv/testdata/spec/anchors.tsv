@@ -91,3 +91,24 @@ mess_to_chat_resp	z_thinking	mess	500	BetaThinkingBlockParam object
 mess_to_chat_resp	z_tool_use	mess	522	BetaToolUseBlockParam object
 mess_to_chat_resp	z_media	mess	354	BetaImageBlockParam object
 mess_to_chat_resp	z_tail	mess	197	content: string or array of BetaContentBlockParam
+mess_to_chat_req	mc_sys_text	mess	11	system: string | Array<TextBlockParam>
+mess_to_chat_req	mc_sys_block	mess	12	system blocks: Array<TextBlockParam>
+mess_to_chat_req	mc_user_text	mess	24	content: string | Array<ContentBlockParam>
+mess_to_chat_req	mc_user_img_b64	mess	30	source: { type: "base64", media_type, data }
+mess_to_chat_req	mc_user_img_url	mess	31	source: { type: "url", url }
+mess_to_chat_req	mc_user_doc	mess	41	document source: base64_pdf | url_pdf | content | file
+mess_to_chat_req	mc_user_tr	mess	55	tool_result: { tool_use_id, content: string }
+mess_to_chat_req	mc_user_tr_err	mess	57	is_error: boolean
+mess_to_chat_req	mc_user_tr_img	mess	56	tool_result content: Array<text|image|document|search_result>
+mess_to_chat_req	mc_asst_text	mess	25	assistant content block: { type: "text", text }
+mess_to_chat_req	mc_asst_tooluse	mess	65	tool_use: { type, id, name, input }
+mess_to_chat_req	mc_asst_thinking	mess	70	thinking: { type, thinking, signature }
+mess_to_chat_req	mc_asst_redacted	mess	71	redacted_thinking: { type, data }
+mess_to_chat_req	mc_tools	mess	90	tools: Array<ToolUnion>
+mess_to_chat_req	mc_tool_strict	chat	350	strict: whether to enable strict schema adherence
+mess_to_chat_req	mc_tool_choice_str	mess	100	tool_choice: { type: "auto" | "any" | "none" | "tool" }
+mess_to_chat_req	mc_tool_choice_tool	mess	101	tool_choice tool: { type: "tool", name }
+mess_to_chat_req	mc_tool_choice_parallel	mess	102	disable_parallel_tool_use: boolean
+mess_to_chat_req	mc_max_tokens	chat	60	max_completion_tokens: integer or null
+mess_to_chat_req	mc_stop	chat	65	stop: string / array / null, up to 4 sequences
+mess_to_chat_req	mc_meta_user	chat	70	user: a unique identifier representing your end-user

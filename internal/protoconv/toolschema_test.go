@@ -71,6 +71,7 @@ func TestSchemaModeMaps(t *testing.T) {
 	seen := map[direction]int{}
 	for _, m := range []*toolsFieldMap{
 		&toolsMessFromChat, &toolsMessFromResp, &toolsRespFromMess, &toolsRespFromChat,
+		&toolsChatFromMess,
 	} {
 		seen[m.dir]++
 		require.NotEqual(t, schemaModeUnknown, m.mode)
@@ -78,6 +79,7 @@ func TestSchemaModeMaps(t *testing.T) {
 	}
 	require.Equal(t, map[direction]int{
 		dirChatToMess: 1, dirRespToMess: 1, dirMessToResp: 1, dirChatToResp: 1,
+		dirMessToChatReq: 1,
 	}, seen)
 	// 未知方向必须派生成 Unknown（fail-fast 的前提）。
 	require.Equal(t, schemaModeUnknown, schemaModeFor(dirRespToMessResp))

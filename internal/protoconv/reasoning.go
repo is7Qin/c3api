@@ -268,19 +268,10 @@ func messToolChoiceForces(tc string) bool {
 // Responses 目标的 reasoning 字段值（`{"effort":…,"summary":"auto"}`）；thinking
 // 未开启 → ""。summary:"auto" 必带，否则上游只回 encrypted_content。
 func reasoningValue(thinking, outputEffort gjson.Result) string {
-	if !thinking.IsObject() {
+	if !thinkingOn(thinking) {
 		return ""
 	}
-	typ := thinking.Get("type")
-	if !rawStrEq(typ.Raw, "enabled") && !rawStrEq(typ.Raw, "adaptive") {
-		return ""
-	}
-	effort := effortForBudget(gjsonNumInt(thinking.Get("budget_tokens")))
-	if outputEffort.IsObject() {
-		if v := outputEffort.Get("effort"); reasoningEffortRaw(v) != "" {
-			effort = v.Str
-		}
-	}
+	effort := effortOf(thinking, outputEffort)
 	if effort == "" {
 		return `{"summary":"auto"}`
 	}
@@ -479,4 +470,33 @@ func appendReasoningStripes(buf []byte, item gjson.Result) []byte {
 		})
 	}
 	return buf
+}
+
+// effortOf Mess 的 thinking（budget_tokens）→ chat 的 reasoning_effort 值；
+// output_config.effort 在 chat 白名单内时优先。thinking 未开启（缺失/非法类型）
+// 返回 ""，调用方据此省略字段。
+//
+// 与 reasoningValue 共用同一份"预算→effort"映射（effortForBudget）：两处各写一遍
+// 必然漂移——chat 目标写 effort 字符串，resp 目标写 {"effort":…} 对象。
+func effortOf(thinking, outputEffort gjson.Result) string {
+	if !thinkingOn(thinking) {
+		return ""
+	}
+	effort := effortForBudget(gjsonNumInt(thinking.Get("budget_tokens")))
+	if outputEffort.IsObject() {
+		if v := outputEffort.Get("effort"); reasoningEffortRaw(v) != "" {
+			effort = v.Str
+		}
+	}
+	return effort
+}
+
+// thinkingOn thinking 参数是否开启（enabled / adaptive）。reasoningValue 与
+// effortOf 共用**同一判据**：两处各写一遍必然漂移（一处加 "auto"、另一处忘了）。
+func thinkingOn(thinking gjson.Result) bool {
+	if !thinking.IsObject() {
+		return false
+	}
+	typ := thinking.Get("type")
+	return rawStrEq(typ.Raw, "enabled") || rawStrEq(typ.Raw, "adaptive")
 }

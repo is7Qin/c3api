@@ -70,6 +70,8 @@ func dirTarget(d direction) target {
 		return tgtResp
 	case dirChatToMess, dirRespToMess, dirRespToMessResp:
 		return tgtMess
+	case dirMessToChatReq:
+		return tgtChat
 	default:
 		return tgtChat
 	}
@@ -304,6 +306,29 @@ func TestRowsStructuralEquality(t *testing.T) {
 			rowRole(shYReasoning, rmAsst, kindPart, "thinking", polMap),
 			rowAny(shYTail, kindPart, "", polDrop),
 		}},
+		{dirMessToChatReq, []row{
+			rowAny(shMCSysText, kindField, "messages", polMap),
+			rowAny(shMCSysBlock, kindField, "messages", polMap),
+			rowRole(shMCUserText, rmUser, kindChatKey, "content", polMap),
+			rowRole(shMCUserImgB64, rmUser, kindChatKey, "content", polMap),
+			rowRole(shMCUserImgURL, rmUser, kindChatKey, "content", polMap),
+			rowRole(shMCUserDoc, rmUser, kindChatKey, "", polDrop),
+			rowRole(shMCUserTR, rmUser, kindChatKey, "tool_call_id", polMap),
+			rowRole(shMCUserTRErr, rmUser, kindChatKey, "tool_call_id", polMap),
+			rowRole(shMCUserTRImg, rmUser, kindChatKey, "tool_call_id", polMap),
+			rowRole(shMCAsstText, rmAsst, kindChatKey, "content", polMap),
+			rowRole(shMCAsstToolUse, rmAsst, kindChatKey, "tool_calls", polMap),
+			rowRole(shMCAsstThinking, rmAsst, kindChatKey, "reasoning_content", polMap),
+			rowRole(shMCAsstRedacted, rmAsst, kindChatKey, "", polDrop),
+			rowAny(shMCTools, kindField, "tools", polMap),
+			rowAny(shMCToolStrict, kindField, "tools", polMap),
+			rowAny(shMCToolChoiceStr, kindField, "tool_choice", polMap),
+			rowAny(shMCToolChoiceTool, kindField, "tool_choice", polMap),
+			rowAny(shMCToolChoiceParallel, kindField, "parallel_tool_calls", polMap),
+			rowAny(shMCMaxTokens, kindField, "max_completion_tokens", polMap),
+			rowAny(shMCStop, kindField, "stop", polMap),
+			rowAny(shMCMetaUser, kindField, "user", polMap),
+		}},
 		{dirMessToChatResp, []row{
 			rowRole(shZText, rmAsst, kindChatKey, "content", polMap),
 			rowRole(shZThinking, rmAsst, kindChatKey, "reasoning_content", polMap),
@@ -405,6 +430,7 @@ func TestRoleMaskCoverage(t *testing.T) {
 func TestRowNamesInVocab(t *testing.T) {
 	requestDirs := map[direction]bool{
 		dirChatToResp: true, dirChatToMess: true, dirMessToResp: true, dirRespToMess: true,
+		dirMessToChatReq: true,
 	}
 	for d := direction(0); d < dirCount; d++ {
 		tgt := dirTarget(d)
@@ -431,7 +457,11 @@ func TestRowNamesInVocab(t *testing.T) {
 			case kindChatKey:
 				require.True(t, inVocab(chatKeyVocab, rw.name), "方向 %s 行 %s 的 name=%q 不在 chat 键词表内", dirName[d], shapeName[rw.sh], rw.name)
 			case kindField:
-				require.True(t, inVocab(fieldVocab, rw.name), "方向 %s 行 %s 的 name=%q 不在字段词表内", dirName[d], shapeName[rw.sh], rw.name)
+				vocab := fieldVocab
+				if tgt == tgtChat {
+					vocab = chatReqVocab
+				}
+				require.True(t, inVocab(vocab, rw.name), "方向 %s 行 %s 的 name=%q 不在字段词表内", dirName[d], shapeName[rw.sh], rw.name)
 			default:
 				require.Fail(t, "行的 kind 未定义", shapeName[rw.sh])
 			}
@@ -452,9 +482,13 @@ func TestVocabSelfComplete(t *testing.T) {
 
 	require.ElementsMatch(t, []string{"message", "function_call", "function_call_output", "reasoning"}, itemVocabIn)
 	require.ElementsMatch(t, []string{"message", "function_call", "reasoning"}, itemVocabOut)
-	require.ElementsMatch(t, []string{"content", "tool_calls", "reasoning_content"}, chatKeyVocab)
+	require.ElementsMatch(t, []string{"content", "tool_calls", "reasoning_content", "tool_call_id"}, chatKeyVocab)
 	require.ElementsMatch(t, []string{"id", "object", "created", "model", "choices", "index", "delta", "role", "finish_reason", "usage"}, chatFrameKeys)
-	require.ElementsMatch(t, []string{"instructions", "system"}, fieldVocab)
+	require.ElementsMatch(t, []string{"instructions", "system", "messages"}, fieldVocab)
+	require.ElementsMatch(t, []string{
+		"messages", "tools", "tool_choice", "parallel_tool_calls",
+		"max_completion_tokens", "stop", "user",
+	}, chatReqVocab)
 	require.ElementsMatch(t, []string{
 		"response.created", "response.output_item.added", "response.output_item.done",
 		"response.output_text.delta", "response.reasoning_summary_text.delta",
