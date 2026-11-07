@@ -172,6 +172,15 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 						writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "protocol conversion direction is not supported"}})
 						return
 					}
+					// 有状态字段（previous_response_id 等）在 chat 目标下不可承载：
+					// 静默丢弃会不可逆地丢多轮历史，故 400 + invalid_request_error
+					// （与"请求体非法"区分：这是协议能力边界，不是格式错误）。
+					if errors.Is(cerr, protoconv.ErrStatefulFields) {
+						writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+							"type": "invalid_request_error", "message": cerr.Error(),
+						}})
+						return
+					}
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: protocol conversion failed: " + cerr.Error()}})
 					return
 				}

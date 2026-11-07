@@ -112,3 +112,19 @@ mess_to_chat_req	mc_tool_choice_parallel	mess	102	disable_parallel_tool_use: boo
 mess_to_chat_req	mc_max_tokens	chat	60	max_completion_tokens: integer or null
 mess_to_chat_req	mc_stop	chat	65	stop: string / array / null, up to 4 sequences
 mess_to_chat_req	mc_meta_user	chat	70	user: a unique identifier representing your end-user
+resp_to_chat_req	rc_instructions	resp	60	instructions: A system (or developer) message inserted into the model context
+resp_to_chat_req	rc_input_str	resp	75	input: string or array of ResponseInputItem
+resp_to_chat_req	rc_msg_text	resp	143	type: "input_text"
+resp_to_chat_req	rc_msg_img	resp	187	The URL of the image to be sent to the model. A fully qualified URL or base64 encoded image in a data URL.
+resp_to_chat_req	rc_msg_file	resp	219	file_data: optional string
+resp_to_chat_req	rc_fc	resp	1043	FunctionCall object { arguments, call_id, name, type }
+resp_to_chat_req	rc_fco	resp	1078	FunctionCallOutput object { output, type, id, 5 more }
+resp_to_chat_req	rc_reasoning	resp	1010	ResponseReasoningItem object { summary, type }
+resp_to_chat_req	rc_encrypted	resp	1014	encrypted_content: optional string (opaque reasoning payload)
+resp_to_chat_req	rc_max_out	chat	60	max_completion_tokens: integer or null
+resp_to_chat_req	rc_tools	resp	1105	FunctionTool object { name, parameters, strict, type }
+resp_to_chat_req	rc_tools_strict	chat	350	strict: whether to enable strict schema adherence
+resp_to_chat_req	rc_tool_choice	resp	1180	tool_choice: "none" | "auto" | "required" | function tool choice
+resp_to_chat_req	rc_text_format	resp	1250	text.format: { type: "text" | "json_object" | "json_schema" }
+resp_to_chat_req	rc_effort	chat	410	reasoning_effort: none | minimal | low | medium | high | xhigh | max
+resp_to_chat_req	rc_prev_id	resp	66	previous_response_id: the ID of the previous response in the conversation

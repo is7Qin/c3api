@@ -80,6 +80,9 @@ const (
 	polOmit               // 已折叠到别处，不在此处单独写出
 	polEmpty              // 目标必填容器写空值（L16：output 必填 → ""）；为 §3.1 预留，当前零行使用
 	polTextDegrade        // 降级为 text 块（L12：mess 目标 refusal）
+	polReject             // 目标无法承载且**不可静默丢弃** → 转换入口整请求 400
+	//                       （T10 的 previous_response_id：丢了等于丢多轮历史，
+	//                       客户端只会看到"模型变笨"，比 400 难排查得多）
 )
 
 // shape 源内容形状。全局唯一，与成员常量一一对应；7 段值域两两不相交。
@@ -96,9 +99,12 @@ const (
 	shapeBaseRespToChat shape = 401 // T5  x_*
 	shapeBaseRespMess   shape = 501 // T6  y_*
 	shapeBaseMessChat   shape = 601 // T7  z_*
-	shapeBaseMessChatReq shape = 701 // T8  mc_*
+	shapeBaseMessChatReq  shape = 701  // T8  mc_*
+	shapeBaseChatMessResp shape = 801  // T9  cm2_*
+	shapeBaseRespChatReq  shape = 901  // T10 rc_*
+	shapeBaseChatRespResp shape = 1001 // T11 cc_*
 
-	shapeCount shape = 722 // 全部 shape 的值域上界（shape 直接作下标，见 shapeName）
+	shapeCount shape = 1024 // 全部 shape 的值域上界（shape 直接作下标，见 shapeName）
 )
 
 // segWidth lookup 表的段内宽度：各段成员数的最大值（T3 = 23）。段内偏移从 0 起
@@ -118,6 +124,7 @@ var segBase = [dirCount]shape{
 	dirRespToMessResp: shapeBaseRespMess,
 	dirMessToChatResp: shapeBaseMessChat,
 	dirMessToChatReq:  shapeBaseMessChatReq,
+	dirRespToChatReq:  shapeBaseRespChatReq,
 }
 
 // T1 chat→resp 成员（spec §3.2，全部 kindItem）。
@@ -272,6 +279,31 @@ const (
 	shMCMetaUser
 )
 
+// T10 resp→chat 成员（请求面，spec §6.2 T10 的 16 个，逐名对齐）。
+//
+// 与 T8 同构：内容侧只有"文本 / 图片 / 文件(丢) / 工具对 / 思考 / 加密思考(丢)"
+// 六类，其余是顶层参数。独有两点：`text.format` 要**重排结构**成 chat 的
+// `response_format`，`previous_response_id` 等有状态字段**不可静默丢弃**（见
+// polReject 与 rejectRespStateful）。
+const (
+	shRCInstructions shape = shapeBaseRespChatReq + iota
+	shRCInputStr
+	shRCMsgText
+	shRCMsgImg
+	shRCMsgFile
+	shRCFunctionCall
+	shRCFunctionCallOutput
+	shRCReasoning
+	shRCEncrypted
+	shRCMaxOut
+	shRCTools
+	shRCToolsStrict
+	shRCToolChoice
+	shRCTextFormat
+	shRCEffort
+	shRCPrevID
+)
+
 // direction 内容模型的方向（7 个方向各自一张表）。
 type direction uint8
 
@@ -284,6 +316,7 @@ const (
 	dirRespToMessResp
 	dirMessToChatResp
 	dirMessToChatReq
+	dirRespToChatReq
 	dirCount
 )
 
@@ -309,6 +342,9 @@ var dirRoles = [dirCount]uint8{
 	// T8 请求面：Mess 的 message 只有 user/assistant 两种 role（system 在顶层，
 	// 由 shMCTopSystem 的 anyRole 行承载）。
 	dirMessToChatReq: rmUser | rmAsst,
+	// T10 请求面：resp 的 item 没有 role 字段（role 在 message item 内部），
+	// 但 message item 可以是 user/system/developer/assistant 四种。
+	dirRespToChatReq: rmSystem | rmDeveloper | rmUser | rmAsst,
 }
 
 // row 一行内容模型：一个 (direction, member) 的 A1/A2 取值。
@@ -485,6 +521,8 @@ func rowsOf(d direction) []row {
 		return rowsMessToChatResp()
 	case dirMessToChatReq:
 		return rowsMessToChatReq()
+	case dirRespToChatReq:
+		return rowsRespToChatReq()
 	}
 	return nil
 }
@@ -643,6 +681,8 @@ func membersOf(d direction) []member {
 		return membersMessToChatResp()
 	case dirMessToChatReq:
 		return membersMessToChatReq()
+	case dirRespToChatReq:
+		return membersRespToChatReq()
 	}
 	return nil
 }
@@ -657,6 +697,7 @@ var dirName = [dirCount]string{
 	dirRespToMessResp: "resp_to_mess_resp",
 	dirMessToChatResp: "mess_to_chat_resp",
 	dirMessToChatReq:  "mess_to_chat_req",
+	dirRespToChatReq:  "resp_to_chat_req",
 }
 
 // lookupTable (dir, shape) → 行数据的静态数组：index = sh - segBase[dir]（段基值
@@ -778,6 +819,8 @@ var fieldVocab = []string{"instructions", "system", "messages"}
 var chatReqVocab = []string{
 	"messages", "tools", "tool_choice", "parallel_tool_calls",
 	"max_completion_tokens", "stop", "user",
+	// 只有 resp→chat（T10）会写的两项。
+	"response_format", "reasoning_effort",
 }
 
 // respEventVocab resp 目标的 SSE 事件名域（本仓会产出的事件）。
@@ -914,5 +957,52 @@ func membersMessToChatReq() []member {
 		{shMCMaxTokens, "mc_max_tokens"},
 		{shMCStop, "mc_stop"},
 		{shMCMetaUser, "mc_meta_user"},
+	}
+}
+
+// T10 resp→chat：resp 的 item 是开放联合，能搬过来的只有文本/图片/工具对/思考；
+// 文件与加密思考无载体（丢弃），有状态字段整请求拒绝。
+func rowsRespToChatReq() []row {
+	return []row{
+		{sh: shRCInstructions, anyRole: true, kind: kindField, name: "messages", pol: polMap},
+		{sh: shRCInputStr, anyRole: true, kind: kindField, name: "messages", pol: polMap},
+		{sh: shRCMsgText, roles: rmSystem | rmDeveloper | rmUser, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shRCMsgImg, roles: rmUser, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shRCMsgFile, roles: rmUser, kind: kindChatKey, pol: polDrop},
+		{sh: shRCFunctionCall, roles: rmAsst, kind: kindChatKey, name: "tool_calls", pol: polMap},
+		{sh: shRCFunctionCallOutput, anyRole: true, kind: kindChatKey, name: "tool_call_id", pol: polMap},
+		{sh: shRCReasoning, roles: rmAsst, kind: kindChatKey, name: "reasoning_content", pol: polMap},
+		{sh: shRCEncrypted, roles: rmAsst, kind: kindChatKey, pol: polDrop},
+		{sh: shRCMaxOut, anyRole: true, kind: kindField, name: "max_completion_tokens", pol: polMap},
+		{sh: shRCTools, anyRole: true, kind: kindField, name: "tools", pol: polMap},
+		{sh: shRCToolsStrict, anyRole: true, kind: kindField, name: "tools", pol: polMap},
+		{sh: shRCToolChoice, anyRole: true, kind: kindField, name: "tool_choice", pol: polMap},
+		{sh: shRCTextFormat, anyRole: true, kind: kindField, name: "response_format", pol: polMap},
+		{sh: shRCEffort, anyRole: true, kind: kindField, name: "reasoning_effort", pol: polMap},
+		// 有状态字段的代表行：策略是 polReject（整请求 400），不是 polDrop。
+		// 另外三个同族字段（conversation / prompt / context_management）行为相同，
+		// 由 rejectRespStateful 的列表承载，不各占一行。
+		{sh: shRCPrevID, anyRole: true, kind: kindField, name: "previous_response_id", pol: polReject},
+	}
+}
+
+func membersRespToChatReq() []member {
+	return []member{
+		{shRCInstructions, "rc_instructions"},
+		{shRCInputStr, "rc_input_str"},
+		{shRCMsgText, "rc_msg_text"},
+		{shRCMsgImg, "rc_msg_img"},
+		{shRCMsgFile, "rc_msg_file"},
+		{shRCFunctionCall, "rc_fc"},
+		{shRCFunctionCallOutput, "rc_fco"},
+		{shRCReasoning, "rc_reasoning"},
+		{shRCEncrypted, "rc_encrypted"},
+		{shRCMaxOut, "rc_max_out"},
+		{shRCTools, "rc_tools"},
+		{shRCToolsStrict, "rc_tools_strict"},
+		{shRCToolChoice, "rc_tool_choice"},
+		{shRCTextFormat, "rc_text_format"},
+		{shRCEffort, "rc_effort"},
+		{shRCPrevID, "rc_prev_id"},
 	}
 }

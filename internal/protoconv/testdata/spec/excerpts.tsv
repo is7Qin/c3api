@@ -58,3 +58,13 @@ mess	102	disable_parallel_tool_use: boolean
 chat	60	max_completion_tokens: integer or null
 chat	65	stop: string / array / null, up to 4 sequences
 chat	70	user: a unique identifier representing your end-user
+resp	60	instructions: A system (or developer) message inserted into the model context
+resp	75	input: string or array of ResponseInputItem
+resp	1043	FunctionCall object { arguments, call_id, name, type }
+resp	1010	ResponseReasoningItem object { summary, type }
+resp	1014	encrypted_content: optional string (opaque reasoning payload)
+resp	1105	FunctionTool object { name, parameters, strict, type }
+resp	1180	tool_choice: "none" | "auto" | "required" | function tool choice
+resp	1250	text.format: { type: "text" | "json_object" | "json_schema" }
+chat	410	reasoning_effort: none | minimal | low | medium | high | xhigh | max
+resp	66	previous_response_id: the ID of the previous response in the conversation

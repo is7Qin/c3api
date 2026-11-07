@@ -343,6 +343,56 @@ func goldenCases() []goldenCase {
 			],"tools":[{"name":"f","description":"df","input_schema":{"type":"object","properties":{"x":{"type":"integer"}}}},{"name":"g","description":"dg","input_schema":{"type":"object"}}],"tool_choice":{"type":"auto"},"stop_sequences":["END"],"metadata":{"user_id":"u9"}}`),
 		},
 		{
+			// M2b：resp → chat 请求面，纯文本路径（instructions → system 消息）。
+			name:  "resp_to_chat_req_text",
+			vocab: dirRespToChatReq,
+			run: goldenRequest(domain.ProtocolConvertRespToChat, `{"model":"m","instructions":"be nice","input":"hello","max_output_tokens":64}`),
+		},
+		{
+			// M2b：工具路径。内置工具（web_search_preview）被读取侧过滤，
+			// function_call 合并进同一条 assistant，function_call_output → role:"tool"，
+			// tool_choice 从扁平重排成嵌套。
+			name:  "resp_to_chat_req_tools",
+			vocab: dirRespToChatReq,
+			run: goldenRequest(domain.ProtocolConvertRespToChat, `{"model":"m","input":[
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"q"}]},
+				{"type":"function_call","call_id":"c1","name":"f","arguments":"{\"a\":1}"},
+				{"type":"function_call_output","call_id":"c1","output":"ok"},
+				{"type":"web_search_call","id":"ws1","status":"completed"}
+			],"tools":[{"type":"function","name":"f","description":"d","parameters":{"type":"object","properties":{"a":{"type":"integer"}}},"strict":true},{"type":"web_search_preview"}],"tool_choice":{"type":"function","name":"f"},"parallel_tool_calls":false}`),
+		},
+		{
+			// M2b：图片 + system/developer 消息 + 文件丢弃 + text.format 结构重排 +
+			// reasoning.effort 直传（effort 非空 ⇒ 丢弃 temperature/top_p）。
+			name:  "resp_to_chat_req_image_system",
+			vocab: dirRespToChatReq,
+			run: goldenRequest(domain.ProtocolConvertRespToChat, `{"model":"m","instructions":"sys","input":[
+				{"type":"message","role":"developer","content":[{"type":"input_text","text":"dev"}]},
+				{"type":"message","role":"user","content":[
+					{"type":"input_text","text":"what"},
+					{"type":"input_image","image_url":"https://e.com/i.png"},
+					{"type":"input_file","file_id":"f_1"}
+				]}
+			],"text":{"format":{"type":"json_schema","name":"S","schema":{"type":"object"},"strict":true}},"reasoning":{"effort":"xhigh"},"temperature":0.7,"top_p":0.9,"user":"u1","stream":true}`),
+		},
+		{
+			// M2b：多轮配对（spec §8(a) 的配对用例）。reasoning 与两个连续
+			// function_call 落进**同一条** assistant（chat 的 tool_calls 必须紧邻
+			// 其结果），两条结果按声明顺序紧邻输出，之后的 user 文本另起一条。
+			name:  "resp_to_chat_req_multiturn",
+			vocab: dirRespToChatReq,
+			run: goldenRequest(domain.ProtocolConvertRespToChat, `{"model":"m","input":[
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"u1"}]},
+				{"type":"reasoning","summary":[{"type":"summary_text","text":"think"}]},
+				{"type":"function_call","call_id":"a","name":"f","arguments":"{\"x\":1}"},
+				{"type":"function_call","call_id":"b","name":"g","arguments":"{}"},
+				{"type":"function_call_output","call_id":"a","output":"ra"},
+				{"type":"function_call_output","call_id":"b","output":[{"type":"input_text","text":"rb"}]},
+				{"type":"function_call_output","call_id":"ghost","output":"lost"},
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"u2"}]}
+			]}`),
+		},
+		{
 			name:   "stream_resp_to_chat",
 			vocab:  dirRespToChat,
 			stream: true,

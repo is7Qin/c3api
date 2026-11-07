@@ -435,6 +435,11 @@ var (
 	// chat 是**嵌套**形态（与 resp 的扁平相反）；schema 走 objectOnly（chat 把缺省
 	// parameters 视为空对象，不发明默认 schema）。
 	toolsChatFromMess = toolsFieldMap{dir: dirMessToChatReq, inSchemaKey: "input_schema", outSchemaFrag: `"parameters":`, mode: schemaModeObjectOnly, nestedOut: true, copyStrict: true}
+	// resp tools（扁平 {type:"function",name,parameters}）→ chat tools（嵌套）。
+	// typeFunctionGate：内置工具（custom / web_search_preview / computer_use_preview
+	// / image_generation / code_interpreter）在 chat 侧没有 function 定义，读取侧
+	// 必须先过滤（丢弃计数见 noteNonFunctionTools）。
+	toolsChatFromResp = toolsFieldMap{dir: dirRespToChatReq, typeFunctionGate: true, inSchemaKey: "parameters", outSchemaFrag: `"parameters":`, mode: schemaModeObjectOnly, nestedOut: true, copyStrict: true}
 )
 
 // lastField 取工具对象里某个成员的**末个**取值（末个胜，零分配）。工具级重复键
@@ -836,14 +841,22 @@ func fieldRaw(obj gjson.Result, name string) gjson.Result {
 // anthropicSystemRaw Mess 顶层 system → resp instructions 字段值
 // （内容模型的 m_top_system 行：字符串或 text 块数组都折叠成一条文本）。
 func anthropicSystemRaw(v gjson.Result) string {
+	return foldSystemTexts(tgtResp, anthropicSystemParts(v))
+}
+
+// anthropicSystemParts Mess 顶层 system → 各段文本的 **JSON 字符串字面量**（Raw）。
+// 非文本块不返回（丢不丢、计不计由调用方决定：chat 目标要计 `system_block`，
+// resp 目标沿用既有行为不计数）。与 anthropicSystemRaw 共用同一套"什么算文本"
+// 的判据，避免两处各写一遍。
+func anthropicSystemParts(v gjson.Result) []string {
 	if !v.Exists() || v.Type == gjson.Null {
-		return ""
+		return nil
 	}
 	if v.Type == gjson.String {
-		return v.Raw
+		return []string{v.Raw}
 	}
 	if !v.IsArray() {
-		return ""
+		return nil
 	}
 	var parts []string
 	v.ForEach(func(_, p gjson.Result) bool {
@@ -856,7 +869,7 @@ func anthropicSystemRaw(v gjson.Result) string {
 		}
 		return true
 	})
-	return foldSystemTexts(tgtResp, parts)
+	return parts
 }
 
 // messInputPartShape Mess 内容块 → mess→resp 的成员形状。按 (role, 块类型,

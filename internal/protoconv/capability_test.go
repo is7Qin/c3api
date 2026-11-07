@@ -48,7 +48,7 @@ func TestCapabilityExistingDirectionsGA(t *testing.T) {
 func TestCapabilityNewDirections(t *testing.T) {
 	for pc, want := range map[domain.ProtocolConvert]DirectionCaps{
 		domain.ProtocolConvertMessToChat: {Request: true},
-		domain.ProtocolConvertRespToChat: {},
+		domain.ProtocolConvertRespToChat: {Request: true},
 	} {
 		require.Equal(t, want, Capability(pc), "%q 的能力三元组与接线进度不符", pc)
 		// 三项未全真 ⇒ 仍未 GA：配置层必须继续 400，流式必须继续 fail-closed。
@@ -60,10 +60,7 @@ func TestCapabilityNewDirections(t *testing.T) {
 // TestUnsupportedDirectionSentinel 未接线方向必须返回 **可 errors.Is 的 sentinel**
 // （调用方靠它区分"未支持方向"与"请求体非法"；字符串匹配会在改文案时静默失效）。
 func TestUnsupportedDirectionSentinel(t *testing.T) {
-	// 请求面：resp→chat 尚未接线。
-	_, err := ConvertRequest([]byte(`{"model":"m"}`), domain.ProtocolConvertRespToChat)
-	require.ErrorIs(t, err, ErrUnsupportedDirection, "ConvertRequest(%q)", domain.ProtocolConvertRespToChat)
-	// 响应面：两个新方向都尚未接线（M2b/M2c 才打开）。
+	// 响应面：两个新方向都尚未接线（M2c 才打开）。
 	for _, pc := range []domain.ProtocolConvert{
 		domain.ProtocolConvertMessToChat,
 		domain.ProtocolConvertRespToChat,
@@ -78,6 +75,7 @@ func TestUnsupportedDirectionSentinel(t *testing.T) {
 		domain.ProtocolConvertRespToMess,
 		domain.ProtocolConvertChatToMess,
 		domain.ProtocolConvertMessToChat,
+		domain.ProtocolConvertRespToChat,
 	} {
 		_, err := ConvertRequest([]byte(`{"model":"m","messages":[]}`), pc)
 		require.False(t, errors.Is(err, ErrUnsupportedDirection), "已接线方向 %q 不应返回 ErrUnsupportedDirection", pc)

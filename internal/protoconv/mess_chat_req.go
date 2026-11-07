@@ -87,8 +87,14 @@ func messToChatRequest(body []byte) ([]byte, error) {
 	}
 	first = false
 	out = append(out, `"messages":[`...)
-	out = appendMessChatMessages(out, sys, msgs)
+	var nMsgs int
+	out, nMsgs = appendMessChatMessages(out, sys, msgs)
 	out = append(out, ']')
+	if nMsgs == 0 {
+		// system 折叠为空 + 全是被丢块：messages 仍是必填键（写了空数组），但
+		// "这一单其实没有任何可发给模型的内容"必须可见（spec §4.1）。
+		noteDrop(domain.ProtocolConvertMessToChat, "messages_empty")
+	}
 	if rawNotNull(model) {
 		out = appendField(out, &first, "model", model)
 	}
@@ -138,18 +144,22 @@ func messToChatRequest(body []byte) ([]byte, error) {
 // 消息。Mess 把工具结果放在**下一条 user 消息**的 content 里，所以遇到
 // tool_result 块要**就地**把它写成独立的 tool 消息（先于该 user 消息自身的
 // 文本/图片），否则会出现"tool 消息离它的 tool_calls 太远" → 上游 400。
-func appendMessChatMessages(out []byte, sys, msgs gjson.Result) []byte {
+func appendMessChatMessages(out []byte, sys, msgs gjson.Result) ([]byte, int) {
 	n := 0
-	// 顶层 system 折叠成首条 system 消息（foldSystemTexts 返回 JSON 字符串
-	// 字面量；折叠后为空串时 anthropicSystemRaw 返回 ""，不写空 system）。
-	if s := anthropicSystemRaw(sys); s != "" {
+	// 顶层 system 折叠成首条 system 消息（foldSystemTexts 返回 JSON 字符串字面量；
+	// 折叠后为空串则不写空 system）。非文本块（image/document …）chat 无载体 ⇒
+	// 丢弃 + 计 `system_block`（resp 方向同样丢弃但不计数，见 anthropicSystemParts
+	// 的注释：共享函数不改既有方向的行为）。
+	texts := anthropicSystemParts(sys)
+	noteSystemBlockDrops(sys)
+	if s := foldSystemTexts(tgtChat, texts); s != "" {
 		out, n = appendComma(out, n)
 		out = append(out, `{"content":`...)
 		out = append(out, s...)
 		out = append(out, `,"role":"system"}`...)
 	}
 	if !msgs.IsArray() {
-		return out
+		return out, n
 	}
 	msgs.ForEach(func(_, m gjson.Result) bool {
 		if !m.IsObject() {
@@ -186,7 +196,26 @@ func appendMessChatMessages(out []byte, sys, msgs gjson.Result) []byte {
 		out, n = appendMessChatAsstTurn(out, n, content)
 		return true
 	})
-	return out
+	return out, n
+}
+
+// noteSystemBlockDrops 顶层 system 数组里**不是文本**的块逐块计数（chat 没有
+// 承载位）。判据与 anthropicSystemParts 一致：字符串、或带 string `text` 的块
+// 才算文本。
+func noteSystemBlockDrops(sys gjson.Result) {
+	if !sys.IsArray() {
+		return
+	}
+	sys.ForEach(func(_, p gjson.Result) bool {
+		if p.Type == gjson.String {
+			return true
+		}
+		if t := p.Get("text"); t.Type == gjson.String {
+			return true
+		}
+		noteDrop(domain.ProtocolConvertMessToChat, "system_block")
+		return true
+	})
 }
 
 // appendMessChatUserTurn user 轮：文本/图片 → content parts；tool_result →
@@ -304,11 +333,14 @@ func appendMessChatAsstTurn(out []byte, n int, content gjson.Result) ([]byte, in
 				noteDrop(domain.ProtocolConvertMessToChat, "tool_use")
 				return true
 			}
+			// arguments 用**源字节**而不是重排后的紧凑 JSON：chat 把 arguments
+			// 当不透明字符串转给上游，重排只会多一条"中途解析失败"的路径，且会
+			// 悄悄改掉重复键的语义（上游 json.loads 是末键胜，重排会先合并）。
+			// 唯一要求是合法 JSON：input 缺失/null → "{}"；非 JSON（字符串等）
+			// 按原字面量传递。
 			args := []byte(`{}`)
-			if in := blk.Get("input"); in.Exists() && in.Type == gjson.JSON {
+			if in := blk.Get("input"); in.Exists() && in.Type != gjson.Null {
 				args = appendJSONString(nil, in.Raw)
-			} else {
-				args = appendJSONString(nil, `{}`)
 			}
 			calls = appendToolCallComma(calls, nCalls)
 			nCalls++

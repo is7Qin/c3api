@@ -278,6 +278,41 @@ func rowCases(t *testing.T) map[direction][]rowCase {
 			{"mc_meta_user", lit(`{"messages":[],"metadata":{"user_id":"u1"}}`),
 				[]string{`"user":"u1"`}, []string{`"metadata"`}},
 		},
+		dirRespToChatReq: {
+			{"rc_instructions", lit(`{"model":"m","instructions":"SYS","input":"hi"}`),
+				[]string{`"content":"SYS"`, `"role":"system"`}, nil},
+			{"rc_input_str", lit(`{"model":"m","input":"hello"}`),
+				[]string{`{"content":"hello","role":"user"}`}, nil},
+			{"rc_msg_text", lit(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"U1"}]}]}`),
+				[]string{`"text":"U1"`, `"role":"user"`}, nil},
+			{"rc_msg_img", lit(`{"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://e.com/i.png"}]}]}`),
+				[]string{`"image_url":{"url":"https://e.com/i.png"}`}, nil},
+			{"rc_msg_file", lit(`{"input":[{"type":"message","role":"user","content":[{"type":"input_file","file_id":"f_1"}]}]}`),
+				nil, []string{`f_1`}},
+			{"rc_fc", lit(`{"input":[{"type":"function_call","call_id":"c1","name":"f","arguments":"{"a":1}"}]}`),
+				[]string{`"tool_calls"`, `"name":"f"`, `"id":"c1"`, `arguments`}, nil},
+			{"rc_fco", lit(`{"input":[{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"OK"}]}`),
+				[]string{`"role":"tool"`, `"tool_call_id":"c1"`, `"content":"OK"`}, nil},
+			{"rc_reasoning", lit(`{"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"think"}]}]}`),
+				[]string{`"reasoning_content":"think"`}, nil},
+			{"rc_encrypted", lit(`{"input":[{"type":"reasoning","encrypted_content":"ENC","summary":[{"type":"summary_text","text":"t"}]}]}`),
+				[]string{`"reasoning_content":"t"`}, []string{`ENC`}},
+			{"rc_max_out", lit(`{"max_output_tokens":77,"input":"hi"}`),
+				[]string{`"max_completion_tokens":77`}, []string{`"max_output_tokens"`}},
+			{"rc_tools", lit(`{"input":"hi","tools":[{"type":"function","name":"f","parameters":{"type":"object"}}]}`),
+				[]string{`"tools":[{"function":{`, `"type":"function"`}, []string{`"parameters":{},`}},
+			{"rc_tools_strict", lit(`{"input":"hi","tools":[{"type":"function","name":"f","strict":true,"parameters":{"type":"object"}}]}`),
+				[]string{`"strict":true`}, nil},
+			{"rc_tool_choice", lit(`{"input":"hi","tool_choice":{"type":"function","name":"f"}}`),
+				[]string{`"tool_choice":{"function":{"name":"f"},"type":"function"}`}, nil},
+			{"rc_text_format", lit(`{"input":"hi","text":{"format":{"type":"json_schema","name":"S","schema":{"type":"object"},"strict":true}}}`),
+				[]string{`"response_format":{"json_schema":{"name":"S","schema":{"type":"object"},"strict":true},"type":"json_schema"}`}, nil},
+			{"rc_effort", lit(`{"input":"hi","reasoning":{"effort":"high"}}`),
+				[]string{`"reasoning_effort":"high"`}, nil},
+			// 有状态字段的策略是 polReject（整请求 400），不是"丢弃"：
+			// TestRowCoverage 对 polReject 成员改判"必须报 ErrStatefulFields"。
+			{"rc_prev_id", lit(`{"input":"hi","previous_response_id":"resp_1"}`), nil, nil},
+		},
 		dirMessToChatResp: {
 			{"z_text", lit(`{"id":"m1","content":[{"type":"text","text":"HELLO"}]}`),
 				[]string{`"content":"HELLO"`}, nil},
@@ -291,6 +326,16 @@ func rowCases(t *testing.T) map[direction][]rowCase {
 				nil, []string{`ZZZ`}},
 		},
 	}
+}
+
+// rowOfMember 取某成员的策略行（找不到返回零值行，pol 为 polUnknown）。
+func rowOfMember(d direction, member string) row {
+	for _, rw := range rowsOf(d) {
+		if shapeName[rw.sh] == member {
+			return rw
+		}
+	}
+	return row{}
 }
 
 // TestRowCoverage (c)：每个成员至少一条用例，且每条用例的形态断言成立。
@@ -309,6 +354,14 @@ func TestRowCoverage(t *testing.T) {
 				out, err = ConvertResponse([]byte(body), dirToConvert(d))
 			default:
 				out, err = ConvertRequest([]byte(body), dirToConvert(d))
+			}
+			if rowOfMember(d, c.member).pol == polReject {
+				// polReject 的语义是"整请求拒绝"，不是"丢弃该字段"：断言它确实
+				// 报可识别的 sentinel，而不是静默产出少了东西的报文。
+				require.ErrorIs(t, err, ErrStatefulFields, "%s/%s：有状态字段必须整请求拒绝", dirName[d], c.member)
+				require.False(t, covered[c.member], "成员 %s 有重复用例", c.member)
+				covered[c.member] = true
+				continue
 			}
 			require.NoError(t, err, "%s/%s", dirName[d], c.member)
 			s := string(out)
@@ -352,6 +405,8 @@ func dirToConvert(d direction) domain.ProtocolConvert {
 		return domain.ProtocolConvertChatToMess
 	case dirMessToChatReq:
 		return domain.ProtocolConvertMessToChat
+	case dirRespToChatReq:
+		return domain.ProtocolConvertRespToChat
 	}
 	return ""
 }
@@ -379,6 +434,9 @@ func TestInvariantsOnAllGoldenOutputs(t *testing.T) {
 	// 逐行用例的输出同样要过不变量
 	for d, cs := range rowCases(t) {
 		for _, c := range cs {
+			if rowOfMember(d, c.member).pol == polReject {
+				continue // polReject 没有产物（整请求 400），不变量无从谈起
+			}
 			out, err := ConvertRequest([]byte(c.body(t)), dirToConvert(d))
 			if err != nil {
 				out, err = ConvertResponse([]byte(c.body(t)), dirToConvert(d))

@@ -70,7 +70,7 @@ func dirTarget(d direction) target {
 		return tgtResp
 	case dirChatToMess, dirRespToMess, dirRespToMessResp:
 		return tgtMess
-	case dirMessToChatReq:
+	case dirMessToChatReq, dirRespToChatReq:
 		return tgtChat
 	default:
 		return tgtChat
@@ -329,6 +329,24 @@ func TestRowsStructuralEquality(t *testing.T) {
 			rowAny(shMCStop, kindField, "stop", polMap),
 			rowAny(shMCMetaUser, kindField, "user", polMap),
 		}},
+		{dirRespToChatReq, []row{
+			rowAny(shRCInstructions, kindField, "messages", polMap),
+			rowAny(shRCInputStr, kindField, "messages", polMap),
+			rowRole(shRCMsgText, rmSystem|rmDeveloper|rmUser, kindChatKey, "content", polMap),
+			rowRole(shRCMsgImg, rmUser, kindChatKey, "content", polMap),
+			rowRole(shRCMsgFile, rmUser, kindChatKey, "", polDrop),
+			rowRole(shRCFunctionCall, rmAsst, kindChatKey, "tool_calls", polMap),
+			rowAny(shRCFunctionCallOutput, kindChatKey, "tool_call_id", polMap),
+			rowRole(shRCReasoning, rmAsst, kindChatKey, "reasoning_content", polMap),
+			rowRole(shRCEncrypted, rmAsst, kindChatKey, "", polDrop),
+			rowAny(shRCMaxOut, kindField, "max_completion_tokens", polMap),
+			rowAny(shRCTools, kindField, "tools", polMap),
+			rowAny(shRCToolsStrict, kindField, "tools", polMap),
+			rowAny(shRCToolChoice, kindField, "tool_choice", polMap),
+			rowAny(shRCTextFormat, kindField, "response_format", polMap),
+			rowAny(shRCEffort, kindField, "reasoning_effort", polMap),
+			rowAny(shRCPrevID, kindField, "previous_response_id", polReject),
+		}},
 		{dirMessToChatResp, []row{
 			rowRole(shZText, rmAsst, kindChatKey, "content", polMap),
 			rowRole(shZThinking, rmAsst, kindChatKey, "reasoning_content", polMap),
@@ -430,13 +448,18 @@ func TestRoleMaskCoverage(t *testing.T) {
 func TestRowNamesInVocab(t *testing.T) {
 	requestDirs := map[direction]bool{
 		dirChatToResp: true, dirChatToMess: true, dirMessToResp: true, dirRespToMess: true,
-		dirMessToChatReq: true,
+		dirMessToChatReq: true, dirRespToChatReq: true,
 	}
 	for d := direction(0); d < dirCount; d++ {
 		tgt := dirTarget(d)
 		for _, rw := range rowsOf(d) {
 			if rw.name == "" {
 				continue // ∅ 行不参与名词判定
+			}
+			if rw.pol == polReject {
+				// polReject 行**不写出任何字段**（整请求 400），故它的 name 不在
+				// 目标词表里 —— 语义由 TestRespChatRejectRowsCovered 钉住。
+				continue
 			}
 			switch rw.kind {
 			case kindPart:
@@ -488,6 +511,7 @@ func TestVocabSelfComplete(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"messages", "tools", "tool_choice", "parallel_tool_calls",
 		"max_completion_tokens", "stop", "user",
+		"response_format", "reasoning_effort",
 	}, chatReqVocab)
 	require.ElementsMatch(t, []string{
 		"response.created", "response.output_item.added", "response.output_item.done",

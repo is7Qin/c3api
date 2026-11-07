@@ -53,9 +53,9 @@ var dirCaps = map[domain.ProtocolConvert]DirectionCaps{
 	// 新增 2 方向（mess/resp 客户端 → chat 上游）：逐里程碑打开（请求面 → 响应面
 	// → 流式）。未 GA（三项未全真）时配置层直接 400，流式入口 fail-closed ——
 	// 宁可不支持，也不给客户端 200 + 空流（比 400 难排查得多）。
-	// M2a：mess→chat 的请求面已接线。
+	// M2 请求面：两个方向的 ConvertRequest 已接线；响应面/流式仍为 false。
 	domain.ProtocolConvertMessToChat: {Request: true},
-	domain.ProtocolConvertRespToChat: {},
+	domain.ProtocolConvertRespToChat: {Request: true},
 }
 
 // Capability 方向能力查询（未登记 → 零值，即三项 false）。
@@ -80,6 +80,8 @@ func ConvertRequest(body []byte, dir domain.ProtocolConvert) ([]byte, error) {
 		return chatToMessRequest(body)
 	case domain.ProtocolConvertMessToChat:
 		return messToChatRequest(body)
+	case domain.ProtocolConvertRespToChat:
+		return respToChatRequest(body)
 	}
 	return nil, fmt.Errorf("%w: %q", ErrUnsupportedDirection, dir)
 }

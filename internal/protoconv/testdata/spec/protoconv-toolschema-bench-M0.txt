@@ -5,8 +5,8 @@ cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go 8985695bced8f3f8f977028726e2b9e7fbd1a31a0651591654e4f4be0e009d0b
-src_sha256 toolschema_bench_test.go 72104923140677e5949f1513fbb23dfd18dbecc473e64f5f1bc3352bd57bfe57
+src_sha256 toolschema.go 9378fed810334dd505f5f6c85ea50d442ec451610044c57bae6dc5c443bac977
+src_sha256 toolschema_bench_test.go 44cc6c4aacb0d8d4f8992e3e6da8ad77e18da0e62fed08d1bb0f0d36640ab8c0
 
 BenchmarkConvertRequestRespToMessTools20-16           2000   85835 ns/op   28899 B/op   111 allocs/op
 BenchmarkToolsHandling-16                            2000    5638 ns/op       4 B/op     0 allocs/op
@@ -63,3 +63,9 @@ BenchmarkConvertRequestRespToMessTools20AllPIn-16     2000   28819 ns/op    6913
 #    allocs/op 的实测值仍在门禁范围内（同机同会话复跑 TestBenchGates 通过）。
 #    棘轮因此只更新 src_sha256，不重采数字；理由写在这里，避免下一个人误以为
 #    "sha 变了就等于数字也变了"而顺手放宽上界。
+
+# 2) 2026-11-08 M2b：`toolschema_bench_test.go` 新增两个方向的基准
+#    （BenchmarkConvertRequestMessToChatTools20 / ...RespToChatTools20）。新增基准
+#    不改既有基准的读数，故仍只刷 sha；两个新基准的**首测值与上界**登记在
+#    testdata/spec/bench_targets.tsv（26/24 allocs，上界 31/28 写死在
+#    TestBenchGates 里）。
