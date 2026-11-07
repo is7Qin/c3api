@@ -111,21 +111,21 @@ func TestBailValve(t *testing.T) {
 		{
 			// ③ 子路径引用（非“恰好一个名字段”）⇒ 兜底。
 			name: "refs_subpath_bail",
-			in:   `{"type":"object","$defs":{"H":{"properties":{"x":{"type":"object"}}}},"properties":{"a":{"$ref":"#/$defs/H/properties/x"}},"oneOf":[{"type":"object"}]}`,
+			in:   `{"type":"object","$defs":{"H":{"properties":{"x":{"type":"object"}}}},"oneOf":[{"type":"object","properties":{"a":{"$ref":"#/$defs/H/properties/x"}}}],"properties":{"a":{"$ref":"#/$defs/H/properties/x"}}}`,
 			want: `{"type":"object"}`,
 			deg:  degBail,
 		},
 		{
 			// 名字含 % ⇒ 兜底（URI percent 解码会把名字改掉）。
 			name: "refs_percent_bail",
-			in:   `{"type":"object","$defs":{"A%20B":{"type":"object"}},"properties":{"p":{"$ref":"#/$defs/A%20B"}},"oneOf":[{"type":"object"}]}`,
+			in:   `{"type":"object","$defs":{"A%20B":{"type":"object"}},"oneOf":[{"type":"object","properties":{"p":{"$ref":"#/$defs/A%20B"}}}],"properties":{"p":{"$ref":"#/$defs/A%20B"}}}`,
 			want: `{"type":"object"}`,
 			deg:  degBail,
 		},
 		{
 			// 出现 $id ⇒ 兜底（基址重置）。
 			name: "refs_id_bail",
-			in:   `{"type":"object","oneOf":[{"type":"object"}],"properties":{"a":{"$id":"https://x/y","type":"object"}}}`,
+			in:   `{"type":"object","$id":"https://x/y","oneOf":[{"type":"object","properties":{"a":{"type":"object"}}}]}`,
 			want: `{"type":"object"}`,
 			deg:  degBail,
 		},

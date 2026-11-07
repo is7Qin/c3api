@@ -556,6 +556,7 @@ func (p *propEnt) add(raw []byte) {
 type flattenState struct {
 	props      []propEnt
 	propIndex  map[string]int
+	forceEmpty map[string]bool // 某组合分支不约束该属性 ⇒ 合并后必须无约束（否则收窄）
 	rootReq    []string
 	allOfReq   [][]string
 	anyOneReq  [][]string
@@ -750,7 +751,7 @@ func unionInto(set map[string]struct{}, names []string) {
 // flattenMessSchema 第 1~9 步：把根级组合关键字压平成普通 object schema。
 // raw 必须是 src.Raw（源字节）；doc 是同一个文档基准。
 func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
-	st := &flattenState{propIndex: map[string]int{}}
+	st := &flattenState{propIndex: map[string]int{}, forceEmpty: map[string]bool{}}
 	v := scanRoot(raw)
 	if !v.isObject {
 		return []byte(`{"type":"object"}`), nil
@@ -844,6 +845,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 
 	// 第 6 步：合并
 	branchReq := map[int]map[string]struct{}{}
+	branchProps := map[int]map[string]struct{}{}
 	kinds := map[int]branchKind{}
 	reqUnion := map[string]struct{}{}
 	reqInter := map[string]struct{}{}
@@ -854,8 +856,18 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			continue
 		}
 		// properties（贡献者内部末个胜）
+		declared := map[string]struct{}{}
 		for _, e := range propsOf(c.raw) {
 			st.addProp(e.name, e.raw)
+			declared[e.name] = struct{}{}
+		}
+		if !c.isRoot && c.kind != brRoot {
+			if branchProps[c.branch] == nil {
+				branchProps[c.branch] = map[string]struct{}{}
+			}
+			for n := range declared {
+				branchProps[c.branch][n] = struct{}{}
+			}
 		}
 		// required
 		req := requiredOf(c.raw)
@@ -904,6 +916,21 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 	for n := range reqInter {
 		reqUnion[n] = struct{}{}
 	}
+	// I1（v18 修）：属性若被某个组合分支"不约束"，合并后必须无约束 ——
+	// 否则把 oneOf/anyOf 的析取当成了合取，实例会从合法变非法。
+	for _, p := range st.props {
+		for bi, set := range branchProps {
+			// allOf 是**合取**：各分支的约束可以安全并列（不产生收窄）。
+			// anyOf/oneOf 是**析取**：某分支不约束该属性 ⇒ 合并后必须无约束。
+			if kinds[bi] == brAllOf {
+				continue
+			}
+			if _, ok := set[p.name]; !ok {
+				st.forceEmpty[p.name] = true
+				break
+			}
+		}
+	}
 
 	// 第 7 步：根 enum / const / not
 	for _, k := range []string{"enum", "const", "not"} {
@@ -947,6 +974,10 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			}
 			out = appendJSONString(out, p.name)
 			out = append(out, ':')
+			if st.forceEmpty[p.name] {
+				out = append(out, `{}`...)
+				continue
+			}
 			if len(p.raws) == 1 {
 				out = append(out, p.raws[0]...)
 				continue
