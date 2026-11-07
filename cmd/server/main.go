@@ -94,7 +94,9 @@ func main() {
 	// 都记 WARN，带 direction/tool/reason/schema_bytes/root_keys；计数由
 	// protoconv 自己累计（protoconv.SchemaRepaired，供健康检查读取）。
 	protoconv.SetSchemaSink(func(e protoconv.SchemaEvent) {
-		if e.Degenerate == "none" && !e.Missing {
+		// 触发条件：退化（simplify/bail）、源侧没有 schema（missing）、或"有值但不是
+		// 对象/字符串形态"（no-schema 但没有 missing）——三者都要可见。
+		if e.Degenerate == "none" && !e.Missing && !hasReason(e.Reasons, "no-schema") {
 			return
 		}
 		log.Warn("tool schema degraded for the Messages target",
@@ -964,4 +966,14 @@ func fatalDB(step string, err error) {
 func fatalf(format string, args ...any) {
 	_, _ = os.Stderr.WriteString("fatal: " + fmt.Sprintf(format, args...) + "\n")
 	os.Exit(1)
+}
+
+// hasReason 判定事件里是否含某个 reason。
+func hasReason(reasons []string, want string) bool {
+	for _, r := range reasons {
+		if r == want {
+			return true
+		}
+	}
+	return false
 }

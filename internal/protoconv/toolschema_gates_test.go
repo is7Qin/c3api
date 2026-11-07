@@ -248,3 +248,57 @@ func TestBenchRecordMatchesSource(t *testing.T) {
 		require.Equal(t, want, sum, "%s 的 sha256 与 M0 记录不一致（bench 数字已失效，需重跑并更新 M0）", file)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// metis-r2 的三条回归（互指 $ref 的递归、畸形 JSON 的快路径、工具级重复键）
+// ---------------------------------------------------------------------------
+
+// C-1：4b 的递归必须有保险丝（互指的 $ref + 组合关键字没有自然终点）。
+func TestFlattenRecursionBounded(t *testing.T) {
+	cases := []string{
+		`{"type":"object","$ref":"#/$defs/A","$defs":{"A":{"oneOf":[{"$ref":"#/$defs/A"}]}}}`,
+		`{"type":"object","oneOf":[{"$ref":"#/$defs/A"}],"$defs":{"A":{"anyOf":[{"$ref":"#/$defs/A"}]}}}`,
+	}
+	for _, src := range cases {
+		out, deg := messSchema(src)
+		require.True(t, gjson.Valid(out), "产物必须是合法 JSON：%s", out)
+		assertPOut(t, "cycle", out)
+		require.Equal(t, degSimplify, deg, "深度保险丝触发必须计 lossy（发 hint）")
+	}
+}
+
+// C-2：快路径不许把畸形 JSON 判成 P_in 成立（否则非法字节原样上行）。
+func TestPInFastStrict(t *testing.T) {
+	for _, in := range []string{
+		`{"type":"object",}`,
+		`{"type":"object" "properties":{}}`,
+		`{"type":"object","properties":}`,
+		`{"type":"object"`,
+		`{"type":"object","properties":{"a":}}`,
+	} {
+		require.False(t, pInFast(gjson.Parse(in)), "畸形 JSON 不得走快路径：%s", in)
+		res := evalMessSchema(gjson.Parse(in))
+		out := res.raw
+		if out == "" {
+			out = string(res.out)
+		}
+		require.True(t, gjson.Valid(out), "畸形源的产物必须仍是合法 JSON：%s ⇒ %s", in, out)
+		require.Equal(t, `{"type":"object"}`, out, "畸形源必须兜底成空 schema：%s", in)
+	}
+	// 端到端：畸形 parameters 的产物必须仍是合法 JSON
+	out := appendToolsMapped(nil, gjson.Parse(`[{"type":"function","function":{"name":"f","parameters":{"type":"object",}}}]`), toolsMessFromChat)
+	require.True(t, gjson.Valid(string(out)), "产物必须是合法 JSON：%s", out)
+}
+
+// C-3：工具对象里的重复键必须末个胜（gjson.Get 是首胜 ⇒ 收窄）。
+func TestToolDuplicateKeyLastWins(t *testing.T) {
+	tools := gjson.Parse(`[{"type":"function","function":{"name":"f","parameters":{"type":"object","properties":{"a":{"type":"string"}},"required":["a"]},"parameters":{"type":"object"}}}]`)
+	out := string(appendToolsMapped(nil, tools, toolsMessFromChat))
+	require.Equal(t, `{"input_schema":{"type":"object"},"name":"f"}`, out,
+		"重复 parameters 必须取末个（上游 json.loads 也是末个胜）")
+
+	// 重复 name / description 同理
+	tools = gjson.Parse(`[{"type":"function","function":{"name":"first","name":"last","description":"d1","description":"d2","parameters":{"type":"object"}}}]`)
+	out = string(appendToolsMapped(nil, tools, toolsMessFromChat))
+	require.Equal(t, `{"description":"d2","input_schema":{"type":"object"},"name":"last"}`, out)
+}

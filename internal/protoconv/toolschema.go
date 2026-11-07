@@ -780,6 +780,11 @@ func evalMessSchemaInner(src gjson.Result) evalResult {
 	if pInFast(src) {
 		return evalResult{raw: src.Raw, deg: degNone}
 	}
+	if !gjson.Valid(src.Raw) {
+		// 畸形 JSON：不能当文档基准（否则非法字节会原样上行）。请求体层面的
+		// json.Valid 早已拦过，这里是防线内的兜底。
+		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
+	}
 	raw := []byte(src.Raw)
 	v := scanRoot(raw)
 	if v.pIn(raw) {
@@ -809,12 +814,15 @@ func evalMessSchemaInner(src gjson.Result) evalResult {
 	return evalResult{out: out, deg: degNone, reasons: st.reasons}
 }
 
+// branchID 分支身份：高 32 位是组合序号，低 32 位是元素下标。
+type branchID int64
+
 // contrib 一个贡献者（分支或根）。
 type contrib struct {
 	kind   branchKind
 	raw    []byte
-	isRoot bool // branch₀：其余根键由第 9 步保留，不进 4c 分类
-	branch int  // 组合键分支序号；brRoot 用 -1/-2
+	isRoot bool     // branch₀：其余根键由第 9 步保留，不进 4c 分类
+	branch branchID // 分支身份；brRoot 用 -1/-2
 }
 
 // fieldSpan 取对象里某个键的**末个**取值区间（末个胜，不用 gjson.Get）。
@@ -834,6 +842,151 @@ func fieldSpan(obj []byte, name string) (span, bool) {
 		return span{}, false
 	}
 	return span{lo, hi}, true
+}
+
+// ---------------------------------------------------------------------------
+// 工具对象上的末个胜取值（string 版扫描：gjson 视图的 Raw 是 string，
+// 转成 []byte 会分配 ⇒ 工具级热路径必须走这里）
+// ---------------------------------------------------------------------------
+
+func skipSpaceStr(s string, i int) int {
+	for i < len(s) {
+		switch s[i] {
+		case ' ', '\n', '\r', '\t':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+func rawStringEndStr(s string, i int) (int, bool) {
+	if i >= len(s) || s[i] != '"' {
+		return i, false
+	}
+	i++
+	for i < len(s) {
+		switch s[i] {
+		case '\\':
+			i += 2
+		case '"':
+			return i + 1, true
+		default:
+			i++
+		}
+	}
+	return i, false
+}
+
+func skipValueStr(s string, i int) (int, bool) {
+	if i >= len(s) {
+		return i, false
+	}
+	switch s[i] {
+	case '"':
+		return rawStringEndStr(s, i)
+	case '{', '[':
+		opening := s[i]
+		closing := byte('}')
+		if opening == '[' {
+			closing = ']'
+		}
+		depth := 1
+		i++
+		for i < len(s) && depth > 0 {
+			if s[i] == '"' {
+				var ok bool
+				i, ok = rawStringEndStr(s, i)
+				if !ok {
+					return i, false
+				}
+				continue
+			}
+			switch s[i] {
+			case opening:
+				depth++
+			case closing:
+				depth--
+			}
+			i++
+		}
+		return i, depth == 0
+	case 't':
+		if i+4 <= len(s) && s[i:i+4] == "true" {
+			return i + 4, true
+		}
+	case 'f':
+		if i+5 <= len(s) && s[i:i+5] == "false" {
+			return i + 5, true
+		}
+	case 'n':
+		if i+4 <= len(s) && s[i:i+4] == "null" {
+			return i + 4, true
+		}
+	default:
+		if s[i] == '-' || (s[i] >= '0' && s[i] <= '9') {
+			i++
+			for i < len(s) {
+				c := s[i]
+				if (c >= '0' && c <= '9') || c == '.' || c == 'e' || c == 'E' || c == '+' || c == '-' {
+					i++
+					continue
+				}
+				break
+			}
+			return i, true
+		}
+	}
+	return i, false
+}
+
+// fieldSpanStr 取字符串对象里某个键的**末个**取值区间（零分配）。
+func fieldSpanStr(obj, name string) (span, bool) {
+	if len(obj) == 0 || obj[0] != '{' {
+		return span{}, false
+	}
+	var lo, hi int
+	found := false
+	i := skipSpaceStr(obj, 1)
+	for i < len(obj) {
+		i = skipSpaceStr(obj, i)
+		if i >= len(obj) || obj[i] != '"' {
+			return span{lo, hi}, found
+		}
+		keyLo := i
+		keyEnd, ok := rawStringEndStr(obj, i)
+		if !ok {
+			return span{lo, hi}, found
+		}
+		keyRaw := obj[keyLo:keyEnd]
+		i = skipSpaceStr(obj, keyEnd)
+		if i >= len(obj) || obj[i] != ':' {
+			return span{lo, hi}, found
+		}
+		i = skipSpaceStr(obj, i+1)
+		valLo := i
+		valHi, ok := skipValueStr(obj, i)
+		if !ok {
+			return span{lo, hi}, found
+		}
+		if keyIsRaw(keyRaw, name) {
+			lo, hi, found = valLo, valHi, true
+		}
+		i = skipSpaceStr(obj, valHi)
+		if i >= len(obj) {
+			break
+		}
+		switch obj[i] {
+		case ',':
+			i++
+		case '}':
+			return span{lo, hi}, found
+		default:
+			return span{lo, hi}, found
+		}
+	}
+	return span{lo, hi}, found
 }
 
 // propsOf 取对象的 properties 成员（数组形式：名字 + 值原始字节），贡献者内部末个胜。
@@ -900,10 +1053,24 @@ func unionInto(set map[string]struct{}, names []string) {
 	}
 }
 
+// maxFlattenDepth 4b 的递归保险丝。互指的 $ref + 组合关键字（A.oneOf→A）会让
+// 递归没有自然终点；超限时该层退化为"接受任意对象"（放宽方向）并计 lossy。
+const maxFlattenDepth = 64
+
 // flattenMessSchema 第 1~9 步：把根级组合关键字压平成普通 object schema。
 // raw 必须是 src.Raw（源字节）；doc 是同一个文档基准。
 func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
+	return flattenMessSchemaDepth(doc, raw, 0)
+}
+
+func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int) ([]byte, *flattenState) {
 	st := &flattenState{propIndex: map[string]int{}, forceEmpty: map[string]bool{}, groupNonObj: map[int]bool{}}
+	if depth > maxFlattenDepth {
+		// 无法在有限层数内压平：这一层退化为"接受任意对象"（只放宽），并计 lossy。
+		st.lossyUnres = true
+		st.reason("unresolved-ref")
+		return []byte(`{"type":"object"}`), st
+	}
 	v := scanRoot(raw)
 	if !v.isObject {
 		return []byte(`{"type":"object"}`), nil
@@ -953,23 +1120,24 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 		}
 	}
 
-	// 分支级累计（key = 分支序号）
-	branchReq := map[int]map[string]struct{}{}
-	branchProps := map[int]map[string]struct{}{}
-	branchKinds := map[int]branchKind{}
-	branchIsObj := map[int]bool{}
+	// 分支级累计（key = 组合序号 << 32 | 元素下标；不能进位相加，
+	// 否则 4000+ 个分支时不同组合会撞车 —— metis-r2 I-1）
+	branchReq := map[branchID]map[string]struct{}{}
+	branchProps := map[branchID]map[string]struct{}{}
+	branchKinds := map[branchID]branchKind{}
+	branchIsObj := map[branchID]bool{}
 
 	// 第 4/5 步：收集贡献者
 	var contribs []contrib
 	if refContrib != nil {
-		contribs = append(contribs, contrib{kind: brRoot, raw: flattenNested(doc, refContrib, st), branch: -2})
+		contribs = append(contribs, contrib{kind: brRoot, raw: flattenNested(doc, refContrib, st, depth), branch: -2})
 	}
 	contribs = append(contribs, contrib{kind: brRoot, raw: raw, isRoot: true, branch: -1})
 	for ci, cb := range combos {
 		elemIdx := 0
 		scanArray(cb.arr, 0, len(cb.arr), func(elLo, elHi int) bool {
 			elem := cb.arr[elLo:elHi]
-			branchKey := ci*4096 + elemIdx
+			branchKey := branchID(ci)<<32 | branchID(elemIdx)
 			elemIdx++
 			st.anyBranch = true
 			branchKinds[branchKey] = cb.kind
@@ -1001,7 +1169,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			}
 			branchIsObj[branchKey] = isObj
 			for _, c := range cands {
-				contribs = append(contribs, contrib{kind: cb.kind, raw: flattenNested(doc, c, st), branch: branchKey})
+				contribs = append(contribs, contrib{kind: cb.kind, raw: flattenNested(doc, c, st, depth), branch: branchKey})
 			}
 			return true
 		})
@@ -1063,7 +1231,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 
 	// required 交集：**每组各算一个**再并入（momus-r2 I-6）；
 	// 组里有"什么都不约束"的分支 ⇒ 该组交集为空（v20 ④）。
-	interByGroup := map[int]map[string]struct{}{}
+	interByGroup := map[branchID]map[string]struct{}{}
 	for bi, set := range branchReq {
 		if branchKinds[bi] == brAllOf { // 合取：直接并入
 			for n := range set {
@@ -1071,8 +1239,8 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			}
 			continue
 		}
-		ci := bi / 4096
-		if st.groupNonObj[ci] {
+		ci := bi >> 32
+		if st.groupNonObj[int(ci)] {
 			continue
 		}
 		g, ok := interByGroup[ci]
@@ -1102,7 +1270,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 		if branchKinds[bi] == brAllOf {
 			continue
 		}
-		if st.groupNonObj[bi/4096] {
+		if st.groupNonObj[int(bi>>32)] {
 			for n := range set {
 				st.forceEmpty[n] = true
 			}
@@ -1239,12 +1407,12 @@ func hasComboKey(raw []byte) bool {
 }
 
 // flattenNested 4b：贡献者根带组合关键字 ⇒ 递归压平，内层 state 并回外层
-// （内层丢掉的约束必须让 hint 与度量看见）。
-func flattenNested(doc *schemaDoc, raw []byte, st *flattenState) []byte {
+// （内层丢掉的约束必须让 hint 与度量看见）。depth 是递归保险丝。
+func flattenNested(doc *schemaDoc, raw []byte, st *flattenState, depth int) []byte {
 	if !hasComboKey(raw) {
 		return raw
 	}
-	sub, sst := flattenMessSchema(doc, raw)
+	sub, sst := flattenMessSchemaDepth(doc, raw, depth+1)
 	if sst != nil {
 		st.lossyUnres = st.lossyUnres || sst.lossyUnres
 		st.lossyDrop = st.lossyDrop || sst.lossyDrop
@@ -1415,12 +1583,16 @@ var reasonWhitelist = func() map[string]struct{} {
 	return m
 }()
 
-// pInFast 源侧后置条件的快路径：gjson 视图遍历 + 键名按**原始字节**比较，
-// 不建键表、不分配。只有它返回 false 才走 scanRoot 的完整判定；
-// (i) 的 TestPInFastParity 断言两者逐输入一致。
+// pInFast 源侧后置条件的快路径：gjson 视图遍历（键名按原始字节比较，零分配）
+// + `gjson.Valid` 的严格性前置（ForEach 对 `{"a":1,}` 这类畸形串仍是宽松的，
+// 会把非法字节原样放进产物 —— metis-r2 C-2）。只有它返回 false 才走
+// scanRoot 的完整判定；(i) 的 TestPInFastParity 断言两者逐输入一致。
 func pInFast(src gjson.Result) bool {
 	if !src.IsObject() {
 		return false
+	}
+	if !gjson.Valid(src.Raw) {
+		return false // 畸形 JSON ⇒ 交给完整判定（它会产出合法的兜底）
 	}
 	var seen [24]string // 已见键的原始 JSON 文本（含引号；根键很少，固定数组免分配）
 	n := 0

@@ -432,6 +432,17 @@ var (
 	toolsMessFromResp = toolsFieldMap{dir: dirRespToMess, typeFunctionGate: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, mode: schemaModeMessDialect, schemaBeforeName: true}
 )
 
+// lastField 取工具对象里某个成员的**末个**取值（末个胜，零分配）。工具级重复键
+// 必须与上游 json.loads 一致；gjson.Get 是首胜，会让"客户端与上游读的不是同一个
+// 值"（metis-r2 C-3：重复 parameters 时产物会收窄）。
+func lastField(obj gjson.Result, name string) (gjson.Result, bool) {
+	sp, ok := fieldSpanStr(obj.Raw, name)
+	if !ok {
+		return gjson.Result{}, false
+	}
+	return gjson.Parse(obj.Raw[sp.lo:sp.hi]), true
+}
+
 // appendToolsMapped tools 数组转换（映射表驱动）：四个方向的 tools 处理收敛
 // 于此，源/目标键差异全由 m 表达，输出逐字节等价于原各方向内联版本。
 // mess 方言方向（m.mode == schemaModeMessDialect）先求值再写 description：
@@ -444,9 +455,11 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 		}
 		src := tv
 		if m.nestedInput {
-			if src = tv.Get("function"); !src.IsObject() {
+			fn, ok := lastField(tv, "function")
+			if !ok || !fn.IsObject() {
 				return true
 			}
+			src = fn
 		} else if m.typeFunctionGate && !rawStrEq(tv.Get("type").Raw, "function") {
 			return true
 		}
@@ -455,7 +468,7 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 		out, n = appendComma(out, n)
 		out = append(out, '{')
 		wrote := false
-		if d := src.Get("description"); d.Type == gjson.String {
+		if d, ok := lastField(src, "description"); ok && d.Type == gjson.String {
 			out = append(out, `"description":`...)
 			if deg == degNone {
 				out = append(out, d.Raw...)
@@ -465,7 +478,7 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 			wrote = true
 		}
 		writeName := func() {
-			if name := src.Get("name"); name.Type == gjson.String {
+			if name, ok := lastField(src, "name"); ok && name.Type == gjson.String {
 				if wrote {
 					out = append(out, ',')
 				}
@@ -497,7 +510,7 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 			writeSchema()
 		}
 		if m.copyStrict {
-			if s := src.Get("strict"); s.Type == gjson.True || s.Type == gjson.False {
+			if s, ok := lastField(src, "strict"); ok && (s.Type == gjson.True || s.Type == gjson.False) {
 				if wrote {
 					out = append(out, ',')
 				}
@@ -521,9 +534,9 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 
 // evalSchemaField 计算 schema 字段的值字节；nil 表示该字段不写出。
 func evalSchemaField(m toolsFieldMap, src gjson.Result) (string, []byte, degenerateKind) {
+	in, inOK := lastField(src, m.inSchemaKey)
 	switch m.mode {
 	case schemaModeMessDialect:
-		in := src.Get(m.inSchemaKey)
 		res := evalMessSchema(in)
 		if res.raw != "" {
 			return res.raw, nil, res.deg // P_in 成立：不观测、不分配（I2）
@@ -531,13 +544,13 @@ func evalSchemaField(m toolsFieldMap, src gjson.Result) (string, []byte, degener
 		observeSchema(m, src, in, res)
 		return "", res.out, res.deg
 	case schemaModeObjectOnly:
-		if s := src.Get(m.inSchemaKey); s.IsObject() {
-			return s.Raw, nil, degNone
+		if inOK && in.IsObject() {
+			return in.Raw, nil, degNone
 		}
 		return "", nil, degNone
 	case schemaModeExistence:
-		if s := src.Get(m.inSchemaKey); s.Exists() && s.Type != gjson.Null {
-			return s.Raw, nil, degNone
+		if inOK && in.Exists() && in.Type != gjson.Null {
+			return in.Raw, nil, degNone
 		}
 		return "", nil, degNone
 	default:

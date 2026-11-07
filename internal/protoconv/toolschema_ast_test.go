@@ -18,10 +18,11 @@ import (
 // v21（momus-r2 I-8）：补上包级 `var d schemaDoc`、`map[string]schemaDoc`、
 // 以及 `.raw`/`.memo` 字段读写的位置限制。
 var schemaDocAllowedFuncs = map[string]struct{}{
-	"newSchemaDoc":      {},
-	"resolve":           {},
-	"resolveUncached":   {},
-	"flattenMessSchema": {},
+	"newSchemaDoc":           {},
+	"resolve":                {},
+	"resolveUncached":        {},
+	"flattenMessSchema":      {},
+	"flattenMessSchemaDepth": {},
 	// 只读辅助：只把 doc 当"解析器"用，不新建、不外传
 	"derefChain":    {},
 	"flattenNested": {},

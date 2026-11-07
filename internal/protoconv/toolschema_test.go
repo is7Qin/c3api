@@ -1,8 +1,10 @@
 package protoconv
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -176,47 +178,65 @@ func TestToolsCountPreserved(t *testing.T) {
 	require.NotContains(t, string(out), "web_search")
 }
 
-// (l) 产物引用可解析（作用域：走 T 的产物）。判据与 9b 独立实现（此处直接用正则复核）。
+// (l) 产物引用可解析（作用域：走 T 的产物）。判据**独立实现**：
+// 解析用 encoding/json、指针表自己建、正则自己写，不复用 refOK/collectTables/scanObject
+// （momus-r3 I-7：复用实现等于自证）。
 func TestProductRefsResolvable(t *testing.T) {
+	re := regexp.MustCompile(`^#/(\$defs|definitions)/([^/]+)$`)
+	badRefs := func(out string) []string {
+		var doc any
+		if err := json.Unmarshal([]byte(out), &doc); err != nil {
+			return []string{"<invalid json>"}
+		}
+		tables := map[string]map[string]struct{}{"$defs": {}, "definitions": {}}
+		root, _ := doc.(map[string]any)
+		for _, tbl := range []string{"$defs", "definitions"} {
+			if m, ok := root[tbl].(map[string]any); ok {
+				for k := range m {
+					tables[tbl][k] = struct{}{}
+				}
+			}
+		}
+		var bad []string
+		var walk func(v any)
+		walk = func(v any) {
+			switch x := v.(type) {
+			case map[string]any:
+				for k, val := range x {
+					if k == "$ref" || k == "$dynamicRef" || k == "$recursiveRef" {
+						s, _ := val.(string)
+						m := re.FindStringSubmatch(s)
+						if m == nil {
+							bad = append(bad, s)
+						} else if _, ok := tables[m[1]][m[2]]; !ok {
+							bad = append(bad, s)
+						}
+						continue
+					}
+					walk(val)
+				}
+			case []any:
+				for _, e := range x {
+					walk(e)
+				}
+			}
+		}
+		walk(doc)
+		return bad
+	}
 	inputs := []string{
 		`{"type":"object","$defs":{"P":{"type":"object","properties":{"q":{"type":"string"}}}},"oneOf":[{"$ref":"#/$defs/P"}]}`,
 		`{"type":"object","oneOf":[{"type":"object","$defs":{"P":{"type":"object"}},"properties":{"a":{"$ref":"#/$defs/P"}}}]}`,
 	}
 	for _, in := range inputs {
 		out, _ := messSchema(in)
-		tables := collectTables([]byte(out))
-		ok := true
-		var walk func(lo, hi int)
-		walk = func(lo, hi int) {
-			if !ok || lo >= hi || hi > len(out) {
-				return
-			}
-			switch out[lo] {
-			case '{':
-				scanObject([]byte(out), lo, hi, func(kr []byte, vl, vh int) bool {
-					name := decodeRawKey(kr)
-					for _, rk := range refKeys {
-						if name == rk {
-							if !refOK([]byte(out)[vl:vh], tables) {
-								ok = false
-								return false
-							}
-							return true
-						}
-					}
-					walk(vl, vh)
-					return ok
-				})
-			case '[':
-				scanArray([]byte(out), lo, hi, func(vl, vh int) bool {
-					walk(vl, vh)
-					return ok
-				})
-			}
-		}
-		walk(0, len(out))
-		require.True(t, ok, "产物引用必须可解析：%s ⇒ %s", in, out)
+		require.Empty(t, badRefs(out), "产物里有不可解析的引用：%s ⇒ %s", in, out)
 	}
+	// 防恒绿：判据必须能报出坏引用
+	require.NotEmpty(t, badRefs(`{"type":"object","properties":{"a":{"$ref":"#/$defs/Missing"}}}`),
+		"判据抓不到悬空引用 ⇒ 门禁空过")
+	require.NotEmpty(t, badRefs(`{"type":"object","properties":{"a":{"$ref":"#/$defs/H/properties/x"}}}`),
+		"判据抓不到子路径引用 ⇒ 门禁空过")
 }
 
 // (q) 非对象实例域：改写为 object 而不是 DROP。
@@ -262,6 +282,8 @@ func TestBenchFixtures(t *testing.T) {
 
 // pInFast 与 scanRoot().pIn() 必须逐输入一致（快路径不许更宽松）。
 // 覆盖：手写边界 + (b) 全表（防"只测手写用例"）。
+// 域：只对**合法 JSON** 断言（scanRoot 只保证根级结构；畸形串由 evalMessSchema 的
+// gjson.Valid 兜底处理，见 spec L30 / TestPInFastStrict）。
 func TestPInFastParity(t *testing.T) {
 	inputs := []string{
 		`{}`, `{"properties":{"a":{}}}`, `{"title":"t"}`,

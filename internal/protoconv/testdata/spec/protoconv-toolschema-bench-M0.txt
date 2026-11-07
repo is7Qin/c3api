@@ -5,7 +5,7 @@ cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go 53a0950186a40799ce38a1ce6275b9880746a841f79e6a442a1ed8e56cfb004e
+src_sha256 toolschema.go 6bb414b0d3ac454f974d2294fb7dd9f8ba4986ddf0204759951b782bec38e8f5
 src_sha256 toolschema_bench_test.go 6f7c766a5cd388f408ec46a43308bb9fa4a7ad9f4d0c297424908740967c87ed
 
 BenchmarkConvertRequestRespToMessTools20-16   1000  120990 ns/op   49230 B/op   302 allocs/op

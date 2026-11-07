@@ -64,3 +64,6 @@ one_of_intersect_required	{}	must_reject
 required_union_allof_root	{"r":1}	must_reject
 required_without_property	{"a":1}	must_reject
 definitions_table	{"q":"s"}	must_accept
+root_oneof_with_allof	{"c":1,"d":1}	must_accept
+multi_group_required	{"c":1}	must_accept
+allof_non_object_branch	{"a":"s"}	must_accept

@@ -10,4 +10,4 @@ defsTables	$defs,definitions
 logReasons	no-schema,duplicate-key,unresolved-ref,dangling-after-flatten,merged-union,dropped-branch-constraint,dropped-branch-meta,dropped-branch-type,dropped-root-constraint,non-object-root,dropped-forbidden-key,required-without-property,degenerate-lossy,empty-schema,no-object-branch
 degenerateHint	 [args simplified: some constraints could not be expressed]
 bailHint	 [args dropped: schema could not be preserved, call with no arguments]
-schema_cases_sha256	168c3a1659bc1174b8857eeda851aefa5a02fd58784ebf4bc84be1367e4fea75
+schema_cases_sha256	f754f92cf4097c2605e3b393f3dfbbccbb9bfac16e6a9745eff0990b5a8aa101

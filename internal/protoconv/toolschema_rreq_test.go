@@ -97,7 +97,12 @@ func TestRReqCoverage(t *testing.T) {
 		ev := newEvaluator(srcDoc)
 		outRoot, _ := outDoc.(map[string]any)
 		outProps, _ := outRoot["properties"].(map[string]any)
-		multiGroup := len(comboGroups(srcDoc)) > 1
+		// 根 $ref 的目标里可能还有组合关键字（v21 的修复面），静态数不准 ⇒ 跳过反向断言。
+		hasRootRef := false
+		if m, ok := srcDoc.(map[string]any); ok {
+			_, hasRootRef = m["$ref"].(string)
+		}
+		multiGroup := hasRootRef || len(comboGroups(srcDoc)) > 1
 		for _, ref := range refs {
 			refCount++
 			target, ok := ev.resolve(ref.ptr)
