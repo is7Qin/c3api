@@ -595,6 +595,10 @@ func (st *flattenState) classifyBranch(keyName string) {
 		st.reason("dropped-branch-type")
 		return
 	}
+	switch keyName {
+	case "$ref", "$defs", "definitions":
+		return // 引用已被解引用、定义表不约束实例：都不算丢弃约束
+	}
 	st.lossyDrop = true
 	st.reason("dropped-branch-constraint")
 }
@@ -805,8 +809,11 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 	contribs = append(contribs, contrib{kind: brRoot, raw: raw, isRoot: true, branch: -1})
 	for ci, cb := range combos {
 		present := false
+		elemIdx := 0
 		scanArray(cb.arr, 0, len(cb.arr), func(elLo, elHi int) bool {
 			elem := cb.arr[elLo:elHi]
+			branchKey := ci*4096 + elemIdx
+			elemIdx++
 			obj := gjson.ParseBytes(elem)
 			if !obj.IsObject() {
 				st.sawNonObj = true
@@ -818,17 +825,17 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 					st.lossyUnres = true
 					st.reason("unresolved-ref")
 				} else if !bytesEq(b, string(elem)) {
-					contribs = append(contribs, contrib{kind: cb.kind, raw: b, branch: ci})
+					contribs = append(contribs, contrib{kind: cb.kind, raw: b, branch: branchKey})
 					present = true
 				}
 			}
 			if hasComboKey(obj) {
 				sub, _ := flattenMessSchema(doc, elem)
-				contribs = append(contribs, contrib{kind: cb.kind, raw: sub, branch: ci})
+				contribs = append(contribs, contrib{kind: cb.kind, raw: sub, branch: branchKey})
 				present = true
 				return true
 			}
-			contribs = append(contribs, contrib{kind: cb.kind, raw: elem, branch: ci})
+			contribs = append(contribs, contrib{kind: cb.kind, raw: elem, branch: branchKey})
 			present = true
 			return true
 		})

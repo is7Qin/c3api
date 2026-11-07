@@ -99,7 +99,7 @@ func TestBailValve(t *testing.T) {
 			name: "refs_root_defs_pass",
 			in:   `{"type":"object","$defs":{"P":{"type":"object","properties":{"q":{"type":"string"}}}},"oneOf":[{"$ref":"#/$defs/P"}]}`,
 			want: `{"type":"object","properties":{"q":{"type":"string"}},"$defs":{"P":{"type":"object","properties":{"q":{"type":"string"}}}}}`,
-			deg:  degSimplify,
+			deg:  degNone,
 		},
 		{
 			// ② 分支自带 $defs、引用指向它 ⇒ 产物悬空 ⇒ 兜底。
