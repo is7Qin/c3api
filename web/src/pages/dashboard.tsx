@@ -32,7 +32,7 @@ type ErrRow = { name: string; err_rate: number; err_count: number }
 // trend 日桶行（date = 请求 `timezone` 时区的本地日 YYYY-MM-DD；缺省 UTC）。
 type TrendRow = { date: string; requests: number; cost_usd: number; errors: number; tokens: number }
 
-// 大数紧凑格式（用户裁决 2026-08-14）：≥1e9 → X.XX B、≥1e6 → X.XX M，否则千分位。
+// 大数紧凑格式：≥1e9 → X.XX B、≥1e6 → X.XX M，否则千分位。
 function formatCompact(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(2)} B`
   if (n >= 1e6) return `${(n / 1e6).toFixed(2)} M`

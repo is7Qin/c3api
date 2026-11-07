@@ -33,7 +33,7 @@ export function browserTimeZone(): string | undefined {
 // 最小显示 1s（避免 0s 闪烁）；分段：≥24h → "Xd Xh"（10086h → "420d 6h"）、
 // ≥1h → "Xh Ym"、≥1m → "Xm Ys"、<1m → "Xs"；整除时零段省略（恰好 24h →
 // "1d"）。空值/非法/已过期 → null（调用方不渲染）。不做实时倒计时——列表
-// refetchInterval 轮询重算（用户裁决）。
+// refetchInterval 轮询重算。
 export function formatRemaining(untilISO?: string | null): string | null {
   if (!untilISO) return null
   const until = new Date(untilISO)
@@ -165,7 +165,7 @@ export function fmtTokens(n: number): string {
   return String(n)
 }
 
-// TTFT 显示格式化（用户裁决 2026-08-14）：≥1000ms 转秒（2 位小数）；无样本 → '—'。
+// TTFT 显示格式化：≥1000ms 转秒（2 位小数）；无样本 → '—'。
 export function fmtTTFT(value: number): string {
   if (value <= 0) return '—'
   return value >= 1000 ? `${(value / 1000).toFixed(2)} s` : `${value} ms`

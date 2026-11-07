@@ -11,7 +11,7 @@
 - **ID**：路径参数 `{id}` 为模板/账号/分组的整数 ID。
 - **更新语义**：`PUT` 为**全量替换**——请求体中的字段整体覆盖，未提供的字段清零（仅提供部分字段的 `PUT` 会把缺失字段重置为空/零值）。批量 `batch-update` 为**部分更新**（只改 `fields` 中提供的字段）。
 - **列表响应**：templates / accounts / groups 三个旧端点统一返回 `{"total": <满足筛选的总数>, "rows": [...]}`，支持 `limit` / `offset` 分页、筛选参数与白名单 `sort` / `order` 排序（非法 `sort` / `order` → `400`）。兑换码与模型价格为**增强分页范式**（`page` / `page_size`，1-based），见对应章节。
-- **金额单位（两个面，勿混）**：**明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs` 的 `Cost` / `RawCost`、价格快照 `Price*Millis`（每 M token 毫分）、key 的 `Quota` / `QuotaUsed`、`/routing/frontier` 的 `input_unit_cost`（毫分/1M 输入侧 token）；这些字段在 API 边界**原样下发，不做换算**。**聚合/账户面恒为 USD float64**——`users.balance`、`temp_balances.amount_usd` / `total_usd`、兑换码 `value`、`/stats/*` 与 `/overview` 的 `Cost` / `cost_usd` / `raw_cost_usd`；这些字段由服务端按 `毫分 / 1e5` 换算后下发。同一含义在两面的类型与量纲不同（如 `usage_logs.Cost` 是毫分 int64，`/stats/trend` 的 `Cost` 是 USD float64），客户端不得跨面直接比较或相加。
+- **金额单位（两个面，勿混）**：**明细/计数面恒为毫分整数**（1 USD = 100,000 毫分）——`usage_logs` 的 `Cost` / `RawCost`、价格快照 `Price*Millis`（**token 侧**每 M token 毫分；`PricePerCallMillis` 例外——**毫分/单元**：search 每次 / 图片每张，**不除 1e6**）、key 的 `Quota` / `QuotaUsed`、`/routing/frontier` 的 `input_unit_cost`（毫分/1M 输入侧 token）；这些字段在 API 边界**原样下发，不做换算**。**聚合/账户面恒为 USD float64**——`users.balance`、`temp_balances.amount_usd` / `total_usd`、兑换码 `value`、`/stats/*` 与 `/overview` 的 `Cost` / `cost_usd` / `raw_cost_usd`；这些字段由服务端按 `毫分 / 1e5` 换算后下发。同一含义在两面的类型与量纲不同（如 `usage_logs.Cost` 是毫分 int64，`/stats/trend` 的 `Cost` 是 USD float64），客户端不得跨面直接比较或相加。
 
 ## 枚举值
 
@@ -806,7 +806,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `error_type` | string | — | 按错误类型过滤（值域收敛 `none` / `abort`——usage_logs 仅放行路径行） |
 | `from` / `to` | RFC3339 | 必填 | 时间范围过滤（缺失 → 400；防无范围全分区扫描） |
 
-> **分表设计**（用户裁决）：`usage_logs` 只承载**放行路径明细**——成功（`error_type=none`，含免费分组/0 token 成功行，cost 不限）+ abort 半异常计费行；4xx/5xx/拒绝等失败行**不入 usage_logs**（错误审计面见 `/err_logs`，下节）。
+> **分表设计**：`usage_logs` 只承载**放行路径明细**——成功（`error_type=none`，含免费分组/0 token 成功行，cost 不限）+ abort 半异常计费行；4xx/5xx/拒绝等失败行**不入 usage_logs**（错误审计面见 `/err_logs`，下节）。
 
 响应 `200`：
 
@@ -827,6 +827,8 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
       "InputTokens": 10,
       "OutputTokens": 20,
       "TotalTokens": 30,
+      "CallCount": 0,
+      "PricePerCallMillis": null,
       "Cost": 500,
       "BillingTier": "auto",
       "AboveHit": false,
@@ -846,6 +848,8 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 |---|---|---|
 | `Cost` | int64 | 计费成本（**毫分**，1 USD = 100,000 毫分）；放行路径行可为 0（免费分组/0 token） |
 | `RawCost` | int64 | 原始成本（**毫分**，乘倍率前——免费组 `Cost`=0 但 `RawCost` 有值，"实际消耗"口径）；bill 未装配/无价防御路径恒 0 |
+| `CallCount` | int64 | 按次分量计数：图片生成 = 张数、search = 1；**不入** `TotalTokens`；0 = 无按次分量 |
+| `PricePerCallMillis` | int64 (null) | 按单元价快照（**毫分/单元**——search 每次 / 图片每张，**不按**每 M token 口径除 1e6）；null = 无按单元分量 |
 | `BillingTier` | string | 请求 `service_tier` 归一化值：`priority` / `flex` / `fast` / `auto`（未知/空值归一 auto）；空 = 未计费路径（billing 关闭或未鉴权） |
 | `AboveHit` | bool | 任一分量超 `above_threshold` 命中分段计价 |
 | `Overdraft` | bool | 本次扣费透支（余额不足扣为负余额；`[billing]` 开启且允许透支时可能为 true） |
@@ -1126,7 +1130,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `400` | `when`/`then` 含未知字段、`kind` 非法、计数为负、`window_seconds` < 1、比例越界或缺 `count_total_ge`、`then` 无动作、`throttle` 组合非法（scope/mode/duration/use_reset 真值表不满足、与 `fail_account` 并现）、`custom_message` 空串 |
 | `409` | `priority` 或 `name` 唯一冲突 |
 
-> 配置变更：`scheduler.cooldown_429` / `scheduler.backoff_base` / `scheduler.backoff_max` **已移除**（2026-08-13 用户裁决：不向后兼容）——配置含这些键将启动失败（未知键报错）。429 节流、错误摘除与恢复节奏统一由规则引擎的种子规则与自定义 typed 动作（`throttle`/`fail_account`）接管。
+> 配置变更：`scheduler.cooldown_429` / `scheduler.backoff_base` / `scheduler.backoff_max` **已移除**（不向后兼容）——配置含这些键将启动失败（未知键报错）。429 节流、错误摘除与恢复节奏统一由规则引擎的种子规则与自定义 typed 动作（`throttle`/`fail_account`）接管。
 
 ---
 

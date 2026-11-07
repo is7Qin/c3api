@@ -658,6 +658,9 @@ type UserUsageLog struct {
 	CacheCreationTokens *int64  `json:"CacheCreationTokens,omitempty"`
 	CacheReadTokens     *int64  `json:"CacheReadTokens,omitempty"`
 
+	// CallCount 按次调用计数（图片生成 = 张数、search = 1；不入 TotalTokens）；0 = 无按次分量
+	CallCount *int64 `json:"CallCount,omitempty"`
+
 	// ClientIP 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无
 	ClientIP *string `json:"ClientIP,omitempty"`
 
@@ -691,6 +694,9 @@ type UserUsageLog struct {
 
 	// PriceOutputMillis 输出单价快照（每 M token 毫分）；null = 未计费路径
 	PriceOutputMillis *int64 `json:"PriceOutputMillis"`
+
+	// PricePerCallMillis 按单元价快照（毫分/单元——search 每次 / 图片每张；per-call 计费不走 /1e6 除法）；null = 无按单元分量
+	PricePerCallMillis *int64 `json:"PricePerCallMillis"`
 
 	// RawCost 原始成本（毫分，乘倍率前——免费组 cost=0 但 raw 有值，实际消耗口径）；bill 未装配/无价防御路径恒 0
 	RawCost   *int64  `json:"RawCost,omitempty"`

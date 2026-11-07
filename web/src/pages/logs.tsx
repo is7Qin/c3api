@@ -64,6 +64,22 @@ const fmtPricePerM = (millis: number): string => {
   return `$${s}/M`
 }
 
+// 按次/按张单价：毫分/单元 → USD/单元（≥0.01 四位小数，否则六位，去尾零；0 = 免费，显示 $0）。
+const fmtPricePerUnit = (millis: number): string => {
+  const usd = millis / 100_000
+  if (usd === 0) return '$0'
+  return `$${(usd >= 0.01 ? usd.toFixed(4) : usd.toFixed(6)).replace(/0+$/, '').replace(/\.$/, '')}`
+}
+
+// token 四件套全 0（openai-search 恒如此；上游未报 usage 的图片行亦然）时，
+// 悬停窗只呈现按次/成本/档位——外层门必须一并认按次，否则 ⓘ 不存在，按次行即死代码。
+const hasTokenUsage = (l: {
+  InputTokens?: number
+  OutputTokens?: number
+  CacheReadTokens?: number
+  CacheCreationTokens?: number
+}): boolean => !!(l.InputTokens || l.OutputTokens || l.CacheReadTokens || l.CacheCreationTokens)
+
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
 const FORMAT_ALL = '__all__'
@@ -574,8 +590,9 @@ export default function Logs() {
                       （tokens 明细 + 档位 BillingTier + 超档/透支徽章） */}
                   {isColVisible('tokens') && (
                   <TableCell className="text-right font-medium tabular-nums">
-                    {l.InputTokens || l.OutputTokens || l.CacheReadTokens || l.CacheCreationTokens ? (
+                    {hasTokenUsage(l) || ((l.CallCount ?? 0) > 0 && l.PricePerCallMillis != null) ? (
                       <span className="inline-flex items-center justify-end gap-1.5">
+                        {hasTokenUsage(l) && (
                         <span className="space-y-0.5 text-xs text-right">
                           <span className="inline-flex items-center gap-2 text-muted-foreground">
                             <span className="inline-flex items-center gap-0.5">
@@ -593,6 +610,7 @@ export default function Logs() {
                             </div>
                           ) : null}
                         </span>
+                        )}
                         {/* delay 0 立即弹出（base-ui 默认 600ms 偏慢）；触发热区 -m-1 p-1 扩大
                             （16px 圆点视觉不变，命中面积 36px） */}
                         <Tooltip>
@@ -603,6 +621,7 @@ export default function Logs() {
                               勿用默认反色 bg-foreground/text-background（浅色黑卡深色白卡，突兀） */}
                           <TooltipContent className="max-w-xs border bg-popover p-0 text-popover-foreground shadow-lg">
                             <div className="space-y-1.5 p-3 text-xs">
+                              {hasTokenUsage(l) && (<>
                               {/* 单价小字尾注：$0.0025/M（每 M token；null = 未计费路径不显示） */}
                               <div className="flex items-center justify-between gap-6">
                                 <span className="text-muted-foreground">{t('logs.tokens.input')}</span>
@@ -636,6 +655,16 @@ export default function Logs() {
                                   </span>
                                 </div>
                               ) : null}
+                              </>)}
+                              {l.CallCount != null && l.CallCount > 0 && l.PricePerCallMillis != null && (
+                                <div className="flex items-center justify-between gap-6">
+                                  <span className="text-muted-foreground">{t('logs.tokens.calls')}</span>
+                                  <span className="font-medium tabular-nums">
+                                    {l.CallCount.toLocaleString()} × {fmtPricePerUnit(l.PricePerCallMillis)}/{t(l.Format === 'openai-search' ? 'logs.tokens.unitCall' : 'logs.tokens.unitImage')}
+                                  </span>
+                                </div>
+                              )}
+                              {hasTokenUsage(l) && (
                               <div className="flex items-center justify-between gap-6 border-t pt-1.5">
                                 <span className="text-muted-foreground">{t('logs.tokens.total')}</span>
                                 {/* 动态求和（不依赖 TotalTokens 字段——某行该字段缺失/为 null 时总计仍正确） */}
@@ -643,6 +672,7 @@ export default function Logs() {
                                   {((l.InputTokens ?? 0) + (l.OutputTokens ?? 0) + (l.CacheReadTokens ?? 0) + (l.CacheCreationTokens ?? 0)).toLocaleString()}
                                 </span>
                               </div>
+                              )}
                               {/* A 原始成本（乘倍率前，毫分 → USD）；RawCost 0 = 未计费路径不显示 */}
                               {l.RawCost != null && l.RawCost > 0 && (
                                 <div className="flex items-center justify-between gap-6 border-t pt-1.5">
