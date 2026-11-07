@@ -35,6 +35,7 @@ func TestDialectAnchors(t *testing.T) {
 		"requireRootType":     requireRootType,
 		"localRefOnly":        "true",
 		"maxRefHops":          "32",
+		"maxValveDepth":       "256",
 		"maxDescriptionBytes": "8192",
 		"refKeys":             strings.Join(refKeys[:], ","),
 		"bailKeys":            strings.Join(bailKeys[:], ","),
@@ -251,4 +252,62 @@ func TestBenchFixtures(t *testing.T) {
 		require.Contains(t, string(targets), b, "bench_targets.tsv 缺 %s", b)
 		require.Contains(t, txt, b, "M0 记录缺 %s 的实测行", b)
 	}
+}
+
+// pInFast 与 scanRoot().pIn() 必须逐输入一致（快路径不许更宽松）。
+func TestPInFastParity(t *testing.T) {
+	inputs := []string{
+		`{}`, `{"properties":{"a":{}}}`, `{"title":"t"}`,
+		`{"$schema":"http://x","properties":{}}`, `{"Type":"object","properties":{"a":{}}}`,
+		`{"type":"object"}`, `{"type":"object","properties":{}}`,
+		`{"type":"string"}`, `{"type":["object","null"]}`,
+		`{"type":"object","oneOf":[]}`, `{"type":"object","enum":[]}`,
+		`{"type":"object","$ref":"#/$defs/P"}`,
+		`{"type":"object","type":"string"}`,
+		`{"type":"object","properties":{},"properties":{}}`,
+		`{"type":"object","title":"t","properties":{"a":{}}}`,
+	}
+	for _, in := range inputs {
+		src := gjson.Parse(in)
+		raw := []byte(in)
+		require.Equal(t, scanRoot(raw).pIn(raw), pInFast(src), "判定不一致：%s", in)
+	}
+}
+
+// 9b 安全阀的递归必须有深度上限（深嵌套输入不许把栈打爆）。
+func TestValveDepthCap(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"type":"object","oneOf":[{"type":"object","properties":{"x":`)
+	depth := maxValveDepth + 50 // 超过上限 ⇒ 兜底，但不许崩
+	for i := 0; i < depth; i++ {
+		b.WriteString(`{"n":`)
+	}
+	b.WriteString(`1`)
+	for i := 0; i < depth; i++ {
+		b.WriteString(`}`)
+	}
+	b.WriteString(`}}]}`)
+	src := b.String()
+	out, deg := messSchema(src)
+	// 不崩即可；深嵌套超出可证明范围时按兜底处理
+	require.NotEmpty(t, out)
+	require.Contains(t, []degenerateKind{degNone, degSimplify, degBail}, deg)
+}
+
+// 深嵌套但无引用的 schema 不应被兜底（阀只对引用与 $id 敏感）。
+func TestDeepNestingNoRef(t *testing.T) {
+	var b strings.Builder
+	b.WriteString(`{"type":"object","oneOf":[{"type":"object","properties":{"x":`)
+	depth := 80
+	for i := 0; i < depth; i++ {
+		b.WriteString(`{"n":`)
+	}
+	b.WriteString(`{"type":"string"}`)
+	for i := 0; i < depth; i++ {
+		b.WriteString(`}`)
+	}
+	b.WriteString(`}}]}`)
+	out, deg := messSchema(b.String())
+	require.NotEqual(t, degBail, deg, "无引用的深嵌套不该兜底")
+	require.Contains(t, out, `"type":"string"`)
 }

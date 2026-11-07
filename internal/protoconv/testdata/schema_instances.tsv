@@ -52,3 +52,8 @@ defs_nested_defs	-	-
 onlyof_and_items	-	-
 pattern_props_root_ref	-	-
 all_of_with_any_of_sibling	-	-
+root_type_missing	{"a":"s"}	must_accept
+anyof_true_required	{}	must_accept
+all_non_object_branches	{}	must_accept
+anyof_object_branch_no_hint	{}	must_accept
+root_type_array_object	{"a":"s"}	must_accept

@@ -28,6 +28,7 @@ const (
 
 const (
 	maxRefHops          = 32
+	maxValveDepth       = 256
 	maxDescriptionBytes = 8192
 
 	degenerateHint = " [args simplified: some constraints could not be expressed]"
@@ -102,25 +103,17 @@ func (d *schemaDoc) resolveUncached(ptr string) (int, int, bool) {
 	if !strings.HasPrefix(ptr, "#/") {
 		return 0, 0, false
 	}
-	rest := ptr[2:]
+	parts := strings.Split(ptr[2:], "/") // 保留尾部空段：`#/a/` 与 `#/a` 是不同指针
 	lo, hi := 0, len(d.raw)
-	for {
-		var seg string
-		if i := strings.IndexByte(rest, '/'); i >= 0 {
-			seg, rest = rest[:i], rest[i+1:]
-		} else {
-			seg, rest = rest, ""
-		}
-		name := pointerUnescape(seg)
+	for _, part := range parts {
+		name := pointerUnescape(part)
 		var ok bool
 		lo, hi, ok = stepInto(d.raw, lo, hi, name)
 		if !ok {
 			return 0, 0, false
 		}
-		if rest == "" {
-			return lo, hi, true
-		}
 	}
+	return lo, hi, true
 }
 
 // stepInto 在当前值 [lo,hi) 里按对象键名或数组下标前进一层。
@@ -481,9 +474,16 @@ func collectTables(b []byte) map[string]map[string]struct{} {
 func valveOK(b []byte) bool {
 	tables := collectTables(b)
 	ok := true
-	var walk func(lo, hi int)
-	walk = func(lo, hi int) {
+	var walk func(lo, hi, depth int)
+	walk = func(lo, hi, depth int) {
 		if !ok || lo < 0 || hi > len(b) || lo >= hi {
+			return
+		}
+		// 深度上限：递归深度 = 输入嵌套深度。Go 的栈可增长，但遍历成本是
+		// O(深度 × 字节)，不设限会被深嵌套输入拖死；超限即"不能证明可解析"⇒ 兜底。
+		// 256 覆盖真实 schema（工具参数一般 < 30 层），同时给开销一个硬上界。
+		if depth > maxValveDepth {
+			ok = false
 			return
 		}
 		switch b[lo] {
@@ -510,17 +510,17 @@ func valveOK(b []byte) bool {
 					}
 					return true
 				}
-				walk(vl, vh)
+				walk(vl, vh, depth+1)
 				return ok
 			})
 		case '[':
 			scanArray(b, lo, hi, func(vl, vh int) bool {
-				walk(vl, vh)
+				walk(vl, vh, depth+1)
 				return ok
 			})
 		}
 	}
-	walk(0, len(b))
+	walk(0, len(b), 0)
 	return ok
 }
 
@@ -554,19 +554,23 @@ func (p *propEnt) add(raw []byte) {
 
 // flattenState 一次压平的累积状态。
 type flattenState struct {
-	props      []propEnt
-	propIndex  map[string]int
-	forceEmpty map[string]bool // 某组合分支不约束该属性 ⇒ 合并后必须无约束（否则收窄）
-	rootReq    []string
-	allOfReq   [][]string
-	anyOneReq  [][]string
-	lossyUnres bool // (L1) 读不到
-	lossyDrop  bool // (L2) 丢了分支约束
-	lossyRoot  bool // (L3) 删了根约束
-	hasCombo   bool
-	sawNonObj  bool // 出现过非 object 分支
-	anyNonObj  bool // 任一组合分支不是对象 ⇒ 该组"什么都不约束" ⇒ 全部属性必须无约束
-	reasons    []string
+	props        []propEnt
+	propIndex    map[string]int
+	forceEmpty   map[string]bool // 某组合分支不约束该属性 ⇒ 合并后必须无约束（否则收窄）
+	rootReq      []string
+	allOfReq     [][]string
+	anyOneReq    [][]string
+	lossyUnres   bool // (L1) 读不到
+	lossyDrop    bool // (L2) 丢了分支约束
+	lossyRoot    bool // (L3) 删了根约束
+	hasCombo     bool
+	sawNonObj    bool         // 出现过非 object 分支（字面量不是对象）
+	branchNonObj map[int]bool // 某组合分支"什么都不约束"（非对象字面量）
+	allNonObj    bool         // 全部组合分支都"非 object"（spec 第 11 步的判据）
+	anyBranch    bool         // 至少有一个组合分支
+	branch0Empty bool         // branch₀（根）既无 properties 也无 required
+	anyNonObj    bool         // 任一组合分支不是对象 ⇒ 该组"什么都不约束" ⇒ 全部属性必须无约束
+	reasons      []string
 }
 
 func (st *flattenState) reason(r string) {
@@ -660,8 +664,8 @@ func evalMessSchema(src gjson.Result) (string, []byte, degenerateKind) {
 	if lossy {
 		return "", out, degSimplify
 	}
-	if st.hasCombo && st.sawNonObj && len(st.props) == 0 {
-		return "", out, degSimplify // no-object-branch
+	if st.hasCombo && st.allNonObj && st.branch0Empty && len(st.props) == 0 {
+		return "", out, degSimplify // no-object-branch（spec 第 11 步判据）
 	}
 	return "", out, degNone
 }
@@ -755,7 +759,7 @@ func unionInto(set map[string]struct{}, names []string) {
 // flattenMessSchema 第 1~9 步：把根级组合关键字压平成普通 object schema。
 // raw 必须是 src.Raw（源字节）；doc 是同一个文档基准。
 func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
-	st := &flattenState{propIndex: map[string]int{}, forceEmpty: map[string]bool{}}
+	st := &flattenState{propIndex: map[string]int{}, forceEmpty: map[string]bool{}, branchNonObj: map[int]bool{}}
 	v := scanRoot(raw)
 	if !v.isObject {
 		return []byte(`{"type":"object"}`), nil
@@ -806,6 +810,12 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 		}
 	}
 
+	// 分支级累计（key = 分支序号）
+	branchReq := map[int]map[string]struct{}{}
+	branchProps := map[int]map[string]struct{}{}
+	branchKinds := map[int]branchKind{}
+	branchIsObj := map[int]bool{}
+
 	// 第 4/5 步：收集贡献者
 	var contribs []contrib
 	if refContrib != nil {
@@ -819,10 +829,13 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			elem := cb.arr[elLo:elHi]
 			branchKey := ci*4096 + elemIdx
 			elemIdx++
+			st.anyBranch = true
 			obj := gjson.ParseBytes(elem)
 			if !obj.IsObject() {
+				branchKinds[branchKey] = cb.kind
 				st.sawNonObj = true
-				st.anyNonObj = true // true/false/非对象：该分支对属性没有任何约束
+				st.anyNonObj = true               // true/false/非对象：该分支对属性没有任何约束
+				st.branchNonObj[branchKey] = true // 同理：它的 required 也不约束
 				return true
 			}
 			if obj.Get("$ref").Type == gjson.String {
@@ -835,8 +848,22 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 					present = true
 				}
 			}
+			if !isObjectSchema(elem) {
+				branchIsObj[branchKey] = false
+			} else {
+				branchIsObj[branchKey] = true
+			}
 			if hasComboKey(obj) {
-				sub, _ := flattenMessSchema(doc, elem)
+				sub, sst := flattenMessSchema(doc, elem)
+				if sst != nil {
+					// 内层丢掉的约束必须传到外层，否则 hint/度量看不到（metis-r1 C2）
+					st.lossyUnres = st.lossyUnres || sst.lossyUnres
+					st.lossyDrop = st.lossyDrop || sst.lossyDrop
+					st.lossyRoot = st.lossyRoot || sst.lossyRoot
+					for _, r := range sst.reasons {
+						st.reason(r)
+					}
+				}
 				contribs = append(contribs, contrib{kind: cb.kind, raw: sub, branch: branchKey})
 				present = true
 				return true
@@ -848,10 +875,18 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 		_ = present
 	}
 
+	// spec 第 11 步：全部分支"非 object"？
+	if st.anyBranch {
+		st.allNonObj = true
+		for _, isObj := range branchIsObj {
+			if isObj {
+				st.allNonObj = false
+				break
+			}
+		}
+	}
+	st.branch0Empty = len(propsOf(raw)) == 0 && len(requiredOf(raw)) == 0
 	// 第 6 步：合并
-	branchReq := map[int]map[string]struct{}{}
-	branchProps := map[int]map[string]struct{}{}
-	kinds := map[int]branchKind{}
 	reqUnion := map[string]struct{}{}
 	reqInter := map[string]struct{}{}
 	var interOrder []int
@@ -867,6 +902,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			declared[e.name] = struct{}{}
 		}
 		if !c.isRoot && c.kind != brRoot {
+			branchKinds[c.branch] = c.kind
 			if branchProps[c.branch] == nil {
 				branchProps[c.branch] = map[string]struct{}{}
 			}
@@ -883,7 +919,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 		} else {
 			if branchReq[c.branch] == nil {
 				branchReq[c.branch] = map[string]struct{}{}
-				kinds[c.branch] = c.kind
+				branchKinds[c.branch] = c.kind
 			}
 			unionInto(branchReq[c.branch], req)
 		}
@@ -898,8 +934,14 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			}
 		}
 	}
+	// 组里有"什么都不约束"的分支 ⇒ 该组 required 交集为空（实例可以走那一支）。
+	// 组里有"什么都不约束"的分支（非对象字面量）⇒ 该组 required 交集必须为空。
+	// 保守做法：只要出现过这类分支，就整个跳过 anyOf/oneOf 的交集贡献（放宽方向安全）。
 	for bi, set := range branchReq {
-		if kinds[bi] == brAllOf {
+		if st.anyNonObj && branchKinds[bi] != brAllOf {
+			continue
+		}
+		if branchKinds[bi] == brAllOf {
 			for n := range set {
 				reqUnion[n] = struct{}{}
 			}
@@ -935,7 +977,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 		for bi, set := range branchProps {
 			// allOf 是**合取**：各分支的约束可以安全并列（不产生收窄）。
 			// anyOf/oneOf 是**析取**：某分支不约束该属性 ⇒ 合并后必须无约束。
-			if kinds[bi] == brAllOf {
+			if branchKinds[bi] == brAllOf {
 				continue
 			}
 			if _, ok := set[p.name]; !ok {
@@ -1177,6 +1219,7 @@ func pInFast(src gjson.Result) bool {
 	}
 	seen := make([]string, 0, 8)
 	ok := true
+	sawType := false
 	src.ForEach(func(k, v gjson.Result) bool {
 		name := k.Str
 		for _, s := range seen { // 根键很少，O(n²) 比较比建 map 便宜
@@ -1191,6 +1234,7 @@ func pInFast(src gjson.Result) bool {
 			ok = false
 			return false
 		case "type":
+			sawType = true
 			if v.Type != gjson.String || v.Str != "object" {
 				ok = false
 				return false
@@ -1198,5 +1242,29 @@ func pInFast(src gjson.Result) bool {
 		}
 		return true
 	})
-	return ok
+	return ok && sawType
+}
+
+// isObjectSchema spec 第 11 步的「object 分支」判据（4c 前、解引用后）：
+// 带 properties，或根 type 解码后等于 "object"。
+func isObjectSchema(raw []byte) bool {
+	obj := gjson.ParseBytes(raw)
+	if !obj.IsObject() {
+		return false
+	}
+	if p := obj.Get("properties"); p.IsObject() {
+		return true
+	}
+	t := obj.Get("type")
+	if t.Type == gjson.String {
+		return t.Str == "object"
+	}
+	if t.IsArray() { // ["object","null"] 这类也算 object 分支
+		for _, e := range t.Array() {
+			if e.Type == gjson.String && e.Str == "object" {
+				return true
+			}
+		}
+	}
+	return false
 }

@@ -410,6 +410,11 @@ func TestI1Superset(t *testing.T) {
 		for n := range names {
 			nameList = append(nameList, n)
 		}
+		// 0 键实例（spec 的 required/分支语义最常在这里出错）
+		empty := map[string]any{}
+		if evS.valid(srcDoc, empty) && !evT.valid(outDoc, empty) {
+			t.Fatalf("%s: I1 违反（空实例）—— 源=%s\n产物=%s", r.name, r.src, out)
+		}
 		// 键集合的所有子集 × 值类别（单键赋值，覆盖度足够发现收窄）
 		for _, n := range nameList {
 			for _, v := range valueCats {

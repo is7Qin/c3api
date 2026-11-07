@@ -2,10 +2,11 @@ forbiddenRootKeys	oneOf,anyOf,allOf,enum,const,not
 requireRootType	object
 localRefOnly	true
 maxRefHops	32
+maxValveDepth	256
 maxDescriptionBytes	8192
 refKeys	$ref,$dynamicRef,$recursiveRef
 bailKeys	$id,$anchor,$dynamicAnchor
 defsTables	$defs,definitions
 degenerateHint	 [args simplified: some constraints could not be expressed]
 bailHint	 [args dropped: schema could not be preserved, call with no arguments]
-schema_cases_sha256	1cde2d982944442ca85283579e90b65b785525d25a71922443611b39a7145a40
+schema_cases_sha256	1cf815fb2dd073b8dd1e7d0b8ceee0cc39c3f49c9e926fd1c1db1b162b2db556
