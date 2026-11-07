@@ -1,18 +1,18 @@
-# M1 基准记录（toolschema 方言层，v21）
+# M2 基准记录（toolschema 方言层，v22）
 goos=windows
 goarch=amd64
 cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go 6bb414b0d3ac454f974d2294fb7dd9f8ba4986ddf0204759951b782bec38e8f5
+src_sha256 toolschema.go a037b2e7ee7dc2e77843a0155867d4f0b307f7a951556af167c383da013f6dff
 src_sha256 toolschema_bench_test.go 6f7c766a5cd388f408ec46a43308bb9fa4a7ad9f4d0c297424908740967c87ed
 
-BenchmarkConvertRequestRespToMessTools20-16   1000  120990 ns/op   49230 B/op   302 allocs/op
-BenchmarkToolsHandling-16                     1000    7734 ns/op       8 B/op     0 allocs/op
-BenchmarkMessSchemaScan-16                    1000     515.5 ns/op     0 B/op     0 allocs/op
-BenchmarkMessSchemaFlatten-16                 1000   10490 ns/op    5704 B/op    84 allocs/op
-BenchmarkToolsRatio-16                        1000   20437 ns/op   0.64~1.96 fix/base   5717 B/op  84 allocs/op
+BenchmarkConvertRequestRespToMessTools20-16   1000  115900 ns/op   49230 B/op   302 allocs/op
+BenchmarkToolsHandling-16                     1000    5904 ns/op       8 B/op     0 allocs/op
+BenchmarkMessSchemaScan-16                    1000     278.8 ns/op     0 B/op     0 allocs/op
+BenchmarkMessSchemaFlatten-16                 1000    8195 ns/op    5704 B/op    84 allocs/op
+BenchmarkToolsRatio-16                        1000   14108 ns/op   0.87~5.64 fix/base   5717 B/op  84 allocs/op
 
 # 结论（诚实标注）
 # 1) 本机同会话对照（同一台机器、同一会话，HEAD=90e7f8b8 与 v21 各跑 5 次取最大值）：

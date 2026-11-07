@@ -617,28 +617,32 @@ func refString(obj []byte) (string, bool) {
 	return r.Str, true
 }
 
-// derefChain 沿本地 $ref 链走到底。返回 (raw, ok)；ok=false 表示"读不到"。
-func derefChain(doc *schemaDoc, raw []byte, visiting map[string]struct{}) ([]byte, bool) {
+// derefChain 沿本地 $ref 链走到底。返回 (raw, ok, benign)：
+//   - ok=false            ⇒ 读不到（悬空 / 非本地前缀）：caller 记 unresolved-ref 并计 lossy；
+//   - ok=true, benign     ⇒ 环 或 目标非对象：没有内容可丢，按当前对象处理，
+//     caller 只记 unresolved-ref（§2.2 字面口径）但**不计 lossy**（L1 的那一半）；
+//   - ok=true, !benign    ⇒ 正常走到终点。
+func derefChain(doc *schemaDoc, raw []byte, visiting map[string]struct{}) ([]byte, bool, bool) {
 	cur := raw
 	for hop := 0; hop < maxRefHops; hop++ {
 		ptr, ok := refString(cur)
 		if !ok {
-			return cur, true
+			return cur, true, false
 		}
 		if _, seen := visiting[ptr]; seen {
-			return cur, true // 环：按当前对象处理（不放宽也不丢内容）
+			return cur, true, true // 环
 		}
 		visiting[ptr] = struct{}{}
 		target, ok := doc.resolve(ptr)
 		if !ok {
-			return nil, false
+			return nil, false, false
 		}
 		if t := gjson.ParseBytes(target); !t.IsObject() {
-			return cur, true
+			return cur, true, true // 目标非对象：对对象实例等价于"无约束"
 		}
 		cur = target
 	}
-	return cur, true
+	return cur, true, true // 保险丝耗尽：没有更多内容可丢
 }
 
 // evalResult 一次 mess 方言求值的结果（spec §3.5 的观测契约）。
@@ -746,7 +750,7 @@ func observeSchema(m toolsFieldMap, src, in gjson.Result, res evalResult) {
 		SchemaBytes: len(in.Raw),
 		Missing:     res.missing,
 	}
-	if name := src.Get("name"); name.Type == gjson.String {
+	if name, ok := lastField(src, "name"); ok && name.Type == gjson.String {
 		ev.Tool = name.Str
 	}
 	if res.deg != degNone { // root_keys 只在 WARN 路径序列化（免热路径开销）
@@ -777,13 +781,13 @@ func evalMessSchemaInner(src gjson.Result) evalResult {
 		// 会成为第二个文档基准）。
 		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
 	}
+	if !gjson.Valid(src.Raw) {
+		// 畸形 JSON：不能当文档基准（否则非法字节会原样上行）。只在这里判一次
+		// （请求体层面的 json.Valid 早已拦过，这里是防线内的兜底）。
+		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
+	}
 	if pInFast(src) {
 		return evalResult{raw: src.Raw, deg: degNone}
-	}
-	if !gjson.Valid(src.Raw) {
-		// 畸形 JSON：不能当文档基准（否则非法字节会原样上行）。请求体层面的
-		// json.Valid 早已拦过，这里是防线内的兜底。
-		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}}
 	}
 	raw := []byte(src.Raw)
 	v := scanRoot(raw)
@@ -1053,24 +1057,31 @@ func unionInto(set map[string]struct{}, names []string) {
 	}
 }
 
-// maxFlattenDepth 4b 的递归保险丝。互指的 $ref + 组合关键字（A.oneOf→A）会让
-// 递归没有自然终点；超限时该层退化为"接受任意对象"（放宽方向）并计 lossy。
-const maxFlattenDepth = 64
+// 4b 的递归保险丝。互指的 $ref + 组合关键字（A.oneOf→A）会让递归没有自然终点；
+// 而且每个分支会同时压平"分支自身"与"解引用结果"，层数每 +1 调用数就可能翻倍
+// （metis-r3 C-1：20 层 1.9 KB 实测 8 秒）。因此**深度与调用预算都要有**：
+// 超限时该层退化为"接受任意对象"（只放宽）并计 lossy。
+const (
+	maxFlattenDepth = 64
+	maxFlattenCalls = 256
+)
 
 // flattenMessSchema 第 1~9 步：把根级组合关键字压平成普通 object schema。
 // raw 必须是 src.Raw（源字节）；doc 是同一个文档基准。
 func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
-	return flattenMessSchemaDepth(doc, raw, 0)
+	budget := maxFlattenCalls
+	return flattenMessSchemaDepth(doc, raw, 0, &budget)
 }
 
-func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int) ([]byte, *flattenState) {
+func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int, budget *int) ([]byte, *flattenState) {
 	st := &flattenState{propIndex: map[string]int{}, forceEmpty: map[string]bool{}, groupNonObj: map[int]bool{}}
-	if depth > maxFlattenDepth {
-		// 无法在有限层数内压平：这一层退化为"接受任意对象"（只放宽），并计 lossy。
+	if depth > maxFlattenDepth || *budget <= 0 {
+		// 无法在有限工作量内压平：这一层退化为"接受任意对象"（只放宽），并计 lossy。
 		st.lossyUnres = true
 		st.reason("unresolved-ref")
 		return []byte(`{"type":"object"}`), st
 	}
+	*budget--
 	v := scanRoot(raw)
 	if !v.isObject {
 		return []byte(`{"type":"object"}`), nil
@@ -1092,11 +1103,17 @@ func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int) ([]byte, *fla
 	// 第 2 步：根 $ref 解引用到底
 	var refContrib []byte
 	if rootRaw("$ref") != nil {
-		b, ok := derefChain(doc, raw, map[string]struct{}{})
-		if !ok {
+		b, ok, benign := derefChain(doc, raw, map[string]struct{}{})
+		switch {
+		case !ok:
 			st.lossyUnres = true
 			st.reason("unresolved-ref")
-		} else if !bytesEq(b, string(raw)) {
+		case benign:
+			st.reason("unresolved-ref") // 环/非对象目标：可观测，但没有内容可丢
+			if !bytesEq(b, string(raw)) {
+				refContrib = b
+			}
+		case !bytesEq(b, string(raw)):
 			refContrib = b
 		}
 	}
@@ -1130,7 +1147,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int) ([]byte, *fla
 	// 第 4/5 步：收集贡献者
 	var contribs []contrib
 	if refContrib != nil {
-		contribs = append(contribs, contrib{kind: brRoot, raw: flattenNested(doc, refContrib, st, depth), branch: -2})
+		contribs = append(contribs, contrib{kind: brRoot, raw: flattenNested(doc, refContrib, st, depth, budget), branch: -2})
 	}
 	contribs = append(contribs, contrib{kind: brRoot, raw: raw, isRoot: true, branch: -1})
 	for ci, cb := range combos {
@@ -1153,11 +1170,17 @@ func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int) ([]byte, *fla
 			// 候选贡献者：分支自身 + 4a 的解引用结果（v21：两者都要判 4b）
 			cands := [][]byte{elem}
 			if _, isRef := refString(elem); isRef {
-				b, ok := derefChain(doc, elem, map[string]struct{}{})
-				if !ok {
+				b, ok, benign := derefChain(doc, elem, map[string]struct{}{})
+				switch {
+				case !ok:
 					st.lossyUnres = true
 					st.reason("unresolved-ref")
-				} else if !bytesEq(b, string(elem)) {
+				case benign:
+					st.reason("unresolved-ref")
+					if !bytesEq(b, string(elem)) {
+						cands = append(cands, b)
+					}
+				case !bytesEq(b, string(elem)):
 					cands = append(cands, b)
 				}
 			}
@@ -1169,7 +1192,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, raw []byte, depth int) ([]byte, *fla
 			}
 			branchIsObj[branchKey] = isObj
 			for _, c := range cands {
-				contribs = append(contribs, contrib{kind: cb.kind, raw: flattenNested(doc, c, st, depth), branch: branchKey})
+				contribs = append(contribs, contrib{kind: cb.kind, raw: flattenNested(doc, c, st, depth, budget), branch: branchKey})
 			}
 			return true
 		})
@@ -1408,11 +1431,11 @@ func hasComboKey(raw []byte) bool {
 
 // flattenNested 4b：贡献者根带组合关键字 ⇒ 递归压平，内层 state 并回外层
 // （内层丢掉的约束必须让 hint 与度量看见）。depth 是递归保险丝。
-func flattenNested(doc *schemaDoc, raw []byte, st *flattenState, depth int) []byte {
+func flattenNested(doc *schemaDoc, raw []byte, st *flattenState, depth int, budget *int) []byte {
 	if !hasComboKey(raw) {
 		return raw
 	}
-	sub, sst := flattenMessSchemaDepth(doc, raw, depth+1)
+	sub, sst := flattenMessSchemaDepth(doc, raw, depth+1, budget)
 	if sst != nil {
 		st.lossyUnres = st.lossyUnres || sst.lossyUnres
 		st.lossyDrop = st.lossyDrop || sst.lossyDrop
@@ -1583,16 +1606,14 @@ var reasonWhitelist = func() map[string]struct{} {
 	return m
 }()
 
-// pInFast 源侧后置条件的快路径：gjson 视图遍历（键名按原始字节比较，零分配）
-// + `gjson.Valid` 的严格性前置（ForEach 对 `{"a":1,}` 这类畸形串仍是宽松的，
-// 会把非法字节原样放进产物 —— metis-r2 C-2）。只有它返回 false 才走
-// scanRoot 的完整判定；(i) 的 TestPInFastParity 断言两者逐输入一致。
+// pInFast 源侧后置条件的快路径：gjson 视图遍历 + 键名按原始字节比较，零分配。
+// **调用方必须先保证 `src.Raw` 是合法 JSON**（`evalMessSchema` 用一次
+// `gjson.Valid` 统一把关：ForEach 对 `{"a":1,}` 这类畸形串仍是宽松的，会把
+// 非法字节原样放进产物）。只有它返回 false 才走 scanRoot 的完整判定；
+// (i) 的 TestPInFastParity 在合法 JSON 域上断言两者逐输入一致。
 func pInFast(src gjson.Result) bool {
 	if !src.IsObject() {
 		return false
-	}
-	if !gjson.Valid(src.Raw) {
-		return false // 畸形 JSON ⇒ 交给完整判定（它会产出合法的兜底）
 	}
 	var seen [24]string // 已见键的原始 JSON 文本（含引号；根键很少，固定数组免分配）
 	n := 0

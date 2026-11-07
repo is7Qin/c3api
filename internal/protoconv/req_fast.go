@@ -460,8 +460,11 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 				return true
 			}
 			src = fn
-		} else if m.typeFunctionGate && !rawStrEq(tv.Get("type").Raw, "function") {
-			return true
+		} else if m.typeFunctionGate {
+			typ, ok := lastField(tv, "type")
+			if !ok || !rawStrEq(typ.Raw, "function") {
+				return true
+			}
 		}
 		// 先求值（mess 方言），供 description 的 hint 与后面的 schema 字段共用。
 		schemaStr, schemaBytes, deg := evalSchemaField(m, src)
