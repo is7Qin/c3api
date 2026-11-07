@@ -38,6 +38,18 @@ type capturedUpstream struct {
 	body     map[string]any
 	stream   bool
 	dataOnly bool // /v1/responses 流式不产 event: 行（非规范上游形态，同 fakeupstream）
+	// usage 覆盖 chat 响应的 usage（计费口径断言用；nil = 默认 3/5/0/0）。
+	usage map[string]any
+}
+
+// chatUsage 本次 chat 响应要带的 usage（默认 gross=3 / out=5 / 无缓存）。
+func (c *capturedUpstream) chatUsage() map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.usage != nil {
+		return c.usage
+	}
+	return map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}
 }
 
 func (c *capturedUpstream) last(t *testing.T) (string, map[string]any, bool) {
@@ -111,7 +123,12 @@ func (c *capturedUpstream) srv(t *testing.T) *httptest.Server {
 				w.Header().Set("Content-Type", "text/event-stream")
 				fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`+"\n\n")
 				fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}`+"\n\n")
-				fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`+"\n\n")
+				fr, _ := json.Marshal(map[string]any{
+					"id": "c_1", "object": "chat.completion.chunk",
+					"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+					"usage":   c.chatUsage(),
+				})
+				fmt.Fprintf(w, "data: %s\n\n", fr)
 				fmt.Fprint(w, "data: [DONE]\n\n")
 				return
 			}
@@ -119,7 +136,7 @@ func (c *capturedUpstream) srv(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": "c_1", "object": "chat.completion", "model": body["model"],
 				"choices": []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": "hi"}, "finish_reason": "stop"}},
-				"usage":   map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+				"usage":   c.chatUsage(),
 			})
 		default:
 			w.WriteHeader(404)

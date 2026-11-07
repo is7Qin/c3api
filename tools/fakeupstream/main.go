@@ -75,7 +75,11 @@ func main() {
 		if !stream {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": "c1", "object": "chat.completion",
+				"id": "c1", "object": "chat.completion", "model": body["model"],
+				"choices": []any{map[string]any{
+					"index": 0, "finish_reason": "stop",
+					"message": map[string]any{"role": "assistant", "content": "x"},
+				}},
 				"usage": map[string]any{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30},
 			})
 			return
@@ -216,16 +220,28 @@ func writeChatStream(w http.ResponseWriter, fl http.Flusher, latency time.Durati
 	// 2 次、逐帧单写，线格式与旧实现逐字节一致。
 	base := map[string]any{
 		"id": "c1", "object": "chat.completion.chunk",
-		"choices": []map[string]any{{"delta": map[string]any{"content": "x"}, "index": 0}},
+		"choices": []map[string]any{{"delta": map[string]any{"content": "x"}, "index": 0, "finish_reason": nil}},
 	}
 	raw, _ := json.Marshal(base)
 	frame := append(append([]byte("data: "), raw...), '\n', '\n')
+	// 首帧：真实 chat 流的第一帧带 delta.role（客户端据此建消息；缺了就得由网关补）。
+	firstBase := map[string]any{
+		"id": "c1", "object": "chat.completion.chunk",
+		"choices": []map[string]any{{"delta": map[string]any{"role": "assistant", "content": "x"}, "index": 0, "finish_reason": nil}},
+	}
+	rawFirst, _ := json.Marshal(firstBase)
+	first := append(append([]byte("data: "), rawFirst...), '\n', '\n')
+	// 末帧：finish_reason + usage（chat 的停因与用量都在收尾处）。
+	base["choices"] = []map[string]any{{"delta": map[string]any{}, "index": 0, "finish_reason": "stop"}}
 	base["usage"] = map[string]any{"prompt_tokens": 10, "completion_tokens": 20, "total_tokens": 30}
 	rawLast, _ := json.Marshal(base)
 	last := append(append([]byte("data: "), rawLast...), '\n', '\n')
 	for i := range n {
 		time.Sleep(latency)
 		data := frame
+		if i == 0 {
+			data = first
+		}
 		if i == n-1 {
 			data = last
 		}
