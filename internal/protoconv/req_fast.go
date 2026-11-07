@@ -410,11 +410,12 @@ func chatStopRaw(v gjson.Result) string {
 // schemaBeforeName 决定参数与 name 的输出顺序（Mess 目标 schema 在前、resp
 // 目标 name 在前——逐字节保持原输出）。
 type toolsFieldMap struct {
+	dir              direction // 方向（与 mode 同源，供 TestToolsMapsComplete 派生断言）
 	nestedInput      bool   // 源工具嵌套在 "function" 下（OpenAI chat 形态）
 	typeFunctionGate bool   // 源工具须 type=="function" 才转换（resp 源）
 	inSchemaKey      string // 源参数 schema 字段名（parameters / input_schema）
 	outSchemaFrag    string // 目标参数 schema 片段（含引号冒号，如 `"input_schema":`）
-	schemaObjectOnly bool   // schema 门控：true=IsObject；false=Exists 且非 null
+	mode             schemaMode // schema 处理模式（v18：取代 schemaObjectOnly）
 	schemaBeforeName bool   // 参数 schema 先于 name 输出
 	emitType         bool   // 目标追加 "type":"function"
 	copyStrict       bool   // 目标透传 strict
@@ -422,17 +423,19 @@ type toolsFieldMap struct {
 
 var (
 	// chat tools（{function:{...}}）→ Mess tools（{name,description,input_schema}）。
-	toolsMessFromChat = toolsFieldMap{nestedInput: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, schemaObjectOnly: true, schemaBeforeName: true}
+	toolsMessFromChat = toolsFieldMap{dir: dirChatToMess, nestedInput: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, mode: schemaModeMessDialect, schemaBeforeName: true}
 	// Mess tools（{name,description,input_schema}）→ resp tools（{...,type:"function"}）。
-	toolsRespFromMess = toolsFieldMap{inSchemaKey: "input_schema", outSchemaFrag: `"parameters":`, schemaObjectOnly: true, emitType: true}
+	toolsRespFromMess = toolsFieldMap{dir: dirMessToResp, inSchemaKey: "input_schema", outSchemaFrag: `"parameters":`, mode: schemaModeObjectOnly, emitType: true}
 	// chat tools（{function:{...}}）→ resp tools（strict 透传）。
-	toolsRespFromChat = toolsFieldMap{nestedInput: true, inSchemaKey: "parameters", outSchemaFrag: `"parameters":`, emitType: true, copyStrict: true}
+	toolsRespFromChat = toolsFieldMap{dir: dirChatToResp, nestedInput: true, inSchemaKey: "parameters", outSchemaFrag: `"parameters":`, mode: schemaModeExistence, emitType: true, copyStrict: true}
 	// resp tools（{type:"function",...}）→ Mess tools。
-	toolsMessFromResp = toolsFieldMap{typeFunctionGate: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, schemaObjectOnly: true, schemaBeforeName: true}
+	toolsMessFromResp = toolsFieldMap{dir: dirRespToMess, typeFunctionGate: true, inSchemaKey: "parameters", outSchemaFrag: `"input_schema":`, mode: schemaModeMessDialect, schemaBeforeName: true}
 )
 
 // appendToolsMapped tools 数组转换（映射表驱动）：四个方向的 tools 处理收敛
 // 于此，源/目标键差异全由 m 表达，输出逐字节等价于原各方向内联版本。
+// mess 方言方向（m.mode == schemaModeMessDialect）先求值再写 description：
+// 退化提示要写进 description，而退化只能由 schema 求值判定。
 func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 	n := 0
 	tools.ForEach(func(_, tv gjson.Result) bool {
@@ -447,12 +450,18 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 		} else if m.typeFunctionGate && !rawStrEq(tv.Get("type").Raw, "function") {
 			return true
 		}
+		// 先求值（mess 方言），供 description 的 hint 与后面的 schema 字段共用。
+		schemaStr, schemaBytes, deg := evalSchemaField(m, src)
 		out, n = appendComma(out, n)
 		out = append(out, '{')
 		wrote := false
 		if d := src.Get("description"); d.Type == gjson.String {
 			out = append(out, `"description":`...)
-			out = append(out, d.Raw...)
+			if deg == degNone {
+				out = append(out, d.Raw...)
+			} else {
+				out = append(out, encodeDescriptionWithHint(d.Str, deg)...)
+			}
 			wrote = true
 		}
 		writeName := func() {
@@ -466,19 +475,19 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 			}
 		}
 		writeSchema := func() {
-			schema := src.Get(m.inSchemaKey)
-			ok := schema.IsObject()
-			if !m.schemaObjectOnly {
-				ok = schema.Exists() && schema.Type != gjson.Null
+			if schemaStr == "" && schemaBytes == nil {
+				return
 			}
-			if ok {
-				if wrote {
-					out = append(out, ',')
-				}
-				out = append(out, m.outSchemaFrag...)
-				out = append(out, schema.Raw...)
-				wrote = true
+			if wrote {
+				out = append(out, ',')
 			}
+			out = append(out, m.outSchemaFrag...)
+			if schemaBytes == nil {
+				out = append(out, schemaStr...)
+			} else {
+				out = append(out, schemaBytes...)
+			}
+			wrote = true
 		}
 		if m.schemaBeforeName {
 			writeSchema()
@@ -508,6 +517,61 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 		return true
 	})
 	return out
+}
+
+// evalSchemaField 计算 schema 字段的值字节；nil 表示该字段不写出。
+func evalSchemaField(m toolsFieldMap, src gjson.Result) (string, []byte, degenerateKind) {
+	switch m.mode {
+	case schemaModeMessDialect:
+		return evalMessSchema(src.Get(m.inSchemaKey))
+	case schemaModeObjectOnly:
+		if s := src.Get(m.inSchemaKey); s.IsObject() {
+			return s.Raw, nil, degNone
+		}
+		return "", nil, degNone
+	case schemaModeExistence:
+		if s := src.Get(m.inSchemaKey); s.Exists() && s.Type != gjson.Null {
+			return s.Raw, nil, degNone
+		}
+		return "", nil, degNone
+	default:
+		panic("protoconv: unknown schemaMode")
+	}
+}
+
+// appendMessSchema 只写 schema 字段（供门禁/测试直接调用）。
+func appendMessSchema(out []byte, src gjson.Result, m toolsFieldMap) []byte {
+	str, b, _ := evalSchemaField(m, src)
+	if b == nil && str == "" {
+		return out
+	}
+	out = append(out, m.outSchemaFrag...)
+	if b != nil {
+		return append(out, b...)
+	}
+	return append(out, str...)
+}
+
+// hintOf 退化种类 → 追加文案。
+func hintOf(deg degenerateKind) string {
+	switch deg {
+	case degBail:
+		return bailHint
+	case degSimplify:
+		return degenerateHint
+	}
+	return ""
+}
+
+// encodeDescriptionWithHint 幂等追加提示（按实际要追加的那一份判重；超长则原样输出）。
+func encodeDescriptionWithHint(desc string, deg degenerateKind) []byte {
+	hint := hintOf(deg)
+	if hint == "" || strings.HasSuffix(desc, hint) || len(desc)+len(hint) > maxDescriptionBytes {
+		var out []byte
+		return appendJSONString(out, desc)
+	}
+	var out []byte
+	return appendJSONString(out, desc+hint)
 }
 
 // messToolChoiceString tool_choice 字符串形态 → Messages 对象字面量；非字符串
