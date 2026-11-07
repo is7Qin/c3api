@@ -590,7 +590,7 @@ export default function Logs() {
                       （tokens 明细 + 档位 BillingTier + 超档/透支徽章） */}
                   {isColVisible('tokens') && (
                   <TableCell className="text-right font-medium tabular-nums">
-                    {hasTokenUsage(l) || (l.CallCount ?? 0) > 0 ? (
+                    {hasTokenUsage(l) || ((l.CallCount ?? 0) > 0 && l.PricePerCallMillis != null) ? (
                       <span className="inline-flex items-center justify-end gap-1.5">
                         {hasTokenUsage(l) && (
                         <span className="space-y-0.5 text-xs text-right">
