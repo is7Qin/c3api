@@ -702,7 +702,7 @@ func validateTemplate(t *domain.Template) error {
 	if t.Name == "" {
 		return ErrInvalidInput
 	}
-	// base_url 全类型可选（用户裁决 2026-08-14：模板层级所有类型都可空——codex
+	// base_url 全类型可选（模板层级所有类型都可空——codex
 	// 走 SDK 默认端点；api_key 静态透传留空则路由时失败，管理面不拦截）；提供时
 	// 校验格式（可解析、路径不以 /v1 结尾）。
 	if t.BaseURL != "" {
@@ -716,8 +716,8 @@ func validateTemplate(t *domain.Template) error {
 	}
 	// 类型-格式约束（扩展）：responses-special/codex-oauth/codex-pat
 	// 类型模板支持 resp / resp-ws / openai-images / openai-search 格式（images 直连
-	// 为用户裁决：responses-special 与 api_key 同支持两图片端点，codex 类型
-	// 走 SDK 生图；search 为用户裁决：search 端点四类型分派全可达——
+	// 为：responses-special 与 api_key 同支持两图片端点，codex 类型
+	// 走 SDK 生图；search 为：search 端点四类型分派全可达——
 	// codex 类型走 SDK Search、api_key/responses-special 静态透传）；api_key 类型全部格式任意。
 	// 生态三类型限定 resp/resp-ws/images/search；api_key 与 custom 支持全部格式
 	// （custom = 静态 Key + 自定义路径，路径本身不改变协议形状）。

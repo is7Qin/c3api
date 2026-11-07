@@ -163,7 +163,7 @@ func main() {
 	// 统计桶界时区不在装配面：持久化恒规范 UTC，浏览器时区逐请求解析注入
 	// （handler → service → repository 方法参数），无进程级可变状态。
 	// usage_logs/err_logs/usage_stats 分区 bootstrap（分表设计 +
-	// 用户裁决 2026-08-11 三表统一分区机制）：ent migrate 已跳过三表
+	// 三表统一分区机制）：ent migrate 已跳过三表
 	// （migrateHookExcludesPartitioned——atlas 对分区表 diff 规划期必失败，实测
 	// 结论见 internal/repository/partition.go），此处独占建分区表 + 预建当日/明日
 	// 分区 + 索引；幂等（已分区 → 仅补齐分区），失败即 fatal（明细/审计/统计表
@@ -288,7 +288,7 @@ func main() {
 		FlushInterval: cfg.Usage.ErrLogFlushInterval,
 	}, repos.ErrLogs, log)
 	// retention worker：三表按日分区保留（分表设计 + usage_stats 分区化，
-	// 清理统一 DROP PARTITION O(1)——PG DELETE 不释放空间，用户裁决）；保留天数
+	// 清理统一 DROP PARTITION O(1)——PG DELETE 不释放空间）；保留天数
 	// 同源 config（usage_logs = usage.log_retention_days；err_logs =
 	// usage.errlog_retention_days 默认 7 天短保留——错误审计；usage_stats =
 	// usage.stats_retention_days 默认 180 天——聚合统计长保留）。
@@ -677,7 +677,7 @@ func main() {
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
 	userHandler := userapi.Router(svc, iss, auth, ruleEngine, log)
 
-	// /api/admin/ops/workers 运维观测（spec 2026-08-11，用户裁决并入管理面）：
+	// /api/admin/ops/workers 运维观测（spec 2026-08-11，并入管理面）：
 	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持
 	// 具体引用，断言实现 handler.StatsProvider 的入列；快照注册表状态单独
 	// 经 Status 直出）。WithOps 注入，路由由契约 chi-server 生成。

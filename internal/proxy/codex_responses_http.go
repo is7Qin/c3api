@@ -96,7 +96,7 @@ func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o
 // 字节级 relay（sserelay.Relay + Output）透传/转换。
 //
 // 预处理沿用 setModel 改写（ModelMapping 对 codex 账号生效，不静默
-// 失效）；不 stripImageTools（用户裁决：strip 仅针对 resp/resp-ws 的
+// 失效）；不 stripImageTools（strip 仅针对 resp/resp-ws 的
 // responses-special——codex 上游自带 image 处理）。
 //
 // 错误分类（骨架 statusOf/upstreamBody 零改动复用）：

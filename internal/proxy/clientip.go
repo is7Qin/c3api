@@ -25,7 +25,7 @@ var clientIPHeaders = func() []string {
 }()
 
 // clientIP 提取客户端 IP（审计/排障的尽力而为标识，非安全边界——不做鉴权/
-// 限流决策依据；spec 2026-08-17 用户裁决方案：供应商头识别 + RemoteAddr 兜底）：
+// 限流决策依据；spec 2026-08-17 方案：供应商头识别 + RemoteAddr 兜底）：
 //   - behindCDN=true（默认）：按序采信首个非空头 CF-Connecting-IP → True-Client-IP →
 //     X-Real-IP（TrimSpace；值域截断 64 字符——真实 IP 最长 IPv6 45 字符）；
 //     全空 → RemoteAddr 剥端口。部署前提：源站只对 CDN/反向代理暴露（防火墙

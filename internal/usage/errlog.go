@@ -4,14 +4,14 @@
 
 package usage
 
-// err_logs 错误明细落盘 worker（用户裁决分表设计：独立于计费 Flusher 与
+// err_logs 错误明细落盘 worker（分表设计：独立于计费 Flusher 与
 // Recorder 的错误日志落盘通道——独立类型、独立队列、独立锁，互不阻塞）。
 //
 // 背压（风暴采样）：有界队列 + producer 非阻塞投递（队列满 → 丢弃 + 原子计数）
 // ——拒绝风暴不阻塞请求热路径、不爆内存、不淹没 DB（DB 写速率由 batch/interval
 // 配置有界 = BatchSize/FlushInterval，不随风暴放大；丢弃即采样式落盘的采样面）。
 //
-// 双队列按来源（provenance）分类（用户裁决）——不可按 error_type
+// 双队列按来源（provenance）分类——不可按 error_type
 // 推断（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）：
 //   - 豁免队列（exemptQ）：**双轨行**（abort/failover 已计费错误：finish/
 //     recordLog 投递的 usage_logs 错误行）——**不参与拒绝风暴采样丢弃，恒落盘**

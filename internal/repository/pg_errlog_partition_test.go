@@ -4,7 +4,7 @@
 
 package repository_test
 
-// err_logs 分区生命周期（用户裁决：与 usage_logs 同分区路线，独立保留期）真实
+// err_logs 分区生命周期（与 usage_logs 同分区路线，独立保留期）真实
 // PG 测试：bootstrap 幂等 / 跨日插入路由 / 独立保留期 DROP 边界（与 usage_logs
 // 不同 cutoff）/ 并发 bootstrap 幂等。
 //

@@ -4,7 +4,7 @@
 
 package repository
 
-// err_logs 错误明细审计（用户裁决分表设计：独立于 usage_logs 的瘦表——拒绝/
+// err_logs 错误明细审计（分表设计：独立于 usage_logs 的瘦表——拒绝/
 // 异常路径的 status_code/error_message 等审计字段由本表承载）。写入来源：
 // usage.ErrLogWorker（有界队列 + 背压采样丢弃；recordRejected 本地拒绝 + 401
 // 鉴权失败 + record/finish 错误行半异常双轨）。分区表 DDL 由 partition.go

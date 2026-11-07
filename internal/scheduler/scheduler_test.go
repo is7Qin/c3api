@@ -455,7 +455,7 @@ func TestBuildRoutesFormatModelsLimit(t *testing.T) {
 	require.False(t, ok, "格式不在 supported → 无桶")
 }
 
-// —— 模板模型硬白名单（用户裁决 2026-08-18）：Serves 未命中 + 白名单账号 →
+// —— 模板模型硬白名单：Serves 未命中 + 白名单账号 →
 // 404；全模型账号（无模型空间）保留默认桶兜底 ——
 
 func TestSelectWhitelistHitMiss(t *testing.T) {

@@ -281,7 +281,7 @@ func multI64ToNormalPtr(v *int64) *float64 {
 	return &f
 }
 
-// --- 图片价格 API 边界换算（；单位规则与 pricings 相同，独立函数自文档化） ---
+// --- 图片价格 API 边界换算（单位规则与 pricings 相同，独立函数自文档化） ---
 //
 // 1 USD = 100,000 毫分。token 价：USD/1M image tokens ×1e5 → 毫分/1M——与
 // pricings 的 usdToMillis ×1e5 同系数同口径，直接复用不另设函数；per-image 价：

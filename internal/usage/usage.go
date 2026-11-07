@@ -6,7 +6,7 @@
 // （quota 在线保留——独立于统计，不随离线聚合搬移）、usagelog 保留策略
 // （retention worker，按日分区 DROP 清理）与离线聚合 worker
 // （stats_agg.go：spec 2026-08-14 使用量统计离线聚合化）。
-// 请求路径**零统计计算**（用户裁决 2026-08-14）：统计内存桶机制整体删除，
+// 请求路径**零统计计算**：统计内存桶机制整体删除，
 // Record 锁内仅明细 append + quota 原子累加；usage_stats 由离线聚合 worker
 // 每周期从 DB 重建（DELETE+INSERT 覆盖语义，见 stats_agg.go）。明细经无界
 // pending 批量落库（管道化：Record 永不阻塞——此前有界 channel cap 16384

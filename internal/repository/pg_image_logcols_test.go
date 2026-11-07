@@ -98,7 +98,7 @@ func TestUsageLogCallColumnsExistPG(t *testing.T) {
 		pgCallColAbsent(t, pool, name)
 	}
 
-	// 普通表 → bootstrap DROP 重建路径（用户裁决：直接重建即终态，无补列逻辑）
+	// 普通表 → bootstrap DROP 重建路径（直接重建即终态，无补列逻辑）
 	ctx := context.Background()
 	db := pgTestDB(t, pgtest.Clone(t))
 	_, err := db.ExecContext(ctx, `DROP SCHEMA IF EXISTS public CASCADE; CREATE SCHEMA public;`)

@@ -97,7 +97,7 @@ func (s *Service) checkGroupEligible(ctx context.Context, userID, groupID int64)
 // ListAdminKeys 管理端全量 key 列表（/api/admin/keys，spec 2026-08-16）：全量
 // 视角（不限归属用户）+ name/user_id/group_id 筛选 + sort 白名单
 // id/name/created_at。脱敏在 handler 转换面（AdminKey 无 key 明文字段——
-// 用户裁决，明文绝不下发管理端）。
+// 明文绝不下发管理端）。
 func (s *Service) ListAdminKeys(ctx context.Context, q repository.ListQuery) ([]*domain.Key, int64, error) {
 	if err := validateListQuery(q, listSortFields["admin_keys"]); err != nil {
 		return nil, 0, err

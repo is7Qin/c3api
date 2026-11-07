@@ -162,7 +162,7 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 // 组不会出现在结果中——见下方白名单守卫；旧 eager-load 同窗口行为。）
 func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain.Account, error) {
 	// 软删除：已删 account/group 不进调度器快照（成员关系白名单守卫同语义）。
-	// 模板侧嵌套 WithExt：快照合并 StripImageTools（；ext IN 参数数受模板
+	// 模板侧嵌套 WithExt：快照合并 StripImageTools（ext IN 参数数受模板
 	// 表实体数约束——同一小表界，见上方注释）；账号侧 ext 不 eager-load
 	// （FK=account_id 的 IN 参数数受账号规模驱动——触顶约束，见步骤 4）。
 	accs, err := r.client.Account.Query().Where(account.DeletedAtIsNil()).

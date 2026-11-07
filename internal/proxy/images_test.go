@@ -566,7 +566,7 @@ func TestImagesCodexPATNotIntegrated501(t *testing.T) {
 	require.Equal(t, http.StatusNotImplemented, store.logs[0].StatusCode)
 }
 
-// TestImagesResponsesSpecialDirect responses-special 类型直连（用户裁决：两
+// TestImagesResponsesSpecialDirect responses-special 类型直连（两
 // 类型都支持两个端点）：凭据取用成功（502 消灭同款——注册表必须含
 // responses-special provider）+ 上游收到账号 key。
 func TestImagesResponsesSpecialDirect(t *testing.T) {

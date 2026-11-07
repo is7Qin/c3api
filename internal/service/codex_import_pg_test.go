@@ -85,7 +85,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 
 		acc, err := repos.Accounts.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
-		require.Equal(t, 25, acc.MaxConcurrency, "max_concurrency 缺省 25（非表默认 8——用户裁决红绿）")
+		require.Equal(t, 25, acc.MaxConcurrency, "max_concurrency 缺省 25（非表默认 8红绿）")
 		require.Equal(t, "pg1@example.com", acc.Name)
 		gs, err := repos.Accounts.GetAccountGroups(ctx, acc.ID)
 		require.NoError(t, err)

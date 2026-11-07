@@ -100,7 +100,7 @@ type RetentionConfig struct {
 // （同一循环 DROP+预建，180d），同一循环无新增 goroutine）：
 //   - DROP 分区下界 < now - 保留天数的分区（DROP TABLE O(1)，比逐行 DELETE
 //     快 5~6 个量级；按分区名日期判定，无需查元数据——usage_stats 保留清理
-//     用户裁决 2026-08-11：PG DELETE 不释放空间，必须分区 DROP）
+//     PG DELETE 不释放空间，必须分区 DROP）
 //   - 预建 当日 + 未来 1 天 分区（PG 无自动建分区，防日界跨区插入失败）
 //   - redemption_uses 有界批删：普通表无分区可 DROP，同一循环内每轮
 //     DELETE 至多 5000 行超窗行（TTL 定死 90 天，见 redemptionUseRetentionDays）

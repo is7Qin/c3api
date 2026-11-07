@@ -283,7 +283,7 @@ func anthropicUsageFromResponse(data []byte) (it, ot, tt, cr, cc int64) {
 
 // --- resp/resp-ws 响应侧 image 检测旁路（spec §6；检测开关判定 + 计数提取） ---
 
-// respImageDetectOn 响应侧 image 检测开关判定（spec §6 检测矩阵，用户裁决）：
+// respImageDetectOn 响应侧 image 检测开关判定（spec §6 检测矩阵）：
 // api_key（默认）永不检测；responses-special / codex-oauth / codex-pat 按模板
 // ext strip_image_tools 联动——开（默认）= 不检测（图像工具已剥，响应不会出
 // 图——旁路多余）；关 = 检测。

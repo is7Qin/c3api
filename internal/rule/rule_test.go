@@ -403,7 +403,7 @@ func TestSeedRules(t *testing.T) {
 	require.Equal(t, "5xx", *rules[3].When.Kind)
 	require.NotNil(t, rules[3].Then.Throttle)
 	require.Equal(t, domain.ThrottleModeOpen, rules[3].Then.Throttle.Mode)
-	require.Equal(t, int64(10*60*1000), *rules[3].Then.Throttle.DurationMs, "seed-5xx open 10m（用户裁决）")
+	require.Equal(t, int64(10*60*1000), *rules[3].Then.Throttle.DurationMs, "seed-5xx open 10m")
 	require.NotNil(t, rules[3].Then.ResponseCode)
 	require.Equal(t, 502, *rules[3].Then.ResponseCode)
 	require.Equal(t, "Upstream request failed", *rules[3].Then.CustomMessage)

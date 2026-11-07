@@ -13,13 +13,13 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// SDK 接入：account 失效字段（failed_at——用户裁决 2026-08-13 仅此一列，
+// SDK 接入：account 失效字段（failed_at——仅此一列，
 // 失效原因复用既有 last_error）真实 PG 测试：建列断言 + 幂等首写 + 与 status
 // 语义分离。基座见 pg_account_groups_test.go 的 newPGRepos（DROP SCHEMA 重建）。
 // ---------------------------------------------------------------------------
 
 // TestAccountFailedColumnsPG ent schema 建列断言：accounts 表存在 failed_at
-// （timestamptz NULL）一列；不新增 failed_reason（用户裁决——原因复用 last_error）。
+// （timestamptz NULL）一列；不新增 failed_reason（原因复用 last_error）。
 func TestAccountFailedColumnsPG(t *testing.T) {
 	repos := newPGReposShared(t) // shared schema 已完成一次迁移
 	ctx := context.Background()

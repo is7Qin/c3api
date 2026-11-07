@@ -6,8 +6,8 @@ package repository_test
 
 // OpenPG 连接池防卡死参数生效断言：lock_timeout=5s 为会话级
 // GUC——pgx DSN query 参数 → 连接启动包 → 会话生效，必须真实连接 SHOW 才可
-// 证伪（非解析层自证）；MaxConnLifetime=30m 为 pgxpool 配置断言（用户裁决
-// 2026-08-13 实施，滚动轮换）。statement_timeout 断言保持 PG 默认 0 = 降级
+// 证伪（非解析层自证）；MaxConnLifetime=30m 为 pgxpool 配置断言（
+// 滚动轮换）。statement_timeout 断言保持 PG 默认 0 = 降级
 // 回归锚：session 级 statement_timeout 与 admin 面 ScanStats 大窗口聚合实测
 // 冲突（57014，见 f1-impl-report.md）→ 不设会话级，计费路径执行时长由
 // 结算语句 per-query 10s ctx 超时兜底（settleTimeout，

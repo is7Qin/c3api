@@ -34,9 +34,9 @@ import (
 //   - err_logs 错误审计明细（分区键 created_at；风暴背压采样后量可控，默认
 //     7 天短保留，见 usage.ErrLogRetentionDays）
 //   - usage_stats 统计聚合（分区键 bucket_time——小时桶聚合 24 桶/日分区；
-//     默认 180 天保留；用户裁决：PG DELETE 不释放空间，清理必须分区 DROP）
+//     默认 180 天保留；PG DELETE 不释放空间，清理必须分区 DROP）
 //   - usage_entity_stats 实体小时卷积（分区键 bucket_time——小时桶聚合；默认
-//     180 天保留，与 usage_stats 共用 StatsRetentionDays；用户裁决 2026-08-23
+//     180 天保留，与 usage_stats 共用 StatsRetentionDays；
 //     v2.1：实体视角专属卷积表）
 //
 // 主键 (id, 分区键)（分区表硬约束：主键必须含分区键）；id 由专用序列
@@ -46,8 +46,8 @@ import (
 //
 // Ensure/Drop 均按表参数化（表名 + 分区键 + 日期）——四表共用一套实现（单一
 // 实现防漂移，教训同款）；幂等语义全表通用（IF NOT EXISTS / IF EXISTS、
-// 42P07/duplicate_object 容忍、并发实例安全）。升级策略（用户裁决
-// 2026-08-23）：beta 全新库自举，无迁移，bootstrap 对已分区表 no-op 预期。
+// 42P07/duplicate_object 容忍、并发实例安全）。升级策略：
+// beta 全新库自举，无迁移，bootstrap 对已分区表 no-op 预期。
 type PartitionRepo struct {
 	// driver 为 raw SQL 入口（ent 无分区 DDL 能力；bootstrap/retention 均走
 	// dialect.Driver.Exec/Query —— execUpdate 同构，txDriver 下同连接）。
@@ -90,7 +90,7 @@ func tablePartitionDate(table, name string) (time.Time, bool) {
 // 见 ensureTablePartitioned 注释与 migrateHookExcludesPartitioned；id 走序列
 // nextval，语义同 ent bigserial）。
 // partitionCol 为分区键列（usage_logs/err_logs = created_at；usage_stats =
-// bucket_time——用户裁决 2026-08-11：三表统一分区机制，主键必含分区键）。
+// bucket_time——三表统一分区机制，主键必含分区键）。
 func partitionedCreateDDL(table, partitionCol string, columnDefs []string) string {
 	return "CREATE TABLE " + table + " (\n\t" +
 		strings.Join(columnDefs, ",\n\t") + ",\n\t" +
@@ -102,13 +102,13 @@ func partitionedCreateDDL(table, partitionCol string, columnDefs []string) strin
 // 建表 DDL 由本列表生成（partitionedCreateDDL）——列集合一致性由
 // TestUsageLogColumnDefsMatchCreateDDL 锚定（防"向静态 DDL 加列忘加事实源"
 // 漂移，含类型漂移——列定义字符串整体生成）。列定义与 ent schema 完全一致，
-// 仅主键与 id 生成方式不同（见 partitionedCreateDDL 注释）。用户裁决
+// 仅主键与 id 生成方式不同（见 partitionedCreateDDL 注释）。
 // （err_logs 分表）：usage_logs 瘦身去 2 留 1——status_code 与 error_message
 // 列移除（错误审计由 err_logs 承载，见 errLogColumnDefs）。
 var usageLogColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('usage_logs_id_seq'::regclass)`,
 	`request_id varchar NOT NULL`,
-	// 用户裁决（2026-08-17，S-E）：client_ip 审计列（紧随 request_id 审计聚集）——
+	// client_ip 审计列（紧随 request_id 审计聚集）——
 	// 供应商头识别 + RemoteAddr 兜底（proxy.behind_cdn 门控）；NULL 语义 =
 	// Optional（与 ent schema 一致，未 Set 的列不写）。
 	`client_ip text NULL`,
@@ -210,7 +210,7 @@ var usageLogIndexDDLs = []string{
 var errLogColumnDefs = []string{
 	`id bigint NOT NULL DEFAULT nextval('err_logs_id_seq'::regclass)`,
 	`request_id varchar NOT NULL`,
-	// 用户裁决（2026-08-17，S-E）：client_ip 审计列（紧随 request_id）——拒绝行
+	// 2026-08-17，S-E：client_ip 审计列（紧随 request_id）——拒绝行
 	// （401 鉴权失败等）也带（guardPipeline 入口鉴权前提取）；NULL = Optional。
 	`client_ip text NULL`,
 	`group_id bigint NULL`,
@@ -249,7 +249,7 @@ var errLogIndexDDLs = []string{
 // （ScanStatsDays/StatsTrend 族）走 pgx 直查扫描 []int64。分区键 bucket_time（小时桶聚合 24 桶/区）。id 走
 // usage_stats_id_seq（ent bigserial 同款语义——INSERT 不带 id 列走 DEFAULT
 // nextval；该表经 bootstrap 建表（表不存在则建，全新安装唯一路径），零迁移
-// 逻辑。升级策略（用户裁决 2026-08-23）：beta 教义全新库自举，无迁移逻辑无
+// 逻辑。升级策略：beta 教义全新库自举，无迁移逻辑无
 // 兼容路径；bootstrap 对已分区表 no-op 是预期行为非缺陷（旧形状表不在支持
 // 范围内，重建全新卷即是迁移）。
 var usageStatsColumnDefs = []string{
@@ -269,7 +269,7 @@ var usageStatsColumnDefs = []string{
 	// SUM(raw_cost)（usage_logs 同源口径）；历史桶/缺省 = 0（fresh setup
 	// 不迁移，重算即填）。
 	`raw_cost bigint NOT NULL DEFAULT 0`,
-	// 按次调用（用户裁决 2026-08-14）：图片生成 = 张数、search = 1；离线聚合
+	// 按次调用：图片生成 = 张数、search = 1；离线聚合
 	// sum(call_count) 直取（usage_logs 明细已有 CallCount——图片 6 专列删后的
 	// 统一计费模型分量，spec 2026-08-13）。
 	`call_count bigint NOT NULL DEFAULT 0`,
@@ -521,7 +521,7 @@ var statsAggWatermarkDDL = `CREATE TABLE IF NOT EXISTS stats_agg_watermark (
 	CONSTRAINT stats_agg_watermark_single CHECK (id = 1)
 )`
 
-// EnsureUsageStatsPartitioned usage_stats 分区 bootstrap（用户裁决 2026-08-11：
+// EnsureUsageStatsPartitioned usage_stats 分区 bootstrap（
 // 三表统一分区机制；分区键 bucket_time——小时桶聚合 24 桶/日分区；建表语义同
 // ensureTablePartitioned）。同步骤建 stats_agg_watermark 单行表（离线聚合
 // worker 的 watermark 存储；撞名类竞态容忍——多实例并发 bootstrap 收敛语义同
@@ -904,7 +904,7 @@ func (r *PartitionRepo) DropErrLogPartitionsBefore(ctx context.Context, cutoff t
 }
 
 // DropUsageStatsPartitionsBefore usage_stats DROP 分区下界早于 cutoff 的分区
-// （用户裁决 2026-08-11：PG DELETE 不释放空间，180 天保留清理必须分区 DROP
+// （PG DELETE 不释放空间，180 天保留清理必须分区 DROP
 // O(1)——替代逐行 DELETE 方案；cutoff 由 usage.StatsRetentionDays 推导）。
 func (r *PartitionRepo) DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "usage_stats", cutoff)

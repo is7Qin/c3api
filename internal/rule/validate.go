@@ -15,7 +15,7 @@ import (
 // ValidateWhen when 语义校验（字段白名单/未知字段由 service 层 JSON 反序列化
 // DisallowUnknownFields 挡下；此处查语义）：
 //   - kind 必须为 ok/429/4xx/5xx/network 之一（error 已删除——4xx 独立、
-//     连接级独立 network，用户裁决）
+//     连接级独立 network）
 //   - kind=ok 与 error_message_contains 不兼容（ok 事件错误信息恒空 → 永不命中）
 //   - 计数阈值 ≥ 0、window_seconds ≥ 1
 //   - 比例 ∈ [0,1] 且必须配 count_total_ge（比例样本下限）

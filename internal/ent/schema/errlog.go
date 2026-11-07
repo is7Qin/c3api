@@ -8,7 +8,7 @@ import (
 	"entgo.io/ent/schema/index"
 )
 
-// ErrLog 错误明细审计表（用户裁决分表设计：err_logs 独立于 usage_logs，不混表）：
+// ErrLog 错误明细审计表（分表设计：err_logs 独立于 usage_logs，不混表）：
 // 拒绝/异常路径的错误审计字段（status_code/error_message 等 usage_logs 瘦身去掉
 // 的排障列）由本表承载——瘦表，无 token/价格列。写入来源：recordRejected（本地
 // 预用量拒绝 + 401 鉴权失败）+ record/finish 的错误行（abort/failover/4xx/5xx/
@@ -21,7 +21,7 @@ func (ErrLog) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("id"),
 		field.String("request_id"),
-		// 用户裁决（2026-08-17，S-E）：client_ip 审计列——供应商头识别 + RemoteAddr
+		// client_ip 审计列——供应商头识别 + RemoteAddr
 		// 兜底（proxy.behind_cdn 开关门控；与 usage_logs 同列同步加）；拒绝行
 		// （401 鉴权失败等）也带（guardPipeline 入口鉴权前提取）。NULL = Optional
 		// 未 Set。

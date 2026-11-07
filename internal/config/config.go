@@ -100,7 +100,7 @@ type ProxyConfig struct {
 	// 组内账号耗尽后全组 429 死锁）。
 	FailoverAttempts int  `koanf:"failover_attempts"`
 	UsageCapture     bool `koanf:"usage_capture"`
-	// BehindCDN 客户端 IP 识别开关（用户裁决 2026-08-17：config 文件键，非 admin
+	// BehindCDN 客户端 IP 识别开关（config 文件键，非 admin
 	// setting；2026-10-07 默认翻转 false → true）：true（默认）→ 按序采信
 	// CF-Connecting-IP / True-Client-IP / X-Real-IP（首个非空头），全空回退
 	// RemoteAddr；false → 完全不读供应商头，直取 RemoteAddr（零伪造面，与直连

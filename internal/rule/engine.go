@@ -32,7 +32,7 @@ const (
 	Kind429
 	Kind4xx
 	Kind5xx
-	KindNetwork // 连接级（code==0）事件——独立类型，不吃 5xx 冷却（用户裁决）
+	KindNetwork // 连接级（code==0）事件——独立类型，不吃 5xx 冷却
 )
 
 func (k Kind) String() string {
@@ -295,7 +295,7 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 	return nil
 }
 
-// seedRules 规则表为空时写入种子规则（fresh setup 哲学，用户裁决；kind=error
+// seedRules 规则表为空时写入种子规则（fresh setup 哲学；kind=error
 // 旧规则不迁移——管理面重建；指针即意图 ResponseCode/CustomMessage nil=透传；
 // 惩罚动作全部 typed throttle——持久 status/cooldown 已随 cutover 删除，
 // 临时健康由 RuntimeHealth（Redis OPEN/RETRY_AFTER + 探针恢复）唯一承载）：
@@ -304,7 +304,7 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 //	seed-4xx-400（p15）  kind=4xx + http_status=400 → ResponseCode nil + CustomMessage nil（400 全透；其余 4xx 默认归一 502——无规则即归一；直插 store，其 Then{} 与用户规则 Then{} 全透语义等价）
 //	seed-5xx-503-overload（p16）kind=5xx + http_status=503 + error_message_contains="overload"（小写敏感）→ ResponseCode nil +
 //	                    CustomMessage nil（503 overload 全透——码/文原样过，不惩罚不归一；其余 503 落回 seed-5xx 归一）
-//	seed-5xx（p20）      kind=5xx   → throttle(account, open, 10m) + 502/"Upstream request failed"（用户裁决归一）
+//	seed-5xx（p20）      kind=5xx   → throttle(account, open, 10m) + 502/"Upstream request failed"（归一）
 //	seed-network（p25）  kind=network → throttle(account, open, 5s) + 502/"Upstream request failed"
 //	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
 //

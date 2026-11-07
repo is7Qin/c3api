@@ -14,7 +14,7 @@ func (UsageLog) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("id"),
 		field.String("request_id"),
-		// 用户裁决（2026-08-17，S-E）：client_ip 审计列——供应商头识别
+		// client_ip 审计列——供应商头识别
 		// （CF-Connecting-IP / True-Client-IP / X-Real-IP 按序）+ RemoteAddr 兜底，
 		// proxy.behind_cdn 开关门控；审计/排障的尽力而为标识，非安全边界。
 		// NULL = Optional 未 Set（空 = 无）。
@@ -34,7 +34,7 @@ func (UsageLog) Fields() []ent.Field {
 			// 落库 format——本 task 只扩枚举（search 端点接入为独立 task，消费
 			// 本枚举 + call_count 落账）。
 			Values("openai-chat", "openai-responses", "openai-responses-ws", "anthropic", "openai-images", "openai-search"),
-		// 用户裁决（err_logs 分表设计 + 升级原则）：usage_logs 瘦身去 2 留 1——
+		// err_logs 分表设计 + 升级原则：usage_logs 瘦身去 2 留 1——
 		// status_code（成功行恒 200 无信息量）与 error_message（纯排障文本列）
 		// 移入 err_logs 独立审计表；error_type 保留（半异常计费行标记；分表后
 		// usage_logs = 纯计费明细（仅 cost>0），值域收敛为 none/abort 两值——

@@ -861,7 +861,7 @@ billing = { enabled = true, flush_interval = "300ms", balance_refresh_interval =
 
 	// ============ 场景 8.5：上游 4xx 错误文本落盘（部署故障修复） ============
 	// 独立模板/账号/组：上游 key = fail400-key → fakeupstream 注入 400（透传，
-	// 不转移）。分表设计（用户裁决）：4xx 失败行不入 usage_logs——err_logs
+	// 不转移）。分表设计：4xx 失败行不入 usage_logs——err_logs
 	// error_message 必须落上游错误 body（根因锁定靠文本）。
 	t.Log("场景 8.5：上游 4xx → err_logs error_message 落盘")
 	tpl400 := env.create("/templates", map[string]any{

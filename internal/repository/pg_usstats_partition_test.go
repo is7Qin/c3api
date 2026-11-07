@@ -4,7 +4,7 @@
 
 package repository_test
 
-// usage_stats 分区化（用户裁决 2026-08-11：PG DELETE 不释放空间，180 天保留
+// usage_stats 分区化（PG DELETE 不释放空间，180 天保留
 // 清理必须分区 DROP O(1)——替代逐行 DELETE 方案）真实 PG 测试：bootstrap 幂等
 // / 分区键（bucket_time）覆盖写入路由（spec 2026-08-14：Upsert 累加语义已由
 // AggregateRange 覆盖语义替代，单写者） / 180 天 cutoff DROP 边界 / 并发
@@ -111,7 +111,7 @@ func TestUsageStatsPartitionBootstrapPG(t *testing.T) {
 	require.Equal(t, int64(1), n, "bootstrap 建齐 v2 唯一索引（唯一索引 ON CONFLICT 目标）")
 }
 
-// TestUsageStatsPartitionRoutingPG 分区键覆盖写入路由正确（用户裁决要求）：
+// TestUsageStatsPartitionRoutingPG 分区键覆盖写入路由正确：
 // 跨日两桶 AggregateRange → 按 bucket_time 路由到各自日分区；同分区同 key 二次
 // 覆盖写入 → DELETE+INSERT 覆盖（不新增行不累加——覆盖语义替代旧 upsert 累加）。
 func TestUsageStatsPartitionRoutingPG(t *testing.T) {
@@ -145,7 +145,7 @@ func TestUsageStatsPartitionRoutingPG(t *testing.T) {
 	require.Equal(t, int64(1), pgCount(t, pool, `SELECT COUNT(*) FROM usage_stats_`+dayB.Format("20060102")))
 }
 
-// TestUsageStatsPartitionRetentionPG 180 天保留期 DROP 边界（用户裁决核心）：
+// TestUsageStatsPartitionRetentionPG 180 天保留期 DROP 边界：
 // cutoff = now - 180 天 → 181 天前分区 DROP O(1)，当日/近期分区保留。
 func TestUsageStatsPartitionRetentionPG(t *testing.T) {
 	repos := newPGRepos(t)

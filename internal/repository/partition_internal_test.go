@@ -9,7 +9,7 @@ package repository
 // usageEntityStatsColumnDefs）的列集合必须一致——任一同步点被绕过/手改立即被本
 // 文件锚测试捕获（防"向静态 DDL 加列忘加事实源"漂移，含类型漂移——列定义字符
 // 串整体生成）。列集合的在场/取反断言是列集合演化的自动化防线。升级策略
-// （用户裁决 2026-08-23）：beta 全新库自举，无迁移，bootstrap 对已分区表
+//：beta 全新库自举，无迁移，bootstrap 对已分区表
 // no-op 预期行为非缺陷。
 
 import (
@@ -161,8 +161,8 @@ func TestErrLogColumnDefsMatchCreateDDL(t *testing.T) {
 	require.NotContains(t, source, "input_tokens", "err_logs 瘦表无 token 列")
 }
 
-// TestUsageStatsColumnDefsMatchCreateDDL usage_stats 列事实源锚 v2（用户裁决
-// 2026-08-11 三表统一分区机制——usageStatsColumnDefs 第三列事实源，建表 DDL
+// TestUsageStatsColumnDefsMatchCreateDDL usage_stats 列事实源锚 v2（
+// 三表统一分区机制——usageStatsColumnDefs 第三列事实源，建表 DDL
 // 与事实源列集合一致；防同型复发）→ spec 2026-08-23 v2 瘦身：删
 // account_id/template_id/user_id/is_error 四列（维度 7→3），保留 ttft_hist
 // （v2.2 裁决——平台级分位数草图，overview 的 ScanStatsDays 消费）；spec

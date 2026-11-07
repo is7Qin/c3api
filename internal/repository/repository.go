@@ -40,7 +40,7 @@ type Repository struct {
 	PriceEntries   *PriceEntryRepo
 	PriceVariants  *PriceVariantRepo
 	Billing        *BillingRepo       // 扣费落库
-	Partitions     *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats 用户裁决 2026-08-11）
+	Partitions     *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats）
 	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1； 数据层，消费接线）
 	AccountExts    *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1； 数据层，消费接线）
 	EmailTemplates *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
@@ -946,7 +946,7 @@ func (r *Repository) AcquireBillingLock(ctx context.Context) (release func(), ok
 	return r.Billing.AcquireBillingLock(ctx)
 }
 
-// --- usagelog 按日分区（；main 装配 bootstrap + retention worker） ---
+// --- usagelog 按日分区（main 装配 bootstrap + retention worker） ---
 
 // EnsureUsageLogPartitioned 分区 bootstrap（幂等）：未分区 → DROP 重建分区表
 // + 预建当日/明日分区 + 索引；已分区 → 仅补齐分区。
@@ -1004,7 +1004,7 @@ func (r *Repository) EnsureUsageStatsPartitions(ctx context.Context, now, until 
 }
 
 // DropUsageStatsPartitionsBefore usage_stats DROP 分区下界 < cutoff 的分区
-// （O(1)；用户裁决 2026-08-11：PG DELETE 不释放空间，180 天保留清理必须分区
+// （O(1)；PG DELETE 不释放空间，180 天保留清理必须分区
 // DROP——retention worker 按 StatsRetentionDays 调）。
 func (r *Repository) DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DropUsageStatsPartitionsBefore(ctx, cutoff)
@@ -1155,7 +1155,7 @@ func OpenPG(ctx context.Context, dsn string, maxConns int32) (*pgxpool.Pool, err
 		return nil, err
 	}
 	cfg.MaxConns = maxConns
-	// MaxConnLifetime 30m 滚动轮换（用户裁决 2026-08-13 实施）：每条连接到期后
+	// MaxConnLifetime 30m 滚动轮换：每条连接到期后
 	// 按需重建（非全量轮换——PG 侧连接数峰值不变），防网络抖动后长连接脏状态；
 	// HealthCheckPeriod 30s 健康检查保留为双保险（不设）。
 	cfg.MaxConnLifetime = 30 * time.Minute

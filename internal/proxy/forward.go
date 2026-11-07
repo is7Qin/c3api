@@ -138,7 +138,7 @@ type Deps struct {
 }
 
 // New 构造代理。creds 为凭据注册表（直接参数注入，编译期强制；
-// 不用 Config 字段——避免 nil 运行时才炸）。bill 为计费钩子（；
+// 不用 Config 字段——避免 nil 运行时才炸）。bill 为计费钩子（
 // nil = 计费全关——现有调用点/测试兼容）。errlog 为错误明细落盘 worker
 // （分表设计；nil = 未装配——拒绝/异常路径只聚统计不落 err_logs 明细）。
 // deps 为尾部一次性协作者（零值 = 三者皆未装配，各 nil 语义见 Deps）。
@@ -390,7 +390,7 @@ func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int
 
 // recordRejected 记录一条**本地预用量拒绝**（401 鉴权失败/额度耗尽/并发超限/
 // 余额 402/tier reject/缺价/无账号：请求未接触上游、未消费任何 token、cost 恒
-// 0）。双轨（用户裁决分表设计）：①统计聚合（usagestat 请求/错误计数语义不变）
+// 0）。双轨（分表设计）：①统计聚合（usagestat 请求/错误计数语义不变）
 // ②错误明细投递 errlog worker 落 err_logs——**不产生 usage_logs 明细**、不进
 // billed/非 billed pending。拒绝风暴（压测 2026-08-11：单 key 限流
 // 161k req/s → 60s 冲至 9.8M pending 行 / RSS 7.5GB，usage_logs 表 120.7M→
@@ -428,7 +428,7 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 	p.routeLog(l)
 }
 
-// routeLog 分表统一路由（用户裁决修正 2026-08-11：usage_logs 成员资格按**放行
+// routeLog 分表统一路由（usage_logs 成员资格按**放行
 // 路径语义（error_type）**判定，与 cost 无关——cost>0 判定会漏掉免费分组
 // （倍率 0 的成功行）与 0 token 成功行（空响应））：
 //   - usage_logs = 放行路径明细：error_type ∈ {none（成功，含 cost=0 免费组/

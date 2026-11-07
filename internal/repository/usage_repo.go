@@ -103,7 +103,7 @@ func mapPartitionError(err error) error {
 // /图片每张，例外单位——per-call 计费不走 /1e6 除法，同原 price_per_image
 // _millis 语义）——nil = NULL 落库。原图片 6 列已删：image token 并入
 // InputTokens/OutputTokens（TotalTokens 口径不变）。
-// 用户裁决（err_logs 分表）：StatusCode/ErrorMessage 为域内瞬态审计字段
+// err_logs 分表：StatusCode/ErrorMessage 为域内瞬态审计字段
 // （err_logs 承载），不再写 usage_logs（该两列已从表移除——瘦身）。
 // billed（ledger-cursor，spec 2026-08-23）：出生标记直接透传（false=待对账
 // 消费；true=关闭计费/匿名行出生吸收态），翻转只发生在对账事务内。
@@ -271,7 +271,7 @@ func usageLogRowValues(l *domain.UsageLog) []any {
 	}
 }
 
-// QueryUsages usage_logs keyset 游标分页查询（用户裁决：无 from/to 的全分区
+// QueryUsages usage_logs keyset 游标分页查询（无 from/to 的全分区
 // OFFSET 扫描是压测中危——游标分页 + from/to 必填 + 零新索引，id 主键天然有序）。
 // 游标语义：WHERE id < cursor AND created_at BETWEEN from/to [AND 既有过滤]，
 // ORDER BY id DESC LIMIT limit+1——多取 1 行探测是否有下一页（调用方按
@@ -318,7 +318,7 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 		l := &domain.UsageLog{
 			ID: row.ID, RequestID: row.RequestID,
 			Model: row.Model, Format: domain.RequestFormat(row.Format),
-			// 用户裁决（err_logs 分表）：StatusCode/ErrorMessage 不再落 usage_logs
+			// err_logs 分表：StatusCode/ErrorMessage 不再落 usage_logs
 			// ——查询结果恒零值/nil（错误审计字段由 err_logs 承载）。
 			ErrorType:                domain.ErrorType(row.ErrorType),
 			LatencyMS:                row.LatencyMs,

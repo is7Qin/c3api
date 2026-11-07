@@ -38,7 +38,7 @@ import (
 //
 // **只收时长，不收日历天**（spec §7.3b，评审 m3）：`d` 不是 time.ParseDuration
 // 的单位，`7d` 的拒绝是 ParseDuration 的默认行为，此处只负责把它映射成 400 +
-// 机读 reason（用户裁决：`24h` 在 DST 切换日 ≠ 一个日历天，而本 API 唯一的对齐
+// 机读 reason（`24h` 在 DST 切换日 ≠ 一个日历天，而本 API 唯一的对齐
 // 基准是固定 1h 网格，另立 AddDate 日历语义会引入第二套窗口长度语义）。
 //
 // now 由调用方注入（handler 既有的可注入时钟 h.now）——本函数不读墙钟，故 A11/A12

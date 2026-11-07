@@ -68,7 +68,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
 		require.Equal(t, "a@example.com", acc.Name, "name = codex_email")
-		require.Equal(t, 25, acc.MaxConcurrency, "max_concurrency 缺省 25（非 8——用户裁决红绿）")
+		require.Equal(t, 25, acc.MaxConcurrency, "max_concurrency 缺省 25（非 8红绿）")
 		require.Equal(t, tplID, acc.TemplateID)
 		gs, err := store.GetAccountGroups(ctx, acc.ID)
 		require.NoError(t, err)

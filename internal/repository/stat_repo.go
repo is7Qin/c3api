@@ -28,8 +28,8 @@ import (
 // ScanStatsDays）全部经 pgx 原生池直查直写——ent client 仅用于资源计数等非
 // 统计面（usage_stats 含 bigint[] 数组列，ent 无类型，ent carve-out）。
 // pool 由 NewWithPG 构造注入（生产 main.go 注入 OpenPG 池；与 ent driver 同
-// DSN 共享连接上限）。usage_stats / usage_entity_stats 均为分区表（用户裁决
-// 2026-08-11：PG DELETE 不释放空间，保留清理必须 DROP 分区 O(1)）——清理由
+// DSN 共享连接上限）。usage_stats / usage_entity_stats 均为分区表（
+// PG DELETE 不释放空间，保留清理必须 DROP 分区 O(1)）——清理由
 // retention worker 经 PartitionRepo 执行；两表只由离线聚合 worker 写入
 // （DELETE+INSERT 覆盖语义，无双写者、无 merge 累加——issue 教训）。
 type StatRepo struct {
@@ -102,7 +102,7 @@ func TTFTPercentileMS(hist []int64, n int64, p float64) int64 {
 }
 
 // TTFTAvgMS TTFT 均值（查询侧 Go 除——SQL 只 sum/count/max，spec P3 措辞）；
-// 无样本 → 0。除法后 math.Round 收敛整数毫秒（用户裁决 2026-08-14：裸浮点
+// 无样本 → 0。除法后 math.Round 收敛整数毫秒（裸浮点
 // 直出——dashboard 显示 322.96317829457365；毫秒语义整数，契约 number 不变）。
 func (s *StatSummary) TTFTAvgMS() float64 {
 	if s.TTFTCount <= 0 {

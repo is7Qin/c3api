@@ -197,7 +197,7 @@ func TestOpsWorkersPG(t *testing.T) {
 	require.Equal(t, int64(1), rst.LastDroppedLogPartitions, "DROP 分区数与真实一致")
 
 	// --- 4) /api/admin/ops/workers 端点：typed struct 断言 + 指标与真实状态一致 ---
-	// （用户裁决并入管理面：路由由契约 chi-server 生成，走 /admin 组鉴权）
+	// （并入管理面：路由由契约 chi-server 生成，走 /admin 组鉴权）
 	opsWorkers := []handler.StatsProvider{ruleEngine, sched, rec, errlogW, retention, statsAgg}
 	ah := handler.New(nil, handler.OpsOptions{
 		Workers:   opsWorkers,

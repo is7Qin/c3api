@@ -220,7 +220,7 @@ func recoverer(log *logx.Logger) func(http.Handler) http.Handler {
 				if rec := recover(); rec != nil {
 					if log != nil {
 						// debug.Stack()：panic 定位靠栈——无栈日志只有 message 无法
-						// 溯源（；栈在错误路径才物化，热路径零成本）。
+						// 溯源（栈在错误路径才物化，热路径零成本）。
 						log.Error("panic recovered",
 							logx.Any("panic", rec),
 							logx.String("stack", string(debug.Stack())),

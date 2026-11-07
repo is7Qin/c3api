@@ -45,7 +45,7 @@ func newPGReposFresh(tb testing.TB) *repository.Repository {
 	tb.Cleanup(func() { _ = db.Close() })
 	repos, err := repository.NewWithPG(ctx, entsql.OpenDB(dialect.Postgres, db), false, pool) // pool 注入 Stats（Upsert COPY 两阶段真实路径）
 	require.NoError(tb, err)
-	// 分表设计 + 用户裁决 2026-08-11：四张分区表（usage_logs/err_logs/
+	// 分表设计 + 四张分区表（usage_logs/err_logs/
 	// usage_stats/usage_entity_stats）已从 ent migrate 列表排除
 	// （migrateHookExcludesPartitioned），分区表由 bootstrap 独占建表——模板/
 	// 克隆已含当日分区，这里幂等重申（克隆后跨天用例依赖它补齐当日分区）。

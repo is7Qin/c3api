@@ -14,7 +14,7 @@ import (
 )
 
 // Tier service_tier 归一化档位。与 sub2api 的 fast→priority 归一不同：fast
-// 为独立档位（Anthropic Fast Mode 整单倍率，Anthropic 官方语义；用户裁决，
+// 为独立档位（Anthropic Fast Mode 整单倍率，Anthropic 官方语义，
 // 见计划）。
 type Tier int
 
@@ -126,7 +126,7 @@ func CostFromResolved(rp domain.ResolvedPrices, pt, ct, cr, cc int64) int64 {
 
 // ImageCostFromResolved image branch via unified ResolvedPrices.
 //
-// 分量**互斥、按张优先**（用户裁决 2026-11-08）：price_per_image（按张）与
+// 分量**互斥、按张优先**：price_per_image（按张）与
 // img_in/out_tok_per_m（图像 token）二选一，同时配置时按张赢——不再相加。
 // 判据是「按张列非 NULL」而不是「> 0」：显式配 0 表示按张免费，同样压过 token
 // 价（与按次价 0 = 免费的口径一致），否则「免费」会被静默改写成按 token 收费。

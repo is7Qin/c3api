@@ -14,7 +14,7 @@ import (
 
 // 管理端密钥列表（/api/admin/keys，spec 2026-08-16）：全量视角（不限归属用户）+
 // name 模糊 / user_id / group_id 等值收窄 + sort 白名单 id/name/created_at。
-// 脱敏铁律（用户裁决）：AdminKey 响应 schema 无 key 明文字段——转换面必须
+// 脱敏铁律：AdminKey 响应 schema 无 key 明文字段——转换面必须
 // 剥掉 KeyRaw，密钥明文绝不下发管理端。
 
 // GetKeys 密钥列表（脱敏，不含 key 明文；platform_admin 专属，ServerInterface）。
@@ -44,7 +44,7 @@ func (h *AdminAPI) GetKeys(w http.ResponseWriter, r *http.Request, params GetKey
 }
 
 // toAPIAdminKey key 领域对象 → 契约类型（脱敏面：不映射 KeyRaw——响应
-// 无 key 明文字段，用户裁决）。
+// 无 key 明文字段）。
 func toAPIAdminKey(k *domain.Key) AdminKey {
 	st := KeyStatus(k.Status)
 	return AdminKey{

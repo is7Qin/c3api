@@ -761,7 +761,7 @@ func modelSet(accs []*accountSnapshot) map[string]struct{} {
 // 兜底转发。桶键集是编译车道的枚举域（编译器经 fullCandidateUnion 重算候选，
 // 不消费序列）。
 //
-// 分桶语义（模板模型硬白名单，用户裁决 2026-08-18）：
+// 分桶语义（模板模型硬白名单）：
 //   - Serves(model) 命中 → tier1（不变）；
 //   - 未命中 + 模板有模型空间（Models/FormatModels/ModelMapping 任一非空 =
 //     白名单账号）→ 跳过（不建路由 → Select 404，不再 tier2 兜底转发）；

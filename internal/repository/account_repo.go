@@ -338,7 +338,7 @@ func (r *AccountRepo) GetAccountGroups(ctx context.Context, accountID int64) ([]
 }
 
 // SetAccountFailed 幂等写账号失效（SDK 接入——统一失效回调处理链第一步）：
-// failed_at + last_error（失效原因文本，复用既有 last_error——用户裁决
+// failed_at + last_error（失效原因文本，复用既有 last_error
 // 2026-08-13：两原因字段并存会漂移；失效后账号摘除不再被调度 → caller.go
 // 的普通失败写点不会覆盖失效原因，复用安全）首写生效——failed_at 已置（首次
 // 上报）→ 0 行不覆盖（保持首次失效时刻与原因；重复上报不重复写；恢复由

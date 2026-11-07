@@ -80,7 +80,7 @@ func emitSearchOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, 
 //     无会话绑定：search 请求自包含，上游鉴权 = 有效 Bearer，无会话亲和机制）
 //   - 不走计费预检（余额/缺价 402 均不执行——search 无预检语义；按次价在
 //     2xx 落账时结算，零余额透支扣费为产品语义）
-//   - 四类型分派（用户裁决 2026-08-13）：codex-oauth/codex-pat → codex-sdk
+//   - 四类型分派：codex-oauth/codex-pat → codex-sdk
 //     Search（适配层 clientFor 缓存客户端直接复用；固定 SDK 官方端点 https://chatgpt.com/backend-api/codex/alpha/search，网关零拼装，
 //     test transport 仅 host 重写保留官方 path；Auth 注入/刷新/fatal 生命周期
 //     复用既有 SDK 面）；api_key/responses-special → 静态透传（Bearer upstream
