@@ -1,0 +1,27 @@
+# M2 基准记录（toolschema 方言层，v22）
+goos=windows
+goarch=amd64
+cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
+pkg=internal/protoconv
+-count=1
+-benchtime=1000x
+src_sha256 toolschema.go a037b2e7ee7dc2e77843a0155867d4f0b307f7a951556af167c383da013f6dff
+src_sha256 toolschema_bench_test.go 6f7c766a5cd388f408ec46a43308bb9fa4a7ad9f4d0c297424908740967c87ed
+
+BenchmarkConvertRequestRespToMessTools20-16   1000  115900 ns/op   49230 B/op   302 allocs/op
+BenchmarkToolsHandling-16                     1000    5904 ns/op       8 B/op     0 allocs/op
+BenchmarkMessSchemaScan-16                    1000     278.8 ns/op     0 B/op     0 allocs/op
+BenchmarkMessSchemaFlatten-16                 1000    8195 ns/op    5704 B/op    84 allocs/op
+BenchmarkToolsRatio-16                        1000   14108 ns/op   0.87~5.64 fix/base   5717 B/op  84 allocs/op
+
+# 结论（诚实标注）
+# 1) 本机同会话对照（同一台机器、同一会话，HEAD=90e7f8b8 与 v21 各跑 5 次取最大值）：
+#    Convert 105~122 us / 428 allocs  ->  105~121 us / 302 allocs（速度持平，分配 -126）
+#    Scan    1.98~3.10 us / 11 allocs ->  0.29~0.52 us / 0 allocs（pInFast 改字节比较 + 固定数组）
+#    Flatten 12.1~14.3 us / 147 allocs ->  8.5~10.5 us / 84 allocs（fieldSpan 免建键表）
+#    M0 里记的 91234 ns / 397 allocs 是更早一次会话的读数，同一提交今天复跑只有 105 us 量级
+#    ⇒ 说明该机器上 ns 有 ~15% 的会话级漂移；门禁因此用 ns x1.5 的相对上界（spec v21）。
+# 2) `BenchmarkMessSchemaScan` 现在测的是**生产热路径** pInFast（P_in 快路径）。
+#    scanRoot 是 !pInFast 之后的慢路径，仍会分配键表，它不在本基准里。
+# 3) 仍待优化（未做）：flatten 的 dedupeDefs/propsOf 逐项复制 -> span 视图；
+#    T 路径每次仍要 scanRoot(raw) 两趟（evalMessSchema 判 P_in + flattenMessSchema 取键）。

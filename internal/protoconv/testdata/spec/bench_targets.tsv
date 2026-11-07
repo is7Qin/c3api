@@ -1,0 +1,6 @@
+benchmark	allocs_op	ns_op	round
+BenchmarkConvertRequestRespToMessTools20	302	117000	M2
+BenchmarkToolsHandling	0	6000	M2
+BenchmarkMessSchemaScan	0	300	M2
+BenchmarkMessSchemaFlatten	84	8300	M2
+BenchmarkToolsRatio	84	14200	M2

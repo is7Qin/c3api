@@ -74,6 +74,29 @@ func goldenStream(dir domain.ProtocolConvert, events []benchEv) func(t *testing.
 func goldenCases() []goldenCase {
 	return []goldenCase{
 		{
+			// spec (f)②：真进 T 且带 description（锁写序与 hint 位置）。
+			// 分支带 additionalProperties:false ⇒ 4c 丢弃分支约束 ⇒ deg=simplify ⇒ 追加提示。
+			name:  "resp_to_mess_tools_dialect",
+			vocab: dirRespToMess,
+			fixed: true,
+			run:   goldenRequest(domain.ProtocolConvertRespToMess, `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"f","description":"d","parameters":{"type":"object","oneOf":[{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":false}]}}]}`),
+		},
+		{
+			// spec (f)①：P_in 成立 ⇒ 原字节（锁 I2，零改动）。
+			name:  "resp_to_mess_tools_idle",
+			vocab: dirRespToMess,
+			fixed: true,
+			run:   goldenRequest(domain.ProtocolConvertRespToMess, `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"f","description":"d","parameters":{"type":"object","properties":{"a":{"type":"string"}}}}]}`),
+		},
+		{
+			// (e)④：`toolsMessFromChat` 的具名金格（chat 源是 {function:{…}} 包装）。
+			// 真进 T + `parameters` 缺失的无参工具（写 `input_schema` 但不加 hint）。
+			name:  "chat_to_mess_tools_dialect",
+			vocab: dirChatToMess,
+			fixed: true,
+			run:   goldenRequest(domain.ProtocolConvertChatToMess, `{"model":"m","messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"f","description":"d","parameters":{"type":"object","oneOf":[{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":false}]}}},{"type":"function","function":{"name":"noparam","description":"e"}},{"type":"web_search"}]}`),
+		},
+		{
 			name:  "chat_to_resp_typical",
 			vocab: dirChatToResp,
 			fixed: true, // §4 修正 1：assistant 文本 → output_text + annotations

@@ -1,0 +1,13 @@
+forbiddenRootKeys	oneOf,anyOf,allOf,enum,const,not
+requireRootType	object
+localRefOnly	true
+maxRefHops	32
+maxValveDepth	256
+maxDescriptionBytes	8192
+refKeys	$ref,$dynamicRef,$recursiveRef
+bailKeys	$id,$anchor,$dynamicAnchor
+defsTables	$defs,definitions
+logReasons	no-schema,duplicate-key,unresolved-ref,dangling-after-flatten,merged-union,dropped-branch-constraint,dropped-branch-meta,dropped-branch-type,dropped-root-constraint,non-object-root,dropped-forbidden-key,required-without-property,degenerate-lossy,empty-schema,no-object-branch
+degenerateHint	 [args simplified: some constraints could not be expressed]
+bailHint	 [args dropped: schema could not be preserved, call with no arguments]
+schema_cases_sha256	4511ae827e0bbd03517a2f4855610e2b7c742bf603c73d67b5279bd0212a9b62
