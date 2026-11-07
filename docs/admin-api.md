@@ -827,6 +827,8 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
       "InputTokens": 10,
       "OutputTokens": 20,
       "TotalTokens": 30,
+      "CallCount": 0,
+      "PricePerCallMillis": null,
       "Cost": 500,
       "BillingTier": "auto",
       "AboveHit": false,
@@ -847,7 +849,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `Cost` | int64 | 计费成本（**毫分**，1 USD = 100,000 毫分）；放行路径行可为 0（免费分组/0 token） |
 | `RawCost` | int64 | 原始成本（**毫分**，乘倍率前——免费组 `Cost`=0 但 `RawCost` 有值，"实际消耗"口径）；bill 未装配/无价防御路径恒 0 |
 | `CallCount` | int64 | 按次分量计数：图片生成 = 张数、search = 1；**不入** `TotalTokens`；0 = 无按次分量 |
-| `PricePerCallMillis` | int64 | 按单元价快照（**毫分/单元**——search 每次 / 图片每张，**不按**每 M token 口径除 1e6）；nullable，null = 无按单元分量 |
+| `PricePerCallMillis` | int64 (null) | 按单元价快照（**毫分/单元**——search 每次 / 图片每张，**不按**每 M token 口径除 1e6）；null = 无按单元分量 |
 | `BillingTier` | string | 请求 `service_tier` 归一化值：`priority` / `flex` / `fast` / `auto`（未知/空值归一 auto）；空 = 未计费路径（billing 关闭或未鉴权） |
 | `AboveHit` | bool | 任一分量超 `above_threshold` 命中分段计价 |
 | `Overdraft` | bool | 本次扣费透支（余额不足扣为负余额；`[billing]` 开启且允许透支时可能为 true） |
