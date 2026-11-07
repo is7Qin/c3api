@@ -125,6 +125,14 @@ func CostFromResolved(rp domain.ResolvedPrices, pt, ct, cr, cc int64) int64 {
 }
 
 // ImageCostFromResolved image branch via unified ResolvedPrices.
+//
+// 分量**互斥、按张优先**（用户裁决 2026-11-08）：price_per_image（按张）与
+// img_in/out_tok_per_m（图像 token）二选一，同时配置时按张赢——不再相加。
+// 判据是「按张列非 NULL」而不是「> 0」：显式配 0 表示按张免费，同样压过 token
+// 价（与按次价 0 = 免费的口径一致），否则「免费」会被静默改写成按 token 收费。
+//
+// count <= 0（上游没给出张数）才回落到图像 token 分量：没有张数就没有按张
+// 计费的乘数，此时按 token 收是唯一有数据支撑的口径。
 func ImageCostFromResolved(rp domain.ResolvedPrices, inTok, outTok, count int64) int64 {
 	clamp := func(t int64) int64 {
 		if t < 0 {
@@ -133,27 +141,25 @@ func ImageCostFromResolved(rp domain.ResolvedPrices, inTok, outTok, count int64)
 		return t
 	}
 	inTok, outTok, count = clamp(inTok), clamp(outTok), clamp(count)
-	var inP, outP, perP int64
+	if perP := rp.PricePerImage; perP != nil && count > 0 {
+		p := *perP
+		if p <= 0 {
+			return 0
+		}
+		if lim := imageTotalCap / p; count > lim {
+			count = lim
+		}
+		return min(count*p, imageTotalCap)
+	}
+	var inP, outP int64
 	if rp.ImgInTokPerM != nil {
 		inP = *rp.ImgInTokPerM
 	}
 	if rp.ImgOutTokPerM != nil {
 		outP = *rp.ImgOutTokPerM
 	}
-	if rp.PricePerImage != nil {
-		perP = *rp.PricePerImage
-	}
 	raw := clampToken(inTok, inP)*inP + clampToken(outTok, outP)*outP
-	tokenCost := (raw + milliPerMillion/2) / milliPerMillion
-	var perImage int64
-	if perP > 0 && count > 0 {
-		if lim := imageTotalCap / perP; count > lim {
-			count = lim
-		}
-		perImage = count * perP
-	}
-	total := min(tokenCost+perImage, imageTotalCap)
-	return total
+	return min((raw+milliPerMillion/2)/milliPerMillion, imageTotalCap)
 }
 
 // CallCostFromResolved per-call branch.

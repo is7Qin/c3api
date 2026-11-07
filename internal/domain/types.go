@@ -894,8 +894,9 @@ type KeyMeta struct {
 // （功能调用非 token——对齐原 image_count 语义；离线聚合 sum(call_count) = 功能
 // 调用量，进 StatBucket.CallCount——spec 2026-08-14 用户裁决按次调用入桶与展示）。
 // 图片生成 image token 已并入 InputTokens/OutputTokens（原 image_input/output_tokens 六
-// 列删除——image token 价快照列随之删除，cost 口径不变：ImageCost 仍按
-// 张数 × 每张价 + image token 价计算）。
+// 列删除——image token 价快照列随之删除。ImageCost 分量互斥、按张优先：
+// price_per_image 非 nil 时只按「张数 × 每张价」收，不再叠加 image token
+// 价；按张列缺省（NULL）才走 img_in/out_tok_per_m（用户裁决 2026-11-08）。
 type UsageLog struct {
 	ID                       int64
 	RequestID                string

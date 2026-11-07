@@ -193,10 +193,11 @@ func TestStreamImagePassthrough(t *testing.T) {
 		rec.Body.String())
 	require.True(t, rec.Flushed, "每事件后 Flush")
 
-	// 流终计费（同口径）：call_count=2、image token 取末事件、价格快照、
-	// ImageCost（100×800000/1e6 + 50×3000000/1e6 + 2×5400 = 11030）；text 分量
+	// 流终计费（同口径）：call_count=2、image token 取末事件、价格快照；text 分量
 	// 恒 0；TotalTokens 含 image tokens 不含张数。统一计费模型（spec 2026-08-13）：
 	// image token 并入 in/out、张数入 call_count、每张价入 price_per_call_millis。
+	// 分量互斥、按张优先（用户裁决 2026-11-08）：本行同时配了图像 token 价
+	// （800000/3000000 毫分/1M）与按张价 5400，只收 2×5400——token 分量不参与。
 	l := collectImageLogs(t, p, store)
 	require.Equal(t, domain.FormatOpenAIImages, l.Format)
 	require.Equal(t, domain.ErrNone, l.ErrorType)
@@ -206,7 +207,7 @@ func TestStreamImagePassthrough(t *testing.T) {
 	require.Equal(t, int64(150), l.TotalTokens, "image tokens 入 TotalTokens（口径不变）")
 	require.NotNil(t, l.PricePerCallMillis)
 	require.Equal(t, int64(5400), *l.PricePerCallMillis)
-	require.Equal(t, int64(11030), l.Cost, "100×800000/1e6 + 50×3000000/1e6 + 2×5400（ImageCost 口径不变）")
+	require.Equal(t, int64(10800), l.Cost, "按张优先：2×5400（图像 token 价已配置但不叠加）")
 }
 
 // TestStreamImageNoGenericHeartbeat codex images 合成路径（caller_images_stream.go）
