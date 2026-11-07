@@ -40,3 +40,15 @@ refs_subpath_bail	-	-
 refs_percent_bail	-	-
 refs_id_bail	-	-
 refs_plain_name_pass	-	-
+items_object_ref	-	-
+additional_props_ref_root	-	-
+boolean_branch	-	-
+branch_not_dropped	-	-
+required_union_allof_root	-	-
+nested_oneof_inline	-	-
+ref_escaped_value	-	-
+dup_required_keys	-	-
+defs_nested_defs	-	-
+onlyof_and_items	-	-
+pattern_props_root_ref	-	-
+all_of_with_any_of_sibling	-	-

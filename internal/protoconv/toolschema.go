@@ -565,6 +565,7 @@ type flattenState struct {
 	lossyRoot  bool // (L3) 删了根约束
 	hasCombo   bool
 	sawNonObj  bool // 出现过非 object 分支
+	anyNonObj  bool // 任一组合分支不是对象 ⇒ 该组"什么都不约束" ⇒ 全部属性必须无约束
 	reasons    []string
 }
 
@@ -818,6 +819,7 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 			obj := gjson.ParseBytes(elem)
 			if !obj.IsObject() {
 				st.sawNonObj = true
+				st.anyNonObj = true // true/false/非对象：该分支对属性没有任何约束
 				return true
 			}
 			if obj.Get("$ref").Type == gjson.String {
@@ -918,7 +920,15 @@ func flattenMessSchema(doc *schemaDoc, raw []byte) ([]byte, *flattenState) {
 	}
 	// I1（v18 修）：属性若被某个组合分支"不约束"，合并后必须无约束 ——
 	// 否则把 oneOf/anyOf 的析取当成了合取，实例会从合法变非法。
+	if st.anyNonObj {
+		for _, p := range st.props {
+			st.forceEmpty[p.name] = true
+		}
+	}
 	for _, p := range st.props {
+		if st.forceEmpty[p.name] {
+			continue
+		}
 		for bi, set := range branchProps {
 			// allOf 是**合取**：各分支的约束可以安全并列（不产生收窄）。
 			// anyOf/oneOf 是**析取**：某分支不约束该属性 ⇒ 合并后必须无约束。

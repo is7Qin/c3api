@@ -105,7 +105,7 @@ func TestSchemaCases(t *testing.T) {
 			require.Regexp(t, `^r\d+:`, r.note, "%s: 备注列格式", r.name)
 		})
 	}
-	require.GreaterOrEqual(t, len(rows), 40, "(b) 用例行数下限")
+	require.GreaterOrEqual(t, len(rows), 50, "(b) 用例行数下限")
 }
 
 func boolToLen(b bool) int {
