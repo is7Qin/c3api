@@ -410,15 +410,15 @@ func chatStopRaw(v gjson.Result) string {
 // schemaBeforeName 决定参数与 name 的输出顺序（Mess 目标 schema 在前、resp
 // 目标 name 在前——逐字节保持原输出）。
 type toolsFieldMap struct {
-	dir              direction // 方向（与 mode 同源，供 TestToolsMapsComplete 派生断言）
-	nestedInput      bool   // 源工具嵌套在 "function" 下（OpenAI chat 形态）
-	typeFunctionGate bool   // 源工具须 type=="function" 才转换（resp 源）
-	inSchemaKey      string // 源参数 schema 字段名（parameters / input_schema）
-	outSchemaFrag    string // 目标参数 schema 片段（含引号冒号，如 `"input_schema":`）
+	dir              direction  // 方向（与 mode 同源，供 TestToolsMapsComplete 派生断言）
+	nestedInput      bool       // 源工具嵌套在 "function" 下（OpenAI chat 形态）
+	typeFunctionGate bool       // 源工具须 type=="function" 才转换（resp 源）
+	inSchemaKey      string     // 源参数 schema 字段名（parameters / input_schema）
+	outSchemaFrag    string     // 目标参数 schema 片段（含引号冒号，如 `"input_schema":`）
 	mode             schemaMode // schema 处理模式（v18：取代 schemaObjectOnly）
-	schemaBeforeName bool   // 参数 schema 先于 name 输出
-	emitType         bool   // 目标追加 "type":"function"
-	copyStrict       bool   // 目标透传 strict
+	schemaBeforeName bool       // 参数 schema 先于 name 输出
+	emitType         bool       // 目标追加 "type":"function"
+	copyStrict       bool       // 目标透传 strict
 }
 
 var (

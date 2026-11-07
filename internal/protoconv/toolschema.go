@@ -71,7 +71,7 @@ func newSchemaDoc(raw []byte) *schemaDoc { return &schemaDoc{raw: raw} }
 var failedSpan = span{lo: -1, hi: -1}
 
 // resolve 解析本地 Pointer 子集：接受 "#" 与 "#/a/b"；段内 ~1→'/'、~0→'~'
-//（先 ~1 后 ~0，故 "~01" 得到字面量 "~1"）；不做 URI percent 解码；
+// （先 ~1 后 ~0，故 "~01" 得到字面量 "~1"）；不做 URI percent 解码；
 // 数组段按十进制下标。每一层只在当前对象区间内扫键，重名取末个。
 func (d *schemaDoc) resolve(ptr string) ([]byte, bool) {
 	if d == nil {
@@ -326,11 +326,11 @@ type rootKey struct {
 
 // verdict 根级判定结果。
 type verdict struct {
-	isObject bool
-	keys     []rootKey // 源顺序，只保留同名组的末个
-	typeVal  string    // 解码后的根 type（非字符串为空）
-	forbidden []string // 出现的禁键（解码名，去重）
-	dupCount int
+	isObject  bool
+	keys      []rootKey // 源顺序，只保留同名组的末个
+	typeVal   string    // 解码后的根 type（非字符串为空）
+	forbidden []string  // 出现的禁键（解码名，去重）
+	dupCount  int
 }
 
 func scanRoot(raw []byte) verdict {

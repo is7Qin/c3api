@@ -74,6 +74,21 @@ func goldenStream(dir domain.ProtocolConvert, events []benchEv) func(t *testing.
 func goldenCases() []goldenCase {
 	return []goldenCase{
 		{
+			// spec (f)②：真进 T 且带 description（锁写序与 hint 位置）。
+			// 分支带 additionalProperties:false ⇒ 4c 丢弃分支约束 ⇒ deg=simplify ⇒ 追加提示。
+			name:  "resp_to_mess_tools_dialect",
+			vocab: dirRespToMess,
+			fixed: true,
+			run:   goldenRequest(domain.ProtocolConvertRespToMess, `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"f","description":"d","parameters":{"type":"object","oneOf":[{"type":"object","properties":{"a":{"type":"string"}},"additionalProperties":false}]}}]}`),
+		},
+		{
+			// spec (f)①：P_in 成立 ⇒ 原字节（锁 I2，零改动）。
+			name:  "resp_to_mess_tools_idle",
+			vocab: dirRespToMess,
+			fixed: true,
+			run:   goldenRequest(domain.ProtocolConvertRespToMess, `{"model":"m","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"function","name":"f","description":"d","parameters":{"type":"object","properties":{"a":{"type":"string"}}}}]}`),
+		},
+		{
 			name:  "chat_to_resp_typical",
 			vocab: dirChatToResp,
 			fixed: true, // §4 修正 1：assistant 文本 → output_text + annotations
