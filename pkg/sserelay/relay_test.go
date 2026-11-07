@@ -639,3 +639,62 @@ func TestRelayPooledFrameBufferDoesNotLeak(t *testing.T) {
 	require.NoError(t, relayStream(rec2, short, Config{}))
 	require.Equal(t, short, rec2.Body.String(), "pooled frame buffer must be reset per stream")
 }
+
+// flushSpy 记录「已真实下行（flush 过）的字节数」：每次 Flush 快照当前写入长度。
+// 用于判定「完整帧是否在 relay 阻塞之前就可见」，与仅统计 flush 次数不同。
+type flushSpy struct {
+	mu      sync.Mutex
+	buf     bytes.Buffer
+	flushed int
+}
+
+func (w *flushSpy) Header() http.Header { return http.Header{} }
+func (w *flushSpy) WriteHeader(int)     {}
+func (w *flushSpy) Write(b []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(b)
+}
+func (w *flushSpy) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.flushed = w.buf.Len()
+}
+func (w *flushSpy) visible() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.flushed
+}
+func (w *flushSpy) body() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+// TestRelayFlushesCompletedFramesBeforeBlockingOnPartialTail 钉住 flush-on-drain
+// 的阻塞预判据：同一读批 = 完整帧 + 尾部残缺行时，完整帧必须在 relay 因等残行
+// 余下字节而阻塞之前下行。旧判据只看「读缓冲为空」，这种形状下完整帧会滞留在
+// Output 写缓冲里，直到上游下一次写入才一起下行——滞后时长恰等于上游静默时长
+// （实测：上游 2s 后才补上残行余下字节 ⇒ 前端 2s 后才看到早已完整的那一帧）。
+func TestRelayFlushesCompletedFramesBeforeBlockingOnPartialTail(t *testing.T) {
+	pr, pw := io.Pipe()
+	spy := &flushSpy{}
+	errCh := make(chan error, 1)
+	go func() { errCh <- Relay(context.Background(), spy, pr, Config{}) }()
+
+	preamble := "data: {\"pre\":1}\n\n"
+	frameA := "data: {\"a\":1}\n\n"
+	partial := "data: {\"b\":1}" // 残缺：结尾空行尚未产生
+	_, err := pw.Write([]byte(preamble + frameA + partial))
+	require.NoError(t, err)
+
+	want := len(preamble) + len(frameA)
+	require.Eventually(t, func() bool { return spy.visible() >= want }, time.Second, 5*time.Millisecond,
+		"完整帧必须在阻塞等尾部残缺行之前下行")
+
+	_, err = pw.Write([]byte("\n\n"))
+	require.NoError(t, err)
+	require.NoError(t, pw.Close())
+	require.NoError(t, <-errCh)
+	require.Equal(t, preamble+frameA+partial+"\n\n", spy.body())
+}

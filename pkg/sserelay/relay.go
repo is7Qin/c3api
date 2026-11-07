@@ -248,6 +248,9 @@ func (r *relay) run() error {
 		event  []byte // 当前帧 event 字段
 		inLine bool   // 当前行未结束（上次 ReadSlice 返回 ErrBufferFull ⟹ true；chunk 以 \n 结尾 ⟹ false）
 	)
+	// nlTail：读缓冲未读区内最后一个换行符的下标（相对未读区起点）；-1 = 该区内
+	// 已无换行。增量维护（每轮 O(1)，不扫整块缓冲）——flush-on-drain 的阻塞预判据。
+	nlTail := -1
 	flushFrame := func() error {
 		raw := Event{Raw: frame.Bytes(), Event: event, Data: data}
 		out := frame.Bytes()
@@ -274,15 +277,48 @@ func (r *relay) run() error {
 		return nil
 	}
 	for {
-		// flush-on-drain：读缓冲已空 ⟹ 下一次 ReadSlice 将因等新数据而阻塞。
-		// 此刻先 flush 已写入的完整帧——同一读批的多帧合并为一次写系统调用。
-		if br.Buffered() == 0 {
+		// flush-on-drain：下一次 ReadSlice 必然要 fill（缓冲内已无可直接消费的
+		// 换行）⟹ 大概率阻塞等上游；此刻先 flush 已写入的完整帧——同一读批的
+		// 多帧仍合并为一次写系统调用。
+		//
+		// 判据不能只是「读缓冲为空」：只判空时，「同一读批 = 若干完整帧 + 尾部
+		// 一个残缺行」里已完整的帧会滞留在 Output 写缓冲里无人 flush，直到上游
+		// 下一次写入补齐残行才随它一起下行——滞后时长恰等于上游静默时长
+		// （见 TestRelayFlushesCompletedFramesBeforeBlockingOnPartialTail）。
+		// 精确判据是「缓冲内已无换行」（ReadSlice 在缓冲里找到换行即返回、不
+		// fill；找不到才 fill），由 nlTail 增量给出，每轮 O(1)。
+		if nlTail < 0 {
 			if err := r.out.DrainFlush(); err != nil {
 				return err
 			}
 		}
 		// 空行 = 帧结束
+		before := br.Buffered()
 		line, err := br.ReadSlice('\n')
+		after := br.Buffered()
+		// nlTail 记账：消费 len(line) 字节后旧换行下标左移；fill（after 大于
+		// 「消费后余量」）追加的新字节只扫追加区间（LastIndexByte 从尾部反向找，
+		// 常见形状一次命中）。两处偏差方向都取「判 -1」——-1 只多一次 drain
+		// （flush 已写入的字节，无害），绝不漏判。
+		if consumed := len(line); nlTail >= consumed {
+			nlTail -= consumed
+		} else {
+			nlTail = -1
+		}
+		// fill 之后的坐标：未读区 = [原未读余量][fill 追加]，两者都以区首为原点；
+		// 消费发生在区首，故追加区间起点 = max(before-len(line), 0)（消费越过原
+		// 余量时整块都是追加字节）。
+		tailStart := before - len(line)
+		if tailStart < 0 {
+			tailStart = 0
+		}
+		if tailStart < after {
+			if p, perr := br.Peek(after); perr == nil {
+				if j := bytes.LastIndexByte(p[tailStart:], '\n'); j >= 0 {
+					nlTail = tailStart + j
+				}
+			}
+		}
 		if len(line) > 0 {
 			frame.Write(line)
 			if inLine {
