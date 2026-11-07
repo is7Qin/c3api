@@ -36,7 +36,7 @@ describe('用量明细的按次分量（源码形状）', () => {
     }
   })
 
-  it('外层门是「token 任一非 0 或按次计数 > 0」', () => {
+  it('外层门是「token 任一非 0 或（按次计数 > 0 且有价快照）」', () => {
     for (const { name, src } of PAGES) {
       assert.match(src, NEW_GATE, `${name}缺新外层门 ${NEW_GATE}`)
       assert.ok(src.includes('(l.CallCount ?? 0) > 0'), `${name}外层门没把按次计数纳入`)
