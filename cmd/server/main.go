@@ -17,6 +17,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -39,6 +40,7 @@ import (
 	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
+	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/proxy"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/repository"
@@ -88,6 +90,23 @@ func main() {
 	if err != nil {
 		fatalf("logger: %v", err)
 	}
+	// 工具 schema 方言的退化必须可见（spec §3.5 / I3 护栏④）：任一退化或兜底
+	// 都记 WARN，带 direction/tool/reason/schema_bytes/root_keys；计数由
+	// protoconv 自己累计（protoconv.SchemaRepaired，供健康检查读取）。
+	protoconv.SetSchemaSink(func(e protoconv.SchemaEvent) {
+		if e.Degenerate == "none" && !e.Missing {
+			return
+		}
+		log.Warn("tool schema degraded for the Messages target",
+			logx.String("direction", e.Direction),
+			logx.String("tool", e.Tool),
+			logx.String("reasons", strings.Join(e.Reasons, ",")),
+			logx.String("degenerate", e.Degenerate),
+			logx.Int("schema_bytes", e.SchemaBytes),
+			logx.Int("root_keys", e.RootKeys),
+			logx.Bool("schema_missing", e.Missing),
+		)
+	})
 	// pprof 监听失败可观测（spec 2026-08-13）：旧实现 `_ =` 全静默——监听
 	// 失败零日志零观测。goroutine 在 logx.New 之后启动：闭包捕获 log 恒非 nil
 	// （若保留原位置，端口占用等启动期失败时 log 尚 nil，Warn 判空即被丢弃，

@@ -25,16 +25,22 @@ type caseRow struct {
 	note    string
 }
 
+// splitTSVLine 按 \t 切；顺带吃掉 CRLF 的 \r（M-6：仓库在 Windows 上开发）。
+func splitTSVLine(line string) []string {
+	line = strings.TrimSuffix(line, "\r")
+	return strings.Split(line, "\t")
+}
+
 func loadSchemaCases(t *testing.T) []caseRow {
 	t.Helper()
 	raw, err := os.ReadFile(schemaCasesPath)
 	require.NoError(t, err)
 	var out []caseRow
 	for i, line := range strings.Split(string(raw), "\n") {
-		if line == "" {
+		if line == "" || line == "\r" {
 			continue
 		}
-		f := strings.Split(line, "\t")
+		f := splitTSVLine(line)
 		require.Len(t, f, 6, "第 %d 行必须是 6 列", i+1)
 		src, err := strconv.Unquote(f[1])
 		require.NoError(t, err, "第 %d 行第 2 列必须可 Unquote", i+1)
@@ -53,7 +59,8 @@ func loadSchemaCases(t *testing.T) []caseRow {
 	return out
 }
 
-// (a) 输出侧 P_out 全称断言：out-1..out-5。
+// assertPOut (a) 输出侧 P_out 全称断言：out-1..out-5。
+// 用 ForEach 遍历根键（不许 Get：Get 首胜看不见重复键）。
 func assertPOut(t *testing.T, name, out string) {
 	t.Helper()
 	obj := gjson.Parse(out)
@@ -64,11 +71,17 @@ func assertPOut(t *testing.T, name, out string) {
 		forbidden[f] = struct{}{}
 	}
 	var dup bool
-	obj.ForEach(func(k, _ gjson.Result) bool {
+	typeSeen := false
+	typeIsObject := false
+	obj.ForEach(func(k, v gjson.Result) bool {
 		if _, ok := seen[k.Str]; ok {
 			dup = true
 		}
 		seen[k.Str] = struct{}{}
+		if k.Str == "type" {
+			typeSeen = true
+			typeIsObject = v.Type == gjson.String && v.Str == "object"
+		}
 		return true
 	})
 	require.False(t, dup, "%s: out-5 不得有重复根键", name)
@@ -76,43 +89,43 @@ func assertPOut(t *testing.T, name, out string) {
 		_, bad := forbidden[k]
 		require.False(t, bad, "%s: out-4 根键 %s 在禁键集里", name, k)
 	}
-	got := obj.Get("type")
-	require.Equal(t, gjson.String, got.Type, "%s: out-3 根 type 必须是字符串", name)
-	require.Equal(t, "object", got.Str, "%s: out-3 根 type 必须是 object", name)
+	require.True(t, typeSeen, "%s: out-3 根 type 必须存在", name)
+	require.True(t, typeIsObject, "%s: out-3 根 type 必须是 object", name)
 }
 
-// (b)(a)(p)(m)：逐行字节断言 + 结构断言。
+// (b)(a)(p)(m)：逐行字节断言 + 结构断言 + reason 集合断言。
 func TestSchemaCases(t *testing.T) {
 	rows := loadSchemaCases(t)
 	for _, r := range rows {
 		t.Run(r.name, func(t *testing.T) {
-			got, deg := messSchema(r.src)
+			res := evalMessSchema(gjson.Parse(r.src))
+			got := res.raw
+			if got == "" {
+				got = string(res.out)
+			}
 			require.Equal(t, r.want, got, "%s（%s）", r.name, r.note)
 			assertPOut(t, r.name, got)
-			// (b) 第 4 列：属性名集合必须与产物一致。
+			// (p)① ⊇ 与 (p)② 下限：门禁只挡"丢属性"，不规定"不许有更多"（momus-r2 I-17）。
 			var props []string
 			gjson.Parse(got).Get("properties").ForEach(func(k, _ gjson.Result) bool {
 				props = append(props, k.Str)
 				return true
 			})
-			require.ElementsMatch(t, r.propSet, props, "%s: 属性名集合")
-			// (b) 第 5 列：reason 集合（只看退化种类这一层，动作级 reason 由 (n) 覆盖）。
-			require.Len(t, r.reasons, boolToLen(deg != degNone), "%s: reason 列与退化种类不符", r.name)
-			if deg == degBail {
-				require.Contains(t, r.reasons, "dangling-after-flatten", "%s", r.name)
+			for _, want := range r.propSet {
+				require.Contains(t, props, want, "P2[case=%s]: 属性名 %q 在产物里丢了", r.name, want)
 			}
+			require.GreaterOrEqual(t, len(props), len(r.propSet), "P2[case=%s]: 属性个数低于下限", r.name)
+			// (b) 第 5 列：reason 集合**逐项**相等（C-4：只比长度会让内容写反也绿）
+			require.ElementsMatch(t, r.reasons, res.reasons, "%s: reason 集合不符", r.name)
 			// (b) 第 6 列：备注必须以 r<N>: 开头。
 			require.Regexp(t, `^r\d+:`, r.note, "%s: 备注列格式", r.name)
+			// missing 与 no-schema 的权威关系（(n)③ 的单向蕴含）。
+			if res.missing {
+				require.Contains(t, res.reasons, "no-schema", "%s: missing ⇒ 必须含 no-schema", r.name)
+			}
 		})
 	}
 	require.GreaterOrEqual(t, len(rows), 50, "(b) 用例行数下限")
-}
-
-func boolToLen(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
 }
 
 // (e)⑤ schema_cases.tsv 的实际哈希必须与 anchors 里记录的一致。
@@ -132,10 +145,10 @@ func TestSchemaInstancesCoverage(t *testing.T) {
 	require.NoError(t, err)
 	got := map[string]struct{}{}
 	for i, line := range strings.Split(string(raw), "\n") {
-		if line == "" {
+		if line == "" || line == "\r" {
 			continue
 		}
-		f := strings.Split(line, "\t")
+		f := splitTSVLine(line)
 		require.Len(t, f, 3, "第 %d 行必须是 3 列", i+1)
 		got[f[0]] = struct{}{}
 	}

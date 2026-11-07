@@ -74,15 +74,15 @@ func BenchmarkToolsHandling(b *testing.B) {
 	benchTools20Result = out
 }
 
-// BenchmarkMessSchemaScan 根级一趟扫描（0 分配）。
+// BenchmarkMessSchemaScan 生产热路径：P_in 快路径（pInFast）的根级一趟扫描，
+// 0 分配。scanRoot 是 !pInFast 之后的慢路径，不在本基准里（spec v21 登记）。
 func BenchmarkMessSchemaScan(b *testing.B) {
-	raw := []byte(gjson.Parse(benchTools20).Get("tools.19.parameters").Raw)
-	b.SetBytes(int64(len(raw)))
+	src := gjson.Parse(benchTools20).Get("tools.0.parameters")
+	b.SetBytes(int64(len(src.Raw)))
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		v := scanRoot(raw)
-		if len(v.keys) == 0 {
-			b.Fatal("scanRoot 扫不到键")
+		if !pInFast(src) {
+			b.Fatal("pInFast 应命中：载荷是合法 object schema")
 		}
 	}
 }
@@ -92,8 +92,7 @@ func BenchmarkMessSchemaFlatten(b *testing.B) {
 	src := gjson.Parse(`{"type":"object","$defs":{"P":{"type":"object","properties":{"q":{"type":"string"}}}},"oneOf":[{"$ref":"#/$defs/P"}]}`)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, b1, _ := evalMessSchema(src)
-		benchTools20Result = b1
+		benchTools20Result = evalMessSchema(src).out
 	}
 }
 
@@ -114,8 +113,7 @@ func BenchmarkToolsRatio(b *testing.B) {
 		})
 		d0 := time.Since(t0)
 		t1 := time.Now()
-		_, b1, _ := evalMessSchema(src)
-		out = append(out, b1...)
+		out = append(out, evalMessSchema(src).out...)
 		d1 := time.Since(t1)
 		base += d0
 		fix += d1

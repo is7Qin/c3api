@@ -523,7 +523,13 @@ func appendToolsMapped(out []byte, tools gjson.Result, m toolsFieldMap) []byte {
 func evalSchemaField(m toolsFieldMap, src gjson.Result) (string, []byte, degenerateKind) {
 	switch m.mode {
 	case schemaModeMessDialect:
-		return evalMessSchema(src.Get(m.inSchemaKey))
+		in := src.Get(m.inSchemaKey)
+		res := evalMessSchema(in)
+		if res.raw != "" {
+			return res.raw, nil, res.deg // P_in 成立：不观测、不分配（I2）
+		}
+		observeSchema(m, src, in, res)
+		return "", res.out, res.deg
 	case schemaModeObjectOnly:
 		if s := src.Get(m.inSchemaKey); s.IsObject() {
 			return s.Raw, nil, degNone
@@ -537,19 +543,6 @@ func evalSchemaField(m toolsFieldMap, src gjson.Result) (string, []byte, degener
 	default:
 		panic("protoconv: unknown schemaMode")
 	}
-}
-
-// appendMessSchema 只写 schema 字段（供门禁/测试直接调用）。
-func appendMessSchema(out []byte, src gjson.Result, m toolsFieldMap) []byte {
-	str, b, _ := evalSchemaField(m, src)
-	if b == nil && str == "" {
-		return out
-	}
-	out = append(out, m.outSchemaFrag...)
-	if b != nil {
-		return append(out, b...)
-	}
-	return append(out, str...)
 }
 
 // hintOf 退化种类 → 追加文案。

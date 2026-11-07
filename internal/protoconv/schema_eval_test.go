@@ -6,7 +6,6 @@ package protoconv
 
 import (
 	"encoding/json"
-	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -34,10 +33,41 @@ func (e *evaluator) valid(s any, inst any) bool {
 	return true // 非 schema（如字符串）按注解忽略
 }
 
+// supportedKeywords 求值器**实现了**的关键字。
+var supportedKeywords = map[string]struct{}{
+	"type": {}, "enum": {}, "const": {}, "not": {}, "allOf": {}, "anyOf": {}, "oneOf": {},
+	"if": {}, "then": {}, "else": {}, "required": {}, "properties": {}, "patternProperties": {},
+	"additionalProperties": {}, "minProperties": {}, "maxProperties": {},
+	"dependentRequired": {}, "dependentSchemas": {}, "$ref": {},
+	"prefixItems": {}, "items": {}, "additionalItems": {}, "contains": {},
+	"minContains": {}, "maxContains": {}, "minItems": {}, "maxItems": {}, "uniqueItems": {},
+	"minLength": {}, "maxLength": {}, "pattern": {},
+	"minimum": {}, "maximum": {}, "exclusiveMinimum": {}, "exclusiveMaximum": {},
+	"propertyNames": {},
+}
+
+// annotationKeywords 注解白名单：不约束实例，忽略是安全的。
+var annotationKeywords = map[string]struct{}{
+	"title": {}, "description": {}, "default": {}, "examples": {}, "$comment": {},
+	"deprecated": {}, "readOnly": {}, "writeOnly": {}, "$schema": {}, "$id": {},
+	"$anchor": {}, "$dynamicAnchor": {}, "$vocabulary": {},
+	"contentEncoding": {}, "contentMediaType": {}, "$defs": {}, "definitions": {},
+}
+
 func (e *evaluator) validObject(s map[string]any, inst any) bool {
 	// 深度保险丝：自引用/环引用在 2020-12 里语义未定义，视为满足（源侧保留它，我们也不收窄）。
 	if e.depth > 64 {
 		return true
+	}
+	// fail-closed：既不在"已实现"也不在"注解白名单"的关键字 ⇒ 无法证明 ⇒ 判不满足。
+	for k := range s {
+		if _, ok := supportedKeywords[k]; ok {
+			continue
+		}
+		if _, ok := annotationKeywords[k]; ok {
+			continue
+		}
+		return false
 	}
 	e.depth++
 	defer func() { e.depth-- }()
@@ -156,6 +186,13 @@ func (e *evaluator) validObject(s map[string]any, inst any) bool {
 				}
 			}
 		}
+		if v, ok := s["propertyNames"]; ok {
+			for name := range obj {
+				if !e.valid(v, name) {
+					return false
+				}
+			}
+		}
 		for name, val := range obj {
 			if sub, ok := props[name]; ok && !e.valid(sub, val) {
 				return false
@@ -223,6 +260,32 @@ func (e *evaluator) validObject(s map[string]any, inst any) bool {
 			}
 			if v, ok := s["maxContains"]; ok && n > toInt(v) {
 				return false
+			}
+		}
+		if v, ok := s["uniqueItems"]; ok {
+			if b, _ := v.(bool); b {
+				seen := map[string]struct{}{}
+				for _, x := range arr {
+					xs, err := json.Marshal(x)
+					if err != nil {
+						return false
+					}
+					if _, dup := seen[string(xs)]; dup {
+						return false
+					}
+					seen[string(xs)] = struct{}{}
+				}
+			}
+		}
+		if v, ok := s["additionalItems"]; ok {
+			start := 0
+			if subs, ok := s["items"].([]any); ok {
+				start = len(subs)
+			}
+			for i := start; i < len(arr); i++ {
+				if !e.valid(v, arr[i]) {
+					return false
+				}
 			}
 		}
 		if v, ok := s["minItems"]; ok && len(arr) < toInt(v) {
@@ -440,5 +503,3 @@ func TestI1Superset(t *testing.T) {
 		}
 	}
 }
-
-var _ = fmt.Sprintf

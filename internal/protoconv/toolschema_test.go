@@ -3,6 +3,7 @@ package protoconv
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -17,10 +18,10 @@ func tsvDialectAnchors(t *testing.T) map[string]string {
 	require.NoError(t, err)
 	out := map[string]string{}
 	for _, line := range strings.Split(string(raw), "\n") {
-		if line == "" {
+		if line == "" || line == "\r" {
 			continue
 		}
-		f := strings.Split(line, "\t")
+		f := splitTSVLine(line)
 		require.Len(t, f, 2, "dialect_anchors.tsv 每行两列：field/value")
 		out[f[0]] = f[1]
 	}
@@ -28,18 +29,20 @@ func tsvDialectAnchors(t *testing.T) map[string]string {
 }
 
 // (e)① dialect 常量 ↔ dialect_anchors.tsv 双向机检。
+// 右侧一律取**代码常量**（不是字面量），否则改代码常量时 TSV 与测试一起不红（momus-r2 I-9）。
 func TestDialectAnchors(t *testing.T) {
 	anchors := tsvDialectAnchors(t)
 	want := map[string]string{
 		"forbiddenRootKeys":   strings.Join(forbiddenRootKeys[:], ","),
 		"requireRootType":     requireRootType,
-		"localRefOnly":        "true",
-		"maxRefHops":          "32",
-		"maxValveDepth":       "256",
-		"maxDescriptionBytes": "8192",
+		"localRefOnly":        strconv.FormatBool(localRefOnly),
+		"maxRefHops":          strconv.Itoa(maxRefHops),
+		"maxValveDepth":       strconv.Itoa(maxValveDepth),
+		"maxDescriptionBytes": strconv.Itoa(maxDescriptionBytes),
 		"refKeys":             strings.Join(refKeys[:], ","),
 		"bailKeys":            strings.Join(bailKeys[:], ","),
-		"defsTables":          "$defs,definitions",
+		"defsTables":          defsTables,
+		"logReasons":          strings.Join(reasonOrder, ","),
 		"degenerateHint":      degenerateHint,
 		"bailHint":            bailHint,
 	}
@@ -78,14 +81,17 @@ func TestSchemaModeMaps(t *testing.T) {
 	require.Equal(t, schemaModeUnknown, schemaModeFor(dirRespToMessResp))
 }
 
-// missMessSchema 便捷：跑一次 mess 方言求值。
+// messSchema 便捷：跑一次 mess 方言求值。
 func messSchema(raw string) (string, degenerateKind) {
-	str, b, deg := evalMessSchema(gjson.Parse(raw))
-	if b == nil {
-		return str, deg
+	res := evalMessSchema(gjson.Parse(raw))
+	if res.raw != "" {
+		return res.raw, res.deg
 	}
-	return string(b), deg
+	return string(res.out), res.deg
 }
+
+// messSchemaFull 同上，但带 reason 集合与 missing 标志（(b) 第 5 列与 (n) 用）。
+func messSchemaFull(raw string) evalResult { return evalMessSchema(gjson.Parse(raw)) }
 
 // (b′) 9b 安全阀的三行 golden。
 func TestBailValve(t *testing.T) {
@@ -255,6 +261,7 @@ func TestBenchFixtures(t *testing.T) {
 }
 
 // pInFast 与 scanRoot().pIn() 必须逐输入一致（快路径不许更宽松）。
+// 覆盖：手写边界 + (b) 全表（防"只测手写用例"）。
 func TestPInFastParity(t *testing.T) {
 	inputs := []string{
 		`{}`, `{"properties":{"a":{}}}`, `{"title":"t"}`,
@@ -266,6 +273,14 @@ func TestPInFastParity(t *testing.T) {
 		`{"type":"object","type":"string"}`,
 		`{"type":"object","properties":{},"properties":{}}`,
 		`{"type":"object","title":"t","properties":{"a":{}}}`,
+		`{"\u0074ype":"object"}`, `{"type":"object","\u006fneOf":[]}`,
+		`{"type":"object","a\u0062c":1}`, `{"type":"object","":"x"}`,
+	}
+	for _, r := range loadSchemaCases(t) {
+		if strings.HasPrefix(r.src, `"`) || r.src == "" {
+			continue // 非对象源由完整判定直接否掉
+		}
+		inputs = append(inputs, r.src)
 	}
 	for _, in := range inputs {
 		src := gjson.Parse(in)
@@ -289,9 +304,9 @@ func TestValveDepthCap(t *testing.T) {
 	b.WriteString(`}}]}`)
 	src := b.String()
 	out, deg := messSchema(src)
-	// 不崩即可；深嵌套超出可证明范围时按兜底处理
-	require.NotEmpty(t, out)
-	require.Contains(t, []degenerateKind{degNone, degSimplify, degBail}, deg)
+	// 超限即"不能证明可解析" ⇒ 必须兜底（不是"不崩就行"，momus-r2 I-10）
+	require.Equal(t, degBail, deg, "超过 maxValveDepth 必须兜底")
+	require.Equal(t, `{"type":"object"}`, out)
 }
 
 // 深嵌套但无引用的 schema 不应被兜底（阀只对引用与 $id 敏感）。

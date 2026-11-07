@@ -7,6 +7,7 @@ maxDescriptionBytes	8192
 refKeys	$ref,$dynamicRef,$recursiveRef
 bailKeys	$id,$anchor,$dynamicAnchor
 defsTables	$defs,definitions
+logReasons	no-schema,duplicate-key,unresolved-ref,dangling-after-flatten,merged-union,dropped-branch-constraint,dropped-branch-meta,dropped-branch-type,dropped-root-constraint,non-object-root,dropped-forbidden-key,required-without-property,degenerate-lossy,empty-schema,no-object-branch
 degenerateHint	 [args simplified: some constraints could not be expressed]
 bailHint	 [args dropped: schema could not be preserved, call with no arguments]
-schema_cases_sha256	1cf815fb2dd073b8dd1e7d0b8ceee0cc39c3f49c9e926fd1c1db1b162b2db556
+schema_cases_sha256	168c3a1659bc1174b8857eeda851aefa5a02fd58784ebf4bc84be1367e4fea75

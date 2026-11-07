@@ -1,0 +1,1 @@
+{"max_tokens":4096,"messages":[{"content":"hi","role":"user"}],"model":"m","tools":[{"description":"d [args simplified: some constraints could not be expressed]","input_schema":{"type":"object","properties":{"a":{"type":"string"}}},"name":"f"},{"description":"e","input_schema":{"type":"object"},"name":"noparam"}]}

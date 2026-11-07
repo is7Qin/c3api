@@ -32,7 +32,8 @@ func TestRawKeyEqMatchesGjson(t *testing.T) {
 	}
 }
 
-// (n)① 反向断言：实现里出现的 reason 字面量必须都在白名单内。
+// (n)① 反向断言：实现里出现的 reason 字面量必须都在白名单内；
+// 正向断言（白名单 ⊆ 实测）在 TestReasonCoverage。本测试不再"自己查自己"。
 func TestReasonWhitelist(t *testing.T) {
 	raw, err := os.ReadFile("toolschema.go")
 	require.NoError(t, err)
@@ -44,10 +45,11 @@ func TestReasonWhitelist(t *testing.T) {
 		require.True(t, ok, "reason %q 不在白名单（(n)① 反向断言）", m[1])
 	}
 	require.Greater(t, found, 3, "至少要扫到几处 reason 调用，否则正则失效")
-	// 兜底与退化两个 reason 必须真实存在
-	for _, must := range []string{"dangling-after-flatten", "degenerate-lossy", "merged-union", "duplicate-key"} {
-		_, ok := reasonWhitelist[must]
-		require.True(t, ok)
+	// 白名单自身必须无重复、且与 reasonOrder 完全一致（顺序表是唯一真源）。
+	require.Len(t, reasonWhitelist, len(reasonOrder), "reasonOrder 与 reasonWhitelist 必须一一对应")
+	for _, r := range reasonOrder {
+		_, ok := reasonWhitelist[r]
+		require.True(t, ok, "reasonOrder 里的 %q 不在白名单", r)
 	}
 }
 
@@ -63,8 +65,6 @@ func TestHintIdempotent(t *testing.T) {
 	require.Contains(t, other, "simplified")
 
 	// 超长不追加
-	long := string(make([]byte, 0))
-	_ = long
 	huge := ""
 	for i := 0; i < maxDescriptionBytes+10; i++ {
 		huge += "x"

@@ -1,24 +1,27 @@
-# M0 基准记录（toolschema 方言层）
+# M1 基准记录（toolschema 方言层，v21）
 goos=windows
 goarch=amd64
 cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
--benchtime=300x
-src_sha256 toolschema.go 40a4ac8cc0dfd433c1fe4bc0c4f9a2bf7e74fcb2e604661254c4479ebf41d0d8
-src_sha256 toolschema_bench_test.go b6316bdf2a425c864115a589db359c7f6fbe6ba3ba7ae6fc649de2b0424dae6b
+-benchtime=1000x
+src_sha256 toolschema.go 53a0950186a40799ce38a1ce6275b9880746a841f79e6a442a1ed8e56cfb004e
+src_sha256 toolschema_bench_test.go 6f7c766a5cd388f408ec46a43308bb9fa4a7ad9f4d0c297424908740967c87ed
 
-BenchmarkConvertRequestRespToMessTools20-16   300   91234 ns/op   55709 B/op   397 allocs/op
-BenchmarkToolsHandling-16                     300    7504 ns/op      42 B/op     0 allocs/op
-BenchmarkMessSchemaScan-16                    300    1899 ns/op     855 B/op    11 allocs/op
-BenchmarkMessSchemaFlatten-16                 300    8666 ns/op    8688 B/op   122 allocs/op
-BenchmarkToolsRatio-16                        300   13492 ns/op     0.2316 fix/base   8756 B/op  122 allocs/op
+BenchmarkConvertRequestRespToMessTools20-16   1000  120990 ns/op   49230 B/op   302 allocs/op
+BenchmarkToolsHandling-16                     1000    7734 ns/op       8 B/op     0 allocs/op
+BenchmarkMessSchemaScan-16                    1000     515.5 ns/op     0 B/op     0 allocs/op
+BenchmarkMessSchemaFlatten-16                 1000   10490 ns/op    5704 B/op    84 allocs/op
+BenchmarkToolsRatio-16                        1000   20437 ns/op   0.64~1.96 fix/base   5717 B/op  84 allocs/op
 
 # 结论（诚实标注）
-# 1) spec §4 的 B 行（37,700 ns / 2 allocs）是**加方言层之前**的全量转换基线，
-#    不能作为“加了每工具判定之后仍然不许涨”的门禁。
-# 2) 压平的 allocs（122）远高于 v13 设定的 ≤4：那 4 是“全量键索引”方案的预算，
-#    该方案已在 v14 被删除（见 spec 9b）。真实成本须重设门禁，做法是**棘轮**：
-#    以本文件为准，后续不得变差。
-# 3) 待优化项（按收益）：flatten 的 dedupeDefs/propsOf 逐项复制 → 改成 span 视图；
-#    pInFast 的 seen 切片 → 改成固定数组。
+# 1) 本机同会话对照（同一台机器、同一会话，HEAD=90e7f8b8 与 v21 各跑 5 次取最大值）：
+#    Convert 105~122 us / 428 allocs  ->  105~121 us / 302 allocs（速度持平，分配 -126）
+#    Scan    1.98~3.10 us / 11 allocs ->  0.29~0.52 us / 0 allocs（pInFast 改字节比较 + 固定数组）
+#    Flatten 12.1~14.3 us / 147 allocs ->  8.5~10.5 us / 84 allocs（fieldSpan 免建键表）
+#    M0 里记的 91234 ns / 397 allocs 是更早一次会话的读数，同一提交今天复跑只有 105 us 量级
+#    ⇒ 说明该机器上 ns 有 ~15% 的会话级漂移；门禁因此用 ns x1.5 的相对上界（spec v21）。
+# 2) `BenchmarkMessSchemaScan` 现在测的是**生产热路径** pInFast（P_in 快路径）。
+#    scanRoot 是 !pInFast 之后的慢路径，仍会分配键表，它不在本基准里。
+# 3) 仍待优化（未做）：flatten 的 dedupeDefs/propsOf 逐项复制 -> span 视图；
+#    T 路径每次仍要 scanRoot(raw) 两趟（evalMessSchema 判 P_in + flattenMessSchema 取键）。
