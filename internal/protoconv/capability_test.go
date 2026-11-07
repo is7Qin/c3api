@@ -47,8 +47,8 @@ func TestCapabilityExistingDirectionsGA(t *testing.T) {
 // "半成品窗口"的显式账本，不是恒真断言。
 func TestCapabilityNewDirections(t *testing.T) {
 	for pc, want := range map[domain.ProtocolConvert]DirectionCaps{
-		domain.ProtocolConvertMessToChat: {Request: true},
-		domain.ProtocolConvertRespToChat: {Request: true},
+		domain.ProtocolConvertMessToChat: {Request: true, Response: true},
+		domain.ProtocolConvertRespToChat: {Request: true, Response: true},
 	} {
 		require.Equal(t, want, Capability(pc), "%q 的能力三元组与接线进度不符", pc)
 		// 三项未全真 ⇒ 仍未 GA：配置层必须继续 400，流式必须继续 fail-closed。
@@ -60,13 +60,11 @@ func TestCapabilityNewDirections(t *testing.T) {
 // TestUnsupportedDirectionSentinel 未接线方向必须返回 **可 errors.Is 的 sentinel**
 // （调用方靠它区分"未支持方向"与"请求体非法"；字符串匹配会在改文案时静默失效）。
 func TestUnsupportedDirectionSentinel(t *testing.T) {
-	// 响应面：两个新方向都尚未接线（M2c 才打开）。
-	for _, pc := range []domain.ProtocolConvert{
-		domain.ProtocolConvertMessToChat,
-		domain.ProtocolConvertRespToChat,
-	} {
-		_, err := ConvertResponse([]byte(`{"id":"x"}`), pc)
-		require.ErrorIs(t, err, ErrUnsupportedDirection, "ConvertResponse(%q)", pc)
+	// 未登记的方向值必须返回 sentinel（两个新方向已全接线，故改用非法方向值：
+	// sentinel 的意义是"配置/部署与实现不一致"，不是"某个方向名"）。
+	for _, f := range []func([]byte, domain.ProtocolConvert) ([]byte, error){ConvertRequest, ConvertResponse} {
+		_, err := f([]byte(`{"id":"x"}`), domain.ProtocolConvert("no_such_direction"))
+		require.ErrorIs(t, err, ErrUnsupportedDirection)
 	}
 	// 已接线方向绝不能返回该 sentinel（否则会把正常请求误判成"方向不支持"）。
 	for _, pc := range []domain.ProtocolConvert{

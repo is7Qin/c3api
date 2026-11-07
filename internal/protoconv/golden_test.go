@@ -346,7 +346,7 @@ func goldenCases() []goldenCase {
 			// M2b：resp → chat 请求面，纯文本路径（instructions → system 消息）。
 			name:  "resp_to_chat_req_text",
 			vocab: dirRespToChatReq,
-			run: goldenRequest(domain.ProtocolConvertRespToChat, `{"model":"m","instructions":"be nice","input":"hello","max_output_tokens":64}`),
+			run:   goldenRequest(domain.ProtocolConvertRespToChat, `{"model":"m","instructions":"be nice","input":"hello","max_output_tokens":64}`),
 		},
 		{
 			// M2b：工具路径。内置工具（web_search_preview）被读取侧过滤，
@@ -391,6 +391,45 @@ func goldenCases() []goldenCase {
 				{"type":"function_call_output","call_id":"ghost","output":"lost"},
 				{"type":"message","role":"user","content":[{"type":"input_text","text":"u2"}]}
 			]}`),
+		},
+		{
+			// M2c：chat → mess 响应面，纯文本（usage 走 §5.4 净额口径）。
+			name:  "chat_to_mess_resp_text",
+			vocab: dirChatToMessResp,
+			run: goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c1","object":"chat.completion","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`),
+		},
+		{
+			// M2c：工具 + 思考 + 用量明细。thinking 块不写 signature（chat 无签名
+			// 通道），tool_use 的 input 由 arguments 解析而来。
+			name:  "chat_to_mess_resp_tools",
+			vocab: dirChatToMessResp,
+			run: goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c2","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"calling","reasoning_content":"think","tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}},{"id":"c2","type":"function","function":{"name":"g","arguments":"{oops"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`),
+		},
+		{
+			// M2c：length → max_tokens；空 content → **仍写一个空 text 块**
+			// （Messages 客户端对 content:[] 会报协议错）。
+			name:  "chat_to_mess_resp_length",
+			vocab: dirChatToMessResp,
+			run: goldenResponse(domain.ProtocolConvertMessToChat, `{"id":"c3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":null},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":0}}`),
+		},
+		{
+			// M2c：chat → resp 响应面，纯文本（output 项 id 确定性合成）。
+			name:  "chat_to_resp_resp_text",
+			vocab: dirChatToRespResp,
+			run: goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c1","object":"chat.completion","created":99,"model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10}}}`),
+		},
+		{
+			// M2c：工具 + 思考 + 用量明细。output 顺序固定 reasoning → message →
+			// function_call；input_tokens_details 的**两个键恒写**（官方必填）。
+			name:  "chat_to_resp_resp_tools",
+			vocab: dirChatToRespResp,
+			run: goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c2","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"calling","reasoning_content":"think","tool_calls":[{"id":"call_1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`),
+		},
+		{
+			// M2c：length → status:"incomplete" + incomplete_details.reason。
+			name:  "chat_to_resp_resp_incomplete",
+			vocab: dirChatToRespResp,
+			run: goldenResponse(domain.ProtocolConvertRespToChat, `{"id":"c3","model":"m","choices":[{"index":0,"message":{"role":"assistant","content":"trunc"},"finish_reason":"length"}],"usage":{"prompt_tokens":10,"completion_tokens":0}}`),
 		},
 		{
 			name:   "stream_resp_to_chat",
@@ -448,6 +487,13 @@ func goldenCases() []goldenCase {
 			}),
 		},
 	}
+}
+
+// TestGoldenCorpusSize spec §8(g)：语料条数写死（不用变量派生），新增/删除用例
+// 必须同时改这里。当前 35 = 既有 21 + 两个请求面各 4（3 + 多轮配对）+ 两个响应面
+// 各 3；M3 加 6 条流式后为 41。
+func TestGoldenCorpusSize(t *testing.T) {
+	require.Len(t, goldenCases(), 35)
 }
 
 // TestGoldenOutputs 逐字节钉住四个请求/响应方向与四个流式方向的输出。

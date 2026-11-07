@@ -38,8 +38,8 @@ func messToChatRequest(body []byte) ([]byte, error) {
 	}
 	var (
 		sys, msgs, maxT, tools, toolChoice, thinking, outputConfig gjson.Result
-		clientSO                                                    gjson.Result
-		model, temperature, topP, stream, metadata                  string
+		clientSO                                                   gjson.Result
+		model, temperature, topP, stream, metadata                 string
 	)
 	if root.IsObject() {
 		root.ForEach(func(k, v gjson.Result) bool {

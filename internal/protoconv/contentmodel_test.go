@@ -66,9 +66,9 @@ func (r row) anyRoleName() string {
 // dirTarget 方向 → 目标协议（(b2)/(d′) 取词表用）。
 func dirTarget(d direction) target {
 	switch d {
-	case dirChatToResp, dirMessToResp:
+	case dirChatToResp, dirMessToResp, dirChatToRespResp:
 		return tgtResp
-	case dirChatToMess, dirRespToMess, dirRespToMessResp:
+	case dirChatToMess, dirRespToMess, dirRespToMessResp, dirChatToMessResp:
 		return tgtMess
 	case dirMessToChatReq, dirRespToChatReq:
 		return tgtChat
@@ -347,6 +347,31 @@ func TestRowsStructuralEquality(t *testing.T) {
 			rowAny(shRCEffort, kindField, "reasoning_effort", polMap),
 			rowAny(shRCPrevID, kindField, "previous_response_id", polReject),
 		}},
+		{dirChatToMessResp, []row{
+			rowRole(shCM2Text, rmAsst, kindPart, "text", polMap),
+			rowRole(shCM2Tool, rmAsst, kindPart, "tool_use", polMap),
+			rowRole(shCM2ToolBadArgs, rmAsst, kindPart, "tool_use", polMap),
+			rowRole(shCM2Reasoning, rmAsst, kindPart, "thinking", polMap),
+			rowAny(shCM2Finish, kindField, "", polMap),
+			rowAny(shCM2UsageNet, kindUsage, "input_tokens", polMap),
+			rowAny(shCM2UsageCached, kindUsage, "cache_read_input_tokens", polMap),
+			rowAny(shCM2UsageWrite, kindUsage, "cache_creation_input_tokens", polMap),
+			rowAny(shCM2UsageOut, kindUsage, "output_tokens", polMap),
+			rowAny(shCM2DropReasoningTokens, kindUsage, "", polDrop),
+			rowAny(shCM2DropLogprobs, kindUsage, "", polDrop),
+		}},
+		{dirChatToRespResp, []row{
+			rowRole(shCCText, rmAsst, kindPart, "output_text", polMap),
+			rowRole(shCCFunctionCall, rmAsst, kindItem, "function_call", polMap),
+			rowRole(shCCReasoning, rmAsst, kindItem, "reasoning", polMap),
+			rowAny(shCCStatus, kindField, "", polMap),
+			rowAny(shCCIncomplete, kindField, "", polMap),
+			rowAny(shCCUsageNet, kindUsage, "input_tokens", polMap),
+			rowAny(shCCUsageCached, kindUsage, "input_tokens_details", polMap),
+			rowAny(shCCUsageWrite, kindUsage, "input_tokens_details", polMap),
+			rowAny(shCCUsageOut, kindUsage, "output_tokens", polMap),
+			rowAny(shCCReasoningTokens, kindUsage, "output_tokens_details", polMap),
+		}},
 		{dirMessToChatResp, []row{
 			rowRole(shZText, rmAsst, kindChatKey, "content", polMap),
 			rowRole(shZThinking, rmAsst, kindChatKey, "reasoning_content", polMap),
@@ -485,6 +510,8 @@ func TestRowNamesInVocab(t *testing.T) {
 					vocab = chatReqVocab
 				}
 				require.True(t, inVocab(vocab, rw.name), "方向 %s 行 %s 的 name=%q 不在字段词表内", dirName[d], shapeName[rw.sh], rw.name)
+			case kindUsage:
+				require.True(t, inVocab(usageVocab, rw.name), "方向 %s 行 %s 的 name=%q 不在用量词表内", dirName[d], shapeName[rw.sh], rw.name)
 			default:
 				require.Fail(t, "行的 kind 未定义", shapeName[rw.sh])
 			}
@@ -513,6 +540,11 @@ func TestVocabSelfComplete(t *testing.T) {
 		"max_completion_tokens", "stop", "user",
 		"response_format", "reasoning_effort",
 	}, chatReqVocab)
+	require.ElementsMatch(t, []string{
+		"input_tokens", "output_tokens", "total_tokens",
+		"cache_read_input_tokens", "cache_creation_input_tokens",
+		"input_tokens_details", "output_tokens_details",
+	}, usageVocab)
 	require.ElementsMatch(t, []string{
 		"response.created", "response.output_item.added", "response.output_item.done",
 		"response.output_text.delta", "response.reasoning_summary_text.delta",
@@ -575,10 +607,40 @@ func TestStopMapMatchesLiveMapping(t *testing.T) {
 	}
 	require.Equal(t, stopDefaultIncomplete.chat, chatFinishFromIncomplete("max_output_tokens"))
 	require.Equal(t, stopDefaultIncomplete.mess, messStopFromIncomplete("max_output_tokens"))
+	// 正向查表是**首命中**：表里 tool_use 出现两行（第二行的 chat 值是 deprecated
+	// 的 function_call，只为反向查表而存在），正向必须仍取第一行。
+	firstByMess := map[string]string{}
 	for _, r := range messStopToChat {
-		require.Equal(t, r.chat, messStopToChatFinish(r.mess), "mess→chat 停因表不一致：%s", r.mess)
+		if _, ok := firstByMess[r.mess]; !ok {
+			firstByMess[r.mess] = r.chat
+		}
+		require.Equal(t, firstByMess[r.mess], messStopToChatFinish(r.mess), "mess→chat 停因表不一致：%s", r.mess)
 	}
+	// 反向也是首命中：chat 侧同样不唯一（max_tokens 与
+	// model_context_window_exceeded 都映到 length），故每行只需与**该 chat 值的
+	// 第一个 mess 值**一致；含只为反向存在的那一行（function_call → tool_use）。
+	firstByChat := map[string]string{}
+	for _, r := range messStopToChat {
+		if _, ok := firstByChat[r.chat]; !ok {
+			firstByChat[r.chat] = r.mess
+		}
+	}
+	for _, r := range messStopToChat {
+		require.Equal(t, firstByChat[r.chat], messStopFromChat(r.chat), "chat→mess 停因表不一致：%s", r.chat)
+	}
+	// chat 全集的每个值都必须落在表的像集内（非单射 ⇒ 不要求 round-trip 恒等）。
+	messImage := map[string]bool{}
+	for _, r := range messStopToChat {
+		messImage[r.mess] = true
+	}
+	for _, chat := range []string{"stop", "length", "tool_calls", "content_filter", "function_call"} {
+		got := messStopFromChat(chat)
+		require.True(t, messImage[got], "chat finish_reason %q 反查出的 stop_reason %q 不在表像集内", chat, got)
+	}
+	// 未命中兜底：end_turn 由表命中得到（值不变），未知值仍走 end_turn（不得空串）。
 	require.Equal(t, messStopToChatDefault, messStopToChatFinish("end_turn"))
+	require.Equal(t, "end_turn", messStopFromChat("no_such_finish_reason"))
+	require.NotEmpty(t, messStopFromChat(""))
 }
 
 // --- (e) 分配门 ---

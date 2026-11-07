@@ -313,6 +313,52 @@ func rowCases(t *testing.T) map[direction][]rowCase {
 			// TestRowCoverage 对 polReject 成员改判"必须报 ErrStatefulFields"。
 			{"rc_prev_id", lit(`{"input":"hi","previous_response_id":"resp_1"}`), nil, nil},
 		},
+		dirChatToMessResp: {
+			{"cm2_text", lit(chatResp(`"content":"HELLO"`, `"finish_reason":"stop"`)),
+				[]string{`"text":"HELLO"`, `"type":"text"`}, nil},
+			{"cm2_tool", lit(chatResp(`"content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}]`, `"finish_reason":"tool_calls"`)),
+				[]string{`"type":"tool_use"`, `"id":"c1"`, `"input":{"a":1}`}, nil},
+			{"cm2_tool_badargs", lit(chatResp(`"tool_calls":[{"id":"c2","type":"function","function":{"name":"g","arguments":"{oops"}}]`, `"finish_reason":"tool_calls"`)),
+				[]string{`"input":{}`}, []string{`oops`}},
+			{"cm2_reasoning", lit(chatResp(`"content":"t","reasoning_content":"think"`, `"finish_reason":"stop"`)),
+				[]string{`"type":"thinking"`, `"thinking":"think"`}, []string{`signature`}},
+			{"cm2_finish", lit(chatResp(`"content":"x"`, `"finish_reason":"length"`)),
+				[]string{`"stop_reason":"max_tokens"`}, nil},
+			{"cm2_usage_net", lit(chatRespUsage()),
+				[]string{`"input_tokens":50`}, nil},
+			{"cm2_usage_cached", lit(chatRespUsage()),
+				[]string{`"cache_read_input_tokens":40`}, nil},
+			{"cm2_usage_write", lit(chatRespUsage()),
+				[]string{`"cache_creation_input_tokens":10`}, nil},
+			{"cm2_usage_out", lit(chatRespUsage()),
+				[]string{`"output_tokens":20`}, nil},
+			{"cm2_drop_reasoning_tokens", lit(chatRespUsage()),
+				nil, []string{`reasoning_tokens`}},
+			{"cm2_drop_logprobs", lit(chatRespLogprobs()),
+				nil, []string{`logprobs`}},
+		},
+		dirChatToRespResp: {
+			{"cc_text", lit(chatResp(`"content":"HELLO"`, `"finish_reason":"stop"`)),
+				[]string{`"type":"output_text"`, `"text":"HELLO"`}, nil},
+			{"cc_fc", lit(chatResp(`"tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}]`, `"finish_reason":"tool_calls"`)),
+				[]string{`"type":"function_call"`, `"arguments":"{\"a\":1}"`, `"call_id":"c1"`}, nil},
+			{"cc_reasoning", lit(chatResp(`"content":"t","reasoning_content":"think"`, `"finish_reason":"stop"`)),
+				[]string{`"type":"reasoning"`, `"summary_text"`, `"text":"think"`}, nil},
+			{"cc_status", lit(chatResp(`"content":"x"`, `"finish_reason":"stop"`)),
+				[]string{`"status":"completed"`}, nil},
+			{"cc_incomplete", lit(chatResp(`"content":"x"`, `"finish_reason":"length"`)),
+				[]string{`"status":"incomplete"`, `"reason":"max_output_tokens"`}, nil},
+			{"cc_usage_net", lit(chatRespUsage()),
+				[]string{`"input_tokens":50`}, nil},
+			{"cc_usage_cached", lit(chatRespUsage()),
+				[]string{`"cached_tokens":40`}, nil},
+			{"cc_usage_write", lit(chatRespUsage()),
+				[]string{`"cache_write_tokens":10`}, nil},
+			{"cc_usage_out", lit(chatRespUsage()),
+				[]string{`"output_tokens":20`}, nil},
+			{"cc_reasoning_tokens", lit(chatRespUsage()),
+				[]string{`"reasoning_tokens":7`}, nil},
+		},
 		dirMessToChatResp: {
 			{"z_text", lit(`{"id":"m1","content":[{"type":"text","text":"HELLO"}]}`),
 				[]string{`"content":"HELLO"`}, nil},
@@ -326,6 +372,21 @@ func rowCases(t *testing.T) map[direction][]rowCase {
 				nil, []string{`ZZZ`}},
 		},
 	}
+}
+
+// chatResp chat completion 响应夹具：`"id":"c1","model":"m"` + message 片段 +
+// choice 片段 + usage。
+func chatResp(msgParts, choiceParts string) string {
+	return `{"id":"c1","model":"m","object":"chat.completion","created":9,"choices":[{"index":0,"message":{"role":"assistant",` +
+		msgParts + `},` + choiceParts + `}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`
+}
+
+// chatRespUsage 纯用量夹具（net = 100-40-10 = 50）。
+func chatRespUsage() string { return chatResp(`"content":"x"`, `"finish_reason":"stop"`) }
+
+// chatRespLogprobs 带 logprobs 的夹具（Messages 无承载位 → 必须丢）。
+func chatRespLogprobs() string {
+	return `{"id":"c1","model":"m","choices":[{"index":0,"logprobs":{"content":[{"token":"x"}]},"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}]}`
 }
 
 // rowOfMember 取某成员的策略行（找不到返回零值行，pol 为 polUnknown）。
@@ -350,7 +411,7 @@ func TestRowCoverage(t *testing.T) {
 			var out []byte
 			var err error
 			switch d {
-			case dirRespToChat, dirRespToMessResp, dirMessToChatResp:
+			case dirRespToChat, dirRespToMessResp, dirMessToChatResp, dirChatToMessResp, dirChatToRespResp:
 				out, err = ConvertResponse([]byte(body), dirToConvert(d))
 			default:
 				out, err = ConvertRequest([]byte(body), dirToConvert(d))
@@ -406,6 +467,12 @@ func dirToConvert(d direction) domain.ProtocolConvert {
 	case dirMessToChatReq:
 		return domain.ProtocolConvertMessToChat
 	case dirRespToChatReq:
+		return domain.ProtocolConvertRespToChat
+	// 响应面方向映射回"以客户端协议为准"的那一个 direction 值（ConvertResponse 的
+	// 入参方向 = 客户端协议 → 上游协议）。
+	case dirChatToMessResp:
+		return domain.ProtocolConvertMessToChat
+	case dirChatToRespResp:
 		return domain.ProtocolConvertRespToChat
 	}
 	return ""
