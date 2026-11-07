@@ -70,7 +70,7 @@ func sseFrames(n, size int) []byte {
 }
 
 // BenchmarkRelayShortStream 短流形态（fakeup chunks=1 / 快速单事件流）：单帧
-// 即 EOF，走首事件立即 flush 路径。衡量每流固定开销（池化 bufio 取还、
+// 即 EOF，走首事件立即 flush 路径。衡量每流固定开销（池化读缓冲取还、
 // deadline watcher、锁、首 flush 全链）。
 // dst 跨迭代复用（Reset 保容量）：sink 增长分配不计入 relay 成本。
 func BenchmarkRelayShortStream(b *testing.B) {

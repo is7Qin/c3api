@@ -9,7 +9,6 @@
 package sserelay
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -120,7 +119,7 @@ type relay struct {
 	ctx   context.Context
 	w     http.ResponseWriter // 原始 dst：取消联动设写侧 deadline（方案 1）
 	out   *Output             // 统一下行 owner（写缓冲/保活/提交态）
-	br    *bufio.Reader
+	rb    *readBuf
 	frame *bytes.Buffer // 当前帧原始字节（池化复用；归属 relayBufio）
 	cfg   Config
 
@@ -128,22 +127,125 @@ type relay struct {
 	wg        sync.WaitGroup // deadline watcher 汇合（替代 deadlineDone chan；spec 2026-08-15-gc-opt-ab）
 }
 
-// relayBufio 池化的逐流读侧缓冲组：读 bufio + 帧组装缓冲（写侧已下沉
-// Output，由 Output 自带写 bufio）。读缓冲 4KB——SSE 帧 ~60B、行 ≤4KB 直读；
-// >4KB 行走 ErrBufferFull 续片路径。帧缓冲随组复用（Reset 保容量）。
+// readBuf 是 relay 的读侧缓冲：自有字节缓冲 + 显式 fill，把「切出一行」与
+// 「从上游读」彻底分开。bufio.ReadSlice 把两者合在一次调用里（取不到行就自己
+// fill），于是调用方只能「预测」这一次调用会不会阻塞——「完整帧 + 尾部半截行」
+// 这种形状下预测就会失准，已完成的帧被压到上游下一次写入才下发。分开之后
+// 「即将阻塞」变成事实：flush 之后紧接着就是 fill 里的那次 Read，不需要检查
+// 缓冲内容、也不需要任何记账。
 //
-// 流结束 Reset(nil) 解除对 src 的引用后归还——watcher goroutine 在
-// stopWatcher 汇合后才归还，无并发复用。
+// 不变量：buf[r:w] 是未消费字节；nl 是下次搜索换行的起点（>= r），只前进不
+// 后退，同一次 fill 的结果内每个字节最多被扫一次。fill 会把残留字节搬到区首
+// 并可按需扩容，所以**行切片只在下次 fill 之前有效**（各消费点都在同一轮内用
+// 完：frame.Write 复制、splitField 的返回值当轮 append 复制、OnEvent 见
+// Event 注释）。
+type readBuf struct {
+	buf   []byte
+	r     int
+	w     int
+	nl    int
+	err   error
+	src   io.Reader
+	empty int // 连续 (0, nil) 读次数（防退化 reader 自旋）
+}
+
+const readBufInit = 4096
+
+func newReadBuf() readBuf {
+	return readBuf{buf: make([]byte, readBufInit)}
+}
+
+// reset 清空状态并保容量（src 由 Relay 装配）。
+func (b *readBuf) reset() {
+	b.r, b.w, b.nl = 0, 0, 0
+	b.err = nil
+	b.empty = 0
+}
+
+// next 切出下一行（含行尾 '\n'）。缓冲内没有完整行 → (nil, false)：调用方此
+// 时应先 flush 已写入的完整帧，再 fill——那正是「即将阻塞等上游」的时刻。
+func (b *readBuf) next() ([]byte, bool) {
+	if b.nl < b.r {
+		b.nl = b.r
+	}
+	if b.nl >= b.w {
+		return nil, false
+	}
+	if i := bytes.IndexByte(b.buf[b.nl:b.w], '\n'); i >= 0 {
+		end := b.nl + i + 1
+		line := b.buf[b.r:end]
+		b.r, b.nl = end, end
+		return line, true
+	}
+	b.nl = b.w // [nl:w) 已确认无换行，下轮只扫新增字节
+	return nil, false
+}
+
+// fill 把残留字节搬到区首，再从 src 读一次（可能阻塞等上游）。
+func (b *readBuf) fill() {
+	if len(b.buf) == 0 { // 池内被丢弃过超大缓冲
+		b.buf = make([]byte, readBufInit)
+	}
+	if b.r > 0 {
+		b.w = copy(b.buf, b.buf[b.r:b.w])
+		b.nl -= b.r
+		if b.nl < 0 {
+			b.nl = 0
+		}
+		b.r = 0
+	}
+	if b.w == len(b.buf) {
+		// 单行超过缓冲容量：扩容拼出完整行（不再需要 ErrBufferFull 续片语义，
+		// 超长 data 行天然全量可见——旧实现的续片路径曾把 usage 截断在首片）。
+		nb := make([]byte, len(b.buf)*2)
+		copy(nb, b.buf[:b.w])
+		b.buf = nb
+	}
+	n, err := b.src.Read(b.buf[b.w:])
+	b.w += n
+	b.err = err
+	if n == 0 && err == nil {
+		b.empty++
+		if b.empty >= 100 {
+			b.err = io.ErrNoProgress // 退化 reader：与 bufio 同类保护，不空转
+		}
+	} else {
+		b.empty = 0
+	}
+}
+
+// rest 返回流结束时无换行结尾的残留字节（末行），并清空读区。
+func (b *readBuf) rest() []byte {
+	if b.r >= b.w {
+		return nil
+	}
+	rest := b.buf[b.r:b.w]
+	b.r, b.nl = b.w, b.w
+	return rest
+}
+
+// release 解除对 src 与超大缓冲的引用后归还池（watcher 已汇合，无并发复用）。
+func (b *readBuf) release() {
+	b.src = nil
+	b.reset()
+	if cap(b.buf) > 64<<10 {
+		b.buf = nil // 单次超长行不把池容量永久抬走
+	}
+}
+
+// relayBufio 池化的逐流读侧缓冲组：读缓冲 + 帧组装缓冲（写侧已下沉 Output，
+// 由 Output 自带写 bufio）。帧缓冲随组复用（Reset 保容量）。
+//
+// 流结束解除对 src 的引用后归还——watcher goroutine 在 stopWatcher 汇合后才
+// 归还，无并发复用。
 type relayBufio struct {
-	br    *bufio.Reader
+	rb    readBuf
 	frame bytes.Buffer
 }
 
 var relayBufioPool = sync.Pool{
 	New: func() any {
-		return &relayBufio{
-			br: bufio.NewReaderSize(nil, 4096),
-		}
+		return &relayBufio{rb: newReadBuf()}
 	},
 }
 
@@ -155,7 +257,8 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 		cfg.FlushBytes = 4096
 	}
 	rb := relayBufioPool.Get().(*relayBufio)
-	rb.br.Reset(&ctxReader{ctx: ctx, r: src})
+	rb.rb.reset()
+	rb.rb.src = &ctxReader{ctx: ctx, r: src}
 	rb.frame.Reset()
 
 	out := cfg.Output
@@ -169,7 +272,7 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 		ctx: ctx, cfg: cfg,
 		w:         out.w,
 		out:       out,
-		br:        rb.br,
+		rb:        &rb.rb,
 		frame:     &rb.frame,
 		stopWatch: make(chan struct{}),
 	}
@@ -215,7 +318,7 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	// 归还池（先解除对 src 的引用，防池内残留大对象引用链）；帧缓冲
 	// Reset 保容量复用，但单次超长帧（>64KB，如大 base64 图）不把池容量
 	// 永久抬走——超限直接弃用该切片，池内重建小缓冲。
-	rb.br.Reset(nil)
+	rb.rb.release()
 	rb.frame.Reset()
 	if rb.frame.Cap() > 64<<10 {
 		rb.frame = bytes.Buffer{}
@@ -240,17 +343,13 @@ func (c *ctxReader) Read(p []byte) (int, error) {
 }
 
 func (r *relay) run() error {
-	br := r.br
+	rb := r.rb
 	frame := r.frame // 池化帧缓冲（每流 Reset 复用，免每次 bytes.Buffer 增长分配）
 
 	var (
-		data   []byte // 当前帧 data payload（合并）
-		event  []byte // 当前帧 event 字段
-		inLine bool   // 当前行未结束（上次 ReadSlice 返回 ErrBufferFull ⟹ true；chunk 以 \n 结尾 ⟹ false）
+		data  []byte // 当前帧 data payload（合并）
+		event []byte // 当前帧 event 字段
 	)
-	// nlTail：读缓冲未读区内最后一个换行符的下标（相对未读区起点）；-1 = 该区内
-	// 已无换行。增量维护（每轮 O(1)，不扫整块缓冲）——flush-on-drain 的阻塞预判据。
-	nlTail := -1
 	flushFrame := func() error {
 		raw := Event{Raw: frame.Bytes(), Event: event, Data: data}
 		out := frame.Bytes()
@@ -277,110 +376,75 @@ func (r *relay) run() error {
 		return nil
 	}
 	for {
-		// flush-on-drain：下一次 ReadSlice 必然要 fill（缓冲内已无可直接消费的
-		// 换行）⟹ 大概率阻塞等上游；此刻先 flush 已写入的完整帧——同一读批的
-		// 多帧仍合并为一次写系统调用。
-		//
-		// 判据不能只是「读缓冲为空」：只判空时，「同一读批 = 若干完整帧 + 尾部
-		// 一个残缺行」里已完整的帧会滞留在 Output 写缓冲里无人 flush，直到上游
-		// 下一次写入补齐残行才随它一起下行——滞后时长恰等于上游静默时长
-		// （见 TestRelayFlushesCompletedFramesBeforeBlockingOnPartialTail）。
-		// 精确判据是「缓冲内已无换行」（ReadSlice 在缓冲里找到换行即返回、不
-		// fill；找不到才 fill），由 nlTail 增量给出，每轮 O(1)。
-		if nlTail < 0 {
+		// 切一行（不碰 socket）。切不出来 ⟹ 缓冲内已无完整行，而下一句就是从
+		// 上游读——「即将阻塞等上游」在这里是事实而非预测，所以无条件先把已
+		// 写入 Output 的完整帧 flush 出去（flush-on-drain）：同一读批的多帧仍
+		// 合并为一次写系统调用，而「完整帧 + 尾部半截行」也不会再把已完整的帧
+		// 压到上游下一次写入（滞后 = 上游静默时长，见
+		// TestRelayFlushesCompletedFramesBeforeBlockingOnPartialTail）。
+		line, ok := rb.next()
+		if !ok {
+			if rb.err != nil {
+				if rb.err != io.EOF {
+					// 读错误/取消：不 flush 残帧（与原语义一致——错误路径残余字节
+					// 直接丢弃，不把半帧当完整帧下发）。
+					return r.normalize(rb.err)
+				}
+				// 正常 EOF。中途截断（末行无 \n 结尾）按 WHATWG 视同空行派发
+				// ——否则末帧不进 OnEvent → usage 提取落空 → cost=0 落账。
+				if rest := rb.rest(); len(rest) > 0 {
+					frame.Write(rest)
+					field, value := splitField(rest)
+					switch string(field) {
+					case "event":
+						event = append(event[:0], value...)
+					case "data":
+						if len(data) > 0 {
+							data = append(data, '\n')
+						}
+						data = append(data, value...)
+					}
+				}
+				if frame.Len() > 0 {
+					// 残帧前先停定时器，防心跳与残帧竞争；写错误必须传播。
+					r.out.StopTimer()
+					if err := flushFrame(); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
 			if err := r.out.DrainFlush(); err != nil {
 				return err
 			}
-		}
-		// 空行 = 帧结束
-		before := br.Buffered()
-		line, err := br.ReadSlice('\n')
-		after := br.Buffered()
-		// nlTail 记账：消费 len(line) 字节后旧换行下标左移；fill（after 大于
-		// 「消费后余量」）追加的新字节只扫追加区间（LastIndexByte 从尾部反向找，
-		// 常见形状一次命中）。两处偏差方向都取「判 -1」——-1 只多一次 drain
-		// （flush 已写入的字节，无害），绝不漏判。
-		if consumed := len(line); nlTail >= consumed {
-			nlTail -= consumed
-		} else {
-			nlTail = -1
-		}
-		// fill 之后的坐标：未读区 = [原未读余量][fill 追加]，两者都以区首为原点；
-		// 消费发生在区首，故追加区间起点 = max(before-len(line), 0)（消费越过原
-		// 余量时整块都是追加字节）。
-		tailStart := before - len(line)
-		if tailStart < 0 {
-			tailStart = 0
-		}
-		if tailStart < after {
-			if p, perr := br.Peek(after); perr == nil {
-				if j := bytes.LastIndexByte(p[tailStart:], '\n'); j >= 0 {
-					nlTail = tailStart + j
-				}
-			}
-		}
-		if len(line) > 0 {
-			frame.Write(line)
-			if inLine {
-				// 续片（>4KB 长行）：原始 line 去尾 \n\r 直接并入 data，不经
-				// splitField——续片内容不可按字段解析（可能含冒号）；>4KB
-				// event 行会并入 data，真实上游 event 恒短，已知限制
-				v := line
-				for len(v) > 0 && (v[len(v)-1] == '\n' || v[len(v)-1] == '\r') {
-					v = v[:len(v)-1]
-				}
-				data = append(data, v...)
-			} else if len(line) == 2 && line[0] == '\r' && line[1] == '\n' {
-				// 空行（CRLF）——仅行起始 chunk 才可能是真帧分隔空行
-				// （续片状态下的孤立 \n 是续行终止符，归上支）
-				if err := flushFrame(); err != nil {
-					return err
-				}
-				continue
-			} else if len(line) == 1 && line[0] == '\n' {
-				// 空行（LF）
-				if err := flushFrame(); err != nil {
-					return err
-				}
-				continue
-			} else {
-				// 行起始 chunk：字段提取（注释行 splitField 返回 nil，不进 data）
-				field, value := splitField(line)
-				switch string(field) {
-				case "event":
-					event = append(event[:0], value...)
-				case "data":
-					if len(data) > 0 {
-						data = append(data, '\n')
-					}
-					data = append(data, value...)
-				}
-			}
-		}
-		if err == io.EOF {
-			// ReadSlice "数据+io.EOF" 双返回时末帧已累积未 flush：正常流末帧
-			// 已由空行派发（此处 frame.Len()==0，行为零变化）；无末尾空行的
-			// 关闭风格（第三方兼容上游）会丢最后一帧 → OnEvent 看不到
-			// completed 帧 → usage 提取落空 → cost=0 落账。EOF 中途截断
-			// （末行无 \n）按原样转发直写（WHATWG 视同空行派发）。
-			// EOF 残帧前先停定时器，防心跳与残帧竞争；flushFrame 写错误必须
-			// 传播（与正常空行 flush 分支行为一致）。
-			if frame.Len() > 0 {
-				r.out.StopTimer()
-				if err := flushFrame(); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		if err == bufio.ErrBufferFull {
-			inLine = true // 行未结束：后续 chunk 为续片
+			rb.fill()
 			continue
 		}
-		if err != nil {
-			return r.normalize(err)
+		frame.Write(line)
+		switch {
+		case len(line) == 2 && line[0] == '\r' && line[1] == '\n':
+			// 空行（CRLF）= 帧结束
+			if err := flushFrame(); err != nil {
+				return err
+			}
+		case len(line) == 1 && line[0] == '\n':
+			// 空行（LF）= 帧结束
+			if err := flushFrame(); err != nil {
+				return err
+			}
+		default:
+			// 字段提取（注释行 splitField 返回 nil，不进 data）
+			field, value := splitField(line)
+			switch string(field) {
+			case "event":
+				event = append(event[:0], value...)
+			case "data":
+				if len(data) > 0 {
+					data = append(data, '\n')
+				}
+				data = append(data, value...)
+			}
 		}
-		inLine = false // chunk 以 \n 结尾：行结束复位
 		if err := r.checkCancel(); err != nil {
 			return err
 		}
@@ -441,7 +505,7 @@ func (r *relay) stopWatcher() {
 // "取消 = 写失败 = 正常退出"——半开客户端上阻塞的写（bw.Flush 持 out.mu、
 // 无 ctx 感知，全库无 SetWriteDeadline）在 deadline 处失败返回，flushFrame
 // 传播 → run 正常退出；无此联动则 run + watcher 永久泄漏（每流 1 goroutine
-// + 池化 bufio）。
+// + 池化读缓冲）。
 // 本 goroutine 永不触碰 out.mu，取消必然可达。设置后即退出；流正常结束时由
 // stopWatch 唤醒退出（net/http 在 handler 返回后自行复位 conn 写 deadline，
 // 无残留影响 keep-alive 复用）。

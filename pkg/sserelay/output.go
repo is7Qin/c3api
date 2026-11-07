@@ -64,7 +64,7 @@ type OutputOptions struct {
 
 // Output 是统一下行 owner：持真实 wire、唯一串行锁与自有写缓冲，负责完整帧
 // 的写出/批量 flush、静默保活、提交态与终态错误帧。读缓冲留在 relay（组帧仍
-// 依赖读缓冲耗尽判断）。所有帧级操作持 mu。
+// 走自有读缓冲的行扫描）。所有帧级操作持 mu。
 //
 // 生命周期：NewOutput（可复用池取）→ WriteFrame/Heartbeat/Commit/WriteError/
 // DrainFlush → StopTimer（汇合在途心跳）→ 读取提交态 → Finish（禁写）。调用方
@@ -323,7 +323,7 @@ func (o *Output) WriteError(frame []byte) error {
 	return nil
 }
 
-// DrainFlush flush-on-drain：读缓冲耗尽、即将阻塞等新数据前调用，flush 已写入
+// DrainFlush flush-on-drain：即将从上游读（可能阻塞）之前调用，flush 已写入
 // 的完整帧（同一读批多帧 = 一次写系统调用）。空 pending / 已 finish / 写失败为
 // no-op（禁写一致）。
 func (o *Output) DrainFlush() error {
