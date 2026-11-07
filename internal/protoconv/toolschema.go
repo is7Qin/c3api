@@ -1101,3 +1101,19 @@ func init() {
 		panic(err)
 	}
 }
+
+// 与 testdata/spec/dialect_anchors.tsv 双向机检的方言常量。
+const (
+	requireRootType = "object"
+	localRefOnly    = true
+)
+
+// reasonWhitelist 允许出现在日志/度量里的 reason（(n)① 的反向断言依据）。
+var reasonWhitelist = map[string]struct{}{
+	"no-schema": {}, "duplicate-key": {}, "unresolved-ref": {},
+	"dangling-after-flatten": {}, "merged-union": {},
+	"dropped-branch-constraint": {}, "dropped-branch-meta": {}, "dropped-branch-type": {},
+	"dropped-root-constraint": {}, "non-object-root": {}, "dropped-forbidden-key": {},
+	"required-without-property": {}, "degenerate-lossy": {}, "empty-schema": {},
+	"no-object-branch": {},
+}
