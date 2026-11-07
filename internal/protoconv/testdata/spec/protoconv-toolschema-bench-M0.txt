@@ -1,18 +1,18 @@
-# M3 基准记录（toolschema 方言层，v24：性能整轮）
+# M4 基准记录（toolschema 方言层，v25：性能第二轮）
 goos=windows
 goarch=amd64
 cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go bdd67c922ecf68db27a8022eb0622ade3d0dbff00ceb945c9aaf9238e6d830c9
+src_sha256 toolschema.go 5574ecf71e64b2d6e7303543d76f8af0826f23c7773bec0ab74ea13fd899126a
 src_sha256 toolschema_bench_test.go 72104923140677e5949f1513fbb23dfd18dbecc473e64f5f1bc3352bd57bfe57
 
-BenchmarkConvertRequestRespToMessTools20-16           1000   94809 ns/op   32519 B/op   213 allocs/op
-BenchmarkToolsHandling-16                            1000    5530 ns/op       8 B/op     0 allocs/op
-BenchmarkMessSchemaScan-16                           1000     290.0 ns/op     0 B/op     0 allocs/op
-BenchmarkMessSchemaFlatten-16                        1000    6412 ns/op    4688 B/op    64 allocs/op
-BenchmarkToolsRatio-16                               1000   12358 ns/op   0.71~3.00 fix/base   4701 B/op  64 allocs/op
+BenchmarkConvertRequestRespToMessTools20-16           2000   85835 ns/op   28899 B/op   111 allocs/op
+BenchmarkToolsHandling-16                            2000    5638 ns/op       4 B/op     0 allocs/op
+BenchmarkMessSchemaScan-16                           2000     279.9 ns/op     0 B/op     0 allocs/op
+BenchmarkMessSchemaFlatten-16                        2000    5442 ns/op    3624 B/op    44 allocs/op
+BenchmarkToolsRatio-16                               2000   11312 ns/op   1.06~1.17 fix/base   3630 B/op  44 allocs/op
 
 # 结论（诚实标注）
 # 1) 本机同会话对照（同一台机器、同一会话，HEAD=90e7f8b8 与 v21 各跑 5 次取最大值）：
@@ -26,7 +26,7 @@ BenchmarkToolsRatio-16                               1000   12358 ns/op   0.71~3
 # 3) 仍待优化（未做）：flatten 的 dedupeDefs/propsOf 逐项复制 -> span 视图；
 #    T 路径每次仍要 scanRoot(raw) 两趟（evalMessSchema 判 P_in + flattenMessSchema 取键）。
 
-BenchmarkConvertRequestRespToMessTools20AllPIn-16     1000   28216 ns/op    6915 B/op     2 allocs/op
+BenchmarkConvertRequestRespToMessTools20AllPIn-16     2000   28819 ns/op    6913 B/op     2 allocs/op
 
 # v24 的性能画像（同机同会话，5 次取中位）
 # 1) 20 个工具**全部**不需要改写（P_in 命中）：28.7~33 µs / **2 allocs**
@@ -43,3 +43,16 @@ BenchmarkConvertRequestRespToMessTools20AllPIn-16     1000   28216 ns/op    6915
 #    scanRoot/propsOf 去掉每次调用的 map。
 # 4) 仍待优化（未做，按收益）：9b 的 collectTables 与盲扫可以合并成一趟（省 ~7 µs/大 schema）；
 #    flattenState 每次递归建 3 个 map，可懒建。
+
+# v25 追加（在 v24 基础上继续砍"多余的一趟/多余的一个表"）
+# convert20   111 allocs（v24: 213、v23: 302）   86~88 µs
+# AllPIn      2 allocs                          28.8~29.1 µs（与加方言层前的基线持平）
+# Flatten     44 allocs（v23: 122）              5.4~6.6 µs
+# 做法：9b 的 collectTables 与盲扫合并成一趟（引用位置先记录、走完再校验）；
+# 定义表改存原始键字节（查表用 rawKeyEq，不再为 25 个定义名各解码一次）；
+# dedupeDefs 先探测重名（无重名直接返回原样字节，无转义时逐字节比即可）；
+# flattenState 的 propIndex 换成线性查重、forceEmpty/groupNonObj 懒建；
+# 合并循环里根的 properties/required 用已有 verdict 定位（不再多扫两遍 10 KB）；
+# 4c 分类按原始键字节做（不再为每个分支建一次 key 表、解一次名）。
+# 仍待优化（收益递减，未做）：scanRoot/propsOf 仍为每个键 decode 一次名字
+# （改成 rawKeyEqual 需要动 verdict 的公开字段）；scanObject 的回调闭包无法避免。

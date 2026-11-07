@@ -428,9 +428,18 @@ func refNameOK(name string) bool {
 	return true
 }
 
+// refNameIn 解码后的名字是否出现在某张表的原始键字节里（表很小，线性扫）。
+func refNameIn(table [][]byte, name string) bool {
+	for _, raw := range table {
+		if rawKeyEq(raw, name) {
+			return true
+		}
+	}
+	return false
+}
+
 // refOK 判定一个引用值（原始 JSON 字符串字节）是否符合安全阀。
-// 返回 (是否安全, 需要兜底的其它理由)。
-func refOK(valRaw []byte, tables map[string]map[string]struct{}) bool {
+func refOK(valRaw []byte, defs, defsStd [][]byte) bool {
 	if len(valRaw) < 2 || valRaw[0] != '"' {
 		return false // 非字符串：判据是全称的
 	}
@@ -439,12 +448,12 @@ func refOK(valRaw []byte, tables map[string]map[string]struct{}) bool {
 	switch {
 	case strings.HasPrefix(s, "#/$defs/"):
 		name = s[len("#/$defs/"):]
-		if _, ok := tables["$defs"][name]; !ok {
+		if !refNameIn(defs, name) {
 			return false
 		}
 	case strings.HasPrefix(s, "#/definitions/"):
 		name = s[len("#/definitions/"):]
-		if _, ok := tables["definitions"][name]; !ok {
+		if !refNameIn(defsStd, name) {
 			return false
 		}
 	default:
@@ -453,38 +462,14 @@ func refOK(valRaw []byte, tables map[string]map[string]struct{}) bool {
 	return refNameOK(name)
 }
 
-// collectTables 收集产物里 $defs / definitions 的键名（JSON 解码后）。
-func collectTables(b []byte) map[string]map[string]struct{} {
-	tables := map[string]map[string]struct{}{
-		"$defs":       {},
-		"definitions": {},
-	}
-	scanObject(b, 0, len(b), func(keyRaw []byte, vl, vh int) bool {
-		// 外层只比原始字节：盲扫整个产物时每个键都解码是主要分配源。
-		var name string
-		switch {
-		case rawKeyEq(keyRaw, "$defs"):
-			name = "$defs"
-		case rawKeyEq(keyRaw, "definitions"):
-			name = "definitions"
-		default:
-			return true
-		}
-		if vl >= len(b) || b[vl] != '{' {
-			return true
-		}
-		scanObject(b, vl, vh, func(k2 []byte, _, _ int) bool {
-			tables[name][decodeRawKey(k2)] = struct{}{} // 定义名必须解码（map 键）
-			return true
-		})
-		return true
-	})
-	return tables
-}
-
 // valveOK 在产物上盲扫：任何引用值不安全、或出现 $id/$anchor/$dynamicAnchor ⇒ 不通过。
+// **一趟遍历**：边走边收集 $defs/definitions 的名字与「引用值的位置」，走完再校验引用
+// （引用可以指向后面才出现的定义，所以校验必须延后）。原先"先 collectTables 再盲扫"
+// 要两趟整文档，大 schema 上是纯浪费。
 func valveOK(b []byte) bool {
-	tables := collectTables(b)
+	var defs, defsStd [][]byte
+	var refs [64]span
+	nrefs := 0
 	ok := true
 	var walk func(lo, hi, depth int)
 	walk = func(lo, hi, depth int) {
@@ -493,7 +478,6 @@ func valveOK(b []byte) bool {
 		}
 		// 深度上限：递归深度 = 输入嵌套深度。Go 的栈可增长，但遍历成本是
 		// O(深度 × 字节)，不设限会被深嵌套输入拖死；超限即"不能证明可解析"⇒ 兜底。
-		// 256 覆盖真实 schema（工具参数一般 < 30 层），同时给开销一个硬上界。
 		if depth > maxValveDepth {
 			ok = false
 			return
@@ -508,19 +492,37 @@ func valveOK(b []byte) bool {
 						return false
 					}
 				}
-				isRef := false
 				for _, rk := range refKeys {
 					if rawKeyEq(keyRaw, rk) {
-						isRef = true
-						break
+						if nrefs == len(refs) {
+							ok = false // 引用太多：不再尝试证明
+							return false
+						}
+						refs[nrefs] = span{vl, vh}
+						nrefs++
+						return true
 					}
 				}
-				if isRef {
-					if !refOK(b[vl:vh], tables) {
-						ok = false
-						return false
+				// 根级定义表（根对象的成员在 depth==0 这一层被访问）
+				if depth == 0 {
+					collect := false
+					isStd := false
+					switch {
+					case rawKeyEq(keyRaw, "$defs"):
+						collect = true
+					case rawKeyEq(keyRaw, "definitions"):
+						collect, isStd = true, true
 					}
-					return true
+					if collect && vl < len(b) && b[vl] == '{' {
+						scanObject(b, vl, vh, func(k2 []byte, _, _ int) bool {
+							if isStd {
+								defsStd = append(defsStd, k2) // 原始键字节：查表用 rawKeyEq，不解码
+							} else {
+								defs = append(defs, k2)
+							}
+							return true
+						})
+					}
 				}
 				walk(vl, vh, depth+1)
 				return ok
@@ -533,7 +535,15 @@ func valveOK(b []byte) bool {
 		}
 	}
 	walk(0, len(b), 0)
-	return ok
+	if !ok {
+		return false
+	}
+	for i := 0; i < nrefs; i++ {
+		if !refOK(b[refs[i].lo:refs[i].hi], defs, defsStd) {
+			return false
+		}
+	}
+	return true
 }
 
 // ---------------------------------------------------------------------------
@@ -567,13 +577,12 @@ func (p *propEnt) add(raw []byte) {
 // flattenState 一次压平的累积状态。
 type flattenState struct {
 	props        []propEnt
-	propIndex    map[string]int
-	forceEmpty   map[string]bool // 某析取组不约束该属性 ⇒ 合并后必须无约束（否则收窄）
+	forceEmpty   map[string]bool // 某析取组不约束该属性 ⇒ 合并后必须无约束（否则收窄）；懒建
 	lossyUnres   bool            // (L1) 读不到
 	lossyDrop    bool            // (L2) 丢了分支约束
 	lossyRoot    bool            // (L3) 删了根约束
 	hasCombo     bool
-	groupNonObj  map[int]bool // 该析取组里有"什么都不约束"的分支（非对象字面量）
+	groupNonObj  map[int]bool // 该析取组里有"什么都不约束"的分支（非对象字面量）；懒建
 	allNonObj    bool         // 全部组合分支都"非 object"（spec 第 11 步的判据）
 	anyBranch    bool         // 至少有一个组合分支
 	branch0Empty bool         // branch₀（根）既无 properties 也无 required
@@ -590,15 +599,55 @@ func (st *flattenState) reason(r string) {
 }
 
 func (st *flattenState) addProp(name string, raw []byte) {
-	if i, ok := st.propIndex[name]; ok {
-		st.props[i].add(raw)
-		return
+	// 属性个数是个位数 ⇒ 线性查重比 map 便宜（且不分配）。
+	for i := range st.props {
+		if st.props[i].name == name {
+			st.props[i].add(raw)
+			return
+		}
 	}
-	st.propIndex[name] = len(st.props)
 	st.props = append(st.props, propEnt{name: name, raws: [][]byte{raw}})
 }
 
-// classifyBranch 4c 三桶：返回是否计入 lossy。
+func (st *flattenState) markForceEmpty(name string) {
+	if st.forceEmpty == nil {
+		st.forceEmpty = map[string]bool{}
+	}
+	st.forceEmpty[name] = true
+}
+
+func (st *flattenState) isForceEmpty(name string) bool { return st.forceEmpty[name] }
+
+func (st *flattenState) markGroupNonObj(ci int) {
+	if st.groupNonObj == nil {
+		st.groupNonObj = map[int]bool{}
+	}
+	st.groupNonObj[ci] = true
+}
+
+func (st *flattenState) groupIsNonObj(ci int) bool { return st.groupNonObj[ci] }
+
+// classifyBranchRaw 4c 三桶（按**原始键字节**分类：分支对象很小，但每层都解码
+// 一次键名是纯浪费；metaBranchKeys 只有 15 项，线性比完就够）。
+func (st *flattenState) classifyBranchRaw(keyRaw []byte) {
+	for k := range metaBranchKeys {
+		if rawKeyEq(keyRaw, k) {
+			st.reason("dropped-branch-meta")
+			return
+		}
+	}
+	if rawKeyEq(keyRaw, "type") {
+		st.reason("dropped-branch-type")
+		return
+	}
+	if rawKeyEq(keyRaw, "$ref") || rawKeyEq(keyRaw, "$defs") || rawKeyEq(keyRaw, "definitions") {
+		return // 引用已被解引用、定义表不约束实例：都不算丢弃约束
+	}
+	st.lossyDrop = true
+	st.reason("dropped-branch-constraint")
+}
+
+// classifyBranch 4c 三桶（解码名版，保留给需要名字的调用点）。
 func (st *flattenState) classifyBranch(keyName string) {
 	if _, ok := metaBranchKeys[keyName]; ok {
 		st.reason("dropped-branch-meta")
@@ -1050,6 +1099,14 @@ func propsOf(obj []byte) []struct {
 	raw  []byte
 } {
 	sp, ok := fieldSpan(obj, "properties")
+	return propsAt(obj, sp, ok)
+}
+
+// propsAt 已知 properties 的值区间时直接取值（省掉为找它再扫一遍整对象）。
+func propsAt(obj []byte, sp span, ok bool) []struct {
+	name string
+	raw  []byte
+} {
 	if !ok || sp.lo >= len(obj) || obj[sp.lo] != '{' {
 		return nil
 	}
@@ -1091,7 +1148,12 @@ func propsOf(obj []byte) []struct {
 // requiredOf 取对象的 required 名字（末个胜）。
 func requiredOf(obj []byte) []string {
 	sp, ok := fieldSpan(obj, "required")
-	if !ok || obj[sp.lo] != '[' {
+	return requiredAt(obj, sp, ok)
+}
+
+// requiredAt 已知 required 的值区间时直接取值。
+func requiredAt(obj []byte, sp span, ok bool) []string {
+	if !ok || sp.lo >= len(obj) || obj[sp.lo] != '[' {
 		return nil
 	}
 	var out []string
@@ -1134,7 +1196,7 @@ func flattenMessSchemaRoot(doc *schemaDoc, v verdict, raw []byte) ([]byte, *flat
 }
 
 func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, budget *int) ([]byte, *flattenState) {
-	st := &flattenState{propIndex: map[string]int{}, forceEmpty: map[string]bool{}, groupNonObj: map[int]bool{}}
+	st := &flattenState{props: make([]propEnt, 0, 8)}
 	if depth > maxFlattenDepth || *budget <= 0 {
 		// 无法在有限工作量内压平：这一层退化为"接受任意对象"（只放宽），并计 lossy。
 		st.lossyUnres = true
@@ -1222,7 +1284,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 				// 析取（anyOf/oneOf）组里出现这类分支 ⇒ 该组不再要求别处的键；
 				// allOf 是合取 ⇒ 不受影响（momus-r2 I-5）。
 				if cb.kind != brAllOf {
-					st.groupNonObj[ci] = true
+					st.markGroupNonObj(ci)
 				}
 				return true
 			}
@@ -1275,9 +1337,20 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 		if !gjson.ParseBytes(c.raw).IsObject() {
 			continue
 		}
+		// properties / required 的区间：根贡献者的判定已经算过（v），直接取键区间，
+		// 不再为找这两个成员把 10 KB 的根对象再扫两遍。
+		var psp, rsp span
+		var hasP, hasR bool
+		if c.isRoot {
+			psp, hasP = rootSpan(v, "properties")
+			rsp, hasR = rootSpan(v, "required")
+		} else {
+			psp, hasP = fieldSpan(c.raw, "properties")
+			rsp, hasR = fieldSpan(c.raw, "required")
+		}
 		// properties（贡献者内部末个胜）
 		declared := map[string]struct{}{}
-		for _, e := range propsOf(c.raw) {
+		for _, e := range propsAt(c.raw, psp, hasP) {
 			st.addProp(e.name, e.raw)
 			declared[e.name] = struct{}{}
 		}
@@ -1290,7 +1363,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 			}
 		}
 		// required：branch₋₁/根/allOf 取并，anyOf/oneOf 按组取交
-		req := requiredOf(c.raw)
+		req := requiredAt(c.raw, rsp, hasR)
 		if c.isRoot || c.kind == brRoot {
 			unionInto(reqUnion, req)
 		} else {
@@ -1299,15 +1372,15 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 			}
 			unionInto(branchReq[c.branch], req)
 		}
-		// 4c 分类（只对分支贡献者；用 scanRoot 的末个胜键集合）
+		// 4c 分类（只对分支贡献者）：直接按原始键字节分类，不再建 key 表
 		if !c.isRoot {
-			for _, k := range scanRoot(c.raw).keys {
-				switch k.name {
-				case "properties", "required":
-				default:
-					st.classifyBranch(k.name)
+			scanObjectPos(c.raw, 0, len(c.raw), func(keyRaw []byte, _, _, _, _ int) bool {
+				if rawKeyEq(keyRaw, "properties") || rawKeyEq(keyRaw, "required") {
+					return true
 				}
-			}
+				st.classifyBranchRaw(keyRaw)
+				return true
+			})
 		}
 	}
 
@@ -1322,7 +1395,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 			continue
 		}
 		ci := bi >> 32
-		if st.groupNonObj[int(ci)] {
+		if st.groupIsNonObj(int(ci)) {
 			continue
 		}
 		g, ok := interByGroup[ci]
@@ -1352,14 +1425,14 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 		if branchKinds[bi] == brAllOf {
 			continue
 		}
-		if st.groupNonObj[int(bi>>32)] {
+		if st.groupIsNonObj(int(bi >> 32)) {
 			for n := range set {
-				st.forceEmpty[n] = true
+				st.markForceEmpty(n)
 			}
 		}
 	}
 	for _, p := range st.props {
-		if st.forceEmpty[p.name] {
+		if st.isForceEmpty(p.name) {
 			continue
 		}
 		for bi, set := range branchProps {
@@ -1369,7 +1442,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 				continue
 			}
 			if _, ok := set[p.name]; !ok {
-				st.forceEmpty[p.name] = true
+				st.markForceEmpty(p.name)
 				break
 			}
 		}
@@ -1434,7 +1507,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 			}
 			out = appendJSONString(out, p.name)
 			out = append(out, ':')
-			if st.forceEmpty[p.name] {
+			if st.isForceEmpty(p.name) {
 				out = append(out, `{}`...)
 				continue
 			}
@@ -1536,21 +1609,31 @@ func dedupeDefs(val []byte) []byte {
 		valRaw  []byte
 	}
 	var all []ent
-	// 快路径：绝大多数 $defs 没有重名 ⇒ 直接原样返回（不建表、不复制）。
-	names := make([]string, 0, 8)
-	hasDup := false
-	scanObject(val, 0, len(val), func(kr []byte, _, _ int) bool {
-		n := decodeRawKey(kr)
-		for _, x := range names {
-			if x == n {
+	// 快路径：绝大多数 $defs 没有重名 ⇒ 直接原样返回（不建表、不解码、不复制）。
+	// 无转义键时逐字节比较与解码后比较等价；一旦见到转义键就退回慢路径。
+	var seen [32]span
+	nseen := 0
+	hasDup, escaped, overflow := false, false, false
+	scanObjectPos(val, 0, len(val), func(kr []byte, kLo, kHi, _, _ int) bool {
+		if hasByteIn(kr, '\\') {
+			escaped = true
+			return false
+		}
+		for i := 0; i < nseen; i++ {
+			if rawBytesEqual(val[seen[i].lo:seen[i].hi], kr) {
 				hasDup = true
 				return false
 			}
 		}
-		names = append(names, n)
+		if nseen == len(seen) {
+			overflow = true
+			return false
+		}
+		seen[nseen] = span{kLo, kHi}
+		nseen++
 		return true
 	})
-	if !hasDup {
+	if !hasDup && !escaped && !overflow {
 		return val
 	}
 	all = all[:0]
@@ -1560,14 +1643,14 @@ func dedupeDefs(val []byte) []byte {
 	}) {
 		return val
 	}
-	seen := map[string]struct{}{}
+	seenNames := map[string]struct{}{}
 	keep := make([]bool, len(all))
 	for i := len(all) - 1; i >= 0; i-- {
 		n := decodeRawKey(all[i].nameRaw)
-		if _, dup := seen[n]; dup {
+		if _, dup := seenNames[n]; dup {
 			continue
 		}
-		seen[n] = struct{}{}
+		seenNames[n] = struct{}{}
 		keep[i] = true
 	}
 	out := []byte{'{'}
@@ -1727,6 +1810,27 @@ func pInFast(src gjson.Result) bool {
 		return true
 	})
 	return ok && sawType
+}
+
+func hasByteIn(b []byte, c byte) bool {
+	for i := 0; i < len(b); i++ {
+		if b[i] == c {
+			return true
+		}
+	}
+	return false
+}
+
+func rawBytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // keyIsRaw 原始键文本（含引号）的解码名是否等于 name。无转义时逐字节，
