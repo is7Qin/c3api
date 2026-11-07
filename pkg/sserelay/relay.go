@@ -12,6 +12,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -113,6 +115,12 @@ type Config struct {
 	// Cancel 实际上游请求 ctx 的 cancel（仅在 Output==nil 自建时生效；调用方
 	// 自建 Output 时应经 OutputOptions.Cancel 注入）。
 	Cancel context.CancelFunc
+	// MaxLineBytes 单行（无换行结尾的累计字节）硬上界；<=0 时取
+	// DefaultMaxLineBytes（64 MiB）。超限以 ErrLineTooLong 结束本流——目的是
+	// 给「畸形/恶意上游发一条永不换行的行」一个上界（否则读缓冲会一直翻倍到
+	// OOM），不是给正常帧留的余量：真实 SSE 帧在几十字节量级，最大的
+	// response.completed（含整段 output）也在数 MB。
+	MaxLineBytes int
 }
 
 type relay struct {
@@ -146,13 +154,32 @@ type readBuf struct {
 	nl    int
 	err   error
 	src   io.Reader
+	max   int // 单行上界（Config.MaxLineBytes 生效值）
 	empty int // 连续 (0, nil) 读次数（防退化 reader 自旋）
 }
 
 const readBufInit = 4096
 
+// DefaultMaxLineBytes 单行默认上界（64 MiB）。见 Config.MaxLineBytes。
+const DefaultMaxLineBytes = 64 << 20
+
+// ErrLineTooLong 单行超过 Config.MaxLineBytes：上游字节流不含换行且累计超过
+// 上界（畸形帧或恶意输入）。Relay 以读错误返回，调用方按上游读失败处理。
+var ErrLineTooLong = errors.New("sserelay: single line too long")
+
 func newReadBuf() readBuf {
 	return readBuf{buf: make([]byte, readBufInit)}
+}
+
+// prepare 装配本流的单行上界，并把池内带来的过大缓冲收回上界之内（池缓冲
+// 可能来自另一个配置：测试用小上界、生产用 64 MiB）。
+func (b *readBuf) prepare(maxBytes int) {
+	b.max = maxBytes
+	// 只在上界比池内缓冲还小时才收缩（测试用小上界）；上界更大时保留容量，
+	// 否则每条流都要从 4 KiB 重新长到工作集大小，白付几次扩容拷贝。
+	if len(b.buf) > maxBytes {
+		b.buf = make([]byte, min(readBufInit, maxBytes))
+	}
 }
 
 // reset 清空状态并保容量（src 由 Relay 装配）。
@@ -184,7 +211,7 @@ func (b *readBuf) next() ([]byte, bool) {
 // fill 把残留字节搬到区首，再从 src 读一次（可能阻塞等上游）。
 func (b *readBuf) fill() {
 	if len(b.buf) == 0 { // 池内被丢弃过超大缓冲
-		b.buf = make([]byte, readBufInit)
+		b.buf = make([]byte, min(readBufInit, b.max))
 	}
 	if b.r > 0 {
 		b.w = copy(b.buf, b.buf[b.r:b.w])
@@ -195,9 +222,20 @@ func (b *readBuf) fill() {
 		b.r = 0
 	}
 	if b.w == len(b.buf) {
-		// 单行超过缓冲容量：扩容拼出完整行（不再需要 ErrBufferFull 续片语义，
-		// 超长 data 行天然全量可见——旧实现的续片路径曾把 usage 截断在首片）。
-		nb := make([]byte, len(b.buf)*2)
+		// 整块缓冲都没有换行：需要扩容拼出完整行（不再有 ErrBufferFull 续片
+		// 语义，超长 data 行天然全量可见）。扩容封顶在 max——越过即判上界，
+		// 不允许畸形长行把内存一路抬上去。
+		if len(b.buf) >= b.max {
+			// 带上生效上界：运维看到这条日志就知道是「上游发了不换行的长行」，
+			// 以及当前边界是多少，不必回头读代码。
+			b.err = fmt.Errorf("%w (%d bytes)", ErrLineTooLong, b.max)
+			return
+		}
+		next := len(b.buf) * 2
+		if next > b.max {
+			next = b.max
+		}
+		nb := make([]byte, next)
 		copy(nb, b.buf[:b.w])
 		b.buf = nb
 	}
@@ -256,7 +294,11 @@ func Relay(ctx context.Context, dst http.ResponseWriter, src io.Reader, cfg Conf
 	if cfg.FlushBytes <= 0 {
 		cfg.FlushBytes = 4096
 	}
+	if cfg.MaxLineBytes <= 0 {
+		cfg.MaxLineBytes = DefaultMaxLineBytes
+	}
 	rb := relayBufioPool.Get().(*relayBufio)
+	rb.rb.prepare(cfg.MaxLineBytes)
 	rb.rb.reset()
 	rb.rb.src = &ctxReader{ctx: ctx, r: src}
 	rb.frame.Reset()

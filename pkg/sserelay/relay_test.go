@@ -698,3 +698,29 @@ func TestRelayFlushesCompletedFramesBeforeBlockingOnPartialTail(t *testing.T) {
 	require.NoError(t, <-errCh)
 	require.Equal(t, preamble+frameA+partial+"\n\n", spy.body())
 }
+
+// TestRelayLineTooLongIsRejected 钉住单行上界：超过 Config.MaxLineBytes 的
+// 无换行累计字节按读错误返回（ErrLineTooLong），不得把读缓冲一路翻倍到 OOM。
+func TestRelayLineTooLongIsRejected(t *testing.T) {
+	src := "data: " + strings.Repeat("x", 4096) + "\n\n"
+	rec := httptest.NewRecorder()
+	err := Relay(context.Background(), rec, strings.NewReader(src), Config{MaxLineBytes: 1024})
+	require.ErrorIs(t, err, ErrLineTooLong)
+	require.Empty(t, rec.Body.String(), "上界触发在写出之前——不得有半帧下行")
+}
+
+// TestRelayLineUnderLimitPasses 同上但恰好不越界：上界是「单行累计字节」的
+// 硬限制，正常大帧（数 KB 的 response.completed）不受影响。
+func TestRelayLineUnderLimitPasses(t *testing.T) {
+	long := strings.Repeat("y", 6000)
+	src := "data: " + long + "\n\n"
+	rec := httptest.NewRecorder()
+	var got []Event
+	require.NoError(t, Relay(context.Background(), rec, strings.NewReader(src), Config{
+		MaxLineBytes: 8192,
+		OnEvent:      func(e Event) { got = append(got, e) },
+	}))
+	require.Len(t, got, 1)
+	require.Equal(t, long, string(got[0].Data))
+	require.Equal(t, src, rec.Body.String())
+}
