@@ -312,7 +312,7 @@ type Key struct {
 	UpdatedAt *time.Time `json:"UpdatedAt,omitempty"`
 	UserID    *int64     `json:"UserID,omitempty"`
 
-	// Key key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决）
+	// Key key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡）
 	Key *string `json:"key,omitempty"`
 }
 

@@ -806,7 +806,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `error_type` | string | — | 按错误类型过滤（值域收敛 `none` / `abort`——usage_logs 仅放行路径行） |
 | `from` / `to` | RFC3339 | 必填 | 时间范围过滤（缺失 → 400；防无范围全分区扫描） |
 
-> **分表设计**（用户裁决）：`usage_logs` 只承载**放行路径明细**——成功（`error_type=none`，含免费分组/0 token 成功行，cost 不限）+ abort 半异常计费行；4xx/5xx/拒绝等失败行**不入 usage_logs**（错误审计面见 `/err_logs`，下节）。
+> **分表设计**：`usage_logs` 只承载**放行路径明细**——成功（`error_type=none`，含免费分组/0 token 成功行，cost 不限）+ abort 半异常计费行；4xx/5xx/拒绝等失败行**不入 usage_logs**（错误审计面见 `/err_logs`，下节）。
 
 响应 `200`：
 
@@ -1126,7 +1126,7 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `400` | `when`/`then` 含未知字段、`kind` 非法、计数为负、`window_seconds` < 1、比例越界或缺 `count_total_ge`、`then` 无动作、`throttle` 组合非法（scope/mode/duration/use_reset 真值表不满足、与 `fail_account` 并现）、`custom_message` 空串 |
 | `409` | `priority` 或 `name` 唯一冲突 |
 
-> 配置变更：`scheduler.cooldown_429` / `scheduler.backoff_base` / `scheduler.backoff_max` **已移除**（2026-08-13 用户裁决：不向后兼容）——配置含这些键将启动失败（未知键报错）。429 节流、错误摘除与恢复节奏统一由规则引擎的种子规则与自定义 typed 动作（`throttle`/`fail_account`）接管。
+> 配置变更：`scheduler.cooldown_429` / `scheduler.backoff_base` / `scheduler.backoff_max` **已移除**（不向后兼容）——配置含这些键将启动失败（未知键报错）。429 节流、错误摘除与恢复节奏统一由规则引擎的种子规则与自定义 typed 动作（`throttle`/`fail_account`）接管。
 
 ---
 

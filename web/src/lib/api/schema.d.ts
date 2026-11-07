@@ -2793,7 +2793,7 @@ export interface components {
             /** @description 归属分组名（只读投影；组非存活/未加载 → 空串，前端回退 `#<GroupID>`） */
             GroupName?: string;
             Name?: string;
-            /** @description key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决） */
+            /** @description key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡） */
             key?: string;
             Status?: components["schemas"]["KeyStatus"];
             MaxConcurrency?: number;

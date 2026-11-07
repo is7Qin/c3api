@@ -210,7 +210,7 @@ pkg 职责边界：
 
 **四表分区**（`internal/repository/partition.go`，单一实现四表共用）：
 - 分区键：usage_logs/err_logs = `created_at`；usage_stats/usage_entity_stats = `bucket_time`（小时桶 24 桶/日分区）。主键 `(id, 分区键)`（分区表硬约束），id 走专用序列 `{table}_id_seq`，DROP TABLE 级联回收（`internal/repository/partition.go:83-91` `partitionCol`）。
-- 保留期：usage_logs **30 天**、err_logs **7 天**（错误审计短保留）、usage_stats / usage_entity_stats **180 天**（聚合长保留，两表共用 `StatsRetentionDays`）——**全部 DROP 分区 O(1)**（PG DELETE 不释放空间，用户裁决），retention worker 每小时巡检按名 DROP + 预建当日/明日分区。
+- 保留期：usage_logs **30 天**、err_logs **7 天**（错误审计短保留）、usage_stats / usage_entity_stats **180 天**（聚合长保留，两表共用 `StatsRetentionDays`）——**全部 DROP 分区 O(1)**（PG DELETE 不释放空间），retention worker 每小时巡检按名 DROP + 预建当日/明日分区。
 - ent migrate 跳过分区表（`migrateHookExcludesPartitioned` `internal/repository/partition.go:660-676`——atlas 对分区表 diff 规划期必失败，真实 PG 实测结论）；表 DDL/索引由 bootstrap 独占管理（`ensureTablePartitioned` 族 `partition.go:469-503,566-571`：未分区 → DROP 重建表/序列/OWNED BY/索引，已分区 → 仅补当日/明日分区；幂等 + 42P07/42710/23505/42P01 容忍多实例并发）；**无补列路径**——表恒从零创建，schema 变更即全新建库（多实例并发 bootstrap 竞态由 `isBootstrapRaceError` `partition.go:404-416` 容忍）。
 - 关键索引（`internal/repository/partition.go:158-173`）：usage_logs `(created_at)` + `(group_id/account_id/user_id/key_id, created_at)` + **`usagelog_request_id_created_at` 唯一索引**（幂等键）+ **`usagelog_unbilled_id` 部分索引**（`WHERE NOT billed`——结算游标取批）；err_logs `(created_at)` + `(group_id/user_id, created_at)`；usage_stats 唯一索引 `(bucket_time, group_id, model)`（Upsert 冲突目标）；usage_entity_stats 唯一索引 `(bucket_time, entity_type, entity_id, model)` + 覆盖索引 `(entity_type, entity_id, bucket_time)`。
 - **stats_agg_watermark 辅助表**（`partition.go:481-491` DDL + `EnsureUsageStatsPartitioned` 内建）：单行 watermark（`CHECK (id = 1)`）——stats-agg worker 每周期读聚合位置、推进与 DELETE+INSERT 同事务。
@@ -351,7 +351,7 @@ flowchart LR
 
 ## 13. 架构决策记录（ADR）
 
-每条 = 用户裁决/评审定稿 + **为什么** + 来源锚点（代码注释位置或 plan 文件名）。
+每条 = 定稿结论 + **为什么** + 来源锚点（代码注释位置或 plan 文件名）。
 
 1. **三词原则（性能 / 边界 / 优雅）**——所有方案取舍的评判标准。为什么：压测驱动演化（53k/s 目标）中每个"快"都要有边界（哪些路径不碰）与优雅（停机/失败不丢语义）。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:5`。
 2. **不计费不入 usage_logs**——usage_logs 成员资格按**放行路径语义（error_type ∈ {none, abort}）**判定，与 cost 无关。为什么：cost>0 判定会漏掉免费分组（倍率 0 成功行）与 0 token 成功行（空响应）；失败行（4xx/5xx/network）不入 usage_logs（拒绝风暴教训：每请求一条明细即无界积压与写放大源头），错误审计归 err_logs。来源：`internal/proxy/forward.go:377-391`（routeLog 注释）+ `docs/superpowers/plans/2026-08-11-errlog-task.md:12`。
@@ -363,7 +363,7 @@ flowchart LR
 8. **usage_logs 瘦身**——去 error_message + status_code（保留 error_type，值域收敛 none/abort）。为什么：错误排障列由 err_logs 承载（status_code integer + error_message），明细表瘦身降写放大。**无"存量库"概念**——schema 变更即全新建库，bootstrap 不做增量补列。来源：`internal/ent/schema/usagelog.go:33-39` + `internal/ent/schema/errlog.go:12,35`。
 9. **锁顺序一致化防死锁**——批量 upsert 批内按 model 排序 + 40P01 重试。为什么：多实例并发同批 model 取锁顺序交错 → deadlock detected（压测启动期偶发）；排序消除主因，重试兜底残余。来源：`internal/repository/price_entry_repo.go:38`（sort.SliceStable）+ `internal/repository/litellm_upsert.go:94,103`（isDeadlock / litellmExecBatchWithRetry）。
 10. **ent migrate 跳过分区表**——分区 DDL 由 bootstrap 独占管理。为什么：atlas 对分区表 diff 规划期必失败（真实 PG 实测，ent v0.14.6 + atlas v0.36.2 + PG18）。来源：`internal/repository/partition.go:660-676`。
-11. **2026-08-14/15 批次裁决**——① billing 默认开启（用户裁决）；② 使用量统计走离线聚合（stats-agg worker + stats_agg_watermark 表）；③ 价格内部统一按 per-million 毫分口径；④ 额度回写周期键为 `quota_flush_interval`；⑤ `/stats` + `/user/stats` 计费字段以 USD 下发、TTFT 指标重写；⑥ 账号级 `base_url`。
+11. **2026-08-14/15 批次裁决**——① billing 默认开启；② 使用量统计走离线聚合（stats-agg worker + stats_agg_watermark 表）；③ 价格内部统一按 per-million 毫分口径；④ 额度回写周期键为 `quota_flush_interval`；⑤ `/stats` + `/user/stats` 计费字段以 USD 下发、TTFT 指标重写；⑥ 账号级 `base_url`。
 12. **2026-08-23 ~ 09-23 批次裁决**——① **Redis 是必需依赖**：实例发现心跳 + 短时验证码，**非缓存层**；实例数 N 由心跳活体数提供；② `usage_entity_stats` 分区表承载实体维度 trend/top；③ 价格面为 `price_entries` + `price_variants` 双表；④ 计费结算为 **v2 三车道拓扑**（Balance/Temp 双车道语句化结算，扣减与标记一体）；⑤ 统计查询按形状分四个端点：`/stats/trend|top|entity-trend|ttft`；⑥ `upstream_cost_multiplier_bp` 用 `*int` 承载，以区分**显式 ×0** 与未提供；⑦ codex 批量导入支持 body 级账号配置（`enabled`/`cache_domain`/`upstream_cost_multiplier`，仅新建行生效）；⑧ key 额度设为 `0` 同步清零 `quota_used`（`AddQuotaUsed` 带 `WHERE "quota" > 0` 守卫）。
 13. **2026-10-09/10 批次裁决 —— SSE 统一输出 + 续接异步绑定 + codex raw relay**：① 客户端 SSE 静默保活——无业务输出时网关按 `proxy.stream_keepalive_interval`（默认 10s）写心跳注释，字节恒 `: keepalive\n`（单换行，规避上层 SDK 对 `\n\n` 的解码错误）；② REST Responses 续接取消 **ACK-before-visible 闸门**：首个有效响应 id 在写出前 seam 快照、经常驻 worker 有界队列**异步绑定**（业务帧即刻可见；绑定失败仅观测，不回写当前响应）；WS 保留同步 ACK 门、非流式 Responses 保留同步绑定；③ 采样与出口统一——所有流式 caller 的 TTFT/usage/图像计数/轮次钩子收敛到**唯一写出前 seam**（`sserelay.Config.OnEvent`，取代 post-write `Observer`；drop 帧也采），出口判定收敛为单一 `classifyStreamExit`（取消/写失败不补写、未提交交 pipeline、已提交补客户端协议 error 帧）；④ codex responses 改由 SDK 返回 **raw body**（`StreamBody`：仅 200 接受、非 200 读尽关闭返 `*HTTPError`、禁跟随重定向、turn-state 取本次响应头），复用 native responses 流式（直连 verbatim / converted 经 `StreamMapper` 适配），删净流式手写重帧、保留非流式 renderer 与 codex 身份/轮次 hooks；⑤ `pkg/redisx` 启用 `ContextTimeoutEnabled`（Redis 超时硬生效）。来源：`pkg/sserelay/output.go`、`pkg/sserelay/relay.go`、`internal/proxy/stream_exit.go`、`internal/proxy/continuation_bind.go`、`internal/proxy/codex_responses_http.go`、`internal/sdkbridge/codex.go`、`pkg/redisx`。
 

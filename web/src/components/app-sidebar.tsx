@@ -103,7 +103,7 @@ export default function AppSidebar({ navs, userEmail }: { navs: readonly NavGrou
             </div>
             <DropdownMenuSeparator />
             {/* 账户条目（个人中心 / 管理 API key / 登出）由共享 AccountMenuItems 渲染
-                （用户裁决 2026-08-15——入口不放侧边栏导航；登出独立成组） */}
+                （入口不放侧边栏导航；登出独立成组） */}
             <AccountMenuItems />
           </DropdownMenuContent>
         </DropdownMenu>

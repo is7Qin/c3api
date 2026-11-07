@@ -28,7 +28,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 // 侧边栏/顶栏不重挂（消除闪烁）。导航由 me().Role 决定：
 // platform_admin 同时看到管理组（/app）与用户组（/user），普通用户仅用户组。
 
-// 用户中心菜单组（个人中心入口在底部用户卡内——用户裁决 2026-08-15，不放导航）
+// 用户中心菜单组（个人中心入口在底部用户卡内，不放导航）
 const userNav: readonly NavItem[] = [
   { to: '/user', key: 'user.nav.overview', icon: LayoutDashboard, end: true },
   { to: '/user/keys', key: 'user.nav.keys', icon: KeyRound, end: false },
@@ -38,7 +38,7 @@ const userNav: readonly NavItem[] = [
   { to: '/user/redemptions', key: 'user.nav.redemptions', icon: Ticket, end: false },
 ]
 
-// platform_admin 专属的管理端菜单组（排序 = 功能边界，2026-08-15 用户裁决）：
+// platform_admin 专属的管理端菜单组（排序 = 功能边界）：
 // 概览独立首位 → 代理配置域（模板/账户/规则——上游资源与转发策略）→ 客户域
 // （用户/分组——下游消费方，与账户不直接相邻）→ 观测域（日志/统计）→ 商业域
 // （兑换码/计费）→ 系统域（设置/运维）。平铺不拆子分组标题。

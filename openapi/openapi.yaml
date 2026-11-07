@@ -1968,7 +1968,7 @@ paths:
               schema: { $ref: '#/components/schemas/RoutingPlanResponse' }
         default:
           $ref: '#/components/responses/Error'
-  # 管理端总览（spec 2026-08-14，用户裁决）：聚合面与实时面拆两个端点——
+  # 管理端总览（spec 2026-08-14）：聚合面与实时面拆两个端点——
   # overview（一站式聚合，TTL 30s 缓存）+ users-top（实时并发排行，TTL 2s）。
   # 全冷面（聚合查询 + 门禁快照遍历）；既有端点（GetStats/GetUsageLogs/账号
   # list）保留不动——overview 是聚合便捷面。
@@ -2018,7 +2018,7 @@ paths:
               schema: { $ref: '#/components/schemas/UsersTopResponse' }
         default:
           $ref: '#/components/responses/Error'
-  # 运维观测面（/admin/ops/workers，用户裁决并入管理面）：路由由 oapi-codegen
+  # 运维观测面（/admin/ops/workers，并入管理面）：路由由 oapi-codegen
   # chi-server 生成（BaseURL /api/admin 拼接），鉴权走 /api/admin 组 adminAuth；类型在
   # 契约（handler/api.gen.go + 前端 schema.d.ts 同源）。
   /ops/workers:
@@ -3562,7 +3562,7 @@ components:
         GroupID: { type: integer, format: int64 }
         GroupName: { type: string, description: 归属分组名（只读投影；组非存活/未加载 → 空串，前端回退 `#<GroupID>`） }
         Name: { type: string }
-        key: { type: string, description: key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡，用户裁决） }
+        key: { type: string, description: key 明文（长期可查看/复制；DB 泄露即暴露——自托管权衡） }
         Status: { $ref: '#/components/schemas/KeyStatus' }
         MaxConcurrency: { type: integer }
         Quota: { type: integer, format: int64, description: "累计最终计费金额上限（毫分，1 USD = 100,000 毫分）；0 = 不限" }
@@ -4520,7 +4520,7 @@ components:
         Model: { type: string }
         MappedModel: { type: string, nullable: true }
         Format: { $ref: '#/components/schemas/RequestFormat' }
-        # 用户裁决（err_logs 分表）：status_code/error_message 已移入 err_logs
+        # err_logs 分表：status_code/error_message 已移入 err_logs
         #（usage_logs 瘦身 + 纯计费化），本响应不再含该两字段。
         ErrorType: { $ref: '#/components/schemas/ErrorType' }
         LatencyMS: { type: integer, format: int64 }
@@ -4555,7 +4555,7 @@ components:
         Model: { type: string }
         MappedModel: { type: string, nullable: true }
         Format: { $ref: '#/components/schemas/RequestFormat' }
-        # 用户裁决（err_logs 分表）：status_code/error_message 已移入 err_logs
+        # err_logs 分表：status_code/error_message 已移入 err_logs
         #（usage_logs 瘦身 + 纯计费化），本响应不再含该两字段。
         ErrorType: { $ref: '#/components/schemas/ErrorType' }
         LatencyMS: { type: integer, format: int64 }
