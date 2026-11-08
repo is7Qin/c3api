@@ -5,6 +5,7 @@
 package domain
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,15 +30,17 @@ func TestCodexResponsesTransportTruthTable(t *testing.T) {
 		name    string
 		why     string
 	}{
-		{"", true, true, "", "http", "零值 = 未配置 = 默认 http"},
-		{"http", true, true, "", "http", "显式 http 与默认同键、同名"},
-		{"ws", true, true, "ws", "ws", "唯一真正换传输的值"},
-		{"WS", false, false, "", "http", "不做大小写归一（回落会让两臂都落 http）"},
-		{"websocket", false, false, "", "http", "不做别名归一"},
-		{" ", false, false, "", "http", "空白不是未配置"},
+		{in: "", valid: true, allowed: true, key: "", name: "http", why: "零值 = 未配置 = 默认 http"},
+		{in: "http", valid: true, allowed: true, key: "", name: "http", why: "显式 http 与默认同键、同名"},
+		{in: "ws", valid: true, allowed: true, key: "ws", name: "ws", why: "唯一真正换传输的值"},
+		{in: "WS", valid: false, allowed: false, key: "", name: "http", why: "不做大小写归一（回落会让两臂都落 http）"},
+		{in: "websocket", valid: false, allowed: false, key: "", name: "http", why: "不做别名归一"},
+		{in: " ", valid: false, allowed: false, key: "", name: "http", why: "空白不是未配置"},
 	}
 	for _, tc := range cases {
-		t.Run(string(tc.in), func(t *testing.T) {
+		// 子测试名用 %q：空串/空格子测试名在 `go test -run` 里不可读也不可区分
+		// （"" 与 " " 都会退化成看不见的名字）。
+		t.Run(fmt.Sprintf("%q", tc.in), func(t *testing.T) {
 			require.Equal(t, tc.valid, tc.in.Valid(), "Valid(%q): %s", string(tc.in), tc.why)
 			require.Equal(t, tc.allowed, tc.in.AllowedFor(credential.TypeCodexOAuth), "AllowedFor(codex-oauth, %q)", string(tc.in))
 			require.Equal(t, tc.allowed, tc.in.AllowedFor(credential.TypeCodexPAT), "AllowedFor(codex-pat, %q)", string(tc.in))

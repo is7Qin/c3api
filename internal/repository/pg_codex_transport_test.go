@@ -98,6 +98,12 @@ func TestPGCodexTransportSnapshotMerge(t *testing.T) {
 		acc := seedPGAccount(t, repos, tpl.ID, "a-null")
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 
+		// 本行要的是「列缺失」这条路径的机制：**不传** StripImageTools ⇒ 仓库里
+		// 的 SetNillableStripImageTools(nil) 是 no-op ⇒ strip_image_tools 列根本
+		// 不进入 INSERT 列表 ⇒ 落 DB 默认值 NULL。**不要**为了"可读性"补成
+		// new(false)：那是显式 false，走的是另一条路径（列在 INSERT 里、值非
+		// NULL），本用例就退化成下面那条 strip=true 的近亲，独立 if 的门控再也
+		// 测不到。
 		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexResponsesTransport: domain.CodexResponsesTransportWS,

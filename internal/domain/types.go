@@ -540,8 +540,9 @@ type TemplateExt struct {
 	// 落库）；空 map 与 nil 等价。键集合与默认值见 spec §4.3。
 	UpstreamPaths map[string]string
 	// CodexResponsesTransport 代码出站传输开关（仅 codex-oauth/codex-pat 有意义；
-	// 非 codex 只接受 ""）。非可空列："" = 未配置 = 默认 http——库里因此无法
-	// 区分"从未配置"与"显式 http"（spec §11.1 已登记）。
+	// 非 codex 只接受 ""）。非可空列："" = 未配置 = 默认 http。库里**能**区分
+	// `""` 与 `"http"`（两个不同的落库值）；不能区分的是「从未配置」与「显式写入
+	// `""`」——二者同形，故无法证明某模板曾设过 ws（spec §11.1 已登记）。
 	CodexResponsesTransport CodexResponsesTransport
 }
 
