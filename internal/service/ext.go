@@ -141,10 +141,12 @@ func (s *Service) GetTemplateExt(ctx context.Context, templateID int64) (*domain
 //  3. 类型（!new.AllowedFor(ct) && new != old ⇒ 400；**幂等例外** new == old
 //     放行——模板类型改掉后陈旧 ext 行原样带回时不该报错）；
 //  4. 降级门（old == ws && new != ws ⇒ 409，除非 confirm 恰为
-//     transportDowngradeConfirm）。**不引入 expect_old**：需要确认的唯一情形
-//     就是 old == ws，期望值恒为常量，绑不住任何东西；
-//  5. 放行降级时 WARN（template_id/old/new）——没有指标系统，这是"实验臂何时
-//     被降级"的唯一事后证据。
+//     transportDowngradeConfirm）。消息是**英文**短句（会原样进响应体，与既有
+//     ErrConflict 同风格）。**不引入 expect_old**：需要确认的唯一情形就是
+//     old == ws，期望值恒为常量，绑不住任何东西；
+//  5. 放行降级且**落库成功之后**写 WARN（template_id/old/new）——没有指标系统，
+//     这是"实验臂何时被降级"的唯一事后证据；写在落库之前会在写失败时留下一条
+//     假的"已降级"证据，审计必须反映事实。
 //
 // confirm 只由 handler 从 `?confirm=` 解析后原样透传，判定只在本方法一处。
 //
@@ -185,19 +187,12 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 	// 第 4 步：降级门。old == ws 时把 ws 换成任何别的值都要显式确认：一次只改
 	// strip_image_tools 的外部脚本会把 ws 静默清回默认，而 web 侧的回显门管
 	// 不到脚本/curl/DB 直改——只有服务端能管住全部写面。
-	if oldTransport == domain.CodexResponsesTransportWS && newTransport != domain.CodexResponsesTransportWS {
-		if confirm != transportDowngradeConfirm {
-			return nil, fmt.Errorf("%w: codex_responses_transport %q → %q 会让该模板的原生 responses 车道回落 http；确认降级请带 ?confirm=%s 重发",
-				ErrConflict, string(oldTransport), string(newTransport), transportDowngradeConfirm)
-		}
-		// 第 5 步：放行降级时的唯一事后证据（审计面 = WARN 日志，spec §4.3）。
-		// s.log 可能为 nil（测试/降级装配），守卫与其余写面一致。
-		if s.log != nil {
-			s.log.Warn("codex responses transport downgraded",
-				logx.Int64("template_id", e.TemplateID),
-				logx.String("old", string(oldTransport)),
-				logx.String("new", string(newTransport)))
-		}
+	// down 是第 5 步 WARN 的触发条件（不是"old == ws"：ws → ws 不是降级）。
+	down := oldTransport == domain.CodexResponsesTransportWS && newTransport != domain.CodexResponsesTransportWS
+	if down && confirm != transportDowngradeConfirm {
+		// 消息是**英文**短句（与既有 ErrConflict 同风格）：它会原样进 API 响应体。
+		return nil, fmt.Errorf("%w: codex_responses_transport %s -> %s is a downgrade to http; resend with ?confirm=%s to confirm",
+			ErrConflict, string(oldTransport), string(newTransport), transportDowngradeConfirm)
 	}
 	if len(e.UpstreamPaths) > 0 {
 		if e.CredentialType != credential.TypeCustom {
@@ -217,6 +212,16 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 	saved, err := s.store.UpsertTemplateExt(ctx, e)
 	if err != nil {
 		return nil, mapRepoErr(err)
+	}
+	// 第 5 步：放行的降级，**落库成功之后**才写 WARN——落在写之前会在写失败时
+	// 留下一条假的"已降级"证据，而审计必须反映事实（spec §4.3 第 5 步）。
+	// 字段取落库返回值：真实 repo 的 RETURNING 路径会以库为准，回显入参可能与
+	// 实际落库值不一致。s.log 可能为 nil（测试/降级装配），守卫与其余写面一致。
+	if down && s.log != nil {
+		s.log.Warn("codex responses transport downgraded",
+			logx.Int64("template_id", saved.TemplateID),
+			logx.String("old", string(oldTransport)),
+			logx.String("new", string(saved.CodexResponsesTransport)))
 	}
 	s.inv.Templates()
 	s.publish(ctx, notify.Change{Templates: true})

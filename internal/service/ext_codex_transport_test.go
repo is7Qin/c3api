@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -237,6 +238,9 @@ func TestUpsertTemplateExtTransportDowngradeGate(t *testing.T) {
 		require.ErrorIs(t, err, ErrConflict, "ws → %q 未确认必须 409", string(newV))
 		require.Contains(t, err.Error(), "codex_responses_transport", "409 消息要点名被降级的字段")
 		require.Contains(t, err.Error(), "?confirm=transport-downgrade", "409 消息必须带重试提示")
+		require.Contains(t, err.Error(), "is a downgrade to http", "409 消息要用英文短句（会原样进响应体）")
+		require.Contains(t, err.Error(), "resend with", "409 消息要用英文短句（会原样进响应体）")
+		require.NotContains(t, err.Error(), "降级", "409 消息不得含中文（既有 ErrConflict 全是英文短句）")
 		require.NotContains(t, err.Error(), "expect_old", "不引入 expect_old")
 
 		got, ok := storedTransport(t, svc, tpl.ID)
@@ -365,4 +369,57 @@ func TestUpsertTemplateExtTransportDowngradeWarns(t *testing.T) {
 	require.Contains(t, out, fmt.Sprintf(`"template_id":%d`, tpl.ID), "WARN 必须带 template_id")
 	require.Contains(t, out, `"old":"ws"`, "WARN 必须带降级前值")
 	require.Contains(t, out, `"new":"http"`, "WARN 必须带降级后值")
+}
+
+// failingExtWriteStore 包一层 fakeStore，只让 ext 写入失败（模拟真实 repo 的写库
+// 错误），其余方法原样透传——用于钉住「写失败不得留下已降级的审计证据」。
+type failingExtWriteStore struct {
+	*fakeStore
+	err error
+}
+
+func (s *failingExtWriteStore) UpsertTemplateExt(context.Context, *domain.TemplateExt) (*domain.TemplateExt, error) {
+	return nil, s.err
+}
+
+// TestUpsertTemplateExtTransportNoWarnWhenWriteFails WARN 落在落库成功之后：
+// 写库失败时一条都不能写——否则审计里会出现"已降级"的假证据。
+func TestUpsertTemplateExtTransportNoWarnWhenWriteFails(t *testing.T) {
+	// 同 TestUpsertTemplateExtTransportDowngradeWarns：日志目录用 os.MkdirTemp，
+	// 不用 t.TempDir()（zap 持有文件句柄，Windows 上自动清理会假红）。
+	dir, err := os.MkdirTemp("", "c3api-transport-nowarn-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	logPath := filepath.Join(dir, "warn.log")
+	log, err := logx.New("warn", logPath)
+	require.NoError(t, err)
+
+	writeErr := errors.New("boom: ext write failed")
+	st := &failingExtWriteStore{fakeStore: newFakeStore(), err: writeErr}
+	svc := &Service{store: st, inv: &invRecorder{}, log: log}
+	ctx := context.Background()
+	tpl := seedExtTemplate(t, svc, "t-warn-fail", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
+
+	// 旧值 ws 直接写进底层 store（绕过会失败的那个写面），让本次请求真的走降级路径。
+	_, err = st.fakeStore.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexResponsesTransport: domain.CodexResponsesTransportWS,
+	})
+	require.NoError(t, err)
+
+	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexResponsesTransport: domain.CodexResponsesTransportHTTP,
+	}, "transport-downgrade")
+	require.ErrorIs(t, err, writeErr, "写库失败必须上抛（降级已确认，但没落库）")
+
+	require.NoError(t, log.Sync())
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "codex responses transport downgraded",
+		"写库失败不得写 WARN——审计必须反映事实")
+	// 落库态也没变（写失败 = 什么都没发生）。
+	got, ok := storedTransport(t, svc, tpl.ID)
+	require.True(t, ok)
+	require.Equal(t, domain.CodexResponsesTransportWS, got)
 }
