@@ -166,13 +166,37 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 				if cerr != nil {
 					sel2.Release()
 					sel2GuardActive = false
+					// 未接线方向（能力表未 GA）与"请求体非法"分开报：前者是
+					// 配置/部署错，后者是客户端错，混在一起会让排障方向跑偏。
+					if errors.Is(cerr, protoconv.ErrUnsupportedDirection) {
+						writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "protocol conversion direction is not supported"}})
+						return
+					}
+					// 有状态字段（previous_response_id 等）在 chat 目标下不可承载：
+					// 静默丢弃会不可逆地丢多轮历史，故 400 + invalid_request_error
+					// （与"请求体非法"区分：这是协议能力边界，不是格式错误）。
+					if errors.Is(cerr, protoconv.ErrStatefulFields) {
+						writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{
+							"type": "invalid_request_error", "message": cerr.Error(),
+						}})
+						return
+					}
 					writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "invalid request body: protocol conversion failed: " + cerr.Error()}})
+					return
+				}
+				// 方向到 caller 的接线必须完备：缺键即部署缺陷，显式拒绝比
+				// nil 接口调用 panic 好（门禁 TestConvCallersComplete 钉住）。
+				convCaller, ok := p.convCallers[conv]
+				if !ok {
+					sel2.Release()
+					sel2GuardActive = false
+					writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": "protocol conversion caller is not wired"}})
 					return
 				}
 				sel2GuardActive = false
 				sel, plan, attempt = sel2, plan2, attempt2
 				err = nil
-				route = forwardRoute{format: tgt, caller: p.convCallers[conv], body: cb}
+				route = forwardRoute{format: tgt, caller: convCaller, body: cb}
 			} else {
 				// Preserve target error (distinguish ErrNoAvailable vs AttemptsExhausted)
 				err = err2

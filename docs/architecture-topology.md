@@ -93,7 +93,7 @@ flowchart LR
 | `internal/notify` | 多实例 NOTIFY 发布/监听（`Change` 载荷 + Dispatcher 接口） | main 装配（service/scheduler 发布） |
 | `internal/invalidate` | 管理面变更去抖定向失效（Debouncer） | main 装配；service 作 Invalidator |
 | `internal/pricing` | litellm 价格表拉取 + cron 同步 worker（落 `price_entries` + `price_variants` 双表；换算系 ×1e5 与 ×1e11 **禁混用**） | service/repository |
-| `internal/protoconv` | 协议转换（四方向，纯标准库） | proxy（convertedCaller） |
+| `internal/protoconv` | 协议转换（六方向，纯标准库） | proxy（convertedCaller） |
 | `internal/worker` | worker.Worker 契约 + Manager（顺序启动/反向排空/panic 栈日志/Go 托管） | cmd/server 装配 |
 | `internal/snapshot` | 快照注册表（已合并）：Registry/ReloadAll/Status + scope 精确分发 | cmd/server 装配（dispatcher 消费） |
 | `internal/sdkbridge` | codex-sdk 适配层（生图/Responses/StreamBody/WS/Search/Dial + 凭据派生 clientFor + 失效回调 + OAuth 轮转回写，`internal/sdkbridge/codex.go:27`） | proxy |
@@ -167,12 +167,12 @@ pkg 职责边界：
 - `pkg/sserelay`：字节级 SSE relay——`Relay` 读循环（增量读帧/`Mapper` 挂载/写出前 `OnEvent` 采样 seam）+ 统一下行 owner `Output`（`pkg/sserelay/output.go`：自有写缓冲 + 自适应批量 Flush + 静默保活 `: keepalive\n` + 提交态/写失败/自取消态 + 终态错误帧 + 可返错 Flush）+ EOF 末帧 flush + deadline watcher（取消/超时联动写侧 deadline）+ `Config.Terminal`（正常 EOF 在 watcher 存活期内补写协议终止帧）+ normalize 错误分类 + relayBufio 池。
 - 凭据抽象 `internal/credential`：Provider 只返回凭据值，不感知请求格式（`internal/credential/credential.go:9-11` 正交原则）；未知类型显式报错不静默 fallback（`internal/proxy/forward.go:748` credentialFor）；**codex 复合凭据不进注册表**——走 `sel.Ext` → AccountCredential 直供适配层（`caller.go:344-358` 注释，单字符串表达不了）。
 
-加新格式 = 1 个 caller 文件 + `internal/proxy/forward.go:76-80,151-152` 注册表一行（callers + convCallers 四方向 + images/codexImages 双调用器）+ router.go 一个端点（现 8 端点，`router.go:19-57`）；images 同格式双端点 + codex 双调用器为既有格局之外的特例。
+加新格式 = 1 个 caller 文件 + `internal/proxy/forward.go:76-80,151-152` 注册表一行（callers + convCallers 六方向 + images/codexImages 双调用器）+ router.go 一个端点（现 8 端点，`router.go:19-57`）；images 同格式双端点 + codex 双调用器为既有格局之外的特例。
 
 ## 5. 协议转换层（internal/protoconv）
 
 - 边界（`internal/protoconv/protoconv.go:5-13` 包注释）：**纯标准库**（encoding/json），与 OpenAI/Anthropic SDK 零耦合；按 `groups.protocol_convert` 快照值分派（off 不经过本包——热路径分支在 proxy 判定）；WS 帧流转换不做（resp-ws 1:1 透传）。
-- 四方向（`internal/protoconv/protoconv.go:29`）：`ConvertRequest`（chat→resp / mess→resp / resp→mess / chat→mess）+ `ConvertResponse`（非流式）；`NewStreamMapper`（流式 SSE 事件映射，`internal/protoconv/protoconv.go:62`）+ `StreamMapper.Done()/Finish()`（目标终止帧查询与流末补发——codex converted 适配层在源协议仅 `[DONE]` 或无 `[DONE]` 正常 EOF 时按方向镜像补发）；四方向常量在 `domain/types.go:627-631`。
+- 六方向（`internal/protoconv/protoconv.go`）：`ConvertRequest`（chat→resp / mess→resp / resp→mess / chat→mess / mess→chat / resp→chat）+ `ConvertResponse`（非流式）；`NewStreamMapper`（流式 SSE 事件映射）+ `StreamMapper.Done()/Finish()`（目标终止帧查询与流末补发——codex converted 适配层在源协议仅 `[DONE]` 或无 `[DONE]` 正常 EOF 时按方向镜像补发；mess→chat / resp→chat 的 `Finish` 接在 `sserelay.Config.Terminal` 上，与上游 `[DONE]` 恰好二选一）；方向常量在 `domain/types.go`。
 - **字节级纪律**（`internal/protoconv/jsraw.go:20-25`）：gjson 预筛（`gjsonKeyEq` 长度校验 + 逐字节比较零分配）→ `gjson.Result.Raw` 零拷贝切片直接拼入输出 → 单缓冲复用（`StreamMapper` 的 buf/dbuf，`internal/protoconv/protoconv.go:84`；帧返回后下一帧覆盖，调用方不得跨帧保留）；chat→resp 方向字节级组装，其余方向 map 组装（`EncodeFrame`）。
 - 缺名帧处理（教训）：无 `event:` 名帧从 data 的 `type` 字段推断（**已上提到共享实现** `pkg/sserelay/relay.go:46` `InferEventName`，protoconv 在 `internal/protoconv/protoconv.go:120` 调用），无法推断原样透传。
 - 转换 on/off 开销实证（`docs/superpowers/plans/2026-08-11-w3-loadtest.md` §二 与 `docs/superpowers/plans/2026-08-11-protoconv-opt-loadtest.md` §一，均压测机（内部环境，IP 存部署清单） 实证）：

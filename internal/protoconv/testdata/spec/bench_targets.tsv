@@ -5,3 +5,5 @@ BenchmarkToolsHandling	0	6000	M4
 BenchmarkMessSchemaScan	0	410	M4
 BenchmarkMessSchemaFlatten	44	6700	M4
 BenchmarkToolsRatio	44	11800	M4
+BenchmarkConvertRequestMessToChatTools20	26	26000	M2
+BenchmarkConvertRequestRespToChatTools20	24	42000	M2

@@ -35,6 +35,17 @@ type convertedCaller struct {
 	dir domain.ProtocolConvert
 }
 
+// streamSupported 流式能力查询的间接层（测试可替换）：未接线的方向必须在这里
+// fail-closed 成 400，而不是放行后给客户端一个 200 + 空流。
+var streamSupported = protoconv.StreamSupported
+
+// isChatSource 方向的上游是否为 chat（即“上游发的帧是 chat chunk”）。
+// 仅两个新方向成立；既有四方向均为 false ⇒ 它们完全不进 chat 相关分支，
+// 字节级行为零变化。
+func isChatSource(dir domain.ProtocolConvert) bool {
+	return dir == domain.ProtocolConvertMessToChat || dir == domain.ProtocolConvertRespToChat
+}
+
 func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, cred string, body []byte, stream bool) (int, []byte, bool, error) {
 	p := c.p
 	client, target := clientAndTargetOf(c.dir)
@@ -48,6 +59,14 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 
 	if stream {
+		// 流式 fail-closed 守卫：**必须在写 SSE 头之前**。未接线的流式
+		// 方向若放行，客户端会拿到 200 + 空流（StreamMapper.Map 对未注册
+		// 方向静默丢帧），比 400 难排查得多。
+		if !streamSupported(c.dir) {
+			writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"message": "streaming is not supported for this protocol conversion"}})
+			sel.Release()
+			return http.StatusBadRequest, nil, true, nil
+		}
 		reqModel := gjson.GetBytes(body, "model").String()
 		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 		defer cancel()
@@ -61,6 +80,8 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP)
 		case domain.FormatAnthropic:
 			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP)
+		case domain.FormatOpenAIChat:
+			resp, err = p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP)
 		}
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err
@@ -83,8 +104,28 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 一次。id 由 mapper 显式返回（BindableID），不从映射帧机械解析。
 		var contEnqueued bool
 		var lastDrop bool
+		// 正常 EOF 的终止帧：chat 上游**可能不发 `data: [DONE]`** 就关流（截断、
+		// 或某些实现在最后一帧后直接 FIN）。不给客户端补终止帧的后果：mess 侧
+		// 永远收不到 message_stop、resp 侧永远收不到 response.completed，客户端
+		// 只能靠超时判死。Finish 内部按 m.done 去重 ⇒ 与 [DONE] 恰好二选一。
+		//
+		// I1：终止帧同样要过 rewriteConvertedFrames —— 它内部是
+		// `response.completed.response.model`，不过这里就会被写成**上游**模型名，
+		// 而同一流前面的帧（response.created 等）已是客户端模型名，客户端读到的
+		// 模型名前后不一致。与 Mapper 分支同一处改写、同一判空。
+		var terminal func() []byte
+		if isChatSource(c.dir) {
+			terminal = func() []byte {
+				fin := mapper.Finish()
+				if len(fin) == 0 || clientModel == "" {
+					return fin
+				}
+				return rewriteConvertedFrames(fin, clientModel)
+			}
+		}
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
-			Output: out,
+			Output:   out,
+			Terminal: terminal,
 			Mapper: func(ev sserelay.Event) ([]byte, bool) {
 				mapped, drop := mapper.Map(string(ev.Event), ev.Data)
 				lastDrop = drop
@@ -120,6 +161,12 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						}
 					case "message_delta":
 						ot = anthropicDeltaOutput(ev.Data)
+					}
+				case domain.FormatOpenAIChat:
+					// chat 用量只在末帧（choices:[] + usage 对象）出现；中间帧的
+					// usage 键存在但值为 null —— chatStreamUsage 已内建存在判定。
+					if t, ok := chatStreamUsage(ev.Data); ok {
+						it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
 					}
 				}
 				if !lastDrop && !contEnqueued && p.contBindWired() && c.dir == domain.ProtocolConvertRespToMess {
@@ -207,6 +254,13 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		path, authHeader, auth = targetPath(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred
 	case domain.FormatAnthropic:
 		path, authHeader, auth = targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), "x-api-key", cred
+	case domain.FormatOpenAIChat:
+		path, authHeader, auth = targetPath(sel, pathKeyChat, defaultPathChat), "Authorization", "Bearer "+cred
+	default:
+		// 未接线的目标协议：显式拒绕（不得带空 path 去拼 URL）。
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"message": "protocol conversion target is not wired"}})
+		sel.Release()
+		return http.StatusInternalServerError, nil, true, nil
 	}
 	data, code, errBody, upstreamErr := p.rawJSON(ctx, sel, path, authHeader, auth, upBody, r.Header)
 	if upstreamErr != nil {
@@ -215,9 +269,12 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if code != 0 {
 		return code, errBody, false, nil
 	}
-	if target == domain.FormatAnthropic {
+	switch target {
+	case domain.FormatAnthropic:
 		it, ot, tt, cr, cc = anthropicUsageFromResponse(data)
-	} else {
+	case domain.FormatOpenAIChat:
+		it, ot, tt, cr, cc = chatUsageFromResponse(data)
+	default:
 		it, ot, tt, cr, cc = responsesUsageFromResponse(data)
 	}
 	conv, err := protoconv.ConvertResponse(data, c.dir)

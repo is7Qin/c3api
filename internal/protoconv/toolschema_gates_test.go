@@ -218,6 +218,18 @@ func bestOf(n int, f func() testing.BenchmarkResult) testing.BenchmarkResult {
 // TestBenchGates 真跑 bench 并与 M 记录表比对（(g)：数值断言，不是文件子串）。
 func TestBenchGates(t *testing.T) {
 	targets := loadBenchTargets(t)
+	// spec §8(o)②：两个新方向的 allocs 上界**写死在代码里**（首测值 ×1.2 取整），
+	// 免得"改 TSV 就顺手放宽"。改上界必须同时改这里与 bench_targets.tsv。
+	for name, ceil := range map[string]int{
+		"BenchmarkConvertRequestMessToChatTools20": 31, // 26 allocs ×1.2
+		"BenchmarkConvertRequestRespToChatTools20": 28, // 24 allocs ×1.2
+	} {
+		tgt, ok := targets[name]
+		require.True(t, ok, "bench_targets.tsv 缺 %s", name)
+		require.LessOrEqual(t, tgt.allocs, ceil, "%s 的登记 allocs 超过首测值×1.2 的上界", name)
+		require.NotZero(t, tgt.ns, "%s 的 ns 必须登记（0 会让相对门槛恒红）", name)
+	}
+
 	// Scan 必须 0 分配（spec §4 决策 1/3/6），且测的是生产热路径 pInFast。
 	scan := bestOf(3, func() testing.BenchmarkResult { return testing.Benchmark(BenchmarkMessSchemaScan) })
 	require.EqualValues(t, 0, scan.AllocsPerOp(), "BenchmarkMessSchemaScan 必须 0 分配（pInFast 的固定数组）")
@@ -242,6 +254,14 @@ func TestBenchGates(t *testing.T) {
 		check("BenchmarkMessSchemaFlatten", bestOf(3, func() testing.BenchmarkResult { return testing.Benchmark(BenchmarkMessSchemaFlatten) }))
 		check("BenchmarkConvertRequestRespToMessTools20", bestOf(3, func() testing.BenchmarkResult {
 			return testing.Benchmark(BenchmarkConvertRequestRespToMessTools20)
+		}))
+		// spec §8(o)①：两个新方向的 benchmark 必须真的被门禁跑到，否则
+		// bench_targets.tsv 里那两行是死数据。
+		check("BenchmarkConvertRequestMessToChatTools20", bestOf(3, func() testing.BenchmarkResult {
+			return testing.Benchmark(BenchmarkConvertRequestMessToChatTools20)
+		}))
+		check("BenchmarkConvertRequestRespToChatTools20", bestOf(3, func() testing.BenchmarkResult {
+			return testing.Benchmark(BenchmarkConvertRequestRespToChatTools20)
 		}))
 	}
 }

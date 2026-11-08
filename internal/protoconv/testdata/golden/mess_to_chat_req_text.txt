@@ -1,0 +1,1 @@
+{"max_completion_tokens":64,"messages":[{"content":"be nice","role":"system"},{"content":"hello","role":"user"},{"content":"hi there","role":"assistant"},{"content":[{"text":"again","type":"text"}],"role":"user"}],"model":"m"}

@@ -67,6 +67,7 @@ const (
 	kindItem         // 项类型（message / function_call / function_call_output / reasoning）
 	kindField        // 请求字段名（instructions / system）
 	kindChatKey      // chat 消息体键（content / tool_calls / reasoning_content）
+	kindUsage        // 用量键（mess / resp 响应的 usage 成员）
 )
 
 // policy 不可表达策略（A2）。**零值 = polUnknown**：未填表或 role 掩码外
@@ -80,6 +81,9 @@ const (
 	polOmit               // 已折叠到别处，不在此处单独写出
 	polEmpty              // 目标必填容器写空值（L16：output 必填 → ""）；为 §3.1 预留，当前零行使用
 	polTextDegrade        // 降级为 text 块（L12：mess 目标 refusal）
+	polReject             // 目标无法承载且**不可静默丢弃** → 转换入口整请求 400
+	//                       （T10 的 previous_response_id：丢了等于丢多轮历史，
+	//                       客户端只会看到"模型变笨"，比 400 难排查得多）
 )
 
 // shape 源内容形状。全局唯一，与成员常量一一对应；7 段值域两两不相交。
@@ -89,15 +93,19 @@ type shape uint16
 const (
 	shapeNone shape = 0
 
-	shapeBaseChatToResp shape = 1   // T1  c_*
-	shapeBaseChatToMess shape = 101 // T2  cm_*
-	shapeBaseMessToResp shape = 201 // T3  m_*
-	shapeBaseRespToMess shape = 301 // T4  r_*
-	shapeBaseRespToChat shape = 401 // T5  x_*
-	shapeBaseRespMess   shape = 501 // T6  y_*
-	shapeBaseMessChat   shape = 601 // T7  z_*
+	shapeBaseChatToResp   shape = 1    // T1  c_*
+	shapeBaseChatToMess   shape = 101  // T2  cm_*
+	shapeBaseMessToResp   shape = 201  // T3  m_*
+	shapeBaseRespToMess   shape = 301  // T4  r_*
+	shapeBaseRespToChat   shape = 401  // T5  x_*
+	shapeBaseRespMess     shape = 501  // T6  y_*
+	shapeBaseMessChat     shape = 601  // T7  z_*
+	shapeBaseMessChatReq  shape = 701  // T8  mc_*
+	shapeBaseChatMessResp shape = 801  // T9  cm2_*
+	shapeBaseRespChatReq  shape = 901  // T10 rc_*
+	shapeBaseChatRespResp shape = 1001 // T11 cc_*
 
-	shapeCount shape = 608 // 全部 shape 的值域上界（shape 直接作下标，见 shapeName）
+	shapeCount shape = 1024 // 全部 shape 的值域上界（shape 直接作下标，见 shapeName）
 )
 
 // segWidth lookup 表的段内宽度：各段成员数的最大值（T3 = 23）。段内偏移从 0 起
@@ -116,6 +124,10 @@ var segBase = [dirCount]shape{
 	dirRespToChat:     shapeBaseRespToChat,
 	dirRespToMessResp: shapeBaseRespMess,
 	dirMessToChatResp: shapeBaseMessChat,
+	dirMessToChatReq:  shapeBaseMessChatReq,
+	dirRespToChatReq:  shapeBaseRespChatReq,
+	dirChatToMessResp: shapeBaseChatMessResp,
+	dirChatToRespResp: shapeBaseChatRespResp,
 }
 
 // T1 chat→resp 成员（spec §3.2，全部 kindItem）。
@@ -239,6 +251,95 @@ const (
 	shZTail
 )
 
+// T8 mess→chat 成员（请求面，spec §6.2 T8 的 21 个，逐名对齐）。源形状与 T3
+// 同构（Mess 内容块），但目标策略按 chat 的能力重排：文档类只有纯文本有载体、
+// tool_result 的图片要迁到随后的 user 消息、签名无处承载。
+//
+// 与既有四方向不同，T8 有**顶层参数**成员（tools / tool_choice / stop / …）：
+// chat 是唯一"参数名与 Anthropic 完全不同"的目标（`max_completion_tokens`、
+// `stop`、嵌套 `tools[].function`），不建模就等于这些字段没有 anchor 可查。
+const (
+	shMCSysText shape = shapeBaseMessChatReq + iota
+	shMCSysBlock
+	shMCUserText
+	shMCUserImgB64
+	shMCUserImgURL
+	shMCUserDoc
+	shMCUserTR
+	shMCUserTRErr
+	shMCUserTRImg
+	shMCAsstText
+	shMCAsstToolUse
+	shMCAsstThinking
+	shMCAsstRedacted
+	shMCTools
+	shMCToolStrict
+	shMCToolChoiceStr
+	shMCToolChoiceTool
+	shMCToolChoiceParallel
+	shMCMaxTokens
+	shMCStop
+	shMCMetaUser
+)
+
+// T10 resp→chat 成员（请求面，spec §6.2 T10 的 16 个，逐名对齐）。
+//
+// 与 T8 同构：内容侧只有"文本 / 图片 / 文件(丢) / 工具对 / 思考 / 加密思考(丢)"
+// 六类，其余是顶层参数。独有两点：`text.format` 要**重排结构**成 chat 的
+// `response_format`，`previous_response_id` 等有状态字段**不可静默丢弃**（见
+// polReject 与 rejectRespStateful）。
+const (
+	shRCInstructions shape = shapeBaseRespChatReq + iota
+	shRCInputStr
+	shRCMsgText
+	shRCMsgImg
+	shRCMsgFile
+	shRCFunctionCall
+	shRCFunctionCallOutput
+	shRCReasoning
+	shRCEncrypted
+	shRCMaxOut
+	shRCTools
+	shRCToolsStrict
+	shRCToolChoice
+	shRCTextFormat
+	shRCEffort
+	shRCPrevID
+)
+
+// T9 chat→mess（**响应面**）成员（spec §6.2 T9 的 11 个）。
+// 上游是 chat，客户端要 Messages：文本/工具/思考三块 + 停因 + 四项用量 + 两项
+// "chat 有、mess 无"的丢弃（reasoning_tokens 明细、logprobs）。
+const (
+	shCM2Text shape = shapeBaseChatMessResp + iota
+	shCM2Tool
+	shCM2ToolBadArgs
+	shCM2Reasoning
+	shCM2Finish
+	shCM2UsageNet
+	shCM2UsageCached
+	shCM2UsageWrite
+	shCM2UsageOut
+	shCM2DropReasoningTokens
+	shCM2DropLogprobs
+)
+
+// T11 chat→resp（**响应面**）成员（spec §6.2 T11 的 10 个）。
+// 与 T9 的差别：resp 的文本是 output[] 里的 message 项、工具是 function_call 项、
+// 思考是 reasoning 项，且状态/不完整原因要写进 status/incomplete_details。
+const (
+	shCCText shape = shapeBaseChatRespResp + iota
+	shCCFunctionCall
+	shCCReasoning
+	shCCStatus
+	shCCIncomplete
+	shCCUsageNet
+	shCCUsageCached
+	shCCUsageWrite
+	shCCUsageOut
+	shCCReasoningTokens
+)
+
 // direction 内容模型的方向（7 个方向各自一张表）。
 type direction uint8
 
@@ -250,6 +351,10 @@ const (
 	dirRespToChat
 	dirRespToMessResp
 	dirMessToChatResp
+	dirMessToChatReq
+	dirRespToChatReq
+	dirChatToMessResp
+	dirChatToRespResp
 	dirCount
 )
 
@@ -272,6 +377,15 @@ var dirRoles = [dirCount]uint8{
 	dirRespToChat:     rmAsst,
 	dirRespToMessResp: rmAsst,
 	dirMessToChatResp: rmAsst,
+	// T8 请求面：Mess 的 message 只有 user/assistant 两种 role（system 在顶层，
+	// 由 shMCTopSystem 的 anyRole 行承载）。
+	dirMessToChatReq: rmUser | rmAsst,
+	// T10 请求面：resp 的 item 没有 role 字段（role 在 message item 内部），
+	// 但 message item 可以是 user/system/developer/assistant 四种。
+	dirRespToChatReq: rmSystem | rmDeveloper | rmUser | rmAsst,
+	// T9/T11 响应面：chat 的 choices[0].message 只有 assistant 一侧。
+	dirChatToMessResp: rmAsst,
+	dirChatToRespResp: rmAsst,
 }
 
 // row 一行内容模型：一个 (direction, member) 的 A1/A2 取值。
@@ -446,6 +560,14 @@ func rowsOf(d direction) []row {
 		return rowsRespToMessResp()
 	case dirMessToChatResp:
 		return rowsMessToChatResp()
+	case dirMessToChatReq:
+		return rowsMessToChatReq()
+	case dirRespToChatReq:
+		return rowsRespToChatReq()
+	case dirChatToMessResp:
+		return rowsChatToMessResp()
+	case dirChatToRespResp:
+		return rowsChatToRespResp()
 	}
 	return nil
 }
@@ -602,6 +724,14 @@ func membersOf(d direction) []member {
 		return membersRespToMessResp()
 	case dirMessToChatResp:
 		return membersMessToChatResp()
+	case dirMessToChatReq:
+		return membersMessToChatReq()
+	case dirRespToChatReq:
+		return membersRespToChatReq()
+	case dirChatToMessResp:
+		return membersChatToMessResp()
+	case dirChatToRespResp:
+		return membersChatToRespResp()
 	}
 	return nil
 }
@@ -615,6 +745,10 @@ var dirName = [dirCount]string{
 	dirRespToChat:     "resp_to_chat",
 	dirRespToMessResp: "resp_to_mess_resp",
 	dirMessToChatResp: "mess_to_chat_resp",
+	dirMessToChatReq:  "mess_to_chat_req",
+	dirRespToChatReq:  "resp_to_chat_req",
+	dirChatToMessResp: "chat_to_mess_resp",
+	dirChatToRespResp: "chat_to_resp_resp",
 }
 
 // lookupTable (dir, shape) → 行数据的静态数组：index = sh - segBase[dir]（段基值
@@ -713,7 +847,7 @@ var itemVocabIn = []string{"message", "function_call", "function_call_output", "
 var itemVocabOut = []string{"message", "function_call", "reasoning"}
 
 // chatKeyVocab chat 消息体键（行级）。
-var chatKeyVocab = []string{"content", "tool_calls", "reasoning_content"}
+var chatKeyVocab = []string{"content", "tool_calls", "reasoning_content", "tool_call_id"}
 
 // chatFrameKeys chat SSE **顶层**帧键（帧级；choices[].delta 的键仍查
 // chatKeyVocab——两张表不得混用）。
@@ -724,7 +858,30 @@ var chatFrameKeys = []string{
 
 // fieldVocab 请求字段名。mess 目标的顶层 system 是 chat/resp 的
 // system 折叠落点，resp 目标的对应字段是 instructions。
-var fieldVocab = []string{"instructions", "system"}
+var fieldVocab = []string{"instructions", "system", "messages"}
+
+// chatReqVocab **chat 请求**顶层键（T8 会写出的那些）。chat 的参数名与
+// Anthropic 完全不同（max_completion_tokens / stop / 嵌套 tools[].function），
+// 故不能与 fieldVocab 混用一张表：混了就等于两套语义互相背书，谁都查不出错。
+//
+// 只登记**有成员行**的键。model / stream / stream_options / temperature / top_p /
+// reasoning_effort 直传直写、无成员行，故不入表（口径与既有四方向一致：内容模型
+// 只覆盖"需要判断怎么落"的东西，不覆盖直传参数）。
+var chatReqVocab = []string{
+	"messages", "tools", "tool_choice", "parallel_tool_calls",
+	"max_completion_tokens", "stop", "user",
+	// 只有 resp→chat（T10）会写的两项。
+	"response_format", "reasoning_effort",
+}
+
+// usageVocab 用量键（mess 与 resp 两个目标的并集；T9/T11 的 usage 行查这张表）。
+// 目标用量对象的键由协议固定（不是"选词"问题），但"到底写了哪几个键"仍必须显式
+// 登记——账务口径就是靠这几个键分别计价的（billing/cost.go 按 net + cr + cc）。
+var usageVocab = []string{
+	"input_tokens", "output_tokens", "total_tokens",
+	"cache_read_input_tokens", "cache_creation_input_tokens",
+	"input_tokens_details", "output_tokens_details",
+}
 
 // respEventVocab resp 目标的 SSE 事件名域（本仓会产出的事件）。
 var respEventVocab = []string{
@@ -795,10 +952,193 @@ var stopDefaultIncomplete = stopRow{incomplete: "", mess: "max_tokens", chat: "l
 // messStopToChat 表：Messages stop_reason → Chat finish_reason。
 var messStopToChat = []struct{ mess, chat string }{
 	{"tool_use", "tool_calls"},
+	// F4：`function_call` 是 chat 官方 deprecated 的 finish_reason。它排在
+	// tool_calls **之后**：正向（mess→chat）首命中仍是 tool_calls，行为不变；
+	// 反向（chat→mess，messStopFromChat）才能查到它 —— 否则 chat 全集里这个
+	// 值会掉进 default 得 end_turn，客户端看到"正常结束"而实际是工具调用。
+	{"tool_use", "function_call"},
 	{"max_tokens", "length"},
 	{"model_context_window_exceeded", "length"},
 	{"refusal", "content_filter"},
+	// 显式登记 end_turn：值不变（与 default 同），但"这个值有定义"从兜底变成
+	// 表命中 —— messStopFromChat 反向扫得到它，(e) 的像集断言才有意义。
+	{"end_turn", "stop"},
 }
 
 // messStopToChatDefault end_turn / stop_sequence / pause_turn / compaction / 缺省。
 const messStopToChatDefault = "stop"
+
+// T8 mess→chat（请求面）：源是 Mess 内容块，目标策略按 chat 能力定。与 T3 的
+// 差别集中在四处：document 只有纯文本有载体、tool_result 的图片要迁走、
+// assistant 图片无对应位置、thinking 只能保留纯文本（chat 无签名通道）。
+func rowsMessToChatReq() []row {
+	return []row{
+		// 顶层 system（字符串或块数组）折叠成首条 role:"system" 消息。
+		{sh: shMCSysText, anyRole: true, kind: kindField, name: "messages", pol: polMap},
+		{sh: shMCSysBlock, anyRole: true, kind: kindField, name: "messages", pol: polMap},
+		// user 内容块。
+		{sh: shMCUserText, roles: rmUser, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shMCUserImgB64, roles: rmUser, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shMCUserImgURL, roles: rmUser, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shMCUserDoc, roles: rmUser, kind: kindChatKey, pol: polDrop},
+		// tool_result：只有 tool 消息有载体（tool_call_id + 文本 content）。
+		{sh: shMCUserTR, roles: rmUser, kind: kindChatKey, name: "tool_call_id", pol: polMap},
+		{sh: shMCUserTRErr, roles: rmUser, kind: kindChatKey, name: "tool_call_id", pol: polMap},
+		{sh: shMCUserTRImg, roles: rmUser, kind: kindChatKey, name: "tool_call_id", pol: polMap},
+		// assistant 内容块。
+		{sh: shMCAsstText, roles: rmAsst, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shMCAsstToolUse, roles: rmAsst, kind: kindChatKey, name: "tool_calls", pol: polMap},
+		{sh: shMCAsstThinking, roles: rmAsst, kind: kindChatKey, name: "reasoning_content", pol: polMap},
+		{sh: shMCAsstRedacted, roles: rmAsst, kind: kindChatKey, pol: polDrop},
+		// 顶层参数（字段级，无 role 维度）。
+		{sh: shMCTools, anyRole: true, kind: kindField, name: "tools", pol: polMap},
+		{sh: shMCToolStrict, anyRole: true, kind: kindField, name: "tools", pol: polMap},
+		{sh: shMCToolChoiceStr, anyRole: true, kind: kindField, name: "tool_choice", pol: polMap},
+		{sh: shMCToolChoiceTool, anyRole: true, kind: kindField, name: "tool_choice", pol: polMap},
+		{sh: shMCToolChoiceParallel, anyRole: true, kind: kindField, name: "parallel_tool_calls", pol: polMap},
+		{sh: shMCMaxTokens, anyRole: true, kind: kindField, name: "max_completion_tokens", pol: polMap},
+		{sh: shMCStop, anyRole: true, kind: kindField, name: "stop", pol: polMap},
+		{sh: shMCMetaUser, anyRole: true, kind: kindField, name: "user", pol: polMap},
+	}
+}
+
+func membersMessToChatReq() []member {
+	return []member{
+		{shMCSysText, "mc_sys_text"},
+		{shMCSysBlock, "mc_sys_block"},
+		{shMCUserText, "mc_user_text"},
+		{shMCUserImgB64, "mc_user_img_b64"},
+		{shMCUserImgURL, "mc_user_img_url"},
+		{shMCUserDoc, "mc_user_doc"},
+		{shMCUserTR, "mc_user_tr"},
+		{shMCUserTRErr, "mc_user_tr_err"},
+		{shMCUserTRImg, "mc_user_tr_img"},
+		{shMCAsstText, "mc_asst_text"},
+		{shMCAsstToolUse, "mc_asst_tooluse"},
+		{shMCAsstThinking, "mc_asst_thinking"},
+		{shMCAsstRedacted, "mc_asst_redacted"},
+		{shMCTools, "mc_tools"},
+		{shMCToolStrict, "mc_tool_strict"},
+		{shMCToolChoiceStr, "mc_tool_choice_str"},
+		{shMCToolChoiceTool, "mc_tool_choice_tool"},
+		{shMCToolChoiceParallel, "mc_tool_choice_parallel"},
+		{shMCMaxTokens, "mc_max_tokens"},
+		{shMCStop, "mc_stop"},
+		{shMCMetaUser, "mc_meta_user"},
+	}
+}
+
+// T10 resp→chat：resp 的 item 是开放联合，能搬过来的只有文本/图片/工具对/思考；
+// 文件与加密思考无载体（丢弃），有状态字段整请求拒绝。
+func rowsRespToChatReq() []row {
+	return []row{
+		{sh: shRCInstructions, anyRole: true, kind: kindField, name: "messages", pol: polMap},
+		{sh: shRCInputStr, anyRole: true, kind: kindField, name: "messages", pol: polMap},
+		{sh: shRCMsgText, roles: rmSystem | rmDeveloper | rmUser, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shRCMsgImg, roles: rmUser, kind: kindChatKey, name: "content", pol: polMap},
+		{sh: shRCMsgFile, roles: rmUser, kind: kindChatKey, pol: polDrop},
+		{sh: shRCFunctionCall, roles: rmAsst, kind: kindChatKey, name: "tool_calls", pol: polMap},
+		{sh: shRCFunctionCallOutput, anyRole: true, kind: kindChatKey, name: "tool_call_id", pol: polMap},
+		{sh: shRCReasoning, roles: rmAsst, kind: kindChatKey, name: "reasoning_content", pol: polMap},
+		{sh: shRCEncrypted, roles: rmAsst, kind: kindChatKey, pol: polDrop},
+		{sh: shRCMaxOut, anyRole: true, kind: kindField, name: "max_completion_tokens", pol: polMap},
+		{sh: shRCTools, anyRole: true, kind: kindField, name: "tools", pol: polMap},
+		{sh: shRCToolsStrict, anyRole: true, kind: kindField, name: "tools", pol: polMap},
+		{sh: shRCToolChoice, anyRole: true, kind: kindField, name: "tool_choice", pol: polMap},
+		{sh: shRCTextFormat, anyRole: true, kind: kindField, name: "response_format", pol: polMap},
+		{sh: shRCEffort, anyRole: true, kind: kindField, name: "reasoning_effort", pol: polMap},
+		// 有状态字段的代表行：策略是 polReject（整请求 400），不是 polDrop。
+		// 另外三个同族字段（conversation / prompt / context_management）行为相同，
+		// 由 rejectRespStateful 的列表承载，不各占一行。
+		{sh: shRCPrevID, anyRole: true, kind: kindField, name: "previous_response_id", pol: polReject},
+	}
+}
+
+func membersRespToChatReq() []member {
+	return []member{
+		{shRCInstructions, "rc_instructions"},
+		{shRCInputStr, "rc_input_str"},
+		{shRCMsgText, "rc_msg_text"},
+		{shRCMsgImg, "rc_msg_img"},
+		{shRCMsgFile, "rc_msg_file"},
+		{shRCFunctionCall, "rc_fc"},
+		{shRCFunctionCallOutput, "rc_fco"},
+		{shRCReasoning, "rc_reasoning"},
+		{shRCEncrypted, "rc_encrypted"},
+		{shRCMaxOut, "rc_max_out"},
+		{shRCTools, "rc_tools"},
+		{shRCToolsStrict, "rc_tools_strict"},
+		{shRCToolChoice, "rc_tool_choice"},
+		{shRCTextFormat, "rc_text_format"},
+		{shRCEffort, "rc_effort"},
+		{shRCPrevID, "rc_prev_id"},
+	}
+}
+
+// T9 chat→mess（响应面）：assistant 只有文本/工具/思考三种块可搬；停因与四项用量
+// 恒写；chat 的 reasoning_tokens 明细与 logprobs 在 Messages 里没有承载位。
+func rowsChatToMessResp() []row {
+	return []row{
+		{sh: shCM2Text, roles: rmAsst, kind: kindPart, name: "text", pol: polMap},
+		{sh: shCM2Tool, roles: rmAsst, kind: kindPart, name: "tool_use", pol: polMap},
+		{sh: shCM2ToolBadArgs, roles: rmAsst, kind: kindPart, name: "tool_use", pol: polMap},
+		{sh: shCM2Reasoning, roles: rmAsst, kind: kindPart, name: "thinking", pol: polMap},
+		// 停因与状态是**取值映射**（值域由 messStopFromChat / chatRespStatus 的表
+		// 钉住，(e) 门禁覆盖），故 name 为空：它们不选键，只选值。
+		{sh: shCM2Finish, anyRole: true, kind: kindField, pol: polMap},
+		{sh: shCM2UsageNet, anyRole: true, kind: kindUsage, name: "input_tokens", pol: polMap},
+		{sh: shCM2UsageCached, anyRole: true, kind: kindUsage, name: "cache_read_input_tokens", pol: polMap},
+		{sh: shCM2UsageWrite, anyRole: true, kind: kindUsage, name: "cache_creation_input_tokens", pol: polMap},
+		{sh: shCM2UsageOut, anyRole: true, kind: kindUsage, name: "output_tokens", pol: polMap},
+		{sh: shCM2DropReasoningTokens, anyRole: true, kind: kindUsage, pol: polDrop},
+		{sh: shCM2DropLogprobs, anyRole: true, kind: kindUsage, pol: polDrop},
+	}
+}
+
+func membersChatToMessResp() []member {
+	return []member{
+		{shCM2Text, "cm2_text"},
+		{shCM2Tool, "cm2_tool"},
+		{shCM2ToolBadArgs, "cm2_tool_badargs"},
+		{shCM2Reasoning, "cm2_reasoning"},
+		{shCM2Finish, "cm2_finish"},
+		{shCM2UsageNet, "cm2_usage_net"},
+		{shCM2UsageCached, "cm2_usage_cached"},
+		{shCM2UsageWrite, "cm2_usage_write"},
+		{shCM2UsageOut, "cm2_usage_out"},
+		{shCM2DropReasoningTokens, "cm2_drop_reasoning_tokens"},
+		{shCM2DropLogprobs, "cm2_drop_logprobs"},
+	}
+}
+
+// T11 chat→resp（响应面）：resp 把内容装进 output[] 的**项**里（message /
+// function_call / reasoning），并额外要求 status 与 incomplete_details。
+func rowsChatToRespResp() []row {
+	return []row{
+		{sh: shCCText, roles: rmAsst, kind: kindPart, name: "output_text", pol: polMap},
+		{sh: shCCFunctionCall, roles: rmAsst, kind: kindItem, name: "function_call", pol: polMap},
+		{sh: shCCReasoning, roles: rmAsst, kind: kindItem, name: "reasoning", pol: polMap},
+		{sh: shCCStatus, anyRole: true, kind: kindField, pol: polMap},
+		{sh: shCCIncomplete, anyRole: true, kind: kindField, pol: polMap},
+		{sh: shCCUsageNet, anyRole: true, kind: kindUsage, name: "input_tokens", pol: polMap},
+		{sh: shCCUsageCached, anyRole: true, kind: kindUsage, name: "input_tokens_details", pol: polMap},
+		{sh: shCCUsageWrite, anyRole: true, kind: kindUsage, name: "input_tokens_details", pol: polMap},
+		{sh: shCCUsageOut, anyRole: true, kind: kindUsage, name: "output_tokens", pol: polMap},
+		{sh: shCCReasoningTokens, anyRole: true, kind: kindUsage, name: "output_tokens_details", pol: polMap},
+	}
+}
+
+func membersChatToRespResp() []member {
+	return []member{
+		{shCCText, "cc_text"},
+		{shCCFunctionCall, "cc_fc"},
+		{shCCReasoning, "cc_reasoning"},
+		{shCCStatus, "cc_status"},
+		{shCCIncomplete, "cc_incomplete"},
+		{shCCUsageNet, "cc_usage_net"},
+		{shCCUsageCached, "cc_usage_cached"},
+		{shCCUsageWrite, "cc_usage_write"},
+		{shCCUsageOut, "cc_usage_out"},
+		{shCCReasoningTokens, "cc_reasoning_tokens"},
+	}
+}

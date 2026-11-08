@@ -169,6 +169,12 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 		domain.ProtocolConvertMessToResp: &convertedCaller{p: p, dir: domain.ProtocolConvertMessToResp},
 		domain.ProtocolConvertRespToMess: &convertedCaller{p: p, dir: domain.ProtocolConvertRespToMess},
 		domain.ProtocolConvertChatToMess: &convertedCaller{p: p, dir: domain.ProtocolConvertChatToMess},
+		// 客户端 mess/resp → 上游 chat：目标协议是 FormatOpenAIChat，走
+		// caller_converted 里新增的 chat 分支（ChatCompletionRaw / pathKeyChat /
+		// chatUsageFromResponse）。门禁 TestConvCallersComplete 钉住
+		// domain.AllProtocolConverts() 全覆盖。
+		domain.ProtocolConvertMessToChat: &convertedCaller{p: p, dir: domain.ProtocolConvertMessToChat},
+		domain.ProtocolConvertRespToChat: &convertedCaller{p: p, dir: domain.ProtocolConvertRespToChat},
 	}
 	p.codexImagesGenerations = &codexImagesCaller{p: p}
 	p.codexImagesEdits = &codexImagesCaller{p: p}

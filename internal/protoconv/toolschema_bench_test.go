@@ -89,6 +89,67 @@ func BenchmarkConvertRequestRespToMessTools20AllPIn(b *testing.B) {
 	}
 }
 
+// benchMessToChat20 mess → chat 的 20 工具请求体（工具数是真实流量的上限形态）。
+func benchMessToChat20() string {
+	var sb strings.Builder
+	sb.WriteString(`{"model":"m","max_tokens":4096,"system":"sys","messages":[{"role":"user","content":[{"type":"text","text":"hi"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]},{"role":"assistant","content":[{"type":"text","text":"t"},{"type":"tool_use","id":"a","name":"t0","input":{"a":"x"}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"a","content":[{"type":"text","text":"ok"}]}]}],"tools":[`)
+	for i := 0; i < 20; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, `{"name":"t%d","description":"d","input_schema":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"number"}},"required":["a"]}}`, i)
+	}
+	sb.WriteString(`],"tool_choice":{"type":"auto"}}`)
+	return sb.String()
+}
+
+// benchRespToChat20 resp → chat 的 20 工具请求体。
+func benchRespToChat20() string {
+	var sb strings.Builder
+	sb.WriteString(`{"model":"m","instructions":"sys","max_output_tokens":4096,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"},{"type":"input_image","image_url":"https://e.com/i.png"}]},{"type":"reasoning","summary":[{"type":"summary_text","text":"think"}]},{"type":"function_call","call_id":"a","name":"t0","arguments":"{\"a\":\"x\"}"},{"type":"function_call_output","call_id":"a","output":"ok"}],"tools":[`)
+	for i := 0; i < 20; i++ {
+		if i > 0 {
+			sb.WriteString(",")
+		}
+		fmt.Fprintf(&sb, `{"type":"function","name":"t%d","description":"d","parameters":{"type":"object","properties":{"a":{"type":"string"},"b":{"type":"number"}},"required":["a"]}}`, i)
+	}
+	sb.WriteString(`],"tool_choice":{"type":"function","name":"t0"}}`)
+	return sb.String()
+}
+
+var (
+	benchMessToChat20Body = benchMessToChat20()
+	benchRespToChat20Body = benchRespToChat20()
+)
+
+// BenchmarkConvertRequestMessToChatTools20 全量转换（T8，20 工具）。
+func BenchmarkConvertRequestMessToChatTools20(b *testing.B) {
+	body := []byte(benchMessToChat20Body)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	for i := 0; i < b.N; i++ {
+		out, err := ConvertRequest(body, domain.ProtocolConvertMessToChat)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchTools20Result = out
+	}
+}
+
+// BenchmarkConvertRequestRespToChatTools20 全量转换（T10，20 工具）。
+func BenchmarkConvertRequestRespToChatTools20(b *testing.B) {
+	body := []byte(benchRespToChat20Body)
+	b.ReportAllocs()
+	b.SetBytes(int64(len(body)))
+	for i := 0; i < b.N; i++ {
+		out, err := ConvertRequest(body, domain.ProtocolConvertRespToChat)
+		if err != nil {
+			b.Fatal(err)
+		}
+		benchTools20Result = out
+	}
+}
+
 // BenchmarkToolsHandling 只做"现状工具字节处理"（ForEach + Get + append(Raw)），
 // 作为分母，不是门禁。
 func BenchmarkToolsHandling(b *testing.B) {

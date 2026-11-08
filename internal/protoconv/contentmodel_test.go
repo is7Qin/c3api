@@ -66,10 +66,12 @@ func (r row) anyRoleName() string {
 // dirTarget 方向 → 目标协议（(b2)/(d′) 取词表用）。
 func dirTarget(d direction) target {
 	switch d {
-	case dirChatToResp, dirMessToResp:
+	case dirChatToResp, dirMessToResp, dirChatToRespResp:
 		return tgtResp
-	case dirChatToMess, dirRespToMess, dirRespToMessResp:
+	case dirChatToMess, dirRespToMess, dirRespToMessResp, dirChatToMessResp:
 		return tgtMess
+	case dirMessToChatReq, dirRespToChatReq:
+		return tgtChat
 	default:
 		return tgtChat
 	}
@@ -150,12 +152,22 @@ func TestMembersTSVInSync(t *testing.T) {
 	}
 
 	// (a)③ members.tsv 的 AnchorRef ↔ anchors.tsv 的 (dir, member) 双向 ElementsMatch
+	//
+	// **只对内容模型的三份规范生效**：spec §8(m) 的 contract_client_to_chat 锚点
+	// 指向契约表的**物理行**（`line` 是 TSV 行号、`member` 存 rule_id），不属于
+	// members.tsv 的成员全集；它由 contract_client_to_chat_test.go 的
+	// TestContractAnchorsVerified 单独核验（行存在性 / excerpt ⊆ expect / rule_id
+	// 是 assertRule 实参）。把两类锚点混在一起比对，会让"合同表加一行"这种
+	// 无关改动把成员表门禁打红。
 	var fromMembers, fromAnchors []string
 	for _, f := range rows {
 		fromMembers = append(fromMembers, f[4])
 	}
 	for _, f := range tsvRows(t, "testdata/spec/anchors.tsv") {
 		require.Len(t, f, 5, "anchors.tsv 每行五列：dir/member/spec_file/line/excerpt")
+		if f[2] == contractSpecFile {
+			continue
+		}
 		key := f[0] + "/" + f[1]
 		require.False(t, seenAnchor[key], "anchor 重复：%s", key)
 		seenAnchor[key] = true
@@ -166,7 +178,13 @@ func TestMembersTSVInSync(t *testing.T) {
 	// (a)④ anchors ⊆ excerpts（逐三元组）⑤ excerpts 每条至少被用一次 ⑥ 片段 ≤120B
 	used := map[string]bool{}
 	for _, f := range tsvRows(t, "testdata/spec/anchors.tsv") {
-		require.Contains(t, []string{"resp", "mess", "chat"}, f[2], "spec_file 只能是三份规范之一")
+		require.Contains(t, []string{"resp", "mess", "chat", contractSpecFile}, f[2],
+			"spec_file 只能是三份内容模型规范或契约表（§8(d) 白名单）")
+		if f[2] == contractSpecFile {
+			// 契约锚点的 excerpt 来自契约表 expect 列，与 excerpts.tsv 无关。
+			require.LessOrEqual(t, len(f[4]), 120, "anchor 片段必须 ≤120B：%s", f[1])
+			continue
+		}
 		triple := f[2] + "\t" + f[3] + "\t" + f[4]
 		used[triple] = true
 		require.LessOrEqual(t, len(f[4]), 120, "anchor 片段必须 ≤120B：%s", f[1])
@@ -304,6 +322,72 @@ func TestRowsStructuralEquality(t *testing.T) {
 			rowRole(shYReasoning, rmAsst, kindPart, "thinking", polMap),
 			rowAny(shYTail, kindPart, "", polDrop),
 		}},
+		{dirMessToChatReq, []row{
+			rowAny(shMCSysText, kindField, "messages", polMap),
+			rowAny(shMCSysBlock, kindField, "messages", polMap),
+			rowRole(shMCUserText, rmUser, kindChatKey, "content", polMap),
+			rowRole(shMCUserImgB64, rmUser, kindChatKey, "content", polMap),
+			rowRole(shMCUserImgURL, rmUser, kindChatKey, "content", polMap),
+			rowRole(shMCUserDoc, rmUser, kindChatKey, "", polDrop),
+			rowRole(shMCUserTR, rmUser, kindChatKey, "tool_call_id", polMap),
+			rowRole(shMCUserTRErr, rmUser, kindChatKey, "tool_call_id", polMap),
+			rowRole(shMCUserTRImg, rmUser, kindChatKey, "tool_call_id", polMap),
+			rowRole(shMCAsstText, rmAsst, kindChatKey, "content", polMap),
+			rowRole(shMCAsstToolUse, rmAsst, kindChatKey, "tool_calls", polMap),
+			rowRole(shMCAsstThinking, rmAsst, kindChatKey, "reasoning_content", polMap),
+			rowRole(shMCAsstRedacted, rmAsst, kindChatKey, "", polDrop),
+			rowAny(shMCTools, kindField, "tools", polMap),
+			rowAny(shMCToolStrict, kindField, "tools", polMap),
+			rowAny(shMCToolChoiceStr, kindField, "tool_choice", polMap),
+			rowAny(shMCToolChoiceTool, kindField, "tool_choice", polMap),
+			rowAny(shMCToolChoiceParallel, kindField, "parallel_tool_calls", polMap),
+			rowAny(shMCMaxTokens, kindField, "max_completion_tokens", polMap),
+			rowAny(shMCStop, kindField, "stop", polMap),
+			rowAny(shMCMetaUser, kindField, "user", polMap),
+		}},
+		{dirRespToChatReq, []row{
+			rowAny(shRCInstructions, kindField, "messages", polMap),
+			rowAny(shRCInputStr, kindField, "messages", polMap),
+			rowRole(shRCMsgText, rmSystem|rmDeveloper|rmUser, kindChatKey, "content", polMap),
+			rowRole(shRCMsgImg, rmUser, kindChatKey, "content", polMap),
+			rowRole(shRCMsgFile, rmUser, kindChatKey, "", polDrop),
+			rowRole(shRCFunctionCall, rmAsst, kindChatKey, "tool_calls", polMap),
+			rowAny(shRCFunctionCallOutput, kindChatKey, "tool_call_id", polMap),
+			rowRole(shRCReasoning, rmAsst, kindChatKey, "reasoning_content", polMap),
+			rowRole(shRCEncrypted, rmAsst, kindChatKey, "", polDrop),
+			rowAny(shRCMaxOut, kindField, "max_completion_tokens", polMap),
+			rowAny(shRCTools, kindField, "tools", polMap),
+			rowAny(shRCToolsStrict, kindField, "tools", polMap),
+			rowAny(shRCToolChoice, kindField, "tool_choice", polMap),
+			rowAny(shRCTextFormat, kindField, "response_format", polMap),
+			rowAny(shRCEffort, kindField, "reasoning_effort", polMap),
+			rowAny(shRCPrevID, kindField, "previous_response_id", polReject),
+		}},
+		{dirChatToMessResp, []row{
+			rowRole(shCM2Text, rmAsst, kindPart, "text", polMap),
+			rowRole(shCM2Tool, rmAsst, kindPart, "tool_use", polMap),
+			rowRole(shCM2ToolBadArgs, rmAsst, kindPart, "tool_use", polMap),
+			rowRole(shCM2Reasoning, rmAsst, kindPart, "thinking", polMap),
+			rowAny(shCM2Finish, kindField, "", polMap),
+			rowAny(shCM2UsageNet, kindUsage, "input_tokens", polMap),
+			rowAny(shCM2UsageCached, kindUsage, "cache_read_input_tokens", polMap),
+			rowAny(shCM2UsageWrite, kindUsage, "cache_creation_input_tokens", polMap),
+			rowAny(shCM2UsageOut, kindUsage, "output_tokens", polMap),
+			rowAny(shCM2DropReasoningTokens, kindUsage, "", polDrop),
+			rowAny(shCM2DropLogprobs, kindUsage, "", polDrop),
+		}},
+		{dirChatToRespResp, []row{
+			rowRole(shCCText, rmAsst, kindPart, "output_text", polMap),
+			rowRole(shCCFunctionCall, rmAsst, kindItem, "function_call", polMap),
+			rowRole(shCCReasoning, rmAsst, kindItem, "reasoning", polMap),
+			rowAny(shCCStatus, kindField, "", polMap),
+			rowAny(shCCIncomplete, kindField, "", polMap),
+			rowAny(shCCUsageNet, kindUsage, "input_tokens", polMap),
+			rowAny(shCCUsageCached, kindUsage, "input_tokens_details", polMap),
+			rowAny(shCCUsageWrite, kindUsage, "input_tokens_details", polMap),
+			rowAny(shCCUsageOut, kindUsage, "output_tokens", polMap),
+			rowAny(shCCReasoningTokens, kindUsage, "output_tokens_details", polMap),
+		}},
 		{dirMessToChatResp, []row{
 			rowRole(shZText, rmAsst, kindChatKey, "content", polMap),
 			rowRole(shZThinking, rmAsst, kindChatKey, "reasoning_content", polMap),
@@ -405,12 +489,18 @@ func TestRoleMaskCoverage(t *testing.T) {
 func TestRowNamesInVocab(t *testing.T) {
 	requestDirs := map[direction]bool{
 		dirChatToResp: true, dirChatToMess: true, dirMessToResp: true, dirRespToMess: true,
+		dirMessToChatReq: true, dirRespToChatReq: true,
 	}
 	for d := direction(0); d < dirCount; d++ {
 		tgt := dirTarget(d)
 		for _, rw := range rowsOf(d) {
 			if rw.name == "" {
 				continue // ∅ 行不参与名词判定
+			}
+			if rw.pol == polReject {
+				// polReject 行**不写出任何字段**（整请求 400），故它的 name 不在
+				// 目标词表里 —— 语义由 TestRespChatRejectRowsCovered 钉住。
+				continue
 			}
 			switch rw.kind {
 			case kindPart:
@@ -431,7 +521,13 @@ func TestRowNamesInVocab(t *testing.T) {
 			case kindChatKey:
 				require.True(t, inVocab(chatKeyVocab, rw.name), "方向 %s 行 %s 的 name=%q 不在 chat 键词表内", dirName[d], shapeName[rw.sh], rw.name)
 			case kindField:
-				require.True(t, inVocab(fieldVocab, rw.name), "方向 %s 行 %s 的 name=%q 不在字段词表内", dirName[d], shapeName[rw.sh], rw.name)
+				vocab := fieldVocab
+				if tgt == tgtChat {
+					vocab = chatReqVocab
+				}
+				require.True(t, inVocab(vocab, rw.name), "方向 %s 行 %s 的 name=%q 不在字段词表内", dirName[d], shapeName[rw.sh], rw.name)
+			case kindUsage:
+				require.True(t, inVocab(usageVocab, rw.name), "方向 %s 行 %s 的 name=%q 不在用量词表内", dirName[d], shapeName[rw.sh], rw.name)
 			default:
 				require.Fail(t, "行的 kind 未定义", shapeName[rw.sh])
 			}
@@ -452,9 +548,19 @@ func TestVocabSelfComplete(t *testing.T) {
 
 	require.ElementsMatch(t, []string{"message", "function_call", "function_call_output", "reasoning"}, itemVocabIn)
 	require.ElementsMatch(t, []string{"message", "function_call", "reasoning"}, itemVocabOut)
-	require.ElementsMatch(t, []string{"content", "tool_calls", "reasoning_content"}, chatKeyVocab)
+	require.ElementsMatch(t, []string{"content", "tool_calls", "reasoning_content", "tool_call_id"}, chatKeyVocab)
 	require.ElementsMatch(t, []string{"id", "object", "created", "model", "choices", "index", "delta", "role", "finish_reason", "usage"}, chatFrameKeys)
-	require.ElementsMatch(t, []string{"instructions", "system"}, fieldVocab)
+	require.ElementsMatch(t, []string{"instructions", "system", "messages"}, fieldVocab)
+	require.ElementsMatch(t, []string{
+		"messages", "tools", "tool_choice", "parallel_tool_calls",
+		"max_completion_tokens", "stop", "user",
+		"response_format", "reasoning_effort",
+	}, chatReqVocab)
+	require.ElementsMatch(t, []string{
+		"input_tokens", "output_tokens", "total_tokens",
+		"cache_read_input_tokens", "cache_creation_input_tokens",
+		"input_tokens_details", "output_tokens_details",
+	}, usageVocab)
 	require.ElementsMatch(t, []string{
 		"response.created", "response.output_item.added", "response.output_item.done",
 		"response.output_text.delta", "response.reasoning_summary_text.delta",
@@ -517,10 +623,40 @@ func TestStopMapMatchesLiveMapping(t *testing.T) {
 	}
 	require.Equal(t, stopDefaultIncomplete.chat, chatFinishFromIncomplete("max_output_tokens"))
 	require.Equal(t, stopDefaultIncomplete.mess, messStopFromIncomplete("max_output_tokens"))
+	// 正向查表是**首命中**：表里 tool_use 出现两行（第二行的 chat 值是 deprecated
+	// 的 function_call，只为反向查表而存在），正向必须仍取第一行。
+	firstByMess := map[string]string{}
 	for _, r := range messStopToChat {
-		require.Equal(t, r.chat, messStopToChatFinish(r.mess), "mess→chat 停因表不一致：%s", r.mess)
+		if _, ok := firstByMess[r.mess]; !ok {
+			firstByMess[r.mess] = r.chat
+		}
+		require.Equal(t, firstByMess[r.mess], messStopToChatFinish(r.mess), "mess→chat 停因表不一致：%s", r.mess)
 	}
+	// 反向也是首命中：chat 侧同样不唯一（max_tokens 与
+	// model_context_window_exceeded 都映到 length），故每行只需与**该 chat 值的
+	// 第一个 mess 值**一致；含只为反向存在的那一行（function_call → tool_use）。
+	firstByChat := map[string]string{}
+	for _, r := range messStopToChat {
+		if _, ok := firstByChat[r.chat]; !ok {
+			firstByChat[r.chat] = r.mess
+		}
+	}
+	for _, r := range messStopToChat {
+		require.Equal(t, firstByChat[r.chat], messStopFromChat(r.chat), "chat→mess 停因表不一致：%s", r.chat)
+	}
+	// chat 全集的每个值都必须落在表的像集内（非单射 ⇒ 不要求 round-trip 恒等）。
+	messImage := map[string]bool{}
+	for _, r := range messStopToChat {
+		messImage[r.mess] = true
+	}
+	for _, chat := range []string{"stop", "length", "tool_calls", "content_filter", "function_call"} {
+		got := messStopFromChat(chat)
+		require.True(t, messImage[got], "chat finish_reason %q 反查出的 stop_reason %q 不在表像集内", chat, got)
+	}
+	// 未命中兜底：end_turn 由表命中得到（值不变），未知值仍走 end_turn（不得空串）。
 	require.Equal(t, messStopToChatDefault, messStopToChatFinish("end_turn"))
+	require.Equal(t, "end_turn", messStopFromChat("no_such_finish_reason"))
+	require.NotEmpty(t, messStopFromChat(""))
 }
 
 // --- (e) 分配门 ---
@@ -672,9 +808,11 @@ func checkFrame(t *testing.T, tgt target, payload []byte) {
 		return
 	}
 	vocab := eventVocabOf(tgt)
-	if typ, ok := m["type"].(string); ok {
-		require.True(t, inVocab(vocab, typ), "事件类型 %q 不在 %s 事件域内", typ, targetName(tgt))
-	}
+	// spec §8(b2)：目标帧**必须**带字符串 type —— 写成 `if ok` 会让"漏了 type 的
+	// 帧"静默通过（等于该帧不参与任何词表校验）。
+	typ, ok := m["type"].(string)
+	require.True(t, ok, "目标帧必须带字符串 type 字段")
+	require.True(t, inVocab(vocab, typ), "事件类型 %q 不在 %s 事件域内", typ, targetName(tgt))
 	if tgt != tgtResp {
 		return
 	}

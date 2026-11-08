@@ -1696,6 +1696,11 @@ func schemaModeFor(dir direction) schemaMode {
 		return schemaModeObjectOnly
 	case dirChatToResp:
 		return schemaModeExistence
+	case dirMessToChatReq, dirRespToChatReq:
+		// chat 目标的 function.parameters 必须是对象（官方 FunctionParameters
+		// 是 object + additionalProperties）；非对象/缺失 → 省略（chat 视为空）。
+		// 响应面方向不产 tools，维持 schemaModeUnknown（未登记即崩的语义保留）。
+		return schemaModeObjectOnly
 	}
 	return schemaModeUnknown
 }
@@ -1734,6 +1739,7 @@ func fmtErrToolsMaps(msg string) error { return toolsMapsError(msg) }
 func init() {
 	if err := validateToolsMaps([]*toolsFieldMap{
 		&toolsMessFromChat, &toolsMessFromResp, &toolsRespFromMess, &toolsRespFromChat,
+		&toolsChatFromMess, &toolsChatFromResp,
 	}); err != nil {
 		panic(err)
 	}

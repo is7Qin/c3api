@@ -234,6 +234,131 @@ func rowCases(t *testing.T) map[direction][]rowCase {
 			{"y_tail", lit(`{"id":"r1","output":[{"type":"unknown_item"}]}`),
 				nil, []string{`"unknown_item"`}},
 		},
+		dirMessToChatReq: {
+			{"mc_sys_text", lit(`{"model":"m","system":"SYS","messages":[]}`),
+				[]string{`"role":"system"`, `SYS`}, nil},
+			{"mc_sys_block", lit(`{"system":[{"type":"text","text":"S1"},{"type":"image","source":{"type":"url","url":"https://e.com/s.png"}},{"type":"text","text":"S2"}],"messages":[]}`),
+				[]string{`"role":"system"`, `S1`, `S2`}, []string{`s.png`}},
+			{"mc_user_text", lit(`{"messages":[{"role":"user","content":[{"type":"text","text":"U1"}]}]}`),
+				[]string{`"text":"U1"`, `"role":"user"`}, nil},
+			{"mc_user_img_b64", lit(`{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]}]}`),
+				[]string{`data:image/png;base64,QUJD`}, nil},
+			{"mc_user_img_url", lit(`{"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://e.com/i.png"}},{"type":"image","source":{"type":"file","file_id":"f_1"}}]}]}`),
+				[]string{`https://e.com/i.png`}, []string{`f_1`}},
+			{"mc_user_doc", lit(`{"messages":[{"role":"user","content":[{"type":"document","source":{"type":"text","media_type":"text/plain","data":"DOCTXT"}},{"type":"document","source":{"type":"base64","media_type":"application/pdf","data":"UERG"}},{"type":"search_result","content":"SR1"}]}]}`),
+				[]string{`DOCTXT`}, []string{`UERG`, `SR1`}},
+			{"mc_user_tr", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"R1"}]}]}`),
+				[]string{`"role":"tool"`, `"tool_call_id":"tu1"`, `R1`}, nil},
+			{"mc_user_tr_err", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","is_error":true,"content":[{"type":"text","text":"BOOM"}]}]}]}`),
+				[]string{`"content":"Error: BOOM"`, `"tool_call_id":"tu1"`}, nil},
+			{"mc_user_tr_img", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{}}]},{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]}]}]}`),
+				[]string{`"content":"[image]"`, `data:image/png;base64,QUJD`}, nil},
+			{"mc_asst_text", lit(`{"messages":[{"role":"assistant","content":[{"type":"text","text":"HELLO"}]}]}`),
+				[]string{`"content":"HELLO"`}, nil},
+			{"mc_asst_tooluse", lit(`{"messages":[{"role":"assistant","content":[{"type":"tool_use","id":"tu1","name":"f","input":{"a":1}}]}]}`),
+				[]string{`"tool_calls"`, `"name":"f"`, `"id":"tu1"`}, nil},
+			{"mc_asst_thinking", lit(`{"messages":[{"role":"assistant","content":[{"type":"thinking","thinking":"think","signature":"SIG"}]}]}`),
+				[]string{`"reasoning_content":"think"`}, []string{`SIG`}},
+			{"mc_asst_redacted", lit(`{"messages":[{"role":"assistant","content":[{"type":"redacted_thinking","data":"RED"},{"type":"unknown_block","text":"ZZZ"}]}]}`),
+				nil, []string{`RED`, `ZZZ`}},
+			{"mc_tools", lit(`{"messages":[],"tools":[{"name":"f","description":"d","input_schema":{"type":"object","properties":{"a":{"type":"string"}}}}]}`),
+				[]string{`"tools":[{"function":{`, `"parameters":{"type":"object"`, `"type":"function"`}, []string{`"input_schema"`}},
+			{"mc_tool_strict", lit(`{"messages":[],"tools":[{"name":"f","description":"d","strict":true,"input_schema":{"type":"object"}}]}`),
+				[]string{`"strict":true`}, nil},
+			{"mc_tool_choice_str", lit(`{"messages":[],"tool_choice":"any"}`),
+				[]string{`"tool_choice":"required"`}, nil},
+			{"mc_tool_choice_tool", lit(`{"messages":[],"tool_choice":{"type":"tool","name":"f"}}`),
+				[]string{`"tool_choice":{"function":{"name":"f"},"type":"function"}`}, nil},
+			{"mc_tool_choice_parallel", lit(`{"messages":[],"tool_choice":{"type":"auto","disable_parallel_tool_use":true}}`),
+				[]string{`"parallel_tool_calls":false`}, nil},
+			{"mc_max_tokens", lit(`{"max_tokens":128,"messages":[]}`),
+				[]string{`"max_completion_tokens":128`}, []string{`"max_tokens"`}},
+			{"mc_stop", lit(`{"messages":[],"stop_sequences":["A","B"]}`),
+				[]string{`"stop":["A","B"]`}, []string{`"stop_sequences"`}},
+			{"mc_meta_user", lit(`{"messages":[],"metadata":{"user_id":"u1"}}`),
+				[]string{`"user":"u1"`}, []string{`"metadata"`}},
+		},
+		dirRespToChatReq: {
+			{"rc_instructions", lit(`{"model":"m","instructions":"SYS","input":"hi"}`),
+				[]string{`"content":"SYS"`, `"role":"system"`}, nil},
+			{"rc_input_str", lit(`{"model":"m","input":"hello"}`),
+				[]string{`{"content":"hello","role":"user"}`}, nil},
+			{"rc_msg_text", lit(`{"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"U1"}]}]}`),
+				[]string{`"text":"U1"`, `"role":"user"`}, nil},
+			{"rc_msg_img", lit(`{"input":[{"type":"message","role":"user","content":[{"type":"input_image","image_url":"https://e.com/i.png"}]}]}`),
+				[]string{`"image_url":{"url":"https://e.com/i.png"}`}, nil},
+			{"rc_msg_file", lit(`{"input":[{"type":"message","role":"user","content":[{"type":"input_file","file_id":"f_1"}]}]}`),
+				nil, []string{`f_1`}},
+			{"rc_fc", lit(`{"input":[{"type":"function_call","call_id":"c1","name":"f","arguments":"{"a":1}"}]}`),
+				[]string{`"tool_calls"`, `"name":"f"`, `"id":"c1"`, `arguments`}, nil},
+			{"rc_fco", lit(`{"input":[{"type":"function_call","call_id":"c1","name":"f","arguments":"{}"},{"type":"function_call_output","call_id":"c1","output":"OK"}]}`),
+				[]string{`"role":"tool"`, `"tool_call_id":"c1"`, `"content":"OK"`}, nil},
+			{"rc_reasoning", lit(`{"input":[{"type":"reasoning","summary":[{"type":"summary_text","text":"think"}]}]}`),
+				[]string{`"reasoning_content":"think"`}, nil},
+			{"rc_encrypted", lit(`{"input":[{"type":"reasoning","encrypted_content":"ENC","summary":[{"type":"summary_text","text":"t"}]}]}`),
+				[]string{`"reasoning_content":"t"`}, []string{`ENC`}},
+			{"rc_max_out", lit(`{"max_output_tokens":77,"input":"hi"}`),
+				[]string{`"max_completion_tokens":77`}, []string{`"max_output_tokens"`}},
+			{"rc_tools", lit(`{"input":"hi","tools":[{"type":"function","name":"f","parameters":{"type":"object"}}]}`),
+				[]string{`"tools":[{"function":{`, `"type":"function"`}, []string{`"parameters":{},`}},
+			{"rc_tools_strict", lit(`{"input":"hi","tools":[{"type":"function","name":"f","strict":true,"parameters":{"type":"object"}}]}`),
+				[]string{`"strict":true`}, nil},
+			{"rc_tool_choice", lit(`{"input":"hi","tool_choice":{"type":"function","name":"f"}}`),
+				[]string{`"tool_choice":{"function":{"name":"f"},"type":"function"}`}, nil},
+			{"rc_text_format", lit(`{"input":"hi","text":{"format":{"type":"json_schema","name":"S","schema":{"type":"object"},"strict":true}}}`),
+				[]string{`"response_format":{"json_schema":{"name":"S","schema":{"type":"object"},"strict":true},"type":"json_schema"}`}, nil},
+			{"rc_effort", lit(`{"input":"hi","reasoning":{"effort":"high"}}`),
+				[]string{`"reasoning_effort":"high"`}, nil},
+			// 有状态字段的策略是 polReject（整请求 400），不是"丢弃"：
+			// TestRowCoverage 对 polReject 成员改判"必须报 ErrStatefulFields"。
+			{"rc_prev_id", lit(`{"input":"hi","previous_response_id":"resp_1"}`), nil, nil},
+		},
+		dirChatToMessResp: {
+			{"cm2_text", lit(chatResp(`"content":"HELLO"`, `"finish_reason":"stop"`)),
+				[]string{`"text":"HELLO"`, `"type":"text"`}, nil},
+			{"cm2_tool", lit(chatResp(`"content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}]`, `"finish_reason":"tool_calls"`)),
+				[]string{`"type":"tool_use"`, `"id":"c1"`, `"input":{"a":1}`}, nil},
+			{"cm2_tool_badargs", lit(chatResp(`"tool_calls":[{"id":"c2","type":"function","function":{"name":"g","arguments":"{oops"}}]`, `"finish_reason":"tool_calls"`)),
+				[]string{`"input":{}`}, []string{`oops`}},
+			{"cm2_reasoning", lit(chatResp(`"content":"t","reasoning_content":"think"`, `"finish_reason":"stop"`)),
+				[]string{`"type":"thinking"`, `"thinking":"think"`}, []string{`signature`}},
+			{"cm2_finish", lit(chatResp(`"content":"x"`, `"finish_reason":"length"`)),
+				[]string{`"stop_reason":"max_tokens"`}, nil},
+			{"cm2_usage_net", lit(chatRespUsage()),
+				[]string{`"input_tokens":50`}, nil},
+			{"cm2_usage_cached", lit(chatRespUsage()),
+				[]string{`"cache_read_input_tokens":40`}, nil},
+			{"cm2_usage_write", lit(chatRespUsage()),
+				[]string{`"cache_creation_input_tokens":10`}, nil},
+			{"cm2_usage_out", lit(chatRespUsage()),
+				[]string{`"output_tokens":20`}, nil},
+			{"cm2_drop_reasoning_tokens", lit(chatRespUsage()),
+				nil, []string{`reasoning_tokens`}},
+			{"cm2_drop_logprobs", lit(chatRespLogprobs()),
+				nil, []string{`logprobs`}},
+		},
+		dirChatToRespResp: {
+			{"cc_text", lit(chatResp(`"content":"HELLO"`, `"finish_reason":"stop"`)),
+				[]string{`"type":"output_text"`, `"text":"HELLO"`}, nil},
+			{"cc_fc", lit(chatResp(`"tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"a\":1}"}}]`, `"finish_reason":"tool_calls"`)),
+				[]string{`"type":"function_call"`, `"arguments":"{\"a\":1}"`, `"call_id":"c1"`}, nil},
+			{"cc_reasoning", lit(chatResp(`"content":"t","reasoning_content":"think"`, `"finish_reason":"stop"`)),
+				[]string{`"type":"reasoning"`, `"summary_text"`, `"text":"think"`}, nil},
+			{"cc_status", lit(chatResp(`"content":"x"`, `"finish_reason":"stop"`)),
+				[]string{`"status":"completed"`}, nil},
+			{"cc_incomplete", lit(chatResp(`"content":"x"`, `"finish_reason":"length"`)),
+				[]string{`"status":"incomplete"`, `"reason":"max_output_tokens"`}, nil},
+			{"cc_usage_net", lit(chatRespUsage()),
+				[]string{`"input_tokens":50`}, nil},
+			{"cc_usage_cached", lit(chatRespUsage()),
+				[]string{`"cached_tokens":40`}, nil},
+			{"cc_usage_write", lit(chatRespUsage()),
+				[]string{`"cache_write_tokens":10`}, nil},
+			{"cc_usage_out", lit(chatRespUsage()),
+				[]string{`"output_tokens":20`}, nil},
+			{"cc_reasoning_tokens", lit(chatRespUsage()),
+				[]string{`"reasoning_tokens":7`}, nil},
+		},
 		dirMessToChatResp: {
 			{"z_text", lit(`{"id":"m1","content":[{"type":"text","text":"HELLO"}]}`),
 				[]string{`"content":"HELLO"`}, nil},
@@ -249,6 +374,31 @@ func rowCases(t *testing.T) map[direction][]rowCase {
 	}
 }
 
+// chatResp chat completion 响应夹具：`"id":"c1","model":"m"` + message 片段 +
+// choice 片段 + usage。
+func chatResp(msgParts, choiceParts string) string {
+	return `{"id":"c1","model":"m","object":"chat.completion","created":9,"choices":[{"index":0,"message":{"role":"assistant",` +
+		msgParts + `},` + choiceParts + `}],"usage":{"prompt_tokens":100,"completion_tokens":20,"total_tokens":120,"prompt_tokens_details":{"cached_tokens":40,"cache_write_tokens":10},"completion_tokens_details":{"reasoning_tokens":7}}}`
+}
+
+// chatRespUsage 纯用量夹具（net = 100-40-10 = 50）。
+func chatRespUsage() string { return chatResp(`"content":"x"`, `"finish_reason":"stop"`) }
+
+// chatRespLogprobs 带 logprobs 的夹具（Messages 无承载位 → 必须丢）。
+func chatRespLogprobs() string {
+	return `{"id":"c1","model":"m","choices":[{"index":0,"logprobs":{"content":[{"token":"x"}]},"message":{"role":"assistant","content":"x"},"finish_reason":"stop"}]}`
+}
+
+// rowOfMember 取某成员的策略行（找不到返回零值行，pol 为 polUnknown）。
+func rowOfMember(d direction, member string) row {
+	for _, rw := range rowsOf(d) {
+		if shapeName[rw.sh] == member {
+			return rw
+		}
+	}
+	return row{}
+}
+
 // TestRowCoverage (c)：每个成员至少一条用例，且每条用例的形态断言成立。
 func TestRowCoverage(t *testing.T) {
 	cases := rowCases(t)
@@ -261,10 +411,18 @@ func TestRowCoverage(t *testing.T) {
 			var out []byte
 			var err error
 			switch d {
-			case dirRespToChat, dirRespToMessResp, dirMessToChatResp:
+			case dirRespToChat, dirRespToMessResp, dirMessToChatResp, dirChatToMessResp, dirChatToRespResp:
 				out, err = ConvertResponse([]byte(body), dirToConvert(d))
 			default:
 				out, err = ConvertRequest([]byte(body), dirToConvert(d))
+			}
+			if rowOfMember(d, c.member).pol == polReject {
+				// polReject 的语义是"整请求拒绝"，不是"丢弃该字段"：断言它确实
+				// 报可识别的 sentinel，而不是静默产出少了东西的报文。
+				require.ErrorIs(t, err, ErrStatefulFields, "%s/%s：有状态字段必须整请求拒绝", dirName[d], c.member)
+				require.False(t, covered[c.member], "成员 %s 有重复用例", c.member)
+				covered[c.member] = true
+				continue
 			}
 			require.NoError(t, err, "%s/%s", dirName[d], c.member)
 			s := string(out)
@@ -306,6 +464,16 @@ func dirToConvert(d direction) domain.ProtocolConvert {
 		return domain.ProtocolConvertMessToResp
 	case dirMessToChatResp:
 		return domain.ProtocolConvertChatToMess
+	case dirMessToChatReq:
+		return domain.ProtocolConvertMessToChat
+	case dirRespToChatReq:
+		return domain.ProtocolConvertRespToChat
+	// 响应面方向映射回"以客户端协议为准"的那一个 direction 值（ConvertResponse 的
+	// 入参方向 = 客户端协议 → 上游协议）。
+	case dirChatToMessResp:
+		return domain.ProtocolConvertMessToChat
+	case dirChatToRespResp:
+		return domain.ProtocolConvertRespToChat
 	}
 	return ""
 }
@@ -333,6 +501,9 @@ func TestInvariantsOnAllGoldenOutputs(t *testing.T) {
 	// 逐行用例的输出同样要过不变量
 	for d, cs := range rowCases(t) {
 		for _, c := range cs {
+			if rowOfMember(d, c.member).pol == polReject {
+				continue // polReject 没有产物（整请求 400），不变量无从谈起
+			}
 			out, err := ConvertRequest([]byte(c.body(t)), dirToConvert(d))
 			if err != nil {
 				out, err = ConvertResponse([]byte(c.body(t)), dirToConvert(d))

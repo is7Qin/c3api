@@ -47,7 +47,9 @@ const (
 const (
 	ChatToMess GroupProtocolConvert = "chat_to_mess"
 	ChatToResp GroupProtocolConvert = "chat_to_resp"
+	MessToChat GroupProtocolConvert = "mess_to_chat"
 	MessToResp GroupProtocolConvert = "mess_to_resp"
+	RespToChat GroupProtocolConvert = "resp_to_chat"
 	RespToMess GroupProtocolConvert = "resp_to_mess"
 )
 
@@ -566,7 +568,7 @@ type GroupListResponse struct {
 	Total int64   `json:"total"`
 }
 
-// GroupProtocolConvert 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）
+// GroupProtocolConvert 分组级协议转换方向（只补差，网关 internal/protoconv 消费）：chat_to_resp = 客户端 chat → 模板 resp；mess_to_resp = anthropic messages → resp；resp_to_mess = resp → anthropic messages；chat_to_mess = chat → anthropic messages；mess_to_chat = anthropic messages → chat；resp_to_chat = resp → chat。off 不在枚举内——不转换 = 空数组（见 protocol_convert 字段说明）。方向是否可用还取决于网关能力表（未 GA 的方向配置即 400）
 type GroupProtocolConvert string
 
 // GroupVisibility defines model for GroupVisibility.

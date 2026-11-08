@@ -33,7 +33,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | 任务 | 位置 |
 |---|---|
 | 改 AI 格式路径 | `internal/proxy/forward_*.go`(HTTP 面) → `caller_*.go`(上游策略) → `pipeline.go`(守卫骨架) |
-| 协议转换 | `internal/protoconv`（chat↔resp/mess 四方向全网格；仅 chat→resp 是 gjson 字节级） |
+| 协议转换 | `internal/protoconv`（六方向：chat↔resp/mess 四方向 + mess→chat / resp→chat；请求侧全字节级，响应侧除 chat→resp 外是 map-based） |
 | 上游客户端/鉴权注入 | `pkg/aiclient`（Factory 双缓存；`rawPostCT` 收 `in http.Header` 走 `RelayHeaders`，唯一剔除清单在 `relay.go` 的 `relayDeny`） |
 | 新增管理端点 | `openapi/openapi.yaml` → 重生成 → `internal/handler/*.go` 实现 → `web` 跑 `pnpm gen:api` |
 | 扣费链路 | `internal/proxy/forward.go`(routeLog 出生定态) → `internal/repository/billing_cursor.go`(游标消费) → `internal/billing`(Cost 纯函数/Balances 快照) |
@@ -50,7 +50,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | `handleFormat` | method | internal/proxy/caller.go:126 | 4 种 REST 格式共享入口（scanKeys 单遍提取） |
 | `UpstreamCaller` | iface | internal/proxy/caller.go:98 | 一格式一实现； owns 记录/failover 分类 |
 | `relayWS` / `wsRelayTransport` | method/iface | internal/proxy/ws_relay.go:54/:35 | WS 双向中继合一；5 方法隔离 responses vs codex |
-| `ConvertRequest`/`StreamMapper` | func/struct | internal/protoconv/protoconv.go:29/:84 | 请求转换四方向分发；流式逐帧零分配映射 |
+| `ConvertRequest`/`StreamMapper` | func/struct | internal/protoconv/protoconv.go | 请求转换六方向分发；流式逐帧零分配映射（chat 源两方向的帧由 `chat_stream.go` 自解析） |
 | `Factory` / `rawPostCT` | struct/method | pkg/aiclient/aiclient.go | 模板级客户端缓存+URL 缓存；HTTP 面走 `RelayHeaders`（default-allow + `relayDeny`） |
 | `Relay`/`InferEventName` | func | pkg/sserelay/relay.go | 池化 SSE 中继；inLine 续片状态机 |
 | `Codex` | struct | internal/sdkbridge/codex.go:27 | codex SDK 适配：账号级缓存+fatal 回调+轮换 |
@@ -58,7 +58,8 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 
 ## CONVENTIONS
 
-- **字节级(gjson)边界按请求/响应分开看**：**请求侧四方向全部字节级**（`internal/protoconv/req_fast.go` 的 `chatToMessRequest`/`messToRespRequest`/`respToMessRequest`，加 `chat_resp.go` 的 `chatToRespRequest`）；**响应侧只有 chat→resp 字节级**（`respToChatResponse`），`respToMessResponse`/`messToRespResponse`/`messToChatResponse` 仍是 `decodeObj` 的 map-based——响应侧不对称是有意的，别"统一"
+- **字节级(gjson)边界按请求/响应分开看**：**请求侧六方向全部字节级**（`internal/protoconv/req_fast.go` 的 `chatToMessRequest`/`messToRespRequest`/`respToMessRequest`，`chat_resp.go` 的 `chatToRespRequest`，`mess_chat_req.go` 的 `messToChatRequest`，`resp_chat_req.go` 的 `respToChatRequest`）；**响应侧只有 chat→resp 字节级**（`respToChatResponse`），`respToMessResponse`/`messToRespResponse`/`messToChatResponse`/`chatToMessResponse`/`chatToRespResponse` 仍是 `decodeObj` 的 map-based——响应侧不对称是有意的，别"统一"
+- **chat 源两方向（mess→chat / resp→chat）的丢弃必须计数**：内容模型判 `polDrop` 的块（document 非纯文本源、search_result、redacted_thinking、file 图片、input_file、加密思考）在转换里走 `noteReqDrop(dir, field)` / `noteRespDrop(dir, field)`（**按面选入口**：请求转换文件用前者、响应转换文件用后者），键是 `"<方向>|<面>|<字段>"`（面 ∈ `req`/`resp`）；有状态字段（`previous_response_id` 等）判 `polReject`，**整请求 400**，不许静默丢
 - **方向命名双轨**：`ProtocolConvertXToY`=客户端说 X 上游说 Y；转换函数按数据流命名(`respToChatResponse`)
 - **base_url 可带协议前缀**（如 `/zen`），但拒绝以 `/v1` 结尾（防 `/v1/v1/...` 404）；openai 族自动补 `/v1`
 - **配置 fail-fast**：未知键、时长<1ms、受控整数<1、占位密钥(change-me 等)全部启动即炸；改 TOML 键名=故意破坏性变更

@@ -38,6 +38,40 @@ type capturedUpstream struct {
 	body     map[string]any
 	stream   bool
 	dataOnly bool // /v1/responses 流式不产 event: 行（非规范上游形态，同 fakeupstream）
+	// usage 覆盖 chat 响应的 usage（计费口径断言用；nil = 默认 3/5/0/0）。
+	usage map[string]any
+	// chatChoices 覆盖 chat **非流式**响应的 choices[]（nil = 固定的
+	// message.content:"hi" / finish_reason:"stop"）。用来造工具调用停因。
+	chatChoices []any
+	// chatStreamFrames 覆盖 chat **流式**响应发出的数据帧（每项是一帧的 JSON 体，
+	// 不含 "data: " 前缀；nil = 默认的 role→content→finish+usage 三帧）。
+	chatStreamFrames []string
+	// noDone 让 chat 流式响应在最后一帧后**直接结束、不写 [DONE]**，用来验证
+	// sserelay 的 Terminal 收尾路径（无 [DONE] 的正常 EOF）。
+	noDone bool
+	// chatModel 覆盖 chat 响应里回显的 model（nil = 原样回显请求里的 model）。
+	// 用来验证「上游模型名 ≠ 客户端模型名」时帧里的 model 被改写成客户端模型。
+	chatModel string
+}
+
+// replyModel chat 响应要回显的 model。
+func (c *capturedUpstream) replyModel(reqModel any) any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.chatModel != "" {
+		return c.chatModel
+	}
+	return reqModel
+}
+
+// chatUsage 本次 chat 响应要带的 usage（默认 gross=3 / out=5 / 无缓存）。
+func (c *capturedUpstream) chatUsage() map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.usage != nil {
+		return c.usage
+	}
+	return map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8}
 }
 
 func (c *capturedUpstream) last(t *testing.T) (string, map[string]any, bool) {
@@ -109,17 +143,39 @@ func (c *capturedUpstream) srv(t *testing.T) *httptest.Server {
 		case "/v1/chat/completions":
 			if stream {
 				w.Header().Set("Content-Type", "text/event-stream")
-				fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`+"\n\n")
-				fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}`+"\n\n")
-				fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}`+"\n\n")
-				fmt.Fprint(w, "data: [DONE]\n\n")
+				c.mu.Lock()
+				frames, noDone := c.chatStreamFrames, c.noDone
+				c.mu.Unlock()
+				if frames != nil {
+					for _, f := range frames {
+						fmt.Fprintf(w, "data: %s\n\n", f)
+					}
+				} else {
+					fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}`+"\n\n")
+					fmt.Fprint(w, `data: {"id":"c_1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}`+"\n\n")
+					fr, _ := json.Marshal(map[string]any{
+						"id": "c_1", "object": "chat.completion.chunk",
+						"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
+						"usage":   c.chatUsage(),
+					})
+					fmt.Fprintf(w, "data: %s\n\n", fr)
+				}
+				if !noDone {
+					fmt.Fprint(w, "data: [DONE]\n\n")
+				}
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
+			c.mu.Lock()
+			choices := c.chatChoices
+			c.mu.Unlock()
+			if choices == nil {
+				choices = []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": "hi"}, "finish_reason": "stop"}}
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id": "c_1", "object": "chat.completion", "model": body["model"],
-				"choices": []any{map[string]any{"index": 0, "message": map[string]any{"role": "assistant", "content": "hi"}, "finish_reason": "stop"}},
-				"usage":   map[string]any{"prompt_tokens": 3, "completion_tokens": 5, "total_tokens": 8},
+				"id": "c_1", "object": "chat.completion", "model": c.replyModel(body["model"]),
+				"choices": choices,
+				"usage":   c.chatUsage(),
 			})
 		default:
 			w.WriteHeader(404)

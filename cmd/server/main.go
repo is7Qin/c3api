@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -107,6 +108,27 @@ func main() {
 			logx.Int("schema_bytes", e.SchemaBytes),
 			logx.Int("root_keys", e.RootKeys),
 			logx.Bool("schema_missing", e.Missing),
+		)
+	})
+	// 丢弃观测（spec §7 I3）：转换把"目标协议无载体"的字段丢掉时必须可见。
+	// 以前 SetDropSink 从未被调用——计数在涨、日志一条没有，线上只能靠翻代码猜。
+	//
+	// 按事件（方向 + 协议面 + 字段）去重、每个三元组只 WARN 一次：noteReqDrop /
+	// noteRespDrop 在请求/响应热路径上逐次调用（孤儿 tool_result、document、
+	// mcp_servers… 每单都可能命中），不去重会把日志刷爆并淹没真正的异常。
+	//
+	// 去重表是单层 sync.Map + **直接拿 DropEvent 当键**（值类型、可比较）：不拼
+	// 字符串、每次调用只做一次 LoadOrStore（内部按 key 分片），不会让所有丢弃
+	// 事件抢同一把全局锁。
+	var dropSeen sync.Map
+	protoconv.SetDropSink(func(e protoconv.DropEvent) {
+		if _, dup := dropSeen.LoadOrStore(e, struct{}{}); dup {
+			return
+		}
+		log.Warn("conversion dropped fields the target protocol cannot carry",
+			logx.String("direction", string(e.Dir)),
+			logx.String("face", e.Face.String()),
+			logx.String("field", e.Field),
 		)
 	})
 	// pprof 监听失败可观测（spec 2026-08-13）：旧实现 `_ =` 全静默——监听
