@@ -30,11 +30,14 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 	_, err := r.client.TemplateExt.Create().
 		SetTemplateID(e.TemplateID).
 		SetCredentialType(string(e.CredentialType)).
-		SetNillableStripImageTools(e.StripImageTools). // nil = no-op（插入路径缺列 → NULL）
-		SetUpstreamPaths(e.UpstreamPaths).             // nil → NULL（JSON 列零值即 nil）
+		SetNillableStripImageTools(e.StripImageTools).                 // nil = no-op（插入路径缺列 → NULL）
+		SetUpstreamPaths(e.UpstreamPaths).                             // nil → NULL（JSON 列零值即 nil）
+		SetCodexResponsesTransport(string(e.CodexResponsesTransport)). // 非可空列：零值 "" 即"未配置 = 默认 http"
 		OnConflictColumns(templateext.FieldTemplateID).
 		Update(func(u *ent.TemplateExtUpsert) {
 			u.SetCredentialType(string(e.CredentialType))
+			// 非可空列：恒 Set（不 Clear——空串本身就是默认面的完整表达）
+			u.SetCodexResponsesTransport(string(e.CodexResponsesTransport))
 			// 可空列：非 nil → Set 覆盖；nil → Clear（NULL 清空）
 			if e.StripImageTools != nil {
 				u.SetStripImageTools(*e.StripImageTools)

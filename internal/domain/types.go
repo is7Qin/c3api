@@ -387,9 +387,14 @@ type Template struct {
 	// 值**原样**拼到模板 base_url 之后（不自动补 /v1、不改写），可带 query；
 	// 未配置不影响任何既有类型。
 	UpstreamPaths map[string]string
-	CreatedAt     time.Time
-	UpdatedAt     time.Time
-	DeletedAt     *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
+	// CodexResponsesTransport 原生 codex responses 车道的出站传输（模板级开关；
+	// template_ext.codex_responses_transport 快照合并值，热路径只读它）。
+	// 零值 = 默认 http。**不进 CandidateFingerprint**：指纹变化会击穿在途
+	// continuation 的候选缓存，而传输不影响候选集。
+	CodexResponsesTransport CodexResponsesTransport
+	CreatedAt               time.Time
+	UpdatedAt               time.Time
+	DeletedAt               *time.Time // 软删除时间戳；nil = 存活（列表/消费路径过滤；GET 单个可查已删）
 }
 
 // FormatsFor 模板支持的格式列表。
@@ -534,6 +539,10 @@ type TemplateExt struct {
 	// UpstreamPaths 逐格式自定义上游路径（custom 专用）。nil = 未配置（NULL
 	// 落库）；空 map 与 nil 等价。键集合与默认值见 spec §4.3。
 	UpstreamPaths map[string]string
+	// CodexResponsesTransport 代码出站传输开关（仅 codex-oauth/codex-pat 有意义；
+	// 非 codex 只接受 ""）。非可空列："" = 未配置 = 默认 http——库里因此无法
+	// 区分"从未配置"与"显式 http"（spec §11.1 已登记）。
+	CodexResponsesTransport CodexResponsesTransport
 }
 
 // CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 序列化

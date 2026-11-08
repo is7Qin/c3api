@@ -25,6 +25,10 @@ func (TemplateExt) Fields() []ent.Field {
 		// custom 专用：逐格式自定义上游路径（NULL/空 = 全回落官方默认）。
 		// 键集合与校验见 spec §4.3/§4.4；仅 credential_type=custom 可写。
 		field.JSON("upstream_paths", map[string]string{}).Optional(),
+		// 原生 codex responses 出站传输开关（spec-codex-outbound-transport
+		// §4.1）："" = 未配置 = 默认 http，故 NOT NULL DEFAULT ''——不用
+		// Optional().Nillable()，因为 "" 已是"未配置 = 默认 http"的完整表达。
+		field.String("codex_responses_transport").Default(""),
 	}
 }
 

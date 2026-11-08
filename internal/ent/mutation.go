@@ -23790,18 +23790,19 @@ func (m *TemplateMutation) ResetEdge(name string) error {
 // TemplateExtMutation represents an operation that mutates the TemplateExt nodes in the graph.
 type TemplateExtMutation struct {
 	config
-	op                Op
-	typ               string
-	id                *int64
-	credential_type   *string
-	strip_image_tools *bool
-	upstream_paths    *map[string]string
-	clearedFields     map[string]struct{}
-	template          *int64
-	clearedtemplate   bool
-	done              bool
-	oldValue          func(context.Context) (*TemplateExt, error)
-	predicates        []predicate.TemplateExt
+	op                        Op
+	typ                       string
+	id                        *int64
+	credential_type           *string
+	strip_image_tools         *bool
+	upstream_paths            *map[string]string
+	codex_responses_transport *string
+	clearedFields             map[string]struct{}
+	template                  *int64
+	clearedtemplate           bool
+	done                      bool
+	oldValue                  func(context.Context) (*TemplateExt, error)
+	predicates                []predicate.TemplateExt
 }
 
 var _ ent.Mutation = (*TemplateExtMutation)(nil)
@@ -24078,6 +24079,42 @@ func (m *TemplateExtMutation) ResetUpstreamPaths() {
 	delete(m.clearedFields, templateext.FieldUpstreamPaths)
 }
 
+// SetCodexResponsesTransport sets the "codex_responses_transport" field.
+func (m *TemplateExtMutation) SetCodexResponsesTransport(s string) {
+	m.codex_responses_transport = &s
+}
+
+// CodexResponsesTransport returns the value of the "codex_responses_transport" field in the mutation.
+func (m *TemplateExtMutation) CodexResponsesTransport() (r string, exists bool) {
+	v := m.codex_responses_transport
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCodexResponsesTransport returns the old "codex_responses_transport" field's value of the TemplateExt entity.
+// If the TemplateExt object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *TemplateExtMutation) OldCodexResponsesTransport(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCodexResponsesTransport is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCodexResponsesTransport requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCodexResponsesTransport: %w", err)
+	}
+	return oldValue.CodexResponsesTransport, nil
+}
+
+// ResetCodexResponsesTransport resets all changes to the "codex_responses_transport" field.
+func (m *TemplateExtMutation) ResetCodexResponsesTransport() {
+	m.codex_responses_transport = nil
+}
+
 // ClearTemplate clears the "template" edge to the Template entity.
 func (m *TemplateExtMutation) ClearTemplate() {
 	m.clearedtemplate = true
@@ -24139,7 +24176,7 @@ func (m *TemplateExtMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *TemplateExtMutation) Fields() []string {
-	fields := make([]string, 0, 4)
+	fields := make([]string, 0, 5)
 	if m.template != nil {
 		fields = append(fields, templateext.FieldTemplateID)
 	}
@@ -24151,6 +24188,9 @@ func (m *TemplateExtMutation) Fields() []string {
 	}
 	if m.upstream_paths != nil {
 		fields = append(fields, templateext.FieldUpstreamPaths)
+	}
+	if m.codex_responses_transport != nil {
+		fields = append(fields, templateext.FieldCodexResponsesTransport)
 	}
 	return fields
 }
@@ -24168,6 +24208,8 @@ func (m *TemplateExtMutation) Field(name string) (ent.Value, bool) {
 		return m.StripImageTools()
 	case templateext.FieldUpstreamPaths:
 		return m.UpstreamPaths()
+	case templateext.FieldCodexResponsesTransport:
+		return m.CodexResponsesTransport()
 	}
 	return nil, false
 }
@@ -24185,6 +24227,8 @@ func (m *TemplateExtMutation) OldField(ctx context.Context, name string) (ent.Va
 		return m.OldStripImageTools(ctx)
 	case templateext.FieldUpstreamPaths:
 		return m.OldUpstreamPaths(ctx)
+	case templateext.FieldCodexResponsesTransport:
+		return m.OldCodexResponsesTransport(ctx)
 	}
 	return nil, fmt.Errorf("unknown TemplateExt field %s", name)
 }
@@ -24221,6 +24265,13 @@ func (m *TemplateExtMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetUpstreamPaths(v)
+		return nil
+	case templateext.FieldCodexResponsesTransport:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCodexResponsesTransport(v)
 		return nil
 	}
 	return fmt.Errorf("unknown TemplateExt field %s", name)
@@ -24300,6 +24351,9 @@ func (m *TemplateExtMutation) ResetField(name string) error {
 		return nil
 	case templateext.FieldUpstreamPaths:
 		m.ResetUpstreamPaths()
+		return nil
+	case templateext.FieldCodexResponsesTransport:
+		m.ResetCodexResponsesTransport()
 		return nil
 	}
 	return fmt.Errorf("unknown TemplateExt field %s", name)

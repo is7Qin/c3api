@@ -26,6 +26,7 @@ import (
 	"github.com/is7qin/c3api/internal/ent/suppliersettlement"
 	"github.com/is7qin/c3api/internal/ent/tempbalance"
 	"github.com/is7qin/c3api/internal/ent/template"
+	"github.com/is7qin/c3api/internal/ent/templateext"
 	"github.com/is7qin/c3api/internal/ent/usageentitystat"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 	"github.com/is7qin/c3api/internal/ent/usagestat"
@@ -346,6 +347,12 @@ func init() {
 	templateDescCreatedAt := templateFields[10].Descriptor()
 	// template.DefaultCreatedAt holds the default value on creation for the created_at field.
 	template.DefaultCreatedAt = templateDescCreatedAt.Default.(func() time.Time)
+	templateextFields := schema.TemplateExt{}.Fields()
+	_ = templateextFields
+	// templateextDescCodexResponsesTransport is the schema descriptor for codex_responses_transport field.
+	templateextDescCodexResponsesTransport := templateextFields[5].Descriptor()
+	// templateext.DefaultCodexResponsesTransport holds the default value on creation for the codex_responses_transport field.
+	templateext.DefaultCodexResponsesTransport = templateextDescCodexResponsesTransport.Default.(string)
 	usageentitystatFields := schema.UsageEntityStat{}.Fields()
 	_ = usageentitystatFields
 	// usageentitystatDescModel is the schema descriptor for model field.

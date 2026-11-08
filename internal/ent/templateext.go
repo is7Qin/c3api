@@ -26,6 +26,8 @@ type TemplateExt struct {
 	StripImageTools *bool `json:"strip_image_tools,omitempty"`
 	// UpstreamPaths holds the value of the "upstream_paths" field.
 	UpstreamPaths map[string]string `json:"upstream_paths,omitempty"`
+	// CodexResponsesTransport holds the value of the "codex_responses_transport" field.
+	CodexResponsesTransport string `json:"codex_responses_transport,omitempty"`
 	// Edges holds the relations/edges for other nodes in the graph.
 	// The values are being populated by the TemplateExtQuery when eager-loading is set.
 	Edges        TemplateExtEdges `json:"edges"`
@@ -63,7 +65,7 @@ func (*TemplateExt) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case templateext.FieldID, templateext.FieldTemplateID:
 			values[i] = new(sql.NullInt64)
-		case templateext.FieldCredentialType:
+		case templateext.FieldCredentialType, templateext.FieldCodexResponsesTransport:
 			values[i] = new(sql.NullString)
 		default:
 			values[i] = new(sql.UnknownType)
@@ -112,6 +114,12 @@ func (_m *TemplateExt) assignValues(columns []string, values []any) error {
 				if err := json.Unmarshal(*value, &_m.UpstreamPaths); err != nil {
 					return fmt.Errorf("unmarshal field upstream_paths: %w", err)
 				}
+			}
+		case templateext.FieldCodexResponsesTransport:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field codex_responses_transport", values[i])
+			} else if value.Valid {
+				_m.CodexResponsesTransport = value.String
 			}
 		default:
 			_m.selectValues.Set(columns[i], values[i])
@@ -167,6 +175,9 @@ func (_m *TemplateExt) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("upstream_paths=")
 	builder.WriteString(fmt.Sprintf("%v", _m.UpstreamPaths))
+	builder.WriteString(", ")
+	builder.WriteString("codex_responses_transport=")
+	builder.WriteString(_m.CodexResponsesTransport)
 	builder.WriteByte(')')
 	return builder.String()
 }

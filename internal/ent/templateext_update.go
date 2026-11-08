@@ -88,6 +88,20 @@ func (_u *TemplateExtUpdate) ClearUpstreamPaths() *TemplateExtUpdate {
 	return _u
 }
 
+// SetCodexResponsesTransport sets the "codex_responses_transport" field.
+func (_u *TemplateExtUpdate) SetCodexResponsesTransport(v string) *TemplateExtUpdate {
+	_u.mutation.SetCodexResponsesTransport(v)
+	return _u
+}
+
+// SetNillableCodexResponsesTransport sets the "codex_responses_transport" field if the given value is not nil.
+func (_u *TemplateExtUpdate) SetNillableCodexResponsesTransport(v *string) *TemplateExtUpdate {
+	if v != nil {
+		_u.SetCodexResponsesTransport(*v)
+	}
+	return _u
+}
+
 // SetTemplate sets the "template" edge to the Template entity.
 func (_u *TemplateExtUpdate) SetTemplate(v *Template) *TemplateExtUpdate {
 	return _u.SetTemplateID(v.ID)
@@ -165,6 +179,9 @@ func (_u *TemplateExtUpdate) sqlSave(ctx context.Context) (_node int, err error)
 	}
 	if _u.mutation.UpstreamPathsCleared() {
 		_spec.ClearField(templateext.FieldUpstreamPaths, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.CodexResponsesTransport(); ok {
+		_spec.SetField(templateext.FieldCodexResponsesTransport, field.TypeString, value)
 	}
 	if _u.mutation.TemplateCleared() {
 		edge := &sqlgraph.EdgeSpec{
@@ -275,6 +292,20 @@ func (_u *TemplateExtUpdateOne) ClearUpstreamPaths() *TemplateExtUpdateOne {
 	return _u
 }
 
+// SetCodexResponsesTransport sets the "codex_responses_transport" field.
+func (_u *TemplateExtUpdateOne) SetCodexResponsesTransport(v string) *TemplateExtUpdateOne {
+	_u.mutation.SetCodexResponsesTransport(v)
+	return _u
+}
+
+// SetNillableCodexResponsesTransport sets the "codex_responses_transport" field if the given value is not nil.
+func (_u *TemplateExtUpdateOne) SetNillableCodexResponsesTransport(v *string) *TemplateExtUpdateOne {
+	if v != nil {
+		_u.SetCodexResponsesTransport(*v)
+	}
+	return _u
+}
+
 // SetTemplate sets the "template" edge to the Template entity.
 func (_u *TemplateExtUpdateOne) SetTemplate(v *Template) *TemplateExtUpdateOne {
 	return _u.SetTemplateID(v.ID)
@@ -382,6 +413,9 @@ func (_u *TemplateExtUpdateOne) sqlSave(ctx context.Context) (_node *TemplateExt
 	}
 	if _u.mutation.UpstreamPathsCleared() {
 		_spec.ClearField(templateext.FieldUpstreamPaths, field.TypeJSON)
+	}
+	if value, ok := _u.mutation.CodexResponsesTransport(); ok {
+		_spec.SetField(templateext.FieldCodexResponsesTransport, field.TypeString, value)
 	}
 	if _u.mutation.TemplateCleared() {
 		edge := &sqlgraph.EdgeSpec{

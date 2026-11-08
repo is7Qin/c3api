@@ -20,6 +20,8 @@ const (
 	FieldStripImageTools = "strip_image_tools"
 	// FieldUpstreamPaths holds the string denoting the upstream_paths field in the database.
 	FieldUpstreamPaths = "upstream_paths"
+	// FieldCodexResponsesTransport holds the string denoting the codex_responses_transport field in the database.
+	FieldCodexResponsesTransport = "codex_responses_transport"
 	// EdgeTemplate holds the string denoting the template edge name in mutations.
 	EdgeTemplate = "template"
 	// Table holds the table name of the templateext in the database.
@@ -40,6 +42,7 @@ var Columns = []string{
 	FieldCredentialType,
 	FieldStripImageTools,
 	FieldUpstreamPaths,
+	FieldCodexResponsesTransport,
 }
 
 // ValidColumn reports if the column name is valid (part of the table columns).
@@ -51,6 +54,11 @@ func ValidColumn(column string) bool {
 	}
 	return false
 }
+
+var (
+	// DefaultCodexResponsesTransport holds the default value on creation for the "codex_responses_transport" field.
+	DefaultCodexResponsesTransport string
+)
 
 // OrderOption defines the ordering options for the TemplateExt queries.
 type OrderOption func(*sql.Selector)
@@ -73,6 +81,11 @@ func ByCredentialType(opts ...sql.OrderTermOption) OrderOption {
 // ByStripImageTools orders the results by the strip_image_tools field.
 func ByStripImageTools(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldStripImageTools, opts...).ToFunc()
+}
+
+// ByCodexResponsesTransport orders the results by the codex_responses_transport field.
+func ByCodexResponsesTransport(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCodexResponsesTransport, opts...).ToFunc()
 }
 
 // ByTemplateField orders the results by template field.
