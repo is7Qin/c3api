@@ -6,6 +6,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -13,6 +15,8 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
+	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // —— 模板类型化扩展（template_ext 1:1；通用框架：表结构/CRUD 骨架/类型枚举
@@ -31,6 +35,12 @@ var upstreamPathFormat = map[string]domain.RequestFormat{
 }
 
 const upstreamPathMaxLen = 1024
+
+// transportDowngradeConfirm 降级确认令牌（spec §4.3 第 3 步）：把
+// codex_responses_transport 从 ws 换成别的值必须显式带这个字面量
+// （`?confirm=transport-downgrade`）。只认全等——"yes"、大小写变体、带空白都
+// 不放行，避免"顺手带个 confirm 就过"。
+const transportDowngradeConfirm = "transport-downgrade"
 
 // upstreamPathRE 白名单：黑名单枚举不出 `\`、`;`、`%00` 等分隔符变体。
 var upstreamPathRE = regexp.MustCompile(`^(?:v1/)?[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*(?:\?[A-Za-z0-9._~=&%-]+)?$`)
@@ -121,10 +131,27 @@ func (s *Service) GetTemplateExt(ctx context.Context, templateID int64) (*domain
 // 含 NULL 清空）。模板缺 id → 404（FK 由仓库保证）。
 // 类型一致性：ext 行 credential_type 必须与父模板的 credential_type 一致
 // （api_key 模板无 ext 行；special/oauth/pat 模板只能挂同类型行）——不一致 → 400。
+//
+// 出站传输的判定顺序**本身是契约**（spec-codex-outbound-transport §4.3）：
+//  0. 类型存在性（validateTemplateExt；必须先于降级门——api_key 模板根本没有
+//     ext 行，不先拦就会先吃 409 再吃 400）；
+//  1. 值域（!new.Valid() ⇒ 400；不 trim、不做大小写归一——回落会让两条实验臂
+//     都落 http，读数"一致地看不出差别"，是事后最难定位的故障）；
+//  2. 前置读旧值：GetTemplateExt 的 ErrNotFound ⇒ 默认面（首次建行不是 404）；
+//  3. 类型（!new.AllowedFor(ct) && new != old ⇒ 400；**幂等例外** new == old
+//     放行——模板类型改掉后陈旧 ext 行原样带回时不该报错）；
+//  4. 降级门（old == ws && new != ws ⇒ 409，除非 confirm 恰为
+//     transportDowngradeConfirm）。**不引入 expect_old**：需要确认的唯一情形
+//     就是 old == ws，期望值恒为常量，绑不住任何东西；
+//  5. 放行降级时 WARN（template_id/old/new）——没有指标系统，这是"实验臂何时
+//     被降级"的唯一事后证据。
+//
+// confirm 只由 handler 从 `?confirm=` 解析后原样透传，判定只在本方法一处。
+//
 // ext 行是模板快照的静态原料之一（strip_image_tools 参与路由属性推导），
 // 故写入后必须与模板其余写面同规失效：Templates() 全量重载调度快照 + 失效
 // 客户端工厂，并广播 NOTIFY 使多实例收敛。
-func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) (*domain.TemplateExt, error) {
+func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, confirm string) (*domain.TemplateExt, error) {
 	tpl, err := s.store.GetTemplate(ctx, e.TemplateID)
 	if err != nil {
 		return nil, mapRepoErr(err)
@@ -132,8 +159,45 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) 
 	if tpl.CredentialType != e.CredentialType {
 		return nil, ErrInvalidInput // 父模板类型与 ext 行类型必须一致
 	}
-	if err := validateTemplateExt(e); err != nil {
+	if err := validateTemplateExt(e); err != nil { // 第 0 步：类型存在性
 		return nil, err
+	}
+	newTransport := e.CodexResponsesTransport
+	if !newTransport.Valid() { // 第 1 步：值域（不 trim、不归一）
+		return nil, ErrInvalidInput
+	}
+	// 第 2 步：前置读旧值。无 ext 行 = 首次建行 ⇒ 默认面（不是 404）。
+	oldTransport := domain.CodexResponsesTransportDefault
+	oldExt, err := s.store.GetTemplateExt(ctx, e.TemplateID)
+	switch {
+	case err == nil:
+		oldTransport = oldExt.CodexResponsesTransport
+	case errors.Is(err, repository.ErrNotFound):
+		// 首次建行：old 取默认面
+	default:
+		return nil, mapRepoErr(err)
+	}
+	// 第 3 步：类型面。幂等例外：原值原样带回（new == old）放行——模板类型改
+	// 掉后陈旧 ext 行（如 custom 行上残留的 ws）再保存时不该变成 400。
+	if newTransport != oldTransport && !newTransport.AllowedFor(e.CredentialType) {
+		return nil, ErrInvalidInput
+	}
+	// 第 4 步：降级门。old == ws 时把 ws 换成任何别的值都要显式确认：一次只改
+	// strip_image_tools 的外部脚本会把 ws 静默清回默认，而 web 侧的回显门管
+	// 不到脚本/curl/DB 直改——只有服务端能管住全部写面。
+	if oldTransport == domain.CodexResponsesTransportWS && newTransport != domain.CodexResponsesTransportWS {
+		if confirm != transportDowngradeConfirm {
+			return nil, fmt.Errorf("%w: codex_responses_transport %q → %q 会让该模板的原生 responses 车道回落 http；确认降级请带 ?confirm=%s 重发",
+				ErrConflict, string(oldTransport), string(newTransport), transportDowngradeConfirm)
+		}
+		// 第 5 步：放行降级时的唯一事后证据（审计面 = WARN 日志，spec §4.3）。
+		// s.log 可能为 nil（测试/降级装配），守卫与其余写面一致。
+		if s.log != nil {
+			s.log.Warn("codex responses transport downgraded",
+				logx.Int64("template_id", e.TemplateID),
+				logx.String("old", string(oldTransport)),
+				logx.String("new", string(newTransport)))
+		}
 	}
 	if len(e.UpstreamPaths) > 0 {
 		if e.CredentialType != credential.TypeCustom {

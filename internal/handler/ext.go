@@ -41,6 +41,9 @@ func (h *AdminAPI) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 // 必须 == 父模板类型）与模板缺 id → 400/404（service 校验）。模板是共享配置
 // 面：可空列 strip_image_tools（公共能力开关）+ custom 的 upstream_paths——
 // 凭据（oauth/pat）一律在账号级 account_ext。
+//
+// `?confirm=` 是出站传输降级门（spec §4.3）的确认令牌：本层只读、只透传，
+// **不判 409**——判定（含令牌字面量比对与 WARN）只在 service 一处。
 func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	var in TemplateExt
 	if err := decodeLenient(r, &in); err != nil {
@@ -55,7 +58,8 @@ func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 	if in.UpstreamPaths != nil {
 		e.UpstreamPaths = *in.UpstreamPaths // nil = 未配置（清列由 service/repo 语义决定）
 	}
-	saved, err := h.svc.UpsertTemplateExt(r.Context(), e)
+	// confirm 原样透传（空串 = 未确认）：降级门的判定与 WARN 都在 service 一侧。
+	saved, err := h.svc.UpsertTemplateExt(r.Context(), e, r.URL.Query().Get("confirm"))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
