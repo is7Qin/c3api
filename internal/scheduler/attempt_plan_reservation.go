@@ -215,7 +215,10 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		Format: domain.RequestFormat(plan.route.Format), UpstreamKey: curAv.acc.UpstreamKey,
 		CredentialType: curAv.tpl.CredentialType, Model: mapped,
 		StripImageTools: curAv.tpl.StripImageTools, UpstreamPaths: curAv.tpl.UpstreamPaths, Ext: curAv.acc.Ext,
-		CandidateFingerprint: candidate.Fingerprint, lease: &leaseToken{acc: cur},
+		// 传输是**模板原值**（不做归一）：消费方只调 Key()/Name()，Selection 保存
+		// 原值才能让"配置写了什么"在响应头/日志里可辨认。
+		CodexResponsesTransport: curAv.tpl.CodexResponsesTransport,
+		CandidateFingerprint:    candidate.Fingerprint, lease: &leaseToken{acc: cur},
 		ModelMappingMode: mappingMode,
 		// 出口 client：快照期已解析好的指针（恒非 nil）——热路径一次字段读，
 		// 没有"代理是否可用"的判断（那是装载/编译期的事实，不是每次选号的活）。

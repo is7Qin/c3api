@@ -164,7 +164,8 @@ func toDomainTemplate(t *ent.Template) *domain.Template {
 	// 与模板一致，旧的 ws 会就此复活；写面的 409 + 确认（§4.3）是那条路唯一的
 	// 守卫，本函数不清理 ext 行（读路径不越权改写配置面）。
 	// 值**原样**合并（不在合并点归一）：脏值由 Key()/Name() 按默认面归一；装载侧
-	// WARN 待批次 3 接入（计划函数名 `scheduler.warnDirtyCodexTransports`）。
+	// 的审计 WARN 由 `scheduler.warnDirtyCodexTransports` 在每轮 reload 装配时写
+	// （每模板一条，带 template_id + 原值）。
 	if len(t.Edges.Ext) > 0 {
 		ext := t.Edges.Ext[0]
 		if d.CredentialType.IsCodex() && ext.CredentialType == string(d.CredentialType) {

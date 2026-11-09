@@ -156,7 +156,10 @@ func TestSelectionSizeAMD64(t *testing.T) {
 	// err_logs.message 写 `proxy_id=<id>`，而 `egress.Spec` 是按 Key 复用的连接
 	// 规格、按设计不带行 id ⇒ id 只能随 Selection 携带）。它与 Egress 同一次字段
 	// 读取得来，热路径**不读**它（只有失败面读）——有意登记，不是顺手加宽。
-	require.Equal(t, uintptr(208), unsafe.Sizeof(Selection{}))
+	// +16：CodexResponsesTransport 的 string 头（spec-codex-outbound-transport
+	// §5：模板级开关随快照定型，Selection 携带**原值**，消费方只调 Key()/Name()）。
+	// 它是构造期参数、热路径只读一个已定型的字符串，不进任何判断分支。
+	require.Equal(t, uintptr(224), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {
