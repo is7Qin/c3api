@@ -619,3 +619,130 @@ func TestCodexRetireThreadOnlyThatThread(t *testing.T) {
 	readAndCloseBody(t, wsReuseStream(t, a, cred, keep.identity(), domain.CodexResponsesTransportWS).Body)
 	require.Equal(t, 3, up.upgradeCount(), "另一条 thread 的连接不受影响")
 }
+
+// ---------------------------------------------------------------------------
+// S4 验收（G2/G7/G8/G9）：退休只摘 idle、关闭不复活、回调边界
+// ---------------------------------------------------------------------------
+
+// TestCodexRetireThreadG2NewThreadStartsWithNoTurnState G2（退休）：旧线程的连接
+// 被关、新线程首请求不带 ts（会话侧在退休时已清空 ts）。
+func TestCodexRetireThreadG2NewThreadStartsWithNoTurnState(t *testing.T) {
+	up := newWSReuseUpstream(t, "T-old",
+		wsReuseStep{created: true, id: "old1"},
+		wsReuseStep{created: true, id: "new1"},
+	)
+	a, _ := wsReuseCodex(t, up)
+	cred := wsReuseCred()
+	oldSess := newWSReuseSess("inst")
+	oldSess.SetTurnState("T-old")
+	readAndCloseBody(t, wsReuseStream(t, a, cred, oldSess.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 1, up.upgradeCount())
+
+	// 退休：① 记旧 threadKey ② 清 ts（会话侧）③ 新 thread ④ 退役旧线程空闲连接。
+	newSess := newWSReuseSess("inst")
+	a.RetireThread(cred.AccountID, oldSess.threadKey())
+	select {
+	case <-up.wsClosed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("退休未摘掉旧线程的空闲连接")
+	}
+
+	readAndCloseBody(t, wsReuseStream(t, a, cred, newSess.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 2, up.upgradeCount(), "新线程新连接")
+	require.Equal(t, []string{"T-old", ""}, up.wsRequestTS(), "新线程首请求不带旧 ts")
+}
+
+// TestCodexRetireThreadG7ClosedClientDoesNotReviveIdle G7：退休/关闭后不残留；旧
+// client 的在飞连接归还后**不复活**（Close 之后 put 拒收，由 Release 终止）。
+func TestCodexRetireThreadG7ClosedClientDoesNotReviveIdle(t *testing.T) {
+	up := newWSReuseUpstream(t, "",
+		wsReuseStep{created: true, id: "inflight"},
+		wsReuseStep{created: true, id: "after"},
+	)
+	a, _ := wsReuseCodex(t, up)
+	oldCred := wsReuseCred()
+	sess := newWSReuseSess("inst")
+
+	// 在飞：拿到 body 但先不读（连接被 exchange 独占，不在 idle 表里）。
+	inFlight := wsReuseStream(t, a, oldCred, sess.identity(), domain.CodexResponsesTransportWS)
+	require.Equal(t, 1, up.upgradeCount())
+
+	// 凭据替换 ⇒ 旧条目弃用 + CloseWSIdleConnections（在飞连接不受影响）。
+	next := *oldCred
+	next.PATKey = "pat-reuse-rotated"
+	resp, err := a.StreamBody(t.Context(), &next, a.DirectEgress(),
+		[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
+	require.NoError(t, err)
+	readAndCloseBody(t, resp.Body)
+
+	// 在飞连接读完归还：client 已 closed ⇒ put 拒收 ⇒ 终止（不复活成 idle）。
+	readAndCloseBody(t, inFlight.Body)
+	select {
+	case <-up.wsClosed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("已关闭 client 的在飞连接归还后未被终止（复活成 idle）")
+	}
+
+	// 下一次请求必须重拨（旧 idle 不存在了）。
+	readAndCloseBody(t, wsReuseStream(t, a, &next, sess.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 2, up.upgradeCount(), "旧 client 的 idle 不残留：新凭据重拨")
+}
+
+// TestCodexRetireThreadG8OnlyAfterBodyClose G8（退休时序）：body Close **之前**
+// 上游观察不到连接关闭（退休只摘 idle，在飞连接不受影响）；Close 之后才观察到。
+func TestCodexRetireThreadG8OnlyAfterBodyClose(t *testing.T) {
+	up := newWSReuseUpstream(t, "",
+		wsReuseStep{created: true, id: "seq1"},
+	)
+	a, _ := wsReuseCodex(t, up)
+	cred := wsReuseCred()
+	sess := newWSReuseSess("inst")
+
+	inflight := wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS)
+	// 在飞期间退休：连接不在 idle 表里 ⇒ 不得被关闭。
+	a.RetireThread(cred.AccountID, sess.threadKey())
+	// 正向判据（不用等待/负向窗口）：在飞 body 仍能读到终态帧——连接没被杀。
+	got := readAndCloseBody(t, inflight.Body)
+	require.Contains(t, string(got), "response.completed", "在飞连接不因退休被关闭")
+
+	// Close 之后（连接已归还 idle）：再退休 ⇒ 上游观察到关闭。
+	a.RetireThread(cred.AccountID, sess.threadKey())
+	select {
+	case <-up.wsClosed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("body Close 之后退休未关闭 idle 连接")
+	}
+	require.Equal(t, 1, up.closedCount())
+}
+
+// TestCodexTurnStateSinkG9NoCallbackAfterClose G9（回调边界）：body Close 之后
+// Sink 不再被调用（计数不增）；聚合臂同理。
+func TestCodexTurnStateSinkG9NoCallbackAfterClose(t *testing.T) {
+	up := newWSReuseUpstream(t, "T1",
+		wsReuseStep{created: true, id: "s1", ts: "T2"},
+		wsReuseStep{created: true, id: "s2"},
+	)
+	a, _ := wsReuseCodex(t, up)
+	cred := wsReuseCred()
+	sess := newWSReuseSess("inst")
+
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
+	afterClose := len(sess.issued())
+	require.NotZero(t, afterClose)
+	// Close 之后没有任何新回调：再做一次请求（另一条会话的同款帧序）也不动本会话。
+	otherSess := newWSReuseSess("inst")
+	readAndCloseBody(t, wsReuseStream(t, a, cred, otherSess.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Len(t, sess.issued(), afterClose, "Close 之后本会话 Sink 计数不增")
+
+	// 聚合臂同理：调用返回（= 内部 Close 完成）后计数冻结。
+	aggSess := newWSReuseSess("inst")
+	_, err := a.Responses(t.Context(), cred, a.DirectEgress(),
+		[]byte(`{"model":"gpt-5.6","input":[]}`), aggSess.identity(), domain.CodexResponsesTransportWS)
+	require.NoError(t, err)
+	aggCount := len(aggSess.issued())
+	require.NotZero(t, aggCount)
+	require.Equal(t, aggSess.issued()[aggCount-1], aggSess.turnState(),
+		"聚合臂以**最后一次**签发值收尾（握手快照不回写）")
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Len(t, aggSess.issued(), aggCount, "聚合返回后 Sink 计数不增")
+}

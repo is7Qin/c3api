@@ -181,6 +181,13 @@ func withCodexIdentitySlots(n int) codexRespProxyOption {
 // bill 为计费钩子（nil = 计费全关）；opts 为模板微调（如出站传输开关）。
 func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, bill *BillingHooks, logs *captureLogStore, opts ...codexRespProxyOption) (*Proxy, *fakeFailureStore) {
 	t.Helper()
+	p, store, _ := newTestCodexRespProxyAccs(t, credType, accounts, upstream, mapping, bill, logs, opts...)
+	return p, store
+}
+
+// newTestCodexRespProxyAccs 同上，额外返回账号快照集合（用例要改 ext 后 reload）。
+func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, bill *BillingHooks, logs *captureLogStore, opts ...codexRespProxyOption) (*Proxy, *fakeFailureStore, map[int64][]*domain.Account) {
+	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: "",
 		CredentialType:   credType,
@@ -215,7 +222,18 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
 	// 请求会绕过测试替身直接打真实 codex 端点）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 线程退休出口与生产同形（晚绑定：适配层依赖调度器做失效上报）。会话池退休/
+	// 重载丢槽时会经它退役旧线程的空闲连接（§3.2 ④）。
+	var codexAdapter *sdkbridge.Codex
+	sched := scheduler.New(scheduler.Config{
+		SyncInterval: time.Hour,
+		Egress:       egPool,
+		RetireThread: func(accountID int64, threadKey string) {
+			if codexAdapter != nil {
+				codexAdapter.RetireThread(accountID, threadKey)
+			}
+		},
+	}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -239,9 +257,11 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
-	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
-	return p, store
+	codexAdapter = sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{
+		ClearTurnStates: sched.ClearTurnStates,
+	})
+	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codexAdapter})
+	return p, store, accs
 }
 
 // postResponses 向网关发 /v1/responses 请求（Bearer ck-1），返回响应。

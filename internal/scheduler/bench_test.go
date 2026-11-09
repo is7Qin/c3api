@@ -147,7 +147,8 @@ func TestSelectionSizeAMD64(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("amd64 layout gate")
 	}
-	// +8：codex 槽位池认领的 identitySlot 指针（slot-identity 注入/推进面）。
+	// +8：codex 会话池认领的 codexSession 指针（会话身份注入/推进面）。
+	// +8：会话所属池指针（凭据代际清 ts + 线程退休出口；spec S4 §3.2）。
 	// +32：SupplierFinance（选中账号时捕获的不可变财务上下文，spec 2026-10-09
 	// §4.2/§4.6；随尝试携带，收尾不再回查 owner）。
 	// +8：Egress 出口 client 指针（spec-proxy-pool §4.3：快照期解析好，出栈只读
@@ -159,7 +160,7 @@ func TestSelectionSizeAMD64(t *testing.T) {
 	// +16：CodexResponsesTransport 的 string 头（spec-codex-outbound-transport
 	// §5：模板级开关随快照定型，Selection 携带**原值**，消费方只调 Key()/Name()）。
 	// 它是构造期参数、热路径只读一个已定型的字符串，不进任何判断分支。
-	require.Equal(t, uintptr(224), unsafe.Sizeof(Selection{}))
+	require.Equal(t, uintptr(232), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {

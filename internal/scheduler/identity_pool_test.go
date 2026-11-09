@@ -184,6 +184,15 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 	require.NotEmpty(t, grown.slots[2].thread, "扩容位次开新线程")
 	require.NotEmpty(t, grown.slots[3].thread)
 	require.NotEqual(t, grown.slots[2].thread, grown.slots[3].thread)
+	for i := range 2 {
+		require.Equal(t, fmt.Sprintf("T%d", i), grown.slots[i].turnState, "扩容不丢保留位次的 ts")
+	}
+	for i := 2; i < 4; i++ {
+		require.Empty(t, grown.slots[i].turnState, "新会话无 ts（G10：K 2→4 首请求不带 ts）")
+		id := (&Selection{session: grown.slots[i], pool: grown}).CodexIdentity()
+		require.Empty(t, id.TurnState)
+		require.Equal(t, grown.slots[i].thread+":0", id.Session.WindowID, "新会话 window 从 0 起")
+	}
 }
 
 // TestResizeDroppedInFlightSessionNotHandedOver 缩容丢弃的**在飞**会话不做任何
