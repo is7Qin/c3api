@@ -16,6 +16,7 @@ import {
   PROXY_UNCHANGED_VALUE,
   buildAccountPatch,
   buildBatchProxyFields,
+  buildGroupIdsField,
   echoMayHideBinding,
   parseBatchProxyValue,
   parseProxySelectValue,
@@ -206,7 +207,10 @@ interface FormState {
   base_url: string // 账号级覆盖（'' = 继承模板）
   upstream_key: string
   max_concurrency: string
-  group_ids: number[]
+  // null = 没表态（不发键）：分组回显是异步的（GET /accounts/{id}/groups，
+  // 不随列表返回），把「看起来是空」的草稿发回去会清空已有分组。
+  // 契约三态：缺席（null）= 不变、[] = 清空、[ids] = 替换。
+  group_ids: number[] | null
   // 生命周期表单项（创建/编辑对话框直配；随创建/PATCH 请求体一次落库）：
   // cost_multiplier 字符串形态（默认 '1' = ×1），提交前经 parseMultiplier
   // 校验（0–10，bp 4 位小数）；cache_domain 空串 = 账号私有域（编辑态按变化
@@ -241,7 +245,7 @@ const emptyForm = (): FormState => ({
   base_url: '',
   upstream_key: '',
   max_concurrency: '8',
-  group_ids: [],
+  group_ids: null,
   cost_multiplier: '1',
   cache_domain: '',
   codex_oauth_token: '',
@@ -267,10 +271,10 @@ function toForm(a: AccountView): FormState {
     base_url: codex ? '' : (a.BaseURL ?? ''), // Codex: must clear stale BaseURL on load
     upstream_key: a.UpstreamKey ?? '',
     max_concurrency: String(a.MaxConcurrency ?? 8),
-    // 编辑回显不走账号列表（方案 B）：对话框挂载时经 getAccountGroups
-    // 拉取，加载完成前禁用保存（防误发 [] 清空）。codex 凭据经 ext 拉取回显。
-    // 生命周期回显：倍率缺失按 ×1，缓存域缺失（null）按空串（= 私有域）。
-    group_ids: [],
+    // 编辑回显不走账号列表（方案 B）：对话框挂载时经 getAccountGroups 拉取，
+    // 拉到前控件禁用；写入侧由 buildGroupIdsField 保证「没表态 = 不发键」。
+    // codex 凭据经 ext 拉取回显；生命周期回显：倍率缺失按 ×1，缓存域缺失（null）按空串。
+    group_ids: null,
     cost_multiplier: String(a.UpstreamCostMultiplier ?? 1),
     cache_domain: a.CacheDomain ?? '',
     codex_oauth_token: '',
@@ -291,8 +295,8 @@ function toForm(a: AccountView): FormState {
 }
 
 // 三态字段模型（创建/PATCH/批量共用）的请求体：只带契约字段，不带运行时字段。
-// 缺席 = 不变（创建态 = 取后端缺省）；可空标量 null = 清空；group_ids 编辑态
-// 总是发送（含空数组 = 清空），创建态仅已选时发送。
+// 缺席 = 不变（创建态 = 取后端缺省）；可空标量 null = 清空；group_ids 三态走
+// buildGroupIdsField（null = 没表态 → 不出现）。
 // 倍率/缓存域不是独立端点：随同一请求体一次落库（编辑态仅变化项才带）。
 function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): AccountCreate {
   const body: AccountCreate = {
@@ -306,7 +310,7 @@ function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): A
   if (f.upstream_key) body.upstream_key = f.upstream_key
   // max_concurrency 缺席 = 不变 / 创建取后端配置缺省（不再硬编码 8）。
   if (f.max_concurrency !== '') body.max_concurrency = Number(f.max_concurrency)
-  if (current || f.group_ids.length > 0) body.group_ids = f.group_ids
+  Object.assign(body, buildGroupIdsField(f.group_ids))
   if (!current) {
     const d = f.cache_domain.trim()
     if (d) body.cache_domain = d
@@ -750,19 +754,16 @@ export default function Accounts() {
     setDomainValue(a.CacheDomain ?? '')
   }
 
-  // 编辑回显（方案 B）：对话框挂载时拉取当前分组；数据未到前禁用
-  // 保存与分组多选（防未加载完提交误发 [] 清空）。
+  // 编辑回显（方案 B）：对话框挂载时拉取当前分组；未到前禁用分组控件。
+  // 展示**派生**自回显（`草稿 ?? 回显 ?? []`），不再回填 form：
+  // 回填就有两份真值，就得靠 effect 同步，同步就有「缓存命中不跑 effect」的窗口。
   const groupsEcho = useQuery({
     queryKey: ['account-groups', editing?.ID],
     queryFn: () => api.getAccountGroups(editing!.ID!),
     enabled: !!editing && dialogOpen,
   })
   const groupsLoaded = !editing || (groupsEcho.data !== undefined && !groupsEcho.isError)
-  useEffect(() => {
-    if (groupsEcho.data) {
-      setForm(f => ({ ...f, group_ids: [...(groupsEcho.data!.group_ids ?? [])] }))
-    }
-  }, [groupsEcho.data])
+  const groupsValue = form.group_ids ?? groupsEcho.data?.group_ids ?? []
 
   // codex 账号编辑回显：对话框挂载时拉 ext 凭据（404 = 无 ext 行 → 空表单）；
   // 与「扩展配置」弹窗同一数据源，此处仅填充表单。
@@ -916,6 +917,8 @@ export default function Accounts() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
+      // 分组回显单独缓存：本次可能改过分组，下次打开必须先取新值（否则先显示旧分组）。
+      if (editing) qc.invalidateQueries({ queryKey: ['account-groups', editing.ID] })
       setDialogOpen(false)
       toast.add({ title: t('accounts.saveSuccess'), type: 'success' })
     },
@@ -1555,11 +1558,14 @@ export default function Accounts() {
               <Label>{t('accounts.groupLabel')}</Label>
               <GroupMultiSelect
                 groups={groups}
-                value={form.group_ids}
+                value={groupsValue}
                 onChange={v => setForm(f => ({ ...f, group_ids: v }))}
                 disabled={!!editing && !groupsLoaded}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.groupHint')}</p>
+              {editing && groupsEcho.isLoading && (
+                <p className="text-xs text-muted-foreground">{t('accounts.groupsLoading')}</p>
+              )}
               {editing && groupsEcho.isError && (
                 <p className="text-sm text-destructive">{t('accounts.loadGroupsFailed')}</p>
               )}
@@ -1582,9 +1588,9 @@ export default function Accounts() {
                 (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
                 (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
                 (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
-                (!!editing && !groupsLoaded) ||
+                // 分组回显未到不再阻塞保存：写入侧「没表态 = 不发键」，不会清空。
                 // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
-                // 会使 account id 回退到 null，PUT 全列更新将清空已存值（groups 同款门禁）
+                // 会使 account id 回退到 null，PUT 全列更新将清空已存值。
                 (!!editing && isSelCodex && extEcho.isLoading)
               }
             >
