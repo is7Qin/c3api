@@ -422,17 +422,25 @@ func TestPGTemplateExtTransportConcurrentGuardWrite(t *testing.T) {
 	}
 }
 
-// TestPGTemplateExtGuardWriteHoldsParentLock 受控锁阻塞用例：**直接证明**父行锁
-// 存在，而不是靠概率论证。
+// TestPGTemplateExtGuardWriteHoldsParentLock 受控锁阻塞用例：**直接观测**父行锁，
+// 不用"B 在某个时间窗内没返回"去推断锁存在。
 //
-// 做法（无睡眠等待，全用 channel）：A 的 decide 回调只在**已持父行锁之后**被调用，
-// 所以它向主 goroutine 发"我已持锁"信号后阻塞在 release 上；主 goroutine 等 B 真的
-// 起跑后，用 select + 短超时断言 B 在 A 放行前**没有**返回——B 返回了就等于锁不存在。
+// 证据面：A 的 decide 回调只在**已持父行锁之后**被调用，所以它向主 goroutine 发"我已
+// 持锁"信号后阻塞在 release 上；B 起跑后，主 goroutine 用**独立观察连接**
+// （pgSharedConn：同一 clone，只读 pg_stat_activity，不参与锁竞争）轮询，直到看见 B
+// 的后端确实阻塞在那条 `SELECT id FROM templates WHERE id = $1 FOR UPDATE` 上
+// （pg_blocking_pids(pid) 非空）才放行 A。轮询间隔 25ms、总窗口 3s——窗口必须短于
+// pgtest.OpenPool 给会话设的 lock_timeout=5s，否则"B 锁超时后返回"会被误读成证据。
+//
+//   - 窗口内 B 先返回 ⇒ 父行锁没有生效；
+//   - 窗口结束仍未观测到任何锁等待 ⇒ 不能用「B 变慢」冒充锁生效。
+//
+// 两个方向都是 Fatal，超时只作失败兜底，绝不当通过证据。
+//
+// 判别力（变异实测）：去掉 `... FOR UPDATE` 后 B 不再等父行，几毫秒内就把守卫写做完
+// ⇒ 观测面永远看不到 pg_blocking_pids 非空 ⇒ 本用例红在"未观测到 B 的父行锁等待"。
+//
 // A 放行后两者都必须成功（A 先提交，B 随后读到 A 写下的值再写）。
-//
-// 判别力（变异实测）：去掉 `... FOR UPDATE` 后 B 不再阻塞在父行上，它的 upsert 只
-// 需要 ext 行的行锁，而 A 此刻还卡在 decide、尚未写 ⇒ B 几毫秒内就返回 ⇒ 本用例在
-// "B 在 A 持锁期间完成了守卫写"这条断言上红。
 func TestPGTemplateExtGuardWriteHoldsParentLock(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -442,8 +450,9 @@ func TestPGTemplateExtGuardWriteHoldsParentLock(t *testing.T) {
 		CodexResponsesTransport: domain.CodexResponsesTransportWS,
 	})
 
-	// 预热连接池：让 B「取连接」不落在下面的观测窗口里——否则去锁变异下 B 可能卡在
-	// 建连上，用例会因为无关原因而绿（假绿）。预热后 pgxpool 留住 3 条空闲连接。
+	// 预热只是降低 B「取连接」那一段的抖动，好把观测窗口留给锁本身：pgxpool 并不保证
+	// 连接常驻（空闲连接随时可回收），所以预热不是证据的一部分——证据只来自下面的
+	// pg_stat_activity 观测。
 	var prewarm sync.WaitGroup
 	for range 3 {
 		prewarm.Add(1)
@@ -453,6 +462,10 @@ func TestPGTemplateExtGuardWriteHoldsParentLock(t *testing.T) {
 		}()
 	}
 	prewarm.Wait()
+
+	// 观测连接现在就建好：首个后端建连要 1–2s，落在观测窗口里会挤掉 lock_timeout 的
+	// 余量。它只读 pg_stat_activity，不参与 A/B 的锁竞争。
+	observer := pgSharedConn(t)
 
 	locked := make(chan struct{})    // A → 主 goroutine：我已持父行锁
 	releaseCh := make(chan struct{}) // 主 goroutine → A：可以继续了
@@ -493,11 +506,66 @@ func TestPGTemplateExtGuardWriteHoldsParentLock(t *testing.T) {
 	}()
 	<-bStarted
 
-	// A 仍持锁：B 必须没有返回（短超时只用来兜底判"仍在阻塞"，不是等待技巧）。
-	select {
-	case <-bDone:
-		t.Fatal("B 在 A 持锁期间完成了守卫写：父行锁没有生效")
-	case <-time.After(500 * time.Millisecond):
+	// A 仍持锁：观测 B 是否**真的在等这把父行锁**。判据是 PG 自己的阻塞关系
+	// （pg_blocking_pids 非空），不是"这段时间里 B 没返回"。
+	// 私有 clone ⇒ datname 已足够隔离；pid <> pg_backend_pid() 排掉观察连接自己
+	// （它的 SQL 文本里含有同样的字面量，虽然它不阻塞）。
+	lockWaiters := func() int {
+		var n int
+		require.NoError(t,
+			observer.QueryRow(ctx, `SELECT count(*) FROM pg_stat_activity
+WHERE datname = current_database()
+  AND pid <> pg_backend_pid()
+  AND cardinality(pg_blocking_pids(pid)) > 0
+  AND query LIKE '%FROM templates WHERE id = $1 FOR UPDATE%'`).Scan(&n),
+			"观测连接必须能查询 pg_stat_activity")
+		return n
+	}
+	const (
+		observeWindow = 3 * time.Second // < 会话 lock_timeout=5s：窗口内不该出现 B 锁超时
+		observePoll   = 25 * time.Millisecond
+	)
+	deadline := time.NewTimer(observeWindow)
+	defer deadline.Stop()
+	tick := time.NewTicker(observePoll)
+	defer tick.Stop()
+
+	bReturned := func() bool {
+		select {
+		case <-bDone:
+			return true
+		default:
+			return false
+		}
+	}
+	// B 提前把守卫写做完，说明父行上根本没挡住它：观测不到锁等待，且原因要说清楚。
+	failWrittenWhileLocked := func() {
+		t.Fatalf("未观测到 B 的父行锁等待：B 在 A 持锁期间就完成了守卫写（err=%v）——父行锁没有生效",
+			<-bErr)
+	}
+
+	waiting := false
+	for !waiting {
+		if bReturned() {
+			failWrittenWhileLocked()
+		}
+		if lockWaiters() > 0 {
+			waiting = true
+			break
+		}
+		select {
+		case <-tick.C:
+		case <-deadline.C:
+			// 截止瞬间做最后一次判定，别把"刚好在这一刻阻塞"判成红。
+			if bReturned() {
+				failWrittenWhileLocked()
+			}
+			if lockWaiters() > 0 {
+				waiting = true
+				break
+			}
+			t.Fatalf("未观测到 B 的父行锁等待：不能用「B 变慢」冒充锁生效")
+		}
 	}
 	release()
 	require.NoError(t, <-aErr, "A 放行后必须成功")
