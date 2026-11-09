@@ -14,7 +14,13 @@ package sdkbridge
 //
 // 上游是同一台机上的自签 TLS 假服务（HTTP + WS 同端口），transport 用 DialContext
 // 重写地址——与生产同一条适配层代码路径（entry → client 桶 → SDK 调用），只把网络
-// 换成 loopback。A/B 时基线 worktree 用同名用例的 c6014967 适配版跑**同一条命令**。
+// 换成 loopback。
+//
+// **A/B 可比性契约**（oracle R4 N2；R3 的 base 夹具传 nil/nil/"" 就是在这里违约）：
+// 基线侧必须用旧 API（Session/CodexMeta/turnState）传与这里 `benchCodexIdentity()`
+// **完全相同的四个身份值**，且 payload、响应帧、传输参数（连接复用）逐字一致。身份
+// metadata 的编码量是两侧共同成本；只改一侧就会把"身份进入帧/体"的字节差记到另一
+// 侧头上。B/op 只有在身份输入等价时才可比——allocs/op 下降不能单独当零退化证据。
 
 import (
 	"context"
@@ -94,7 +100,8 @@ func benchCodexAdapter(b *testing.B) (*Codex, *domain.AccountCredential, []byte)
 }
 
 // benchCodexIdentity 固定会话身份（与生产同构的"线程级"复用键）：匿名身份在 SDK 里
-// 不参与连接复用（首帧/握手每次重建），不代表生产请求路径。
+// 不参与连接复用（首帧/握手每次重建），不代表生产请求路径。四个值就是 A/B 契约里的
+// 身份输入——基线侧必须用旧 API 传同一组值（见文件头）。
 func benchCodexIdentity() codexsdk.Identity {
 	sess := codexsdk.Session{SessionID: "bench-session", ThreadID: "bench-thread", WindowID: "bench-thread:0"}
 	return codexsdk.Identity{
