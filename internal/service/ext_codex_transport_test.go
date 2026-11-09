@@ -429,3 +429,44 @@ func TestUpsertTemplateExtTransportNoWarnWhenWriteFails(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, domain.CodexResponsesTransportWS, got)
 }
+
+// TestUpsertTemplateExtTransportConflictNoWarn 409 的 service 侧证据：判定被拒
+// （仓库层 decide 返回 ErrConflict）⇒ 不落库、**也不写 WARN**。
+// repository 层的用例只能断言"未落库"（它看不见日志）；"无 WARN"必须在这里断言
+// ——WARN 在 service、且只在落库成功之后写。
+func TestUpsertTemplateExtTransportConflictNoWarn(t *testing.T) {
+	// 同 TestUpsertTemplateExtTransportDowngradeWarns：日志目录用 os.MkdirTemp，
+	// 不用 t.TempDir()（zap 持有文件句柄，Windows 上自动清理会假红）。
+	dir, err := os.MkdirTemp("", "c3api-transport-conflict-")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	logPath := filepath.Join(dir, "warn.log")
+	log, err := logx.New("warn", logPath)
+	require.NoError(t, err)
+
+	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: log}
+	ctx := context.Background()
+	tpl := seedExtTemplate(t, svc, "t-conflict-nowarn", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
+
+	// 旧值 ws 直接写进底层 store（模拟 DB 直改/外部脚本），让本次请求真的走到降级门。
+	_, _, err = svc.store.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexResponsesTransport: domain.CodexResponsesTransportWS,
+	}, allowTemplateExtWrite)
+	require.NoError(t, err)
+
+	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+	}, "")
+	require.ErrorIs(t, err, ErrConflict, "old == ws 的无确认降级必须 409")
+
+	require.NoError(t, log.Sync())
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), "codex responses transport downgraded",
+		"被 409 拒绝的写不得留下「已降级」的审计证据")
+
+	got, ok := storedTransport(t, svc, tpl.ID)
+	require.True(t, ok)
+	require.Equal(t, domain.CodexResponsesTransportWS, got, "409 不得改动原值")
+}
