@@ -456,15 +456,18 @@ func TestClaimCodexSessionOnlyCodexAndFallback(t *testing.T) {
 //
 //	① 两个会话都已对齐 owner A 并各自持有 ts=T-old；
 //	② 重载建好新池（会话按位次迁移——ts/owner 都是**会话字段**），但尚未发布；
-//	③ 发布窗口内发生凭据替换：旧池仍被旧视图持有者使用，下一次租借对齐 owner B；
+//	③ 发布窗口内发生凭据替换：旧池仍被旧视图持有者使用，**两条会话各租借一次**都会
+//	   对齐 owner B；
 //	④ 新池发布后：**每个**会话的下一租借都必须是空 ts。
 //
 // 旧实现（池级 credGen + resize 时 `np.credGen.Store(old.credGen.Load())` 值拷贝）在
 // ②③④ 之间丢掉失效：清 ts 推进的是旧池，新池发布后会话看不到刚推进的代际，T-old 被
 // 带进新 owner 的上游会话（oracle B1-路径二）。
 //
-// ④ 的"每个会话"是关键：owner 若被复制到池上（哪怕清 ts 仍写会话字段），对齐就退化成
-// "只清当前被租到的那一条"，同账号其它会话继续重放旧 ts——所以失效源必须是会话字段。
+// ③④ 的位次是**判别力**的关键（momus N3）：③ 必须把两条会话都租一遍（这样"只清被
+// 租到的那一条"的池级实现会让另一条带着 T-old 存活），④ 必须**逆序**访问（先访问
+// ③ 最后清过的那条）——否则池级 owner 在 ④ 的第一次访问时已经"顺手"清了两条，用例
+// 对池级失效源仍然是绿的。
 func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
 	ownerA, ownerB := [16]byte{0x0a}, [16]byte{0x0b}
 	old := newTestPool(2, testPolicy())
@@ -483,22 +486,51 @@ func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
 	require.Same(t, old.slots[0], next.slots[0], "会话对象跨池迁移（owner/ts 都是会话字段）")
 	require.Same(t, old.slots[1], next.slots[1], "会话对象跨池迁移（位次 1）")
 
-	// ③ 发布窗口内的凭据替换：旧池仍可见，一次租借把 owner 推到 B。
-	stale := old.claim()
-	require.NotNil(t, stale)
-	(&Selection{session: stale, pool: old}).AlignCodexOwner(ownerB)
-	require.Empty(t, stale.turnState, "凭据替换 ⇒ 租借内先清 ts（owner 对齐先于身份快照）")
-	stale.release()
+	// ③ 发布窗口内的凭据替换：旧池仍可见，**两条会话各租借一次**（每次都要在租借内
+	// 先清 ts——失效源是会话字段时两条都会被清；克隆到池上时只会清被租到的那一条）。
+	for i := range 2 {
+		stale := old.claim()
+		require.NotNil(t, stale, "①已全部归还 ⇒ 窗口内两次租借都应成功（%d）", i)
+		(&Selection{session: stale, pool: old}).AlignCodexOwner(ownerB)
+		require.Empty(t, stale.turnState, "凭据替换 ⇒ 租借内先清 ts（位次 %d）", i)
+		stale.release()
+	}
 
 	// ④ 新池发布后到来的请求（同一份凭据 = owner B）：**每条**会话都不得再带回 T-old。
-	for i, held := range next.slots[:2] {
+	// 逆序访问：先走被 ③ 最后清过的那条，让「池级失效源」在第二次访问时已无清 ts 动作。
+	for i, held := range []*codexSession{next.slots[1], next.slots[0]} {
 		require.True(t, held.busy.CompareAndSwap(false, true))
 		sel := &Selection{session: held, pool: next}
 		sel.AlignCodexOwner(ownerB)
 		require.Empty(t, sel.CodexIdentity().TurnState,
-			"位次 %d：失效必须跨「新池已建、尚未发布」窗口存活，且覆盖该账号全部会话", i)
+			"逆序第 %d 条：失效必须跨「新池已建、尚未发布」窗口存活，且覆盖该账号全部会话", i)
 		held.release()
 	}
+}
+
+// TestResizeWithoutOwnerChangeKeepsTurnState 正控（momus N2）：owner 没有变化的重载
+// **不得过度清理**——resize 后的首次租借必须保留 ts。
+//
+// 这一条是 pending owner 那一类变异的对偶：把 owner 搬回池上、让 resize 重建失效源，
+// 会让"每次重载都清 ts"，而只看"凭据替换后必须清"的用例抓不到这种过度清理。
+func TestResizeWithoutOwnerChangeKeepsTurnState(t *testing.T) {
+	owner := [16]byte{0x0c}
+	old := newTestPool(1, testPolicy())
+	held := old.slots[0]
+	require.True(t, held.busy.CompareAndSwap(false, true))
+	(&Selection{session: held, pool: old}).AlignCodexOwner(owner)
+	held.SetTurnState("T-keep")
+	held.release()
+
+	next := resizeForTest(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy()})
+	require.Same(t, held, next.slots[0], "会话对象跨池迁移（同一 owner 的会话身份不变）")
+
+	require.True(t, held.busy.CompareAndSwap(false, true))
+	sel := &Selection{session: held, pool: next}
+	sel.AlignCodexOwner(owner)
+	require.Equal(t, "T-keep", sel.CodexIdentity().TurnState,
+		"owner 未变 ⇒ 重载后的首次租借保留 ts（不允许无差别清空）")
+	held.release()
 }
 
 // TestReleaseFreesSessionBeforeConcurrencyDecrement 释放窗口内 claim 恒成功
