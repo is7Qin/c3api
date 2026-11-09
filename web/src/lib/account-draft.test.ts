@@ -1,0 +1,522 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
+// 账号表单的三态模型（absent / value / clear）回归。
+//
+// PATCH 契约按字段类别定义状态机：缺席 = 不变、null = 清空、有值 = 落值（集合：[] = 清空）。
+// 旧表单用「快照 + 与回显比较」表达「没表态」，于是「还没加载出来」被当成「用户清空」——
+// c4b3e711（分组）与 0de4d56f（授予）是同一件事的两次事故。这里把投影钉成表格：
+// 每个字段 × {缺席, 有值, 清空} 各一条断言，漏接线由 FIELD_KINDS 的键集合对齐兜底。
+import { describe, it } from 'node:test'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import {
+  FIELD_KINDS,
+  assertCreate,
+  draftToPatch,
+  defaults,
+  fromAccountView,
+  mergeView,
+  withField,
+  withoutField,
+} from './account-draft.ts'
+
+const ctx = { tpl: 'nonCodex', echoProxyId: null, isSupplierScope: false }
+
+// 逐字段三态：[字段, 有值草稿, patch 期望值, 清空草稿, 清空期望]。
+// clear.want = 'absent'（非法瞬时值，投影不发）/ 'throws'（投影拒绝）/ 具体值。
+const rows = [
+  { key: 'name', draft: { name: '  acc-1  ' }, want: 'acc-1', clear: { draft: { name: '' }, want: 'absent' } },
+  { key: 'template_id', draft: { template_id: '7' }, want: 7, clear: { draft: { template_id: '' }, want: 'absent' } },
+  { key: 'base_url', draft: { base_url: ' https://up.example ' }, want: 'https://up.example', clear: { draft: { base_url: null }, want: null } },
+  { key: 'upstream_key', draft: { upstream_key: 'sk-x' }, want: 'sk-x', clear: { draft: { upstream_key: '' }, want: 'absent' } },
+  { key: 'max_concurrency', draft: { max_concurrency: '5' }, want: 5, clear: { draft: { max_concurrency: '' }, want: 'absent' } },
+  { key: 'group_ids', draft: { group_ids: [3, 4] }, want: [3, 4], clear: { draft: { group_ids: [] }, want: [] } },
+  { key: 'cost_multiplier', patchKey: 'upstream_cost_multiplier', draft: { cost_multiplier: '2.5' }, want: 2.5, clear: { draft: { cost_multiplier: '' }, want: 'throws' } },
+  { key: 'cache_domain', draft: { cache_domain: ' a.example.com ' }, want: 'a.example.com', clear: { draft: { cache_domain: null }, want: null } },
+  { key: 'supplier_user_id', draft: { supplier_user_id: 9 }, want: 9, clear: { draft: { supplier_user_id: null }, want: null } },
+  // proxy 两种取值都看回显：绑定 = 有值，直连 = 解绑可见的那条（回显 null 时仍不发）
+  { key: 'proxy', patchKey: 'proxy_id', draft: { proxy: { kind: 'bind', id: 7 } }, want: 7, ctx: { ...ctx, echoProxyId: 3 }, clear: { draft: { proxy: { kind: 'direct' } }, want: null, ctx: { ...ctx, echoProxyId: 5 } } },
+]
+
+describe('draftToPatch：逐字段三态', () => {
+  it('草稿为空 ⇒ 空补丁（一个键都不带）', () => {
+    assert.deepEqual(draftToPatch({}, ctx), {})
+  })
+
+  it('表格覆盖 FIELD_KINDS 的每个字段（加字段必须补用例）', () => {
+    assert.deepEqual(rows.map(r => r.key).sort(), Object.keys(FIELD_KINDS).sort())
+  })
+
+  for (const row of rows) {
+    const patchKey = row.patchKey ?? row.key
+    it(`${row.key}：缺席 ⇒ 不发键`, () => {
+      assert.equal(Object.hasOwn(draftToPatch({}, row.ctx ?? ctx), patchKey), false)
+    })
+    it(`${row.key}：有值 ⇒ 发 ${JSON.stringify(row.want)}`, () => {
+      const patch = draftToPatch(row.draft, row.ctx ?? ctx)
+      assert.equal(Object.hasOwn(patch, patchKey), true)
+      assert.deepEqual(patch[patchKey], row.want)
+    })
+    it(`${row.key}：${row.clear.want === 'throws' ? '非法空串 ⇒ 投影拒绝' : `清空 ⇒ ${JSON.stringify(row.clear.want)}`}`, () => {
+      const run = () => draftToPatch(row.clear.draft, row.clear.ctx ?? ctx)
+      if (row.clear.want === 'throws') {
+        assert.throws(run)
+        return
+      }
+      if (row.clear.want === 'absent') {
+        assert.equal(Object.hasOwn(run(), patchKey), false)
+        return
+      }
+      assert.deepEqual(run()[patchKey], row.clear.want)
+    })
+  }
+
+  it('enabled（批量专属，单条无控件）单独一条', () => {
+    assert.equal(Object.hasOwn(draftToPatch({}, ctx), 'enabled'), false)
+    assert.deepEqual(draftToPatch({ enabled: false }, ctx), { enabled: false })
+  })
+
+  // 契约的 max_concurrency 是 ≥1 的整数（service.go:917）；页面守卫之外再兜一层，
+  // 免得将来新调用方绕过守卫把 0/小数发成 400。
+  it('max_concurrency：0 / 小数 / 空白 ⇒ 投影拒绝（不是静默丢弃）', () => {
+    assert.throws(() => draftToPatch({ max_concurrency: '0' }, ctx), /invalid max_concurrency/)
+    assert.throws(() => draftToPatch({ max_concurrency: '8.5' }, ctx), /invalid max_concurrency/)
+    assert.throws(() => draftToPatch({ max_concurrency: '  ' }, ctx), /invalid max_concurrency/)
+    assert.deepEqual(draftToPatch({ max_concurrency: '8' }, ctx), { max_concurrency: 8 })
+  })
+})
+
+describe('draftToPatch：codex / 模板上下文四分', () => {
+  // codex 的清空只在「本次 PATCH 可能改写模板/基址」时才有意义（否则 no-op 保存
+  // 会凭空产生一个 PATCH，空补丁守卫永远不成立，见 spec v9 §4.3）。
+  it("tpl: 'codex' ⇒ 无模板/基址表态时保持空补丁（no-op 保存不发 PATCH）", () => {
+    assert.deepEqual(draftToPatch({ name: 'a' }, { ...ctx, tpl: 'codex' }), { name: 'a' })
+    assert.deepEqual(draftToPatch({}, { ...ctx, tpl: 'codex' }), {})
+  })
+
+  it("tpl: 'codex' ⇒ 本次改模板（template_id 在草稿）⇒ 强制 base_url: null", () => {
+    assert.deepEqual(
+      draftToPatch({ template_id: '3' }, { ...ctx, tpl: 'codex' }),
+      { template_id: 3, base_url: null },
+    )
+  })
+
+  it("tpl: 'codex' ⇒ 草稿里的 base_url 被 null 覆盖（不是跳过）", () => {
+    assert.deepEqual(draftToPatch({ base_url: 'https://x.example' }, { ...ctx, tpl: 'codex' }), { base_url: null })
+  })
+
+  it("tpl: 'nonCodex' ⇒ 按草稿：缺席不发 / null 清空 / 有值 trim", () => {
+    assert.deepEqual(draftToPatch({}, { ...ctx, tpl: 'nonCodex' }), {})
+    assert.deepEqual(draftToPatch({ base_url: null }, { ...ctx, tpl: 'nonCodex' }), { base_url: null })
+    assert.deepEqual(draftToPatch({ base_url: ' a.example/v1 ' }, { ...ctx, tpl: 'nonCodex' }), { base_url: 'a.example/v1' })
+  })
+
+  // 可空标量的线格式里 '' 是 400（handler.nullableScalar：清空只有一个拼法 null）。
+  // 输入框只把精确 '' 映射成 null，纯空白会留在草稿里；投影必须按「未表态」丢掉它，
+  // 否则 trim 后变成 '' 直接 400。
+  it('纯空白的可空标量 ⇒ 不发键（不得 trim 成空串）', () => {
+    const patch = draftToPatch({ base_url: '   ', cache_domain: '  ' }, { ...ctx, tpl: 'nonCodex' })
+    assert.equal(Object.hasOwn(patch, 'base_url'), false)
+    assert.equal(Object.hasOwn(patch, 'cache_domain'), false)
+  })
+
+  // 批量混合/未解析 ⇒ 不发 BaseURL：宁可拒绝也不误清（非 codex 行不能被写 null）
+  for (const tpl of ['mixed', 'unresolved']) {
+    it(`tpl: '${tpl}' ⇒ 不含 base_url`, () => {
+      assert.equal(Object.hasOwn(draftToPatch({ base_url: 'https://x.example' }, { ...ctx, tpl }), 'base_url'), false)
+    })
+  }
+
+  it("tpl: 'codex' ⇒ upstream_key 不投影（codex 不用它，切模板后的旧草稿不得写进去）", () => {
+    assert.deepEqual(draftToPatch({ upstream_key: 'sk-x' }, { ...ctx, tpl: 'codex' }), {})
+  })
+
+  it('upstream_key 纯空白 ⇒ 未表态（不发原始空格）', () => {
+    assert.deepEqual(draftToPatch({ upstream_key: '   ' }, { ...ctx, tpl: 'nonCodex' }), {})
+  })
+})
+
+describe('draftToPatch：作用域与代理', () => {
+  it('供应商作用域 ⇒ 永不编码 supplier_user_id（管理面照常分配）', () => {
+    assert.equal(Object.hasOwn(draftToPatch({ supplier_user_id: 9 }, { ...ctx, isSupplierScope: true }), 'supplier_user_id'), false)
+  })
+
+  it('回显 null + 直连 ⇒ 不出现 proxy_id（看不见的绑定不得被覆盖成 null）', () => {
+    assert.deepEqual(draftToPatch({ proxy: { kind: 'direct' } }, { ...ctx, echoProxyId: null }), {})
+  })
+
+  it('绑定 ⇒ proxy_id = id', () => {
+    assert.deepEqual(draftToPatch({ proxy: { kind: 'bind', id: 7 } }, { ...ctx, echoProxyId: null }), { proxy_id: 7 })
+  })
+
+  // 批量面没有回显基线：「不变」必须由调用方显式表达，直连必须发 null（解绑语义）。
+  // 投影因此允许注入已算好的 proxyFields——优先于草稿 + echo 的规则。
+  it('注入 proxyFields ⇒ 以注入为准（批量直连发 null，忽略草稿的 bind）', () => {
+    assert.deepEqual(
+      draftToPatch({ proxy: { kind: 'bind', id: 7 } }, { ...ctx, echoProxyId: 7, proxyFields: { proxy_id: null } }),
+      { proxy_id: null },
+    )
+  })
+
+  it('注入空 proxyFields（批量「不变」）⇒ 不发 proxy_id，即使草稿里有 bind', () => {
+    assert.deepEqual(draftToPatch({ proxy: { kind: 'bind', id: 7 } }, { ...ctx, echoProxyId: 3, proxyFields: {} }), {})
+  })
+
+  it('未注入 proxyFields ⇒ 仍走单条的 buildAccountPatch（回显 null 不发键）', () => {
+    assert.deepEqual(draftToPatch({ proxy: { kind: 'direct' } }, { ...ctx, echoProxyId: null }), {})
+  })
+})
+
+describe('assertCreate：创建必填', () => {
+  it('空草稿 ⇒ 抛错（name/template_id 必填）', () => {
+    assert.throws(() => assertCreate({}))
+  })
+
+  it('只有空白 name ⇒ 抛错', () => {
+    assert.throws(() => assertCreate({ name: '   ', template_id: '1' }))
+  })
+
+  // name 的「缺失」与「空白」是两条分支：缺失必须先被 !d.name 拦下，
+  // 否则 d.name.trim() 会 TypeError（而不是抛业务错）。
+  it('name 缺失（不是空串）⇒ 抛错而非 TypeError', () => {
+    assert.throws(() => assertCreate({ template_id: '1' }), (e: unknown) => e instanceof Error && e.message === 'name is required')
+  })
+
+  it('template_id 缺失 ⇒ 抛错', () => {
+    assert.throws(() => assertCreate({ name: 'a' }), (e: unknown) => e instanceof Error && e.message === 'template_id is required')
+  })
+
+  it('name + template_id ⇒ 通过，且投影只含这两键之外的显式字段', () => {
+    const draft = { name: 'a', template_id: '1' }
+    assert.doesNotThrow(() => assertCreate(draft))
+    assert.deepEqual(draftToPatch(draft, ctx), { name: 'a', template_id: 1 })
+  })
+})
+
+describe('withField / withoutField：纯写入原语', () => {
+  it('withField 不改原对象', () => {
+    const before = { name: 'a' }
+    const after = withField(before, 'template_id', '2')
+    assert.deepEqual(before, { name: 'a' })
+    assert.deepEqual(after, { name: 'a', template_id: '2' })
+  })
+
+  it('withField 接受 null（清空编码能过类型，undefined 不能）', () => {
+    assert.deepEqual(withField({}, 'base_url', null), { base_url: null })
+  })
+
+  it('withoutField 真删键（不是置 undefined）', () => {
+    const after = withoutField({ name: 'a', base_url: null }, 'base_url')
+    assert.equal(Object.hasOwn(after, 'base_url'), false)
+    assert.deepEqual(after, { name: 'a' })
+  })
+
+  it('withoutField 不改原对象', () => {
+    const before = { name: 'a', cache_domain: null }
+    withoutField(before, 'cache_domain')
+    assert.deepEqual(before, { name: 'a', cache_domain: null })
+  })
+})
+
+describe('mergeView：基线 ⊕ 草稿', () => {
+  it('undefined 不覆盖基线（洞不算表态）', () => {
+    const base = defaults()
+    assert.deepEqual(mergeView(base, { name: undefined }), base)
+  })
+
+  it('null 覆盖基线（展示层据此 ?? \'\'）', () => {
+    const base = { ...defaults(), base_url: 'https://x.example', cache_domain: 'a.example' }
+    const view = mergeView(base, { base_url: null, cache_domain: null })
+    assert.equal(view.base_url, null)
+    assert.equal(view.cache_domain, null)
+  })
+
+  it('不改基线对象', () => {
+    const base = defaults()
+    mergeView(base, { name: 'b' })
+    assert.equal(base.name, '')
+  })
+})
+
+describe('fromAccountView：回显 → 基线', () => {
+  const view = {
+    ID: 1,
+    Name: 'acc-1',
+    TemplateID: 2,
+    Template: { CredentialType: 'api_key' },
+    BaseURL: 'https://up.example',
+    UpstreamKey: 'sk-x',
+    MaxConcurrency: 4,
+    UpstreamCostMultiplier: 2.5,
+    CacheDomain: 'a.example',
+    supplier_user_id: 7,
+    proxy_id: 3,
+  }
+
+  it('可空字段保留契约的 null（不是 \'\'）；分组来自回显参数', () => {
+    const base = fromAccountView({ ID: 1, Name: 'x', TemplateID: 2 }, [5, 6])
+    assert.equal(base.base_url, null)
+    assert.equal(base.cache_domain, null)
+    assert.equal(base.supplier_user_id, null)
+    assert.deepEqual(base.group_ids, [5, 6])
+  })
+
+  it('有值字段照抄回显；proxy 由 proxy_id 派生', () => {
+    const base = fromAccountView(view, [5])
+    assert.equal(base.name, 'acc-1')
+    assert.equal(base.template_id, '2')
+    assert.equal(base.base_url, 'https://up.example')
+    assert.equal(base.upstream_key, 'sk-x')
+    assert.equal(base.max_concurrency, '4')
+    assert.equal(base.cost_multiplier, '2.5')
+    assert.equal(base.cache_domain, 'a.example')
+    assert.equal(base.supplier_user_id, 7)
+    assert.deepEqual(base.proxy, { kind: 'bind', id: 3 })
+  })
+
+  it('codex 模板的 base_url 恒为 null（SDK 默认端点，非空禁用）', () => {
+    const base = fromAccountView({ ...view, Template: { CredentialType: 'codex-oauth' } }, [])
+    assert.equal(base.base_url, null)
+  })
+
+  it('不改调用方的分组数组（拷贝语义）', () => {
+    const ids = [5]
+    const base = fromAccountView(view, ids)
+    ids.push(6)
+    assert.deepEqual(base.group_ids, [5])
+  })
+})
+
+// —— 源码形状（剥注释后断言）——
+// 这些接线错误没有渲染测试能接住（本仓无 jsdom），只能钉源码：
+// 「忘记接某个字段」「又长出第二个写入入口」「openEdit 忘了重置草稿」都会静默写坏数据。
+function stripComments(src: string): string {
+  let out = ''
+  let i = 0
+  while (i < src.length) {
+    const c = src[i]
+    const c2 = src[i + 1]
+    if (c === '/' && c2 === '/') {
+      while (i < src.length && src[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && c2 === '*') {
+      i += 2
+      while (i < src.length && !(src[i] === '*' && src[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    if (c === '"' || c === "'" || c === '`') {
+      const q = c
+      out += c
+      i++
+      while (i < src.length) {
+        if (src[i] === '\\') {
+          out += src[i] + (src[i + 1] ?? '')
+          i += 2
+          continue
+        }
+        out += src[i]
+        if (src[i] === q) {
+          i++
+          break
+        }
+        i++
+      }
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
+}
+
+// 取 `const <name> = … => {` 的函数体（花括号配平）。注释已剥除，字符串里的括号成对。
+function fnBody(src: string, decl: string): string {
+  const at = src.indexOf(decl)
+  assert.notEqual(at, -1, `找不到 ${decl}`)
+  const start = src.indexOf('{', at)
+  let depth = 0
+  for (let i = start; i < src.length; i++) {
+    if (src[i] === '{') depth++
+    else if (src[i] === '}') {
+      depth--
+      if (depth === 0) return src.slice(start + 1, i)
+    }
+  }
+  return ''
+}
+
+const page = stripComments(readFileSync(new URL('../pages/accounts.tsx', import.meta.url), 'utf8'))
+
+describe('accounts.tsx：接线形状', () => {
+  it('每个字段都有 update(\'<key>\', …) 写入点（enabled 不在页内）', () => {
+    for (const key of Object.keys(FIELD_KINDS)) {
+      if (key === 'enabled') continue
+      assert.match(page, new RegExp(`\\bupdate\\s*\\(\\s*'${key}'\\s*,`), `${key} 没有写入点`)
+    }
+  })
+
+  it('禁止变量键调用（键必须字面量，否则漏字段查不出来）', () => {
+    assert.equal(/\bupdate\s*\(\s*(?!')/.test(page), false)
+  })
+
+  it('setDraft( 只有 3 处（update/clear/reset 三个封装）', () => {
+    assert.equal(page.match(/setDraft\(/g)?.length, 3)
+  })
+
+  it('openCreate / openEdit 各自 reset() 一次（否则上一个账号的增量串到下一个）', () => {
+    assert.equal(fnBody(page, 'const openCreate').match(/reset\(\)/g)?.length, 1)
+    assert.equal(fnBody(page, 'const openEdit').match(/reset\(\)/g)?.length, 1)
+  })
+
+  it('旧的快照模型符号归零（form. / setForm( / clearOwner）', () => {
+    assert.equal(/\bform\./.test(page), false)
+    assert.equal(/setForm\(/.test(page), false)
+    assert.equal(/clearOwner/.test(page), false)
+  })
+
+  it('投影只有 draftToPatch（创建与编辑共用）', () => {
+    assert.match(page, /\bdraftToPatch\(draft,/)
+    assert.equal(/toBody\(/.test(page), false)
+  })
+
+  it('分组回显进基线、不回填草稿；写入经 update(\'group_ids\')', () => {
+    assert.match(page, /fromAccountView\(editing, groupsEcho\.data\?\.group_ids \?\? \[\]\)/)
+    assert.equal(/group_ids:\s*\[\.\.\.\(?groupsEcho\.data/.test(page), false)
+    assert.match(page, /\bupdate\('group_ids',\s*v\)/)
+  })
+
+  it('分组控件保留回显门禁（回显未到 ⇒ 禁用，防只勾几个就覆盖全部授予）', () => {
+    assert.match(page, /<GroupMultiSelect\b[\s\S]{0,300}?disabled=\{!!editing && !groupsLoaded\}/)
+  })
+
+  // 最大并发：缺席合法（创建取服务端缺省）；有值必须是 ≥1 的整数（契约不接受 null/0）。
+  // 判据读草稿本身——派生视图会把「没表态」和「清空」都显示成 ''。
+  it('最大并发的非法判据读草稿（空串/0/小数），且保存按钮与 submit 共用', () => {
+    assert.match(page, /const maxConcurrencyInvalid =\s*\n\s*draft\.max_concurrency !== undefined/)
+    assert.match(page, /if \(maxConcurrencyInvalid\) return/)
+    // 按钮的 disabled 必须也读它：只拦 submit 会让按钮「可点但没反应」。
+    assert.match(page, /maxConcurrencyInvalid \|\|/)
+  })
+
+  // 非 codex 的 key 必填与按钮同一判据（trim 后为空）：投影把纯空白当未表态丢掉，
+  // 若只判原文非空，创建会打到后端 400（service/account.go 要求非空）。
+  it('upstream_key 必填判据 trim 后比较（submit 与按钮一致）', () => {
+    assert.match(page, /if \(!isCodexCt\(ct\) && !view\.upstream_key\.trim\(\)\) return/)
+    assert.match(page, /!isCodexCt\(effectiveSelCt\) && !view\.upstream_key\.trim\(\)/)
+  })
+
+  it('页面把模板上下文交给投影（单条按选中模板二分，批量四分）', () => {
+    assert.match(page, /tpl: isSelCodex \? 'codex' : 'nonCodex',/)
+    assert.match(page, /tpl: batchTplCtx,/)
+  })
+
+  // codex 凭据回显是 effect 驱动的子状态（spec §3 的非目标），但它同样会被 structural
+  // sharing 卡住：重开时 editing / data 的引用都可能不变，只有 dialogOpen 会变。
+  it('codex 凭据回显 effect 依赖 dialogOpen（重开命中缓存也能回填）', () => {
+    assert.match(page, /if \(dialogOpen && editing && !extEcho\.isLoading && d\) \{/)
+    assert.match(page, /\}, \[dialogOpen, editing, extEcho\.isLoading, extEcho\.data\]\)/)
+  })
+
+  // 空串/空格不是「清空」：codex ext 的可空列必须回落回显，否则重贴 access token
+  // 会把 refresh_token / email 写没。
+  it('codex ext 的可空列以「空 = 未表态」回落回显（不是空串覆盖）', () => {
+    const body = fnBody(page, 'const saveCodexExt')
+    assert.match(body, /codex_oauth_refresh_token: codexFields\.codex_oauth_refresh_token\.trim\(\) \|\| cur\?\.codex_oauth_refresh_token \|\| null/)
+    assert.match(body, /codex_email: codexFields\.codex_email\.trim\(\) \|\| cur\?\.codex_email \|\| null/)
+  })
+
+  // 空补丁不发：后端 validateAccountPatch 拒绝无字段补丁（service.go:894-901），
+  // 发出去就是 400——「什么都没改点保存」必须是 no-op，而不是报错。
+  it('编辑保存守卫空补丁，且守卫在 PATCH 之前（只改 ext 时仍会写 ext）', () => {
+    assert.match(page, /if \(Object\.keys\(patch\)\.length > 0\) \{/)
+    const guard = page.indexOf('Object.keys(patch).length')
+    const patchCall = page.indexOf('api.updateAccount(')
+    assert.notEqual(guard, -1, '找不到空补丁守卫')
+    assert.notEqual(patchCall, -1, '找不到 updateAccount 调用')
+    assert.ok(guard < patchCall, '空补丁守卫必须在 api.updateAccount( 之前')
+  })
+})
+
+// —— 批量面（Part B）：与单条共用稀疏草稿，但没有回显基线 ——
+// 三个 clear 布尔 + 三值枚举 + 空串哨兵曾把同一件事编码成 5 种形式；这里钉住它们不回来。
+describe('accounts.tsx：批量面接线形状', () => {
+  const batch = fnBody(page, 'const submitBatchUpdate')
+
+  it('批量草稿只有三个写入点（updateBatch / clearBatch / resetBatch）', () => {
+    assert.equal(page.match(/setBatchDraft\(/g)?.length, 3)
+  })
+
+  it('打开对话框重置草稿（上一次的增量不得串到下一次）', () => {
+    assert.equal(fnBody(page, 'const openBatchUpdate').match(/resetBatch\(\)/g)?.length, 1)
+  })
+
+  it('旧快照模型的 clear* 布尔与快照类型归零（批量文案键按面命名）', () => {
+    const old = page.match(/clearBaseURL|clearGroups\b|clearCacheDomain\b|emptyBatchForm|\bBatchForm\b/g) ?? []
+    assert.deepEqual(old, [], `旧快照符号复活：${old.join(', ')}`)
+    // 分组/缓存域的「清空」文案只属于批量面 → 键名带 batch 前缀；
+    // 单条与批量共用的 BaseURL 清空文案仍叫 clearBaseUrl。
+    assert.match(page, /t\('accounts\.batchClearGroups'\)/)
+    assert.match(page, /t\('accounts\.batchClearCacheDomain'\)/)
+    assert.match(page, /t\('accounts\.clearBaseUrl'\)/)
+    assert.equal(/enabled:\s*'all'/.test(page), false)
+  })
+
+  it('isBatchCodex 只作 UI 判据（声明 + 三处控件），不再参与投影分支', () => {
+    assert.equal(page.match(/\bisBatchCodex\b/g)?.length, 4)
+    assert.equal(/if \(!isBatchCodex\)/.test(page), false)
+  })
+
+  it('上下文四分：mixed / unresolved 存在，且 BaseURL 真表态时就地拒绝', () => {
+    const ctxBody = fnBody(page, 'const batchTplCtx')
+    for (const s of ['codex', 'nonCodex', 'mixed', 'unresolved']) {
+      assert.match(ctxBody, new RegExp(`return '${s}'`), `batchTplCtx 缺 ${s} 分支`)
+    }
+    assert.match(batch, /batchTplCtx === 'mixed'/)
+    assert.match(batch, /batchTplCtx === 'unresolved'/)
+    // 纯空白不算表态：投影会丢弃它，gate 不能因此把用户堵在提示里。
+    assert.match(batch, /const baseUrlExpressed = batchDraft\.base_url === null \|\| \(batchDraft\.base_url\?\.trim\(\) \?\? ''\) !== ''/)
+    assert.match(batch, /accounts\.batchBaseUrlBlocked/)
+  })
+
+  it('批量最大并发：0/小数在提交口拦下（不发 400，用批量文案）', () => {
+    assert.match(batch, /const n = Number\(batchDraft\.max_concurrency\)/)
+    assert.match(batch, /!Number\.isInteger\(n\) \|\| n < 1/)
+    assert.match(batch, /accounts\.batchMaxInvalid/) // batch 语境不能复用「新建时留空」的文案
+  })
+
+  it('分组「清空」勾选框只认 []；勾选时多选置灰（选具体分组不得显示「清空」）', () => {
+    assert.match(page, /const clearGroupsChecked = batchDraft\.group_ids !== undefined && batchDraft\.group_ids\.length === 0/)
+    assert.match(page, /<Checkbox checked=\{clearGroupsChecked\}/)
+    assert.match(page, /<GroupMultiSelect\b[\s\S]{0,260}?disabled=\{clearGroupsChecked\}/)
+  })
+
+  it('提交走唯一投影 draftToPatch，且空补丁在 mutate 之前拦下', () => {
+    assert.match(batch, /draftToPatch\(batchDraft,/)
+    assert.match(batch, /proxyFields: buildBatchProxyFields\(batchDraft\.proxy \?\? null\)/)
+    // 投影抛错（非法瞬时值）必须落到 batchErr，而不是未捕获异常。
+    assert.match(batch, /try \{\s*\n\s*fields = draftToPatch\(batchDraft,/)
+    assert.match(batch, /setBatchErr\(\(e as Error\)\.message\)/)
+    const guard = batch.indexOf('Object.keys(fields).length')
+    const mutate = batch.indexOf('batchUpdate.mutate(')
+    assert.notEqual(guard, -1, '找不到空补丁守卫')
+    assert.notEqual(mutate, -1, '找不到 batchUpdate.mutate')
+    assert.ok(guard < mutate, '空补丁守卫必须在 batchUpdate.mutate( 之前')
+  })
+
+  it('每个批量字段都有 updateBatch 写入点（enabled 只在批量面）', () => {
+    // supplier_user_id 不在批量面（归属只在单条表单里分配）。
+    const keys = [...Object.keys(FIELD_KINDS), 'enabled'].filter(k => k !== 'supplier_user_id')
+    for (const key of keys) {
+      assert.match(page, new RegExp(`\\bupdateBatch\\s*\\(\\s*'${key}'\\s*,`), `${key} 没有批量写入点`)
+    }
+  })
+
+  it('唯一模板判据 batchTplCtx 读草稿（替换模板优先于选中行）', () => {
+    assert.match(page, /const batchTplCtx: TplCtx = useMemo/)
+    assert.match(page, /batchDraft\.template_id !== undefined/)
+  })
+})

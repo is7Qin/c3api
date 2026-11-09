@@ -14,16 +14,26 @@ import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import {
   PROXY_DIRECT_VALUE,
   PROXY_UNCHANGED_VALUE,
-  buildAccountPatch,
   buildBatchProxyFields,
-  buildGroupIdsField,
   echoMayHideBinding,
   parseBatchProxyValue,
   parseProxySelectValue,
   proxySelectItems,
   proxySelectValue,
-  proxySelectionOf,
 } from '@/lib/account-proxy'
+import {
+  assertCreate,
+  defaults,
+  draftToPatch,
+  fromAccountView,
+  mergeView,
+  withField,
+  withoutField,
+  type AccountDraft,
+  type AccountValues,
+  type BatchDraft,
+  type TplCtx,
+} from '@/lib/account-draft'
 import { BatchBar } from '@/components/batch-bar'
 import { ListToolbar } from '@/components/list-toolbar'
 import { Pagination } from '@/components/pagination'
@@ -59,7 +69,6 @@ type AccountExt = components['schemas']['AccountExt']
 type Group = components['schemas']['Group']
 
 // codex 生态账号（AccountExt 仅支持 codex-oauth/codex-pat）：凭据走扩展配置，列表上游 key 不承载凭据
-const CODE_CREDENTIAL_TYPES: NonNullable<components['schemas']['Template']['CredentialType']>[] = ['codex-oauth', 'codex-pat']
 const isCodexTemplate = (a: AccountView) =>
   a.Template?.CredentialType === 'codex-oauth' || a.Template?.CredentialType === 'codex-pat'
 
@@ -201,123 +210,9 @@ function toLocalDT(iso: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-interface FormState {
-  name: string
-  template_id: string // Select 值统一用字符串，提交时转 number
-  base_url: string // 账号级覆盖（'' = 继承模板）
-  upstream_key: string
-  max_concurrency: string
-  // null = 没表态（不发键）：分组回显是异步的（GET /accounts/{id}/groups，
-  // 不随列表返回），把「看起来是空」的草稿发回去会清空已有分组。
-  // 契约三态：缺席（null）= 不变、[] = 清空、[ids] = 替换。
-  group_ids: number[] | null
-  // 生命周期表单项（创建/编辑对话框直配；随创建/PATCH 请求体一次落库）：
-  // cost_multiplier 字符串形态（默认 '1' = ×1），提交前经 parseMultiplier
-  // 校验（0–10，bp 4 位小数）；cache_domain 空串 = 账号私有域（编辑态按变化
-  // 发送 null = 清空）。
-  cost_multiplier: string
-  cache_domain: string
-  // codex 凭据（按模板类型分流：codex-oauth → codex_oauth_* 组；codex-pat →
-  // codex_pat_key；与 account_ext 字段对应——保存时链式写入扩展配置）
-  codex_oauth_token: string
-  codex_oauth_refresh_token: string
-  codex_oauth_expires_at: string
-  codex_pat_key: string
-  codex_email: string
-  codex_account_id: string
-  // 归属供应商 user_id（**仅管理面作用域**：把账号分配给供应商的唯一入口，
-  // spec §2.5/§6.1 L834）；供应商面不展示、不可编辑（服务端恒为 JWT 本人）。
-  // 空串 = 不发送（创建态 = 平台自有 null；编辑态 = 保持不变，绝不误清空）。
-  supplier_user_id: string
-  // 清空归属哨兵（对齐 clearCacheDomain）：编辑态勾选 ⇒ 显式发送 supplier_user_id:
-  // null（回平台自有）；供应商面不展示该控件（服务端恒为 JWT 本人）。
-  clearOwner: boolean
-  // 出口代理（spec proxy-pool §3.6/§7）：Select 值 = 哨兵 PROXY_DIRECT_VALUE 或代理 id。
-  // **三态靠「与回显相比是否变化」表达**（buildAccountPatch 是唯一实现）——
-  // 用户没动这个选择器 ⇒ 请求体里不会有 proxy_id 键（也就不会把管理员绑的、
-  // 而读面不可见的平台代理静默解绑）。
-  proxy: string
-}
-
-const emptyForm = (): FormState => ({
-  name: '',
-  template_id: '',
-  base_url: '',
-  upstream_key: '',
-  max_concurrency: '8',
-  group_ids: null,
-  cost_multiplier: '1',
-  cache_domain: '',
-  codex_oauth_token: '',
-  codex_oauth_refresh_token: '',
-  codex_oauth_expires_at: '',
-  codex_pat_key: '',
-  codex_email: '',
-  codex_account_id: '',
-  supplier_user_id: '',
-  clearOwner: false,
-  proxy: PROXY_DIRECT_VALUE,
-})
-
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
 // PUT 全列更新：account id 优先用表单手填值，空则回显原值防清空
 const codexAccountIdBody = (val: string, cur?: string | null) => val.trim() || cur || null
-function toForm(a: AccountView): FormState {
-  const ct = a.Template?.CredentialType as string | undefined
-  const codex = isCodexCt(ct)
-  return {
-    name: a.Name ?? '',
-    template_id: String(a.TemplateID ?? ''),
-    base_url: codex ? '' : (a.BaseURL ?? ''), // Codex: must clear stale BaseURL on load
-    upstream_key: a.UpstreamKey ?? '',
-    max_concurrency: String(a.MaxConcurrency ?? 8),
-    // 编辑回显不走账号列表（方案 B）：对话框挂载时经 getAccountGroups 拉取，
-    // 拉到前控件禁用；写入侧由 buildGroupIdsField 保证「没表态 = 不发键」。
-    // codex 凭据经 ext 拉取回显；生命周期回显：倍率缺失按 ×1，缓存域缺失（null）按空串。
-    group_ids: null,
-    cost_multiplier: String(a.UpstreamCostMultiplier ?? 1),
-    cache_domain: a.CacheDomain ?? '',
-    codex_oauth_token: '',
-    codex_oauth_refresh_token: '',
-    codex_oauth_expires_at: '',
-    codex_pat_key: '',
-    codex_email: '',
-    codex_account_id: '',
-    // 归属回显（AccountView 现含 supplier_user_id 列）：编辑态按当前归属回填，
-    // 空 = 平台自有；勾选 clearOwner 显式清空（发送 null）。
-    supplier_user_id: a.supplier_user_id != null ? String(a.supplier_user_id) : '',
-    clearOwner: false,
-    // 出口代理回显：proxy_id 非 null ⇒ 该代理对当前调用方可见；null ⇒ 直连**或**
-    // 绑着一条当前调用方看不见的代理（供应商面的平台代理），两种情形在 UI 上无法区分，
-    // 故回显为 null 时永远只展示「直连」且不改动就不发键（buildAccountPatch 守卫）。
-    proxy: proxySelectValue(proxySelectionOf(a.proxy_id)),
-  }
-}
-
-// 三态字段模型（创建/PATCH/批量共用）的请求体：只带契约字段，不带运行时字段。
-// 缺席 = 不变（创建态 = 取后端缺省）；可空标量 null = 清空；group_ids 三态走
-// buildGroupIdsField（null = 没表态 → 不出现）。
-// 倍率/缓存域不是独立端点：随同一请求体一次落库（编辑态仅变化项才带）。
-function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): AccountCreate {
-  const body: AccountCreate = {
-    name: f.name.trim(),
-    template_id: Number(f.template_id),
-    // 空串归一 null；Codex 强制 null（SDK default, non-empty forbidden)
-    base_url: isCodex ? null : (f.base_url.trim() || null),
-  }
-  // upstream_key 缺席 = 不变；空值不发送（codex 模板本无静态 key；非 codex 模板
-  // 的空 key 由后端按模板类型条件必填拒绝为 400，不在此处伪造空串）。
-  if (f.upstream_key) body.upstream_key = f.upstream_key
-  // max_concurrency 缺席 = 不变 / 创建取后端配置缺省（不再硬编码 8）。
-  if (f.max_concurrency !== '') body.max_concurrency = Number(f.max_concurrency)
-  Object.assign(body, buildGroupIdsField(f.group_ids))
-  if (!current) {
-    const d = f.cache_domain.trim()
-    if (d) body.cache_domain = d
-  }
-  return body
-}
-
 // 分组多选（替换语义 UI；disabled 用于回显加载中/批量清空勾选时）。
 function GroupMultiSelect({ groups, value, onChange, disabled }: {
   groups: Group[]
@@ -341,38 +236,8 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
   )
 }
 
-// 批量更新表单：空字段 = 不发送（保持原值）。
-interface BatchForm {
-  name: string
-  upstream_key: string
-  base_url: string
-  max_concurrency: string
-  template_id: string
-  group_ids: string[]
-  clearGroups: boolean // 勾选发送 group_ids: [] 并禁用分组多选
-  clearBaseURL: boolean // 三态哨兵（对齐 clearGroups 先例）：勾选发送 base_url: "" = 清空；未勾选且输入非空 → 该值；未勾选且空 → 不变
-  enabled: 'all' | 'true' | 'false' // 三态：'all' = 不变（不发送）；true/false = 统一落值
-  cache_domain: string
-  clearCacheDomain: boolean // 三态哨兵（对齐 clearBaseURL）：勾选发送 cache_domain: null = 清空回账号私有域
-  multiplier: string // 空 = 不变（不发送）
-  proxy: string // 三态：PROXY_UNCHANGED_VALUE = 不变（不发键）/ PROXY_DIRECT_VALUE = null（解绑）/ 代理 id = 绑定
-}
-
-const emptyBatchForm = (): BatchForm => ({
-  name: '',
-  upstream_key: '',
-  base_url: '',
-  max_concurrency: '',
-  template_id: 'all',
-  group_ids: [],
-  clearGroups: false,
-  clearBaseURL: false,
-  enabled: 'all',
-  cache_domain: '',
-  clearCacheDomain: false,
-  multiplier: '',
-  proxy: PROXY_UNCHANGED_VALUE,
-})
+// 批量更新表单与单条共用同一套稀疏草稿（BatchDraft）：键缺席 = 不改；
+// 批量没有回显基线，故没有「输入框清空 = 写 null」——清空只由勾选框显式表达。
 
 // 作用域参数化（spec 2026-10-09 §6.1/§10）：**同一页面组件**在管理面（/app/accounts）与
 // 供应商控制台（/app 之外的 /user/supplier/accounts）复用，只切 API base 前缀——
@@ -413,7 +278,8 @@ export default function Accounts() {
     refetchInterval: 10_000,
   })
   const templatesQ = useQuery({ queryKey: ['templates'], queryFn: () => api.listTemplates({ limit: 100 }) })
-  const templates = templatesQ.data?.rows ?? []
+  // 稳定引用：未加载时的 [] 不能每帧换身份（batchTplCtx 的 useMemo 依赖它）
+  const templates = useMemo(() => templatesQ.data?.rows ?? [], [templatesQ.data])
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: () => api.listGroups({ limit: 100 }) })
   const groups = groupsQ.data?.rows ?? []
   const rows = useMemo(() => data?.rows ?? [], [data?.rows])
@@ -650,84 +516,84 @@ export default function Accounts() {
   })
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const [batchUpdateOpen, setBatchUpdateOpen] = useState(false)
-  const [batchForm, setBatchForm] = useState<BatchForm>(emptyBatchForm())
-  const [batchFormErr, setBatchFormErr] = useState<string | null>(null)
+  // 批量面的稀疏草稿：与单条同一套写入原语（键缺席 = 不改）；没有回显基线。
+  const [batchDraft, setBatchDraft] = useState<BatchDraft>({})
+  const [batchErr, setBatchErr] = useState<string | null>(null)
   const batchResolve = useRef<((r: 'cancelled' | 'submitted') => void) | null>(null)
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
     setBatchUpdateOpen(false)
     batchResolve.current?.(r)
     batchResolve.current = null
   }
+  const updateBatch = <K extends keyof BatchDraft>(k: K, v: Exclude<BatchDraft[K], undefined>) => setBatchDraft(d => withField(d, k, v))
+  const clearBatch = (k: keyof BatchDraft) => setBatchDraft(d => withoutField(d, k))
+  const resetBatch = () => setBatchDraft({})
   const openBatchUpdate = () => {
-    setBatchForm(emptyBatchForm())
-    setBatchFormErr(null)
+    resetBatch()
+    setBatchErr(null)
     setBatchUpdateOpen(true)
   }
-  // 批量有效模板判定 — 替换模板优先，否则各选中账号现模板（账号 Template 回退，缺失时禁用）
-  const isBatchCodex = useMemo(() => {
-    if (batchForm.template_id !== 'all') {
-      const tpl = templates.find(p => String(p.ID) === batchForm.template_id)
+  // 批量有效模板四分：替换模板优先，否则按选中行（账号 Template 回退到模板列表）。
+  // 与单条不同，批量会同时命中 codex 与非 codex：mixed/unresolved 下 BaseURL 一律不发。
+  const batchTplCtx: TplCtx = useMemo(() => {
+    if (batchDraft.template_id !== undefined) {
+      const tpl = templates.find(p => String(p.ID) === batchDraft.template_id)
       const ct = tpl?.CredentialType as string | undefined
-      if (isCodexCt(ct)) return true
-      if (ct != null) return false // found non-codex (including responses-special) -> preserve
-      // unresolved replacement template: fail closed (disable) while loading or not found
-      if (templatesQ.isLoading) return true
-      if (templatesQ.data) return true
-      return true // before first load also fail closed
+      if (isCodexCt(ct)) return 'codex'
+      if (ct != null) return 'nonCodex'
+      return 'unresolved'
     }
-    return selected.some(id => {
+    const states = selected.map(id => {
       const acc = rows.find(r => r.ID === id)
       const ct = (acc?.Template?.CredentialType as string | undefined) ?? (templates.find(p => p.ID === acc?.TemplateID)?.CredentialType as string | undefined)
-      if (isCodexCt(ct)) return true
-      if (ct != null) return false
-      // unresolved effective template for this row -> fail closed
-      if (!acc) return true
-      return true
+      if (isCodexCt(ct)) return 'codex' as const
+      if (ct != null) return 'nonCodex' as const
+      return 'unresolved' as const
     })
-  }, [batchForm.template_id, selected, rows, templates, templatesQ.isLoading, templatesQ.data])
-  useEffect(() => {
-    if (isBatchCodex && (batchForm.base_url !== '' || batchForm.clearBaseURL)) {
-      setBatchForm(f => ({ ...f, base_url: '', clearBaseURL: false }))
-    }
-  }, [isBatchCodex, batchForm.base_url, batchForm.clearBaseURL])
+    if (states.length === 0) return 'nonCodex'
+    if (states.includes('unresolved')) return 'unresolved'
+    if (states.every(s => s === 'codex')) return 'codex'
+    if (states.every(s => s === 'nonCodex')) return 'nonCodex'
+    return 'mixed'
+  }, [batchDraft.template_id, selected, rows, templates])
+  const isBatchCodex = batchTplCtx === 'codex' // 只给三处 UI 判据用（禁用输入/勾选/提示）
+  // 「清空分组」只由 []（明确的空集合）表达；选了具体分组时勾选框必须是未勾选
+  // （否则文案说「清空」、实际是替换，用户取消勾选还会把变更丢掉）。
+  const clearGroupsChecked = batchDraft.group_ids !== undefined && batchDraft.group_ids.length === 0
   const submitBatchUpdate = () => {
-    const fields: AccountConfigPatch = {}
-    if (batchForm.name.trim()) fields.name = batchForm.name.trim()
-    if (batchForm.upstream_key) fields.upstream_key = batchForm.upstream_key
-    // base_url 三态：勾选清空 → null = 清空（回继承模板）；
-    // 未勾选且输入非空 → 落值；未勾选且空 → 不变（不发送）
-    // 含 Codex 时禁止提交 base_url
-    if (!isBatchCodex) {
-      if (batchForm.clearBaseURL) fields.base_url = null
-      else if (batchForm.base_url.trim()) fields.base_url = batchForm.base_url.trim()
-    }
-    if (batchForm.max_concurrency !== '') fields.max_concurrency = Number(batchForm.max_concurrency)
-    if (batchForm.template_id !== 'all') fields.template_id = Number(batchForm.template_id)
-    if (batchForm.clearGroups) fields.group_ids = []
-    else if (batchForm.group_ids.length > 0) fields.group_ids = batchForm.group_ids.map(Number)
-    // 启停/缓存域/倍率：AccountConfigPatch 的批量契约字段（API 侧全字段可批量，
-    // 无需改契约）。倍率/缓存域先做 UI 边界校验（镜像后端），非法则整单拒绝。
-    const dom = batchForm.cache_domain.trim()
-    if (dom && !validCacheDomain(dom)) {
-      setBatchFormErr(t('accounts.cacheDomain.invalid'))
+    if (selected.length === 0) return
+    // 混合/未解析 + 用户真的表态了 BaseURL（非空值或显式清空）⇒ 拒绝；
+    // 纯空白投影后本来就不发，不该把用户堵在提示里。
+    const baseUrlExpressed = batchDraft.base_url === null || (batchDraft.base_url?.trim() ?? '') !== ''
+    if ((batchTplCtx === 'mixed' || batchTplCtx === 'unresolved') && baseUrlExpressed) {
+      setBatchErr(t('accounts.batchBaseUrlBlocked'))
       return
     }
-    let mult: number | null = null
-    if (batchForm.multiplier.trim()) {
-      mult = parseMultiplier(batchForm.multiplier)
-      if (mult === null) {
-        setBatchFormErr(t('accounts.multiplier.invalid'))
-        return
-      }
+    if (batchDraft.max_concurrency !== undefined) {
+      const n = Number(batchDraft.max_concurrency)
+      if (!Number.isInteger(n) || n < 1) { setBatchErr(t('accounts.batchMaxInvalid')); return }
     }
-    if (batchForm.enabled !== 'all') fields.enabled = batchForm.enabled === 'true'
-    if (batchForm.clearCacheDomain) fields.cache_domain = null
-    else if (dom) fields.cache_domain = dom
-    if (mult !== null) fields.upstream_cost_multiplier = mult
-    // 出口代理批量三态（投影唯一实现 = buildBatchProxyFields）：「不变」⇒ 不发键。
-    Object.assign(fields, buildBatchProxyFields(parseBatchProxyValue(batchForm.proxy)))
+    const dom = (batchDraft.cache_domain ?? '').trim()
+    if (dom !== '' && !validCacheDomain(dom)) { setBatchErr(t('accounts.cacheDomain.invalid')); return }
+    if (batchDraft.cost_multiplier !== undefined && parseMultiplier(batchDraft.cost_multiplier) === null) {
+      setBatchErr(t('accounts.multiplier.invalid')); return
+    }
+    // 投影是纯函数，唯一可能抛的是「非法瞬时值」（如 max_concurrency 的 0/小数）。
+    // 上面的守卫已拦；这里兜住，保证守卫将来被删时是可见错误而不是未捕获异常。
+    let fields: AccountConfigPatch
+    try {
+      fields = draftToPatch(batchDraft, {
+        tpl: batchTplCtx,
+        echoProxyId: 0, // 批量不用 echo 规则（proxyFields 覆盖）
+        isSupplierScope,
+        proxyFields: buildBatchProxyFields(batchDraft.proxy ?? null),
+      })
+    } catch (e) {
+      setBatchErr((e as Error).message)
+      return
+    }
     if (Object.keys(fields).length === 0) {
-      setBatchFormErr(t('accounts.batchUpdateEmpty'))
+      setBatchErr(t('accounts.batchUpdateEmpty'))
       return
     }
     batchUpdate.mutate({ ids: selected, fields })
@@ -736,7 +602,22 @@ export default function Accounts() {
   // —— 单行 创建/编辑/删除 ——
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AccountView | null>(null)
-  const [form, setForm] = useState<FormState>(emptyForm())
+  // 单条创建/编辑的**稀疏草稿**：键缺席 = 用户没表态；清空只有 null（标量）/ []（集合）。
+  // 控件读派生视图 view（基线 ⊕ 草稿），写只经 update/clear/reset 三个原语——
+  // 全文件仅这三处 setDraft：没有 effect 回填，也没有第二份真值。
+  const [draft, setDraft] = useState<AccountDraft>({})
+  // codex 凭据子状态（本对话框专用；「扩展配置」弹窗的 extForm 是另一份，不共享）。
+  const [codexFields, setCodexFields] = useState({
+    codex_oauth_token: '',
+    codex_oauth_refresh_token: '',
+    codex_oauth_expires_at: '',
+    codex_pat_key: '',
+    codex_email: '',
+    codex_account_id: '',
+  })
+  const update = <K extends keyof BatchDraft>(k: K, v: Exclude<BatchDraft[K], undefined>) => setDraft(d => withField(d, k, v))
+  const clear = (k: keyof BatchDraft) => setDraft(d => withoutField(d, k))
+  const reset = () => setDraft({})
   const [deleting, setDeleting] = useState<AccountView | null>(null)
   const [importOpen, setImportOpen] = useState(false)
 
@@ -765,7 +646,18 @@ export default function Accounts() {
     enabled: !!editing && dialogOpen,
   })
   const groupsLoaded = !editing || (groupsEcho.data !== undefined && !groupsEcho.isError)
-  const groupsValue = form.group_ids ?? groupsEcho.data?.group_ids ?? []
+
+  // 基线 ⊕ 草稿 = 控件与校验只读的派生视图。分组回显进**基线**（不进草稿）：
+  // 回显未到前控件禁用，用户勾选只会写 draft.group_ids（稀疏增量）。
+  const baseline = useMemo<AccountValues>(
+    () => (editing ? fromAccountView(editing, groupsEcho.data?.group_ids ?? []) : defaults()),
+    [editing, groupsEcho.data],
+  )
+  const view = mergeView(baseline, draft)
+  // 最大并发：缺席合法（创建取服务端缺省）；有值必须是 ≥1 的整数
+  // （契约不接受 null/0，service.go:917）。空串/0/小数 = 非法瞬时值。
+  const maxConcurrencyInvalid =
+    draft.max_concurrency !== undefined && !(Number.isInteger(Number(draft.max_concurrency)) && Number(draft.max_concurrency) >= 1)
 
   // codex 账号编辑回显：对话框挂载时拉 ext 凭据（404 = 无 ext 行 → 空表单）；
   // 与「扩展配置」弹窗同一数据源，此处仅填充表单。
@@ -783,27 +675,32 @@ export default function Accounts() {
   })
   useEffect(() => {
     const d = extEcho.data
-    if (editing && !extEcho.isLoading && d) {
-      setForm(f => ({
-        ...f,
+    // dialogOpen 必须进条件与依赖：二次打开时 editing / data 的引用都可能被复用，
+    // 只靠 [editing, data] 会让回显 effect 一次都不跑（同一类 structural sharing 事故）。
+    if (dialogOpen && editing && !extEcho.isLoading && d) {
+      setCodexFields({
         codex_oauth_token: d.codex_oauth_token ?? '',
         codex_oauth_refresh_token: d.codex_oauth_refresh_token ?? '',
         codex_oauth_expires_at: d.codex_oauth_expires_at ? toLocalDT(d.codex_oauth_expires_at) : '',
         codex_pat_key: d.codex_pat_key ?? '',
         codex_email: d.codex_email ?? '',
         codex_account_id: d.codex_account_id ?? '',
-      }))
+      })
     }
-  }, [editing, extEcho.isLoading, extEcho.data])
+  }, [dialogOpen, editing, extEcho.isLoading, extEcho.data])
 
+  // 草稿生命周期：打开对话框是**唯一**重置点。不重置就会把上一个账号的增量串到
+  // 下一个（「编辑 A 改个名字 → 取消 → 打开 B」保存即写错行）。
   const openCreate = () => {
     setEditing(null)
-    setForm(emptyForm())
+    reset()
+    setCodexFields({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '', codex_account_id: '' })
     setDialogOpen(true)
   }
   const openEdit = (a: AccountView) => {
     setEditing(a)
-    setForm(toForm(a))
+    reset()
+    setCodexFields({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '', codex_account_id: '' })
     setDialogOpen(true)
   }
 
@@ -839,39 +736,33 @@ export default function Accounts() {
   // 编辑走 PATCH /accounts/{id}（If-Match = 读到的代际，陈旧 → 412）。
   // 失败 throw → 内联错误展示（对话框保持打开可重试）。
   const save = useMutation({
-    mutationFn: async (f: FormState): Promise<void> => {
-      const mult = parseMultiplier(f.cost_multiplier)
-      if (mult === null) throw new Error(t('accounts.multiplier.invalid'))
-      const domTrim = f.cache_domain.trim()
+    mutationFn: async (): Promise<void> => {
+      if (parseMultiplier(view.cost_multiplier) === null) throw new Error(t('accounts.multiplier.invalid'))
+      const domTrim = (view.cache_domain ?? '').trim()
       if (domTrim !== '' && !validCacheDomain(domTrim)) throw new Error(t('accounts.cacheDomain.invalid'))
-      const newDom = domTrim === '' ? null : domTrim
-      // 计算有效凭据：未改时以嵌入 Template 为准，变更时查替换模板，未解析时禁用
-      const isUnchangedForF = !!(editing && String(editing.TemplateID) === String(f.template_id))
-      const tplForF = isUnchangedForF ? null : templates.find(p => String(p.ID) === String(f.template_id))
-      const effCt: string | undefined = isUnchangedForF
-        ? (editing!.Template?.CredentialType as string | undefined)
-        : (tplForF?.CredentialType as string | undefined)
-      const unresolved = !!f.template_id && effCt == null
-      const isCodexForBody = isCodexCt(effCt) || unresolved
-      const ct = effCt
+      // 有效凭据（未改模板时以嵌入 Template 为准；未解析 = fail-closed 视为 codex）
+      const ct = effectiveSelCt
       const saveCodexExt = async (id: number) => {
         if (!(id && isCodexCt(ct))) return
         const cur = extEcho.data
         const extBody: AccountExt = {
           account_id: id,
           credential_type: ct,
-          codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
+          // 空串 = 未表态（回显可能未到）⇒ 回落回显；旧写法 `?.trim() ?? cur` 的回落永不
+          // 触发（trim 恒非 null），会把邮箱写成空串。
+          codex_email: codexFields.codex_email.trim() || cur?.codex_email || null,
           // PUT 全列更新：缺省字段按 NULL 落盘
-          codex_account_id: codexAccountIdBody(f.codex_account_id, cur?.codex_account_id),
+          codex_account_id: codexAccountIdBody(codexFields.codex_account_id, cur?.codex_account_id),
           ...(ct === 'codex-oauth'
             ? {
-                codex_oauth_token: f.codex_oauth_token.trim() || null,
-                codex_oauth_refresh_token: f.codex_oauth_refresh_token.trim() || null,
-                codex_oauth_expires_at: toRFC3339(f.codex_oauth_expires_at) ?? null,
+                codex_oauth_token: codexFields.codex_oauth_token.trim() || null,
+                // refresh/expires 可空：空 = 未表态，不得把已有值写没
+                codex_oauth_refresh_token: codexFields.codex_oauth_refresh_token.trim() || cur?.codex_oauth_refresh_token || null,
+                codex_oauth_expires_at: toRFC3339(codexFields.codex_oauth_expires_at) ?? cur?.codex_oauth_expires_at ?? null,
                 codex_pat_key: null,
               }
             : {
-                codex_pat_key: f.codex_pat_key.trim() || null,
+                codex_pat_key: codexFields.codex_pat_key.trim() || null,
                 codex_oauth_token: null,
                 codex_oauth_refresh_token: null,
                 codex_oauth_expires_at: null,
@@ -881,41 +772,28 @@ export default function Accounts() {
         }
         await api.putAccountExt(id, extBody)
       }
-      // 归属供应商（仅管理面作用域；供应商面恒隐含 JWT 本人）。空 = 不发送。
-      // 值由 SupplierPicker 唯一写入（只产出数字串或 ''），无需再校验。
-      const ownerRaw = isSupplierScope ? '' : f.supplier_user_id.trim()
-      const ownerUID = ownerRaw === '' ? null : Number(ownerRaw)
+      // 唯一投影（创建与编辑共用）：缺席 = 不变，null/[] = 清空。codex 的 base_url
+      // 约束、归属的作用域约束都只在这里施加——控件层没有第二套规则。
+      const patch = draftToPatch(draft, {
+        tpl: isSelCodex ? 'codex' : 'nonCodex',
+        echoProxyId: editing?.proxy_id ?? null,
+        isSupplierScope,
+      })
       if (!editing) {
-        // 创建：一次 POST 落全部字段（倍率非 ×1 时随体带，无补写腿）
-        // structurally force base_url null for Codex/unresolved even if form still stale
-        const body = toBody(f, null, isCodexForBody)
-        if (mult !== 1) body.upstream_cost_multiplier = mult
-        if (ownerUID != null) body.supplier_user_id = ownerUID
-        const created = await api.createAccount(body)
+        // 创建：一次 POST 落全部字段（必填由 assertCreate 兜底；缺席 = 服务端缺省）
+        assertCreate(draft)
+        const created = await api.createAccount(patch as AccountCreate)
         await saveCodexExt(created.ID!)
         return
       }
-      // 编辑：一次 PATCH 落全部变更（仅变化项才带倍率/缓存域；缺席 = 不变）
-      const id = editing.ID!
-      const normMult = (v?: number | null) => Math.round((v ?? 1) * 10000) / 10000
-      const patch: AccountConfigPatch = toBody(f, editing, isCodexForBody)
-      if (mult !== normMult(editing.UpstreamCostMultiplier)) patch.upstream_cost_multiplier = mult
-      if (newDom !== (editing.CacheDomain ?? null)) patch.cache_domain = newDom
-      // 归属三态（AccountView 现回显）：勾选清空 ⇒ null；显式填值 ⇒ 分配；
-      // 字段被清空且原有归属 ⇒ 清空；其余 ⇒ 缺席（保持原归属不变）。
-      if (!isSupplierScope) {
-        const currentOwner = editing.supplier_user_id ?? null
-        if (f.clearOwner) patch.supplier_user_id = null
-        else if (ownerUID != null) patch.supplier_user_id = ownerUID
-        else if (currentOwner != null) patch.supplier_user_id = null
+      // 编辑：一次 PATCH 落全部变更（缺席 = 不变，不再与回显逐字段比较）。
+      // 空补丁不发：后端 validateAccountPatch 拒绝无字段补丁（service.go:894-901），
+      // 「什么都没改点保存」应是 no-op 关窗，而不是 400。只改了 codex 凭据时补丁
+      // 本来就是空的——ext 照旧要写。
+      if (Object.keys(patch).length > 0) {
+        await api.updateAccount(editing.ID!, patch, editing.LifecycleRevision)
       }
-      // 出口代理三态（投影唯一实现 = buildAccountPatch）：与回显相同、或回显为 null
-      // （可能绑着对当前调用方不可见的代理）且用户没选中具体代理 ⇒ 请求体**不含**
-      // proxy_id 键。这两条一起构成「整表单覆盖不得静默解绑管理员配置」的防线。
-      Object.assign(patch, buildAccountPatch(editing.proxy_id, parseProxySelectValue(f.proxy)))
-      await api.updateAccount(id, patch, editing.LifecycleRevision)
-      await saveCodexExt(id)
-      return
+      await saveCodexExt(editing.ID!)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
@@ -993,16 +871,21 @@ export default function Accounts() {
     // 凭据必填性按模板类型分流：api_key/responses-special → upstream_key；
     // codex-oauth → codex_oauth_token；codex-pat → codex_pat_key（后端同步校验）。
     // Use effectiveSelCt (fail-closed) so delayed template query does not bypass validation
-    if (!form.name.trim() || !form.template_id) return
+    if (!view.name.trim() || !view.template_id) return
     if (isSelUnresolved) return // fail-closed: do not submit while unresolved
-    if (parseMultiplier(form.cost_multiplier) === null) return
-    const domTrim = form.cache_domain.trim()
+    // 判据读草稿不读视图：缺席合法（创建取服务端缺省）；有值必须是 ≥1 的整数
+    // （契约不接受 null/0，service.go:917）。空串/0/非法小数一律禁用保存。
+    if (maxConcurrencyInvalid) return
+    if (parseMultiplier(view.cost_multiplier) === null) return
+    const domTrim = (view.cache_domain ?? '').trim()
     if (domTrim !== '' && !validCacheDomain(domTrim)) return
     const ct = effectiveSelCt
-    if (ct === 'codex-oauth' && !form.codex_oauth_token.trim()) return
-    if (ct === 'codex-pat' && !form.codex_pat_key.trim()) return
-    if (ct !== 'codex-oauth' && ct !== 'codex-pat' && !form.upstream_key) return
-    save.mutate(form)
+    if (ct === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) return
+    if (ct === 'codex-pat' && !codexFields.codex_pat_key.trim()) return
+    // 非 codex 的 key 必填与按钮同一判据：trim 后为空 ⇒ 不提交。
+    // （投影会把纯空白当未表态丢掉，若只判原文非空，创建会打到后端 400。）
+    if (!isCodexCt(ct) && !view.upstream_key.trim()) return
+    save.mutate()
   }
 
   // —— 扩展配置（codex-oauth/codex-pat 模板；GET 404 = 无 ext 行 → 空表单，credential_type 预填模板类型） ——
@@ -1079,20 +962,16 @@ export default function Accounts() {
 
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
   const templateName = (a: AccountView) => a.Template?.Name ?? (a.TemplateID ? `#${a.TemplateID}` : '—')
-  const selTemplate = templates.find(tp => String(tp.ID) === form.template_id)
+  const selTemplate = templates.find(tp => String(tp.ID) === view.template_id)
   // 有效凭据：编辑未改时以嵌入 Template 为准，仅 ID 变更时查替换模板，未解析时禁用
-  const isEditingUnchanged = !!(editing && String(editing.TemplateID) === form.template_id)
+  const isEditingUnchanged = !!(editing && String(editing.TemplateID) === view.template_id)
   const effectiveSelCt: string | undefined = isEditingUnchanged
     ? (editing!.Template?.CredentialType as string | undefined)
     : (selTemplate?.CredentialType as string | undefined)
-  const isSelUnresolved = !!form.template_id && effectiveSelCt == null
+  const isSelUnresolved = !!view.template_id && effectiveSelCt == null
   const isSelCodex = isCodexCt(effectiveSelCt) || isSelUnresolved
-  // 切换至 Codex/未解析时清空残留 BaseURL
-  useEffect(() => {
-    if (isSelCodex && form.base_url !== '') {
-      setForm(f => ({ ...f, base_url: '' }))
-    }
-  }, [isSelCodex, form.base_url])
+  // 切模板**不碰** base_url 草稿（codex 约束在投影期施加：保存时落 null，
+  // 切回非 codex 时输入框仍显示原值，用户没表态就不写）。
 
   return (
     <div className="space-y-6">
@@ -1350,7 +1229,7 @@ export default function Accounts() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="acc-name">{t('accounts.nameLabel')}</Label>
-              <Input id="acc-name" value={form.name} placeholder={t('accounts.namePlaceholder')} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <Input id="acc-name" value={view.name} placeholder={t('accounts.namePlaceholder')} onChange={e => update('name', e.target.value)} />
             </div>
             {/* 归属供应商（仅管理面作用域）：把账号分配给供应商的唯一入口（spec §6.1 L834）。
                 供应商面不展示（服务端把归属恒定为 JWT 本人）。 */}
@@ -1359,18 +1238,18 @@ export default function Accounts() {
                 <Label htmlFor="acc-owner">{t('accounts.owner.label')}</Label>
                 <SupplierPicker
                   id="acc-owner"
-                  value={form.supplier_user_id}
-                  onChange={v => setForm(f => ({ ...f, supplier_user_id: v }))}
+                  value={view.supplier_user_id == null ? '' : String(view.supplier_user_id)}
+                  onChange={v => (v === '' ? clear('supplier_user_id') : update('supplier_user_id', Number(v)))}
                   placeholder={t('accounts.owner.placeholder')}
-                  disabled={form.clearOwner}
+                  disabled={draft.supplier_user_id === null}
                   disableInactive
                 />
                 <p className="text-xs text-muted-foreground">{t('accounts.owner.hint')}</p>
                 {editing && (
                   <label className="flex items-center gap-2">
                     <Checkbox
-                      checked={form.clearOwner}
-                      onCheckedChange={c => setForm(f => ({ ...f, clearOwner: c === true }))}
+                      checked={draft.supplier_user_id === null}
+                      onCheckedChange={c => (c === true ? update('supplier_user_id', null) : clear('supplier_user_id'))}
                     />
                     <span className="text-sm">{t('accounts.owner.clear')}</span>
                   </label>
@@ -1379,14 +1258,11 @@ export default function Accounts() {
             )}
             <div className="space-y-1.5">
               <Label>{t('accounts.templateLabel')}</Label>
+              {/* 只写模板：base_url 草稿不随模板切换而变（codex 约束在投影期施加，切回不丢值） */}
               <Select
                 items={Object.fromEntries(templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`]))}
-                value={form.template_id || null}
-                onValueChange={v => {
-                  const tpl = templates.find(p => String(p.ID) === String(v))
-                  const isCodex = !!(tpl && CODE_CREDENTIAL_TYPES.includes(tpl.CredentialType as typeof CODE_CREDENTIAL_TYPES[number]))
-                  setForm(f => ({ ...f, template_id: String(v), base_url: isCodex ? '' : f.base_url }))
-                }}
+                value={view.template_id || null}
+                onValueChange={v => update('template_id', String(v))}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -1406,9 +1282,9 @@ export default function Accounts() {
                   <Input
                     id="acc-oauth-token"
                     type="password"
-                    value={form.codex_oauth_token}
+                    value={codexFields.codex_oauth_token}
                     placeholder={t('accounts.ext.oauthTokenPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_oauth_token: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_oauth_token: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -1416,26 +1292,26 @@ export default function Accounts() {
                   <Input
                     id="acc-oauth-refresh"
                     type="password"
-                    value={form.codex_oauth_refresh_token}
+                    value={codexFields.codex_oauth_refresh_token}
                     placeholder={t('accounts.ext.oauthRefreshPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_oauth_refresh_token: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_oauth_refresh_token: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t('accounts.ext.oauthExpiresAt')}</Label>
                   <DateTimePicker
                     id="acc-oauth-expires"
-                    value={form.codex_oauth_expires_at}
-                    onChange={v => setForm(f => ({ ...f, codex_oauth_expires_at: v }))}
+                    value={codexFields.codex_oauth_expires_at}
+                    onChange={v => setCodexFields(f => ({ ...f, codex_oauth_expires_at: v }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-ext-email">{t('accounts.ext.email')}</Label>
                   <Input
                     id="acc-ext-email"
-                    value={form.codex_email}
+                    value={codexFields.codex_email}
                     placeholder={t('accounts.ext.emailPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_email: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_email: e.target.value }))}
                   />
                 </div>
               </div>
@@ -1446,25 +1322,25 @@ export default function Accounts() {
                   <Input
                     id="acc-pat"
                     type="password"
-                    value={form.codex_pat_key}
+                    value={codexFields.codex_pat_key}
                     placeholder={t('accounts.ext.patKeyPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_pat_key: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_pat_key: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-ext-email">{t('accounts.ext.email')}</Label>
                   <Input
                     id="acc-ext-email"
-                    value={form.codex_email}
+                    value={codexFields.codex_email}
                     placeholder={t('accounts.ext.emailPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_email: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_email: e.target.value }))}
                   />
                 </div>
               </div>
             ) : (
               <div className="space-y-1.5">
                 <Label htmlFor="acc-key">Upstream Key</Label>
-                <Input id="acc-key" type="password" value={form.upstream_key} placeholder="sk-..." onChange={e => setForm(f => ({ ...f, upstream_key: e.target.value }))} />
+                <Input id="acc-key" type="password" value={view.upstream_key} placeholder="sk-..." onChange={e => update('upstream_key', e.target.value)} />
               </div>
             )}
             {isCodexCt(effectiveSelCt) && (
@@ -1472,13 +1348,14 @@ export default function Accounts() {
                 <Label htmlFor="acc-account-id">{t('accounts.ext.accountId')}</Label>
                 <Input
                   id="acc-account-id"
-                  value={form.codex_account_id}
+                  value={codexFields.codex_account_id}
                   placeholder={t('accounts.ext.accountIdPlaceholder')}
-                  onChange={e => setForm(f => ({ ...f, codex_account_id: e.target.value }))}
+                  onChange={e => setCodexFields(f => ({ ...f, codex_account_id: e.target.value }))}
                 />
               </div>
             )}
-            {/* Codex 不可配置 BaseURL，隐藏并清空；其他类型保留覆盖 */}
+            {/* Codex 不可配置 BaseURL：控件隐藏，约束在投影期施加（保存时落 null）；
+                切回非 codex 时草稿仍在，用户没表态就不写 */}
             {isSelCodex ? (
               <p className="text-xs text-muted-foreground">{t('accounts.baseUrlCodexHidden')}</p>
             ) : (
@@ -1486,23 +1363,23 @@ export default function Accounts() {
                 <Label htmlFor="acc-base-url">Base URL</Label>
                 <Input
                   id="acc-base-url"
-                  value={form.base_url}
+                  value={view.base_url ?? ''}
                   placeholder="https://..."
-                  onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+                  onChange={e => update('base_url', e.target.value === '' ? null : e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
               </div>
             )}
             {/* 出口代理（spec proxy-pool §7）：选项 = 直连 + 当前调用方可见的代理列表。
                 **codex 账号同样可选**（v7 已覆盖 codex 面）——此处刻意不按凭据类型置灰。
-                未改动 ⇒ 请求体不含 proxy_id（buildAccountPatch 是唯一投影）。 */}
+                未改动（草稿里没有该键）⇒ 请求体不含 proxy_id（buildAccountPatch 是唯一投影）。 */}
             {editing && (
               <div className="space-y-1.5">
                 <Label>{t('accounts.proxy.label')}</Label>
                 <Select
                   items={proxyItems}
-                  value={form.proxy}
-                  onValueChange={v => setForm(f => ({ ...f, proxy: v }))}
+                  value={proxySelectValue(view.proxy)}
+                  onValueChange={v => update('proxy', parseProxySelectValue(v))}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1525,7 +1402,10 @@ export default function Accounts() {
                 列表行内弹窗保留（点击倍率/缓存域单元格）。 */}
             <div className="space-y-1.5 max-w-40">
               <Label htmlFor="acc-max">{t('accounts.maxLabel')}</Label>
-              <Input id="acc-max" type="number" min={1} value={form.max_concurrency} onChange={e => setForm(f => ({ ...f, max_concurrency: e.target.value }))} />
+              <Input id="acc-max" type="number" min={1} value={view.max_concurrency} onChange={e => update('max_concurrency', e.target.value)} />
+              {maxConcurrencyInvalid && (
+                <p className="text-sm text-destructive">{t('accounts.maxRequired')}</p>
+              )}
             </div>
             <div className="space-y-1.5 max-w-40">
               <Label htmlFor="acc-form-mult">{t('accounts.multiplier.label')}</Label>
@@ -1535,11 +1415,11 @@ export default function Accounts() {
                 min={0}
                 max={10}
                 step={0.0001}
-                value={form.cost_multiplier}
-                onChange={e => setForm(f => ({ ...f, cost_multiplier: e.target.value }))}
+                value={view.cost_multiplier}
+                onChange={e => update('cost_multiplier', e.target.value)}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.multiplier.rangeHint')}</p>
-              {form.cost_multiplier.trim() !== '' && parseMultiplier(form.cost_multiplier) === null && (
+              {view.cost_multiplier.trim() !== '' && parseMultiplier(view.cost_multiplier) === null && (
                 <p className="text-sm text-destructive">{t('accounts.multiplier.invalid')}</p>
               )}
             </div>
@@ -1547,12 +1427,12 @@ export default function Accounts() {
               <Label htmlFor="acc-form-domain">{t('accounts.cacheDomain.label')}</Label>
               <Input
                 id="acc-form-domain"
-                value={form.cache_domain}
+                value={view.cache_domain ?? ''}
                 placeholder={t('accounts.cacheDomain.placeholder')}
-                onChange={e => setForm(f => ({ ...f, cache_domain: e.target.value }))}
+                onChange={e => update('cache_domain', e.target.value === '' ? null : e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">{form.cache_domain.trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
-              {form.cache_domain.trim() !== '' && !validCacheDomain(form.cache_domain.trim()) && (
+              <p className="text-xs text-muted-foreground">{(view.cache_domain ?? '').trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
+              {(view.cache_domain ?? '').trim() !== '' && !validCacheDomain((view.cache_domain ?? '').trim()) && (
                 <p className="text-sm text-destructive">{t('accounts.cacheDomain.invalid')}</p>
               )}
             </div>
@@ -1560,8 +1440,8 @@ export default function Accounts() {
               <Label>{t('accounts.groupLabel')}</Label>
               <GroupMultiSelect
                 groups={groups}
-                value={groupsValue}
-                onChange={v => setForm(f => ({ ...f, group_ids: v }))}
+                value={view.group_ids}
+                onChange={v => update('group_ids', v)}
                 disabled={!!editing && !groupsLoaded}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.groupHint')}</p>
@@ -1582,14 +1462,16 @@ export default function Accounts() {
               onClick={submit}
               disabled={
                 save.isPending ||
-                !form.name.trim() ||
-                !form.template_id ||
+                !view.name.trim() ||
+                !view.template_id ||
                 isSelUnresolved ||
-                parseMultiplier(form.cost_multiplier) === null ||
-                (form.cache_domain.trim() !== '' && !validCacheDomain(form.cache_domain.trim())) ||
-                (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
-                (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
-                (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
+                // 判据读草稿：非法最大并发（空串/0/小数）；缺席合法
+                maxConcurrencyInvalid ||
+                parseMultiplier(view.cost_multiplier) === null ||
+                ((view.cache_domain ?? '').trim() !== '' && !validCacheDomain((view.cache_domain ?? '').trim())) ||
+                (effectiveSelCt === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) ||
+                (effectiveSelCt === 'codex-pat' && !codexFields.codex_pat_key.trim()) ||
+                (!isCodexCt(effectiveSelCt) && !view.upstream_key.trim()) ||
                 // 分组回显未到不再阻塞保存：写入侧「没表态 = 不发键」，不会清空。
                 // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
                 // 会使 account id 回退到 null，PUT 全列更新将清空已存值。
@@ -1633,26 +1515,30 @@ export default function Accounts() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="ba-name">{t('accounts.nameLabel')}</Label>
-              <Input id="ba-name" value={batchForm.name} placeholder={t('accounts.namePlaceholder')} onChange={e => setBatchForm(f => ({ ...f, name: e.target.value }))} />
+              <Input id="ba-name" value={batchDraft.name ?? ''} placeholder={t('accounts.namePlaceholder')} onChange={e => { const v = e.target.value; if (v === '') clearBatch('name'); else updateBatch('name', v) }} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-key">Upstream Key</Label>
-              <Input id="ba-key" type="password" value={batchForm.upstream_key} placeholder="sk-..." onChange={e => setBatchForm(f => ({ ...f, upstream_key: e.target.value }))} />
+              <Input id="ba-key" type="password" value={batchDraft.upstream_key ?? ''} placeholder="sk-..." onChange={e => { const v = e.target.value; if (v === '') clearBatch('upstream_key'); else updateBatch('upstream_key', v) }} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-base-url">Base URL</Label>
               <Input
                 id="ba-base-url"
-                value={batchForm.base_url}
+                value={batchDraft.base_url ?? ''}
                 placeholder="https://..."
                 disabled={isBatchCodex}
-                onChange={e => setBatchForm(f => ({ ...f, base_url: e.target.value }))}
+                onChange={e => { const v = e.target.value; if (v === '') clearBatch('base_url'); else updateBatch('base_url', v) }}
               />
               <p className="text-xs text-muted-foreground">{isBatchCodex ? t('accounts.batchBaseUrlCodexDisabled') : t('accounts.batchBaseUrlHint')}</p>
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchForm.clearBaseURL} disabled={isBatchCodex} onCheckedChange={c => setBatchForm(f => ({ ...f, clearBaseURL: c === true }))} />
+                <Checkbox checked={batchDraft.base_url === null} disabled={isBatchCodex} onCheckedChange={c => c === true ? updateBatch('base_url', null) : clearBatch('base_url')} />
                 <span className="text-sm">{t('accounts.clearBaseUrl')}</span>
               </label>
+              {/* 混合/未解析：输入仍可用（草稿要有清除入口），但提交会被 gate 拒绝 */}
+              {(batchTplCtx === 'mixed' || batchTplCtx === 'unresolved') && (
+                <p className="text-xs text-destructive">{t('accounts.batchBaseUrlBlocked')}</p>
+              )}
             </div>
             {/* 批量面携带 AccountConfigPatch 全字段（模板/并发/启停/倍率/缓存域）；
                 失效恢复是逐账号 fenced 端点，不在批量面 */}
@@ -1661,8 +1547,8 @@ export default function Accounts() {
                 <Label>{t('accounts.templateLabel')}</Label>
                 <Select
                   items={Object.fromEntries([['all', t('list.unchanged')], ...templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`])])}
-                  value={batchForm.template_id}
-                  onValueChange={v => setBatchForm(f => ({ ...f, template_id: v }))}
+                  value={batchDraft.template_id ?? 'all'}
+                  onValueChange={v => v === 'all' ? clearBatch('template_id') : updateBatch('template_id', v)}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1673,21 +1559,21 @@ export default function Accounts() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ba-max">{t('accounts.maxLabel')}</Label>
-                <Input id="ba-max" type="number" min={1} value={batchForm.max_concurrency} placeholder="8" onChange={e => setBatchForm(f => ({ ...f, max_concurrency: e.target.value }))} />
+                <Input id="ba-max" type="number" min={1} value={batchDraft.max_concurrency ?? ''} placeholder="8" onChange={e => { const v = e.target.value; if (v === '') clearBatch('max_concurrency'); else updateBatch('max_concurrency', v) }} />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label>{t('accounts.batchGroupLabel')}</Label>
               <GroupMultiSelect
                 groups={groups}
-                value={batchForm.group_ids.map(Number)}
-                onChange={v => setBatchForm(f => ({ ...f, group_ids: v.map(String) }))}
-                disabled={batchForm.clearGroups}
+                value={batchDraft.group_ids ?? []}
+                onChange={v => updateBatch('group_ids', v.map(Number))}
+                disabled={clearGroupsChecked}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.batchGroupHint')}</p>
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchForm.clearGroups} onCheckedChange={c => setBatchForm(f => ({ ...f, clearGroups: c === true }))} />
-                <span className="text-sm">{t('accounts.clearGroups')}</span>
+                <Checkbox checked={clearGroupsChecked} onCheckedChange={c => c === true ? updateBatch('group_ids', []) : clearBatch('group_ids')} />
+                <span className="text-sm">{t('accounts.batchClearGroups')}</span>
               </label>
             </div>
             {/* 生命周期配置（启停/倍率/缓存域）——同为批量契约字段，留空/不变 = 不修改 */}
@@ -1696,8 +1582,8 @@ export default function Accounts() {
                 <Label>{t('accounts.enabledLabel')}</Label>
                 <Select
                   items={{ all: t('list.unchanged'), true: t('accounts.state.enabled'), false: t('accounts.state.disabled') }}
-                  value={batchForm.enabled}
-                  onValueChange={v => setBatchForm(f => ({ ...f, enabled: v as BatchForm['enabled'] }))}
+                  value={batchDraft.enabled === undefined ? 'all' : String(batchDraft.enabled)}
+                  onValueChange={v => v === 'all' ? clearBatch('enabled') : updateBatch('enabled', v === 'true')}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1709,7 +1595,7 @@ export default function Accounts() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ba-mult">{t('accounts.multiplier.label')}</Label>
-                <Input id="ba-mult" type="number" min={0} max={10} step="0.0001" value={batchForm.multiplier} placeholder={t('list.unchanged')} onChange={e => setBatchForm(f => ({ ...f, multiplier: e.target.value }))} />
+                <Input id="ba-mult" type="number" min={0} max={10} step="0.0001" value={batchDraft.cost_multiplier ?? ''} placeholder={t('list.unchanged')} onChange={e => { const v = e.target.value; if (v === '') clearBatch('cost_multiplier'); else updateBatch('cost_multiplier', v) }} />
               </div>
             </div>
             <div className="space-y-1.5">
@@ -1718,8 +1604,8 @@ export default function Accounts() {
                   不把「读面回显 null」当成要解绑（那是逐账号的语义，批量面拿不到回显）。 */}
               <Select
                 items={proxyItems}
-                value={batchForm.proxy}
-                onValueChange={v => setBatchForm(f => ({ ...f, proxy: v }))}
+                value={batchDraft.proxy === undefined ? PROXY_UNCHANGED_VALUE : proxySelectValue(batchDraft.proxy)}
+                onValueChange={v => { const sel = parseBatchProxyValue(v); if (sel === null) clearBatch('proxy'); else updateBatch('proxy', sel) }}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -1736,13 +1622,13 @@ export default function Accounts() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-domain">{t('accounts.cacheDomain.label')}</Label>
-              <Input id="ba-domain" value={batchForm.cache_domain} disabled={batchForm.clearCacheDomain} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => setBatchForm(f => ({ ...f, cache_domain: e.target.value }))} />
+              <Input id="ba-domain" value={batchDraft.cache_domain ?? ''} disabled={batchDraft.cache_domain === null} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => { const v = e.target.value; if (v === '') clearBatch('cache_domain'); else updateBatch('cache_domain', v) }} />
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchForm.clearCacheDomain} onCheckedChange={c => setBatchForm(f => ({ ...f, clearCacheDomain: c === true }))} />
-                <span className="text-sm">{t('accounts.clearCacheDomain')}</span>
+                <Checkbox checked={batchDraft.cache_domain === null} onCheckedChange={c => c === true ? updateBatch('cache_domain', null) : clearBatch('cache_domain')} />
+                <span className="text-sm">{t('accounts.batchClearCacheDomain')}</span>
               </label>
             </div>
-            {batchFormErr && <p className="text-sm text-destructive">{batchFormErr}</p>}
+            {batchErr && <p className="text-sm text-destructive">{batchErr}</p>}
             {batchUpdate.isError && errMsg(batchUpdate.error) && (
               <p className="text-sm text-destructive">{errMsg(batchUpdate.error)}</p>
             )}

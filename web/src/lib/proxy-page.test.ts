@@ -7,7 +7,7 @@
 // 断言——它们不是行为测试，只守最容易静默回归的四处：
 //   ① 两个导航项与两条路由存在；
 //   ② 代理页调的相对路径与 schema.d.ts 的操作 id 对应得上（两套 path 互不重叠）；
-//   ③ 账号编辑的 payload 投影对「未触碰」不产生 proxy_id（防线：整表单覆盖会静默
+//   ③ 账号编辑的 payload 投影（模块 draftToPatch）对「未触碰」不产生 proxy_id（防线：整表单覆盖会静默
 //      解绑管理员绑的、而读面不可见的平台代理）；
 //   ④ codex 类型账号不再置灰（v7 已覆盖 codex 面）。
 import { describe, it } from 'node:test'
@@ -31,6 +31,7 @@ const app = read('../App.tsx')
 const client = read('../lib/api/client.ts')
 const schema = read('../lib/api/schema.d.ts')
 const accounts = read('../pages/accounts.tsx')
+const draftModule = read('./account-draft.ts')
 const proxyPage = read('../components/proxy-pool-page.tsx')
 const proxyForm = read('../lib/proxy-form.ts')
 const enLocale = read('../locales/en.ts')
@@ -173,17 +174,30 @@ describe('账号出口代理的三态投影（安全防线）', () => {
 })
 
 describe('accounts 页面接线（源码形状）', () => {
-  it('编辑保存路径走 buildAccountPatch，且落在归属分支之外（供应商面也要能绑自己的代理）', () => {
-    assert.match(accounts, /buildAccountPatch\(editing\.proxy_id, parseProxySelectValue\(f\.proxy\)\)/)
-    // 归属三态只在管理面（supplier_user_id 恒为 JWT 本人）；proxy 必须在其 `}` 之后、
-    // PATCH 之前——写进那个分支就会让供应商永远绑不上自己的代理。
-    const ordered = /if \(!isSupplierScope\) \{[\s\S]*?\n      \}\n[\s\S]{0,600}?Object\.assign\(patch, buildAccountPatch\(editing\.proxy_id[\s\S]{0,200}?await api\.updateAccount\(id, patch, editing\.LifecycleRevision\)/
-    assert.match(accounts, ordered, 'proxy 三态必须在归属分支之后、PATCH 之前执行')
+  it('proxy 投影在 draftToPatch 内，且与归属作用域守卫平级（供应商面也要能绑自己的代理）', () => {
+    // 投影已收敛到模块：页面只交草稿 + 上下文（回显 id / 作用域），不再自己组合补丁。
+    assert.match(accounts, /draftToPatch\(draft, \{[\s\S]{0,200}?echoProxyId: editing\?\.proxy_id \?\? null,[\s\S]{0,80}?isSupplierScope,/)
+    // proxy 赋值必须与 supplier_user_id 的守卫**平级**（同为函数体顶层语句）：
+    // 写进那个分支就会让供应商永远绑不上自己的代理。缩进是最廉价的结构判据。
+    const at = draftModule.indexOf('export function draftToPatch(')
+    const end = draftModule.indexOf('export function assertCreate(')
+    assert.ok(at !== -1 && end > at, '找不到 draftToPatch')
+    const body = draftModule.slice(at, end)
+    assert.match(body, /^ {2}if \(d\.supplier_user_id !== undefined && !ctx\.isSupplierScope\)/m)
+    // 批量注入的 proxyFields 优先（批量「直连」必须发 null，不能用单条的 echo 规则），
+    // 未注入时才走单条的 buildAccountPatch；两者都必须是函数体顶层语句。
+    assert.match(body, /^ {2}if \(ctx\.proxyFields !== undefined\) Object\.assign\(p, ctx\.proxyFields\)/m)
+    assert.match(body, /^ {2}else if \(d\.proxy !== undefined\) Object\.assign\(p, buildAccountPatch\(ctx\.echoProxyId, d\.proxy\)\)/m)
+    // 先后关系：归属守卫在前、proxy 在后（不是嵌套）
+    assert.ok(body.indexOf('d.supplier_user_id') < body.indexOf('buildAccountPatch('), 'proxy 投影必须在归属守卫之后执行')
   })
 
-  it('批量编辑默认「不变」（哨兵），投影走 buildBatchProxyFields', () => {
-    assert.match(accounts, /proxy: PROXY_UNCHANGED_VALUE,/)
-    assert.match(accounts, /buildBatchProxyFields\(parseBatchProxyValue\(batchForm\.proxy\)\)/)
+  it('批量编辑默认「不变」（草稿缺键 ⇒ 哨兵），投影走 buildBatchProxyFields', () => {
+    // 三态收敛到稀疏草稿：proxy 缺席 = 不变（Select 显示哨兵），显式选择才落键。
+    assert.match(accounts, /batchDraft\.proxy === undefined \? PROXY_UNCHANGED_VALUE : proxySelectValue\(batchDraft\.proxy\)/)
+    assert.match(accounts, /buildBatchProxyFields\(batchDraft\.proxy \?\? null\)/)
+    // 旧快照表单已删：任何 batchForm 引用都说明又长回了第二份真值。
+    assert.equal(/\bbatchForm\b/.test(accounts), false)
   })
 
   it('单条编辑的出口代理 Select 不按凭据类型置灰（codex 面 v7 已覆盖）', () => {
