@@ -11,7 +11,7 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/is7Qin/codex-sdk v0.0.0-20261109094742-d1f2bcf5d835
+	github.com/is7Qin/codex-sdk v0.0.0-20261109130024-c3badafa97c4
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.2
 	github.com/knadh/koanf/providers/env/v2 v2.0.2
@@ -76,5 +76,3 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
-
-replace github.com/is7Qin/codex-sdk => C:/Users/i/project/codex-sdk
