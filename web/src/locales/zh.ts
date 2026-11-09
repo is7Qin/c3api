@@ -406,6 +406,7 @@ export default {
     "templateLabel": "所属模板",
     "maxLabel": "最大并发",
     "maxRequired": "最大并发必须是 ≥ 1 的整数（新建时留空 = 取服务端缺省）",
+    "batchMaxInvalid": "批量最大并发必须是 ≥ 1 的整数（留空 = 不改）",
     "deleteTitle": "删除账号",
     "deleteDesc": "确认删除账号「{{name}}」？删除后该账号从所有分组解绑。",
     "saveSuccess": "账号已保存",

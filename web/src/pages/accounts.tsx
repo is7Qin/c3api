@@ -571,7 +571,7 @@ export default function Accounts() {
     }
     if (batchDraft.max_concurrency !== undefined) {
       const n = Number(batchDraft.max_concurrency)
-      if (!Number.isInteger(n) || n < 1) { setBatchErr(t('accounts.maxRequired')); return }
+      if (!Number.isInteger(n) || n < 1) { setBatchErr(t('accounts.batchMaxInvalid')); return }
     }
     const dom = (batchDraft.cache_domain ?? '').trim()
     if (dom !== '' && !validCacheDomain(dom)) { setBatchErr(t('accounts.cacheDomain.invalid')); return }
@@ -874,7 +874,9 @@ export default function Accounts() {
     const ct = effectiveSelCt
     if (ct === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) return
     if (ct === 'codex-pat' && !codexFields.codex_pat_key.trim()) return
-    if (!isCodexCt(ct) && !view.upstream_key) return
+    // 非 codex 的 key 必填与按钮同一判据：trim 后为空 ⇒ 不提交。
+    // （投影会把纯空白当未表态丢掉，若只判原文非空，创建会打到后端 400。）
+    if (!isCodexCt(ct) && !view.upstream_key.trim()) return
     save.mutate()
   }
 
@@ -1455,13 +1457,13 @@ export default function Accounts() {
                 !view.name.trim() ||
                 !view.template_id ||
                 isSelUnresolved ||
-                // 判据读草稿：清空最大并发 = 非法（契约不接受 null/0）；缺席合法
-                draft.max_concurrency === '' ||
+                // 判据读草稿：非法最大并发（空串/0/小数）；缺席合法
+                maxConcurrencyInvalid ||
                 parseMultiplier(view.cost_multiplier) === null ||
                 ((view.cache_domain ?? '').trim() !== '' && !validCacheDomain((view.cache_domain ?? '').trim())) ||
                 (effectiveSelCt === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) ||
                 (effectiveSelCt === 'codex-pat' && !codexFields.codex_pat_key.trim()) ||
-                (!isCodexCt(effectiveSelCt) && view.upstream_key === '') ||
+                (!isCodexCt(effectiveSelCt) && !view.upstream_key.trim()) ||
                 // 分组回显未到不再阻塞保存：写入侧「没表态 = 不发键」，不会清空。
                 // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
                 // 会使 account id 回退到 null，PUT 全列更新将清空已存值。

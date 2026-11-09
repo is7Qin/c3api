@@ -406,6 +406,7 @@ export default {
     "templateLabel": "Template",
     "maxLabel": "Max concurrency",
     "maxRequired": "Max concurrency must be a whole number ≥ 1 (leave it blank on create to use the server default)",
+    "batchMaxInvalid": "Batch max concurrency must be a whole number ≥ 1 (blank = unchanged)",
     "deleteTitle": "Delete account",
     "deleteDesc": "Delete account \"{{name}}\"? The account will be unbound from all groups.",
     "saveSuccess": "Account saved",

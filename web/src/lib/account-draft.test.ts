@@ -77,6 +77,15 @@ describe('draftToPatch：逐字段三态', () => {
     assert.equal(Object.hasOwn(draftToPatch({}, ctx), 'enabled'), false)
     assert.deepEqual(draftToPatch({ enabled: false }, ctx), { enabled: false })
   })
+
+  // 契约的 max_concurrency 是 ≥1 的整数（service.go:917）；页面守卫之外再兜一层，
+  // 免得将来新调用方绕过守卫把 0/小数发成 400。
+  it('max_concurrency：0 / 小数 / 空白 ⇒ 投影拒绝（不是静默丢弃）', () => {
+    assert.throws(() => draftToPatch({ max_concurrency: '0' }, ctx), /invalid max_concurrency/)
+    assert.throws(() => draftToPatch({ max_concurrency: '8.5' }, ctx), /invalid max_concurrency/)
+    assert.throws(() => draftToPatch({ max_concurrency: '  ' }, ctx), /invalid max_concurrency/)
+    assert.deepEqual(draftToPatch({ max_concurrency: '8' }, ctx), { max_concurrency: 8 })
+  })
 })
 
 describe('draftToPatch：codex / 模板上下文四分', () => {
@@ -386,9 +395,18 @@ describe('accounts.tsx：接线形状', () => {
 
   // 最大并发：缺席合法（创建取服务端缺省）；有值必须是 ≥1 的整数（契约不接受 null/0）。
   // 判据读草稿本身——派生视图会把「没表态」和「清空」都显示成 ''。
-  it('最大并发的非法判据读草稿（空串/0/小数），不在视图上做比较', () => {
+  it('最大并发的非法判据读草稿（空串/0/小数），且保存按钮与 submit 共用', () => {
     assert.match(page, /const maxConcurrencyInvalid =\s*\n\s*draft\.max_concurrency !== undefined/)
     assert.match(page, /if \(maxConcurrencyInvalid\) return/)
+    // 按钮的 disabled 必须也读它：只拦 submit 会让按钮「可点但没反应」。
+    assert.match(page, /maxConcurrencyInvalid \|\|/)
+  })
+
+  // 非 codex 的 key 必填与按钮同一判据（trim 后为空）：投影把纯空白当未表态丢掉，
+  // 若只判原文非空，创建会打到后端 400（service/account.go 要求非空）。
+  it('upstream_key 必填判据 trim 后比较（submit 与按钮一致）', () => {
+    assert.match(page, /if \(!isCodexCt\(ct\) && !view\.upstream_key\.trim\(\)\) return/)
+    assert.match(page, /!isCodexCt\(effectiveSelCt\) && !view\.upstream_key\.trim\(\)/)
   })
 
   it('页面把模板上下文交给投影（单条按选中模板二分，批量四分）', () => {

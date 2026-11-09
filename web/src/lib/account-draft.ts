@@ -138,7 +138,12 @@ export function draftToPatch(
     const k = d.upstream_key.trim()
     if (k !== '') p.upstream_key = k
   }
-  if (d.max_concurrency !== undefined && d.max_concurrency !== '') p.max_concurrency = Number(d.max_concurrency)
+  if (d.max_concurrency !== undefined && d.max_concurrency !== '') {
+    const n = Number(d.max_concurrency)
+    // 非法瞬时值（0/小数/空白）由校验层拦；跑到这里就是调用方漏了守卫——炸掉而不是发 400。
+    if (!Number.isInteger(n) || n < 1) throw new Error('invalid max_concurrency')
+    p.max_concurrency = n
+  }
   if (d.group_ids !== undefined) p.group_ids = [...d.group_ids]
   if (d.cost_multiplier !== undefined) {
     const m = parseMultiplier(d.cost_multiplier)
