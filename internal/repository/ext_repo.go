@@ -55,7 +55,15 @@ type TemplateExtDecide func(old *domain.TemplateExt) (down bool, err error)
 // 因为首次建行时根本无 ext 行可锁；顺带把 UpdateTemplate（改父类型）串行化。
 //
 // 返回落库后的完整行 + down（decide 的降级判定）+ error。
+//
+// decide **不得为 nil**（spec v4.26 写死）：nil 不是"不判定"，而是"把 409 门整个
+// 关掉"，故入口处 panic——绝不静默放行。
 func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide TemplateExtDecide) (*domain.TemplateExt, bool, error) {
+	if decide == nil {
+		// nil 不是"不判定"，而是"把判定整个关掉"——那正是 409 门要防的事，所以它是
+		// 编程错误（不是可重试的运行时状态），入口处直接 panic：绝不静默放行。
+		panic("repository: template ext guard write requires a non-nil decide callback")
+	}
 	var down bool
 	err := withWriteTx(ctx, r.driver, func(tx *ent.Client, txDrv dialect.Driver) error {
 		if err := lockTemplateExtParentForUpdate(ctx, txDrv, e.TemplateID); err != nil {
@@ -65,14 +73,12 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 		if err != nil {
 			return err
 		}
-		if decide != nil {
-			d, err := decide(old)
-			if err != nil {
-				// 原样上抛：service 的 409 哨兵经此到达 handler 的 errors.Is。
-				return err
-			}
-			down = d
+		d, err := decide(old)
+		if err != nil {
+			// 原样上抛：service 的 409 哨兵经此到达 handler 的 errors.Is。
+			return err
 		}
+		down = d
 		return upsertTemplateExtUnlocked(ctx, tx, e)
 	})
 	if err != nil {
@@ -94,7 +100,7 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 func lockTemplateExtParentForUpdate(ctx context.Context, driver dialect.Driver, templateID int64) error {
 	rows := &entsql.Rows{}
 	// 表名是字面量而不是 schema 常量：这里写的是裸 SQL 的物理表，与 ent 迁移
-	// 产物同名（「写面门禁」的 aux-6 只对 **template_ext** 表名设白名单）。
+	// 产物同名（写面约定见 spec §11-6：唯一写入口靠 code review 守，无机器判据）。
 	if err := driver.Query(ctx, `SELECT id FROM templates WHERE id = $1 FOR UPDATE`, []any{templateID}, rows); err != nil {
 		return err
 	}
@@ -123,8 +129,8 @@ func templateExtRow(ctx context.Context, c *ent.Client, templateID int64) (*doma
 
 // upsertTemplateExtUnlocked 无锁幂等写入（Create/Update 合一）：template_id 冲突
 // → 全列更新（含 NULL 清空——调用方显式传 nil 即清列），无冲突 → 插入。
-// **私有**：它只能被守卫写在持锁事务内调用（写面门禁 aux-3 断言调用点恰好 1 处），
-// 否则 FOR UPDATE 形同虚设。
+// **私有**：它只能被守卫写在持锁事务内调用，否则 FOR UPDATE 形同虚设（写面约定见
+// spec §11-6：唯一写入口靠 code review 守，无机器判据）。
 // 注意 ent 语义：SetNillableX(nil) 是 no-op（不进 INSERT 列），NULL 清空必须在
 // 冲突 UPDATE 里显式 ClearX（与 pricing repo 同模式）。
 func upsertTemplateExtUnlocked(ctx context.Context, c *ent.Client, e *domain.TemplateExt) error {

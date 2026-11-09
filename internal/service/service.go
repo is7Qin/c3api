@@ -225,7 +225,7 @@ type GroupStore interface {
 
 // TemplateExtStore 模板类型化扩展的**写**面（template_ext 1:1）。
 //
-// 只有**一个**方法，且它就是守卫写（spec §4.3 原子性约束 + §8.5 辅助断言 1）：
+// 只有**一个**方法，且它就是守卫写（spec §4.3 原子性约束 + §9.1 命名约定）：
 // 事务内读旧行 → decide(old) → 私有 upsert → 提交。三个返回值分别是落库行 /
 // down（= downgradeApplied：本次写是否真的完成了 ws→非 ws 的降级，供 service
 // 决定是否写审计 WARN）/ 错误。
@@ -240,8 +240,12 @@ type TemplateExtStore interface {
 	UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide repository.TemplateExtDecide) (*domain.TemplateExt, bool, error)
 }
 
-// TemplateExtReadStore 模板类型化扩展的**读**面。与写面分开：写面必须恰好一个
-// 方法（守卫写），读方法并进去会让 §8.5 辅助断言 1（接口方法集合恒为 1）失效。
+// TemplateExtReadStore 模板类型化扩展的**读**面。
+//
+// 为什么拆成两个接口（而不是把 Get 并进写面，spec §9 已登记）：§9.1 的命名约定把
+// "唯一写入口"落成**写面接口恰好一个方法**——守卫写。读方法并进去之后，"一个写入口
+// = 一个方法"这个可读的形状就没了，后来人也没法靠"接口只有一行"一眼确认写面没扩张。
+// 读面本身不是写面，不该影响那条约定的可读性。
 type TemplateExtReadStore interface {
 	GetTemplateExt(ctx context.Context, templateID int64) (*domain.TemplateExt, error)
 }

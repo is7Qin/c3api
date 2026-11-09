@@ -304,6 +304,42 @@ func TestPGTemplateExtGuardWriteDecideVetoesWrite(t *testing.T) {
 	require.Equal(t, domain.CodexResponsesTransportWS, saved.CodexResponsesTransport)
 }
 
+// TestPGTemplateExtGuardWriteNilDecidePanics decide == nil ⇒ **panic**，不是"不判定
+// 直接放行"（spec v4.26 写死）：nil 等于把 409 门整个关掉，是最危险的默认值。
+// 入口处就 panic（连事务都不开），因此也断言未落库。
+func TestPGTemplateExtGuardWriteNilDecidePanics(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	tpl := seedPGCodexTemplate(t, repos, "t-nil-decide")
+
+	const wantMsg = "repository: template ext guard write requires a non-nil decide callback"
+
+	// 首次建行：panic 且一行都不许落。
+	require.PanicsWithValue(t, wantMsg, func() {
+		_, _, _ = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+			CodexResponsesTransport: domain.CodexResponsesTransportWS,
+		}, nil)
+	})
+	_, err := repos.TemplateExts.GetTemplateExt(ctx, tpl.ID)
+	require.ErrorIs(t, err, repository.ErrNotFound, "nil decide panic 前不得落库")
+
+	// 已有行：panic 且值不得变。
+	seedTemplateExt(t, repos, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexResponsesTransport: domain.CodexResponsesTransportWS,
+	})
+	require.PanicsWithValue(t, wantMsg, func() {
+		_, _, _ = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+		}, nil)
+	})
+	got, err := repos.TemplateExts.GetTemplateExt(ctx, tpl.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.CodexResponsesTransportWS, got.CodexResponsesTransport,
+		"nil decide panic 不得改动原值")
+}
+
 // TestPGTemplateExtTransportConcurrentGuardWrite §8.2 并发门禁（真 PG，取值写死）：
 // 同一 template_id，两条**守卫写**并发（各开自己的事务），重复 N=50 次，每次只用
 // 直接 UPDATE 把列重置回 ""（复用同一模板与同一个库，不重建）。

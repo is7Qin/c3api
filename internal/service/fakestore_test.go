@@ -2240,8 +2240,9 @@ func (t *fakeTx) DeletePriceEntryManual(_ context.Context, model string) error {
 // 替换含 NULL 清空）。「读旧值 → 判定 → 写」**在同一把 mutex 内**完成，所以 fake
 // 上也能跑并发用例：任何别的 goroutine 都读不到中间态。
 //
-// decide 非 nil 时其返回值原样上抛（**不包装**）；decide 拒绝 ⇒ 不落任何改动
-// （真 repo 的"事务回滚"在 fake 上等价于"什么都不写"）。
+// decide 的返回值原样上抛（**不包装**）；decide 拒绝 ⇒ 不落任何改动（真 repo 的
+// "事务回滚"在 fake 上等价于"什么都不写"）。decide == nil ⇒ panic（与真仓库同语义：
+// nil 不是"不判定"，是"把 409 门关掉"）。
 // 父行锁与 FK 是 DB 语义，fake 不复制。
 func (f *fakeStore) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide repository.TemplateExtDecide) (*domain.TemplateExt, bool, error) {
 	f.mu.Lock()
@@ -2251,13 +2252,15 @@ func (f *fakeStore) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt
 		cp := *prev
 		old = &cp
 	}
-	down := false
-	if decide != nil {
-		d, err := decide(old)
-		if err != nil {
-			return nil, false, err
-		}
-		down = d
+	if decide == nil {
+		// 与真仓库同语义（spec v4.26）：nil decide 是"把判定关掉"，属编程错误，
+		// 不得静默放行。
+		panic("repository: template ext guard write requires a non-nil decide callback")
+	}
+	down, err := decide(old)
+	if err != nil {
+		// 判定拒绝 ⇒ 不落任何改动（真仓库的事务回滚在 fake 上等价于"什么都不写"）。
+		return nil, false, err
 	}
 	c := *e
 	f.tplExts[e.TemplateID] = &c

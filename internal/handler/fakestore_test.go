@@ -422,7 +422,7 @@ func (f *fakeStore) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 
 // UpsertTemplateExt 守卫写镜像（真实 repo 同语义：事务内读旧值 → decide → 全列
 // 替换含 NULL 清空）。「读旧值 → 判定 → 写」**在同一把 mutex 内**完成；decide
-// 的返回值原样上抛（**不包装**），拒绝 ⇒ 不落任何改动。
+// 的返回值原样上抛（**不包装**），拒绝 ⇒ 不落任何改动，nil ⇒ panic（同真仓库）。
 func (f *fakeStore) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide repository.TemplateExtDecide) (*domain.TemplateExt, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -431,13 +431,15 @@ func (f *fakeStore) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt
 		cp := *prev
 		old = &cp
 	}
-	down := false
-	if decide != nil {
-		d, err := decide(old)
-		if err != nil {
-			return nil, false, err
-		}
-		down = d
+	if decide == nil {
+		// 与真仓库同语义（spec v4.26）：nil decide 是"把判定关掉"，属编程错误，
+		// 不得静默放行。
+		panic("repository: template ext guard write requires a non-nil decide callback")
+	}
+	down, err := decide(old)
+	if err != nil {
+		// 判定拒绝 ⇒ 不落任何改动（真仓库的事务回滚在 fake 上等价于"什么都不写"）。
+		return nil, false, err
 	}
 	c := *e
 	f.tplExts[e.TemplateID] = &c
