@@ -5,15 +5,21 @@
 package egress
 
 import (
+	"bufio"
 	"encoding/base64"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/is7qin/c3api/pkg/httpx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -186,4 +192,211 @@ func TestPoolForRoutesThroughProxy(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("代理没有收到请求：出口 client 没有走代理")
 	}
+}
+
+// TestPoolClonesShardedTransport 门禁 (g)：分片底座 ⇒ 出口 client **仍是分片**，
+// 分片数不变、连接池独立、Proxy 真的装上（经真实代理发一次请求验证）、
+// Timeout/CheckRedirect 沿用底座。
+//
+// 负例：cloneTransport 漏掉 *httpx.ShardedTransport 分支 ⇒ 走 default 退回单
+// transport，分片数变 1，红；Clone 里忘了覆盖 Proxy ⇒ 请求不会经过代理，红。
+func TestPoolClonesShardedTransport(t *testing.T) {
+	proxyAddr, seen := startRecordingProxy(t)
+
+	baseTr := httpx.NewShardedTransport(&http.Transport{ForceAttemptHTTP2: true, MaxIdleConns: 64}, 4)
+	require.Equal(t, 4, baseTr.ShardCount())
+	base := &http.Client{
+		Transport: baseTr,
+		Timeout:   42 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	pool := NewPool(base)
+	host, port := splitHostPort(t, proxyAddr)
+	c := pool.For(New("http", host, port, "", ""))
+
+	tr, ok := c.HTTP.Transport.(*httpx.ShardedTransport)
+	require.True(t, ok, "分片底座经出口池后必须仍是分片（否则经代理的账号退回单连接）")
+	require.Equal(t, 4, tr.ShardCount())
+	require.NotSame(t, base.Transport, c.HTTP.Transport, "出口必须有自己的连接池")
+	require.Equal(t, 42*time.Second, c.HTTP.Timeout, "Timeout 必须沿用底座")
+	// CheckRedirect 必须沿用底座的**行为**，不只是"非 nil"（被换成别的非 nil 函数也要红）。
+	require.NotNil(t, c.HTTP.CheckRedirect, "CheckRedirect 必须沿用底座")
+	require.ErrorIs(t, c.HTTP.CheckRedirect(
+		&http.Request{URL: &url.URL{Scheme: "http", Host: "upstream.example"}}, nil),
+		http.ErrUseLastResponse, "克隆后必须仍是底座那个拒绝跟随重定向的回调")
+
+	resp, err := c.HTTP.Get("http://upstream.example/echo")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Len(t, seen(), 1, "请求必须经过代理一次")
+	require.Contains(t, seen()[0], "http://upstream.example/echo",
+		"代理看到的必须是绝对 URI（证明 Transport.Proxy 被覆盖到每个分片）")
+}
+
+// startRecordingProxy 起一个玩具 HTTP 代理：记录请求行，回一个固定 200。
+func startRecordingProxy(t *testing.T) (string, func() []string) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+
+	var mu sync.Mutex
+	var lines []string
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				line, err := bufio.NewReader(conn).ReadString('\n')
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				lines = append(lines, line)
+				mu.Unlock()
+				_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"))
+			}()
+		}
+	}()
+	return ln.Addr().String(), func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), lines...)
+	}
+}
+
+// TestPoolPruneClosesIdleConnectionsOnShardedBase 门禁 (g)/B9：底座是分片时，
+// Prune 必须**关到每个分片**的空闲连接。
+//
+// `http.Client.CloseIdleConnections` 靠类型断言
+// `interface{ CloseIdleConnections() }`；ShardedTransport 少写这个方法 ⇒ Prune
+// 静默不再关连接，而用 nil 底座的既有用例不会红。负例：删
+// ShardedTransport.CloseIdleConnections ⇒ 本用例超时，红。
+func TestPoolPruneClosesIdleConnectionsOnShardedBase(t *testing.T) {
+	const shards = 3
+	release := make(chan struct{})
+	arrived := make(chan struct{}, shards)
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// barrier：三个请求必须同时在飞，否则后续请求会复用第 0 片的连接，
+		// "每片都有一条空闲连接"这个前提就不成立（门禁会变成看调度运气）。
+		arrived <- struct{}{}
+		<-release
+		w.WriteHeader(http.StatusOK)
+	}))
+	rls := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(rls)
+	var closed atomic.Int32
+	proxy.Config.ConnState = func(_ net.Conn, st http.ConnState) {
+		if st == http.StateClosed || st == http.StateHijacked {
+			closed.Add(1)
+		}
+	}
+	defer proxy.Close()
+	host, port := splitHostPort(t, proxy.Listener.Addr().String())
+
+	base := &http.Client{Transport: httpx.NewShardedTransport(&http.Transport{MaxIdleConns: 32}, shards)}
+	require.NotNil(t, base.Transport)
+	pool := NewPool(base)
+	c := pool.For(New("http", host, port, "", ""))
+
+	// 先让**每个分片**各自建立一条连接（并发 ⇒ 最少在飞把请求摊到 3 个分片），
+	// 这样"Prune 只关到一个分片"会被抓出来；只发一个请求的话断言 ≥1 是空转。
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	var errs []error
+	for range shards {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := c.HTTP.Get("http://upstream.invalid/x")
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+				return
+			}
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+			_ = resp.Body.Close()
+		}()
+	}
+	for range shards {
+		select {
+		case <-arrived:
+		case <-time.After(5 * time.Second):
+			rls()
+			t.Fatalf("只有 %d/%d 个请求同时在飞", len(arrived), shards)
+		}
+	}
+	rls()
+	wg.Wait()
+	require.Empty(t, errs, "铺连接阶段有失败请求，Prune 断言会失真")
+
+	before := closed.Load()
+	require.Zero(t, before, "Prune 之前不应有连接被关闭")
+	pool.Prune(nil)
+	require.Eventually(t, func() bool { return closed.Load()-before >= shards }, 2*time.Second, 10*time.Millisecond,
+		"Prune 必须把**每个**分片的空闲连接都关掉（漏 CloseIdleConnections ⇒ 连接泄漏）")
+}
+
+// foreignProxyTransport 是 pkg/egress **从未听说过**的 transport 类型，只实现
+// proxyCloner 这个能力（CloneWithProxy）。它证明池子认的是能力而不是具体类型：
+// 若有人把 cloneTransport 改回 `case *httpx.ShardedTransport` 之类的具体类型
+// switch，stub 会掉进 DefaultTransport 兜底 ⇒ 请求打不到 stub 上、Proxy 也不生效。
+type foreignProxyTransport struct {
+	proxy func(*http.Request) (*url.URL, error)
+	hits  *atomic.Int32
+}
+
+func (f *foreignProxyTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	f.hits.Add(1)
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("stub")),
+		Proto:      "HTTP/1.1",
+		ProtoMajor: 1,
+		ProtoMinor: 1,
+	}, nil
+}
+
+func (f *foreignProxyTransport) CloneWithProxy(proxy func(*http.Request) (*url.URL, error)) http.RoundTripper {
+	return &foreignProxyTransport{proxy: proxy, hits: f.hits}
+}
+
+// TestPoolHonorsAnyProxyCloner 门禁：任何实现 proxyCloner 的 transport 都必须被
+// 池子认领（独立副本 + Proxy 覆盖），而不是只看具体类型。
+// 负例：cloneTransport 退回具体类型判断 ⇒ 本用例红。
+func TestPoolHonorsAnyProxyCloner(t *testing.T) {
+	var hits atomic.Int32
+	base := &http.Client{Transport: &foreignProxyTransport{hits: &hits}}
+	pool := NewPool(base)
+	c := pool.For(New("http", "127.0.0.1", 3128, "", ""))
+
+	tr, ok := c.HTTP.Transport.(*foreignProxyTransport)
+	require.True(t, ok, "实现了 CloneWithProxy 的 transport 必须被认领（池子只认能力）")
+	require.NotSame(t, base.Transport, c.HTTP.Transport, "出口必须是独立副本")
+	require.NotNil(t, tr.proxy, "Proxy 必须被覆盖")
+
+	req, err := http.NewRequest(http.MethodGet, "http://upstream.invalid/x", nil)
+	require.NoError(t, err)
+	u, err := tr.proxy(req)
+	require.NoError(t, err)
+	require.Equal(t, "http://127.0.0.1:3128", u.String())
+
+	resp, err := c.HTTP.Get("http://upstream.invalid/x")
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.EqualValues(t, 1, hits.Load(), "请求必须走 stub 本身（不是 DefaultTransport 兜底）")
+	require.Same(t, base.Transport, pool.Direct().HTTP.Transport, "直连仍是底座本身，不被克隆")
 }

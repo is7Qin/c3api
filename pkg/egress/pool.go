@@ -99,7 +99,6 @@ func (p *Pool) Size() int {
 // schema 白名单校验在写面（§3.5）；这里按 Go 原生能力装配：socks5 / socks5h /
 // http / https 四种都经 Transport.Proxy（https 代理需 Go ≥1.24）。
 func (p *Pool) newClient(spec Spec) *http.Client {
-	tr := cloneTransport(p.base)
 	u := &url.URL{Scheme: spec.Scheme, Host: spec.Addr()}
 	if spec.Username != "" {
 		// 有用户名无密码 ⇒ url.User（URL 形态 `user@host`，不臆造一个空密码段）。
@@ -109,20 +108,38 @@ func (p *Pool) newClient(spec Spec) *http.Client {
 			u.User = url.UserPassword(spec.Username, spec.Password)
 		}
 	}
-	tr.Proxy = http.ProxyURL(u)
 	hc := *p.base // 按值克隆：Timeout/CheckRedirect/Jar 沿用底座
-	hc.Transport = tr
+	hc.Transport = cloneTransport(p.base, http.ProxyURL(u))
 	return &hc
 }
 
-// cloneTransport 克隆底座 transport；底座没给 *http.Transport（或给了个包装
-// RoundTripper）时退回 http.DefaultTransport 的克隆——代理装配是"加一层
-// Proxy"，不该因底座类型未知而放弃。
-func cloneTransport(base *http.Client) *http.Transport {
-	if tr, ok := base.Transport.(*http.Transport); ok {
-		// 底座 Transport 若自带 Proxy 是本规格要覆盖的（main 显式直连）：克隆后
-		// 立刻覆盖，克隆本身只是为了拿到独立的连接池与参数。
-		return tr.Clone()
+// proxyCloner 是"能派生**独立副本**并把 Proxy 换成给定函数"的 transport 能力。
+//
+// 接口声明在消费方（本包），实现方无需 import 本包：池子因此只依赖能力、不依赖
+// 具体 transport 类型——分片分片、重试层、指标层各自实现即可，加一种不用改这里，
+// 也不会把 pkg/httpx 这类装配层包拉进 pkg/egress 的依赖里。
+type proxyCloner interface {
+	CloneWithProxy(proxy func(*http.Request) (*url.URL, error)) http.RoundTripper
+}
+
+// cloneTransport 克隆底座 transport 并覆盖 Proxy。
+//
+// 优先认 proxyCloner（分片底座走这条，否则"经代理"的交易会退回单连接，等于把上行
+// BDP 分摊在绑了代理的账号上整体丢掉，spec-upstream-h2-sharding G5）；其次是
+// *http.Transport 的常规克隆；底座没给 transport（nil，或给了个不懂 Proxy 的包装
+// RoundTripper）时退回 http.DefaultTransport 的克隆——代理装配是"加一层 Proxy"，
+// 不该因底座类型未知而放弃。
+func cloneTransport(base *http.Client, proxy func(*http.Request) (*url.URL, error)) http.RoundTripper {
+	if c, ok := base.Transport.(proxyCloner); ok {
+		return c.CloneWithProxy(proxy)
 	}
-	return http.DefaultTransport.(*http.Transport).Clone()
+	tr, ok := base.Transport.(*http.Transport)
+	if !ok {
+		// 底座 Transport 若自带 Proxy 是本规格要覆盖的（main 显式直连）：克隆后
+		// 覆盖，克隆本身只是为了拿到独立的连接池与参数。
+		tr = http.DefaultTransport.(*http.Transport)
+	}
+	c := tr.Clone()
+	c.Proxy = proxy
+	return c
 }
