@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -15,6 +16,23 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/redisx"
 )
+
+// shutdownHTTPServer 优雅停机第 1-2 步：先按 drain 窗口让在途请求自然收尾，到点后
+// Close 强断剩余连接——客户端断开触发 abort → finish，断前已收到的 usage 帧照常计费
+// （"长流不丢账"就靠这个顺序，不能改成直接 Close）。
+//
+// 两项错误都并入 Warn（spec 2026-08-13）：旧实现 `_ =` 全丢弃，httpSrv 的失败在停机
+// 日志里不可见；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐 httpSrv 静默面。
+func shutdownHTTPServer(ctx context.Context, srv *http.Server, drain time.Duration, log *logx.Logger) {
+	srvCtx, cancel := context.WithTimeout(ctx, drain)
+	defer cancel()
+	if err := srv.Shutdown(srvCtx); err != nil {
+		log.Warn("http server shutdown failed", logx.Error(err))
+	}
+	if err := srv.Close(); err != nil {
+		log.Warn("http server close failed", logx.Error(err))
+	}
+}
 
 const qualityRecorderCloseBudget = time.Second
 

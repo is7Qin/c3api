@@ -54,6 +54,38 @@ type ServerConfig struct {
 	ReadHeaderTimeout time.Duration `koanf:"read_header_timeout"`
 	MaxHeaderBytes    int           `koanf:"max_header_bytes"`
 	TimeZone          string        `koanf:"time_zone"`
+	// ShutdownDrain HTTP 优雅停机窗口：SIGTERM 后先给在途请求这么长时间收尾，到点才
+	// Close 强断长连接（流式请求由客户端断开触发的 abort 照常结算**已收到**的 usage）。
+	// 默认 2s。它与固定尾部组成**共享主 deadline**（ShutdownBudget），不是"进程必在该
+	// 时间内退出"的保证：尾部里还有各自重设预算的收尾（实例除名 2s、quality 终态快照
+	// 1s），会越过主 deadline——见 GracefulStopBudget。
+	ShutdownDrain time.Duration `koanf:"shutdown_drain"`
+}
+
+// shutdownTailBudget 主 deadline 里"非 HTTP 窗口"的那一段：等在途归零、worker 反向
+// 排空（recorder 排空/refill 收敛）、终态日志。
+//
+// 不给配的理由是它没有策略含义（随部署变化的是 HTTP 窗口，那个才是 shutdown_drain），
+// 不是"配小了会谎称干净退出"——排空失败本身有独立上报路径（shutdownTail 的 Error 级
+// "shutdown incomplete"）。数值 8s 是从改造前的 10s−2s 直接减出来的，不是新拍的。
+const shutdownTailBudget = 8 * time.Second
+
+// shutdownIndependentTailBudget 会在主 deadline **之后**继续跑的收尾：实例除名
+// （discovery 的 ZREM 用 WithoutCancel 后自设 2s）与 quality recorder 终态快照（自设
+// 1s）。它们不受 ShutdownBudget 约束，所以编排器的 grace 必须额外加这一段。
+const shutdownIndependentTailBudget = 3 * time.Second
+
+// ShutdownBudget 停机主 deadline = HTTP 优雅窗口 + 固定尾部。它约束
+// Shutdown → Close → 等在途归零 → worker 排空这条链（main 用它建 context）。
+func (s ServerConfig) ShutdownBudget() time.Duration {
+	return s.ShutdownDrain + shutdownTailBudget
+}
+
+// GracefulStopBudget 编排器（docker stop_grace_period / k8s
+// terminationGracePeriodSeconds）必须给的最小 grace = 主 deadline + 独立收尾。
+// 本进程看不见编排器的设置，只能靠部署模板与部署契约门禁对齐。
+func (s ServerConfig) GracefulStopBudget() time.Duration {
+	return s.ShutdownBudget() + shutdownIndependentTailBudget
 }
 
 type LogConfig struct {
@@ -176,7 +208,7 @@ type BillingConfig struct {
 
 func defaults() *Config {
 	return &Config{
-		Server: ServerConfig{Addr: ":8080", ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 1 << 20},
+		Server: ServerConfig{Addr: ":8080", ReadHeaderTimeout: 10 * time.Second, MaxHeaderBytes: 1 << 20, ShutdownDrain: 2 * time.Second},
 		Log:    LogConfig{Level: "warn", Output: "stdout"},
 		// 10→20（billing 8 worker + stats 8 worker + 余量；统计 COPY 批量写已改毫秒级短事务）。
 		// 连接参数（lock_timeout=5s 会话级 + 计费结算 per-tx 10s 超时 + MaxConnLifetime=30m，
@@ -288,6 +320,9 @@ func validate(c *Config) error {
 		{"billing.balance_refresh_interval", c.Billing.BalanceRefreshInterval, false},
 		// upstream 连接池超时：0 = 永不回收 idle 连接 / 无拨号超时（与 fail-fast
 		// 哲学相悖——spec 2026-08-17 补下限；默认 90s/10s 安全不受影响）。
+		// server.shutdown_drain：0 会让 http.Server.Shutdown 立即超时（优雅停机名存
+		// 实亡，长流一律被强断），启动即拒绝；上限见下方 int/时长上界段。
+		{"server.shutdown_drain", c.Server.ShutdownDrain, false},
 		{"upstream.idle_conn_timeout", c.Upstream.IdleConnTimeout, false},
 		{"upstream.dial_timeout", c.Upstream.DialTimeout, false},
 	} {
@@ -320,6 +355,12 @@ func validate(c *Config) error {
 	// proxy.failover_attempts 上限 8（intelligent routing 契约）：AttemptPlan 用
 	// 固定 [8] attempted-ID 集做跨账号去重，>8 无法保证不重复选号；启动即拒绝，
 	// 与下限 1 成对锁定合法域 1..8（默认 3）。
+	// server.shutdown_drain 上限 10m：长流不靠 drain 收尾——到点由 Close 强断并按已收到
+	// 的 usage 结算；分钟级的窗口只是把 pod 拖住，不会多救回一条流。与其留一个"配了也不
+	// 产生收益"的旋钮，启动即拒绝（默认 2s 不受影响）。
+	if c.Server.ShutdownDrain > 10*time.Minute {
+		return fmt.Errorf("server.shutdown_drain must be <= 10m (got %s)", c.Server.ShutdownDrain)
+	}
 	// upstream.http2_shards 上限 64：分片数就是连接数与 fd 的乘数（每个活跃 origin
 	// 每片一条长连），再大只会在 TLS 握手上烧 CPU；合法域 1..64，默认 1（opt-in）。
 	if c.Upstream.HTTP2Shards > 64 {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 // setenvRequired 注入必填密钥（auth.jwt_secret/db.dsn/redis.addr 校验已内聚到
@@ -455,4 +456,126 @@ func TestLoadHTTP2ShardsBounds(t *testing.T) {
 			require.ErrorContains(t, err, "upstream.http2_shards")
 		})
 	}
+}
+
+// TestLoadShutdownDrainBounds：server.shutdown_drain 合法域 1ms..10m，默认 2s。
+// 0/负值必须启动即拒（Shutdown 会立刻超时 ⇒ 优雅停机名存实亡）；>10m 也拒，因为
+// 编排器的 grace period 通常 10s～90s，进程会先被 SIGKILL——配了也不会被执行。
+func TestLoadShutdownDrainBounds(t *testing.T) {
+	setenvRequired(t)
+
+	c, err := Load("")
+	require.NoError(t, err)
+	require.Equal(t, 2*time.Second, c.Server.ShutdownDrain, "默认 2s（历史行为）")
+
+	for _, v := range []struct {
+		raw  string
+		want time.Duration
+	}{{"1ms", time.Millisecond}, {"2s", 2 * time.Second}, {"30s", 30 * time.Second}, {"10m", 10 * time.Minute}} {
+		t.Run("accept "+v.raw, func(t *testing.T) {
+			c, err := Load(writeConfig(t, `server = { shutdown_drain = "`+v.raw+`" }`))
+			require.NoError(t, err)
+			require.Equal(t, v.want, c.Server.ShutdownDrain, "加载后的值必须等于输入值")
+		})
+	}
+	// 主 deadline 与独立收尾是两件事：预算里恒含 8s 尾部，grace 要求再多 3s。
+	require.Equal(t, 8*time.Second, c.Server.ShutdownBudget()-c.Server.ShutdownDrain)
+	require.Equal(t, 3*time.Second, c.Server.GracefulStopBudget()-c.Server.ShutdownBudget())
+
+	// env 在 TOML 之后生效（C3API_ 前缀 + 首个下划线转点）。
+	t.Run("env 覆盖 TOML", func(t *testing.T) {
+		t.Setenv("C3API_SERVER_SHUTDOWN_DRAIN", "45s")
+		c, err := Load(writeConfig(t, `server = { shutdown_drain = "2s" }`))
+		require.NoError(t, err)
+		require.Equal(t, 45*time.Second, c.Server.ShutdownDrain, "env 必须覆盖 TOML")
+	})
+
+	for _, v := range []string{"0s", "-1s", "500us", "11m"} {
+		t.Run("reject "+v, func(t *testing.T) {
+			_, err := Load(writeConfig(t, `server = { shutdown_drain = "`+v+`" }`))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "server.shutdown_drain")
+		})
+	}
+}
+
+// TestDeployGracePeriodCoversShutdownDrain 是一条**部署契约**门禁：进程看不见编排器
+// 给了多少停机时间，只能把仓库里发布的配置当契约读。要覆盖的是"应用**实际**会拿到的
+// drain"，三条入口都要算：
+//
+//	1) 代码默认（不写该键的部署）；
+//	2) compose 挂载的 deploy/config.toml；
+//	3) helm：config.content（inline 时原样渲染成 TOML）→ 再叠加 app.env 的
+//	   C3API_SERVER_SHUTDOWN_DRAIN（env 在文件之后生效，与环境变量优先级一致）。
+//
+// 三者取最大预算，再要求两份模板的 grace >= **GracefulStopBudget**（预算 + 主 deadline
+// 之后仍会跑的独立收尾 3s）。docker 默认的 10s 连主 deadline 都不够，所以必须显式写。
+//
+// 负例（均已实测红）：compose 删掉 stop_grace_period；helm 的 content 写
+// shutdown_drain="60s"；helm 的 env 写 60s；代码默认改成 5s 而模板不动；helm grace 调到 9s。
+func TestDeployGracePeriodCoversShutdownDrain(t *testing.T) {
+	setenvRequired(t)
+
+	defaults, err := Load("")
+	require.NoError(t, err, "代码默认配置必须可加载")
+	deployCfg, err := Load("../../deploy/config.toml")
+	require.NoError(t, err)
+
+	// --- helm：还原它实际会下发的配置 ---
+	helmRaw, err := os.ReadFile("../../deploy/helm/values.yaml")
+	require.NoError(t, err)
+	var helm struct {
+		Config struct {
+			Inline  bool   `yaml:"inline"`
+			Content string `yaml:"content"`
+		} `yaml:"config"`
+		App struct {
+			TerminationGracePeriodSeconds int               `yaml:"terminationGracePeriodSeconds"`
+			Env                           map[string]string `yaml:"env"`
+		} `yaml:"app"`
+	}
+	require.NoError(t, yaml.Unmarshal(helmRaw, &helm))
+
+	helmServer := defaults.Server // 不 inline 时只剩 env + 代码默认
+	if helm.Config.Inline {
+		path := filepath.Join(t.TempDir(), "helm-config.toml")
+		require.NoError(t, os.WriteFile(path, []byte(helm.Config.Content), 0o600))
+		hc, err := Load(path)
+		require.NoError(t, err, "helm config.content 必须是可加载的 TOML")
+		helmServer = hc.Server
+	}
+	if v := helm.App.Env["C3API_SERVER_SHUTDOWN_DRAIN"]; v != "" {
+		d, err := time.ParseDuration(v)
+		require.NoError(t, err, "helm app.env 的 C3API_SERVER_SHUTDOWN_DRAIN 必须是合法 duration")
+		helmServer.ShutdownDrain = d
+	}
+
+	// 三条发布通道取最严的 grace 要求
+	need := defaults.Server.GracefulStopBudget()
+	for _, b := range []time.Duration{deployCfg.Server.GracefulStopBudget(), helmServer.GracefulStopBudget()} {
+		if b > need {
+			need = b
+		}
+	}
+
+	// --- compose：结构化解，不猜缩进 ---
+	var compose struct {
+		Services map[string]struct {
+			StopGracePeriod string `yaml:"stop_grace_period"`
+		} `yaml:"services"`
+	}
+	composeRaw, err := os.ReadFile("../../compose.yml")
+	require.NoError(t, err)
+	require.NoError(t, yaml.Unmarshal(composeRaw, &compose))
+	appSvc, ok := compose.Services["app"]
+	require.True(t, ok, "compose.yml 必须有 app 服务")
+	composeGrace, err := time.ParseDuration(appSvc.StopGracePeriod)
+	require.NoError(t, err, "compose 的 app 服务必须显式给 stop_grace_period（docker 默认 10s 连主 deadline 都不够）")
+	require.GreaterOrEqual(t, composeGrace, need,
+		"compose stop_grace_period(%s) 必须 >= 所需 grace(%s)：否则进程在收尾途中被 SIGKILL", composeGrace, need)
+
+	// --- helm：grace 必须覆盖同一条链 ---
+	helmGrace := time.Duration(helm.App.TerminationGracePeriodSeconds) * time.Second
+	require.GreaterOrEqual(t, helmGrace, need,
+		"helm terminationGracePeriodSeconds(%s) 必须 >= 所需 grace(%s)", helmGrace, need)
 }

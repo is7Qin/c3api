@@ -334,7 +334,7 @@ flowchart LR
 
 | 段落 | 消费模块 | 关键项 |
 |---|---|---|
-| `server` | server.NewServer + http.Server | addr/read_header_timeout/max_header_bytes/time_zone（IANA 名，空 = 进程本地；非法名启动失败） |
+| `server` | server.NewServer + http.Server | addr/read_header_timeout/max_header_bytes/time_zone（IANA 名，空 = 进程本地；非法名启动失败）/shutdown_drain（优雅停机窗口，默认 2s，合法域 1ms..10m；主 deadline = drain + 8s 尾部，编排器 grace 需 ≥ drain + 11s——尾部外还有实例除名 2s 与 quality 终态快照 1s 的独立收尾） |
 | `log` | logx.New | level/output |
 | `auth` | jwtauth.Issuer | jwt_secret（必填；`C3API_AUTH_JWT_SECRET` 亦可） |
 | `db` | repository.OpenPG | dsn（必填）/max_conns（20 = billing 8 + stats 8 worker + 余量）；**OpenPG 自动补丁**：lock_timeout=5s 会话级 + 计费结算事务 per-tx 10s 超时 + MaxConnLifetime=30m 滚动轮换——DSN 无需手工配置，用户 DSN 显式同名参数时尊重不覆盖；**不设会话级 statement_timeout**（与 admin 面大窗口聚合实测冲突，降级为计费路径 per-query 超时；`internal/config/config.go:58-61` + `internal/repository/repository.go:855-873`） |

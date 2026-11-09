@@ -47,6 +47,10 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # 停机宽限（docker 默认 10s）：必须 >= server.shutdown_drain(默认 2s) + 8s 主尾部
+    # + 3s 独立收尾（实例除名 2s、quality 终态快照 1s），即默认 13s；这里给 15s 留余量。
+    # 调大 shutdown_drain 时同步调这里（>= drain + 11s），否则进程在收尾途中被 SIGKILL。
+    stop_grace_period: 15s
     depends_on:
       db:
         condition: service_healthy

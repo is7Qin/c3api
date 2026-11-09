@@ -925,10 +925,13 @@ func main() {
 	})
 
 	<-ctx.Done()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// 停机总预算 = 配置的 HTTP 优雅窗口 + 固定尾部（对账/排空/终态日志）。窗口之所以
+	// 可配：流式请求的收尾时长随部署规模变化（默认 2s 是为公网短请求调的），而尾部
+	// 预算是"排空能不能做完"的下限，不是策略，故不给配。
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownBudget())
 	defer cancel()
 	// 优雅停机链（计费不丢窗口）：
-	// 1) Shutdown(2s) 优雅窗口：快速请求收尾（长连接流式超时留给 Close 强断）
+	// 1) Shutdown(server.shutdown_drain) 优雅窗口：在途请求收尾（长连接流式留 Close 强断）
 	// 2) Close 强制断长连接 → 客户端断开 → recordStreamAbort → finish（断前
 	//    usage 帧照常计费）
 	// 3) waitForInflight：等在途归零（100ms 轮询；超时 Warn 继续不阻塞退出）
@@ -942,17 +945,7 @@ func main() {
 	//    在 shutdownTail：排空失败不再 `_ =` 静默——Error 级 "shutdown
 	//    incomplete" 显式上报且不宣称 clean shutdown（review blocker
 	//    2026-08-30）。
-	srvCtx, cancelSrv := context.WithTimeout(shutdownCtx, 2*time.Second)
-	// （spec 2026-08-13）：httpSrv 两项错误并入 shutdown Warn（旧实现
-	// `_ =` 全丢弃；wm.Shutdown 内部已对 worker Close 失败 Warn，此处补齐
-	// httpSrv 静默面）。
-	if err := httpSrv.Shutdown(srvCtx); err != nil {
-		log.Warn("http server shutdown failed", logx.Error(err))
-	}
-	cancelSrv()
-	if err := httpSrv.Close(); err != nil {
-		log.Warn("http server close failed", logx.Error(err))
-	}
+	shutdownHTTPServer(shutdownCtx, httpSrv, cfg.Server.ShutdownDrain, log)
 	px.CloseAllWS()
 	waitForInflight(px, shutdownCtx, log)
 	shutdownTail(shutdownCtx, wm, qualityRecorder, rdb, log)

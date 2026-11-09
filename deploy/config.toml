@@ -9,6 +9,14 @@ read_header_timeout = "10s"
 max_header_bytes = 1048576
 # IANA 名（如 Asia/Shanghai）；空 = 进程本地；非法名启动失败。
 time_zone = ""
+# 优雅停机窗口：SIGTERM 后先等这么久让在途请求收尾，到点才强断长连接（流式请求由
+# 客户端断开触发的 abort 照常结算已收到的 usage）。默认 2s，合法域 1ms..10m。
+# 主 deadline = 本值 + 8s（对账/排空/终态日志）；尾部之外还有各自重设预算的收尾
+# （实例除名 2s、quality 终态快照 1s）。所以编排器 grace 要给到 本值 + 11s：
+#   docker compose: stop_grace_period: 15s      # 默认 drain 时 >= 13s，这里留 2s 余量
+#   k8s:            terminationGracePeriodSeconds: 60
+# 小于这个总和 = 进程在收尾途中被 SIGKILL；配大也不会多做功（上限锁 10m）。
+shutdown_drain = "2s"
 
 [log]
 level = "info"
