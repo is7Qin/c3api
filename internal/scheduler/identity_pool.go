@@ -24,8 +24,8 @@ import (
 // codexSession 一个会话：busy 独占标志 + 线程生命周期状态（§3.1 字段表）。
 //
 // 租借（busy.CAS false→true）成功的一方独占全部状态字段直到 release：读写都在
-// 租借期内，没有第二读者。credGen 是唯一例外——它记录本会话已对齐的凭据代际，
-// 让「凭据替换清 ts」可以由持有者在下一次租借内完成（写 ts 只能由持有者做）。
+// 租借期内，没有第二读者。credOwner 记录本会话已对齐的凭据 owner——它跟着**会话
+// 对象**走（含跨池迁移），不复制到池上：池会被整体替换，复制即丢失效（§3.2）。
 type codexSession struct {
 	busy         atomic.Bool
 	installation string
@@ -38,7 +38,9 @@ type codexSession struct {
 	wmax         uint64
 	turnState    string
 	policy       codexsdk.RotatePolicy
-	credGen      uint64
+	// credOwner 已对齐的凭据 owner 签名（sdkbridge.CredOwner）。零值 = 尚未对齐
+	// （新会话没有 ts 可清，首次对齐只是把它写上）。
+	credOwner [16]byte
 }
 
 // SetTurnState 是 SDK 的 TurnStateSink：一次普通赋值（§3.2）。
@@ -142,9 +144,6 @@ type identityPool struct {
 	// reserveHook 是 test-only 屏障（生产 nil）：在「已判空闲、尚未写 busy」处留出
 	// 确定性交错点，让「busy 用无 CAS 的 Store」这一变异（M7）能被稳定现红。
 	reserveHook func()
-	// credGen 凭据代际：凭据替换（sdkbridge 的 credSig 变化）时 +1。会话在租借内
-	// 发现代际落后就**由持有者自己**清 ts（状态字段没有第二读者，见 ClearTurnStates）。
-	credGen atomic.Uint64
 }
 
 // rotatePolicy 返回本池的轮换策略（单一来源 = 会话：池内各会话构造期写入同一策略）。
@@ -214,10 +213,6 @@ func resizeIdentityPool(old *identityPool, spec poolSpec) *identityPool {
 		accountID:      spec.accountID,
 		retireThread:   spec.retire,
 		slots:          make([]*codexSession, k),
-	}
-	if old != nil {
-		// 代际跨池延续：凭据替换发生在重建之前时，新池里的会话仍会看到落后的代际。
-		np.credGen.Store(old.credGen.Load())
 	}
 	for i := range k {
 		if old != nil && i < len(old.slots) && old.slots[i].busy.CompareAndSwap(false, true) {

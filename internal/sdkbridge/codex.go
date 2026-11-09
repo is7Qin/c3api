@@ -6,6 +6,7 @@ package sdkbridge
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -31,10 +32,7 @@ type Codex struct {
 	failure FailureHandler        // 统一失效回调；nil = no-op（测试/未装配）
 	rotate  RotationStore         // 轮转回写落库面；nil = 不落库（测试/未装配）
 	inval   func(accountID int64) // 回写后失效账号快照条目（下个会话重载新凭据）；nil = 不失效
-	// clearTurnStates 凭据替换（条目重建且 credSig 变）时清该账号全部会话的 ts
-	// （scheduler.ClearTurnStates 实现；nil = 不接）。
-	clearTurnStates func(accountID int64)
-	log             *logx.Logger // 回写/失效错误日志；nil = 不记
+	log     *logx.Logger          // 回写/失效错误日志；nil = 不记
 	// egress 出口池（构造期注入；M3 取代旧的单个 http.RoundTripper 字段）。
 	// SDK 客户端的 transport 是**构造期**参数，所以出口只能按账号在 clientFor
 	// 构造时注入（`eg.HTTP.Transport`——与 HTTP 面共享同一连接池）；同一账号
@@ -73,12 +71,6 @@ type RotationDeps struct {
 	// InvalidateSnapshot 回写成功后失效调度器 AccountExt 内存快照对应条目
 	// （下个会话重载新凭据）；nil = 不失效（测试/未装配）。
 	InvalidateSnapshot func(accountID int64)
-	// ClearTurnStates 凭据**替换**（外部 credSig 变化 ⇒ 条目重建）时让该账号全部
-	// 会话的 turn-state 失效（scheduler.ClearTurnStates 实现；nil = 不接）。
-	//
-	// owner 判定就是「条目被替换」这件事本身——token 轮转回调不重建条目，因此
-	// 不在这里清（§3.2 凭据替换）。
-	ClearTurnStates func(accountID int64)
 	// Log 回写/失效错误日志（旋转低频事件，错误恒 Warn 记一条）；nil = 不记。
 	Log *logx.Logger
 }
@@ -131,16 +123,15 @@ type codexEntry struct {
 // 三者皆为构造期依赖，一次给齐——构造后不存在“半装配”的 Codex。
 func NewCodex(failure FailureHandler, egressPool *egress.Pool, rotation RotationDeps) *Codex {
 	return &Codex{
-		failure:         failure,
-		egress:          egressPool,
-		rotate:          rotation.Store,
-		inval:           rotation.InvalidateSnapshot,
-		clearTurnStates: rotation.ClearTurnStates,
-		log:             rotation.Log,
-		entries:         make(map[int64]*codexEntry),
-		usageSem:        make(chan struct{}, usageFetchConcurrency),
-		usageTTL:        defaultUsageSnapshotTTL,
-		usageCooldown:   defaultUsageCooldown,
+		failure:       failure,
+		egress:        egressPool,
+		rotate:        rotation.Store,
+		inval:         rotation.InvalidateSnapshot,
+		log:           rotation.Log,
+		entries:       make(map[int64]*codexEntry),
+		usageSem:      make(chan struct{}, usageFetchConcurrency),
+		usageTTL:      defaultUsageSnapshotTTL,
+		usageCooldown: defaultUsageCooldown,
 	}
 }
 
@@ -332,22 +323,15 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 	// 锁内摘除、锁外关闭（G4）：覆盖旧条目时它名下的 HTTPClient 全部弃用，其中
 	// 的 WS 空闲连接必须主动关（否则旧 socket 一直挂在上游，直到 TTL 到期）。
 	var dropped []*codexsdk.HTTPClient
-	replaced := false
 	if err == nil {
 		e.auth = auth
 		if old != nil {
 			dropped = old.takeClients()
-			replaced = old.sig != sig
 		}
 		a.entries[cred.AccountID] = e
 	}
 	a.mu.Unlock()
 	closeWSIdleConns(dropped)
-	if replaced && a.clearTurnStates != nil {
-		// 凭据**替换**（sig 变）⇒ 该账号全部会话的 ts 作废：旧 ts 属于旧 auth owner，
-		// 带进新 owner 的请求就是串台（§3.2）。token 轮转不重建条目，所以不在此列。
-		a.clearTurnStates(cred.AccountID)
-	}
 	if err != nil {
 		// 构造失败（空 rt 等）：锁外上报（reportFatal → evict 需取
 		// a.mu——锁内调用即重入死锁；sync.Mutex 不可重入）。旧条目仍在表里
@@ -814,6 +798,43 @@ func credSig(c *domain.AccountCredential) credKey {
 		patKey:         c.PATKey,
 		codexAccountID: c.CodexAccountID,
 	}
+}
+
+// CredOwner 账号当前凭据的 owner 签名（§3.2「owner 判定 = 现有 credSig」）。
+//
+// 网关在**请求准备第一步**用它对齐会话（早于 Identity 构造），因此它必须是纯函数：
+// 不读缓存、不加锁、**零分配**（栈上两个累加器），每请求只多一次比较。
+//
+// 为什么非密码学哈希就够：比较是**账号内**的（会话池按账号建，owner 只和同一会话
+// 上一次对齐的值比），所以它只回答"这份凭据还是不是同一版"，跨账号碰撞在语义上
+// 无法发生；而"同一账号伪造自己凭据的碰撞"能拿到的只是自己那一条会话的旧 ts。
+// 逐字段喂入并夹一个分隔字节，避免 ("ab","c") 与 ("a","bc") 同值。
+func CredOwner(cred *domain.AccountCredential) [16]byte {
+	const (
+		offsetA = 0xcbf29ce484222325 // FNV-1a 64 偏移基
+		offsetB = 0x9e3779b97f4a7c15 // 第二通道：不同初值，降低结构碰撞
+		prime   = 0x100000001b3
+	)
+	var out [16]byte
+	if cred == nil {
+		return out
+	}
+	a, b := uint64(offsetA), uint64(offsetB)
+	mix := func(s string) {
+		for i := 0; i < len(s); i++ {
+			a = (a ^ uint64(s[i])) * prime
+			b = (b + uint64(s[i])) * prime
+			b ^= b >> 31
+		}
+		a = (a ^ 0xff) * prime
+		b = (b + 0xff) * prime
+	}
+	for _, s := range [4]string{cred.OAuthToken, cred.OAuthRefreshToken, cred.PATKey, cred.CodexAccountID} {
+		mix(s)
+	}
+	binary.LittleEndian.PutUint64(out[0:8], a)
+	binary.LittleEndian.PutUint64(out[8:16], b)
+	return out
 }
 
 // report 单次上报核心（双源去重——CAS 胜者上报，败者并发调用/补报路径跳过）；

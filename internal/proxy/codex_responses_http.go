@@ -19,6 +19,7 @@ import (
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
@@ -159,11 +160,17 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 // 改 true 的前置条件是 P1（真实账号 ≥10 连轮实测）通过，不是配置项。
 const codexTurnStateReplay = false
 
-// codexRequestIdentity 本次请求的身份数据（identity 是**请求数据**，§3.1）：会话
-// 给出 Session/Meta/TurnState/Sink，重放策略在这里施加（§5.1 单点常量）。
+// codexRequestIdentity 本次请求的身份数据（identity 是**请求数据**，§3.1）。
+//
+// 顺序是契约（§3.3 请求准备顺序）：取得租借 → **对齐 owner（可能清 ts）** →
+// 构造 Identity。owner 取自**本次请求自己的凭据**（sdkbridge.CredOwner）而不是池上
+// 的计数器：池会被整体替换，复制即丢失效；会话字段跟着会话对象走，重载窗口里
+// 发生的对齐不会丢（B2）。反序（先生成 Identity 再清 ts）会让换凭据后的第一个请求
+// 带着旧 owner 的 ts 出去，而事后任何清理都追不回来（B1）。
 //
 // 策略 false ⇒ 既不发送也不捕获（ts 恒空、Sink = nil）；连接复用不受影响。
-func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection) codexsdk.Identity {
+func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection, cred *domain.AccountCredential) codexsdk.Identity {
+	sel.AlignCodexOwner(sdkbridge.CredOwner(cred))
 	id := sel.CodexIdentity()
 	if !p.turnStateReplay {
 		id.TurnState, id.Sink = "", nil
@@ -197,9 +204,10 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 请求级身份（§3.1）：会话给出 Session/Meta/ts/Sink——同账号并发各持不同会话
-	// ⇒ 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的构造期配置。
-	id := p.codexRequestIdentity(sel)
+	// 请求级身份（§3.1）：**先对齐 owner**，再由会话给出 Session/Meta/ts/Sink——同账号
+	// 并发各持不同会话 ⇒ 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/
+	// 客户端的构造期配置。
+	id := p.codexRequestIdentity(sel, cred)
 	// 出站传输开关由调用方给值（原生车道 = Selection 原值；转换车道钉 http，
 	// 见 caller_converted.go）。sdkbridge 侧按它分 client 条目——构造期参数，
 	// 改模板 ⇒ 换条目。
@@ -276,8 +284,8 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	if err != nil {
 		return 0, nil, false, err
 	}
-	// 请求级身份同非流式。
-	id := p.codexRequestIdentity(sel)
+	// 请求级身份同非流式（含 owner 对齐——同样必须先于身份快照）。
+	id := p.codexRequestIdentity(sel, cred)
 	// 出站传输开关同非流式（原生车道 = Selection 原值；转换车道钉 http）。
 	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, id, transport)
 	if err != nil {

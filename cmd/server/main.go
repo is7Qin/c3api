@@ -600,9 +600,7 @@ func main() {
 	}), egressPool, sdkbridge.RotationDeps{
 		Store:              repos.AccountExts,
 		InvalidateSnapshot: sched.InvalidateAccount,
-		// 凭据替换（credSig 变）⇒ 该账号全部会话的 ts 作废（旧 ts 属旧 auth owner）。
-		ClearTurnStates: sched.ClearTurnStates,
-		Log:             log,
+		Log:                log,
 	})
 	// quality-sync lane（intelligent-routing）：500ms Redis 当前分钟绝对
 	// 快照发布 + 5s PG quality/flow UPSERT。单实例一个串行 loop（worker.GoLoop

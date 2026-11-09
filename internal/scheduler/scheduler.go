@@ -106,7 +106,8 @@ type Selection struct {
 	// session 本次预留认领的 codex 会话（仅 codex 凭据；nil = 无会话——非 codex
 	// 面不认领）。Release 归还；CodexIdentity/StepIdentity 经它读写。
 	session *codexSession
-	// pool 会话所属池（凭据代际 + 线程退役出口）；全忙兜底的临时会话无池。
+	// pool 会话所属池（线程退役出口；owner 对齐不读池——凭据失效是账号级的，见
+	// AlignCodexOwner）。全忙兜底的临时会话无池。
 	pool             *identityPool
 	ModelMappingMode domain.ModelMappingMode
 	// SupplierFinance 选中本账号时捕获的不可变财务上下文（spec 2026-10-09
@@ -144,19 +145,35 @@ func (s *Selection) Release() {
 // 装配收回调度器侧——proxy 不再回 ext 拼装）。全部取自会话：installation 是账号级
 // 稳定项、与 session/thread/window 同源，故不再与账号 ext 各存一份。
 //
-// 无会话（非 codex / 池缺席）→ 零值（SDK 内层 omit，不注入）。凭据代际在这里
-// 对齐：会话发现池的代际比自己的新 ⇒ 先清 ts 再用（清 ts 只能由持有者做）。
+// 无会话（非 codex / 池缺席）→ 零值（SDK 内层 omit，不注入）。
+//
+// **owner 对齐不在这里**：它必须先于身份快照发生，见 AlignCodexOwner。
 func (s *Selection) CodexIdentity() codexsdk.Identity {
 	if s == nil || s.session == nil {
 		return codexsdk.Identity{}
 	}
-	if s.pool != nil {
-		if gen := s.pool.credGen.Load(); s.session.credGen != gen {
-			s.session.turnState = ""
-			s.session.credGen = gen
-		}
-	}
 	return s.session.identity()
+}
+
+// AlignCodexOwner 把会话对齐到「本请求所用凭据的 owner」（§3.2 凭据替换 / §3.3
+// 请求准备顺序）：owner 变了 ⇒ 先清 ts，再由调用方构造 Identity。
+//
+// 这是**请求准备的第一步**（取得租借之后、CodexIdentity 之前）：反序会让换凭据后
+// 的第一个请求带着旧 owner 的 ts 出去，而任何事后递增都追不回来（B1）。
+//
+// 失效源是会话自己的字段，不是池上的计数器：owner 属于账号凭据这一稳定事实，
+// 会话对象跨池迁移（resize）时字段随对象走，所以「新池已建、尚未发布」的窗口里
+// 发生的对齐不会丢（B2）。清 ts 只能由租借持有者做——状态字段没有第二读者。
+//
+// owner 为零值（未装配/匿名调用面）= 不对齐，保持既有行为。
+func (s *Selection) AlignCodexOwner(owner [16]byte) {
+	if s == nil || s.session == nil || owner == ([16]byte{}) {
+		return
+	}
+	if s.session.credOwner != owner {
+		s.session.credOwner = owner
+		s.session.turnState = ""
+	}
 }
 
 // StepIdentity 推进本会话一次完成轮（§3.2 推进）——**仅成功取到 usage、且上游
@@ -170,24 +187,6 @@ func (s *Selection) StepIdentity() {
 	}
 	if old := s.session.step(); old != "" {
 		s.pool.retire(old)
-	}
-}
-
-// ClearTurnStates 让某账号**全部会话**的 turn-state 失效（§3.2 凭据替换）。
-//
-// 只推进池的代际，不直接写会话字段：状态字段没有第二读者，清 ts 由各会话在
-// **下一次租借内**自己完成（见 CodexIdentity）。owner 判定 = sdkbridge 的 credSig
-// 变化（条目重建），token 轮转回写不触发。
-func (s *Scheduler) ClearTurnStates(accountID int64) {
-	if s == nil {
-		return
-	}
-	cur := s.view.Load()
-	if cur == nil || cur.static == nil || cur.static.identityPools == nil {
-		return
-	}
-	if pool := cur.static.identityPools.pools[accountID]; pool != nil {
-		pool.credGen.Add(1)
 	}
 }
 

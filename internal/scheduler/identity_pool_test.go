@@ -433,31 +433,53 @@ func TestClaimCodexSessionOnlyCodexAndFallback(t *testing.T) {
 	require.NotEmpty(t, ephem.thread)
 }
 
-// TestClearTurnStatesAdvancesGeneration 凭据替换只推进池的代际（不直接写会话
-// 字段——状态字段没有第二读者）；会话在下一次租借内自己清 ts。
-func TestClearTurnStatesAdvancesGeneration(t *testing.T) {
-	session := newCodexSession("inst", testPolicy())
-	pool := &identityPool{slots: []*codexSession{session}}
-	reg := &identityRegistry{pools: map[int64]*identityPool{7: pool}}
-	view := &RoutingView{static: &StaticView{identityPools: reg}}
+// TestSessionCredGenSurvivesPendingPoolPublication 凭据 owner 失效**不依赖池的发布
+// 时机**，也不依赖"被租到的那一条会话"（B2 回归，替代原名
+// TestClearTurnStatesAdvancesGeneration）：
+//
+//	① 两个会话都已对齐 owner A 并各自持有 ts=T-old；
+//	② 重载建好新池（会话按位次迁移——ts/owner 都是**会话字段**），但尚未发布；
+//	③ 发布窗口内发生凭据替换：旧池仍被旧视图持有者使用，下一次租借对齐 owner B；
+//	④ 新池发布后：**每个**会话的下一租借都必须是空 ts。
+//
+// 旧实现（池级 credGen + resize 时 `np.credGen.Store(old.credGen.Load())` 值拷贝）在
+// ②③④ 之间丢掉失效：清 ts 推进的是旧池，新池发布后会话看不到刚推进的代际，T-old 被
+// 带进新 owner 的上游会话（oracle B1-路径二）。失效源改成会话字段后这条交错结构性
+// 消失；④ 的"每个会话"钉住"不得把 owner 复制到池上"（否则只剩被租到的那条被清）。
+func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
+	ownerA, ownerB := [16]byte{0x0a}, [16]byte{0x0b}
+	old := resizeIdentityPool(nil, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy()})
 
-	s := &Scheduler{}
-	s.view.Store(view)
+	// ① 两条会话各自完成一轮（拿到 T-old）并已对齐 owner A。
+	for _, s := range old.slots {
+		require.True(t, s.busy.CompareAndSwap(false, true))
+		// 请求准备顺序：先对齐 owner（会话刚建，ts 尚空），请求结束后 Sink 才落 ts。
+		(&Selection{session: s, pool: old}).AlignCodexOwner(ownerA)
+		s.SetTurnState("T-old")
+		s.release()
+	}
 
-	session.SetTurnState("T-old")
-	sel := &Selection{session: session, pool: pool}
-	require.Equal(t, "T-old", sel.CodexIdentity().TurnState, "未换凭据：ts 原样")
+	// ② 重载：新池已建（两条会话按位次迁移，不重建），尚未发布。
+	next := resizeIdentityPool(old, poolSpec{accountID: 7, k: 3, installationID: "inst", policy: testPolicy()})
+	require.Same(t, old.slots[0], next.slots[0], "会话对象跨池迁移（owner/ts 都是会话字段）")
+	require.Same(t, old.slots[1], next.slots[1], "会话对象跨池迁移（位次 1）")
 
-	s.ClearTurnStates(7)
-	require.Equal(t, uint64(1), pool.credGen.Load())
-	id := sel.CodexIdentity()
-	require.Empty(t, id.TurnState, "凭据替换 ⇒ 下一请求不带旧 ts")
-	require.Empty(t, session.turnState, "清 ts 在租借内完成")
-	require.Equal(t, uint64(1), session.credGen)
+	// ③ 发布窗口内的凭据替换：旧池仍可见，一次租借把 owner 推到 B。
+	stale := old.claim()
+	require.NotNil(t, stale)
+	(&Selection{session: stale, pool: old}).AlignCodexOwner(ownerB)
+	require.Empty(t, stale.turnState, "凭据替换 ⇒ 租借内先清 ts（owner 对齐先于身份快照）")
+	stale.release()
 
-	// 无池账号 / 未发布视图：no-op（不 panic）。
-	s.ClearTurnStates(99)
-	(&Scheduler{}).ClearTurnStates(7)
+	// ④ 新池发布后到来的请求（同一份凭据 = owner B）：**每条**会话都不得再带回 T-old。
+	for i, held := range next.slots[:2] {
+		require.True(t, held.busy.CompareAndSwap(false, true))
+		sel := &Selection{session: held, pool: next}
+		sel.AlignCodexOwner(ownerB)
+		require.Empty(t, sel.CodexIdentity().TurnState,
+			"位次 %d：失效必须跨「新池已建、尚未发布」窗口存活，且覆盖该账号全部会话", i)
+		held.release()
+	}
 }
 
 // TestReleaseFreesSessionBeforeConcurrencyDecrement 释放窗口内 claim 恒成功
