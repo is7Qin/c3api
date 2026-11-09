@@ -815,10 +815,16 @@ func credSig(c *domain.AccountCredential) credKey {
 	}
 }
 
-// CredOwner 账号当前凭据的 owner 签名（§3.2「owner 判定 = 现有 credSig」）。
+// CredOwner 账号当前凭据的 **owner**（§3.2「凭据替换」的 ts 清空判据）。
 //
 // 网关在**请求准备第一步**用它对齐会话（早于 Identity 构造），因此它必须是纯函数：
-// 不读缓存、不加锁、**零分配**（栈上两个累加器），每请求只多一次比较。
+// 不读缓存、不加锁、**零分配**（栈上两个累加器）。
+//
+// owner 只含**稳定身份标识**——installation + CodexAccountID + PAT / refresh-token，
+// **排除会轮转的 access token**：SDK 每次 OAuth refresh 都会把新 at 写回 ext，若 at
+// 参与 owner，每个 token refresh 都会清该账号全部会话的 ts，与「不是每次 token
+// refresh」（spec §3.2 括注）自相矛盾。at 变化属于"凭据换了一版"（entry 重建判据
+// credSig 更宽，含 at），但**不是**换 owner：会话的 ts 属于同一条上游对话。
 //
 // 为什么非密码学哈希就够：比较是**账号内**的（会话池按账号建，owner 只和同一会话
 // 上一次对齐的值比），所以它只回答"这份凭据还是不是同一版"，跨账号碰撞在语义上
@@ -844,7 +850,8 @@ func CredOwner(cred *domain.AccountCredential) [16]byte {
 		a = (a ^ 0xff) * prime
 		b = (b + 0xff) * prime
 	}
-	for _, s := range [4]string{cred.OAuthToken, cred.OAuthRefreshToken, cred.PATKey, cred.CodexAccountID} {
+	// 字段顺序即语义：installation（账号身份）→ 上游账号 → PAT / refresh-token。
+	for _, s := range [4]string{cred.InstallationID, cred.CodexAccountID, cred.PATKey, cred.OAuthRefreshToken} {
 		mix(s)
 	}
 	binary.LittleEndian.PutUint64(out[0:8], a)

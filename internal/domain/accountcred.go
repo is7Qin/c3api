@@ -24,6 +24,10 @@ type AccountCredential struct {
 	// CodexAccountID 上游账号/空间标识（ChatGPT-Account-ID 头——SDK 内部注入面；
 	// 空 = 不发头，向后兼容）。落库点定值（导入行/单账号保存派生），热路径只读。
 	CodexAccountID string
+	// InstallationID 账号安装级稳定标识（codex_identity.installation_id 的投影）。
+	// 它与会话的 installation 同源，是"这份凭据还是不是同一版账号身份"的判据之一
+	// （sdkbridge.CredOwner）；不属于凭据本身，故不参与重建签名（credKey）。
+	InstallationID string
 }
 
 // CredentialFromExt 从账号扩展行派生每次调用必传的凭据（投影语义：按类型取
@@ -40,6 +44,9 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 	if e.CredentialType.IsCodex() {
 		if e.CodexAccountID != nil {
 			c.CodexAccountID = *e.CodexAccountID
+		}
+		if e.CodexIdentity != nil {
+			c.InstallationID = e.CodexIdentity.InstallationID
 		}
 	}
 	switch e.CredentialType {
