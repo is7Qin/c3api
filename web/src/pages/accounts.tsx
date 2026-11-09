@@ -578,12 +578,20 @@ export default function Accounts() {
     if (batchDraft.cost_multiplier !== undefined && parseMultiplier(batchDraft.cost_multiplier) === null) {
       setBatchErr(t('accounts.multiplier.invalid')); return
     }
-    const fields = draftToPatch(batchDraft, {
-      tpl: batchTplCtx,
-      echoProxyId: 0, // 批量不用 echo 规则（proxyFields 覆盖）
-      isSupplierScope,
-      proxyFields: buildBatchProxyFields(batchDraft.proxy ?? null),
-    })
+    // 投影是纯函数，唯一可能抛的是「非法瞬时值」（如 max_concurrency 的 0/小数）。
+    // 上面的守卫已拦；这里兜住，保证守卫将来被删时是可见错误而不是未捕获异常。
+    let fields: AccountConfigPatch
+    try {
+      fields = draftToPatch(batchDraft, {
+        tpl: batchTplCtx,
+        echoProxyId: 0, // 批量不用 echo 规则（proxyFields 覆盖）
+        isSupplierScope,
+        proxyFields: buildBatchProxyFields(batchDraft.proxy ?? null),
+      })
+    } catch (e) {
+      setBatchErr((e as Error).message)
+      return
+    }
     if (Object.keys(fields).length === 0) {
       setBatchErr(t('accounts.batchUpdateEmpty'))
       return

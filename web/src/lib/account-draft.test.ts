@@ -482,9 +482,10 @@ describe('accounts.tsx：批量面接线形状', () => {
     assert.match(batch, /accounts\.batchBaseUrlBlocked/)
   })
 
-  it('批量最大并发：0/小数在提交口拦下（不发 400）', () => {
+  it('批量最大并发：0/小数在提交口拦下（不发 400，用批量文案）', () => {
     assert.match(batch, /const n = Number\(batchDraft\.max_concurrency\)/)
     assert.match(batch, /!Number\.isInteger\(n\) \|\| n < 1/)
+    assert.match(batch, /accounts\.batchMaxInvalid/) // batch 语境不能复用「新建时留空」的文案
   })
 
   it('分组「清空」勾选框只认 []；勾选时多选置灰（选具体分组不得显示「清空」）', () => {
@@ -496,6 +497,9 @@ describe('accounts.tsx：批量面接线形状', () => {
   it('提交走唯一投影 draftToPatch，且空补丁在 mutate 之前拦下', () => {
     assert.match(batch, /draftToPatch\(batchDraft,/)
     assert.match(batch, /proxyFields: buildBatchProxyFields\(batchDraft\.proxy \?\? null\)/)
+    // 投影抛错（非法瞬时值）必须落到 batchErr，而不是未捕获异常。
+    assert.match(batch, /try \{\s*\n\s*fields = draftToPatch\(batchDraft,/)
+    assert.match(batch, /setBatchErr\(\(e as Error\)\.message\)/)
     const guard = batch.indexOf('Object.keys(fields).length')
     const mutate = batch.indexOf('batchUpdate.mutate(')
     assert.notEqual(guard, -1, '找不到空补丁守卫')
