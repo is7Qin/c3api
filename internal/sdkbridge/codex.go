@@ -251,7 +251,9 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 // client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id
 // clientTurnState 为客户端请求自带 x-codex-turn-state（透传优先——客户端自管）：
 // 非空即写入该会话槽（下一次 provider 求值就带上它），空则交给槽里已有的值。
-// 成功响应签发值 → 槽回写（非空才覆盖）。两处回写都不涉及客户端重建（G1）。
+// 上游签发值（握手头/响应头/WS 事件）由 SDK observer 写同一个槽，**不在返回后
+// 回写**（那会把事件签发的新值倒退成请求开始时的快照）。两处写入都不涉及客户端
+// 重建（G1）。
 // 错误翻译同 GenerateImage（translateError——SDK *HTTPError → 信封；fatal 五类
 // 统一回调双源去重；RefreshError/网络原样）。transport 为出站传输开关（spec §5：
 // 构造期参数 ⇒ 走 clientFor 的键维度；映射点只有 codexTransport 一处）。
@@ -268,7 +270,11 @@ func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, e
 	if err != nil {
 		return nil, a.translateError(e, err)
 	}
-	captureTurnState(e, key, resp.TurnState)
+	// **不**回写 resp.TurnState：它是**请求开始时的快照**（WS 臂 = 握手签发值，
+	// HTTP 臂 = 本次响应头）。WS 臂在取帧过程中可能已被 `response.metadata` 事件
+	// 更新到更新的值——返回后再用旧快照回写会把槽**倒退**（下一步续传就重放旧值）。
+	// 上游签发值的唯一写入口是 observer（握手响应头 / HTTP 响应头 / WS 事件三处
+	// 共用 SDK 的 captureTurnStateValue），它在本函数返回前已经写完了。
 	return resp, nil
 }
 
@@ -295,10 +301,10 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *
 // StreamBody 流式 responses **raw body** 透传：cred → 缓存取 HTTPClient →
 // c.StreamBody(ctx, payload) 返回**未关闭**的 *http.Response（body 归调用方，
 // proxy 侧经 sserelay.Relay 消费后**恰好关闭一次**）。sess/meta/clientTurnState
-// 语义同 Responses（伪装身份 + 透传优先）。成功后**直接读本次
-// resp.Header** 回写会话槽——不读共享 client.TurnState()（并发响应可互相覆盖，
-// http.go captureTurnState 为池级最近值）。事件级 ts（`response.metadata`）由
-// SDK 的 observer 在**取帧过程中**写槽（S3），不经过这条路径。错误翻译同
+// 语义同 Responses（伪装身份 + 透传优先）。**本方法不写响应签发值**：本次
+// resp.Header 的 ts 与流式取帧期间 `response.metadata` 事件的新值都由 SDK 的
+// observer 写槽（后者才是更新的值；回写响应头只会把新值倒退成快照）。
+// 错误翻译同
 // Responses（translateError——信封/fatal 统一回调双源去重/RefreshError 分类复用）。
 // transport 语义同 Responses（构造期参数 ⇒ 换值换 client 条目）。
 func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string, transport domain.CodexResponsesTransport) (*http.Response, error) {
@@ -312,7 +318,9 @@ func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, 
 	if err != nil {
 		return nil, a.translateError(e, err)
 	}
-	captureTurnState(e, key, resp.Header.Get(codexsdk.HeaderTurnState))
+	// **不**回写 resp.Header 的 ts：同 Responses——响应头是本请求开始时的快照，
+	// 而流式取帧期间的事件可能已签发更新的值；回写旧快照只会倒退。签发值的唯一
+	// 写入口是 observer（SDK 在 HTTP 响应头 / 握手 / 事件三处回调）。
 	return resp, nil
 }
 
@@ -496,12 +504,13 @@ func moveToEnd(lru []identityKey, sig identityKey) []identityKey {
 	return append(lru, sig)
 }
 
-// captureTurnState 上游签发值（或客户端自带值）→ **会话槽**回写（非空才覆盖；
-// 空 = 不改，重复回写幂等）。键 = sessionKey（G3），粒度 = 会话。
+// captureTurnState 客户端自带 ts → **会话槽**回写（非空才覆盖；空 = 不改，
+// 重复写幂等）。键 = sessionKey（G3），粒度 = 会话。
 //
-// 三条写入路径都走这里：调用面读响应头（HTTPResponse.TurnState /
-// StreamBody 的 resp.Header）、客户端透传值（请求前）、以及 SDK observer
-// （握手/响应头/WS 事件——那条不经过本函数，直接 e.turnStates.store）。
+// 它现在只服务一条路径：**客户端透传值**（请求前写入，见 Responses/StreamBody）。
+// 上游签发值**不**走这里——那是 SDK observer 的职责（握手/HTTP 响应头/WS 事件
+// 三处共用同一写入口，直接 e.turnStates.store）。曾经"返回后回写 resp.TurnState"
+// 的写法已删除：那是请求开始时的快照，会把取帧期间事件签发的新值倒退成旧值。
 func captureTurnState(e *codexEntry, key, ts string) {
 	if ts == "" || e == nil {
 		return

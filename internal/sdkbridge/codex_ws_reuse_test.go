@@ -11,9 +11,13 @@ package sdkbridge
 // 恒红/恒绿，没有判别力。这里的上游在同一连接上**循环读帧、逐帧回 completed、
 // 不主动关闭**，`upgrades`（升级次数）才成为"是否复用"的唯一判据。
 //
-// 判据一律落在假上游侧（升级次数 / 请求帧里的 client_metadata / HTTP 请求头 /
-// TCP dial 次数），不读网关私有字段——私有字段是"网关以为发了什么"，上游才是
-// "实际到了什么"。
+// **主判据**落在假上游侧（升级次数 / 请求帧里的 client_metadata / HTTP 请求头 /
+// TCP dial 次数）——私有字段是"网关以为发了什么"，上游才是"实际到了什么"。
+//
+// 例外（有意为之，评审已确认）：C 与 D 各有一条补充断言直接读网关私有槽
+// （`testSessionTurnState`），因为"槽里此刻是什么"没有对外观测面——上游只能证明
+// "下一次请求带了什么"。私有读只作补充、不取代上游侧判据：同一用例里"实际发出去
+// 的 ts"仍由帧序列 `wsRequestTS` 单独断言。
 
 import (
 	"context"
@@ -303,6 +307,36 @@ func TestCodexWSReuseAcrossTurns(t *testing.T) {
 
 	require.Equal(t, []string{"T1", "T2"}, up.wsRequestTS(), "两轮各带自己的 ts（第 2 轮的事件 ts 生效）")
 	require.Equal(t, 1, up.upgradeCount(), "两轮 ts 不同仍复用同一条连接（upgrades == 1）")
+}
+
+// TestCodexAggregateTurnStateKeepsEventIssuedValue：聚合臂（非流式 `Responses`）
+// 在 WS 新握手时，**合成响应头是握手快照**（T1）——它必须早于任何帧定死；而本轮
+// `response.metadata` 事件已签发新值（T2）。网关**不得**在请求返回后用响应头快照
+// 回写会话槽：那会把 T2 倒退成 T1，下一次同轮续传就重放旧值（oracle 评审 blocking-1）。
+//
+// 判据两条：① 槽里是最新签发值（T2）；② 下一次请求帧里带的是 T2（黑盒面）。
+func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
+	up := newWSReuseUpstream(t, "T1",
+		wsReuseStep{created: true, id: "agg1", ts: "T2"},
+		wsReuseStep{created: true, id: "agg2"},
+	)
+	a, _ := wsReuseCodex(t, up)
+	cred := wsReuseCred()
+
+	resp, err := a.Responses(t.Context(), cred, a.DirectEgress(),
+		[]byte(`{"model":"gpt-5.6","input":[]}`), nil, nil, "", domain.CodexResponsesTransportWS)
+	require.NoError(t, err)
+	require.Equal(t, "T1", resp.TurnState, "合成响应头是握手快照（早于任何帧定死）")
+	require.Equal(t, "T2", testSessionTurnState(a, cred.AccountID, nil, nil),
+		"事件签发的新值必须留在槽里：返回阶段不得用握手快照回写")
+
+	// 黑盒面：下一次同会话请求必须带 T2（不是 T1）。
+	if _, err := a.Responses(t.Context(), cred, a.DirectEgress(),
+		[]byte(`{"model":"gpt-5.6","input":[]}`), nil, nil, "", domain.CodexResponsesTransportWS); err != nil {
+		t.Fatalf("第二次 Responses: %v", err)
+	}
+	require.Equal(t, []string{"", "T2"}, up.wsRequestTS(),
+		"轮首不带；续传必须带**事件**签发值 T2（不是握手快照 T1）")
 }
 
 // ---------------------------------------------------------------------------

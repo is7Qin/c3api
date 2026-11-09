@@ -25,48 +25,97 @@ func sessionKeyOf(sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
 	return installation + "|" + session + "|" + thread
 }
 
+// turnStateSlotCompactAt 是外层键表的压缩阈值：插入新键时若表已超过它，顺手丢掉
+// 值为空的条目（= 已结束的轮留下的壳）。阈值以下不压缩，避免每轮结束都复制整表。
+const turnStateSlotCompactAt = 4096
+
 // turnStateSlots 会话级 turn-state 槽表（G3）：键 = sessionKey，值 = 该会话当前
 // 生效的 ts。
 //
 // 读路径是**每请求**的（SDK 的 WithTurnStateProvider 在热路径上调它），所以不能
-// 用互斥锁——这里是一份写时复制的只读快照：
-//   - 读：一次 atomic.Load + 一次 map 查，零锁；
-//   - 写：拷一份新 map 再 CAS 换指针（写只在握手/响应头/事件/轮结束这几个低频点
-//     发生，拷贝成本可忽略）。CAS 失败即有人并发写过，重读重试——最终一致，不会
-//     丢写（谁最后成功谁的值生效，与"最后签发值胜出"的语义一致）。
+// 用互斥锁；写路径（握手/响应头/事件/轮结束）也不能是"复制整张表"——那样轮结束
+// 的清除与每个响应头都会变成 O(会话数)，键数一多就是持续的写放大（实测 keys=10k
+// 时整表复制 ~0.47ms/次、100k 时 ~6.4ms/次，分配量同阶）。
 //
-// 零值可用（原子指针 nil ⇒ 空表）。
+// 结构是两层：
+//   - 外层 map：键 → 值单元，只在**新增键**时复制（每个新 thread 一次，低频）；
+//   - 值单元：*atomic.Pointer[string]，更新/清除都是 O(1) 原子写，不复制表。
+//
+// 清除（ts = ""）保留值单元（把值置空），因为同一会话下一轮会复用这个单元；残留的
+// 空单元由插入新键时的压缩回收（阈值 turnStateSlotCompactAt）。
+//
+// 零值可用（原子指针 nil ⇒ 空表）。读 = 一次 atomic.Load + 一次 map 查 + 一次原子
+// 读，全程无锁、无分配。
 type turnStateSlots struct {
-	m atomic.Pointer[map[string]string]
+	m atomic.Pointer[map[string]*atomic.Pointer[string]]
 }
 
 // load 读该会话当前 ts（空串 = 本会话尚未签发/已清除）。
 func (s *turnStateSlots) load(key string) string {
-	if m := s.m.Load(); m != nil {
-		return (*m)[key]
+	m := s.m.Load()
+	if m == nil {
+		return ""
+	}
+	cell := (*m)[key]
+	if cell == nil {
+		return ""
+	}
+	if v := cell.Load(); v != nil {
+		return *v
 	}
 	return ""
 }
 
-// store 写该会话当前 ts（空串 = 清除该键）。
+// slotEmpty 报告一个值单元是否为"空"：从未写过（nil 指针）或写的是空串。
+//
+// 清除**保留值单元**（把值置空），所以"空壳"有两种形态，压缩与幂等判定都必须
+// 同时认这两种——只看 nil 指针会把显式清空的单元当活值留着。
+func slotEmpty(cell *atomic.Pointer[string]) bool {
+	v := cell.Load()
+	return v == nil || *v == ""
+}
+
+// store 写该会话当前 ts（空串 = 清除该键的值，保留值单元）。
+//
+// 并发语义：同键的并发写是"最后成功的那次原子写胜出"（与"最后签发值胜出"一致）；
+// 不同键互不影响。外层表的 CAS 只用于**新增键**——失败即有人并发插入，重读重试。
+// 压缩可能把本 goroutine 刚写过值的空壳摘掉，所以写完值后要复核一次自己在不在表里
+// （不在就重试，重新插入）——不会丢写。
 func (s *turnStateSlots) store(key, ts string) {
 	for {
 		old := s.m.Load()
-		cur := map[string]string(nil)
+		var cur map[string]*atomic.Pointer[string]
 		if old != nil {
 			cur = *old
 		}
-		if cur[key] == ts {
-			return // 幂等：同值不复制（响应未再签发时重复回写走这一条）
+		if cell := cur[key]; cell != nil {
+			if ts == "" && slotEmpty(cell) {
+				return // 已经是空值：幂等（未签发/已清除时重复回写走这一条）
+			}
+			cell.Store(&ts)
+			// 复核：并发压缩可能已把该单元从表里摘掉（摘的是空壳；而我们在摘除点
+			// 之后又写了值）——那样这次写就落在了孤儿上，重试一次会重新插入。
+			if now := s.m.Load(); now != nil && (*now)[key] == cell {
+				return
+			}
+			continue
 		}
-		next := make(map[string]string, len(cur)+1)
+		if ts == "" {
+			return // 键不存在 + 值为空 = no-op
+		}
+		next := make(map[string]*atomic.Pointer[string], len(cur)+1)
 		for k, v := range cur {
 			next[k] = v
 		}
-		if ts == "" {
-			delete(next, key)
-		} else {
-			next[key] = ts
+		cell := new(atomic.Pointer[string])
+		cell.Store(&ts)
+		next[key] = cell
+		if len(next) > turnStateSlotCompactAt {
+			for k, v := range next {
+				if slotEmpty(v) {
+					delete(next, k) // 已结束的轮留下的空壳（含被显式清空的值单元）
+				}
+			}
 		}
 		if s.m.CompareAndSwap(old, &next) {
 			return
