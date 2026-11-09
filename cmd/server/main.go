@@ -276,10 +276,10 @@ func main() {
 		StalenessProbe: repos.Groups,
 		RotatePolicy:   codexsdk.DefaultRotatePolicy(),
 		Egress:         egressPool,
-		// 线程退休、账号移除与配置面 client 回收都走同一张表的锁内摘表 + 锁外
-		// close/terminate。
+		// 线程退休与配置批次应用（活跃集 + 账号集合删除）都走同一张表的锁内
+		// 摘表 + 锁外 close/terminate；账号删除没有独立出口，随 Reconcile 的 gen
+		// 准入一起应用。
 		RetireThread:     codexClients.RetireThread,
-		RemoveAccount:    codexClients.RemoveAccount,
 		ReconcileClients: codexClients.Reconcile,
 	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
 	// 启动期装配门（spec §4.7）：代理表里有启用条目、而调度器没拿到池 ⇒ 起不来。

@@ -147,7 +147,7 @@ type Options struct {
 // WithOnAuthFatal → 回调；nil = 上报 no-op——测试替身形态）；egressPool 为出口池
 // （构造期注入，生产 = main 里与调度器 Config.Egress 同一个池；客户端 transport
 // 就从这个池的 client 上取，spec-proxy-pool §4.6）；clients 为账号传输资源表
-// （构造期注入，生产 = 与 scheduler.Config.RetireThread/RemoveAccount 同一个实例；
+// （构造期注入，生产 = 与 scheduler.Config.RetireThread/ReconcileClients 同一个实例；
 // nil = 本适配层自建，只适用于不需要跨组件退役的用法）；rotation 为轮转回写面
 // （零值 = 不落库/不失效/不记，测试与未装配形态）。
 // 全部构造期依赖一次给齐——构造后不存在“半装配”的 Codex，也没有事后回填。
@@ -384,7 +384,7 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 		return a.buildAuth(cred, e)
 	})
 	if err != nil {
-		// 构造失败（空 rt 等）：锁外上报（reportFatal → RemoveAccount 要取表锁——
+		// 构造失败（空 rt 等）：锁外上报（reportFatal → InvalidateAccount 要取表锁——
 		// 锁内调用即重入死锁）。旧条目仍在表里（构建失败不覆盖）。
 		a.reportFatal(e, err)
 		return nil, err
@@ -550,13 +550,15 @@ func (a *Codex) RetireThread(accountID int64, threadKey string) {
 	a.clients.RetireThread(accountID, threadKey)
 }
 
-// RemoveAccount 账号从账号集合消失时回收其传输资源（§3.2 账号移除）。装配面直接
-// 用 ClientTable.RemoveAccount，不经适配层——两者是同一条路径，这里只是同义入口。
-func (a *Codex) RemoveAccount(accountID int64) {
+// InvalidateAccount 运行时失效账号的传输资源（凭据 fatal / 健康剔除；§3.2 账号移除
+// 的**另一条**生命周期：立即作用于当前条目，没有配置代号）。装配面直接用
+// ClientTable.InvalidateAccount，不经适配层——两者是同一条路径，这里只是同义入口。
+// 配置面的账号集合删除走 ClientTable.Reconcile 的 remove 参数（同一批次准入）。
+func (a *Codex) InvalidateAccount(accountID int64) {
 	if a == nil {
 		return
 	}
-	a.clients.RemoveAccount(accountID)
+	a.clients.InvalidateAccount(accountID)
 }
 
 // closeWSIdleConns 关闭一批客户端各自的 **WS** 空闲连接（G4）。
@@ -1050,11 +1052,13 @@ const rotateWritebackTimeout = 3 * time.Second
 // evict 失效剔除（条目摘除 + 其名下 WS 空闲连接关闭；不存在 = no-op——
 // 并发/重复上报安全）。
 //
-// 与「账号移除」是同一条运作路径（ClientTable.RemoveAccount）：条目一旦从表里
-// 消失就再没人会复用它，但它的 WS 连接还挂在上游——不主动关就白占一个 socket
-// 直到 TTL/maxAge 到期。摘表在表锁内、terminate 在锁外（G4）。
+// 运行时失效**不是**配置批次：没有代号、也不等批次，直接作用于当前条目
+// （ClientTable.InvalidateAccount）。条目一旦从表里消失就再没人会复用它，但它的 WS
+// 连接还挂在上游——不主动关就白占一个 socket 直到 TTL/maxAge 到期。摘表在表锁内、
+// terminate 在锁外（G4）。配置面的账号集合删除走 Reconcile 的 remove 参数（共享
+// 批次准入），两者不共用实现。
 func (a *Codex) evict(accountID int64) {
-	a.clients.RemoveAccount(accountID)
+	a.clients.InvalidateAccount(accountID)
 }
 
 // translateError SDK 错误 → 网关侧错误翻译（错误契约）：

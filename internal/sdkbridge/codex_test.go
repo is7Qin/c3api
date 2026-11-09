@@ -1545,7 +1545,7 @@ func TestClientCacheBoundedByActiveEgressSet(t *testing.T) {
 		eg.Spec.Port = 8000
 		eg.Spec.Password = fmt.Sprintf("revision-%d", i)
 		// 密码轮换 = 账号配置变更 ⇒ reload 面把新的当前出口登记为活跃集。
-		a.clients.Reconcile(uint64(i+1), map[int64]*egress.Client{cred.AccountID: &eg})
+		a.clients.Reconcile(uint64(i+1), map[int64]*egress.Client{cred.AccountID: &eg}, nil)
 		_, _, err := a.clientFor(cred, &eg, domain.CodexResponsesTransportWS)
 		require.NoError(t, err)
 		last = egressDigest(&eg)
@@ -1557,10 +1557,10 @@ func TestClientCacheBoundedByActiveEgressSet(t *testing.T) {
 	require.NotNil(t, a.clients.Get(9), "回收 client 桶不得动条目（Auth/usage 仍在）")
 }
 
-// TestClientTableRemoveAccountDropsTransportResources 账号移除（§3.2）：摘除条目与
-// 全部 client，锁外 CloseWSIdleConnections——上游必须看到空闲连接被关；再来请求
-// 时按新条目重建（不复活旧 client）。
-func TestClientTableRemoveAccountDropsTransportResources(t *testing.T) {
+// TestClientTableInvalidateAccountDropsTransportResources 运行时失效（§3.2）：摘除
+// 条目与全部 client，锁外 CloseWSIdleConnections——上游必须看到空闲连接被关；再来
+// 请求时按新条目重建（不复活旧 client）。
+func TestClientTableInvalidateAccountDropsTransportResources(t *testing.T) {
 	up := newWSReuseUpstream(t, "", wsReuseStep{created: true, id: "rm1"}, wsReuseStep{created: true, id: "rm2"})
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
@@ -1570,8 +1570,8 @@ func TestClientTableRemoveAccountDropsTransportResources(t *testing.T) {
 	require.Equal(t, 1, up.upgradeCount())
 	require.Equal(t, 1, up.openCount(), "只请求一次 ⇒ 一条 idle 连接挂着")
 
-	a.RemoveAccount(cred.AccountID)
-	up.waitClosed(t, 1, "账号移除")
+	a.InvalidateAccount(cred.AccountID)
+	up.waitClosed(t, 1, "账号失效")
 
 	require.Nil(t, a.clients.Get(cred.AccountID), "条目必须摘除（含 Auth 与 usage 缓存）——桶挂在条目上，条目不可达即桶不存在")
 

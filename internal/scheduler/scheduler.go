@@ -60,20 +60,18 @@ type Config struct {
 	// 装配是**先构造组件再注入**：ClientTable 在调度器之前构造，同一个实例也交给
 	// codex 适配层（AGENTS.md「禁止事后回填」——不拿闭包回填一个后构造的指针）。
 	RetireThread func(accountID int64, threadKey string)
-	// RemoveAccount 账号从账号集合消失时回收其传输资源（sdkbridge.ClientTable
-	// 实现；nil = 未接）：摘除条目与全部 client、锁外 CloseWSIdleConnections。
-	// 判定点是重载的池注册表差分（§3.2 账号移除）。
-	RemoveAccount func(accountID int64)
-	// ReconcileClients 按账号当前配置回收 codex 传输资源（sdkbridge.ClientTable
-	// 实现；nil = 未接）：入参是**账号全集**（含未编组、`MaxConcurrency=0`、没有
-	// 会话池的账号）→ 当前 responses 出口（nil = 直连）。gen 是该配置批次的单调
-	// 代号（锁内取号）：应用在锁外执行，只有更新的批次允许改写活跃集（B1）。
+	// ReconcileClients 应用一个配置批次（sdkbridge.ClientTable 实现；nil = 未接）：
+	// gen 是批次代号（publisher.mu 内取号），active 是**账号全集**（含未编组、
+	// `MaxConcurrency=0`、没有会话池的账号）→ 当前 responses 出口（nil = 直连），
+	// remove 是本批次判定为「从账号集合消失」的账号。三者一起交给同一个方法：
+	// 账号删除与活跃集应用必须共享同一个 gen 准入（B1）——先删当前资源、最后再判
+	// 批次过期，会让旧批次删掉新配置刚建出来的条目。
 	//
 	// 活跃集只能由**配置生命周期**决定（§3.2 出口/transport 变更）：请求路径只读不判，
 	// 否则 usage 快照（恒 Direct）一次调用就会把在用的代理桶摘掉并永久 Close——"跨窗口
 	// 不重连"直接失效。传账号全集还有一个作用：账号从集合里消失 ⇒ 整账号资源摘除，
 	// 覆盖「没有会话池的账号」（池注册表差分看不到它们，N7）。
-	ReconcileClients func(gen uint64, active map[int64]*egress.Client)
+	ReconcileClients func(gen uint64, active map[int64]*egress.Client, remove []int64)
 	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
 	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
 	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
@@ -491,11 +489,11 @@ func (s *Scheduler) withPublisherLock(fn func(*poolReclaim)) {
 	reclaim.run()
 }
 
-// newReclaim 本次重载的锁外副作用批次（出口取自构造期注入的三个能力）。
+// newReclaim 本次重载的锁外副作用批次（出口取自构造期注入的两个能力）。账号删除
+// 没有独立出口：它随 ReconcileClients 的批次一起应用（共享 gen 准入，R4 B1）。
 func (s *Scheduler) newReclaim() *poolReclaim {
 	return &poolReclaim{
 		retire:    s.cfg.RetireThread,
-		remove:    s.cfg.RemoveAccount,
 		reconcile: s.cfg.ReconcileClients,
 	}
 }

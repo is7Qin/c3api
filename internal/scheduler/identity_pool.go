@@ -287,7 +287,10 @@ type threadRetire struct {
 // socket 写闸上等待——放在 publisher.mu 里等于让一次 reload 被若干连接收尾拖住
 // （N1）。锁内只做内存摘表，锁外的部分按收集顺序串行执行，不需要额外 goroutine。
 type poolReclaim struct {
-	threads  []threadRetire
+	threads []threadRetire
+	// accounts 本批次判定为「从账号集合消失」的账号。它**不是**独立的执行入口：
+	// 与 egress 一起作为同一次 Reconcile 的入参，共享 gen 批次准入（R4 B1）——
+	// 旧批次既不能回退活跃集，也不能删掉新配置才建出来的条目。
 	accounts []int64
 	// egress 本批次的账号全集 → 当前 responses 出口（nil 值 = 直连）；只由
 	// collectActiveEgress 填充，reconcile 为 nil 时保持 nil。
@@ -296,8 +299,7 @@ type poolReclaim struct {
 	// 接受更新的号——旧批次不能把活跃集回退到旧配置（B1）。
 	gen       uint64
 	retire    func(accountID int64, threadKey string)
-	remove    func(accountID int64)
-	reconcile func(gen uint64, active map[int64]*egress.Client)
+	reconcile func(gen uint64, active map[int64]*egress.Client, remove []int64)
 }
 
 // run 执行收集到的副作用（必须在 publisher.mu 之外调用；nil 安全）。
@@ -310,25 +312,22 @@ func (b *poolReclaim) run() {
 			b.retire(t.accountID, t.threadKey)
 		}
 	}
-	if b.remove != nil {
-		for _, id := range b.accounts {
-			b.remove(id)
-		}
-	}
-	// 配置面回收放最后：它按「账号当前配置」重设活跃集并摘除历史出口摘要，同时把不在
-	// 账号集合里的资源整账号摘除（与上面的 remove 幂等，多走一遍只是 no-op）。
-	// gen 由锁内取号，ClientTable 只应用更新的批次（旧批次的 socket 收尾已经在上面
-	// 完成，且幂等；只有"设状态"的活跃集应用需要顺序）。
+	// 配置面回收放最后：重设活跃集、摘除历史出口摘要、整账号摘除，**同一个**批次
+	// 准入。账号删除因此不能抢在 gen 判定之前执行——旧批次删掉的可能是新配置刚
+	// 建出来的条目（oracle R4 B1 的确定性交错）。
 	if b.reconcile != nil && b.egress != nil {
-		b.reconcile(b.gen, b.egress)
+		b.reconcile(b.gen, b.egress, b.accounts)
 	}
 }
 
 // collectRemovedAccounts 收集「旧注册表有池、新注册表没有」的账号（§3.2 账号移除的
 // 判定点：池存在而账号/id 不在新表就是移除信号——工作 byID 恒为全量克隆，不存在
-// 部分编译导致的误判）。调用方持 publisher.mu；执行在锁外（poolReclaim.run）。
+// 部分编译导致的误判）。调用方持 publisher.mu；执行在锁外（poolReclaim.run → Reconcile）。
+//
+// 这里只**收集**，不正法：删除必须与活跃集应用共享同一个批次准入，否则旧批次会删掉
+// 新配置刚建出来的条目（oracle R4 B1）。reconcile 未装配 ⇒ 没有执行面，不收集。
 func collectRemovedAccounts(prev, next *identityRegistry, reclaim *poolReclaim) {
-	if prev == nil || reclaim == nil || reclaim.remove == nil {
+	if prev == nil || reclaim == nil || reclaim.reconcile == nil {
 		return
 	}
 	for id := range prev.pools {

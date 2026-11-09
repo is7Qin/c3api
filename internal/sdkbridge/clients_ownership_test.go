@@ -66,7 +66,7 @@ func TestClientTableStaleEntryCannotSeedLiveBucket(t *testing.T) {
 // TestClientTableRemovedAccountCannotRecreateBucket 账号移除后，旧句柄即使继续执行也
 // 不得重建出**可复用**的桶；账号重新加回（同 accountID）不得命中上一轮的桶（B3）。
 //
-// 交错：请求已取得条目 → 账号被移除（池注册表差分 → RemoveAccount）→ 请求恢复执行。
+// 交错：请求已取得条目 → 账号被移除（池注册表差分 → Reconcile 的 remove 批次）→ 请求恢复执行。
 // 桶挂在条目上 ⇒ 移除后表里没有条目，迟到写入无处可"注册"，也就不存在"账号级可复用
 // 桶"这种跨越账号生命周期的资源。
 func TestClientTableRemovedAccountCannotRecreateBucket(t *testing.T) {
@@ -76,7 +76,7 @@ func TestClientTableRemovedAccountCannotRecreateBucket(t *testing.T) {
 
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
-	a.RemoveAccount(cred.AccountID)
+	a.clients.Reconcile(1, map[int64]*egress.Client{}, []int64{cred.AccountID})
 
 	stale := a.clients.Client(e, keyWS, true, func() *codexsdk.HTTPClient {
 		return codexsdk.NewHTTPClient(e.auth)
@@ -166,7 +166,7 @@ func TestReconcileKeepsTransportVariantsAndDropsOldEgress(t *testing.T) {
 	require.Same(t, wsA, againWS, "ws 请求命中旧桶（不重拨）")
 
 	// 出口规格变更（= 配置变更）⇒ 旧摘要下的桶（两种传输）全部摘除，条目本身不动。
-	a.clients.Reconcile(1, map[int64]*egress.Client{cred.AccountID: &egB})
+	a.clients.Reconcile(1, map[int64]*egress.Client{cred.AccountID: &egB}, nil)
 	e = a.clients.Get(cred.AccountID)
 	require.NotNil(t, e, "回收 client 桶不得动条目（Auth/usage 仍在）")
 	require.Empty(t, testEntryBuckets(a, e), "旧出口摘要下的桶（ws 与 http）都必须摘除")
@@ -182,15 +182,15 @@ func TestReconcileDropsAccountsOutsideActiveSet(t *testing.T) {
 	require.NotNil(t, a.clients.Get(cred.AccountID))
 
 	// 集合里只有别的账号 ⇒ 42 整账号摘除。
-	a.clients.Reconcile(1, map[int64]*egress.Client{7: nil})
+	a.clients.Reconcile(1, map[int64]*egress.Client{7: nil}, nil)
 	require.Nil(t, a.clients.Get(cred.AccountID), "不在账号集合里的条目必须回收")
 
 	// 空集合（清空部署）⇒ 全部摘除；nil 表示"该能力未装配"，no-op。
 	_, _, err = a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	a.clients.Reconcile(2, nil)
+	a.clients.Reconcile(2, nil, nil)
 	require.NotNil(t, a.clients.Get(cred.AccountID), "nil = 未装配该能力 ⇒ 不得回收")
-	a.clients.Reconcile(3, map[int64]*egress.Client{})
+	a.clients.Reconcile(3, map[int64]*egress.Client{}, nil)
 	require.Nil(t, a.clients.Get(cred.AccountID), "空集合 = 没有任何账号 ⇒ 全部回收")
 }
 
@@ -236,7 +236,7 @@ func TestReconcileRejectsStaleBatch(t *testing.T) {
 	require.NoError(t, err)
 
 	// 新批次（代号 2）：账号 1 改到出口 B、账号 3 删除、账号 2 新增。
-	a.clients.Reconcile(2, map[int64]*egress.Client{1: &egB, 2: nil})
+	a.clients.Reconcile(2, map[int64]*egress.Client{1: &egB, 2: nil}, nil)
 	require.Nil(t, a.clients.Get(3), "新批次删除的账号整账号摘除")
 	e1 := a.clients.Get(1)
 	require.NotNil(t, e1)
@@ -249,15 +249,51 @@ func TestReconcileRejectsStaleBatch(t *testing.T) {
 	require.NotNil(t, a.clients.Get(2), "新批次新增的账号有条目")
 
 	// 旧批次（代号 1）迟到：整体 no-op。
-	a.clients.Reconcile(1, map[int64]*egress.Client{1: &egA, 3: nil})
+	a.clients.Reconcile(1, map[int64]*egress.Client{1: &egA, 3: nil}, nil)
 	require.NotNil(t, a.clients.Get(2), "旧批次不得删掉新配置才出现的账号")
 	require.Nil(t, a.clients.Get(3), "旧批次不得让已删除账号复活")
 	require.Same(t, newB, testCachedClient(a, a.clients.Get(1), keyB),
 		"旧批次不得把活跃集回退到出口 A（B 桶必须仍在）")
 
 	// 更新的批次仍被接受（守卫只拒旧号）。
-	a.clients.Reconcile(3, map[int64]*egress.Client{1: &egA})
+	a.clients.Reconcile(3, map[int64]*egress.Client{1: &egA}, nil)
 	require.Empty(t, testEntryBuckets(a, a.clients.Get(1)), "代号 3 = 更新的配置：B 桶摘除")
+}
+
+// TestReconcileGatesRemovalsWithBatchSequence 删除与活跃集共享**同一个**批次准入
+// （oracle R4 B1 的单元面）：旧批次的 remove 项不能晚到执行——否则删掉的可能是新配置
+// 重建出来的条目。判据是"过期批次的 remove 整体 no-op"，不是"删除本身幂等"。
+func TestReconcileGatesRemovalsWithBatchSequence(t *testing.T) {
+	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
+	cred := &domain.AccountCredential{AccountID: 31, PATKey: "pat-31"}
+	_, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	require.NoError(t, err)
+	old := a.clients.Get(cred.AccountID)
+	require.NotNil(t, old)
+
+	// 新批次（代号 2）：账号仍在活跃集，但显式删除（例如不再是 codex 账号/清空部署）。
+	a.clients.Reconcile(2, map[int64]*egress.Client{cred.AccountID: nil}, []int64{cred.AccountID})
+	require.Nil(t, a.clients.Get(cred.AccountID), "通过准入的 remove 必须摘除条目")
+
+	// 新配置把账号加回：真实请求建出一条新条目。
+	_, _, err = a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	require.NoError(t, err)
+	current := a.clients.Get(cred.AccountID)
+	require.NotNil(t, current)
+	require.NotSame(t, old, current)
+
+	// 旧批次（代号 1）迟到，仍带着同一个账号的 remove 项：整个批次 no-op。
+	a.clients.Reconcile(1, map[int64]*egress.Client{}, []int64{cred.AccountID})
+	require.Same(t, current, a.clients.Get(cred.AccountID),
+		"旧批次的 remove 必须被同一个 gen 准入拒掉（不得删掉新配置的条目）")
+
+	// 只带 remove、不带活跃集的调用同样受准入约束（active==nil 不是"跳过判定"）。
+	a.clients.Reconcile(1, nil, []int64{cred.AccountID})
+	require.Same(t, current, a.clients.Get(cred.AccountID), "只带 remove 的旧批次同样被拒")
+
+	// 更新的批次仍然可以删除（守卫只拒旧号）。
+	a.clients.Reconcile(3, map[int64]*egress.Client{cred.AccountID: nil}, []int64{cred.AccountID})
+	require.Nil(t, a.clients.Get(cred.AccountID), "更新的批次必须能删除")
 }
 
 // TestUsageLaneDoesNotDefineActiveEgress usage 面 `pin=false` 的永久判据（momus N-b）：

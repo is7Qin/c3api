@@ -34,7 +34,7 @@ func TestReloadReconcilesClientEgress(t *testing.T) {
 	var gens []uint64
 	cfg := testCfg()
 	cfg.Egress = pool
-	cfg.ReconcileClients = func(gen uint64, active map[int64]*egress.Client) {
+	cfg.ReconcileClients = func(gen uint64, active map[int64]*egress.Client, _ []int64) {
 		gens = append(gens, gen)
 		got = append(got, active)
 	}
@@ -129,7 +129,7 @@ func TestReconcileCoversUngroupedAccounts(t *testing.T) {
 	var got []map[int64]*egress.Client
 	cfg := testCfg()
 	cfg.Egress = pool
-	cfg.ReconcileClients = func(_ uint64, active map[int64]*egress.Client) { got = append(got, active) }
+	cfg.ReconcileClients = func(_ uint64, active map[int64]*egress.Client, _ []int64) { got = append(got, active) }
 	s := newSchedWithCfg(t, cfg, loader)
 
 	require.Len(t, got, 1)
@@ -168,7 +168,7 @@ func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 			close(entered)
 			<-release
 		},
-		ReconcileClients: func(gen uint64, _ map[int64]*egress.Client) {
+		ReconcileClients: func(gen uint64, _ map[int64]*egress.Client, _ []int64) {
 			mu.Lock()
 			applied = append(applied, gen)
 			mu.Unlock()

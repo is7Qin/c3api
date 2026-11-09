@@ -144,25 +144,30 @@ func (t *ClientTable) Client(e *codexEntry, key clientKey, pinEgress bool, build
 	return c
 }
 
-// Reconcile 按**账号当前配置**回收传输资源（§3.2 出口/transport 变更）。调用方是
-// reload 面（配置生命周期），传**账号全集**：accountID → 当前 responses 出口
-// （nil = 直连）。nil 表示"未装配该能力"，no-op；非 nil 的空表表示"没有任何账号"，
-// 会摘除全部资源。
+// Reconcile 应用**一个配置批次**（§3.2 出口/transport 变更、账号移除）。调用方是
+// reload 面（配置生命周期），一次交出该批次的全部三件事：
 //
-//   - 不在集合里的账号：条目与桶整账号摘除（含**没有会话池**的账号——池注册表差分看
-//     不到它们，N7；以及应用关闭/清空部署）；
-//   - 在集合里的账号：登记活跃集，并按 egress 维度摘除历史摘要（transport 维度不动）。
+//   - gen：批次的单调代号（调度器在 publisher.mu 内取号）；
+//   - active：**账号全集** → 当前 responses 出口（nil 值 = 直连）；nil 表示本批次
+//     不携带账号集合（只做 remove），非 nil 的空表表示"没有任何账号"，会摘除全部资源；
+//   - remove：本批次判定为「从账号集合消失」的账号（池注册表差分；§3.2 账号移除）。
 //
-// **顺序**：gen 是配置批次的单调代号，由调度器在 publisher.mu 内取号；本方法在锁外
-// 被调用，两次重叠 reload 的应用顺序不保证。只接受比 appliedGen **更新**的批次——
-// 旧批次（先取号、后被新批次插队）不得把活跃集回退到旧配置，也不得删掉新配置里
-// 才出现的账号/条目。被拒的批次在这里整体 no-op（它收集的 socket 收尾已在
-// poolReclaim.run 的更早步骤完成，且那些动作幂等）。
+// **同一个准入**：gen 由锁内取号、应用在锁外，两次重叠 reload 的应用顺序不保证。只
+// 接受比 appliedGen **更新**的批次——旧批次（先取号、后被新批次插队）必须整体 no-op。
+// 因此账号删除**不能**先按"当前账号资源"执行、最后再判批次过期：那会在旧批次里删掉
+// 新配置刚建出来的条目（oracle R4 B1 的确定性交错）。删除与活跃集应用都在同一个
+// `gen <= appliedGen` 之后，通过准入后只摘**此刻表里**的具体条目/桶指针。
+//
+//   - 在 remove 里的账号：条目与桶整账号摘除（先做，随后若该账号仍在 active 里，只是
+//     重新登记它的当前出口摘要——条目由下一次请求按当前凭据重建）；
+//   - 不在 active 里的账号：条目与桶整账号摘除（含**没有会话池**的账号——池注册表差分
+//     看不到它们，N7；以及应用关闭/清空部署）；
+//   - 在 active 里的账号：登记活跃集，并按 egress 维度摘除历史摘要（transport 维度不动）。
 //
 // 这就是"活跃集不能由单个请求的入参定义"的落点：usage 面只会读这个集合，不会重定义它。
 // 摘表在锁内、Close 在锁外。
-func (t *ClientTable) Reconcile(gen uint64, active map[int64]*egress.Client) {
-	if t == nil || active == nil {
+func (t *ClientTable) Reconcile(gen uint64, active map[int64]*egress.Client, remove []int64) {
+	if t == nil || (active == nil && len(remove) == 0) {
 		return
 	}
 	var dropped []*codexsdk.HTTPClient
@@ -172,6 +177,19 @@ func (t *ClientTable) Reconcile(gen uint64, active map[int64]*egress.Client) {
 		return
 	}
 	t.appliedGen = gen
+	// 账号集合删除：与活跃集共享上面这一个批次准入。过期的批次在入口整体 no-op，
+	// 不会碰到新配置重建的资源；通过准入后只关闭此刻摘出的具体 client 指针。
+	for _, id := range remove {
+		e := t.entries[id]
+		delete(t.entries, id)
+		delete(t.active, id)
+		dropped = append(dropped, takeBucketsLocked(e)...)
+	}
+	if active == nil {
+		t.mu.Unlock()
+		closeWSIdleConns(dropped)
+		return
+	}
 	for id := range t.active {
 		if _, ok := active[id]; ok {
 			continue
@@ -258,13 +276,15 @@ func (t *ClientTable) RetireThread(accountID int64, threadKey string) {
 	}
 }
 
-// RemoveAccount 账号从账号集合消失（§3.2 账号移除）：摘除条目与其全部 client，
-// 锁外逐条 CloseWSIdleConnections——归还即失效（正在归还的连接被拒收并终止）。
+// InvalidateAccount 运行时失效一个账号的传输资源（凭据 fatal / 健康剔除）：摘除
+// 当前条目与其全部 client，锁外逐条 CloseWSIdleConnections——归还即失效（正在归还的
+// 连接被拒收并终止）。
 //
-// 判定点在上游：调度器重载时池注册表差分（池存在而账号/id 不在新表）。本方法
-// 就是那个事件的实际执行面（scheduler.Config.RemoveAccount 的实现），不存在
-// "无事件源"的挂起理由。
-func (t *ClientTable) RemoveAccount(accountID int64) {
+// **这不是配置批次入口**：失效是运行期事实（认证被撤销、回写失败），没有配置代号，
+// 也必须立即作用于**此刻当前**的条目——等一个批次既不成立也不安全。配置面的账号集合
+// 删除只能在 `Reconcile` 的 remove 参数里，和活跃集共享同一个批次准入（R4 B1）。
+// 两者是不同生命周期的事件，不能共用"按账号删当前资源"的实现。
+func (t *ClientTable) InvalidateAccount(accountID int64) {
 	if t == nil {
 		return
 	}
