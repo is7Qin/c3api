@@ -26,6 +26,7 @@ import (
 	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/httpx"
 )
 
@@ -254,7 +255,7 @@ func TestMapStreamEventType(t *testing.T) {
 // cred → Auth 缓存
 // ---------------------------------------------------------------------------
 
-// testCachedClient 取某账号 client 桶里指定键的客户端（测试断言用；生产代码经
+// testCachedClient 取某条目私有桶里指定键的客户端（测试断言用；生产代码经
 // clientFor 取）。nil 适配层/条目/未构造/无该键 → nil。
 func testCachedClient(a *Codex, e *codexEntry, key clientKey) *codexsdk.HTTPClient {
 	if a == nil || e == nil {
@@ -262,11 +263,21 @@ func testCachedClient(a *Codex, e *codexEntry, key clientKey) *codexsdk.HTTPClie
 	}
 	a.clients.mu.Lock()
 	defer a.clients.mu.Unlock()
-	m := a.clients.clients[e.accountID]
-	if m == nil {
+	return e.clients[key]
+}
+
+// testEntryBuckets 条目私有桶的键快照（测试断言用；与生产同表锁读，-race 下才有意义）。
+func testEntryBuckets(a *Codex, e *codexEntry) []clientKey {
+	if a == nil || e == nil {
 		return nil
 	}
-	return m[key]
+	a.clients.mu.Lock()
+	defer a.clients.mu.Unlock()
+	out := make([]clientKey, 0, len(e.clients))
+	for k := range e.clients {
+		out = append(out, k)
+	}
+	return out
 }
 
 // tableEntryCount 表内条目数（测试面：与生产同锁读，-race 下才有意义）。
@@ -312,9 +323,9 @@ func TestClientCacheKeyedByTransportOnly(t *testing.T) {
 	require.NoError(t, err)
 	require.NotSame(t, c1, wsClient, "传输是构造期参数 ⇒ 不同传输不同客户端")
 
-	e := a.clients.entries[9]
+	e := a.clients.Get(9)
 	require.NotNil(t, e)
-	require.Len(t, a.clients.clients[9], 2, "同出口的桶数 = 传输数（不再随身份增长）")
+	require.Len(t, testEntryBuckets(a, e), 2, "同出口的桶数 = 传输数（不再随身份增长）")
 	require.Same(t, c1, testCachedClient(a, e, clientKey{transport: domain.CodexResponsesTransportDefault.Key()}))
 	require.Same(t, wsClient, testCachedClient(a, e, clientKey{transport: domain.CodexResponsesTransportWS.Key()}))
 }
@@ -1506,7 +1517,7 @@ func TestCodexDialAuthCacheReuse(t *testing.T) {
 	c2, err := a.Dial(context.Background(), cred, a.DirectEgress(), codexsdk.Identity{}, codexsdk.WithPingInterval(0))
 	require.NoError(t, err)
 	c2.CloseNow()
-	require.Same(t, a.clients.entries[7].auth, a.clients.entries[7].auth, "条目同账号复用")
+	require.Same(t, a.clients.Get(7).auth, a.clients.Get(7).auth, "条目同账号复用")
 	require.Equal(t, 2, up.upgradesN())
 	require.Equal(t, 0, rm.callsN(), "at 缓存保持 → 第二次 Dial 零 refresh")
 	require.Equal(t, "Bearer at-old", up.header(1).Get("Authorization"), "同一 Auth 的 at 缓存跨 Dial 生效")
@@ -1516,7 +1527,10 @@ func TestCodexDialAuthCacheReuse(t *testing.T) {
 // clientKey 的 proxy 维是出口**规格摘要**（含代理密码），同一代理地址连续 20 个
 // 密码版本若只增不减，表就随规格版本无界增长——TTL 只管连接，不管这张表。
 //
-// 判据：表长 ≤ 活跃组合数，且留下来的就是**本次**规格那一桶（活跃集 = 当前出口
+// 每个密码版本都是一次**配置变更**（代理 CRUD → reload），所以活跃集由配置面
+// `Reconcile` 登记后再生效（§3.2「不能由单个请求的入参定义」）。
+//
+// 判据：桶数恒 ≤ 活跃组合数，且留下来的就是**最新**规格那一桶（活跃集 = 当前出口
 // 摘要 + 直连摘要；直连桶在本用例里从未创建）。
 func TestClientCacheBoundedByActiveEgressSet(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
@@ -1530,22 +1544,16 @@ func TestClientCacheBoundedByActiveEgressSet(t *testing.T) {
 		eg.Spec.Host = "localhost"
 		eg.Spec.Port = 8000
 		eg.Spec.Password = fmt.Sprintf("revision-%d", i)
+		// 密码轮换 = 账号配置变更 ⇒ reload 面把新的当前出口登记为活跃集。
+		a.clients.Reconcile(map[int64]*egress.Client{cred.AccountID: &eg})
 		_, _, err := a.clientFor(cred, &eg, domain.CodexResponsesTransportWS)
 		require.NoError(t, err)
 		last = egressDigest(&eg)
 	}
 
-	a.clients.mu.Lock()
-	buckets := len(a.clients.clients[9])
-	var kept []clientKey
-	for k := range a.clients.clients[9] {
-		kept = append(kept, k)
-	}
-	a.clients.mu.Unlock()
-
+	kept := testEntryBuckets(a, a.clients.Get(9))
 	require.Len(t, kept, 1, "同一代理地址的 20 个密码版本只该留最后一条（活跃集回收）")
 	require.Equal(t, last, kept[0].proxy, "保留的必须是**本次**出口规格（不是第一版）")
-	require.Equal(t, 1, buckets)
 	require.NotNil(t, a.clients.Get(9), "回收 client 桶不得动条目（Auth/usage 仍在）")
 }
 
@@ -1565,11 +1573,7 @@ func TestClientTableRemoveAccountDropsTransportResources(t *testing.T) {
 	a.RemoveAccount(cred.AccountID)
 	up.waitClosed(t, 1, "账号移除")
 
-	require.Nil(t, a.clients.Get(cred.AccountID), "条目必须摘除（含 Auth 与 usage 缓存）")
-	a.clients.mu.Lock()
-	left := len(a.clients.clients[cred.AccountID])
-	a.clients.mu.Unlock()
-	require.Zero(t, left, "该账号的 client 桶必须摘空")
+	require.Nil(t, a.clients.Get(cred.AccountID), "条目必须摘除（含 Auth 与 usage 缓存）——桶挂在条目上，条目不可达即桶不存在")
 
 	// 重新出现（比如管理面重新导入）⇒ 重建，而不是复活旧 client。
 	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)

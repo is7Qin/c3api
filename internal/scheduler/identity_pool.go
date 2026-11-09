@@ -18,6 +18,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -278,8 +279,9 @@ type threadRetire struct {
 	threadKey string
 }
 
-// poolReclaim 是重载路径的**锁外副作用批次**：线程退役与账号移除都只在锁内收集，
-// 由持锁方的调用点在**解锁之后**执行（§3.2「锁外 RetireThread / 锁外 Close」）。
+// poolReclaim 是重载路径的**锁外副作用批次**：线程退役、账号移除与配置面 client 回收
+// 都只在锁内收集，由持锁方的调用点在**解锁之后**执行（§3.2「锁外 RetireThread /
+// 锁外 Close」）。
 //
 // 为什么是批次而不是原地调用：terminate 逐条 client 调用 SDK 的 clear()，可能在
 // socket 写闸上等待——放在 publisher.mu 里等于让一次 reload 被若干连接收尾拖住
@@ -287,8 +289,12 @@ type threadRetire struct {
 type poolReclaim struct {
 	threads  []threadRetire
 	accounts []int64
-	retire   func(accountID int64, threadKey string)
-	remove   func(accountID int64)
+	// egress 本次快照的全量账号 → 当前 responses 出口（nil 值 = 直连）；只由
+	// collectActiveEgress 填充，reconcile 为 nil 时保持 nil。
+	egress    map[int64]*egress.Client
+	retire    func(accountID int64, threadKey string)
+	remove    func(accountID int64)
+	reconcile func(active map[int64]*egress.Client)
 }
 
 // run 执行收集到的副作用（必须在 publisher.mu 之外调用；nil 安全）。
@@ -305,6 +311,11 @@ func (b *poolReclaim) run() {
 		for _, id := range b.accounts {
 			b.remove(id)
 		}
+	}
+	// 配置面回收放最后：它按「账号当前配置」重设活跃集并摘除历史出口摘要，同时把不在
+	// 账号集合里的资源整账号摘除（与上面的 remove 幂等，多走一遍只是 no-op）。
+	if b.reconcile != nil && b.egress != nil {
+		b.reconcile(b.egress)
 	}
 }
 
@@ -323,6 +334,29 @@ func collectRemovedAccounts(prev, next *identityRegistry, reclaim *poolReclaim) 
 		}
 		reclaim.accounts = append(reclaim.accounts, id)
 	}
+}
+
+// collectActiveEgress 收集「账号 → 当前 responses 出口」交给 ClientTable 做配置面回收
+// （§3.2 出口/transport 变更）：活跃集 = 该账号当前配置的出口 + usage 的直连，且**只按
+// egress 维度**剪枝。
+//
+// 必须用**全量** byID：账号从集合里消失 ⇒ 该账号的传输资源整账号摘除——这条覆盖
+// 「没有会话池的账号」（buildIdentityPools 只给 codex 且 MaxConcurrency>0 的账号建池，
+// 池注册表差分看不到其余账号，momus N7 的残留面）。调用方持 publisher.mu，执行在锁外
+// （terminate 可能在 socket 写闸上等待）。
+func (s *Scheduler) collectActiveEgress(byID map[int64]*accountSnapshot, reclaim *poolReclaim) {
+	if reclaim == nil || reclaim.reconcile == nil {
+		return
+	}
+	active := make(map[int64]*egress.Client, len(byID))
+	for id, as := range byID {
+		av := as.static.Load()
+		if av == nil {
+			continue
+		}
+		active[id] = av.egress
+	}
+	reclaim.egress = active
 }
 
 // buildIdentityPools 按当前 byID 重建 codex 会话池注册表：仅 codex 凭据

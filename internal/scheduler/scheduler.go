@@ -64,6 +64,14 @@ type Config struct {
 	// 实现；nil = 未接）：摘除条目与全部 client、锁外 CloseWSIdleConnections。
 	// 判定点是重载的池注册表差分（§3.2 账号移除）。
 	RemoveAccount func(accountID int64)
+	// ReconcileClients 按账号当前配置回收 codex 传输资源（sdkbridge.ClientTable
+	// 实现；nil = 未接）：入参是**全量**账号集 → 当前 responses 出口（nil = 直连）。
+	//
+	// 活跃集只能由**配置生命周期**决定（§3.2 出口/transport 变更）：请求路径只读不判，
+	// 否则 usage 快照（恒 Direct）一次调用就会把在用的代理桶摘掉并永久 Close——"跨窗口
+	// 不重连"直接失效。传全量集还有一个作用：账号从集合里消失 ⇒ 整账号资源摘除，覆盖
+	// 「没有会话池的账号」（池注册表差分看不到它们，N7）。
+	ReconcileClients func(active map[int64]*egress.Client)
 	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
 	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
 	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
@@ -473,9 +481,13 @@ func (s *Scheduler) withPublisherLock(fn func(*poolReclaim)) {
 	reclaim.run()
 }
 
-// newReclaim 本次重载的锁外副作用批次（出口取自构造期注入的两个能力）。
+// newReclaim 本次重载的锁外副作用批次（出口取自构造期注入的三个能力）。
 func (s *Scheduler) newReclaim() *poolReclaim {
-	return &poolReclaim{retire: s.cfg.RetireThread, remove: s.cfg.RemoveAccount}
+	return &poolReclaim{
+		retire:    s.cfg.RetireThread,
+		remove:    s.cfg.RemoveAccount,
+		reconcile: s.cfg.ReconcileClients,
+	}
 }
 
 // reloadLocked is reload's body without taking publisher.mu; the caller must
@@ -577,6 +589,10 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	// 任何叶子引用的规格 client 关闭并移除。零代理部署（所有既有基线）在
 	// pruneEgress 参数判空后即刻返回——不扫描账号、不分配活跃集合。
 	s.pruneEgress(byID)
+	// 传输资源（条目 + client 桶）的配置面回收：全量账号集 → 当前 responses 出口。
+	// 与 pruneEgress 同一收敛点（新快照已 stage，退出的规格不再可能被选中），但执行
+	// 在锁外（reclaim.run）——terminate 可能在 socket 写闸上等待。
+	s.collectActiveEgress(byID, reclaim)
 	// a full staging covers every route — the lane takes the
 	// full-fidelity fallback. Scope-first, then wake.
 	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)

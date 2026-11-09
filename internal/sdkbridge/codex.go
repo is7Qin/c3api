@@ -99,17 +99,22 @@ const codexWSConnCacheCapacity = 2 * 1024
 // expiresAt 为构造时凭据携带的旧过期时刻（轮转回调无 expiry，回写保旧
 // 用；外部凭据变更 → 重建刷新）。
 //
-// client 桶**不在条目上**：它们由 ClientTable 按账号持有（键 = 出口 × responses
-// 传输），因为那张表要同时服务调度器的退役/移除。旧注释「条目数有界（出口数 × 2
-// 条传输），不需要 LRU」是错的——proxy 维是出口**规格摘要**，代理地址/密码轮换
-// 每次都产生新键，不回收即无界（B3）。回收点在 ClientTable.Client（活跃集）。
+// client 桶**挂在条目上**（键 = 出口 × responses 传输），表只映射 accountID → 当前
+// 条目：桶的可见性与条目同生命周期，于是"条目被替换/删除"= "它的桶再也无人可达"。
+// 这是「旧凭据的请求被新条目复用」与「账号移除后旧句柄重建可复用桶」两条边界的结构性
+// 答案（§3.2 凭据替换 / 账号移除）。回收点：条目重建/移除（整条目摘除）与配置面
+// Reconcile（egress 维活跃集）——proxy 维是出口**规格摘要**，代理地址/密码轮换每次
+// 都产生新键，不回收即无界；TTL 只管连接不管这张表。
 //
-// turn-state 也不在条目上：存储属会话（scheduler.codexSession），经 Identity.Sink
+// turn-state 不在条目上：存储属会话（scheduler.codexSession），经 Identity.Sink
 // 写入、经 Identity.TurnState 读出。
 type codexEntry struct {
 	accountID int64
 	auth      codexsdk.Auth
 	sig       credKey // 凭据签名（外部凭据变更 → 重建）
+	// clients 本条目私有的 HTTPClient 桶（出口 × responses 传输）。**只由 ClientTable
+	// 在表锁内访问**——条目一旦离开表就不可达，迟到写入自然落空。
+	clients   map[clientKey]*codexsdk.HTTPClient
 	expiresAt *time.Time
 	reported  atomic.Bool
 	// usage 额度快照缓存（GetUsageSnapshot 5min TTL）+ 失败冷却起点
@@ -403,7 +408,24 @@ func egressDigest(eg *egress.Client) [16]byte {
 //
 // transport 为 responses 出站传输（spec §5）：SDK 侧同样是**构造期**参数，不入
 // 键就会"Selection 说 ws、请求仍走 HTTP POST"。
+//
+// 出口来源随调用面分两类（见 usageClientFor）：本函数是**配置出口**面——eg 来自
+// Selection（= 账号当前配的出口），因此它有权在配置面尚未登记该账号时兜底定义活跃集。
 func (a *Codex) clientFor(cred *domain.AccountCredential, eg *egress.Client, transport domain.CodexResponsesTransport) (*codexEntry, *codexsdk.HTTPClient, error) {
+	return a.clientForEgress(cred, eg, transport, true)
+}
+
+// usageClientFor 无 Selection 的辅助面（额度快照）取 client：出口恒为直连，且**不参与
+// 定义账号活跃集**——它只按已登记的活跃集保留。§3.2 要求 usage 的 Direct/HTTP 被保留，
+// 但如果反过来让一次 usage 请求重定义整账号的活跃集，在用的代理桶就会被摘掉并永久 Close
+// （"跨窗口不重连"直接失效）。所以 usage 面 pin=false：不 pin、不判，只读配置面登记值。
+func (a *Codex) usageClientFor(cred *domain.AccountCredential) (*codexEntry, *codexsdk.HTTPClient, error) {
+	return a.clientForEgress(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault, false)
+}
+
+// clientForEgress 是两条调用面共同的本体：条目（entryFor）→ 条目私有桶（Client）。
+// pinEgress 只影响"该账号尚无配置登记时"的兜底活跃集，正常运行由 Reconcile 决定。
+func (a *Codex) clientForEgress(cred *domain.AccountCredential, eg *egress.Client, transport domain.CodexResponsesTransport, pinEgress bool) (*codexEntry, *codexsdk.HTTPClient, error) {
 	eg, err := a.resolveEgress(eg)
 	if err != nil {
 		return nil, nil, err
@@ -413,7 +435,7 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, eg *egress.Client, tra
 		return nil, nil, err
 	}
 	key := clientKey{proxy: egressDigest(eg), transport: transport.Key()}
-	c := a.clients.Client(cred.AccountID, key, func() *codexsdk.HTTPClient {
+	c := a.clients.Client(e, key, pinEgress, func() *codexsdk.HTTPClient {
 		return codexsdk.NewHTTPClient(e.auth,
 			// 出口 transport（spec §4.6）：eg 恒非 nil（resolveEgress 保证），直连时
 			// 就是底座 transport、与 HTTP 面共享同一连接池。底座是裸 client
@@ -516,13 +538,16 @@ const (
 // clientFor（entryFor 签名比对/重建）。
 //
 // 出口：本面**没有 Selection**（额度快照是节点本地的后台拉取，不是某次请求的
-// 出栈），故走池的直连出口（`DirectEgress()`）。想让额度拉取也随账号的代理走，
-// 需要把"绑定 → 出口"解析搬到调用面并一起传进来——那是独立的一步，不在 M3。
+// 出栈），故走池的直连出口（`DirectEgress()`，经 usageClientFor）。它**不参与定义
+// 账号的活跃集**（§3.2）：直连/HTTP 只是"仍被调用的组合"，按已登记的活跃集保留；
+// 反过来让一次 usage 请求重定义活跃集，就会把在用的代理桶摘掉并永久 Close，
+// 打掉「跨窗口不重连」。想让额度拉取也随账号的代理走，需要把"绑定 → 出口"解析搬到
+// 调用面并一起传进来——那是独立的一步，不在 M3。
 func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
 	if s, ok := a.snapshotCachedFor(cred.AccountID); ok {
 		return s, nil
 	}
-	e, client, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	e, client, err := a.usageClientFor(cred)
 	if err != nil {
 		// 入口错误分类：oauth 缺 rt 凭据不完整（errCredentialIncomplete）
 		// → 凭据失效语义 ErrAuthExpired（不落 default 归 ErrUpstream）。

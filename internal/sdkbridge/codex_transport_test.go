@@ -243,12 +243,12 @@ func TestCodexTransportIsClientKeyDimension(t *testing.T) {
 	_, httpClient, err := a.clientFor(cred, eg, domain.CodexResponsesTransportHTTP)
 	require.NoError(t, err)
 	require.NotSame(t, wsClient, httpClient, "同身份不同传输必须是不同 client（构造期参数无法替换）")
-	require.Len(t, a.clients.clients[transportTestCred().AccountID], 2, "ws 与 http 各占一条")
+	require.Len(t, testEntryBuckets(a, e), 2, "ws 与 http 各占一条")
 
 	_, defaultClient, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Same(t, httpClient, defaultClient, `"" 与 "http" 必须落同一条目（Key() 归一）`)
-	require.Len(t, a.clients.clients[transportTestCred().AccountID], 2, `"" 不得再开一条`)
+	require.Len(t, testEntryBuckets(a, e), 2, `"" 不得再开一条`)
 
 	// 键里的确有 transport 维（不是"两个条目恰好不同"）：ws 维的键命中 ws 条目，
 	// 而零值键（= Key() 归一的 HTTP 面）命中 HTTP 条目——两组键各自落桶。
@@ -295,7 +295,7 @@ func TestCodexTransportSwitchChangesLegWithinOneInstance(t *testing.T) {
 	// 三次调用只该有两条条目（""/"http" 归一 + ws）。
 	_, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	require.Len(t, a.clients.clients[transportTestCred().AccountID], 2)
+	require.Len(t, testEntryBuckets(a, a.clients.Get(transportTestCred().AccountID)), 2)
 }
 
 // TestCodexTranslateErrorMapsWSBackpressure 背压：SDK sentinel → 领域 sentinel。
