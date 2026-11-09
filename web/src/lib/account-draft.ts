@@ -107,7 +107,13 @@ export type TplCtx = 'codex' | 'nonCodex' | 'mixed' | 'unresolved'
 // 唯一投影：草稿 → AccountConfigPatch（创建与编辑共用）
 export function draftToPatch(
   d: BatchDraft,
-  ctx: { tpl: TplCtx; echoProxyId: number | null; isSupplierScope: boolean },
+  ctx: {
+    tpl: TplCtx
+    echoProxyId: number | null
+    isSupplierScope: boolean
+    /** 批量：调用方已用 buildBatchProxyFields 算好；提供时优先于草稿+echo 的投影 */
+    proxyFields?: Pick<AccountConfigPatch, 'proxy_id'>
+  },
 ): AccountConfigPatch {
   const p: AccountConfigPatch = {}
   // 不可空标量的 '' 是「用户清空了必填框」的非法瞬时值（校验层拦），投影里不发。
@@ -116,7 +122,14 @@ export function draftToPatch(
   // base_url：codex 恒 null（模板可能随本次 PATCH 切换）；mixed/unresolved 一律不发
   if (ctx.tpl === 'codex') p.base_url = null
   else if (ctx.tpl === 'nonCodex' && d.base_url !== undefined) {
-    p.base_url = d.base_url === null ? null : d.base_url.trim()
+    if (d.base_url === null) p.base_url = null
+    else {
+      // 纯空白 = 用户把输入框清空的另一种写法（控件只把精确 '' 映射成 null）。
+      // 线上 '' 是 400（handler.nullableScalar），故按「未表态」处理——
+      // 清空只有一个拼法：null。
+      const u = d.base_url.trim()
+      if (u !== '') p.base_url = u
+    }
   }
   if (d.upstream_key !== undefined && d.upstream_key !== '') p.upstream_key = d.upstream_key
   if (d.max_concurrency !== undefined && d.max_concurrency !== '') p.max_concurrency = Number(d.max_concurrency)
@@ -126,9 +139,16 @@ export function draftToPatch(
     if (m === null) throw new Error('invalid multiplier') // 校验层本应拦截
     p.upstream_cost_multiplier = m
   }
-  if (d.cache_domain !== undefined) p.cache_domain = d.cache_domain === null ? null : d.cache_domain.trim()
+  if (d.cache_domain !== undefined) {
+    if (d.cache_domain === null) p.cache_domain = null
+    else {
+      const v = d.cache_domain.trim()
+      if (v !== '') p.cache_domain = v // 纯空白同上：不发 ''（400）
+    }
+  }
   if (d.supplier_user_id !== undefined && !ctx.isSupplierScope) p.supplier_user_id = d.supplier_user_id
-  if (d.proxy !== undefined) Object.assign(p, buildAccountPatch(ctx.echoProxyId, d.proxy))
+  if (ctx.proxyFields !== undefined) Object.assign(p, ctx.proxyFields)
+  else if (d.proxy !== undefined) Object.assign(p, buildAccountPatch(ctx.echoProxyId, d.proxy))
   if (d.enabled !== undefined) p.enabled = d.enabled
   return p
 }

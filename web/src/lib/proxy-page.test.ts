@@ -184,14 +184,20 @@ describe('accounts 页面接线（源码形状）', () => {
     assert.ok(at !== -1 && end > at, '找不到 draftToPatch')
     const body = draftModule.slice(at, end)
     assert.match(body, /^ {2}if \(d\.supplier_user_id !== undefined && !ctx\.isSupplierScope\)/m)
-    assert.match(body, /^ {2}if \(d\.proxy !== undefined\) Object\.assign\(p, buildAccountPatch\(ctx\.echoProxyId, d\.proxy\)\)/m)
+    // 批量注入的 proxyFields 优先（批量「直连」必须发 null，不能用单条的 echo 规则），
+    // 未注入时才走单条的 buildAccountPatch；两者都必须是函数体顶层语句。
+    assert.match(body, /^ {2}if \(ctx\.proxyFields !== undefined\) Object\.assign\(p, ctx\.proxyFields\)/m)
+    assert.match(body, /^ {2}else if \(d\.proxy !== undefined\) Object\.assign\(p, buildAccountPatch\(ctx\.echoProxyId, d\.proxy\)\)/m)
     // 先后关系：归属守卫在前、proxy 在后（不是嵌套）
     assert.ok(body.indexOf('d.supplier_user_id') < body.indexOf('buildAccountPatch('), 'proxy 投影必须在归属守卫之后执行')
   })
 
-  it('批量编辑默认「不变」（哨兵），投影走 buildBatchProxyFields', () => {
-    assert.match(accounts, /proxy: PROXY_UNCHANGED_VALUE,/)
-    assert.match(accounts, /buildBatchProxyFields\(parseBatchProxyValue\(batchForm\.proxy\)\)/)
+  it('批量编辑默认「不变」（草稿缺键 ⇒ 哨兵），投影走 buildBatchProxyFields', () => {
+    // 三态收敛到稀疏草稿：proxy 缺席 = 不变（Select 显示哨兵），显式选择才落键。
+    assert.match(accounts, /batchDraft\.proxy === undefined \? PROXY_UNCHANGED_VALUE : proxySelectValue\(batchDraft\.proxy\)/)
+    assert.match(accounts, /buildBatchProxyFields\(batchDraft\.proxy \?\? null\)/)
+    // 旧快照表单已删：任何 batchForm 引用都说明又长回了第二份真值。
+    assert.equal(/\bbatchForm\b/.test(accounts), false)
   })
 
   it('单条编辑的出口代理 Select 不按凭据类型置灰（codex 面 v7 已覆盖）', () => {

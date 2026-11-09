@@ -94,6 +94,15 @@ describe('draftToPatch：codex / 模板上下文四分', () => {
     assert.deepEqual(draftToPatch({ base_url: ' a.example/v1 ' }, { ...ctx, tpl: 'nonCodex' }), { base_url: 'a.example/v1' })
   })
 
+  // 可空标量的线格式里 '' 是 400（handler.nullableScalar：清空只有一个拼法 null）。
+  // 输入框只把精确 '' 映射成 null，纯空白会留在草稿里；投影必须按「未表态」丢掉它，
+  // 否则 trim 后变成 '' 直接 400。
+  it('纯空白的可空标量 ⇒ 不发键（不得 trim 成空串）', () => {
+    const patch = draftToPatch({ base_url: '   ', cache_domain: '  ' }, { ...ctx, tpl: 'nonCodex' })
+    assert.equal(Object.hasOwn(patch, 'base_url'), false)
+    assert.equal(Object.hasOwn(patch, 'cache_domain'), false)
+  })
+
   // 批量混合/未解析 ⇒ 不发 BaseURL：宁可拒绝也不误清（非 codex 行不能被写 null）
   for (const tpl of ['mixed', 'unresolved']) {
     it(`tpl: '${tpl}' ⇒ 不含 base_url`, () => {
@@ -113,6 +122,23 @@ describe('draftToPatch：作用域与代理', () => {
 
   it('绑定 ⇒ proxy_id = id', () => {
     assert.deepEqual(draftToPatch({ proxy: { kind: 'bind', id: 7 } }, { ...ctx, echoProxyId: null }), { proxy_id: 7 })
+  })
+
+  // 批量面没有回显基线：「不变」必须由调用方显式表达，直连必须发 null（解绑语义）。
+  // 投影因此允许注入已算好的 proxyFields——优先于草稿 + echo 的规则。
+  it('注入 proxyFields ⇒ 以注入为准（批量直连发 null，忽略草稿的 bind）', () => {
+    assert.deepEqual(
+      draftToPatch({ proxy: { kind: 'bind', id: 7 } }, { ...ctx, echoProxyId: 7, proxyFields: { proxy_id: null } }),
+      { proxy_id: null },
+    )
+  })
+
+  it('注入空 proxyFields（批量「不变」）⇒ 不发 proxy_id，即使草稿里有 bind', () => {
+    assert.deepEqual(draftToPatch({ proxy: { kind: 'bind', id: 7 } }, { ...ctx, echoProxyId: 3, proxyFields: {} }), {})
+  })
+
+  it('未注入 proxyFields ⇒ 仍走单条的 buildAccountPatch（回显 null 不发键）', () => {
+    assert.deepEqual(draftToPatch({ proxy: { kind: 'direct' } }, { ...ctx, echoProxyId: null }), {})
   })
 })
 
@@ -330,7 +356,8 @@ describe('accounts.tsx：接线形状', () => {
     assert.match(page, /<GroupMultiSelect\b[\s\S]{0,300}?disabled=\{!!editing && !groupsLoaded\}/)
   })
 
-  // 批量面（Part B）仍持有自己的 clear* 布尔与本表单无关；清空 max_concurrency 是非法瞬时值。
+  // 清空 max_concurrency 是非法瞬时值（空白输入框），投影不发键；判据必须读草稿本身，
+  // 不能在派生视图上比较（视图会把「没表态」和「清空」都显示成 ''）。
   it('最大并发清空的判据读草稿（不在视图上做比较）', () => {
     assert.match(page, /draft\.max_concurrency === ''/)
   })
@@ -344,5 +371,69 @@ describe('accounts.tsx：接线形状', () => {
     assert.notEqual(guard, -1, '找不到空补丁守卫')
     assert.notEqual(patchCall, -1, '找不到 updateAccount 调用')
     assert.ok(guard < patchCall, '空补丁守卫必须在 api.updateAccount( 之前')
+  })
+})
+
+// —— 批量面（Part B）：与单条共用稀疏草稿，但没有回显基线 ——
+// 三个 clear 布尔 + 三值枚举 + 空串哨兵曾把同一件事编码成 5 种形式；这里钉住它们不回来。
+describe('accounts.tsx：批量面接线形状', () => {
+  const batch = fnBody(page, 'const submitBatchUpdate')
+
+  it('批量草稿只有三个写入点（updateBatch / clearBatch / resetBatch）', () => {
+    assert.equal(page.match(/setBatchDraft\(/g)?.length, 3)
+  })
+
+  it('打开对话框重置草稿（上一次的增量不得串到下一次）', () => {
+    assert.equal(fnBody(page, 'const openBatchUpdate').match(/resetBatch\(\)/g)?.length, 1)
+  })
+
+  it('旧快照模型的 clear* 布尔与快照类型归零（批量文案键按面命名）', () => {
+    const old = page.match(/clearBaseURL|clearGroups|clearCacheDomain|emptyBatchForm|\bBatchForm\b/g) ?? []
+    assert.deepEqual(old, [], `旧快照符号复活：${old.join(', ')}`)
+    // 分组/缓存域的「清空」文案只属于批量面 → 键名带 batch 前缀；
+    // 单条与批量共用的 BaseURL 清空文案仍叫 clearBaseUrl。
+    assert.match(page, /t\('accounts\.batchClearGroups'\)/)
+    assert.match(page, /t\('accounts\.batchClearCacheDomain'\)/)
+    assert.match(page, /t\('accounts\.clearBaseUrl'\)/)
+    assert.equal(/enabled:\s*'all'/.test(page), false)
+  })
+
+  it('isBatchCodex 只作 UI 判据（声明 + 三处控件），不再参与投影分支', () => {
+    assert.equal(page.match(/\bisBatchCodex\b/g)?.length, 4)
+    assert.equal(/if \(!isBatchCodex\)/.test(page), false)
+  })
+
+  it('上下文四分：mixed / unresolved 存在，且 BaseURL 有值时就地拒绝', () => {
+    const ctxBody = fnBody(page, 'const batchTplCtx')
+    for (const s of ['codex', 'nonCodex', 'mixed', 'unresolved']) {
+      assert.match(ctxBody, new RegExp(`return '${s}'`), `batchTplCtx 缺 ${s} 分支`)
+    }
+    assert.match(batch, /batchTplCtx === 'mixed'/)
+    assert.match(batch, /batchTplCtx === 'unresolved'/)
+    assert.match(batch, /batchDraft\.base_url !== undefined/)
+    assert.match(batch, /accounts\.batchBaseUrlBlocked/)
+  })
+
+  it('提交走唯一投影 draftToPatch，且空补丁在 mutate 之前拦下', () => {
+    assert.match(batch, /draftToPatch\(batchDraft,/)
+    assert.match(batch, /proxyFields: buildBatchProxyFields\(batchDraft\.proxy \?\? null\)/)
+    const guard = batch.indexOf('Object.keys(fields).length')
+    const mutate = batch.indexOf('batchUpdate.mutate(')
+    assert.notEqual(guard, -1, '找不到空补丁守卫')
+    assert.notEqual(mutate, -1, '找不到 batchUpdate.mutate')
+    assert.ok(guard < mutate, '空补丁守卫必须在 batchUpdate.mutate( 之前')
+  })
+
+  it('每个批量字段都有 updateBatch 写入点（enabled 只在批量面）', () => {
+    // supplier_user_id 不在批量面（归属只在单条表单里分配）。
+    const keys = [...Object.keys(FIELD_KINDS), 'enabled'].filter(k => k !== 'supplier_user_id')
+    for (const key of keys) {
+      assert.match(page, new RegExp(`\\bupdateBatch\\s*\\(\\s*'${key}'\\s*,`), `${key} 没有批量写入点`)
+    }
+  })
+
+  it('唯一模板判据 batchTplCtx 读草稿（替换模板优先于选中行）', () => {
+    assert.match(page, /const batchTplCtx: TplCtx = useMemo/)
+    assert.match(page, /batchDraft\.template_id !== undefined/)
   })
 })

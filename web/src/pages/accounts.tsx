@@ -32,6 +32,7 @@ import {
   type AccountDraft,
   type AccountValues,
   type BatchDraft,
+  type TplCtx,
 } from '@/lib/account-draft'
 import { BatchBar } from '@/components/batch-bar'
 import { ListToolbar } from '@/components/list-toolbar'
@@ -235,38 +236,8 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
   )
 }
 
-// 批量更新表单：空字段 = 不发送（保持原值）。
-interface BatchForm {
-  name: string
-  upstream_key: string
-  base_url: string
-  max_concurrency: string
-  template_id: string
-  group_ids: string[]
-  clearGroups: boolean // 勾选发送 group_ids: [] 并禁用分组多选
-  clearBaseURL: boolean // 三态哨兵（对齐 clearGroups 先例）：勾选发送 base_url: "" = 清空；未勾选且输入非空 → 该值；未勾选且空 → 不变
-  enabled: 'all' | 'true' | 'false' // 三态：'all' = 不变（不发送）；true/false = 统一落值
-  cache_domain: string
-  clearCacheDomain: boolean // 三态哨兵（对齐 clearBaseURL）：勾选发送 cache_domain: null = 清空回账号私有域
-  multiplier: string // 空 = 不变（不发送）
-  proxy: string // 三态：PROXY_UNCHANGED_VALUE = 不变（不发键）/ PROXY_DIRECT_VALUE = null（解绑）/ 代理 id = 绑定
-}
-
-const emptyBatchForm = (): BatchForm => ({
-  name: '',
-  upstream_key: '',
-  base_url: '',
-  max_concurrency: '',
-  template_id: 'all',
-  group_ids: [],
-  clearGroups: false,
-  clearBaseURL: false,
-  enabled: 'all',
-  cache_domain: '',
-  clearCacheDomain: false,
-  multiplier: '',
-  proxy: PROXY_UNCHANGED_VALUE,
-})
+// 批量更新表单与单条共用同一套稀疏草稿（BatchDraft）：键缺席 = 不改；
+// 批量没有回显基线，故没有「输入框清空 = 写 null」——清空只由勾选框显式表达。
 
 // 作用域参数化（spec 2026-10-09 §6.1/§10）：**同一页面组件**在管理面（/app/accounts）与
 // 供应商控制台（/app 之外的 /user/supplier/accounts）复用，只切 API base 前缀——
@@ -544,84 +515,67 @@ export default function Accounts() {
   })
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const [batchUpdateOpen, setBatchUpdateOpen] = useState(false)
-  const [batchForm, setBatchForm] = useState<BatchForm>(emptyBatchForm())
-  const [batchFormErr, setBatchFormErr] = useState<string | null>(null)
+  // 批量面的稀疏草稿：与单条同一套写入原语（键缺席 = 不改）；没有回显基线。
+  const [batchDraft, setBatchDraft] = useState<BatchDraft>({})
+  const [batchErr, setBatchErr] = useState<string | null>(null)
   const batchResolve = useRef<((r: 'cancelled' | 'submitted') => void) | null>(null)
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
     setBatchUpdateOpen(false)
     batchResolve.current?.(r)
     batchResolve.current = null
   }
+  const updateBatch = <K extends keyof BatchDraft>(k: K, v: Exclude<BatchDraft[K], undefined>) => setBatchDraft(d => withField(d, k, v))
+  const clearBatch = (k: keyof BatchDraft) => setBatchDraft(d => withoutField(d, k))
+  const resetBatch = () => setBatchDraft({})
   const openBatchUpdate = () => {
-    setBatchForm(emptyBatchForm())
-    setBatchFormErr(null)
+    resetBatch()
+    setBatchErr(null)
     setBatchUpdateOpen(true)
   }
-  // 批量有效模板判定 — 替换模板优先，否则各选中账号现模板（账号 Template 回退，缺失时禁用）
-  const isBatchCodex = useMemo(() => {
-    if (batchForm.template_id !== 'all') {
-      const tpl = templates.find(p => String(p.ID) === batchForm.template_id)
+  // 批量有效模板四分：替换模板优先，否则按选中行（账号 Template 回退到模板列表）。
+  // 与单条不同，批量会同时命中 codex 与非 codex：mixed/unresolved 下 BaseURL 一律不发。
+  const batchTplCtx: TplCtx = useMemo(() => {
+    if (batchDraft.template_id !== undefined) {
+      const tpl = templates.find(p => String(p.ID) === batchDraft.template_id)
       const ct = tpl?.CredentialType as string | undefined
-      if (isCodexCt(ct)) return true
-      if (ct != null) return false // found non-codex (including responses-special) -> preserve
-      // unresolved replacement template: fail closed (disable) while loading or not found
-      if (templatesQ.isLoading) return true
-      if (templatesQ.data) return true
-      return true // before first load also fail closed
+      if (isCodexCt(ct)) return 'codex'
+      if (ct != null) return 'nonCodex'
+      return 'unresolved'
     }
-    return selected.some(id => {
+    const states = selected.map(id => {
       const acc = rows.find(r => r.ID === id)
       const ct = (acc?.Template?.CredentialType as string | undefined) ?? (templates.find(p => p.ID === acc?.TemplateID)?.CredentialType as string | undefined)
-      if (isCodexCt(ct)) return true
-      if (ct != null) return false
-      // unresolved effective template for this row -> fail closed
-      if (!acc) return true
-      return true
+      if (isCodexCt(ct)) return 'codex' as const
+      if (ct != null) return 'nonCodex' as const
+      return 'unresolved' as const
     })
-  }, [batchForm.template_id, selected, rows, templates, templatesQ.isLoading, templatesQ.data])
-  useEffect(() => {
-    if (isBatchCodex && (batchForm.base_url !== '' || batchForm.clearBaseURL)) {
-      setBatchForm(f => ({ ...f, base_url: '', clearBaseURL: false }))
-    }
-  }, [isBatchCodex, batchForm.base_url, batchForm.clearBaseURL])
+    if (states.length === 0) return 'nonCodex'
+    if (states.includes('unresolved')) return 'unresolved'
+    if (states.every(s => s === 'codex')) return 'codex'
+    if (states.every(s => s === 'nonCodex')) return 'nonCodex'
+    return 'mixed'
+  }, [batchDraft.template_id, selected, rows, templates])
+  const isBatchCodex = batchTplCtx === 'codex' // 只给三处 UI 判据用（禁用输入/勾选/提示）
   const submitBatchUpdate = () => {
-    const fields: AccountConfigPatch = {}
-    if (batchForm.name.trim()) fields.name = batchForm.name.trim()
-    if (batchForm.upstream_key) fields.upstream_key = batchForm.upstream_key
-    // base_url 三态：勾选清空 → null = 清空（回继承模板）；
-    // 未勾选且输入非空 → 落值；未勾选且空 → 不变（不发送）
-    // 含 Codex 时禁止提交 base_url
-    if (!isBatchCodex) {
-      if (batchForm.clearBaseURL) fields.base_url = null
-      else if (batchForm.base_url.trim()) fields.base_url = batchForm.base_url.trim()
-    }
-    if (batchForm.max_concurrency !== '') fields.max_concurrency = Number(batchForm.max_concurrency)
-    if (batchForm.template_id !== 'all') fields.template_id = Number(batchForm.template_id)
-    if (batchForm.clearGroups) fields.group_ids = []
-    else if (batchForm.group_ids.length > 0) fields.group_ids = batchForm.group_ids.map(Number)
-    // 启停/缓存域/倍率：AccountConfigPatch 的批量契约字段（API 侧全字段可批量，
-    // 无需改契约）。倍率/缓存域先做 UI 边界校验（镜像后端），非法则整单拒绝。
-    const dom = batchForm.cache_domain.trim()
-    if (dom && !validCacheDomain(dom)) {
-      setBatchFormErr(t('accounts.cacheDomain.invalid'))
+    if (selected.length === 0) return
+    // 混合/未解析 + 用户设了 BaseURL ⇒ 拒绝（批量不能按行分流，宁可拒绝也不误清）
+    if ((batchTplCtx === 'mixed' || batchTplCtx === 'unresolved') && batchDraft.base_url !== undefined) {
+      setBatchErr(t('accounts.batchBaseUrlBlocked'))
       return
     }
-    let mult: number | null = null
-    if (batchForm.multiplier.trim()) {
-      mult = parseMultiplier(batchForm.multiplier)
-      if (mult === null) {
-        setBatchFormErr(t('accounts.multiplier.invalid'))
-        return
-      }
+    const dom = (batchDraft.cache_domain ?? '').trim()
+    if (dom !== '' && !validCacheDomain(dom)) { setBatchErr(t('accounts.cacheDomain.invalid')); return }
+    if (batchDraft.cost_multiplier !== undefined && parseMultiplier(batchDraft.cost_multiplier) === null) {
+      setBatchErr(t('accounts.multiplier.invalid')); return
     }
-    if (batchForm.enabled !== 'all') fields.enabled = batchForm.enabled === 'true'
-    if (batchForm.clearCacheDomain) fields.cache_domain = null
-    else if (dom) fields.cache_domain = dom
-    if (mult !== null) fields.upstream_cost_multiplier = mult
-    // 出口代理批量三态（投影唯一实现 = buildBatchProxyFields）：「不变」⇒ 不发键。
-    Object.assign(fields, buildBatchProxyFields(parseBatchProxyValue(batchForm.proxy)))
+    const fields = draftToPatch(batchDraft, {
+      tpl: batchTplCtx,
+      echoProxyId: 0, // 批量不用 echo 规则（proxyFields 覆盖）
+      isSupplierScope,
+      proxyFields: buildBatchProxyFields(batchDraft.proxy ?? null),
+    })
     if (Object.keys(fields).length === 0) {
-      setBatchFormErr(t('accounts.batchUpdateEmpty'))
+      setBatchErr(t('accounts.batchUpdateEmpty'))
       return
     }
     batchUpdate.mutate({ ids: selected, fields })
@@ -1532,26 +1486,30 @@ export default function Accounts() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="ba-name">{t('accounts.nameLabel')}</Label>
-              <Input id="ba-name" value={batchForm.name} placeholder={t('accounts.namePlaceholder')} onChange={e => setBatchForm(f => ({ ...f, name: e.target.value }))} />
+              <Input id="ba-name" value={batchDraft.name ?? ''} placeholder={t('accounts.namePlaceholder')} onChange={e => { const v = e.target.value; if (v === '') clearBatch('name'); else updateBatch('name', v) }} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-key">Upstream Key</Label>
-              <Input id="ba-key" type="password" value={batchForm.upstream_key} placeholder="sk-..." onChange={e => setBatchForm(f => ({ ...f, upstream_key: e.target.value }))} />
+              <Input id="ba-key" type="password" value={batchDraft.upstream_key ?? ''} placeholder="sk-..." onChange={e => { const v = e.target.value; if (v === '') clearBatch('upstream_key'); else updateBatch('upstream_key', v) }} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-base-url">Base URL</Label>
               <Input
                 id="ba-base-url"
-                value={batchForm.base_url}
+                value={batchDraft.base_url ?? ''}
                 placeholder="https://..."
                 disabled={isBatchCodex}
-                onChange={e => setBatchForm(f => ({ ...f, base_url: e.target.value }))}
+                onChange={e => { const v = e.target.value; if (v === '') clearBatch('base_url'); else updateBatch('base_url', v) }}
               />
               <p className="text-xs text-muted-foreground">{isBatchCodex ? t('accounts.batchBaseUrlCodexDisabled') : t('accounts.batchBaseUrlHint')}</p>
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchForm.clearBaseURL} disabled={isBatchCodex} onCheckedChange={c => setBatchForm(f => ({ ...f, clearBaseURL: c === true }))} />
+                <Checkbox checked={batchDraft.base_url === null} disabled={isBatchCodex} onCheckedChange={c => c === true ? updateBatch('base_url', null) : clearBatch('base_url')} />
                 <span className="text-sm">{t('accounts.clearBaseUrl')}</span>
               </label>
+              {/* 混合/未解析：输入仍可用（草稿要有清除入口），但提交会被 gate 拒绝 */}
+              {(batchTplCtx === 'mixed' || batchTplCtx === 'unresolved') && (
+                <p className="text-xs text-destructive">{t('accounts.batchBaseUrlBlocked')}</p>
+              )}
             </div>
             {/* 批量面携带 AccountConfigPatch 全字段（模板/并发/启停/倍率/缓存域）；
                 失效恢复是逐账号 fenced 端点，不在批量面 */}
@@ -1560,8 +1518,8 @@ export default function Accounts() {
                 <Label>{t('accounts.templateLabel')}</Label>
                 <Select
                   items={Object.fromEntries([['all', t('list.unchanged')], ...templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`])])}
-                  value={batchForm.template_id}
-                  onValueChange={v => setBatchForm(f => ({ ...f, template_id: v }))}
+                  value={batchDraft.template_id ?? 'all'}
+                  onValueChange={v => v === 'all' ? clearBatch('template_id') : updateBatch('template_id', v)}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1572,21 +1530,20 @@ export default function Accounts() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ba-max">{t('accounts.maxLabel')}</Label>
-                <Input id="ba-max" type="number" min={1} value={batchForm.max_concurrency} placeholder="8" onChange={e => setBatchForm(f => ({ ...f, max_concurrency: e.target.value }))} />
+                <Input id="ba-max" type="number" min={1} value={batchDraft.max_concurrency ?? ''} placeholder="8" onChange={e => { const v = e.target.value; if (v === '') clearBatch('max_concurrency'); else updateBatch('max_concurrency', v) }} />
               </div>
             </div>
             <div className="space-y-1.5">
               <Label>{t('accounts.batchGroupLabel')}</Label>
               <GroupMultiSelect
                 groups={groups}
-                value={batchForm.group_ids.map(Number)}
-                onChange={v => setBatchForm(f => ({ ...f, group_ids: v.map(String) }))}
-                disabled={batchForm.clearGroups}
+                value={batchDraft.group_ids ?? []}
+                onChange={v => updateBatch('group_ids', v.map(Number))}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.batchGroupHint')}</p>
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchForm.clearGroups} onCheckedChange={c => setBatchForm(f => ({ ...f, clearGroups: c === true }))} />
-                <span className="text-sm">{t('accounts.clearGroups')}</span>
+                <Checkbox checked={batchDraft.group_ids !== undefined} onCheckedChange={c => c === true ? updateBatch('group_ids', []) : clearBatch('group_ids')} />
+                <span className="text-sm">{t('accounts.batchClearGroups')}</span>
               </label>
             </div>
             {/* 生命周期配置（启停/倍率/缓存域）——同为批量契约字段，留空/不变 = 不修改 */}
@@ -1595,8 +1552,8 @@ export default function Accounts() {
                 <Label>{t('accounts.enabledLabel')}</Label>
                 <Select
                   items={{ all: t('list.unchanged'), true: t('accounts.state.enabled'), false: t('accounts.state.disabled') }}
-                  value={batchForm.enabled}
-                  onValueChange={v => setBatchForm(f => ({ ...f, enabled: v as BatchForm['enabled'] }))}
+                  value={batchDraft.enabled === undefined ? 'all' : String(batchDraft.enabled)}
+                  onValueChange={v => v === 'all' ? clearBatch('enabled') : updateBatch('enabled', v === 'true')}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1608,7 +1565,7 @@ export default function Accounts() {
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="ba-mult">{t('accounts.multiplier.label')}</Label>
-                <Input id="ba-mult" type="number" min={0} max={10} step="0.0001" value={batchForm.multiplier} placeholder={t('list.unchanged')} onChange={e => setBatchForm(f => ({ ...f, multiplier: e.target.value }))} />
+                <Input id="ba-mult" type="number" min={0} max={10} step="0.0001" value={batchDraft.cost_multiplier ?? ''} placeholder={t('list.unchanged')} onChange={e => { const v = e.target.value; if (v === '') clearBatch('cost_multiplier'); else updateBatch('cost_multiplier', v) }} />
               </div>
             </div>
             <div className="space-y-1.5">
@@ -1617,8 +1574,8 @@ export default function Accounts() {
                   不把「读面回显 null」当成要解绑（那是逐账号的语义，批量面拿不到回显）。 */}
               <Select
                 items={proxyItems}
-                value={batchForm.proxy}
-                onValueChange={v => setBatchForm(f => ({ ...f, proxy: v }))}
+                value={batchDraft.proxy === undefined ? PROXY_UNCHANGED_VALUE : proxySelectValue(batchDraft.proxy)}
+                onValueChange={v => { const sel = parseBatchProxyValue(v); if (sel === null) clearBatch('proxy'); else updateBatch('proxy', sel) }}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -1635,13 +1592,13 @@ export default function Accounts() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-domain">{t('accounts.cacheDomain.label')}</Label>
-              <Input id="ba-domain" value={batchForm.cache_domain} disabled={batchForm.clearCacheDomain} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => setBatchForm(f => ({ ...f, cache_domain: e.target.value }))} />
+              <Input id="ba-domain" value={batchDraft.cache_domain ?? ''} disabled={batchDraft.cache_domain === null} placeholder={t('accounts.cacheDomain.placeholder')} onChange={e => { const v = e.target.value; if (v === '') clearBatch('cache_domain'); else updateBatch('cache_domain', v) }} />
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchForm.clearCacheDomain} onCheckedChange={c => setBatchForm(f => ({ ...f, clearCacheDomain: c === true }))} />
-                <span className="text-sm">{t('accounts.clearCacheDomain')}</span>
+                <Checkbox checked={batchDraft.cache_domain === null} onCheckedChange={c => c === true ? updateBatch('cache_domain', null) : clearBatch('cache_domain')} />
+                <span className="text-sm">{t('accounts.batchClearCacheDomain')}</span>
               </label>
             </div>
-            {batchFormErr && <p className="text-sm text-destructive">{batchFormErr}</p>}
+            {batchErr && <p className="text-sm text-destructive">{batchErr}</p>}
             {batchUpdate.isError && errMsg(batchUpdate.error) && (
               <p className="text-sm text-destructive">{errMsg(batchUpdate.error)}</p>
             )}
