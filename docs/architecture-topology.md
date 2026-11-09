@@ -330,7 +330,7 @@ flowchart LR
 
 ## 12. 配置面
 
-`config.example.toml`（**TOML inline table 风格，无 `[section]` 头**，现 94 行）段落 → 模块映射（`internal/config/config.go` 加载 + fail-fast 校验，`cmd/server/main.go` 消费，现 803 行）：
+`config.example.toml`（**TOML `[section]` 段头风格，全量键、不混用内联表**）段落 → 模块映射（`internal/config/config.go` 加载 + fail-fast 校验，`cmd/server/main.go` 消费，现 803 行）：
 
 | 段落 | 消费模块 | 关键项 |
 |---|---|---|
@@ -339,13 +339,15 @@ flowchart LR
 | `auth` | jwtauth.Issuer | jwt_secret（必填；`C3API_AUTH_JWT_SECRET` 亦可） |
 | `db` | repository.OpenPG | dsn（必填）/max_conns（20 = billing 8 + stats 8 worker + 余量）；**OpenPG 自动补丁**：lock_timeout=5s 会话级 + 计费结算事务 per-tx 10s 超时 + MaxConnLifetime=30m 滚动轮换——DSN 无需手工配置，用户 DSN 显式同名参数时尊重不覆盖；**不设会话级 statement_timeout**（与 admin 面大窗口聚合实测冲突，降级为计费路径 per-query 超时；`internal/config/config.go:58-61` + `internal/repository/repository.go:855-873`） |
 | **`redis`** | pkg/redisx → discovery / concSync | **必需依赖**（实例发现等易失协调态）：`addr` 必填，空/不可达启动即失败；env `C3API_REDIS_ADDR` / `C3API_REDIS_PASSWORD` / `C3API_REDIS_DB`；password 空 = 无鉴权（占位值被拒）；`db < 0` 非法 |
-| `proxy` | proxy.New | max_body_size/max_inflight/upstream_timeout/upstream_stream_timeout/failover_attempts（合法域 1..8，越界启动失败）/usage_capture/behind_cdn/stream_keepalive_interval（客户端 SSE 保活注释间隔，默认 10s；0=关闭通用定时保活） |
+| `proxy` | proxy.New | max_body_size/max_inflight/upstream_timeout/upstream_stream_timeout/failover_attempts（合法域 1..8，越界启动失败）/usage_capture/behind_cdn/low_balance_max_concurrency+low_balance_threshold_usd（低余额用户级并发钳制，0=关闭）/stream_keepalive_interval（客户端 SSE 保活注释间隔，默认 10s；0=关闭通用定时保活） |
 | `upstream` | httpx.TransportConfig | 连接池参数（max_idle_conns 8192 / max_idle_conns_per_host 2048 / force_http2 / idle_conn_timeout 90s / dial_timeout 10s） |
 | `scheduler` | scheduler.Config | default_max_concurrency/sync_interval |
 | `usage` | usage.Recorder + StatsAggWorker + ErrLogWorker + RetentionWorker | batch_size/flush_interval/log_retention_days=30/quota_flush_interval/stats_agg_interval（默认 5m，0=禁用聚合）/flush_workers=8/errlog_* 族（注释内默认 4096/500/500ms/7 天）/stats_retention_days=180 |
 | `billing` | billing.NewFlusher + BillingHooks | enabled=true/flush_interval=250ms/balance_refresh_interval=10s |
+| `routing` | RoutingCompiler + 保留 worker | 仅 `observation_retention_days`（默认 7、地板 2，低于地板启动失败）；策略参数不可配（下条） |
+| `supplier` | supplier 收益链 + 付款风控 | enabled=false（总开关，开启前需先 bootstrap 建表）/freeze_enabled=true/freeze_hours=24/thaw_granularity=2h（≥ 1m 且整秒，跨字段上界 ≤ 64 桶）/share_bp_default=1000（bp，10000=100%）/payout_max_backlog_rows、payout_max_backlog_age、payout_max_observe_age、risk_review_max_age |
 
-- **智能路由无独立配置段**（`config.example.toml:56-59` 注释）：Primary/Explore/Degraded 分层、探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 + 采购倍率 + 运行时健康派生，**无固定全局 SLO 阈值可配**；可调项在账号与规则面。
+- **智能路由策略参数无配置段**（`config.example.toml` 的 `[routing]` 段前注释）：Primary/Explore/Degraded 分层、探索比例、成本序、事故判定全部由后台 RoutingCompiler 从持久质量统计 + 采购倍率 + 运行时健康派生，**无固定全局 SLO 阈值可配**；可调项在账号与规则面。可配的只有观测保留深度（`routing.observation_retention_days`——存储成本与可查深度的权衡，且低于地板会让编译器基线窗读到已 DROP 的分钟）。
 - 必填校验（`internal/config/config.go` validate）：**必填字符串** = `auth.jwt_secret` / `db.dsn` / `redis.addr`（空 → fatal）；**占位值精确匹配拒绝** = `auth.jwt_secret` / `redis.password`（change-me / change-me-too / dev-jwt-secret-for-local）。duration 除 `stats_agg_interval`（0 = 禁用）外均须 ≥ 1ms；int 下限 1（scheduler.default_max_concurrency / db.max_conns / proxy.failover_attempts / proxy.max_body_size）；failover_attempts 上限 8。
 - 分区/保留/倍率等策略参数在 **DB settings 表**而非 config（`internal/domain/settings.go:13-45`）：signup 默认资源、price_source_url/price_sync_cron、service_tier_policy_*、mail.* 族、balance_warning.enabled。实例数 N **不在** settings——由 Redis 心跳活体数提供（§10）。
 
@@ -356,7 +358,7 @@ flowchart LR
 1. **三词原则（性能 / 边界 / 优雅）**——所有方案取舍的评判标准。为什么：压测驱动演化（53k/s 目标）中每个"快"都要有边界（哪些路径不碰）与优雅（停机/失败不丢语义）。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:5`。
 2. **不计费不入 usage_logs**——usage_logs 成员资格按**放行路径语义（error_type ∈ {none, abort}）**判定，与 cost 无关。为什么：cost>0 判定会漏掉免费分组（倍率 0 成功行）与 0 token 成功行（空响应）；失败行（4xx/5xx/network）不入 usage_logs（拒绝风暴教训：每请求一条明细即无界积压与写放大源头），错误审计归 err_logs。来源：`internal/proxy/forward.go:377-391`（routeLog 注释）+ `docs/superpowers/plans/2026-08-11-errlog-task.md:12`。
 3. **表三分**——usage_logs（计费明细 30 天）/ err_logs（错误明细 7 天）/ usage_stats（聚合统计 180 天），三表独立保留期。为什么：错误审计与计费明细生命周期/查询面不同，混表使两边互相拖累（瘦身 + 短保留）。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:25` + `internal/repository/partition.go:22-31`。
-4. **分区 DROP 不 DELETE**——保留清理全部 DROP TABLE O(1)（比逐行 DELETE 快 5~6 个量级）。为什么：50k 并发量级 usage_logs ~4.3 亿行/天，逐行 DELETE 不可行；PG DELETE 不释放空间（usage_stats 180 天清理必须 DROP）。来源：`internal/repository/partition.go:22-31` + `internal/usage/retention.go:62` + `config.example.toml:55-56` 注释。
+4. **分区 DROP 不 DELETE**——保留清理全部 DROP TABLE O(1)（比逐行 DELETE 快 5~6 个量级）。为什么：50k 并发量级 usage_logs ~4.3 亿行/天，逐行 DELETE 不可行；PG DELETE 不释放空间（usage_stats 180 天清理必须 DROP）。来源：`internal/repository/partition.go:22-31` + `internal/usage/retention.go:62` + `config.example.toml` 的 `usage.log_retention_days` 注释。
 5. **双队列豁免采样**——err_logs 按来源（provenance）分队列：豁免队列（abort/failover 已计费错误）恒落盘，普通队列（401/429/402/400/404 拒绝）风暴采样丢弃。为什么：不可按 error_type 推断来源（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）；已计费错误审计价值最高。来源：`internal/usage/errlog.go:10-16` + `docs/superpowers/plans/2026-08-11-errlog-task.md:10,14`。
 6. **快照注册表边界（已合并）**——注册表不接管模块周期 ticker、不做数据缓存、不进入请求热路径。为什么：避免双 reload 竞争与热路径锁；快照数据形态与周期刷新保持各模块自管。来源：`internal/snapshot/snapshot.go:9-19` 包注释（用户拍板 2026-08-11）。
 7. **单 worker 批量落盘（err_logs）**——无多 worker 并行必要。为什么：DB 写是瓶颈，写速率由 BatchSize/FlushInterval 钉死有界，采样兜底防积压。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:23`。

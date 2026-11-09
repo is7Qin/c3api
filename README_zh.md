@@ -154,7 +154,7 @@ cd web && pnpm install && pnpm run dev
 | `C3API_DB_DSN` | PostgreSQL 连接串 |
 | `C3API_REDIS_ADDR` | Redis 地址（必填；如 `127.0.0.1:6379`——实例发现、短时效验证码等易失状态） |
 
-完整配置项（server / log / auth / db / redis / proxy / upstream / limit / scheduler / usage / billing）见 `config.example.toml`。
+完整配置项（server / log / auth / db / redis / proxy / upstream / scheduler / usage / billing / routing / supplier）见 `config.example.toml`。
 
 - **仅全新部署（不适配迁移）**——表结构与配置跨版本不向后兼容：升级即全新创建数据库、从零重核对配置（见上方"状态：Beta"说明）。
 - **纯 env 部署**（如 K8s）：传 `-config ""` 完全跳过配置文件——flag 默认 config.toml，无文件即启动失败。

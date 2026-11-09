@@ -81,11 +81,11 @@ func TestLoadFromTOML(t *testing.T) {
 	c, err := Load("../../config.example.toml")
 	require.NoError(t, err)
 	require.Equal(t, 500*time.Millisecond, c.Usage.FlushInterval)
-	require.Empty(t, c.Server.TimeZone, "example 的 time_zone 必须位于 server 内联表")
+	require.Empty(t, c.Server.TimeZone, "example 的 time_zone 必须位于 server 段")
 
 	deploy, err := Load("../../deploy/config.toml")
 	require.NoError(t, err)
-	require.Empty(t, deploy.Server.TimeZone, "deploy 模板的 time_zone 必须位于 server 内联表")
+	require.Empty(t, deploy.Server.TimeZone, "deploy 模板的 time_zone 必须位于 server 段")
 }
 
 // S-E（2026-08-17，2026-10-07 默认翻转）：proxy.behind_cdn 可选键——缺省 = true

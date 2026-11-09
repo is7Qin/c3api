@@ -155,7 +155,7 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 | `C3API_REDIS_ADDR` | Redis address (required; e.g. `127.0.0.1:6379` — instance discovery, short-lived verification codes and other ephemeral state) |
 | `C3API_SERVER_TIME_ZONE` | Deployment timezone for pricing time/day-of-week conditions (IANA name, e.g. `Asia/Shanghai`; empty = process local) |
 
-See `config.example.toml` for the full schema (server, log, admin, auth, db, redis, proxy, upstream, limit, scheduler, usage, billing).
+See `config.example.toml` for the full schema (server, log, auth, db, redis, proxy, upstream, scheduler, usage, billing, routing, supplier).
 
 - **Fresh setup only (no migration path)** — schemas and configuration are not backward-compatible between versions: an upgrade means a brand-new database and a re-checked configuration (see [Status: Beta](#status-beta)).
 - **Env-only deployments** (e.g. K8s): pass `-config ""` to skip the config file entirely — the flag defaults to `config.toml`, and a missing file is a startup error.

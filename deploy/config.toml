@@ -1,87 +1,110 @@
 # 生产配置模板（compose 挂载，只读）。敏感项由环境变量
 # C3API_DB_DSN / C3API_AUTH_JWT_SECRET / C3API_REDIS_ADDR 注入覆盖（见 compose.yml），
 # 此处留空即可。配置仅启动时读取，变更需滚动重启（无热更新）。
-server = { addr = ":18080", read_header_timeout = "10s", max_header_bytes = 1048576, time_zone = "" } # IANA 名（如 Asia/Shanghai）；空=进程本地
-log = { level = "info", output = "stdout" }
+# 统一 [section] 段头风格——不混用内联表（`x = { … }`），段落顺序无语义。
+
+[server]
+addr = ":18080"
+read_header_timeout = "10s"
+max_header_bytes = 1048576
+# IANA 名（如 Asia/Shanghai）；空 = 进程本地；非法名启动失败。
+time_zone = ""
+
+[log]
+level = "info"
+output = "stdout"
+
 # 管理面鉴权：platform_admin 身份（首个注册用户自动成为 platform_admin，注册后即可
 # 登录管理面）或其管理 key（mk- 前缀，自签发）。
+[auth]
 # JWT 密钥（强制——缺失启动失败；生产必须经 env C3API_AUTH_JWT_SECRET 注入，
-# 随机生成 = 重启全失效 + 多实例不一致）
-auth = { jwt_secret = "" }
-db = { dsn = "", max_conns = 20 }
-proxy = {
-  # 请求体上限（字节，64 MiB）：读 body 时 http.MaxBytesReader 强制，超出即中断
-  # 并按 413 类错误拒绝（含 vision base64 图片的大请求需相应调大）。
-  max_body_size = 67108864,
-  # 全局在途请求上限（并发闸门，中间件层）：超限的新请求立即 429，不排队。
-  # 0 = server 侧兜底为 50000（配置下限不校验，见 config.go validate 注释）。
-  max_inflight = 50000,
-  upstream_timeout = "120s",
-  upstream_stream_timeout = "30m",
-  # 合法域 1..8（上限 = AttemptPlan 固定去重集），0/负值或 >8 启动即失败
-  failover_attempts = 3,
-  usage_capture = true,
-  # client_ip 按序采信 CF-Connecting-IP → True-Client-IP → X-Real-IP（true，默认）；
-  # false 完全不读这些头直取 RemoteAddr——compose + 前置代理拓扑下只会记到内网
-  # 对端（如 172.18.0.1），审计无意义。默认开的前提是源站端口只对代理开放
-  # （防火墙封直连）；若本机直连公网暴露，须显式置 false——头可被客户端自填，
-  # client_ip 仅为尽力而为的排障标识。
-  behind_cdn = true,
-  # 低余额用户级并发钳制：余额（毫分）严格小于阈值的用户，其用户级并发上限
-  # 钳为 low_balance_max_concurrency；余额回到阈值以上恢复原上限。
-  # 阈值单位 USD；low_balance_max_concurrency = 0 关闭该特性（退回旧行为）。
-  # 默认开启（5 / 10）——升级后余额 < $10 的用户即时被钳为 5（原上限更大/不限者）。
-  low_balance_max_concurrency = 5,
-  low_balance_threshold_usd = 10,
-  # SSE 客户端保活：客户端长时间无业务输出时，网关按此间隔写出 `: keepalive\n`
-  # 注释帧以维持连接（默认 10s）。0 = 关闭通用定时心跳。五路（chat/responses/
-  # anthropic/converted）与 typed images 均受此键控制；仅 codex images 合成路径
-  #（上游非流、由 SDK 合成 keepalive+completed）不受此键影响——其保活由 SDK
-  # 自带 60s 驱动（60s 不满足最严 LB 的 ≤60s 读超时）。
-  stream_keepalive_interval = "10s",
-}
-upstream = {
-  max_idle_conns = 8192,
-  max_idle_conns_per_host = 2048,
-  idle_conn_timeout = "90s",
-  dial_timeout = "10s",
-  force_http2 = true,
-}
+# 随机生成 = 重启全失效 + 多实例不一致）。
+jwt_secret = ""
+
+[db]
+dsn = ""
+max_conns = 20
+
+[redis]
+# 生产经 env C3API_REDIS_ADDR / C3API_REDIS_PASSWORD / C3API_REDIS_DB 注入；
+# addr 空 = 启动即失败（Redis 为必需依赖，见 config.example.toml 说明）。
+addr = ""
+password = ""
+db = 0
+
+[proxy]
+# 请求体上限（字节，64 MiB）：读 body 时 http.MaxBytesReader 强制，超出即中断
+# 并按 413 类错误拒绝（含 vision base64 图片的大请求需相应调大）。
+max_body_size = 67108864
+# 全局在途请求上限（并发闸门，中间件层）：超限的新请求立即 429，不排队。
+# 0 = server 侧兜底为 50000（配置下限不校验，见 config.go validate 注释）。
+max_inflight = 50000
+upstream_timeout = "120s"
+upstream_stream_timeout = "30m"
+# 合法域 1..8（上限 = AttemptPlan 固定去重集），0/负值或 >8 启动即失败。
+failover_attempts = 3
+usage_capture = true
+# client_ip 按序采信 CF-Connecting-IP → True-Client-IP → X-Real-IP（true，默认）；
+# false 完全不读这些头直取 RemoteAddr——compose + 前置代理拓扑下只会记到内网
+# 对端（如 172.18.0.1），审计无意义。默认开的前提是源站端口只对代理开放
+# （防火墙封直连）；若本机直连公网暴露，须显式置 false——头可被客户端自填，
+# client_ip 仅为尽力而为的排障标识。
+behind_cdn = true
+# 低余额用户级并发钳制：余额（毫分）严格小于阈值的用户，其用户级并发上限
+# 钳为 low_balance_max_concurrency；余额回到阈值以上恢复原上限。
+# 阈值单位 USD；low_balance_max_concurrency = 0 关闭该特性（退回旧行为）。
+# 默认开启（5 / 10）——升级后余额 < $10 的用户即时被钳为 5（原上限更大/不限者）。
+low_balance_max_concurrency = 5
+low_balance_threshold_usd = 10
+# SSE 客户端保活：客户端长时间无业务输出时，网关按此间隔写出 `: keepalive\n`
+# 注释帧以维持连接（默认 10s）。0 = 关闭通用定时心跳。五路（chat/responses/
+# anthropic/converted）与 typed images 均受此键控制；仅 codex images 合成路径
+# （上游非流、由 SDK 合成 keepalive+completed）不受此键影响——其保活由 SDK
+# 自带 60s 驱动（60s 不满足最严 LB 的 ≤60s 读超时）。
+stream_keepalive_interval = "10s"
+
+[upstream]
+max_idle_conns = 8192
+max_idle_conns_per_host = 2048
+idle_conn_timeout = "90s"
+dial_timeout = "10s"
+force_http2 = true
+
+[scheduler]
+default_max_concurrency = 8
+sync_interval = "30s"
 # cooldown_429 / backoff_base / backoff_max 已移除（不向后兼容）——配置含这些
 # 键将启动失败；429 冷却与错误退避由规则引擎（种子规则 +
 # /admin/rules 自定义规则）接管。
-scheduler = {
-  default_max_concurrency = 8,
-  sync_interval = "30s",
-}
-usage = {
-  batch_size = 500,
-  flush_interval = "500ms",
-  # usagelog 按日分区保留天数：保留期外分区由 retention worker
-  # DROP TABLE O(1) 清理（默认 30 天 = 30 个日分区）；<= 0 = 不删除。
-  log_retention_days = 30,
-  # quota 回写 cadence（spec 2026-08-14：统计 flush 删除后仅驱动额度增量回写）。
-  quota_flush_interval = "10s",
-  # 离线聚合周期（spec 2026-08-14 使用量统计离线聚合化）：独立 worker 每周期
-  # 从 usage_logs/err_logs 重建 usage_stats（两范围 + 三查询 + 单事务
-  # DELETE+INSERT+watermark）；0 = 禁用聚合。统计分钟级陈旧（接受）。
-  stats_agg_interval = "5m",
-  # flush_workers：明细/额度 flush 并行 worker 数（默认 8——多角度压测
-  # C 项实证 2026-08-12：多用户水线告警清零、pending 斜率降 25-40%、QPS/CPU
-  # 零回退；每 worker 一笔批量 SQL，受 DB 连接池余量 db.max_conns 约束；
-  # 同 key 恒同 worker，分片确定性）。
-  flush_workers = 8,
-  # err_logs 错误审计明细（分表设计）：有界队列 + 背压采样丢弃——拒绝风暴不
-  # 阻塞热路径/不爆内存/不淹没 DB（DB 写速率上界 = errlog_batch_size /
-  # errlog_flush_interval）。双轨行（abort 等已计费错误）豁免采样恒落盘。
-  # errlog_queue_size = 4096,          # 拒绝队列容量（满 → 丢弃采样）
-  # errlog_batch_size = 500,           # 每批落盘行数
-  # errlog_flush_interval = "500ms",   # 批间隔
-  # errlog_retention_days = 7,         # err_logs 分区保留天数（默认 7 天短保留）
-  # stats_retention_days = 180,        # usage_stats 分区保留天数（默认 180 天；
-  #                                    # 聚合统计也分区化——清理 DROP 分区 O(1)，
-  #                                    # PG DELETE 不释放空间）
-}
+
+[usage]
+batch_size = 500
+flush_interval = "500ms"
+# usagelog 按日分区保留天数：保留期外分区由 retention worker
+# DROP TABLE O(1) 清理（默认 30 天 = 30 个日分区）；<= 0 = 不删除。
+log_retention_days = 30
+# quota 回写 cadence（spec 2026-08-14：统计 flush 删除后仅驱动额度增量回写）。
+quota_flush_interval = "10s"
+# 离线聚合周期（spec 2026-08-14 使用量统计离线聚合化）：独立 worker 每周期
+# 从 usage_logs/err_logs 重建 usage_stats（两范围 + 三查询 + 单事务
+# DELETE+INSERT+watermark）；0 = 禁用聚合。统计分钟级陈旧（接受）。
+stats_agg_interval = "5m"
+# flush_workers：明细/额度 flush 并行 worker 数（默认 8——多角度压测
+# C 项实证 2026-08-12：多用户水线告警清零、pending 斜率降 25-40%、QPS/CPU
+# 零回退；每 worker 一笔批量 SQL，受 DB 连接池余量 db.max_conns 约束；
+# 同 key 恒同 worker，分片确定性）。
+flush_workers = 8
+# err_logs 错误审计明细（分表设计）：有界队列 + 背压采样丢弃——拒绝风暴不
+# 阻塞热路径/不爆内存/不淹没 DB（DB 写速率上界 = errlog_batch_size /
+# errlog_flush_interval）。双轨行（abort 等已计费错误）豁免采样恒落盘。
+# errlog_queue_size = 4096          # 拒绝队列容量（满 → 丢弃采样）
+# errlog_batch_size = 500           # 每批落盘行数
+# errlog_flush_interval = "500ms"   # 批间隔
+# errlog_retention_days = 7         # err_logs 分区保留天数（默认 7 天短保留）
+# stats_retention_days = 180        # usage_stats 分区保留天数（默认 180 天；
+#                                   # 聚合统计也分区化——清理 DROP 分区 O(1)，
+#                                   # PG DELETE 不释放空间）。
+
 # 计费：默认开启（与代码/example 默认一致）。首次启动后需先同步
 # 价格（POST /admin/pricing/sync）——空价格表 = 全模型 402。开启后：请求前
 # 余额预检（快照缺失或 ≤0 → 402；免费用户/组放行，临时额度由 FEFO 扣费消化）、
@@ -92,4 +115,30 @@ usage = {
 # 截断不阻塞退出）。
 # 注：compose 未注入 C3API_BILLING_*（env 覆盖能力存在，可按需注入），开关/参数
 # 经挂载的 config.toml 文件修改生效。
-billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval = "10s" }
+[billing]
+enabled = true
+flush_interval = "250ms"
+balance_refresh_interval = "10s"
+
+# 路由观测保留深度（运维/存储参数；策略参数不可配——理由见 config.example.toml）。
+# 默认 7 天，地板 2 天（正确性回看下界 24h + 24h 边际），低于地板启动即失败；
+# 窗口起点早于保留截止的查询整窗拒绝（HTTP 400），不静默截断。
+[routing]
+observation_retention_days = 7
+
+# 供应商收益（spec 2026-10-09 §6.4）。启用前需一次会跑 bootstrap 的启动建表
+# （users.role=supplier、accounts.supplier_user_id 与四张 supplier_* 表）；
+# 本仓不做增量补列。关闭态零成本（不注册 worker、不入收益索引）。
+[supplier]
+enabled = false
+freeze_enabled = true
+freeze_hours = 24
+# 解冻对齐粒度：≥ 1m 且整秒；跨字段上界 ceil(freeze_hours×3600 / g) + 1 ≤ 64。
+thaw_granularity = "2h"
+# 全局默认分成率（bp；10000 = 100%，0 合法）。
+share_bp_default = 1000
+# 付款风控门（backlog 行数/时长、观测新鲜度、风险复核有效期）。
+payout_max_backlog_rows = 10000
+payout_max_backlog_age = "10m"
+payout_max_observe_age = "3m"
+risk_review_max_age = "24h"

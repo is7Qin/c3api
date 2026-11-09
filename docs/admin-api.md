@@ -1388,7 +1388,10 @@ flow 守恒与丢失口径（三者独立，不得混为上游失败）：`incom
 ### 启用顺序（config.toml）
 
 ```toml
-billing = { enabled = true, flush_interval = "250ms", balance_refresh_interval = "10s" }
+[billing]
+enabled = true
+flush_interval = "250ms"
+balance_refresh_interval = "10s"
 ```
 
 | 配置 | 默认 | 说明 |

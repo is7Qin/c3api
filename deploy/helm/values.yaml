@@ -51,8 +51,12 @@ externalRedis:
 config:
   inline: true                 # true: render config.toml into a ConfigMap; false: env-only (-config "")
   content: |
-    server = { addr = ":18080", time_zone = "" }
-    scheduler = { default_max_concurrency = 8 }
+    [server]
+    addr = ":18080"
+    time_zone = ""
+
+    [scheduler]
+    default_max_concurrency = 8
 
 app:
   port: 18080
