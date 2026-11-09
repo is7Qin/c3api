@@ -217,7 +217,9 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// installation_id 亦取自槽状态）——同账号并发各持不同槽 ⇒ 上游见多条独立会话。
 	// HTTP 面经 SDK client_metadata 注入。
 	sess, meta := sel.CodexIdentity()
-	resp, err := p.codex.Responses(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r))
+	// 出站传输开关随本次 Selection 下发（sdkbridge 侧按它分 client 条目——构造期
+	// 参数，改模板 ⇒ 换条目）。
+	resp, err := p.codex.Responses(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), sel.CodexResponsesTransport)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -295,7 +297,8 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	}
 	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
 	sess, meta := sel.CodexIdentity()
-	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r))
+	// 出站传输开关同非流式（Selection 原值下发）。
+	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), sel.CodexResponsesTransport)
 	if err != nil {
 		// 客户端断开（上游响应前）优先归因。
 		if r.Context().Err() != nil {

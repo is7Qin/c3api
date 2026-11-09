@@ -286,7 +286,7 @@ func TestCodexHTTPClientCacheIsBoundedLRU(t *testing.T) {
 	total := codexHTTPClientCacheMax + 20
 	for i := range total {
 		meta := &codexsdk.CodexMeta{InstallationID: fmt.Sprintf("inst-%d", i)}
-		_, _, err := a.clientFor(cred, nil, meta, "", a.DirectEgress())
+		_, _, err := a.clientFor(cred, nil, meta, "", a.DirectEgress(), domain.CodexResponsesTransportDefault)
 		require.NoError(t, err)
 	}
 	a.mu.Lock()
@@ -791,7 +791,7 @@ func TestCodexResponsesAggregateNonstream(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-resp"}
 
-	resp, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"gpt-5.6","input":"hi"}`), nil, nil, "")
+	resp, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"gpt-5.6","input":"hi"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	want := `{"id":"resp_t6","object":"response","status":"completed","output":[` + t6RespItem + `],"usage":` + t6RespUsage + `}`
@@ -823,7 +823,7 @@ func TestCodexResponsesIdentityMetadata(t *testing.T) {
 	sess := &codexsdk.Session{SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
 	meta := &codexsdk.CodexMeta{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","input":"hi"}`), sess, meta, "")
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","input":"hi"}`), sess, meta, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	cm := gjson.GetBytes(c.body(0), "client_metadata")
 	require.Equal(t, "inst-1", cm.Get("x-codex-installation-id").String(), "installation_id 注入")
@@ -845,7 +845,7 @@ func TestCodexResponsesIdentityTurnIDOverride(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-t"}
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), nil, nil, "")
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	got := gjson.GetBytes(c.body(0), "client_metadata.turn_id").String()
 	require.True(t, isUUIDv7(got), "客户端 turn_id 不透传，网关注入自动 UUIDv7: %s", got)
@@ -862,7 +862,7 @@ func TestCodexStreamBodyPassthrough(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-body"}
 
-	resp, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, "")
+	resp, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode, "仅 200 返回未关闭 body")
 	body, err := io.ReadAll(resp.Body)
@@ -878,7 +878,7 @@ func TestCodexStreamBodyPassthrough(t *testing.T) {
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id 恒带")
 
 	// turn-state：本次响应头回写 held → 下次未带请求注入（不读共享 TurnState）。
-	resp2, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), nil, nil, "")
+	resp2, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	_, _ = io.Copy(io.Discard, resp2.Body)
 	_ = resp2.Body.Close()
@@ -900,20 +900,20 @@ func TestCodexResponsesIdentityChangeRebuild(t *testing.T) {
 	sig2 := identitySig(nil, meta2)
 	require.NotEqual(t, sig1, sig2, "不同 identity 签名不同")
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, meta1, "")
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, meta1, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	a.mu.Lock()
 	c1 := testCachedClient(a.entries[9], sig1)
 	a.mu.Unlock()
 	require.NotNil(t, c1)
 
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, meta1, "")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, meta1, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	a.mu.Lock()
 	require.Same(t, c1, testCachedClient(a.entries[9], sig1), "同 identity 复用连接池")
 	a.mu.Unlock()
 
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, meta2, "")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, meta2, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	a.mu.Lock()
 	require.NotSame(t, c1, testCachedClient(a.entries[9], sig2), "identity 变化 → 新条目客户端")
@@ -939,19 +939,19 @@ func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-ts"}
 
 	// 首请求（轮首）：未带 turn-state → 上游签发 ts-1 → held 回写
-	resp, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	resp, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, "ts-1", resp.TurnState, "响应签发值暴露")
 	require.Equal(t, "", c.turnState(0), "轮首请求不带头")
 
 	// 同轮后续请求：客户端未带 → 自动注入 held（ts-1）
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, "ts-1", c.turnState(1), "同轮续传（注入 held）")
 
 	// 轮结束清除 → 下一请求不再携带（跨轮不回传）
 	a.ClearTurnState(9)
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, "", c.turnState(2), "清除后跨轮不回传")
 }
@@ -966,19 +966,19 @@ func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-pt"}
 
 	// 先构造条目（首调用建 entry——无 held 无客户端值）
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	// held 覆盖预置（验证客户端值覆盖 held——不被 held 覆盖）
 	a.mu.Lock()
 	a.entries[9].turnState = "held-old"
 	a.mu.Unlock()
 
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "client-ts")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "client-ts", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, "client-ts", c.turnState(1), "客户端自带 → 透传优先（覆盖 held）")
 
 	// 响应签发值 → held 回写（服务端为准——后续未带请求注入新签发值）
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, "ts-up", c.turnState(2), "签发值回写 held 后续注入")
 }
@@ -993,7 +993,7 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-rt"}
 
 	// 首调用（无 held）：无头客户端
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	a.mu.Lock()
 	c1 := testCachedClient(a.entries[9], identityKey{})
@@ -1001,7 +1001,7 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	a.mu.Unlock()
 
 	// 同值复用（held 已回写 ts-1 → 生效值变化 → 重建——断言客户端非同一实例）
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	a.mu.Lock()
 	c2 := testCachedClient(a.entries[9], identityKey{})
@@ -1011,7 +1011,7 @@ func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
 	a.mu.Unlock()
 
 	// 同值复用不重建
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "ts-1")
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "ts-1", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	a.mu.Lock()
 	require.Same(t, c2, testCachedClient(a.entries[9], identityKey{}), "同生效值复用不重建")
@@ -1129,7 +1129,7 @@ func TestCodexResponsesEnvelope4xx(t *testing.T) {
 	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-4xx"}
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{}`), nil, nil, "")
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.Error(t, err)
 	var env *EnvelopeError
 	require.True(t, errors.As(err, &env), "信封类型 errors.As 命中: %v", err)
@@ -1168,7 +1168,7 @@ func TestCodexResponses401Rotate(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
 	cred := respCred(7, "at-old", "rt-1")
 
-	resp, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "")
+	resp, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, `"resp_t6"`, gjson.GetBytes(resp.Raw, "id").Raw, "轮转后应成功聚合")
 	require.Equal(t, 1, rm.callsN(), "refresh 恰一次（单飞）")
@@ -1191,7 +1191,7 @@ func TestCodexResponsesFatal(t *testing.T) {
 	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
 	cred := respCred(7, "at-old", "rt-1")
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{}`), nil, nil, "")
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.Error(t, err)
 	var ap *codexsdk.AuthPermanentlyRevokedError
 	require.True(t, errors.As(err, &ap), "fatal 原样透传（errors.As 命中）: %v", err)

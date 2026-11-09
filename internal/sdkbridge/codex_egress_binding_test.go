@@ -76,11 +76,11 @@ func TestCodexEgressTransportIsBindingOwned(t *testing.T) {
 	require.Equal(t, 1, base.hits, "底座不该被代理出口触达")
 
 	// 3) 缓存分桶：同身份不同出口 ⇒ 不同 client；同出口重复 ⇒ 同一个 client。
-	e, cDirect, err := a.clientFor(cred, nil, nil, "", pool.Direct())
+	e, cDirect, err := a.clientFor(cred, nil, nil, "", pool.Direct(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	_, cProxy, err := a.clientFor(cred, nil, nil, "", eg)
+	_, cProxy, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	_, cProxyAgain, err := a.clientFor(cred, nil, nil, "", eg)
+	_, cProxyAgain, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.NotSame(t, cDirect, cProxy, "换出口必须是新 client（构造期 transport 无法替换）")
 	require.Same(t, cProxy, cProxyAgain, "同出口必须复用同一 client（连接池不重建）")

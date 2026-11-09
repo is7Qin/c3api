@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -179,7 +180,8 @@ func (a *Codex) DirectEgress() *egress.Client {
 // fatal 五类（errors.As）→ 统一回调单次上报（双源去重）+ 原样透传（SDK 已
 // 不包装，errors.As 可命中）；RefreshError 可重试不上报。Codex 端点归 SDK 官方默认。
 func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, p *domain.ImageGenParams) (*domain.ImageResponse, error) {
-	e, client, err := a.clientFor(cred, nil, nil, "", eg)
+	// 生图不走 responses 面（spec §5）：传输维恒零值 ⇒ 键与改动前同条目。
+	e, client, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportDefault)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +200,8 @@ func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredentia
 // 错误翻译同 GenerateImage（translateError——信封/fatal 统一回调/refresh 分
 // 类复用；fn 回调错误经 translateError 原样透传——非 SDK 错误不过滤）。
 func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, p *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error {
-	e, client, err := a.clientFor(cred, nil, nil, "", eg)
+	// 传输维恒零值（同 GenerateImage：生图不经 responses 面）。
+	e, client, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportDefault)
 	if err != nil {
 		return err
 	}
@@ -244,13 +247,14 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 // 透传优先——客户端自管，非空覆盖 held 注入）；未带 → 注入 held（上游签发值
 // ——同轮回传）。成功响应签发值 → held 回写（非空才覆盖）。错误翻译同
 // GenerateImage（translateError——SDK *HTTPError → 信封；fatal 五类统一回调
-// 双源去重；RefreshError/网络原样）。
-func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string) (*codexsdk.HTTPResponse, error) {
+// 双源去重；RefreshError/网络原样）。transport 为出站传输开关（spec §5：
+// 构造期参数 ⇒ 走 clientFor 的键维度；映射点只有 codexTransport 一处）。
+func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string, transport domain.CodexResponsesTransport) (*codexsdk.HTTPResponse, error) {
 	ts := clientTurnState
 	if ts == "" {
 		ts = a.turnStateOf(cred.AccountID)
 	}
-	e, client, err := a.clientFor(cred, sess, meta, ts, eg)
+	e, client, err := a.clientFor(cred, sess, meta, ts, eg, transport)
 	if err != nil {
 		return nil, err
 	}
@@ -270,7 +274,8 @@ func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, e
 // 头）。错误翻译同 Responses（translateError——信封/fatal 统一回调双源去重/
 // RefreshError 分类复用）。
 func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte) (*codexsdk.HTTPResponse, error) {
-	e, client, err := a.clientFor(cred, nil, nil, "", eg)
+	// 传输维恒零值（Search 不走 responses 面——键与改动前同条目）。
+	e, client, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportDefault)
 	if err != nil {
 		return nil, err
 	}
@@ -288,12 +293,13 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *
 // resp.Header** 回写 held turn-state——不读共享 client.TurnState()（并发响应
 // 可互相覆盖，http.go captureTurnState 为池级最近值）。错误翻译同 Responses
 // （translateError——信封/fatal 统一回调双源去重/RefreshError 分类复用）。
-func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string) (*http.Response, error) {
+// transport 语义同 Responses（构造期参数 ⇒ 换值换 client 条目）。
+func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string, transport domain.CodexResponsesTransport) (*http.Response, error) {
 	ts := clientTurnState
 	if ts == "" {
 		ts = a.turnStateOf(cred.AccountID)
 	}
-	e, client, err := a.clientFor(cred, sess, meta, ts, eg)
+	e, client, err := a.clientFor(cred, sess, meta, ts, eg, transport)
 	if err != nil {
 		return nil, err
 	}
@@ -343,6 +349,21 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 	return e, nil
 }
 
+// codexTransport 领域开关 → SDK 传输枚举的**唯一**映射点。
+// ws → TransportWS，其余（含 ""/"http"/脏值）→ TransportHTTP：脏值由
+// CodexResponsesTransport.Key()/Valid() 在写面与快照面归一，这里 fail-safe
+// 到默认面。
+//
+// 为什么显式映射而不是 `codexsdk.Transport(t)`：那依赖"domain 字符串恰好等于
+// SDK 枚举"这个巧合，任一侧改名就静默错配（WS 折成 HTTP 时两臂读数会"一致地
+// 看不出差别"，是事后最难定位的故障）。
+func codexTransport(t domain.CodexResponsesTransport) codexsdk.Transport {
+	if t == domain.CodexResponsesTransportWS {
+		return codexsdk.TransportWS
+	}
+	return codexsdk.TransportHTTP
+}
+
 // clientFor entryFor + HTTPClient 多条目懒构造（GenerateImage/Stream/Responses/
 // Search/GetUsage 面——键 = identitySig，同身份复用连接池；变化只重建该条）。
 // sess/meta 为 HTTP 面伪装身份（SDK 注入点读构造期 opts（http.go
@@ -353,7 +374,10 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 // 池，重建不重置连接池（补压测 4e08fbd 连接风暴防护保持））。NewHTTPClient 为
 // 纯构造（无 I/O 无 error）；构造/读取全程持 a.mu。返回选中的客户端供调用面
 // 直用（多条目后不再有单一 e.client）。
-func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta, turnState string, eg *egress.Client) (*codexEntry, *codexsdk.HTTPClient, error) {
+//
+// transport 为 responses 出站传输（spec §5）：SDK 侧同样是**构造期**参数，不入
+// 键就会"Selection 说 ws、请求仍走 HTTP POST"；键取值面只有 transport.Key()。
+func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta, turnState string, eg *egress.Client, transport domain.CodexResponsesTransport) (*codexEntry, *codexsdk.HTTPClient, error) {
 	eg, err := a.resolveEgress(eg)
 	if err != nil {
 		return nil, nil, err
@@ -367,6 +391,9 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	// 复用旧 client = 请求仍走旧线；所以同一伪装身份在不同出口上必须是不同条目。
 	// 直连（Spec 零值）⇒ 零值摘要 ⇒ 键与 M3 之前完全一致（零代理零回归）。
 	sig.proxy = egressDigest(eg)
+	// 传输维（spec §5）：同上——构造期参数，不同传输必须是不同条目。默认面
+	// 取 Key() 零值 ⇒ 只走 HTTP 的部署键形状与改动前逐字节一致。
+	sig.transport = transport.Key()
 	a.mu.Lock()
 	if e.clients == nil {
 		e.clients = make(map[identityKey]*codexHTTPClient)
@@ -382,6 +409,10 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 		// codex-sdk/http.go:448 的 `if c.opts.transport != nil` 就是全部依赖，
 		// 所以这里恒注入、不写分支（测试路径也走这一条，与生产同构）。
 		opts = append(opts, codexsdk.WithTransport(eg.HTTP.Transport))
+		// responses 出站传输（spec §5）：同样恒注入。WithResponsesTransport
+		// (TransportHTTP) 与"不注入"等价，而不写 if 分支的原因正是要让"注入点
+		// 被删掉"这种变异在组合用例里现红（删了它，ws 臂会静默跑 HTTP）。
+		opts = append(opts, codexsdk.WithResponsesTransport(codexTransport(transport)))
 		if turnState != "" {
 			opts = append(opts, codexsdk.WithHeader(codexsdk.HeaderTurnState, turnState))
 		}
@@ -502,7 +533,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	if s, ok := a.snapshotCachedFor(cred.AccountID); ok {
 		return s, nil
 	}
-	e, client, err := a.clientFor(cred, nil, nil, "", a.DirectEgress())
+	e, client, err := a.clientFor(cred, nil, nil, "", a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	if err != nil {
 		// 入口错误分类：oauth 缺 rt 凭据不完整（errCredentialIncomplete）
 		// → 凭据失效语义 ErrAuthExpired（不落 default 归 ErrUpstream）。
@@ -680,6 +711,11 @@ type identityKey struct {
 	// 是构造期参数，换代理后复用旧条目就是"配置换了、连接没换"。HTTP 面靠
 	// planKey/payloadKey 达成的同一件事，在这一面靠这 16 字节对齐。
 	proxy [16]byte
+	// transport 出站传输维（spec §5）：SDK 客户端的 responses 传输是**构造期**
+	// 参数 ⇒ 同身份不同传输必须是不同 client，否则"模板改成 ws、client 命中旧条目"
+	// 会让 Selection 说 ws 而请求仍走 HTTP POST。默认面取零值 ⇒ 只走 HTTP 的部署
+	// 键形状与改动前逐字节一致（取值面 = CodexResponsesTransport.Key()）。
+	transport string
 }
 
 // egressDigest 出口摘要（identityKey 的 proxy 维）：直连（零值 Spec）→ 全零，
@@ -951,7 +987,17 @@ func (a *Codex) evict(accountID int64) {
 //     网关按既有 failover 分类处理）
 //   - *HTTPError → 信封包装（EnvelopeError：StatusCode()/RawJSON()/Unwrap 链）
 //   - 其余（网络/解析等）原样透传（code 0 连接级分类）
+//
+// 背压（codexsdk.ErrWSBackpressure）是**传输层**错误而非协议终态：上游没坏、
+// 下游消费太慢。sentinel 换 sentinel（不按字符串匹配），并保留原始错误链——
+// `errors.Is(mapped, domain.ErrUpstreamBackpressure)` 与
+// `errors.Is(mapped, codexsdk.ErrWSBackpressure)` 同时为真，调用方既能按网关
+// 语义分类（不误判成网络失败/鉴权失败去重试与冷却账号），又能回溯 SDK 原始面。
+// 包装风格与 repository/usage_repo.go:86 的 ErrPartitionUnavailable 一致。
 func (a *Codex) translateError(e *codexEntry, err error) error {
+	if errors.Is(err, codexsdk.ErrWSBackpressure) {
+		return fmt.Errorf("%w: %w", domain.ErrUpstreamBackpressure, err)
+	}
 	if f := asFatal(err); f != nil {
 		// 双源去重（与 reportFatal 同语义，直接复用）：
 		// CAS 在回调路径已胜出则此处跳过（单次上报）；PAT/无回调路径此处补报
