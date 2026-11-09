@@ -81,6 +81,12 @@ max_idle_conns_per_host = 2048
 idle_conn_timeout = "90s"
 dial_timeout = "10s"
 force_http2 = true
+# h2 连接分片数（spec-upstream-h2-sharding）：>1 时上游并发摊到 N 个独立连接池，
+# 换 N 倍上行 BDP 与 1/N 的 TCP HOL 影响面。**示例值 8，未经判据验证**——收益只在
+# "上游连接窗小 + RTT 高 + 并发大 body"时存在；先按规格 §5 抓帧（GODEBUG=
+# http2debug=2 读对端连接窗）或 AB 压测，窗 >= 1MiB 就别开。1 = 历史行为/回滚
+#（恢复单 transport，不保证单连接）。只在 force_http2 = true 时生效。
+http2_shards = 8
 
 [scheduler]
 default_max_concurrency = 8

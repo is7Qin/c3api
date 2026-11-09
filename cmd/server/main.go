@@ -252,11 +252,19 @@ func main() {
 		IdleConnTimeout:     cfg.Upstream.IdleConnTimeout,
 		DialTimeout:         cfg.Upstream.DialTimeout,
 		ForceHTTP2:          cfg.Upstream.ForceHTTP2,
+		HTTP2Shards:         cfg.Upstream.HTTP2Shards,
 		// Proxy 显式直连（防劫持）：HTTP_PROXY 环境变量不再静默改道
 		// 上游请求（含 x-api-key/Authorization 凭据，WS 升级大概率失败）；
 		// 压测行为不随部署环境漂移。
 		Proxy: nil,
 	})
+	// 分片依赖 h2：force_http2=false 时 h1 每请求独占连接，本来就没有共享连接窗，
+	// httpx.NewClient 会退回单 transport（不报错），此处只留一条启动日志说明
+	// "http2_shards 没生效"，否则运维会以为已打开。
+	if cfg.Upstream.HTTP2Shards > 1 && !cfg.Upstream.ForceHTTP2 {
+		log.Warn("upstream.http2_shards ignored: force_http2=false",
+			logx.Int("http2_shards", cfg.Upstream.HTTP2Shards))
+	}
 	egressPool := egress.NewPool(hc)
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,

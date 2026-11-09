@@ -130,6 +130,10 @@ type UpstreamConfig struct {
 	IdleConnTimeout     time.Duration `koanf:"idle_conn_timeout"`
 	DialTimeout         time.Duration `koanf:"dial_timeout"`
 	ForceHTTP2          bool          `koanf:"force_http2"`
+	// HTTP2Shards h2 连接分片数（spec-upstream-h2-sharding）：>1 时上游并发摊到 N 个
+	// 独立连接池，换 N 倍上行 BDP 与 1/N 的 TCP HOL 影响面；1 = 历史行为（回滚开关）。
+	// 只在 force_http2 = true 时生效（h1 无共享连接窗，分片只会放大连接数）。
+	HTTP2Shards int `koanf:"http2_shards"`
 }
 
 // SchedulerConfig 注意：cooldown_429 / backoff_base / backoff_max 已删除
@@ -180,7 +184,7 @@ func defaults() *Config {
 		// 显式配置同名参数时尊重不覆盖；statement_timeout 不设会话级——副作用核实见 f1-impl-report.md）。
 		DB:        DBConfig{MaxConns: 20},
 		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10, StreamKeepaliveInterval: 10 * time.Second},
-		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true},
+		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true, HTTP2Shards: 1},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
 		Billing:   BillingConfig{Enabled: true, FlushInterval: 250 * time.Millisecond, BalanceRefreshInterval: 10 * time.Second},
@@ -307,6 +311,7 @@ func validate(c *Config) error {
 		// proxy.max_body_size：n<1 经 MaxBytesReader 归一 0 → 全量非空请求 413
 		// （internal/proxy/caller.go 用法；spec 2026-08-17 补下限，启动即拒绝）。
 		{"proxy.max_body_size", int(c.Proxy.MaxBodySize)},
+		{"upstream.http2_shards", c.Upstream.HTTP2Shards},
 	} {
 		if n.value < 1 {
 			return fmt.Errorf("%s must be >= 1 (got %d)", n.path, n.value)
@@ -315,6 +320,11 @@ func validate(c *Config) error {
 	// proxy.failover_attempts 上限 8（intelligent routing 契约）：AttemptPlan 用
 	// 固定 [8] attempted-ID 集做跨账号去重，>8 无法保证不重复选号；启动即拒绝，
 	// 与下限 1 成对锁定合法域 1..8（默认 3）。
+	// upstream.http2_shards 上限 64：分片数就是连接数与 fd 的乘数（每个活跃 origin
+	// 每片一条长连），再大只会在 TLS 握手上烧 CPU；合法域 1..64，默认 1（opt-in）。
+	if c.Upstream.HTTP2Shards > 64 {
+		return fmt.Errorf("upstream.http2_shards must be <= 64 (got %d)", c.Upstream.HTTP2Shards)
+	}
 	if c.Proxy.FailoverAttempts > 8 {
 		return fmt.Errorf("proxy.failover_attempts must be <= 8 (got %d)", c.Proxy.FailoverAttempts)
 	}

@@ -427,3 +427,32 @@ func TestLoadLowBalanceConcValidation(t *testing.T) {
 		}
 	})
 }
+
+// TestLoadHTTP2ShardsBounds：upstream.http2_shards 合法域 1..64（默认 1 = 历史行为）。
+// 0/负数必须在 shareConns 之前被拒（否则除零/静默单路径）；65 起拒（分片数就是连接
+// 数与 fd 的乘数）。
+func TestLoadHTTP2ShardsBounds(t *testing.T) {
+	setenvRequired(t)
+
+	c, err := Load("")
+	require.NoError(t, err)
+	require.Equal(t, 1, c.Upstream.HTTP2Shards, "默认 1：不写该键的部署行为逐字节不变")
+
+	for _, v := range []struct {
+		raw  string
+		want int
+	}{{"1", 1}, {"8", 8}, {"64", 64}} {
+		t.Run("accept "+v.raw, func(t *testing.T) {
+			c, err := Load(writeConfig(t, "upstream = { http2_shards = "+v.raw+" }"))
+			require.NoError(t, err)
+			require.Equal(t, v.want, c.Upstream.HTTP2Shards, "加载后的值必须等于输入值")
+		})
+	}
+	for _, v := range []string{"0", "-1", "65"} {
+		t.Run("reject "+v, func(t *testing.T) {
+			_, err := Load(writeConfig(t, "upstream = { http2_shards = "+v+" }"))
+			require.Error(t, err)
+			require.ErrorContains(t, err, "upstream.http2_shards")
+		})
+	}
+}
