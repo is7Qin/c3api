@@ -104,7 +104,8 @@ helm install c3api ./deploy/helm \
 | `app.tmpVolume` | Mount emptyDir at `/tmp` | `true` |
 | `app.securityContext` | Non-root / dropped caps | see `values.yaml` |
 | `app.probes.*` | startup/liveness/readiness probes on `/healthz` | enabled |
-| `app.terminationGracePeriodSeconds` | Graceful shutdown budget — must be >= `server.shutdown_drain` + 8s tail (default 2s + 8s => 10s) | `60` |
+| `app.terminationGracePeriodSeconds` | Graceful shutdown budget — must be >= `server.shutdown_drain` + 11s (8s main tail + 3s independent tail); e.g. drain `2s` => 13s | `60` |
+| `app.lifecycle` | Container `lifecycle` block rendered verbatim (e.g. `preStop` sleep so endpoints drain before SIGTERM). Counted **inside** the grace period | `{}` |
 | `app.strategy` | RollingUpdate `maxUnavailable`/`maxSurge` | `0` / `1` |
 | `app.revisionHistoryLimit` | Old ReplicaSets kept | `3` |
 | `app.minReadySeconds` | Seconds a pod must be ready before available | `0` |

@@ -69,7 +69,8 @@
         "env": { "type": "object" },
         "readOnlyRootFilesystem": { "type": "boolean" },
         "tmpVolume": { "type": "boolean" },
-        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 }
+        "terminationGracePeriodSeconds": { "type": "integer", "minimum": 0 },
+        "lifecycle": { "type": "object" }
       }
     },
     "service": {

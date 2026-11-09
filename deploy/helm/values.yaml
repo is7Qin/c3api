@@ -73,6 +73,14 @@ app:
       cpu: "2"
       memory: "2Gi"
   podAnnotations: {}
+  # lifecycle 原样渲染进容器的 lifecycle 段（可选）。典型用途：滚动更新时先让端点从
+  # Service 摘除、再收 SIGTERM，避免在途新请求打到已关闭的监听器（502）：
+  #   lifecycle:
+  #     preStop:
+  #       exec:
+  #         command: ["sleep", "5"]
+  # 注意：preStop 的时长**计入** terminationGracePeriodSeconds。
+  lifecycle: {}
   nodeSelector: {}
   tolerations: []
   affinity: {}
