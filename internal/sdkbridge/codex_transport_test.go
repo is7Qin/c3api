@@ -112,7 +112,7 @@ func isWebsocketUpgrade(r *http.Request) bool {
 // ——它同时覆盖 HTTP POST 与 WS 拨号）。
 func transportTestCodex(t *testing.T, srvURL string) *Codex {
 	t.Helper()
-	return NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srvURL)), RotationDeps{})
+	return NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srvURL)), nil, RotationDeps{})
 }
 
 func transportTestCred() *domain.AccountCredential {
@@ -234,7 +234,7 @@ func TestCodexResponsesTransportReachesChosenLeg(t *testing.T) {
 // 不同传输必须是不同 client 条目——否则"模板改成 ws、client 命中旧条目"会让
 // Selection 说 ws 而请求仍走 HTTP。同时钉住 Key() 归一："" 与 "http" 同条目。
 func TestCodexTransportIsClientKeyDimension(t *testing.T) {
-	a := NewCodex(nil, testEgressPool(nil), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := transportTestCred()
 	eg := a.DirectEgress()
 
@@ -243,19 +243,19 @@ func TestCodexTransportIsClientKeyDimension(t *testing.T) {
 	_, httpClient, err := a.clientFor(cred, eg, domain.CodexResponsesTransportHTTP)
 	require.NoError(t, err)
 	require.NotSame(t, wsClient, httpClient, "同身份不同传输必须是不同 client（构造期参数无法替换）")
-	require.Len(t, e.clients, 2, "ws 与 http 各占一条")
+	require.Len(t, a.clients.clients[transportTestCred().AccountID], 2, "ws 与 http 各占一条")
 
 	_, defaultClient, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Same(t, httpClient, defaultClient, `"" 与 "http" 必须落同一条目（Key() 归一）`)
-	require.Len(t, e.clients, 2, `"" 不得再开一条`)
+	require.Len(t, a.clients.clients[transportTestCred().AccountID], 2, `"" 不得再开一条`)
 
 	// 键里的确有 transport 维（不是"两个条目恰好不同"）：ws 维的键命中 ws 条目，
 	// 而零值键（= Key() 归一的 HTTP 面）命中 HTTP 条目——两组键各自落桶。
 	keyWS := clientKey{transport: domain.CodexResponsesTransportWS.Key()}
-	require.Same(t, wsClient, testCachedClient(e, keyWS), "ws 条目按含 transport 维的键落桶")
-	require.Same(t, httpClient, testCachedClient(e, clientKey{}), "零值键落 HTTP 条目（Key() 归一面）")
-	require.NotSame(t, wsClient, testCachedClient(e, clientKey{}), "零值键不得命中 ws 条目")
+	require.Same(t, wsClient, testCachedClient(a, e, keyWS), "ws 条目按含 transport 维的键落桶")
+	require.Same(t, httpClient, testCachedClient(a, e, clientKey{}), "零值键落 HTTP 条目（Key() 归一面）")
+	require.NotSame(t, wsClient, testCachedClient(a, e, clientKey{}), "零值键不得命中 ws 条目")
 }
 
 // TestCodexTransportSwitchChangesLegWithinOneInstance 键维的**行为面**证据：同一个
@@ -293,16 +293,16 @@ func TestCodexTransportSwitchChangesLegWithinOneInstance(t *testing.T) {
 	require.Equal(t, 2, posts, `显式 http 与 "" 同条目 ⇒ 复用已构造的 HTTP client，再打一次 POST`)
 
 	// 三次调用只该有两条条目（""/"http" 归一 + ws）。
-	e, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	_, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	require.Len(t, e.clients, 2)
+	require.Len(t, a.clients.clients[transportTestCred().AccountID], 2)
 }
 
 // TestCodexTranslateErrorMapsWSBackpressure 背压：SDK sentinel → 领域 sentinel。
 // 双向链都要能 errors.Is（网关按领域语义分类，同时保留 SDK 原始面可回溯），
 // 且不得被 fatal 判定误当成账号级终止、也不得被当成"网络故障"。
 func TestCodexTranslateErrorMapsWSBackpressure(t *testing.T) {
-	a := NewCodex(nil, testEgressPool(nil), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	mapped := a.translateError(nil, codexsdk.ErrWSBackpressure)
 	require.ErrorIs(t, mapped, domain.ErrUpstreamBackpressure, "领域 sentinel 必须可判")
 	require.ErrorIs(t, mapped, codexsdk.ErrWSBackpressure, "原始 SDK 错误链必须保留")

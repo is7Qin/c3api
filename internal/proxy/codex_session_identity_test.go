@@ -29,6 +29,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/scheduler"
 )
 
 // sessionWSStep 上游对**一次**请求的响应脚本：created →（可选）metadata →
@@ -510,4 +511,78 @@ func mustPost(t *testing.T, srv *httptest.Server) *http.Request {
 	req.Header.Set("Authorization", "Bearer ck-1")
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+// TestSessionCredentialReplacementDropsOldTurnState 凭据替换后**第一个**请求就不得
+// 重放旧 owner 的 ts（B1 回归，oracle 探针的正式版）。
+//
+// 判据：首请求拿到上游事件签发的 T-old-owner（会话 ts = T-old-owner）；管理面换 PAT
+// 并 reload 之后，第二个请求仍在同一会话/同一线程上（不是靠换会话掩盖问题），但帧内
+// 不得再带那个值——owner 对齐发生在 Identity 构造之前，而不是 SDK 调用内部。
+func TestSessionCredentialReplacementDropsOldTurnState(t *testing.T) {
+	up, u := newSessionWSUpstream(t, "",
+		sessionWSStep{id: "cc1", ts: "T-old-owner", usage: true},
+		sessionWSStep{id: "cc2", usage: true})
+	p, accs := newSessionWSProxy(t, up.URL, 1)
+	p.turnStateReplay = true // 策略 true 才暴露"带了什么 ts"（§5.1）
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+
+	next := "pat-new-owner"
+	accs[10][0].Ext.CodexPATKey = &next
+	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+
+	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+
+	got := u.requests()
+	require.Len(t, got, 2)
+	require.Equal(t, "", got[0].ts, "轮首不带 ts")
+	require.Equal(t, got[0].thread, got[1].thread, "同一会话（换会话会掩盖问题）")
+	require.Empty(t, got[1].ts, "新凭据不得重放旧 owner 的 ts")
+}
+
+// TestSessionAccountRemovalClosesTransportResources 账号移除的端到端接线（§3.2）：
+// 账号从账号集合消失（重载的池注册表差分 = 实际移除事件）⇒ 其 WS 空闲连接被关、
+// 请求不再路由到它；账号回来后按新条目重建（旧 client 不复活）。
+func TestSessionAccountRemovalClosesTransportResources(t *testing.T) {
+	up, u := newSessionWSUpstream(t, "", sessionWSStep{id: "arm1", usage: true})
+	p, accs := newSessionWSProxy(t, up.URL, 1)
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+	require.Equal(t, 1, u.upgradeCount())
+
+	// 账号消失（管理面删除 = 装载结果里不再有它）→ 重载 ⇒ 池注册表差分触发移除。
+	account := accs[10][0]
+	delete(accs, 10)
+	require.NoError(t, p.sched.InvalidateAllSync())
+	// 把 staged 静态根刷出去并清掉该路由的决策（生产里由编译车道对空组发布）；
+	// publishTestRoutes 只遍历 loader 里仍有账号的组，这里是空组，得显式驱动。
+	p.sched.PublishDecisionForTest(scheduler.RouteRefFor(10, string(domain.FormatOpenAIResponses), ""), nil)
+
+	select {
+	case <-u.closedCh:
+	case <-time.After(15 * time.Second):
+		t.Fatal("账号移除后该账号的 WS 空闲连接未被关闭")
+	}
+
+	gone := postResponses(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+	goneBody, _ := io.ReadAll(gone.Body)
+	gone.Body.Close()
+	require.NotEqual(t, http.StatusOK, gone.StatusCode, "账号已移除，不得再路由：%s", string(goneBody))
+	require.Equal(t, 1, u.upgradeCount(), "失败请求不得新开连接")
+
+	// 账号回来（重新导入）⇒ 重建条目/连接，新一轮会话可正常出网。
+	accs[10] = []*domain.Account{account}
+	require.NoError(t, p.sched.InvalidateAllSync())
+	publishTestRoutes(t, p.sched)
+	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+	require.Equal(t, 2, u.upgradeCount(), "旧 idle 已关闭：重新出网必须重拨")
+	reqs := u.requests()
+	require.Len(t, reqs, 2)
+	require.NotEqual(t, reqs[0].thread, reqs[1].thread, "账号移除后是新会话（池不复活）")
 }

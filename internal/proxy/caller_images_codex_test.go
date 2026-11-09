@@ -212,7 +212,7 @@ func newTestCodexProxy(t *testing.T, credType credential.Type, accounts map[int6
 	// 统一失效回调（装配形态）：落库替身 + 真实调度器摘除（FailAccount——
 	// 失效标记断言依赖真实摘除，路由"不重试同账号"才成立）。
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, nil, sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codex})
 	return p, store
 }
@@ -735,7 +735,7 @@ func TestImagesCodexMixedGroupFailoverReset(t *testing.T) {
 	errlogW := usage.NewErrLogWorker(usage.ErrLogConfig{QueueSize: 4096, FlushInterval: time.Hour}, store, nil)
 	fs := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: fs, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, nil, sdkbridge.RotationDeps{})
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true,

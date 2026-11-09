@@ -108,7 +108,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 		UpstreamTimeout:       5 * time.Second,
 		UpstreamStreamTimeout: 30 * time.Second,
 	})
-	codex := sdkbridge.NewCodex(nil, egPool, sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(nil, egPool, nil, sdkbridge.RotationDeps{})
 	p := New(Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,

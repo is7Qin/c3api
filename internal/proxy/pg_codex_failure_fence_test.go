@@ -148,7 +148,7 @@ func TestCodexFatalChainUsesFencedPathPG(t *testing.T) {
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
 		Store: repos.Accounts, Failer: sched, Latch: ls, Publisher: pub,
 	})
-	adapter := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	adapter := sdkbridge.NewCodex(failure, egPool, nil, sdkbridge.RotationDeps{})
 
 	ext, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)

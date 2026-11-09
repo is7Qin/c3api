@@ -453,7 +453,7 @@ func newCodexWSProxyWithMapping(t *testing.T, upstream string, mode domain.Model
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, nil, sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 	return p, store
 }

@@ -91,7 +91,7 @@ func TestCodexFatalChainPG(t *testing.T) {
 	require.NoError(t, sched.Start(sctx, nil))
 	t.Cleanup(scancel)
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: repos.Accounts, Failer: sched, Log: nil})
-	adapter := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	adapter := sdkbridge.NewCodex(failure, egPool, nil, sdkbridge.RotationDeps{})
 
 	// 触发：fatal（refresh 判死）→ 统一回调全链路
 	ext, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)

@@ -38,9 +38,9 @@ var batchStageTimeout = 10 * time.Second
 // 失败序列下，其最终 canonical decision bytes 与静态拓扑 == 按同一排序去重
 // ids 顺序执行单组路径并最终编译的结果（允许合并中间 generation/发布序列）。
 func (s *Scheduler) InvalidateGroups(ids []int64) {
-	s.publisher.mu.Lock()
-	defer s.publisher.mu.Unlock()
-	s.invalidateGroupsLocked(ids)
+	s.withPublisherLock(func(reclaim *poolReclaim) {
+		s.invalidateGroupsLocked(ids, reclaim)
+	})
 }
 
 // invalidateGroupsLocked 是加锁私有本体（调用方已持 publisher.mu）。禁止
@@ -52,7 +52,7 @@ func (s *Scheduler) InvalidateGroups(ids []int64) {
 // 超时走同一失败分支（置位 + 跳过），不把失败响应当空组。
 // 仅当至少一组成功（succeeded）才 stage：一次 newStaticView + 一次 stage +
 // 一次 enqueueCompileScope（有序去重）+ 一次 RequestCompile（先 scope 后 wake）。
-func (s *Scheduler) invalidateGroupsLocked(ids []int64) {
+func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 	gids := sortedUniqueInt64(ids)
 	if len(gids) == 0 {
 		return
@@ -67,6 +67,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64) {
 	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(ctx)
 	m, byID, pools := s.workingRootLocked()
+	prevPools := pools
 	var scope []int64
 	succeeded := false
 	for _, gid := range gids {
@@ -86,12 +87,13 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64) {
 		}
 		succeeded = true
 		var stepScope []int64
-		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs)
+		stepScope, pools = s.invalidateOneIntoLocked(m, byID, pools, gid, accs, reclaim)
 		scope = unionScope(scope, stepScope)
 	}
 	if !succeeded {
 		return
 	}
+	collectRemovedAccounts(prevPools, pools, reclaim)
 	sv := newStaticView(m, byID, pools)
 	s.publisher.stageLocked(sv)
 	// this staging touches exactly scope — the lane recomputes only their
@@ -136,7 +138,7 @@ func (s *Scheduler) workingRootLocked() (map[int64]*groupSnapshot, map[int64]*ac
 // groups' fix-ups read the CURRENT step's working m (seeing prior groups and
 // this step's removed-group replacement); pools are rebuilt once per successful
 // group (step-wise buildIdentityPools over the updated working byID).
-func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry, gid int64, accs []*domain.Account) (scope []int64, poolsOut *identityRegistry) {
+func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map[int64]*accountSnapshot, pools *identityRegistry, gid int64, accs []*domain.Account, reclaim *poolReclaim) (scope []int64, poolsOut *identityRegistry) {
 	// Capture the pre-step source: oldGroup must be read before m[gid] is
 	// replaced by this step's fresh snapshot.
 	oldGroup := m[gid]
@@ -267,7 +269,7 @@ func (s *Scheduler) invalidateOneIntoLocked(m map[int64]*groupSnapshot, byID map
 	// （P0-3）——否则调高 max_concurrency / 新增账号的窗口内门禁上限已变新而池
 	// 仍旧（新增账号无池 → 不注入身份；旧 K 槽不足 → claim==nil 兜底）。
 	// 逐步池转换：每成功组一次全表重建，prev 源 = 上一步工作池，不得重取批前源。
-	poolsOut = s.buildIdentityPools(byID, pools)
+	poolsOut = s.buildIdentityPools(byID, pools, reclaim)
 	return scope, poolsOut
 }
 

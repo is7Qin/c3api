@@ -27,12 +27,17 @@ import (
 // fatal → 统一回调（双源去重）+ 轮转回写。新增能力（流式 / Dial /
 // resp）同形态扩展本文件。
 type Codex struct {
-	mu      sync.Mutex
-	entries map[int64]*codexEntry // accountID → 客户端缓存（同账号复用）
+	// clients 账号 → 传输资源表（条目 + 出口×传输 的 HTTPClient）。**构造期注入的
+	// 共享组件**：同一个实例也交给调度器（线程退役 / 账号移除），所以两侧不互相
+	// 持有、构造顺序单向（AGENTS.md「禁止事后回填」）。nil = 本适配层自建（无调度器
+	// 共享的用法，如纯单位用例；生产装配必须显式传同一个实例）。
+	clients *ClientTable
 	failure FailureHandler        // 统一失效回调；nil = no-op（测试/未装配）
 	rotate  RotationStore         // 轮转回写落库面；nil = 不落库（测试/未装配）
 	inval   func(accountID int64) // 回写后失效账号快照条目（下个会话重载新凭据）；nil = 不失效
 	log     *logx.Logger          // 回写/失效错误日志；nil = 不记
+	// wsCache 每个 client 的 WS 空闲连接上限（构造期参数；见 Options.WSConnCache）。
+	wsCache int
 	// egress 出口池（构造期注入；M3 取代旧的单个 http.RoundTripper 字段）。
 	// SDK 客户端的 transport 是**构造期**参数，所以出口只能按账号在 clientFor
 	// 构造时注入（`eg.HTTP.Transport`——与 HTTP 面共享同一连接池）；同一账号
@@ -89,21 +94,22 @@ type RotationDeps struct {
 const codexWSConnCacheCapacity = 2 * 1024
 
 // codexEntry 单账号缓存条目：Auth（HTTP/WS 双面共享——at 缓存/单飞/rt 轮换
-// 在 SDK Auth 内）+ HTTPClient 多条目缓存（按身份签名，nil = 未构造）+ 重建
-// 判定签名 + fatal 已上报标记（双源去重——回调路径与 errors.As 路径共享同一 CAS）。
+// 在 SDK Auth 内）+ 重建判定签名 + fatal 已上报标记（双源去重——回调路径与
+// errors.As 路径共享同一 CAS）。
 // expiresAt 为构造时凭据携带的旧过期时刻（轮转回调无 expiry，回写保旧
 // 用；外部凭据变更 → 重建刷新）。
+//
+// client 桶**不在条目上**：它们由 ClientTable 按账号持有（键 = 出口 × responses
+// 传输），因为那张表要同时服务调度器的退役/移除。旧注释「条目数有界（出口数 × 2
+// 条传输），不需要 LRU」是错的——proxy 维是出口**规格摘要**，代理地址/密码轮换
+// 每次都产生新键，不回收即无界（B3）。回收点在 ClientTable.Client（活跃集）。
+//
+// turn-state 也不在条目上：存储属会话（scheduler.codexSession），经 Identity.Sink
+// 写入、经 Identity.TurnState 读出。
 type codexEntry struct {
 	accountID int64
 	auth      codexsdk.Auth
 	sig       credKey // 凭据签名（外部凭据变更 → 重建）
-	// clients HTTP 面客户端缓存：键 = **纯传输维度**（出口 × responses 传输）——
-	// 两者都是 SDK 的构造期参数。身份不在键里：身份是请求数据（§3.1），所以同一条
-	// client 服务该账号全部会话，条目数有界（出口数 × 2 条传输），不需要 LRU。
-	//
-	// turn-state 也不在条目上：存储属会话（scheduler.codexSession），经 Identity.Sink
-	// 写入、经 Identity.TurnState 读出。
-	clients   map[clientKey]*codexsdk.HTTPClient
 	expiresAt *time.Time
 	reported  atomic.Bool
 	// usage 额度快照缓存（GetUsageSnapshot 5min TTL）+ 失败冷却起点
@@ -113,22 +119,46 @@ type codexEntry struct {
 	usageAt    time.Time
 	usageErrAt time.Time
 	usageErr   error
+	// usageMu 保护上面四个字段：它们由 usage 拉取协程与快照读取面并发访问，与
+	// **条目重建**无关——所以用条目自己的叶锁，不复用表锁（表锁只保护 map 与
+	// client 桶的摘除）。
+	usageMu sync.Mutex
+}
+
+// Options 构造期开关（零值 = 生产默认）。
+type Options struct {
+	// WSConnCache 每个 HTTPClient 的 WS 空闲连接上限；0 = 生产默认
+	// （codexWSConnCacheCapacity）。它只是**可测性**入口：上限是构造期参数，
+	// 而"空闲数不超过构造期上限"（G7）只有把小容量注入进去才能行为观测。
+	WSConnCache int
 }
 
 // NewCodex 构造 codex 适配层。failure 为统一失效回调（适配层构造注册
 // WithOnAuthFatal → 回调；nil = 上报 no-op——测试替身形态）；egressPool 为出口池
 // （构造期注入，生产 = main 里与调度器 Config.Egress 同一个池；客户端 transport
-// 就从这个池的 client 上取，spec-proxy-pool §4.6）；rotation 为轮转回写面
+// 就从这个池的 client 上取，spec-proxy-pool §4.6）；clients 为账号传输资源表
+// （构造期注入，生产 = 与 scheduler.Config.RetireThread/RemoveAccount 同一个实例；
+// nil = 本适配层自建，只适用于不需要跨组件退役的用法）；rotation 为轮转回写面
 // （零值 = 不落库/不失效/不记，测试与未装配形态）。
-// 三者皆为构造期依赖，一次给齐——构造后不存在“半装配”的 Codex。
-func NewCodex(failure FailureHandler, egressPool *egress.Pool, rotation RotationDeps) *Codex {
+// 全部构造期依赖一次给齐——构造后不存在“半装配”的 Codex，也没有事后回填。
+func NewCodex(failure FailureHandler, egressPool *egress.Pool, clients *ClientTable, rotation RotationDeps, opts ...Options) *Codex {
+	if clients == nil {
+		clients = NewClientTable()
+	}
+	wsCache := codexWSConnCacheCapacity
+	for _, o := range opts {
+		if o.WSConnCache > 0 {
+			wsCache = o.WSConnCache
+		}
+	}
 	return &Codex{
+		clients:       clients,
 		failure:       failure,
 		egress:        egressPool,
 		rotate:        rotation.Store,
 		inval:         rotation.InvalidateSnapshot,
 		log:           rotation.Log,
-		entries:       make(map[int64]*codexEntry),
+		wsCache:       wsCache,
 		usageSem:      make(chan struct{}, usageFetchConcurrency),
 		usageTTL:      defaultUsageSnapshotTTL,
 		usageCooldown: defaultUsageCooldown,
@@ -311,31 +341,12 @@ func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, 
 // 条目承载 Auth（HTTP 面 GenerateImage/Stream 与 WS 面 Dial 共享——连接
 // per-请求不缓存，Auth 账号级状态跨面复用；HTTPClient 由 clientFor 懒构造）。
 func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
-	sig := credSig(cred)
-	a.mu.Lock()
-	old := a.entries[cred.AccountID]
-	if old != nil && old.sig == sig {
-		a.mu.Unlock()
-		return old, nil
-	}
-	e := &codexEntry{accountID: cred.AccountID, sig: sig}
-	auth, err := a.buildAuth(cred, e)
-	// 锁内摘除、锁外关闭（G4）：覆盖旧条目时它名下的 HTTPClient 全部弃用，其中
-	// 的 WS 空闲连接必须主动关（否则旧 socket 一直挂在上游，直到 TTL 到期）。
-	var dropped []*codexsdk.HTTPClient
-	if err == nil {
-		e.auth = auth
-		if old != nil {
-			dropped = old.takeClients()
-		}
-		a.entries[cred.AccountID] = e
-	}
-	a.mu.Unlock()
-	closeWSIdleConns(dropped)
+	e, err := a.clients.Entry(cred.AccountID, credSig(cred), func(e *codexEntry) (codexsdk.Auth, error) {
+		return a.buildAuth(cred, e)
+	})
 	if err != nil {
-		// 构造失败（空 rt 等）：锁外上报（reportFatal → evict 需取
-		// a.mu——锁内调用即重入死锁；sync.Mutex 不可重入）。旧条目仍在表里
-		// （构建失败不覆盖），所以上面也没摘它的 client。
+		// 构造失败（空 rt 等）：锁外上报（reportFatal → RemoveAccount 要取表锁——
+		// 锁内调用即重入死锁）。旧条目仍在表里（构建失败不覆盖）。
 		a.reportFatal(e, err)
 		return nil, err
 	}
@@ -387,8 +398,8 @@ func egressDigest(eg *egress.Client) [16]byte {
 // 这也是 S1（连接身份去 ts）在网关侧成立的前提：client 跨轮存活，连接才可能跨轮
 // 存活。
 //
-// NewHTTPClient 为纯构造（无 I/O 无 error）；构造/读取全程持 a.mu。返回选中的
-// 客户端供调用面直用。
+// NewHTTPClient 为纯构造（无 I/O 无 error）；取表/构造全程在 ClientTable 的锁内。
+// 返回选中的客户端供调用面直用。
 //
 // transport 为 responses 出站传输（spec §5）：SDK 侧同样是**构造期**参数，不入
 // 键就会"Selection 说 ws、请求仍走 HTTP POST"。
@@ -402,13 +413,8 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, eg *egress.Client, tra
 		return nil, nil, err
 	}
 	key := clientKey{proxy: egressDigest(eg), transport: transport.Key()}
-	a.mu.Lock()
-	if e.clients == nil {
-		e.clients = make(map[clientKey]*codexsdk.HTTPClient)
-	}
-	c := e.clients[key]
-	if c == nil {
-		c = codexsdk.NewHTTPClient(e.auth,
+	c := a.clients.Client(cred.AccountID, key, func() *codexsdk.HTTPClient {
+		return codexsdk.NewHTTPClient(e.auth,
 			// 出口 transport（spec §4.6）：eg 恒非 nil（resolveEgress 保证），直连时
 			// 就是底座 transport、与 HTTP 面共享同一连接池。底座是裸 client
 			// （`Transport == nil`）时 WithTransport(nil) 等价于"不加 Transport"——
@@ -420,51 +426,31 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, eg *egress.Client, tra
 			codexsdk.WithResponsesTransport(codexTransport(transport)),
 			// G6：**必须**开 WS 连接复用。SDK 默认 0 = 每请求一条新连接；不接这一行，
 			// S1（连接身份去 ts）带来的"可复用"就只是潜力，实际上零复用。
-			codexsdk.WithWSConnCache(codexWSConnCacheCapacity),
+			codexsdk.WithWSConnCache(a.wsCache),
 		)
-		e.clients[key] = c
-	}
-	a.mu.Unlock()
+	})
 	return e, c, nil
 }
 
-// takeClients 摘除并返回条目名下全部 HTTPClient（G4）。**a.mu 下调用**：摘除
-// 必须与表操作原子，而关闭（terminate 可能等写闸）必须留在锁外——调用方拿到返回值
-// 后在锁外逐个 closeWSIdleConns。
-func (e *codexEntry) takeClients() []*codexsdk.HTTPClient {
-	if len(e.clients) == 0 {
-		return nil
-	}
-	out := make([]*codexsdk.HTTPClient, 0, len(e.clients))
-	for k, c := range e.clients {
-		out = append(out, c)
-		delete(e.clients, k)
-	}
-	return out
-}
-
 // RetireThread 退役账号某线程的空闲 WS 连接（线程退休 / 重载丢槽的唯一出口）。
+// 实现在 ClientTable（它才是表的所有者）；本方法保留为适配层自用/测试面。
 //
 // 前置条件由会话池保证：调用时该 threadKey 不可能有在飞 exchange（会话独占租借，
-// 退休发生在该请求 `Close` 归还之后），所以只需摘 idle。摘表与 terminate 都在
-// `RetireThread` 内部完成，本方法只负责在**锁外**把整表快照出来再逐条调用。
+// 退休发生在该请求 `Close` 归还之后），所以只需摘 idle。
 func (a *Codex) RetireThread(accountID int64, threadKey string) {
-	if a == nil || threadKey == "" {
+	if a == nil {
 		return
 	}
-	a.mu.Lock()
-	e := a.entries[accountID]
-	var clients []*codexsdk.HTTPClient
-	if e != nil {
-		clients = make([]*codexsdk.HTTPClient, 0, len(e.clients))
-		for _, c := range e.clients {
-			clients = append(clients, c)
-		}
+	a.clients.RetireThread(accountID, threadKey)
+}
+
+// RemoveAccount 账号从账号集合消失时回收其传输资源（§3.2 账号移除）。装配面直接
+// 用 ClientTable.RemoveAccount，不经适配层——两者是同一条路径，这里只是同义入口。
+func (a *Codex) RemoveAccount(accountID int64) {
+	if a == nil {
+		return
 	}
-	a.mu.Unlock()
-	for _, c := range clients {
-		c.RetireThread(threadKey)
-	}
+	a.clients.RemoveAccount(accountID)
 }
 
 // closeWSIdleConns 关闭一批客户端各自的 **WS** 空闲连接（G4）。
@@ -577,14 +563,14 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 		return nil, classifyUsageErr(err)
 	}
 	s := fromSDKUsage(resp)
-	a.mu.Lock()
+	e.usageMu.Lock()
 	e.usage = s
 	e.usageAt = time.Now()
 	// 成功清冷却态（死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
 	// 状态机卫生——检查顺序调整不误服旧哨兵）。
 	e.usageErrAt = time.Time{}
 	e.usageErr = nil
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 	return s, nil
 }
 
@@ -592,9 +578,13 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 // 判定——命中直接返回缓存实例，不经过 clientFor/credSig/
 // entryFor（重建判定）。未命中/无 entry → nil（走完整路径）。
 func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if e := a.entries[accountID]; e != nil && e.usage != nil && time.Since(e.usageAt) < a.usageTTL {
+	e := a.clients.Get(accountID)
+	if e == nil {
+		return nil, false
+	}
+	e.usageMu.Lock()
+	defer e.usageMu.Unlock()
+	if e.usage != nil && time.Since(e.usageAt) < a.usageTTL {
 		return e.usage, true
 	}
 	return nil, false
@@ -602,8 +592,8 @@ func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, 
 
 // snapshotCached 快照 TTL 命中判定（5min 慢变量；e.usage nil = 未拉取过）。
 func (a *Codex) snapshotCached(e *codexEntry) (*domain.CodexUsageSnapshot, bool) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	e.usageMu.Lock()
+	defer e.usageMu.Unlock()
 	if e.usage != nil && time.Since(e.usageAt) < a.usageTTL {
 		return e.usage, true
 	}
@@ -614,8 +604,8 @@ func (a *Codex) snapshotCached(e *codexEntry) (*domain.CodexUsageSnapshot, bool)
 // ErrAuthExpired/ErrUpstream——非错误体，冷却后重试拉取新错误）；冷却外 →
 // nil（可拉取）。
 func (a *Codex) snapshotCooldown(e *codexEntry) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
+	e.usageMu.Lock()
+	defer e.usageMu.Unlock()
 	if !e.usageErrAt.IsZero() && time.Since(e.usageErrAt) < a.usageCooldown {
 		return e.usageErr
 	}
@@ -625,10 +615,10 @@ func (a *Codex) snapshotCooldown(e *codexEntry) error {
 // recordUsageFailure 失败冷却起点（gate Major 2）：写 usageErrAt + 分类哨兵
 // （不缓存错误体）。
 func (a *Codex) recordUsageFailure(e *codexEntry, err error) {
-	a.mu.Lock()
+	e.usageMu.Lock()
 	e.usageErrAt = time.Now()
 	e.usageErr = classifyUsageErr(err)
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 }
 
 // classifyUsageErr 错误分类纯判定（gate Major 3——零副作用不上报不摘除）。
@@ -876,9 +866,7 @@ func (a *Codex) FatalAuth(accountID int64, fatal error) {
 	if fatal == nil {
 		return // 防御：无错误不上报
 	}
-	a.mu.Lock()
-	e := a.entries[accountID]
-	a.mu.Unlock()
+	e := a.clients.Get(accountID)
 	if e == nil {
 		return // 并发 fatal 已上报剔除 / 未构造：无 Auth 可毒化，上报已由胜者完成
 	}
@@ -932,22 +920,14 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 // 者——本地 upsert 毫秒级，3s 兜底 PG 故障；超时 → 重试链接管）。
 const rotateWritebackTimeout = 3 * time.Second
 
-// evict 失效剔除（缓存条目摘除 + 其名下 WS 空闲连接关闭；不存在 = no-op——
+// evict 失效剔除（条目摘除 + 其名下 WS 空闲连接关闭；不存在 = no-op——
 // 并发/重复上报安全）。
 //
-// 关闭必须在**锁外**（G4）：条目一旦从表里消失就再没人会复用它，但它的 WS
-// 连接还挂在上游——不主动关就白占一个 socket 直到 TTL/maxAge 到期。terminate
-// 可能在写闸上阻塞，锁内调用会把整张 client 表卡住。
+// 与「账号移除」是同一条运作路径（ClientTable.RemoveAccount）：条目一旦从表里
+// 消失就再没人会复用它，但它的 WS 连接还挂在上游——不主动关就白占一个 socket
+// 直到 TTL/maxAge 到期。摘表在表锁内、terminate 在锁外（G4）。
 func (a *Codex) evict(accountID int64) {
-	a.mu.Lock()
-	e := a.entries[accountID]
-	delete(a.entries, accountID)
-	var dropped []*codexsdk.HTTPClient
-	if e != nil {
-		dropped = e.takeClients()
-	}
-	a.mu.Unlock()
-	closeWSIdleConns(dropped)
+	a.clients.RemoveAccount(accountID)
 }
 
 // translateError SDK 错误 → 网关侧错误翻译（错误契约）：

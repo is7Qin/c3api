@@ -144,7 +144,7 @@ const usageOKBody = `{
 // （若计算签名必触发重建 → 重拉）。
 func TestCodexUsageSnapshotTTL(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -158,9 +158,9 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	// 触发重建重拉（calls → 2）；仍恒 1 = 命中路径不做 sig 拼接/建条目。
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
-	a.mu.Lock()
+	a.clients.mu.Lock()
 	e.sig = credKey{oauthToken: "corrupted-sig"}
-	a.mu.Unlock()
+	a.clients.mu.Unlock()
 
 	for range 5 {
 		got, err := a.GetUsageSnapshot(ctx, cred)
@@ -173,9 +173,9 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 	// entryFor 重建出新条目）
 	e, err = a.entryFor(cred)
 	require.NoError(t, err)
-	a.mu.Lock()
+	e.usageMu.Lock()
 	e.usageAt = time.Now().Add(-a.usageTTL - time.Second)
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 
 	got, err := a.GetUsageSnapshot(ctx, cred)
 	require.NoError(t, err)
@@ -188,7 +188,7 @@ func TestCodexUsageSnapshotTTL(t *testing.T) {
 func TestCodexUsageSnapshotConcurrencyThrottle(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
 	c.release = make(chan struct{})
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	ctx := context.Background()
 
 	const n = 20
@@ -224,7 +224,7 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 		codexUpstreamStep{status: 500, body: `{"error":{"message":"boom"}}`},
 		codexUpstreamStep{status: 200, body: usageOKBody},
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -241,12 +241,12 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 	// 失败不缓存错误体：冷却内返回哨兵（非上游 body 错误）
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
-	a.mu.Lock()
+	e.usageMu.Lock()
 	require.Nil(t, e.usage, "失败不写快照缓存")
 	require.Equal(t, ErrUpstream, e.usageErr, "冷却只存分类哨兵")
 	// 冷却后重试（时间注入：拨旧 usageErrAt 越过冷却——禁 sleep）
 	e.usageErrAt = time.Now().Add(-a.usageCooldown - time.Second)
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 
 	snap, err := a.GetUsageSnapshot(ctx, cred)
 	require.NoError(t, err)
@@ -255,10 +255,10 @@ func TestCodexUsageSnapshotFailureCooldown(t *testing.T) {
 	// 成功清冷却态（死状态不留）：冷却哨兵随成功归零
 	e, err = a.entryFor(cred)
 	require.NoError(t, err)
-	a.mu.Lock()
+	e.usageMu.Lock()
 	require.True(t, e.usageErrAt.IsZero(), "成功路径清空冷却起点")
 	require.Nil(t, e.usageErr, "成功路径清空冷却哨兵")
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 }
 
 // TestCodexUsageSnapshotCancelNoCooldown ctx 取消短路（task review
@@ -291,7 +291,7 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 		_, _ = w.Write([]byte(usageOKBody))
 	}))
 	t.Cleanup(srv.Close)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -303,9 +303,9 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled, "取消身份保留（不误归 ErrUpstream）")
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
-	a.mu.Lock()
+	e.usageMu.Lock()
 	require.True(t, e.usageErrAt.IsZero(), "取消不写 60s 冷却")
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 	close(release) // 放行挂起的首请求（其响应随连接取消丢弃）
 
 	snap, err := a.GetUsageSnapshot(context.Background(), cred)
@@ -330,7 +330,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 	c.release = make(chan struct{}) // handler 积住直至放行
 	release := sync.OnceFunc(func() { close(c.release) })
 	t.Cleanup(release) // 失败路径（t.Fatal 提前退出）先释放闸门——挂起 handler 不阻塞 httptest Close
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	cred := usageCred(1, srv.URL+"/codex/responses")
 	ctx := context.Background()
 
@@ -375,7 +375,7 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 	t.Run("non_fatal_401_upstream", func(t *testing.T) {
 		srv, c := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"message":"invalid token"}}`})
-		a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+		a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 
 		_, err := a.GetUsageSnapshot(context.Background(), usageCred(1, srv.URL+"/codex/responses"))
 		require.ErrorIs(t, err, ErrUpstream, "非致命 401 归上游面（鉴权结论唯一来源 = SDK 致命分类）")
@@ -383,7 +383,7 @@ func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 	})
 	t.Run("fatal_401_auth_expired", func(t *testing.T) {
 		srv, _ := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"code":"token_revoked"}}`})
-		a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+		a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 
 		_, err := a.GetUsageSnapshot(context.Background(), usageCred(2, srv.URL+"/codex/responses"))
 		require.ErrorIs(t, err, ErrAuthExpired, "致命 401 经 SDK 判死走统一 fatal 判定")
@@ -394,7 +394,7 @@ func TestCodexUsageSnapshotHTTP401Classification(t *testing.T) {
 // （errCredentialIncomplete——凭据不完整）→ ErrAuthExpired（不落 default 归
 // ErrUpstream）。
 func TestCodexUsageSnapshotEntryErrAuthExpired(t *testing.T) {
-	a := NewCodex(nil, testEgressPool(nil), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 7, OAuthToken: "at"} // 无 rt 无 PAT
 	_, err := a.GetUsageSnapshot(context.Background(), cred)
 	require.ErrorIs(t, err, ErrAuthExpired, "oauth 缺 rt 凭据 → ErrAuthExpired（入口错误分类）")
@@ -405,7 +405,7 @@ func TestCodexUsageSnapshotEntryErrAuthExpired(t *testing.T) {
 // 且 entry 不被摘除（后续调用仍命中冷却零上游）。
 func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	cred := oauthCred(1, "at-ok", "rt-ok") // oauth（rotationAuth 的 Fatal 生效；PAT Fatal 为 no-op）
 	ctx := context.Background()
 
@@ -420,17 +420,14 @@ func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	a.FatalAuth(1, &codexsdk.RefreshOAuthError{Code: "refresh_token_invalidated", Raw: []byte(`{}`)})
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
-	a.mu.Lock()
+	e.usageMu.Lock()
 	e.usageAt = time.Now().Add(-a.usageTTL - time.Second)
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 
 	_, err = a.GetUsageSnapshot(ctx, cred)
 	require.ErrorIs(t, err, ErrAuthExpired, "fatal → ErrAuthExpired 分类（纯判定）")
 	require.Equal(t, 1, c.callsN(), "凭据失效零上游（Authorization 面直接失败）")
-	a.mu.Lock()
-	_, ok := a.entries[1]
-	a.mu.Unlock()
-	require.True(t, ok, "entry 不被摘除（GetUsageSnapshot 零副作用——红绿：translateError 路径会 evict）")
+	require.NotNil(t, a.clients.Get(1), "entry 不被摘除（GetUsageSnapshot 零副作用——红绿：translateError 路径会 evict）")
 
 	_, err = a.GetUsageSnapshot(ctx, cred)
 	require.ErrorIs(t, err, ErrAuthExpired, "fatal 后仍命中冷却（红绿断言——冷却不随 entry 消失）")
@@ -446,7 +443,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 		codexUpstreamStep{status: 200, body: `{"plan_type":"plan"}`},
 		codexUpstreamStep{status: 200, body: `{"rate_limit":{"primary_window":{"used_percent":50}},"credits":{"balance":""}}`},
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	ctx := context.Background()
 
 	snap, err := a.GetUsageSnapshot(ctx, usageCred(1, srv.URL+"/codex/responses"))
@@ -508,7 +505,7 @@ func TestCodexUsageSnapshotConvergence(t *testing.T) {
 // 重拉）；TTL 过期 + sig 变化 → entry 重建 → 快照缓存随新条目清除 → 重拉。
 func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	ctx := context.Background()
 	base := usageCred(1, srv.URL+"/codex/responses")
 
@@ -526,9 +523,9 @@ func TestCodexUsageSnapshotEntryRebuildClears(t *testing.T) {
 	// TTL 过期 + sig 变化 → 重建条目（usage 随新条目清除）→ 重拉
 	e, err := a.entryFor(base)
 	require.NoError(t, err)
-	a.mu.Lock()
+	e.usageMu.Lock()
 	e.usageAt = time.Now().Add(-a.usageTTL - time.Second)
-	a.mu.Unlock()
+	e.usageMu.Unlock()
 	snap, err = a.GetUsageSnapshot(ctx, changed)
 	require.NoError(t, err)
 	require.Equal(t, "chatgpt-plus", snap.PlanType)

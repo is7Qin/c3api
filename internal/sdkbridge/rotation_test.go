@@ -106,7 +106,7 @@ func TestCodexRotationWritebackPersists(t *testing.T) {
 	up := newRotationUpstream(t, "at-old")
 	refresh := newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	store := &fakeRotationStore{}
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{Store: store})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
 	expires := cred.OAuthExpiresAt
@@ -124,9 +124,7 @@ func TestCodexRotationWritebackPersists(t *testing.T) {
 	require.True(t, calls[0].expiresAt.Equal(*expires), "codex_oauth_expires_at 保旧——防 ClearX 清空回归")
 
 	// 不重建缓存：条目保留（回调写回的是本 Auth 内部已更新状态）
-	a.mu.Lock()
-	e := a.entries[7]
-	a.mu.Unlock()
+	e := a.clients.Get(7)
 	require.NotNil(t, e, "条目保留（不重建不剔除）")
 
 	// 后续请求直接用新 at（零额外 refresh）
@@ -145,7 +143,7 @@ func TestCodexRotationWritebackMissingRefreshKeepsOldRT(t *testing.T) {
 	// refresh 响应缺 refresh_token（auth_oauth.go:402-406 字段均可选）
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new"}`})
 	store := &fakeRotationStore{}
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{Store: store})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
 
@@ -225,7 +223,7 @@ func TestCodexRotationWritebackSingleFlight(t *testing.T) {
 	t.Cleanup(rsrv.Close)
 	t.Setenv("CODEX_REFRESH_TOKEN_URL_OVERRIDE", rsrv.URL)
 	store := &fakeRotationStore{}
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{Store: store})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
 
@@ -262,7 +260,7 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 	)
 	handler := &recordingHandler{}
 	store := &fakeRotationStore{err: errors.New("db down")}
-	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{Store: store})
+	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{Store: store})
 
 	cred := oauthCred(7, "at-old", "rt-1")
 
@@ -296,7 +294,7 @@ func TestCodexRotationWritebackFailureD4Fatal(t *testing.T) {
 func TestCodexRotationWritebackUnwired(t *testing.T) {
 	up := newRotationUpstream(t, "at-old")
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{}) // 未装配 rotate
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{}) // 未装配 rotate
 
 	cred := oauthCred(7, "at-old", "rt-1")
 	_, err := a.GenerateImage(context.Background(), cred, a.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
@@ -310,7 +308,7 @@ func TestRotationCallExpiryNilPreserved(t *testing.T) {
 	up := newRotationUpstream(t, "at-old")
 	newCodexMockRefresh(t, codexUpstreamStep{status: 200, body: `{"access_token":"at-new","refresh_token":"rt-new"}`})
 	store := &fakeRotationStore{}
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{Store: store})
+	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{Store: store})
 
 	cred := &domain.AccountCredential{AccountID: 7, OAuthToken: "at-old", OAuthRefreshToken: "rt-1"}
 	_, err := a.GenerateImage(context.Background(), cred, a.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
@@ -332,7 +330,7 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{})
+	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
 
 	cred := oauthCred(7, "at-1", "rt-1")
 	_, err := a.GenerateImage(context.Background(), cred, a.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
@@ -351,9 +349,7 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 	require.Len(t, handler.snapshot(), 1, "双源去重：errors.As 二次命中同一 fatal → 仍单次上报")
 
 	// 不剔除：毒化条目保留（外部凭据变更 → sig 变化才重建）
-	a.mu.Lock()
-	e := a.entries[7]
-	a.mu.Unlock()
+	e := a.clients.Get(7)
 	require.NotNil(t, e, "FatalAuth 不剔除条目——毒化保留")
 }
 
@@ -361,7 +357,7 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 // no-op 不 panic（条目不存在 = 并发 fatal 已上报剔除，上报已由胜者完成）。
 func TestCodexFatalAuthNilAndMissing(t *testing.T) {
 	handler := &recordingHandler{}
-	a := NewCodex(handler.add, testEgressPool(nil), RotationDeps{})
+	a := NewCodex(handler.add, testEgressPool(nil), nil, RotationDeps{})
 	require.NotPanics(t, func() {
 		a.FatalAuth(7, nil)
 		a.FatalAuth(999, &codexsdk.AuthPermanentlyRevokedError{Code: "token_revoked"})

@@ -189,9 +189,10 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // sel.Model 等价；短路守卫零分配）→ 适配层 Responses → out.Body 写出（直连 =
 // 合成体原样转发 application/json；转换 = responses 合成体经 protoconv 反向映射
 // 回客户端协议 + 客户端模型回填）→ 合成体顶层 usage 提取（SDK 把 response.usage
-// 提升到合成体顶层；无 type 字段）。turn-state：客户端自带 → 透传优先；未带 →
-// 网关注入 held（上游签发值——同轮回传）；合成体无工具调用项（轮结束）→
-// ClearTurnState（跨轮不回传）。日志 Format 由 out.LogFormat() 自报。
+// 提升到合成体顶层；无 type 字段）。turn-state：属**会话**（ts 只经 Identity 发送、
+// 只经 Sink 落回会话，§3.1）——本层不读也不回写；跨轮是否重放由 codexRequestIdentity
+// 的单点策略决定。
+// 日志 Format 由 out.LogFormat() 自报。
 // transport 为出站传输实参（原生车道 = Selection 原值；转换车道钉 http）。
 func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
 	streamBody, err := setModel(body, sel.Model)

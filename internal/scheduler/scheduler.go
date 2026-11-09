@@ -54,9 +54,16 @@ type Config struct {
 	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口推进口径（按完成轮数、每窗口
 	// 随机 span）由 SDK 内部定。
 	RotatePolicy codexsdk.RotatePolicy
-	// RetireThread 退役账号某线程的空闲 WS 连接（sdkbridge.Codex 实现；nil = 未接
-	// ——测试/未装配形态）。线程退休与重载丢槽的唯一出口，装配点只有 main 一处。
+	// RetireThread 退役账号某线程的空闲 WS 连接（sdkbridge.ClientTable 实现；nil =
+	// 未接——测试/未装配形态）。线程退休与重载丢槽的唯一出口。
+	//
+	// 装配是**先构造组件再注入**：ClientTable 在调度器之前构造，同一个实例也交给
+	// codex 适配层（AGENTS.md「禁止事后回填」——不拿闭包回填一个后构造的指针）。
 	RetireThread func(accountID int64, threadKey string)
+	// RemoveAccount 账号从账号集合消失时回收其传输资源（sdkbridge.ClientTable
+	// 实现；nil = 未接）：摘除条目与全部 client、锁外 CloseWSIdleConnections。
+	// 判定点是重载的池注册表差分（§3.2 账号移除）。
+	RemoveAccount func(accountID int64)
 	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
 	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
 	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
@@ -463,10 +470,31 @@ func (s *Scheduler) fireOnMinuteAdvance() {
 // the new static root is built from the newest staged-or-published root and
 // staged as pending — the published pair is never paired with a stale
 // decision (atomic publication: the compile lane publishes the matched pair).
+//
+// 锁内只收集传输资源回收动作（线程退役 / 账号移除），**解锁后**才执行：那些动作
+// 会 terminate SDK 的 WS 连接，可能在写闸上等待，不能把 publisher.mu 拖进去（N1）。
 func (s *Scheduler) reload(ctx context.Context) error {
-	s.publisher.mu.Lock()
-	defer s.publisher.mu.Unlock()
-	return s.reloadLocked(ctx)
+	var err error
+	s.withPublisherLock(func(reclaim *poolReclaim) { err = s.reloadLocked(ctx, reclaim) })
+	return err
+}
+
+// withPublisherLock 在持 publisher.mu 的临界区里跑 fn，**解锁后**再执行本批收集到
+// 的锁外副作用（N1：terminate/Close 可能在 socket 写闸上等待）。defer 解锁保留
+// panic 语义——不能为了"锁外执行"把锁交给每个调用点自己保管。
+func (s *Scheduler) withPublisherLock(fn func(*poolReclaim)) {
+	reclaim := s.newReclaim()
+	func() {
+		s.publisher.mu.Lock()
+		defer s.publisher.mu.Unlock()
+		fn(reclaim)
+	}()
+	reclaim.run()
+}
+
+// newReclaim 本次重载的锁外副作用批次（出口取自构造期注入的两个能力）。
+func (s *Scheduler) newReclaim() *poolReclaim {
+	return &poolReclaim{retire: s.cfg.RetireThread, remove: s.cfg.RemoveAccount}
 }
 
 // reloadLocked is reload's body without taking publisher.mu; the caller must
@@ -477,7 +505,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 // reloadRequired before returning, so every caller (public reload / backstop
 // tick) is naturally closed and no caller has to re-mark. A successful full
 // loader + full stage clears the obligation.
-func (s *Scheduler) reloadLocked(ctx context.Context) error {
+func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) error {
 	// refresh-first baseline (never after — see refreshProbeBaseline).
 	s.refreshProbeBaseline(ctx)
 	m, err := s.loader.LoadGroupsAccounts(ctx)
@@ -517,7 +545,9 @@ func (s *Scheduler) reloadLocked(ctx context.Context) error {
 	// （copy-modify-store）：未变（容量/安装 ID/策略）复用旧池——保留在途
 	// busy 与槽身份，无关重载不重置会话；容量变化才按位次迁移旧槽状态；
 	// 删除的账号其池随注册表替换自然 GC。仅 codex 凭据建池。
-	pools := s.buildIdentityPools(byID, s.prevIdentityPoolsLocked())
+	prevReg := s.prevIdentityPoolsLocked()
+	pools := s.buildIdentityPools(byID, prevReg, reclaim)
+	collectRemovedAccounts(prevReg, pools, reclaim)
 	sv := newStaticView(groups, byID, pools)
 	if s.latch != nil {
 		for id, as := range byID {
@@ -904,9 +934,9 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 // 原子指针发布（buildSnapshots/本方法 copy-modify-Store），读经 atomic.Load()
 // （发布收集仍持 publisher.mu——纪律，无锁外裸读）。
 func (s *Scheduler) InvalidateGroup(groupID int64) {
-	s.publisher.mu.Lock()
-	defer s.publisher.mu.Unlock()
-	s.invalidateGroupsLocked([]int64{groupID})
+	s.withPublisherLock(func(reclaim *poolReclaim) {
+		s.invalidateGroupsLocked([]int64{groupID}, reclaim)
+	})
 }
 
 // InvalidateAccount 单账号快照失效（SDK 接入 §1——轮转回写后同步
@@ -918,19 +948,19 @@ func (s *Scheduler) InvalidateGroup(groupID int64) {
 // 批路径内部 Warn 记录 + 置 reloadRequired，不阻断——令牌已落库，下个会话经
 // 适配层 Auth 内存新 at 自愈。
 func (s *Scheduler) InvalidateAccount(accountID int64) {
-	s.publisher.mu.Lock()
-	defer s.publisher.mu.Unlock()
-	var as *accountSnapshot
-	if s.publisher.pending != nil {
-		as = s.publisher.pending.byID[accountID]
-	} else if cur := s.view.Load(); cur != nil && cur.static != nil {
-		as = cur.static.byID[accountID]
-	}
-	if as == nil {
-		return
-	}
-	gids := append([]int64(nil), as.static.Load().groupIDs...)
-	s.invalidateGroupsLocked(gids)
+	s.withPublisherLock(func(reclaim *poolReclaim) {
+		var as *accountSnapshot
+		if s.publisher.pending != nil {
+			as = s.publisher.pending.byID[accountID]
+		} else if cur := s.view.Load(); cur != nil && cur.static != nil {
+			as = cur.static.byID[accountID]
+		}
+		if as == nil {
+			return
+		}
+		gids := append([]int64(nil), as.static.Load().groupIDs...)
+		s.invalidateGroupsLocked(gids, reclaim)
+	})
 }
 
 // minGID 返回组 ID 集合的最小值——snapshotStatic.gid 的确定性派生。

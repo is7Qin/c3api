@@ -86,7 +86,11 @@ type wsReuseUpstream struct {
 	wsTS     []string // 每次 WS 请求帧的 client_metadata.x-codex-turn-state（按到达序）
 	httpTS   []string // 每次 HTTP 请求的 x-codex-turn-state 头（按到达序）
 	closed   int      // 上游观察到的 WS 连接关闭次数
+	opened   int      // 接受过的 WS 连接总数（open = opened - closed）
 	conns    []*websocket.Conn
+	// closedEvents 每观察到一次对端关闭就投递一次（缓冲足够，永不阻塞）：
+	// "被淘汰/被移除的连接确实被关掉"用通道 + deadline 等，不用 sleep。
+	closedEvents chan struct{}
 
 	// wsClosed 在**首次**观察到对端关闭时关闭（E 的确定性等待点：不用 sleep）。
 	wsClosed chan struct{}
@@ -95,7 +99,7 @@ type wsReuseUpstream struct {
 
 func newWSReuseUpstream(t *testing.T, handshakeTS string, steps ...wsReuseStep) *wsReuseUpstream {
 	t.Helper()
-	u := &wsReuseUpstream{handshakeTS: handshakeTS, wsClosed: make(chan struct{})}
+	u := &wsReuseUpstream{handshakeTS: handshakeTS, wsClosed: make(chan struct{}, 1), closedEvents: make(chan struct{}, 256)}
 	if len(steps) > 0 {
 		u.steps = steps
 		u.last = steps[len(steps)-1]
@@ -128,6 +132,7 @@ func (u *wsReuseUpstream) handle(w http.ResponseWriter, r *http.Request) {
 func (u *wsReuseUpstream) serveWS(w http.ResponseWriter, r *http.Request) {
 	u.mu.Lock()
 	u.upgrades++
+	u.opened++
 	hs := u.handshakeTS
 	u.mu.Unlock()
 	if hs != "" {
@@ -150,6 +155,10 @@ func (u *wsReuseUpstream) serveWS(w http.ResponseWriter, r *http.Request) {
 			u.mu.Lock()
 			u.closed++
 			u.mu.Unlock()
+			select {
+			case u.closedEvents <- struct{}{}:
+			default:
+			}
 			u.closedON.Do(func() { close(u.wsClosed) })
 			return
 		}
@@ -213,6 +222,25 @@ func (u *wsReuseUpstream) closedCount() int {
 	return u.closed
 }
 
+// openCount 上游此刻仍打开的 WS 连接数。
+func (u *wsReuseUpstream) openCount() int {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return u.opened - u.closed
+}
+
+// waitClosed 等上游观察到 n 次连接关闭（通道 + deadline，禁 sleep）。
+func (u *wsReuseUpstream) waitClosed(t *testing.T, n int, what string) {
+	t.Helper()
+	for range n {
+		select {
+		case <-u.closedEvents:
+		case <-time.After(15 * time.Second):
+			t.Fatalf("%s：上游未在 deadline 内观察到第 %d 次连接关闭", what, n)
+		}
+	}
+}
+
 // wsRequestTS 每次 WS 请求帧里带的 turn-state（判据面：网关**实际发出**了什么）。
 func (u *wsReuseUpstream) wsRequestTS() []string {
 	u.mu.Lock()
@@ -250,7 +278,7 @@ func wsReuseCodex(t *testing.T, up *wsReuseUpstream) (*Codex, *atomic.Int64) {
 		IdleConnTimeout:     time.Minute,
 	}
 	t.Cleanup(tr.CloseIdleConnections)
-	return NewCodex(nil, testEgressPool(tr), RotationDeps{}), &dials
+	return NewCodex(nil, testEgressPool(tr), nil, RotationDeps{}), &dials
 }
 
 func wsReuseCred() *domain.AccountCredential {

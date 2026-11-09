@@ -47,9 +47,26 @@ func newTestPool(k int, p codexsdk.RotatePolicy) *identityPool {
 }
 
 func newTestPoolWith(k int, p codexsdk.RotatePolicy, retire func(int64, string)) *identityPool {
-	return resizeIdentityPool(nil, poolSpec{
+	return resizeForTest(nil, poolSpec{
 		accountID: 7, k: k, installationID: "inst", policy: p, retire: retire,
 	})
+}
+
+// resizeForTest 跑一次 resize 并**立即执行**收集到的退役动作。生产里退役由持锁方
+// 在解锁后跑 `poolReclaim.run`（N1）；单测没有锁，所以这里当场消费——断言面相同。
+func resizeForTest(old *identityPool, spec poolSpec) *identityPool {
+	reclaim := &poolReclaim{retire: spec.retire}
+	np := resizeIdentityPool(old, spec, reclaim)
+	reclaim.run()
+	return np
+}
+
+// syncForTest 同 resizeForTest（复用路径不产生退役动作，但仍需要批次出口）。
+func syncForTest(prev *identityPool, spec poolSpec) *identityPool {
+	reclaim := &poolReclaim{retire: spec.retire}
+	np := syncIdentityPool(prev, spec, reclaim)
+	reclaim.run()
+	return np
 }
 
 // TestSelectionCodexIdentityFromSession 身份四元组一次给全（Session + Meta 同源），
@@ -166,7 +183,7 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 		old.slots[i].turns = uint64(10 + i)
 	}
 
-	shrunk := resizeIdentityPool(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy(), retire: spy.fn})
+	shrunk := resizeForTest(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy(), retire: spy.fn})
 	require.Len(t, shrunk.slots, 2)
 	for i := range 2 {
 		require.Equal(t, threads[i], shrunk.slots[i].thread, "保留位次沿用线程")
@@ -177,7 +194,7 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 	require.Equal(t, []string{fmt.Sprintf("7|%s", keys[2]), fmt.Sprintf("7|%s", keys[3])}, spy.snapshot(),
 		"被丢弃且预留成功的旧会话立即退役旧线程")
 
-	grown := resizeIdentityPool(shrunk, poolSpec{accountID: 7, k: 4, installationID: "inst", policy: testPolicy(), retire: spy.fn})
+	grown := resizeForTest(shrunk, poolSpec{accountID: 7, k: 4, installationID: "inst", policy: testPolicy(), retire: spy.fn})
 	require.Len(t, grown.slots, 4)
 	require.Equal(t, threads[0], grown.slots[0].thread)
 	require.Equal(t, threads[1], grown.slots[1].thread)
@@ -206,7 +223,7 @@ func TestResizeDroppedInFlightSessionNotHandedOver(t *testing.T) {
 	inFlightThread := inFlight.thread
 
 	droppedIdle := old.slots[2].threadKey
-	shrunk := resizeIdentityPool(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy(), retire: spy.fn})
+	shrunk := resizeForTest(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy(), retire: spy.fn})
 	require.Len(t, shrunk.slots, 2)
 	require.Equal(t, []string{"7|" + droppedIdle}, spy.snapshot(),
 		"只退役空闲的丢槽；在飞丢槽不做任何交接（不读其状态）")
@@ -232,7 +249,7 @@ func TestResizeInstallationChangeRebuildsAllSessions(t *testing.T) {
 		s.SetTurnState("T-stale")
 	}
 
-	np := resizeIdentityPool(old, poolSpec{accountID: 7, k: 3, installationID: "inst-new", policy: testPolicy(), retire: spy.fn})
+	np := resizeForTest(old, poolSpec{accountID: 7, k: 3, installationID: "inst-new", policy: testPolicy(), retire: spy.fn})
 	require.Len(t, np.slots, 3)
 	require.Equal(t, []string{
 		"7|" + oldKeys[0], "7|" + oldKeys[1], "7|" + oldKeys[2],
@@ -254,10 +271,10 @@ func TestSyncIdentityPoolReusesWhenUnchanged(t *testing.T) {
 	spec := func(k int, installation string, policy codexsdk.RotatePolicy) poolSpec {
 		return poolSpec{accountID: 7, k: k, installationID: installation, policy: policy}
 	}
-	require.Same(t, pool, syncIdentityPool(pool, spec(3, "inst", p)), "未变复用")
-	require.NotSame(t, pool, syncIdentityPool(pool, spec(4, "inst", p)), "容量变化重建")
-	require.NotSame(t, pool, syncIdentityPool(pool, spec(3, "other", p)), "安装 ID 变化重建")
-	require.NotSame(t, pool, syncIdentityPool(pool, spec(3, "inst", codexsdk.RotatePolicy{WMaxLo: 2, WMaxHi: 4})), "策略变化重建")
+	require.Same(t, pool, syncForTest(pool, spec(3, "inst", p)), "未变复用")
+	require.NotSame(t, pool, syncForTest(pool, spec(4, "inst", p)), "容量变化重建")
+	require.NotSame(t, pool, syncForTest(pool, spec(3, "other", p)), "安装 ID 变化重建")
+	require.NotSame(t, pool, syncForTest(pool, spec(3, "inst", codexsdk.RotatePolicy{WMaxLo: 2, WMaxHi: 4})), "策略变化重建")
 }
 
 // TestIdentityPoolClaimReleaseNoCrossSession 认领 K 个会话互不相同（不串会话）、
@@ -369,8 +386,8 @@ func TestClaimExclusiveAcrossIdleBarrier(t *testing.T) {
 	require.True(t, got[0].busy.Load())
 }
 
-// TestIdentityPoolResizeMigratesMin 见 TestResizeMigratesOwnedSessions（保留旧名
-// 供历史调用点检索），此用例改为断言 busy 旧会话不迁移。
+// TestIdentityPoolResizeBusySlotNotMigrated 在飞（busy）旧会话不迁移、不被读写：
+// 迁移只碰**取得 busy 所有权**的位次（与 TestResizeMigratesOwnedSessions 互补）。
 func TestIdentityPoolResizeBusySlotNotMigrated(t *testing.T) {
 	busyPool := newTestPool(2, testPolicy())
 	busy := busyPool.claim()
@@ -382,7 +399,7 @@ func TestIdentityPoolResizeBusySlotNotMigrated(t *testing.T) {
 		}
 	}
 	require.NotEqual(t, -1, busyIdx)
-	rebuilt := resizeIdentityPool(busyPool, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy()})
+	rebuilt := resizeForTest(busyPool, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy()})
 	for _, s := range rebuilt.slots {
 		require.NotSame(t, busy, s, "在飞会话不迁移（不与在途请求共享身份）")
 	}
@@ -444,11 +461,13 @@ func TestClaimCodexSessionOnlyCodexAndFallback(t *testing.T) {
 //
 // 旧实现（池级 credGen + resize 时 `np.credGen.Store(old.credGen.Load())` 值拷贝）在
 // ②③④ 之间丢掉失效：清 ts 推进的是旧池，新池发布后会话看不到刚推进的代际，T-old 被
-// 带进新 owner 的上游会话（oracle B1-路径二）。失效源改成会话字段后这条交错结构性
-// 消失；④ 的"每个会话"钉住"不得把 owner 复制到池上"（否则只剩被租到的那条被清）。
+// 带进新 owner 的上游会话（oracle B1-路径二）。
+//
+// ④ 的"每个会话"是关键：owner 若被复制到池上（哪怕清 ts 仍写会话字段），对齐就退化成
+// "只清当前被租到的那一条"，同账号其它会话继续重放旧 ts——所以失效源必须是会话字段。
 func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
 	ownerA, ownerB := [16]byte{0x0a}, [16]byte{0x0b}
-	old := resizeIdentityPool(nil, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy()})
+	old := newTestPool(2, testPolicy())
 
 	// ① 两条会话各自完成一轮（拿到 T-old）并已对齐 owner A。
 	for _, s := range old.slots {
@@ -460,7 +479,7 @@ func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
 	}
 
 	// ② 重载：新池已建（两条会话按位次迁移，不重建），尚未发布。
-	next := resizeIdentityPool(old, poolSpec{accountID: 7, k: 3, installationID: "inst", policy: testPolicy()})
+	next := resizeForTest(old, poolSpec{accountID: 7, k: 3, installationID: "inst", policy: testPolicy()})
 	require.Same(t, old.slots[0], next.slots[0], "会话对象跨池迁移（owner/ts 都是会话字段）")
 	require.Same(t, old.slots[1], next.slots[1], "会话对象跨池迁移（位次 1）")
 

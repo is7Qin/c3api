@@ -110,7 +110,7 @@ func TestCredSigAccountID(t *testing.T) {
 // TestBuildAuthAccountID buildAuth：DB account id 经 WithOAuthAccountID/
 // WithPATAccountID 透传进 Auth（AccountIDProvider 可选接口）；空 = 不发头。
 func TestBuildAuthAccountID(t *testing.T) {
-	a := NewCodex(nil, testEgressPool(nil), RotationDeps{})
+	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 
 	oauth := oauthCred(7, "at-7", "rt-7")
 	oauth.CodexAccountID = "acc-oauth-7"

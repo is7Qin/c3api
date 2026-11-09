@@ -122,11 +122,11 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 		// sticky obligation on failure (single error source), so a subsequent
 		// healthy tick retries (probe errors leave the baseline untouched, so
 		// the retry is not probe-gated).
-		s.publisher.mu.Lock()
-		if rerr := s.reloadLocked(ctx); rerr != nil && s.log != nil {
-			s.log.Warn("scheduler sync failed", logx.Error(rerr))
-		}
-		s.publisher.mu.Unlock()
+		s.withPublisherLock(func(reclaim *poolReclaim) {
+			if rerr := s.reloadLocked(ctx, reclaim); rerr != nil && s.log != nil {
+				s.log.Warn("scheduler sync failed", logx.Error(rerr))
+			}
+		})
 		return
 	}
 	// Decide-and-rebuild under ONE publisher.mu hold: the skip check must
@@ -134,17 +134,16 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 	// load that is probe-invisible (equal-count membership swap) could be
 	// skipped forever. probe-before-load is preserved (refresh-first baseline
 	// never runs ahead of a successful load).
-	s.publisher.mu.Lock()
-	if last := s.lastProbe.Load(); last != nil && *last == c && !s.reloadRequired && s.publishedViewWhole() {
-		// Probe-hit skip applies ONLY to whole views. A partial (scoped-carry)
-		// view may carry forward holes from its carry, and DB-quiet would
-		// otherwise freeze them forever — fall through to the full path
-		// instead. This is NOT a periodic full recompile: whole views skip.
-		s.publisher.mu.Unlock()
-		return
-	}
-	if rerr := s.reloadLocked(ctx); rerr != nil && s.log != nil {
-		s.log.Warn("scheduler sync failed", logx.Error(rerr))
-	}
-	s.publisher.mu.Unlock()
+	s.withPublisherLock(func(reclaim *poolReclaim) {
+		if last := s.lastProbe.Load(); last != nil && *last == c && !s.reloadRequired && s.publishedViewWhole() {
+			// Probe-hit skip applies ONLY to whole views. A partial (scoped-carry)
+			// view may carry forward holes from its carry, and DB-quiet would
+			// otherwise freeze them forever — fall through to the full path
+			// instead. This is NOT a periodic full recompile: whole views skip.
+			return
+		}
+		if rerr := s.reloadLocked(ctx, reclaim); rerr != nil && s.log != nil {
+			s.log.Warn("scheduler sync failed", logx.Error(rerr))
+		}
+	})
 }

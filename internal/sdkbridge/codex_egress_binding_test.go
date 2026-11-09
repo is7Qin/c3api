@@ -51,7 +51,7 @@ func sdkClosedAddr(t *testing.T) string {
 func TestCodexEgressTransportIsBindingOwned(t *testing.T) {
 	base := &sentinelTransport{marker: "direct"}
 	pool := egress.NewPool(&http.Client{Transport: base})
-	a := NewCodex(nil, pool, RotationDeps{})
+	a := NewCodex(nil, pool, nil, RotationDeps{})
 	cred := oauthCred(9, "at-1", "rt-1")
 	params := &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"}
 
@@ -89,14 +89,14 @@ func TestCodexEgressTransportIsBindingOwned(t *testing.T) {
 	keyDirect := clientKey{proxy: egressDigest(pool.Direct())}
 	keyProxy := clientKey{proxy: egressDigest(eg)}
 	require.NotEqual(t, keyDirect, keyProxy, "clientKey 必须含出口摘要维")
-	require.Same(t, cProxy, testCachedClient(e, keyProxy), "代理出口的条目按含 digest 的键落桶")
-	require.Same(t, cDirect, testCachedClient(e, keyDirect), "直连出口的条目按零值 digest 落桶")
+	require.Same(t, cProxy, testCachedClient(a, e, keyProxy), "代理出口的条目按含 digest 的键落桶")
+	require.Same(t, cDirect, testCachedClient(a, e, keyDirect), "直连出口的条目按零值 digest 落桶")
 }
 
 // TestCodexEgressNotWiredIsExplicit 池未装配时**不静默直连**：没有出口可解析就
 // 返回明确错误（装配期错误在运行期的唯一残影），而不是悄悄用 SDK 默认 transport。
 func TestCodexEgressNotWiredIsExplicit(t *testing.T) {
-	a := NewCodex(nil, nil, RotationDeps{})
+	a := NewCodex(nil, nil, nil, RotationDeps{})
 	cred := oauthCred(9, "at-1", "rt-1")
 	_, err := a.GenerateImage(context.Background(), cred, nil, &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.ErrorIs(t, err, errEgressNotWired)

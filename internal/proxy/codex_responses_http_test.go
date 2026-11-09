@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
@@ -155,12 +156,14 @@ func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 	}
 }
 
-// codexRespProxyOption 模板/账号微调面（变参——既有调用点零改动）。
-type codexRespProxyOption func(tpl *domain.Template, acc *domain.Account)
+// codexRespProxyOption 模板/账号/调度器配置微调面（变参——既有调用点零改动）。
+// 第三个参数是本次 fixture 的调度器配置快照：轮换策略（如 G6 的 wmax=1）是
+// 构造期参数，不能在调度器建好之后回写。
+type codexRespProxyOption func(tpl *domain.Template, acc *domain.Account, schedCfg *scheduler.Config)
 
 // withCodexResponsesTransport 在模板上设置出站传输开关（快照原值透传面）。
 func withCodexResponsesTransport(tr domain.CodexResponsesTransport) codexRespProxyOption {
-	return func(tpl *domain.Template, _ *domain.Account) { tpl.CodexResponsesTransport = tr }
+	return func(tpl *domain.Template, _ *domain.Account, _ *scheduler.Config) { tpl.CodexResponsesTransport = tr }
 }
 
 // withCodexIdentitySlots 设定账号 MaxConcurrency（= codex 伪装身份槽位池容量 K）。
@@ -170,7 +173,16 @@ func withCodexResponsesTransport(tr domain.CodexResponsesTransport) codexRespPro
 // 相邻两次请求会落到不同 thread ⇒ 那是**不同会话**，本就不该继承上一个 ts。
 // 需要"同轮续传"语义的用例必须把 K 钉成 1（一条槽 = 一个会话）。
 func withCodexIdentitySlots(n int) codexRespProxyOption {
-	return func(_ *domain.Template, acc *domain.Account) { acc.MaxConcurrency = n }
+	return func(_ *domain.Template, acc *domain.Account, _ *scheduler.Config) { acc.MaxConcurrency = n }
+}
+
+// withCodexRotatePolicy 注入调度器的 codex 轮换策略（会话池建会话时采样）。
+//
+// 用途（G6 “取消不推进”的行为观测）：策略 WMax=1 时，**任何**推进都会在一个
+// 窗口内（48–96 轮）把线程退掉；所以“大量取消之后线程与 window 不变”就是
+// “取消不推进”的可观测形式，不需要读会话私有计数器。
+func withCodexRotatePolicy(p codexsdk.RotatePolicy) codexRespProxyOption {
+	return func(_ *domain.Template, _ *domain.Account, schedCfg *scheduler.Config) { schedCfg.RotatePolicy = p }
 }
 
 // newTestCodexRespProxy 构造 codex 类型 resp HTTP 测试代理：模板（credType 类
@@ -196,13 +208,14 @@ func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts 
 		ModelMapping:     mapping,
 	}
 	accs := make(map[int64][]*domain.Account, 1)
+	schedCfg := scheduler.Config{SyncInterval: time.Hour}
 	for id, ext := range accounts {
 		acc := &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
 			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: ext,
 		}
 		for _, opt := range opts {
-			opt(tpl, acc)
+			opt(tpl, acc, &schedCfg)
 		}
 		accs[10] = append(accs[10], acc)
 	}
@@ -222,18 +235,13 @@ func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts 
 	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
 	// 请求会绕过测试替身直接打真实 codex 端点）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
-	// 线程退休出口与生产同形（晚绑定：适配层依赖调度器做失效上报）。会话池退休/
-	// 重载丢槽时会经它退役旧线程的空闲连接（§3.2 ④）。
-	var codexAdapter *sdkbridge.Codex
-	sched := scheduler.New(scheduler.Config{
-		SyncInterval: time.Hour,
-		Egress:       egPool,
-		RetireThread: func(accountID int64, threadKey string) {
-			if codexAdapter != nil {
-				codexAdapter.RetireThread(accountID, threadKey)
-			}
-		},
-	}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 线程退役 / 账号移除出口与生产同形：**先构造共享的传输资源表**，同一实例
+	// 分别交给调度器与适配层——不做晚绑定回填（AGENTS.md）。
+	codexClients := sdkbridge.NewClientTable()
+	schedCfg.Egress = egPool
+	schedCfg.RetireThread = codexClients.RetireThread
+	schedCfg.RemoveAccount = codexClients.RemoveAccount
+	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -257,7 +265,7 @@ func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts 
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codexAdapter = sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	codexAdapter := sdkbridge.NewCodex(failure, egPool, codexClients, sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, bill, errlogW, Deps{Codex: codexAdapter})
 	return p, store, accs
 }

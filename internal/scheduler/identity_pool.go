@@ -133,6 +133,9 @@ func newCodexSession(installationID string, policy codexsdk.RotatePolicy) *codex
 // identityPool 账号级会话池（无锁）：容量 K = 账号 MaxConcurrency；cursor 为认领
 // 的旋转起点（round-robin 打散并发）。slots 切片发布后不再增删；逐会话状态经
 // 租借独占。轮换策略单一来源在**会话**（policy），池经 rotatePolicy 从会话派生。
+//
+// 池上**没有**任何凭据失效状态：owner 对齐读的是请求自己的凭据、落在会话字段上
+// （§3.2），所以重载换池、pending 池交错都不会丢失效。
 type identityPool struct {
 	slots          []*codexSession
 	cursor         atomic.Uint64
@@ -202,11 +205,14 @@ type poolSpec struct {
 //
 // 迁移判据是**原子预留**（旧会话 busy CAS false→true）：只有取得所有权的旧会话才
 // 被读写——重载不得碰在飞会话的状态（读它就是在和持有者竞争，§3.2）。预留成功的
-// 位次迁移会话（沿用线程/窗口计数/ts）；installation 变 ⇒ 该账号全部会话重建
-// （旧线程空闲连接立即退役、ts 不迁）。缩容丢弃的位次：预留成功（=空闲）⇒ 立即
+// 位次迁移会话（沿用线程/窗口计数/ts/owner）；installation 变 ⇒ 该账号全部会话
+// 重建（旧线程空闲连接退役、ts 不迁）。缩容丢弃的位次：预留成功（=空闲）⇒ 收集
 // 退役旧线程；预留失败（=在飞）⇒ **不做任何交接**，其残留 idle 由 SDK 的 idle TTL
 // 时间有界回收（§5.2-5）——正是不引入「交接标志」的原因。旧池 GC。
-func resizeIdentityPool(old *identityPool, spec poolSpec) *identityPool {
+//
+// 退役**只收集**：terminate 可能在 socket 写闸上等，必须由持锁方解锁后执行
+// （`poolReclaim.run`，§3.2「锁外 RetireThread」）。
+func resizeIdentityPool(old *identityPool, spec poolSpec, reclaim *poolReclaim) *identityPool {
 	k := max(spec.k, 1)
 	np := &identityPool{
 		installationID: spec.installationID,
@@ -223,7 +229,7 @@ func resizeIdentityPool(old *identityPool, spec poolSpec) *identityPool {
 				np.slots[i] = os
 				continue
 			}
-			retireThreadKey(spec, os.threadKey)
+			retireThreadKey(spec, reclaim, os.threadKey)
 			os.busy.Store(false)
 		}
 		np.slots[i] = newCodexSession(spec.installationID, spec.policy)
@@ -232,7 +238,7 @@ func resizeIdentityPool(old *identityPool, spec poolSpec) *identityPool {
 		for i := k; i < len(old.slots); i++ {
 			os := old.slots[i]
 			if os.busy.CompareAndSwap(false, true) {
-				retireThreadKey(spec, os.threadKey)
+				retireThreadKey(spec, reclaim, os.threadKey)
 				os.busy.Store(false)
 			}
 		}
@@ -240,20 +246,21 @@ func resizeIdentityPool(old *identityPool, spec poolSpec) *identityPool {
 	return np
 }
 
-// retireThreadKey 退役一条线程的空闲连接（账号面出口）；未装配 = no-op。
-func retireThreadKey(spec poolSpec, threadKey string) {
-	if spec.retire != nil && threadKey != "" {
-		spec.retire(spec.accountID, threadKey)
+// retireThreadKey 收集一条线程的退役动作：锁内只入清单，terminate 由调用方在
+// 解锁后执行（`poolReclaim.run`）。未装配（测试形态）⇒ 丢弃。
+func retireThreadKey(spec poolSpec, reclaim *poolReclaim, threadKey string) {
+	if spec.retire != nil && threadKey != "" && reclaim != nil {
+		reclaim.threads = append(reclaim.threads, threadRetire{accountID: spec.accountID, threadKey: threadKey})
 	}
 }
 
 // syncIdentityPool 取本次 reload 生效的池：容量/安装 ID/策略均未变则**原样复用**
 // （保留在途 busy 标志与会话身份，杜绝无关重载重置会话）；任一变化才重建。
-func syncIdentityPool(prev *identityPool, spec poolSpec) *identityPool {
+func syncIdentityPool(prev *identityPool, spec poolSpec, reclaim *poolReclaim) *identityPool {
 	if prev != nil && len(prev.slots) == spec.k && prev.installationID == spec.installationID && prev.rotatePolicy() == spec.policy {
 		return prev
 	}
-	return resizeIdentityPool(prev, spec)
+	return resizeIdentityPool(prev, spec, reclaim)
 }
 
 // maxIdentityPoolSlots 是 codex 会话池容量 K 的防御性上界。K = 账号
@@ -265,12 +272,69 @@ func syncIdentityPool(prev *identityPool, spec poolSpec) *identityPool {
 // 门禁与池读同一份 acc，故二者仍恒同源。
 const maxIdentityPoolSlots = 1024
 
+// threadRetire 一条线程退役动作（账号面）。
+type threadRetire struct {
+	accountID int64
+	threadKey string
+}
+
+// poolReclaim 是重载路径的**锁外副作用批次**：线程退役与账号移除都只在锁内收集，
+// 由持锁方的调用点在**解锁之后**执行（§3.2「锁外 RetireThread / 锁外 Close」）。
+//
+// 为什么是批次而不是原地调用：terminate 逐条 client 调用 SDK 的 clear()，可能在
+// socket 写闸上等待——放在 publisher.mu 里等于让一次 reload 被若干连接收尾拖住
+// （N1）。锁内只做内存摘表，锁外的部分按收集顺序串行执行，不需要额外 goroutine。
+type poolReclaim struct {
+	threads  []threadRetire
+	accounts []int64
+	retire   func(accountID int64, threadKey string)
+	remove   func(accountID int64)
+}
+
+// run 执行收集到的副作用（必须在 publisher.mu 之外调用；nil 安全）。
+func (b *poolReclaim) run() {
+	if b == nil {
+		return
+	}
+	if b.retire != nil {
+		for _, t := range b.threads {
+			b.retire(t.accountID, t.threadKey)
+		}
+	}
+	if b.remove != nil {
+		for _, id := range b.accounts {
+			b.remove(id)
+		}
+	}
+}
+
+// collectRemovedAccounts 收集「旧注册表有池、新注册表没有」的账号（§3.2 账号移除的
+// 判定点：池存在而账号/id 不在新表就是移除信号——工作 byID 恒为全量克隆，不存在
+// 部分编译导致的误判）。调用方持 publisher.mu；执行在锁外（poolReclaim.run）。
+func collectRemovedAccounts(prev, next *identityRegistry, reclaim *poolReclaim) {
+	if prev == nil || reclaim == nil || reclaim.remove == nil {
+		return
+	}
+	for id := range prev.pools {
+		if next != nil {
+			if _, ok := next.pools[id]; ok {
+				continue
+			}
+		}
+		reclaim.accounts = append(reclaim.accounts, id)
+	}
+}
+
 // buildIdentityPools 按当前 byID 重建 codex 会话池注册表：仅 codex 凭据
 // （oauth/pat）且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
 // StaticView.identityPools），使门禁读的 MaxConcurrency 与池 K 恒同源。prevReg
 // 供复用（未变的池原样保留在途 busy 与会话身份）；删除/非 codex 的账号不在新
 // 表中 → 旧池随之 GC。K 的上界已在 buildSnapshots 装载期施加于 acc.MaxConcurrency。
-func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg *identityRegistry) *identityRegistry {
+//
+// 退役与移除只写进 reclaim（锁外执行）；reclaim 为 nil 时（单元用例直接建池）
+// 退役不执行——调用方自己决定要不要真退役。账号移除差分不在这里做：组级批路径
+// 逐步重建池，只有**整批结束后**才知道哪个账号真的从集合里消失了。
+func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg *identityRegistry, reclaim *poolReclaim) *identityRegistry {
 	pools := make(map[int64]*identityPool)
 	for id, as := range byID {
 		av := as.static.Load()
@@ -294,9 +358,10 @@ func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg 
 			installationID: installationIDOf(av.acc.Ext),
 			policy:         s.cfg.RotatePolicy,
 			retire:         s.cfg.RetireThread,
-		})
+		}, reclaim)
 	}
-	return &identityRegistry{pools: pools}
+	reg := &identityRegistry{pools: pools}
+	return reg
 }
 
 // prevIdentityPoolsLocked 取当前「最新」静态根的池注册表作为复用源：优先

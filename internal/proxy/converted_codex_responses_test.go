@@ -61,13 +61,14 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 		ModelMapping:     mapping,
 	}
 	accs := make(map[int64][]*domain.Account, 1)
+	schedCfg := scheduler.Config{SyncInterval: time.Hour}
 	for id, ext := range accounts {
 		acc := &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
 			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: ext,
 		}
 		for _, opt := range opts {
-			opt(tpl, acc)
+			opt(tpl, acc, &schedCfg)
 		}
 		accs[10] = append(accs[10], acc)
 	}
@@ -87,7 +88,12 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
 	// 请求会绕过测试替身直接打真实 codex 端点）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 线程退役 / 账号移除出口与生产同形：先构造共享表，再交给调度器与适配层。
+	codexClients := sdkbridge.NewClientTable()
+	schedCfg.Egress = egPool
+	schedCfg.RetireThread = codexClients.RetireThread
+	schedCfg.RemoveAccount = codexClients.RemoveAccount
+	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 
@@ -111,7 +117,7 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	wctx, wcancel := context.WithCancel(context.Background())
 	require.NoError(t, errlogW.Start(wctx))
 	t.Cleanup(func() { wcancel(); _ = errlogW.Close(context.Background()) })
-	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, codexClients, sdkbridge.RotationDeps{})
 	p := New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, errlogW, Deps{Codex: codex})
 	return p, store
 }
@@ -385,11 +391,11 @@ func TestConvertedCodexTurnStateReplay(t *testing.T) {
 	require.Equal(t, "", upc2.turnState(0), "策略 false ⇒ 客户端自带也不发")
 }
 
-// TestConvertedCodexAdvanceIdentityDrivesWindow spec §5.9：转换路径每次成功取到
+// TestConvertedCodexStepIdentityDrivesWindow spec §5.9：转换路径每次成功取到
 // usage 都调用 sel.StepIdentity（与直连同一调用点）→ 单槽（MaxConcurrency=1）
 // 上连续完成轮数驱动 window_id 递增。断言上游 client_metadata.x-codex-window-id
 // 出现 ≥2 个不同值——若未推进身份，window 恒为 ":0"。
-func TestConvertedCodexAdvanceIdentityDrivesWindow(t *testing.T) {
+func TestConvertedCodexStepIdentityDrivesWindow(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{
 		convCodexRespCreated, convCodexRespDelta, convCodexRespItemEv, convCodexRespDone,
 	}})
@@ -420,10 +426,10 @@ func TestConvertedCodexAdvanceIdentityDrivesWindow(t *testing.T) {
 	for i := 0; i < upc.callsN(); i++ {
 		seen[gjson.GetBytes(upc.body(i), "client_metadata").Get("x-codex-window-id").String()] = struct{}{}
 	}
-	require.GreaterOrEqual(t, len(seen), 2, "AdvanceIdentity 推进 → window_id 递增（未推进则恒为同一值）")
+	require.GreaterOrEqual(t, len(seen), 2, "成功轮推进 → window_id 递增（未推进则恒为同一值）")
 }
 
-// newConvertedCodexTestProxyAccs 单槽/自定义并发变体（AdvanceIdentity 用例用）：
+// newConvertedCodexTestProxyAccs 单槽/自定义并发变体（成功轮推进用例用）：
 // 直接注入账号集 + KeyMeta，其余装配同 newConvertedCodexTestProxy。
 func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Account, key domain.KeyMeta, upstream string) *Proxy {
 	t.Helper()
@@ -434,7 +440,12 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的 transport
 	// 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
-	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	// 线程退役 / 账号移除出口与生产同形：先构造共享表，再交给调度器与适配层。
+	codexClients := sdkbridge.NewClientTable()
+	schedCfg := scheduler.Config{SyncInterval: time.Hour, Egress: egPool}
+	schedCfg.RetireThread = codexClients.RetireThread
+	schedCfg.RemoveAccount = codexClients.RemoveAccount
+	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 	auth := NewAuth(noopKeyLoader{keys: map[string]domain.KeyMeta{"ck-1": key}}, noopUserLoader{}, nil, nil, true)
@@ -443,6 +454,6 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	clients := aiclient.NewFactory(hc, aiclient.Config{UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second})
 	store := &fakeFailureStore{}
 	failure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{Store: store, Failer: sched, Log: nil})
-	codex := sdkbridge.NewCodex(failure, egPool, sdkbridge.RotationDeps{})
+	codex := sdkbridge.NewCodex(failure, egPool, codexClients, sdkbridge.RotationDeps{})
 	return New(cfg, sched, credential.New(), rec, clients, auth, nil, nil, nil, Deps{Codex: codex})
 }
