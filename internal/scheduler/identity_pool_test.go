@@ -578,3 +578,23 @@ func TestReloadPublishesPoolWithView(t *testing.T) {
 	require.Len(t, v.static.identityPools.pools[1].slots, 4)
 	require.Same(t, v.static, s.View().static, "同一静态根")
 }
+
+// TestClaimAndIdentityZeroAlloc §4 预算：租借 + Identity 构造稳态 0 allocs
+// （windowID/threadKey 预计算在会话上；Sink 是指针接口不装箱）。
+func TestClaimAndIdentityZeroAlloc(t *testing.T) {
+	pool := newTestPool(1, testPolicy())
+	var sink codexsdk.TurnStateSink
+	var window string
+	allocs := testing.AllocsPerRun(1000, func() {
+		session := pool.claim()
+		if session == nil {
+			t.Fatal("单槽空闲时 claim 必须成功")
+		}
+		id := session.identity()
+		sink, window = id.Sink, id.Session.WindowID // 保留引用，防被优化掉
+		session.release()
+	})
+	require.Zero(t, allocs, "租借 + 身份构造不得分配（allocs=%v）", allocs)
+	require.NotNil(t, sink)
+	require.NotEmpty(t, window)
+}
