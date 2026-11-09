@@ -14,16 +14,25 @@ import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import {
   PROXY_DIRECT_VALUE,
   PROXY_UNCHANGED_VALUE,
-  buildAccountPatch,
   buildBatchProxyFields,
-  buildGroupIdsField,
   echoMayHideBinding,
   parseBatchProxyValue,
   parseProxySelectValue,
   proxySelectItems,
   proxySelectValue,
-  proxySelectionOf,
 } from '@/lib/account-proxy'
+import {
+  assertCreate,
+  defaults,
+  draftToPatch,
+  fromAccountView,
+  mergeView,
+  withField,
+  withoutField,
+  type AccountDraft,
+  type AccountValues,
+  type BatchDraft,
+} from '@/lib/account-draft'
 import { BatchBar } from '@/components/batch-bar'
 import { ListToolbar } from '@/components/list-toolbar'
 import { Pagination } from '@/components/pagination'
@@ -59,7 +68,6 @@ type AccountExt = components['schemas']['AccountExt']
 type Group = components['schemas']['Group']
 
 // codex 生态账号（AccountExt 仅支持 codex-oauth/codex-pat）：凭据走扩展配置，列表上游 key 不承载凭据
-const CODE_CREDENTIAL_TYPES: NonNullable<components['schemas']['Template']['CredentialType']>[] = ['codex-oauth', 'codex-pat']
 const isCodexTemplate = (a: AccountView) =>
   a.Template?.CredentialType === 'codex-oauth' || a.Template?.CredentialType === 'codex-pat'
 
@@ -201,123 +209,9 @@ function toLocalDT(iso: string): string {
   const pad = (n: number) => String(n).padStart(2, '0')
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
-interface FormState {
-  name: string
-  template_id: string // Select 值统一用字符串，提交时转 number
-  base_url: string // 账号级覆盖（'' = 继承模板）
-  upstream_key: string
-  max_concurrency: string
-  // null = 没表态（不发键）：分组回显是异步的（GET /accounts/{id}/groups，
-  // 不随列表返回），把「看起来是空」的草稿发回去会清空已有分组。
-  // 契约三态：缺席（null）= 不变、[] = 清空、[ids] = 替换。
-  group_ids: number[] | null
-  // 生命周期表单项（创建/编辑对话框直配；随创建/PATCH 请求体一次落库）：
-  // cost_multiplier 字符串形态（默认 '1' = ×1），提交前经 parseMultiplier
-  // 校验（0–10，bp 4 位小数）；cache_domain 空串 = 账号私有域（编辑态按变化
-  // 发送 null = 清空）。
-  cost_multiplier: string
-  cache_domain: string
-  // codex 凭据（按模板类型分流：codex-oauth → codex_oauth_* 组；codex-pat →
-  // codex_pat_key；与 account_ext 字段对应——保存时链式写入扩展配置）
-  codex_oauth_token: string
-  codex_oauth_refresh_token: string
-  codex_oauth_expires_at: string
-  codex_pat_key: string
-  codex_email: string
-  codex_account_id: string
-  // 归属供应商 user_id（**仅管理面作用域**：把账号分配给供应商的唯一入口，
-  // spec §2.5/§6.1 L834）；供应商面不展示、不可编辑（服务端恒为 JWT 本人）。
-  // 空串 = 不发送（创建态 = 平台自有 null；编辑态 = 保持不变，绝不误清空）。
-  supplier_user_id: string
-  // 清空归属哨兵（对齐 clearCacheDomain）：编辑态勾选 ⇒ 显式发送 supplier_user_id:
-  // null（回平台自有）；供应商面不展示该控件（服务端恒为 JWT 本人）。
-  clearOwner: boolean
-  // 出口代理（spec proxy-pool §3.6/§7）：Select 值 = 哨兵 PROXY_DIRECT_VALUE 或代理 id。
-  // **三态靠「与回显相比是否变化」表达**（buildAccountPatch 是唯一实现）——
-  // 用户没动这个选择器 ⇒ 请求体里不会有 proxy_id 键（也就不会把管理员绑的、
-  // 而读面不可见的平台代理静默解绑）。
-  proxy: string
-}
-
-const emptyForm = (): FormState => ({
-  name: '',
-  template_id: '',
-  base_url: '',
-  upstream_key: '',
-  max_concurrency: '8',
-  group_ids: null,
-  cost_multiplier: '1',
-  cache_domain: '',
-  codex_oauth_token: '',
-  codex_oauth_refresh_token: '',
-  codex_oauth_expires_at: '',
-  codex_pat_key: '',
-  codex_email: '',
-  codex_account_id: '',
-  supplier_user_id: '',
-  clearOwner: false,
-  proxy: PROXY_DIRECT_VALUE,
-})
-
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
 // PUT 全列更新：account id 优先用表单手填值，空则回显原值防清空
 const codexAccountIdBody = (val: string, cur?: string | null) => val.trim() || cur || null
-function toForm(a: AccountView): FormState {
-  const ct = a.Template?.CredentialType as string | undefined
-  const codex = isCodexCt(ct)
-  return {
-    name: a.Name ?? '',
-    template_id: String(a.TemplateID ?? ''),
-    base_url: codex ? '' : (a.BaseURL ?? ''), // Codex: must clear stale BaseURL on load
-    upstream_key: a.UpstreamKey ?? '',
-    max_concurrency: String(a.MaxConcurrency ?? 8),
-    // 编辑回显不走账号列表（方案 B）：对话框挂载时经 getAccountGroups 拉取，
-    // 拉到前控件禁用；写入侧由 buildGroupIdsField 保证「没表态 = 不发键」。
-    // codex 凭据经 ext 拉取回显；生命周期回显：倍率缺失按 ×1，缓存域缺失（null）按空串。
-    group_ids: null,
-    cost_multiplier: String(a.UpstreamCostMultiplier ?? 1),
-    cache_domain: a.CacheDomain ?? '',
-    codex_oauth_token: '',
-    codex_oauth_refresh_token: '',
-    codex_oauth_expires_at: '',
-    codex_pat_key: '',
-    codex_email: '',
-    codex_account_id: '',
-    // 归属回显（AccountView 现含 supplier_user_id 列）：编辑态按当前归属回填，
-    // 空 = 平台自有；勾选 clearOwner 显式清空（发送 null）。
-    supplier_user_id: a.supplier_user_id != null ? String(a.supplier_user_id) : '',
-    clearOwner: false,
-    // 出口代理回显：proxy_id 非 null ⇒ 该代理对当前调用方可见；null ⇒ 直连**或**
-    // 绑着一条当前调用方看不见的代理（供应商面的平台代理），两种情形在 UI 上无法区分，
-    // 故回显为 null 时永远只展示「直连」且不改动就不发键（buildAccountPatch 守卫）。
-    proxy: proxySelectValue(proxySelectionOf(a.proxy_id)),
-  }
-}
-
-// 三态字段模型（创建/PATCH/批量共用）的请求体：只带契约字段，不带运行时字段。
-// 缺席 = 不变（创建态 = 取后端缺省）；可空标量 null = 清空；group_ids 三态走
-// buildGroupIdsField（null = 没表态 → 不出现）。
-// 倍率/缓存域不是独立端点：随同一请求体一次落库（编辑态仅变化项才带）。
-function toBody(f: FormState, current: AccountView | null, isCodex?: boolean): AccountCreate {
-  const body: AccountCreate = {
-    name: f.name.trim(),
-    template_id: Number(f.template_id),
-    // 空串归一 null；Codex 强制 null（SDK default, non-empty forbidden)
-    base_url: isCodex ? null : (f.base_url.trim() || null),
-  }
-  // upstream_key 缺席 = 不变；空值不发送（codex 模板本无静态 key；非 codex 模板
-  // 的空 key 由后端按模板类型条件必填拒绝为 400，不在此处伪造空串）。
-  if (f.upstream_key) body.upstream_key = f.upstream_key
-  // max_concurrency 缺席 = 不变 / 创建取后端配置缺省（不再硬编码 8）。
-  if (f.max_concurrency !== '') body.max_concurrency = Number(f.max_concurrency)
-  Object.assign(body, buildGroupIdsField(f.group_ids))
-  if (!current) {
-    const d = f.cache_domain.trim()
-    if (d) body.cache_domain = d
-  }
-  return body
-}
-
 // 分组多选（替换语义 UI；disabled 用于回显加载中/批量清空勾选时）。
 function GroupMultiSelect({ groups, value, onChange, disabled }: {
   groups: Group[]
@@ -736,7 +630,22 @@ export default function Accounts() {
   // —— 单行 创建/编辑/删除 ——
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<AccountView | null>(null)
-  const [form, setForm] = useState<FormState>(emptyForm())
+  // 单条创建/编辑的**稀疏草稿**：键缺席 = 用户没表态；清空只有 null（标量）/ []（集合）。
+  // 控件读派生视图 view（基线 ⊕ 草稿），写只经 update/clear/reset 三个原语——
+  // 全文件仅这三处 setDraft：没有 effect 回填，也没有第二份真值。
+  const [draft, setDraft] = useState<AccountDraft>({})
+  // codex 凭据子状态（本对话框专用；「扩展配置」弹窗的 extForm 是另一份，不共享）。
+  const [codexFields, setCodexFields] = useState({
+    codex_oauth_token: '',
+    codex_oauth_refresh_token: '',
+    codex_oauth_expires_at: '',
+    codex_pat_key: '',
+    codex_email: '',
+    codex_account_id: '',
+  })
+  const update = <K extends keyof BatchDraft>(k: K, v: Exclude<BatchDraft[K], undefined>) => setDraft(d => withField(d, k, v))
+  const clear = (k: keyof BatchDraft) => setDraft(d => withoutField(d, k))
+  const reset = () => setDraft({})
   const [deleting, setDeleting] = useState<AccountView | null>(null)
   const [importOpen, setImportOpen] = useState(false)
 
@@ -765,7 +674,14 @@ export default function Accounts() {
     enabled: !!editing && dialogOpen,
   })
   const groupsLoaded = !editing || (groupsEcho.data !== undefined && !groupsEcho.isError)
-  const groupsValue = form.group_ids ?? groupsEcho.data?.group_ids ?? []
+
+  // 基线 ⊕ 草稿 = 控件与校验只读的派生视图。分组回显进**基线**（不进草稿）：
+  // 回显未到前控件禁用，用户勾选只会写 draft.group_ids（稀疏增量）。
+  const baseline = useMemo<AccountValues>(
+    () => (editing ? fromAccountView(editing, groupsEcho.data?.group_ids ?? []) : defaults()),
+    [editing, groupsEcho.data],
+  )
+  const view = mergeView(baseline, draft)
 
   // codex 账号编辑回显：对话框挂载时拉 ext 凭据（404 = 无 ext 行 → 空表单）；
   // 与「扩展配置」弹窗同一数据源，此处仅填充表单。
@@ -784,26 +700,29 @@ export default function Accounts() {
   useEffect(() => {
     const d = extEcho.data
     if (editing && !extEcho.isLoading && d) {
-      setForm(f => ({
-        ...f,
+      setCodexFields({
         codex_oauth_token: d.codex_oauth_token ?? '',
         codex_oauth_refresh_token: d.codex_oauth_refresh_token ?? '',
         codex_oauth_expires_at: d.codex_oauth_expires_at ? toLocalDT(d.codex_oauth_expires_at) : '',
         codex_pat_key: d.codex_pat_key ?? '',
         codex_email: d.codex_email ?? '',
         codex_account_id: d.codex_account_id ?? '',
-      }))
+      })
     }
   }, [editing, extEcho.isLoading, extEcho.data])
 
+  // 草稿生命周期：打开对话框是**唯一**重置点。不重置就会把上一个账号的增量串到
+  // 下一个（「编辑 A 改个名字 → 取消 → 打开 B」保存即写错行）。
   const openCreate = () => {
     setEditing(null)
-    setForm(emptyForm())
+    reset()
+    setCodexFields({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '', codex_account_id: '' })
     setDialogOpen(true)
   }
   const openEdit = (a: AccountView) => {
     setEditing(a)
-    setForm(toForm(a))
+    reset()
+    setCodexFields({ codex_oauth_token: '', codex_oauth_refresh_token: '', codex_oauth_expires_at: '', codex_pat_key: '', codex_email: '', codex_account_id: '' })
     setDialogOpen(true)
   }
 
@@ -839,39 +758,30 @@ export default function Accounts() {
   // 编辑走 PATCH /accounts/{id}（If-Match = 读到的代际，陈旧 → 412）。
   // 失败 throw → 内联错误展示（对话框保持打开可重试）。
   const save = useMutation({
-    mutationFn: async (f: FormState): Promise<void> => {
-      const mult = parseMultiplier(f.cost_multiplier)
-      if (mult === null) throw new Error(t('accounts.multiplier.invalid'))
-      const domTrim = f.cache_domain.trim()
+    mutationFn: async (): Promise<void> => {
+      if (parseMultiplier(view.cost_multiplier) === null) throw new Error(t('accounts.multiplier.invalid'))
+      const domTrim = (view.cache_domain ?? '').trim()
       if (domTrim !== '' && !validCacheDomain(domTrim)) throw new Error(t('accounts.cacheDomain.invalid'))
-      const newDom = domTrim === '' ? null : domTrim
-      // 计算有效凭据：未改时以嵌入 Template 为准，变更时查替换模板，未解析时禁用
-      const isUnchangedForF = !!(editing && String(editing.TemplateID) === String(f.template_id))
-      const tplForF = isUnchangedForF ? null : templates.find(p => String(p.ID) === String(f.template_id))
-      const effCt: string | undefined = isUnchangedForF
-        ? (editing!.Template?.CredentialType as string | undefined)
-        : (tplForF?.CredentialType as string | undefined)
-      const unresolved = !!f.template_id && effCt == null
-      const isCodexForBody = isCodexCt(effCt) || unresolved
-      const ct = effCt
+      // 有效凭据（未改模板时以嵌入 Template 为准；未解析 = fail-closed 视为 codex）
+      const ct = effectiveSelCt
       const saveCodexExt = async (id: number) => {
         if (!(id && isCodexCt(ct))) return
         const cur = extEcho.data
         const extBody: AccountExt = {
           account_id: id,
           credential_type: ct,
-          codex_email: (f.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
+          codex_email: (codexFields.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
           // PUT 全列更新：缺省字段按 NULL 落盘
-          codex_account_id: codexAccountIdBody(f.codex_account_id, cur?.codex_account_id),
+          codex_account_id: codexAccountIdBody(codexFields.codex_account_id, cur?.codex_account_id),
           ...(ct === 'codex-oauth'
             ? {
-                codex_oauth_token: f.codex_oauth_token.trim() || null,
-                codex_oauth_refresh_token: f.codex_oauth_refresh_token.trim() || null,
-                codex_oauth_expires_at: toRFC3339(f.codex_oauth_expires_at) ?? null,
+                codex_oauth_token: codexFields.codex_oauth_token.trim() || null,
+                codex_oauth_refresh_token: codexFields.codex_oauth_refresh_token.trim() || null,
+                codex_oauth_expires_at: toRFC3339(codexFields.codex_oauth_expires_at) ?? null,
                 codex_pat_key: null,
               }
             : {
-                codex_pat_key: f.codex_pat_key.trim() || null,
+                codex_pat_key: codexFields.codex_pat_key.trim() || null,
                 codex_oauth_token: null,
                 codex_oauth_refresh_token: null,
                 codex_oauth_expires_at: null,
@@ -881,41 +791,23 @@ export default function Accounts() {
         }
         await api.putAccountExt(id, extBody)
       }
-      // 归属供应商（仅管理面作用域；供应商面恒隐含 JWT 本人）。空 = 不发送。
-      // 值由 SupplierPicker 唯一写入（只产出数字串或 ''），无需再校验。
-      const ownerRaw = isSupplierScope ? '' : f.supplier_user_id.trim()
-      const ownerUID = ownerRaw === '' ? null : Number(ownerRaw)
+      // 唯一投影（创建与编辑共用）：缺席 = 不变，null/[] = 清空。codex 的 base_url
+      // 约束、归属的作用域约束都只在这里施加——控件层没有第二套规则。
+      const patch = draftToPatch(draft, {
+        tpl: isSelCodex ? 'codex' : 'nonCodex',
+        echoProxyId: editing?.proxy_id ?? null,
+        isSupplierScope,
+      })
       if (!editing) {
-        // 创建：一次 POST 落全部字段（倍率非 ×1 时随体带，无补写腿）
-        // structurally force base_url null for Codex/unresolved even if form still stale
-        const body = toBody(f, null, isCodexForBody)
-        if (mult !== 1) body.upstream_cost_multiplier = mult
-        if (ownerUID != null) body.supplier_user_id = ownerUID
-        const created = await api.createAccount(body)
+        // 创建：一次 POST 落全部字段（必填由 assertCreate 兜底；缺席 = 服务端缺省）
+        assertCreate(draft)
+        const created = await api.createAccount(patch as AccountCreate)
         await saveCodexExt(created.ID!)
         return
       }
-      // 编辑：一次 PATCH 落全部变更（仅变化项才带倍率/缓存域；缺席 = 不变）
-      const id = editing.ID!
-      const normMult = (v?: number | null) => Math.round((v ?? 1) * 10000) / 10000
-      const patch: AccountConfigPatch = toBody(f, editing, isCodexForBody)
-      if (mult !== normMult(editing.UpstreamCostMultiplier)) patch.upstream_cost_multiplier = mult
-      if (newDom !== (editing.CacheDomain ?? null)) patch.cache_domain = newDom
-      // 归属三态（AccountView 现回显）：勾选清空 ⇒ null；显式填值 ⇒ 分配；
-      // 字段被清空且原有归属 ⇒ 清空；其余 ⇒ 缺席（保持原归属不变）。
-      if (!isSupplierScope) {
-        const currentOwner = editing.supplier_user_id ?? null
-        if (f.clearOwner) patch.supplier_user_id = null
-        else if (ownerUID != null) patch.supplier_user_id = ownerUID
-        else if (currentOwner != null) patch.supplier_user_id = null
-      }
-      // 出口代理三态（投影唯一实现 = buildAccountPatch）：与回显相同、或回显为 null
-      // （可能绑着对当前调用方不可见的代理）且用户没选中具体代理 ⇒ 请求体**不含**
-      // proxy_id 键。这两条一起构成「整表单覆盖不得静默解绑管理员配置」的防线。
-      Object.assign(patch, buildAccountPatch(editing.proxy_id, parseProxySelectValue(f.proxy)))
-      await api.updateAccount(id, patch, editing.LifecycleRevision)
-      await saveCodexExt(id)
-      return
+      // 编辑：一次 PATCH 落全部变更（缺席 = 不变，不再与回显逐字段比较）
+      await api.updateAccount(editing.ID!, patch, editing.LifecycleRevision)
+      await saveCodexExt(editing.ID!)
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['accounts'] })
@@ -993,16 +885,19 @@ export default function Accounts() {
     // 凭据必填性按模板类型分流：api_key/responses-special → upstream_key；
     // codex-oauth → codex_oauth_token；codex-pat → codex_pat_key（后端同步校验）。
     // Use effectiveSelCt (fail-closed) so delayed template query does not bypass validation
-    if (!form.name.trim() || !form.template_id) return
+    if (!view.name.trim() || !view.template_id) return
     if (isSelUnresolved) return // fail-closed: do not submit while unresolved
-    if (parseMultiplier(form.cost_multiplier) === null) return
-    const domTrim = form.cache_domain.trim()
+    // 判据读草稿不读视图：view 里的空串只可能来自「用户清空了最大并发」——
+    // 契约不接受 null/0，故这里禁用保存（缺席 = 创建取服务端缺省，合法）。
+    if (draft.max_concurrency === '') return
+    if (parseMultiplier(view.cost_multiplier) === null) return
+    const domTrim = (view.cache_domain ?? '').trim()
     if (domTrim !== '' && !validCacheDomain(domTrim)) return
     const ct = effectiveSelCt
-    if (ct === 'codex-oauth' && !form.codex_oauth_token.trim()) return
-    if (ct === 'codex-pat' && !form.codex_pat_key.trim()) return
-    if (ct !== 'codex-oauth' && ct !== 'codex-pat' && !form.upstream_key) return
-    save.mutate(form)
+    if (ct === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) return
+    if (ct === 'codex-pat' && !codexFields.codex_pat_key.trim()) return
+    if (!isCodexCt(ct) && !view.upstream_key) return
+    save.mutate()
   }
 
   // —— 扩展配置（codex-oauth/codex-pat 模板；GET 404 = 无 ext 行 → 空表单，credential_type 预填模板类型） ——
@@ -1079,20 +974,16 @@ export default function Accounts() {
 
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
   const templateName = (a: AccountView) => a.Template?.Name ?? (a.TemplateID ? `#${a.TemplateID}` : '—')
-  const selTemplate = templates.find(tp => String(tp.ID) === form.template_id)
+  const selTemplate = templates.find(tp => String(tp.ID) === view.template_id)
   // 有效凭据：编辑未改时以嵌入 Template 为准，仅 ID 变更时查替换模板，未解析时禁用
-  const isEditingUnchanged = !!(editing && String(editing.TemplateID) === form.template_id)
+  const isEditingUnchanged = !!(editing && String(editing.TemplateID) === view.template_id)
   const effectiveSelCt: string | undefined = isEditingUnchanged
     ? (editing!.Template?.CredentialType as string | undefined)
     : (selTemplate?.CredentialType as string | undefined)
-  const isSelUnresolved = !!form.template_id && effectiveSelCt == null
+  const isSelUnresolved = !!view.template_id && effectiveSelCt == null
   const isSelCodex = isCodexCt(effectiveSelCt) || isSelUnresolved
-  // 切换至 Codex/未解析时清空残留 BaseURL
-  useEffect(() => {
-    if (isSelCodex && form.base_url !== '') {
-      setForm(f => ({ ...f, base_url: '' }))
-    }
-  }, [isSelCodex, form.base_url])
+  // 切模板**不碰** base_url 草稿（codex 约束在投影期施加：保存时落 null，
+  // 切回非 codex 时输入框仍显示原值，用户没表态就不写）。
 
   return (
     <div className="space-y-6">
@@ -1350,7 +1241,7 @@ export default function Accounts() {
           <div className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="acc-name">{t('accounts.nameLabel')}</Label>
-              <Input id="acc-name" value={form.name} placeholder={t('accounts.namePlaceholder')} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+              <Input id="acc-name" value={view.name} placeholder={t('accounts.namePlaceholder')} onChange={e => update('name', e.target.value)} />
             </div>
             {/* 归属供应商（仅管理面作用域）：把账号分配给供应商的唯一入口（spec §6.1 L834）。
                 供应商面不展示（服务端把归属恒定为 JWT 本人）。 */}
@@ -1359,18 +1250,18 @@ export default function Accounts() {
                 <Label htmlFor="acc-owner">{t('accounts.owner.label')}</Label>
                 <SupplierPicker
                   id="acc-owner"
-                  value={form.supplier_user_id}
-                  onChange={v => setForm(f => ({ ...f, supplier_user_id: v }))}
+                  value={view.supplier_user_id == null ? '' : String(view.supplier_user_id)}
+                  onChange={v => (v === '' ? clear('supplier_user_id') : update('supplier_user_id', Number(v)))}
                   placeholder={t('accounts.owner.placeholder')}
-                  disabled={form.clearOwner}
+                  disabled={draft.supplier_user_id === null}
                   disableInactive
                 />
                 <p className="text-xs text-muted-foreground">{t('accounts.owner.hint')}</p>
                 {editing && (
                   <label className="flex items-center gap-2">
                     <Checkbox
-                      checked={form.clearOwner}
-                      onCheckedChange={c => setForm(f => ({ ...f, clearOwner: c === true }))}
+                      checked={draft.supplier_user_id === null}
+                      onCheckedChange={c => (c === true ? update('supplier_user_id', null) : clear('supplier_user_id'))}
                     />
                     <span className="text-sm">{t('accounts.owner.clear')}</span>
                   </label>
@@ -1379,14 +1270,11 @@ export default function Accounts() {
             )}
             <div className="space-y-1.5">
               <Label>{t('accounts.templateLabel')}</Label>
+              {/* 只写模板：base_url 草稿不随模板切换而变（codex 约束在投影期施加，切回不丢值） */}
               <Select
                 items={Object.fromEntries(templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`]))}
-                value={form.template_id || null}
-                onValueChange={v => {
-                  const tpl = templates.find(p => String(p.ID) === String(v))
-                  const isCodex = !!(tpl && CODE_CREDENTIAL_TYPES.includes(tpl.CredentialType as typeof CODE_CREDENTIAL_TYPES[number]))
-                  setForm(f => ({ ...f, template_id: String(v), base_url: isCodex ? '' : f.base_url }))
-                }}
+                value={view.template_id || null}
+                onValueChange={v => update('template_id', String(v))}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -1406,9 +1294,9 @@ export default function Accounts() {
                   <Input
                     id="acc-oauth-token"
                     type="password"
-                    value={form.codex_oauth_token}
+                    value={codexFields.codex_oauth_token}
                     placeholder={t('accounts.ext.oauthTokenPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_oauth_token: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_oauth_token: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
@@ -1416,26 +1304,26 @@ export default function Accounts() {
                   <Input
                     id="acc-oauth-refresh"
                     type="password"
-                    value={form.codex_oauth_refresh_token}
+                    value={codexFields.codex_oauth_refresh_token}
                     placeholder={t('accounts.ext.oauthRefreshPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_oauth_refresh_token: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_oauth_refresh_token: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label>{t('accounts.ext.oauthExpiresAt')}</Label>
                   <DateTimePicker
                     id="acc-oauth-expires"
-                    value={form.codex_oauth_expires_at}
-                    onChange={v => setForm(f => ({ ...f, codex_oauth_expires_at: v }))}
+                    value={codexFields.codex_oauth_expires_at}
+                    onChange={v => setCodexFields(f => ({ ...f, codex_oauth_expires_at: v }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-ext-email">{t('accounts.ext.email')}</Label>
                   <Input
                     id="acc-ext-email"
-                    value={form.codex_email}
+                    value={codexFields.codex_email}
                     placeholder={t('accounts.ext.emailPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_email: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_email: e.target.value }))}
                   />
                 </div>
               </div>
@@ -1446,25 +1334,25 @@ export default function Accounts() {
                   <Input
                     id="acc-pat"
                     type="password"
-                    value={form.codex_pat_key}
+                    value={codexFields.codex_pat_key}
                     placeholder={t('accounts.ext.patKeyPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_pat_key: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_pat_key: e.target.value }))}
                   />
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="acc-ext-email">{t('accounts.ext.email')}</Label>
                   <Input
                     id="acc-ext-email"
-                    value={form.codex_email}
+                    value={codexFields.codex_email}
                     placeholder={t('accounts.ext.emailPlaceholder')}
-                    onChange={e => setForm(f => ({ ...f, codex_email: e.target.value }))}
+                    onChange={e => setCodexFields(f => ({ ...f, codex_email: e.target.value }))}
                   />
                 </div>
               </div>
             ) : (
               <div className="space-y-1.5">
                 <Label htmlFor="acc-key">Upstream Key</Label>
-                <Input id="acc-key" type="password" value={form.upstream_key} placeholder="sk-..." onChange={e => setForm(f => ({ ...f, upstream_key: e.target.value }))} />
+                <Input id="acc-key" type="password" value={view.upstream_key} placeholder="sk-..." onChange={e => update('upstream_key', e.target.value)} />
               </div>
             )}
             {isCodexCt(effectiveSelCt) && (
@@ -1472,13 +1360,14 @@ export default function Accounts() {
                 <Label htmlFor="acc-account-id">{t('accounts.ext.accountId')}</Label>
                 <Input
                   id="acc-account-id"
-                  value={form.codex_account_id}
+                  value={codexFields.codex_account_id}
                   placeholder={t('accounts.ext.accountIdPlaceholder')}
-                  onChange={e => setForm(f => ({ ...f, codex_account_id: e.target.value }))}
+                  onChange={e => setCodexFields(f => ({ ...f, codex_account_id: e.target.value }))}
                 />
               </div>
             )}
-            {/* Codex 不可配置 BaseURL，隐藏并清空；其他类型保留覆盖 */}
+            {/* Codex 不可配置 BaseURL：控件隐藏，约束在投影期施加（保存时落 null）；
+                切回非 codex 时草稿仍在，用户没表态就不写 */}
             {isSelCodex ? (
               <p className="text-xs text-muted-foreground">{t('accounts.baseUrlCodexHidden')}</p>
             ) : (
@@ -1486,23 +1375,23 @@ export default function Accounts() {
                 <Label htmlFor="acc-base-url">Base URL</Label>
                 <Input
                   id="acc-base-url"
-                  value={form.base_url}
+                  value={view.base_url ?? ''}
                   placeholder="https://..."
-                  onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))}
+                  onChange={e => update('base_url', e.target.value === '' ? null : e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">{t('accounts.baseUrlHint')}</p>
               </div>
             )}
             {/* 出口代理（spec proxy-pool §7）：选项 = 直连 + 当前调用方可见的代理列表。
                 **codex 账号同样可选**（v7 已覆盖 codex 面）——此处刻意不按凭据类型置灰。
-                未改动 ⇒ 请求体不含 proxy_id（buildAccountPatch 是唯一投影）。 */}
+                未改动（草稿里没有该键）⇒ 请求体不含 proxy_id（buildAccountPatch 是唯一投影）。 */}
             {editing && (
               <div className="space-y-1.5">
                 <Label>{t('accounts.proxy.label')}</Label>
                 <Select
                   items={proxyItems}
-                  value={form.proxy}
-                  onValueChange={v => setForm(f => ({ ...f, proxy: v }))}
+                  value={proxySelectValue(view.proxy)}
+                  onValueChange={v => update('proxy', parseProxySelectValue(v))}
                 >
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1525,7 +1414,10 @@ export default function Accounts() {
                 列表行内弹窗保留（点击倍率/缓存域单元格）。 */}
             <div className="space-y-1.5 max-w-40">
               <Label htmlFor="acc-max">{t('accounts.maxLabel')}</Label>
-              <Input id="acc-max" type="number" min={1} value={form.max_concurrency} onChange={e => setForm(f => ({ ...f, max_concurrency: e.target.value }))} />
+              <Input id="acc-max" type="number" min={1} value={view.max_concurrency} onChange={e => update('max_concurrency', e.target.value)} />
+              {draft.max_concurrency === '' && (
+                <p className="text-sm text-destructive">{t('accounts.maxRequired')}</p>
+              )}
             </div>
             <div className="space-y-1.5 max-w-40">
               <Label htmlFor="acc-form-mult">{t('accounts.multiplier.label')}</Label>
@@ -1535,11 +1427,11 @@ export default function Accounts() {
                 min={0}
                 max={10}
                 step={0.0001}
-                value={form.cost_multiplier}
-                onChange={e => setForm(f => ({ ...f, cost_multiplier: e.target.value }))}
+                value={view.cost_multiplier}
+                onChange={e => update('cost_multiplier', e.target.value)}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.multiplier.rangeHint')}</p>
-              {form.cost_multiplier.trim() !== '' && parseMultiplier(form.cost_multiplier) === null && (
+              {view.cost_multiplier.trim() !== '' && parseMultiplier(view.cost_multiplier) === null && (
                 <p className="text-sm text-destructive">{t('accounts.multiplier.invalid')}</p>
               )}
             </div>
@@ -1547,12 +1439,12 @@ export default function Accounts() {
               <Label htmlFor="acc-form-domain">{t('accounts.cacheDomain.label')}</Label>
               <Input
                 id="acc-form-domain"
-                value={form.cache_domain}
+                value={view.cache_domain ?? ''}
                 placeholder={t('accounts.cacheDomain.placeholder')}
-                onChange={e => setForm(f => ({ ...f, cache_domain: e.target.value }))}
+                onChange={e => update('cache_domain', e.target.value === '' ? null : e.target.value)}
               />
-              <p className="text-xs text-muted-foreground">{form.cache_domain.trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
-              {form.cache_domain.trim() !== '' && !validCacheDomain(form.cache_domain.trim()) && (
+              <p className="text-xs text-muted-foreground">{(view.cache_domain ?? '').trim() === '' ? t('accounts.cacheDomain.currentPrivate') : t('accounts.cacheDomain.currentShared')}</p>
+              {(view.cache_domain ?? '').trim() !== '' && !validCacheDomain((view.cache_domain ?? '').trim()) && (
                 <p className="text-sm text-destructive">{t('accounts.cacheDomain.invalid')}</p>
               )}
             </div>
@@ -1560,8 +1452,8 @@ export default function Accounts() {
               <Label>{t('accounts.groupLabel')}</Label>
               <GroupMultiSelect
                 groups={groups}
-                value={groupsValue}
-                onChange={v => setForm(f => ({ ...f, group_ids: v }))}
+                value={view.group_ids}
+                onChange={v => update('group_ids', v)}
                 disabled={!!editing && !groupsLoaded}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.groupHint')}</p>
@@ -1582,14 +1474,16 @@ export default function Accounts() {
               onClick={submit}
               disabled={
                 save.isPending ||
-                !form.name.trim() ||
-                !form.template_id ||
+                !view.name.trim() ||
+                !view.template_id ||
                 isSelUnresolved ||
-                parseMultiplier(form.cost_multiplier) === null ||
-                (form.cache_domain.trim() !== '' && !validCacheDomain(form.cache_domain.trim())) ||
-                (effectiveSelCt === 'codex-oauth' && !form.codex_oauth_token.trim()) ||
-                (effectiveSelCt === 'codex-pat' && !form.codex_pat_key.trim()) ||
-                (!isCodexCt(effectiveSelCt) && form.upstream_key === '') ||
+                // 判据读草稿：清空最大并发 = 非法（契约不接受 null/0）；缺席合法
+                draft.max_concurrency === '' ||
+                parseMultiplier(view.cost_multiplier) === null ||
+                ((view.cache_domain ?? '').trim() !== '' && !validCacheDomain((view.cache_domain ?? '').trim())) ||
+                (effectiveSelCt === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) ||
+                (effectiveSelCt === 'codex-pat' && !codexFields.codex_pat_key.trim()) ||
+                (!isCodexCt(effectiveSelCt) && view.upstream_key === '') ||
                 // 分组回显未到不再阻塞保存：写入侧「没表态 = 不发键」，不会清空。
                 // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
                 // 会使 account id 回退到 null，PUT 全列更新将清空已存值。

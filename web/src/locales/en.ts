@@ -405,6 +405,7 @@ export default {
     "namePlaceholder": "e.g. openai-acc-1",
     "templateLabel": "Template",
     "maxLabel": "Max concurrency",
+    "maxRequired": "Max concurrency cannot be empty (leave it blank on create to use the server default)",
     "deleteTitle": "Delete account",
     "deleteDesc": "Delete account \"{{name}}\"? The account will be unbound from all groups.",
     "saveSuccess": "Account saved",
