@@ -10,6 +10,7 @@
 // 所以草稿用 number[] | null 表达意图，写入侧只负责把 null 变成「不发键」。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import { buildGroupIdsField } from './account-proxy.ts'
 
 describe('buildGroupIdsField：分组三态', () => {
@@ -31,5 +32,24 @@ describe('buildGroupIdsField：分组三态', () => {
     assert.notEqual(field.group_ids, draft)
     draft.push(8)
     assert.deepEqual(field.group_ids, [7])
+  })
+})
+
+// 源码形状：回显只读不拷贝。React Query 的 structural sharing 会在内容不变时
+// 复用同一引用，于是「把回显灌进 form 的 effect」在二次打开时永远不跑——
+// 线上表现是「分组取到了但一个都没勾上」。这类回归没有渲染测试能接住，只能钉形状。
+const page = readFileSync(new URL('../pages/accounts.tsx', import.meta.url), 'utf8')
+
+describe('accounts.tsx：回显不许被 structural sharing 吃掉', () => {
+  it('展示派生自回显（草稿 ?? 回显 ?? []）', () => {
+    assert.match(page, /form\.group_ids \?\? groupsEcho\.data\?\.group_ids \?\? \[\]/)
+  })
+
+  it('不再把回显回填进 form', () => {
+    assert.equal(/group_ids:\s*\[\.\.\.\(?groupsEcho\.data/.test(page), false)
+  })
+
+  it('写入走 buildGroupIdsField（null = 不发键）', () => {
+    assert.match(page, /buildGroupIdsField\(f\.group_ids\)/)
   })
 })

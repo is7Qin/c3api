@@ -755,8 +755,10 @@ export default function Accounts() {
   }
 
   // 编辑回显（方案 B）：对话框挂载时拉取当前分组；未到前禁用分组控件。
-  // 展示**派生**自回显（`草稿 ?? 回显 ?? []`），不再回填 form：
-  // 回填就有两份真值，就得靠 effect 同步，同步就有「缓存命中不跑 effect」的窗口。
+  // 展示**派生**自回显（`草稿 ?? 回显 ?? []`），不再回填 form。原因是 React Query
+  // 的 structural sharing：重取回来内容相同时会复用**同一个引用**，于是
+  // `useEffect(…, [groupsEcho.data])` 在二次打开时根本不会跑——线上表现就是
+  // 「分组取到了但一个都没勾上」。展示派生就没有这个依赖。
   const groupsEcho = useQuery({
     queryKey: ['account-groups', editing?.ID],
     queryFn: () => api.getAccountGroups(editing!.ID!),
