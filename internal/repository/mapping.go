@@ -85,10 +85,11 @@ func protocolConvertStrings(pcs []domain.ProtocolConvert) []string {
 
 func toDomainTemplateExt(e *ent.TemplateExt) *domain.TemplateExt {
 	return &domain.TemplateExt{
-		TemplateID:      e.TemplateID,
-		CredentialType:  credential.Type(e.CredentialType),
-		StripImageTools: e.StripImageTools,
-		UpstreamPaths:   e.UpstreamPaths,
+		TemplateID:              e.TemplateID,
+		CredentialType:          credential.Type(e.CredentialType),
+		StripImageTools:         e.StripImageTools,
+		UpstreamPaths:           e.UpstreamPaths,
+		CodexResponsesTransport: domain.CodexResponsesTransport(e.CodexResponsesTransport),
 	}
 }
 
@@ -152,6 +153,24 @@ func toDomainTemplate(t *ent.Template) *domain.Template {
 	// 请求打到非预期端点。按模板类型门控后，陈旧行对其它类型完全无效。
 	if d.CredentialType == credential.TypeCustom && len(t.Edges.Ext) > 0 {
 		d.UpstreamPaths = t.Edges.Ext[0].UpstreamPaths
+	}
+	// codex responses 出站传输同款快照合并（spec-codex-outbound-transport §4.4）。
+	// **独立 if**：strip_image_tools 默认 NULL，把这段塞进上面的 strip 守卫里会让
+	// 绝大多数模板的开关永远合并不进快照（现有夹具恰好 strip=true 时测试全绿，
+	// 线上 ws 臂却静默回落 http）。
+	// **门控只覆盖「当前类型不匹配」**：三个条件（有 ext 边、模板是 codex 类型、
+	// ext 行类型与模板类型一致）都是对**此刻**配置的判定。它防不住「类型改走再
+	// 改回与 ext 行相同的类型」——codex→custom→codex 之后陈旧 ext 行的类型重新
+	// 与模板一致，旧的 ws 会就此复活；写面的 409 + 确认（§4.3）是那条路唯一的
+	// 守卫，本函数不清理 ext 行（读路径不越权改写配置面）。
+	// 值**原样**合并（不在合并点归一）：脏值由 Key()/Name() 按默认面归一；装载侧
+	// 的审计 WARN 由 `scheduler.warnDirtyCodexTransports` 在每轮 reload 装配时写
+	// （每模板一条，带 template_id + 原值）。
+	if len(t.Edges.Ext) > 0 {
+		ext := t.Edges.Ext[0]
+		if d.CredentialType.IsCodex() && ext.CredentialType == string(d.CredentialType) {
+			d.CodexResponsesTransport = domain.CodexResponsesTransport(ext.CodexResponsesTransport)
+		}
 	}
 	return d
 }

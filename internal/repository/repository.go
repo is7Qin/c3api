@@ -114,7 +114,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		PriceVariants:  &PriceVariantRepo{client: client},
 		Billing:        &BillingRepo{client: client, driver: drv, pool: pool},
 		Partitions:     &PartitionRepo{driver: drv},
-		TemplateExts:   &TemplateExtRepo{client: client},
+		TemplateExts:   &TemplateExtRepo{client: client, driver: drv},
 		AccountExts:    &AccountExtRepo{client: client, driver: drv},
 		EmailTemplates: &EmailTemplateRepo{client: client},
 		BalanceLogs:    &BalanceLogRepo{client: client},
@@ -484,8 +484,11 @@ func (r *Repository) UpdateGroupsBatch(ctx context.Context, ids []int64, p Group
 
 // --- 模板/账号类型化扩展（数据层；消费接线） ---
 
-func (r *Repository) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) (*domain.TemplateExt, error) {
-	return r.TemplateExts.UpsertTemplateExt(ctx, e)
+// UpsertTemplateExt 守卫写门面（spec §4.3：唯一写入口）：事务 + 父行锁 + 判定
+// 回调的语义全在 TemplateExtRepo.UpsertTemplateExt，门面只透传——**不得**在此
+// 或任何别的门面方法里另开一条不判定的写路径。
+func (r *Repository) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide TemplateExtDecide) (*domain.TemplateExt, bool, error) {
+	return r.TemplateExts.UpsertTemplateExt(ctx, e, decide)
 }
 
 func (r *Repository) GetTemplateExt(ctx context.Context, templateID int64) (*domain.TemplateExt, error) {

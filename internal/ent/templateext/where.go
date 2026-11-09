@@ -68,6 +68,11 @@ func StripImageTools(v bool) predicate.TemplateExt {
 	return predicate.TemplateExt(sql.FieldEQ(FieldStripImageTools, v))
 }
 
+// CodexResponsesTransport applies equality check predicate on the "codex_responses_transport" field. It's identical to CodexResponsesTransportEQ.
+func CodexResponsesTransport(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldEQ(FieldCodexResponsesTransport, v))
+}
+
 // TemplateIDEQ applies the EQ predicate on the "template_id" field.
 func TemplateIDEQ(v int64) predicate.TemplateExt {
 	return predicate.TemplateExt(sql.FieldEQ(FieldTemplateID, v))
@@ -181,6 +186,71 @@ func UpstreamPathsIsNil() predicate.TemplateExt {
 // UpstreamPathsNotNil applies the NotNil predicate on the "upstream_paths" field.
 func UpstreamPathsNotNil() predicate.TemplateExt {
 	return predicate.TemplateExt(sql.FieldNotNull(FieldUpstreamPaths))
+}
+
+// CodexResponsesTransportEQ applies the EQ predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportEQ(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldEQ(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportNEQ applies the NEQ predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportNEQ(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldNEQ(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportIn applies the In predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportIn(vs ...string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldIn(FieldCodexResponsesTransport, vs...))
+}
+
+// CodexResponsesTransportNotIn applies the NotIn predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportNotIn(vs ...string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldNotIn(FieldCodexResponsesTransport, vs...))
+}
+
+// CodexResponsesTransportGT applies the GT predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportGT(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldGT(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportGTE applies the GTE predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportGTE(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldGTE(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportLT applies the LT predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportLT(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldLT(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportLTE applies the LTE predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportLTE(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldLTE(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportContains applies the Contains predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportContains(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldContains(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportHasPrefix applies the HasPrefix predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportHasPrefix(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldHasPrefix(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportHasSuffix applies the HasSuffix predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportHasSuffix(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldHasSuffix(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportEqualFold applies the EqualFold predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportEqualFold(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldEqualFold(FieldCodexResponsesTransport, v))
+}
+
+// CodexResponsesTransportContainsFold applies the ContainsFold predicate on the "codex_responses_transport" field.
+func CodexResponsesTransportContainsFold(v string) predicate.TemplateExt {
+	return predicate.TemplateExt(sql.FieldContainsFold(FieldCodexResponsesTransport, v))
 }
 
 // HasTemplate applies the HasEdge predicate on the "template" edge.

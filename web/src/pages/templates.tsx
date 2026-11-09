@@ -13,9 +13,11 @@ import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import type { components } from '@/lib/api/schema'
 import {
   CUSTOM_PATH_FIELDS,
+  extEchoBlocked as echoBlocked,
   extFormFields,
-  nonEmptyPaths,
-  pathsEchoBlocked as echoBlocked,
+  extWriteBody,
+  extWriteConfirm,
+  isCodexCredentialType as isCodexCredential,
   saveTargetID,
   shouldSyncEcho,
 } from '@/lib/template-extensions'
@@ -71,8 +73,7 @@ const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-specia
 const ECO_CREDENTIAL_TYPES: TemplateCredentialType[] = ['responses-special', 'codex-oauth', 'codex-pat']
 const ECO_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws', 'openai-images', 'openai-search']
 
-// 路径键与「留空不上送」在 lib/template-extensions.ts（纯函数，node --test 覆盖）
-const isCodexCredential = (v: string) => v === 'codex-oauth' || v === 'codex-pat'
+// 路径键 / 门禁 / 写面 body 组装在 lib/template-extensions.ts（纯函数，node --test 覆盖）
 const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> = {
   'responses-special': 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
   'codex-oauth': 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-400',
@@ -117,6 +118,9 @@ interface FormState {
   strip_image_tools: boolean
   // custom 专用逐格式路径（键 → 路径；空串/缺键 = 用默认端点）
   upstream_paths: Record<string, string>
+  // codex 出站传输（"" = 未配置 = 默认 http；"http" / "ws"）——编辑态经 ext 回显填充，
+  // 保存时链式写 ext。表单里不提供修改入口（改它在「扩展配置」弹窗，需 409 确认流）。
+  codex_responses_transport: string
 }
 
 const emptyForm = (): FormState => ({
@@ -129,6 +133,7 @@ const emptyForm = (): FormState => ({
   model_mapping: [],
   strip_image_tools: false,
   upstream_paths: {},
+  codex_responses_transport: '',
 })
 
 function toForm(t: Template): FormState {
@@ -151,6 +156,7 @@ function toForm(t: Template): FormState {
     // 编辑回显经 GET /templates/{id}/ext 拉取填充（见 dialog 挂载 effect）
     strip_image_tools: false,
     upstream_paths: {},
+    codex_responses_transport: '',
   }
 }
 
@@ -590,11 +596,11 @@ export default function Templates() {
   const [editing, setEditing] = useState<Template | null>(null)
   const [form, setForm] = useState<FormState>(emptyForm())
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
-  // pathsSyncedFor 记录「表单已按哪个模板 ID 同步过 ext 回显」（custom 保存门禁用）。
+  // extSyncedFor 记录「表单已按哪个模板 ID 同步过 ext 回显」（custom 与 codex 保存门禁用）。
   // 门禁必须挂在表单状态上而不是查询状态上：关闭再打开同一模板时 react-query
   // 会复用同一份 data 引用（structural sharing），effect 不重跑，而 openEdit 已
   // 把 form 重置成空表——只查 isLoading 会把「刚被重置的空表单」当成已回显。
-  const [pathsSyncedFor, setPathsSyncedFor] = useState<number | null>(null)
+  const [extSyncedFor, setExtSyncedFor] = useState<number | null>(null)
   // pendingTemplateID 记录「表单对应的模板行已经落库、但链式写 ext 失败」的 id：
   // 此时 editing 仍为 null（新建），重试必须走 update，否则会再建一个重复模板。
   const [pendingTemplateID, setPendingTemplateID] = useState<number | null>(null)
@@ -622,10 +628,14 @@ export default function Templates() {
 
   // —— 扩展配置（生态三类型；GET 404 = 无 ext 行 → 空表单；strip_image_tools 三态：未配置/开/关） ——
   // custom 模板不在此弹窗里维护：它的 upstream_paths 属于主表单（需要 7 个格式
-  // 输入框与回显门控），而本弹窗只有 strip_image_tools，对 custom 开放会让一次
-  // 保存带走整份路径配置——行操作入口因此按 ECO 三类型门控。
+  // 输入框与回显门控）。本弹窗负责 strip_image_tools 与 **codex 出站传输**
+  // （后者只对 codex-oauth/codex-pat 可见；入站 `openai-responses-ws` 同名不同义）。
   const [extTarget, setExtTarget] = useState<Template | null>(null)
   const [extStrip, setExtStrip] = useState<boolean | null>(null)
+  // 出站传输："" = 未配置（默认 http）/ "http" / "ws"，与后端回显同一个字符串。
+  const [extTransport, setExtTransport] = useState<string>('')
+  // 409 二次确认：只有用户点头后重发才带 confirm（禁止无条件带）。
+  const [extConfirmOpen, setExtConfirmOpen] = useState(false)
   const extQ = useQuery({
     queryKey: ['template-ext', extTarget?.ID],
     queryFn: async () => {
@@ -641,33 +651,45 @@ export default function Templates() {
   const openExt = (t: Template) => {
     setExtTarget(t)
     setExtStrip(null)
+    setExtTransport('')
+    setExtConfirmOpen(false)
   }
   useEffect(() => {
     if (!extTarget || extQ.isLoading || extQ.data === null) return
     const target = extQ.data?.strip_image_tools ?? null
     setExtStrip(prev => (prev === target ? prev : target))
+    // 回显是写面的前提：没读回旧值就保存＝把已生效的 ws 静默清回默认
+    const transport = extQ.data?.codex_responses_transport ?? ''
+    setExtTransport(prev => (prev === transport ? prev : transport))
   }, [extTarget?.ID, extQ.isLoading, extQ.data])
+  // 扩展对话框的写面：body 走唯一的组装点（与主表单链式写同一个 helper）。
+  // mutationFn 的入参就是「用户是否已在 409 弹窗里确认」——确认才带令牌。
   const extSave = useMutation({
-    mutationFn: () => {
+    mutationFn: (vars: { confirmed: boolean }) => {
       const tpl = extTarget!
-      const body: TemplateExt = {
-        template_id: tpl.ID,
-        credential_type: tpl.CredentialType as TemplateExt['credential_type'],
-        strip_image_tools: extStrip,
-      }
-      return api.putTemplateExt(tpl.ID, body)
+      const body: TemplateExt = extWriteBody(
+        { strip_image_tools: extStrip, upstream_paths: {}, codex_responses_transport: extTransport },
+        tpl.CredentialType as string,
+      )
+      return api.putTemplateExt(tpl.ID, body, extWriteConfirm(vars.confirmed))
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['templates'] })
+      qc.invalidateQueries({ queryKey: ['template-ext-echo'] })
+      setExtConfirmOpen(false)
       setExtTarget(null)
       toast.add({ title: tr('templates.ext.saveSuccess'), type: 'success' })
+    },
+    onError: e => {
+      // 409 = 把已生效的 ws 改成非 ws：弹二次确认，**不自动重发**。
+      if (e instanceof ApiError && e.status === 409) setExtConfirmOpen(true)
     },
   })
 
   const openCreate = () => {
     setEditing(null)
     setForm(emptyForm())
-    setPathsSyncedFor(null) // 新建无既有路径；清掉上次的同步标记
+    setExtSyncedFor(null) // 新建无既有 ext 配置；清掉上次的同步标记
     setPendingTemplateID(null)
     setValidationMsg(null)
     setDialogOpen(true)
@@ -676,8 +698,8 @@ export default function Templates() {
     setEditing(t)
     setForm(toForm(t))
     // 表单刚被重置成空表：在回显 effect 重新灌入之前一律视为未同步，否则
-    // 「关闭→重开→保存」会在表单尚空的瞬间把全部路径写成 NULL。
-    setPathsSyncedFor(null)
+    // 「关闭→重开→保存」会在表单尚空的瞬间把全部路径/传输写成默认。
+    setExtSyncedFor(null)
     setPendingTemplateID(null)
     setValidationMsg(null)
     setDialogOpen(true)
@@ -707,11 +729,12 @@ export default function Templates() {
     const fields = extFormFields(templateExtEcho.isSuccess ? (templateExtEcho.data ?? null) : undefined)
     if (!fields) return // 没读到：保持表单原样，也不标记已同步
     setForm(f => ({ ...f, ...fields }))
-    setPathsSyncedFor(editingID)
+    setExtSyncedFor(editingID)
   }, [editingID, dialogOpen, templateExtEcho.isSuccess, templateExtEcho.data])
 
-  // 自定义模板的路径依赖 ext 回显：当前模板尚未同步过既有配置时不得保存。
-  const pathsEchoBlocked = echoBlocked(form.credential_type, editingID, pathsSyncedFor)
+  // custom 的路径与 codex 的传输都依赖 ext 回显：当前模板尚未同步过既有配置时
+  // 不得保存（写面是全列替换，回显没走完就写＝把 ws 静默清回默认）。
+  const echoGateBlocked = echoBlocked(form.credential_type, editingID, extSyncedFor)
   // BatchBar 的 onUpdate 返回 promise：对话框关闭（提交成功/取消）时 resolve。
   const closeBatchUpdate = (r: 'cancelled' | 'submitted' = 'cancelled') => {
     setBatchOpen(false)
@@ -729,14 +752,15 @@ export default function Templates() {
     })
   }
 
-  // 生态类型保存链式写 ext（strip_image_tools 三态）；api_key 类型无 ext 行
+  // 生态类型与 custom 保存时链式写 ext；api_key 类型无 ext 行。
+  // body 由唯一组装点产出（全列替换：三字段一起发）。
   const save = useMutation({
     mutationFn: async (f: FormState) => {
       const ct = (f.credential_type || 'api_key') as TemplateCredentialType
-      // 自定义路径必须建立在「已读回既有配置」之上：回显未完成就写，会把已有
-      // 路径整体清空（7 个端点全部回落厂商默认，运维侧表现为 404）。门禁前置到
-      // 任何写之前——放在 updateTemplate 之后会变成「模板已改、却报没保存」。
-      if (echoBlocked(ct, editing?.ID ?? null, pathsSyncedFor)) {
+      // 回显门禁：路径与传输都必须建立在「已读回既有配置」之上，否则会把已有
+      // 配置整体清空（custom：7 个端点回落厂商默认；codex：ws 静默降级回 http）。
+      // 门禁前置到任何写之前——放在 updateTemplate 之后会变成「模板已改、却报没保存」。
+      if (echoBlocked(ct, editing?.ID ?? null, extSyncedFor)) {
         throw new Error(tr('templates.ext.echoRequired'))
       }
       let id = saveTargetID(editing?.ID ?? null, pendingTemplateID)
@@ -750,20 +774,13 @@ export default function Templates() {
         await api.updateTemplate(id, toBody(f))
       }
       if (id && (ECO_CREDENTIAL_TYPES.includes(ct) || ct === 'custom')) {
-        const body: TemplateExt = {
-          template_id: id,
-          credential_type: ct as TemplateExt['credential_type'],
-          strip_image_tools: f.strip_image_tools,
-        }
-        if (ct === 'custom') {
-          // 留空的键不上送（后端 nil = 未配置 = 该格式走默认端点）。键与
-          // supported_formats 不联动：已取消格式的旧路径原样带回，保留为死配置。
-          body.upstream_paths = nonEmptyPaths(f.upstream_paths)
-        }
+        const body: TemplateExt = extWriteBody(f, ct)
         try {
           await api.putTemplateExt(id, body)
         } catch (e) {
           // 模板行已写成功：文案必须说清，否则运维会以为什么都没保存而重复操作。
+          // 传输降级在这里不会发生（主表单没有传输控件，带的就是回显值，409 只可能
+          // 来自并发改写）；因此没有「确认后重发」分支，异常原样折射给用户。
           throw new Error(tr('templates.ext.partialFailure', { message: errMsg(e) ?? String(e) }))
         }
       }
@@ -1020,13 +1037,13 @@ export default function Templates() {
             {save.isError && errMsg(save.error) && (
               <p className="text-sm text-destructive">{errMsg(save.error)}</p>
             )}
-            {pathsEchoBlocked && (
+            {echoGateBlocked && (
               <p className="text-sm text-destructive">{tr('templates.ext.echoRequired')}</p>
             )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{tr('common.cancel')}</Button>
-            <Button onClick={submit} disabled={save.isPending || pathsEchoBlocked}>
+            <Button onClick={submit} disabled={save.isPending || echoGateBlocked}>
               {save.isPending ? tr('common.saving') : editing ? tr('common.saveChanges') : tr('common.create')}
             </Button>
           </DialogFooter>
@@ -1056,8 +1073,9 @@ export default function Templates() {
         </DialogContent>
       </Dialog>
 
-      {/* —— 扩展配置（生态三类型模板；strip_image_tools 三态：未配置/开/关） —— */}
-      <Dialog open={!!extTarget} onOpenChange={o => { if (!o && !extSave.isPending) setExtTarget(null) }}>
+      {/* —— 扩展配置（生态三类型模板；strip_image_tools 三态：未配置/开/关；
+             codex 追加「出站传输」选择——入站 openai-responses-ws 同名不同义） —— */}
+      <Dialog open={!!extTarget} onOpenChange={o => { if (!o && !extSave.isPending) { setExtTarget(null); setExtConfirmOpen(false) } }}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader>
             <DialogTitle>{tr('templates.ext.title', { id: extTarget?.ID ?? 0 })}</DialogTitle>
@@ -1080,6 +1098,30 @@ export default function Templates() {
                 aria-label={tr('templates.ext.stripImageTools')}
               />
             </div>
+            {isCodexCredential((extTarget?.CredentialType as string) ?? '') && (
+              <div className="space-y-1.5">
+                <Label htmlFor="ext-transport">{tr('templates.ext.transport')}</Label>
+                <Select
+                  items={{
+                    default: tr('templates.ext.transportDefault'),
+                    http: tr('templates.ext.transportHttp'),
+                    ws: tr('templates.ext.transportWs'),
+                  }}
+                  value={extTransport === '' ? 'default' : extTransport}
+                  onValueChange={v => setExtTransport(v === 'default' ? '' : v)}
+                >
+                  <SelectTrigger id="ext-transport" className="w-full" disabled={extQ.isLoading || !extQ.isSuccess || extSave.isPending}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="default" label={tr('templates.ext.transportDefault')}>{tr('templates.ext.transportDefault')}</SelectItem>
+                    <SelectItem value="http" label={tr('templates.ext.transportHttp')}>{tr('templates.ext.transportHttp')}</SelectItem>
+                    <SelectItem value="ws" label={tr('templates.ext.transportWs')}>{tr('templates.ext.transportWs')}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">{tr('templates.ext.transportHint')}</p>
+              </div>
+            )}
             {extQ.isError && (
               <p className="text-sm text-destructive">{tr('templates.ext.loadFailed', { message: (extQ.error as Error).message })}</p>
             )}
@@ -1089,8 +1131,27 @@ export default function Templates() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExtTarget(null)} disabled={extSave.isPending}>{tr('common.cancel')}</Button>
-            <Button onClick={() => extSave.mutate()} disabled={extSave.isPending || extQ.isLoading}>
+            {/* 回显未成功时禁止保存：写面全列替换，没读回旧值就写＝把 ws 清回默认 */}
+            <Button onClick={() => extSave.mutate({ confirmed: false })} disabled={extSave.isPending || !extQ.isSuccess}>
               {extSave.isPending ? tr('common.saving') : tr('common.save')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* —— 出站传输降级确认（409 二次确认）：确认后才带 ?confirm= 重发同一 body —— */}
+      <Dialog open={extConfirmOpen} onOpenChange={o => { if (!o && !extSave.isPending) setExtConfirmOpen(false) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>{tr('templates.ext.transportConfirmTitle')}</DialogTitle>
+            <DialogDescription>{tr('templates.ext.transportConfirmDesc')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExtConfirmOpen(false)} disabled={extSave.isPending}>
+              {tr('common.cancel')}
+            </Button>
+            <Button variant="destructive" onClick={() => extSave.mutate({ confirmed: true })} disabled={extSave.isPending}>
+              {extSave.isPending ? tr('common.saving') : tr('templates.ext.transportConfirmAction')}
             </Button>
           </DialogFooter>
         </DialogContent>

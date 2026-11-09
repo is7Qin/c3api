@@ -54,6 +54,20 @@ func (_c *TemplateExtCreate) SetUpstreamPaths(v map[string]string) *TemplateExtC
 	return _c
 }
 
+// SetCodexResponsesTransport sets the "codex_responses_transport" field.
+func (_c *TemplateExtCreate) SetCodexResponsesTransport(v string) *TemplateExtCreate {
+	_c.mutation.SetCodexResponsesTransport(v)
+	return _c
+}
+
+// SetNillableCodexResponsesTransport sets the "codex_responses_transport" field if the given value is not nil.
+func (_c *TemplateExtCreate) SetNillableCodexResponsesTransport(v *string) *TemplateExtCreate {
+	if v != nil {
+		_c.SetCodexResponsesTransport(*v)
+	}
+	return _c
+}
+
 // SetID sets the "id" field.
 func (_c *TemplateExtCreate) SetID(v int64) *TemplateExtCreate {
 	_c.mutation.SetID(v)
@@ -72,6 +86,7 @@ func (_c *TemplateExtCreate) Mutation() *TemplateExtMutation {
 
 // Save creates the TemplateExt in the database.
 func (_c *TemplateExtCreate) Save(ctx context.Context) (*TemplateExt, error) {
+	_c.defaults()
 	return withHooks(ctx, _c.sqlSave, _c.mutation, _c.hooks)
 }
 
@@ -97,6 +112,14 @@ func (_c *TemplateExtCreate) ExecX(ctx context.Context) {
 	}
 }
 
+// defaults sets the default values of the builder before save.
+func (_c *TemplateExtCreate) defaults() {
+	if _, ok := _c.mutation.CodexResponsesTransport(); !ok {
+		v := templateext.DefaultCodexResponsesTransport
+		_c.mutation.SetCodexResponsesTransport(v)
+	}
+}
+
 // check runs all checks and user-defined validators on the builder.
 func (_c *TemplateExtCreate) check() error {
 	if _, ok := _c.mutation.TemplateID(); !ok {
@@ -104,6 +127,9 @@ func (_c *TemplateExtCreate) check() error {
 	}
 	if _, ok := _c.mutation.CredentialType(); !ok {
 		return &ValidationError{Name: "credential_type", err: errors.New(`ent: missing required field "TemplateExt.credential_type"`)}
+	}
+	if _, ok := _c.mutation.CodexResponsesTransport(); !ok {
+		return &ValidationError{Name: "codex_responses_transport", err: errors.New(`ent: missing required field "TemplateExt.codex_responses_transport"`)}
 	}
 	if len(_c.mutation.TemplateIDs()) == 0 {
 		return &ValidationError{Name: "template", err: errors.New(`ent: missing required edge "TemplateExt.template"`)}
@@ -152,6 +178,10 @@ func (_c *TemplateExtCreate) createSpec() (*TemplateExt, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.UpstreamPaths(); ok {
 		_spec.SetField(templateext.FieldUpstreamPaths, field.TypeJSON, value)
 		_node.UpstreamPaths = value
+	}
+	if value, ok := _c.mutation.CodexResponsesTransport(); ok {
+		_spec.SetField(templateext.FieldCodexResponsesTransport, field.TypeString, value)
+		_node.CodexResponsesTransport = value
 	}
 	if nodes := _c.mutation.TemplateIDs(); len(nodes) > 0 {
 		edge := &sqlgraph.EdgeSpec{
@@ -282,6 +312,18 @@ func (u *TemplateExtUpsert) ClearUpstreamPaths() *TemplateExtUpsert {
 	return u
 }
 
+// SetCodexResponsesTransport sets the "codex_responses_transport" field.
+func (u *TemplateExtUpsert) SetCodexResponsesTransport(v string) *TemplateExtUpsert {
+	u.Set(templateext.FieldCodexResponsesTransport, v)
+	return u
+}
+
+// UpdateCodexResponsesTransport sets the "codex_responses_transport" field to the value that was provided on create.
+func (u *TemplateExtUpsert) UpdateCodexResponsesTransport() *TemplateExtUpsert {
+	u.SetExcluded(templateext.FieldCodexResponsesTransport)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create except the ID field.
 // Using this option is equivalent to using:
 //
@@ -400,6 +442,20 @@ func (u *TemplateExtUpsertOne) ClearUpstreamPaths() *TemplateExtUpsertOne {
 	})
 }
 
+// SetCodexResponsesTransport sets the "codex_responses_transport" field.
+func (u *TemplateExtUpsertOne) SetCodexResponsesTransport(v string) *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.SetCodexResponsesTransport(v)
+	})
+}
+
+// UpdateCodexResponsesTransport sets the "codex_responses_transport" field to the value that was provided on create.
+func (u *TemplateExtUpsertOne) UpdateCodexResponsesTransport() *TemplateExtUpsertOne {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.UpdateCodexResponsesTransport()
+	})
+}
+
 // Exec executes the query.
 func (u *TemplateExtUpsertOne) Exec(ctx context.Context) error {
 	if len(u.create.conflict) == 0 {
@@ -452,6 +508,7 @@ func (_c *TemplateExtCreateBulk) Save(ctx context.Context) ([]*TemplateExt, erro
 	for i := range _c.builders {
 		func(i int, root context.Context) {
 			builder := _c.builders[i]
+			builder.defaults()
 			var mut Mutator = MutateFunc(func(ctx context.Context, m Mutation) (Value, error) {
 				mutation, ok := m.(*TemplateExtMutation)
 				if !ok {
@@ -680,6 +737,20 @@ func (u *TemplateExtUpsertBulk) UpdateUpstreamPaths() *TemplateExtUpsertBulk {
 func (u *TemplateExtUpsertBulk) ClearUpstreamPaths() *TemplateExtUpsertBulk {
 	return u.Update(func(s *TemplateExtUpsert) {
 		s.ClearUpstreamPaths()
+	})
+}
+
+// SetCodexResponsesTransport sets the "codex_responses_transport" field.
+func (u *TemplateExtUpsertBulk) SetCodexResponsesTransport(v string) *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.SetCodexResponsesTransport(v)
+	})
+}
+
+// UpdateCodexResponsesTransport sets the "codex_responses_transport" field to the value that was provided on create.
+func (u *TemplateExtUpsertBulk) UpdateCodexResponsesTransport() *TemplateExtUpsertBulk {
+	return u.Update(func(s *TemplateExtUpsert) {
+		s.UpdateCodexResponsesTransport()
 	})
 }
 

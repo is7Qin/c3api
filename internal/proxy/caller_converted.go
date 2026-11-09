@@ -339,10 +339,14 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
 	cm := sel.ClientResponseModel(reqModel)
+	// 出站传输钉死 http：转换车道上游跑的是**转换后的 payload**，本轮 WS 臂只
+	// 验证原生 responses 请求（sdkbridge 组合用例），未覆盖转换产物；钉 http
+	// 让转换车道保持本轮唯一已验证的腿，而不是跟随模板开关走进未验证面。
+	// 这也让本车道绕过 callCodexResponses ⇒ 天然不写生效传输头。
 	if stream {
-		return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, codexConvertedStreamPlan(dir, cm))
+		return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body, codexConvertedStreamPlan(dir, cm), domain.CodexResponsesTransportHTTP)
 	}
-	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm))
+	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, &cred, body, newCodexConvertedOutput(w, dir, cm), domain.CodexResponsesTransportHTTP)
 }
 
 // convertedOpTag 转换方向对应的操作标签：由 domain.ProtocolConvert.Client()

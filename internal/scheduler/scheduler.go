@@ -89,10 +89,17 @@ type Selection struct {
 	StripImageTools bool
 	// UpstreamPaths custom 的逐格式自定义上游路径（只读引用快照 map，不复制、
 	// 不修改；nil = 未配置 = 全部回落官方默认端点）。
-	UpstreamPaths        map[string]string
-	Ext                  *domain.AccountExt
-	CandidateFingerprint string
-	lease                *leaseToken
+	UpstreamPaths map[string]string
+	// CodexResponsesTransport 原生 codex responses 的出站传输（构造期参数，
+	// 来自 tpl.CodexResponsesTransport 原值；消费方只调 Key()/Name()）。
+	//
+	// 为什么是构造期而不是热路径判断：它由模板配置决定、随快照定型；热路径
+	// 多一次分支只为读一个已经定型的事实。它进 planKey（换值 ⇒ 换叶子）与
+	// sdkbridge 的 client 缓存键（换值 ⇒ 换 client），两处缺一即静默失效。
+	CodexResponsesTransport domain.CodexResponsesTransport
+	Ext                     *domain.AccountExt
+	CandidateFingerprint    string
+	lease                   *leaseToken
 	// identitySlot 本次预留认领的 codex 伪装身份槽（仅 codex 凭据；nil = 无
 	// 槽身份——非 codex 面不认领）。Release 归还。
 	identitySlot     *identitySlot
@@ -467,6 +474,9 @@ func (s *Scheduler) reloadLocked(ctx context.Context) error {
 	} else if cur != nil && cur.static != nil {
 		oldByID = cur.static.byID
 	}
+	// 装载侧审计：非法传输值在这里留 WARN（每模板一条），值本身原样带进快照，
+	// 归一留给 domain 的 Key()/Name()。必须在装配前跑，且不在热路径上。
+	s.warnDirtyCodexTransports(m)
 	groups, byID := buildSnapshots(m, oldByID, s.cfg.Egress)
 	// codex 槽位池：与静态叶**同一发布点**（sv.identityPools）——门禁读的
 	// MaxConcurrency（byID 叶）与 request 认领的池 K 恒同源，杜绝「门禁上限
@@ -628,6 +638,39 @@ func runtimeStatusFor(a *domain.Account) domain.AccountStatus {
 // 都必须入键**，凭据值（含 OAuth token）亦然——否则凭据轮转后键判等、复用旧叶、
 // 上游用旧令牌（实测 TestInvalidateAccountReloadsExt）。而「token 刷新不该作废
 // 在途计划」由 planKey 承担：**两件事不共用一个比较**。
+
+// warnDirtyCodexTransports 是模板级 codex responses 传输开关的**装载侧审计面**
+// （spec §5「脏值」）：写面 400 挡住非法值，但 DB 直改/导入绕过写面时值仍会
+// 落进快照。归一只在 domain.CodexResponsesTransport 的 Key()/Name() 里发生
+// （"" → 默认面 http）；这里不归一、不改变任何返回值，只留一条可追溯的 WARN
+// （template_id + **原值**），否则"配置写成 WS、实际走 http"在日志里没有任何痕迹。
+//
+// 每轮 reload 每个 template_id 最多一条：一个模板可能挂很多账号，按账号刷屏
+// 只会把这个审计信号稀释掉。日志器可能为 nil（测试装配）⇒ 显式守卫。
+//
+// 调用点在 reloadLocked 的装配循环里（**不在**热路径上）：判据读装载器原值
+// （a.Template），不读快照，也不经过任何归一。
+func (s *Scheduler) warnDirtyCodexTransports(accounts map[int64][]*domain.Account) {
+	if s == nil || s.log == nil {
+		return
+	}
+	seen := make(map[int64]struct{}, len(accounts))
+	for _, accs := range accounts {
+		for _, a := range accs {
+			tpl := a.Template
+			if tpl == nil || !tpl.CredentialType.IsCodex() || tpl.CodexResponsesTransport.Valid() {
+				continue
+			}
+			if _, dup := seen[tpl.ID]; dup {
+				continue
+			}
+			seen[tpl.ID] = struct{}{}
+			s.log.Warn("invalid codex responses transport; falling back to the default",
+				logx.Int64("template_id", tpl.ID),
+				logx.String("value", string(tpl.CodexResponsesTransport)))
+		}
+	}
+}
 
 // buildSnapshots 构建全量快照：**每账号一个共享实例**——多组账号在多个组
 // 快照中引用同一实例（评审实证修复）。发布后 leaves never mutate；

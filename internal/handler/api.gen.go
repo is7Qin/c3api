@@ -2292,6 +2292,9 @@ type TemplateCreateSupportedFormats string
 
 // TemplateExt defines model for TemplateExt.
 type TemplateExt struct {
+	// CodexResponsesTransport codex 出站传输：""（默认=http）/"http"/"ws"。全列替换语义：缺省或 null 即清空为默认面。仅 codex-oauth/codex-pat 可配非空值。
+	CodexResponsesTransport *string `json:"codex_responses_transport"`
+
 	// CredentialType 类型声明；必须与父模板 credential_type 一致（不一致 → 400）
 	CredentialType TemplateExtCredentialType `json:"credential_type"`
 
@@ -2963,6 +2966,12 @@ type GetTemplatesParams struct {
 // GetTemplatesParamsOrder defines parameters for GetTemplates.
 type GetTemplatesParamsOrder string
 
+// PutTemplatesIdExtParams defines parameters for PutTemplatesIdExt.
+type PutTemplatesIdExtParams struct {
+	// Confirm 降级确认令牌：把已有的 ws 改成非 ws 时必须带 `transport-downgrade`，否则 409。其它值等同未确认。
+	Confirm *string `form:"confirm,omitempty" json:"confirm,omitempty"`
+}
+
 // GetUsageLogsParams defines parameters for GetUsageLogs.
 type GetUsageLogsParams struct {
 	Limit     *int           `form:"limit,omitempty" json:"limit,omitempty"`
@@ -3388,7 +3397,7 @@ type ServerInterface interface {
 	GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64)
 	// 幂等写入模板类型化扩展（Create/Update 合一；全列更新含 NULL 清空）
 	// (PUT /templates/{id}/ext)
-	PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64)
+	PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64, params PutTemplatesIdExtParams)
 	// 用量明细分页查询（usage_logs 放行路径明细——成功 none + abort 半异常，cost 不限；失败行（4xx/5xx/拒绝）归 /err_logs）
 	// (GET /usage_logs)
 	GetUsageLogs(w http.ResponseWriter, r *http.Request, params GetUsageLogsParams)
@@ -3916,7 +3925,7 @@ func (_ Unimplemented) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request,
 
 // 幂等写入模板类型化扩展（Create/Update 合一；全列更新含 NULL 清空）
 // (PUT /templates/{id}/ext)
-func (_ Unimplemented) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
+func (_ Unimplemented) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64, params PutTemplatesIdExtParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -6819,8 +6828,19 @@ func (siw *ServerInterfaceWrapper) PutTemplatesIdExt(w http.ResponseWriter, r *h
 		return
 	}
 
+	// Parameter object where we will unmarshal all parameters from the context
+	var params PutTemplatesIdExtParams
+
+	// ------------- Optional query parameter "confirm" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "confirm", r.URL.Query(), &params.Confirm)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "confirm", Err: err})
+		return
+	}
+
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		siw.Handler.PutTemplatesIdExt(w, r, id)
+		siw.Handler.PutTemplatesIdExt(w, r, id, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {

@@ -93,6 +93,13 @@ type planKey struct {
 	// upstreamPathsKey custom 的逐格式路径（credential_type=custom 专用）。
 	// 路径直接决定上游 URL，改配置必须换新计划，否则旧计划继续打到旧端点。
 	upstreamPathsKey [32]byte
+	// codexResponsesTransport 原生 codex responses 的出站传输（spec §5）。
+	// 归一取 Key()：""/"http" 同键，"ws" 独立键，非法值折默认面。
+	//
+	// 为什么必须进键：`sameStatic := staticKeyOf(oldAv) == staticKeyOf(av)` 命中时
+	// 整片静态叶子被复用，`reserveOnView` 从 `cur.static.Load()` 读 `curAv.tpl`
+	// ⇒ 键里没有该维度时，模板把开关改成 ws 之后仍然读旧 `tpl`，**开关永远不生效**。
+	codexResponsesTransport string
 
 	// --- §5.5 group_ids 行（Slice 类事实以规范序摘要入键） ---
 	groupIDsDigest [32]byte
@@ -227,6 +234,7 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 		k.supportedFormats = digestFormats(tpl.SupportedFormats)
 		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
 		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
+		k.codexResponsesTransport = tpl.CodexResponsesTransport.Key()
 	}
 	k.groupIDsDigest = digestInt64s(av.groupIDs)
 	av.key = k

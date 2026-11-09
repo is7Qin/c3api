@@ -140,7 +140,7 @@ func TestTemplateExtValidation(t *testing.T) {
 	saved, err := svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 		StripImageTools: new(true),
-	})
+	}, "")
 	require.NoError(t, err)
 	require.Equal(t, tpl.ID, saved.TemplateID)
 	require.Equal(t, credential.TypeResponsesSpecial, saved.CredentialType)
@@ -150,11 +150,11 @@ func TestTemplateExtValidation(t *testing.T) {
 	// 类型一致性：special 模板挂 oauth/pat 行 → 400（类型与父模板不一致）
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
-	})
+	}, "")
 	require.ErrorIs(t, err, ErrInvalidInput, "special 模板 ext 行类型必须一致（oauth 拒绝）")
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeCodexPAT,
-	})
+	}, "")
 	require.ErrorIs(t, err, ErrInvalidInput, "special 模板 ext 行类型必须一致（pat 拒绝）")
 
 	// oauth 模板：strip 开关同可用（三类型公共能力）+ 幂等 upsert 覆盖（NULL 清空）
@@ -162,7 +162,7 @@ func TestTemplateExtValidation(t *testing.T) {
 	saved, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplO.ID, CredentialType: credential.TypeCodexOAuth,
 		StripImageTools: new(true),
-	})
+	}, "")
 	require.NoError(t, err)
 	require.True(t, *saved.StripImageTools, "oauth 模板 strip 开关可配置（三类型公共能力）")
 
@@ -174,21 +174,21 @@ func TestTemplateExtValidation(t *testing.T) {
 	saved, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplO.ID, CredentialType: credential.TypeCodexOAuth,
 		StripImageTools: new(false),
-	})
+	}, "")
 	require.NoError(t, err)
 	require.False(t, *saved.StripImageTools, "幂等 upsert 覆盖（改值）")
 
 	// NULL 清空：写 nil → 落 NULL
 	saved, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplO.ID, CredentialType: credential.TypeCodexOAuth,
-	})
+	}, "")
 	require.NoError(t, err)
 	require.Nil(t, saved.StripImageTools, "nil 显式清列（NULL 落库）")
 
 	// oauth 模板挂 pat 行 → 400（类型不一致）
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplO.ID, CredentialType: credential.TypeCodexPAT,
-	})
+	}, "")
 	require.ErrorIs(t, err, ErrInvalidInput, "oauth 模板 ext 行类型必须一致（pat 拒绝）")
 
 	// pat 模板 + pat 行：roundtrip（strip 同样可用）
@@ -196,7 +196,7 @@ func TestTemplateExtValidation(t *testing.T) {
 	saved, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tplP.ID, CredentialType: credential.TypeCodexPAT,
 		StripImageTools: new(true),
-	})
+	}, "")
 	require.NoError(t, err)
 	require.True(t, *saved.StripImageTools, "pat 模板 strip 开关可配置")
 	got, err = svc.GetTemplateExt(ctx, tplP.ID)
@@ -207,13 +207,13 @@ func TestTemplateExtValidation(t *testing.T) {
 	apiTpl := seedExtTemplate(t, svc, "t-key", credential.TypeAPIKey, domain.FormatOpenAIChat)
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: apiTpl.ID, CredentialType: credential.TypeAPIKey,
-	})
+	}, "")
 	require.ErrorIs(t, err, ErrInvalidInput, "api_key 类型模板不允许 ext 行")
 
 	// 父模板缺失 → 404
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: 999, CredentialType: credential.TypeResponsesSpecial,
-	})
+	}, "")
 	require.ErrorIs(t, err, ErrNotFound)
 	_, err = svc.GetTemplateExt(ctx, 999)
 	require.ErrorIs(t, err, ErrNotFound)
@@ -236,7 +236,7 @@ func TestUpsertTemplateExtInvalidates(t *testing.T) {
 	_, err := svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 		StripImageTools: new(true),
-	})
+	}, "")
 	require.NoError(t, err)
 	require.Equal(t, before+1, rec.countKind("templates"), "写入 ext 行必须失效模板快照")
 
@@ -244,14 +244,14 @@ func TestUpsertTemplateExtInvalidates(t *testing.T) {
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 		StripImageTools: new(true),
-	})
+	}, "")
 	require.NoError(t, err)
 	require.Equal(t, before+2, rec.countKind("templates"))
 
 	// 校验失败（类型不一致）不得失效——写未发生。
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
-	})
+	}, "")
 	require.ErrorIs(t, err, ErrInvalidInput)
 	require.Equal(t, before+2, rec.countKind("templates"), "校验失败不得失效")
 }

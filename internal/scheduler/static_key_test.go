@@ -89,6 +89,9 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 			"credentialType", "stripImageTools", "modelsDigest", "formatModelsKey",
 			"supportedFormats", "modelMappingKey",
 			"upstreamPathsKey", // custom 路径进 planKey：改路径必须换新计划
+			// codex responses 出站传输进 planKey：改模板开关必须换新叶子，否则
+			// 复用分支让 reserveOnView 读到旧 tpl，开关永远不生效（spec §5）。
+			"codexResponsesTransport",
 			"groupIDsDigest",
 		}
 		declaredPayloadKeyFields = []string{

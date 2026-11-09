@@ -49,8 +49,9 @@ const (
 // credType 类型 + openai-responses 格式 + BaseURL=""（codex 端点归 SDK 官方默认）
 // + 携带 Ext 的账号（同组 10）；KeyMeta 携带组级 protocol_convert 方向集合 pcs。
 // 装配 codex 适配层（official-rewrite transport 重写到 mock 上游）——与
-// newTestCodexRespProxy 同款骨架，差异在 pcs 与 SupportedFormats。
-func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, pcs []domain.ProtocolConvert, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
+// newTestCodexRespProxy 同款骨架，差异在 pcs 与 SupportedFormats；opts 为模板
+// 微调（如出站传输开关）。
+func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, pcs []domain.ProtocolConvert, logs *captureLogStore, opts ...codexRespProxyOption) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: "",
@@ -58,6 +59,9 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o"},
 		ModelMapping:     mapping,
+	}
+	for _, opt := range opts {
+		opt(tpl)
 	}
 	accs := make(map[int64][]*domain.Account, 1)
 	for id, ext := range accounts {

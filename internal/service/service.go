@@ -61,6 +61,7 @@ type Store interface {
 	RedemptionStore
 	PricingStore
 	TemplateExtStore
+	TemplateExtReadStore
 	AccountExtStore
 	EmailTemplateStore
 	SupplierStore
@@ -222,10 +223,30 @@ type GroupStore interface {
 	LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error)
 }
 
-// TemplateExtStore 模板类型化扩展持久化（template_ext 1:1；数据层 CRUD，
-// 消费接线留给后续扩展）。
+// TemplateExtStore 模板类型化扩展的**写**面（template_ext 1:1）。
+//
+// 只有**一个**方法，且它就是守卫写（spec §4.3 原子性约束 + §9.1 命名约定）：
+// 事务内读旧行 → decide(old) → 私有 upsert → 提交。三个返回值分别是落库行 /
+// down（= downgradeApplied：本次写是否真的完成了 ws→非 ws 的降级，供 service
+// 决定是否写审计 WARN）/ 错误。
+//
+// 事务内读到的 old 只能经 decide 的**闭包捕获**传出（decide 的唯一允许副作用）；
+// **不要**为此在提交后再读一次库——既违反"old 唯一来源 = 事务内那一读"，拿到的
+// 还可能是并发后的值。
+//
+// 原无锁 `UpsertTemplateExt(ctx, e) (*TemplateExt, error)` 形态一律禁止：它就是
+// §4.3 要堵的"第二类写者"，有它在 FOR UPDATE 形同虚设。
 type TemplateExtStore interface {
-	UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) (*domain.TemplateExt, error)
+	UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide repository.TemplateExtDecide) (*domain.TemplateExt, bool, error)
+}
+
+// TemplateExtReadStore 模板类型化扩展的**读**面。
+//
+// 为什么拆成两个接口（而不是把 Get 并进写面，spec §9 已登记）：§9.1 的命名约定把
+// "唯一写入口"落成**写面接口恰好一个方法**——守卫写。读方法并进去之后，"一个写入口
+// = 一个方法"这个可读的形状就没了，后来人也没法靠"接口只有一行"一眼确认写面没扩张。
+// 读面本身不是写面，不该影响那条约定的可读性。
+type TemplateExtReadStore interface {
 	GetTemplateExt(ctx context.Context, templateID int64) (*domain.TemplateExt, error)
 }
 
