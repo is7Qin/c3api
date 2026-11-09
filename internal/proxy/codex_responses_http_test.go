@@ -155,13 +155,21 @@ func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 	}
 }
 
+// codexRespProxyOption 模板微调面（变参——既有调用点零改动）。
+type codexRespProxyOption func(*domain.Template)
+
+// withCodexResponsesTransport 在模板上设置出站传输开关（快照原值透传面）。
+func withCodexResponsesTransport(tr domain.CodexResponsesTransport) codexRespProxyOption {
+	return func(tpl *domain.Template) { tpl.CodexResponsesTransport = tr }
+}
+
 // newTestCodexRespProxy 构造 codex 类型 resp HTTP 测试代理：模板（credType 类
 // 型 + openai-responses 格式 + gpt-4o；mapping = 模板 ModelMapping——nil = 无
 // 映射）+ 携带 Ext 的账号（同组 10，可多账号）+ 装配适配层（统一失效回调走
 // 真实处理链——fakeFailureStore 落库替身 + 真实调度器 FailAccount 摘除）。
 // Codex 端点归 SDK 官方默认（transport seam 重写到 mock 上游）。
-// bill 为计费钩子（nil = 计费全关）。
-func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, bill *BillingHooks, logs *captureLogStore) (*Proxy, *fakeFailureStore) {
+// bill 为计费钩子（nil = 计费全关）；opts 为模板微调（如出站传输开关）。
+func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, bill *BillingHooks, logs *captureLogStore, opts ...codexRespProxyOption) (*Proxy, *fakeFailureStore) {
 	t.Helper()
 	tpl := &domain.Template{
 		ID: 1, Name: "t", BaseURL: "",
@@ -169,6 +177,9 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
 		Models:           []string{"gpt-4o"},
 		ModelMapping:     mapping,
+	}
+	for _, opt := range opts {
+		opt(tpl)
 	}
 	accs := make(map[int64][]*domain.Account, 1)
 	for id, ext := range accounts {

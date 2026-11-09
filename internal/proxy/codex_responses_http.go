@@ -36,6 +36,11 @@ import (
 // 路径同款）。
 var errCodexResponsesNotIntegrated = &formatError{status: http.StatusNotImplemented, msg: "codex responses unavailable (adapter not wired)"}
 
+// headerUpstreamTransport 生效传输头（spec §6）：原生 codex responses 车道的
+// 每个响应都带"网关选了什么腿"，值 = transport.Name()（http|ws）。它不是契约、
+// 不进 openapi/web，是实验仪器（A/B harness 的 effective 判据）。
+const headerUpstreamTransport = "x-c3api-upstream-transport"
+
 func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start time.Time, usage usageTuple, ttft *int64) AttemptOutcome {
 	fp := "fp1"
 	if sel != nil && sel.CandidateFingerprint != "" {
@@ -107,6 +112,12 @@ func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o
 //     MarkResult(RuleKindOf(0)) + 转移其它账号（与 images 路径同语义）
 //   - RefreshError/网络 → code 0 → failover 可重试
 func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, body []byte, stream bool) (int, []byte, bool, error) {
+	// 生效传输头（spec §6）：每个响应都带"网关选了什么腿"。写在这里是**唯一**
+	// 写点——它同时覆盖下面两条早退（p.codex == nil 的 501、sel.Ext == nil 的
+	// errCodexExtMissing）与流式/非流式两个入口；每次 attempt 重设，WriteHeader
+	// 之后不再变 ⇒ 语义正好是"产生首字节那条腿的传输"。转换车道绕过本函数
+	// （直接调 core），因此天然不写头。
+	w.Header().Set(headerUpstreamTransport, sel.CodexResponsesTransport.Name())
 	// 客户端请求模型（日志口径）：gjson 顶层提取（与 typed 流式路径同款，
 	// 1 次分配；codex 分支无完整 params 解析）。
 	reqModel := gjson.GetBytes(body, "model").String()
@@ -191,7 +202,7 @@ func sniffCodexTurnCallItem(f []byte) bool {
 // nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——
 // 合成体原样透传、日志口径 openai-responses）。直连路径逐字节不变。
 func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
-	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, cred, body, &codexDirectOutput{w: w})
+	return p.nonstreamCodexResponsesCore(ctx, r, reqID, groupID, start, sel, reqModel, cred, body, &codexDirectOutput{w: w}, sel.CodexResponsesTransport)
 }
 
 // nonstreamCodexResponsesCore 非流式 codex resp core（渲染经注入 output——core
@@ -202,7 +213,8 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // 提升到合成体顶层；无 type 字段）。turn-state：客户端自带 → 透传优先；未带 →
 // 网关注入 held（上游签发值——同轮回传）；合成体无工具调用项（轮结束）→
 // ClearTurnState（跨轮不回传）。日志 Format 由 out.LogFormat() 自报。
-func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody) (int, []byte, bool, error) {
+// transport 为出站传输实参（原生车道 = Selection 原值；转换车道钉 http）。
+func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
 		return 0, nil, false, err
@@ -217,9 +229,10 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// installation_id 亦取自槽状态）——同账号并发各持不同槽 ⇒ 上游见多条独立会话。
 	// HTTP 面经 SDK client_metadata 注入。
 	sess, meta := sel.CodexIdentity()
-	// 出站传输开关随本次 Selection 下发（sdkbridge 侧按它分 client 条目——构造期
-	// 参数，改模板 ⇒ 换条目）。
-	resp, err := p.codex.Responses(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), sel.CodexResponsesTransport)
+	// 出站传输开关由调用方给值（原生车道 = Selection 原值；转换车道钉 http，
+	// 见 caller_converted.go）。sdkbridge 侧按它分 client 条目——构造期参数，
+	// 改模板 ⇒ 换条目。
+	resp, err := p.codex.Responses(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), transport)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -266,7 +279,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 // streamCodexResponses 直连 codex resp 流式（薄封装 core：注入直连 plan——上游
 // 原始 SSE 字节 verbatim 透传；日志口径 openai-responses）。
 func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte) (int, []byte, bool, error) {
-	return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, cred, body, codexDirectStreamPlan())
+	return p.streamCodexResponsesCore(ctx, w, r, reqID, groupID, start, sel, reqModel, cred, body, codexDirectStreamPlan(), sel.CodexResponsesTransport)
 }
 
 // streamCodexResponsesCore 流式 codex resp core（渲染经注入 plan——core 体内无
@@ -276,6 +289,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 // plan.mapper（protoconv.StreamMapper 适配 sserelay seam，先过滤源协议 [DONE]）
 // 映射为客户端协议帧 + 客户端模型回填，流末按「目标终止帧尚未产生」补发
 // （plan.finish）。日志 Format 由 plan.logFormat 自报。
+// transport 为出站传输实参（原生车道 = Selection 原值；转换车道钉 http）。
 //
 // 采集统一在**唯一写出前 seam**（sserelay.Config.OnEvent，与 native 五路同一回调
 // 实例）：TTFT（保真「输出前、drop 帧也记」）/usage/图像计数/轮次 hooks/续接入队
@@ -288,7 +302,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 // 断开/超时/已提交错误收尾走统一出口判定 classifyStreamExit（§3.7）：客户端取消
 // → 不 MarkResult（200 ErrAbort——上游已消费请求，token 取断前已收 usage）；
 // 未提交读取失败 → pipeline；已提交 → 客户端协议 SSE error + recordStreamAbort。
-func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, plan codexStreamPlan) (int, []byte, bool, error) {
+func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, plan codexStreamPlan, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
 	defer cancel()
 	streamBody, err := setModel(body, sel.Model)
@@ -297,8 +311,8 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	}
 	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
 	sess, meta := sel.CodexIdentity()
-	// 出站传输开关同非流式（Selection 原值下发）。
-	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), sel.CodexResponsesTransport)
+	// 出站传输开关同非流式（原生车道 = Selection 原值；转换车道钉 http）。
+	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), transport)
 	if err != nil {
 		// 客户端断开（上游响应前）优先归因。
 		if r.Context().Err() != nil {
