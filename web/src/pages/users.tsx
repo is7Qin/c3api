@@ -246,7 +246,6 @@ export default function Users() {
   const [groupsTarget, setGroupsTarget] = useState<User | null>(null)
   const [groupsChecked, setGroupsChecked] = useState<number[]>([])
   const [groupsMult, setGroupsMult] = useState<Record<number, AssignRowMult>>({})
-  const [groupsReadFailed, setGroupsReadFailed] = useState(false) // 每次打开只 toast 一次
   const [clearGroupsOpen, setClearGroupsOpen] = useState(false)
 
   // 全部组（组倍率/可见性展示；账号弹窗同款 limit:100 取全量）。
@@ -268,9 +267,12 @@ export default function Users() {
     enabled: !!groupsTarget,
     retry: false,
   })
-  // 回显加载中（尚无数据）：禁行交互，防止数据到达后覆盖用户已做的勾选
-  // （accounts 弹窗同款守卫；失败即降级为可交互）。
-  const groupsEchoLoading = !!groupsTarget && userGroupsEcho.data === undefined && userGroupsEcho.isFetching
+  // 回显未就绪（加载中**或失败**）一律禁写：PUT /users/{id}/groups 是替换语义，
+  // 拿「看起来是空」的勾选态提交 = 撤销该用户全部授予。失败不做降级（旧行为是
+  // 失败后弹窗照常可交互，一点保存就清空）。
+  const groupsEchoReady = !groupsTarget || userGroupsEcho.data !== undefined
+  const groupsEchoBlocked = !!groupsTarget && !groupsEchoReady
+  const groupsEchoLoading = groupsEchoBlocked && userGroupsEcho.isFetching
 
   // 回显成功 → 预填充勾选态 + 专属倍率初值（null/缺省 = 未设置）。
   useEffect(() => {
@@ -284,19 +286,12 @@ export default function Users() {
     setGroupsMult(m)
   }, [groupsTarget, userGroupsEcho.data])
 
-  // 回显失败 → 空预填充不阻塞 + 一次性提示。
-  useEffect(() => {
-    if (groupsTarget && userGroupsEcho.isError && !groupsReadFailed) {
-      setGroupsReadFailed(true)
-      toast.add({ title: t('users.groups.readFailed'), type: 'error' })
-    }
-  }, [groupsTarget, userGroupsEcho.isError, groupsReadFailed, t])
+  // 回显失败不再降级为可交互：错误与重试入口在对话框头部内联展示（见 JSX）。
 
   const openGroups = (u: User) => {
     setGroupsTarget(u)
     setGroupsChecked([])
     setGroupsMult({})
-    setGroupsReadFailed(false)
   }
   const toggleGroup = (id: number, on: boolean) =>
     setGroupsChecked(s => (on ? (s.includes(id) ? s : [...s, id]) : s.filter(x => x !== id)))
@@ -663,8 +658,16 @@ export default function Users() {
           <DialogHeader>
             <DialogTitle>{t('users.groups.title', { name: groupsTarget?.Email ?? '' })}</DialogTitle>
             <DialogDescription>{t('users.groups.desc')}</DialogDescription>
-            <p className="text-sm font-medium">{t('users.groups.count', { count: grantedCount })}</p>
+            <p className="text-sm font-medium">{groupsEchoReady ? t('users.groups.count', { count: grantedCount }) : '\u00a0'}</p>
             {groupsEchoLoading && <p className="text-xs text-muted-foreground">{t('users.groups.echoLoading')}</p>}
+            {groupsTarget && userGroupsEcho.isError && (
+              <div className="flex items-start gap-2">
+                <p className="text-sm text-destructive">{t('users.groups.echoBlocked')}</p>
+                <Button variant="outline" size="sm" onClick={() => void userGroupsEcho.refetch()} disabled={userGroupsEcho.isFetching}>
+                  {t('users.groups.retry')}
+                </Button>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">{t('users.groups.multiplierHint')}</p>
           </DialogHeader>
           <div className="space-y-3">
@@ -677,7 +680,7 @@ export default function Users() {
             ) : allGroups.length === 0 ? (
               <p className="py-6 text-center text-sm text-muted-foreground">{t('users.groups.empty')}</p>
             ) : (
-              <ScrollArea className={cn('max-h-72 pr-1', groupsEchoLoading && 'pointer-events-none opacity-50')}>
+              <ScrollArea className={cn('max-h-72 pr-1', groupsEchoBlocked && 'pointer-events-none opacity-50')}>
                 <div className="space-y-1.5">
                 {allGroups.map(g => {
                   const isPublic = g.Visibility === 'public'
@@ -730,11 +733,11 @@ export default function Users() {
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setClearGroupsOpen(true)} disabled={saveUserGroups.isPending || groupsEchoLoading}>
+            <Button variant="outline" onClick={() => setClearGroupsOpen(true)} disabled={saveUserGroups.isPending || groupsEchoBlocked}>
               {t('users.groups.clearAll')}
             </Button>
             <Button variant="outline" onClick={() => setGroupsTarget(null)} disabled={saveUserGroups.isPending}>{t('common.cancel')}</Button>
-            <Button onClick={() => saveUserGroups.mutate()} disabled={saveUserGroups.isPending || groupsEchoLoading}>
+            <Button onClick={() => saveUserGroups.mutate()} disabled={saveUserGroups.isPending || groupsEchoBlocked}>
               {saveUserGroups.isPending ? t('common.saving') : t('common.save')}
             </Button>
           </DialogFooter>
