@@ -289,12 +289,15 @@ type threadRetire struct {
 type poolReclaim struct {
 	threads  []threadRetire
 	accounts []int64
-	// egress 本次快照的全量账号 → 当前 responses 出口（nil 值 = 直连）；只由
+	// egress 本批次的账号全集 → 当前 responses 出口（nil 值 = 直连）；只由
 	// collectActiveEgress 填充，reconcile 为 nil 时保持 nil。
-	egress    map[int64]*egress.Client
+	egress map[int64]*egress.Client
+	// gen 本批次的配置代号（publisher.mu 内取号）。应用在锁外，ClientTable 只
+	// 接受更新的号——旧批次不能把活跃集回退到旧配置（B1）。
+	gen       uint64
 	retire    func(accountID int64, threadKey string)
 	remove    func(accountID int64)
-	reconcile func(active map[int64]*egress.Client)
+	reconcile func(gen uint64, active map[int64]*egress.Client)
 }
 
 // run 执行收集到的副作用（必须在 publisher.mu 之外调用；nil 安全）。
@@ -314,8 +317,10 @@ func (b *poolReclaim) run() {
 	}
 	// 配置面回收放最后：它按「账号当前配置」重设活跃集并摘除历史出口摘要，同时把不在
 	// 账号集合里的资源整账号摘除（与上面的 remove 幂等，多走一遍只是 no-op）。
+	// gen 由锁内取号，ClientTable 只应用更新的批次（旧批次的 socket 收尾已经在上面
+	// 完成，且幂等；只有"设状态"的活跃集应用需要顺序）。
 	if b.reconcile != nil && b.egress != nil {
-		b.reconcile(b.egress)
+		b.reconcile(b.gen, b.egress)
 	}
 }
 
@@ -336,19 +341,26 @@ func collectRemovedAccounts(prev, next *identityRegistry, reclaim *poolReclaim) 
 	}
 }
 
-// collectActiveEgress 收集「账号 → 当前 responses 出口」交给 ClientTable 做配置面回收
-// （§3.2 出口/transport 变更）：活跃集 = 该账号当前配置的出口 + usage 的直连，且**只按
-// egress 维度**剪枝。
+// collectActiveEgress 收集「账号全集 → 当前 responses 出口」交给 ClientTable 做配置面
+// 回收（§3.2 出口/transport 变更）：活跃集 = 该账号当前配置的出口 + usage 的直连，且
+// **只按 egress 维度**剪枝。
 //
-// 必须用**全量** byID：账号从集合里消失 ⇒ 该账号的传输资源整账号摘除——这条覆盖
-// 「没有会话池的账号」（buildIdentityPools 只给 codex 且 MaxConcurrency>0 的账号建池，
-// 池注册表差分看不到其余账号，momus N7 的残留面）。调用方持 publisher.mu，执行在锁外
-// （terminate 可能在 socket 写闸上等待）。
-func (s *Scheduler) collectActiveEgress(byID map[int64]*accountSnapshot, reclaim *poolReclaim) {
+// 输入必须是**账号全集**：byID 是组→账号折叠出的账号（含 `MaxConcurrency=0`、没有
+// 会话池的账号——buildIdentityPools 只给 codex 且 K>0 的账号建池，池注册表差分看不到
+// 其余账号，momus N7）；extra 是本轮**未编组**账号的出口（全量 reload 现算，组级增量
+// 路径沿用上次全量装载的基线——组级路径不重扫账号表）。账号从全集里消失 ⇒ 该账号的
+// 传输资源整账号摘除。同一 id 以 byID 为准（工作根是最新事实）。
+//
+// 批次序号在**锁内**取（publisher.mu 由调用方持有）：应用在锁外、顺序不保证，序号是
+// "旧批次不得覆盖新配置"的唯一判据（B1）。terminate 仍由 reclaim.run 在锁外执行。
+func (s *Scheduler) collectActiveEgress(byID map[int64]*accountSnapshot, extra map[int64]*egress.Client, reclaim *poolReclaim) {
 	if reclaim == nil || reclaim.reconcile == nil {
 		return
 	}
-	active := make(map[int64]*egress.Client, len(byID))
+	active := make(map[int64]*egress.Client, len(byID)+len(extra))
+	for id, eg := range extra {
+		active[id] = eg
+	}
 	for id, as := range byID {
 		av := as.static.Load()
 		if av == nil {
@@ -357,6 +369,41 @@ func (s *Scheduler) collectActiveEgress(byID map[int64]*accountSnapshot, reclaim
 		active[id] = av.egress
 	}
 	reclaim.egress = active
+	reclaim.gen = s.publisher.reconcileGen + 1
+	s.publisher.reconcileGen = reclaim.gen
+}
+
+// ungroupedEgress 全量装载里**不在任何组**的账号 → 当前 responses 出口（未装配出口
+// 池的测试形态 ⇒ nil 值 = 直连）。它们不进路由根（无组即无 route），但仍是账号全集的
+// 一部分：不给它们登记活跃集，每次 reload 都会把管理面 usage 刚建的条目/桶摘掉
+// （momus N-e）。未编组账号的删除只能由下一次全量装载发现——残留有界（无路由，只有
+// 管理面 usage 触达）。
+func (s *Scheduler) ungroupedEgress(byID map[int64]*accountSnapshot, all []*domain.Account) map[int64]*egress.Client {
+	if len(all) == 0 {
+		return nil
+	}
+	var out map[int64]*egress.Client
+	pool := s.cfg.Egress
+	for _, acc := range all {
+		if acc == nil {
+			continue
+		}
+		if _, grouped := byID[acc.ID]; grouped {
+			continue
+		}
+		if out == nil {
+			out = make(map[int64]*egress.Client, len(all)-len(byID))
+		}
+		var eg *egress.Client
+		if pool != nil {
+			eg = pool.Direct()
+			if acc.Proxy != nil {
+				eg = pool.For(specOfDomain(acc.Proxy))
+			}
+		}
+		out[acc.ID] = eg
+	}
+	return out
 }
 
 // buildIdentityPools 按当前 byID 重建 codex 会话池注册表：仅 codex 凭据

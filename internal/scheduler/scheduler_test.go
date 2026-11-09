@@ -139,8 +139,9 @@ func newSched(t *testing.T, m *memLoader) *Scheduler {
 	return newSchedWithCfg(t, testCfg(), m)
 }
 
-// newSchedWithCfg 同 newSched 但可注入 Config（出口池等装配面）。
-func newSchedWithCfg(t *testing.T, cfg Config, m *memLoader) *Scheduler {
+// newSchedWithCfg 同 newSched 但可注入 Config（出口池等装配面）。m 取 Loader
+// （而非 *memLoader）：需要账号全集的用例用实现了 AccountUniverseLoader 的装载源。
+func newSchedWithCfg(t *testing.T, cfg Config, m Loader) *Scheduler {
 	t.Helper()
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)
 	require.NoError(t, re.Reload(context.Background()))

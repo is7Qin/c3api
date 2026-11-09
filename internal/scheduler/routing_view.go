@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/pkg/egress"
 )
 
 // cloneSnapMap 浅拷贝快照 map（语义与原各手写循环逐字一致：恒返回非 nil
@@ -295,6 +296,15 @@ type routingPublisher struct {
 	// Control plane only (reload/InvalidateGroup stage, the serial compile
 	// lane consumes); guarded by mu. Nil means the published view is current.
 	pending *StaticView
+	// reconcileGen 配置面回收批次的单调代号：每次在 publisher.mu 内收集活跃集时
+	// 取一个更大的号，随批次交给 ClientTable。应用在锁外（run），顺序不保证——
+	// 序号是"旧批次不得覆盖新配置"的唯一判据（B1）。
+	reconcileGen uint64
+	// ungroupedEgress 上一次**全量装载**里未编组账号的当前出口（id → 出口）。
+	// 组级增量路径不重扫账号表，但要保持「活跃集 = 账号全集」口径，就把这份
+	// 基线并进活跃集。未编组账号的删除只能由下一次全量装载发现（无路由、只有
+	// 管理面 usage 触达，残留有界）。只由全量 reload 写、只读消费；guarded by mu。
+	ungroupedEgress map[int64]*egress.Client
 }
 
 func newRoutingPublisher(s *Scheduler) *routingPublisher { return &routingPublisher{sched: s} }

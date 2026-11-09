@@ -130,6 +130,21 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 }
 
 // LoadGroupsAccounts 全量组→账号快照（调度器启动/定时/全量失效的数据源）。
+// 扫描纪律与返回语义见 loadGroupsAccounts。
+func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain.Account, error) {
+	m, _, err := r.loadGroupsAccounts(ctx, false)
+	return m, err
+}
+
+// LoadGroupsAccountsFull 与 LoadGroupsAccounts **同一次扫描**，额外返回账号全集
+// （含未编组账号）：调度器用它给 sdkbridge.ClientTable 提供配置面活跃集的输入
+// （账号全集口径，momus N-e）。不额外发查询——`all` 就来自组→账号折叠用的同一份
+// 账号表扫描结果。
+func (r *GroupRepo) LoadGroupsAccountsFull(ctx context.Context) (map[int64][]*domain.Account, []*domain.Account, error) {
+	return r.loadGroupsAccounts(ctx, true)
+}
+
+// loadGroupsAccounts 是全量快照的扫描本体（withUniverse 决定是否额外产出账号全集）。
 //
 // 崩溃修复（实证：847k 组 → 启动 fatal / 运行中静默空结果）：ent
 // WithAccounts eager-load 对 m2m 边生成两跳参数化 IN——
@@ -160,7 +175,7 @@ func (r *GroupRepo) DeleteGroup(ctx context.Context, id int64) error {
 // 结果语义与旧 eager-load 一致：所有组都在 map 中（无账号组为空切片），
 // 账号只出现在其所属组且带模板。（唯一窗口差异：组 id 扫描后被并发删除的
 // 组不会出现在结果中——见下方白名单守卫；旧 eager-load 同窗口行为。）
-func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain.Account, error) {
+func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool) (map[int64][]*domain.Account, []*domain.Account, error) {
 	// 软删除：已删 account/group 不进调度器快照（成员关系白名单守卫同语义）。
 	// 模板侧嵌套 WithExt：快照合并 StripImageTools（ext IN 参数数受模板
 	// 表实体数约束——同一小表界，见上方注释）；账号侧 ext 不 eager-load
@@ -168,11 +183,11 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 	accs, err := r.client.Account.Query().Where(account.DeletedAtIsNil()).
 		WithTemplate(func(q *ent.TemplateQuery) { q.WithExt() }).All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load groups-accounts (accounts scan): %w", err)
+		return nil, nil, fmt.Errorf("load groups-accounts (accounts scan): %w", err)
 	}
 	exts, err := r.client.AccountExt.Query().All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load groups-accounts (account_ext scan): %w", err)
+		return nil, nil, fmt.Errorf("load groups-accounts (account_ext scan): %w", err)
 	}
 	extByAccount := make(map[int64]*ent.AccountExt, len(exts))
 	for _, e := range exts {
@@ -180,7 +195,7 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 	}
 	proxies, err := r.proxyIndexByID(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load groups-accounts (proxy scan): %w", err)
+		return nil, nil, fmt.Errorf("load groups-accounts (proxy scan): %w", err)
 	}
 	byID := make(map[int64]*domain.Account, len(accs))
 	for _, a := range accs {
@@ -193,7 +208,7 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 	}
 	gids, err := r.client.Group.Query().Where(group.DeletedAtIsNil()).IDs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("load groups-accounts (groups scan): %w", err)
+		return nil, nil, fmt.Errorf("load groups-accounts (groups scan): %w", err)
 	}
 	out := make(map[int64][]*domain.Account, len(gids))
 	for _, gid := range gids {
@@ -201,13 +216,13 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 	}
 	rows := &entsql.Rows{}
 	if err := r.driver.Query(ctx, accountGroupsMembershipSQL, []any{}, rows); err != nil {
-		return nil, fmt.Errorf("load groups-accounts (membership scan): %w", err)
+		return nil, nil, fmt.Errorf("load groups-accounts (membership scan): %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var accountID, groupID int64
 		if err := rows.Scan(&accountID, &groupID); err != nil {
-			return nil, fmt.Errorf("load groups-accounts (membership scan): %w", err)
+			return nil, nil, fmt.Errorf("load groups-accounts (membership scan): %w", err)
 		}
 		a, ok := byID[accountID]
 		if !ok {
@@ -223,9 +238,17 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 		out[groupID] = append(out[groupID], a)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("load groups-accounts (membership scan): %w", err)
+		return nil, nil, fmt.Errorf("load groups-accounts (membership scan): %w", err)
 	}
-	return out, nil
+	if !withUniverse {
+		return out, nil, nil
+	}
+	// 账号全集 = 本次账号表扫描的全部行（未编组的也在 byID 里）：不额外发查询。
+	all := make([]*domain.Account, 0, len(byID))
+	for _, a := range byID {
+		all = append(all, a)
+	}
+	return out, all, nil
 }
 
 // compileStalenessSQL is the single §9-A1 read-only aggregate pass: one

@@ -97,9 +97,10 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 	sv := newStaticView(m, byID, pools)
 	s.publisher.stageLocked(sv)
 	// 传输资源（条目 + client 桶）的配置面回收：byID 是折叠后的**全量**工作根（其它组
-	// 的叶子原样保留），所以这里与全量 reload 同口径——账号消失 ⇒ 整账号摘除，出口变更
-	// ⇒ 历史摘要摘除。执行在锁外（reclaim.run）。
-	s.collectActiveEgress(byID, reclaim)
+	// 的叶子原样保留），再并上上次全量装载的**未编组账号**基线（组级路径不重扫账号表，
+	// N-e）——所以这里与全量 reload 同口径（账号全集）：账号消失 ⇒ 整账号摘除，出口
+	// 变更 ⇒ 历史摘要摘除。执行在锁外（reclaim.run）。
+	s.collectActiveEgress(byID, s.publisher.ungroupedEgress, reclaim)
 	// this staging touches exactly scope — the lane recomputes only their
 	// routes. Scope-first, then wake.
 	s.enqueueCompileScope(scope, nil, scopeCauseGroup)

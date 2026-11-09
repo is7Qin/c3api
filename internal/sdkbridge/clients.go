@@ -47,6 +47,11 @@ type ClientTable struct {
 	// 直连）。写入点只有 Reconcile；请求路径不得改写。缺失 = 尚未登记（独立装配/
 	// 单元用例），此时允许请求侧按首次构造的出口兜底登记（见 Client）。
 	active map[int64][16]byte
+	// appliedGen 已应用的配置批次代号（Reconcile 的单调守卫）。批次编号由调度器
+	// 在 publisher.mu 内取号、应用在锁外——两次重叠 reload 可能后取号者先跑到
+	// 这里，所以只接受**更新**的号：旧批次不得把活跃集（乃至账号集合）回退到旧
+	// 配置。0 = 还没有应用过任何批次（请求侧兜底登记不参与此代号）。
+	appliedGen uint64
 }
 
 // NewClientTable 构造空表（装配点：main 在调度器之前，测试在 fixture 里）。
@@ -140,7 +145,7 @@ func (t *ClientTable) Client(e *codexEntry, key clientKey, pinEgress bool, build
 }
 
 // Reconcile 按**账号当前配置**回收传输资源（§3.2 出口/transport 变更）。调用方是
-// reload 面（配置生命周期），传**全量**账号集：accountID → 当前 responses 出口
+// reload 面（配置生命周期），传**账号全集**：accountID → 当前 responses 出口
 // （nil = 直连）。nil 表示"未装配该能力"，no-op；非 nil 的空表表示"没有任何账号"，
 // 会摘除全部资源。
 //
@@ -148,14 +153,25 @@ func (t *ClientTable) Client(e *codexEntry, key clientKey, pinEgress bool, build
 //     不到它们，N7；以及应用关闭/清空部署）；
 //   - 在集合里的账号：登记活跃集，并按 egress 维度摘除历史摘要（transport 维度不动）。
 //
+// **顺序**：gen 是配置批次的单调代号，由调度器在 publisher.mu 内取号；本方法在锁外
+// 被调用，两次重叠 reload 的应用顺序不保证。只接受比 appliedGen **更新**的批次——
+// 旧批次（先取号、后被新批次插队）不得把活跃集回退到旧配置，也不得删掉新配置里
+// 才出现的账号/条目。被拒的批次在这里整体 no-op（它收集的 socket 收尾已在
+// poolReclaim.run 的更早步骤完成，且那些动作幂等）。
+//
 // 这就是"活跃集不能由单个请求的入参定义"的落点：usage 面只会读这个集合，不会重定义它。
 // 摘表在锁内、Close 在锁外。
-func (t *ClientTable) Reconcile(active map[int64]*egress.Client) {
+func (t *ClientTable) Reconcile(gen uint64, active map[int64]*egress.Client) {
 	if t == nil || active == nil {
 		return
 	}
 	var dropped []*codexsdk.HTTPClient
 	t.mu.Lock()
+	if gen <= t.appliedGen {
+		t.mu.Unlock()
+		return
+	}
+	t.appliedGen = gen
 	for id := range t.active {
 		if _, ok := active[id]; ok {
 			continue
@@ -219,6 +235,11 @@ func takeBucketsLocked(e *codexEntry) []*codexsdk.HTTPClient {
 //
 // 前置条件由会话池保证：调用时该 threadKey 不可能有在飞 exchange（会话被租借独占，
 // 退休发生在该请求 Close 归还之后），所以只需摘 idle。
+//
+// **边界（momus N-f）**：只看**当前条目**的桶。条目被替换/移除时若有在飞请求仍持有死
+// 句柄，它随后新开的连接不在任何 retire/close 的触达面里——只由 SDK 的 idle TTL
+// （5min，心跳 30s 清扫）时间有界回收。规模有界（≤ 死句柄数 × 1 桶），且死句柄的连接
+// 不会被任何后续请求复用（桶不可达）。
 func (t *ClientTable) RetireThread(accountID int64, threadKey string) {
 	if t == nil || threadKey == "" {
 		return

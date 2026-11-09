@@ -1545,7 +1545,7 @@ func TestClientCacheBoundedByActiveEgressSet(t *testing.T) {
 		eg.Spec.Port = 8000
 		eg.Spec.Password = fmt.Sprintf("revision-%d", i)
 		// 密码轮换 = 账号配置变更 ⇒ reload 面把新的当前出口登记为活跃集。
-		a.clients.Reconcile(map[int64]*egress.Client{cred.AccountID: &eg})
+		a.clients.Reconcile(uint64(i+1), map[int64]*egress.Client{cred.AccountID: &eg})
 		_, _, err := a.clientFor(cred, &eg, domain.CodexResponsesTransportWS)
 		require.NoError(t, err)
 		last = egressDigest(&eg)
