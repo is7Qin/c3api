@@ -334,4 +334,15 @@ describe('accounts.tsx：接线形状', () => {
   it('最大并发清空的判据读草稿（不在视图上做比较）', () => {
     assert.match(page, /draft\.max_concurrency === ''/)
   })
+
+  // 空补丁不发：后端 validateAccountPatch 拒绝无字段补丁（service.go:894-901），
+  // 发出去就是 400——「什么都没改点保存」必须是 no-op，而不是报错。
+  it('编辑保存守卫空补丁，且守卫在 PATCH 之前（只改 ext 时仍会写 ext）', () => {
+    assert.match(page, /if \(Object\.keys\(patch\)\.length > 0\) \{/)
+    const guard = page.indexOf('Object.keys(patch).length')
+    const patchCall = page.indexOf('api.updateAccount(')
+    assert.notEqual(guard, -1, '找不到空补丁守卫')
+    assert.notEqual(patchCall, -1, '找不到 updateAccount 调用')
+    assert.ok(guard < patchCall, '空补丁守卫必须在 api.updateAccount( 之前')
+  })
 })

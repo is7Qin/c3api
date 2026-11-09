@@ -805,8 +805,13 @@ export default function Accounts() {
         await saveCodexExt(created.ID!)
         return
       }
-      // 编辑：一次 PATCH 落全部变更（缺席 = 不变，不再与回显逐字段比较）
-      await api.updateAccount(editing.ID!, patch, editing.LifecycleRevision)
+      // 编辑：一次 PATCH 落全部变更（缺席 = 不变，不再与回显逐字段比较）。
+      // 空补丁不发：后端 validateAccountPatch 拒绝无字段补丁（service.go:894-901），
+      // 「什么都没改点保存」应是 no-op 关窗，而不是 400。只改了 codex 凭据时补丁
+      // 本来就是空的——ext 照旧要写。
+      if (Object.keys(patch).length > 0) {
+        await api.updateAccount(editing.ID!, patch, editing.LifecycleRevision)
+      }
       await saveCodexExt(editing.ID!)
     },
     onSuccess: () => {
