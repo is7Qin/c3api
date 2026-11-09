@@ -112,6 +112,11 @@ type codexEntry struct {
 	accountID int64
 	auth      codexsdk.Auth
 	sig       credKey // 凭据签名（外部凭据变更 → 重建）
+	// owner 构造**本条目**那版凭据的稳定 owner（§3.2「凭据替换」的 ts 清空判据）。
+	// 它是条目的稳定字段：请求准备阶段（Prepare）从这里读，不再对请求里的凭据快照
+	// 重新散列——否则条目还没重建时，散列给出的是"更新的 owner + 旧的 auth"，owner
+	// 与实际出网凭据分叉（oracle B2）。owner/Identity/client-auth 因此在同一版本上。
+	owner [16]byte
 	// clients 本条目私有的 HTTPClient 桶（出口 × responses 传输）。**只由 ClientTable
 	// 在表锁内访问**——条目一旦离开表就不可达，迟到写入自然落空。
 	clients   map[clientKey]*codexsdk.HTTPClient
@@ -278,13 +283,26 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 // 统一回调双源去重；RefreshError/网络原样）。transport 为出站传输开关（spec §5：
 // 构造期参数 ⇒ 走 clientFor 的键维度；映射点只有 codexTransport 一处）。
 func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*codexsdk.HTTPResponse, error) {
-	e, client, err := a.clientFor(cred, eg, transport)
+	p, err := a.Prepare(cred)
+	if err != nil {
+		return nil, err
+	}
+	return a.ResponsesPrepared(ctx, p, eg, payload, id, transport)
+}
+
+// ResponsesPrepared 用**已准备句柄**发起非流式 responses 调用（生产热路径）：
+// 条目来自该句柄，auth/client 与 owner 同版（§3.2 凭据替换）。语义同 Responses。
+func (a *Codex) ResponsesPrepared(ctx context.Context, p Prepared, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*codexsdk.HTTPResponse, error) {
+	if p.entry == nil {
+		return nil, errUnprepared
+	}
+	client, err := a.clientForEntry(p.entry, eg, transport, true)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := client.Responses(ctx, payload, id)
 	if err != nil {
-		return nil, a.translateError(e, err)
+		return nil, a.translateError(p.entry, err)
 	}
 	return resp, nil
 }
@@ -319,13 +337,26 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *
 // Responses（translateError——信封/fatal 统一回调双源去重/RefreshError 分类复用）。
 // transport 语义同 Responses（构造期参数 ⇒ 换值换 client 条目）。
 func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*http.Response, error) {
-	e, client, err := a.clientFor(cred, eg, transport)
+	p, err := a.Prepare(cred)
+	if err != nil {
+		return nil, err
+	}
+	return a.StreamBodyPrepared(ctx, p, eg, payload, id, transport)
+}
+
+// StreamBodyPrepared 用**已准备句柄**发起流式 responses 调用（生产热路径）：
+// 条目来自该句柄，auth/client 与 owner 同版。语义同 StreamBody。
+func (a *Codex) StreamBodyPrepared(ctx context.Context, p Prepared, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*http.Response, error) {
+	if p.entry == nil {
+		return nil, errUnprepared
+	}
+	client, err := a.clientForEntry(p.entry, eg, transport, true)
 	if err != nil {
 		return nil, err
 	}
 	resp, err := client.StreamBody(ctx, payload, id)
 	if err != nil {
-		return nil, a.translateError(e, err)
+		return nil, a.translateError(p.entry, err)
 	}
 	return resp, nil
 }
@@ -347,6 +378,9 @@ func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, 
 // per-请求不缓存，Auth 账号级状态跨面复用；HTTPClient 由 clientFor 懒构造）。
 func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 	e, err := a.clients.Entry(cred.AccountID, credSig(cred), func(e *codexEntry) (codexsdk.Auth, error) {
+		// owner 随条目一起定型（同一版凭据）：重建/复用都保持 owner 与 auth 同版，
+		// 请求准备只需读这个字段（见 Prepared）。
+		e.owner = CredOwner(cred)
 		return a.buildAuth(cred, e)
 	})
 	if err != nil {
@@ -356,6 +390,40 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 		return nil, err
 	}
 	return e, nil
+}
+
+// Prepared 是一次请求的**账号准备句柄**（§3.3 请求准备的第一步）：条目（auth + 该
+// 条目私有的 client 桶）。owner 从该条目的**稳定字段**读（`Owner`），不再对请求里的
+// 凭据快照重新散列——那是"更新的 owner + 还没换的 auth"的分叉来源（oracle B2）。
+//
+// 值类型、栈上传递：不额外分配，也不引入第二次查表。生命周期：由 `Prepare` 在请求
+// 准备阶段取得；owner 对齐、Identity 构造与 client/auth 取用都从**同一个句柄**读。
+// 条目之后被替换/删除时它仍是合法指针（在飞请求照常完成），owner/auth 恒为它自己
+// 那一版。
+type Prepared struct {
+	entry *codexEntry
+}
+
+// errUnprepared 空句柄的使用错误（调用方忽略了 Prepare 的错误）。装配错误必须显形，
+// 不静默回退到"按请求凭据再查一次"（那正是要消除的路径）。
+var errUnprepared = errors.New("sdkbridge: codex request prepared without entry")
+
+// Prepare 取本次请求的账号准备句柄：entryFor（无网络）+ 条目稳定字段。错误语义与
+// 适配层调用一致（空 rt/构造失败 → 交给调用方的上游错误分类）。
+func (a *Codex) Prepare(cred *domain.AccountCredential) (Prepared, error) {
+	e, err := a.entryFor(cred)
+	if err != nil {
+		return Prepared{}, err
+	}
+	return Prepared{entry: e}, nil
+}
+
+// Owner 本句柄的凭据 owner（条目构造时定型的稳定字段；零值 = 空句柄）。
+func (p Prepared) Owner() [16]byte {
+	if p.entry == nil {
+		return [16]byte{}
+	}
+	return p.entry.owner
 }
 
 // codexTransport 领域开关 → SDK 传输枚举的**唯一**映射点。
@@ -434,8 +502,25 @@ func (a *Codex) clientForEgress(cred *domain.AccountCredential, eg *egress.Clien
 	if err != nil {
 		return nil, nil, err
 	}
+	return e, a.clientOnEgress(e, eg, transport, pinEgress), nil
+}
+
+// clientForEntry 已取得条目句柄后的取 client 面（Prepared 路径用它，**不再查条目**
+// ——请求准备与取 client 必须是同一个句柄，否则替换窗口里 owner 与实际 auth 又会
+// 分叉）。eg 由 resolveEgress 归一（nil → 池直连；池未装配 ⇒ 错误）。
+func (a *Codex) clientForEntry(e *codexEntry, eg *egress.Client, transport domain.CodexResponsesTransport, pinEgress bool) (*codexsdk.HTTPClient, error) {
+	eg, err := a.resolveEgress(eg)
+	if err != nil {
+		return nil, err
+	}
+	return a.clientOnEgress(e, eg, transport, pinEgress), nil
+}
+
+// clientOnEgress 出口已归一后的取/建 client 本体（条目私有桶；miss 时按该条目的
+// auth 构造）。
+func (a *Codex) clientOnEgress(e *codexEntry, eg *egress.Client, transport domain.CodexResponsesTransport, pinEgress bool) *codexsdk.HTTPClient {
 	key := clientKey{proxy: egressDigest(eg), transport: transport.Key()}
-	c := a.clients.Client(e, key, pinEgress, func() *codexsdk.HTTPClient {
+	return a.clients.Client(e, key, pinEgress, func() *codexsdk.HTTPClient {
 		return codexsdk.NewHTTPClient(e.auth,
 			// 出口 transport（spec §4.6）：eg 恒非 nil（resolveEgress 保证），直连时
 			// 就是底座 transport、与 HTTP 面共享同一连接池。底座是裸 client
@@ -451,7 +536,6 @@ func (a *Codex) clientForEgress(cred *domain.AccountCredential, eg *egress.Clien
 			codexsdk.WithWSConnCache(a.wsCache),
 		)
 	})
-	return e, c, nil
 }
 
 // RetireThread 退役账号某线程的空闲 WS 连接（线程退休 / 重载丢槽的唯一出口）。
@@ -704,11 +788,21 @@ func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
 //     AccountDisabledError）→ 统一回调单次上报 + 原样透传（网关"该请求不转
 //     移"，IsFatal 判定）；RefreshError/网络 → 原样透传（网关正常 failover）
 func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, id codexsdk.Identity, opts ...codexsdk.Option) (*codexsdk.Client, error) {
-	e, err := a.entryFor(cred)
+	p, err := a.Prepare(cred)
 	if err != nil {
 		return nil, err
 	}
-	eg, err = a.resolveEgress(eg)
+	return a.DialPrepared(ctx, p, eg, id, opts...)
+}
+
+// DialPrepared 用**已准备句柄**拨号（生产 WS 车道热路径）：auth 来自该句柄，与 owner
+// 同版（§3.2 凭据替换）。语义同 Dial。
+func (a *Codex) DialPrepared(ctx context.Context, p Prepared, eg *egress.Client, id codexsdk.Identity, opts ...codexsdk.Option) (*codexsdk.Client, error) {
+	e := p.entry
+	if e == nil {
+		return nil, errUnprepared
+	}
+	eg, err := a.resolveEgress(eg)
 	if err != nil {
 		return nil, err
 	}
@@ -815,16 +909,17 @@ func credSig(c *domain.AccountCredential) credKey {
 	}
 }
 
-// CredOwner 账号当前凭据的 **owner**（§3.2「凭据替换」的 ts 清空判据）。
+// CredOwner 账号凭据的 **owner**（§3.2「凭据替换」的 ts 清空判据）——**条目构造期**
+// 的派生函数：entryFor 在建条目时把它写进 codexEntry.owner，请求准备阶段只读该字段
+// （Prepared.Owner）。**不要**在请求路径上对请求里的凭据快照重新散列——那会在"条目
+// 还没重建、凭据已经换了"的窗口里给出更新的 owner 与旧的 auth（oracle B2）。
 //
-// 网关在**请求准备第一步**用它对齐会话（早于 Identity 构造），因此它必须是纯函数：
-// 不读缓存、不加锁、**零分配**（栈上两个累加器）。
-//
-// owner 只含**稳定身份标识**——installation + CodexAccountID + PAT / refresh-token，
-// **排除会轮转的 access token**：SDK 每次 OAuth refresh 都会把新 at 写回 ext，若 at
-// 参与 owner，每个 token refresh 都会清该账号全部会话的 ts，与「不是每次 token
-// refresh」（spec §3.2 括注）自相矛盾。at 变化属于"凭据换了一版"（entry 重建判据
-// credSig 更宽，含 at），但**不是**换 owner：会话的 ts 属于同一条上游对话。
+// 纯函数：不读缓存、不加锁、**零分配**（栈上两个累加器）。owner 只含**稳定身份标识**
+// ——installation + CodexAccountID + PAT / refresh-token，**排除会轮转的 access
+// token**：SDK 每次 OAuth refresh 都会把新 at 写回 ext，若 at 参与 owner，每个 token
+// refresh 都会清该账号全部会话的 ts，与「不是每次 token refresh」（spec §3.2 括注）
+// 自相矛盾。at 变化属于"凭据换了一版"（entry 重建判据 credSig 更宽，含 at），但
+// **不是**换 owner：会话的 ts 属于同一条上游对话。
 //
 // 为什么非密码学哈希就够：比较是**账号内**的（会话池按账号建，owner 只和同一会话
 // 上一次对齐的值比），所以它只回答"这份凭据还是不是同一版"，跨账号碰撞在语义上

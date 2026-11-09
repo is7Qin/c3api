@@ -162,20 +162,32 @@ const codexTurnStateReplay = false
 
 // codexRequestIdentity 本次请求的身份数据（identity 是**请求数据**，§3.1）。
 //
-// 顺序是契约（§3.3 请求准备顺序）：取得租借 → **对齐 owner（可能清 ts）** →
-// 构造 Identity。owner 取自**本次请求自己的凭据**（sdkbridge.CredOwner）而不是池上
-// 的计数器：池会被整体替换，复制即丢失效；会话字段跟着会话对象走，重载窗口里
-// 发生的对齐不会丢（B2）。反序（先生成 Identity 再清 ts）会让换凭据后的第一个请求
-// 带着旧 owner 的 ts 出去，而事后任何清理都追不回来（B1）。
+// 顺序是契约（§3.3 请求准备顺序）：取得租借 → **准备条目句柄** → 对齐 owner（可能清
+// ts）→ 构造 Identity。owner 取自**本次请求准备好的条目句柄**（`Prepared.Owner`：条目
+// 构造时定型的稳定字段），既不拿请求里的凭据快照重新散列（那会在条目尚未重建时给出
+// "新 owner + 旧 auth"），也不读池上的计数器（池会被整体替换，复制即丢失效；会话字段
+// 跟着会话对象走，重载窗口里发生的对齐不会丢）。反序（先生成 Identity 再清 ts）会让换
+// 凭据后的第一个请求带着旧 owner 的 ts 出去，而事后任何清理都追不回来（B1）。
 //
 // 策略 false ⇒ 既不发送也不捕获（ts 恒空、Sink = nil）；连接复用不受影响。
-func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection, cred *domain.AccountCredential) codexsdk.Identity {
-	sel.AlignCodexOwner(sdkbridge.CredOwner(cred))
+func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection, prep sdkbridge.Prepared) codexsdk.Identity {
+	sel.AlignCodexOwner(prep.Owner())
 	id := sel.CodexIdentity()
 	if !p.turnStateReplay {
 		id.TurnState, id.Sink = "", nil
 	}
 	return id
+}
+
+// codexRequestPrep 请求准备两步合一（§3.3）：取得条目句柄 → 对齐 owner → 构造
+// Identity。错误原样上抛，由调用方按各自车道既有的错误映射收口（HTTP / stream /
+// ws 的状态面不同，不在这里归一）。
+func (p *Proxy) codexRequestPrep(sel *scheduler.Selection, cred *domain.AccountCredential) (sdkbridge.Prepared, codexsdk.Identity, error) {
+	prep, err := p.codex.Prepare(cred)
+	if err != nil {
+		return sdkbridge.Prepared{}, codexsdk.Identity{}, err
+	}
+	return prep, p.codexRequestIdentity(sel, prep), nil
 }
 
 // nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——
@@ -205,14 +217,20 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 请求级身份（§3.1）：**先对齐 owner**，再由会话给出 Session/Meta/ts/Sink——同账号
-	// 并发各持不同会话 ⇒ 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/
-	// 客户端的构造期配置。
-	id := p.codexRequestIdentity(sel, cred)
+	// 请求级身份（§3.1）：**先准备条目句柄**（owner 与 auth/client 同版，oracle B2），
+	// 再对齐 owner，最后由会话给出 Session/Meta/ts/Sink——同账号并发各持不同会话 ⇒
+	// 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的构造期配置。
+	prep, id, err := p.codexRequestPrep(sel, cred)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return 0, nil, false, r.Context().Err()
+		}
+		return statusOf(err), upstreamBody(err), false, err
+	}
 	// 出站传输开关由调用方给值（原生车道 = Selection 原值；转换车道钉 http，
 	// 见 caller_converted.go）。sdkbridge 侧按它分 client 条目——构造期参数，
-	// 改模板 ⇒ 换条目。
-	resp, err := p.codex.Responses(ctx, cred, sel.Egress, streamBody, id, transport)
+	// 改模板 ⇒ 换条目。**同一个 prep 句柄**继续取 client/auth（不查第二次）。
+	resp, err := p.codex.ResponsesPrepared(ctx, prep, sel.Egress, streamBody, id, transport)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -285,10 +303,17 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	if err != nil {
 		return 0, nil, false, err
 	}
-	// 请求级身份同非流式（含 owner 对齐——同样必须先于身份快照）。
-	id := p.codexRequestIdentity(sel, cred)
+	// 请求级身份同非流式（先准备条目句柄，再对齐 owner——同样必须先于身份快照）。
+	prep, id, err := p.codexRequestPrep(sel, cred)
+	if err != nil {
+		if r.Context().Err() != nil {
+			return 0, nil, false, r.Context().Err()
+		}
+		return streamUpstreamStatus(statusOf(err)), upstreamBody(err), false, err
+	}
 	// 出站传输开关同非流式（原生车道 = Selection 原值；转换车道钉 http）。
-	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, id, transport)
+	// 同一个 prep 句柄继续取 client/auth（不查第二次）。
+	resp, err := p.codex.StreamBodyPrepared(ctx, prep, sel.Egress, streamBody, id, transport)
 	if err != nil {
 		// 客户端断开（上游响应前）优先归因。
 		if r.Context().Err() != nil {

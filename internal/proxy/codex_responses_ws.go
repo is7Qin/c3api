@@ -79,13 +79,16 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 		return nil, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
-	// 请求准备顺序（§3.3）：取得租借 → **对齐 owner（可能清 ts）** → 构造 Identity。
-	// 反序会让换凭据后的第一个请求带着旧 owner 的 ts 出去。ws 车道不重放 ts，
-	// 但 owner 对齐仍然要做：会话的 staleness 不能靠车道类型来养。
-	sel.AlignCodexOwner(sdkbridge.CredOwner(&cred))
+	// 请求准备顺序（§3.3）：取得租借 → **准备条目句柄** → 对齐 owner（可能清 ts）→
+	// 构造 Identity。owner 从该句柄的稳定字段读（与 auth 同版，oracle B2）；反序会让换
+	// 凭据后的第一个请求带着旧 owner 的 ts 出去。ws 车道不重放 ts，但 owner 对齐仍然要
+	// 做：会话的 staleness 不能靠车道类型来养。
+	prep, id, err := p.codexRequestPrep(sel, &cred)
+	if err != nil {
+		return nil, err
+	}
 	// 入站 WS 车道 1:1 透传：身份随连接传入，但**不走 ts 重放**（§5.2-3）——
 	// 既不发送也不捕获，Sink 为 nil。
-	id := sel.CodexIdentity()
 	id.TurnState, id.Sink = "", nil
 	opts := []codexsdk.Option{
 		codexsdk.WithPingInterval(0), // 心跳单源：编排层 30s+10s 单一所有者
@@ -97,7 +100,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 	// 转移（零新分支；wrapped ctx 取消不向上传播，不落 499）。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
 	defer cancel()
-	return p.codex.Dial(ctx, &cred, sel.Egress, id, opts...)
+	return p.codex.DialPrepared(ctx, prep, sel.Egress, id, opts...)
 }
 
 // handleCodexDialError codex WS 拨号失败分类与收尾（返回
