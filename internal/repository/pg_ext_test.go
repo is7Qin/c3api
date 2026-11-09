@@ -36,8 +36,8 @@ func strPtrPG(s string) *string { return new(s) }
 func allowTemplateExtWrite(*domain.TemplateExt) (bool, error) { return false, nil }
 
 // seedTemplateExt 播种/覆盖一行 template_ext（走守卫写，恒放行 decide）。
-// **仅 _test.go 可用**：非测试源码里不得出现同名入口（“唯一写入口”由
-// ext_write_surface_gate_test.go 静态钉住）。
+// **仅 _test.go 可用**：非测试源码里不得出现同名入口（唯一写入口是约定，见
+// spec §11-6；靠 code review 把关）。
 func seedTemplateExt(t *testing.T, repos *repository.Repository, e *domain.TemplateExt) *domain.TemplateExt {
 	t.Helper()
 	saved, _, err := repos.TemplateExts.UpsertTemplateExt(context.Background(), e, allowTemplateExtWrite)

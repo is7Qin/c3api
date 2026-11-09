@@ -47,7 +47,7 @@ type TemplateExtDecide func(old *domain.TemplateExt) (down bool, err error)
 //	   → 读 ext 行（无行 ⇒ old = nil）
 //	   → decide(old)（非 nil err ⇒ 回滚并按原样返回该 err）
 //	   → 私有 upsert（用 tx.Client()）
-//	   → 提交 → 回读返回
+//	   → **事务内**回读 → 提交 → 返回
 //
 // 为什么必须有这道门：`old` 与实际被覆盖的值必须绑定。事务外读到的旧值只允许
 // 用于快速失败/回显——A 读到 `http` → B 抢先把值升到 `ws` → A 无条件 upsert 会
@@ -64,7 +64,10 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 		// 编程错误（不是可重试的运行时状态），入口处直接 panic：绝不静默放行。
 		panic("repository: template ext guard write requires a non-nil decide callback")
 	}
-	var down bool
+	var (
+		down  bool
+		saved *domain.TemplateExt
+	)
 	err := withWriteTx(ctx, r.driver, func(tx *ent.Client, txDrv dialect.Driver) error {
 		if err := lockTemplateExtParentForUpdate(ctx, txDrv, e.TemplateID); err != nil {
 			return err
@@ -79,13 +82,28 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 			return err
 		}
 		down = d
-		return upsertTemplateExtUnlocked(ctx, tx, e)
+		if err := upsertTemplateExtUnlocked(ctx, tx, e); err != nil {
+			return err
+		}
+		// 回读必须留在**事务内**（spec v4.27）：upsert 的 RETURNING 只给 id，全列
+		// 还得再读一次。放到提交之后去读会开出两个真故障窗口：
+		//   ① 写已提交但回读失败 ⇒ 调用方拿到 error ⇒ service 提前返回 ⇒ 既不写
+		//      审计 WARN、也不执行 Templates()/NOTIFY —— 写入成功而快照不失效，
+		//      开关静默失效（本项目最忌的那类故障）；
+		//   ② 另一条守卫写在回读之前提交 ⇒ saved 是**别人的**值 ⇒ WARN 会记成
+		//      "downgraded, old=ws, new=ws" 这种自相矛盾的证据。
+		// 锁还在自己手里时读到的就是本次写入的提交前状态，两个窗口都不存在。
+		row, err := templateExtRow(ctx, tx, e.TemplateID)
+		if err != nil {
+			return err
+		}
+		if row == nil {
+			// 自己刚写的行自己都读不回来 ⇒ 不提交（不提交一个读不回的行）。
+			return fmt.Errorf("%w: template_id=%d missing after upsert", ErrNotFound, e.TemplateID)
+		}
+		saved = row
+		return nil
 	})
-	if err != nil {
-		return nil, false, err
-	}
-	// 提交后回读：返回库中真实全列（upsert 的 RETURNING 只给 id）。
-	saved, err := r.GetTemplateExt(ctx, e.TemplateID)
 	if err != nil {
 		return nil, false, err
 	}

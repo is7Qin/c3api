@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -357,9 +358,11 @@ func TestPGTemplateExtGuardWriteNilDecidePanics(t *testing.T) {
 // **禁止**逐分支断言：不要求"必须观测到 409"、不要求"两支都出现过"（50 次里两支
 // 各 ~25 次是期望、不是保证，按它断言会随机红）。
 //
-// 为什么必须重复 50 次：把父行锁去掉（`... FOR UPDATE` 删掉）后，单跑一次的终值
-// 取决于谁后落库（A 后落库才落 ""），只有 ~50% 概率抓到；50 次全绿的联合概率
-// ≈2⁻⁵⁰。这是本轮唯一"没被旧实现红钉住"的机制——缺它，事务+父行锁就只是声明。
+// 为什么重复 50 次：单次配对只是**提高暴露交错的机会**，不是确定性证明——起跑
+// channel 不保证两条事务都在对方提交前读到 old，连接获取与调度也不保证等概率。
+// 真正的判别力来自变异实测：M1 去掉 `... FOR UPDATE` ⇒ 本用例红；M2 把 old 的读取
+// 挪到父行锁之前 ⇒ 本用例红（顺序"先锁后读"因此有判别力）。本用例的职责就是把这两
+// 类改动暴露出来。
 // 也不用"两侧都写 ws"这类无判别力的配对：那样去掉锁也全绿。
 func TestPGTemplateExtTransportConcurrentGuardWrite(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -417,4 +420,91 @@ func TestPGTemplateExtTransportConcurrentGuardWrite(t *testing.T) {
 		require.Equal(t, domain.CodexResponsesTransportWS, got.CodexResponsesTransport,
 			"第 %d 轮：终值必须是 ws（降级写不得覆盖升级写）", round)
 	}
+}
+
+// TestPGTemplateExtGuardWriteHoldsParentLock 受控锁阻塞用例：**直接证明**父行锁
+// 存在，而不是靠概率论证。
+//
+// 做法（无睡眠等待，全用 channel）：A 的 decide 回调只在**已持父行锁之后**被调用，
+// 所以它向主 goroutine 发"我已持锁"信号后阻塞在 release 上；主 goroutine 等 B 真的
+// 起跑后，用 select + 短超时断言 B 在 A 放行前**没有**返回——B 返回了就等于锁不存在。
+// A 放行后两者都必须成功（A 先提交，B 随后读到 A 写下的值再写）。
+//
+// 判别力（变异实测）：去掉 `... FOR UPDATE` 后 B 不再阻塞在父行上，它的 upsert 只
+// 需要 ext 行的行锁，而 A 此刻还卡在 decide、尚未写 ⇒ B 几毫秒内就返回 ⇒ 本用例在
+// "B 在 A 持锁期间完成了守卫写"这条断言上红。
+func TestPGTemplateExtGuardWriteHoldsParentLock(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+	tpl := seedPGCodexTemplate(t, repos, "t-lock-block")
+	seedTemplateExt(t, repos, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+		CodexResponsesTransport: domain.CodexResponsesTransportWS,
+	})
+
+	// 预热连接池：让 B「取连接」不落在下面的观测窗口里——否则去锁变异下 B 可能卡在
+	// 建连上，用例会因为无关原因而绿（假绿）。预热后 pgxpool 留住 3 条空闲连接。
+	var prewarm sync.WaitGroup
+	for range 3 {
+		prewarm.Add(1)
+		go func() {
+			defer prewarm.Done()
+			_, _ = repos.TemplateExts.GetTemplateExt(ctx, tpl.ID)
+		}()
+	}
+	prewarm.Wait()
+
+	locked := make(chan struct{})    // A → 主 goroutine：我已持父行锁
+	releaseCh := make(chan struct{}) // 主 goroutine → A：可以继续了
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseCh) }) }
+	t.Cleanup(release) // 断言中途失败也要放行 A，别把连接与事务挂到用例结束
+
+	aErr := make(chan error, 1)
+	go func() {
+		_, _, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+			CodexResponsesTransport: domain.CodexResponsesTransportWS,
+		}, func(*domain.TemplateExt) (bool, error) {
+			close(locked)
+			<-releaseCh
+			return false, nil
+		})
+		aErr <- err
+	}()
+
+	select {
+	case <-locked:
+	case <-time.After(30 * time.Second):
+		t.Fatal("A 未能在 30s 内进入 decide（守卫写没走到判定面？）")
+	}
+
+	bStarted := make(chan struct{}) // B → 主 goroutine：我马上发那条守卫写
+	bDone := make(chan struct{})
+	bErr := make(chan error, 1)
+	go func() {
+		defer close(bDone)
+		close(bStarted)
+		_, _, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
+			CodexResponsesTransport: domain.CodexResponsesTransportWS,
+		}, func(*domain.TemplateExt) (bool, error) { return false, nil })
+		bErr <- err
+	}()
+	<-bStarted
+
+	// A 仍持锁：B 必须没有返回（短超时只用来兜底判"仍在阻塞"，不是等待技巧）。
+	select {
+	case <-bDone:
+		t.Fatal("B 在 A 持锁期间完成了守卫写：父行锁没有生效")
+	case <-time.After(500 * time.Millisecond):
+	}
+	release()
+	require.NoError(t, <-aErr, "A 放行后必须成功")
+	<-bDone
+	require.NoError(t, <-bErr, "B 在 A 提交后必须成功")
+
+	got, err := repos.TemplateExts.GetTemplateExt(ctx, tpl.ID)
+	require.NoError(t, err)
+	require.Equal(t, domain.CodexResponsesTransportWS, got.CodexResponsesTransport)
 }
