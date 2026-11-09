@@ -119,9 +119,11 @@ export function draftToPatch(
   // 不可空标量的 '' 是「用户清空了必填框」的非法瞬时值（校验层拦），投影里不发。
   if (d.name !== undefined && d.name.trim() !== '') p.name = d.name.trim()
   if (d.template_id !== undefined && d.template_id !== '') p.template_id = Number(d.template_id)
-  // base_url：codex 恒 null（模板可能随本次 PATCH 切换）；mixed/unresolved 一律不发
-  if (ctx.tpl === 'codex') p.base_url = null
-  else if (ctx.tpl === 'nonCodex' && d.base_url !== undefined) {
+  // base_url：codex 只在本批真可能改动模板/基址时强制 null（no-op 保存必须保持空补丁；
+  // 切模板到 codex 的 PATCH 必然带 template_id）；mixed/unresolved 一律不发
+  if (ctx.tpl === 'codex') {
+    if (d.template_id !== undefined || d.base_url !== undefined) p.base_url = null
+  } else if (ctx.tpl === 'nonCodex' && d.base_url !== undefined) {
     if (d.base_url === null) p.base_url = null
     else {
       // 纯空白 = 用户把输入框清空的另一种写法（控件只把精确 '' 映射成 null）。
@@ -131,7 +133,11 @@ export function draftToPatch(
       if (u !== '') p.base_url = u
     }
   }
-  if (d.upstream_key !== undefined && d.upstream_key !== '') p.upstream_key = d.upstream_key
+  // upstream_key：codex 账号不用它（切模板后草稿里的旧值不写）；纯空白 = 未表态
+  if (d.upstream_key !== undefined && ctx.tpl !== 'codex') {
+    const k = d.upstream_key.trim()
+    if (k !== '') p.upstream_key = k
+  }
   if (d.max_concurrency !== undefined && d.max_concurrency !== '') p.max_concurrency = Number(d.max_concurrency)
   if (d.group_ids !== undefined) p.group_ids = [...d.group_ids]
   if (d.cost_multiplier !== undefined) {

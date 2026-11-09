@@ -278,7 +278,8 @@ export default function Accounts() {
     refetchInterval: 10_000,
   })
   const templatesQ = useQuery({ queryKey: ['templates'], queryFn: () => api.listTemplates({ limit: 100 }) })
-  const templates = templatesQ.data?.rows ?? []
+  // 稳定引用：未加载时的 [] 不能每帧换身份（batchTplCtx 的 useMemo 依赖它）
+  const templates = useMemo(() => templatesQ.data?.rows ?? [], [templatesQ.data])
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: () => api.listGroups({ limit: 100 }) })
   const groups = groupsQ.data?.rows ?? []
   const rows = useMemo(() => data?.rows ?? [], [data?.rows])
@@ -556,12 +557,21 @@ export default function Accounts() {
     return 'mixed'
   }, [batchDraft.template_id, selected, rows, templates])
   const isBatchCodex = batchTplCtx === 'codex' // 只给三处 UI 判据用（禁用输入/勾选/提示）
+  // 「清空分组」只由 []（明确的空集合）表达；选了具体分组时勾选框必须是未勾选
+  // （否则文案说「清空」、实际是替换，用户取消勾选还会把变更丢掉）。
+  const clearGroupsChecked = batchDraft.group_ids !== undefined && batchDraft.group_ids.length === 0
   const submitBatchUpdate = () => {
     if (selected.length === 0) return
-    // 混合/未解析 + 用户设了 BaseURL ⇒ 拒绝（批量不能按行分流，宁可拒绝也不误清）
-    if ((batchTplCtx === 'mixed' || batchTplCtx === 'unresolved') && batchDraft.base_url !== undefined) {
+    // 混合/未解析 + 用户真的表态了 BaseURL（非空值或显式清空）⇒ 拒绝；
+    // 纯空白投影后本来就不发，不该把用户堵在提示里。
+    const baseUrlExpressed = batchDraft.base_url === null || (batchDraft.base_url?.trim() ?? '') !== ''
+    if ((batchTplCtx === 'mixed' || batchTplCtx === 'unresolved') && baseUrlExpressed) {
       setBatchErr(t('accounts.batchBaseUrlBlocked'))
       return
+    }
+    if (batchDraft.max_concurrency !== undefined) {
+      const n = Number(batchDraft.max_concurrency)
+      if (!Number.isInteger(n) || n < 1) { setBatchErr(t('accounts.maxRequired')); return }
     }
     const dom = (batchDraft.cache_domain ?? '').trim()
     if (dom !== '' && !validCacheDomain(dom)) { setBatchErr(t('accounts.cacheDomain.invalid')); return }
@@ -636,6 +646,10 @@ export default function Accounts() {
     [editing, groupsEcho.data],
   )
   const view = mergeView(baseline, draft)
+  // 最大并发：缺席合法（创建取服务端缺省）；有值必须是 ≥1 的整数
+  // （契约不接受 null/0，service.go:917）。空串/0/小数 = 非法瞬时值。
+  const maxConcurrencyInvalid =
+    draft.max_concurrency !== undefined && !(Number.isInteger(Number(draft.max_concurrency)) && Number(draft.max_concurrency) >= 1)
 
   // codex 账号编辑回显：对话框挂载时拉 ext 凭据（404 = 无 ext 行 → 空表单）；
   // 与「扩展配置」弹窗同一数据源，此处仅填充表单。
@@ -653,7 +667,9 @@ export default function Accounts() {
   })
   useEffect(() => {
     const d = extEcho.data
-    if (editing && !extEcho.isLoading && d) {
+    // dialogOpen 必须进条件与依赖：二次打开时 editing / data 的引用都可能被复用，
+    // 只靠 [editing, data] 会让回显 effect 一次都不跑（同一类 structural sharing 事故）。
+    if (dialogOpen && editing && !extEcho.isLoading && d) {
       setCodexFields({
         codex_oauth_token: d.codex_oauth_token ?? '',
         codex_oauth_refresh_token: d.codex_oauth_refresh_token ?? '',
@@ -663,7 +679,7 @@ export default function Accounts() {
         codex_account_id: d.codex_account_id ?? '',
       })
     }
-  }, [editing, extEcho.isLoading, extEcho.data])
+  }, [dialogOpen, editing, extEcho.isLoading, extEcho.data])
 
   // 草稿生命周期：打开对话框是**唯一**重置点。不重置就会把上一个账号的增量串到
   // 下一个（「编辑 A 改个名字 → 取消 → 打开 B」保存即写错行）。
@@ -724,14 +740,17 @@ export default function Accounts() {
         const extBody: AccountExt = {
           account_id: id,
           credential_type: ct,
-          codex_email: (codexFields.codex_email?.trim() ?? cur?.codex_email ?? null) as string | null | undefined,
+          // 空串 = 未表态（回显可能未到）⇒ 回落回显；旧写法 `?.trim() ?? cur` 的回落永不
+          // 触发（trim 恒非 null），会把邮箱写成空串。
+          codex_email: codexFields.codex_email.trim() || cur?.codex_email || null,
           // PUT 全列更新：缺省字段按 NULL 落盘
           codex_account_id: codexAccountIdBody(codexFields.codex_account_id, cur?.codex_account_id),
           ...(ct === 'codex-oauth'
             ? {
                 codex_oauth_token: codexFields.codex_oauth_token.trim() || null,
-                codex_oauth_refresh_token: codexFields.codex_oauth_refresh_token.trim() || null,
-                codex_oauth_expires_at: toRFC3339(codexFields.codex_oauth_expires_at) ?? null,
+                // refresh/expires 可空：空 = 未表态，不得把已有值写没
+                codex_oauth_refresh_token: codexFields.codex_oauth_refresh_token.trim() || cur?.codex_oauth_refresh_token || null,
+                codex_oauth_expires_at: toRFC3339(codexFields.codex_oauth_expires_at) ?? cur?.codex_oauth_expires_at ?? null,
                 codex_pat_key: null,
               }
             : {
@@ -846,9 +865,9 @@ export default function Accounts() {
     // Use effectiveSelCt (fail-closed) so delayed template query does not bypass validation
     if (!view.name.trim() || !view.template_id) return
     if (isSelUnresolved) return // fail-closed: do not submit while unresolved
-    // 判据读草稿不读视图：view 里的空串只可能来自「用户清空了最大并发」——
-    // 契约不接受 null/0，故这里禁用保存（缺席 = 创建取服务端缺省，合法）。
-    if (draft.max_concurrency === '') return
+    // 判据读草稿不读视图：缺席合法（创建取服务端缺省）；有值必须是 ≥1 的整数
+    // （契约不接受 null/0，service.go:917）。空串/0/非法小数一律禁用保存。
+    if (maxConcurrencyInvalid) return
     if (parseMultiplier(view.cost_multiplier) === null) return
     const domTrim = (view.cache_domain ?? '').trim()
     if (domTrim !== '' && !validCacheDomain(domTrim)) return
@@ -1374,7 +1393,7 @@ export default function Accounts() {
             <div className="space-y-1.5 max-w-40">
               <Label htmlFor="acc-max">{t('accounts.maxLabel')}</Label>
               <Input id="acc-max" type="number" min={1} value={view.max_concurrency} onChange={e => update('max_concurrency', e.target.value)} />
-              {draft.max_concurrency === '' && (
+              {maxConcurrencyInvalid && (
                 <p className="text-sm text-destructive">{t('accounts.maxRequired')}</p>
               )}
             </div>
@@ -1539,10 +1558,11 @@ export default function Accounts() {
                 groups={groups}
                 value={batchDraft.group_ids ?? []}
                 onChange={v => updateBatch('group_ids', v.map(Number))}
+                disabled={clearGroupsChecked}
               />
               <p className="text-xs text-muted-foreground">{t('accounts.batchGroupHint')}</p>
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchDraft.group_ids !== undefined} onCheckedChange={c => c === true ? updateBatch('group_ids', []) : clearBatch('group_ids')} />
+                <Checkbox checked={clearGroupsChecked} onCheckedChange={c => c === true ? updateBatch('group_ids', []) : clearBatch('group_ids')} />
                 <span className="text-sm">{t('accounts.batchClearGroups')}</span>
               </label>
             </div>

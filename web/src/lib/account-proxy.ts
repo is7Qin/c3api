@@ -102,19 +102,3 @@ export function proxySelectItems(
 export function echoMayHideBinding(kind: 'admin' | 'supplier', echo: number | null | undefined): boolean {
   return kind === 'supplier' && echo == null
 }
-
-// —— 分组（group_ids）的三态：**字段本身就是三态，不要再叠哨兵** ——
-//
-// 分组回显不随账号列表返回（GET /accounts/{id}/groups，对话框打开时才拉），
-// 于是「表单里是空数组」有两种含义：用户清空了 / 回显还没到。混为一谈就会用
-// `[]` 覆盖账号已有分组——这类 bug 修过两次，两次都在让「快照」变完整，
-// 而不是让「写入」不依赖快照。
-//
-// 契约（PATCH）：缺席 = 不变、`[]` = 清空。所以草稿用 `number[] | null` 表达意图：
-// null = 没表态（不发键），[] = 明确清空，[ids] = 替换。展示侧派生自回显，
-// 不拷进表单——拷贝就会有两份真值，就得靠 effect 同步，同步就有窗口。
-export function buildGroupIdsField(
-  ids: readonly number[] | null,
-): Pick<AccountConfigPatch, 'group_ids'> {
-  return ids === null ? {} : { group_ids: [...ids] }
-}
