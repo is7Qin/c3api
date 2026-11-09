@@ -2236,14 +2236,32 @@ func (t *fakeTx) DeletePriceEntryManual(_ context.Context, model string) error {
 
 // --- 模板/账号类型化扩展（TemplateExtStore / AccountExtStore） ---
 
-// UpsertTemplateExt 幂等写入（镜像真实 repo 1:1 upsert 语义：已存在 → 全列
-// 替换含 NULL 清空；缺失 → 插入）。
-func (f *fakeStore) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt) (*domain.TemplateExt, error) {
+// UpsertTemplateExt 守卫写镜像（真实 repo 同语义：事务内读旧值 → decide → 全列
+// 替换含 NULL 清空）。「读旧值 → 判定 → 写」**在同一把 mutex 内**完成，所以 fake
+// 上也能跑并发用例：任何别的 goroutine 都读不到中间态。
+//
+// decide 非 nil 时其返回值原样上抛（**不包装**）；decide 拒绝 ⇒ 不落任何改动
+// （真 repo 的"事务回滚"在 fake 上等价于"什么都不写"）。
+// 父行锁与 FK 是 DB 语义，fake 不复制。
+func (f *fakeStore) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide repository.TemplateExtDecide) (*domain.TemplateExt, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	var old *domain.TemplateExt
+	if prev, ok := f.tplExts[e.TemplateID]; ok {
+		cp := *prev
+		old = &cp
+	}
+	down := false
+	if decide != nil {
+		d, err := decide(old)
+		if err != nil {
+			return nil, false, err
+		}
+		down = d
+	}
 	c := *e
 	f.tplExts[e.TemplateID] = &c
-	return &c, nil
+	return &c, down, nil
 }
 
 func (f *fakeStore) GetTemplateExt(ctx context.Context, templateID int64) (*domain.TemplateExt, error) {

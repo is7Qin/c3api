@@ -56,10 +56,9 @@ func TestTemplateExtCodexTransportPG(t *testing.T) {
 	tpl := seedPGCodexTemplate(t, repos, "t-transport")
 
 	// 未配置 = 零值 ""（NOT NULL DEFAULT ''：插入路径不显式 Set 也不为 NULL）
-	saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+	saved := seedTemplateExt(t, repos, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 	})
-	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportDefault, saved.CodexResponsesTransport)
 
 	for _, want := range []domain.CodexResponsesTransport{
@@ -67,11 +66,10 @@ func TestTemplateExtCodexTransportPG(t *testing.T) {
 		domain.CodexResponsesTransportWS,
 		domain.CodexResponsesTransportDefault,
 	} {
-		saved, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		saved = seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexResponsesTransport: want,
 		})
-		require.NoError(t, err)
 		require.Equal(t, want, saved.CodexResponsesTransport, "upsert 返回值必须反映落库值")
 
 		got, err := repos.TemplateExts.GetTemplateExt(ctx, tpl.ID)
@@ -104,11 +102,10 @@ func TestPGCodexTransportSnapshotMerge(t *testing.T) {
 		// new(false)：那是显式 false，走的是另一条路径（列在 INSERT 里、值非
 		// NULL），本用例就退化成下面那条 strip=true 的近亲，独立 if 的门控再也
 		// 测不到。
-		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexResponsesTransport: domain.CodexResponsesTransportWS,
 		})
-		require.NoError(t, err)
 
 		got, ok := snapshotTransportOf(t, repos, g.ID, acc.ID)
 		require.True(t, ok, "快照必须含该账号")
@@ -128,12 +125,11 @@ func TestPGCodexTransportSnapshotMerge(t *testing.T) {
 		acc := seedPGAccount(t, repos, tpl.ID, "a-strip")
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 
-		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 			StripImageTools:         new(true),
 			CodexResponsesTransport: domain.CodexResponsesTransportWS,
 		})
-		require.NoError(t, err)
 
 		m, err := repos.Groups.LoadGroupsAccounts(ctx)
 		require.NoError(t, err)
@@ -155,18 +151,16 @@ func TestPGCodexTransportSnapshotMerge(t *testing.T) {
 		acc := seedPGAccount(t, repos, tpl.ID, "a-clear")
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 
-		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 			StripImageTools:         new(true),
 			CodexResponsesTransport: domain.CodexResponsesTransportWS,
 		})
-		require.NoError(t, err)
 		// 清 strip（nil ⇒ NULL），transport 原样重写：守卫为假时出站传输仍必须合并
-		_, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 			CodexResponsesTransport: domain.CodexResponsesTransportWS,
 		})
-		require.NoError(t, err)
 
 		got, ok := snapshotTransportOf(t, repos, g.ID, acc.ID)
 		require.True(t, ok)
@@ -188,11 +182,10 @@ func TestPGCodexTransportMergeGating(t *testing.T) {
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 
 		// 陈旧行：ext.credential_type=codex-pat 而模板是 codex-oauth
-		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCodexPAT,
 			CodexResponsesTransport: domain.CodexResponsesTransportWS,
 		})
-		require.NoError(t, err)
 
 		got, ok := snapshotTransportOf(t, repos, g.ID, acc.ID)
 		require.True(t, ok)
@@ -213,11 +206,10 @@ func TestPGCodexTransportMergeGating(t *testing.T) {
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
 
 		// 脏行：custom 模板的 ext 行带着 ws（写面会 400，这里模拟 DB 直改）
-		_, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeCustom,
 			CodexResponsesTransport: domain.CodexResponsesTransportWS,
 		})
-		require.NoError(t, err)
 
 		got, ok := snapshotTransportOf(t, repos, g.ID, acc.ID)
 		require.True(t, ok)

@@ -30,6 +30,21 @@ func boolPtr(b bool) *bool { return new(b) }
 //go:fix inline
 func strPtrPG(s string) *string { return new(s) }
 
+// allowTemplateExtWrite 恒放行的 decide：本文件的用例测的是 template_ext 的读写
+// 语义（upsert/NULL 清空/合并），不是降级判定——判定在 service 层，仓储层的
+// 判定专设用例见 TestPGTemplateExtGuardWriteDecideVetoesWrite / 并发用例。
+func allowTemplateExtWrite(*domain.TemplateExt) (bool, error) { return false, nil }
+
+// seedTemplateExt 播种/覆盖一行 template_ext（走守卫写，恒放行 decide）。
+// **仅 _test.go 可用**：非测试源码里不得出现同名入口（“唯一写入口”由
+// ext_write_surface_gate_test.go 静态钉住）。
+func seedTemplateExt(t *testing.T, repos *repository.Repository, e *domain.TemplateExt) *domain.TemplateExt {
+	t.Helper()
+	saved, _, err := repos.TemplateExts.UpsertTemplateExt(context.Background(), e, allowTemplateExtWrite)
+	require.NoError(t, err)
+	return saved
+}
+
 // TestTemplateExtPG 模板 ext：strip_image_tools（三类型公共能力开关）读写 +
 // 幂等 upsert（同父 id 再写 = 单行覆盖，NULL 清空）+ FK（父模板缺失报错）+
 // 缺行 404。模板 ext 无凭据列（oauth/pat 一律在 account_ext）。
@@ -39,11 +54,10 @@ func TestTemplateExtPG(t *testing.T) {
 	tpl := seedPGTemplate(t, repos)
 
 	t.Run("strip_image_tools roundtrip", func(t *testing.T) {
-		saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		saved := seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 			StripImageTools: new(true),
 		})
-		require.NoError(t, err)
 		require.Equal(t, tpl.ID, saved.TemplateID)
 		require.Equal(t, credential.TypeResponsesSpecial, saved.CredentialType)
 		require.NotNil(t, saved.StripImageTools)
@@ -55,21 +69,19 @@ func TestTemplateExtPG(t *testing.T) {
 		require.True(t, *got.StripImageTools)
 
 		// 幂等 upsert：再写（改值）→ 仍单行、值更新
-		saved, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		saved = seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 			StripImageTools: new(false),
 		})
-		require.NoError(t, err)
 		require.False(t, *saved.StripImageTools)
 		rows, err := repos.Client.TemplateExt.Query().Count(ctx)
 		require.NoError(t, err)
 		require.Equal(t, 1, rows, "同 template_id 幂等 upsert 恒单行")
 
 		// NULL 清空：显式 nil → 落 NULL
-		saved, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		saved = seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 		})
-		require.NoError(t, err)
 		require.Nil(t, saved.StripImageTools, "nil 显式清列（NULL 落库）")
 		got, err = repos.TemplateExts.GetTemplateExt(ctx, tpl.ID)
 		require.NoError(t, err)
@@ -80,20 +92,22 @@ func TestTemplateExtPG(t *testing.T) {
 		// oauth/pat 类型模板同可配 strip（三类型公共能力开关；仓库层不校验
 		// 类型一致性——service 层负责）
 		for _, ct := range []credential.Type{credential.TypeCodexOAuth, credential.TypeCodexPAT} {
-			saved, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+			saved := seedTemplateExt(t, repos, &domain.TemplateExt{
 				TemplateID: tpl.ID, CredentialType: ct, StripImageTools: new(true),
 			})
-			require.NoError(t, err)
 			require.Equal(t, ct, saved.CredentialType)
 			require.True(t, *saved.StripImageTools, "type %s strip roundtrip", ct)
 		}
 	})
 
-	t.Run("missing parent template FK", func(t *testing.T) {
-		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+	t.Run("missing parent template", func(t *testing.T) {
+		// 守卫写先锁父行：命中 0 行 ⇒ ErrNotFound（不是裸 FK 错误，也不是落行）。
+		// FK 仍作为兜底存在，但正常路径永远不会走到它。
+		_, _, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
 			TemplateID: 999999, CredentialType: credential.TypeCodexOAuth,
-		})
-		require.Error(t, err, "FK：父模板缺失必须报错（service 层先查父行，仓库层约束兜底）")
+		}, allowTemplateExtWrite)
+		require.Error(t, err, "父模板缺失必时报错（不是静默建行）")
+		require.ErrorIs(t, err, repository.ErrNotFound, "父行锁 0 行 ⇒ ErrNotFound: %v", err)
 	})
 
 	t.Run("get missing 404", func(t *testing.T) {

@@ -31,6 +31,12 @@ import (
 // 判定只有 UpsertTemplateExt 一处入口（handler 只透传 `?confirm=`），所以这里
 // 的用例直接打 service，不经 HTTP。
 
+// allowTemplateExtWrite 恒放行的 decide：**只用于播种**（把一行 ext 直接写进
+// 底层 store，模拟「陈旧行 / 旧值 ws」这类只有 DB 直改才到得了的状态）。
+// 被测对象是 service 的判定，播种不需要仓储层再判一次——真正的判定入口只有
+// Service.UpsertTemplateExt 一处。
+func allowTemplateExtWrite(*domain.TemplateExt) (bool, error) { return false, nil }
+
 // storedTransport 直接读仓储层的落库值——不经 service，避免用被测代码自证。
 func storedTransport(t *testing.T, svc *Service, templateID int64) (domain.CodexResponsesTransport, bool) {
 	t.Helper()
@@ -182,10 +188,10 @@ func TestUpsertTemplateExtTransportIdempotentStaleRow(t *testing.T) {
 
 	// 绕过 service 直接落一行陈旧 ws：模板类型从 codex 改成 custom 时
 	// UpdateTemplate 不碰 ext 行，DB 直改/导入也能到同一个状态。
-	_, err := svc.store.UpsertTemplateExt(ctx, &domain.TemplateExt{
+	_, _, err := svc.store.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeCustom,
 		CodexResponsesTransport: domain.CodexResponsesTransportWS,
-	})
+	}, allowTemplateExtWrite)
 	require.NoError(t, err)
 
 	// 原样带回：没有幂等例外，这里必 400（custom 不接受 ws）。
@@ -304,10 +310,10 @@ func TestUpsertTemplateExtTransportTypeExistencePrecedesGate(t *testing.T) {
 	tpl := seedExtTemplate(t, svc, "t-apikey", credential.TypeAPIKey, domain.FormatOpenAIChat)
 
 	// 陈旧行（仅 DB 直改可达）：api_key 模板不该有 ext 行，更不该有 ws。
-	_, err := svc.store.UpsertTemplateExt(ctx, &domain.TemplateExt{
+	_, _, err := svc.store.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeAPIKey,
 		CodexResponsesTransport: domain.CodexResponsesTransportWS,
-	})
+	}, allowTemplateExtWrite)
 	require.NoError(t, err)
 
 	// 走到降级门就是 ws → ""，本该 409；类型存在性必须先拦成 400。
@@ -378,8 +384,8 @@ type failingExtWriteStore struct {
 	err error
 }
 
-func (s *failingExtWriteStore) UpsertTemplateExt(context.Context, *domain.TemplateExt) (*domain.TemplateExt, error) {
-	return nil, s.err
+func (s *failingExtWriteStore) UpsertTemplateExt(context.Context, *domain.TemplateExt, repository.TemplateExtDecide) (*domain.TemplateExt, bool, error) {
+	return nil, false, s.err
 }
 
 // TestUpsertTemplateExtTransportNoWarnWhenWriteFails WARN 落在落库成功之后：
@@ -401,10 +407,10 @@ func TestUpsertTemplateExtTransportNoWarnWhenWriteFails(t *testing.T) {
 	tpl := seedExtTemplate(t, svc, "t-warn-fail", credential.TypeCodexOAuth, domain.FormatOpenAIResponses)
 
 	// 旧值 ws 直接写进底层 store（绕过会失败的那个写面），让本次请求真的走降级路径。
-	_, err = st.fakeStore.UpsertTemplateExt(ctx, &domain.TemplateExt{
+	_, _, err = st.fakeStore.UpsertTemplateExt(ctx, &domain.TemplateExt{
 		TemplateID: tpl.ID, CredentialType: credential.TypeCodexOAuth,
 		CodexResponsesTransport: domain.CodexResponsesTransportWS,
-	})
+	}, allowTemplateExtWrite)
 	require.NoError(t, err)
 
 	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{

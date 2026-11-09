@@ -6,7 +6,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -15,7 +14,6 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
-	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -137,16 +135,21 @@ func (s *Service) GetTemplateExt(ctx context.Context, templateID int64) (*domain
 //     ext 行，不先拦就会先吃 409 再吃 400）；
 //  1. 值域（!new.Valid() ⇒ 400；不 trim、不做大小写归一——回落会让两条实验臂
 //     都落 http，读数"一致地看不出差别"，是事后最难定位的故障）；
-//  2. 前置读旧值：GetTemplateExt 的 ErrNotFound ⇒ 默认面（首次建行不是 404）；
-//  3. 类型（!new.AllowedFor(ct) && new != old ⇒ 400；**幂等例外** new == old
+//  2. 类型（!new.AllowedFor(ct) && new != old ⇒ 400；**幂等例外** new == old
 //     放行——模板类型改掉后陈旧 ext 行原样带回时不该报错）；
-//  4. 降级门（old == ws && new != ws ⇒ 409，除非 confirm 恰为
+//  3. 降级门（old == ws && new != ws ⇒ 409，除非 confirm 恰为
 //     transportDowngradeConfirm）。消息是**英文**短句（会原样进响应体，与既有
 //     ErrConflict 同风格）。**不引入 expect_old**：需要确认的唯一情形就是
 //     old == ws，期望值恒为常量，绑不住任何东西；
+//  4. 落库（守卫写：事务内读-判-写 + 父行锁）；
 //  5. 放行降级且**落库成功之后**写 WARN（template_id/old/new）——没有指标系统，
 //     这是"实验臂何时被降级"的唯一事后证据；写在落库之前会在写失败时留下一条
 //     假的"已降级"证据，审计必须反映事实。
+//
+// ⚠ 第 2/3 步的 `old` 唯一合法来源是**守卫写事务内那一次读**（spec §4.3 原子性
+// 约束）：本方法**不得**在这里另读一次 ext 行来判定——事务外读到的旧值只允许
+// 用于快速失败/回显，否则并发写可以绕过降级门（A 读到 http → B 提交 ws → A 无条件
+// 写，实际完成 ws→http，既不 409 也不 WARN）。
 //
 // confirm 只由 handler 从 `?confirm=` 解析后原样透传，判定只在本方法一处。
 //
@@ -164,35 +167,8 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 	if err := validateTemplateExt(e); err != nil { // 第 0 步：类型存在性
 		return nil, err
 	}
-	newTransport := e.CodexResponsesTransport
-	if !newTransport.Valid() { // 第 1 步：值域（不 trim、不归一）
+	if !e.CodexResponsesTransport.Valid() { // 第 1 步：值域（不 trim、不归一）
 		return nil, ErrInvalidInput
-	}
-	// 第 2 步：前置读旧值。无 ext 行 = 首次建行 ⇒ 默认面（不是 404）。
-	oldTransport := domain.CodexResponsesTransportDefault
-	oldExt, err := s.store.GetTemplateExt(ctx, e.TemplateID)
-	switch {
-	case err == nil:
-		oldTransport = oldExt.CodexResponsesTransport
-	case errors.Is(err, repository.ErrNotFound):
-		// 首次建行：old 取默认面
-	default:
-		return nil, mapRepoErr(err)
-	}
-	// 第 3 步：类型面。幂等例外：原值原样带回（new == old）放行——模板类型改
-	// 掉后陈旧 ext 行（如 custom 行上残留的 ws）再保存时不该变成 400。
-	if newTransport != oldTransport && !newTransport.AllowedFor(e.CredentialType) {
-		return nil, ErrInvalidInput
-	}
-	// 第 4 步：降级门。old == ws 时把 ws 换成任何别的值都要显式确认：一次只改
-	// strip_image_tools 的外部脚本会把 ws 静默清回默认，而 web 侧的回显门管
-	// 不到脚本/curl/DB 直改——只有服务端能管住全部写面。
-	// down 是第 5 步 WARN 的触发条件（不是"old == ws"：ws → ws 不是降级）。
-	down := oldTransport == domain.CodexResponsesTransportWS && newTransport != domain.CodexResponsesTransportWS
-	if down && confirm != transportDowngradeConfirm {
-		// 消息是**英文**短句（与既有 ErrConflict 同风格）：它会原样进 API 响应体。
-		return nil, fmt.Errorf("%w: codex_responses_transport %s -> %s is a downgrade to http; resend with ?confirm=%s to confirm",
-			ErrConflict, string(oldTransport), string(newTransport), transportDowngradeConfirm)
 	}
 	if len(e.UpstreamPaths) > 0 {
 		if e.CredentialType != credential.TypeCustom {
@@ -209,14 +185,21 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 		// 运维排查会出现「明明清空了却还看到 {}」的噪音。
 		e.UpstreamPaths = nil
 	}
-	saved, err := s.store.UpsertTemplateExt(ctx, e)
+	// 第 2/3/4 步：交给守卫写在**同一事务**里完成（父行锁 + 事务内读 + decide +
+	// 写）。old 经闭包捕获出来供第 5 步 WARN 用——这是 decide 唯一被允许的副作用。
+	var oldTransport domain.CodexResponsesTransport
+	saved, down, err := s.store.UpsertTemplateExt(ctx, e, func(old *domain.TemplateExt) (bool, error) {
+		return decideTransport(e, old, confirm, &oldTransport)
+	})
 	if err != nil {
+		// ErrConflict 必须原样透出：mapRepoErr 只重包 repository 的哨兵，
+		// service 的 409 因此逐字到达 handler 的 errors.Is。
 		return nil, mapRepoErr(err)
 	}
 	// 第 5 步：放行的降级，**落库成功之后**才写 WARN——落在写之前会在写失败时
 	// 留下一条假的"已降级"证据，而审计必须反映事实（spec §4.3 第 5 步）。
-	// 字段取落库返回值：真实 repo 的 RETURNING 路径会以库为准，回显入参可能与
-	// 实际落库值不一致。s.log 可能为 nil（测试/降级装配），守卫与其余写面一致。
+	// old 取事务内那一次读（闭包捕获），new 取落库返回值：回显入参可能与实际
+	// 落库值不一致。s.log 可能为 nil（测试/降级装配），守卫与其余写面一致。
 	if down && s.log != nil {
 		s.log.Warn("codex responses transport downgraded",
 			logx.Int64("template_id", saved.TemplateID),
@@ -226,4 +209,43 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 	s.inv.Templates()
 	s.publish(ctx, notify.Change{Templates: true})
 	return saved, nil
+}
+
+// decideTransport 是 §4.3 第 2/3 步的**唯一**判定实现（守卫写的事务内回调）：
+// 入参只有**事务内**读到的 old（首次建行 = nil）、请求的 new（在 e 上）与 confirm。
+//
+// 纯函数：不访问 store/DB/日志——它被调用在已持有父行锁的事务里，回头读库等于
+// 等自己持有的锁。唯一的副作用是把事务内那一次读到的旧值写到 oldOut（调用方
+// 用它写 WARN；nil 表示调用方不需要）。
+//
+// 类型门（第 2 步，含幂等例外）先于降级门（第 3 步）：顺序本身是契约——值域与
+// 类型检查都不通过时不得先返回 409。旧值用库中原值比较、**不归一**：脏值（"WS"
+// 等）既不触发 409 也不享受幂等例外。
+func decideTransport(e *domain.TemplateExt, old *domain.TemplateExt, confirm string, oldOut *domain.CodexResponsesTransport) (down bool, err error) {
+	oldTransport := domain.CodexResponsesTransportDefault
+	if old != nil {
+		oldTransport = old.CodexResponsesTransport
+	}
+	if oldOut != nil {
+		*oldOut = oldTransport
+	}
+	newTransport := e.CodexResponsesTransport
+	// 第 2 步：类型面。幂等例外：原值原样带回（new == old）放行——模板类型改
+	// 掉后陈旧 ext 行（如 custom 行上残留的 ws）再保存时不该变成 400。
+	if newTransport != oldTransport && !newTransport.AllowedFor(e.CredentialType) {
+		return false, ErrInvalidInput
+	}
+	// 第 3 步：降级门。old == ws 时把 ws 换成任何别的值都要显式确认：一次只改
+	// strip_image_tools 的外部脚本会把 ws 静默清回默认，而 web 侧的回显门管
+	// 不到脚本/curl/DB 直改——只有服务端能管住全部写面。
+	// down 是第 5 步 WARN 的触发条件（不是"old == ws"：ws → ws 不是降级）。
+	if oldTransport == domain.CodexResponsesTransportWS && newTransport != domain.CodexResponsesTransportWS {
+		if confirm != transportDowngradeConfirm {
+			// 消息是**英文**短句（与既有 ErrConflict 同风格）：它会原样进 API 响应体。
+			return false, fmt.Errorf("%w: codex_responses_transport %s -> %s is a downgrade to http; resend with ?confirm=%s to confirm",
+				ErrConflict, string(oldTransport), string(newTransport), transportDowngradeConfirm)
+		}
+		return true, nil
+	}
+	return false, nil
 }

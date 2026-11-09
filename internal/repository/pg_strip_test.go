@@ -58,11 +58,10 @@ func TestPGStripSnapshotLoad(t *testing.T) {
 	})
 
 	t.Run("ext strip true merged into snapshot", func(t *testing.T) {
-		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 			StripImageTools: new(true),
 		})
-		require.NoError(t, err)
 		strip, ok := snapshotStripOf(t, repos, g.ID, acc.ID)
 		require.True(t, ok)
 		require.True(t, strip, "ext strip_image_tools=true 必须合并进全量快照")
@@ -72,11 +71,10 @@ func TestPGStripSnapshotLoad(t *testing.T) {
 	})
 
 	t.Run("ext update false after reload", func(t *testing.T) {
-		_, err := repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl.ID, CredentialType: credential.TypeResponsesSpecial,
 			StripImageTools: new(false),
 		})
-		require.NoError(t, err)
 		strip, ok := snapshotStripOf(t, repos, g.ID, acc.ID)
 		require.True(t, ok)
 		require.False(t, strip, "ext 更新后重载快照必须反映新值（false）")
@@ -93,10 +91,9 @@ func TestPGStripSnapshotLoad(t *testing.T) {
 		g2 := seedPGGroup(t, repos, "g2")
 		acc2 := seedPGAccount(t, repos, tpl2.ID, "a2")
 		require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc2.ID, []int64{g2.ID}))
-		_, err = repos.TemplateExts.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		seedTemplateExt(t, repos, &domain.TemplateExt{
 			TemplateID: tpl2.ID, CredentialType: credential.TypeCodexOAuth,
 		})
-		require.NoError(t, err)
 		strip, ok := snapshotStripOf(t, repos, g2.ID, acc2.ID)
 		require.True(t, ok)
 		require.False(t, strip, "oauth 类型无 strip 配置 → 快照 false")
