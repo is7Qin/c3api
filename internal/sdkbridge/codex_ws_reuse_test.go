@@ -55,9 +55,13 @@ type wsReuseStep struct {
 	created bool
 	id      string
 	ts      string
+	// lateTS 在**终态帧之后**再投一封同 response_id 的 metadata：G9 用它证明
+	// "关闭之后到达的 metadata 不会回到已关闭 exchange 的 Sink"（只写不发 ts 的
+	// 断言在别的会话上跑，恒真，没有判别力）。
+	lateTS string
 }
 
-// frames 组装本步要写的帧（顺序写死：created → metadata → completed）。
+// frames 组装本步要写的帧（顺序写死：created → metadata → completed → late metadata）。
 func (s wsReuseStep) frames() []string {
 	var out []string
 	if s.created {
@@ -68,6 +72,9 @@ func (s wsReuseStep) frames() []string {
 		out = append(out, `{"type":"response.metadata","response_id":"`+s.id+`","headers":{"x-codex-turn-state":"`+s.ts+`"}}`)
 	}
 	out = append(out, `{"type":"response.completed","response":{"id":"`+s.id+`","object":"response","status":"completed","usage":{"input_tokens":3,"output_tokens":2,"total_tokens":5}}}`)
+	if s.lateTS != "" {
+		out = append(out, `{"type":"response.metadata","response_id":"`+s.id+`","headers":{"x-codex-turn-state":"`+s.lateTS+`"}}`)
+	}
 	return out
 }
 
@@ -89,7 +96,7 @@ type wsReuseUpstream struct {
 	opened   int      // 接受过的 WS 连接总数（open = opened - closed）
 	conns    []*websocket.Conn
 	// closedEvents 每观察到一次对端关闭就投递一次（缓冲足够，永不阻塞）：
-	// "被淘汰/被移除的连接确实被关掉"用通道 + deadline 等，不用 sleep。
+	// G7 的"被淘汰的连接确实被关掉"用通道 + deadline 等，不用 sleep。
 	closedEvents chan struct{}
 
 	// wsClosed 在**首次**观察到对端关闭时关闭（E 的确定性等待点：不用 sleep）。
@@ -222,7 +229,7 @@ func (u *wsReuseUpstream) closedCount() int {
 	return u.closed
 }
 
-// openCount 上游此刻仍打开的 WS 连接数。
+// openCount 上游此刻仍打开的 WS 连接数（G7 的"空闲数 ≤ 构造期上限"判据面）。
 func (u *wsReuseUpstream) openCount() int {
 	u.mu.Lock()
 	defer u.mu.Unlock()
@@ -268,9 +275,20 @@ func (u *wsReuseUpstream) addr() string { return u.srv.Listener.Addr().String() 
 func wsReuseCodex(t *testing.T, up *wsReuseUpstream) (*Codex, *atomic.Int64) {
 	t.Helper()
 	var dials atomic.Int64
+	tr := wsReuseTransport(t, up)
+	dial := tr.DialContext
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		dials.Add(1)
+		return dial(ctx, network, addr)
+	}
+	return NewCodex(nil, testEgressPool(tr), nil, RotationDeps{}), &dials
+}
+
+// wsReuseTransport 真 `*http.Transport`，DialContext 直指假上游（TLS 自签）。
+func wsReuseTransport(t *testing.T, up *wsReuseUpstream) *http.Transport {
+	t.Helper()
 	tr := &http.Transport{
 		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
-			dials.Add(1)
 			return (&net.Dialer{}).DialContext(ctx, network, up.addr())
 		},
 		TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
@@ -278,7 +296,7 @@ func wsReuseCodex(t *testing.T, up *wsReuseUpstream) (*Codex, *atomic.Int64) {
 		IdleConnTimeout:     time.Minute,
 	}
 	t.Cleanup(tr.CloseIdleConnections)
-	return NewCodex(nil, testEgressPool(tr), nil, RotationDeps{}), &dials
+	return tr
 }
 
 func wsReuseCred() *domain.AccountCredential {
@@ -745,9 +763,14 @@ func TestCodexRetireThreadG8OnlyAfterBodyClose(t *testing.T) {
 
 // TestCodexTurnStateSinkG9NoCallbackAfterClose G9（回调边界）：body Close 之后
 // Sink 不再被调用（计数不增）；聚合臂同理。
+//
+// 判别力来自**同一连接上迟到的 metadata**：上游在终态帧之后仍发一封同 response_id
+// 的 metadata（lateTS）。若实现把"已关闭 exchange 的 Sink"留着（或把它挂在会话上
+// 继续写），下一次请求读到这封迟到帧就会把 T-late 写进会话——本用例断言它不会：
+// 会话终值恒为关闭前拿到的 T2，计数也只在第二个交换自己的帧上增长。
 func TestCodexTurnStateSinkG9NoCallbackAfterClose(t *testing.T) {
 	up := newWSReuseUpstream(t, "T1",
-		wsReuseStep{created: true, id: "s1", ts: "T2"},
+		wsReuseStep{created: true, id: "s1", ts: "T2", lateTS: "T-late"},
 		wsReuseStep{created: true, id: "s2"},
 	)
 	a, _ := wsReuseCodex(t, up)
@@ -757,10 +780,16 @@ func TestCodexTurnStateSinkG9NoCallbackAfterClose(t *testing.T) {
 	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
 	afterClose := len(sess.issued())
 	require.NotZero(t, afterClose)
-	// Close 之后没有任何新回调：再做一次请求（另一条会话的同款帧序）也不动本会话。
-	otherSess := newWSReuseSess("inst")
-	readAndCloseBody(t, wsReuseStream(t, a, cred, otherSess.identity(), domain.CodexResponsesTransportWS).Body)
-	require.Len(t, sess.issued(), afterClose, "Close 之后本会话 Sink 计数不增")
+	require.Equal(t, "T2", sess.turnState(), "关闭时值是关闭前签发的 T2")
+
+	// 同一连接复用给第二条请求：它可能先读到那封**迟到** metadata（response_id 属于
+	// 上一轮）。迟到帧不得回到已关闭 exchange 的 Sink ⇒ 会话仍只能是本轮的签发值。
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
+	require.NotEqual(t, "T-late", sess.turnState(), "关闭之后到达的 metadata 不得写入已关闭会话")
+	require.GreaterOrEqual(t, len(sess.issued()), afterClose)
+	for _, ts := range sess.issued()[afterClose:] {
+		require.NotEqual(t, "T-late", ts, "已关闭 exchange 的迟到帧不得回调 Sink")
+	}
 
 	// 聚合臂同理：调用返回（= 内部 Close 完成）后计数冻结。
 	aggSess := newWSReuseSess("inst")
@@ -773,4 +802,36 @@ func TestCodexTurnStateSinkG9NoCallbackAfterClose(t *testing.T) {
 		"聚合臂以**最后一次**签发值收尾（握手快照不回写）")
 	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
 	require.Len(t, aggSess.issued(), aggCount, "聚合返回后 Sink 计数不增")
+}
+
+// TestCodexWSConnCacheBoundedByConstructionTimeLimit G7（连接池上限）：空闲连接数
+// 不超过**构造期**上限（`WithWSConnCache(n)` 的 n），被淘汰的连接在上游侧真的关闭。
+//
+// 判据全在上游：opened/closed 是"实际建立/关闭了几条 TCP"。容量 2 + 4 条会话各一轮
+// ⇒ 上游最多同时挂着 2 条；第 3/4 轮把最早的挤掉（put 的满则驱逐最旧）。再验证
+// ①最近的两条仍复用（不重拨）②被淘汰的那条必须重拨——否则"上限"只是没生效。
+func TestCodexWSConnCacheBoundedByConstructionTimeLimit(t *testing.T) {
+	const capacity = 2
+	up := newWSReuseUpstream(t, "", wsReuseStep{created: true, id: "cap"})
+	a := NewCodex(nil, testEgressPool(wsReuseTransport(t, up)), NewClientTable(), RotationDeps{},
+		Options{WSConnCache: capacity})
+	cred := wsReuseCred()
+
+	sessions := make([]*wsReuseSess, 4)
+	for i := range sessions {
+		sessions[i] = newWSReuseSess("inst")
+		readAndCloseBody(t, wsReuseStream(t, a, cred, sessions[i].identity(), domain.CodexResponsesTransportWS).Body)
+	}
+	require.Equal(t, 4, up.upgradeCount(), "四条会话各一条连接")
+	up.waitClosed(t, 2, "容量驱逐")
+	require.LessOrEqual(t, up.openCount(), capacity, "空闲连接数不得超过构造期上限")
+
+	// ① 最近两条仍在 idle 表里 ⇒ 复用（不新增 upgrade）。
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sessions[3].identity(), domain.CodexResponsesTransportWS).Body)
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sessions[2].identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 4, up.upgradeCount(), "最近两条会话命中自己的 idle 连接")
+
+	// ② 被淘汰的会话必须重拨（旧 idle 已被终止，不复活）。
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sessions[0].identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 5, up.upgradeCount(), "被驱逐的会话重拨")
 }

@@ -13,11 +13,13 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -237,16 +239,116 @@ func (u *sessionWSUpstream) httpBodies() [][]byte {
 
 // newSessionWSProxy 构造 codex WS 出站测试代理（单账号 10；K 与传输经选项注入）。
 // 返回账号快照集合（用例要改 ext 后 reload）。
-func newSessionWSProxy(t *testing.T, upstream string, slots int) (*Proxy, map[int64][]*domain.Account) {
+func newSessionWSProxy(t *testing.T, upstream string, slots int, opts ...codexRespProxyOption) (*Proxy, map[int64][]*domain.Account) {
 	t.Helper()
 	ext := codexPATExt(10, "pat-session")
 	ext.CodexIdentity = &domain.CodexIdentity{InstallationID: "inst-session"}
+	all := append([]codexRespProxyOption{withCodexIdentitySlots(slots), withCodexResponsesTransport(domain.CodexResponsesTransportWS)}, opts...)
 	p, _, accs := newTestCodexRespProxyAccs(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: ext},
 		upstream, nil, nil, &captureLogStore{},
-		withCodexIdentitySlots(slots),
-		withCodexResponsesTransport(domain.CodexResponsesTransportWS))
+		all...)
 	return p, accs
+}
+
+// barrierServer 在每个请求的 handler **返回之后**投递一次计数：网关侧的
+// finish→Release 全在 handler 内同步完成，所以"handler 已返回"就是"服务端已释放
+// 租借"的确定性证据。客户端 `Do` 的返回不能当这个屏障（首帧/取消都比它早）。
+type barrierServer struct {
+	inner http.Handler
+	done  chan int
+	n     atomic.Int32
+}
+
+func newBarrierServer(t *testing.T, h http.Handler) (*httptest.Server, *barrierServer) {
+	t.Helper()
+	b := &barrierServer{inner: h, done: make(chan int, 64)}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.inner.ServeHTTP(w, r)
+		b.done <- int(b.n.Add(1))
+	}))
+	t.Cleanup(srv.Close)
+	return srv, b
+}
+
+// waitHandlerDone 等下一个 handler 返回（通道 + deadline，禁 sleep）。
+func (b *barrierServer) waitHandlerDone(t *testing.T, what string) {
+	t.Helper()
+	select {
+	case <-b.done:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("%s：handler 未在 deadline 内返回（服务端未收尾）", what)
+	}
+}
+
+// sessionStream 一次流式请求的客户端收尾面（Do 的返回值通道 + cancel）。
+type sessionStream struct {
+	cancel context.CancelFunc
+	done   chan struct {
+		resp *http.Response
+		err  error
+	}
+}
+
+// startSessionStream 起一个流式 /v1/responses 请求（不读 body，占住租借）。
+func startSessionStream(t *testing.T, srv *httptest.Server, parent context.Context) *sessionStream {
+	t.Helper()
+	ctx, cancel := context.WithCancel(parent)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/responses",
+		strings.NewReader(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer ck-1")
+	req.Header.Set("Content-Type", "application/json")
+	s := &sessionStream{cancel: cancel, done: make(chan struct {
+		resp *http.Response
+		err  error
+	}, 1)}
+	go func() {
+		resp, err := http.DefaultClient.Do(req)
+		s.done <- struct {
+			resp *http.Response
+			err  error
+		}{resp: resp, err: err}
+	}()
+	return s
+}
+
+// wait 等客户端收尾（通道 + deadline；响应体不读，直接关）。
+func (s *sessionStream) wait(t *testing.T, what string) {
+	t.Helper()
+	select {
+	case r := <-s.done:
+		if r.resp != nil {
+			r.resp.Body.Close()
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatalf("%s：客户端未在 deadline 内收尾", what)
+	}
+}
+
+// cancelAndRelease 取消请求并放行被卡住的上游，再等客户端收尾（取消路径标准收尾）。
+func (s *sessionStream) cancelAndRelease(t *testing.T, gate chan struct{}, what string) {
+	t.Helper()
+	s.cancel()
+	close(gate)
+	s.wait(t, what)
+}
+
+// waitArrived 等上游收到一个请求帧（租借已被占住的确定性同步点）。
+func waitArrived(t *testing.T, u *sessionWSUpstream, what string) {
+	t.Helper()
+	select {
+	case <-u.arrived:
+	case <-time.After(15 * time.Second):
+		t.Fatalf("%s：上游未在 deadline 内收到请求帧", what)
+	}
+}
+
+// setGate 换掉上游的阻塞门（nil = 后续新连接不再阻塞）。
+func (u *sessionWSUpstream) setGate(ch <-chan struct{}) {
+	u.mu.Lock()
+	u.gate = ch
+	u.mu.Unlock()
 }
 
 // postResponsesOK 发一次非流式 responses 并读尽。
@@ -370,75 +472,62 @@ func TestSessionG4IsolationAcrossSessions(t *testing.T) {
 	require.Equal(t, "inst-session", reqs[1].installation, "同账号同 installation")
 }
 
-// TestSessionG6LeaseExclusiveAndCancelDoesNotAdvance G6：租借独占——占满 K 个租借
-// （body 不读）时第 K+1 个请求不得进入该账号的 claim（按现有门禁失败，不排队）；
-// 提前取消 ⇒ 计数器不推进。
+// TestSessionG6LeaseExclusiveAndCancelDoesNotAdvance G6：租借独占 + 取消不推进。
+//
+//   - 独占：占满 K（=1）个租借（body 不读）时第 K+1 个请求**不得进入该账号的
+//     claim**（按现有门禁失败，不排队）；
+//   - 取消不推进：用**行为观测**而不是读会话私有计数器——策略 WMax=1 时任何一次
+//     推进都会在一个窗口（48–96 轮）内把线程退掉，所以"取消 97 次（> 最大 span 96）
+//     之后线程与 window 仍是首轮的"就是"这些取消一次都没计数"的可观测形式；
+//     正向（成功才推进/退休）由 G1 覆盖。
+//
+// 服务端释放的同步点 = **handler 返回**（finish→Release 在 handler 内同步完成）：
+// 客户端 `Do` 的返回只代表首帧/取消，早于服务端收尾，拿它当屏障会偶发 429（N2）。
 func TestSessionG6LeaseExclusiveAndCancelDoesNotAdvance(t *testing.T) {
 	gate := make(chan struct{})
 	up, u := newSessionWSUpstream(t, "", sessionWSStep{id: "d1", usage: true})
 	u.gate = gate
-	p, _ := newSessionWSProxy(t, up.URL, 1)
-	srv := httptest.NewServer(AIRouter(p))
-	defer srv.Close()
+	p, _ := newSessionWSProxy(t, up.URL, 1, withCodexRotatePolicy(codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
+	srv, barrier := newBarrierServer(t, AIRouter(p))
 
 	// 1) 占住唯一租借：流式请求，上游被 gate 卡住（不回帧），客户端不读 body。
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/v1/responses",
-		strings.NewReader(`{"model":"gpt-4o","stream":true,"input":"hi"}`))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer ck-1")
-	req.Header.Set("Content-Type", "application/json")
-	type firstResult struct {
-		resp *http.Response
-		err  error
-	}
-	firstDone := make(chan firstResult, 1)
-	go func() {
-		resp, err := http.DefaultClient.Do(req)
-		firstDone <- firstResult{resp: resp, err: err}
-	}()
-	// 租借已被占住的确定性同步点：上游收到请求帧（通道 + deadline）。
-	select {
-	case <-u.arrived:
-	case <-time.After(15 * time.Second):
-		t.Fatal("上游未在 deadline 内收到首个请求帧")
-	}
+	first := startSessionStream(t, srv, t.Context())
+	waitArrived(t, u, "首个请求")
 
-	// 2) 第二个请求：门禁满 ⇒ 不得进入 claim（失败即可，不是排队等待）。
+	// 2) 第 K+1 个请求：门禁满 ⇒ 不得进入 claim（失败即可，不是排队等待）。
 	second := postResponses(t, srv, `{"model":"gpt-4o","input":"hi"}`)
 	secondBody, _ := io.ReadAll(second.Body)
 	second.Body.Close()
 	require.NotEqual(t, http.StatusOK, second.StatusCode,
 		"占满后第 K+1 个请求必须失败（不得排队等待）：%s", string(secondBody))
 	require.Equal(t, 1, u.upgradeCount(), "失败请求不得新开会话连接")
+	barrier.waitHandlerDone(t, "失败请求") // 它的 handler 已返回（下面不再计入屏障）
+	first.cancelAndRelease(t, gate, "首个请求")
+	u.setGate(nil)
 
-	_, windowN, turns, ok := p.sched.CodexSessionStateForTest(10)
-	require.True(t, ok)
-	require.Zero(t, windowN)
-	require.Zero(t, turns, "在飞/失败请求不推进计数器")
-
-	// 3) 提前取消（未读到终态）⇒ 不推进、不退休。首个请求返回 = 网关侧 handler
-	// 已收尾（通道 + deadline，不用 sleep）。
-	cancel()
-	select {
-	case fr := <-firstDone:
-		if fr.resp != nil {
-			fr.resp.Body.Close()
-		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("取消后首个请求未返回")
+	// 3) 提前取消（未读到终态）⇒ 不推进、不退休。逐轮：占住 → 取消 → 等服务端收尾。
+	const cancels = 97 // > spanHi(96)：任何一次计数都会跨过窗口 ⇒ 退休换线程
+	for i := range cancels {
+		ch := make(chan struct{})
+		u.setGate(ch)
+		s := startSessionStream(t, srv, t.Context())
+		waitArrived(t, u, fmt.Sprintf("第 %d 个取消请求", i))
+		s.cancelAndRelease(t, ch, fmt.Sprintf("第 %d 个取消请求", i))
+		barrier.waitHandlerDone(t, fmt.Sprintf("第 %d 个取消请求", i))
 	}
-	_, _, turns, _ = p.sched.CodexSessionStateForTest(10)
-	require.Zero(t, turns, "取消的请求不推进计数器")
+	u.setGate(nil)
 
-	// 4) 放行上游并让下一次请求成功：若取消被计入，turns 会是 2（不是 1）。
-	close(gate)
+	// 4) 一次成功请求：线程与 window 必须仍是首轮的（取消一次都没计数）。
 	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
-	thread, _, turns, ok := p.sched.CodexSessionStateForTest(10)
-	require.True(t, ok)
-	require.Equal(t, uint64(1), turns, "只有成功取到 usage 的那一次推进（取消不计数）")
+
+	reqs := u.requests()
+	require.Len(t, reqs, cancels+2, "上游只看到首个请求 + 97 个取消请求 + 1 个成功请求（失败请求不进 claim）")
+	thread := reqs[0].thread
 	require.NotEmpty(t, thread)
+	for i, r := range reqs {
+		require.Equal(t, thread, r.thread, "第 %d 个请求的线程不变（取消不推进/不退休）", i)
+		require.Equal(t, thread+":0", r.window, "第 %d 个请求的 window 仍是 0", i)
+	}
 }
 
 // TestSessionG11InstallationChangeRebuildsSessions G11：改账号 ext 的 installation
@@ -585,4 +674,52 @@ func TestSessionAccountRemovalClosesTransportResources(t *testing.T) {
 	reqs := u.requests()
 	require.Len(t, reqs, 2)
 	require.NotEqual(t, reqs[0].thread, reqs[1].thread, "账号移除后是新会话（池不复活）")
+}
+
+// TestSessionG2NaturalRetirementClosesOldConnection G2（自然退休的**端到端接线**）：
+// WMax=1 时窗口跨过即退休，链路 StepIdentity → pool.retire → ClientTable.RetireThread
+// → SDK 必须真的把旧线程的空闲连接关掉；新线程首请求不带 ts（退休清 ts）。
+//
+// 为什么需要这一条：G2 的两半过去是分开测的（会话层注入 retire spy / 连接层直接调
+// 适配层 RetireThread），变异「网关省略退休调用」（M4）只让前一半变红，连接层仍绿——
+// 装配线（Config.RetireThread 忘接、或 StepIdentity 不调 pool.retire）掉链子时没有
+// 任何用例现红。这里把三段合成一条真实请求路径。
+func TestSessionG2NaturalRetirementClosesOldConnection(t *testing.T) {
+	up, u := newSessionWSUpstream(t, "",
+		sessionWSStep{id: "g2", ts: "T-win", usage: true})
+	p, _ := newSessionWSProxy(t, up.URL, 1, withCodexRotatePolicy(codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
+	p.turnStateReplay = true // 带 ts 才能观测"退休清 ts"
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	// 驱动到线程变化：span ∈ [48,96] ⇒ 97 轮内必发生；且不在首轮发生（span ≥ 48）。
+	firstThread := ""
+	retiredAt := -1
+	for i := range 97 {
+		postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+		reqs := u.requests()
+		if i == 0 {
+			firstThread = reqs[0].thread
+			continue
+		}
+		if reqs[len(reqs)-1].thread != firstThread {
+			retiredAt = i
+			break
+		}
+	}
+	require.NotEqual(t, -1, retiredAt, "WMax=1 必须在窗口跨过后退休（≤97 轮）")
+	require.GreaterOrEqual(t, retiredAt, 48, "首窗口至少 48 轮（span ≥ 48）")
+
+	// 旧线程的空闲连接被关（退休的唯一可见结果）。
+	select {
+	case <-u.closedCh:
+	case <-time.After(15 * time.Second):
+		t.Fatal("自然退休后旧线程的空闲连接未被关闭（退休调用没接线）")
+	}
+
+	reqs := u.requests()
+	last := reqs[len(reqs)-1]
+	require.NotEqual(t, firstThread, last.thread, "退休后换新线程")
+	require.Empty(t, last.ts, "新线程首请求不带 ts（退休清 ts）")
+	require.GreaterOrEqual(t, u.upgradeCount(), 2, "新线程重拨（旧连接已摘除）")
 }

@@ -197,25 +197,6 @@ func (s *Selection) StepIdentity() {
 	}
 }
 
-// CodexSessionStateForTest 读某账号当前会话的（thread / windowN / turns）快照
-// ——**仅测试面**：推进语义（"成功取到 usage 才 +1"）没有对外观测面，用例必须能
-// 直接读计数器（与 LeaseAccountForTest 同性质；生产无消费者）。K>1 时只取首条。
-func (s *Scheduler) CodexSessionStateForTest(accountID int64) (thread string, windowN, turns uint64, ok bool) {
-	if s == nil {
-		return "", 0, 0, false
-	}
-	cur := s.view.Load()
-	if cur == nil || cur.static == nil || cur.static.identityPools == nil {
-		return "", 0, 0, false
-	}
-	pool := cur.static.identityPools.pools[accountID]
-	if pool == nil || len(pool.slots) == 0 {
-		return "", 0, 0, false
-	}
-	session := pool.slots[0]
-	return session.thread, session.windowN, session.turns, true
-}
-
 func (s *Selection) LeaseAccountForTest() *accountSnapshot {
 	if s == nil || s.lease == nil {
 		return nil
