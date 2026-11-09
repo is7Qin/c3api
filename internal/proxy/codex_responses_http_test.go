@@ -155,12 +155,22 @@ func codexPATExt(accountID int64, pat string) *domain.AccountExt {
 	}
 }
 
-// codexRespProxyOption 模板微调面（变参——既有调用点零改动）。
-type codexRespProxyOption func(*domain.Template)
+// codexRespProxyOption 模板/账号微调面（变参——既有调用点零改动）。
+type codexRespProxyOption func(tpl *domain.Template, acc *domain.Account)
 
 // withCodexResponsesTransport 在模板上设置出站传输开关（快照原值透传面）。
 func withCodexResponsesTransport(tr domain.CodexResponsesTransport) codexRespProxyOption {
-	return func(tpl *domain.Template) { tpl.CodexResponsesTransport = tr }
+	return func(tpl *domain.Template, _ *domain.Account) { tpl.CodexResponsesTransport = tr }
+}
+
+// withCodexIdentitySlots 设定账号 MaxConcurrency（= codex 伪装身份槽位池容量 K）。
+//
+// turn-state 是**会话级**的（sdkbridge G3，键 = installation|session|thread，其中
+// session/thread 取自本次请求认领的槽），而槽位池的 claim 是 round-robin：K>1 时
+// 相邻两次请求会落到不同 thread ⇒ 那是**不同会话**，本就不该继承上一个 ts。
+// 需要"同轮续传"语义的用例必须把 K 钉成 1（一条槽 = 一个会话）。
+func withCodexIdentitySlots(n int) codexRespProxyOption {
+	return func(_ *domain.Template, acc *domain.Account) { acc.MaxConcurrency = n }
 }
 
 // newTestCodexRespProxy 构造 codex 类型 resp HTTP 测试代理：模板（credType 类
@@ -178,15 +188,16 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 		Models:           []string{"gpt-4o"},
 		ModelMapping:     mapping,
 	}
-	for _, opt := range opts {
-		opt(tpl)
-	}
 	accs := make(map[int64][]*domain.Account, 1)
 	for id, ext := range accounts {
-		accs[10] = append(accs[10], &domain.Account{
+		acc := &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
 			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: ext,
-		})
+		}
+		for _, opt := range opts {
+			opt(tpl, acc)
+		}
+		accs[10] = append(accs[10], acc)
 	}
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
@@ -587,9 +598,12 @@ func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 	store := &captureLogStore{}
+	// 单槽（K=1）：turn-state 是会话级的（sdkbridge G3），而槽位池按轮询发槽——
+	// K>1 时相邻请求落在不同 thread 就是不同会话，本用例要断言的"同轮续传"必须
+	// 固定同一个会话。
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
-		up.URL, nil, nil, store)
+		up.URL, nil, nil, store, withCodexIdentitySlots(1))
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
@@ -633,7 +647,7 @@ func TestCodexResponsesTurnStateStreamCarryAndClear(t *testing.T) {
 	store := &captureLogStore{}
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
-		up.URL, nil, nil, store)
+		up.URL, nil, nil, store, withCodexIdentitySlots(1))
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
@@ -664,7 +678,7 @@ func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
 	store := &captureLogStore{}
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
-		up.URL, nil, nil, store)
+		up.URL, nil, nil, store, withCodexIdentitySlots(1))
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()

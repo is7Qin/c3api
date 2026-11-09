@@ -12,7 +12,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/uuid v1.6.0
-	github.com/is7Qin/codex-sdk v0.0.0-20261108152814-429c23fe62ed
+	github.com/is7Qin/codex-sdk v0.0.0-20261109094742-d1f2bcf5d835
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.2
 	github.com/knadh/koanf/providers/env/v2 v2.0.2

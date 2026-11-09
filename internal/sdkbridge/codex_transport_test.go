@@ -238,14 +238,14 @@ func TestCodexTransportIsIdentityKeyDimension(t *testing.T) {
 	cred := transportTestCred()
 	eg := a.DirectEgress()
 
-	e, wsClient, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportWS)
+	e, wsClient, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
-	_, httpClient, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportHTTP)
+	_, httpClient, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportHTTP)
 	require.NoError(t, err)
 	require.NotSame(t, wsClient, httpClient, "同身份不同传输必须是不同 client（构造期参数无法替换）")
 	require.Len(t, e.clients, 2, "ws 与 http 各占一条")
 
-	_, defaultClient, err := a.clientFor(cred, nil, nil, "", eg, domain.CodexResponsesTransportDefault)
+	_, defaultClient, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Same(t, httpClient, defaultClient, `"" 与 "http" 必须落同一条目（Key() 归一）`)
 	require.Len(t, e.clients, 2, `"" 不得再开一条`)
@@ -294,7 +294,7 @@ func TestCodexTransportSwitchChangesLegWithinOneInstance(t *testing.T) {
 	require.Equal(t, 2, posts, `显式 http 与 "" 同条目 ⇒ 复用已构造的 HTTP client，再打一次 POST`)
 
 	// 三次调用只该有两条条目（""/"http" 归一 + ws）。
-	e, _, err := a.clientFor(cred, nil, nil, "", a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	e, _, err := a.clientFor(cred, nil, nil, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Len(t, e.clients, 2)
 }

@@ -60,15 +60,16 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 		Models:           []string{"gpt-4o"},
 		ModelMapping:     mapping,
 	}
-	for _, opt := range opts {
-		opt(tpl)
-	}
 	accs := make(map[int64][]*domain.Account, 1)
 	for id, ext := range accounts {
-		accs[10] = append(accs[10], &domain.Account{
+		acc := &domain.Account{
 			ID: id, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "",
 			Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: ext,
-		})
+		}
+		for _, opt := range opts {
+			opt(tpl, acc)
+		}
+		accs[10] = append(accs[10], acc)
 	}
 	rec := usage.New(usage.UsageConfig{
 		BatchSize: 100, FlushInterval: time.Hour,
@@ -355,9 +356,12 @@ func TestConvertedCodexTurnStateCarryAndClear(t *testing.T) {
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}},
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
+	// 单槽（K=1）：turn-state 会话级（sdkbridge G3）——同轮续传用例必须固定同一个
+	// 会话（槽位池 K>1 时按轮询发槽，相邻请求会换 thread）。
 	p, _ := newConvertedCodexTestProxy(t, credential.TypeCodexOAuth,
 		map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")},
-		up.URL, nil, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, &captureLogStore{})
+		up.URL, nil, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, &captureLogStore{},
+		withCodexIdentitySlots(1))
 
 	// 轮首：客户端未带 turn-state；响应签发 ts-1 + 工具调用（轮继续）。
 	rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, nil)

@@ -260,22 +260,21 @@ func testCachedClient(e *codexEntry, sig identityKey) *codexsdk.HTTPClient {
 	if e == nil || e.clients == nil {
 		return nil
 	}
-	if c := e.clients[sig]; c != nil {
-		return c.client
-	}
-	return nil
+	return e.clients[sig]
 }
 
-// testAppliedTurnState 取条目多条目缓存中指定身份签名的客户端构造期已应用
-// turn-state（测试断言用；无该签名 → ""）。
-func testAppliedTurnState(e *codexEntry, sig identityKey) string {
-	if e == nil || e.clients == nil {
+// testSessionTurnState 读会话槽当前 ts（测试断言用；无条目/无会话 → ""）。
+//
+// G3 之后 ts 是**会话级**的（键 = sessionKey），账号级单值已经没有观测面——
+// 断言必须给会话（nil sess/meta 即"无会话标识"那一条退化槽）。
+func testSessionTurnState(a *Codex, accountID int64, sess *codexsdk.Session, meta *codexsdk.CodexMeta) string {
+	a.mu.Lock()
+	e := a.entries[accountID]
+	a.mu.Unlock()
+	if e == nil {
 		return ""
 	}
-	if c := e.clients[sig]; c != nil {
-		return c.appliedTurnState
-	}
-	return ""
+	return e.turnStates.load(sessionKeyOf(sess, meta))
 }
 
 // TestCodexHTTPClientCacheIsBoundedLRU 多条目客户端缓存限幅：身份签名随槽
@@ -286,7 +285,7 @@ func TestCodexHTTPClientCacheIsBoundedLRU(t *testing.T) {
 	total := codexHTTPClientCacheMax + 20
 	for i := range total {
 		meta := &codexsdk.CodexMeta{InstallationID: fmt.Sprintf("inst-%d", i)}
-		_, _, err := a.clientFor(cred, nil, meta, "", a.DirectEgress(), domain.CodexResponsesTransportDefault)
+		_, _, err := a.clientFor(cred, nil, meta, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 		require.NoError(t, err)
 	}
 	a.mu.Lock()
@@ -877,13 +876,21 @@ func TestCodexStreamBodyPassthrough(t *testing.T) {
 	require.Equal(t, "inst-s", cm.Get("x-codex-installation-id").String(), "StreamBody 路径同样注入伪装身份")
 	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id 恒带")
 
-	// turn-state：本次响应头回写 held → 下次未带请求注入（不读共享 TurnState）。
-	resp2, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), nil, nil, "", domain.CodexResponsesTransportDefault)
+	// turn-state：本次响应头回写**会话槽** → 同会话的下次未带请求注入（不读共享
+	// TurnState）。槽是会话级的（G3），所以第二次必须带同一个 meta（同
+	// installation），否则那是另一个会话、本就不该继承这个 ts。
+	resp2, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-s"}, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	_, _ = io.Copy(io.Discard, resp2.Body)
 	_ = resp2.Body.Close()
 	require.Equal(t, "", c.turnState(0), "轮首未带 turn-state")
-	require.Equal(t, "st-body", c.turnState(1), "held 回写本次响应头 → 下次注入")
+	require.Equal(t, "st-body", c.turnState(1), "响应头回写会话槽 → 同会话下次注入")
+	// 换会话（不同 installation）= 另一条槽：不继承别人的 ts（G3 的直接守卫）。
+	resp3, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), nil, &codexsdk.CodexMeta{InstallationID: "inst-other"}, "", domain.CodexResponsesTransportDefault)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp3.Body)
+	_ = resp3.Body.Close()
+	require.Equal(t, "", c.turnState(2), "不同会话不串台")
 }
 
 // TestCodexResponsesIdentityChangeRebuild identity 变化 → 重建 HTTPClient
@@ -950,7 +957,7 @@ func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
 	require.Equal(t, "ts-1", c.turnState(1), "同轮续传（注入 held）")
 
 	// 轮结束清除 → 下一请求不再携带（跨轮不回传）
-	a.ClearTurnState(9)
+	a.ClearTurnState(9, nil, nil)
 	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, "", c.turnState(2), "清除后跨轮不回传")
@@ -970,7 +977,7 @@ func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
 	require.NoError(t, err)
 	// held 覆盖预置（验证客户端值覆盖 held——不被 held 覆盖）
 	a.mu.Lock()
-	a.entries[9].turnState = "held-old"
+	a.entries[9].turnStates.store(sessionKeyOf(nil, nil), "held-old")
 	a.mu.Unlock()
 
 	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "client-ts", domain.CodexResponsesTransportDefault)
@@ -983,38 +990,42 @@ func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
 	require.Equal(t, "ts-up", c.turnState(2), "签发值回写 held 后续注入")
 }
 
-// TestCodexResponsesTurnStateChangeRebuild turn-state 变化 → 重建 HTTPClient
-// （与 idSig 同语义——构造期 opts 承载的头面变化才能生效；生产路径共享
-// transport 承载连接池，重建不重置连接池）。
-func TestCodexResponsesTurnStateChangeRebuild(t *testing.T) {
-	up, _ := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"})
+// TestCodexResponsesTurnStateChangeDoesNotRebuild turn-state 变化**不再**重建
+// HTTPClient（G1 + G2 的正向证明）。
+//
+// 旧行为（appliedTurnState 判等）：ts 从 "" 变 ts-1 即重建客户端——这是"每轮
+// 必重连"的网关侧根因。现在 ts 走 SDK 的每请求 provider，客户端跨轮存活：
+// 同一身份签名下的客户端指针必须**恒等**，而请求头仍按会话槽逐次更新。
+func TestCodexResponsesTurnStateChangeDoesNotRebuild(t *testing.T) {
+	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"})
 	defer up.Close()
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-rt"}
 
-	// 首调用（无 held）：无头客户端
+	// 首调用（空槽）：不带头；响应签发 ts-1 → 槽回写
 	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	a.mu.Lock()
 	c1 := testCachedClient(a.entries[9], identityKey{})
-	require.Equal(t, "", testAppliedTurnState(a.entries[9], identityKey{}), "首调用应用空值")
 	a.mu.Unlock()
+	require.NotNil(t, c1)
+	require.Equal(t, "", c.turnState(0), "轮首请求不带头")
+	require.Equal(t, "ts-1", testSessionTurnState(a, 9, nil, nil), "签发值写入会话槽")
 
-	// 同值复用（held 已回写 ts-1 → 生效值变化 → 重建——断言客户端非同一实例）
+	// 第二次请求：槽里已有 ts-1 ⇒ 带上；客户端**不重建**
 	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
+	require.Equal(t, "ts-1", c.turnState(1), "会话槽值由 provider 逐请求下发")
 	a.mu.Lock()
-	c2 := testCachedClient(a.entries[9], identityKey{})
-	require.NotSame(t, c1, c2, "生效值空 → ts-1 变化 → 重建客户端")
-	require.Equal(t, "ts-1", testAppliedTurnState(a.entries[9], identityKey{}), "重建后记录应用值")
-	require.NotNil(t, c2)
+	require.Same(t, c1, testCachedClient(a.entries[9], identityKey{}), "ts 变化不再重建客户端（G1）")
 	a.mu.Unlock()
 
-	// 同值复用不重建
-	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "ts-1", domain.CodexResponsesTransportDefault)
+	// 再换一个值（客户端自带）：仍不重建
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), nil, nil, "ts-2", domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
+	require.Equal(t, "ts-2", c.turnState(2), "客户端自带值覆盖会话槽")
 	a.mu.Lock()
-	require.Same(t, c2, testCachedClient(a.entries[9], identityKey{}), "同生效值复用不重建")
+	require.Same(t, c1, testCachedClient(a.entries[9], identityKey{}), "值再变仍不重建")
 	a.mu.Unlock()
 }
 

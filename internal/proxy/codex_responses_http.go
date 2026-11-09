@@ -251,7 +251,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// 轮结束清除：合成体成功返回必含 completed 终态——无工具调用项
 	// → 轮结束 → 清除 held（跨轮不回传；适配层已回写本次响应签发值）。
 	if codexTurnEndedBody(resp.Raw) {
-		p.codex.ClearTurnState(sel.AccountID)
+		p.codex.ClearTurnState(sel.AccountID, &sess, &meta)
 	}
 	// 合成体顶层 usage：缺失/显式 null → ok=false → 恒 0。
 	var it, ot, tt, cr, cc int64
@@ -388,7 +388,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	// （!turnCallSeen）→ 轮结束 → 清除 held（跨轮不回传）。错误/断开路径不清
 	// （轮结束未知——不误清同轮续传值）。
 	if err == nil && usageTaken && !turnCallSeen {
-		p.codex.ClearTurnState(sel.AccountID)
+		p.codex.ClearTurnState(sel.AccountID, &sess, &meta)
 	}
 	if ttft != nil {
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
