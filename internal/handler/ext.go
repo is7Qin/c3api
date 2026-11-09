@@ -44,7 +44,7 @@ func (h *AdminAPI) GetTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 //
 // `?confirm=` 是出站传输降级门（spec §4.3）的确认令牌：本层只读、只透传，
 // **不判 409**——判定（含令牌字面量比对与 WARN）只在 service 一处。
-func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64) {
+func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id int64, params PutTemplatesIdExtParams) {
 	var in TemplateExt
 	if err := decodeLenient(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
@@ -58,8 +58,20 @@ func (h *AdminAPI) PutTemplatesIdExt(w http.ResponseWriter, r *http.Request, id 
 	if in.UpstreamPaths != nil {
 		e.UpstreamPaths = *in.UpstreamPaths // nil = 未配置（清列由 service/repo 语义决定）
 	}
+	// 字段灌入必须显式做：decodeLenient 宽松解码只会丢未知字段，不会替我们把
+	// 契约字段搬进领域对象——漏掉这行则 PUT 恒落 ""，409 门与 WARN 永不可达。
+	// nil（缺省或 JSON null）⇒ 零值 "" ⇒ 全列替换的"清空"；**不** trim/归一/折叠
+	// 大小写——脏值原样交给 service 去 400（归一比较会把 400 变成静默放行）。
+	if in.CodexResponsesTransport != nil {
+		e.CodexResponsesTransport = domain.CodexResponsesTransport(*in.CodexResponsesTransport)
+	}
 	// confirm 原样透传（空串 = 未确认）：降级门的判定与 WARN 都在 service 一侧。
-	saved, err := h.svc.UpsertTemplateExt(r.Context(), e, r.URL.Query().Get("confirm"))
+	// 生成接口的参数绑定已把确认令牌解到 params.Confirm（可选 query）。
+	confirm := ""
+	if params.Confirm != nil {
+		confirm = *params.Confirm
+	}
+	saved, err := h.svc.UpsertTemplateExt(r.Context(), e, confirm)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
@@ -74,6 +86,10 @@ func toAPITemplateExt(e *domain.TemplateExt) TemplateExt {
 		CredentialType:  TemplateExtCredentialType(e.CredentialType),
 		StripImageTools: e.StripImageTools,
 	}
+	// 出站传输**恒回显**（含 ""）：与 strip_image_tools 的三态不同，"" 本身
+	// 就是有意义的取值（默认面），省略会让 web 无法区分"没读取"与"未配置"。
+	transport := string(e.CodexResponsesTransport)
+	out.CodexResponsesTransport = &transport
 	if e.UpstreamPaths != nil {
 		paths := e.UpstreamPaths
 		out.UpstreamPaths = &paths

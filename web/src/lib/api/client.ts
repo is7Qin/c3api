@@ -125,7 +125,13 @@ export class ApiClient {
   deleteTemplatesBatch = (ids: number[]) => this.request<components['schemas']['BatchDeleteResponse']>('/templates/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
   updateTemplatesBatch = (ids: number[], fields: components['schemas']['TemplatePatch']) => this.request<components['schemas']['BatchUpdateResponse']>('/templates/batch-update', { method: 'POST', body: JSON.stringify({ ids, fields }) })
   getTemplateExt = (id: number) => this.request<components['schemas']['TemplateExt']>(`/templates/${id}/ext`)
-  putTemplateExt = (id: number, b: components['schemas']['TemplateExt']) => this.request<components['schemas']['TemplateExt']>(`/templates/${id}/ext`, { method: 'PUT', body: JSON.stringify(b) })
+  // opts.confirm = 出站传输降级确认令牌（`transport-downgrade`）。**只在用户确认后**
+  // 才传：无条件带会让服务端 409 门形同虚设（写入是全列替换，降级必须有人点头）。
+  putTemplateExt = (id: number, b: components['schemas']['TemplateExt'], opts?: { confirm?: string }) =>
+    this.request<components['schemas']['TemplateExt']>(
+      `/templates/${id}/ext${opts?.confirm ? `?confirm=${encodeURIComponent(opts.confirm)}` : ''}`,
+      { method: 'PUT', body: JSON.stringify(b) },
+    )
   // —— 账号 ——
   listAccounts = (p?: AccountListParams) => this.request<components['schemas']['AccountListResponse']>('/accounts', { params: toQuery(p) })
   createAccount = (b: components['schemas']['AccountCreate']) => this.request<components['schemas']['Account']>('/accounts', { method: 'POST', body: JSON.stringify(b) })

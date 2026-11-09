@@ -159,6 +159,12 @@ paths:
       operationId: PutTemplatesIdExt
       tags: [templates]
       summary: 幂等写入模板类型化扩展（Create/Update 合一；全列更新含 NULL 清空）
+      parameters:
+        - name: confirm
+          in: query
+          required: false
+          schema: { type: string }
+          description: "降级确认令牌：把已有的 ws 改成非 ws 时必须带 `transport-downgrade`，否则 409。其它值等同未确认。"
       requestBody:
         required: true
         content:
@@ -3340,6 +3346,12 @@ components:
         # 模板是共享配置面：可空列 strip_image_tools（公共能力开关，生态三类型与
         # custom 均可配）——凭据列组（oauth/pat）一律在账号级 account_ext（账号私有）。
         strip_image_tools: { type: boolean, nullable: true, description: "公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）" }
+        # codex responses 的**出站传输**（模板级；仅 codex-oauth/codex-pat 有意义）。
+        # 语义 = 全列替换：缺省 / null ⇒ 落 ""（默认面）；"http"/"ws" 原样落库。
+        # 不加 enum：写面用 400 明确拒绝脏值（service 判定），契约里再列一遍就是
+        # 两套值域；且 web 需要在"未配置"与显式 http 之间回显同一个字符串。
+        # 非 codex 类型提交非空值 → 400（idempotent 例外见 spec §4.3 第 2 步）。
+        codex_responses_transport: { type: string, nullable: true, description: "codex 出站传输：\"\"（默认=http）/\"http\"/\"ws\"。全列替换语义：缺省或 null 即清空为默认面。仅 codex-oauth/codex-pat 可配非空值。" }
         # custom 专用：逐格式自定义上游路径。键 ∈ {openai-chat, openai-responses,
         # openai-responses-ws, anthropic, openai-search, openai-images.generations,
         # openai-images.edits}；值**原样**拼到模板 base_url 之后（不自动补 /v1、
