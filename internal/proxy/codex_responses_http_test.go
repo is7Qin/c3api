@@ -586,120 +586,101 @@ func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string)
 	return resp
 }
 
-// TestCodexResponsesTurnStateCarryAndClear turn-state 头回传（非流式
-// 路径）：轮首请求未带 → 上游签发 ts-1 → held；同轮后续（响应含工具调用——
-// 轮继续）自动注入 x-codex-turn-state；轮结束（completed 无工具调用）→ 清除
-// → 跨轮不回传。对齐真实 codex 轮级实例语义（client.rs:498 new_session +
-// stream_events_utils.rs needs_follow_up + 真实测试 turn_state.rs）。
-func TestCodexResponsesTurnStateCarryAndClear(t *testing.T) {
+// TestCodexResponsesTurnStateReplay（G3a / 非流式臂）：重放策略开 ⇒ 上游响应头
+// 签发的 ts 进会话，下一条同会话请求带它（"更新即跟随、跟随即复用"）。
+//
+// 策略是网关侧单点常量（§5.1），生产默认 false；这里在内部构造函数上注入 true。
+func TestCodexResponsesTurnStateReplay(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t,
-		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-1"},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"},
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}},
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	store := &captureLogStore{}
-	// 单槽（K=1）：turn-state 是会话级的（sdkbridge G3），而槽位池按轮询发槽——
-	// K>1 时相邻请求落在不同 thread 就是不同会话，本用例要断言的"同轮续传"必须
-	// 固定同一个会话。
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
-		up.URL, nil, nil, store, withCodexIdentitySlots(1))
-
-	srv := httptest.NewServer(AIRouter(p))
-	defer srv.Close()
-
-	// 轮首：未带 turn-state → 上游不收到头；响应签发 ts-1 + 工具调用（轮继续）
-	resp := postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
-	defer resp.Body.Close()
-	b, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	require.Contains(t, string(b), `"type":"function_call"`, "工具调用项透传（轮继续信号）")
-
-	// 同轮后续：自动注入 held（ts-1）；响应无签发（请求已带）→ held 保持
-	resp = postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
-	defer resp.Body.Close()
-	b, _ = io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	// 轮结束（completed 无工具调用）→ 清除 → 跨轮不回传
-	resp = postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
-	defer resp.Body.Close()
-	b, _ = io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	upc.mu.Lock()
-	defer upc.mu.Unlock()
-	require.Equal(t, 3, upc.calls)
-	require.Equal(t, "", upc.turnStates[0], "轮首请求不带头")
-	require.Equal(t, "ts-1", upc.turnStates[1], "同轮续传（注入 held）")
-	require.Equal(t, "", upc.turnStates[2], "轮结束清除——跨轮不回传")
-}
-
-// TestCodexResponsesTurnStateStreamCarryAndClear turn-state 头回传（
-// 流式路径）：与 TestCodexResponsesTurnStateCarryAndClear 同语义序列（轮首无
-// 头 → 同轮续传 → 轮结束清除）。
-func TestCodexResponsesTurnStateStreamCarryAndClear(t *testing.T) {
-	up, upc := newCodexHTTPUpstream(t,
-		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-1"},
-		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}},
-		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
-	defer up.Close()
-	store := &captureLogStore{}
-	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
-		up.URL, nil, nil, store, withCodexIdentitySlots(1))
+		up.URL, nil, nil, &captureLogStore{}, withCodexIdentitySlots(1))
+	p.turnStateReplay = true // G3a：内部构造函数注入策略
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
 	for range 3 {
-		resp := postResponsesTS(t, srv, `{"model":"gpt-4o","stream":true,"input":"hi"}`, "")
-		defer resp.Body.Close()
+		resp := postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
 		b, _ := io.ReadAll(resp.Body)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.Contains(t, string(b), "[DONE]")
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
 	}
 
 	upc.mu.Lock()
 	defer upc.mu.Unlock()
 	require.Equal(t, 3, upc.calls)
-	require.Equal(t, "", upc.turnStates[0], "轮首请求不带头")
-	require.Equal(t, "ts-1", upc.turnStates[1], "同轮续传（注入 held）")
-	require.Equal(t, "", upc.turnStates[2], "轮结束清除——跨轮不回传")
+	require.Equal(t, "", upc.turnStates[0], "轮首不带头")
+	require.Equal(t, "ts-1", upc.turnStates[1], "签发值进会话 → 下一请求带上（跟随）")
+	require.Equal(t, "ts-1", upc.turnStates[2], "上游未再签发 ⇒ 会话继续持有（复用）")
 }
 
-// TestCodexResponsesTurnStatePassthrough 透传优先：客户端自带
-// x-codex-turn-state → 原值透传不覆盖（客户端自管）；响应签发值回写 held →
-// 后续未带请求注入新签发值。
-func TestCodexResponsesTurnStatePassthrough(t *testing.T) {
+// TestCodexResponsesTurnStateStreamReplay（G3a / 流式臂）：同上，走 StreamBody。
+func TestCodexResponsesTurnStateStreamReplay(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t,
-		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-up"})
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	store := &captureLogStore{}
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
-		up.URL, nil, nil, store, withCodexIdentitySlots(1))
+		up.URL, nil, nil, &captureLogStore{}, withCodexIdentitySlots(1))
+	p.turnStateReplay = true
 
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
-	// 客户端自带 client-ts → 透传优先（不被网关 held 覆盖）
-	resp := postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "client-ts")
-	defer resp.Body.Close()
-	_, _ = io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	// 后续未带 → 注入响应签发值（ts-up——服务端为准）
-	resp = postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "")
-	defer resp.Body.Close()
-	_, _ = io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	for range 2 {
+		resp := postResponsesTS(t, srv, `{"model":"gpt-4o","stream":true,"input":"hi"}`, "")
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
+		require.Contains(t, string(b), "[DONE]")
+	}
 
 	upc.mu.Lock()
 	defer upc.mu.Unlock()
-	require.Equal(t, 2, upc.calls)
-	require.Equal(t, "client-ts", upc.turnStates[0], "客户端自带 → 透传优先不覆盖")
-	require.Equal(t, "ts-up", upc.turnStates[1], "响应签发值回写 held → 后续注入")
+	require.Equal(t, "", upc.turnStates[0], "轮首不带头")
+	require.Equal(t, "ts-1", upc.turnStates[1], "流式臂同样按会话 ts 续传")
+}
+
+// TestCodexResponsesTurnStateNeverSentByDefault（G3b）：默认策略（false）⇒
+// 既不发送也不捕获：上游连续签发 ts，网关任何请求都不带；身份头/连接复用照常。
+func TestCodexResponsesTurnStateNeverSentByDefault(t *testing.T) {
+	up, upc := newCodexHTTPUpstream(t,
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-2"},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-3"})
+	defer up.Close()
+	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
+		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")},
+		up.URL, nil, nil, &captureLogStore{}, withCodexIdentitySlots(1))
+	require.False(t, p.turnStateReplay, "生产默认必须 false（P1 门禁前不重放）")
+
+	// 客户端自带 ts 也不参与（身份来自会话，不是入站请求）：仍是 ""
+	srv := httptest.NewServer(AIRouter(p))
+	defer srv.Close()
+
+	for range 3 {
+		resp := postResponsesTS(t, srv, `{"model":"gpt-4o","input":"hi"}`, "client-ts")
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, string(b))
+	}
+
+	require.Equal(t, 3, upc.callsN())
+	threads := map[string]bool{}
+	for i := range 3 {
+		require.Equal(t, "", upc.turnState(i), "策略 false ⇒ 任何请求都不带 ts（含客户端自带）")
+		cm := gjson.GetBytes(upc.body(i), "client_metadata")
+		require.NotEmpty(t, cm.Get("thread_id").String(), "身份注入照常（只是不带 ts）")
+		require.False(t, cm.Get("x-codex-turn-state").Exists(), "帧内也不出现 ts")
+		threads[cm.Get("thread_id").String()] = true
+	}
+	require.Len(t, threads, 1, "单槽单会话：三次请求同一 thread")
 }
 
 // TestCodexResponses401RotateFailover 401 非判死 → SDK 单飞 refresh → 自动重试

@@ -170,7 +170,7 @@ func TestCodexStreamBodyTransportReachesChosenLeg(t *testing.T) {
 			defer cancel()
 
 			resp, err := a.StreamBody(ctx, transportTestCred(), a.DirectEgress(),
-				[]byte(`{"model":"gpt-5.6","input":[]}`), nil, nil, "", tc.transport)
+				[]byte(`{"model":"gpt-5.6","input":[]}`), codexsdk.Identity{}, tc.transport)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 			body := readAndCloseBody(t, resp.Body)
@@ -212,7 +212,7 @@ func TestCodexResponsesTransportReachesChosenLeg(t *testing.T) {
 			defer cancel()
 
 			resp, err := a.Responses(ctx, transportTestCred(), a.DirectEgress(),
-				[]byte(`{"model":"gpt-5.6","input":[]}`), nil, nil, "", tc.transport)
+				[]byte(`{"model":"gpt-5.6","input":[]}`), codexsdk.Identity{}, tc.transport)
 			require.NoError(t, err)
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 			require.NotEmpty(t, resp.Raw, "合成体不得为空")
@@ -230,33 +230,32 @@ func TestCodexResponsesTransportReachesChosenLeg(t *testing.T) {
 	}
 }
 
-// TestCodexTransportIsIdentityKeyDimension 键维：传输是**构造期**参数，所以同身份
+// TestCodexTransportIsClientKeyDimension 键维：传输是**构造期**参数，所以同账号
 // 不同传输必须是不同 client 条目——否则"模板改成 ws、client 命中旧条目"会让
 // Selection 说 ws 而请求仍走 HTTP。同时钉住 Key() 归一："" 与 "http" 同条目。
-func TestCodexTransportIsIdentityKeyDimension(t *testing.T) {
+func TestCodexTransportIsClientKeyDimension(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), RotationDeps{})
 	cred := transportTestCred()
 	eg := a.DirectEgress()
 
-	e, wsClient, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportWS)
+	e, wsClient, err := a.clientFor(cred, eg, domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
-	_, httpClient, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportHTTP)
+	_, httpClient, err := a.clientFor(cred, eg, domain.CodexResponsesTransportHTTP)
 	require.NoError(t, err)
 	require.NotSame(t, wsClient, httpClient, "同身份不同传输必须是不同 client（构造期参数无法替换）")
 	require.Len(t, e.clients, 2, "ws 与 http 各占一条")
 
-	_, defaultClient, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportDefault)
+	_, defaultClient, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Same(t, httpClient, defaultClient, `"" 与 "http" 必须落同一条目（Key() 归一）`)
 	require.Len(t, e.clients, 2, `"" 不得再开一条`)
 
-	// 键里的确有 transport 维（不是"两个条目恰好不同"）：ws 维的签名命中 ws 条目，
-	// 而零值签名（= Key() 归一的 HTTP 面）命中 HTTP 条目——两组签名各自落桶。
-	sigWS := identitySig(nil, nil)
-	sigWS.transport = domain.CodexResponsesTransportWS.Key()
-	require.Same(t, wsClient, testCachedClient(e, sigWS), "ws 条目按含 transport 维的签名落桶")
-	require.Same(t, httpClient, testCachedClient(e, identitySig(nil, nil)), "零值签名落 HTTP 条目（Key() 归一面）")
-	require.NotSame(t, wsClient, testCachedClient(e, identitySig(nil, nil)), "零值签名不得命中 ws 条目")
+	// 键里的确有 transport 维（不是"两个条目恰好不同"）：ws 维的键命中 ws 条目，
+	// 而零值键（= Key() 归一的 HTTP 面）命中 HTTP 条目——两组键各自落桶。
+	keyWS := clientKey{transport: domain.CodexResponsesTransportWS.Key()}
+	require.Same(t, wsClient, testCachedClient(e, keyWS), "ws 条目按含 transport 维的键落桶")
+	require.Same(t, httpClient, testCachedClient(e, clientKey{}), "零值键落 HTTP 条目（Key() 归一面）")
+	require.NotSame(t, wsClient, testCachedClient(e, clientKey{}), "零值键不得命中 ws 条目")
 }
 
 // TestCodexTransportSwitchChangesLegWithinOneInstance 键维的**行为面**证据：同一个
@@ -272,7 +271,7 @@ func TestCodexTransportSwitchChangesLegWithinOneInstance(t *testing.T) {
 
 	call := func(transport domain.CodexResponsesTransport) {
 		t.Helper()
-		resp, err := a.StreamBody(ctx, cred, a.DirectEgress(), payload, nil, nil, "", transport)
+		resp, err := a.StreamBody(ctx, cred, a.DirectEgress(), payload, codexsdk.Identity{}, transport)
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		_ = readAndCloseBody(t, resp.Body)
@@ -294,7 +293,7 @@ func TestCodexTransportSwitchChangesLegWithinOneInstance(t *testing.T) {
 	require.Equal(t, 2, posts, `显式 http 与 "" 同条目 ⇒ 复用已构造的 HTTP client，再打一次 POST`)
 
 	// 三次调用只该有两条条目（""/"http" 归一 + ws）。
-	e, _, err := a.clientFor(cred, nil, nil, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	e, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Len(t, e.clients, 2)
 }

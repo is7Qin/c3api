@@ -50,10 +50,13 @@ var (
 
 type Config struct {
 	SyncInterval time.Duration
-	// RotatePolicy codex 伪装身份轮换策略（SDK 类型）：槽位池开线程与 Step 用它
+	// RotatePolicy codex 伪装身份轮换策略（SDK 类型）：会话池开线程与推进用它
 	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口推进口径（按完成轮数、每窗口
 	// 随机 span）由 SDK 内部定。
 	RotatePolicy codexsdk.RotatePolicy
+	// RetireThread 退役账号某线程的空闲 WS 连接（sdkbridge.Codex 实现；nil = 未接
+	// ——测试/未装配形态）。线程退休与重载丢槽的唯一出口，装配点只有 main 一处。
+	RetireThread func(accountID int64, threadKey string)
 	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
 	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
 	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
@@ -100,9 +103,11 @@ type Selection struct {
 	Ext                     *domain.AccountExt
 	CandidateFingerprint    string
 	lease                   *leaseToken
-	// identitySlot 本次预留认领的 codex 伪装身份槽（仅 codex 凭据；nil = 无
-	// 槽身份——非 codex 面不认领）。Release 归还。
-	identitySlot     *identitySlot
+	// session 本次预留认领的 codex 会话（仅 codex 凭据；nil = 无会话——非 codex
+	// 面不认领）。Release 归还；CodexIdentity/StepIdentity 经它读写。
+	session *codexSession
+	// pool 会话所属池（凭据代际 + 线程退役出口）；全忙兜底的临时会话无池。
+	pool             *identityPool
 	ModelMappingMode domain.ModelMappingMode
 	// SupplierFinance 选中本账号时捕获的不可变财务上下文（spec 2026-10-09
 	// §4.2/§4.6）：供给准入门放行候选时**同一次视图读取**捕获归属/分成/代数，
@@ -126,53 +131,63 @@ func (s *Selection) Release() {
 		return
 	}
 	if s.lease.released.CompareAndSwap(false, true) {
-		// 先归还槽，再减并发计数：门禁按 concurrency 放行，若先减计数则释放
-		// 窗口内可出现「K 槽全忙而 concurrency=K-1」——新预留放行后
-		// claim()==nil（兜底临时身份 + Warn，破坏「K 条稳定会话」）。归还槽
-		// 先于计数，使门禁观测到的空闲额度对应的槽已真正可用。
-		s.identitySlot.release()
+		// 先归还会话，再减并发计数：门禁按 concurrency 放行，若先减计数则释放
+		// 窗口内可出现「K 会话全忙而 concurrency=K-1」——新预留放行后
+		// claim()==nil（兜底临时身份 + Warn，破坏「K 条稳定会话」）。归还会话
+		// 先于计数，使门禁观测到的空闲额度对应的会话已真正可用。
+		s.session.release()
 		s.lease.acc.runtime.concurrency.Add(-1)
 	}
 }
 
-// CodexIdentity 返回本 Selection 认领的槽的**完整** codex 伪装身份（四元组一次
-// 给全，装配收回调度器侧——proxy 不再回 ext 拼装）。installation_id / session_id
-// / thread_id / window_id 全部取自槽状态：installation 是账号级稳定项、与
-// session/thread/window 同源（池构建时写入槽 state），故不再与账号 ext 各存一份。
-// 无槽（非 codex / 池缺席）→ 零值（SDK 内层 omit，不注入）。
-func (s *Selection) CodexIdentity() (codexsdk.Session, codexsdk.CodexMeta) {
-	if s == nil || s.identitySlot == nil {
-		return codexsdk.Session{}, codexsdk.CodexMeta{}
+// CodexIdentity 本次请求的 codex 身份（Session/Meta/TurnState/Sink 一次给全，
+// 装配收回调度器侧——proxy 不再回 ext 拼装）。全部取自会话：installation 是账号级
+// 稳定项、与 session/thread/window 同源，故不再与账号 ext 各存一份。
+//
+// 无会话（非 codex / 池缺席）→ 零值（SDK 内层 omit，不注入）。凭据代际在这里
+// 对齐：会话发现池的代际比自己的新 ⇒ 先清 ts 再用（清 ts 只能由持有者做）。
+func (s *Selection) CodexIdentity() codexsdk.Identity {
+	if s == nil || s.session == nil {
+		return codexsdk.Identity{}
 	}
-	st := s.identitySlot.state.Load()
-	if st == nil {
-		return codexsdk.Session{}, codexsdk.CodexMeta{}
+	if s.pool != nil {
+		if gen := s.pool.credGen.Load(); s.session.credGen != gen {
+			s.session.turnState = ""
+			s.session.credGen = gen
+		}
 	}
-	sess := st.Session()
-	return sess, codexsdk.CodexMeta{
-		InstallationID: st.InstallationID,
-		SessionID:      sess.SessionID,
-		ThreadID:       sess.ThreadID,
-		WindowID:       sess.WindowID,
+	return s.session.identity()
+}
+
+// StepIdentity 推进本会话一次完成轮（§3.2 推进）——**仅成功取到 usage、且上游
+// 连接已归还（`Body.Close`）之后**调用一次；无会话 no-op。
+//
+// 退休（窗口数达 wmax）在此发生：会话独占租借，本函数不持任何锁，退役旧线程的
+// 空闲连接是锁外动作（§3.2 ④）。
+func (s *Selection) StepIdentity() {
+	if s == nil || s.session == nil {
+		return
+	}
+	if old := s.session.step(); old != "" {
+		s.pool.retire(old)
 	}
 }
 
-// AdvanceIdentity 推进本槽一次完成轮（Step 一次 = Turns+1）——**仅成功取到
-// usage 时调用一次**；无槽 no-op。CAS 换入新状态（并发同槽推进不丢更新）。
-func (s *Selection) AdvanceIdentity() {
-	if s == nil || s.identitySlot == nil {
+// ClearTurnStates 让某账号**全部会话**的 turn-state 失效（§3.2 凭据替换）。
+//
+// 只推进池的代际，不直接写会话字段：状态字段没有第二读者，清 ts 由各会话在
+// **下一次租借内**自己完成（见 CodexIdentity）。owner 判定 = sdkbridge 的 credSig
+// 变化（条目重建），token 轮转回写不触发。
+func (s *Scheduler) ClearTurnStates(accountID int64) {
+	if s == nil {
 		return
 	}
-	slot := s.identitySlot
-	for {
-		cur := slot.state.Load()
-		if cur == nil {
-			return
-		}
-		next := codexsdk.Step(*cur, slot.policy)
-		if slot.state.CompareAndSwap(cur, &next) {
-			return
-		}
+	cur := s.view.Load()
+	if cur == nil || cur.static == nil || cur.static.identityPools == nil {
+		return
+	}
+	if pool := cur.static.identityPools.pools[accountID]; pool != nil {
+		pool.credGen.Add(1)
 	}
 }
 

@@ -347,10 +347,9 @@ func TestConvertedCodexExtMissing(t *testing.T) {
 	require.Equal(t, 0, upc.callsN(), "配置错误不触达上游")
 }
 
-// TestConvertedCodexTurnStateCarryAndClear spec §5.9：转换路径 turn-state 透传优先
-// + 同轮续传 + 轮结束清除（与直连 TestCodexResponsesTurnStateCarryAndClear 同语义
-// 序列：轮首无头 → 同轮续传 → 轮结束清除）。
-func TestConvertedCodexTurnStateCarryAndClear(t *testing.T) {
+// TestConvertedCodexTurnStateReplay spec §5.9：转换路径与直连同一条 ts 策略——
+// 重放开时上游签发值进会话、下一请求带上；默认（false）既不发送也不捕获。
+func TestConvertedCodexTurnStateReplay(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t,
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-1"},
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}},
@@ -363,37 +362,31 @@ func TestConvertedCodexTurnStateCarryAndClear(t *testing.T) {
 		up.URL, nil, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, &captureLogStore{},
 		withCodexIdentitySlots(1))
 
-	// 轮首：客户端未带 turn-state；响应签发 ts-1 + 工具调用（轮继续）。
-	rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, nil)
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	p.turnStateReplay = true // 内部构造函数注入策略（§5.1）
 
-	// 同轮后续：自动注入 held（ts-1）；响应无工具调用 → 轮结束清除。
-	rec = postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, nil)
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	for range 2 {
+		rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, nil)
+		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
+	}
 
-	// 跨轮：清除后不再回传。
-	rec = postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, nil)
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-
-	require.Equal(t, 3, upc.callsN())
+	require.Equal(t, 2, upc.callsN())
 	require.Equal(t, "", upc.turnState(0), "轮首请求不带头")
-	require.Equal(t, "ts-1", upc.turnState(1), "同轮续传（注入 held）")
-	require.Equal(t, "", upc.turnState(2), "轮结束清除——跨轮不回传")
+	require.Equal(t, "ts-1", upc.turnState(1), "签发值进会话 → 下一请求带上")
 
-	// 透传优先：客户端自带 x-codex-turn-state → 原值透传不覆盖。
-	up2, upc2 := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
+	// 默认策略（false）：客户端自带 ts 也不发送（身份来自会话，不是入站请求）。
+	up2, upc2 := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-9"})
 	defer up2.Close()
 	p2, _ := newConvertedCodexTestProxy(t, credential.TypeCodexOAuth,
 		map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")},
 		up2.URL, nil, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, &captureLogStore{})
-	rec = postChatConv(t, p2, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
+	rec := postChatConv(t, p2, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
 		map[string]string{"x-codex-turn-state": "client-ts"})
 	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	require.Equal(t, "client-ts", upc2.turnState(0), "客户端自带 → 透传优先不覆盖")
+	require.Equal(t, "", upc2.turnState(0), "策略 false ⇒ 客户端自带也不发")
 }
 
 // TestConvertedCodexAdvanceIdentityDrivesWindow spec §5.9：转换路径每次成功取到
-// usage 都调用 sel.AdvanceIdentity（与直连同一调用点）→ 单槽（MaxConcurrency=1）
+// usage 都调用 sel.StepIdentity（与直连同一调用点）→ 单槽（MaxConcurrency=1）
 // 上连续完成轮数驱动 window_id 递增。断言上游 client_metadata.x-codex-window-id
 // 出现 ≥2 个不同值——若未推进身份，window 恒为 ":0"。
 func TestConvertedCodexAdvanceIdentityDrivesWindow(t *testing.T) {

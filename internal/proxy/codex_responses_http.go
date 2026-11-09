@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
@@ -152,51 +151,24 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	return p.nonstreamCodexResponses(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body)
 }
 
-// clientTurnState 客户端请求自带 x-codex-turn-state（透传优先——客户端
-// 自管，非空覆盖网关 held 注入；空 = 未带 → 网关补服务端签发过的空缺）。
-func clientTurnState(r *http.Request) string {
-	if r == nil {
-		return ""
+// codexTurnStateReplay 是 turn-state 重放策略的**单点常量**（§5.1）：
+//   - false：本请求既不带 ts 也不捕获（Identity 的 ts 恒空、Sink = nil）——跨轮
+//     重放违反真实 codex 的轮级契约，P1 门禁通过前生产必须走这一态；
+//   - true：本请求带会话当前 ts，上游签发新值即覆盖（"更新即跟随、跟随即复用"）。
+//
+// 改 true 的前置条件是 P1（真实账号 ≥10 连轮实测）通过，不是配置项。
+const codexTurnStateReplay = false
+
+// codexRequestIdentity 本次请求的身份数据（identity 是**请求数据**，§3.1）：会话
+// 给出 Session/Meta/TurnState/Sink，重放策略在这里施加（§5.1 单点常量）。
+//
+// 策略 false ⇒ 既不发送也不捕获（ts 恒空、Sink = nil）；连接复用不受影响。
+func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection) codexsdk.Identity {
+	id := sel.CodexIdentity()
+	if !p.turnStateReplay {
+		id.TurnState, id.Sink = "", nil
 	}
-	return r.Header.Get(codexsdk.HeaderTurnState)
-}
-
-// --- turn-state 轮边界判定（真实代码实证钉死） ---
-// 真实实例归属：轮级——ModelClientSession.new_session 每轮新建
-// Arc<OnceLock<String>>（core/src/client.rs:498 "fresh turn-scoped streaming
-// session"），值 = 实例生命周期内首次 set 后恒定（握手响应头
-// responses_websocket.rs:538 + 流事件 :742 二次 set 被 OnceLock 忽略）；轮结束
-// = 会话销毁（跨轮不回传）。真实轮结束判定（stream_events_utils.rs:318-328
-// needs_follow_up + turn.rs:150-152）：响应输出项为工具调用 → 轮继续；纯
-// message/reasoning → 轮结束。真实测试套件实证（core/tests/suite/turn_state.rs
-// persists_within_turn_and_resets_after）：completed 响应（含工具调用）后同轮
-// 后续请求仍带 ts，仅跨轮清除——不在 response.completed 即清。
-
-// isCodexCallItemType 轮继续信号判定：输出项类型为工具调用型——wire type 族
-// 恒以 "_call" 结尾（function_call/shell_command_call/computer_call/
-// web_search_call/local_shell_call/custom_tool_call 等——对齐真实
-// stream_events_utils.rs needs_follow_up 语义）。
-func isCodexCallItemType(t string) bool { return strings.HasSuffix(t, "_call") }
-
-// codexTurnEndedBody 非流式合成体轮结束判定：output 无工具调用项 → 轮结束
-// （SDK 聚合器成功返回必已收到 response.completed 终态——合成体恒 completed）。
-func codexTurnEndedBody(body []byte) bool {
-	for _, t := range gjson.GetBytes(body, "output.#.type").Array() {
-		if isCodexCallItemType(t.String()) {
-			return false // 含工具调用 → 轮继续（同轮后续请求须续传）
-		}
-	}
-	return true
-}
-
-// sniffCodexTurnCallItem 流式帧轮继续信号嗅探（热路径纪律同 sniffCodexWSDeath：
-// bytes.Contains 零分配预筛——"item":{" 为 item 对象形态（消息正文 JSON 转义
-// 不含该原始子串），命中才最小 gjson 解析 item.type）。
-func sniffCodexTurnCallItem(f []byte) bool {
-	if !bytes.Contains(f, []byte(`"item":{`)) {
-		return false
-	}
-	return isCodexCallItemType(gjson.GetBytes(f, "item.type").String())
+	return id
 }
 
 // nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——
@@ -225,14 +197,13 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 伪装身份：注入源 = 运行时槽身份（Selection.CodexIdentity 一次给全四元组，
-	// installation_id 亦取自槽状态）——同账号并发各持不同槽 ⇒ 上游见多条独立会话。
-	// HTTP 面经 SDK client_metadata 注入。
-	sess, meta := sel.CodexIdentity()
+	// 请求级身份（§3.1）：会话给出 Session/Meta/ts/Sink——同账号并发各持不同会话
+	// ⇒ 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的构造期配置。
+	id := p.codexRequestIdentity(sel)
 	// 出站传输开关由调用方给值（原生车道 = Selection 原值；转换车道钉 http，
 	// 见 caller_converted.go）。sdkbridge 侧按它分 client 条目——构造期参数，
 	// 改模板 ⇒ 换条目。
-	resp, err := p.codex.Responses(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), transport)
+	resp, err := p.codex.Responses(ctx, cred, sel.Egress, streamBody, id, transport)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -248,17 +219,13 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	if err := out.Body(resp.Raw); err != nil {
 		return http.StatusInternalServerError, nil, false, err
 	}
-	// 轮结束清除：合成体成功返回必含 completed 终态——无工具调用项
-	// → 轮结束 → 清除 held（跨轮不回传；适配层已回写本次响应签发值）。
-	if codexTurnEndedBody(resp.Raw) {
-		p.codex.ClearTurnState(sel.AccountID, &sess, &meta)
-	}
 	// 合成体顶层 usage：缺失/显式 null → ok=false → 恒 0。
 	var it, ot, tt, cr, cc int64
 	if t, ok := responsesBodyUsage(resp.Raw); ok {
 		it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
-		// 轮次推进：成功取到 usage 时 Step 一次。
-		sel.AdvanceIdentity()
+		// 推进（§3.3）：SDK 的聚合臂在返回前已 Close（连接同步归还进 idle 表），
+		// 所以此刻推进/退休看得见那条连接。仅"成功取到 usage"才推进。
+		sel.StepIdentity()
 	}
 	var img int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 	if respImageDetectOn(sel) {
@@ -309,10 +276,10 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	if err != nil {
 		return 0, nil, false, err
 	}
-	// 伪装身份同非流式；turn-state 透传优先（客户端自带覆盖 held 注入）。
-	sess, meta := sel.CodexIdentity()
+	// 请求级身份同非流式。
+	id := p.codexRequestIdentity(sel)
 	// 出站传输开关同非流式（原生车道 = Selection 原值；转换车道钉 http）。
-	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, &sess, &meta, clientTurnState(r), transport)
+	resp, err := p.codex.StreamBody(ctx, cred, sel.Egress, streamBody, id, transport)
 	if err != nil {
 		// 客户端断开（上游响应前）优先归因。
 		if r.Context().Err() != nil {
@@ -337,7 +304,6 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		it, ot, tt, cr, cc int64
 		img                int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 		usageTaken         bool  // 首个 completed 帧已取（usage 只读一次）
-		turnCallSeen       bool  // 流中轮继续信号（工具调用输出项——轮边界）
 		ttft               *int64
 		contEnqueued       bool // 首个有效可续接 id 已入队（每流一次）
 	)
@@ -362,15 +328,8 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 					if respImageDetectOn(sel) {
 						img = respImageCountCompleted(ev.Data)
 					}
-					// 轮次推进：成功取到 usage 时 Step 一次。
-					sel.AdvanceIdentity()
 					usageTaken = true
 				}
-			}
-			// 轮边界嗅探：工具调用输出项 → 轮继续（同轮后续请求续传
-			// turn-state）；命中后跳过（每响应一次判定足够）。
-			if !turnCallSeen && sniffCodexTurnCallItem(ev.Data) {
-				turnCallSeen = true
 			}
 			// 续接入队：与 native 同一 seam（首个有效响应 id 写出前快照入队
 			// 一次）。仅**直连**（客户端 Responses）入队——converted 客户端为
@@ -384,11 +343,11 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		},
 	})
 	_ = resp.Body.Close()
-	// 轮结束清除：正常结束且收到 completed 终态（usageTaken）且无工具调用项
-	// （!turnCallSeen）→ 轮结束 → 清除 held（跨轮不回传）。错误/断开路径不清
-	// （轮结束未知——不误清同轮续传值）。
-	if err == nil && usageTaken && !turnCallSeen {
-		p.codex.ClearTurnState(sel.AccountID, &sess, &meta)
+	// 推进/退休（§3.3 顺序契约）：relay 读到终态 → Close（连接同步归还进 idle 表）
+	// → Step（退休此刻才看得见那条连接）→ finish。提前 Close / 取消 / 读取失败
+	// **不推进不退休**；failover 重试因此不可能"先推进再失败"。
+	if err == nil && usageTaken {
+		sel.StepIdentity()
 	}
 	if ttft != nil {
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)

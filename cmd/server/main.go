@@ -266,11 +266,20 @@ func main() {
 			logx.Int("http2_shards", cfg.Upstream.HTTP2Shards))
 	}
 	egressPool := egress.NewPool(hc)
+	// codex 适配层在调度器之后构造（它依赖调度器做失效上报），而会话池的线程退休
+	// 要走适配层的 client 表——所以这里绑定一个晚绑定 closure：退休只在 reload /
+	// 请求收尾时发生，那时装配已完成；nil 检查兜住启动早期的 reload。
+	var codexAdapter *sdkbridge.Codex
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,
 		StalenessProbe: repos.Groups,
 		RotatePolicy:   codexsdk.DefaultRotatePolicy(),
 		Egress:         egressPool,
+		RetireThread: func(accountID int64, threadKey string) {
+			if codexAdapter != nil {
+				codexAdapter.RetireThread(accountID, threadKey)
+			}
+		},
 	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
 	// 启动期装配门（spec §4.7）：代理表里有启用条目、而调度器没拿到池 ⇒ 起不来。
 	// 热路径不写"代理是否可用"的分支，装配缺失只能在这里暴露；否则后果是绑了
@@ -582,7 +591,7 @@ func main() {
 	// Latch/Publisher 必须装配：SDK 失效链据此走**围栏路径**（先锁存 → 以身份
 	// 代际 K 为 guard 的 CAS 落库 → 组级 NOTIFY）；缺任一项即退化为只写 failed_at
 	// 的简化路径——判决不再与"身份是否被授权变更"对齐，且对端只能靠周期兜底收敛。
-	codexAdapter := sdkbridge.NewCodex(sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
+	codexAdapter = sdkbridge.NewCodex(sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
 		Store:     repos.Accounts,
 		Failer:    sched,
 		Log:       log,
@@ -591,7 +600,9 @@ func main() {
 	}), egressPool, sdkbridge.RotationDeps{
 		Store:              repos.AccountExts,
 		InvalidateSnapshot: sched.InvalidateAccount,
-		Log:                log,
+		// 凭据替换（credSig 变）⇒ 该账号全部会话的 ts 作废（旧 ts 属旧 auth owner）。
+		ClearTurnStates: sched.ClearTurnStates,
+		Log:             log,
 	})
 	// quality-sync lane（intelligent-routing）：500ms Redis 当前分钟绝对
 	// 快照发布 + 5s PG quality/flow UPSERT。单实例一个串行 loop（worker.GoLoop

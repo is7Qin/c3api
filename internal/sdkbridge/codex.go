@@ -31,11 +31,14 @@ type Codex struct {
 	failure FailureHandler        // 统一失效回调；nil = no-op（测试/未装配）
 	rotate  RotationStore         // 轮转回写落库面；nil = 不落库（测试/未装配）
 	inval   func(accountID int64) // 回写后失效账号快照条目（下个会话重载新凭据）；nil = 不失效
-	log     *logx.Logger          // 回写/失效错误日志；nil = 不记
+	// clearTurnStates 凭据替换（条目重建且 credSig 变）时清该账号全部会话的 ts
+	// （scheduler.ClearTurnStates 实现；nil = 不接）。
+	clearTurnStates func(accountID int64)
+	log             *logx.Logger // 回写/失效错误日志；nil = 不记
 	// egress 出口池（构造期注入；M3 取代旧的单个 http.RoundTripper 字段）。
 	// SDK 客户端的 transport 是**构造期**参数，所以出口只能按账号在 clientFor
 	// 构造时注入（`eg.HTTP.Transport`——与 HTTP 面共享同一连接池）；同一账号
-	// 不同出口靠 identityKey 的 proxy 维分桶。nil 且调用面要求出口 ⇒ 明确 error
+	// 不同出口靠 clientKey 的 proxy 维分桶。nil 且调用面要求出口 ⇒ 明确 error
 	// （errEgressNotWired），绝不静默退回底座。
 	egress *egress.Pool
 	// usage 额度快照拉取的实例级节流与时间参数（S8——原包级全局挂实例，
@@ -70,26 +73,28 @@ type RotationDeps struct {
 	// InvalidateSnapshot 回写成功后失效调度器 AccountExt 内存快照对应条目
 	// （下个会话重载新凭据）；nil = 不失效（测试/未装配）。
 	InvalidateSnapshot func(accountID int64)
+	// ClearTurnStates 凭据**替换**（外部 credSig 变化 ⇒ 条目重建）时让该账号全部
+	// 会话的 turn-state 失效（scheduler.ClearTurnStates 实现；nil = 不接）。
+	//
+	// owner 判定就是「条目被替换」这件事本身——token 轮转回调不重建条目，因此
+	// 不在这里清（§3.2 凭据替换）。
+	ClearTurnStates func(accountID int64)
 	// Log 回写/失效错误日志（旋转低频事件，错误恒 Warn 记一条）；nil = 不记。
 	Log *logx.Logger
 }
 
 // (SetRotationDeps setter deleted by hygiene: same reason — see NewCodex.)
 
-// codexHTTPClientCacheMax 是账号级 HTTPClient 多条目缓存的 LRU 上限。身份签名
-// 含 thread/window，随槽窗口推进/线程退休而变 ⇒ 无界会随流量持续增长；按 LRU
-// 限幅（超限驱逐最久未用条目），保证内存有界。
-const codexHTTPClientCacheMax = 64
-
-// codexWSConnCacheCapacity 是每个 HTTPClient 保留的 WS 空闲连接容量（G6）。
+// codexWSConnCacheCapacity 是每个 HTTPClient 的空闲 WS 连接**总数上限**（仅上限、
+// 不预分配；SDK 的 connCache 按需 append）。
 //
-// 容量 2 = 两条取数路径各一条：SDK 的连接身份 = readLimit（流式 64MiB / 聚合
-// 16MiB），所以同一条 HTTPClient 上流式与非流式各占一格；给 1 会让交替请求互相
-// 挤掉，给更多只是白留空闲 socket。
+// 取 2 × 会话池容量上界（scheduler.maxIdentityPoolSlots = 1024）：一条 client 上
+// 每个 thread 至多两条（流式 64MiB / 聚合 16MiB 各一），而容量是构造期参数、K 随
+// reload 变化——按当前 K 配会让「改大 K」之后仍按旧上限淘汰。
 //
 // **必须显式注入**：SDK 默认 0 = 不复用（每请求一条新连接）——不接这一行，"跨轮
 // 复用"整条链就是零收益（spec GAP-7）。
-const codexWSConnCacheCapacity = 2
+const codexWSConnCacheCapacity = 2 * 1024
 
 // codexEntry 单账号缓存条目：Auth（HTTP/WS 双面共享——at 缓存/单飞/rt 轮换
 // 在 SDK Auth 内）+ HTTPClient 多条目缓存（按身份签名，nil = 未构造）+ 重建
@@ -100,27 +105,15 @@ type codexEntry struct {
 	accountID int64
 	auth      codexsdk.Auth
 	sig       credKey // 凭据签名（外部凭据变更 → 重建）
-	// clients HTTP 面客户端缓存：按伪装身份键（identitySig）分条目，每个
-	// 槽身份各持一份客户端，仅轮换/变化时重建单条。键空间 = 身份键
-	// （含 thread/window，随槽窗口推进/线程退休而变）——**必须限幅**：以
-	// codexHTTPClientCacheMax 为上限的 LRU（clientsLRU 最近使用序，末尾最新），
-	// 超限驱逐最久未用条目，杜绝无界增长。clientsLRU 仅 a.mu 下读写。
+	// clients HTTP 面客户端缓存：键 = **纯传输维度**（出口 × responses 传输）——
+	// 两者都是 SDK 的构造期参数。身份不在键里：身份是请求数据（§3.1），所以同一条
+	// client 服务该账号全部会话，条目数有界（出口数 × 2 条传输），不需要 LRU。
 	//
-	// **turn-state 不在键里，也不在条目上**（G1/S1）：客户端构造期不再承载 ts，
-	// 所以"ts 更新"不再是重建理由——同一身份一条客户端跨轮存活。
-	clients    map[identityKey]*codexsdk.HTTPClient
-	clientsLRU []identityKey
-	// turnStates 会话级 turn-state 槽（G3）：键 = sessionKey（installation|
-	// session|thread，与 identityKey 同源），值 = 该会话当前生效的 ts。
-	//
-	// 为什么放在条目里而不是包级：条目本身按账号分桶，槽再按会话分键 ⇒ 既不会
-	// 跨账号串台，也不会同账号多 thread 互相覆盖（旧的账号级单值被 A 会话的签发
-	// 值盖掉，B 会话下一次请求就带上别人的 ts）。读写都不取 a.mu——读是 SDK
-	// provider 的**每请求**热路径（spec G2 明令不得新增阻塞锁），靠写时复制快照；
-	// 见 turnStateSlots。
-	turnStates turnStateSlots
-	expiresAt  *time.Time
-	reported   atomic.Bool
+	// turn-state 也不在条目上：存储属会话（scheduler.codexSession），经 Identity.Sink
+	// 写入、经 Identity.TurnState 读出。
+	clients   map[clientKey]*codexsdk.HTTPClient
+	expiresAt *time.Time
+	reported  atomic.Bool
 	// usage 额度快照缓存（GetUsageSnapshot 5min TTL）+ 失败冷却起点
 	// （60s——gate Major 2）：重建（sig 变化）随新条目一并清除；usageErr 只存
 	// 分类哨兵（ErrAuthExpired/ErrUpstream），不缓存错误体。
@@ -138,15 +131,16 @@ type codexEntry struct {
 // 三者皆为构造期依赖，一次给齐——构造后不存在“半装配”的 Codex。
 func NewCodex(failure FailureHandler, egressPool *egress.Pool, rotation RotationDeps) *Codex {
 	return &Codex{
-		failure:       failure,
-		egress:        egressPool,
-		rotate:        rotation.Store,
-		inval:         rotation.InvalidateSnapshot,
-		log:           rotation.Log,
-		entries:       make(map[int64]*codexEntry),
-		usageSem:      make(chan struct{}, usageFetchConcurrency),
-		usageTTL:      defaultUsageSnapshotTTL,
-		usageCooldown: defaultUsageCooldown,
+		failure:         failure,
+		egress:          egressPool,
+		rotate:          rotation.Store,
+		inval:           rotation.InvalidateSnapshot,
+		clearTurnStates: rotation.ClearTurnStates,
+		log:             rotation.Log,
+		entries:         make(map[int64]*codexEntry),
+		usageSem:        make(chan struct{}, usageFetchConcurrency),
+		usageTTL:        defaultUsageSnapshotTTL,
+		usageCooldown:   defaultUsageCooldown,
 	}
 }
 
@@ -187,7 +181,7 @@ func (a *Codex) DirectEgress() *egress.Client {
 // 不包装，errors.As 可命中）；RefreshError 可重试不上报。Codex 端点归 SDK 官方默认。
 func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, p *domain.ImageGenParams) (*domain.ImageResponse, error) {
 	// 生图不走 responses 面（spec §5）：传输维恒零值 ⇒ 键与改动前同条目。
-	e, client, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportDefault)
+	e, client, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	if err != nil {
 		return nil, err
 	}
@@ -207,7 +201,7 @@ func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredentia
 // 类复用；fn 回调错误经 translateError 原样透传——非 SDK 错误不过滤）。
 func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, p *domain.ImageGenParams, fn func(domain.ImageStreamEvent) error) error {
 	// 传输维恒零值（同 GenerateImage：生图不经 responses 面）。
-	e, client, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportDefault)
+	e, client, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	if err != nil {
 		return err
 	}
@@ -245,36 +239,27 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 }
 
 // Responses 非流式 responses 合成调用（§1）：cred → 缓存取 HTTPClient
-// （clientFor——机制复用）→ c.Responses(ctx, payload)（SDK 合成非流式——
+// （clientFor——机制复用）→ c.Responses(ctx, payload, id)（SDK 合成非流式——
 // 内部无条件 stream:true + SSE 事件聚合重组完整响应体；网关以非流式语义消费，
-// 原样转发；网关从合成体顶层 usage 计费）。sess/meta 为 HTTP 面伪装身份
-// client_metadata 注入键集对齐真实 codex；nil = 未配置——SDK 仍恒带 turn_id
-// clientTurnState 为客户端请求自带 x-codex-turn-state（透传优先——客户端自管）：
-// 非空即写入该会话槽（下一次 provider 求值就带上它），空则交给槽里已有的值。
-// 上游签发值（握手头/响应头/WS 事件）由 SDK observer 写同一个槽，**不在返回后
-// 回写**（那会把事件签发的新值倒退成请求开始时的快照）。两处写入都不涉及客户端
-// 重建（G1）。
+// 原样转发；网关从合成体顶层 usage 计费）。
+//
+// id 是**请求级身份**（§2.1）：Session/Meta 进握手头与 client_metadata、TurnState
+// 是本次要带的 ts、Sink 是签发值落点。上游签发值（握手头/响应头/事件）只经 Sink
+// 写入会话——本函数既不在请求前改 ts，也不在返回后回写：那是把事件签发的新值
+// 倒退成请求开始时的快照。
+//
 // 错误翻译同 GenerateImage（translateError——SDK *HTTPError → 信封；fatal 五类
 // 统一回调双源去重；RefreshError/网络原样）。transport 为出站传输开关（spec §5：
 // 构造期参数 ⇒ 走 clientFor 的键维度；映射点只有 codexTransport 一处）。
-func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string, transport domain.CodexResponsesTransport) (*codexsdk.HTTPResponse, error) {
-	key := sessionKeyOf(sess, meta)
-	e, client, err := a.clientFor(cred, sess, meta, eg, transport)
+func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*codexsdk.HTTPResponse, error) {
+	e, client, err := a.clientFor(cred, eg, transport)
 	if err != nil {
 		return nil, err
 	}
-	// 客户端自带值优先（透传）：写在请求之前——provider 是每请求求值的，所以
-	// "更新 ts"不需要重建 client（G1/G2 的全部意义）。空值不覆盖槽里的值。
-	captureTurnState(e, key, clientTurnState)
-	resp, err := client.Responses(ctx, payload)
+	resp, err := client.Responses(ctx, payload, id)
 	if err != nil {
 		return nil, a.translateError(e, err)
 	}
-	// **不**回写 resp.TurnState：它是**请求开始时的快照**（WS 臂 = 握手签发值，
-	// HTTP 臂 = 本次响应头）。WS 臂在取帧过程中可能已被 `response.metadata` 事件
-	// 更新到更新的值——返回后再用旧快照回写会把槽**倒退**（下一步续传就重放旧值）。
-	// 上游签发值的唯一写入口是 observer（握手响应头 / HTTP 响应头 / WS 事件三处
-	// 共用 SDK 的 captureTurnStateValue），它在本函数返回前已经写完了。
 	return resp, nil
 }
 
@@ -287,7 +272,7 @@ func (a *Codex) Responses(ctx context.Context, cred *domain.AccountCredential, e
 // RefreshError 分类复用）。
 func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte) (*codexsdk.HTTPResponse, error) {
 	// 传输维恒零值（Search 不走 responses 面——键与改动前同条目）。
-	e, client, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportDefault)
+	e, client, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	if err != nil {
 		return nil, err
 	}
@@ -299,28 +284,23 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *
 }
 
 // StreamBody 流式 responses **raw body** 透传：cred → 缓存取 HTTPClient →
-// c.StreamBody(ctx, payload) 返回**未关闭**的 *http.Response（body 归调用方，
-// proxy 侧经 sserelay.Relay 消费后**恰好关闭一次**）。sess/meta/clientTurnState
-// 语义同 Responses（伪装身份 + 透传优先）。**本方法不写响应签发值**：本次
-// resp.Header 的 ts 与流式取帧期间 `response.metadata` 事件的新值都由 SDK 的
-// observer 写槽（后者才是更新的值；回写响应头只会把新值倒退成快照）。
+// c.StreamBody(ctx, payload, id) 返回**未关闭**的 *http.Response（body 归调用方，
+// proxy 侧经 sserelay.Relay 消费后**恰好关闭一次**）。身份语义同 Responses
+// （TurnState 是本次要带的 ts、Sink 是签发值落点）。**本方法不写签发值**：本次
+// resp.Header 的 ts 与流式取帧期间 `response.metadata` 事件的新值都由 SDK 经 Sink
+// 写会话（后者才是更新的值；回写响应头只会把新值倒退成快照）。
 // 错误翻译同
 // Responses（translateError——信封/fatal 统一回调双源去重/RefreshError 分类复用）。
 // transport 语义同 Responses（构造期参数 ⇒ 换值换 client 条目）。
-func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTurnState string, transport domain.CodexResponsesTransport) (*http.Response, error) {
-	key := sessionKeyOf(sess, meta)
-	e, client, err := a.clientFor(cred, sess, meta, eg, transport)
+func (a *Codex) StreamBody(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, payload []byte, id codexsdk.Identity, transport domain.CodexResponsesTransport) (*http.Response, error) {
+	e, client, err := a.clientFor(cred, eg, transport)
 	if err != nil {
 		return nil, err
 	}
-	captureTurnState(e, key, clientTurnState)
-	resp, err := client.StreamBody(ctx, payload)
+	resp, err := client.StreamBody(ctx, payload, id)
 	if err != nil {
 		return nil, a.translateError(e, err)
 	}
-	// **不**回写 resp.Header 的 ts：同 Responses——响应头是本请求开始时的快照，
-	// 而流式取帧期间的事件可能已签发更新的值；回写旧快照只会倒退。签发值的唯一
-	// 写入口是 observer（SDK 在 HTTP 响应头 / 握手 / 事件三处回调）。
 	return resp, nil
 }
 
@@ -352,15 +332,22 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 	// 锁内摘除、锁外关闭（G4）：覆盖旧条目时它名下的 HTTPClient 全部弃用，其中
 	// 的 WS 空闲连接必须主动关（否则旧 socket 一直挂在上游，直到 TTL 到期）。
 	var dropped []*codexsdk.HTTPClient
+	replaced := false
 	if err == nil {
 		e.auth = auth
 		if old != nil {
 			dropped = old.takeClients()
+			replaced = old.sig != sig
 		}
 		a.entries[cred.AccountID] = e
 	}
 	a.mu.Unlock()
 	closeWSIdleConns(dropped)
+	if replaced && a.clearTurnStates != nil {
+		// 凭据**替换**（sig 变）⇒ 该账号全部会话的 ts 作废：旧 ts 属于旧 auth owner，
+		// 带进新 owner 的请求就是串台（§3.2）。token 轮转不重建条目，所以不在此列。
+		a.clearTurnStates(cred.AccountID)
+	}
 	if err != nil {
 		// 构造失败（空 rt 等）：锁外上报（reportFatal → evict 需取
 		// a.mu——锁内调用即重入死锁；sync.Mutex 不可重入）。旧条目仍在表里
@@ -386,23 +373,42 @@ func codexTransport(t domain.CodexResponsesTransport) codexsdk.Transport {
 	return codexsdk.TransportHTTP
 }
 
-// clientFor entryFor + HTTPClient 多条目懒构造（GenerateImage/Stream/Responses/
-// Search/GetUsage 面——键 = identitySig，同身份复用连接池；变化只重建该条）。
-// sess/meta 为 HTTP 面伪装身份（SDK 注入点读构造期 opts（http.go
-// injectResponsesClientMetadata），须随构造下发；nil = 未配置）。
+// clientKey 是 HTTPClient 缓存的**纯传输**维度：出口 × responses 传输。两者都是
+// SDK 的构造期参数（换代理/换传输后复用旧 client = 请求仍走旧线路）。身份不在这里
+// ——身份是请求数据（§3.1），同一条 client 服务该账号全部会话。
+type clientKey struct {
+	// proxy 出口维（spec-proxy-pool §4.6.3）：= 本次出口的 Spec 摘要，直连（零值
+	// Spec）为全零。
+	proxy [16]byte
+	// transport responses 出站传输（spec §5）；取值面 = CodexResponsesTransport.Key()，
+	// 默认面取零值 ⇒ 只走 HTTP 的部署键形状与改动前一致。
+	transport string
+}
+
+// egressDigest 出口摘要（clientKey 的 proxy 维）：直连（零值 Spec）→ 全零，
+// 代理 → `Spec.Key()`。不直接用 `Spec.Key()` 的原因是它连零值也给一个非零哈希，
+// 那会让"零代理部署的缓存键与 M3 之前逐字节一致"这条零回归承诺失效。
+func egressDigest(eg *egress.Client) [16]byte {
+	if eg == nil || eg.Spec == (egress.Spec{}) {
+		return [16]byte{}
+	}
+	return eg.Spec.Key()
+}
+
+// clientFor entryFor + HTTPClient 懒构造（GenerateImage/Stream/Responses/Search/
+// GetUsage 面——键 = clientKey，同传输组合复用连接池）。
 //
-// **turn-state 不再是构造期参数**（G1）：本次请求带什么由 SDK 每请求回调
-// WithTurnStateProvider 决定（G2，provider 读该会话槽），所以"ts 更新"既不需要
-// 重建 client、也不再构成缓存命中/未命中的判据——命中判据只剩 `c == nil`。
-// 这也是 S1（连接身份去 ts）在网关侧成立的前提：client 跨轮存活，连接才可能
-// 跨轮存活。
+// 身份与 turn-state 都不是构造期参数（§3.1）：本次请求带什么由 Identity 决定，
+// 签发值由 Sink 落到会话——所以"ts 更新"不构成重建理由，同一条 client 跨轮存活。
+// 这也是 S1（连接身份去 ts）在网关侧成立的前提：client 跨轮存活，连接才可能跨轮
+// 存活。
 //
 // NewHTTPClient 为纯构造（无 I/O 无 error）；构造/读取全程持 a.mu。返回选中的
-// 客户端供调用面直用（多条目后不再有单一 e.client）。
+// 客户端供调用面直用。
 //
 // transport 为 responses 出站传输（spec §5）：SDK 侧同样是**构造期**参数，不入
-// 键就会"Selection 说 ws、请求仍走 HTTP POST"；键取值面只有 transport.Key()。
-func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta, eg *egress.Client, transport domain.CodexResponsesTransport) (*codexEntry, *codexsdk.HTTPClient, error) {
+// 键就会"Selection 说 ws、请求仍走 HTTP POST"。
+func (a *Codex) clientFor(cred *domain.AccountCredential, eg *egress.Client, transport domain.CodexResponsesTransport) (*codexEntry, *codexsdk.HTTPClient, error) {
 	eg, err := a.resolveEgress(eg)
 	if err != nil {
 		return nil, nil, err
@@ -411,68 +417,30 @@ func (a *Codex) clientFor(cred *domain.AccountCredential, sess *codexsdk.Session
 	if err != nil {
 		return nil, nil, err
 	}
-	sig := identitySig(sess, meta)
-	// 出口维（spec §4.6）：SDK 客户端的 transport 是**构造期**参数，换代理后
-	// 复用旧 client = 请求仍走旧线；所以同一伪装身份在不同出口上必须是不同条目。
-	// 直连（Spec 零值）⇒ 零值摘要 ⇒ 键与 M3 之前完全一致（零代理零回归）。
-	sig.proxy = egressDigest(eg)
-	// 传输维（spec §5）：同上——构造期参数，不同传输必须是不同条目。默认面
-	// 取 Key() 零值 ⇒ 只走 HTTP 的部署键形状与改动前逐字节一致。
-	sig.transport = transport.Key()
-	// 会话键在**锁外**算好（provider/observer 闭包捕获它；纯字符串拼接，无锁）。
-	key := sessionKeyOf(sess, meta)
+	key := clientKey{proxy: egressDigest(eg), transport: transport.Key()}
 	a.mu.Lock()
 	if e.clients == nil {
-		e.clients = make(map[identityKey]*codexsdk.HTTPClient)
+		e.clients = make(map[clientKey]*codexsdk.HTTPClient)
 	}
-	c := e.clients[sig]
-	var dropped []*codexsdk.HTTPClient
+	c := e.clients[key]
 	if c == nil {
-		// opts 仅在真正构造（miss）时组装：缓存命中（常态）跳过
-		// WithTransport/WithWSConnCache/identityOpts 的闭包分配。
-		var opts []codexsdk.Option
-		// 出口 transport（spec §4.6）：eg 恒非 nil（resolveEgress 保证），直连时
-		// 就是底座 transport、与 HTTP 面共享同一连接池。底座是裸 client
-		// （`Transport == nil`）时 WithTransport(nil) 等价于"不加 Transport"——
-		// codex-sdk/http.go:448 的 `if c.opts.transport != nil` 就是全部依赖，
-		// 所以这里恒注入、不写分支（测试路径也走这一条，与生产同构）。
-		opts = append(opts, codexsdk.WithTransport(eg.HTTP.Transport))
-		// responses 出站传输（spec §5）：同样恒注入。WithResponsesTransport
-		// (TransportHTTP) 与"不注入"等价，而不写 if 分支的原因正是要让"注入点
-		// 被删掉"这种变异在组合用例里现红（删了它，ws 臂会静默跑 HTTP）。
-		opts = append(opts, codexsdk.WithResponsesTransport(codexTransport(transport)))
-		// G6：**必须**开 WS 连接复用。SDK 默认 0 = 每请求一条新连接；不接这一行，
-		// S1（连接身份去 ts）带来的"可复用"就只是潜力，实际上零复用。
-		opts = append(opts, codexsdk.WithWSConnCache(codexWSConnCacheCapacity))
-		// G2：turn-state 的两个方向。provider 每请求求值（读会话槽，写时复制快照
-		// + 原子读，**不取任何锁**）；observer 在 SDK 的三个捕获点（握手响应头 /
-		// HTTP 响应头 / WS 事件）同步回调，只做一次原子写（写时才复制 map）。
-		// 两者都只捕获 e/key，不持有 client 自身——丢弃该 client 不会留下环。
-		opts = append(opts,
-			codexsdk.WithTurnStateProvider(func() string { return e.turnStates.load(key) }),
-			codexsdk.WithTurnStateObserver(func(ts string) { e.turnStates.store(key, ts) }),
+		c = codexsdk.NewHTTPClient(e.auth,
+			// 出口 transport（spec §4.6）：eg 恒非 nil（resolveEgress 保证），直连时
+			// 就是底座 transport、与 HTTP 面共享同一连接池。底座是裸 client
+			// （`Transport == nil`）时 WithTransport(nil) 等价于"不加 Transport"——
+			// 所以这里恒注入、不写分支（测试路径也走这一条，与生产同构）。
+			codexsdk.WithTransport(eg.HTTP.Transport),
+			// responses 出站传输（spec §5）：同样恒注入。WithResponsesTransport
+			// (TransportHTTP) 与"不注入"等价，而不写 if 分支的原因正是要让"注入点
+			// 被删掉"这种变异在组合用例里现红（删了它，ws 臂会静默跑 HTTP）。
+			codexsdk.WithResponsesTransport(codexTransport(transport)),
+			// G6：**必须**开 WS 连接复用。SDK 默认 0 = 每请求一条新连接；不接这一行，
+			// S1（连接身份去 ts）带来的"可复用"就只是潜力，实际上零复用。
+			codexsdk.WithWSConnCache(codexWSConnCacheCapacity),
 		)
-		opts = append(opts, identityOpts(sess, meta)...)
-		c = codexsdk.NewHTTPClient(e.auth, opts...)
-		e.clients[sig] = c
-	}
-	// LRU 触碰（sig 置最近使用）+ 超限驱逐最久未用条目。
-	if len(e.clientsLRU) > 0 && e.clientsLRU[len(e.clientsLRU)-1] == sig {
-		// 已在末尾，无需移动。
-	} else {
-		e.clientsLRU = moveToEnd(e.clientsLRU, sig)
-	}
-	for len(e.clientsLRU) > codexHTTPClientCacheMax {
-		old := e.clientsLRU[0]
-		e.clientsLRU = e.clientsLRU[1:]
-		if evicted := e.clients[old]; evicted != nil {
-			delete(e.clients, old)
-			dropped = append(dropped, evicted)
-		}
+		e.clients[key] = c
 	}
 	a.mu.Unlock()
-	// G4：被驱逐条目的 WS 空闲连接在**锁外**关闭（终止会等写闸，锁内会卡住整表）。
-	closeWSIdleConns(dropped)
 	return e, c, nil
 }
 
@@ -488,55 +456,48 @@ func (e *codexEntry) takeClients() []*codexsdk.HTTPClient {
 		out = append(out, c)
 		delete(e.clients, k)
 	}
-	e.clientsLRU = nil
 	return out
 }
 
-// moveToEnd 把 sig 移到 LRU 序末尾（最近使用）；不在序中则追加。均在 a.mu 下调用。
-func moveToEnd(lru []identityKey, sig identityKey) []identityKey {
-	for i, s := range lru {
-		if s == sig {
-			copy(lru[i:], lru[i+1:])
-			lru[len(lru)-1] = sig
-			return lru
-		}
-	}
-	return append(lru, sig)
-}
-
-// captureTurnState 客户端自带 ts → **会话槽**回写（非空才覆盖；空 = 不改，
-// 重复写幂等）。键 = sessionKey（G3），粒度 = 会话。
+// RetireThread 退役账号某线程的空闲 WS 连接（线程退休 / 重载丢槽的唯一出口）。
 //
-// 它现在只服务一条路径：**客户端透传值**（请求前写入，见 Responses/StreamBody）。
-// 上游签发值**不**走这里——那是 SDK observer 的职责（握手/HTTP 响应头/WS 事件
-// 三处共用同一写入口，直接 e.turnStates.store）。曾经"返回后回写 resp.TurnState"
-// 的写法已删除：那是请求开始时的快照，会把取帧期间事件签发的新值倒退成旧值。
-func captureTurnState(e *codexEntry, key, ts string) {
-	if ts == "" || e == nil {
+// 前置条件由会话池保证：调用时该 threadKey 不可能有在飞 exchange（会话独占租借，
+// 退休发生在该请求 `Close` 归还之后），所以只需摘 idle。摘表与 terminate 都在
+// `RetireThread` 内部完成，本方法只负责在**锁外**把整表快照出来再逐条调用。
+func (a *Codex) RetireThread(accountID int64, threadKey string) {
+	if a == nil || threadKey == "" {
 		return
 	}
-	e.turnStates.store(key, ts)
-}
-
-// ClearTurnState 轮结束清除该会话的 turn-state（网关在响应含轮结束信号时调用：
-// 跨轮不得回传）。条目/会话不存在 = no-op。
-//
-// 签名带 sess/meta（G3）而不是 accountID：槽是会话级的，光有账号无法定位键——
-// 这也是本改动最容易被漏掉的一处（旧签名能编过，但会清掉"同账号某个会话"而不是
-// 调用方那个会话）。
-//
-// **只清 ts，不动连接**（G5）：S1 之后连接身份不含 ts，且客户端不再因 ts 变化重建
-// ⇒ 清除之后同一会话的下一次请求仍走同一条 WS 连接（只是帧里不带 ts）。旧实现
-// "清除 → 下次请求生效值变了 → 重建 client"的连锁在这里彻底断开。
-func (a *Codex) ClearTurnState(accountID int64, sess *codexsdk.Session, meta *codexsdk.CodexMeta) {
-	key := sessionKeyOf(sess, meta)
 	a.mu.Lock()
 	e := a.entries[accountID]
-	a.mu.Unlock()
-	if e == nil {
-		return // 未构造/已失效剔除：无槽可清
+	var clients []*codexsdk.HTTPClient
+	if e != nil {
+		clients = make([]*codexsdk.HTTPClient, 0, len(e.clients))
+		for _, c := range e.clients {
+			clients = append(clients, c)
+		}
 	}
-	e.turnStates.store(key, "")
+	a.mu.Unlock()
+	for _, c := range clients {
+		c.RetireThread(threadKey)
+	}
+}
+
+// closeWSIdleConns 关闭一批客户端各自的 **WS** 空闲连接（G4）。
+//
+// 调用纪律：**锁外**调用。SDK 的 clear() 会逐条 terminate，可能在写闸上等待；
+// 在 a.mu 内调用会把整个 client 表卡住（spec §3.1-S4）。
+//
+// 只用 CloseWSIdleConnections 而不是 CloseIdleConnections：后者会对
+// `client.Transport.(*http.Transport)` 断言，然后清空其空闲池——网关出口是
+// `*httpx.ShardedTransport`（断言失败 ⇒ 静默 no-op，丢了 client 却关不掉连接），
+// 而一旦哪天出口是裸 `*http.Transport` 又会打掉全站 h2 连接池（spec §7-5）。
+func closeWSIdleConns(clients []*codexsdk.HTTPClient) {
+	for _, c := range clients {
+		if c != nil {
+			c.CloseWSIdleConnections()
+		}
+	}
 }
 
 // —— codex 额度快照（GetUsageSnapshot——TTL 缓存 + 有界并发 + 失败冷却） ——
@@ -591,7 +552,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	if s, ok := a.snapshotCachedFor(cred.AccountID); ok {
 		return s, nil
 	}
-	e, client, err := a.clientFor(cred, nil, nil, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	e, client, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	if err != nil {
 		// 入口错误分类：oauth 缺 rt 凭据不完整（errCredentialIncomplete）
 		// → 凭据失效语义 ErrAuthExpired（不落 default 归 ErrUpstream）。
@@ -730,91 +691,12 @@ func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
 	return s
 }
 
-// identityOpts 伪装身份 → SDK Option（WithSession/WithCodexMeta——
-// SDK HTTP 面注入键集对齐真实 codex client_metadata()；nil = 未配置 = 现状
-// 零注入面，SDK 仍恒带 turn_id——spec）。
-func identityOpts(sess *codexsdk.Session, meta *codexsdk.CodexMeta) []codexsdk.Option {
-	var opts []codexsdk.Option
-	if sess != nil {
-		opts = append(opts, codexsdk.WithSession(*sess))
-	}
-	if meta != nil {
-		opts = append(opts, codexsdk.WithCodexMeta(*meta))
-	}
-	return opts
-}
-
-// identityKey 是伪装身份的**可比较值键**，取代原先用 \x00/\x1e 拼串当缓存键的
-// 做法：具名 struct 用 `==` 逐字段比较，不再依赖「身份值不含控制字符」这一脆弱
-// 约定（一旦被违反即碰撞）。字段名区分 meta/session 两段，两侧同名字段不串键；
-// nil meta/sess 与全空同键（零值）——proxy 无槽路径与未配置路径落同一键，不引发
-// 无谓重建。
-type identityKey struct {
-	// meta 段（meta == nil → 全零）
-	installationID string
-	sessionID      string
-	threadID       string
-	windowID       string
-	subagent       string
-	parentThreadID string
-	parentTurnID   string
-	turnMetadata   string
-	// session 段（sess == nil → 全零）
-	sessSessionID       string
-	sessThreadID        string
-	sessWindowID        string
-	sessClientRequestID string
-	// proxy 出口维（spec-proxy-pool §4.6.3）：= 本次出口的 Spec 摘要，直连（零值
-	// Spec）为全零。**同身份不同出口必须是不同 client**——SDK 客户端的 transport
-	// 是构造期参数，换代理后复用旧条目就是"配置换了、连接没换"。HTTP 面靠
-	// planKey/payloadKey 达成的同一件事，在这一面靠这 16 字节对齐。
-	proxy [16]byte
-	// transport 出站传输维（spec §5）：SDK 客户端的 responses 传输是**构造期**
-	// 参数 ⇒ 同身份不同传输必须是不同 client，否则"模板改成 ws、client 命中旧条目"
-	// 会让 Selection 说 ws 而请求仍走 HTTP POST。默认面取零值 ⇒ 只走 HTTP 的部署
-	// 键形状与改动前逐字节一致（取值面 = CodexResponsesTransport.Key()）。
-	transport string
-}
-
-// egressDigest 出口摘要（identityKey 的 proxy 维）：直连（零值 Spec）→ 全零，
-// 代理 → `Spec.Key()`。不直接用 `Spec.Key()` 的原因是它连零值也给一个非零哈希，
-// 那会让"零代理部署的缓存键与 M3 之前逐字节一致"这条零回归承诺失效。
-func egressDigest(eg *egress.Client) [16]byte {
-	if eg == nil || eg.Spec == (egress.Spec{}) {
-		return [16]byte{}
-	}
-	return eg.Spec.Key()
-}
-
-// identitySig 伪装身份键（客户端重建判定——HTTPClient 构造期 opts 承载，
-// 变化必须重建才能生效）。nil 与全空等价（均不注入 → 零值键）——proxy 无槽
-// 路径与测试/未配置路径（nil）同键，不引发无谓重建。
-func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) identityKey {
-	var k identityKey
-	if meta != nil {
-		k.installationID = meta.InstallationID
-		k.sessionID = meta.SessionID
-		k.threadID = meta.ThreadID
-		k.windowID = meta.WindowID
-		k.subagent = meta.Subagent
-		k.parentThreadID = meta.ParentThreadID
-		k.parentTurnID = meta.ParentTurnID
-		k.turnMetadata = meta.TurnMetadata
-	}
-	if sess != nil {
-		k.sessSessionID = sess.SessionID
-		k.sessThreadID = sess.ThreadID
-		k.sessWindowID = sess.WindowID
-		k.sessClientRequestID = sess.ClientRequestID
-	}
-	return k
-}
-
 // Dial 建立到上游的 Responses WebSocket 连接（§2 接线）：cred → Auth 缓存
 // 取（entryFor——账号级长存：at 缓存/单飞/rt 轮换在 Auth 内，与 HTTP 面共享；
-// WS 连接本身 per-请求不缓存）→ codexsdk.Dial(ctx, auth, opts...)。opts 由
-// 网关侧组装（codex_responses_ws.go——伪装四元组 / WithPingInterval(0) /
-// 透传头；SDK 侧按 codex 形状归一 WS 帧）；端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses，
+// WS 连接本身 per-请求不缓存）→ codexsdk.Dial(ctx, auth, id, opts...)。id 是本次
+// 连接的身份（握手头 + 帧内 metadata + ts 落点）；opts 由网关侧组装
+// （codex_responses_ws.go——WithPingInterval(0) 等；SDK 侧按 codex 形状归一 WS
+// 帧）；端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses，
 // transport 观察为 https）。错误翻译（translateDialError）：
 //   - *DialError → 信封包装（EnvelopeError——StatusCode()/RawJSON()/Unwrap
 //     链，Refreshed 语义保留：已轮转重连一次仍失败 → 网关避免双份刷新）
@@ -822,7 +704,7 @@ func identitySig(sess *codexsdk.Session, meta *codexsdk.CodexMeta) identityKey {
 //     DialError）→ translateError 既有双分支：fatal 类（RefreshOAuthError /
 //     AccountDisabledError）→ 统一回调单次上报 + 原样透传（网关"该请求不转
 //     移"，IsFatal 判定）；RefreshError/网络 → 原样透传（网关正常 failover）
-func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, opts ...codexsdk.Option) (*codexsdk.Client, error) {
+func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, id codexsdk.Identity, opts ...codexsdk.Option) (*codexsdk.Client, error) {
 	e, err := a.entryFor(cred)
 	if err != nil {
 		return nil, err
@@ -835,7 +717,7 @@ func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, eg *eg
 	// `HTTPClient.Do`，transport 上的 Proxy 是代理唯一的注入面。eg 恒非 nil；
 	// `Transport == nil`（裸底座）时 WithTransport(nil) 等价 SDK 默认。
 	opts = append(opts, codexsdk.WithTransport(eg.HTTP.Transport))
-	c, err := codexsdk.Dial(ctx, e.auth, opts...)
+	c, err := codexsdk.Dial(ctx, e.auth, id, opts...)
 	if err != nil {
 		return nil, a.translateDialError(e, err)
 	}

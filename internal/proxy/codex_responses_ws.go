@@ -60,9 +60,9 @@ const codexAuthFailedMsg = "codex authorization failed"
 // dialCodexWS 组装一次 codex WS Dial（凭当前请求选中账号 cred）：
 //   - 凭据线：sel.Ext 快照 → AccountCredential 派生（relay 线；热路径零 DB）
 //   - 端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses）
-//   - 伪装四元组（运行时槽身份）：WithSession（握手头 + 帧内 metadata session/
-//     thread/window）+ WithCodexMeta（帧内 x-codex-installation-id——真实客户
-//     端该头不进握手头，仅帧 metadata）
+//   - 会话身份（请求数据）：Dial 收 Identity——握手头 + 帧内 metadata 的
+//     session/thread/window/installation 全部来自本次租借的会话
+//   - 本车道**不使用 ts 重放**（§5.2-3：1:1 透传语义，ts 既不带也不捕获）
 //   - WithPingInterval(0)：禁 SDK 内部心跳（心跳单源——编排层 30s+10s）
 //   - SDK 侧按 codex 形状归一（无条件，不可关）：WS 19 键白名单过滤 + 强制
 //     store:false——违禁顶层键（如 max_output_tokens）被剥、store 恒 false
@@ -79,11 +79,12 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 		return nil, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
-	sess, meta := sel.CodexIdentity()
+	// 入站 WS 车道 1:1 透传：身份随连接传入，但**不走 ts 重放**（§5.2-3）——
+	// 既不发送也不捕获，Sink 为 nil。
+	id := sel.CodexIdentity()
+	id.TurnState, id.Sink = "", nil
 	opts := []codexsdk.Option{
 		codexsdk.WithPingInterval(0), // 心跳单源：编排层 30s+10s 单一所有者
-		codexsdk.WithSession(sess),   // 伪装：握手头 + 帧内 session/thread/window
-		codexsdk.WithCodexMeta(meta), // 伪装：帧内 x-codex-installation-id 等
 	}
 	// 裁决（spec §12）：codex 面不透传任何客户端头，握手头全由 SDK 生成（伪装身份、
 	// beta、session 四元组、Authorization）；此处不喂任何客户端头。
@@ -92,7 +93,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 	// 转移（零新分支；wrapped ctx 取消不向上传播，不落 499）。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
 	defer cancel()
-	return p.codex.Dial(ctx, &cred, sel.Egress, opts...)
+	return p.codex.Dial(ctx, &cred, sel.Egress, id, opts...)
 }
 
 // handleCodexDialError codex WS 拨号失败分类与收尾（返回

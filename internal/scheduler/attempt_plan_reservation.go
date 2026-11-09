@@ -228,10 +228,10 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		// 可用性位在 Routable，出口在 Egress。nil = 直连（失败日志不写 proxy_id）。
 		ProxyID: curAv.acc.ProxyID,
 	}
-	// 认领槽身份（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
-	// 内**，避免后置校验异常路径泄漏槽）。仅 codex 凭据认领（claimIdentitySlot
+	// 认领会话（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
+	// 内**，避免后置校验异常路径泄漏会话）。仅 codex 凭据认领（claimCodexSession
 	// 内判定），非 codex → nil。池注册表取自本视图静态根——与门禁 limit 同源。
-	selected.identitySlot = s.claimIdentitySlot(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType)
+	selected.session, selected.pool = s.claimCodexSession(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType)
 	// 财务上下文随选中固定（供给准入门放行时同一次视图读取捕获；§4.2/§4.6）：
 	// 收尾只按本值落账，不再 Load/查 owner。
 	selected.SupplierFinance = admittedFinance

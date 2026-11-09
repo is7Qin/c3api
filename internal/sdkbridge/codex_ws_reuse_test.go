@@ -22,7 +22,6 @@ package sdkbridge
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -258,25 +257,69 @@ func wsReuseCred() *domain.AccountCredential {
 	return &domain.AccountCredential{AccountID: 9, PATKey: "pat-reuse"}
 }
 
+// wsReuseSess 测试侧的会话，与 scheduler.codexSession **同形**：ts 是一个普通
+// 字段，Sink 就是它自己（一次赋值）。额外记一份签发序列供断言——生产会话没有
+// 这一面（SDK 不再持有 ts，"槽里此刻是什么"在适配层已无观测面）。
+type wsReuseSess struct {
+	mu      sync.Mutex
+	session codexsdk.Session
+	meta    codexsdk.CodexMeta
+	ts      string
+	seen    []string
+}
+
+func newWSReuseSess(installationID string) *wsReuseSess {
+	thread := codexsdk.NewUUIDv7()
+	return &wsReuseSess{
+		session: codexsdk.Session{SessionID: thread, ThreadID: thread, WindowID: thread + ":0"},
+		meta: codexsdk.CodexMeta{
+			InstallationID: installationID,
+			SessionID:      thread,
+			ThreadID:       thread,
+			WindowID:       thread + ":0",
+		},
+	}
+}
+
+// SetTurnState SDK 的 TurnStateSink 落点：一次赋值（+ 记录序列）。
+func (s *wsReuseSess) SetTurnState(ts string) {
+	s.mu.Lock()
+	s.ts = ts
+	s.seen = append(s.seen, ts)
+	s.mu.Unlock()
+}
+
+func (s *wsReuseSess) turnState() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ts
+}
+
+func (s *wsReuseSess) issued() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.seen...)
+}
+
+func (s *wsReuseSess) threadKey() string {
+	return s.meta.InstallationID + "|" + s.meta.ThreadID + "|" + s.meta.ThreadID
+}
+
+// identity 本次请求的身份：ts = 会话当前值，Sink = 会话（与网关同构）。
+func (s *wsReuseSess) identity() codexsdk.Identity {
+	return codexsdk.Identity{Session: s.session, Meta: s.meta, TurnState: s.turnState(), Sink: s}
+}
+
 // wsReuseStream 发一次 ws 臂 StreamBody 并读尽关闭（与 proxy 侧消费语义同形：
 // 读完终态帧 → Close → 连接**归还缓存**，这正是复用的唯一出口）。
-func wsReuseStream(t *testing.T, a *Codex, cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta, clientTS string, transport domain.CodexResponsesTransport) *http.Response {
+func wsReuseStream(t *testing.T, a *Codex, cred *domain.AccountCredential, id codexsdk.Identity, transport domain.CodexResponsesTransport) *http.Response {
 	t.Helper()
 	// ctx 必须活到 body 读完（exchange 的取帧走 ctx）：用 t.Context()，不要在这里
 	// defer cancel——那会把刚返回的 body 直接读成 context canceled。
-	resp, err := a.StreamBody(t.Context(), cred, a.DirectEgress(), []byte(`{"model":"gpt-5.6","input":[]}`), sess, meta, clientTS, transport)
+	resp, err := a.StreamBody(t.Context(), cred, a.DirectEgress(), []byte(`{"model":"gpt-5.6","input":[]}`), id, transport)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	return resp
-}
-
-// seedTurnState 测试面：把会话槽预置为 ts（模拟"该会话此前已签发过"的起点——
-// 唯一可信的写入口是 observer/capture，但用例需要可控的初始值）。
-func seedTurnState(t *testing.T, a *Codex, cred *domain.AccountCredential, sess *codexsdk.Session, meta *codexsdk.CodexMeta, ts string) {
-	t.Helper()
-	e, err := a.entryFor(cred)
-	require.NoError(t, err)
-	e.turnStates.store(sessionKeyOf(sess, meta), ts)
 }
 
 // ---------------------------------------------------------------------------
@@ -285,10 +328,10 @@ func seedTurnState(t *testing.T, a *Codex, cred *domain.AccountCredential, sess 
 
 // TestCodexWSReuseAcrossTurns A：同会话连续两轮，两轮 ts 不同 ⇒ upgrades == 1。
 //
-// 第 1 轮带 T1（预置），握手签发 T1，随后 `response.metadata` 发 T2 ⇒ observer 把
-// 会话槽更新成 T2；第 2 轮 provider 读到 T2 并带上。两轮 ts 不同却仍是同一条
-// 连接 —— 这正是 S1（连接身份不含 ts）+ G1/G2（ts 不再进构造期）+ G6（复用真的
-// 开着）三件事合起来的唯一可见结果。
+// 第 1 轮带 T1（会话当前值），握手签发 T1，随后 `response.metadata` 发 T2 ⇒ Sink 把
+// 会话更新成 T2；第 2 轮带 T2。两轮 ts 不同却仍是同一条连接 —— 这正是 S1（连接
+// 身份不含 ts）+ G1/G2（ts 不再是构造期/缓存键面）+ G6（复用真的开着）三件事合起
+// 来的唯一可见结果。
 func TestCodexWSReuseAcrossTurns(t *testing.T) {
 	up := newWSReuseUpstream(t, "T1",
 		wsReuseStep{created: true, id: "r1", ts: "T2"},
@@ -296,25 +339,25 @@ func TestCodexWSReuseAcrossTurns(t *testing.T) {
 	)
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
-	seedTurnState(t, a, cred, nil, nil, "T1")
+	sess := newWSReuseSess("inst")
+	sess.SetTurnState("T1")
 
-	resp1 := wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-	require.Equal(t, "T1", resp1.Header.Get(codexsdk.HeaderTurnState), "握手签发值回填合成响应头（S5）")
-	readAndCloseBody(t, resp1.Body)
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
 
-	resp2 := wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-	readAndCloseBody(t, resp2.Body)
-
-	require.Equal(t, []string{"T1", "T2"}, up.wsRequestTS(), "两轮各带自己的 ts（第 2 轮的事件 ts 生效）")
+	require.Equal(t, []string{"T1", "T2"}, up.wsRequestTS(), "两轮各带自己的 ts（事件签发值下一轮生效）")
+	require.Equal(t, "T2", sess.turnState(), "会话最终值是事件签发值（握手 T1 被 T2 覆盖）")
+	issued := sess.issued()
+	require.NotEmpty(t, issued)
+	require.Equal(t, "T2", issued[len(issued)-1], "签名值只经 Sink 交付，最后落的是事件值")
 	require.Equal(t, 1, up.upgradeCount(), "两轮 ts 不同仍复用同一条连接（upgrades == 1）")
 }
 
-// TestCodexAggregateTurnStateKeepsEventIssuedValue：聚合臂（非流式 `Responses`）
-// 在 WS 新握手时，**合成响应头是握手快照**（T1）——它必须早于任何帧定死；而本轮
-// `response.metadata` 事件已签发新值（T2）。网关**不得**在请求返回后用响应头快照
-// 回写会话槽：那会把 T2 倒退成 T1，下一次同轮续传就重放旧值（oracle 评审 blocking-1）。
+// TestCodexAggregateTurnStateKeepsEventIssuedValue 聚合臂（非流式 `Responses`）在
+// WS 新握手时先收到握手签发值（T1），随后 `response.metadata` 事件签发新值（T2）。
+// 适配层**不得**在请求返回后用响应头快照回写会话：那会把 T2 倒退成 T1。
 //
-// 判据两条：① 槽里是最新签发值（T2）；② 下一次请求帧里带的是 T2（黑盒面）。
+// 判据两条：① Sink 序列以 T2 收尾（事件值最后落）；② 下一次请求帧里带 T2。
 func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
 	up := newWSReuseUpstream(t, "T1",
 		wsReuseStep{created: true, id: "agg1", ts: "T2"},
@@ -322,19 +365,18 @@ func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
 	)
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
+	sess := newWSReuseSess("inst")
 
-	resp, err := a.Responses(t.Context(), cred, a.DirectEgress(),
-		[]byte(`{"model":"gpt-5.6","input":[]}`), nil, nil, "", domain.CodexResponsesTransportWS)
+	_, err := a.Responses(t.Context(), cred, a.DirectEgress(),
+		[]byte(`{"model":"gpt-5.6","input":[]}`), sess.identity(), domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
-	require.Equal(t, "T1", resp.TurnState, "合成响应头是握手快照（早于任何帧定死）")
-	require.Equal(t, "T2", testSessionTurnState(a, cred.AccountID, nil, nil),
-		"事件签发的新值必须留在槽里：返回阶段不得用握手快照回写")
+	require.Equal(t, []string{"T1", "T2"}, sess.issued(), "握手 T1 → 事件 T2（返回阶段不回写旧快照）")
+	require.Equal(t, "T2", sess.turnState(), "会话保留事件签发值")
 
 	// 黑盒面：下一次同会话请求必须带 T2（不是 T1）。
-	if _, err := a.Responses(t.Context(), cred, a.DirectEgress(),
-		[]byte(`{"model":"gpt-5.6","input":[]}`), nil, nil, "", domain.CodexResponsesTransportWS); err != nil {
-		t.Fatalf("第二次 Responses: %v", err)
-	}
+	_, err = a.Responses(t.Context(), cred, a.DirectEgress(),
+		[]byte(`{"model":"gpt-5.6","input":[]}`), sess.identity(), domain.CodexResponsesTransportWS)
+	require.NoError(t, err)
 	require.Equal(t, []string{"", "T2"}, up.wsRequestTS(),
 		"轮首不带；续传必须带**事件**签发值 T2（不是握手快照 T1）")
 }
@@ -346,9 +388,8 @@ func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
 // TestCodexWSTurnReplayWithinTurn B：同一轮内重复请求携带**同一个** ts（第一次
 // 由握手签发、后两次重放它），全程 upgrades == 1。
 //
-// 轮首不带 ts（provider 读到空槽）——这正是 M2（把 provider 改回构造期 WithHeader）
-// 现形的地方：构造期快照停在 ""，第二次请求要带 T1 就只能重建 client ⇒ upgrades
-// 变 2。第 3 次与第 2 次同 ts（"轮内两次 metadata ts 相同"的字面读法）一并钉住。
+// 轮首不带 ts——这正是 M2（把 ts 搬回连接身份/构造期）现形的地方：构造期快照停在
+// ""，第二次请求要带 T1 就只能重建 client ⇒ upgrades 变 2。
 func TestCodexWSTurnReplayWithinTurn(t *testing.T) {
 	up := newWSReuseUpstream(t, "T1",
 		wsReuseStep{created: true, id: "b1"},
@@ -357,10 +398,10 @@ func TestCodexWSTurnReplayWithinTurn(t *testing.T) {
 	)
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
+	sess := newWSReuseSess("inst")
 
 	for range 3 {
-		resp := wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-		readAndCloseBody(t, resp.Body)
+		readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
 	}
 
 	require.Equal(t, []string{"", "T1", "T1"}, up.wsRequestTS(),
@@ -369,40 +410,34 @@ func TestCodexWSTurnReplayWithinTurn(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// C 不重放旧 ts（跨轮）
+// C 会话侧 ts 不跨会话串台
 // ---------------------------------------------------------------------------
 
-// TestCodexWSTurnStateClearedAcrossTurns C：第 1 轮两次（带 T1）→ 轮结束
-// （ClearTurnState）→ 第 2 轮两次都**不带**上一轮的 ts，全程 upgrades == 1。
+// TestCodexWSNoTurnStateAcrossSessions C：两条会话各带自己的 ts，交错请求 ⇒
+// 连接按 thread 分开（upgrades == 2）、帧内 ts 各归各（不串台）。
 //
-// 第 2 轮第二次是关键判据点（M5 的显形点）：若合成响应头按"恒回填 issued"实现，
-// 第 2 轮第一次复用会拿到该连接握手时的 T1，网关把它存回会话槽，第二次就重放了
-// 旧值——连接没换（upgrades 仍 1），但 ts 泄漏了。
-func TestCodexWSTurnStateClearedAcrossTurns(t *testing.T) {
-	up := newWSReuseUpstream(t, "T1",
-		wsReuseStep{created: true, id: "c1"},
-		wsReuseStep{created: true, id: "c2"},
-		wsReuseStep{created: true, id: "c3"},
-		wsReuseStep{created: true, id: "c4"},
+// 这条钉住"存储属会话"：把 ts 放回账号级/客户端级单值（旧机制）就会让 B 会话
+// 带上 A 的 ts（G4 的同族）。
+func TestCodexWSNoTurnStateAcrossSessions(t *testing.T) {
+	up := newWSReuseUpstream(t, "",
+		wsReuseStep{created: true, id: "a1"},
+		wsReuseStep{created: true, id: "b1"},
+		wsReuseStep{created: true, id: "a2"},
+		wsReuseStep{created: true, id: "b2"},
 	)
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
-	seedTurnState(t, a, cred, nil, nil, "T1")
+	aSess, bSess := newWSReuseSess("inst"), newWSReuseSess("inst")
+	aSess.SetTurnState("TA")
+	bSess.SetTurnState("TB")
 
-	for range 2 { // 第 1 轮：两次都带 T1
-		resp := wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-		readAndCloseBody(t, resp.Body)
-	}
-	a.ClearTurnState(cred.AccountID, nil, nil) // 轮结束：只清 ts（G5）
-	require.Equal(t, "", testSessionTurnState(a, cred.AccountID, nil, nil), "轮结束清空会话槽")
-
-	for range 2 { // 第 2 轮：两次都不带上一轮的 ts
-		resp := wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-		readAndCloseBody(t, resp.Body)
+	for range 2 {
+		readAndCloseBody(t, wsReuseStream(t, a, cred, aSess.identity(), domain.CodexResponsesTransportWS).Body)
+		readAndCloseBody(t, wsReuseStream(t, a, cred, bSess.identity(), domain.CodexResponsesTransportWS).Body)
 	}
 
-	require.Equal(t, []string{"T1", "T1", "", ""}, up.wsRequestTS(), "跨轮绝不重放上一轮 ts")
-	require.Equal(t, 1, up.upgradeCount(), "清 ts 不动连接（round 边界不重连）")
+	require.Equal(t, []string{"TA", "TB", "TA", "TB"}, up.wsRequestTS(), "两会话 ts 各自正确（不串台）")
+	require.Equal(t, 2, up.upgradeCount(), "两会话 = 两条 thread 连接（G4）")
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +445,7 @@ func TestCodexWSTurnStateClearedAcrossTurns(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestCodexWSTurnStateFromMetadataEvent D：上游只在 `response.metadata` 事件里给
-// ts ⇒ observer 写进会话槽 ⇒ 网关下一次请求带它，且 upgrades 不增。
+// ts ⇒ Sink 写进会话 ⇒ 网关下一次请求带它，且 upgrades 不增。
 //
 // 帧序是前提（created → metadata）：SDK 的 tap 用 `response.created` 记本轮
 // response_id 做归属判定，先到的 metadata 会被 fail-safe 丢弃（按设计）。
@@ -421,15 +456,12 @@ func TestCodexWSTurnStateFromMetadataEvent(t *testing.T) {
 	)
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
+	sess := newWSReuseSess("inst")
 
-	resp1 := wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-	require.Equal(t, "", resp1.Header.Get(codexsdk.HeaderTurnState), "无握手签发 ⇒ 合成响应头不带 ts")
-	readAndCloseBody(t, resp1.Body)
-	// 事件 ts 是**读帧时**才到的（合成响应头早已定死），所以判据只能看会话槽。
-	require.Equal(t, "T3", testSessionTurnState(a, cred.AccountID, nil, nil), "事件 ts 经 observer 写入会话槽")
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, []string{"T3"}, sess.issued(), "事件 ts 经 Sink 写入会话")
 
-	resp2 := wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-	readAndCloseBody(t, resp2.Body)
+	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
 
 	require.Equal(t, []string{"", "T3"}, up.wsRequestTS(), "下一次请求带上事件捕获的 ts")
 	require.Equal(t, 1, up.upgradeCount(), "事件捕获不触发重连")
@@ -444,34 +476,31 @@ func TestCodexWSTurnStateFromMetadataEvent(t *testing.T) {
 func TestCodexHTTPLegCarriesTurnStatePerRequest(t *testing.T) {
 	for _, transport := range []domain.CodexResponsesTransport{domain.CodexResponsesTransportDefault, domain.CodexResponsesTransportHTTP} {
 		t.Run(string(transport), func(t *testing.T) {
-			up := newWSReuseUpstream(t, "")
+			up := newWSReuseUpstream(t, "",
+				wsReuseStep{created: true, id: "f1", ts: "T2"},
+				wsReuseStep{created: true, id: "f2"},
+			)
 			a, _ := wsReuseCodex(t, up)
 			cred := wsReuseCred()
-			seedTurnState(t, a, cred, nil, nil, "T1")
+			sess := newWSReuseSess("inst")
+			sess.SetTurnState("T1")
 
-			resp1 := wsReuseStream(t, a, cred, nil, nil, "", transport)
-			readAndCloseBody(t, resp1.Body)
+			readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), transport).Body)
+			// 上游签发新值（HTTP 响应头）→ Sink → 会话当前值更新
+			readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), transport).Body)
 
-			// 客户端自带值（透传）→ 成为该会话当前 ts
-			resp2 := wsReuseStream(t, a, cred, nil, nil, "T2", transport)
-			readAndCloseBody(t, resp2.Body)
-
-			// 客户端未带 → provider 下发会话槽里的当前值
-			resp3 := wsReuseStream(t, a, cred, nil, nil, "", transport)
-			readAndCloseBody(t, resp3.Body)
-
-			require.Equal(t, []string{"T1", "T2", "T2"}, up.httpRequestTS(), "每次请求带当前 ts（逐请求求值）")
+			require.Equal(t, []string{"T1", "T2"}, up.httpRequestTS(), "每次请求带当前 ts（逐请求求值）")
 			require.Equal(t, 0, up.upgradeCount(), "HTTP 腿不升级")
-			require.Equal(t, 3, up.postCount())
+			require.Equal(t, 2, up.postCount())
 		})
 	}
 }
 
 // ---------------------------------------------------------------------------
-// E 关池不动 h2/h1
+// E 关池 / 退休不动 h2/h1
 // ---------------------------------------------------------------------------
 
-// TestCodexDropPathsCloseWSOnly E：三条 drop 路径（entry 覆盖 / LRU 驱逐 /
+// TestCodexDropPathsCloseWSOnly E：三条 drop 路径（entry 覆盖 / 线程退休 /
 // evict）各触发一次 ⇒ 假上游观察到 WS 关闭；**紧接**一次 HTTP 腿请求，
 // DialContext 计数不增（底层连接池没被打掉）。
 //
@@ -481,17 +510,17 @@ func TestCodexHTTPLegCarriesTurnStatePerRequest(t *testing.T) {
 func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 	cases := []struct {
 		name string
-		drop func(t *testing.T, a *Codex, cred *domain.AccountCredential)
+		drop func(t *testing.T, a *Codex, cred *domain.AccountCredential, sess *wsReuseSess)
 	}{
 		{
 			// entryFor 覆盖旧 entry：外部凭据变更（PAT 变化）⇒ sig 不同 ⇒ 旧条目弃用
 			name: "entry-overwrite",
-			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential) {
+			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential, _ *wsReuseSess) {
 				t.Helper()
 				next := *cred
 				next.PATKey = "pat-reuse-rotated"
 				resp, err := a.StreamBody(t.Context(), &next, a.DirectEgress(),
-					[]byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportHTTP)
+					[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
 				require.NoError(t, err)
 				// 必须读尽关掉：否则这条底层连接被占用，第 4 步的"不新增 dial"
 				// 断言会为**测试自身的泄漏**变红（与被测行为无关）。
@@ -499,22 +528,17 @@ func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 			},
 		},
 		{
-			// LRU 驱逐：塞满上限 + 2 个新身份 ⇒ 最久未用的两条（http 腿 + ws 腿的
-			// 客户端）被驱逐
-			name: "lru-evict",
-			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential) {
+			// 线程退休（§3.2 ④）：只摘该 thread 的空闲连接
+			name: "retire-thread",
+			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential, sess *wsReuseSess) {
 				t.Helper()
-				for i := range codexHTTPClientCacheMax + 2 {
-					meta := &codexsdk.CodexMeta{InstallationID: fmt.Sprintf("evict-%d", i)}
-					_, _, err := a.clientFor(cred, nil, meta, a.DirectEgress(), domain.CodexResponsesTransportDefault)
-					require.NoError(t, err)
-				}
+				a.RetireThread(cred.AccountID, sess.threadKey())
 			},
 		},
 		{
 			// evict(accountID)：fatal 上报后的剔除路径
 			name: "evict",
-			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential) {
+			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential, _ *wsReuseSess) {
 				t.Helper()
 				a.evict(cred.AccountID)
 			},
@@ -526,38 +550,72 @@ func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 			up := newWSReuseUpstream(t, "")
 			a, dials := wsReuseCodex(t, up)
 			cred := wsReuseCred()
+			sess := newWSReuseSess("inst")
 
 			// 1) 预热：HTTP 腿一次请求（占一条底层空闲连接）
 			resp, err := a.StreamBody(t.Context(), cred, a.DirectEgress(),
-				[]byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportHTTP)
+				[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
 			require.NoError(t, err)
 			readAndCloseBody(t, resp.Body)
 			require.Equal(t, int64(1), dials.Load(), "预热只拨一次")
 			require.Equal(t, 0, up.upgradeCount())
 
 			// 2) 一条**空闲**（已归还缓存）的 WS 连接
-			resp = wsReuseStream(t, a, cred, nil, nil, "", domain.CodexResponsesTransportWS)
-			readAndCloseBody(t, resp.Body)
+			readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
 			require.Equal(t, 1, up.upgradeCount())
 			require.Equal(t, int64(2), dials.Load(), "WS 拨号另计一次")
 
 			// 3) 触发 drop 路径 ⇒ 上游必须看到 WS 关闭
-			tc.drop(t, a, cred)
+			tc.drop(t, a, cred, sess)
 			select {
 			case <-up.wsClosed:
 			case <-time.After(15 * time.Second):
-				t.Fatalf("上游未观察到 WS 连接关闭（drop 路径没调 CloseWSIdleConnections）")
+				t.Fatalf("上游未观察到 WS 连接关闭（drop 路径没退役 idle）")
 			}
 			require.Equal(t, 1, up.closedCount())
 
 			// 4) 紧接一次 HTTP 腿请求：底层连接池不受影响 ⇒ 不新增 dial
 			before := dials.Load()
 			resp, err = a.StreamBody(t.Context(), cred, a.DirectEgress(),
-				[]byte(`{"model":"m"}`), nil, nil, "", domain.CodexResponsesTransportHTTP)
+				[]byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportHTTP)
 			require.NoError(t, err)
 			readAndCloseBody(t, resp.Body)
 			require.Equal(t, before, dials.Load(),
 				"关 WS 空闲连接不得打掉底层连接池（CloseWSIdleConnections，不是 CloseIdleConnections）")
 		})
 	}
+}
+
+// TestCodexRetireThreadOnlyThatThread 退休只摘该 threadKey 的空闲连接（G7 的
+// 会话面）：另一条 thread 的连接仍在 idle 表里 ⇒ 它的下一次请求不重连；被退休的
+// thread 下一次请求必须重拨（不残留、不复活）。
+func TestCodexRetireThreadOnlyThatThread(t *testing.T) {
+	up := newWSReuseUpstream(t, "",
+		wsReuseStep{created: true, id: "k1"},
+		wsReuseStep{created: true, id: "d1"},
+		wsReuseStep{created: true, id: "d2"},
+		wsReuseStep{created: true, id: "k2"},
+	)
+	a, _ := wsReuseCodex(t, up)
+	cred := wsReuseCred()
+	keep, drop := newWSReuseSess("inst"), newWSReuseSess("inst")
+
+	readAndCloseBody(t, wsReuseStream(t, a, cred, keep.identity(), domain.CodexResponsesTransportWS).Body)
+	readAndCloseBody(t, wsReuseStream(t, a, cred, drop.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 2, up.upgradeCount(), "两条 thread 各一条连接")
+
+	a.RetireThread(cred.AccountID, drop.threadKey())
+	select {
+	case <-up.wsClosed:
+	case <-time.After(15 * time.Second):
+		t.Fatal("退休未关闭该 thread 的空闲连接")
+	}
+
+	// 被退休的 thread：下一条连接必须重拨（旧连接已摘除、不复活）。
+	readAndCloseBody(t, wsReuseStream(t, a, cred, drop.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 3, up.upgradeCount(), "退休后该 thread 重拨")
+
+	// 未受影响的 thread：命中它自己的空闲连接（不重拨）。
+	readAndCloseBody(t, wsReuseStream(t, a, cred, keep.identity(), domain.CodexResponsesTransportWS).Body)
+	require.Equal(t, 3, up.upgradeCount(), "另一条 thread 的连接不受影响")
 }

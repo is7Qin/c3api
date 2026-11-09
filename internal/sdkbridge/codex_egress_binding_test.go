@@ -44,7 +44,7 @@ func sdkClosedAddr(t *testing.T) string {
 //  1. **transport 由出口决定**：直连出口用池底座，代理出口用 `Pool.For(spec)` 那条
 //     （从底座克隆 + `Proxy` 指向代理）。判据不是读私有字段，而是看请求真的走了谁：
 //     直连时底座的哨兵错误浮出；代理出口时错误里出现代理地址、且不再有底座哨兵。
-//  2. **同一身份不同出口必须是不同 client**：`identityKey` 的 `proxy` 维是 16 字节
+//  2. **同传输不同出口必须是不同 client**：`clientKey` 的 `proxy` 维是 16 字节
 //     摘要，两条出口各自命中各自的条目；同出口重复取仍是同一个 client（复用）。
 //
 // 反例（漏接线时的形态）：换代理后复用旧条目 ⇒ 配置换了、连接没换，请求继续打旧出口。
@@ -76,24 +76,21 @@ func TestCodexEgressTransportIsBindingOwned(t *testing.T) {
 	require.Equal(t, 1, base.hits, "底座不该被代理出口触达")
 
 	// 3) 缓存分桶：同身份不同出口 ⇒ 不同 client；同出口重复 ⇒ 同一个 client。
-	e, cDirect, err := a.clientFor(cred, nil, nil, pool.Direct(), domain.CodexResponsesTransportDefault)
+	e, cDirect, err := a.clientFor(cred, pool.Direct(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	_, cProxy, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportDefault)
+	_, cProxy, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	_, cProxyAgain, err := a.clientFor(cred, nil, nil, eg, domain.CodexResponsesTransportDefault)
+	_, cProxyAgain, err := a.clientFor(cred, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.NotSame(t, cDirect, cProxy, "换出口必须是新 client（构造期 transport 无法替换）")
 	require.Same(t, cProxy, cProxyAgain, "同出口必须复用同一 client（连接池不重建）")
 
 	// 4) 键里的 proxy 维确实是摘要维（不是同一个键命中两次）。
-	sig := identitySig(nil, nil)
-	sigDirect := sig
-	sigDirect.proxy = egressDigest(pool.Direct())
-	sigProxy := sig
-	sigProxy.proxy = egressDigest(eg)
-	require.NotEqual(t, sigDirect, sigProxy, "identityKey 必须含出口摘要维")
-	require.NotNil(t, testCachedClient(e, sigProxy), "代理出口的条目按含 digest 的键落桶")
-	require.NotNil(t, testCachedClient(e, sigDirect), "直连出口的条目按零值 digest 落桶")
+	keyDirect := clientKey{proxy: egressDigest(pool.Direct())}
+	keyProxy := clientKey{proxy: egressDigest(eg)}
+	require.NotEqual(t, keyDirect, keyProxy, "clientKey 必须含出口摘要维")
+	require.Same(t, cProxy, testCachedClient(e, keyProxy), "代理出口的条目按含 digest 的键落桶")
+	require.Same(t, cDirect, testCachedClient(e, keyDirect), "直连出口的条目按零值 digest 落桶")
 }
 
 // TestCodexEgressNotWiredIsExplicit 池未装配时**不静默直连**：没有出口可解析就

@@ -2,11 +2,13 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 //
-// codex 伪装身份轮换（账号级槽位池）：账号级恒定身份 → 账号级 K 槽位池；每个
-// 槽按完成轮数确定性演化 thread/window，使上游见「多条独立会话、各自演化」。
-// 槽 = codexsdk.IdentityState（InstallationID 账号级共享；ThreadID/Turns/WindowN/
-// NextWindowAt/WMax 各槽私有）。整族**无锁**：认领 = 旋转游标 + 逐槽 CAS，
-// 归还 = Store(false)——无 channel、无 mutex、请求路径零每请求锁。
+// codex 会话池（账号级 K 会话）：一个会话 = 一条上游线程的完整生命周期——
+// installation / thread / window 计数 / turn-state / 连接身份。身份不再是客户端的
+// 构造期配置，而是**请求数据**：会话池摊开成 `Identity` 交给一次调用（spec S4 §3.1）。
+//
+// 并发模型沿用原槽位池：认领 = 旋转游标 + 逐槽 CAS，归还 = Store(false)——无
+// channel、无 mutex、请求路径零每请求锁。会话状态字段是**普通字段**：busy 独占
+// 保证租借期内只有一个读者/写者，所以不再套 atomic（§3.1）。
 package scheduler
 
 import (
@@ -19,33 +21,145 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// identitySlot 槽位池中的单个槽（无锁）：busy 认领标志（CAS 认领 / Store 归还）
-// + 身份状态（atomic.Pointer 承载，Step 推进经 CAS 换入新状态）。policy 槽
-// 构造期写入、此后只读（Step 用它采样 WMax）。复用（占用）**不改
-// 身份**——身份演化只由完成轮数驱动。
-type identitySlot struct {
-	busy   atomic.Bool
-	policy codexsdk.RotatePolicy
-	state  atomic.Pointer[codexsdk.IdentityState]
+// codexSession 一个会话：busy 独占标志 + 线程生命周期状态（§3.1 字段表）。
+//
+// 租借（busy.CAS false→true）成功的一方独占全部状态字段直到 release：读写都在
+// 租借期内，没有第二读者。credGen 是唯一例外——它记录本会话已对齐的凭据代际，
+// 让「凭据替换清 ts」可以由持有者在下一次租借内完成（写 ts 只能由持有者做）。
+type codexSession struct {
+	busy         atomic.Bool
+	installation string
+	thread       string
+	windowN      uint64
+	windowID     string
+	threadKey    string
+	turns        uint64
+	nextAt       uint64
+	wmax         uint64
+	turnState    string
+	policy       codexsdk.RotatePolicy
+	credGen      uint64
 }
 
-// identityPool 账号级槽位池（无锁）：容量 K = 账号 MaxConcurrency；cursor 为
-// 认领的旋转起点（round-robin 打散并发）。slots 切片发布后不再增删；逐槽状态
-// 经 atomic 可变。轮换策略单一来源在**槽**（slot.policy，Step 读它）——pool 不再
-// 各存一份（需要时经 rotatePolicy 从槽派生）。installationID 供 resize / 兜底开
-// 新线程。
+// SetTurnState 是 SDK 的 TurnStateSink：一次普通赋值（§3.2）。
+//
+// 契约保证只在租借期内被调用（`Body.Close`/聚合返回之后不再回调，§2.2），所以
+// 这里既不加锁也不做代际判定。
+func (s *codexSession) SetTurnState(ts string) { s.turnState = ts }
+
+// identity 本次请求的身份数据（§3.2 租借）：Session 与 Meta 同源（session ==
+// thread，根线程语义），ts 取会话当前值，Sink 指向本会话。
+//
+// windowID/threadKey 预计算在会话上 ⇒ 本函数零分配（§4）；Sink 是指针接口，
+// 装进接口不产生分配。
+func (s *codexSession) identity() codexsdk.Identity {
+	return codexsdk.Identity{
+		Session: codexsdk.Session{SessionID: s.thread, ThreadID: s.thread, WindowID: s.windowID},
+		Meta: codexsdk.CodexMeta{
+			InstallationID: s.installation,
+			SessionID:      s.thread,
+			ThreadID:       s.thread,
+			WindowID:       s.windowID,
+		},
+		TurnState: s.turnState,
+		Sink:      s,
+	}
+}
+
+// step 推进一次完成轮（§3.2 推进）：turns++；跨过 nextAt ⇒ 窗口 +1、windowID 重算、
+// nextAt 叠加下一个 span。窗口数达 wmax（>0）⇒ 退休，返回**旧** threadKey（调用方
+// 在锁外用它退役旧线程的空闲连接）。
+//
+// 窗口 span / 退休阈值沿用 SDK 的纯值类型 `IdentityState`/`Step`：那是同一套
+// （thread, windowN）确定性派生，网关只是把状态摊在自己的普通字段上，不再有第二个
+// 实现可以漂移。
+func (s *codexSession) step() string {
+	cur := codexsdk.IdentityState{
+		InstallationID: s.installation,
+		ThreadID:       s.thread,
+		Turns:          s.turns,
+		WindowN:        s.windowN,
+		NextWindowAt:   s.nextAt,
+		WMax:           s.wmax,
+	}
+	next := codexsdk.Step(cur, s.policy)
+	s.turns, s.nextAt = next.Turns, next.NextWindowAt
+	if next.ThreadID != s.thread {
+		// 退休（§3.2）：① 记旧 threadKey ② ts 清空 ③ 新线程 + 计数/阈值/上限重算。
+		old := s.threadKey
+		s.turnState = ""
+		s.thread, s.windowN, s.windowID = next.ThreadID, next.WindowN, next.WindowID()
+		s.threadKey, s.wmax = threadKeyOf(s.installation, next.ThreadID), next.WMax
+		return old
+	}
+	if next.WindowN != s.windowN {
+		s.windowN, s.windowID = next.WindowN, next.WindowID()
+	}
+	return ""
+}
+
+// release 归还会话（非阻塞 Store——无 channel 锁、无容量死锁）；nil 安全。
+func (s *codexSession) release() {
+	if s != nil {
+		s.busy.Store(false)
+	}
+}
+
+// threadKeyOf 连接复用键，与 SDK 同构：installation|session|thread。本池的
+// session == thread（根线程语义），所以是 installation|thread|thread。
+func threadKeyOf(installationID, threadID string) string {
+	return installationID + "|" + threadID + "|" + threadID
+}
+
+// newCodexSession 开一个新会话：身份状态用 installationID 开新线程（线程 UUIDv7、
+// WMax 按 policy 抽样、turns/window 归零），windowID/threadKey 一次算好。
+func newCodexSession(installationID string, policy codexsdk.RotatePolicy) *codexSession {
+	st := codexsdk.NewIdentityState(installationID, policy)
+	return &codexSession{
+		installation: installationID,
+		thread:       st.ThreadID,
+		windowN:      st.WindowN,
+		windowID:     st.WindowID(),
+		threadKey:    threadKeyOf(installationID, st.ThreadID),
+		turns:        st.Turns,
+		nextAt:       st.NextWindowAt,
+		wmax:         st.WMax,
+		policy:       policy,
+	}
+}
+
+// identityPool 账号级会话池（无锁）：容量 K = 账号 MaxConcurrency；cursor 为认领
+// 的旋转起点（round-robin 打散并发）。slots 切片发布后不再增删；逐会话状态经
+// 租借独占。轮换策略单一来源在**会话**（policy），池经 rotatePolicy 从会话派生。
 type identityPool struct {
-	slots          []*identitySlot
+	slots          []*codexSession
 	cursor         atomic.Uint64
 	installationID string
+	accountID      int64
+	// retireThread 退役某线程的空闲 WS 连接（构造期注入；nil = 未接——测试形态）。
+	// 退休与重载丢槽都走它，装配点唯一。
+	retireThread func(accountID int64, threadKey string)
+	// reserveHook 是 test-only 屏障（生产 nil）：在「已判空闲、尚未写 busy」处留出
+	// 确定性交错点，让「busy 用无 CAS 的 Store」这一变异（M7）能被稳定现红。
+	reserveHook func()
+	// credGen 凭据代际：凭据替换（sdkbridge 的 credSig 变化）时 +1。会话在租借内
+	// 发现代际落后就**由持有者自己**清 ts（状态字段没有第二读者，见 ClearTurnStates）。
+	credGen atomic.Uint64
 }
 
-// rotatePolicy 返回本池的轮换策略（单一来源 = 槽：池内各槽构造期写入同一策略）。
+// rotatePolicy 返回本池的轮换策略（单一来源 = 会话：池内各会话构造期写入同一策略）。
 func (p *identityPool) rotatePolicy() codexsdk.RotatePolicy {
 	if p == nil || len(p.slots) == 0 {
 		return codexsdk.RotatePolicy{}
 	}
 	return p.slots[0].policy
+}
+
+// retire 退役某条线程的空闲连接（锁外调用；nil 池/未装配 = no-op）。
+func (p *identityPool) retire(threadKey string) {
+	if p != nil && p.retireThread != nil && threadKey != "" {
+		p.retireThread(p.accountID, threadKey)
+	}
 }
 
 // identityRegistry 账号 ID → 池 的只读注册表：**发布后不可变**（map 不增删），
@@ -55,18 +169,9 @@ type identityRegistry struct {
 	pools map[int64]*identityPool
 }
 
-// newIdentitySlot 构造一个槽：身份状态用 installationID 开新线程（WMax 按 policy
-// 抽样、Turns/WindowN 归零）。
-func newIdentitySlot(installationID string, policy codexsdk.RotatePolicy) *identitySlot {
-	st := codexsdk.NewIdentityState(installationID, policy)
-	s := &identitySlot{policy: policy}
-	s.state.Store(&st)
-	return s
-}
-
-// claim 认领一个空闲槽（无锁：旋转游标 + 逐槽 CAS）。全忙（理论不可达——gate
+// claim 认领一个空闲会话（无锁：旋转游标 + 逐槽 CAS）。全忙（理论不可达——gate
 // 保证 ≤K 在途）返回 nil，由调用方兜底临时身份（不落池）。
-func (p *identityPool) claim() *identitySlot {
+func (p *identityPool) claim() *codexSession {
 	if p == nil || len(p.slots) == 0 {
 		return nil
 	}
@@ -74,6 +179,9 @@ func (p *identityPool) claim() *identitySlot {
 	base := p.cursor.Add(1)
 	for i := range k {
 		s := p.slots[(base+i)%k]
+		if p.reserveHook != nil && !s.busy.Load() {
+			p.reserveHook()
+		}
 		if s.busy.CompareAndSwap(false, true) {
 			return s
 		}
@@ -81,68 +189,91 @@ func (p *identityPool) claim() *identitySlot {
 	return nil
 }
 
-// release 归还槽（非阻塞 Store——无 channel 锁、无容量死锁）；nil 安全。
-func (s *identitySlot) release() {
-	if s != nil {
-		s.busy.Store(false)
-	}
+// poolSpec 是建池的构造期参数（账号级）：容量、installation、轮换策略、线程退役
+// 出口。全部来自本次 reload 生效的静态根。
+type poolSpec struct {
+	accountID      int64
+	k              int
+	installationID string
+	policy         codexsdk.RotatePolicy
+	retire         func(accountID int64, threadKey string)
 }
 
-// resizeIdentityPool 按新容量重建池：按位次迁移旧槽身份至 min(old,new)。迁移
-// 判据为**原子预留**（旧槽 busy CAS false→true）：只有成功预留的旧槽才迁移其
-// 身份——杜绝与在途认领 TOCTOU 共享同一 thread（旧池虽将被 GC，但在注册表换入
-// 前仍可被请求 Load 到并认领，故判据必须原子）。CAS 失败（在途持有）→ 该位次
-// 新开线程（在途持旧槽指针、其 Step 写在旧槽，该窗口轮换丢失，spec D2 可接受）；
-// 其余位次新开线程。新槽 busy=false 起始。旧池 GC。
-func resizeIdentityPool(old *identityPool, k int, installationID string, policy codexsdk.RotatePolicy) *identityPool {
-	if k < 1 {
-		k = 1
+// resizeIdentityPool 按 spec.k 重建池：按位次迁移旧会话至 min(old,new)。
+//
+// 迁移判据是**原子预留**（旧会话 busy CAS false→true）：只有取得所有权的旧会话才
+// 被读写——重载不得碰在飞会话的状态（读它就是在和持有者竞争，§3.2）。预留成功的
+// 位次迁移会话（沿用线程/窗口计数/ts）；installation 变 ⇒ 该账号全部会话重建
+// （旧线程空闲连接立即退役、ts 不迁）。缩容丢弃的位次：预留成功（=空闲）⇒ 立即
+// 退役旧线程；预留失败（=在飞）⇒ **不做任何交接**，其残留 idle 由 SDK 的 idle TTL
+// 时间有界回收（§5.2-5）——正是不引入「交接标志」的原因。旧池 GC。
+func resizeIdentityPool(old *identityPool, spec poolSpec) *identityPool {
+	k := max(spec.k, 1)
+	np := &identityPool{
+		installationID: spec.installationID,
+		accountID:      spec.accountID,
+		retireThread:   spec.retire,
+		slots:          make([]*codexSession, k),
 	}
-	np := &identityPool{installationID: installationID, slots: make([]*identitySlot, k)}
-	for i := 0; i < k; i++ {
-		if old != nil && i < len(old.slots) {
+	if old != nil {
+		// 代际跨池延续：凭据替换发生在重建之前时，新池里的会话仍会看到落后的代际。
+		np.credGen.Store(old.credGen.Load())
+	}
+	for i := range k {
+		if old != nil && i < len(old.slots) && old.slots[i].busy.CompareAndSwap(false, true) {
+			os := old.slots[i]
+			if old.installationID == spec.installationID {
+				os.policy = spec.policy
+				os.busy.Store(false) // 新池尚未发布：此刻释放不会被别人抢到
+				np.slots[i] = os
+				continue
+			}
+			retireThreadKey(spec, os.threadKey)
+			os.busy.Store(false)
+		}
+		np.slots[i] = newCodexSession(spec.installationID, spec.policy)
+	}
+	if old != nil {
+		for i := k; i < len(old.slots); i++ {
 			os := old.slots[i]
 			if os.busy.CompareAndSwap(false, true) {
-				if cur := os.state.Load(); cur != nil {
-					st := *cur
-					// installation_id 是账号级项、与注入同源（Selection.CodexIdentity
-					// 读槽 state）：迁移沿用旧 thread/window 演化，但 installation
-					// 必须取本次生效值——否则槽状态与 ext 静默不一致（P1-3）。
-					st.InstallationID = installationID
-					slot := &identitySlot{policy: policy}
-					slot.state.Store(&st)
-					np.slots[i] = slot
-					continue
-				}
+				retireThreadKey(spec, os.threadKey)
+				os.busy.Store(false)
 			}
 		}
-		np.slots[i] = newIdentitySlot(installationID, policy)
 	}
 	return np
 }
 
-// syncIdentityPool 取本次 reload 生效的池：容量/安装 ID/策略均未变则**原样复用**
-// （保留在途 busy 标志与槽身份，杜绝无关重载重置会话）；任一变化才重建。
-func syncIdentityPool(prev *identityPool, k int, installationID string, policy codexsdk.RotatePolicy) *identityPool {
-	if prev != nil && len(prev.slots) == k && prev.installationID == installationID && prev.rotatePolicy() == policy {
-		return prev
+// retireThreadKey 退役一条线程的空闲连接（账号面出口）；未装配 = no-op。
+func retireThreadKey(spec poolSpec, threadKey string) {
+	if spec.retire != nil && threadKey != "" {
+		spec.retire(spec.accountID, threadKey)
 	}
-	return resizeIdentityPool(prev, k, installationID, policy)
 }
 
-// maxIdentityPoolSlots 是 codex 槽位池容量 K 的防御性上界。K = 账号
+// syncIdentityPool 取本次 reload 生效的池：容量/安装 ID/策略均未变则**原样复用**
+// （保留在途 busy 标志与会话身份，杜绝无关重载重置会话）；任一变化才重建。
+func syncIdentityPool(prev *identityPool, spec poolSpec) *identityPool {
+	if prev != nil && len(prev.slots) == spec.k && prev.installationID == spec.installationID && prev.rotatePolicy() == spec.policy {
+		return prev
+	}
+	return resizeIdentityPool(prev, spec)
+}
+
+// maxIdentityPoolSlots 是 codex 会话池容量 K 的防御性上界。K = 账号
 // MaxConcurrency，而 reload 在持 publisher.mu 期间按 K **同步**分配 K 个 UUID
-// （newIdentitySlot → NewIdentityState；tools/loadtest 曾配 100000）——无上界即
+// （newCodexSession → NewIdentityState；tools/loadtest 曾配 100000）——无上界即
 // 让一次 reload 的锁内分配量随配置线性放大。1024 覆盖任何合理并发会话数
 // （账号默认 8，实测运维 ≤ 数十），同时把锁内 UUID 分配压在常数级。上界只在
 // 装载期施加于 codex 账号（见 buildSnapshots），非 codex 账号的并发门禁不变；
 // 门禁与池读同一份 acc，故二者仍恒同源。
 const maxIdentityPoolSlots = 1024
 
-// buildIdentityPools 按当前 byID 重建 codex 槽位池注册表：仅 codex 凭据
+// buildIdentityPools 按当前 byID 重建 codex 会话池注册表：仅 codex 凭据
 // （oauth/pat）且 MaxConcurrency>0 建池；与静态叶**同发布点**（挂
 // StaticView.identityPools），使门禁读的 MaxConcurrency 与池 K 恒同源。prevReg
-// 供复用（未变的池原样保留在途 busy 与槽身份）；删除/非 codex 的账号不在新
+// 供复用（未变的池原样保留在途 busy 与会话身份）；删除/非 codex 的账号不在新
 // 表中 → 旧池随之 GC。K 的上界已在 buildSnapshots 装载期施加于 acc.MaxConcurrency。
 func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg *identityRegistry) *identityRegistry {
 	pools := make(map[int64]*identityPool)
@@ -162,7 +293,13 @@ func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg 
 		if prevReg != nil {
 			prev = prevReg.pools[id]
 		}
-		pools[id] = syncIdentityPool(prev, k, installationIDOf(av.acc.Ext), s.cfg.RotatePolicy)
+		pools[id] = syncIdentityPool(prev, poolSpec{
+			accountID:      id,
+			k:              k,
+			installationID: installationIDOf(av.acc.Ext),
+			policy:         s.cfg.RotatePolicy,
+			retire:         s.cfg.RetireThread,
+		})
 	}
 	return &identityRegistry{pools: pools}
 }
@@ -180,28 +317,25 @@ func (s *Scheduler) prevIdentityPoolsLocked() *identityRegistry {
 	return nil
 }
 
-// claimIdentitySlot 为一次**已成功预留**的 codex 调用认领槽身份：仅 codex 凭据
-// （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入槽身份）。pools 取自
+// claimCodexSession 为一次**已成功预留**的 codex 调用认领会话：仅 codex 凭据
+// （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入会话身份）。pools 取自
 // 本次预留所用视图的静态根（与门禁 limit 同源）；全忙兜底 = 临时一次性身份
-// （不落池，计一条 warn）——installation/policy 取自池（单一来源，不再回 ext）。
-func (s *Scheduler) claimIdentitySlot(pools *identityRegistry, accountID int64, credType credential.Type) *identitySlot {
-	if !credType.IsCodex() {
-		return nil
-	}
-	if pools == nil {
-		return nil
+// （不落池、无代际/退役面，计一条 warn）——installation/policy 取自池。
+func (s *Scheduler) claimCodexSession(pools *identityRegistry, accountID int64, credType credential.Type) (*codexSession, *identityPool) {
+	if !credType.IsCodex() || pools == nil {
+		return nil, nil
 	}
 	pool := pools.pools[accountID]
 	if pool == nil {
-		return nil
+		return nil, nil
 	}
-	if slot := pool.claim(); slot != nil {
-		return slot
+	if session := pool.claim(); session != nil {
+		return session, pool
 	}
 	if s.log != nil {
-		s.log.Warn("identity pool exhausted; using ephemeral identity", logx.Int64("account_id", accountID))
+		s.log.Warn("codex session pool exhausted; using ephemeral identity", logx.Int64("account_id", accountID))
 	}
-	return newIdentitySlot(pool.installationID, pool.rotatePolicy())
+	return newCodexSession(pool.installationID, pool.rotatePolicy()), nil
 }
 
 // installationIDOf 取账号 ext 的安装 ID（账号级稳定项；缺列 → 空串）。
