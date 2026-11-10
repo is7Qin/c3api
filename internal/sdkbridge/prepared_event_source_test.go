@@ -50,6 +50,7 @@ func TestSameSignatureCannotPromoteOldFatal(t *testing.T) {
 	require.Len(t, calls, 1)
 	require.Equal(t, int64(1), calls[0].sourceRevision,
 		"事件绑定请求准备时冻结的 K（回读条目当前值会让旧判决拿到 2）")
+	require.Nil(t, a.clients.Get(7), "跨代证据不施加条目级动作（不毒化）⇒ 摘掉条目，交给当前代重新判断")
 
 	// 端到端：库里的身份已推进到 2 ⇒ 上面这条 K=1 的事件在持久化围栏处被拒。
 	store := &configRevisionStore{acct: newCodexAccountForRetry(7, 1)}
@@ -68,6 +69,7 @@ func TestSameSignatureCannotPromoteOldFatal(t *testing.T) {
 	require.Nil(t, store.acct.FailedAt, "来源 K=1 的旧判决不得禁用已推进到 K=2 的身份")
 	require.Empty(t, failer.calls, "围栏拒绝 ⇒ 内存摘除不得先发生")
 	require.Empty(t, store.gotExpect, "K 不符 ⇒ 连 CAS 都不该尝试")
+	require.Nil(t, b.clients.Get(7), "跨代证据摘掉条目（不留下永久毒化且无人记录的黑洞）")
 }
 
 // TestPreparedCarriesItsOwnSourceRevision 并存的句柄各自带各自的 K：账号 21 的句柄
@@ -137,4 +139,49 @@ func TestIdentityAdvanceKeepsAuthFatalDisabling(t *testing.T) {
 	require.NotNil(t, store.acct.FailedAt, "Auth 级 fatal 必须落下禁用判决（不得因回调先吃掉 CAS 而静默丢弃）")
 	require.Equal(t, []int64{2}, store.gotExpect, "判死围栏用条目当前 K=2（构造期 K=1 会被判陈旧）")
 	require.Equal(t, 1, failer.calls, "FailAccount 恰一次（回调与 errors.As 双源去重）")
+}
+
+// TestStaleFatalEvictsInsteadOfPoisoningSharedAuth 跨代判死帧不得毒化**共享** Auth：
+// 同签名 K 前进后条目复用、Auth 不重建，一条 K1 的旧帧若毒化共享 Auth，就会让 K2 的
+// 新身份带着旧判决跑——请求全死、判决却因围栏与 CAS 去重落不了库、账号在库里一直
+// "启用"（黑洞）。正确形状：动作的作用域等于证据的作用域——旧代证据只摘条目，不毒化。
+func TestStaleFatalEvictsInsteadOfPoisoningSharedAuth(t *testing.T) {
+	store := &configRevisionStore{acct: newCodexAccountForRetry(7, 1)}
+	failer := &retryFakeFailer{}
+	a := NewCodex(NewFailureHandler(FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch()}),
+		testEgressPool(nil), nil, RotationDeps{})
+
+	older, err := a.Prepare(oauthCredWithRev(7, "at-1", "rt-1", 1))
+	require.NoError(t, err)
+	shared := older.entry.auth
+
+	// 管理面只改身份类字段：K 1→2、凭据内容不变 ⇒ 条目复用，Auth（与它的毒化态）共享。
+	store.acct.IdentityRevision = 2
+	promoted, err := a.Prepare(oauthCredWithRev(7, "at-1", "rt-1", 2))
+	require.NoError(t, err)
+	require.Same(t, older.entry, promoted.entry, "同签名复用同一条目")
+	require.Equal(t, int64(2), a.clients.Get(7).srcRev.Load())
+
+	fatal := &codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated"}
+	a.FatalPrepared(older, fatal)
+
+	// ① 条目级动作不施加：共享 Auth 未被毒化（Authorization 仍给得出令牌）。
+	got, aerr := shared.Authorization(context.Background())
+	require.NoError(t, aerr, "共享 Auth 不得被旧代证据毒化（否则新身份带着旧判决跑）")
+	require.Equal(t, "Bearer at-1", got)
+	// ② 账号级动作也没发生：库 K=2 ≠ 证据 K=1，围栏在 CAS 之前就拒。
+	require.Nil(t, store.acct.FailedAt)
+	require.Empty(t, store.gotExpect)
+	require.Empty(t, failer.calls)
+	// ③ 条目被摘掉：不存在"毒化了却没人记录"的黑洞。
+	require.Nil(t, a.clients.Get(7), "旧代证据摘掉条目，交给下一次请求重新判断")
+
+	// ④ 判决没被藏起来：当前代（K=2）的请求重建条目、再次收到同一 fatal ⇒ 真正禁用。
+	fresh, err := a.Prepare(oauthCredWithRev(7, "at-1", "rt-1", 2))
+	require.NoError(t, err)
+	require.NotSame(t, promoted.entry, fresh.entry, "摘除后重建（新的 Auth 与新的去重位）")
+	a.FatalPrepared(fresh, fatal)
+	require.NotNil(t, store.acct.FailedAt, "当前代的证据必须落下禁用判决")
+	require.Equal(t, []int64{2}, store.gotExpect, "围栏用当前代 K=2")
+	require.Equal(t, 1, failer.calls)
 }

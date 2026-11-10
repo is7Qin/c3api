@@ -1081,12 +1081,21 @@ func (a *Codex) reportFatal(e *codexEntry, srcRev int64, fatal error) {
 // 帧后调用；唯一跨边界点）：
 //   - 来源版本门：只对**本连接 Prepare 得到的条目**生效。条目已被替换（管理面换
 //     凭据）⇒ 这条帧属于旧凭据，直接 no-op——旧连接的错误不得毒化新凭据的 Auth。
-//   - e.auth.Fatal(fatal)：SDK 显式终止——**不触发 OnAuthFatal**（实证
-//     auth_oauth.go:187-195），仅毒化 Auth（后续 Authorization 恒返回该错误）
 //   - 上报走 reportCredentialEvent(e, p.srcRev, fatal, false)：来源 K 来自**这个
-//     句柄**（准备时冻结），与 errors.As 路径共享 CAS 双源去重；**不剔除**——毒化
-//     Auth 保留至外部凭据变更（管理面重新导入 → sig 变化重建；与"不重建缓存"裁决
-//     一致——剔除会丢毒化态，凭据未变重建后仍走旧 token）
+//     句柄**（准备时冻结），与 errors.As 路径共享 CAS 双源去重。
+//   - **条目级动作按"这条证据是否仍属于当前授权的那一代"分流**（动作的作用域必须
+//     等于证据的作用域）：
+//   - `e.srcRev.Load() == p.srcRev`（条目此刻仍授权在同一代）：毒化 `e.auth` +
+//     上报，且**不剔除**——毒化态保留至外部凭据变更（管理面重新导入 → sig 变化
+//     重建；剔除会丢毒化态，凭据未变重建后仍走旧 token）。
+//   - 不相等（条目已被同签名身份写入抬到更新的代）：**不毒化**共享 Auth，改为摘掉
+//     这条条目。理由：`e.auth` 是条目**共享**的，毒化它是条目级动作；而这条证据属于
+//     旧代——毒化会让新身份带着旧判决跑（请求全死、判决却因围栏/去重落不了库，账号
+//     在库里一直"启用"），正是"动作作用域 > 证据作用域"的黑洞。摘条目让下一条请求
+//     按当前代重建、重新得出结论并上报。
+//   - 为什么不能"两边都改用条目当前 K"：这条证据是**某一次请求**产生的（可能来自旧
+//     出口/旧配置的伪 401），按当前 K 上报就会把旧判决升格成新身份的事实（B1 倒退）。
+//     K 必须来自 `p.srcRev`，只在**是否施加条目级动作**上参考条目当前值。
 //
 // 空句柄（未 Prepare / 未装配）→ no-op：没有来源版本就没有可施加的事件。
 func (a *Codex) FatalPrepared(p Prepared, fatal error) {
@@ -1096,6 +1105,14 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 	}
 	if !a.clients.isCurrent(e) {
 		return // 旧版本的判死帧：不毒化当前 Auth、不升级为账号级事件
+	}
+	if e.srcRev.Load() != p.srcRev {
+		// 跨代证据：照常以**请求自己的** K 上报（存储围栏会把它判成陈旧，fail-closed），
+		// 但**不毒化**共享 Auth——它是条目级动作，只属于当前那一代。随后摘掉这条条目，
+		// 让下一条请求按当前代重建并重新得出结论。
+		a.reportCredentialEvent(e, p.srcRev, fatal, false)
+		a.clients.evictIfCurrent(e)
+		return
 	}
 	e.auth.Fatal(fatal)
 	a.reportCredentialEvent(e, p.srcRev, fatal, false)
