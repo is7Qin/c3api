@@ -21,27 +21,25 @@ import (
 // 不再 import sdkbridge。
 
 // AccountUsageCredential 账号 codex 凭据组装（纯数据面零上游调用）：
-// 作用域门用**一条** owner-scoped 查询 `store.GetOwnedAccountExt`——归属谓词 AND 进
-// 同一条 SQL（越域 / 账号缺失 / 无 ext 行 ⇒ nil/nil；§2.5 禁止「先按 id 取行、再应用
-// 层比归属」）→ CredentialFromExt 派生 cred（codex-oauth/codex-pat 列组）→ **补来源
-// 身份代际 K**（`store.GetAccount`，同样是 owner-scoped 单读）→ 非 codex 凭据（全空）
-// → nil/nil。调用方（handler fan-out）凭 nil/non-nil 分流：nil = 无上游能力（null
-// 快照），non-nil = 调 prober。
+// **单次** owner-scoped 读 `store.GetOwnedAccountCredential`——凭据列与父账号行的
+// `identity_revision` 在同一条 SQL（JOIN accounts）里读出，越域 / 账号缺失 / 无 ext
+// 行 ⇒ ErrNotFound（§2.5：归属谓词 AND 进同一条语句，不存在「先按 id 取行、再应用
+// 层比归属」）。调用方（handler fan-out）凭 nil/non-nil 分流：nil = 无上游能力
+// （null 快照），non-nil = 调 prober。
 //
-// 为什么必须补 K：这一面**没有 Selection**（额度快照是后台拉取，不是某次请求的
-// 选号），凭据只能自己组装；而 ext 行不带 `identity_revision`（它落在父行）。K=0
-// 的凭据建出的条目上，SDK 自刷新产生的轮转回写会被存储围栏当成"来源未知/陈旧"
-// 丢掉（只 Warn、不落库）——进程重启后 DB 仍停在已被轮换掉的旧 RT。真实 codex 在
-// 额度面会主动刷新并落盘，这里不能更弱。
+// 为什么必须**一次**读：这一面没有 Selection（额度快照是后台拉取），凭据只能自己
+// 组装；而凭据内容与来源 K 分两次读时，中间可能夹进一次管理面凭据替换 ⇒ 得到
+// "旧内容 + 新 K" 的凭据。它建出的条目上，旧 Auth 的轮转/判死就能通过新身份的围栏
+// （覆盖管理员刚换上的凭据、或让旧判决禁用新身份）。
 //
-// §2.5：K 取的是**第二条 owner-scoped 单读**（`GetAccount` 的归属谓词 AND 进它自己
-// 的 WHERE），不是"先按 id 取行、再在应用层比归属"——本函数不做任何归属比较，越域
-// id 在两条查询里都是零行。两条查询之间发生转属时，第二条（K 来源）自己也是零行
-// ⇒ 按"账号不可见"返回 nil，不会读到他人身份。
+// 为什么 K 不能缺：K=0 的条目上，SDK 自刷新产生的轮转回写会被存储围栏当成"来源未知"
+// 丢掉（只 Warn、不落库）——进程重启后 DB 仍停在已被轮换掉的旧 RT。
 func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
-	// 作用域门：账号不可见（越域或缺失）⇒ 不读 ext、不返回凭据。
-	e, err := s.store.GetOwnedAccountExt(ctx, accountID)
-	if err != nil && !errors.Is(err, repository.ErrNotFound) {
+	cred, err := s.store.GetOwnedAccountCredential(ctx, accountID)
+	if err != nil {
+		if errors.Is(err, repository.ErrNotFound) {
+			return nil, nil // 越域 / 账号缺失 / api-key（无 ext 行）→ 无上游能力
+		}
 		mapped := mapRepoErr(err)
 		// 非 ErrNotFound store 故障 → Warn + 透错（handler 侧记 null/null，
 		// 不误标上游问题；ctx 取消为请求已死信号，不记 Warn）。
@@ -50,27 +48,10 @@ func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (
 		}
 		return nil, mapped
 	}
-	if errors.Is(err, repository.ErrNotFound) {
-		return nil, nil // 越域 / 账号缺失 / api-key（无 ext 行）→ 无上游能力
-	}
-	cred := domain.CredentialFromExt(e)
 	if cred.OAuthToken == "" && cred.OAuthRefreshToken == "" && cred.PATKey == "" {
 		return nil, nil // 非 codex 凭据（防御——ext 行仅 codex 类型可写）→ 无上游能力
 	}
-	// 来源 K：父行的 identity_revision（与凭据列同一身份代际）。取不到账号行 =
-	// 越域或刚被删除 ⇒ 与 ext 缺失同处理（无上游能力），不退化成 K=0。
-	a, aerr := s.store.GetAccount(ctx, accountID)
-	if aerr != nil {
-		if ctx.Err() == nil && s.log != nil && !errors.Is(aerr, repository.ErrNotFound) {
-			s.log.Warn("accounts usage: identity revision lookup failed", logx.Int64("account_id", accountID), logx.Error(mapRepoErr(aerr)))
-		}
-		if errors.Is(aerr, repository.ErrNotFound) {
-			return nil, nil
-		}
-		return nil, mapRepoErr(aerr)
-	}
-	cred.IdentityRevision = a.IdentityRevision
-	return &cred, nil
+	return cred, nil
 }
 
 // AccountUsageFrozen 失效冻结判定：账号是否处于运行时失效（failed_at 置位）——

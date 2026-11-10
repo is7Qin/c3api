@@ -136,6 +136,10 @@ type fakeStore struct {
 	// routingObservedCalls 记录 QueryObservedRouteClasses 被调用次数（计划为空时
 	// 的短路测试断言其为 0）。
 	routingObservedCalls int
+	// usageCredReads 额度面一次组装实际发生的 store 读次数（GetOwnedAccountCredential /
+	// GetOwnedAccountExt / GetAccount 各自 +1）：钉"凭据内容与父行 K 必须一次读出"
+	// ——分两次读会让它变成 2，而那正是"旧内容 + 新 K"的窗口。
+	usageCredReads int
 }
 
 // fakeTempRow 临时额度行模拟（domain 无 TempBalance 类型，CreateTempBalance
@@ -308,6 +312,7 @@ func (f *fakeStore) CreateAccount(ctx context.Context, a *domain.Account) (*doma
 func (f *fakeStore) GetAccount(ctx context.Context, id int64) (*domain.Account, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.usageCredReads++
 	a, ok := f.accs[id]
 	if !ok {
 		return nil, missingErr(id)
@@ -2318,6 +2323,7 @@ func (f *fakeStore) GetAccountExt(ctx context.Context, accountID int64) (*domain
 // ——谓词读 ctx，fake 同源读 ctx）。
 func (f *fakeStore) GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error) {
 	f.mu.Lock()
+	f.usageCredReads++
 	scope := domain.AccountScopeFrom(ctx)
 	defer f.mu.Unlock()
 	if scope.Set {
@@ -2335,6 +2341,36 @@ func (f *fakeStore) GetOwnedAccountExt(ctx context.Context, accountID int64) (*d
 	}
 	c := *e
 	return &c, nil
+}
+
+// GetOwnedAccountCredential 额度面凭据投影镜像：真实 repo 用**一条** JOIN SQL 同时取
+// 凭据列与父行 K；fake 在同一临界区内读两份 map，等价于同一个快照。
+func (f *fakeStore) GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
+	f.mu.Lock()
+	f.usageCredReads++
+	scope := domain.AccountScopeFrom(ctx)
+	defer f.mu.Unlock()
+	if scope.Set {
+		a, ok := f.accs[accountID]
+		if !ok || a.DeletedAt != nil || !scope.MatchesOwner(a.SupplierUserID) {
+			return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+		}
+	}
+	if err, ok := f.accExtErr[accountID]; ok {
+		return nil, err
+	}
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+	}
+	a, ok := f.accs[accountID]
+	if !ok {
+		return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID) // JOIN 无行
+	}
+	c := *e
+	cred := domain.CredentialFromExt(&c)
+	cred.IdentityRevision = a.IdentityRevision
+	return &cred, nil
 }
 
 // FindMissingOwnedAccountID ids 中第一个越出当前作用域的 id 镜像（作用域未设 ⇒ 恒 false）。

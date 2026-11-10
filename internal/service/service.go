@@ -263,9 +263,13 @@ type AccountExtStore interface {
 	AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error)
 	TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error)
 	GetAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
-	// GetOwnedAccountExt 作用域内的 ext 单读（usage 上游凭据组装面）：owner 谓词
+	// GetOwnedAccountExt 作用域内的 ext 单读（管理面 ext 读取面）：owner 谓词
 	// AND 进同一 SQL，越域/缺失/无 ext 行 ⇒ ErrNotFound（调用方按无上游能力处理）。
 	GetOwnedAccountExt(ctx context.Context, accountID int64) (*domain.AccountExt, error)
+	// GetOwnedAccountCredential 额度面的凭据投影：凭据列与父账号行的
+	// identity_revision **同一条** owner-scoped SQL 读出（分两次读会读出
+	// "旧凭据内容 + 新 K"，让旧 Auth 的事件通过新身份的围栏）。
+	GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error)
 	// FindAccountExtByCodexKey 组合幂等键查重（批量导入——(codex_email,
 	// codex_account_id)；GetAccountExt 仅按 account_id，查重面不存在）；缺行 →
 	// ErrNotFound。

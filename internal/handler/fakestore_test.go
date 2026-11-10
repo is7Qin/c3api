@@ -515,6 +515,35 @@ func (f *fakeStore) GetOwnedAccountExt(ctx context.Context, accountID int64) (*d
 	return &c, nil
 }
 
+// GetOwnedAccountCredential 额度面凭据投影镜像：真实 repo 用**一条** JOIN SQL 同时
+// 取凭据列与父行 K；fake 在同一临界区内读两份 map，等价于同一个快照。
+func (f *fakeStore) GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
+	f.mu.Lock()
+	scope := domain.AccountScopeFrom(ctx)
+	defer f.mu.Unlock()
+	if scope.Set {
+		a, ok := f.accs[accountID]
+		if !ok || a.DeletedAt != nil || !scope.MatchesOwner(a.SupplierUserID) {
+			return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+		}
+	}
+	if err, ok := f.accExtErr[accountID]; ok {
+		return nil, err
+	}
+	e, ok := f.accExts[accountID]
+	if !ok {
+		return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID)
+	}
+	a, ok := f.accs[accountID]
+	if !ok {
+		return nil, fmt.Errorf("%w: account_id=%d missing", repository.ErrNotFound, accountID) // JOIN 无行
+	}
+	c := *e
+	cred := domain.CredentialFromExt(&c)
+	cred.IdentityRevision = a.IdentityRevision
+	return &cred, nil
+}
+
 // FindMissingOwnedAccountID ids 中第一个越出当前作用域的 id 镜像（作用域未设 ⇒ 恒 false）。
 func (f *fakeStore) FindMissingOwnedAccountID(ctx context.Context, ids []int64) (int64, bool, error) {
 	f.mu.Lock()

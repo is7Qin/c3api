@@ -107,6 +107,32 @@ func TestAccountUsageCredentialStoreError(t *testing.T) {
 	require.Nil(t, cred)
 }
 
+// TestUsageCredentialReadsCredentialAndRevisionInOneRead 额度面的凭据内容与父行 K
+// 必须**一次**读出：分两次读（先 ext 取内容、再 accounts 取 K）时，两条查询之间可能
+// 夹进一次管理面凭据替换 ⇒ 得到"旧内容 + 新 K"的凭据，它建出的条目上旧 Auth 的轮转/
+// 判死就能通过新身份的围栏。
+//
+// 判据是 store 读次数：一次组装只允许发生一次读（真实 repo 是一条 JOIN SQL，越域/
+// 缺失同样在这一条语句里判掉）。
+func TestUsageCredentialReadsCredentialAndRevisionInOneRead(t *testing.T) {
+	svc := &Service{store: newFakeStore()}
+	f := svc.store.(*fakeStore)
+	f.accs[21] = &domain.Account{ID: 21, Enabled: true, IdentityRevision: 77}
+	f.accExts[21] = &domain.AccountExt{
+		AccountID: 21, CredentialType: credential.TypeCodexOAuth,
+		CodexOAuthToken: new("at-21"), CodexOAuthRefreshToken: new("rt-21"),
+	}
+
+	before := f.usageCredReads
+	cred, err := svc.AccountUsageCredential(context.Background(), 21)
+	require.NoError(t, err)
+	require.NotNil(t, cred)
+	require.Equal(t, 1, f.usageCredReads-before,
+		"凭据与父行 K 必须一次读出（分两次读会让这里是 2：\"旧内容 + 新 K\" 的窗口回来）")
+	require.Equal(t, int64(77), cred.IdentityRevision, "同一次读出的 K")
+	require.Equal(t, "rt-21", cred.OAuthRefreshToken)
+}
+
 // TestAccountUsageFrozen failed_at 判定（Q1 冻结范围）+ 失效来源透出（Q2）：
 // failed_at 置位 → frozen=true 且透出 failure_source；未失效 / enabled=false
 // （手动禁用）→ false；缺 id → false 不报错（无对象可冻结）。

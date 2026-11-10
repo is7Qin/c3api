@@ -7,6 +7,7 @@ package repository
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
@@ -450,6 +452,86 @@ func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64
 		return nil, err
 	}
 	return toDomainAccountExt(row), nil
+}
+
+// GetOwnedAccountCredential 额度面（无 Selection）的凭据投影（§2.5）：**一条
+// SQL** 同时读出凭据列与父账号行的 `identity_revision`——`account_ext e JOIN
+// accounts a`，owner 谓词 AND 在同一语句的 WHERE 里。
+//
+// 为什么必须一条语句：分两次读（先 ext 取凭据内容、再 accounts 取 K）时，两条
+// 语句之间可能夹进一次管理面凭据替换 ⇒ 读出"旧内容 + 新 K"，这份凭据建出的条目
+// 上的轮转/判死就能通过新身份的围栏（覆盖管理员刚换上的凭据、或让旧判决禁用新
+// 身份）。JOIN 读出的两半来自同一快照，结构上没有这个窗口。
+//
+// 越域 / 账号缺失 / 无 ext 行 ⇒ ErrNotFound（调用方按"无上游能力"处理，不区分
+// 缺失原因以免泄漏归属）。只投影凭据面用到的列——`codex_email` 等不在此列。
+func (r *AccountExtRepo) GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
+	query := `SELECT e.credential_type, e.codex_identity, e.codex_oauth_token, e.codex_oauth_refresh_token,
+       e.codex_oauth_expires_at, e.codex_pat_key, e.codex_account_id, a.identity_revision
+FROM account_ext e
+JOIN accounts a ON a.id = e.account_id
+WHERE e.account_id = $1`
+	args := []any{accountID}
+	if s := domain.AccountScopeFrom(ctx); s.Set {
+		args = append(args, s.OwnerUID)
+		query += fmt.Sprintf(" AND a.supplier_user_id = $%d AND a.deleted_at IS NULL", len(args))
+	}
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, query, args, rows); err != nil {
+		return nil, err
+	}
+	defer rows.Close() // nolint:errcheck // Rows.Err reports iteration failures.
+	if !rows.Next() {
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: account_id=%d missing or outside scope", ErrNotFound, accountID)
+	}
+	var (
+		credentialType string
+		identity       []byte
+		oauthToken     sql.NullString
+		oauthRefresh   sql.NullString
+		oauthExpires   sql.NullTime
+		patKey         sql.NullString
+		codexAccountID sql.NullString
+		identityRev    int64
+	)
+	if err := rows.Scan(&credentialType, &identity, &oauthToken, &oauthRefresh,
+		&oauthExpires, &patKey, &codexAccountID, &identityRev); err != nil {
+		return nil, err
+	}
+	// 只填凭据投影用到的列（其余列额度面不消费，保持 nil = 未提供）。
+	nullStr := func(v sql.NullString) *string {
+		if !v.Valid {
+			return nil
+		}
+		raw := v.String
+		return &raw
+	}
+	ext := &domain.AccountExt{
+		AccountID:              accountID,
+		CredentialType:         credential.Type(credentialType),
+		CodexOAuthToken:        nullStr(oauthToken),
+		CodexOAuthRefreshToken: nullStr(oauthRefresh),
+		CodexPATKey:            nullStr(patKey),
+		CodexAccountID:         nullStr(codexAccountID),
+	}
+	if oauthExpires.Valid {
+		t := oauthExpires.Time
+		ext.CodexOAuthExpiresAt = &t
+	}
+	if len(identity) > 0 {
+		var id domain.CodexIdentity
+		if err := json.Unmarshal(identity, &id); err != nil {
+			return nil, fmt.Errorf("account_id=%d codex_identity decode: %w", accountID, err)
+		}
+		ext.CodexIdentity = &id
+	}
+	// 凭据组装与类型分发只有一处（CredentialFromExt）；这里补上同一次读出的 K。
+	cred := domain.CredentialFromExt(ext)
+	cred.IdentityRevision = identityRev
+	return &cred, nil
 }
 
 // AdminWriteOAuthRotationCAS 管理员 OAuth 轮转（fenced）：CAS expectedRevision，

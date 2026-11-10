@@ -512,6 +512,12 @@ func (r *Repository) GetOwnedAccountExt(ctx context.Context, accountID int64) (*
 	return r.AccountExts.GetOwnedAccountExt(ctx, accountID)
 }
 
+// GetOwnedAccountCredential 额度面的凭据投影：凭据列与父行 identity_revision 在
+// 一条 owner-scoped SQL 里读出（作用域谓词 AND 在同一语句的 WHERE 里）。
+func (r *Repository) GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
+	return r.AccountExts.GetOwnedAccountCredential(ctx, accountID)
+}
+
 // FindAccountExtByCodexKey 组合幂等键查重（批量导入——(codex_email,
 // codex_account_id) 双条件；缺行 → ErrNotFound）。
 func (r *Repository) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
