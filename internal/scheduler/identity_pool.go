@@ -9,6 +9,10 @@
 // 并发模型沿用原槽位池：认领 = 旋转游标 + 逐槽 CAS，归还 = Store(false)——无
 // channel、无 mutex、请求路径零每请求锁。会话状态字段是**普通字段**：busy 独占
 // 保证租借期内只有一个读者/写者，所以不再套 atomic（§3.1）。
+//
+// 因此**租借之外可读的字段必须不可变**：轮换策略属于池的构造参数，`policy` 只
+// 是建会话时抄下的一份只读副本；resize 不写已发布的会话（容量变化只迁移会话
+// 指针，策略变化开新会话并回收旧线程）。兜底临时身份也只读池字段，不读 slot。
 package scheduler
 
 import (
@@ -38,7 +42,9 @@ type codexSession struct {
 	nextAt       uint64
 	wmax         uint64
 	turnState    string
-	policy       codexsdk.RotatePolicy
+	// policy 建会话时抄下的轮换策略（只读：与池的构造参数恒同值）。step 用它推进
+	// 窗口/退休；resize 永不改写它——策略真的变了就换新会话。
+	policy codexsdk.RotatePolicy
 	// credOwner 已对齐的凭据 owner 签名（sdkbridge.CredOwner）。零值 = 尚未对齐
 	// （新会话没有 ts 可清，首次对齐只是把它写上）。
 	credOwner [16]byte
@@ -133,7 +139,8 @@ func newCodexSession(installationID string, policy codexsdk.RotatePolicy) *codex
 
 // identityPool 账号级会话池（无锁）：容量 K = 账号 MaxConcurrency；cursor 为认领
 // 的旋转起点（round-robin 打散并发）。slots 切片发布后不再增删；逐会话状态经
-// 租借独占。轮换策略单一来源在**会话**（policy），池经 rotatePolicy 从会话派生。
+// 租借独占。轮换策略是**池的不可变构造参数**（policy），会话只持有建会话时的
+// 只读副本——这样"策略"没有第二个可写副本，resize 也不需要同步它。
 //
 // 池上**没有**任何凭据失效状态：owner 对齐读的是请求自己的凭据、落在会话字段上
 // （§3.2），所以重载换池、pending 池交错都不会丢失效。
@@ -142,6 +149,9 @@ type identityPool struct {
 	cursor         atomic.Uint64
 	installationID string
 	accountID      int64
+	// policy 本池的轮换策略（构造后不变）。所有会话按它开线程、按它推进；resize
+	// 比较它与新配置决定"迁移会话指针"还是"开新会话"。
+	policy codexsdk.RotatePolicy
 	// retireThread 退役某线程的空闲 WS 连接（构造期注入；nil = 未接——测试形态）。
 	// 退休与重载丢槽都走它，装配点唯一。
 	retireThread func(accountID int64, threadKey string)
@@ -150,12 +160,13 @@ type identityPool struct {
 	reserveHook func()
 }
 
-// rotatePolicy 返回本池的轮换策略（单一来源 = 会话：池内各会话构造期写入同一策略）。
+// rotatePolicy 返回本池的轮换策略（**不可变构造参数**：读它不碰任何会话字段，
+// 因此兜底路径/配置比较都可以在租借之外安全读）。
 func (p *identityPool) rotatePolicy() codexsdk.RotatePolicy {
-	if p == nil || len(p.slots) == 0 {
+	if p == nil {
 		return codexsdk.RotatePolicy{}
 	}
-	return p.slots[0].policy
+	return p.policy
 }
 
 // retire 退役某条线程的空闲连接（锁外调用；nil 池/未装配 = no-op）。
@@ -206,10 +217,14 @@ type poolSpec struct {
 //
 // 迁移判据是**原子预留**（旧会话 busy CAS false→true）：只有取得所有权的旧会话才
 // 被读写——重载不得碰在飞会话的状态（读它就是在和持有者竞争，§3.2）。预留成功的
-// 位次迁移会话（沿用线程/窗口计数/ts/owner）；installation 变 ⇒ 该账号全部会话
-// 重建（旧线程空闲连接退役、ts 不迁）。缩容丢弃的位次：预留成功（=空闲）⇒ 收集
-// 退役旧线程；预留失败（=在飞）⇒ **不做任何交接**，其残留 idle 由 SDK 的 idle TTL
-// 时间有界回收（§5.2-5）——正是不引入「交接标志」的原因。旧池 GC。
+// 位次迁移会话（沿用线程/窗口计数/ts/owner）；installation 或轮换策略变 ⇒ 该账号
+// 全部会话重建（旧线程空闲连接退役、ts 不迁）。缩容丢弃的位次：预留成功（=空闲）
+// ⇒ 收集退役旧线程；预留失败（=在飞）⇒ **不做任何交接**，其残留 idle 由 SDK 的
+// idle TTL 时间有界回收（§5.2-5）。旧池 GC。
+//
+// 这里**只迁移会话指针**，绝不改写已发布会话的字段（尤其 policy：它是池的不可变
+// 构造参数，会话上的副本也只在构造时写入）。策略真的变了就换新会话——持旧视图
+// 的请求仍在旧池/旧会话上，它们读到的策略永远与建会话时一致。
 //
 // 退役**只收集**：terminate 可能在 socket 写闸上等，必须由持锁方解锁后执行
 // （`poolReclaim.run`，§3.2「锁外 RetireThread」）。
@@ -218,20 +233,25 @@ func resizeIdentityPool(old *identityPool, spec poolSpec, reclaim *poolReclaim) 
 	np := &identityPool{
 		installationID: spec.installationID,
 		accountID:      spec.accountID,
+		policy:         spec.policy,
 		retireThread:   spec.retire,
 		slots:          make([]*codexSession, k),
 	}
+	reusable := old != nil && old.installationID == spec.installationID && old.rotatePolicy() == spec.policy
 	for i := range k {
-		if old != nil && i < len(old.slots) && old.slots[i].busy.CompareAndSwap(false, true) {
+		if old != nil && i < len(old.slots) {
 			os := old.slots[i]
-			if old.installationID == spec.installationID {
-				os.policy = spec.policy
-				os.busy.Store(false) // 新池尚未发布：此刻释放不会被别人抢到
-				np.slots[i] = os
-				continue
+			if os.busy.CompareAndSwap(false, true) {
+				if reusable {
+					// 同一 installation + 同一策略：会话字段与池参数仍然自洽，迁移指针。
+					os.busy.Store(false) // 新池尚未发布：此刻释放不会被别人抢到
+					np.slots[i] = os
+					continue
+				}
+				// installation/策略变了：旧会话的线程不再属于新配置，退役后开新会话。
+				retireThreadKey(spec, reclaim, os.threadKey)
+				os.busy.Store(false)
 			}
-			retireThreadKey(spec, reclaim, os.threadKey)
-			os.busy.Store(false)
 		}
 		np.slots[i] = newCodexSession(spec.installationID, spec.policy)
 	}
@@ -460,7 +480,8 @@ func (s *Scheduler) prevIdentityPoolsLocked() *identityRegistry {
 // claimCodexSession 为一次**已成功预留**的 codex 调用认领会话：仅 codex 凭据
 // （oauth/pat）认领；非 codex / 无池 → nil（不认领、不注入会话身份）。pools 取自
 // 本次预留所用视图的静态根（与门禁 limit 同源）；全忙兜底 = 临时一次性身份
-// （不落池、无代际/退役面，计一条 warn）——installation/policy 取自池。
+// （不落池、无代际/退役面，计一条 warn）——installation/policy 取自池的**不可变
+// 字段**，不在租借之外读任何会话状态。
 func (s *Scheduler) claimCodexSession(pools *identityRegistry, accountID int64, credType credential.Type) (*codexSession, *identityPool) {
 	if !credType.IsCodex() || pools == nil {
 		return nil, nil

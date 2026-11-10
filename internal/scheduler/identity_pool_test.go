@@ -407,13 +407,17 @@ func TestIdentityPoolResizeBusySlotNotMigrated(t *testing.T) {
 	require.Equal(t, busy.thread, busyPool.slots[busyIdx].thread, "持者身份不被改写")
 }
 
-// TestIdentityPoolRotatePolicySingleSource 轮换策略单一来源在会话：pool.rotatePolicy
-// 从会话派生（池不再各存一份投影）。
-func TestIdentityPoolRotatePolicySingleSource(t *testing.T) {
+// TestIdentityPoolRotatePolicyImmutable 轮换策略是**池的不可变构造参数**：池与会话
+// 各持同一份只读副本，池的读取不依赖任何会话——兜底路径因此不需要租借。
+func TestIdentityPoolRotatePolicyImmutable(t *testing.T) {
 	p := codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 3}
 	pool := newTestPool(3, p)
-	require.Equal(t, p, pool.rotatePolicy(), "池策略由会话派生")
-	require.Equal(t, p, newCodexSession("inst", p).policy, "会话持有策略（单一来源）")
+	require.Equal(t, p, pool.rotatePolicy(), "池字段 = 构造参数")
+	for _, sl := range pool.slots {
+		require.Equal(t, p, sl.policy, "会话持有建会话时的只读副本")
+	}
+	require.Equal(t, codexsdk.RotatePolicy{}, (&identityPool{}).rotatePolicy(),
+		"空池也按字段回答（不读 slot）")
 }
 
 // TestClaimCodexSessionOnlyCodexAndFallback 仅 codex 凭据认领；全忙兜底临时身份
