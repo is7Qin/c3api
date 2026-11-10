@@ -9,11 +9,17 @@ package sdkbridge
 // 在飞请求的旧判决就会顶上新身份。用例只用真实组件与确定性交错（无 sleep）。
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // TestSameSignatureCannotPromoteOldFatal 同签名复用不得把旧请求的判决升格成新身份的
@@ -90,4 +96,45 @@ func TestPreparedCarriesItsOwnSourceRevision(t *testing.T) {
 	require.Equal(t, int64(22), calls[1].accountID)
 	require.Equal(t, int64(9), calls[1].sourceRevision, "另一个句柄带它自己的 K=9")
 	require.NotSame(t, older.entry, other.entry)
+}
+
+// TestIdentityAdvanceKeepsAuthFatalDisabling K 前进不得让 Auth 级判死丢掉：SDK 的判死回调
+// 在**事件发生时**读条目当前 K，所以"K 1→2、条目复用、Auth 不重建"之后它仍能通过存储
+// 围栏落下判决。
+//
+// 这条钉的是 fail-open 形状：`reportCredentialEvent` **先 CAS 去重再走围栏**，若回调带
+// 构造期 K（=1），它会先吃掉那唯一一次上报机会、再被判陈旧；随后请求级翻译（带请求自己
+// 的 K=2，本该成功）被去重跳过 ⇒ 真正被判死的凭据永远不禁用账号。
+func TestIdentityAdvanceKeepsAuthFatalDisabling(t *testing.T) {
+	var reqs atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqs.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":{"code":"token_invalidated"}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	store := &configRevisionStore{acct: newCodexAccountForRetry(7, 1)}
+	failer := &retryFakeFailer{}
+	a := NewCodex(NewFailureHandler(FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch()}),
+		testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
+
+	// K=1 建条目（Auth 与判死回调都在这一刻定型）。
+	first, err := a.Prepare(oauthCredWithRev(7, "at-1", "rt-1", 1))
+	require.NoError(t, err)
+	// 管理面只改身份类字段：K 1→2，凭据内容逐字节不变 ⇒ 复用同一条目、Auth 不重建。
+	store.acct.IdentityRevision = 2
+	promoted, err := a.Prepare(oauthCredWithRev(7, "at-1", "rt-1", 2))
+	require.NoError(t, err)
+	require.Same(t, first.entry, promoted.entry, "同签名复用同一条目（判死回调仍是最早那次构造的）")
+
+	// 真实交换：上游 401 判死码 → SDK 分类为 AuthPermanentlyRevokedError → OnAuthFatal。
+	_, err = a.Responses(context.Background(), oauthCredWithRev(7, "at-1", "rt-1", 2),
+		a.DirectEgress(), []byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
+	require.Error(t, err)
+	require.Equal(t, int64(1), reqs.Load(), "判死不重试")
+
+	require.NotNil(t, store.acct.FailedAt, "Auth 级 fatal 必须落下禁用判决（不得因回调先吃掉 CAS 而静默丢弃）")
+	require.Equal(t, []int64{2}, store.gotExpect, "判死围栏用条目当前 K=2（构造期 K=1 会被判陈旧）")
+	require.Equal(t, 1, failer.calls, "FailAccount 恰一次（回调与 errors.As 双源去重）")
 }

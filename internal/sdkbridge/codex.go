@@ -128,9 +128,12 @@ type codexEntry struct {
 	// ——两者都是"要不要动这张表"，不是"这条事件属于哪一代"。
 	//
 	// **请求级证据不用它**：条目按签名复用、这个值会被后来的同签名请求单调抬升，所以
-	// 在飞请求的 fatal、构造失败用那一版请求自己的 K（`Prepared.srcRev` 或构造 Auth 时
-	// 的凭据版本），绝不回读这里。反过来，**条目自身**的轮转回写必须用它：轮转换的是
-	// 这个条目自己的令牌，K 前进只是管理面对同一份凭据内容的重新授权（见
+	// 在飞请求的判决（errors.As 补报、构造失败）用那一版请求自己的 K（`Prepared.srcRev`
+	// 或凭据快照的版本），绝不回读这里——请求可能被旧出口/旧配置污染，那条判决不得
+	// 升格成新身份的事实。
+	//
+	// 反过来，**凭据自身**的证据（Auth 判死回调、轮转回写）必须用它：它们说的是这条活
+	// 条目此刻的凭据，K 前进只是管理面对同一份凭据内容的重新授权（见 buildAuth /
 	// rotateWriteback）。0 = 来源未知（无 Selection 调用面）。
 	//
 	// 语义是"该凭据内容上**观测到的最大** K"：同签名的新 K 只可能来自不动凭据内容
@@ -429,10 +432,10 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 type Prepared struct {
 	entry *codexEntry
 	// srcRev 这条请求**准备时冻结**的来源身份代际 K（`AccountCredential.IdentityRevision`）。
-	// 它是本句柄产生的**请求级事件**（fatal / 构造失败）的唯一来源版本：条目按签名复
-	// 用、条目上的 `srcRev` 会被后来的同签名 Prepare 单调抬升，所以"此刻条目上的值"
-	// 不是这条请求的版本——回读它就会让在飞请求的旧判决顶上新身份。条目自身的轮转不回
-	// 写落到这里（见 rotateWriteback）。0 = 来源未知（无 Selection 调用面）。
+	// 它是本句柄产生的**请求级证据**（errors.As 补报、构造失败）的唯一来源版本：条目按
+	// 签名复用、条目上的 `srcRev` 会被后来的同签名 Prepare 单调抬升，所以"此刻条目上
+	// 的值"不是这条请求的版本——回读它就会让在飞请求的旧判决顶上新身份。凭据自身的证据
+	// 不走这里（Auth 判死回调 / 轮转回写用条目当前 K）。0 = 来源未知（无 Selection 面）。
 	//
 	// 值类型字段：随句柄在栈上传递，不引入分配。
 	srcRev int64
@@ -866,17 +869,22 @@ func (a *Codex) translateDialError(e *codexEntry, srcRev int64, err error) error
 //     派生——派生点唯一在落库，管理面导入行/单账号保存）；空 = 不发头。变更 →
 //     credSig 变化 → 客户端重建（账号身份变更语义）
 func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexsdk.Auth, error) {
-	// 判死回调的**事件来源 K**：构造这条 Auth 的那份凭据快照的版本。闭包捕获这个值
-	// （而不是在事件发生时读条目上的当前值）：条目按签名复用、K 会被后来的同签名
-	// 请求抬升，而这一次"凭据判死"是请求级证据，属于把它建出来的那一代身份。
+	// 判死回调的**事件来源 K = 条目当前 K**（回调触发时才读，不捕获构造期的值）：
+	// 与轮转回写同一条规则——凭据自身的证据落在"这条活条目此刻被授权的那一代"上。
 	//
-	// 轮转回写不在此列：它换的是条目自己的令牌，按条目当前 K 落库（见 rotateWriteback）。
-	srcRev := cred.IdentityRevision
+	// 为什么必须用当前值（fail-open 的成因）：K 只在身份类字段变更时推进，凭据内容
+	// 可以不变 ⇒ 条目按签名复用、Auth 不重建 ⇒ 捕获的构造期 K 会永远停在旧代际。而
+	// `reportCredentialEvent` **先 CAS 去重再走围栏**：带旧 K 的回调会先吃掉那唯一
+	// 一次上报机会、再被存储围栏判陈旧；随后请求级翻译（带请求自己的当前 K，本该
+	// 成功）被去重跳过 ⇒ 真正判死的凭据永远不禁用账号，账号带病继续跑。
+	//
+	// 不复用这段逻辑的地方是 `translateError` / `translateDialError`：它们带的是请求
+	// 句柄**冻结**的 K（请求可能被旧出口/旧配置污染，那条保护不能丢）。
 	if cred.PATKey != "" {
 		return codexsdk.PAT(cred.PATKey,
 			// 统一回调装配（与 OAuth 同源）：SDK 判死（PAT 401 致命体分类）→
 			// reportFatal 上报禁用（双源去重单次）
-			codexsdk.WithPATOnAuthFatal(func(fatal error) { a.reportFatal(e, srcRev, fatal) }),
+			codexsdk.WithPATOnAuthFatal(func(fatal error) { a.reportFatal(e, e.srcRev.Load(), fatal) }),
 			// 账号标识（DB 显式值——SDK 不派生；空 = 不发头，向后兼容）
 			codexsdk.WithPATAccountID(cred.CodexAccountID),
 		), nil
@@ -888,7 +896,7 @@ func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexs
 	opts := []codexsdk.OAuthOption{
 		// 统一回调装配（§3）：SDK 判死（RT 判死码 / token 端点 401 / 账号
 		// 禁用 / AT 401 判死 / 回调连续失败）→ 双源去重单次上报
-		codexsdk.WithOnAuthFatal(func(fatal error) { a.reportFatal(e, srcRev, fatal) }),
+		codexsdk.WithOnAuthFatal(func(fatal error) { a.reportFatal(e, e.srcRev.Load(), fatal) }),
 		codexsdk.WithOnTokenRotated(func(at, rt string) { a.rotateWriteback(e, at, rt) }),
 	}
 	if atUsable(cred) {
@@ -1061,8 +1069,10 @@ func (a *Codex) reportConfigFailure(cred *domain.AccountCredential, fatal error)
 // 上报**（CAS 胜者上报；败者并发调用/errors.As 补报路径跳过）。上报后失效
 // 剔除（联动——账号已判死，缓存条目随弃，管理面恢复后重建）。
 //
-// srcRev 是这一 fatal 的**来源 K**：SDK 回调路径取构造该 Auth 时的凭据版本，
-// errors.As 路径取请求句柄/凭据快照的版本——两条都不回读条目当前值。
+// srcRev 是这一 fatal 的**来源 K**，两条路径的取法不同（这是刻意的）：
+//   - SDK 判死回调（凭据自身的证据）取**条目当前** K——见 buildAuth；
+//   - errors.As 补报（请求级证据）取**请求句柄冻结**的 K（`Prepared.srcRev` 或凭据
+//     快照的版本），请求可能被旧出口/旧配置污染，不得升格成新身份的判决。
 func (a *Codex) reportFatal(e *codexEntry, srcRev int64, fatal error) {
 	a.reportCredentialEvent(e, srcRev, fatal, true)
 }
