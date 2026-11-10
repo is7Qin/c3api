@@ -134,6 +134,24 @@ func resourceBatch(gen uint64, universe map[int64]*egress.Client, held []int64) 
 	return domain.ResourceBatch{Gen: gen, Directives: directives}
 }
 
+// hasDropped 报告这份 `Accounts()` 快照里是否有账号**已不在账号全集里**——即
+// "该点名删除"的差额。它是配置权威对**自己**那份快照的只读判断（表侧仍然不做差分）：
+// 静默轮用它决定要不要取号下发，避免每 tick 空转一个新代号、反复下发内容相同的指令。
+//
+// 必须每次现算、不得缓存"曾经回收过"：请求侧可能在任何时刻为已移除账号新建资源，
+// 判据只能是最新的表快照（否则迟到资源会被永久漏掉）。
+func (r *accountRuntime) hasDropped(held []int64) bool {
+	if r == nil {
+		return false
+	}
+	for _, id := range held {
+		if _, ok := r.universe[id]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
 // egressForAccount 账号当前 responses 出口（未装配池 ⇒ nil = 直连语义）。与
 // buildSnapshots 对组内账号的派生同源：有代理 → 规格 client；无 → 池直连。
 func egressForAccount(acc *domain.Account, pool *egress.Pool) *egress.Client {

@@ -58,3 +58,33 @@ func TestQuietBackstopReclaimsLateResource(t *testing.T) {
 	require.Equal(t, loads, cl.loadsN(), "静默轮不得重扫配置（不触发 full reload）")
 	require.Equal(t, genBefore+1, s.accounts.gen, "静默轮仍取一个新批次号（围栏随之前进）")
 }
+
+// TestQuietBackstopDoesNotBurnGenerations 静默轮不得空转代号：静默是常态（30s 一 tick），
+// 若每个 tick 都取号并下发一批内容相同的保留指令，代号会按 tick 频率膨胀，回收路径每次
+// 都要遍历全表却没有新指令。
+//
+// 判据：无差分时既不取号也不产生批次；有差分时（TestQuietBackstopReclaimsLateResource）
+// 恰好 +1 并点名删除。每次 tick 都重新读 Accounts() 再判，所以迟到资源仍会被发现。
+func TestQuietBackstopDoesNotBurnGenerations(t *testing.T) {
+	tplChat := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
+	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tplChat, 4)}})
+	cl := &countingLoader{inner: m}
+	// 资源表持有账号 1，而它在账号全集里 ⇒ 没有要回收的东西。
+	table := newRecordingResources(1)
+	cfg := testCfg()
+	cfg.ClientResources = table
+	s := newSchedWithCfg(t, cfg, cl)
+
+	c := m.probeCounts()
+	s.lastProbe.Store(&c)
+	s.stalenessProbe = func(context.Context) (compileProbeCounts, error) { return c, nil }
+	require.True(t, s.publishedViewWhole(), "前置：整视图已发布")
+
+	genBefore, batchesBefore, loadsBefore := s.accounts.gen, table.count(), cl.loadsN()
+	s.backstopTick(context.Background())
+	s.backstopTick(context.Background())
+
+	require.Equal(t, genBefore, s.accounts.gen, "无差分的静默轮不得取号")
+	require.Equal(t, batchesBefore, table.count(), "无差分的静默轮不得下发批次")
+	require.Equal(t, loadsBefore, cl.loadsN(), "静默轮仍不得重扫配置")
+}

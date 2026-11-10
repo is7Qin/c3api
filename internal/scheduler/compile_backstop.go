@@ -145,12 +145,16 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 			// `Accounts()` 快照之后、批次应用之前为已移除账号建出条目，而删除指令
 			// 只能由全集差分产生。静默期因此仍需一次"点名机会"：用内存里**已有的**
 			// 账号全集（不重扫 DB、不做 full reload）+ 资源表**新鲜**的 `Accounts()`
-			// 快照取号下发——表仍只执行指令，差分与策略仍在本侧。
+			// 快照做差分——表仍只执行指令，差分与策略仍在本侧。
+			//
+			// **没有差异就不取号、不下发**：静默是常态（30s 一 tick），无条件取号
+			// 会让代号每 tick 空转一次、并反复下发内容相同的保留指令。每次都重新
+			// 读 `Accounts()` 再判，所以迟到资源不会被永久漏掉（不记"回收过就不查"）。
 			//
 			// 取号在本锁内（保持 Gen 单调），应用在锁外（reclaim.run，与既有回收
 			// 路径同一批次、同一顺序）。未装配资源表 ⇒ 无资源可回收，不取号。
-			if s.cfg.ClientResources != nil {
-				cfg := s.accounts.issue(s.accounts.universe, s.clientAccounts())
+			if held := s.clientAccounts(); s.accounts.hasDropped(held) {
+				cfg := s.accounts.issue(s.accounts.universe, held)
 				reclaim.config = &cfg
 			}
 			return
