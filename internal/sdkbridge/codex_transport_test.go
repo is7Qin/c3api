@@ -303,7 +303,7 @@ func TestCodexTransportSwitchChangesLegWithinOneInstance(t *testing.T) {
 // 且不得被 fatal 判定误当成账号级终止、也不得被当成"网络故障"。
 func TestCodexTranslateErrorMapsWSBackpressure(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
-	mapped := a.translateError(nil, codexsdk.ErrWSBackpressure)
+	mapped := a.translateError(nil, 0, codexsdk.ErrWSBackpressure)
 	require.ErrorIs(t, mapped, domain.ErrUpstreamBackpressure, "领域 sentinel 必须可判")
 	require.ErrorIs(t, mapped, codexsdk.ErrWSBackpressure, "原始 SDK 错误链必须保留")
 	require.False(t, IsFatal(mapped), "背压不是账号级终止（不得触发摘号/冷却）")

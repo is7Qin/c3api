@@ -123,13 +123,17 @@ type codexEntry struct {
 	auth      codexsdk.Auth
 	sig       credKey // 凭据签名（外部凭据变更 → 重建）
 	// srcRev **本条目**凭据内容的来源身份代际 K（`AccountCredential.IdentityRevision`，
-	// 与凭据列同一次快照读）。它是条目身上所有事件回流的围栏：fatal 上报、构造失败、
-	// 轮转回写都以它作 `expectedRevision`——**绝不回读"当前 K"**（那会让旧凭据的
-	// 事件在管理面换凭据后仍然生效）。0 = 来源未知（无 Selection 调用面）。
+	// 与凭据列同一次快照读）。它只回答**资源归属**问题：`supersededBy` 判"这份快照
+	// 是否已被表里的条目超越"、`invalidateOlder` 判"表里的条目是否属于更旧的身份"
+	// ——两者都是"要不要动这张表"，不是"这条事件属于哪一代"。
 	//
-	// 语义是"该凭据内容上**观测到的最大** K"：条目按签名复用，而同签名的新 K 只可能
-	// 来自不动凭据内容的身份写入（base_url/template_id/installation），内容既相同，
-	// 围栏就该按新 K——故复用时**单调抬升**、从不回退（atomic：事件路径无表锁读它）。
+	// **它不是事件来源**：条目按签名复用、这个值会被后来的同签名请求单调抬升，所以
+	// 在飞请求的 fatal/构造失败/轮转回写一律用自己那一版 K（`Prepared.srcRev` 或
+	// 构造 Auth 时的凭据版本），绝不回读这里。0 = 来源未知（无 Selection 调用面）。
+	//
+	// 语义是"该凭据内容上**观测到的最大** K"：同签名的新 K 只可能来自不动凭据内容
+	// 的身份写入（base_url/template_id/installation），内容既相同，资源归属就该按新
+	// K——故复用时**单调抬升**、从不回退（atomic：事件路径无表锁读它）。
 	srcRev atomic.Int64
 	// owner 构造**本条目**那版凭据的稳定 owner（§3.2「凭据替换」的 ts 清空判据）。
 	// 它是条目的稳定字段：请求准备阶段（Prepare）从这里读，不再对请求里的凭据快照
@@ -237,7 +241,7 @@ func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredentia
 	}
 	resp, err := client.GenerateImage(ctx, toSDKParams(p))
 	if err != nil {
-		return nil, a.translateError(e, err)
+		return nil, a.translateError(e, cred.IdentityRevision, err)
 	}
 	return fromSDKResponse(resp), nil
 }
@@ -283,7 +287,7 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 		// 透传、SSE error 帧 message 取上游文案）；fatal 五类统一回调单次上报
 		// + 原样透传。fn 回调错误（网关写入失败/客户端断开）非 SDK 错误 →
 		// translateError 原样透传（不过滤）。
-		return a.translateError(e, err)
+		return a.translateError(e, cred.IdentityRevision, err)
 	}
 	return nil
 }
@@ -321,7 +325,7 @@ func (a *Codex) ResponsesPrepared(ctx context.Context, p Prepared, eg *egress.Cl
 	}
 	resp, err := client.Responses(ctx, payload, id)
 	if err != nil {
-		return nil, a.translateError(p.entry, err)
+		return nil, a.translateError(p.entry, p.srcRev, err)
 	}
 	return resp, nil
 }
@@ -341,7 +345,7 @@ func (a *Codex) Search(ctx context.Context, cred *domain.AccountCredential, eg *
 	}
 	resp, err := client.Search(ctx, payload)
 	if err != nil {
-		return nil, a.translateError(e, err)
+		return nil, a.translateError(e, cred.IdentityRevision, err)
 	}
 	return resp, nil
 }
@@ -375,7 +379,7 @@ func (a *Codex) StreamBodyPrepared(ctx context.Context, p Prepared, eg *egress.C
 	}
 	resp, err := client.StreamBody(ctx, payload, id)
 	if err != nil {
-		return nil, a.translateError(p.entry, err)
+		return nil, a.translateError(p.entry, p.srcRev, err)
 	}
 	return resp, nil
 }
@@ -422,20 +426,30 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 // 那一版。
 type Prepared struct {
 	entry *codexEntry
+	// srcRev 这条请求**准备时冻结**的来源身份代际 K（`AccountCredential.IdentityRevision`）。
+	// 它是本句柄产生的一切事件的唯一来源版本：条目按签名复用、`srcRev` 会被后来
+	// 的同签名 Prepare 单调抬升，所以"此刻条目上的值"不是这条请求的版本——回读它就
+	// 会让在飞请求的旧判决顶上新身份。0 = 来源未知（无 Selection 调用面）。
+	//
+	// 值类型字段：随句柄在栈上传递，不引入分配。
+	srcRev int64
 }
 
 // errUnprepared 空句柄的使用错误（调用方忽略了 Prepare 的错误）。装配错误必须显形，
 // 不静默回退到"按请求凭据再查一次"（那正是要消除的路径）。
 var errUnprepared = errors.New("sdkbridge: codex request prepared without entry")
 
-// Prepare 取本次请求的账号准备句柄：entryFor（无网络）+ 条目稳定字段。错误语义与
-// 适配层调用一致（空 rt/构造失败 → 交给调用方的上游错误分类）。
+// Prepare 取本次请求的账号准备句柄：entryFor（无网络）+ 条目稳定字段 + **冻结的来源
+// K**。错误语义与适配层调用一致（空 rt/构造失败 → 交给调用方的上游错误分类）。
+//
+// K 取自**请求自己的凭据快照**（不是条目上的当前值）：条目可以被同签名的后到请求
+// 抬升，而这条请求的事件永远属于它准备时的那一代身份。
 func (a *Codex) Prepare(cred *domain.AccountCredential) (Prepared, error) {
 	e, err := a.entryFor(cred)
 	if err != nil {
 		return Prepared{}, err
 	}
-	return Prepared{entry: e}, nil
+	return Prepared{entry: e, srcRev: cred.IdentityRevision}, nil
 }
 
 // Owner 本句柄的凭据 owner（条目构造时定型的稳定字段；零值 = 空句柄）。
@@ -816,7 +830,7 @@ func (a *Codex) DialPrepared(ctx context.Context, p Prepared, eg *egress.Client,
 	opts = append(opts, codexsdk.WithTransport(eg.HTTP.Transport))
 	c, err := codexsdk.Dial(ctx, e.auth, id, opts...)
 	if err != nil {
-		return nil, a.translateDialError(e, err)
+		return nil, a.translateDialError(e, p.srcRev, err)
 	}
 	return c, nil
 }
@@ -824,13 +838,13 @@ func (a *Codex) DialPrepared(ctx context.Context, p Prepared, eg *egress.Client,
 // translateDialError Dial 错误翻译（§5 错误契约）：*DialError → 信封
 // （Refreshed 保留）；其余（refresh 失败裸错误）复用 translateError 双分支
 // （fatal → 统一回调 + 原样；RefreshError/网络 → 原样 → 网关 failover 分类）。
-func (a *Codex) translateDialError(e *codexEntry, err error) error {
+func (a *Codex) translateDialError(e *codexEntry, srcRev int64, err error) error {
 	if de, ok := errors.AsType[*codexsdk.DialError](err); ok {
 		env := NewEnvelopeError(de.StatusCode, "", de)
 		env.Refreshed = de.Refreshed
 		return env
 	}
-	return a.translateError(e, err)
+	return a.translateError(e, srcRev, err)
 }
 
 // buildAuth 按 cred 构造 SDK Auth（构造前校验）：
@@ -849,11 +863,15 @@ func (a *Codex) translateDialError(e *codexEntry, err error) error {
 //     派生——派生点唯一在落库，管理面导入行/单账号保存）；空 = 不发头。变更 →
 //     credSig 变化 → 客户端重建（账号身份变更语义）
 func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexsdk.Auth, error) {
+	// 这条 Auth 的**事件来源 K**：构造它的那份凭据快照的版本。回调闭包捕获这个值
+	// （而不是在事件发生时读条目上的当前值）：条目按签名复用、K 会被后来的同签名
+	// 请求抬升，而这条 Auth 内部产生的事件属于把它建出来的那一代身份。
+	srcRev := cred.IdentityRevision
 	if cred.PATKey != "" {
 		return codexsdk.PAT(cred.PATKey,
 			// 统一回调装配（与 OAuth 同源）：SDK 判死（PAT 401 致命体分类）→
 			// reportFatal 上报禁用（双源去重单次）
-			codexsdk.WithPATOnAuthFatal(func(fatal error) { a.reportFatal(e, fatal) }),
+			codexsdk.WithPATOnAuthFatal(func(fatal error) { a.reportFatal(e, srcRev, fatal) }),
 			// 账号标识（DB 显式值——SDK 不派生；空 = 不发头，向后兼容）
 			codexsdk.WithPATAccountID(cred.CodexAccountID),
 		), nil
@@ -865,8 +883,8 @@ func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexs
 	opts := []codexsdk.OAuthOption{
 		// 统一回调装配（§3）：SDK 判死（RT 判死码 / token 端点 401 / 账号
 		// 禁用 / AT 401 判死 / 回调连续失败）→ 双源去重单次上报
-		codexsdk.WithOnAuthFatal(func(fatal error) { a.reportFatal(e, fatal) }),
-		codexsdk.WithOnTokenRotated(func(at, rt string) { a.rotateWriteback(e, at, rt) }),
+		codexsdk.WithOnAuthFatal(func(fatal error) { a.reportFatal(e, srcRev, fatal) }),
+		codexsdk.WithOnTokenRotated(func(at, rt string) { a.rotateWriteback(e, srcRev, at, rt) }),
 	}
 	if atUsable(cred) {
 		opts = append(opts, codexsdk.WithInitialAccessToken(cred.OAuthToken))
@@ -981,18 +999,20 @@ func CredOwner(cred *domain.AccountCredential) [16]byte {
 // 共用）：CAS 去重 —— 同一条目的同一 fatal 只上报一次（回调路径与 errors.As 路径
 // 双源去重）。
 //
-// 关键约束（§3.3b-2）：事件在产生时绑定了**来源条目**（含来源 K）。两道门：
+// 关键约束（§3.3b-2）：事件在产生时绑定了**来源条目**与**来源 K**。两道门：
 //  1. 本地门 `isCurrent(e)`（表锁内指针比较）——条目已被换掉 ⇒ 这条事件属于旧
 //     版本，不发账号级动作也不回收资源；
-//  2. 持久化门：上报携带 `SourceRevision = e.srcRev`，由 failure 链以它作
-//     expectedRevision（存储侧 CAS）。第 1 道门挡不住"管理面已换凭据、还没有任何
-//     请求重建条目"这段窗口——指针仍是旧的，只有 K 才能揭穿。
+//  2. 持久化门：上报携带 `SourceRevision = srcRev`（来源 K，由调用方按句柄/构造版本
+//     传入），由 failure 链以它作 expectedRevision（存储侧 CAS）。第 1 道门挡不住
+//     "管理面已换凭据、还没有任何请求重建条目"这段窗口——指针仍是旧的，只有 K 才能
+//     揭穿；而"同签名身份写入把条目 K 抬到更大"的窗口里，指针也仍是旧的，所以 K
+//     只能来自事件自己的来源，**不能回读条目当前值**。
 //
 // 资源回收用 evictIfCurrent（锁内比较指针），同样是"只在仍是当前版本时生效"。
 //
 // 账号级禁用与单凭据撤销是两种事件：本函数处理后者（且只在来源版本仍当前时升级
 // 为账号级动作）；整账号不可用走 reportConfigFailure（同样带来源版本）。
-func (a *Codex) reportCredentialEvent(e *codexEntry, fatal error, evict bool) {
+func (a *Codex) reportCredentialEvent(e *codexEntry, srcRev int64, fatal error, evict bool) {
 	if e == nil || fatal == nil {
 		return
 	}
@@ -1000,7 +1020,7 @@ func (a *Codex) reportCredentialEvent(e *codexEntry, fatal error, evict bool) {
 		return
 	}
 	if a.clients.isCurrent(e) && a.failure != nil {
-		a.failure(CredentialFailure{AccountID: e.accountID, SourceRevision: e.srcRev.Load(), Cause: fatal})
+		a.failure(CredentialFailure{AccountID: e.accountID, SourceRevision: srcRev, Cause: fatal})
 	}
 	if evict {
 		a.clients.evictIfCurrent(e)
@@ -1035,8 +1055,11 @@ func (a *Codex) reportConfigFailure(cred *domain.AccountCredential, fatal error)
 // 触发 WithOnAuthFatal 又随返回错误 errors.As 命中——**以回调为准去重、单次
 // 上报**（CAS 胜者上报；败者并发调用/errors.As 补报路径跳过）。上报后失效
 // 剔除（联动——账号已判死，缓存条目随弃，管理面恢复后重建）。
-func (a *Codex) reportFatal(e *codexEntry, fatal error) {
-	a.reportCredentialEvent(e, fatal, true)
+//
+// srcRev 是这一 fatal 的**来源 K**：SDK 回调路径取构造该 Auth 时的凭据版本，
+// errors.As 路径取请求句柄/凭据快照的版本——两条都不回读条目当前值。
+func (a *Codex) reportFatal(e *codexEntry, srcRev int64, fatal error) {
+	a.reportCredentialEvent(e, srcRev, fatal, true)
 }
 
 // FatalPrepared 显式终止 + 单次上报（§3——WS 业务判死事件帧接线，relay 解析
@@ -1045,10 +1068,10 @@ func (a *Codex) reportFatal(e *codexEntry, fatal error) {
 //     凭据）⇒ 这条帧属于旧凭据，直接 no-op——旧连接的错误不得毒化新凭据的 Auth。
 //   - e.auth.Fatal(fatal)：SDK 显式终止——**不触发 OnAuthFatal**（实证
 //     auth_oauth.go:187-195），仅毒化 Auth（后续 Authorization 恒返回该错误）
-//   - 上报走 reportCredentialEvent(e, fatal, false)：与 errors.As 路径共享 CAS
-//     双源去重；**不剔除**——毒化 Auth 保留至外部凭据变更（管理面重新导入 → sig
-//     变化重建；与"不重建缓存"裁决一致——剔除会丢毒化态，凭据未变重建后仍走
-//     旧 token）
+//   - 上报走 reportCredentialEvent(e, p.srcRev, fatal, false)：来源 K 来自**这个
+//     句柄**（准备时冻结），与 errors.As 路径共享 CAS 双源去重；**不剔除**——毒化
+//     Auth 保留至外部凭据变更（管理面重新导入 → sig 变化重建；与"不重建缓存"裁决
+//     一致——剔除会丢毒化态，凭据未变重建后仍走旧 token）
 //
 // 空句柄（未 Prepare / 未装配）→ no-op：没有来源版本就没有可施加的事件。
 func (a *Codex) FatalPrepared(p Prepared, fatal error) {
@@ -1060,7 +1083,7 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 		return // 旧版本的判死帧：不毒化当前 Auth、不升级为账号级事件
 	}
 	e.auth.Fatal(fatal)
-	a.reportCredentialEvent(e, fatal, false)
+	a.reportCredentialEvent(e, p.srcRev, fatal, false)
 }
 
 // rotateWriteback 轮转回写（§1——SDK OnTokenRotated 回调；在 SDK 单飞内
@@ -1069,7 +1092,8 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 //     （写进去就是"旧 Auth 覆盖管理员刚换上的新凭据"）
 //   - account_ext 部分更新 upsert（codex_oauth_token + codex_oauth_refresh_token +
 //     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值），**带存储围栏**：
-//     `expectedIdentityRevision = e.srcRev`，命中 0 行 ⇒ 身份已被管理面替换 ⇒
+//     `expectedIdentityRevision = srcRev`（构造这条 Auth 的那版凭据的 K——**不是**
+//     条目当前值），命中 0 行 ⇒ 身份已被管理面替换 ⇒
 //     repository.ErrStaleIdentityRevision
 //   - 陈旧围栏（ErrStaleIdentityRevision）：这是**被拒的陈旧事件**，不是投递失败
 //     ——记一条 Warn、不回写快照、不 panic、**不得反过来禁用账号**（旧凭据的轮转
@@ -1086,7 +1110,7 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 //
 // 回调在 SDK 单飞内阻塞并发等待者——必须快速返回（本地 upsert 毫秒级）；
 // 用固定短超时兜底 PG 故障（超时 → 重试链接管）。
-func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
+func (a *Codex) rotateWriteback(e *codexEntry, srcRev int64, at, rt string) {
 	if a.rotate == nil {
 		return // 未装配（测试形态）：no-op
 	}
@@ -1101,14 +1125,14 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), rotateWritebackTimeout)
 	defer cancel()
-	err := a.rotate.WriteOAuthRotation(ctx, e.accountID, e.srcRev.Load(), at, rt, e.expiresAt)
+	err := a.rotate.WriteOAuthRotation(ctx, e.accountID, srcRev, at, rt, e.expiresAt)
 	if err != nil {
 		if errors.Is(err, repository.ErrStaleIdentityRevision) {
 			// 存储围栏拒绝：这一版身份已被管理面替换（旧 Auth 在途 refresh 迟到的
 			// 结果）。丢弃即可——新凭据的令牌由新条目自己维护。
 			if a.log != nil {
 				a.log.Warn("codex rotation writeback rejected by identity fence",
-					logx.Int64("account_id", e.accountID), logx.Int64("source_identity_revision", e.srcRev.Load()))
+					logx.Int64("account_id", e.accountID), logx.Int64("source_identity_revision", srcRev))
 			}
 			return
 		}
@@ -1134,7 +1158,8 @@ const rotateWritebackTimeout = 3 * time.Second
 //   - fatal 五类（errors.As——RefreshOAuthError / AuthPermanentlyRevokedError /
 //     AccountDisabledError / CallbackDeliveryError）→ 双源去重单次上报（回调
 //     路径 CAS 已胜出则此处跳过；PAT/无回调路径此处补报）——原样透传不包装
-//     （SDK 已保证 errors.As 可命中）
+//     （SDK 已保证 errors.As 可命中）。srcRev 是这条错误的**来源 K**（调用面带
+//     请求句柄或凭据快照的版本），与回调路径共享去重但不共享"当前值"。
 //   - RefreshError → 不上报（可重试——对齐 SDK 语义 auth_errors.go:53-58，
 //     网关按既有 failover 分类处理）
 //   - *HTTPError → 信封包装（EnvelopeError：StatusCode()/RawJSON()/Unwrap 链）
@@ -1146,14 +1171,14 @@ const rotateWritebackTimeout = 3 * time.Second
 // `errors.Is(mapped, codexsdk.ErrWSBackpressure)` 同时为真，调用方既能按网关
 // 语义分类（不误判成网络失败/鉴权失败去重试与冷却账号），又能回溯 SDK 原始面。
 // 包装风格与 repository/usage_repo.go:86 的 ErrPartitionUnavailable 一致。
-func (a *Codex) translateError(e *codexEntry, err error) error {
+func (a *Codex) translateError(e *codexEntry, srcRev int64, err error) error {
 	if errors.Is(err, codexsdk.ErrWSBackpressure) {
 		return fmt.Errorf("%w: %w", domain.ErrUpstreamBackpressure, err)
 	}
 	if f := asFatal(err); f != nil {
 		// 双源去重（与 reportFatal 同语义，直接复用）：
 		// CAS 在回调路径已胜出则此处跳过（单次上报）；PAT/无回调路径此处补报
-		a.reportFatal(e, f)
+		a.reportFatal(e, srcRev, f)
 		return err
 	}
 	if he, ok := errors.AsType[*codexsdk.HTTPError](err); ok {

@@ -93,8 +93,10 @@ func (t *ClientTable) Get(accountID int64) *codexEntry {
 // 请求单飞构造）。build 为条目构造函数（适配层注入，保持表对 auth 语义零知识）。
 //
 // sourceRevision 是这版凭据的**来源身份代际 K**（`AccountCredential.IdentityRevision`，
-// 与凭据列同一次快照读）：条目把它冻结下来，此后所有事件（fatal / 构造失败 / 轮转
-// 回写）都以它作围栏，**不再回读"当前"**。0 = 来源未知（无 Selection 调用面）。
+// 与凭据列同一次快照读）。条目把它记下来供资源归属判断（`supersededBy` /
+// `invalidateOlder`），但**事件不以它为来源**：请求产生的事件用它自己准备时冻结的
+// K（`Prepared.srcRev`），Auth 内部回调用构造那份 Auth 的凭据版本。0 = 来源未知
+// （无 Selection 调用面）。
 //
 // 重建即整条目弃用旧资源：旧条目的 client 桶全部摘除并在**锁外**关闭——它们载着旧
 // auth，留着就是"新凭据的请求被旧 client 送出去"。旧桶随死条目一起变得不可达，
@@ -105,9 +107,12 @@ func (t *ClientTable) Entry(accountID int64, sig credKey, sourceRevision int64, 
 	// 复用条件只有**凭据签名**（同一份凭据内容 ⇒ 同一个 Auth/连接池）；来源 K 随之
 	// **单调抬升**而不是触发重建：
 	//   - 同签名 + 更大的 K = 不动凭据内容的身份写入（base_url/template_id/installation）
-	//     ⇒ 内容没变，围栏按新 K 才正确（否则该条目的事件会被永久判成陈旧）；
-	//   - 无版本调用面（K=0，管理面额度快照）先建出条目时，首个请求把 K 抬上来即可
-	//     ——不必为"补一个标量"重建 Auth/关连接池。
+	//     ⇒ 内容没变，资源归属按新 K 才正确（否则该条目会被同代的构造失败当成更旧）；
+	//   - 无版本调用面（K=0）先建出条目时，首个带 K 的请求把它抬上来即可——不必为
+	//     "补一个标量"重建 Auth/关连接池。
+	//
+	// 抬升**只改资源归属判据**：这条条目的既有事件（在飞请求的 fatal、Auth 内部回调
+	// 的轮转回写）仍用各自冻结的来源版本，所以抬升不会把旧判决升格成新身份的事实。
 	if old := t.entries[accountID]; old != nil && old.sig == sig {
 		if sourceRevision > old.srcRev.Load() {
 			old.srcRev.Store(sourceRevision)

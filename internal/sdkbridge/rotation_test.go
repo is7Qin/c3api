@@ -420,7 +420,7 @@ func TestCodexStaleEntryFatalDoesNotDisableAccount(t *testing.T) {
 	require.NotSame(t, oldPrep.entry, newPrep.entry)
 
 	fatal := &codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated"}
-	out := a.translateError(oldPrep.entry, fatal)
+	out := a.translateError(oldPrep.entry, oldPrep.srcRev, fatal)
 	require.ErrorIs(t, out, fatal, "错误本身原样透传（不影响该请求的失败分类）")
 	require.Empty(t, handler.snapshot(), "旧版本的 fatal 不得禁用账号")
 	require.Same(t, newPrep.entry, a.clients.Get(7), "新凭据条目不被摘除")
