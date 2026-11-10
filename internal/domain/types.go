@@ -996,7 +996,7 @@ type LedgerRow struct {
 }
 
 // UserBalance 定向余额对（结算语句 debited/forced RETURNING (uid, balance_after)；
-// spec-f2opt-settlement §一 oracle 必改）：保住 Balances 定向 Set 的预检
+// spec-f2opt-settlement §一）：保住 Balances 定向 Set 的预检
 // 新鲜度（10s Reload 间隙 fail-closed 预检依赖它）。
 type UserBalance struct {
 	UserID  int64

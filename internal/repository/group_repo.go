@@ -137,9 +137,8 @@ func (r *GroupRepo) LoadGroupsAccounts(ctx context.Context) (map[int64][]*domain
 }
 
 // LoadGroupsAccountsFull 与 LoadGroupsAccounts **同一次扫描**，额外返回账号全集
-// （含未编组账号）：调度器用它给 sdkbridge.ClientTable 提供配置面活跃集的输入
-// （账号全集口径，momus N-e）。不额外发查询——`all` 就来自组→账号折叠用的同一份
-// 账号表扫描结果。
+// （含未编组账号）：调度器用它给账号配置权威提供"账号全集"这一份事实。不额外发
+// 查询——`all` 就来自组→账号折叠用的同一份账号表扫描结果。
 func (r *GroupRepo) LoadGroupsAccountsFull(ctx context.Context) (map[int64][]*domain.Account, []*domain.Account, error) {
 	return r.loadGroupsAccounts(ctx, true)
 }

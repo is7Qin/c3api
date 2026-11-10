@@ -78,7 +78,7 @@ type RetentionConfig struct {
 	// routing_flow_fact 两张事实分区表 + snapshot_state 交接状态）
 	// 保留天数（config routing.observation_retention_days，默认 7；config 地板 2）。
 	// 与 usage_stats **解耦**：观测深度是运维参数，不再搭 180 天长保留的车
-	// （判据 A4/B1/B2/B3）；读面窗口守卫用同一份天数 + 同一换算
+	// （保留策略的判别口径）；读面窗口守卫用同一份天数 + 同一换算
 	// （domain.RoutingObservationCutoff）。<= 0 = 不删除。
 	RoutingObservationRetentionDays int
 	TickerInterval                  time.Duration // 巡检周期（生产 1h；测试注入短周期；<= 0 兜底 1h）

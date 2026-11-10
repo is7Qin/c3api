@@ -876,21 +876,38 @@ func atUsable(cred *domain.AccountCredential) bool {
 	return cred.OAuthExpiresAt.After(time.Now())
 }
 
-// credKey 是外部凭据签名（重建判定）的**可比较值键**，取代原先的 \x00 拼串：
-// 逐字段 `==` 比较，不依赖「OAuth token/PAT 为 base64url 字符集」的脆弱约定。
+// 身份/版本字段矩阵（每个字段影响哪个生命周期；三套判据不可混用）：
+//
+//	字段                  | 条目/Auth 重建 | 会话 ts（owner） | 会话/线程       | 说明
+//	--------------------- | ------------- | ---------------- | --------------- | ----
+//	AT 轮转（SDK 刷新）    | 否            | 否               | 否              | 派生缓存：SDK 内存已更新，DB 回写不换身份
+//	RT 轮转（SDK / 管理面） | 是            | 否               | 否              | Auth 构造输入变了；上游对话身份未变
+//	PAT 变更              | 是            | 是               | 否              | PAT 既是秘密也是身份
+//	上游账号 ID 改绑       | 是            | 是               | 否              | 跨账号串台风险
+//	installation 变更     | 否            | 否               | 是（会话重建）   | 会话身份配置：线程按新 installation 重开、ts 自然为空
+//	出口 / 传输变更        | 否            | 否               | 否              | clientKey 层（出口 × 传输）
+//
+// 三套判据：credKey = Auth 构造输入（RT/PAT/上游账号）；CredOwner = 会话连续性
+// 身份（上游账号/PAT，**是 credKey 字段的子集**）；clientKey = 纯传输（出口/传输）。
+// AT 是派生值，不参与任何一套——入键就等于"每个刷新周期重建一次、清一次 ts"。
+// installation 不参与 owner：它是会话身份配置，由会话/线程版本承担（池重建即新
+// 线程、ts 为空）——把它放进 owner 会让"条目何时重建"决定 owner 值（冻结的 owner
+// 与请求快照分叉），正是要消除的不自洽。
+//
+// credKey 是外部凭据签名（重建判定）的**可比较值键**：逐字段 `==` 比较，不依赖
+// 「OAuth token/PAT 为 base64url 字符集」的脆弱约定。
 type credKey struct {
-	oauthToken     string
 	oauthRefresh   string
 	patKey         string
 	codexAccountID string
 }
 
-// credSig 凭据签名（重建判定）：外部凭据变更（管理面导入/更新——token/rt/pat/
-// account id 任一变化）→ 重建。过期时刻不参与签名（构造时的初始 at 预置决策已
-// 经生效；过期 at 由 SDK 401 自愈轮转，无需重建）。
+// credSig 凭据签名（Auth 重建判定）：Auth 构造输入变了（管理面换 RT/PAT、改绑上游
+// 账号）→ 重建。**AT 不参与**：它是派生缓存，SDK 每次 refresh 都会换，入键会让
+// "token 轮转"退化成"每轮重建"；过期时刻同样不参与（构造时的初始 at 预置决策已经
+// 生效，过期 at 由 SDK 401 自愈轮转）。
 func credSig(c *domain.AccountCredential) credKey {
 	return credKey{
-		oauthToken:     c.OAuthToken,
 		oauthRefresh:   c.OAuthRefreshToken,
 		patKey:         c.PATKey,
 		codexAccountID: c.CodexAccountID,
@@ -903,11 +920,13 @@ func credSig(c *domain.AccountCredential) credKey {
 // 还没重建、凭据已经换了"的窗口里给出更新的 owner 与旧的 auth。
 //
 // 纯函数：不读缓存、不加锁、**零分配**（栈上两个累加器）。owner 只含**稳定身份标识**
-// ——installation + CodexAccountID + PAT / refresh-token，**排除会轮转的 access
-// token**：SDK 每次 OAuth refresh 都会把新 at 写回 ext，若 at 参与 owner，每个 token
-// refresh 都会清该账号全部会话的 ts，与「不是每次 token refresh」（spec §3.2 括注）
-// 自相矛盾。at 变化属于"凭据换了一版"（entry 重建判据 credSig 更宽，含 at），但
-// **不是**换 owner：会话的 ts 属于同一条上游对话。
+// ——CodexAccountID + PAT，**排除 AT 与 RT**：两者都会被 OAuth 刷新改写（RT 也会
+// 轮转），参与 owner 就等于每个刷新周期清一次该账号全部会话的 ts。会话的 ts 属于
+// 同一条上游对话；刷新只换令牌，不换对话身份。
+//
+// owner 的字段是 credKey 的**子集**：任何 owner 维度变化都会同时重建条目，因此
+// 冻结在条目上的 owner 恒等于当前凭据快照的 owner——结构上不存在"新 owner + 旧
+// auth"的分叉。installation 不属于此集合（会话身份配置，见字段矩阵）。
 //
 // 为什么非密码学哈希就够：比较是**账号内**的（会话池按账号建，owner 只和同一会话
 // 上一次对齐的值比），所以它只回答"这份凭据还是不是同一版"，跨账号碰撞在语义上
@@ -933,8 +952,8 @@ func CredOwner(cred *domain.AccountCredential) [16]byte {
 		a = (a ^ 0xff) * prime
 		b = (b + 0xff) * prime
 	}
-	// 字段顺序即语义：installation（账号身份）→ 上游账号 → PAT / refresh-token。
-	for _, s := range [4]string{cred.InstallationID, cred.CodexAccountID, cred.PATKey, cred.OAuthRefreshToken} {
+	// 字段顺序即语义：上游账号 → PAT（两者都在 credKey 里 ⇒ owner 与 auth 同版）。
+	for _, s := range [2]string{cred.CodexAccountID, cred.PATKey} {
 		mix(s)
 	}
 	binary.LittleEndian.PutUint64(out[0:8], a)
@@ -1024,12 +1043,14 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 //     CallbackDeliveryError fatal → 统一回调摘除；fail-closed）
 //   - 成功后失效调度器 AccountExt 内存快照条目（下个会话重载新凭据；
 //     失效失败仅 Warn 不阻断——令牌已落库，适配层 Auth 内存新 at 自愈）
-//   - **不重建缓存**：回调写回的是本 Auth 内部已更新的状态（at 缓存/rt 轮换
-//     已在 SDK 内生效），重建丢 at 缓存破坏轮转连续性；仅外部凭据变更重建
-//     （机制——sig 比对）
+//   - **回调本身不重建缓存**：回调写回的是本 Auth 内部已更新的状态（at 缓存/rt
+//     轮换已在 SDK 内生效）。但下一次 Prepare 会因 RT 变化而重建 Auth（RT 是 Auth
+//     构造输入，见 credKey 的矩阵）：新 Auth 用刚落库的 AT/RT 起步，不丢轮转结果。
+//     ts 不因此清空——owner 不含 AT/RT，同一条上游对话的会话继续复用。
 //   - **pending 竞态（接受）**：适配层重建缓存后旧 Auth 在途 401 →
 //     deliverPendingRotate 可能写回旧轮转结果——旧 rt 已吊销则 refresh 判死
-//     正确摘除，基本自愈；低概率，不额外防护
+//     正确摘除（旧条目的事件按来源版本判定，不会误伤新凭据），基本自愈；低概率，
+//     不额外防护
 //
 // 回调在 SDK 单飞内阻塞并发等待者——必须快速返回（本地 upsert 毫秒级）；
 // 用固定短超时兜底 PG 故障（超时 → 重试链接管）。

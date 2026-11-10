@@ -16,7 +16,7 @@ package repository
 
 // settleBalanceSQL Balance 车道结算语句（§一原设计）：终 SELECT 首行为聚合哨兵
 // （uid=-1 恒一行，ORDER BY 置首），其余为 debited/forced 的 (uid,balance_after)
-// 定向余额对（oracle 必改——Balances.Set 预检新鲜度）。
+// 定向余额对（Balances.Set 预检新鲜度）。
 const settleBalanceSQL = `WITH batch AS (
 	SELECT id, COALESCE(user_id, 0) AS uid, cost
 	FROM usage_logs

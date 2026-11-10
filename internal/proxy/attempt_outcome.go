@@ -492,7 +492,7 @@ func (o AttemptOutcome) Validate() error {
 // outcomeParams 是 buildOutcome 的逐字段入参：只覆盖各 caller/WS/转换 outcome
 // 构造器里会变化的字段；派发元数据（Ordinal/IdentityRevision/Lane/Generation）
 // 由 buildOutcome 统一钉为 plan-canonical 常量（=1/Primary），杜绝逐构造器重复
-// 的字面量字段（B2 收敛）。行为与原实现逐字段等价。
+// 的字面量字段（收敛为单一构造点）。行为与原实现逐字段等价。
 type outcomeParams struct {
 	reqID          AttemptID
 	routeClassID   RouteClassID

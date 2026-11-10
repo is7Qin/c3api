@@ -160,7 +160,7 @@ func parsePriceEntry(model string, raw json.RawMessage, log *logx.Logger) (*doma
 	pe.SupportsPromptCaching = e.SupportsPromptCaching
 	var vars []*domain.PriceVariant
 	seq := 1
-	// 缓存分量表达力取舍（momus）——priority/flex 的 cache 字段与 above_ 系列 cache 键不映射为变体（仅 input/output），缓存计价恒走基础价；信息保留在 raw JSONB。
+	// 缓存分量表达力取舍——priority/flex 的 cache 字段与 above_ 系列 cache 键不映射为变体（仅 input/output），缓存计价恒走基础价；信息保留在 raw JSONB。
 	if e.InputCostPerTokenPriority != nil || e.OutputCostPerTokenPriority != nil {
 		if validCost(e.InputCostPerTokenPriority) || validCost(e.OutputCostPerTokenPriority) {
 			st := "priority"

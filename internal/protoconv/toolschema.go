@@ -834,7 +834,7 @@ func evalMessSchema(src gjson.Result) evalResult {
 func evalMessSchemaInner(src gjson.Result) evalResult {
 	if src.Raw == "" || src.Type == gjson.Null {
 		// 第 0 步：源侧根本没有 schema（无参工具最常见）。这不是退化 ——
-		// 没有任何约束被丢掉 ⇒ degNone，不加 hint（momus-r2 I-4）。
+		// 没有任何约束被丢掉 ⇒ degNone，不加 hint。
 		return evalResult{out: emptyObjectSchema, deg: degNone, reasons: []string{"no-schema"}, missing: true}
 	}
 	if !src.IsObject() {
@@ -1282,7 +1282,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 			if !gjson.ParseBytes(elem).IsObject() {
 				// `true`/`false`/数字/字符串/数组分支：什么都不约束。
 				// 析取（anyOf/oneOf）组里出现这类分支 ⇒ 该组不再要求别处的键；
-				// allOf 是合取 ⇒ 不受影响（momus-r2 I-5）。
+				// allOf 是合取 ⇒ 不受影响。
 				if cb.kind != brAllOf {
 					st.markGroupNonObj(ci)
 				}
@@ -1384,7 +1384,7 @@ func flattenMessSchemaDepth(doc *schemaDoc, v verdict, raw []byte, depth int, bu
 		}
 	}
 
-	// required 交集：**每组各算一个**再并入（momus-r2 I-6）；
+	// required 交集：**每组各算一个**再并入；
 	// 组里有"什么都不约束"的分支 ⇒ 该组交集为空（v20 ④）。
 	interByGroup := map[branchID]map[string]struct{}{}
 	for bi, set := range branchReq {

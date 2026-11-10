@@ -330,9 +330,9 @@ func TestClientCacheKeyedByTransportOnly(t *testing.T) {
 	require.Same(t, wsClient, testCachedClient(a, e, clientKey{transport: domain.CodexResponsesTransportWS.Key()}))
 }
 
-// TestCodexCacheReuseAndRebuild 同账号复用（同 HTTPClient 指针断言）/ 凭据
-// 更新后重建（token/rt/pat 任一变化 → 新客户端）/ 轮转回调写回不重建
-// （回调本身不触发缓存变更）。
+// TestCodexCacheReuseAndRebuild 同账号复用（同 HTTPClient 指针断言）/ Auth 构造
+// 输入更新后重建（rt/pat/上游账号变化 → 新客户端）/ AT 轮转不重建（派生缓存，
+// 见 credKey 的字段矩阵）。
 func TestCodexCacheReuseAndRebuild(t *testing.T) {
 	up, c := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
@@ -356,20 +356,20 @@ func TestCodexCacheReuseAndRebuild(t *testing.T) {
 	require.Same(t, c1, testCachedClient(a, a.clients.Get(7), clientKey{}), "同账号复用（轮转状态/连接池保持）")
 	require.Equal(t, 2, c.callsN())
 
-	// 凭据更新（管理面导入/更新——at 变更）→ 重建
+	// AT 变化（token 刷新回写）不重建：AT 是派生缓存，SDK 内存里已是最新值，
+	// 不参与 credSig（入键 = 每个刷新周期重建一次）。
 	cred2 := oauthCred(7, "at-2", "rt-1")
 	_, err = a.GenerateImage(context.Background(), cred2, a.DirectEgress(), p)
 	require.NoError(t, err)
-	c2 := testCachedClient(a, a.clients.Get(7), clientKey{})
-	require.NotSame(t, c1, c2, "凭据更新 → 重建")
-	require.NotEqual(t, "Bearer at-1", c.auth(c.callsN()-1), "重建后新 at 生效")
+	require.Same(t, c1, testCachedClient(a, a.clients.Get(7), clientKey{}),
+		"AT 轮转不重建（派生缓存不入签名）")
 
-	// rt 变更同样触发重建
+	// RT 变化 = Auth 构造输入变了 → 重建（新 Auth 用刚落库的 AT/RT 起步）。
 	cred3 := oauthCred(7, "at-2", "rt-2")
 	_, err = a.GenerateImage(context.Background(), cred3, a.DirectEgress(), p)
 	require.NoError(t, err)
 	c3 := testCachedClient(a, a.clients.Get(7), clientKey{})
-	require.NotSame(t, c2, c3, "rt 更新 → 重建")
+	require.NotSame(t, c1, c3, "rt 更新 → 重建")
 	require.NotEqual(t, "Bearer at-1", c.auth(c.callsN()-1), "rt 更新后 client 已重建")
 
 	// 同凭据 → 复用（无变化不重建）
