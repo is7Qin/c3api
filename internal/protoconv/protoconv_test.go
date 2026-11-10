@@ -880,17 +880,21 @@ func TestConvertResponseNullBody(t *testing.T) {
 	require.Equal(t, float64(0), m["created"])
 }
 
-// TestConvertRequestChatToRespToolCallDoubleID（对齐）：请求方向
-// tool_call 同时含 id+call_id → 取 id（与 map 版一致；call_id 优先仅响应方向）。
-func TestConvertRequestChatToRespToolCallDoubleID(t *testing.T) {
+// TestConvertRequestChatToRespToolCallOmitsItemID 请求方向**不写**
+// function_call.id：该字段在 Responses 输入里可选，出现就必须以 `fc_` 开头；
+// chat 的 tool_calls[].id 是 call id（`call_…`）。2026-11 实测上游 400：
+// 「Invalid 'input[3].id': 'call_de647…'. Expected an ID that begins with 'fc'」。
+// 配对键是 call_id，省略 id 不影响 function_call_output 的回指。
+func TestConvertRequestChatToRespToolCallOmitsItemID(t *testing.T) {
 	body := []byte(`{"model":"m","messages":[{"role":"assistant","content":"ok","tool_calls":[{"id":"call_id_1","call_id":"call_9","type":"function","function":{"name":"f","arguments":"{}"}}]}]}`)
 	out, err := ConvertRequest(body, domain.ProtocolConvertChatToResp)
 	require.NoError(t, err)
 	input := arrOf(t, obj(t, out), "input")
 	require.Len(t, input, 2)
 	fc := input[1].(map[string]any)
-	require.Equal(t, "call_id_1", fc["id"], "请求方向取 id")
-	require.Equal(t, "call_id_1", fc["call_id"])
+	_, hasID := fc["id"]
+	require.False(t, hasID, "不得把 chat 的 call id 塞进 Responses 项 id：%v", fc["id"])
+	require.Equal(t, "call_id_1", fc["call_id"], "配对键仍取 chat tool_calls[].id")
 }
 
 // TestConvertRequestChatToRespEscapedKey（重做回归）：真实 \uXXXX

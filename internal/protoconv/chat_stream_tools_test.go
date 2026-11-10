@@ -5,6 +5,7 @@
 package protoconv
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -181,25 +182,184 @@ func TestChatStreamToolSameIDNewIndexKeepsOneItem(t *testing.T) {
 }
 
 // TestChatStreamToolLateIDAndNameBackfill：首片没有 id/name（迟到），后续分片才
-// 补 ⇒ 终态 item 的 call_id / name 必须写回，不能是空串；item id 与 call_id 同源。
+// 补 ⇒ 终态 item 的 call_id / name 必须写回；块身份在 start 帧发出前就定死
+// （响应 id + 内容 index），迟到只回填 call_id，**不改 item id**，也不推迟 start
+// （推迟会让后到的块先 start，Anthropic 客户端按 start 顺序追加块会索引错位）。
 func TestChatStreamToolLateIDAndNameBackfill(t *testing.T) {
 	frames := chatStreamRun(t, domain.ProtocolConvertRespToChat, true,
 		`{"id":"c","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"k\""}}]},"finish_reason":null}]}`,
 		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_late","type":"function","function":{"name":"h","arguments":":1}"}}]},"finish_reason":null}]}`,
 	)
 
+	ids := map[string]bool{}
+	var added int
+	for _, f := range frames {
+		switch f.event {
+		case "response.output_item.added":
+			added++
+			id := f.data.Get("item.id").Str
+			require.Regexp(t, `^fc_`, id, "item id 必须是 fc_ 前缀")
+			ids[id] = true
+		case "response.function_call_arguments.delta":
+			id := f.data.Get("item_id").Str
+			require.Regexp(t, `^fc_`, id)
+			ids[id] = true
+		case "response.output_item.done":
+			ids[f.data.Get("item.id").Str] = true
+		}
+	}
+	require.Equal(t, 1, added, "整串分片只允许一个 added")
+	require.Len(t, ids, 1, "added/delta/done 必须共用同一个 item id：%v", ids)
+
 	resp := terminalResponse(t, frames)
 	require.Equal(t, int64(1), resp.Get("output.#").Int())
 	require.Equal(t, "call_late", resp.Get("output.0.call_id").Str,
-		"迟到的 id 必须写回 item 的 call_id（不得是空串）")
+		"迟到的 id 必须写回 call_id（不得是空串）")
 	require.Equal(t, "h", resp.Get("output.0.name").Str,
-		"迟到的 name 必须写回 item 的 name（不得是空串）")
-	require.Equal(t, "fc_call_late", resp.Get("output.0.id").Str,
-		"item id 必须是 fc_ + call_id 形态")
-	require.Equal(t, "fc_"+resp.Get("output.0.call_id").Str, resp.Get("output.0.id").Str,
-		"item id 与 call_id 必须同源")
+		"迟到的 name 必须写回 name（不得是空串）")
+	for id := range ids {
+		require.Equal(t, id, resp.Get("output.0.id").Str, "终态 item id 必须与流内一致")
+	}
 	require.Equal(t, `{"k":1}`, resp.Get("output.0.arguments").Str)
 }
+
+// TestChatStreamToolLateIDMessTarget mess 目标同一规则：tool_use.id 在 start 帧
+// 发出时就定死（迟到用响应 id + index 占位），不先空后变——客户端拿它回传
+// tool_result，空 id 会把下一轮配对打断。
+func TestChatStreamToolLateIDMessTarget(t *testing.T) {
+	frames := chatStreamRun(t, domain.ProtocolConvertMessToChat, true,
+		`{"id":"c","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"k\""}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_late","type":"function","function":{"name":"h","arguments":":1}"}}]},"finish_reason":null}]}`,
+	)
+	var starts int
+	for _, f := range frames {
+		if f.event != "content_block_start" || f.data.Get("content_block.type").Str != "tool_use" {
+			continue
+		}
+		starts++
+		require.NotEmpty(t, f.data.Get("content_block.id").Str,
+			"start 帧的 tool_use.id 不得为空")
+	}
+	require.Equal(t, 1, starts, "整串分片只允许一个 tool_use start")
+}
+
+// TestChatStreamToolNeverIDMessTarget 始终收不到 call id：start 帧仍立刻发出
+// （占位 id），且**先**于 stop；否则客户端收到孤立的 content_block_stop。
+func TestChatStreamToolNeverIDMessTarget(t *testing.T) {
+	frames := chatStreamRun(t, domain.ProtocolConvertMessToChat, true,
+		`{"id":"c","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"","function":{"name":"h","arguments":"{\"k\":1}"}}]},"finish_reason":"tool_calls"}]}`,
+	)
+	var startAt, stopAt = -1, -1
+	for i, f := range frames {
+		switch f.event {
+		case "content_block_start":
+			if f.data.Get("content_block.type").Str == "tool_use" {
+				startAt = i
+				require.NotEmpty(t, f.data.Get("content_block.id").Str)
+			}
+		case "content_block_stop":
+			stopAt = i
+		}
+	}
+	require.NotEqual(t, -1, startAt, "tool_use start 必须发出")
+	require.NotEqual(t, -1, stopAt, "块必须收尾")
+	require.Less(t, startAt, stopAt, "start 必须先于 stop")
+}
+
+// interleavedChunks 交错到达：工具 0（无 id）→ 正文 → 工具 1（有 id）→ 工具 0
+// 续片（补 id）。这是「推迟 start」会让索引错位的典型序列。
+func interleavedChunks() []string {
+	return []string{
+		`{"id":"c","model":"m","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"name":"a","arguments":"{\"a\""}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"b","arguments":"{}"}}]},"finish_reason":null}]}`,
+		`{"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"arguments":":1}"}}]},"finish_reason":"tool_calls"}]}`,
+	}
+}
+
+// TestChatStreamToolInterleavedBlocksMessTarget 交错到达时 Anthropic 客户端按
+// content_block_start 的顺序 append 块（SDK 的 accumulate_event 就是这么做的），
+// 因此 start 必须按 index 升序：工具块不能因为 call id 迟到就被后到的正文/工具
+// 抢先 start。同时每个 delta 只能落在已 start 的 index 上。
+func TestChatStreamToolInterleavedBlocksMessTarget(t *testing.T) {
+	frames := chatStreamRun(t, domain.ProtocolConvertMessToChat, true, interleavedChunks()...)
+
+	var starts []int64
+	started := map[int64]bool{}
+	type startInfo struct {
+		typ string
+		id  string
+	}
+	byIndex := map[int64]startInfo{}
+	for _, f := range frames {
+		switch f.event {
+		case "content_block_start":
+			idx := f.data.Get("index").Int()
+			require.False(t, started[idx], "index %d 重复 start", idx)
+			started[idx] = true
+			starts = append(starts, idx)
+			typ := f.data.Get("content_block.type").Str
+			byIndex[idx] = startInfo{typ: typ, id: f.data.Get("content_block.id").Str}
+		case "content_block_delta":
+			idx := f.data.Get("index").Int()
+			require.True(t, started[idx], "delta 落在未 start 的 index %d", idx)
+		case "content_block_stop":
+			idx := f.data.Get("index").Int()
+			require.True(t, started[idx], "stop 落在未 start 的 index %d", idx)
+		}
+	}
+	require.Equal(t, []int64{0, 1, 2}, starts, "start 必须按内容 index 升序")
+	require.Equal(t, "tool_use", byIndex[0].typ)
+	require.Equal(t, "call_c_0", byIndex[0].id, "迟到 id 的占位身份（响应 id + index）")
+	require.Equal(t, "text", byIndex[1].typ)
+	require.Equal(t, "tool_use", byIndex[2].typ)
+	require.Equal(t, "call_b", byIndex[2].id)
+}
+
+// TestChatStreamToolInterleavedBlocksRespTarget 同一交错序列的 resp 目标：
+// added 的 output_index 升序、每个 delta 的 item_id 与对应 added 一致、done /
+// completed 的 item 身份与流内一致，终态 output 顺序与 output_index 一致。
+func TestChatStreamToolInterleavedBlocksRespTarget(t *testing.T) {
+	frames := chatStreamRun(t, domain.ProtocolConvertRespToChat, true, interleavedChunks()...)
+
+	var addedOrder []int64
+	byIndex := map[int64]string{}
+	for _, f := range frames {
+		switch f.event {
+		case "response.output_item.added", "response.output_item.done":
+			idx := f.data.Get("output_index").Int()
+			id := f.data.Get("item.id").Str
+			if prev, ok := byIndex[idx]; ok {
+				require.Equal(t, prev, id, "index %d 的 item id 在 added/done 之间不得变化", idx)
+				continue
+			}
+			byIndex[idx] = id
+			if f.event == "response.output_item.added" {
+				addedOrder = append(addedOrder, idx)
+			}
+		case "response.function_call_arguments.delta":
+			idx := f.data.Get("output_index").Int()
+			id, ok := byIndex[idx]
+			require.True(t, ok, "delta 落在未 added 的 index %d", idx)
+			require.Equal(t, id, f.data.Get("item_id").Str, "delta 的 item_id 必须与该 index 的 added 一致")
+		}
+	}
+	require.Equal(t, []int64{0, 1, 2}, addedOrder, "added 必须按 output_index 升序")
+	require.Equal(t, "fc_c_0", byIndex[0], "迟到工具块的稳定身份")
+	require.Equal(t, "msg_c_1", byIndex[1])
+	require.Equal(t, "fc_call_b", byIndex[2])
+
+	resp := terminalResponse(t, frames)
+	require.Equal(t, int64(3), resp.Get("output.#").Int())
+	for i := int64(0); i < 3; i++ {
+		require.Equal(t, byIndex[i], resp.Get("output."+gjsonIndex(i)+".id").Str,
+			"终态 output 顺序与 id 必须与流内一致")
+	}
+	require.Equal(t, "call_a", resp.Get("output.0.call_id").Str)
+	require.Equal(t, `{"a":1}`, resp.Get("output.0.arguments").Str)
+}
+
+func gjsonIndex(i int64) string { return strconv.FormatInt(i, 10) }
 
 // TestChatStreamToolIndexRewriteAliasesLaterIDLessFragments：id 别名 + index 表
 // 必须**双向**对齐——改了 index 之后，同一新 index 上再来的**无 id** 分片也要落回

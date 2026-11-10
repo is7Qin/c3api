@@ -431,7 +431,14 @@ func appendThinkingBlock(out []byte, b thinkingBlock) []byte {
 }
 
 // appendReasoningRefItem 把 reasoning_ref 臂还原成 Responses reasoning item
-// 字面量（id 非空才写；不带 summary——臂里没有）。
+// 字面量：只写 encrypted_content 与 type，id 仅在信封里有值时写，**不写 summary**
+// （臂里只有加密内容）。
+//
+// 与官方输入 schema 的差异（如实记录，不宣称合规）：ReasoningItem 的 required
+// 是 id / summary / type，而这里 (a) 信封没有 id 时不写 id、(b) 从不写 summary。
+// id 由产出该信封的上游决定（OpenAI 是 rs_…，其它 Responses 兼容实现不保证
+// 前缀），本网关无法凭空合成一个"合法"的 rs_ id；summary 缺失、以及这种形状
+// 是否被上游接受，均**未验证**。跨厂商回放（A 家信封发给 B 家）同理。
 func appendReasoningRefItem(out []byte, r reasoningRef) []byte {
 	out = append(out, `{"encrypted_content":`...)
 	out = appendJSONString(out, r.EncryptedContent)

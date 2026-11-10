@@ -1163,13 +1163,14 @@ func appendMessInput(out []byte, msgs gjson.Result) []byte {
 				if !fcMapped || !rawStrEq(blk.Get("type").Raw, "tool_use") {
 					return true
 				}
+				// 同 chat_to_resp 请求面：Messages 的 tool_use.id（`toolu_…`）
+				// 是**配对键**，不是 Responses 的项 id；写进 function_call.id 会被
+				// 上游 400（id 必须以 `fc_` 开头）。call_id 才是必填配对字段。
 				id := strOrEmpty(blk.Get("id"))
 				out, n = appendComma(out, n)
 				out = append(out, `{"arguments":`...)
 				out = append(out, marshalRaw(blk.Get("input"))...)
 				out = append(out, `,"call_id":`...)
-				out = append(out, id...)
-				out = append(out, `,"id":`...)
 				out = append(out, id...)
 				out = append(out, `,"name":`...)
 				out = append(out, strOrEmpty(blk.Get("name"))...)

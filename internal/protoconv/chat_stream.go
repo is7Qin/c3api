@@ -4,7 +4,12 @@
 
 package protoconv
 
-import "github.com/is7qin/c3api/internal/domain"
+import (
+	"fmt"
+	"sort"
+
+	"github.com/is7qin/c3api/internal/domain"
+)
 
 // chat 上游的 SSE 帧**没有 event: 行、顶层没有 type 字段**（官方 chunk 形如
 // `{"id":…,"object":"chat.completion.chunk","choices":[…]}`），所以现有
@@ -215,17 +220,39 @@ func (m *StreamMapper) chatText(t string) []byte {
 	})...)
 }
 
-// chatFCID function_call 项的 id：与既有 resp 目标的流式映射保持一致
-// （`fc_` + call_id，**不带 index**）。call_id 才是工具结果的匹配键，id 只是展示
-// 用，两处写法必须相同，否则同一响应在流式与非流式下 id 不一致。
+// chatFCID 由 call id 派生的 function_call 项 id（`fc_` + call_id，不带 index）。
+// 正常情况（call id 随首片到达）下与非流式 chatToRespOutput 的写法一致；call id
+// 迟到时见 chatToolItemID（item id 已提前定死，不再由 call id 派生）。
 func chatFCID(callID string) string { return "fc_" + callID }
 
 // chatToolBlock 一个 chat 工具调用块（内容 index + 元数据 + 已拼好的 arguments）。
 type chatToolBlock struct {
 	idx  int64  // 内容 index（chatAlloc 分配，块列表顺序即分配序）
-	id   string // call_id（迟到时回填）
+	iid  string // 对客户端的块身份：resp 目标 = function_call item id；mess 目标 = tool_use.id
+	id   string // call_id（迟到时回填；resp 目标用作 call_id 字段）
 	name string // function.name（迟到时回填）
 	args string // arguments 累积
+}
+
+// chatToolItemID 决定工具块对客户端的身份，**在 start 帧发出前一次定死**：
+//
+//   - resp 目标：正常由 call id 派生（fc_ + call_id，与非流式同源）。call id 迟到
+//     （非规范上游）时改用响应 id + 内容 index 合成 —— item id 一旦发出就不能再
+//     变（客户端按 item_id 归并增量），而 call_id 之后仍可回填。
+//   - mess 目标：tool_use.id 是客户端回传 tool_result 的匹配键，同样必须从 start
+//     起稳定；迟到时用同一确定性规则占位。上游 chat 只要求「同一请求内调用与结果
+//     的 id 配对」，字符串本身不参与校验，故占位与后续回传一致即可。
+func (m *StreamMapper) chatToolItemID(b *chatToolBlock, callID string) string {
+	if m.dir == domain.ProtocolConvertRespToChat {
+		if callID != "" {
+			return chatFCID(callID)
+		}
+		return chatFCID(m.id + "_" + fmt.Sprint(b.idx))
+	}
+	if callID != "" {
+		return callID
+	}
+	return "call_" + m.id + "_" + fmt.Sprint(b.idx)
 }
 
 // chatToolCall 工具调用增量。chat 的 tool_calls 分片到达：首片带 id/name，之后
@@ -237,11 +264,13 @@ type chatToolBlock struct {
 //     绝不开新块（否则一个应答被切成两个 tool_use）；
 //   - 只带 index、不带 id 的续片凭 index 表落回原块（第三片带的是**新**
 //     index，所以命中分支必须把新 index 登记回原块）；
-//   - 首片没带 id/name（迟到）时，后续分片的 id/name 写回块元数据，
-//     终态 output_item.done / response.completed 才不会带空 id/name。
+//   - 首片没带 id/name（迟到）时，后续分片的 id/name 写回块元数据；块身份
+//     （chatToolItemID）在 start 帧发出前已定死，迟到只回填 call_id，不改 item id
+//     —— 也不把 start 帧推迟（推迟会让后到的块先 start，Anthropic 客户端按
+//     content_block_start 的顺序追加块，索引会错位）。
 //
-// 新块的内容 index 由 chatAlloc 单调分配 ⇒ 块列表顺序即首片到达序，终态
-// output 次序不依赖 map 迭代顺序。
+// 新块的内容 index 由 chatAlloc 单调分配 ⇒ 块列表顺序即首片到达序，start 帧与
+// 终态 output 次序都不依赖 map 迭代顺序。
 func (m *StreamMapper) chatToolCall(pos int, tcm map[string]any) []byte {
 	key := int64(pos)
 	if _, ok := tcm["index"]; ok {
@@ -275,7 +304,8 @@ func (m *StreamMapper) chatToolCall(pos int, tcm map[string]any) []byte {
 		// 同一块可能被多个 chat index 指着：新 index 也必须登记，只带新 index、
 		// 不带 id 的续片才落得回原块。
 		m.toolIdx[key] = bi
-		// 迟到的 id/name 回填（终态 item 不能带空值）。
+		// 迟到的 id/name 回填（终态 item 不能带空值）。**不动 b.iid**：start 帧
+		// 已用当时的身份发出，流内身份必须自始至终一致。
 		if b.id == "" {
 			b.id = id
 		}
@@ -286,49 +316,56 @@ func (m *StreamMapper) chatToolCall(pos int, tcm map[string]any) []byte {
 			return nil
 		}
 		b.args += args
-		if m.dir == domain.ProtocolConvertRespToChat {
-			return EncodeFrame("response.function_call_arguments.delta", map[string]any{
-				"type": "response.function_call_arguments.delta", "item_id": chatFCID(b.id),
-				"output_index": b.idx, "delta": args,
-			})
-		}
-		return EncodeFrame("content_block_delta", map[string]any{
-			"type": "content_block_delta", "index": b.idx,
-			"delta": map[string]any{"type": "input_json_delta", "partial_json": args},
-		})
+		return m.chatToolDelta(b, args)
 	}
-	b := &chatToolBlock{idx: m.chatAlloc(), id: id, name: name, args: args}
+	b := &chatToolBlock{idx: m.chatAlloc(), iid: "", id: id, name: name, args: args}
+	b.iid = m.chatToolItemID(b, id)
 	m.tools = append(m.tools, b)
 	m.toolIdx[key] = len(m.tools) - 1
+	return m.chatToolStart(b, args)
+}
+
+// chatToolStart 发工具块的 start 帧（resp 目标 = output_item.added；mess 目标 =
+// content_block_start）。身份取 b.iid，首片参数作为第一条增量一并写出。
+func (m *StreamMapper) chatToolStart(b *chatToolBlock, args string) []byte {
 	// mess 目标的 content_block_stop 由这张表驱动（closeOpenBlocks）。
 	m.blockStarted[b.idx] = true
 	if m.dir == domain.ProtocolConvertRespToChat {
 		out := EncodeFrame("response.output_item.added", map[string]any{
 			"type": "response.output_item.added", "output_index": b.idx,
 			"item": map[string]any{
-				"id": chatFCID(b.id), "type": "function_call", "call_id": b.id,
+				"id": b.iid, "type": "function_call", "call_id": b.id,
 				"name": b.name, "arguments": "", "status": "in_progress",
 			},
 		})
 		if args == "" {
 			return out
 		}
-		return append(out, EncodeFrame("response.function_call_arguments.delta", map[string]any{
-			"type": "response.function_call_arguments.delta", "item_id": chatFCID(b.id),
-			"output_index": b.idx, "delta": args,
-		})...)
+		return append(out, m.chatToolDelta(b, args)...)
 	}
 	out := EncodeFrame("content_block_start", map[string]any{
 		"type": "content_block_start", "index": b.idx,
-		"content_block": map[string]any{"type": "tool_use", "id": b.id, "name": b.name, "input": map[string]any{}},
+		"content_block": map[string]any{"type": "tool_use", "id": b.iid, "name": b.name, "input": map[string]any{}},
 	})
 	if args == "" {
 		return out
 	}
-	return append(out, EncodeFrame("content_block_delta", map[string]any{
+	return append(out, m.chatToolDelta(b, args)...)
+}
+
+// chatToolDelta 工具参数增量帧（resp = function_call_arguments.delta；mess =
+// input_json_delta）。item_id / 块 index 与 chatToolStart 同源。
+func (m *StreamMapper) chatToolDelta(b *chatToolBlock, args string) []byte {
+	if m.dir == domain.ProtocolConvertRespToChat {
+		return EncodeFrame("response.function_call_arguments.delta", map[string]any{
+			"type": "response.function_call_arguments.delta", "item_id": b.iid,
+			"output_index": b.idx, "delta": args,
+		})
+	}
+	return EncodeFrame("content_block_delta", map[string]any{
 		"type": "content_block_delta", "index": b.idx,
 		"delta": map[string]any{"type": "input_json_delta", "partial_json": args},
-	})...)
+	})
 }
 
 // chatCreatedAt 只在源帧携带过 created 时写 created_at（I7）。
@@ -452,11 +489,19 @@ func (m *StreamMapper) chatRespItems() []map[string]any {
 	}
 	for _, b := range m.tools {
 		out = append(out, map[string]any{
-			"__index": b.idx, "id": chatFCID(b.id), "type": "function_call",
+			"__index": b.idx, "id": b.iid, "type": "function_call",
 			"call_id": b.id, "name": b.name, "arguments": b.args,
 			"status": "completed",
 		})
 	}
+	// chatRespItems 的固定次序是 reasoning → message → tools，但**输出索引是分配
+	// 序**（工具先到、正文后到时分错）。终态 output / done 必须按 output_index 升序，
+	// 否则客户端拿 completed.output 与流内 output_index 对不上。
+	sort.SliceStable(out, func(i, j int) bool {
+		ai, _ := out[i]["__index"].(int64)
+		aj, _ := out[j]["__index"].(int64)
+		return ai < aj
+	})
 	return out
 }
 

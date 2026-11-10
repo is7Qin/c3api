@@ -107,12 +107,19 @@ func messContentToRespOutput(msg map[string]any) ([]any, int64, int64) {
 			id, _ := str(bm, "id")
 			name, _ := str(bm, "name")
 			fcs = append(fcs, map[string]any{
-				"type": "function_call", "id": id, "call_id": id,
+				// 与流式（同文件 fcIDs 分支）对齐：都用 `fc_` + call_id。已知的
+				// 上游规则只是「id 出现即须 `fc_` 前缀」；合成 id 的回放接受度
+				// 未实测（见 chatToRespOutput 同款注释）。
+				"type": "function_call", "id": "fc_" + id, "call_id": id,
 				"name": name, "arguments": marshalAny(bm["input"]), "status": "completed",
 			})
 		}
 	}
 	if len(textParts) > 0 {
+		// id 直接沿用上游 message id。OpenAI 侧 message 项的 id 形如 msg_…，但本
+		// 网关的上游可以是任意 Anthropic 兼容实现（id 前缀不受我们控制），所以这里
+		// 只是**透传**：前缀合法性未经上游验证，也不做改写（改写会与客户端已看到的
+		// 响应 id 脱节）。
 		rest = append(rest, map[string]any{
 			"id": msgID, "type": "message", "status": "completed", "role": "assistant",
 			"content": textParts,

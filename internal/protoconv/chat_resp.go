@@ -245,14 +245,18 @@ func appendChatInputItems(out []byte, msgs gjson.Result) []byte {
 						out = append(out, ',')
 					}
 					n++
-					// 请求方向取 id（与 map 版一致：chat tool_calls 仅 id；
-					// fcIDRaw 的 call_id 优先仅响应方向）
+					// 请求方向**不写 item id**：Responses 的 function_call.id 是
+					// 可选**项 id**（写上就必须以 `fc_` 开头），而 chat 的
+					// tool_calls[].id 是**配对键 call id**（`call_…`，或别家上游
+					// 的任意前缀）。把它塞进 id 会被上游 400：
+					// 「Invalid 'input[N].id': 'call_…'. Expected an ID that
+					// begins with 'fc'」（官方输入类型 ResponseFunctionToolCallParam
+					// 里 id 非必填、call_id 才是必填配对键）。配对只依赖 call_id，
+					// 省略 id 语义无损。
 					idRaw := strOrEmpty(tc.Get("id"))
 					out = append(out, `{"arguments":`...)
 					out = append(out, strOrEmpty(fn.Get("arguments"))...)
 					out = append(out, `,"call_id":`...)
-					out = append(out, idRaw...)
-					out = append(out, `,"id":`...)
 					out = append(out, idRaw...)
 					out = append(out, `,"name":`...)
 					out = append(out, strOrEmpty(fn.Get("name"))...)

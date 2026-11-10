@@ -234,8 +234,12 @@ func chatToRespOutput(id string, m map[string]any) []any {
 			name, _ = str(fn, "name")
 			args, _ = str(fn, "arguments")
 		}
+		// 输出侧 item id 与流式同一规则（chatFCID = `fc_` + call_id）。已知且
+		// 实测过的上游规则只有一条：`id` 一旦出现就必须以 `fc_` 开头——旧的
+		// `call_…` 形态一旦被回放就会被 400。这里只是**对齐既有流式惯例**；
+		// 合成出来的 `fc_` id 是否被上游接受（回放/存储引用）未经实测，不宣称。
 		out = append(out, map[string]any{
-			"type": "function_call", "id": callID, "call_id": callID,
+			"type": "function_call", "id": chatFCID(callID), "call_id": callID,
 			"name": name, "arguments": args, "status": "completed",
 		})
 	}
