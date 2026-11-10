@@ -1557,10 +1557,10 @@ func TestClientCacheBoundedByActiveEgressSet(t *testing.T) {
 	require.NotNil(t, a.clients.Get(9), "回收 client 桶不得动条目（Auth/usage 仍在）")
 }
 
-// TestClientTableInvalidateAccountDropsTransportResources 运行时失效（§3.2）：摘除
-// 条目与全部 client，锁外 CloseWSIdleConnections——上游必须看到空闲连接被关；再来
-// 请求时按新条目重建（不复活旧 client）。
-func TestClientTableInvalidateAccountDropsTransportResources(t *testing.T) {
+// TestEvictIfCurrentDropsTransportResources 来源版本失效（§3.2）：fatal 上报对**仍当前**
+// 的条目走 evictIfCurrent ⇒ 摘除条目与全部 client，锁外 CloseWSIdleConnections——上游
+// 必须看到空闲连接被关；再来请求时按新条目重建（不复活旧 client）。
+func TestEvictIfCurrentDropsTransportResources(t *testing.T) {
 	up := newWSReuseUpstream(t, "", wsReuseStep{created: true, id: "rm1"}, wsReuseStep{created: true, id: "rm2"})
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
@@ -1570,7 +1570,7 @@ func TestClientTableInvalidateAccountDropsTransportResources(t *testing.T) {
 	require.Equal(t, 1, up.upgradeCount())
 	require.Equal(t, 1, up.openCount(), "只请求一次 ⇒ 一条 idle 连接挂着")
 
-	a.clients.InvalidateAccount(cred.AccountID)
+	require.True(t, a.clients.evictIfCurrent(a.clients.Get(cred.AccountID)), "fatal 的来源条目仍当前 ⇒ 摘除")
 	up.waitClosed(t, 1, "账号失效")
 
 	require.Nil(t, a.clients.Get(cred.AccountID), "条目必须摘除（含 Auth 与 usage 缓存）——桶挂在条目上，条目不可达即桶不存在")

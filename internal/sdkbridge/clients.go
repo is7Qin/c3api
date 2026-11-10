@@ -273,25 +273,6 @@ func (t *ClientTable) evictIfCurrent(e *codexEntry) bool {
 	return true
 }
 
-// InvalidateAccount **账号级无版本**失效：摘除该账号此刻的条目与其全部 client，锁外
-// 逐条 CloseWSIdleConnections。
-//
-// **它不是请求路径的入口**（§3.3b-2）：凭据事件（fatal / 构造失败 / 轮转）都带着
-// 来源身份代际，必须走 evictIfCurrent / invalidateOlder——"按账号 id 删当前资源"
-// 正是"旧凭据的事件杀掉新凭据的 Auth"。这里只留给**控制面明确的整体禁用**
-// （运维处置/账号级事件），与配置批次也不共用入口（后者只走 ApplyBatch）。
-func (t *ClientTable) InvalidateAccount(accountID int64) {
-	if t == nil {
-		return
-	}
-	t.mu.Lock()
-	e := t.entries[accountID]
-	delete(t.entries, accountID)
-	dropped := takeBucketsLocked(e)
-	t.mu.Unlock()
-	closeWSIdleConns(dropped)
-}
-
 // invalidateOlder 按**来源版本**失效：只有当表里的条目属于**更旧**的身份代际时
 // 才整账号摘除它（及其桶，锁外关闭）。返回是否真的摘除。
 //

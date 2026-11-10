@@ -582,11 +582,12 @@ func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 			},
 		},
 		{
-			// 账号级失效：fatal 上报后的整账号资源剔除（凭据版本级剔除走 evictIfCurrent）
-			name: "invalidate-account",
+			// 来源版本失效：fatal 上报对该来源条目走 evictIfCurrent（仍当前 ⇒ 摘除整条目）
+			name: "evict-current",
 			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential, _ *wsReuseSess) {
 				t.Helper()
-				a.clients.InvalidateAccount(cred.AccountID)
+				require.True(t, a.clients.evictIfCurrent(a.clients.Get(cred.AccountID)),
+					"fatal 的来源条目仍当前 ⇒ 摘除")
 			},
 		},
 	}
