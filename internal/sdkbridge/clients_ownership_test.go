@@ -302,6 +302,33 @@ func TestApplyBatchDoesNotInferDeletionsFromAbsence(t *testing.T) {
 		"未被指令提及的账号资源保持不动（表不推断删除；漏掉的账号由下一批点名回收）")
 }
 
+// TestApplyBatchEmptyBatchAdvancesFence 空指令批次**同样占号**：权威在"账号全集与
+// 表都为空"（例如账号全删）时会产出零指令批次，它一旦被应用就必须把围栏推进到自己的
+// 代号——否则之后迟到的旧批次仍会按旧配置的指令作用到更新的表状态上，"过期批次整体
+// no-op"的契约不成立。
+func TestApplyBatchEmptyBatchAdvancesFence(t *testing.T) {
+	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
+	cred := &domain.AccountCredential{AccountID: 41, PATKey: "pat-41"}
+	_, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	require.NoError(t, err)
+	cur := a.clients.Get(41)
+	require.NotNil(t, cur)
+
+	// 新批次（代号 20）：这一版配置没有任何要摘的东西——只推进围栏，不做动作。
+	a.clients.ApplyBatch(domain.ResourceBatch{Gen: 20})
+	require.Same(t, cur, a.clients.Get(41), "空指令批次不动资源")
+
+	// 旧批次（代号 19）迟到：必须整体 no-op（不得按旧配置点名删除）。
+	a.clients.ApplyBatch(domain.ResourceBatch{Gen: 19, Directives: []domain.AccountResourceDirective{
+		{AccountID: 41, Action: domain.ResourceDelete},
+	}})
+	require.Same(t, cur, a.clients.Get(41), "空指令批次已经占了号：迟到的旧批次不得执行")
+
+	// 零值批次仍是"能力未装配"的 no-op（不占号、不动资源）。
+	a.clients.ApplyBatch(domain.ResourceBatch{})
+	require.Same(t, cur, a.clients.Get(41), "Gen==0 是能力未装配，不是「最新配置」")
+}
+
 // TestApplyBatchGatesRemovalsWithBatchSequence 账号删除与可见性共享**同一个**批次准入：
 // 旧批次（按当时的集合列出了 Delete）迟到时不得删掉新配置重建出来的条目。判据是
 // "过期批次整体 no-op"，不是"删除本身幂等"。

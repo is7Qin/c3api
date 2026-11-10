@@ -195,13 +195,15 @@ func (t *ClientTable) Accounts() []int64 {
 //   - 没有指令的账号：**不动**（保守保留资源胜过误删）。权威每批用 Accounts() 取
 //     全量快照做差分，故漏掉的账号在下一批被点名——竞态中新建的条目最多多活一批。
 //
-// 零值批次（Gen == 0 且无指令）= 该能力未装配 ⇒ no-op。
+// 零值批次（Gen == 0）= 该能力未装配 ⇒ no-op。
 //
 // **批次准入**：Gen 由权威在串行区内取号、应用在锁外，两次重叠 reload 的应用顺序
 // 不保证。只接受比 appliedGen **更新**的批次——旧批次必须整体 no-op，否则会把资源
-// 可见性回退到旧配置（连带删掉新配置刚建出来的条目）。摘表在锁内、Close 在锁外。
+// 可见性回退到旧配置（连带删掉新配置刚建出来的条目）。准入对**每个**非零批次生效，
+// 包括**没有指令**的批次：空指令 = "这一版配置没有要摘的东西"，它同样占号，否则
+// 之后迟到的旧批次仍会以更旧配置的指令作用到更新的表状态上。摘表在锁内、Close 在锁外。
 func (t *ClientTable) ApplyBatch(batch domain.ResourceBatch) {
-	if t == nil || batch.Gen == 0 || len(batch.Directives) == 0 {
+	if t == nil || batch.Gen == 0 {
 		return
 	}
 	var dropped []*codexsdk.HTTPClient
@@ -210,6 +212,8 @@ func (t *ClientTable) ApplyBatch(batch domain.ResourceBatch) {
 		t.mu.Unlock()
 		return
 	}
+	// 先推进围栏再做动作：动作本身可能耗时（桶摘除），而围栏是"这一版已生效"的
+	// 唯一判据——迟到的旧批次必须在看到新号的第一时间就被拒。
 	t.appliedGen = batch.Gen
 	for _, d := range batch.Directives {
 		switch d.Action {
