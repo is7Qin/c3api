@@ -19,8 +19,8 @@ import (
 // TestReloadReconcilesClientEgress 配置面回收的**接线**：每次全量 reload / 组级批重载
 // 都把「账号全集 → 当前 responses 出口」交给 ClientTable（§3.2 出口/transport 变更）。
 //
-// 没有这条接线，ClientTable.Reconcile 就是死代码：活跃集永远停在使用请求兜底登记的那
-// 一版，代理 CRUD 之后旧摘要不会被摘、usage 面的判断也没有配置可依。
+// 没有这条接线，ApplyConfig 就是死代码：资源可见性永远停在某一版，代理 CRUD 之后旧
+// 摘要不会被摘。
 func TestReloadReconcilesClientEgress(t *testing.T) {
 	pool := egress.NewPool(nil)
 	px := &domain.Proxy{ID: 7, Scheme: domain.ProxySchemeSOCKS5, Host: "10.1.2.3", Port: 1080,
@@ -34,7 +34,7 @@ func TestReloadReconcilesClientEgress(t *testing.T) {
 	var gens []uint64
 	cfg := testCfg()
 	cfg.Egress = pool
-	cfg.ReconcileClients = func(gen uint64, active map[int64]*egress.Client, _ []int64) {
+	cfg.ReconcileClients = func(gen uint64, active map[int64]*egress.Client) {
 		gens = append(gens, gen)
 		got = append(got, active)
 	}
@@ -48,7 +48,7 @@ func TestReloadReconcilesClientEgress(t *testing.T) {
 		"绑定账号的活跃集 = 它当前配置的出口摘要")
 
 	// 代理密码轮换（配置变更）：装载器像生产一样给出**新的**对象（新 Proxy 值 + 新账号），
-	// 下一次 reload 传的就是新摘要——旧摘要不在集合里，该出口下的桶由 Reconcile 摘除。
+	// 下一次 reload 传的就是新摘要——旧摘要不在集合里，该出口下的桶由 ApplyConfig 摘除。
 	px2 := *px
 	px2.Password = "p2"
 	loader.set(10, []*domain.Account{proxyAcc(t, 1, tplA, &px2), direct})
@@ -65,7 +65,7 @@ func TestReloadReconcilesClientEgress(t *testing.T) {
 	require.NotContains(t, got[2], int64(1), "被删除的账号不再出现在活跃集里")
 	require.Contains(t, got[2], int64(2))
 
-	// 批次代号必须严格单调（锁内取号；ClientTable 只接受更新的号，B1）。
+	// 批次代号必须严格单调（锁内取号；ClientTable 只接受更新的号）。
 	require.Equal(t, []uint64{1, 2, 3}, gens, "每次配置面回收取一个新号")
 }
 
@@ -111,10 +111,13 @@ func (l *universeLoader) setUngrouped(accs []*domain.Account) {
 	l.ungrouped = accs
 }
 
-// TestReconcileCoversUngroupedAccounts 配置面活跃集的输入是**账号全集**（momus N-e）：
-// 未编组账号不进路由根（无组即无 route），但仍是账号全集的一部分——不给它们登记活跃集，
-// 每次 reload 都会把管理面 usage 刚建的条目/桶摘掉。没有会话池的账号（K=0）同样在集合里
-// （momus N7 的同一判据面）。
+// TestReconcileCoversUngroupedAccounts 配置面活跃集的输入是**账号全集**：未编组账号
+// 不进路由根（无组即无 route），但仍是账号全集的一部分——不给它们登记资源可见性，
+// 每次 reload 都会把管理面 usage 刚建的条目/桶摘掉。没有会话池的账号（K=0）同样在
+// 集合里。
+//
+// 组级增量不重扫账号表：从组里移除**不是**账号移除（账号仍在全集/数据库里），资源
+// 保留；真正的删除只由下一次全量装载的全集差分发现（§3.3b-4）。
 func TestReconcileCoversUngroupedAccounts(t *testing.T) {
 	pool := egress.NewPool(nil)
 	tplCodex := tpl(1, domain.FormatOpenAIResponses, []string{"gpt-5"})
@@ -129,34 +132,63 @@ func TestReconcileCoversUngroupedAccounts(t *testing.T) {
 	var got []map[int64]*egress.Client
 	cfg := testCfg()
 	cfg.Egress = pool
-	cfg.ReconcileClients = func(_ uint64, active map[int64]*egress.Client, _ []int64) { got = append(got, active) }
+	cfg.ReconcileClients = func(_ uint64, active map[int64]*egress.Client) { got = append(got, active) }
 	s := newSchedWithCfg(t, cfg, loader)
 
 	require.Len(t, got, 1)
 	require.Contains(t, got[0], int64(1), "组内账号（K=0，没有池）在活跃集里")
-	require.Contains(t, got[0], int64(2), "未编组账号也在账号全集里（momus N-e）")
+	require.Contains(t, got[0], int64(2), "未编组账号也在账号全集里")
 
-	// 组级增量路径不重扫账号表，但沿用上次全量装载的全集基线。
+	// 组级增量路径不重扫账号表：账号 1 从组里消失，但仍在账号全集 ⇒ 资源保留。
 	loader.set(10, nil)
 	s.InvalidateGroups([]int64{10})
 	require.Len(t, got, 2)
-	require.NotContains(t, got[1], int64(1), "账号从组里消失 ⇒ 从活跃集摘除")
+	require.Contains(t, got[1], int64(1), "离开组 ≠ 账号移除：资源仍按全集保留")
 	require.Contains(t, got[1], int64(2), "组级路径仍保留未编组账号（基线）")
 
-	// 未编组账号的删除只能由下一次全量装载发现（无路由、只有管理面 usage 触达 ⇒ 有界）。
+	// 未编组账号的删除同样只能由下一次全量装载发现（组级路径不重扫账号表）。
 	loader.setUngrouped(nil)
 	s.InvalidateGroups([]int64{10})
 	require.Len(t, got, 3)
 	require.Contains(t, got[2], int64(2), "组级路径不重扫账号表：基线保留（已披露边界）")
 	require.NoError(t, s.InvalidateAllSync())
 	require.Len(t, got, 4)
+	require.NotContains(t, got[3], int64(1), "全量装载发现账号已从组与全集消失")
 	require.NotContains(t, got[3], int64(2), "全量装载发现未编组账号已删除")
 }
 
-// TestReconcileBatchesTakeSequenceInsidePublisherLock A/B 屏障（oracle B1 的确定性交错）：
-// 旧批次 A 在发布锁内取号后、锁外 socket 收尾卡住；新批次 B 在同锁内取到更大的号并
-// **先**完成应用；A 恢复后才轮到它的应用。代号必须仍按**锁内顺序**单调（[2,1]）——
-// ClientTable 用这个号拒绝旧批次回退活跃集（见 sdkbridge TestReconcileRejectsStaleBatch）。
+// TestFullReloadKeepsUngroupedEgressInBothLayers 两级出口资源消费**同一份**快照
+// （§3.3b-1 的结构要求）：未编组账号独占的代理出口在全量 reload 后必须仍留在
+// egress.Pool 里（不被按路由根口径误剪），并在同一批次里交给 ClientTable。
+func TestFullReloadKeepsUngroupedEgressInBothLayers(t *testing.T) {
+	pool := egress.NewPool(nil)
+	px := &domain.Proxy{ID: 7, Scheme: domain.ProxySchemeSOCKS5, Host: "10.9.9.9", Port: 1080,
+		Username: "u", Password: "p", Enabled: true}
+	tplCodex := tpl(1, domain.FormatOpenAIResponses, []string{"gpt-5"})
+	tplCodex.CredentialType = credential.TypeCodexOAuth
+	ungrouped := proxyAcc(t, 3, tplCodex, px)
+	loader := &universeLoader{
+		memLoader: newMemLoader(map[int64][]*domain.Account{}),
+		ungrouped: []*domain.Account{ungrouped},
+	}
+	spec := egress.New("socks5", "10.9.9.9", 1080, "u", "p")
+	want := pool.For(spec)
+
+	var got map[int64]*egress.Client
+	cfg := testCfg()
+	cfg.Egress = pool
+	cfg.ReconcileClients = func(_ uint64, active map[int64]*egress.Client) { got = active }
+	newSchedWithCfg(t, cfg, loader)
+
+	require.Same(t, want, pool.For(spec), "未编组账号的出口 client 不得被按 byID 口径误剪")
+	require.Equal(t, 1, pool.Size())
+	require.Same(t, want, got[3], "同一批次交给 ClientTable 的是同一个出口指针")
+}
+
+// TestReconcileBatchesTakeSequenceInsidePublisherLock A/B 屏障：旧批次 A 在发布锁内
+// 取号后、锁外 socket 收尾卡住；新批次 B 在同锁内取到更大的号并**先**完成应用；A
+// 恢复后才轮到它的应用。代号必须仍按**锁内顺序**单调（[2,1]）——ClientTable 用这个
+// 号拒绝旧批次回退资源可见性。
 func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -168,7 +200,7 @@ func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 			close(entered)
 			<-release
 		},
-		ReconcileClients: func(gen uint64, _ map[int64]*egress.Client, _ []int64) {
+		ReconcileClients: func(gen uint64, _ map[int64]*egress.Client) {
 			mu.Lock()
 			applied = append(applied, gen)
 			mu.Unlock()
@@ -180,14 +212,16 @@ func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 		defer close(done)
 		s.withPublisherLock(func(b *poolReclaim) {
 			b.threads = []threadRetire{{accountID: 1, threadKey: "old-thread"}}
-			s.collectActiveEgress(nil, map[int64]*egress.Client{1: nil}, b)
+			cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 1}}, nil)
+			b.config = &cfg
 		})
 	}()
 	<-entered // A 已取号（1）并进入锁外收尾
 
 	// 批次 B = 新配置（删 1、加 2）：在 A 的锁外收尾期间取号（2）并先应用。
 	s.withPublisherLock(func(b *poolReclaim) {
-		s.collectActiveEgress(nil, map[int64]*egress.Client{2: nil}, b)
+		cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 2}}, nil)
+		b.config = &cfg
 	})
 
 	close(release)
@@ -196,5 +230,5 @@ func TestReconcileBatchesTakeSequenceInsidePublisherLock(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	require.Equal(t, []uint64{2, 1}, applied, "应用顺序被交错（B 先），代号仍按锁内顺序单调")
-	require.Equal(t, uint64(2), s.publisher.reconcileGen)
+	require.Equal(t, uint64(2), s.accounts.gen)
 }

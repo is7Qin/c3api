@@ -4,9 +4,12 @@
 
 package sdkbridge
 
-// 传输资源归属与活跃集的边界回归（§3.2 凭据替换 / 账号移除 / 出口·transport 变更）。
-// 这四条都是**单线程确定性交错**：不依赖并发概率，交错顺序就是生产里两条请求的真实
-// 先后。
+// 传输资源归属与配置可见性的边界回归（§3.2 凭据替换 / 账号移除 / 出口·transport
+// 变更）。都是**单线程确定性交错**：不依赖并发概率，交错顺序就是生产里两条请求的
+// 真实先后。
+//
+// 配置可见性只有一个写入口 ApplyConfig；请求路径（Client/Entry）只取/建，不剪枝、
+// 不登记。
 
 import (
 	"fmt"
@@ -21,7 +24,7 @@ import (
 )
 
 // TestClientTableStaleEntryCannotSeedLiveBucket 凭据替换窗口内的旧条目句柄不得把 client
-// 写进**活桶**（B4/B1 的永久用例）。
+// 写进**活桶**（永久用例）。
 //
 // 交错（生产里两次请求的真实先后，确定性复现）：
 //
@@ -46,7 +49,7 @@ func TestClientTableStaleEntryCannotSeedLiveBucket(t *testing.T) {
 	require.Same(t, eNew, a.clients.Get(9), "当前条目已是新条目")
 
 	// 请求 A 恢复执行：迟到写入只落在死条目自己的桶里。
-	stale := a.clients.Client(eOld, clientKey{}, true, func() *codexsdk.HTTPClient {
+	stale := a.clients.Client(eOld, clientKey{}, func() *codexsdk.HTTPClient {
 		return codexsdk.NewHTTPClient(eOld.auth)
 	})
 	require.NotNil(t, stale, "在飞句柄仍可完成本次工作（不把在飞请求打断）")
@@ -54,7 +57,7 @@ func TestClientTableStaleEntryCannotSeedLiveBucket(t *testing.T) {
 		"死句柄的写入不得进活桶（否则新凭据的请求会被旧 auth 的 client 送出去）")
 
 	built := false
-	fresh := a.clients.Client(eNew, clientKey{}, true, func() *codexsdk.HTTPClient {
+	fresh := a.clients.Client(eNew, clientKey{}, func() *codexsdk.HTTPClient {
 		built = true
 		return codexsdk.NewHTTPClient(eNew.auth)
 	})
@@ -64,9 +67,9 @@ func TestClientTableStaleEntryCannotSeedLiveBucket(t *testing.T) {
 }
 
 // TestClientTableRemovedAccountCannotRecreateBucket 账号移除后，旧句柄即使继续执行也
-// 不得重建出**可复用**的桶；账号重新加回（同 accountID）不得命中上一轮的桶（B3）。
+// 不得重建出**可复用**的桶；账号重新加回（同 accountID）不得命中上一轮的桶。
 //
-// 交错：请求已取得条目 → 账号被移除（池注册表差分 → Reconcile 的 remove 批次）→ 请求恢复执行。
+// 交错：请求已取得条目 → 账号从账号全集消失（控制面 ApplyConfig 空集合）→ 请求恢复。
 // 桶挂在条目上 ⇒ 移除后表里没有条目，迟到写入无处可"注册"，也就不存在"账号级可复用
 // 桶"这种跨越账号生命周期的资源。
 func TestClientTableRemovedAccountCannotRecreateBucket(t *testing.T) {
@@ -76,9 +79,9 @@ func TestClientTableRemovedAccountCannotRecreateBucket(t *testing.T) {
 
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
-	a.clients.Reconcile(1, map[int64]*egress.Client{}, []int64{cred.AccountID})
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{})
 
-	stale := a.clients.Client(e, keyWS, true, func() *codexsdk.HTTPClient {
+	stale := a.clients.Client(e, keyWS, func() *codexsdk.HTTPClient {
 		return codexsdk.NewHTTPClient(e.auth)
 	})
 	require.NotNil(t, stale, "在飞句柄仍可完成本次工作")
@@ -92,7 +95,7 @@ func TestClientTableRemovedAccountCannotRecreateBucket(t *testing.T) {
 	require.Empty(t, testEntryBuckets(a, revived), "旧句柄预留的桶不得出现在新条目里")
 
 	built := false
-	fresh := a.clients.Client(revived, keyWS, true, func() *codexsdk.HTTPClient {
+	fresh := a.clients.Client(revived, keyWS, func() *codexsdk.HTTPClient {
 		built = true
 		return codexsdk.NewHTTPClient(revived.auth)
 	})
@@ -100,13 +103,13 @@ func TestClientTableRemovedAccountCannotRecreateBucket(t *testing.T) {
 	require.NotSame(t, stale, fresh)
 }
 
-// TestUsageLaneKeepsActiveProxyBucket usage 快照面（无 Selection ⇒ 恒 Direct/HTTP）不得
-// 摘掉账号在用的**代理**桶（N1 / oracle B2 的永久用例，momus N1 探针等价）。
+// TestUsageLaneKeepsRegisteredProxyBucket usage 快照面（无 Selection ⇒ 恒 Direct/HTTP）
+// 不得摘掉账号配置里在用的**代理**桶。
 //
-// 活跃集由**账号当前配置**决定；usage 只是"仍被调用的组合"（§3.2）。让一次 usage 请求
-// 重定义活跃集会把它 Close 掉并永久移出表——下一次代理请求就要重新握手，"跨窗口不重连"
-// 当场失效。
-func TestUsageLaneKeepsActiveProxyBucket(t *testing.T) {
+// 可见性由**配置批次**决定；usage 只是"仍被调用的组合"。让一次 usage 请求重定义可见
+// 性会把它 Close 掉并永久移出表——下一次代理请求就要重新握手，"跨窗口不重连"当场
+// 失效。
+func TestUsageLaneKeepsRegisteredProxyBucket(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-usage-keep"}
 	proxy := *a.DirectEgress()
@@ -115,6 +118,8 @@ func TestUsageLaneKeepsActiveProxyBucket(t *testing.T) {
 	proxy.Spec.Port = 8000
 	keyProxy := clientKey{proxy: egressDigest(&proxy), transport: domain.CodexResponsesTransportWS.Key()}
 
+	// 配置面登记当前出口（reload 面）后再发请求。
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{cred.AccountID: &proxy})
 	_, proxyClient, err := a.clientFor(cred, &proxy, domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
 
@@ -128,16 +133,21 @@ func TestUsageLaneKeepsActiveProxyBucket(t *testing.T) {
 	require.Same(t, usageClient, testCachedClient(a, e, clientKey{}),
 		"usage 的 Direct/HTTP 组合必须保留")
 
+	// 再一批同出口配置：直连桶是 usage 的合法组合，同样不得被摘。
+	a.clients.ApplyConfig(2, map[int64]*egress.Client{cred.AccountID: &proxy})
+	require.Same(t, usageClient, testCachedClient(a, e, clientKey{}))
+
 	// 代理请求继续命中同一 client（跨窗口不重连的前提）。
 	_, again, err := a.clientFor(cred, &proxy, domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
 	require.Same(t, proxyClient, again, "代理请求必须命中同一 client")
 }
 
-// TestReconcileKeepsTransportVariantsAndDropsOldEgress 出口 / transport 变更的剪枝口径：
-// **只按 egress 维度**——同出口换 responses 传输是合法变体（旧桶不得误删），换出口规格
-// （代理密码轮换）则该出口下的全部传输桶都必须摘除（历史摘要不得无界增长）。
-func TestReconcileKeepsTransportVariantsAndDropsOldEgress(t *testing.T) {
+// TestApplyConfigKeepsTransportVariantsAndDropsOldEgress 出口 / transport 变更的剪枝
+// 口径：**只按 egress 维度**——同出口换 responses 传输是合法变体（旧桶不得误删），
+// 换出口规格（代理密码轮换）则该出口下的全部传输桶都必须摘除（历史摘要不得无界
+// 增长）。
+func TestApplyConfigKeepsTransportVariantsAndDropsOldEgress(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-egress"}
 	egA := *a.DirectEgress()
@@ -151,6 +161,7 @@ func TestReconcileKeepsTransportVariantsAndDropsOldEgress(t *testing.T) {
 	keyWS := clientKey{proxy: egressDigest(&egA), transport: domain.CodexResponsesTransportWS.Key()}
 	keyHTTP := clientKey{proxy: egressDigest(&egA), transport: domain.CodexResponsesTransportDefault.Key()}
 
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{cred.AccountID: &egA})
 	_, wsA, err := a.clientFor(cred, &egA, domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
 	_, httpA, err := a.clientFor(cred, &egA, domain.CodexResponsesTransportDefault)
@@ -166,15 +177,15 @@ func TestReconcileKeepsTransportVariantsAndDropsOldEgress(t *testing.T) {
 	require.Same(t, wsA, againWS, "ws 请求命中旧桶（不重拨）")
 
 	// 出口规格变更（= 配置变更）⇒ 旧摘要下的桶（两种传输）全部摘除，条目本身不动。
-	a.clients.Reconcile(1, map[int64]*egress.Client{cred.AccountID: &egB}, nil)
+	a.clients.ApplyConfig(2, map[int64]*egress.Client{cred.AccountID: &egB})
 	e = a.clients.Get(cred.AccountID)
 	require.NotNil(t, e, "回收 client 桶不得动条目（Auth/usage 仍在）")
 	require.Empty(t, testEntryBuckets(a, e), "旧出口摘要下的桶（ws 与 http）都必须摘除")
 }
 
-// TestReconcileDropsAccountsOutsideActiveSet 配置面回收用**全量**账号集：账号不在集合里
-// ⇒ 整账号摘除。这条覆盖「没有会话池的账号」（池注册表差分看不到它们，momus N7）。
-func TestReconcileDropsAccountsOutsideActiveSet(t *testing.T) {
+// TestApplyConfigDropsAccountsOutsideUniverse 配置批次用**账号全集**：账号不在集合里
+// ⇒ 整账号摘除。这条覆盖「没有会话池的账号」（池注册表差分看不到它们）。
+func TestApplyConfigDropsAccountsOutsideUniverse(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 42, PATKey: "pat-42"}
 	_, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
@@ -182,42 +193,46 @@ func TestReconcileDropsAccountsOutsideActiveSet(t *testing.T) {
 	require.NotNil(t, a.clients.Get(cred.AccountID))
 
 	// 集合里只有别的账号 ⇒ 42 整账号摘除。
-	a.clients.Reconcile(1, map[int64]*egress.Client{7: nil}, nil)
-	require.Nil(t, a.clients.Get(cred.AccountID), "不在账号集合里的条目必须回收")
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{7: nil})
+	require.Nil(t, a.clients.Get(cred.AccountID), "不在账号全集里的条目必须回收")
 
 	// 空集合（清空部署）⇒ 全部摘除；nil 表示"该能力未装配"，no-op。
 	_, _, err = a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	a.clients.Reconcile(2, nil, nil)
+	a.clients.ApplyConfig(2, nil)
 	require.NotNil(t, a.clients.Get(cred.AccountID), "nil = 未装配该能力 ⇒ 不得回收")
-	a.clients.Reconcile(3, map[int64]*egress.Client{}, nil)
+	a.clients.ApplyConfig(3, map[int64]*egress.Client{})
 	require.Nil(t, a.clients.Get(cred.AccountID), "空集合 = 没有任何账号 ⇒ 全部回收")
 }
 
-// TestClientCacheFallbackBoundedWithoutConfig 未登记配置的账号（独立装配/单元用例）也
-// 不得让表随规格版本无界增长：请求侧只在**首次**兜底登记出口，之后的历史摘要照摘——
-// 表长恒 ≤ 首版 + 本次，与「20 个代理密码版本」这一形状无关。
-//
-// 生产装配下 Reconcile 已在 reload 面登记过，请求侧不会参与定义活跃集（见
-// TestClientCacheBoundedByActiveEgressSet 的配置面版本）。
-func TestClientCacheFallbackBoundedWithoutConfig(t *testing.T) {
+// TestRequestPathNeverPrunesBuckets 请求路径**不回收**资源（M3 的判据）：同账号连续
+// 20 个出口版本，请求只累积各自的桶（每个版本都合法，只是不再是配置出口）；下一次
+// 配置批次按当前出口摘除历史摘要——表长因此由配置约束，而不是由单次调用猜测。
+func TestRequestPathNeverPrunesBuckets(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 11, PATKey: "pat-fallback"}
 	base := *a.DirectEgress()
+	var last *egress.Client
 	for i := range 20 {
 		eg := base
 		eg.Spec = egress.New("http", "localhost", 8000, "", fmt.Sprintf("revision-%d", i))
 		_, _, err := a.clientFor(cred, &eg, domain.CodexResponsesTransportWS)
 		require.NoError(t, err)
+		last = &eg
 	}
-	require.LessOrEqual(t, len(testEntryBuckets(a, a.clients.Get(cred.AccountID))), 2,
-		"退回请求侧兜底时表长也必须是有界的（首版 + 本次）")
+	require.Len(t, testEntryBuckets(a, a.clients.Get(cred.AccountID)), 20,
+		"请求路径不得以任何理由剪枝（配置不可由单个请求定义）")
+
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{cred.AccountID: last})
+	kept := testEntryBuckets(a, a.clients.Get(cred.AccountID))
+	require.Len(t, kept, 1, "配置批次按当前出口回收历史摘要")
+	require.Equal(t, egressDigest(last), kept[0].proxy)
 }
 
-// TestReconcileRejectsStaleBatch 配置批次的应用有单调代号（B1）：旧批次可能在新批次
-// **之后**才跑到 Reconcile（锁外执行），不得把活跃集回退到旧配置，也不得删掉新配置里
-// 才出现的账号。覆盖出口变更 + 账号增删（oracle 要求的 A/B 形状）。
-func TestReconcileRejectsStaleBatch(t *testing.T) {
+// TestApplyConfigRejectsStaleBatch 配置批次的应用有单调代号：旧批次可能在新批次**之后**
+// 才跑到 ApplyConfig（锁外执行），不得把可见性回退到旧配置，也不得删掉新配置里才出现
+// 的账号。覆盖出口变更 + 账号增删（A/B 形状）。
+func TestApplyConfigRejectsStaleBatch(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	base := *a.DirectEgress()
 	egA := base
@@ -230,13 +245,14 @@ func TestReconcileRejectsStaleBatch(t *testing.T) {
 	keyB := clientKey{proxy: egressDigest(&egB), transport: domain.CodexResponsesTransportDefault.Key()}
 
 	// 旧配置的资源：账号 1 在出口 A、账号 3 在直连。
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{1: &egA, 3: nil})
 	_, oldA, err := a.clientFor(cred1, &egA, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	_, _, err = a.clientFor(cred3, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 
 	// 新批次（代号 2）：账号 1 改到出口 B、账号 3 删除、账号 2 新增。
-	a.clients.Reconcile(2, map[int64]*egress.Client{1: &egB, 2: nil}, nil)
+	a.clients.ApplyConfig(2, map[int64]*egress.Client{1: &egB, 2: nil})
 	require.Nil(t, a.clients.Get(3), "新批次删除的账号整账号摘除")
 	e1 := a.clients.Get(1)
 	require.NotNil(t, e1)
@@ -249,21 +265,21 @@ func TestReconcileRejectsStaleBatch(t *testing.T) {
 	require.NotNil(t, a.clients.Get(2), "新批次新增的账号有条目")
 
 	// 旧批次（代号 1）迟到：整体 no-op。
-	a.clients.Reconcile(1, map[int64]*egress.Client{1: &egA, 3: nil}, nil)
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{1: &egA, 3: nil})
 	require.NotNil(t, a.clients.Get(2), "旧批次不得删掉新配置才出现的账号")
 	require.Nil(t, a.clients.Get(3), "旧批次不得让已删除账号复活")
 	require.Same(t, newB, testCachedClient(a, a.clients.Get(1), keyB),
-		"旧批次不得把活跃集回退到出口 A（B 桶必须仍在）")
+		"旧批次不得把配置回退到出口 A（B 桶必须仍在）")
 
 	// 更新的批次仍被接受（守卫只拒旧号）。
-	a.clients.Reconcile(3, map[int64]*egress.Client{1: &egA}, nil)
+	a.clients.ApplyConfig(3, map[int64]*egress.Client{1: &egA})
 	require.Empty(t, testEntryBuckets(a, a.clients.Get(1)), "代号 3 = 更新的配置：B 桶摘除")
 }
 
-// TestReconcileGatesRemovalsWithBatchSequence 删除与活跃集共享**同一个**批次准入
-// （oracle R4 B1 的单元面）：旧批次的 remove 项不能晚到执行——否则删掉的可能是新配置
-// 重建出来的条目。判据是"过期批次的 remove 整体 no-op"，不是"删除本身幂等"。
-func TestReconcileGatesRemovalsWithBatchSequence(t *testing.T) {
+// TestApplyConfigGatesUniverseRemovalsWithBatchSequence 账号删除与可见性共享**同一个**
+// 批次准入：旧批次（账号全集里没有某账号）迟到时不得删掉新配置重建出来的条目。
+// 判据是"过期批次整体 no-op"，不是"删除本身幂等"。
+func TestApplyConfigGatesUniverseRemovalsWithBatchSequence(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 31, PATKey: "pat-31"}
 	_, _, err := a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
@@ -271,41 +287,34 @@ func TestReconcileGatesRemovalsWithBatchSequence(t *testing.T) {
 	old := a.clients.Get(cred.AccountID)
 	require.NotNil(t, old)
 
-	// 新批次（代号 2）：账号仍在活跃集，但显式删除（例如不再是 codex 账号/清空部署）。
-	a.clients.Reconcile(2, map[int64]*egress.Client{cred.AccountID: nil}, []int64{cred.AccountID})
-	require.Nil(t, a.clients.Get(cred.AccountID), "通过准入的 remove 必须摘除条目")
+	// 批次 2：账号仍在全集，资源保留。
+	a.clients.ApplyConfig(2, map[int64]*egress.Client{cred.AccountID: nil})
+	require.Same(t, old, a.clients.Get(cred.AccountID))
 
-	// 新配置把账号加回：真实请求建出一条新条目。
-	_, _, err = a.clientFor(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
-	require.NoError(t, err)
-	current := a.clients.Get(cred.AccountID)
-	require.NotNil(t, current)
-	require.NotSame(t, old, current)
+	// 旧批次（代号 1）迟到，全集里没有这个账号：整个批次 no-op。
+	a.clients.ApplyConfig(1, map[int64]*egress.Client{})
+	require.Same(t, old, a.clients.Get(cred.AccountID),
+		"旧批次的账号缺失必须被同一个 gen 准入拒掉（不得删掉新配置的条目）")
 
-	// 旧批次（代号 1）迟到，仍带着同一个账号的 remove 项：整个批次 no-op。
-	a.clients.Reconcile(1, map[int64]*egress.Client{}, []int64{cred.AccountID})
-	require.Same(t, current, a.clients.Get(cred.AccountID),
-		"旧批次的 remove 必须被同一个 gen 准入拒掉（不得删掉新配置的条目）")
-
-	// 只带 remove、不带活跃集的调用同样受准入约束（active==nil 不是"跳过判定"）。
-	a.clients.Reconcile(1, nil, []int64{cred.AccountID})
-	require.Same(t, current, a.clients.Get(cred.AccountID), "只带 remove 的旧批次同样被拒")
+	// 只带 nil 的调用同样受准入约束（nil 不是"跳过判定"的旁路）。
+	a.clients.ApplyConfig(1, nil)
+	require.Same(t, old, a.clients.Get(cred.AccountID))
 
 	// 更新的批次仍然可以删除（守卫只拒旧号）。
-	a.clients.Reconcile(3, map[int64]*egress.Client{cred.AccountID: nil}, []int64{cred.AccountID})
+	a.clients.ApplyConfig(3, map[int64]*egress.Client{})
 	require.Nil(t, a.clients.Get(cred.AccountID), "更新的批次必须能删除")
 }
 
-// TestUsageLaneDoesNotDefineActiveEgress usage 面 `pin=false` 的永久判据（momus N-b）：
-// 账号尚无配置登记时，usage 面**不得**用它的直连出口定义活跃集——否则随后代理面第一次
-// 换传输时就会把在用的代理桶摘掉并永久 Close（"跨窗口不重连"失效）。
-func TestUsageLaneDoesNotDefineActiveEgress(t *testing.T) {
+// TestUsageLaneDoesNotWriteConfig usage 面的永久判据：账号尚无配置登记时，usage 面
+// **不得**用它的直连出口定义可见性——否则随后代理面换传输时就会把在用的代理桶摘掉并
+// 永久 Close（"跨窗口不重连"失效）。
+func TestUsageLaneDoesNotWriteConfig(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 21, PATKey: "pat-usage"}
 	proxy := *a.DirectEgress()
 	proxy.Spec = egress.New("http", "localhost", 8002, "", "")
 
-	_, _, err := a.usageClientFor(cred) // usage 先到：pin=false，不定义活跃集
+	_, _, err := a.usageClientFor(cred) // usage 先到：不写配置
 	require.NoError(t, err)
 	_, ws1, err := a.clientFor(cred, &proxy, domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
@@ -313,5 +322,5 @@ func TestUsageLaneDoesNotDefineActiveEgress(t *testing.T) {
 	require.NoError(t, err)
 	_, ws2, err := a.clientFor(cred, &proxy, domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
-	require.Same(t, ws1, ws2, "usage 不得定义活跃集：换传输后代理 ws 桶必须仍在（命中同一 client）")
+	require.Same(t, ws1, ws2, "usage 不得定义可见性：换传输后代理 ws 桶必须仍在（命中同一 client）")
 }

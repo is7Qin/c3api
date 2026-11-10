@@ -299,27 +299,20 @@ type threadRetire struct {
 	threadKey string
 }
 
-// poolReclaim 是重载路径的**锁外副作用批次**：线程退役、账号移除与配置面 client 回收
-// 都只在锁内收集，由持锁方的调用点在**解锁之后**执行（§3.2「锁外 RetireThread /
-// 锁外 Close」）。
+// poolReclaim 是重载路径的**锁外副作用批次**：线程退役与配置面 client 回收都只在
+// 锁内收集，由持锁方的调用点在**解锁之后**执行（§3.2「锁外 RetireThread / 锁外
+// Close」）。
 //
 // 为什么是批次而不是原地调用：terminate 逐条 client 调用 SDK 的 clear()，可能在
-// socket 写闸上等待——放在 publisher.mu 里等于让一次 reload 被若干连接收尾拖住
-// （N1）。锁内只做内存摘表，锁外的部分按收集顺序串行执行，不需要额外 goroutine。
+// socket 写闸上等待——放在 publisher.mu 里等于让一次 reload 被若干连接收尾拖住。
+// 锁内只做内存摘表，锁外的部分按收集顺序串行执行，不需要额外 goroutine。
 type poolReclaim struct {
 	threads []threadRetire
-	// accounts 本批次判定为「从账号集合消失」的账号。它**不是**独立的执行入口：
-	// 与 egress 一起作为同一次 Reconcile 的入参，共享 gen 批次准入（R4 B1）——
-	// 旧批次既不能回退活跃集，也不能删掉新配置才建出来的条目。
-	accounts []int64
-	// egress 本批次的账号全集 → 当前 responses 出口（nil 值 = 直连）；只由
-	// collectActiveEgress 填充，reconcile 为 nil 时保持 nil。
-	egress map[int64]*egress.Client
-	// gen 本批次的配置代号（publisher.mu 内取号）。应用在锁外，ClientTable 只
-	// 接受更新的号——旧批次不能把活跃集回退到旧配置（B1）。
-	gen       uint64
-	retire    func(accountID int64, threadKey string)
-	reconcile func(gen uint64, active map[int64]*egress.Client, remove []int64)
+	// config 本批次的账号配置快照（账号全集 → 当前出口 + 批次代号）。nil = 本批次
+	// 不携带配置（单元用例直接建池）。应用在锁外、与线程退役同一个批次。
+	config *accountConfig
+	retire func(accountID int64, threadKey string)
+	apply  func(gen uint64, active map[int64]*egress.Client)
 }
 
 // run 执行收集到的副作用（必须在 publisher.mu 之外调用；nil 安全）。
@@ -332,97 +325,49 @@ func (b *poolReclaim) run() {
 			b.retire(t.accountID, t.threadKey)
 		}
 	}
-	// 配置面回收放最后：重设活跃集、摘除历史出口摘要、整账号摘除，**同一个**批次
-	// 准入。账号删除因此不能抢在 gen 判定之前执行——旧批次删掉的可能是新配置刚
-	// 建出来的条目（oracle R4 B1 的确定性交错）。
-	if b.reconcile != nil && b.egress != nil {
-		b.reconcile(b.gen, b.egress, b.accounts)
+	// 配置面回收放最后：账号全集差分的删除与出口可见性必须在**同一个** gen 准入
+	// 之后应用——旧批次删掉的可能是新配置刚建出来的条目。
+	if b.config != nil && b.apply != nil {
+		b.apply(b.config.gen, b.config.egress)
 	}
 }
 
-// collectRemovedAccounts 收集「旧注册表有池、新注册表没有」的账号（§3.2 账号移除的
-// 判定点：池存在而账号/id 不在新表就是移除信号——工作 byID 恒为全量克隆，不存在
-// 部分编译导致的误判）。调用方持 publisher.mu；执行在锁外（poolReclaim.run → Reconcile）。
+// collectRetiredPools 池注册表差分的**唯一**语义：池消失 ⇒ 退役它名下会话的线程。
 //
-// 这里只**收集**，不正法：删除必须与活跃集应用共享同一个批次准入，否则旧批次会删掉
-// 新配置刚建出来的条目（oracle R4 B1）。reconcile 未装配 ⇒ 没有执行面，不收集。
-func collectRemovedAccounts(prev, next *identityRegistry, reclaim *poolReclaim) {
-	if prev == nil || reclaim == nil || reclaim.reconcile == nil {
+// 池消失 ≠ 账号移除（§3.3b-4）：K 变 0、凭据类型变更、账号从路由集合退出都会让池
+// 消失，但账号资源（Auth/usage/client 桶）的生命周期由**账号全集差分**决定
+// （accountConfig → ClientTable.ApplyConfig）。这里只回收会话/线程，不冒充账号移除。
+//
+// 这里只**收集**，执行在锁外（`poolReclaim.run`）。
+func collectRetiredPools(prev, next *identityRegistry, reclaim *poolReclaim) {
+	if prev == nil || reclaim == nil || reclaim.retire == nil {
 		return
 	}
-	for id := range prev.pools {
+	for id, pool := range prev.pools {
 		if next != nil {
 			if _, ok := next.pools[id]; ok {
 				continue
 			}
 		}
-		reclaim.accounts = append(reclaim.accounts, id)
+		pool.collectThreads(reclaim)
 	}
 }
 
-// collectActiveEgress 收集「账号全集 → 当前 responses 出口」交给 ClientTable 做配置面
-// 回收（§3.2 出口/transport 变更）：活跃集 = 该账号当前配置的出口 + usage 的直连，且
-// **只按 egress 维度**剪枝。
-//
-// 输入必须是**账号全集**：byID 是组→账号折叠出的账号（含 `MaxConcurrency=0`、没有
-// 会话池的账号——buildIdentityPools 只给 codex 且 K>0 的账号建池，池注册表差分看不到
-// 其余账号，momus N7）；extra 是本轮**未编组**账号的出口（全量 reload 现算，组级增量
-// 路径沿用上次全量装载的基线——组级路径不重扫账号表）。账号从全集里消失 ⇒ 该账号的
-// 传输资源整账号摘除。同一 id 以 byID 为准（工作根是最新事实）。
-//
-// 批次序号在**锁内**取（publisher.mu 由调用方持有）：应用在锁外、顺序不保证，序号是
-// "旧批次不得覆盖新配置"的唯一判据（B1）。terminate 仍由 reclaim.run 在锁外执行。
-func (s *Scheduler) collectActiveEgress(byID map[int64]*accountSnapshot, extra map[int64]*egress.Client, reclaim *poolReclaim) {
-	if reclaim == nil || reclaim.reconcile == nil {
+// collectThreads 收集本池**空闲**会话的线程退役动作（调用方持 publisher.mu）。
+// 在飞会话不动：它的连接由该请求自己收尾，残留 idle 由 SDK 的 idle TTL 时间有界
+// 回收（与缩容丢槽同一条边界）。
+func (p *identityPool) collectThreads(reclaim *poolReclaim) {
+	if p == nil || reclaim == nil {
 		return
 	}
-	active := make(map[int64]*egress.Client, len(byID)+len(extra))
-	for id, eg := range extra {
-		active[id] = eg
-	}
-	for id, as := range byID {
-		av := as.static.Load()
-		if av == nil {
-			continue
-		}
-		active[id] = av.egress
-	}
-	reclaim.egress = active
-	reclaim.gen = s.publisher.reconcileGen + 1
-	s.publisher.reconcileGen = reclaim.gen
-}
-
-// ungroupedEgress 全量装载里**不在任何组**的账号 → 当前 responses 出口（未装配出口
-// 池的测试形态 ⇒ nil 值 = 直连）。它们不进路由根（无组即无 route），但仍是账号全集的
-// 一部分：不给它们登记活跃集，每次 reload 都会把管理面 usage 刚建的条目/桶摘掉
-// （momus N-e）。未编组账号的删除只能由下一次全量装载发现——残留有界（无路由，只有
-// 管理面 usage 触达）。
-func (s *Scheduler) ungroupedEgress(byID map[int64]*accountSnapshot, all []*domain.Account) map[int64]*egress.Client {
-	if len(all) == 0 {
-		return nil
-	}
-	var out map[int64]*egress.Client
-	pool := s.cfg.Egress
-	for _, acc := range all {
-		if acc == nil {
-			continue
-		}
-		if _, grouped := byID[acc.ID]; grouped {
-			continue
-		}
-		if out == nil {
-			out = make(map[int64]*egress.Client, len(all)-len(byID))
-		}
-		var eg *egress.Client
-		if pool != nil {
-			eg = pool.Direct()
-			if acc.Proxy != nil {
-				eg = pool.For(specOfDomain(acc.Proxy))
+	for _, s := range p.slots {
+		if s.busy.CompareAndSwap(false, true) {
+			if s.threadKey != "" {
+				reclaim.threads = append(reclaim.threads, threadRetire{accountID: p.accountID, threadKey: s.threadKey})
 			}
+			s.busy.Store(false)
 		}
-		out[acc.ID] = eg
 	}
-	return out
 }
 
 // buildIdentityPools 按当前 byID 重建 codex 会话池注册表：仅 codex 凭据
@@ -431,9 +376,9 @@ func (s *Scheduler) ungroupedEgress(byID map[int64]*accountSnapshot, all []*doma
 // 供复用（未变的池原样保留在途 busy 与会话身份）；删除/非 codex 的账号不在新
 // 表中 → 旧池随之 GC。K 的上界已在 buildSnapshots 装载期施加于 acc.MaxConcurrency。
 //
-// 退役与移除只写进 reclaim（锁外执行）；reclaim 为 nil 时（单元用例直接建池）
-// 退役不执行——调用方自己决定要不要真退役。账号移除差分不在这里做：组级批路径
-// 逐步重建池，只有**整批结束后**才知道哪个账号真的从集合里消失了。
+// 退役只写进 reclaim（锁外执行）；reclaim 为 nil 时（单元用例直接建池）退役不
+// 执行——调用方自己决定要不要真退役。**账号移除不在这里判定**：池注册表只回答
+// "这个账号此刻有没有会话池"，账号资源回收只由账号全集差分（accountConfig）驱动。
 func (s *Scheduler) buildIdentityPools(byID map[int64]*accountSnapshot, prevReg *identityRegistry, reclaim *poolReclaim) *identityRegistry {
 	pools := make(map[int64]*identityPool)
 	for id, as := range byID {

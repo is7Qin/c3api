@@ -60,18 +60,17 @@ type Config struct {
 	// 装配是**先构造组件再注入**：ClientTable 在调度器之前构造，同一个实例也交给
 	// codex 适配层（AGENTS.md「禁止事后回填」——不拿闭包回填一个后构造的指针）。
 	RetireThread func(accountID int64, threadKey string)
-	// ReconcileClients 应用一个配置批次（sdkbridge.ClientTable 实现；nil = 未接）：
-	// gen 是批次代号（publisher.mu 内取号），active 是**账号全集**（含未编组、
-	// `MaxConcurrency=0`、没有会话池的账号）→ 当前 responses 出口（nil = 直连），
-	// remove 是本批次判定为「从账号集合消失」的账号。三者一起交给同一个方法：
-	// 账号删除与活跃集应用必须共享同一个 gen 准入（B1）——先删当前资源、最后再判
-	// 批次过期，会让旧批次删掉新配置刚建出来的条目。
+	// ReconcileClients 应用一个配置批次（sdkbridge.ClientTable.ApplyConfig 实现；
+	// nil = 未接）：gen 是批次代号（publisher.mu 内取号），active 是**账号全集**
+	// （含未编组、`MaxConcurrency=0`、没有会话池的账号）→ 当前 responses 出口
+	// （nil = 直连）。
 	//
-	// 活跃集只能由**配置生命周期**决定（§3.2 出口/transport 变更）：请求路径只读不判，
-	// 否则 usage 快照（恒 Direct）一次调用就会把在用的代理桶摘掉并永久 Close——"跨窗口
-	// 不重连"直接失效。传账号全集还有一个作用：账号从集合里消失 ⇒ 整账号资源摘除，
-	// 覆盖「没有会话池的账号」（池注册表差分看不到它们，N7）。
-	ReconcileClients func(gen uint64, active map[int64]*egress.Client, remove []int64)
+	// 账号删除由这份**账号全集差分**判定：新批次集合里没有的账号 ⇒ 整账号资源
+	// 摘除。池注册表差分只回收会话/线程（池消失 ≠ 账号移除），两者不互相冒充。
+	// 出口可见性也只能由**配置生命周期**产生（§3.2 出口/transport 变更）：请求
+	// 路径只读不写，否则 usage 快照（恒 Direct）一次调用就会把在用的代理桶摘掉并
+	// 永久 Close——"跨窗口不重连"直接失效。
+	ReconcileClients func(gen uint64, active map[int64]*egress.Client)
 	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
 	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
 	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
@@ -182,11 +181,11 @@ func (s *Selection) CodexIdentity() codexsdk.Identity {
 // 请求准备顺序）：owner 变了 ⇒ 先清 ts，再由调用方构造 Identity。
 //
 // 这是**请求准备的第一步**（取得租借之后、CodexIdentity 之前）：反序会让换凭据后
-// 的第一个请求带着旧 owner 的 ts 出去，而任何事后递增都追不回来（B1）。
+// 的第一个请求带着旧 owner 的 ts 出去，而任何事后递增都追不回来。
 //
 // 失效源是会话自己的字段，不是池上的计数器：owner 属于账号凭据这一稳定事实，
 // 会话对象跨池迁移（resize）时字段随对象走，所以「新池已建、尚未发布」的窗口里
-// 发生的对齐不会丢（B2）。清 ts 只能由租借持有者做——状态字段没有第二读者。
+// 发生的对齐不会丢。清 ts 只能由租借持有者做——状态字段没有第二读者。
 //
 // owner 为零值（未装配/匿名调用面）= 不对齐，保持既有行为。
 func (s *Selection) AlignCodexOwner(owner [16]byte) {
@@ -242,6 +241,10 @@ type Scheduler struct {
 	view        atomic.Pointer[RoutingView]
 	gen         atomic.Uint64
 	publisher   *routingPublisher
+	// accounts 账号配置权威（账号全集/当前出口/批次代号/组级基线）。guarded by
+	// publisher.mu：只由 reload/组级批的控制面推进，请求路径不读取。routingPublisher
+	// 只持 pending/发布状态，不再保存不参与路由的账号影子配置。
+	accounts accountRuntime
 	// reloadRequired is the sticky retry obligation guarded by publisher.mu:
 	// any group load / full load failure sets it true; no local success or
 	// probe hit clears it; only a successful full loader + full stage clears
@@ -469,7 +472,7 @@ func (s *Scheduler) fireOnMinuteAdvance() {
 // decision (atomic publication: the compile lane publishes the matched pair).
 //
 // 锁内只收集传输资源回收动作（线程退役 / 账号移除），**解锁后**才执行：那些动作
-// 会 terminate SDK 的 WS 连接，可能在写闸上等待，不能把 publisher.mu 拖进去（N1）。
+// 会 terminate SDK 的 WS 连接，可能在写闸上等待，不能把 publisher.mu 拖进去。
 func (s *Scheduler) reload(ctx context.Context) error {
 	var err error
 	s.withPublisherLock(func(reclaim *poolReclaim) { err = s.reloadLocked(ctx, reclaim) })
@@ -477,7 +480,7 @@ func (s *Scheduler) reload(ctx context.Context) error {
 }
 
 // withPublisherLock 在持 publisher.mu 的临界区里跑 fn，**解锁后**再执行本批收集到
-// 的锁外副作用（N1：terminate/Close 可能在 socket 写闸上等待）。defer 解锁保留
+// 的锁外副作用（terminate/Close 可能在 socket 写闸上等待）。defer 解锁保留
 // panic 语义——不能为了"锁外执行"把锁交给每个调用点自己保管。
 func (s *Scheduler) withPublisherLock(fn func(*poolReclaim)) {
 	reclaim := s.newReclaim()
@@ -490,17 +493,17 @@ func (s *Scheduler) withPublisherLock(fn func(*poolReclaim)) {
 }
 
 // newReclaim 本次重载的锁外副作用批次（出口取自构造期注入的两个能力）。账号删除
-// 没有独立出口：它随 ReconcileClients 的批次一起应用（共享 gen 准入，R4 B1）。
+// 没有独立出口：它随账号全集差分（accountConfig）一起应用（共享同一 gen 准入）。
 func (s *Scheduler) newReclaim() *poolReclaim {
 	return &poolReclaim{
-		retire:    s.cfg.RetireThread,
-		reconcile: s.cfg.ReconcileClients,
+		retire: s.cfg.RetireThread,
+		apply:  s.cfg.ReconcileClients,
 	}
 }
 
 // loadGroupsAccountsFull 全量装载并尽量给出**账号全集**：实现了 AccountUniverseLoader
-// 的数据源在同一次扫描里额外交出未编组账号；否则退化为「组→账号」折叠集合
-// （all == nil ⇒ 活跃集只覆盖组内账号——测试替身形态，语义不破）。
+// 的数据源在同一次扫描里额外交出未编组账号；否则 all == nil，退化为「组→账号」折叠
+// 集合（账号全集只覆盖组内账号——测试替身形态，语义不破）。
 func (s *Scheduler) loadGroupsAccountsFull(ctx context.Context) (map[int64][]*domain.Account, []*domain.Account, error) {
 	if l, ok := s.loader.(AccountUniverseLoader); ok {
 		return l.LoadGroupsAccountsFull(ctx)
@@ -562,7 +565,9 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	// 删除的账号其池随注册表替换自然 GC。仅 codex 凭据建池。
 	prevReg := s.prevIdentityPoolsLocked()
 	pools := s.buildIdentityPools(byID, prevReg, reclaim)
-	collectRemovedAccounts(prevReg, pools, reclaim)
+	collectRetiredPools(prevReg, pools, reclaim)
+	// 账号配置快照（账号全集 → 当前出口 + 批次代号）：一次算好，两级资源共用。
+	cfg := s.accounts.fullLocked(byID, all, s.cfg.Egress)
 	sv := newStaticView(groups, byID, pools)
 	if s.latch != nil {
 		for id, as := range byID {
@@ -608,46 +613,18 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	}
 	s.publisher.stageLocked(sv)
 	// 出口 client 回收（spec §8 失效矩阵）：新快照成为唯一活跃根之后，池里不再被
-	// 任何叶子引用的规格 client 关闭并移除。
-	s.pruneEgress(byID)
-	// 传输资源（条目 + client 桶）的配置面回收：账号全集（含未编组、没有池的账号）→
-	// 当前 responses 出口。与 pruneEgress 同一收敛点（新快照已 stage，退出的规格不再
-	// 可能被选中），但执行在锁外（reclaim.run）——terminate 可能在 socket 写闸上等待。
-	s.publisher.ungroupedEgress = s.ungroupedEgress(byID, all)
-	s.collectActiveEgress(byID, s.publisher.ungroupedEgress, reclaim)
+	// **账号配置**引用的规格 client 关闭并移除。输入与 ClientTable 的配置批次是同一
+	// 份快照（账号全集）——两级资源同口径。
+	s.pruneEgress(cfg.egress)
+	// 传输资源（条目 + client 桶）的配置面回收：同一份快照（账号全集 → 当前出口）
+	// 交给 ClientTable；执行在锁外（reclaim.run）——terminate 可能在 socket 写闸上等待。
+	reclaim.config = &cfg
 	// a full staging covers every route — the lane takes the
 	// full-fidelity fallback. Scope-first, then wake.
 	s.enqueueCompileScope(nil, nil, scopeCauseFullStage)
 	s.RequestCompile()
 	s.reloadRequired = false
 	return nil
-}
-
-// pruneEgress 回收当前快照不再引用到的出口 client（spec §8 失效矩阵：代理 CRUD /
-// 改绑后旧规格的连接池必须关闭并移除，不靠 GC 猜）。
-//
-// 池里没有规格 client（零代理部署）⇒ 判空后本函数直接返回：它自己**不扫描账号、不
-// 分配摘要集合**。注意这不等于"一次 reload 不碰账号表"——紧接其后的
-// collectActiveEgress（momus N7/N-e 的账号全集回收）恒做一次 O(账号数) 的 map
-// 构造，两者都在锁内、都不是热路径；别把这里的提前返回当成整体零开销来引用
-// （momus N-c：旧注释的"reload 不扫描账号"是错的）。有代理时再做一次 O(叶子数)
-// 的摘要集合（非热路径，spec §8）。
-func (s *Scheduler) pruneEgress(byID map[int64]*accountSnapshot) {
-	pool := s.cfg.Egress
-	if pool == nil || pool.Size() == 0 {
-		return
-	}
-	active := make(map[[16]byte]struct{}, pool.Size())
-	for _, as := range byID {
-		av := as.static.Load()
-		if av == nil || av.egress == nil {
-			continue
-		}
-		// 直连（零值 Spec）也进集合：它的摘要不在注册表里，多这一项无害，
-		// 却让"直连"与"某个真实规格"不靠特例区分。
-		active[av.egress.Spec.Key()] = struct{}{}
-	}
-	pool.Prune(active)
 }
 
 // proxyBoundAccount 返回第一个绑定了出口代理的账号（装配违例定位用）。装载结果

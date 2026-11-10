@@ -65,14 +65,15 @@ var staticReaderFuncs = map[string]string{
 	"deriveCompilerAccountFacts": "编译事实派生（决策输入）",
 	"eventGID":                   "事件组 ID（group_ids 的确定性派生）",
 	"failureEvent":               "失效事件构造：K、template_id、事件组",
+	"fullLocked":                 "账号配置快照（全量）：账号全集 → 当前出口（读叶子 egress）",
 	"indexRoutesForAccount":      "账号的组引用集登记",
+	"mergedLocked":               "账号配置快照（组级增量）：用工作根叶子 egress 覆盖基线",
 	"modelSet":                   "模型集合：模板的模型/映射/格式",
 	"newAccountSnapshot":         "叶子构造：账号 ID",
 	"newSnapshotStatic":          "唯一构造函数：一次派生并持有 planKey（读全部源字段，写 $S.key）",
 	"onRuleFailure":              "失效事件的 fail-closed fence（K）",
 	"payloadKeyOf":               "载荷投影",
 	"planKeyOf":                  "决策输入投影",
-	"pruneEgress":                "出口 client 回收：遍历叶子取 egress.Spec 摘要作为活跃集合（spec §8 失效矩阵）",
 	"reloadLocked":               "全量重载：K 变化检测",
 	"reserveOnView":              "预留谓词与 Selection 装配",
 	"staticKeyOf":                "叶子复用判据",
@@ -105,7 +106,6 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.ProxyID":           {staticPathField, "proxyDigest"}, // 绑定关系（nil = 直连）与 $S.acc.Proxy 同源承载：绑定变化 ⇒ 摘要变；可用性位另见 $S.routable
 	"$S.routable":              {staticPathField, "routable"},    // 唯一可用性决策位（**快照事实**，不是领域字段）：构造期一次定型（enabled ∧（未绑定 ∨ 绑定可用）），候选过滤只读它
 	"$S.egress":                {staticPathContainer, "恒非 nil 的出口 client 指针：直接交给 Selection（热路径零判断）、组级重派生时原样接续、prune 时取摘要"},
-	"$S.egress.Spec":           {staticPathContainer, "整交给 egress.Spec.Key：摘要的唯一构造点在 pkg/egress（此处只做活跃集合登记，不读任何字段）"},
 
 	// --- 账号侧标量 ---
 	"$S.acc.ID":                       {staticPathField, "accountID"},

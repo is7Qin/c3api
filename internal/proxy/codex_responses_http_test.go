@@ -240,7 +240,7 @@ func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts 
 	codexClients := sdkbridge.NewClientTable()
 	schedCfg.Egress = egPool
 	schedCfg.RetireThread = codexClients.RetireThread
-	schedCfg.ReconcileClients = codexClients.Reconcile
+	schedCfg.ReconcileClients = codexClients.ApplyConfig
 	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)

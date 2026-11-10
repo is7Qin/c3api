@@ -6,7 +6,6 @@ import (
 	"sync"
 
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/pkg/egress"
 )
 
 // cloneSnapMap 浅拷贝快照 map（语义与原各手写循环逐字一致：恒返回非 nil
@@ -295,16 +294,11 @@ type routingPublisher struct {
 	// pending is the staged static root awaiting a paired compile+publish.
 	// Control plane only (reload/InvalidateGroup stage, the serial compile
 	// lane consumes); guarded by mu. Nil means the published view is current.
+	//
+	// 账号配置（账号全集/当前出口/批次代号/组级基线）不在这里：它是账号运行时的
+	// 事实（scheduler.accounts），不属于路由发布状态。发布器只持 pending 与发布
+	// 序列。
 	pending *StaticView
-	// reconcileGen 配置面回收批次的单调代号：每次在 publisher.mu 内收集活跃集时
-	// 取一个更大的号，随批次交给 ClientTable。应用在锁外（run），顺序不保证——
-	// 序号是"旧批次不得覆盖新配置"的唯一判据（B1）。
-	reconcileGen uint64
-	// ungroupedEgress 上一次**全量装载**里未编组账号的当前出口（id → 出口）。
-	// 组级增量路径不重扫账号表，但要保持「活跃集 = 账号全集」口径，就把这份
-	// 基线并进活跃集。未编组账号的删除只能由下一次全量装载发现（无路由、只有
-	// 管理面 usage 触达，残留有界）。只由全量 reload 写、只读消费；guarded by mu。
-	ungroupedEgress map[int64]*egress.Client
 }
 
 func newRoutingPublisher(s *Scheduler) *routingPublisher { return &routingPublisher{sched: s} }

@@ -167,7 +167,7 @@ const codexTurnStateReplay = false
 // 构造时定型的稳定字段），既不拿请求里的凭据快照重新散列（那会在条目尚未重建时给出
 // "新 owner + 旧 auth"），也不读池上的计数器（池会被整体替换，复制即丢失效；会话字段
 // 跟着会话对象走，重载窗口里发生的对齐不会丢）。反序（先生成 Identity 再清 ts）会让换
-// 凭据后的第一个请求带着旧 owner 的 ts 出去，而事后任何清理都追不回来（B1）。
+// 凭据后的第一个请求带着旧 owner 的 ts 出去，而事后任何清理都追不回来。
 //
 // 策略 false ⇒ 既不发送也不捕获（ts 恒空、Sink = nil）；连接复用不受影响。
 func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection, prep sdkbridge.Prepared) codexsdk.Identity {
@@ -217,7 +217,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 请求级身份（§3.1）：**先准备条目句柄**（owner 与 auth/client 同版，oracle B2），
+	// 请求级身份（§3.1）：**先准备条目句柄**（owner 与 auth/client 同版），
 	// 再对齐 owner，最后由会话给出 Session/Meta/ts/Sink——同账号并发各持不同会话 ⇒
 	// 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的构造期配置。
 	prep, id, err := p.codexRequestPrep(sel, cred)

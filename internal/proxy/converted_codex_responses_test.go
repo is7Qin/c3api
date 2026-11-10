@@ -92,7 +92,7 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	codexClients := sdkbridge.NewClientTable()
 	schedCfg.Egress = egPool
 	schedCfg.RetireThread = codexClients.RetireThread
-	schedCfg.ReconcileClients = codexClients.Reconcile
+	schedCfg.ReconcileClients = codexClients.ApplyConfig
 	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
@@ -444,7 +444,7 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	codexClients := sdkbridge.NewClientTable()
 	schedCfg := scheduler.Config{SyncInterval: time.Hour, Egress: egPool}
 	schedCfg.RetireThread = codexClients.RetireThread
-	schedCfg.ReconcileClients = codexClients.Reconcile
+	schedCfg.ReconcileClients = codexClients.ApplyConfig
 	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, nil, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)

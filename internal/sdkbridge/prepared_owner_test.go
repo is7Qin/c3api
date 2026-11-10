@@ -30,7 +30,7 @@ func TestPreparedOwnerComesFromEntryNotSnapshot(t *testing.T) {
 	oldPrep, err := a.Prepare(oldCred)
 	require.NoError(t, err)
 	require.Equal(t, CredOwner(oldCred), oldPrep.Owner(), "条目刚建：owner = 构造它的那版凭据")
-	oldClient, err := a.clientForEntry(oldPrep.entry, eg, domain.CodexResponsesTransportDefault, true)
+	oldClient, err := a.clientForEntry(oldPrep.entry, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 
 	// installation 变（sig 不含它 ⇒ 条目复用）：owner 只认条目稳定字段。
@@ -52,13 +52,13 @@ func TestPreparedOwnerComesFromEntryNotSnapshot(t *testing.T) {
 	require.NotEqual(t, oldPrep.Owner(), newPrep.Owner())
 	require.Same(t, newPrep.entry, a.clients.Get(7))
 
-	newClient, err := a.clientForEntry(newPrep.entry, eg, domain.CodexResponsesTransportDefault, true)
+	newClient, err := a.clientForEntry(newPrep.entry, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.NotSame(t, oldClient, newClient, "不同 owner 的请求不得复用同一 client 桶")
 
 	// 旧句柄继续用自己的版本（在飞请求不受替换影响）：条目重建时旧桶已被摘除并 Close，
 	// 迟到的取用只会在**死条目自己的 map** 里重建——按旧 auth，且对活路径不可见。
-	staleClient, err := a.clientForEntry(oldPrep.entry, eg, domain.CodexResponsesTransportDefault, true)
+	staleClient, err := a.clientForEntry(oldPrep.entry, eg, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.NotSame(t, newClient, staleClient, "旧句柄不得拿到新 auth 的 client")
 	require.Same(t, staleClient, testCachedClient(a, oldPrep.entry, clientKey{}),
