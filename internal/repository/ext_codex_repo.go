@@ -5,6 +5,7 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -460,6 +461,9 @@ const accountExtProjectionColumns = `e.account_id, e.credential_type, e.codex_id
        e.codex_oauth_token, e.codex_oauth_refresh_token, e.codex_oauth_expires_at,
        e.codex_pat_key, e.codex_email, e.codex_account_id`
 
+// jsonNullLiteral jsonb 列里的 JSON 空字面量（不是 SQL NULL：两者都表示"未配置"）。
+var jsonNullLiteral = []byte("null")
+
 // nullStrPtr 可空文本列 → 指针（NULL 与空串在领域模型里都是"未提供"）。
 func nullStrPtr(v sql.NullString) *string {
 	if !v.Valid {
@@ -500,9 +504,12 @@ func scanAccountExtRevision(rows *entsql.Rows) (*domain.AccountExt, int64, error
 		t := oauthExpires.Time
 		ext.CodexOAuthExpiresAt = &t
 	}
-	if len(identity) > 0 {
+	// codex_identity 是 jsonb：SQL NULL（len==0）与 JSON 字面量 `null` 都表示"未配置
+	// 身份" ⇒ nil（与 ent 生成层扫描器同语义）。不能按"字段全空即视为 nil"判断——
+	// `{}` 与 `null` 语义不同（前者是"配置了空身份"，后者是"没有身份"）。
+	if raw := bytes.TrimSpace(identity); len(raw) > 0 && !bytes.Equal(raw, jsonNullLiteral) {
 		var id domain.CodexIdentity
-		if err := json.Unmarshal(identity, &id); err != nil {
+		if err := json.Unmarshal(raw, &id); err != nil {
 			return nil, 0, fmt.Errorf("account_id=%d codex_identity decode: %w", ext.AccountID, err)
 		}
 		ext.CodexIdentity = &id
