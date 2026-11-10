@@ -278,6 +278,30 @@ func TestApplyBatchRejectsStaleBatch(t *testing.T) {
 	require.Empty(t, testEntryBuckets(a, a.clients.Get(1)), "代号 3 = 更新的配置：B 桶摘除")
 }
 
+// TestApplyBatchDoesNotInferDeletionsFromAbsence 表**不**从"没被提到"推断删除：
+// 批次是完整指令（该删的账号由控制器点名 ResourceDelete），未被提及的账号资源保持
+// 不动。这条守的是职责边界（§3.3b-1）的可观测后果——表若把"未提及"当成删除，
+// 就又回到"由表解释账号全集"的形状，而那种实现只在竞态窗口里与正确实现不同
+// （请求侧刚为已移除账号建了条目），无法用常规用例区分。
+func TestApplyBatchDoesNotInferDeletionsFromAbsence(t *testing.T) {
+	a := NewCodex(nil, testEgressPool(nil), nil, RotationDeps{})
+	cred7 := &domain.AccountCredential{AccountID: 7, PATKey: "pat-7"}
+	cred8 := &domain.AccountCredential{AccountID: 8, PATKey: "pat-8"}
+	_, _, err := a.clientFor(cred7, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	require.NoError(t, err)
+	_, _, err = a.clientFor(cred8, a.DirectEgress(), domain.CodexResponsesTransportDefault)
+	require.NoError(t, err)
+	keep8 := a.clients.Get(8)
+	require.NotNil(t, keep8)
+
+	// 只点名 7（保留直连键）：8 没有被任何指令提及。
+	a.clients.ApplyBatch(domain.ResourceBatch{Gen: 1, Directives: []domain.AccountResourceDirective{
+		{AccountID: 7, Action: domain.ResourceRetain, Keep: []domain.EgressResourceKey{{}}},
+	}})
+	require.Same(t, keep8, a.clients.Get(8),
+		"未被指令提及的账号资源保持不动（表不推断删除；漏掉的账号由下一批点名回收）")
+}
+
 // TestApplyBatchGatesRemovalsWithBatchSequence 账号删除与可见性共享**同一个**批次准入：
 // 旧批次（按当时的集合列出了 Delete）迟到时不得删掉新配置重建出来的条目。判据是
 // "过期批次整体 no-op"，不是"删除本身幂等"。
