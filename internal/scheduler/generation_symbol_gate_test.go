@@ -168,6 +168,7 @@ var revisionVocabulary = map[string]string{
 	"expectedRevision":           "可重载：管理面前置条件指 C，运行时失效动词指 K",
 	"identityRevision":           "K：参数/字段名（latch、continuation、失效重试）",
 	"revision":                   "泛化名：编译器事实的候选内容代际（值 = K）、SetProbing 的 K 参数",
+	"scanAccountExtRevision":     "K：仓库层扫描器名（一条 SQL 读出凭据投影 + 父行 K；名字里的 Revision 指它读出的那个 K）",
 }
 
 // revisionTags 是扫描面上全部含 "revision" 的结构体标签（已去引号）。

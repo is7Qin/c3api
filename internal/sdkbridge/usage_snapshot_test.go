@@ -400,40 +400,101 @@ func TestCodexUsageSnapshotEntryErrAuthExpired(t *testing.T) {
 	require.ErrorIs(t, err, ErrAuthExpired, "oauth 缺 rt 凭据 → ErrAuthExpired（入口错误分类）")
 }
 
-// TestCodexUsageSnapshotFatalKeepsEntry fatal 纯判定（gate Major 3——红绿）：
-// RefreshOAuth 类（FatalAuth 注入——不经 OnAuthFatal 上报面）→ ErrAuthExpired
-// 且 entry 不被摘除（后续调用仍命中冷却零上游）。
-func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
-	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
-	cred := oauthCred(1, "at-ok", "rt-ok") // oauth（rotationAuth 的 Fatal 生效；PAT Fatal 为 no-op）
-	ctx := context.Background()
+// TestCodexUsageSnapshotFatalEntryLifecycle fatal 的两件事必须分开钉住（混在一条
+// 用例里会互相掩盖——`FatalPrepared` 改成两档都摘条目之后，旧用例的"毒化态保留"
+// 前提已经不存在）：
+//
+//	① 额度面遇到凭据失效类响应：`classifyUsageErr` 只做纯判定（ErrAuthExpired），
+//	   账号级动作与条目摘除都来自 **SDK 的判死回调**（buildAuth 的
+//	   WithOnAuthFatal → reportFatal → reportCredentialEvent 的 evict 分支），
+//	   不是额度面自己做的。
+//	② FatalPrepared（WS 判死帧）两档都摘条目：条目消失、库存量不变
+//	   （围栏拒，fail-closed）；随后额度面按库里当前 K **重建**条目再拉一次——
+//	   第二次机会只能来自重建。
+func TestCodexUsageSnapshotFatalEntryLifecycle(t *testing.T) {
+	// ① 额度面的凭据失效面。
+	t.Run("usage_face_fatal_401", func(t *testing.T) {
+		srv, c := newUsageUpstream(t, codexUpstreamStep{status: 401, body: `{"error":{"code":"token_invalidated"}}`})
+		store := &configRevisionStore{acct: newCodexAccountForRetry(1, 1)}
+		failer := &retryFakeFailer{}
+		a := NewCodex(NewFailureHandler(FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch()}),
+			testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
+		cred := oauthCredWithRev(1, "at-ok", "rt-ok", 1)
 
-	_, err := a.GetUsageSnapshot(ctx, cred)
-	require.NoError(t, err)
-	require.Equal(t, 1, c.callsN())
+		_, err := a.GetUsageSnapshot(context.Background(), cred)
+		require.ErrorIs(t, err, ErrAuthExpired, "判死码 401 → IsFatal 纯判定 ⇒ ErrAuthExpired")
+		require.Equal(t, 1, c.callsN(), "判死不重试（零轮转、零重试）")
 
-	// 凭据失效（RefreshOAuth 类）→ FatalPrepared 毒化来源条目的 Auth（evict=false，
-	// entry 保留）；GetUsageSnapshot 纯 IsFatal 判定 → ErrAuthExpired。
-	// 先拨旧 usageAt（首次成功缓存仍新鲜——TTL 优先语义：≤5min 快照不被
-	// 后续失败掩盖；冷却红绿断言须等 TTL 过期才可观察）。
-	prep, perr := a.Prepare(cred)
-	require.NoError(t, perr)
-	a.FatalPrepared(prep, &codexsdk.RefreshOAuthError{Code: "refresh_token_invalidated", Raw: []byte(`{}`)})
-	e, err := a.entryFor(cred)
-	require.NoError(t, err)
-	e.usageMu.Lock()
-	e.usageAt = time.Now().Add(-a.usageTTL - time.Second)
-	e.usageMu.Unlock()
+		// 账号级动作恰一次，且**来自 SDK 判死回调**：回调带条目当前 K（凭据自身的
+		// 证据），围栏按 K=1 命中 ⇒ 库里落下禁用。额度面的分类层不产生第二次。
+		require.Equal(t, 1, failer.calls, "恰一次账号级动作（不是两次：分类层不上报）")
+		require.Equal(t, []int64{1}, store.gotExpect, "回调带条目当前 K（不是凭据快照以外的值）")
+		require.NotNil(t, store.acct.FailedAt, "判死回调是账号级的：库里落禁用")
 
-	_, err = a.GetUsageSnapshot(ctx, cred)
-	require.ErrorIs(t, err, ErrAuthExpired, "fatal → ErrAuthExpired 分类（纯判定）")
-	require.Equal(t, 1, c.callsN(), "凭据失效零上游（Authorization 面直接失败）")
-	require.NotNil(t, a.clients.Get(1), "entry 不被摘除（GetUsageSnapshot 零副作用——红绿：translateError 路径会 evict）")
+		// 条目也被**同一条回调**摘掉（reportFatal 的 evict=true）。实测确认：额度面
+		// 走不通"零副作用"——摘除站点唯一，就在 reportCredentialEvent 的 evict 分支，
+		// 触发者是 SDK 的 notifyAuthFatal，不是 classifyUsageErr。
+		require.Nil(t, a.clients.Get(1), "摘除来自判死回调（SDK notifyAuthFatal → reportFatal）")
 
-	_, err = a.GetUsageSnapshot(ctx, cred)
-	require.ErrorIs(t, err, ErrAuthExpired, "fatal 后仍命中冷却（红绿断言——冷却不随 entry 消失）")
-	require.Equal(t, 1, c.callsN(), "冷却内零上游")
+		// 分类层是纯函数：再喂同一 fatal 走一遍分类，不产生任何状态变化。
+		require.ErrorIs(t, classifyUsageErr(&codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated"}),
+			ErrAuthExpired)
+		require.Equal(t, 1, failer.calls, "classifyUsageErr 不上报")
+		require.Nil(t, a.clients.Get(1), "classifyUsageErr 不摘条目")
+
+		// 后果（原用例断言的"fatal 后仍命中冷却、零上游"已不成立）：冷却态挂在条目
+		// 上，条目被摘 ⇒ 下一次调用重建条目、重新打一次上游。非致命错误的冷却语义
+		// 由 TestCodexUsageSnapshotFailureCooldown 钉住（那条路径不摘条目）。
+		_, err = a.GetUsageSnapshot(context.Background(), cred)
+		require.ErrorIs(t, err, ErrAuthExpired)
+		require.Equal(t, 2, c.callsN(), "条目已摘 ⇒ 冷却态随之消失，下一次调用重新打上游")
+	})
+
+	// ② FatalPrepared 的摘除语义 + 额度面重建。
+	t.Run("fatal_prepared_evicts_then_rebuild", func(t *testing.T) {
+		srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
+		store := &configRevisionStore{acct: newCodexAccountForRetry(1, 1)}
+		failer := &retryFakeFailer{}
+		a := NewCodex(NewFailureHandler(FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch()}),
+			testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
+		ctx := context.Background()
+		cred := oauthCredWithRev(1, "at-ok", "rt-ok", 1)
+		prep, err := a.Prepare(cred)
+		require.NoError(t, err)
+		poisoned := prep.entry.auth
+
+		// 管理面把库里的 K 推到 2，但**没有**请求 Prepare ⇒ 判死帧按"观测同代"走
+		// 毒化档；围栏按 K 不等拒（fail-closed），库存量不变。
+		store.acct.IdentityRevision = 2
+		fatal := &codexsdk.RefreshOAuthError{Code: "refresh_token_invalidated", Raw: []byte(`{}`)}
+		a.FatalPrepared(prep, fatal)
+		require.Nil(t, store.acct.FailedAt, "围栏拒 ⇒ 库不改（fail-closed）")
+		require.Empty(t, store.gotExpect, "K 不等 ⇒ 连 CAS 都不该尝试")
+		require.Empty(t, failer.calls)
+
+		// 毒化面留在那一版 Auth 上（在飞请求快速失败），但条目不再被路由到。
+		_, aerr := poisoned.Authorization(ctx)
+		require.Error(t, aerr, "同代档毒化它自己那一版 Auth")
+		require.Nil(t, a.clients.Get(1), "FatalPrepared 两档都摘条目（毒化态不独占账号）")
+
+		// 第二次机会：额度面按库里当前 K 重建条目、重新拉一次上游（不再命中毒化态）。
+		snap, err := a.GetUsageSnapshot(ctx, oauthCredWithRev(1, "at-ok", "rt-ok", 2))
+		require.NoError(t, err, "重建出的条目未中毒化态")
+		require.Equal(t, "chatgpt-plus", snap.PlanType)
+		require.Equal(t, 1, c.callsN(), "重建后额度面照常工作（一次上游）")
+		rebuilt := a.clients.Get(1)
+		require.NotNil(t, rebuilt)
+		require.Equal(t, int64(2), rebuilt.srcRev.Load(), "新条目按库里当前 K 建")
+		require.NotSame(t, prep.entry, rebuilt, "不是那条毒化条目")
+
+		// 重建后这条连接可以重新得出结论：同代证据 ⇒ 上报 K=2 被围栏接受。
+		fresh, err := a.Prepare(oauthCredWithRev(1, "at-ok", "rt-ok", 2))
+		require.NoError(t, err)
+		a.FatalPrepared(fresh, fatal)
+		require.NotNil(t, store.acct.FailedAt, "重建后的条目能落下判决（第二次机会有效）")
+		require.Equal(t, []int64{2}, store.gotExpect, "围栏用当前代 K=2")
+		require.Equal(t, 1, failer.calls)
+	})
 }
 
 // TestCodexUsageSnapshotConvergence 收敛映射（白名单）：approx_*/瞬时布尔/
