@@ -140,6 +140,19 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 			// view may carry forward holes from its carry, and DB-quiet would
 			// otherwise freeze them forever — fall through to the full path
 			// instead. This is NOT a periodic full recompile: whole views skip.
+			//
+			// 跳过的只是**配置重载**，不是资源回收义务：请求侧可能在上一批
+			// `Accounts()` 快照之后、批次应用之前为已移除账号建出条目，而删除指令
+			// 只能由全集差分产生。静默期因此仍需一次"点名机会"：用内存里**已有的**
+			// 账号全集（不重扫 DB、不做 full reload）+ 资源表**新鲜**的 `Accounts()`
+			// 快照取号下发——表仍只执行指令，差分与策略仍在本侧。
+			//
+			// 取号在本锁内（保持 Gen 单调），应用在锁外（reclaim.run，与既有回收
+			// 路径同一批次、同一顺序）。未装配资源表 ⇒ 无资源可回收，不取号。
+			if s.cfg.ClientResources != nil {
+				cfg := s.accounts.issue(s.accounts.universe, s.clientAccounts())
+				reclaim.config = &cfg
+			}
 			return
 		}
 		if rerr := s.reloadLocked(ctx, reclaim); rerr != nil && s.log != nil {
