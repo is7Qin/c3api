@@ -164,7 +164,7 @@ func TestStaleRotationWritebackIsDropped(t *testing.T) {
 	_, err = a.entryFor(oauthCredWithRev(7, "at-new", "rt-new", 2))
 	require.NoError(t, err)
 
-	a.rotateWriteback(oldEntry, 1, "at-rotated", "rt-rotated")
+	a.rotateWriteback(oldEntry, "at-rotated", "rt-rotated")
 	require.Empty(t, store.snapshot(), "旧条目的轮转不得写库")
 	require.Zero(t, invals, "被丢弃的轮转也不得回写调度器快照")
 }
@@ -176,7 +176,7 @@ func TestRotationWritebackCarriesSourceRevision(t *testing.T) {
 
 	e, err := a.entryFor(oauthCredWithRev(7, "at-old", "rt-old", 3))
 	require.NoError(t, err)
-	a.rotateWriteback(e, 3, "at-new-r", "rt-new-r")
+	a.rotateWriteback(e, "at-new-r", "rt-new-r")
 
 	calls := store.snapshot()
 	require.Len(t, calls, 1)
@@ -198,7 +198,7 @@ func TestRotationFencedByStorageDoesNotDisableAccount(t *testing.T) {
 	e, err := a.entryFor(oauthCredWithRev(7, "at-old", "rt-old", 1))
 	require.NoError(t, err)
 
-	require.NotPanics(t, func() { a.rotateWriteback(e, 1, "at-rotated", "rt-rotated") },
+	require.NotPanics(t, func() { a.rotateWriteback(e, "at-rotated", "rt-rotated") },
 		"围栏拒绝是陈旧事件、不是投递失败：不得 panic 触发 SDK 重试链")
 	require.Len(t, store.snapshot(), 1, "尝试过一次（由存储评判）")
 	require.Zero(t, invals, "被拒的轮转不得回写快照")
@@ -214,7 +214,7 @@ func TestRotationWritebackStillFailsClosedOnStoreError(t *testing.T) {
 
 	e, err := a.entryFor(oauthCredWithRev(7, "at-old", "rt-old", 1))
 	require.NoError(t, err)
-	require.Panics(t, func() { a.rotateWriteback(e, 1, "at-rotated", "rt-rotated") })
+	require.Panics(t, func() { a.rotateWriteback(e, "at-rotated", "rt-rotated") })
 }
 
 // TestEntrySourceRevisionIsMonotone 条目按**签名**复用，来源 K 随之单调抬升：

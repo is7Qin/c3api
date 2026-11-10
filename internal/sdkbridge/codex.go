@@ -127,9 +127,11 @@ type codexEntry struct {
 	// 是否已被表里的条目超越"、`invalidateOlder` 判"表里的条目是否属于更旧的身份"
 	// ——两者都是"要不要动这张表"，不是"这条事件属于哪一代"。
 	//
-	// **它不是事件来源**：条目按签名复用、这个值会被后来的同签名请求单调抬升，所以
-	// 在飞请求的 fatal/构造失败/轮转回写一律用自己那一版 K（`Prepared.srcRev` 或
-	// 构造 Auth 时的凭据版本），绝不回读这里。0 = 来源未知（无 Selection 调用面）。
+	// **请求级证据不用它**：条目按签名复用、这个值会被后来的同签名请求单调抬升，所以
+	// 在飞请求的 fatal、构造失败用那一版请求自己的 K（`Prepared.srcRev` 或构造 Auth 时
+	// 的凭据版本），绝不回读这里。反过来，**条目自身**的轮转回写必须用它：轮转换的是
+	// 这个条目自己的令牌，K 前进只是管理面对同一份凭据内容的重新授权（见
+	// rotateWriteback）。0 = 来源未知（无 Selection 调用面）。
 	//
 	// 语义是"该凭据内容上**观测到的最大** K"：同签名的新 K 只可能来自不动凭据内容
 	// 的身份写入（base_url/template_id/installation），内容既相同，资源归属就该按新
@@ -427,9 +429,10 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 type Prepared struct {
 	entry *codexEntry
 	// srcRev 这条请求**准备时冻结**的来源身份代际 K（`AccountCredential.IdentityRevision`）。
-	// 它是本句柄产生的一切事件的唯一来源版本：条目按签名复用、`srcRev` 会被后来
-	// 的同签名 Prepare 单调抬升，所以"此刻条目上的值"不是这条请求的版本——回读它就
-	// 会让在飞请求的旧判决顶上新身份。0 = 来源未知（无 Selection 调用面）。
+	// 它是本句柄产生的**请求级事件**（fatal / 构造失败）的唯一来源版本：条目按签名复
+	// 用、条目上的 `srcRev` 会被后来的同签名 Prepare 单调抬升，所以"此刻条目上的值"
+	// 不是这条请求的版本——回读它就会让在飞请求的旧判决顶上新身份。条目自身的轮转不回
+	// 写落到这里（见 rotateWriteback）。0 = 来源未知（无 Selection 调用面）。
 	//
 	// 值类型字段：随句柄在栈上传递，不引入分配。
 	srcRev int64
@@ -863,9 +866,11 @@ func (a *Codex) translateDialError(e *codexEntry, srcRev int64, err error) error
 //     派生——派生点唯一在落库，管理面导入行/单账号保存）；空 = 不发头。变更 →
 //     credSig 变化 → 客户端重建（账号身份变更语义）
 func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexsdk.Auth, error) {
-	// 这条 Auth 的**事件来源 K**：构造它的那份凭据快照的版本。回调闭包捕获这个值
+	// 判死回调的**事件来源 K**：构造这条 Auth 的那份凭据快照的版本。闭包捕获这个值
 	// （而不是在事件发生时读条目上的当前值）：条目按签名复用、K 会被后来的同签名
-	// 请求抬升，而这条 Auth 内部产生的事件属于把它建出来的那一代身份。
+	// 请求抬升，而这一次"凭据判死"是请求级证据，属于把它建出来的那一代身份。
+	//
+	// 轮转回写不在此列：它换的是条目自己的令牌，按条目当前 K 落库（见 rotateWriteback）。
 	srcRev := cred.IdentityRevision
 	if cred.PATKey != "" {
 		return codexsdk.PAT(cred.PATKey,
@@ -884,7 +889,7 @@ func (a *Codex) buildAuth(cred *domain.AccountCredential, e *codexEntry) (codexs
 		// 统一回调装配（§3）：SDK 判死（RT 判死码 / token 端点 401 / 账号
 		// 禁用 / AT 401 判死 / 回调连续失败）→ 双源去重单次上报
 		codexsdk.WithOnAuthFatal(func(fatal error) { a.reportFatal(e, srcRev, fatal) }),
-		codexsdk.WithOnTokenRotated(func(at, rt string) { a.rotateWriteback(e, srcRev, at, rt) }),
+		codexsdk.WithOnTokenRotated(func(at, rt string) { a.rotateWriteback(e, at, rt) }),
 	}
 	if atUsable(cred) {
 		opts = append(opts, codexsdk.WithInitialAccessToken(cred.OAuthToken))
@@ -1092,9 +1097,15 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 //     （写进去就是"旧 Auth 覆盖管理员刚换上的新凭据"）
 //   - account_ext 部分更新 upsert（codex_oauth_token + codex_oauth_refresh_token +
 //     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值），**带存储围栏**：
-//     `expectedIdentityRevision = srcRev`（构造这条 Auth 的那版凭据的 K——**不是**
-//     条目当前值），命中 0 行 ⇒ 身份已被管理面替换 ⇒
-//     repository.ErrStaleIdentityRevision
+//     `expectedIdentityRevision = e.srcRev`（**条目当前**的身份代际），命中 0 行 ⇒
+//     身份已被管理面替换 ⇒ repository.ErrStaleIdentityRevision
+//
+// 为什么这里可以（也必须）用当前 K：轮转换的是**这个条目自己的** AT/RT，不是某一次
+// 请求的证据。K 只在身份类字段（base_url / template_id / installation）变更时推进
+// ——凭据内容（RT/PAT/上游账号）可以完全不变，于是条目按签名复用、Auth 不重建；若
+// 回写还带"构造这条 Auth 时的 K"，K 前进之后该条目的**每一次**轮转都会被判陈旧、
+// 永不落库（重启后 DB 停在已被轮换掉的旧 RT）。K 前进是管理面对同一份凭据内容的
+// 重新授权，写入自然落在新 K 上。旧条目的迟到轮转由上面的 `isCurrent` 门挡住。
 //   - 陈旧围栏（ErrStaleIdentityRevision）：这是**被拒的陈旧事件**，不是投递失败
 //     ——记一条 Warn、不回写快照、不 panic、**不得反过来禁用账号**（旧凭据的轮转
 //     结果失配，新凭据自己会继续工作）
@@ -1110,7 +1121,7 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 //
 // 回调在 SDK 单飞内阻塞并发等待者——必须快速返回（本地 upsert 毫秒级）；
 // 用固定短超时兜底 PG 故障（超时 → 重试链接管）。
-func (a *Codex) rotateWriteback(e *codexEntry, srcRev int64, at, rt string) {
+func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 	if a.rotate == nil {
 		return // 未装配（测试形态）：no-op
 	}
@@ -1123,6 +1134,9 @@ func (a *Codex) rotateWriteback(e *codexEntry, srcRev int64, at, rt string) {
 	if !a.clients.isCurrent(e) {
 		return // 旧凭据的轮转：当前条目已换，写进去就是覆盖新凭据
 	}
+	// 围栏取**条目当前** K（不是构造这条 Auth 时的 K）：见上方"为什么这里可以用
+	// 当前 K"。isCurrent 之后读，拿到的是这条活条目此刻被授权的那一代。
+	srcRev := e.srcRev.Load()
 	ctx, cancel := context.WithTimeout(context.Background(), rotateWritebackTimeout)
 	defer cancel()
 	err := a.rotate.WriteOAuthRotation(ctx, e.accountID, srcRev, at, rt, e.expiresAt)

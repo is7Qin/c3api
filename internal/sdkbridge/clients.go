@@ -111,8 +111,10 @@ func (t *ClientTable) Entry(accountID int64, sig credKey, sourceRevision int64, 
 	//   - 无版本调用面（K=0）先建出条目时，首个带 K 的请求把它抬上来即可——不必为
 	//     "补一个标量"重建 Auth/关连接池。
 	//
-	// 抬升**只改资源归属判据**：这条条目的既有事件（在飞请求的 fatal、Auth 内部回调
-	// 的轮转回写）仍用各自冻结的来源版本，所以抬升不会把旧判决升格成新身份的事实。
+	// 抬升**只改资源归属与条目自身的轮转回写**：在飞请求的判死仍是那一版请求自己的
+	// 事实（`Prepared.srcRev`，不随抬升变化），所以抬升不会把旧判决升格成新身份。
+	// 轮转变的是条目自己的令牌，按抬升后的 K 落库才是对的（否则 K 前进一次就让该条目
+	// 的轮转永久被判陈旧）。
 	if old := t.entries[accountID]; old != nil && old.sig == sig {
 		if sourceRevision > old.srcRev.Load() {
 			old.srcRev.Store(sourceRevision)
