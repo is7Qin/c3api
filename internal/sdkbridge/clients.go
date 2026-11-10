@@ -276,14 +276,51 @@ func (t *ClientTable) RetireThread(accountID int64, threadKey string) {
 	}
 }
 
-// InvalidateAccount 运行时失效一个账号的传输资源（凭据 fatal / 健康剔除）：摘除
-// 当前条目与其全部 client，锁外逐条 CloseWSIdleConnections——归还即失效（正在归还的
-// 连接被拒收并终止）。
+// isCurrent 报告 e 是否仍是该账号的**当前条目**（表锁内比较指针）。版本句柄的
+// 事件回流用它判定"这条事件是否仍属于当前凭据版本"。
+func (t *ClientTable) isCurrent(e *codexEntry) bool {
+	if t == nil || e == nil {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.entries[e.accountID] == e
+}
+
+// evictIfCurrent 仅当 e 仍是当前条目时摘除它（及其私有桶，锁外关闭）。返回是否
+// 真的摘除。
 //
-// **这不是配置批次入口**：失效是运行期事实（认证被撤销、回写失败），没有配置代号，
-// 也必须立即作用于**此刻当前**的条目——等一个批次既不成立也不安全。配置面的账号集合
-// 删除只能在 `Reconcile` 的 remove 参数里，和活跃集共享同一个批次准入（R4 B1）。
-// 两者是不同生命周期的事件，不能共用"按账号删当前资源"的实现。
+// 这是**凭据版本资源失效**的唯一删除语义：fatal/evict 由某一版 Prepared 产生，
+// 回流时不得按 accountID 删"此刻的表项"——那会杀掉重导入后新凭据的 Auth。比较
+// 指针（而非签名）是因为条目身份就是版本身份：同签名复用同一条目。
+//
+// 刻意**不**动配置面登记（出口摘要）：凭据资源失效与配置生命周期不是同一件事，
+// 配置只由 ApplyConfig 改写（请求/运行期路径不写配置）。
+func (t *ClientTable) evictIfCurrent(e *codexEntry) bool {
+	if t == nil || e == nil {
+		return false
+	}
+	t.mu.Lock()
+	if t.entries[e.accountID] != e {
+		t.mu.Unlock()
+		return false
+	}
+	delete(t.entries, e.accountID)
+	dropped := takeBucketsLocked(e)
+	t.mu.Unlock()
+	closeWSIdleConns(dropped)
+	return true
+}
+
+// InvalidateAccount **账号级**失效：摘除该账号此刻的条目与其全部 client，锁外
+// 逐条 CloseWSIdleConnections——归还即失效（正在归还的连接被拒收并终止）。
+//
+// 这是"账号整体不可用"（健康剔除 / 配置里凭据不完整）的动作，不是单条凭据版本
+// 的撤销：后者必须用 evictIfCurrent，否则旧请求的错误会杀掉新凭据的 Auth。
+//
+// **这不是配置批次入口**：失效是运行期事实（认证被撤销、回写失败），没有配置
+// 代号；配置面的账号集合/出口只由 ApplyConfig 改写——两者不共用"按账号删当前
+// 资源"的实现。
 func (t *ClientTable) InvalidateAccount(accountID int64) {
 	if t == nil {
 		return
@@ -291,7 +328,6 @@ func (t *ClientTable) InvalidateAccount(accountID int64) {
 	t.mu.Lock()
 	e := t.entries[accountID]
 	delete(t.entries, accountID)
-	delete(t.active, accountID)
 	dropped := takeBucketsLocked(e)
 	t.mu.Unlock()
 	closeWSIdleConns(dropped)

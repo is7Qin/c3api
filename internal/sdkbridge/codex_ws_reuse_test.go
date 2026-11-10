@@ -582,11 +582,11 @@ func TestCodexDropPathsCloseWSOnly(t *testing.T) {
 			},
 		},
 		{
-			// evict(accountID)：fatal 上报后的剔除路径
-			name: "evict",
+			// 账号级失效：fatal 上报后的整账号资源剔除（凭据版本级剔除走 evictIfCurrent）
+			name: "invalidate-account",
 			drop: func(t *testing.T, a *Codex, cred *domain.AccountCredential, _ *wsReuseSess) {
 				t.Helper()
-				a.evict(cred.AccountID)
+				a.clients.InvalidateAccount(cred.AccountID)
 			},
 		},
 	}

@@ -70,22 +70,26 @@ const codexAuthFailedMsg = "codex authorization failed"
 //   - 透传头：**无**（spec §12）—— 该面只发 SDK 自己写的头，客户端头一律不递；
 //     握手头仅来自 SDK（伪装身份、beta、session 四元组、Authorization）。
 //
+// 返回本次连接的**来源凭据句柄**（prep）：判死帧的事件回流必须带这个版本
+// （`FatalPrepared`），不能按 accountID 重新取"此刻的条目"——那会毒化管理面
+// 刚换上的新凭据 Auth。
+//
 // 错误经适配层翻译（DialError → 信封 + Refreshed；裸 fatal → 统一回调上报）。
-func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsdk.Client, error) {
+func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsdk.Client, sdkbridge.Prepared, error) {
 	if p.codex == nil {
-		return nil, errCodexWSNotIntegrated
+		return nil, sdkbridge.Prepared{}, errCodexWSNotIntegrated
 	}
 	if sel.Ext == nil {
-		return nil, errCodexExtMissing
+		return nil, sdkbridge.Prepared{}, errCodexExtMissing
 	}
 	cred := domain.CredentialFromExt(sel.Ext)
 	// 请求准备顺序（§3.3）：取得租借 → **准备条目句柄** → 对齐 owner（可能清 ts）→
-	// 构造 Identity。owner 从该句柄的稳定字段读（与 auth 同版，oracle B2）；反序会让换
+	// 构造 Identity。owner 从该句柄的稳定字段读（与 auth 同版）；反序会让换
 	// 凭据后的第一个请求带着旧 owner 的 ts 出去。ws 车道不重放 ts，但 owner 对齐仍然要
 	// 做：会话的 staleness 不能靠车道类型来养。
 	prep, id, err := p.codexRequestPrep(sel, &cred)
 	if err != nil {
-		return nil, err
+		return nil, sdkbridge.Prepared{}, err
 	}
 	// 入站 WS 车道 1:1 透传：身份随连接传入，但**不走 ts 重放**（§5.2-3）——
 	// 既不发送也不捕获，Sink 为 nil。
@@ -100,7 +104,8 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 	// 转移（零新分支；wrapped ctx 取消不向上传播，不落 499）。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
 	defer cancel()
-	return p.codex.DialPrepared(ctx, prep, sel.Egress, id, opts...)
+	c, err := p.codex.DialPrepared(ctx, prep, sel.Egress, id, opts...)
+	return c, prep, err
 }
 
 // handleCodexDialError codex WS 拨号失败分类与收尾（返回

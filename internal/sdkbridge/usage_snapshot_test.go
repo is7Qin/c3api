@@ -413,11 +413,13 @@ func TestCodexUsageSnapshotFatalKeepsEntry(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, c.callsN())
 
-	// 凭据失效（RefreshOAuth 类）→ FatalAuth 毒化 Auth（evict=false，
+	// 凭据失效（RefreshOAuth 类）→ FatalPrepared 毒化来源条目的 Auth（evict=false，
 	// entry 保留）；GetUsageSnapshot 纯 IsFatal 判定 → ErrAuthExpired。
 	// 先拨旧 usageAt（首次成功缓存仍新鲜——TTL 优先语义：≤5min 快照不被
 	// 后续失败掩盖；冷却红绿断言须等 TTL 过期才可观察）。
-	a.FatalAuth(1, &codexsdk.RefreshOAuthError{Code: "refresh_token_invalidated", Raw: []byte(`{}`)})
+	prep, perr := a.Prepare(cred)
+	require.NoError(t, perr)
+	a.FatalPrepared(prep, &codexsdk.RefreshOAuthError{Code: "refresh_token_invalidated", Raw: []byte(`{}`)})
 	e, err := a.entryFor(cred)
 	require.NoError(t, err)
 	e.usageMu.Lock()

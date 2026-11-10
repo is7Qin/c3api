@@ -20,10 +20,16 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// FailureHandler 账号失效上报的唯一入口：SDK 适配层（此后）把 SDK 内部判死
-// （OnAuthFatal / errors.As fatal 四类——RefreshOAuthError / AuthPermanentlyRevokedError /
-// AccountDisabledError / CallbackDeliveryError；RefreshError 可重试，有意排除）翻译成一次统一回调；
-// 网关侧只处理这一个入口。
+// FailureHandler 账号失效上报的唯一入口——**账号级事件**（凭据永久失效/上游
+// 封禁/判死 → 账号从调度摘除）。适配层把 SDK 内部判死（OnAuthFatal / errors.As
+// fatal 四类——RefreshOAuthError / AuthPermanentlyRevokedError /
+// AccountDisabledError / CallbackDeliveryError；RefreshError 可重试，有意排除）
+// 翻译成一次统一回调；网关侧只处理这一个入口。
+//
+// **来源版本约束**：单条凭据版本的撤销事件（WS 判死帧）必须先绑定产生它的条目
+// （Prepared 句柄），只有该条目仍是当前凭据版本时才升级为本回调——
+// 回调实现按 accountID 记账号失效，它没有版本维度，所以调用方（sdkbridge）
+// 负责在旧版本事件上不发这一步。旧请求的错误不得禁用用新凭据的账号。
 //
 // 语义：
 //   - 账号级终止（凭据永久失效/上游封禁/判死）才上报；**可重试类（RefreshError

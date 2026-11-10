@@ -1570,7 +1570,7 @@ func TestClientTableInvalidateAccountDropsTransportResources(t *testing.T) {
 	require.Equal(t, 1, up.upgradeCount())
 	require.Equal(t, 1, up.openCount(), "只请求一次 ⇒ 一条 idle 连接挂着")
 
-	a.InvalidateAccount(cred.AccountID)
+	a.clients.InvalidateAccount(cred.AccountID)
 	up.waitClosed(t, 1, "账号失效")
 
 	require.Nil(t, a.clients.Get(cred.AccountID), "条目必须摘除（含 Auth 与 usage 缓存）——桶挂在条目上，条目不可达即桶不存在")

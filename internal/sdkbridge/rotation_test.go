@@ -319,14 +319,14 @@ func TestRotationCallExpiryNilPreserved(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// §3：FatalAuth（WS 业务判死帧——毒化 + 单次上报 + 双源去重）
+// §3：FatalPrepared（WS 业务判死帧——毒化来源版本 Auth + 单次上报 + 双源去重）
 // ---------------------------------------------------------------------------
 
-// TestCodexFatalAuthPoisonAndDedup 帧判死接线：FatalAuth → Auth 毒化（后续
-// Authorization 恒返回该错误——SDK 显式终止不触发 OnAuthFatal）+ 单次上报
-// + 不剔除（毒化保留——外部凭据变更才重建）；同一 fatal 再经 errors.As 二次
+// TestCodexFatalPreparedPoisonAndDedup 帧判死接线：FatalPrepared → 来源条目 Auth
+// 毒化（后续 Authorization 恒返回该错误——SDK 显式终止不触发 OnAuthFatal）+ 单次
+// 上报 + 不剔除（毒化保留——外部凭据变更才重建）；同一 fatal 再经 errors.As 二次
 // 命中（translateError 路径）→ 仍单次上报（CAS 双源去重）。
-func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
+func TestCodexFatalPreparedPoisonAndDedup(t *testing.T) {
 	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
 	handler := &recordingHandler{}
@@ -335,10 +335,12 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 	cred := oauthCred(7, "at-1", "rt-1")
 	_, err := a.GenerateImage(context.Background(), cred, a.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.NoError(t, err)
+	prep, err := a.Prepare(cred)
+	require.NoError(t, err)
 
-	// 帧判死：token_invalidated 业务事件 → Auth.Fatal + 上报
+	// 帧判死：token_invalidated 业务事件 → 来源条目的 Auth.Fatal + 上报
 	fatal := &codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated", Raw: []byte(`{"type":"error","error":{"code":"token_invalidated"}}`)}
-	a.FatalAuth(7, fatal)
+	a.FatalPrepared(prep, fatal)
 	require.Len(t, handler.snapshot(), 1, "帧判死上报一次")
 
 	// Auth 已毒化：同账号请求 → 恒返回判死错误（errors.As 二次命中——CAS 已置 → 不上报）
@@ -350,17 +352,90 @@ func TestCodexFatalAuthPoisonAndDedup(t *testing.T) {
 
 	// 不剔除：毒化条目保留（外部凭据变更 → sig 变化才重建）
 	e := a.clients.Get(7)
-	require.NotNil(t, e, "FatalAuth 不剔除条目——毒化保留")
+	require.NotNil(t, e, "FatalPrepared 不剔除条目——毒化保留")
+	require.Same(t, prep.entry, e, "毒化的就是当前条目")
 }
 
-// TestCodexFatalAuthNilAndMissing FatalAuth 防御：nil 错误 / 未知账号 →
-// no-op 不 panic（条目不存在 = 并发 fatal 已上报剔除，上报已由胜者完成）。
-func TestCodexFatalAuthNilAndMissing(t *testing.T) {
+// TestCodexFatalPreparedNilAndEmpty FatalPrepared 防御：空句柄 / nil 错误 →
+// no-op 不 panic。
+func TestCodexFatalPreparedNilAndEmpty(t *testing.T) {
 	handler := &recordingHandler{}
 	a := NewCodex(handler.add, testEgressPool(nil), nil, RotationDeps{})
 	require.NotPanics(t, func() {
-		a.FatalAuth(7, nil)
-		a.FatalAuth(999, &codexsdk.AuthPermanentlyRevokedError{Code: "token_revoked"})
+		a.FatalPrepared(Prepared{}, &codexsdk.AuthPermanentlyRevokedError{Code: "token_revoked"})
+		a.FatalPrepared(Prepared{}, nil)
 	})
-	require.Empty(t, handler.snapshot(), "nil/未知账号不上报")
+	require.Empty(t, handler.snapshot(), "空句柄/nil 不上报")
+}
+
+// TestCodexFatalPreparedDoesNotPoisonReplacement 旧版本的判死帧不得作用于新凭据
+// （§3.3b-2 的判别用例）：
+//
+//	连接 A: Prepare(old) → 取得条目 e_old
+//	管理面换凭据 → 请求 B: Prepare(new) 建出 e_new
+//	连接 A: 收到 fatal → FatalPrepared(prep_old)
+//
+// e_old 已不是当前条目 ⇒ 不毒化、不上报、不摘除；账号在新凭据上继续可用。
+func TestCodexFatalPreparedDoesNotPoisonReplacement(t *testing.T) {
+	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
+	defer up.Close()
+	handler := &recordingHandler{}
+	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
+
+	oldCred := oauthCred(7, "at-old", "rt-old")
+	oldPrep, err := a.Prepare(oldCred)
+	require.NoError(t, err)
+
+	// 管理面换凭据（RT 变）：新条目成为当前版本。
+	newCred := oauthCred(7, "at-new", "rt-new")
+	newPrep, err := a.Prepare(newCred)
+	require.NoError(t, err)
+	require.NotSame(t, oldPrep.entry, newPrep.entry)
+
+	fatal := &codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated"}
+	a.FatalPrepared(oldPrep, fatal)
+
+	require.Empty(t, handler.snapshot(), "旧版本事件不得升级为账号级失效")
+	require.Same(t, newPrep.entry, a.clients.Get(7), "当前条目仍是新凭据版本")
+
+	// 新凭据仍可用（新条目的 Auth 没被旧事件的 Fatal 毒化）。
+	_, err = a.GenerateImage(context.Background(), newCred, a.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
+	require.NoError(t, err, "新凭据的 Auth 未被旧版本的判死帧毒化")
+	require.Empty(t, handler.snapshot())
+}
+
+// TestCodexStaleEntryFatalDoesNotDisableAccount HTTP 面同一约束：旧条目的 fatal
+// 经 translateError 回流时按来源版本判定——不得上报、不得摘除新凭据条目。
+func TestCodexStaleEntryFatalDoesNotDisableAccount(t *testing.T) {
+	handler := &recordingHandler{}
+	a := NewCodex(handler.add, testEgressPool(nil), nil, RotationDeps{})
+
+	oldPrep, err := a.Prepare(&domain.AccountCredential{AccountID: 7, PATKey: "pat-old"})
+	require.NoError(t, err)
+	newPrep, err := a.Prepare(&domain.AccountCredential{AccountID: 7, PATKey: "pat-new"})
+	require.NoError(t, err)
+	require.NotSame(t, oldPrep.entry, newPrep.entry)
+
+	fatal := &codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated"}
+	out := a.translateError(oldPrep.entry, fatal)
+	require.ErrorIs(t, out, fatal, "错误本身原样透传（不影响该请求的失败分类）")
+	require.Empty(t, handler.snapshot(), "旧版本的 fatal 不得禁用账号")
+	require.Same(t, newPrep.entry, a.clients.Get(7), "新凭据条目不被摘除")
+}
+
+// TestEvictIfCurrentOnlyDropsSourceEntry 表级判别：evictIfCurrent 只在来源条目
+// 仍是当前条目时摘除；指针已被替换 ⇒ no-op（不碰新条目）。
+func TestEvictIfCurrentOnlyDropsSourceEntry(t *testing.T) {
+	table := NewClientTable()
+	oldEntry := &codexEntry{accountID: 7, clients: map[clientKey]*codexsdk.HTTPClient{}}
+	newEntry := &codexEntry{accountID: 7, clients: map[clientKey]*codexsdk.HTTPClient{}}
+	table.entries[7] = oldEntry
+	require.True(t, table.isCurrent(oldEntry))
+
+	// 替换后旧句柄的 evict 不得删除新条目。
+	table.entries[7] = newEntry
+	require.False(t, table.evictIfCurrent(oldEntry))
+	require.Same(t, newEntry, table.Get(7))
+	require.True(t, table.evictIfCurrent(newEntry), "当前条目仍可被自己的事件摘除")
+	require.Nil(t, table.Get(7))
 }

@@ -244,16 +244,17 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
 		// 组 + 心跳单源全部在 dialCodexWS/codexTransport（codex_responses_ws.go）；
 		// 该面**不递任何客户端头**（spec §12：只发 SDK 自己写的头），故不存在"头部族剥离清单"这种东西。
-		up, dialErr := p.dialCodexWS(r, sel)
+		up, prep, dialErr := p.dialCodexWS(r, sel)
 		if dialErr == nil {
 			// frameHook：每帧判死嗅探（唯一跨边界点——读帧成功后、usage
 			// 嗅探与 client.Write 前调用，即 relayWS 的 frameHook 调用序）；
 			// 判死帧照常透传客户端（错误事件属业务流），会话随后由上游关闭帧
-			// 自然收尾。闭包捕获 p/sel——每 relay
+			// 自然收尾。事件带**本次连接的来源凭据句柄**（prep）：旧连接的判死帧
+			// 不得毒化管理面刚换上的新凭据 Auth。闭包捕获 p/prep——每 relay
 			// 一次分配（与 reqMeta/logCtx 同级），非每帧。
 			frameHook := func(f []byte) {
 				if fatal := sniffCodexWSDeath(f); fatal != nil {
-					p.codex.FatalAuth(sel.AccountID, fatal)
+					p.codex.FatalPrepared(prep, fatal)
 				}
 			}
 			handled, fwMsg := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first)

@@ -384,9 +384,10 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 		return a.buildAuth(cred, e)
 	})
 	if err != nil {
-		// 构造失败（空 rt 等）：锁外上报（reportFatal → InvalidateAccount 要取表锁——
-		// 锁内调用即重入死锁）。旧条目仍在表里（构建失败不覆盖）。
-		a.reportFatal(e, err)
+		// 构造失败（空 rt 等）：锁外上报（上报链要取表锁——锁内调用即重入死锁）。
+		// 这是**账号配置**事件（凭据本身不完整），不是某个请求的版本事件：按账号
+		// 上报并摘除当前资源；旧条目仍在表里（构建失败不覆盖）。
+		a.reportConfigFailure(cred.AccountID, err)
 		return nil, err
 	}
 	return e, nil
@@ -548,17 +549,6 @@ func (a *Codex) RetireThread(accountID int64, threadKey string) {
 		return
 	}
 	a.clients.RetireThread(accountID, threadKey)
-}
-
-// InvalidateAccount 运行时失效账号的传输资源（凭据 fatal / 健康剔除；§3.2 账号移除
-// 的**另一条**生命周期：立即作用于当前条目，没有配置代号）。装配面直接用
-// ClientTable.InvalidateAccount，不经适配层——两者是同一条路径，这里只是同义入口。
-// 配置面的账号集合删除走 ClientTable.Reconcile 的 remove 参数（同一批次准入）。
-func (a *Codex) InvalidateAccount(accountID int64) {
-	if a == nil {
-		return
-	}
-	a.clients.InvalidateAccount(accountID)
 }
 
 // closeWSIdleConns 关闭一批客户端各自的 **WS** 空闲连接（G4）。
@@ -956,19 +946,45 @@ func CredOwner(cred *domain.AccountCredential) [16]byte {
 	return out
 }
 
-// report 单次上报核心（双源去重——CAS 胜者上报，败者并发调用/补报路径跳过）；
-// evict=true 上报后失效剔除条目（HTTP 路径——账号已判死，缓存条目随弃，管理
-// 面恢复后重建）。WS 帧路径（FatalAuth）用 evict=false——毒化 Auth 保留。
-func (a *Codex) report(e *codexEntry, fatal error, evict bool) {
+// reportCredentialEvent 单条**凭据版本**事件的上报与资源回收（fatal / WS 判死帧
+// 共用）：CAS 去重 —— 同一条目的同一 fatal 只上报一次（回调路径与 errors.As 路径
+// 双源去重）。
+//
+// 关键约束（§3.3b-2）：事件在产生时绑定**来源条目**。账号级动作（FailureHandler →
+// 持久化 + 调度摘除）只在来源条目仍是表里的当前条目时执行——A 持旧 Prepared、B
+// 换凭据建新条目后 A 才返回 fatal，这条错误的宿主已被替换，不得杀 B 的 Auth，也
+// 不得禁用账号。资源回收用 evictIfCurrent（锁内比较指针），同样是"只在仍是当前
+// 版本时生效"。
+//
+// 账号级禁用与单凭据撤销是两种事件：本函数处理后者（且只在来源版本仍当前时升级
+// 为账号级动作）；整账号不可用走 reportConfigFailure / ClientTable.InvalidateAccount。
+func (a *Codex) reportCredentialEvent(e *codexEntry, fatal error, evict bool) {
+	if e == nil || fatal == nil {
+		return
+	}
 	if !e.reported.CompareAndSwap(false, true) {
 		return
 	}
-	if a.failure != nil {
+	if a.clients.isCurrent(e) && a.failure != nil {
 		a.failure(e.accountID, fatal)
 	}
 	if evict {
-		a.evict(e.accountID)
+		a.clients.evictIfCurrent(e)
 	}
+}
+
+// reportConfigFailure **账号配置**事件：配置里的凭据构造不出 Auth（如 oauth 缺
+// refresh_token）。这不是某个请求的版本事件——配置本身就是坏的，所以直接按账号
+// 上报并摘除当前资源。与 reportCredentialEvent 分开，避免把"配置坏了"和"旧请求
+// 迟到的 fatal"混成一条路径。
+func (a *Codex) reportConfigFailure(accountID int64, fatal error) {
+	if fatal == nil {
+		return
+	}
+	if a.failure != nil {
+		a.failure(accountID, fatal)
+	}
+	a.clients.InvalidateAccount(accountID)
 }
 
 // reportFatal fatal 统一上报（双源去重核心）：rotationAuth 路径同一 fatal 既
@@ -976,31 +992,31 @@ func (a *Codex) report(e *codexEntry, fatal error, evict bool) {
 // 上报**（CAS 胜者上报；败者并发调用/errors.As 补报路径跳过）。上报后失效
 // 剔除（联动——账号已判死，缓存条目随弃，管理面恢复后重建）。
 func (a *Codex) reportFatal(e *codexEntry, fatal error) {
-	a.report(e, fatal, true)
+	a.reportCredentialEvent(e, fatal, true)
 }
 
-// FatalAuth 显式终止 + 单次上报（§3——WS 业务判死事件帧接线，relay 解析
+// FatalPrepared 显式终止 + 单次上报（§3——WS 业务判死事件帧接线，relay 解析
 // 帧后调用；唯一跨边界点）：
+//   - 来源版本门：只对**本连接 Prepare 得到的条目**生效。条目已被替换（管理面换
+//     凭据）⇒ 这条帧属于旧凭据，直接 no-op——旧连接的错误不得毒化新凭据的 Auth。
 //   - e.auth.Fatal(fatal)：SDK 显式终止——**不触发 OnAuthFatal**（实证
 //     auth_oauth.go:187-195），仅毒化 Auth（后续 Authorization 恒返回该错误）
-//   - 上报走 report(e, fatal, false)：与 errors.As 路径共享 CAS 双源去重
-//     （帧判死后同一 fatal 再经 errors.As 二次命中 → 仍单次上报）；
-//     **不剔除**——毒化 Auth 保留至外部凭据变更（管理面重新导入 → sig 变化
-//     重建；与"不重建缓存"裁决一致——剔除会丢毒化态，凭据未变重建后仍走
+//   - 上报走 reportCredentialEvent(e, fatal, false)：与 errors.As 路径共享 CAS
+//     双源去重；**不剔除**——毒化 Auth 保留至外部凭据变更（管理面重新导入 → sig
+//     变化重建；与"不重建缓存"裁决一致——剔除会丢毒化态，凭据未变重建后仍走
 //     旧 token）
 //
-// 条目不存在（未构造/并发 fatal 已上报剔除）→ no-op（无 Auth 可毒化；上报
-// 已由并发胜者完成，账号已走失效链）。
-func (a *Codex) FatalAuth(accountID int64, fatal error) {
-	if fatal == nil {
-		return // 防御：无错误不上报
+// 空句柄（未 Prepare / 未装配）→ no-op：没有来源版本就没有可施加的事件。
+func (a *Codex) FatalPrepared(p Prepared, fatal error) {
+	e := p.entry
+	if e == nil || fatal == nil {
+		return // 防御：无来源/无错误不上报
 	}
-	e := a.clients.Get(accountID)
-	if e == nil {
-		return // 并发 fatal 已上报剔除 / 未构造：无 Auth 可毒化，上报已由胜者完成
+	if !a.clients.isCurrent(e) {
+		return // 旧版本的判死帧：不毒化当前 Auth、不升级为账号级事件
 	}
 	e.auth.Fatal(fatal)
-	a.report(e, fatal, false)
+	a.reportCredentialEvent(e, fatal, false)
 }
 
 // rotateWriteback 轮转回写（§1——SDK OnTokenRotated 回调；在 SDK 单飞内
@@ -1048,18 +1064,6 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 // rotateWritebackTimeout 轮转回写固定超时（回调在 SDK 单飞内阻塞并发等待
 // 者——本地 upsert 毫秒级，3s 兜底 PG 故障；超时 → 重试链接管）。
 const rotateWritebackTimeout = 3 * time.Second
-
-// evict 失效剔除（条目摘除 + 其名下 WS 空闲连接关闭；不存在 = no-op——
-// 并发/重复上报安全）。
-//
-// 运行时失效**不是**配置批次：没有代号、也不等批次，直接作用于当前条目
-// （ClientTable.InvalidateAccount）。条目一旦从表里消失就再没人会复用它，但它的 WS
-// 连接还挂在上游——不主动关就白占一个 socket 直到 TTL/maxAge 到期。摘表在表锁内、
-// terminate 在锁外（G4）。配置面的账号集合删除走 Reconcile 的 remove 参数（共享
-// 批次准入），两者不共用实现。
-func (a *Codex) evict(accountID int64) {
-	a.clients.InvalidateAccount(accountID)
-}
 
 // translateError SDK 错误 → 网关侧错误翻译（错误契约）：
 //   - fatal 五类（errors.As——RefreshOAuthError / AuthPermanentlyRevokedError /
