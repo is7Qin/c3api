@@ -31,6 +31,7 @@ func TestAccountUsageCredentialDispatch(t *testing.T) {
 	// codex-oauth：ext 行 → oauth 列组派生 cred
 	exp := time.Now().Add(time.Hour)
 	f := svc.store.(*fakeStore)
+	f.accs[2] = &domain.Account{ID: 2, Enabled: true, IdentityRevision: 3}
 	f.accExts[2] = &domain.AccountExt{
 		AccountID: 2, CredentialType: credential.TypeCodexOAuth,
 		CodexOAuthToken: new("at"), CodexOAuthRefreshToken: new("rt"), CodexOAuthExpiresAt: &exp,
@@ -41,8 +42,10 @@ func TestAccountUsageCredentialDispatch(t *testing.T) {
 	require.Equal(t, int64(2), cred.AccountID)
 	require.Equal(t, "at", cred.OAuthToken)
 	require.Equal(t, "rt", cred.OAuthRefreshToken, "oauth 列组派生 cred")
+	require.Equal(t, int64(3), cred.IdentityRevision, "来源 K 从账号行补齐（ext 行不带它）")
 
 	// codex-pat：pat 列组派生 cred
+	f.accs[3] = &domain.Account{ID: 3, Enabled: true, IdentityRevision: 1}
 	f.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-x")}
 	cred, err = svc.AccountUsageCredential(ctx, 3)
 	require.NoError(t, err)
@@ -50,10 +53,44 @@ func TestAccountUsageCredentialDispatch(t *testing.T) {
 	require.Equal(t, "pat-x", cred.PATKey, "pat 列组派生 cred")
 
 	// ext 行存在但凭据全空 → nil/nil（防御分支）
+	f.accs[4] = &domain.Account{ID: 4, Enabled: true, IdentityRevision: 1}
 	f.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT}
 	cred, err = svc.AccountUsageCredential(ctx, 4)
 	require.NoError(t, err)
 	require.Nil(t, cred, "凭据全空 → 无上游能力")
+}
+
+// TestUsageCredentialCarriesIdentityRevision 额度面（无 Selection）的凭据必须带**来源
+// 身份代际 K**：ext 行不带 `identity_revision`（它在父行），K=0 的凭据建出的条目上
+// 任何轮转回写都会被存储围栏当成陈旧事件丢掉（只 Warn、不落库）。
+//
+// 取 K 不违反 §2.5：它是**第二条 owner-scoped 单读**的投影（`GetAccount` 把归属谓词
+// AND 进自己的 WHERE），本函数不做任何归属比较；账号行读不到 = 越域/刚被删除 ⇒
+// 与 ext 缺失同处理（无上游能力），不退化成 K=0。
+func TestUsageCredentialCarriesIdentityRevision(t *testing.T) {
+	svc := &Service{store: newFakeStore()}
+	f := svc.store.(*fakeStore)
+	f.accs[11] = &domain.Account{ID: 11, Enabled: true, IdentityRevision: 41}
+	f.accExts[11] = &domain.AccountExt{
+		AccountID: 11, CredentialType: credential.TypeCodexOAuth,
+		CodexOAuthToken: new("at-11"), CodexOAuthRefreshToken: new("rt-11"),
+	}
+
+	cred, err := svc.AccountUsageCredential(context.Background(), 11)
+	require.NoError(t, err)
+	require.NotNil(t, cred)
+	require.Equal(t, int64(41), cred.IdentityRevision, "凭据携带父行 identity_revision")
+
+	// 账号行不可见（越域/刚被删除）⇒ 没有可用的来源版本 ⇒ 如实报"无上游能力"。
+	f.accs[12] = &domain.Account{ID: 12, Enabled: true, IdentityRevision: 5}
+	f.accExts[12] = &domain.AccountExt{
+		AccountID: 12, CredentialType: credential.TypeCodexOAuth,
+		CodexOAuthToken: new("at-12"), CodexOAuthRefreshToken: new("rt-12"),
+	}
+	delete(f.accs, 12)
+	cred, err = svc.AccountUsageCredential(context.Background(), 12)
+	require.NoError(t, err)
+	require.Nil(t, cred, "取不到账号行 ⇒ nil/nil（不得退化成 K=0 的凭据）")
 }
 
 // TestAccountUsageCredentialStoreError store 故障透传：GetAccountExt

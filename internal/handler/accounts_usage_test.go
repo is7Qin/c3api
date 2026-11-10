@@ -54,6 +54,17 @@ func newUsageTestHandler(t *testing.T, now time.Time, snap CodexUsageProber) (*A
 	return h, store
 }
 
+// seedCodexAccounts 给 ext 夹具补上父账号行（生产不变量：ext 行必属某个账号，
+// `identity_revision` 落在父行——额度面凭据的来源 K 从那里取）。
+func seedCodexAccounts(store *fakeStore, ids ...int64) {
+	for _, id := range ids {
+		if _, ok := store.accs[id]; ok {
+			continue
+		}
+		store.accs[id] = &domain.Account{ID: id, Enabled: true, IdentityRevision: 1}
+	}
+}
+
 // getUsage 发 GET /api/admin/accounts/usage 请求。
 func getUsage(h *AdminAPI, query string) *httptest.ResponseRecorder {
 	req := httptest.NewRequest(http.MethodGet, "/api/admin/accounts/usage?"+query, nil)
@@ -183,6 +194,8 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 		}},
 		errs: map[int64]error{3: sdkbridge.ErrAuthExpired, 4: sdkbridge.ErrUpstream},
 	})
+	// ext 行必有父账号行（生产不变量）：额度面凭据的来源 K 从父行取。
+	seedCodexAccounts(store, 1, 2, 3, 4)
 	store.accExts[2] = &domain.AccountExt{AccountID: 2, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
 	store.accExts[3] = &domain.AccountExt{AccountID: 3, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-bad")}
 	store.accExts[4] = &domain.AccountExt{AccountID: 4, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-net")}
@@ -228,6 +241,7 @@ func TestGetAccountsUsageUpstreamAssembly(t *testing.T) {
 func TestGetAccountsUsageNilProber(t *testing.T) {
 	now := time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC)
 	h, store := newUsageTestHandler(t, now, nil)
+	seedCodexAccounts(store, 1)
 	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
 
 	rec := getUsage(h, "account_ids=1&window=24h")
@@ -246,6 +260,7 @@ func TestAssembleUpstreamStoreErrorIsolated(t *testing.T) {
 	h, store := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), &hUsageSnap{
 		snaps: map[int64]*domain.CodexUsageSnapshot{1: {PlanType: "chatgpt-plus"}},
 	})
+	seedCodexAccounts(store, 1)
 	store.accExts[1] = &domain.AccountExt{AccountID: 1, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
 	store.accExtErr[2] = errors.New("store down") // 非 ErrNotFound store 故障
 
@@ -310,6 +325,7 @@ func TestAssembleUpstreamParallel(t *testing.T) {
 	}
 	h, store := newUsageTestHandler(t, time.Date(2026, 8, 18, 15, 30, 0, 0, time.UTC), snap)
 	for i := int64(1); i <= 8; i++ {
+		seedCodexAccounts(store, i)
 		store.accExts[i] = &domain.AccountExt{AccountID: i, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-ok")}
 	}
 	items := make([]domain.AccountUsage, 0, 8)
@@ -366,9 +382,9 @@ func TestGetAccountsUsageFrozenFailedAccountSkipsProbe(t *testing.T) {
 	failedAt := now.Add(-time.Hour)
 	sdkSrc := domain.FailureSourceSDK
 	ruleSrc := domain.FailureSourceRule
-	store.accs[1] = &domain.Account{ID: 1, Enabled: true}
-	store.accs[2] = &domain.Account{ID: 2, Enabled: true, FailedAt: &failedAt, FailureSource: &sdkSrc}
-	store.accs[3] = &domain.Account{ID: 3, Enabled: true, FailedAt: &failedAt, FailureSource: &ruleSrc}
+	store.accs[1] = &domain.Account{ID: 1, Enabled: true, IdentityRevision: 1}
+	store.accs[2] = &domain.Account{ID: 2, Enabled: true, IdentityRevision: 1, FailedAt: &failedAt, FailureSource: &sdkSrc}
+	store.accs[3] = &domain.Account{ID: 3, Enabled: true, IdentityRevision: 1, FailedAt: &failedAt, FailureSource: &ruleSrc}
 	for id := int64(1); id <= 3; id++ {
 		store.accExts[id] = &domain.AccountExt{AccountID: id, CredentialType: credential.TypeCodexPAT, CodexPATKey: new("pat-" + strconv.FormatInt(id, 10))}
 	}
