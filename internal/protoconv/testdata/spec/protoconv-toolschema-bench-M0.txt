@@ -5,7 +5,7 @@ cpu=AMD Ryzen 7 7840H w/Radeon 780M Graphics
 pkg=internal/protoconv
 -count=1
 -benchtime=1000x
-src_sha256 toolschema.go 9378fed810334dd505f5f6c85ea50d442ec451610044c57bae6dc5c443bac977
+src_sha256 toolschema.go ece145998a57854b1bb07a8ae629a81229809f8d968f29ccf7848d0a64edf037
 src_sha256 toolschema_bench_test.go 44cc6c4aacb0d8d4f8992e3e6da8ad77e18da0e62fed08d1bb0f0d36640ab8c0
 
 BenchmarkConvertRequestRespToMessTools20-16           2000   85835 ns/op   28899 B/op   111 allocs/op
@@ -69,3 +69,7 @@ BenchmarkConvertRequestRespToMessTools20AllPIn-16     2000   28819 ns/op    6913
 #    不改既有基准的读数，故仍只刷 sha；两个新基准的**首测值与上界**登记在
 #    testdata/spec/bench_targets.tsv（26/24 allocs，上界 31/28 写死在
 #    TestBenchGates 里）。
+
+# 3) 2026-11-10 S4 收敛轮：`toolschema.go` 只有 6 行注释改动
+#    （删掉 `momus-r2 I-4 / I-5 / I-6` 这类评审标签，逐行 diff 已核对）；
+#    热路径零改动 ⇒ 数字仍有效，只刷 src_sha256，不重采。
