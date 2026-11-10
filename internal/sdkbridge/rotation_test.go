@@ -326,9 +326,11 @@ func TestRotationCallExpiryNilPreserved(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestCodexFatalPreparedPoisonAndDedup 帧判死接线：FatalPrepared → 来源条目 Auth
-// 毒化（后续 Authorization 恒返回该错误——SDK 显式终止不触发 OnAuthFatal）+ 单次
-// 上报 + 不剔除（毒化保留——外部凭据变更才重建）；同一 fatal 再经 errors.As 二次
-// 命中（translateError 路径）→ 仍单次上报（CAS 双源去重）。
+// 毒化（"观测同代"这一档：在飞请求快速失败——后续 Authorization 恒返回该错误；
+// SDK 显式终止不触发 OnAuthFatal）+ 单次上报 + **条目被摘**（观测同代证明不了
+// 库里同代，留着毒化态就是判决落不了库、又没人会再判的黑洞）；同一 fatal 再经
+// errors.As 二次命中（translateError 路径）→ 仍单次上报（CAS 双源去重：去重位
+// 随条目对象走，同一对象上的第二次调用被跳过）。
 func TestCodexFatalPreparedPoisonAndDedup(t *testing.T) {
 	up, _ := newCodexUpstream(t, codexUpstreamStep{status: 200, body: okImageResponse})
 	defer up.Close()
@@ -340,23 +342,26 @@ func TestCodexFatalPreparedPoisonAndDedup(t *testing.T) {
 	require.NoError(t, err)
 	prep, err := a.Prepare(cred)
 	require.NoError(t, err)
+	shared := prep.entry.auth
 
 	// 帧判死：token_invalidated 业务事件 → 来源条目的 Auth.Fatal + 上报
 	fatal := &codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated", Raw: []byte(`{"type":"error","error":{"code":"token_invalidated"}}`)}
 	a.FatalPrepared(prep, fatal)
 	require.Len(t, handler.snapshot(), 1, "帧判死上报一次")
 
-	// Auth 已毒化：同账号请求 → 恒返回判死错误（errors.As 二次命中——CAS 已置 → 不上报）
-	_, err = a.GenerateImage(context.Background(), cred, a.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
-	require.Error(t, err)
+	// 毒化发生在"观测同代"这一档：那一版 Auth 恒返回判死错误（在飞请求快速失败）。
+	_, authErr := shared.Authorization(context.Background())
+	require.Error(t, authErr, "同代档毒化它自己那一版 Auth")
 	var ap *codexsdk.AuthPermanentlyRevokedError
-	require.True(t, errors.As(err, &ap), "毒化 Auth → 请求面恒返回同一 fatal（errors.As 可命中）")
-	require.Len(t, handler.snapshot(), 1, "双源去重：errors.As 二次命中同一 fatal → 仍单次上报")
+	require.True(t, errors.As(authErr, &ap), "毒化面就是这条 fatal（errors.As 可命中）")
 
-	// 不剔除：毒化条目保留（外部凭据变更 → sig 变化才重建）
-	e := a.clients.Get(7)
-	require.NotNil(t, e, "FatalPrepared 不剔除条目——毒化保留")
-	require.Same(t, prep.entry, e, "毒化的就是当前条目")
+	// 但条目不再保留：毒化态留着而判决被围栏拒 = 永久黑洞，第二次机会只能来自重建。
+	require.Nil(t, a.clients.Get(7), "同代档也摘条目——不再保留毒化态")
+
+	// 双源去重：同一请求随后把同一 fatal 交给 translateError（errors.As 补报）
+	// ⇒ 该条目的去重位已置，仍单次上报。
+	require.Error(t, a.translateError(prep.entry, prep.srcRev, fatal))
+	require.Len(t, handler.snapshot(), 1, "双源去重：errors.As 二次命中同一 fatal → 仍单次上报")
 }
 
 // TestCodexFatalPreparedNilAndEmpty FatalPrepared 防御：空句柄 / nil 错误 →

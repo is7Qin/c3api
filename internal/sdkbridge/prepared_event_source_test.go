@@ -185,3 +185,46 @@ func TestStaleFatalEvictsInsteadOfPoisoningSharedAuth(t *testing.T) {
 	require.Equal(t, []int64{2}, store.gotExpect, "围栏用当前代 K=2")
 	require.Equal(t, 1, failer.calls)
 }
+
+// TestUnobservedIdentityAdvanceDoesNotBlackhole "观测同代"不等于"库里同代"：
+// `e.srcRev` 是**被请求观测到**的 K，只有同签名 Prepare 命中复用且 K 更大时才抬升。
+// 管理面把库里的 K 推进到 2 之后如果没有任何请求 Prepare，旧句柄看到的仍是 1，
+// 一条陈旧判死帧就会走"同代"档——毒化 + 上报 + 围栏按 K 不等拒（CAS 已消费、毒化态
+// 落不了库）。此时若还保留条目，就是永久黑洞：poisoned=true、failed_at=nil、
+// evicted=false，账号在库里一直"启用"而这条连接的所有请求恒失败。
+//
+// 判据：同代档也必须摘条目。判决被围栏拒是正确行为（fail-closed），但第二次机会只能
+// 来自条目重建——下一条请求按库里当前 K=2 重建、再收到同一 fatal 时真正落下禁用。
+func TestUnobservedIdentityAdvanceDoesNotBlackhole(t *testing.T) {
+	store := &configRevisionStore{acct: newCodexAccountForRetry(7, 1)}
+	failer := &retryFakeFailer{}
+	a := NewCodex(NewFailureHandler(FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch()}),
+		testEgressPool(nil), nil, RotationDeps{})
+
+	older, err := a.Prepare(oauthCredWithRev(7, "at-1", "rt-1", 1))
+	require.NoError(t, err)
+
+	// 只推进库里的 K：**不做第二次 Prepare**，所以条目上的观测值停在 1。
+	store.acct.IdentityRevision = 2
+	require.Equal(t, int64(1), a.clients.Get(7).srcRev.Load(),
+		"没有人观测到新 K（这正是 e.srcRev != p.srcRev 判据挡不住的窗口）")
+
+	fatal := &codexsdk.AuthPermanentlyRevokedError{Code: "token_invalidated"}
+	a.FatalPrepared(older, fatal)
+
+	// 判决被存储围栏拒（证据 K=1 ≠ 库里 2）：fail-closed，旧代证据不得禁用新身份。
+	require.Nil(t, store.acct.FailedAt, "来源 K=1 的判决不得禁用已推进到 K=2 的身份")
+	require.Empty(t, store.gotExpect, "K 不符 ⇒ 连 CAS 都不该尝试")
+	require.Empty(t, failer.calls)
+	// 但条目必须已被摘除——留着毒化态就是"判决落不了库、也没人会再判"的黑洞。
+	require.Nil(t, a.clients.Get(7), "同代档也摘条目：毒化态不得独占这条账号")
+
+	// 第二次机会：下一条请求按库里当前 K=2 重建、重新得出结论。
+	fresh, err := a.Prepare(oauthCredWithRev(7, "at-1", "rt-1", 2))
+	require.NoError(t, err)
+	require.NotSame(t, older.entry, fresh.entry, "摘除后重建（新的 Auth 与新的去重位）")
+	a.FatalPrepared(fresh, fatal)
+	require.NotNil(t, store.acct.FailedAt, "当前代用同一 fatal 必须落下禁用判决")
+	require.Equal(t, []int64{2}, store.gotExpect, "围栏用当前代 K=2")
+	require.Equal(t, 1, failer.calls)
+}
