@@ -110,6 +110,8 @@ github.com/invopop/jsonschema v0.14.0 h1:MHQqLhvpNUZfw+hM3AZDYK7jxO8FZoQeQM77g8i
 github.com/invopop/jsonschema v0.14.0/go.mod h1:ygm6C2EaVNMBDPpaPlnOA2pFAxBnxGjFlMZABxm9n2I=
 github.com/is7Qin/codex-sdk v0.0.0-20261110054800-93d5d3b32c3d h1:YxIM5JeuMhnp3dPcw1Co/w+FvigkuzUUI0FCXM5BHnE=
 github.com/is7Qin/codex-sdk v0.0.0-20261110054800-93d5d3b32c3d/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
+github.com/is7Qin/codex-sdk v0.0.0-20261110122115-4f5e1038e43e h1:OKJHLR1ALtBmH8SJ8W2di4KfvK4SArVYv1yPL/7Sm0M=
+github.com/is7Qin/codex-sdk v0.0.0-20261110122115-4f5e1038e43e/go.mod h1:rMLjht31Uu2fnNEhnrzIkjLE5KvXM1SeU9pGh3VAUmg=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
 github.com/jackc/pgpassfile v1.0.0/go.mod h1:CEx0iS5ambNFdcRtxPj5JhEz+xB6uRky5eyVu/W2HEg=
 github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 h1:iCEnooe7UlwOQYpKFhBabPMi4aNAfoODPEFNiAnClxo=
