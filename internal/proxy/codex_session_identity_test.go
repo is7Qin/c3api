@@ -271,13 +271,23 @@ func newBarrierServer(t *testing.T, h http.Handler) (*httptest.Server, *barrierS
 	return srv, b
 }
 
-// waitHandlerDone 等下一个 handler 返回（通道 + deadline，禁 sleep）。
-func (b *barrierServer) waitHandlerDone(t *testing.T, what string) {
+// waitHandlers 等到**累计**至少 n 个 handler 返回（通道 + timer deadline，禁 sleep）。
+// 用累计量而非"下一次"：多个请求的 handler 返回顺序不保证与发起顺序一致，逐个等
+// "下一个"会把颠倒的两次收尾错认成同一次，于是在租借仍被持有时就放行——G6 的 N2：
+// 取消请求的客户端 `Do` 已返回、服务端还没 Release，下一轮直接 429（上游无帧）。
+func (b *barrierServer) waitHandlers(t *testing.T, n int, what string) {
 	t.Helper()
-	select {
-	case <-b.done:
-	case <-time.After(15 * time.Second):
-		t.Fatalf("%s：handler 未在 deadline 内返回（服务端未收尾）", what)
+	timer := time.NewTimer(15 * time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case got := <-b.done:
+			if got >= n {
+				return
+			}
+		case <-timer.C:
+			t.Fatalf("%s：handler 未在 deadline 内返回（服务端未收尾）", what)
+		}
 	}
 }
 
@@ -501,8 +511,11 @@ func TestSessionG6LeaseExclusiveAndCancelDoesNotAdvance(t *testing.T) {
 	require.NotEqual(t, http.StatusOK, second.StatusCode,
 		"占满后第 K+1 个请求必须失败（不得排队等待）：%s", string(secondBody))
 	require.Equal(t, 1, u.upgradeCount(), "失败请求不得新开会话连接")
-	barrier.waitHandlerDone(t, "失败请求") // 它的 handler 已返回（下面不再计入屏障）
 	first.cancelAndRelease(t, gate, "首个请求")
+	// 首个请求的取消与失败请求的 handler 都返回后，服务端租借才算真释放（finish→
+	// Release 在 handler 内）。等它们再进入第 3 步，否则下一轮会在 claim 前拿到
+	// 429 no available account——上游一帧都收不到（CI 双核下的 N2）。
+	barrier.waitHandlers(t, 2, "首个请求与失败请求")
 	u.setGate(nil)
 
 	// 3) 提前取消（未读到终态）⇒ 不推进、不退休。逐轮：占住 → 取消 → 等服务端收尾。
@@ -513,7 +526,7 @@ func TestSessionG6LeaseExclusiveAndCancelDoesNotAdvance(t *testing.T) {
 		s := startSessionStream(t, srv, t.Context())
 		waitArrived(t, u, fmt.Sprintf("第 %d 个取消请求", i))
 		s.cancelAndRelease(t, ch, fmt.Sprintf("第 %d 个取消请求", i))
-		barrier.waitHandlerDone(t, fmt.Sprintf("第 %d 个取消请求", i))
+		barrier.waitHandlers(t, i+3, fmt.Sprintf("第 %d 个取消请求", i))
 	}
 	u.setGate(nil)
 

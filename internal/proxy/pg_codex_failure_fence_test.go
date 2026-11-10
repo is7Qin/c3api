@@ -92,6 +92,28 @@ func (p *recordingGroupPublisher) published() [][]int64 {
 	return append([][]int64(nil), p.gids...)
 }
 
+// eventually 有界轮询 cond 直到成立（50ms 一拍、10s 上限；ticker + deadline，禁 sleep）。
+// 用于等**异步**侧的可观测事实：超时不在这里判死，只记一条 Log，随后仍由调用方
+// 的原始断言以最后一次观测结果给出明确失败信息（断言不被放宽）。
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	for {
+		if cond() {
+			return
+		}
+		select {
+		case <-ticker.C:
+		case <-deadline.C:
+			t.Logf("%s：10s 内未达成，按最后一次观测断言", what)
+			return
+		}
+	}
+}
+
 func TestCodexFatalChainUsesFencedPathPG(t *testing.T) {
 	dsn := pgtest.Clone(t)
 	ctx := context.Background()
@@ -153,14 +175,36 @@ func TestCodexFatalChainUsesFencedPathPG(t *testing.T) {
 	ext, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	cred := domain.CredentialFromExt(ext)
+	// 来源 K 必须随凭据一起投影（生产等价物 = scheduler 的 Selection.Credential()）：
+	// 围栏链拿它当 CAS 的 expectedRevision，K<=0 一律 ErrMissingExpectedRevision、
+	// 拒绝任何账号级动作（failed_at 因此永不落库）。CredentialFromExt 只投影 ext 的
+	// 列，K 在账号行上，故按同一次快照补齐——缺这一步，用例根本没走到围栏路径。
+	cred.IdentityRevision = before.IdentityRevision
 	_, err = adapter.GenerateImage(ctx, &cred, adapter.DirectEgress(), &domain.ImageGenParams{Model: "gpt-image-2", Prompt: "cat"})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refresh 被拒绝")
 
 	// ① 围栏路径的判据：failure_source 只由 FailAccountCAS 写入（简化路径不写），
 	//    且 CAS 会推进 C。
-	got, err := repos.Accounts.GetAccount(ctx, acc.ID)
-	require.NoError(t, err)
+	//
+	// 上报链路与断言之间**没有顺序保证**（回调侧完成，CAS 落库 → 锁存释放 → 组级
+	// NOTIFY 是紧邻的三步）：读一次 DB 就断言会在慢机上撞到"还没写完"。故有界轮询
+	// 到三步都已可见再逐条断言；断言本身不放宽——failed_at 仍须非 nil、来源仍须是
+	// sdk、C 仍须恰好推进 1、K 不变。
+	var got *domain.Account
+	eventually(t, "fatal 失效链落库与围栏收尾", func() bool {
+		row, rerr := repos.Accounts.GetAccount(ctx, acc.ID)
+		if rerr != nil {
+			return false
+		}
+		got = row
+		acquired, cleared := ls.snapshot()
+		return got.FailedAt != nil &&
+			len(acquired) == 1 &&
+			len(cleared) == 1 &&
+			len(pub.published()) == 1
+	})
+	require.NotNil(t, got, "账号行必须可读")
 	require.NotNil(t, got.FailedAt, "failed_at 落库")
 	require.NotNil(t, got.FailureSource, "failure_source 必须落库 —— 只有围栏路径的 CAS 会写它")
 	require.Equal(t, "sdk", *got.FailureSource)
