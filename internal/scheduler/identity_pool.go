@@ -348,7 +348,8 @@ func (b *poolReclaim) run() {
 //
 // 池消失 ≠ 账号移除（§3.3b-4）：K 变 0、凭据类型变更、账号从路由集合退出都会让池
 // 消失，但账号资源（Auth/usage/client 桶）的生命周期由**账号全集差分**决定
-// （accountConfig → ClientTable.ApplyConfig）。这里只回收会话/线程，不冒充账号移除。
+// （accountConfig 的资源指令 → `ClientTable.ApplyBatch`）。这里只回收会话/线程，
+// 不冒充账号移除。
 //
 // 这里只**收集**，执行在锁外（`poolReclaim.run`）。
 func collectRetiredPools(prev, next *identityRegistry, reclaim *poolReclaim) {

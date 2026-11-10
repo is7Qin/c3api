@@ -1075,6 +1075,6 @@ func TestCodexWSUpstreamSeesDisguisedUA(t *testing.T) {
 	require.NotContains(t, got.Get("OpenAI-Beta"), "1999-01-01", "客户端 beta 值不得顶掉 SDK 的")
 }
 
-// 伪装身份装配已收敛到 scheduler.Selection.CodexIdentity（一次给全四元组，注入
+// 伪装身份装配已收敛到 scheduler.Selection.IdentityFor（一次给全四元组，注入
 // 值取自槽状态、与账号 ext 无关）；此处不再有 proxy 侧组装函数可测——其正确性由
-// scheduler 包 TestSelectionCodexIdentityFromSlot 覆盖。
+// scheduler 包 TestSelectionCodexIdentityFromSession 覆盖。

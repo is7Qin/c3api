@@ -244,7 +244,7 @@ func (t *ClientTable) isCurrent(e *codexEntry) bool {
 // 指针（而非签名）是因为条目身份就是版本身份：同签名复用同一条目。
 //
 // 刻意**不**动配置面可见性：凭据资源失效与配置生命周期不是同一件事，配置只由
-// ApplyConfig 改写（请求/运行期路径不写配置）。
+// 资源指令（`ApplyBatch`）改写（请求/运行期路径不写配置）。
 func (t *ClientTable) evictIfCurrent(e *codexEntry) bool {
 	if t == nil || e == nil {
 		return false

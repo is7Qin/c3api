@@ -113,7 +113,7 @@ const codexWSConnCacheCapacity = 2 * 1024
 // 条目：桶的可见性与条目同生命周期，于是"条目被替换/删除"= "它的桶再也无人可达"。
 // 这是「旧凭据的请求被新条目复用」与「账号移除后旧句柄重建可复用桶」两条边界的结构性
 // 答案（§3.2 凭据替换 / 账号移除）。回收点：条目重建/移除（整条目摘除）与配置批次
-// `ClientTable.ApplyConfig`（egress 维）——proxy 维是出口**规格摘要**，代理地址/密码
+// 的资源指令（`ClientTable.ApplyBatch` 按出口**资源键**保留/回收）——代理地址/密码
 // 轮换每次都产生新键，不回收即无界；TTL 只管连接不管这张表。
 //
 // turn-state 不在条目上：存储属会话（scheduler.codexSession），经 Identity.Sink
@@ -166,8 +166,8 @@ type Options struct {
 // WithOnAuthFatal → 回调；nil = 上报 no-op——测试替身形态）；egressPool 为出口池
 // （构造期注入，生产 = main 里与调度器 Config.Egress 同一个池；客户端 transport
 // 就从这个池的 client 上取，spec-proxy-pool §4.6）；clients 为账号传输资源表
-// （构造期注入，生产 = 与 scheduler.Config.RetireThread/ReconcileClients 同一个实例；
-// nil = 本适配层自建，只适用于不需要跨组件退役的用法）；rotation 为轮转回写面
+// （构造期注入，生产 = 与 scheduler.Config.RetireThread、scheduler.Config.ClientResources
+// 指向同一个实例；nil = 本适配层自建，只适用于不需要跨组件退役的用法）；rotation 为轮转回写面
 // （零值 = 不落库/不失效/不记，测试与未装配形态）。
 // 全部构造期依赖一次给齐——构造后不存在“半装配”的 Codex，也没有事后回填。
 func NewCodex(failure FailureHandler, egressPool *egress.Pool, clients *ClientTable, rotation RotationDeps, opts ...Options) *Codex {
@@ -494,15 +494,15 @@ func egressDigest(eg *egress.Client) domain.EgressResourceKey {
 // 键就会"Selection 说 ws、请求仍走 HTTP POST"。
 //
 // 出口一律来自调用方（proxy 给 `sel.Egress`，usage 面给池直连）；取 client 只按
-// (条目 × 出口 × 传输) 命中或构造，**不定义账号活跃集**——那是配置批次的职责
-// （ClientTable.ApplyConfig）。
+// (条目 × 出口 × 传输) 命中或构造，**不定义账号活跃集**——保留还是回收账号资源由
+// 配置权威下发的资源指令决定（`ClientTable.ApplyBatch`）。
 func (a *Codex) clientFor(cred *domain.AccountCredential, eg *egress.Client, transport domain.CodexResponsesTransport) (*codexEntry, *codexsdk.HTTPClient, error) {
 	return a.clientForEgress(cred, eg, transport)
 }
 
 // usageClientFor 无 Selection 的辅助面（额度快照）取 client：出口恒为直连。
-// 它只按已登记的配置取/建资源，不参与定义活跃集——否则一次 usage 请求就会把在用
-// 的代理桶摘掉并永久 Close（"跨窗口不重连"直接失效）。
+// 它只按配置权威下发的资源指令范围取/建资源，不参与定义活跃集——否则一次 usage
+// 请求就会把在用的代理桶摘掉并永久 Close（"跨窗口不重连"直接失效）。
 func (a *Codex) usageClientFor(cred *domain.AccountCredential) (*codexEntry, *codexsdk.HTTPClient, error) {
 	return a.clientForEgress(cred, a.DirectEgress(), domain.CodexResponsesTransportDefault)
 }
@@ -629,7 +629,8 @@ const (
 //
 // 出口：本面**没有 Selection**（额度快照是节点本地的后台拉取，不是某次请求的
 // 出栈），故走池的直连出口（`DirectEgress()`，经 usageClientFor）。它**不参与定义
-// 账号的活跃集**：请求路径只取/建资源，配置可见性只由控制面 ApplyConfig 改写。
+// 账号的活跃集**：请求路径只取/建资源，配置可见性只由配置权威下发的资源指令改写
+// （`ClientTable.ApplyBatch`；直连键由权威显式列入保留集，不是表的特例）。
 func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
 	if s, ok := a.snapshotCachedFor(cred.AccountID); ok {
 		return s, nil

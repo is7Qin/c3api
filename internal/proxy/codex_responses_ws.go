@@ -194,7 +194,7 @@ func sniffCodexWSDeath(f []byte) *codexsdk.AuthPermanentlyRevokedError {
 	return codexsdk.ClassifyAuthFatalFrame(f)
 }
 
-// 伪装身份注入源：scheduler.Selection.CodexIdentity 一次给全四元组
+// 伪装身份注入源：scheduler.Selection.IdentityFor 一次给全四元组
 // （installation_id / session_id / thread_id / window_id，全部取自槽状态）——
 // proxy 不再回账号 ext 拼装，杜绝 installation 双源。
 

@@ -257,7 +257,7 @@ func (s *Service) ProbeProxy(ctx context.Context, id int64) (domain.Proxy, error
 // 走**同一条**既有 seam（KindTemplates → Sched.InvalidateAll），不另起一条 reload
 // 通路——代理决定账号的出口，出口 client 在快照期解析，故它与模板同属「全量重装」
 // 类变更；跨实例由既有 NOTIFY（d.Templates() = mark(KindTemplates|KindClients)）
-// 收敛，M2 在该 reload 里跑 Pool.Prune。
+// 收敛，那次 reload 里跑 egress.Pool.Detach（锁内摘出旧规格 client，锁外关闭连接池）。
 func (s *Service) invalidateProxyPool(ctx context.Context) {
 	s.inv.Templates()
 	s.publish(ctx, notify.Change{Templates: true})

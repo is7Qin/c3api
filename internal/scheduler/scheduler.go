@@ -136,10 +136,10 @@ type Selection struct {
 	CandidateFingerprint    string
 	lease                   *leaseToken
 	// session 本次预留认领的 codex 会话（仅 codex 凭据；nil = 无会话——非 codex
-	// 面不认领）。Release 归还；CodexIdentity/StepIdentity 经它读写。
+	// 面不认领）。Release 归还；IdentityFor/StepIdentity 经它读写。
 	session *codexSession
-	// pool 会话所属池（线程退役出口；owner 对齐不读池——凭据失效是账号级的，见
-	// AlignCodexOwner）。全忙兜底的临时会话无池。
+	// pool 会话所属池（线程退役出口；owner 对齐不读池——凭据失效是账号级的，且对齐
+	// 用的是会话自己的字段，见 IdentityFor）。全忙兜底的临时会话无池。
 	pool             *identityPool
 	ModelMappingMode domain.ModelMappingMode
 	// SupplierFinance 选中本账号时捕获的不可变财务上下文（spec 2026-10-09
