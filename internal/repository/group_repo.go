@@ -17,7 +17,6 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
-	"github.com/is7qin/c3api/internal/ent/accountext"
 	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/proxy"
@@ -161,11 +160,13 @@ func (r *GroupRepo) LoadGroupsAccountsFull(ctx context.Context) (map[int64][]*do
 //     与旧 eager-load 语义一致，调度器 Select 区分"组不存在"与"组无账号"）。
 //  3. `SELECT account_id, group_id FROM account_groups`——成员关系全表扫描，
 //     零参数。
-//  4. `SELECT * FROM account_exts`——账号 ext 全表扫描 + 内存 join（此后
-//     codex 路由按 Account.Ext 派生 AccountCredential）。不 eager-load 的原因
-//     同成员关系：ext 的 FK 是 account_id，eager-load 生成 `WHERE account_id
-//     IN (全部账号 id)`——参数数 = 账号实体数，>65,535 触顶；全表扫描零参数，
-//     与账号全表扫描同一量级带宽。
+//  4. `SELECT <ext 投影列>, a.identity_revision FROM account_exts e JOIN accounts a`
+//     ——账号 ext 全表扫描 + 父行 K 的**同一次**读 + 内存 join（此后 codex 路由按
+//     Account.Ext 派生 AccountCredential）。K 与凭据内容必须同一条语句带出：分两次
+//     读会得到"旧内容 + 新 K"的错配（那条凭据的事件能通过新身份的围栏）。不
+//     eager-load 的原因同成员关系：ext 的 FK 是 account_id，eager-load 生成
+//     `WHERE account_id IN (全部账号 id)`——参数数 = 账号实体数，>65,535 触顶；
+//     全表扫描零参数，与账号全表扫描同一量级带宽。
 //  5. `SELECT * FROM proxies WHERE deleted_at IS NULL`——出口代理全表扫描 +
 //     内存 join（spec-proxy-pool §4.1：把 `Account.ProxyID` 展开成
 //     `Account.Proxy`）。代理是小表（十到百条），见 proxyIndexByID 注释。
@@ -184,13 +185,9 @@ func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool) (
 	if err != nil {
 		return nil, nil, fmt.Errorf("load groups-accounts (accounts scan): %w", err)
 	}
-	exts, err := r.client.AccountExt.Query().All(ctx)
+	extByAccount, err := r.accountExtSnapshot(ctx, 0)
 	if err != nil {
 		return nil, nil, fmt.Errorf("load groups-accounts (account_ext scan): %w", err)
-	}
-	extByAccount := make(map[int64]*ent.AccountExt, len(exts))
-	for _, e := range exts {
-		extByAccount[e.AccountID] = e
 	}
 	proxies, err := r.proxyIndexByID(ctx)
 	if err != nil {
@@ -198,11 +195,14 @@ func (r *GroupRepo) loadGroupsAccounts(ctx context.Context, withUniverse bool) (
 	}
 	byID := make(map[int64]*domain.Account, len(accs))
 	for _, a := range accs {
-		if e := extByAccount[a.ID]; e != nil {
-			a.Edges.Ext = []*ent.AccountExt{e}
-		}
 		d := toDomainAccount(a)
 		expandAccountProxy(d, proxies)
+		if snap, ok := extByAccount[a.ID]; ok {
+			// 凭据内容与 K 来自**同一条**语句（见 accountExtSnapshot）：成对覆盖，
+			// 不得一半用账号扫描的 K、一半用 ext 扫描的内容（"旧内容 + 新 K"）。
+			d.Ext = snap.ext
+			d.IdentityRevision = snap.identityRevision
+		}
 		byID[a.ID] = d
 	}
 	gids, err := r.client.Group.Query().Where(group.DeletedAtIsNil()).IDs(ctx)
@@ -350,6 +350,48 @@ func (r *GroupRepo) LoadAssignmentMultipliers(ctx context.Context) (map[billing.
 	return out, nil
 }
 
+// accountExtSnapshot 快照装载面的 ext 读（**一条**语句）：凭据内容（ext 列）与
+// 来源身份代际 K（父账号行的 identity_revision）来自同一次读，因此快照里的一对
+// "凭据 + K"永远属于同一个版本——分两次读会读出"旧内容 + 新 K"，那条凭据的事件
+// 就能通过新身份的围栏。
+//
+// groupID = 0 读全量（与旧的全表扫描同义）；非 0 只读该组的账号（组级定向重载，
+// 不做全表扫描）。两种情形都是零 IN 参数：参数数不随账号规模增长（PG 65,535 上限
+// 约束见 loadGroupsAccounts 顶部）。
+func (r *GroupRepo) accountExtSnapshot(ctx context.Context, groupID int64) (map[int64]accountExtSnapshotRow, error) {
+	query := `SELECT ` + accountExtProjectionColumns + `, a.identity_revision
+FROM account_exts e JOIN accounts a ON a.id = e.account_id`
+	args := []any{}
+	if groupID != 0 {
+		args = append(args, groupID)
+		query += ` WHERE a.deleted_at IS NULL AND EXISTS (
+	SELECT 1 FROM account_groups ag WHERE ag.account_id = a.id AND ag.group_id = $1)`
+	}
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, query, args, rows); err != nil {
+		return nil, err
+	}
+	defer rows.Close() // nolint:errcheck // Rows.Err reports iteration failures.
+	out := make(map[int64]accountExtSnapshotRow)
+	for rows.Next() {
+		ext, identityRevision, err := scanAccountExtRevision(rows)
+		if err != nil {
+			return nil, err
+		}
+		out[ext.AccountID] = accountExtSnapshotRow{ext: ext, identityRevision: identityRevision}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// accountExtSnapshotRow 一行 ext 投影与和它同一次读出的父行 K。
+type accountExtSnapshotRow struct {
+	ext              *domain.AccountExt
+	identityRevision int64
+}
+
 // LoadGroupAccounts 单组账号（组级定向重载数据源）。崩溃修复：旧实现
 // `QueryAccounts()` 的 m2m 邻接跳生成 `WHERE id IN (该组全部账号 id)`——
 // 单组账号数 >65,535 即超 PG 参数上限。改用 EXISTS 谓词
@@ -360,10 +402,9 @@ func (r *GroupRepo) LoadAssignmentMultipliers(ctx context.Context) (map[billing.
 // 返回无序（调用方构建快照/路由，不依赖顺序）。
 func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*domain.Account, error) {
 	// 软删除：已删 account 不进调度器快照（与 LoadGroupsAccounts 同语义）。
-	// 账号侧 ext 同触顶约束（单组账号 >65,535）：不 eager-load，经 account 边
-	// 子查询过滤——ent 对 m2o 边生成 `account_id IN (SELECT id FROM accounts
-	// WHERE ...)`（子查询非参数列表，语句参数数恒为常量——与上方 EXISTS 谓词
-	// 同界）；account_ext 表按组定向取，不做全表扫描（组级定向重载语义）。
+	// 账号侧 ext 同触顶约束（单组账号 >65,535）：不 eager-load，按组定向取
+	// （EXISTS 子查询，参数数恒为 1）；ext 与父行 K 在同一条语句里读出
+	// （见 accountExtSnapshot），不做全表扫描（组级定向重载语义）。
 	accs, err := r.client.Account.Query().
 		Where(account.DeletedAtIsNil(), account.HasGroupsWith(group.IDEQ(groupID))).
 		WithTemplate(func(q *ent.TemplateQuery) { q.WithExt() }). // ext 边快照合并 StripImageTools
@@ -371,15 +412,9 @@ func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 	if err != nil {
 		return nil, fmt.Errorf("load group accounts (group %d): %w", groupID, err)
 	}
-	exts, err := r.client.AccountExt.Query().
-		Where(accountext.HasAccountWith(account.DeletedAtIsNil(), account.HasGroupsWith(group.IDEQ(groupID)))).
-		All(ctx)
+	extByAccount, err := r.accountExtSnapshot(ctx, groupID)
 	if err != nil {
 		return nil, fmt.Errorf("load group accounts (account_ext scan, group %d): %w", groupID, err)
-	}
-	extByAccount := make(map[int64]*ent.AccountExt, len(exts))
-	for _, e := range exts {
-		extByAccount[e.AccountID] = e
 	}
 	out := make([]*domain.Account, 0, len(accs))
 	proxies, err := r.proxyIndexByID(ctx)
@@ -387,11 +422,13 @@ func (r *GroupRepo) LoadGroupAccounts(ctx context.Context, groupID int64) ([]*do
 		return nil, fmt.Errorf("load group accounts (proxy scan, group %d): %w", groupID, err)
 	}
 	for _, a := range accs {
-		if e := extByAccount[a.ID]; e != nil {
-			a.Edges.Ext = []*ent.AccountExt{e}
-		}
 		d := toDomainAccount(a)
 		expandAccountProxy(d, proxies)
+		if snap, ok := extByAccount[a.ID]; ok {
+			// 凭据内容与 K 来自同一条语句（见 accountExtSnapshot）。
+			d.Ext = snap.ext
+			d.IdentityRevision = snap.identityRevision
+		}
 		out = append(out, d)
 	}
 	return out, nil

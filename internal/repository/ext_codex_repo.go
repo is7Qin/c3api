@@ -454,9 +454,65 @@ func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64
 	return toDomainAccountExt(row), nil
 }
 
+// accountExtProjectionColumns ext 投影的列清单：额度面凭据投影与调度器快照共用
+// 一份（表别名固定为 `e`，顺序即扫描顺序——改动必须同步 scanAccountExt）。
+const accountExtProjectionColumns = `e.account_id, e.credential_type, e.codex_identity,
+       e.codex_oauth_token, e.codex_oauth_refresh_token, e.codex_oauth_expires_at,
+       e.codex_pat_key, e.codex_email, e.codex_account_id`
+
+// nullStrPtr 可空文本列 → 指针（NULL 与空串在领域模型里都是"未提供"）。
+func nullStrPtr(v sql.NullString) *string {
+	if !v.Valid {
+		return nil
+	}
+	raw := v.String
+	return &raw
+}
+
+// scanAccountExtRevision 按 accountExtProjectionColumns 的列序读一行 ext 投影，
+// 并读出紧随其后的 `a.identity_revision`（两条使用方都按"投影列 + 父行 K"选列）。
+// codex_identity 是 jsonb：NULL → nil，坏 json → 报错原样上抛（与 ent 生成层扫描器
+// 同语义）。
+func scanAccountExtRevision(rows *entsql.Rows) (*domain.AccountExt, int64, error) {
+	var (
+		ext              domain.AccountExt
+		credentialType   string
+		identity         []byte
+		oauthToken       sql.NullString
+		oauthRefresh     sql.NullString
+		oauthExpires     sql.NullTime
+		patKey           sql.NullString
+		email            sql.NullString
+		codexAccountID   sql.NullString
+		identityRevision int64
+	)
+	if err := rows.Scan(&ext.AccountID, &credentialType, &identity, &oauthToken, &oauthRefresh,
+		&oauthExpires, &patKey, &email, &codexAccountID, &identityRevision); err != nil {
+		return nil, 0, err
+	}
+	ext.CredentialType = credential.Type(credentialType)
+	ext.CodexOAuthToken = nullStrPtr(oauthToken)
+	ext.CodexOAuthRefreshToken = nullStrPtr(oauthRefresh)
+	ext.CodexPATKey = nullStrPtr(patKey)
+	ext.CodexEmail = nullStrPtr(email)
+	ext.CodexAccountID = nullStrPtr(codexAccountID)
+	if oauthExpires.Valid {
+		t := oauthExpires.Time
+		ext.CodexOAuthExpiresAt = &t
+	}
+	if len(identity) > 0 {
+		var id domain.CodexIdentity
+		if err := json.Unmarshal(identity, &id); err != nil {
+			return nil, 0, fmt.Errorf("account_id=%d codex_identity decode: %w", ext.AccountID, err)
+		}
+		ext.CodexIdentity = &id
+	}
+	return &ext, identityRevision, nil
+}
+
 // GetOwnedAccountCredential 额度面（无 Selection）的凭据投影（§2.5）：**一条
-// SQL** 同时读出凭据列与父账号行的 `identity_revision`——`account_ext e JOIN
-// accounts a`，owner 谓词 AND 在同一语句的 WHERE 里。
+// SQL** 同时读出凭据列与父账号行的 `identity_revision`——`account_exts` JOIN
+// `accounts`，owner 谓词 AND 在同一语句的 WHERE 里。
 //
 // 为什么必须一条语句：分两次读（先 ext 取凭据内容、再 accounts 取 K）时，两条
 // 语句之间可能夹进一次管理面凭据替换 ⇒ 读出"旧内容 + 新 K"，这份凭据建出的条目
@@ -464,12 +520,10 @@ func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64
 // 身份）。JOIN 读出的两半来自同一快照，结构上没有这个窗口。
 //
 // 越域 / 账号缺失 / 无 ext 行 ⇒ ErrNotFound（调用方按"无上游能力"处理，不区分
-// 缺失原因以免泄漏归属）。只投影凭据面用到的列——`codex_email` 等不在此列。
+// 缺失原因以免泄漏归属）。
 func (r *AccountExtRepo) GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error) {
-	query := `SELECT e.credential_type, e.codex_identity, e.codex_oauth_token, e.codex_oauth_refresh_token,
-       e.codex_oauth_expires_at, e.codex_pat_key, e.codex_account_id, a.identity_revision
-FROM account_ext e
-JOIN accounts a ON a.id = e.account_id
+	query := `SELECT ` + accountExtProjectionColumns + `, a.identity_revision
+FROM account_exts e JOIN accounts a ON a.id = e.account_id
 WHERE e.account_id = $1`
 	args := []any{accountID}
 	if s := domain.AccountScopeFrom(ctx); s.Set {
@@ -487,50 +541,13 @@ WHERE e.account_id = $1`
 		}
 		return nil, fmt.Errorf("%w: account_id=%d missing or outside scope", ErrNotFound, accountID)
 	}
-	var (
-		credentialType string
-		identity       []byte
-		oauthToken     sql.NullString
-		oauthRefresh   sql.NullString
-		oauthExpires   sql.NullTime
-		patKey         sql.NullString
-		codexAccountID sql.NullString
-		identityRev    int64
-	)
-	if err := rows.Scan(&credentialType, &identity, &oauthToken, &oauthRefresh,
-		&oauthExpires, &patKey, &codexAccountID, &identityRev); err != nil {
+	ext, identityRevision, err := scanAccountExtRevision(rows)
+	if err != nil {
 		return nil, err
-	}
-	// 只填凭据投影用到的列（其余列额度面不消费，保持 nil = 未提供）。
-	nullStr := func(v sql.NullString) *string {
-		if !v.Valid {
-			return nil
-		}
-		raw := v.String
-		return &raw
-	}
-	ext := &domain.AccountExt{
-		AccountID:              accountID,
-		CredentialType:         credential.Type(credentialType),
-		CodexOAuthToken:        nullStr(oauthToken),
-		CodexOAuthRefreshToken: nullStr(oauthRefresh),
-		CodexPATKey:            nullStr(patKey),
-		CodexAccountID:         nullStr(codexAccountID),
-	}
-	if oauthExpires.Valid {
-		t := oauthExpires.Time
-		ext.CodexOAuthExpiresAt = &t
-	}
-	if len(identity) > 0 {
-		var id domain.CodexIdentity
-		if err := json.Unmarshal(identity, &id); err != nil {
-			return nil, fmt.Errorf("account_id=%d codex_identity decode: %w", accountID, err)
-		}
-		ext.CodexIdentity = &id
 	}
 	// 凭据组装与类型分发只有一处（CredentialFromExt）；这里补上同一次读出的 K。
 	cred := domain.CredentialFromExt(ext)
-	cred.IdentityRevision = identityRev
+	cred.IdentityRevision = identityRevision
 	return &cred, nil
 }
 

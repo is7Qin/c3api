@@ -352,12 +352,13 @@ func TestAccountAndGroup(t *testing.T) {
 		WithArgs(int64(1)).
 		WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "credential_type", "strip_image_tools"}))
 	// 账号侧 ext 不 eager-load（FK=account_id 的 IN 参数数受账号规模驱动——
-	// >65,535 触顶）→ 全表扫描 + 内存 join（零参数，与成员关系扫描同构）；
-	// api_key 账号无 ext 行 → 空结果 → Ext 边 nil（语义与真实导入路径一致）
-	tr.pool.ExpectQuery(q(`FROM "account_exts"`)).
-		WillReturnRows(pgxmock.NewRows([]string{"id", "account_id", "credential_type", "codex_identity",
+	// >65,535 触顶）→ 全表扫描 + 父行 K 的**同一次**读 + 内存 join（零参数，与成员
+	// 关系扫描同构）；api_key 账号无 ext 行 → 空结果 → Ext 保持 nil（语义与真实
+	// 导入路径一致）
+	tr.pool.ExpectQuery(q(`FROM account_exts e JOIN accounts a`)).
+		WillReturnRows(pgxmock.NewRows([]string{"account_id", "credential_type", "codex_identity",
 			"codex_oauth_token", "codex_oauth_refresh_token", "codex_oauth_expires_at",
-			"codex_pat_key", "codex_email", "codex_account_id"}))
+			"codex_pat_key", "codex_email", "codex_account_id", "identity_revision"}))
 	// 出口代理全表扫描（spec-proxy-pool §4.1：`Account.ProxyID` → `Account.Proxy`
 	// 展开）。代理是小表，零参数全扫描；空结果 ⇒ 全部直连（Proxy 留 nil）。
 	tr.pool.ExpectQuery(q(`FROM "proxies"`)).
@@ -398,6 +399,54 @@ func TestAccountAndGroup(t *testing.T) {
 	a2, err := tr.repos.Accounts.GetAccount(ctx(), acc.ID)
 	require.NoError(t, err)
 	require.Equal(t, acc.ID, a2.ID, "account round-trip")
+	tr.expectDone(t)
+}
+
+// accountExtRowFixture ext 投影行（列序 = accountExtProjectionColumns + 父行 K）。
+// revision 刻意与 accounts 行的 identity_revision 取不同值：快照里"凭据 + K"必须
+// 成对来自同一条语句。
+func accountExtRowFixture(accountID, revision int64) *pgxmock.Rows {
+	return pgxmock.NewRows([]string{"account_id", "credential_type", "codex_identity",
+		"codex_oauth_token", "codex_oauth_refresh_token", "codex_oauth_expires_at",
+		"codex_pat_key", "codex_email", "codex_account_id", "identity_revision"}).
+		AddRow(accountID, "codex-oauth", []byte(`{"installation_id":"inst-1"}`),
+			"at-1", "rt-1", sql.NullTime{}, sql.NullString{}, sql.NullString{}, "codex-up-1", revision)
+}
+
+// TestLoadGroupsAccountsPairsCredentialWithItsOwnRevision 快照装载的凭据内容与 K
+// 必须来自**同一条**语句：凭据列（account_exts）与父行 identity_revision 在一条
+// JOIN SQL 里读出。分两次读时，"先读 ext 再读 accounts"之间的管理面凭据替换会让
+// 快照拿到"旧内容 + 新 K"，那条凭据的轮转/判死于是能通过新身份的围栏。
+//
+// 判据：accounts 行给 K=1，ext 行给 K=9 ⇒ 快照必须取 9（与凭据内容同源），且 ext
+// 读只发生一次（多一次读就会撞上 pgxmock 的未预期查询）。
+func TestLoadGroupsAccountsPairsCredentialWithItsOwnRevision(t *testing.T) {
+	tr := newRepos(t)
+
+	tr.pool.ExpectQuery(q(`FROM "accounts"`)).WillReturnRows(accountRow()) // identity_revision = 1
+	tr.pool.ExpectQuery(q(`FROM "templates"`)).WithArgs(int64(1)).WillReturnRows(templateRow())
+	tr.pool.ExpectQuery(q(`FROM "template_exts"`)).WithArgs(int64(1)).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "template_id", "credential_type", "strip_image_tools"}))
+	tr.pool.ExpectQuery(q(`FROM account_exts e JOIN accounts a`)).
+		WillReturnRows(accountExtRowFixture(2, 9)) // 与 accounts 行的 K 不同 ⇒ 只有成对读才取到 9
+	tr.pool.ExpectQuery(q(`FROM "proxies"`)).
+		WillReturnRows(pgxmock.NewRows([]string{"id", "name", "scheme", "host", "port",
+			"username", "password", "enabled", "remark", "last_probe_at", "last_probe_ok",
+			"last_probe_error"}))
+	tr.pool.ExpectQuery(q(`FROM "groups"`)).
+		WillReturnRows(pgxmock.NewRows([]string{"id"}).AddRow(int64(3)))
+	tr.pool.ExpectQuery(q(`SELECT account_id, group_id FROM account_groups`)).
+		WillReturnRows(pgxmock.NewRows([]string{"account_id", "group_id"}).AddRow(int64(2), int64(3)))
+
+	m, err := tr.repos.Groups.LoadGroupsAccounts(ctx())
+	require.NoError(t, err)
+	got := m[3]
+	require.Len(t, got, 1)
+	require.NotNil(t, got[0].Ext, "ext 行合并进快照（凭据投影来源）")
+	require.NotNil(t, got[0].Ext.CodexOAuthRefreshToken)
+	require.Equal(t, "rt-1", *got[0].Ext.CodexOAuthRefreshToken, "凭据内容来自 ext 投影")
+	require.Equal(t, int64(9), got[0].IdentityRevision,
+		"K 必须与凭据内容同一次读出（分两次读会拿到 accounts 行的 1 = 旧内容+新 K 的反向错配）")
 	tr.expectDone(t)
 }
 
