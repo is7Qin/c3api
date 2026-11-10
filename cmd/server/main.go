@@ -468,6 +468,9 @@ func main() {
 		supplierViewLoader.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return supplierViewSnap.Obs(now) })
 	}
 	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Auth: auth, Log: log, EmailCodeStore: verification.New(rdb),
+		// codex 设备码登录：无服务端会话（发起返回凭据、完成时一次性轮询落库），
+		// 因此只需协议面装配，无 Redis 依赖。
+		CodexLogin:         sdkbridge.NewCodexLogin(),
 		SupplierViewReload: supplierViewReloader(supplierViewLoader),
 		TimeLocation:       svcLoc,
 		// Retention 三表原件（不预先折 min：读 N 张表取最保守 floor 是

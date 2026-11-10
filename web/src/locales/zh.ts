@@ -14,7 +14,8 @@ export default {
     "confirmDelete": "确认删除",
     "loadFailed": "加载失败：{{message}}",
     "logout": "退出",
-    "back": "返回"
+    "back": "返回",
+    "close": "关闭"
   },
   "nav": {
     "overview": "总览",
@@ -266,6 +267,28 @@ export default {
     "title": "账号",
     "subtitle": "上游密钥与配额，运行时视图每 10 秒刷新",
     "new": "新建账号",
+    "login": {
+      "button": "登录 ChatGPT",
+      "title": "通过 ChatGPT 登录添加 Codex 账号",
+      "desc": "在浏览器完成授权后点「我已完成授权」，账号会当场写入号池（与批量导入同一条写入路径）",
+      "template": "账号模板",
+      "templatePlaceholder": "选择 codex-oauth 模板",
+      "noTemplate": "没有 codex-oauth 模板，请先创建模板",
+      "group": "分组（可选）",
+      "groupNone": "暂不分组",
+      "ungroupedHint": "未分配分组的账号不接流量——可稍后在账号列表里归组",
+      "codeHint": "在打开的页面输入下面的一次性码：",
+      "expiresIn": "有效期约 {{minutes}} 分钟",
+      "stillPending": "还没检测到授权——请确认浏览器里已点「允许」，然后再次点「我已完成授权」",
+      "completeAction": "我已完成授权",
+      "checking": "正在确认授权…",
+      "unknownError": "登录失败，请重新发起",
+      "expired": "设备码已过期，请重新发起登录",
+      "denied": "你拒绝了授权，请重新发起登录",
+      "done": "登录成功，账号已写入号池",
+      "start": "开始登录",
+      "retry": "重新发起"
+    },
     "import": {
       "button": "导入",
       "title": "批量导入 Codex 账号",

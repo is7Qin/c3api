@@ -95,6 +95,18 @@ func (s supplierSurface) PostSupplierAccountsBatchImportCodexPat(w http.Response
 	s.api.PostAccountsBatchImportCodexPat(w, r)
 }
 
+// PostSupplierAccountsCodexDeviceLogin POST /api/user/supplier/accounts/codex-device-login。
+// 归属恒为 JWT 本人（作用域由供应商面中间件注入 ctx，service 读 AccountScopeFrom）。
+func (s supplierSurface) PostSupplierAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request) {
+	s.api.PostAccountsCodexDeviceLogin(w, r)
+}
+
+// PostSupplierAccountsCodexDeviceLoginComplete POST /api/user/supplier/accounts/codex-device-login/complete。
+// 无服务端会话可越权：落库归属恒由 ctx 作用域决定（JWT 本人）。
+func (s supplierSurface) PostSupplierAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
+	s.api.PostAccountsCodexDeviceLoginComplete(w, r)
+}
+
 // GetSupplierAccountsId GET /api/user/supplier/accounts/{id}。
 func (s supplierSurface) GetSupplierAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
 	s.api.GetAccountsId(w, r, id)

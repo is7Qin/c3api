@@ -38,6 +38,12 @@ var (
 	ErrMailNotConfigured     = errors.New("service: mail not configured")
 	ErrMailQueueFull         = errors.New("service: mail queue full")
 	ErrMailChannelTestFailed = errors.New("service: mail channel test failed")
+	// ErrUnavailable 可选能力未装配（依赖注入缺省）→ 503。与「故障」区分：
+	// 这是部署形态缺失（如未注入协议面），不是瞬时错误。
+	ErrUnavailable = errors.New("service: unavailable")
+	// ErrUpstream 上游认证/管理端点不可用 → 502。错误细节只进日志（认证端点
+	// 响应体可能带内部追踪串，不透给客户端）。
+	ErrUpstream = errors.New("service: upstream unavailable")
 )
 
 // emailExistsError 邮箱重复哨兵：干净文案 + Unwrap → ErrConflict（409）。零值

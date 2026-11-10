@@ -93,6 +93,10 @@ func WriteServiceErr(w http.ResponseWriter, err error) {
 		WriteErr(w, http.StatusInternalServerError, err.Error())
 	case errors.Is(err, serviceerr.ErrMailChannelTestFailed):
 		WriteErr(w, http.StatusInternalServerError, err.Error())
+	case errors.Is(err, serviceerr.ErrUnavailable):
+		WriteErr(w, http.StatusServiceUnavailable, err.Error())
+	case errors.Is(err, serviceerr.ErrUpstream):
+		WriteErr(w, http.StatusBadGateway, err.Error())
 	default:
 		WriteErr(w, http.StatusInternalServerError, "internal error")
 	}

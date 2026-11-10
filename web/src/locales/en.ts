@@ -14,7 +14,8 @@ export default {
     "confirmDelete": "Confirm delete",
     "loadFailed": "Failed to load: {{message}}",
     "logout": "Log out",
-    "back": "Back"
+    "back": "Back",
+    "close": "Close"
   },
   "nav": {
     "overview": "Overview",
@@ -266,6 +267,28 @@ export default {
     "title": "Accounts",
     "subtitle": "Upstream keys & quotas; runtime view refreshes every 10 seconds",
     "new": "New account",
+    "login": {
+      "button": "Sign in with ChatGPT",
+      "title": "Add a Codex account via ChatGPT sign-in",
+      "desc": "Finish authorizing in the browser, then click “I've authorized” — the account is written into the pool right away (same write path as batch import)",
+      "template": "Account template",
+      "templatePlaceholder": "Select a codex-oauth template",
+      "noTemplate": "No codex-oauth template yet — create one first",
+      "group": "Group (optional)",
+      "groupNone": "No group for now",
+      "ungroupedHint": "Ungrouped accounts receive no traffic — you can assign a group later in the account list",
+      "codeHint": "Enter this one-time code on the page that opens:",
+      "expiresIn": "Valid for about {{minutes}} minutes",
+      "stillPending": "Authorization not detected yet — make sure you clicked Allow in the browser, then click “I've authorized” again",
+      "completeAction": "I've authorized",
+      "checking": "Checking authorization…",
+      "unknownError": "Sign-in failed — start it again",
+      "expired": "The device code expired — start the sign-in again",
+      "denied": "You denied the authorization — start the sign-in again",
+      "done": "Signed in — the account has been added to the pool",
+      "start": "Start sign-in",
+      "retry": "Start over"
+    },
     "import": {
       "button": "Import",
       "title": "Import Codex accounts",

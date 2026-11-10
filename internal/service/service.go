@@ -39,6 +39,8 @@ var (
 	ErrMailNotConfigured     = serviceerr.ErrMailNotConfigured
 	ErrMailQueueFull         = serviceerr.ErrMailQueueFull
 	ErrMailChannelTestFailed = serviceerr.ErrMailChannelTestFailed
+	ErrUnavailable           = serviceerr.ErrUnavailable
+	ErrUpstream              = serviceerr.ErrUpstream
 )
 
 // EmailVerificationRequired 缺验证码时 400 响应的固定哨兵片段（前端发现机制）。
@@ -513,6 +515,9 @@ type Service struct {
 	//（测试/降级路径），仅做值域校验。
 	supplierGranularity time.Duration
 	tzLoc               *time.Location
+	// codexLogin codex 设备码登录协议面（sdkbridge.CodexLogin 实现；nil =
+	// 未装配，端点 503——与其它可选装配面同语义，无降级路径）。
+	codexLogin CodexLoginProvider
 	// retention 统计面 coverage 步的保留期来源（usage_logs/err_logs/usage_stats
 	// 三表天数；New 经 Deps.Retention 一次性注入）。判定唯一入口
 	// domain.Admit 以**参数**接收它（纯函数：不读配置、不读全局）。Days(t) <= 0
@@ -605,6 +610,9 @@ type Deps struct {
 	// 窗口守卫的 cutoff 来源，与 retention worker 同源（同一份天数 + 同一换算）。
 	// 0 = 未装配（测试/降级路径），守卫关闭。
 	RoutingObservationRetentionDays int
+	// CodexLogin codex 设备码登录协议面（sdkbridge.CodexLogin 实现）。nil =
+	// 端点 503（测试/降级路径）。协议细节全部在实现侧，service 只见接口。
+	CodexLogin CodexLoginProvider
 	// SupplierThawGranularity 解冻粒度（main 传 cfg.Supplier.ThawGranularity）：
 	// 管理面 PATCH share_bp/freeze_hours 跨字段上界校验（§6.4 A16⑤）。0 = 未装配。
 	SupplierThawGranularity time.Duration
@@ -627,6 +635,7 @@ func New(deps Deps) *Service {
 		clearBalanceWarningCooldown: deps.ClearBalanceWarningCooldown,
 		routingRetentionDays:        deps.RoutingObservationRetentionDays,
 		supplierGranularity:         deps.SupplierThawGranularity,
+		codexLogin:                  deps.CodexLogin,
 		retention:                   deps.Retention}
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot

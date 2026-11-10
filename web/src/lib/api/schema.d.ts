@@ -197,6 +197,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/codex-device-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
+         * @description 无服务端会话——发起响应自带完成所需的凭据，任意实例都能处理 complete。
+         */
+        post: operations["PostAccountsCodexDeviceLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/accounts/codex-device-login/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
+         * @description 模板/分组校验先于上游轮询——上游授权码一次性，先换码再拒绝会烧掉用户刚授权的凭据。
+         */
+        post: operations["PostAccountsCodexDeviceLoginComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/accounts/{id}": {
         parameters: {
             query?: never;
@@ -1672,6 +1712,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/supplier/accounts/codex-device-login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 发起 codex 设备码登录（归属恒为 JWT 本人；无服务端会话） */
+        post: operations["PostSupplierAccountsCodexDeviceLogin"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/supplier/accounts/codex-device-login/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 完成设备码登录（落库归属 = JWT 本人；无跨用户会话可越权） */
+        post: operations["PostSupplierAccountsCodexDeviceLoginComplete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/supplier/accounts/{id}": {
         parameters: {
             query?: never;
@@ -2715,6 +2789,56 @@ export interface components {
              * @description 保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）
              */
             supplier_user_id?: number | null;
+        };
+        CodexDeviceLoginStart: {
+            /** @description 上游轮询凭据（短期；complete 时回传；不落日志、不落库） */
+            device_auth_id: string;
+            /** @description 展示给用户的一次性码（在 verification_uri 页面输入） */
+            user_code: string;
+            /** @description 用户打开并输入 user_code 的页面 */
+            verification_uri: string;
+            /** @description 上游建议轮询间隔（前端在 pending 时用作重试节奏提示，缺省 5s） */
+            interval_seconds: number;
+            /** @description 设备码有效期（0 = 上游未下发） */
+            expires_in_seconds: number;
+        };
+        /** @description 完成设备码登录请求体（模板/分组在此提供——发起阶段不产生本地状态） */
+        CodexDeviceLoginCompleteBody: {
+            /** @description 发起响应原样回传 */
+            device_auth_id: string;
+            /** @description 发起响应原样回传 */
+            user_code: string;
+            /**
+             * Format: int64
+             * @description 必填：codex 账号归属模板（credential_type 必须 == codex-oauth——错配 → 400，且不消费上游授权码）
+             */
+            template_id: number;
+            /**
+             * Format: int64
+             * @description 可选：新建账号归组（不存在 → 404，且不消费上游授权码）
+             */
+            group_id?: number | null;
+        };
+        /** @description 完成调用的结果；pending = 用户尚未授权（可再次调用），其余为终态 */
+        CodexDeviceLoginResult: {
+            /**
+             * @description pending = 再点一次；expired/denied = 重新发起；authorized = 已落库
+             * @enum {string}
+             */
+            status: "pending" | "authorized" | "expired" | "denied";
+            /**
+             * Format: int64
+             * @description authorized：平台账号行 id（回读失败时缺省——刷新列表即可）
+             */
+            account_id?: number | null;
+            /** @description authorized：账号名（新建 = 邮箱） */
+            account_name?: string | null;
+            /** @description authorized：登录邮箱（组合幂等键①） */
+            email?: string | null;
+            /** @description authorized：上游账号/空间标识（组合幂等键②） */
+            codex_account_id?: string | null;
+            /** @description authorized：true = 新建账号，false = 更新既有账号凭据 */
+            imported?: boolean;
         };
         /** @description 行级失败条目（index = items 原始下标——行级定位契约） */
         ImportFailedItem: {
@@ -5172,6 +5296,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsCodexDeviceLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 设备码（前端展示 user_code + verification_uri，完成授权后回传 complete） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexDeviceLoginStart"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostAccountsCodexDeviceLoginComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexDeviceLoginCompleteBody"];
+            };
+        };
+        responses: {
+            /** @description 结果（status ∈ pending/authorized/expired/denied） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexDeviceLoginResult"];
                 };
             };
             default: components["responses"]["Error"];
@@ -8023,6 +8193,52 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsCodexDeviceLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 设备码（前端展示 user_code + verification_uri） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexDeviceLoginStart"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsCodexDeviceLoginComplete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CodexDeviceLoginCompleteBody"];
+            };
+        };
+        responses: {
+            /** @description 结果（status ∈ pending/authorized/expired/denied） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CodexDeviceLoginResult"];
                 };
             };
             default: components["responses"]["Error"];

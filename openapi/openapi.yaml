@@ -307,6 +307,39 @@ paths:
               schema: { $ref: '#/components/schemas/ImportResult' }
         default:
           $ref: '#/components/responses/Error'
+  /accounts/codex-device-login:
+    post:
+      operationId: PostAccountsCodexDeviceLogin
+      tags: [accounts]
+      summary: 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
+      description: 无服务端会话——发起响应自带完成所需的凭据，任意实例都能处理 complete。
+      responses:
+        '200':
+          description: 设备码（前端展示 user_code + verification_uri，完成授权后回传 complete）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexDeviceLoginStart' }
+        default:
+          $ref: '#/components/responses/Error'
+  /accounts/codex-device-login/complete:
+    post:
+      operationId: PostAccountsCodexDeviceLoginComplete
+      tags: [accounts]
+      summary: 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
+      description: 模板/分组校验先于上游轮询——上游授权码一次性，先换码再拒绝会烧掉用户刚授权的凭据。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodexDeviceLoginCompleteBody' }
+      responses:
+        '200':
+          description: 结果（status ∈ pending/authorized/expired/denied）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexDeviceLoginResult' }
+        default:
+          $ref: '#/components/responses/Error'
   /accounts/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -2254,6 +2287,37 @@ paths:
               schema: { $ref: '#/components/schemas/ImportResult' }
         default:
           $ref: '#/components/responses/Error'
+  /api/user/supplier/accounts/codex-device-login:
+    post:
+      operationId: PostSupplierAccountsCodexDeviceLogin
+      tags: [supplier]
+      summary: 发起 codex 设备码登录（归属恒为 JWT 本人；无服务端会话）
+      responses:
+        '200':
+          description: 设备码（前端展示 user_code + verification_uri）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexDeviceLoginStart' }
+        default:
+          $ref: '#/components/responses/Error'
+  /api/user/supplier/accounts/codex-device-login/complete:
+    post:
+      operationId: PostSupplierAccountsCodexDeviceLoginComplete
+      tags: [supplier]
+      summary: 完成设备码登录（落库归属 = JWT 本人；无跨用户会话可越权）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CodexDeviceLoginCompleteBody' }
+      responses:
+        '200':
+          description: 结果（status ∈ pending/authorized/expired/denied）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CodexDeviceLoginResult' }
+        default:
+          $ref: '#/components/responses/Error'
   /api/user/supplier/accounts/{id}:
     parameters:
       - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
@@ -3453,6 +3517,35 @@ components:
         cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
         upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
         supplier_user_id: { type: integer, format: int64, nullable: true, description: "保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）" }
+    CodexDeviceLoginStart:
+      type: object
+      required: [device_auth_id, user_code, verification_uri, interval_seconds, expires_in_seconds]
+      properties:
+        device_auth_id: { type: string, description: "上游轮询凭据（短期；complete 时回传；不落日志、不落库）" }
+        user_code: { type: string, description: "展示给用户的一次性码（在 verification_uri 页面输入）" }
+        verification_uri: { type: string, description: "用户打开并输入 user_code 的页面" }
+        interval_seconds: { type: integer, description: "上游建议轮询间隔（前端在 pending 时用作重试节奏提示，缺省 5s）" }
+        expires_in_seconds: { type: integer, description: "设备码有效期（0 = 上游未下发）" }
+    CodexDeviceLoginCompleteBody:
+      type: object
+      required: [device_auth_id, user_code, template_id]
+      description: 完成设备码登录请求体（模板/分组在此提供——发起阶段不产生本地状态）
+      properties:
+        device_auth_id: { type: string, description: "发起响应原样回传" }
+        user_code: { type: string, description: "发起响应原样回传" }
+        template_id: { type: integer, format: int64, description: "必填：codex 账号归属模板（credential_type 必须 == codex-oauth——错配 → 400，且不消费上游授权码）" }
+        group_id: { type: integer, format: int64, nullable: true, description: "可选：新建账号归组（不存在 → 404，且不消费上游授权码）" }
+    CodexDeviceLoginResult:
+      type: object
+      required: [status]
+      description: 完成调用的结果；pending = 用户尚未授权（可再次调用），其余为终态
+      properties:
+        status: { type: string, enum: [pending, authorized, expired, denied], description: "pending = 再点一次；expired/denied = 重新发起；authorized = 已落库" }
+        account_id: { type: integer, format: int64, nullable: true, description: "authorized：平台账号行 id（回读失败时缺省——刷新列表即可）" }
+        account_name: { type: string, nullable: true, description: "authorized：账号名（新建 = 邮箱）" }
+        email: { type: string, nullable: true, description: "authorized：登录邮箱（组合幂等键①）" }
+        codex_account_id: { type: string, nullable: true, description: "authorized：上游账号/空间标识（组合幂等键②）" }
+        imported: { type: boolean, description: "authorized：true = 新建账号，false = 更新既有账号凭据" }
     ImportFailedItem:
       type: object
       required: [index, error]

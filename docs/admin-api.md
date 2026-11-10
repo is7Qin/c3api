@@ -395,6 +395,55 @@
 
 > 批末一次性触发 invalidate + publish（`imported` 行归组 ∪ `updated` 行既有分组）——新凭据经 `account_ext` 快照即时生效，无需重启。
 
+### codex 设备码登录（ChatGPT OAuth device flow）
+
+`POST /api/admin/accounts/codex-device-login`
+
+`POST /api/admin/accounts/codex-device-login/complete`
+
+供应商面同构：`POST /api/user/supplier/accounts/codex-device-login` 与 `.../complete`（落库归属恒为 JWT 本人）。
+
+用 ChatGPT 账号授权直接建号，不必手工粘贴令牌。**网关不保存待授权会话**：发起响应自带完成所需的全部凭据，用户在浏览器授权后由前端触发 `complete`，服务端当场轮询一次。因此没有 TTL、没有跨实例状态，任意实例都能处理完成调用；浏览器关掉即自然放弃。
+
+**发起**（无请求体）→ `200`：
+
+| 字段 | 说明 |
+|---|---|
+| `device_auth_id` | 上游轮询凭据（短期；`complete` 时原样回传；不落库、不落日志） |
+| `user_code` | 展示给用户的一次性码 |
+| `verification_uri` | 用户打开并输入 `user_code` 的页面 |
+| `interval_seconds` | 上游建议轮询间隔（缺省 5）；`pending` 时前端据此提示用户何时再点 |
+| `expires_in_seconds` | 设备码有效期秒数，**恒为正**（上游未下发时按真客户端的 15 分钟上限补齐） |
+
+**完成**请求体：
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `device_auth_id` | string | ✅ | 发起响应原样回传 |
+| `user_code` | string | ✅ | 发起响应原样回传 |
+| `template_id` | int | ✅ | codex 账号归属模板；**`credential_type` 必须 == `codex-oauth`**（错配 → `400`） |
+| `group_id` | int / null | 否 | 新建账号归组（不存在 → `404`） |
+
+响应 `200`：
+
+```json
+{ "status": "authorized", "account_id": 12, "account_name": "a@example.com",
+  "email": "a@example.com", "codex_account_id": "acc-...", "imported": true }
+```
+
+| `status` | 含义 | 客户端动作 |
+|---|---|---|
+| `pending` | 上游尚未看到授权（通常几秒传播延迟） | 保留一次性码，稍后再调 `complete` |
+| `authorized` | 已换码并落库（`imported=true` 新建 / `false` 更新既有账号凭据） | 停止，刷新账号列表 |
+| `expired` | 设备码过期 | 重新发起 |
+| `denied` | 用户拒绝授权 | 重新发起 |
+
+**信任边界（如实表述）**：`device_auth_id` + `user_code` 是一对短期 bearer 凭据——持有二者的**任一已鉴权调用者**都能完成这次登录；网关不做「发起人绑定」（不保存会话、不签名句柄）。它们只在发起者自己的浏览器上下文里流转、不落日志，落库归属由**完成调用者**的作用域决定（供应商面写本人、管理面写平台）。
+
+**顺序保证**：模板/分组校验在**上游轮询之前**完成——上游授权码一次性，先换码再拒绝会烧掉用户刚批准的授权。落库复用批量导入的同一 upsert 核心（幂等组合键 `codex_email` + `codex_account_id`），因此新建账号按导入缺省配置（启用 / 私有缓存域 / ×1 / 并发 25），已存在行只换凭据列。
+
+错误：`400` 字段缺失/模板类型错配；`404` 模板或分组不存在；`409` 登录成功但账号写入失败（需重新登录或核对账号列表）；`502` 上游认证端点不可用（细节只进服务端日志）；`503` 该能力未装配。
+
 ### 账号用量聚合
 
 `GET /api/admin/accounts/usage?account_ids=1,2,3&from=...&to=...`

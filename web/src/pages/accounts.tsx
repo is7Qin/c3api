@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload, RotateCcw } from 'lucide-react'
+import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload, LogIn, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
@@ -60,6 +60,7 @@ import { compositeMaxSpanSeconds } from '@/lib/stats-capabilities'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
+import { CodexLoginDialog } from '@/components/codex-import/login-dialog'
 import { SupplierPicker } from '@/components/supplier/supplier-picker'
 
 type AccountView = components['schemas']['AccountView']
@@ -280,6 +281,8 @@ export default function Accounts() {
   const templatesQ = useQuery({ queryKey: ['templates'], queryFn: () => api.listTemplates({ limit: 100 }) })
   // 稳定引用：未加载时的 [] 不能每帧换身份（batchTplCtx 的 useMemo 依赖它）
   const templates = useMemo(() => templatesQ.data?.rows ?? [], [templatesQ.data])
+  // 设备码登录只对 codex-oauth 模板可用（其它类型没有 OAuth 凭据面）。
+  const hasOauthTemplates = useMemo(() => templates.some(tp => tp.CredentialType === 'codex-oauth'), [templates])
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: () => api.listGroups({ limit: 100 }) })
   const groups = groupsQ.data?.rows ?? []
   const rows = useMemo(() => data?.rows ?? [], [data?.rows])
@@ -620,6 +623,7 @@ export default function Accounts() {
   const reset = () => setDraft({})
   const [deleting, setDeleting] = useState<AccountView | null>(null)
   const [importOpen, setImportOpen] = useState(false)
+  const [loginOpen, setLoginOpen] = useState(false)
 
   // —— 生命周期编辑弹窗（倍率/缓存域；各自独立 fenced 写，打开时取行内代际）——
   const [multTarget, setMultTarget] = useState<AccountView | null>(null)
@@ -981,6 +985,9 @@ export default function Accounts() {
           <p className="text-sm text-muted-foreground">{t('accounts.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
+        <Button variant="outline" onClick={() => setLoginOpen(true)} disabled={!hasOauthTemplates} title={!hasOauthTemplates ? t('accounts.login.noTemplate') : undefined}>
+          <LogIn /> {t('accounts.login.button')}
+        </Button>
         <Button variant="outline" onClick={() => setImportOpen(true)} disabled={templates.length === 0} title={templates.length === 0 ? '无可用模板，请先创建 codex-oauth/pat 模板' : undefined}>
           <Upload /> {t('accounts.import.button')}
         </Button>
@@ -1926,6 +1933,13 @@ export default function Accounts() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <CodexLoginDialog
+        open={loginOpen}
+        onOpenChange={setLoginOpen}
+        templates={templates}
+        groups={groups}
+        onDone={() => qc.invalidateQueries({ queryKey: ['accounts'] })}
+      />
       <CodexImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}

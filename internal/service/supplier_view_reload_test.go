@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 )
@@ -69,4 +70,30 @@ func TestCreateAccountOwnedTriggersSupplierViewReload(t *testing.T) {
 	_, err = svc.CreateAccount(ctx, repository.AccountPatch{Name: new("owned"), TemplateID: new(int64(1)), UpstreamKey: new("k2"), SupplierUserID: &owner})
 	require.NoError(t, err)
 	require.Equal(t, 1, reload.calls, "带归属创建须触发视图换代")
+}
+
+// TestImportCodexOAuthSupplierScopeTriggersSupplierViewReload 批量导入入口与设备码
+// 登录共用写核心：供应商作用域的导入必须在批末触发财务视图换代（屏障在核心内，
+// 入口不得各自记得调用）。
+func TestImportCodexOAuthSupplierScopeTriggersSupplierViewReload(t *testing.T) {
+	fs := newFakeStore()
+	fs.tpls[1] = &domain.Template{ID: 1, Name: "t", CredentialType: credential.TypeCodexOAuth}
+	reload := &fakeSupplierViewReloader{}
+	svc := New(Deps{Store: fs, Invalidate: &invRecorder{}, EmailCodeStore: testEmailCodes, SupplierViewReload: reload})
+	tplID := int64(1)
+
+	supplierCtx := domain.WithAccountScope(context.Background(), domain.SupplierAccountScope(42))
+	_, err := svc.ImportCodexOAuthAccounts(supplierCtx, []domain.CodexOAuthImportItem{{
+		CodexEmail: "s@example.com", CodexAccountID: "acc-s",
+		CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt",
+	}}, &tplID, nil, domain.CodexImportConfig{})
+	require.NoError(t, err)
+	require.Equal(t, 1, reload.calls, "供应商面导入须触发视图换代")
+
+	_, err = svc.ImportCodexOAuthAccounts(context.Background(), []domain.CodexOAuthImportItem{{
+		CodexEmail: "p@example.com", CodexAccountID: "acc-p",
+		CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt",
+	}}, &tplID, nil, domain.CodexImportConfig{})
+	require.NoError(t, err)
+	require.Equal(t, 1, reload.calls, "管理面导入不触发供应商视图换代")
 }

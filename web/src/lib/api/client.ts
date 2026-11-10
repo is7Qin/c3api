@@ -197,6 +197,16 @@ export class ApiClient {
   // —— codex 凭据批量导入（行级失败归 failed——HTTP 恒 200）——
   importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
   importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
+  // —— codex 设备码登录（ChatGPT OAuth device flow）——
+  // 发起返回 device_auth_id/user_code 与展示信息；用户在浏览器授权后调用 complete，
+  // 服务端**当场轮询一次**并落库（无服务端会话、无 Redis）。complete 返回
+  // pending/authorized/expired/denied 四态：pending = 再点一次，其余为终态。
+  // device_auth_id 是短期 bearer 凭据：只在发起者的浏览器上下文里流转。
+  startCodexDeviceLogin = () => this.request<components['schemas']['CodexDeviceLoginStart']>('/accounts/codex-device-login', { method: 'POST' })
+  // 完成端点由**用户操作**触发（浏览器授权后点一次）：无服务端会话，回传发起响应
+  // 的凭据 + 落库参数；pending 表示上游还没看到授权，再点一次即可。
+  completeCodexDeviceLogin = (b: components['schemas']['CodexDeviceLoginCompleteBody']) =>
+    this.request<components['schemas']['CodexDeviceLoginResult']>('/accounts/codex-device-login/complete', { method: 'POST', body: JSON.stringify(b) })
   // —— 规则 ——
   listRules = (p?: { enabled?: boolean }) => this.request<components['schemas']['RuleListResponse']>('/rules', { params: toQuery(p) })
   createRule = (b: components['schemas']['RuleCreate']) => this.request<components['schemas']['Rule']>('/rules', { method: 'POST', body: JSON.stringify(b) })

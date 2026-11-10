@@ -34,6 +34,14 @@ const (
 	SignupDefault BalanceLogSource = "signup_default"
 )
 
+// Defines values for CodexDeviceLoginResultStatus.
+const (
+	CodexDeviceLoginResultStatusAuthorized CodexDeviceLoginResultStatus = "authorized"
+	CodexDeviceLoginResultStatusDenied     CodexDeviceLoginResultStatus = "denied"
+	CodexDeviceLoginResultStatusExpired    CodexDeviceLoginResultStatus = "expired"
+	CodexDeviceLoginResultStatusPending    CodexDeviceLoginResultStatus = "pending"
+)
+
 // Defines values for ErrorResponseReason.
 const (
 	CubeHorizon     ErrorResponseReason = "cube_horizon"
@@ -420,11 +428,11 @@ const (
 
 // Defines values for GetAdminSupplierSettlementsParamsStatus.
 const (
-	GetAdminSupplierSettlementsParamsStatusApproved GetAdminSupplierSettlementsParamsStatus = "approved"
-	GetAdminSupplierSettlementsParamsStatusPaid     GetAdminSupplierSettlementsParamsStatus = "paid"
-	GetAdminSupplierSettlementsParamsStatusPaying   GetAdminSupplierSettlementsParamsStatus = "paying"
-	GetAdminSupplierSettlementsParamsStatusPending  GetAdminSupplierSettlementsParamsStatus = "pending"
-	GetAdminSupplierSettlementsParamsStatusRejected GetAdminSupplierSettlementsParamsStatus = "rejected"
+	Approved GetAdminSupplierSettlementsParamsStatus = "approved"
+	Paid     GetAdminSupplierSettlementsParamsStatus = "paid"
+	Paying   GetAdminSupplierSettlementsParamsStatus = "paying"
+	Pending  GetAdminSupplierSettlementsParamsStatus = "pending"
+	Rejected GetAdminSupplierSettlementsParamsStatus = "rejected"
 )
 
 // Defines values for GetAdminSupplierSettlementsParamsKind.
@@ -794,6 +802,63 @@ type BatchUpdateTemplatesBody struct {
 // CodexCredits 充值余额（金额字符串，如 "12.50"；上游空串 → null，非空串占位）
 type CodexCredits struct {
 	Balance *string `json:"balance"`
+}
+
+// CodexDeviceLoginCompleteBody 完成设备码登录请求体（模板/分组在此提供——发起阶段不产生本地状态）
+type CodexDeviceLoginCompleteBody struct {
+	// DeviceAuthId 发起响应原样回传
+	DeviceAuthId string `json:"device_auth_id"`
+
+	// GroupId 可选：新建账号归组（不存在 → 404，且不消费上游授权码）
+	GroupId *int64 `json:"group_id"`
+
+	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == codex-oauth——错配 → 400，且不消费上游授权码）
+	TemplateId int64 `json:"template_id"`
+
+	// UserCode 发起响应原样回传
+	UserCode string `json:"user_code"`
+}
+
+// CodexDeviceLoginResult 完成调用的结果；pending = 用户尚未授权（可再次调用），其余为终态
+type CodexDeviceLoginResult struct {
+	// AccountId authorized：平台账号行 id（回读失败时缺省——刷新列表即可）
+	AccountId *int64 `json:"account_id"`
+
+	// AccountName authorized：账号名（新建 = 邮箱）
+	AccountName *string `json:"account_name"`
+
+	// CodexAccountId authorized：上游账号/空间标识（组合幂等键②）
+	CodexAccountId *string `json:"codex_account_id"`
+
+	// Email authorized：登录邮箱（组合幂等键①）
+	Email *string `json:"email"`
+
+	// Imported authorized：true = 新建账号，false = 更新既有账号凭据
+	Imported *bool `json:"imported,omitempty"`
+
+	// Status pending = 再点一次；expired/denied = 重新发起；authorized = 已落库
+	Status CodexDeviceLoginResultStatus `json:"status"`
+}
+
+// CodexDeviceLoginResultStatus pending = 再点一次；expired/denied = 重新发起；authorized = 已落库
+type CodexDeviceLoginResultStatus string
+
+// CodexDeviceLoginStart defines model for CodexDeviceLoginStart.
+type CodexDeviceLoginStart struct {
+	// DeviceAuthId 上游轮询凭据（短期；complete 时回传；不落日志、不落库）
+	DeviceAuthId string `json:"device_auth_id"`
+
+	// ExpiresInSeconds 设备码有效期（0 = 上游未下发）
+	ExpiresInSeconds int `json:"expires_in_seconds"`
+
+	// IntervalSeconds 上游建议轮询间隔（前端在 pending 时用作重试节奏提示，缺省 5s）
+	IntervalSeconds int `json:"interval_seconds"`
+
+	// UserCode 展示给用户的一次性码（在 verification_uri 页面输入）
+	UserCode string `json:"user_code"`
+
+	// VerificationUri 用户打开并输入 user_code 的页面
+	VerificationUri string `json:"verification_uri"`
 }
 
 // CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 契约形态；对象字段请求语义：null 与空串同 = 未提供）。仅 installation_id——会话级 session/thread/window 已退役为运行时槽状态，不再持久化/暴露。
@@ -3030,6 +3095,9 @@ type PostAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
+// PostAccountsCodexDeviceLoginCompleteJSONRequestBody defines body for PostAccountsCodexDeviceLoginComplete for application/json ContentType.
+type PostAccountsCodexDeviceLoginCompleteJSONRequestBody = CodexDeviceLoginCompleteBody
+
 // PatchAccountsIdJSONRequestBody defines body for PatchAccountsId for application/json ContentType.
 type PatchAccountsIdJSONRequestBody = AccountConfigPatch
 
@@ -3161,6 +3229,12 @@ type ServerInterface interface {
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
+	// 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
+	// (POST /accounts/codex-device-login)
+	PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request)
+	// 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
+	// (POST /accounts/codex-device-login/complete)
+	PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request)
 	// 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
 	// (GET /accounts/usage)
 	GetAccountsUsage(w http.ResponseWriter, r *http.Request, params GetAccountsUsageParams)
@@ -3461,6 +3535,18 @@ func (_ Unimplemented) PostAccountsBatchImportCodexPat(w http.ResponseWriter, r 
 // 批量更新账号（fields 为任意字段子集）
 // (POST /accounts/batch-update)
 func (_ Unimplemented) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
+// (POST /accounts/codex-device-login)
+func (_ Unimplemented) PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
+// (POST /accounts/codex-device-login/complete)
+func (_ Unimplemented) PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4122,6 +4208,34 @@ func (siw *ServerInterfaceWrapper) PostAccountsBatchUpdate(w http.ResponseWriter
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAccountsBatchUpdate(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsCodexDeviceLogin operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsCodexDeviceLogin(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsCodexDeviceLoginComplete operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsCodexDeviceLoginComplete(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7336,6 +7450,12 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/batch-update", wrapper.PostAccountsBatchUpdate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/codex-device-login", wrapper.PostAccountsCodexDeviceLogin)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/codex-device-login/complete", wrapper.PostAccountsCodexDeviceLoginComplete)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/accounts/usage", wrapper.GetAccountsUsage)
