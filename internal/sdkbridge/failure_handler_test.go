@@ -177,7 +177,7 @@ func TestFailureRetry_NonblockingAndProcessLifetime(t *testing.T) {
 	deps := FailureDeps{Store: store, Failer: failer, Latch: latch, Publisher: pub}
 	// barrier for nonblocking: HandleFailure must return quickly
 	done := make(chan error, 1)
-	go func() { done <- HandleFailure(context.Background(), deps, 7, errors.New("fatal")) }()
+	go func() { done <- HandleFailure(context.Background(), deps, failEvent(7, 1, errors.New("fatal"))) }()
 	select {
 	case err := <-done:
 		require.Error(t, err, "first attempt transient should return error")
@@ -211,7 +211,7 @@ func TestFailureRetry_NoRetryAfterShutdown(t *testing.T) {
 	deps := FailureDeps{Store: store, Failer: failer, Latch: latch, Publisher: pub}
 	ShutdownFailureRetry()
 	// after shutdown, HandleFailure should not enqueue retry
-	err := HandleFailure(context.Background(), deps, 7, errors.New("fatal"))
+	err := HandleFailure(context.Background(), deps, failEvent(7, 1, errors.New("fatal")))
 	require.Error(t, err)
 	// give a window via barrier: ensure no publish arrives
 	select {
@@ -275,7 +275,7 @@ func TestFailure_StaleFencedByExpectedRevision(t *testing.T) {
 	}
 	latch := newRetryFakeLatch()
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch}
-	err := HandleFailure(context.Background(), deps, 7, errors.New("fatal"))
+	err := HandleFailure(context.Background(), deps, failEvent(7, 1, errors.New("fatal")))
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrStaleFailureRevision))
 	// stale should not be retried: callCount should be 1 (no retry)
@@ -301,7 +301,7 @@ func TestHandleFailureIdempotentWhenAlreadyFailed(t *testing.T) {
 	pub := &retryFakePublisher{}
 	deps := FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch(), Publisher: pub}
 
-	require.NoError(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
+	require.NoError(t, HandleFailure(context.Background(), deps, failEvent(7, 1, errors.New("fatal"))))
 
 	store.mu.Lock()
 	calls := store.callCount

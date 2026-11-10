@@ -18,6 +18,7 @@ import (
 	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -65,8 +66,17 @@ type Codex struct {
 // 注入与装配侧解耦）。部分更新 upsert——仅 codex_oauth_token/
 // codex_oauth_refresh_token/codex_oauth_expires_at（expiresAt 为调用方携带的
 // 旧值，保旧语义），其余列不动。
+//
+// **围栏（§3.3b-2 的轮转回写半边）**：写入必须带来源身份代际 K，存储侧以
+// `WHERE … AND account.identity_revision = expected` 提交；命中 0 行 = 这一版
+// 身份已被管理面替换 ⇒ 返回 repository.ErrStaleIdentityRevision，**不是**重试
+// 信号（陈旧轮转不得覆盖新凭据，也不得反过来禁用账号）。
+//
+// 为什么围栏维度不是旧 RT：RT 每轮都轮换，多实例下同一账号的两个 Auth 各自
+// 轮转（DB 的 RT 由先到者写成新的），用旧 RT 作谓词会把合法轮转判成陈旧、让
+// DB 永久停在已吊销的那一版；K 只由管理面身份写入推进，SDK 自刷新中性。
 type RotationStore interface {
-	WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error
+	WriteOAuthRotation(ctx context.Context, accountID int64, expectedIdentityRevision int64, at, rt string, expiresAt *time.Time) error
 }
 
 // RotationDeps 轮转回写依赖（§1——main 装配：repository.AccountExts +
@@ -112,6 +122,15 @@ type codexEntry struct {
 	accountID int64
 	auth      codexsdk.Auth
 	sig       credKey // 凭据签名（外部凭据变更 → 重建）
+	// srcRev **本条目**凭据内容的来源身份代际 K（`AccountCredential.IdentityRevision`，
+	// 与凭据列同一次快照读）。它是条目身上所有事件回流的围栏：fatal 上报、构造失败、
+	// 轮转回写都以它作 `expectedRevision`——**绝不回读"当前 K"**（那会让旧凭据的
+	// 事件在管理面换凭据后仍然生效）。0 = 来源未知（无 Selection 调用面）。
+	//
+	// 语义是"该凭据内容上**观测到的最大** K"：条目按签名复用，而同签名的新 K 只可能
+	// 来自不动凭据内容的身份写入（base_url/template_id/installation），内容既相同，
+	// 围栏就该按新 K——故复用时**单调抬升**、从不回退（atomic：事件路径无表锁读它）。
+	srcRev atomic.Int64
 	// owner 构造**本条目**那版凭据的稳定 owner（§3.2「凭据替换」的 ts 清空判据）。
 	// 它是条目的稳定字段：请求准备阶段（Prepare）从这里读，不再对请求里的凭据快照
 	// 重新散列——否则条目还没重建时，散列给出的是"更新的 owner + 旧的 auth"，owner
@@ -377,7 +396,7 @@ func (a *Codex) StreamBodyPrepared(ctx context.Context, p Prepared, eg *egress.C
 // 条目承载 Auth（HTTP 面 GenerateImage/Stream 与 WS 面 Dial 共享——连接
 // per-请求不缓存，Auth 账号级状态跨面复用；HTTPClient 由 clientFor 懒构造）。
 func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
-	e, err := a.clients.Entry(cred.AccountID, credSig(cred), func(e *codexEntry) (codexsdk.Auth, error) {
+	e, err := a.clients.Entry(cred.AccountID, credSig(cred), cred.IdentityRevision, func(e *codexEntry) (codexsdk.Auth, error) {
 		// owner 随条目一起定型（同一版凭据）：重建/复用都保持 owner 与 auth 同版，
 		// 请求准备只需读这个字段（见 Prepared）。
 		e.owner = CredOwner(cred)
@@ -385,9 +404,9 @@ func (a *Codex) entryFor(cred *domain.AccountCredential) (*codexEntry, error) {
 	})
 	if err != nil {
 		// 构造失败（空 rt 等）：锁外上报（上报链要取表锁——锁内调用即重入死锁）。
-		// 这是**账号配置**事件（凭据本身不完整），不是某个请求的版本事件：按账号
-		// 上报并摘除当前资源；旧条目仍在表里（构建失败不覆盖）。
-		a.reportConfigFailure(cred.AccountID, err)
+		// 这是**来源凭据版本**的失败（不是"账号配置的全局事实"）：上报带来源 K 与
+		// 来源签名，只有它仍是当前版本时才允许摘掉资源/升级为账号级动作。
+		a.reportConfigFailure(cred, err)
 		return nil, err
 	}
 	return e, nil
@@ -965,14 +984,17 @@ func CredOwner(cred *domain.AccountCredential) [16]byte {
 // 共用）：CAS 去重 —— 同一条目的同一 fatal 只上报一次（回调路径与 errors.As 路径
 // 双源去重）。
 //
-// 关键约束（§3.3b-2）：事件在产生时绑定**来源条目**。账号级动作（FailureHandler →
-// 持久化 + 调度摘除）只在来源条目仍是表里的当前条目时执行——A 持旧 Prepared、B
-// 换凭据建新条目后 A 才返回 fatal，这条错误的宿主已被替换，不得杀 B 的 Auth，也
-// 不得禁用账号。资源回收用 evictIfCurrent（锁内比较指针），同样是"只在仍是当前
-// 版本时生效"。
+// 关键约束（§3.3b-2）：事件在产生时绑定了**来源条目**（含来源 K）。两道门：
+//  1. 本地门 `isCurrent(e)`（表锁内指针比较）——条目已被换掉 ⇒ 这条事件属于旧
+//     版本，不发账号级动作也不回收资源；
+//  2. 持久化门：上报携带 `SourceRevision = e.srcRev`，由 failure 链以它作
+//     expectedRevision（存储侧 CAS）。第 1 道门挡不住"管理面已换凭据、还没有任何
+//     请求重建条目"这段窗口——指针仍是旧的，只有 K 才能揭穿。
+//
+// 资源回收用 evictIfCurrent（锁内比较指针），同样是"只在仍是当前版本时生效"。
 //
 // 账号级禁用与单凭据撤销是两种事件：本函数处理后者（且只在来源版本仍当前时升级
-// 为账号级动作）；整账号不可用走 reportConfigFailure / ClientTable.InvalidateAccount。
+// 为账号级动作）；整账号不可用走 reportConfigFailure（同样带来源版本）。
 func (a *Codex) reportCredentialEvent(e *codexEntry, fatal error, evict bool) {
 	if e == nil || fatal == nil {
 		return
@@ -981,25 +1003,35 @@ func (a *Codex) reportCredentialEvent(e *codexEntry, fatal error, evict bool) {
 		return
 	}
 	if a.clients.isCurrent(e) && a.failure != nil {
-		a.failure(e.accountID, fatal)
+		a.failure(CredentialFailure{AccountID: e.accountID, SourceRevision: e.srcRev.Load(), Cause: fatal})
 	}
 	if evict {
 		a.clients.evictIfCurrent(e)
 	}
 }
 
-// reportConfigFailure **账号配置**事件：配置里的凭据构造不出 Auth（如 oauth 缺
-// refresh_token）。这不是某个请求的版本事件——配置本身就是坏的，所以直接按账号
-// 上报并摘除当前资源。与 reportCredentialEvent 分开，避免把"配置坏了"和"旧请求
-// 迟到的 fatal"混成一条路径。
-func (a *Codex) reportConfigFailure(accountID int64, fatal error) {
-	if fatal == nil {
+// reportConfigFailure 构造失败的上报（如 oauth 缺 refresh_token）：这是**来源
+// 凭据版本**的失败，不是"账号配置的全局事实"——请求快照的坏配置不得删掉管理员
+// 刚修好的当前条目（§3.3b-2）。
+//
+// 判定用同一套来源门：表里已有属于**更新身份**的条目（K 更大），或同一代身份下
+// 已有另一份**构造成功**的凭据（签名不同 ⇒ 迟到的这份不是当前内容）⇒ 这条错误
+// 只上抛，不做账号级动作、不动现有资源。否则：
+//   - 上报带来源 K（failure 链据此围栏：K 已被推进则拒）；
+//   - 资源动作走 invalidateOlder（仅当表里条目属于更旧的身份才摘），绝不做
+//     无版本的"按 id 删当前"。
+func (a *Codex) reportConfigFailure(cred *domain.AccountCredential, fatal error) {
+	if cred == nil || fatal == nil {
 		return
 	}
-	if a.failure != nil {
-		a.failure(accountID, fatal)
+	sig := credSig(cred)
+	if supersededBy(a.clients.Get(cred.AccountID), cred.IdentityRevision, sig) {
+		return // 陈旧凭据快照的构造失败：当前条目保留，错误照常上抛给调用方
 	}
-	a.clients.InvalidateAccount(accountID)
+	if a.failure != nil {
+		a.failure(CredentialFailure{AccountID: cred.AccountID, SourceRevision: cred.IdentityRevision, Cause: fatal})
+	}
+	a.clients.invalidateOlder(cred.AccountID, cred.IdentityRevision)
 }
 
 // reportFatal fatal 统一上报（双源去重核心）：rotationAuth 路径同一 fatal 既
@@ -1036,9 +1068,16 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 
 // rotateWriteback 轮转回写（§1——SDK OnTokenRotated 回调；在 SDK 单飞内
 // 串行执行——同账号并发轮转天然单飞，无需额外互斥）：
+//   - **来源门（本地）**：条目已不是当前版本 ⇒ 这次轮转属于旧凭据，直接丢弃
+//     （写进去就是"旧 Auth 覆盖管理员刚换上的新凭据"）
 //   - account_ext 部分更新 upsert（codex_oauth_token + codex_oauth_refresh_token +
-//     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值）
-//   - 失败 → panic（SDK 契约：回调失败 = 令牌持久化中断信号——callRotate
+//     codex_oauth_expires_at 保旧——携带 e.expiresAt 构造时旧值），**带存储围栏**：
+//     `expectedIdentityRevision = e.srcRev`，命中 0 行 ⇒ 身份已被管理面替换 ⇒
+//     repository.ErrStaleIdentityRevision
+//   - 陈旧围栏（ErrStaleIdentityRevision）：这是**被拒的陈旧事件**，不是投递失败
+//     ——记一条 Warn、不回写快照、不 panic、**不得反过来禁用账号**（旧凭据的轮转
+//     结果失配，新凭据自己会继续工作）
+//   - 其余失败 → panic（SDK 契约：回调失败 = 令牌持久化中断信号——callRotate
 //     recover 后记 pending 下次 refresh 前重试，连续达阈值 →
 //     CallbackDeliveryError fatal → 统一回调摘除；fail-closed）
 //   - 成功后失效调度器 AccountExt 内存快照条目（下个会话重载新凭据；
@@ -1047,10 +1086,6 @@ func (a *Codex) FatalPrepared(p Prepared, fatal error) {
 //     轮换已在 SDK 内生效）。但下一次 Prepare 会因 RT 变化而重建 Auth（RT 是 Auth
 //     构造输入，见 credKey 的矩阵）：新 Auth 用刚落库的 AT/RT 起步，不丢轮转结果。
 //     ts 不因此清空——owner 不含 AT/RT，同一条上游对话的会话继续复用。
-//   - **pending 竞态（接受）**：适配层重建缓存后旧 Auth 在途 401 →
-//     deliverPendingRotate 可能写回旧轮转结果——旧 rt 已吊销则 refresh 判死
-//     正确摘除（旧条目的事件按来源版本判定，不会误伤新凭据），基本自愈；低概率，
-//     不额外防护
 //
 // 回调在 SDK 单飞内阻塞并发等待者——必须快速返回（本地 upsert 毫秒级）；
 // 用固定短超时兜底 PG 故障（超时 → 重试链接管）。
@@ -1058,12 +1093,28 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 	if a.rotate == nil {
 		return // 未装配（测试形态）：no-op
 	}
+	if e == nil {
+		return
+	}
 	if at == "" || rt == "" {
 		return // 盲写防御：SDK 已保证非空（响应缺 refresh 时回调收旧 rt），双保险
 	}
+	if !a.clients.isCurrent(e) {
+		return // 旧凭据的轮转：当前条目已换，写进去就是覆盖新凭据
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), rotateWritebackTimeout)
 	defer cancel()
-	if err := a.rotate.WriteOAuthRotation(ctx, e.accountID, at, rt, e.expiresAt); err != nil {
+	err := a.rotate.WriteOAuthRotation(ctx, e.accountID, e.srcRev.Load(), at, rt, e.expiresAt)
+	if err != nil {
+		if errors.Is(err, repository.ErrStaleIdentityRevision) {
+			// 存储围栏拒绝：这一版身份已被管理面替换（旧 Auth 在途 refresh 迟到的
+			// 结果）。丢弃即可——新凭据的令牌由新条目自己维护。
+			if a.log != nil {
+				a.log.Warn("codex rotation writeback rejected by identity fence",
+					logx.Int64("account_id", e.accountID), logx.Int64("source_identity_revision", e.srcRev.Load()))
+			}
+			return
+		}
 		if a.log != nil {
 			// 运维信号即时留痕（重试至多 3 次各记一条——DB 故障持续期的
 			// 真实告警；fatal 上报后账号摘除，告警自停）

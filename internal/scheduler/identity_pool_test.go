@@ -78,7 +78,7 @@ func TestSelectionCodexIdentityFromSession(t *testing.T) {
 		session: session,
 		Ext:     codexExt("ext-inst"), // 故意与会话不一致：注入必须取会话
 	}
-	id := sel.CodexIdentity()
+	id := sel.IdentityFor([16]byte{}, true)
 	require.Equal(t, session.thread, id.Session.SessionID)
 	require.Equal(t, session.thread, id.Session.ThreadID)
 	require.Equal(t, session.windowID, id.Session.WindowID)
@@ -92,9 +92,9 @@ func TestSelectionCodexIdentityFromSession(t *testing.T) {
 
 	// 无会话（非 codex / 池缺席）→ 零值（不注入）。
 	empty := &Selection{Ext: codexExt("ext-inst")}
-	require.Zero(t, empty.CodexIdentity())
+	require.Zero(t, empty.IdentityFor([16]byte{}, true))
 	var nilSel *Selection
-	require.Zero(t, nilSel.CodexIdentity())
+	require.Zero(t, nilSel.IdentityFor([16]byte{}, true))
 }
 
 // TestSessionStepAdvancesWindow 推进只由「完成轮数」驱动：turns 每步 +1；跨
@@ -163,11 +163,11 @@ func TestSessionRetireClearsTurnStateAndReportsOldThreadKey(t *testing.T) {
 	require.Equal(t, session.thread+":0", session.windowID, "windowID 重算")
 	require.Equal(t, threadKeyOf("inst", session.thread), session.threadKey, "threadKey 重算")
 	require.Equal(t, uint64(1), session.wmax, "wmax 按策略重抽（WMax=1 固定）")
-	require.Equal(t, session.thread+":0", sel.CodexIdentity().Session.WindowID, "下一个请求用新线程")
+	require.Equal(t, session.thread+":0", sel.IdentityFor([16]byte{}, true).Session.WindowID, "下一个请求用新线程")
 
 	// 退休后旧 threadKey 永不复用（UUIDv7 新线程）；新会话首请求不带 ts。
 	require.NotEqual(t, oldKey, session.threadKey)
-	require.Empty(t, sel.CodexIdentity().TurnState)
+	require.Empty(t, sel.IdentityFor([16]byte{}, true).TurnState)
 }
 
 // TestResizeMigratesOwnedSessions 容量变化按位次迁移（沿用线程/窗口计数/ts）；
@@ -206,7 +206,7 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 	}
 	for i := 2; i < 4; i++ {
 		require.Empty(t, grown.slots[i].turnState, "新会话无 ts（G10：K 2→4 首请求不带 ts）")
-		id := (&Selection{session: grown.slots[i], pool: grown}).CodexIdentity()
+		id := (&Selection{session: grown.slots[i], pool: grown}).IdentityFor([16]byte{}, true)
 		require.Empty(t, id.TurnState)
 		require.Equal(t, grown.slots[i].thread+":0", id.Session.WindowID, "新会话 window 从 0 起")
 	}
@@ -259,7 +259,7 @@ func TestResizeInstallationChangeRebuildsAllSessions(t *testing.T) {
 		require.Equal(t, "inst-new", s.installation, "installation 取本次生效值")
 		require.Equal(t, threadKeyOf("inst-new", s.thread), s.threadKey, "threadKey 随 installation 重算")
 		require.Empty(t, s.turnState, "ts 全清（新 owner 不重放旧 ts）")
-		require.Empty(t, (&Selection{session: s, pool: np}).CodexIdentity().TurnState)
+		require.Empty(t, (&Selection{session: s, pool: np}).IdentityFor([16]byte{}, true).TurnState)
 	}
 }
 
@@ -480,7 +480,7 @@ func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
 	for _, s := range old.slots {
 		require.True(t, s.busy.CompareAndSwap(false, true))
 		// 请求准备顺序：先对齐 owner（会话刚建，ts 尚空），请求结束后 Sink 才落 ts。
-		(&Selection{session: s, pool: old}).AlignCodexOwner(ownerA)
+		(&Selection{session: s, pool: old}).IdentityFor(ownerA, true)
 		s.SetTurnState("T-old")
 		s.release()
 	}
@@ -495,7 +495,7 @@ func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
 	for i := range 2 {
 		stale := old.claim()
 		require.NotNil(t, stale, "①已全部归还 ⇒ 窗口内两次租借都应成功（%d）", i)
-		(&Selection{session: stale, pool: old}).AlignCodexOwner(ownerB)
+		(&Selection{session: stale, pool: old}).IdentityFor(ownerB, true)
 		require.Empty(t, stale.turnState, "凭据替换 ⇒ 租借内先清 ts（位次 %d）", i)
 		stale.release()
 	}
@@ -505,8 +505,8 @@ func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
 	for i, held := range []*codexSession{next.slots[1], next.slots[0]} {
 		require.True(t, held.busy.CompareAndSwap(false, true))
 		sel := &Selection{session: held, pool: next}
-		sel.AlignCodexOwner(ownerB)
-		require.Empty(t, sel.CodexIdentity().TurnState,
+		sel.IdentityFor(ownerB, true)
+		require.Empty(t, sel.IdentityFor([16]byte{}, true).TurnState,
 			"逆序第 %d 条：失效必须跨「新池已建、尚未发布」窗口存活，且覆盖该账号全部会话", i)
 		held.release()
 	}
@@ -522,7 +522,7 @@ func TestResizeWithoutOwnerChangeKeepsTurnState(t *testing.T) {
 	old := newTestPool(1, testPolicy())
 	held := old.slots[0]
 	require.True(t, held.busy.CompareAndSwap(false, true))
-	(&Selection{session: held, pool: old}).AlignCodexOwner(owner)
+	(&Selection{session: held, pool: old}).IdentityFor(owner, true)
 	held.SetTurnState("T-keep")
 	held.release()
 
@@ -531,8 +531,8 @@ func TestResizeWithoutOwnerChangeKeepsTurnState(t *testing.T) {
 
 	require.True(t, held.busy.CompareAndSwap(false, true))
 	sel := &Selection{session: held, pool: next}
-	sel.AlignCodexOwner(owner)
-	require.Equal(t, "T-keep", sel.CodexIdentity().TurnState,
+	sel.IdentityFor(owner, true)
+	require.Equal(t, "T-keep", sel.IdentityFor([16]byte{}, true).TurnState,
 		"owner 未变 ⇒ 重载后的首次租借保留 ts（不允许无差别清空）")
 	held.release()
 }

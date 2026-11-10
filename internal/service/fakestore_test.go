@@ -2370,13 +2370,18 @@ func (f *fakeStore) FindAccountExtByCodexKey(ctx context.Context, codexEmail, co
 }
 
 // WriteOAuthRotation oauth 凭据三列部分更新（镜像真实 repo 部分更新语义——
-// 其余列零触碰）；行缺失 → ErrNotFound。
-func (f *fakeStore) WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error {
+// 其余列零触碰）；**提交围栏** account.identity_revision = expected（镜像生产的
+// 同一条 SQL 谓词）⇒ K 已推进时返回 ErrStaleIdentityRevision；行缺失 → ErrNotFound。
+func (f *fakeStore) WriteOAuthRotation(ctx context.Context, accountID int64, expectedIdentityRevision int64, at, rt string, expiresAt *time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	e, ok := f.accExts[accountID]
 	if !ok {
 		return fmt.Errorf("%w: account_id=%d ext row missing", repository.ErrNotFound, accountID)
+	}
+	if acc, ok := f.accs[accountID]; ok && acc.IdentityRevision != expectedIdentityRevision {
+		return fmt.Errorf("%w: account_id=%d rotation from stale identity revision %d",
+			repository.ErrStaleIdentityRevision, accountID, expectedIdentityRevision)
 	}
 	e.CodexOAuthToken = &at
 	e.CodexOAuthRefreshToken = &rt

@@ -31,7 +31,7 @@ func TestAdminFencingImportRevision(t *testing.T) {
 	// Test SDK path does NOT increment
 	before, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(1), before.LifecycleRevision)
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "tok-sdk", "rt-sdk", nil))
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "tok-sdk", "rt-sdk", nil))
 	afterSDK, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(1), afterSDK.LifecycleRevision, "SDK refresh must not increment")
 	// 管理员写入经唯一写点 → 推进 C
@@ -190,8 +190,9 @@ func TestAdminStaleDoesNotUpdateExt(t *testing.T) {
 	require.Equal(t, int64(2), afterStale.LifecycleRevision, "stale must not increment")
 	ext3, _ := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.Equal(t, "tok2", *ext3.CodexOAuthToken, "stale must not update ext")
-	// SDK refresh must not increment but must update ext
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "tok-sdk", "rt-sdk", nil))
+	// SDK refresh must not increment but must update ext（围栏用**当前** K=2：
+	// admin 轮转换了 RT ⇒ K 推进；SDK 回写自身不推进）
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 2, "tok-sdk", "rt-sdk", nil))
 	afterSDK, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), afterSDK.LifecycleRevision, "SDK refresh must not increment")
 	extSDK, _ := repos.AccountExts.GetAccountExt(ctx, acc.ID)

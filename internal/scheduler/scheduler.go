@@ -101,6 +101,9 @@ type AccountUniverseLoader interface {
 type leaseToken struct {
 	acc      *accountSnapshot
 	released atomic.Bool
+	// identityRevision 本租借认领时该账号的身份代际 K。与 acc 同一次快照读、同时
+	// 冻结：请求侧此后拿到的凭据投影与事件都以此为**来源版本**（§3.3b-2）。
+	identityRevision int64
 }
 
 type Selection struct {
@@ -163,39 +166,38 @@ func (s *Selection) Release() {
 	}
 }
 
-// CodexIdentity 本次请求的 codex 身份（Session/Meta/TurnState/Sink 一次给全，
-// 装配收回调度器侧——proxy 不再回 ext 拼装）。全部取自会话：installation 是账号级
-// 稳定项、与 session/thread/window 同源，故不再与账号 ext 各存一份。
+// IdentityFor 本次请求的身份数据（identity 是**请求数据**，§3.1）——**一步**完成
+// 「对齐 owner → 构造 Identity」。
 //
-// 无会话（非 codex / 池缺席）→ 零值（SDK 内层 omit，不注入）。
+// 为什么只有这一个入口：这两步有强制先后（owner 变了必须先清 ts，再由调用方取
+// 身份），分成两个可反序调用的方法就只能靠注释约束顺序——历史上 WS 车道正是靠
+// "调完再清 replay" 补的。现在策略作为参数给全：`replay=false` 的车道在**同一
+// 次调用**里既不发送也不捕获 ts（ts 恒空、Sink = nil），顺序错不了。
 //
-// **owner 对齐不在这里**：它必须先于身份快照发生，见 AlignCodexOwner。
-func (s *Selection) CodexIdentity() codexsdk.Identity {
+// owner 取自本次请求准备好的条目句柄（`Prepared.Owner`：条目构造时定型的稳定
+// 字段），不拿请求里的凭据快照重新散列（那会在条目尚未重建时给出"新 owner + 旧
+// auth"），也不读池上的计数器（池会被整体替换；会话字段跟着会话对象走，重载窗口
+// 里发生的对齐不会丢）。owner 为零值（未装配/匿名调用面）= 不对齐。
+//
+// 全部取自会话：installation 是账号级稳定项、与 session/thread/window 同源，故
+// 不再与账号 ext 各存一份。无会话（非 codex / 池缺席）→ 零值（SDK 内层 omit）。
+func (s *Selection) IdentityFor(owner [16]byte, replay bool) codexsdk.Identity {
 	if s == nil || s.session == nil {
 		return codexsdk.Identity{}
 	}
-	return s.session.identity()
-}
-
-// AlignCodexOwner 把会话对齐到「本请求所用凭据的 owner」（§3.2 凭据替换 / §3.3
-// 请求准备顺序）：owner 变了 ⇒ 先清 ts，再由调用方构造 Identity。
-//
-// 这是**请求准备的第一步**（取得租借之后、CodexIdentity 之前）：反序会让换凭据后
-// 的第一个请求带着旧 owner 的 ts 出去，而任何事后递增都追不回来。
-//
-// 失效源是会话自己的字段，不是池上的计数器：owner 属于账号凭据这一稳定事实，
-// 会话对象跨池迁移（resize）时字段随对象走，所以「新池已建、尚未发布」的窗口里
-// 发生的对齐不会丢。清 ts 只能由租借持有者做——状态字段没有第二读者。
-//
-// owner 为零值（未装配/匿名调用面）= 不对齐，保持既有行为。
-func (s *Selection) AlignCodexOwner(owner [16]byte) {
-	if s == nil || s.session == nil || owner == ([16]byte{}) {
-		return
-	}
-	if s.session.credOwner != owner {
+	// 对齐（§3.2 凭据替换 / §3.3 请求准备顺序）：owner 变了 ⇒ 先清 ts。
+	// 失效源是会话自己的字段，不是池上的计数器：owner 属于账号凭据这一稳定事实，
+	// 会话对象跨池迁移（resize）时字段随对象走，所以「新池已建、尚未发布」的窗口
+	// 里发生的对齐不会丢。清 ts 只能由租借持有者做——状态字段没有第二读者。
+	if owner != ([16]byte{}) && s.session.credOwner != owner {
 		s.session.credOwner = owner
 		s.session.turnState = ""
 	}
+	id := s.session.identity()
+	if !replay {
+		id.TurnState, id.Sink = "", nil
+	}
+	return id
 }
 
 // StepIdentity 推进本会话一次完成轮（§3.2 推进）——**仅成功取到 usage、且上游
@@ -217,6 +219,26 @@ func (s *Selection) LeaseAccountForTest() *accountSnapshot {
 		return nil
 	}
 	return s.lease.acc
+}
+
+// IdentityRevision 本次请求所用凭据的**来源身份代际 K**（认领租借时冻结的那一版）。
+// 0 = 无租借（非选号调用面）。
+func (s *Selection) IdentityRevision() int64 {
+	if s == nil || s.lease == nil {
+		return 0
+	}
+	return s.lease.identityRevision
+}
+
+// Credential 本次请求的凭据投影：`CredentialFromExt` 的各列 + **来源 K**。
+//
+// 调用方一律用它而不是 `domain.CredentialFromExt(sel.Ext)`：凭据内容与 K 必须
+// 同一次快照读，否则"内容属于某一版、K 属于另一版"会让 SDK 侧的事件围栏失准。
+// K 冻结在租借上（不是再读快照）——请求准备路径因此没有第二次静态读。
+func (s *Selection) Credential() domain.AccountCredential {
+	cred := domain.CredentialFromExt(s.Ext)
+	cred.IdentityRevision = s.IdentityRevision()
+	return cred
 }
 
 // RuntimeInfo 账号运行时视图（管理端展示 + overview 聚合）。Status = 运行时

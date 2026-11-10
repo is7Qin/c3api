@@ -32,14 +32,14 @@ func TestCredOwnerStableAcrossTokenRefresh(t *testing.T) {
 	sess := newCodexSession("inst-1", testPolicy())
 	sel := &Selection{session: sess}
 	require.True(t, sess.busy.CompareAndSwap(false, true))
-	sel.AlignCodexOwner(sdkbridge.CredOwner(base))
+	sel.IdentityFor(sdkbridge.CredOwner(base), true)
 	sess.SetTurnState("T-keep")
 
 	// ① token refresh：at 换了（过期时刻可能一起换），refresh-token 未变 ⇒ 不是换 owner。
 	refreshed := *base
 	refreshed.OAuthToken = "at-2"
-	sel.AlignCodexOwner(sdkbridge.CredOwner(&refreshed))
-	require.Equal(t, "T-keep", sel.CodexIdentity().TurnState,
+	sel.IdentityFor(sdkbridge.CredOwner(&refreshed), true)
+	require.Equal(t, "T-keep", sel.IdentityFor([16]byte{}, true).TurnState,
 		"token refresh 不得清 ts（owner 排除会轮转的 access token）")
 
 	// ② refresh-token 也轮转（SDK 每次 refresh 都可能换 RT）⇒ 仍不是换 owner：
@@ -47,25 +47,25 @@ func TestCredOwnerStableAcrossTokenRefresh(t *testing.T) {
 	rerotated := *base
 	rerotated.OAuthToken = "at-3"
 	rerotated.OAuthRefreshToken = "rt-2"
-	sel.AlignCodexOwner(sdkbridge.CredOwner(&rerotated))
-	require.Equal(t, "T-keep", sel.CodexIdentity().TurnState,
+	sel.IdentityFor(sdkbridge.CredOwner(&rerotated), true)
+	require.Equal(t, "T-keep", sel.IdentityFor([16]byte{}, true).TurnState,
 		"RT 轮转 = 换令牌不换对话身份 ⇒ ts 保留（owner 排除 RT）")
 
 	// ③ 上游账号改绑 ⇒ 跨账号串台风险：ts 必须清。
 	rebound := *base
 	rebound.CodexAccountID = "acc-2"
-	sel.AlignCodexOwner(sdkbridge.CredOwner(&rebound))
-	require.Empty(t, sel.CodexIdentity().TurnState, "CodexAccountID 改绑 ⇒ 清 ts")
+	sel.IdentityFor(sdkbridge.CredOwner(&rebound), true)
+	require.Empty(t, sel.IdentityFor([16]byte{}, true).TurnState, "CodexAccountID 改绑 ⇒ 清 ts")
 
 	// ④ installation 变化 ⇒ owner 不变：它是会话身份配置，ts 清空由**会话重建**
 	// 承担（新池新线程、ts 自然为空，见 G11），不塞进凭据 owner——否则条目何时
 	// 重建会决定 owner 值，与冻结在条目上的版本分叉。
-	sel.AlignCodexOwner(sdkbridge.CredOwner(base)) // ③ 已换到 acc-2：先对齐回本账号
+	sel.IdentityFor(sdkbridge.CredOwner(base), true) // ③ 已换到 acc-2：先对齐回本账号
 	sess.SetTurnState("T-inst")
 	reinstalled := *base
 	reinstalled.InstallationID = "inst-2"
-	sel.AlignCodexOwner(sdkbridge.CredOwner(&reinstalled))
-	require.Equal(t, "T-inst", sel.CodexIdentity().TurnState,
+	sel.IdentityFor(sdkbridge.CredOwner(&reinstalled), true)
+	require.Equal(t, "T-inst", sel.IdentityFor([16]byte{}, true).TurnState,
 		"installation 变化不改凭据 owner（会话层重建才是 ts 清空点）")
 	sess.release()
 
@@ -74,11 +74,11 @@ func TestCredOwnerStableAcrossTokenRefresh(t *testing.T) {
 	patSess := newCodexSession("inst-1", testPolicy())
 	patSel := &Selection{session: patSess}
 	require.True(t, patSess.busy.CompareAndSwap(false, true))
-	patSel.AlignCodexOwner(sdkbridge.CredOwner(pat))
+	patSel.IdentityFor(sdkbridge.CredOwner(pat), true)
 	patSess.SetTurnState("T-pat")
 	nextPat := *pat
 	nextPat.PATKey = "pat-2"
-	patSel.AlignCodexOwner(sdkbridge.CredOwner(&nextPat))
-	require.Empty(t, patSel.CodexIdentity().TurnState, "PAT 轮换 = 换凭据 ⇒ 清 ts")
+	patSel.IdentityFor(sdkbridge.CredOwner(&nextPat), true)
+	require.Empty(t, patSel.IdentityFor([16]byte{}, true).TurnState, "PAT 轮换 = 换凭据 ⇒ 清 ts")
 	patSess.release()
 }

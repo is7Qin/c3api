@@ -76,7 +76,7 @@ func TestHandleFailureFencesOnIdentityGenerationNotConfigRevision(t *testing.T) 
 	latch := newRetryFakeLatch()
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch}
 
-	require.NoError(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
+	require.NoError(t, HandleFailure(context.Background(), deps, failEvent(7, 3, errors.New("fatal"))))
 	require.Equal(t, []int64{3}, store.gotExpect, "the verdict must carry the identity generation K, never the config generation C")
 	require.NotNil(t, store.acct.FailedAt, "a fatal failure must persist while the identity is unchanged")
 	require.Equal(t, int64(10), store.acct.LifecycleRevision, "the failure write advances C")
@@ -93,7 +93,7 @@ func TestHandleFailureVoidedWhenIdentityMovedSinceObservation(t *testing.T) {
 	latch := newRetryFakeLatch()
 	deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: latch}
 
-	err := HandleFailure(context.Background(), deps, 7, errors.New("fatal"))
+	err := HandleFailure(context.Background(), deps, failEvent(7, 4, errors.New("fatal")))
 	require.ErrorIs(t, err, ErrStaleFailureRevision, "a verdict whose K moved before the CAS must be reported stale")
 	require.Nil(t, store.acct.FailedAt, "a voided verdict must not disable the account")
 	require.Empty(t, latch.m, "the stale latch must be cleared so the new identity is selectable")
@@ -115,7 +115,7 @@ func TestSDKRefreshDoesNotVoidFailureVerdict(t *testing.T) {
 		CodexOAuthRefreshToken: new("rotated-refresh"),
 	}
 
-	require.NoError(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
+	require.NoError(t, HandleFailure(context.Background(), deps, failEvent(7, 2, errors.New("fatal"))))
 	require.NotNil(t, store.acct.FailedAt, "a token refresh must not void the verdict")
 	require.Equal(t, []int64{2}, store.gotExpect)
 }
@@ -138,7 +138,7 @@ func TestHandleFailureNeedsTemplateCapableStore(t *testing.T) {
 	t.Run("store without template capability cannot form a verdict", func(t *testing.T) {
 		store := &configRevisionStore{acct: newAcct()}
 		deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: newRetryFakeLatch()}
-		err := HandleFailure(context.Background(), deps, 7, errors.New("fatal"))
+		err := HandleFailure(context.Background(), deps, failEvent(7, 1, errors.New("fatal")))
 		require.ErrorIs(t, err, ErrMissingCredentialDiscriminator)
 		require.Empty(t, store.gotExpect, "判决不得成形，故不得尝试 CAS")
 	})
@@ -146,7 +146,7 @@ func TestHandleFailureNeedsTemplateCapableStore(t *testing.T) {
 	t.Run("template-capable store forms the verdict", func(t *testing.T) {
 		store := &configRevisionStore{acct: newAcct(), templateOnDemand: newCodexAccountForRetry(7, 1).Template}
 		deps := FailureDeps{Store: store, Failer: &retryFakeFailer{}, Latch: newRetryFakeLatch()}
-		require.NoError(t, HandleFailure(context.Background(), deps, 7, errors.New("fatal")))
+		require.NoError(t, HandleFailure(context.Background(), deps, failEvent(7, 1, errors.New("fatal"))))
 		require.Equal(t, []int64{1}, store.gotExpect, "补齐模板后判决以 K 成形并 CAS")
 		require.NotNil(t, store.acct.FailedAt)
 	})

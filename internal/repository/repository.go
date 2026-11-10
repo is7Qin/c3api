@@ -519,9 +519,11 @@ func (r *Repository) FindAccountExtByCodexKey(ctx context.Context, codexEmail, c
 }
 
 // WriteOAuthRotation oauth 凭据三列部分更新（SDK 轮转回写 sdkbridge.RotationStore
-// 与批量导入 updated 路径共用面）；行缺失 → ErrNotFound。
-func (r *Repository) WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error {
-	return r.AccountExts.WriteOAuthRotation(ctx, accountID, at, rt, expiresAt)
+// 的唯一写面）。带提交围栏：`expectedIdentityRevision` 是产生这次轮转的那版凭据
+// 的 K，K 已被管理面推进 ⇒ ErrStaleIdentityRevision（陈旧事件，调用方丢弃）；
+// 行缺失 → ErrNotFound。
+func (r *Repository) WriteOAuthRotation(ctx context.Context, accountID int64, expectedIdentityRevision int64, at, rt string, expiresAt *time.Time) error {
+	return r.AccountExts.WriteOAuthRotation(ctx, accountID, expectedIdentityRevision, at, rt, expiresAt)
 }
 
 // AdminWriteOAuthRotationCAS 管理员 OAuth 凭据轮转（fenced）：CAS

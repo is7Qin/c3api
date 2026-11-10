@@ -47,7 +47,7 @@ func TestCredentialDiscriminatorMatchesScheduler_TemplateAuthority(t *testing.T)
 	latchA := newFakeLatch2()
 	failerA := &fakeFailer2{}
 	depsA := FailureDeps{Store: storeA, Failer: failerA, Latch: latchA}
-	require.NoError(t, HandleFailure(context.Background(), depsA, 1, fmt.Errorf("fatal")))
+	require.NoError(t, HandleFailure(context.Background(), depsA, failEvent(1, 1, fmt.Errorf("fatal"))))
 	require.Empty(t, failerA.failed, "non-Codex Template must not self-fail even if Ext says Codex")
 	require.Empty(t, latchA.m)
 
@@ -58,7 +58,7 @@ func TestCredentialDiscriminatorMatchesScheduler_TemplateAuthority(t *testing.T)
 	latchB := newFakeLatch2()
 	failerB := &fakeFailer2{}
 	depsB := FailureDeps{Store: storeB, Failer: failerB, Latch: latchB}
-	require.NoError(t, HandleFailure(context.Background(), depsB, 2, fmt.Errorf("fatal")))
+	require.NoError(t, HandleFailure(context.Background(), depsB, failEvent(2, 1, fmt.Errorf("fatal"))))
 	require.Equal(t, []int64{2}, failerB.failed, "Template Codex must self-fail even if Ext says api_key")
 }
 
@@ -194,8 +194,8 @@ func TestRetryHOLFairness_SecondTaskNotStarved(t *testing.T) {
 	// barrier: ensure nonblocking
 	done7 := make(chan error, 1)
 	done8 := make(chan error, 1)
-	go func() { done7 <- HandleFailure(context.Background(), deps7, 7, errors.New("fatal7")) }()
-	go func() { done8 <- HandleFailure(context.Background(), deps8, 8, errors.New("fatal8")) }()
+	go func() { done7 <- HandleFailure(context.Background(), deps7, failEvent(7, 1, errors.New("fatal7"))) }()
+	go func() { done8 <- HandleFailure(context.Background(), deps8, failEvent(8, 1, errors.New("fatal8"))) }()
 	barrier := make(chan struct{})
 	go func() {
 		var c int

@@ -20,16 +20,15 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
-// FailureHandler 账号失效上报的唯一入口——**账号级事件**（凭据永久失效/上游
-// 封禁/判死 → 账号从调度摘除）。适配层把 SDK 内部判死（OnAuthFatal / errors.As
+// FailureHandler 账号失效上报的唯一入口——**凭据版本事件**（凭据永久失效/上游封禁/
+// 判死 => 账号从调度摘除）。适配层把 SDK 内部判死（OnAuthFatal / errors.As
 // fatal 四类——RefreshOAuthError / AuthPermanentlyRevokedError /
 // AccountDisabledError / CallbackDeliveryError；RefreshError 可重试，有意排除）
 // 翻译成一次统一回调；网关侧只处理这一个入口。
 //
-// **来源版本约束**：单条凭据版本的撤销事件（WS 判死帧）必须先绑定产生它的条目
-// （Prepared 句柄），只有该条目仍是当前凭据版本时才升级为本回调——
-// 回调实现按 accountID 记账号失效，它没有版本维度，所以调用方（sdkbridge）
-// 负责在旧版本事件上不发这一步。旧请求的错误不得禁用用新凭据的账号。
+// **来源版本约束（§3.3b-2，强制而非建议）**：事件必须携带 `SourceRevision`（产生
+// 它的那版凭据的 K）。失效链以它作 expectedRevision 去 CAS，**不读当前 K 覆盖它**；
+// 旧请求的错误不得禁用用新凭据的账号，也不得提前摘除新身份的内存状态。
 //
 // 语义：
 //   - 账号级终止（凭据永久失效/上游封禁/判死）才上报；**可重试类（RefreshError
@@ -38,7 +37,19 @@ import (
 //   - 双源去重：rotationAuth 路径同一 fatal 既触发 OnAuthFatal 又随返回错误
 //     errors.As 命中——**以回调为准去重、单次上报**（结构或语义级去重，
 //     适配层实现；本契约只定义回调形态）
-type FailureHandler func(accountID int64, fatal error)
+type FailureHandler func(CredentialFailure)
+
+// CredentialFailure 一次**凭据版本事件**：来源账号 + 产生事件的那一版身份代际 K +
+// 原因。回调形态用结构体而不是三个参数，是为了让"来源版本"在类型上不可省略——
+// 它曾经因为能以"从 accountID 再读一次"补上而被默默省略（§3.3b-2 的成因）。
+type CredentialFailure struct {
+	AccountID int64
+	// SourceRevision 事件来源凭据的身份代际 K（Prepare/构造时冻结的那一版）。
+	// 0 = 来源未知（无 Selection 调用面，如管理面额度快照）：失效链拒绝账号级动作
+	// （ErrMissingExpectedRevision），**绝不**退化成"读当前 K"。
+	SourceRevision int64
+	Cause          error
+}
 
 // FailureStore 失效字段落库面（repository.AccountRepo 满足；接口化供测试注入
 // 与装配侧解耦）。
@@ -112,17 +123,27 @@ type FailureDeps struct {
 // HandleFailure 网关侧失效处理链（§3——统一回调装配；适配层在
 // FailureHandler 回调中调用；冷面——失败上报低频）：
 //
-//  1. DB 写 failed_at + last_error（失效原因文本，复用既有 last_error——用户
+//  1. **围栏校验**：事件的 `SourceRevision`（来源 K）必须仍等于存储里的当前 K；
+//     读当前账号只用于这一步校验与"是否已失效"的判定，**不得覆盖来源 K**
+//  2. DB 写 failed_at + last_error（失效原因文本，复用既有 last_error——用户
 //     裁决 2026-08-13：两原因字段并存会漂移；幂等：重复上报不重复写，首次
-//     失效时刻保持）
-//  2. 调度器状态置 StatusDisabled（快照运行时摘除）——持久化事实 = failed_at
-//     （第 1 步/CAS 步落库；重启快照重载经 failed_at 仍摘除）；复用既有选号
+//     失效时刻保持），**以来源 K 作 CAS guard**
+//  3. **CAS 成功之后**才做内存/锁存动作：Latch.TryAcquire（事件登记）→
+//     Failer.FailAccount（快照置 StatusDisabled）。顺序不可颠倒：CAS 被拒（K 已
+//     推进 = 身份已授权变更）时不得先摘掉内存状态，否则旧判决要靠下一轮 reload
+//     才自愈
+//  4. 调度器状态置 StatusDisabled（快照运行时摘除）——持久化事实 = failed_at
+//     （第 2 步/CAS 步落库；重启快照重载经 failed_at 仍摘除）；复用既有选号
 //     disabled 过滤器与 MarkResult 防复活守卫（置位后在途请求结果短路）
-//  3. 失败请求自身不在此链——由 proxy 既有分类路径处理（fatal → 连接级
+//  5. 失败请求自身不在此链——由 proxy 既有分类路径处理（fatal → 连接级
 //     MarkResult 分流，failover 不重试同一账号；forward.go 语义，不改动）
 //
-// DB 写失败不阻断摘除（fail-closed：账号已判死，摘除优先；错误返回供日志）。
-// 返回 DB 写错误（nil = 成功）；调度摘除为 void（快照外账号 no-op）。
+// 来源版本未知（SourceRevision <= 0）⇒ 一律拒绝账号级动作
+// （ErrMissingExpectedRevision）：没有来源版本就没有可施加的账号级事实。
+//
+// 非 CAS 存储（未装配围栏能力的简化实现）：保持 fail-closed——写失败字段 +
+// 内存摘除，无围栏可用（该形态下不存在"来源 K"的判据）。
+//
 // 本函数不记日志——处理错误统一由回调侧（NewFailureHandler）记一条（
 // 评审：同一失败不得双条 Warn）。
 var (
@@ -157,11 +178,12 @@ func canonicalFingerprint(acct *domain.Account) (string, error) {
 	return domain.CandidateFPHex(fp), nil
 }
 
-func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal error) error {
-	if fatal == nil {
+func HandleFailure(ctx context.Context, deps FailureDeps, event CredentialFailure) error {
+	if event.Cause == nil {
 		return nil // 防御：无错误不上报
 	}
-	reason := domain.TruncateErrMsg(fatal.Error())
+	accountID := event.AccountID
+	reason := domain.TruncateErrMsg(event.Cause.Error())
 	// Unified path with latch+revision+NOTIFY when store supports CAS and latch present.
 	if deps.Latch != nil {
 		if cs, ok := deps.Store.(casStore); ok {
@@ -192,21 +214,24 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 			if ferr != nil {
 				return ferr
 			}
-			// 失效判决的围栏维度是 K（身份代际），不是 C（配置代际）：SDK 上报
-			// 的失效只在"身份未被授权变更"时成立，故取值与 CAS guard 必须同为 K。
-			expectedRev := acct.IdentityRevision
+			// 围栏维度是 K（身份代际），且期望值**只能来自事件**：SDK 上报的失效只
+			// 在"产生它的那一版身份仍是当前身份"时成立。此处读到的 acct 只用于
+			// 校验——用它覆盖来源 K 会把"管理面已换凭据、旧条目还没重建"这段窗口
+			// 的旧判决放行（C-M1 的成因）。
+			expectedRev := event.SourceRevision
 			if expectedRev <= 0 {
 				return ErrMissingExpectedRevision
 			}
-			deps.Latch.TryAcquire(accountID, fp, expectedRev)
-			deps.Failer.FailAccount(accountID)
+			if acct != nil && acct.IdentityRevision != expectedRev {
+				return fmt.Errorf("%w: account_id=%d source=%d current=%d",
+					ErrStaleFailureRevision, accountID, expectedRev, acct.IdentityRevision)
+			}
 			err = cs.FailAccountCAS(ctx, accountID, expectedRev, domain.FailureSourceSDK, time.Now(), reason)
 			if err != nil {
 				if errors.Is(err, repository.ErrStaleIdentityRevision) {
-					fresh, ferr := cs.GetAccount(ctx, accountID)
-					if ferr == nil && fresh.IdentityRevision > expectedRev {
-						deps.Latch.Clear(accountID)
-					}
+					// CAS 被拒 = 身份已授权变更（旧判决作废）。此时**什么都没做**：
+					// 内存/锁存动作尚未执行，无需回滚，也不得反过来清掉新身份的
+					// 锁存（新身份本来就该可选）。
 					return fmt.Errorf("%w: %v", ErrStaleFailureRevision, err)
 				}
 				// fencing for fingerprint mismatch is handled via ErrCandidateFingerprintMismatch at retry time;
@@ -216,6 +241,10 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 				}
 				return err
 			}
+			// **CAS 成功之后**才动内存与锁存：先摘再判会让陈旧判决在 CAS 被拒时
+			// 留下"已禁用但库里没失效"的状态（要靠下一轮 reload 自愈）。
+			deps.Latch.TryAcquire(accountID, fp, expectedRev)
+			deps.Failer.FailAccount(accountID)
 			deps.Latch.Clear(accountID)
 			if deps.Publisher != nil {
 				if gg, ok := deps.Store.(groupGetter); ok {
@@ -235,8 +264,8 @@ func HandleFailure(ctx context.Context, deps FailureDeps, accountID int64, fatal
 		}
 	}
 	err := deps.Store.SetAccountFailed(ctx, accountID, time.Now(), reason)
-	// 摘除恒执行：DB 故障时内存摘除先生效（持久化事实 = failed_at，DB 恢复后
-	// 同链重试落库；重启重载经 failed_at 收敛——fail-closed）。
+	// 无围栏能力的存储：保持 fail-closed——DB 故障时内存摘除先生效（持久化事实 =
+	// failed_at，DB 恢复后同链重试落库；重启重载经 failed_at 收敛）。
 	deps.Failer.FailAccount(accountID)
 	return err
 }
@@ -252,9 +281,10 @@ func isTransientFailure(err error) bool {
 }
 
 func NewFailureHandler(deps FailureDeps) FailureHandler {
-	return func(accountID int64, fatal error) {
-		if err := HandleFailure(context.Background(), deps, accountID, fatal); err != nil && deps.Log != nil {
-			deps.Log.Warn("account failure handling failed", logx.Int64("account_id", accountID), logx.Error(err))
+	return func(event CredentialFailure) {
+		if err := HandleFailure(context.Background(), deps, event); err != nil && deps.Log != nil {
+			deps.Log.Warn("account failure handling failed", logx.Int64("account_id", event.AccountID),
+				logx.Int64("source_identity_revision", event.SourceRevision), logx.Error(err))
 		}
 	}
 }

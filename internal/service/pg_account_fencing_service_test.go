@@ -53,7 +53,7 @@ func TestServiceSDKRefreshNotFenced(t *testing.T) {
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// SDK rotation via unfenced method
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "tok-sdk", "rt-sdk", nil))
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "tok-sdk", "rt-sdk", nil))
 	acc2, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(1), acc2.LifecycleRevision, "SDK refresh must not increment")
 	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sdk@example.com", "sdk-1")
@@ -188,7 +188,7 @@ func TestServiceStaleImportNotUpdate(t *testing.T) {
 	ext3, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")
 	require.Equal(t, "tok2", *ext3.CodexOAuthToken, "stale must not update ext")
 	// SDK refresh should still update ext without increment
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "tok-sdk2", "rt-sdk2", nil))
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 2, "tok-sdk2", "rt-sdk2", nil))
 	afterSDK, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), afterSDK.LifecycleRevision, "SDK refresh must not increment after admin")
 	extSDK, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")

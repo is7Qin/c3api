@@ -82,18 +82,18 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 	if sel.Ext == nil {
 		return nil, sdkbridge.Prepared{}, errCodexExtMissing
 	}
-	cred := domain.CredentialFromExt(sel.Ext)
+	cred := sel.Credential()
 	// 请求准备顺序（§3.3）：取得租借 → **准备条目句柄** → 对齐 owner（可能清 ts）→
-	// 构造 Identity。owner 从该句柄的稳定字段读（与 auth 同版）；反序会让换
-	// 凭据后的第一个请求带着旧 owner 的 ts 出去。ws 车道不重放 ts，但 owner 对齐仍然要
-	// 做：会话的 staleness 不能靠车道类型来养。
-	prep, id, err := p.codexRequestPrep(sel, &cred)
+	// 构造 Identity，全部经 `codexRequestPrep` 一次完成（顺序不可反）。
+	//
+	// 入站 WS 车道 1:1 透传：身份随连接传入，但**不走 ts 重放**（§5.2-3）——既不
+	// 发送也不捕获，Sink 为 nil。这条策略作为 `replay=false` 传给 IdentityFor（与
+	// owner 对齐同一个调用），而不是先取身份再清字段：会话的 staleness 不能靠车道
+	// 类型事后补。
+	prep, id, err := p.codexRequestPrep(sel, &cred, false)
 	if err != nil {
 		return nil, sdkbridge.Prepared{}, err
 	}
-	// 入站 WS 车道 1:1 透传：身份随连接传入，但**不走 ts 重放**（§5.2-3）——
-	// 既不发送也不捕获，Sink 为 nil。
-	id.TurnState, id.Sink = "", nil
 	opts := []codexsdk.Option{
 		codexsdk.WithPingInterval(0), // 心跳单源：编排层 30s+10s 单一所有者
 	}

@@ -34,15 +34,18 @@ type fakeRotationStore struct {
 }
 
 type rotationCall struct {
-	accountID int64
-	at, rt    string
-	expiresAt *time.Time
+	accountID      int64
+	sourceRevision int64
+	at, rt         string
+	expiresAt      *time.Time
 }
 
-func (f *fakeRotationStore) WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error {
+func (f *fakeRotationStore) WriteOAuthRotation(ctx context.Context, accountID int64, expectedIdentityRevision int64, at, rt string, expiresAt *time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.calls = append(f.calls, rotationCall{accountID: accountID, at: at, rt: rt, expiresAt: expiresAt})
+	f.calls = append(f.calls, rotationCall{
+		accountID: accountID, sourceRevision: expectedIdentityRevision, at: at, rt: rt, expiresAt: expiresAt,
+	})
 	return f.err
 }
 

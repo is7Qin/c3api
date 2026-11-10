@@ -37,7 +37,7 @@ func TestRequeueDoesNotPanicAfterReset(t *testing.T) {
 
 	// Trigger failure that will transiently fail CAS and enqueue retry.
 	// HandleFailure failSeq[0] transient -> enqueue. Worker handles retry, failSeq[1] transient -> requeueWithBackoff launches goroutine.
-	err := HandleFailure(context.Background(), deps, 99, errors.New("fatal"))
+	err := HandleFailure(context.Background(), deps, failEvent(99, 1, errors.New("fatal")))
 	require.Error(t, err)
 
 	// Barrier: ensure the retry task has been dequeued and requeue goroutine started.
@@ -72,7 +72,7 @@ func TestRequeueDoesNotPanicAfterReset(t *testing.T) {
 	pubCh2 := make(chan struct{}, 1)
 	pub2 := &retryFakePublisher{ch: pubCh2}
 	deps2 := FailureDeps{Store: store2, Failer: &retryFakeFailer{}, Latch: latch2, Publisher: pub2}
-	require.Error(t, HandleFailure(context.Background(), deps2, 100, errors.New("fatal")))
+	require.Error(t, HandleFailure(context.Background(), deps2, failEvent(100, 1, errors.New("fatal"))))
 	select {
 	case <-pubCh2:
 	case <-time.After(2 * time.Second):

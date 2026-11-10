@@ -75,13 +75,23 @@ func (t *ClientTable) Get(accountID int64) *codexEntry {
 // auth，留着就是"新凭据的请求被旧 client 送出去"。旧桶随死条目一起变得不可达，
 // 所以即使在飞请求随后往旧句柄里写，也进不了任何活路径。构造失败时旧条目保留
 // （不覆盖），错误由调用方锁外上报。
-func (t *ClientTable) Entry(accountID int64, sig credKey, build func(*codexEntry) (codexsdk.Auth, error)) (*codexEntry, error) {
+func (t *ClientTable) Entry(accountID int64, sig credKey, sourceRevision int64, build func(*codexEntry) (codexsdk.Auth, error)) (*codexEntry, error) {
 	t.mu.Lock()
+	// 复用条件只有**凭据签名**（同一份凭据内容 ⇒ 同一个 Auth/连接池）；来源 K 随之
+	// **单调抬升**而不是触发重建：
+	//   - 同签名 + 更大的 K = 不动凭据内容的身份写入（base_url/template_id/installation）
+	//     ⇒ 内容没变，围栏按新 K 才正确（否则该条目的事件会被永久判成陈旧）；
+	//   - 无版本调用面（K=0，管理面额度快照）先建出条目时，首个请求把 K 抬上来即可
+	//     ——不必为"补一个标量"重建 Auth/关连接池。
 	if old := t.entries[accountID]; old != nil && old.sig == sig {
+		if sourceRevision > old.srcRev.Load() {
+			old.srcRev.Store(sourceRevision)
+		}
 		t.mu.Unlock()
 		return old, nil
 	}
 	e := &codexEntry{accountID: accountID, sig: sig, clients: make(map[clientKey]*codexsdk.HTTPClient)}
+	e.srcRev.Store(sourceRevision)
 	auth, err := build(e)
 	var dropped []*codexsdk.HTTPClient
 	if err == nil {
@@ -176,6 +186,23 @@ func (t *ClientTable) isCurrent(e *codexEntry) bool {
 	return t.entries[e.accountID] == e
 }
 
+// supersededBy 是**来源版本门**的判据（纯函数，不入表锁）。
+//
+// 两个维度都必须看：
+//   - K 更大 ⇒ 表里的条目已属于更新的身份（旧快照的事件只能落到自己那一版）；
+//   - 同 K 但凭据签名不同 ⇒ 同一代身份下只有一份权威凭据内容，两个不同签名的快照
+//     不可能同时是当前版本；既然表里已有一个**构造成功**的条目，迟到的那份不能
+//     反过来把它删掉（资源保留胜过误删）。
+func supersededBy(e *codexEntry, sourceRevision int64, sig credKey) bool {
+	if e == nil {
+		return false
+	}
+	if cur := e.srcRev.Load(); cur != sourceRevision {
+		return cur > sourceRevision
+	}
+	return e.sig != sig
+}
+
 // evictIfCurrent 仅当 e 仍是当前条目时摘除它（及其私有桶，锁外关闭）。返回是否
 // 真的摘除。
 //
@@ -220,6 +247,28 @@ func (t *ClientTable) InvalidateAccount(accountID int64) {
 	dropped := takeBucketsLocked(e)
 	t.mu.Unlock()
 	closeWSIdleConns(dropped)
+}
+
+// invalidateOlder 按**来源版本**失效：只有当表里的条目属于**更旧**的身份代际时
+// 才整账号摘除它（及其桶，锁外关闭）。返回是否真的摘除。
+//
+// 这是"这一版凭据构造不出 Auth"的唯一资源动作：来源版本之后的条目（K 更大，或同 K
+// 但不同凭据内容）不得被旧快照删掉。没有条目（当前无资源）⇒ 无事可做。
+func (t *ClientTable) invalidateOlder(accountID int64, sourceRevision int64) bool {
+	if t == nil {
+		return false
+	}
+	t.mu.Lock()
+	e := t.entries[accountID]
+	if e == nil || e.srcRev.Load() >= sourceRevision {
+		t.mu.Unlock()
+		return false
+	}
+	delete(t.entries, accountID)
+	dropped := takeBucketsLocked(e)
+	t.mu.Unlock()
+	closeWSIdleConns(dropped)
+	return true
 }
 
 // pruneBucketsLocked 摘除不在活跃集的桶并返回它们（调用方持锁、锁外关闭）。活跃集 =

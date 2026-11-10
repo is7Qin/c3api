@@ -28,6 +28,14 @@ type AccountCredential struct {
 	// 它与会话的 installation 同源，是"这份凭据还是不是同一版账号身份"的判据之一
 	// （sdkbridge.CredOwner）；不属于凭据本身，故不参与重建签名（credKey）。
 	InstallationID string
+	// IdentityRevision **来源身份代际 K**（account.identity_revision 的投影，与上面
+	// 各列**同一次快照读**）。凭据事件（判死/构造失败/轮转回写）必须带着"产生它的
+	// 那一版身份"走到持久化围栏：K 只由管理面身份类写入推进（SDK 自刷新不动），
+	// 所以"来源 K = 当前 K"才是"这份判决仍然生效"的判据。
+	//
+	// 0 = 来源未知（装配缺陷）：拿不到来源版本的事件不得退化去读"当前"——那正是
+	// "旧凭据的判决禁用新凭据"的来源。消费方（sdkbridge）对 0 拒绝账号级动作。
+	IdentityRevision int64
 }
 
 // CredentialFromExt 从账号扩展行派生每次调用必传的凭据（投影语义：按类型取

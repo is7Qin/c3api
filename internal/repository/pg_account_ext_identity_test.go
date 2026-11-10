@@ -43,7 +43,7 @@ func TestPGAdminCredentialWriteAdvancesIdentityOnlyOnValueChange(t *testing.T) {
 	acc, _ := seedCodexAccountWithExt(t, repos, "ext-identity")
 
 	// 1) SDK 自动刷新：不触 accounts 行 ⇒ C/K 均不动。
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "tok-sdk", "rt-sdk", nil))
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "tok-sdk", "rt-sdk", nil))
 	afterSDK, err := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), afterSDK.LifecycleRevision, "SDK refresh must not advance C")

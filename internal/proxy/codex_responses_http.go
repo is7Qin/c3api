@@ -145,7 +145,7 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	// 结构 oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
 	// 达不了；注册表未注册 codex 类型，见 codex_responses_ws.go 注释）。
 	// Codex 端点归 SDK 官方默认，网关不再派生 BaseURL。
-	cred := domain.CredentialFromExt(sel.Ext)
+	cred := sel.Credential()
 	if stream {
 		return p.streamCodexResponses(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body)
 	}
@@ -163,31 +163,29 @@ const codexTurnStateReplay = false
 // codexRequestIdentity 本次请求的身份数据（identity 是**请求数据**，§3.1）。
 //
 // 顺序是契约（§3.3 请求准备顺序）：取得租借 → **准备条目句柄** → 对齐 owner（可能清
-// ts）→ 构造 Identity。owner 取自**本次请求准备好的条目句柄**（`Prepared.Owner`：条目
+// ts）→ 构造 Identity。两者由 `Selection.IdentityFor` **一步**完成——顺序不可能反：
+// 先生成 Identity 再清 ts 会让换凭据后的第一个请求带着旧 owner 的 ts 出去，而事后
+// 任何清理都追不回来。owner 取自本次请求准备好的条目句柄（`Prepared.Owner`：条目
 // 构造时定型的稳定字段），既不拿请求里的凭据快照重新散列（那会在条目尚未重建时给出
 // "新 owner + 旧 auth"），也不读池上的计数器（池会被整体替换，复制即丢失效；会话字段
-// 跟着会话对象走，重载窗口里发生的对齐不会丢）。反序（先生成 Identity 再清 ts）会让换
-// 凭据后的第一个请求带着旧 owner 的 ts 出去，而事后任何清理都追不回来。
+// 跟着会话对象走，重载窗口里发生的对齐不会丢）。
 //
-// 策略 false ⇒ 既不发送也不捕获（ts 恒空、Sink = nil）；连接复用不受影响。
+// 策略 false ⇒ 既不发送也不捕获（ts 恒空、Sink = nil）；连接复用不受影响。策略是
+// `IdentityFor` 的**参数**而不是"调完再清"的后置步骤。
 func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection, prep sdkbridge.Prepared) codexsdk.Identity {
-	sel.AlignCodexOwner(prep.Owner())
-	id := sel.CodexIdentity()
-	if !p.turnStateReplay {
-		id.TurnState, id.Sink = "", nil
-	}
-	return id
+	return sel.IdentityFor(prep.Owner(), p.turnStateReplay)
 }
 
 // codexRequestPrep 请求准备两步合一（§3.3）：取得条目句柄 → 对齐 owner → 构造
 // Identity。错误原样上抛，由调用方按各自车道既有的错误映射收口（HTTP / stream /
-// ws 的状态面不同，不在这里归一）。
-func (p *Proxy) codexRequestPrep(sel *scheduler.Selection, cred *domain.AccountCredential) (sdkbridge.Prepared, codexsdk.Identity, error) {
+// ws 的状态面不同，不在这里归一）。replay 是本车道的 ts 重放策略（WS 车道恒 false：
+// 身份随连接传入，不重放 ts）。
+func (p *Proxy) codexRequestPrep(sel *scheduler.Selection, cred *domain.AccountCredential, replay bool) (sdkbridge.Prepared, codexsdk.Identity, error) {
 	prep, err := p.codex.Prepare(cred)
 	if err != nil {
 		return sdkbridge.Prepared{}, codexsdk.Identity{}, err
 	}
-	return prep, p.codexRequestIdentity(sel, prep), nil
+	return prep, sel.IdentityFor(prep.Owner(), replay), nil
 }
 
 // nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——
@@ -220,7 +218,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// 请求级身份（§3.1）：**先准备条目句柄**（owner 与 auth/client 同版），
 	// 再对齐 owner，最后由会话给出 Session/Meta/ts/Sink——同账号并发各持不同会话 ⇒
 	// 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的构造期配置。
-	prep, id, err := p.codexRequestPrep(sel, cred)
+	prep, id, err := p.codexRequestPrep(sel, cred, p.turnStateReplay)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -304,7 +302,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		return 0, nil, false, err
 	}
 	// 请求级身份同非流式（先准备条目句柄，再对齐 owner——同样必须先于身份快照）。
-	prep, id, err := p.codexRequestPrep(sel, cred)
+	prep, id, err := p.codexRequestPrep(sel, cred, p.turnStateReplay)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()

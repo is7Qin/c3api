@@ -60,7 +60,7 @@ func TestWriteOAuthRotationPG(t *testing.T) {
 	acc, ext := seedPGOAuthExt(t, repos, "rot1", "at-old", "rt-old", &expires)
 
 	// 回写（携带旧 expiry 保旧）
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at-new", "rt-new", &expires))
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "at-new", "rt-new", &expires))
 
 	got, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
@@ -73,7 +73,7 @@ func TestWriteOAuthRotationPG(t *testing.T) {
 	require.Equal(t, *ext.CodexEmail, *got.CodexEmail)
 
 	// 幂等：重复回调（重试投递同一 (at, rt)）→ 收敛不报错
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at-new", "rt-new", &expires))
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "at-new", "rt-new", &expires))
 	got2, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	require.Equal(t, "at-new", *got2.CodexOAuthToken)
@@ -89,7 +89,7 @@ func TestWriteOAuthRotationNilExpiryPG(t *testing.T) {
 	expires := time.Date(2026, 8, 13, 12, 0, 0, 0, time.UTC)
 	acc, _ := seedPGOAuthExt(t, repos, "rot2", "at-old", "rt-old", &expires)
 
-	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at-new", "rt-new", nil))
+	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "at-new", "rt-new", nil))
 	got, err := repos.AccountExts.GetAccountExt(ctx, acc.ID)
 	require.NoError(t, err)
 	require.Nil(t, got.CodexOAuthExpiresAt, "nil expiry → 写 NULL（保旧携带值语义）")
@@ -110,6 +110,6 @@ func TestWriteOAuthRotationMissingRowPG(t *testing.T) {
 		Name: "rot3", TemplateID: tpl.ID, UpstreamKey: "sk-rot3", MaxConcurrency: 8, Enabled: true})
 	require.NoError(t, err)
 	// 无 ext 行
-	require.Error(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, "at", "rt", nil),
+	require.Error(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "at", "rt", nil),
 		"行缺失必须报错——令牌无法持久化 = 失败信号")
 }

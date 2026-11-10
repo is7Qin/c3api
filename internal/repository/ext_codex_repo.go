@@ -319,13 +319,24 @@ func lockOwnedAccountForUpdate(ctx context.Context, driver dialect.Driver, accou
 // 期"语义一致）。at/rt 由 SDK 保证非空（响应缺 refresh_token 时 SDK 保留内
 // 存旧 rt 后回调——盲写不落空）。
 //
-// 行缺失（配置损坏——codex 账号必有 ext 行，选号前提）→ 0 行报错：错误 →
-// SDK 回调重试 → 连续达阈值 CallbackDeliveryError fatal（fail-closed：
-// 令牌无法持久化 = 账号失效信号，管理员重新导入后恢复）。不做 INSERT 路径
-// ——回调无身份/类型材料（缺行场景 = 配置损坏，应报错而非以空身份静默建行）。
-func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error {
+// **提交围栏（§3.3b-2 的"轮转回写"半边）**：`expectedIdentityRevision` 是产生
+// 这次轮转的那版凭据的 K，谓词 `account.identity_revision = $K` 与更新在同一条
+// SQL 里提交。管理面换凭据（K 推进）后，旧 Auth 在途 refresh 迟到的结果命中 0 行
+// ⇒ 返回 ErrStaleIdentityRevision（**陈旧事件**，不是投递失败：调用方丢弃即可，
+// 不得因此禁用账号）。
+//
+// 为什么围栏维度不是"旧 RT"：RT 每轮都换。多实例下同一账号的两个 Auth 各自轮转，
+// DB 的 RT 由先到者写成新的——用旧 RT 作谓词会把**合法**轮转判成陈旧，让 DB 永久
+// 停在已吊销的那一版。K 只由管理面身份写入推进、SDK 自刷新中性，才是正确判据。
+//
+// 行缺失（配置损坏——codex 账号必有 ext 行，选号前提）→ 0 行；回读区分后报
+// ErrNotFound（fail-closed：错误 → SDK 回调重试 → 连续达阈值 CallbackDeliveryError
+// fatal，管理员重新导入后恢复）。不做 INSERT 路径——回调无身份/类型材料（缺行场景
+// = 配置损坏，应报错而非以空身份静默建行）。
+func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64, expectedIdentityRevision int64, at, rt string, expiresAt *time.Time) error {
 	u := r.client.AccountExt.Update().
-		Where(accountext.AccountIDEQ(accountID)).
+		Where(accountext.AccountIDEQ(accountID),
+			accountext.HasAccountWith(account.IdentityRevisionEQ(expectedIdentityRevision))).
 		SetCodexOauthToken(at).
 		SetCodexOauthRefreshToken(rt)
 	if expiresAt != nil {
@@ -338,6 +349,12 @@ func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64
 		return err
 	}
 	if n == 0 {
+		// 0 行回读区分（一次 PK 读，冷面）：ext 行仍在 ⇒ 围栏拒绝（K 已被推进）；
+		// 缺行 ⇒ 配置损坏（返回既有 ErrNotFound 语义）。
+		if _, gerr := r.GetAccountExt(ctx, accountID); gerr == nil {
+			return fmt.Errorf("%w: account_id=%d rotation from stale identity revision %d",
+				ErrStaleIdentityRevision, accountID, expectedIdentityRevision)
+		}
 		return fmt.Errorf("%w: account_id=%d ext row missing (codex account must have account_ext)", ErrNotFound, accountID)
 	}
 	return nil

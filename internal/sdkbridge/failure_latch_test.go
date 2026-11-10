@@ -90,10 +90,10 @@ func TestSDKFailSharesLatchNonCodexCannotSelfFail(t *testing.T) {
 	latch := newFakeLatch2()
 	failer := &fakeFailer2{}
 	deps := FailureDeps{Store: store, Failer: failer, Latch: latch}
-	require.NoError(t, HandleFailure(context.Background(), deps, 1, fmt.Errorf("fatal")))
+	require.NoError(t, HandleFailure(context.Background(), deps, failEvent(1, 1, fmt.Errorf("fatal"))))
 	require.Empty(t, failer.failed, "non-Codex must not self-fail via SDK")
 	require.Empty(t, latch.m)
-	require.NoError(t, HandleFailure(context.Background(), deps, 2, fmt.Errorf("fatal")))
+	require.NoError(t, HandleFailure(context.Background(), deps, failEvent(2, 1, fmt.Errorf("fatal"))))
 	require.Equal(t, []int64{2}, failer.failed)
 	require.Empty(t, latch.m, "successful CAS clears old latch")
 }
@@ -107,7 +107,7 @@ func TestSDKFailStaleRevisionFence(t *testing.T) {
 	latch.m[1] = "k1"
 	failer := &fakeFailer2{}
 	deps := FailureDeps{Store: store, Failer: failer, Latch: latch}
-	err := HandleFailure(context.Background(), deps, 1, fmt.Errorf("fatal"))
+	err := HandleFailure(context.Background(), deps, failEvent(1, 1, fmt.Errorf("fatal")))
 	require.Error(t, err)
 	require.Contains(t, latch.m, int64(1))
 }

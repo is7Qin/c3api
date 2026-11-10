@@ -270,8 +270,9 @@ type AccountExtStore interface {
 	// codex_account_id)；GetAccountExt 仅按 account_id，查重面不存在）；缺行 →
 	// ErrNotFound。
 	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error)
-	// WriteOAuthRotation oauth 凭据三列部分更新（SDK 轮转回写，unfenced，不增 revision）。
-	WriteOAuthRotation(ctx context.Context, accountID int64, at, rt string, expiresAt *time.Time) error
+	// WriteOAuthRotation oauth 凭据三列部分更新（SDK 轮转回写）：带来源身份代际
+	// 围栏（不增任何代际；K 已被管理面推进 ⇒ ErrStaleIdentityRevision）。
+	WriteOAuthRotation(ctx context.Context, accountID int64, expectedIdentityRevision int64, at, rt string, expiresAt *time.Time) error
 	AdminWriteOAuthRotationCAS(ctx context.Context, accountID int64, expectedRevision int64, at, rt string, expiresAt *time.Time) error
 	AdminWritePATKeyCAS(ctx context.Context, accountID int64, expectedRevision int64, patKey string) error
 }

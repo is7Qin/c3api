@@ -38,7 +38,7 @@ func TestSDKFailAPIKeyNilTemplateMissingDiscriminator(t *testing.T) {
 	latch.m[1] = "latched-fp"
 	failer := &fakeFailer2{}
 	deps := FailureDeps{Store: store, Failer: failer, Latch: latch}
-	err := HandleFailure(context.Background(), deps, 1, fmt.Errorf("fatal"))
+	err := HandleFailure(context.Background(), deps, failEvent(1, 1, fmt.Errorf("fatal")))
 	require.Error(t, err)
 	require.True(t, errors.Is(err, ErrMissingCredentialDiscriminator))
 	require.Empty(t, failer.failed, "missing discriminator must not self-fail")
@@ -55,7 +55,7 @@ func TestSDKFailResponsesSpecialAndUnknownRejected(t *testing.T) {
 		latch := newFakeLatch2()
 		failer := &fakeFailer2{}
 		deps := FailureDeps{Store: store, Failer: failer, Latch: latch}
-		err := HandleFailure(context.Background(), deps, 1, fmt.Errorf("fatal"))
+		err := HandleFailure(context.Background(), deps, failEvent(1, 1, fmt.Errorf("fatal")))
 		require.NoError(t, err, "ct=%q", ct)
 		require.Empty(t, failer.failed, "non-Codex %q must not self-fail", ct)
 		require.Empty(t, latch.m, "rejected type must not leave latch")
@@ -69,7 +69,7 @@ func TestSDKFailReadFailurePreservesLatch(t *testing.T) {
 	latch.m[42] = "old-fp"
 	failer := &fakeFailer2{}
 	deps := FailureDeps{Store: store, Failer: failer, Latch: latch}
-	err := HandleFailure(context.Background(), deps, 42, fmt.Errorf("fatal"))
+	err := HandleFailure(context.Background(), deps, failEvent(42, 1, fmt.Errorf("fatal")))
 	require.Error(t, err)
 	require.True(t, errors.Is(err, readErr))
 	require.Empty(t, failer.failed, "read failure must not self-fail")

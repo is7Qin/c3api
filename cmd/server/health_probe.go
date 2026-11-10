@@ -96,6 +96,9 @@ func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error
 		}
 		cred := domain.CredentialFromExt(acct.Ext)
 		cred.AccountID = key.AccountID
+		// 来源身份代际：健康探针手上有完整账号行，K 与凭据同源（无 Selection 的调用面
+		// 必须自己补上——0 会被失效链拒绝为"来源未知"）。
+		cred.IdentityRevision = acct.IdentityRevision
 		if _, err := p.codex.GetUsageSnapshot(cctx, &cred); err != nil {
 			return fmt.Errorf("health probe: codex usage probe failed for account %d: %w", key.AccountID, err)
 		}

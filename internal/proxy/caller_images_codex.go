@@ -68,7 +68,7 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 	if params.Model == "" {
 		params.Model = reqModel
 	}
-	cred2 := domain.CredentialFromExt(sel.Ext)
+	cred2 := sel.Credential()
 	if stream {
 		// 出口在**这一跳**绑定进 seam：`imageStreamGenerator` 是流式状态机的测试
 		// 替身面（五路共用），不该被塞进一个对替身毫无意义的出口参数；真实能力

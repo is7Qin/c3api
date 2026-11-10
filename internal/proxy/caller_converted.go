@@ -337,7 +337,7 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 		// 转移（失败文本落盘，耗尽 502 语义）；不上报失效（与直连同语义）。
 		return 0, nil, false, errCodexExtMissing
 	}
-	cred := domain.CredentialFromExt(sel.Ext)
+	cred := sel.Credential()
 	cm := sel.ClientResponseModel(reqModel)
 	// 出站传输钉死 http：转换车道上游跑的是**转换后的 payload**，本轮 WS 臂只
 	// 验证原生 responses 请求（sdkbridge 组合用例），未覆盖转换产物；钉 http

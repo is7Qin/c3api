@@ -250,6 +250,12 @@ func handleRetryOnce(ctx context.Context, task failureRetryTask) bool {
 	}
 	err = cs.FailAccountCAS(ctx, task.accountID, task.identityRevision, domain.FailureSourceSDK, time.Now(), task.reason)
 	if err == nil {
+		// 内存摘除与持久化同序：主链（HandleFailure）把 FailAccount 移到 CAS 成功
+		// 之后，瞬时失败的重试就必须在这里补这一次——否则重试成功只落了库，快照
+		// 要等下一轮 reload 才摘除。
+		if task.deps.Failer != nil {
+			task.deps.Failer.FailAccount(task.accountID)
+		}
 		if task.deps.Latch != nil {
 			task.deps.Latch.Clear(task.accountID)
 		}

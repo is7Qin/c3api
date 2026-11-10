@@ -213,7 +213,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	}
 	// 凭据线：快照派生直供适配层。Codex 端点固定 SDK 官方
 	// https://chatgpt.com/backend-api/codex/alpha/search，网关零拼装。
-	cred := domain.CredentialFromExt(sel.Ext)
+	cred := sel.Credential()
 	// 非流式超时：TCP 黑洞读停滞 → 超时触发 → 连接级错误转移
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
