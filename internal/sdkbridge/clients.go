@@ -6,19 +6,21 @@ package sdkbridge
 
 // 账号 → codex 传输资源表（条目，以及**条目私有**的 client 桶）的持有者。
 //
-// 这张表被两个组件共享：调度器问它"配置里还有哪些账号/出口"（ApplyConfig）并
-// 退役线程，适配层向它取（并懒构造）client。它因此是**先构造的独立组件**
+// 这张表被两个组件共享：配置权威（scheduler 的账号运行时）向它下发资源指令
+// （`ApplyBatch`），适配层向它取（并懒构造）client。它因此是**先构造的独立组件**
 // （AGENTS.md「禁止事后回填：把能力抽成独立组件按序构造」）：main 先建表，再把
 // 同一个实例分别交给 scheduler.Config 与 NewCodex——构造环结构性消失。
 //
 // **职责边界（配置权威与请求缓存分开）**：
-//   - 配置只有一个权威（scheduler 的账号运行时），这里只接受它算好的**一个批次**：
-//     `ApplyConfig(账号全集 → 当前 responses 出口, 批次代号)`。表不认识"删除事件"、
-//     不认识"未编组基线"，也不判断"哪个出口算活跃"——只按给定集合回收。
+//   - 配置只有一个权威（scheduler 的账号运行时），这里只接受它算好的**一份资源
+//     指令**（`domain.ResourceBatch`：保留哪些账号的哪些出口键、哪个账号的资源
+//     作废、批次代号）。表不认识账号全集、不认识"直连必须保留"，也不做任何差分
+//     ——差分与策略都在权威侧，这里只执行。
+//     权威要枚举"该删哪些账号"时先问 `Accounts()`（控制面读，非热路径）。
 //   - 请求路径**不写配置**：取 client 只按 (条目, 出口, 传输) 键取/建，从不登记
 //     活跃集、也从不剪枝。以调用方意图布尔量定义全局配置的设计已删除。
-//   - 凭据版本失效只作用于**来源条目**（evictIfCurrent）；整账号失效是另一条路径
-//     （InvalidateAccount）。
+//   - 凭据版本失效只作用于**来源条目**（evictIfCurrent / 来源版本比较）；整账号
+//     失效是另一条路径（invalidateOlder：仍然按来源版本比较，绝不"按 id 删当前"）。
 //
 // 锁纪律：摘表在锁内、terminate/Close 在锁外。SDK 的 clear() 会逐条 terminate，
 // 可能在 socket 写闸上等待；锁内做会把整张表卡住。
@@ -31,10 +33,12 @@ package sdkbridge
 //   - 账号被移除后迟到的写入不可能重建出账号级可复用桶；账号重新加回时是全新条目。
 
 import (
+	"slices"
 	"sync"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
-	"github.com/is7qin/c3api/pkg/egress"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // ClientTable 是账号级 codex 传输资源表：
@@ -46,11 +50,28 @@ import (
 type ClientTable struct {
 	mu      sync.Mutex
 	entries map[int64]*codexEntry
-	// appliedGen 已应用的配置批次代号（ApplyConfig 的单调守卫）。批次编号由调度器
+	// appliedGen 已应用的配置批次代号（ApplyBatch 的单调守卫）。批次编号由调度器
 	// 在 publisher.mu 内取号、应用在锁外——两次重叠 reload 可能后取号者先跑到
 	// 这里，所以只接受**更新**的号：旧批次不得把资源可见性回退到旧配置。
 	// 0 = 还没有应用过任何批次。
 	appliedGen uint64
+}
+
+// sourceGate 是**来源版本门**的判据（不入表锁：它是纯函数，调用方传快照）。
+//
+// 两个维度都必须看：
+//   - K 更大 ⇒ 表里的条目已属于更新的身份（旧快照的事件只能落到自己那一版）；
+//   - 同 K 但凭据签名不同 ⇒ 同一代身份下只有一份权威凭据内容，两个不同签名的快照
+//     不可能同时是当前版本；既然表里已有一个**构造成功**的条目，迟到的那份不能
+//     反过来把它删掉（资源保留胜过误删）。
+func supersededBy(e *codexEntry, sourceRevision int64, sig credKey) bool {
+	if e == nil {
+		return false
+	}
+	if cur := e.srcRev.Load(); cur != sourceRevision {
+		return cur > sourceRevision
+	}
+	return e.sig != sig
 }
 
 // NewClientTable 构造空表（装配点：main 在调度器之前，测试在 fixture 里）。
@@ -70,6 +91,10 @@ func (t *ClientTable) Get(accountID int64) *codexEntry {
 
 // Entry 取账号条目；凭据签名变化时重建（**锁内**构造，与表操作原子——同账号并发
 // 请求单飞构造）。build 为条目构造函数（适配层注入，保持表对 auth 语义零知识）。
+//
+// sourceRevision 是这版凭据的**来源身份代际 K**（`AccountCredential.IdentityRevision`，
+// 与凭据列同一次快照读）：条目把它冻结下来，此后所有事件（fatal / 构造失败 / 轮转
+// 回写）都以它作围栏，**不再回读"当前"**。0 = 来源未知（无 Selection 调用面）。
 //
 // 重建即整条目弃用旧资源：旧条目的 client 桶全部摘除并在**锁外**关闭——它们载着旧
 // auth，留着就是"新凭据的请求被旧 client 送出去"。旧桶随死条目一起变得不可达，
@@ -111,7 +136,7 @@ func (t *ClientTable) Entry(accountID int64, sig credKey, sourceRevision int64, 
 //     迟到的旧 auth 不会被任何后续请求命中；
 //   - 账号移除后不存在"账号级"可复用桶，重新加回时是全新条目。
 //
-// 请求路径**只取/建，不回收**：历史出口摘要由配置批次的 ApplyConfig 摘（键空间随
+// 请求路径**只取/建，不回收**：历史出口摘要由配置批次（ApplyBatch）摘（键空间随
 // 规格版本增长，TTL 只管连接不管这张表），单个请求无权按一次调用推断全局活跃集。
 // 摘表在锁内、Close 在锁外；并发持有旧 client 指针的在飞请求不受影响（它们只失去
 // 共享的空闲连接池，下一条连接自己重拨）。
@@ -133,42 +158,67 @@ func (t *ClientTable) Client(e *codexEntry, key clientKey, build func() *codexsd
 	return c
 }
 
-// ApplyConfig 应用**一个配置批次**：`active` 是账号全集 → 当前 responses 出口
-// （nil 值 = 直连），`gen` 是批次的单调代号（调度器在 publisher.mu 内取号）。
-// 这是资源可见性的**唯一写入口**。
+// Accounts 表当前持有的账号 id 快照（配置权威算"该删谁"用；控制面读，请求路径
+// 不得调用）。
 //
-//   - 不在 active 里的账号：条目与桶整账号摘除（账号全集差分 = 账号移除的唯一判据；
-//     没有会话池的账号同样在集合里）；
-//   - 在 active 里的账号：按 egress 维度摘除历史摘要（transport 维度不动——同出口
-//     换传输是合法变体）。
+// 为什么需要它：账号移除的判据是**账号全集差分**，而全集只属于配置权威。表若
+// 自己拿"没被列进保留集"当删除判据，就等于又把策略搬回来了；让权威先问表里有
+// 谁、再点名删除，表这边就只剩执行。
+func (t *ClientTable) Accounts() []int64 {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(t.entries) == 0 {
+		return nil
+	}
+	out := make([]int64, 0, len(t.entries))
+	for id := range t.entries {
+		out = append(out, id)
+	}
+	return out
+}
+
+// ApplyBatch 执行**一份配置批次的资源指令**（`domain.ResourceBatch`）。这是资源
+// 可见性的唯一写入口，而批次内容完全由配置权威决定：
 //
-// `active == nil` 表示"该能力未装配"（独立装配/单元用例）⇒ 整体 no-op；非 nil 的
-// 空表表示"没有任何账号"⇒ 摘除全部资源。
+//   - ResourceDelete：整账号条目与其全部出口桶摘除（"账号不在全集里"这条策略在
+//     权威侧得出，表只执行点名删除）；
+//   - ResourceRetain：只保留 `Keep` 里列出的出口资源键（transport 维度不动——同
+//     出口换传输是合法变体；直连是否保留是权威折进 Keep 的策略，不是表的特例）；
+//   - 没有指令的账号：**不动**（保守保留资源胜过误删）。权威每批用 Accounts() 取
+//     全量快照做差分，故漏掉的账号在下一批被点名——竞态中新建的条目最多多活一批。
 //
-// **同一个准入**：gen 由锁内取号、应用在锁外，两次重叠 reload 的应用顺序不保证。
-// 只接受比 appliedGen **更新**的批次——旧批次（先取号、后被新批次插队）必须整体
-// no-op，否则会把资源可见性回退到旧配置。摘表在锁内、Close 在锁外。
-func (t *ClientTable) ApplyConfig(gen uint64, active map[int64]*egress.Client) {
-	if t == nil || active == nil {
+// 零值批次（Gen == 0 且无指令）= 该能力未装配 ⇒ no-op。
+//
+// **批次准入**：Gen 由权威在串行区内取号、应用在锁外，两次重叠 reload 的应用顺序
+// 不保证。只接受比 appliedGen **更新**的批次——旧批次必须整体 no-op，否则会把资源
+// 可见性回退到旧配置（连带删掉新配置刚建出来的条目）。摘表在锁内、Close 在锁外。
+func (t *ClientTable) ApplyBatch(batch domain.ResourceBatch) {
+	if t == nil || batch.Gen == 0 || len(batch.Directives) == 0 {
 		return
 	}
 	var dropped []*codexsdk.HTTPClient
 	t.mu.Lock()
-	if gen <= t.appliedGen {
+	if batch.Gen <= t.appliedGen {
 		t.mu.Unlock()
 		return
 	}
-	t.appliedGen = gen
-	for id, e := range t.entries {
-		if _, ok := active[id]; ok {
-			continue
-		}
-		delete(t.entries, id)
-		dropped = append(dropped, takeBucketsLocked(e)...)
-	}
-	for id, eg := range active {
-		if e := t.entries[id]; e != nil {
-			dropped = append(dropped, pruneBucketsLocked(e.clients, egressDigest(eg))...)
+	t.appliedGen = batch.Gen
+	for _, d := range batch.Directives {
+		switch d.Action {
+		case domain.ResourceDelete:
+			e := t.entries[d.AccountID]
+			if e == nil {
+				continue
+			}
+			delete(t.entries, d.AccountID)
+			dropped = append(dropped, takeBucketsLocked(e)...)
+		case domain.ResourceRetain:
+			if e := t.entries[d.AccountID]; e != nil {
+				dropped = append(dropped, pruneBucketsLocked(e.clients, d.Keep)...)
+			}
 		}
 	}
 	t.mu.Unlock()
@@ -184,23 +234,6 @@ func (t *ClientTable) isCurrent(e *codexEntry) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.entries[e.accountID] == e
-}
-
-// supersededBy 是**来源版本门**的判据（纯函数，不入表锁）。
-//
-// 两个维度都必须看：
-//   - K 更大 ⇒ 表里的条目已属于更新的身份（旧快照的事件只能落到自己那一版）；
-//   - 同 K 但凭据签名不同 ⇒ 同一代身份下只有一份权威凭据内容，两个不同签名的快照
-//     不可能同时是当前版本；既然表里已有一个**构造成功**的条目，迟到的那份不能
-//     反过来把它删掉（资源保留胜过误删）。
-func supersededBy(e *codexEntry, sourceRevision int64, sig credKey) bool {
-	if e == nil {
-		return false
-	}
-	if cur := e.srcRev.Load(); cur != sourceRevision {
-		return cur > sourceRevision
-	}
-	return e.sig != sig
 }
 
 // evictIfCurrent 仅当 e 仍是当前条目时摘除它（及其私有桶，锁外关闭）。返回是否
@@ -228,15 +261,13 @@ func (t *ClientTable) evictIfCurrent(e *codexEntry) bool {
 	return true
 }
 
-// InvalidateAccount **账号级**失效：摘除该账号此刻的条目与其全部 client，锁外
-// 逐条 CloseWSIdleConnections——归还即失效（正在归还的连接被拒收并终止）。
+// InvalidateAccount **账号级无版本**失效：摘除该账号此刻的条目与其全部 client，锁外
+// 逐条 CloseWSIdleConnections。
 //
-// 这是"账号整体不可用"（健康剔除 / 配置里凭据不完整）的动作，不是单条凭据版本
-// 的撤销：后者必须用 evictIfCurrent，否则旧请求的错误会杀掉新凭据的 Auth。
-//
-// **这不是配置批次入口**：失效是运行期事实（认证被撤销、回写失败），没有配置
-// 代号；配置面的账号集合/出口只由 ApplyConfig 改写——两者不共用"按账号删当前
-// 资源"的实现。
+// **它不是请求路径的入口**（§3.3b-2）：凭据事件（fatal / 构造失败 / 轮转）都带着
+// 来源身份代际，必须走 evictIfCurrent / invalidateOlder——"按账号 id 删当前资源"
+// 正是"旧凭据的事件杀掉新凭据的 Auth"。这里只留给**控制面明确的整体禁用**
+// （运维处置/账号级事件），与配置批次也不共用入口（后者只走 ApplyBatch）。
 func (t *ClientTable) InvalidateAccount(accountID int64) {
 	if t == nil {
 		return
@@ -271,12 +302,16 @@ func (t *ClientTable) invalidateOlder(accountID int64, sourceRevision int64) boo
 	return true
 }
 
-// pruneBucketsLocked 摘除不在活跃集的桶并返回它们（调用方持锁、锁外关闭）。活跃集 =
-// 该账号当前配置出口 + 直连（零值摘要）。只看 proxy 维。
-func pruneBucketsLocked(m map[clientKey]*codexsdk.HTTPClient, active [16]byte) []*codexsdk.HTTPClient {
+// pruneBucketsLocked 摘除不在保留集里的桶并返回它们（调用方持锁、锁外关闭）。
+// 保留集由配置权威给出（含它认可的直连键）；**只看 proxy 维**：同出口换传输是
+// 合法变体，旧桶不得因此误删。
+func pruneBucketsLocked(m map[clientKey]*codexsdk.HTTPClient, keep []domain.EgressResourceKey) []*codexsdk.HTTPClient {
+	if len(m) == 0 {
+		return nil
+	}
 	var dropped []*codexsdk.HTTPClient
 	for k, c := range m {
-		if k.proxy == active || k.proxy == ([16]byte{}) {
+		if slices.Contains(keep, k.proxy) {
 			continue
 		}
 		dropped = append(dropped, c)

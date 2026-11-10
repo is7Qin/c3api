@@ -276,11 +276,12 @@ func main() {
 		StalenessProbe: repos.Groups,
 		RotatePolicy:   codexsdk.DefaultRotatePolicy(),
 		Egress:         egressPool,
-		// 线程退休与配置批次应用（账号全集 → 当前出口）都走同一张表的锁内摘表 +
-		// 锁外 close/terminate；账号删除由账号全集差分判定，与出口可见性共享同一
-		// 批次代号，池注册表差分只回收会话/线程。
-		RetireThread:     codexClients.RetireThread,
-		ReconcileClients: codexClients.ApplyConfig,
+		// 线程退休与配置批次应用都走同一张表：退线只退役会话线程，账号资源只按
+		// 控制器算好的**资源指令**（保留键集合 / 待删账号 / 批次代号）摘除——
+		// 表不认识账号全集，"账号不在全集即删除""直连必须保留"都在控制器侧
+		// （scheduler.accountRuntime），池注册表差分只回收会话/线程。
+		RetireThread:    codexClients.RetireThread,
+		ClientResources: codexClients,
 	}, repos.Groups, ruleEngine, runtimeHealth, log, latchStore, hub)
 	// 启动期装配门（spec §4.7）：代理表里有启用条目、而调度器没拿到池 ⇒ 起不来。
 	// 热路径不写"代理是否可用"的分支，装配缺失只能在这里暴露；否则后果是绑了

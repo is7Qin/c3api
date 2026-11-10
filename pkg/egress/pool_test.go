@@ -110,9 +110,9 @@ func TestPoolSpecsGetDistinctTransports(t *testing.T) {
 	require.Same(t, base.Transport, pool.Direct().HTTP.Transport)
 }
 
-// TestPoolPruneKeepsActiveAndRemovesRest 钉住 Prune 的取舍与幂等：活跃项保留
-// （同一指针），其余移除（之后再 For 必然新建），重复调用不 panic。
-func TestPoolPruneKeepsActiveAndRemovesRest(t *testing.T) {
+// TestPoolDetachKeepsActiveAndRemovesRest 钉住 Detach 的取舍与幂等：活跃项保留
+// （同一指针），其余摘出并**返回**（之后再 For 必然新建），重复调用不 panic。
+func TestPoolDetachKeepsActiveAndRemovesRest(t *testing.T) {
 	pool := NewPool(nil)
 	keepSpec := New("socks5", "10.0.0.1", 1080, "", "")
 	dropSpec := New("http", "10.0.0.2", 3128, "", "")
@@ -120,22 +120,24 @@ func TestPoolPruneKeepsActiveAndRemovesRest(t *testing.T) {
 	drop := pool.For(dropSpec)
 	require.Equal(t, 2, pool.Size())
 
-	pool.Prune(map[[16]byte]struct{}{keepSpec.Key(): {}})
+	require.NotPanics(t, func() { CloseClients(nil) }, "nil 安全")
+	CloseClients(pool.Detach(map[[16]byte]struct{}{keepSpec.Key(): {}}))
 	require.Equal(t, 1, pool.Size())
 	require.Same(t, keep, pool.For(keepSpec), "活跃规格必须保留同一 client")
 	require.NotSame(t, drop, pool.For(dropSpec), "被移除的规格必须重建（旧 client 已关闭）")
 	require.Equal(t, 2, pool.Size())
 
 	require.NotPanics(t, func() {
-		pool.Prune(nil)
-		pool.Prune(nil)
+		CloseClients(pool.Detach(nil))
+		CloseClients(pool.Detach(nil))
 	})
 	require.Equal(t, 0, pool.Size(), "空 active 集 ⇒ 清空注册表")
 }
 
-// TestPoolPruneClosesIdleConnections 证明 Prune **先关闭空闲连接**再移除（不只是
-// 丢引用）：经代理建立一条 keep-alive 连接后 prune，代理侧必须观测到连接关闭。
-func TestPoolPruneClosesIdleConnections(t *testing.T) {
+// TestPoolDetachClosesIdleConnections 证明 Detach 返回的 client 被调用方关闭后
+// **连接真的被关**（不只是丢引用）：经代理建立一条 keep-alive 连接后摘除并锁外
+// 关闭，代理侧必须观测到连接关闭。
+func TestPoolDetachClosesIdleConnections(t *testing.T) {
 	var closed atomic.Int32
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -155,9 +157,11 @@ func TestPoolPruneClosesIdleConnections(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
-	pool.Prune(nil)
+	detached := pool.Detach(nil)
+	require.Len(t, detached, 1, "被摘出的正是刚才那条出口 client")
+	CloseClients(detached)
 	require.Eventually(t, func() bool { return closed.Load() > 0 }, 2*time.Second, 10*time.Millisecond,
-		"Prune 必须 CloseIdleConnections（代理侧应观测到连接关闭）")
+		"Detach + CloseClients 必须关掉空闲连接（代理侧应观测到连接关闭）")
 	require.Equal(t, 0, pool.Size())
 }
 
@@ -272,14 +276,14 @@ func startRecordingProxy(t *testing.T) (string, func() []string) {
 	}
 }
 
-// TestPoolPruneClosesIdleConnectionsOnShardedBase 门禁 (g)/B9：底座是分片时，
-// Prune 必须**关到每个分片**的空闲连接。
+// TestPoolDetachClosesIdleConnectionsOnShardedBase 门禁 (g)/B9：底座是分片时，
+// 摘除后的关闭必须**关到每个分片**的空闲连接。
 //
 // `http.Client.CloseIdleConnections` 靠类型断言
-// `interface{ CloseIdleConnections() }`；ShardedTransport 少写这个方法 ⇒ Prune
+// `interface{ CloseIdleConnections() }`；ShardedTransport 少写这个方法 ⇒ 关闭
 // 静默不再关连接，而用 nil 底座的既有用例不会红。负例：删
 // ShardedTransport.CloseIdleConnections ⇒ 本用例超时，红。
-func TestPoolPruneClosesIdleConnectionsOnShardedBase(t *testing.T) {
+func TestPoolDetachClosesIdleConnectionsOnShardedBase(t *testing.T) {
 	const shards = 3
 	release := make(chan struct{})
 	arrived := make(chan struct{}, shards)
@@ -307,7 +311,7 @@ func TestPoolPruneClosesIdleConnectionsOnShardedBase(t *testing.T) {
 	c := pool.For(New("http", host, port, "", ""))
 
 	// 先让**每个分片**各自建立一条连接（并发 ⇒ 最少在飞把请求摊到 3 个分片），
-	// 这样"Prune 只关到一个分片"会被抓出来；只发一个请求的话断言 ≥1 是空转。
+	// 这样"关闭只到一个分片"会被抓出来；只发一个请求的话断言 ≥1 是空转。
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errs []error
@@ -340,13 +344,13 @@ func TestPoolPruneClosesIdleConnectionsOnShardedBase(t *testing.T) {
 	}
 	rls()
 	wg.Wait()
-	require.Empty(t, errs, "铺连接阶段有失败请求，Prune 断言会失真")
+	require.Empty(t, errs, "铺连接阶段有失败请求，关闭断言会失真")
 
 	before := closed.Load()
-	require.Zero(t, before, "Prune 之前不应有连接被关闭")
-	pool.Prune(nil)
+	require.Zero(t, before, "摘除/关闭之前不应有连接被关闭")
+	CloseClients(pool.Detach(nil))
 	require.Eventually(t, func() bool { return closed.Load()-before >= shards }, 2*time.Second, 10*time.Millisecond,
-		"Prune 必须把**每个**分片的空闲连接都关掉（漏 CloseIdleConnections ⇒ 连接泄漏）")
+		"摘除后的关闭必须把**每个**分片的空闲连接都关掉（漏 CloseIdleConnections ⇒ 连接泄漏）")
 }
 
 // foreignProxyTransport 是 pkg/egress **从未听说过**的 transport 类型，只实现

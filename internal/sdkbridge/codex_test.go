@@ -1537,15 +1537,15 @@ func TestClientCacheBoundedByActiveEgressSet(t *testing.T) {
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-bounded"}
 	base := *a.DirectEgress()
 
-	var last [16]byte
+	var last domain.EgressResourceKey
 	for i := range 20 {
 		eg := base
 		eg.Spec.Scheme = "http"
 		eg.Spec.Host = "localhost"
 		eg.Spec.Port = 8000
 		eg.Spec.Password = fmt.Sprintf("revision-%d", i)
-		// 密码轮换 = 账号配置变更 ⇒ reload 面把新的当前出口登记为活跃集。
-		a.clients.ApplyConfig(uint64(i+1), map[int64]*egress.Client{cred.AccountID: &eg})
+		// 密码轮换 = 账号配置变更 ⇒ 控制器把新的当前出口下发为保留键。
+		applyUniverse(t, a.clients, uint64(i+1), map[int64]*egress.Client{cred.AccountID: &eg})
 		_, _, err := a.clientFor(cred, &eg, domain.CodexResponsesTransportWS)
 		require.NoError(t, err)
 		last = egressDigest(&eg)

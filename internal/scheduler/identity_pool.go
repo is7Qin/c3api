@@ -18,11 +18,12 @@ package scheduler
 import (
 	"sync/atomic"
 
+	"github.com/is7qin/c3api/pkg/egress"
+
 	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -244,7 +245,12 @@ func resizeIdentityPool(old *identityPool, spec poolSpec, reclaim *poolReclaim) 
 			if os.busy.CompareAndSwap(false, true) {
 				if reusable {
 					// 同一 installation + 同一策略：会话字段与池参数仍然自洽，迁移指针。
-					os.busy.Store(false) // 新池尚未发布：此刻释放不会被别人抢到
+					//
+					// 这里的 Store(false) **不是**"没人抢得到"：旧池仍是已发布池，持旧视图
+					// 的请求随时可能认领同一会话指针。安全来自 `busy` 是**会话对象上的共享
+					// CAS**——旧视图认领后把 busy 置回 true，本侧（或新池侧）下一次 CAS 必败，
+					// 同一会话永远只会被一个请求独占。换句话说属性由 CAS 保证，不靠发布时机。
+					os.busy.Store(false)
 					np.slots[i] = os
 					continue
 				}
@@ -308,11 +314,15 @@ type threadRetire struct {
 // 锁内只做内存摘表，锁外的部分按收集顺序串行执行，不需要额外 goroutine。
 type poolReclaim struct {
 	threads []threadRetire
-	// config 本批次的账号配置快照（账号全集 → 当前出口 + 批次代号）。nil = 本批次
-	// 不携带配置（单元用例直接建池）。应用在锁外、与线程退役同一个批次。
+	// config 本批次的账号配置快照（账号全集 → 当前出口 + 资源指令 + 批次代号）。
+	// nil = 本批次不携带配置（单元用例直接建池）。应用在锁外、与线程退役同一个批次。
 	config *accountConfig
+	// egress 本批次被摘出注册表的出口 client（egress.Pool.Detach 的返回）：与配置
+	// 指令共享"锁内只收集、锁外才动系统调用"的纪律——关闭空闲连接可能在连接收尾上
+	// 等待，不能留在 publisher.mu 里。
+	egress []*egress.Client
 	retire func(accountID int64, threadKey string)
-	apply  func(gen uint64, active map[int64]*egress.Client)
+	apply  func(batch domain.ResourceBatch)
 }
 
 // run 执行收集到的副作用（必须在 publisher.mu 之外调用；nil 安全）。
@@ -325,10 +335,12 @@ func (b *poolReclaim) run() {
 			b.retire(t.accountID, t.threadKey)
 		}
 	}
-	// 配置面回收放最后：账号全集差分的删除与出口可见性必须在**同一个** gen 准入
-	// 之后应用——旧批次删掉的可能是新配置刚建出来的条目。
+	// 出口 client 与线程退役同一批、同一纪律：锁内只摘，锁外关闭。
+	egress.CloseClients(b.egress)
+	// 配置面回收放最后：账号删除与出口可见性必须在**同一个** gen 准入之后应用——
+	// 旧批次删掉的可能是新配置刚建出来的条目。
 	if b.config != nil && b.apply != nil {
-		b.apply(b.config.gen, b.config.egress)
+		b.apply(b.config.batch)
 	}
 }
 

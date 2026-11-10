@@ -74,6 +74,19 @@ func (s Spec) Key() [16]byte {
 	return out
 }
 
+// ResourceKey 一条出口 client 的**资源键**（`domain.EgressResourceKey` 的取值面）：
+// 直连（零值 Spec，含 nil client）→ **零值**，代理 → Spec.Key()。
+//
+// 为什么不直接用 Spec.Key()：它连零值也给一个非零哈希，而"直连"必须与
+// "某个真实规格"在键空间里可分辨——配置权威要能显式说"直连这条出口保留"，
+// 表据此决定保留哪个桶，而不是在表里写一条"零摘要恒保留"的特例。
+func ResourceKey(c *Client) (k [16]byte) {
+	if c == nil || c.Spec == (Spec{}) {
+		return k
+	}
+	return c.Spec.Key()
+}
+
 // Addr 返回 `host:port`（IPv6 自动补方括号）：M3 的 Dial/代理 URL 直接用它，
 // 调用点不得自己拼（拼错方括号 = 拨错地址）。
 func (s Spec) Addr() string {

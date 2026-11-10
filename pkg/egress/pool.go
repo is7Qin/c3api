@@ -24,9 +24,9 @@ type Client struct {
 }
 
 // Pool 是**进程级持久**的出口 client 注册表：按 Spec.Key() 复用，不随快照回收
-// （改 base_url 不该重建代理连接池），旧规格靠显式 Prune 关闭并移除。
+// （改 base_url 不该重建代理连接池），旧规格靠显式 Detach + 锁外关闭并移除。
 //
-// 生命周期纪律：For / Prune 只可能在快照期与管理面写后调用（低频）；热路径只
+// 生命周期纪律：For / Detach 只可能在快照期与管理面写后调用（低频）；热路径只
 // 读快照上已解析好的 *Client 指针——0 次 map 读、0 次分支、0 分配。
 type Pool struct {
 	mu     sync.Mutex
@@ -71,17 +71,35 @@ func (p *Pool) For(spec Spec) *Client {
 	return c
 }
 
-// Prune 关闭并移除不在 active 的规格 client：先 CloseIdleConnections 再删（不靠
-// GC 猜、不靠 finalizer），幂等。active 由调用方给出当前叶子引用到的摘要集。
-func (p *Pool) Prune(active map[[16]byte]struct{}) {
+// Detach 摘除并**返回**不在 active 的规格 client（幂等）。active 由调用方给出当前
+// 配置引用到的摘要集。
+//
+//   - 锁内只做 map 摘除（O(被摘项)）；**关闭动作由调用方在锁外做**——CloseIdleConnections
+//     会等在途连接收尾，把它留在池锁里会连带拖住持锁的配置临界区（scheduler 还是在
+//     publisher.mu 里调用这里，关闭必须晚于那次解锁）。
+//   - 返回的是**精确的旧 client 指针**：调用方不得在锁外再按 key 查一次最新注册表
+//     （两次查之间可能已经建出同规格的新 client，关错对象）。
+//   - 不靠 GC 猜、不靠 finalizer：返回了就由调用方负责关闭。
+func (p *Pool) Detach(active map[[16]byte]struct{}) []*Client {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	var out []*Client
 	for key, c := range p.byKey {
 		if _, ok := active[key]; ok {
 			continue
 		}
-		c.HTTP.CloseIdleConnections()
+		out = append(out, c)
 		delete(p.byKey, key)
+	}
+	return out
+}
+
+// CloseClients 关闭一批已从注册表摘除的出口 client 的空闲连接（锁外调用；nil 安全）。
+func CloseClients(clients []*Client) {
+	for _, c := range clients {
+		if c != nil && c.HTTP != nil {
+			c.HTTP.CloseIdleConnections()
+		}
 	}
 }
 

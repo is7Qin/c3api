@@ -465,22 +465,18 @@ func codexTransport(t domain.CodexResponsesTransport) codexsdk.Transport {
 // SDK 的构造期参数（换代理/换传输后复用旧 client = 请求仍走旧线路）。身份不在这里
 // ——身份是请求数据（§3.1），同一条 client 服务该账号全部会话。
 type clientKey struct {
-	// proxy 出口维（spec-proxy-pool §4.6.3）：= 本次出口的 Spec 摘要，直连（零值
-	// Spec）为全零。
-	proxy [16]byte
+	// proxy 出口维（spec-proxy-pool §4.6.3）：= 本次出口的**资源键**
+	// （`egress.ResourceKey`：Spec 摘要，直连为全零）。
+	proxy domain.EgressResourceKey
 	// transport responses 出站传输（spec §5）；取值面 = CodexResponsesTransport.Key()，
 	// 默认面取零值 ⇒ 只走 HTTP 的部署键形状与改动前一致。
 	transport string
 }
 
-// egressDigest 出口摘要（clientKey 的 proxy 维）：直连（零值 Spec）→ 全零，
-// 代理 → `Spec.Key()`。不直接用 `Spec.Key()` 的原因是它连零值也给一个非零哈希，
-// 那会让"零代理部署的缓存键与 M3 之前逐字节一致"这条零回归承诺失效。
-func egressDigest(eg *egress.Client) [16]byte {
-	if eg == nil || eg.Spec == (egress.Spec{}) {
-		return [16]byte{}
-	}
-	return eg.Spec.Key()
+// egressDigest 出口资源键（clientKey 的 proxy 维）：直连 → 零值，代理 →
+// `Spec.Key()`。实现收在 pkg/egress（配置权威也要算同一个键，不得两份定义）。
+func egressDigest(eg *egress.Client) domain.EgressResourceKey {
+	return domain.EgressResourceKey(egress.ResourceKey(eg))
 }
 
 // clientFor entryFor + HTTPClient 懒构造（GenerateImage/Stream/Responses/Search/

@@ -97,11 +97,11 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 	// 账号配置快照：以全量装载的全集为基线，用折叠后的工作根（byID）覆盖本次触达的
 	// 账号。从组里移除账号不是账号移除——它仍在全集里，资源保留；真正的删除由下一次
 	// 全量装载的全集差分发现（§3.3b-4）。
-	cfg := s.accounts.mergedLocked(byID, s.cfg.Egress)
+	cfg := s.accounts.mergedLocked(byID, s.cfg.Egress, s.clientAccounts())
 	sv := newStaticView(m, byID, pools)
 	s.publisher.stageLocked(sv)
-	// 传输资源（条目 + client 桶）的配置面回收：输入是**账号全集**（与全量 reload
-	// 同口径）。执行在锁外（reclaim.run）。
+	// 传输资源（条目 + client 桶）的配置面回收：输入与全量 reload 同口径
+	// （账号全集 + 资源指令）。执行在锁外（reclaim.run）。
 	reclaim.config = &cfg
 	// this staging touches exactly scope — the lane recomputes only their
 	// routes. Scope-first, then wake.

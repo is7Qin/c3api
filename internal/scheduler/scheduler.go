@@ -60,17 +60,12 @@ type Config struct {
 	// 装配是**先构造组件再注入**：ClientTable 在调度器之前构造，同一个实例也交给
 	// codex 适配层（AGENTS.md「禁止事后回填」——不拿闭包回填一个后构造的指针）。
 	RetireThread func(accountID int64, threadKey string)
-	// ReconcileClients 应用一个配置批次（sdkbridge.ClientTable.ApplyConfig 实现；
-	// nil = 未接）：gen 是批次代号（publisher.mu 内取号），active 是**账号全集**
-	// （含未编组、`MaxConcurrency=0`、没有会话池的账号）→ 当前 responses 出口
-	// （nil = 直连）。
+	// ClientResources 传输资源表（sdkbridge.ClientTable 实现；nil = 未接）。
 	//
-	// 账号删除由这份**账号全集差分**判定：新批次集合里没有的账号 ⇒ 整账号资源
-	// 摘除。池注册表差分只回收会话/线程（池消失 ≠ 账号移除），两者不互相冒充。
-	// 出口可见性也只能由**配置生命周期**产生（§3.2 出口/transport 变更）：请求
-	// 路径只读不写，否则 usage 快照（恒 Direct）一次调用就会把在用的代理桶摘掉并
-	// 永久 Close——"跨窗口不重连"直接失效。
-	ReconcileClients func(gen uint64, active map[int64]*egress.Client)
+	// 边界就两句话：控制器只问表"现在持有哪些账号"（Accounts），再把算好的
+	// **资源指令**交给它执行（ApplyBatch）；表不认识配置、不做差分，控制器也不认识
+	// 条目。账号删除的判据（账号全集差分）与"直连恒保留"都在控制器侧。
+	ClientResources ClientResources
 	// Egress 出口 client 池（spec-proxy-pool §4.3/§4.7）：main 注入与 aiclient
 	// Factory **共用同一个** *http.Client 作底座（直连与代理同源，出口差异只在
 	// transport 的 Proxy 一项）。nil = 未装配：New 会补一个空池保证快照字段恒
@@ -82,6 +77,18 @@ type Config struct {
 	// （backstop 保持 fail-safe 全量 reload）。装配后不可变—— probes
 	// 不支持运行时替换（换源 = 重建 Scheduler）。
 	StalenessProbe stalenessQuerier
+}
+
+// ClientResources 是传输资源表的最小面（sdkbridge.ClientTable 实现；接口在本包
+// 声明，实现方无需 import 本包）。
+//
+// 两个方法就是全部契约：读"表里有哪些账号"（供控制器做全集差分），执行一份
+// 类型明确的资源指令。表不解释配置，控制器不碰条目。
+type ClientResources interface {
+	// Accounts 表当前持有的账号 id 快照（控制面读；请求路径不用）。
+	Accounts() []int64
+	// ApplyBatch 执行一个配置批次的资源指令（批次代号内含单调准入）。
+	ApplyBatch(batch domain.ResourceBatch)
 }
 
 // Loader 是调度器的数据源（由 repository 实现）。
@@ -515,12 +522,23 @@ func (s *Scheduler) withPublisherLock(fn func(*poolReclaim)) {
 }
 
 // newReclaim 本次重载的锁外副作用批次（出口取自构造期注入的两个能力）。账号删除
-// 没有独立出口：它随账号全集差分（accountConfig）一起应用（共享同一 gen 准入）。
+// 没有独立出口：它随账号资源指令（accountConfig.batch）一起应用（共享同一 gen 准入）。
 func (s *Scheduler) newReclaim() *poolReclaim {
-	return &poolReclaim{
-		retire: s.cfg.RetireThread,
-		apply:  s.cfg.ReconcileClients,
+	r := &poolReclaim{retire: s.cfg.RetireThread}
+	if s.cfg.ClientResources != nil {
+		r.apply = s.cfg.ClientResources.ApplyBatch
 	}
+	return r
+}
+
+// clientAccounts 传输资源表当前持有的账号 id 快照（配置权威做全集差分用）。
+// 未装配 ⇒ nil（没有需要差分的资源）。调用方在 publisher.mu 内调用：表锁在
+// publisher.mu 之内是单向的（表从不回调调度器），不存在反向等待。
+func (s *Scheduler) clientAccounts() []int64 {
+	if s.cfg.ClientResources == nil {
+		return nil
+	}
+	return s.cfg.ClientResources.Accounts()
 }
 
 // loadGroupsAccountsFull 全量装载并尽量给出**账号全集**：实现了 AccountUniverseLoader
@@ -588,8 +606,8 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	prevReg := s.prevIdentityPoolsLocked()
 	pools := s.buildIdentityPools(byID, prevReg, reclaim)
 	collectRetiredPools(prevReg, pools, reclaim)
-	// 账号配置快照（账号全集 → 当前出口 + 批次代号）：一次算好，两级资源共用。
-	cfg := s.accounts.fullLocked(byID, all, s.cfg.Egress)
+	// 账号配置快照（账号全集 → 当前出口 + 资源指令）：一次算好，两级资源共用。
+	cfg := s.accounts.fullLocked(byID, all, s.cfg.Egress, s.clientAccounts())
 	sv := newStaticView(groups, byID, pools)
 	if s.latch != nil {
 		for id, as := range byID {
@@ -635,9 +653,10 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	}
 	s.publisher.stageLocked(sv)
 	// 出口 client 回收（spec §8 失效矩阵）：新快照成为唯一活跃根之后，池里不再被
-	// **账号配置**引用的规格 client 关闭并移除。输入与 ClientTable 的配置批次是同一
-	// 份快照（账号全集）——两级资源同口径。
-	s.pruneEgress(cfg.egress)
+	// **账号配置**引用的规格 client 摘出注册表。输入与传输资源表的配置批次是同一份
+	// 快照（账号全集）——两级资源同口径。关闭动作进 reclaim（**锁外**执行）：
+	// CloseIdleConnections 会等在途连接收尾，留在 publisher.mu 里会拖住整条控制面。
+	reclaim.egress = s.pruneEgress(cfg.egress)
 	// 传输资源（条目 + client 桶）的配置面回收：同一份快照（账号全集 → 当前出口）
 	// 交给 ClientTable；执行在锁外（reclaim.run）——terminate 可能在 socket 写闸上等待。
 	reclaim.config = &cfg

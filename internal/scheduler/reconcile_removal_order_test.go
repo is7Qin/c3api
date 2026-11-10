@@ -11,12 +11,12 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/sdkbridge"
-	"github.com/is7qin/c3api/pkg/egress"
 )
 
 // TestReconcileStaleBatchPreservesNewEntry 旧批次不得删掉新配置的资源（永久用例）：
-// 旧批次 A（账号全集里没有账号 2）在锁内取号后、锁外收尾被卡住；新批次 B（账号 2
-// 加回）取到更大的号、先应用，随后真实 Prepare 建出账号 2 的新条目；A 恢复。
+// 旧批次 A（账号全集里没有账号 2 ⇒ 点名 Delete(2)）在锁内取号后、锁外收尾被卡住；
+// 新批次 B（账号 2 加回 ⇒ Retain(2)）取到更大的号、先应用，随后真实 Prepare 建出
+// 账号 2 的新条目；A 恢复。
 //
 // 账号删除与出口可见性共享**同一个** gen 准入 ⇒ A 整体 no-op，新条目连指针都不变。
 //
@@ -30,16 +30,21 @@ func TestReconcileStaleBatchPreservesNewEntry(t *testing.T) {
 	entered, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
 	s := &Scheduler{publisher: &routingPublisher{}, cfg: Config{
 		// A 的锁外收尾被卡住：批次已经拿到旧代号，但还没轮到应用。
-		RetireThread:     func(int64, string) { close(entered); <-release },
-		ReconcileClients: table.ApplyConfig,
+		RetireThread:    func(int64, string) { close(entered); <-release },
+		ClientResources: table,
 	}}
+
+	// 账号 2 的资源先存在（上一版配置建的），于是 A 的差分里会点名 Delete(2)。
+	_, err := adapter.Prepare(cred)
+	require.NoError(t, err)
+	require.NotNil(t, table.Get(2))
 
 	go func() {
 		defer close(done)
 		s.withPublisherLock(func(b *poolReclaim) {
 			b.threads = []threadRetire{{accountID: 1, threadKey: "old-thread"}}
-			// A = 旧配置：账号全集为空（账号 2 尚未出现）。
-			cfg := s.accounts.fullLocked(nil, []*domain.Account{}, nil)
+			// A = 旧配置：账号全集为空（账号 2 已不在配置里）。
+			cfg := s.accounts.fullLocked(nil, []*domain.Account{}, nil, s.clientAccounts())
 			b.config = &cfg
 		})
 	}()
@@ -47,11 +52,11 @@ func TestReconcileStaleBatchPreservesNewEntry(t *testing.T) {
 
 	// B = 新配置（账号 2 加回）：取更大的号并先完成应用。
 	s.withPublisherLock(func(b *poolReclaim) {
-		cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 2}}, nil)
+		cfg := s.accounts.fullLocked(nil, []*domain.Account{{ID: 2}}, nil, s.clientAccounts())
 		b.config = &cfg
 	})
 	// 真实准备：账号 2 按新配置建出的条目就是"新配置的资源"。
-	_, err := adapter.Prepare(cred)
+	_, err = adapter.Prepare(cred)
 	require.NoError(t, err)
 	current := table.Get(2)
 	require.NotNil(t, current)
@@ -72,15 +77,17 @@ func TestPoolDisappearanceOnlyRetiresThreads(t *testing.T) {
 	adapter := sdkbridge.NewCodex(nil, nil, table, sdkbridge.RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 7, PATKey: "pat"}
 
-	// 账号资源先建立（配置批次登记它）。
-	table.ApplyConfig(1, map[int64]*egress.Client{7: nil})
+	// 账号资源先建立（配置批次登记它：保留键只有直连）。
+	table.ApplyBatch(domain.ResourceBatch{Gen: 1, Directives: []domain.AccountResourceDirective{
+		{AccountID: 7, Action: domain.ResourceRetain, Keep: []domain.EgressResourceKey{{}}},
+	}})
 	_, err := adapter.Prepare(cred)
 	require.NoError(t, err)
 	before := table.Get(7)
 	require.NotNil(t, before)
 
 	pool := newTestPoolWith(2, testPolicy(), spy.fn)
-	reclaim := &poolReclaim{retire: spy.fn, apply: table.ApplyConfig}
+	reclaim := &poolReclaim{retire: spy.fn, apply: table.ApplyBatch}
 	collectRetiredPools(
 		&identityRegistry{pools: map[int64]*identityPool{7: pool}},
 		&identityRegistry{pools: map[int64]*identityPool{}}, // K=0 / 类型变更 / 退出路由集合
