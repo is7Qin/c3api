@@ -10,8 +10,12 @@ package protoconv
 //   - 请求：官方 schema 的 FunctionToolCall required 只有 type/call_id/name/
 //     arguments —— item id 可选，出现时须 `fc_` 开头。转换器因此一律**省略** id，
 //     只写配对键 call_id（chat 的 tool_calls[].id / Messages 的 tool_use.id）。
-//   - 响应：FunctionCallItemResource 的 id 是 **required** —— 必须合成，且流式与
-//     非流式同源（`fc_` + call_id）。
+//   - 响应：输出类型的 id 是 **Optional**（官方 `ResponseFunctionToolCall` 就是
+//     `id: Optional[str]`；`FunctionCallItemResource` 属于 agent 资源模型、带
+//     turn_id，不能当输出 schema 引用）。转换器仍合成 id 的理由只有两条：流内
+//     身份要可引用（added/delta/done/completed 共用同一 id），且唯一被观察到的
+//     上游规则是「出现即须 `fc_` 前缀」。流式与非流式同源（`fc_` + call_id，
+//     call id 迟到时用响应 id + 内容 index）。
 //   - 流内身份：同一 output_index 的 added / delta / done / completed 必须共用
 //     一个 item id（客户端按 item_id 归并分片）。
 //
