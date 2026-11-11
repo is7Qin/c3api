@@ -164,3 +164,21 @@ func TestProbeSupplierScope(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 	require.Equal(t, 1, prober.calls, "越域请求不得触达探测执行")
 }
+
+// TestProbeDeletedAccountNotFound A8/PG：软删账号仍在表里（GET 单个可查），但
+// 探测是消费动作，必须 404，不得继续使用其存储凭据。
+func TestProbeDeletedAccountNotFound(t *testing.T) {
+	repos, _ := probePGBase(t)
+	ctx := context.Background()
+	tpl := probePGTemplate(t, repos)
+	acc := probePGAccount(t, repos, tpl.ID, 0, "probe-deleted")
+	require.NoError(t, repos.Accounts.DeleteAccount(ctx, acc.ID))
+
+	prober := &probeStub{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := probePGService(t, repos, prober)
+	_, err := svc.ProbeAccount(ctx, acc.ID, service.AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAIChat,
+	})
+	require.ErrorIs(t, err, service.ErrNotFound)
+	require.Zero(t, prober.calls, "软删账号不得进入探测执行器")
+}

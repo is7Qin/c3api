@@ -1188,3 +1188,19 @@ func (r *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	clone.URL = &cu
 	return http.DefaultTransport.RoundTrip(clone)
 }
+
+// TestProbeAdmissionBounded：并发槽满后只允许有界 waiter；等待队列也满时立即
+// probe busy，不再保留更多请求的内存上下文。
+func TestProbeAdmissionBounded(t *testing.T) {
+	p := newTestProber(t, nil, 10*time.Second)
+	for i := 0; i < cap(p.sem); i++ {
+		p.sem <- struct{}{}
+	}
+	for i := 0; i < cap(p.waiters); i++ {
+		p.waiters <- struct{}{}
+	}
+	res := p.Probe(context.Background(), staticSpec("http://127.0.0.1:1"))
+	require.False(t, res.Success)
+	require.Equal(t, "probe busy", res.Error)
+	require.Zero(t, res.StatusCode)
+}

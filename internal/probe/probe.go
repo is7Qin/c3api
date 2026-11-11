@@ -59,6 +59,7 @@ type Prober struct {
 	log     *logx.Logger
 	timeout time.Duration
 	sem     chan struct{}
+	waiters chan struct{}
 }
 
 // New 构造探测执行器。timeout/concurrency <= 0 回落硬上限（30s/4）。nil factory
@@ -76,6 +77,7 @@ func New(factory *aiclient.Factory, pool *egress.Pool, log *logx.Logger, timeout
 		log:     log,
 		timeout: timeout,
 		sem:     make(chan struct{}, concurrency),
+		waiters: make(chan struct{}, domain.ProbeMaxWaiters),
 	}
 }
 
@@ -87,13 +89,26 @@ func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeR
 	}
 	pctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
+	// 先非阻塞抢并发槽；槽满才进入有界等待队列。等待队列也满 ⇒ 立即
+	// probe busy（不再保留更多请求体/模型串），避免无限 waiter 的内存放大。
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
-	case <-pctx.Done():
-		return finalizeResult(spec, domain.ProbeResult{
-			Error: classifyTransportError(pctx.Err()),
-		})
+	default:
+		select {
+		case p.waiters <- struct{}{}:
+			defer func() { <-p.waiters }()
+		default:
+			return finalizeResult(spec, domain.ProbeResult{Error: "probe busy"})
+		}
+		select {
+		case p.sem <- struct{}{}:
+			defer func() { <-p.sem }()
+		case <-pctx.Done():
+			return finalizeResult(spec, domain.ProbeResult{
+				Error: classifyTransportError(pctx.Err()),
+			})
+		}
 	}
 
 	start := time.Now()

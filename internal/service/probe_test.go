@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -516,4 +517,32 @@ func TestProbeProberNotConfigured(t *testing.T) {
 	require.NotErrorIs(t, err, ErrInvalidInput)
 	require.NotErrorIs(t, err, ErrNotFound)
 	require.NotErrorIs(t, err, ErrUnavailable)
+}
+
+// TestProbeRejectsDeletedAndOversizedAccount：软删账号不得继续用存储凭据探测；
+// 通配模型输入在任何排队/上游组装前限制长度。
+func TestProbeRejectsDeletedAndOversizedAccount(t *testing.T) {
+	tpl := staticProbeTemplate()
+	deletedAt := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	acc := &domain.Account{
+		ID: 1, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "sk-test",
+		DeletedAt: &deletedAt,
+	}
+	store := &probeReadOnlyStore{acc: acc}
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+
+	_, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAIChat,
+	})
+	require.ErrorIs(t, err, ErrNotFound)
+	require.Zero(t, prober.calls, "软删账号不得进入探测执行器")
+
+	acc.DeletedAt = nil
+	oversized := strings.Repeat("m", domain.ProbeMaxModelLen+1)
+	_, err = svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+		Model: oversized, Format: domain.FormatOpenAIChat,
+	})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	require.Zero(t, prober.calls, "超长模型不得进入探测执行器")
 }

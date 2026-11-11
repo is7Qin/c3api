@@ -45,11 +45,14 @@
    缓冲，2 MiB 的 `data:0\n\n` 微事件洪泛分配为 O(body) 而不是 O(events)。
    两个 cap 的 `New*CappedTransport` 都只是测试 seam，生产装配只经
    `guardedHTTPClient` / `guardedCodexTransport`。
-5. **并发/超时**：进程内信号量（默认 4）+ `context.WithTimeout`（默认 30s，常量，
-   不开配置键）；信号量等待受同一 ctx 约束。任何超时/取消（含响应头已到但 body
-   未读完、以及 SDK 吞掉非 200/401 预读 body 错误的情形）→ `status_code=0` + 固定
-   `probe timed out` / `probe canceled`；映射 SDK error 前先检查 `ctx.Err()`。
-   codex 非 200（含 201/204/3xx）保留真实状态码并按 HTTP 响应分类。
+5. **并发/超时**：进程内信号量（默认 4）+ 有界等待队列（16）+ `context.WithTimeout`
+   （默认 30s，常量，不开配置键）；等待受同一 ctx 约束。并发槽与等待队列都满时
+   立即返回固定 `probe busy`，不得让无限 waiter 各自保留请求体/模型串。任何超时/
+   取消（含响应头已到但 body 未读完、以及 SDK 吞掉非 200/401 预读 body 错误的
+   情形）→ `status_code=0` + 固定 `probe timed out` / `probe canceled`；映射 SDK
+   error 前先检查 `ctx.Err()`。codex 非 200（含 201/204/3xx）保留真实状态码并按
+   HTTP 响应分类。service 在进入执行器前拒绝软删账号（404）与超过
+   `domain.ProbeMaxModelLen`（256 字节）的模型。
 6. **JSON 深度守卫（≤128）**：任何上游可控 body / SSE 事件在交给递归的 `gjson`
    之前必须先过 `domain.ShallowJSON`（线性、零分配，正确跳过字符串与转义）。超深
    数据按「不可用/非终态」处理：静态判定成功 = false、`errorCodeDetail` = 空、
@@ -65,7 +68,7 @@
    request failed / upstream rejected credentials / upstream endpoint or model not
    found / upstream rate limited / upstream rejected request / upstream redirect
    rejected / upstream error / upstream response missing usable output / upstream
-   stream failed / response exceeds 2 MiB）；`detail` 只允许**内置有限公开错误码
+   stream failed / response exceeds 2 MiB / probe busy）；`detail` 只允许**内置有限公开错误码
    表**内的值（invalid_request_error / invalid_api_key / model_not_found /
    context_length_exceeded / rate_limit_exceeded / rate_limit_error /
    insufficient_quota / server_error / api_error / overloaded_error /

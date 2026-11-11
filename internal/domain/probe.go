@@ -23,6 +23,12 @@ const (
 	ProbeTimeout = 30 * time.Second
 	// ProbeMaxConcurrency 进程内探测并发上限（信号量；多实例不协调）。
 	ProbeMaxConcurrency = 4
+	// ProbeMaxWaiters 等待并发槽的请求上限：超出立即返回 probe busy，避免
+	// 无限 waiter 各自保留请求体/模型串造成内存放大。
+	ProbeMaxWaiters = 16
+	// ProbeMaxModelLen 请求模型名最大字节数：通配模板允许自由输入，必须在上游
+	// 组装/排队前限制长度（否则 1 MiB 模型串可被大量请求保留）。
+	ProbeMaxModelLen = 256
 	// ProbeErrorMaxLen / ProbeDetailMaxLen 结果文本截断上限（分类/错误码收敛后截断）。
 	ProbeErrorMaxLen  = 1024
 	ProbeDetailMaxLen = 2048

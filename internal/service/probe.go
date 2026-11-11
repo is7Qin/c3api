@@ -58,6 +58,11 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
+	// GET 单个账号允许读到软删行（编辑回显），探测是消费动作：已删除账号不得
+	// 继续用其存储凭据发上游请求。
+	if acc.DeletedAt != nil {
+		return nil, mapRepoErr(fmt.Errorf("%w: account %d is deleted", repository.ErrNotFound, id))
+	}
 	tpl := acc.Template
 	if tpl == nil {
 		return nil, fmt.Errorf("service: account %d has no template", id)
@@ -70,6 +75,9 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	}
 	if strings.TrimSpace(model) == "" {
 		return nil, fmt.Errorf("%w: probe model is empty", ErrInvalidInput)
+	}
+	if len(model) > domain.ProbeMaxModelLen {
+		return nil, fmt.Errorf("%w: probe model exceeds %d bytes", ErrInvalidInput, domain.ProbeMaxModelLen)
 	}
 	if !tpl.FormatSupports(format, model) || !(tpl.Serves(model) || !tpl.HasModelSpace()) {
 		return nil, fmt.Errorf("%w: model %q is not eligible for template format %q", ErrInvalidInput, model, format)
