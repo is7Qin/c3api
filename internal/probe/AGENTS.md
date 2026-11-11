@@ -53,7 +53,9 @@
 6. **JSON 深度守卫（≤128）**：任何上游可控 body / SSE 事件在交给递归的 `gjson`
    之前必须先过 `domain.ShallowJSON`（线性、零分配，正确跳过字符串与转义）。超深
    数据按「不可用/非终态」处理：静态判定成功 = false、`errorCodeDetail` = 空、
-   SSE 事件被忽略且不是终态；禁止把 2 MiB 的 `[` 交给 `gjson.ValidBytes`。
+   依赖 data.type 的 SSE 事件被忽略且不是终态；禁止把 2 MiB 的 `[` 交给
+   `gjson.ValidBytes`。**例外**：失败事件名 `response.failed` / `error` 是无条件
+   终态，不解析 data、也不受深度守卫影响（data 为空/`[DONE]`/非 JSON 同样失败）。
 7. **固定文案不做凭据子串替换**：结果字段只有分类白名单 + 有限错误码，没有动态
    上游文本；按 secret 做 substring 替换会用短 key（如 `up`）破坏
    `upstream rejected credentials` 等固定文案，代码中不保留逐 secret 替换调用。

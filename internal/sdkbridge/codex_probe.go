@@ -183,10 +183,11 @@ func sseLineEmpty(line []byte) bool {
 }
 
 // codexTerminalBlock 判断一个 SSE 事件块是否已是终态事件（response.completed /
-// response.failed / error）。data 必须先通过线性深度守卫且能解析成完整 JSON
-// （多行 data 已合并）才可信；事件名仅在 data 合法时兜底。终态判定在空行边界
-// 每个事件只调用一次；单行 data 直接引用块切片、多行才写复用 buffer，因此
-// 微事件洪泛不会为每个事件分配描述符/缓冲。
+// response.failed / error）。失败事件名（response.failed / error）是**无条件**
+// 终态，不要求 data 合法；只有依赖 data.type 的判定才必须先过线性深度守卫且能
+// 解析成完整 JSON（多行 data 已合并）。终态判定在空行边界每个事件只调用一次；
+// 单行 data 直接引用块切片、多行才写复用 buffer，因此微事件洪泛不会为每个事件
+// 分配描述符/缓冲。
 func codexTerminalBlock(block []byte) bool {
 	var (
 		name    string
