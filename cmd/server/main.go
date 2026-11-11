@@ -361,9 +361,9 @@ func main() {
 		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
 	})
 	// 单账号单模型探测执行器（account-model-test §5.1）：与 HTTP 面共用同一个
-	// aiclient Factory 与出口池；硬上限 30s / 并发 4 是常量（不开配置键），由
-	// service.Deps.Prober 注入。探测不落库、不计费、不进调度/规则/失败统计。
-	accountProber := accountprobe.New(clients, egressPool, log, accountprobe.DefaultTimeout, accountprobe.DefaultMaxConcurrency)
+	// aiclient Factory 与出口池。准入（4 执行 + 16 等待）与 30s 总期限在 service
+	// 内；本构造只传执行依赖。探测不落库、不计费、不进调度/规则/失败统计。
+	accountProber := accountprobe.New(clients, egressPool)
 	// 管理端变更统一经 invalidate 去抖器生效（接线矩阵）：
 	// - 用户 CRUD（含创建）/余额变更 → auth + 余额快照全量 Reload（去抖窗口
 	//   内合并；新用户必须即刻进余额快照——防 ≤10s 402 窗口）

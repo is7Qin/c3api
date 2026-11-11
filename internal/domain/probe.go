@@ -5,6 +5,8 @@
 package domain
 
 import (
+	"context"
+	"errors"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -17,13 +19,14 @@ import (
 const (
 	// ProbeMaxBodyBytes 上游响应体硬上限（2 MiB）。transport 层对非 2xx 截断到
 	// 这里；2xx 允许读取到 +1 字节以发现溢出（见 internal/probe 的 capTransport
-	// 与 sdkbridge.ProbeResponses）。
+	// 与 codex 扫描器）。
 	ProbeMaxBodyBytes = 2 << 20
-	// ProbeTimeout 单次探测硬上限（常量，不开配置键）。
+	// ProbeTimeout 单次探测总期限（常量，不开配置键）。只由 service 在探测入口
+	// 创建，prober 不再自行包一层。
 	ProbeTimeout = 30 * time.Second
-	// ProbeMaxConcurrency 进程内探测并发上限（信号量；多实例不协调）。
+	// ProbeMaxConcurrency 进程内探测执行槽上限（service 准入；多实例不协调）。
 	ProbeMaxConcurrency = 4
-	// ProbeMaxWaiters 等待并发槽的请求上限：超出立即返回 probe busy，避免
+	// ProbeMaxWaiters 等待执行槽的请求上限：超出立即返回 probe busy，避免
 	// 无限 waiter 各自保留请求体/模型串造成内存放大。
 	ProbeMaxWaiters = 16
 	// ProbeMaxModelLen 请求模型名最大字节数：通配模板允许自由输入，必须在上游
@@ -37,6 +40,40 @@ const (
 	// 上游 body / SSE 事件在交给 gjson 前必须先经 ShallowJSON 线性扫描。
 	ProbeMaxJSONDepth = 128
 )
+
+// 探测结果的固定分类文案。service（准入/期限/凭据早退）与 internal/probe
+// （传输/上游/流式）共用这一份词表；结果与日志不得出现表外动态文本。
+const (
+	ProbeErrorRequestFailed     = "probe request failed"
+	ProbeErrorTimedOut          = "probe timed out"
+	ProbeErrorCanceled          = "probe canceled"
+	ProbeErrorBusy              = "probe busy"
+	ProbeErrorBlockedRedirect   = "probe blocked cross-origin redirect"
+	ProbeErrorUpstreamRedirect  = "upstream redirect rejected"
+	ProbeErrorUpstreamAuth      = "upstream rejected credentials"
+	ProbeErrorUpstreamNotFound  = "upstream endpoint or model not found"
+	ProbeErrorUpstreamRateLimit = "upstream rate limited"
+	ProbeErrorUpstreamRejected  = "upstream rejected request"
+	ProbeErrorUpstream          = "upstream error"
+	ProbeErrorNoUsableOutput    = "upstream response missing usable output"
+	ProbeErrorStreamFailed      = "upstream stream failed"
+	ProbeErrorBodyTooLarge      = "response exceeds 2 MiB"
+	ProbeErrorCodexTokenExpired = "codex access token expired; re-run device login"
+)
+
+// ProbeContextError 把 ctx 错误归一为固定文案；其余错误按请求失败处理。
+// 调用方必须先用它处理 context.Canceled/DeadlineExceeded，再走各自的传输
+// 分类（例如 origin 阻止），避免 busy/上游分类掩盖取消。
+func ProbeContextError(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return ProbeErrorTimedOut
+	case errors.Is(err, context.Canceled):
+		return ProbeErrorCanceled
+	default:
+		return ProbeErrorRequestFailed
+	}
+}
 
 // ProbeSpec 是 service **组装并校验完成后**交给探测执行器的全部事实：出站目标
 // 只来自已存储的账号/模板配置（请求体与 query 不携带 URL/host/路径）。

@@ -30,11 +30,11 @@ import (
 	"github.com/is7qin/c3api/pkg/egress"
 )
 
-func newTestProber(t *testing.T, base http.RoundTripper, timeout time.Duration) *Prober {
+func newTestProber(t *testing.T, base http.RoundTripper) *Prober {
 	t.Helper()
 	hc := &http.Client{Transport: base}
 	factory := aiclient.NewFactory(hc, aiclient.Config{})
-	return New(factory, egress.NewPool(hc), nil, timeout, domain.ProbeMaxConcurrency)
+	return New(factory, egress.NewPool(hc))
 }
 
 func waitSignal(t *testing.T, ch <-chan struct{}, what string) {
@@ -116,7 +116,7 @@ func TestProbeChat(t *testing.T) {
 	}))
 	defer up.Close()
 
-	p := newTestProber(t, nil, 5*time.Second)
+	p := newTestProber(t, nil)
 	res := p.Probe(context.Background(), staticSpec(up.URL))
 	require.True(t, res.Success)
 	require.Equal(t, 200, res.StatusCode)
@@ -154,7 +154,7 @@ func TestProbeResponses(t *testing.T) {
 
 			spec := staticSpec(up.URL)
 			spec.Format = format
-			res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), spec)
+			res := newTestProber(t, nil).Probe(context.Background(), spec)
 			require.True(t, res.Success)
 			require.Equal(t, format, res.Format)
 
@@ -184,7 +184,7 @@ func TestProbeAnthropic(t *testing.T) {
 
 	spec := staticSpec(up.URL)
 	spec.Format = domain.FormatAnthropic
-	res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, nil).Probe(context.Background(), spec)
 	require.True(t, res.Success)
 
 	c := <-got
@@ -211,7 +211,7 @@ func TestProbeCustomPath(t *testing.T) {
 	spec := staticSpec(up.URL)
 	spec.CredentialType = credential.TypeCustom
 	spec.UpstreamPaths = map[string]string{string(domain.UpstreamPathChat): "v1/custom/chat?api-version=2024-10-21"}
-	res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, nil).Probe(context.Background(), spec)
 	require.True(t, res.Success)
 	c := <-got
 	require.Equal(t, "/v1/custom/chat", c.path)
@@ -219,7 +219,7 @@ func TestProbeCustomPath(t *testing.T) {
 
 	// ext 行缺失（service 归为 nil map）→ 回落默认端点。
 	spec.UpstreamPaths = nil
-	res = newTestProber(t, nil, 5*time.Second).Probe(context.Background(), spec)
+	res = newTestProber(t, nil).Probe(context.Background(), spec)
 	require.True(t, res.Success)
 	c = <-got
 	require.Equal(t, "/v1/chat/completions", c.path)
@@ -295,7 +295,7 @@ func TestProbePayloadValidation(t *testing.T) {
 			if tc.credential != "" {
 				spec.Credential = tc.credential
 			}
-			res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), spec)
+			res := newTestProber(t, nil).Probe(context.Background(), spec)
 			require.Equal(t, tc.status, res.StatusCode)
 			require.Equal(t, tc.wantSuccess, res.Success)
 			require.Equal(t, tc.wantError, res.Error)
@@ -314,7 +314,7 @@ func TestProbePayloadValidation(t *testing.T) {
 		spec.CredentialType = credential.TypeCodexPAT
 		spec.Format = domain.FormatOpenAIResponses
 		spec.Credential = "pat-test"
-		res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+		res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 		require.False(t, res.Success)
 		require.Equal(t, 200, res.StatusCode)
 		require.Equal(t, "upstream response missing usable output", res.Error)
@@ -333,7 +333,7 @@ func TestProbeDeepJSON(t *testing.T) {
 	defer up.Close()
 
 	begin := time.Now()
-	res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+	res := newTestProber(t, nil).Probe(context.Background(), staticSpec(up.URL))
 	require.False(t, res.Success)
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "upstream response missing usable output", res.Error)
@@ -400,8 +400,7 @@ func TestProbeCodexNamedFailureWins(t *testing.T) {
 // TestProbeCodexFieldWhitespaceConsistent A4：终态检测与校验必须采用同一字段
 // 解析规则——行首空白的 ` data:` 也是 data 行。
 func TestProbeCodexFieldWhitespaceConsistent(t *testing.T) {
-	// 与 sdkbridge.codexTerminalBlock 相同的合并语义：后一行 data 污染多行事件，
-	// 事件非法 → 既不是终态也不能判成功。
+	// 单一扫描器的合并语义：后一行 data 污染多行事件，事件非法 → 既不是终态也不能判成功。
 	body := []byte("event: response.completed\n" +
 		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n" +
 		" data: garbage\n\n")
@@ -501,7 +500,7 @@ func TestProbeCodexTerminalOffsetNoOverflow(t *testing.T) {
 	spec.CredentialType = credential.TypeCodexPAT
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
-	res := newTestProber(t, &bodyResponseTransport{body: body}, 5*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, &bodyResponseTransport{body: body}).Probe(context.Background(), spec)
 	require.True(t, res.Success, "终态后的预读尾巴不得造成 2 MiB 溢出")
 	require.Equal(t, http.StatusOK, res.StatusCode)
 	require.Empty(t, res.Error)
@@ -527,7 +526,7 @@ func TestProbeRedirectBlocked(t *testing.T) {
 	}))
 	defer first.Close()
 
-	res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(first.URL))
+	res := newTestProber(t, nil).Probe(context.Background(), staticSpec(first.URL))
 	require.False(t, res.Success)
 	require.Equal(t, http.StatusFound, res.StatusCode)
 	require.Equal(t, "upstream redirect rejected", res.Error)
@@ -547,7 +546,7 @@ func TestProbeRedirectBlocked(t *testing.T) {
 		w.WriteHeader(http.StatusFound)
 	}))
 	defer malformed.Close()
-	res = newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(malformed.URL))
+	res = newTestProber(t, nil).Probe(context.Background(), staticSpec(malformed.URL))
 	require.False(t, res.Success)
 	require.Equal(t, 0, res.StatusCode, "Location 解析失败 = 传输失败")
 	require.Equal(t, "probe blocked cross-origin redirect", res.Error)
@@ -557,13 +556,13 @@ func TestProbeRedirectBlocked(t *testing.T) {
 	require.NotContains(t, res.Error, malformed.URL)
 }
 
-// TestProbeTimeout A10：超时/取消一律 status 0 + 固定文案。测试不提前武装短
-// deadline：Prober 用长超时，先等上游 started 屏障，再取消父 ctx（channel 屏障，
+// TestProbeTimeout A10：超时/取消一律 status 0 + 固定文案。准入/期限由 service
+// 拥有，本测试用父 ctx 取消/到期驱动；先等上游 started 屏障再取消（channel 屏障，
 // 不用 sleep）；DeadlineExceeded 的固定文案由 TestClassifyTransportError 覆盖。
 // 两个阶段：① 响应头未到；② 响应头已到但 body 一直不结束。
 func TestProbeTimeout(t *testing.T) {
-	require.Equal(t, 30*time.Second, DefaultTimeout, "单次探测硬上限必须是 30s 常量（不开配置键）")
-	require.Equal(t, 4, DefaultMaxConcurrency)
+	require.Equal(t, 30*time.Second, domain.ProbeTimeout, "单次探测总期限必须是 30s 常量（不开配置键）")
+	require.Equal(t, 4, domain.ProbeMaxConcurrency)
 
 	t.Run("request-hangs-before-headers", func(t *testing.T) {
 		started := make(chan struct{})
@@ -580,7 +579,7 @@ func TestProbeTimeout(t *testing.T) {
 		}))
 		defer up.Close()
 
-		p := newTestProber(t, nil, 10*time.Second)
+		p := newTestProber(t, nil)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		result := make(chan domain.ProbeResult, 1)
@@ -615,7 +614,7 @@ func TestProbeTimeout(t *testing.T) {
 		defer up.Close()
 
 		barrier := newHeadersBarrier(http.DefaultTransport)
-		p := newTestProber(t, barrier, 10*time.Second)
+		p := newTestProber(t, barrier)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		result := make(chan domain.ProbeResult, 1)
@@ -669,7 +668,7 @@ func TestProbeResponseTooLarge(t *testing.T) {
 
 	var closes atomic.Int64
 	tr := &countCloseTransport{next: http.DefaultTransport, closes: &closes}
-	res := newTestProber(t, tr, 10*time.Second).Probe(context.Background(), staticSpec(up.URL))
+	res := newTestProber(t, tr).Probe(context.Background(), staticSpec(up.URL))
 	require.False(t, res.Success)
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "response exceeds 2 MiB", res.Error)
@@ -693,7 +692,7 @@ func TestCodexProbeStreamTooLarge(t *testing.T) {
 	spec.Credential = "pat-test"
 	var closes atomic.Int64
 	tr := &countCloseTransport{next: &rewriteTransport{target: up.URL}, closes: &closes}
-	res := newTestProber(t, tr, 10*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, tr).Probe(context.Background(), spec)
 	require.False(t, res.Success)
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "response exceeds 2 MiB", res.Error)
@@ -725,7 +724,7 @@ func TestProbeCodexNon200Status(t *testing.T) {
 			spec.CredentialType = credential.TypeCodexPAT
 			spec.Format = domain.FormatOpenAIResponses
 			spec.Credential = "pat-test"
-			res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+			res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 			require.False(t, res.Success)
 			require.Equal(t, tc.status, res.StatusCode, "非 200 的真实状态码必须原样保留")
 			require.Equal(t, "upstream error", res.Error)
@@ -762,7 +761,7 @@ func TestProbeCodexNon200BodyCancel(t *testing.T) {
 	spec.Credential = "pat-test"
 	// 必须等 transport 层真正收到非 200 响应头再取消，否则可能仍在请求头阶段。
 	barrier := newHeadersBarrier(&rewriteTransport{target: up.URL})
-	p := newTestProber(t, barrier, 10*time.Second)
+	p := newTestProber(t, barrier)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan domain.ProbeResult, 1)
@@ -798,12 +797,16 @@ func TestProbeCodexNon200CappedWiring(t *testing.T) {
 			spec.Format = domain.FormatOpenAIResponses
 			spec.Credential = "pat-test"
 			var closes atomic.Int64
-			p := newTestProber(t, &countCloseTransport{next: &rewriteTransport{target: up.URL}, closes: &closes}, 5*time.Second)
+			p := newTestProber(t, &countCloseTransport{next: &rewriteTransport{target: up.URL}, closes: &closes})
 			transport, err := p.guardedCodexTransport(spec)
 			require.NoError(t, err)
-			gotStatus, body, callErr := sdkbridge.ProbeResponses(context.Background(), spec.Credential, spec.CodexAccountID, transport, sdkbridge.ProbeResponsesPayload(spec.UpstreamModel), 5*time.Second)
+			gotStatus, body, callErr := sdkbridge.StreamBodyOnce(
+				context.Background(), spec.Credential, spec.CodexAccountID, transport,
+				codexProbePayload(spec.UpstreamModel),
+				func(rc io.ReadCloser) ([]byte, error) { return io.ReadAll(rc) },
+			)
+			require.NoError(t, callErr)
 			require.Equal(t, status, gotStatus)
-			require.Error(t, callErr)
 			require.Len(t, body, domain.ProbeMaxBodyBytes, "codex 非 200（含 201）cap 必须恰好 2 MiB")
 			require.Equal(t, int64(1), closes.Load(), "body 必须恰好关闭一次")
 		})
@@ -826,7 +829,7 @@ func TestProbeCodexSSE(t *testing.T) {
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
 	spec.CodexAccountID = "acct-1"
-	res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 	require.True(t, res.Success)
 
 	c := <-got
@@ -836,6 +839,7 @@ func TestProbeCodexSSE(t *testing.T) {
 	require.True(t, gjson.GetBytes(c.body, "stream").Bool())
 	require.Equal(t, "acct-1", c.accountID)
 	require.Equal(t, "user", gjson.GetBytes(c.body, "input.0.role").String())
+	require.Equal(t, "input_text", gjson.GetBytes(c.body, "input.0.content.0.type").String())
 	require.Equal(t, "hi", gjson.GetBytes(c.body, "input.0.content.0.text").String())
 }
 
@@ -854,7 +858,7 @@ func TestProbeCodexMultilineEvent(t *testing.T) {
 	spec.CredentialType = credential.TypeCodexPAT
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
-	res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 	require.True(t, res.Success)
 	require.Empty(t, res.Error)
 	require.Empty(t, res.Detail)
@@ -875,7 +879,7 @@ func TestProbeCodexIncompleteEvent(t *testing.T) {
 	spec.CredentialType = credential.TypeCodexPAT
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
-	res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 	require.False(t, res.Success, "合并后的非法事件不得判成功")
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "upstream stream failed", res.Error)
@@ -897,7 +901,7 @@ func TestProbeCodexWhitespaceNotBoundary(t *testing.T) {
 	spec.CredentialType = credential.TypeCodexPAT
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
-	res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+	res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 	require.False(t, res.Success, "空白行不是事件边界，后续 garbage 必须使事件非法")
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "upstream stream failed", res.Error)
@@ -928,7 +932,7 @@ func TestProbeCodexErrorTerminal(t *testing.T) {
 	spec.CredentialType = credential.TypeCodexPAT
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
-	p := newTestProber(t, &rewriteTransport{target: up.URL}, 10*time.Second)
+	p := newTestProber(t, &rewriteTransport{target: up.URL})
 	result := make(chan domain.ProbeResult, 1)
 	go func() { result <- p.Probe(context.Background(), spec) }()
 
@@ -976,7 +980,7 @@ func TestProbeCodexNamedFailureEmptyData(t *testing.T) {
 			spec.CredentialType = credential.TypeCodexPAT
 			spec.Format = domain.FormatOpenAIResponses
 			spec.Credential = "pat-test"
-			p := newTestProber(t, &rewriteTransport{target: up.URL}, 10*time.Second)
+			p := newTestProber(t, &rewriteTransport{target: up.URL})
 			result := make(chan domain.ProbeResult, 1)
 			go func() { result <- p.Probe(context.Background(), spec) }()
 
@@ -1015,7 +1019,7 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		}))
 		defer up.Close()
 
-		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		res := newTestProber(t, nil).Probe(context.Background(), staticSpec(up.URL))
 		require.False(t, res.Success)
 		require.Equal(t, http.StatusTooManyRequests, res.StatusCode)
 		require.Equal(t, "upstream rate limited", res.Error)
@@ -1030,7 +1034,7 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		}))
 		defer up.Close()
 
-		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		res := newTestProber(t, nil).Probe(context.Background(), staticSpec(up.URL))
 		require.False(t, res.Success)
 		require.Equal(t, "upstream rejected request", res.Error)
 		require.Empty(t, res.Detail)
@@ -1045,7 +1049,7 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		}))
 		defer up.Close()
 
-		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		res := newTestProber(t, nil).Probe(context.Background(), staticSpec(up.URL))
 		require.False(t, res.Success)
 		require.Equal(t, "upstream rejected request", res.Error)
 		require.Empty(t, res.Detail, "表外 error.code/error.type 一律丢弃")
@@ -1059,7 +1063,7 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		}))
 		defer up.Close()
 
-		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		res := newTestProber(t, nil).Probe(context.Background(), staticSpec(up.URL))
 		require.False(t, res.Success)
 		require.Equal(t, "code=invalid_api_key", res.Detail, "表内公开码仍以 code=<value> 回显")
 		assertClean(t, res)
@@ -1078,7 +1082,7 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		spec.CredentialType = credential.TypeCodexPAT
 		spec.Format = domain.FormatOpenAIResponses
 		spec.Credential = "pat-test"
-		res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+		res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 		require.False(t, res.Success)
 		require.Equal(t, "upstream stream failed", res.Error)
 		require.Equal(t, "code=rate_limit_exceeded", res.Detail)
@@ -1098,7 +1102,7 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		spec.CredentialType = credential.TypeCodexPAT
 		spec.Format = domain.FormatOpenAIResponses
 		spec.Credential = "pat-test"
-		res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+		res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
 		require.False(t, res.Success)
 		require.Equal(t, "upstream stream failed", res.Error)
 		require.Empty(t, res.Detail, "表外 error.code/error.type 一律丢弃")
@@ -1189,68 +1193,35 @@ func (r *rewriteTransport) RoundTrip(req *http.Request) (*http.Response, error) 
 	return http.DefaultTransport.RoundTrip(clone)
 }
 
-// TestProbeAdmissionBounded：并发槽满后只允许有界 waiter；等待队列也满时立即
-// probe busy，不再保留更多请求的内存上下文。
-func TestProbeAdmissionBounded(t *testing.T) {
-	p := newTestProber(t, nil, 10*time.Second)
-	for i := 0; i < cap(p.sem); i++ {
-		p.sem <- struct{}{}
-	}
-	for i := 0; i < cap(p.waiters); i++ {
-		p.waiters <- struct{}{}
-	}
-	res := p.Probe(context.Background(), staticSpec("http://127.0.0.1:1"))
-	require.False(t, res.Success)
-	require.Equal(t, "probe busy", res.Error)
-	require.Zero(t, res.StatusCode)
-
-	// 队列满也不能掩盖已经取消的 ctx。
-	canceled, cancel := context.WithCancel(context.Background())
-	cancel()
-	res = p.Probe(canceled, staticSpec("http://127.0.0.1:1"))
-	require.Equal(t, "probe canceled", res.Error)
-
-	// 等待名额只在排队期间持有：请求拿到并发槽或取消后必须释放 waiter。
-	p2 := newTestProber(t, nil, 10*time.Second)
-	for i := 0; i < cap(p2.sem); i++ {
-		p2.sem <- struct{}{}
-	}
-	waitCtx, waitCancel := context.WithCancel(context.Background())
-	done := make(chan domain.ProbeResult, 1)
-	go func() { done <- p2.Probe(waitCtx, staticSpec("http://127.0.0.1:1")) }()
-	require.Eventually(t, func() bool { return len(p2.waiters) == 1 }, time.Second, time.Millisecond)
-	waitCancel()
-	require.Equal(t, "probe canceled", (<-done).Error)
-	require.Eventually(t, func() bool { return len(p2.waiters) == 0 }, time.Second, time.Millisecond)
-}
-
-// TestProbeWaiterPromotionReleasesSlot：等待者晋升为活跃探测后必须立即释放 waiter
-// 名额（否则活跃探测仍占等待容量，后续请求会被误判 busy）。
-func TestProbeWaiterPromotionReleasesSlot(t *testing.T) {
+// TestProbeDeadlineFromParent：prober 不叠加自己的超时，父 ctx 的 deadline 是
+// 唯一期限；到期即返回 status 0 + probe timed out。
+func TestProbeDeadlineFromParent(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
+	done := make(chan struct{})
+	var once sync.Once
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		close(started)
-		<-release
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
+		once.Do(func() { close(started) })
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+		close(done)
 	}))
 	defer up.Close()
 
-	p := newTestProber(t, nil, 10*time.Second)
-	for i := 0; i < cap(p.sem); i++ {
-		p.sem <- struct{}{}
-	}
-	done := make(chan domain.ProbeResult, 1)
-	go func() { done <- p.Probe(context.Background(), staticSpec(up.URL)) }()
-	require.Eventually(t, func() bool { return len(p.waiters) == 1 }, time.Second, time.Millisecond)
+	p := newTestProber(t, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	result := make(chan domain.ProbeResult, 1)
+	go func() { result <- p.Probe(ctx, staticSpec(up.URL)) }()
 
-	<-p.sem // 放出一个并发槽，等待者晋升
-	waitSignal(t, started, "upstream handler after promotion")
-	require.Eventually(t, func() bool { return len(p.waiters) == 0 }, time.Second, time.Millisecond,
-		"promoted probe must release its waiter slot while active")
+	waitSignal(t, started, "upstream handler")
+	res := waitProbeResult(t, result)
+	require.False(t, res.Success)
+	require.Zero(t, res.StatusCode)
+	require.Equal(t, domain.ProbeErrorTimedOut, res.Error)
 
 	close(release)
-	res := waitProbeResult(t, done)
-	require.True(t, res.Success)
+	waitSignal(t, done, "upstream handler completion")
 }

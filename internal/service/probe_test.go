@@ -41,6 +41,11 @@ type probeReadOnlyStore struct {
 	extErr  error
 	credErr error
 	accErr  error
+	// accBlock 模拟账号读取阻塞；ctx 到期后返回成功，用于证明 store 成功后
+	// 已过期的 pctx 不得继续模板/OAuth/prober。
+	accBlock       bool
+	accHasDeadline bool
+	accDeadline    time.Time
 	// credBlock 模拟 codex 凭据 SQL 读取：记录收到的 ctx 期限并返回 ctx 超时
 	// （验证 service 传的是含总期限的 pctx，而不是无期限的父 ctx）。
 	credBlock       bool
@@ -52,7 +57,13 @@ func (s *probeReadOnlyStore) GetAllSettings(context.Context) ([]*domain.Setting,
 	return nil, nil
 }
 
-func (s *probeReadOnlyStore) GetAccountWithTemplate(_ context.Context, id int64) (*domain.Account, error) {
+func (s *probeReadOnlyStore) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
+	if deadline, ok := ctx.Deadline(); ok {
+		s.accDeadline, s.accHasDeadline = deadline, true
+	}
+	if s.accBlock {
+		<-ctx.Done()
+	}
 	if s.accErr != nil {
 		return nil, s.accErr
 	}
@@ -90,14 +101,19 @@ func (s *probeReadOnlyStore) GetOwnedAccountCredential(ctx context.Context, _ in
 }
 
 type fakeAccountProber struct {
-	calls  int
-	spec   domain.ProbeSpec
-	result domain.ProbeResult
+	calls            int
+	spec             domain.ProbeSpec
+	result           domain.ProbeResult
+	probeDeadline    time.Time
+	probeHasDeadline bool
 }
 
-func (f *fakeAccountProber) Probe(_ context.Context, spec domain.ProbeSpec) domain.ProbeResult {
+func (f *fakeAccountProber) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult {
 	f.calls++
 	f.spec = spec
+	if deadline, ok := ctx.Deadline(); ok {
+		f.probeDeadline, f.probeHasDeadline = deadline, true
+	}
 	res := f.result
 	if res.Format == "" {
 		res.Format = spec.Format
@@ -487,7 +503,7 @@ func TestProbeNoUpstreamTextLeakLog(t *testing.T) {
 	tpl.BaseURL = up.URL
 	acc := probeAccountFor(tpl)
 	hc := &http.Client{}
-	realProber := probe.New(aiclient.NewFactory(hc, aiclient.Config{}), egress.NewPool(hc), nil, 5*time.Second, domain.ProbeMaxConcurrency)
+	realProber := probe.New(aiclient.NewFactory(hc, aiclient.Config{}), egress.NewPool(hc))
 	logPath := filepath.Join(t.TempDir(), "probe.log")
 	logger, err := logx.New("info", logPath)
 	require.NoError(t, err)
@@ -593,8 +609,11 @@ func TestProbeAdmissionBeforeStore(t *testing.T) {
 	store := &probeReadOnlyStore{} // 一旦被读就会 panic（acc/Store 均为 nil）
 	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
 	svc := newProbeSvc(store, prober, nil)
-	for i := 0; i < cap(svc.probeGate); i++ {
-		svc.probeGate <- struct{}{}
+	for range cap(svc.probeGate.slots) {
+		svc.probeGate.slots <- struct{}{}
+	}
+	for range cap(svc.probeGate.waiters) {
+		svc.probeGate.waiters <- struct{}{}
 	}
 	req := AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat}
 
@@ -647,4 +666,165 @@ func TestProbeStoreContextErrorsBecomeResults(t *testing.T) {
 	require.Zero(t, res.StatusCode)
 	require.True(t, blocking.credHasDeadline, "凭据读取必须收到 pctx 期限")
 	require.WithinDuration(t, time.Now().Add(domain.ProbeTimeout), blocking.credDeadline, 2*time.Second)
+}
+
+func newProbeLogger(t *testing.T) (*logx.Logger, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "probe.log")
+	logger, err := logx.New("info", path)
+	require.NoError(t, err)
+	return logger, path
+}
+
+func probeLogCount(t *testing.T, logger *logx.Logger, path string) int {
+	t.Helper()
+	require.NoError(t, logger.Sync())
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return strings.Count(string(raw), "account_probe")
+}
+
+// TestProbeDeadlineOwnedByService：唯一期限由 service 创建并原样传给账号读取
+// 与 prober；prober 不再自行包一层。
+func TestProbeDeadlineOwnedByService(t *testing.T) {
+	tpl := staticProbeTemplate()
+	acc := probeAccountFor(tpl)
+	store := &probeReadOnlyStore{acc: acc}
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+
+	res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err)
+	require.True(t, res.Success)
+	require.True(t, store.accHasDeadline, "账号读取必须收到 pctx 期限")
+	require.True(t, prober.probeHasDeadline, "prober 必须收到同一 pctx")
+	require.WithinDuration(t, time.Now().Add(domain.ProbeTimeout), store.accDeadline, 2*time.Second)
+	require.Equal(t, store.accDeadline, prober.probeDeadline, "store 与 prober 必须共享同一期限")
+}
+
+// TestProbeContextAfterStoreSuccess：store 成功返回时 ctx 已过期，不得继续模板/
+// OAuth 早退/prober；返回 status 0 + probe timed out。
+func TestProbeContextAfterStoreSuccess(t *testing.T) {
+	tpl := staticProbeTemplate()
+	acc := probeAccountFor(tpl)
+	store := &probeReadOnlyStore{acc: acc, accBlock: true}
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	res, err := svc.ProbeAccount(ctx, acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err)
+	require.False(t, res.Success)
+	require.Zero(t, res.StatusCode)
+	require.Equal(t, domain.ProbeErrorTimedOut, res.Error)
+	require.Zero(t, prober.calls, "过期后不得调用 prober")
+}
+
+// TestProbeLatencyExcludesStoreWait：LatencyMS 是 prober 对上游调用的结论，
+// service 不得用包含 DB/排队的总耗时覆盖。
+func TestProbeLatencyExcludesStoreWait(t *testing.T) {
+	tpl := staticProbeTemplate()
+	acc := probeAccountFor(tpl)
+	prober := &fakeAccountProber{result: domain.ProbeResult{
+		Success: true, StatusCode: 200, LatencyMS: 7,
+	}}
+	svc := newProbeSvc(&probeReadOnlyStore{acc: acc}, prober, nil)
+
+	res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err)
+	require.Equal(t, int64(7), res.LatencyMS)
+}
+
+// TestProbeLogOneForProberResult：prober 结果恰好一条 account_probe。
+func TestProbeLogOneForProberResult(t *testing.T) {
+	tpl := staticProbeTemplate()
+	acc := probeAccountFor(tpl)
+	logger, path := newProbeLogger(t)
+	svc := New(Deps{
+		Store: &probeReadOnlyStore{acc: acc}, Invalidate: NopInvalidator{},
+		EmailCodeStore: testEmailCodes, Prober: &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}},
+		Log: logger,
+	})
+	_, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err)
+	require.Equal(t, 1, probeLogCount(t, logger, path))
+}
+
+// TestProbeLogOneForAdmission：busy/canceled/timedout 各一条。
+func TestProbeLogOneForAdmission(t *testing.T) {
+	logger, path := newProbeLogger(t)
+	svc := New(Deps{
+		Store: &probeReadOnlyStore{}, Invalidate: NopInvalidator{},
+		EmailCodeStore: testEmailCodes, Prober: &fakeAccountProber{}, Log: logger,
+	})
+	for range cap(svc.probeGate.slots) {
+		svc.probeGate.slots <- struct{}{}
+	}
+	for range cap(svc.probeGate.waiters) {
+		svc.probeGate.waiters <- struct{}{}
+	}
+	req := AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat}
+
+	_, err := svc.ProbeAccount(context.Background(), 1, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, probeLogCount(t, logger, path))
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err = svc.ProbeAccount(canceled, 1, req)
+	require.NoError(t, err)
+	require.Equal(t, 2, probeLogCount(t, logger, path))
+
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	_, err = svc.ProbeAccount(expired, 1, req)
+	require.NoError(t, err)
+	require.Equal(t, 3, probeLogCount(t, logger, path))
+}
+
+// TestProbeLogOneForOAuthExpired：codex token 过期早退也恰好一条，且不发网络。
+func TestProbeLogOneForOAuthExpired(t *testing.T) {
+	tpl := staticProbeTemplate()
+	tpl.CredentialType = credential.TypeCodexOAuth
+	tpl.SupportedFormats = []domain.RequestFormat{domain.FormatOpenAIResponses}
+	past := time.Date(2026, 11, 11, 0, 0, 0, 0, time.UTC)
+	acc := &domain.Account{ID: 12, TemplateID: tpl.ID, Template: tpl}
+	store := &probeReadOnlyStore{acc: acc, cred: &domain.AccountCredential{
+		AccountID: acc.ID, OAuthToken: "expired", OAuthExpiresAt: &past,
+	}}
+	prober := &fakeAccountProber{}
+	logger, path := newProbeLogger(t)
+	svc := New(Deps{
+		Store: store, Invalidate: NopInvalidator{}, EmailCodeStore: testEmailCodes,
+		Prober: prober, Log: logger,
+	})
+	res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIResponses})
+	require.NoError(t, err)
+	require.Equal(t, domain.ProbeErrorCodexTokenExpired, res.Error)
+	require.Zero(t, prober.calls)
+	require.Equal(t, 1, probeLogCount(t, logger, path))
+}
+
+// TestProbeLogNoneOnValidation404500：未形成 200 探测结论的退出不写 account_probe。
+func TestProbeLogNoneOnValidation404500(t *testing.T) {
+	tpl := staticProbeTemplate()
+	acc := probeAccountFor(tpl)
+	store := &probeReadOnlyStore{acc: acc}
+	logger, path := newProbeLogger(t)
+	svc := New(Deps{
+		Store: store, Invalidate: NopInvalidator{}, EmailCodeStore: testEmailCodes,
+		Prober: &fakeAccountProber{}, Log: logger,
+	})
+
+	_, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: "bogus"})
+	require.ErrorIs(t, err, ErrInvalidInput)
+
+	_, err = svc.ProbeAccount(context.Background(), 999, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.ErrorIs(t, err, ErrNotFound)
+
+	store.accErr = errors.New("db failed")
+	_, err = svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.Error(t, err)
+	require.Zero(t, probeLogCount(t, logger, path))
 }

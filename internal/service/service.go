@@ -529,9 +529,9 @@ type Service struct {
 	// prober 单账号单模型探测执行面（internal/probe.Prober 实现；nil = 未装配，
 	// ProbeAccount 返回装配错误 → handler 500）。
 	prober AccountProber
-	// probeGate 在**仓储读取之前**给探测总入口限流（容量 = 执行并发 + 有界等待），
+	// probeGate 在**仓储读取之前**给探测总入口准入：4 执行槽 + 16 等待位，
 	// 防止大量请求在 DB 池前排长队并各自保留请求串；队列满立即 probe busy。
-	probeGate chan struct{}
+	probeGate *probeLimiter
 	// retention 统计面 coverage 步的保留期来源（usage_logs/err_logs/usage_stats
 	// 三表天数；New 经 Deps.Retention 一次性注入）。判定唯一入口
 	// domain.Admit 以**参数**接收它（纯函数：不读配置、不读全局）。Days(t) <= 0
@@ -654,7 +654,7 @@ func New(deps Deps) *Service {
 		supplierGranularity:         deps.SupplierThawGranularity,
 		codexLogin:                  deps.CodexLogin,
 		prober:                      deps.Prober,
-		probeGate:                   make(chan struct{}, domain.ProbeMaxConcurrency+domain.ProbeMaxWaiters),
+		probeGate:                   newProbeLimiter(),
 		retention:                   deps.Retention}
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot
