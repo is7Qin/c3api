@@ -41,9 +41,11 @@ type probeReadOnlyStore struct {
 	extErr  error
 	credErr error
 	accErr  error
-	// credBlock 模拟 codex 凭据 SQL 阻塞到 ctx 结束（验证 service 传的是含总期限
-	// 的 pctx，而不是无期限的父 ctx）。
-	credBlock bool
+	// credBlock 模拟 codex 凭据 SQL 读取：记录收到的 ctx 期限并返回 ctx 超时
+	// （验证 service 传的是含总期限的 pctx，而不是无期限的父 ctx）。
+	credBlock       bool
+	credDeadline    time.Time
+	credHasDeadline bool
 }
 
 func (s *probeReadOnlyStore) GetAllSettings(context.Context) ([]*domain.Setting, error) {
@@ -74,8 +76,8 @@ func (s *probeReadOnlyStore) GetTemplateExt(_ context.Context, _ int64) (*domain
 
 func (s *probeReadOnlyStore) GetOwnedAccountCredential(ctx context.Context, _ int64) (*domain.AccountCredential, error) {
 	if s.credBlock {
-		<-ctx.Done()
-		return nil, ctx.Err()
+		s.credDeadline, s.credHasDeadline = ctx.Deadline()
+		return nil, context.DeadlineExceeded
 	}
 	if s.credErr != nil {
 		return nil, s.credErr
@@ -630,19 +632,19 @@ func TestProbeStoreContextErrorsBecomeResults(t *testing.T) {
 	require.Zero(t, res.StatusCode)
 	require.Equal(t, "probe timed out", res.Error)
 
-	// codex 凭据 SQL 阻塞到 ctx 结束：pctx 期限必须传进去。
+	// codex 凭据 SQL 必须收到 service 的 30s 总期限（父 ctx 本身没有 deadline）。
 	tpl := staticProbeTemplate()
 	tpl.CredentialType = credential.TypeCodexPAT
 	tpl.SupportedFormats = []domain.RequestFormat{domain.FormatOpenAIResponses}
 	acc := &domain.Account{ID: 2, TemplateID: tpl.ID, Template: tpl}
 	blocking := &probeReadOnlyStore{acc: acc, credBlock: true}
 	svc = newProbeSvc(blocking, prober, nil)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	res, err = svc.ProbeAccount(ctx, acc.ID, AccountProbeRequest{
+	res, err = svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
 		Model: "m1", Format: domain.FormatOpenAIResponses,
 	})
 	require.NoError(t, err)
 	require.Equal(t, "probe timed out", res.Error)
 	require.Zero(t, res.StatusCode)
+	require.True(t, blocking.credHasDeadline, "凭据读取必须收到 pctx 期限")
+	require.WithinDuration(t, time.Now().Add(domain.ProbeTimeout), blocking.credDeadline, 2*time.Second)
 }

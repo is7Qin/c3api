@@ -1223,3 +1223,34 @@ func TestProbeAdmissionBounded(t *testing.T) {
 	require.Equal(t, "probe canceled", (<-done).Error)
 	require.Eventually(t, func() bool { return len(p2.waiters) == 0 }, time.Second, time.Millisecond)
 }
+
+// TestProbeWaiterPromotionReleasesSlot：等待者晋升为活跃探测后必须立即释放 waiter
+// 名额（否则活跃探测仍占等待容量，后续请求会被误判 busy）。
+func TestProbeWaiterPromotionReleasesSlot(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-release
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"hi"}}]}`))
+	}))
+	defer up.Close()
+
+	p := newTestProber(t, nil, 10*time.Second)
+	for i := 0; i < cap(p.sem); i++ {
+		p.sem <- struct{}{}
+	}
+	done := make(chan domain.ProbeResult, 1)
+	go func() { done <- p.Probe(context.Background(), staticSpec(up.URL)) }()
+	require.Eventually(t, func() bool { return len(p.waiters) == 1 }, time.Second, time.Millisecond)
+
+	<-p.sem // 放出一个并发槽，等待者晋升
+	waitSignal(t, started, "upstream handler after promotion")
+	require.Eventually(t, func() bool { return len(p.waiters) == 0 }, time.Second, time.Millisecond,
+		"promoted probe must release its waiter slot while active")
+
+	close(release)
+	res := waitProbeResult(t, done)
+	require.True(t, res.Success)
+}

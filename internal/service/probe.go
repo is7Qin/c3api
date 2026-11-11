@@ -83,6 +83,7 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		default:
 			res.Error = "probe busy"
 		}
+		s.logProbe(id, *res)
 		return res
 	}
 	select {
