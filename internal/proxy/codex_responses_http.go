@@ -153,33 +153,31 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 }
 
 // codexTurnStateReplay 是 turn-state 重放策略的**单点常量**（§5.1）：
-//   - false：本请求既不带 ts 也不捕获（Identity 的 ts 恒空、Sink = nil）——跨轮
-//     重放违反真实 codex 的轮级契约，P1 门禁通过前生产必须走这一态；
+//   - false：本请求既不带 ts 也不捕获（Identity 的 ts 恒空、Sink = nil）；
 //   - true：本请求带会话当前 ts，上游签发新值即覆盖（"更新即跟随、跟随即复用"）。
 //
-// 改 true 的前置条件是 P1（真实账号 ≥10 连轮实测）通过，不是配置项。
+// 重放**不违反**真实客户端契约——恰恰是它的默认行为（codex-rs
+// `core/src/client.rs`：`x-codex-turn-state` 自述 "sticky routing token captured
+// earlier in the turn"；同一条连接上每个后续请求都把捕获值塞进
+// `client_metadata`（:2311-2312），HTTP 车道则每个请求都带同名请求头
+// （:1638-1642 → :2687-2703）；只有换账号/换 auth owner 才 reset（:1884-1886）。
+// WS 握手头不带它（:1558-1566 与 :1498 传 None）——"只在帧里带"只对握手成立）。
+//
+// 因此 gate 不是"契约是否允许"，而是**收益未测**：开 true 后上游是否真的按 token
+// 命中同一分片（prompt cache 局部性 → TTFT/成本），需要真实账号多轮 A/B 才能定量。
+// 在那之前生产保持 false（错开不亏，开错可能把命中率变化记成"波动"）。
 const codexTurnStateReplay = false
 
-// codexRequestIdentity 本次请求的身份数据（identity 是**请求数据**，§3.1）。
+// codexRequestPrep 请求准备两步合一（§3.3）：取得条目句柄 → 对齐 owner（可能清 ts）
+// → 构造 Identity。错误原样上抛，由调用方按各自车道既有的错误映射收口（HTTP /
+// stream / ws 的状态面不同，不在这里归一）。replay 是本车道的 ts 重放策略（WS 车道
+// 恒 false：身份随连接传入，客户端帧自带 ts，网关不二次注入）。
 //
-// 顺序是契约（§3.3 请求准备顺序）：取得租借 → **准备条目句柄** → 对齐 owner（可能清
-// ts）→ 构造 Identity。两者由 `Selection.IdentityFor` **一步**完成——顺序不可能反：
-// 先生成 Identity 再清 ts 会让换凭据后的第一个请求带着旧 owner 的 ts 出去，而事后
-// 任何清理都追不回来。owner 取自本次请求准备好的条目句柄（`Prepared.Owner`：条目
-// 构造时定型的稳定字段），既不拿请求里的凭据快照重新散列（那会在条目尚未重建时给出
-// "新 owner + 旧 auth"），也不读池上的计数器（池会被整体替换，复制即丢失效；会话字段
-// 跟着会话对象走，重载窗口里发生的对齐不会丢）。
-//
-// 策略 false ⇒ 既不发送也不捕获（ts 恒空、Sink = nil）；连接复用不受影响。策略是
-// `IdentityFor` 的**参数**而不是"调完再清"的后置步骤。
-func (p *Proxy) codexRequestIdentity(sel *scheduler.Selection, prep sdkbridge.Prepared) codexsdk.Identity {
-	return sel.IdentityFor(prep.Owner(), p.turnStateReplay)
-}
-
-// codexRequestPrep 请求准备两步合一（§3.3）：取得条目句柄 → 对齐 owner → 构造
-// Identity。错误原样上抛，由调用方按各自车道既有的错误映射收口（HTTP / stream /
-// ws 的状态面不同，不在这里归一）。replay 是本车道的 ts 重放策略（WS 车道恒 false：
-// 身份随连接传入，不重放 ts）。
+// 顺序是契约：`IdentityFor` 必须拿**本次请求准备好的条目句柄**的 owner（
+// `Prepared.Owner`，条目构造时定型的稳定字段），不能拿请求里的凭据快照重新散列
+// （条目尚未重建时会给出"新 owner + 旧 auth"），也不读池上的计数器（池整体替换会
+// 丢）。先构造 Identity 再清 ts 更不行：换凭据后的第一个请求会带着旧 owner 的 ts
+// 出去，事后追不回来。所以重放/清空是 `IdentityFor` 的**参数**，不是后置步骤。
 func (p *Proxy) codexRequestPrep(sel *scheduler.Selection, cred *domain.AccountCredential, replay bool) (sdkbridge.Prepared, codexsdk.Identity, error) {
 	prep, err := p.codex.Prepare(cred)
 	if err != nil {
@@ -200,8 +198,8 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // 合成体原样转发 application/json；转换 = responses 合成体经 protoconv 反向映射
 // 回客户端协议 + 客户端模型回填）→ 合成体顶层 usage 提取（SDK 把 response.usage
 // 提升到合成体顶层；无 type 字段）。turn-state：属**会话**（ts 只经 Identity 发送、
-// 只经 Sink 落回会话，§3.1）——本层不读也不回写；跨轮是否重放由 codexRequestIdentity
-// 的单点策略决定。
+// 只经 Sink 落回会话，§3.1）——本层不读也不回写；跨轮是否重放由 codexTurnStateReplay
+// 单点策略决定。
 // 日志 Format 由 out.LogFormat() 自报。
 // transport 为出站传输实参（原生车道 = Selection 原值；转换车道钉 http）。
 func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
