@@ -143,6 +143,13 @@ func (s supplierSurface) PostSupplierAccountsIdRecover(w http.ResponseWriter, r 
 	s.api.PostAccountsIdRecover(w, r, id)
 }
 
+// PostSupplierAccountsIdTest POST /api/user/supplier/accounts/{id}/test（account-model-test）：
+// 与管理面同一实现/同一组 component（body 由 AdminAPI 自 r 读一次）；越域由仓储
+// 作用域谓词 ⇒ 404。
+func (s supplierSurface) PostSupplierAccountsIdTest(w http.ResponseWriter, r *http.Request, id int64) {
+	s.api.PostAccountsIdTest(w, r, id)
+}
+
 // GetSupplierGroups GET /api/user/supplier/groups（只读候选列表；组写面不登记）。
 func (s supplierSurface) GetSupplierGroups(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierGroupsParams) {
 	s.api.GetGroups(w, r, GetGroupsParams{

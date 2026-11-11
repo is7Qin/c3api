@@ -105,14 +105,12 @@ type planKey struct {
 	groupIDsDigest [32]byte
 }
 
-// specOfDomain 把领域代理对象降为出口规格值（egress.Spec）——**唯一的转换点**：
-// 摘要与（M3 的）Dial 参数都从这一条规格派生，不得在别处重新拼 scheme/host/port。
-// nil（未绑定）= 零值 Spec（摘要 = 空规格摘要，直连是一个确定状态，不是缺失）。
+// specOfDomain 把领域代理对象降为出口规格值（egress.Spec）——**唯一转换点已
+// 下沉到 domain**（spec account-model-test §4.2：调度静态键与探测执行共用
+// (*domain.Proxy).EgressSpec，不得在别处重新拼 scheme/host/port）。nil（未绑定）
+// = 零值 Spec（摘要 = 空规格摘要，直连是一个确定状态，不是缺失）。
 func specOfDomain(p *domain.Proxy) egress.Spec {
-	if p == nil {
-		return egress.Spec{}
-	}
-	return egress.New(string(p.Scheme), p.Host, p.Port, p.Username, p.Password)
+	return p.EgressSpec()
 }
 
 // routableFor 派生唯一决策位 Routable：**enabled ∧（未绑定 ∨ 绑定可用）**。

@@ -21,17 +21,7 @@ import (
 // 校验。数据层 CRUD + 契约；codex 专属类型/列组见
 // ext_codex.go，未来 claude oauth 等新类型 → 新增 ext_claude.go 同构） ——
 
-// upstreamPathFormat 自定义路径键 → 需要的格式（键集合固定，见 spec §4.3）。
-var upstreamPathFormat = map[string]domain.RequestFormat{
-	"openai-chat":               domain.FormatOpenAIChat,
-	"openai-responses":          domain.FormatOpenAIResponses,
-	"openai-responses-ws":       domain.FormatOpenAIResponsesWS,
-	"anthropic":                 domain.FormatAnthropic,
-	"openai-search":             domain.FormatOpenAISearch,
-	"openai-images.generations": domain.FormatOpenAIImages,
-	"openai-images.edits":       domain.FormatOpenAIImages,
-}
-
+// upstreamPathMaxLen custom 路径值的长度上限。
 const upstreamPathMaxLen = 1024
 
 // transportDowngradeConfirm 降级确认令牌（spec §4.3 第 3 步）：把
@@ -63,7 +53,7 @@ var upstreamQueryRE = regexp.MustCompile(`^[A-Za-z0-9._~=&-]+$`)
 func validateUpstreamPaths(paths map[string]string) (map[string]string, error) {
 	out := make(map[string]string, len(paths))
 	for k, raw := range paths {
-		if _, ok := upstreamPathFormat[k]; !ok {
+		if _, ok := domain.UpstreamPathFormat(k); !ok {
 			return nil, ErrInvalidInput
 		}
 		v := strings.TrimSpace(raw)

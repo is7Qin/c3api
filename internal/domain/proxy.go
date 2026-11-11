@@ -9,6 +9,8 @@ import (
 	"net"
 	"strconv"
 	"time"
+
+	"github.com/is7qin/c3api/pkg/egress"
 )
 
 // ProxyScheme 出口代理的协议族（spec-proxy-pool §2 协议矩阵）。取值即落库字符串：
@@ -61,6 +63,17 @@ type Proxy struct {
 	LastProbeError string    // 已脱敏的错误文本（§5.2）
 	CreatedAt      time.Time // 管理面读模型回显（§6.1）；不参与任何判定
 	UpdatedAt      time.Time // 同上
+}
+
+// EgressSpec 把领域代理对象降为出口规格值（egress.Spec）——**唯一的转换点**：
+// 摘要（调度静态键）与 Dial 参数（egress 池）都从这一条规格派生，不得在别处
+// 重新拼 scheme/host/port。nil（未绑定）= 零值 Spec（直连是一个确定状态，不是
+// 缺失）。
+func (p *Proxy) EgressSpec() egress.Spec {
+	if p == nil {
+		return egress.Spec{}
+	}
+	return egress.New(string(p.Scheme), p.Host, p.Port, p.Username, p.Password)
 }
 
 // String 返回脱敏摘要：只出 id / name / scheme / host:port。**用户名与密码恒不出**

@@ -132,6 +132,7 @@ var allowedServiceMethods = []string{
 	"PriceModels",
 	"PriceSourceURL",
 	"PriceSyncCron",
+	"ProbeAccount",
 	"ProbeProxy",
 	"QueryEntityTrend",
 	"QueryErrLogs",
@@ -286,14 +287,14 @@ func isServiceAccountDomain(name string) bool {
 }
 
 // isServiceAccountRead 报告账号域方法名是否为读或纯数据组装（Get、List、
-// Find、Load 前缀，或 Usage 组装）。写面 = 账号域全集 − 此读集，故任何写
-// 动词前缀（Create、Patch、Update、Delete、Recover、Upsert、Import、Set、
-// Write、Rotate……）的新方法都自动落入写面，无需逐个登记动词。
+// Find、Load 前缀，Usage 组装，或 Probe——探测是只读诊断观测：不落库、不计费、
+// 不改账号状态，故不属于写面）。
 func isServiceAccountRead(name string) bool {
 	return strings.HasPrefix(name, "Get") ||
 		strings.HasPrefix(name, "List") ||
 		strings.HasPrefix(name, "Find") ||
 		strings.HasPrefix(name, "Load") ||
+		strings.HasPrefix(name, "Probe") ||
 		strings.Contains(name, "Usage")
 }
 

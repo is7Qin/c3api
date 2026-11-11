@@ -161,10 +161,7 @@ func buildCandidateFacts(candidates []*accountSnapshot, rootFacts map[int64]comp
 		}
 		fact.compilerAccountFacts = cf
 		if cf.static.tpl != nil {
-			if mapping, ok := cf.static.tpl.ModelMapping[rk.model]; ok {
-				fact.mappedModel = mapping.MappedModel
-				fact.mappingMode = mapping.Mode
-			}
+			fact.mappedModel, fact.mappingMode = domain.MapModelEntry(cf.static.tpl, rk.model)
 		}
 		fact.quality = qualityFor(fact.mappedModel)
 		if fact.mappedModel == fact.requestedModel {

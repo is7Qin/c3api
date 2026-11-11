@@ -20,6 +20,14 @@ const (
 	AccountExtCredentialTypeCodexPat   AccountExtCredentialType = "codex-pat"
 )
 
+// Defines values for AccountTestRequestFormat.
+const (
+	AccountTestRequestFormatAnthropic         AccountTestRequestFormat = "anthropic"
+	AccountTestRequestFormatOpenaiChat        AccountTestRequestFormat = "openai-chat"
+	AccountTestRequestFormatOpenaiResponses   AccountTestRequestFormat = "openai-responses"
+	AccountTestRequestFormatOpenaiResponsesWs AccountTestRequestFormat = "openai-responses-ws"
+)
+
 // Defines values for AccountUsageItemUpstreamError.
 const (
 	AuthExpired         AccountUsageItemUpstreamError = "auth_expired"
@@ -303,12 +311,12 @@ const (
 
 // Defines values for TemplatePatchSupportedFormats.
 const (
-	Anthropic         TemplatePatchSupportedFormats = "anthropic"
-	OpenaiChat        TemplatePatchSupportedFormats = "openai-chat"
-	OpenaiImages      TemplatePatchSupportedFormats = "openai-images"
-	OpenaiResponses   TemplatePatchSupportedFormats = "openai-responses"
-	OpenaiResponsesWs TemplatePatchSupportedFormats = "openai-responses-ws"
-	OpenaiSearch      TemplatePatchSupportedFormats = "openai-search"
+	TemplatePatchSupportedFormatsAnthropic         TemplatePatchSupportedFormats = "anthropic"
+	TemplatePatchSupportedFormatsOpenaiChat        TemplatePatchSupportedFormats = "openai-chat"
+	TemplatePatchSupportedFormatsOpenaiImages      TemplatePatchSupportedFormats = "openai-images"
+	TemplatePatchSupportedFormatsOpenaiResponses   TemplatePatchSupportedFormats = "openai-responses"
+	TemplatePatchSupportedFormatsOpenaiResponsesWs TemplatePatchSupportedFormats = "openai-responses-ws"
+	TemplatePatchSupportedFormatsOpenaiSearch      TemplatePatchSupportedFormats = "openai-search"
 )
 
 // Defines values for UserRole.
@@ -592,6 +600,45 @@ type AccountRecoverBody struct {
 type AccountRevision struct {
 	AccountId         int64 `json:"account_id"`
 	LifecycleRevision int64 `json:"lifecycle_revision"`
+}
+
+// AccountTestRequest 单账号单模型探测请求。**不含 URL/host/路径字段**：出站目标只能来自已存储的 账号/模板配置。format 只接受四种可探测格式（openai-images/openai-search → 400）； openai-responses-ws 表示按 HTTP responses 探测。
+type AccountTestRequest struct {
+	// Format 探测格式（与 domain.RequestFormat 同名）
+	Format AccountTestRequestFormat `json:"format"`
+
+	// Model 客户端模型名（须非空，且满足模板格式/模型空间资格）
+	Model string `json:"model"`
+}
+
+// AccountTestRequestFormat 探测格式（与 domain.RequestFormat 同名）
+type AccountTestRequestFormat string
+
+// AccountTestResult 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。error/detail 已脱敏 （凭据与绑定代理密码）并分别截断到 1024/2048 字节；status_code=0 表示传输失败。
+type AccountTestResult struct {
+	// Detail 上游解码后的错误文本或 SSE 终态摘要（≤2048 字节，已脱敏）
+	Detail string `json:"detail"`
+
+	// Error 失败摘要（≤1024 字节，已脱敏）
+	Error string `json:"error"`
+
+	// Format 原样回显请求格式
+	Format string `json:"format"`
+
+	// LatencyMs 仅上游调用耗时（毫秒）
+	LatencyMs int64 `json:"latency_ms"`
+
+	// RequestedModel 客户端模型名
+	RequestedModel string `json:"requested_model"`
+
+	// StatusCode 上游 HTTP 状态；传输失败 = 0
+	StatusCode int `json:"status_code"`
+
+	// Success 上游返回了该格式可用的输出
+	Success bool `json:"success"`
+
+	// UpstreamModel 映射后的上游模型名
+	UpstreamModel string `json:"upstream_model"`
 }
 
 // AccountUsageItem 账号 usage 视图 item（恒 = account_ids 去重后全量；upstream 为 codex 额度快照，api-key/无凭据账号恒 null）
@@ -3107,6 +3154,9 @@ type PutAccountsIdExtJSONRequestBody = AccountExt
 // PostAccountsIdRecoverJSONRequestBody defines body for PostAccountsIdRecover for application/json ContentType.
 type PostAccountsIdRecoverJSONRequestBody = AccountRecoverBody
 
+// PostAccountsIdTestJSONRequestBody defines body for PostAccountsIdTest for application/json ContentType.
+type PostAccountsIdTestJSONRequestBody = AccountTestRequest
+
 // PostGroupsJSONRequestBody defines body for PostGroups for application/json ContentType.
 type PostGroupsJSONRequestBody = GroupCreate
 
@@ -3259,6 +3309,9 @@ type ServerInterface interface {
 	// 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
 	// (POST /accounts/{id}/recover)
 	PostAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64)
+	// 对单个账号发起一次单模型探测（不落库、不计费、不改账号状态）
+	// (POST /accounts/{id}/test)
+	PostAccountsIdTest(w http.ResponseWriter, r *http.Request, id int64)
 	// 错误明细分页查询（err_logs 完整错误面：本地拒绝 + 半异常双轨；status_code/error_type 全值）
 	// (GET /err_logs)
 	GetErrLogs(w http.ResponseWriter, r *http.Request, params GetErrLogsParams)
@@ -3593,6 +3646,12 @@ func (_ Unimplemented) GetAccountsIdGroups(w http.ResponseWriter, r *http.Reques
 // 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
 // (POST /accounts/{id}/recover)
 func (_ Unimplemented) PostAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 对单个账号发起一次单模型探测（不落库、不计费、不改账号状态）
+// (POST /accounts/{id}/test)
+func (_ Unimplemented) PostAccountsIdTest(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -4501,6 +4560,31 @@ func (siw *ServerInterfaceWrapper) PostAccountsIdRecover(w http.ResponseWriter, 
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PostAccountsIdRecover(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostAccountsIdTest operation middleware
+func (siw *ServerInterfaceWrapper) PostAccountsIdTest(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostAccountsIdTest(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7480,6 +7564,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/accounts/{id}/recover", wrapper.PostAccountsIdRecover)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/accounts/{id}/test", wrapper.PostAccountsIdTest)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/err_logs", wrapper.GetErrLogs)

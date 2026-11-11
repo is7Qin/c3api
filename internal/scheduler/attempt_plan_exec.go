@@ -357,10 +357,7 @@ func (p *selectSession) projectCandidate(c CompiledCandidate) CompiledCandidate 
 	c.MappedModel = c.RequestedModel
 	c.MappingMode = domain.ModelMappingModeInvalid
 	if c.Static != nil && c.Static.tpl != nil {
-		if mapping, ok := c.Static.tpl.ModelMapping[c.RequestedModel]; ok {
-			c.MappedModel = mapping.MappedModel
-			c.MappingMode = mapping.Mode
-		}
+		c.MappedModel, c.MappingMode = domain.MapModelEntry(c.Static.tpl, c.RequestedModel)
 	}
 	format := domain.RequestFormat(p.route.Format)
 	op := domain.OperationTag(p.route.OperationTag)

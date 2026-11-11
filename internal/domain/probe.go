@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
+package domain
+
+import (
+	"time"
+
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/pkg/egress"
+)
+
+// account-model-test（单账号单模型探测）的共享数据形状与硬上限。探测本身是
+// 只读诊断观测：不落库、不计费、不进调度/规则/失败统计。service 负责组装与
+// 校验，internal/probe 负责执行，internal/sdkbridge 只承载 codex SDK 机制。
+const (
+	// ProbeMaxBodyBytes 上游响应体硬上限（2 MiB）。transport 层对非 2xx 截断到
+	// 这里；2xx 允许读取到 +1 字节以发现溢出（见 internal/probe 的 capTransport
+	// 与 sdkbridge.ProbeResponses）。
+	ProbeMaxBodyBytes = 2 << 20
+	// ProbeTimeout 单次探测硬上限（常量，不开配置键）。
+	ProbeTimeout = 30 * time.Second
+	// ProbeMaxConcurrency 进程内探测并发上限（信号量；多实例不协调）。
+	ProbeMaxConcurrency = 4
+	// ProbeErrorMaxLen / ProbeDetailMaxLen 结果文本截断上限（脱敏之后截断）。
+	ProbeErrorMaxLen  = 1024
+	ProbeDetailMaxLen = 2048
+)
+
+// ProbeSpec 是 service **组装并校验完成后**交给探测执行器的全部事实：出站目标
+// 只来自已存储的账号/模板配置（请求体与 query 不携带 URL/host/路径）。
+type ProbeSpec struct {
+	AccountID int64
+	// TemplateID 只用于 aiclient Factory 的 URL 缓存键（模板 × base_url × path）。
+	TemplateID     int64
+	CredentialType credential.Type
+	// Format 原样回显请求值。codex 族恒走 HTTP responses 语义（与 format 无关）。
+	Format         RequestFormat
+	RequestedModel string
+	UpstreamModel  string
+	// BaseURL 有效 base_url：模板值，账号非空 BaseURL 覆盖（静态族使用；
+	// codex 族由 SDK 固定官方端点，不读它）。
+	BaseURL string
+	// UpstreamPaths 仅 custom 模板携带（template_ext.upstream_paths）；nil/空 =
+	// 全部回落默认端点。ext 行缺失在 service 已归为 nil。
+	UpstreamPaths map[string]string
+	// Credential 本次探测使用的静态 key 或 codex 访问令牌/PAT（脱敏源）。
+	Credential string
+	// CodexAccountID codex 账号标识（ChatGPT-Account-ID 头；空 = 不发）。
+	CodexAccountID string
+	// ProxyPassword 绑定代理的密码（脱敏源：拨号/CONNECT 错误可能回显带 userinfo
+	// 的代理地址）。未绑定代理时为空。
+	ProxyPassword string
+	// Egress 已由 service 按 fail-closed 规则解析的出口规格（零值 = 直连）。
+	Egress egress.Spec
+}
+
+// ProbeResult 是探测结论（HTTP 200 恒返回本对象；success=false 不映射为
+// 4xx/5xx）。Error/Detail 已脱敏并截断。
+type ProbeResult struct {
+	Success    bool
+	LatencyMS  int64
+	StatusCode int
+	Format     RequestFormat
+	// RequestedModel 客户端模型名；UpstreamModel 映射后的上游模型名。
+	RequestedModel string
+	UpstreamModel  string
+	Error          string
+	Detail         string
+}

@@ -41,6 +41,7 @@ import (
 	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
+	accountprobe "github.com/is7qin/c3api/internal/probe"
 	"github.com/is7qin/c3api/internal/protoconv"
 	"github.com/is7qin/c3api/internal/proxy"
 	"github.com/is7qin/c3api/internal/quality"
@@ -359,6 +360,10 @@ func main() {
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
 		UpstreamStreamTimeout: cfg.Proxy.UpstreamStreamTimeout,
 	})
+	// 单账号单模型探测执行器（account-model-test §5.1）：与 HTTP 面共用同一个
+	// aiclient Factory 与出口池；硬上限 30s / 并发 4 是常量（不开配置键），由
+	// service.Deps.Prober 注入。探测不落库、不计费、不进调度/规则/失败统计。
+	accountProber := accountprobe.New(clients, egressPool, log, accountprobe.DefaultTimeout, accountprobe.DefaultMaxConcurrency)
 	// 管理端变更统一经 invalidate 去抖器生效（接线矩阵）：
 	// - 用户 CRUD（含创建）/余额变更 → auth + 余额快照全量 Reload（去抖窗口
 	//   内合并；新用户必须即刻进余额快照——防 ≤10s 402 窗口）
@@ -472,6 +477,7 @@ func main() {
 		// codex 设备码登录：无服务端会话（发起返回凭据、完成时一次性轮询落库），
 		// 因此只需协议面装配，无 Redis 依赖。
 		CodexLogin:         sdkbridge.NewCodexLogin(),
+		Prober:             accountProber,
 		SupplierViewReload: supplierViewReloader(supplierViewLoader),
 		TimeLocation:       svcLoc,
 		// Retention 三表原件（不预先折 min：读 N 张表取最保守 floor 是

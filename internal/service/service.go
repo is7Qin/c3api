@@ -196,6 +196,9 @@ type ProxyStore interface {
 type AccountStore interface {
 	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
 	GetAccount(ctx context.Context, id int64) (*domain.Account, error)
+	// GetAccountWithTemplate 读账号 + 模板 + 已按 ctx scope 展开的 Proxy（探测
+	// 组装面；仓储实现已存在，接口此前未暴露）。越域/缺失 ⇒ repository.ErrNotFound。
+	GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error)
 	ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error)
 	FailAccountCAS(ctx context.Context, id int64, expectedRevision int64, source string, failedAt time.Time, reason string) error
 	RecoverAccountCAS(ctx context.Context, id int64, expectedRevision int64) error
@@ -523,6 +526,9 @@ type Service struct {
 	// codexLogin codex 设备码登录协议面（sdkbridge.CodexLogin 实现；nil =
 	// 未装配，端点 503——与其它可选装配面同语义，无降级路径）。
 	codexLogin CodexLoginProvider
+	// prober 单账号单模型探测执行面（internal/probe.Prober 实现；nil = 未装配，
+	// ProbeAccount 返回装配错误 → handler 500）。
+	prober AccountProber
 	// retention 统计面 coverage 步的保留期来源（usage_logs/err_logs/usage_stats
 	// 三表天数；New 经 Deps.Retention 一次性注入）。判定唯一入口
 	// domain.Admit 以**参数**接收它（纯函数：不读配置、不读全局）。Days(t) <= 0
@@ -618,6 +624,9 @@ type Deps struct {
 	// CodexLogin codex 设备码登录协议面（sdkbridge.CodexLogin 实现）。nil =
 	// 端点 503（测试/降级路径）。协议细节全部在实现侧，service 只见接口。
 	CodexLogin CodexLoginProvider
+	// Prober 单账号单模型探测执行面（internal/probe.Prober 实现；main 构造
+	// 注入）。nil = 未装配 → ProbeAccount 返回装配错误（handler 500）。
+	Prober AccountProber
 	// SupplierThawGranularity 解冻粒度（main 传 cfg.Supplier.ThawGranularity）：
 	// 管理面 PATCH share_bp/freeze_hours 跨字段上界校验（§6.4 A16⑤）。0 = 未装配。
 	SupplierThawGranularity time.Duration
@@ -641,6 +650,7 @@ func New(deps Deps) *Service {
 		routingRetentionDays:        deps.RoutingObservationRetentionDays,
 		supplierGranularity:         deps.SupplierThawGranularity,
 		codexLogin:                  deps.CodexLogin,
+		prober:                      deps.Prober,
 		retention:                   deps.Retention}
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot

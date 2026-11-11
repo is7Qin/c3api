@@ -320,6 +320,27 @@ func (f *fakeStore) GetAccount(ctx context.Context, id int64) (*domain.Account, 
 	return accountClone(a), nil
 }
 
+// GetAccountWithTemplate 探测组装面镜像：账号 + 模板 + 已按 ctx scope 展开的
+// Proxy（真实仓储 WithTemplate + accountWithProxy 的同语义替身）。越域/缺失 ⇒
+// repository.ErrNotFound。
+func (f *fakeStore) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a, ok := f.accs[id]
+	if !ok {
+		return nil, missingErr(id)
+	}
+	if scope := domain.AccountScopeFrom(ctx); scope.Set && (a.DeletedAt != nil || !scope.MatchesOwner(a.SupplierUserID)) {
+		return nil, missingErr(id)
+	}
+	c := accountClone(a)
+	if tpl, ok := f.tpls[a.TemplateID]; ok {
+		tc := *tpl
+		c.Template = &tc
+	}
+	return c, nil
+}
+
 func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
