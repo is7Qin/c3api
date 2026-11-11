@@ -1290,3 +1290,38 @@ func TestProbeCodexBodyDeadline(t *testing.T) {
 	require.Zero(t, res.StatusCode)
 	require.Equal(t, domain.ProbeErrorTimedOut, res.Error)
 }
+
+// TestProbeCodexLongLineChunked：2 MiB 的单行 data 事件按 1 KiB 分块交付仍必须
+// 在 watchdog 内完成（扫描游标只扫新增字节，不 O(n²)），事件完整收齐到空行边界、
+// body 恰好关闭一次。
+func TestProbeCodexLongLineChunked(t *testing.T) {
+	head := []byte(`data: {"type":"response.completed","response":{"output":[{"type":"message"}],"pad":"`)
+	tail := []byte("\"}}\n\n")
+	target := domain.ProbeMaxBodyBytes
+	require.Less(t, len(head)+len(tail), target)
+	event := make([]byte, 0, target)
+	event = append(event, head...)
+	event = append(event, bytes.Repeat([]byte("x"), target-len(head)-len(tail))...)
+	event = append(event, tail...)
+	require.Len(t, event, target)
+
+	body := &chunkedBody{data: event, chunk: 1024}
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+
+	type outcome struct{ res domain.ProbeResult }
+	done := make(chan outcome, 1)
+	go func() {
+		done <- outcome{res: newTestProber(t, &bodyResponseTransport{body: body}).Probe(context.Background(), spec)}
+	}()
+	select {
+	case got := <-done:
+		require.True(t, got.res.Success, "2 MiB 单行事件必须完整扫描到终态")
+		require.Equal(t, http.StatusOK, got.res.StatusCode)
+		require.Equal(t, int64(1), body.closes.Load(), "body 必须恰好关闭一次")
+	case <-time.After(5 * time.Second):
+		t.Fatal("2 MiB 单行事件分块扫描未在 watchdog 内完成")
+	}
+}
