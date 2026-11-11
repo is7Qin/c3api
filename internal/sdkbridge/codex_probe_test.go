@@ -152,14 +152,39 @@ func TestCodexProbeStatic(t *testing.T) {
 	require.Contains(t, string(raw), "bad token")
 }
 
-// TestCodexProbeNon200Capped A5/A17：201 + >2 MiB body 经**生产
+// TestCodexProbeNon200Capped A5/A17：500 + >2 MiB body 经**生产
 // NewCappedTransport**（不是测试自带 cap）截断——SDK 内部 io.ReadAll 只能拿到
-// ≤2 MiB+1，且 body 恰好关闭一次。
+// ≤2 MiB，且 body 恰好关闭一次。
 func TestCodexProbeNon200Capped(t *testing.T) {
 	huge := strings.Repeat("x", domain.ProbeMaxBodyBytes+4096)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
+		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(huge))
+	}))
+	defer up.Close()
+
+	var wrapped *closeCountingBody
+	tr := probe.NewCappedTransport(&probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
+		wrapped = &closeCountingBody{rc: rc}
+		return wrapped
+	}})
+	status, raw, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", tr, sdkbridge.ProbeResponsesPayload("m"), 5*time.Second)
+	require.Equal(t, http.StatusInternalServerError, status)
+	var httpErr *codexsdk.HTTPError
+	require.True(t, errors.As(err, &httpErr))
+	require.LessOrEqual(t, len(raw), domain.ProbeMaxBodyBytes, "非 200 body 必须经生产 capTransport 截断到 2 MiB")
+	require.Len(t, raw, domain.ProbeMaxBodyBytes)
+	require.NotNil(t, wrapped, "transport 必须被生产 cap 包装")
+	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
+}
+
+// TestCodexProbeNon200Short A5：201 短体也是 HTTP 响应——真实状态码与 body 原样
+// 保留，不套 200 溢出文案；cap 仍生效但不截断。
+func TestCodexProbeNon200Short(t *testing.T) {
+	const rawBody = `{"error":{"code":"invalid_api_key"}}`
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(rawBody))
 	}))
 	defer up.Close()
 
@@ -172,9 +197,9 @@ func TestCodexProbeNon200Capped(t *testing.T) {
 	require.Equal(t, http.StatusCreated, status)
 	var httpErr *codexsdk.HTTPError
 	require.True(t, errors.As(err, &httpErr))
-	require.LessOrEqual(t, len(raw), domain.ProbeMaxBodyBytes+1, "201 body 必须经生产 capTransport 截断到 2 MiB+1")
-	require.Len(t, raw, domain.ProbeMaxBodyBytes+1)
-	require.NotNil(t, wrapped, "transport 必须被生产 cap 包装")
+	require.Equal(t, http.StatusCreated, httpErr.StatusCode)
+	require.JSONEq(t, rawBody, string(raw), "201 body 必须原样保留")
+	require.NotNil(t, wrapped)
 	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
 }
 
@@ -228,8 +253,70 @@ func TestCodexProbeStopsAtTerminal(t *testing.T) {
 		require.NoError(t, got.err)
 		require.Equal(t, http.StatusOK, got.status)
 		require.Contains(t, string(got.body), "response.completed")
+		require.True(t, strings.HasSuffix(string(got.body), "\n\n"), "终态事件必须以空行边界收齐")
 	case <-time.After(2 * time.Second):
 		t.Fatal("probe waited for EOF after terminal event instead of returning")
+	}
+	require.NotNil(t, wrapped)
+	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
+}
+
+// TestCodexProbeIncompleteEvent A20：首行 data 本身是完整 completed JSON，但后续
+// data 行使合并事件非法——终态只能在空行边界判定；不得按首行提前停止（那会
+// 截断事件并误判成功）。这里断言 body 完整收齐到空行边界。
+func TestCodexProbeIncompleteEvent(t *testing.T) {
+	firstWritten := make(chan struct{})
+	writeRest := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(firstWritten)
+		select {
+		case <-writeRest:
+		case <-r.Context().Done():
+			return
+		}
+		_, _ = io.WriteString(w, "data: garbage\n\n")
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+	}))
+	defer up.Close()
+
+	var wrapped *closeCountingBody
+	tr := &probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
+		wrapped = &closeCountingBody{rc: rc}
+		return wrapped
+	}}
+	type outcome struct {
+		status int
+		body   []byte
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		status, body, err := sdkbridge.ProbeResponses(context.Background(), "pat", "acct-1", probe.NewCappedTransport(tr), sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+		done <- outcome{status: status, body: body, err: err}
+	}()
+
+	select {
+	case <-firstWritten:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream never wrote the first data line")
+	}
+	close(writeRest)
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.Equal(t, http.StatusOK, got.status)
+		require.Contains(t, string(got.body), `"type":"response.completed"`)
+		require.Contains(t, string(got.body), "garbage", "事件必须在空行边界完整收齐，不能按首行提前截断")
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe did not return after stream end")
 	}
 	require.NotNil(t, wrapped)
 	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")

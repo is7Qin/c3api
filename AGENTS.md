@@ -15,7 +15,7 @@ internal/
   proxy/          # 热路径：guardPipeline→failoverLoop→caller_*；不变量：零 DB、零每请求锁
   handler/        # /api/admin(oapi-codegen 生成路由) + /api/user(JWT) + httpface(错误写出收敛)
   service/        # 业务逻辑；errors 叶子包=8 哨兵错误；publish/reload 用 WithoutCancel
-  probe/          # 单账号单模型探测：origin 锁定+不跟随重定向+2 MiB 上限+凭据脱敏（只读）
+  probe/          # 单账号单模型探测：origin 锁定+不跟随重定向+2 MiB 上限+固定分类+有限错误码（只读）
   repository/     # pgx+ent 数据访问；日分区引导(usage_logs/err_logs/usage_stats)
   ent/            # GENERATED——禁止手改
   scheduler/      # 选号快照；copy-modify-Store 不可变视图

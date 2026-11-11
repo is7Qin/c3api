@@ -2645,7 +2645,7 @@ export interface components {
              */
             format: "openai-chat" | "openai-responses" | "openai-responses-ws" | "anthropic";
         };
-        /** @description 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。error 只含固定分类 文案，detail 只含白名单上游错误码（code=<value>）；两者均不回显上游自由文本、原始 JSON、内部 ID 或其他凭据，并分别截断到 1024/2048 字节。status_code=0 表示传输 失败（含超时/取消）。 */
+        /** @description 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。error 只含固定分类 文案，detail 只含内置有限公开错误码表内的 code=<value>；两者均不回显上游自由文本、 原始 JSON、内部 ID 或其他凭据，并分别截断到 1024/2048 字节。status_code=0 表示传输 失败（含超时/取消）。 */
         AccountTestResult: {
             /** @description 上游返回了该格式可用的输出 */
             success: boolean;
@@ -2662,9 +2662,9 @@ export interface components {
             requested_model: string;
             /** @description 映射后的上游模型名 */
             upstream_model: string;
-            /** @description 固定分类文案（如 probe timed out / upstream rejected credentials；≤1024 字节，不回显上游文本） */
+            /** @description 固定分类文案（probe timed out / probe canceled / probe blocked cross-origin redirect / probe request failed / upstream rejected credentials / upstream endpoint or model not found / upstream rate limited / upstream rejected request / upstream redirect rejected / upstream error / upstream response missing usable output / upstream stream failed / response exceeds 2 MiB；≤1024 字节，不回显上游文本） */
             error: string;
-            /** @description 白名单上游错误码 code=<value>（匹配 ^[A-Za-z0-9_.:-]{1,64}$）；无可用码则为空（≤2048 字节） */
+            /** @description 内置有限公开错误码表内的 code=<value>（如 invalid_api_key / model_not_found / rate_limit_exceeded）；表外值（含上游任意 error.code/error.type、其他租户 key、内部请求 id）一律为空（≤2048 字节） */
             detail: string;
         };
         /** @description 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度） */

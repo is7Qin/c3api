@@ -173,16 +173,13 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		CodexAccountID: codexAccountID,
 		Egress:         egressSpec,
 	}
-	if acc.Proxy != nil {
-		spec.ProxyPassword = acc.Proxy.Password
-	}
 	res := s.prober.Probe(ctx, spec)
 	s.logProbe(id, res)
 	return &res, nil
 }
 
-// logProbe 每个探测恰好一条 Info（§7）：不含凭据、不含响应体。失败另记已脱敏
-// error（prober 已脱敏/截断）。
+// logProbe 每个探测恰好一条 Info（§7）：不含凭据、不含响应体。失败另记固定
+// 分类 error（prober 已按白名单/有限错误码收敛并截断）。
 func (s *Service) logProbe(accountID int64, res domain.ProbeResult) {
 	if s.log == nil {
 		return

@@ -7,7 +7,7 @@
 
 `Prober.Probe(ctx, domain.ProbeSpec)` 用 service 组装好的账号/模板事实发一条最小上游
 请求，返回 `domain.ProbeResult`（success / latency_ms / status_code / 回显 model /
-脱敏 error+detail）。
+固定分类 error + 有限错误码 detail，均按 1024/2048 字节截断）。
 
 - 静态 key 族（`api_key` / `responses-special` / `custom`）：`pkg/aiclient.Factory` 的
   `ChatCompletionRaw` / `ResponseRaw` / `AnthMessageRaw`，路径来自
@@ -30,20 +30,30 @@
    （status 0），不回显 Location/URL。
 4. **响应体硬上限 2 MiB**：`capTransport` 对非 2xx 截断到 2 MiB；2xx 允许读到
    2 MiB+1，调用方读到第 2 MiB+1 字节即判 `response exceeds 2 MiB` 并关闭。codex
-   200 体增量扫描，读到 `response.completed` / `response.failed` 终态事件立即停止
-   并关闭（上游不关流不得拖到超时）。
+   200 体增量扫描，只在**空行事件边界（或 EOF）**判定 `response.completed` /
+   `response.failed` 终态并停止读取、关闭——不得按未收齐的前缀提前停止（会截断
+   多行事件并产生二次解析放大），上游不关流不得拖到超时。
 5. **并发/超时**：进程内信号量（默认 4）+ `context.WithTimeout`（默认 30s，常量，
    不开配置键）；信号量等待受同一 ctx 约束。任何超时/取消（含响应头已到但 body
-   未读完）→ `status_code=0` + 固定 `probe timed out` / `probe canceled`。
-6. **脱敏**：凭据与绑定代理密码的原文 / JSON 转义（含 `\/`）/ QueryEscape /
-   PathEscape / URL userinfo（`url.UserPassword` 形态）/ 小写百分号十六进制变体
-   全部替换 `***`，再按 1024/2048 字节截断 error/detail。结果字段本身已不含上游
-   文本；脱敏用于日志/诊断中无法避免的传输错误文本（代理地址、拨号错误）。
+   未读完、以及 SDK 吞掉非 200/401 预读 body 错误的情形）→ `status_code=0` + 固定
+   `probe timed out` / `probe canceled`；映射 SDK error 前先检查 `ctx.Err()`。
+   codex 非 200（含 201/204/3xx）保留真实状态码并按 HTTP 响应分类。
+6. **固定文案不做凭据子串替换**：结果字段只有分类白名单 + 有限错误码，没有动态
+   上游文本；按 secret 做 substring 替换会用短 key（如 `up`）破坏
+   `upstream rejected credentials` 等固定文案，代码中不保留逐 secret 替换调用。
 7. **失败文案受控（根 AGENTS.md 反模式 7）**：结果与日志**不得**包含上游自由
    文本、原始 JSON、内部 ID 或其他凭据。`error` 只允许固定分类文案（probe
    timed out / probe canceled / probe blocked cross-origin redirect / probe
    request failed / upstream rejected credentials / upstream endpoint or model not
    found / upstream rate limited / upstream rejected request / upstream redirect
    rejected / upstream error / upstream response missing usable output / upstream
-   stream failed）；`detail` 只允许白名单形态的上游错误码 `code=<value>`（匹配
-   `^[A-Za-z0-9_.:-]{1,64}$`），否则为空。绝不返回 `error.message` 或原始 body。
+   stream failed / response exceeds 2 MiB）；`detail` 只允许**内置有限公开错误码
+   表**内的值（invalid_request_error / invalid_api_key / model_not_found /
+   context_length_exceeded / rate_limit_exceeded / rate_limit_error /
+   insufficient_quota / server_error / api_error / overloaded_error /
+   authentication_error / permission_error / not_found_error / request_too_large /
+   content_policy_violation / usage_not_included / invalid_prompt /
+   model_not_supported / unsupported_model / billing_hard_limit_reached /
+   account_deactivated）以 `code=<value>` 形式给出；表外值（含任意形态的上游
+   `error.code`/`error.type`、其他租户 key、内部请求 id）一律为空。绝不返回
+   `error.message` 或原始 body。

@@ -8,7 +8,8 @@
 // 只读诊断观测：不落库、不计费、不改账号状态、不进调度/规则/失败统计。请求体
 // 与 query 不携带 URL/host/路径——出站目标只能是 service 组装进来的已存储配置；
 // 本包负责 origin 锁定（scheme + hostname + 规范化端口）、不跟随重定向与响应体
-// 硬上限（2 MiB），并把凭据/绑定代理密码从结果文本中脱敏。
+// 硬上限（2 MiB）；结果只含固定分类文案与有限公开错误码，不含任何上游自由文本
+// （安全由分类白名单 + 有限错误码结构性保证，不做凭据子串替换）。
 package probe
 
 import (
@@ -21,7 +22,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -112,14 +112,15 @@ func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeR
 	return finalizeResult(spec, res)
 }
 
-// finalizeResult 统一回显字段 + 脱敏 + 截断（所有出口都必须经过这里）。
+// finalizeResult 统一回显字段 + 截断（所有出口都必须经过这里）。安全由分类
+// 白名单 + 有限错误码结构性保证：结果字段不含动态上游文本，因此不做凭据子串
+// 替换——短 key（如 `up`）会破坏 `upstream rejected credentials` 等固定文案。
 func finalizeResult(spec domain.ProbeSpec, res domain.ProbeResult) domain.ProbeResult {
 	res.Format = spec.Format
 	res.RequestedModel = spec.RequestedModel
 	res.UpstreamModel = spec.UpstreamModel
-	secrets := []string{spec.Credential, spec.ProxyPassword}
-	res.Error = truncateBytes(redactText(res.Error, secrets), domain.ProbeErrorMaxLen)
-	res.Detail = truncateBytes(redactText(res.Detail, secrets), domain.ProbeDetailMaxLen)
+	res.Error = truncateBytes(res.Error, domain.ProbeErrorMaxLen)
+	res.Detail = truncateBytes(res.Detail, domain.ProbeDetailMaxLen)
 	return res
 }
 
@@ -196,35 +197,33 @@ func (p *Prober) probeCodex(ctx context.Context, spec domain.ProbeSpec) domain.P
 	}
 	payload := sdkbridge.ProbeResponsesPayload(spec.UpstreamModel)
 	status, body, callErr := sdkbridge.ProbeResponses(ctx, spec.Credential, spec.CodexAccountID, transport, payload, p.timeout)
+	if callErr != nil {
+		// ctx 超时/取消优先于 SDK 吞掉的非 200 body 读错误：SDK 对非 200 的
+		// io.ReadAll 错误与 401 预读错误都不透传，只留 HTTPError；响应头已到
+		// 但 body 未读完时按传输失败处理（status 0）。
+		if ctx.Err() != nil {
+			return domain.ProbeResult{Error: classifyTransportError(ctx.Err())}
+		}
+		if status != 0 {
+			// SDK 对任何非 200（含 201/204/3xx）都返回 HTTPError：这是 HTTP
+			// 响应，原样保留真实状态码并按 HTTP 响应分类，不得当成 body 读失败
+			// 或 200 溢出。
+			return domain.ProbeResult{
+				StatusCode: status,
+				Error:      classifyUpstreamStatus(status),
+				Detail:     errorCodeDetail(body),
+			}
+		}
+		return domain.ProbeResult{Error: classifyTransportError(callErr)}
+	}
+	// nil error ⇒ SDK 只对 200 放行；仅 200 走 2 MiB 溢出判定与 SSE 终态解析。
 	res := domain.ProbeResult{StatusCode: status}
+	if status != http.StatusOK {
+		res.Error = classifyUpstreamStatus(status)
+		return res
+	}
 	if len(body) > domain.ProbeMaxBodyBytes {
 		res.Error = "response exceeds 2 MiB"
-		return res
-	}
-	if callErr != nil {
-		if isContextError(callErr) {
-			// 响应头可能已到达，但 body 读取被超时/取消截断：传输失败 = status 0。
-			res.StatusCode = 0
-			res.Error = classifyTransportError(callErr)
-			return res
-		}
-		if status == 0 {
-			res.Error = classifyTransportError(callErr)
-			return res
-		}
-		if status < 200 || status > 299 {
-			res.Error = classifyUpstreamStatus(status)
-			res.Detail = errorCodeDetail(body)
-			return res
-		}
-		// 2xx 但 body 读取失败：传输失败。
-		res.StatusCode = 0
-		res.Error = "probe request failed"
-		return res
-	}
-	if status < 200 || status > 299 {
-		res.Error = classifyUpstreamStatus(status)
-		res.Detail = errorCodeDetail(body)
 		return res
 	}
 	success, errMsg, detail := validateCodexSSE(body)
@@ -329,8 +328,9 @@ func effectivePort(u *url.URL) string {
 // io.ReadAll 也只能拿到 ≤2 MiB）；2xx 允许读到 2 MiB+1（多一个字节用于发现
 // 溢出——调用方读到第 2 MiB+1 字节即判失败）。
 //
-// NewCappedTransport 导出生产实现，供 sdkbridge 的 cap 证据测试（A5/A17）经
-// sdkbridge.ProbeResponses 复用同一层，避免测试自带一份 capping transport。
+// NewCappedTransport 是测试 seam：导出使 sdkbridge 的外部测试能经
+// sdkbridge.ProbeResponses 复用生产 capping（A5/A17 证据）；生产装配只经
+// guardedHTTPClient / guardedCodexTransport 构造本类型。
 func NewCappedTransport(next http.RoundTripper) http.RoundTripper {
 	return &capTransport{next: next}
 }
@@ -463,7 +463,12 @@ func validateStatic(format domain.RequestFormat, body []byte) bool {
 	r := gjson.ParseBytes(body)
 	switch format {
 	case domain.FormatOpenAIChat:
-		first := r.Get("choices.0")
+		// 父级必须是数组：`{"choices":{"0":...}}` 不是数组。
+		choices := r.Get("choices")
+		if !choices.IsArray() {
+			return false
+		}
+		first := choices.Get("0")
 		if !first.IsObject() {
 			return false
 		}
@@ -474,20 +479,33 @@ func validateStatic(format domain.RequestFormat, body []byte) bool {
 		if content.IsArray() && content.Get("0").Exists() {
 			return true
 		}
-		if first.Get("message.tool_calls.0").Exists() {
+		toolCalls := first.Get("message.tool_calls")
+		if toolCalls.IsArray() && toolCalls.Get("0").Exists() {
 			return true
 		}
-		if first.Get("message.reasoning_content").String() != "" {
+		reasoning := first.Get("message.reasoning_content")
+		if reasoning.Type == gjson.String && reasoning.String() != "" {
 			return true
 		}
-		return first.Get("finish_reason").String() != ""
+		finish := first.Get("finish_reason")
+		return finish.Type == gjson.String && finish.String() != ""
 	case domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS:
-		if r.Get("output.0.type").String() != "" {
-			return true
+		output := r.Get("output")
+		if output.IsArray() {
+			typ := output.Get("0.type")
+			if typ.Type == gjson.String && typ.String() != "" {
+				return true
+			}
 		}
-		return r.Get("output_text").String() != ""
+		outputText := r.Get("output_text")
+		return outputText.Type == gjson.String && outputText.String() != ""
 	case domain.FormatAnthropic:
-		return r.Get("content.0.type").String() != ""
+		content := r.Get("content")
+		if !content.IsArray() {
+			return false
+		}
+		typ := content.Get("0.type")
+		return typ.Type == gjson.String && typ.String() != ""
 	}
 	return false
 }
@@ -577,18 +595,48 @@ func classifyUpstreamStatus(status int) string {
 	}
 }
 
-var probeErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
+// probeErrorCodes 是唯一允许回显的公开错误码集合（spec §5.2 的有限表，lowercase
+// snake）。上游可把别家 key / 内部请求 id 塞进 error.code/error.type，因此只认
+// 表内命中值；表外值（含任意形态）一律丢弃，绝不做形态正则放行。
+var probeErrorCodes = map[string]struct{}{
+	"invalid_request_error":      {},
+	"invalid_api_key":            {},
+	"model_not_found":            {},
+	"context_length_exceeded":    {},
+	"rate_limit_exceeded":        {},
+	"rate_limit_error":           {},
+	"insufficient_quota":         {},
+	"server_error":               {},
+	"api_error":                  {},
+	"overloaded_error":           {},
+	"authentication_error":       {},
+	"permission_error":           {},
+	"not_found_error":            {},
+	"request_too_large":          {},
+	"content_policy_violation":   {},
+	"usage_not_included":         {},
+	"invalid_prompt":             {},
+	"model_not_supported":        {},
+	"unsupported_model":          {},
+	"billing_hard_limit_reached": {},
+	"account_deactivated":        {},
+}
 
-// errorCodeDetail 只从上游错误对象提取白名单形态的 error.code/error.type，
-// 以 code=<value> 返回；message/原始 JSON/其他文本一律丢弃。
+// errorCodeDetail 只从上游错误对象提取**内置有限公开表**内的 error.code/
+// error.type，以 code=<value> 返回；message/原始 JSON/其他文本/表外 code 一律
+// 丢弃。
 func errorCodeDetail(body []byte) string {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
 		return ""
 	}
 	for _, path := range []string{"error.code", "error.type", "response.error.code", "response.error.type"} {
 		v := gjson.GetBytes(body, path)
-		if v.Type == gjson.String && probeErrorCodePattern.MatchString(v.String()) {
-			return "code=" + v.String()
+		if v.Type != gjson.String {
+			continue
+		}
+		code := v.String()
+		if _, ok := probeErrorCodes[code]; ok {
+			return "code=" + code
 		}
 	}
 	return ""
@@ -601,10 +649,6 @@ func isTimeoutError(err error) bool {
 	}
 	var ne net.Error
 	return errors.As(err, &ne) && ne.Timeout()
-}
-
-func isContextError(err error) bool {
-	return isTimeoutError(err) || errors.Is(err, context.Canceled)
 }
 
 // classifyTransportError 把传输层错误归一为固定文案；redirect/Location 解析
@@ -628,93 +672,7 @@ func classifyTransportError(err error) string {
 	return "probe request failed"
 }
 
-// ---- 脱敏 / 截断（spec §5.2/§6） ----
-
-// redactText 把每个 secret 的所有可回显形态替换为 ***：原文、JSON 转义
-// （含 `\/`）、QueryEscape、PathEscape、URL userinfo（url.UserPassword 形态）
-// 以及它们的小写百分号十六进制变体。secret 为空跳过。
-func redactText(s string, secrets []string) string {
-	if s == "" {
-		return s
-	}
-	for _, secret := range secrets {
-		if secret == "" {
-			continue
-		}
-		for _, form := range redactionForms(secret) {
-			if form == "" {
-				continue
-			}
-			s = strings.ReplaceAll(s, form, "***")
-		}
-	}
-	return s
-}
-
-func redactionForms(secret string) []string {
-	jsonForm := jsonEscape(secret)
-	queryForm := url.QueryEscape(secret)
-	pathForm := url.PathEscape(secret)
-	userinfoForm := url.UserPassword("u", secret).String()
-	userinfoForm = strings.TrimPrefix(userinfoForm, "u:")
-	forms := []string{
-		secret,
-		jsonForm,
-		strings.ReplaceAll(jsonForm, "/", `\/`),
-		queryForm,
-		lowerPercentHex(queryForm),
-		pathForm,
-		lowerPercentHex(pathForm),
-		userinfoForm,
-		lowerPercentHex(userinfoForm),
-	}
-	// 去空并保持顺序去重（原文优先，避免短形态先替换破坏长形态）。
-	seen := make(map[string]struct{}, len(forms))
-	out := forms[:0]
-	for _, form := range forms {
-		if form == "" {
-			continue
-		}
-		if _, ok := seen[form]; ok {
-			continue
-		}
-		seen[form] = struct{}{}
-		out = append(out, form)
-	}
-	return out
-}
-
-func jsonEscape(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil || len(b) < 2 {
-		return s
-	}
-	return string(b[1 : len(b)-1])
-}
-
-// lowerPercentHex 只把 %XX 的十六进制字母转小写；其他字符保持原样。
-func lowerPercentHex(s string) string {
-	b := []byte(s)
-	for i := 0; i+2 < len(b); i++ {
-		if b[i] != '%' || !isHexDigit(b[i+1]) || !isHexDigit(b[i+2]) {
-			continue
-		}
-		b[i+1] = lowerHex(b[i+1])
-		b[i+2] = lowerHex(b[i+2])
-	}
-	return string(b)
-}
-
-func isHexDigit(c byte) bool {
-	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
-}
-
-func lowerHex(c byte) byte {
-	if c >= 'A' && c <= 'F' {
-		return c + ('a' - 'A')
-	}
-	return c
-}
+// ---- 截断（spec §5.2/§6） ----
 
 func truncateBytes(s string, max int) string {
 	if len(s) <= max {

@@ -7,6 +7,7 @@ package probe
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/aiclient"
 	"github.com/is7qin/c3api/pkg/egress"
 )
@@ -32,6 +34,26 @@ func newTestProber(t *testing.T, base http.RoundTripper, timeout time.Duration) 
 	hc := &http.Client{Transport: base}
 	factory := aiclient.NewFactory(hc, aiclient.Config{})
 	return New(factory, egress.NewPool(hc), nil, timeout, domain.ProbeMaxConcurrency)
+}
+
+func waitSignal(t *testing.T, ch <-chan struct{}, what string) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("%s: %s never signaled", t.Name(), what)
+	}
+}
+
+func waitProbeResult(t *testing.T, ch <-chan domain.ProbeResult) domain.ProbeResult {
+	t.Helper()
+	select {
+	case res := <-ch:
+		return res
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe did not return in time")
+		return domain.ProbeResult{}
+	}
 }
 
 func staticSpec(baseURL string) domain.ProbeSpec {
@@ -191,35 +213,48 @@ func TestProbePayloadValidation(t *testing.T) {
 		format      domain.RequestFormat
 		status      int
 		body        string
+		credential  string
 		wantSuccess bool
 		wantError   string
 		wantDetail  string
 	}{
-		{"chat-empty-body", domain.FormatOpenAIChat, 200, "", false, "upstream response missing usable output", ""},
-		{"chat-empty-object", domain.FormatOpenAIChat, 200, `{}`, false, "upstream response missing usable output", ""},
-		{"chat-empty-choice", domain.FormatOpenAIChat, 200, `{"choices":[{}]}`, false, "upstream response missing usable output", ""},
-		{"chat-empty-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[]}}]}`, false, "upstream response missing usable output", ""},
-		{"chat-empty-content-string", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":""}}]}`, false, "upstream response missing usable output", ""},
-		{"chat-empty-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[]}}]}`, false, "upstream response missing usable output", ""},
-		{"chat-content", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":"hi"}}]}`, true, "", ""},
-		{"chat-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[{"type":"text","text":"hi"}]}}]}`, true, "", ""},
-		{"chat-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[{"id":"c1"}]}}]}`, true, "", ""},
-		{"chat-reasoning", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"reasoning_content":"think"}}]}`, true, "", ""},
-		{"chat-finish-reason", domain.FormatOpenAIChat, 200, `{"choices":[{"finish_reason":"stop"}]}`, true, "", ""},
-		{"chat-error-only", domain.FormatOpenAIChat, 200, `{"error":{"message":"boom sk-other-tenant req_abc123"}}`, false, "upstream response missing usable output", ""},
-		{"responses-empty", domain.FormatOpenAIResponses, 200, `{}`, false, "upstream response missing usable output", ""},
-		{"responses-empty-output", domain.FormatOpenAIResponses, 200, `{"output":[]}`, false, "upstream response missing usable output", ""},
-		{"responses-output", domain.FormatOpenAIResponses, 200, `{"output":[{"type":"message"}]}`, true, "", ""},
-		{"responses-output-text", domain.FormatOpenAIResponses, 200, `{"output_text":"hi"}`, true, "", ""},
-		{"anthropic-empty", domain.FormatAnthropic, 200, `{"content":[]}`, false, "upstream response missing usable output", ""},
-		{"anthropic-content", domain.FormatAnthropic, 200, `{"content":[{"type":"text","text":"hi"}]}`, true, "", ""},
-		{"chat-http-error", domain.FormatOpenAIChat, 400, `{"error":{"message":"bad model"}}`, false, "upstream rejected request", ""},
-		{"chat-http-error-safe-code", domain.FormatOpenAIChat, 400, `{"error":{"code":"model_not_found","type":"invalid_request_error","message":"bad model"}}`, false, "upstream rejected request", "code=model_not_found"},
-		{"chat-http-error-unsafe-code", domain.FormatOpenAIChat, 400, `{"error":{"code":"bad code with spaces"}}`, false, "upstream rejected request", ""},
-		{"chat-http-401", domain.FormatOpenAIChat, 401, `{"error":{"code":"token_invalidated","message":"no"}}`, false, "upstream rejected credentials", "code=token_invalidated"},
-		{"chat-http-404", domain.FormatOpenAIChat, 404, "", false, "upstream endpoint or model not found", ""},
-		{"chat-http-429", domain.FormatOpenAIChat, 429, "", false, "upstream rate limited", ""},
-		{"chat-http-503", domain.FormatOpenAIChat, 503, "", false, "upstream error", ""},
+		{"chat-empty-body", domain.FormatOpenAIChat, 200, "", "", false, "upstream response missing usable output", ""},
+		{"chat-empty-object", domain.FormatOpenAIChat, 200, `{}`, "", false, "upstream response missing usable output", ""},
+		{"chat-empty-choice", domain.FormatOpenAIChat, 200, `{"choices":[{}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-choices-object-parent", domain.FormatOpenAIChat, 200, `{"choices":{"0":{"message":{"content":"hi"}}}}`, "", false, "upstream response missing usable output", ""},
+		{"chat-empty-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[]}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-empty-content-string", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":""}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-empty-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[]}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-tool-calls-object-parent", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":{"0":{"id":"c1"}}}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-content", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":"hi"}}]}`, "", true, "", ""},
+		{"chat-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[{"type":"text","text":"hi"}]}}]}`, "", true, "", ""},
+		{"chat-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[{"id":"c1"}]}}]}`, "", true, "", ""},
+		{"chat-reasoning", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"reasoning_content":"think"}}]}`, "", true, "", ""},
+		{"chat-reasoning-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"reasoning_content":[]}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-finish-reason", domain.FormatOpenAIChat, 200, `{"choices":[{"finish_reason":"stop"}]}`, "", true, "", ""},
+		{"chat-finish-reason-array", domain.FormatOpenAIChat, 200, `{"choices":[{"finish_reason":[]}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-error-only", domain.FormatOpenAIChat, 200, `{"error":{"message":"boom sk-other-tenant req_abc123"}}`, "", false, "upstream response missing usable output", ""},
+		{"responses-empty", domain.FormatOpenAIResponses, 200, `{}`, "", false, "upstream response missing usable output", ""},
+		{"responses-empty-output", domain.FormatOpenAIResponses, 200, `{"output":[]}`, "", false, "upstream response missing usable output", ""},
+		{"responses-output-object-parent", domain.FormatOpenAIResponses, 200, `{"output":{"0":{"type":"message"}}}`, "", false, "upstream response missing usable output", ""},
+		{"responses-output-type-array", domain.FormatOpenAIResponses, 200, `{"output":[{"type":[]}]}`, "", false, "upstream response missing usable output", ""},
+		{"responses-output-type-number", domain.FormatOpenAIResponses, 200, `{"output":[{"type":1}]}`, "", false, "upstream response missing usable output", ""},
+		{"responses-output-text-array", domain.FormatOpenAIResponses, 200, `{"output_text":[]}`, "", false, "upstream response missing usable output", ""},
+		{"responses-output", domain.FormatOpenAIResponses, 200, `{"output":[{"type":"message"}]}`, "", true, "", ""},
+		{"responses-output-text", domain.FormatOpenAIResponses, 200, `{"output_text":"hi"}`, "", true, "", ""},
+		{"anthropic-empty", domain.FormatAnthropic, 200, `{"content":[]}`, "", false, "upstream response missing usable output", ""},
+		{"anthropic-content-object-parent", domain.FormatAnthropic, 200, `{"content":{"0":{"type":"text"}}}`, "", false, "upstream response missing usable output", ""},
+		{"anthropic-content-type-array", domain.FormatAnthropic, 200, `{"content":[{"type":[]}]}`, "", false, "upstream response missing usable output", ""},
+		{"anthropic-content", domain.FormatAnthropic, 200, `{"content":[{"type":"text","text":"hi"}]}`, "", true, "", ""},
+		{"chat-http-error", domain.FormatOpenAIChat, 400, `{"error":{"message":"bad model"}}`, "", false, "upstream rejected request", ""},
+		{"chat-http-error-safe-code", domain.FormatOpenAIChat, 400, `{"error":{"code":"model_not_found","type":"invalid_request_error","message":"bad model"}}`, "", false, "upstream rejected request", "code=model_not_found"},
+		{"chat-http-error-unsafe-code", domain.FormatOpenAIChat, 400, `{"error":{"code":"bad code with spaces"}}`, "", false, "upstream rejected request", ""},
+		{"chat-http-401", domain.FormatOpenAIChat, 401, `{"error":{"code":"authentication_error","message":"no"}}`, "", false, "upstream rejected credentials", "code=authentication_error"},
+		{"chat-http-401-short-credential", domain.FormatOpenAIChat, 401, `{"error":{"message":"no"}}`, "up", false, "upstream rejected credentials", ""},
+		{"chat-http-400-short-credential-code", domain.FormatOpenAIChat, 400, `{"error":{"code":"invalid_api_key","message":"no"}}`, "api", false, "upstream rejected request", "code=invalid_api_key"},
+		{"chat-http-404", domain.FormatOpenAIChat, 404, "", "", false, "upstream endpoint or model not found", ""},
+		{"chat-http-429", domain.FormatOpenAIChat, 429, "", "", false, "upstream rate limited", ""},
+		{"chat-http-503", domain.FormatOpenAIChat, 503, "", "", false, "upstream error", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -230,6 +265,9 @@ func TestProbePayloadValidation(t *testing.T) {
 			defer up.Close()
 			spec := staticSpec(up.URL)
 			spec.Format = tc.format
+			if tc.credential != "" {
+				spec.Credential = tc.credential
+			}
 			res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), spec)
 			require.Equal(t, tc.status, res.StatusCode)
 			require.Equal(t, tc.wantSuccess, res.Success)
@@ -287,31 +325,13 @@ func TestProbeRedirectBlocked(t *testing.T) {
 	require.NotContains(t, res.Error, malformed.URL)
 }
 
-// TestProbeTimeout A10：ctx 到期 → status 0 + 固定 "probe timed out"。用 channel
-// 屏障（先等上游 started 再等结果，watchdog 兜底），不使用 sleep。
-// 两个阶段：① 响应头未到；② 响应头已到但 body 一直不结束（读 body 超时）。
+// TestProbeTimeout A10：超时/取消一律 status 0 + 固定文案。测试不提前武装短
+// deadline：Prober 用长超时，先等上游 started 屏障，再取消父 ctx（channel 屏障，
+// 不用 sleep）；DeadlineExceeded 的固定文案由 TestClassifyTransportError 覆盖。
+// 两个阶段：① 响应头未到；② 响应头已到但 body 一直不结束。
 func TestProbeTimeout(t *testing.T) {
 	require.Equal(t, 30*time.Second, DefaultTimeout, "单次探测硬上限必须是 30s 常量（不开配置键）")
 	require.Equal(t, 4, DefaultMaxConcurrency)
-
-	waitSignal := func(t *testing.T, ch <-chan struct{}, what string) {
-		t.Helper()
-		select {
-		case <-ch:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("%s: %s never signaled", t.Name(), what)
-		}
-	}
-	waitResult := func(t *testing.T, ch <-chan domain.ProbeResult) domain.ProbeResult {
-		t.Helper()
-		select {
-		case res := <-ch:
-			return res
-		case <-time.After(2 * time.Second):
-			t.Fatal("probe did not return after timeout")
-			return domain.ProbeResult{}
-		}
-	}
 
 	t.Run("request-hangs-before-headers", func(t *testing.T) {
 		started := make(chan struct{})
@@ -328,15 +348,18 @@ func TestProbeTimeout(t *testing.T) {
 		}))
 		defer up.Close()
 
-		p := newTestProber(t, nil, 20*time.Millisecond)
+		p := newTestProber(t, nil, 10*time.Second)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		result := make(chan domain.ProbeResult, 1)
-		go func() { result <- p.Probe(context.Background(), staticSpec(up.URL)) }()
+		go func() { result <- p.Probe(ctx, staticSpec(up.URL)) }()
 
 		waitSignal(t, started, "upstream handler")
-		res := waitResult(t, result)
+		cancel()
+		res := waitProbeResult(t, result)
 		require.False(t, res.Success)
 		require.Equal(t, 0, res.StatusCode, "传输失败 status_code = 0")
-		require.Equal(t, "probe timed out", res.Error)
+		require.Equal(t, "probe canceled", res.Error)
 
 		close(release)
 		waitSignal(t, done, "upstream handler completion")
@@ -361,19 +384,31 @@ func TestProbeTimeout(t *testing.T) {
 		}))
 		defer up.Close()
 
-		p := newTestProber(t, nil, 50*time.Millisecond)
+		p := newTestProber(t, nil, 10*time.Second)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
 		result := make(chan domain.ProbeResult, 1)
-		go func() { result <- p.Probe(context.Background(), staticSpec(up.URL)) }()
+		go func() { result <- p.Probe(ctx, staticSpec(up.URL)) }()
 
 		waitSignal(t, started, "upstream headers")
-		res := waitResult(t, result)
+		cancel()
+		res := waitProbeResult(t, result)
 		require.False(t, res.Success)
-		require.Equal(t, 0, res.StatusCode, "响应头已到但 body 读超时也必须 status 0")
-		require.Equal(t, "probe timed out", res.Error)
+		require.Equal(t, 0, res.StatusCode, "响应头已到但 body 读取消也必须 status 0")
+		require.Equal(t, "probe canceled", res.Error)
 
 		close(release)
 		waitSignal(t, done, "upstream handler completion")
 	})
+}
+
+// TestClassifyTransportError A10 纯函数：DeadlineExceeded → probe timed out，
+// Canceled → probe canceled，其他 → probe request failed。
+func TestClassifyTransportError(t *testing.T) {
+	require.Equal(t, "probe timed out", classifyTransportError(context.DeadlineExceeded))
+	require.Equal(t, "probe canceled", classifyTransportError(context.Canceled))
+	require.Equal(t, "probe request failed", classifyTransportError(nil))
+	require.Equal(t, "probe request failed", classifyTransportError(errors.New("boom")))
 }
 
 // TestProbeResponseTooLarge A17：静态族 200 体 >2 MiB → 失败并关闭连接（恰好
@@ -409,11 +444,119 @@ func TestCodexProbeStreamTooLarge(t *testing.T) {
 	spec.CredentialType = credential.TypeCodexPAT
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
-	tr := &rewriteTransport{target: up.URL}
+	var closes atomic.Int64
+	tr := &countCloseTransport{next: &rewriteTransport{target: up.URL}, closes: &closes}
 	res := newTestProber(t, tr, 10*time.Second).Probe(context.Background(), spec)
 	require.False(t, res.Success)
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "response exceeds 2 MiB", res.Error)
+	require.Equal(t, int64(1), closes.Load(), "200 溢出时 body 必须恰好关闭一次")
+}
+
+// TestProbeCodexNon200Status A5/A17：SDK 对 201/204 也返回 HTTPError——探测必须
+// 保留真实状态码并按 HTTP 响应分类，不得覆盖成 0 或 200 溢出文案。
+func TestProbeCodexNon200Status(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"created-201", http.StatusCreated, `{"error":{"code":"invalid_api_key"}}`},
+		{"no-content-204", http.StatusNoContent, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(tc.status)
+				if tc.body != "" {
+					_, _ = w.Write([]byte(tc.body))
+				}
+			}))
+			defer up.Close()
+
+			spec := staticSpec("")
+			spec.CredentialType = credential.TypeCodexPAT
+			spec.Format = domain.FormatOpenAIResponses
+			spec.Credential = "pat-test"
+			res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+			require.False(t, res.Success)
+			require.Equal(t, tc.status, res.StatusCode, "非 200 的真实状态码必须原样保留")
+			require.Equal(t, "upstream error", res.Error)
+			if tc.status == http.StatusCreated {
+				require.Equal(t, "code=invalid_api_key", res.Detail)
+			} else {
+				require.Empty(t, res.Detail)
+			}
+		})
+	}
+}
+
+// TestProbeCodexNon200BodyCancel A10：非 200 响应头已到但 body 停住，SDK 吞掉
+// body 读错误；取消父 ctx 必须在映射 SDK HTTPError 前生效 → status 0 + canceled。
+func TestProbeCodexNon200BodyCancel(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(started)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+		close(done)
+	}))
+	defer up.Close()
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	p := newTestProber(t, &rewriteTransport{target: up.URL}, 10*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	result := make(chan domain.ProbeResult, 1)
+	go func() { result <- p.Probe(ctx, spec) }()
+
+	waitSignal(t, started, "upstream non-200 headers")
+	cancel()
+	res := waitProbeResult(t, result)
+	require.False(t, res.Success)
+	require.Equal(t, 0, res.StatusCode, "非 200 body 读取消也必须 status 0")
+	require.Equal(t, "probe canceled", res.Error)
+	require.Empty(t, res.Detail)
+
+	close(release)
+	waitSignal(t, done, "upstream handler completion")
+}
+
+// TestProbeCodexNon200CappedWiring A5/A17：生产 guardedCodexTransport 走完整
+// 装配（cap∘originGuard∘出口 transport）时，500 巨体经 SDK 内部 io.ReadAll 只能
+// 拿到 ≤2 MiB，且 body 恰好关闭一次。
+func TestProbeCodexNon200CappedWiring(t *testing.T) {
+	huge := bytes.Repeat([]byte("x"), domain.ProbeMaxBodyBytes+4096)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write(huge)
+	}))
+	defer up.Close()
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	var closes atomic.Int64
+	p := newTestProber(t, &countCloseTransport{next: &rewriteTransport{target: up.URL}, closes: &closes}, 5*time.Second)
+	transport, err := p.guardedCodexTransport(spec)
+	require.NoError(t, err)
+	status, body, callErr := sdkbridge.ProbeResponses(context.Background(), spec.Credential, spec.CodexAccountID, transport, sdkbridge.ProbeResponsesPayload(spec.UpstreamModel), 5*time.Second)
+	require.Equal(t, http.StatusInternalServerError, status)
+	require.Error(t, callErr)
+	require.Len(t, body, domain.ProbeMaxBodyBytes, "生产 wiring 的非 200 cap 必须截断到 2 MiB")
+	require.Equal(t, int64(1), closes.Load(), "body 必须恰好关闭一次")
 }
 
 // TestProbeCodexSSE codex 成功判定：response.completed + 非空 output。
@@ -466,6 +609,28 @@ func TestProbeCodexMultilineEvent(t *testing.T) {
 	require.Empty(t, res.Detail)
 }
 
+// TestProbeCodexIncompleteEvent A20：首行 data 本身是完整 completed JSON，但后续
+// data 行使合并事件非法——终态只能在空行边界判定；合并后 JSON 无效 → 失败，
+// 不得按首行提前判成功。
+func TestProbeCodexIncompleteEvent(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n" +
+			"data: garbage\n\n"))
+	}))
+	defer up.Close()
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+	require.False(t, res.Success, "合并后的非法事件不得判成功")
+	require.Equal(t, 200, res.StatusCode)
+	require.Equal(t, "upstream stream failed", res.Error)
+	require.Empty(t, res.Detail)
+}
+
 // TestProbeNoUpstreamTextLeak A19：上游错误体含其他租户 key、内部 request id 与
 // 自由文本时，结果只出固定分类文案 + 白名单 code；注入串不得出现在任何结果字段。
 func TestProbeNoUpstreamTextLeak(t *testing.T) {
@@ -513,11 +678,39 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		assertClean(t, res)
 	})
 
+	t.Run("static-injected-code-and-type", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"` + otherTenantKey + `","type":"` + internalReqID +
+				`","message":"free-form upstream text"}}`))
+		}))
+		defer up.Close()
+
+		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		require.False(t, res.Success)
+		require.Equal(t, "upstream rejected request", res.Error)
+		require.Empty(t, res.Detail, "表外 error.code/error.type 一律丢弃")
+		assertClean(t, res)
+	})
+
+	t.Run("static-known-code", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"code":"invalid_api_key"}}`))
+		}))
+		defer up.Close()
+
+		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		require.False(t, res.Success)
+		require.Equal(t, "code=invalid_api_key", res.Detail, "表内公开码仍以 code=<value> 回显")
+		assertClean(t, res)
+	})
+
 	t.Run("codex-failed-event", func(t *testing.T) {
 		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			_, _ = w.Write([]byte(`event: response.failed` + "\n" +
-				`data: {"type":"response.failed","response":{"error":{"code":"upstream_stream_error","message":"` +
+				`data: {"type":"response.failed","response":{"error":{"code":"rate_limit_exceeded","message":"` +
 				otherTenantKey + ` ` + internalReqID + ` free-form"}}}` + "\n\n"))
 		}))
 		defer up.Close()
@@ -529,59 +722,37 @@ func TestProbeNoUpstreamTextLeak(t *testing.T) {
 		res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
 		require.False(t, res.Success)
 		require.Equal(t, "upstream stream failed", res.Error)
-		require.Equal(t, "code=upstream_stream_error", res.Detail)
+		require.Equal(t, "code=rate_limit_exceeded", res.Detail)
+		assertClean(t, res)
+	})
+
+	t.Run("codex-failed-injected-code", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(`event: response.failed` + "\n" +
+				`data: {"type":"response.failed","response":{"error":{"code":"` + otherTenantKey +
+				`","type":"` + internalReqID + `","message":"free-form"}}}` + "\n\n"))
+		}))
+		defer up.Close()
+
+		spec := staticSpec("")
+		spec.CredentialType = credential.TypeCodexPAT
+		spec.Format = domain.FormatOpenAIResponses
+		spec.Credential = "pat-test"
+		res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+		require.False(t, res.Success)
+		require.Equal(t, "upstream stream failed", res.Error)
+		require.Empty(t, res.Detail, "表外 error.code/error.type 一律丢弃")
 		assertClean(t, res)
 	})
 }
 
-// TestProbeRedaction A13：凭据与绑定代理密码的原文 / JSON 转义（含 `\/`）/
-// QueryEscape / PathEscape / URL userinfo / 小写百分号十六进制形态一律替换为
-// ***，并分别截断 error/detail。
-func TestProbeRedaction(t *testing.T) {
-	secrets := []string{
-		`sk-a"b\c` + "\n" + `d e+f`,
-		`p@ss w"rd/+=`,
-		`foo/bar`,
-		`a+b@c`,
-	}
-	for _, secret := range secrets {
-		forms := redactionForms(secret)
-		require.Contains(t, forms, secret)
-		for _, form := range forms {
-			require.NotEmpty(t, form)
-			out := redactText("before "+form+" after", []string{secret})
-			require.NotContains(t, out, form, "形式 %q 必须被脱敏", form)
-			require.Contains(t, out, "***")
-		}
-	}
-
-	spec := domain.ProbeSpec{
-		Credential:    `foo/bar`,
-		ProxyPassword: `a+b@c`,
-	}
-	jsonSlash := strings.ReplaceAll(jsonEscape(spec.Credential), "/", `\/`)
-	userinfo := strings.TrimPrefix(url.UserPassword("u", spec.ProxyPassword).String(), "u:")
-	lowerQuery := lowerPercentHex(url.QueryEscape(spec.ProxyPassword))
-	lowerPath := lowerPercentHex(url.PathEscape(spec.Credential))
-	require.Equal(t, `foo\/bar`, jsonSlash)
-	require.Equal(t, "a+b%40c", userinfo)
-	require.Equal(t, "a%2bb%40c", lowerQuery)
-	require.Equal(t, "foo%2fbar", lowerPath)
-
-	res := finalizeResult(spec, domain.ProbeResult{
-		Error:  "json " + jsonSlash + " userinfo " + userinfo + " raw " + spec.Credential,
-		Detail: "lower-query " + lowerQuery + " lower-path " + lowerPath + " proxy " + spec.ProxyPassword,
-	})
-	for _, form := range []string{jsonSlash, userinfo, lowerQuery, lowerPath, spec.Credential, spec.ProxyPassword} {
-		require.NotContains(t, res.Error+res.Detail, form)
-	}
-	require.Contains(t, res.Error, "***")
-	require.Contains(t, res.Detail, "***")
-
+// TestProbeResultTruncation：error/detail 分别按 1024/2048 字节截断。
+func TestProbeResultTruncation(t *testing.T) {
 	long := strings.Repeat("z", domain.ProbeDetailMaxLen+100)
-	res = finalizeResult(spec, domain.ProbeResult{Error: long, Detail: long})
-	require.LessOrEqual(t, len(res.Error), domain.ProbeErrorMaxLen)
-	require.LessOrEqual(t, len(res.Detail), domain.ProbeDetailMaxLen)
+	res := finalizeResult(domain.ProbeSpec{}, domain.ProbeResult{Error: long, Detail: long})
+	require.Len(t, res.Error, domain.ProbeErrorMaxLen)
+	require.Len(t, res.Detail, domain.ProbeDetailMaxLen)
 }
 
 // TestProbeOriginGuard origin 锁定按 scheme + hostname + 规范化端口比较。

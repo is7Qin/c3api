@@ -23,7 +23,7 @@ const (
 	ProbeTimeout = 30 * time.Second
 	// ProbeMaxConcurrency 进程内探测并发上限（信号量；多实例不协调）。
 	ProbeMaxConcurrency = 4
-	// ProbeErrorMaxLen / ProbeDetailMaxLen 结果文本截断上限（脱敏之后截断）。
+	// ProbeErrorMaxLen / ProbeDetailMaxLen 结果文本截断上限（分类/错误码收敛后截断）。
 	ProbeErrorMaxLen  = 1024
 	ProbeDetailMaxLen = 2048
 )
@@ -45,19 +45,17 @@ type ProbeSpec struct {
 	// UpstreamPaths 仅 custom 模板携带（template_ext.upstream_paths）；nil/空 =
 	// 全部回落默认端点。ext 行缺失在 service 已归为 nil。
 	UpstreamPaths map[string]string
-	// Credential 本次探测使用的静态 key 或 codex 访问令牌/PAT（脱敏源）。
+	// Credential 本次探测使用的静态 key 或 codex 访问令牌/PAT（只用于出站鉴权，
+	// 不进入结果/日志；结果字段只有分类白名单与有限错误码）。
 	Credential string
 	// CodexAccountID codex 账号标识（ChatGPT-Account-ID 头；空 = 不发）。
 	CodexAccountID string
-	// ProxyPassword 绑定代理的密码（脱敏源：拨号/CONNECT 错误可能回显带 userinfo
-	// 的代理地址）。未绑定代理时为空。
-	ProxyPassword string
 	// Egress 已由 service 按 fail-closed 规则解析的出口规格（零值 = 直连）。
 	Egress egress.Spec
 }
 
 // ProbeResult 是探测结论（HTTP 200 恒返回本对象；success=false 不映射为
-// 4xx/5xx）。Error/Detail 已脱敏并截断。
+// 4xx/5xx）。Error/Detail 只含固定分类文案与有限公开错误码，并已截断。
 type ProbeResult struct {
 	Success    bool
 	LatencyMS  int64

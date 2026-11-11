@@ -67,13 +67,12 @@ func ProbeResponsesPayload(model string) []byte {
 //     本函数只负责 SDK 机制，不重复实现守卫。
 //
 // 返回约定：
-//   - 200：status=200，body 读取至多 2 MiB+1 字节；读到 response.completed /
-//     response.failed 终态事件即停止读取并关闭（上游不关流不得拖到超时）；body
-//     恰好关闭一次，len > 2 MiB 由调用方判溢出失败；
+//   - 200：status=200，body 读取至多 2 MiB+1 字节；在**空行事件边界**（或 EOF）
+//     判定 response.completed / response.failed 终态并停止读取、关闭（上游不关流
+//     不得拖到超时）；body 恰好关闭一次，len > 2 MiB 由调用方判溢出失败；
 //   - 非 200：*codexsdk.HTTPError → 其 StatusCode/Raw（Raw 经调用方 capTransport
-//     截断到 ≤2 MiB）；*codexsdk.AuthPermanentlyRevokedError → status=401 +
-//     Error()/Raw；
-//   - 传输失败（拨号/超时/守卫拒绝）：status=0，err 为底层错误。
+//     截断到 ≤2 MiB；201/204 也按 HTTP 响应保留真实状态）；
+//   - 传输失败（拨号/超时/守卫拒绝/200 body 读取失败）：status=0，err 为底层错误。
 func ProbeResponses(ctx context.Context, token, accountID string, transport http.RoundTripper, payload []byte, timeout time.Duration) (status int, body []byte, err error) {
 	if transport == nil {
 		return 0, nil, errors.New("sdkbridge: probe transport is nil")
@@ -100,23 +99,26 @@ func ProbeResponses(ctx context.Context, token, accountID string, transport http
 	}
 	// 200 分支：SDK 不读 body（HTTP arm 只做状态检查），由本函数增量扫描并
 	// **恰好关闭一次**。读取上限 = 2 MiB+1，多一个字节用于调用方判溢出。
+	// body 读取失败是传输失败（status=0）：SDK 只对非 200 返回 HTTPError，200
+	// 头已到但 body 读不完不属于「HTTP 响应」结论。
 	body, readErr := readProbeBody(resp.Body)
 	if readErr != nil {
-		return resp.StatusCode, body, readErr
+		return 0, body, readErr
 	}
 	return resp.StatusCode, body, nil
 }
 
-// readProbeBody 增量读取 200 body，读到 SSE 终态（response.completed /
-// response.failed）立即返回；总量上限 2 MiB+1（到限即停，由调用方判溢出）。
-// body 在函数内关闭且只关闭一次。
+// readProbeBody 增量读取 200 body，在**空行事件边界**（或 EOF）判定终态：
+// response.completed / response.failed 时立即返回；总量上限 2 MiB+1（到限即停，
+// 由调用方判溢出）。事件按行累积，仅在边界解析一次——既不会把多行事件的首行
+// 误当完整事件截断，也避免逐行重解析的二次放大。body 在函数内关闭且只关闭一次。
 func readProbeBody(rc io.ReadCloser) ([]byte, error) {
 	defer rc.Close()
 
 	limit := int64(domain.ProbeMaxBodyBytes) + 1
 	var buf bytes.Buffer
 	reader := bufio.NewReaderSize(rc, 32*1024)
-	var event []byte
+	event := make([]byte, 0, 256)
 	for {
 		line, err := reader.ReadBytes('\n')
 		if len(line) > 0 {
@@ -130,26 +132,25 @@ func readProbeBody(rc io.ReadCloser) ([]byte, error) {
 			}
 			buf.Write(line)
 
-			trimmed := bytes.TrimSpace(line)
-			if len(trimmed) == 0 {
-				// 空行 = 事件块结束；块内有终态即停。
+			if len(bytes.TrimSpace(line)) == 0 {
+				// 空行 = 事件块结束；此时事件已完整收齐，可判定终态。
 				if codexTerminalBlock(event) {
 					return buf.Bytes(), nil
 				}
 				event = event[:0]
 			} else {
 				event = append(event, line...)
-				// 单行 data 已构成完整终态事件时立即停（不必等空行/EOF）。
-				if bytes.HasPrefix(trimmed, []byte("data:")) && codexTerminalBlock(event) {
-					return buf.Bytes(), nil
-				}
 			}
 		}
 		if err != nil {
-			if errors.Is(err, io.EOF) {
+			if !errors.Is(err, io.EOF) {
+				return buf.Bytes(), err
+			}
+			// EOF 也是事件边界（无尾随空行）。
+			if codexTerminalBlock(event) {
 				return buf.Bytes(), nil
 			}
-			return buf.Bytes(), err
+			return buf.Bytes(), nil
 		}
 	}
 }
