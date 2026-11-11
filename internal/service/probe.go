@@ -69,7 +69,27 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		return nil, fmt.Errorf("%w: probe model exceeds %d bytes", ErrInvalidInput, domain.ProbeMaxModelLen)
 	}
 
-	acc, err := s.store.GetAccountWithTemplate(ctx, id)
+	// 30s 总期限从输入校验后开始（含 DB 等待）；入口闸门在仓储读取前限制
+	// 4 执行 + 16 等待，队列满立即 probe busy，避免无限请求在 DB 池前排队。
+	pctx, cancel := context.WithTimeout(ctx, domain.ProbeTimeout)
+	defer cancel()
+	select {
+	case s.probeGate <- struct{}{}:
+		defer func() { <-s.probeGate }()
+	default:
+		res := &domain.ProbeResult{Format: format, RequestedModel: model}
+		switch {
+		case errors.Is(pctx.Err(), context.DeadlineExceeded):
+			res.Error = "probe timed out"
+		case errors.Is(pctx.Err(), context.Canceled):
+			res.Error = "probe canceled"
+		default:
+			res.Error = "probe busy"
+		}
+		return res, nil
+	}
+
+	acc, err := s.store.GetAccountWithTemplate(pctx, id)
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
@@ -97,7 +117,7 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	// 路径），其他错误才 500。
 	var upstreamPaths map[string]string
 	if tpl.CredentialType == credential.TypeCustom {
-		ext, xerr := s.store.GetTemplateExt(ctx, tpl.ID)
+		ext, xerr := s.store.GetTemplateExt(pctx, tpl.ID)
 		switch {
 		case xerr == nil:
 			if ext != nil {
@@ -184,7 +204,7 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		CodexAccountID: codexAccountID,
 		Egress:         egressSpec,
 	}
-	res := s.prober.Probe(ctx, spec)
+	res := s.prober.Probe(pctx, spec)
 	s.logProbe(id, res)
 	return &res, nil
 }

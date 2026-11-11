@@ -265,7 +265,7 @@ func (f *fakeStore) GetAccountWithTemplate(ctx context.Context, id int64) (*doma
 	if !ok {
 		return nil, missingErr(id)
 	}
-	if scope := domain.AccountScopeFrom(ctx); scope.Set && (a.DeletedAt != nil || !scope.MatchesOwner(a.SupplierUserID)) {
+	if scope := domain.AccountScopeFrom(ctx); scope.Set && !scope.MatchesOwner(a.SupplierUserID) {
 		return nil, missingErr(id)
 	}
 	c := *a

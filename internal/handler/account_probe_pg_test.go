@@ -182,3 +182,24 @@ func TestProbeDeletedAccountNotFound(t *testing.T) {
 	require.ErrorIs(t, err, service.ErrNotFound)
 	require.Zero(t, prober.calls, "软删账号不得进入探测执行器")
 }
+
+// TestProbeDeletedSupplierAccountScoped：真实仓储按 owner scope 读取时仍返回
+// 软删行（与 GET 单个一致）；service 必须在组装凭据前按 404 拒绝，供应商越域
+// 也是同一 404 形态。
+func TestProbeDeletedSupplierAccountScoped(t *testing.T) {
+	repos, _ := probePGBase(t)
+	ctx := context.Background()
+	tpl := probePGTemplate(t, repos)
+	owner := probePGUser(t, repos, "probe-deleted-owner@example.com")
+	acc := probePGAccount(t, repos, tpl.ID, owner.ID, "probe-deleted-own")
+	require.NoError(t, repos.Accounts.DeleteAccount(ctx, acc.ID))
+
+	prober := &probeStub{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := probePGService(t, repos, prober)
+	scoped := domain.WithAccountScope(ctx, domain.SupplierAccountScope(owner.ID))
+	_, err := svc.ProbeAccount(scoped, acc.ID, service.AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAIChat,
+	})
+	require.ErrorIs(t, err, service.ErrNotFound)
+	require.Zero(t, prober.calls)
+}

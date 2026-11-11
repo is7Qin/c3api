@@ -577,3 +577,33 @@ func TestProbeInputErrorsBoundedBeforeStore(t *testing.T) {
 	require.Less(t, len(err.Error()), 128)
 	require.Zero(t, prober.calls)
 }
+
+// TestProbeAdmissionBeforeStore：入口闸门在仓储读取前生效；队列满立即 busy，
+// 已取消/已过期请求优先返回对应传输文案，且不触达 store/prober。
+func TestProbeAdmissionBeforeStore(t *testing.T) {
+	store := &probeReadOnlyStore{} // 一旦被读就会 panic（acc/Store 均为 nil）
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+	for i := 0; i < cap(svc.probeGate); i++ {
+		svc.probeGate <- struct{}{}
+	}
+	req := AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat}
+
+	res, err := svc.ProbeAccount(context.Background(), 1, req)
+	require.NoError(t, err)
+	require.False(t, res.Success)
+	require.Equal(t, "probe busy", res.Error)
+
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	res, err = svc.ProbeAccount(canceled, 1, req)
+	require.NoError(t, err)
+	require.Equal(t, "probe canceled", res.Error)
+
+	expired, cancelExpired := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancelExpired()
+	res, err = svc.ProbeAccount(expired, 1, req)
+	require.NoError(t, err)
+	require.Equal(t, "probe timed out", res.Error)
+	require.Zero(t, prober.calls)
+}
