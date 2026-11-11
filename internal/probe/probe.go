@@ -595,6 +595,17 @@ func validateCodexSSE(body []byte) (bool, string, string) {
 	// evaluate 返回 (terminal, success, error, detail)；非终态事件返回 false。
 	evaluate := func() (bool, bool, string, string) {
 		data := eventData()
+		// 失败事件名优先于 data 内容：`event: error` / `event: response.failed`
+		// 即使 data 为空、[DONE]、非 JSON 或自相矛盾（type=completed）也是失败，
+		// 不得因为没有可解析的 data 而静默放过、让后续 completed 覆盖。
+		if name == "response.failed" || name == "error" {
+			detail := ""
+			if len(data) > 0 && !bytes.Equal(data, sseDone) &&
+				domain.ShallowJSON(data, domain.ProbeMaxJSONDepth) && gjson.ValidBytes(data) {
+				detail = errorCodeDetail(data)
+			}
+			return true, false, "upstream stream failed", detail
+		}
 		if len(data) == 0 || bytes.Equal(data, sseDone) {
 			return false, false, "", ""
 		}
@@ -606,8 +617,8 @@ func validateCodexSSE(body []byte) (bool, string, string) {
 		if typ == "" {
 			typ = name
 		}
-		// 事件名失败优先：`event: error` + data.type=response.completed 也是失败。
-		if name == "response.failed" || name == "error" || typ == "response.failed" || typ == "error" {
+		// data.type 失败同样是失败（事件名失败已在上面优先处理）。
+		if typ == "response.failed" || typ == "error" {
 			return true, false, "upstream stream failed", errorCodeDetail(data)
 		}
 		if typ == "response.completed" {
@@ -740,7 +751,7 @@ func isMalformedLocationError(err error) bool {
 	if !errors.As(err, &uerr) || uerr.Err == nil {
 		return false
 	}
-	return strings.Contains(uerr.Err.Error(), "failed to parse Location header")
+	return strings.HasPrefix(uerr.Err.Error(), "failed to parse Location header")
 }
 
 // classifyTransportError 把传输层错误归一为固定文案；originGuard 拒绝与

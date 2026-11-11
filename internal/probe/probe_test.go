@@ -940,6 +940,56 @@ func TestProbeCodexErrorTerminal(t *testing.T) {
 	require.Equal(t, "code=server_error", res.Detail)
 }
 
+// TestProbeCodexNamedFailureEmptyData：失败事件名即使 data 为空 / [DONE] /
+// 非 JSON 也必须是失败终态，不得被后续 completed 覆盖或拖到超时。
+func TestProbeCodexNamedFailureEmptyData(t *testing.T) {
+	cases := []struct {
+		name  string
+		event string
+	}{
+		{"error-empty", "event: error\n\n"},
+		{"error-done", "event: error\ndata: [DONE]\n\n"},
+		{"error-garbage", "event: error\ndata: garbage\n\n"},
+		{"failed-empty", "event: response.failed\n\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			written := make(chan struct{})
+			release := make(chan struct{})
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, tc.event)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				close(written)
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			defer up.Close()
+			defer close(release)
+
+			spec := staticSpec("")
+			spec.CredentialType = credential.TypeCodexPAT
+			spec.Format = domain.FormatOpenAIResponses
+			spec.Credential = "pat-test"
+			p := newTestProber(t, &rewriteTransport{target: up.URL}, 10*time.Second)
+			result := make(chan domain.ProbeResult, 1)
+			go func() { result <- p.Probe(context.Background(), spec) }()
+
+			waitSignal(t, written, "upstream wrote named failure event")
+			res := waitProbeResult(t, result)
+			require.False(t, res.Success)
+			require.Equal(t, 200, res.StatusCode)
+			require.Equal(t, "upstream stream failed", res.Error)
+			require.Empty(t, res.Detail)
+		})
+	}
+}
+
 // TestProbeNoUpstreamTextLeak A19：上游错误体含其他租户 key、内部 request id 与
 // 自由文本时，结果只出固定分类文案 + 白名单 code；注入串不得出现在任何结果字段。
 func TestProbeNoUpstreamTextLeak(t *testing.T) {

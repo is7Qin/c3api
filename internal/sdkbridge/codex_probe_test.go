@@ -613,6 +613,77 @@ func TestCodexProbeErrorTerminal(t *testing.T) {
 	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
 }
 
+// TestCodexProbeNamedFailureEmptyData：失败事件名（error / response.failed）是
+// 无条件终态——data 为空、[DONE]、非 JSON 或自相矛盾时也必须立即停止读取，
+// 否则上游可再补一个 completed 或让流挂着直到超时。
+func TestCodexProbeNamedFailureEmptyData(t *testing.T) {
+	cases := []struct {
+		name  string
+		event string
+	}{
+		{"error-empty", "event: error\n\n"},
+		{"error-done", "event: error\ndata: [DONE]\n\n"},
+		{"error-garbage", "event: error\ndata: garbage\n\n"},
+		{"failed-empty", "event: response.failed\n\n"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			started := make(chan struct{})
+			release := make(chan struct{})
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, tc.event)
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				close(started)
+				select {
+				case <-r.Context().Done():
+				case <-release:
+				}
+			}))
+			defer up.Close()
+			defer close(release)
+
+			var wrapped *closeCountingBody
+			tr := &probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
+				wrapped = &closeCountingBody{rc: rc}
+				return wrapped
+			}}
+			done := make(chan struct {
+				status int
+				body   []byte
+				err    error
+			}, 1)
+			go func() {
+				status, body, err := sdkbridge.ProbeResponses(context.Background(), "pat", "acct-1", probe.NewCodexCappedTransport(tr), sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+				done <- struct {
+					status int
+					body   []byte
+					err    error
+				}{status, body, err}
+			}()
+
+			select {
+			case <-started:
+			case <-time.After(2 * time.Second):
+				t.Fatal("upstream handler never started")
+			}
+			select {
+			case got := <-done:
+				require.NoError(t, got.err)
+				require.Equal(t, http.StatusOK, got.status)
+				require.Contains(t, string(got.body), "event:")
+			case <-time.After(2 * time.Second):
+				t.Fatal("probe waited for EOF after named failure terminal event")
+			}
+			require.NotNil(t, wrapped)
+			require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
+		})
+	}
+}
+
 // TestCodexProbeTransportError 传输失败 → status 0。
 func TestCodexProbeTransportError(t *testing.T) {
 	status, body, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", errTransport{}, sdkbridge.ProbeResponsesPayload("m"), time.Second)

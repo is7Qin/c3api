@@ -228,6 +228,11 @@ func codexTerminalBlock(block []byte) bool {
 			joined.Write(chunk)
 		}
 	}
+	// 失败事件名是无条件终态：data 为空、[DONE]、非 JSON 或自相矛盾
+	// （type=completed）都不得让读取继续等待 EOF/超时。
+	if name == "response.failed" || name == "error" {
+		return true
+	}
 	data := single
 	if multi {
 		data = joined.Bytes()
@@ -240,8 +245,7 @@ func codexTerminalBlock(block []byte) bool {
 	if typ == "" {
 		typ = name
 	}
-	// 失败事件名与 response.completed 一样立即停止读取（事件名失败优先于
-	// data.type 的成功信号）；具体成功/失败分类由 probe.validateCodexSSE 做。
-	return name == "response.failed" || name == "error" ||
-		typ == "response.completed" || typ == "response.failed" || typ == "error"
+	// 失败 data.type 与 response.completed 一样立即停止读取；具体成功/失败
+	// 分类由 probe.validateCodexSSE 做。
+	return typ == "response.completed" || typ == "response.failed" || typ == "error"
 }
