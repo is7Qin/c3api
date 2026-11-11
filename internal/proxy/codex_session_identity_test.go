@@ -378,13 +378,19 @@ func TestSessionG1WindowAdvanceKeepsConnection(t *testing.T) {
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
-	// span ∈ [48,96]：驱动到跨过去（100 次足够，且第二次跨越还来不及发生）。
-	for range 100 {
+	// span 由 (thread, window) 确定性抽样 ∈ [48,96]，每轮边界位置都不同。
+	// 两种固定次数都会偶发红：100 次在 span(0)+span(1) ≤ 100 时提前进入 :2
+	// （约 0.6%），而 100 < span(0)+1 时根本看不到边界。因此驱动到"看见 window 变化"就停，
+	// 上限 2*spanHi（正常 ≤ 97 次就停）。
+	const maxDrives = 192
+	var reqs []sessionWSReq
+	for range maxDrives {
 		postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
+		reqs = u.requests()
+		if n := len(reqs); n > 0 && reqs[n-1].window != reqs[0].window {
+			break
+		}
 	}
-
-	reqs := u.requests()
-	require.Len(t, reqs, 100)
 	require.Equal(t, 1, u.upgradeCount(), "跨窗口不重连（window 不进连接身份）")
 
 	thread := reqs[0].thread
@@ -404,8 +410,11 @@ func TestSessionG1WindowAdvanceKeepsConnection(t *testing.T) {
 			t.Fatalf("第 %d 个请求 window = %q，期望 %s:0 或 :1", i, r.window, thread)
 		}
 	}
-	require.GreaterOrEqual(t, crossed, 49, "第 1 个窗口至少 48 轮（48 轮的成功请求之后才跨）")
-	require.LessOrEqual(t, crossed, 97, "第 1 个窗口至多 96 轮")
+	require.NotEqual(t, -1, crossed, "%d 次内必须观察到跨窗（span 上界 96）", maxDrives)
+	// 边界 = 第 1 个窗口的轮数 = span(0) ∈ [spanLo,spanHi]（codex-sdk/identity.go:66-69）。
+	// 旧断言写成 49/97 就是差一：span=48 时边界落在下标 48。
+	require.GreaterOrEqual(t, crossed, 48, "第 1 个窗口至少 48 轮（spanLo）")
+	require.LessOrEqual(t, crossed, 96, "第 1 个窗口至多 96 轮（spanHi）")
 	require.Equal(t, thread+":1", reqs[crossed].window)
 	require.Equal(t, thread+":0", reqs[crossed-1].window, "跨越只发生一次")
 }
