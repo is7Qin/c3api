@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,6 +55,27 @@ func waitProbeResult(t *testing.T, ch <-chan domain.ProbeResult) domain.ProbeRes
 		t.Fatal("probe did not return in time")
 		return domain.ProbeResult{}
 	}
+}
+
+// headersBarrierTransport 在底层 RoundTrip 返回响应（即响应头已到达客户端）
+// 时关闭 seen；body 阶段用例必须等它再取消父 ctx，避免把「请求头阶段」误当
+// 「响应体阶段」而掩盖 body 读取回归。
+type headersBarrierTransport struct {
+	next http.RoundTripper
+	once sync.Once
+	seen chan struct{}
+}
+
+func newHeadersBarrier(next http.RoundTripper) *headersBarrierTransport {
+	return &headersBarrierTransport{next: next, seen: make(chan struct{})}
+}
+
+func (t *headersBarrierTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	if resp != nil {
+		t.once.Do(func() { close(t.seen) })
+	}
+	return resp, err
 }
 
 func staticSpec(baseURL string) domain.ProbeSpec {
@@ -223,8 +245,12 @@ func TestProbePayloadValidation(t *testing.T) {
 		{"chat-empty-choice", domain.FormatOpenAIChat, 200, `{"choices":[{}]}`, "", false, "upstream response missing usable output", ""},
 		{"chat-choices-object-parent", domain.FormatOpenAIChat, 200, `{"choices":{"0":{"message":{"content":"hi"}}}}`, "", false, "upstream response missing usable output", ""},
 		{"chat-empty-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[]}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-null-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[null]}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-scalar-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[1]}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-string-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":["hi"]}}]}`, "", true, "", ""},
 		{"chat-empty-content-string", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":""}}]}`, "", false, "upstream response missing usable output", ""},
 		{"chat-empty-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[]}}]}`, "", false, "upstream response missing usable output", ""},
+		{"chat-null-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[null]}}]}`, "", false, "upstream response missing usable output", ""},
 		{"chat-tool-calls-object-parent", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":{"0":{"id":"c1"}}}}]}`, "", false, "upstream response missing usable output", ""},
 		{"chat-content", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":"hi"}}]}`, "", true, "", ""},
 		{"chat-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[{"type":"text","text":"hi"}]}}]}`, "", true, "", ""},
@@ -239,6 +265,7 @@ func TestProbePayloadValidation(t *testing.T) {
 		{"responses-output-object-parent", domain.FormatOpenAIResponses, 200, `{"output":{"0":{"type":"message"}}}`, "", false, "upstream response missing usable output", ""},
 		{"responses-output-type-array", domain.FormatOpenAIResponses, 200, `{"output":[{"type":[]}]}`, "", false, "upstream response missing usable output", ""},
 		{"responses-output-type-number", domain.FormatOpenAIResponses, 200, `{"output":[{"type":1}]}`, "", false, "upstream response missing usable output", ""},
+		{"responses-output-null", domain.FormatOpenAIResponses, 200, `{"output":[null]}`, "", false, "upstream response missing usable output", ""},
 		{"responses-output-text-array", domain.FormatOpenAIResponses, 200, `{"output_text":[]}`, "", false, "upstream response missing usable output", ""},
 		{"responses-output", domain.FormatOpenAIResponses, 200, `{"output":[{"type":"message"}]}`, "", true, "", ""},
 		{"responses-output-text", domain.FormatOpenAIResponses, 200, `{"output_text":"hi"}`, "", true, "", ""},
@@ -275,6 +302,74 @@ func TestProbePayloadValidation(t *testing.T) {
 			require.Equal(t, tc.wantDetail, res.Detail)
 		})
 	}
+
+	// codex：response.output.0 必须是对象，null/标量不算可用输出。
+	t.Run("codex-null-output", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[null]}}\n\n"))
+		}))
+		defer up.Close()
+		spec := staticSpec("")
+		spec.CredentialType = credential.TypeCodexPAT
+		spec.Format = domain.FormatOpenAIResponses
+		spec.Credential = "pat-test"
+		res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+		require.False(t, res.Success)
+		require.Equal(t, 200, res.StatusCode)
+		require.Equal(t, "upstream response missing usable output", res.Error)
+		require.Empty(t, res.Detail)
+	})
+}
+
+// TestProbeDeepJSON A13：2 MiB 的 `[` 必须先被线性深度守卫拒绝，绝不进入递归
+// gjson（无守卫时实测可达数百 MB 内存）；深层 SSE 事件同样被忽略。
+func TestProbeDeepJSON(t *testing.T) {
+	deep := bytes.Repeat([]byte("["), domain.ProbeMaxBodyBytes)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(deep)
+	}))
+	defer up.Close()
+
+	begin := time.Now()
+	res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+	require.False(t, res.Success)
+	require.Equal(t, 200, res.StatusCode)
+	require.Equal(t, "upstream response missing usable output", res.Error)
+	require.Empty(t, res.Detail)
+	require.Less(t, time.Since(begin), 2*time.Second, "深度守卫必须线性快速拒绝")
+
+	// 超深错误体同样不得进入 gjson。
+	require.Empty(t, errorCodeDetail(deep), "超深错误体在 gjson 之前被拒绝")
+
+	// 守卫本身：恰好 128 层通过，129 层拒绝；字符串内的括号不计数。
+	require.True(t, domain.ShallowJSON([]byte(strings.Repeat("[", domain.ProbeMaxJSONDepth)), domain.ProbeMaxJSONDepth))
+	require.False(t, domain.ShallowJSON([]byte(strings.Repeat("[", domain.ProbeMaxJSONDepth+1)), domain.ProbeMaxJSONDepth))
+	require.True(t, domain.ShallowJSON([]byte(`{"a":"[[[[[[["}`), domain.ProbeMaxJSONDepth), "字符串内容不参与深度计数")
+
+	// 深层 SSE 事件不是终态，且被忽略而不是交给递归解析器。
+	success, errMsg, detail := validateCodexSSE(append([]byte("data: "), deep...))
+	require.False(t, success)
+	require.Equal(t, "upstream stream failed", errMsg)
+	require.Empty(t, detail)
+}
+
+// TestProbeCodexNewlineFlood A20：2 MiB 纯换行 body 经 parseSSEEvents 必须被索引
+// 扫描消费，不能产生 bytes.Split 的百万级行头分配（旧实现约 48 MiB）。
+func TestProbeCodexNewlineFlood(t *testing.T) {
+	flood := bytes.Repeat([]byte("\n"), domain.ProbeMaxBodyBytes)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	success, errMsg, detail := validateCodexSSE(flood)
+	runtime.ReadMemStats(&after)
+
+	require.False(t, success)
+	require.Equal(t, "upstream stream failed", errMsg)
+	require.Empty(t, detail)
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("2 MiB newline flood parse allocated %d bytes", allocated)
+	require.Less(t, allocated, uint64(8<<20), "parseSSEEvents 不得为每行分配切片头")
 }
 
 // TestProbeRedirectBlocked A11：302 不跟随——第二台 httptest 0 请求，结果失败且
@@ -366,7 +461,6 @@ func TestProbeTimeout(t *testing.T) {
 	})
 
 	t.Run("headers-then-body-hang", func(t *testing.T) {
-		started := make(chan struct{})
 		release := make(chan struct{})
 		done := make(chan struct{})
 		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -375,7 +469,6 @@ func TestProbeTimeout(t *testing.T) {
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-			close(started)
 			select {
 			case <-r.Context().Done():
 			case <-release:
@@ -384,13 +477,14 @@ func TestProbeTimeout(t *testing.T) {
 		}))
 		defer up.Close()
 
-		p := newTestProber(t, nil, 10*time.Second)
+		barrier := newHeadersBarrier(http.DefaultTransport)
+		p := newTestProber(t, barrier, 10*time.Second)
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		result := make(chan domain.ProbeResult, 1)
 		go func() { result <- p.Probe(ctx, staticSpec(up.URL)) }()
 
-		waitSignal(t, started, "upstream headers")
+		waitSignal(t, barrier.seen, "client received response headers")
 		cancel()
 		res := waitProbeResult(t, result)
 		require.False(t, res.Success)
@@ -494,7 +588,6 @@ func TestProbeCodexNon200Status(t *testing.T) {
 // TestProbeCodexNon200BodyCancel A10：非 200 响应头已到但 body 停住，SDK 吞掉
 // body 读错误；取消父 ctx 必须在映射 SDK HTTPError 前生效 → status 0 + canceled。
 func TestProbeCodexNon200BodyCancel(t *testing.T) {
-	started := make(chan struct{})
 	release := make(chan struct{})
 	done := make(chan struct{})
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -502,7 +595,6 @@ func TestProbeCodexNon200BodyCancel(t *testing.T) {
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
-		close(started)
 		select {
 		case <-r.Context().Done():
 		case <-release:
@@ -515,13 +607,15 @@ func TestProbeCodexNon200BodyCancel(t *testing.T) {
 	spec.CredentialType = credential.TypeCodexPAT
 	spec.Format = domain.FormatOpenAIResponses
 	spec.Credential = "pat-test"
-	p := newTestProber(t, &rewriteTransport{target: up.URL}, 10*time.Second)
+	// 必须等 transport 层真正收到非 200 响应头再取消，否则可能仍在请求头阶段。
+	barrier := newHeadersBarrier(&rewriteTransport{target: up.URL})
+	p := newTestProber(t, barrier, 10*time.Second)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	result := make(chan domain.ProbeResult, 1)
 	go func() { result <- p.Probe(ctx, spec) }()
 
-	waitSignal(t, started, "upstream non-200 headers")
+	waitSignal(t, barrier.seen, "client received non-200 headers")
 	cancel()
 	res := waitProbeResult(t, result)
 	require.False(t, res.Success)
@@ -534,29 +628,33 @@ func TestProbeCodexNon200BodyCancel(t *testing.T) {
 }
 
 // TestProbeCodexNon200CappedWiring A5/A17：生产 guardedCodexTransport 走完整
-// 装配（cap∘originGuard∘出口 transport）时，500 巨体经 SDK 内部 io.ReadAll 只能
-// 拿到 ≤2 MiB，且 body 恰好关闭一次。
+// 装配（codex cap∘originGuard∘出口 transport）时，201/500 巨体经 SDK 内部
+// io.ReadAll 只能拿到恰好 2 MiB（201 不享受 200 的 +1 字节），且 body 恰好关闭一次。
 func TestProbeCodexNon200CappedWiring(t *testing.T) {
-	huge := bytes.Repeat([]byte("x"), domain.ProbeMaxBodyBytes+4096)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write(huge)
-	}))
-	defer up.Close()
+	for _, status := range []int{http.StatusCreated, http.StatusInternalServerError} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			huge := bytes.Repeat([]byte("x"), domain.ProbeMaxBodyBytes+4096)
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write(huge)
+			}))
+			defer up.Close()
 
-	spec := staticSpec("")
-	spec.CredentialType = credential.TypeCodexPAT
-	spec.Format = domain.FormatOpenAIResponses
-	spec.Credential = "pat-test"
-	var closes atomic.Int64
-	p := newTestProber(t, &countCloseTransport{next: &rewriteTransport{target: up.URL}, closes: &closes}, 5*time.Second)
-	transport, err := p.guardedCodexTransport(spec)
-	require.NoError(t, err)
-	status, body, callErr := sdkbridge.ProbeResponses(context.Background(), spec.Credential, spec.CodexAccountID, transport, sdkbridge.ProbeResponsesPayload(spec.UpstreamModel), 5*time.Second)
-	require.Equal(t, http.StatusInternalServerError, status)
-	require.Error(t, callErr)
-	require.Len(t, body, domain.ProbeMaxBodyBytes, "生产 wiring 的非 200 cap 必须截断到 2 MiB")
-	require.Equal(t, int64(1), closes.Load(), "body 必须恰好关闭一次")
+			spec := staticSpec("")
+			spec.CredentialType = credential.TypeCodexPAT
+			spec.Format = domain.FormatOpenAIResponses
+			spec.Credential = "pat-test"
+			var closes atomic.Int64
+			p := newTestProber(t, &countCloseTransport{next: &rewriteTransport{target: up.URL}, closes: &closes}, 5*time.Second)
+			transport, err := p.guardedCodexTransport(spec)
+			require.NoError(t, err)
+			gotStatus, body, callErr := sdkbridge.ProbeResponses(context.Background(), spec.Credential, spec.CodexAccountID, transport, sdkbridge.ProbeResponsesPayload(spec.UpstreamModel), 5*time.Second)
+			require.Equal(t, status, gotStatus)
+			require.Error(t, callErr)
+			require.Len(t, body, domain.ProbeMaxBodyBytes, "codex 非 200（含 201）cap 必须恰好 2 MiB")
+			require.Equal(t, int64(1), closes.Load(), "body 必须恰好关闭一次")
+		})
+	}
 }
 
 // TestProbeCodexSSE codex 成功判定：response.completed + 非空 output。
@@ -629,6 +727,64 @@ func TestProbeCodexIncompleteEvent(t *testing.T) {
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "upstream stream failed", res.Error)
 	require.Empty(t, res.Detail)
+}
+
+// TestProbeCodexWhitespaceNotBoundary A20：completed 后仅一个空白行不是事件边界；
+// 紧随其后的 data: garbage 使整个事件非法，探测不得在空白行提前判成功。
+func TestProbeCodexWhitespaceNotBoundary(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n" +
+			" \n" +
+			"data: garbage\n\n"))
+	}))
+	defer up.Close()
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+	require.False(t, res.Success, "空白行不是事件边界，后续 garbage 必须使事件非法")
+	require.Equal(t, 200, res.StatusCode)
+	require.Equal(t, "upstream stream failed", res.Error)
+}
+
+// TestProbeCodexErrorTerminal A20：error 事件也是终态——上游发完 error + 空行后
+// 不关流，探测必须立即返回失败（status 200 + upstream stream failed）而不是超时。
+func TestProbeCodexErrorTerminal(t *testing.T) {
+	written := make(chan struct{})
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(written)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer up.Close()
+	defer close(release)
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	p := newTestProber(t, &rewriteTransport{target: up.URL}, 10*time.Second)
+	result := make(chan domain.ProbeResult, 1)
+	go func() { result <- p.Probe(context.Background(), spec) }()
+
+	waitSignal(t, written, "upstream wrote error event")
+	res := waitProbeResult(t, result)
+	require.False(t, res.Success)
+	require.Equal(t, 200, res.StatusCode)
+	require.Equal(t, "upstream stream failed", res.Error)
+	require.Equal(t, "code=server_error", res.Detail)
 }
 
 // TestProbeNoUpstreamTextLeak A19：上游错误体含其他租户 key、内部 request id 与

@@ -26,6 +26,10 @@ const (
 	// ProbeErrorMaxLen / ProbeDetailMaxLen 结果文本截断上限（分类/错误码收敛后截断）。
 	ProbeErrorMaxLen  = 1024
 	ProbeDetailMaxLen = 2048
+	// ProbeMaxJSONDepth 上游 JSON 深度上限（spec §5.2）。gjson.ValidBytes/
+	// GetBytes 对 `{`/`[` 按层递归，2 MiB 的深层嵌套可耗尽数百 MB 内存；任何
+	// 上游 body / SSE 事件在交给 gjson 前必须先经 ShallowJSON 线性扫描。
+	ProbeMaxJSONDepth = 128
 )
 
 // ProbeSpec 是 service **组装并校验完成后**交给探测执行器的全部事实：出站目标
@@ -66,4 +70,41 @@ type ProbeResult struct {
 	UpstreamModel  string
 	Error          string
 	Detail         string
+}
+
+// ShallowJSON 线性、零分配地判断 b 的 `{`/`[` 嵌套深度是否不超过 maxDepth。
+// 它正确跳过字符串字面量与转义（`"..."` 内的括号不计数），且不校验 JSON 是否
+// 合法——调用方在 false 时必须按「不可用/非终态」处理，绝不能把上游可控的深层
+// 嵌套交给 gjson 等递归解析器（2 MiB 的 `[` 可耗尽数百 MB 内存）。
+func ShallowJSON(b []byte, maxDepth int) bool {
+	depth := 0
+	inString := false
+	escaped := false
+	for _, c := range b {
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+		case '{', '[':
+			depth++
+			if depth > maxDepth {
+				return false
+			}
+		case '}', ']':
+			if depth > 0 {
+				depth--
+			}
+		}
+	}
+	return true
 }

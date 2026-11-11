@@ -5,7 +5,6 @@
 package sdkbridge
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -67,9 +66,10 @@ func ProbeResponsesPayload(model string) []byte {
 //     本函数只负责 SDK 机制，不重复实现守卫。
 //
 // 返回约定：
-//   - 200：status=200，body 读取至多 2 MiB+1 字节；在**空行事件边界**（或 EOF）
-//     判定 response.completed / response.failed 终态并停止读取、关闭（上游不关流
-//     不得拖到超时）；body 恰好关闭一次，len > 2 MiB 由调用方判溢出失败；
+//   - 200：status=200，body 读取至多 2 MiB+1 字节；在**真正空行事件边界**（或
+//     EOF）判定 response.completed / response.failed / error 终态并停止读取、
+//     关闭（上游不关流不得拖到超时）；body 恰好关闭一次，len > 2 MiB 由调用方判
+//     溢出失败；
 //   - 非 200：*codexsdk.HTTPError → 其 StatusCode/Raw（Raw 经调用方 capTransport
 //     截断到 ≤2 MiB；201/204 也按 HTTP 响应保留真实状态）；
 //   - 传输失败（拨号/超时/守卫拒绝/200 body 读取失败）：status=0，err 为底层错误。
@@ -108,46 +108,54 @@ func ProbeResponses(ctx context.Context, token, accountID string, transport http
 	return resp.StatusCode, body, nil
 }
 
-// readProbeBody 增量读取 200 body，在**空行事件边界**（或 EOF）判定终态：
-// response.completed / response.failed 时立即返回；总量上限 2 MiB+1（到限即停，
-// 由调用方判溢出）。事件按行累积，仅在边界解析一次——既不会把多行事件的首行
-// 误当完整事件截断，也避免逐行重解析的二次放大。body 在函数内关闭且只关闭一次。
+// readProbeBody 增量读取 200 body，在**真正空行事件边界**（或 EOF）判定终态：
+// response.completed / response.failed / error 时立即返回；总量上限 2 MiB+1
+// （到限即停，由调用方判溢出）。扫描用索引循环（bytes.IndexByte）而不是
+// bytes.Split/ReadBytes：2 MiB 纯换行 body 不能产生百万级行头/行缓冲分配。
+// 事件在 buf 内以 [eventStart, lineEnd) 表示，只在边界解析一次——既不会把多行
+// 事件的首行误当完整事件截断，也避免逐行重解析的二次放大。body 恰好关闭一次。
 func readProbeBody(rc io.ReadCloser) ([]byte, error) {
 	defer rc.Close()
 
 	limit := int64(domain.ProbeMaxBodyBytes) + 1
 	var buf bytes.Buffer
-	reader := bufio.NewReaderSize(rc, 32*1024)
-	event := make([]byte, 0, 256)
+	chunk := make([]byte, 32*1024)
+	eventStart, lineStart := 0, 0
 	for {
-		line, err := reader.ReadBytes('\n')
-		if len(line) > 0 {
-			room := limit - int64(buf.Len())
-			if room <= 0 {
-				return buf.Bytes(), nil
-			}
-			if int64(len(line)) > room {
-				buf.Write(line[:room])
-				return buf.Bytes(), nil
-			}
-			buf.Write(line)
-
-			if len(bytes.TrimSpace(line)) == 0 {
-				// 空行 = 事件块结束；此时事件已完整收齐，可判定终态。
-				if codexTerminalBlock(event) {
-					return buf.Bytes(), nil
+		room := limit - int64(buf.Len())
+		if room <= 0 {
+			return buf.Bytes(), nil
+		}
+		readBuf := chunk
+		if int64(len(readBuf)) > room {
+			readBuf = readBuf[:room]
+		}
+		n, readErr := rc.Read(readBuf)
+		if n > 0 {
+			_, _ = buf.Write(readBuf[:n])
+			data := buf.Bytes()
+			for lineStart < len(data) {
+				idx := bytes.IndexByte(data[lineStart:], '\n')
+				if idx < 0 {
+					break
 				}
-				event = event[:0]
-			} else {
-				event = append(event, line...)
+				lineEnd := lineStart + idx + 1
+				if sseLineEmpty(data[lineStart:lineEnd]) {
+					// 空行 = 事件块结束；此时事件已完整收齐，可判定终态。
+					if codexTerminalBlock(data[eventStart:lineEnd]) {
+						return buf.Bytes(), nil
+					}
+					eventStart = lineEnd
+				}
+				lineStart = lineEnd
 			}
 		}
-		if err != nil {
-			if !errors.Is(err, io.EOF) {
-				return buf.Bytes(), err
+		if readErr != nil {
+			if !errors.Is(readErr, io.EOF) {
+				return buf.Bytes(), readErr
 			}
 			// EOF 也是事件边界（无尾随空行）。
-			if codexTerminalBlock(event) {
+			if codexTerminalBlock(buf.Bytes()[eventStart:]) {
 				return buf.Bytes(), nil
 			}
 			return buf.Bytes(), nil
@@ -155,13 +163,35 @@ func readProbeBody(rc io.ReadCloser) ([]byte, error) {
 	}
 }
 
-// codexTerminalBlock 判断一个 SSE 事件块是否已是终态事件。data 必须能解析成
-// 完整 JSON（多行 data 已合并）才可信；事件名仅在 data 合法时兜底。
+// sseLineEmpty 只把真正的空行（`\n` 或 `\r\n`）视为事件分隔；仅含空白的行
+// 属于事件内容（spec §5.1/§5.2，A20）。
+func sseLineEmpty(line []byte) bool {
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		line = line[:len(line)-1]
+	}
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	return len(line) == 0
+}
+
+// codexTerminalBlock 判断一个 SSE 事件块是否已是终态事件（response.completed /
+// response.failed / error）。data 必须先通过线性深度守卫且能解析成完整 JSON
+// （多行 data 已合并）才可信；事件名仅在 data 合法时兜底。
 func codexTerminalBlock(block []byte) bool {
 	name := ""
 	var data bytes.Buffer
-	for _, rawLine := range bytes.Split(block, []byte("\n")) {
-		line := bytes.TrimSpace(rawLine)
+	for start := 0; start < len(block); {
+		lineEnd := bytes.IndexByte(block[start:], '\n')
+		var line []byte
+		if lineEnd < 0 {
+			line = block[start:]
+			start = len(block)
+		} else {
+			line = block[start : start+lineEnd]
+			start += lineEnd + 1
+		}
+		line = bytes.TrimSpace(line)
 		switch {
 		case bytes.HasPrefix(line, []byte("event:")):
 			name = string(bytes.TrimSpace(line[len("event:"):]))
@@ -173,12 +203,13 @@ func codexTerminalBlock(block []byte) bool {
 			data.Write(chunk)
 		}
 	}
-	if data.Len() == 0 || !gjson.ValidBytes(data.Bytes()) {
+	// 深度守卫必须先于递归的 gjson 解析：超深事件不是终态。
+	if data.Len() == 0 || !domain.ShallowJSON(data.Bytes(), domain.ProbeMaxJSONDepth) || !gjson.ValidBytes(data.Bytes()) {
 		return false
 	}
 	typ := gjson.GetBytes(data.Bytes(), "type").String()
 	if typ == "" {
 		typ = name
 	}
-	return typ == "response.completed" || typ == "response.failed"
+	return typ == "response.completed" || typ == "response.failed" || typ == "error"
 }

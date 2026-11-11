@@ -270,7 +270,7 @@ func (p *Prober) guardedCodexTransport(spec domain.ProbeSpec) (http.RoundTripper
 	if eg == nil || eg.HTTP == nil {
 		return nil, errors.New("egress client not configured")
 	}
-	return NewCappedTransport(&originGuard{
+	return NewCodexCappedTransport(&originGuard{
 		next:   transportOrDefault(eg.HTTP.Transport),
 		scheme: codexOriginScheme,
 		host:   codexOriginHost,
@@ -325,18 +325,27 @@ func effectivePort(u *url.URL) string {
 }
 
 // capTransport 给响应体加硬上限：非 2xx 截断到 2 MiB（SDK 内部对非 200 的
-// io.ReadAll 也只能拿到 ≤2 MiB）；2xx 允许读到 2 MiB+1（多一个字节用于发现
-// 溢出——调用方读到第 2 MiB+1 字节即判失败）。
+// io.ReadAll 也只能拿到 ≤2 MiB）；静态族 2xx 允许读到 2 MiB+1（多一个字节用于
+// 发现溢出——调用方读到第 2 MiB+1 字节即判失败）。
 //
 // NewCappedTransport 是测试 seam：导出使 sdkbridge 的外部测试能经
 // sdkbridge.ProbeResponses 复用生产 capping（A5/A17 证据）；生产装配只经
-// guardedHTTPClient / guardedCodexTransport 构造本类型。
+// guardedHTTPClient 构造本类型。
 func NewCappedTransport(next http.RoundTripper) http.RoundTripper {
 	return &capTransport{next: next}
 }
 
+// NewCodexCappedTransport 是 codex 专用的测试 seam：只有 200 允许 2 MiB+1
+// （200 溢出探测），其余状态（含 201/204/206/3xx/4xx/5xx）恰好 2 MiB，不享受
+// +1 字节。生产装配只经 guardedCodexTransport 构造本类型。
+func NewCodexCappedTransport(next http.RoundTripper) http.RoundTripper {
+	return &capTransport{next: next, onlyOKOverflow: true}
+}
+
 type capTransport struct {
 	next http.RoundTripper
+	// onlyOKOverflow 只对 200 放行 2 MiB+1（codex 的非 200 必须严格 2 MiB）。
+	onlyOKOverflow bool
 }
 
 func (t *capTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -348,7 +357,8 @@ func (t *capTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return resp, nil
 	}
 	limit := int64(domain.ProbeMaxBodyBytes)
-	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+	if resp.StatusCode == http.StatusOK ||
+		(!t.onlyOKOverflow && resp.StatusCode >= 200 && resp.StatusCode <= 299) {
 		limit++ // 检测溢出需要第 2 MiB+1 字节
 	}
 	resp.Body = &cappedBody{rc: resp.Body, remaining: limit}
@@ -457,7 +467,8 @@ func staticPayload(format domain.RequestFormat, model string) []byte {
 // ---- 成功判定（spec §5.2；只查首元素路径，不物化上游数组） ----
 
 func validateStatic(format domain.RequestFormat, body []byte) bool {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	// 深度守卫必须先于递归的 gjson 解析：超深上游 body 直接判不可用。
+	if len(body) == 0 || !domain.ShallowJSON(body, domain.ProbeMaxJSONDepth) || !gjson.ValidBytes(body) {
 		return false
 	}
 	r := gjson.ParseBytes(body)
@@ -476,11 +487,16 @@ func validateStatic(format domain.RequestFormat, body []byte) bool {
 		if content.Type == gjson.String && content.String() != "" {
 			return true
 		}
-		if content.IsArray() && content.Get("0").Exists() {
-			return true
+		if content.IsArray() {
+			// 数组首元素必须是对象，或 chat content 允许的非空字符串；null/
+			// 标量不算可用输出（spec §5.2 / A13）。
+			item := content.Get("0")
+			if item.IsObject() || (item.Type == gjson.String && item.String() != "") {
+				return true
+			}
 		}
 		toolCalls := first.Get("message.tool_calls")
-		if toolCalls.IsArray() && toolCalls.Get("0").Exists() {
+		if toolCalls.IsArray() && toolCalls.Get("0").IsObject() {
 			return true
 		}
 		reasoning := first.Get("message.reasoning_content")
@@ -517,8 +533,21 @@ type sseEvent struct {
 	data []byte
 }
 
-// parseSSEEvents 按空行分块；同一事件的多行 data 用 "\n" 合并（SSE 规范），
-// 因此被拆成多行的 response.completed 仍能还原成完整 JSON。
+// sseLineEmpty 只把真正的空行（`\n` 或 `\r\n`）视为事件分隔；仅含空白的行
+// 属于事件内容（spec §5.1/§5.2，A20）。
+func sseLineEmpty(line []byte) bool {
+	if len(line) > 0 && line[len(line)-1] == '\n' {
+		line = line[:len(line)-1]
+	}
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	return len(line) == 0
+}
+
+// parseSSEEvents 按真正空行分块；同一事件的多行 data 用 "\n" 合并（SSE 规范），
+// 因此被拆成多行的 response.completed 仍能还原成完整 JSON。用索引扫描而不是
+// bytes.Split：2 MiB 纯换行 body 不能产生百万级行头分配。
 func parseSSEEvents(body []byte) []sseEvent {
 	events := make([]sseEvent, 0, 4)
 	var (
@@ -531,17 +560,27 @@ func parseSSEEvents(body []byte) []sseEvent {
 		}
 		name, data = "", nil
 	}
-	for _, rawLine := range bytes.Split(body, []byte("\n")) {
-		line := bytes.TrimSuffix(rawLine, []byte("\r"))
-		if len(bytes.TrimSpace(line)) == 0 {
+	for start := 0; start < len(body); {
+		lineEnd := bytes.IndexByte(body[start:], '\n')
+		var line []byte
+		if lineEnd < 0 {
+			line = body[start:]
+			start = len(body)
+		} else {
+			line = body[start : start+lineEnd+1]
+			start += lineEnd + 1
+		}
+		if sseLineEmpty(line) {
 			flush()
 			continue
 		}
+		field := bytes.TrimSuffix(line, []byte("\n"))
+		field = bytes.TrimSuffix(field, []byte("\r"))
 		switch {
-		case bytes.HasPrefix(line, []byte("event:")):
-			name = string(bytes.TrimSpace(line[len("event:"):]))
-		case bytes.HasPrefix(line, []byte("data:")):
-			chunk := bytes.TrimSpace(line[len("data:"):])
+		case bytes.HasPrefix(field, []byte("event:")):
+			name = string(bytes.TrimSpace(field[len("event:"):]))
+		case bytes.HasPrefix(field, []byte("data:")):
+			chunk := bytes.TrimSpace(field[len("data:"):])
 			if len(data) > 0 {
 				data = append(data, '\n')
 			}
@@ -552,11 +591,14 @@ func parseSSEEvents(body []byte) []sseEvent {
 	return events
 }
 
-// validateCodexSSE 扫描 SSE 终态：response.completed 且 response.output 长度
-// ≥1 = 成功；response.failed / error 事件 = 失败（固定文案 + 白名单 code）。
+// validateCodexSSE 扫描 SSE 终态：response.completed 且 response.output 首元素
+// 为对象 = 成功；response.failed / error 事件 = 失败（固定文案 + 白名单 code）。
 func validateCodexSSE(body []byte) (bool, string, string) {
 	for _, ev := range parseSSEEvents(body) {
-		if bytes.Equal(ev.data, []byte("[DONE]")) || !gjson.ValidBytes(ev.data) {
+		// 深层嵌套事件在 gjson 之前丢弃（线性深度守卫）。
+		if bytes.Equal(ev.data, []byte("[DONE]")) ||
+			!domain.ShallowJSON(ev.data, domain.ProbeMaxJSONDepth) ||
+			!gjson.ValidBytes(ev.data) {
 			continue
 		}
 		typ := gjson.GetBytes(ev.data, "type").String()
@@ -565,7 +607,8 @@ func validateCodexSSE(body []byte) (bool, string, string) {
 		}
 		switch typ {
 		case "response.completed":
-			if gjson.GetBytes(ev.data, "response.output").IsArray() && gjson.GetBytes(ev.data, "response.output.0").Exists() {
+			output := gjson.GetBytes(ev.data, "response.output")
+			if output.IsArray() && output.Get("0").IsObject() {
 				return true, "", ""
 			}
 			return false, "upstream response missing usable output", ""
@@ -626,7 +669,7 @@ var probeErrorCodes = map[string]struct{}{
 // error.type，以 code=<value> 返回；message/原始 JSON/其他文本/表外 code 一律
 // 丢弃。
 func errorCodeDetail(body []byte) string {
-	if len(body) == 0 || !gjson.ValidBytes(body) {
+	if len(body) == 0 || !domain.ShallowJSON(body, domain.ProbeMaxJSONDepth) || !gjson.ValidBytes(body) {
 		return ""
 	}
 	for _, path := range []string{"error.code", "error.type", "response.error.code", "response.error.type"} {

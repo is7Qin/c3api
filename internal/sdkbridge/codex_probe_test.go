@@ -7,13 +7,17 @@
 package sdkbridge_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -152,34 +156,37 @@ func TestCodexProbeStatic(t *testing.T) {
 	require.Contains(t, string(raw), "bad token")
 }
 
-// TestCodexProbeNon200Capped A5/A17：500 + >2 MiB body 经**生产
-// NewCappedTransport**（不是测试自带 cap）截断——SDK 内部 io.ReadAll 只能拿到
-// ≤2 MiB，且 body 恰好关闭一次。
+// TestCodexProbeNon200Capped A5/A17：201/500 + >2 MiB body 经**生产
+// NewCodexCappedTransport**（不是测试自带 cap）截断——SDK 内部 io.ReadAll 只能
+// 拿到恰好 2 MiB（非 200 不享受 +1 字节），且 body 恰好关闭一次。
 func TestCodexProbeNon200Capped(t *testing.T) {
-	huge := strings.Repeat("x", domain.ProbeMaxBodyBytes+4096)
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-		_, _ = w.Write([]byte(huge))
-	}))
-	defer up.Close()
+	for _, status := range []int{http.StatusCreated, http.StatusInternalServerError} {
+		t.Run(fmt.Sprint(status), func(t *testing.T) {
+			huge := strings.Repeat("x", domain.ProbeMaxBodyBytes+4096)
+			up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(huge))
+			}))
+			defer up.Close()
 
-	var wrapped *closeCountingBody
-	tr := probe.NewCappedTransport(&probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
-		wrapped = &closeCountingBody{rc: rc}
-		return wrapped
-	}})
-	status, raw, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", tr, sdkbridge.ProbeResponsesPayload("m"), 5*time.Second)
-	require.Equal(t, http.StatusInternalServerError, status)
-	var httpErr *codexsdk.HTTPError
-	require.True(t, errors.As(err, &httpErr))
-	require.LessOrEqual(t, len(raw), domain.ProbeMaxBodyBytes, "非 200 body 必须经生产 capTransport 截断到 2 MiB")
-	require.Len(t, raw, domain.ProbeMaxBodyBytes)
-	require.NotNil(t, wrapped, "transport 必须被生产 cap 包装")
-	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
+			var wrapped *closeCountingBody
+			tr := probe.NewCodexCappedTransport(&probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
+				wrapped = &closeCountingBody{rc: rc}
+				return wrapped
+			}})
+			gotStatus, raw, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", tr, sdkbridge.ProbeResponsesPayload("m"), 5*time.Second)
+			require.Equal(t, status, gotStatus)
+			var httpErr *codexsdk.HTTPError
+			require.True(t, errors.As(err, &httpErr))
+			require.Len(t, raw, domain.ProbeMaxBodyBytes, "codex 非 200（含 201）body 必须恰好截断到 2 MiB")
+			require.NotNil(t, wrapped, "transport 必须被生产 codex cap 包装")
+			require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
+		})
+	}
 }
 
 // TestCodexProbeNon200Short A5：201 短体也是 HTTP 响应——真实状态码与 body 原样
-// 保留，不套 200 溢出文案；cap 仍生效但不截断。
+// 保留，不套 200 溢出文案；codex cap 仍生效但不截断。
 func TestCodexProbeNon200Short(t *testing.T) {
 	const rawBody = `{"error":{"code":"invalid_api_key"}}`
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +196,7 @@ func TestCodexProbeNon200Short(t *testing.T) {
 	defer up.Close()
 
 	var wrapped *closeCountingBody
-	tr := probe.NewCappedTransport(&probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
+	tr := probe.NewCodexCappedTransport(&probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
 		wrapped = &closeCountingBody{rc: rc}
 		return wrapped
 	}})
@@ -317,6 +324,175 @@ func TestCodexProbeIncompleteEvent(t *testing.T) {
 		require.Contains(t, string(got.body), "garbage", "事件必须在空行边界完整收齐，不能按首行提前截断")
 	case <-time.After(2 * time.Second):
 		t.Fatal("probe did not return after stream end")
+	}
+	require.NotNil(t, wrapped)
+	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
+}
+
+// stagedBody 先返回 first 块并通知 firstRead，随后阻塞到 release 才返回 rest 与
+// EOF——用于确定性地证明「空白行不是事件边界」：提前停止的实现拿不到 rest。
+type stagedBody struct {
+	first     []byte
+	rest      []byte
+	firstRead chan struct{}
+	release   chan struct{}
+	closed    atomic.Int64
+
+	mu    sync.Mutex
+	stage int
+}
+
+func (b *stagedBody) Read(p []byte) (int, error) {
+	b.mu.Lock()
+	stage := b.stage
+	b.mu.Unlock()
+	switch stage {
+	case 0:
+		n := copy(p, b.first)
+		b.mu.Lock()
+		b.stage = 1
+		b.mu.Unlock()
+		close(b.firstRead)
+		return n, nil
+	case 1:
+		<-b.release
+		n := copy(p, b.rest)
+		b.mu.Lock()
+		b.stage = 2
+		b.mu.Unlock()
+		return n, nil
+	default:
+		return 0, io.EOF
+	}
+}
+
+func (b *stagedBody) Close() error {
+	b.closed.Add(1)
+	return nil
+}
+
+// staticResponseTransport 直接返回一个 200 响应（无网络），用于确定性读取用例。
+type staticResponseTransport struct{ body io.ReadCloser }
+
+func (t *staticResponseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       t.body,
+	}, nil
+}
+
+// TestCodexProbeWhitespaceNotBoundary A20：completed 后仅一个空白行不是事件边界。
+// 首块（completed + " \n"）之后阻塞；若把空白行当边界，探测会在 garbage 到达前
+// 提前返回成功。正确实现必须继续读到后续 data: garbage，合并事件非法。
+func TestCodexProbeWhitespaceNotBoundary(t *testing.T) {
+	body := &stagedBody{
+		first:     []byte("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n \n"),
+		rest:      []byte("data: garbage\n\n"),
+		firstRead: make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	tr := probe.NewCodexCappedTransport(&staticResponseTransport{body: body})
+
+	type outcome struct {
+		status int
+		body   []byte
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		status, got, err := sdkbridge.ProbeResponses(context.Background(), "pat", "acct-1", tr, sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+		done <- outcome{status: status, body: got, err: err}
+	}()
+
+	select {
+	case <-body.firstRead:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe never read the first SSE chunk")
+	}
+	close(body.release)
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.Equal(t, http.StatusOK, got.status)
+		require.Contains(t, string(got.body), "garbage", "空白行不是事件边界；探测必须继续收到后续 data")
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe did not return after EOF")
+	}
+	require.Equal(t, int64(1), body.closed.Load(), "body 必须恰好关闭一次")
+}
+
+// TestCodexProbeNewlineFlood A20：2 MiB 纯换行 body 必须被索引扫描消费，不能产生
+// 百万级行头分配（旧实现用 bytes.Split 约 48 MiB），仍在 EOF 正常返回。
+func TestCodexProbeNewlineFlood(t *testing.T) {
+	flood := bytes.Repeat([]byte("\n"), domain.ProbeMaxBodyBytes)
+	body := &closeCountingBody{rc: io.NopCloser(bytes.NewReader(flood))}
+	tr := probe.NewCodexCappedTransport(&staticResponseTransport{body: body})
+
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	status, got, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", tr, sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+	runtime.ReadMemStats(&after)
+
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, got, len(flood), "全部换行必须被消费到 EOF")
+	require.Equal(t, int64(1), body.closes.Load(), "body 必须恰好关闭一次")
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("2 MiB newline flood allocated %d bytes", allocated)
+	require.Less(t, allocated, uint64(16<<20), "2 MiB 换行洪泛不得产生约 48 MiB 的行头分配")
+}
+
+// TestCodexProbeErrorTerminal A20：error 事件 + 空行是终态；上游不关流也要立即
+// 返回（而不是等到超时），body 恰好关闭一次。
+func TestCodexProbeErrorTerminal(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("event: error\ndata: {\"type\":\"error\",\"error\":{\"code\":\"server_error\",\"message\":\"boom\"}}\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(started)
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer up.Close()
+	defer close(release)
+
+	var wrapped *closeCountingBody
+	tr := &probeRewriteTransport{target: up.URL, wrap: func(rc io.ReadCloser) io.ReadCloser {
+		wrapped = &closeCountingBody{rc: rc}
+		return wrapped
+	}}
+	type outcome struct {
+		status int
+		body   []byte
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		status, body, err := sdkbridge.ProbeResponses(context.Background(), "pat", "acct-1", probe.NewCodexCappedTransport(tr), sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+		done <- outcome{status: status, body: body, err: err}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream handler never started")
+	}
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.Equal(t, http.StatusOK, got.status)
+		require.Contains(t, string(got.body), `"type":"error"`)
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe waited for EOF after error terminal event")
 	}
 	require.NotNil(t, wrapped)
 	require.Equal(t, int64(1), wrapped.closes.Load(), "body 必须恰好关闭一次")
