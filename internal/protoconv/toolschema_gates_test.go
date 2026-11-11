@@ -216,6 +216,11 @@ func bestOf(n int, f func() testing.BenchmarkResult) testing.BenchmarkResult {
 }
 
 // TestBenchGates 真跑 bench 并与 M 记录表比对（(g)：数值断言，不是文件子串）。
+//
+// 必须**单独跑**：ns/op 断言只在空闲机器上有意义，与其余包并行（scripts/test.sh
+// 的 -p）一起跑时读到过 2.7×（同一二进制单跑 0.9–1.0×）。脚本因此跳过它、再串行
+// 补跑（`-run '^TestBenchGates$' ./internal/protoconv`）——以后新增 timing 断言
+// 沿用同一条纪律，别把 ns 比较塞进并行那一遍。
 func TestBenchGates(t *testing.T) {
 	targets := loadBenchTargets(t)
 	// spec §8(o)②：两个新方向的 allocs 上界**写死在代码里**（首测值 ×1.2 取整），

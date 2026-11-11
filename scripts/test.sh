@@ -43,4 +43,11 @@ fi
 # A per-package timeout well above go test's 10m default: cloning a database is
 # cheap on Linux CI but a few seconds each on slower hosts, and the repository
 # package alone opens a clone per test. A -timeout in "$@" still wins.
-exec go test -p "$p" -timeout 30m "$@" ./...
+#
+# TestBenchGates asserts ns/op against the M4 record (×2.5). That number only
+# means something on an idle machine: measured together with the rest of the
+# suite (-p parallel) it read 2.7× once, while the same binary run alone reads
+# 0.9–1.0× — load noise, not a regression. So the parallel pass skips it and it
+# is re-run on its own below (single package, single test).
+go test -p "$p" -timeout 30m -skip '^TestBenchGates$' "$@" ./...
+go test -p 1 -timeout 30m "$@" -run '^TestBenchGates$' ./internal/protoconv
