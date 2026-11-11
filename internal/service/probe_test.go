@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,6 +49,7 @@ type probeReadOnlyStore struct {
 	accEnter       chan struct{}
 	accRelease     chan struct{}
 	accCalls       atomic.Int64
+	accMu          sync.Mutex
 	accHasDeadline bool
 	accDeadline    time.Time
 	// credBlock 模拟 codex 凭据 SQL 读取：记录收到的 ctx 期限并返回 ctx 超时
@@ -64,7 +66,9 @@ func (s *probeReadOnlyStore) GetAllSettings(context.Context) ([]*domain.Setting,
 func (s *probeReadOnlyStore) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
 	s.accCalls.Add(1)
 	if deadline, ok := ctx.Deadline(); ok {
+		s.accMu.Lock()
 		s.accDeadline, s.accHasDeadline = deadline, true
+		s.accMu.Unlock()
 	}
 	if s.accBlock {
 		<-ctx.Done()
@@ -110,6 +114,7 @@ func (s *probeReadOnlyStore) GetOwnedAccountCredential(ctx context.Context, _ in
 }
 
 type fakeAccountProber struct {
+	mu               sync.Mutex
 	calls            int
 	spec             domain.ProbeSpec
 	result           domain.ProbeResult
@@ -118,12 +123,14 @@ type fakeAccountProber struct {
 }
 
 func (f *fakeAccountProber) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult {
+	f.mu.Lock()
 	f.calls++
 	f.spec = spec
 	if deadline, ok := ctx.Deadline(); ok {
 		f.probeDeadline, f.probeHasDeadline = deadline, true
 	}
 	res := f.result
+	f.mu.Unlock()
 	if res.Format == "" {
 		res.Format = spec.Format
 		res.RequestedModel = spec.RequestedModel
