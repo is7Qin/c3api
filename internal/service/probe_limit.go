@@ -41,6 +41,12 @@ func (l *probeLimiter) acquire(ctx context.Context) (release func(), err error) 
 	}
 	select {
 	case l.slots <- struct{}{}:
+		// ctx 可能在初始检查与拿槽之间到期：拿到槽后必须复核，不能把
+		// 已取消请求放进仓储/上游。
+		if err := ctx.Err(); err != nil {
+			<-l.slots
+			return nil, err
+		}
 		return l.releaseSlot, nil
 	default:
 	}

@@ -1225,3 +1225,20 @@ func TestProbeDeadlineFromParent(t *testing.T) {
 	close(release)
 	waitSignal(t, done, "upstream handler completion")
 }
+
+// TestProbeCodexEOFEventBoundary：无尾随空行的事件在 EOF 也是完整事件；
+// completed 必须成功，failed 必须保留白名单 detail。
+func TestProbeCodexEOFEventBoundary(t *testing.T) {
+	success, errMsg, detail := validateCodexSSE([]byte(
+		`event: response.completed` + "\n" +
+			`data: {"type":"response.completed","response":{"output":[{"type":"message"}]}}`))
+	require.True(t, success)
+	require.Empty(t, errMsg)
+	require.Empty(t, detail)
+
+	success, errMsg, detail = validateCodexSSE([]byte(
+		`data: {"type":"response.failed","error":{"code":"server_error"}}`))
+	require.False(t, success)
+	require.Equal(t, domain.ProbeErrorStreamFailed, errMsg)
+	require.Equal(t, "code=server_error", detail)
+}

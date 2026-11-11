@@ -828,3 +828,22 @@ func TestProbeLogNoneOnValidation404500(t *testing.T) {
 	require.Error(t, err)
 	require.Zero(t, probeLogCount(t, logger, path))
 }
+
+// TestProbeStoreErrorAfterDeadline：store 返回非 ctx 错误（404/500）时，只要
+// pctx 已过期，结论必须是 status 0 的 probe timed out，而不是错误映射。
+func TestProbeStoreErrorAfterDeadline(t *testing.T) {
+	tpl := staticProbeTemplate()
+	acc := probeAccountFor(tpl)
+	store := &probeReadOnlyStore{acc: acc, accErr: repository.ErrNotFound, accBlock: true}
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	res, err := svc.ProbeAccount(ctx, acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err, "不得把过期映射成 404/500")
+	require.False(t, res.Success)
+	require.Zero(t, res.StatusCode)
+	require.Equal(t, domain.ProbeErrorTimedOut, res.Error)
+	require.Zero(t, prober.calls)
+}

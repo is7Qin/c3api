@@ -748,7 +748,9 @@ func evaluateSSEBlock(block []byte) (bool, bool, string, string) {
 // validateCodexSSE 是完整 body 校验入口，复用同一增量扫描器（不保留第二份
 // 行/字段/终态解析）。仅测试与对已读 body 的诊断使用。
 func validateCodexSSE(body []byte) (bool, string, string) {
-	scan := scanCodexBodyLimit(bytes.NewReader(body), int64(len(body)), false)
+	// 多留 1 字节让 scanner 看到 EOF；否则完整 body 恰好等于 limit 时会在
+	// room<=0 退出，EOF 边界事件（无尾随空行）永远不会被评估。
+	scan := scanCodexBodyLimit(bytes.NewReader(body), int64(len(body))+1, false)
 	if scan.err != nil {
 		return false, domain.ProbeErrorRequestFailed, ""
 	}

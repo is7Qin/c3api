@@ -90,15 +90,15 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	defer release()
 
 	acc, err := s.store.GetAccountWithTemplate(pctx, id)
+	// 只要 store 已返回，先看期限：非 ctx 错误（404/500）也不能掩盖已过期。
+	if pctx.Err() != nil {
+		return ctxResult(pctx.Err()), nil
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return ctxResult(err), nil
 		}
 		return nil, mapRepoErr(err)
-	}
-	// store 已成功返回，但期限可能已经过去：不得继续模板校验/凭据早退/prober。
-	if err := pctx.Err(); err != nil {
-		return ctxResult(err), nil
 	}
 	// GET 单个账号允许读到软删行（编辑回显），探测是消费动作：已删除账号不得
 	// 继续用其存储凭据发上游请求。错误文本与不存在保持同一形态，不暴露删除态。
@@ -128,6 +128,10 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	var upstreamPaths map[string]string
 	if tpl.CredentialType == credential.TypeCustom {
 		ext, xerr := s.store.GetTemplateExt(pctx, tpl.ID)
+		// ext 的 ErrNotFound/其它错误同样不能掩盖已过期期限。
+		if pctx.Err() != nil {
+			return ctxResult(pctx.Err()), nil
+		}
 		switch {
 		case xerr == nil:
 			if ext != nil {
@@ -139,9 +143,6 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 			return ctxResult(xerr), nil
 		default:
 			return nil, xerr
-		}
-		if err := pctx.Err(); err != nil {
-			return ctxResult(err), nil
 		}
 	}
 
@@ -164,6 +165,10 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	)
 	if tpl.CredentialType.IsCodex() {
 		cred, cerr := s.store.GetOwnedAccountCredential(pctx, id)
+		// 凭据的 ErrNotFound/其它错误也不能掩盖已过期期限。
+		if pctx.Err() != nil {
+			return ctxResult(pctx.Err()), nil
+		}
 		if cerr != nil {
 			if errors.Is(cerr, repository.ErrNotFound) {
 				return nil, fmt.Errorf("%w: 账号缺少 codex 凭据", ErrInvalidInput)
@@ -172,9 +177,6 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 				return ctxResult(cerr), nil
 			}
 			return nil, cerr
-		}
-		if err := pctx.Err(); err != nil {
-			return ctxResult(err), nil
 		}
 		switch tpl.CredentialType {
 		case credential.TypeCodexOAuth:
