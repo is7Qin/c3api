@@ -64,6 +64,11 @@ const codexAuthFailedMsg = "codex authorization failed"
 //     session/thread/window/installation 全部来自本次租借的会话
 //   - 本车道**不使用 ts 重放**（§5.2-3：1:1 透传语义，ts 既不带也不捕获）
 //   - WithPingInterval(0)：禁 SDK 内部心跳（心跳单源——编排层 30s+10s）
+//   - WS 读帧空闲上限由 SDK 默认值负责（300s = 上游 DEFAULT_STREAM_IDLE_TIMEOUT_MS；
+//     只计"一次取帧等待里没有任何可交付帧"，Ping/Pong 不续命）。本车道不设、也不许
+//     用 WithTimeout 替代——那是整段请求上限，会切断长流。代价要记住：上游 relay 走
+//     pull，轮与轮之间静默超过预算时 SDK 会关掉整条会话（不可复用、不重试），客户端
+//     收到 1011；这是对齐真实客户端的取舍（见 SDK TRANSPORT.md）
 //   - SDK 侧按 codex 形状归一（无条件，不可关）：WS 19 键白名单过滤 + 强制
 //     store:false——违禁顶层键（如 max_output_tokens）被剥、store 恒 false
 //     （对齐真实 codex；归一后 prepareFrame 照常注入 client_metadata）
@@ -206,6 +211,11 @@ func sniffCodexWSDeath(f []byte) *codexsdk.AuthPermanentlyRevokedError {
 // 循环的常驻 Read 处理——满足 SDK Client 并发读写前提）。错误原样透传（SDK Recv
 // 透传 coder/websocket 错误 → errors.As *CloseError 成立，relayClassify/recordClose
 // 直接复用）。
+//
+// 读帧上限：每次 Read 对应一次 SDK Recv，各带 5 分钟读空闲预算（口径见
+// dialCodexWS）。因此本循环跨轮常驻读在多轮会话里同样受该预算约束——
+// ErrWSIdleTimeout 作为普通上游错误落进 upErr 槽，relayClassify 判
+// relayEndUpstreamError（不重试、不归还缓存，客户端收 1011）。
 type codexTransport struct{ up *codexsdk.Client }
 
 func newCodexTransport(up *codexsdk.Client) *codexTransport {

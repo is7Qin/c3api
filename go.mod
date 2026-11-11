@@ -11,7 +11,7 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/is7Qin/codex-sdk v0.0.0-20261110122115-4f5e1038e43e
+	github.com/is7Qin/codex-sdk v0.0.0-20261111063344-d9a1e9535f99
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/knadh/koanf/parsers/toml/v2 v2.2.2
 	github.com/knadh/koanf/providers/env/v2 v2.0.2

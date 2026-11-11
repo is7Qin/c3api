@@ -821,6 +821,12 @@ func (a *Codex) Dial(ctx context.Context, cred *domain.AccountCredential, eg *eg
 
 // DialPrepared 用**已准备句柄**拨号（生产 WS 车道热路径）：auth 来自该句柄，与 owner
 // 同版（§3.2 凭据替换）。语义同 Dial。
+//
+// 读帧空闲上限（仅 WS）不在这里设：SDK 默认 5 分钟（对齐上游
+// DEFAULT_STREAM_IDLE_TIMEOUT_MS；只计"一次取帧等待里没有任何可交付帧"，Ping/Pong
+// 不续命），由 SDK 单点拥有。**不要**用 codexsdk.WithTimeout 或调用方 ctx 期限替代
+// 它——那是整段请求的硬上限，会把长流切成 DeadlineExceeded；也不要在 opts 里放宽
+// WithWSIdleTimeout：上游自己 5 分钟就断，网关宽于上游只会攒死连接。
 func (a *Codex) DialPrepared(ctx context.Context, p Prepared, eg *egress.Client, id codexsdk.Identity, opts ...codexsdk.Option) (*codexsdk.Client, error) {
 	e := p.entry
 	if e == nil {

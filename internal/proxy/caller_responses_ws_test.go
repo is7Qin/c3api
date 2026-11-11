@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/billing"
@@ -805,6 +806,35 @@ func TestRelayClassifyCloseFramePriority(t *testing.T) {
 			require.Equal(t, tt.wantErr, endErr)
 		})
 	}
+}
+
+// TestRelayClassifyWSIdleTimeout 网关分类（SDK 侧 P8c 的对应面）：WS 读空闲
+// 超时是**普通上游错误**（既不是关闭帧，也不是客户端断开）→ 计冷却、客户端收
+// 1011、不重试也不归还缓存。哨兵有意不包装 context.DeadlineExceeded——SDK 侧
+// 用独立 errors.New 保证这一点，否则会与"续接 ACK 期限到"的 fail-closed 分支
+// （ws_relay.go 的 errors.Is(err, context.DeadlineExceeded)）交叉，把已缓冲帧
+// 整批弃置。
+func TestRelayClassifyWSIdleTimeout(t *testing.T) {
+	idle := codexsdk.ErrWSIdleTimeout
+	require.False(t, errors.Is(idle, context.DeadlineExceeded),
+		"空闲超时哨兵不得包装 DeadlineExceeded（续接 ACK 分支会误判）")
+
+	end, endErr := relayClassify(nil, idle, nil, nil)
+	require.Equal(t, relayEndUpstreamError, end, "读空闲超时按上游错误计冷却")
+	require.ErrorIs(t, endErr, codexsdk.ErrWSIdleTimeout)
+	require.Equal(t, websocket.StatusInternalError, wsCloseStatus(endErr),
+		"WS 上以 1011 传播（与其它上游网络错误同形）")
+
+	// 与心跳失联并存：诊断取 upErr（首因是读空闲，不是 ping 超时）
+	end, endErr = relayClassify(nil, idle, nil, errors.New("pong timeout"))
+	require.Equal(t, relayEndUpstreamError, end)
+	require.ErrorIs(t, endErr, codexsdk.ErrWSIdleTimeout)
+
+	// 客户端同时断开仍归 abort（不计冷却）——既有槽位优先级不变
+	clientClose := &websocket.CloseError{Code: websocket.StatusNormalClosure}
+	end, endErr = relayClassify(nil, idle, clientClose, nil)
+	require.Equal(t, relayEndClientAbort, end)
+	require.Equal(t, clientClose, endErr)
 }
 
 // TestResponsesWSConcurrentWriteClose 端到端竞态复现：上游关闭帧与客户端
