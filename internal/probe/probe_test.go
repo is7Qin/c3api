@@ -1242,3 +1242,51 @@ func TestProbeCodexEOFEventBoundary(t *testing.T) {
 	require.Equal(t, domain.ProbeErrorStreamFailed, errMsg)
 	require.Equal(t, "code=server_error", detail)
 }
+
+// TestProbeCodexStopsAtTerminalWithoutEOF：终端事件到达后即使上游保持连接，
+// 探测也必须立即返回成功，不能等 EOF/超时。
+func TestProbeCodexStopsAtTerminalWithoutEOF(t *testing.T) {
+	release := make(chan struct{})
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-release
+	}))
+	defer up.Close()
+	defer close(release)
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(context.Background(), spec)
+	require.True(t, res.Success, "终端事件后应停止读取并返回成功")
+}
+
+// TestProbeCodexBodyDeadline：200 响应头已到但 body 不结束，父 ctx 期限到期
+// 必须返回 status 0 + timed out，且不能被上游 200 掩盖。
+func TestProbeCodexBodyDeadline(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: partial\n"))
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		<-r.Context().Done()
+	}))
+	defer up.Close()
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	res := newTestProber(t, &rewriteTransport{target: up.URL}).Probe(ctx, spec)
+	require.False(t, res.Success)
+	require.Zero(t, res.StatusCode)
+	require.Equal(t, domain.ProbeErrorTimedOut, res.Error)
+}

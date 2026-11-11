@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -44,6 +45,9 @@ type probeReadOnlyStore struct {
 	// accBlock 模拟账号读取阻塞；ctx 到期后返回成功，用于证明 store 成功后
 	// 已过期的 pctx 不得继续模板/OAuth/prober。
 	accBlock       bool
+	accEnter       chan struct{}
+	accRelease     chan struct{}
+	accCalls       atomic.Int64
 	accHasDeadline bool
 	accDeadline    time.Time
 	// credBlock 模拟 codex 凭据 SQL 读取：记录收到的 ctx 期限并返回 ctx 超时
@@ -58,11 +62,16 @@ func (s *probeReadOnlyStore) GetAllSettings(context.Context) ([]*domain.Setting,
 }
 
 func (s *probeReadOnlyStore) GetAccountWithTemplate(ctx context.Context, id int64) (*domain.Account, error) {
+	s.accCalls.Add(1)
 	if deadline, ok := ctx.Deadline(); ok {
 		s.accDeadline, s.accHasDeadline = deadline, true
 	}
 	if s.accBlock {
 		<-ctx.Done()
+	}
+	if s.accEnter != nil {
+		s.accEnter <- struct{}{}
+		<-s.accRelease
 	}
 	if s.accErr != nil {
 		return nil, s.accErr
@@ -846,4 +855,52 @@ func TestProbeStoreErrorAfterDeadline(t *testing.T) {
 	require.Zero(t, res.StatusCode)
 	require.Equal(t, domain.ProbeErrorTimedOut, res.Error)
 	require.Zero(t, prober.calls)
+}
+
+// TestProbeAdmissionBarrierBeforeStore：4 个执行中的请求可以进入 store；第 5 个
+// 在等待位里，绝不能进入 store，直到一个执行槽被释放后晋升。
+func TestProbeAdmissionBarrierBeforeStore(t *testing.T) {
+	tpl := staticProbeTemplate()
+	acc := probeAccountFor(tpl)
+	store := &probeReadOnlyStore{
+		acc:        acc,
+		accEnter:   make(chan struct{}, domain.ProbeMaxConcurrency+1),
+		accRelease: make(chan struct{}, domain.ProbeMaxConcurrency+1),
+	}
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+	req := AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat}
+
+	results := make(chan error, domain.ProbeMaxConcurrency+1)
+	for range domain.ProbeMaxConcurrency {
+		go func() {
+			_, err := svc.ProbeAccount(context.Background(), acc.ID, req)
+			results <- err
+		}()
+	}
+	require.Eventually(t, func() bool {
+		return store.accCalls.Load() == domain.ProbeMaxConcurrency
+	}, time.Second, time.Millisecond, "4 个执行请求应已进入 store")
+
+	go func() {
+		_, err := svc.ProbeAccount(context.Background(), acc.ID, req)
+		results <- err
+	}()
+	require.Eventually(t, func() bool {
+		return len(svc.probeGate.waiters) == 1
+	}, time.Second, time.Millisecond, "第 5 个应进入等待位")
+	require.Equal(t, int64(domain.ProbeMaxConcurrency), store.accCalls.Load(),
+		"4 个执行槽占用时第 5 个绝不能进入 store")
+
+	store.accRelease <- struct{}{} // 释放一个执行槽，第 5 个晋升
+	require.Eventually(t, func() bool {
+		return store.accCalls.Load() == domain.ProbeMaxConcurrency+1
+	}, time.Second, time.Millisecond, "晋升后第 5 个才进入 store")
+
+	for range domain.ProbeMaxConcurrency {
+		store.accRelease <- struct{}{}
+	}
+	for range domain.ProbeMaxConcurrency + 1 {
+		require.NoError(t, <-results)
+	}
 }
