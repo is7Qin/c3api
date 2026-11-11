@@ -60,7 +60,7 @@ BenchmarkConvertRequestRespToMessTools20AllPIn-16     2000   28819 ns/op    6913
 # sha256 刷新记录（数字未动）
 # 1) 2026-11-08 M1/M2a：`toolschema.go` 只多了 `schemaModeFor` 的一个 case
 #    （dirMessToChatReq）与 init 校验列表的一项，热路径零改动 ⇒ 上面所有 ns/op、
-#    allocs/op 的实测值仍在门禁范围内（同机同会话复跑 TestBenchGates 通过）。
+#    allocs/op 的实测值仍在门禁范围内（同机同会话复跑 TestPerfGateToolSchemaHotPath 通过）。
 #    棘轮因此只更新 src_sha256，不重采数字；理由写在这里，避免下一个人误以为
 #    "sha 变了就等于数字也变了"而顺手放宽上界。
 
@@ -68,7 +68,7 @@ BenchmarkConvertRequestRespToMessTools20AllPIn-16     2000   28819 ns/op    6913
 #    （BenchmarkConvertRequestMessToChatTools20 / ...RespToChatTools20）。新增基准
 #    不改既有基准的读数，故仍只刷 sha；两个新基准的**首测值与上界**登记在
 #    testdata/spec/bench_targets.tsv（26/24 allocs，上界 31/28 写死在
-#    TestBenchGates 里）。
+#    TestPerfGateToolSchemaHotPath 里）。
 
 # 3) 2026-11-10 S4 收敛轮：`toolschema.go` 只有 6 行注释改动
 #    （删掉 `momus-r2 I-4 / I-5 / I-6` 这类评审标签，逐行 diff 已核对）；

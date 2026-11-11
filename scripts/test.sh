@@ -44,10 +44,11 @@ fi
 # cheap on Linux CI but a few seconds each on slower hosts, and the repository
 # package alone opens a clone per test. A -timeout in "$@" still wins.
 #
-# TestBenchGates asserts ns/op against the M4 record (×2.5). That number only
-# means something on an idle machine: measured together with the rest of the
-# suite (-p parallel) it read 2.7× once, while the same binary run alone reads
-# 0.9–1.0× — load noise, not a regression. So the parallel pass skips it and it
-# is re-run on its own below (single package, single test).
-go test -p "$p" -timeout 30m -skip '^TestBenchGates$' "$@" ./...
-go test -p 1 -timeout 30m "$@" -run '^TestBenchGates$' ./internal/protoconv
+# TestPerfGateToolSchemaHotPath asserts ns/op against the M record (×2.5). It lives
+# behind the `perf` build tag: `go test ./...` does not even compile it, so the
+# parallel pass cannot see it at all — no -skip flag, no "skip then re-run"
+# convention. The explicit line below is the only place it runs (one pass).
+# Allocation gates are load-independent and stay in the default run
+# (TestToolSchemaAllocsGate).
+go test -p "$p" -timeout 30m "$@" ./...
+go test -tags perf -p 1 -timeout 30m "$@" -run '^TestPerfGateToolSchemaHotPath$' ./internal/protoconv

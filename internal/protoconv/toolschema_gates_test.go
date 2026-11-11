@@ -179,7 +179,7 @@ func fileSHA256(name string) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-func loadBenchTargets(t *testing.T) map[string]benchTarget {
+func loadBenchTargets(t testing.TB) map[string]benchTarget {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("testdata", "spec", "bench_targets.tsv"))
 	require.NoError(t, err)
@@ -203,28 +203,32 @@ func loadBenchTargets(t *testing.T) map[string]benchTarget {
 	return out
 }
 
-// bestOf 跑 n 次 bench 取最优（并发测试环境下单次读数受调度噪声影响大）。
-func bestOf(n int, f func() testing.BenchmarkResult) testing.BenchmarkResult {
-	best := f()
-	for i := 1; i < n; i++ {
-		cur := f()
-		if cur.NsPerOp() < best.NsPerOp() {
-			best = cur
-		}
+// benchByName 把 bench_targets.tsv 里的名字映射到真跑的 benchmark 函数。
+// 只列**被门禁断言**的目标：其余登记项（AllPIn / ToolsHandling / ToolsRatio）只作为
+// M 记录存在，不在这里加——门禁范围变了要有独立理由。
+func benchByName(name string) func(*testing.B) {
+	switch name {
+	case "BenchmarkMessSchemaScan":
+		return BenchmarkMessSchemaScan
+	case "BenchmarkMessSchemaFlatten":
+		return BenchmarkMessSchemaFlatten
+	case "BenchmarkConvertRequestRespToMessTools20":
+		return BenchmarkConvertRequestRespToMessTools20
+	case "BenchmarkConvertRequestMessToChatTools20":
+		return BenchmarkConvertRequestMessToChatTools20
+	case "BenchmarkConvertRequestRespToChatTools20":
+		return BenchmarkConvertRequestRespToChatTools20
 	}
-	return best
+	return nil
 }
 
-// TestBenchGates 真跑 bench 并与 M 记录表比对（(g)：数值断言，不是文件子串）。
-//
-// 必须**单独跑**：ns/op 断言只在空闲机器上有意义，与其余包并行（scripts/test.sh
-// 的 -p）一起跑时读到过 2.7×（同一二进制单跑 0.9–1.0×）。脚本因此跳过它、再串行
-// 补跑（`-run '^TestBenchGates$' ./internal/protoconv`）——以后新增 timing 断言
-// 沿用同一条纪律，别把 ns 比较塞进并行那一遍。
-func TestBenchGates(t *testing.T) {
+// TestToolSchemaAllocsGate 分配门禁。alloc 计数与机器负载无关，所以它留在默认测试
+// 那一遍（并行也是真值）。ns/op 不在这里断言——见 //go:build perf 的
+// TestPerfGateToolSchemaHotPath（那一个才需要空闲机器）。
+func TestToolSchemaAllocsGate(t *testing.T) {
 	targets := loadBenchTargets(t)
 	// spec §8(o)②：两个新方向的 allocs 上界**写死在代码里**（首测值 ×1.2 取整），
-	// 免得"改 TSV 就顺手放宽"。改上界必须同时改这里与 bench_targets.tsv。
+	// 免得“改 TSV 就顺手放宽”。改上界必须同时改这里与 bench_targets.tsv。
 	for name, ceil := range map[string]int{
 		"BenchmarkConvertRequestMessToChatTools20": 31, // 26 allocs ×1.2
 		"BenchmarkConvertRequestRespToChatTools20": 28, // 24 allocs ×1.2
@@ -236,38 +240,23 @@ func TestBenchGates(t *testing.T) {
 	}
 
 	// Scan 必须 0 分配（spec §4 决策 1/3/6），且测的是生产热路径 pInFast。
-	scan := bestOf(3, func() testing.BenchmarkResult { return testing.Benchmark(BenchmarkMessSchemaScan) })
+	scan := testing.Benchmark(BenchmarkMessSchemaScan)
 	require.EqualValues(t, 0, scan.AllocsPerOp(), "BenchmarkMessSchemaScan 必须 0 分配（pInFast 的固定数组）")
 	require.LessOrEqual(t, scan.AllocsPerOp(), int64(targets["BenchmarkMessSchemaScan"].allocs))
-	if !raceEnabled {
-		// 亚微秒基准的相对噪声远大于微秒级基准 ⇒ 这里给 3x（其余 2.5x，见 spec L25）。
-		require.LessOrEqual(t, scan.NsPerOp(), targets["BenchmarkMessSchemaScan"].ns*3,
-			"BenchmarkMessSchemaScan 的 ns/op 相对 M 记录超限（%d ns）", scan.NsPerOp())
-	}
 
-	check := func(name string, r testing.BenchmarkResult) {
+	for _, name := range []string{
+		"BenchmarkMessSchemaScan",
+		"BenchmarkMessSchemaFlatten",
+		"BenchmarkConvertRequestRespToMessTools20",
+		"BenchmarkConvertRequestMessToChatTools20",
+		"BenchmarkConvertRequestRespToChatTools20",
+	} {
 		tgt, ok := targets[name]
 		require.True(t, ok, "bench_targets.tsv 缺 %s", name)
-		require.LessOrEqual(t, r.AllocsPerOp(), int64(tgt.allocs), "%s 的 allocs/op 不得比 M 记录差", name)
-		if raceEnabled {
-			return // -race 下 ns 放大数倍，不可比（L25）；allocs 仍然有效
-		}
-		// 相对阈值：同机允许抖动与并发干扰（3 次取最优），但数量级变差必须红。
-		require.LessOrEqual(t, r.NsPerOp(), tgt.ns*5/2, "%s 的 ns/op 相对 M 记录超限（%d ns）", name, r.NsPerOp())
-	}
-	if !testing.Short() {
-		check("BenchmarkMessSchemaFlatten", bestOf(3, func() testing.BenchmarkResult { return testing.Benchmark(BenchmarkMessSchemaFlatten) }))
-		check("BenchmarkConvertRequestRespToMessTools20", bestOf(3, func() testing.BenchmarkResult {
-			return testing.Benchmark(BenchmarkConvertRequestRespToMessTools20)
-		}))
-		// spec §8(o)①：两个新方向的 benchmark 必须真的被门禁跑到，否则
-		// bench_targets.tsv 里那两行是死数据。
-		check("BenchmarkConvertRequestMessToChatTools20", bestOf(3, func() testing.BenchmarkResult {
-			return testing.Benchmark(BenchmarkConvertRequestMessToChatTools20)
-		}))
-		check("BenchmarkConvertRequestRespToChatTools20", bestOf(3, func() testing.BenchmarkResult {
-			return testing.Benchmark(BenchmarkConvertRequestRespToChatTools20)
-		}))
+		fn := benchByName(name)
+		require.NotNil(t, fn, "benchByName 缺 %s 的映射（登记了却不被门禁跑 = 死数据）", name)
+		require.LessOrEqual(t, testing.Benchmark(fn).AllocsPerOp(), int64(tgt.allocs),
+			"%s 的 allocs/op 不得比 M 记录差", name)
 	}
 }
 
