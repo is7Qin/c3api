@@ -52,6 +52,10 @@ func probePGTemplate(t *testing.T, repos *repository.Repository) *domain.Templat
 		CredentialType:   credential.TypeAPIKey,
 		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat},
 		Models:           []string{"m1"},
+		// ent JSON 列不接受 NULL：nil map 会让 CreateTemplate 在回读时
+		// unmarshal 失败（model_mapping must not be null）。
+		FormatModels: map[domain.RequestFormat][]string{},
+		ModelMapping: domain.ModelMapping{},
 	})
 	require.NoError(t, err)
 	return tpl
