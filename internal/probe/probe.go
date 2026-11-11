@@ -18,8 +18,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -81,7 +83,7 @@ func New(factory *aiclient.Factory, pool *egress.Pool, log *logx.Logger, timeout
 // 受同一 ctx 约束；延迟只统计上游调用本身（拿到信号量之后）。
 func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult {
 	if p == nil {
-		return finalizeResult(spec, domain.ProbeResult{Error: "probe not configured"})
+		return finalizeResult(spec, domain.ProbeResult{Error: "probe request failed"})
 	}
 	pctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
@@ -90,7 +92,7 @@ func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeR
 		defer func() { <-p.sem }()
 	case <-pctx.Done():
 		return finalizeResult(spec, domain.ProbeResult{
-			Error: "probe canceled before start: " + pctx.Err().Error(),
+			Error: classifyTransportError(pctx.Err()),
 		})
 	}
 
@@ -104,7 +106,7 @@ func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeR
 		spec.CredentialType == credential.TypeCustom:
 		res = p.probeStatic(pctx, spec)
 	default:
-		res = domain.ProbeResult{Error: "unsupported credential type for probe"}
+		res = domain.ProbeResult{Error: "probe request failed"}
 	}
 	res.LatencyMS = time.Since(start).Milliseconds()
 	return finalizeResult(spec, res)
@@ -125,16 +127,16 @@ func finalizeResult(spec domain.ProbeSpec, res domain.ProbeResult) domain.ProbeR
 // Factory 的原始方法 + 账号出口 client（克隆后替换 Transport = cap∘guard）。
 func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult {
 	if p == nil || p.factory == nil {
-		return domain.ProbeResult{Error: "probe factory not configured"}
+		return domain.ProbeResult{Error: "probe request failed"}
 	}
 	key, ok := domain.UpstreamPathKeyForFormat(spec.Format)
 	if !ok {
-		return domain.ProbeResult{Error: "unsupported probe format"}
+		return domain.ProbeResult{Error: "probe request failed"}
 	}
 	path := domain.ResolveUpstreamPath(spec.CredentialType, spec.UpstreamPaths, key, domain.UpstreamDefaultTail(key))
 	hc, err := p.guardedHTTPClient(spec)
 	if err != nil {
-		return domain.ProbeResult{Error: "probe client: " + err.Error()}
+		return domain.ProbeResult{Error: "probe request failed"}
 	}
 	payload := staticPayload(spec.Format, spec.UpstreamModel)
 
@@ -150,22 +152,23 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 	case domain.FormatAnthropic:
 		resp, call = p.factory.AnthMessageRaw(ctx, spec.TemplateID, spec.BaseURL, path, spec.Credential, payload, nil, hc)
 	default:
-		return domain.ProbeResult{Error: "unsupported probe format"}
+		return domain.ProbeResult{Error: "probe request failed"}
 	}
 	if call != nil {
-		return domain.ProbeResult{Error: "probe request failed: " + call.Error()}
+		return domain.ProbeResult{Error: classifyTransportError(call)}
 	}
 
 	res := domain.ProbeResult{StatusCode: resp.StatusCode}
 	body, overflow, readErr := readLimitedBody(resp.Body, domain.ProbeMaxBodyBytes)
 	_ = resp.Body.Close() // 恰好一次（body 归本函数）
 	if readErr != nil {
-		res.Error = "probe response read failed: " + readErr.Error()
+		// 响应头已到达但 body 读取失败（含 ctx 超时/取消）：传输失败 = status 0。
+		res.StatusCode = 0
+		res.Error = classifyTransportError(readErr)
 		return res
 	}
 	if overflow {
 		res.Error = "response exceeds 2 MiB"
-		res.Detail = "response body exceeds 2 MiB; connection closed"
 		return res
 	}
 
@@ -174,21 +177,12 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 			res.Success = true
 			return res
 		}
-		errMsg, detail := extractErrorText(body)
-		if errMsg == "" {
-			errMsg = "upstream returned no usable output"
-		}
-		res.Error = errMsg
-		res.Detail = detail
+		res.Error = "upstream response missing usable output"
 		return res
 	}
 
-	errMsg, detail := extractErrorText(body)
-	if errMsg == "" {
-		errMsg = upstreamStatusText(resp.StatusCode)
-	}
-	res.Error = errMsg
-	res.Detail = detail
+	res.Error = classifyUpstreamStatus(resp.StatusCode)
+	res.Detail = errorCodeDetail(body)
 	return res
 }
 
@@ -198,37 +192,39 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 func (p *Prober) probeCodex(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult {
 	transport, err := p.guardedCodexTransport(spec)
 	if err != nil {
-		return domain.ProbeResult{Error: "probe client: " + err.Error()}
+		return domain.ProbeResult{Error: "probe request failed"}
 	}
-	payload, err := json.Marshal(codexProbePayload{Model: spec.UpstreamModel, Stream: true})
-	if err != nil {
-		return domain.ProbeResult{Error: "probe payload: " + err.Error()}
-	}
+	payload := sdkbridge.ProbeResponsesPayload(spec.UpstreamModel)
 	status, body, callErr := sdkbridge.ProbeResponses(ctx, spec.Credential, spec.CodexAccountID, transport, payload, p.timeout)
 	res := domain.ProbeResult{StatusCode: status}
 	if len(body) > domain.ProbeMaxBodyBytes {
 		res.Error = "response exceeds 2 MiB"
-		res.Detail = "response body exceeds 2 MiB; connection closed"
-		return res
-	}
-	if callErr != nil && status == 0 {
-		res.Error = "probe request failed: " + callErr.Error()
-		return res
-	}
-	if status < 200 || status > 299 {
-		errMsg, detail := extractErrorText(body)
-		if errMsg == "" && callErr != nil {
-			errMsg = callErr.Error()
-		}
-		if errMsg == "" {
-			errMsg = upstreamStatusText(status)
-		}
-		res.Error = errMsg
-		res.Detail = detail
 		return res
 	}
 	if callErr != nil {
-		res.Error = "probe response read failed: " + callErr.Error()
+		if isContextError(callErr) {
+			// 响应头可能已到达，但 body 读取被超时/取消截断：传输失败 = status 0。
+			res.StatusCode = 0
+			res.Error = classifyTransportError(callErr)
+			return res
+		}
+		if status == 0 {
+			res.Error = classifyTransportError(callErr)
+			return res
+		}
+		if status < 200 || status > 299 {
+			res.Error = classifyUpstreamStatus(status)
+			res.Detail = errorCodeDetail(body)
+			return res
+		}
+		// 2xx 但 body 读取失败：传输失败。
+		res.StatusCode = 0
+		res.Error = "probe request failed"
+		return res
+	}
+	if status < 200 || status > 299 {
+		res.Error = classifyUpstreamStatus(status)
+		res.Detail = errorCodeDetail(body)
 		return res
 	}
 	success, errMsg, detail := validateCodexSSE(body)
@@ -257,12 +253,12 @@ func (p *Prober) guardedHTTPClient(spec domain.ProbeSpec) (*http.Client, error) 
 	}
 	hc := *eg.HTTP
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	hc.Transport = &capTransport{next: &originGuard{
+	hc.Transport = NewCappedTransport(&originGuard{
 		next:   transportOrDefault(eg.HTTP.Transport),
 		scheme: strings.ToLower(u.Scheme),
 		host:   strings.ToLower(u.Hostname()),
 		port:   effectivePort(u),
-	}}
+	})
 	return &hc, nil
 }
 
@@ -275,12 +271,12 @@ func (p *Prober) guardedCodexTransport(spec domain.ProbeSpec) (http.RoundTripper
 	if eg == nil || eg.HTTP == nil {
 		return nil, errors.New("egress client not configured")
 	}
-	return &capTransport{next: &originGuard{
+	return NewCappedTransport(&originGuard{
 		next:   transportOrDefault(eg.HTTP.Transport),
 		scheme: codexOriginScheme,
 		host:   codexOriginHost,
 		port:   codexOriginPort,
-	}}, nil
+	}), nil
 }
 
 func transportOrDefault(rt http.RoundTripper) http.RoundTripper {
@@ -332,6 +328,13 @@ func effectivePort(u *url.URL) string {
 // capTransport 给响应体加硬上限：非 2xx 截断到 2 MiB（SDK 内部对非 200 的
 // io.ReadAll 也只能拿到 ≤2 MiB）；2xx 允许读到 2 MiB+1（多一个字节用于发现
 // 溢出——调用方读到第 2 MiB+1 字节即判失败）。
+//
+// NewCappedTransport 导出生产实现，供 sdkbridge 的 cap 证据测试（A5/A17）经
+// sdkbridge.ProbeResponses 复用同一层，避免测试自带一份 capping transport。
+func NewCappedTransport(next http.RoundTripper) http.RoundTripper {
+	return &capTransport{next: next}
+}
+
 type capTransport struct {
 	next http.RoundTripper
 }
@@ -420,14 +423,6 @@ type anthProbePayload struct {
 	Messages  []probeMessage `json:"messages"`
 }
 
-// codexProbePayload 无输出 token 上限：SDK 白名单会剔除 max_output_tokens 等
-// 非白名单键，codex 探测不假定输出上限（spec §5.1）。
-type codexProbePayload struct {
-	Model  string              `json:"model"`
-	Input  []probeInputContent `json:"input"`
-	Stream bool                `json:"stream"`
-}
-
 func staticPayload(format domain.RequestFormat, model string) []byte {
 	switch format {
 	case domain.FormatOpenAIChat:
@@ -459,7 +454,7 @@ func staticPayload(format domain.RequestFormat, model string) []byte {
 	}
 }
 
-// ---- 成功判定（spec §5.2） ----
+// ---- 成功判定（spec §5.2；只查首元素路径，不物化上游数组） ----
 
 func validateStatic(format domain.RequestFormat, body []byte) bool {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
@@ -468,18 +463,18 @@ func validateStatic(format domain.RequestFormat, body []byte) bool {
 	r := gjson.ParseBytes(body)
 	switch format {
 	case domain.FormatOpenAIChat:
-		choices := r.Get("choices")
-		if !choices.IsArray() || len(choices.Array()) == 0 {
-			return false
-		}
-		first := choices.Array()[0]
+		first := r.Get("choices.0")
 		if !first.IsObject() {
 			return false
 		}
-		if first.Get("message.content").String() != "" {
+		content := first.Get("message.content")
+		if content.Type == gjson.String && content.String() != "" {
 			return true
 		}
-		if tc := first.Get("message.tool_calls"); tc.IsArray() && len(tc.Array()) > 0 {
+		if content.IsArray() && content.Get("0").Exists() {
+			return true
+		}
+		if first.Get("message.tool_calls.0").Exists() {
 			return true
 		}
 		if first.Get("message.reasoning_content").String() != "" {
@@ -487,149 +482,157 @@ func validateStatic(format domain.RequestFormat, body []byte) bool {
 		}
 		return first.Get("finish_reason").String() != ""
 	case domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS:
-		if out := r.Get("output"); out.IsArray() && len(out.Array()) > 0 && out.Array()[0].Get("type").String() != "" {
+		if r.Get("output.0.type").String() != "" {
 			return true
 		}
 		return r.Get("output_text").String() != ""
 	case domain.FormatAnthropic:
-		content := r.Get("content")
-		return content.IsArray() && len(content.Array()) > 0 && content.Array()[0].Get("type").String() != ""
+		return r.Get("content.0.type").String() != ""
 	}
 	return false
 }
 
-// validateCodexSSE 扫描 SSE 终态：response.completed 且 response.output 数组
-// 长度 ≥1 = 成功；response.failed / error 事件 = 失败。
-func validateCodexSSE(body []byte) (bool, string, string) {
-	lastType := ""
-	eventName := ""
+// ---- SSE 事件块解析（spec §5.1/§5.2） ----
+
+type sseEvent struct {
+	name string
+	data []byte
+}
+
+// parseSSEEvents 按空行分块；同一事件的多行 data 用 "\n" 合并（SSE 规范），
+// 因此被拆成多行的 response.completed 仍能还原成完整 JSON。
+func parseSSEEvents(body []byte) []sseEvent {
+	events := make([]sseEvent, 0, 4)
+	var (
+		name string
+		data []byte
+	)
+	flush := func() {
+		if len(data) > 0 {
+			events = append(events, sseEvent{name: name, data: data})
+		}
+		name, data = "", nil
+	}
 	for _, rawLine := range bytes.Split(body, []byte("\n")) {
-		line := bytes.TrimSpace(rawLine)
-		if bytes.HasPrefix(line, []byte("event:")) {
-			eventName = string(bytes.TrimSpace(line[len("event:"):]))
+		line := bytes.TrimSuffix(rawLine, []byte("\r"))
+		if len(bytes.TrimSpace(line)) == 0 {
+			flush()
 			continue
 		}
-		if !bytes.HasPrefix(line, []byte("data:")) {
+		switch {
+		case bytes.HasPrefix(line, []byte("event:")):
+			name = string(bytes.TrimSpace(line[len("event:"):]))
+		case bytes.HasPrefix(line, []byte("data:")):
+			chunk := bytes.TrimSpace(line[len("data:"):])
+			if len(data) > 0 {
+				data = append(data, '\n')
+			}
+			data = append(data, chunk...)
+		}
+	}
+	flush()
+	return events
+}
+
+// validateCodexSSE 扫描 SSE 终态：response.completed 且 response.output 长度
+// ≥1 = 成功；response.failed / error 事件 = 失败（固定文案 + 白名单 code）。
+func validateCodexSSE(body []byte) (bool, string, string) {
+	for _, ev := range parseSSEEvents(body) {
+		if bytes.Equal(ev.data, []byte("[DONE]")) || !gjson.ValidBytes(ev.data) {
 			continue
 		}
-		data := bytes.TrimSpace(line[len("data:"):])
-		name := eventName
-		eventName = ""
-		if len(data) == 0 || bytes.Equal(data, []byte("[DONE]")) || !gjson.ValidBytes(data) {
-			continue
-		}
-		typ := gjson.GetBytes(data, "type").String()
+		typ := gjson.GetBytes(ev.data, "type").String()
 		if typ == "" {
-			typ = name
-		}
-		if typ != "" {
-			lastType = typ
+			typ = ev.name
 		}
 		switch typ {
 		case "response.completed":
-			out := gjson.GetBytes(data, "response.output")
-			if out.IsArray() && len(out.Array()) > 0 {
+			if gjson.GetBytes(ev.data, "response.output").IsArray() && gjson.GetBytes(ev.data, "response.output.0").Exists() {
 				return true, "", ""
 			}
-			return false, "upstream response completed without output", "response.completed output is empty"
-		case "response.failed":
-			errMsg, detail := codexEventError(data)
-			if errMsg == "" {
-				errMsg = "upstream response failed"
-			}
-			if detail == "" {
-				detail = "response.failed"
-			}
-			return false, errMsg, detail
-		case "error":
-			errMsg, detail := codexEventError(data)
-			if errMsg == "" {
-				errMsg = "upstream returned an error event"
-			}
-			if detail == "" {
-				detail = "error"
-			}
-			return false, errMsg, detail
+			return false, "upstream response missing usable output", ""
+		case "response.failed", "error":
+			return false, "upstream stream failed", errorCodeDetail(ev.data)
 		}
 	}
-	if lastType != "" {
-		return false, "upstream stream ended before response.completed", "last event: " + lastType
-	}
-	return false, "upstream stream ended without a terminal event", ""
+	return false, "upstream stream failed", ""
 }
 
-// ---- 错误提取（解码后的文本，不放未解码的原始 JSON 字节） ----
+// ---- 失败分类（根 AGENTS.md 反模式 7：结果/日志不回显上游自由文本） ----
 
-func extractErrorText(body []byte) (string, string) {
+func classifyUpstreamStatus(status int) string {
+	switch {
+	case status >= 300 && status <= 399:
+		return "upstream redirect rejected"
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "upstream rejected credentials"
+	case status == http.StatusNotFound:
+		return "upstream endpoint or model not found"
+	case status == http.StatusTooManyRequests:
+		return "upstream rate limited"
+	case status >= 400 && status <= 499:
+		return "upstream rejected request"
+	default:
+		return "upstream error"
+	}
+}
+
+var probeErrorCodePattern = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,64}$`)
+
+// errorCodeDetail 只从上游错误对象提取白名单形态的 error.code/error.type，
+// 以 code=<value> 返回；message/原始 JSON/其他文本一律丢弃。
+func errorCodeDetail(body []byte) string {
 	if len(body) == 0 || !gjson.ValidBytes(body) {
-		return "", ""
-	}
-	r := gjson.ParseBytes(body)
-	if !r.IsObject() {
-		return "", ""
-	}
-	if m := r.Get("error.message"); m.Exists() && m.String() != "" {
-		return m.String(), m.String()
-	}
-	e := r.Get("error")
-	if !e.Exists() || e.Type == gjson.Null {
-		return "", ""
-	}
-	if e.Type == gjson.String {
-		s := e.String()
-		return s, s
-	}
-	raw := compactJSON(e.Raw)
-	if m := e.Get("message"); m.Exists() && m.String() != "" {
-		return m.String(), raw
-	}
-	if raw != "" {
-		return raw, raw
-	}
-	return "", ""
-}
-
-func codexEventError(data []byte) (string, string) {
-	for _, path := range []string{"response.error.message", "error.message", "message"} {
-		if m := gjson.GetBytes(data, path); m.Exists() && m.String() != "" {
-			return m.String(), m.String()
-		}
-	}
-	for _, path := range []string{"response.error", "error"} {
-		e := gjson.GetBytes(data, path)
-		if !e.Exists() || e.Type == gjson.Null {
-			continue
-		}
-		if e.Type == gjson.String {
-			return e.String(), e.String()
-		}
-		raw := compactJSON(e.Raw)
-		if raw != "" {
-			return "upstream response failed", raw
-		}
-	}
-	return "", ""
-}
-
-func compactJSON(raw string) string {
-	var buf bytes.Buffer
-	if err := json.Compact(&buf, []byte(raw)); err != nil {
 		return ""
 	}
-	return buf.String()
+	for _, path := range []string{"error.code", "error.type", "response.error.code", "response.error.type"} {
+		v := gjson.GetBytes(body, path)
+		if v.Type == gjson.String && probeErrorCodePattern.MatchString(v.String()) {
+			return "code=" + v.String()
+		}
+	}
+	return ""
 }
 
-func upstreamStatusText(status int) string {
-	if t := http.StatusText(status); t != "" {
-		return t
+// isTimeoutError 覆盖 ctx deadline、客户端超时与 net.Error.Timeout。
+func isTimeoutError(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
 	}
-	return fmt.Sprintf("HTTP %d", status)
+	var ne net.Error
+	return errors.As(err, &ne) && ne.Timeout()
+}
+
+func isContextError(err error) bool {
+	return isTimeoutError(err) || errors.Is(err, context.Canceled)
+}
+
+// classifyTransportError 把传输层错误归一为固定文案；redirect/Location 解析
+// 失败一律记 cross-origin 阻止，绝不回显 URL/Location/底层错误文本。
+func classifyTransportError(err error) string {
+	if err == nil {
+		return "probe request failed"
+	}
+	if isTimeoutError(err) {
+		return "probe timed out"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "probe canceled"
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "probe blocked request to") ||
+		strings.Contains(msg, "failed to parse Location header") ||
+		strings.Contains(msg, "redirect") {
+		return "probe blocked cross-origin redirect"
+	}
+	return "probe request failed"
 }
 
 // ---- 脱敏 / 截断（spec §5.2/§6） ----
 
-// redactText 把每个 secret 的原文、JSON 转义形式、URL 编码形式（QueryEscape 与
-// PathEscape）一律替换为 ***。secret 为空跳过。
+// redactText 把每个 secret 的所有可回显形态替换为 ***：原文、JSON 转义
+// （含 `\/`）、QueryEscape、PathEscape、URL userinfo（url.UserPassword 形态）
+// 以及它们的小写百分号十六进制变体。secret 为空跳过。
 func redactText(s string, secrets []string) string {
 	if s == "" {
 		return s
@@ -638,7 +641,7 @@ func redactText(s string, secrets []string) string {
 		if secret == "" {
 			continue
 		}
-		for _, form := range []string{secret, jsonEscape(secret), url.QueryEscape(secret), url.PathEscape(secret)} {
+		for _, form := range redactionForms(secret) {
 			if form == "" {
 				continue
 			}
@@ -648,12 +651,69 @@ func redactText(s string, secrets []string) string {
 	return s
 }
 
+func redactionForms(secret string) []string {
+	jsonForm := jsonEscape(secret)
+	queryForm := url.QueryEscape(secret)
+	pathForm := url.PathEscape(secret)
+	userinfoForm := url.UserPassword("u", secret).String()
+	userinfoForm = strings.TrimPrefix(userinfoForm, "u:")
+	forms := []string{
+		secret,
+		jsonForm,
+		strings.ReplaceAll(jsonForm, "/", `\/`),
+		queryForm,
+		lowerPercentHex(queryForm),
+		pathForm,
+		lowerPercentHex(pathForm),
+		userinfoForm,
+		lowerPercentHex(userinfoForm),
+	}
+	// 去空并保持顺序去重（原文优先，避免短形态先替换破坏长形态）。
+	seen := make(map[string]struct{}, len(forms))
+	out := forms[:0]
+	for _, form := range forms {
+		if form == "" {
+			continue
+		}
+		if _, ok := seen[form]; ok {
+			continue
+		}
+		seen[form] = struct{}{}
+		out = append(out, form)
+	}
+	return out
+}
+
 func jsonEscape(s string) string {
 	b, err := json.Marshal(s)
 	if err != nil || len(b) < 2 {
 		return s
 	}
 	return string(b[1 : len(b)-1])
+}
+
+// lowerPercentHex 只把 %XX 的十六进制字母转小写；其他字符保持原样。
+func lowerPercentHex(s string) string {
+	b := []byte(s)
+	for i := 0; i+2 < len(b); i++ {
+		if b[i] != '%' || !isHexDigit(b[i+1]) || !isHexDigit(b[i+2]) {
+			continue
+		}
+		b[i+1] = lowerHex(b[i+1])
+		b[i+2] = lowerHex(b[i+2])
+	}
+	return string(b)
+}
+
+func isHexDigit(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+func lowerHex(c byte) byte {
+	if c >= 'A' && c <= 'F' {
+		return c + ('a' - 'A')
+	}
+	return c
 }
 
 func truncateBytes(s string, max int) string {

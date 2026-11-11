@@ -24,8 +24,10 @@ export function formatSupports(template: ProbeTemplate, format: ProbeFormat, mod
 }
 
 export function hasWildcardModelSpace(template: ProbeTemplate): boolean {
+  // 与后端 domain.Template.HasModelSpace 完全一致：任一容器非空（含“只含空列表”
+  // 的 FormatModels map）即已配置模型空间，不再是通配。
   return (template.Models?.length ?? 0) === 0
-    && Object.values(template.FormatModels ?? {}).every(models => models.length === 0)
+    && Object.keys(template.FormatModels ?? {}).length === 0
     && Object.keys(template.ModelMapping ?? {}).length === 0
 }
 

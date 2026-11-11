@@ -8,6 +8,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,7 +20,11 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
+	"github.com/is7qin/c3api/internal/probe"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/pkg/aiclient"
+	"github.com/is7qin/c3api/pkg/egress"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // probeReadOnlyStore 是探测用例的**只读**替身：只实现探测组装会读的三个方法
@@ -420,6 +428,82 @@ func TestProbeCustomExtMissing(t *testing.T) {
 	require.ErrorIs(t, err, storeErr)
 	require.Nil(t, res)
 	require.Equal(t, 1, prober.calls, "第二次失败请求不得调用 Prober")
+}
+
+// TestProbeCustomExtWiring A21：custom ext 存在时 Prober 收到 override；ext 行
+// 缺失（ErrNotFound）→ UpstreamPaths 为空且不报错。
+func TestProbeCustomExtWiring(t *testing.T) {
+	tpl := staticProbeTemplate()
+	tpl.CredentialType = credential.TypeCustom
+	acc := probeAccountFor(tpl)
+	override := map[string]string{string(domain.UpstreamPathChat): "v1/custom/chat?api-version=2024-10-21"}
+	store := &probeReadOnlyStore{
+		acc: acc,
+		ext: &domain.TemplateExt{TemplateID: tpl.ID, UpstreamPaths: override},
+	}
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+
+	res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err)
+	require.True(t, res.Success)
+	require.Equal(t, 1, prober.calls)
+	require.Equal(t, override, prober.spec.UpstreamPaths, "custom ext 存在时必须把 override 交给 Prober")
+
+	// ext 行缺失 → 空覆盖（nil/empty）且无错误。
+	store.ext = nil
+	res, err = svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err)
+	require.True(t, res.Success)
+	require.Equal(t, 2, prober.calls)
+	require.Empty(t, prober.spec.UpstreamPaths, "ext 行缺失必须视为空覆盖")
+}
+
+// TestProbeNoUpstreamTextLeakLog A19：service 日志同样只含固定分类文案；上游
+// 自由文本、其他租户 key 与内部 request id 不得进入日志。
+func TestProbeNoUpstreamTextLeakLog(t *testing.T) {
+	const (
+		otherTenantKey = "sk-other-tenant"
+		internalReqID  = "req_abc123"
+	)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":{"code":"rate_limit_exceeded","type":"rate_limit_error","message":"` +
+			otherTenantKey + ` failed for ` + internalReqID + `: free-form upstream text"}}`))
+	}))
+	defer up.Close()
+
+	tpl := staticProbeTemplate()
+	tpl.BaseURL = up.URL
+	acc := probeAccountFor(tpl)
+	hc := &http.Client{}
+	realProber := probe.New(aiclient.NewFactory(hc, aiclient.Config{}), egress.NewPool(hc), nil, 5*time.Second, domain.ProbeMaxConcurrency)
+	logPath := filepath.Join(t.TempDir(), "probe.log")
+	logger, err := logx.New("info", logPath)
+	require.NoError(t, err)
+	svc := New(Deps{
+		Store:          &probeReadOnlyStore{acc: acc},
+		Invalidate:     NopInvalidator{},
+		EmailCodeStore: testEmailCodes,
+		Prober:         realProber,
+		Log:            logger,
+	})
+
+	res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIChat})
+	require.NoError(t, err)
+	require.False(t, res.Success)
+	require.Equal(t, "upstream rate limited", res.Error)
+	require.Equal(t, "code=rate_limit_exceeded", res.Detail)
+
+	require.NoError(t, logger.Sync())
+	raw, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	logged := string(raw)
+	require.Contains(t, logged, "account_probe")
+	require.Contains(t, logged, "upstream rate limited")
+	require.NotContains(t, logged, otherTenantKey)
+	require.NotContains(t, logged, internalReqID)
+	require.NotContains(t, logged, "free-form upstream text")
 }
 
 // TestProbeProberNotConfigured：nil Prober → 装配错误（handler 默认 500）。

@@ -7,6 +7,7 @@ package probe
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -181,8 +182,9 @@ func TestProbeCustomPath(t *testing.T) {
 	require.Empty(t, c.rawQuery)
 }
 
-// TestProbePayloadValidation A7：空 body / {} / 空 choices → success=false；
-// 上游 error 键取解码后文本；正常载荷 → true。
+// TestProbePayloadValidation A7：空 body / {} / 空集合（空 choices、content:[]、
+// tool_calls:[]、output:[]）→ success=false；正常载荷 → true。上游 message 与
+// 原始 JSON 不出现在结果中，detail 只允许白名单 code。
 func TestProbePayloadValidation(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -191,22 +193,33 @@ func TestProbePayloadValidation(t *testing.T) {
 		body        string
 		wantSuccess bool
 		wantError   string
+		wantDetail  string
 	}{
-		{"chat-empty-body", domain.FormatOpenAIChat, 200, "", false, "no usable output"},
-		{"chat-empty-object", domain.FormatOpenAIChat, 200, `{}`, false, "no usable output"},
-		{"chat-empty-choice", domain.FormatOpenAIChat, 200, `{"choices":[{}]}`, false, "no usable output"},
-		{"chat-content", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":"hi"}}]}`, true, ""},
-		{"chat-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[{"id":"c1"}]}}]}`, true, ""},
-		{"chat-reasoning", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"reasoning_content":"think"}}]}`, true, ""},
-		{"chat-finish-reason", domain.FormatOpenAIChat, 200, `{"choices":[{"finish_reason":"stop"}]}`, true, ""},
-		{"chat-error-only", domain.FormatOpenAIChat, 200, `{"error":{"message":"boom"}}`, false, "boom"},
-		{"responses-empty", domain.FormatOpenAIResponses, 200, `{}`, false, "no usable output"},
-		{"responses-output", domain.FormatOpenAIResponses, 200, `{"output":[{"type":"message"}]}`, true, ""},
-		{"responses-output-text", domain.FormatOpenAIResponses, 200, `{"output_text":"hi"}`, true, ""},
-		{"anthropic-empty", domain.FormatAnthropic, 200, `{"content":[]}`, false, "no usable output"},
-		{"anthropic-content", domain.FormatAnthropic, 200, `{"content":[{"type":"text","text":"hi"}]}`, true, ""},
-		{"chat-http-error", domain.FormatOpenAIChat, 400, `{"error":{"message":"bad model"}}`, false, "bad model"},
-		{"chat-http-error-no-body", domain.FormatOpenAIChat, 503, "", false, http.StatusText(503)},
+		{"chat-empty-body", domain.FormatOpenAIChat, 200, "", false, "upstream response missing usable output", ""},
+		{"chat-empty-object", domain.FormatOpenAIChat, 200, `{}`, false, "upstream response missing usable output", ""},
+		{"chat-empty-choice", domain.FormatOpenAIChat, 200, `{"choices":[{}]}`, false, "upstream response missing usable output", ""},
+		{"chat-empty-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[]}}]}`, false, "upstream response missing usable output", ""},
+		{"chat-empty-content-string", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":""}}]}`, false, "upstream response missing usable output", ""},
+		{"chat-empty-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[]}}]}`, false, "upstream response missing usable output", ""},
+		{"chat-content", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":"hi"}}]}`, true, "", ""},
+		{"chat-content-array", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"content":[{"type":"text","text":"hi"}]}}]}`, true, "", ""},
+		{"chat-tool-calls", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"tool_calls":[{"id":"c1"}]}}]}`, true, "", ""},
+		{"chat-reasoning", domain.FormatOpenAIChat, 200, `{"choices":[{"message":{"reasoning_content":"think"}}]}`, true, "", ""},
+		{"chat-finish-reason", domain.FormatOpenAIChat, 200, `{"choices":[{"finish_reason":"stop"}]}`, true, "", ""},
+		{"chat-error-only", domain.FormatOpenAIChat, 200, `{"error":{"message":"boom sk-other-tenant req_abc123"}}`, false, "upstream response missing usable output", ""},
+		{"responses-empty", domain.FormatOpenAIResponses, 200, `{}`, false, "upstream response missing usable output", ""},
+		{"responses-empty-output", domain.FormatOpenAIResponses, 200, `{"output":[]}`, false, "upstream response missing usable output", ""},
+		{"responses-output", domain.FormatOpenAIResponses, 200, `{"output":[{"type":"message"}]}`, true, "", ""},
+		{"responses-output-text", domain.FormatOpenAIResponses, 200, `{"output_text":"hi"}`, true, "", ""},
+		{"anthropic-empty", domain.FormatAnthropic, 200, `{"content":[]}`, false, "upstream response missing usable output", ""},
+		{"anthropic-content", domain.FormatAnthropic, 200, `{"content":[{"type":"text","text":"hi"}]}`, true, "", ""},
+		{"chat-http-error", domain.FormatOpenAIChat, 400, `{"error":{"message":"bad model"}}`, false, "upstream rejected request", ""},
+		{"chat-http-error-safe-code", domain.FormatOpenAIChat, 400, `{"error":{"code":"model_not_found","type":"invalid_request_error","message":"bad model"}}`, false, "upstream rejected request", "code=model_not_found"},
+		{"chat-http-error-unsafe-code", domain.FormatOpenAIChat, 400, `{"error":{"code":"bad code with spaces"}}`, false, "upstream rejected request", ""},
+		{"chat-http-401", domain.FormatOpenAIChat, 401, `{"error":{"code":"token_invalidated","message":"no"}}`, false, "upstream rejected credentials", "code=token_invalidated"},
+		{"chat-http-404", domain.FormatOpenAIChat, 404, "", false, "upstream endpoint or model not found", ""},
+		{"chat-http-429", domain.FormatOpenAIChat, 429, "", false, "upstream rate limited", ""},
+		{"chat-http-503", domain.FormatOpenAIChat, 503, "", false, "upstream error", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -220,17 +233,15 @@ func TestProbePayloadValidation(t *testing.T) {
 			res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), spec)
 			require.Equal(t, tc.status, res.StatusCode)
 			require.Equal(t, tc.wantSuccess, res.Success)
-			if tc.wantSuccess {
-				require.Empty(t, res.Error)
-			} else {
-				require.Contains(t, res.Error, tc.wantError)
-			}
+			require.Equal(t, tc.wantError, res.Error)
+			require.Equal(t, tc.wantDetail, res.Detail)
 		})
 	}
 }
 
 // TestProbeRedirectBlocked A11：302 不跟随——第二台 httptest 0 请求，结果失败且
-// 状态码保留 302。
+// 状态码保留 302；malformed Location 的解析错误同样归一为固定 cross-origin 文案，
+// 任何 Location/URL/host 文本都不得出现在结果中。
 func TestProbeRedirectBlocked(t *testing.T) {
 	var secondHits atomic.Int64
 	second := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,48 +260,124 @@ func TestProbeRedirectBlocked(t *testing.T) {
 	res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(first.URL))
 	require.False(t, res.Success)
 	require.Equal(t, http.StatusFound, res.StatusCode)
+	require.Equal(t, "upstream redirect rejected", res.Error)
+	require.Empty(t, res.Detail)
 	require.Equal(t, int64(1), firstHits.Load())
 	require.Equal(t, int64(0), secondHits.Load(), "重定向目标不得收到请求（凭据不跨 origin）")
+	rendered := res.Error + res.Detail
+	require.NotContains(t, rendered, second.URL)
+	require.NotContains(t, rendered, "/stolen")
+	require.NotContains(t, rendered, first.URL)
+	require.NotContains(t, rendered, strings.TrimPrefix(second.URL, "http://"))
+
+	// malformed Location：Go 客户端在 CheckRedirect 之前解析失败，错误文本含
+	// Location；结果必须只给固定分类文案（status 0），不回显任何 URL 片段。
+	malformed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "http://[::1]:bad-location/%zz")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer malformed.Close()
+	res = newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(malformed.URL))
+	require.False(t, res.Success)
+	require.Equal(t, 0, res.StatusCode, "Location 解析失败 = 传输失败")
+	require.Equal(t, "probe blocked cross-origin redirect", res.Error)
+	require.Empty(t, res.Detail)
+	require.NotContains(t, res.Error, "Location")
+	require.NotContains(t, res.Error, "::1")
+	require.NotContains(t, res.Error, malformed.URL)
 }
 
-// TestProbeTimeout A10：ctx 到期 → status 0；用 channel 屏障而非 sleep。
+// TestProbeTimeout A10：ctx 到期 → status 0 + 固定 "probe timed out"。用 channel
+// 屏障（先等上游 started 再等结果，watchdog 兜底），不使用 sleep。
+// 两个阶段：① 响应头未到；② 响应头已到但 body 一直不结束（读 body 超时）。
 func TestProbeTimeout(t *testing.T) {
 	require.Equal(t, 30*time.Second, DefaultTimeout, "单次探测硬上限必须是 30s 常量（不开配置键）")
 	require.Equal(t, 4, DefaultMaxConcurrency)
-	started := make(chan struct{})
-	done := make(chan struct{})
-	release := make(chan struct{})
-	var once sync.Once
-	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		once.Do(func() { close(started) })
+
+	waitSignal := func(t *testing.T, ch <-chan struct{}, what string) {
+		t.Helper()
 		select {
-		case <-r.Context().Done():
-		case <-release:
+		case <-ch:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("%s: %s never signaled", t.Name(), what)
 		}
-		close(done)
-	}))
-	defer up.Close()
-
-	p := newTestProber(t, nil, 20*time.Millisecond)
-	res := p.Probe(context.Background(), staticSpec(up.URL))
-	require.False(t, res.Success)
-	require.Equal(t, 0, res.StatusCode, "传输失败 status_code = 0")
-	require.Contains(t, res.Error, "context deadline exceeded")
-
-	select {
-	case <-started:
-	case <-time.After(2 * time.Second):
-		t.Fatal("upstream handler never started")
 	}
-	close(release)
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("upstream handler did not observe cancellation")
+	waitResult := func(t *testing.T, ch <-chan domain.ProbeResult) domain.ProbeResult {
+		t.Helper()
+		select {
+		case res := <-ch:
+			return res
+		case <-time.After(2 * time.Second):
+			t.Fatal("probe did not return after timeout")
+			return domain.ProbeResult{}
+		}
 	}
+
+	t.Run("request-hangs-before-headers", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		done := make(chan struct{})
+		var once sync.Once
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			once.Do(func() { close(started) })
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+			close(done)
+		}))
+		defer up.Close()
+
+		p := newTestProber(t, nil, 20*time.Millisecond)
+		result := make(chan domain.ProbeResult, 1)
+		go func() { result <- p.Probe(context.Background(), staticSpec(up.URL)) }()
+
+		waitSignal(t, started, "upstream handler")
+		res := waitResult(t, result)
+		require.False(t, res.Success)
+		require.Equal(t, 0, res.StatusCode, "传输失败 status_code = 0")
+		require.Equal(t, "probe timed out", res.Error)
+
+		close(release)
+		waitSignal(t, done, "upstream handler completion")
+	})
+
+	t.Run("headers-then-body-hang", func(t *testing.T) {
+		started := make(chan struct{})
+		release := make(chan struct{})
+		done := make(chan struct{})
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+			close(started)
+			select {
+			case <-r.Context().Done():
+			case <-release:
+			}
+			close(done)
+		}))
+		defer up.Close()
+
+		p := newTestProber(t, nil, 50*time.Millisecond)
+		result := make(chan domain.ProbeResult, 1)
+		go func() { result <- p.Probe(context.Background(), staticSpec(up.URL)) }()
+
+		waitSignal(t, started, "upstream headers")
+		res := waitResult(t, result)
+		require.False(t, res.Success)
+		require.Equal(t, 0, res.StatusCode, "响应头已到但 body 读超时也必须 status 0")
+		require.Equal(t, "probe timed out", res.Error)
+
+		close(release)
+		waitSignal(t, done, "upstream handler completion")
+	})
 }
 
-// TestProbeResponseTooLarge A17：静态族 200 体 >2 MiB → 失败并关闭连接。
+// TestProbeResponseTooLarge A17：静态族 200 体 >2 MiB → 失败并关闭连接（恰好
+// 一次；读取上限由生产 capTransport 承担）。
 func TestProbeResponseTooLarge(t *testing.T) {
 	huge := bytes.Repeat([]byte("x"), domain.ProbeMaxBodyBytes+1)
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -298,11 +385,14 @@ func TestProbeResponseTooLarge(t *testing.T) {
 	}))
 	defer up.Close()
 
-	res := newTestProber(t, nil, 10*time.Second).Probe(context.Background(), staticSpec(up.URL))
+	var closes atomic.Int64
+	tr := &countCloseTransport{next: http.DefaultTransport, closes: &closes}
+	res := newTestProber(t, tr, 10*time.Second).Probe(context.Background(), staticSpec(up.URL))
 	require.False(t, res.Success)
 	require.Equal(t, 200, res.StatusCode)
 	require.Equal(t, "response exceeds 2 MiB", res.Error)
-	require.Contains(t, res.Detail, "exceeds 2 MiB")
+	require.Empty(t, res.Detail)
+	require.Equal(t, int64(1), closes.Load(), "溢出时 body 必须恰好关闭一次")
 }
 
 // TestCodexProbeStreamTooLarge A17：codex 200 体 >2 MiB → 失败（读取上限由
@@ -351,17 +441,112 @@ func TestProbeCodexSSE(t *testing.T) {
 	require.Equal(t, "upstream-model", gjson.GetBytes(c.body, "model").String())
 	require.True(t, gjson.GetBytes(c.body, "stream").Bool())
 	require.Equal(t, "acct-1", c.accountID)
+	require.Equal(t, "user", gjson.GetBytes(c.body, "input.0.role").String())
+	require.Equal(t, "hi", gjson.GetBytes(c.body, "input.0.content.0.text").String())
 }
 
-// TestProbeRedaction A13：凭据与绑定代理密码的原文 / JSON 转义 / URL 编码三种
-// 形式一律替换为 ***，并分别截断 error/detail。
+// TestProbeCodexMultilineEvent A20：response.completed 被拆成多行 data:，按事件块
+// （空行分隔、多行 data 以 "\n" 合并）解析后仍必须判成功。
+func TestProbeCodexMultilineEvent(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: response.completed\r\n" +
+			"data: {\"type\":\"response.completed\",\r\n" +
+			"data: \"response\":{\"output\":[{\"type\":\"message\"}]}}\r\n\r\n"))
+	}))
+	defer up.Close()
+
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+	require.True(t, res.Success)
+	require.Empty(t, res.Error)
+	require.Empty(t, res.Detail)
+}
+
+// TestProbeNoUpstreamTextLeak A19：上游错误体含其他租户 key、内部 request id 与
+// 自由文本时，结果只出固定分类文案 + 白名单 code；注入串不得出现在任何结果字段。
+func TestProbeNoUpstreamTextLeak(t *testing.T) {
+	const (
+		otherTenantKey = "sk-other-tenant"
+		internalReqID  = "req_abc123"
+	)
+	injected := []string{otherTenantKey, internalReqID}
+
+	assertClean := func(t *testing.T, res domain.ProbeResult) {
+		t.Helper()
+		rendered := fmt.Sprintf("%+v", res)
+		for _, leak := range injected {
+			require.NotContains(t, rendered, leak)
+		}
+	}
+
+	t.Run("static-status-error", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":{"code":"rate_limit_exceeded","type":"rate_limit_error","message":"` +
+				otherTenantKey + ` failed for ` + internalReqID + `: free-form upstream text"}}`))
+		}))
+		defer up.Close()
+
+		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		require.False(t, res.Success)
+		require.Equal(t, http.StatusTooManyRequests, res.StatusCode)
+		require.Equal(t, "upstream rate limited", res.Error)
+		require.Equal(t, "code=rate_limit_exceeded", res.Detail)
+		assertClean(t, res)
+	})
+
+	t.Run("static-non-json-body", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(otherTenantKey + " internal=" + internalReqID + " free-form body"))
+		}))
+		defer up.Close()
+
+		res := newTestProber(t, nil, 5*time.Second).Probe(context.Background(), staticSpec(up.URL))
+		require.False(t, res.Success)
+		require.Equal(t, "upstream rejected request", res.Error)
+		require.Empty(t, res.Detail)
+		assertClean(t, res)
+	})
+
+	t.Run("codex-failed-event", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			_, _ = w.Write([]byte(`event: response.failed` + "\n" +
+				`data: {"type":"response.failed","response":{"error":{"code":"upstream_stream_error","message":"` +
+				otherTenantKey + ` ` + internalReqID + ` free-form"}}}` + "\n\n"))
+		}))
+		defer up.Close()
+
+		spec := staticSpec("")
+		spec.CredentialType = credential.TypeCodexPAT
+		spec.Format = domain.FormatOpenAIResponses
+		spec.Credential = "pat-test"
+		res := newTestProber(t, &rewriteTransport{target: up.URL}, 5*time.Second).Probe(context.Background(), spec)
+		require.False(t, res.Success)
+		require.Equal(t, "upstream stream failed", res.Error)
+		require.Equal(t, "code=upstream_stream_error", res.Detail)
+		assertClean(t, res)
+	})
+}
+
+// TestProbeRedaction A13：凭据与绑定代理密码的原文 / JSON 转义（含 `\/`）/
+// QueryEscape / PathEscape / URL userinfo / 小写百分号十六进制形态一律替换为
+// ***，并分别截断 error/detail。
 func TestProbeRedaction(t *testing.T) {
 	secrets := []string{
 		`sk-a"b\c` + "\n" + `d e+f`,
 		`p@ss w"rd/+=`,
+		`foo/bar`,
+		`a+b@c`,
 	}
 	for _, secret := range secrets {
-		forms := []string{secret, jsonEscape(secret), url.QueryEscape(secret), url.PathEscape(secret)}
+		forms := redactionForms(secret)
+		require.Contains(t, forms, secret)
 		for _, form := range forms {
 			require.NotEmpty(t, form)
 			out := redactText("before "+form+" after", []string{secret})
@@ -371,20 +556,25 @@ func TestProbeRedaction(t *testing.T) {
 	}
 
 	spec := domain.ProbeSpec{
-		Credential:    `sk-a"b\c` + "\n" + `d e+f`,
-		ProxyPassword: `p@ss w"rd/+=`,
+		Credential:    `foo/bar`,
+		ProxyPassword: `a+b@c`,
 	}
-	rawCred := spec.Credential
-	jsonCred := jsonEscape(spec.Credential)
-	urlPass := url.QueryEscape(spec.ProxyPassword)
+	jsonSlash := strings.ReplaceAll(jsonEscape(spec.Credential), "/", `\/`)
+	userinfo := strings.TrimPrefix(url.UserPassword("u", spec.ProxyPassword).String(), "u:")
+	lowerQuery := lowerPercentHex(url.QueryEscape(spec.ProxyPassword))
+	lowerPath := lowerPercentHex(url.PathEscape(spec.Credential))
+	require.Equal(t, `foo\/bar`, jsonSlash)
+	require.Equal(t, "a+b%40c", userinfo)
+	require.Equal(t, "a%2bb%40c", lowerQuery)
+	require.Equal(t, "foo%2fbar", lowerPath)
+
 	res := finalizeResult(spec, domain.ProbeResult{
-		Error:  "dial http://user:" + spec.ProxyPassword + "@proxy: " + rawCred,
-		Detail: "upstream echoed " + jsonCred + " and " + urlPass,
+		Error:  "json " + jsonSlash + " userinfo " + userinfo + " raw " + spec.Credential,
+		Detail: "lower-query " + lowerQuery + " lower-path " + lowerPath + " proxy " + spec.ProxyPassword,
 	})
-	require.NotContains(t, res.Error, spec.ProxyPassword)
-	require.NotContains(t, res.Error, rawCred)
-	require.NotContains(t, res.Detail, jsonCred)
-	require.NotContains(t, res.Detail, urlPass)
+	for _, form := range []string{jsonSlash, userinfo, lowerQuery, lowerPath, spec.Credential, spec.ProxyPassword} {
+		require.NotContains(t, res.Error+res.Detail, form)
+	}
 	require.Contains(t, res.Error, "***")
 	require.Contains(t, res.Detail, "***")
 
@@ -422,6 +612,34 @@ type stubTransport struct{ calls int }
 func (s *stubTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	s.calls++
 	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader("{}"))}, nil
+}
+
+// countCloseTransport 包装响应体以断言关闭次数（生产 capTransport 在其上层）。
+type countCloseTransport struct {
+	next   http.RoundTripper
+	closes *atomic.Int64
+}
+
+func (t *countCloseTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.next.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	if resp.Body != nil {
+		resp.Body = &countCloseBody{rc: resp.Body, closes: t.closes}
+	}
+	return resp, nil
+}
+
+type countCloseBody struct {
+	rc     io.ReadCloser
+	closes *atomic.Int64
+}
+
+func (b *countCloseBody) Read(p []byte) (int, error) { return b.rc.Read(p) }
+func (b *countCloseBody) Close() error {
+	b.closes.Add(1)
+	return b.rc.Close()
 }
 
 // rewriteTransport 把 codex 固定 origin 的请求改写到 httptest 服务（测试 seam：

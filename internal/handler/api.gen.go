@@ -614,12 +614,12 @@ type AccountTestRequest struct {
 // AccountTestRequestFormat 探测格式（与 domain.RequestFormat 同名）
 type AccountTestRequestFormat string
 
-// AccountTestResult 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。error/detail 已脱敏 （凭据与绑定代理密码）并分别截断到 1024/2048 字节；status_code=0 表示传输失败。
+// AccountTestResult 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。error 只含固定分类 文案，detail 只含白名单上游错误码（code=<value>）；两者均不回显上游自由文本、原始 JSON、内部 ID 或其他凭据，并分别截断到 1024/2048 字节。status_code=0 表示传输 失败（含超时/取消）。
 type AccountTestResult struct {
-	// Detail 上游解码后的错误文本或 SSE 终态摘要（≤2048 字节，已脱敏）
+	// Detail 白名单上游错误码 code=<value>（匹配 ^[A-Za-z0-9_.:-]{1,64}$）；无可用码则为空（≤2048 字节）
 	Detail string `json:"detail"`
 
-	// Error 失败摘要（≤1024 字节，已脱敏）
+	// Error 固定分类文案（如 probe timed out / upstream rejected credentials；≤1024 字节，不回显上游文本）
 	Error string `json:"error"`
 
 	// Format 原样回显请求格式

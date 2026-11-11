@@ -63,9 +63,12 @@ describe('probeModelsFor', () => {
     assert.deepEqual(probeModelsFor(tpl, 'openai-responses').models, [])
   })
 
-  it('Models、所有格式模型列表与映射全空时才是通配模型空间', () => {
-    const wildcard = template({ FormatModels: { 'openai-chat': [], anthropic: [] } })
+  it('Models、FormatModels map 与映射全空时才是通配模型空间；只含空列表的 map 不是', () => {
+    const wildcard = template({ Models: [], FormatModels: {}, ModelMapping: {} })
     assert.deepEqual(probeModelsFor(wildcard, 'openai-chat'), { models: [], wildcard: true })
+    // 后端 HasModelSpace 以 map 键存在与否为准：{format: []} 已配置，不是通配。
+    const emptyLists = template({ FormatModels: { 'openai-chat': [], anthropic: [] } })
+    assert.deepEqual(probeModelsFor(emptyLists, 'openai-chat'), { models: [], wildcard: false })
     assert.equal(probeModelsFor(template({ Models: ['one'] }), 'openai-chat').wildcard, false)
     assert.equal(probeModelsFor(template({ FormatModels: { anthropic: ['one'] } }), 'openai-chat').wildcard, false)
     assert.equal(probeModelsFor(template({ ModelMapping: mapping }), 'openai-chat').wildcard, false)
