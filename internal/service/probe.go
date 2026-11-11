@@ -73,24 +73,34 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	// 4 执行 + 16 等待，队列满立即 probe busy，避免无限请求在 DB 池前排队。
 	pctx, cancel := context.WithTimeout(ctx, domain.ProbeTimeout)
 	defer cancel()
-	select {
-	case s.probeGate <- struct{}{}:
-		defer func() { <-s.probeGate }()
-	default:
+	ctxResult := func(err error) *domain.ProbeResult {
 		res := &domain.ProbeResult{Format: format, RequestedModel: model}
 		switch {
-		case errors.Is(pctx.Err(), context.DeadlineExceeded):
+		case errors.Is(err, context.DeadlineExceeded):
 			res.Error = "probe timed out"
-		case errors.Is(pctx.Err(), context.Canceled):
+		case errors.Is(err, context.Canceled):
 			res.Error = "probe canceled"
 		default:
 			res.Error = "probe busy"
 		}
-		return res, nil
+		return res
+	}
+	select {
+	case s.probeGate <- struct{}{}:
+		defer func() { <-s.probeGate }()
+	default:
+		return ctxResult(pctx.Err()), nil
+	}
+	// 抢到闸门也可能是在 ctx 取消之后：不得再触达仓储。
+	if err := pctx.Err(); err != nil {
+		return ctxResult(err), nil
 	}
 
 	acc, err := s.store.GetAccountWithTemplate(pctx, id)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return ctxResult(err), nil
+		}
 		return nil, mapRepoErr(err)
 	}
 	// GET 单个账号允许读到软删行（编辑回显），探测是消费动作：已删除账号不得
@@ -125,6 +135,8 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 			}
 		case errors.Is(xerr, repository.ErrNotFound):
 			// 无 ext 行 = 未配置。
+		case errors.Is(xerr, context.Canceled) || errors.Is(xerr, context.DeadlineExceeded):
+			return ctxResult(xerr), nil
 		default:
 			return nil, xerr
 		}
@@ -145,10 +157,13 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		codexAccountID string
 	)
 	if tpl.CredentialType.IsCodex() {
-		cred, cerr := s.store.GetOwnedAccountCredential(ctx, id)
+		cred, cerr := s.store.GetOwnedAccountCredential(pctx, id)
 		if cerr != nil {
 			if errors.Is(cerr, repository.ErrNotFound) {
 				return nil, fmt.Errorf("%w: 账号缺少 codex 凭据", ErrInvalidInput)
+			}
+			if errors.Is(cerr, context.Canceled) || errors.Is(cerr, context.DeadlineExceeded) {
+				return ctxResult(cerr), nil
 			}
 			return nil, cerr
 		}
