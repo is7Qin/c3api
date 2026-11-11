@@ -1203,4 +1203,23 @@ func TestProbeAdmissionBounded(t *testing.T) {
 	require.False(t, res.Success)
 	require.Equal(t, "probe busy", res.Error)
 	require.Zero(t, res.StatusCode)
+
+	// 队列满也不能掩盖已经取消的 ctx。
+	canceled, cancel := context.WithCancel(context.Background())
+	cancel()
+	res = p.Probe(canceled, staticSpec("http://127.0.0.1:1"))
+	require.Equal(t, "probe canceled", res.Error)
+
+	// 等待名额只在排队期间持有：请求拿到并发槽或取消后必须释放 waiter。
+	p2 := newTestProber(t, nil, 10*time.Second)
+	for i := 0; i < cap(p2.sem); i++ {
+		p2.sem <- struct{}{}
+	}
+	waitCtx, waitCancel := context.WithCancel(context.Background())
+	done := make(chan domain.ProbeResult, 1)
+	go func() { done <- p2.Probe(waitCtx, staticSpec("http://127.0.0.1:1")) }()
+	require.Eventually(t, func() bool { return len(p2.waiters) == 1 }, time.Second, time.Millisecond)
+	waitCancel()
+	require.Equal(t, "probe canceled", (<-done).Error)
+	require.Eventually(t, func() bool { return len(p2.waiters) == 0 }, time.Second, time.Millisecond)
 }

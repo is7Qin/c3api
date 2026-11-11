@@ -89,22 +89,35 @@ func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeR
 	}
 	pctx, cancel := context.WithTimeout(ctx, p.timeout)
 	defer cancel()
+	// 已取消/已过期的请求先按传输失败返回，不能被下面的队列满掩盖成 busy。
+	if err := pctx.Err(); err != nil {
+		return finalizeResult(spec, domain.ProbeResult{Error: classifyTransportError(err)})
+	}
 	// 先非阻塞抢并发槽；槽满才进入有界等待队列。等待队列也满 ⇒ 立即
 	// probe busy（不再保留更多请求体/模型串），避免无限 waiter 的内存放大。
+	// 等待名额只在排队期间持有：拿到并发槽后立即释放，主动探测不占 waiter 容量。
 	select {
 	case p.sem <- struct{}{}:
 		defer func() { <-p.sem }()
 	default:
 		select {
 		case p.waiters <- struct{}{}:
-			defer func() { <-p.waiters }()
 		default:
+			if err := pctx.Err(); err != nil {
+				return finalizeResult(spec, domain.ProbeResult{Error: classifyTransportError(err)})
+			}
 			return finalizeResult(spec, domain.ProbeResult{Error: "probe busy"})
 		}
 		select {
 		case p.sem <- struct{}{}:
+			<-p.waiters
+			if err := pctx.Err(); err != nil {
+				<-p.sem
+				return finalizeResult(spec, domain.ProbeResult{Error: classifyTransportError(err)})
+			}
 			defer func() { <-p.sem }()
 		case <-pctx.Done():
+			<-p.waiters
 			return finalizeResult(spec, domain.ProbeResult{
 				Error: classifyTransportError(pctx.Err()),
 			})

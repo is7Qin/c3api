@@ -538,6 +538,12 @@ func TestProbeRejectsDeletedAndOversizedAccount(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotFound)
 	require.Zero(t, prober.calls, "软删账号不得进入探测执行器")
 
+	// 用通配模板证明拒绝来自长度守卫，而不是模型恰好不在候选内。
+	wildcard := *tpl
+	wildcard.Models = nil
+	wildcard.FormatModels = nil
+	wildcard.ModelMapping = nil
+	acc.Template = &wildcard
 	acc.DeletedAt = nil
 	oversized := strings.Repeat("m", domain.ProbeMaxModelLen+1)
 	_, err = svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
@@ -545,4 +551,29 @@ func TestProbeRejectsDeletedAndOversizedAccount(t *testing.T) {
 	})
 	require.ErrorIs(t, err, ErrInvalidInput)
 	require.Zero(t, prober.calls, "超长模型不得进入探测执行器")
+}
+
+// TestProbeInputErrorsBoundedBeforeStore：非法 format / 超长 model 在仓储等待前
+// 就被拒绝，错误文本不回显任意长度的输入（避免 1 MiB 回显与 DB 池排队放大）。
+func TestProbeInputErrorsBoundedBeforeStore(t *testing.T) {
+	store := &probeReadOnlyStore{}
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(store, prober, nil)
+
+	longFormat := strings.Repeat("f", 1<<20)
+	_, err := svc.ProbeAccount(context.Background(), 1, AccountProbeRequest{
+		Model: "m1", Format: domain.RequestFormat(longFormat),
+	})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	require.NotContains(t, err.Error(), longFormat)
+	require.Less(t, len(err.Error()), 128)
+
+	longModel := strings.Repeat("m", 1<<20)
+	_, err = svc.ProbeAccount(context.Background(), 1, AccountProbeRequest{
+		Model: longModel, Format: domain.FormatOpenAIChat,
+	})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	require.NotContains(t, err.Error(), longModel)
+	require.Less(t, len(err.Error()), 128)
+	require.Zero(t, prober.calls)
 }

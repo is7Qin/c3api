@@ -54,30 +54,33 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	if s.prober == nil {
 		return nil, errors.New("service: account probe prober not configured")
 	}
-	acc, err := s.store.GetAccountWithTemplate(ctx, id)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-	// GET 单个账号允许读到软删行（编辑回显），探测是消费动作：已删除账号不得
-	// 继续用其存储凭据发上游请求。
-	if acc.DeletedAt != nil {
-		return nil, mapRepoErr(fmt.Errorf("%w: account %d is deleted", repository.ErrNotFound, id))
-	}
-	tpl := acc.Template
-	if tpl == nil {
-		return nil, fmt.Errorf("service: account %d has no template", id)
-	}
-
+	// 先做**不依赖存储**的输入校验：非法 format/超长 model 不得进入仓储等待
+	// （否则大量并发请求会在 DB 池前排同样长的队并保留大字符串），错误文本也
+	// 不回显任意长度的输入。
 	format := req.Format
 	model := req.Model
 	if _, ok := probeFormats[format]; !ok {
-		return nil, fmt.Errorf("%w: invalid probe format %q", ErrInvalidInput, format)
+		return nil, fmt.Errorf("%w: invalid probe format", ErrInvalidInput)
 	}
 	if strings.TrimSpace(model) == "" {
 		return nil, fmt.Errorf("%w: probe model is empty", ErrInvalidInput)
 	}
 	if len(model) > domain.ProbeMaxModelLen {
 		return nil, fmt.Errorf("%w: probe model exceeds %d bytes", ErrInvalidInput, domain.ProbeMaxModelLen)
+	}
+
+	acc, err := s.store.GetAccountWithTemplate(ctx, id)
+	if err != nil {
+		return nil, mapRepoErr(err)
+	}
+	// GET 单个账号允许读到软删行（编辑回显），探测是消费动作：已删除账号不得
+	// 继续用其存储凭据发上游请求。错误文本与不存在保持同一形态，不暴露删除态。
+	if acc.DeletedAt != nil {
+		return nil, mapRepoErr(fmt.Errorf("%w: id=%d missing", repository.ErrNotFound, id))
+	}
+	tpl := acc.Template
+	if tpl == nil {
+		return nil, fmt.Errorf("service: account %d has no template", id)
 	}
 	if !tpl.FormatSupports(format, model) || !(tpl.Serves(model) || !tpl.HasModelSpace()) {
 		return nil, fmt.Errorf("%w: model %q is not eligible for template format %q", ErrInvalidInput, model, format)
