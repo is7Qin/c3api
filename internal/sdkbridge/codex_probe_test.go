@@ -444,6 +444,121 @@ func TestCodexProbeNewlineFlood(t *testing.T) {
 	require.Less(t, allocated, uint64(16<<20), "2 MiB 换行洪泛不得产生约 48 MiB 的行头分配")
 }
 
+// chunkedProbeBody 按固定块大小交付 body（确定性复现「单行事件分块到达」与
+// 「终态后仍有预读尾巴」的读取边界）。
+type chunkedProbeBody struct {
+	data   []byte
+	chunk  int
+	off    int
+	closes atomic.Int64
+}
+
+func (b *chunkedProbeBody) Read(p []byte) (int, error) {
+	if b.off >= len(b.data) {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > b.chunk {
+		n = b.chunk
+	}
+	if n > len(b.data)-b.off {
+		n = len(b.data) - b.off
+	}
+	copy(p, b.data[b.off:b.off+n])
+	b.off += n
+	return n, nil
+}
+
+func (b *chunkedProbeBody) Close() error {
+	b.closes.Add(1)
+	return nil
+}
+
+// TestCodexProbeLongLineChunked B4：2 MiB 单行事件以 1 KiB 块到达时，扫描游标
+// 必须只推进新增字节（旧实现每块从行首重扫，约 2 GiB 扫描量），在 watchdog 内
+// 正常收齐并返回。
+func TestCodexProbeLongLineChunked(t *testing.T) {
+	head := []byte("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}],\"pad\":\"")
+	tail := []byte("\"}}\n\n")
+	target := domain.ProbeMaxBodyBytes
+	require.Less(t, len(head)+len(tail), target)
+	event := make([]byte, 0, target)
+	event = append(event, head...)
+	event = append(event, bytes.Repeat([]byte("x"), target-len(head)-len(tail))...)
+	event = append(event, tail...)
+	require.Len(t, event, target)
+
+	body := &chunkedProbeBody{data: event, chunk: 1024}
+	tr := probe.NewCappedTransport(&staticResponseTransport{body: body})
+	type outcome struct {
+		status int
+		body   []byte
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		status, got, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", tr, sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+		done <- outcome{status: status, body: got, err: err}
+	}()
+
+	select {
+	case got := <-done:
+		require.NoError(t, got.err)
+		require.Equal(t, http.StatusOK, got.status)
+		require.Len(t, got.body, target)
+		require.True(t, bytes.HasSuffix(got.body, tail), "事件必须完整收齐到空行边界")
+	case <-time.After(5 * time.Second):
+		t.Fatal("2 MiB 单行事件分块扫描未在 watchdog 内完成")
+	}
+	require.Equal(t, int64(1), body.closes.Load(), "body 必须恰好关闭一次")
+}
+
+// TestCodexProbeTerminalTrim B4/A4：终态空行之后紧跟 >2 MiB 尾巴时只返回到
+// 终态空行为止的字节；同一次 read 的预读尾巴不得被当作溢出。
+func TestCodexProbeTerminalTrim(t *testing.T) {
+	limit := domain.ProbeMaxBodyBytes + 1
+	chunk := 1000
+	end := limit/chunk*chunk + 100 // ∈ (limit-chunk, limit-1]，落在最后一次 read
+	head := []byte("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}],\"pad\":\"")
+	tail := []byte("\"}}\n\n")
+	require.Less(t, len(head)+len(tail), end)
+	event := make([]byte, 0, end)
+	event = append(event, head...)
+	event = append(event, bytes.Repeat([]byte("x"), end-len(head)-len(tail))...)
+	event = append(event, tail...)
+	require.Len(t, event, end)
+
+	data := append(append([]byte{}, event...), bytes.Repeat([]byte("y"), domain.ProbeMaxBodyBytes)...)
+	body := &chunkedProbeBody{data: data, chunk: chunk}
+	tr := probe.NewCappedTransport(&staticResponseTransport{body: body})
+	status, got, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", tr, sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, got, end, "body 必须在终态空行处截断，而不是返回整块预读缓冲（2 MiB+1）")
+	require.True(t, bytes.HasSuffix(got, tail))
+	require.Equal(t, int64(1), body.closes.Load(), "body 必须恰好关闭一次")
+}
+
+// TestCodexProbeTinyEventFloodTerminalScan B4：2 MiB `data:0\n\n` 微事件洪泛在
+// readProbeBody 的逐事件终态检测下也不得产生 O(events) 分配，body 恰好关闭一次。
+func TestCodexProbeTinyEventFloodTerminalScan(t *testing.T) {
+	event := []byte("data:0\n\n")
+	flood := bytes.Repeat(event, domain.ProbeMaxBodyBytes/len(event))
+	body := &chunkedProbeBody{data: flood, chunk: 32 * 1024}
+	tr := probe.NewCappedTransport(&staticResponseTransport{body: body})
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	status, got, err := sdkbridge.ProbeResponses(context.Background(), "pat", "", tr, sdkbridge.ProbeResponsesPayload("m"), 10*time.Second)
+	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	require.Len(t, got, len(flood))
+	require.Equal(t, int64(1), body.closes.Load(), "body 必须恰好关闭一次")
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("2 MiB tiny-event terminal scan allocated %d bytes", allocated)
+	require.Less(t, allocated, uint64(16<<20), "逐事件终态检测不得为每个微事件分配 buffer")
+}
+
 // TestCodexProbeErrorTerminal A20：error 事件 + 空行是终态；上游不关流也要立即
 // 返回（而不是等到超时），body 恰好关闭一次。
 func TestCodexProbeErrorTerminal(t *testing.T) {

@@ -285,6 +285,11 @@ func transportOrDefault(rt http.RoundTripper) http.RoundTripper {
 	return rt
 }
 
+// errBlockedOrigin 是 originGuard 的拒绝哨兵：classifyTransportError 用
+// errors.Is 识别（而不是匹配错误文本），普通传输失败不会因 host/URL 文本
+// 含 "redirect" 被误分类。
+var errBlockedOrigin = errors.New("probe blocked request")
+
 // originGuard 只放行与目标 origin（scheme + hostname + 规范化端口）完全一致的
 // 请求；其余立即失败（凭据不会被重定向/换端口带到第二个 origin）。
 type originGuard struct {
@@ -301,7 +306,7 @@ func (g *originGuard) RoundTrip(req *http.Request) (*http.Response, error) {
 		if u != nil {
 			target = u.Scheme + "://" + u.Host
 		}
-		return nil, fmt.Errorf("probe blocked request to %s", target)
+		return nil, fmt.Errorf("%w to %s", errBlockedOrigin, target)
 	}
 	return g.next.RoundTrip(req)
 }
@@ -528,10 +533,8 @@ func validateStatic(format domain.RequestFormat, body []byte) bool {
 
 // ---- SSE 事件块解析（spec §5.1/§5.2） ----
 
-type sseEvent struct {
-	name string
-	data []byte
-}
+// sseDone 是 SSE 的 `[DONE]` 哨兵（线上以 data 字段给出）。
+var sseDone = []byte("[DONE]")
 
 // sseLineEmpty 只把真正的空行（`\n` 或 `\r\n`）视为事件分隔；仅含空白的行
 // 属于事件内容（spec §5.1/§5.2，A20）。
@@ -545,22 +548,85 @@ func sseLineEmpty(line []byte) bool {
 	return len(line) == 0
 }
 
-// parseSSEEvents 按真正空行分块；同一事件的多行 data 用 "\n" 合并（SSE 规范），
-// 因此被拆成多行的 response.completed 仍能还原成完整 JSON。用索引扫描而不是
-// bytes.Split：2 MiB 纯换行 body 不能产生百万级行头分配。
-func parseSSEEvents(body []byte) []sseEvent {
-	events := make([]sseEvent, 0, 4)
+// validateCodexSSE 单遍扫描 SSE 终态：response.completed 且 response.output
+// 首元素为对象 = 成功；response.failed / error（事件名或 data.type，失败信号
+// 优先于 data.type 的 response.completed）事件 = 失败（固定文案 + 白名单 code）。
+//
+// 扫描按索引推进，单行 data 直接引用 body 切片，只有多行 data 才复制到复用的
+// 缓冲区：2 MiB 的 `data:0\n\n` 微事件洪泛分配 O(body)，不是 O(events)。字段
+// 解析（含行首空白）与 sdkbridge.codexTerminalBlock 逐字一致。
+func validateCodexSSE(body []byte) (bool, string, string) {
 	var (
-		name string
-		data []byte
+		name    string
+		single  []byte
+		hasData bool
+		multi   bool
+		joined  bytes.Buffer
 	)
-	flush := func() {
-		if len(data) > 0 {
-			events = append(events, sseEvent{name: name, data: data})
-		}
-		name, data = "", nil
+	reset := func() {
+		name, single, hasData, multi = "", nil, false, false
+		joined.Reset()
 	}
-	for start := 0; start < len(body); {
+	eventData := func() []byte {
+		if !hasData {
+			return nil
+		}
+		if multi {
+			return joined.Bytes()
+		}
+		return single
+	}
+	addData := func(chunk []byte) {
+		if !hasData {
+			single, hasData = chunk, true
+			return
+		}
+		if !multi {
+			multi = true
+			joined.Reset()
+			joined.Write(single)
+		}
+		// 与 SSE 规范一致：多行 data 以 '\n' 合并（空行也参与分隔）。
+		if joined.Len() > 0 {
+			joined.WriteByte('\n')
+		}
+		joined.Write(chunk)
+	}
+	// evaluate 返回 (terminal, success, error, detail)；非终态事件返回 false。
+	evaluate := func() (bool, bool, string, string) {
+		data := eventData()
+		if len(data) == 0 || bytes.Equal(data, sseDone) {
+			return false, false, "", ""
+		}
+		// 深层嵌套事件在 gjson 之前丢弃（线性深度守卫）。
+		if !domain.ShallowJSON(data, domain.ProbeMaxJSONDepth) || !gjson.ValidBytes(data) {
+			return false, false, "", ""
+		}
+		typ := gjson.GetBytes(data, "type").String()
+		if typ == "" {
+			typ = name
+		}
+		// 事件名失败优先：`event: error` + data.type=response.completed 也是失败。
+		if name == "response.failed" || name == "error" || typ == "response.failed" || typ == "error" {
+			return true, false, "upstream stream failed", errorCodeDetail(data)
+		}
+		if typ == "response.completed" {
+			output := gjson.GetBytes(data, "response.output")
+			if output.IsArray() && output.Get("0").IsObject() {
+				return true, true, "", ""
+			}
+			return true, false, "upstream response missing usable output", ""
+		}
+		return false, false, "", ""
+	}
+	for start := 0; start <= len(body); {
+		if start == len(body) {
+			// EOF 也是事件边界（无尾随空行），与 readProbeBody 一致。
+			if terminal, success, errMsg, detail := evaluate(); terminal {
+				return success, errMsg, detail
+			}
+			break
+		}
 		lineEnd := bytes.IndexByte(body[start:], '\n')
 		var line []byte
 		if lineEnd < 0 {
@@ -571,49 +637,20 @@ func parseSSEEvents(body []byte) []sseEvent {
 			start += lineEnd + 1
 		}
 		if sseLineEmpty(line) {
-			flush()
+			if terminal, success, errMsg, detail := evaluate(); terminal {
+				return success, errMsg, detail
+			}
+			reset()
 			continue
 		}
-		field := bytes.TrimSuffix(line, []byte("\n"))
-		field = bytes.TrimSuffix(field, []byte("\r"))
+		// 行首空白与终态检测使用同一规则：` data:` 也是 data 字段，不能被一边
+		// 忽略、另一边当内容（否则同一事件在两边语义不同）。
+		field := bytes.TrimSpace(line)
 		switch {
 		case bytes.HasPrefix(field, []byte("event:")):
 			name = string(bytes.TrimSpace(field[len("event:"):]))
 		case bytes.HasPrefix(field, []byte("data:")):
-			chunk := bytes.TrimSpace(field[len("data:"):])
-			if len(data) > 0 {
-				data = append(data, '\n')
-			}
-			data = append(data, chunk...)
-		}
-	}
-	flush()
-	return events
-}
-
-// validateCodexSSE 扫描 SSE 终态：response.completed 且 response.output 首元素
-// 为对象 = 成功；response.failed / error 事件 = 失败（固定文案 + 白名单 code）。
-func validateCodexSSE(body []byte) (bool, string, string) {
-	for _, ev := range parseSSEEvents(body) {
-		// 深层嵌套事件在 gjson 之前丢弃（线性深度守卫）。
-		if bytes.Equal(ev.data, []byte("[DONE]")) ||
-			!domain.ShallowJSON(ev.data, domain.ProbeMaxJSONDepth) ||
-			!gjson.ValidBytes(ev.data) {
-			continue
-		}
-		typ := gjson.GetBytes(ev.data, "type").String()
-		if typ == "" {
-			typ = ev.name
-		}
-		switch typ {
-		case "response.completed":
-			output := gjson.GetBytes(ev.data, "response.output")
-			if output.IsArray() && output.Get("0").IsObject() {
-				return true, "", ""
-			}
-			return false, "upstream response missing usable output", ""
-		case "response.failed", "error":
-			return false, "upstream stream failed", errorCodeDetail(ev.data)
+			addData(bytes.TrimSpace(field[len("data:"):]))
 		}
 	}
 	return false, "upstream stream failed", ""
@@ -694,8 +731,21 @@ func isTimeoutError(err error) bool {
 	return errors.As(err, &ne) && ne.Timeout()
 }
 
-// classifyTransportError 把传输层错误归一为固定文案；redirect/Location 解析
-// 失败一律记 cross-origin 阻止，绝不回显 URL/Location/底层错误文本。
+// isMalformedLocationError 识别 Go http.Client 解析重定向 Location 失败时返回
+// 的特定错误：*url.Error 包裹 "failed to parse Location header"。只有这一种
+// redirect 解析错误归为 cross-origin 阻止；host/URL 文本里出现 "redirect" 的
+// 普通传输失败不得误分类。
+func isMalformedLocationError(err error) bool {
+	var uerr *url.Error
+	if !errors.As(err, &uerr) || uerr.Err == nil {
+		return false
+	}
+	return strings.Contains(uerr.Err.Error(), "failed to parse Location header")
+}
+
+// classifyTransportError 把传输层错误归一为固定文案；originGuard 拒绝与
+// malformed Location 解析失败记 cross-origin 阻止，绝不回显 URL/Location/
+// 底层错误文本。
 func classifyTransportError(err error) string {
 	if err == nil {
 		return "probe request failed"
@@ -706,10 +756,7 @@ func classifyTransportError(err error) string {
 	if errors.Is(err, context.Canceled) {
 		return "probe canceled"
 	}
-	msg := err.Error()
-	if strings.Contains(msg, "probe blocked request to") ||
-		strings.Contains(msg, "failed to parse Location header") ||
-		strings.Contains(msg, "redirect") {
+	if errors.Is(err, errBlockedOrigin) || isMalformedLocationError(err) {
 		return "probe blocked cross-origin redirect"
 	}
 	return "probe request failed"

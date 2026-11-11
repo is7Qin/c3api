@@ -46,3 +46,10 @@ export function probeModelsFor(template: ProbeTemplate, format: ProbeFormat): { 
   const models = [...new Set(candidates.filter(model => formatSupports(template, format, model)))].sort()
   return { models, wildcard: hasWildcardModelSpace(template) }
 }
+
+// 通配模板允许自由输入；受控 Combobox 的 value 必须跟随输入本身（而不是
+// “输入是否在候选内”）。否则关闭弹层/清除受控值时 null 会把已输入的模型抹掉，
+// 结果面板也随之失效。空串仍映射为 null（未选择）。
+export function probeComboboxValue(model: string): string | null {
+  return model || null
+}

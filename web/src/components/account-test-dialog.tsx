@@ -8,7 +8,7 @@ import { Check, Copy, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAccountSurface } from '@/lib/api/scope'
 import type { components } from '@/lib/api/schema.d.ts'
-import { probeFormats, probeModelsFor, type ProbeFormat } from '@/lib/account-test'
+import { probeComboboxValue, probeFormats, probeModelsFor, type ProbeFormat } from '@/lib/account-test'
 import { copyText } from '@/components/key-box'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -112,7 +112,7 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
           <Label htmlFor="account-test-model">{t('accounts.test.model')}</Label>
           <Combobox
             items={candidates.models}
-            value={candidates.models.includes(model) ? model : null}
+            value={probeComboboxValue(model)}
             inputValue={model}
             onValueChange={next => changeModel(next ?? '')}
             onInputValueChange={changeModel}

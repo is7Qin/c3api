@@ -355,8 +355,8 @@ func TestProbeDeepJSON(t *testing.T) {
 	require.Empty(t, detail)
 }
 
-// TestProbeCodexNewlineFlood A20：2 MiB 纯换行 body 经 parseSSEEvents 必须被索引
-// 扫描消费，不能产生 bytes.Split 的百万级行头分配（旧实现约 48 MiB）。
+// TestProbeCodexNewlineFlood A20：2 MiB 纯换行 body 经单遍扫描必须被索引消费，
+// 不能产生 bytes.Split 的百万级行头分配（旧实现约 48 MiB）。
 func TestProbeCodexNewlineFlood(t *testing.T) {
 	flood := bytes.Repeat([]byte("\n"), domain.ProbeMaxBodyBytes)
 	var before, after runtime.MemStats
@@ -369,7 +369,144 @@ func TestProbeCodexNewlineFlood(t *testing.T) {
 	require.Empty(t, detail)
 	allocated := after.TotalAlloc - before.TotalAlloc
 	t.Logf("2 MiB newline flood parse allocated %d bytes", allocated)
-	require.Less(t, allocated, uint64(8<<20), "parseSSEEvents 不得为每行分配切片头")
+	require.Less(t, allocated, uint64(8<<20), "SSE 扫描不得为每行分配切片头")
+}
+
+// TestProbeCodexNamedFailureWins A4/B4：事件名失败（error / response.failed）优先于
+// data.type 的 response.completed；反向 data.type 失败也压过事件名成功。
+func TestProbeCodexNamedFailureWins(t *testing.T) {
+	const completed = `{"type":"response.completed","response":{"output":[{"type":"message"}]}}`
+	for _, name := range []string{"error", "response.failed"} {
+		success, errMsg, detail := validateCodexSSE([]byte("event: " + name + "\ndata: " + completed + "\n\n"))
+		require.False(t, success, "event: %s + data.type=response.completed 必须失败", name)
+		require.Equal(t, "upstream stream failed", errMsg)
+		require.Empty(t, detail)
+	}
+
+	// 反向：data.type 失败 + 事件名成功 → 失败（detail 仍只取白名单 code）。
+	success, errMsg, detail := validateCodexSSE([]byte(
+		"event: response.completed\ndata: {\"type\":\"response.failed\",\"error\":{\"code\":\"server_error\"}}\n\n"))
+	require.False(t, success)
+	require.Equal(t, "upstream stream failed", errMsg)
+	require.Equal(t, "code=server_error", detail)
+
+	// 事件名与 data.type 都是 completed 时仍是成功，不能误伤。
+	success, errMsg, detail = validateCodexSSE([]byte("event: response.completed\ndata: " + completed + "\n\n"))
+	require.True(t, success)
+	require.Empty(t, errMsg)
+	require.Empty(t, detail)
+}
+
+// TestProbeCodexFieldWhitespaceConsistent A4：终态检测与校验必须采用同一字段
+// 解析规则——行首空白的 ` data:` 也是 data 行。
+func TestProbeCodexFieldWhitespaceConsistent(t *testing.T) {
+	// 与 sdkbridge.codexTerminalBlock 相同的合并语义：后一行 data 污染多行事件，
+	// 事件非法 → 既不是终态也不能判成功。
+	body := []byte("event: response.completed\n" +
+		"data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n" +
+		" data: garbage\n\n")
+	success, errMsg, detail := validateCodexSSE(body)
+	require.False(t, success, "行首空白 data 必须参与合并，不能被忽略成成功")
+	require.Equal(t, "upstream stream failed", errMsg)
+	require.Empty(t, detail)
+
+	// 行首空白本身不影响字段识别：整行前置空白的 event/data 仍可成功。
+	body = []byte(" event: response.completed\n" +
+		" data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n\n")
+	success, errMsg, _ = validateCodexSSE(body)
+	require.True(t, success)
+	require.Empty(t, errMsg)
+}
+
+// TestProbeCodexTinyEventFlood B4：2 MiB 的 `data:0\n\n` 微事件洪泛必须失败且
+// 分配 O(body)（旧实现为每个事件保留描述符/缓冲，约 16 MiB+）。
+func TestProbeCodexTinyEventFlood(t *testing.T) {
+	event := []byte("data:0\n\n")
+	flood := bytes.Repeat(event, domain.ProbeMaxBodyBytes/len(event))
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	success, errMsg, detail := validateCodexSSE(flood)
+	runtime.ReadMemStats(&after)
+
+	require.False(t, success)
+	require.Equal(t, "upstream stream failed", errMsg)
+	require.Empty(t, detail)
+	allocated := after.TotalAlloc - before.TotalAlloc
+	t.Logf("2 MiB tiny-event flood validation allocated %d bytes", allocated)
+	require.Less(t, allocated, uint64(8<<20), "微事件洪泛的分配必须是 O(body)，不是 O(events)")
+}
+
+// chunkedBody 按固定块大小交付 body：确定性构造「终态空行落在最后一次被
+// room 截断的 read 内、其后仍有预读尾巴」的边界。
+type chunkedBody struct {
+	data   []byte
+	chunk  int
+	off    int
+	closes atomic.Int64
+}
+
+func (b *chunkedBody) Read(p []byte) (int, error) {
+	if b.off >= len(b.data) {
+		return 0, io.EOF
+	}
+	n := len(p)
+	if n > b.chunk {
+		n = b.chunk
+	}
+	if n > len(b.data)-b.off {
+		n = len(b.data) - b.off
+	}
+	copy(p, b.data[b.off:b.off+n])
+	b.off += n
+	return n, nil
+}
+
+func (b *chunkedBody) Close() error {
+	b.closes.Add(1)
+	return nil
+}
+
+// bodyResponseTransport 直接返回 200 响应（无网络），body 由测试控制。
+type bodyResponseTransport struct{ body io.ReadCloser }
+
+func (t *bodyResponseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     make(http.Header),
+		Body:       t.body,
+	}, nil
+}
+
+// TestProbeCodexTerminalOffsetNoOverflow B4/A4：终态事件之后紧跟 >2 MiB 尾巴时，
+// 只返回到终态空行为止的字节——同一次 read 的预读尾巴不得把有效终态误判成
+// 2 MiB 溢出。
+func TestProbeCodexTerminalOffsetNoOverflow(t *testing.T) {
+	limit := int(domain.ProbeMaxBodyBytes) + 1
+	chunk := 1000
+	// 终态空行落在最后一次（被 room 截断的）read 内：end ∈ (2097000, 2097152]。
+	end := limit/chunk*chunk + 100
+	head := []byte("data: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}],\"pad\":\"")
+	tail := []byte("\"}}\n\n")
+	require.Less(t, len(head)+len(tail), end)
+	event := make([]byte, 0, end)
+	event = append(event, head...)
+	event = append(event, bytes.Repeat([]byte("x"), end-len(head)-len(tail))...)
+	event = append(event, tail...)
+	require.Len(t, event, end)
+
+	data := append(append([]byte{}, event...), bytes.Repeat([]byte("y"), domain.ProbeMaxBodyBytes)...)
+	body := &chunkedBody{data: data, chunk: chunk}
+	spec := staticSpec("")
+	spec.CredentialType = credential.TypeCodexPAT
+	spec.Format = domain.FormatOpenAIResponses
+	spec.Credential = "pat-test"
+	res := newTestProber(t, &bodyResponseTransport{body: body}, 5*time.Second).Probe(context.Background(), spec)
+	require.True(t, res.Success, "终态后的预读尾巴不得造成 2 MiB 溢出")
+	require.Equal(t, http.StatusOK, res.StatusCode)
+	require.Empty(t, res.Error)
+	require.Empty(t, res.Detail)
+	require.Equal(t, int64(1), body.closes.Load(), "body 必须恰好关闭一次")
 }
 
 // TestProbeRedirectBlocked A11：302 不跟随——第二台 httptest 0 请求，结果失败且
@@ -503,6 +640,22 @@ func TestClassifyTransportError(t *testing.T) {
 	require.Equal(t, "probe canceled", classifyTransportError(context.Canceled))
 	require.Equal(t, "probe request failed", classifyTransportError(nil))
 	require.Equal(t, "probe request failed", classifyTransportError(errors.New("boom")))
+
+	// 普通失败只因 host/URL 文本包含 "redirect" 不得误分类为 cross-origin 阻止。
+	require.Equal(t, "probe request failed", classifyTransportError(&url.Error{
+		Op:  "Post",
+		URL: "https://redirect.example.com/v1/chat/completions",
+		Err: errors.New("dial tcp: lookup redirect.example.com: no such host"),
+	}))
+	require.Equal(t, "probe request failed", classifyTransportError(errors.New("redirect target unreachable")))
+
+	// 只有 originGuard 哨兵与 malformed Location 解析失败归为 cross-origin 阻止。
+	require.Equal(t, "probe blocked cross-origin redirect", classifyTransportError(fmt.Errorf("%w to https://evil.example.com", errBlockedOrigin)))
+	require.Equal(t, "probe blocked cross-origin redirect", classifyTransportError(&url.Error{
+		Op:  "Post",
+		URL: "https://api.example.com/v1/chat/completions",
+		Err: errors.New(`failed to parse Location header "http://[::1]:bad/%zz": invalid URL escape "%zz"`),
+	}))
 }
 
 // TestProbeResponseTooLarge A17：静态族 200 体 >2 MiB → 失败并关闭连接（恰好

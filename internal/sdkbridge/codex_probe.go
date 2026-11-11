@@ -120,7 +120,7 @@ func readProbeBody(rc io.ReadCloser) ([]byte, error) {
 	limit := int64(domain.ProbeMaxBodyBytes) + 1
 	var buf bytes.Buffer
 	chunk := make([]byte, 32*1024)
-	eventStart, lineStart := 0, 0
+	eventStart, lineStart, scanFrom := 0, 0, 0
 	for {
 		room := limit - int64(buf.Len())
 		if room <= 0 {
@@ -134,20 +134,27 @@ func readProbeBody(rc io.ReadCloser) ([]byte, error) {
 		if n > 0 {
 			_, _ = buf.Write(readBuf[:n])
 			data := buf.Bytes()
-			for lineStart < len(data) {
-				idx := bytes.IndexByte(data[lineStart:], '\n')
+			// scanFrom 只在换行边界推进；未完成的尾行这里只扫新增字节，
+			// 不会每块从 lineStart 重扫（2 MiB 单行 + 1 KiB 块不再是 O(n²)）。
+			// lineStart 保留未完成行的起点，空白行判定不看被块边界切开的尾巴。
+			for scanFrom < len(data) {
+				idx := bytes.IndexByte(data[scanFrom:], '\n')
 				if idx < 0 {
+					scanFrom = len(data)
 					break
 				}
-				lineEnd := lineStart + idx + 1
+				lineEnd := scanFrom + idx + 1
 				if sseLineEmpty(data[lineStart:lineEnd]) {
 					// 空行 = 事件块结束；此时事件已完整收齐，可判定终态。
 					if codexTerminalBlock(data[eventStart:lineEnd]) {
-						return buf.Bytes(), nil
+						// 只返回到终态空行为止的字节：同一次 read 的预读尾巴
+						// 不得把有效终态误判成 2 MiB 溢出。
+						return buf.Bytes()[:lineEnd], nil
 					}
 					eventStart = lineEnd
 				}
 				lineStart = lineEnd
+				scanFrom = lineEnd
 			}
 		}
 		if readErr != nil {
@@ -177,10 +184,17 @@ func sseLineEmpty(line []byte) bool {
 
 // codexTerminalBlock 判断一个 SSE 事件块是否已是终态事件（response.completed /
 // response.failed / error）。data 必须先通过线性深度守卫且能解析成完整 JSON
-// （多行 data 已合并）才可信；事件名仅在 data 合法时兜底。
+// （多行 data 已合并）才可信；事件名仅在 data 合法时兜底。终态判定在空行边界
+// 每个事件只调用一次；单行 data 直接引用块切片、多行才写复用 buffer，因此
+// 微事件洪泛不会为每个事件分配描述符/缓冲。
 func codexTerminalBlock(block []byte) bool {
-	name := ""
-	var data bytes.Buffer
+	var (
+		name    string
+		single  []byte
+		hasData bool
+		multi   bool
+		joined  bytes.Buffer
+	)
 	for start := 0; start < len(block); {
 		lineEnd := bytes.IndexByte(block[start:], '\n')
 		var line []byte
@@ -191,25 +205,43 @@ func codexTerminalBlock(block []byte) bool {
 			line = block[start : start+lineEnd]
 			start += lineEnd + 1
 		}
-		line = bytes.TrimSpace(line)
+		// 与 probe.validateCodexSSE 相同的字段解析规则：行首空白先去掉，` data:`
+		// 也是 data 字段（两边必须一致，不能一边忽略、另一边当内容）。
+		field := bytes.TrimSpace(line)
 		switch {
-		case bytes.HasPrefix(line, []byte("event:")):
-			name = string(bytes.TrimSpace(line[len("event:"):]))
-		case bytes.HasPrefix(line, []byte("data:")):
-			chunk := bytes.TrimSpace(line[len("data:"):])
-			if data.Len() > 0 {
-				data.WriteByte('\n')
+		case bytes.HasPrefix(field, []byte("event:")):
+			name = string(bytes.TrimSpace(field[len("event:"):]))
+		case bytes.HasPrefix(field, []byte("data:")):
+			chunk := bytes.TrimSpace(field[len("data:"):])
+			if !hasData {
+				single, hasData = chunk, true
+				continue
 			}
-			data.Write(chunk)
+			if !multi {
+				multi = true
+				joined.Reset()
+				joined.Write(single)
+			}
+			if joined.Len() > 0 {
+				joined.WriteByte('\n')
+			}
+			joined.Write(chunk)
 		}
 	}
+	data := single
+	if multi {
+		data = joined.Bytes()
+	}
 	// 深度守卫必须先于递归的 gjson 解析：超深事件不是终态。
-	if data.Len() == 0 || !domain.ShallowJSON(data.Bytes(), domain.ProbeMaxJSONDepth) || !gjson.ValidBytes(data.Bytes()) {
+	if len(data) == 0 || !domain.ShallowJSON(data, domain.ProbeMaxJSONDepth) || !gjson.ValidBytes(data) {
 		return false
 	}
-	typ := gjson.GetBytes(data.Bytes(), "type").String()
+	typ := gjson.GetBytes(data, "type").String()
 	if typ == "" {
 		typ = name
 	}
-	return typ == "response.completed" || typ == "response.failed" || typ == "error"
+	// 失败事件名与 response.completed 一样立即停止读取（事件名失败优先于
+	// data.type 的成功信号）；具体成功/失败分类由 probe.validateCodexSSE 做。
+	return name == "response.failed" || name == "error" ||
+		typ == "response.completed" || typ == "response.failed" || typ == "error"
 }

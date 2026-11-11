@@ -4,7 +4,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatSupports, probeFormats, probeModelsFor } from './account-test.ts'
+import { formatSupports, probeComboboxValue, probeFormats, probeModelsFor } from './account-test.ts'
 import type { ProbeTemplate } from './account-test.ts'
 
 const template = (overrides: Partial<ProbeTemplate> = {}): ProbeTemplate => ({
@@ -72,5 +72,24 @@ describe('probeModelsFor', () => {
     assert.equal(probeModelsFor(template({ Models: ['one'] }), 'openai-chat').wildcard, false)
     assert.equal(probeModelsFor(template({ FormatModels: { anthropic: ['one'] } }), 'openai-chat').wildcard, false)
     assert.equal(probeModelsFor(template({ ModelMapping: mapping }), 'openai-chat').wildcard, false)
+  })
+})
+
+describe('probeComboboxValue', () => {
+  it('通配模板的自由输入不在候选中时仍作为受控值保留', () => {
+    const wildcard = template({ Models: [], FormatModels: {}, ModelMapping: {} })
+    const candidates = probeModelsFor(wildcard, 'openai-chat')
+    assert.equal(candidates.wildcard, true)
+    assert.deepEqual(candidates.models, [])
+    // 旧实现把“不在候选内”映射成 null：关闭/清空 Combobox 会连输入一起清掉。
+    assert.equal(candidates.models.includes('free-model') ? 'free-model' : null, null)
+    assert.equal(probeComboboxValue('free-model'), 'free-model')
+    assert.equal(probeComboboxValue(''), null)
+  })
+
+  it('候选内选择与显式清空语义不变', () => {
+    assert.equal(probeComboboxValue('chat-only'), 'chat-only')
+    assert.equal(probeComboboxValue('   '), '   ')
+    assert.equal(probeComboboxValue(''), null)
   })
 })

@@ -35,8 +35,16 @@
    200 体增量扫描，只在**真正空行**（`\n` / `\r\n`）事件边界（或 EOF）判定
    `response.completed` / `response.failed` / `error` 终态并停止读取、关闭——仅含
    空白的行属于事件内容，不是边界；不得按未收齐的前缀提前停止（会截断多行事件并
-   产生二次解析放大），上游不关流不得拖到超时。两个 cap 的 `New*CappedTransport`
-   都只是测试 seam，生产装配只经 `guardedHTTPClient` / `guardedCodexTransport`。
+   产生二次解析放大），上游不关流不得拖到超时。终态检测与下游校验必须用同一字段
+   解析规则（行首空白先去掉，` data:` 同样是 data 行）；事件名
+   `error`/`response.failed` 是失败信号并优先于 data.type 的
+   `response.completed`，失败事件名也立即停止读取。读取保留独立扫描游标，只扫描
+   新增字节（2 MiB 单行分 1 KiB 到达不会 O(n²) 重扫）；停在终态空行时只返回
+   `[:lineEnd]`，不带同一次 read 的预读尾巴（否则有效终态会被误判成 2 MiB 溢出）。
+   校验端是单遍流式扫描：单行 data 直接引用 body 切片，只有多行 data 才写复用
+   缓冲，2 MiB 的 `data:0\n\n` 微事件洪泛分配为 O(body) 而不是 O(events)。
+   两个 cap 的 `New*CappedTransport` 都只是测试 seam，生产装配只经
+   `guardedHTTPClient` / `guardedCodexTransport`。
 5. **并发/超时**：进程内信号量（默认 4）+ `context.WithTimeout`（默认 30s，常量，
    不开配置键）；信号量等待受同一 ctx 约束。任何超时/取消（含响应头已到但 body
    未读完、以及 SDK 吞掉非 200/401 预读 body 错误的情形）→ `status_code=0` + 固定
