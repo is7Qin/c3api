@@ -197,6 +197,15 @@ func newTestCodexRespProxy(t *testing.T, credType credential.Type, accounts map[
 	return p, store
 }
 
+// 健康读回钩子（仅测试，默认 nil = 生产形态不变）：testRuleSink 替换规则 sink
+// （用来接生产同款 LatchSink），testRuntimeHealth 交给调度器（取用准入门）。
+// 本仓测试全串行（t.Parallel=0），包级钩子与 testHealthSink 同款前提；用例
+// 必须自行 t.Cleanup 复位。
+var (
+	testRuleSink      rule.HealthSink
+	testRuntimeHealth *scheduler.RuntimeHealth
+)
+
 // newTestCodexRespProxyAccs 同上，额外返回账号快照集合（用例要改 ext 后 reload）。
 func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts map[int64]*domain.AccountExt, upstream string, mapping map[string]domain.ModelMappingEntry, bill *BillingHooks, logs *captureLogStore, opts ...codexRespProxyOption) (*Proxy, *fakeFailureStore, map[int64][]*domain.Account) {
 	t.Helper()
@@ -229,7 +238,15 @@ func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts 
 		UpstreamStreamTimeout: 30 * time.Second,
 		UsageCapture:          true,
 	}
-	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
+	// 规则 sink / 健康状态机注入点（仅测试，默认 nil = 生产形态不变）：默认 sink 是
+	// testHealthSink（只记录投递），调度器不装配 RuntimeHealth。需要读回**真实**健康
+	// 状态（StateRetryAfter / EffectiveState）的用例成对设置这两个钩子——本仓测试
+	// 全串行（t.Parallel=0），包级钩子与 testHealthSink 同款前提。
+	ruleSink := rule.HealthSink(testHealthSink)
+	if testRuleSink != nil {
+		ruleSink = testRuleSink
+	}
+	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, ruleSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
 	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
@@ -241,7 +258,7 @@ func newTestCodexRespProxyAccs(t *testing.T, credType credential.Type, accounts 
 	schedCfg.Egress = egPool
 	schedCfg.RetireThread = codexClients.RetireThread
 	schedCfg.ClientResources = codexClients
-	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, nil, nil, nil, nil)
+	sched := scheduler.New(schedCfg, noopLoader{accs: accs}, re, testRuntimeHealth, nil, nil, nil)
 	require.NoError(t, sched.InvalidateAllSync())
 	publishTestRoutes(t, sched)
 

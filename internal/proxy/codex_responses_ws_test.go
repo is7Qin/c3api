@@ -51,6 +51,10 @@ type codexWSUpstream struct {
 	steps      []int
 	last       int
 	frameLimit int
+	// frameScript 非 nil 时改写"收到首个客户端帧之后"的行为：按序写这些帧，然后
+	// 正常关闭（不回声、不发内置 created/delta/completed 事件流）。它把"上游只
+	// 回一帧错误就收尾"变成可编程形态（静默/半闭形态仍用 steps+frameLimit）。
+	frameScript []string
 }
 
 func newCodexWSUpstream(t *testing.T, steps []int, frameLimit int) (*httptest.Server, *codexWSUpstream) {
@@ -60,6 +64,20 @@ func newCodexWSUpstream(t *testing.T, steps []int, frameLimit int) (*httptest.Se
 		u.steps = steps
 		u.last = steps[len(steps)-1]
 	}
+	return newCodexWSServer(t, u), u
+}
+
+// newCodexWSScriptUpstream 同 newCodexWSUpstream，但首个客户端帧之后按序下发
+// frameScript 并以 1000 关闭（复用同一个 handler 与观测面）。
+func newCodexWSScriptUpstream(t *testing.T, frames ...string) (*httptest.Server, *codexWSUpstream) {
+	t.Helper()
+	u := &codexWSUpstream{last: 200, frameScript: frames}
+	return newCodexWSServer(t, u), u
+}
+
+// newCodexWSServer 是两种构造共用的 handler 装配（u 必须已填好 steps/frameScript）。
+func newCodexWSServer(t *testing.T, u *codexWSUpstream) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
@@ -97,7 +115,18 @@ func newCodexWSUpstream(t *testing.T, steps []int, frameLimit int) (*httptest.Se
 			}
 			u.mu.Lock()
 			u.frames = append(u.frames, string(msg))
+			script := u.frameScript
 			u.mu.Unlock()
+			if script != nil {
+				// 脚本模式：按序下发后正常关闭（不回声、不发内置事件流）。
+				for _, f := range script {
+					if err := c.Write(r.Context(), typ, []byte(f)); err != nil {
+						return
+					}
+				}
+				_ = c.Close(websocket.StatusNormalClosure, "")
+				return
+			}
 			if !streamed {
 				streamed = true
 				for _, f := range []string{
@@ -125,7 +154,7 @@ func newCodexWSUpstream(t *testing.T, steps []int, frameLimit int) (*httptest.Se
 		}
 	}))
 	t.Cleanup(srv.Close)
-	return srv, u
+	return srv
 }
 
 func (u *codexWSUpstream) upgradesN() int {

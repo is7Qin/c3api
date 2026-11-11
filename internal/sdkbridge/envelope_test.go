@@ -12,8 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sdkHTTPError 模拟 SDK 内部 HTTP 错误（仅 StatusCode+Raw，无 RawJSON()——
-// 适配层包装的动机）。
+// sdkHTTPError 模拟 SDK 内部 HTTP 错误：刻意只用裸字段（StatusCode+Raw），不带
+// StatusCode()/RawJSON() 方法——沿用"包装动机"的原始形状。注意 SDK 的 *HTTPError
+// 现在**有** RawJSON()，但 StatusCode 仍是字段，方法面依旧不完整。
 type sdkHTTPError struct {
 	status int
 	raw    string

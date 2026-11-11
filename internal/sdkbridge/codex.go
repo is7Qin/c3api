@@ -236,6 +236,8 @@ func (a *Codex) DirectEgress() *egress.Client {
 // eg 为本次出口（**必填**：`sel.Egress`，恒非 nil；直连就是池的 Direct）。
 // 错误翻译（translateError）：SDK *HTTPError → 网关侧信封错误（EnvelopeError——
 // StatusCode()/RawJSON()/Unwrap 链，网关 statusOf/upstreamErrMsg 零改动复用）；
+// 注：*HTTPError 自身现在也有 RawJSON()（SDK 侧 WS 错误帧翻译用），包装保留是为了
+// 统一 StatusCode() 方法面与 Unwrap 链；
 // fatal 五类（errors.As）→ 统一回调单次上报（双源去重）+ 原样透传（SDK 已
 // 不包装，errors.As 可命中）；RefreshError 可重试不上报。Codex 端点归 SDK 官方默认。
 func (a *Codex) GenerateImage(ctx context.Context, cred *domain.AccountCredential, eg *egress.Client, p *domain.ImageGenParams) (*domain.ImageResponse, error) {
@@ -286,8 +288,9 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 		return fn(domain.ImageStreamEvent{Type: t, B64JSON: ev.B64JSON, Usage: usage})
 	})
 	if err != nil {
-		// 与 GenerateImage 同款（评审修复）：SDK *HTTPError（字段裸类型，无
-		// StatusCode()/RawJSON() 方法）→ EnvelopeError 包装——网关 statusOf/
+		// 与 GenerateImage 同款（评审修复）：SDK *HTTPError（StatusCode/Raw 是**字段**，
+		// 不是 StatusCode()/RawJSON() 方法——RawJSON() 自 SDK 的 WS 错误帧翻译起已存在，
+		// 但方法面仍不完整）→ EnvelopeError 包装——网关 statusOf/
 		// upstreamBody/streamErrMessage 的协议才能消费（4xx 状态 + 原始 body
 		// 透传、SSE error 帧 message 取上游文案）；fatal 五类统一回调单次上报
 		// + 原样透传。fn 回调错误（网关写入失败/客户端断开）非 SDK 错误 →
@@ -1225,7 +1228,8 @@ const rotateWritebackTimeout = 3 * time.Second
 //     请求句柄或凭据快照的版本），与回调路径共享去重但不共享"当前值"。
 //   - RefreshError → 不上报（可重试——对齐 SDK 语义 auth_errors.go:53-58，
 //     网关按既有 failover 分类处理）
-//   - *HTTPError → 信封包装（EnvelopeError：StatusCode()/RawJSON()/Unwrap 链）
+//   - *HTTPError → 信封包装（EnvelopeError：StatusCode()/RawJSON()/Unwrap 链；
+//     *HTTPError 自身已有 RawJSON()，包装保留是为了 StatusCode() 方法面与 Unwrap 链）
 //   - 其余（网络/解析等）原样透传（code 0 连接级分类）
 //
 // 背压（codexsdk.ErrWSBackpressure）是**传输层**错误而非协议终态：上游没坏、

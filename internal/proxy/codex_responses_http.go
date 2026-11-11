@@ -400,7 +400,10 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
-			return statusOf(err), nil, false, err
+			// body 带上游原文（SDK *HTTPError.RawJSON）：否则 429 行的 ErrorMessage
+			// 恒空（pipeline.go:355-358 从 body 取 message），"网关侧看不到为什么"的
+			// 原始症状会以"看到 429 但不知道原因"的形式残留。
+			return statusOf(err), upstreamBody(err), false, err
 		default: // 写失败 / 已提交
 			if out.Committed() {
 				writeClientStreamError(out, plan.logFormat, err)

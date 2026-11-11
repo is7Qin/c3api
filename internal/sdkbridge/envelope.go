@@ -6,11 +6,16 @@ package sdkbridge
 
 import "fmt"
 
-// EnvelopeError 网关侧信封错误（信封包装）：SDK 内部 HTTP 错误（*HTTPError
-// 仅 StatusCode+Raw，无 RawJSON()）经适配层（此后）包装为网关侧信封错误——
-// 实现 StatusCode() int + RawJSON() string 协议，网关 statusOf/upstreamBody/
-// upstreamErrMsg 零改动复用（4xx 透传 + error_message 匹配）；**Unwrap 保留
-// errors.As 链**（SDK 错误类别判断 / 双源去重 errors.As 命中穿透本信封）。
+// EnvelopeError 网关侧信封错误（信封包装）：SDK 内部 HTTP 错误经适配层（此后）
+// 包装为网关侧信封错误——实现 StatusCode() int + RawJSON() string 协议，网关
+// statusOf/upstreamBody/upstreamErrMsg 零改动复用（4xx 透传 + error_message
+// 匹配）；**Unwrap 保留 errors.As 链**（SDK 错误类别判断 / 双源去重 errors.As
+// 命中穿透本信封）。
+//
+// 注意（现状）：SDK 的 *HTTPError 自 WS 错误帧翻译落地后**也**有了 RawJSON()
+// （http.go），但包装仍然保留——理由是统一 StatusCode() 方法面（SDK 侧是字段
+// StatusCode，不是方法）与 Unwrap 链形状，且流式读错误不经过 translateError，
+// 包装面不影响那条路。
 // Err 为 nil（无底层 SDK 错误）时 Unwrap 返回 nil——errors.As 链自然中断，
 // 仅信封协议可用。
 type EnvelopeError struct {
