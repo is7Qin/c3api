@@ -38,6 +38,7 @@ export type AccountApi = Pick<
   | 'putAccountExt'
   | 'getAccountGroups'
   | 'recoverAccount'
+  | 'testAccount'
   | 'listAccountsUsage'
   | 'listGroups'
   | 'listTemplates'

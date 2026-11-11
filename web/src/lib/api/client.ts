@@ -149,6 +149,7 @@ export class ApiClient {
   // —— 失效恢复（/recover）：清 failed_at/last_error/failure_source；expected_revision 过期 → 409，
   // 前端须重读账号后重试；响应回显新代际 Account ——
   recoverAccount = (id: number, b: components['schemas']['AccountRecoverBody']) => this.request<components['schemas']['Account']>(`/accounts/${id}/recover`, { method: 'POST', body: JSON.stringify(b) })
+  testAccount = (id: number, b: components['schemas']['AccountTestRequest']) => this.request<components['schemas']['AccountTestResult']>(`/accounts/${id}/test`, { method: 'POST', body: JSON.stringify(b) })
   // —— 出口代理池（spec proxy-pool §6）——
   // 管理面 = adminApi（'/api/admin/proxies'，六个 op 走 admin tag）；
   // 供应商面 = supplierApi（base '/api/user/supplier' ⇒ '/api/user/supplier/proxies'，

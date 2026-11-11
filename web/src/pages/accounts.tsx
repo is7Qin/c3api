@@ -5,7 +5,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
-import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Filter, Settings2, SlidersHorizontal, Upload, LogIn, RotateCcw } from 'lucide-react'
+import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Ellipsis, Filter, SlidersHorizontal, Upload, LogIn, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
@@ -45,7 +45,7 @@ import { Card } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DateTimePicker } from '@/components/ui/date-picker'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -62,6 +62,7 @@ import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
 import { CodexLoginDialog } from '@/components/codex-import/login-dialog'
 import { SupplierPicker } from '@/components/supplier/supplier-picker'
+import { AccountTestDialog } from '@/components/account-test-dialog'
 
 type AccountView = components['schemas']['AccountView']
 type AccountCreate = components['schemas']['AccountCreate']
@@ -622,6 +623,7 @@ export default function Accounts() {
   const clear = (k: keyof BatchDraft) => setDraft(d => withoutField(d, k))
   const reset = () => setDraft({})
   const [deleting, setDeleting] = useState<AccountView | null>(null)
+  const [testTarget, setTestTarget] = useState<AccountView | null>(null)
   const [importOpen, setImportOpen] = useState(false)
   const [loginOpen, setLoginOpen] = useState(false)
 
@@ -1209,11 +1211,17 @@ export default function Accounts() {
                             <RotateCcw />
                           </Button>
                         )}
-                        {isCodexTemplate(a) && (
-                          <Button variant="ghost" size="icon-sm" title={t('accounts.ext.button')} onClick={() => openExt(a)}><Settings2 /></Button>
-                        )}
                         <Button variant="ghost" size="icon-sm" title={t('common.edit')} aria-label={t('common.edit')} onClick={() => openEdit(a)}><Pencil /></Button>
                         <Button variant="ghost" size="icon-sm" className="text-destructive" title={t('common.delete')} aria-label={t('common.delete')} onClick={() => setDeleting(a)}><Trash2 /></Button>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger render={<Button variant="ghost" size="icon-sm" title={t('accounts.test.menu')} aria-label={t('accounts.test.menu')} />}>
+                            <Ellipsis />
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => setTestTarget(a)}>{t('accounts.test.menu')}</DropdownMenuItem>
+                            {isCodexTemplate(a) && <DropdownMenuItem onClick={() => openExt(a)}>{t('accounts.ext.button')}</DropdownMenuItem>}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1648,6 +1656,8 @@ export default function Accounts() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AccountTestDialog account={testTarget} onOpenChange={open => { if (!open) setTestTarget(null) }} />
 
       {/* —— 扩展配置（codex 生态账号；credential_type 分流 codex_oauth_* 列组 / codex_pat_key；身份四元组只读） —— */}
       <Dialog open={!!extTarget} onOpenChange={o => { if (!o && !extSave.isPending) setExtTarget(null) }}>

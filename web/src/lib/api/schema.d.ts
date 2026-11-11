@@ -324,6 +324,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/accounts/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 对单个账号发起一次单模型探测（不落库、不计费、不改账号状态） */
+        post: operations["PostAccountsIdTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/groups": {
         parameters: {
             query?: never;
@@ -1790,6 +1809,25 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/supplier/accounts/{id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 对本人归属的单个账号发起一次单模型探测（不落库、不计费；越域 ⇒ 404） */
+        post: operations["PostSupplierAccountsIdTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/supplier/accounts/{id}/groups": {
         parameters: {
             query?: never;
@@ -2596,6 +2634,38 @@ export interface components {
              * @description CAS 期望代际（= 读到的 LifecycleRevision）；过期 → 409
              */
             expected_revision: number;
+        };
+        /** @description 单账号单模型探测请求。**不含 URL/host/路径字段**：出站目标只能来自已存储的 账号/模板配置。format 只接受四种可探测格式（openai-images/openai-search → 400）； openai-responses-ws 表示按 HTTP responses 探测。 */
+        AccountTestRequest: {
+            /** @description 客户端模型名（须非空，且满足模板格式/模型空间资格） */
+            model: string;
+            /**
+             * @description 探测格式（与 domain.RequestFormat 同名）
+             * @enum {string}
+             */
+            format: "openai-chat" | "openai-responses" | "openai-responses-ws" | "anthropic";
+        };
+        /** @description 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。error/detail 已脱敏 （凭据与绑定代理密码）并分别截断到 1024/2048 字节；status_code=0 表示传输失败。 */
+        AccountTestResult: {
+            /** @description 上游返回了该格式可用的输出 */
+            success: boolean;
+            /**
+             * Format: int64
+             * @description 仅上游调用耗时（毫秒）
+             */
+            latency_ms: number;
+            /** @description 上游 HTTP 状态；传输失败 = 0 */
+            status_code: number;
+            /** @description 原样回显请求格式 */
+            format: string;
+            /** @description 客户端模型名 */
+            requested_model: string;
+            /** @description 映射后的上游模型名 */
+            upstream_model: string;
+            /** @description 失败摘要（≤1024 字节，已脱敏） */
+            error: string;
+            /** @description 上游解码后的错误文本或 SSE 终态摘要（≤2048 字节，已脱敏） */
+            detail: string;
         };
         /** @description 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度） */
         CodexUsageSnapshot: {
@@ -5531,6 +5601,33 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    PostAccountsIdTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountTestRequest"];
+            };
+        };
+        responses: {
+            /** @description 探测结论（success=false 仍是 200；status_code=0 表示未拿到上游 HTTP 响应） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountTestResult"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     GetGroups: {
         parameters: {
             query?: {
@@ -8373,6 +8470,33 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AccountExt"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostSupplierAccountsIdTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AccountTestRequest"];
+            };
+        };
+        responses: {
+            /** @description 探测结论（success=false 仍是 200） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountTestResult"];
                 };
             };
             default: components["responses"]["Error"];
