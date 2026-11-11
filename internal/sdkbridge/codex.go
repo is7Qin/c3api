@@ -568,6 +568,13 @@ func (a *Codex) clientOnEgress(e *codexEntry, eg *egress.Client, transport domai
 			codexsdk.WithResponsesTransport(codexTransport(transport)),
 			// G6：**必须**开 WS 连接复用。SDK 默认 0 = 每请求一条新连接；不接这一行，
 			// S1（连接身份去 ts）带来的"可复用"就只是潜力，实际上零复用。
+			//
+			// 复用面由 SDK 的**读空闲上限**兜底（默认 300s = 上游
+			// DEFAULT_STREAM_IDLE_TIMEOUT_MS；只计"一次取帧等待里没有任何可交付帧"，
+			// Ping/Pong 不续命）：超时即退役该连接（不归还、不重试），同 key 的下一请求
+			// 重新拨号。所以这里**不要**再传 WithWSIdleTimeout 放宽（上游自己 5 分钟就断），
+			// 也不要用 WithTimeout 替代——那是整段请求的硬上限，会切断长流。缓存里的空闲
+			// 连接不在等待、不计时；取用时才开始算。
 			codexsdk.WithWSConnCache(a.wsCache),
 		)
 	})
