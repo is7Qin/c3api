@@ -341,6 +341,11 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		Output:   out,
 		Mapper:   plan.mapper,
 		Terminal: plan.finish,
+		// 流内错误载荷 = 本流失败（spec-inband-error-truth §3-3）：**仅直连**
+		// （plan.mapper == nil）。转换子车道（mapper != nil）的协议收尾依赖该帧
+		// 产出 closeOpenBlocks + event: error，吞帧会让客户端停在半截内容块
+		// （§6-9 本轮不接）。
+		FailOnErrorPayload: plan.mapper == nil,
 		OnEvent: func(ev sserelay.Event) {
 			// 唯一写出前采样 seam（含 drop 帧）：TTFT 仅对**真实 payload** 计时
 			// （旧 SDK 只对真实 data 行回调——纯注释/控制帧、仅 [DONE] 不计；

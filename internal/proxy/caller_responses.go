@@ -67,7 +67,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		mapper := newResponseModelSSEMapper(sel.ClientResponseModel(reqModel))
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Output: out,
-			Mapper: mapper,
+			// 流内错误载荷 = 本流失败（spec-inband-error-truth §3-3）。
+			FailOnErrorPayload: true,
+			Mapper:             mapper,
 			OnEvent: func(ev sserelay.Event) {
 				// 统一写出前采样 seam：TTFT/usage/图像计数 + 续接入队同点。
 				if ttft == nil {

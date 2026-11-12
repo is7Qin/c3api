@@ -53,7 +53,9 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var ttft *int64
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Output: out,
-			Mapper: newResponseModelSSEMapper(sel.ClientResponseModel(reqModel)),
+			// 流内错误载荷 = 本流失败（spec-inband-error-truth §3-3）。
+			FailOnErrorPayload: true,
+			Mapper:             newResponseModelSSEMapper(sel.ClientResponseModel(reqModel)),
 			OnEvent: func(ev sserelay.Event) {
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()

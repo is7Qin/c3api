@@ -5,6 +5,7 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -19,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
+	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
 // --- resp-ws relay 合一骨架（relayWS：双传输面共用的并发状态机，传输差异抽
@@ -188,6 +190,11 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	})
 
 	upLoopDone := make(chan struct{})
+	// 入站 WS 的流内错误载荷记账（spec-inband-error-truth §3-3 第 5 行）：帧必须
+	// 照旧 1:1 转发（错误即退役的连接策略不改），所以判据只置位、不阻断。
+	// 无需加锁：只在 up-loop 内写，编排读它之前先 `<-upLoopDone`（close 提供
+	// happens-before）。
+	var upPayloadErr *sserelay.PayloadError
 	wg.Go(func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer close(upLoopDone)                   // 编排等本读者退出后再分类，保证记录可见性
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
@@ -219,6 +226,18 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			}
 			if frameHook != nil {
 				frameHook(f) // codex 路径：判死帧 → FatalAuth（唯一跨边界点，判死帧照常透传客户端）
+			}
+			// 流内错误载荷记账（spec-inband-error-truth §3-3）：每读到上行帧就调
+			// **同一个**判据；命中 ⇒ 置位（帧照旧 1:1 转发，不阻断——入站 WS 已升级，
+			// 没有换号机会，只改记账与账号健康）。**轮级清零**：长连接可承载多轮，
+			// 只在 response.completed 处清（与 usage 的"最后一帧覆盖"记账同向）。
+			// 位置必须在续接闸门之前：闸门命中会把帧塞进 contPending 后 continue，
+			// 放在闸门之后会漏掉被缓冲的错误帧。
+			if pe := sserelay.AsPayloadError(sserelay.Event{Data: f}); pe != nil {
+				upPayloadErr = pe
+			}
+			if upPayloadErr != nil && isResponsesCompleted(f) {
+				upPayloadErr = nil
 			}
 			// 热路径纪律：只嗅探 response.completed 帧（精确 type 判定，
 			// usage_extract.go sniffResponsesCompletedUsage scanKeyValue 单遍扫描
@@ -361,9 +380,32 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	uc, ue, ce, pe := upClose, upErr, clientErr, pingErr
 	endMu.Unlock()
 	end, endErr := relayClassify(uc, ue, ce, pe)
+	// 收尾改判（spec-inband-error-truth §3-3）：上游"正常关闭"但本连接上见过
+	// 未清零的错误帧 ⇒ 失败。**两个都换**——正常关闭时 relayClassify 的 endErr 是
+	// nil，只换 end 会让 wsCloseStatus(nil) 返 1011、客户端拿到虚构的内部错误码，
+	// 且 errors.AsType[*PayloadError](nil) 永不成立、"关闭码保持 1000"写不出来。
+	if end == relayEndUpstreamClosed && upPayloadErr != nil {
+		end, endErr = relayEndUpstreamError, upPayloadErr
+	}
 	p.relayWSPropagate(client, up, logCtx, sel, reqID, groupID, reqModel, start, u, ttft, end, endErr)
 	wg.Wait() // client-loop 的阻塞 Read 已被上方关闭传播/直拆解除
 	return true, ""
+}
+
+// isResponsesCompleted 判定一帧是否是 response.completed（spec-inband-error-truth
+// 轮级清零用，6 行、零分配）。
+//
+// 不复用 sniffResponsesCompletedUsage：它的 ok 是"是 completed 帧**且**解析到
+// usage"（usage_extract.go:111-126）——无 usage 的 completed 会返 false，挂它
+// 等于把清零条件收窄成"带 usage 的 completed"。这里照抄它 :117-119 的两道守卫
+// （ok/越界/首字节必须是引号），否则非字符串值时 data[start+1:end-1] 会越界。
+// 只在 upPayloadErr != nil 时才调（常态零成本，不新增每帧全扫）。
+func isResponsesCompleted(data []byte) bool {
+	start, end, ok := scanKeyValue(data, typeKeyBytes)
+	if !ok || start >= len(data) || data[start] != '"' {
+		return false
+	}
+	return bytes.Equal(data[start+1:end-1], completedTypeBytes)
 }
 
 // relayWSFirstFrame 首帧模型改写 + 转发（relayWS 提取）：sel.Model 非空且与
@@ -457,7 +499,13 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 	case relayEndUpstreamError:
 		// 上游错误/心跳超时：业务帧已见但连接异常，需冷却
 		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft)
-		_ = client.Close(wsCloseStatus(endErr), "")
+		code := wsCloseStatus(endErr)
+		// 流内错误载荷（spec-inband-error-truth §3-3）：上游**确实**是正常关闭
+		// （发完错误帧后 1000），客户端观感不得变——关闭码保持 1000，不虚构 1011。
+		if _, ok := errors.AsType[*sserelay.PayloadError](endErr); ok {
+			code = websocket.StatusNormalClosure
+		}
+		_ = client.Close(code, "")
 		up.CloseNow() // 上游已失联，免握手等待
 	}
 }

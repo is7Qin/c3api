@@ -121,6 +121,15 @@ type Config struct {
 	// OOM），不是给正常帧留的余量：真实 SSE 帧在几十字节量级，最大的
 	// response.completed（含整段 output）也在数 MB。
 	MaxLineBytes int
+	// FailOnErrorPayload 打开「流内错误载荷 = 本流失败」判定（默认 false = 原样
+	// 转发，行为与旧版逐字一致）。打开后每个组好的帧在 Mapper/OnEvent/写出
+	// **之前**过一遍 AsPayloadError：命中 ⇒ 该帧**不写出**、不走 Mapper、不触发
+	// OnEvent，Relay 以 *PayloadError 返回（spec-inband-error-truth §3-2）。
+	//
+	// 默认 false 是因为语义面按调用点逐个开关：转换子车道（protoconv 协议收尾
+	// 依赖该帧产出 closeOpenBlocks + event: error）与 images 车道（error 对象可能
+	// 表示"某张图失败"）本轮明确不接（§6-6 / §6-9）。
+	FailOnErrorPayload bool
 }
 
 type relay struct {
@@ -394,6 +403,16 @@ func (r *relay) run() error {
 	)
 	flushFrame := func() error {
 		raw := Event{Raw: frame.Bytes(), Event: event, Data: data}
+		// 失败出口（spec-inband-error-truth §3-2，**最顶部、Mapper 之前**）：
+		// 上游在流内声明失败 ⇒ 本流失败。命中即返回：该帧不写出（未提交时由
+		// pipeline 写真实状态码；已提交时既有 writeClientStreamError 补 SSE
+		// error）、不走 Mapper、不触发 OnEvent。此处**不** frame.Reset()——
+		// 错误路径的残余字节由 Relay 归还池时统一丢弃（既有语义）。
+		if r.cfg.FailOnErrorPayload {
+			if pe := AsPayloadError(raw); pe != nil {
+				return pe
+			}
+		}
 		out := frame.Bytes()
 		if r.cfg.Mapper != nil {
 			mapped, drop := r.cfg.Mapper(raw)
