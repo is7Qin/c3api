@@ -88,7 +88,14 @@ func (p *Proxy) observeDispatchOutcome(ctx context.Context, outcome AttemptOutco
 		}
 	}
 	if health != nil && outcome.IsCountedForQuality() && p.sched != nil {
-		p.sched.MarkResult(outcome.AccountID, health.Kind, health.ResetAt, int(outcome.HTTPStatus), health.ErrorMessage, outcome.MappedModel)
+		// 状态口径（§4）：归因状态优先，0 回落 outcome.HTTPStatus。已提交失败
+		// 的 outcome 恒 0，故上游没给码时事件 HTTPStatus 为空（不带条件的规则
+		// 才匹配——§3.2 的必然结果，不是缺陷）。
+		status := int(outcome.HTTPStatus)
+		if health.Status != 0 {
+			status = health.Status
+		}
+		p.sched.MarkResult(outcome.AccountID, health.Kind, health.ResetAt, status, health.ErrorMessage, outcome.MappedModel)
 	}
 }
 

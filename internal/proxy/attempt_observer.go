@@ -16,8 +16,13 @@ var (
 )
 
 type AttemptHealthEvent struct {
-	Kind         rule.Kind
-	ResetAt      *time.Time
+	Kind    rule.Kind
+	ResetAt *time.Time
+	// Status 归因状态（spec-stream-failure-truth §4）：写进规则事件 HTTPStatus 的
+	// **失败分类状态**，与「客户端响应状态」（AttemptOutcome.HTTPStatus）是两个
+	// 语义（I2）。0 = 回落 outcome.HTTPStatus——已提交的失败在类型上无法承载上游
+	// status（AttemptOutcome.Validate 矩阵），所以归因状态只能走这条独立字段。
+	Status       int
 	ErrorMessage string
 	Retryable    bool
 }

@@ -223,27 +223,34 @@ func TestStreamFailureG5aClientCancelIsAbortWithoutHealth(t *testing.T) {
 	require.Empty(t, testHealthSink.eventsFor(1), "客户端取消不投递健康事件（不惩罚账号）")
 }
 
-// G5②：PayloadError 与取消同时发生 ⇒ 序 1 优先（上游已明确表态，归因不得被
-// 取消语义覆盖）。判据 = 出口判定（commit-3 归因函数的输入域）必须落在
-// streamExitCommitted 而不是 streamExitClientCancel；对照组证明用例非空转。
+// G5②：上游错误载荷与客户端取消同时成立时，归因答 5xx（序 1 优先），不得被
+// 取消语义覆盖。
+//
+// 实现选择（B）：**不动** classifyStreamExit（0a–0c 仍是唯一出口判定），序 1 的
+// 优先级由出口侧「先看 cause、再信 exit kind」的顺序承担——一旦落到已提交失败
+// 出口，归因只看 cause，不看 ctx 是否已取消。
+//
+// 事实补充（实测，非推测）：真实 relay 的读循环逐行 checkCancel（relay.go:509），
+// 观测量级的取消总在读侧先被看见，所以「已取消的 ctx + 已被 relay 返回的
+// PayloadError」在真实链路上不会同时出现——请求侧看到的仍是 abort（G5①）。
+// 因此这里断言的是归因接缝本身：同一条 cause 在取消中也必须答 5xx，且必须给出
+// 与聊天/codex 一致的 kind（I4）；对照组（非载荷 cause）仍答 abort，证明这不是
+// 把 abort 语义放宽。
 func TestStreamFailureG5bPayloadErrorBeatsCancel(t *testing.T) {
-	rec := httptest.NewRecorder()
-	out := sserelay.NewOutput(rec, 0, sserelay.OutputOptions{})
-	defer out.Release()
-	_, err := out.WriteFrame([]byte("data: {\"choices\":[]}\n\n"))
-	require.NoError(t, err, "业务帧写出（已提交）")
-	require.True(t, out.Committed())
-
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	payload := &sserelay.PayloadError{Type: "server_error", Message: inbandOverloadMsg}
 
-	cause := &sserelay.PayloadError{Type: "server_error", Message: inbandOverloadMsg}
-	require.Equal(t, streamExitCommitted,
-		classifyStreamExit(ctx, out, cause, AttemptUsage{}, nil),
-		"序 1 优先于客户端取消：上游已表态 ⇒ 已提交失败出口（→ 5xx）")
-	require.Equal(t, streamExitClientCancel,
-		classifyStreamExit(ctx, out, context.Canceled, AttemptUsage{}, nil),
-		"对照：同一 ctx 下没有 PayloadError ⇒ 客户端取消（证明用例非空转）")
+	f := streamFailureOf(ctx, streamExitCommitted, payload)
+	require.Equal(t, domain.Err5xx, f.ET, "序 1 优先：上游已表态 ⇒ 5xx，取消不得覆盖")
+	require.Equal(t, rule.Kind5xx, f.Kind)
+	require.Zero(t, f.Status, "序 1 不合成状态")
+	require.NotNil(t, streamFailureHealth(f), "5xx 必须投递健康事件")
+
+	// 对照组：同一已取消 ctx + 一个纯取消 cause ⇒ 仍然是客户端侧结束（不投递健康）。
+	g := streamFailureOf(ctx, streamExitClientCancel, context.Canceled)
+	require.Equal(t, domain.ErrAbort, g.ET, "真正的客户端取消仍是 abort（未放宽）")
+	require.Nil(t, streamFailureHealth(g))
 }
 
 // G6：上游失败 + 已交付（含 usage 帧后停滞 → 网关 UpstreamStreamTimeout）⇒
