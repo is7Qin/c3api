@@ -11,7 +11,7 @@
 | `proxy/` | 69 | /v1/* 网关热路径（见根 CODE MAP） |
 | `handler/` | 69 | 根包=管理面(/api/admin, oapi-codegen)；`user/`=用户面(/api/user)；`httpface/`=错误写出叶子包。**没有 v1 子包——/v1 在 proxy** |
 | `service/` | 52 | 一资源一文件；`errors/` 叶子包 8 哨兵；探测准入（4 执行+16 等待）与唯一 30s 期限在本层 |
-| `probe/` | 2 | 单账号单模型探测执行（account-model-test）：纯执行已准入 ctx；origin 锁定（scheme+host+规范化端口）、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；只读（不落库/不计费/不进调度） |
+| `probe/` | 5 | 单账号单模型探测执行（account-model-test/account-probe-content）：纯执行已准入 ctx；origin 锁定、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；文本/images（generations/edits）/search 200-only 安全预览（output_preview/image_previews）、图片取图与脱敏；只读 |
 | billing(14) scheduler(13) domain(15) rule(12) usage(10) protoconv(8) sdkbridge(9) pricing(8) notify(7) server(4) auth(4) invalidate(4) credential(2) config(2) snapshot(2) worker(2) | | 领域件 |
 
 ## 分层与请求流

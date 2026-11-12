@@ -88,6 +88,7 @@ func staticSpec(baseURL string) domain.ProbeSpec {
 		UpstreamModel:  "upstream-model",
 		BaseURL:        baseURL,
 		Credential:     "sk-test",
+		Input:          domain.ProbeDefaultInputText,
 	}
 }
 
@@ -802,7 +803,7 @@ func TestProbeCodexNon200CappedWiring(t *testing.T) {
 			require.NoError(t, err)
 			gotStatus, body, callErr := sdkbridge.StreamBodyOnce(
 				context.Background(), spec.Credential, spec.CodexAccountID, transport,
-				codexProbePayload(spec.UpstreamModel),
+				codexProbePayload(spec.UpstreamModel, domain.ProbeDefaultInputText),
 				func(rc io.ReadCloser) ([]byte, error) { return io.ReadAll(rc) },
 			)
 			require.NoError(t, callErr)

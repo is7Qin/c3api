@@ -74,8 +74,9 @@ func UpstreamDefaultTail(key UpstreamPathKey) string {
 	return upstreamDefaultTails[key]
 }
 
-// UpstreamPathKeyForFormat 请求格式 → 自定义路径键（探测执行用）。images/search
-// 不参与探测，故不在表内。
+// UpstreamPathKeyForFormat 文本四格式 → 自定义路径键（探测执行用）。images 按
+// ImageMode 直接取 UpstreamPathImagesGen/Edits，search 直接取 UpstreamPathSearch，
+// 都不经过本表（同一格式两端点，不能共用一个键）。
 func UpstreamPathKeyForFormat(f RequestFormat) (UpstreamPathKey, bool) {
 	switch f {
 	case FormatOpenAIChat:

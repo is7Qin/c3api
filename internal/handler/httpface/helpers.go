@@ -14,11 +14,20 @@ import (
 
 // Decode 管理面/用户面共享的严格 JSON 解码：未知字段 → 错误（拼错字段名从
 // 200 静默不生效变 400 显式）；二次 Decode 拒尾随数据（io.EOF 才算完）。
+// 请求体上限 1 MiB；需要更大上限的端点（探测 8 MiB）走 DecodeLimit。
 //
 // 实现从 handler/user 两份逐字节相同的本地副本下沉到本包（两面包共享的请求
 // 参数边界，与 ClampLimit 同款先例）——不再两处各留一份。
 func Decode(r *http.Request, v any) error {
-	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, 1<<20))
+	return DecodeLimit(r, v, 1<<20)
+}
+
+// DecodeLimit 是 Decode 的可配置上限版本：语义逐字节一致
+// （DisallowUnknownFields + trailing-data 检查），仅请求体上限由调用方给定
+// （如探测端点 domain.ProbeMaxRequestBytes=8 MiB）。上限是**字节**；超过时
+// json.Decoder 返回 http.MaxBytesError。
+func DecodeLimit(r *http.Request, v any, limit int64) error {
+	dec := json.NewDecoder(http.MaxBytesReader(nil, r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {
 		return err

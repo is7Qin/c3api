@@ -193,10 +193,10 @@ func TestProbeValidation(t *testing.T) {
 		wantBase  string
 	}{
 		{
-			name:    "unsupported-format-images",
+			name:    "images-not-declared-by-template",
 			tpl:     staticProbeTemplate(),
 			req:     AccountProbeRequest{Model: "m1", Format: domain.FormatOpenAIImages},
-			wantErr: "invalid probe format",
+			wantErr: "not eligible",
 		},
 		{
 			name:    "unknown-format",
@@ -910,4 +910,303 @@ func TestProbeAdmissionBarrierBeforeStore(t *testing.T) {
 	for range domain.ProbeMaxConcurrency + 1 {
 		require.NoError(t, <-results)
 	}
+}
+
+// ---- account-probe-content：input/image_mode/image_url 三态与格式资格 ----
+
+func probeStrPtr(s string) *string { return &s }
+
+func probeContentTemplate() *domain.Template {
+	tpl := staticProbeTemplate()
+	tpl.SupportedFormats = []domain.RequestFormat{
+		domain.FormatOpenAIChat, domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS,
+		domain.FormatAnthropic, domain.FormatOpenAIImages, domain.FormatOpenAISearch,
+	}
+	return tpl
+}
+
+func probeContentAccount(tpl *domain.Template) *domain.Account {
+	return &domain.Account{
+		ID: 41, Name: "content-acc", TemplateID: tpl.ID, Template: tpl,
+		UpstreamKey: "sk-static", Enabled: true,
+	}
+}
+
+// TestProbeOptionalInputTriState input 缺省/null → 格式默认值；显式值 trim 后
+// 进入 ProbeSpec；显式空串/空白 → 400 且不调用 prober。
+func TestProbeOptionalInputTriState(t *testing.T) {
+	const dataURL = "data:image/png;base64,aGVsbG8="
+	valid := []struct {
+		name     string
+		format   domain.RequestFormat
+		mode     *string
+		url      *string
+		input    *string
+		wantIn   string
+		wantMode string
+		wantURL  string
+	}{
+		{"chat-default", domain.FormatOpenAIChat, nil, nil, nil, domain.ProbeDefaultInputText, "", ""},
+		{"responses-default", domain.FormatOpenAIResponses, nil, nil, nil, domain.ProbeDefaultInputText, "", ""},
+		{"responses-ws-default", domain.FormatOpenAIResponsesWS, nil, nil, nil, domain.ProbeDefaultInputText, "", ""},
+		{"anthropic-default", domain.FormatAnthropic, nil, nil, nil, domain.ProbeDefaultInputText, "", ""},
+		{"images-generations-default", domain.FormatOpenAIImages, nil, nil, nil, domain.ProbeDefaultInputImages, domain.ProbeImageModeGenerations, ""},
+		{"images-edits-default", domain.FormatOpenAIImages, probeStrPtr(domain.ProbeImageModeEdits), probeStrPtr(dataURL), nil,
+			domain.ProbeDefaultInputEdits, domain.ProbeImageModeEdits, dataURL},
+		{"search-default", domain.FormatOpenAISearch, nil, nil, nil, domain.ProbeDefaultInputSearch, "", ""},
+		{"explicit-trimmed", domain.FormatOpenAIChat, nil, nil, probeStrPtr("  custom input  "), "custom input", "", ""},
+	}
+	for _, tc := range valid {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl := probeContentTemplate()
+			acc := probeContentAccount(tpl)
+			prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+			svc := newProbeSvc(&probeReadOnlyStore{acc: acc}, prober, nil)
+			res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+				Model: "m1", Format: tc.format, Input: tc.input, ImageMode: tc.mode, ImageURL: tc.url,
+			})
+			require.NoError(t, err)
+			require.True(t, res.Success)
+			require.Equal(t, 1, prober.calls)
+			require.Equal(t, tc.wantIn, prober.spec.Input)
+			require.Equal(t, tc.wantMode, prober.spec.ImageMode)
+			require.Equal(t, tc.wantURL, prober.spec.ImageURL)
+		})
+	}
+
+	invalid := []struct {
+		name  string
+		input *string
+	}{
+		{"empty", probeStrPtr("")},
+		{"whitespace", probeStrPtr("   \t\n")},
+		{"oversized-ascii", probeStrPtr(strings.Repeat("a", domain.ProbeMaxInputLen+1))},
+		{"oversized-trimmed", probeStrPtr(strings.Repeat(" ", 10) + strings.Repeat("a", domain.ProbeMaxInputLen+1))},
+	}
+	for _, tc := range invalid {
+		t.Run("invalid-"+tc.name, func(t *testing.T) {
+			store := &probeReadOnlyStore{} // 任何存储访问都会 panic
+			prober := &fakeAccountProber{}
+			svc := newProbeSvc(store, prober, nil)
+			_, err := svc.ProbeAccount(context.Background(), 1, AccountProbeRequest{
+				Model: "m1", Format: domain.FormatOpenAIChat, Input: tc.input,
+			})
+			require.ErrorIs(t, err, ErrInvalidInput)
+			require.Zero(t, prober.calls)
+			require.Equal(t, int64(0), store.accCalls.Load())
+		})
+	}
+}
+
+// TestProbeImageModeTriState image_mode/image_url 的唯一三态规则（§4）。
+func TestProbeImageModeTriState(t *testing.T) {
+	const dataURL = "data:image/png;base64,aGVsbG8="
+	oversizedURL := strings.Repeat("a", domain.ProbeMaxImageSourceBytes+1)
+	cases := []struct {
+		name     string
+		format   domain.RequestFormat
+		mode     *string
+		url      *string
+		wantErr  string
+		wantMode string
+		wantURL  string
+	}{
+		{"text-mode-empty", domain.FormatOpenAIChat, probeStrPtr(""), nil, domain.ProbeErrorImageModeUnexpected, "", ""},
+		{"text-mode-value", domain.FormatOpenAIChat, probeStrPtr("generations"), nil, domain.ProbeErrorImageModeUnexpected, "", ""},
+		{"text-url-empty", domain.FormatOpenAIChat, nil, probeStrPtr(""), domain.ProbeErrorImageURLInvalid, "", ""},
+		{"text-url-value", domain.FormatOpenAIChat, nil, probeStrPtr("https://secret.example/x"), domain.ProbeErrorImageURLInvalid, "", ""},
+		{"images-mode-empty", domain.FormatOpenAIImages, probeStrPtr(""), nil, domain.ProbeErrorImageModeInvalid, "", ""},
+		{"images-mode-bogus", domain.FormatOpenAIImages, probeStrPtr("bogus"), nil, domain.ProbeErrorImageModeInvalid, "", ""},
+		{"images-gen-empty-url", domain.FormatOpenAIImages, probeStrPtr("generations"), probeStrPtr(""), "", "generations", ""},
+		{"images-gen-nonempty-url", domain.FormatOpenAIImages, probeStrPtr("generations"), probeStrPtr("https://secret.example/x"), domain.ProbeErrorImageURLInvalid, "", ""},
+		{"images-gen-oversized-url", domain.FormatOpenAIImages, probeStrPtr("generations"), probeStrPtr(oversizedURL), domain.ProbeErrorImageURLTooLarge, "", ""},
+		{"images-edits-missing-url", domain.FormatOpenAIImages, probeStrPtr("edits"), nil, domain.ProbeErrorImageURLRequired, "", ""},
+		{"images-edits-empty-url", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr(""), domain.ProbeErrorImageURLRequired, "", ""},
+		{"images-edits-bad-scheme", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr("ftp://secret.example/x"), domain.ProbeErrorImageURLInvalid, "", ""},
+		{"images-edits-bad-data", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr("data:text/plain;base64,AAAA"), domain.ProbeErrorImageURLInvalid, "", ""},
+		{"images-edits-oversized", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr(oversizedURL), domain.ProbeErrorImageURLTooLarge, "", ""},
+		{"images-edits-http", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr("http://secret.example/x.png"), "", "edits", "http://secret.example/x.png"},
+		{"images-edits-data", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr(dataURL), "", "edits", dataURL},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl := probeContentTemplate()
+			acc := probeContentAccount(tpl)
+			store := &probeReadOnlyStore{acc: acc}
+			prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+			svc := newProbeSvc(store, prober, nil)
+			res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+				Model: "m1", Format: tc.format, ImageMode: tc.mode, ImageURL: tc.url,
+			})
+			if tc.wantErr != "" {
+				require.ErrorIs(t, err, ErrInvalidInput)
+				require.Contains(t, err.Error(), tc.wantErr)
+				require.NotContains(t, err.Error(), "secret.example", "校验错误不得回显 image_url")
+				require.Zero(t, prober.calls)
+				require.Equal(t, int64(0), store.accCalls.Load())
+				return
+			}
+			require.NoError(t, err)
+			require.True(t, res.Success)
+			require.Equal(t, tc.wantMode, prober.spec.ImageMode)
+			require.Equal(t, tc.wantURL, prober.spec.ImageURL)
+		})
+	}
+}
+
+// TestProbeInvalidInputSkipsStoreAndAdmission 所有新 400 都在准入与存储之前：
+// 槽位被占满时非法输入仍返回 400（而不是 probe busy），且 store 零调用。
+func TestProbeInvalidInputSkipsStoreAndAdmission(t *testing.T) {
+	store := &probeReadOnlyStore{} // 任何存储访问都会 panic
+	prober := &fakeAccountProber{}
+	svc := newProbeSvc(store, prober, nil)
+	for range cap(svc.probeGate.slots) {
+		svc.probeGate.slots <- struct{}{}
+	}
+	for range cap(svc.probeGate.waiters) {
+		svc.probeGate.waiters <- struct{}{}
+	}
+
+	for _, req := range []AccountProbeRequest{
+		{Model: "m1", Format: domain.FormatOpenAIChat, Input: probeStrPtr("")},
+		{Model: "m1", Format: domain.FormatOpenAIImages, ImageMode: probeStrPtr("bogus")},
+		{Model: "m1", Format: domain.FormatOpenAIImages, ImageMode: probeStrPtr("edits")},
+		{Model: "m1", Format: domain.FormatOpenAIChat, ImageMode: probeStrPtr("generations")},
+		{Model: "m1", Format: domain.FormatOpenAIChat, ImageURL: probeStrPtr("https://x.example")},
+	} {
+		_, err := svc.ProbeAccount(context.Background(), 1, req)
+		require.ErrorIs(t, err, ErrInvalidInput)
+		require.NotEqual(t, domain.ProbeErrorBusy, err.Error())
+	}
+	require.Zero(t, prober.calls)
+
+	// 合法输入才进入准入（槽位已满 → busy）。
+	res, err := svc.ProbeAccount(context.Background(), 1, AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAIChat,
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.ProbeErrorBusy, res.Error)
+}
+
+// TestProbeImagesSearchEligibility images/search 必须显式出现在模板
+// supported_formats（FormatModels 逐格式限制同样生效）。
+func TestProbeImagesSearchEligibility(t *testing.T) {
+	tpl := probeContentTemplate()
+	acc := probeContentAccount(tpl)
+	prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+	svc := newProbeSvc(&probeReadOnlyStore{acc: acc}, prober, nil)
+	const dataURL = "data:image/png;base64,aGVsbG8="
+
+	_, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAIImages, ImageMode: probeStrPtr(domain.ProbeImageModeEdits), ImageURL: probeStrPtr(dataURL),
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.FormatOpenAIImages, prober.spec.Format)
+	require.Equal(t, domain.ProbeImageModeEdits, prober.spec.ImageMode)
+	require.Equal(t, dataURL, prober.spec.ImageURL)
+
+	_, err = svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAISearch,
+	})
+	require.NoError(t, err)
+	require.Equal(t, domain.FormatOpenAISearch, prober.spec.Format)
+	require.Equal(t, domain.ProbeDefaultInputSearch, prober.spec.Input)
+	require.Equal(t, 2, prober.calls)
+
+	// 模板未声明 images → 400。
+	noImages := probeContentTemplate()
+	noImages.SupportedFormats = []domain.RequestFormat{domain.FormatOpenAIChat, domain.FormatOpenAISearch}
+	noImagesAcc := probeContentAccount(noImages)
+	svc = newProbeSvc(&probeReadOnlyStore{acc: noImagesAcc}, &fakeAccountProber{}, nil)
+	_, err = svc.ProbeAccount(context.Background(), noImagesAcc.ID, AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAIImages,
+	})
+	require.ErrorIs(t, err, ErrInvalidInput)
+	require.Contains(t, err.Error(), "not eligible")
+
+	// FormatModels 逐格式拒绝。
+	formatModels := probeContentTemplate()
+	formatModels.FormatModels = map[domain.RequestFormat][]string{
+		domain.FormatOpenAIImages: {"other-model"},
+		domain.FormatOpenAISearch: {"other-model"},
+	}
+	fmAcc := probeContentAccount(formatModels)
+	svc = newProbeSvc(&probeReadOnlyStore{acc: fmAcc}, &fakeAccountProber{}, nil)
+	for _, format := range []domain.RequestFormat{domain.FormatOpenAIImages, domain.FormatOpenAISearch} {
+		_, err = svc.ProbeAccount(context.Background(), fmAcc.ID, AccountProbeRequest{Model: "m1", Format: format})
+		require.ErrorIs(t, err, ErrInvalidInput)
+		require.Contains(t, err.Error(), "not eligible")
+	}
+}
+
+// TestProbeInputMultibyteBoundary 8192 字节按 UTF-8 字节（不是 rune）校验；
+// trim 后再量长度。
+func TestProbeInputMultibyteBoundary(t *testing.T) {
+	const exact = 8192
+	multibyte := strings.Repeat("界", exact/3) + "ab" // 3*2730 + 2 = 8192 字节
+	require.Len(t, []byte(multibyte), exact)
+
+	tpl := probeContentTemplate()
+	acc := probeContentAccount(tpl)
+
+	accepted := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"exact", multibyte, multibyte},
+		{"trimmed-to-exact", "  " + multibyte + "\n", multibyte},
+	}
+	for _, tc := range accepted {
+		t.Run(tc.name, func(t *testing.T) {
+			prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, StatusCode: 200}}
+			svc := newProbeSvc(&probeReadOnlyStore{acc: acc}, prober, nil)
+			_, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+				Model: "m1", Format: domain.FormatOpenAIChat, Input: probeStrPtr(tc.input),
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, prober.spec.Input)
+		})
+	}
+
+	t.Run("over-by-one", func(t *testing.T) {
+		over := strings.Repeat("界", exact/3+1) // 8193 字节
+		require.Len(t, []byte(over), exact+1)
+		prober := &fakeAccountProber{}
+		svc := newProbeSvc(&probeReadOnlyStore{}, prober, nil)
+		_, err := svc.ProbeAccount(context.Background(), 1, AccountProbeRequest{
+			Model: "m1", Format: domain.FormatOpenAIChat, Input: probeStrPtr(over),
+		})
+		require.ErrorIs(t, err, ErrInvalidInput)
+		require.Contains(t, err.Error(), domain.ProbeErrorInputTooLarge)
+		require.Zero(t, prober.calls)
+	})
+}
+
+// TestProbeLogNoPreview 预览只返回给调用方，绝不写日志。
+func TestProbeLogNoPreview(t *testing.T) {
+	tpl := probeContentTemplate()
+	acc := probeContentAccount(tpl)
+	logger, path := newProbeLogger(t)
+	const marker = "SECRET-PREVIEW-XYZ"
+	svc := New(Deps{
+		Store: &probeReadOnlyStore{acc: acc}, Invalidate: NopInvalidator{},
+		EmailCodeStore: testEmailCodes,
+		Prober: &fakeAccountProber{result: domain.ProbeResult{
+			Success: true, StatusCode: 200, OutputPreview: marker,
+			ImagePreviews: []string{"data:image/png;base64,aGVsbG8="},
+		}},
+		Log: logger,
+	})
+	res, err := svc.ProbeAccount(context.Background(), acc.ID, AccountProbeRequest{
+		Model: "m1", Format: domain.FormatOpenAIChat,
+	})
+	require.NoError(t, err)
+	require.Equal(t, marker, res.OutputPreview)
+	require.Equal(t, 1, probeLogCount(t, logger, path))
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NotContains(t, string(raw), marker)
+	require.NotContains(t, string(raw), "aGVsbG8=")
+	require.NotContains(t, string(raw), "output_preview")
 }

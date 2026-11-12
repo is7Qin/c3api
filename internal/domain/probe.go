@@ -39,6 +39,35 @@ const (
 	// GetBytes 对 `{`/`[` 按层递归，2 MiB 的深层嵌套可耗尽数百 MB 内存；任何
 	// 上游 body / SSE 事件在交给 gjson 前必须先经 ShallowJSON 线性扫描。
 	ProbeMaxJSONDepth = 128
+	// ProbeMaxInputLen 探测自定输入的 UTF-8 **字节**上限（schema maxLength 同值、
+	// 运行时按字节而非 rune 校验）。
+	ProbeMaxInputLen = 8192
+	// ProbeMaxRequestBytes 探测端点请求体上限（8 MiB；其他管理端点仍走 1 MiB）。
+	ProbeMaxRequestBytes = 8 << 20
+	// ProbeMaxImageSourceBytes image_url 字符串的 UTF-8 字节上限（6 MiB）。
+	ProbeMaxImageSourceBytes = 6 << 20
+	// ProbeMaxImageBytes edits 取图原始字节上限与图片预览合计上限（4 MiB；
+	// 单张预览解码上限复用 ProbeMaxBodyBytes=2 MiB）。
+	ProbeMaxImageBytes = 4 << 20
+	// ProbePreviewMaxLen output_preview 截断上限（64 KiB，UTF-8 边界）。
+	ProbePreviewMaxLen = 64 << 10
+	// ProbeMaxImagePreviews image_previews 最多张数（4）。
+	ProbeMaxImagePreviews = 4
+)
+
+// 探测 image mode（openai-images 的 wire 取值）。service 校验后写入 ProbeSpec；
+// 其他格式恒为空。
+const (
+	ProbeImageModeGenerations = "generations"
+	ProbeImageModeEdits       = "edits"
+)
+
+// 探测缺省输入：input 缺省或显式 null 时按格式（images 再按 mode）取默认值。
+const (
+	ProbeDefaultInputText   = "hi"
+	ProbeDefaultInputImages = "A simple red apple on a white table"
+	ProbeDefaultInputEdits  = "Turn this image into a watercolor painting"
+	ProbeDefaultInputSearch = "OpenAI"
 )
 
 // 探测结果的固定分类文案。service（准入/期限/凭据早退）与 internal/probe
@@ -59,6 +88,18 @@ const (
 	ProbeErrorStreamFailed      = "upstream stream failed"
 	ProbeErrorBodyTooLarge      = "response exceeds 2 MiB"
 	ProbeErrorCodexTokenExpired = "codex access token expired; re-run device login"
+	// 图片取图/输入校验固定文案（不得拼入 image_url/原始值——错误路径绝不回显
+	// 请求字段）。取图失败时 status_code=0。
+	ProbeErrorImageFetchFailed    = "probe image fetch failed"
+	ProbeErrorImageInvalid        = "probe image invalid"
+	ProbeErrorImageTooLarge       = "probe image exceeds 4 MiB"
+	ProbeErrorInputEmpty          = "probe input is empty"
+	ProbeErrorInputTooLarge       = "probe input exceeds 8192 bytes"
+	ProbeErrorImageModeInvalid    = "probe image mode invalid"
+	ProbeErrorImageModeUnexpected = "probe image mode unexpected"
+	ProbeErrorImageURLRequired    = "probe image url required"
+	ProbeErrorImageURLInvalid     = "probe image url invalid"
+	ProbeErrorImageURLTooLarge    = "probe image url exceeds 6 MiB"
 )
 
 // ProbeContextError 把 ctx 错误归一为固定文案；其余错误按请求失败处理。
@@ -99,6 +140,13 @@ type ProbeSpec struct {
 	CodexAccountID string
 	// Egress 已由 service 按 fail-closed 规则解析的出口规格（零值 = 直连）。
 	Egress egress.Spec
+	// Input 已 trim、已按字节校验的自定输入（缺省值由 service 填好；prober 不再
+	// 取默认值，避免第二份默认表）。
+	Input string
+	// ImageMode/ImageURL 仅 openai-images 使用：service 已按 mode 完成三态与
+	// scheme/长度校验（generations 恒空 URL；edits 恒非空 URL）。
+	ImageMode string
+	ImageURL  string
 }
 
 // ProbeResult 是探测结论（HTTP 200 恒返回本对象；success=false 不映射为
@@ -113,6 +161,12 @@ type ProbeResult struct {
 	UpstreamModel  string
 	Error          string
 	Detail         string
+	// OutputPreview 仅 200 成功响应按格式抽取的文本投影（已脱敏、≤64 KiB）；
+	// 错误路径、非 200、图片格式恒为空。绝不含原始 JSON/SSE/envelope。
+	OutputPreview string
+	// ImagePreviews 仅图片格式 200 成功响应中通过 base64+魔数校验的
+	// data:image/<mime>;base64,... 列表（最多 4 张，恒非 nil 返回给 handler）。
+	ImagePreviews []string
 }
 
 // ShallowJSON 线性、零分配地判断 b 的 `{`/`[` 嵌套深度是否不超过 maxDepth。

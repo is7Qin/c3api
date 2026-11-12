@@ -117,3 +117,53 @@ func TestProxyEgressSpec(t *testing.T) {
 	require.Equal(t, "u", spec.Username)
 	require.Equal(t, "p", spec.Password)
 }
+
+// TestProbeContentConstants account-probe-content 的硬上限/默认值/固定文案是
+// 唯一来源：数值与词表逐字锁定（service/prober/openapi 描述都引用这里）。
+func TestProbeContentConstants(t *testing.T) {
+	require.Equal(t, 8192, domain.ProbeMaxInputLen)
+	require.Equal(t, 8<<20, domain.ProbeMaxRequestBytes)
+	require.Equal(t, 6<<20, domain.ProbeMaxImageSourceBytes)
+	require.Equal(t, 4<<20, domain.ProbeMaxImageBytes)
+	require.Equal(t, 64<<10, domain.ProbePreviewMaxLen)
+	require.Equal(t, 4, domain.ProbeMaxImagePreviews)
+
+	require.Equal(t, "generations", domain.ProbeImageModeGenerations)
+	require.Equal(t, "edits", domain.ProbeImageModeEdits)
+	require.Equal(t, "hi", domain.ProbeDefaultInputText)
+	require.Equal(t, "A simple red apple on a white table", domain.ProbeDefaultInputImages)
+	require.Equal(t, "Turn this image into a watercolor painting", domain.ProbeDefaultInputEdits)
+	require.Equal(t, "OpenAI", domain.ProbeDefaultInputSearch)
+}
+
+// TestProbeErrorVocabulary 固定文案不得重复/漂移；错误路径只允许这些值。
+func TestProbeErrorVocabulary(t *testing.T) {
+	values := []string{
+		domain.ProbeErrorRequestFailed, domain.ProbeErrorTimedOut, domain.ProbeErrorCanceled,
+		domain.ProbeErrorBusy, domain.ProbeErrorBlockedRedirect, domain.ProbeErrorUpstreamRedirect,
+		domain.ProbeErrorUpstreamAuth, domain.ProbeErrorUpstreamNotFound, domain.ProbeErrorUpstreamRateLimit,
+		domain.ProbeErrorUpstreamRejected, domain.ProbeErrorUpstream, domain.ProbeErrorNoUsableOutput,
+		domain.ProbeErrorStreamFailed, domain.ProbeErrorBodyTooLarge, domain.ProbeErrorCodexTokenExpired,
+		domain.ProbeErrorImageFetchFailed, domain.ProbeErrorImageInvalid, domain.ProbeErrorImageTooLarge,
+		domain.ProbeErrorInputEmpty, domain.ProbeErrorInputTooLarge, domain.ProbeErrorImageModeInvalid,
+		domain.ProbeErrorImageModeUnexpected, domain.ProbeErrorImageURLRequired,
+		domain.ProbeErrorImageURLInvalid, domain.ProbeErrorImageURLTooLarge,
+	}
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		_, dup := seen[value]
+		require.False(t, dup, "重复固定文案: %q", value)
+		seen[value] = struct{}{}
+		require.NotEmpty(t, value)
+	}
+	require.Equal(t, "probe image fetch failed", domain.ProbeErrorImageFetchFailed)
+	require.Equal(t, "probe image invalid", domain.ProbeErrorImageInvalid)
+	require.Equal(t, "probe image exceeds 4 MiB", domain.ProbeErrorImageTooLarge)
+	require.Equal(t, "probe input is empty", domain.ProbeErrorInputEmpty)
+	require.Equal(t, "probe input exceeds 8192 bytes", domain.ProbeErrorInputTooLarge)
+	require.Equal(t, "probe image mode invalid", domain.ProbeErrorImageModeInvalid)
+	require.Equal(t, "probe image mode unexpected", domain.ProbeErrorImageModeUnexpected)
+	require.Equal(t, "probe image url required", domain.ProbeErrorImageURLRequired)
+	require.Equal(t, "probe image url invalid", domain.ProbeErrorImageURLInvalid)
+	require.Equal(t, "probe image url exceeds 6 MiB", domain.ProbeErrorImageURLTooLarge)
+}

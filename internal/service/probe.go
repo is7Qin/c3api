@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -26,18 +27,26 @@ type AccountProber interface {
 }
 
 // AccountProbeRequest 是已解码的探测请求（协议无关：handler 从 openapi 生成
-// 类型搬运，service 只认 domain.RequestFormat）。
+// 类型搬运，service 只认 domain.RequestFormat）。Input/ImageMode/ImageURL 为
+// 三态投影：nil = 缺省或显式 null（同义）；非 nil = 显式值（**含空串**，必须
+// 与缺省区分：空串有各自的 400 规则与默认值）。
 type AccountProbeRequest struct {
-	Model  string
-	Format domain.RequestFormat
+	Model     string
+	Format    domain.RequestFormat
+	Input     *string
+	ImageMode *string
+	ImageURL  *string
 }
 
-// probeFormats 可探测格式集合：openai-images/openai-search 明确不可测（400）。
+// probeFormats 可探测格式集合（七格式中的六个：openai-images 按 image_mode
+// 分 generations/edits，openai-search 打 /v1/alpha/search）。
 var probeFormats = map[domain.RequestFormat]struct{}{
 	domain.FormatOpenAIChat:        {},
 	domain.FormatOpenAIResponses:   {},
 	domain.FormatOpenAIResponsesWS: {},
 	domain.FormatAnthropic:         {},
+	domain.FormatOpenAIImages:      {},
+	domain.FormatOpenAISearch:      {},
 }
 
 // ProbeAccount 组装并执行一次单账号单模型探测（spec §5.3）。
@@ -67,6 +76,16 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	}
 	if len(model) > domain.ProbeMaxModelLen {
 		return nil, fmt.Errorf("%w: probe model exceeds %d bytes", ErrInvalidInput, domain.ProbeMaxModelLen)
+	}
+	// image mode / image_url / input 的三态校验同样在**任何存储读取与准入之前**
+	// 完成：非法输入只回固定文案（不回显 URL/原文），也不占探测槽位。
+	imageMode, imageURL, verr := validateProbeImageFields(format, req.ImageMode, req.ImageURL)
+	if verr != nil {
+		return nil, verr
+	}
+	input, verr := probeInput(format, imageMode, req.Input)
+	if verr != nil {
+		return nil, verr
 	}
 
 	// 30s 总期限从输入校验后开始（含准入等待+DB+上游）；准入在仓储读取前
@@ -232,6 +251,9 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		Credential:     token,
 		CodexAccountID: codexAccountID,
 		Egress:         egressSpec,
+		Input:          input,
+		ImageMode:      imageMode,
+		ImageURL:       imageURL,
 	}
 	if err := pctx.Err(); err != nil {
 		return ctxResult(err), nil
@@ -260,4 +282,117 @@ func (s *Service) logProbe(accountID int64, res domain.ProbeResult) {
 		fields = append(fields, logx.String("error", res.Error))
 	}
 	s.log.Info("account_probe", fields...)
+}
+
+// validateProbeImageFields 是 image_mode/image_url 的**唯一**三态校验实现
+// （spec §4「可选字段语义（唯一规则）」）：全部在 store/准入之前完成，错误
+// 文案固定且不回显 image_url/原始值。
+//
+//   - 非 openai-images：出现任何非 null image_mode → probe image mode
+//     unexpected；出现任何非 null image_url（含空串）→ probe image url invalid。
+//   - images：image_mode 缺省/null → generations；空串/非法值 → probe image
+//     mode invalid。
+//   - edits：image_url 缺省/null/空串 → probe image url required；scheme 非
+//     http(s)/data:image 或数据 URL 形态不完整 → probe image url invalid。
+//   - generations：非空 image_url → probe image url invalid（空串可用）。
+//   - 任何非 null image_url 超过 6 MiB → probe image url exceeds 6 MiB。
+func validateProbeImageFields(format domain.RequestFormat, rawMode, rawURL *string) (string, string, error) {
+	invalidInput := func(msg string) (string, string, error) {
+		return "", "", fmt.Errorf("%w: %s", ErrInvalidInput, msg)
+	}
+	if format != domain.FormatOpenAIImages {
+		if rawMode != nil {
+			return invalidInput(domain.ProbeErrorImageModeUnexpected)
+		}
+		if rawURL != nil {
+			return invalidInput(domain.ProbeErrorImageURLInvalid)
+		}
+		return "", "", nil
+	}
+
+	mode := domain.ProbeImageModeGenerations
+	if rawMode != nil {
+		switch *rawMode {
+		case domain.ProbeImageModeGenerations:
+			mode = domain.ProbeImageModeGenerations
+		case domain.ProbeImageModeEdits:
+			mode = domain.ProbeImageModeEdits
+		default:
+			return invalidInput(domain.ProbeErrorImageModeInvalid)
+		}
+	}
+	if rawURL != nil && len(*rawURL) > domain.ProbeMaxImageSourceBytes {
+		return invalidInput(domain.ProbeErrorImageURLTooLarge)
+	}
+
+	switch mode {
+	case domain.ProbeImageModeEdits:
+		if rawURL == nil || *rawURL == "" {
+			return invalidInput(domain.ProbeErrorImageURLRequired)
+		}
+		if !validProbeImageURL(*rawURL) {
+			return invalidInput(domain.ProbeErrorImageURLInvalid)
+		}
+		return mode, *rawURL, nil
+	default:
+		if rawURL != nil && *rawURL != "" {
+			return invalidInput(domain.ProbeErrorImageURLInvalid)
+		}
+		return mode, "", nil
+	}
+}
+
+// validProbeImageURL 校验 image_url 的 wire 形态：http(s) 绝对 URL，或
+// data:image/<mime>;base64,<data>（scheme 大小写不敏感）。不做取图/解码
+// （prober 负责；codex 族直接交给 SDK）。
+func validProbeImageURL(raw string) bool {
+	lower := strings.ToLower(raw)
+	if strings.HasPrefix(lower, "data:") {
+		if !strings.HasPrefix(lower, "data:image/") {
+			return false
+		}
+		meta, _, ok := strings.Cut(raw[len("data:"):], ",")
+		if !ok || !strings.HasSuffix(strings.ToLower(meta), ";base64") {
+			return false
+		}
+		mime := meta[:len(meta)-len(";base64")]
+		return len(mime) > len("image/")
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	return strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")
+}
+
+// probeInput 解析 input 三态：nil（缺省/null）→ 格式默认值；显式值先
+// TrimSpace，空 → probe input is empty，trim 后 UTF-8 字节数 >8192 → probe
+// input exceeds 8192 bytes，其余用 trim 后的值。默认值依赖 images mode。
+func probeInput(format domain.RequestFormat, imageMode string, raw *string) (string, error) {
+	if raw == nil {
+		return probeDefaultInput(format, imageMode), nil
+	}
+	v := strings.TrimSpace(*raw)
+	if v == "" {
+		return "", fmt.Errorf("%w: %s", ErrInvalidInput, domain.ProbeErrorInputEmpty)
+	}
+	if len(v) > domain.ProbeMaxInputLen {
+		return "", fmt.Errorf("%w: %s", ErrInvalidInput, domain.ProbeErrorInputTooLarge)
+	}
+	return v, nil
+}
+
+// probeDefaultInput 是探测缺省输入的唯一表（spec §4「输入默认值」）。
+func probeDefaultInput(format domain.RequestFormat, imageMode string) string {
+	switch format {
+	case domain.FormatOpenAIImages:
+		if imageMode == domain.ProbeImageModeEdits {
+			return domain.ProbeDefaultInputEdits
+		}
+		return domain.ProbeDefaultInputImages
+	case domain.FormatOpenAISearch:
+		return domain.ProbeDefaultInputSearch
+	default:
+		return domain.ProbeDefaultInputText
+	}
 }

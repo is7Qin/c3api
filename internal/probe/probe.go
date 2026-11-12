@@ -69,13 +69,28 @@ func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeR
 
 	start := time.Now()
 	var res domain.ProbeResult
+	codex := spec.CredentialType.IsCodex()
 	switch {
-	case spec.CredentialType.IsCodex():
-		res = p.probeCodex(ctx, spec)
+	case codex:
+		switch spec.Format {
+		case domain.FormatOpenAIImages:
+			res = p.probeCodexImages(ctx, spec)
+		case domain.FormatOpenAISearch:
+			res = p.probeCodexSearch(ctx, spec)
+		default:
+			res = p.probeCodex(ctx, spec)
+		}
 	case spec.CredentialType == credential.TypeAPIKey ||
 		spec.CredentialType == credential.TypeResponsesSpecial ||
 		spec.CredentialType == credential.TypeCustom:
-		res = p.probeStatic(ctx, spec)
+		switch spec.Format {
+		case domain.FormatOpenAIImages:
+			res = p.probeStaticImages(ctx, spec)
+		case domain.FormatOpenAISearch:
+			res = p.probeStaticSearch(ctx, spec)
+		default:
+			res = p.probeStatic(ctx, spec)
+		}
 	default:
 		res = domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}
 	}
@@ -84,14 +99,20 @@ func (p *Prober) Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeR
 }
 
 // finalizeResult 统一回显字段 + 截断（所有出口都必须经过这里）。安全由分类
-// 白名单 + 有限错误码结构性保证：结果字段不含动态上游文本，因此不做凭据子串
-// 替换——短 key（如 `up`）会破坏 `upstream rejected credentials` 等固定文案。
+// 白名单 + 有限错误码结构性保证：error/detail 不含动态上游文本，因此不做凭据
+// 子串替换——短 key（如 `up`）会破坏 `upstream rejected credentials` 等固定
+// 文案。唯一的窄例外是 output_preview：先在抽取侧完成格式投影，这里统一按
+// 已知 URL/Bearer/key/ID/UUID 形态脱敏，再按 64 KiB UTF-8 边界截断；
+// image_previews 是校验后的 b64 图片，不经过文本脱敏器。
 func finalizeResult(spec domain.ProbeSpec, res domain.ProbeResult) domain.ProbeResult {
 	res.Format = spec.Format
 	res.RequestedModel = spec.RequestedModel
 	res.UpstreamModel = spec.UpstreamModel
 	res.Error = truncateBytes(res.Error, domain.ProbeErrorMaxLen)
 	res.Detail = truncateBytes(res.Detail, domain.ProbeDetailMaxLen)
+	if res.OutputPreview != "" {
+		res.OutputPreview = truncateBytes(sanitizePreview(res.OutputPreview), domain.ProbePreviewMaxLen)
+	}
 	return res
 }
 
@@ -110,7 +131,7 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 	if err != nil {
 		return domain.ProbeResult{Error: domain.ProbeErrorRequestFailed}
 	}
-	payload := staticPayload(spec.Format, spec.UpstreamModel)
+	payload := staticPayload(spec.Format, spec.UpstreamModel, spec.Input)
 
 	var (
 		resp *http.Response
@@ -147,6 +168,11 @@ func (p *Prober) probeStatic(ctx context.Context, spec domain.ProbeSpec) domain.
 	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
 		if validateStatic(spec.Format, body) {
 			res.Success = true
+			// 文本四格式保持既有 2xx 成功语义，但 output_preview 仅在 HTTP 200
+			// 且成功判定通过后抽取（spec §4 预览抽取）。
+			if resp.StatusCode == http.StatusOK {
+				res.OutputPreview = extractStaticPreview(spec.Format, body)
+			}
 			return res
 		}
 		res.Error = domain.ProbeErrorNoUsableOutput
@@ -169,7 +195,7 @@ func (p *Prober) probeCodex(ctx context.Context, spec domain.ProbeSpec) domain.P
 	var scan codexBodyScan
 	status, body, callErr := sdkbridge.StreamBodyOnce(
 		ctx, spec.Credential, spec.CodexAccountID, transport,
-		codexProbePayload(spec.UpstreamModel),
+		codexProbePayload(spec.UpstreamModel, spec.Input),
 		func(rc io.ReadCloser) ([]byte, error) {
 			scan = scanCodexBody(rc)
 			return scan.body, scan.err
@@ -205,6 +231,7 @@ func (p *Prober) probeCodex(ctx context.Context, spec domain.ProbeSpec) domain.P
 	}
 	if scan.success {
 		res.Success = true
+		res.OutputPreview = scan.preview
 		return res
 	}
 	res.Error = scan.errMsg
@@ -231,12 +258,12 @@ type codexProbeInputText struct {
 	Text string `json:"text"`
 }
 
-func codexProbePayload(model string) []byte {
+func codexProbePayload(model, input string) []byte {
 	b, err := json.Marshal(codexProbePayloadBody{
 		Model: model,
 		Input: []codexProbeInput{{
 			Role:    "user",
-			Content: []codexProbeInputText{{Type: "input_text", Text: "hi"}},
+			Content: []codexProbeInputText{{Type: "input_text", Text: input}},
 		}},
 		Stream: true,
 	})
@@ -247,8 +274,19 @@ func codexProbePayload(model string) []byte {
 }
 
 // guardedHTTPClient 克隆账号出口 client 并替换 Transport：
-// capTransport(originGuard(出口 Transport))；静态族不跟随重定向。
+// capTransport(originGuard(出口 Transport))；静态族不跟随重定向（文本四格式
+// 保持既有 2xx 允许 2 MiB+1 的溢出探测语义）。
 func (p *Prober) guardedHTTPClient(spec domain.ProbeSpec) (*http.Client, error) {
+	return p.guardedHTTPClientWith(spec, false)
+}
+
+// guardedHTTPClient200Only 是 images/search 的静态族 client：只有 200 允许
+// 2 MiB+1，其余状态（含 201/204/206）恰好 2 MiB（不判溢出）。
+func (p *Prober) guardedHTTPClient200Only(spec domain.ProbeSpec) (*http.Client, error) {
+	return p.guardedHTTPClientWith(spec, true)
+}
+
+func (p *Prober) guardedHTTPClientWith(spec domain.ProbeSpec, onlyOKOverflow bool) (*http.Client, error) {
 	if p.pool == nil {
 		return nil, errors.New("egress pool not configured")
 	}
@@ -262,12 +300,17 @@ func (p *Prober) guardedHTTPClient(spec domain.ProbeSpec) (*http.Client, error) 
 	}
 	hc := *eg.HTTP
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	hc.Transport = newCappedTransport(&originGuard{
+	guard := &originGuard{
 		next:   transportOrDefault(eg.HTTP.Transport),
 		scheme: strings.ToLower(u.Scheme),
 		host:   strings.ToLower(u.Hostname()),
 		port:   effectivePort(u),
-	})
+	}
+	if onlyOKOverflow {
+		hc.Transport = newCodexCappedTransport(guard)
+	} else {
+		hc.Transport = newCappedTransport(guard)
+	}
 	return &hc, nil
 }
 
@@ -446,12 +489,12 @@ type anthProbePayload struct {
 	Messages  []probeMessage `json:"messages"`
 }
 
-func staticPayload(format domain.RequestFormat, model string) []byte {
+func staticPayload(format domain.RequestFormat, model, input string) []byte {
 	switch format {
 	case domain.FormatOpenAIChat:
 		b, _ := json.Marshal(chatProbePayload{
 			Model:     model,
-			Messages:  []probeMessage{{Role: "user", Content: "hi"}},
+			Messages:  []probeMessage{{Role: "user", Content: input}},
 			MaxTokens: 16,
 		})
 		return b
@@ -460,7 +503,7 @@ func staticPayload(format domain.RequestFormat, model string) []byte {
 			Model: model,
 			Input: []probeInputContent{{
 				Role:    "user",
-				Content: []probeInputText{{Type: "input_text", Text: "hi"}},
+				Content: []probeInputText{{Type: "input_text", Text: input}},
 			}},
 			MaxOutputTokens: 16,
 		})
@@ -469,7 +512,7 @@ func staticPayload(format domain.RequestFormat, model string) []byte {
 		b, _ := json.Marshal(anthProbePayload{
 			Model:     model,
 			MaxTokens: 16,
-			Messages:  []probeMessage{{Role: "user", Content: "hi"}},
+			Messages:  []probeMessage{{Role: "user", Content: input}},
 		})
 		return b
 	default:
@@ -565,6 +608,7 @@ type codexBodyScan struct {
 	success  bool
 	errMsg   string
 	detail   string
+	preview  string
 	err      error
 }
 
@@ -587,7 +631,7 @@ func scanCodexBodyLimit(rc io.Reader, limit int64, enforceMax bool) codexBodySca
 	eventStart, lineStart, scanFrom := 0, 0, 0
 
 	evaluate := func(end int) bool {
-		terminal, success, errMsg, detail := evaluateSSEBlock(buf.Bytes()[eventStart:end])
+		terminal, success, errMsg, detail, preview := evaluateSSEBlock(buf.Bytes()[eventStart:end])
 		if !terminal {
 			return false
 		}
@@ -598,6 +642,7 @@ func scanCodexBodyLimit(rc io.Reader, limit int64, enforceMax bool) codexBodySca
 		scan.success = success
 		scan.errMsg = errMsg
 		scan.detail = detail
+		scan.preview = preview
 		return true
 	}
 	for {
@@ -661,10 +706,11 @@ func scanCodexBodyLimit(rc io.Reader, limit int64, enforceMax bool) codexBodySca
 }
 
 // evaluateSSEBlock 解析一个完整 SSE 事件块并返回 (terminal, success, error,
-// detail)。失败事件名优先于 data 内容：`event: error` / `event: response.failed`
-// 即使 data 为空、[DONE]、非 JSON 或自相矛盾（type=completed）也是失败，不得
-// 因为没有可解析的 data 而静默放过、让后续 completed 覆盖。
-func evaluateSSEBlock(block []byte) (bool, bool, string, string) {
+// detail, preview)。失败事件名优先于 data 内容：`event: error` /
+// `event: response.failed` 即使 data 为空、[DONE]、非 JSON 或自相矛盾
+// （type=completed）也是失败，不得因为没有可解析的 data 而静默放过、让后续
+// completed 覆盖。preview 只从 response.completed 的 data.response 抽取。
+func evaluateSSEBlock(block []byte) (bool, bool, string, string, string) {
 	var (
 		name    string
 		single  []byte
@@ -719,30 +765,31 @@ func evaluateSSEBlock(block []byte) (bool, bool, string, string) {
 			domain.ShallowJSON(data, domain.ProbeMaxJSONDepth) && gjson.ValidBytes(data) {
 			detail = errorCodeDetail(data)
 		}
-		return true, false, domain.ProbeErrorStreamFailed, detail
+		return true, false, domain.ProbeErrorStreamFailed, detail, ""
 	}
 	if len(data) == 0 || bytes.Equal(data, sseDone) {
-		return false, false, "", ""
+		return false, false, "", "", ""
 	}
 	// 深层嵌套事件在 gjson 之前丢弃（线性深度守卫）。
 	if !domain.ShallowJSON(data, domain.ProbeMaxJSONDepth) || !gjson.ValidBytes(data) {
-		return false, false, "", ""
+		return false, false, "", "", ""
 	}
 	typ := gjson.GetBytes(data, "type").String()
 	if typ == "" {
 		typ = name
 	}
 	if typ == "response.failed" || typ == "error" {
-		return true, false, domain.ProbeErrorStreamFailed, errorCodeDetail(data)
+		return true, false, domain.ProbeErrorStreamFailed, errorCodeDetail(data), ""
 	}
 	if typ == "response.completed" {
-		output := gjson.GetBytes(data, "response.output")
+		response := gjson.GetBytes(data, "response")
+		output := response.Get("output")
 		if output.IsArray() && output.Get("0").IsObject() {
-			return true, true, "", ""
+			return true, true, "", "", codexResponsePreview(response)
 		}
-		return true, false, domain.ProbeErrorNoUsableOutput, ""
+		return true, false, domain.ProbeErrorNoUsableOutput, "", ""
 	}
-	return false, false, "", ""
+	return false, false, "", "", ""
 }
 
 // validateCodexSSE 是完整 body 校验入口，复用同一增量扫描器（不保留第二份
