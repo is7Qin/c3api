@@ -5,9 +5,12 @@
 package sserelay
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // --- 判据矩阵（spec-inband-error-truth r10 §3-1 / §5.2 的 T-* 组） ---
@@ -131,6 +134,175 @@ func TestAsPayloadErrorSkipsParseWithoutNeedle(t *testing.T) { // 解析失败�
 	}
 }
 
+func TestAsPayloadErrorMultiAnchor(t *testing.T) { // T-multi
+	// 同一帧里"`error` 键但值非对象"可能排在合格键之前 ⇒ 首个锚点不合格**必须继续扫**
+	// 下一个出现位置（r16 只判首个出现位置的实现会漏判）。
+	cases := []struct {
+		name string
+		data string
+	}{
+		{"error:null 后跟 type:error", `{"error":null,"type":"error"}`},
+		{"error 字符串后跟 error 对象", `{"error":"boom","error":{"message":"m"}}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if pe := AsPayloadError(Event{Data: []byte(c.data)}); pe == nil {
+				t.Fatalf("多锚点必须命中（不能只看首个出现位置）：%s", c.data)
+			}
+		})
+	}
+	// 第二个反例同时钉住"取值由 encoding/json 后值语义裁决"。
+	if pe := AsPayloadError(Event{Data: []byte(`{"error":"boom","error":{"message":"m"}}`)}); pe == nil || pe.Message != "m" {
+		t.Fatalf(`重复 error 键 ⇒ 内层后值 message="m"，得到 %#v`, pe)
+	}
+}
+
+func TestAsPayloadErrorNotType(t *testing.T) { // T-notype
+	// 判形要求锚点紧随 `:{` 或前 7 B 恰为 `"type":`；`"status":"error"` 两者都不满足
+	// ⇒ 锚点出现不等于命中（M12b 的钉子）。
+	if pe := AsPayloadError(Event{Data: []byte(`{"status":"error"}`)}); pe != nil {
+		t.Fatalf(`{"status":"error"} 期望 nil，得到 %#v`, pe)
+	}
+}
+
+// --- 4 KiB 扫判闸（spec r16 §3-1 ② / §5.2 T-gate 组） ---
+//
+// 夹具长度与锚点位置**全部写死**：`>` 与 `>=`、"判到底"与"头尾窗口"的差别只有这些
+// 数字能分辨，用变量或不精确的 pad 会静默失去分辨力。
+
+const (
+	gateSize     = 4096 // 闸值：len(data) > 4096 的 data-only 帧不判
+	gateAnchorAt = 2049 // ⑥ 的锚点绝对下标（中部；头尾窗口实现会漏）
+)
+
+// buildFrame 拼 head + pad + tail 并断言**恰好** size 字节的合法 JSON。
+func buildFrame(t testing.TB, size int, head, tail string) []byte {
+	t.Helper()
+	n := size - len(head) - len(tail)
+	if n < 0 {
+		t.Fatalf("夹具超长：head+tail = %d > %d", len(head)+len(tail), size)
+	}
+	data := []byte(head + strings.Repeat("x", n) + tail)
+	require.Equal(t, size, len(data), "夹具长度必须写死")
+	require.True(t, json.Valid(data), "夹具必须是合法 JSON：%q", string(data[:64]))
+	return data
+}
+
+// gateFrameNested 内含**嵌套**（非顶层）`"error":{…}`：预筛合格、顶层解析不命中。
+func gateFrameNested(t testing.TB, size int) []byte {
+	t.Helper()
+	return buildFrame(t, size, `{"item":{"error":{"message":"tool boom"}},"pad":"`, `"}`)
+}
+
+// gateFrameTopErrorHead 顶层 `{"error":{…}}` 在**开头**。
+func gateFrameTopErrorHead(t testing.TB, size int) []byte {
+	t.Helper()
+	return buildFrame(t, size, `{"error":{"message":"boom"},"pad":"`, `"}`)
+}
+
+// gateFrameTopErrorTail 顶层 `{"error":{…}}` 在**尾部**。
+func gateFrameTopErrorTail(t testing.TB, size int) []byte {
+	t.Helper()
+	return buildFrame(t, size, `{"pad":"`, `","error":{"message":"tail"}}`)
+}
+
+// gateFrameTopErrorMid 顶层 `"error":{"message":"mid"}` 的**锚点绝对下标恰为 2049**：
+// 前 2049 B 一个 pad 键、之后同样是两千多字节的 pad 键（两侧都有内容 ⇒ 头尾窗口都抓不到）。
+func gateFrameTopErrorMid(t testing.TB, size int) []byte {
+	t.Helper()
+	const (
+		head      = `{"p":"`
+		errPart   = `"error":{"message":"mid"},`
+		tailOpen  = `"q":"`
+		tailClose = `"}`
+	)
+	pad1 := gateAnchorAt - len(head) - len(`",`)
+	pad2 := size - gateAnchorAt - len(errPart) - len(tailOpen) - len(tailClose)
+	if pad1 < 0 || pad2 < 0 {
+		t.Fatalf("夹具尺寸不足：size=%d pad1=%d pad2=%d", size, pad1, pad2)
+	}
+	data := []byte(head + strings.Repeat("a", pad1) + `",` + errPart + tailOpen + strings.Repeat("b", pad2) + tailClose)
+	require.Equal(t, size, len(data), "夹具长度必须写死")
+	require.Equal(t, gateAnchorAt, bytes.Index(data, []byte(`"error"`)),
+		"锚点绝对下标必须写死（否则边界钉子静默失去分辨力）")
+	require.True(t, json.Valid(data), "夹具必须是合法 JSON：%q", string(data[:64]))
+	return data
+}
+
+// gateFrameEventBig 配 `event: error` 的 128 KiB 帧，data 开头是 `{"message":"boom"}`。
+func gateFrameEventBig(t testing.TB, size int) []byte {
+	t.Helper()
+	return buildFrame(t, size, `{"message":"boom","pad":"`, `"}`)
+}
+
+func TestAsPayloadErrorGate(t *testing.T) { // T-gate ①–⑥
+	t.Run("①16 KiB 内容帧+嵌套 error ⇒ nil 且 0 alloc", func(t *testing.T) {
+		ev := Event{Data: gateFrameNested(t, 16<<10)}
+		if pe := AsPayloadError(ev); pe != nil {
+			t.Fatalf("16 KiB data-only 帧不判，得到 %#v", pe)
+		}
+		allocs := testing.AllocsPerRun(50, func() { _ = AsPayloadError(ev) })
+		t.Logf("16 KiB 内容帧：AllocsPerRun = %v（字节数 %d）", allocs, len(ev.Data))
+		if allocs != 0 {
+			t.Fatalf("16 KiB 内容帧 AllocsPerRun = %v，门禁要求 0（长度闸必须先于预筛与解析）", allocs)
+		}
+	})
+
+	t.Run("②16 KiB 帧+顶层 error 在尾部 ⇒ nil", func(t *testing.T) {
+		ev := Event{Data: gateFrameTopErrorTail(t, 16<<10)}
+		if pe := AsPayloadError(ev); pe != nil {
+			t.Fatalf(">4 KiB 的 data-only 帧不判（申报取舍），得到 %#v", pe)
+		}
+	})
+
+	t.Run("③128 KiB 帧+顶层 error 在开头 ⇒ nil", func(t *testing.T) {
+		ev := Event{Data: gateFrameTopErrorHead(t, 128<<10)}
+		if pe := AsPayloadError(ev); pe != nil {
+			t.Fatalf(">4 KiB 的 data-only 帧不判，得到 %#v", pe)
+		}
+	})
+
+	t.Run("④128 KiB+event:error ⇒ hit 但不解析文案", func(t *testing.T) {
+		ev := Event{Event: []byte("error"), Data: gateFrameEventBig(t, 128<<10)}
+		pe := AsPayloadError(ev)
+		if pe == nil {
+			t.Fatal("event: error 不受长度闸约束，必须仍判 hit")
+		}
+		if pe.Message != "" || pe.Type != "" {
+			t.Fatalf(">4 KiB 只判 hit 不解析文案，得到 %#v", pe)
+		}
+	})
+
+	t.Run("⑤恰好 4096 B+嵌套 error ⇒ nil（走完整解析）", func(t *testing.T) {
+		ev := Event{Data: gateFrameNested(t, gateSize)}
+		if pe := AsPayloadError(ev); pe != nil {
+			t.Fatalf("4096 B 走进解析路径但非顶层 ⇒ nil，得到 %#v", pe)
+		}
+	})
+
+	t.Run("⑥(a)恰好 4096 B+顶层 error 锚点在 2049 ⇒ hit", func(t *testing.T) {
+		ev := Event{Data: gateFrameTopErrorMid(t, gateSize)}
+		// 夹具的两个数字都在此断言（"≈" 不可断言）：闸值与锚点绝对下标。
+		require.Equal(t, 4096, len(ev.Data))
+		require.Equal(t, 2049, bytes.Index(ev.Data, []byte(`"error"`)))
+		pe := AsPayloadError(ev)
+		require.NotNil(t, pe, "4096 B 必须判到底（`>` 不是 `>=`，也不能只扫头尾）")
+		require.Equal(t, "mid", pe.Message)
+	})
+
+	t.Run("⑥(b)4097 B 同形 ⇒ nil 且 0 alloc", func(t *testing.T) {
+		ev := Event{Data: gateFrameTopErrorMid(t, gateSize+1)}
+		if pe := AsPayloadError(ev); pe != nil {
+			t.Fatalf("4097 B 过闸 ⇒ nil，得到 %#v", pe)
+		}
+		allocs := testing.AllocsPerRun(50, func() { _ = AsPayloadError(ev) })
+		t.Logf("4097 B 顶层 error：AllocsPerRun = %v（字节数 %d）", allocs, len(ev.Data))
+		if allocs != 0 {
+			t.Fatalf("4097 B AllocsPerRun = %v，门禁要求 0", allocs)
+		}
+	})
+}
+
 func TestPayloadErrorErrorAndRawJSON(t *testing.T) {
 	pe := &PayloadError{Type: "server_error", Message: "Our servers are currently overloaded."}
 	if got := pe.Error(); got != "Our servers are currently overloaded." {
@@ -163,10 +335,10 @@ func TestPayloadErrorErrorAndRawJSON(t *testing.T) {
 	}
 }
 
-// --- 性能门禁（spec §3-5 / brief §5.4） ---
+// --- 性能门禁（spec §3-5 / brief §5） ---
 
-// TestAsPayloadErrorMissAllocs 未命中路径的硬门禁：两针 bytes.Contains、零解析、
-// 零分配。字节串在循环外预构造（AllocsPerRun 只计被测函数内的分配）。
+// TestAsPayloadErrorMissAllocs 未命中路径的硬门禁：单锚点单遍、零解析、零分配。
+// 字节串在循环外预构造（AllocsPerRun 只计被测函数内的分配）。
 func TestAsPayloadErrorMissAllocs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -179,21 +351,24 @@ func TestAsPayloadErrorMissAllocs(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			ev := c.ev
-			if got := testing.AllocsPerRun(200, func() {
-				if pe := AsPayloadError(ev); pe != nil {
-					t.Fatalf("期望 nil，得到 %#v", pe)
-				}
-			}); got != 0 {
-				t.Fatalf("%s：AllocsPerRun = %v，门禁要求 0", c.name, got)
+			if pe := AsPayloadError(ev); pe != nil {
+				t.Fatalf("期望 nil，得到 %#v", pe)
+			}
+			allocs := testing.AllocsPerRun(200, func() { _ = AsPayloadError(ev) })
+			t.Logf("%s：AllocsPerRun = %v（字节数 %d）", c.name, allocs, len(ev.Data))
+			if allocs != 0 {
+				t.Fatalf("%s：AllocsPerRun = %v，门禁要求 0", c.name, allocs)
 			}
 		})
 	}
 }
 
-// largeErrorPayload ≥64 KiB 的 error 对象（大帧账目：probe.Error 按 error 对象大小
-// 复制一次，受 MaxLineBytes 约束）。
+// largeErrorPayload ~3.5 KiB 的 error 对象（大帧账目：probe.Error 按 error 对象大小
+// 复制一次，受 MaxLineBytes 约束）。**必须 ≤ 4096 B**：超过 4 KiB 就过扫判闸、不再
+// 进入解析路径（那一段由 BenchmarkAsPayloadErrorGate 负责，只做 bench 不断言）。
 func largeErrorPayload() []byte {
-	return []byte(`{"error":{"type":"server_error","message":"` + strings.Repeat("x", 64<<10) + `"}}`)
+	// 43 B 前缀 + 3584 B message + 3 B 收尾 = 3630 B。
+	return []byte(`{"error":{"type":"server_error","message":"` + strings.Repeat("x", 3584) + `"}}`)
 }
 
 // TestAsPayloadErrorHitAllocs 命中路径的 allocs 目数（实测值写进报告；spec §3-5
@@ -207,7 +382,7 @@ func TestAsPayloadErrorHitAllocs(t *testing.T) {
 		{"T-empty（空对象判 nil）", Event{Data: []byte(`{"error":{}}`)}},
 		{"顶层 type:error", Event{Data: []byte(`{"type":"error","message":"x"}`)}},
 		{"Azure message-only", Event{Data: []byte(`{"error":{"message":"quota exceeded","code":"insufficient_quota"}}`)}},
-		{"大 error 对象（≥64 KiB）", Event{Data: largeErrorPayload()}},
+		{"大 error 对象（~3.5 KiB，仍走解析）", Event{Data: largeErrorPayload()}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -251,6 +426,31 @@ func BenchmarkAsPayloadErrorAzureMessageOnly(b *testing.B) {
 	benchAsPayloadError(b, `{"error":{"message":"quota exceeded","code":"insufficient_quota"}}`)
 }
 
-func BenchmarkAsPayloadErrorLarge(b *testing.B) {
+// BenchmarkAsPayloadErrorLargeHit 3.5 KiB 命中路径：预筛合格 ⇒ 整帧解析（唯一
+// "扫描 + 解析都付"的形态，spec §3-5 的最坏路径 ~2.0 µs）。
+func BenchmarkAsPayloadErrorLargeHit(b *testing.B) {
 	benchAsPayloadError(b, string(largeErrorPayload()))
+}
+
+// BenchmarkAsPayloadErrorContent16K / Content1M >4 KiB 的**内容帧**（帧内无 `error`
+// 子串，即生产上的普通 chunk 形态）：只付长度闸，成本与帧长解耦。
+func BenchmarkAsPayloadErrorContent16K(b *testing.B) {
+	benchAsPayloadError(b, string(buildFrame(b, 16<<10, `{"pad":"`, `"}`)))
+}
+
+func BenchmarkAsPayloadErrorContent1M(b *testing.B) {
+	benchAsPayloadError(b, string(buildFrame(b, 1<<20, `{"pad":"`, `"}`)))
+}
+
+// BenchmarkAsPayloadErrorNested4K 恰好 4096 B 的嵌套 error 帧：预筛合格但非顶层
+// ⇒ 走完整解析路径（最坏路径的边界值，spec §3-5 的 ~2.0 µs 对应本条）。
+func BenchmarkAsPayloadErrorNested4K(b *testing.B) {
+	benchAsPayloadError(b, string(gateFrameNested(b, gateSize)))
+}
+
+// BenchmarkAsPayloadErrorGate 64 KiB 内容帧（>4 KiB 闸直接返回，不扫不解析）。
+// 只做 bench、不断言——命中路径的 allocs 账目由 largeErrorPayload（~3.5 KiB）承担。
+// 64 KiB 帧已不属判据定义域（spec §6-1 申报），这里量的是"闸生效后的零成本"。
+func BenchmarkAsPayloadErrorGate(b *testing.B) {
+	benchAsPayloadError(b, `{"error":{"type":"server_error","message":"`+strings.Repeat("x", 64<<10)+`"}}`)
 }

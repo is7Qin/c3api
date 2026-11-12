@@ -51,27 +51,48 @@ func (e *PayloadError) RawJSON() string {
 	return string(b)
 }
 
-// 判据常量（包级不可变字节串——零锁零全局状态，编译期静态引用，零分配）。
+// 判据常量。
+//
+// 两个闸的取值都是 4 KiB（spec r16 §3-1 ②／§3-5）：**要省的是"扫多少字节"，不是
+// "扫几遍"**——`bytes.Index` 是 SIMD（实测 ~5.5 GB/s），手写逐字节状态机（~0.5–1 GB/s）
+// 更慢，把两次扫描融合成一次自定义遍历只会更糟。所以给判据加**长度闸**：>4 KiB 的
+// data-only 帧一律不判，让每帧成本与帧长解耦。真实上游的错误载荷整体 ≤300 B
+// （13× 余量）。v1 的"每帧两次 bytes.Contains"在 16 KiB 帧上要 5.9 µs/帧、
+// 整条 3.2 MiB 流 +382%——这是本次重塑的原因。
+const (
+	// payloadScanMax 是 data-only 帧的扫判闸：len > 4 KiB ⇒ 不判 ⇒ nil。
+	payloadScanMax = 4 << 10
+	// payloadParseMax 是 `event: error` 的解析闸：超过只判命中、不解析文案。
+	payloadParseMax = 4 << 10
+)
+
+// 判据字节串（包级不可变——零锁零全局状态，编译期静态引用，零分配）。
 var (
-	// needleTypeError / needleErrorObject 是两条预筛针（spec §3-1 ②③）：只有
-	// 命中才解析，普通 chunk 两针、零解析、零分配。
-	needleTypeError   = []byte(`"type":"error"`)
-	needleErrorObject = []byte(`"error":{`)
 	// payloadEventName 是 `event: error` 的折叠比较目标（针①）。
 	payloadEventName = []byte("error")
+	// payloadAnchor 是两个形状的**共同子串**（含首尾引号，7 B）：`"error":{` 以它开头，
+	// `"type":"error"` 里它紧随 `"type":` ⇒ **同一个 bytes.Index 循环覆盖两种形态**
+	// （每次从一个出现位置推进到下一个），命中后再 O(1) 判形。
+	payloadAnchor = []byte(`"error"`)
+	// payloadTypeKey 是 responses 形状的就近前缀（7 B）。
+	payloadTypeKey = []byte(`"type":`)
 )
 
 // AsPayloadError 判定一帧是否是「上游在声明失败」，并把它归一成 PayloadError
 // （spec §3-1，五处消费者共用的唯一判据）。
 //
-// 命中条件（帧**顶层**投递错误载荷，与 status 无关）：
+// 形状（r16：单锚点 + 4 KiB 扫判闸 + 命中才解析）：
 //
-//	① ev.Event 折叠等于 "error"（零预筛——`event: error` 本身就是声明）
-//	② 预筛 `"type":"error"` 或 ③ 预筛 `"error":{` 命中，且
-//	   - data 顶层 type == "error"，或
-//	   - data 顶层 error 为非空对象（内层 type/message 至少一个非空）
+//	① ev.Event 折叠等于 "error" ⇒ 直接进解析（零预筛——`event: error` 本身就是声明）；
+//	   len > 4 KiB 时只判 hit、不解析文案。
+//	② 否则 len > 4 KiB ⇒ 不判 ⇒ nil（data-only 大帧，§6-1 申报）。
+//	③ 否则（≤4 KiB）：全帧单遍、单锚点 `"error"` + O(1) 就近判形（payloadPrefilter），
+//	   **逐个出现位置继续扫**（首个不合格不代表整帧不合格）；未命中 ⇒ nil（零解析、
+//	   零分配），命中 ⇒ 进解析。判 nil 后不回头再判。
+//	④ 解析（①/③ 共用同一次，parsePayload）：顶层 type == "error"，或顶层 error 为
+//	   非空对象（内层 type/message 至少一个非空）⇒ hit。
 //
-// 语义要点：
+// 语义要点（与 v1 逐条保持不变）：
 //   - **① 也要解析**：Type/Message 只能来自 data，`data: {"message":"failed"}`
 //     只有①命中，不解析就拿不到上游文案（S5b）。
 //   - **解析不看返回值、不早退**：单字段类型不匹配时 encoding/json 会跳过该字段
@@ -88,23 +109,66 @@ var (
 // 不复制整帧：只有 probe.Error（error 对象大小，受 Config.MaxLineBytes 约束）
 // 与两个 string 逃逸。
 func AsPayloadError(ev Event) *PayloadError {
-	eventIsError := bytes.EqualFold(ev.Event, payloadEventName)
-	if !eventIsError &&
-		!bytes.Contains(ev.Data, needleTypeError) &&
-		!bytes.Contains(ev.Data, needleErrorObject) {
-		return nil // 普通帧：两针、零解析、零分配
+	if bytes.EqualFold(ev.Event, payloadEventName) {
+		if len(ev.Data) > payloadParseMax {
+			return &PayloadError{} // hit 但不解析：不为文案付整帧解析
+		}
+		return parsePayload(ev.Data, true)
 	}
-	// A（①）与 B（②③）共用同一次解析：只看顶层键，不看返回值、不早退。
+	if len(ev.Data) > payloadScanMax {
+		return nil // data-only 大帧：不判（每帧成本与帧长解耦）
+	}
+	if !payloadPrefilter(ev.Data) {
+		return nil // 普通帧：单锚点单遍、零解析、零分配
+	}
+	return parsePayload(ev.Data, false)
+}
+
+// payloadPrefilter 是 O(1) 判形的单锚点预筛：锚点 `"error"`（含首尾引号）是两种形态的
+// 共同子串，任一出现位置满足下列之一即命中：
+//
+//	紧随 `:{`          ⇒ chat 形状（`"error":{…}`）
+//	前 7 B 恰为 `"type":` ⇒ responses 形状（`"type":"error"`）
+//
+// **逐个出现位置继续扫**：同一帧里"`error` 键但值非对象"可能排在合格键之前
+// （`{"error":null,"type":"error"}`、`{"error":"boom","error":{"message":"m"}}`），
+// 只判首个出现位置会漏（T-multi）。`"error":null` / `"error":"boom"` 两处都不满足
+// ⇒ **不进解析**（保住 T-null 的 0 alloc）。
+func payloadPrefilter(data []byte) bool {
+	off := 0
+	for off < len(data) {
+		i := bytes.Index(data[off:], payloadAnchor)
+		if i < 0 {
+			return false
+		}
+		i += off
+		j := i + len(payloadAnchor)
+		if j+1 < len(data) && data[j] == ':' && data[j+1] == '{' {
+			return true
+		}
+		if i >= len(payloadTypeKey) && bytes.Equal(data[i-len(payloadTypeKey):i], payloadTypeKey) {
+			return true
+		}
+		off = j
+	}
+	return false
+}
+
+// parsePayload 是命中后的**唯一一次**解析（spec §3-1 ④）。hit 的初值由调用方给定：
+// ①（`event: error`）为 true，③ 为 false。
+//
+// 只看顶层键、不看返回值、不早退；内层 error 对象只在首字节是 '{' 时解析
+// （null/字符串/缺失一律不算命中），且内层 type/message **至少一个非空**才算命中
+// （OR 不是 AND）。取内层优先、缺失回退顶层。
+func parsePayload(data []byte, hit bool) *PayloadError {
 	var probe struct {
 		Type    string          `json:"type"`
 		Message string          `json:"message"`
 		Error   json.RawMessage `json:"error"`
 	}
-	_ = json.Unmarshal(ev.Data, &probe)
+	_ = json.Unmarshal(data, &probe)
 
-	hit := eventIsError || probe.Type == "error"
-	// 内层 error 对象：仅当首字节是 '{' 才解析（null/字符串/缺失一律不算命中）。
-	// 空对象（内层 type 与 message 都空）不算命中。
+	hit = hit || probe.Type == "error"
 	var inner struct{ Type, Message string }
 	innerHoldsFields := false
 	if len(probe.Error) > 0 && probe.Error[0] == '{' {
