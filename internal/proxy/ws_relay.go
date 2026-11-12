@@ -195,6 +195,12 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 无需加锁：只在 up-loop 内写，编排读它之前先 `<-upLoopDone`（close 提供
 	// happens-before）。
 	var upPayloadErr *sserelay.PayloadError
+	// businessN 是真实下行业务帧计数（spec-stream-failure-truth §5.3）：计费资格
+	// （commit_state）的事实源。旧实现里 wsOutcomeFor{ClientAbort,UpstreamError}
+	// 的 BusinessFrameSent=true 是构造常量而非事实。只统计「上游帧成功写客户端」
+	// 的次数——网关自己生成的错误帧（contFail 收尾 / wsWriteError）、关闭帧、心跳
+	// ping 都不计业务交付。同样只在 up-loop 内写，编排在 `<-upLoopDone` 之后读。
+	var businessN int
 	wg.Go(func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer close(upLoopDone)                   // 编排等本读者退出后再分类，保证记录可见性
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
@@ -294,6 +300,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 							exit()
 							return
 						}
+						businessN++
 					}
 					contPending, contPendingN = nil, 0
 				} else if id != "" && id != contLastID {
@@ -310,6 +317,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				exit()
 				return
 			}
+			businessN++
 		}
 	})
 
@@ -358,7 +366,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 		logCtx = context.WithValue(relayCtx, ctxKeyTTFT{}, ttft)
 	}
 	if contFail != nil {
-		p.relayWSContFail(client, up, &wg, logCtx, contFail, contAcked, sel, reqID, groupID, reqModel, start, u, ttft)
+		p.relayWSContFail(client, up, &wg, logCtx, contFail, contAcked, businessN, sel, reqID, groupID, reqModel, start, u, ttft)
 		return true, ""
 	}
 	if contTag != "" && !contAcked && len(contPending) > 0 {
@@ -387,7 +395,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	if end == relayEndUpstreamClosed && upPayloadErr != nil {
 		end, endErr = relayEndUpstreamError, upPayloadErr
 	}
-	p.relayWSPropagate(client, up, logCtx, sel, reqID, groupID, reqModel, start, u, ttft, end, endErr)
+	p.relayWSPropagate(client, up, logCtx, sel, reqID, groupID, reqModel, start, u, ttft, businessN, end, endErr)
 	wg.Wait() // client-loop 的阻塞 Read 已被上方关闭传播/直拆解除
 	return true, ""
 }
@@ -441,7 +449,7 @@ func relayWSFirstFrame(up wsRelayTransport, r *http.Request, sel *scheduler.Sele
 // 网关侧失败不冷却账号（health=nil）。ACK 后新 id 绑定失败 = 帧已可见，走
 // sent_ambiguous 终态（与流中止同轨）。错误帧写出后 CloseNow 直拆（免库内 5s
 // 握手超时），wg.Wait 全 join。记录/字段/时机逐字一致。
-func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg *sync.WaitGroup, logCtx context.Context, contFail *formatError, contAcked bool, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64) {
+func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg *sync.WaitGroup, logCtx context.Context, contFail *formatError, contAcked bool, businessN int, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64) {
 	// 硬续接 fail-closed（WS create 面）：绑定权威不可用/冲突——缓冲帧
 	// 弃置（未绑定 id 永不达客户端），错误帧可达后收尾；已消耗用量保留
 	// 计费；网关侧失败不冷却账号（health=nil）。ACK 后新 id 绑定失败 =
@@ -457,10 +465,14 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 	_ = client.CloseNow()
 	base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
 	out := base
-	logStatus, logET := contFail.status, domain.Err5xx
+	// 归因（I9：relayWSContFail 属归因输入域，各出口不得自建第二套）：
+	//   - ACK 前（帧未可见）：网关侧 fail-closed，状态 = 网关给出的 contFail.status
+	//     （这是网关自己的终态码，不是上游状态，故不走 classifyStreamFailure）；
+	//   - ACK 后（帧已可见）：与流中止同轨的派生归因——**不得再默认 abort**。
+	var f streamFailure
 	if contAcked {
 		out = wsOutcomeForUpstreamError(base, u, ttft)
-		logStatus, logET = http.StatusOK, domain.ErrAbort
+		f = classifyStreamFailure(contFail)
 	} else {
 		out.Result = ResultFailed
 		out.HTTPStatus = AttemptStatus(contFail.status)
@@ -468,12 +480,20 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 		out.Terminal = true
 		out.Usage = wsUsageFromTuple(u)
 		out.Timing.TTFTMS = ttft
+		f = streamFailure{
+			Status:  contFail.status,
+			ET:      domain.Err5xx,
+			Kind:    scheduler.RuleKindOf(contFail.status),
+			Message: failureMessage(contFail),
+		}
 	}
+	// 网关侧失败不冷却账号（health=nil）：续接权威不可用是网关自身的问题。
 	p.observeDispatchOutcome(logCtx, out, nil)
-	l := withCommit(logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, logStatus, logET, u, start)), out.Commit)
+	commit := commitStateOfWSDelivery(out.Result, businessN > 0)
+	l := withCommit(logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, f.Status, f.ET, u, start)), commit)
 	// 与其余中止/失败出口同口径：contFail 的文案就是网关给出的失败原因
 	// （续接权威不可用/绑定冲突），落盘后 err_logs 才有可读文本。
-	l.ErrorMessage = causeMessage(contFail)
+	l.ErrorMessage = f.message()
 	p.finish(sel, l)
 	up.CloseNow()
 	wg.Wait()
@@ -482,7 +502,7 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 // relayWSPropagate 关闭传播阶段（relayWS 提取）：按分类结果（relayEnd/endErr）
 // 完成关闭握手/直拆 + reportWSOutcome 落盘（成功 / 客户端 abort / 上游错误三分支）。
 // 关闭帧优先级与「先记录后关」的时机逐字一致。
-func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, logCtx context.Context, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64, end relayEnd, endErr error) {
+func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, logCtx context.Context, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64, businessN int, end relayEnd, endErr error) {
 	base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
 	switch end {
 	case relayEndUpstreamClosed:
@@ -497,7 +517,7 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 			code = wsCloseStatus(endErr)
 		}
 		// 客户端 abort：业务帧已见但不计冷却，向上游传播关闭
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, endErr)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, businessN > 0, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, endErr)
 		_ = up.Close(code, "")
 	case relayEndUpstreamError:
 		// 上游错误/心跳超时：业务帧已见但连接异常，需冷却

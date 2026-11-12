@@ -34,8 +34,10 @@ import (
 // 判据：abort 行的 ErrorMessage 非 nil、含**上游原文**（不是只有 "HTTP 500" 这类
 // 无信息量的包装），且受域内 500 字截断约束。
 
-// abortRow 取出唯一一条中止行（usage/errlog 双轨共享同一指针，去重后取一条）。
-func abortRow(t *testing.T, rows []*domain.UsageLog) *domain.UsageLog {
+// failureRow 取出唯一一条失败行（usage/errlog 双轨共享同一指针，去重后取一条）。
+// 归因迁移后「已提交后的上游失败」不再记 abort——本文件的判据是**可读原因**，
+// 类别由归因表决定（abort 只留给客户端侧结束）。
+func failureRow(t *testing.T, rows []*domain.UsageLog) *domain.UsageLog {
 	t.Helper()
 	seen := make(map[*domain.UsageLog]struct{}, len(rows))
 	for _, l := range rows {
@@ -43,19 +45,20 @@ func abortRow(t *testing.T, rows []*domain.UsageLog) *domain.UsageLog {
 			continue
 		}
 		seen[l] = struct{}{}
-		if l.ErrorType == domain.ErrAbort {
+		if l.ErrorType != domain.ErrNone {
 			return l
 		}
 	}
-	require.FailNowf(t, "没有中止行", "rows=%+v", rows)
+	require.FailNowf(t, "没有失败行", "rows=%+v", rows)
 	return nil
 }
 
-// TestAbortCodexWSOutboundCarriesErrorMessage 用户现场：HTTP 入站 + codex 出站 WS。
-// 上游先给一帧正常内容（已提交），再给一帧带 status 的错误帧（SDK 的 sseView 把它
-// 翻成 *HTTPError，帧体只挂在 Raw 上——`HTTPError.Error()` 只有 "upstream HTTP 500"）。
-// 断言：客户端 200 + 协议错误帧；日志恰 1 条 abort 行，且 error_message 带上游 message。
-func TestAbortCodexWSOutboundCarriesErrorMessage(t *testing.T) {
+// TestCodexWSOutboundCommittedFailureCarriesErrorMessage 用户现场：HTTP 入站 + codex
+// 出站 WS。上游先给一帧正常内容（已提交），再给一帧带 status 的错误帧（SDK 的
+// sseView 把它翻成 *HTTPError，帧体只挂在 Raw 上——`HTTPError.Error()` 只有
+// "upstream HTTP 500"）。断言：客户端 200 + 协议错误帧；日志恰 1 条 5xx 行，且
+// error_message 带上游 message。
+func TestCodexWSOutboundCommittedFailureCarriesErrorMessage(t *testing.T) {
 	testHealthSink.reset()
 	up, mock := newCodexWSScriptUpstream(t,
 		`{"type":"response.output_text.delta","delta":"hi"}`,
@@ -78,19 +81,20 @@ func TestAbortCodexWSOutboundCarriesErrorMessage(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 	waitStoreLogs(t, store, 1)
 	rows := storeRows(store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(rows), "rows=%+v", rows)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows), "rows=%+v", rows)
 
-	row := abortRow(t, rows)
+	row := failureRow(t, rows)
+	require.Equal(t, domain.Err5xx, row.ErrorType, "已提交后的上游失败 ⇒ 5xx（不是 abort）")
 	require.NotNil(t, row.ErrorMessage,
-		"中止行必须带错误文本（否则前端只剩「已中止」+ 空列）")
+		"失败行必须带错误文本（否则前端只剩类别 + 空列）")
 	require.Contains(t, *row.ErrorMessage, inbandOverloadMsg,
 		"error_message 必须含上游原文，而不是只有 HTTP 状态包装；got=%q", *row.ErrorMessage)
 	require.LessOrEqual(t, len(*row.ErrorMessage), domain.ErrMsgMaxLen, "域内截断 500")
 }
 
-// TestAbortChatCommittedCarriesErrorMessage chat 车道已提交后命中流内错误帧：
-// 同一条 abort 双轨行（usage_logs + err_logs），error_message 必须带上游 message。
-func TestAbortChatCommittedCarriesErrorMessage(t *testing.T) {
+// TestChatCommittedFailureCarriesErrorMessage chat 车道已提交后命中流内错误帧：
+// 同一条双轨失败行（usage_logs + err_logs），error_message 必须带上游 message。
+func TestChatCommittedFailureCarriesErrorMessage(t *testing.T) {
 	testHealthSink.reset()
 	up, _ := newInbandSSEUpstream(t, "/v1/chat/completions", "Authorization", "Bearer sk-upstream",
 		chatNormalFrame, chatErrFrame)
@@ -101,16 +105,17 @@ func TestAbortChatCommittedCarriesErrorMessage(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "已提交 ⇒ 200；body=%q", rec.Body.String())
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(rows), "rows=%+v", rows)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows), "rows=%+v", rows)
 
-	row := abortRow(t, rows)
-	require.NotNil(t, row.ErrorMessage, "中止行必须带错误文本")
+	row := failureRow(t, rows)
+	require.Equal(t, domain.Err5xx, row.ErrorType, "流内错误载荷 ⇒ 5xx（序 1）")
+	require.NotNil(t, row.ErrorMessage, "失败行必须带错误文本")
 	require.Contains(t, *row.ErrorMessage, inbandOverloadMsg, "got=%q", *row.ErrorMessage)
 }
 
-// TestAbortInboundWSCarriesErrorMessage 入站 WS：上游发错误帧后 1000 关闭 ⇒ 记
-// abort（关闭码保持 1000，客户端观感不变），但落盘行必须带上游 message。
-func TestAbortInboundWSCarriesErrorMessage(t *testing.T) {
+// TestInboundWSCommittedFailureCarriesErrorMessage 入站 WS：上游发错误帧后 1000
+// 关闭 ⇒ 记 5xx（关闭码保持 1000，客户端观感不变），落盘行必须带上游 message。
+func TestInboundWSCommittedFailureCarriesErrorMessage(t *testing.T) {
 	testHealthSink.reset()
 	up, _ := fakeResponsesWSScript(t,
 		`{"type":"error","error":{"type":"server_error","message":"`+inbandOverloadMsg+`"}}`)
@@ -123,19 +128,19 @@ func TestAbortInboundWSCarriesErrorMessage(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(rows), "rows=%+v", rows)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows), "rows=%+v", rows)
 
-	row := abortRow(t, rows)
-	require.NotNil(t, row.ErrorMessage, "中止行必须带错误文本")
+	row := failureRow(t, rows)
+	require.Equal(t, domain.Err5xx, row.ErrorType, "流内错误载荷 ⇒ 5xx（序 1）")
+	require.NotNil(t, row.ErrorMessage, "失败行必须带错误文本")
 	require.Contains(t, *row.ErrorMessage, inbandOverloadMsg,
 		"入站 WS 的错误帧原文必须落到 error_message；got=%q", *row.ErrorMessage)
 }
 
-// TestAbortInboundWSUpstreamFailureCarriesErrorMessage 入站 WS：上游先给一帧业务
-// 内容再以 1011 异常关闭（无错误帧）。已提交后的上游故障 = sent_ambiguous ⇒
-// reportWSOutcome 落 200 + ErrAbort（同一「已中止」观感），关闭码仍是上游真值
-// 1011；该行同样必须带关闭帧描述。
-func TestAbortInboundWSUpstreamFailureCarriesErrorMessage(t *testing.T) {
+// TestInboundWSUpstreamAbnormalCloseCarriesErrorMessage 入站 WS：上游先给一帧业务
+// 内容再以 1011 异常关闭（无错误帧）。已提交后的上游断流 ⇒ network + status 0
+// （序 5），关闭码仍是上游真值 1011；该行同样必须带关闭帧描述。
+func TestInboundWSUpstreamAbnormalCloseCarriesErrorMessage(t *testing.T) {
 	testHealthSink.reset()
 	up, _ := fakeResponsesWSAbnormalClose(t, `{"type":"response.output_text.delta","delta":"hi"}`)
 	store := &captureLogStore{}
@@ -147,9 +152,11 @@ func TestAbortInboundWSUpstreamFailureCarriesErrorMessage(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusInternalError)
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(rows), "rows=%+v", rows)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows), "rows=%+v", rows)
 
-	row := abortRow(t, rows)
+	row := failureRow(t, rows)
+	require.Equal(t, domain.ErrNetwork, row.ErrorType,
+		"上游断流 ⇒ network（序 5）；旧实现记 abort 是误标")
 	require.NotNil(t, row.ErrorMessage, "上游异常关闭行必须带错误文本")
 	require.Contains(t, *row.ErrorMessage, "StatusInternalError",
 		"文本取关闭帧描述（coder/websocket 的 CloseError.Error()：status = ... and reason = ...）；got=%q", *row.ErrorMessage)

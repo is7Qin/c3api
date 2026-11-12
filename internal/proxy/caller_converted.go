@@ -186,21 +186,21 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		timing := AttemptTiming{LatencyMS: time.Since(start).Milliseconds(), TTFTMS: ttft}
 		if err != nil {
 			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
-			switch classifyStreamExit(ctx, out, err, usage, ttft) {
-			case streamExitClientCancel:
-				// 客户端取消与上游中断区分：取消不计健康惩罚，仍需计费落账。
-				outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
-				p.observeDispatchOutcome(ctx, outcome, nil)
-				// 计费落账由 p.finish 统一收口，routeLog 负责构建日志与用量。
-				p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)), outcome.Commit))
-				return 0, nil, true, nil
-			case streamExitUncommitted:
+			exit := classifyStreamExit(ctx, out, err, usage, ttft)
+			if exit == streamExitUncommitted {
 				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）
 				return statusOf(err), nil, false, err
-			default: // 写失败 / 已提交
-				if out.Committed() {
-					writeClientStreamError(out, client, err)
-				}
+			}
+			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5）。
+			f := streamFailureOf(ctx, exit, err)
+			if exit != streamExitClientCancel && out.Committed() {
+				writeClientStreamError(out, client, err)
+			}
+			// 客户端取消与上游中断区分：取消不计健康惩罚，两者都仍需计费落账。
+			var outcome AttemptOutcome
+			if exit == streamExitClientCancel {
+				outcome = mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
+			} else {
 				code := statusOf(err)
 				commit := CommitUpstreamResponded
 				business := false
@@ -208,12 +208,13 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 					commit = CommitSentAmbiguous
 					business = true
 				}
-				outcome := mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
-				health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: err.Error()}
-				p.observeDispatchOutcome(ctx, outcome, health)
-				p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusOK, domain.ErrAbort, u, start)), outcome.Commit))
-				return 0, nil, true, nil
+				outcome = mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
 			}
+			p.observeDispatchOutcome(ctx, outcome, streamFailureHealth(f))
+			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, logStatusForFailure(f), f.ET, u, start))
+			l.ErrorMessage = f.message()
+			p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
+			return 0, nil, true, nil
 		}
 		tt = it + ot
 		usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
@@ -326,7 +327,7 @@ func (p *Proxy) callConvertedCodexResponses(ctx context.Context, w http.Response
 		o.Commit = CommitUpstreamResponded
 		o.Terminal = true
 		o.BusinessFrameSent = false
-		emitCodexOutcome(ctx, p, sel, o, rule.Kind5xx, errCodexResponsesNotIntegrated.msg)
+		emitCodexOutcome(ctx, p, sel, o, &AttemptHealthEvent{Kind: rule.Kind5xx, ErrorMessage: errCodexResponsesNotIntegrated.msg})
 		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
 		writeErr(w, errCodexResponsesNotIntegrated)

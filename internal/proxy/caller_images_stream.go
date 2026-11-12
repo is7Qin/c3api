@@ -131,12 +131,17 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
 		// 出口判定用请求 ctx 识别客户端断开（r.Context 与内部超时 ctx 的取消在
 		// 生产路径同源；genErr 未必携带 context.Canceled）。
-		switch classifyStreamExit(r.Context(), out, genErr, usageObs, ttft) {
+		exit := classifyStreamExit(r.Context(), out, genErr, usageObs, ttft)
+		// 归因只算一次（§3 序 0a–0c + 1–5）：各分支只消费结论。
+		f := streamFailureOf(r.Context(), exit, genErr)
+		switch exit {
 		case streamExitClientCancel:
 			// 客户端断开：已收集张数照常计费落账，不 MarkResult（不可转移）。
 			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
 			p.observeDispatchOutcome(ctx, outcome, nil)
-			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)), outcome.Commit))
+			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, logStatusForFailure(f), f.ET, u, start))
+			l.ErrorMessage = f.message()
+			p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
@@ -153,14 +158,17 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 				writeClientStreamError(out, domain.FormatOpenAIImages, genErr)
 			}
 			code := statusOf(genErr)
-			// 交付事实取 Output 的真实写出（§5.2(4) 折叠口径）：出图一张也算已写
-			// ——「上游 500 但已下发一张」必须计费（白送真实产出是本次要修的毛病）。
-			commit := commitStateOfFailure(out)
-			business := commit == CommitSentAmbiguous
-			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, business, true, false))
-			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: genErr.Error()}
-			p.observeDispatchOutcome(ctx, outcome, health)
-			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)), commit))
+			// 类型层交付态（AttemptOutcome.Validate）：非 0 状态只能用 upstream_responded，
+			// 0 状态只能用 sent_ambiguous——真实折叠值走日志列（commitStateOfFailure）。
+			outCommit := CommitSentAmbiguous
+			if code != 0 {
+				outCommit = CommitUpstreamResponded
+			}
+			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), outCommit, code == 0, true, false))
+			p.observeDispatchOutcome(ctx, outcome, streamFailureHealth(f))
+			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, logStatusForFailure(f), f.ET, u, start))
+			l.ErrorMessage = f.message()
+			p.finish(sel, withCommit(l, commitStateOfFailure(out)))
 			return 0, nil, true, nil
 		}
 	}

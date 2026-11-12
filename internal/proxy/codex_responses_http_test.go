@@ -1108,8 +1108,9 @@ func TestCodexResponsesStreamMidstreamUpstreamError(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType, "recordStreamAbort → 200 ErrAbort 记录")
-	require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
+	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
+		"上游流中断 ⇒ network（序 5）")
+	require.Equal(t, 0, store.logs[0].StatusCode, "上游断流无状态码 ⇒ 0（不合成）")
 	require.Zero(t, store.logs[0].TotalTokens, "completed 帧未送达（中止前未收 usage 帧）→ 0")
 }
 
@@ -1140,7 +1141,8 @@ func TestCodexResponsesStreamDoneWriteAbort(t *testing.T) {
 	p.sched.FlushRules()
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
-	require.Len(t, testHealthSink.throttlesFor(10), 1, "已提交写失败 → 连接级健康观测")
+	require.Empty(t, testHealthSink.throttlesFor(10),
+		"已提交写失败是客户端侧结束（序 0c）⇒ 不投递健康事件、不冷却账号")
 	require.Zero(t, ri.Concurrency, "收尾释放并发槽")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()

@@ -307,12 +307,15 @@ func TestRelayWSUpstreamError(t *testing.T) {
 	env.store.mu.Lock()
 	var lg *domain.UsageLog
 	for _, l := range env.store.logs {
-		if l.ErrorType == domain.ErrAbort {
+		if l.ErrorType != domain.ErrNone {
 			lg = l
 		}
 	}
 	env.store.mu.Unlock()
-	require.NotNil(t, lg, "recordStreamAbort 记录必须存在（ErrAbort——现状语义）")
+	require.NotNil(t, lg, "上游断流的失败行必须存在")
+	require.Equal(t, domain.ErrNetwork, lg.ErrorType,
+		"上游读失败 ⇒ network（序 5）；旧实现记 abort 是误标")
+	require.Equal(t, 0, lg.StatusCode, "关闭帧/读失败无上游状态 ⇒ 0")
 	require.Equal(t, int64(2), lg.InputTokens, "断前已嗅探 usage 照常计费（可计费输入 = 6 − cached 1 − cache_write 3）")
 	require.Equal(t, int64(5), lg.OutputTokens)
 	env.p.sched.FlushRules()

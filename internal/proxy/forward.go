@@ -498,6 +498,52 @@ func commitStateOf(c CommitState) *string {
 	return &s
 }
 
+// commitStateForExit 日志行的交付事实（出口判定的唯一折算入口）：0a/0c 客户端侧
+// 结束走 abort 口径（§5.2「沿用今天 abort 对同状态的口径」），其余（0b + 序 1–5）
+// 按真实写出事实折算。
+func commitStateForExit(exit streamExitKind, out *sserelay.Output) CommitState {
+	if exit == streamExitClientCancel || exit == streamExitWriteFailed {
+		return commitStateOfAbort(out)
+	}
+	return commitStateOfFailure(out)
+}
+
+// logStatusForFailure 失败行的 status_code：客户端侧结束仍记 200（响应头早已提交，
+// 既有语义），其余取归因状态（序 1/序 5 为 0，§3.1 不合成）。
+func logStatusForFailure(f streamFailure) int {
+	if f.ET == domain.ErrAbort {
+		return http.StatusOK
+	}
+	return f.Status
+}
+
+// commitStateOfAbort 客户端侧结束（序 0a/0c）的交付事实：§5.2 明确「沿用今天
+// abort 对同状态的口径」——这类行仍然计费（半异常计费语义），钱的归属只由本列
+// 决定，不由 error_type 决定。写过业务帧 ⇒ response_started；一帧业务字节都没
+// 写出去 ⇒ sent_ambiguous（交付不确定，仍按今天 abort 的口径计入放行侧）。
+func commitStateOfAbort(out *sserelay.Output) CommitState {
+	if out.BusinessFrameSent() {
+		return CommitResponseStarted
+	}
+	return CommitSentAmbiguous
+}
+
+// commitStateOfWSDelivery WS 下行的交付事实折算（§5.3：事实源是 relayWS 的真实
+// 下行帧计数——网关生成的错误帧/关闭帧/ping 不计业务交付）。客户端取消沿用今天
+// abort 的可计费口径（§5.2），故写没写过业务帧都落在可计费侧。
+func commitStateOfWSDelivery(result AttemptResult, sent bool) CommitState {
+	if result == ResultClientCancel {
+		if sent {
+			return CommitResponseStarted
+		}
+		return CommitSentAmbiguous
+	}
+	if sent {
+		return CommitSentAmbiguous
+	}
+	return CommitUpstreamResponded
+}
+
 // commitStateOfFailure 已提交流失败出口的交付事实折算（spec §5.2「折算规则」/
 // §5.3）：事实源是 sserelay.Output 的真实写出计数，**不是**出口自己构造的常量。
 //

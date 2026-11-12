@@ -93,29 +93,25 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
 			// 客户端断开/上游中断均经 typed outcome 统一收敛，保证 exactly-one 观测。
 			base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
-			switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ttft) {
-			case streamExitClientCancel:
-				// 客户端断开：上游已消费请求，仍保留已采集的 usage/TTFT 并记 200+ErrAbort，避免成功请求丢日志。
-				outcome := chatOutcomeForAbort(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, true)
-				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, err)
-				return 0, nil, true, nil
-			case streamExitUncommitted:
+			exit := classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ttft)
+			if exit == streamExitUncommitted {
 				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
 				return statusOf(err), nil, false, err
-			default: // 写失败 / 已提交
-				if out.Committed() {
-					writeClientStreamError(out, domain.FormatOpenAIChat, err)
-				}
-				// 上游流中断：保留已采集 usage 走网络错误观测。
-				outcome := chatOutcomeForAbort(base, out.BusinessFrameSent(), usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, false)
-				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, err)
-				return 0, nil, true, nil
 			}
+			// 已提交 / 写失败：唯一归因只在这里算一次（§3 序 0a–0c + 1–5）。
+			f := streamFailureOf(ctx, exit, err)
+			if exit != streamExitClientCancel && out.Committed() {
+				writeClientStreamError(out, domain.FormatOpenAIChat, err)
+			}
+			// 中止/失败都保留已采集的 usage/TTFT（成功请求丢日志防线）。
+			outcome := chatOutcomeForAbort(base, out.BusinessFrameSent(), usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, exit == streamExitClientCancel)
+			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, f, commitStateOfAbort(out))
+			return 0, nil, true, nil
 		}
 		// 流式成功：携带 TTFT 与已聚合的 usage 经 typed outcome 统一记录，保证 exactly-one 观测与记录归一。
 		base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 		outcome := chatOutcomeForSuccess(base, ttft, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
-		_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, nil)
+		_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, streamFailure{}, outcome.Commit)
 		return 200, nil, true, nil
 	}
 
@@ -150,6 +146,6 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// 非流式成功经 typed outcome 统一收敛，保证 exactly-one 观测与记录归一。
 	base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 	outcome := chatOutcomeForSuccess(base, nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
-	_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, nil)
+	_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, streamFailure{}, outcome.Commit)
 	return 200, nil, true, nil
 }

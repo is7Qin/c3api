@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
@@ -36,16 +37,29 @@ func TestWSOutcome_successReportsResponseStartedWithUsageAndTTFT(t *testing.T) {
 	require.Equal(t, CallerResponsesWS, out.CallerCategory)
 }
 
+// 客户端中止的观测事实取**真实下行计数**（§5.3）：写过业务帧 ⇒ response_started，
+// 一帧未写 ⇒ sent_ambiguous（交付不确定），两种情况都不得伪造 BusinessFrameSent。
 func TestWSOutcome_clientAbortIsResponseStarted(t *testing.T) {
 	sel := selForWSReport()
 	base := wsDispatchedBase(sel, "gpt-4o", time.Now())
 	ttft := int64(4)
-	out := wsOutcomeForClientAbort(base, usageTuple{it: 1}, &ttft)
+	out := wsOutcomeForClientAbort(base, true, usageTuple{it: 1}, &ttft)
 	require.NoError(t, out.Validate())
 	require.Equal(t, ResultClientCancel, out.Result)
 	require.Equal(t, CommitResponseStarted, out.Commit)
 	require.True(t, out.BusinessFrameSent)
 	require.Equal(t, AttemptStatus(0), out.HTTPStatus)
+
+	notSent := wsOutcomeForClientAbort(base, false, usageTuple{}, nil)
+	require.NoError(t, notSent.Validate())
+	require.Equal(t, CommitNotSent, notSent.Commit, "一帧未写出 ⇒ not_sent（cancel 允许 not_sent+terminal）")
+	require.False(t, notSent.BusinessFrameSent, "一帧未写出 ⇒ 不得记成已交付")
+	require.Equal(t, statusClientClosedRequest, func() int {
+		if !notSent.BusinessFrameSent {
+			return statusClientClosedRequest
+		}
+		return 200
+	}(), "未交付的取消记 499（既有语义）")
 }
 
 func TestWSOutcome_upstreamErrorIsSentAmbiguous(t *testing.T) {
@@ -59,6 +73,12 @@ func TestWSOutcome_upstreamErrorIsSentAmbiguous(t *testing.T) {
 	require.True(t, out.BusinessFrameSent)
 	require.True(t, out.Terminal)
 	require.False(t, CanRetry(CallerResponsesWS, out))
+
+	// 一帧业务字节都没写出去：类型层仍只能是 sent_ambiguous（Validate 要求
+	// BusinessFrameSent），但**日志列**按真实下行计数落 upstream_responded ⇒
+	// 不计费（§5.2(4) 折叠口径）。
+	require.Equal(t, CommitUpstreamResponded, commitStateOfWSDelivery(ResultFailed, false))
+	require.Equal(t, CommitSentAmbiguous, commitStateOfWSDelivery(out.Result, out.BusinessFrameSent))
 }
 
 func TestWSOutcome_notSentNetworkIsRetryable(t *testing.T) {
@@ -112,7 +132,7 @@ func TestWSOutcome_singleObserverExactlyOnceBarrier(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			<-startCh
-			_ = obs.Complete(out, wsHealthForOutcome(out))
+			_ = obs.Complete(out, &AttemptHealthEvent{Kind: rule.KindOK})
 		}()
 	}
 	close(startCh)

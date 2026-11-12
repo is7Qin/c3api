@@ -70,48 +70,33 @@ func chatOutcomeForAbort(base AttemptOutcome, sent bool, u usageTuple, ttft *int
 	return o
 }
 
-func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, cause error) error {
+// reportChatOutcome chat 车道的唯一记录点。归因（error_type / status_code /
+// error_message / 健康事件）全部来自 f——出口不再自拼类别（旧实现把「上游流内
+// 声明失败」和「客户端断开」都写成 abort）；commit 是交付事实（计费资格），由
+// 调用方按 Output 的写出事实给出。
+func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, f streamFailure, commit CommitState) error {
 	if err := outcome.Validate(); err != nil {
 		return err
 	}
-	var status int
-	var et domain.ErrorType
+	status, et := http.StatusOK, domain.ErrNone
 	var health *AttemptHealthEvent
-	switch outcome.Result {
-	case ResultSuccess:
-		status = http.StatusOK
-		et = domain.ErrNone
+	switch {
+	case outcome.Result == ResultSuccess:
 		health = &AttemptHealthEvent{Kind: rule.KindOK}
-	case ResultClientCancel:
-		status = http.StatusOK
+	case f.ET == domain.ErrAbort:
+		// 客户端侧结束（序 0a/0c）：200 + abort，不投递健康事件（不惩罚账号）；
+		// 上游可能已消费请求，token 照常落账。
 		et = domain.ErrAbort
-		health = nil
-	case ResultFailed:
-		status = http.StatusOK
-		et = domain.ErrAbort
-		health = &AttemptHealthEvent{Kind: rule.KindNetwork}
 	default:
-		status = http.StatusOK
-		et = domain.ErrAbort
-		health = &AttemptHealthEvent{Kind: rule.KindNetwork}
+		status, et, health = f.Status, f.ET, streamFailureHealth(f)
 	}
 	u := usageTuple{it: outcome.Usage.InputTokens, ot: outcome.Usage.OutputTokens, tt: outcome.Usage.InputTokens + outcome.Usage.OutputTokens, cr: outcome.Usage.CacheReadTokens, cc: outcome.Usage.CacheCreationTokens}
 	if outcome.Timing.TTFTMS != nil {
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, outcome.Timing.TTFTMS)
 	}
-	// 交付事实（§5.2）：成功 = 已确认下发；首字节写失败（序 0c，outcome 记
-	// not_sent）今天记 abort 且计入放行侧——沿用今天 abort 对同状态的可计费口径
-	// （半异常计费语义），本轮不改钱。钱的归属只由本列决定，不由 error_type。
-	commit := outcome.Commit
-	if outcome.Result == ResultFailed && outcome.Commit == CommitNotSent {
-		commit = CommitSentAmbiguous
-	}
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIChat, status, et, u, start)), commit)
-	// 中止/失败行必须留因：cause 为 relay 返回的真实错误（上游流内错误帧的
-	// PayloadError、关闭帧、context.Canceled 等）。成功行 cause 恒 nil ⇒ NULL。
-	if outcome.Result != ResultSuccess {
-		l.ErrorMessage = causeMessage(cause)
-	}
+	// 中止/失败行必须留因：取归因文本（上游信封原文优先）。成功行 f 为零值 ⇒ NULL。
+	l.ErrorMessage = f.message()
 	// Single owner observation (quality + bounded flow) + health marking; the
 	// finish releases the lease exactly once.
 	p.observeDispatchOutcome(ctx, outcome, health)

@@ -181,8 +181,9 @@ func TestTerminalOutcomesAllMappings(t *testing.T) {
 			store.mu.Lock()
 			defer store.mu.Unlock()
 			require.Len(t, store.logs, 1)
-			require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
-			require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType)
+			require.Equal(t, 0, store.logs[0].StatusCode, "上游断流无状态码 ⇒ 0（不合成）")
+			require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
+				"已接受流中止是上游断流 ⇒ network（序 5）")
 			require.Equal(t, "gpt-4o", store.logs[0].Model)
 			require.Equal(t, tc.wantMapped, store.logs[0].MappedModel, "已接受流中止 MappedModel 必须等于当轮用量身份")
 		})

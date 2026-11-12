@@ -352,7 +352,7 @@ func TestStreamFailureG9ContFailAfterAckIsNotAbort(t *testing.T) {
 		defer client.CloseNow()
 		var wg sync.WaitGroup
 		p.relayWSContFail(client, &fakeTransport{}, &wg, r.Context(), errContUnavailable,
-			true, sel, reqID, 10, "gpt-4o", start, usageTuple{}, nil)
+			true, 1, sel, reqID, 10, "gpt-4o", start, usageTuple{}, nil)
 	}))
 	defer srv.Close()
 	c := dialResponsesWS(t, srv)

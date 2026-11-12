@@ -854,7 +854,8 @@ func TestProxyStreamTimeoutMarksThrottle(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1, "must capture exactly one usage log")
-	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType, "超时中止按上游读失败记 ErrAbort")
+	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
+		"超时中止是上游侧失败（序 0b）⇒ network；旧实现误标 abort")
 	require.Equal(t, "gpt-4o", store.logs[0].Model, "recordStreamAbort：Model = 客户端请求模型")
 	require.Equal(t, "", store.logs[0].MappedModel, "无映射 → MappedModel 空")
 }
@@ -958,7 +959,8 @@ func TestProxyClientDisconnectFreesSlot(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Len(t, testHealthSink.throttlesFor(1), 1, "客户端断开写出失败按上游读失败惩罚")
+	require.Empty(t, testHealthSink.throttlesFor(1),
+		"客户端侧结束不惩罚账号（I3：下游连接断裂是客户端行为，旧实现误冷却无辜账号）")
 	require.Zero(t, ri.Concurrency, "客户端断开必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "写出失败按上游读失败处理，记 ErrAbort 用量")
 	// 客户端断开（recordStreamAbort）Model=客户端请求模型

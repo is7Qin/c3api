@@ -102,7 +102,8 @@ func TestConvertedCodexAbortAfterFrameWritten(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType, "已写出后上游中断 → recordStreamAbort")
+	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
+		"已写出后上游断流 ⇒ network（序 5）；旧实现记 abort 是误标")
 }
 
 // TestConvertedCodexZeroFrameDefense spec §3 第 4 项（新结构）：转换路径病态上游

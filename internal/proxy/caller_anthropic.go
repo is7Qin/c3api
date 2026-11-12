@@ -80,39 +80,36 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		base := mergeDispatchBase(ctx, anthropicBaseOutcome(reqID, groupID, sel, reqModel, start, ttft, it, ot, cr, cc))
 		if err != nil {
 			// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
-			switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ttft) {
-			case streamExitClientCancel:
-				// 已提交流用量保留：沿用断前已收到的用量，无则 0，记 200+ErrAbort 防丢日志
-				oc := base
-				oc.Result = ResultClientCancel
-				oc.Commit = CommitResponseStarted
-				oc.HTTPStatus = 0
-				oc.Terminal = true
-				oc.BusinessFrameSent = true
-				p.observeDispatchOutcome(ctx, oc, nil)
-				p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)), CommitResponseStarted))
-				return 0, nil, true, nil
-			case streamExitUncommitted:
+			exit := classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ttft)
+			if exit == streamExitUncommitted {
 				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）
 				return statusOf(err), nil, false, err
-			default: // 写失败 / 已提交
-				if out.Committed() {
-					writeClientStreamError(out, domain.FormatAnthropic, err)
-				}
-				oc := base
+			}
+			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5）。
+			f := streamFailureOf(ctx, exit, err)
+			if exit != streamExitClientCancel && out.Committed() {
+				writeClientStreamError(out, domain.FormatAnthropic, err)
+			}
+			// 中止/失败都保留断前已收到的用量（防丢日志）。
+			oc := base
+			oc.HTTPStatus = 0
+			oc.Terminal = true
+			oc.BusinessFrameSent = true
+			oc.Commit = CommitSentAmbiguous
+			if exit == streamExitClientCancel {
+				oc.Result = ResultClientCancel
+				oc.Commit = CommitResponseStarted
+			} else {
 				oc.Result = ResultFailed
-				oc.HTTPStatus = 0
-				oc.Commit = CommitSentAmbiguous
-				oc.Terminal = true
-				oc.BusinessFrameSent = true
-				health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(statusOf(err)), ErrorMessage: err.Error()}
-				p.observeDispatchOutcome(ctx, oc, health)
-				if p.log != nil {
+				if p.log != nil && f.ET != domain.ErrAbort {
 					p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
 				}
-				p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, http.StatusOK, domain.ErrAbort, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start)), CommitSentAmbiguous))
-				return 0, nil, true, nil
 			}
+			p.observeDispatchOutcome(ctx, oc, streamFailureHealth(f))
+			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, logStatusForFailure(f), f.ET, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start))
+			l.ErrorMessage = f.message()
+			p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
+			return 0, nil, true, nil
 		}
 		tt = it + ot
 		base.Usage.OutputTokens = ot

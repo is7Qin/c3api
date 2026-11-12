@@ -78,16 +78,12 @@ func codexDispatchBase(sel *scheduler.Selection, reqModel, reqID string, start t
 	}
 }
 
-func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o AttemptOutcome, healthKind rule.Kind, healthMsg string) {
+func emitCodexOutcome(ctx context.Context, p *Proxy, sel *scheduler.Selection, o AttemptOutcome, health *AttemptHealthEvent) {
 	if sel == nil {
 		return
 	}
 	if err := o.Validate(); err != nil {
 		return
-	}
-	var health *AttemptHealthEvent
-	if healthKind != 0 || healthMsg != "" {
-		health = &AttemptHealthEvent{Kind: healthKind, ErrorMessage: healthMsg}
 	}
 	if o.Result == ResultClientCancel {
 		health = nil
@@ -129,7 +125,7 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 		o.Commit = CommitUpstreamResponded
 		o.Terminal = true
 		o.BusinessFrameSent = false
-		emitCodexOutcome(ctx, p, sel, o, rule.Kind5xx, errCodexResponsesNotIntegrated.msg)
+		emitCodexOutcome(ctx, p, sel, o, &AttemptHealthEvent{Kind: rule.Kind5xx, ErrorMessage: errCodexResponsesNotIntegrated.msg})
 		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexResponsesNotIntegrated.msg)
 		writeErr(w, errCodexResponsesNotIntegrated)
@@ -261,7 +257,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	o.Commit = CommitResponseStarted
 	o.BusinessFrameSent = true
 	o.Terminal = true
-	emitCodexOutcome(ctx, p, sel, o, rule.KindOK, "")
+	emitCodexOutcome(ctx, p, sel, o, &AttemptHealthEvent{Kind: rule.KindOK})
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), out.LogFormat(), http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }
@@ -390,18 +386,19 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
 	if err != nil {
 		// 统一出口判定（§3.7）：取消/写失败不补写；未提交交 pipeline；已提交写 SSE error。
-		switch classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img}, ttft) {
+		exit := classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img}, ttft)
+		switch exit {
 		case streamExitClientCancel:
-			// 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志
-			// 防线）；按 abort 收尾不 MarkResult。
+			// 0a 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志
+			// 防线）；按 abort 收尾不 MarkResult、不投递健康事件。
 			o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 			o.Result = ResultClientCancel
 			o.HTTPStatus = 0
 			o.Commit = CommitResponseStarted
 			o.BusinessFrameSent = true
 			o.Terminal = true
-			emitCodexOutcome(ctx, p, sel, o, 0, "")
-			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrAbort, ut, start)), o.Commit))
+			emitCodexOutcome(ctx, p, sel, o, nil)
+			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrAbort, ut, start)), commitStateOfAbort(out)))
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
@@ -409,22 +406,31 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			// 恒空（pipeline.go:355-358 从 body 取 message），"网关侧看不到为什么"的
 			// 原始症状会以"看到 429 但不知道原因"的形式残留。
 			return statusOf(err), upstreamBody(err), false, err
-		default: // 写失败 / 已提交
-			if out.Committed() {
-				writeClientStreamError(out, plan.logFormat, err)
-			}
-			// 上游停滞/错误（流中止）：200 已写出——recordStreamAbort + 连接级/5xx
-			// 分流，保留健康观测。
-			o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
-			o.Result = ResultFailed
-			o.HTTPStatus = 0
-			o.Commit = CommitResponseStarted
-			o.BusinessFrameSent = true
-			o.Terminal = true
-			emitCodexOutcome(ctx, p, sel, o, rule.KindNetwork, err.Error())
-			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, CommitSentAmbiguous, err)
+		}
+		// 已提交 / 写失败：终态归因只在这里算一次（§3 序 0b–0c + 1–5）。
+		f := streamFailureOf(ctx, exit, err)
+		if f.ET == domain.ErrAbort {
+			// 0c 客户端侧结束（下行写不进去）：abort 行 + 不投递健康事件。
+			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, commitStateOfAbort(out), err)
 			return 0, nil, true, nil
 		}
+		if out.Committed() {
+			writeClientStreamError(out, plan.logFormat, err)
+		}
+		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
+		o.Result = ResultFailed
+		o.HTTPStatus = 0
+		// 类型层交付态受 AttemptOutcome.Validate 约束（status 0 只允许
+		// not_sent/sent_ambiguous/response_started/client_committed），故这里记
+		// sent_ambiguous；日志列落真实折叠值（commitStateOfFailure）。
+		o.Commit = CommitSentAmbiguous
+		o.BusinessFrameSent = out.BusinessFrameSent()
+		o.Terminal = true
+		emitCodexOutcome(ctx, p, sel, o, streamFailureHealth(f))
+		l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, f.Status, f.ET, ut, start))
+		l.ErrorMessage = f.message()
+		p.finish(sel, withCommit(l, commitStateOfFailure(out)))
+		return 0, nil, true, nil
 	}
 	o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 	o.Result = ResultSuccess
@@ -432,7 +438,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	o.Commit = CommitClientCommitted
 	o.BusinessFrameSent = true
 	o.Terminal = true
-	emitCodexOutcome(ctx, p, sel, o, rule.KindOK, "")
+	emitCodexOutcome(ctx, p, sel, o, &AttemptHealthEvent{Kind: rule.KindOK})
 	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrNone, ut, start)))
 	return http.StatusOK, nil, true, nil
 }

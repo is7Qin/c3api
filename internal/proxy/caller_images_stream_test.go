@@ -329,7 +329,8 @@ func TestStreamImagePostHeaderError(t *testing.T) {
 	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"error\":{\"message\":\"upstream exploded\",\"type\":\"server_error\"}}\n\n", "SSE error 帧 + EOF")
 	// 计费走 recordStreamAbort：已收集 1 张照常落账（200 + abort 语义）。
 	l := collectImageLogs(t, p, store)
-	require.Equal(t, domain.ErrAbort, l.ErrorType)
+	require.Equal(t, domain.Err5xx, l.ErrorType, "上游 500 信封 ⇒ 5xx（序 4），不是 abort")
+	require.Equal(t, http.StatusInternalServerError, l.StatusCode, "归因状态取上游真值")
 	require.Equal(t, int64(1), l.CallCount)
 	require.Equal(t, int64(5400), l.Cost, "1 张 per-image 计费")
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空

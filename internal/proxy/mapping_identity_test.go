@@ -219,7 +219,8 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 		defer store.mu.Unlock()
 		require.Len(t, store.logs, 1, "must capture exactly one usage log")
 		l := store.logs[0]
-		require.Equal(t, domain.ErrAbort, l.ErrorType, "已接受流中止记 ErrAbort")
+		require.Equal(t, domain.ErrNetwork, l.ErrorType,
+			"已接受流中止是上游断流 ⇒ network（序 5）")
 		require.Equal(t, "gpt-4o", l.Model, "Model = 客户端请求模型")
 		require.Equal(t, "", l.MappedModel, "implicit 流中止行不记录 MappedModel")
 	})
