@@ -7,8 +7,86 @@ import type { components } from './api/schema.d.ts'
 
 export type ProbeTemplate = Pick<components['schemas']['Template'], 'SupportedFormats' | 'Models' | 'FormatModels' | 'ModelMapping'>
 export type ProbeFormat = components['schemas']['AccountTestRequest']['format']
+export type ProbeImageMode = NonNullable<components['schemas']['AccountTestRequest']['image_mode']>
 
-export const PROBE_FORMATS = ['openai-chat', 'openai-responses', 'openai-responses-ws', 'anthropic'] as const satisfies readonly ProbeFormat[]
+export const PROBE_FORMATS = [
+  'openai-chat',
+  'openai-responses',
+  'openai-responses-ws',
+  'anthropic',
+  'openai-images',
+  'openai-search',
+] as const satisfies readonly ProbeFormat[]
+
+// 与后端 domain.ProbeMaxInputLen / ProbeMaxImageSourceBytes 同值。前端只做
+// 提示与提交前拦截；最终判定仍在 service（UTF-8 字节，不是 JS 字符数）。
+export const PROBE_MAX_INPUT_BYTES = 8192
+export const PROBE_MAX_IMAGE_URL_BYTES = 6 * 1024 * 1024
+
+export function probeUTF8Bytes(value: string): number {
+  return new TextEncoder().encode(value).length
+}
+
+export function probeInputByteLength(raw: string): number {
+  return probeUTF8Bytes(raw.trim())
+}
+
+export function probeImageURLByteLength(raw: string): number {
+  return probeUTF8Bytes(raw.trim())
+}
+
+// 缺省/显式空串都表示“不发送 input”，由后端按格式取默认提示词。非空值
+// 先 trim（与 service 同口径）。
+export function probeInputValue(raw: string): string | undefined {
+  const value = raw.trim()
+  return value === '' ? undefined : value
+}
+
+// 与 service.validProbeImageURL 的 wire 形态一致：http(s) 绝对 URL，或
+// data:image/<mime>;base64,<data>。字节上限由 probeImageURLByteLength 单独判定。
+export function probeImageURLShapeValid(raw: string): boolean {
+  const value = raw.trim()
+  if (value === '') return false
+  const lower = value.toLowerCase()
+  if (lower.startsWith('data:')) {
+    if (!lower.startsWith('data:image/')) return false
+    const comma = value.indexOf(',')
+    if (comma < 0) return false
+    const meta = value.slice(0, comma).slice('data:'.length).toLowerCase()
+    return meta.endsWith(';base64') && meta.length - ';base64'.length > 'image/'.length
+  }
+  try {
+    const url = new URL(value)
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host !== ''
+  } catch {
+    return false
+  }
+}
+
+// 请求体只携带真正有值的可选字段：input 缺省/null 才是后端默认值；显式空串
+// 会被 service 判 400。generations 不发送 image_mode/image_url。
+export function buildProbeRequest(args: {
+  format: ProbeFormat
+  model: string
+  input: string
+  imageMode: ProbeImageMode
+  imageURL: string
+}): components['schemas']['AccountTestRequest'] {
+  const body: components['schemas']['AccountTestRequest'] = {
+    model: args.model.trim(),
+    format: args.format,
+  }
+  const input = probeInputValue(args.input)
+  if (input !== undefined) body.input = input
+  if (args.format === 'openai-images' && args.imageMode === 'edits') {
+    const imageURL = args.imageURL.trim()
+    if (imageURL !== '') {
+      body.image_mode = 'edits'
+      body.image_url = imageURL
+    }
+  }
+  return body
+}
 
 export function probeFormats(template: ProbeTemplate | null | undefined): ProbeFormat[] {
   if (!template) return []

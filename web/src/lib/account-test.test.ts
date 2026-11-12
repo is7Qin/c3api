@@ -4,7 +4,17 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatSupports, probeComboboxValue, probeFormats, probeModelsFor } from './account-test.ts'
+import {
+  buildProbeRequest,
+  formatSupports,
+  PROBE_MAX_IMAGE_URL_BYTES,
+  PROBE_MAX_INPUT_BYTES,
+  probeComboboxValue,
+  probeFormats,
+  probeImageURLShapeValid,
+  probeInputByteLength,
+  probeModelsFor,
+} from './account-test.ts'
 import type { ProbeTemplate } from './account-test.ts'
 
 const template = (overrides: Partial<ProbeTemplate> = {}): ProbeTemplate => ({
@@ -18,10 +28,71 @@ const template = (overrides: Partial<ProbeTemplate> = {}): ProbeTemplate => ({
 const mapping = { alias: { mapped_model: 'upstream-alias', mode: 'explicit' as const } }
 
 describe('probeFormats', () => {
-  it('只返回模板支持格式与四种可探测格式的交集', () => {
+  it('只返回模板支持格式与六种可探测格式的交集（保持 PROBE_FORMATS 顺序）', () => {
     const tpl = template({ SupportedFormats: ['openai-images', 'anthropic', 'openai-chat', 'openai-search'] })
-    assert.deepEqual(probeFormats(tpl), ['openai-chat', 'anthropic'])
-    assert.deepEqual(probeFormats(template({ SupportedFormats: ['openai-images'] })), [])
+    assert.deepEqual(probeFormats(tpl), ['openai-chat', 'anthropic', 'openai-images', 'openai-search'])
+    assert.deepEqual(probeFormats(template({ SupportedFormats: ['openai-images'] })), ['openai-images'])
+    assert.deepEqual(probeFormats(template({ SupportedFormats: ['openai-search'] })), ['openai-search'])
+  })
+})
+
+describe('probeInputByteLength / probeImageURLShapeValid', () => {
+  it('input 字节数按 trim 后的 UTF-8 计算，与 service 同口径', () => {
+    assert.equal(probeInputByteLength('  你好  '), 6)
+    assert.equal(probeInputByteLength('   '), 0)
+    assert.ok(PROBE_MAX_INPUT_BYTES === 8192)
+  })
+
+  it('接受 http(s) 与 data:image/...;base64，拒绝其他 scheme/空 data', () => {
+    assert.equal(probeImageURLShapeValid('https://example.com/a.png'), true)
+    assert.equal(probeImageURLShapeValid('HTTP://example.com/a.png'), true)
+    assert.equal(probeImageURLShapeValid('data:image/png;base64,AAAA'), true)
+    assert.equal(probeImageURLShapeValid('DATA:IMAGE/PNG;BASE64,AAAA'), true)
+    assert.equal(probeImageURLShapeValid('data:image/png,AAAA'), false)
+    assert.equal(probeImageURLShapeValid('data:text/plain;base64,AAAA'), false)
+    assert.equal(probeImageURLShapeValid('data:image/;base64,AAAA'), false)
+    assert.equal(probeImageURLShapeValid('ftp://example.com/a.png'), false)
+    assert.equal(probeImageURLShapeValid('/relative.png'), false)
+    assert.equal(probeImageURLShapeValid(''), false)
+    assert.ok(PROBE_MAX_IMAGE_URL_BYTES === 6 * 1024 * 1024)
+  })
+})
+
+describe('buildProbeRequest', () => {
+  const base = { format: 'openai-chat' as const, model: '  m1  ', input: '', imageMode: 'generations' as const, imageURL: '' }
+
+  it('空白 input 不发送，非空先 trim', () => {
+    assert.deepEqual(buildProbeRequest(base), { model: 'm1', format: 'openai-chat' })
+    assert.deepEqual(buildProbeRequest({ ...base, input: '  你好  ' }), {
+      model: 'm1',
+      format: 'openai-chat',
+      input: '你好',
+    })
+  })
+
+  it('非图片格式忽略图片字段；generations 不发送 image_mode/image_url', () => {
+    assert.deepEqual(buildProbeRequest({ ...base, imageURL: 'https://example.com/a.png', imageMode: 'edits' }), {
+      model: 'm1',
+      format: 'openai-chat',
+    })
+    assert.deepEqual(buildProbeRequest({ ...base, format: 'openai-images', imageURL: 'https://example.com/a.png' }), {
+      model: 'm1',
+      format: 'openai-images',
+    })
+  })
+
+  it('images edits 携带 trim 后的 image_url 与 image_mode', () => {
+    assert.deepEqual(buildProbeRequest({
+      ...base,
+      format: 'openai-images',
+      imageMode: 'edits',
+      imageURL: '  data:image/png;base64,AAAA  ',
+    }), {
+      model: 'm1',
+      format: 'openai-images',
+      image_mode: 'edits',
+      image_url: 'data:image/png;base64,AAAA',
+    })
   })
 })
 

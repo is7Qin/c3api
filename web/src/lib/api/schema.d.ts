@@ -2635,26 +2635,35 @@ export interface components {
              */
             expected_revision: number;
         };
-        /** @description 单账号单模型探测请求。**不含 URL/host/路径字段**：出站目标只能来自已存储的 账号/模板配置。format 只接受四种可探测格式（openai-images/openai-search → 400）； openai-responses-ws 表示按 HTTP responses 探测。 */
+        /** @description 单账号单模型探测请求。**不含 URL/host/路径字段**：出站目标（base_url + 上游路径） 只能来自已存储的账号/模板配置。format 接受六种可探测格式； openai-responses-ws 表示按 HTTP responses 探测。可选 input/image_mode/image_url 均为 nullable：缺省与显式 null 同义（input 用格式默认值；image_mode 在 images 下默认 generations；image_url 视为空）。input 运行时按 UTF-8 **字节** 8192 校验， image_url 运行时按 UTF-8 **字节** 6 MiB 校验。 */
         AccountTestRequest: {
             /** @description 客户端模型名（须非空，且满足模板格式/模型空间资格） */
             model: string;
             /**
-             * @description 探测格式（与 domain.RequestFormat 同名）
+             * @description 探测格式（与 domain.RequestFormat 同名）。openai-images 由 image_mode 选择 generations/edits（缺省 generations）；openai-search 探测 /v1/alpha/search。
              * @enum {string}
              */
-            format: "openai-chat" | "openai-responses" | "openai-responses-ws" | "anthropic";
+            format: "openai-chat" | "openai-responses" | "openai-responses-ws" | "anthropic" | "openai-images" | "openai-search";
+            /** @description 自定输入（UTF-8 字节 ≤8192；出现时先 TrimSpace，为空/超长 → 400）。 缺省/null 按格式默认值：文本四格式 hi、images generations 「A simple red apple on a white table」、images edits 「Turn this image into a watercolor painting」、openai-search OpenAI。 */
+            input?: string | null;
+            /**
+             * @description 仅 openai-images 有效。缺省/null → generations；出现空串/非法值 → 400。 其他格式出现任何非 null 值（含空串）→ 400。edits 必须提供 image_url； generations 不得携带非空 image_url。
+             * @enum {string|null}
+             */
+            image_mode?: "generations" | "edits" | null;
+            /** @description 仅 openai-images edits 必填：http(s) URL 或 data:image/<mime>;base64,<data> （其他 scheme → 400；UTF-8 字节上限 6 MiB）。静态 key 族由探测端取图/解码后 组 multipart；codex 族把 URL/data URL 直接交给 SDK。generations 出现非空值 → 400；其他格式出现任何非 null 值（含空串）→ 400。请求字段绝不回显到结果/日志。 */
+            image_url?: string | null;
         };
-        /** @description 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。error 只含固定分类 文案，detail 只含内置有限公开错误码表内的 code=<value>；两者均不回显上游自由文本、 原始 JSON、内部 ID 或其他凭据，并分别截断到 1024/2048 字节。status_code=0 表示传输 失败（含超时/取消）。 */
+        /** @description 探测结论（HTTP 200 恒返回本对象；success=false 不是 4xx/5xx）。**窄例外**： 仅当上游响应是 200 且成功判定通过时，output_preview 为按格式抽取、按已知 URL/token/ID 形态脱敏并截断到 64 KiB 的模型可见输出；image_previews 为通过 base64+魔数校验的 b64 图片（data URL 形态）。成功文本是 best-effort redacted model output，**不是 formal secret boundary**，只返回给管理员/账号 owner， 绝不写日志/usage/err/rule。**保留禁止项**：status != 200（含 201/204/206）的 响应体、error envelope、原始 JSON/SSE、search envelope、图片取图失败详情、 URL、内部 ID、key/签名与凭据一律不回显；错误路径 output_preview 为空、 image_previews 为空数组，status_code=0 表示传输/取图失败（含超时/取消）。 error 只含固定分类文案，detail 只含内置有限公开错误码表内的 code=<value>； 两者均不回显上游自由文本并分别截断到 1024/2048 字节。 */
         AccountTestResult: {
-            /** @description 上游返回了该格式可用的输出 */
+            /** @description 上游返回了该格式可用的输出（images/search 要求 HTTP 200） */
             success: boolean;
             /**
              * Format: int64
-             * @description 仅上游调用耗时（毫秒）
+             * @description 仅上游调用耗时（毫秒；images edits 含取图耗时）
              */
             latency_ms: number;
-            /** @description 上游 HTTP 状态；传输失败 = 0 */
+            /** @description 上游 HTTP 状态；传输/取图失败 = 0 */
             status_code: number;
             /** @description 原样回显请求格式 */
             format: string;
@@ -2662,10 +2671,14 @@ export interface components {
             requested_model: string;
             /** @description 映射后的上游模型名 */
             upstream_model: string;
-            /** @description 固定分类文案（probe timed out / probe canceled / probe blocked cross-origin redirect / probe request failed / upstream rejected credentials / upstream endpoint or model not found / upstream rate limited / upstream rejected request / upstream redirect rejected / upstream error / upstream response missing usable output / upstream stream failed / response exceeds 2 MiB；≤1024 字节，不回显上游文本） */
+            /** @description 固定分类文案（probe timed out / probe canceled / probe blocked cross-origin redirect / probe request failed / upstream rejected credentials / upstream endpoint or model not found / upstream rate limited / upstream rejected request / upstream redirect rejected / upstream error / upstream response missing usable output / upstream stream failed / response exceeds 2 MiB / probe image fetch failed / probe image invalid / probe image exceeds 4 MiB；≤1024 字节，不回显上游文本） */
             error: string;
             /** @description 内置有限公开错误码表内的 code=<value>（如 invalid_api_key / model_not_found / rate_limit_exceeded）；表外值（含上游任意 error.code/error.type、其他租户 key、内部请求 id）一律为空（≤2048 字节） */
             detail: string;
+            /** @description 仅 200 成功响应的文本安全投影（chat/responses/anthropic/search 抽取；codex SSE 取终态 response；已按 URL/Bearer/key/ID/UUID 形态脱敏并截断到 64 KiB）。错误路径/非 200/图片格式为空串；原始 JSON/SSE/envelope 绝不回显 */
+            output_preview: string;
+            /** @description 仅图片格式 200 成功响应中通过 base64+魔数（PNG/JPEG/WebP）校验的图片预览（data:image/<mime>;base64,...；单张解码 ≤2 MiB、合计 ≤4 MiB、最多 4 张）。恒非 null（空为 []）；不经过文本脱敏器 */
+            image_previews: string[];
         };
         /** @description 账号 codex 额度快照（sdkbridge；每块可选——上游没返回就不出字段；金额为字符串不解析保精度） */
         CodexUsageSnapshot: {

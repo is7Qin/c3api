@@ -8,7 +8,20 @@ import { Check, Copy, LoaderCircle } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useAccountSurface } from '@/lib/api/scope'
 import type { components } from '@/lib/api/schema.d.ts'
-import { probeComboboxValue, probeFormats, probeModelsFor, type ProbeFormat } from '@/lib/account-test'
+import { ApiError } from '@/lib/api/client'
+import {
+  buildProbeRequest,
+  PROBE_MAX_IMAGE_URL_BYTES,
+  PROBE_MAX_INPUT_BYTES,
+  probeComboboxValue,
+  probeFormats,
+  probeImageURLByteLength,
+  probeImageURLShapeValid,
+  probeInputByteLength,
+  probeModelsFor,
+  type ProbeFormat,
+  type ProbeImageMode,
+} from '@/lib/account-test'
 import { copyText } from '@/components/key-box'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -17,6 +30,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 
 type AccountView = components['schemas']['AccountView']
 type AccountTestResult = components['schemas']['AccountTestResult']
@@ -46,6 +60,10 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
     () => format && template ? probeModelsFor(template, format) : { models: [], wildcard: false },
     [template, format],
   )
+  const [inputText, setInputText] = useState('')
+  const [imageMode, setImageMode] = useState<ProbeImageMode>('generations')
+  const [imageURL, setImageURL] = useState('')
+  const [fileError, setFileError] = useState<string | null>(null)
   const [result, setResult] = useState<AccountTestResult | null>(null)
   const [requestError, setRequestError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
@@ -58,7 +76,12 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
       setCopied(false)
     },
     onSuccess: setResult,
-    onError: (error: Error) => setRequestError(error.message),
+    onError: (error: Error) => {
+      // 不显示服务端错误体原文：仅按状态区分“输入被拒”和“请求失败”。
+      setRequestError(error instanceof ApiError && error.status === 400
+        ? t('accounts.test.requestInvalid')
+        : t('accounts.test.requestFailed'))
+    },
   })
 
   const clearOutcome = () => {
@@ -70,25 +93,82 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
     setFormat(next)
     const nextCandidates = template ? probeModelsFor(template, next) : { models: [], wildcard: false }
     setModel(current => nextCandidates.wildcard || nextCandidates.models.includes(current) ? current : '')
+    if (next !== 'openai-images') {
+      setImageMode('generations')
+      setImageURL('')
+      setFileError(null)
+    }
     clearOutcome()
   }
   const changeModel = (next: string) => {
     setModel(next)
     clearOutcome()
   }
+  const changeImageMode = (next: ProbeImageMode) => {
+    setImageMode(next)
+    setFileError(null)
+    clearOutcome()
+  }
+  const changeImageURL = (next: string) => {
+    setImageURL(next)
+    setFileError(null)
+    clearOutcome()
+  }
+  const onImageFile = (file: File | undefined) => {
+    setFileError(null)
+    clearOutcome()
+    if (!file) return
+    if (file.type && !file.type.startsWith('image/')) {
+      setFileError(t('accounts.test.imageFileType'))
+      return
+    }
+    if (file.size > PROBE_MAX_IMAGE_URL_BYTES) {
+      setFileError(t('accounts.test.imageUrlTooLarge'))
+      return
+    }
+    const reader = new FileReader()
+    reader.onerror = () => setFileError(t('accounts.test.imageFileRead'))
+    reader.onload = () => {
+      const dataURL = typeof reader.result === 'string' ? reader.result : ''
+      if (dataURL === '' || probeImageURLByteLength(dataURL) > PROBE_MAX_IMAGE_URL_BYTES) {
+        setFileError(t('accounts.test.imageUrlTooLarge'))
+        return
+      }
+      setImageURL(dataURL)
+      setFileError(null)
+      clearOutcome()
+    }
+    reader.readAsDataURL(file)
+  }
 
   const trimmed = model.trim()
   const modelValid = trimmed !== '' && (candidates.wildcard || candidates.models.includes(trimmed))
+  const imagesFormat = format === 'openai-images'
+  const edits = imagesFormat && imageMode === 'edits'
+  const inputTooLarge = probeInputByteLength(inputText) > PROBE_MAX_INPUT_BYTES
+  const imageURLBytes = probeImageURLByteLength(imageURL)
+  const imageTooLarge = edits && imageURLBytes > PROBE_MAX_IMAGE_URL_BYTES
+  const imageMissing = edits && imageURL.trim() === ''
+  const imageInvalid = edits && !imageMissing && !imageTooLarge && !probeImageURLShapeValid(imageURL)
+  const imageError = imageMissing
+    ? t('accounts.test.imageUrlRequired')
+    : imageTooLarge
+      ? t('accounts.test.imageUrlTooLarge')
+      : imageInvalid
+        ? t('accounts.test.imageUrlInvalid')
+        : null
   const disabledReason = formats.length === 0
     ? t('accounts.test.noFormats')
     : !candidates.wildcard && candidates.models.length === 0
       ? t('accounts.test.noModels')
       : trimmed === ''
         ? t('accounts.test.modelRequired')
-        : null
+        : inputTooLarge
+          ? t('accounts.test.inputTooLarge')
+          : imageError
 
   return (
-    <DialogContent className="sm:max-w-lg">
+    <DialogContent className="sm:max-w-xl">
       <DialogHeader>
         <DialogTitle>{t('accounts.test.title', { name: account.Name ?? '—', id: account.ID ?? 0 })}</DialogTitle>
       </DialogHeader>
@@ -134,9 +214,85 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
           {candidates.wildcard && <p className="text-xs text-muted-foreground">{t('accounts.test.wildcardHint')}</p>}
           {disabledReason && formats.length > 0 && <p className="text-xs text-muted-foreground">{disabledReason}</p>}
         </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="account-test-input">{t('accounts.test.input')}</Label>
+          <Textarea
+            id="account-test-input"
+            value={inputText}
+            onChange={event => {
+              setInputText(event.target.value)
+              clearOutcome()
+            }}
+            placeholder={t('accounts.test.inputPlaceholder')}
+            aria-invalid={inputTooLarge}
+            rows={3}
+            disabled={probe.isPending}
+          />
+          <p className="text-xs text-muted-foreground">{t('accounts.test.inputHint')}</p>
+          {inputTooLarge && <p className="text-xs text-destructive">{t('accounts.test.inputTooLarge')}</p>}
+        </div>
+        {imagesFormat && (
+          <div className="space-y-3 rounded-lg border bg-background/40 p-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="account-test-image-mode">{t('accounts.test.imageMode')}</Label>
+              <Select
+                items={{
+                  generations: t('accounts.test.imageModeGenerations'),
+                  edits: t('accounts.test.imageModeEdits'),
+                }}
+                value={imageMode}
+                onValueChange={value => changeImageMode(value as ProbeImageMode)}
+                disabled={probe.isPending}
+              >
+                <SelectTrigger id="account-test-image-mode" className="w-full"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="generations" label={t('accounts.test.imageModeGenerations')}>
+                    {t('accounts.test.imageModeGenerations')}
+                  </SelectItem>
+                  <SelectItem value="edits" label={t('accounts.test.imageModeEdits')}>
+                    {t('accounts.test.imageModeEdits')}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {edits && (
+              <>
+                <div className="space-y-1.5">
+                  <Label htmlFor="account-test-image-url">{t('accounts.test.imageUrl')}</Label>
+                  <Input
+                    id="account-test-image-url"
+                    value={imageURL}
+                    onChange={event => changeImageURL(event.target.value)}
+                    placeholder={t('accounts.test.imageUrlPlaceholder')}
+                    aria-invalid={!!imageError}
+                    autoComplete="off"
+                    disabled={probe.isPending}
+                  />
+                  <p className="text-xs text-muted-foreground">{t('accounts.test.imageUrlHint')}</p>
+                  {imageError && <p className="text-xs text-destructive">{imageError}</p>}
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="account-test-image-file">{t('accounts.test.imageFile')}</Label>
+                  <Input
+                    id="account-test-image-file"
+                    type="file"
+                    accept="image/*"
+                    onChange={event => {
+                      const target = event.currentTarget
+                      onImageFile(target.files?.[0])
+                      target.value = ''
+                    }}
+                    disabled={probe.isPending}
+                  />
+                  {fileError && <p className="text-xs text-destructive">{fileError}</p>}
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {requestError && <p className="text-xs text-destructive" role="alert">{requestError}</p>}
         {result && (
-          <div className="space-y-3 rounded-lg border bg-background/40 p-3" role="status">
+          <div className="max-h-[55vh] space-y-3 overflow-y-auto rounded-lg border bg-background/40 p-3" role="status">
             <div className="flex items-center justify-between gap-2">
               <Badge variant={result.success ? 'default' : 'destructive'} className={result.success ? 'bg-emerald-600 text-white hover:bg-emerald-600' : undefined}>
                 {result.success ? t('accounts.test.success') : t('accounts.test.failure')}
@@ -153,6 +309,30 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
               <Label htmlFor="account-test-upstream-model">{t('accounts.test.upstreamModel')}</Label>
               <Input id="account-test-upstream-model" value={result.upstream_model} readOnly className="font-mono text-xs" />
             </div>
+            {result.success && result.output_preview && (
+              <div className="space-y-1.5">
+                <Label>{t('accounts.test.outputPreview')}</Label>
+                <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted/60 p-2 font-mono text-xs">{result.output_preview}</pre>
+              </div>
+            )}
+            {result.success && (result.image_previews?.length ?? 0) > 0 && (
+              <div className="space-y-1.5">
+                <Label>{t('accounts.test.imagePreviews')}</Label>
+                <div className="grid grid-cols-2 gap-2">
+                  {result.image_previews.map((src, index) => (
+                    <img
+                      key={index}
+                      src={src}
+                      alt={t('accounts.test.imagePreviewAlt', { index: index + 1 })}
+                      className="max-h-48 w-full rounded-md border object-contain"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            {result.success && !result.output_preview && (result.image_previews?.length ?? 0) === 0 && (
+              <p className="text-xs text-muted-foreground">{t('accounts.test.noPreview')}</p>
+            )}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-2">
                 <Label>{t('accounts.test.detail')}</Label>
@@ -175,10 +355,10 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
       </div>
       <DialogFooter>
         <Button
-          disabled={!format || !modelValid || probe.isPending}
+          disabled={!format || !modelValid || probe.isPending || inputTooLarge || !!imageError}
           onClick={() => {
-            if (!format || !modelValid) return
-            probe.mutate({ model: trimmed, format })
+            if (!format || !modelValid || inputTooLarge || imageError) return
+            probe.mutate(buildProbeRequest({ format, model: trimmed, input: inputText, imageMode, imageURL }))
           }}
         >
           {probe.isPending && <LoaderCircle className="animate-spin" />}
