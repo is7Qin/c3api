@@ -246,7 +246,10 @@ func TestInbandS1ChatUncommittedErrorFrameIs502(t *testing.T) {
 
 // --- S1b：chat · 已提交（业务字节已写） ---
 
-func TestInbandS1bChatCommittedErrorFrameIsAbort(t *testing.T) {
+// TestInbandS1bChatCommittedErrorFrameIs5xx 已提交后命中流内错误载荷：客户端仍是
+// 200 + 协议 error 帧（
+// 观感不变），但归因是 5xx（上游已明确表态，状态码 0：上游没给过码），不是 abort。
+func TestInbandS1bChatCommittedErrorFrameIs5xx(t *testing.T) {
 	testHealthSink.reset()
 	hr := newHealthReadback(t)
 	up, u := newInbandSSEUpstream(t, "/v1/chat/completions", "Authorization", "Bearer sk-upstream",
@@ -262,17 +265,24 @@ func TestInbandS1bChatCommittedErrorFrameIsAbort(t *testing.T) {
 	require.Contains(t, body, inbandOverloadMsg, "客户端文案必须含上游原文（RawJSON 契约）")
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(rows),
-		"abort 双轨：usage_logs 恰 1 行 + err_logs 1 行；rows=%+v", rows)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows),
+		"已交付的失败双轨：usage_logs 恰 1 行 + err_logs 1 行；rows=%+v", rows)
+	require.Equal(t, domain.Err5xx, rows[0].ErrorType,
+		"上游在流内声明失败 ⇒ 5xx（序 1）")
+	require.Equal(t, 0, rows[0].StatusCode, "序 1 不合成状态码")
 	require.Equal(t, int64(0), rows[0].InputTokens)
 	require.Equal(t, int64(0), rows[0].OutputTokens)
 
 	p.sched.FlushRules()
+	events := testHealthSink.eventsFor(1)
+	require.Len(t, events, 1, "失败账号恰一条规则事件；events=%+v", events)
+	require.Equal(t, rule.Kind5xx, events[0].kind, "健康 kind 与归因一致（5xx）")
+	require.Nil(t, events[0].status, "序 1 不合成状态 ⇒ 规则事件无 HTTPStatus")
 	states := hr.statesFor(t, 1)
 	require.Len(t, states, 1, "失败账号必须有一条 health 记录")
 	for key, st := range states {
-		// seed-network 是 throttle(account, open, 5s) ⇒ StateOPEN（sink.go:44-50）。
-		require.Equal(t, scheduler.StateOPEN, st, "network 类失败 → 5s 冷却（StateOPEN）")
+		// seed-5xx 是 throttle(account, open, 10m) ⇒ StateOPEN（sink.go:44-50）。
+		require.Equal(t, scheduler.StateOPEN, st, "5xx 类失败 → 冷却（StateOPEN）")
 		require.NotEqual(t, scheduler.StateReady,
 			hr.h.EffectiveState(1, key.Quality, key.Identity, key.IdentityRevision),
 			"取用准入门必须判定为不可用")
@@ -518,7 +528,7 @@ func wsDialInbound(t *testing.T, srv *httptest.Server) *websocket.Conn {
 	return c
 }
 
-func TestInbandS6InboundWSErrorFrameIsAbort(t *testing.T) {
+func TestInbandS6InboundWSErrorFrameIs5xx(t *testing.T) {
 	testHealthSink.reset()
 	hr := newHealthReadback(t)
 	up, u := fakeResponsesWSScript(t, `{"type":"error","error":{"type":"server_error","message":"`+inbandOverloadMsg+`"}}`)
@@ -532,18 +542,23 @@ func TestInbandS6InboundWSErrorFrameIsAbort(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure) // 上游确实 1000 关闭 ⇒ 不虚构 1011
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(rows),
-		"入站 WS 记 abort（不是成功）：usage_logs 恰 1 行 + err_logs 恰 1 行；rows=%+v", rows)
-	require.Equal(t, domain.ErrAbort, rows[0].ErrorType)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows),
+		"入站 WS 流内错误载荷记 5xx：usage_logs 恰 1 行 + err_logs 恰 1 行；rows=%+v", rows)
+	require.Equal(t, domain.Err5xx, rows[0].ErrorType, "上游已明确表态 ⇒ 5xx（序 1），不是 abort")
+	require.Equal(t, 0, rows[0].StatusCode, "序 1 不合成状态码")
 	require.Equal(t, int64(0), rows[0].InputTokens)
 	require.Equal(t, int64(0), rows[0].OutputTokens)
 	require.Equal(t, 1, u.attempts())
 
 	p.sched.FlushRules()
+	events := testHealthSink.eventsFor(1)
+	require.Len(t, events, 1, "失败账号恰一条规则事件；events=%+v", events)
+	require.Equal(t, rule.Kind5xx, events[0].kind, "入站 WS 健康 kind 必须与 chat/codex 一致")
+	require.Nil(t, events[0].status, "序 1 不合成状态 ⇒ 规则事件无 HTTPStatus")
 	states := hr.statesFor(t, 1)
 	require.Len(t, states, 1, "失败账号必须有一条 health 记录")
 	for _, st := range states {
-		require.Equal(t, scheduler.StateOPEN, st, "HTTPStatus==0 ⇒ network 类冷却（seed-network: open 5s）")
+		require.Equal(t, scheduler.StateOPEN, st, "seed-5xx: open 10m（StateOPEN）")
 	}
 }
 
@@ -591,9 +606,10 @@ func TestInbandTurnResetRequiresCompleted(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(rows),
-		"非 completed 帧不清零 ⇒ 仍记 abort + 冷却；rows=%+v", rows)
-	require.Equal(t, domain.ErrAbort, rows[0].ErrorType)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows),
+		"非 completed 帧不清零 ⇒ 仍记失败（5xx）+ 冷却；rows=%+v", rows)
+	require.Equal(t, domain.Err5xx, rows[0].ErrorType,
+		"轮级未清零 ⇒ 错误载荷仍归因为 5xx（不是 abort）")
 
 	p.sched.FlushRules()
 	states := hr.statesFor(t, 1)

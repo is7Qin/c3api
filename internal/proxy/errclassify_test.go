@@ -54,6 +54,8 @@ type recordingHealthSink struct {
 type recordedThrottle struct {
 	accountID int64
 	action    domain.ThrottleAction
+	kind      rule.Kind
+	status    *int
 }
 
 var testHealthSink = &recordingHealthSink{}
@@ -61,7 +63,7 @@ var testHealthSink = &recordingHealthSink{}
 func (s *recordingHealthSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.throttle = append(s.throttle, recordedThrottle{accountID: ev.AccountID, action: th})
+	s.throttle = append(s.throttle, recordedThrottle{accountID: ev.AccountID, action: th, kind: ev.Kind, status: ev.HTTPStatus})
 	return nil
 }
 
@@ -83,6 +85,16 @@ func (s *recordingHealthSink) throttles() []recordedThrottle {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]recordedThrottle(nil), s.throttle...)
+}
+
+func (s *recordingHealthSink) eventsFor(accountID int64) []recordedThrottle {
+	var out []recordedThrottle
+	for _, ev := range s.throttles() {
+		if ev.accountID == accountID {
+			out = append(out, ev)
+		}
+	}
+	return out
 }
 
 func (s *recordingHealthSink) throttleCount() int {
