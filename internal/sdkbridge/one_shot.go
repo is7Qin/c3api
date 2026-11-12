@@ -17,14 +17,18 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// oneShotMaxBodyBytes 是诊断/探测 one-shot seam 的上游响应体上限（2 MiB）。
-// 调用方 cap transport 负责让读取停在上限；本文件只对 200 的溢出做判定
-// （非 200 由 SDK 读尽调用方已截断的 raw，不判溢出）。
+// oneShotMaxBodyBytes 是诊断/探测 one-shot seam 的文本/search 上游响应体上限
+// （2 MiB）。images 用 oneShotImageMaxBodyBytes：其正常 b64_json 结果会超过 2 MiB。
 const oneShotMaxBodyBytes = domain.ProbeMaxBodyBytes
 
-// ErrBodyTooLarge 是 one-shot seam 的 200 响应体溢出哨兵（>2 MiB）。probe 用
-// errors.Is 映射固定文案 `response exceeds 2 MiB`；非 200 永不返回本错误。
-var ErrBodyTooLarge = errors.New("sdkbridge: response body exceeds 2 MiB")
+// oneShotImageMaxBodyBytes 是 codex GenerateImage 的上游响应体上限（8 MiB）；
+// 与 static images 共用 domain.ProbeMaxImageResponseBytes。
+const oneShotImageMaxBodyBytes = domain.ProbeMaxImageResponseBytes
+
+// ErrBodyTooLarge 是 one-shot seam 的 200 响应体溢出哨兵。文本/search 上限为
+// 2 MiB，GenerateImage 上限为 8 MiB；probe 用 errors.Is 映射到对应固定文案，
+// 非 200 永不返回本错误。
+var ErrBodyTooLarge = errors.New("sdkbridge: response body exceeds limit")
 
 // oneShotTransport 包裹调用方提供的（已按 origin/上限装配的）transport：记录
 // 最后一次 HTTP 状态与响应体实际读出的字节数。GenerateImage 的 typed success
@@ -74,9 +78,9 @@ func (b *oneShotCountingBody) Close() error { return b.rc.Close() }
 //   - SDK *HTTPError（非 2xx/4xx/5xx）→ 真实 status + raw（不判溢出）。
 //   - AuthPermanentlyRevokedError → 401 + raw。
 //   - 其他传输/SDK 错误（含 200 解析失败）→ 捕获 status（无则 0）+ err；
-//     200 解析失败且读出 >2 MiB → ErrBodyTooLarge。
+//     200 解析失败且读出 >8 MiB → ErrBodyTooLarge。
 //
-// body 由 SDK 读取/关闭；调用方 cap transport 保证 2 MiB。本函数不写账号状态、
+// body 由 SDK 读取/关闭；调用方 cap transport 保证 8 MiB。本函数不写账号状态、
 // 不刷新、不回调、不写日志；raw 只供 probe 做成功判定/error detail/预览抽取。
 func GenerateImageOnce(
 	ctx context.Context,
@@ -104,7 +108,7 @@ func GenerateImageOnce(
 		if errors.As(callErr, &httpErr) {
 			return httpErr.StatusCode, httpErr.Raw, nil
 		}
-		if status == http.StatusOK && read > oneShotMaxBodyBytes {
+		if status == http.StatusOK && read > oneShotImageMaxBodyBytes {
 			return status, nil, ErrBodyTooLarge
 		}
 		return status, nil, callErr
@@ -116,7 +120,7 @@ func GenerateImageOnce(
 	if marshalErr != nil {
 		return status, nil, marshalErr
 	}
-	if status == http.StatusOK && read > oneShotMaxBodyBytes {
+	if status == http.StatusOK && read > oneShotImageMaxBodyBytes {
 		return status, nil, ErrBodyTooLarge
 	}
 	return status, wire, nil

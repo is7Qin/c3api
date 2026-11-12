@@ -2671,7 +2671,7 @@ export interface components {
             requested_model: string;
             /** @description 映射后的上游模型名 */
             upstream_model: string;
-            /** @description 固定分类文案（probe timed out / probe canceled / probe blocked cross-origin redirect / probe request failed / upstream rejected credentials / upstream endpoint or model not found / upstream rate limited / upstream rejected request / upstream redirect rejected / upstream error / upstream response missing usable output / upstream stream failed / response exceeds 2 MiB / probe image fetch failed / probe image invalid / probe image exceeds 4 MiB；≤1024 字节，不回显上游文本） */
+            /** @description 固定分类文案（probe timed out / probe canceled / probe blocked cross-origin redirect / probe request failed / upstream rejected credentials / upstream endpoint or model not found / upstream rate limited / upstream rejected request / upstream redirect rejected / upstream error / upstream response missing usable output / upstream stream failed / response exceeds 2 MiB / response exceeds 8 MiB / probe image fetch failed / probe image invalid / probe image exceeds 4 MiB；≤1024 字节，不回显上游文本） */
             error: string;
             /** @description 内置有限公开错误码表内的 code=<value>（如 invalid_api_key / model_not_found / rate_limit_exceeded）；表外值（含上游任意 error.code/error.type、其他租户 key、内部请求 id）一律为空（≤2048 字节） */
             detail: string;

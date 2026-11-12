@@ -281,7 +281,8 @@ func (p *Prober) guardedHTTPClient(spec domain.ProbeSpec) (*http.Client, error) 
 }
 
 // guardedHTTPClient200Only 是 images/search 的静态族 client：只有 200 允许
-// 2 MiB+1，其余状态（含 201/204/206）恰好 2 MiB（不判溢出）。
+// max+1，其余状态（含 201/204/206）恰好 max（不判溢出）；max 由
+// probeResponseLimits 按格式选择（images 8 MiB/2 MiB，search 2 MiB/2 MiB）。
 func (p *Prober) guardedHTTPClient200Only(spec domain.ProbeSpec) (*http.Client, error) {
 	return p.guardedHTTPClientWith(spec, true)
 }
@@ -307,11 +308,21 @@ func (p *Prober) guardedHTTPClientWith(spec domain.ProbeSpec, onlyOKOverflow boo
 		port:   effectivePort(u),
 	}
 	if onlyOKOverflow {
-		hc.Transport = newCodexCappedTransport(guard)
+		okMax, errorMax := probeResponseLimits(spec)
+		hc.Transport = newCappedTransportLimit(guard, okMax, errorMax, true)
 	} else {
 		hc.Transport = newCappedTransport(guard)
 	}
 	return &hc, nil
+}
+
+// probeResponseLimits 按格式选择上游响应体上限：images 的成功体可到 8 MiB
+// （b64_json），但非 200 错误体仍严格 2 MiB；文本/SSE/search 两者均 2 MiB。
+func probeResponseLimits(spec domain.ProbeSpec) (okMax, errorMax int64) {
+	if spec.Format == domain.FormatOpenAIImages {
+		return domain.ProbeMaxImageResponseBytes, domain.ProbeMaxBodyBytes
+	}
+	return domain.ProbeMaxBodyBytes, domain.ProbeMaxBodyBytes
 }
 
 // guardedCodexTransport 构造 codex 的传输守卫（origin 固定 chatgpt.com）。
@@ -323,12 +334,13 @@ func (p *Prober) guardedCodexTransport(spec domain.ProbeSpec) (http.RoundTripper
 	if eg == nil || eg.HTTP == nil {
 		return nil, errors.New("egress client not configured")
 	}
-	return newCodexCappedTransport(&originGuard{
+	okMax, errorMax := probeResponseLimits(spec)
+	return newCappedTransportLimit(&originGuard{
 		next:   transportOrDefault(eg.HTTP.Transport),
 		scheme: codexOriginScheme,
 		host:   codexOriginHost,
 		port:   codexOriginPort,
-	}), nil
+	}, okMax, errorMax, true), nil
 }
 
 func transportOrDefault(rt http.RoundTripper) http.RoundTripper {
@@ -388,19 +400,29 @@ func effectivePort(u *url.URL) string {
 //
 // 私有测试 seam：生产装配只经 guardedHTTPClient 构造本类型。
 func newCappedTransport(next http.RoundTripper) http.RoundTripper {
-	return &capTransport{next: next}
+	return newCappedTransportLimit(next, domain.ProbeMaxBodyBytes, domain.ProbeMaxBodyBytes, false)
 }
 
-// newCodexCappedTransport 是 codex 专用构造：只有 200 允许 2 MiB+1
-// （200 溢出探测），其余状态（含 201/204/206/3xx/4xx/5xx）恰好 2 MiB，不享受
-// +1 字节。生产装配只经 guardedCodexTransport 构造本类型。
-func newCodexCappedTransport(next http.RoundTripper) http.RoundTripper {
-	return &capTransport{next: next, onlyOKOverflow: true}
+// newCappedTransportLimit 是 capTransport 的唯一构造：okMax 是成功响应
+// （200，或 onlyOKOverflow=false 时的全部 2xx）上限，errorMax 是非成功响应
+// 上限。成功体允许读取 okMax+1 用于发现溢出；错误体恰好 errorMax。
+func newCappedTransportLimit(next http.RoundTripper, okMax, errorMax int64, onlyOKOverflow bool) http.RoundTripper {
+	if okMax <= 0 {
+		okMax = domain.ProbeMaxBodyBytes
+	}
+	if errorMax <= 0 {
+		errorMax = domain.ProbeMaxBodyBytes
+	}
+	return &capTransport{next: next, okMax: okMax, errorMax: errorMax, onlyOKOverflow: onlyOKOverflow}
 }
 
 type capTransport struct {
 	next http.RoundTripper
-	// onlyOKOverflow 只对 200 放行 2 MiB+1（codex 的非 200 必须严格 2 MiB）。
+	// okMax 是成功响应上限；成功体额外放行 1 字节用于发现溢出。
+	okMax int64
+	// errorMax 是非成功响应上限；错误体严格截断到 errorMax。
+	errorMax int64
+	// onlyOKOverflow 只对 200 放行 okMax+1（codex/images 的非 200 必须严格 errorMax）。
 	onlyOKOverflow bool
 }
 
@@ -412,10 +434,11 @@ func (t *capTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if resp.Body == nil {
 		return resp, nil
 	}
-	limit := int64(domain.ProbeMaxBodyBytes)
+	limit := t.errorMax
 	if resp.StatusCode == http.StatusOK ||
 		(!t.onlyOKOverflow && resp.StatusCode >= 200 && resp.StatusCode <= 299) {
-		limit++ // 检测溢出需要第 2 MiB+1 字节
+		limit = t.okMax
+		limit++ // 检测溢出需要第 okMax+1 字节
 	}
 	resp.Body = &cappedBody{rc: resp.Body, remaining: limit}
 	return resp, nil

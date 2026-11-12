@@ -62,6 +62,20 @@ func TestGenerateImageOnceSuccess(t *testing.T) {
 	require.Equal(t, int64(1), body.closes.Load(), "body 必须恰好关闭一次")
 }
 
+// TestGenerateImageOnceLargeBody 生图 b64_json 正常超过旧 2 MiB 文本上限，但
+// 低于 images 8 MiB 上限时必须成功。
+func TestGenerateImageOnceLargeBody(t *testing.T) {
+	large := strings.Repeat("A", domain.ProbeMaxBodyBytes)
+	tr := roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
+			Body: io.NopCloser(strings.NewReader(imageSuccessBody(large)))}, nil
+	})
+	status, raw, err := sdkbridge.GenerateImageOnce(context.Background(), "pat", "acct", tr, generateImageParams())
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, status)
+	require.Contains(t, string(raw), large)
+}
+
 // TestGenerateImageOnceEditsUsesEditsPath edits 走固定官方 edits 端点，ImageURL
 // 原样进入请求体（codex 族不提前取图）。
 func TestGenerateImageOnceEditsUsesEditsPath(t *testing.T) {
@@ -144,9 +158,9 @@ func TestGenerateImageOnceNonFatal401ExactlyOneRequest(t *testing.T) {
 	require.Equal(t, int64(1), body.closes.Load(), "401 body 也必须恰好关闭一次")
 }
 
-// TestGenerateImageOnceOverflow 200 解析失败且读出 >2 MiB → ErrBodyTooLarge。
+// TestGenerateImageOnceOverflow 200 解析失败且读出 >8 MiB → ErrBodyTooLarge。
 func TestGenerateImageOnceOverflow(t *testing.T) {
-	huge := strings.Repeat("x", domain.ProbeMaxBodyBytes+1)
+	huge := strings.Repeat("x", domain.ProbeMaxImageResponseBytes+1)
 	tr := roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header),
 			Body: io.NopCloser(strings.NewReader(huge))}, nil

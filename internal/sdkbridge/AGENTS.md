@@ -18,20 +18,21 @@
     字节数，**typed success 返回真实状态**（201/204/206 不得冒充 200）+
     `MarshalImageResponse` 生成的 wire body；`*HTTPError` → 真实 status + raw；
     `AuthPermanentlyRevokedError` → 401 + raw；其他错误 → 捕获 status（无则 0）+
-    err；200 读出 >2 MiB（含 typed success / parse 失败）→ `ErrBodyTooLarge`。
+    err；200 读出 >8 MiB（含 typed success / parse 失败）→ `ErrBodyTooLarge`。
   - `SearchOnce(ctx, token, accountID, transport, payload)`：SDK `Search`；真实
     status + raw；revoked → 401 + raw；传输错误 → 0 + err；200 且 len(raw) >
     2 MiB → `ErrBodyTooLarge`（非 200 由调用方 cap 截断到恰好 2 MiB，不判溢出）。
 - `ErrBodyTooLarge` 是本包导出的 200 溢出哨兵；probe 用 `errors.Is` 映射固定
-  文案 `response exceeds 2 MiB`。body 由 SDK 读取/关闭；调用方 cap transport
-  保证 2 MiB。
+  文案：StreamBodyOnce/SearchOnce 为 `response exceeds 2 MiB`，
+  GenerateImageOnce 为 `response exceeds 8 MiB`。body 由 SDK 读取/关闭；调用方
+  cap transport 保证对应上限（2 MiB / 8 MiB）。
 
 ## 不变量
 
 - 不记录/不回显 token、payload、上游原文；SDK error 文本不进入结果。
 - 生产 Codex 与 one-shot seam 分离：seam 不取 ClientTable、不装 fatal 回调、不轮转；
   两次调用之间没有共享账号状态（不缓存 fatal、不刷新）。
-- 非 200 body 由 SDK 读尽并关闭；调用方 cap transport 负责 2 MiB 上限。
+- 非 200 body 由 SDK 读尽并关闭；调用方 cap transport 负责对应上限。
 - codex WS 面不喂任何客户端头（spec §12）；HTTP 面头策略仅在 `pkg/aiclient` 维护。
 - 生成物不手改；日志只走 `pkg/logx`。
 

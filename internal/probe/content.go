@@ -189,7 +189,11 @@ func imagesRawResult(ctx context.Context, resp *http.Response, callErr error) do
 		return domain.ProbeResult{Error: classifyTransportError(callErr)}
 	}
 	res := domain.ProbeResult{StatusCode: resp.StatusCode}
-	body, overflow, readErr := readLimitedBody(resp.Body, domain.ProbeMaxBodyBytes)
+	bodyLimit := domain.ProbeMaxImageResponseBytes
+	if resp.StatusCode != http.StatusOK {
+		bodyLimit = domain.ProbeMaxBodyBytes // 非 200 错误体仍严格 2 MiB
+	}
+	body, overflow, readErr := readLimitedBody(resp.Body, bodyLimit)
 	_ = resp.Body.Close() // 恰好一次（body 归本函数）
 	if readErr != nil {
 		if ctx.Err() != nil {
@@ -198,7 +202,7 @@ func imagesRawResult(ctx context.Context, resp *http.Response, callErr error) do
 		return domain.ProbeResult{Error: classifyTransportError(readErr)}
 	}
 	if overflow {
-		res.Error = domain.ProbeErrorBodyTooLarge
+		res.Error = domain.ProbeErrorImageBodyTooLarge
 		return res
 	}
 	if resp.StatusCode != http.StatusOK {
@@ -294,14 +298,18 @@ func (p *Prober) probeCodexSearch(ctx context.Context, spec domain.ProbeSpec) do
 }
 
 // codexFormatResult 统一 codex images/search 结论：ctx 取消/到期优先于 body
-// 超限与状态分类；ErrBodyTooLarge 映射固定文案；其余 err 在 status != 0 时按
+// 超限与状态分类；ErrBodyTooLarge 按 images 选择 8 MiB/2 MiB 固定文案；其余 err 在 status != 0 时按
 // 真实 HTTP 状态分类（201/204/206 → upstream error），status=0 才走传输分类。
 func codexFormatResult(ctx context.Context, status int, body []byte, callErr error, images bool) domain.ProbeResult {
 	if ctx.Err() != nil {
 		return domain.ProbeResult{Error: classifyTransportError(ctx.Err())}
 	}
 	if errors.Is(callErr, sdkbridge.ErrBodyTooLarge) {
-		return domain.ProbeResult{StatusCode: status, Error: domain.ProbeErrorBodyTooLarge}
+		errMsg := domain.ProbeErrorBodyTooLarge
+		if images {
+			errMsg = domain.ProbeErrorImageBodyTooLarge
+		}
+		return domain.ProbeResult{StatusCode: status, Error: errMsg}
 	}
 	if callErr != nil {
 		// status 200 + err 只可能来自“200 body 不可用”（SDK 解析失败/读取失败）：

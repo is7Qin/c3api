@@ -20,8 +20,13 @@ import (
 const (
 	// ProbeMaxBodyBytes 上游响应体硬上限（2 MiB）。transport 层对非 2xx 截断到
 	// 这里；2xx 允许读取到 +1 字节以发现溢出（见 internal/probe 的 capTransport
-	// 与 codex 扫描器）。
+	// 与 codex 扫描器）。文本/SSE/search 使用本上限。
 	ProbeMaxBodyBytes = 2 << 20
+	// ProbeMaxImageResponseBytes images 生图响应体上限（8 MiB）。请求固定
+	// response_format=b64_json，4 MiB 图片 base64 后约 5.33 MiB；2 MiB 会把正常
+	// 生图结果误判为 response exceeds 2 MiB。8 MiB 覆盖单张 4 MiB 图片 + JSON
+	// 包装，同时仍为并发探测保留硬上限。
+	ProbeMaxImageResponseBytes = 8 << 20
 	// ProbeTimeout 单次探测总期限（常量，不开配置键）。只由 service 在探测入口
 	// 创建，prober 不再自行包一层。
 	ProbeTimeout = 30 * time.Second
@@ -88,6 +93,7 @@ const (
 	ProbeErrorNoUsableOutput    = "upstream response missing usable output"
 	ProbeErrorStreamFailed      = "upstream stream failed"
 	ProbeErrorBodyTooLarge      = "response exceeds 2 MiB"
+	ProbeErrorImageBodyTooLarge = "response exceeds 8 MiB"
 	ProbeErrorCodexTokenExpired = "codex access token expired; re-run device login"
 	// 图片取图/输入校验固定文案（不得拼入 image_url/原始值——错误路径绝不回显
 	// 请求字段）。取图失败时 status_code=0。

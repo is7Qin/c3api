@@ -11,8 +11,9 @@
 - 探测固定结果词表：`ProbeError*` 常量是唯一来源；`ProbeContextError` 只把
   `context.Canceled/DeadlineExceeded` 归一到固定文案，其余返回 request failed。
   openapi 描述不是完整词表，不得作为第二份定义。
-- 探测硬上限集中在 `domain/probe.go`：`ProbeMaxBodyBytes`（2 MiB 上游体）、
-  `ProbeMaxRequestBytes`（8 MiB 探测请求体）、`ProbeMaxInputLen`（8192 字节）、
+- 探测硬上限集中在 `domain/probe.go`：`ProbeMaxBodyBytes`（2 MiB 文本/SSE/search
+  上游体）、`ProbeMaxImageResponseBytes`（8 MiB images 上游体；b64_json 正常结果
+  会超过 2 MiB）、`ProbeMaxRequestBytes`（8 MiB 探测请求体）、`ProbeMaxInputLen`（8192 字节）、
   `ProbeMaxImageSourceBytes`（6 MiB image_url 字符串）、`ProbeMaxImageBytes`
   （4 MiB 取图/预览合计；单张预览复用 2 MiB 的 `ProbeMaxBodyBytes`）、`ProbePreviewMaxLen`（64 KiB）、`ProbeMaxImagePreviews`
   （4 张）、`ProbeTimeout/ProbeMaxConcurrency/ProbeMaxWaiters/ProbeMaxModelLen/

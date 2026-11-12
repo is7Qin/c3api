@@ -239,6 +239,58 @@ func TestProbeImagesGenerationsStatic(t *testing.T) {
 
 // TestProbeImagesStatusMatrix 新 images 格式只接受 HTTP 200；201/204/206/错误
 // 状态保留真实 status_code 且不投影任何 body。
+// TestProbeImagesResponseCaps 生图请求固定 b64_json，正常响应会超过旧的 2 MiB
+// 文本/SSE 上限；images 必须使用独立的 8 MiB 上限，且超过后仍返回固定文案。
+func TestProbeImagesResponseCaps(t *testing.T) {
+	t.Run("large-b64-json-passes-text-cap", func(t *testing.T) {
+		raw := pngBytes(domain.ProbeMaxBodyBytes) // base64 后约 2.8 MiB，超过文本上限
+		body := imagesBody(b64(raw))
+		require.Greater(t, len(body), domain.ProbeMaxBodyBytes)
+		require.LessOrEqual(t, len(body), domain.ProbeMaxImageResponseBytes)
+		rt := contentRT(func(*http.Request) (*http.Response, error) {
+			return contentResponse(http.StatusOK, body), nil
+		})
+		res := newTestProber(t, rt).Probe(context.Background(), contentImageSpec(domain.ProbeImageModeGenerations, ""))
+		require.True(t, res.Success, res.Error)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+	})
+
+	t.Run("over-image-cap", func(t *testing.T) {
+		huge := strings.Repeat("x", domain.ProbeMaxImageResponseBytes+16)
+		rt := contentRT(func(*http.Request) (*http.Response, error) {
+			return contentResponse(http.StatusOK, huge), nil
+		})
+		res := newTestProber(t, rt).Probe(context.Background(), contentImageSpec(domain.ProbeImageModeGenerations, ""))
+		require.False(t, res.Success)
+		require.Equal(t, http.StatusOK, res.StatusCode)
+		require.Equal(t, domain.ProbeErrorImageBodyTooLarge, res.Error)
+	})
+}
+
+// TestImageCapTransportStatusLimits images 只在 200 放开 8 MiB；非 200 错误体
+// 仍严格截断到 2 MiB，不能被成功的 b64_json 上限放大。
+func TestImageCapTransportStatusLimits(t *testing.T) {
+	tr := newCappedTransportLimit(contentRT(func(*http.Request) (*http.Response, error) {
+		return contentResponseBytes(http.StatusOK, bytes.Repeat([]byte("x"), domain.ProbeMaxImageResponseBytes+1), nil), nil
+	}), domain.ProbeMaxImageResponseBytes, domain.ProbeMaxBodyBytes, true)
+	req, err := http.NewRequest(http.MethodGet, "https://upstream.example/x", nil)
+	require.NoError(t, err)
+	resp, err := tr.RoundTrip(req)
+	require.NoError(t, err)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Len(t, body, domain.ProbeMaxImageResponseBytes+1, "200 允许 max+1 发现溢出")
+
+	tr = newCappedTransportLimit(contentRT(func(*http.Request) (*http.Response, error) {
+		return contentResponseBytes(http.StatusCreated, bytes.Repeat([]byte("x"), domain.ProbeMaxImageResponseBytes), nil), nil
+	}), domain.ProbeMaxImageResponseBytes, domain.ProbeMaxBodyBytes, true)
+	resp, err = tr.RoundTrip(req)
+	require.NoError(t, err)
+	body, err = io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Len(t, body, domain.ProbeMaxBodyBytes, "非 200 必须严格 2 MiB")
+}
+
 func TestProbeImagesStatusMatrix(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -595,14 +647,14 @@ func TestProbeCodexImages(t *testing.T) {
 	}
 
 	t.Run("overflow", func(t *testing.T) {
-		huge := strings.Repeat("x", domain.ProbeMaxBodyBytes+16)
+		huge := strings.Repeat("x", domain.ProbeMaxImageResponseBytes+16)
 		rt := contentRT(func(*http.Request) (*http.Response, error) {
 			return contentResponse(http.StatusOK, huge), nil
 		})
 		res := newTestProber(t, rt).Probe(context.Background(), codexImageSpec(domain.ProbeImageModeGenerations, ""))
 		require.False(t, res.Success)
 		require.Equal(t, http.StatusOK, res.StatusCode)
-		require.Equal(t, domain.ProbeErrorBodyTooLarge, res.Error)
+		require.Equal(t, domain.ProbeErrorImageBodyTooLarge, res.Error)
 	})
 
 	t.Run("cancel", func(t *testing.T) {
