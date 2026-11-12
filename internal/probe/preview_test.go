@@ -293,7 +293,7 @@ func TestProbeImageFetchHeaderAndLatency(t *testing.T) {
 		contentImageSpec(domain.ProbeImageModeEdits, "https://images.example/x.png"))
 	require.True(t, imageSeen)
 	require.True(t, res.Success)
-	require.GreaterOrEqual(t, res.LatencyMS, int64(0))
+	require.GreaterOrEqual(t, res.LatencyMS, int64(5), "latency 必须包含取图耗时")
 }
 
 // TestProbeImagesNoUpstreamWhenFetchInvalid 取图失败时不得调用上游 images 端点。

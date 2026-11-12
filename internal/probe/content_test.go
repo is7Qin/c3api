@@ -12,6 +12,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -765,6 +766,36 @@ func TestProbeCodexSearch(t *testing.T) {
 		require.Equal(t, domain.ProbeErrorCanceled, res.Error)
 		require.Zero(t, res.StatusCode)
 	})
+}
+
+// TestProbeDenseArraysDoNotMaterialize 2 MiB 内的密集数组不得调用 gjson.Array()：
+// 每个元素 80 字节，60 万空对象会瞬态放大 ~48 MiB；预览/校验都必须流式 ForEach
+// 或用 Get("#")/Get("0")。阈值 8 MiB 留足对象头/字符串开销，远低于旧实现。
+func TestProbeDenseArraysDoNotMaterialize(t *testing.T) {
+	const count = 600000
+	entries := strings.Repeat(`{},`, count)
+	cases := []struct {
+		name string
+		run  func()
+	}{
+		{"chat-preview", func() {
+			_ = extractChatPreview(gjson.ParseBytes([]byte(`{"choices":[` + entries + `{"message":{"content":"ok"}}]}`)))
+		}},
+		{"validate-images", func() { _ = validateImages([]byte(`{"data":[` + entries + `{}]}`)) }},
+		{"image-previews", func() { _ = imagePreviews([]byte(`{"data":[` + entries + `{}]}`)) }},
+		{"validate-search", func() { _ = validateSearch([]byte(`{"results":[` + entries + `{}]}`)) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			tc.run()
+			runtime.ReadMemStats(&after)
+			allocated := after.TotalAlloc - before.TotalAlloc
+			t.Logf("%s dense array allocated %d bytes", tc.name, allocated)
+			require.Less(t, allocated, uint64(8<<20), "密集数组不得物化为 []gjson.Result")
+		})
+	}
 }
 
 // TestProbeNewFormatErrorsCarryNoPreview 错误路径绝不回显上游 body（即使 body

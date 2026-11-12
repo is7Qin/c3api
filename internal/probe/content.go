@@ -351,11 +351,9 @@ func validateImages(body []byte) bool {
 	if !data.IsArray() {
 		return false
 	}
-	items := data.Array()
-	if len(items) == 0 {
-		return false
-	}
-	return items[0].IsObject()
+	// Get("#") / Get("0") 不物化整个数组；Array() 会为每个元素分配
+	// gjson.Result（2 MiB 的密集数组可放大出数十 MB）。
+	return data.Get("#").Int() > 0 && data.Get("0").IsObject()
 }
 
 func validateSearch(body []byte) bool {
@@ -370,7 +368,7 @@ func validateSearch(body []byte) bool {
 		return true
 	}
 	results := r.Get("results")
-	return results.IsArray() && len(results.Array()) > 0
+	return results.IsArray() && results.Get("#").Int() > 0
 }
 
 // ---- 安全预览抽取（仅 200 成功体；确定性字段路径） ----
@@ -397,22 +395,24 @@ func extractChatPreview(r gjson.Result) string {
 		return ""
 	}
 	var parts []string
-	for _, choice := range choices.Array() {
+	choices.ForEach(func(_, choice gjson.Result) bool {
 		content := choice.Get("message.content")
 		switch {
 		case content.Type == gjson.String:
 			parts = append(parts, content.String())
 		case content.IsArray():
-			for _, item := range content.Array() {
+			content.ForEach(func(_, item gjson.Result) bool {
 				if item.Get("type").String() != "text" {
-					continue
+					return true
 				}
 				if text := item.Get("text"); text.Type == gjson.String {
 					parts = append(parts, text.String())
 				}
-			}
+				return true
+			})
 		}
-	}
+		return true
+	})
 	return strings.Join(parts, "\n")
 }
 
@@ -431,20 +431,22 @@ func responsesOutputText(r gjson.Result) string {
 		return ""
 	}
 	var parts []string
-	for _, item := range output.Array() {
+	output.ForEach(func(_, item gjson.Result) bool {
 		content := item.Get("content")
 		if !content.IsArray() {
-			continue
+			return true
 		}
-		for _, block := range content.Array() {
+		content.ForEach(func(_, block gjson.Result) bool {
 			if block.Get("type").String() != "output_text" {
-				continue
+				return true
 			}
 			if text := block.Get("text"); text.Type == gjson.String {
 				parts = append(parts, text.String())
 			}
-		}
-	}
+			return true
+		})
+		return true
+	})
 	return strings.Join(parts, "\n")
 }
 
@@ -455,14 +457,15 @@ func extractAnthropicPreview(r gjson.Result) string {
 		return ""
 	}
 	var parts []string
-	for _, block := range content.Array() {
+	content.ForEach(func(_, block gjson.Result) bool {
 		if block.Get("type").String() != "text" {
-			continue
+			return true
 		}
 		if text := block.Get("text"); text.Type == gjson.String {
 			parts = append(parts, text.String())
 		}
-	}
+		return true
+	})
 	return strings.Join(parts, "\n")
 }
 
@@ -481,14 +484,15 @@ func searchPreviewFromResult(r gjson.Result) string {
 		return ""
 	}
 	var parts []string
-	for _, item := range results.Array() {
+	results.ForEach(func(_, item gjson.Result) bool {
 		web := item.Get("web_search")
 		for _, field := range []string{"title", "content"} {
 			if value := web.Get(field); value.Type == gjson.String && value.String() != "" {
 				parts = append(parts, value.String())
 			}
 		}
-	}
+		return true
+	})
 	return strings.Join(parts, "\n")
 }
 
@@ -525,31 +529,29 @@ func imagePreviews(body []byte) []string {
 		return out
 	}
 	total := 0
-	for _, item := range data.Array() {
+	data.ForEach(func(_, item gjson.Result) bool {
 		if len(out) >= domain.ProbeMaxImagePreviews {
-			break
+			return false
 		}
 		encoded := item.Get("b64_json")
 		if encoded.Type != gjson.String || encoded.String() == "" {
-			continue
+			return true
 		}
 		raw, err := base64.StdEncoding.DecodeString(encoded.String())
-		if err != nil || len(raw) == 0 {
-			continue
-		}
-		if len(raw) > domain.ProbeMaxBodyBytes {
-			continue
+		if err != nil || len(raw) == 0 || len(raw) > domain.ProbeMaxBodyBytes {
+			return true
 		}
 		if total+len(raw) > domain.ProbeMaxImageBytes {
-			continue
+			return true
 		}
 		mime, ok := imageMagicMIME(raw)
 		if !ok {
-			continue
+			return true
 		}
 		total += len(raw)
 		out = append(out, "data:"+mime+";base64,"+base64.StdEncoding.EncodeToString(raw))
-	}
+		return len(out) < domain.ProbeMaxImagePreviews
+	})
 	return out
 }
 
