@@ -7,6 +7,7 @@ package domain
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -101,6 +102,22 @@ const (
 	ProbeErrorImageURLInvalid     = "probe image url invalid"
 	ProbeErrorImageURLTooLarge    = "probe image url exceeds 6 MiB"
 )
+
+// ValidProbeImageMIME 校验会被写入 multipart part 头的图片 MIME：必须是
+// image/<subtype>，且不得含 CR/LF 或其他 C0/DEL 控制字符。mime/multipart 会把
+// Content-Type 原样写进 part 头，data URL 元数据里的 CRLF 可注入额外头。
+// 允许 `;` 参数（调用方通常再经 mediaType 归一）。
+func ValidProbeImageMIME(mime string) bool {
+	if !strings.HasPrefix(strings.ToLower(mime), "image/") || len(mime) <= len("image/") {
+		return false
+	}
+	for i := 0; i < len(mime); i++ {
+		if mime[i] < 0x20 || mime[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
 
 // ProbeContextError 把 ctx 错误归一为固定文案；其余错误按请求失败处理。
 // 调用方必须先用它处理 context.Canceled/DeadlineExceeded，再走各自的传输

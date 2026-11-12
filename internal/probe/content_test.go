@@ -280,6 +280,17 @@ func TestProbeImagesStatusMatrix(t *testing.T) {
 	}
 }
 
+// TestProbeImageMIMERejectsHeaderInjection data URL 的 MIME 会被写进 multipart
+// part 头；CR/LF 必须在校验层拒绝，不能交给 mime/multipart 原样输出。
+func TestProbeImageMIMERejectsHeaderInjection(t *testing.T) {
+	png := pngBytes(16)
+	_, _, errMsg := decodeProbeDataImage("data:image/png\r\nX-Injected: 1;base64," + b64(png))
+	require.Equal(t, domain.ProbeErrorImageInvalid, errMsg)
+
+	_, _, err := imagesEditsMultipart("m", "p", "image/png\r\nX-Injected: 1", png)
+	require.Error(t, err, "multipart 层必须拒绝带控制字符的 MIME")
+}
+
 // TestProbeImagesEditsStaticDataURL 静态族 edits：data URL 本地解码 → multipart
 // （model/prompt/response_format/image + 图片 Content-Type），命中 images/edits。
 func TestProbeImagesEditsStaticDataURL(t *testing.T) {

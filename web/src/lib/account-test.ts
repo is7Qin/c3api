@@ -86,6 +86,7 @@ export function probeImageURLShapeValid(raw: string): boolean {
     const comma = value.indexOf(',')
     if (comma < 0) return false
     const meta = value.slice(0, comma).slice('data:'.length).toLowerCase()
+    if (/[\u0000-\u001f\u007f]/.test(meta)) return false
     return meta.endsWith(';base64') && meta.length - ';base64'.length > 'image/'.length
   }
   try {

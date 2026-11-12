@@ -72,6 +72,7 @@ describe('probeInputByteLength / probeImageURLShapeValid', () => {
     assert.equal(probeImageURLShapeValid('data:image/png,AAAA'), false)
     assert.equal(probeImageURLShapeValid('data:text/plain;base64,AAAA'), false)
     assert.equal(probeImageURLShapeValid('data:image/;base64,AAAA'), false)
+    assert.equal(probeImageURLShapeValid('data:image/png\r\nX-Injected: 1;base64,AAAA'), false)
     assert.equal(probeImageURLShapeValid('https://user:pass@example.com/a.png'), false)
     assert.equal(probeImageURLShapeValid('ftp://example.com/a.png'), false)
     assert.equal(probeImageURLShapeValid('/relative.png'), false)

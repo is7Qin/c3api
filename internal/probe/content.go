@@ -56,6 +56,9 @@ func imagesGenerationsPayload(model, prompt string) []byte {
 // response_format=b64_json + 单张 image（原始字节 + 图片 Content-Type）。
 // 不内置任何测试图片；图片只来自调用方 image_url。
 func imagesEditsMultipart(model, prompt, imageMIME string, image []byte) ([]byte, string, error) {
+	if !domain.ValidProbeImageMIME(imageMIME) {
+		return nil, "", errors.New("probe: invalid image MIME")
+	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	if err := mw.WriteField("model", model); err != nil {
@@ -576,6 +579,9 @@ func decodeProbeDataImage(raw string) ([]byte, string, string) {
 		return nil, "", domain.ProbeErrorImageInvalid
 	}
 	mime := mediaType(meta[len("data:") : len(meta)-len(";base64")])
+	if !domain.ValidProbeImageMIME(mime) {
+		return nil, "", domain.ProbeErrorImageInvalid
+	}
 	decoded, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil || len(decoded) == 0 {
 		return nil, "", domain.ProbeErrorImageInvalid
@@ -646,7 +652,7 @@ func (p *Prober) downloadProbeImage(ctx context.Context, spec domain.ProbeSpec) 
 	if imageMIME == "" {
 		imageMIME = mediaType(http.DetectContentType(data))
 	}
-	if !strings.HasPrefix(imageMIME, "image/") {
+	if !domain.ValidProbeImageMIME(imageMIME) {
 		return nil, "", domain.ProbeErrorImageInvalid
 	}
 	return data, imageMIME, ""

@@ -356,7 +356,7 @@ func validProbeImageURL(raw string) bool {
 			return false
 		}
 		mime := meta[:len(meta)-len(";base64")]
-		return len(mime) > len("image/")
+		return domain.ValidProbeImageMIME(mime)
 	}
 	u, err := url.Parse(raw)
 	if err != nil || u.Host == "" || u.User != nil {
