@@ -3299,6 +3299,12 @@ func (f *fakeStore) ListPaymentChannels(_ context.Context, _ int64) ([]*domain.P
 	return nil, nil
 }
 
+// ListAllPaymentChannels 全量渠道（§19-2 / P56 的取数口）。基座返回空表：需要
+// 渠道形状的用例各自在包装 store 里覆写（见 paymentMethodsChannelStore）。
+func (f *fakeStore) ListAllPaymentChannels(_ context.Context) ([]*domain.PaymentChannel, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) CreateOrder(ctx context.Context, o *domain.Order) (*domain.Order, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

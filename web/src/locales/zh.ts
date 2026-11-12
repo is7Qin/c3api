@@ -2554,6 +2554,7 @@ export default {
     "saved": "账户已保存",
     "created": "账户已创建",
     "saveFailed": "保存失败",
+    "saveConflict": "账户已被其他人修改（配置版本已变化），请刷新后重试",
     "channelSection": "渠道",
     "channelHint": "同一账户下多渠道互不覆盖；pay_type 必须 ∈ 协议 capabilities",
     "channelEmpty": "还没有渠道：该账户当前不可售",

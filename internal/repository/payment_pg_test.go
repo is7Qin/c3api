@@ -191,3 +191,61 @@ func TestPaymentChannelCascadeOnAccountRowDelete_PG(t *testing.T) {
 	_, err = repos.GetPaymentAccountByKey(ctx, "pg_cascade")
 	require.ErrorIs(t, err, repository.ErrNotFound, "账户行确实已删除（与前一条软停用例互为对照）")
 }
+
+// TestPaymentAccountUpdateRevisionCAS_PG P57 / §19-1：带 `expected_config_revision`
+// 的更新是**比较并交换**（`WHERE key=? AND config_revision=?`）。
+//
+// 为什么必须在真库上跑：CAS 的全部语义都在那条 WHERE 里——fake store 里的比较是
+// 另一份实现，钉不住"服务端真的把版本条件放进了 UPDATE"（M40 的杀手）。
+func TestPaymentAccountUpdateRevisionCAS_PG(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+
+	created, err := repos.CreatePaymentAccount(ctx, pgPaymentAccount("pg_cas", "mch-cas"))
+	require.NoError(t, err)
+	require.EqualValues(t, 1, created.ConfigRevision, "创建即 revision 1")
+
+	// ① 命中：expected=1 → 生效，revision 1→2。
+	cfgV2 := json.RawMessage(`{"pid":"mch-cas","nonce":"v2"}`)
+	upd, err := repos.UpdatePaymentAccount(ctx, "pg_cas", repository.AccountUpdate{
+		Config: cfgV2, MerchantRef: "mch-cas", ExpectedConfigRevision: 1,
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 2, upd.ConfigRevision)
+
+	// ② 过期：另一份同样基于 revision 1 的写 → 409 族，且**行未被改动**。
+	_, err = repos.UpdatePaymentAccount(ctx, "pg_cas", repository.AccountUpdate{
+		Config: json.RawMessage(`{"pid":"mch-cas","nonce":"stale"}`), MerchantRef: "mch-cas",
+		ExpectedConfigRevision: 1,
+	})
+	require.ErrorIs(t, err, repository.ErrConfigRevisionMismatch, "过期版本必须被拒（P57）")
+	require.ErrorIs(t, err, repository.ErrConflict, "细分哨兵必须仍是 ErrConflict（→ 409）")
+	require.Contains(t, err.Error(), "expected config_revision=1", "409 文案带期望版本")
+	require.Contains(t, err.Error(), "actual=2", "409 文案带当前版本（运维据此判断是不是别人刚改过）")
+
+	got, err := repos.GetPaymentAccountByKey(ctx, "pg_cas")
+	require.NoError(t, err)
+	require.EqualValues(t, 2, got.ConfigRevision, "被拒的更新不得推进 revision")
+	require.JSONEq(t, string(cfgV2), string(got.Config), "被拒的更新不得改动 config（密钥回滚的判据）")
+
+	// 只改元数据 + 旧 revision：revision 未变 ⇒ 条件仍成立，不得误报 409。
+	name := "renamed"
+	_, err = repos.UpdatePaymentAccount(ctx, "pg_cas", repository.AccountUpdate{
+		DisplayName: &name, ExpectedConfigRevision: 2,
+	})
+	require.NoError(t, err, "只改展示名时 revision 不变，CAS 必须放行（不逼前端刷新整表）")
+
+	// ③ expected=0 = 不校验（r12 行为，脚本兼容口径）。
+	third, err := repos.UpdatePaymentAccount(ctx, "pg_cas", repository.AccountUpdate{
+		Config: json.RawMessage(`{"pid":"mch-cas","nonce":"v3"}`), MerchantRef: "mch-cas",
+	})
+	require.NoError(t, err)
+	require.EqualValues(t, 3, third.ConfigRevision)
+
+	// ④ 缺行 + expected → 404（不是 409）：0 行有两种含义，必须能区分。
+	enabled := true
+	_, err = repos.UpdatePaymentAccount(ctx, "pg_missing", repository.AccountUpdate{
+		Enabled: &enabled, ExpectedConfigRevision: 1,
+	})
+	require.ErrorIs(t, err, repository.ErrNotFound, "缺行是 404，不是并发冲突")
+}

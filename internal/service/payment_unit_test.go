@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"math"
 	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -298,18 +299,41 @@ const (
 // paymentMethodsChannelStore 只替换账户/渠道两个读口：本组用例要直接控制
 // enabled/min_usd 的形状（(account_id, pay_type) 在真实 schema 上是 UNIQUE，
 // 停用账户/停用渠道的 min_usd 组合也只能这样喂进来）。
+//
+// `calls` 是 P56（§19-2）的计数口：一次 `PaymentMethods` 只允许 1 条账户查询 +
+// 1 条全量渠道查询，逐账户的 `ListPaymentChannels` 必须是 **0** 次。
 type paymentMethodsChannelStore struct {
 	*fakeStore
 	accounts []*domain.PaymentAccount
 	channels map[int64][]*domain.PaymentChannel
+	calls    struct{ accounts, allChannels, perAccount int }
 }
 
 func (s *paymentMethodsChannelStore) ListPaymentAccounts(context.Context) ([]*domain.PaymentAccount, error) {
+	s.calls.accounts++
 	return append([]*domain.PaymentAccount(nil), s.accounts...), nil
 }
 
 func (s *paymentMethodsChannelStore) ListPaymentChannels(_ context.Context, accountID int64) ([]*domain.PaymentChannel, error) {
+	s.calls.perAccount++
 	return append([]*domain.PaymentChannel(nil), s.channels[accountID]...), nil
+}
+
+// ListAllPaymentChannels 全量渠道：按 account_id 升序铺开，**保留每账户内的既有
+// 顺序**——same_account 那条用例（同账户同 pay_type 两行）靠它钉住"启用的那行排在
+// 前面"，再排序会把该判据变成偶然。
+func (s *paymentMethodsChannelStore) ListAllPaymentChannels(context.Context) ([]*domain.PaymentChannel, error) {
+	s.calls.allChannels++
+	ids := make([]int64, 0, len(s.channels))
+	for id := range s.channels {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var out []*domain.PaymentChannel
+	for _, id := range ids {
+		out = append(out, s.channels[id]...)
+	}
+	return out, nil
 }
 
 // paymentMethodsCfg 测试凭据：本组用例只判探针金额的选法，凭据形状与签名无关
@@ -352,6 +376,13 @@ func testMethodsChannel(accountID int64, payType string, enabled bool, minUSD in
 // 这样断言 Provider 就能指出投影来自哪个账户）。
 func newPaymentMethodsSvc(t *testing.T, accounts []*domain.PaymentAccount, channels map[int64][]*domain.PaymentChannel) *Service {
 	t.Helper()
+	svc, _ := newPaymentMethodsSvcWithStore(t, accounts, channels)
+	return svc
+}
+
+// newPaymentMethodsSvcWithStore 同上，但同时交出 store（P56 要读查询计数）。
+func newPaymentMethodsSvcWithStore(t *testing.T, accounts []*domain.PaymentAccount, channels map[int64][]*domain.PaymentChannel) (*Service, *paymentMethodsChannelStore) {
+	t.Helper()
 	ctx := context.Background()
 	fs := newFakeStore()
 	store := &paymentMethodsChannelStore{fakeStore: fs, accounts: accounts, channels: channels}
@@ -378,7 +409,7 @@ func newPaymentMethodsSvc(t *testing.T, accounts []*domain.PaymentAccount, chann
 		paymentCfgs:     make(map[string]cachedPaymentCfg, len(providers)),
 		paymentRegistry: registry,
 	}
-	return svc
+	return svc, store
 }
 
 // findPaymentMethod 取该 pay_type 的唯一一行（0 行或多行都直接失败）。
@@ -548,4 +579,38 @@ func TestResolveChannelClampsOverflowingMaxUSD(t *testing.T) {
 				"收敛发生在比较处，不得改写行数据")
 		})
 	}
+}
+
+// TestPaymentMethodsIssuesTwoPaymentQueries P56 / §19-2：一次 `methods` 只允许
+// **2 条**支付表查询（账户 1 + 全量渠道 1），逐账户读渠道必须是 **0** 次。
+//
+// 旧写法的形状是 `1 + N + P×(1+N)`：账户 5 个、`pay_type` 4 个、每个 1 个探针时
+// 约 30 条 SQL。判据不靠耗时（噪声大），而是直接数调用次数——这是唯一能稳定区分
+// 两种取数形状的量，也是 M42（改回逐账户读）的杀手。
+func TestPaymentMethodsIssuesTwoPaymentQueries(t *testing.T) {
+	const accountCount = 5
+	payTypes := []string{testPayTypeAlipay, testPayTypeWxpay, "bank", "card"}
+	accounts := make([]*domain.PaymentAccount, 0, accountCount)
+	channels := make(map[int64][]*domain.PaymentChannel, accountCount)
+	for i := range accountCount {
+		id := int64(i + 1)
+		accounts = append(accounts, &domain.PaymentAccount{
+			ID: id, Key: fmt.Sprintf("epay_%d", id),
+			Provider: domain.ProviderName(fmt.Sprintf("proto_%d", id)),
+			Enabled:  true, Priority: i,
+		})
+		for j, payType := range payTypes {
+			channels[id] = append(channels[id], testMethodsChannel(id, payType, true, int64(1+j)))
+		}
+	}
+	svc, store := newPaymentMethodsSvcWithStore(t, accounts, channels)
+
+	methods, err := svc.PaymentMethods(context.Background())
+	require.NoError(t, err)
+	require.Len(t, methods, len(payTypes), "4 个 pay_type 都应可售（取数形状不得改变可售结果）")
+
+	require.Equal(t, 1, store.calls.accounts, "账户只读一次")
+	require.Equal(t, 1, store.calls.allChannels, "全量渠道只读一次")
+	require.Equal(t, 0, store.calls.perAccount,
+		"methods 不得逐账户读渠道（N+1 回归，§19-2 / P56）；开销与账户数无关")
 }

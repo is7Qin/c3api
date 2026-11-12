@@ -132,6 +132,10 @@ func (a *API) PostPaymentAccounts(w http.ResponseWriter, r *http.Request) {
 // 启停的前端不必回传 display_name（否则一次误传就把展示名覆盖成空串）。`config`
 // 缺省 = 不变；密钥字段 `"***"` = 保持原值；新 config 的 merchant_ref 与现列
 // 不符 → **400**（N29：改商户身份请新建账户 + 停用旧账户）。
+//
+// `expected_config_revision` 是**可选的乐观并发闸门**（§19-1 / P57）：带上时
+// 版本不符 → **409**（管理台总是带它，脚本可以不带）。handler 只做透传——
+// 比较发生在 UPDATE 的 WHERE 里，不在这里读后比。
 func (a *API) PutPaymentAccountsKey(w http.ResponseWriter, r *http.Request, key string) {
 	var body PutPaymentAccountsKeyJSONRequestBody
 	if err := httpface.Decode(r, &body); err != nil {
@@ -143,6 +147,9 @@ func (a *API) PutPaymentAccountsKey(w http.ResponseWriter, r *http.Request, key 
 		DisplayName: body.DisplayName,
 		Priority:    body.Priority,
 		Enabled:     body.Enabled,
+	}
+	if body.ExpectedConfigRevision != nil {
+		in.ExpectedConfigRevision = *body.ExpectedConfigRevision
 	}
 	if body.Config != nil {
 		raw, err := marshalConfig(*body.Config)

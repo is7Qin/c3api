@@ -76,6 +76,9 @@ type PaymentStore interface {
 	UpsertPaymentChannel(ctx context.Context, accountID int64, ch *domain.PaymentChannel) (*domain.PaymentChannel, error)
 	DeletePaymentChannel(ctx context.Context, accountID int64, payType string) error
 	ListPaymentChannels(ctx context.Context, accountID int64) ([]*domain.PaymentChannel, error)
+	// ListAllPaymentChannels 全量渠道行（含 disabled）——选路/`methods` 的唯一取数口
+	// （§19-2 / P56：一次请求固定 2 条支付表查询，不得逐账户读）。
+	ListAllPaymentChannels(ctx context.Context) ([]*domain.PaymentChannel, error)
 }
 
 // 支付编排专用哨兵（domain 层哨兵之外的**归因**信号，供 notify 独立错误
@@ -231,11 +234,16 @@ type PaymentAccountInput struct {
 // PaymentAccountUpdateInput 更新账户输入（PUT /payment/accounts/{key}）。
 //
 // 指针 nil = 保持不变；Config nil = 不改配置（**不动** config_revision）。
+// ExpectedConfigRevision > 0 = 乐观并发闸门（§19-1 / P57）：服务端只在
+// `config_revision` 仍等于该值时才应用，0 行 → 409。0 = 不校验。
 type PaymentAccountUpdateInput struct {
 	DisplayName *string
 	Priority    *int
 	Enabled     *bool
 	Config      json.RawMessage
+	// ExpectedConfigRevision 客户端读到的版本；带 config 的更新必须带它（管理台口径），
+	// 否则并发轮换密钥会被旧表单静默回滚（两人都 200，下次回调验签失败）。
+	ExpectedConfigRevision int64
 }
 
 // PaymentChannelInput 渠道 upsert 输入（PUT /payment/accounts/{key}/channels/{pay_type}）。
@@ -310,31 +318,72 @@ func (s *Service) ResolveChannel(ctx context.Context, payType string, amountUSD 
 	return s.resolveChannel(ctx, payType, amountUSD*100)
 }
 
-// resolveChannel 选路的**唯一实现**（单位：USD 分）。
+// paymentCandidates 一次请求的「账户 + 渠道」快照（§19-2 / P56）。
 //
-// 为什么内部用分：`amount_usd` 允许两位小数，而 `min_usd/max_usd` 是整数 USD；
-// 用分做比较才不会被 1.99 > max=1 这类边界骗过（公开入口把整数 USD 乘 100 后
-// 走同一条路径，禁止第二份过滤代码）。
-func (s *Service) resolveChannel(ctx context.Context, payType string, amountCents int64) (Resolved, error) {
+// 为什么要有它：`resolveChannel` 原本自己取数（账户 1 条 + 每账户渠道 1 条），而
+// `methods` 为了算探针金额又逐账户取了一遍，再对每个 pay_type 调 `ResolveChannel`
+// ——一次 methods 请求 ≈ `1 + N + P×(1+N)` 条支付表 SQL（N=5、P=4 时约 30 条）。
+// 快照把取数压到**固定 2 条**，过滤逻辑仍然只有 `resolveChannelIn` 一处。
+//
+// 分组用的是 `channels[account_id]`：渠道行的 `AccountID` 是主键，天然对齐
+// `accounts[].ID`（v2 的账户行永不物理删除，所以不存在"渠道指向已删账户"的形状）。
+type paymentCandidates struct {
+	accounts []*domain.PaymentAccount           // priority ASC, id ASC（⑧ 的定序）
+	channels map[int64][]*domain.PaymentChannel // account_id → pay_type ASC
+}
+
+// loadPaymentCandidates 取一次请求的账户+渠道快照：**恰好两条**支付表查询。
+//
+// 排序在这里一次做定：`priority ASC, id ASC` 是 M21/M33 的判据，也是"主备是人工的"
+// （§5-4）唯一可复现的依据。调用方（`resolveChannel` / `PaymentMethods`）不得再排。
+func (s *Service) loadPaymentCandidates(ctx context.Context) (paymentCandidates, error) {
 	accounts, err := s.store.ListPaymentAccounts(ctx)
 	if err != nil {
-		return Resolved{}, fmt.Errorf("%w: list payment accounts: %w", domain.ErrInternal, err)
+		return paymentCandidates{}, fmt.Errorf("%w: list payment accounts: %w", domain.ErrInternal, err)
 	}
-	// ⑧ 的排序先做：priority ASC, id ASC（M21/M33 的判据）。
 	sort.SliceStable(accounts, func(i, j int) bool {
 		if accounts[i].Priority != accounts[j].Priority {
 			return accounts[i].Priority < accounts[j].Priority
 		}
 		return accounts[i].ID < accounts[j].ID
 	})
+	channels, err := s.store.ListAllPaymentChannels(ctx)
+	if err != nil {
+		// 批量读无法归因到单个账户 key（这是 N+1 的代价之一，如实记录）；DB 层错误
+		// 的上下文由 repository 提供。
+		return paymentCandidates{}, fmt.Errorf("%w: list payment channels: %w", domain.ErrInternal, err)
+	}
+	byAccount := make(map[int64][]*domain.PaymentChannel, len(accounts))
+	for _, ch := range channels {
+		byAccount[ch.AccountID] = append(byAccount[ch.AccountID], ch)
+	}
+	return paymentCandidates{accounts: accounts, channels: byAccount}, nil
+}
 
+// resolveChannel 选路的**唯一实现**（单位：USD 分）。
+//
+// 为什么内部用分：`amount_usd` 允许两位小数，而 `min_usd/max_usd` 是整数 USD；
+// 用分做比较才不会被 1.99 > max=1 这类边界骗过（公开入口把整数 USD 乘 100 后
+// 走同一条路径，禁止第二份过滤代码）。
+//
+// 取数与过滤在这里刻意分开：`PaymentMethods` 复用同一份快照多次调
+// `resolveChannelIn`，否则每个探针金额都会重新读一遍账户/渠道（§19-2）。
+func (s *Service) resolveChannel(ctx context.Context, payType string, amountCents int64) (Resolved, error) {
+	cand, err := s.loadPaymentCandidates(ctx)
+	if err != nil {
+		return Resolved{}, err
+	}
+	return s.resolveChannelIn(ctx, cand, payType, amountCents)
+}
+
+// resolveChannelIn 在给定快照上做 §5-1 的 8 步过滤（**唯一的过滤实现**）。
+//
+// ctx 只用于 ③ 的配置解析（走 `paymentAccountConfig` 的缓存）；取数已由快照完成，
+// 所以同一个 ctx 上的多次调用不会再打 DB。
+func (s *Service) resolveChannelIn(ctx context.Context, cand paymentCandidates, payType string, amountCents int64) (Resolved, error) {
 	sawPayType := false
-	for _, acct := range accounts {
-		channels, chErr := s.store.ListPaymentChannels(ctx, acct.ID)
-		if chErr != nil {
-			return Resolved{}, fmt.Errorf("%w: list payment channels (account %q): %w",
-				domain.ErrInternal, acct.Key, chErr)
-		}
+	for _, acct := range cand.accounts {
+		channels := cand.channels[acct.ID]
 		// pay_type 的"存在性"必须在所有过滤**之前**统计：它决定 400（未知方式）
 		// 还是 503（有这种方式但当前不可用）。
 		var channel *domain.PaymentChannel
@@ -404,9 +453,9 @@ func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 		// 空可售集：用户面渲染"暂无可用方式"即可，不是错误（§5-1b）。
 		return []PaymentMethod{}, nil
 	}
-	accounts, err := s.store.ListPaymentAccounts(ctx)
+	cand, err := s.loadPaymentCandidates(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("%w: list payment accounts: %w", domain.ErrInternal, err)
+		return nil, err
 	}
 	// distinct(pay_type) + 该方式的**探针金额候选集**（§5-2）。
 	//
@@ -425,13 +474,11 @@ func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 	// 停、备用 min_usd=10 时，唯一下限探针停在 1 → ResolveChannel(1) 只剩备用、
 	// 备用要求 ≥10 → ErrNoEligibleAccount → 整个 alipay 从列表消失（备用明明可卖
 	// ≥10）：照 spec 切流反而把支付方式卖没了。
+	//
+	// 候选集直接来自**同一份快照**（§19-2 / P56）：这里不再逐账户读渠道，下面的
+	// 探针也复用 `cand` 调 `resolveChannelIn`——一次 methods 只有 2 条支付表查询。
 	minUSDByType := make(map[string][]int64, 4)
-	for _, acct := range accounts {
-		channels, chErr := s.store.ListPaymentChannels(ctx, acct.ID)
-		if chErr != nil {
-			return nil, fmt.Errorf("%w: list payment channels (account %q): %w",
-				domain.ErrInternal, acct.Key, chErr)
-		}
+	for _, channels := range cand.channels {
 		for _, ch := range channels {
 			minUSDByType[ch.PayType] = append(minUSDByType[ch.PayType], ch.MinUSD)
 		}
@@ -457,7 +504,9 @@ func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 			if amountUSD < 1 {
 				amountUSD = 1
 			}
-			got, rErr := s.ResolveChannel(ctx, payType, amountUSD)
+			// 与公开入口同一口径：`ResolveChannel` 把整数 USD 乘 100 后走
+			// resolveChannelIn，这里直接给分，且复用上面那一份快照（P56）。
+			got, rErr := s.resolveChannelIn(ctx, cand, payType, amountUSD*100)
 			if rErr == nil {
 				res, onSale = got, true
 				break
@@ -1310,16 +1359,22 @@ func (s *Service) CreatePaymentAccount(ctx context.Context, in PaymentAccountInp
 //     `ConfigSchema().SecretNames()`）；
 //   - 新 config 的 `MerchantRef()` 必须等于现列，否则 **400**（N29/P45：
 //     `repository.ErrMerchantRefImmutable` 是 ErrConflict 的细分，handler 单独映射 400）；
+//   - 调用方带了 `expected_config_revision` 时是**比较并交换**：版本不符 → **409**
+//     （§19-1 / P57，防止并发轮换的新密钥被旧表单静默回滚）；
 //   - 成功 `config_revision++`（repo 做）+ **失效缓存**。
 func (s *Service) UpdatePaymentAccount(ctx context.Context, key string, in PaymentAccountUpdateInput) (*PaymentAccountView, error) {
+	if in.ExpectedConfigRevision < 0 {
+		return nil, fmt.Errorf("%w: expected_config_revision must be >= 1 (or omitted)", ErrInvalidInput)
+	}
 	cur, err := s.GetPaymentAccount(ctx, key)
 	if err != nil {
 		return nil, err
 	}
 	upd := repository.AccountUpdate{
-		DisplayName: in.DisplayName,
-		Priority:    in.Priority,
-		Enabled:     in.Enabled,
+		DisplayName:            in.DisplayName,
+		Priority:               in.Priority,
+		Enabled:                in.Enabled,
+		ExpectedConfigRevision: in.ExpectedConfigRevision,
 	}
 	if in.Config != nil {
 		p, ok := s.paymentRegistry.Get(cur.Provider)
@@ -1348,6 +1403,10 @@ func (s *Service) UpdatePaymentAccount(ctx context.Context, key string, in Payme
 		switch {
 		case errors.Is(err, repository.ErrMerchantRefImmutable):
 			return nil, err // handler 映射 400
+		case errors.Is(err, repository.ErrConfigRevisionMismatch):
+			// 别人先改了：409（不是 400——请求本身没错，只是基于过期快照）。
+			// mapRepoErr 会把 ErrConflict 的 detail 保留在响应里（P57）。
+			return nil, mapRepoErr(err)
 		case errors.Is(err, repository.ErrNotFound):
 			return nil, mapRepoErr(err)
 		case errors.Is(err, repository.ErrInvalidInput):

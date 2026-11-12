@@ -150,6 +150,11 @@ type PaymentAccountUpdate struct {
 	// Enabled 可售开关（缺省 = 不变）
 	Enabled *bool `json:"enabled,omitempty"`
 
+	// ExpectedConfigRevision 乐观并发闸门（spec §19-1 / P57）：带上它时，服务端只在 `config_revision` 仍等于该值时才应用本次更新；
+	// 不符 → **409**（错误文案带 `expected` / `actual` 两个版本号）。缺省 = 不校验（脚本兼容口径）。
+	// 管理台**总是**带它：两人同时编辑同一账户时，后提交者的旧表单不会把前者的新密钥覆盖回去。
+	ExpectedConfigRevision *int64 `json:"expected_config_revision,omitempty"`
+
 	// Priority 选路优先级（缺省 = 不变）
 	Priority *int `json:"priority,omitempty"`
 }
@@ -257,7 +262,7 @@ type ServerInterface interface {
 	// 停用账户（**恒为软停**：置 enabled=false，行永不删除，幂等 200）
 	// (DELETE /payment/accounts/{key})
 	DeletePaymentAccountsKey(w http.ResponseWriter, r *http.Request, key string)
-	// 更新账户（只改 display_name/priority/enabled/config；config_revision++；新 config 的 merchant_ref 与现列不符 → 400）
+	// 更新账户（只改 display_name/priority/enabled/config；config_revision++；新 config 的 merchant_ref 与现列不符 → 400；expected_config_revision 不符 → 409）
 	// (PUT /payment/accounts/{key})
 	PutPaymentAccountsKey(w http.ResponseWriter, r *http.Request, key string)
 	// 删除单渠道（幂等；账户不存在 → 404）
@@ -296,7 +301,7 @@ func (_ Unimplemented) DeletePaymentAccountsKey(w http.ResponseWriter, r *http.R
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 更新账户（只改 display_name/priority/enabled/config；config_revision++；新 config 的 merchant_ref 与现列不符 → 400）
+// 更新账户（只改 display_name/priority/enabled/config；config_revision++；新 config 的 merchant_ref 与现列不符 → 400；expected_config_revision 不符 → 409）
 // (PUT /payment/accounts/{key})
 func (_ Unimplemented) PutPaymentAccountsKey(w http.ResponseWriter, r *http.Request, key string) {
 	w.WriteHeader(http.StatusNotImplemented)

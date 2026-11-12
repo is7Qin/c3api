@@ -2554,6 +2554,7 @@ export default {
     "saved": "Account saved",
     "created": "Account created",
     "saveFailed": "Failed to save",
+    "saveConflict": "This account was changed by someone else (config revision moved); refresh and try again",
     "channelSection": "Channels",
     "channelHint": "Multiple channels per account do not overwrite each other; pay_type must be in the provider capabilities",
     "channelEmpty": "No channels yet: this account is not sellable",

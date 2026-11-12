@@ -208,3 +208,37 @@ func TestMarkOrderPaidOnPendingOrderBindsCode_PG(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, codeID, *after.RedemptionCodeID, "二次迁移未改写凭据")
 }
+
+// TestOrderNotifyFailureKeepsFirstCause_PG P58 / §19-3：`fail_reason` 只在**为空**时
+// 写入（`COALESCE`），`fail_count` / `last_notify_at` 照旧每次刷新。
+//
+// 事故形状：强制关单先写 `forced`，网关的迟到重试随后带 `ErrOrderClosed` 再进来一次。
+// 无条件赋值会把 `forced` 覆盖成 `closed`（"为什么关单"这条唯一线索就没了），而这
+// 恰恰是事后查账最先要看的那一列。
+func TestOrderNotifyFailureKeepsFirstCause_PG(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+
+	created, err := repos.CreateOrder(ctx, pgOrderFor("P20261112030405UVWXYZABCD", domain.OrderStatusClosed))
+	require.NoError(t, err)
+
+	// 首因：强制关单。
+	require.NoError(t, repos.MarkOrderNotifyFailure(ctx, created.OutTradeNo, domain.OrderFailReasonForced))
+	first, err := repos.GetOrderByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, first.FailReason)
+	require.Equal(t, domain.OrderFailReasonForced, *first.FailReason, "fail_reason 为空时必须写入首因")
+	require.Equal(t, 1, first.FailCount)
+	require.NotNil(t, first.LastNotifyAt)
+
+	// 迟到回调：不得覆盖首因，但计数与时间戳要前进。
+	require.NoError(t, repos.MarkOrderNotifyFailure(ctx, created.OutTradeNo, domain.OrderFailReasonClosed))
+	second, err := repos.GetOrderByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.NotNil(t, second.FailReason)
+	require.Equal(t, domain.OrderFailReasonForced, *second.FailReason,
+		"首因 forced 不得被 closed 覆盖（P58；改回 SetFailReason 的实现这里必红）")
+	require.Equal(t, 2, second.FailCount, "fail_count 照旧每次累加")
+	require.NotNil(t, second.LastNotifyAt)
+	require.False(t, second.LastNotifyAt.Before(*first.LastNotifyAt), "last_notify_at 单调不回退")
+}

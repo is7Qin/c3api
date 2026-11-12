@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"sync"
 	"testing"
 
@@ -142,6 +143,24 @@ func (s *paymentAccountStore) ListPaymentChannels(_ context.Context, accountID i
 	return append([]*domain.PaymentChannel(nil), s.channels[accountID]...), nil
 }
 
+// ListAllPaymentChannels 全量渠道（§19-2 / P56 的取数口）：account_id 升序铺开。
+// 不实现它会让选路在**替身**上看到"没有渠道"（继承 fakeStore 的空表），P54 的
+// 「503 而非 400」判据会退化成 400——那不是实现错，是替身错。
+func (s *paymentAccountStore) ListAllPaymentChannels(context.Context) ([]*domain.PaymentChannel, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]int64, 0, len(s.channels))
+	for id := range s.channels {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var out []*domain.PaymentChannel
+	for _, id := range ids {
+		out = append(out, s.channels[id]...)
+	}
+	return out, nil
+}
+
 func (s *paymentAccountStore) GetPaymentAccountByKey(_ context.Context, key string) (*domain.PaymentAccount, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -159,6 +178,13 @@ func (s *paymentAccountStore) UpdatePaymentAccount(_ context.Context, key string
 	for _, acct := range s.accounts {
 		if acct.Key != key {
 			continue
+		}
+		// CAS（§19-1 / P57）：与 repository 的 `WHERE config_revision=?` 同语义——
+		// 版本不符时**整条更新都不生效**（不是"只跳过 config"），否则"半更新"会比
+		// 丢更新更难查。
+		if upd.ExpectedConfigRevision > 0 && acct.ConfigRevision != upd.ExpectedConfigRevision {
+			return nil, fmt.Errorf("%w: payment account key=%q: expected config_revision=%d actual=%d",
+				repository.ErrConfigRevisionMismatch, key, upd.ExpectedConfigRevision, acct.ConfigRevision)
 		}
 		if upd.DisplayName != nil {
 			acct.DisplayName = *upd.DisplayName
@@ -282,4 +308,54 @@ func TestPaymentAccountMaskFollowsSchemaSecret(t *testing.T) {
 		"token 不再是秘密 → 原值返回（写死 private_key/token 的实现这里必红）")
 	require.Equal(t, secretPlaceholder, view.Config["other"],
 		"秘密标记换到 other → other 必须变成掩码")
+}
+
+// TestUpdatePaymentAccountRejectsStaleRevision P57 / §19-1：带 `config` 的更新是
+// **比较并交换**——同一份 `expected_config_revision` 只能用一次；不带的保持 r12
+// 行为（不校验）。
+//
+// 这条钉的是 lost update 最坏形态：A 轮换了密钥（revision 1→2），B 基于 revision 1
+// 的旧表单再提交时，服务端必须拒绝，而不是把 A 的新密钥静默改回旧值（两人都 200，
+// 下次回调验签失败）。
+func TestUpdatePaymentAccountRejectsStaleRevision(t *testing.T) {
+	ctx := context.Background()
+	provider := &configurableProvider{schema: maskSchema("token")}
+	svc, store := newSchemaMaskService(t, provider,
+		`{"token":"`+schemaMaskTokenValue+`","other":"`+schemaMaskOtherValue+`"}`)
+
+	// ① A 的轮换：基于 revision 1 → 成功，revision 1→2。
+	first, err := svc.UpdatePaymentAccount(ctx, schemaMaskAccountKey, PaymentAccountUpdateInput{
+		Config:                 json.RawMessage(`{"token":"` + secretPlaceholder + `","other":"rotated_by_a"}`),
+		ExpectedConfigRevision: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, "rotated_by_a", first.Config["other"])
+	stored, rev := store.storedConfig(t, schemaMaskAccountKey)
+	require.EqualValues(t, 2, rev, "config 变更推进 revision")
+	require.Equal(t, schemaMaskTokenValue, stored["token"], "PUT 回传的占位符必须合并旧值（密钥不被写坏）")
+
+	// ② B 的旧表单（同样基于 revision 1）→ 409，且**库里什么都没变**。
+	_, err = svc.UpdatePaymentAccount(ctx, schemaMaskAccountKey, PaymentAccountUpdateInput{
+		Config:                 json.RawMessage(`{"token":"stale_key_from_b","other":"stale_by_b"}`),
+		ExpectedConfigRevision: 1,
+	})
+	require.ErrorIs(t, err, ErrConflict, "过期的 expected_config_revision 必须映射 409（不是 400/500）")
+
+	stored, rev = store.storedConfig(t, schemaMaskAccountKey)
+	require.Equal(t, "rotated_by_a", stored["other"], "被拒的更新不得改动库内任何字段")
+	require.Equal(t, schemaMaskTokenValue, stored["token"], "被拒的更新不得覆盖密钥")
+	require.EqualValues(t, 2, rev, "被拒的更新不得推进 revision")
+
+	// ③ 不带该字段 = 不校验（脚本兼容口径，与 r12 行为等价）。
+	third, err := svc.UpdatePaymentAccount(ctx, schemaMaskAccountKey, PaymentAccountUpdateInput{
+		Config: json.RawMessage(`{"token":"` + secretPlaceholder + `","other":"no_cas"}`),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "no_cas", third.Config["other"])
+
+	// ④ 负数 → 400（不是 409）：这是"你写错了请求"。
+	_, err = svc.UpdatePaymentAccount(ctx, schemaMaskAccountKey, PaymentAccountUpdateInput{
+		ExpectedConfigRevision: -1,
+	})
+	require.ErrorIs(t, err, ErrInvalidInput)
 }

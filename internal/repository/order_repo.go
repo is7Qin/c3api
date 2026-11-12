@@ -150,19 +150,37 @@ func (r *OrderRepo) ListOrders(ctx context.Context, q OrderQuery) ([]*domain.Ord
 // MarkOrderNotifyFailure 记录一次通知失败（**非事务**，由调用方在 CompleteOrder
 // 返回错误后调用）：
 //
-//	UPDATE orders SET fail_reason=?, fail_count=fail_count+1, last_notify_at=now()
-//	WHERE out_trade_no=? AND status <> 'paid'
+//	UPDATE orders
+//	   SET fail_reason = COALESCE(fail_reason, $1),   -- 只在为空时写：**首因不被覆盖**
+//	       fail_count   = fail_count + 1,             -- 计数/时间戳每次都刷新
+//	       last_notify_at = now()
+//	 WHERE out_trade_no = $2 AND status <> 'paid'
 //
 // WHERE **不含 status='pending'**（F36：否则 closed 分支永远写不进 → 已付款未入账
 // 静默）；`status <> 'paid'` 排除已入账订单，避免污染。
 // **验签/重复键/未知单号失败不得调用**（单号未验证，可被伪造签名污染任意订单）。
+//
+// 为什么 `fail_reason` 是 COALESCE 而不是赋值（§19-3 / P58）：强制关单先写
+// `fail_reason='forced'`，之后网关的迟到重试会带着 `ErrOrderClosed` 再进来一次。
+// 无条件赋值会把 `forced` 覆盖成 `closed`——事后查账只剩"关单后又来了个回调"，
+// 看不到"为什么关单"。首因才是审计要的东西，而 `fail_count` / `last_notify_at`
+// 仍然每次刷新（它们是"这单还在持续失败"的活性信号）。
+//
+// 为什么用 raw builder 而不是 ent 的 `SetFailReason`（与 user_repo 的原子增减同款
+// 先例）：ent 生成代码的字段 setter 只有无条件赋值；条件写只能用 SQL 表达式，
+// 而这里必须保持**单语句**（非事务面，读改写会重新引入竞态）。
 func (r *OrderRepo) MarkOrderNotifyFailure(ctx context.Context, outTradeNo, reason string) error {
-	_, err := r.client.Order.Update().
-		Where(order.OutTradeNoEQ(outTradeNo), order.StatusNEQ(order.StatusPaid)).
-		SetFailReason(reason).
-		AddFailCount(1).
-		SetLastNotifyAt(time.Now()).
-		Save(ctx)
+	u := entsql.Update(order.Table).
+		Set(order.FieldFailReason, entsql.ExprFunc(func(b *entsql.Builder) {
+			b.WriteString("COALESCE(").Ident(order.FieldFailReason).WriteString(", ").Arg(reason).WriteString(")")
+		})).
+		Add(order.FieldFailCount, 1).
+		Set(order.FieldLastNotifyAt, time.Now()).
+		Where(entsql.And(
+			entsql.EQ(order.FieldOutTradeNo, outTradeNo),
+			entsql.NEQ(order.FieldStatus, string(order.StatusPaid)),
+		))
+	_, err := execUpdate(ctx, r.driver, u)
 	return err
 }
 

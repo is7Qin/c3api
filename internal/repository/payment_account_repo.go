@@ -18,6 +18,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -36,6 +37,14 @@ import (
 // 一个可识别的子哨兵免得服务层按字符串匹配。
 var ErrMerchantRefImmutable = fmt.Errorf("%w: merchant_ref is read-only", ErrConflict)
 
+// ErrConfigRevisionMismatch 账户更新的乐观并发闸门未通过：调用方带的
+// `expected_config_revision` 与现列不符（说明这份表单是基于过期快照填的）。
+//
+// 它同样是 ErrConflict 的细分（`errors.Is(err, ErrConflict)` 为真 → 服务层用
+// `mapRepoErr` 归一成 409）。与 ErrMerchantRefImmutable 的区别是**方向相反**：
+// 那个是"你写错了配置"（400，改商户身份），这个是"别人先改了"（409，刷新重试）。
+var ErrConfigRevisionMismatch = fmt.Errorf("%w: config_revision mismatch", ErrConflict)
+
 // PaymentAccountRepo 支付账户持久化（payment_accounts）。
 type PaymentAccountRepo struct {
 	client *ent.Client
@@ -53,6 +62,13 @@ type AccountUpdate struct {
 	// MerchantRef 新 config 由协议 ParseConfig 推导出的商户标识；Config 非 nil
 	// 时必填，且必须等于现列（否则 ErrMerchantRefImmutable）。
 	MerchantRef string
+	// ExpectedConfigRevision 乐观并发闸门（§19-1 / P57）：> 0 时更新语句带
+	// `AND config_revision = ?`，0 行且行存在 → ErrConfigRevisionMismatch（409）。
+	// 0 = 不校验（与 r12 行为等价；脚本化调用不必带版本）。
+	//
+	// 为什么需要它：服务层是「读旧 config → 合并 `"***"` → 写回」，无条件的写回会
+	// 把并发轮换的新密钥静默改回旧值（两人都收到 200，下次回调验签失败）。
+	ExpectedConfigRevision int64
 }
 
 // CreateAccount 插入账户。`key` 或 `(provider, merchant_ref)` 唯一冲突 → ErrConflict
@@ -152,6 +168,11 @@ func (r *PaymentAccountRepo) UpdateAccount(ctx context.Context, key string, upd 
 		return cur, nil
 	}
 	u := r.client.PaymentAccount.Update().Where(paymentaccount.KeyEQ(key))
+	if upd.ExpectedConfigRevision > 0 {
+		// CAS 闸门（§19-1 / P57）：条件与应用在同一条 UPDATE 里，不存在
+		// "校验通过后被并发改掉"的窗口。
+		u = u.Where(paymentaccount.ConfigRevisionEQ(upd.ExpectedConfigRevision))
+	}
 	if upd.DisplayName != nil {
 		u = u.SetDisplayName(*upd.DisplayName)
 	}
@@ -169,7 +190,21 @@ func (r *PaymentAccountRepo) UpdateAccount(ctx context.Context, key string, upd 
 		return nil, err
 	}
 	if n == 0 {
-		return nil, fmt.Errorf("%w: payment account key=%q", ErrNotFound, key)
+		// 0 行有两种含义：行不存在（404）或 revision 不符（409）。用一次按 key 的
+		// 读回区分——这不是竞态，两次之间行被删掉的极端情形会落到 ErrNotFound，
+		// 与"没找到"的语义一致。
+		//
+		// 409 的文案带上 expected/actual 两个数字（§19-1）：运维看到"你基于 3、现在
+		// 是 4"就能判断是不是别人刚改过，不必再翻一轮 GET。
+		cur, gerr := r.GetAccountByKey(ctx, key)
+		if gerr != nil {
+			if !errors.Is(gerr, ErrNotFound) {
+				return nil, gerr
+			}
+			return nil, fmt.Errorf("%w: payment account key=%q", ErrNotFound, key)
+		}
+		return nil, fmt.Errorf("%w: payment account key=%q: expected config_revision=%d actual=%d",
+			ErrConfigRevisionMismatch, key, upd.ExpectedConfigRevision, cur.ConfigRevision)
 	}
 	return r.GetAccountByKey(ctx, key)
 }
@@ -259,6 +294,29 @@ func (r *PaymentChannelRepo) ListChannels(ctx context.Context, accountID int64) 
 	rows, err := r.client.PaymentChannel.Query().
 		Where(paymentchannel.AccountIDEQ(accountID)).
 		Order(ent.Asc(paymentchannel.FieldPayType)).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]*domain.PaymentChannel, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, toDomainPaymentChannel(row))
+	}
+	return out, nil
+}
+
+// ListAllChannels 全量渠道行（含 disabled），按 `(account_id, pay_type)` 升序。
+//
+// 存在的唯一理由是**反 N+1**（§19-2 / P56）：选路与 `methods` 需要"所有账户的所有
+// 渠道"，逐账户读在 5 个账户 × 4 个 pay_type 的规模上会放大成 30 条 SQL（
+// `1 + N + P×(1+N)`）。调用方拿到全量后**在内存里按 account_id 分组**，过滤逻辑
+// （§5-1 的 8 步）一行都不搬。
+//
+// 定序与 ListChannels 一致（`pay_type` 升序），让"同一 pay_type 取第一条"这类
+// 既有语义在快照上仍然可复现（多行的形状只出现在 store 替身里，见 P56 的说明）。
+func (r *PaymentChannelRepo) ListAllChannels(ctx context.Context) ([]*domain.PaymentChannel, error) {
+	rows, err := r.client.PaymentChannel.Query().
+		Order(ent.Asc(paymentchannel.FieldAccountID), ent.Asc(paymentchannel.FieldPayType)).
 		All(ctx)
 	if err != nil {
 		return nil, err
@@ -362,4 +420,10 @@ func (r *Repository) DeletePaymentChannel(ctx context.Context, accountID int64, 
 // ListPaymentChannels 该账户的全部渠道（含 disabled，pay_type 升序）。
 func (r *Repository) ListPaymentChannels(ctx context.Context, accountID int64) ([]*domain.PaymentChannel, error) {
 	return r.PaymentChannels.ListChannels(ctx, accountID)
+}
+
+// ListAllPaymentChannels 全量渠道行（含 disabled；account_id, pay_type 升序）——
+// **选路/`methods` 的唯一取数口**（§19-2 / P56：一次请求固定 2 条支付表查询）。
+func (r *Repository) ListAllPaymentChannels(ctx context.Context) ([]*domain.PaymentChannel, error) {
+	return r.PaymentChannels.ListAllChannels(ctx)
 }

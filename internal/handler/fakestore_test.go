@@ -3389,6 +3389,29 @@ func (f *fakeStore) ListPaymentChannels(_ context.Context, accountID int64) ([]*
 	return out, nil
 }
 
+// ListAllPaymentChannels 全量渠道（§19-2 / P56 的取数口）：account_id 升序铺开，
+// 每账户内保持 pay_type 升序（与 repository 的 ORDER BY 同序）。
+func (f *fakeStore) ListAllPaymentChannels(context.Context) ([]*domain.PaymentChannel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ids := make([]int64, 0, len(f.paymentChannels))
+	for id := range f.paymentChannels {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	var out []*domain.PaymentChannel
+	for _, id := range ids {
+		rows := make([]*domain.PaymentChannel, 0, len(f.paymentChannels[id]))
+		for _, row := range f.paymentChannels[id] {
+			c := *row
+			rows = append(rows, &c)
+		}
+		slices.SortFunc(rows, func(a, b *domain.PaymentChannel) int { return cmp.Compare(a.PayType, b.PayType) })
+		out = append(out, rows...)
+	}
+	return out, nil
+}
+
 func (f *fakeStore) CreateOrder(ctx context.Context, o *domain.Order) (*domain.Order, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

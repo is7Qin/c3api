@@ -35,6 +35,17 @@ import {
   type MetaState,
   type PaymentProviderInfo,
 } from '@/lib/payment-form'
+import {
+  canAddChannel,
+  channelDeleteRequest,
+  channelDraftOf,
+  channelRowActions,
+  channelUpsertRequest,
+  newChannelDraft,
+  payTypeEditable,
+  rateText,
+  type ChannelDraft,
+} from '@/lib/payment-channels'
 import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -63,22 +74,13 @@ import type { components } from '@/lib/api/schema'
 type PaymentAccount = components['schemas']['PaymentAccount']
 type PaymentChannel = components['schemas']['PaymentChannel']
 
-// MICRO 汇率定点：rate_micro = 汇率 × 1e6（契约面整数，禁 float 传输）。
-const MICRO = 1_000_000
-
 // 渠道币种白名单：与 domain.paymentCurrencies 同集合（大写 ISO 代码；写错 = 渠道不可售）。
 // 前端给下拉而不是自由输入（避免手打小写 "cny" 这类"存进去但不可售"的坑），
 // 权威判定仍在服务端（不在白名单 → 渠道不可售）。
 const CURRENCIES = ['CNY', 'USD', 'EUR', 'GBP', 'HKD', 'AUD', 'CAD', 'SGD', 'THB', 'MYR'] as const
 
-// rateText 整数除法渲染 4 位小数（7200000 → "7.2000"）：不经 float 往返，
-// 与 settings 页的 rate_micro 显示同一口径。4 位小数是本页的编辑粒度。
-const rateText = (micro: number) => {
-  const sign = micro < 0 ? '-' : ''
-  const abs = Math.abs(micro)
-  const frac = String(abs % MICRO).padStart(6, '0').slice(0, 4)
-  return `${sign}${Math.trunc(abs / MICRO)}.${frac}`
-}
+// MICRO / rateText / 渠道草稿与判定全部来自 lib/payment-channels（P55 的决策层）：
+// 汇率定点换算与"三态下渠道还能不能停用"必须与测试共用同一份实现。
 
 // 汇率文本：正整数或最多 4 位小数（7 / 7.2 / 7.2000），且 > 0。
 const RATE_RE = /^\d+(\.\d{1,4})?$/
@@ -355,6 +357,8 @@ function AccountDrawer({
   const [displayName, setDisplayName] = useState(account?.display_name ?? '')
   const [priority, setPriority] = useState(String(account?.priority ?? 0))
   const [enabled, setEnabled] = useState(account?.enabled ?? true)
+  // 本地版本号：只改元数据的请求也带上它（revision 未变时条件仍成立，不会误报 409）。
+  const [revision, setRevision] = useState(account?.config_revision ?? 0)
   const [formErr, setFormErr] = useState<string | null>(null)
 
   // 协议名：新建取下拉，编辑取账户（创建后只读）。渠道 pay_type 与配置字段都从它派生。
@@ -420,15 +424,21 @@ function AccountDrawer({
       }
       // 部分更新：只发改动过的字段；config 未改就整个省掉（密钥 `***` 回传同理）。
       // 配置不可提交（loading/failed）时同样省掉——绝不能把空表当成"用户清空"。
+      // `expected_config_revision`：管理台**总是**带当前版本（§19-1 / P57）——
+      // 两人同时改同一账户时，后提交者的旧表单会拿到 409 而不是把新密钥改回去。
       return api.updatePaymentAccount(account?.key ?? '', {
         display_name: displayName,
         priority: Number(priority),
         enabled,
+        ...(revision > 0 ? { expected_config_revision: revision } : {}),
         ...(form.submittable && configDirty ? { config } : {}),
       })
     },
     onSuccess: view => {
       applyView(view)
+      // 下一次保存要基于**服务端刚回的**版本：本地状态不像 account prop 那样
+      // 跟随 query cache 重挂（抽屉按 key 挂载，key 不变就不会重建）。
+      setRevision(view.config_revision)
       // 保存后把凭据表单回落到服务端**掩码视图**：密钥重新变回 `***`，明文不留在
       // 输入框里（下一次保存若没改就直接回传 `***` = 保持原值）。
       if (!isNew) setConfig(resolveFormState('ready', view, schema).config)
@@ -438,8 +448,15 @@ function AccountDrawer({
       })
       if (isNew) onCreated(view.key)
     },
-    onError: (e: unknown) =>
-      toast.add({ title: t('paymentAccounts.saveFailed'), description: errMsg(e), type: 'error' }),
+    onError: (e: unknown) => {
+      // 409 = 别人先改了（§19-1）：把列表拉新，否则用户会拿着旧值反复重试。
+      if (e instanceof ApiError && e.status === 409) {
+        qc.invalidateQueries({ queryKey: ['payment-accounts'] })
+        toast.add({ title: t('paymentAccounts.saveConflict'), description: errMsg(e), type: 'error' })
+        return
+      }
+      toast.add({ title: t('paymentAccounts.saveFailed'), description: errMsg(e), type: 'error' })
+    },
   })
 
   const submit = () => {
@@ -656,17 +673,6 @@ function AccountDrawer({
   )
 }
 
-// 渠道草稿：payType 在"编辑既有渠道"时不可改（它就是 upsert 的寻址键）。
-type ChannelDraft = {
-  payType: string
-  enabled: boolean
-  currency: string
-  rate: string
-  min: string
-  max: string
-  isNew: boolean
-}
-
 // ChannelSection 渠道子表 + 行内编辑器（按 pay_type upsert / 单独删）。
 function ChannelSection({
   account,
@@ -682,28 +688,24 @@ function ChannelSection({
   const { t } = useTranslation()
   const qc = useQueryClient()
   // "新增渠道"需要 capabilities（§18-3）：元数据没就绪就没有取值域 → 隐藏按钮并给原因；
-  // 已有行的启用/停用/删除全部照旧。
-  const canAdd = metaState === 'ready' && capabilities.length > 0
+  // 已有行的启用/停用/删除**全部照旧**（P55）：渠道 enabled 是该账户能不能卖的唯一开关，
+  // 故障期必须留着这条生路。
+  const canAdd = canAddChannel(metaState, capabilities)
+  // 既有行的动作可用性：这个判定与 metaState **无关**（函数签名里就没有它）。
+  const actions = channelRowActions()
 
-  // 新建渠道的默认值：优先挑一个"还没被该账户占用"的 pay_type
-  const startNewDraft = (): ChannelDraft => {
-    const used = new Set(account.channels.map(c => c.pay_type))
-    const free = capabilities.find(c => !used.has(c)) ?? capabilities[0] ?? ''
-    return { payType: free, enabled: true, currency: 'CNY', rate: '', min: '1', max: '1000', isNew: true }
-  }
+  // 新建渠道的默认值：优先挑一个"还没被该账户占用"的 pay_type（省一次手改）。
+  const startNewDraft = (): ChannelDraft =>
+    newChannelDraft(capabilities, account.channels.map(c => c.pay_type))
   const [draft, setDraft] = useState<ChannelDraft | null>(null)
   const [rowErr, setRowErr] = useState<string | null>(null)
 
   const upsert = useMutation({
-    mutationFn: (d: ChannelDraft) =>
-      api.putPaymentAccountChannel(account.key, d.payType, {
-        enabled: d.enabled,
-        currency: d.currency,
-        // 汇率 ×1e6 落库：契约面是整数（禁 float 传输），前端在这里一次性换算。
-        rate_micro: Math.round(Number(d.rate) * MICRO),
-        min_usd: Number(d.min),
-        max_usd: Number(d.max),
-      }),
+    // 停用就是这条路径（`enabled:false` 的同一条 upsert），请求体不读元数据（P55）。
+    mutationFn: (d: ChannelDraft) => {
+      const req = channelUpsertRequest(account.key, d)
+      return api.putPaymentAccountChannel(req.key, req.payType, req.body)
+    },
     onSuccess: view => {
       onView(view)
       setDraft(null)
@@ -714,7 +716,11 @@ function ChannelSection({
   })
 
   const remove = useMutation({
-    mutationFn: (payType: string) => api.deletePaymentAccountChannel(account.key, payType),
+    // 删除是独立端点（不是 upsert）；同样不需要元数据。
+    mutationFn: (payType: string) => {
+      const req = channelDeleteRequest(account.key, payType)
+      return api.deletePaymentAccountChannel(req.key, req.payType)
+    },
     onSuccess: () => {
       // 204 无 body：拿不到新视图，失效列表由抽屉重新派生（渠道行已消失）
       qc.invalidateQueries({ queryKey: ['payment-accounts'] })
@@ -786,17 +792,10 @@ function ChannelSection({
                       <Button
                         variant="ghost"
                         size="sm"
+                        disabled={!actions.edit}
                         onClick={() => {
                           setRowErr(null)
-                          setDraft({
-                            payType: ch.pay_type,
-                            enabled: ch.enabled,
-                            currency: ch.currency,
-                            rate: rateText(ch.rate_micro),
-                            min: String(ch.min_usd),
-                            max: String(ch.max_usd),
-                            isNew: false,
-                          })
+                          setDraft(channelDraftOf(ch))
                         }}
                       >
                         {t('paymentAccounts.edit')}
@@ -805,7 +804,7 @@ function ChannelSection({
                         variant="ghost"
                         size="sm"
                         onClick={() => remove.mutate(ch.pay_type)}
-                        disabled={remove.isPending}
+                        disabled={!actions.del || remove.isPending}
                       >
                         <Trash2 /> {t('paymentAccounts.channelDelete')}
                       </Button>
@@ -824,7 +823,7 @@ function ChannelSection({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label>{t('paymentAccounts.channelPayType')}</Label>
-              {draft.isNew ? (
+              {payTypeEditable(draft) ? (
                 <Select
                   items={Object.fromEntries(capabilities.map(c => [c, c]))}
                   value={draft.payType}

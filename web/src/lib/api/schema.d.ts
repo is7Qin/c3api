@@ -748,12 +748,14 @@ export interface paths {
         };
         get?: never;
         /**
-         * 更新账户（只改 display_name/priority/enabled/config；config_revision++；新 config 的 merchant_ref 与现列不符 → 400）
+         * 更新账户（只改 display_name/priority/enabled/config；config_revision++；新 config 的 merchant_ref 与现列不符 → 400；expected_config_revision 不符 → 409）
          * @description `key`/`provider`/`merchant_ref` 创建后只读（改任一 = 新建账户 + 停用旧账户，否则该
          *     账户所有 pending 单的回调会按新协议验签而永久 fail）。
          *     更新 `config` 时，服务端用同一事务内的 ParseConfig 结果比对 `merchant_ref` 与现列：
          *     不等 → 400（"改商户身份请新建账户 + 停用旧账户"），否则同一商户可被改成重复。
          *     取值为 `"***"` 的字段 = 保持原值；变更成功后 config_revision 自增并失效配置缓存。
+         *     带 `expected_config_revision` 时是**比较并交换**：`WHERE key=? AND config_revision=?`，
+         *     0 行（行存在）→ **409**——防止并发轮换的新密钥被基于旧快照的表单静默回滚（§19-1）。
          */
         put: operations["PutPaymentAccountsKey"];
         post?: never;
@@ -5346,6 +5348,13 @@ export interface components {
             config?: {
                 [key: string]: unknown;
             };
+            /**
+             * Format: int64
+             * @description 乐观并发闸门（spec §19-1 / P57）：带上它时，服务端只在 `config_revision` 仍等于该值时才应用本次更新；
+             *     不符 → **409**（错误文案带 `expected` / `actual` 两个版本号）。缺省 = 不校验（脚本兼容口径）。
+             *     管理台**总是**带它：两人同时编辑同一账户时，后提交者的旧表单不会把前者的新密钥覆盖回去。
+             */
+            expected_config_revision?: number;
         };
         PaymentAccountTestResponse: {
             /** @description 签名与网络自检是否通过（不落库、不改状态） */
