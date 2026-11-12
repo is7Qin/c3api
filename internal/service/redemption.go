@@ -216,8 +216,33 @@ var appliers = map[domain.RedemptionType]applyFunc{
 	domain.RedemptionTypeTempBalance: applyTempBalance,
 }
 
+// applyInTx 在**给定事务**内应用一张兑换码（appliers 注册表分发 + 仓储错误归类）。
+// 抽取自 Redeem 的编排段，供支付到账（CompleteOrder）复用——两者共用**同一条**
+// 余额变动路径（spec 支付网关 §2 判据 1：余额只经兑换 applier 变动）。
+//
+// repository.ErrConflict **原样直通**（M1）：它是事务级可重试信号，CompleteOrder
+// 的 isRetryableTxErr 只认 repository 哨兵；一旦被 mapRepoErr 改写成
+// service.ErrConflict，applier 内部冲突（并发更新撞行等）就不再触发「新事务 +
+// 新码」重试，而是直接 5xx 上抛（用户已付款却要人工介入）。redeem 侧无事务重试，
+// 直通同样不改变它的 409 语义。
+func (s *Service) applyInTx(ctx context.Context, tx repository.TxStore, userID int64, c *domain.RedemptionCode) error {
+	fn, ok := appliers[c.Type]
+	if !ok {
+		return fmt.Errorf("%w: invalid code", ErrInvalidInput)
+	}
+	if err := fn(ctx, tx, userID, c); err != nil {
+		if errors.Is(err, repository.ErrConflict) {
+			return err
+		}
+		return mapRepoErr(err)
+	}
+	return nil
+}
+
 // applyBalance 余额累加：users.balance += value（原子 SQL，无读改写），同事务
 // 读回变更后余额并写 redemption 行（spec §4.4 不变量）。
+// note = 码文本（唯一、可审计定位）；码带 remark 时追加 ` (remark)` —— 支付
+// 到账因此是 `ABCD-… (order P2026…)`（spec §4-6/F26）。
 func applyBalance(ctx context.Context, tx repository.TxStore, userID int64, c *domain.RedemptionCode) error {
 	if err := tx.UpdateUserBalance(ctx, userID, c.Value); err != nil {
 		return err
@@ -229,6 +254,9 @@ func applyBalance(ctx context.Context, tx repository.TxStore, userID int64, c *d
 		return err
 	}
 	note := c.Code // 兑换码文本（供记录展示；码本身即前台可见）
+	if c.Remark != nil && *c.Remark != "" {
+		note = c.Code + " (" + *c.Remark + ")"
+	}
 	return writeBalanceLog(ctx, tx, userID, c.Value, u.Balance, domain.BalanceSourceRedemption, 0, &note)
 }
 
@@ -278,13 +306,10 @@ func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domai
 			(c.ExpiresAt != nil && !c.ExpiresAt.After(time.Now())) {
 			return fmt.Errorf("%w: invalid code", ErrInvalidInput)
 		}
-		// applier 注册表（决策 1）：新类型 = 注册新 applier，编排零改动
-		fn, ok := appliers[c.Type]
-		if !ok {
-			return fmt.Errorf("%w: invalid code", ErrInvalidInput)
-		}
-		if err := fn(ctx, tx, userID, c); err != nil {
-			return mapRepoErr(err)
+		// applier 注册表（决策 1）：新类型 = 注册新 applier，编排零改动；
+		// 与支付到账共用同一条 applyInTx 路径。
+		if err := s.applyInTx(ctx, tx, userID, c); err != nil {
+			return err
 		}
 		if err := tx.CreateUse(ctx, &domain.RedemptionUse{
 			CodeID: c.ID, UserID: userID, Value: c.Value,
@@ -292,7 +317,7 @@ func (s *Service) Redeem(ctx context.Context, code string, userID int64) (*domai
 		}); err != nil {
 			return mapRepoErr(err) // (code_id,user_id) 唯一冲突 → 409（DB 兜底幂等）
 		}
-		ok, err = tx.IncrementUsed(ctx, c.ID)
+		ok, err := tx.IncrementUsed(ctx, c.ID)
 		if err != nil {
 			return err
 		}

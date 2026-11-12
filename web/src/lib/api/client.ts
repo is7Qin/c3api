@@ -362,6 +362,61 @@ export class ApiClient {
   })
   updateManagementKey = (id: number, b: components['schemas']['ManagementKeyUpdate']) => this.request<components['schemas']['ManagementKey']>(`/management-keys/${id}`, { method: 'PUT', body: JSON.stringify(b) })
   deleteManagementKey = (id: number) => this.request<components['schemas']['DeletedResponse']>(`/management-keys/${id}`, { method: 'DELETE' })
+  // —— 支付（spec 支付网关 §7-1/§7-3）——
+  // 用户面 = userApi（base /api/user ⇒ /api/user/payment/methods、/api/user/orders）；
+  // 管理面 = adminApi（base /api/admin；服务端 paths 不带 /api/admin 前缀）。
+  // 两侧都发相对的 '/orders'，用**方法名**区分语义（我的订单 vs 全量订单运维）。
+  listPaymentMethods = () => this.request<components['schemas']['PaymentMethod'][]>('/payment/methods')
+  // 金额一律字符串直传（'1e3'/'1.234'/空 → 400；前端不做 float 再格式化）。
+  createOrder = (b: components['schemas']['CreateOrderRequest']) =>
+    this.request<components['schemas']['CreateOrderResponse']>('/orders', { method: 'POST', body: JSON.stringify(b) })
+  listMyOrders = (p?: { page?: number; page_size?: number; status?: components['schemas']['OrderStatus'] }) =>
+    this.request<components['schemas']['UserOrderListResponse']>('/orders', { params: toQuery(p) })
+  getMyOrder = (id: number) => this.request<components['schemas']['UserOrder']>(`/orders/${id}`)
+  // 管理面：详情是运维闭环的唯一信号面（raw_notify/fail_reason/fail_count/
+  // last_notify_at/resolved_at）；sync 查单、close 三态关单、resolve 防重复补账。
+  listOrders = (p?: {
+    user_id?: number
+    status?: components['schemas']['OrderStatus']
+    out_trade_no?: string
+    created_from?: string
+    created_to?: string
+    limit?: number
+    offset?: number
+  }) => this.request<components['schemas']['OrderListResponse']>('/orders', { params: toQuery(p) })
+  getOrder = (id: number) => this.request<components['schemas']['OrderDetail']>(`/orders/${id}`)
+  syncOrder = (id: number) => this.request<components['schemas']['OrderSyncResponse']>(`/orders/${id}/sync`, { method: 'POST' })
+  // force 只在「无查单能力 / 查询本身失败」时生效——查询明确报 paid 时服务端忽略它，
+  // 因此这里不把它包装成「强制成功」的语义（失败仍回 502 + fail_reason）。
+  closeOrder = (id: number, force?: boolean) =>
+    this.request<components['schemas']['OrderCloseResponse']>(`/orders/${id}/close`, {
+      method: 'POST',
+      body: JSON.stringify(force ? { force } : {}),
+    })
+  resolveOrder = (id: number) => this.request<components['schemas']['OrderResolveResponse']>(`/orders/${id}/resolve`, { method: 'POST' })
+  // —— 支付账户 / 渠道（spec §10-3，tag payment-admin；base '/api/admin'）——
+  // key 是网关后台填过的回调 URL 段：创建后只读；DELETE **恒为软停**（enabled=false，
+  // 行永不删除，幂等 200）——复用同名 key 会让老回调打到新账户。
+  listPaymentAccounts = () => this.request<components['schemas']['PaymentAccount'][]>('/payment/accounts')
+  createPaymentAccount = (b: components['schemas']['PaymentAccountCreate']) =>
+    this.request<components['schemas']['PaymentAccount']>('/payment/accounts', { method: 'POST', body: JSON.stringify(b) })
+  // 部分更新：只发要改的字段（缺省 = 不变）；密钥字段传 `"***"` = 保持原值。
+  updatePaymentAccount = (key: string, b: components['schemas']['PaymentAccountUpdate']) =>
+    this.request<components['schemas']['PaymentAccount']>(`/payment/accounts/${key}`, { method: 'PUT', body: JSON.stringify(b) })
+  deletePaymentAccount = (key: string) =>
+    this.request<components['schemas']['PaymentAccount']>(`/payment/accounts/${key}`, { method: 'DELETE' })
+  // 渠道按 pay_type 寻址（upsert，不是整体替换）：同一账户下多个渠道互不覆盖。
+  putPaymentAccountChannel = (key: string, payType: string, b: components['schemas']['PaymentChannelUpsert']) =>
+    this.request<components['schemas']['PaymentAccount']>(`/payment/accounts/${key}/channels/${payType}`, {
+      method: 'PUT',
+      body: JSON.stringify(b),
+    })
+  // 删单渠道 → 204（无 body）：request 对 204 返回 undefined。
+  deletePaymentAccountChannel = (key: string, payType: string) =>
+    this.request<void>(`/payment/accounts/${key}/channels/${payType}`, { method: 'DELETE' })
+  // 签名/连通性自检（§5-4：上线前对备用账户跑一次，是唯一探活手段）。
+  testPaymentAccount = (key: string) =>
+    this.request<components['schemas']['PaymentAccountTestResponse']>(`/payment/accounts/${key}/test`, { method: 'POST' })
 }
 
 export class ApiUnauthorized extends Error {

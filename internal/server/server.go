@@ -3,7 +3,8 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
 // Package server 装配 chi 路由：/api/admin/*（platform_admin JWT 或该身份的管理
-// key mk-）+ /api/user/*（身份鉴权，register/login 公开）+ 三个 AI 端点 + /healthz。
+// key mk-）+ /api/user/*（身份鉴权，register/login 公开）+ /api/payment/*（支付
+// 网关公开回调，**无鉴权**，网关不带 JWT）+ 三个 AI 端点 + /healthz。
 // 架构约束：所有 API 统一收口于 /api/*，前端 SPA 占用根及 /api/user/*、/app/*，
 // 两者无前缀重叠，SPA fallback 可无歧义地回 index.html。
 package server
@@ -38,9 +39,17 @@ type Options struct {
 	// （openapi 里 tag `supplier` 的 path；未登记者未注册 ⇒ 404），账号/分组(只读)/
 	// 模板(只读) op 转发到管理面同一批 handler（§2.5/§2.6）。nil = 不挂载。
 	SupplierHandler http.Handler
-	AIHandler       http.Handler // proxy 三个端点
-	WebFS           fs.FS        // 前端构建产物（nil = 不挂静态资源）
-	Logger          *logx.Logger
+	// PaymentAdminHandler 支付账户/渠道管理面（/api/admin/payment/*，spec §10-3）：
+	// **挂在 adminAuth 组内**（与 /api/admin/* 同组）——账户 config 里有商户私钥，
+	// 漏到无鉴权路径等于把凭据交给公网。nil = 不挂载。
+	PaymentAdminHandler http.Handler
+	// PaymentHandler 支付公开回调面（/api/payment/*，spec 支付网关 §7-2）：网关
+	// 不带 JWT，故**不进 admin 鉴权组**；暴露面由 openapi tag `payment` 决定
+	// （只有 notify/return 两条 GET），协议真伪由 provider 验签判定。nil = 不挂载。
+	PaymentHandler http.Handler
+	AIHandler      http.Handler // proxy 三个端点
+	WebFS          fs.FS        // 前端构建产物（nil = 不挂静态资源）
+	Logger         *logx.Logger
 }
 
 type Server struct {
@@ -86,7 +95,23 @@ func NewServer(opts Options) *Server {
 			// （HandlerWithOptions BaseURL="/api/admin"）按完整路径 /api/admin/* 匹配。
 			r.Handle("/api/admin/*", opts.AdminHandler)
 		}
+		if opts.PaymentAdminHandler != nil {
+			// 与 AdminHandler 同一前缀 + 同一鉴权组：chi 按注册顺序匹配 /api/admin/*
+			// 的具体子路由（payment/accounts…），两条 Handle 的 pattern 相同前缀但
+			// 互斥（各自的生成路由只认自己的 path），后注册者接管未命中前者的请求。
+			r.Handle("/api/admin/payment/*", opts.PaymentAdminHandler)
+		}
 	})
+
+	// 支付公开回调面（/api/payment/*，spec 支付网关 §7-2）：**非 admin 鉴权组**
+	// ——网关不会带 JWT，挂进上面那组会把每一条合法通知都变成 401（= 收了钱但
+	// 永远不入账）。暴露面只有 openapi tag `payment` 的两条 GET（生成的子路由），
+	// 协议真伪由 provider 验签判定；未知 provider 由 handler 回 404。
+	// 该前缀下的 access log 只记 path（accessLog 统一不记 query）：notify 的 query
+	// 里带签名与买家信息。
+	if opts.PaymentHandler != nil {
+		r.Handle("/api/payment/*", opts.PaymentHandler)
+	}
 
 	// 供应商面：挂在 /api/user 之前——更具体的静态前缀 /api/user/supplier/*
 	// 优先于 /api/user/*（chi 路由树按最长静态匹配）。门控/作用域/**暴露面

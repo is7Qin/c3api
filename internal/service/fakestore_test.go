@@ -52,6 +52,15 @@ type fakeStore struct {
 	codes       map[int64]*domain.RedemptionCode
 	uses        map[int64]*domain.RedemptionUse
 	temps       []*fakeTempRow
+	// orders 支付订单（spec 支付网关 §4-1；key = id）：值语义拷贝，与其它 fake 同
+	// 纪律——外部拿到的指针不得污染"库内"行。
+	orders map[int64]*domain.Order
+	// orderErrs 依次注入 LockOrderByOutTradeNo 的失败（FIFO 队列，**指针共享**给
+	// fakeTx：跨多次事务重试仍按序消费）。P25 需要「2 次 40P01 + 1 次成功」与
+	// 「3 次全 40P01」两种编排——PG 无法确定性注入死锁，故注入面只在 fake。
+	orderErrs *errQueue
+	// markPaidErr 注入 MarkOrderPaid 失败（完成订单回滚断言用）。
+	markPaidErr error
 	// pricings 模型价格（key = model，一行 = 最终生效价，镜像仓库 unique(model)
 	// 约束；manual > litellm 优先级语义与真实仓库一致）。
 	// imagePrices 图片生成价格（数据面；同 pricings 的 manual > litellm
@@ -113,6 +122,10 @@ type fakeStore struct {
 	balanceLogs []*domain.BalanceLog
 	// createBalanceLogErr 注入事务内 CreateBalanceLog 失败（原子回滚断言，spec §4/A6）。
 	createBalanceLogErr error
+	// balanceLogErrs 依次注入事务内 CreateBalanceLog 的**可重试**失败（FIFO，指针
+	// 共享给 fakeTx）：M1 需要「第 1 次事务冲突、第 2 次成功」的编排，固定错误注入
+	// 做不到（永久失败无法区分「重试了」与「根本没重试」）。
+	balanceLogErrs *errQueue
 	// createUserUnique 事务内 CreateUser 强制 email 唯一（并发重复邮箱竞态测试）。
 	createUserUnique bool
 	// updateUserTxErr 注入事务内 UpdateUser 失败（重试超限/回滚测试）。
@@ -161,6 +174,7 @@ func newFakeStore() *fakeStore {
 		assign: make(map[int64][]int64), assignMult: make(map[[2]int64]*int),
 		codes:         make(map[int64]*domain.RedemptionCode),
 		uses:          make(map[int64]*domain.RedemptionUse),
+		orders:        make(map[int64]*domain.Order),
 		priceEntries:  make(map[string]*domain.PriceEntry),
 		priceVariants: make(map[string][]*domain.PriceVariant),
 		tplExts:       make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
@@ -1773,12 +1787,17 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		uses:   cloneUseMap(f.uses),
 		users:  cloneUserMap(f.users),
 		temps:  slices.Clone(f.temps),
+		orders: cloneOrderMap(f.orders),
 		nextID: f.nextID,
+		// 支付注入缝（orderErrs 共享指针：重试跨多次 WithTx 仍按 FIFO 消费）。
+		orderErrs:   f.orderErrs,
+		markPaidErr: f.markPaidErr,
 		// mgmtKeys 管理 key 暂存（同 WithTx 提交/回滚）。
 		mgmtKeys: cloneMgmtKeyMap(f.mgmtKeys),
 		// 余额变动记录（注册/建用户/改余额/兑换写行；注入透传）
 		balanceLogs:      slices.Clone(f.balanceLogs),
 		balanceLogErr:    f.createBalanceLogErr,
+		balanceLogErrs:   f.balanceLogErrs,
 		createUserUnique: f.createUserUnique,
 		updateUserErr:    f.updateUserTxErr,
 		// 授予面（assignment 替换循环入事务；error 注入透传）
@@ -1797,7 +1816,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 	if err := fn(tx); err != nil {
 		return err // 回滚：暂存丢弃
 	}
-	f.codes, f.uses, f.users, f.temps, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.nextID
+	f.codes, f.uses, f.users, f.temps, f.orders, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.orders, tx.nextID
 	f.balanceLogs = tx.balanceLogs
 	f.assign, f.assignMult = tx.assign, tx.assignMult
 	f.accs, f.accExts, f.accGroups = tx.accs, tx.accExts, tx.accGroups
@@ -1961,6 +1980,9 @@ type fakeTx struct {
 	// 余额变动记录（暂存；balanceLogErr 注入 CreateBalanceLog 失败 → 回滚断言）
 	balanceLogs   []*domain.BalanceLog
 	balanceLogErr error
+	// balanceLogErrs 可重试冲突的 FIFO 注入（M1；与 fakeStore 共享同一指针，跨
+	// 多次 WithTx 仍按序消费）。
+	balanceLogErrs *errQueue
 	// createUserUnique 事务内 CreateUser 强制 email 唯一（并发重复邮箱竞态）。
 	createUserUnique bool
 	// updateUserErr 注入事务内 UpdateUser 失败（重试超限/回滚测试）。
@@ -1982,6 +2004,11 @@ type fakeTx struct {
 	// DeletePriceEntryManual 已有级联行为）。
 	priceEntries  map[string]*domain.PriceEntry
 	priceVariants map[string][]*domain.PriceVariant
+	// 支付订单暂存（行锁读单 + 条件迁移置 paid；提交/回滚同 WithTx）。
+	orders map[int64]*domain.Order
+	// orderErrs 与 fakeStore **共享指针**（重试编排跨多次事务）；markPaidErr 单点注入。
+	orderErrs   *errQueue
+	markPaidErr error
 }
 
 var _ repository.TxStore = (*fakeTx)(nil)
@@ -2102,6 +2129,9 @@ func (t *fakeTx) UpdateUser(ctx context.Context, p *repository.UserPatch) (*doma
 
 // CreateBalanceLog 事务内写入余额变动记录（暂存；balanceLogErr 注入失败 → 回滚）。
 func (t *fakeTx) CreateBalanceLog(ctx context.Context, l *domain.BalanceLog) error {
+	if err := t.balanceLogErrs.next(); err != nil { // M1：可重试失败按序注入
+		return err
+	}
 	if t.balanceLogErr != nil {
 		return t.balanceLogErr
 	}
@@ -3158,5 +3188,251 @@ func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time,
 	row.p.LastProbeAt = &at
 	row.p.LastProbeOK = ok
 	row.p.LastProbeError = errText
+	return nil
+}
+
+// --- 支付订单（spec 支付网关 §4-1/§4-4；PaymentStore 读面 + TxStore 两个订单方法） ---
+
+// errQueue 依次吐出注入错误的 FIFO。fakeStore 只持有指针，fakeTx 共享它，故
+// "2 次 40P01 + 1 次成功"这类跨多次事务重试的编排也能按序注入（P25）。
+type errQueue struct{ errs []error }
+
+func newErrQueue(errs ...error) *errQueue { return &errQueue{errs: errs} }
+
+func (q *errQueue) next() error {
+	if q == nil || len(q.errs) == 0 {
+		return nil
+	}
+	err := q.errs[0]
+	q.errs = q.errs[1:]
+	return err
+}
+
+func cloneOrderMap(m map[int64]*domain.Order) map[int64]*domain.Order {
+	out := make(map[int64]*domain.Order, len(m))
+	for k, v := range m {
+		c := *v
+		out[k] = &c
+	}
+	return out
+}
+
+// LockOrderByOutTradeNo 事务内按单号加行锁读单：注入错误优先（P25），否则命中
+// 暂存；缺行 → repository.ErrNotFound 包装（与真实 repo 同形）。
+func (t *fakeTx) LockOrderByOutTradeNo(ctx context.Context, outTradeNo string) (*domain.Order, error) {
+	if err := t.orderErrs.next(); err != nil {
+		return nil, err
+	}
+	for _, o := range t.orders {
+		if o.OutTradeNo == outTradeNo {
+			c := *o
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: out_trade_no=%q", repository.ErrNotFound, outTradeNo)
+}
+
+// MarkOrderPaid 条件迁移（镜像真实 repo：WHERE status='pending'；命中 0 行 →
+// repository.ErrConflict）。P4b 的 repo 级用例在 fake 与 PG 双跑。
+func (t *fakeTx) MarkOrderPaid(ctx context.Context, id, codeID int64, tradeNo string, rawNotify *string) error {
+	if t.markPaidErr != nil {
+		return t.markPaidErr
+	}
+	o, ok := t.orders[id]
+	if !ok || o.Status != domain.OrderStatusPending {
+		return fmt.Errorf("%w: order id=%d is not pending", repository.ErrConflict, id)
+	}
+	now := time.Now()
+	o.Status = domain.OrderStatusPaid
+	o.RedemptionCodeID = &codeID
+	o.TradeNo = &tradeNo
+	if rawNotify != nil {
+		raw := *rawNotify
+		o.RawNotify = &raw
+	} else {
+		o.RawNotify = nil
+	}
+	o.PaidAt = &now
+	return nil
+}
+
+// --- 支付账户 / 渠道（spec 支付网关 v2 §3-1/§3-2/§10-3）---
+//
+// A 批只做「能编译的最小替身」：账户/渠道语义（选路、SecretFields 掩码、
+// config_error、capabilities 校验、软停幂等）在 B 批随 service 一起补。此处一律
+// 返回「不存在 / 空列表」——任何误触达的用例会**响亮失败**，而不是被一个宽容的
+// 假实现悄悄放过。
+//
+// 命名带 Payment 前缀是硬要求：本替身已实现上游账号集的 CreateAccount /
+// GetAccount / ListAccounts（名字相同、参数不同），Go 不允许同类型重载。
+func (f *fakeStore) CreatePaymentAccount(_ context.Context, _ *domain.PaymentAccount) (*domain.PaymentAccount, error) {
+	return nil, repository.ErrNotFound
+}
+
+func (f *fakeStore) GetPaymentAccountByKey(_ context.Context, _ string) (*domain.PaymentAccount, error) {
+	return nil, repository.ErrNotFound
+}
+
+func (f *fakeStore) ListPaymentAccounts(_ context.Context) ([]*domain.PaymentAccount, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) UpdatePaymentAccount(_ context.Context, _ string, _ repository.AccountUpdate) (*domain.PaymentAccount, error) {
+	return nil, repository.ErrNotFound
+}
+
+func (f *fakeStore) SoftDeletePaymentAccount(_ context.Context, _ string) error {
+	return repository.ErrNotFound
+}
+
+func (f *fakeStore) UpsertPaymentChannel(_ context.Context, _ int64, _ *domain.PaymentChannel) (*domain.PaymentChannel, error) {
+	return nil, repository.ErrNotFound
+}
+
+func (f *fakeStore) DeletePaymentChannel(_ context.Context, _ int64, _ string) error {
+	return repository.ErrNotFound
+}
+
+func (f *fakeStore) ListPaymentChannels(_ context.Context, _ int64) ([]*domain.PaymentChannel, error) {
+	return nil, nil
+}
+
+func (f *fakeStore) CreateOrder(ctx context.Context, o *domain.Order) (*domain.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, existing := range f.orders {
+		if existing.OutTradeNo == o.OutTradeNo {
+			return nil, fmt.Errorf("%w: out_trade_no=%q", repository.ErrConflict, o.OutTradeNo)
+		}
+	}
+	o.ID = f.nextID
+	f.nextID++
+	c := *o
+	f.orders[c.ID] = &c
+	out := c
+	return &out, nil
+}
+
+func (f *fakeStore) GetOrderByID(ctx context.Context, id int64) (*domain.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok {
+		return nil, missingErr(id)
+	}
+	c := *o
+	return &c, nil
+}
+
+// ListOrders 语义镜像真实 repo：筛选 + id 倒序 + limit 默认 20/上限 100。
+func (f *fakeStore) ListOrders(ctx context.Context, q repository.OrderQuery) ([]*domain.Order, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if q.Status != nil && !q.Status.Valid() {
+		return nil, 0, fmt.Errorf("%w: status=%q", repository.ErrInvalidInput, *q.Status)
+	}
+	rows := make([]*domain.Order, 0, len(f.orders))
+	for _, o := range f.orders {
+		if q.UserID != 0 && o.UserID != q.UserID {
+			continue
+		}
+		if q.Status != nil && o.Status != *q.Status {
+			continue
+		}
+		if q.OutTradeNo != "" && o.OutTradeNo != q.OutTradeNo {
+			continue
+		}
+		if q.CreatedFrom != nil && o.CreatedAt.Before(*q.CreatedFrom) {
+			continue
+		}
+		if q.CreatedTo != nil && o.CreatedAt.After(*q.CreatedTo) {
+			continue
+		}
+		c := *o
+		rows = append(rows, &c)
+	}
+	slices.SortFunc(rows, func(a, b *domain.Order) int { return cmp.Compare(b.ID, a.ID) })
+	total := int64(len(rows))
+	limit, offset := q.Limit, q.Offset
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(rows) {
+		return nil, total, nil
+	}
+	end := min(offset+limit, len(rows))
+	return rows[offset:end], total, nil
+}
+
+// MarkOrderNotifyFailure 镜像真实 repo：`WHERE status <> 'paid'`（closed 分支
+// 也要能写进，F36），fail_count 尽力 +1。
+func (f *fakeStore) MarkOrderNotifyFailure(ctx context.Context, outTradeNo, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now()
+	for _, o := range f.orders {
+		if o.OutTradeNo != outTradeNo || o.Status == domain.OrderStatusPaid {
+			continue
+		}
+		r := reason
+		o.FailReason = &r
+		o.FailCount++
+		o.LastNotifyAt = &now
+	}
+	return nil
+}
+
+// CloseOrder 单语句原子关单（WHERE id=? AND status='pending'）。
+func (f *fakeStore) CloseOrder(ctx context.Context, id int64, failReason *string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok || o.Status != domain.OrderStatusPending {
+		return false, nil
+	}
+	o.Status = domain.OrderStatusClosed
+	if failReason != nil {
+		r := *failReason
+		o.FailReason = &r
+	}
+	return true, nil
+}
+
+// ResolveOrder 写 resolved_at（已标记 → false）。
+func (f *fakeStore) ResolveOrder(ctx context.Context, id int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok {
+		return false, missingErr(id)
+	}
+	if o.ResolvedAt != nil {
+		return false, nil
+	}
+	now := time.Now()
+	o.ResolvedAt = &now
+	return true, nil
+}
+
+// UpdateOrderRawNotify 只写 raw_notify（sync 非 paid 分支）。
+func (f *fakeStore) UpdateOrderRawNotify(ctx context.Context, id int64, rawNotify *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if rawNotify != nil {
+		raw := *rawNotify
+		o.RawNotify = &raw
+	} else {
+		o.RawNotify = nil
+	}
 	return nil
 }

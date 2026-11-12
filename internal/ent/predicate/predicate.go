@@ -33,6 +33,15 @@ type Key func(*sql.Selector)
 // ManagementKey is the predicate function for managementkey builders.
 type ManagementKey func(*sql.Selector)
 
+// Order is the predicate function for order builders.
+type Order func(*sql.Selector)
+
+// PaymentAccount is the predicate function for paymentaccount builders.
+type PaymentAccount func(*sql.Selector)
+
+// PaymentChannel is the predicate function for paymentchannel builders.
+type PaymentChannel func(*sql.Selector)
+
 // PriceEntry is the predicate function for priceentry builders.
 type PriceEntry func(*sql.Selector)
 

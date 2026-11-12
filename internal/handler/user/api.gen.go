@@ -71,6 +71,13 @@ const (
 	ManagementKeyStatusDisabled ManagementKeyStatus = "disabled"
 )
 
+// Defines values for OrderStatus.
+const (
+	OrderStatusClosed  OrderStatus = "closed"
+	OrderStatusPaid    OrderStatus = "paid"
+	OrderStatusPending OrderStatus = "pending"
+)
+
 // Defines values for RedemptionType.
 const (
 	Balance     RedemptionType = "balance"
@@ -117,6 +124,13 @@ const (
 const (
 	GetUserKeysParamsOrderAsc  GetUserKeysParamsOrder = "asc"
 	GetUserKeysParamsOrderDesc GetUserKeysParamsOrder = "desc"
+)
+
+// Defines values for GetUserOrdersParamsStatus.
+const (
+	GetUserOrdersParamsStatusClosed  GetUserOrdersParamsStatus = "closed"
+	GetUserOrdersParamsStatusPaid    GetUserOrdersParamsStatus = "paid"
+	GetUserOrdersParamsStatusPending GetUserOrdersParamsStatus = "pending"
 )
 
 // Defines values for GetUserRedemptionsParamsOrder.
@@ -205,6 +219,40 @@ type CatalogVariant struct {
 // ChangePasswordResponse defines model for ChangePasswordResponse.
 type ChangePasswordResponse struct {
 	Updated bool `json:"updated"`
+}
+
+// CreateOrderRequest defines model for CreateOrderRequest.
+type CreateOrderRequest struct {
+	// AmountUsd USD 金额字符串：`^\d{1,7}(\.\d{1,2})?$` 且 > 0（禁 float；"1e3"/"1.234"/空/非字符串 → 400）
+	AmountUsd string `json:"amount_usd"`
+
+	// PayType 渠道别名（未知 → 400；未启用/汇率不可用/未配置 → 503）
+	PayType string `json:"pay_type"`
+}
+
+// CreateOrderResponse defines model for CreateOrderResponse.
+type CreateOrderResponse struct {
+	// Account 本次下单冻结的上游账户 key（= pay_url 的 `/api/payment/{account}` 段）
+	Account string `json:"account"`
+
+	// AmountUsd 规范化后的 USD 金额（%d.%02d）
+	AmountUsd string `json:"amount_usd"`
+	Currency  string `json:"currency"`
+
+	// ExpiresAt 支付截止时刻（过期仍可入账，见 OrderStatus）
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// OrderNo 订单号（`P` + UTC `yyyyMMddHHmmss` + 10 位 base32）
+	OrderNo string `json:"order_no"`
+
+	// PayAmount 实付金额（渠道币种，%d.%02d）——**权威值**，前端必须在跳转前展示并要求确认（methods.rate 仅为参考值）
+	PayAmount string `json:"pay_amount"`
+
+	// PayUrl 已签名的网关跳转 URL（GET；notify/return 路径带本账户 key）
+	PayUrl string `json:"pay_url"`
+
+	// Rate 汇率快照（%d.%06d）
+	Rate string `json:"rate"`
 }
 
 // DeletedResponse defines model for DeletedResponse.
@@ -386,6 +434,30 @@ type ManagementKeyStatus string
 type ManagementKeyUpdate struct {
 	Name   *string              `json:"name,omitempty"`
 	Status *ManagementKeyStatus `json:"status,omitempty"`
+}
+
+// OrderStatus 订单状态（只有三态；过期是 pending && expires_at < now 的派生视图，**不是**状态）
+type OrderStatus string
+
+// PaymentMethod defines model for PaymentMethod.
+type PaymentMethod struct {
+	// Currency 渠道结算币种（两位小数白名单）
+	Currency string `json:"currency"`
+
+	// MaxUsd **生效**上限（USD；已按该渠道汇率可表示范围收敛）
+	MaxUsd int64 `json:"max_usd"`
+
+	// MinUsd 该渠道行的下单下限（整数 USD，取 `payment_channels.min_usd`）
+	MinUsd int64 `json:"min_usd"`
+
+	// PayType 渠道别名（全局唯一；建单时原样回传）
+	PayType string `json:"pay_type"`
+
+	// Provider 协议标识（如 `epay_v2`）；回调路径用的是账户 key 而非协议名（`/api/payment/{account}/notify`，`{account}` = `payment_accounts.key`）
+	Provider string `json:"provider"`
+
+	// Rate 汇率（rate_micro/1e6 的六位小数定点串，如 "7.200000"）
+	Rate string `json:"rate"`
 }
 
 // RedeemRequest defines model for RedeemRequest.
@@ -644,6 +716,41 @@ type UserLogsResponse struct {
 	Rows       []UserUsageLog `json:"rows"`
 }
 
+// UserOrder defines model for UserOrder.
+type UserOrder struct {
+	// Account 上游账户 key（列表返回；**详情可不返回**——spec §10-1 规定用户详情不外泄 account_key）
+	Account *string `json:"account,omitempty"`
+
+	// AmountUsd 入账 USD 金额（%d.%02d）
+	AmountUsd string     `json:"amount_usd"`
+	CreatedAt time.Time  `json:"created_at"`
+	Currency  string     `json:"currency"`
+	ExpiresAt time.Time  `json:"expires_at"`
+	Id        int64      `json:"id"`
+	OrderNo   string     `json:"order_no"`
+	PaidAt    *time.Time `json:"paid_at"`
+
+	// PayAmount 实付金额（渠道币种，%d.%02d）
+	PayAmount string `json:"pay_amount"`
+	PayType   string `json:"pay_type"`
+
+	// PayUrl 仅 pending 且未过期时返回（实时重签）；其余/签名不可用 → null
+	PayUrl   *string `json:"pay_url"`
+	Provider string  `json:"provider"`
+
+	// Rate 汇率快照（%d.%06d）
+	Rate string `json:"rate"`
+
+	// Status 订单状态（只有三态；过期是 pending && expires_at < now 的派生视图，**不是**状态）
+	Status OrderStatus `json:"status"`
+}
+
+// UserOrderListResponse defines model for UserOrderListResponse.
+type UserOrderListResponse struct {
+	Rows  []UserOrder `json:"rows"`
+	Total int64       `json:"total"`
+}
+
 // UserRole defines model for UserRole.
 type UserRole string
 
@@ -746,6 +853,16 @@ type GetUserKeysParams struct {
 
 // GetUserKeysParamsOrder defines parameters for GetUserKeys.
 type GetUserKeysParamsOrder string
+
+// GetUserOrdersParams defines parameters for GetUserOrders.
+type GetUserOrdersParams struct {
+	Page     *int                       `form:"page,omitempty" json:"page,omitempty"`
+	PageSize *int                       `form:"page_size,omitempty" json:"page_size,omitempty"`
+	Status   *GetUserOrdersParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+}
+
+// GetUserOrdersParamsStatus defines parameters for GetUserOrders.
+type GetUserOrdersParamsStatus string
 
 // GetUserRedemptionsParams defines parameters for GetUserRedemptions.
 type GetUserRedemptionsParams struct {
@@ -874,6 +991,9 @@ type PostUserManagementKeysJSONRequestBody = ManagementKeyCreate
 // PutUserManagementKeysIdJSONRequestBody defines body for PutUserManagementKeysId for application/json ContentType.
 type PutUserManagementKeysIdJSONRequestBody = ManagementKeyUpdate
 
+// PostUserOrdersJSONRequestBody defines body for PostUserOrders for application/json ContentType.
+type PostUserOrdersJSONRequestBody = CreateOrderRequest
+
 // PostUserRedemptionsJSONRequestBody defines body for PostUserRedemptions for application/json ContentType.
 type PostUserRedemptionsJSONRequestBody = RedeemRequest
 
@@ -945,6 +1065,18 @@ type ServerInterface interface {
 	// 可见分组的可路由模型及其价格（只读快照投影；展示基底价与全部条件变体，最终价由用户按有效倍率自算）
 	// (GET /api/user/models)
 	GetUserModels(w http.ResponseWriter, r *http.Request)
+	// 我的订单（分页 + status；只返回本人，越权 = 404）
+	// (GET /api/user/orders)
+	GetUserOrders(w http.ResponseWriter, r *http.Request, params GetUserOrdersParams)
+	// 创建充值订单（400 金额/pay_type 非法；503 支付未启用或渠道未配置）
+	// (POST /api/user/orders)
+	PostUserOrders(w http.ResponseWriter, r *http.Request)
+	// 我的订单详情（pending 且未过期时返回实时重签的 pay_url；非本人 → 404）
+	// (GET /api/user/orders/{id})
+	GetUserOrdersId(w http.ResponseWriter, r *http.Request, id int64)
+	// 可售渠道列表（三层开关过滤后；max_usd 为按汇率收敛的**生效**上限）
+	// (GET /api/user/payment/methods)
+	GetUserPaymentMethods(w http.ResponseWriter, r *http.Request)
 	// 我的兑换记录（use 快照 + 码的 type/remark 联查；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/redemptions)
 	GetUserRedemptions(w http.ResponseWriter, r *http.Request, params GetUserRedemptionsParams)
@@ -1101,6 +1233,30 @@ func (_ Unimplemented) PutUserManagementKeysId(w http.ResponseWriter, r *http.Re
 // 可见分组的可路由模型及其价格（只读快照投影；展示基底价与全部条件变体，最终价由用户按有效倍率自算）
 // (GET /api/user/models)
 func (_ Unimplemented) GetUserModels(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 我的订单（分页 + status；只返回本人，越权 = 404）
+// (GET /api/user/orders)
+func (_ Unimplemented) GetUserOrders(w http.ResponseWriter, r *http.Request, params GetUserOrdersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 创建充值订单（400 金额/pay_type 非法；503 支付未启用或渠道未配置）
+// (POST /api/user/orders)
+func (_ Unimplemented) PostUserOrders(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 我的订单详情（pending 且未过期时返回实时重签的 pay_url；非本人 → 404）
+// (GET /api/user/orders/{id})
+func (_ Unimplemented) GetUserOrdersId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 可售渠道列表（三层开关过滤后；max_usd 为按汇率收敛的**生效**上限）
+// (GET /api/user/payment/methods)
+func (_ Unimplemented) GetUserPaymentMethods(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1673,6 +1829,102 @@ func (siw *ServerInterfaceWrapper) GetUserModels(w http.ResponseWriter, r *http.
 	handler.ServeHTTP(w, r)
 }
 
+// GetUserOrders operation middleware
+func (siw *ServerInterfaceWrapper) GetUserOrders(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetUserOrdersParams
+
+	// ------------- Optional query parameter "page" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "page", r.URL.Query(), &params.Page)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "page_size" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "page_size", r.URL.Query(), &params.PageSize)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "page_size", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "status", r.URL.Query(), &params.Status)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserOrders(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostUserOrders operation middleware
+func (siw *ServerInterfaceWrapper) PostUserOrders(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostUserOrders(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUserOrdersId operation middleware
+func (siw *ServerInterfaceWrapper) GetUserOrdersId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserOrdersId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUserPaymentMethods operation middleware
+func (siw *ServerInterfaceWrapper) GetUserPaymentMethods(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserPaymentMethods(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // GetUserRedemptions operation middleware
 func (siw *ServerInterfaceWrapper) GetUserRedemptions(w http.ResponseWriter, r *http.Request) {
 
@@ -2175,6 +2427,18 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/models", wrapper.GetUserModels)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/orders", wrapper.GetUserOrders)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/api/user/orders", wrapper.PostUserOrders)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/orders/{id}", wrapper.GetUserOrdersId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/payment/methods", wrapper.GetUserPaymentMethods)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/redemptions", wrapper.GetUserRedemptions)

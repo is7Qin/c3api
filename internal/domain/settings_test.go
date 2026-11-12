@@ -61,3 +61,45 @@ func TestMailSettingsRegistry(t *testing.T) {
 	tls := DefaultSetting("mail.tls")
 	require.ElementsMatch(t, []string{"starttls", "implicit", "none"}, tls.PolicyValues)
 }
+
+// TestPaymentSettingsRegistry 支付网关注册表（spec 支付网关 §6）：17 个键的类型与
+// 默认值必须与 spec 一字不差。值域断言针对三处**会造成资损/免费下单**的地方：
+func TestPaymentSettingsRegistry(t *testing.T) {
+	// spec §15-7：v2 只留 4 键（删 13、留 4）。键面收敛是"账户是数据"的落地形状：
+	// 凭据/汇率/限额搬进 payment_accounts + payment_channels 后，settings 里再出现
+	// 这些键就说明有代码在走 v1 的旁路。
+	cases := []struct {
+		key   string
+		typ   SettingType
+		value string
+	}{
+		{SettingPaymentEnabled, SettingTypeSwitch, "false"},
+		{SettingNotifyBaseURL, SettingTypeString, ""},
+		{SettingPortalBaseURL, SettingTypeString, ""},
+		{SettingOrderTTLMinutes, SettingTypeNumber, "30"},
+	}
+	for _, c := range cases {
+		s := DefaultSetting(c.key)
+		require.NotNil(t, s, "%s 必须在册", c.key)
+		require.Equal(t, c.typ, s.Type, "%s 类型", c.key)
+		require.Equal(t, c.value, s.Value, "%s 默认值", c.key)
+	}
+
+	// TTL 必须有上下界（0 分钟 = 立即过期，等于把建单功能关掉）。
+	ttl := DefaultSetting(SettingOrderTTLMinutes)
+	require.NotNil(t, ttl.Min)
+	require.Equal(t, int64(1), *ttl.Min)
+	require.NotNil(t, ttl.Max)
+	require.Equal(t, int64(1440), *ttl.Max)
+
+	// v1 的 13 个键必须**不在**注册表里（否则 spec §15-7 的删除没有落地）。
+	for _, key := range []string{
+		"payment.epay.enabled", "payment.epay_base_url", "payment.epay_pid",
+		"payment.epay_private_key", "payment.epay_public_key",
+		"payment.min_usd", "payment.max_usd",
+		"payment.alipay.enabled", "payment.alipay.currency", "payment.alipay.rate_micro",
+		"payment.wxpay.enabled", "payment.wxpay.currency", "payment.wxpay.rate_micro",
+	} {
+		require.Nil(t, DefaultSetting(key), "v1 键 %s 必须已从注册表删除", key)
+	}
+}

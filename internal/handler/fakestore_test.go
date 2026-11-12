@@ -56,6 +56,16 @@ type fakeStore struct {
 	codes               map[int64]*domain.RedemptionCode
 	uses                map[int64]*domain.RedemptionUse
 	temps               []*fakeTempRow // 临时额度行（domain 无 TempBalance 类型，标量参数即全字段）
+	// orders 支付订单（spec 支付网关 §4-1；key = id）：值语义拷贝。
+	orders map[int64]*domain.Order
+	// paymentAccounts / paymentChannels 支付账户与渠道（spec 支付网关 v2 §3-1/§3-2）。
+	// 账户按 key 索引（回调路径即 key），渠道按 account_id + pay_type 唯一。
+	paymentAccounts map[string]*domain.PaymentAccount
+	paymentChannels map[int64]map[string]*domain.PaymentChannel
+	// orderErrs 依次注入 LockOrderByOutTradeNo 的失败（FIFO，指针共享给 fakeTx）；
+	// markPaidErr 注入 MarkOrderPaid 失败（与 service 包 fake 同形）。
+	orderErrs   *errQueue
+	markPaidErr error
 	// pricings 模型价格（key = model，一行 = 最终生效价；manual > litellm 优先级
 	// 语义与真实仓库一致）。
 	pricings map[string]*domain.PriceEntry
@@ -95,13 +105,16 @@ func newFakeStore() *fakeStore {
 		keys:    make(map[int64]*domain.Key), mgmtKeys: make(map[int64]*domain.ManagementKey), users: make(map[int64]*domain.User),
 		settings: make(map[string]*domain.Setting), rules: make(map[int64]domain.Rule),
 		assign: make(map[int64][]int64), assignMult: make(map[[2]int64]*int),
-		codes: make(map[int64]*domain.RedemptionCode),
-		uses:  make(map[int64]*domain.RedemptionUse), pricings: make(map[string]*domain.PriceEntry),
-		imagePrices:    make(map[string]*domain.PriceEntry),
-		functionPrices: make(map[string]*domain.PriceEntry),
-		priceEntries:   make(map[string]*domain.PriceEntry),
-		priceVariants:  make(map[string][]*domain.PriceVariant),
-		tplExts:        make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
+		codes:  make(map[int64]*domain.RedemptionCode),
+		uses:   make(map[int64]*domain.RedemptionUse),
+		orders: make(map[int64]*domain.Order), pricings: make(map[string]*domain.PriceEntry),
+		paymentAccounts: make(map[string]*domain.PaymentAccount),
+		paymentChannels: make(map[int64]map[string]*domain.PaymentChannel),
+		imagePrices:     make(map[string]*domain.PriceEntry),
+		functionPrices:  make(map[string]*domain.PriceEntry),
+		priceEntries:    make(map[string]*domain.PriceEntry),
+		priceVariants:   make(map[string][]*domain.PriceVariant),
+		tplExts:         make(map[int64]*domain.TemplateExt), accExts: make(map[int64]*domain.AccountExt),
 		emailTemplates: make(map[string]*domain.EmailTemplate),
 		emailCodes:     make(map[string]*domain.EmailCode),
 		accExtErr:      make(map[int64]error),
@@ -1978,7 +1991,10 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 		uses:        cloneUseMap(f.uses),
 		users:       cloneUserMap(f.users),
 		temps:       slices.Clone(f.temps),
+		orders:      cloneOrderMap(f.orders),
 		nextID:      f.nextID,
+		orderErrs:   f.orderErrs,
+		markPaidErr: f.markPaidErr,
 		mgmtKeys:    cloneMgmtKeyMap(f.mgmtKeys),
 		balanceLogs: slices.Clone(f.balanceLogs),
 		// 授予面（assignment 替换循环入事务）
@@ -1995,7 +2011,7 @@ func (f *fakeStore) WithTx(ctx context.Context, fn func(repository.TxStore) erro
 	if err := fn(tx); err != nil {
 		return err // 回滚：暂存丢弃
 	}
-	f.codes, f.uses, f.users, f.temps, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.nextID
+	f.codes, f.uses, f.users, f.temps, f.orders, f.nextID = tx.codes, tx.uses, tx.users, tx.temps, tx.orders, tx.nextID
 	f.balanceLogs = tx.balanceLogs
 	f.assign, f.assignMult = tx.assign, tx.assignMult
 	f.accs, f.accExts, f.accGroups = tx.accs, tx.accExts, tx.accGroups
@@ -2115,6 +2131,11 @@ type fakeTx struct {
 	// DeletePriceEntryManual 已有级联行为）。
 	priceEntries  map[string]*domain.PriceEntry
 	priceVariants map[string][]*domain.PriceVariant
+	// 支付订单暂存（行锁读单 + 条件迁移置 paid；提交/回滚同 WithTx）。
+	orders map[int64]*domain.Order
+	// orderErrs 与 fakeStore 共享指针；markPaidErr 单点注入。
+	orderErrs   *errQueue
+	markPaidErr error
 }
 
 var _ repository.TxStore = (*fakeTx)(nil)
@@ -3165,5 +3186,339 @@ func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time,
 	row.p.LastProbeAt = &at
 	row.p.LastProbeOK = ok
 	row.p.LastProbeError = errText
+	return nil
+}
+
+// --- 支付订单（spec 支付网关 §4-1/§4-4；语义与 service 包 fake 对齐） ---
+
+// errQueue 依次吐出注入错误的 FIFO（fakeStore 持指针、fakeTx 共享，故跨多次
+// 事务重试的注入编排成立）。
+type errQueue struct{ errs []error }
+
+func newErrQueue(errs ...error) *errQueue { return &errQueue{errs: errs} }
+
+func (q *errQueue) next() error {
+	if q == nil || len(q.errs) == 0 {
+		return nil
+	}
+	err := q.errs[0]
+	q.errs = q.errs[1:]
+	return err
+}
+
+func cloneOrderMap(m map[int64]*domain.Order) map[int64]*domain.Order {
+	out := make(map[int64]*domain.Order, len(m))
+	for k, v := range m {
+		c := *v
+		out[k] = &c
+	}
+	return out
+}
+
+func (t *fakeTx) LockOrderByOutTradeNo(ctx context.Context, outTradeNo string) (*domain.Order, error) {
+	if err := t.orderErrs.next(); err != nil {
+		return nil, err
+	}
+	for _, o := range t.orders {
+		if o.OutTradeNo == outTradeNo {
+			c := *o
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: out_trade_no=%q", repository.ErrNotFound, outTradeNo)
+}
+
+func (t *fakeTx) MarkOrderPaid(ctx context.Context, id, codeID int64, tradeNo string, rawNotify *string) error {
+	if t.markPaidErr != nil {
+		return t.markPaidErr
+	}
+	o, ok := t.orders[id]
+	if !ok || o.Status != domain.OrderStatusPending {
+		return fmt.Errorf("%w: order id=%d is not pending", repository.ErrConflict, id)
+	}
+	now := time.Now()
+	o.Status = domain.OrderStatusPaid
+	o.RedemptionCodeID = &codeID
+	o.TradeNo = &tradeNo
+	if rawNotify != nil {
+		raw := *rawNotify
+		o.RawNotify = &raw
+	} else {
+		o.RawNotify = nil
+	}
+	o.PaidAt = &now
+	return nil
+}
+
+// --- 支付账户 / 渠道（spec 支付网关 v2 §3-1/§3-2/§10-3）---
+//
+// 内存替身必须复刻**四条** repo 不变量，否则 B 批用例会假绿：
+// key 唯一、`(provider, merchant_ref)` 唯一、config 变更 `config_revision++`
+// （配置缓存的失效键）、`MerchantRef` 只读（变 → repository.ErrMerchantRefImmutable）。
+//
+// 命名带 Payment 前缀是硬要求：本替身已实现上游账号集的 CreateAccount /
+// GetAccount / ListAccounts（名字相同、参数不同），Go 不允许同类型重载。
+func (f *fakeStore) CreatePaymentAccount(_ context.Context, a *domain.PaymentAccount) (*domain.PaymentAccount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, dup := f.paymentAccounts[a.Key]; dup {
+		return nil, fmt.Errorf("%w: payment account key=%q", repository.ErrConflict, a.Key)
+	}
+	for _, existing := range f.paymentAccounts {
+		if existing.Provider == a.Provider && existing.MerchantRef == a.MerchantRef {
+			return nil, fmt.Errorf("%w: provider=%q merchant_ref=%q", repository.ErrConflict, a.Provider, a.MerchantRef)
+		}
+	}
+	row := *a
+	row.ID = f.nextID
+	f.nextID++
+	if row.ConfigRevision <= 0 {
+		row.ConfigRevision = 1
+	}
+	now := time.Now()
+	row.CreatedAt, row.UpdatedAt = now, now
+	f.paymentAccounts[row.Key] = &row
+	out := row
+	return &out, nil
+}
+
+func (f *fakeStore) GetPaymentAccountByKey(_ context.Context, key string) (*domain.PaymentAccount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.paymentAccounts[key]
+	if !ok {
+		return nil, fmt.Errorf("%w: payment account key=%q", repository.ErrNotFound, key)
+	}
+	out := *row
+	return &out, nil
+}
+
+func (f *fakeStore) ListPaymentAccounts(_ context.Context) ([]*domain.PaymentAccount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]*domain.PaymentAccount, 0, len(f.paymentAccounts))
+	for _, row := range f.paymentAccounts {
+		c := *row
+		out = append(out, &c)
+	}
+	slices.SortFunc(out, func(a, b *domain.PaymentAccount) int { return cmp.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+func (f *fakeStore) UpdatePaymentAccount(_ context.Context, key string, upd repository.AccountUpdate) (*domain.PaymentAccount, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.paymentAccounts[key]
+	if !ok {
+		return nil, fmt.Errorf("%w: payment account key=%q", repository.ErrNotFound, key)
+	}
+	if upd.Config != nil {
+		if upd.MerchantRef == "" {
+			return nil, fmt.Errorf("%w: config update requires merchant_ref", repository.ErrInvalidInput)
+		}
+		if upd.MerchantRef != row.MerchantRef {
+			return nil, fmt.Errorf("%w: key=%q current=%q new=%q", repository.ErrMerchantRefImmutable,
+				key, row.MerchantRef, upd.MerchantRef)
+		}
+		row.Config = upd.Config
+		row.ConfigRevision++
+	}
+	if upd.DisplayName != nil {
+		row.DisplayName = *upd.DisplayName
+	}
+	if upd.Priority != nil {
+		row.Priority = *upd.Priority
+	}
+	if upd.Enabled != nil {
+		row.Enabled = *upd.Enabled
+	}
+	row.UpdatedAt = time.Now()
+	out := *row
+	return &out, nil
+}
+
+func (f *fakeStore) SoftDeletePaymentAccount(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	row, ok := f.paymentAccounts[key]
+	if !ok {
+		return fmt.Errorf("%w: payment account key=%q", repository.ErrNotFound, key)
+	}
+	row.Enabled = false // 软停：行永不删除（N30），重复 DELETE 幂等
+	return nil
+}
+
+func (f *fakeStore) UpsertPaymentChannel(_ context.Context, accountID int64, ch *domain.PaymentChannel) (*domain.PaymentChannel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.paymentChannels[accountID] == nil {
+		f.paymentChannels[accountID] = make(map[string]*domain.PaymentChannel)
+	}
+	c := *ch
+	c.AccountID = accountID
+	if existing, ok := f.paymentChannels[accountID][ch.PayType]; ok {
+		c.ID = existing.ID
+		c.CreatedAt = existing.CreatedAt
+	} else {
+		c.ID = f.nextID
+		f.nextID++
+		c.CreatedAt = time.Now()
+	}
+	c.UpdatedAt = time.Now()
+	f.paymentChannels[accountID][ch.PayType] = &c
+	out := c
+	return &out, nil
+}
+
+func (f *fakeStore) DeletePaymentChannel(_ context.Context, accountID int64, payType string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.paymentChannels[accountID], payType) // 幂等
+	return nil
+}
+
+func (f *fakeStore) ListPaymentChannels(_ context.Context, accountID int64) ([]*domain.PaymentChannel, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]*domain.PaymentChannel, 0, len(f.paymentChannels[accountID]))
+	for _, row := range f.paymentChannels[accountID] {
+		c := *row
+		out = append(out, &c)
+	}
+	slices.SortFunc(out, func(a, b *domain.PaymentChannel) int { return cmp.Compare(a.PayType, b.PayType) })
+	return out, nil
+}
+
+func (f *fakeStore) CreateOrder(ctx context.Context, o *domain.Order) (*domain.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, existing := range f.orders {
+		if existing.OutTradeNo == o.OutTradeNo {
+			return nil, fmt.Errorf("%w: out_trade_no=%q", repository.ErrConflict, o.OutTradeNo)
+		}
+	}
+	o.ID = f.nextID
+	f.nextID++
+	c := *o
+	f.orders[c.ID] = &c
+	out := c
+	return &out, nil
+}
+
+func (f *fakeStore) GetOrderByID(ctx context.Context, id int64) (*domain.Order, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok {
+		return nil, missingErr(id)
+	}
+	c := *o
+	return &c, nil
+}
+
+func (f *fakeStore) ListOrders(ctx context.Context, q repository.OrderQuery) ([]*domain.Order, int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if q.Status != nil && !q.Status.Valid() {
+		return nil, 0, fmt.Errorf("%w: status=%q", repository.ErrInvalidInput, *q.Status)
+	}
+	rows := make([]*domain.Order, 0, len(f.orders))
+	for _, o := range f.orders {
+		if q.UserID != 0 && o.UserID != q.UserID {
+			continue
+		}
+		if q.Status != nil && o.Status != *q.Status {
+			continue
+		}
+		if q.OutTradeNo != "" && o.OutTradeNo != q.OutTradeNo {
+			continue
+		}
+		if q.CreatedFrom != nil && o.CreatedAt.Before(*q.CreatedFrom) {
+			continue
+		}
+		if q.CreatedTo != nil && o.CreatedAt.After(*q.CreatedTo) {
+			continue
+		}
+		c := *o
+		rows = append(rows, &c)
+	}
+	slices.SortFunc(rows, func(a, b *domain.Order) int { return cmp.Compare(b.ID, a.ID) })
+	total := int64(len(rows))
+	limit, offset := q.Limit, q.Offset
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if offset >= len(rows) {
+		return nil, total, nil
+	}
+	end := min(offset+limit, len(rows))
+	return rows[offset:end], total, nil
+}
+
+func (f *fakeStore) MarkOrderNotifyFailure(ctx context.Context, outTradeNo, reason string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now()
+	for _, o := range f.orders {
+		if o.OutTradeNo != outTradeNo || o.Status == domain.OrderStatusPaid {
+			continue
+		}
+		r := reason
+		o.FailReason = &r
+		o.FailCount++
+		o.LastNotifyAt = &now
+	}
+	return nil
+}
+
+func (f *fakeStore) CloseOrder(ctx context.Context, id int64, failReason *string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok || o.Status != domain.OrderStatusPending {
+		return false, nil
+	}
+	o.Status = domain.OrderStatusClosed
+	if failReason != nil {
+		r := *failReason
+		o.FailReason = &r
+	}
+	return true, nil
+}
+
+func (f *fakeStore) ResolveOrder(ctx context.Context, id int64) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok {
+		return false, missingErr(id)
+	}
+	if o.ResolvedAt != nil {
+		return false, nil
+	}
+	now := time.Now()
+	o.ResolvedAt = &now
+	return true, nil
+}
+
+func (f *fakeStore) UpdateOrderRawNotify(ctx context.Context, id int64, rawNotify *string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	o, ok := f.orders[id]
+	if !ok {
+		return missingErr(id)
+	}
+	if rawNotify != nil {
+		raw := *rawNotify
+		o.RawNotify = &raw
+	} else {
+		o.RawNotify = nil
+	}
 	return nil
 }

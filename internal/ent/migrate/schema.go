@@ -304,6 +304,114 @@ var (
 			},
 		},
 	}
+	// OrdersColumns holds the columns for the "orders" table.
+	OrdersColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "out_trade_no", Type: field.TypeString, Unique: true},
+		{Name: "user_id", Type: field.TypeInt64},
+		{Name: "provider", Type: field.TypeString},
+		{Name: "account_key", Type: field.TypeString},
+		{Name: "status", Type: field.TypeEnum, Enums: []string{"pending", "paid", "closed"}, Default: "pending"},
+		{Name: "credit_milli", Type: field.TypeInt64},
+		{Name: "pay_minor", Type: field.TypeInt64},
+		{Name: "currency", Type: field.TypeString},
+		{Name: "rate_micro", Type: field.TypeInt64},
+		{Name: "pay_type", Type: field.TypeString},
+		{Name: "trade_no", Type: field.TypeString, Nullable: true},
+		{Name: "redemption_code_id", Type: field.TypeInt64, Unique: true, Nullable: true},
+		{Name: "raw_notify", Type: field.TypeString, Nullable: true},
+		{Name: "fail_reason", Type: field.TypeString, Nullable: true},
+		{Name: "fail_count", Type: field.TypeInt, Default: 0},
+		{Name: "last_notify_at", Type: field.TypeTime, Nullable: true},
+		{Name: "resolved_at", Type: field.TypeTime, Nullable: true},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "paid_at", Type: field.TypeTime, Nullable: true},
+		{Name: "expires_at", Type: field.TypeTime},
+	}
+	// OrdersTable holds the schema information for the "orders" table.
+	OrdersTable = &schema.Table{
+		Name:       "orders",
+		Columns:    OrdersColumns,
+		PrimaryKey: []*schema.Column{OrdersColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "order_user_id_id",
+				Unique:  false,
+				Columns: []*schema.Column{OrdersColumns[2], OrdersColumns[0]},
+			},
+			{
+				Name:    "order_status_created_at",
+				Unique:  false,
+				Columns: []*schema.Column{OrdersColumns[5], OrdersColumns[18]},
+			},
+			{
+				Name:    "order_account_key_id",
+				Unique:  false,
+				Columns: []*schema.Column{OrdersColumns[4], OrdersColumns[0]},
+			},
+		},
+	}
+	// PaymentAccountsColumns holds the columns for the "payment_accounts" table.
+	PaymentAccountsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "key", Type: field.TypeString, Unique: true},
+		{Name: "provider", Type: field.TypeString},
+		{Name: "merchant_ref", Type: field.TypeString},
+		{Name: "display_name", Type: field.TypeString},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "priority", Type: field.TypeInt, Default: 0},
+		{Name: "config", Type: field.TypeJSON, SchemaType: map[string]string{"postgres": "jsonb"}},
+		{Name: "config_revision", Type: field.TypeInt64, Default: 1},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+	}
+	// PaymentAccountsTable holds the schema information for the "payment_accounts" table.
+	PaymentAccountsTable = &schema.Table{
+		Name:       "payment_accounts",
+		Columns:    PaymentAccountsColumns,
+		PrimaryKey: []*schema.Column{PaymentAccountsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "paymentaccount_provider_merchant_ref",
+				Unique:  true,
+				Columns: []*schema.Column{PaymentAccountsColumns[2], PaymentAccountsColumns[3]},
+			},
+		},
+	}
+	// PaymentChannelsColumns holds the columns for the "payment_channels" table.
+	PaymentChannelsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt64, Increment: true},
+		{Name: "pay_type", Type: field.TypeString},
+		{Name: "enabled", Type: field.TypeBool, Default: true},
+		{Name: "currency", Type: field.TypeString},
+		{Name: "rate_micro", Type: field.TypeInt64},
+		{Name: "min_usd", Type: field.TypeInt64, Default: 1},
+		{Name: "max_usd", Type: field.TypeInt64},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "updated_at", Type: field.TypeTime},
+		{Name: "account_id", Type: field.TypeInt64},
+	}
+	// PaymentChannelsTable holds the schema information for the "payment_channels" table.
+	PaymentChannelsTable = &schema.Table{
+		Name:       "payment_channels",
+		Columns:    PaymentChannelsColumns,
+		PrimaryKey: []*schema.Column{PaymentChannelsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "payment_channels_payment_accounts_channels",
+				Columns:    []*schema.Column{PaymentChannelsColumns[9]},
+				RefColumns: []*schema.Column{PaymentAccountsColumns[0]},
+				OnDelete:   schema.Cascade,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "paymentchannel_account_id_pay_type",
+				Unique:  true,
+				Columns: []*schema.Column{PaymentChannelsColumns[9], PaymentChannelsColumns[1]},
+			},
+		},
+	}
 	// PriceEntriesColumns holds the columns for the "price_entries" table.
 	PriceEntriesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
@@ -917,6 +1025,9 @@ var (
 		GroupAssignmentsTable,
 		KeysTable,
 		ManagementKeysTable,
+		OrdersTable,
+		PaymentAccountsTable,
+		PaymentChannelsTable,
 		PriceEntriesTable,
 		PriceVariantsTable,
 		ProxiesTable,
@@ -947,6 +1058,7 @@ func init() {
 	KeysTable.ForeignKeys[0].RefTable = GroupsTable
 	KeysTable.ForeignKeys[1].RefTable = UsersTable
 	ManagementKeysTable.ForeignKeys[0].RefTable = UsersTable
+	PaymentChannelsTable.ForeignKeys[0].RefTable = PaymentAccountsTable
 	RedemptionUsesTable.ForeignKeys[0].RefTable = RedemptionCodesTable
 	SupplierBalancesTable.Annotation = &entsql.Annotation{}
 	SupplierBalancesTable.Annotation.Checks = map[string]string{

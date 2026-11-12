@@ -118,6 +118,13 @@ const (
 	Implicit ModelMappingEntryMode = "implicit"
 )
 
+// Defines values for OrderStatus.
+const (
+	OrderStatusClosed  OrderStatus = "closed"
+	OrderStatusPaid    OrderStatus = "paid"
+	OrderStatusPending OrderStatus = "pending"
+)
+
 // Defines values for PriceEntryMode.
 const (
 	PriceEntryModeCall  PriceEntryMode = "call"
@@ -356,6 +363,13 @@ const (
 const (
 	GetKeysParamsOrderAsc  GetKeysParamsOrder = "asc"
 	GetKeysParamsOrderDesc GetKeysParamsOrder = "desc"
+)
+
+// Defines values for GetOrdersParamsStatus.
+const (
+	GetOrdersParamsStatusClosed  GetOrdersParamsStatus = "closed"
+	GetOrdersParamsStatusPaid    GetOrdersParamsStatus = "paid"
+	GetOrdersParamsStatusPending GetOrdersParamsStatus = "pending"
 )
 
 // Defines values for GetPricesParamsMode.
@@ -1298,6 +1312,104 @@ type ModelMappingEntry struct {
 
 // ModelMappingEntryMode defines model for ModelMappingEntry.Mode.
 type ModelMappingEntryMode string
+
+// OrderCloseRequest defines model for OrderCloseRequest.
+type OrderCloseRequest struct {
+	// Force 仅在无查单能力/查询本身失败时生效；查询明确报 paid 时**无效**（优先级写死）
+	Force *bool `json:"force,omitempty"`
+}
+
+// OrderCloseResponse defines model for OrderCloseResponse.
+type OrderCloseResponse struct {
+	// Credited status=paid 时：本次调用是否完成入账
+	Credited bool        `json:"credited"`
+	Order    OrderDetail `json:"order"`
+
+	// Status 订单状态（只有三态；过期是 pending && expires_at < now 的派生视图，**不是**状态）
+	Status OrderStatus `json:"status"`
+}
+
+// OrderDetail defines model for OrderDetail.
+type OrderDetail struct {
+	// AccountKey 上游账户快照（不建外键：账户停用/改名后账本仍可读；按上游对账的索引键）
+	AccountKey string `json:"account_key"`
+
+	// AmountUsd 入账 USD 金额（%d.%02d，由 credit_milli 换算）
+	AmountUsd string    `json:"amount_usd"`
+	CreatedAt time.Time `json:"created_at"`
+
+	// CreditMilli 入账毫分（权威账本值）
+	CreditMilli int64     `json:"credit_milli"`
+	Currency    string    `json:"currency"`
+	ExpiresAt   time.Time `json:"expires_at"`
+
+	// FailCount 尽力计数（不承担对账职责）
+	FailCount int `json:"fail_count"`
+
+	// FailReason 已付款未入账/强制关单的唯一信号（sig/pid/amount/status/closed/provider/account/user/internal/forced；null = 无异常）
+	FailReason   *string    `json:"fail_reason"`
+	Id           int64      `json:"id"`
+	LastNotifyAt *time.Time `json:"last_notify_at"`
+	OrderNo      string     `json:"order_no"`
+	PaidAt       *time.Time `json:"paid_at"`
+
+	// PayAmount 实付金额（渠道币种，%d.%02d）
+	PayAmount string `json:"pay_amount"`
+
+	// PayMinor 实付最小单位（渠道币种分）
+	PayMinor int64  `json:"pay_minor"`
+	PayType  string `json:"pay_type"`
+	Provider string `json:"provider"`
+
+	// Rate 汇率快照（%d.%06d）
+	Rate string `json:"rate"`
+
+	// RawNotify 清洗后的通知原文（≤4 KiB 合法 UTF-8 JSON；含买家信息，仅管理面可见）
+	RawNotify *string `json:"raw_notify"`
+
+	// RedemptionCodeId 自动到账凭据（同一订单只入账一次）
+	RedemptionCodeId *int64 `json:"redemption_code_id"`
+
+	// ResolvedAt 人工处置完成时刻（防重复补账）
+	ResolvedAt *time.Time `json:"resolved_at"`
+
+	// Status 订单状态（只有三态；过期是 pending && expires_at < now 的派生视图，**不是**状态）
+	Status OrderStatus `json:"status"`
+
+	// TradeNo 网关流水号
+	TradeNo *string `json:"trade_no"`
+	UserId  int64   `json:"user_id"`
+}
+
+// OrderListResponse defines model for OrderListResponse.
+type OrderListResponse struct {
+	Rows  []OrderDetail `json:"rows"`
+	Total int64         `json:"total"`
+}
+
+// OrderResolveResponse defines model for OrderResolveResponse.
+type OrderResolveResponse struct {
+	Order OrderDetail `json:"order"`
+
+	// Resolved 恒为 true（已标记过 → 409）
+	Resolved bool `json:"resolved"`
+}
+
+// OrderStatus 订单状态（只有三态；过期是 pending && expires_at < now 的派生视图，**不是**状态）
+type OrderStatus string
+
+// OrderSyncResponse defines model for OrderSyncResponse.
+type OrderSyncResponse struct {
+	// AlreadyPaid 查单时订单已 paid（幂等重放）
+	AlreadyPaid bool `json:"already_paid"`
+
+	// Credited 本次调用完成入账
+	Credited bool        `json:"credited"`
+	Order    OrderDetail `json:"order"`
+
+	// Status 订单状态（只有三态；过期是 pending && expires_at < now 的派生视图，**不是**状态）
+	Status OrderStatus `json:"status"`
+}
 
 // OverviewAccounts 账号健康分布（两轴三桶：手动停用 / 运行时失效 / 正常服务；调度器快照同源——与账号列表运行时视图一致）+ 并发水位
 type OverviewAccounts struct {
@@ -2771,6 +2883,26 @@ type GetKeysParams struct {
 // GetKeysParamsOrder defines parameters for GetKeys.
 type GetKeysParamsOrder string
 
+// GetOrdersParams defines parameters for GetOrders.
+type GetOrdersParams struct {
+	UserId *int64 `form:"user_id,omitempty" json:"user_id,omitempty"`
+
+	// Status 非法枚举 → 400
+	Status     *GetOrdersParamsStatus `form:"status,omitempty" json:"status,omitempty"`
+	OutTradeNo *string                `form:"out_trade_no,omitempty" json:"out_trade_no,omitempty"`
+
+	// CreatedFrom created_at >=（含）
+	CreatedFrom *time.Time `form:"created_from,omitempty" json:"created_from,omitempty"`
+
+	// CreatedTo created_at <=（含）
+	CreatedTo *time.Time `form:"created_to,omitempty" json:"created_to,omitempty"`
+	Limit     *int       `form:"limit,omitempty" json:"limit,omitempty"`
+	Offset    *int       `form:"offset,omitempty" json:"offset,omitempty"`
+}
+
+// GetOrdersParamsStatus defines parameters for GetOrders.
+type GetOrdersParamsStatus string
+
 // GetAdminOverviewParams defines parameters for GetAdminOverview.
 type GetAdminOverviewParams struct {
 	Days    *int   `form:"days,omitempty" json:"days,omitempty"`
@@ -3195,6 +3327,9 @@ type PostMailChannelTestJSONRequestBody = MailChannelTestRequest
 // PutMailTemplateJSONRequestBody defines body for PutMailTemplate for application/json ContentType.
 type PutMailTemplateJSONRequestBody = MailTemplateUpdate
 
+// PostOrdersIdCloseJSONRequestBody defines body for PostOrdersIdClose for application/json ContentType.
+type PostOrdersIdCloseJSONRequestBody = OrderCloseRequest
+
 // PutPriceEntryJSONRequestBody defines body for PutPriceEntry for application/json ContentType.
 type PutPriceEntryJSONRequestBody = PriceEntryUpsert
 
@@ -3374,6 +3509,21 @@ type ServerInterface interface {
 	// 运维观测（worker 状态 + 快照注册表）
 	// (GET /ops/workers)
 	GetOpsWorkers(w http.ResponseWriter, r *http.Request)
+	// 订单列表（全量；user_id/status/out_trade_no/created 区间筛选；limit 默认 20 上限 100，新单在前）
+	// (GET /orders)
+	GetOrders(w http.ResponseWriter, r *http.Request, params GetOrdersParams)
+	// 订单详情（含 raw_notify / fail_reason / fail_count / last_notify_at / resolved_at——运维闭环的唯一信号面）
+	// (GET /orders/{id})
+	GetOrdersId(w http.ResponseWriter, r *http.Request, id int64)
+	// 关闭待付订单（三态；入账失败**绝不关单**）
+	// (POST /orders/{id}/close)
+	PostOrdersIdClose(w http.ResponseWriter, r *http.Request, id int64)
+	// 标记人工处置完成（写 resolved_at；防同一订单被补两次，已标记 → 409）
+	// (POST /orders/{id}/resolve)
+	PostOrdersIdResolve(w http.ResponseWriter, r *http.Request, id int64)
+	// 手动查单（非 pending → 409；协议无查单能力 → 409；查单故障 → 502 且订单不变）
+	// (POST /orders/{id}/sync)
+	PostOrdersIdSync(w http.ResponseWriter, r *http.Request, id int64)
 	// 管理端总览（summary USD + trend 日桶 + 账号健康 + 资源 + err_top + 计费告警）
 	// (GET /overview)
 	GetAdminOverview(w http.ResponseWriter, r *http.Request, params GetAdminOverviewParams)
@@ -3756,6 +3906,36 @@ func (_ Unimplemented) PutMailTemplate(w http.ResponseWriter, r *http.Request, p
 // 运维观测（worker 状态 + 快照注册表）
 // (GET /ops/workers)
 func (_ Unimplemented) GetOpsWorkers(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 订单列表（全量；user_id/status/out_trade_no/created 区间筛选；limit 默认 20 上限 100，新单在前）
+// (GET /orders)
+func (_ Unimplemented) GetOrders(w http.ResponseWriter, r *http.Request, params GetOrdersParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 订单详情（含 raw_notify / fail_reason / fail_count / last_notify_at / resolved_at——运维闭环的唯一信号面）
+// (GET /orders/{id})
+func (_ Unimplemented) GetOrdersId(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 关闭待付订单（三态；入账失败**绝不关单**）
+// (POST /orders/{id}/close)
+func (_ Unimplemented) PostOrdersIdClose(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 标记人工处置完成（写 resolved_at；防同一订单被补两次，已标记 → 409）
+// (POST /orders/{id}/resolve)
+func (_ Unimplemented) PostOrdersIdResolve(w http.ResponseWriter, r *http.Request, id int64) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 手动查单（非 pending → 409；协议无查单能力 → 409；查单故障 → 502 且订单不变）
+// (POST /orders/{id}/sync)
+func (_ Unimplemented) PostOrdersIdSync(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5099,6 +5279,181 @@ func (siw *ServerInterfaceWrapper) GetOpsWorkers(w http.ResponseWriter, r *http.
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetOpsWorkers(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrders operation middleware
+func (siw *ServerInterfaceWrapper) GetOrders(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetOrdersParams
+
+	// ------------- Optional query parameter "user_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "user_id", r.URL.Query(), &params.UserId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "user_id", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "status" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "status", r.URL.Query(), &params.Status)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "status", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "out_trade_no" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "out_trade_no", r.URL.Query(), &params.OutTradeNo)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "out_trade_no", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "created_from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "created_from", r.URL.Query(), &params.CreatedFrom)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "created_from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "created_to" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "created_to", r.URL.Query(), &params.CreatedTo)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "created_to", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "limit" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "limit", r.URL.Query(), &params.Limit)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "limit", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "offset" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "offset", r.URL.Query(), &params.Offset)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "offset", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrders(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetOrdersId operation middleware
+func (siw *ServerInterfaceWrapper) GetOrdersId(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetOrdersId(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostOrdersIdClose operation middleware
+func (siw *ServerInterfaceWrapper) PostOrdersIdClose(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostOrdersIdClose(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostOrdersIdResolve operation middleware
+func (siw *ServerInterfaceWrapper) PostOrdersIdResolve(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostOrdersIdResolve(w, r, id)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostOrdersIdSync operation middleware
+func (siw *ServerInterfaceWrapper) PostOrdersIdSync(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "id" -------------
+	var id int64
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", chi.URLParam(r, "id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "id", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostOrdersIdSync(w, r, id)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -7629,6 +7984,21 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/ops/workers", wrapper.GetOpsWorkers)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/orders", wrapper.GetOrders)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/orders/{id}", wrapper.GetOrdersId)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{id}/close", wrapper.PostOrdersIdClose)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{id}/resolve", wrapper.PostOrdersIdResolve)
+	})
+	r.Group(func(r chi.Router) {
+		r.Post(options.BaseURL+"/orders/{id}/sync", wrapper.PostOrdersIdSync)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/overview", wrapper.GetAdminOverview)

@@ -144,6 +144,8 @@ var structFieldSpecs = []structFieldSpec{
 var revisionVocabulary = map[string]string{
 	"AccountRevision":            "C：批量更新响应条目（回显）",
 	"ApprovedRevision":           "结算单审批的 CAS revision（风险评估核对绑定；非账号代际 C/K）",
+	"ConfigRevision":             "配置代际：payment_accounts.config_revision（spec 支付网关 v2 §3-1：每次 config 变更 +1，与 account_key 一起构成 service 配置缓存键；非账号代际 C/K）",
+	"AddConfigRevision":          "配置代际：ent 相对自增（payment_accounts.config_revision 随 config 变更 +1 ⇒ 配置缓存键失效；spec 支付网关 v2 §3-1）",
 	"AddIdentityRevision":        "K：ent 相对自增",
 	"AddLifecycleRevision":       "C：ent 相对自增（水位必须无条件推进）",
 	"ErrMissingExpectedRevision": "名字含 C、语义是 K：失效事件的 K 缺失校验",
@@ -159,6 +161,7 @@ var revisionVocabulary = map[string]string{
 	"LifecycleRevisionEQ":        "C：ent 相等谓词（前置条件 WHERE）",
 	"MaxLifecycleRevision":       "C：编译水位（DB 变更检测，非 fence）",
 	"Revision":                   "泛化名：healthEntry 的 Redis 记录槽位（值 = K）",
+	"SetConfigRevision":          "配置代际：ent 写入（payment_accounts.config_revision 创建即落 1，配置缓存键起点；spec 支付网关 v2 §3-1）",
 	"SetIdentityRevision":        "K：ent 写入",
 	"SetLifecycleRevision":       "C：ent 写入",
 	"SettlementRevision":         "结算单 CAS revision：认领命令 approved→paying 前置条件（非账号代际 C/K）",

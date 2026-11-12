@@ -35,6 +35,8 @@ import (
 	"github.com/is7qin/c3api/internal/discovery"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler"
+	paymentapi "github.com/is7qin/c3api/internal/handler/payment"
+	"github.com/is7qin/c3api/internal/handler/paymentadmin"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/invalidate"
 	"github.com/is7qin/c3api/internal/latch"
@@ -51,6 +53,7 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/service/epay"
 	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/supplier"
@@ -473,6 +476,16 @@ func main() {
 		// 成功」在 ops 面不可见。
 		supplierViewLoader.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return supplierViewSnap.Obs(now) })
 	}
+	// 支付协议注册表（spec 支付网关 v2 §4）：注册表**只增不减**——下线协议也必须
+	// 保留实现与密钥以完成对账，故这里无条件构造（账户 enabled=false 只影响可售性，
+	// 不影响回调能否被验签）。协议实现**无状态**：凭据随账户 cfg 传入，改密钥/汇率
+	// 走管理面（config_revision++ → 缓存失效）即时生效；HTTP 客户端 10s 超时
+	// （查单是管理面同步动作，不能让上游挂死请求 goroutine）。
+	paymentHTTP := &http.Client{Timeout: 10 * time.Second}
+	// v2 协议实现**无状态**：凭据在 payment_accounts.config（每账户一份），协议
+	// 只在调用时吃 cfg。因此这里不再传 settings 快照——改密钥/汇率走管理面账户
+	// 编辑（config_revision++ → 配置缓存失效），立即生效。
+	paymentProviders := []domain.PaymentProvider{epay.New(paymentHTTP)}
 	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Auth: auth, Log: log, EmailCodeStore: verification.New(rdb),
 		// codex 设备码登录：无服务端会话（发起返回凭据、完成时一次性轮询落库），
 		// 因此只需协议面装配，无 Redis 依赖。
@@ -496,6 +509,7 @@ func main() {
 		SupplierThawGranularity:         cfg.Supplier.ThawGranularity,
 		CompileNotify:                   sched.RequestCompile,
 		MailEnqueue:                     mailW.Enqueue,
+		PaymentProviders:                paymentProviders,
 		SettingsSnapshot:                settingsSnap})
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据
@@ -726,6 +740,15 @@ func main() {
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
 	userHandler := userapi.Router(svc, iss, auth, ruleEngine, log)
+	// 支付公开回调面（/api/payment/*，spec §7-2）：**无身份鉴权**（网关不带 JWT），
+	// 由 server.go 挂在非 admin 鉴权组；协议真伪由 provider 验签判定，入账只经
+	// svc.CompleteOrder。同一份 providers 装配同时给 service（注册表）与本包
+	// （URL 段路由表）——两处必须同源，否则会出现"能建单但回调 404"。
+	// 协议注册表与配置缓存都在 service 内：handler 只拿 svc（两份装配一定会分叉）。
+	paymentHandler := paymentapi.Router(svc, log)
+	// 管理面账户/渠道（spec §10-3）：路由带 /api/admin 前缀，必须挂在 adminAuth
+	// 组内——账户行里有商户私钥，绝不能落到无鉴权路径。
+	paymentAdminHandler := paymentadmin.New(svc, log).Router()
 
 	// /api/admin/ops/workers 运维观测（spec 2026-08-11，并入管理面）：
 	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持
@@ -838,17 +861,19 @@ func main() {
 	}
 
 	srv := server.NewServer(server.Options{
-		JWTIssuer:         iss,
-		Auth:              auth,
-		MaxInflight:       effectiveInflight,
-		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
-		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
-		AdminHandler:      h.Router(),
-		UserHandler:       userHandler,
-		SupplierHandler:   supplierHandler,
-		AIHandler:         planReadyGate(sched, aiRouter),
-		WebFS:             webUI(),
-		Logger:            log,
+		JWTIssuer:           iss,
+		Auth:                auth,
+		MaxInflight:         effectiveInflight,
+		ReadHeaderTimeout:   cfg.Server.ReadHeaderTimeout,
+		MaxHeaderBytes:      cfg.Server.MaxHeaderBytes,
+		AdminHandler:        h.Router(),
+		UserHandler:         userHandler,
+		SupplierHandler:     supplierHandler,
+		PaymentHandler:      paymentHandler,
+		PaymentAdminHandler: paymentAdminHandler,
+		AIHandler:           planReadyGate(sched, aiRouter),
+		WebFS:               webUI(),
+		Logger:              log,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

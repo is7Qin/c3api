@@ -146,6 +146,38 @@ func TestBalanceLogRedemption(t *testing.T) {
 	require.Len(t, fs.balanceLogs, 1, "失败回滚 → 0 新行")
 }
 
+// TestBalanceLogRedemptionRemark P16：balance 码带 remark → note = 码文本 +
+// " (" + remark + ")"（支付到账因此是 `ABCD-… (order P2026…)`，spec §4-6/F26）；
+// remark 缺省或空串 → note = 码文本（缺省分支已由上面 TestBalanceLogRedemption
+// 断言，这里补空串边界，两者必须同结果——空括号不得出现）。
+func TestBalanceLogRedemptionRemark(t *testing.T) {
+	ctx := context.Background()
+	svc, fs, _ := newRedemptionSvc()
+
+	remark := "order P20261112030405ABCDEFGHIJ"
+	u := seedUser(t, fs, "remark@example.com", 0, 0)
+	withRemark := genOne(t, svc, GenerateRequest{
+		Type: domain.RedemptionTypeBalance, Value: 300, Remark: &remark,
+	}, 0)
+	_, err := svc.Redeem(ctx, withRemark.Code, u.ID)
+	require.NoError(t, err)
+	require.Len(t, fs.balanceLogs, 1)
+	require.NotNil(t, fs.balanceLogs[0].Note)
+	require.Equal(t, withRemark.Code+" ("+remark+")", *fs.balanceLogs[0].Note,
+		"note = 码文本 + \" (\" + remark + \")\"")
+
+	empty := ""
+	u2 := seedUser(t, fs, "remark-empty@example.com", 0, 0)
+	blank := genOne(t, svc, GenerateRequest{
+		Type: domain.RedemptionTypeBalance, Value: 100, Remark: &empty,
+	}, 0)
+	_, err = svc.Redeem(ctx, blank.Code, u2.ID)
+	require.NoError(t, err)
+	require.Len(t, fs.balanceLogs, 2)
+	require.NotNil(t, fs.balanceLogs[1].Note)
+	require.Equal(t, blank.Code, *fs.balanceLogs[1].Note, "空 remark 不追加括号（与缺省同结果）")
+}
+
 // TestBalanceLogAtomicRollback A6：注入 CreateBalanceLog 失败 → 余额变更一并回滚
 // （注册/建用户/改余额/兑换四路径各验一次）。
 func TestBalanceLogAtomicRollback(t *testing.T) {

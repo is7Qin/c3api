@@ -31,6 +31,9 @@ const TIER_KEYS = new Set(['service_tier_policy_priority', 'service_tier_policy_
 const TIER_VALUES = ['passthrough', 'strip', 'reject'] as const
 const TLS_KEY = 'mail.tls'
 const TLS_VALUES = ['starttls', 'implicit', 'none'] as const
+// 密码类设置：只剩 SMTP 密码（商户私钥已随「账户是数据」搬到 /app/payment-accounts，
+// 那里的密钥字段同样 type=password + `***` 掩码回显）。
+const PASSWORD_KEYS = new Set(['mail.smtp_password'])
 
 const GROUPS = [
   { id: 'signup', keys: ['signup_enabled'] },
@@ -39,6 +42,15 @@ const GROUPS = [
   { id: 'tierPolicy', keys: ['service_tier_policy_priority', 'service_tier_policy_flex', 'service_tier_policy_fast'] },
   { id: 'mail', keys: ['mail.enabled', 'mail.register_verification', 'mail.smtp_host', 'mail.smtp_port', 'mail.smtp_username', 'mail.smtp_password', 'mail.from_address', 'mail.tls'] },
   { id: 'balanceWarning', keys: ['balance_warning.enabled'] },
+  // 支付网关：v2 只剩 **4 键**（spec §5-1b / §15-7）——总开关 + 两个基址 + TTL。
+  // 凭据（epay 四件套）与渠道三件套（币种/汇率/限额）已随「账户是数据」搬到
+  // /app/payment-accounts（账户行 + 渠道子表），这里不得再出现。
+  { id: 'payment', keys: [
+    'payment.enabled',
+    'payment.notify_base_url',
+    'payment.portal_base_url',
+    'payment.order_ttl_minutes',
+  ] },
 ] as const
 const GROUPED_KEYS = new Set<string>(GROUPS.flatMap(g => g.keys))
 
@@ -53,9 +65,12 @@ function SettingRow({ setting }: { setting: Setting }) {
   const current = setting.Value ?? ''
   const isUsd = USD_KEYS.has(key)
   const isTier = TIER_KEYS.has(key)
-  const isPassword = key === 'mail.smtp_password'
+  const isPassword = PASSWORD_KEYS.has(key)
   const isTls = key === TLS_KEY
-  const toInput = (v: string) => (isUsd ? String(Number(v) / MILLI_PER_USD) : v)
+  const toInput = (v: string) => {
+    if (isUsd) return String(Number(v) / MILLI_PER_USD)
+    return v
+  }
   const [draft, setDraft] = useState(() => toInput(current))
   const pendingRef = useRef<string | null>(null)
   const queuedRef = useRef<string | null>(null)
@@ -124,7 +139,9 @@ function SettingRow({ setting }: { setting: Setting }) {
         <SelectContent>{TLS_VALUES.map(v => <SelectItem key={v} value={v} label={t(`settings.tlsOptions.${v}`)}>{t(`settings.tlsOptions.${v}`)}</SelectItem>)}</SelectContent>
       </Select>
     ) : typ === 'number' ? (
-      <Input id={controlId} type="number" min={0} step={isUsd ? 0.00001 : 1} className="w-full max-w-full lg:w-48 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 text-right tabular-nums" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
+      <div className="flex w-full items-center justify-end gap-2 lg:w-auto">
+        <Input id={controlId} type="number" min={0} step={isUsd ? 0.00001 : 1} className="w-full max-w-full lg:w-48 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10 text-right tabular-nums" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
+      </div>
     ) : (
       <Input id={controlId} type={isPassword ? 'password' : 'text'} className="w-full max-w-full lg:w-96 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
     )

@@ -30,6 +30,12 @@ type Tx struct {
 	Key *KeyClient
 	// ManagementKey is the client for interacting with the ManagementKey builders.
 	ManagementKey *ManagementKeyClient
+	// Order is the client for interacting with the Order builders.
+	Order *OrderClient
+	// PaymentAccount is the client for interacting with the PaymentAccount builders.
+	PaymentAccount *PaymentAccountClient
+	// PaymentChannel is the client for interacting with the PaymentChannel builders.
+	PaymentChannel *PaymentChannelClient
 	// PriceEntry is the client for interacting with the PriceEntry builders.
 	PriceEntry *PriceEntryClient
 	// PriceVariant is the client for interacting with the PriceVariant builders.
@@ -206,6 +212,9 @@ func (tx *Tx) init() {
 	tx.GroupAssignment = NewGroupAssignmentClient(tx.config)
 	tx.Key = NewKeyClient(tx.config)
 	tx.ManagementKey = NewManagementKeyClient(tx.config)
+	tx.Order = NewOrderClient(tx.config)
+	tx.PaymentAccount = NewPaymentAccountClient(tx.config)
+	tx.PaymentChannel = NewPaymentChannelClient(tx.config)
 	tx.PriceEntry = NewPriceEntryClient(tx.config)
 	tx.PriceVariant = NewPriceVariantClient(tx.config)
 	tx.Proxy = NewProxyClient(tx.config)

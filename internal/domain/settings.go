@@ -42,6 +42,21 @@ var DefaultSettings = []Setting{
 	{Key: "mail.tls", Type: SettingTypeString, Value: "implicit", PolicyValues: []string{"starttls", "implicit", "none"}},
 	// 余额预警全局开关（余额低于阈值时邮件通知）。
 	{Key: "balance_warning.enabled", Type: SettingTypeSwitch, Value: "false"},
+	// 支付网关（spec 支付网关 v2 §15-7）：**只剩 4 键**。
+	// 账户凭据 / 渠道汇率 / 币种 / 单笔限额全部在 payment_accounts +
+	// payment_channels 两行表里（"账户是数据"），v1 的 13 个键（epay 5 个、
+	// min_usd/max_usd、alipay/wxpay 各 3 个）已删除——任何 v2 代码都不得再读写它们。
+	//
+	//  1. `payment.enabled` 只管**创建订单**（F16：拿开关闸 notify 直接造成资损）。
+	//  2. notify/portal base_url 只填 scheme+host，路径由 service 拼（运维写路径 = 双重前缀）。
+	//  3. 协议私钥不再进 settings：它属于账户 config（管理面掩码回显）。
+	{Key: SettingPaymentEnabled, Type: SettingTypeSwitch, Value: "false"},
+	// 只填 scheme+host：notify/return 的路径由 service 按账户 key 拼（运维写路径 = 双重前缀）。
+	{Key: SettingNotifyBaseURL, Type: SettingTypeString, Value: ""},
+	// 空 = 相对路径回退：/user/wallet?order=<out_trade_no>
+	{Key: SettingPortalBaseURL, Type: SettingTypeString, Value: ""},
+	// pending 单有效期（分钟，1..1440）：0 = 立即过期，等于把建单功能关掉。
+	{Key: SettingOrderTTLMinutes, Type: SettingTypeNumber, Value: "30", Min: i64p(1), Max: i64p(1440)},
 }
 
 // i64p 注册表数值值域指针辅助（Min/Max 域字面量；nil = 无限制，见 Setting 注释）。

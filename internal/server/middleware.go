@@ -115,6 +115,11 @@ func inflightLimiter(max int64, c *inflightCounter) func(http.Handler) http.Hand
 }
 
 // accessLog 请求级 Debug 追踪（规格 §7.1：生产 warn 不输出）。
+//
+// **只记 r.URL.Path，绝不记 RawQuery**（spec 支付网关 §5-4/F47）：/api/payment/*/
+// notify 的 query 里有 RSA 签名、买家标识与订单号——落盘等于把长期可重放的凭证
+// 写进日志。这里刻意不做"按前缀分支"：整条链路统一无 query 才是可审计的保证
+// （分支写法一旦有人加回 r.URL.RequestURI 就会重新泄漏）。
 func accessLog(log *logx.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

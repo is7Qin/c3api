@@ -4,9 +4,10 @@
 
 package handler
 
-// 管理面（/admin）：排除 user 与 supplier tag（/ops/workers 运维观测并入管理面，
-// tags: [ops] 正常生成——路由 chi-server 提供，鉴权走 /admin 组 adminAuth）；生成到本包。
-//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -exclude-tags user,supplier -package handler -o api.gen.go ../../openapi/openapi.yaml
+// 管理面（/admin）：排除 user / supplier / payment / payment-admin 四个**非本包**
+// 的 tag（/ops/workers 运维观测并入管理面，tags: [ops] 正常生成；支付订单 tags:
+// [orders] 也属于管理面——paths 不带 /api/admin 前缀——故正常生成）。生成到本包。
+//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -exclude-tags user,supplier,payment,payment-admin -package handler -o api.gen.go ../../openapi/openapi.yaml
 // 用户面（/user）：仅 user tag；独立包（共享 schema 类型在各自包内不冲突）。
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -include-tags user -package user -o user/api.gen.go ../../openapi/openapi.yaml
 // 供应商面（/api/user/supplier）：仅 supplier tag；独立包——该 tag 的 path 一律写
@@ -19,3 +20,10 @@ package handler
 // **tag 即边界**：未登记为 supplier 的 path 不进本包 ⇒ 未注册 ⇒ 404（default-deny
 // 是结构性的，不再有手写允许清单/guard）。
 //go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -include-tags supplier -package supplier -o supplier/api.gen.go ../../openapi/openapi.yaml
+// 支付公开面（/api/payment/{account}/*）：仅 payment tag；独立包——无身份鉴权（网关
+// 无 JWT），由 server.go 以 `r.Handle("/api/payment/*", …)` 挂在**非 admin 鉴权组**。
+//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -include-tags payment -package payment -o payment/api.gen.go ../../openapi/openapi.yaml
+// 支付账户管理面（payment-admin）：仅 payment-admin tag；独立包——该 tag 的 paths
+// **不带** /api/admin 前缀（同 orders），但账户/渠道 CRUD 与订单运维面解耦，故单独
+// 生成到 paymentadmin 包（server.go 以管理面鉴权组挂载；默认不进主 handler 包）。
+//go:generate go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@v2.4.1 -generate types,chi-server -include-tags payment-admin -package paymentadmin -o paymentadmin/api.gen.go ../../openapi/openapi.yaml

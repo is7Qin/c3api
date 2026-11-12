@@ -4,7 +4,7 @@
 
 import { Link, Outlet, useLocation } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3, ScrollText, Ticket, Coins, Settings, KeyRound, Cpu, Menu, Wallet, HandCoins, Network } from 'lucide-react'
+import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3, ScrollText, Ticket, Coins, Settings, KeyRound, Cpu, Menu, Wallet, HandCoins, Network, CreditCard, Receipt, Landmark } from 'lucide-react'
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
@@ -36,6 +36,8 @@ const userNav: readonly NavItem[] = [
   { to: '/user/logs', key: 'user.nav.logs', icon: FileText, end: false },
   { to: '/user/stats', key: 'user.nav.stats', icon: BarChart3, end: false },
   { to: '/user/redemptions', key: 'user.nav.redemptions', icon: Ticket, end: false },
+  // 钱包（spec 支付网关 §9）：充值下单 + 我的订单；网关 return 会带回 /user/wallet?order=…
+  { to: '/user/wallet', key: 'user.nav.wallet', icon: CreditCard, end: false },
 ]
 
 // platform_admin 专属的管理端菜单组（排序 = 功能边界）：
@@ -55,6 +57,10 @@ const adminNav: readonly NavItem[] = [
   { to: '/app/logs', key: 'nav.logs', icon: FileText },
   { to: '/app/stats', key: 'nav.stats', icon: BarChart3 },
   { to: '/app/redemption-codes', key: 'nav.redemptions', icon: Ticket },
+  // 支付订单运维面（spec 支付网关 §7-3）：紧跟兑换码（同属「钱的入口/出口」域）
+  { to: '/app/orders', key: 'nav.orders', icon: Receipt },
+  // 支付账户/渠道配置面（spec v2 §5-1b/§10-3）：订单的上游——账户行决定「钱落到哪」。
+  { to: '/app/payment-accounts', key: 'nav.paymentAccounts', icon: Landmark },
   { to: '/app/pricing', key: 'nav.pricing', icon: Coins },
   { to: '/app/supplier', key: 'nav.supplierWorkbench', icon: HandCoins },
   { to: '/app/settings', key: 'nav.settings', icon: Settings },

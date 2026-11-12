@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 )
@@ -100,4 +101,34 @@ func ClipLogPage[T any](page []T, limit int, id func(T) *int64) ([]T, *int64) {
 		return page[:limit], id(page[limit-1])
 	}
 	return page, nil
+}
+
+// FormatMinor 最小单位（渠道币种分 / 余额毫分）→ 两位小数定点串（`%d.%02d`）。
+//
+// 支付网关契约面（spec 支付网关 §7-1）**禁止**让钱经过 float：服务端全程整数
+// 换算，只在响应边界格式化。管理面与用户面同款输出，故下沉到本包而不是各面
+// 各留一份（三份实现必然分叉出 "1.5" vs "1.50" 这类差异）。
+func FormatMinor(minor int64) string {
+	sign := ""
+	if minor < 0 {
+		sign, minor = "-", -minor
+	}
+	return fmt.Sprintf("%s%d.%02d", sign, minor/100, minor%100)
+}
+
+// FormatRateMicro 汇率 ×1e6 → 六位小数定点串（`%d.%06d`，如 7200000 → "7.200000"）。
+// 与 FormatMinor 同一条纪律：不经 float，不用 strconv.FormatFloat。
+func FormatRateMicro(micro int64) string {
+	sign := ""
+	if micro < 0 {
+		sign, micro = "-", -micro
+	}
+	return fmt.Sprintf("%s%d.%06d", sign, micro/1_000_000, micro%1_000_000)
+}
+
+// FormatUSDFromMilli 余额毫分 → USD 定点串。1 USD = 100,000 毫分 = 100 分，
+// 故先整除 1000 折成"分"再共用 FormatMinor（支付订单的 credit_milli 恒是
+// usd_cents*1000，整除无损；全程整数，绝不经 float）。
+func FormatUSDFromMilli(creditMilli int64) string {
+	return FormatMinor(creditMilli / 1000)
 }

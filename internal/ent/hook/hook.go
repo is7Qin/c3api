@@ -117,6 +117,42 @@ func (f ManagementKeyFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Valu
 	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.ManagementKeyMutation", m)
 }
 
+// The OrderFunc type is an adapter to allow the use of ordinary
+// function as Order mutator.
+type OrderFunc func(context.Context, *ent.OrderMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f OrderFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.OrderMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.OrderMutation", m)
+}
+
+// The PaymentAccountFunc type is an adapter to allow the use of ordinary
+// function as PaymentAccount mutator.
+type PaymentAccountFunc func(context.Context, *ent.PaymentAccountMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f PaymentAccountFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.PaymentAccountMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PaymentAccountMutation", m)
+}
+
+// The PaymentChannelFunc type is an adapter to allow the use of ordinary
+// function as PaymentChannel mutator.
+type PaymentChannelFunc func(context.Context, *ent.PaymentChannelMutation) (ent.Value, error)
+
+// Mutate calls f(ctx, m).
+func (f PaymentChannelFunc) Mutate(ctx context.Context, m ent.Mutation) (ent.Value, error) {
+	if mv, ok := m.(*ent.PaymentChannelMutation); ok {
+		return f(ctx, mv)
+	}
+	return nil, fmt.Errorf("unexpected mutation type %T. expect *ent.PaymentChannelMutation", m)
+}
+
 // The PriceEntryFunc type is an adapter to allow the use of ordinary
 // function as PriceEntry mutator.
 type PriceEntryFunc func(context.Context, *ent.PriceEntryMutation) (ent.Value, error)

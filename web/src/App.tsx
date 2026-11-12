@@ -22,6 +22,7 @@ import UserManagementKeys from '@/pages/user/management-keys'
 import UserLogs from '@/pages/user/logs'
 import UserStats from '@/pages/user/stats'
 import UserRedemptions from '@/pages/user/redemptions'
+import UserWallet from '@/pages/user/wallet'
 import UserProfile from '@/pages/user/profile'
 import Forbidden from '@/pages/forbidden'
 import NotFound from '@/pages/not-found'
@@ -34,6 +35,8 @@ import Logs from '@/pages/logs'
 import Stats from '@/pages/stats'
 import Rules from '@/pages/rules'
 import RedemptionCodes from '@/pages/redemption-codes'
+import Orders from '@/pages/orders'
+import PaymentAccounts from '@/pages/payment-accounts'
 import PricingPage from '@/pages/pricing'
 import SettingsPage from '@/pages/settings'
 import Ops from '@/pages/ops'
@@ -73,6 +76,10 @@ const router = createBrowserRouter([
           { path: 'stats', element: <Stats /> },
           { path: 'rules', element: <Rules /> },
           { path: 'redemption-codes', element: <RedemptionCodes /> },
+          // 支付订单运维面（spec 支付网关 §7-3/§9）：全量订单 + sync/close/resolve。
+          { path: 'orders', element: <Orders /> },
+          // 支付账户/渠道配置面（spec v2 §11）：key/协议/优先级/启停/渠道子表/config_error。
+          { path: 'payment-accounts', element: <PaymentAccounts /> },
           { path: 'pricing', element: <PricingPage /> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'ops', element: <Ops /> },
@@ -90,6 +97,8 @@ const router = createBrowserRouter([
           { path: 'logs', element: <UserLogs /> },
           { path: 'stats', element: <UserStats /> },
           { path: 'redemptions', element: <UserRedemptions /> },
+          // 钱包（spec 支付网关 §7-1/§9）：渠道 → 下单 → 跳网关；`?order=` 进入时轮询到账。
+          { path: 'wallet', element: <UserWallet /> },
           // 供应商控制台（spec 2026-10-09 §6.1）：门控 RequireSupplier（supplier | platform_admin）。
           { path: 'supplier', element: <RequireSupplier />, children: [
             // 整个供应商域注入 supplierApi（base /api/user/supplier）作用域。

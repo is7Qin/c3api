@@ -68,6 +68,9 @@ type Store interface {
 	EmailTemplateStore
 	SupplierStore
 	SupplierAdminStore
+	// PaymentStore 支付订单持久化（spec 支付网关 §4-1）：建单/读单/列表/失败记录/
+	// 关单/处置标记。完成订单的唯一入账路径另走 WithTx + repository.TxStore。
+	PaymentStore
 	// EmailCodeStore 不在复合面：验证码已迁 Redis（spec 2026-08-25-emailcode-
 	// redis-migration §2.2/§2.3），经 New 的 Deps.EmailCodeStore 独立注入，
 	// repository 实现已随 PG 验证码表卸载。
@@ -492,6 +495,20 @@ type Service struct {
 	// supplierViewReload 财务视图装载面（账号归属/启用写成功后本地 Reload；
 	// §4.6.3 发布屏障）。nil = 功能关闭/未装配（见 Deps.SupplierViewReload）。
 	supplierViewReload SupplierViewReloader
+	// paymentProviders 支付协议注册表（spec 支付网关 v2 §4）：注册表**只增不减**
+	// （下线协议也必须保留实现与私钥/公钥以完成对账）。重名/空名 → New fail-fast。
+	// 用 map 而非切片：回调/选路都是"按名字取协议"，线性遍历只会把 O(1) 变成 O(N)
+	// 并让"取到哪一份"变成装配顺序的函数。
+	paymentProviders map[domain.ProviderName]domain.PaymentProvider
+	// paymentCfgMu / paymentCfgs 账户配置缓存（N19）：键 = account_key，值带
+	// config_revision；写面 Update 成功即删键（revision 只是第二道保险）。
+	paymentCfgMu sync.RWMutex
+	paymentCfgs  map[string]cachedPaymentCfg
+	// testBeforeOrderLock/testAfterOrderLock P4 并发钩子（spec §11）：unexported
+	// 函数字段由测试赋值（照 mailer_worker.go:77 先例），生产恒 nil。
+	// **禁 time.Sleep**：钩子内用 channel 同步并发时序。
+	testBeforeOrderLock func(ctx context.Context)
+	testAfterOrderLock  func(ctx context.Context, o *domain.Order)
 	// settings 设置全量内存快照（默认值 + DB 覆盖）：Service 与 MailWorker
 	// 同源共享单个 *settingssnap.Snapshot（根因重开——单指针，无双快照
 	// 分叉；NOTIFY 只刷这一处）。公开读路径零 DB 直读；仅管理面
@@ -633,6 +650,36 @@ type Deps struct {
 	// SupplierThawGranularity 解冻粒度（main 传 cfg.Supplier.ThawGranularity）：
 	// 管理面 PATCH share_bp/freeze_hours 跨字段上界校验（§6.4 A16⑤）。0 = 未装配。
 	SupplierThawGranularity time.Duration
+	// PaymentProviders 支付协议注册表（spec 支付网关 §4-0：只增不减）：main 按配置
+	// 装配（如 epay.New(httpClient)——v2 协议无状态，不再吃 settings）后传入。nil = 支付协议未装
+	// 配（methods 空列表、建单 503），与其它可选装配面同语义。
+	PaymentProviders []domain.PaymentProvider
+}
+
+// registerPaymentProviders 装配协议注册表（spec 支付网关 v2 §4）：nil 项跳过；
+// ProviderName 空/重复 → 错误，由 New panic（装配错误必须启动即炸，运行期不猜
+// "用哪个协议"）。
+//
+// v2 不再做 pay_type 跨协议查重：同一 pay_type 出现在多个**账户**正是多上游的
+// 形态，而 capabilities 是协议自述的静态能力（两个协议支持同一个 pay_type 也合法
+// ——选路由账户的 priority 决定）。
+func (s *Service) registerPaymentProviders(providers []domain.PaymentProvider) error {
+	table := make(map[domain.ProviderName]domain.PaymentProvider, len(providers))
+	for _, p := range providers {
+		if p == nil {
+			continue
+		}
+		name := p.Name()
+		if name == "" {
+			return errors.New("service: payment provider with empty name")
+		}
+		if _, dup := table[name]; dup {
+			return fmt.Errorf("service: duplicate payment provider %q", name)
+		}
+		table[name] = p
+	}
+	s.paymentProviders = table
+	return nil
 }
 
 // New 构造 Service（全部依赖经单一 Deps 注入，S2 消重）。
@@ -661,6 +708,12 @@ func New(deps Deps) *Service {
 	} else {
 		s.settings = settingssnap.New(deps.Store, deps.Log)
 	}
+	// 支付协议注册表（spec 支付网关 §4-0）：pay_type 全局唯一 + ProviderName 唯一，
+	// 任一重名/空名 → 启动 fail-fast（运行期不猜"用哪个协议"，M15 的根源）。
+	if err := s.registerPaymentProviders(deps.PaymentProviders); err != nil {
+		panic(err)
+	}
+	s.paymentCfgs = make(map[string]cachedPaymentCfg, 4)
 	// settings 快照构造时首载（注册表不覆盖 settings——NOTIFY 处理路径
 	// ReloadSettings 保持既有行为）；pricing 快照首载统一由快照注册表
 	// ReloadAll 承担（单一启动入口，消灭"构造即载 + 注册表再刷"双重加载）。

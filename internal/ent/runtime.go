@@ -13,6 +13,9 @@ import (
 	"github.com/is7qin/c3api/internal/ent/groupassignment"
 	"github.com/is7qin/c3api/internal/ent/key"
 	"github.com/is7qin/c3api/internal/ent/managementkey"
+	"github.com/is7qin/c3api/internal/ent/order"
+	"github.com/is7qin/c3api/internal/ent/paymentaccount"
+	"github.com/is7qin/c3api/internal/ent/paymentchannel"
 	"github.com/is7qin/c3api/internal/ent/priceentry"
 	"github.com/is7qin/c3api/internal/ent/pricevariant"
 	"github.com/is7qin/c3api/internal/ent/proxy"
@@ -175,6 +178,60 @@ func init() {
 	managementkey.DefaultUpdatedAt = managementkeyDescUpdatedAt.Default.(func() time.Time)
 	// managementkey.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	managementkey.UpdateDefaultUpdatedAt = managementkeyDescUpdatedAt.UpdateDefault.(func() time.Time)
+	orderFields := schema.Order{}.Fields()
+	_ = orderFields
+	// orderDescFailCount is the schema descriptor for fail_count field.
+	orderDescFailCount := orderFields[15].Descriptor()
+	// order.DefaultFailCount holds the default value on creation for the fail_count field.
+	order.DefaultFailCount = orderDescFailCount.Default.(int)
+	// orderDescCreatedAt is the schema descriptor for created_at field.
+	orderDescCreatedAt := orderFields[18].Descriptor()
+	// order.DefaultCreatedAt holds the default value on creation for the created_at field.
+	order.DefaultCreatedAt = orderDescCreatedAt.Default.(func() time.Time)
+	paymentaccountFields := schema.PaymentAccount{}.Fields()
+	_ = paymentaccountFields
+	// paymentaccountDescEnabled is the schema descriptor for enabled field.
+	paymentaccountDescEnabled := paymentaccountFields[5].Descriptor()
+	// paymentaccount.DefaultEnabled holds the default value on creation for the enabled field.
+	paymentaccount.DefaultEnabled = paymentaccountDescEnabled.Default.(bool)
+	// paymentaccountDescPriority is the schema descriptor for priority field.
+	paymentaccountDescPriority := paymentaccountFields[6].Descriptor()
+	// paymentaccount.DefaultPriority holds the default value on creation for the priority field.
+	paymentaccount.DefaultPriority = paymentaccountDescPriority.Default.(int)
+	// paymentaccountDescConfigRevision is the schema descriptor for config_revision field.
+	paymentaccountDescConfigRevision := paymentaccountFields[8].Descriptor()
+	// paymentaccount.DefaultConfigRevision holds the default value on creation for the config_revision field.
+	paymentaccount.DefaultConfigRevision = paymentaccountDescConfigRevision.Default.(int64)
+	// paymentaccountDescCreatedAt is the schema descriptor for created_at field.
+	paymentaccountDescCreatedAt := paymentaccountFields[9].Descriptor()
+	// paymentaccount.DefaultCreatedAt holds the default value on creation for the created_at field.
+	paymentaccount.DefaultCreatedAt = paymentaccountDescCreatedAt.Default.(func() time.Time)
+	// paymentaccountDescUpdatedAt is the schema descriptor for updated_at field.
+	paymentaccountDescUpdatedAt := paymentaccountFields[10].Descriptor()
+	// paymentaccount.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	paymentaccount.DefaultUpdatedAt = paymentaccountDescUpdatedAt.Default.(func() time.Time)
+	// paymentaccount.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	paymentaccount.UpdateDefaultUpdatedAt = paymentaccountDescUpdatedAt.UpdateDefault.(func() time.Time)
+	paymentchannelFields := schema.PaymentChannel{}.Fields()
+	_ = paymentchannelFields
+	// paymentchannelDescEnabled is the schema descriptor for enabled field.
+	paymentchannelDescEnabled := paymentchannelFields[3].Descriptor()
+	// paymentchannel.DefaultEnabled holds the default value on creation for the enabled field.
+	paymentchannel.DefaultEnabled = paymentchannelDescEnabled.Default.(bool)
+	// paymentchannelDescMinUsd is the schema descriptor for min_usd field.
+	paymentchannelDescMinUsd := paymentchannelFields[6].Descriptor()
+	// paymentchannel.DefaultMinUsd holds the default value on creation for the min_usd field.
+	paymentchannel.DefaultMinUsd = paymentchannelDescMinUsd.Default.(int64)
+	// paymentchannelDescCreatedAt is the schema descriptor for created_at field.
+	paymentchannelDescCreatedAt := paymentchannelFields[8].Descriptor()
+	// paymentchannel.DefaultCreatedAt holds the default value on creation for the created_at field.
+	paymentchannel.DefaultCreatedAt = paymentchannelDescCreatedAt.Default.(func() time.Time)
+	// paymentchannelDescUpdatedAt is the schema descriptor for updated_at field.
+	paymentchannelDescUpdatedAt := paymentchannelFields[9].Descriptor()
+	// paymentchannel.DefaultUpdatedAt holds the default value on creation for the updated_at field.
+	paymentchannel.DefaultUpdatedAt = paymentchannelDescUpdatedAt.Default.(func() time.Time)
+	// paymentchannel.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
+	paymentchannel.UpdateDefaultUpdatedAt = paymentchannelDescUpdatedAt.UpdateDefault.(func() time.Time)
 	priceentryFields := schema.PriceEntry{}.Fields()
 	_ = priceentryFields
 	// priceentryDescCreatedAt is the schema descriptor for created_at field.

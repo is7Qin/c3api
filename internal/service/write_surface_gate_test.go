@@ -39,6 +39,12 @@ import (
 //   - 代理批量导入（spec-proxy-import）：ImportProxies 逐行走**同一个** createProxyOnce
 //     （归一 + 私网判据 + 落库），唯一区别是失效收在循环之后（N 行一次重载）。它没有
 //     自己的写语义，因此也不推进任何代际。
+//   - 支付编排（spec 支付网关）：CreateOrder/CompleteOrder/SyncOrder/CloseOrder/
+//     ListOrders/GetOrder/PaymentMethods 只写订单与兑换码，且入账一律经兑换 applier
+//     （applyInTx）——不推进账号配置或身份代际，故不进 allowedServiceAccountWrites。
+//     接口层（B2）另有三个薄入口：OrderPayURL（详情重签，纯本地计算不落库）、
+//     RecordNotifyFailure（§4-4 的事务外失败审计，只改订单 fail_* 列）、
+//     ResolveOrder（写 resolved_at 的人工处置标记）——同样只碰订单行。
 //   - 其余各项是读、其它实体的写入或纯编排 helper（键、组、用户、模板、规则、
 //     定价、模型目录读（RouteModels/GroupMultiplierOverrides/PriceDisplayForModels）、
 //     兑换、邮件、统计、用量、路由观测），不触账号配置或身份代际。
@@ -58,13 +64,17 @@ var allowedServiceMethods = []string{
 	"ApplySupplierSettlement",
 	"BalanceWarningEnabled",
 	"ChangePassword",
+	"CloseOrder",
 	// 设备码登录（发起/完成）：完成时**复用**导入核心（单行 upsert），不新增落库
 	// 路径/不新增代际推进点——与导入动词同属账号写面，故在此表登记。
 	"CompleteCodexOAuthDeviceLogin",
+	"CompleteOrder",
 	"CreateAccount",
 	"CreateGroup",
 	"CreateKey",
 	"CreateManagementKey",
+	"CreateOrder",
+	"CreatePaymentAccount",
 	"CreateProxy",
 	"CreateRule",
 	"CreateTemplate",
@@ -77,6 +87,7 @@ var allowedServiceMethods = []string{
 	"DeleteGroupsBatch",
 	"DeleteKey",
 	"DeleteManagementKey",
+	"DeletePaymentChannel",
 	"DeletePriceEntry",
 	"DeleteProxy",
 	"DeleteRule",
@@ -93,6 +104,9 @@ var allowedServiceMethods = []string{
 	"GetGroup",
 	"GetGroupAssignments",
 	"GetKey",
+	"GetOrder",
+	"GetPaymentAccount",
+	"GetPaymentAccountConfig",
 	"GetPriceEntry",
 	"GetProxy",
 	"GetSettings",
@@ -115,6 +129,8 @@ var allowedServiceMethods = []string{
 	"ListMailTemplates",
 	"ListManagementKeys",
 	"ListMyRedemptions",
+	"ListOrders",
+	"ListPaymentAccounts",
 	"ListPriceEntries",
 	"ListPriceVariants",
 	"ListProxies",
@@ -126,13 +142,18 @@ var allowedServiceMethods = []string{
 	"ListUsers",
 	"LoginUser",
 	"MailConfig",
+	"OrderPayURL",
 	"Overview",
 	"PatchAccount",
+	"PaymentMethods",
+	"PaymentProvider",
+	"PortalBaseURL",
 	"PriceDisplayForModels",
 	"PriceModels",
 	"PriceSourceURL",
 	"PriceSyncCron",
 	"ProbeAccount",
+	"ProbePaymentAccount",
 	"ProbeProxy",
 	"QueryEntityTrend",
 	"QueryErrLogs",
@@ -143,6 +164,7 @@ var allowedServiceMethods = []string{
 	"QueryStatsTop",
 	"QueryStatsTrend",
 	"QueryUsages",
+	"RecordNotifyFailure",
 	"RecoverAccount",
 	"Redeem",
 	"RegisterUser",
@@ -153,6 +175,8 @@ var allowedServiceMethods = []string{
 	"RenderTemplate",
 	"ReplacePriceVariants",
 	"ResetPassword",
+	"ResolveChannel",
+	"ResolveOrder",
 	"ResolvePrices",
 	"ResolvedPricesByModel",
 	"RotateKey",
@@ -164,12 +188,14 @@ var allowedServiceMethods = []string{
 	"ServiceTierPolicy",
 	"SetGroupAssignments",
 	"SetUserGroups",
+	"SoftDeletePaymentAccount",
 	"StartCodexOAuthDeviceLogin",
 	"StatsCapabilities",
 	"SupplierChunks",
 	"SupplierEarnings",
 	"SupplierOverview",
 	"SupplierSettlements",
+	"SyncOrder",
 	"UpdateAccountsBatch",
 	"UpdateBalanceWarningThreshold",
 	"UpdateGroup",
@@ -177,6 +203,7 @@ var allowedServiceMethods = []string{
 	"UpdateKey",
 	"UpdateMailTemplate",
 	"UpdateManagementKey",
+	"UpdatePaymentAccount",
 	"UpdateProxy",
 	"UpdateRule",
 	"UpdateSetting",
@@ -184,6 +211,7 @@ var allowedServiceMethods = []string{
 	"UpdateTemplatesBatch",
 	"UpdateUser",
 	"UpsertAccountExt",
+	"UpsertPaymentChannel",
 	"UpsertPriceEntry",
 	"UpsertTemplateExt",
 	"UserEmails",
@@ -201,14 +229,17 @@ var allowedServiceAccountWrites = []string{
 	// 登记在此 = 显式承认它是账号写面入口，而不是绕开收口的新写路径。
 	"CompleteCodexOAuthDeviceLogin",
 	"CreateAccount",
+	"CreatePaymentAccount",
 	"DeleteAccount",
 	"DeleteAccountsBatch",
 	"ImportCodexOAuthAccounts",
 	"ImportCodexPATAccounts",
 	"PatchAccount",
 	"RecoverAccount",
+	"SoftDeletePaymentAccount",
 	"StartCodexOAuthDeviceLogin",
 	"UpdateAccountsBatch",
+	"UpdatePaymentAccount",
 	"UpsertAccountExt",
 }
 

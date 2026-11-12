@@ -90,6 +90,30 @@ func TestAccessLogDebugFields(t *testing.T) {
 	}
 }
 
+// TestAccessLogOmitsQuery 支付回调面的 access log **不得**出现 query（spec 支付
+// 网关 §5-4/F47）：/api/payment/*/notify 的 query 里带 RSA 签名、买家标识与订单
+// 号——落盘等于把长期可重放的凭证写进日志。本用例钉住的是"只记 path"这个结构
+// 性保证（不是按前缀打补丁），所以任何人把 r.URL.Path 换成 RequestURI 都会红。
+func TestAccessLogOmitsQuery(t *testing.T) {
+	logger, out := newFileLogger(t, "debug")
+	h := accessLog(logger)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	const secret = "SUPERSECRETSIGNATURE"
+	req := httptest.NewRequest(http.MethodGet,
+		"/api/payment/epay_v2/notify?sign="+secret+"&pid=1001&out_trade_no=P20260101000000ABCDEFGHJK&sign_type=RSA", nil)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	require.NoError(t, logger.Sync())
+
+	b, err := os.ReadFile(out)
+	require.NoError(t, err)
+	line := string(b)
+	require.Contains(t, line, `"path":"/api/payment/epay_v2/notify"`, "path 本身仍要可观测")
+	require.NotContains(t, line, secret, "签名不得落日志")
+	require.NotContains(t, line, "sign=", "query 串整体不得落日志")
+	require.NotContains(t, line, "out_trade_no=", "订单号同样不落日志（只经 path 观测）")
+}
+
 // TestAdminAuth 管理面鉴权契约（静态 token 已删除，spec 2026-10-09）：/admin 仅
 // 接受 platform_admin JWT 或 platform_admin 身份的**管理 key mk-**；任意非空
 // Bearer（含非 JWT 垃圾串/尾空值/未知 mk-）恒 401（前缀先判、失败不回退）；mk-

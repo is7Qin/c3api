@@ -37,15 +37,22 @@ type Repository struct {
 	Stats          *StatRepo
 	Rules          RuleStore
 	Redemptions    *RedemptionRepo
-	PriceEntries   *PriceEntryRepo
-	PriceVariants  *PriceVariantRepo
-	Billing        *BillingRepo       // 扣费落库
-	Partitions     *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats）
-	TemplateExts   *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1； 数据层，消费接线）
-	AccountExts    *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1； 数据层，消费接线）
-	EmailTemplates *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
-	BalanceLogs    *BalanceLogRepo    // 余额变动记录（balance_logs；管理面留痕 + 分页查看）
-	Client         *ent.Client
+	Orders         *OrderRepo // 支付订单（spec 支付网关 §4-1）
+	// PaymentAccounts / PaymentChannels 支付账户与渠道（spec 支付网关 v2
+	// §3-1/§3-2）：**只走独立提交**，绝不进 TxStore（入账事务里不允许账户 CRUD）。
+	// 注意方法名与上游账号集（Accounts）撞名：账户都是 CreateAccount/ListAccounts，
+	// 故 service 侧接线必须用子仓库或带 Payment 前缀的门面方法。
+	PaymentAccounts *PaymentAccountRepo
+	PaymentChannels *PaymentChannelRepo
+	PriceEntries    *PriceEntryRepo
+	PriceVariants   *PriceVariantRepo
+	Billing         *BillingRepo       // 扣费落库
+	Partitions      *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats）
+	TemplateExts    *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1； 数据层，消费接线）
+	AccountExts     *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1； 数据层，消费接线）
+	EmailTemplates  *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
+	BalanceLogs     *BalanceLogRepo    // 余额变动记录（balance_logs；管理面留痕 + 分页查看）
+	Client          *ent.Client
 	// driver 为原始 dialect.Driver：原子资源方法/条件递增等 raw SQL 走它
 	//（ent v0.14 生成代码无 ExecContext/QueryContext，raw SQL 无客户端入口）；
 	// WithTx 内为事务驱动（txDriver），保证 raw SQL 与 ent 构建器同连接。
@@ -96,31 +103,34 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *Repository {
 	accounts := &AccountRepo{client: client, driver: drv}
 	return &Repository{
-		Proxies:        &ProxyRepo{client: client, driver: drv},
-		Templates:      &TemplateRepo{client: client, driver: drv},
-		Accounts:       accounts,
-		Groups:         &GroupRepo{client: client, driver: drv},
-		Users:          &UserRepo{client: client, driver: drv},
-		Keys:           &KeyRepo{client: client, driver: drv},
-		ManagementKeys: &ManagementKeyRepo{client: client},
-		Assignments:    &GroupAssignmentRepo{client: client},
-		Settings:       &SettingRepo{client: client},
-		Usages:         &UsageRepo{client: client, pool: pool},
-		ErrLogs:        &ErrLogRepo{client: client},
-		Stats:          &StatRepo{client: client, pool: pool},
-		Rules:          &RuleRepo{client: client},
-		Redemptions:    &RedemptionRepo{client: client, driver: drv},
-		PriceEntries:   &PriceEntryRepo{client: client, driver: drv},
-		PriceVariants:  &PriceVariantRepo{client: client},
-		Billing:        &BillingRepo{client: client, driver: drv, pool: pool},
-		Partitions:     &PartitionRepo{driver: drv},
-		TemplateExts:   &TemplateExtRepo{client: client, driver: drv},
-		AccountExts:    &AccountExtRepo{client: client, driver: drv},
-		EmailTemplates: &EmailTemplateRepo{client: client},
-		BalanceLogs:    &BalanceLogRepo{client: client},
-		Client:         client,
-		driver:         drv,
-		pool:           pool,
+		Proxies:         &ProxyRepo{client: client, driver: drv},
+		Templates:       &TemplateRepo{client: client, driver: drv},
+		Accounts:        accounts,
+		Groups:          &GroupRepo{client: client, driver: drv},
+		Users:           &UserRepo{client: client, driver: drv},
+		Keys:            &KeyRepo{client: client, driver: drv},
+		ManagementKeys:  &ManagementKeyRepo{client: client},
+		Assignments:     &GroupAssignmentRepo{client: client},
+		Settings:        &SettingRepo{client: client},
+		Usages:          &UsageRepo{client: client, pool: pool},
+		ErrLogs:         &ErrLogRepo{client: client},
+		Stats:           &StatRepo{client: client, pool: pool},
+		Rules:           &RuleRepo{client: client},
+		Redemptions:     &RedemptionRepo{client: client, driver: drv},
+		Orders:          &OrderRepo{client: client, driver: drv},
+		PaymentAccounts: &PaymentAccountRepo{client: client},
+		PaymentChannels: &PaymentChannelRepo{client: client},
+		PriceEntries:    &PriceEntryRepo{client: client, driver: drv},
+		PriceVariants:   &PriceVariantRepo{client: client},
+		Billing:         &BillingRepo{client: client, driver: drv, pool: pool},
+		Partitions:      &PartitionRepo{driver: drv},
+		TemplateExts:    &TemplateExtRepo{client: client, driver: drv},
+		AccountExts:     &AccountExtRepo{client: client, driver: drv},
+		EmailTemplates:  &EmailTemplateRepo{client: client},
+		BalanceLogs:     &BalanceLogRepo{client: client},
+		Client:          client,
+		driver:          drv,
+		pool:            pool,
 	}
 }
 
@@ -304,6 +314,12 @@ type TxStore interface {
 	ListManagementKeysByUser(ctx context.Context, userID int64) ([]*domain.ManagementKey, error)
 	UpdateManagementKey(ctx context.Context, p *ManagementKeyPatch) (*domain.ManagementKey, error)
 	DeleteManagementKey(ctx context.Context, userID, id int64) (string, error)
+	// 支付订单（spec 支付网关 §4-4）：完成订单的唯一入账路径在单事务内经这两个
+	// 方法——行锁读单（FOR UPDATE）与条件迁移置 paid（0 行 → ErrConflict）。
+	// MarkOrderPaid 的 `WHERE status='pending'` 是纵深防御，主判据是行锁 + 状态
+	// switch（F37）。
+	LockOrderByOutTradeNo(ctx context.Context, outTradeNo string) (*domain.Order, error)
+	MarkOrderPaid(ctx context.Context, id, codeID int64, tradeNo string, rawNotify *string) error
 }
 
 // WithTx 在单事务内执行 fn：ent `Tx().Client()` 模式构造 tx 版 Repository

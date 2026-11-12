@@ -687,6 +687,205 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payment/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 账户列表（含渠道 / config_revision / config_error；config 已掩码） */
+        get: operations["GetPaymentAccounts"];
+        put?: never;
+        /** 创建账户（config 由协议 ParseConfig 校验；merchant_ref 由其推导；配置非法 → 400，(provider,merchant_ref) 重复 → 409） */
+        post: operations["PostPaymentAccounts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payment/accounts/{key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key（创建后只读） */
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * 更新账户（只改 display_name/priority/enabled/config；config_revision++；新 config 的 merchant_ref 与现列不符 → 400）
+         * @description `key`/`provider`/`merchant_ref` 创建后只读（改任一 = 新建账户 + 停用旧账户，否则该
+         *     账户所有 pending 单的回调会按新协议验签而永久 fail）。
+         *     更新 `config` 时，服务端用同一事务内的 ParseConfig 结果比对 `merchant_ref` 与现列：
+         *     不等 → 400（"改商户身份请新建账户 + 停用旧账户"），否则同一商户可被改成重复。
+         *     取值为 `"***"` 的字段 = 保持原值；变更成功后 config_revision 自增并失效配置缓存。
+         */
+        put: operations["PutPaymentAccountsKey"];
+        post?: never;
+        /**
+         * 停用账户（**恒为软停**：置 enabled=false，行永不删除，幂等 200）
+         * @description `key` 是网关后台填过的回调 URL 段：物理删除后复用同名 key 会让**老回调打到新账户**
+         *     （资损）。故 DELETE ≡ enabled=false，行保留也保住审计与账本可读性；真正清理只能
+         *     DBA 手工（spec §16 不做）。已停用 → 原样返回（仍 200）。
+         */
+        delete: operations["DeletePaymentAccountsKey"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payment/accounts/{key}/channels/{pay_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key */
+                key: string;
+                /** @description 渠道别名（必须 ∈ 协议 capabilities，否则 400） */
+                pay_type: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        /** upsert 单渠道（按 pay_type 寻址；pay_type 不在协议 capabilities → 400） */
+        put: operations["PutPaymentAccountsKeyChannelsPayType"];
+        post?: never;
+        /** 删除单渠道（幂等；账户不存在 → 404） */
+        delete: operations["DeletePaymentAccountsKeyChannelsPayType"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/payment/accounts/{key}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 签名/连通性自检（上线前对备用账户跑一次——唯一探活手段；不落库、不改状态） */
+        post: operations["PostPaymentAccountsKeyTest"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 订单列表（全量；user_id/status/out_trade_no/created 区间筛选；limit 默认 20 上限 100，新单在前） */
+        get: operations["GetOrders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 订单详情（含 raw_notify / fail_reason / fail_count / last_notify_at / resolved_at——运维闭环的唯一信号面） */
+        get: operations["GetOrdersId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{id}/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 手动查单（非 pending → 409；协议无查单能力 → 409；查单故障 → 502 且订单不变）
+         * @description 查单响应验签 → `status==1` 才进完成流程（与 notify 同一把行锁）；非 paid 只
+         *     写 raw_notify 与审计、不迁移状态。金额/币种不符等入账失败 → 502 + `fail_reason`
+         *     （订单保持 pending，可人工处置）。
+         */
+        post: operations["PostOrdersIdSync"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 关闭待付订单（三态；入账失败**绝不关单**）
+         * @description 有查单能力时必须先查：
+         *     - 查询报 paid → 不关单，转 `CompleteOrder` 入账；成功 → `{status:"paid",credited:true}`
+         *     - 查询报 paid 但入账失败 → **不关单**，502 + 同一 `fail_reason` 落库（仍 pending）
+         *     - 查询报非 paid → 正常关单 → `{status:"closed"}`；0 行 → 409
+         *     `force` 只在「无查单能力 / 查询本身失败」时生效；查询明确报 paid 时**无效**。
+         */
+        post: operations["PostOrdersIdClose"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/orders/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 标记人工处置完成（写 resolved_at；防同一订单被补两次，已标记 → 409） */
+        post: operations["PostOrdersIdResolve"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/pricing/sync": {
         parameters: {
             query?: never;
@@ -1202,6 +1401,113 @@ export interface paths {
         };
         /** 我的临时额度（仅有效额度：未过期且正余额，用尽/过期隐藏；expires_at 升序 FEFO 同序、永久最后；强制 user_id = 当前用户，无 user_id 参数防越权） */
         get: operations["GetUserTempBalances"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/payment/methods": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 可售渠道列表（三层开关过滤后；max_usd 为按汇率收敛的**生效**上限） */
+        get: operations["GetUserPaymentMethods"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/orders": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 我的订单（分页 + status；只返回本人，越权 = 404） */
+        get: operations["GetUserOrders"];
+        put?: never;
+        /** 创建充值订单（400 金额/pay_type 非法；503 支付未启用或渠道未配置） */
+        post: operations["PostUserOrders"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/orders/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** 我的订单详情（pending 且未过期时返回实时重签的 pay_url；非本人 → 404） */
+        get: operations["GetUserOrdersId"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/payment/{account}/notify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key（payment_accounts.key；不存在 → 404） */
+                account: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * 异步通知（按账户路由 → 10 步契约 → 单事务入账；可判定输入错误 200 fail，内部错误 5xx 让网关重试）
+         * @description 顺序是硬约束（spec §6-2，10 步）：① 按路径 key 加载账户（不存在 → 404）
+         *     → ② 解析/取缓存配置（失败 → 503，**不得**让网关放弃）→ ③ 取协议实现
+         *     （未注册 → 503）→ ④ 用该账户 cfg 验签（失败 → 200 fail，不写审计）→ ⑤ 重复键/
+         *     值字符/必填存在性（200 fail，不写审计）→ ⑥ 提取 out_trade_no/money/trade_status
+         *     → ⑦ 锁订单（缺行 → 200 fail，不写审计）→ ⑧ 订单 account_key ≠ 路径 account
+         *     （200 fail + fail_reason=account）→ ⑨ 订单 provider ≠ 账户 provider（200 fail +
+         *     fail_reason=provider）→ ⑩ 幂等分支（paid → success）→ 状态/金额/币种 → 入账。
+         *     ⑧⑨ 必须在 ⑩ 之前：否则已 paid 的订单收到错误账户的通知会被幂等分支吞掉并回 success。
+         *     错误映射见 spec §8（**不复用** httpface.WriteServiceErr）：金额、状态、closed、
+         *     provider、account、user → 200 fail 且落 fail_reason；冲突/死锁/内部/币种解析异常
+         *     → 500 fail 且落 internal（网关重试）；配置不可解析/协议未注册 → 503 fail（重试）。
+         */
+        get: operations["PaymentNotify"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/payment/{account}/return": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key（payment_accounts.key；不存在 → 404） */
+                account: string;
+            };
+            cookie?: never;
+        };
+        /** 同步跳转回门户（校验 order 形状 → 302 到 {portal_base}/user/wallet?order=…；不落账、不改状态） */
+        get: operations["PaymentReturn"];
         put?: never;
         post?: never;
         delete?: never;
@@ -4876,6 +5182,285 @@ export interface components {
             failed: number;
             rows: components["schemas"]["ProxyImportRowResult"][];
         };
+        /**
+         * @description 订单状态（只有三态；过期是 pending && expires_at < now 的派生视图，**不是**状态）
+         * @enum {string}
+         */
+        OrderStatus: "pending" | "paid" | "closed";
+        PaymentMethod: {
+            /** @description 渠道别名（全局唯一；建单时原样回传） */
+            pay_type: string;
+            /** @description 协议标识（如 `epay_v2`）；回调路径用的是账户 key 而非协议名（`/api/payment/{account}/notify`，`{account}` = `payment_accounts.key`） */
+            provider: string;
+            /** @description 渠道结算币种（两位小数白名单） */
+            currency: string;
+            /** @description 汇率（rate_micro/1e6 的六位小数定点串，如 "7.200000"） */
+            rate: string;
+            /**
+             * Format: int64
+             * @description 该渠道行的下单下限（整数 USD，取 `payment_channels.min_usd`）
+             */
+            min_usd: number;
+            /**
+             * Format: int64
+             * @description **生效**上限（USD；已按该渠道汇率可表示范围收敛）
+             */
+            max_usd: number;
+        };
+        PaymentChannel: {
+            /** @description 渠道别名（必须 ∈ 协议 capabilities()，写入校验） */
+            pay_type: string;
+            /** @description 该渠道的可售开关（选路过滤的一项，不影响回调） */
+            enabled: boolean;
+            /** @description ISO-4217 两位小数白名单币种（CNY/USD/…；不在白名单 → 渠道不可售） */
+            currency: string;
+            /**
+             * Format: int64
+             * @description 汇率（1 USD = N 货币 × 1e6；整数，`> 0`，禁 float）
+             */
+            rate_micro: number;
+            /**
+             * Format: int64
+             * @description 单笔下限（整数 USD；`≥ 1`）
+             */
+            min_usd: number;
+            /**
+             * Format: int64
+             * @description 单笔上限（整数 USD；`≥ min_usd`；下单时再按汇率收敛）
+             */
+            max_usd: number;
+        };
+        PaymentChannelUpsert: {
+            enabled: boolean;
+            /** @description 两位小数白名单币种 */
+            currency: string;
+            /**
+             * Format: int64
+             * @description 1 USD = N 货币 × 1e6（`> 0`）
+             */
+            rate_micro: number;
+            /**
+             * Format: int64
+             * @description 单笔下限（`≥ 1`）
+             */
+            min_usd: number;
+            /**
+             * Format: int64
+             * @description 单笔上限（`≥ min_usd`）
+             */
+            max_usd: number;
+        };
+        PaymentAccount: {
+            /** @description 账户 key（= 回调 URL 段 = 订单快照；**创建后只读**、永不复用） */
+            key: string;
+            /** @description 协议标识；**创建后只读**（换协议 = 新建账户） */
+            provider: string;
+            /** @description 协议自述的商户唯一标识（epay = pid）；**创建后只读**，唯一索引 `(provider, merchant_ref)` */
+            merchant_ref: string;
+            /** @description 管理面展示名（唯一可改的身份相关字段） */
+            display_name: string;
+            /** @description 可售开关（**不影响回调处理**：钱可能已收） */
+            enabled: boolean;
+            /** @description 升序选路（0 = 主）；相同 priority 按 id 升序 */
+            priority: number;
+            /** @description 协议专属凭据。**响应恒掩码**：`SecretFields()` 声明的字段一律为 `"***"`（绝不回显密钥） */
+            config: {
+                [key: string]: unknown;
+            };
+            /**
+             * Format: int64
+             * @description 每次 config 变更 +1（配置缓存键的一部分）
+             */
+            config_revision: number;
+            /** @description 配置解析失败原因（**不回显密钥**）；null = 解析正常（协议未注册 / 解析失败 → 非空 + 管理面标红 + 选路跳过） */
+            config_error: string | null;
+            /** @description 该账户下的渠道行（按 pay_type 唯一；同一 pay_type 可出现在多个账户——这正是多上游） */
+            channels: components["schemas"]["PaymentChannel"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        PaymentAccountCreate: {
+            /** @description 账户 key（**创建后只读**） */
+            key: string;
+            /** @description 协议标识（协议未注册 → 400；**创建后只读**） */
+            provider: string;
+            /** @description 展示名（缺省 = key） */
+            display_name?: string;
+            /**
+             * @description 升序选路（0 = 主）
+             * @default 0
+             */
+            priority: number;
+            /**
+             * @description 可售开关（缺省 true）
+             * @default true
+             */
+            enabled: boolean;
+            /** @description 协议专属凭据（**明文**）；服务端用协议 ParseConfig 校验并从中推导 merchant_ref（非法 → 400） */
+            config: {
+                [key: string]: unknown;
+            };
+        };
+        /** @description 部分更新：每个字段缺省 = 保持原值（不改） */
+        PaymentAccountUpdate: {
+            /** @description 展示名（缺省 = 不变） */
+            display_name?: string;
+            /** @description 选路优先级（缺省 = 不变） */
+            priority?: number;
+            /** @description 可售开关（缺省 = 不变） */
+            enabled?: boolean;
+            /** @description 协议专属凭据（**缺省 = 不变**）；密钥字段取值为 `"***"` = 保持原值。服务端要求新 config 的 merchant_ref 与现列相同（否则 400） */
+            config?: {
+                [key: string]: unknown;
+            };
+        };
+        PaymentAccountTestResponse: {
+            /** @description 签名与网络自检是否通过（不落库、不改状态） */
+            ok: boolean;
+            /** @description 失败原因（已脱敏；ok=true 时不出现） */
+            error?: string | null;
+        };
+        CreateOrderRequest: {
+            /** @description USD 金额字符串：`^\d{1,7}(\.\d{1,2})?$` 且 > 0（禁 float；"1e3"/"1.234"/空/非字符串 → 400） */
+            amount_usd: string;
+            /** @description 渠道别名（未知 → 400；未启用/汇率不可用/未配置 → 503） */
+            pay_type: string;
+        };
+        CreateOrderResponse: {
+            /** @description 订单号（`P` + UTC `yyyyMMddHHmmss` + 10 位 base32） */
+            order_no: string;
+            /** @description 已签名的网关跳转 URL（GET；notify/return 路径带本账户 key） */
+            pay_url: string;
+            /** @description 本次下单冻结的上游账户 key（= pay_url 的 `/api/payment/{account}` 段） */
+            account: string;
+            /** @description 规范化后的 USD 金额（%d.%02d） */
+            amount_usd: string;
+            /** @description 实付金额（渠道币种，%d.%02d）——**权威值**，前端必须在跳转前展示并要求确认（methods.rate 仅为参考值） */
+            pay_amount: string;
+            currency: string;
+            /** @description 汇率快照（%d.%06d） */
+            rate: string;
+            /**
+             * Format: date-time
+             * @description 支付截止时刻（过期仍可入账，见 OrderStatus）
+             */
+            expires_at: string;
+        };
+        UserOrder: {
+            /** Format: int64 */
+            id: number;
+            order_no: string;
+            status: components["schemas"]["OrderStatus"];
+            /** @description 入账 USD 金额（%d.%02d） */
+            amount_usd: string;
+            /** @description 实付金额（渠道币种，%d.%02d） */
+            pay_amount: string;
+            currency: string;
+            /** @description 汇率快照（%d.%06d） */
+            rate: string;
+            pay_type: string;
+            provider: string;
+            /** @description 上游账户 key（列表返回；**详情可不返回**——spec §10-1 规定用户详情不外泄 account_key） */
+            account?: string;
+            /** @description 仅 pending 且未过期时返回（实时重签）；其余/签名不可用 → null */
+            pay_url?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            /** Format: date-time */
+            paid_at?: string | null;
+        };
+        UserOrderListResponse: {
+            /** Format: int64 */
+            total: number;
+            rows: components["schemas"]["UserOrder"][];
+        };
+        OrderDetail: {
+            /** Format: int64 */
+            id: number;
+            order_no: string;
+            /** Format: int64 */
+            user_id: number;
+            provider: string;
+            /** @description 上游账户快照（不建外键：账户停用/改名后账本仍可读；按上游对账的索引键） */
+            account_key: string;
+            pay_type: string;
+            status: components["schemas"]["OrderStatus"];
+            /** @description 入账 USD 金额（%d.%02d，由 credit_milli 换算） */
+            amount_usd: string;
+            /** @description 实付金额（渠道币种，%d.%02d） */
+            pay_amount: string;
+            currency: string;
+            /** @description 汇率快照（%d.%06d） */
+            rate: string;
+            /**
+             * Format: int64
+             * @description 入账毫分（权威账本值）
+             */
+            credit_milli: number;
+            /**
+             * Format: int64
+             * @description 实付最小单位（渠道币种分）
+             */
+            pay_minor: number;
+            /** @description 网关流水号 */
+            trade_no?: string | null;
+            /**
+             * Format: int64
+             * @description 自动到账凭据（同一订单只入账一次）
+             */
+            redemption_code_id?: number | null;
+            /** @description 清洗后的通知原文（≤4 KiB 合法 UTF-8 JSON；含买家信息，仅管理面可见） */
+            raw_notify?: string | null;
+            /** @description 已付款未入账/强制关单的唯一信号（sig/pid/amount/status/closed/provider/account/user/internal/forced；null = 无异常） */
+            fail_reason?: string | null;
+            /** @description 尽力计数（不承担对账职责） */
+            fail_count: number;
+            /** Format: date-time */
+            last_notify_at?: string | null;
+            /**
+             * Format: date-time
+             * @description 人工处置完成时刻（防重复补账）
+             */
+            resolved_at?: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            paid_at?: string | null;
+            /** Format: date-time */
+            expires_at: string;
+        };
+        OrderListResponse: {
+            /** Format: int64 */
+            total: number;
+            rows: components["schemas"]["OrderDetail"][];
+        };
+        OrderSyncResponse: {
+            status: components["schemas"]["OrderStatus"];
+            /** @description 本次调用完成入账 */
+            credited: boolean;
+            /** @description 查单时订单已 paid（幂等重放） */
+            already_paid: boolean;
+            order: components["schemas"]["OrderDetail"];
+        };
+        OrderCloseRequest: {
+            /** @description 仅在无查单能力/查询本身失败时生效；查询明确报 paid 时**无效**（优先级写死） */
+            force?: boolean;
+        };
+        OrderCloseResponse: {
+            status: components["schemas"]["OrderStatus"];
+            /** @description status=paid 时：本次调用是否完成入账 */
+            credited: boolean;
+            order: components["schemas"]["OrderDetail"];
+        };
+        OrderResolveResponse: {
+            /** @description 恒为 true（已标记过 → 409） */
+            resolved: boolean;
+            order: components["schemas"]["OrderDetail"];
+        };
     };
     responses: {
         /** @description 错误响应 */
@@ -6330,6 +6915,310 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    GetPaymentAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 账户列表（空数组 = 尚未配置任何上游，此时 methods 为空、建单 503） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentAccount"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostPaymentAccounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymentAccountCreate"];
+            };
+        };
+        responses: {
+            /** @description 已创建（config 已掩码；config_revision 从 1 起） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentAccount"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutPaymentAccountsKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key（创建后只读） */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymentAccountUpdate"];
+            };
+        };
+        responses: {
+            /** @description 已更新（config 已掩码；config_revision 已自增） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentAccount"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    DeletePaymentAccountsKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key（创建后只读） */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 停用后的账户（enabled=false） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentAccount"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PutPaymentAccountsKeyChannelsPayType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key */
+                key: string;
+                /** @description 渠道别名（必须 ∈ 协议 capabilities，否则 400） */
+                pay_type: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PaymentChannelUpsert"];
+            };
+        };
+        responses: {
+            /** @description 已写入的渠道 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentChannel"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    DeletePaymentAccountsKeyChannelsPayType: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key */
+                key: string;
+                /** @description 渠道别名（必须 ∈ 协议 capabilities，否则 400） */
+                pay_type: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已删除（渠道本就不存在同样 204） */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostPaymentAccountsKeyTest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key */
+                key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 自检结果（ok=false 时 error 为已脱敏原因） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentAccountTestResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetOrders: {
+        parameters: {
+            query?: {
+                user_id?: number;
+                /** @description 非法枚举 → 400 */
+                status?: "pending" | "paid" | "closed";
+                out_trade_no?: string;
+                /** @description created_at >=（含） */
+                created_from?: string;
+                /** @description created_at <=（含） */
+                created_to?: string;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 订单列表 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetOrdersId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 订单详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderDetail"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostOrdersIdSync: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已查单（credited = 本次调用完成入账） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderSyncResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostOrdersIdClose: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["OrderCloseRequest"];
+            };
+        };
+        responses: {
+            /** @description 处置结果（status 是**处置后**状态） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderCloseResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostOrdersIdResolve: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 已标记 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrderResolveResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     PostPricingSync: {
         parameters: {
             query?: never;
@@ -7386,6 +8275,181 @@ export interface operations {
                 };
             };
             default: components["responses"]["Error"];
+        };
+    };
+    GetUserPaymentMethods: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 渠道列表（空数组 = 支付未启用或未装配协议） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PaymentMethod"][];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUserOrders: {
+        parameters: {
+            query?: {
+                page?: number;
+                page_size?: number;
+                status?: "pending" | "paid" | "closed";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 分页结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOrderListResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PostUserOrders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateOrderRequest"];
+            };
+        };
+        responses: {
+            /** @description 订单已创建（pay_url 已签名） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CreateOrderResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUserOrdersId: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 订单详情 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserOrder"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    PaymentNotify: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key（payment_accounts.key；不存在 → 404） */
+                account: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description success = 已入账或幂等重放；fail = 可判定输入错误（网关通常不重试） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": "success" | "fail";
+                };
+            };
+            /** @description 账户 key 不存在（这个回调 URL 从来不属于任何账户） */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description 内部错误/死锁重试耗尽（body 恒为 fail，网关应重试） */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            /** @description 账户配置不可解析 / 协议未注册（body 恒为 fail，网关应重试，不得让它放弃） */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    PaymentReturn: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description 账户 key（payment_accounts.key；不存在 → 404） */
+                account: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 跳转回钱包页（portal_base_url 空 → 绝对路径 /user/wallet?order=…） */
+            302: {
+                headers: {
+                    Location?: string;
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 账户 key 不存在 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
         };
     };
     ListRules: {
