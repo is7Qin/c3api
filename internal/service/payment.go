@@ -10,7 +10,7 @@ package service
 //
 //  1. **账户是数据**：协议实现无状态、凭据在 payment_accounts.config（jsonb），
 //     渠道/汇率/限额在 payment_channels。service 里**不出现任何协议字段名**——
-//     掩码靠 `SecretFields()`，能力靠 `Capabilities()`。
+//     掩码靠 `ConfigSchema().SecretNames()`，能力靠 `Capabilities()`。
 //  2. **选路唯一入口** `ResolveChannel`（§5-1）：`methods` 与 `CreateOrder` 共用
 //     它，禁止各写一套过滤（否则会出现"展示 A、下单 B"）。
 //  3. **cfg 随选路结果返回**（N3）：建单时用同一份快照签名，账户在本次下单内被
@@ -350,7 +350,7 @@ func (s *Service) resolveChannel(ctx context.Context, payType string, amountCent
 		if !acct.Enabled {
 			continue // ①
 		}
-		p, ok := s.paymentProviders[acct.Provider]
+		p, ok := s.paymentRegistry.Get(acct.Provider)
 		if !ok {
 			// ② 协议未注册：跳过 + 可观测（管理面 config_error 会标红）。
 			s.warnPaymentAccount(acct, fmt.Errorf("%w: %q", ErrPaymentProviderMissing, acct.Provider))
@@ -879,7 +879,7 @@ func (s *Service) orderQuerier(ctx context.Context, o *domain.Order) (domain.Ord
 		}
 		return nil, nil, fmt.Errorf("%w: get payment account %q: %w", domain.ErrInternal, o.AccountKey, err)
 	}
-	p, ok := s.paymentProviders[acct.Provider]
+	p, ok := s.paymentRegistry.Get(acct.Provider)
 	if !ok {
 		return nil, nil, fmt.Errorf("%w: provider %q of order %s", ErrUnavailable, acct.Provider, o.OutTradeNo)
 	}
@@ -912,7 +912,7 @@ func (s *Service) closeQueryTarget(ctx context.Context, o *domain.Order) (domain
 		// 账户读取失败不是"无查单面"，是真内部错误：别把 500 说成 409。
 		return nil, nil, "", fmt.Errorf("%w: get payment account %q: %w", domain.ErrInternal, o.AccountKey, err)
 	}
-	p, ok := s.paymentProviders[acct.Provider]
+	p, ok := s.paymentRegistry.Get(acct.Provider)
 	if !ok {
 		// 协议未注册：可观测（与管理面 config_error / 选路跳过同一口径，§17-12）。
 		s.warnPaymentAccount(acct, fmt.Errorf("%w: %q", ErrPaymentProviderMissing, acct.Provider))
@@ -1062,7 +1062,7 @@ func (s *Service) OrderPayURL(ctx context.Context, o *domain.Order) (string, err
 		}
 		return "", fmt.Errorf("%w: get payment account %q: %w", domain.ErrInternal, o.AccountKey, err)
 	}
-	p, ok := s.paymentProviders[acct.Provider]
+	p, ok := s.paymentRegistry.Get(acct.Provider)
 	if !ok {
 		return "", fmt.Errorf("%w: provider %q", ErrUnavailable, acct.Provider)
 	}
@@ -1140,7 +1140,7 @@ func (s *Service) payRequest(o *domain.Order) (domain.PayRequest, error) {
 // buildPayURL 用**调用方给的 cfg 快照**签名跳转 URL（N3：建单后账户被改动不影响
 // 本单）。纵深防御：cfg 的协议必须与订单快照的协议一致（N31 的服务层那一层）。
 func (s *Service) buildPayURL(o *domain.Order, cfg domain.AccountConfig) (string, error) {
-	p, ok := s.paymentProviders[o.Provider]
+	p, ok := s.paymentRegistry.Get(o.Provider)
 	if !ok {
 		return "", fmt.Errorf("%w: provider %q is not registered", ErrUnavailable, o.Provider)
 	}
@@ -1171,15 +1171,41 @@ func (s *Service) markNotifyFailure(ctx context.Context, outTradeNo, reason stri
 
 // ---------- 协议注册表 ----------
 
+// PaymentProviderView 协议元数据（§18-2 的响应体）：只有形状与标志，**不含任何
+// 配置值**——账户级的值只出现在账户读面的 config 里（那里按 secret 掩码）。
+type PaymentProviderView struct {
+	Name         domain.ProviderName
+	Capabilities []string
+	Schema       domain.ConfigSchema
+}
+
+// ListPaymentProviders 列出本二进制注册的全部协议及其配置形状（§18-2）。
+//
+// 顺序直接取注册表的 All()（name 升序，构造期已定死）——这里再排序就会制造第二个
+// 定序点。Capabilities 复制一份：协议实现返回的是共享切片，调用方（handler 序列化
+// 之外的代码）就地改动会污染后续响应。
+func (s *Service) ListPaymentProviders() []PaymentProviderView {
+	providers := s.paymentRegistry.All()
+	out := make([]PaymentProviderView, 0, len(providers))
+	for _, p := range providers {
+		out = append(out, PaymentProviderView{
+			Name:         p.Name(),
+			Capabilities: append([]string(nil), p.Capabilities()...),
+			Schema:       p.ConfigSchema(),
+		})
+	}
+	return out
+}
+
 // PaymentProvider 按名字取协议实现（回调 handler 第 3 步；未注册 → false）。
 func (s *Service) PaymentProvider(name domain.ProviderName) (domain.PaymentProvider, bool) {
-	p, ok := s.paymentProviders[name]
+	p, ok := s.paymentRegistry.Get(name)
 	return p, ok
 }
 
 // providerFor 内部取协议实现；未注册 → 错误（回调面按 503 处理）。
 func (s *Service) providerFor(name domain.ProviderName) (domain.PaymentProvider, error) {
-	if p, ok := s.paymentProviders[name]; ok && p != nil {
+	if p, ok := s.paymentRegistry.Get(name); ok {
 		return p, nil
 	}
 	return nil, fmt.Errorf("%w: %q", ErrPaymentProviderMissing, name)
@@ -1243,8 +1269,8 @@ func (s *Service) CreatePaymentAccount(ctx context.Context, in PaymentAccountInp
 		return nil, fmt.Errorf("%w: payment account key must match %s", ErrInvalidInput,
 			paymentAccountKeyPattern.String())
 	}
-	p, ok := s.paymentProviders[in.Provider]
-	if !ok || p == nil {
+	p, ok := s.paymentRegistry.Get(in.Provider)
+	if !ok {
 		return nil, fmt.Errorf("%w: provider %q is not registered", ErrInvalidInput, in.Provider)
 	}
 	cfg, err := p.ParseConfig(in.Config)
@@ -1280,7 +1306,8 @@ func (s *Service) CreatePaymentAccount(ctx context.Context, in PaymentAccountInp
 
 // UpdatePaymentAccount 更新账户（只改 display_name/priority/enabled/config）：
 //
-//   - config 里秘密字段值为 `"***"` 的用旧值替换（B47/P34，通用实现靠 SecretFields）；
+//   - config 里秘密字段值为 `"***"` 的用旧值替换（B47/P34，通用实现靠
+//     `ConfigSchema().SecretNames()`）；
 //   - 新 config 的 `MerchantRef()` 必须等于现列，否则 **400**（N29/P45：
 //     `repository.ErrMerchantRefImmutable` 是 ErrConflict 的细分，handler 单独映射 400）；
 //   - 成功 `config_revision++`（repo 做）+ **失效缓存**。
@@ -1295,11 +1322,11 @@ func (s *Service) UpdatePaymentAccount(ctx context.Context, key string, in Payme
 		Enabled:     in.Enabled,
 	}
 	if in.Config != nil {
-		p, ok := s.paymentProviders[cur.Provider]
-		if !ok || p == nil {
+		p, ok := s.paymentRegistry.Get(cur.Provider)
+		if !ok {
 			return nil, fmt.Errorf("%w: provider %q is not registered", ErrInvalidInput, cur.Provider)
 		}
-		merged, mergeErr := mergeSecretPlaceholders(p.SecretFields(), cur.Config, in.Config)
+		merged, mergeErr := mergeSecretPlaceholders(p.ConfigSchema().SecretNames(), cur.Config, in.Config)
 		if mergeErr != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidInput, mergeErr)
 		}
@@ -1356,8 +1383,8 @@ func (s *Service) UpsertPaymentChannel(ctx context.Context, accountKey string, i
 	if err != nil {
 		return nil, err
 	}
-	p, ok := s.paymentProviders[acct.Provider]
-	if !ok || p == nil {
+	p, ok := s.paymentRegistry.Get(acct.Provider)
+	if !ok {
 		return nil, fmt.Errorf("%w: provider %q is not registered", ErrInvalidInput, acct.Provider)
 	}
 	if !capabilityContains(p.Capabilities(), in.PayType) {
@@ -1426,8 +1453,8 @@ func (s *Service) ProbePaymentAccount(ctx context.Context, key string) (PaymentA
 		msg := err.Error()
 		return PaymentAccountTest{OK: false, Error: &msg}, nil
 	}
-	p, ok := s.paymentProviders[acct.Provider]
-	if !ok || p == nil {
+	p, ok := s.paymentRegistry.Get(acct.Provider)
+	if !ok {
 		return fail(fmt.Errorf("%w: %q", ErrPaymentProviderMissing, acct.Provider))
 	}
 	cfg, err := s.paymentAccountConfig(ctx, acct, p)
@@ -1457,7 +1484,7 @@ func (s *Service) ProbePaymentAccount(ctx context.Context, key string) (PaymentA
 
 // describePaymentAccount 组装管理面视图：渠道 + **掩码后**的 config + config_error。
 //
-// 协议未注册时不回显任何 config 内容（不知道 SecretFields 就不知道该掩谁——
+// 协议未注册时不回显任何 config 内容（不知道哪些字段是 secret 就不知道该掩谁——
 // 宁可空表，也不赌"这个协议没有秘密字段"）。
 func (s *Service) describePaymentAccount(ctx context.Context, acct *domain.PaymentAccount) (*PaymentAccountView, error) {
 	channels, err := s.store.ListPaymentChannels(ctx, acct.ID)
@@ -1466,13 +1493,13 @@ func (s *Service) describePaymentAccount(ctx context.Context, acct *domain.Payme
 			domain.ErrInternal, acct.Key, err)
 	}
 	view := &PaymentAccountView{Account: acct, Channels: channels, Config: map[string]any{}}
-	p, ok := s.paymentProviders[acct.Provider]
-	if !ok || p == nil {
+	p, ok := s.paymentRegistry.Get(acct.Provider)
+	if !ok {
 		view.ConfigError = fmt.Sprintf("%v: %q", ErrPaymentProviderMissing, acct.Provider)
 		s.warnPaymentAccount(acct, ErrPaymentProviderMissing)
 		return view, nil
 	}
-	view.Config = maskSecretFields(p.SecretFields(), acct.Config)
+	view.Config = maskSecretFields(p.ConfigSchema().SecretNames(), acct.Config)
 	if _, cfgErr := s.paymentAccountConfig(ctx, acct, p); cfgErr != nil {
 		view.ConfigError = cfgErr.Error() // 只含字段名/格式原因，不含密钥内容
 	}

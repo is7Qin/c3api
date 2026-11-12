@@ -90,10 +90,12 @@ func TestPaymentNotifyAccountMismatchIsAccount_PG(t *testing.T) {
 
 	// 装配真实 service + 公开回调面（协议实现与 main 同源）。
 	snap := settingssnap.New(repos, nil)
+	registry, err := domain.NewProviderRegistry([]domain.PaymentProvider{epay.New(nil)})
+	require.NoError(t, err)
 	svc := service.New(service.Deps{
 		Store: repos, Invalidate: service.NopInvalidator{},
 		EmailCodeStore: testEmailCodes, SettingsSnapshot: snap,
-		PaymentProviders: []domain.PaymentProvider{epay.New(nil)},
+		PaymentRegistry: registry,
 	})
 	pay := paymentapi.Router(svc, nil)
 

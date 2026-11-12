@@ -79,7 +79,7 @@ type PaymentAccount struct {
 	// Channels 该账户下的渠道行（按 pay_type 唯一；同一 pay_type 可出现在多个账户——这正是多上游）
 	Channels []PaymentChannel `json:"channels"`
 
-	// Config 协议专属凭据。**响应恒掩码**：`SecretFields()` 声明的字段一律为 `"***"`（绝不回显密钥）
+	// Config 协议专属凭据。**响应恒掩码**：`ConfigSchema` 里 `secret:true` 的字段一律为 `"***"`（绝不回显密钥）
 	Config map[string]interface{} `json:"config"`
 
 	// ConfigError 配置解析失败原因（**不回显密钥**）；null = 解析正常（协议未注册 / 解析失败 → 非空 + 管理面标红 + 选路跳过）
@@ -191,6 +191,49 @@ type PaymentChannelUpsert struct {
 	RateMicro int64 `json:"rate_micro"`
 }
 
+// ProviderConfigField defines model for ProviderConfigField.
+type ProviderConfigField struct {
+	// Example 可选输入示例（前端 placeholder）；空串 = 无。**示例不是值**
+	Example string `json:"example"`
+
+	// Kind 呈现提示（`text`/`password`/`multiline`/`url`；**开集**，故意不写 enum——未知 kind 由前端按 `secret` 降级）
+	Kind string `json:"kind"`
+
+	// Label 可选英文兜底标签（纯展示：不是字段键、不参与校验、不参与 secret 判定）；空串 = 无
+	Label string `json:"label"`
+
+	// Name 账户 config（jsonb）里的**键名**——只有键名，永不回值
+	Name string `json:"name"`
+
+	// Required 表单必填提示（权威校验始终是服务端 ParseConfig）
+	Required bool `json:"required"`
+
+	// Secret 秘密字段的**唯一**声明口：掩码、`***` 合并、读面回显都由它派生
+	Secret bool `json:"secret"`
+}
+
+// ProviderConfigSchema defines model for ProviderConfigSchema.
+type ProviderConfigSchema struct {
+	// Fields 表单字段；**顺序即表单顺序**（协议声明顺序，服务端不得重排）
+	Fields []ProviderConfigField `json:"fields"`
+}
+
+// ProviderMetadata defines model for ProviderMetadata.
+type ProviderMetadata struct {
+	// Capabilities 支持的 pay_type 静态能力（渠道 pay_type 下拉的取值来自这里）
+	Capabilities []string             `json:"capabilities"`
+	ConfigSchema ProviderConfigSchema `json:"config_schema"`
+
+	// Name 协议标识（= 账户 provider 列 = 管理面协议下拉的取值）
+	Name string `json:"name"`
+}
+
+// ProviderMetadataList defines model for ProviderMetadataList.
+type ProviderMetadataList struct {
+	// Providers 全部注册协议（`name` 升序，序由注册表在构造期定死，端点不重排；空注册表 → `[]`）
+	Providers []ProviderMetadata `json:"providers"`
+}
+
 // Error defines model for Error.
 type Error = ErrorResponse
 
@@ -226,6 +269,9 @@ type ServerInterface interface {
 	// 签名/连通性自检（上线前对备用账户跑一次——唯一探活手段；不落库、不改状态）
 	// (POST /payment/accounts/{key}/test)
 	PostPaymentAccountsKeyTest(w http.ResponseWriter, r *http.Request, key string)
+	// 协议元数据（协议自述的配置形状；管理面表单据此驱动，前端不维护协议镜像）
+	// (GET /payment/providers)
+	GetPaymentProviders(w http.ResponseWriter, r *http.Request)
 }
 
 // Unimplemented server implementation that returns http.StatusNotImplemented for each endpoint.
@@ -271,6 +317,12 @@ func (_ Unimplemented) PutPaymentAccountsKeyChannelsPayType(w http.ResponseWrite
 // 签名/连通性自检（上线前对备用账户跑一次——唯一探活手段；不落库、不改状态）
 // (POST /payment/accounts/{key}/test)
 func (_ Unimplemented) PostPaymentAccountsKeyTest(w http.ResponseWriter, r *http.Request, key string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 协议元数据（协议自述的配置形状；管理面表单据此驱动，前端不维护协议镜像）
+// (GET /payment/providers)
+func (_ Unimplemented) GetPaymentProviders(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -454,6 +506,20 @@ func (siw *ServerInterfaceWrapper) PostPaymentAccountsKeyTest(w http.ResponseWri
 	handler.ServeHTTP(w, r)
 }
 
+// GetPaymentProviders operation middleware
+func (siw *ServerInterfaceWrapper) GetPaymentProviders(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetPaymentProviders(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 type UnescapedCookieParamError struct {
 	ParamName string
 	Err       error
@@ -587,6 +653,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Post(options.BaseURL+"/payment/accounts/{key}/test", wrapper.PostPaymentAccountsKeyTest)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/payment/providers", wrapper.GetPaymentProviders)
 	})
 
 	return r

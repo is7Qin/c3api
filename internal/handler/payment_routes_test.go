@@ -181,10 +181,12 @@ func newPaymentHarnessBare(t *testing.T, providers ...domain.PaymentProvider) *p
 		require.NoError(t, err)
 	}
 	require.NoError(t, snap.Reload(ctx))
+	paymentRegistry, err := domain.NewProviderRegistry(providers)
+	require.NoError(t, err)
 	svc := service.New(service.Deps{
 		Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{},
 		Auth: &fakeKeys{}, EmailCodeStore: store, SettingsSnapshot: snap,
-		PaymentProviders: providers,
+		PaymentRegistry: paymentRegistry,
 	})
 
 	iss := auth.NewIssuer("test-secret")

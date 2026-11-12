@@ -6,6 +6,9 @@
 // 响应字段为 Go 大写风格（ID/Name/...），前端按此使用，不做 camelCase 转换。
 import type { components } from './schema.d.ts'
 import { userAuth } from '@/lib/auth'
+// 协议元数据（spec §18-2）的响应形状：字段元数据是 **UI 元数据**，`kind` 刻意是开集
+// （openapi 不写 enum，否则协议新增 kind 时旧前端编译即红），故类型与消费点同住
+// payment-form.ts，不塞进 codegen 产物。
 
 // 类实现（原设计为 type 别名，但 throw new ApiError(...) 需要运行时值）
 export class ApiError extends Error {
@@ -395,6 +398,9 @@ export class ApiClient {
     })
   resolveOrder = (id: number) => this.request<components['schemas']['OrderResolveResponse']>(`/orders/${id}/resolve`, { method: 'POST' })
   // —— 支付账户 / 渠道（spec §10-3，tag payment-admin；base '/api/admin'）——
+  // 协议元数据（spec §18-2）：只回字段名与标志、**永不回任何配置值**（连 `***` 也不回）；
+  // `fields` 的顺序即表单顺序（服务端不得重排，前端也不排序）。空注册表回 200 + 空表。
+  listPaymentProviders = () => this.request<components['schemas']['ProviderMetadataList']>('/payment/providers')
   // key 是网关后台填过的回调 URL 段：创建后只读；DELETE **恒为软停**（enabled=false，
   // 行永不删除，幂等 200）——复用同名 key 会让老回调打到新账户。
   listPaymentAccounts = () => this.request<components['schemas']['PaymentAccount'][]>('/payment/accounts')

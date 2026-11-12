@@ -329,7 +329,7 @@ func (p paymentMethodsProvider) Name() domain.ProviderName { return p.name }
 func (p paymentMethodsProvider) Capabilities() []string {
 	return []string{testPayTypeAlipay, testPayTypeWxpay}
 }
-func (p paymentMethodsProvider) SecretFields() []string { return nil }
+func (p paymentMethodsProvider) ConfigSchema() domain.ConfigSchema { return domain.ConfigSchema{} }
 func (p paymentMethodsProvider) ParseConfig([]byte) (domain.AccountConfig, error) {
 	return paymentMethodsCfg{provider: p.name}, nil
 }
@@ -369,14 +369,15 @@ func newPaymentMethodsSvc(t *testing.T, accounts []*domain.PaymentAccount, chann
 		seen[acct.Provider] = true
 		providers = append(providers, paymentMethodsProvider{name: acct.Provider})
 	}
+	registry, err := domain.NewProviderRegistry(providers)
+	require.NoError(t, err)
 	svc := &Service{
-		store:            store,
-		inv:              &invRecorder{},
-		settings:         snap,
-		paymentCfgs:      make(map[string]cachedPaymentCfg, len(providers)),
-		paymentProviders: make(map[domain.ProviderName]domain.PaymentProvider, len(providers)),
+		store:           store,
+		inv:             &invRecorder{},
+		settings:        snap,
+		paymentCfgs:     make(map[string]cachedPaymentCfg, len(providers)),
+		paymentRegistry: registry,
 	}
-	require.NoError(t, svc.registerPaymentProviders(providers))
 	return svc
 }
 

@@ -146,11 +146,13 @@ func newNotifyHandler(t *testing.T) (http.Handler, *auditStore) {
 			MerchantRef: notifyMerchantID, Enabled: true, Config: cfg, ConfigRevision: 1,
 		},
 	}}
+	registry, err := domain.NewProviderRegistry([]domain.PaymentProvider{epay.New(nil)})
+	require.NoError(t, err)
 	svc := service.New(service.Deps{
 		Store:            store,
 		EmailCodeStore:   emailCodeStub{},
 		SettingsSnapshot: settingssnap.New(nil, nil),
-		PaymentProviders: []domain.PaymentProvider{epay.New(nil)},
+		PaymentRegistry:  registry,
 	})
 	return Mount(New(svc, nil)), store
 }

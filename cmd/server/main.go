@@ -42,6 +42,7 @@ import (
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/notify"
+	"github.com/is7qin/c3api/internal/paymentregistry"
 	"github.com/is7qin/c3api/internal/pricing"
 	accountprobe "github.com/is7qin/c3api/internal/probe"
 	"github.com/is7qin/c3api/internal/protoconv"
@@ -53,7 +54,6 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/service"
-	"github.com/is7qin/c3api/internal/service/epay"
 	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/supplier"
@@ -476,16 +476,18 @@ func main() {
 		// 成功」在 ops 面不可见。
 		supplierViewLoader.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs { return supplierViewSnap.Obs(now) })
 	}
-	// 支付协议注册表（spec 支付网关 v2 §4）：注册表**只增不减**——下线协议也必须
-	// 保留实现与密钥以完成对账，故这里无条件构造（账户 enabled=false 只影响可售性，
-	// 不影响回调能否被验签）。协议实现**无状态**：凭据随账户 cfg 传入，改密钥/汇率
-	// 走管理面（config_revision++ → 缓存失效）即时生效；HTTP 客户端 10s 超时
-	// （查单是管理面同步动作，不能让上游挂死请求 goroutine）。
+	// 支付协议注册表（spec 支付网关 v2 §4，N53–N55）：清单**只增不减**——下线协议
+	// 也必须保留实现与公私钥才能对历史订单 sync、给迟到回调验签（账户 enabled=false
+	// 只影响可售性），故这里无条件构造。协议实现**无状态**：凭据在
+	// payment_accounts.config（每账户一份），改密钥/汇率走管理面账户编辑
+	// （config_revision++ → 配置缓存失效）即时生效——因此**不传 settings 快照**。
+	// HTTP 客户端 10s 超时：查单是管理面同步动作，不能让上游挂死请求 goroutine。
+	// 注册表装配错误（nil 元素/空名/重名）必须在启动期炸掉，不能把 nil 交给 service。
 	paymentHTTP := &http.Client{Timeout: 10 * time.Second}
-	// v2 协议实现**无状态**：凭据在 payment_accounts.config（每账户一份），协议
-	// 只在调用时吃 cfg。因此这里不再传 settings 快照——改密钥/汇率走管理面账户
-	// 编辑（config_revision++ → 配置缓存失效），立即生效。
-	paymentProviders := []domain.PaymentProvider{epay.New(paymentHTTP)}
+	paymentReg, err := paymentregistry.Registry(paymentHTTP)
+	if err != nil {
+		fatalf("payment registry: %v", err)
+	}
 	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Auth: auth, Log: log, EmailCodeStore: verification.New(rdb),
 		// codex 设备码登录：无服务端会话（发起返回凭据、完成时一次性轮询落库），
 		// 因此只需协议面装配，无 Redis 依赖。
@@ -509,7 +511,7 @@ func main() {
 		SupplierThawGranularity:         cfg.Supplier.ThawGranularity,
 		CompileNotify:                   sched.RequestCompile,
 		MailEnqueue:                     mailW.Enqueue,
-		PaymentProviders:                paymentProviders,
+		PaymentRegistry:                 paymentReg,
 		SettingsSnapshot:                settingsSnap})
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据

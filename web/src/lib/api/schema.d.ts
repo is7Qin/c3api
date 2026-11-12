@@ -687,6 +687,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/payment/providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 协议元数据（协议自述的配置形状；管理面表单据此驱动，前端不维护协议镜像）
+         * @description 实际 URL = `/api/admin/payment/providers`（本文件 paths **不带** /api/admin 前缀，
+         *     由服务器拼接；与其他管理面一致走 adminAuth）。
+         *
+         *     数据来自进程内注册表（**不查 DB**），故输出不随账户数量 / `enabled` / `config_error`
+         *     变化。空注册表 → `{"providers": []}`（**200**，不是 404）。
+         *
+         *     **只回字段名与标志，永不回任何配置值**——连掩码后的 `***` 也不回：账户级的值只出现在
+         *     `GET /payment/accounts` 的 `config` 里（那里按 `secret` 掩码）。`providers` 按 `name`
+         *     升序（序由注册表在构造期定死，端点**不得**再排序）。`config_schema.fields` 的顺序即表单
+         *     顺序 = 协议声明顺序（服务端不得重排）。`kind` 是**开集**（契约里只写 `string`，不写
+         *     enum）：未知 kind 由前端按 `secret` 感知降级（`secret:true` 一律给 password 控件），
+         *     协议新增 kind 不得让旧前端编译失败。
+         */
+        get: operations["GetPaymentProviders"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/payment/accounts": {
         parameters: {
             query?: never;
@@ -5263,7 +5294,7 @@ export interface components {
             enabled: boolean;
             /** @description 升序选路（0 = 主）；相同 priority 按 id 升序 */
             priority: number;
-            /** @description 协议专属凭据。**响应恒掩码**：`SecretFields()` 声明的字段一律为 `"***"`（绝不回显密钥） */
+            /** @description 协议专属凭据。**响应恒掩码**：`ConfigSchema` 里 `secret:true` 的字段一律为 `"***"`（绝不回显密钥） */
             config: {
                 [key: string]: unknown;
             };
@@ -5321,6 +5352,35 @@ export interface components {
             ok: boolean;
             /** @description 失败原因（已脱敏；ok=true 时不出现） */
             error?: string | null;
+        };
+        ProviderMetadataList: {
+            /** @description 全部注册协议（`name` 升序，序由注册表在构造期定死，端点不重排；空注册表 → `[]`） */
+            providers: components["schemas"]["ProviderMetadata"][];
+        };
+        ProviderMetadata: {
+            /** @description 协议标识（= 账户 provider 列 = 管理面协议下拉的取值） */
+            name: string;
+            /** @description 支持的 pay_type 静态能力（渠道 pay_type 下拉的取值来自这里） */
+            capabilities: string[];
+            config_schema: components["schemas"]["ProviderConfigSchema"];
+        };
+        ProviderConfigSchema: {
+            /** @description 表单字段；**顺序即表单顺序**（协议声明顺序，服务端不得重排） */
+            fields: components["schemas"]["ProviderConfigField"][];
+        };
+        ProviderConfigField: {
+            /** @description 账户 config（jsonb）里的**键名**——只有键名，永不回值 */
+            name: string;
+            /** @description 呈现提示（`text`/`password`/`multiline`/`url`；**开集**，故意不写 enum——未知 kind 由前端按 `secret` 降级） */
+            kind: string;
+            /** @description 秘密字段的**唯一**声明口：掩码、`***` 合并、读面回显都由它派生 */
+            secret: boolean;
+            /** @description 表单必填提示（权威校验始终是服务端 ParseConfig） */
+            required: boolean;
+            /** @description 可选英文兜底标签（纯展示：不是字段键、不参与校验、不参与 secret 判定）；空串 = 无 */
+            label: string;
+            /** @description 可选输入示例（前端 placeholder）；空串 = 无。**示例不是值** */
+            example: string;
         };
         CreateOrderRequest: {
             /** @description USD 金额字符串：`^\d{1,7}(\.\d{1,2})?$` 且 > 0（禁 float；"1e3"/"1.234"/空/非字符串 → 400） */
@@ -6910,6 +6970,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeactivateResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetPaymentProviders: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 全部注册协议（`name` 升序；空注册表 → `{"providers": []}`） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProviderMetadataList"];
                 };
             };
             default: components["responses"]["Error"];

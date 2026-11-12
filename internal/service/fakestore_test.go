@@ -3258,8 +3258,10 @@ func (t *fakeTx) MarkOrderPaid(ctx context.Context, id, codeID int64, tradeNo st
 
 // --- 支付账户 / 渠道（spec 支付网关 v2 §3-1/§3-2/§10-3）---
 //
-// A 批只做「能编译的最小替身」：账户/渠道语义（选路、SecretFields 掩码、
-// config_error、capabilities 校验、软停幂等）在 B 批随 service 一起补。此处一律
+// A 批只做「能编译的最小替身」：账户/渠道语义（选路、ConfigSchema 掩码、
+// config_error、capabilities 校验、软停幂等）由需要它们的用例各自在
+// `*Store` 包装里按需实现（见 payment_schema_mask_test.go 与
+// payment_unit_test.go 的 paymentMethodsChannelStore）。此处一律
 // 返回「不存在 / 空列表」——任何误触达的用例会**响亮失败**，而不是被一个宽容的
 // 假实现悄悄放过。
 //

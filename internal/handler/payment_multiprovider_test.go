@@ -268,10 +268,12 @@ func TestPaymentCreateOrderUsesResolvedSnapshot(t *testing.T) {
 		})
 		require.NoError(t, err)
 	}
+	registry, err := domain.NewProviderRegistry([]domain.PaymentProvider{epay.New(nil)})
+	require.NoError(t, err)
 	svc := service.New(service.Deps{
 		Store: race, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{},
 		Auth: &fakeKeys{}, EmailCodeStore: p.store, SettingsSnapshot: p.snap,
-		PaymentProviders: []domain.PaymentProvider{epay.New(nil)},
+		PaymentRegistry: registry,
 	})
 
 	// 建单直接打 service（P41 的判别点是选路快照与 BuildPayURL 的时序，
@@ -412,7 +414,7 @@ type countingConfig struct {
 }
 
 func (c *countingConfig) Provider() domain.ProviderName { return "counting_v1" }
-func (c *countingConfig) MerchantRef() string          { return c.ref }
+func (c *countingConfig) MerchantRef() string           { return c.ref }
 
 // countingProvider 计数型协议实现（P37 的判据是**调用次数**，不是返回值形状）。
 type countingProvider struct {
@@ -427,9 +429,9 @@ func newCountingProvider(name string) *countingProvider {
 	return &countingProvider{name: name, hits: make(map[string]int, 2)}
 }
 
-func (p *countingProvider) Name() domain.ProviderName   { return domain.ProviderName(p.name) }
-func (p *countingProvider) Capabilities() []string      { return []string{epay.PayTypeAlipay} }
-func (p *countingProvider) SecretFields() []string      { return nil }
+func (p *countingProvider) Name() domain.ProviderName         { return domain.ProviderName(p.name) }
+func (p *countingProvider) Capabilities() []string            { return []string{epay.PayTypeAlipay} }
+func (p *countingProvider) ConfigSchema() domain.ConfigSchema { return domain.ConfigSchema{} }
 func (p *countingProvider) ParseConfig(raw []byte) (domain.AccountConfig, error) {
 	var cfg struct {
 		MerchantRef string `json:"merchant_ref"`

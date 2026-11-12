@@ -15,7 +15,7 @@ import (
 // PaymentAccount 支付账户（spec 支付网关 v2 §3-1）：一行 = 一家上游的一个商户号。
 //
 // 「账户是数据」：新增一家上游 = 插一行，**零代码改动**——协议只回答怎么签/怎么验/
-// 怎么查，凭据形状与哪些字段是秘密由协议自述（`ParseConfig`/`SecretFields`）。
+// 怎么查，凭据形状与哪些字段是秘密由协议自述（`ParseConfig`/`ConfigSchema`）。
 //
 // 三条只读契约（DB 层只保住唯一性，语义校验在 service）：
 //   - `key` 是网关后台填过的回调 URL 段 + 订单快照，**永不复用**、不可改
@@ -45,7 +45,7 @@ func (PaymentAccount) Fields() []ent.Field {
 		field.Bool("enabled").Default(true),
 		// 升序选路（0 = 主）；同 priority 按 id 升序（P38）。
 		field.Int("priority").Default(0),
-		// 协议专属凭据：写入由 ParseConfig 校验，读出由 SecretFields 掩码。
+		// 协议专属凭据：写入由 ParseConfig 校验，读出的秘密字段由 ConfigSchema().SecretNames() 掩码。
 		// jsonb 而非 text：协议演进时旧行解析失败 → 该账户被跳过 + 列表
 		// config_error + 指标（不静默），无需列迁移。
 		field.JSON("config", json.RawMessage{}).

@@ -52,6 +52,26 @@ func (a *API) Router() http.Handler {
 	})
 }
 
+// GetPaymentProviders 协议元数据（§18-2 / §10-3）：只回**字段名与标志**，永不回任何
+// 配置值——连掩码后的 `***` 也不回（账户级的值只出现在 GetPaymentAccounts 的 config
+// 里，那里按 `secret` 掩码）。
+//
+// 顺序直接用 service 返回的顺序（= `ProviderRegistry.All()` 在构造期定死的 `name`
+// 升序），这里**不再排序**：多一处排序就是在"唯一事实来源"之外再造一条排序规则，
+// 注册表顺序与端点输出一旦分叉，测试与前端下拉都不再钉得住（N55/N63）。
+//
+// 该调用**无错误分支**：`ListPaymentProviders` 是全函数（不查 DB、不解析配置、
+// nil 注册表 ≡ 空表 → `{"providers":[]}` 200），所以这里没有 service 错误可映射；
+// 其余管理面方法仍走 writeErr/httpface.WriteServiceErr 的常规路径。
+func (a *API) GetPaymentProviders(w http.ResponseWriter, r *http.Request) {
+	views := a.svc.ListPaymentProviders()
+	out := ProviderMetadataList{Providers: make([]ProviderMetadata, 0, len(views))}
+	for i := range views {
+		out.Providers = append(out.Providers, toAPIProviderMetadata(&views[i]))
+	}
+	httpface.WriteJSON(w, http.StatusOK, out)
+}
+
 // GetPaymentAccounts 账户列表（含渠道 / config_revision / config_error / 掩码 config）。
 func (a *API) GetPaymentAccounts(w http.ResponseWriter, r *http.Request) {
 	views, err := a.svc.ListPaymentAccounts(r.Context())
@@ -235,6 +255,37 @@ func toAPIPaymentAccount(v *service.PaymentAccountView) PaymentAccount {
 		})
 	}
 	return out
+}
+
+// toAPIProviderMetadata 领域投影 → 契约（§18-2）。
+//
+// 三条"不许"都在这里：**不排序**（顺序就是协议声明顺序/注册表顺序）、**不补字段**
+// （fields 只来自协议自述的 schema）、**不查 DB**（元数据与账户行无关）。`kind` 原样
+// 透传字符串：未知值也透传——它只是呈现提示，降级判定在前端（`secret:true` 一律给
+// password 控件），服务端不认识就不猜（N43）。
+func toAPIProviderMetadata(v *service.PaymentProviderView) ProviderMetadata {
+	fields := make([]ProviderConfigField, 0, len(v.Schema.Fields))
+	for _, f := range v.Schema.Fields {
+		fields = append(fields, ProviderConfigField{
+			Name:     f.Name,
+			Kind:     string(f.Kind),
+			Secret:   f.Secret,
+			Required: f.Required,
+			Label:    f.Label,
+			Example:  f.Example,
+		})
+	}
+	caps := v.Capabilities
+	if caps == nil {
+		// null ≠ []：前端把 capabilities 当下拉数据源，"没有能力"必须是空数组，
+		// 否则 `caps.map(...)` 会在协议侧漏填时炸在渲染里。
+		caps = []string{}
+	}
+	return ProviderMetadata{
+		Name:         string(v.Name),
+		Capabilities: caps,
+		ConfigSchema: ProviderConfigSchema{Fields: fields},
+	}
 }
 
 // marshalConfig 契约里的 `map[string]interface{}` → 入库的原始 JSON。

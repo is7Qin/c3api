@@ -390,15 +390,28 @@ func TestProviderBuildPayURL(t *testing.T) {
 	}
 }
 
-// TestProviderCapabilitiesAndSecretFields §4/N23/N24：协议自述的能力与秘密字段
-// 是"新增上游零代码"的两根支柱——service 里不出现任何协议字段名。
-func TestProviderCapabilitiesAndSecretFields(t *testing.T) {
+// TestProviderCapabilitiesAndConfigSchema §4/N23/N35/N39：协议自述的能力与配置
+// 形状是"新增上游零代码"的两根支柱——service 里不出现任何协议字段名。
+//
+// 字段顺序是表单顺序（§18-2：服务端不得重排），秘密集合必须只有 private_key：
+// 掩码与 PUT 的 "***" 合并都从它派生，多标一个是密钥泄漏，少标一个是不可用。
+func TestProviderCapabilitiesAndConfigSchema(t *testing.T) {
 	provider := New(nil)
 	if got := provider.Capabilities(); len(got) != 2 || got[0] != PayTypeAlipay || got[1] != PayTypeWxpay {
 		t.Fatalf("Capabilities() = %v, want [alipay wxpay]", got)
 	}
-	if got := provider.SecretFields(); len(got) != 1 || got[0] != ConfigFieldPrivateKey {
-		t.Fatalf("SecretFields() = %v, want [private_key]", got)
+	schema := provider.ConfigSchema()
+	wantNames := []string{ConfigFieldBaseURL, ConfigFieldPID, ConfigFieldPrivateKey, ConfigFieldPublicKey}
+	if len(schema.Fields) != len(wantNames) {
+		t.Fatalf("ConfigSchema().Fields has %d fields, want %d: %v", len(schema.Fields), len(wantNames), schema.Fields)
+	}
+	for i, want := range wantNames {
+		if got := schema.Fields[i].Name; got != want {
+			t.Fatalf("ConfigSchema().Fields[%d].Name = %q, want %q (声明顺序即表单顺序)", i, got, want)
+		}
+	}
+	if got := schema.SecretNames(); len(got) != 1 || got[0] != ConfigFieldPrivateKey {
+		t.Fatalf("ConfigSchema().SecretNames() = %v, want [private_key]", got)
 	}
 	if provider.Name() != domain.ProviderEpayV2 {
 		t.Fatalf("Name() = %q", provider.Name())

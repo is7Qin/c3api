@@ -131,6 +131,9 @@ var allowedServiceMethods = []string{
 	"ListMyRedemptions",
 	"ListOrders",
 	"ListPaymentAccounts",
+	// ListPaymentProviders 是协议元数据的只读投影（§18-2：不查 DB、不回配置值），
+	// 与 ListPaymentAccounts 同属读面。
+	"ListPaymentProviders",
 	"ListPriceEntries",
 	"ListPriceVariants",
 	"ListProxies",

@@ -20,7 +20,7 @@ import (
 //	渠道 PaymentChannel（数据）  ：一行 = 该账户下可售卖的一种支付方式（含汇率/限额）。
 //
 // 由此得到的判据：新增一家上游 = 插一行数据，**零代码改动**——凭据形状与哪些字段
-// 是秘密由协议自述（ParseConfig / SecretFields），渠道能写哪些 pay_type 由
+// 是秘密由协议自述（ParseConfig / ConfigSchema），渠道能写哪些 pay_type 由
 // Capabilities 自述，service 里不出现任何协议字段名。
 
 // ProviderName 支付协议标识 = 注册表键（如 "epay_v2"）。
@@ -104,6 +104,50 @@ type NotifyEvent struct {
 	Raw          map[string]string
 }
 
+// ConfigFieldKind 配置字段的**呈现**提示（§4/N37）：只决定管理面用哪种输入控件，
+// 服务端不据此校验——校验权威始终是 ParseConfig。
+type ConfigFieldKind string
+
+const (
+	ConfigFieldText      ConfigFieldKind = "text"
+	ConfigFieldPassword  ConfigFieldKind = "password"
+	ConfigFieldMultiline ConfigFieldKind = "multiline"
+	ConfigFieldURL       ConfigFieldKind = "url"
+)
+
+// ConfigField 账户 config（jsonb）里的一个键的形状（§4/§18-2）。
+//
+// 为什么形状也要协议自述：配置表单若靠管理面抄一份镜像，协议加字段时表单不出
+// 输入框（严格 JSON 下必然 400），协议把字段改判为秘密时前端仍以明文回显（密钥
+// 进浏览器历史）。因此 Name/Kind/Secret 只能来自协议实现本身。
+type ConfigField struct {
+	Name     string          // config(jsonb) 的键
+	Kind     ConfigFieldKind // 仅呈现提示
+	Secret   bool            // 掩码 + "***" 合并的唯一声明口（N35）
+	Required bool            // 表单必填提示；权威校验在 ParseConfig
+	Label    string          // 可选：英文兜底标签（纯展示，不参与校验）
+	Example  string          // 可选：输入示例
+}
+
+// ConfigSchema 一份配置的形状：Fields 顺序即表单顺序（服务端不得重排）。
+type ConfigSchema struct {
+	Fields []ConfigField
+}
+
+// SecretNames 由 schema 派生出的秘密字段名（按声明顺序，不排序）。
+//
+// **不是第二份声明**：掩码与 PUT 的 "***" 合并都从这里取，避免"schema 说秘密、
+// 掩码表说不是"的必然漂移（N35）。
+func (s ConfigSchema) SecretNames() []string {
+	var out []string
+	for _, f := range s.Fields {
+		if f.Secret {
+			out = append(out, f.Name)
+		}
+	}
+	return out
+}
+
 // PaymentProvider 支付协议面（spec v2 §4）：service 只见本接口，签名算法、参数名、
 // URL 形状全部在实现侧；协议实现**无状态**（不持有配置）。
 type PaymentProvider interface {
@@ -112,9 +156,9 @@ type PaymentProvider interface {
 	// Capabilities 支持的 pay_type 静态能力（不含汇率/限额）：渠道写入时
 	// 必须 ∈ 本列表，否则 400。
 	Capabilities() []string
-	// SecretFields config 里哪些字段是秘密：通用掩码与 PUT 的 "***" 合并按
-	// 它做 → service 里不出现任何协议字段名。
-	SecretFields() []string
+	// ConfigSchema config 有哪些键、哪个是秘密：掩码、PUT 的 "***" 合并与
+	// 管理面表单都从它派生 → service 里不出现任何协议字段名。
+	ConfigSchema() ConfigSchema
 	// ParseConfig 解析并校验账户凭据（写入与读缓存共用）；同时给出
 	// MerchantRef（唯一索引键）。失败 → 管理面 config_error + 选路跳过 + 指标。
 	ParseConfig(raw []byte) (AccountConfig, error)
@@ -146,7 +190,7 @@ type ChannelConfig struct {
 //
 // Key / Provider / MerchantRef 创建后**只读**（换协议或换商户 = 新建账户 + 停用
 // 旧账户）；Config 是协议专属凭据（jsonb），写入由 ParseConfig 校验，读出由
-// SecretFields 掩码。
+// ConfigSchema().SecretNames() 掩码。
 type PaymentAccount struct {
 	ID             int64
 	Key            string       // `^[a-z][a-z0-9_]{2,31}$`；URL 段 + 订单快照；永不复用

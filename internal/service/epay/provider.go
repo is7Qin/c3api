@@ -44,8 +44,8 @@ const (
 )
 
 // ConfigField* 账户 config（jsonb）里的字段名。它们只在本包出现——service
-// 只认 `SecretFields()` 返回的字符串，不认具体协议字段（"零代码"在掩码路径上
-// 也成立）。
+// 只认 `ConfigSchema().SecretNames()` 返回的字符串，不认具体协议字段（"零代码"
+// 在掩码路径上也成立）。
 const (
 	ConfigFieldBaseURL    = "base_url"
 	ConfigFieldPID        = "pid"
@@ -123,8 +123,13 @@ var (
 	_ domain.OrderQuerier    = (*Provider)(nil)
 )
 
-// New 构造协议实现：hc nil → 10s 超时默认客户端（生产 main 显式注入同参数
-// 客户端）。**不再接受 settings**——凭据随 cfg 传入（spec §15-5）。
+// New 构造协议实现。
+//
+// **hc 可为 nil（内部兜默认客户端）——这是契约，不是巧合**（spec v2 §4 / N67）：
+// provider 表驱动契约测试（P51）与装配面门禁派生协议名，一律用
+// `paymentregistry.Registry(nil)` 构造本实现，故任何协议构造函数都必须容忍
+// nil http client；生产 `main` 显式传带 10s 超时的客户端。
+// **不接受 settings**——凭据随 cfg 传入（spec §15-5）。
 func New(hc *http.Client) *Provider {
 	return &Provider{client: NewClient(hc), now: time.Now}
 }
@@ -138,10 +143,21 @@ func (p *Provider) Capabilities() []string {
 	return []string{PayTypeAlipay, PayTypeWxpay}
 }
 
-// SecretFields config 里哪些字段是秘密（读面掩码 + PUT 的 `"***"` 合并）：
-// service 按这张表做**通用**处理，不出现任何协议字段名（N24）。
-func (p *Provider) SecretFields() []string {
-	return []string{ConfigFieldPrivateKey}
+// ConfigSchema 本协议的配置形状（§4/§18-2）：4 个键、顺序即表单顺序，**只有
+// private_key 是秘密**。掩码、PUT 的 `"***"` 合并与管理面表单都从这里派生，
+// service/前端因此不出现任何协议字段名（N24/N35）。
+//
+// Kind/Required/Example 只是呈现提示，服务端不据此校验——校验权威只有 ParseConfig。
+func (p *Provider) ConfigSchema() domain.ConfigSchema {
+	return domain.ConfigSchema{Fields: []domain.ConfigField{
+		{Name: ConfigFieldBaseURL, Kind: domain.ConfigFieldURL, Required: true,
+			Example: "https://pay.example.com"},
+		{Name: ConfigFieldPID, Kind: domain.ConfigFieldText, Required: true, Example: "1001"},
+		{Name: ConfigFieldPrivateKey, Kind: domain.ConfigFieldPassword, Secret: true, Required: true,
+			Example: "-----BEGIN PRIVATE KEY-----"},
+		{Name: ConfigFieldPublicKey, Kind: domain.ConfigFieldMultiline, Required: true,
+			Example: "-----BEGIN PUBLIC KEY-----"},
+	}}
 }
 
 // ParseConfig 解析并校验账户凭据（创建/更新写面与管理面列表共用）。

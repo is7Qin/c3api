@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// 管理面支付账户页（spec 支付网关 v2 §11 / §10-3）：账户列表 + 新建/编辑抽屉 +
+// 管理面支付账户页（spec 支付网关 v2 §11 / §10-3 / §18）：账户列表 + 新建/编辑抽屉 +
 // 渠道子表。这是「v2 把凭据从 settings 搬进数据行」之后的唯一配置入口：
 //
 //   · **账户是数据**：key / provider / merchant_ref 创建后只读（key 是网关后台填过的
@@ -11,15 +11,31 @@
 //     "软停用"，不是"删除"。
 //   · **密钥不回显**：响应里 secret 字段恒为 `***`；没改就原样回传 `***`（服务端视为
 //     保持原值），改了才发新值。
-//   · **渠道按 pay_type upsert**：同一账户下多渠道互不覆盖；单渠道可单独删。
-import { useMemo, useState } from 'react'
+//   · **协议元数据是唯一来源（§18）**：协议下拉 = `GET /payment/providers` 的
+//     `providers[].name`，渠道 pay_type 下拉 = 选中协议的 `capabilities`，配置表单按
+//     `config_schema.fields` 动态渲染。本文件**不保留**任何本地协议字段表：镜像的代价
+//     不是多写几行，而是必然漂移（协议加字段 → 表单少一个框 → 严格 JSON 下必然 400；
+//     字段改判为秘密 → 前端仍用明文框 → 密钥进浏览器历史）。P50 是这条的门禁。
+//   · **三态门禁（N49 / P52）**：loading / failed 时配置表单不可打开、不可提交；
+//     决策全部来自 lib/payment-form.ts 的 resolveFormState——组件里不出现第二套推导。
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AlertTriangle, CreditCard, Plus, RefreshCw, Save, Trash2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiError } from '@/lib/api/client'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import {
+  controlFor,
+  fieldLabel,
+  metaStateOf,
+  providerOf,
+  resolveFormState,
+  warnUnknownKinds,
+  type MetaState,
+  type PaymentProviderInfo,
+} from '@/lib/payment-form'
+import { Alert, AlertAction, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
@@ -55,32 +71,6 @@ const MICRO = 1_000_000
 // 权威判定仍在服务端（不在白名单 → 渠道不可售）。
 const CURRENCIES = ['CNY', 'USD', 'EUR', 'GBP', 'HKD', 'AUD', 'CAD', 'SGD', 'THB', 'MYR'] as const
 
-// 密钥字段的掩码：服务端响应恒为它；提交时原值回传 = "保持不变"（§10-3）。
-const MASK = '***'
-
-// 协议目录 = 前端镜像。契约面（PaymentAccount）不回传 capabilities，也没有"协议元数据"
-// 端点，故 epay_v2 的 config 字段与 capabilities 只能在这里留一份副本：新增协议时同步
-// 此表（服务端仍是权威：pay_type ∉ capabilities → 400，config 非法 → 400）。
-type ProviderField = { name: string; secret: boolean; multiline?: boolean; placeholder?: string }
-type ProviderSpec = { fields: readonly ProviderField[]; capabilities: readonly string[] }
-
-const PROVIDERS: Record<string, ProviderSpec> = {
-  epay_v2: {
-    // epay.ConfigField*：base_url / pid / private_key / public_key。只有 private_key 在
-    // SecretFields() 里（public_key 是平台公钥，不是秘密）。
-    fields: [
-      { name: 'base_url', secret: false, placeholder: 'https://pay.example.com' },
-      { name: 'pid', secret: false, placeholder: '1001' },
-      { name: 'private_key', secret: true, placeholder: '-----BEGIN PRIVATE KEY-----' },
-      { name: 'public_key', secret: false, multiline: true, placeholder: '-----BEGIN PUBLIC KEY-----' },
-    ],
-    // epay.Provider.Capabilities()：渠道 pay_type 的唯一取值域。
-    capabilities: ['alipay', 'wxpay'],
-  },
-}
-
-const providerSpec = (provider: string): ProviderSpec | undefined => PROVIDERS[provider]
-
 // rateText 整数除法渲染 4 位小数（7200000 → "7.2000"）：不经 float 往返，
 // 与 settings 页的 rate_micro 显示同一口径。4 位小数是本页的编辑粒度。
 const rateText = (micro: number) => {
@@ -110,19 +100,6 @@ function channelIssue(c: { rate: string; min: string; max: string }): string | n
 // errMsg 统一取服务端 error 文案（401 由全局 handleAuthError 处理，页面不再弹）。
 const errMsg = (e: unknown) => (e instanceof ApiError ? e.message : (e as Error)?.message)
 
-// initialConfig 表单初值：config 里 secret 字段已由服务端掩码成 `***`，原样放进输入框
-// （type=password 只显示点），不改则原值提交 = 保持原值。
-function initialConfig(account: PaymentAccount | null): Record<string, string> {
-  const spec = account ? providerSpec(account.provider) : undefined
-  const raw = (account?.config ?? {}) as Record<string, unknown>
-  const out: Record<string, string> = {}
-  for (const f of spec?.fields ?? []) {
-    const v = raw[f.name]
-    out[f.name] = typeof v === 'string' ? v : ''
-  }
-  return out
-}
-
 export default function PaymentAccounts() {
   const { t } = useTranslation()
   const qc = useQueryClient()
@@ -130,6 +107,27 @@ export default function PaymentAccounts() {
   const accountsQ = useQuery({ queryKey: ['payment-accounts'], queryFn: () => api.listPaymentAccounts() })
   // useMemo 化：`data ?? []` 每次渲染都是新数组，直接进依赖会让下面的 useMemo 白算。
   const rows = useMemo(() => accountsQ.data ?? [], [accountsQ.data])
+
+  // 协议元数据（§18-2）：数据源是进程内注册表，不查 DB、不随账户数量变化，故缓存久一点。
+  const providersQ = useQuery({
+    queryKey: ['payment-providers'],
+    queryFn: () => api.listPaymentProviders(),
+    staleTime: 5 * 60_000,
+    // 焦点重取失败会把表单误降级成 failed（元数据本来就不随账户变化）：故障恢复走重试按钮。
+    refetchOnWindowFocus: false,
+  })
+  const metaState = metaStateOf(providersQ)
+  const providers = useMemo<readonly PaymentProviderInfo[]>(() => providersQ.data?.providers ?? [], [providersQ.data])
+  // 新建账户要选协议、要按协议渲染凭据表单 → 元数据没起来（或注册表为空）时入口禁用：
+  // 没有 providers[] 就没有协议可选，硬开抽屉只能让人对着一个空表单按保存。
+  // 编辑入口只在 loading 时禁用：failed 态列表照常可读，抽屉里只关掉协议下拉与配置表单。
+  const canCreate = metaState === 'ready' && providers.length > 0
+  const createHint =
+    metaState === 'failed'
+      ? t('paymentAccounts.metaFailed')
+      : metaState === 'ready' && providers.length === 0
+        ? t('paymentAccounts.unknownProvider')
+        : undefined
 
   // drawer 主体：'new' = 新建；string = 按 key 编辑（对象从列表快照派生，渠道保存后自动刷新）
   const [editing, setEditing] = useState<'new' | string | null>(null)
@@ -162,11 +160,33 @@ export default function PaymentAccounts() {
           <Button variant="ghost" onClick={() => accountsQ.refetch()} disabled={accountsQ.isFetching}>
             <RefreshCw className={cn(accountsQ.isFetching && 'animate-spin')} /> {t('paymentAccounts.refresh')}
           </Button>
-          <Button onClick={() => setEditing('new')}>
+          <Button
+            onClick={() => setEditing('new')}
+            disabled={!canCreate}
+            title={createHint}
+          >
             <Plus /> {t('paymentAccounts.new')}
           </Button>
         </div>
       </div>
+
+      {/* 元数据故障：列表照常、只降级表单（§18-3）。给出错误 + 重试，绝不回退到本地镜像。 */}
+      {metaState === 'failed' && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertDescription>{t('paymentAccounts.metaFailed')}</AlertDescription>
+          <AlertAction>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => providersQ.refetch()}
+              disabled={providersQ.isFetching}
+            >
+              <RefreshCw className={cn(providersQ.isFetching && 'animate-spin')} /> {t('paymentAccounts.refresh')}
+            </Button>
+          </AlertAction>
+        </Alert>
+      )}
 
       {accountsQ.isError ? (
         <p className="text-sm text-destructive">{t('common.loadFailed', { message: errMsg(accountsQ.error) })}</p>
@@ -238,7 +258,12 @@ export default function PaymentAccounts() {
                   </TableCell>
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setEditing(a.key)}>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditing(a.key)}
+                        disabled={metaState === 'loading'}
+                      >
                         {t('paymentAccounts.edit')}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => setDeleting(a)}>
@@ -261,6 +286,8 @@ export default function PaymentAccounts() {
               key={editingAccount?.key ?? 'new'}
               account={editingAccount}
               isNew={editing === 'new'}
+              metaState={metaState}
+              providers={providers}
               onClose={() => setEditing(null)}
               onCreated={key => setEditing(key)}
             />
@@ -306,11 +333,15 @@ export default function PaymentAccounts() {
 function AccountDrawer({
   account,
   isNew,
+  metaState,
+  providers,
   onClose,
   onCreated,
 }: {
   account: PaymentAccount | null
   isNew: boolean
+  metaState: MetaState
+  providers: readonly PaymentProviderInfo[]
   onClose: () => void
   onCreated: (key: string) => void
 }) {
@@ -319,21 +350,49 @@ function AccountDrawer({
 
   // —— 账户字段（编辑态初值来自列表快照；抽屉按 key 重挂，故初值即状态）——
   const [key, setKey] = useState(account?.key ?? '')
-  const [provider, setProvider] = useState(account?.provider ?? Object.keys(PROVIDERS)[0])
+  // 新建时默认选元数据里的第一个协议（服务端已按 name 升序，前端不再排序）。
+  const [provider, setProvider] = useState(account?.provider ?? providers[0]?.name ?? '')
   const [displayName, setDisplayName] = useState(account?.display_name ?? '')
   const [priority, setPriority] = useState(String(account?.priority ?? 0))
   const [enabled, setEnabled] = useState(account?.enabled ?? true)
-  const [config, setConfig] = useState<Record<string, string>>(() => initialConfig(account))
   const [formErr, setFormErr] = useState<string | null>(null)
 
-  const spec = providerSpec(provider)
+  // 协议名：新建取下拉，编辑取账户（创建后只读）。渠道 pay_type 与配置字段都从它派生。
+  const providerName = isNew ? provider : (account?.provider ?? '')
+  const meta = providerOf(providers, providerName)
+  // schema 的**顺序即表单顺序**（§18-2：服务端不重排，前端也不许 sort）。
+  const schema = useMemo(() => meta?.config_schema?.fields ?? [], [meta])
+  const capabilities = useMemo(() => meta?.capabilities ?? [], [meta])
+
+  // 三态决策（P52）在这里一次算完；下面所有"能不能打开 / 能不能提交"都只读 form.*。
+  const form = useMemo(() => resolveFormState(metaState, account, schema), [metaState, account, schema])
+
+  // 初值**只**来自 resolveFormState：绝不在 fields 还没到时自己拼一份"每个键都是空串"的
+  // config——那会让每个字段都算改过，一次保存把密钥写成空串（N49，空串 ≠ `***`）。
+  const [config, setConfig] = useState<Record<string, string>>(() => form.config)
+  const fieldNames = form.fields.map(f => f.name).join('\u0000')
+  // 字段集合变化（元数据从失败恢复、或换协议）→ 旧草稿已无意义，用服务端初值重建。
+  // 依赖只能是 fieldNames：form.config 每次都是新对象，进依赖会让用户输入每次渲染被清掉。
+  useEffect(() => {
+    setConfig(form.config)
+  }, [fieldNames])
+
+  // 未知 kind 的 secret 感知降级必须可观测（§18-7）：warning 含 provider 名与 kind。
+  useEffect(() => {
+    warnUnknownKinds(providerName, form.fields)
+  }, [providerName, schema])
+
   // 初始 config（secret 已掩码）：只有**改过**的字段才需要提交——全部没改 = 不发 config
   // （否则每次点保存都会 config_revision+1 并失效配置缓存）。
-  const baseline = useMemo(() => initialConfig(account), [account])
   const configDirty = useMemo(
-    () => Object.keys(config).some(k => (config[k] ?? '') !== (baseline[k] ?? '')),
-    [config, baseline],
+    () => Object.keys(config).some(k => (config[k] ?? '') !== (form.config[k] ?? '')),
+    [config, form.config],
   )
+
+  // 保存可用性：配置可提交（ready）**或**这次根本没碰配置（只改展示名/优先级/启停）。
+  // failed 态因此仍能改账户的展示字段——"只禁用协议下拉与配置表单"（§18-3）。
+  // 新建必须等元数据齐（要选协议、要按 schema 填凭据）。
+  const canSave = isNew ? form.submittable && providerName !== '' : form.submittable || !configDirty
 
   const applyView = (view: PaymentAccount) => {
     qc.setQueryData<PaymentAccount[]>(['payment-accounts'], prev => {
@@ -352,7 +411,7 @@ function AccountDrawer({
       if (isNew) {
         return api.createPaymentAccount({
           key: key.trim(),
-          provider,
+          provider: providerName,
           display_name: displayName,
           priority: Number(priority),
           enabled,
@@ -360,18 +419,19 @@ function AccountDrawer({
         })
       }
       // 部分更新：只发改动过的字段；config 未改就整个省掉（密钥 `***` 回传同理）。
+      // 配置不可提交（loading/failed）时同样省掉——绝不能把空表当成"用户清空"。
       return api.updatePaymentAccount(account?.key ?? '', {
         display_name: displayName,
         priority: Number(priority),
         enabled,
-        ...(configDirty ? { config } : {}),
+        ...(form.submittable && configDirty ? { config } : {}),
       })
     },
     onSuccess: view => {
       applyView(view)
       // 保存后把凭据表单回落到服务端**掩码视图**：密钥重新变回 `***`，明文不留在
       // 输入框里（下一次保存若没改就直接回传 `***` = 保持原值）。
-      if (!isNew) setConfig(initialConfig(view))
+      if (!isNew) setConfig(resolveFormState('ready', view, schema).config)
       toast.add({
         title: isNew ? t('paymentAccounts.created') : t('paymentAccounts.saved'),
         type: 'success',
@@ -384,10 +444,21 @@ function AccountDrawer({
 
   const submit = () => {
     setFormErr(null)
+    if (!canSave) return
     if (isNew) {
       // 与服务端 pattern 同源（key 是回调 URL 段：小写字母开头，3–32 位）
       if (!/^[a-z][a-z0-9_]{2,31}$/.test(key.trim())) return setFormErr(t('paymentAccounts.keyInvalid'))
-      if (!spec) return setFormErr(t('paymentAccounts.unknownProvider'))
+      // 协议必须来自元数据（未注册/元数据不可用 → 没有可提交的字段表）
+      if (!meta) return setFormErr(t('paymentAccounts.unknownProvider'))
+    }
+    // 必填只是前端提示：权威仍以服务端 400 为准（§18-3）。只在真的会提交 config 时拦。
+    if (form.submittable && (isNew || configDirty)) {
+      const missing = form.fields
+        .filter(f => f.required === true && (config[f.name] ?? '').trim() === '')
+        .map(f => f.name)
+      if (missing.length > 0) {
+        return setFormErr(t('paymentAccounts.configRequired', { fields: missing.join(', ') }))
+      }
     }
     if (!/^\d+$/.test(priority.trim())) return setFormErr(t('paymentAccounts.priorityInvalid'))
     save.mutate()
@@ -424,22 +495,27 @@ function AccountDrawer({
           <div className="space-y-1.5">
             <Label>{t('paymentAccounts.providerLabel')}</Label>
             {isNew ? (
+              // 选项 = 元数据 providers[].name（§18-3）；元数据不可用时表单不可打开，故禁用。
               <Select
-                items={Object.fromEntries(Object.keys(PROVIDERS).map(p => [p, p]))}
+                items={Object.fromEntries(providers.map(p => [p.name, p.name]))}
                 value={provider}
                 onValueChange={setProvider}
               >
-                <SelectTrigger className="w-full" aria-label={t('paymentAccounts.providerLabel')}>
+                <SelectTrigger
+                  className="w-full"
+                  aria-label={t('paymentAccounts.providerLabel')}
+                  disabled={!form.openable}
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {Object.keys(PROVIDERS).map(p => (
-                    <SelectItem key={p} value={p} label={p}>{p}</SelectItem>
+                  {providers.map(p => (
+                    <SelectItem key={p.name} value={p.name} label={p.name}>{p.name}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             ) : (
-              <Input value={provider} readOnly disabled />
+              <Input value={providerName} readOnly disabled />
             )}
             <p className="text-xs text-muted-foreground">{t('paymentAccounts.providerHint')}</p>
           </div>
@@ -473,67 +549,94 @@ function AccountDrawer({
           </div>
         </div>
 
-        {/* —— 协议凭据（动态表单；secret 字段 password + 掩码回显）—— */}
+        {/* —— 协议凭据（按 config_schema.fields 动态渲染；secret 字段 password + 掩码回显）—— */}
         <div className="space-y-2">
           <p className="text-sm font-medium">{t('paymentAccounts.configSection')}</p>
-          {spec ? (
+          {form.openable ? (
             <>
-              {spec.fields.map(f => (
-                <div key={f.name} className="space-y-1.5">
-                  <Label htmlFor={`pay-account-cfg-${f.name}`}>
-                    {t(`paymentAccounts.field.${f.name}` as DynamicKey)}
-                    <code className="ml-2 font-mono text-xs text-muted-foreground">{f.name}</code>
-                  </Label>
-                  {/* secret 字段一律 type=password（§11）：掩码回显 ***，不改就原样回传。
-                      非 secret 的长文本（PEM 公钥）用 Textarea 方便校对。 */}
-                  {f.secret ? (
-                    <Input
-                      id={`pay-account-cfg-${f.name}`}
-                      type="password"
-                      className="font-mono"
-                      value={config[f.name] ?? ''}
-                      onChange={e => setConfig(prev => ({ ...prev, [f.name]: e.target.value }))}
-                      placeholder={isNew ? f.placeholder : MASK}
-                      spellCheck={false}
-                      autoComplete="new-password"
-                    />
-                  ) : f.multiline ? (
-                    <Textarea
-                      id={`pay-account-cfg-${f.name}`}
-                      className="min-h-24 font-mono text-xs"
-                      value={config[f.name] ?? ''}
-                      onChange={e => setConfig(prev => ({ ...prev, [f.name]: e.target.value }))}
-                      placeholder={f.placeholder}
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
-                  ) : (
-                    <Input
-                      id={`pay-account-cfg-${f.name}`}
-                      className="font-mono"
-                      value={config[f.name] ?? ''}
-                      onChange={e => setConfig(prev => ({ ...prev, [f.name]: e.target.value }))}
-                      placeholder={f.placeholder}
-                      spellCheck={false}
-                      autoComplete="off"
-                    />
-                  )}
-                </div>
-              ))}
+              {form.fields.map(f => {
+                const id = `pay-account-cfg-${f.name}`
+                const control = controlFor(f)
+                const value = config[f.name] ?? ''
+                const label = fieldLabel(f, k => t(k as DynamicKey))
+                const placeholder = f.example ?? ''
+                const required = f.required === true
+                const onChange = (v: string) => setConfig(prev => ({ ...prev, [f.name]: v }))
+                return (
+                  <div key={f.name} className="space-y-1.5">
+                    <Label htmlFor={id}>
+                      {label}
+                      {required && <span className="ml-1 text-destructive" aria-hidden="true">*</span>}
+                      {label !== f.name && (
+                        <code className="ml-2 font-mono text-xs text-muted-foreground">{f.name}</code>
+                      )}
+                    </Label>
+                    {/* secret 字段一律 password（§11 / §18-2）：掩码回显 ***，不改就原样回传。
+                        未知 kind 的降级已在 controlFor 里做过 secret 感知判定。 */}
+                    {control === 'password' ? (
+                      <Input
+                        id={id}
+                        type="password"
+                        className="font-mono"
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        spellCheck={false}
+                        autoComplete="new-password"
+                        aria-required={required || undefined}
+                      />
+                    ) : control === 'multiline' ? (
+                      <Textarea
+                        id={id}
+                        className="min-h-24 font-mono text-xs"
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        spellCheck={false}
+                        autoComplete="off"
+                        aria-required={required || undefined}
+                      />
+                    ) : (
+                      <Input
+                        id={id}
+                        className="font-mono"
+                        value={value}
+                        onChange={e => onChange(e.target.value)}
+                        placeholder={placeholder}
+                        spellCheck={false}
+                        autoComplete="off"
+                        aria-required={required || undefined}
+                      />
+                    )}
+                  </div>
+                )
+              })}
               <p className="text-xs text-muted-foreground">{t('paymentAccounts.configSecretHint')}</p>
             </>
-          ) : (
-            <Alert>
-              <AlertDescription>{t('paymentAccounts.unknownProvider')}</AlertDescription>
+          ) : metaState === 'failed' ? (
+            <Alert variant="destructive">
+              <AlertDescription>{t('paymentAccounts.metaFailed')}</AlertDescription>
             </Alert>
+          ) : (
+            // loading：不画任何输入框（画了就是"可提交的空配置"的入口）。
+            <Skeleton className="h-16" />
           )}
         </div>
 
         {formErr && <p className="text-sm text-destructive">{formErr}</p>}
         {save.isError && <p className="text-sm text-destructive">{errMsg(save.error)}</p>}
 
-        {/* —— 渠道子表（仅编辑态：新建账户还没有可挂渠道的行）—— */}
-        {!isNew && account && <ChannelSection account={account} onView={applyView} />}
+        {/* —— 渠道子表（仅编辑态：新建账户还没有可挂渠道的行）——
+            渠道子表**不受**元数据缺失影响（§18-3 / N50）：渠道 enabled 是该账户"能不能卖"
+            的唯一开关，故障期必须留着停用/删除这条生路。 */}
+        {!isNew && account && (
+          <ChannelSection
+            account={account}
+            capabilities={capabilities}
+            metaState={metaState}
+            onView={applyView}
+          />
+        )}
         {isNew && (
           <Alert>
             <AlertDescription>{t('paymentAccounts.createFirstHint')}</AlertDescription>
@@ -545,7 +648,7 @@ function AccountDrawer({
         <Button variant="outline" onClick={onClose} disabled={save.isPending}>
           {t('common.close')}
         </Button>
-        <Button onClick={submit} disabled={save.isPending}>
+        <Button onClick={submit} disabled={save.isPending || !canSave}>
           <Save /> {save.isPending ? t('paymentAccounts.saving') : t('paymentAccounts.save')}
         </Button>
       </DialogFooter>
@@ -567,15 +670,20 @@ type ChannelDraft = {
 // ChannelSection 渠道子表 + 行内编辑器（按 pay_type upsert / 单独删）。
 function ChannelSection({
   account,
+  capabilities,
+  metaState,
   onView,
 }: {
   account: PaymentAccount
+  capabilities: readonly string[]
+  metaState: MetaState
   onView: (view: PaymentAccount) => void
 }) {
   const { t } = useTranslation()
   const qc = useQueryClient()
-  const spec = providerSpec(account.provider)
-  const capabilities = spec?.capabilities ?? []
+  // "新增渠道"需要 capabilities（§18-3）：元数据没就绪就没有取值域 → 隐藏按钮并给原因；
+  // 已有行的启用/停用/删除全部照旧。
+  const canAdd = metaState === 'ready' && capabilities.length > 0
 
   // 新建渠道的默认值：优先挑一个"还没被该账户占用"的 pay_type
   const startNewDraft = (): ChannelDraft => {
@@ -633,11 +741,13 @@ function ChannelSection({
           <p className="text-sm font-medium">{t('paymentAccounts.channelSection')}</p>
           <p className="text-xs text-muted-foreground">{t('paymentAccounts.channelHint')}</p>
         </div>
-        {!draft && capabilities.length > 0 && (
+        {!draft && (canAdd ? (
           <Button variant="outline" size="sm" onClick={() => { setDraft(startNewDraft()); setRowErr(null) }}>
             <Plus /> {t('paymentAccounts.channelNew')}
           </Button>
-        )}
+        ) : (
+          <p className="text-xs text-muted-foreground">{t('paymentAccounts.channelNewUnavailable')}</p>
+        ))}
       </div>
 
       {account.channels.length === 0 ? (
@@ -730,6 +840,7 @@ function ChannelSection({
                   </SelectContent>
                 </Select>
               ) : (
+                // 既有渠道的 pay_type 是寻址键：只读展示（元数据缺失时也不许改）。
                 <Input value={draft.payType} readOnly disabled className="font-mono" />
               )}
               <p className="text-xs text-muted-foreground">{t('paymentAccounts.channelPayTypeHint')}</p>

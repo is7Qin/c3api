@@ -495,11 +495,11 @@ type Service struct {
 	// supplierViewReload 财务视图装载面（账号归属/启用写成功后本地 Reload；
 	// §4.6.3 发布屏障）。nil = 功能关闭/未装配（见 Deps.SupplierViewReload）。
 	supplierViewReload SupplierViewReloader
-	// paymentProviders 支付协议注册表（spec 支付网关 v2 §4）：注册表**只增不减**
-	// （下线协议也必须保留实现与私钥/公钥以完成对账）。重名/空名 → New fail-fast。
-	// 用 map 而非切片：回调/选路都是"按名字取协议"，线性遍历只会把 O(1) 变成 O(N)
-	// 并让"取到哪一份"变成装配顺序的函数。
-	paymentProviders map[domain.ProviderName]domain.PaymentProvider
+	// paymentRegistry 支付协议注册表（spec 支付网关 v2 §4，N53–N55）：元素非 nil /
+	// 名字唯一 / name 升序三条不变量由 domain.ProviderRegistry 在构造期定死。
+	// **协议清单只增不减**：下线协议也必须保留实现与公钥，才能对历史订单 sync、
+	// 给迟到回调验签。nil = 空注册表（读路径 Get/All 对 nil 接收者安全）。
+	paymentRegistry *domain.ProviderRegistry
 	// paymentCfgMu / paymentCfgs 账户配置缓存（N19）：键 = account_key，值带
 	// config_revision；写面 Update 成功即删键（revision 只是第二道保险）。
 	paymentCfgMu sync.RWMutex
@@ -650,36 +650,11 @@ type Deps struct {
 	// SupplierThawGranularity 解冻粒度（main 传 cfg.Supplier.ThawGranularity）：
 	// 管理面 PATCH share_bp/freeze_hours 跨字段上界校验（§6.4 A16⑤）。0 = 未装配。
 	SupplierThawGranularity time.Duration
-	// PaymentProviders 支付协议注册表（spec 支付网关 §4-0：只增不减）：main 按配置
-	// 装配（如 epay.New(httpClient)——v2 协议无状态，不再吃 settings）后传入。nil = 支付协议未装
-	// 配（methods 空列表、建单 503），与其它可选装配面同语义。
-	PaymentProviders []domain.PaymentProvider
-}
-
-// registerPaymentProviders 装配协议注册表（spec 支付网关 v2 §4）：nil 项跳过；
-// ProviderName 空/重复 → 错误，由 New panic（装配错误必须启动即炸，运行期不猜
-// "用哪个协议"）。
-//
-// v2 不再做 pay_type 跨协议查重：同一 pay_type 出现在多个**账户**正是多上游的
-// 形态，而 capabilities 是协议自述的静态能力（两个协议支持同一个 pay_type 也合法
-// ——选路由账户的 priority 决定）。
-func (s *Service) registerPaymentProviders(providers []domain.PaymentProvider) error {
-	table := make(map[domain.ProviderName]domain.PaymentProvider, len(providers))
-	for _, p := range providers {
-		if p == nil {
-			continue
-		}
-		name := p.Name()
-		if name == "" {
-			return errors.New("service: payment provider with empty name")
-		}
-		if _, dup := table[name]; dup {
-			return fmt.Errorf("service: duplicate payment provider %q", name)
-		}
-		table[name] = p
-	}
-	s.paymentProviders = table
-	return nil
+	// PaymentRegistry 支付协议注册表（spec 支付网关 v2 §4，N53–N55）：main 用
+	// paymentregistry.Registry 构造（协议清单的唯一事实来源）。**nil = 空注册表**
+	// （显式语义：无可用协议，methods 空列表、建单 503），与其它可选装配面同纪律。
+	// 注册表把 nil 元素/空名/重名与 name 升序一次定死，service 只做 Get/All。
+	PaymentRegistry *domain.ProviderRegistry
 }
 
 // New 构造 Service（全部依赖经单一 Deps 注入，S2 消重）。
@@ -702,16 +677,12 @@ func New(deps Deps) *Service {
 		codexLogin:                  deps.CodexLogin,
 		prober:                      deps.Prober,
 		probeGate:                   newProbeLimiter(),
+		paymentRegistry:             deps.PaymentRegistry,
 		retention:                   deps.Retention}
 	if deps.SettingsSnapshot != nil {
 		s.settings = deps.SettingsSnapshot
 	} else {
 		s.settings = settingssnap.New(deps.Store, deps.Log)
-	}
-	// 支付协议注册表（spec 支付网关 §4-0）：pay_type 全局唯一 + ProviderName 唯一，
-	// 任一重名/空名 → 启动 fail-fast（运行期不猜"用哪个协议"，M15 的根源）。
-	if err := s.registerPaymentProviders(deps.PaymentProviders); err != nil {
-		panic(err)
 	}
 	s.paymentCfgs = make(map[string]cachedPaymentCfg, 4)
 	// settings 快照构造时首载（注册表不覆盖 settings——NOTIFY 处理路径
