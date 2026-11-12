@@ -13,9 +13,14 @@ package paymentregistry
 //
 // 三方等号（缺一条就会留一条漂移路径）：
 //
-//	① TS 清单  ==  `epay.ConfigField*` 常量     —— 前端少/多一个字段即红（M43）
-//	② 常量      ==  `epay.Provider.ConfigSchema()` 的字段名 —— 常量自己不许漂
+//	① TS 清单  ==  全部注册协议字段名的**集合**   —— 前端少/多一个字段即红（M43）
+//	② 常量      ==  `epay.Provider.ConfigSchema()` 的字段名（**含顺序**）—— 常量自己不许漂
 //	③ TS 协议名 ==  `Registry(nil).All()` 的名字 —— 协议改名/新增未同步即红
+//
+// ① 刻意是**集合**而不是逐位相等：`payment-fields.ts` 是"哪些键属于本二进制"的
+// 白名单（供前端镜像门禁自检），渲染顺序只由各协议自己的 schema 决定。写成逐位
+// 相等会让"注册第二个协议"变成一次必然红的改动——那会把门禁的用途从"防漂移"变成
+// "禁止扩展"。② 保留顺序是因为它钉的是协议声明本身（§18-2：Fields 顺序 = 表单顺序）。
 //
 // 为什么解析失败要直接 fail（不再 skip）：门禁读不到被核对对象时静默变绿，等于
 // 没有门禁。列表为空同理（空清单能让 ① 恒真）。
@@ -24,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -41,18 +47,19 @@ func TestFrontendPaymentConfigFieldsMirror(t *testing.T) {
 	ts := readFrontendFields(t)
 
 	tsFields := tsStringArray(t, ts, "PAYMENT_CONFIG_FIELDS")
-	// ① TS ↔ epay 常量（顺序也取等号：它是表单字段的声明顺序，前端不得重排）。
+	// ① epay 的字段必须在清单里（少一项 = 表单少一个框 = 严格 JSON 下必然 400）。
 	wantFields := []string{
 		epay.ConfigFieldBaseURL,
 		epay.ConfigFieldPID,
 		epay.ConfigFieldPrivateKey,
 		epay.ConfigFieldPublicKey,
 	}
-	require.Equal(t, wantFields, tsFields,
-		"%s 的 PAYMENT_CONFIG_FIELDS 必须与 epay.ConfigField* 常量逐项相等（顺序即表单顺序）",
-		frontendFieldsRel)
+	for _, name := range wantFields {
+		require.Contains(t, tsFields, name,
+			"%s 的 PAYMENT_CONFIG_FIELDS 缺少 epay 字段 %q（M43）", frontendFieldsRel, name)
+	}
 
-	// ② 常量 ↔ 真实协议的 schema：常量不能自成一份真相。
+	// ② 常量 ↔ 真实协议的 schema（**含顺序**）：常量不能自成一份真相。
 	registry, err := Registry(nil)
 	require.NoError(t, err)
 	epayProvider, ok := registry.Get(domain.ProviderEpayV2)
@@ -63,9 +70,9 @@ func TestFrontendPaymentConfigFieldsMirror(t *testing.T) {
 		schemaNames = append(schemaNames, f.Name)
 	}
 	require.Equal(t, wantFields, schemaNames,
-		"epay.ConfigSchema() 的字段名必须与 ConfigField* 常量一致（两边都不许单独改）")
+		"epay.ConfigSchema() 的字段名（含顺序）必须与 ConfigField* 常量一致（两边都不许单独改）")
 
-	// 全仓视角：所有注册协议的字段名并集必须被 TS 清单覆盖（新增协议时忘改清单 → 红）。
+	// ① 的反向：清单不得比"所有注册协议的字段并集"多一项（多出来的项是一份会腐烂的副本）。
 	all := make(map[string]struct{}, len(wantFields))
 	for _, p := range registry.All() {
 		for _, f := range p.ConfigSchema().Fields {
@@ -77,7 +84,10 @@ func TestFrontendPaymentConfigFieldsMirror(t *testing.T) {
 			"注册协议声明了 config 字段 %q，但 %s 的清单里没有它（表单会少一个框）", name, frontendFieldsRel)
 	}
 	require.Len(t, tsFields, len(all),
-		"TS 清单与所有注册协议的字段并集必须等势（多出来的项同样会漂移）")
+		"%s 的清单必须与所有注册协议的字段并集等势（多一项/少一项都是漂移：%v）",
+		frontendFieldsRel, tsFields)
+	require.Len(t, tsFields, len(slices.Compact(slices.Sorted(slices.Values(tsFields)))),
+		"%s 的清单不得有重复项（重复会让等势断言虚高）", frontendFieldsRel)
 }
 
 // TestFrontendPaymentProviderNamesMirror P50②：协议名等号。

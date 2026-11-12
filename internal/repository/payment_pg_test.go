@@ -242,6 +242,11 @@ func TestPaymentAccountUpdateRevisionCAS_PG(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 3, third.ConfigRevision)
 
+	// ⑤ 零变更请求 + 过期版本 → 仍然 409：不能把"只探一下版本"的 PUT 谎报成最新。
+	_, err = repos.UpdatePaymentAccount(ctx, "pg_cas", repository.AccountUpdate{ExpectedConfigRevision: 1})
+	require.ErrorIs(t, err, repository.ErrConfigRevisionMismatch,
+		"no-op 请求也必须过版本闸门（否则过期快照会被谎报为最新）")
+
 	// ④ 缺行 + expected → 404（不是 409）：0 行有两种含义，必须能区分。
 	enabled := true
 	_, err = repos.UpdatePaymentAccount(ctx, "pg_missing", repository.AccountUpdate{

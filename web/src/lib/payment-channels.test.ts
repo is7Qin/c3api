@@ -144,12 +144,13 @@ describe('草稿工厂（P55 的 fixture 本身也要可信）', () => {
   })
 })
 
+// 页面源码（一次读，多处断言）。
+const PAGE = () =>
+  readFileSync(fileURLToPath(new URL('../pages/payment-accounts.tsx', import.meta.url)), 'utf8')
+
 describe('页面确实消费决策层（P55⑤：不是装饰）', () => {
   it('payment-accounts.tsx 调用了这四个判定函数', () => {
-    const src = readFileSync(
-      fileURLToPath(new URL('../pages/payment-accounts.tsx', import.meta.url)),
-      'utf8',
-    )
+    const src = PAGE()
     for (const call of [
       'canAddChannel(',
       'channelRowActions(',
@@ -159,5 +160,12 @@ describe('页面确实消费决策层（P55⑤：不是装饰）', () => {
     ]) {
       assert.ok(src.includes(call), `页面必须调用 ${call}（否则 §19-4b 的纯函数只是装饰）`)
     }
+  })
+
+  it('账户更新带 expected_config_revision，且 409 之后停用保存（§19-1 前端半）', () => {
+    const src = PAGE()
+    assert.ok(src.includes('expected_config_revision'), '保存必须带版本闸门（否则并发轮换会被回滚）')
+    assert.ok(src.includes('setStale(true)'), '409 必须落到 stale（否则用户会拿旧版本反复撞 409）')
+    assert.ok(src.includes('&& !stale'), 'stale 必须真的禁用保存（不是只弹一个 toast）')
   })
 })

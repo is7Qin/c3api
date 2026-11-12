@@ -164,7 +164,14 @@ func (r *PaymentAccountRepo) UpdateAccount(ctx context.Context, key string, upd 
 	}
 	// 零变更请求（全部指针 nil 且 Config nil）：不写库、不碰 updated_at，直接回现列
 	// ——语义是幂等 no-op，而不是"缺行"。
+	//
+	// 但**带版本闸门时仍要校验**（§19-1）：否则 `PUT {expected_config_revision: 旧值}`
+	// 这种"只探一下版本"的请求会得到 200，把过期快照谎报成仍是最新。
 	if upd.DisplayName == nil && upd.Priority == nil && upd.Enabled == nil && upd.Config == nil {
+		if upd.ExpectedConfigRevision > 0 && cur.ConfigRevision != upd.ExpectedConfigRevision {
+			return nil, fmt.Errorf("%w: payment account key=%q: expected config_revision=%d actual=%d",
+				ErrConfigRevisionMismatch, key, upd.ExpectedConfigRevision, cur.ConfigRevision)
+		}
 		return cur, nil
 	}
 	u := r.client.PaymentAccount.Update().Where(paymentaccount.KeyEQ(key))
@@ -196,7 +203,7 @@ func (r *PaymentAccountRepo) UpdateAccount(ctx context.Context, key string, upd 
 		//
 		// 409 的文案带上 expected/actual 两个数字（§19-1）：运维看到"你基于 3、现在
 		// 是 4"就能判断是不是别人刚改过，不必再翻一轮 GET。
-		cur, gerr := r.GetAccountByKey(ctx, key)
+		fresh, gerr := r.GetAccountByKey(ctx, key)
 		if gerr != nil {
 			if !errors.Is(gerr, ErrNotFound) {
 				return nil, gerr
@@ -204,7 +211,7 @@ func (r *PaymentAccountRepo) UpdateAccount(ctx context.Context, key string, upd 
 			return nil, fmt.Errorf("%w: payment account key=%q", ErrNotFound, key)
 		}
 		return nil, fmt.Errorf("%w: payment account key=%q: expected config_revision=%d actual=%d",
-			ErrConfigRevisionMismatch, key, upd.ExpectedConfigRevision, cur.ConfigRevision)
+			ErrConfigRevisionMismatch, key, upd.ExpectedConfigRevision, fresh.ConfigRevision)
 	}
 	return r.GetAccountByKey(ctx, key)
 }

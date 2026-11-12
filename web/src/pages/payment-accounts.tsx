@@ -359,6 +359,11 @@ function AccountDrawer({
   const [enabled, setEnabled] = useState(account?.enabled ?? true)
   // 本地版本号：只改元数据的请求也带上它（revision 未变时条件仍成立，不会误报 409）。
   const [revision, setRevision] = useState(account?.config_revision ?? 0)
+  // stale：服务端回过 409（别人先改了）。此时**禁止再提交**——抽屉按 key 挂载，
+  // account prop 更新（列表已失效重取）不会重置本地 revision，硬重试只会重复 409；
+  // 而"自动采用新版本再写一次"正好会把别人的改动覆盖掉（CAS 要防的就是这个）。
+  // 唯一安全的出路是关闭抽屉重开（重挂 → 用服务端最新值重建表单）。
+  const [stale, setStale] = useState(false)
   const [formErr, setFormErr] = useState<string | null>(null)
 
   // 协议名：新建取下拉，编辑取账户（创建后只读）。渠道 pay_type 与配置字段都从它派生。
@@ -396,7 +401,8 @@ function AccountDrawer({
   // 保存可用性：配置可提交（ready）**或**这次根本没碰配置（只改展示名/优先级/启停）。
   // failed 态因此仍能改账户的展示字段——"只禁用协议下拉与配置表单"（§18-3）。
   // 新建必须等元数据齐（要选协议、要按 schema 填凭据）。
-  const canSave = isNew ? form.submittable && providerName !== '' : form.submittable || !configDirty
+  const canSave =
+    (isNew ? form.submittable && providerName !== '' : form.submittable || !configDirty) && !stale
 
   const applyView = (view: PaymentAccount) => {
     qc.setQueryData<PaymentAccount[]>(['payment-accounts'], prev => {
@@ -436,6 +442,7 @@ function AccountDrawer({
     },
     onSuccess: view => {
       applyView(view)
+      setStale(false)
       // 下一次保存要基于**服务端刚回的**版本：本地状态不像 account prop 那样
       // 跟随 query cache 重挂（抽屉按 key 挂载，key 不变就不会重建）。
       setRevision(view.config_revision)
@@ -451,6 +458,8 @@ function AccountDrawer({
     onError: (e: unknown) => {
       // 409 = 别人先改了（§19-1）：把列表拉新，否则用户会拿着旧值反复重试。
       if (e instanceof ApiError && e.status === 409) {
+        // 置 stale：保存按钮随之禁用（否则本地 revision 不会自己更新，点几次撞几次）。
+        setStale(true)
         qc.invalidateQueries({ queryKey: ['payment-accounts'] })
         toast.add({ title: t('paymentAccounts.saveConflict'), description: errMsg(e), type: 'error' })
         return
@@ -641,6 +650,8 @@ function AccountDrawer({
         </div>
 
         {formErr && <p className="text-sm text-destructive">{formErr}</p>}
+        {/* 409 的常驻提示：关闭重开抽屉会用服务端最新值重建表单（§19-1）。 */}
+        {stale && <p className="text-sm text-destructive">{t('paymentAccounts.saveConflict')}</p>}
         {save.isError && <p className="text-sm text-destructive">{errMsg(save.error)}</p>}
 
         {/* —— 渠道子表（仅编辑态：新建账户还没有可挂渠道的行）——
