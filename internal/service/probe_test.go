@@ -1025,6 +1025,7 @@ func TestProbeImageModeTriState(t *testing.T) {
 		{"images-edits-bad-scheme", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr("ftp://secret.example/x"), domain.ProbeErrorImageURLInvalid, "", ""},
 		{"images-edits-bad-data", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr("data:text/plain;base64,AAAA"), domain.ProbeErrorImageURLInvalid, "", ""},
 		{"images-edits-oversized", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr(oversizedURL), domain.ProbeErrorImageURLTooLarge, "", ""},
+		{"images-edits-userinfo", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr("https://user:pass@secret.example/x.png"), domain.ProbeErrorImageURLInvalid, "", ""},
 		{"images-edits-http", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr("http://secret.example/x.png"), "", "edits", "http://secret.example/x.png"},
 		{"images-edits-data", domain.FormatOpenAIImages, probeStrPtr("edits"), probeStrPtr(dataURL), "", "edits", dataURL},
 	}

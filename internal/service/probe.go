@@ -359,7 +359,9 @@ func validProbeImageURL(raw string) bool {
 		return len(mime) > len("image/")
 	}
 	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
+	if err != nil || u.Host == "" || u.User != nil {
+		// URL userinfo 会被 net/http 转成 Basic Authorization 头；探测取图承诺
+		// 全新空头，不接受 URL 内嵌凭据（prober 仍会防御性清空）。
 		return false
 	}
 	return strings.EqualFold(u.Scheme, "http") || strings.EqualFold(u.Scheme, "https")

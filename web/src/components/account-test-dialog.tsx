@@ -248,7 +248,7 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
                   key={imageURL.trim()}
                   src={imageURL.trim()}
                   alt={t('accounts.test.imageSourcePreviewAlt')}
-                  className="max-h-40 rounded-md border object-contain"
+                  className="max-h-40 max-w-full rounded-md border object-contain"
                   loading="lazy"
                   decoding="async"
                 />

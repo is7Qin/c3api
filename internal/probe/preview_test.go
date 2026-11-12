@@ -284,7 +284,7 @@ func TestProbeImageFetchHeaderAndLatency(t *testing.T) {
 	rt := contentRT(func(req *http.Request) (*http.Response, error) {
 		if req.URL.Host == "images.example" {
 			imageSeen = true
-			time.Sleep(5 * time.Millisecond) // latency 含取图
+			time.Sleep(20 * time.Millisecond) // latency 含取图
 			return contentResponseBytes(http.StatusOK, png, http.Header{"Content-Type": {"image/png"}}), nil
 		}
 		return contentResponse(http.StatusOK, imagesBody(b64(png))), nil
@@ -293,7 +293,7 @@ func TestProbeImageFetchHeaderAndLatency(t *testing.T) {
 		contentImageSpec(domain.ProbeImageModeEdits, "https://images.example/x.png"))
 	require.True(t, imageSeen)
 	require.True(t, res.Success)
-	require.GreaterOrEqual(t, res.LatencyMS, int64(5), "latency 必须包含取图耗时")
+	require.GreaterOrEqual(t, res.LatencyMS, int64(15), "latency 必须包含取图耗时")
 }
 
 // TestProbeImagesNoUpstreamWhenFetchInvalid 取图失败时不得调用上游 images 端点。

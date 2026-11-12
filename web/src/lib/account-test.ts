@@ -90,7 +90,8 @@ export function probeImageURLShapeValid(raw: string): boolean {
   }
   try {
     const url = new URL(value)
-    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host !== ''
+    // 与 service 同口径：拒绝 URL userinfo，避免 net/http 自动生成 Basic 头。
+    return (url.protocol === 'http:' || url.protocol === 'https:') && url.host !== '' && url.username === '' && url.password === ''
   } catch {
     return false
   }
