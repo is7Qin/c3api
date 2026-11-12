@@ -372,6 +372,23 @@ func TestProbeImagesEditsHTTPFetch(t *testing.T) {
 		}
 	})
 
+	t.Run("url-userinfo-not-forwarded", func(t *testing.T) {
+		var got *http.Request
+		rt := contentRT(func(req *http.Request) (*http.Response, error) {
+			if req.URL.Host == "images.example" {
+				got = req.Clone(context.Background())
+				return contentResponseBytes(http.StatusOK, png, http.Header{"Content-Type": {"image/png"}}), nil
+			}
+			return contentResponse(http.StatusOK, imagesBody(b64(png))), nil
+		})
+		res := newTestProber(t, rt).Probe(context.Background(),
+			contentImageSpec(domain.ProbeImageModeEdits, "https://user:pass@images.example/private/secret.png"))
+		require.True(t, res.Success, res.Error)
+		require.NotNil(t, got)
+		require.Nil(t, got.URL.User, "取图请求不得携带 URL userinfo")
+		require.Empty(t, got.Header.Get("Authorization"))
+	})
+
 	t.Run("missing-content-type-detected", func(t *testing.T) {
 		res, upstream, _ := run(t, func() (*http.Response, error) {
 			return contentResponseBytes(http.StatusOK, png, make(http.Header)), nil

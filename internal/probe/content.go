@@ -573,7 +573,7 @@ func decodeProbeDataImage(raw string) ([]byte, string, string) {
 	if !strings.HasPrefix(lower, "data:image/") || !strings.HasSuffix(lower, ";base64") {
 		return nil, "", domain.ProbeErrorImageInvalid
 	}
-	mime := meta[len("data:") : len(meta)-len(";base64")]
+	mime := mediaType(meta[len("data:") : len(meta)-len(";base64")])
 	decoded, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil || len(decoded) == 0 {
 		return nil, "", domain.ProbeErrorImageInvalid
@@ -600,6 +600,9 @@ func (p *Prober) downloadProbeImage(ctx context.Context, spec domain.ProbeSpec) 
 	if err != nil {
 		return nil, "", domain.ProbeErrorImageFetchFailed
 	}
+	// URL userinfo 会被 net/http 自动转成 Basic Authorization 头；探测取图必须
+	// 保持全新空头，不能把 URL 里的凭据带到图片源。
+	target.User = nil
 	hc := *eg.HTTP
 	hc.Jar = nil // 克隆 client 必须清空 Jar
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
