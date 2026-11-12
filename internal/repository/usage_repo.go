@@ -113,6 +113,9 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		SetModel(l.Model).
 		SetFormat(usagelog.Format(l.Format)).
 		SetErrorType(string(l.ErrorType)).
+		// commit_state（spec-stream-failure-truth §5.2）：可空交付事实——nil =
+		// 未知（未接事实的路径/历史行），非 nil = proxy 写入的五值之一。
+		SetNillableCommitState(l.CommitState).
 		SetLatencyMs(l.LatencyMS).
 		SetInputTokens(l.InputTokens).
 		SetOutputTokens(l.OutputTokens).
@@ -195,7 +198,8 @@ var usageLogCopyColumns = []string{
 	usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldGroupID,
 	usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID,
 	usagelog.FieldKeyID, usagelog.FieldModel, usagelog.FieldMappedModel,
-	usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldLatencyMs,
+	usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldCommitState,
+	usagelog.FieldLatencyMs,
 	usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis,
 	usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens,
 	usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis,
@@ -262,7 +266,7 @@ func usageLogRowValues(l *domain.UsageLog) []any {
 	}
 	return []any{
 		l.RequestID, clientIP, groupID, accountID, templateID, userID, keyID,
-		l.Model, mappedModel, string(l.Format), string(l.ErrorType), l.LatencyMS, ttft,
+		l.Model, mappedModel, string(l.Format), string(l.ErrorType), l.CommitState, l.LatencyMS, ttft,
 		l.InputTokens, priceIn, l.OutputTokens, priceOut, l.TotalTokens,
 		l.CacheReadTokens, priceCR, l.CacheCreationTokens, priceCC,
 		l.CallCount, pricePerCall,
@@ -321,6 +325,7 @@ func (r *UsageRepo) QueryUsages(ctx context.Context, q UsageQuery) ([]*domain.Us
 			// err_logs 分表：StatusCode/ErrorMessage 不再落 usage_logs
 			// ——查询结果恒零值/nil（错误审计字段由 err_logs 承载）。
 			ErrorType:                domain.ErrorType(row.ErrorType),
+			CommitState:              row.CommitState,
 			LatencyMS:                row.LatencyMs,
 			TTFTMS:                   row.TtftMs,
 			InputTokens:              row.InputTokens,

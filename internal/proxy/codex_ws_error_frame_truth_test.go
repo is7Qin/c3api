@@ -54,10 +54,11 @@ func pinWSRoute(p *Proxy, ids ...int64) {
 		&scheduler.RouteDecision{Primary: compiled})
 }
 
-// logTracks 按 routeLog 的成员资格分表计数（forward.go:441-467）：
-//   - usage_logs（放行路径）成员 = error_type ∈ {none, abort}；
+// logTracks 按 routeLog 的成员资格分表计数（forward.go routeLog）：
+//   - usage_logs（可计费）成员 = error_type = none **或** commit_state 可计费
+//     （sent_ambiguous / response_started / client_committed——已交付的失败双轨）；
 //   - err_logs（错误明细）成员 = error_type != none；
-//   - abort 同属两表（半异常计费），单列以证明"无 recordStreamAbort 追加行"。
+//   - abort 类别单列计数，以证明"无 recordStreamAbort 追加行"。
 type logTracks struct {
 	usage int
 	errs  int
@@ -67,7 +68,7 @@ type logTracks struct {
 func trackRows(rows []*domain.UsageLog) logTracks {
 	var tr logTracks
 	for _, l := range rows {
-		if l.ErrorType == domain.ErrNone || l.ErrorType == domain.ErrAbort {
+		if l.ErrorType == domain.ErrNone || commitStateBillable(l.CommitState) {
 			tr.usage++
 		}
 		if l.ErrorType != domain.ErrNone {

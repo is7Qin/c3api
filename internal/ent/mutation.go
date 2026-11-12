@@ -4277,6 +4277,7 @@ type ErrLogMutation struct {
 	status_code    *int
 	addstatus_code *int
 	error_type     *string
+	commit_state   *string
 	error_message  *string
 	latency_ms     *int64
 	addlatency_ms  *int64
@@ -4991,6 +4992,55 @@ func (m *ErrLogMutation) ResetErrorType() {
 	m.error_type = nil
 }
 
+// SetCommitState sets the "commit_state" field.
+func (m *ErrLogMutation) SetCommitState(s string) {
+	m.commit_state = &s
+}
+
+// CommitState returns the value of the "commit_state" field in the mutation.
+func (m *ErrLogMutation) CommitState() (r string, exists bool) {
+	v := m.commit_state
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCommitState returns the old "commit_state" field's value of the ErrLog entity.
+// If the ErrLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ErrLogMutation) OldCommitState(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCommitState is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCommitState requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCommitState: %w", err)
+	}
+	return oldValue.CommitState, nil
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (m *ErrLogMutation) ClearCommitState() {
+	m.commit_state = nil
+	m.clearedFields[errlog.FieldCommitState] = struct{}{}
+}
+
+// CommitStateCleared returns if the "commit_state" field was cleared in this mutation.
+func (m *ErrLogMutation) CommitStateCleared() bool {
+	_, ok := m.clearedFields[errlog.FieldCommitState]
+	return ok
+}
+
+// ResetCommitState resets all changes to the "commit_state" field.
+func (m *ErrLogMutation) ResetCommitState() {
+	m.commit_state = nil
+	delete(m.clearedFields, errlog.FieldCommitState)
+}
+
 // SetErrorMessage sets the "error_message" field.
 func (m *ErrLogMutation) SetErrorMessage(s string) {
 	m.error_message = &s
@@ -5215,7 +5265,7 @@ func (m *ErrLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ErrLogMutation) Fields() []string {
-	fields := make([]string, 0, 15)
+	fields := make([]string, 0, 16)
 	if m.request_id != nil {
 		fields = append(fields, errlog.FieldRequestID)
 	}
@@ -5248,6 +5298,9 @@ func (m *ErrLogMutation) Fields() []string {
 	}
 	if m.error_type != nil {
 		fields = append(fields, errlog.FieldErrorType)
+	}
+	if m.commit_state != nil {
+		fields = append(fields, errlog.FieldCommitState)
 	}
 	if m.error_message != nil {
 		fields = append(fields, errlog.FieldErrorMessage)
@@ -5291,6 +5344,8 @@ func (m *ErrLogMutation) Field(name string) (ent.Value, bool) {
 		return m.StatusCode()
 	case errlog.FieldErrorType:
 		return m.ErrorType()
+	case errlog.FieldCommitState:
+		return m.CommitState()
 	case errlog.FieldErrorMessage:
 		return m.ErrorMessage()
 	case errlog.FieldLatencyMs:
@@ -5330,6 +5385,8 @@ func (m *ErrLogMutation) OldField(ctx context.Context, name string) (ent.Value, 
 		return m.OldStatusCode(ctx)
 	case errlog.FieldErrorType:
 		return m.OldErrorType(ctx)
+	case errlog.FieldCommitState:
+		return m.OldCommitState(ctx)
 	case errlog.FieldErrorMessage:
 		return m.OldErrorMessage(ctx)
 	case errlog.FieldLatencyMs:
@@ -5423,6 +5480,13 @@ func (m *ErrLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetErrorType(v)
+		return nil
+	case errlog.FieldCommitState:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCommitState(v)
 		return nil
 	case errlog.FieldErrorMessage:
 		v, ok := value.(string)
@@ -5587,6 +5651,9 @@ func (m *ErrLogMutation) ClearedFields() []string {
 	if m.FieldCleared(errlog.FieldKeyID) {
 		fields = append(fields, errlog.FieldKeyID)
 	}
+	if m.FieldCleared(errlog.FieldCommitState) {
+		fields = append(fields, errlog.FieldCommitState)
+	}
 	if m.FieldCleared(errlog.FieldErrorMessage) {
 		fields = append(fields, errlog.FieldErrorMessage)
 	}
@@ -5624,6 +5691,9 @@ func (m *ErrLogMutation) ClearField(name string) error {
 		return nil
 	case errlog.FieldKeyID:
 		m.ClearKeyID()
+		return nil
+	case errlog.FieldCommitState:
+		m.ClearCommitState()
 		return nil
 	case errlog.FieldErrorMessage:
 		m.ClearErrorMessage()
@@ -5671,6 +5741,9 @@ func (m *ErrLogMutation) ResetField(name string) error {
 		return nil
 	case errlog.FieldErrorType:
 		m.ResetErrorType()
+		return nil
+	case errlog.FieldCommitState:
+		m.ResetCommitState()
 		return nil
 	case errlog.FieldErrorMessage:
 		m.ResetErrorMessage()
@@ -29788,6 +29861,7 @@ type UsageLogMutation struct {
 	mapped_model                   *string
 	format                         *usagelog.Format
 	error_type                     *string
+	commit_state                   *string
 	latency_ms                     *int64
 	addlatency_ms                  *int64
 	ttft_ms                        *int64
@@ -30528,6 +30602,55 @@ func (m *UsageLogMutation) OldErrorType(ctx context.Context) (v string, err erro
 // ResetErrorType resets all changes to the "error_type" field.
 func (m *UsageLogMutation) ResetErrorType() {
 	m.error_type = nil
+}
+
+// SetCommitState sets the "commit_state" field.
+func (m *UsageLogMutation) SetCommitState(s string) {
+	m.commit_state = &s
+}
+
+// CommitState returns the value of the "commit_state" field in the mutation.
+func (m *UsageLogMutation) CommitState() (r string, exists bool) {
+	v := m.commit_state
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCommitState returns the old "commit_state" field's value of the UsageLog entity.
+// If the UsageLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *UsageLogMutation) OldCommitState(ctx context.Context) (v *string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCommitState is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCommitState requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCommitState: %w", err)
+	}
+	return oldValue.CommitState, nil
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (m *UsageLogMutation) ClearCommitState() {
+	m.commit_state = nil
+	m.clearedFields[usagelog.FieldCommitState] = struct{}{}
+}
+
+// CommitStateCleared returns if the "commit_state" field was cleared in this mutation.
+func (m *UsageLogMutation) CommitStateCleared() bool {
+	_, ok := m.clearedFields[usagelog.FieldCommitState]
+	return ok
+}
+
+// ResetCommitState resets all changes to the "commit_state" field.
+func (m *UsageLogMutation) ResetCommitState() {
+	m.commit_state = nil
+	delete(m.clearedFields, usagelog.FieldCommitState)
 }
 
 // SetLatencyMs sets the "latency_ms" field.
@@ -31843,7 +31966,7 @@ func (m *UsageLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *UsageLogMutation) Fields() []string {
-	fields := make([]string, 0, 34)
+	fields := make([]string, 0, 35)
 	if m.request_id != nil {
 		fields = append(fields, usagelog.FieldRequestID)
 	}
@@ -31876,6 +31999,9 @@ func (m *UsageLogMutation) Fields() []string {
 	}
 	if m.error_type != nil {
 		fields = append(fields, usagelog.FieldErrorType)
+	}
+	if m.commit_state != nil {
+		fields = append(fields, usagelog.FieldCommitState)
 	}
 	if m.latency_ms != nil {
 		fields = append(fields, usagelog.FieldLatencyMs)
@@ -31976,6 +32102,8 @@ func (m *UsageLogMutation) Field(name string) (ent.Value, bool) {
 		return m.Format()
 	case usagelog.FieldErrorType:
 		return m.ErrorType()
+	case usagelog.FieldCommitState:
+		return m.CommitState()
 	case usagelog.FieldLatencyMs:
 		return m.LatencyMs()
 	case usagelog.FieldTtftMs:
@@ -32053,6 +32181,8 @@ func (m *UsageLogMutation) OldField(ctx context.Context, name string) (ent.Value
 		return m.OldFormat(ctx)
 	case usagelog.FieldErrorType:
 		return m.OldErrorType(ctx)
+	case usagelog.FieldCommitState:
+		return m.OldCommitState(ctx)
 	case usagelog.FieldLatencyMs:
 		return m.OldLatencyMs(ctx)
 	case usagelog.FieldTtftMs:
@@ -32184,6 +32314,13 @@ func (m *UsageLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetErrorType(v)
+		return nil
+	case usagelog.FieldCommitState:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCommitState(v)
 		return nil
 	case usagelog.FieldLatencyMs:
 		v, ok := value.(int64)
@@ -32664,6 +32801,9 @@ func (m *UsageLogMutation) ClearedFields() []string {
 	if m.FieldCleared(usagelog.FieldMappedModel) {
 		fields = append(fields, usagelog.FieldMappedModel)
 	}
+	if m.FieldCleared(usagelog.FieldCommitState) {
+		fields = append(fields, usagelog.FieldCommitState)
+	}
 	if m.FieldCleared(usagelog.FieldTtftMs) {
 		fields = append(fields, usagelog.FieldTtftMs)
 	}
@@ -32722,6 +32862,9 @@ func (m *UsageLogMutation) ClearField(name string) error {
 		return nil
 	case usagelog.FieldMappedModel:
 		m.ClearMappedModel()
+		return nil
+	case usagelog.FieldCommitState:
+		m.ClearCommitState()
 		return nil
 	case usagelog.FieldTtftMs:
 		m.ClearTtftMs()
@@ -32787,6 +32930,9 @@ func (m *UsageLogMutation) ResetField(name string) error {
 		return nil
 	case usagelog.FieldErrorType:
 		m.ResetErrorType()
+		return nil
+	case usagelog.FieldCommitState:
+		m.ResetCommitState()
 		return nil
 	case usagelog.FieldLatencyMs:
 		m.ResetLatencyMs()

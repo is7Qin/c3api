@@ -160,6 +160,20 @@ func (_c *ErrLogCreate) SetNillableErrorType(v *string) *ErrLogCreate {
 	return _c
 }
 
+// SetCommitState sets the "commit_state" field.
+func (_c *ErrLogCreate) SetCommitState(v string) *ErrLogCreate {
+	_c.mutation.SetCommitState(v)
+	return _c
+}
+
+// SetNillableCommitState sets the "commit_state" field if the given value is not nil.
+func (_c *ErrLogCreate) SetNillableCommitState(v *string) *ErrLogCreate {
+	if v != nil {
+		_c.SetCommitState(*v)
+	}
+	return _c
+}
+
 // SetErrorMessage sets the "error_message" field.
 func (_c *ErrLogCreate) SetErrorMessage(v string) *ErrLogCreate {
 	_c.mutation.SetErrorMessage(v)
@@ -383,6 +397,10 @@ func (_c *ErrLogCreate) createSpec() (*ErrLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.ErrorType(); ok {
 		_spec.SetField(errlog.FieldErrorType, field.TypeString, value)
 		_node.ErrorType = value
+	}
+	if value, ok := _c.mutation.CommitState(); ok {
+		_spec.SetField(errlog.FieldCommitState, field.TypeString, value)
+		_node.CommitState = &value
 	}
 	if value, ok := _c.mutation.ErrorMessage(); ok {
 		_spec.SetField(errlog.FieldErrorMessage, field.TypeString, value)
@@ -653,6 +671,24 @@ func (u *ErrLogUpsert) SetErrorType(v string) *ErrLogUpsert {
 // UpdateErrorType sets the "error_type" field to the value that was provided on create.
 func (u *ErrLogUpsert) UpdateErrorType() *ErrLogUpsert {
 	u.SetExcluded(errlog.FieldErrorType)
+	return u
+}
+
+// SetCommitState sets the "commit_state" field.
+func (u *ErrLogUpsert) SetCommitState(v string) *ErrLogUpsert {
+	u.Set(errlog.FieldCommitState, v)
+	return u
+}
+
+// UpdateCommitState sets the "commit_state" field to the value that was provided on create.
+func (u *ErrLogUpsert) UpdateCommitState() *ErrLogUpsert {
+	u.SetExcluded(errlog.FieldCommitState)
+	return u
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (u *ErrLogUpsert) ClearCommitState() *ErrLogUpsert {
+	u.SetNull(errlog.FieldCommitState)
 	return u
 }
 
@@ -1005,6 +1041,27 @@ func (u *ErrLogUpsertOne) SetErrorType(v string) *ErrLogUpsertOne {
 func (u *ErrLogUpsertOne) UpdateErrorType() *ErrLogUpsertOne {
 	return u.Update(func(s *ErrLogUpsert) {
 		s.UpdateErrorType()
+	})
+}
+
+// SetCommitState sets the "commit_state" field.
+func (u *ErrLogUpsertOne) SetCommitState(v string) *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.SetCommitState(v)
+	})
+}
+
+// UpdateCommitState sets the "commit_state" field to the value that was provided on create.
+func (u *ErrLogUpsertOne) UpdateCommitState() *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.UpdateCommitState()
+	})
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (u *ErrLogUpsertOne) ClearCommitState() *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.ClearCommitState()
 	})
 }
 
@@ -1534,6 +1591,27 @@ func (u *ErrLogUpsertBulk) SetErrorType(v string) *ErrLogUpsertBulk {
 func (u *ErrLogUpsertBulk) UpdateErrorType() *ErrLogUpsertBulk {
 	return u.Update(func(s *ErrLogUpsert) {
 		s.UpdateErrorType()
+	})
+}
+
+// SetCommitState sets the "commit_state" field.
+func (u *ErrLogUpsertBulk) SetCommitState(v string) *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.SetCommitState(v)
+	})
+}
+
+// UpdateCommitState sets the "commit_state" field to the value that was provided on create.
+func (u *ErrLogUpsertBulk) UpdateCommitState() *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.UpdateCommitState()
+	})
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (u *ErrLogUpsertBulk) ClearCommitState() *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.ClearCommitState()
 	})
 }
 

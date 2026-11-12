@@ -541,7 +541,7 @@ func TestProxyQuotaNoDeltaOnRecordPath(t *testing.T) {
 
 	// When：record 携带 TotalTokens=8 的 499/abort 行（旧实现曾从 token 推导额度）
 	p.record(context.Background(), "req-rec", 10, 1, "gpt-4o", "", domain.FormatOpenAIResponsesWS,
-		statusClientClosedRequest, domain.ErrAbort, 0, usageTuple{it: 3, ot: 5, tt: 8}, time.Now())
+		statusClientClosedRequest, domain.ErrAbort, CommitSentAmbiguous, 0, usageTuple{it: 3, ot: 5, tt: 8}, time.Now())
 	require.NoError(t, p.rec.Close(context.Background()))
 
 	// Then：三面无副作用

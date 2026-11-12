@@ -105,11 +105,11 @@ func init() {
 	// errlog.DefaultErrorType holds the default value on creation for the error_type field.
 	errlog.DefaultErrorType = errlogDescErrorType.Default.(string)
 	// errlogDescLatencyMs is the schema descriptor for latency_ms field.
-	errlogDescLatencyMs := errlogFields[13].Descriptor()
+	errlogDescLatencyMs := errlogFields[14].Descriptor()
 	// errlog.DefaultLatencyMs holds the default value on creation for the latency_ms field.
 	errlog.DefaultLatencyMs = errlogDescLatencyMs.Default.(int64)
 	// errlogDescCreatedAt is the schema descriptor for created_at field.
-	errlogDescCreatedAt := errlogFields[15].Descriptor()
+	errlogDescCreatedAt := errlogFields[16].Descriptor()
 	// errlog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	errlog.DefaultCreatedAt = errlogDescCreatedAt.Default.(func() time.Time)
 	groupFields := schema.Group{}.Fields()
@@ -485,63 +485,63 @@ func init() {
 	// usagelog.DefaultErrorType holds the default value on creation for the error_type field.
 	usagelog.DefaultErrorType = usagelogDescErrorType.Default.(string)
 	// usagelogDescLatencyMs is the schema descriptor for latency_ms field.
-	usagelogDescLatencyMs := usagelogFields[12].Descriptor()
+	usagelogDescLatencyMs := usagelogFields[13].Descriptor()
 	// usagelog.DefaultLatencyMs holds the default value on creation for the latency_ms field.
 	usagelog.DefaultLatencyMs = usagelogDescLatencyMs.Default.(int64)
 	// usagelogDescInputTokens is the schema descriptor for input_tokens field.
-	usagelogDescInputTokens := usagelogFields[14].Descriptor()
+	usagelogDescInputTokens := usagelogFields[15].Descriptor()
 	// usagelog.DefaultInputTokens holds the default value on creation for the input_tokens field.
 	usagelog.DefaultInputTokens = usagelogDescInputTokens.Default.(int64)
 	// usagelogDescOutputTokens is the schema descriptor for output_tokens field.
-	usagelogDescOutputTokens := usagelogFields[16].Descriptor()
+	usagelogDescOutputTokens := usagelogFields[17].Descriptor()
 	// usagelog.DefaultOutputTokens holds the default value on creation for the output_tokens field.
 	usagelog.DefaultOutputTokens = usagelogDescOutputTokens.Default.(int64)
 	// usagelogDescTotalTokens is the schema descriptor for total_tokens field.
-	usagelogDescTotalTokens := usagelogFields[18].Descriptor()
+	usagelogDescTotalTokens := usagelogFields[19].Descriptor()
 	// usagelog.DefaultTotalTokens holds the default value on creation for the total_tokens field.
 	usagelog.DefaultTotalTokens = usagelogDescTotalTokens.Default.(int64)
 	// usagelogDescCacheReadTokens is the schema descriptor for cache_read_tokens field.
-	usagelogDescCacheReadTokens := usagelogFields[19].Descriptor()
+	usagelogDescCacheReadTokens := usagelogFields[20].Descriptor()
 	// usagelog.DefaultCacheReadTokens holds the default value on creation for the cache_read_tokens field.
 	usagelog.DefaultCacheReadTokens = usagelogDescCacheReadTokens.Default.(int64)
 	// usagelogDescCacheCreationTokens is the schema descriptor for cache_creation_tokens field.
-	usagelogDescCacheCreationTokens := usagelogFields[21].Descriptor()
+	usagelogDescCacheCreationTokens := usagelogFields[22].Descriptor()
 	// usagelog.DefaultCacheCreationTokens holds the default value on creation for the cache_creation_tokens field.
 	usagelog.DefaultCacheCreationTokens = usagelogDescCacheCreationTokens.Default.(int64)
 	// usagelogDescCallCount is the schema descriptor for call_count field.
-	usagelogDescCallCount := usagelogFields[23].Descriptor()
+	usagelogDescCallCount := usagelogFields[24].Descriptor()
 	// usagelog.DefaultCallCount holds the default value on creation for the call_count field.
 	usagelog.DefaultCallCount = usagelogDescCallCount.Default.(int64)
 	// usagelogDescCost is the schema descriptor for cost field.
-	usagelogDescCost := usagelogFields[25].Descriptor()
+	usagelogDescCost := usagelogFields[26].Descriptor()
 	// usagelog.DefaultCost holds the default value on creation for the cost field.
 	usagelog.DefaultCost = usagelogDescCost.Default.(int64)
 	// usagelogDescRawCost is the schema descriptor for raw_cost field.
-	usagelogDescRawCost := usagelogFields[26].Descriptor()
+	usagelogDescRawCost := usagelogFields[27].Descriptor()
 	// usagelog.DefaultRawCost holds the default value on creation for the raw_cost field.
 	usagelog.DefaultRawCost = usagelogDescRawCost.Default.(int64)
 	// usagelogDescAboveHit is the schema descriptor for above_hit field.
-	usagelogDescAboveHit := usagelogFields[28].Descriptor()
+	usagelogDescAboveHit := usagelogFields[29].Descriptor()
 	// usagelog.DefaultAboveHit holds the default value on creation for the above_hit field.
 	usagelog.DefaultAboveHit = usagelogDescAboveHit.Default.(bool)
 	// usagelogDescOverdraft is the schema descriptor for overdraft field.
-	usagelogDescOverdraft := usagelogFields[29].Descriptor()
+	usagelogDescOverdraft := usagelogFields[30].Descriptor()
 	// usagelog.DefaultOverdraft holds the default value on creation for the overdraft field.
 	usagelog.DefaultOverdraft = usagelogDescOverdraft.Default.(bool)
 	// usagelogDescBilled is the schema descriptor for billed field.
-	usagelogDescBilled := usagelogFields[30].Descriptor()
+	usagelogDescBilled := usagelogFields[31].Descriptor()
 	// usagelog.DefaultBilled holds the default value on creation for the billed field.
 	usagelog.DefaultBilled = usagelogDescBilled.Default.(bool)
 	// usagelogDescSupplierEarnMillis is the schema descriptor for supplier_earn_millis field.
-	usagelogDescSupplierEarnMillis := usagelogFields[32].Descriptor()
+	usagelogDescSupplierEarnMillis := usagelogFields[33].Descriptor()
 	// usagelog.DefaultSupplierEarnMillis holds the default value on creation for the supplier_earn_millis field.
 	usagelog.DefaultSupplierEarnMillis = usagelogDescSupplierEarnMillis.Default.(int64)
 	// usagelogDescSupplierCredited is the schema descriptor for supplier_credited field.
-	usagelogDescSupplierCredited := usagelogFields[33].Descriptor()
+	usagelogDescSupplierCredited := usagelogFields[34].Descriptor()
 	// usagelog.DefaultSupplierCredited holds the default value on creation for the supplier_credited field.
 	usagelog.DefaultSupplierCredited = usagelogDescSupplierCredited.Default.(bool)
 	// usagelogDescCreatedAt is the schema descriptor for created_at field.
-	usagelogDescCreatedAt := usagelogFields[34].Descriptor()
+	usagelogDescCreatedAt := usagelogFields[35].Descriptor()
 	// usagelog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	usagelog.DefaultCreatedAt = usagelogDescCreatedAt.Default.(func() time.Time)
 	usagestatFields := schema.UsageStat{}.Fields()

@@ -260,6 +260,26 @@ func (_u *ErrLogUpdate) SetNillableErrorType(v *string) *ErrLogUpdate {
 	return _u
 }
 
+// SetCommitState sets the "commit_state" field.
+func (_u *ErrLogUpdate) SetCommitState(v string) *ErrLogUpdate {
+	_u.mutation.SetCommitState(v)
+	return _u
+}
+
+// SetNillableCommitState sets the "commit_state" field if the given value is not nil.
+func (_u *ErrLogUpdate) SetNillableCommitState(v *string) *ErrLogUpdate {
+	if v != nil {
+		_u.SetCommitState(*v)
+	}
+	return _u
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (_u *ErrLogUpdate) ClearCommitState() *ErrLogUpdate {
+	_u.mutation.ClearCommitState()
+	return _u
+}
+
 // SetErrorMessage sets the "error_message" field.
 func (_u *ErrLogUpdate) SetErrorMessage(v string) *ErrLogUpdate {
 	_u.mutation.SetErrorMessage(v)
@@ -457,6 +477,12 @@ func (_u *ErrLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.ErrorType(); ok {
 		_spec.SetField(errlog.FieldErrorType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CommitState(); ok {
+		_spec.SetField(errlog.FieldCommitState, field.TypeString, value)
+	}
+	if _u.mutation.CommitStateCleared() {
+		_spec.ClearField(errlog.FieldCommitState, field.TypeString)
 	}
 	if value, ok := _u.mutation.ErrorMessage(); ok {
 		_spec.SetField(errlog.FieldErrorMessage, field.TypeString, value)
@@ -731,6 +757,26 @@ func (_u *ErrLogUpdateOne) SetNillableErrorType(v *string) *ErrLogUpdateOne {
 	return _u
 }
 
+// SetCommitState sets the "commit_state" field.
+func (_u *ErrLogUpdateOne) SetCommitState(v string) *ErrLogUpdateOne {
+	_u.mutation.SetCommitState(v)
+	return _u
+}
+
+// SetNillableCommitState sets the "commit_state" field if the given value is not nil.
+func (_u *ErrLogUpdateOne) SetNillableCommitState(v *string) *ErrLogUpdateOne {
+	if v != nil {
+		_u.SetCommitState(*v)
+	}
+	return _u
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (_u *ErrLogUpdateOne) ClearCommitState() *ErrLogUpdateOne {
+	_u.mutation.ClearCommitState()
+	return _u
+}
+
 // SetErrorMessage sets the "error_message" field.
 func (_u *ErrLogUpdateOne) SetErrorMessage(v string) *ErrLogUpdateOne {
 	_u.mutation.SetErrorMessage(v)
@@ -958,6 +1004,12 @@ func (_u *ErrLogUpdateOne) sqlSave(ctx context.Context) (_node *ErrLog, err erro
 	}
 	if value, ok := _u.mutation.ErrorType(); ok {
 		_spec.SetField(errlog.FieldErrorType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CommitState(); ok {
+		_spec.SetField(errlog.FieldCommitState, field.TypeString, value)
+	}
+	if _u.mutation.CommitStateCleared() {
+		_spec.ClearField(errlog.FieldCommitState, field.TypeString)
 	}
 	if value, ok := _u.mutation.ErrorMessage(); ok {
 		_spec.SetField(errlog.FieldErrorMessage, field.TypeString, value)

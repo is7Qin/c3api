@@ -39,6 +39,8 @@ type UsageLog struct {
 	Format usagelog.Format `json:"format,omitempty"`
 	// ErrorType holds the value of the "error_type" field.
 	ErrorType string `json:"error_type,omitempty"`
+	// CommitState holds the value of the "commit_state" field.
+	CommitState *string `json:"commit_state,omitempty"`
 	// LatencyMs holds the value of the "latency_ms" field.
 	LatencyMs int64 `json:"latency_ms,omitempty"`
 	// TtftMs holds the value of the "ttft_ms" field.
@@ -97,7 +99,7 @@ func (*UsageLog) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case usagelog.FieldID, usagelog.FieldGroupID, usagelog.FieldAccountID, usagelog.FieldTemplateID, usagelog.FieldUserID, usagelog.FieldKeyID, usagelog.FieldLatencyMs, usagelog.FieldTtftMs, usagelog.FieldInputTokens, usagelog.FieldPriceInputMillis, usagelog.FieldOutputTokens, usagelog.FieldPriceOutputMillis, usagelog.FieldTotalTokens, usagelog.FieldCacheReadTokens, usagelog.FieldPriceCacheReadMillis, usagelog.FieldCacheCreationTokens, usagelog.FieldPriceCacheCreationMillis, usagelog.FieldCallCount, usagelog.FieldPricePerCallMillis, usagelog.FieldCost, usagelog.FieldRawCost, usagelog.FieldSupplierUserID, usagelog.FieldSupplierEarnMillis:
 			values[i] = new(sql.NullInt64)
-		case usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldModel, usagelog.FieldMappedModel, usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldBillingTier:
+		case usagelog.FieldRequestID, usagelog.FieldClientIP, usagelog.FieldModel, usagelog.FieldMappedModel, usagelog.FieldFormat, usagelog.FieldErrorType, usagelog.FieldCommitState, usagelog.FieldBillingTier:
 			values[i] = new(sql.NullString)
 		case usagelog.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -194,6 +196,13 @@ func (_m *UsageLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field error_type", values[i])
 			} else if value.Valid {
 				_m.ErrorType = value.String
+			}
+		case usagelog.FieldCommitState:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field commit_state", values[i])
+			} else if value.Valid {
+				_m.CommitState = new(string)
+				*_m.CommitState = value.String
 			}
 		case usagelog.FieldLatencyMs:
 			if value, ok := values[i].(*sql.NullInt64); !ok {
@@ -423,6 +432,11 @@ func (_m *UsageLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("error_type=")
 	builder.WriteString(_m.ErrorType)
+	builder.WriteString(", ")
+	if v := _m.CommitState; v != nil {
+		builder.WriteString("commit_state=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	builder.WriteString("latency_ms=")
 	builder.WriteString(fmt.Sprintf("%v", _m.LatencyMs))

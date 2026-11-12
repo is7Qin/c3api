@@ -63,6 +63,9 @@ func buildErrLogCreate(client *ent.Client, l *domain.UsageLog) *ent.ErrLogCreate
 		SetFormat(errlog.Format(l.Format)).
 		SetStatusCode(l.StatusCode).
 		SetErrorType(string(l.ErrorType)).
+		// commit_state（spec-stream-failure-truth §5.4）：错误明细侧同样携带
+		// 交付事实——nil = 未知（历史行/未接事实路径）。
+		SetNillableCommitState(l.CommitState).
 		SetLatencyMs(l.LatencyMS).
 		SetCreatedAt(l.CreatedAt)
 	// client_ip（S-E 2026-08-17）：非空才 Set（ent 只落被 Set 的列——拒绝行
@@ -143,6 +146,7 @@ func (r *ErrLogRepo) QueryErrLogs(ctx context.Context, q ErrLogQuery) ([]*domain
 			Model: row.Model, Format: domain.RequestFormat(row.Format),
 			StatusCode: row.StatusCode, ErrorType: domain.ErrorType(row.ErrorType),
 			ErrorMessage: row.ErrorMessage,
+			CommitState:  row.CommitState,
 			LatencyMS:    row.LatencyMs,
 			CreatedAt:    row.CreatedAt,
 		}

@@ -196,9 +196,10 @@ func drainLogs(t *testing.T, p *Proxy, store *captureLogStore) []*domain.UsageLo
 }
 
 // inbandTracks 逻辑行计数（usage_logs / err_logs 分表成员资格，按**行**而非按
-// 落库写次数）：abort 双轨——同一个 *domain.UsageLog 会被 usage worker 与 errlog
-// worker 各插一次，共享 captureLogStore 时出现两次同指针条目，这里按指针去重，
-// 避免把"usage_logs 恰 1 行"算成 2。（routeLog 的成员资格语义见 forward.go:441-467。）
+// 落库写次数）：已交付的失败双轨——同一个 *domain.UsageLog 会被 usage worker 与
+// errlog worker 各插一次，共享 captureLogStore 时出现两次同指针条目，这里按指针
+// 去重，避免把"usage_logs 恰 1 行"算成 2。（routeLog 的成员资格语义见 forward.go
+// routeLog：usage_logs = error_type none ∨ commit_state 可计费。）
 func inbandTracks(rows []*domain.UsageLog) logTracks {
 	seen := make(map[*domain.UsageLog]struct{}, len(rows))
 	var tr logTracks
@@ -207,15 +208,14 @@ func inbandTracks(rows []*domain.UsageLog) logTracks {
 			continue
 		}
 		seen[l] = struct{}{}
-		switch l.ErrorType {
-		case domain.ErrNone:
-			tr.usage++
-		case domain.ErrAbort:
-			tr.usage++ // abort 属放行路径（半异常计费）→ usage_logs
-			tr.errs++  // 且是错误明细 → err_logs
+		if l.ErrorType == domain.ErrNone || commitStateBillable(l.CommitState) {
+			tr.usage++ // 可计费 → usage_logs（已交付的失败与成功行同轨）
+		}
+		if l.ErrorType != domain.ErrNone {
+			tr.errs++ // 错误明细 → err_logs
+		}
+		if l.ErrorType == domain.ErrAbort {
 			tr.abort++
-		default:
-			tr.errs++
 		}
 	}
 	return tr

@@ -30,6 +30,7 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/usage"
+	"github.com/is7qin/c3api/pkg/sserelay"
 	"github.com/is7qin/c3api/pkg/aiclient"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -394,8 +395,8 @@ func usageIdentity(format domain.RequestFormat, sel *scheduler.Selection, reqMod
 // 落库路由与 finish 同走 routeLog 单写点。**本地
 // 预用量拒绝（429/402 等，见 recordRejected）不在此路径**——无用量可记的
 // 拒绝不产生明细，避免拒绝风暴打爆 pending。
-func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int64, reqModel, mappedModel string, format domain.RequestFormat, status int, et domain.ErrorType, latencyMS int64, u usageTuple, start time.Time) {
-	p.recordLog(logWithCtx(ctx, p.buildLog(reqID, groupID, accountID, reqModel, mappedModel, format, status, et, u, start)))
+func (p *Proxy) record(ctx context.Context, reqID string, groupID, accountID int64, reqModel, mappedModel string, format domain.RequestFormat, status int, et domain.ErrorType, commit CommitState, latencyMS int64, u usageTuple, start time.Time) {
+	p.recordLog(withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, accountID, reqModel, mappedModel, format, status, et, u, start)), commit))
 }
 
 // recordRejected 记录一条**本地预用量拒绝**（401 鉴权失败/额度耗尽/并发超限/
@@ -438,23 +439,24 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 	p.routeLog(l)
 }
 
-// routeLog 分表统一路由（usage_logs 成员资格按**放行
-// 路径语义（error_type）**判定，与 cost 无关——cost>0 判定会漏掉免费分组
-// （倍率 0 的成功行）与 0 token 成功行（空响应））：
-//   - usage_logs = 放行路径明细：error_type ∈ {none（成功，含 cost=0 免费组/
-//     空响应）, abort（半异常计费）}——单写点（spec §一）：billable 行一律
-//     经 rec.Record 入队，入队前盖 Billed 出生标记；扣费由 billing worker 从
-//     账本游标消费。4xx/5xx/network（上游透传/耗尽失败行）不写
-//     usage_logs（失败明细归 err_logs 拒绝风暴教训同族）
-//   - err_logs = 全部错误明细（error_type != none）：4xx/5xx（上游透传/耗尽）
-//   - abort 双轨（豁免队列恒落盘——架构审查）；拒绝行走 recordRejected
-//     的采样队列，不经本路由
+// routeLog 分表统一路由（usage_logs 成员资格 = **可计费判据**，与 cost 无关——
+// cost>0 判定会漏掉免费分组（倍率 0 的成功行）与 0 token 成功行（空响应））：
+//   - 可计费（spec-stream-failure-truth §5.2/§5.4，SQL 语义逐字对齐）：
+//     error_type = 'none' OR commit_state IN ('sent_ambiguous',
+//     'response_started', 'client_committed')。**计费资格与 error_type 解耦**：
+//     已交付的失败（业务帧已写）照常计费，未交付的失败只留错误明细。
+//     🚨 commit_state IS NULL = **未知**（历史行/未接事实的路径）——不得解释为
+//     not_sent/upstream_responded，也不得回填重判；这里只取保守判定「不计费」。
+//     单写点：billable 行一律经 rec.Record 入队，入队前盖 Billed 出生标记；扣费
+//     由 billing worker 从账本游标消费。
+//   - err_logs = 全部错误明细（error_type != none）：4xx/5xx/429/network + 已交付
+//     的失败（双轨，与既有 abort 行为同构）——豁免队列恒落盘。
 //   - usage_stats = 离线聚合（spec 2026-08-14）：请求路径零统计计算/投递——
-//     放行行（none/abort）由离线 worker 从 usage_logs 重建（全字段含 TTFT/
-//     call_count）；纯错误行（4xx/5xx/network）从 err_logs 重建（count 语义）；
-//     拒绝行随 err_logs 采样丢样（口径注释见 recordRejected）
+//     放行行由离线 worker 从 usage_logs 重建（全字段含 TTFT/call_count）；纯错误行
+//     （尚未双轨的失败）从 err_logs 重建（count 语义）；拒绝行随 err_logs 采样丢样
+//     （口径注释见 recordRejected）。
 func (p *Proxy) routeLog(l *domain.UsageLog) {
-	if l.ErrorType == domain.ErrNone || l.ErrorType == domain.ErrAbort { // 放行路径
+	if l.ErrorType == domain.ErrNone || commitStateBillable(l.CommitState) { // 可计费
 		// 出生标记盖章（spec §一）：Billed = !(计费捕获开 && 有用户归属)。
 		// true = 出生即结算吸收态（计费关闭/匿名行本就不扣，游标零消费顺带
 		// 省一次循环）；false = 待对账，billing worker 游标消费。
@@ -464,6 +466,60 @@ func (p *Proxy) routeLog(l *domain.UsageLog) {
 	if l.ErrorType != domain.ErrNone {
 		p.enqueueErrLog(l) // 全部错误明细 → err_logs（豁免通道）
 	}
+}
+
+// commitStateBillable 报告一行是否已交付（可计费半支；error_type = none 的
+// 成功行由 routeLog 直接放行，不经过本函数）。判据 = 值 ∈ {sent_ambiguous,
+// response_started, client_committed}——即「网关下行写成功」，**不是**「客户端
+// 已实际收到」（TCP 缓冲下写成功不对端消费）。
+//
+// nil（未知）与 not_sent / upstream_responded 一律不可计费：前者是历史行与未接
+// 事实路径的保守判定（spec §5.4 钉死 NULL 语义），后两者是「没发」与「发了没答」
+// ——两者都不计费，但事故复盘含义不同，故落库保留区分而不是压成布尔。
+func commitStateBillable(s *string) bool {
+	if s == nil {
+		return false
+	}
+	switch *s {
+	case CommitSentAmbiguous.String(), CommitResponseStarted.String(), CommitClientCommitted.String():
+		return true
+	default:
+		return false
+	}
+}
+
+// commitStateOf 把一次尝试终态的 CommitState 折算成持久化字符串值（nil =
+// 未知：非法值不写列，保持 NULL 语义——不回填、不重判）。
+func commitStateOf(c CommitState) *string {
+	if !c.Valid() {
+		return nil
+	}
+	s := c.String()
+	return &s
+}
+
+// commitStateOfFailure 已提交流失败出口的交付事实折算（spec §5.2「折算规则」/
+// §5.3）：事实源是 sserelay.Output 的真实写出计数，**不是**出口自己构造的常量。
+//
+//	写过业务帧（网关下行写成功）  ⇒ sent_ambiguous（已写、但断链后去向不确定）
+//	一帧业务字节都没写出 + 曾写失败 ⇒ sent_ambiguous（沿用今天 abort 对同状态的
+//	                                计费口径——本轮不改钱；「没发」由未提交车道
+//	                                记 not_sent）
+//	一帧业务字节都没写出            ⇒ upstream_responded（上游答了失败、我们什么
+//	                                都没发出去 ⇒ 不可计费）
+func commitStateOfFailure(out *sserelay.Output) CommitState {
+	if out.BusinessFrameSent() || out.WriteFailed() {
+		return CommitSentAmbiguous
+	}
+	return CommitUpstreamResponded
+}
+
+// withCommit 给已构建的日志行补交付事实（出口事实源 = AttemptOutcome.Commit /
+// sserelay.Output 的写出事实）。传值而非散落的字面量，保证「同一事实只有一个
+// 折算函数」（commitStateOf）。
+func withCommit(l *domain.UsageLog, c CommitState) *domain.UsageLog {
+	l.CommitState = commitStateOf(c)
+	return l
 }
 
 // enqueueErrLog 错误明细投递（架构审查：上游错误/双轨行走豁免队列——不参与
@@ -610,11 +666,14 @@ type usageTuple struct {
 // applyBilling 承担）。groupID 由各 caller 作用域传入（此前硬编码
 // 0 → 中止路径组倍率查找恒 miss → 组倍率 ≠10000 时计费与正常路径不一致）。
 // MappedModel = 当轮选中尝试的用量身份（非 Search 全走本入口）。
-func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, u usageTuple, err error) {
+//
+// commit 是本次尝试的交付事实（§5.2：计费资格由它决定，不再由 error_type
+// 决定）：写过业务帧的失败照常计费（sent_ambiguous），一帧未写出的失败不计费。
+func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, u usageTuple, commit CommitState, err error) {
 	if p.log != nil {
 		p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
 	}
-	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start))
+	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start)), commit)
 	// 中止行必须留因（causeMessage：上游信封 message 优先，退 err 全文）：没有它
 	// 用户面只剩「已中止」+ 空列，等于把故障原因整个吞掉。
 	l.ErrorMessage = causeMessage(err)

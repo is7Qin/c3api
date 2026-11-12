@@ -144,6 +144,7 @@ var (
 		{Name: "format", Type: field.TypeEnum, Enums: []string{"openai-chat", "openai-responses", "openai-responses-ws", "openai-images", "anthropic", "openai-search"}},
 		{Name: "status_code", Type: field.TypeInt, Default: 0},
 		{Name: "error_type", Type: field.TypeString, Default: "none"},
+		{Name: "commit_state", Type: field.TypeString, Nullable: true},
 		{Name: "error_message", Type: field.TypeString, Nullable: true},
 		{Name: "latency_ms", Type: field.TypeInt64, Default: 0},
 		{Name: "billing_tier", Type: field.TypeString, Nullable: true},
@@ -158,17 +159,17 @@ var (
 			{
 				Name:    "errlog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[15]},
+				Columns: []*schema.Column{ErrLogsColumns[16]},
 			},
 			{
 				Name:    "errlog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[3], ErrLogsColumns[15]},
+				Columns: []*schema.Column{ErrLogsColumns[3], ErrLogsColumns[16]},
 			},
 			{
 				Name:    "errlog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[6], ErrLogsColumns[15]},
+				Columns: []*schema.Column{ErrLogsColumns[6], ErrLogsColumns[16]},
 			},
 		},
 	}
@@ -873,6 +874,7 @@ var (
 		{Name: "mapped_model", Type: field.TypeString, Nullable: true},
 		{Name: "format", Type: field.TypeEnum, Enums: []string{"openai-chat", "openai-responses", "openai-responses-ws", "anthropic", "openai-images", "openai-search"}},
 		{Name: "error_type", Type: field.TypeString, Default: "none"},
+		{Name: "commit_state", Type: field.TypeString, Nullable: true},
 		{Name: "latency_ms", Type: field.TypeInt64, Default: 0},
 		{Name: "ttft_ms", Type: field.TypeInt64, Nullable: true},
 		{Name: "input_tokens", Type: field.TypeInt64, Default: 0},
@@ -906,32 +908,32 @@ var (
 			{
 				Name:    "usagelog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[34]},
+				Columns: []*schema.Column{UsageLogsColumns[35]},
 			},
 			{
 				Name:    "usagelog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[34]},
+				Columns: []*schema.Column{UsageLogsColumns[3], UsageLogsColumns[35]},
 			},
 			{
 				Name:    "usagelog_account_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[4], UsageLogsColumns[34]},
+				Columns: []*schema.Column{UsageLogsColumns[4], UsageLogsColumns[35]},
 			},
 			{
 				Name:    "usagelog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[34]},
+				Columns: []*schema.Column{UsageLogsColumns[6], UsageLogsColumns[35]},
 			},
 			{
 				Name:    "usagelog_key_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{UsageLogsColumns[7], UsageLogsColumns[34]},
+				Columns: []*schema.Column{UsageLogsColumns[7], UsageLogsColumns[35]},
 			},
 			{
 				Name:    "usagelog_request_id_created_at",
 				Unique:  true,
-				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[34]},
+				Columns: []*schema.Column{UsageLogsColumns[1], UsageLogsColumns[35]},
 			},
 		},
 	}

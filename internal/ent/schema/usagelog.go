@@ -42,6 +42,15 @@ func (UsageLog) Fields() []ent.Field {
 		// 错误审计字段（status_code/error_message 等）由 err_logs 承载（见
 		// errlog.go）。
 		field.String("error_type").Default("none"),
+		// commit_state 交付事实（spec-stream-failure-truth §5.2，可空）：
+		// 取值域 = proxy.CommitState.String()（not_sent / sent_ambiguous /
+		// upstream_responded / response_started / client_committed）。
+		// 计费资格与 error_type **解耦**：本列 ∈ {sent_ambiguous,
+		// response_started, client_committed} 即可计费（已交付的失败照常计费）。
+		// NULL = 未知（历史行/未接事实的路径）——不得回填、不得重判，也不得
+		// 解释为 not_sent/upstream_responded。新列仅全新部署（分区表首次创建）
+		// 时建立，已装库不补齐（beta 哲学，同 supplier_* 三列）。
+		field.String("commit_state").Optional().Nillable(),
 		field.Int64("latency_ms").Default(0),
 		// TTFT（首 token 时间毫秒）：caller 流式首 chunk 采集（ctx 传递）；
 		// 非流式/失败/无首 token 路径 = NULL。

@@ -401,7 +401,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			o.BusinessFrameSent = true
 			o.Terminal = true
 			emitCodexOutcome(ctx, p, sel, o, 0, "")
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrAbort, ut, start)))
+			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrAbort, ut, start)), o.Commit))
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
@@ -422,7 +422,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			o.BusinessFrameSent = true
 			o.Terminal = true
 			emitCodexOutcome(ctx, p, sel, o, rule.KindNetwork, err.Error())
-			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, err)
+			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, CommitSentAmbiguous, err)
 			return 0, nil, true, nil
 		}
 	}

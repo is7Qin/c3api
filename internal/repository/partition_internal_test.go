@@ -80,7 +80,7 @@ func TestUsageLogColumnDefsMatchCreateDDL(t *testing.T) {
 // billed 为 ledger-cursor spec 2026-08-23 追加）。
 func TestUsageLogCopyColumnsMatchColumnDefs(t *testing.T) {
 	source := ddlColumnNames(strings.Join(usageLogColumnDefs, "\n"))
-	require.Len(t, usageLogCopyColumns, 34, "COPY 列数 31→34（+3 供应商收益快照列）")
+	require.Len(t, usageLogCopyColumns, 35, "COPY 列数 34→35（+commit_state 交付事实列）")
 	want := make([]string, 0, len(source)-1)
 	for _, s := range source {
 		if s != "id" { // id 为自增列（COPY 不写，序列默认生成）

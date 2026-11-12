@@ -378,7 +378,7 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 		// WS 修复性声明（gate Minor 2c）：WS 拨号/首帧转发阶段断连同样归
 		// 此分支（现状记连接级错误冷却无辜账号——统一 499 语义不冷却）。
 		if code == 0 && r.Context().Err() != nil {
-			l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start))
+			l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start)), CommitSentAmbiguous)
 			msg := "client closed request before upstream response"
 			l.ErrorMessage = &msg
 			p.finish(sel, l)
@@ -486,7 +486,14 @@ func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, f
 	}
 	status := passthroughStatus(then, lastCode)
 	applyPassthroughHeader(w, then, lastHdr, status)
-	l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, usageIdentity(format, lastSel, reqModel), format, lastCode, et, usageTuple{}, start))
+	// 交付事实：耗尽行一律发生在首字节前——上游给了状态 ⇒ upstream_responded
+	// （「发了没答」）；连状态都没有（连接级失败）⇒ not_sent（「没发」）。两者都
+	// 不可计费，但事故复盘含义不同（§5.2）。
+	commit := CommitNotSent
+	if lastCode != 0 {
+		commit = CommitUpstreamResponded
+	}
+	l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, usageIdentity(format, lastSel, reqModel), format, lastCode, et, usageTuple{}, start)), commit)
 	if lastErrMsg != "" {
 		l.ErrorMessage = &lastErrMsg
 	}

@@ -208,6 +208,13 @@ func (h *UserAPI) sanitizeErrLog(l *domain.UsageLog) (string, bool) {
 	if l.GroupID > 0 {
 		ev.GroupID = &l.GroupID
 	}
+	// ⚠ 能力边界（spec-stream-failure-truth §3.2，**不是实现缺陷**）：只有
+	// status_code > 0 才设置 HTTPStatus。上游在流内声明失败时**没有** HTTP 状态
+	// （status_code=0 就是「上游答了失败但未给码」的合法值，不是纯网络错误），
+	// 因此 error_type=5xx + status_code=0 在用户面同样是 `Kind5xx + 无状态`
+	// ——**任何带 http_status / http_status_in 条件的规则都不匹配**（engine.go 对
+	// nil 恒不匹配）。需要「过载不惩罚」这类效果应由规则条件表达，而不是让网关
+	// 合成一个上游没给过的码去迁就现成规则。
 	if l.StatusCode > 0 {
 		ev.HTTPStatus = &l.StatusCode
 	}

@@ -136,7 +136,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			// 客户端断开：已收集张数照常计费落账，不 MarkResult（不可转移）。
 			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultClientCancel, 0, CommitResponseStarted, true, true, false))
 			p.observeDispatchOutcome(ctx, outcome, nil)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
+			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)), outcome.Commit))
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
@@ -153,16 +153,14 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 				writeClientStreamError(out, domain.FormatOpenAIImages, genErr)
 			}
 			code := statusOf(genErr)
-			commit := CommitUpstreamResponded
-			business := false
-			if code == 0 {
-				commit = CommitSentAmbiguous
-				business = true
-			}
+			// 交付事实取 Output 的真实写出（§5.2(4) 折叠口径）：出图一张也算已写
+			// ——「上游 500 但已下发一张」必须计费（白送真实产出是本次要修的毛病）。
+			commit := commitStateOfFailure(out)
+			business := commit == CommitSentAmbiguous
 			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), commit, business, true, false))
 			health := &AttemptHealthEvent{Kind: scheduler.RuleKindOf(code), ErrorMessage: genErr.Error()}
 			p.observeDispatchOutcome(ctx, outcome, health)
-			p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)))
+			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, http.StatusOK, domain.ErrAbort, u, start)), commit))
 			return 0, nil, true, nil
 		}
 	}

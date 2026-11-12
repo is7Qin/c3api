@@ -39,6 +39,13 @@ func (ErrLog) Fields() []ent.Field {
 			Values("openai-chat", "openai-responses", "openai-responses-ws", "openai-images", "anthropic", "openai-search"),
 		field.Int("status_code").Default(0),
 		field.String("error_type").Default("none"),
+		// commit_state 交付事实（spec-stream-failure-truth §5.2/§5.4，可空）：
+		// 错误明细侧同样带交付事实——离线统计从 err_logs 取「纯错误行」时必须
+		// 排除 commit_state ∈ {sent_ambiguous, response_started,
+		// client_committed} 的**已交付**失败行（那些行同时在 usage_logs，重复计
+		// 数会虚增错误数）。取值域与语义同 usage_logs.commit_state；NULL = 未知
+		// （历史行），保守不计入放行侧。
+		field.String("commit_state").Optional().Nillable(),
 		// 错误文本：连接级 err.Error() / 4xx+ 上游 body / 拒绝文案，域内截断
 		// 500 字符（domain.TruncateErrMsg）；NULL = 无错误文本。
 		field.String("error_message").Optional().Nillable(),

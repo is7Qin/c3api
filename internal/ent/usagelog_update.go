@@ -259,6 +259,26 @@ func (_u *UsageLogUpdate) SetNillableErrorType(v *string) *UsageLogUpdate {
 	return _u
 }
 
+// SetCommitState sets the "commit_state" field.
+func (_u *UsageLogUpdate) SetCommitState(v string) *UsageLogUpdate {
+	_u.mutation.SetCommitState(v)
+	return _u
+}
+
+// SetNillableCommitState sets the "commit_state" field if the given value is not nil.
+func (_u *UsageLogUpdate) SetNillableCommitState(v *string) *UsageLogUpdate {
+	if v != nil {
+		_u.SetCommitState(*v)
+	}
+	return _u
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (_u *UsageLogUpdate) ClearCommitState() *UsageLogUpdate {
+	_u.mutation.ClearCommitState()
+	return _u
+}
+
 // SetLatencyMs sets the "latency_ms" field.
 func (_u *UsageLogUpdate) SetLatencyMs(v int64) *UsageLogUpdate {
 	_u.mutation.ResetLatencyMs()
@@ -871,6 +891,12 @@ func (_u *UsageLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.ErrorType(); ok {
 		_spec.SetField(usagelog.FieldErrorType, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.CommitState(); ok {
+		_spec.SetField(usagelog.FieldCommitState, field.TypeString, value)
+	}
+	if _u.mutation.CommitStateCleared() {
+		_spec.ClearField(usagelog.FieldCommitState, field.TypeString)
+	}
 	if value, ok := _u.mutation.LatencyMs(); ok {
 		_spec.SetField(usagelog.FieldLatencyMs, field.TypeInt64, value)
 	}
@@ -1263,6 +1289,26 @@ func (_u *UsageLogUpdateOne) SetNillableErrorType(v *string) *UsageLogUpdateOne 
 	if v != nil {
 		_u.SetErrorType(*v)
 	}
+	return _u
+}
+
+// SetCommitState sets the "commit_state" field.
+func (_u *UsageLogUpdateOne) SetCommitState(v string) *UsageLogUpdateOne {
+	_u.mutation.SetCommitState(v)
+	return _u
+}
+
+// SetNillableCommitState sets the "commit_state" field if the given value is not nil.
+func (_u *UsageLogUpdateOne) SetNillableCommitState(v *string) *UsageLogUpdateOne {
+	if v != nil {
+		_u.SetCommitState(*v)
+	}
+	return _u
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (_u *UsageLogUpdateOne) ClearCommitState() *UsageLogUpdateOne {
+	_u.mutation.ClearCommitState()
 	return _u
 }
 
@@ -1907,6 +1953,12 @@ func (_u *UsageLogUpdateOne) sqlSave(ctx context.Context) (_node *UsageLog, err 
 	}
 	if value, ok := _u.mutation.ErrorType(); ok {
 		_spec.SetField(usagelog.FieldErrorType, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.CommitState(); ok {
+		_spec.SetField(usagelog.FieldCommitState, field.TypeString, value)
+	}
+	if _u.mutation.CommitStateCleared() {
+		_spec.ClearField(usagelog.FieldCommitState, field.TypeString)
 	}
 	if value, ok := _u.mutation.LatencyMs(); ok {
 		_spec.SetField(usagelog.FieldLatencyMs, field.TypeInt64, value)

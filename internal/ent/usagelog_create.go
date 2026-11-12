@@ -160,6 +160,20 @@ func (_c *UsageLogCreate) SetNillableErrorType(v *string) *UsageLogCreate {
 	return _c
 }
 
+// SetCommitState sets the "commit_state" field.
+func (_c *UsageLogCreate) SetCommitState(v string) *UsageLogCreate {
+	_c.mutation.SetCommitState(v)
+	return _c
+}
+
+// SetNillableCommitState sets the "commit_state" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableCommitState(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetCommitState(*v)
+	}
+	return _c
+}
+
 // SetLatencyMs sets the "latency_ms" field.
 func (_c *UsageLogCreate) SetLatencyMs(v int64) *UsageLogCreate {
 	_c.mutation.SetLatencyMs(v)
@@ -734,6 +748,10 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(usagelog.FieldErrorType, field.TypeString, value)
 		_node.ErrorType = value
 	}
+	if value, ok := _c.mutation.CommitState(); ok {
+		_spec.SetField(usagelog.FieldCommitState, field.TypeString, value)
+		_node.CommitState = &value
+	}
 	if value, ok := _c.mutation.LatencyMs(); ok {
 		_spec.SetField(usagelog.FieldLatencyMs, field.TypeInt64, value)
 		_node.LatencyMs = value
@@ -1079,6 +1097,24 @@ func (u *UsageLogUpsert) SetErrorType(v string) *UsageLogUpsert {
 // UpdateErrorType sets the "error_type" field to the value that was provided on create.
 func (u *UsageLogUpsert) UpdateErrorType() *UsageLogUpsert {
 	u.SetExcluded(usagelog.FieldErrorType)
+	return u
+}
+
+// SetCommitState sets the "commit_state" field.
+func (u *UsageLogUpsert) SetCommitState(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldCommitState, v)
+	return u
+}
+
+// UpdateCommitState sets the "commit_state" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateCommitState() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldCommitState)
+	return u
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (u *UsageLogUpsert) ClearCommitState() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldCommitState)
 	return u
 }
 
@@ -1791,6 +1827,27 @@ func (u *UsageLogUpsertOne) SetErrorType(v string) *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) UpdateErrorType() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateErrorType()
+	})
+}
+
+// SetCommitState sets the "commit_state" field.
+func (u *UsageLogUpsertOne) SetCommitState(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCommitState(v)
+	})
+}
+
+// UpdateCommitState sets the "commit_state" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateCommitState() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCommitState()
+	})
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (u *UsageLogUpsertOne) ClearCommitState() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearCommitState()
 	})
 }
 
@@ -2740,6 +2797,27 @@ func (u *UsageLogUpsertBulk) SetErrorType(v string) *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) UpdateErrorType() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.UpdateErrorType()
+	})
+}
+
+// SetCommitState sets the "commit_state" field.
+func (u *UsageLogUpsertBulk) SetCommitState(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetCommitState(v)
+	})
+}
+
+// UpdateCommitState sets the "commit_state" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateCommitState() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateCommitState()
+	})
+}
+
+// ClearCommitState clears the value of the "commit_state" field.
+func (u *UsageLogUpsertBulk) ClearCommitState() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearCommitState()
 	})
 }
 

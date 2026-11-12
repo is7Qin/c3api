@@ -470,7 +470,7 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 		out.Timing.TTFTMS = ttft
 	}
 	p.observeDispatchOutcome(logCtx, out, nil)
-	l := logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, logStatus, logET, u, start))
+	l := withCommit(logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, logStatus, logET, u, start)), out.Commit)
 	// 与其余中止/失败出口同口径：contFail 的文案就是网关给出的失败原因
 	// （续接权威不可用/绑定冲突），落盘后 err_logs 才有可读文本。
 	l.ErrorMessage = causeMessage(contFail)

@@ -348,9 +348,13 @@ func TestStreamImageAbortNoCompleted(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
 	require.Contains(t, rec.Body.String(), "event: error\ndata: {\"error\":{\"message\":\"upstream connection error\",\"type\":\"server_error\"}}\n\n", "SSE error 帧固定文案（连接级内部文本不上用户帧）")
-	l := collectImageLogs(t, p, store)
-	require.Equal(t, domain.ErrAbort, l.ErrorType)
-	require.Zero(t, l.CallCount, "无 completed → 0 张落账")
+	// 未交付（0 张图、0 业务帧，keepalive 不算业务）⇒ upstream_responded ⇒
+	// 不计费：只进 err_logs（usage_logs 0 行）。计费资格与 error_type 解耦后，
+	// 「上游断流」不再自动等于「可计费的失败」。
+	rows := uniqueRows(t, drainLogs(t, p, store))
+	require.Len(t, rows, 1, "失败明细恰一行；rows=%+v", rows)
+	require.Zero(t, rows[0].CallCount, "无 completed → 0 张落账")
+	require.Len(t, storeRows(store), 1, "未交付 ⇒ 只进 err_logs：usage_logs 0 行")
 }
 
 // TestStreamImageClientDisconnect 客户端断开（abort 双分支 1）：已收集张数照常

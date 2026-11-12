@@ -116,7 +116,10 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	firstTyp, first, err := client.Read(firstCtx)
 	firstCancel()
 	if err != nil {
-		p.record(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, statusClientClosedRequest, domain.ErrAbort, 0, usageTuple{}, start)
+		// 交付事实：首帧都没收到 ⇒ 一帧未写。历史行为把这条 abort 行计入放行侧
+		// （§5.2「沿用今天 abort 对同状态的口径」）——保持 sent_ambiguous，不改变
+		// 既有分表成员资格（tokens 恒 0 ⇒ cost 0，不动钱）。
+		p.record(r.Context(), reqID, groupID, 0, "", "", domain.FormatOpenAIResponsesWS, statusClientClosedRequest, domain.ErrAbort, CommitSentAmbiguous, 0, usageTuple{}, start)
 		return
 	}
 	// 首帧必须是合法 JSON：扫描器（duplicateTopLevelKey）与 gjson 都以 json.Valid

@@ -104,6 +104,11 @@ func ErrorType(v string) predicate.ErrLog {
 	return predicate.ErrLog(sql.FieldEQ(FieldErrorType, v))
 }
 
+// CommitState applies equality check predicate on the "commit_state" field. It's identical to CommitStateEQ.
+func CommitState(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldEQ(FieldCommitState, v))
+}
+
 // ErrorMessage applies equality check predicate on the "error_message" field. It's identical to ErrorMessageEQ.
 func ErrorMessage(v string) predicate.ErrLog {
 	return predicate.ErrLog(sql.FieldEQ(FieldErrorMessage, v))
@@ -702,6 +707,81 @@ func ErrorTypeEqualFold(v string) predicate.ErrLog {
 // ErrorTypeContainsFold applies the ContainsFold predicate on the "error_type" field.
 func ErrorTypeContainsFold(v string) predicate.ErrLog {
 	return predicate.ErrLog(sql.FieldContainsFold(FieldErrorType, v))
+}
+
+// CommitStateEQ applies the EQ predicate on the "commit_state" field.
+func CommitStateEQ(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldEQ(FieldCommitState, v))
+}
+
+// CommitStateNEQ applies the NEQ predicate on the "commit_state" field.
+func CommitStateNEQ(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldNEQ(FieldCommitState, v))
+}
+
+// CommitStateIn applies the In predicate on the "commit_state" field.
+func CommitStateIn(vs ...string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldIn(FieldCommitState, vs...))
+}
+
+// CommitStateNotIn applies the NotIn predicate on the "commit_state" field.
+func CommitStateNotIn(vs ...string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldNotIn(FieldCommitState, vs...))
+}
+
+// CommitStateGT applies the GT predicate on the "commit_state" field.
+func CommitStateGT(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldGT(FieldCommitState, v))
+}
+
+// CommitStateGTE applies the GTE predicate on the "commit_state" field.
+func CommitStateGTE(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldGTE(FieldCommitState, v))
+}
+
+// CommitStateLT applies the LT predicate on the "commit_state" field.
+func CommitStateLT(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldLT(FieldCommitState, v))
+}
+
+// CommitStateLTE applies the LTE predicate on the "commit_state" field.
+func CommitStateLTE(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldLTE(FieldCommitState, v))
+}
+
+// CommitStateContains applies the Contains predicate on the "commit_state" field.
+func CommitStateContains(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldContains(FieldCommitState, v))
+}
+
+// CommitStateHasPrefix applies the HasPrefix predicate on the "commit_state" field.
+func CommitStateHasPrefix(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldHasPrefix(FieldCommitState, v))
+}
+
+// CommitStateHasSuffix applies the HasSuffix predicate on the "commit_state" field.
+func CommitStateHasSuffix(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldHasSuffix(FieldCommitState, v))
+}
+
+// CommitStateIsNil applies the IsNil predicate on the "commit_state" field.
+func CommitStateIsNil() predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldIsNull(FieldCommitState))
+}
+
+// CommitStateNotNil applies the NotNil predicate on the "commit_state" field.
+func CommitStateNotNil() predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldNotNull(FieldCommitState))
+}
+
+// CommitStateEqualFold applies the EqualFold predicate on the "commit_state" field.
+func CommitStateEqualFold(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldEqualFold(FieldCommitState, v))
+}
+
+// CommitStateContainsFold applies the ContainsFold predicate on the "commit_state" field.
+func CommitStateContainsFold(v string) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldContainsFold(FieldCommitState, v))
 }
 
 // ErrorMessageEQ applies the EQ predicate on the "error_message" field.

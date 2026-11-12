@@ -99,7 +99,14 @@ func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, s
 	if outcome.Timing.TTFTMS != nil {
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, outcome.Timing.TTFTMS)
 	}
-	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIChat, status, et, u, start))
+	// 交付事实（§5.2）：成功 = 已确认下发；首字节写失败（序 0c，outcome 记
+	// not_sent）今天记 abort 且计入放行侧——沿用今天 abort 对同状态的可计费口径
+	// （半异常计费语义），本轮不改钱。钱的归属只由本列决定，不由 error_type。
+	commit := outcome.Commit
+	if outcome.Result == ResultFailed && outcome.Commit == CommitNotSent {
+		commit = CommitSentAmbiguous
+	}
+	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIChat, status, et, u, start)), commit)
 	// 中止/失败行必须留因：cause 为 relay 返回的真实错误（上游流内错误帧的
 	// PayloadError、关闭帧、context.Canceled 等）。成功行 cause 恒 nil ⇒ NULL。
 	if outcome.Result != ResultSuccess {

@@ -121,6 +121,11 @@ var usageLogColumnDefs = []string{
 	`mapped_model varchar NULL`,
 	`format varchar NOT NULL`,
 	`error_type varchar NOT NULL DEFAULT 'none'`,
+	// commit_state 交付事实（spec-stream-failure-truth §5.2）：取值域 =
+	// proxy.CommitState.String() 五值。计费资格与 error_type 解耦——本列 ∈
+	// {sent_ambiguous,response_started,client_committed} 即计费（已交付的失败
+	// 照常计费）；NULL = 未知（历史行/未接事实路径），不回填、不重判。
+	`commit_state varchar NULL`,
 	`latency_ms bigint NOT NULL DEFAULT 0`,
 	`ttft_ms bigint NULL`,
 	`input_tokens bigint NOT NULL DEFAULT 0`,
@@ -222,6 +227,10 @@ var errLogColumnDefs = []string{
 	`format varchar NOT NULL`,
 	`status_code integer NOT NULL DEFAULT 0`,
 	`error_type varchar NOT NULL DEFAULT 'none'`,
+	// commit_state 交付事实（spec-stream-failure-truth §5.4）：与 usage_logs
+	// 同列同义——离线统计从 err_logs 取纯错误行时须排除已交付子集（否则已
+	// 双轨的失败行会被重复计入错误数）。NULL = 未知（历史行）。
+	`commit_state varchar NULL`,
 	`error_message varchar NULL`,
 	`latency_ms bigint NOT NULL DEFAULT 0`,
 	`billing_tier varchar NULL`,

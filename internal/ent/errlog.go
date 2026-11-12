@@ -39,6 +39,8 @@ type ErrLog struct {
 	StatusCode int `json:"status_code,omitempty"`
 	// ErrorType holds the value of the "error_type" field.
 	ErrorType string `json:"error_type,omitempty"`
+	// CommitState holds the value of the "commit_state" field.
+	CommitState *string `json:"commit_state,omitempty"`
 	// ErrorMessage holds the value of the "error_message" field.
 	ErrorMessage *string `json:"error_message,omitempty"`
 	// LatencyMs holds the value of the "latency_ms" field.
@@ -57,7 +59,7 @@ func (*ErrLog) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case errlog.FieldID, errlog.FieldGroupID, errlog.FieldAccountID, errlog.FieldTemplateID, errlog.FieldUserID, errlog.FieldKeyID, errlog.FieldStatusCode, errlog.FieldLatencyMs:
 			values[i] = new(sql.NullInt64)
-		case errlog.FieldRequestID, errlog.FieldClientIP, errlog.FieldModel, errlog.FieldFormat, errlog.FieldErrorType, errlog.FieldErrorMessage, errlog.FieldBillingTier:
+		case errlog.FieldRequestID, errlog.FieldClientIP, errlog.FieldModel, errlog.FieldFormat, errlog.FieldErrorType, errlog.FieldCommitState, errlog.FieldErrorMessage, errlog.FieldBillingTier:
 			values[i] = new(sql.NullString)
 		case errlog.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -153,6 +155,13 @@ func (_m *ErrLog) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field error_type", values[i])
 			} else if value.Valid {
 				_m.ErrorType = value.String
+			}
+		case errlog.FieldCommitState:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field commit_state", values[i])
+			} else if value.Valid {
+				_m.CommitState = new(string)
+				*_m.CommitState = value.String
 			}
 		case errlog.FieldErrorMessage:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -260,6 +269,11 @@ func (_m *ErrLog) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("error_type=")
 	builder.WriteString(_m.ErrorType)
+	builder.WriteString(", ")
+	if v := _m.CommitState; v != nil {
+		builder.WriteString("commit_state=")
+		builder.WriteString(*v)
+	}
 	builder.WriteString(", ")
 	if v := _m.ErrorMessage; v != nil {
 		builder.WriteString("error_message=")

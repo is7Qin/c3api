@@ -36,6 +36,8 @@ const (
 	FieldStatusCode = "status_code"
 	// FieldErrorType holds the string denoting the error_type field in the database.
 	FieldErrorType = "error_type"
+	// FieldCommitState holds the string denoting the commit_state field in the database.
+	FieldCommitState = "commit_state"
 	// FieldErrorMessage holds the string denoting the error_message field in the database.
 	FieldErrorMessage = "error_message"
 	// FieldLatencyMs holds the string denoting the latency_ms field in the database.
@@ -62,6 +64,7 @@ var Columns = []string{
 	FieldFormat,
 	FieldStatusCode,
 	FieldErrorType,
+	FieldCommitState,
 	FieldErrorMessage,
 	FieldLatencyMs,
 	FieldBillingTier,
@@ -179,6 +182,11 @@ func ByStatusCode(opts ...sql.OrderTermOption) OrderOption {
 // ByErrorType orders the results by the error_type field.
 func ByErrorType(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldErrorType, opts...).ToFunc()
+}
+
+// ByCommitState orders the results by the commit_state field.
+func ByCommitState(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCommitState, opts...).ToFunc()
 }
 
 // ByErrorMessage orders the results by the error_message field.

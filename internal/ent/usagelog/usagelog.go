@@ -36,6 +36,8 @@ const (
 	FieldFormat = "format"
 	// FieldErrorType holds the string denoting the error_type field in the database.
 	FieldErrorType = "error_type"
+	// FieldCommitState holds the string denoting the commit_state field in the database.
+	FieldCommitState = "commit_state"
 	// FieldLatencyMs holds the string denoting the latency_ms field in the database.
 	FieldLatencyMs = "latency_ms"
 	// FieldTtftMs holds the string denoting the ttft_ms field in the database.
@@ -100,6 +102,7 @@ var Columns = []string{
 	FieldMappedModel,
 	FieldFormat,
 	FieldErrorType,
+	FieldCommitState,
 	FieldLatencyMs,
 	FieldTtftMs,
 	FieldInputTokens,
@@ -260,6 +263,11 @@ func ByFormat(opts ...sql.OrderTermOption) OrderOption {
 // ByErrorType orders the results by the error_type field.
 func ByErrorType(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldErrorType, opts...).ToFunc()
+}
+
+// ByCommitState orders the results by the commit_state field.
+func ByCommitState(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldCommitState, opts...).ToFunc()
 }
 
 // ByLatencyMs orders the results by the latency_ms field.
