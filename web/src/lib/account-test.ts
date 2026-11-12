@@ -9,14 +9,47 @@ export type ProbeTemplate = Pick<components['schemas']['Template'], 'SupportedFo
 export type ProbeFormat = components['schemas']['AccountTestRequest']['format']
 export type ProbeImageMode = NonNullable<components['schemas']['AccountTestRequest']['image_mode']>
 
-export const PROBE_FORMATS = [
-  'openai-chat',
-  'openai-responses',
-  'openai-responses-ws',
-  'anthropic',
-  'openai-images',
-  'openai-search',
-] as const satisfies readonly ProbeFormat[]
+// UI 目标 ≠ wire format：images 的两个 mode 在界面上是两个独立目标，但都必须
+// 映射为 `{format:"openai-images", image_mode:"generations"|"edits"}`。
+export type ProbeTarget =
+  | 'openai-chat'
+  | 'openai-responses'
+  | 'openai-responses-ws'
+  | 'anthropic'
+  | 'openai-images.generations'
+  | 'openai-images.edits'
+  | 'openai-search'
+
+const PROBE_TARGETS = [
+  { target: 'openai-chat', format: 'openai-chat' },
+  { target: 'openai-responses', format: 'openai-responses' },
+  { target: 'openai-responses-ws', format: 'openai-responses-ws' },
+  { target: 'anthropic', format: 'anthropic' },
+  { target: 'openai-images.generations', format: 'openai-images' },
+  { target: 'openai-images.edits', format: 'openai-images' },
+  { target: 'openai-search', format: 'openai-search' },
+] as const satisfies readonly { target: ProbeTarget; format: ProbeFormat }[]
+
+export function probeTargetFormat(target: ProbeTarget): ProbeFormat {
+  switch (target) {
+    case 'openai-images.generations':
+    case 'openai-images.edits':
+      return 'openai-images'
+    default:
+      return target
+  }
+}
+
+export function probeTargetImageMode(target: ProbeTarget): ProbeImageMode | undefined {
+  switch (target) {
+    case 'openai-images.generations':
+      return 'generations'
+    case 'openai-images.edits':
+      return 'edits'
+    default:
+      return undefined
+  }
+}
 
 // 与后端 domain.ProbeMaxInputLen / ProbeMaxImageSourceBytes 同值。前端只做
 // 提示与提交前拦截；最终判定仍在 service（UTF-8 字节，不是 JS 字符数）。
@@ -64,33 +97,36 @@ export function probeImageURLShapeValid(raw: string): boolean {
 }
 
 // 请求体只携带真正有值的可选字段：input 缺省/null 才是后端默认值；显式空串
-// 会被 service 判 400。generations 不发送 image_mode/image_url。
+// 会被 service 判 400。images 的目标必须落成 `{format, image_mode}`，edits 再
+// 附加 image_url；generations 绝不发送 image_url。
 export function buildProbeRequest(args: {
-  format: ProbeFormat
+  target: ProbeTarget
   model: string
   input: string
-  imageMode: ProbeImageMode
   imageURL: string
 }): components['schemas']['AccountTestRequest'] {
+  const imageMode = probeTargetImageMode(args.target)
   const body: components['schemas']['AccountTestRequest'] = {
     model: args.model.trim(),
-    format: args.format,
+    format: probeTargetFormat(args.target),
   }
   const input = probeInputValue(args.input)
   if (input !== undefined) body.input = input
-  if (args.format === 'openai-images' && args.imageMode === 'edits') {
-    const imageURL = args.imageURL.trim()
-    if (imageURL !== '') {
-      body.image_mode = 'edits'
-      body.image_url = imageURL
+  if (imageMode !== undefined) {
+    body.image_mode = imageMode
+    if (imageMode === 'edits') {
+      const imageURL = args.imageURL.trim()
+      if (imageURL !== '') body.image_url = imageURL
     }
   }
   return body
 }
 
-export function probeFormats(template: ProbeTemplate | null | undefined): ProbeFormat[] {
+export function probeTargets(template: ProbeTemplate | null | undefined): ProbeTarget[] {
   if (!template) return []
-  return PROBE_FORMATS.filter(format => template.SupportedFormats.includes(format))
+  return PROBE_TARGETS
+    .filter(item => template.SupportedFormats.includes(item.format))
+    .map(item => item.target)
 }
 
 // FormatSupports：格式不受支持时恒 false；格式模型表已配置（含空表）时仅表内模型合格。

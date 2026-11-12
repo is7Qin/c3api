@@ -14,13 +14,13 @@ import {
   PROBE_MAX_IMAGE_URL_BYTES,
   PROBE_MAX_INPUT_BYTES,
   probeComboboxValue,
-  probeFormats,
   probeImageURLByteLength,
   probeImageURLShapeValid,
   probeInputByteLength,
   probeModelsFor,
-  type ProbeFormat,
-  type ProbeImageMode,
+  probeTargetFormat,
+  probeTargets,
+  type ProbeTarget,
 } from '@/lib/account-test'
 import { copyText } from '@/components/key-box'
 import { Badge } from '@/components/ui/badge'
@@ -52,16 +52,16 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
   const { t } = useTranslation()
   const { api } = useAccountSurface()
   const template = account.Template
-  const formats = useMemo(() => probeFormats(template), [template])
-  const defaultFormat = formats.includes('openai-chat') ? 'openai-chat' : (formats[0] ?? '')
-  const [format, setFormat] = useState<ProbeFormat | ''>(defaultFormat)
-  const [model, setModel] = useState(() => defaultFormat && template ? (probeModelsFor(template, defaultFormat).models[0] ?? '') : '')
+  const targets = useMemo(() => probeTargets(template), [template])
+  const defaultTarget = targets.includes('openai-chat') ? 'openai-chat' : (targets[0] ?? '')
+  const [target, setTarget] = useState<ProbeTarget | ''>(defaultTarget)
+  const targetFormat = target ? probeTargetFormat(target) : undefined
+  const [model, setModel] = useState(() => defaultTarget && template ? (probeModelsFor(template, probeTargetFormat(defaultTarget)).models[0] ?? '') : '')
   const candidates = useMemo(
-    () => format && template ? probeModelsFor(template, format) : { models: [], wildcard: false },
-    [template, format],
+    () => targetFormat && template ? probeModelsFor(template, targetFormat) : { models: [], wildcard: false },
+    [template, targetFormat],
   )
   const [inputText, setInputText] = useState('')
-  const [imageMode, setImageMode] = useState<ProbeImageMode>('generations')
   const [imageURL, setImageURL] = useState('')
   const [fileError, setFileError] = useState<string | null>(null)
   const [result, setResult] = useState<AccountTestResult | null>(null)
@@ -89,12 +89,11 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
     setRequestError(null)
     setCopied(false)
   }
-  const changeFormat = (next: ProbeFormat) => {
-    setFormat(next)
-    const nextCandidates = template ? probeModelsFor(template, next) : { models: [], wildcard: false }
+  const changeTarget = (next: ProbeTarget) => {
+    setTarget(next)
+    const nextCandidates = template ? probeModelsFor(template, probeTargetFormat(next)) : { models: [], wildcard: false }
     setModel(current => nextCandidates.wildcard || nextCandidates.models.includes(current) ? current : '')
-    if (next !== 'openai-images') {
-      setImageMode('generations')
+    if (next !== 'openai-images.edits') {
       setImageURL('')
       setFileError(null)
     }
@@ -102,11 +101,6 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
   }
   const changeModel = (next: string) => {
     setModel(next)
-    clearOutcome()
-  }
-  const changeImageMode = (next: ProbeImageMode) => {
-    setImageMode(next)
-    setFileError(null)
     clearOutcome()
   }
   const changeImageURL = (next: string) => {
@@ -143,13 +137,15 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
 
   const trimmed = model.trim()
   const modelValid = trimmed !== '' && (candidates.wildcard || candidates.models.includes(trimmed))
-  const imagesFormat = format === 'openai-images'
-  const edits = imagesFormat && imageMode === 'edits'
+  const edits = target === 'openai-images.edits'
   const inputTooLarge = probeInputByteLength(inputText) > PROBE_MAX_INPUT_BYTES
   const imageURLBytes = probeImageURLByteLength(imageURL)
   const imageTooLarge = edits && imageURLBytes > PROBE_MAX_IMAGE_URL_BYTES
   const imageMissing = edits && imageURL.trim() === ''
   const imageInvalid = edits && !imageMissing && !imageTooLarge && !probeImageURLShapeValid(imageURL)
+  // 远端 URL 不在浏览器里预取（避免管理员浏览器成为第二个取图方）；只预览
+  // 本地文件/粘贴产生的 data URL。
+  const imageSourcePreview = edits && !imageTooLarge && imageURL.trim().toLowerCase().startsWith('data:image/') && probeImageURLShapeValid(imageURL)
   const imageError = imageMissing
     ? t('accounts.test.imageUrlRequired')
     : imageTooLarge
@@ -157,15 +153,13 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
       : imageInvalid
         ? t('accounts.test.imageUrlInvalid')
         : null
-  const disabledReason = formats.length === 0
+  const disabledReason = targets.length === 0
     ? t('accounts.test.noFormats')
     : !candidates.wildcard && candidates.models.length === 0
       ? t('accounts.test.noModels')
       : trimmed === ''
         ? t('accounts.test.modelRequired')
-        : inputTooLarge
-          ? t('accounts.test.inputTooLarge')
-          : imageError
+        : null
 
   return (
     <DialogContent className="sm:max-w-xl">
@@ -176,17 +170,17 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
         <div className="space-y-1.5">
           <Label htmlFor="account-test-format">{t('accounts.test.format')}</Label>
           <Select
-            items={Object.fromEntries(formats.map(item => [item, item]))}
-            value={format || null}
-            onValueChange={value => changeFormat(value as ProbeFormat)}
-            disabled={formats.length === 0 || probe.isPending}
+            items={Object.fromEntries(targets.map(item => [item, item]))}
+            value={target || null}
+            onValueChange={value => changeTarget(value as ProbeTarget)}
+            disabled={targets.length === 0 || probe.isPending}
           >
             <SelectTrigger id="account-test-format" className="w-full"><SelectValue /></SelectTrigger>
             <SelectContent>
-              {formats.map(item => <SelectItem key={item} value={item} label={item}>{item}</SelectItem>)}
+              {targets.map(item => <SelectItem key={item} value={item} label={item}>{item}</SelectItem>)}
             </SelectContent>
           </Select>
-          {formats.length === 0 && <p className="text-xs text-destructive">{t('accounts.test.noFormats')}</p>}
+          {targets.length === 0 && <p className="text-xs text-destructive">{t('accounts.test.noFormats')}</p>}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="account-test-model">{t('accounts.test.model')}</Label>
@@ -196,7 +190,7 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
             inputValue={model}
             onValueChange={next => changeModel(next ?? '')}
             onInputValueChange={changeModel}
-            disabled={!format || probe.isPending || (!candidates.wildcard && candidates.models.length === 0)}
+            disabled={!target || probe.isPending || (!candidates.wildcard && candidates.models.length === 0)}
           >
             <ComboboxInput
               id="account-test-model"
@@ -212,7 +206,7 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
             </ComboboxContent>
           </Combobox>
           {candidates.wildcard && <p className="text-xs text-muted-foreground">{t('accounts.test.wildcardHint')}</p>}
-          {disabledReason && formats.length > 0 && <p className="text-xs text-muted-foreground">{disabledReason}</p>}
+          {disabledReason && targets.length > 0 && <p className="text-xs text-muted-foreground">{disabledReason}</p>}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="account-test-input">{t('accounts.test.input')}</Label>
@@ -231,63 +225,50 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
           <p className="text-xs text-muted-foreground">{t('accounts.test.inputHint')}</p>
           {inputTooLarge && <p className="text-xs text-destructive">{t('accounts.test.inputTooLarge')}</p>}
         </div>
-        {imagesFormat && (
+        {edits && (
           <div className="space-y-3 rounded-lg border bg-background/40 p-3">
             <div className="space-y-1.5">
-              <Label htmlFor="account-test-image-mode">{t('accounts.test.imageMode')}</Label>
-              <Select
-                items={{
-                  generations: t('accounts.test.imageModeGenerations'),
-                  edits: t('accounts.test.imageModeEdits'),
-                }}
-                value={imageMode}
-                onValueChange={value => changeImageMode(value as ProbeImageMode)}
+              <Label htmlFor="account-test-image-url">{t('accounts.test.imageUrl')}</Label>
+              <Input
+                id="account-test-image-url"
+                value={imageURL}
+                onChange={event => changeImageURL(event.target.value)}
+                placeholder={t('accounts.test.imageUrlPlaceholder')}
+                aria-invalid={!!imageError}
+                autoComplete="off"
                 disabled={probe.isPending}
-              >
-                <SelectTrigger id="account-test-image-mode" className="w-full"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="generations" label={t('accounts.test.imageModeGenerations')}>
-                    {t('accounts.test.imageModeGenerations')}
-                  </SelectItem>
-                  <SelectItem value="edits" label={t('accounts.test.imageModeEdits')}>
-                    {t('accounts.test.imageModeEdits')}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              />
+              <p className="text-xs text-muted-foreground">{t('accounts.test.imageUrlHint')}</p>
+              {imageError && <p className="text-xs text-destructive">{imageError}</p>}
             </div>
-            {edits && (
-              <>
-                <div className="space-y-1.5">
-                  <Label htmlFor="account-test-image-url">{t('accounts.test.imageUrl')}</Label>
-                  <Input
-                    id="account-test-image-url"
-                    value={imageURL}
-                    onChange={event => changeImageURL(event.target.value)}
-                    placeholder={t('accounts.test.imageUrlPlaceholder')}
-                    aria-invalid={!!imageError}
-                    autoComplete="off"
-                    disabled={probe.isPending}
-                  />
-                  <p className="text-xs text-muted-foreground">{t('accounts.test.imageUrlHint')}</p>
-                  {imageError && <p className="text-xs text-destructive">{imageError}</p>}
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="account-test-image-file">{t('accounts.test.imageFile')}</Label>
-                  <Input
-                    id="account-test-image-file"
-                    type="file"
-                    accept="image/*"
-                    onChange={event => {
-                      const target = event.currentTarget
-                      onImageFile(target.files?.[0])
-                      target.value = ''
-                    }}
-                    disabled={probe.isPending}
-                  />
-                  {fileError && <p className="text-xs text-destructive">{fileError}</p>}
-                </div>
-              </>
+            {imageSourcePreview && (
+              <div className="space-y-1.5">
+                <Label>{t('accounts.test.imageSourcePreview')}</Label>
+                <img
+                  key={imageURL}
+                  src={imageURL}
+                  alt={t('accounts.test.imageSourcePreviewAlt')}
+                  className="max-h-40 rounded-md border object-contain"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
             )}
+            <div className="space-y-1.5">
+              <Label htmlFor="account-test-image-file">{t('accounts.test.imageFile')}</Label>
+              <Input
+                id="account-test-image-file"
+                type="file"
+                accept="image/*"
+                onChange={event => {
+                  const input = event.currentTarget
+                  onImageFile(input.files?.[0])
+                  input.value = ''
+                }}
+                disabled={probe.isPending}
+              />
+              {fileError && <p className="text-xs text-destructive">{fileError}</p>}
+            </div>
           </div>
         )}
         {requestError && <p className="text-xs text-destructive" role="alert">{requestError}</p>}
@@ -355,10 +336,10 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
       </div>
       <DialogFooter>
         <Button
-          disabled={!format || !modelValid || probe.isPending || inputTooLarge || !!imageError}
+          disabled={!target || !modelValid || probe.isPending || inputTooLarge || !!imageError}
           onClick={() => {
-            if (!format || !modelValid || inputTooLarge || imageError) return
-            probe.mutate(buildProbeRequest({ format, model: trimmed, input: inputText, imageMode, imageURL }))
+            if (!target || !modelValid || inputTooLarge || imageError) return
+            probe.mutate(buildProbeRequest({ target, model: trimmed, input: inputText, imageURL }))
           }}
         >
           {probe.isPending && <LoaderCircle className="animate-spin" />}

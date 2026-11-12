@@ -10,10 +10,12 @@ import {
   PROBE_MAX_IMAGE_URL_BYTES,
   PROBE_MAX_INPUT_BYTES,
   probeComboboxValue,
-  probeFormats,
   probeImageURLShapeValid,
   probeInputByteLength,
   probeModelsFor,
+  probeTargetFormat,
+  probeTargetImageMode,
+  probeTargets,
 } from './account-test.ts'
 import type { ProbeTemplate } from './account-test.ts'
 
@@ -27,12 +29,31 @@ const template = (overrides: Partial<ProbeTemplate> = {}): ProbeTemplate => ({
 
 const mapping = { alias: { mapped_model: 'upstream-alias', mode: 'explicit' as const } }
 
-describe('probeFormats', () => {
-  it('只返回模板支持格式与六种可探测格式的交集（保持 PROBE_FORMATS 顺序）', () => {
+describe('probeTargets', () => {
+  it('7 个 UI 目标按模板 wire format 过滤；images 两 mode 各一条', () => {
     const tpl = template({ SupportedFormats: ['openai-images', 'anthropic', 'openai-chat', 'openai-search'] })
-    assert.deepEqual(probeFormats(tpl), ['openai-chat', 'anthropic', 'openai-images', 'openai-search'])
-    assert.deepEqual(probeFormats(template({ SupportedFormats: ['openai-images'] })), ['openai-images'])
-    assert.deepEqual(probeFormats(template({ SupportedFormats: ['openai-search'] })), ['openai-search'])
+    assert.deepEqual(probeTargets(tpl), [
+      'openai-chat',
+      'anthropic',
+      'openai-images.generations',
+      'openai-images.edits',
+      'openai-search',
+    ])
+    assert.deepEqual(probeTargets(template({ SupportedFormats: ['openai-images'] })), [
+      'openai-images.generations',
+      'openai-images.edits',
+    ])
+    assert.deepEqual(probeTargets(template({ SupportedFormats: ['openai-search'] })), ['openai-search'])
+  })
+
+  it('UI 目标映射到 wire format + image_mode', () => {
+    assert.equal(probeTargetFormat('openai-images.generations'), 'openai-images')
+    assert.equal(probeTargetFormat('openai-images.edits'), 'openai-images')
+    assert.equal(probeTargetFormat('openai-search'), 'openai-search')
+    assert.equal(probeTargetImageMode('openai-images.generations'), 'generations')
+    assert.equal(probeTargetImageMode('openai-images.edits'), 'edits')
+    assert.equal(probeTargetImageMode('openai-search'), undefined)
+    assert.equal(probeTargetImageMode('openai-chat'), undefined)
   })
 })
 
@@ -59,7 +80,7 @@ describe('probeInputByteLength / probeImageURLShapeValid', () => {
 })
 
 describe('buildProbeRequest', () => {
-  const base = { format: 'openai-chat' as const, model: '  m1  ', input: '', imageMode: 'generations' as const, imageURL: '' }
+  const base = { target: 'openai-chat' as const, model: '  m1  ', input: '', imageURL: '' }
 
   it('空白 input 不发送，非空先 trim', () => {
     assert.deepEqual(buildProbeRequest(base), { model: 'm1', format: 'openai-chat' })
@@ -70,28 +91,40 @@ describe('buildProbeRequest', () => {
     })
   })
 
-  it('非图片格式忽略图片字段；generations 不发送 image_mode/image_url', () => {
-    assert.deepEqual(buildProbeRequest({ ...base, imageURL: 'https://example.com/a.png', imageMode: 'edits' }), {
+  it('非图片目标忽略 imageURL；generations 发送 image_mode 但不发送 image_url', () => {
+    assert.deepEqual(buildProbeRequest({ ...base, imageURL: 'https://example.com/a.png' }), {
       model: 'm1',
       format: 'openai-chat',
     })
-    assert.deepEqual(buildProbeRequest({ ...base, format: 'openai-images', imageURL: 'https://example.com/a.png' }), {
+    assert.deepEqual(buildProbeRequest({
+      ...base,
+      target: 'openai-images.generations',
+      imageURL: 'https://example.com/a.png',
+    }), {
       model: 'm1',
       format: 'openai-images',
+      image_mode: 'generations',
     })
   })
 
   it('images edits 携带 trim 后的 image_url 与 image_mode', () => {
     assert.deepEqual(buildProbeRequest({
       ...base,
-      format: 'openai-images',
-      imageMode: 'edits',
+      target: 'openai-images.edits',
       imageURL: '  data:image/png;base64,AAAA  ',
     }), {
       model: 'm1',
       format: 'openai-images',
       image_mode: 'edits',
       image_url: 'data:image/png;base64,AAAA',
+    })
+  })
+
+  it('search 目标只映射 format', () => {
+    assert.deepEqual(buildProbeRequest({ ...base, target: 'openai-search', input: 'news', imageURL: 'data:image/png;base64,AAAA' }), {
+      model: 'm1',
+      format: 'openai-search',
+      input: 'news',
     })
   })
 })
