@@ -245,8 +245,8 @@ function AccountTestDialogContent({ account }: { account: AccountView }) {
               <div className="space-y-1.5">
                 <Label>{t('accounts.test.imageSourcePreview')}</Label>
                 <img
-                  key={imageURL}
-                  src={imageURL}
+                  key={imageURL.trim()}
+                  src={imageURL.trim()}
                   alt={t('accounts.test.imageSourcePreviewAlt')}
                   className="max-h-40 rounded-md border object-contain"
                   loading="lazy"
