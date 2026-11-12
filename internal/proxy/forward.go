@@ -614,7 +614,11 @@ func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int
 	if p.log != nil {
 		p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
 	}
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start)))
+	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start))
+	// 中止行必须留因（causeMessage：上游信封 message 优先，退 err 全文）：没有它
+	// 用户面只剩「已中止」+ 空列，等于把故障原因整个吞掉。
+	l.ErrorMessage = causeMessage(err)
+	p.finish(sel, l)
 }
 
 func (p *Proxy) handleSelectError(w http.ResponseWriter, err error) {
@@ -722,6 +726,34 @@ func upstreamErrMsg(body []byte) string {
 		s = gjson.GetBytes(body, "message").String()
 	}
 	return s
+}
+
+// causeMessage 把一次尝试的真实失败原因归一成 err_logs.error_message 的文本
+// （中止行唯一可读原因）。取值优先级：
+//
+//	① 信封里的 upstream message（*HTTPError / *sserelay.PayloadError 等实现
+//	   rawJSONer 的错误）——`HTTPError.Error()` 只有 "codexsdk: upstream HTTP 500"
+//	   这种无信息量包装，原文只挂在 Raw 上；
+//	② err.Error() 全文（关闭帧描述、网络错误、context.Canceled 等无信封错误）；
+//	③ 两者都空 ⇒ nil（保持 NULL 语义，不写空串）。
+//
+// 域内截断 500 字（domain.ErrMsgMaxLen）。nil err ⇒ nil：成功/无原因路径不写。
+//
+// 为什么不在各出口自己拼：error_message 会进 rules 的 error_message_contains
+// 匹配，用户面 err_logs 脱敏也走同一策略——口径必须单一，否则同一故障在不同
+// 出口命中不同规则。
+func causeMessage(err error) *string {
+	if err == nil {
+		return nil
+	}
+	msg := domain.TruncateErrMsg(upstreamErrMsg(upstreamBody(err)))
+	if msg == "" {
+		msg = domain.TruncateErrMsg(err.Error())
+	}
+	if msg == "" {
+		return nil
+	}
+	return &msg
 }
 
 // rawJSON 非流式原始出栈：按 spec §3.3 状态矩阵归一。

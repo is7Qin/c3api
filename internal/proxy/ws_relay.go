@@ -471,6 +471,9 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 	}
 	p.observeDispatchOutcome(logCtx, out, nil)
 	l := logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, logStatus, logET, u, start))
+	// 与其余中止/失败出口同口径：contFail 的文案就是网关给出的失败原因
+	// （续接权威不可用/绑定冲突），落盘后 err_logs 才有可读文本。
+	l.ErrorMessage = causeMessage(contFail)
 	p.finish(sel, l)
 	up.CloseNow()
 	wg.Wait()
@@ -485,7 +488,7 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 	case relayEndUpstreamClosed:
 		_ = up.Close(websocket.StatusNormalClosure, "") // 上游已发关闭帧，完成握手
 		// 先记录后关：业务帧已见，成功落盘后再向客户端发关闭帧
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForSuccess(base, ttft, u), sel, reqID, groupID, reqModel, start, u, ttft)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForSuccess(base, ttft, u), sel, reqID, groupID, reqModel, start, u, ttft, nil)
 		_ = client.Close(websocket.StatusNormalClosure, "")
 	case relayEndClientAbort:
 		_ = client.CloseNow() // 客户端已断开，免握手等待
@@ -494,11 +497,11 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 			code = wsCloseStatus(endErr)
 		}
 		// 客户端 abort：业务帧已见但不计冷却，向上游传播关闭
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, endErr)
 		_ = up.Close(code, "")
 	case relayEndUpstreamError:
 		// 上游错误/心跳超时：业务帧已见但连接异常，需冷却
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, endErr)
 		code := wsCloseStatus(endErr)
 		// 流内错误载荷（spec-inband-error-truth §3-3）：上游**确实**是正常关闭
 		// （发完错误帧后 1000），客户端观感不得变——关闭码保持 1000，不虚构 1011。

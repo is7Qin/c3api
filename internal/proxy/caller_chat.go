@@ -97,7 +97,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			case streamExitClientCancel:
 				// 客户端断开：上游已消费请求，仍保留已采集的 usage/TTFT 并记 200+ErrAbort，避免成功请求丢日志。
 				outcome := chatOutcomeForAbort(base, ttft != nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, true)
-				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
+				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, err)
 				return 0, nil, true, nil
 			case streamExitUncommitted:
 				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
@@ -108,14 +108,14 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 				}
 				// 上游流中断：保留已采集 usage 走网络错误观测。
 				outcome := chatOutcomeForAbort(base, out.BusinessFrameSent(), usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, false)
-				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
+				_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, err)
 				return 0, nil, true, nil
 			}
 		}
 		// 流式成功：携带 TTFT 与已聚合的 usage 经 typed outcome 统一记录，保证 exactly-one 观测与记录归一。
 		base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 		outcome := chatOutcomeForSuccess(base, ttft, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
-		_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
+		_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, nil)
 		return 200, nil, true, nil
 	}
 
@@ -150,6 +150,6 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 	// 非流式成功经 typed outcome 统一收敛，保证 exactly-one 观测与记录归一。
 	base := mergeDispatchBase(ctx, chatDispatchedBase(sel, reqID, reqModel, start))
 	outcome := chatOutcomeForSuccess(base, nil, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc})
-	_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start)
+	_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, nil)
 	return 200, nil, true, nil
 }

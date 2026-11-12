@@ -183,7 +183,7 @@ func wsHealthForOutcome(o AttemptOutcome) *AttemptHealthEvent {
 	return &AttemptHealthEvent{Kind: kind}
 }
 
-func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64) error {
+func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64, cause error) error {
 	if err := outcome.Validate(); err != nil {
 		return err
 	}
@@ -238,6 +238,11 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 	// finish owns the lease release exactly once.
 	p.observeDispatchOutcome(ctx, outcome, health)
 	l := logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, u, start))
+	// 中止/失败行必须留因（cause 为分类阶段快照的真实错误：上游关闭帧、上游流内
+	// 错误载荷、读写网络错误、context.Canceled）。成功行 cause 恒 nil ⇒ NULL。
+	if outcome.Result != ResultSuccess {
+		l.ErrorMessage = causeMessage(cause)
+	}
 	if ttftCopy != nil {
 		l.TTFTMS = ttftCopy
 	}

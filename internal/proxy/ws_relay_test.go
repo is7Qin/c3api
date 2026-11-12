@@ -541,6 +541,9 @@ func TestRelayWSContFailIdleClientNoHang(t *testing.T) {
 	env.store.mu.Unlock()
 	require.NotNil(t, lg, "fail-closed 记录必须存在（Err5xx）")
 	require.Equal(t, http.StatusServiceUnavailable, lg.StatusCode, "绑定权威缺失 → 503")
+	require.NotNil(t, lg.ErrorMessage, "fail-closed 行必须带错误文本（err_logs 唯一可读原因）")
+	require.Equal(t, errContUnavailable.msg, *lg.ErrorMessage,
+		"文本 = 网关给出的失败原因（续接权威不可用）")
 	env.p.sched.FlushRules()
 	ri, ok := env.p.sched.Runtime(1)
 	require.True(t, ok)

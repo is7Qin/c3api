@@ -70,7 +70,7 @@ func chatOutcomeForAbort(base AttemptOutcome, sent bool, u usageTuple, ttft *int
 	return o
 }
 
-func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time) error {
+func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, cause error) error {
 	if err := outcome.Validate(); err != nil {
 		return err
 	}
@@ -100,6 +100,11 @@ func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, s
 		ctx = context.WithValue(ctx, ctxKeyTTFT{}, outcome.Timing.TTFTMS)
 	}
 	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIChat, status, et, u, start))
+	// 中止/失败行必须留因：cause 为 relay 返回的真实错误（上游流内错误帧的
+	// PayloadError、关闭帧、context.Canceled 等）。成功行 cause 恒 nil ⇒ NULL。
+	if outcome.Result != ResultSuccess {
+		l.ErrorMessage = causeMessage(cause)
+	}
 	// Single owner observation (quality + bounded flow) + health marking; the
 	// finish releases the lease exactly once.
 	p.observeDispatchOutcome(ctx, outcome, health)
