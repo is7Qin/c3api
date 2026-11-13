@@ -148,6 +148,9 @@ var allowedServiceMethods = []string{
 	"OrderPayURL",
 	"Overview",
 	"PatchAccount",
+	// PaymentEnabled 是部署特性开关的只读投影（console 据此隐藏支付页），
+	// 由 feat(api): expose deployment feature flags to the console 有意引入。
+	"PaymentEnabled",
 	"PaymentMethods",
 	"PaymentProvider",
 	"PortalBaseURL",
