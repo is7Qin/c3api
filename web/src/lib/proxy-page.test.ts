@@ -214,7 +214,7 @@ describe('accounts 页面接线（源码形状）', () => {
     assert.match(proxyPage, /useAccountSurface\(\)/)
     assert.match(proxyPage, /queryKey: \['proxies', kind\]/)
     // 供应商面差异：无归属列、无「分配给账号」动作
-    assert.match(proxyPage, /\{!isSupplier && <TableHead className="w-28">/)
+    assert.match(proxyPage, /\{showOwner && <TableHead className="w-28">/)
   })
 })
 

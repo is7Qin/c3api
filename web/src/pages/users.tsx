@@ -28,6 +28,8 @@ import { toast } from '@/components/ui/toast'
 import { cn } from '@/lib/utils'
 import { formatDateTime, formatUSD } from '@/components/fmt'
 import { formatGroupMultiplier as formatMultiplier } from '@/components/group-option'
+import { assignableRoles, filterableRoles } from '@/lib/supplier-visibility'
+import { useFeatures } from '@/lib/use-features'
 import type { components } from '@/lib/api/schema'
 
 type User = components['schemas']['User']
@@ -39,7 +41,6 @@ type GroupVisibility = components['schemas']['GroupVisibility']
 type UserGroupsBody = components['schemas']['UserGroupsBody']
 type BalanceLog = components['schemas']['BalanceLog']
 
-const ROLES: UserRole[] = ['platform_admin', 'user', 'supplier']
 const STATUSES: UserStatus[] = ['active', 'disabled']
 
 // 余额（USD 浮点，已由 API 边界换算）→ $N.NN；空 → —。
@@ -140,6 +141,8 @@ function toUpdateBody(f: UserForm): UserUpdate {
 export default function Users() {
   const { t } = useTranslation()
   const qc = useQueryClient()
+  // 供应商功能开关（加载中 / 失败按关闭）：角色筛选与表单的「供应商」选项读它。
+  const { supplier } = useFeatures()
 
   // —— 列表：筛选/分页状态归 queryKey（排序白名单：id/email/role/status/
   // max_concurrency/created_at/updated_at——balance 不可排）——
@@ -177,18 +180,16 @@ export default function Users() {
   const hasFilters = email !== '' || role !== 'all'
   const clearFilters = () => { setEmail(''); setRole('all'); resetPage() }
   // 角色筛选项（单一事实来源）：items（供 SelectValue 解析并显示标签）与下拉项共用，避免两处漂移
-  const roleOptions: { value: 'all' | UserRole; label: string }[] = [
-    { value: 'all', label: t('users.allRoles') },
-    { value: 'platform_admin', label: t('users.role.platform_admin') },
-    { value: 'user', label: t('users.role.user') },
-    { value: 'supplier', label: t('users.role.supplier') },
-  ]
+  const roleOptions: { value: 'all' | UserRole; label: string }[] = [{ value: 'all', label: t('users.allRoles') }, ...filterableRoles(supplier).map(r => ({ value: r, label: t(`users.role.${r}`) }))]
   const roleItems = Object.fromEntries(roleOptions.map((o) => [o.value, o.label]))
 
   // —— 创建/编辑 ——
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editing, setEditing] = useState<User | null>(null)
   const [form, setForm] = useState<UserForm>(emptyForm())
+  // 表单角色选项：开关关闭时不提供「供应商」，但正在编辑的用户当前就是供应商时保留（下拉
+  // 能显示当前值，不改角色直接保存不会改掉它）。Select.items 与 SelectItem 同源于此。
+  const formRoles = assignableRoles(supplier, editing?.Role)
 
   const openCreate = () => {
     setEditing(null)
@@ -507,10 +508,10 @@ export default function Users() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>{t('users.roleLabel')}</Label>
-                <Select value={form.role} items={Object.fromEntries(ROLES.map(r => [r, t(`users.role.${r}`)]))} onValueChange={v => setForm(f => ({ ...f, role: v as UserRole }))}>
+                <Select value={form.role} items={Object.fromEntries(formRoles.map(r => [r, t(`users.role.${r}`)]))} onValueChange={v => setForm(f => ({ ...f, role: v as UserRole }))}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {ROLES.map(r => <SelectItem key={r} value={r} label={t(`users.role.${r}`)}>{t(`users.role.${r}`)}</SelectItem>)}
+                    {formRoles.map(r => <SelectItem key={r} value={r} label={t(`users.role.${r}`)}>{t(`users.role.${r}`)}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>

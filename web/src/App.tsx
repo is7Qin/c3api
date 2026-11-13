@@ -8,6 +8,7 @@ import { ApiUnauthorized, adminApi, supplierApi } from '@/lib/api/client'
 import { ApiScopeProvider } from '@/lib/api/scope'
 import { ThemeProvider } from '@/components/theme-provider'
 import { userAuth } from '@/lib/auth'
+import { useFeatures } from '@/lib/use-features'
 import { Toaster } from '@/components/ui/toast'
 import { FluidCanvas } from '@/components/fluid-canvas'
 import Home from '@/pages/home'
@@ -83,9 +84,11 @@ const router = createBrowserRouter([
           { path: 'pricing', element: <PricingPage /> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'ops', element: <Ops /> },
-          { path: 'supplier', element: <SupplierAdmin /> },
         ],
       },
+      // 管理面结算工作台：不在 app 支内，先过供应商开关闸门（关闭 = 404，与角色无关），
+      // 开启后再过 RequireAdmin（非 admin 仍是 403）。路径更具体，优先于 app 支匹配。
+      { path: 'app/supplier', element: <SupplierFeatureGate />, children: [{ element: <RequireAdmin />, children: [{ index: true, element: <SupplierAdmin /> }] }] },
       {
         path: 'user',
         children: [
@@ -99,8 +102,9 @@ const router = createBrowserRouter([
           { path: 'redemptions', element: <UserRedemptions /> },
           // 钱包（spec 支付网关 §7-1/§9）：渠道 → 下单 → 跳网关；`?order=` 进入时轮询到账。
           { path: 'wallet', element: <UserWallet /> },
-          // 供应商控制台（spec 2026-10-09 §6.1）：门控 RequireSupplier（supplier | platform_admin）。
-          { path: 'supplier', element: <RequireSupplier />, children: [
+          // 供应商控制台（spec 2026-10-09 §6.1）：先过供应商开关闸门（关闭 = 404），
+          // 再过门控 RequireSupplier（supplier | platform_admin）。
+          { path: 'supplier', element: <SupplierFeatureGate />, children: [{ element: <RequireSupplier />, children: [
             // 整个供应商域注入 supplierApi（base /api/user/supplier）作用域。
             { element: <SupplierScope />, children: [
               { index: true, element: <SupplierConsole /> },
@@ -111,7 +115,7 @@ const router = createBrowserRouter([
               // SupplierScope 注入（base /api/user/supplier ⇒ /api/user/supplier/proxies）。
               { path: 'proxies', element: <SupplierProxies /> },
             ] },
-          ] },
+          ] }] },
         ],
       },
     ],
@@ -119,6 +123,18 @@ const router = createBrowserRouter([
   // 无匹配路径兜底：必须置于最后，避免吞掉 /user 与 /app 子路由
   { path: '*', element: <NotFound /> },
 ])
+
+// 供应商功能闸门（管理面结算工作台与供应商控制台共用，位于角色门控之外）。
+// 四个分支按序判定，顺序是契约：未登录跳登录页（与其余受保护路由一致）→ 开关尚无
+// 结论时渲染空（不闪 404）→ 已确定关闭或请求失败渲染 404（任何角色都一样，不暴露
+// 「有这个页但你无权」）→ 开启则交给内层角色门控。404 渲染在 AppShell 内，与 403 同容器。
+function SupplierFeatureGate() {
+  const { supplier, resolved } = useFeatures()
+  if (!userAuth.getToken()) return <Navigate to="/user/login" replace />
+  if (!resolved) return null
+  if (!supplier) return <NotFound />
+  return <Outlet />
+}
 
 // 管理端路由守卫：未登录一律跳登录页；已登录但角色不足渲染 403 界面。
 // 安全默认：token 存在但 role 缺失（旧会话残留、localStorage 被手动清理）一律视为无权限。

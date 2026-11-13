@@ -5,7 +5,7 @@
 // 出口代理池页面（spec proxy-pool §7）：**管理面与供应商面复用同一组件**，
 // 差异只由作用域（lib/api/scope 的 kind）决定——与账号页（pages/accounts.tsx）同款惯例，
 // 不复制页面、不建平行字段清单：
-// - 管理面（/app/proxies，base /api/admin）：多一列 `owner_uid`（null = 平台代理），
+// - 管理面（/app/proxies，base /api/admin）：供应商功能开启时多一列 `owner_uid`（null = 平台代理），
 //   删除文案按归属分流（平台代理解绑所有引用；私池代理只解绑该供应商自己的账号）。
 // - 供应商面（/user/supplier/proxies，base /api/user/supplier）：没有归属列（都是自己的）、
 //   没有「分配给账号」动作；出口地址旁只挂一句**固定说明**（不得用内网/回环/链路本地，
@@ -25,6 +25,7 @@ import { Plus, Pencil, Trash2, Radar, Lock, Network, CircleCheck, Ban, Upload } 
 import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
+import { useFeatures } from '@/lib/use-features'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import {
   PROXY_IMPORT_MAX_ROWS,
@@ -60,6 +61,10 @@ import { formatDateTime, truncate } from '@/components/fmt'
 export default function ProxyPoolPage() {
   const { kind, api } = useAccountSurface()
   const isSupplier = kind === 'supplier'
+  // 「归属」列只在管理面、且供应商功能开启时展示（加载中 / 失败按关闭）：关闭时供应商面
+  // 不挂载，归属是供应商概念，与菜单、账号表单同一开关收口。
+  const { supplier } = useFeatures()
+  const showOwner = !isSupplier && supplier
   const { t } = useTranslation()
   const qc = useQueryClient()
 
@@ -189,7 +194,7 @@ export default function ProxyPoolPage() {
         <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-tight">{t('proxies.title')}</h1>
           <p className="text-sm text-muted-foreground text-pretty">
-            {t(isSupplier ? 'proxies.subtitleSupplier' : 'proxies.subtitleAdmin')}
+            {t(isSupplier ? 'proxies.subtitleSupplier' : supplier ? 'proxies.subtitleAdmin' : 'proxies.subtitleAdminPlatform')}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -224,7 +229,7 @@ export default function ProxyPoolPage() {
                 <TableHead className="w-44">{t('proxies.table.auth')}</TableHead>
                 <TableHead className="w-20">{t('proxies.table.enabled')}</TableHead>
                 <TableHead className="w-64">{t('proxies.table.probe')}</TableHead>
-                {!isSupplier && <TableHead className="w-28">{t('proxies.table.owner')}</TableHead>}
+                {showOwner && <TableHead className="w-28">{t('proxies.table.owner')}</TableHead>}
                 <TableHead className="w-28 text-right">{t('proxies.table.actions')}</TableHead>
               </TableRow>
             </TableHeader>
@@ -271,7 +276,7 @@ export default function ProxyPoolPage() {
                       </div>
                     )}
                   </TableCell>
-                  {!isSupplier && (
+                  {showOwner && (
                     <TableCell className="text-xs">
                       {p.owner_uid == null
                         ? <Badge variant="outline">{t('proxies.ownerPlatform')}</Badge>

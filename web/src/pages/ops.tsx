@@ -16,6 +16,8 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { fmtTTFT } from '@/components/fmt'
 import { fetchAllRoutingPlanRoutes } from '@/lib/routing-plan'
+import { isOpsStatVisible } from '@/lib/supplier-visibility'
+import { useFeatures } from '@/lib/use-features'
 
 // stats 为契约自由 schema（unknown）：各 worker 异构观测字段。通用渲染分支：
 // 数字（unix_ms 时间戳字段转时间显示）、布尔、字符串，其余 JSON 摘要。
@@ -36,6 +38,8 @@ function fmtStatValue(v: unknown, key: string): string {
 
 export default function Ops() {
   const { t } = useTranslation()
+  // 供应商功能开关（加载中 / 失败按关闭）：只影响供应商专属统计项的展示。
+  const { supplier } = useFeatures()
   // 10s 轮询（与 dashboard 账号视图同频）；手动刷新 refetch。
   const opsQ = useQuery({
     queryKey: ['ops', 'workers'],
@@ -123,42 +127,46 @@ export default function Ops() {
             {workers.length === 0 ? (
               <p className="col-span-full py-6 text-center text-sm text-muted-foreground">{t('ops.noWorkers')}</p>
             ) : (
-              workers.map(w => (
-                <Card key={w.name}>
-                  <CardHeader>
-                    <CardDescription className="flex items-center gap-1.5">
-                      {/* worker 显示名走 i18n（ops.workers.<name>，缺 key 兜底原始标识符） */}
-                      <Cpu className="size-4" /> {t(`ops.workers.${w.name}`, { defaultValue: w.name })}
-                    </CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <dl className="space-y-1.5">
-                      {Object.entries(w.stats ?? {}).map(([k, v]) => (
-                        <div key={k} className="flex items-center justify-between gap-3">
-                          {/* 标签走 i18n（ops.stats.<字段>，缺 key 兜底显示原始字段名）；
-                              title 保留原始 key（运维识别用，标签可翻译但 key 不译） */}
-                          <dt className="shrink-0 text-xs text-muted-foreground" title={k}>
-                            {t(`ops.stats.${k}`, { defaultValue: k })}
-                          </dt>
-                          <dd className="flex min-w-0 items-center justify-end gap-2" title={fmtStatValue(v, k)}>
-                            {typeof v === 'boolean' ? (
-                              // 布尔观测位统一徽章：是（绿）/ 否（灰）
-                              <Badge variant={v ? 'default' : 'secondary'} className="text-xs">
-                                {v ? t('ops.boolYes') : t('ops.boolNo')}
-                              </Badge>
-                            ) : (
-                              <span className="min-w-0 truncate font-mono text-sm tabular-nums">{fmtStatValue(v, k)}</span>
-                            )}
-                          </dd>
-                        </div>
-                      ))}
-                      {Object.keys(w.stats ?? {}).length === 0 && (
-                        <dd className="text-xs text-muted-foreground">—</dd>
-                      )}
-                    </dl>
-                  </CardContent>
-                </Card>
-              ))
+              workers.map(w => {
+                // 展示的统计项：供应商专属项在开关关闭时隐去；空态与渲染同用这一份。
+                const entries = Object.entries(w.stats ?? {}).filter(([k]) => isOpsStatVisible(k, supplier))
+                return (
+                  <Card key={w.name}>
+                    <CardHeader>
+                      <CardDescription className="flex items-center gap-1.5">
+                        {/* worker 显示名走 i18n（ops.workers.<name>，缺 key 兜底原始标识符） */}
+                        <Cpu className="size-4" /> {t(`ops.workers.${w.name}`, { defaultValue: w.name })}
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <dl className="space-y-1.5">
+                        {entries.map(([k, v]) => (
+                          <div key={k} className="flex items-center justify-between gap-3">
+                            {/* 标签走 i18n（ops.stats.<字段>，缺 key 兜底显示原始字段名）；
+                                title 保留原始 key（运维识别用，标签可翻译但 key 不译） */}
+                            <dt className="shrink-0 text-xs text-muted-foreground" title={k}>
+                              {t(`ops.stats.${k}`, { defaultValue: k })}
+                            </dt>
+                            <dd className="flex min-w-0 items-center justify-end gap-2" title={fmtStatValue(v, k)}>
+                              {typeof v === 'boolean' ? (
+                                // 布尔观测位统一徽章：是（绿）/ 否（灰）
+                                <Badge variant={v ? 'default' : 'secondary'} className="text-xs">
+                                  {v ? t('ops.boolYes') : t('ops.boolNo')}
+                                </Badge>
+                              ) : (
+                                <span className="min-w-0 truncate font-mono text-sm tabular-nums">{fmtStatValue(v, k)}</span>
+                              )}
+                            </dd>
+                          </div>
+                        ))}
+                        {entries.length === 0 && (
+                          <dd className="text-xs text-muted-foreground">—</dd>
+                        )}
+                      </dl>
+                    </CardContent>
+                  </Card>
+                )
+              })
             )}
           </div>
 

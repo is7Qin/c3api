@@ -595,6 +595,7 @@ export default {
       "hint": "View usage details"
     },
     "ungroupedNotice": "Accounts without a group receive no traffic: assign at least one group in the account Edit dialog, otherwise the account serves no requests and earns nothing.",
+    "ungroupedNoticePlatform": "Accounts without a group receive no traffic: assign at least one group in the account Edit dialog, otherwise the account serves no requests.",
     "owner": {
       "label": "Owning supplier (search by email)",
       "placeholder": "Search supplier by email",
@@ -614,6 +615,7 @@ export default {
   "proxies": {
     "title": "Egress proxies",
     "subtitleAdmin": "Platform proxies can be assigned to any account; supplier-owned proxies only carry their owner's traffic",
+    "subtitleAdminPlatform": "Proxies can be assigned to any account",
     "subtitleSupplier": "Your own egress proxies; private and loopback addresses are rejected",
     "new": "New proxy",
     "newTitle": "New proxy",

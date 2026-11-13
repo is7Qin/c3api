@@ -1,6 +1,6 @@
 # web/ — React 控制台
 
-> 技术栈：React 18.3 + TS + Vite 8 + Tailwind v4(CSS-first 无 config) + shadcn 风格组件(@base-ui/react 底座，非 Radix) + react-query v5 + react-router v7。oxlint 非 ESLint。无前端测试设施——门禁就是 `tsc -b && vite build` 过。
+> 技术栈：React 19 + TS + Vite 8 + Tailwind v4(CSS-first 无 config) + shadcn 风格组件(@base-ui/react 底座，非 Radix) + react-query v5 + react-router v7。oxlint 非 ESLint。无组件测试设施（不引入 jsdom/RTL）：纯函数与源码形状断言走 `node --test`（`src/lib/*.test.ts`）；门禁 = `pnpm run check && tsc -b && vite build`。
 
 ## 结构
 
@@ -30,6 +30,7 @@ pnpm gen:api        # openapi/openapi.yaml 变更后必跑，重生成 src/lib/a
 - **单登录态**：platform_admin JWT 同时通吃两台控制台；`lib/auth.ts` 单一 userAuth store 支撑 api(/api/admin) 与 userApi(/api/user) 两个 ApiClient 实例
 - **AppShell 不重挂载**：/app ↔ /user 切换只换 Outlet，sidebar/topbar 常驻（App.tsx:45 注释）
 - **401 全局拦截**：QueryCache/MutationCache onError 统一清 token 跳登录页，页面级不写 401 处理
+- **供应商功能开关**：供应商相关 UI 一律经 `useFeatures()`（`GET /api/user/features`，唯一 query key，会话内只请求一次）+ `lib/supplier-visibility.ts` 判定，页面不自行探测供应商端点；内容面 fail-closed（加载中 / 失败按关闭渲染）；供应商路由经 `SupplierFeatureGate`（未登录跳登录 → 加载中空 → 关闭 404 → 角色门控）。不得新增 `['user']` 整前缀的 `invalidateQueries`（会命中开关的缓存键）
 - **Select label 契约**：`SelectItem label` 只描述弹出列表；闭合态 `SelectValue` 由根节点 `Select items={value→label}` 解析。共享 wrapper 已在类型层强制 `Select.items` 与 `SelectItem.label` 必填，并禁止 `SelectValue` children；翻译 label 与动态名称都放在 `items` 映射中，Item 的 `label`/children 与其保持一致。空值使用显式 sentinel（如 `__any`/`__none`）并同时存在于 `items` 与 `SelectItem value`，不要依赖 `''` 或 placeholder 代替已选 label；业务代码只从 `@/components/ui/select` 导入
 - **账号探测入口**：行尾三点菜单只放「测试」与 codex 专属的「扩展配置」；测试弹窗按模板格式/模型空间生成候选，通配模板允许自由输入，受控 Combobox 的 `value` 跟随输入本身（不得用“是否在候选内”决定，否则关闭/清空会把已输入模型抹掉），失败结论留在弹窗内且不刷新账号列表。目标列表是 **7 个 UI 目标**（文本四格式 + `openai-images.generations`/`openai-images.edits` + `openai-search`）；两个 images 目标必须映射为 wire `{format:"openai-images", image_mode:"generations"|"edits"}`，edits 才携带 `image_url`。可选 `input` 留空时不得发送；edits 支持 URL/data URL 与本地文件转 data URL（6 MiB），结果区只渲染成功响应的 `output_preview`/`image_previews`，HTTP 错误不回显服务端响应体。
 

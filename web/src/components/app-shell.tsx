@@ -9,6 +9,8 @@ import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
 import { setLang, type AppLang, type DynamicKey } from '@/lib/i18n'
+import { adminNavFor, isSupplierPath, showSupplierNav } from '@/lib/supplier-visibility'
+import { useFeatures } from '@/lib/use-features'
 import { Button } from '@/components/ui/button'
 import { ModeToggle } from '@/components/mode-toggle'
 import { cn } from '@/lib/utils'
@@ -67,7 +69,8 @@ const adminNav: readonly NavItem[] = [
   { to: '/app/ops', key: 'nav.ops', icon: Cpu },
 ]
 
-// 供应商控制台菜单组（spec 2026-10-09 §6.1）：仅 supplier / platform_admin 可见。
+// 供应商控制台菜单组（spec 2026-10-09 §6.1）：仅 supplier / platform_admin 可见，
+// 且供应商功能已开启（showSupplierNav）。
 // 账号管理页复用同一 /app/accounts 组件（作用域参数化），此处只提供入口路径。
 const supplierNav: readonly NavItem[] = [
   { to: '/user/supplier', key: 'supplier.nav.console', icon: Wallet, end: true },
@@ -84,7 +87,9 @@ const LANGS: { code: AppLang; label: string }[] = [
 // 路径 → 面包屑两级（分组根 + 当前页）；未知路径返回 null（顶栏不渲染面包屑）。
 // 映射直接复用 adminNav/userNav（同一来源，避免漂移）：
 // /app/* → 管理台 + 对应页名；/user/* → 用户中心 + 对应页名。
-function breadcrumbFor(pathname: string): { root: string; section: DynamicKey; page: DynamicKey } | null {
+// 供应商功能未确定开启时，供应商路径不渲染面包屑（闸门在内容区渲染 404）。
+function breadcrumbFor(pathname: string, supplier: boolean): { root: string; section: DynamicKey; page: DynamicKey } | null {
+  if (!supplier && isSupplierPath(pathname)) return null
   if (pathname.startsWith('/app')) {
     if (pathname === '/app') return { root: '/app', section: 'user.nav.adminSection', page: 'nav.overview' }
     const item = adminNav.find((n) => n.to === pathname)
@@ -115,15 +120,16 @@ export default function AppShell() {
     staleTime: 60_000,
   })
   const isAdmin = me?.Role === 'platform_admin'
-  const isSupplier = me?.Role === 'supplier'
+  // 供应商功能开关（加载中 / 失败按关闭）：管理组的结算工作台、供应商组与面包屑都读它。
+  const { supplier } = useFeatures()
   // 菜单组顺序：管理域（仅 admin）→ 供应商域（supplier | admin）→ 用户中心（全员）。
   const navs: NavGroup[] = [
-    ...(isAdmin ? [{ titleKey: 'user.nav.adminSection' as const, items: adminNav }] : []),
-    ...(isAdmin || isSupplier ? [{ titleKey: 'user.nav.supplierSection' as const, items: supplierNav }] : []),
+    ...(isAdmin ? [{ titleKey: 'user.nav.adminSection' as const, items: adminNavFor(adminNav, supplier) }] : []),
+    ...(showSupplierNav(me?.Role, supplier) ? [{ titleKey: 'user.nav.supplierSection' as const, items: supplierNav }] : []),
     { titleKey: 'user.nav.userSection' as const, items: userNav },
   ]
   // 顶栏面包屑（两级）：未知路径返回 null 不渲染
-  const crumb = breadcrumbFor(location.pathname)
+  const crumb = breadcrumbFor(location.pathname, supplier)
   return (
     <div data-od-id="app-shell" className="relative z-10 flex h-screen overflow-hidden bg-transparent text-[#1d1d1f] dark:text-[#f5f5f7]">
       {/* h-screen 锁定视口高度：侧边栏 nav 与 main 各自 ScrollArea 独立滚动（自绘

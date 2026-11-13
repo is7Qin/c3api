@@ -9,6 +9,7 @@ import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Ellipsis, Filter, Slider
 import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
+import { useFeatures } from '@/lib/use-features'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
 import {
@@ -250,6 +251,8 @@ function GroupMultiSelect({ groups, value, onChange, disabled }: {
 export default function Accounts() {
   const { kind, api } = useAccountSurface()
   const isSupplierScope = kind === 'supplier'
+  // 供应商功能开关（加载中 / 失败按关闭）：管理面的归属字段与收益文案读它。
+  const { supplier } = useFeatures()
   const { t } = useTranslation()
   const qc = useQueryClient()
 
@@ -1001,9 +1004,10 @@ export default function Accounts() {
 
       {/* 必须提示（spec §6.1 L178/L838）：「未分配分组的账号不接流量」——
           新账号默认无分组；无分组账号不入任何快照、对流量是空集 no-op。
-          「无需审核」≠「自动可用」：供应商若以为提交即生效会长期零收益。 */}
+          「无需审核」≠「自动可用」：供应商若以为提交即生效会长期零收益。
+          管理面在供应商功能关闭时换用不提收益的平台文案（提示本身始终展示）。 */}
       <Alert data-od-id="accounts-ungrouped-notice" className="border-amber-500/30 bg-amber-500/5">
-        <AlertDescription className="text-sm">{t('accounts.ungroupedNotice')}</AlertDescription>
+        <AlertDescription className="text-sm">{t(!isSupplierScope && !supplier ? 'accounts.ungroupedNoticePlatform' : 'accounts.ungroupedNotice')}</AlertDescription>
       </Alert>
 
       <ListToolbar
@@ -1246,9 +1250,10 @@ export default function Accounts() {
               <Label htmlFor="acc-name">{t('accounts.nameLabel')}</Label>
               <Input id="acc-name" value={view.name} placeholder={t('accounts.namePlaceholder')} onChange={e => update('name', e.target.value)} />
             </div>
-            {/* 归属供应商（仅管理面作用域）：把账号分配给供应商的唯一入口（spec §6.1 L834）。
-                供应商面不展示（服务端把归属恒定为 JWT 本人）。 */}
-            {!isSupplierScope && (
+            {/* 归属供应商（仅管理面作用域、且供应商功能开启）：把账号分配给供应商的唯一入口
+                （spec §6.1 L834）。供应商面不展示（服务端把归属恒定为 JWT 本人）。不渲染时
+                草稿里不会出现 supplier_user_id，补丁自然不带该键。 */}
+            {!isSupplierScope && supplier && (
               <div className="space-y-1.5">
                 <Label htmlFor="acc-owner">{t('accounts.owner.label')}</Label>
                 <SupplierPicker

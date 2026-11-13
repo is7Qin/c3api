@@ -595,6 +595,7 @@ export default {
       "hint": "查看用量明细"
     },
     "ungroupedNotice": "未分配分组的账号不接流量：请在账号「编辑」里为其选择至少一个分组，否则该账号不会服务任何请求、也不会产生收益。",
+    "ungroupedNoticePlatform": "未分配分组的账号不接流量：请在账号「编辑」里为其选择至少一个分组，否则该账号不会服务任何请求。",
     "owner": {
       "label": "归属供应商（按邮箱搜索）",
       "placeholder": "按邮箱搜索供应商",
@@ -614,6 +615,7 @@ export default {
   "proxies": {
     "title": "出口代理池",
     "subtitleAdmin": "平台代理可分配给任意账号；供应商私池代理只承载其主的流量",
+    "subtitleAdminPlatform": "出口代理可分配给任意账号",
     "subtitleSupplier": "你自己的出口代理；内网与回环地址会被拒绝",
     "new": "新建代理",
     "newTitle": "新建代理",
