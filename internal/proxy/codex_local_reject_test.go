@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,9 +25,11 @@ import (
 
 const codexInvalidBodyWant = `{"error":{"message":"invalid request body","type":"invalid_request_error"}}`
 
-// assertCodexLocalRejectLog 本地拒绝的记录面：恰一行 400/Err4xx（固定文案），
-// 无健康投递（Classify/MarkResult 未触达）、账号仍可用、并发槽已释放。
-func assertCodexLocalRejectLog(t *testing.T, p *Proxy, store *captureLogStore, format domain.RequestFormat, accounts ...int64) {
+// assertCodexLocalRejectLog 本地拒绝的记录面：恰一行 400/Err4xx（固定文案）、
+// commit_state=not_sent；MarkResult 0 次（规则事件提交数相对 rulesBefore 差值为 0
+// ——默认规则表对 4xx 无动作，只看健康投递会漏掉 MarkResult(Kind4xx)）、无健康
+// 投递、账号仍可用、并发槽已释放。
+func assertCodexLocalRejectLog(t *testing.T, p *Proxy, store *captureLogStore, rulesBefore uint64, format domain.RequestFormat, accounts ...int64) {
 	t.Helper()
 	waitStoreLogs(t, store, 1)
 	require.NoError(t, p.rec.Close(context.Background()))
@@ -39,6 +42,9 @@ func assertCodexLocalRejectLog(t *testing.T, p *Proxy, store *captureLogStore, f
 	require.Equal(t, format, lg.Format)
 	require.NotNil(t, lg.ErrorMessage)
 	require.Equal(t, codexInvalidBodyMsg, *lg.ErrorMessage)
+	require.NotNil(t, lg.CommitState, "出网前拒绝：交付事实确定")
+	require.Equal(t, CommitNotSent.String(), *lg.CommitState)
+	require.Equal(t, rulesBefore, p.sched.RuleEventsSubmitted(), "本地拒绝 MarkResult 0 次（零规则事件）")
 	p.sched.FlushRules()
 	require.Empty(t, testHealthSink.throttles(), "本地拒绝不 Classify/MarkResult（零健康投递）")
 	for _, id := range accounts {
@@ -69,6 +75,7 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 			defer srv.Close()
 
 			before := convLocalRejects.Load()
+			rulesBefore := p.sched.RuleEventsSubmitted()
 			// input 为数字：SDK 整形拒绝（网关入口不校验 input 形态）。
 			resp := postResponses(t, srv, fmt.Sprintf(`{"model":"gpt-4o","stream":%v,"input":42}`, stream))
 			b, _ := io.ReadAll(resp.Body)
@@ -79,7 +86,7 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 			require.Equal(t, before+1, convLocalRejects.Load(), "conv_local_rejects 递增")
 			require.Zero(t, upc.callsN(), "未出网、不转移")
 			require.Zero(t, recorderCalls(failures), "不上报失效")
-			assertCodexLocalRejectLog(t, p, store, domain.FormatOpenAIResponses, 10, 20)
+			assertCodexLocalRejectLog(t, p, store, rulesBefore, domain.FormatOpenAIResponses, 10, 20)
 		})
 	}
 
@@ -95,12 +102,13 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 				[]domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, store)
 
 			before := convLocalRejects.Load()
+			rulesBefore := p.sched.RuleEventsSubmitted()
 			rec := postChatConv(t, p, fmt.Sprintf(`{"model":"gpt-4o","stream":%v,"messages":[{"role":"user","content":"hi"}]}`, stream), nil)
 			require.Equal(t, http.StatusBadRequest, rec.Code, "body=%s", rec.Body.String())
 			require.JSONEq(t, codexInvalidBodyWant, rec.Body.String(), "转换车道同样是 OpenAI 错误形态")
 			require.Equal(t, before+1, convLocalRejects.Load())
 			require.Zero(t, upc.callsN())
-			assertCodexLocalRejectLog(t, p, store, domain.FormatOpenAIChat, 10, 20)
+			assertCodexLocalRejectLog(t, p, store, rulesBefore, domain.FormatOpenAIChat, 10, 20)
 		})
 	}
 
@@ -116,6 +124,7 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 		defer c.CloseNow()
 
 		before := convLocalRejects.Load()
+		rulesBefore := p.sched.RuleEventsSubmitted()
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 			[]byte(`{"type":"response.create","model":"gpt-4o","input":42}`)))
 		require.JSONEq(t, string(codexInvalidBodyFrame), string(readResponsesWSFrame(t, c)), "拨号阶段本地拒绝 → 错误帧")
@@ -123,7 +132,7 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 		require.Equal(t, before+1, convLocalRejects.Load())
 		require.Zero(t, hooks.upgradesN(), "Dial 未拨号即返回、不转移")
 		require.Zero(t, recorderCalls(failures))
-		assertCodexLocalRejectLog(t, p, store, domain.FormatOpenAIResponsesWS, 10, 20)
+		assertCodexLocalRejectLog(t, p, store, rulesBefore, domain.FormatOpenAIResponsesWS, 10, 20)
 	})
 
 	t.Run("ws_dial_error_chain", func(t *testing.T) {
@@ -135,47 +144,38 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 	})
 
 	t.Run("ws_first_frame", func(t *testing.T) {
-		// Dial 已按同一份首帧字节整形过，真实 SDK 下首帧 Send 不会再拒；这里用传输
-		// 替身注入，覆盖 relayWSFirstFrame 保留错误链 + wsAttempt codex 分支收口。
+		// 当前 SDK 在 Dial 阶段已按同一份首帧整形并拒绝，真实首帧 Send 不会再报
+		// ErrInvalidRequestBody；经 codexWSTransportWrap 注入首帧失败，走完整
+		// HandleResponsesWS → wsAttempt.call → relayWS（保留错误链）→
+		// codexFirstFrameFailed 调用点。
 		testHealthSink.reset()
+		up, hooks := newCodexWSUpstream(t, []int{200}, 1)
+		defer up.Close()
 		store := &captureLogStore{}
-		p, _ := newTestCodexWSProxy(t, credential.TypeCodexPAT, twoPAT(), "http://127.0.0.1:1", nil, store)
-		sel, err := p.sched.Select(10, domain.FormatOpenAIResponsesWS, "gpt-4o")
-		require.NoError(t, err)
-		ft := &fakeTransport{writeErr: fmt.Errorf("send: %w", codexsdk.ErrInvalidRequestBody)}
-		type result struct {
-			relayHandled, handled bool
-			code                  int
-			callErr               error
+		p, failures := newTestCodexWSProxy(t, credential.TypeCodexPAT, twoPAT(), up.URL, nil, store)
+		var wrapped *firstWriteFailTransport
+		p.codexWSTransportWrap = func(tr wsRelayTransport) wsRelayTransport {
+			wrapped = &firstWriteFailTransport{wsRelayTransport: tr, err: fmt.Errorf("send: %w", codexsdk.ErrInvalidRequestBody)}
+			return wrapped
 		}
-		out := make(chan result, 1)
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			client, err := websocket.Accept(w, r, nil)
-			if err != nil {
-				close(out)
-				return
-			}
-			defer client.CloseNow()
-			start := time.Now()
-			relayHandled, fwErr := p.relayWS(client, ft, nil, r, "req-1", 10, start, sel, "gpt-4o", websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-4o"}`))
-			code, _, _, handled, callErr := p.codexFirstFrameFailed(r, "req-1", 10, start, sel, "gpt-4o", client, fwErr)
-			out <- result{relayHandled: relayHandled, handled: handled, code: code, callErr: callErr}
-		}))
+		srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
 		defer srv.Close()
 		before := convLocalRejects.Load()
+		rulesBefore := p.sched.RuleEventsSubmitted()
 		c := dialResponsesWS(t, srv)
 		defer c.CloseNow()
 
+		require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+			[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 		require.JSONEq(t, string(codexInvalidBodyFrame), string(readResponsesWSFrame(t, c)), "首帧本地拒绝 → 错误帧")
 		readResponsesWSClose(t, c, websocket.StatusNormalClosure)
-		res := <-out
-		require.False(t, res.relayHandled, "首帧未写出")
-		require.True(t, res.handled, "本地拒绝已收尾（不进循环分类）")
-		require.Zero(t, res.code)
-		require.NoError(t, res.callErr)
-		require.True(t, ft.closeNow.Load(), "上游连接已直拆")
+		require.NotNil(t, wrapped, "经 wsAttempt codex 分支")
+		require.True(t, wrapped.closedNow.Load(), "上游连接已直拆")
+		require.Equal(t, 1, hooks.upgradesN(), "不转移：第二账号不拨号")
+		require.Empty(t, hooks.framesSnapshot(), "被拒首帧不出网")
+		require.Zero(t, recorderCalls(failures))
 		require.Equal(t, before+1, convLocalRejects.Load())
-		assertCodexLocalRejectLog(t, p, store, sel.Format, 10, 20)
+		assertCodexLocalRejectLog(t, p, store, rulesBefore, domain.FormatOpenAIResponsesWS, 10, 20)
 	})
 
 	t.Run("ws_first_frame_other_error_still_retryable", func(t *testing.T) {
@@ -197,6 +197,7 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 		defer srv.Close()
 		c := dialResponsesWS(t, srv)
 		defer c.CloseNow()
+		rulesBefore := p.sched.RuleEventsSubmitted()
 
 		// 首帧 → 事件流 3 帧 + 回声；不带 model 的帧本地拒绝；下一帧照常回声，
 		// 上游第 2 帧后 1000 关闭 → 会话按成功收尾（不写错误槽、不改结束分类）。
@@ -215,6 +216,27 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 		require.Len(t, store.logs, 1)
 		require.Equal(t, domain.ErrNone, store.logs[0].ErrorType, "结束分类不变（成功）")
 		require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
+		require.Equal(t, rulesBefore, p.sched.RuleEventsSubmitted(), "中间帧本地拒绝 MarkResult 0 次（成功收尾的 ok 事件在无 ok 规则时短路）")
 		require.Empty(t, testHealthSink.throttles())
 	})
+}
+
+// firstWriteFailTransport 首次 Write（= relayWS 写首帧）返回 err，其余委托内层。
+type firstWriteFailTransport struct {
+	wsRelayTransport
+	err       error
+	failed    atomic.Bool
+	closedNow atomic.Bool
+}
+
+func (f *firstWriteFailTransport) Write(ctx context.Context, typ websocket.MessageType, frame []byte) error {
+	if !f.failed.Swap(true) {
+		return f.err
+	}
+	return f.wsRelayTransport.Write(ctx, typ, frame)
+}
+
+func (f *firstWriteFailTransport) CloseNow() {
+	f.closedNow.Store(true)
+	f.wsRelayTransport.CloseNow()
 }

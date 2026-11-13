@@ -46,10 +46,11 @@ func isCodexInvalidBody(err error) bool {
 
 // finishCodexInvalidBody 本地拒绝收尾记录（四个落点共用）：计数 + 400/Err4xx
 // 记录。写法同 caller.go 的 "streaming is required" 本地终止——不 Classify、不
-// MarkResult、不 emitCodexOutcome（dispatch 观测由循环的 abandon 收口）。
+// MarkResult、不 emitCodexOutcome（dispatch 观测由循环的 abandon 收口）。SDK 在
+// 出网前拒绝，“未发送”是确定事实 ⇒ commit_state = not_sent（不是 NULL/未知）。
 func (p *Proxy) finishCodexInvalidBody(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, format domain.RequestFormat) {
 	convLocalRejects.Add(1)
-	l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start))
+	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, usageTuple{}, start)), CommitNotSent)
 	em := codexInvalidBodyMsg
 	l.ErrorMessage = &em
 	p.finish(sel, l)

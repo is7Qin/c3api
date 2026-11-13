@@ -111,6 +111,11 @@ type Proxy struct {
 	// nil）。nil 只出现在测试：选号时 Conversation 恒 false ⇒ 回到槽位路径，
 	// 不会产出匿名身份。
 	conversations *codexsdk.ConversationBook
+	// codexWSTransportWrap 测试 seam（生产恒 nil，只多一次指针比较）：包装 wsAttempt
+	// codex 分支的上游传输。当前 SDK 在 Dial 阶段已按同一份首帧整形并拒绝，首帧
+	// Send 不会再返回 ErrInvalidRequestBody；用例经它注入首帧失败，覆盖
+	// wsAttempt.call → codexFirstFrameFailed 的调用点（C3-8 第 3 落点）。
+	codexWSTransportWrap func(wsRelayTransport) wsRelayTransport
 	// wsHeartbeatInterval resp-ws 心跳间隔 seam（测试缩短 200ms 验证心跳节
 	// 奏；默认 responsesWSHeartbeatInterval——New 构造，生产路径不变）。
 	wsHeartbeatInterval time.Duration

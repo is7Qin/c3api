@@ -114,7 +114,8 @@ func TestFailedAtLoadsDisabledAcrossReload(t *testing.T) {
 }
 
 // TestFailAccountMarkResultGuard 防复活守卫复用：失效后 MarkResult（成功/错误）
-// 不得投递事件把状态改回 active（MarkResult 对 disabled 短路）。
+// 不得投递事件把状态改回 active（MarkResult 对 disabled 短路）；RuleEventsSubmitted
+// 只计实际提交的事件。
 func TestFailAccountMarkResultGuard(t *testing.T) {
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
 	s := newSched(t, m)
@@ -122,9 +123,15 @@ func TestFailAccountMarkResultGuard(t *testing.T) {
 	_, err := s.Select(10, domain.FormatOpenAIChat, "m")
 	require.NoError(t, err)
 
+	s.MarkResult(1, rule.Kind4xx, nil, 400, "bad", "m")
+	require.Equal(t, uint64(1), s.RuleEventsSubmitted(), "active 账号的 4xx 事件提交给规则引擎并计数")
+	s.MarkResult(1, rule.KindOK, nil, 200, "", "")
+	require.Equal(t, uint64(1), s.RuleEventsSubmitted(), "无 ok 规则：KindOK 条件短路不计数")
+
 	s.FailAccount(1)
 	s.MarkResult(1, rule.KindOK, nil, 200, "", "")
 	s.MarkResult(1, rule.KindNetwork, nil, 0, "stale error", "")
+	require.Equal(t, uint64(1), s.RuleEventsSubmitted(), "disabled 短路：不提交、不计数")
 	s.FlushRules()
 	releaseByID(s, 1)
 

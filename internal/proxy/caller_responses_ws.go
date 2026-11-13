@@ -267,7 +267,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 					p.codex.FatalPrepared(prep, fatal)
 				}
 			}
-			handled, fwErr := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, frame)
+			var tr wsRelayTransport = newCodexTransport(up)
+			if p.codexWSTransportWrap != nil {
+				tr = p.codexWSTransportWrap(tr)
+			}
+			handled, fwErr := p.relayWS(st.client, tr, frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, frame)
 			if handled {
 				return 0, nil, nil, true, nil
 			}

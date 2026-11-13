@@ -292,6 +292,11 @@ type Scheduler struct {
 	// account's candidate fingerprint could not be computed (missing identity
 	// fields). The error used to be swallowed into an identity-less event.
 	fingerprintSkips atomic.Uint64
+	// ruleEventsSubmitted counts rule events MarkResult actually hands to the rule
+	// engine (after the KindOK / disabled / fingerprint short-circuits). Only
+	// touched on the submit path, which already pays a channel send, so the
+	// request path's no-event case stays unchanged. Read via RuleEventsSubmitted.
+	ruleEventsSubmitted atomic.Uint64
 	// Compile lane (wiring): serial background compiler feeding the
 	// single routingPublisher. Request path never touches these.
 	// sources 是 Start 期结构注入的编译双源（nil = 未装配，armed 门
@@ -1147,8 +1152,14 @@ func (s *Scheduler) MarkResult(accountID int64, kind rule.Kind, resetAt *time.Ti
 		OccurredAt:               s.timeNow(),
 		CandidateFingerprint:     fp,
 	}
+	s.ruleEventsSubmitted.Add(1)
 	s.rule.Enqueue(ev)
 }
+
+// RuleEventsSubmitted MarkResult 累计提交给规则引擎的事件数（观测与测试用：断言
+// “某路径不 MarkResult”时取前后差值——规则表对该 kind 是否配了动作都能看见，
+// 不依赖健康投递）。
+func (s *Scheduler) RuleEventsSubmitted() uint64 { return s.ruleEventsSubmitted.Load() }
 
 // FailAccount 账号失效摘除（SDK 接入——统一失效回调处理链第二步，
 // sdkbridge.HandleFailure 调用；冷面低频）：快照置 StatusDisabled（运行时
