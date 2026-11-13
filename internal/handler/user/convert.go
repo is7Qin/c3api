@@ -111,6 +111,7 @@ func toAPIUsageLog(l *domain.UsageLog) UserUsageLog {
 		MappedModel:              &l.MappedModel,
 		Format:                   &f,
 		ErrorType:                &et,
+		CommitState:              l.CommitState, // nil = 未知（历史行/未接事实路径）⇒ JSON null，不补默认值
 		LatencyMS:                &l.LatencyMS,
 		TTFTMS:                   l.TTFTMS,
 		InputTokens:              &l.InputTokens,
@@ -151,6 +152,7 @@ func (h *UserAPI) toAPIErrLog(l *domain.UsageLog) UserErrLog {
 		Format:       &f,
 		StatusCode:   &l.StatusCode,
 		ErrorType:    &et,
+		CommitState:  l.CommitState, // nil = 未知 ⇒ JSON null（不得展示为 not_sent/upstream_responded）
 		ErrorMessage: l.ErrorMessage,
 		LatencyMS:    &l.LatencyMS,
 		CreatedAt:    &l.CreatedAt,

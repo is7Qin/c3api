@@ -682,6 +682,9 @@ type UserErrLog struct {
 
 	// UserID 鉴权归属用户；0 = 无
 	UserID *int64 `json:"UserID,omitempty"`
+
+	// CommitState 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded
+	CommitState *string `json:"commit_state"`
 }
 
 // UserErrLogsResponse defines model for UserErrLogsResponse.
@@ -823,6 +826,9 @@ type UserUsageLog struct {
 
 	// UserID 鉴权归属用户；0 = 无
 	UserID *int64 `json:"UserID,omitempty"`
+
+	// CommitState 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded
+	CommitState *string `json:"commit_state"`
 }
 
 // StatsTimezone defines model for StatsTimezone.

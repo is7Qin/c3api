@@ -6,6 +6,7 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -16,7 +17,36 @@ import (
 	"github.com/is7qin/c3api/internal/rule"
 )
 
-// fakeRuleStore 最小 RuleStore（行级脱敏测试——种子写入 + 列表）。
+// TestCommitStateAPINull 用户面契约读回（H8）：commit_state 字段恒在；nil ⇒
+// JSON null（未知不得展示成 not_sent/upstream_responded），有值原样透出。
+func TestCommitStateAPINull(t *testing.T) {
+	usageNull := toAPIUsageLog(&domain.UsageLog{ID: 1})
+	require.Nil(t, usageNull.CommitState)
+	b, err := json.Marshal(usageNull)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":null`)
+	require.NotContains(t, string(b), `"CommitState"`, "契约字段名必须是 commit_state")
+
+	v := "sent_ambiguous"
+	usageVal := toAPIUsageLog(&domain.UsageLog{ID: 2, CommitState: &v})
+	require.NotNil(t, usageVal.CommitState)
+	require.Equal(t, v, *usageVal.CommitState)
+	b, err = json.Marshal(usageVal)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":"sent_ambiguous"`)
+
+	h := &UserAPI{}
+	errNull := h.toAPIErrLog(&domain.UsageLog{ID: 3})
+	b, err = json.Marshal(errNull)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":null`)
+
+	errVal := h.toAPIErrLog(&domain.UsageLog{ID: 4, CommitState: &v})
+	b, err = json.Marshal(errVal)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":"sent_ambiguous"`)
+}
+
 type fakeRuleStore struct {
 	rules []domain.Rule
 }

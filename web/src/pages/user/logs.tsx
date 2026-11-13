@@ -11,7 +11,7 @@ import { Card } from '@/components/ui/card'
 import { DateRangePicker } from '@/components/date-range-picker'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ERROR_TYPES, USAGE_ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, fmtDuration } from '@/components/log-display'
+import { ERROR_TYPES, USAGE_ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, CommitStateBadge, isStreamBroken, fmtDuration } from '@/components/log-display'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -80,6 +80,8 @@ const hasTokenUsage = (l: {
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
 const FORMAT_ALL = '__all__'
+const STREAM_ALL = '__all__'
+const STREAM_ONLY = 'stream_failures'
 
 interface LogFilters {
   key_id: string
@@ -88,12 +90,13 @@ interface LogFilters {
   format: string
   error_type: string
   status_code: string
+  stream_broken: string
   from: string
   to: string
 }
 
 const emptyFilters = (): LogFilters => ({
-  key_id: '', group_id: '', model: '', format: '', error_type: '', status_code: '', ...defaultLogRange(),
+  key_id: '', group_id: '', model: '', format: '', error_type: '', status_code: '', stream_broken: '', ...defaultLogRange(),
 })
 
 export default function UserLogs() {
@@ -152,6 +155,10 @@ export default function UserLogs() {
         ? userApi.getMyErrLogs({ ...errParams, cursor: cursor ?? undefined })
         : userApi.getMyUsageLogs({ ...usageParams, cursor: cursor ?? undefined }),
   )
+
+  // 「流中断」筛选（客户端派生，spec §5.2）：commit_state ∈ 已交付失败 ∧
+  // error_type ≠ none；commit_state = null（未知）不算流中断。
+  const visibleRows = filters.stream_broken ? rows.filter(r => isStreamBroken(r as UsageLog | ErrLog)) : rows
 
   return (
     <div className="space-y-6">
@@ -218,6 +225,20 @@ export default function UserLogs() {
             </div>
           )}
           <div className="space-y-1.5">
+            <Label>{t('user.logs.filter.streamBroken')}</Label>
+            <Select
+              items={{ [STREAM_ALL]: t('user.logs.filter.all'), [STREAM_ONLY]: t('user.logs.filter.streamBroken') }}
+              value={filters.stream_broken || STREAM_ALL}
+              onValueChange={v => set({ stream_broken: v === STREAM_ALL ? '' : String(v) })}
+            >
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={STREAM_ALL} label={t('user.logs.filter.all')}>{t('user.logs.filter.all')}</SelectItem>
+                <SelectItem value={STREAM_ONLY} label={t('user.logs.filter.streamBroken')}>{t('user.logs.filter.streamBroken')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
             <Label>{t('dateRange.label')}</Label>
             <DateRangePicker value={{ from: filters.from, to: filters.to }} onChange={v => set(v)} />
           </div>
@@ -237,7 +258,7 @@ export default function UserLogs() {
             {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
           </div>
         </Card>
-      ) : rows.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
           <FileText className="size-10" />
           <p className="font-medium">{t('user.logs.emptyTitle')}</p>
@@ -261,6 +282,7 @@ export default function UserLogs() {
                 <Th>{t('user.logs.table.format')}</Th>
                 {tab === 'errors' && <Th className="text-right">{t('user.logs.table.statusCode')}</Th>}
                 <Th>{t('user.logs.table.errorType')}</Th>
+                <Th>{t('user.logs.table.commitState')}</Th>
                 {tab === 'errors' && <Th>{t('user.logs.table.errorMessage')}</Th>}
                 {tab === 'usage' && <Th className="text-right">{t('user.logs.table.tokens')}</Th>}
                 {tab === 'usage' && <Th className="text-right">{t('user.logs.table.cost')}</Th>}
@@ -271,7 +293,7 @@ export default function UserLogs() {
             </TableHeader>
             <TableBody className="[&_td]:py-3">
               {tab === 'usage'
-                ? (rows as UsageLog[]).map(l => (
+                ? (visibleRows as UsageLog[]).map(l => (
                 <TableRow key={l.ID}>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(l.CreatedAt)}</TableCell>
                   {/* 鉴权归属 Key（管理端同款）：#KeyID；0 = 无鉴权 */}
@@ -289,6 +311,7 @@ export default function UserLogs() {
                     {l.Format ? <Badge variant="outline">{FORMAT_LABELS[l.Format]}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell><ErrorTypeBadge type={l.ErrorType} /></TableCell>
+                  <TableCell><CommitStateBadge state={l.commit_state} /></TableCell>
                   {/* token 合并列（管理端同款）：↓输入 ↑输出 + cache 第二行 + ⓘ 悬停大卡 */}
                   <TableCell className="text-right font-medium tabular-nums">
                     {hasTokenUsage(l) || ((l.CallCount ?? 0) > 0 && l.PricePerCallMillis != null) ? (
@@ -421,7 +444,7 @@ export default function UserLogs() {
                   </TableCell>
                 </TableRow>
                 ))
-                : (rows as ErrLog[]).map(l => (
+                : (visibleRows as ErrLog[]).map(l => (
                 <TableRow key={l.ID}>
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(l.CreatedAt)}</TableCell>
                   {/* 鉴权归属 Key（管理端同款）：#KeyID；0 = 无鉴权 */}
@@ -438,6 +461,7 @@ export default function UserLogs() {
                     {l.StatusCode ? <Badge variant="outline">{l.StatusCode}</Badge> : <span className="text-xs text-muted-foreground">—</span>}
                   </TableCell>
                   <TableCell><ErrorTypeBadge type={l.ErrorType} /></TableCell>
+                  <TableCell><CommitStateBadge state={l.commit_state} /></TableCell>
                   {/* 错误信息：max-w truncate + title 悬停全文（域内已截断 500 字符） */}
                   <TableCell className="max-w-72">
                     {l.ErrorMessage ? (

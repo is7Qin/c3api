@@ -88,6 +88,13 @@ export default {
     "abort": "已中止",
     "billing": "计费失败"
   },
+  "commitState": {
+    "not_sent": "未发送",
+    "sent_ambiguous": "已发送（不确定）",
+    "upstream_responded": "上游已响应（未下发）",
+    "response_started": "已开始下发",
+    "client_committed": "已确认下发"
+  },
   "error403": {
     "title": "无权访问",
     "desc": "当前账号无权限访问管理端界面",
@@ -886,6 +893,7 @@ export default {
       "format": "格式",
       "errorType": "错误类型",
       "statusCode": "状态码",
+      "streamBroken": "仅流中断",
       "all": "全部",
       "reset": "重置",
       "searching": "搜索中…",
@@ -902,6 +910,7 @@ export default {
       "errorType": "错误类型",
       "statusCode": "状态码",
       "errorMessage": "错误信息",
+      "commitState": "交付状态",
       "cost": "费用",
       "billingTier": "计费档",
       "aboveHit": "超档",
@@ -2023,6 +2032,7 @@ export default {
         "format": "格式",
         "errorType": "错误类型",
         "statusCode": "状态码",
+        "streamBroken": "仅流中断",
         "all": "全部",
         "reset": "重置"
       },
@@ -2032,6 +2042,7 @@ export default {
         "errorType": "错误类型",
         "statusCode": "状态码",
         "errorMessage": "错误信息",
+        "commitState": "交付状态",
         "billingTier": "计费档",
         "latency": "延迟",
         "cost": "费用",

@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,35 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// TestToAPIUsageLogCallComponent 按次分量投影（管理面 UsageLog）：CallCount /
+// TestCommitStateAPINull 契约读回（H8）：commit_state 字段恒在；nil ⇒ JSON null
+// （未知不得展示成 not_sent/upstream_responded），有值原样透出。
+func TestCommitStateAPINull(t *testing.T) {
+	usageNull := toAPIUsageLog(&domain.UsageLog{ID: 1})
+	require.Nil(t, usageNull.CommitState)
+	b, err := json.Marshal(usageNull)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":null`, "nil = 未知 ⇒ JSON null")
+	require.NotContains(t, string(b), `"CommitState"`, "契约字段名必须是 commit_state")
+
+	v := "upstream_responded"
+	usageVal := toAPIUsageLog(&domain.UsageLog{ID: 2, CommitState: &v})
+	require.NotNil(t, usageVal.CommitState)
+	require.Equal(t, v, *usageVal.CommitState)
+	b, err = json.Marshal(usageVal)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":"upstream_responded"`)
+
+	errNull := toAPIErrLog(&domain.UsageLog{ID: 3})
+	b, err = json.Marshal(errNull)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":null`)
+
+	errVal := toAPIErrLog(&domain.UsageLog{ID: 4, CommitState: &v})
+	b, err = json.Marshal(errVal)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"commit_state":"upstream_responded"`)
+}
+
 // PricePerCallMillis 两列直通。价格 nil 必须保持 null——0 是"按次价配成 0 =
 // 免费"，与"没有按次分量"语义不同，不能回落成 0。
 func TestToAPIUsageLogCallComponent(t *testing.T) {

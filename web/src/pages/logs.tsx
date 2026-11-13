@@ -15,7 +15,7 @@ import { DateRangePicker } from '@/components/date-range-picker'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ERROR_TYPES, USAGE_ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, fmtDuration } from '@/components/log-display'
+import { ERROR_TYPES, USAGE_ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, CommitStateBadge, isStreamBroken, fmtDuration } from '@/components/log-display'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -83,13 +83,15 @@ const hasTokenUsage = (l: {
 // base-ui Select 不接受空串值，用哨兵表示「全部」。
 const ERROR_ALL = '__all__'
 const FORMAT_ALL = '__all__'
+const STREAM_ALL = '__all__'
+const STREAM_ONLY = 'stream_failures'
 
 // 可隐藏列（时间/请求 ID 始终可见，参考 sub2api 使用明细的列设置模式）；
 // BillingTier/AboveHit/Overdraft 已并入 Tokens 悬停窗（不再独立列）。
 // 隐藏选择持久化到 localStorage（logs-hidden-columns）。用量/错误两 Tab 列集不同。
 const HIDDEN_STORAGE_KEY = 'logs-hidden-columns'
-const USAGE_HIDDENABLE_COLS = ['user', 'key', 'group', 'account', 'model', 'format', 'errorType', 'cost', 'latency', 'tokens'] as const
-const ERR_HIDDENABLE_COLS = ['user', 'key', 'group', 'account', 'model', 'format', 'statusCode', 'errorType', 'errorMessage', 'latency', 'billingTier'] as const
+const USAGE_HIDDENABLE_COLS = ['user', 'key', 'group', 'account', 'model', 'format', 'errorType', 'commitState', 'cost', 'latency', 'tokens'] as const
+const ERR_HIDDENABLE_COLS = ['user', 'key', 'group', 'account', 'model', 'format', 'statusCode', 'errorType', 'commitState', 'errorMessage', 'latency', 'billingTier'] as const
 
 function loadHiddenCols(): Set<string> {
   try {
@@ -108,12 +110,13 @@ interface LogFilters {
   format: string
   error_type: string
   status_code: string
+  stream_broken: string
   from: string
   to: string
 }
 
 const emptyFilters = (): LogFilters => ({
-  user_id: '', key_id: '', group_id: '', account_id: '', model: '', format: '', error_type: '', status_code: '', ...defaultLogRange(),
+  user_id: '', key_id: '', group_id: '', account_id: '', model: '', format: '', error_type: '', status_code: '', stream_broken: '', ...defaultLogRange(),
 })
 
 // —— 筛选候选搜索（user/key/group/account 四筛选器，2026-08-16 改造）——
@@ -340,6 +343,10 @@ export default function Logs() {
   }
   const isColVisible = (key: string) => !hiddenCols.has(key)
 
+  // 「流中断」筛选（客户端派生，spec §5.2）：commit_state ∈ 已交付失败 ∧
+  // error_type ≠ none；commit_state = null（未知）不算流中断。
+  const visibleRows = filters.stream_broken ? rows.filter(r => isStreamBroken(r as UsageLog | ErrLog)) : rows
+
   return (
     <div className="space-y-6">
       <div>
@@ -446,6 +453,20 @@ export default function Logs() {
               </SelectContent>
             </Select>
           </div>
+          <div className="space-y-1.5">
+            <Label>{t('logs.filter.streamBroken')}</Label>
+            <Select
+              items={{ [STREAM_ALL]: t('logs.filter.all'), [STREAM_ONLY]: t('logs.filter.streamBroken') }}
+              value={filters.stream_broken || STREAM_ALL}
+              onValueChange={v => set({ stream_broken: v === STREAM_ALL ? '' : String(v) })}
+            >
+              <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value={STREAM_ALL} label={t('logs.filter.all')}>{t('logs.filter.all')}</SelectItem>
+                <SelectItem value={STREAM_ONLY} label={t('logs.filter.streamBroken')}>{t('logs.filter.streamBroken')}</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
           {tab === 'errors' && (
             <div className="space-y-1.5">
               <Label htmlFor="log-status">{t('logs.filter.statusCode')}</Label>
@@ -503,7 +524,7 @@ export default function Logs() {
             {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-10" />)}
           </div>
         </Card>
-      ) : rows.length === 0 ? (
+      ) : visibleRows.length === 0 ? (
         <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground">
           <FileText className="size-10" />
           <p className="font-medium">{t('logs.emptyTitle')}</p>
@@ -529,6 +550,7 @@ export default function Logs() {
                 {isColVisible('format') && <Th>{t('logs.table.format')}</Th>}
                 {tab === 'errors' && isColVisible('statusCode') && <Th className="text-right">{t('logs.table.statusCode')}</Th>}
                 {isColVisible('errorType') && <Th>{t('logs.table.errorType')}</Th>}
+                {isColVisible('commitState') && <Th>{t('logs.table.commitState')}</Th>}
                 {tab === 'errors' && isColVisible('errorMessage') && <Th>{t('logs.table.errorMessage')}</Th>}
                 {/* 表头顺序与单元格渲染一致（usage: tokens→cost→latency；errors: latency→billingTier）——
                     Token/费用曾按用户要求移到耗时前，表头漏同步导致错位 */}
@@ -541,7 +563,7 @@ export default function Logs() {
             </TableHeader>
             <TableBody className="[&_td]:py-3">
               {tab === 'usage'
-                ? (rows as UsageLog[]).map(l => (
+                ? (visibleRows as UsageLog[]).map(l => (
                 <TableRow key={l.ID}>
                   <TableCell className="max-w-36">
                     <span className="block truncate font-mono text-xs text-muted-foreground" title={l.RequestID}>{l.RequestID ?? '—'}</span>
@@ -586,6 +608,7 @@ export default function Logs() {
                   </TableCell>
                   )}
                   {isColVisible('errorType') && <TableCell><ErrorTypeBadge type={l.ErrorType} /></TableCell>}
+                  {isColVisible('commitState') && <TableCell><CommitStateBadge state={l.commit_state} /></TableCell>}
                   {/* token 列：↓输入 ↑输出（muted 单色收敛）+ cache 第二行（无值不显示）+ ⓘ 悬停大卡
                       （tokens 明细 + 档位 BillingTier + 超档/透支徽章） */}
                   {isColVisible('tokens') && (
@@ -730,7 +753,7 @@ export default function Logs() {
                   </TableCell>
                 </TableRow>
                 ))
-                : (rows as ErrLog[]).map(l => (
+                : (visibleRows as ErrLog[]).map(l => (
                 <TableRow key={l.ID}>
                   <TableCell className="max-w-36">
                     <span className="block truncate font-mono text-xs text-muted-foreground" title={l.RequestID}>{l.RequestID ?? '—'}</span>
@@ -775,6 +798,7 @@ export default function Logs() {
                     </TableCell>
                   )}
                   {isColVisible('errorType') && <TableCell><ErrorTypeBadge type={l.ErrorType} /></TableCell>}
+                  {isColVisible('commitState') && <TableCell><CommitStateBadge state={l.commit_state} /></TableCell>}
                   {/* 错误信息：max-w truncate + title 悬停全文（与用户列同做法；域内已截断 500 字符） */}
                   {isColVisible('errorMessage') && (
                     <TableCell className="max-w-72">

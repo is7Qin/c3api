@@ -88,6 +88,13 @@ export default {
     "abort": "Aborted",
     "billing": "Billing error"
   },
+  "commitState": {
+    "not_sent": "Not sent",
+    "sent_ambiguous": "Sent (ambiguous)",
+    "upstream_responded": "Upstream responded (not delivered)",
+    "response_started": "Response started",
+    "client_committed": "Client committed"
+  },
   "error403": {
     "title": "Access Denied",
     "desc": "Your account does not have permission to access the admin console",
@@ -886,6 +893,7 @@ export default {
       "format": "Format",
       "errorType": "Error type",
       "statusCode": "Status code",
+      "streamBroken": "Stream failures only",
       "all": "All",
       "reset": "Reset",
       "searching": "Searching…",
@@ -902,6 +910,7 @@ export default {
       "errorType": "Error type",
       "statusCode": "Status code",
       "errorMessage": "Error message",
+      "commitState": "Delivery state",
       "cost": "Cost",
       "billingTier": "Billing tier",
       "aboveHit": "Over limit",
@@ -2023,6 +2032,7 @@ export default {
         "format": "Format",
         "errorType": "Error type",
         "statusCode": "Status code",
+        "streamBroken": "Stream failures only",
         "all": "All",
         "reset": "Reset"
       },
@@ -2032,6 +2042,7 @@ export default {
         "errorType": "Error type",
         "statusCode": "Status code",
         "errorMessage": "Error message",
+        "commitState": "Delivery state",
         "billingTier": "Billing tier",
         "latency": "Latency",
         "cost": "Cost",
