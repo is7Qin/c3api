@@ -2,10 +2,13 @@
 package proxy
 
 import (
+	"encoding/hex"
+	"fmt"
 	"net/http"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
+	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -107,4 +110,86 @@ func TestCodexConversationIdentityStable(t *testing.T) {
 	require.Equal(t, a.metaThread, d.metaThread)
 	require.Equal(t, convInstallation(10), a.metaInstallation)
 	require.Equal(t, convInstallation(11), d.metaInstallation, "installation 按账号")
+}
+
+// TestCodexConversationCrossReplica（C3-5）：两个 Proxy 实例（两份会话簿）共用一个
+// miniredis：首请求到 A 并落地写入，同一轮的后续请求到 B → 上游收到同一轮次号与
+// A 那次上游签发的 turn-state。
+func TestCodexConversationCrossReplica(t *testing.T) {
+	mr := miniredis.RunT(t)
+	bookA, bookB := newMiniredisBook(t, mr), newMiniredisBook(t, mr)
+	up, u := newConvUpstream(t)
+	accs := []convTestAcc{{id: 10}}
+	pA := newConvTestProxy(t, up.URL, convTestOpts{accs: accs, book: bookA})
+	pB := newConvTestProxy(t, up.URL, convTestOpts{accs: accs, book: bookB})
+
+	code, out := postConv(t, pA, "ck-1", convNewTurn1, convHdr("conv-x"))
+	require.Equal(t, http.StatusOK, code, out)
+	flushBook(t, bookA)
+
+	code, out = postConv(t, pB, "ck-1", convFollowUp1, convHdr("conv-x"))
+	require.Equal(t, http.StatusOK, code, out)
+	first, follow := u.wire(t, 0).identity(0), u.wire(t, 1).identity(0)
+	require.Empty(t, first.turnState, "新的一轮不带 turn-state")
+	require.Equal(t, "ts-0", follow.turnState, "B 从共享存储取回 A 捕获的 turn-state")
+	require.Equal(t, first.metaTurn, follow.metaTurn, "同一轮次号")
+	require.Equal(t, first.threadHdr, follow.threadHdr, "同一线程")
+	require.Equal(t, int64(1), bookB.Stats().Loads, "B 本地未命中 → 一次 Load")
+}
+
+// TestCodexConversationLocalHitZeroRedis（C3-14）：本副本命中时（对话与轮次都在本地
+// 缓存），Prepare 与上游调用期间 miniredis 命令数差值为 0（不含 Flush）。
+func TestCodexConversationLocalHitZeroRedis(t *testing.T) {
+	mr := miniredis.RunT(t)
+	book := newMiniredisBook(t, mr)
+	up, u := newConvUpstream(t)
+	p := newConvTestProxy(t, up.URL, convTestOpts{accs: []convTestAcc{{id: 10}}, book: book})
+
+	code, out := postConv(t, p, "ck-1", convNewTurn1, convHdr("conv-hot"))
+	require.Equal(t, http.StatusOK, code, out)
+	flushBook(t, book)
+
+	before := mr.CommandCount()
+	require.Positive(t, before, "首请求 Open 与 Flush 走了 Redis（计数面有效）")
+	for _, body := range []string{convFollowUp1, convNewTurn2} {
+		code, out = postConv(t, p, "ck-1", body, convHdr("conv-hot"))
+		require.Equal(t, http.StatusOK, code, out)
+	}
+	require.Equal(t, before, mr.CommandCount(), "本副本命中零 Redis")
+	require.Equal(t, "ts-0", u.wire(t, 1).identity(0).turnState, "后续请求取本地 turn-state")
+	require.Equal(t, u.wire(t, 0).identity(0).threadHdr, u.wire(t, 2).identity(0).threadHdr)
+}
+
+// TestCodexConversationFailoverAcrossDomains（C3-16）：首个账号（域 d1）429 → 故障转移
+// 到域 d2 的账号：第二次尝试按当次 sel 重新 Prepare，线程号不同；第二次上游签发的
+// turn-state 只写进 d2 的轮次记录，d1 的轮次记录不被写入 turn-state。
+func TestCodexConversationFailoverAcrossDomains(t *testing.T) {
+	testHealthSink.reset()
+	mr := miniredis.RunT(t)
+	book := newMiniredisBook(t, mr)
+	up, u := newConvUpstream(t, http.StatusTooManyRequests, http.StatusOK)
+	p := newConvTestProxy(t, up.URL, convTestOpts{
+		accs:  []convTestAcc{{id: 10, domain: "d1"}, {id: 20, domain: "d2"}},
+		order: []int64{10, 20},
+		book:  book,
+	})
+	code, out := postConv(t, p, "ck-1", convNewTurn1, convHdr("conv-fo"))
+	require.Equal(t, http.StatusOK, code, out)
+	require.Equal(t, 2, u.n())
+	a, b := u.wire(t, 0).identity(0), u.wire(t, 1).identity(0)
+	require.Equal(t, "Bearer "+convPAT(10), a.auth)
+	require.Equal(t, "Bearer "+convPAT(20), b.auth)
+	require.NotEqual(t, a.threadHdr, b.threadHdr, "跨缓存域 → 不同对话键、不同线程")
+	require.Equal(t, convInstallation(20), b.metaInstallation)
+	flushBook(t, book)
+
+	turn := codexsdk.AnalyzeConversationInput([]byte(convNewTurn1)).TurnKey
+	require.NotZero(t, turn)
+	turnKey := func(domain string) string {
+		k := codexsdk.NewConversationKey(domain, 1, "conv-fo")
+		return fmt.Sprintf("codex:turn:%s:%016x", hex.EncodeToString(k[:]), turn)
+	}
+	require.True(t, mr.Exists(turnKey("d2")))
+	require.Equal(t, "ts-1", mr.HGet(turnKey("d2"), "ts"), "成功尝试的 turn-state 归 d2")
+	require.Empty(t, mr.HGet(turnKey("d1"), "ts"), "原域轮次记录不被写入 turn-state")
 }
