@@ -129,8 +129,10 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		return
 	}
 
-	// 硬续接（仅 Responses）：previous_response_id 把派生钉死在产出该响应的
-	// 账号上。普通请求（无续接键、其余全部格式）零 Redis。解析在计划就绪后
+	// 硬续接（仅 Responses，Codex 凭据除外）：previous_response_id 把派生钉死在
+	// 产出该响应的账号上。普通请求（无续接键、其余全部格式）续接零 Redis；
+	// Codex 会话路径的 Redis 访问由 SDK 会话簿按设计 §3 发生（本副本命中时
+	// 零 Redis，回写由会话簿 worker 异步批量完成），不在此处。解析在计划就绪后
 	// 执行（route class 取计划规范身份，与 create 侧绑定键同源），失败一律
 	// fail-closed（missing/expired→410、Redis 不可用→503），零上游拨号。
 	contPrevID := ""
@@ -341,12 +343,19 @@ func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, req
 }
 
 // resolveFormatContinuation 续接解析与钉选阶段（handleFormat 提取）：contPrevID
-// 为空 → 原样返回（零 Redis）。否则 contResolve 查绑定（失败 fail-closed：先释放
+// 为空或首个预留为 Codex 凭据 → 原样返回（零续接 Redis）。否则 contResolve 查绑定（失败 fail-closed：先释放
 // 已占并发槽，记录后写出）；再 contPin 推进计划到绑定账号（失败 fail-closed：
 // 记录后写出，绝不迁移到其他账号）。ok=false 表示已收尾写出，调用方直接 return。
 // 释放/记录时机与现状逐字一致（contPin 内部自行释放被跳过候选）。
 func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, reqID string, groupID, userID int64, reqModel, contPrevID string, start time.Time, sel *scheduler.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*scheduler.Selection, scheduler.Attempt, *continuation.Binding, bool) {
 	if contPrevID == "" {
+		return sel, attempt, nil, true
+	}
+	// Codex 不做续接：首个预留是 Codex 凭据时跳过 contResolve/contPin
+	// （hardContinuation=false，计划照常故障转移）。previous_response_id 留在
+	// 请求体里交给 SDK 白名单处理；Codex 侧从不写续接绑定，查了只会 410。
+	// 选中 API key 账号时保持现状（混合组可能经旧绑定钉选到其他账号）。
+	if sel.CredentialType.IsCodex() {
 		return sel, attempt, nil, true
 	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用

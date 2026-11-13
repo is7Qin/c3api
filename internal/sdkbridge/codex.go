@@ -93,16 +93,20 @@ type RotationDeps struct {
 
 // (SetRotationDeps setter deleted by hygiene: same reason — see NewCodex.)
 
-// codexWSConnCacheCapacity 是每个 HTTPClient 的空闲 WS 连接**总数上限**（仅上限、
-// 不预分配；SDK 的 connCache 按需 append）。
+// codexWSConnCacheCapacity 是每个 HTTPClient（即每个账号 × 出口）的空闲 WS 连接
+// **总数上限**（仅上限、不预分配；SDK 的 connCache 按需 append，满则淘汰最旧）。
 //
-// 取 2 × 会话池容量上界（scheduler.maxIdentityPoolSlots = 1024）：一条 client 上
-// 每个 thread 至多两条（流式 64MiB / 聚合 16MiB 各一），而容量是构造期参数、K 随
-// reload 变化——按当前 K 配会让「改大 K」之后仍按旧上限淘汰。
+// 取 256（设计 §5、§8-9）：旧值 2048 = 2 × 槽位池上界（maxIdentityPoolSlots
+// 1024），前提是“每个槽位线程两条长连接”。有对话标识的请求改走 SDK 会话簿后，
+// 线程号按对话而非槽位分配，缓存键还带 routing-hint，槽位上界不再是空闲连接数
+// 的上界，2 × 1024 只剩放大文件描述符占用（账号数 × 出口数 × 上限）。空闲连接
+// 只在同一线程的下一个请求（一轮内后续请求、紧接的下一轮）有复用价值，活跃连接
+// 不计入上限；256 覆盖单账号同时活跃的对话线程量级，淘汰只让冷线程下次重拨
+// （重拨按 SDK 规则重新预热，不影响正确性）。
 //
 // **必须显式注入**：SDK 默认 0 = 不复用（每请求一条新连接）——不接这一行，"跨轮
 // 复用"整条链就是零收益（spec GAP-7）。
-const codexWSConnCacheCapacity = 2 * 1024
+const codexWSConnCacheCapacity = 256
 
 // codexEntry 单账号缓存条目：Auth（HTTP/WS 双面共享——at 缓存/单飞/rt 轮换
 // 在 SDK Auth 内）+ 重建判定签名 + fatal 已上报标记（双源去重——回调路径与

@@ -331,7 +331,6 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		img                int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 		usageTaken         bool  // 首个 completed 帧已取（usage 只读一次）
 		ttft               *int64
-		contEnqueued       bool // 首个有效可续接 id 已入队（每流一次）
 	)
 	err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 		Output:   out,
@@ -362,15 +361,9 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 					usageTaken = true
 				}
 			}
-			// 续接入队：与 native 同一 seam（首个有效响应 id 写出前快照入队
-			// 一次）。仅**直连**（客户端 Responses）入队——converted 客户端为
-			// Chat/Messages，无法消费 Responses 续接 id（native 同款限定）。
-			if !contEnqueued && plan.contEligible && p.contBindWired() {
-				if id := contFrameID(ev.Data); id != "" {
-					p.contEnqueue(ctx, contProtocolREST, id, groupID)
-					contEnqueued = true
-				}
-			}
+			// Codex 不写续接绑定（直连与转换车道一致）：会话连续性由 SDK
+			// 会话簿承担，previous_response_id 也不再解析钉选（见
+			// resolveFormatContinuation）。
 		},
 	})
 	_ = resp.Body.Close()
@@ -526,23 +519,19 @@ type codexStreamPlan struct {
 	mapper func(sserelay.Event) ([]byte, bool)
 	// finish 流末按「目标终止帧尚未产生」条件补发（converted 专用；direct = nil）。
 	finish func() []byte
-	// contEligible 是否允许异步续接入队：仅直连（客户端 Responses，id 可被
-	// 客户端消费）为 true；converted（客户端 Chat/Messages）为 false。仅此
-	// 开关联合 `contFrameID`——不回退到映射帧 id。
-	contEligible bool
 	// logFormat 日志 Format 口径。
 	logFormat domain.RequestFormat
 }
 
 // codexDirectStreamPlan 直连 verbatim plan：无 mapper/finish（上游原始字节含
-// event:/[DONE]），日志口径 openai-responses；直连客户端为 Responses → 允许续接。
+// event:/[DONE]），日志口径 openai-responses。Codex 不写续接绑定。
 func codexDirectStreamPlan() codexStreamPlan {
-	return codexStreamPlan{contEligible: true, logFormat: domain.FormatOpenAIResponses}
+	return codexStreamPlan{logFormat: domain.FormatOpenAIResponses}
 }
 
 // codexConvertedStreamPlan 协议转换 plan：经 protoconv.StreamMapper 适配
 // sserelay seam（源协议 [DONE] 由适配层过滤），流末按目标终止帧条件补发。
-// 客户端为 Chat/Messages → 不允许续接入队。
+// Codex 不写续接绑定。
 func codexConvertedStreamPlan(dir domain.ProtocolConvert, clientModel string) codexStreamPlan {
 	a := &codexConvertedStreamMapper{
 		mapper:      protoconv.NewStreamMapper(dir),

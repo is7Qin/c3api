@@ -86,6 +86,8 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						img = respImageCountCompleted(ev.Data)
 					}
 				}
+				// 续接入队（W1）：Codex 凭据在函数入口已分流，此处只有 API key
+				// 账号；Codex 不绑定续接。
 				if !contEnqueued && p.contBindWired() {
 					if id := contFrameID(ev.Data); id != "" {
 						p.contEnqueue(ctx, contProtocolREST, id, groupID)
@@ -178,7 +180,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	}
 	base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, string(reqModel), start, nil, it, ot, tt, cr, cc, img))
 	// ACK-before-visible：响应 id 在 Redis 绑定确认前不得写出（store 未装配
-	// 零开销）。绑定失败/冲突 → fail-closed：响应弃置，客户端只见归一错误。
+	// 零开销）。W2：Codex 凭据在函数入口已分流，Codex 不绑定续接。绑定失败/冲突 → fail-closed：响应弃置，客户端只见归一错误。
 	if p.cont != nil {
 		if id := gjson.GetBytes(data, "id").String(); id != "" {
 			if ferr := p.contBind(ctx, contProtocolREST, id, groupID); ferr != nil {

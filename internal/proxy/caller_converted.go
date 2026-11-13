@@ -169,6 +169,8 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 						it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
 					}
 				}
+				// 续接入队（W4）：Codex 凭据在上方已分流到 callConvertedCodexResponses，
+				// 此处只有 API key 账号；Codex 不绑定续接。
 				if !lastDrop && !contEnqueued && p.contBindWired() && c.dir == domain.ProtocolConvertRespToMess {
 					if id := mapper.BindableID(); id != "" {
 						p.contEnqueue(ctx, contProtocolREST, id, groupID)
@@ -290,6 +292,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if rm := sel.ClientResponseModel(reqModel); rm != "" {
 		conv = rewriteResponseModelJSON(conv, rm)
 	}
+	// 同步绑定（W5）：Codex 凭据在上方已分流，Codex 不绑定续接。
 	if c.dir == domain.ProtocolConvertRespToMess && p.cont != nil {
 		if id := gjson.GetBytes(conv, "id").String(); id != "" {
 			if ferr := p.contBind(ctx, contProtocolREST, id, groupID); ferr != nil {

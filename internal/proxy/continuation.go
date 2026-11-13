@@ -11,10 +11,15 @@
 // or Redis-unavailable all fail closed, and a hard-continuation request never
 // migrates to another account. WS keeps its synchronous ACK-before-visible
 // gate (wsContFrame/ws_relay.go), and non-streaming Responses keep the
-// synchronous bind. Codex direct streaming (client Responses) shares the same
-// write-seam async bind as native Responses; protocol-converted codex (client
-// Chat/Messages) does not enqueue a continuation id. Ordinary requests (no
-// previous_response_id, non-Responses formats) issue zero Redis commands.
+// synchronous bind. Codex credentials never take part in continuation: no
+// Codex transport (direct or protocol-converted stream, non-streaming, WS)
+// writes a binding, and when the first reserved selection is a Codex
+// credential the previous_response_id resolve/pin is skipped
+// (hardContinuation=false) and the field is left to the SDK whitelist.
+// Ordinary requests (no previous_response_id, non-Responses formats) issue
+// zero continuation Redis commands; Redis traffic on the Codex conversation
+// path comes from the SDK conversation book (design §3: zero Redis on a
+// local hit, write-back batched by its worker), not from this file.
 
 package proxy
 

@@ -9,9 +9,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/continuation"
@@ -24,7 +26,7 @@ import (
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
-// --- codex 续接入队限定：仅直连（客户端 Responses）入队；converted 不入队 ---
+// --- Codex 不做续接：直连/转换均不入队；首个预留为 Codex 时不解析续接 ---
 
 // newCodexContProxy 构造装配了异步续接 store + worker 的 codex resp 代理（镜像
 // newTestCodexRespProxy，额外下发 Deps{Continuation, ContBind}）。pcs = KeyMeta
@@ -72,26 +74,113 @@ func newCodexContProxy(t *testing.T, credType credential.Type, accounts map[int6
 	return p
 }
 
-// TestCodexDirectContinuationEnqueued 直连 codex 流式（客户端 Responses）：首个
-// 有效响应 id 帧 → contProtocolREST 绑定已建（与 native 同一写出前 seam）。
-func TestCodexDirectContinuationEnqueued(t *testing.T) {
-	_, s, _ := contFixture(t)
-	up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespDone}})
-	defer up.Close()
-	w := startTestContBind(t, s, ContBindConfig{})
-	p := newCodexContProxy(t, credential.TypeCodexPAT,
-		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, s, w)
+// TestCodexSkipsContinuation C3-10：Codex 凭据不做续接。
+//   - 直连流式不入队（原 TestCodexDirectContinuationEnqueued，断言反转）：用未
+//     Start 的 worker，若入队则条目留在队列里（Queued 可确定观测，无需等待）。
+//   - 首个预留为 Codex 时带 previous_response_id：不查绑定（零 Redis 命令）、
+//     不 410，照常派发（HTTP 与 WS）。
+//   - 混合组首个预留为 API key：续接解析照旧，缺失绑定 410 且零派发（HTTP 与 WS）。
+func TestCodexSkipsContinuation(t *testing.T) {
+	t.Run("direct_stream_not_enqueued", func(t *testing.T) {
+		_, s, _ := contFixture(t)
+		up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespDone}})
+		defer up.Close()
+		w := NewContBindWorker(s, nil, ContBindConfig{}) // 不 Start：入队即留在队列
+		p := newCodexContProxy(t, credential.TypeCodexPAT,
+			map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, s, w)
 
-	srv := httptest.NewServer(AIRouter(p))
-	defer srv.Close()
-	resp := postResponses(t, srv, `{"model":"gpt-4o","stream":true,"input":"hi"}`)
-	b, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", b)
-	require.Contains(t, string(b), "resp_t6", "上游 id 帧透传客户端")
+		srv := httptest.NewServer(AIRouter(p))
+		defer srv.Close()
+		resp := postResponses(t, srv, `{"model":"gpt-4o","stream":true,"input":"hi"}`)
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "body=%s", b)
+		require.Contains(t, string(b), "resp_t6", "上游 id 帧透传客户端")
 
-	bind := waitBinding(t, s, contProtocolREST, "resp_t6")
-	require.Equal(t, int64(10), bind.AccountID, "直连 codex 与 native 同一入队 seam")
+		require.Zero(t, w.Queued(), "Codex 直连流式不得入队续接")
+		require.Zero(t, w.Unattributed(), "Codex 不触发归属拒绝计数")
+		require.Zero(t, w.Dropped())
+		_, ok := contLookupBinding(t, s, contProtocolREST, "resp_t6")
+		require.False(t, ok, "Codex 不建续接绑定")
+	})
+
+	t.Run("http_codex_first_prev_id_not_410", func(t *testing.T) {
+		_, s, hook := contFixture(t)
+		up, rec := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespDone}})
+		defer up.Close()
+		p := newCodexContProxy(t, credential.TypeCodexPAT,
+			map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, s, nil)
+
+		srv := httptest.NewServer(AIRouter(p))
+		defer srv.Close()
+		resp := postResponses(t, srv, `{"model":"gpt-4o","stream":true,"input":"hi","previous_response_id":"resp_missing"}`)
+		b, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode, "Codex 首选不解析续接，不 410：body=%s", b)
+		require.Contains(t, string(b), "resp_t6")
+		rec.mu.Lock()
+		calls := rec.calls
+		rec.mu.Unlock()
+		require.Equal(t, 1, calls, "照常派发到 Codex 账号")
+		require.Zero(t, hook.n.Load(), "跳过 contResolve：续接零 Redis 命令")
+	})
+
+	t.Run("ws_codex_first_prev_id_not_410", func(t *testing.T) {
+		_, s, hook := contFixture(t)
+		up, hooks := newCodexWSUpstream(t, []int{200}, 1)
+		defer up.Close()
+		p, _ := newTestCodexWSProxy(t, credential.TypeCodexOAuth,
+			map[int64]*domain.AccountExt{10: codexWSExt(10, "at-10", "rt-10")}, up.URL, nil, &captureLogStore{})
+		p.cont = s // 装配续接 store：未跳过时缺失绑定会 410 错误帧、零拨号
+
+		srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+		defer srv.Close()
+		c := dialResponsesWSHeaders(t, srv, http.Header{"Authorization": {"Bearer ck-1"}})
+		defer c.CloseNow()
+		require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+			[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi","previous_response_id":"rsp_missing"}`)))
+		f := readResponsesWSFrame(t, c)
+		require.NotContains(t, string(f), `"type":"error"`, "Codex 首选不解析续接，不回错误帧：%s", f)
+		require.Contains(t, string(f), "rsp_ws_1")
+		require.Equal(t, 1, hooks.upgradesN(), "照常拨号到 Codex 账号")
+		require.Zero(t, hook.n.Load(), "跳过 contResolve：续接零 Redis 命令")
+	})
+
+	t.Run("mixed_api_key_first_unchanged", func(t *testing.T) {
+		for _, format := range []domain.RequestFormat{domain.FormatOpenAIResponses, domain.FormatOpenAIResponsesWS} {
+			_, s, _ := contFixture(t)
+			var hits atomic.Int32
+			var authSeen atomic.Value
+			var up *httptest.Server
+			if format == domain.FormatOpenAIResponsesWS {
+				up = contFakeWS(t, "rsp_x", &hits, &authSeen, "")
+			} else {
+				up = contUpstream(t, "resp_x", "sk-acc1", "", &hits, &authSeen)
+			}
+			defer up.Close()
+			apiTpl := &domain.Template{ID: 1, Name: "api", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{format}, Models: []string{"gpt-4o"}}
+			codexTpl := &domain.Template{ID: 2, Name: "codex", CredentialType: credential.TypeCodexPAT, SupportedFormats: []domain.RequestFormat{format}, Models: []string{"gpt-4o"}}
+			codexAcc := &domain.Account{ID: 2, TemplateID: codexTpl.ID, Template: codexTpl, Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4, Ext: codexPATExt(2, "pat-2")}
+			p := contProxy(t, format, []*domain.Account{contAcc(1, apiTpl, "sk-acc1", up.URL), codexAcc}, s) // 计划首选 API key
+
+			if format == domain.FormatOpenAIResponsesWS {
+				srv := contWSServer(t, p)
+				c := contWSDial(t, srv)
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				require.NoError(t, c.Write(ctx, websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-4o","input":"x","previous_response_id":"rsp_missing"}`)))
+				_, f, err := c.Read(ctx)
+				require.NoError(t, err)
+				require.Contains(t, string(f), `"type":"error"`, "API key 首选：缺失绑定照旧 fail-closed 错误帧")
+				cancel()
+				c.CloseNow()
+			} else {
+				w := httptest.NewRecorder()
+				p.HandleResponses(w, contResponsesReq(`{"model":"gpt-4o","input":"hi","previous_response_id":"resp_missing"}`))
+				require.Equal(t, http.StatusGone, w.Code, "API key 首选：缺失绑定照旧 410")
+			}
+			require.Zero(t, hits.Load(), "fail-closed 零派发（%s）", format)
+		}
+	})
 }
 
 // TestCodexConvertedContinuationNotEnqueued converted codex（客户端 Chat）：

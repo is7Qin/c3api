@@ -83,7 +83,8 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	respModel := sel.ClientResponseModel(reqModel)
 	// 硬续接（WS create 面）：store 装配且非 codex 传输时，每个 response id
 	// 在 Redis ACK 前不得转发客户端（ACK-before-visible）；codex/未装配 =
-	// 零变化零开销。
+	// 零变化零开销。Codex 不绑定续接：contTag 为空使下方两处 contBind
+	// （W6 首个 id、W7 后续新 id）对 Codex 不可达。
 	contTag := ""
 	if p.cont != nil && !sel.CredentialType.IsCodex() {
 		contTag = contProtocolWS
