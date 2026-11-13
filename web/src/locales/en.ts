@@ -1608,7 +1608,7 @@ export default {
       "mail.tls": "TLS policy",
       "balance_warning.enabled": "Enable balance warning",
       "payment": {
-        "enabled": "Payments enabled",
+        "enabled": "Enable payment gateway",
         "notify_base_url": "Callback base URL",
         "portal_base_url": "Portal base URL",
         "order_ttl_minutes": "Order TTL (minutes)"
@@ -1635,7 +1635,7 @@ export default {
       "mail.tls": "Connection encryption policy; defaults to SMTPS implicit TLS on port 465",
       "balance_warning.enabled": "When off, low-balance warning emails are not sent",
       "payment": {
-        "enabled": "Gates whether payment methods are sellable: when off the method list is empty and order creation returns 503, while notifies/queries/closes keep working (collected money must not be lost by a switch).",
+        "enabled": "Master switch for the payment gateway: when off the console hides payment accounts, payment orders and the wallet, the method list is empty and order creation returns 503, while notifies/queries/closes keep working (collected money must not be lost by a switch). Turn it on before configuring payment accounts.",
         "notify_base_url": "Only scheme + host (e.g. https://api.example.com); the callback and return paths are appended by the system.",
         "portal_base_url": "Portal base for the post-payment redirect; empty = absolute path /user/wallet.",
         "order_ttl_minutes": "Order lifetime in minutes; expired orders can still be credited."

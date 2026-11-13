@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { api } from '@/App'
 import { ApiUnauthorized } from '@/lib/api/client'
+import { FEATURES_QUERY_KEY } from '@/lib/use-features'
 import { Button } from '@/components/ui/button'
 import { Card, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -45,6 +46,7 @@ const GROUPS = [
   // 支付网关：v2 只剩 **4 键**（spec §5-1b / §15-7）——总开关 + 两个基址 + TTL。
   // 凭据（epay 四件套）与渠道三件套（币种/汇率/限额）已随「账户是数据」搬到
   // /app/payment-accounts（账户行 + 渠道子表），这里不得再出现。
+  // 总开关同时决定控制台是否展示支付页面（见 PAYMENT_SWITCH_KEY），故本组始终展示。
   { id: 'payment', keys: [
     'payment.enabled',
     'payment.notify_base_url',
@@ -53,6 +55,9 @@ const GROUPS = [
   ] },
 ] as const
 const GROUPED_KEYS = new Set<string>(GROUPS.flatMap(g => g.keys))
+// 支付网关总开关：也是 GET /api/user/features 的 payment。保存后让开关缓存失效，
+// 侧栏与支付页闸门当场跟随（该缓存平时整页只取一次）。
+const PAYMENT_SWITCH_KEY = 'payment.enabled'
 
 const isPlainInt = (v: string) => /^\d+$/.test(v)
 const isUsdText = (v: string) => v.trim() !== '' && Number.isFinite(Number(v)) && Number(v) >= 0
@@ -82,6 +87,7 @@ function SettingRow({ setting }: { setting: Setting }) {
     mutationFn: (value: string) => api.updateSetting({ key, value }),
     onSuccess: all => {
       qc.setQueryData(['settings'], all)
+      if (key === PAYMENT_SWITCH_KEY) qc.invalidateQueries({ queryKey: FEATURES_QUERY_KEY })
       if (draftRef.current === pendingRef.current) {
         setDraft(toInput(all.find(s => s.Key === key)?.Value ?? current))
       }

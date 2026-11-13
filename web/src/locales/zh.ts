@@ -1608,7 +1608,7 @@ export default {
       "mail.tls": "TLS 策略",
       "balance_warning.enabled": "启用余额预警",
       "payment": {
-        "enabled": "启用支付",
+        "enabled": "启用支付网关",
         "notify_base_url": "回调基址",
         "portal_base_url": "门户基址",
         "order_ttl_minutes": "订单有效期（分钟）"
@@ -1635,7 +1635,7 @@ export default {
       "mail.tls": "连接加密策略；默认 SMTPS 隐式 TLS（端口 465）",
       "balance_warning.enabled": "关闭后余额低于阈值时不发送预警邮件",
       "payment": {
-        "enabled": "只管「能不能卖」：关闭后方法列表为空、建单 503；回调/查单/关单照常（已收的钱不能被开关捻断）。",
+        "enabled": "支付网关总开关：关闭后控制台不显示支付账户、支付订单与钱包，方法列表为空、建单 503；回调/查单/关单照常（已收的钱不能被开关掐断）。配置支付账户前需先开启。",
         "notify_base_url": "只填 scheme + host（如 https://api.example.com）；回调与跳转路径由系统拼接。",
         "portal_base_url": "支付完成后跳回的门户地址；留空 = 绝对路径 /user/wallet。",
         "order_ttl_minutes": "订单有效期（分钟）；过期仍可入账。"

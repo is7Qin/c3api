@@ -77,10 +77,6 @@ const router = createBrowserRouter([
           { path: 'stats', element: <Stats /> },
           { path: 'rules', element: <Rules /> },
           { path: 'redemption-codes', element: <RedemptionCodes /> },
-          // 支付订单运维面（spec 支付网关 §7-3/§9）：全量订单 + sync/close/resolve。
-          { path: 'orders', element: <Orders /> },
-          // 支付账户/渠道配置面（spec v2 §11）：key/协议/优先级/启停/渠道子表/config_error。
-          { path: 'payment-accounts', element: <PaymentAccounts /> },
           { path: 'pricing', element: <PricingPage /> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'ops', element: <Ops /> },
@@ -97,6 +93,21 @@ const router = createBrowserRouter([
           ] },
         ],
       },
+      // 支付网关三张页面：不在 app / user 支内，先过支付开关闸门（关闭 = 404，与角色无关），
+      // 开启后管理面两页再过 RequireAdmin（非 admin 仍是 403），钱包对已登录用户放行。
+      {
+        element: <PaymentFeatureGate />,
+        children: [
+          { element: <RequireAdmin />, children: [
+            // 支付订单运维面（spec 支付网关 §7-3/§9）：全量订单 + sync/close/resolve。
+            { path: 'app/orders', element: <Orders /> },
+            // 支付账户/渠道配置面（spec v2 §11）：key/协议/优先级/启停/渠道子表/config_error。
+            { path: 'app/payment-accounts', element: <PaymentAccounts /> },
+          ] },
+          // 钱包（spec 支付网关 §7-1/§9）：渠道 → 下单 → 跳网关；`?order=` 进入时轮询到账。
+          { path: 'user/wallet', element: <UserWallet /> },
+        ],
+      },
       {
         path: 'user',
         children: [
@@ -108,8 +119,6 @@ const router = createBrowserRouter([
           { path: 'logs', element: <UserLogs /> },
           { path: 'stats', element: <UserStats /> },
           { path: 'redemptions', element: <UserRedemptions /> },
-          // 钱包（spec 支付网关 §7-1/§9）：渠道 → 下单 → 跳网关；`?order=` 进入时轮询到账。
-          { path: 'wallet', element: <UserWallet /> },
           // 供应商控制台（spec 2026-10-09 §6.1）：先过供应商开关闸门（关闭 = 404），
           // 再过门控 RequireSupplier（supplier | platform_admin）。
           {
@@ -147,6 +156,18 @@ function SupplierFeatureGate() {
   if (!userAuth.getToken()) return <Navigate to="/user/login" replace />
   if (!resolved) return null
   if (!supplier) return <NotFound />
+  return <Outlet />
+}
+
+// 支付网关闸门（管理面支付订单/支付账户与用户面钱包共用，位于角色门控之外）。
+// 开关是运行时设置 payment.enabled；分支顺序与 SupplierFeatureGate 相同且同为契约：
+// 未登录跳登录页 → 开关尚无结论时渲染空（不闪 404）→ 已确定关闭或请求失败渲染
+// 404（任何角色都一样）→ 开启则交给内层（管理面两页再过 RequireAdmin）。
+function PaymentFeatureGate() {
+  const { payment, resolved } = useFeatures()
+  if (!userAuth.getToken()) return <Navigate to="/user/login" replace />
+  if (!resolved) return null
+  if (!payment) return <NotFound />
   return <Outlet />
 }
 

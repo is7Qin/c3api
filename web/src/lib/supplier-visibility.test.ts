@@ -128,7 +128,7 @@ describe('接线：AppShell（菜单与面包屑）', () => {
   })
 
   it('面包屑传入开关，且在任何路径分支之前先挡供应商路径', () => {
-    assert.match(shell, /breadcrumbFor\(location\.pathname, supplier\)/)
+    assert.match(shell, /breadcrumbFor\(location\.pathname, supplier, payment\)/)
     const at = shell.indexOf('function breadcrumbFor(')
     assert.notEqual(at, -1, '找不到 breadcrumbFor')
     const body = shell.slice(at, shell.indexOf('\n}\n', at))
@@ -145,7 +145,7 @@ describe('接线：路由闸门（App.tsx）', () => {
     assert.equal(count(appFlat, /element: <SupplierFeatureGate \/>/g), 2)
     assert.equal(count(appFlat, /path: 'app\/supplier'/g), 1)
     assert.equal(count(appFlat, /element: <SupplierAdmin \/>/g), 1)
-    assert.equal(count(appFlat, /element: <RequireAdmin \/>/g), 2, 'app 支 + app/supplier 支')
+    assert.equal(count(appFlat, /element: <RequireAdmin \/>/g), 3, 'app 支 + app/supplier 支 + 支付闸门支')
     assert.equal(count(appFlat, /element: <RequireSupplier \/>/g), 1)
   })
 

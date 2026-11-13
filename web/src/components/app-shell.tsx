@@ -10,6 +10,7 @@ import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
 import { setLang, type AppLang, type DynamicKey } from '@/lib/i18n'
 import { adminNavFor, isSupplierPath, showSupplierNav } from '@/lib/supplier-visibility'
+import { isPaymentPath, paymentNavFor } from '@/lib/payment-visibility'
 import { useFeatures } from '@/lib/use-features'
 import { Button } from '@/components/ui/button'
 import { ModeToggle } from '@/components/mode-toggle'
@@ -39,6 +40,7 @@ const userNav: readonly NavItem[] = [
   { to: '/user/stats', key: 'user.nav.stats', icon: BarChart3, end: false },
   { to: '/user/redemptions', key: 'user.nav.redemptions', icon: Ticket, end: false },
   // 钱包（spec 支付网关 §9）：充值下单 + 我的订单；网关 return 会带回 /user/wallet?order=…
+  // 支付网关关闭时由 paymentNavFor 去掉。
   { to: '/user/wallet', key: 'user.nav.wallet', icon: CreditCard, end: false },
 ]
 
@@ -62,6 +64,7 @@ const adminNav: readonly NavItem[] = [
   // 支付订单运维面（spec 支付网关 §7-3）：紧跟兑换码（同属「钱的入口/出口」域）
   { to: '/app/orders', key: 'nav.orders', icon: Receipt },
   // 支付账户/渠道配置面（spec v2 §5-1b/§10-3）：订单的上游——账户行决定「钱落到哪」。
+  // 这两项在支付网关关闭时由 paymentNavFor 去掉。
   { to: '/app/payment-accounts', key: 'nav.paymentAccounts', icon: Landmark },
   { to: '/app/pricing', key: 'nav.pricing', icon: Coins },
   { to: '/app/supplier', key: 'nav.supplierWorkbench', icon: HandCoins },
@@ -87,9 +90,10 @@ const LANGS: { code: AppLang; label: string }[] = [
 // 路径 → 面包屑两级（分组根 + 当前页）；未知路径返回 null（顶栏不渲染面包屑）。
 // 映射直接复用 adminNav/userNav（同一来源，避免漂移）：
 // /app/* → 管理台 + 对应页名；/user/* → 用户中心 + 对应页名。
-// 供应商功能未确定开启时，供应商路径不渲染面包屑（闸门在内容区渲染 404）。
-function breadcrumbFor(pathname: string, supplier: boolean): { root: string; section: DynamicKey; page: DynamicKey } | null {
+// 供应商功能未确定开启时，供应商路径不渲染面包屑；支付网关同理（闸门在内容区渲染 404）。
+function breadcrumbFor(pathname: string, supplier: boolean, payment: boolean): { root: string; section: DynamicKey; page: DynamicKey } | null {
   if (!supplier && isSupplierPath(pathname)) return null
+  if (!payment && isPaymentPath(pathname)) return null
   if (pathname.startsWith('/app')) {
     if (pathname === '/app') return { root: '/app', section: 'user.nav.adminSection', page: 'nav.overview' }
     const item = adminNav.find((n) => n.to === pathname)
@@ -120,16 +124,17 @@ export default function AppShell() {
     staleTime: 60_000,
   })
   const isAdmin = me?.Role === 'platform_admin'
-  // 供应商功能开关（加载中 / 失败按关闭）：管理组的结算工作台、供应商组与面包屑都读它。
-  const { supplier } = useFeatures()
+  // 功能开关（加载中 / 失败按关闭）：管理组的结算工作台、供应商组与面包屑读 supplier；
+  // 管理组的支付订单/支付账户、用户组的钱包与面包屑读 payment。
+  const { supplier, payment } = useFeatures()
   // 菜单组顺序：管理域（仅 admin）→ 供应商域（supplier | admin）→ 用户中心（全员）。
   const navs: NavGroup[] = [
-    ...(isAdmin ? [{ titleKey: 'user.nav.adminSection' as const, items: adminNavFor(adminNav, supplier) }] : []),
+    ...(isAdmin ? [{ titleKey: 'user.nav.adminSection' as const, items: paymentNavFor(adminNavFor(adminNav, supplier), payment) }] : []),
     ...(showSupplierNav(me?.Role, supplier) ? [{ titleKey: 'user.nav.supplierSection' as const, items: supplierNav }] : []),
-    { titleKey: 'user.nav.userSection' as const, items: userNav },
+    { titleKey: 'user.nav.userSection' as const, items: paymentNavFor(userNav, payment) },
   ]
   // 顶栏面包屑（两级）：未知路径返回 null 不渲染
-  const crumb = breadcrumbFor(location.pathname, supplier)
+  const crumb = breadcrumbFor(location.pathname, supplier, payment)
   return (
     <div data-od-id="app-shell" className="relative z-10 flex h-screen overflow-hidden bg-transparent text-[#1d1d1f] dark:text-[#f5f5f7]">
       {/* h-screen 锁定视口高度：侧边栏 nav 与 main 各自 ScrollArea 独立滚动（自绘
