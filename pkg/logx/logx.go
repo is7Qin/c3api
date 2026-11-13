@@ -6,6 +6,7 @@
 package logx
 
 import (
+	"os"
 	"sync"
 	"time"
 
@@ -47,10 +48,13 @@ type Logger struct {
 // encoderConfig 是日志字段契约的唯一来源（键名 + 编码器）。键名一改，/logs 的
 // 消费方与既有 grep/告警就会静默失效，所以键名单独钉在测试里（logx 内部用例）。
 //
-// StacktraceKey 与 zap 默认生产配置对齐（改前经 zap.Config 的默认值同样生效）：
-// 它只决定「有 stacktrace 时写到哪个键」，本包未启用 AddStacktrace（见 New），
-// 因此 Error 级当前不输出该字段——与改前的输出逐字节等价。要让 error 日志带上
-// 堆栈，在 New 里把 zap.AddStacktrace(zapcore.ErrorLevel) 加上即可（键已就位）。
+// StacktraceKey 的来历：b8c57be4 时的旧实现走 zap.Config.Build，但 EncoderConfig
+// 是显式写的、没有 StacktraceKey（并未用 zap 默认值）。Build 会自动加
+// AddStacktrace(ErrorLevel)，于是旧实现每条 Error 都抓栈，却因键为空被 JSON
+// 编码器丢弃（仅 ent.Stack 与 StacktraceKey 均非空才写）——旧输出从来没有
+// stacktrace 字段。本包现在不启用 AddStacktrace（见 build），不再白抓栈，输出
+// 与旧实现逐字节等价。这里预置 "stacktrace" 只是为将来启用时有键可写：要让
+// error 日志带上堆栈，在 build 里加 zap.AddStacktrace(zapcore.ErrorLevel) 即可。
 func encoderConfig() zapcore.EncoderConfig {
 	return zapcore.EncoderConfig{
 		MessageKey:    "msg",
@@ -81,10 +85,22 @@ func New(level, output string) (*Logger, error) {
 	if err != nil {
 		return nil, err
 	}
+	// zap 内部错误（sink 写/同步失败）显式打到 stderr。这与 zap.New 的隐式默认值
+	// （zapcore.Lock(os.Stderr)）相同，写出来只是不再依赖隐式默认。相对 b8c57be4
+	// 则是有意的变化：旧实现经 zap.Config.Build 且未设 ErrorOutputPaths，Open()
+	// 零路径得到空 MultiWriteSyncer，内部错误被静默丢弃；zap 自己的
+	// Production/Development 配置都用 "stderr"，可见旧的丢弃是遗漏而非设计——
+	// sink 写失败不应静默。
+	return build(lv, ws, closeFn, zapcore.Lock(os.Stderr)), nil
+}
+
+// build 装配 Logger：ws 为输出 sink，closeFn 为其释放函数（交给 sinkCloser），
+// errOut 接收 zap 内部错误。独立出来是为了让测试能注入 errOut。
+func build(lv zapcore.Level, ws zapcore.WriteSyncer, closeFn func(), errOut zapcore.WriteSyncer) *Logger {
 	core := zapcore.NewCore(zapcore.NewJSONEncoder(encoderConfig()), ws, lv)
 	// AddCallerSkip(1) 抵掉本包的 Debug/Info/Warn/Error 包装层，caller 仍是业务调用点。
-	z := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
-	return &Logger{l: z, closer: &sinkCloser{fn: closeFn}}, nil
+	z := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1), zap.ErrorOutput(errOut))
+	return &Logger{l: z, closer: &sinkCloser{fn: closeFn}}
 }
 
 func (l *Logger) Debug(msg string, fields ...Field) { l.l.Debug(msg, fields...) }
