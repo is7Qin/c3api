@@ -25,6 +25,7 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 	codexsdk "github.com/is7Qin/codex-sdk"
+	"github.com/is7Qin/codex-sdk/redisstore"
 	"github.com/jackc/pgx/v5/stdlib"
 
 	jwtauth "github.com/is7qin/c3api/internal/auth"
@@ -605,6 +606,10 @@ func main() {
 	// 本 worker 常驻批量落库（容量/批节奏内部默认；纳管由 managedWorkers 下方
 	// 统一 wm.Register 负责 Start；反向排空顺序：contBindW 先于 errlogW/rec 关闭（无强依赖）。
 	contBindW := proxy.NewContBindWorker(contStore, log, proxy.ContBindConfig{})
+	// Codex 会话簿（设计 §3）：带对话标识的 Codex 请求由它合成身份，跨副本经
+	// SDK redisstore（codex:conv:* / codex:turn:*）共享；c3api 只注入 rdb，连接池
+	// 生命周期归 redisx。恒构造（nil 只出现在测试 → 回到槽位路径）。
+	convBook := codexsdk.NewConversationBook(redisstore.New(rdb))
 	// codex SDK 适配层装配（§3——统一失效回调先落生图路径；全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
 	// 调度摘除 + 审计契约）。egressPool/rotation 同构造期一次给齐（构造后
@@ -656,10 +661,11 @@ func main() {
 		LowBalanceConcThresholdMilli: int64(math.Round(cfg.Proxy.LowBalanceThresholdUSD * 1e5)),
 		StreamKeepaliveInterval:      cfg.Proxy.StreamKeepaliveInterval,
 	}, sched, credential.New(), rec, clients, auth, log, billHooks, errlogW, proxy.Deps{
-		Codex:        codexAdapter,
-		Recorder:     qualityRecorder,
-		Continuation: contStore,
-		ContBind:     contBindW,
+		Codex:         codexAdapter,
+		Recorder:      qualityRecorder,
+		Continuation:  contStore,
+		ContBind:      contBindW,
+		Conversations: convBook,
 	})
 	// 规则 typed Throttle/FailAccount 双面已在构造期接线（latch fail-closed
 	// 先于持久化；持久化走有界 persist queue——满可丢、写失败可弃、四指标可观测，
