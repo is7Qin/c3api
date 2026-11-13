@@ -13,11 +13,15 @@
 // gate (wsContFrame/ws_relay.go), and non-streaming Responses keep the
 // synchronous bind. Codex credentials never take part in continuation: no
 // Codex transport (direct or protocol-converted stream, non-streaming, WS)
-// writes a binding. A previous_response_id is still resolved first
-// (resolveContinuationBinding): a hit pins as usual (an id produced by an API
+// writes a binding. A plan with no non-Codex candidate (pure Codex group)
+// skips resolution entirely — no Redis lookup, and a continuation-store
+// outage does not 503 there. Otherwise a previous_response_id is still
+// resolved first (resolveContinuationBinding): a hit pins as usual (an id produced by an API
 // key account pins back to it even when the first reservation is Codex); a
 // miss with a Codex first reservation does not 410 — hardContinuation=false
-// and the field is left to the SDK whitelist; a miss otherwise still 410s.
+// and the field is left to the SDK whitelist; a miss otherwise still 410s,
+// and a store outage stays fail-closed 503 (an API-key-produced id cannot be
+// told apart, and Codex would silently drop it).
 // Ordinary requests (no previous_response_id, non-Responses formats) issue
 // zero continuation Redis commands; Redis traffic on the Codex conversation
 // path comes from the SDK conversation book (design §3: zero Redis on a

@@ -66,6 +66,36 @@ func (s *Scheduler) NewAttemptPlanWithCacheAffinity(identity AttemptPlanIdentity
 	return plan, nil
 }
 
+// PlanHasNonCodexCandidate 计划绑定的路由决策里是否有非 Codex 凭据的候选（Primary、
+// Explore 全集、Degraded；按当前视图的模板凭据类型判定）。只在带
+// previous_response_id 的请求上调用（续接解析前置判定，不在普通请求路径上）。视图
+// 未就绪、候选不在视图或无模板时按“有非 Codex”返回 true——保守地保留续接解析与
+// fail-closed。
+func (s *Scheduler) PlanHasNonCodexCandidate(plan *AttemptPlan) bool {
+	if plan == nil || plan.route == nil {
+		return true
+	}
+	v := s.view.Load()
+	if v == nil || v.static == nil {
+		return true
+	}
+	nonCodex := func(cs []CompiledCandidate) bool {
+		for i := range cs {
+			cur, ok := v.static.byID[cs[i].AccountID]
+			if !ok || cur == nil {
+				return true
+			}
+			av := cur.static.Load()
+			if av == nil || av.tpl == nil || !av.tpl.CredentialType.IsCodex() {
+				return true
+			}
+		}
+		return false
+	}
+	d := plan.route
+	return nonCodex(d.Primary) || nonCodex(d.Explore.Ordered) || nonCodex(d.Degraded)
+}
+
 // ReserveAttempt applies request-time health, latch, status and
 // cluster-concurrency gates to the compiled plan. Candidates carry immutable
 // metadata; the only per-candidate request work is O(1) gate checks and the

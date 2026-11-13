@@ -356,9 +356,9 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 		return sel, attempt, nil, true
 	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
-	// fail-closed（释放已占并发槽，零上游拨号）。首个预留是 Codex 且未命中 →
-	// 不钉选（见 resolveContinuationBinding）。
-	b, ferr := p.resolveContinuationBinding(r.Context(), userID, groupID, contProtocolREST, contPrevID, sel, attempt)
+	// fail-closed（释放已占并发槽，零上游拨号）。纯 Codex 计划不解析；首个预留是
+	// Codex 且未命中 → 不钉选（见 resolveContinuationBinding）。
+	b, ferr := p.resolveContinuationBinding(r.Context(), userID, groupID, contProtocolREST, contPrevID, sel, plan, attempt)
 	if ferr != nil {
 		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
@@ -379,16 +379,22 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 	return pinned, pinnedAttempt, b, true
 }
 
-// resolveContinuationBinding 续接解析（REST 与 WS 共用，m1 修订）：照常先
-// contResolve——
-//   - 命中 → 返回绑定，调用方照旧 contPin（API key 产出的 id 在首个预留为 Codex
-//     时仍钉回原账号）；
+// resolveContinuationBinding 续接解析（REST 与 WS 共用）：
+//   - 计划里没有任何非 Codex 候选（纯 Codex 组）→ (nil, nil)，根本不解析：Codex 不
+//     写续接绑定，这组请求不可能命中，也就不查 Redis，续接存储故障时同样放行（不
+//     503）；previous_response_id 留在请求里交给 SDK；
+//   - 否则照常先 contResolve——命中 → 返回绑定，调用方照旧 contPin（API key 产出的
+//     id 在首个预留为 Codex 时仍钉回原账号）；
 //   - 未命中（missing/expired）且首个预留 sel 是 Codex → (nil, nil)：不 410、
-//     hardContinuation=false，previous_response_id 留在请求里交给 SDK（Codex 不写
-//     续接绑定，它产出的 id 从来查不到）；续接 store 未装配同理（不可能有绑定）；
-//   - 未命中且首个预留不是 Codex → 照旧 410；Redis 不可用 → 照旧 503（无法判断
-//     是否存在绑定，fail-closed 不分凭据类型）。
-func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *scheduler.Selection, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
+//     hardContinuation=false，previous_response_id 交给 SDK；续接 store 未装配同理
+//     （不可能有绑定）；
+//   - 未命中且首个预留不是 Codex → 照旧 410；Redis 不可用 → 503（混合组无法判断
+//     是否存在 API key 绑定；放行会让 Codex 静默丢弃该 id、模型静默丢上下文，
+//     fail-closed 优先）。
+func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *scheduler.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
+	if !p.sched.PlanHasNonCodexCandidate(plan) {
+		return nil, nil
+	}
 	codexFirst := sel.CredentialType.IsCodex()
 	if codexFirst && p.cont == nil {
 		return nil, nil

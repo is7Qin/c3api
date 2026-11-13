@@ -47,11 +47,14 @@
 - 硬续接（API key 账号）：missing/expired/Redis 不可用一律 fail-closed（410/503/409），
   零上游拨号；钉选后 `hardContinuation=true`，绝不迁移到其他账号。
 - **Codex 不写续接绑定**：没有任何 Codex 传输写续接绑定（W1/W2/W4/W5 在 Codex 分流之后、
-  W6/W7 的 `contTag` 对 Codex 为空，均不可达，代码处有注释）。解析照常先 `contResolve`
-  （`resolveContinuationBinding`，HTTP 与 WS 共用）：命中 → 照旧 `contPin`（API key 产出的 id
-  即使首个预留是 Codex 也钉回原账号）；未命中且首个预留是 Codex → 不 410、
-  `hardContinuation=false`，`previous_response_id` 交给 SDK；未命中且首个预留不是 Codex →
-  照旧 410；Redis 不可用照旧 503。
+  W6/W7 的 `contTag` 对 Codex 为空，均不可达，代码处有注释）。`resolveContinuationBinding`
+  （HTTP 与 WS 共用）：计划里没有任何非 Codex 候选（`Scheduler.PlanHasNonCodexCandidate`
+  为 false，纯 Codex 组）→ 不做续接解析，不查 Redis，续接存储故障也不 503，
+  `previous_response_id` 交给 SDK。有非 Codex 候选时照常先 `contResolve`：命中 → 照旧
+  `contPin`（API key 产出的 id 即使首个预留是 Codex 也钉回原账号）；未命中且首个预留是
+  Codex → 不 410、`hardContinuation=false`，id 交给 SDK；未命中且首个预留不是 Codex →
+  照旧 410；Redis 不可用 → 503（无法判断是否存在 API key 绑定，放行会让 Codex 静默丢
+  上下文）。混合组里 Codex 产出的 id 是否 410 取决于首个预留落在哪类账号（不确定，已认可）。
 - **SDK 本地拒绝**（`codexsdk.ErrInvalidRequestBody`，请求体不能整形：非 JSON 对象、缺字符串
   `model`、`input` 形态错、`service_tier` 含控制字节等）是客户端错误：四个落点——HTTP 两个
   core 的 SDK 错误分支、`handleCodexDialError` 开头、`codexFirstFrameFailed`（首帧）、
@@ -84,5 +87,5 @@
 ```bash
 go test ./internal/proxy/ -count=1
 go test ./internal/proxy/ -run 'TestCodexSkipsContinuation|TestCodexConvertedContinuationNotEnqueued|TestContinuation' -count=1
-go test ./internal/proxy/ -run 'TestCodexInvalidBodyIsClientError|TestConversationWorker|TestCodexConversation|TestCodexClientIdentityNeverEgress' -count=1
+go test ./internal/proxy/ -run 'TestCodexInvalidBodyIsClientError|TestConversationWorker|TestCodexConversation|TestCodexClientIdentityNeverEgress|TestConversationIdentifierPrecedence|TestAffinityPrefersSessionHeaders|TestFormatEntryConversationNoNewAllocs|TestCodexWSPrewarmFailureIsPreCommit' -count=1
 ```

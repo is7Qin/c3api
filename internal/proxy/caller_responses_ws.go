@@ -186,12 +186,12 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
-	// fail-closed（释放已占并发槽，零上游拨号）。首个预留是 Codex 且未命中 →
+	// fail-closed（释放已占并发槽，零上游拨号）。纯 Codex 计划不解析；首个预留是 Codex 且未命中 →
 	// 不钉选（hardContinuation=false），previous_response_id 原样随首帧交给
 	// SDK；命中照旧钉选（见 resolveContinuationBinding）。
 	var contBinding *continuation.Binding
 	if contPrevID != "" {
-		b, ferr := p.resolveContinuationBinding(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, sel, attempt)
+		b, ferr := p.resolveContinuationBinding(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, sel, &plan, attempt)
 		if ferr != nil {
 			sel.Release()
 			wsWriteError(client, ferr.msg)
