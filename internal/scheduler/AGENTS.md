@@ -21,8 +21,8 @@
 ## 关键不变量
 
 - 已发布快照只能 copy-modify-Store；disabled 账号不得被在途事件复活。
-- 选号路径 100% 本地判定、**零 Redis**（Redis 只被 concsync worker 每 tick 一条
-  pipeline 读写）；零 DB、零每请求锁。
+- 选号路径 100% 本地判定、**零 Redis**（Redis 只被后台 worker 读写：concsync 每 tick 一条
+  pipeline、runtime-health 健康同步）；零 DB、零每请求锁。
 - 预留零新增分配：`TestClaimAndIdentityZeroAlloc` 恒为 0；`NewAttemptPlan + ReserveAttempt
   + Release` 在 BASE 上实测 5 次分配，带不带 `Conversation` 都不得超过（C3-15）。
 - `AttemptPlanIdentity.Conversation=true` 时 `reserveOnView` **不认领** Codex 槽位：槽位池
