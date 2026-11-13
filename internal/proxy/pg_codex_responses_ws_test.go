@@ -132,8 +132,8 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	defer c.CloseNow()
 	for _, f := range []string{
 		`{"type":"response.create","model":"gpt-4o","input":"hi"}`,
-		`{"type":"response.input_text.delta","delta":"typing"}`,
-		`{"type":"custom.mid","n":42}`,
+		`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`,
+		`{"type":"custom.mid","model":"gpt-4o","n":42}`,
 	} {
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
 	}

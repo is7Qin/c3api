@@ -818,7 +818,7 @@ func TestProbeCodexNon200CappedWiring(t *testing.T) {
 func TestProbeCodexSSE(t *testing.T) {
 	got := captureChan()
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body := readFakeUpstreamBody(r)
 		got <- capturedReq{method: r.Method, path: r.URL.Path, auth: r.Header.Get("Authorization"), accountID: r.Header.Get("ChatGPT-Account-ID"), body: body}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = w.Write([]byte("event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"output\":[{\"type\":\"message\"}]}}\n\n"))

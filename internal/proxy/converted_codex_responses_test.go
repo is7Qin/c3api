@@ -354,41 +354,25 @@ func TestConvertedCodexExtMissing(t *testing.T) {
 }
 
 // TestConvertedCodexTurnStateReplay spec §5.9：转换路径与直连同一条 ts 策略——
-// 重放开时上游签发值进会话、下一请求带上；默认（false）既不发送也不捕获。
+// 槽位路径既不发送也不捕获：上游签发、客户端自带的 ts 都不进上游请求。
 func TestConvertedCodexTurnStateReplay(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t,
-		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespCallEv, t6RespDone}, turnState: "ts-1"},
-		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}},
+		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-9"},
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
-	// 单槽（K=1）：turn-state 会话级（sdkbridge G3）——同轮续传用例必须固定同一个
-	// 会话（槽位池 K>1 时按轮询发槽，相邻请求会换 thread）。
+	// 单槽（K=1）：两次请求落同一会话，第二次若重放就会带上 ts-9。
 	p, _ := newConvertedCodexTestProxy(t, credential.TypeCodexOAuth,
 		map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")},
 		up.URL, nil, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, &captureLogStore{},
 		withCodexIdentitySlots(1))
-
-	p.turnStateReplay = true // 内部构造函数注入策略（§5.1）
-
 	for range 2 {
-		rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`, nil)
+		rec := postChatConv(t, p, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
+			map[string]string{"x-codex-turn-state": "client-ts"})
 		require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
 	}
-
 	require.Equal(t, 2, upc.callsN())
-	require.Equal(t, "", upc.turnState(0), "轮首请求不带头")
-	require.Equal(t, "ts-1", upc.turnState(1), "签发值进会话 → 下一请求带上")
-
-	// 默认策略（false）：客户端自带 ts 也不发送（身份来自会话，不是入站请求）。
-	up2, upc2 := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-9"})
-	defer up2.Close()
-	p2, _ := newConvertedCodexTestProxy(t, credential.TypeCodexOAuth,
-		map[int64]*domain.AccountExt{10: codexOAuthExt(10, "at-10", "rt-10")},
-		up2.URL, nil, []domain.ProtocolConvert{domain.ProtocolConvertChatToResp}, &captureLogStore{})
-	rec := postChatConv(t, p2, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}]}`,
-		map[string]string{"x-codex-turn-state": "client-ts"})
-	require.Equal(t, http.StatusOK, rec.Code, "body=%s", rec.Body.String())
-	require.Equal(t, "", upc2.turnState(0), "策略 false ⇒ 客户端自带也不发")
+	require.Equal(t, "", upc.turnState(0), "客户端自带也不发")
+	require.Equal(t, "", upc.turnState(1), "上游签发值不捕获、不重放")
 }
 
 // TestConvertedCodexStepIdentityDrivesWindow spec §5.9：转换路径每次成功取到

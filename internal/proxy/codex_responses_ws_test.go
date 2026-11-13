@@ -385,8 +385,8 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	defer c.CloseNow()
 
 	f1 := `{"type":"response.create","model":"gpt-4o","input":"hi"}`
-	f2 := `{"type":"response.input_text.delta","delta":"typing"}`
-	f3 := `{"type":"custom.mid","n":42}`
+	f2 := `{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`
+	f3 := `{"type":"custom.mid","model":"gpt-4o","n":42}`
 	for _, f := range []string{f1, f2, f3} {
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
 	}
@@ -398,17 +398,21 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	require.Equal(t, `{"type":"response.output_text.delta","delta":"hi"}`, got[1])
 	require.Contains(t, got[2], `"type":"response.completed"`)
 	require.Contains(t, got[2], `"input_tokens":6`)
-	// 回声帧 = 客户端帧经 SDK 按 codex 形状归一后的字节（无条件生效）：顶层
-	// 白名单过滤（非白名单键如 f2 的 delta / f3 的 n 被剥离）→ 强制追加
-	// store:false → 末尾注入 client_metadata（伪装身份对象）。归一后
-	// client_metadata 值之前的字节完全确定，逐字节断言；client_metadata 值含
-	// 每帧 UUIDv7 动态身份（turn_id/traceparent），就其尾部结构单独断言。
-	const metaKey = `"client_metadata":`
-	wantNormalizedPrefix := []string{
-		`{"type":"response.create","model":"gpt-4o","input":"hi","store":false,` + metaKey,
-		`{"type":"response.input_text.delta","store":false,` + metaKey,
-		`{"type":"custom.mid","store":false,` + metaKey,
+	// 回声帧 = 客户端帧经 SDK 整形后的字节（无条件生效，SDK 整形 §5.1）：白名单外
+	// 键（f2 的 delta / f3 的 n）与客户端 type 丢弃、type 恒写 response.create；
+	// stream:true / store:false 强制；字符串 input 规范成一条 user 消息，缺省 input
+	// 写 []；非 lite（gpt-4o 表外 = 非 lite）缺省 tools:[] / tool_choice:"auto" /
+	// parallel_tool_calls:true / reasoning:{}（表外模型不填 effort）/ include；
+	// prompt_cache_key = 槽位 SessionID；按官方 WS 键序一次写出。prompt_cache_key
+	// 之前的字节完全确定，逐字节断言；之后只能是 client_metadata 一个键。
+	const pckKey = `"prompt_cache_key":"`
+	const tail = `"tools":[],"tool_choice":"auto","parallel_tool_calls":true,"reasoning":{},"store":false,"include":["reasoning.encrypted_content"],` + pckKey
+	wantShapedPrefix := []string{
+		`{"type":"response.create","model":"gpt-4o","stream":true,"input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}],` + tail,
+		`{"type":"response.create","model":"gpt-4o","stream":true,"input":[],` + tail,
+		`{"type":"response.create","model":"gpt-4o","stream":true,"input":[],` + tail,
 	}
+	threadKeys := map[string]bool{}
 	for i, want := range []string{f1, f2, f3} {
 		var echo struct {
 			Type    string `json:"type"`
@@ -416,21 +420,36 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal([]byte(got[3+i]), &echo))
 		require.Equal(t, "echo", echo.Type)
-		// 精确字节断言：client_metadata 值之前的归一字节逐字节相等——覆盖
-		// ① 白名单键保序保留（type/model/input）② 非白名单键剥离（delta/n）
-		// ③ store:false 强制追加 ④ client_metadata 为末尾唯一附加键。
-		idx := strings.Index(echo.Payload, metaKey)
-		require.GreaterOrEqual(t, idx, 0, "归一帧必带 client_metadata")
-		require.Equal(t, wantNormalizedPrefix[i], echo.Payload[:idx+len(metaKey)],
-			"归一后确定字节不一致（客户端帧 %q）：白名单保序 + 剥离 + store:false", want)
-		// client_metadata 值 = 每帧注入的伪装身份对象：installation_id 固定、
-		// session/thread/window/turn/traceparent 为 UUIDv7 动态值——断言末尾
-		// 唯一附加键、键序前缀与对象闭合（不含动态取值）。
-		rest := echo.Payload[idx+len(metaKey):]
-		require.True(t, strings.HasPrefix(rest, `{"x-codex-installation-id":"inst-00000000000000000000000000000000","session_id":"`),
-			"client_metadata 为末尾唯一附加键且键序固定（installation_id 固定值）")
+		idx := strings.Index(echo.Payload, pckKey)
+		require.GreaterOrEqual(t, idx, 0, "非匿名帧必带 prompt_cache_key")
+		require.Equal(t, wantShapedPrefix[i], echo.Payload[:idx+len(pckKey)],
+			"整形后确定字节不一致（客户端帧 %q）：官方键序 + 缺省值 + 剥离", want)
+		frame := gjson.Parse(echo.Payload)
+		sid := frame.Get("prompt_cache_key").String()
+		require.True(t, isUUIDv7(sid), "prompt_cache_key = 槽位 SessionID（UUIDv7）")
+		require.True(t, strings.HasPrefix(echo.Payload[idx+len(pckKey)+len(sid):], `","client_metadata":{`),
+			"prompt_cache_key 之后只有 client_metadata（无 text/generate/access_programs）")
 		require.True(t, strings.HasSuffix(echo.Payload, "}}"), "client_metadata 对象 + 帧对象闭合")
+		// client_metadata：键序每帧随机（官方 HashMap），按键集与值断言。
+		cm := frame.Get("client_metadata")
+		var keys []string
+		cm.ForEach(func(k, _ gjson.Result) bool { keys = append(keys, k.String()); return true })
+		require.ElementsMatch(t, []string{
+			"session_id", "thread_id", "x-codex-window-id", "x-codex-installation-id",
+			"turn_id", "root_turn_id", "x-codex-turn-metadata", "mcp_attribution",
+			"guardian_credits_requested", "x-codex-ws-stream-request-start-ms",
+		}, keys, "WS 真实帧 client_metadata 键集（槽位路径无 turn-state；非 lite；无 trace）")
+		require.Equal(t, "inst-00000000000000000000000000000000", cm.Get("x-codex-installation-id").String())
+		require.Equal(t, sid, cm.Get("session_id").String())
+		require.Equal(t, sid, cm.Get("thread_id").String(), "槽内 session==thread")
+		require.Equal(t, sid+":0", cm.Get("x-codex-window-id").String())
+		require.True(t, isUUIDv7(cm.Get("turn_id").String()))
+		require.Equal(t, cm.Get("turn_id").String(), cm.Get("root_turn_id").String())
+		require.Regexp(t, `^[0-9]{13}$`, cm.Get("x-codex-ws-stream-request-start-ms").String(), "发送时刻毫秒（13 位）")
+		require.Equal(t, "turn", gjson.Parse(cm.Get("x-codex-turn-metadata").String()).Get("request_kind").String())
+		threadKeys[sid] = true
 	}
+	require.Len(t, threadKeys, 1, "同一连接三帧同一会话身份")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	// 握手面断言（伪装头）：两次升级（401 首拨 + 轮转后重拨），账号鉴权
@@ -676,8 +695,8 @@ func TestCodexWSDial429Failover(t *testing.T) {
 	defer c.CloseNow()
 	for _, f := range []string{
 		`{"type":"response.create","model":"gpt-4o","input":"hi"}`,
-		`{"type":"response.input_text.delta","delta":"typing"}`,
-		`{"type":"custom.mid","n":42}`,
+		`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`,
+		`{"type":"custom.mid","model":"gpt-4o","n":42}`,
 	} {
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
 	}
@@ -772,8 +791,8 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 	defer c.CloseNow()
 	for _, f := range []string{
 		`{"type":"response.create","model":"gpt-4o","input":"hi"}`,
-		`{"type":"response.input_text.delta","delta":"typing"}`,
-		`{"type":"custom.mid","n":42}`,
+		`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`,
+		`{"type":"custom.mid","model":"gpt-4o","n":42}`,
 	} {
 		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
 	}

@@ -188,7 +188,7 @@ func (u *sessionWSUpstream) serveWS(w http.ResponseWriter, r *http.Request) {
 // serveHTTP 非 WS 腿：记录请求体/路径后按端点回包（非 responses 面用例只关心
 // "没新增 WS 连接、没带身份键"）。
 func (u *sessionWSUpstream) serveHTTP(w http.ResponseWriter, r *http.Request) {
-	b, _ := io.ReadAll(r.Body)
+	b := readFakeUpstreamBody(r)
 	u.mu.Lock()
 	u.posts++
 	u.bodies = append(u.bodies, b)
@@ -419,36 +419,13 @@ func TestSessionG1WindowAdvanceKeepsConnection(t *testing.T) {
 	require.Equal(t, thread+":0", reqs[crossed-1].window, "跨越只发生一次")
 }
 
-// TestSessionG3aReplayPolicyOn G3a：策略 true ⇒ 握手签发 T1、事件签发 T2，下一请求
-// 带 T2（"更新即跟随、跟随即复用"），且不重连。
-func TestSessionG3aReplayPolicyOn(t *testing.T) {
-	up, u := newSessionWSUpstream(t, "T1",
-		sessionWSStep{id: "a1", ts: "T2", usage: true},
-		sessionWSStep{id: "a2", usage: true})
-	p, _ := newSessionWSProxy(t, up.URL, 1)
-	p.turnStateReplay = true // 内部构造函数注入策略（§5.1）
-	srv := httptest.NewServer(AIRouter(p))
-	defer srv.Close()
-
-	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
-	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
-
-	reqs := u.requests()
-	require.Len(t, reqs, 2)
-	require.Equal(t, "", reqs[0].ts, "轮首不带 ts")
-	require.Equal(t, "T2", reqs[1].ts, "带事件签发值 T2（不是握手快照 T1）")
-	require.Equal(t, 1, u.upgradeCount(), "ts 更新不换连接")
-	require.Equal(t, reqs[0].thread, reqs[1].thread)
-}
-
-// TestSessionG3bReplayPolicyOff G3b：策略 false（生产默认）⇒ 上游握手/事件都签发，
-// 网关任何请求都不带（既不发送也不捕获）；连接复用照常。
+// TestSessionG3bReplayPolicyOff G3b：槽位路径 ⇒ 上游握手/事件都签发，网关任何请求
+// 都不带（既不发送也不捕获，Sink=nil）；连接复用照常。
 func TestSessionG3bReplayPolicyOff(t *testing.T) {
 	up, u := newSessionWSUpstream(t, "T1",
 		sessionWSStep{id: "b1", ts: "T2", usage: true},
 		sessionWSStep{id: "b2", usage: true})
 	p, _ := newSessionWSProxy(t, up.URL, 1)
-	require.False(t, p.turnStateReplay, "生产默认必须 false（P1 门禁前不重放）")
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
@@ -460,7 +437,7 @@ func TestSessionG3bReplayPolicyOff(t *testing.T) {
 	for i, r := range reqs {
 		require.Equal(t, "", r.ts, "第 %d 个请求不得带 ts", i)
 	}
-	require.Equal(t, 1, u.upgradeCount(), "策略 false 不影响连接复用")
+	require.Equal(t, 1, u.upgradeCount(), "不带 ts 不影响连接复用")
 }
 
 // TestSessionG4IsolationAcrossSessions G4：同账号两条会话交替 ⇒ 两条 thread 各一条
@@ -624,37 +601,6 @@ func mustPost(t *testing.T, srv *httptest.Server) *http.Request {
 	return req
 }
 
-// TestSessionCredentialReplacementDropsOldTurnState 凭据替换后**第一个**请求就不得
-// 重放旧 owner 的 ts（B1 回归，oracle 探针的正式版）。
-//
-// 判据：首请求拿到上游事件签发的 T-old-owner（会话 ts = T-old-owner）；管理面换 PAT
-// 并 reload 之后，第二个请求仍在同一会话/同一线程上（不是靠换会话掩盖问题），但帧内
-// 不得再带那个值——owner 对齐发生在 Identity 构造之前，而不是 SDK 调用内部。
-func TestSessionCredentialReplacementDropsOldTurnState(t *testing.T) {
-	up, u := newSessionWSUpstream(t, "",
-		sessionWSStep{id: "cc1", ts: "T-old-owner", usage: true},
-		sessionWSStep{id: "cc2", usage: true})
-	p, accs := newSessionWSProxy(t, up.URL, 1)
-	p.turnStateReplay = true // 策略 true 才暴露"带了什么 ts"（§5.1）
-	srv := httptest.NewServer(AIRouter(p))
-	defer srv.Close()
-
-	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
-
-	next := "pat-new-owner"
-	accs[10][0].Ext.CodexPATKey = &next
-	require.NoError(t, p.sched.InvalidateAllSync())
-	publishTestRoutes(t, p.sched)
-
-	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
-
-	got := u.requests()
-	require.Len(t, got, 2)
-	require.Equal(t, "", got[0].ts, "轮首不带 ts")
-	require.Equal(t, got[0].thread, got[1].thread, "同一会话（换会话会掩盖问题）")
-	require.Empty(t, got[1].ts, "新凭据不得重放旧 owner 的 ts")
-}
-
 // TestSessionAccountRemovalClosesTransportResources 账号移除的端到端接线（§3.2）：
 // 账号从账号集合消失（重载的池注册表差分 = 实际移除事件）⇒ 其 WS 空闲连接被关、
 // 请求不再路由到它；账号回来后按新条目重建（旧 client 不复活）。
@@ -700,7 +646,7 @@ func TestSessionAccountRemovalClosesTransportResources(t *testing.T) {
 
 // TestSessionG2NaturalRetirementClosesOldConnection G2（自然退休的**端到端接线**）：
 // WMax=1 时窗口跨过即退休，链路 StepIdentity → pool.retire → ClientTable.RetireThread
-// → SDK 必须真的把旧线程的空闲连接关掉；新线程首请求不带 ts（退休清 ts）。
+// → SDK 必须真的把旧线程的空闲连接关掉；新线程首请求不带 ts。
 //
 // 为什么需要这一条：G2 的两半过去是分开测的（会话层注入 retire spy / 连接层直接调
 // 适配层 RetireThread），变异「网关省略退休调用」（M4）只让前一半变红，连接层仍绿——
@@ -710,7 +656,6 @@ func TestSessionG2NaturalRetirementClosesOldConnection(t *testing.T) {
 	up, u := newSessionWSUpstream(t, "",
 		sessionWSStep{id: "g2", ts: "T-win", usage: true})
 	p, _ := newSessionWSProxy(t, up.URL, 1, withCodexRotatePolicy(codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
-	p.turnStateReplay = true // 带 ts 才能观测"退休清 ts"
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 
@@ -742,6 +687,6 @@ func TestSessionG2NaturalRetirementClosesOldConnection(t *testing.T) {
 	reqs := u.requests()
 	last := reqs[len(reqs)-1]
 	require.NotEqual(t, firstThread, last.thread, "退休后换新线程")
-	require.Empty(t, last.ts, "新线程首请求不带 ts（退休清 ts）")
+	require.Empty(t, last.ts, "槽位路径不带 ts（新线程首请求同样）")
 	require.GreaterOrEqual(t, u.upgradeCount(), 2, "新线程重拨（旧连接已摘除）")
 }

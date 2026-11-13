@@ -125,7 +125,7 @@ func TestProbeCustomInput(t *testing.T) {
 	t.Run("codex", func(t *testing.T) {
 		var captured []byte
 		rt := contentRT(func(req *http.Request) (*http.Response, error) {
-			captured, _ = io.ReadAll(req.Body)
+			captured = readFakeUpstreamBody(req)
 			return contentResponse(http.StatusOK, codexCompletedSSE(
 				`{"output":[{"type":"message","content":[{"type":"output_text","text":"codex-ok"}]}]}`)), nil
 		})
