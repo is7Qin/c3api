@@ -130,10 +130,13 @@ type rawBucketRow struct {
 }
 
 // rawTrendSQLs 趋势/实体趋势共享双源 SQL（usage 全测量 + errlog 计数补充；
-// 行级语义与 cube 写侧 aggUsageSQL/aggErrLogSQL 逐位一致）。
+// 行级语义与 cube 写侧 aggUsageSQL/aggErrLogSQL 逐位一致：usage 源 = billableSQL、
+// err 源 = notBillableErrSQL，两谓词严格互补（billable_sql.go），同一 attempt 不
+// 会双计。commit_state IS NULL 的归属由写侧路由决定——不进 usage_logs、进
+// err_logs；统计侧只是逐字互补，未把 NULL 解释成 not_sent）。
 func rawTrendSQLs(bucket, where string) (string, string) {
-	return `SELECT ` + bucket + `, ` + rawUsageMeasures + ` FROM usage_logs WHERE ` + where + ` AND error_type IN ('none', 'abort') GROUP BY 1 ORDER BY 1`,
-		`SELECT ` + bucket + `, ` + rawErrMeasures + ` FROM err_logs WHERE ` + where + ` AND error_type <> 'abort' GROUP BY 1 ORDER BY 1`
+	return `SELECT ` + bucket + `, ` + rawUsageMeasures + ` FROM usage_logs WHERE ` + where + ` AND ` + billableSQL + ` GROUP BY 1 ORDER BY 1`,
+		`SELECT ` + bucket + `, ` + rawErrMeasures + ` FROM err_logs WHERE ` + where + ` AND ` + notBillableErrSQL + ` GROUP BY 1 ORDER BY 1`
 }
 
 // rawTrendArgs 组装 [from, to, zone, filters...] 绑定序列（$1..$3 固定，

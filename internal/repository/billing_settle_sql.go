@@ -16,11 +16,13 @@ package repository
 
 // settleBalanceSQL Balance 车道结算语句（§一原设计）：终 SELECT 首行为聚合哨兵
 // （uid=-1 恒一行，ORDER BY 置首），其余为 debited/forced 的 (uid,balance_after)
-// 定向余额对（Balances.Set 预检新鲜度）。
+// 定向余额对（Balances.Set 预检新鲜度）。batch 谓词 = NOT billed + billableSQL
+// （与 forward.go:463 逐字对应，见 billable_sql.go）+ cost > 0（零价行由
+// sweepZeroCost 纯标记退出索引，不走结算车道）。
 const settleBalanceSQL = `WITH batch AS (
 	SELECT id, COALESCE(user_id, 0) AS uid, cost
 	FROM usage_logs
-	WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+	WHERE NOT billed AND ` + billableSQL + ` AND cost > 0
 		AND COALESCE(user_id, 0) % $2 = $3
 		AND COALESCE(user_id, 0) NOT IN (
 			SELECT user_id FROM temp_balances
@@ -84,7 +86,7 @@ ORDER BY 1`
 const settleFefoSQL = `WITH batch AS (
 	SELECT id, COALESCE(user_id, 0) AS uid, cost
 	FROM usage_logs
-	WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+	WHERE NOT billed AND ` + billableSQL + ` AND cost > 0
 		AND COALESCE(user_id, 0) % $2 = $3
 		AND COALESCE(user_id, 0) IN (
 			SELECT user_id FROM temp_balances

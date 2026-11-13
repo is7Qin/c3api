@@ -349,8 +349,8 @@ func TestPGBillingCursorPoisonAdvance(t *testing.T) {
 
 // —— 族 5：AbortIncluded ——
 
-// TestPGBillingCursorAbortIncluded error_type='abort' 行照常入账：cost 口径与
-// none 一致（同额扣减、同样 billed 翻转、不透支）。
+// TestPGBillingCursorAbortIncluded 已交付 abort（abort + response_started）照常
+// 入账：cost 口径与 none 一致（同额扣减、同样 billed 翻转、不透支）。
 func TestPGBillingCursorAbortIncluded(t *testing.T) {
 	repos := newPGReposShared(t)
 	ensureCursorPartitions(t, repos)
@@ -362,10 +362,11 @@ func TestPGBillingCursorAbortIncluded(t *testing.T) {
 	noneRow := cursorLog(u.ID, 200_000)
 	abortRow := cursorLog(u.ID, 200_000)
 	abortRow.ErrorType = domain.ErrAbort
+	abortRow.CommitState = new("response_started") // 已写帧 = 可计费（forward.go:463）
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{noneRow, abortRow}))
 
 	rows := fetchAllUnbilled(t, repos)
-	require.Len(t, rows, 2, "none 与 abort 都进取批（error_type IN ('none','abort')）")
+	require.Len(t, rows, 2, "none 与已交付 abort 都进取批（billableSQL）")
 
 	drained, quarantinedN := drainBillingCursor(t, repos)
 	require.Equal(t, int64(2), drained)

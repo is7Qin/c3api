@@ -7,10 +7,10 @@ package repository_test
 // 离线聚合 v2 写面真实 PG 测试套件（spec 2026-08-23 §7）：
 //   - AggregateRange 双表单事务覆盖落盘（bigint[] 直方图 + watermark 推进）
 //   - TestPGStatsAggV2CubeEquivalence：cube 两源聚合 vs Go 侧暴力逐行对照
-//     （随机种子；含 abort 进 ec、usage_logs 非 none/abort 行排除、hist 逐档）
+//     （随机种子；含已交付失败进 ec、usage_logs 不可计费行排除、hist 逐档）
 //   - TestPGStatsAggV2EntityEquivalence：entity 六查询等价 + IS NOT NULL 丢弃
 //     语义 + model 拆分合并（三实体类型）
-//   - abort 防双计（err_logs abort 行被 WHERE 排除）
+//   - 双轨防双计（err_logs 侧只计不可计费错误行，billableSQL/notBillableErrSQL 互补）
 //   - TestPGStatsAggIdempotentDoubleRun：同范围双跑行集与 watermark 恒等
 //   - 两范围断言（worker 级端到端：部分小时桶跨周期不截断 + 重放幂等）
 //   - TestPGStatsAggDualTableTxRollback：事务中途注入失败 → 双表均回滚 +
@@ -54,10 +54,12 @@ type expCube struct {
 func newExpCube() *expCube { return &expCube{hist: make([]int64, 10)} }
 
 // expCubeOf 暴力复刻 cube 两查询（aggUsageSQL + aggErrLogSQL 口径）：
-//   - usage_logs 只取 error_type ∈ {none, abort}（WHERE IN 过滤——其余类型
-//     如 5xx 不入 cube）；rc=count(*)、ec=FILTER(<>'none')、测量列全量累加；
-//   - err_logs 排除 abort 行（防双计）；rc=count(*) 含豁免 none 行、ec=
-//     FILTER(<>'none')、测量列恒 0。
+//   - usage_logs 只取可计费行：error_type='none' 或 commit_state ∈ 三值
+//     （testBillableUsage——与写侧 forward.go:463 逐字对应）；rc=count(*)、
+//     ec=FILTER(<>'none')、测量列全量累加；
+//   - err_logs 只取不可计费错误行（testNotBillableErr——与 usage 源严格互补，
+//     防双计；NULL 经 COALESCE 落空串后同样命中本侧）；rc=count(*)、
+//     ec=FILTER(<>'none')、测量列恒 0。
 func expCubeOf(logs, errLogs []*domain.UsageLog) map[expCubeKey]*expCube {
 	m := map[expCubeKey]*expCube{}
 	upsert := func(k expCubeKey) *expCube {
@@ -69,7 +71,7 @@ func expCubeOf(logs, errLogs []*domain.UsageLog) map[expCubeKey]*expCube {
 		return c
 	}
 	for _, l := range logs {
-		if l.ErrorType != domain.ErrNone && l.ErrorType != domain.ErrAbort {
+		if !testBillableUsage(l) {
 			continue
 		}
 		k := expCubeKey{l.CreatedAt.UTC().Truncate(time.Hour), l.GroupID, l.Model}
@@ -96,7 +98,7 @@ func expCubeOf(logs, errLogs []*domain.UsageLog) map[expCubeKey]*expCube {
 		}
 	}
 	for _, l := range errLogs {
-		if l.ErrorType == domain.ErrAbort {
+		if !testNotBillableErr(l) {
 			continue
 		}
 		k := expCubeKey{l.CreatedAt.UTC().Truncate(time.Hour), l.GroupID, l.Model}
@@ -189,7 +191,7 @@ func expEntityOf(etype string, logs, errLogs []*domain.UsageLog) map[expEntityKe
 		return c
 	}
 	for _, l := range logs {
-		if l.ErrorType != domain.ErrNone && l.ErrorType != domain.ErrAbort {
+		if !testBillableUsage(l) {
 			continue
 		}
 		id, ok := entityIDOf(l, etype)
@@ -218,7 +220,7 @@ func expEntityOf(etype string, logs, errLogs []*domain.UsageLog) map[expEntityKe
 		}
 	}
 	for _, l := range errLogs {
-		if l.ErrorType == domain.ErrAbort {
+		if !testNotBillableErr(l) {
 			continue
 		}
 		id, ok := entityIDOf(l, etype)
@@ -258,16 +260,49 @@ func assertEntityEqual(t *testing.T, b *domain.EntityStatBucket, w *expEntity) {
 // InsertBatch 不写列 → DB NULL——IS NOT NULL 丢弃语义的造数入口）。
 func usageLogRow(rid string, at time.Time, et domain.ErrorType, groupID, accountID, userID, keyID int64, model string,
 	in, out, cacheRead, cacheCreate, cost, rawCost, callCount int64, ttft *int64) *domain.UsageLog {
-	return &domain.UsageLog{
+	l := &domain.UsageLog{
 		RequestID: rid, GroupID: groupID, AccountID: accountID, UserID: userID, KeyID: keyID,
 		Model: model, Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: et,
 		InputTokens: in, OutputTokens: out, TotalTokens: in + out,
 		CacheReadTokens: cacheRead, CacheCreationTokens: cacheCreate,
 		CallCount: callCount, Cost: cost, RawCost: rawCost, TTFTMS: ttft, CreatedAt: at,
 	}
+	// abort fixture = 已写帧后客户端断开（旧口径可计费；写侧事实落地后由
+	// commit_state 表达交付）。未交付 abort（not_sent）的新语义由
+	// pg_billing_billable_predicate_test.go 的 G0 门禁覆盖。
+	if et == domain.ErrAbort {
+		l.CommitState = testCommitState("response_started")
+	}
+	return l
 }
 
-// errLogRow 构造纯错误明细（err_logs 成员；非 abort——abort 行见双计探针）。
+// testCommitState 构造 commit_state 指针（值域同 proxy.CommitState.String()）。
+func testCommitState(s string) *string { return &s }
+
+// testCommitBillable 测试侧独立复刻 commitStateBillable（forward.go:483-493）。
+func testCommitBillable(s *string) bool {
+	if s == nil {
+		return false
+	}
+	switch *s {
+	case "sent_ambiguous", "response_started", "client_committed":
+		return true
+	}
+	return false
+}
+
+// testBillableUsage 复刻 billableSQL（usage_logs 侧可计费行）。
+func testBillableUsage(l *domain.UsageLog) bool {
+	return l.ErrorType == domain.ErrNone || testCommitBillable(l.CommitState)
+}
+
+// testNotBillableErr 复刻 notBillableErrSQL（err_logs 侧互补子集，防双计）。
+func testNotBillableErr(l *domain.UsageLog) bool {
+	return l.ErrorType != domain.ErrNone && !testCommitBillable(l.CommitState)
+}
+
+// errLogRow 构造不可计费错误明细（err_logs 成员；commit_state NULL = 未知,
+// 按写侧路由归 err 源；已交付失败的 err 行走双计探针）。
 func errLogRow(rid string, at time.Time, et domain.ErrorType, groupID, accountID, userID, keyID int64, model string) *domain.UsageLog {
 	return &domain.UsageLog{
 		RequestID: rid, GroupID: groupID, AccountID: accountID, UserID: userID, KeyID: keyID,
@@ -356,7 +391,7 @@ func TestPGStatsRawCostRoundtrip(t *testing.T) {
 	h := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	seedAggWindow(t, repos, h, h.Add(time.Hour))
 
-	// 免费组行：cost=0 raw>0（"实际消耗"口径不丢）；付费行 + abort 行
+	// 免费组行：cost=0 raw>0（"实际消耗"口径不丢）；付费行 + 已交付失败行
 	logs := []*domain.UsageLog{
 		usageLogRow("rc1", h.Add(time.Minute), domain.ErrNone, 1, 0, 42, 0, "gpt-4o", 10, 20, 0, 0, 0, 500, 1, nil),   // 免费组
 		usageLogRow("rc2", h.Add(2*time.Minute), domain.ErrNone, 1, 0, 42, 0, "gpt-4o", 5, 5, 0, 0, 100, 250, 0, nil), // 付费行
@@ -456,6 +491,22 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 			users[rng.IntN(len(users))], keys[rng.IntN(len(keys))],
 			models[rng.IntN(len(models))]))
 	}
+	// 不可计费 abort（not_sent）：写侧不会把它写进 usage_logs（forward.go:463 的
+	// commitStateBillable 分支为假）；这里作为历史/回归样本显式构造，验证 usage
+	// 源排除它、err 源计入它。缺这一行时「不可计费 abort」在统计侧没有任何样本，
+	// billableSQL 回归旧口径（error_type IN ('none','abort')）本用例仍会全绿。
+	unsentAt := h.Add(31 * time.Minute) // 与随机行同处 h..h+179m 窗口，落同一小时桶族
+	unsent := usageLogRow("u-abort-unsent", unsentAt, domain.ErrAbort, 1, 11, 21, 31, "gpt-4o",
+		120, 240, 5, 6, 999, 1999, 2, new(int64(150)))
+	unsent.CommitState = testCommitState("not_sent") // 覆盖 helper 自动补的 response_started
+	unsent.Cost = 0                                 // 未交付不产生费用
+	logs = append(logs, unsent)
+	// 同一 attempt 的 err_logs 明细（写侧双轨）：err 源据此计入 1 行（ec 同步 +1），
+	// usage 源则必须按 commit_state=not_sent 把它排除。
+	unsentErr := errLogRow("u-abort-unsent", unsentAt, domain.ErrAbort, 1, 11, 21, 31, "gpt-4o")
+	unsentErr.CommitState = testCommitState("not_sent")
+	errLogs = append(errLogs, unsentErr)
+
 	require.NoError(t, repos.Usages.InsertBatch(ctx, logs))
 	require.NoError(t, repos.ErrLogs.InsertBatch(ctx, errLogs))
 
@@ -471,15 +522,15 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 		assertCubeEqual(t, b, w)
 	}
 
-	// 明细行数口径：usage(none|abort) 行数 + errlog(非 abort) 行数
+	// 明细行数口径：usage 可计费行数 + errlog 不可计费错误行数（两源互补）
 	var wantDetail int64
 	for _, l := range logs {
-		if l.ErrorType == domain.ErrNone || l.ErrorType == domain.ErrAbort {
+		if testBillableUsage(l) {
 			wantDetail++
 		}
 	}
 	for _, l := range errLogs {
-		if l.ErrorType != domain.ErrAbort {
+		if testNotBillableErr(l) {
 			wantDetail++
 		}
 	}
@@ -569,10 +620,9 @@ func TestPGStatsAggV2EntityEquivalence(t *testing.T) {
 	}
 }
 
-// TestPGStatsAbortSplitNoDoubleCount abort 防双计（回归）：abort 行只经
-// usage_logs 全字段计一次；err_logs 的 abort 行（豁免通道实际不写，防御性）
-// 被 WHERE error_type <> 'abort' 排除；v2 同维度 none+abort+errlog 合并单桶时
-// ec 只计错误行。
+// TestPGStatsAbortSplitNoDoubleCount 双轨防双计（回归）：已交付 abort 行只经
+// usage_logs 全字段计一次；err_logs 的同一 attempt（同 commit_state 已交付）
+// 被 notBillableErrSQL 排除；v2 同维度合并单桶时 ec 只计错误行。
 func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
@@ -580,29 +630,45 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 	seedAggWindow(t, repos, h, h.Add(time.Hour))
 
 	ttft := func(v int64) *int64 { return &v }
+	// 不可计费 abort（not_sent）双轨样本：写侧不把它写进 usage_logs，这里显式构造
+	// 一行（历史/回归数据）+ 同一 attempt 的 err_logs 明细。它是本用例的负向探针：
+	// usage 源必须按 commit_state 排除它（否则 requests/ec/全测量列都会被它污染），
+	// err 源必须计入它（+1 行）。
+	unsent := usageLogRow("u-abort-unsent", h.Add(4*time.Minute), domain.ErrAbort, 3, 0, 42, 0, "gpt-4o",
+		100, 100, 0, 0, 500, 700, 3, ttft(900))
+	unsent.CommitState = testCommitState("not_sent") // 覆盖 helper 自动补的 response_started
+	unsent.Cost = 0                                 // 未交付不产生费用
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{
 		usageLogRow("a1", h.Add(time.Minute), domain.ErrAbort, 3, 0, 42, 0, "gpt-4o", 7, 8, 1, 1, 60, 120, 5, ttft(200)),
 		usageLogRow("a2", h.Add(2*time.Minute), domain.ErrNone, 3, 0, 42, 0, "gpt-4o", 1, 1, 0, 0, 10, 20, 0, nil),
+		unsent,
 	}))
-	// err_logs 插入一条 abort 行（防御性双计探针——实际豁免通道不写，但 SQL
-	// 语义必须排除）
+	// err_logs 插入同一已交付 attempt 的明细行（双计探针）：commit_state 与
+	// usage 行一致 ⇒ notBillableErrSQL 必须排除；不可计费 abort（not_sent）则
+	// 必须被 err 源计入（+1 行）。
 	require.NoError(t, repos.ErrLogs.InsertBatch(ctx, []*domain.UsageLog{
 		{RequestID: "x-abort", GroupID: 3, UserID: 42, Model: "gpt-4o",
-			Format: domain.FormatOpenAIChat, StatusCode: 200, ErrorType: domain.ErrAbort, CreatedAt: h.Add(3 * time.Minute)},
+			Format: domain.FormatOpenAIChat, ErrorType: domain.ErrAbort,
+			CommitState: testCommitState("response_started"), CreatedAt: h.Add(3 * time.Minute)},
+		{RequestID: "u-abort-unsent", GroupID: 3, UserID: 42, Model: "gpt-4o",
+			Format: domain.FormatOpenAIChat, ErrorType: domain.ErrAbort, StatusCode: 500,
+			CommitState: testCommitState("not_sent"), CreatedAt: h.Add(4 * time.Minute)},
 	}))
 
 	rows, _, detail, err := repos.Stats.LoadAggRange(ctx, h, h.Add(time.Hour))
 	require.NoError(t, err)
-	require.Equal(t, int64(2), detail, "err_logs abort 行被排除（usage none+abort 两行）")
 	require.Len(t, rows, 1, "同维度 v2 合并单桶")
 	b := rows[0]
-	require.Equal(t, int64(2), b.RequestCount, "abort(1) + none(1)，errlog abort 不计")
-	require.Equal(t, int64(1), b.ErrorCount, "仅 abort 行进 ec")
-	require.Equal(t, int64(5), b.CallCount, "abort 行全字段（call_count）")
-	require.Equal(t, int64(17), b.TotalTokens, "abort+none tokens 合并（15+2）")
-	require.Equal(t, int64(70), b.Cost, "abort+none cost 合并（60+10）")
-	require.Equal(t, int64(140), b.RawCost, "abort+none raw 合并（120+20）")
-	require.Equal(t, int64(200), b.TTFTMaxMS, "abort 行含 TTFT 也计入其桶")
+	// usage 源 requests = a1+a2 = 2（不可计费 abort 不得进入 usage 源）；err 源
+	// requests = 1 ⇒ 合并桶合计 3。若 usage 源误计 not_sent 行，这里会变成 4。
+	require.Equal(t, int64(3), b.RequestCount, "usage 源 2 行（abort 已交付 + none）+ err 源 1 行（abort not_sent）")
+	require.Equal(t, int64(2), b.ErrorCount, "usage 源的已交付 abort + err 源的 not_sent abort，各计 1")
+	require.Equal(t, int64(3), detail, "usage 源两行入选 + err_logs 仅不可计费 abort 入选（已交付行被排除）")
+	require.Equal(t, int64(5), b.CallCount, "不可计费 abort 不进 usage 源 ⇒ 其 call_count=3 不得累加")
+	require.Equal(t, int64(17), b.TotalTokens, "abort+none tokens 合并（15+2）；unsent 的 200 不得累加")
+	require.Equal(t, int64(70), b.Cost, "abort+none cost 合并（60+10）；unsent 的 cost 不得累加")
+	require.Equal(t, int64(140), b.RawCost, "abort+none raw 合并（120+20）；unsent 的 raw_cost 不得累加")
+	require.Equal(t, int64(200), b.TTFTMaxMS, "已交付失败行含 TTFT 也计入其桶；unsent 的 900 不得参与 max")
 	require.Equal(t, int64(1), b.TTFTCount)
 	require.Equal(t, []int64{0, 0, 0, 1, 0, 0, 0, 0, 0, 0}, b.TTFTHist, "200 在 [200,400) 档（第 4 档）")
 }

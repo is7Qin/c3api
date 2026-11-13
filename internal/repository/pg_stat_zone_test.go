@@ -16,8 +16,8 @@ package repository_test
 //     spring-forward 缺失墙钟小时无桶；
 //   - 会话 TimeZone 中毒：NY 会话池上绑定 $zone 支配分组（cube 与 raw 两路径
 //     同断言）；
-//   - 原始行语义与 cube 写侧逐位一致：usage none/abort 全测量 + err_logs
-//     非 abort 计数补充（abort 行排除防双计、豁免 none 行计 rc）；
+//   - 原始行语义与 cube 写侧逐位一致：usage 可计费行全测量 + err_logs 不可计费
+//     错误行计数补充（billableSQL/notBillableErrSQL 严格互补，防双计）；
 //   - SummarizeStats 绝对区间：数值与时区无关（UTC 界窗内 Raw 与 Cube 两实现
 //     等值——两实现都只是绝对区间 sum）。
 //   - 路径选择全在调用方：Cube/Raw 是两套同形 SQL，本包零存储判定（判定唯一
@@ -222,8 +222,8 @@ func TestPGShanghaiCubeAndEntityDayGrouping(t *testing.T) {
 }
 
 // TestPGRawMatchesBruteForce 原始行路径 vs Go 侧独立暴力参照（语义保持金标
-// 准）：混造 usage（none/abort/5xx 排除）+ err（非 abort 补充、含豁免 none 行、
-// abort 行排除）跨两个 Kolkata 本地日——StatsTrend/ScanStatsDays/StatsEntityTrend/
+// 准）：混造 usage（none + 已交付 abort 入选，不可计费 5xx 排除）+ err（不可计费
+// 错误行补入）跨两个 Kolkata 本地日——StatsTrend/ScanStatsDays/StatsEntityTrend/
 // SummarizeStats 的桶归属、rc/ec/tokens/cost/call/TTFT 全与逐行手工分组期望等值。
 func TestPGRawMatchesBruteForce(t *testing.T) {
 	repos := newPGReposShared(t)
@@ -241,7 +241,7 @@ func TestPGRawMatchesBruteForce(t *testing.T) {
 	}
 	errs := []*domain.UsageLog{
 		errLogRow("bf-e1", base.Add(30*time.Minute), domain.Err5xx, 7, 5, 42, 9, "m"),
-		errLogRow("bf-e2", base.Add(30*time.Minute), domain.ErrNone, 7, 5, 42, 9, "m"), // 豁免非错误行：计 rc 不计 ec
+		errLogRow("bf-e2", base.Add(30*time.Minute), domain.ErrNone, 7, 5, 42, 9, "m"), // err_logs 的 none 行：notBillableErrSQL 要求 <>'none' ⇒ 不计（写侧豁免通道也不写本表）
 	}
 	seedRawRows(t, repos, usages, errs)
 
@@ -253,7 +253,7 @@ func TestPGRawMatchesBruteForce(t *testing.T) {
 	require.Len(t, days, 2)
 	require.True(t, days[0].Date.Equal(base.Add(-17*time.Hour-30*time.Minute)), "Aug14 本地日桶 = IST Aug14 零点绝对时刻（Aug13 18:30Z）（%v）", days[0].Date)
 	require.Equal(t, "2026-08-14", days[0].Date.Format("2006-01-02"))
-	require.Equal(t, int64(4), days[0].Requests, "u1 u2 e1 e2（u3 明日、u4 排除、err abort 无）")
+	require.Equal(t, int64(3), days[0].Requests, "u1 u2 e1（u3 明日、u4 不可计费、err none 不计）")
 	require.Equal(t, int64(2), days[0].Errors, "u2 abort + e1 5xx")
 	require.Equal(t, int64(32), days[0].Tokens, "u1 30 + u2 2 + e 行 0（tokens 仅 usage 源）")
 	require.Equal(t, "2026-08-15", days[1].Date.Format("2006-01-02"))
@@ -276,13 +276,13 @@ func TestPGRawMatchesBruteForce(t *testing.T) {
 		rc += b.RequestCount
 		ec += b.ErrorCount
 	}
-	require.Equal(t, int64(4), rc, "entity 过滤 + err 补充（豁免 none 计 rc）")
+	require.Equal(t, int64(3), rc, "entity 过滤 + err 补充（不可计费错误行计 rc；err none 不计）")
 	require.Equal(t, int64(2), ec, "abort + 5xx")
 
 	// 绝对区间单行 sum：请求时区不改变区间数值——UTC-cube 式期望。
 	su, err := repos.Stats.SummarizeStatsRaw(ctx, base.Add(-time.Hour), base.Add(12*time.Hour), 0, ist)
 	require.NoError(t, err)
-	require.Equal(t, int64(5), su.Requests, "u1 u2 u3 + e1 e2（u4 排除——写侧口径）")
+	require.Equal(t, int64(4), su.Requests, "u1 u2 u3 + e1（u4 不可计费、err none 不计）")
 	require.Equal(t, int64(2), su.Errors)
 	require.Equal(t, int64(42), su.TotalTokens)
 	require.Equal(t, int64(160), su.Cost)

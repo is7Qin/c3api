@@ -47,14 +47,15 @@ func (b *billingRows) Close() { b.closeFunc() }
 const billingCursorLockKey int64 = 0x62696c63 // "bilc"
 
 // fetchUnbilledSQL 取未扣账本批（游标消费主查询）：部分索引谓词同构（NOT
-// billed）+ error_type 收敛值域（usage_logs 仅 none/abort，IN 为防御性显式）。
-// 单取批面：cost > 0 谓词删除——零价行同批取出由消费侧内存路由
-// （MarkBilledBulk 纯标记），消灭 FetchZeroCostIDs 第二遍全扫查询类。ORDER BY
-// id 单调推进游标。
+// billed）+ billableSQL（与写侧 forward.go:463 的「进 usage_logs」分支逐字
+// 对应，见 billable_sql.go）——已交付的失败行与成功行同批消费，判据不再是
+// error_type 白名单。单取批面：cost > 0 谓词删除——零价行同批取出由消费侧
+// 内存路由（MarkBilledBulk 纯标记），消灭 FetchZeroCostIDs 第二遍全扫查询类。
+// ORDER BY id 单调推进游标。
 const fetchUnbilledSQL = `SELECT id, COALESCE(user_id, 0), cost, model,
 	COALESCE(billing_tier, ''), call_count, format
 	FROM usage_logs
-	WHERE NOT billed AND error_type IN ('none', 'abort')
+	WHERE NOT billed AND ` + billableSQL + `
 	ORDER BY id LIMIT $1`
 
 // markBilledBulkSQL 纯标记（仅零价行快速路径）：不触碰 overdraft
@@ -71,7 +72,7 @@ const markBilledBulkSQL = `UPDATE usage_logs SET billed = TRUE
 // 游标按 id 升序消费、id 与 created_at 同序（序列分配），偏差上界 = flush 缓冲
 // 延迟 + 时钟偏移（秒级），远小于保留期护栏阈值（天级）；随游标推进收敛。
 const unbilledHeadIDSQL = `SELECT id FROM usage_logs
-	WHERE NOT billed AND error_type IN ('none', 'abort') AND cost > 0
+	WHERE NOT billed AND ` + billableSQL + ` AND cost > 0
 	ORDER BY id LIMIT 1`
 
 const unbilledHeadCreatedSQL = `SELECT created_at FROM usage_logs WHERE id = $1`

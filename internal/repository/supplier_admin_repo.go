@@ -591,11 +591,14 @@ func (r *SupplierRepo) AdminApplySettlement(ctx context.Context, req domain.Appl
 }
 
 // billingProbe 扣费链健康探针（§6.5 新专用探针，单语句快照）：backlog 行数 +
-// 队头 created_at + 采样时刻（statement_timestamp()，非长聚合完成时）。
+// 队头 created_at + 采样时刻（statement_timestamp()，非长聚合完成时）。backlog
+// 判据 = NOT billed + billableSQL + cost > 0，必须与账本消费面同一事实源
+// （billable_sql.go）；否则已交付失败行不计入 backlog，供应商提现门禁会被少算
+// 的积压量放行。
 func (r *SupplierRepo) billingProbe(ctx context.Context, tx pgx.Tx) (supplier.BillingProbe, error) {
 	var p supplier.BillingProbe
 	const q = `SELECT count(*)::bigint, MIN(created_at), statement_timestamp()
-FROM usage_logs WHERE NOT billed AND error_type IN ('none','abort') AND cost > 0`
+FROM usage_logs WHERE NOT billed AND ` + billableSQL + ` AND cost > 0`
 	if err := tx.QueryRow(ctx, q).Scan(&p.BacklogRows, &p.OldestCreatedAt, &p.ObservedAt); err != nil {
 		return p, fmt.Errorf("billing health probe: %w", err)
 	}

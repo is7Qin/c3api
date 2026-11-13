@@ -105,16 +105,17 @@ func fetchAllUnbilled(t *testing.T, repos *repository.Repository) []domain.Ledge
 	return rows
 }
 
-// TestPGFetchUnbilledBatchFilters 取批过滤语义：NOT billed + error_type IN
-// ('none','abort') 两谓词（单取批面：零价行同批取出由消费侧路由）+ ORDER BY id
-// + LIMIT；LedgerRow 瘦身投影字段逐项断言。
+// TestPGFetchUnbilledBatchFilters 取批过滤语义：NOT billed + billableSQL（成功行
+// 或已交付失败行；见 billable_sql.go）+ ORDER BY id + LIMIT；单取批面无 cost>0
+// 过滤（零价行同批取出由消费侧路由）；LedgerRow 瘦身投影字段逐项断言。
 func TestPGFetchUnbilledBatchFilters(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 
 	a := logFor(1, "f-a") // none + cost>0 → 取
-	b := logFor(1, "f-b") // abort + cost>0 → 取
+	b := logFor(1, "f-b") // abort + 已写帧（response_started）+ cost>0 → 取
 	b.ErrorType = domain.ErrAbort
+	b.CommitState = new("response_started")
 	c := logFor(1, "f-c") // cost=0 → 取（单取批面）
 	c.Cost = 0
 	d := logFor(1, "f-d") // born-absorbed（billed=true）→ 不取
@@ -125,7 +126,7 @@ func TestPGFetchUnbilledBatchFilters(t *testing.T) {
 	seedUnbilled(t, repos, d)
 
 	rows := fetchAllUnbilled(t, repos)
-	require.Len(t, rows, 3, "none/abort 且未标记行进取批——零价行同批取出")
+	require.Len(t, rows, 3, "可计费且未标记行进取批——零价行同批取出")
 	require.Less(t, rows[0].ID, rows[1].ID, "ORDER BY id 单调推进游标")
 	first := rows[0]
 	require.Equal(t, int64(1), first.UserID)

@@ -47,8 +47,8 @@ var aggEntityDimCols = `date_trunc('hour', created_at AT TIME ZONE 'UTC') AT TIM
        COALESCE(%[1]s, 0), COALESCE(model, '')`
 
 // aggEntityUsageSQLTpl usage_logs → 实体桶（全字段同 cube 单扫描口径：
-// rc=count(*)、ec=FILTER(<>'none')、测量列全量 sum；WHERE error_type IN
-// ('none','abort') 放行行含 abort）。
+// rc=count(*)、ec=FILTER(<>'none')、测量列全量 sum；谓词 = billableSQL，
+// 与写侧 forward.go:463 的 usage_logs 分支逐字对应，见 billable_sql.go）。
 var aggEntityUsageSQLTpl = `SELECT ` + aggEntityDimCols + `,
 	count(*), count(*) FILTER (WHERE error_type <> 'none'), sum(call_count),
 	sum(input_tokens), sum(output_tokens), sum(total_tokens),
@@ -56,17 +56,18 @@ var aggEntityUsageSQLTpl = `SELECT ` + aggEntityDimCols + `,
 	sum(cost), COALESCE(sum(raw_cost), 0),
 	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0)
 FROM usage_logs
-WHERE created_at >= $1 AND created_at < $2 AND error_type IN ('none', 'abort')
+WHERE created_at >= $1 AND created_at < $2 AND ` + billableSQL + `
 	AND %[1]s IS NOT NULL
 GROUP BY 1, 2, 3`
 
-// aggEntityErrLogSQLTpl err_logs → 实体桶补充（仅两计数列；口径照抄 cube
-// aggErrLogSQL：rc=count(*) 含豁免非错误行、ec=FILTER(<>'none')、WHERE
-// error_type <> 'abort' 防双计——abort 行已由 usage 源全字段计）。
+// aggEntityErrLogSQLTpl err_logs → 实体桶补充（仅两计数列；口径同 cube
+// aggErrLogSQL：rc=count(*) 计本源行、ec=FILTER(<>'none')；谓词 =
+// notBillableErrSQL，与 billableSQL 严格互补——写侧双轨下可计费错误行已由
+// usage 源全字段计，本源只计未覆盖子集，防双计）。
 var aggEntityErrLogSQLTpl = `SELECT ` + aggEntityDimCols + `,
 	count(*), count(*) FILTER (WHERE error_type <> 'none')
 FROM err_logs
-WHERE created_at >= $1 AND created_at < $2 AND error_type <> 'abort'
+WHERE created_at >= $1 AND created_at < $2 AND ` + notBillableErrSQL + `
 	AND %[1]s IS NOT NULL
 GROUP BY 1, 2, 3`
 

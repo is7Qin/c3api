@@ -158,38 +158,46 @@ var aggHistExpr = `ARRAY[count(*) FILTER (WHERE ttft_ms < 50),
 // aggUsageSQL usage_logs 单扫描 → cube 桶（v2：is_error 出键后 success/abort
 // 双查询合一；spec 2026-08-23 §3.1）。
 //
-// 语义等价性论证（旧双查询 vs 本单扫描，逐字段）：旧口径下 success 行
-// （error_type='none'）成桶 rc=count(*)、ec=0；abort 行（error_type='abort'）
-// 成桶 rc=ec=count(*)。本单扫描 WHERE error_type IN ('none','abort') 后维度
-// 不再含 is_error——同维度 none 行与 abort 行合并为一桶：
-//   - rc = count(*) = rc_none + rc_abort（两旧行集不相交，恒等）；
-//   - ec = count(*) FILTER (WHERE error_type <> 'none') = rc_abort（'abort' 是
-//     该行集中唯一非 none 值）= 旧 abort 桶 ec + 旧 success 桶 ec(=0)，恒等；
-//   - 测量列（tokens×5/cost/raw_cost/call_count/ttft sum/count/max/hist 逐档
-//     FILTER 计数）对不相交行集可加——合并桶 = 两旧桶逐列相加。
+// 谓词 = billableSQL（与写侧 forward.go:463「进 usage_logs」分支逐字对应，见
+// billable_sql.go）：成功行（error_type='none'）与已交付失败行（commit_state
+// ∈ {sent_ambiguous,response_started,client_committed}）同属 usage 源、全字段计
+// ——写侧双轨下这两类行确实在 usage_logs 且可计费，故其 cost/tokens 必须计入，
+// 且不能再被 err 源加一次。ec = FILTER (error_type <> 'none') 因此同时覆盖已交
+// 付失败的请求/错误计数。
 //
-// err_logs 纯错误桶补充照抄旧 aggErrLogSQL 口径（aggErrLogSQL）。
+// 维度不再含 is_error——同维度成功行与已交付失败行合并为一桶（两行集不相交，
+// 测量列可加：tokens×5/cost/raw_cost/call_count/ttft sum/count/max/hist 逐档
+// FILTER 计数——合并桶 = 逐列相加）。
+//
+// NULL 归属由写侧路由决定（forward.go:463-472）：commit_state IS NULL 走保守
+// 不计费分支——不向 usage_logs 写行、但进 err_logs；统计 err 源用
+// notBillableErrSQL 与之逐字互补，并**没有**把 NULL 解释成 not_sent。历史
+// NULL 行不回填、不重判。
 var aggUsageSQL = `SELECT ` + aggDimCols + `,
 	count(*), count(*) FILTER (WHERE error_type <> 'none'),
 	sum(input_tokens), sum(output_tokens), sum(total_tokens),
 	sum(cache_read_tokens), sum(cache_creation_tokens), sum(cost), COALESCE(sum(raw_cost), 0),
 	sum(call_count),
 	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0), ` + aggHistExpr + `
-FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type IN ('none', 'abort')
+FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND ` + billableSQL + `
 GROUP BY 1, 2, 3`
 
-// aggErrLogSQL err_logs → 纯错误桶补充（count 语义；WHERE error_type <> 'abort'
-// 防双计——abort 行已由 aggUsageSQL 全字段计；spec §3.2）。**rc = count(\*)**
-// ——err_logs 含豁免非错误行（error_type='none'），request_count 必须计入
-// （勘误：勿按"rc=0"理解）；ec = FILTER (WHERE error_type <> 'none')。
-// 瘦表无 tokens/cost/call_count/TTFT 列 → 恒 0 补位（11 测量列 + 全零直方图；
-// 列序对齐扫描：raw 恒在 cost 后）。
+// aggErrLogSQL err_logs → 不可计费错误行补充（count 语义；谓词 =
+// notBillableErrSQL，与 billableSQL 严格互补，见 billable_sql.go）。写侧双轨
+// （forward.go:463-472）：错误行既进 err_logs，可计费时又进 usage_logs；本查询
+// 只计后者未覆盖的子集，防双计——已交付失败（commit_state ∈ 三值）归 usage 源，
+// 其余错误行（含 NULL 经 COALESCE 落成的空串）归本源。
+//
+// **rc = count(*)**（本查询只见不可计费错误行，request_count 必须计入）；
+// ec = FILTER (WHERE error_type <> 'none')（在本谓词下恒等于 count(*)；列序与
+// 旧投影保持一致）。瘦表无 tokens/cost/call_count/TTFT 列 → 恒 0 补位（11 测量
+// 列 + 全零直方图；列序对齐扫描：raw 恒在 cost 后）。
 var aggErrLogSQL = `SELECT ` + aggDimCols + `,
 	count(*), count(*) FILTER (WHERE error_type <> 'none'),
 	0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint, 0::bigint,
 	0::bigint, 0::bigint, 0::bigint, 0::bigint,
 	ARRAY[0::bigint, 0, 0, 0, 0, 0, 0, 0, 0, 0]
-FROM err_logs WHERE created_at >= $1 AND created_at < $2 AND error_type <> 'abort'
+FROM err_logs WHERE created_at >= $1 AND created_at < $2 AND ` + notBillableErrSQL + `
 GROUP BY 1, 2, 3`
 
 // aggRowKey cube 聚合行合并键（v2 三键 = 唯一索引列序；跨源撞 key 判定：
@@ -206,11 +214,12 @@ func aggKeyOf(b *domain.StatBucket) aggRowKey {
 }
 
 // LoadAggRange 离线聚合双结果集重建（spec 2026-08-23 §3）：重算范围 [from,to)
-// 的小时桶全量重建——cube 两查询（usage_logs 单扫描放行行含 abort 全字段 +
-// err_logs 纯错误桶补充，见 aggUsageSQL/aggErrLogSQL）+ 实体六查询（三实体
-// 类型 × usage/errlog 两源，见 stat_entity_agg.go）。合并语义：跨源同 key 测量
-// 列累加（cube：usage_logs 行 vs err_logs 行；entity 同理）。返回：cube 桶 +
-// entity 桶（各自按键排序——确定性，重放同范围结果一致）+ 消费的明细行数
+// 的小时桶全量重建——cube 两查询（usage_logs 可计费行全字段 + err_logs 不可计费
+// 错误行的计数补充，见 aggUsageSQL/aggErrLogSQL）+ 实体六查询（三实体类型 ×
+// usage/errlog 两源，见 stat_entity_agg.go）。合并语义：跨源同 key 测量列累加
+// （cube：usage_logs 行 vs err_logs 行；entity 同理——两源谓词互斥，同一 attempt
+// 不会两边都计）。返回：cube 桶 + entity 桶（各自按键排序——确定性，重放同
+// 范围结果一致）+ 消费的明细行数
 // （= cube 两查询 count(*) 合计；实体六查询扫的是同两表的同批行，不重复计数
 // ——观测面"上轮行数"口径）。覆盖语义：SELECT 覆盖已消费行无害（DELETE 先清、
 // INSERT 全量覆盖，幂等）。

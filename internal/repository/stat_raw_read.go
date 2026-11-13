@@ -11,10 +11,14 @@ package repository
 // :30/:45 半小时偏移劈开小时行、或界不齐/跨度小于网格）下，分组读取改从
 // usage_logs + err_logs 原始行直接聚合，逐行语义与 cube 写侧两查询
 // （aggUsageSQL/aggErrLogSQL）完全一致：
-//   - usage_logs：error_type IN ('none','abort') 放行行全测量（rc=count(*)、
+//   - usage_logs：billableSQL（与写侧 forward.go:463「进 usage_logs」分支逐字
+//     对应，见 billable_sql.go）——成功行与已交付失败行全测量（rc=count(*)、
 //     ec=FILTER(<>'none')、tokens×5/cost/raw/call/TTFT sum/count/max/hist）；
-//   - err_logs：error_type <> 'abort'（abort 已由 usage 源全字段计，防双计），
-//     rc=count(*)（含豁免非错误行）、ec=FILTER(<>'none')，测量列恒 0（瘦表）；
+//   - err_logs：notBillableErrSQL（与 billableSQL 严格互补：写侧双轨下可计费
+//     错误行已由 usage 源全字段计，本源只计未覆盖子集，防双计），rc=count(*)、
+//     ec=FILTER(<>'none')，测量列恒 0（瘦表）；
+//   - NULL 归属由写侧路由决定（forward.go:463-472）：commit_state IS NULL 不进
+//     usage_logs、进 err_logs；统计侧只是逐字互补，未把 NULL 解释成 not_sent；
 //   - 跨源同桶 Go 侧累加合并（max 取大），与 LoadAggRange 同一合并纪律。
 //
 // 桶 = 本地桶起点的绝对时刻（hour 减法不塌缩 fall-back 重复小时；day
@@ -153,7 +157,7 @@ func (r *StatRepo) rawSummary(ctx context.Context, from, to time.Time, groupID i
 	COALESCE(sum(cache_read_tokens), 0), COALESCE(sum(cost), 0), COALESCE(sum(raw_cost), 0),
 	COALESCE(sum(call_count), 0),
 	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0), ` + aggHistExpr + `
-FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type IN ('none', 'abort')`
+FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND ` + billableSQL
 		args := []any{from, to}
 		if groupID > 0 {
 			sql += ` AND "group_id" = $3`
@@ -171,7 +175,7 @@ FROM usage_logs WHERE created_at >= $1 AND created_at < $2 AND error_type IN ('n
 	}
 	{
 		sql := `SELECT count(*), count(*) FILTER (WHERE error_type <> 'none')
-FROM err_logs WHERE created_at >= $1 AND created_at < $2 AND error_type <> 'abort'`
+FROM err_logs WHERE created_at >= $1 AND created_at < $2 AND ` + notBillableErrSQL
 		args := []any{from, to}
 		if groupID > 0 {
 			sql += ` AND "group_id" = $3`
@@ -202,12 +206,12 @@ func (r *StatRepo) rawScanStatsDays(ctx context.Context, from, to time.Time, gro
 	count(*), count(*) FILTER (WHERE error_type <> 'none'), sum(total_tokens),
 	sum(cost), COALESCE(sum(raw_cost), 0), sum(call_count),
 	COALESCE(sum(ttft_ms), 0), count(ttft_ms), COALESCE(max(ttft_ms), 0), ` + aggHistExpr + `
-FROM usage_logs WHERE ` + where + ` AND error_type IN ('none', 'abort') GROUP BY 1 ORDER BY 1`
+FROM usage_logs WHERE ` + where + ` AND ` + billableSQL + ` GROUP BY 1 ORDER BY 1`
 	errSQL := `SELECT ` + bucket + `,
 	count(*), count(*) FILTER (WHERE error_type <> 'none'), 0::bigint,
 	0::bigint, 0::bigint, 0::bigint,
 	0::bigint, 0::bigint, 0::bigint, ` + rawHistZero + `
-FROM err_logs WHERE ` + where + ` AND error_type <> 'abort' GROUP BY 1 ORDER BY 1`
+FROM err_logs WHERE ` + where + ` AND ` + notBillableErrSQL + ` GROUP BY 1 ORDER BY 1`
 	for _, sql := range []string{usageSQL, errSQL} {
 		rows, err := r.pool.Query(ctx, sql, args...)
 		if err != nil {
