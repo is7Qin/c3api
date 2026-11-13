@@ -456,7 +456,7 @@ func (p *Proxy) recordLog(l *domain.UsageLog) {
 // cost>0 判定会漏掉免费分组（倍率 0 的成功行）与 0 token 成功行（空响应））：
 //   - 可计费（spec-stream-failure-truth §5.2/§5.4，SQL 语义逐字对齐）：
 //     error_type = 'none' OR commit_state IN ('sent_ambiguous',
-//     'response_started', 'client_committed')。**计费资格与 error_type 解耦**：
+//     'response_started')。**计费资格与 error_type 解耦**：
 //     已交付的失败（业务帧已写）照常计费，未交付的失败只留错误明细。
 //     🚨 commit_state IS NULL = **未知**（历史行/未接事实的路径）——不得解释为
 //     not_sent/upstream_responded，也不得回填重判；这里只取保守判定「不计费」。
@@ -483,7 +483,7 @@ func (p *Proxy) routeLog(l *domain.UsageLog) {
 
 // commitStateBillable 报告一行是否已交付（可计费半支；error_type = none 的
 // 成功行由 routeLog 直接放行，不经过本函数）。判据 = 值 ∈ {sent_ambiguous,
-// response_started, client_committed}——即「网关下行写成功」，**不是**「客户端
+// response_started}——即「网关下行写成功」，**不是**「客户端
 // 已实际收到」（TCP 缓冲下写成功不对端消费）。
 //
 // nil（未知）与 not_sent / upstream_responded 一律不可计费：前者是历史行与未接
@@ -494,7 +494,7 @@ func commitStateBillable(s *string) bool {
 		return false
 	}
 	switch *s {
-	case CommitSentAmbiguous.String(), CommitResponseStarted.String(), CommitClientCommitted.String():
+	case CommitSentAmbiguous.String(), CommitResponseStarted.String():
 		return true
 	default:
 		return false

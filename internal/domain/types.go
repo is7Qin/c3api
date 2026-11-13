@@ -946,12 +946,12 @@ type UsageLog struct {
 	ErrorType                ErrorType
 	ErrorMessage             *string // nil = 无错误文本（NULL 落库）
 	// CommitState 交付事实（spec-stream-failure-truth §5.2，可空）。取值域 =
-	// proxy.CommitState.String() 的五个值（domain 不 import proxy，字面量由
+	// proxy.CommitState.String() 的四个值（domain 不 import proxy，字面量由
 	// proxy 侧写入）：not_sent / sent_ambiguous / upstream_responded /
-	// response_started / client_committed。语义边界 = **网关下行写成功**，不是
+	// response_started。语义边界 = **网关下行写成功**，不是
 	// 「客户端已实际收到」（TCP 缓冲下写成功不对端消费）——计费与统计一律按此
 	// 表述。计费判据与 error_type 解耦：error_type == none **或** commit_state ∈
-	// {sent_ambiguous, response_started, client_committed} ⇒ 记 usage_logs。
+	// {sent_ambiguous, response_started} ⇒ 记 usage_logs。
 	// NULL = **未知**（历史行/未接事实的路径）：不得解释为 not_sent 或
 	// upstream_responded，不回填、不重判；只可用于「不计费」这一条保守判定。
 	CommitState              *string

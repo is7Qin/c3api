@@ -241,7 +241,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	o.Terminal = true
 	o.Usage = AttemptUsage{CallCount: 1}
 	emitSearchOutcome(ctx, p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
+	p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)), CommitResponseStarted))
 	return http.StatusOK, nil, true, nil
 }
 
@@ -294,6 +294,6 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	o.Terminal = true
 	o.Usage = AttemptUsage{CallCount: 1}
 	emitSearchOutcome(ctx, p, sel, o, rule.KindOK, "")
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)))
+	p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, mappedFor(reqModel, sel.Model), domain.FormatOpenAISearch, http.StatusOK, domain.ErrNone, usageTuple{calls: 1}, start)), CommitResponseStarted))
 	return http.StatusOK, nil, true, nil
 }

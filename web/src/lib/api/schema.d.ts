@@ -4327,7 +4327,7 @@ export interface components {
             MappedModel?: string | null;
             Format?: components["schemas"]["RequestFormat"];
             ErrorType?: components["schemas"]["ErrorType"];
-            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded */
+            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判 */
             commit_state?: string | null;
             /** Format: int64 */
             LatencyMS?: number;
@@ -4418,7 +4418,7 @@ export interface components {
             MappedModel?: string | null;
             Format?: components["schemas"]["RequestFormat"];
             ErrorType?: components["schemas"]["ErrorType"];
-            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded */
+            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判 */
             commit_state?: string | null;
             /** Format: int64 */
             LatencyMS?: number;
@@ -4530,7 +4530,7 @@ export interface components {
             /** @description 错误状态码（完整错误面；0 = 连接级） */
             StatusCode?: number;
             ErrorType?: components["schemas"]["ErrorType"];
-            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded */
+            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判 */
             commit_state?: string | null;
             /** @description 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本 */
             ErrorMessage?: string | null;
@@ -4565,7 +4565,7 @@ export interface components {
             /** @description 错误状态码（完整错误面；0 = 连接级） */
             StatusCode?: number;
             ErrorType?: components["schemas"]["ErrorType"];
-            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded */
+            /** @description 交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判 */
             commit_state?: string | null;
             /** @description 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本 */
             ErrorMessage?: string | null;

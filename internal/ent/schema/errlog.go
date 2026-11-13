@@ -41,8 +41,8 @@ func (ErrLog) Fields() []ent.Field {
 		field.String("error_type").Default("none"),
 		// commit_state 交付事实（spec-stream-failure-truth §5.2/§5.4，可空）：
 		// 错误明细侧同样带交付事实——离线统计从 err_logs 取「纯错误行」时必须
-		// 排除 commit_state ∈ {sent_ambiguous, response_started,
-		// client_committed} 的**已交付**失败行（那些行同时在 usage_logs，重复计
+		// 排除 commit_state ∈ {sent_ambiguous, response_started}
+		// 的**已交付**失败行（那些行同时在 usage_logs，重复计
 		// 数会虚增错误数）。取值域与语义同 usage_logs.commit_state；NULL = 未知
 		// （历史行），保守不计入放行侧。
 		field.String("commit_state").Optional().Nillable(),

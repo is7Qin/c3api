@@ -54,7 +54,7 @@ type expCube struct {
 func newExpCube() *expCube { return &expCube{hist: make([]int64, 10)} }
 
 // expCubeOf 暴力复刻 cube 两查询（aggUsageSQL + aggErrLogSQL 口径）：
-//   - usage_logs 只取可计费行：error_type='none' 或 commit_state ∈ 三值
+//   - usage_logs 只取可计费行：error_type='none' 或 commit_state ∈ 两值
 //     （testBillableUsage——与写侧 forward.go:463 逐字对应）；rc=count(*)、
 //     ec=FILTER(<>'none')、测量列全量累加；
 //   - err_logs 只取不可计费错误行（testNotBillableErr——与 usage 源严格互补，
@@ -285,7 +285,7 @@ func testCommitBillable(s *string) bool {
 		return false
 	}
 	switch *s {
-	case "sent_ambiguous", "response_started", "client_committed":
+	case "sent_ambiguous", "response_started":
 		return true
 	}
 	return false

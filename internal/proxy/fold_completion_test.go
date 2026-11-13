@@ -50,7 +50,7 @@ func foldCompletionOutcome(token string, terminal bool) AttemptOutcome {
 	case "success":
 		o.Result = ResultSuccess
 		o.HTTPStatus = 200
-		o.Commit = CommitClientCommitted
+		o.Commit = CommitResponseStarted
 		o.BusinessFrameSent = true
 	case "429":
 		o.Result = ResultFailed

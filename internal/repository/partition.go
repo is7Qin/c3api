@@ -122,9 +122,11 @@ var usageLogColumnDefs = []string{
 	`format varchar NOT NULL`,
 	`error_type varchar NOT NULL DEFAULT 'none'`,
 	// commit_state 交付事实（spec-stream-failure-truth §5.2）：取值域 =
-	// proxy.CommitState.String() 五值。计费资格与 error_type 解耦——本列 ∈
-	// {sent_ambiguous,response_started,client_committed} 即计费（已交付的失败
+	// proxy.CommitState.String() 四值。计费资格与 error_type 解耦——本列 ∈
+	// {sent_ambiguous,response_started} 即计费（已交付的失败
 	// 照常计费）；NULL = 未知（历史行/未接事实路径），不回填、不重判。
+	// 早期落库行可能带已退役的第五值（已并入 response_started）——本列列类型
+	// 不受约束（varchar），读侧按「未知」保守处理，不做迁移/回填。
 	`commit_state varchar NULL`,
 	`latency_ms bigint NOT NULL DEFAULT 0`,
 	`ttft_ms bigint NULL`,

@@ -114,7 +114,7 @@ func buildUsageLogCreate(client *ent.Client, l *domain.UsageLog) *ent.UsageLogCr
 		SetFormat(usagelog.Format(l.Format)).
 		SetErrorType(string(l.ErrorType)).
 		// commit_state（spec-stream-failure-truth §5.2）：可空交付事实——nil =
-		// 未知（未接事实的路径/历史行），非 nil = proxy 写入的五值之一。
+		// 未知（未接事实的路径/历史行），非 nil = proxy 写入的四值之一。
 		SetNillableCommitState(l.CommitState).
 		SetLatencyMs(l.LatencyMS).
 		SetInputTokens(l.InputTokens).

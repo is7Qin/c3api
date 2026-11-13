@@ -153,13 +153,6 @@ func TestRetryMatrix(t *testing.T) {
 			o.BusinessFrameSent = true
 			o.Terminal = true
 		}, false},
-		{"chat client_committed false", CallerChat, func(o *AttemptOutcome) {
-			o.Commit = CommitClientCommitted
-			o.Result = ResultFailed
-			o.HTTPStatus = 200
-			o.BusinessFrameSent = true
-			o.Terminal = true
-		}, false},
 		{"chat client_cancel not_sent false", CallerChat, func(o *AttemptOutcome) {
 			o.Commit = CommitNotSent
 			o.Result = ResultClientCancel

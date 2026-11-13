@@ -286,7 +286,7 @@ func (doubleCompleteAttempt) call(ctx context.Context, w http.ResponseWriter, r 
 	start time.Time, sel *scheduler.Selection, reqModel string, body []byte, st attemptState) (int, []byte, http.Header, bool, error) {
 	d := dispatchFromContext(ctx)
 	outcome := mergeDispatchBase(ctx, AttemptOutcome{
-		Result: ResultSuccess, HTTPStatus: 200, Commit: CommitClientCommitted,
+		Result: ResultSuccess, HTTPStatus: 200, Commit: CommitResponseStarted,
 		BusinessFrameSent: true, Terminal: true, Timing: AttemptTiming{LatencyMS: 5},
 		CallerCategory: CallerChat, OperationTag: "chat_completions",
 	})

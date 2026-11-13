@@ -92,8 +92,7 @@ export default {
     "not_sent": "Not sent",
     "sent_ambiguous": "Sent (ambiguous)",
     "upstream_responded": "Upstream responded (not delivered)",
-    "response_started": "Response started",
-    "client_committed": "Client committed"
+    "response_started": "Response started"
   },
   "error403": {
     "title": "Access Denied",

@@ -5175,7 +5175,7 @@ components:
         # err_logs 分表：status_code/error_message 已移入 err_logs
         #（usage_logs 瘦身 + 纯计费化），本响应不再含该两字段。
         ErrorType: { $ref: '#/components/schemas/ErrorType' }
-        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded" }
+        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判" }
         LatencyMS: { type: integer, format: int64 }
         TTFTMS: { type: integer, format: int64, nullable: true, description: 首 token 时间毫秒（流式首 chunk 采集）；非流式/失败/无首 token 路径 = null }
         InputTokens: { type: integer, format: int64 }
@@ -5211,7 +5211,7 @@ components:
         # err_logs 分表：status_code/error_message 已移入 err_logs
         #（usage_logs 瘦身 + 纯计费化），本响应不再含该两字段。
         ErrorType: { $ref: '#/components/schemas/ErrorType' }
-        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded" }
+        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判" }
         LatencyMS: { type: integer, format: int64 }
         TTFTMS: { type: integer, format: int64, nullable: true, description: 首 token 时间毫秒（流式首 chunk 采集）；非流式/失败/无首 token 路径 = null }
         InputTokens: { type: integer, format: int64 }
@@ -5263,7 +5263,7 @@ components:
         Format: { $ref: '#/components/schemas/RequestFormat' }
         StatusCode: { type: integer, description: 错误状态码（完整错误面；0 = 连接级） }
         ErrorType: { $ref: '#/components/schemas/ErrorType' }
-        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded" }
+        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判" }
         ErrorMessage: { type: string, nullable: true, description: 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本 }
         LatencyMS: { type: integer, format: int64 }
         BillingTier: { type: string, nullable: true, description: 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径 }
@@ -5282,7 +5282,7 @@ components:
         Format: { $ref: '#/components/schemas/RequestFormat' }
         StatusCode: { type: integer, description: 错误状态码（完整错误面；0 = 连接级） }
         ErrorType: { $ref: '#/components/schemas/ErrorType' }
-        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started/client_committed；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded" }
+        commit_state: { type: string, nullable: true, description: "交付状态（spec-stream-failure-truth §5.2）；取值域 not_sent/sent_ambiguous/upstream_responded/response_started；null = 未知（历史行或未经该路径），不得解释为 not_sent/upstream_responded；历史行可能带已退役的第五值（已并入 response_started）——按未知处理，不回填、不重判" }
         ErrorMessage: { type: string, nullable: true, description: 错误文本（拒绝文案/上游 body，域内截断 500 字符）；null = 无错误文本 }
         LatencyMS: { type: integer, format: int64 }
         BillingTier: { type: string, nullable: true, description: 计费档位（service_tier 归一化：priority/flex/fast/auto）；null = 未计费路径 }

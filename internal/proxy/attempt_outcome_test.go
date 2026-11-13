@@ -23,7 +23,7 @@ func dispatchedFailedBase(status AttemptStatus, commit CommitState, terminal boo
 	o.HTTPStatus = status
 	o.Commit = commit
 	o.Terminal = terminal
-	o.BusinessFrameSent = commit == CommitResponseStarted || commit == CommitClientCommitted || commit == CommitSentAmbiguous
+	o.BusinessFrameSent = commit == CommitResponseStarted || commit == CommitSentAmbiguous
 	if commit == CommitUpstreamResponded {
 		o.BusinessFrameSent = false
 	}
@@ -42,10 +42,16 @@ func TestAttemptOutcomeContract(t *testing.T) {
 		require.False(t, o.IsFailed())
 		require.True(t, o.HasPossiblyWrittenBytes())
 	})
-	t.Run("valid success client_committed", func(t *testing.T) {
+	t.Run("retired fifth commit value is invalid", func(t *testing.T) {
+		// 已退役的第五值（序 3 之后的旧 client committed，已并入
+		// response_started）：Valid() 恒假 ⇒ 不写列（commitStateOf → NULL）、
+		// 不可计费、不可重试，避免历史语义在类型层复活。
+		retired := CommitState(4)
+		require.False(t, retired.Valid())
+		require.Equal(t, "unknown", retired.String())
 		o := validBase()
-		o.Commit = CommitClientCommitted
-		require.NoError(t, o.Validate())
+		o.Commit = retired
+		require.Error(t, o.Validate())
 	})
 	t.Run("rate_limited upstream_responded ordinary not terminal", func(t *testing.T) {
 		o := dispatchedFailedBase(429, CommitUpstreamResponded, false)
@@ -93,7 +99,7 @@ func TestAttemptOutcomeContract(t *testing.T) {
 		require.False(t, CanRetry(CallerChat, o2))
 	})
 	t.Run("client_cancel flow only explicit states", func(t *testing.T) {
-		for _, commit := range []CommitState{CommitNotSent, CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted} {
+		for _, commit := range []CommitState{CommitNotSent, CommitSentAmbiguous, CommitResponseStarted} {
 			o := validBase()
 			o.Result = ResultClientCancel
 			o.Commit = commit

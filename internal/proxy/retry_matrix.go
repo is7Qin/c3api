@@ -24,7 +24,7 @@ func CanRetry(cat CallerCategory, o AttemptOutcome) bool {
 		return false
 	}
 	switch o.Commit {
-	case CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted:
+	case CommitSentAmbiguous, CommitResponseStarted:
 		return false
 	}
 	// Explicit pre-response 429: must be upstream_responded, ordinary non-hard
@@ -100,12 +100,6 @@ func outcomeForKind(kind string, cat CallerCategory, hard bool) AttemptOutcome {
 		base.Commit = CommitResponseStarted
 		base.Result = ResultFailed
 		base.HTTPStatus = 500
-		base.BusinessFrameSent = true
-		base.Terminal = true
-	case "client_committed":
-		base.Commit = CommitClientCommitted
-		base.Result = ResultFailed
-		base.HTTPStatus = 200
 		base.BusinessFrameSent = true
 		base.Terminal = true
 	case "client_cancel":

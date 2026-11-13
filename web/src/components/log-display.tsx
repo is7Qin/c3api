@@ -33,7 +33,7 @@ export function ErrorTypeBadge({ type }: { type?: ErrorType }) {
 
 // 交付状态（commit_state，spec-stream-failure-truth §5.2）。值域由后端固定；
 // null = 未知（历史行/未经该路径）——必须显示为 —，不得落成任何具体状态。
-export const COMMIT_STATES = ['not_sent', 'sent_ambiguous', 'upstream_responded', 'response_started', 'client_committed'] as const
+export const COMMIT_STATES = ['not_sent', 'sent_ambiguous', 'upstream_responded', 'response_started'] as const
 export type CommitStateValue = (typeof COMMIT_STATES)[number]
 const isCommitState = (s: string): s is CommitStateValue => (COMMIT_STATES as readonly string[]).includes(s)
 
@@ -42,7 +42,6 @@ const COMMIT_META: Record<string, string> = {
   upstream_responded: 'bg-muted text-muted-foreground',
   sent_ambiguous: 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
   response_started: 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-400',
-  client_committed: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
 }
 
 export function CommitStateBadge({ state }: { state?: string | null }) {
@@ -53,9 +52,9 @@ export function CommitStateBadge({ state }: { state?: string | null }) {
 }
 
 // 「流中断」判据（spec §5.2）：已交付的失败 = commit_state ∈ {sent_ambiguous,
-// response_started, client_committed} ∧ error_type ≠ none。commit_state 为
+// response_started} ∧ error_type ≠ none。commit_state 为
 // null（未知）不算流中断。
-export const STREAM_BROKEN_COMMIT_STATES: readonly string[] = ['sent_ambiguous', 'response_started', 'client_committed']
+export const STREAM_BROKEN_COMMIT_STATES: readonly string[] = ['sent_ambiguous', 'response_started']
 
 export const isStreamBroken = (l: { commit_state?: string | null; ErrorType?: ErrorType }): boolean =>
   l.ErrorType !== 'none' && !!l.commit_state && STREAM_BROKEN_COMMIT_STATES.includes(l.commit_state)

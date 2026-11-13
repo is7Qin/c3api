@@ -115,8 +115,8 @@ func wsOutcomeForClientAbort(base AttemptOutcome, sent bool, u usageTuple, ttft 
 //
 // 它是**类型层编码**，不是交付事实：AttemptOutcome.Validate() 的
 // 「ResultFailed + HTTPStatus == 0 + Terminal」矩阵（attempt_outcome.go 的
-// failed/status0 分支）只允许 not_sent / sent_ambiguous / response_started /
-// client_committed，而 terminal 下后三者都要求 BusinessFrameSent=true —— 也就是
+// failed/status0 分支）只允许 not_sent / sent_ambiguous / response_started，
+// 而 terminal 下后两者都要求 BusinessFrameSent=true —— 也就是
 // 「上游已响应、但一帧业务字节都没发出去」在类型层**无法表达**。矩阵不该为这条
 // 观测面放宽（它同时守卫重试与计费），因此保留这条编码，并把「为什么它不是事实」
 // 钉在这里。

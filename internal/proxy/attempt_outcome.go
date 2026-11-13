@@ -58,7 +58,6 @@ const (
 	CommitSentAmbiguous
 	CommitUpstreamResponded
 	CommitResponseStarted
-	CommitClientCommitted
 )
 
 func (c CommitState) String() string {
@@ -71,8 +70,6 @@ func (c CommitState) String() string {
 		return "upstream_responded"
 	case CommitResponseStarted:
 		return "response_started"
-	case CommitClientCommitted:
-		return "client_committed"
 	default:
 		return "unknown"
 	}
@@ -80,7 +77,7 @@ func (c CommitState) String() string {
 
 func (c CommitState) Valid() bool {
 	switch c {
-	case CommitNotSent, CommitSentAmbiguous, CommitUpstreamResponded, CommitResponseStarted, CommitClientCommitted:
+	case CommitNotSent, CommitSentAmbiguous, CommitUpstreamResponded, CommitResponseStarted:
 		return true
 	}
 	return false
@@ -238,7 +235,7 @@ func (o AttemptOutcome) IsFailed() bool {
 
 func (o AttemptOutcome) HasPossiblyWrittenBytes() bool {
 	switch o.Commit {
-	case CommitResponseStarted, CommitClientCommitted, CommitSentAmbiguous:
+	case CommitResponseStarted, CommitSentAmbiguous:
 		return true
 	default:
 		return false
@@ -265,8 +262,8 @@ func (o AttemptOutcome) Validate() error {
 	if o.Commit == CommitNotSent && o.BusinessFrameSent {
 		return fmt.Errorf("not_sent cannot have BusinessFrameSent")
 	}
-	if (o.Commit == CommitResponseStarted || o.Commit == CommitClientCommitted) && !o.BusinessFrameSent {
-		return fmt.Errorf("response_started/client_committed requires BusinessFrameSent")
+	if o.Commit == CommitResponseStarted && !o.BusinessFrameSent {
+		return fmt.Errorf("response_started requires BusinessFrameSent")
 	}
 	if o.Commit == CommitUpstreamResponded && o.BusinessFrameSent {
 		return fmt.Errorf("upstream_responded cannot have BusinessFrameSent")
@@ -342,15 +339,15 @@ func (o AttemptOutcome) Validate() error {
 			return fmt.Errorf("local/reservation reject cannot be terminal")
 		}
 	}
-	// Malformed: never retry, commit upstream_responded/response_started/client_committed, never not_sent/sent_ambiguous
+	// Malformed: never retry, commit upstream_responded/response_started, never not_sent/sent_ambiguous
 	if o.IsMalformed {
 		if o.Result != ResultFailed {
 			return fmt.Errorf("malformed must be failed")
 		}
 		switch o.Commit {
-		case CommitUpstreamResponded, CommitResponseStarted, CommitClientCommitted:
+		case CommitUpstreamResponded, CommitResponseStarted:
 		default:
-			return fmt.Errorf("malformed must be upstream_responded/response_started/client_committed")
+			return fmt.Errorf("malformed must be upstream_responded/response_started")
 		}
 		if o.Result == ResultClientCancel || o.Result == ResultLocalReject || o.Result == ResultReservationReject {
 			return fmt.Errorf("malformed cannot be cancel/local/reservation")
@@ -385,8 +382,8 @@ func (o AttemptOutcome) Validate() error {
 		if o.HTTPStatus < 200 || o.HTTPStatus >= 300 {
 			return fmt.Errorf("success must have 2xx status")
 		}
-		if o.Commit != CommitResponseStarted && o.Commit != CommitClientCommitted {
-			return fmt.Errorf("success must be response_started or client_committed")
+		if o.Commit != CommitResponseStarted {
+			return fmt.Errorf("success must be response_started")
 		}
 		if !o.Terminal {
 			return fmt.Errorf("success must be terminal")
@@ -442,15 +439,15 @@ func (o AttemptOutcome) Validate() error {
 				if !o.Terminal {
 					return fmt.Errorf("sent_ambiguous must be terminal")
 				}
-			case CommitResponseStarted, CommitClientCommitted:
+			case CommitResponseStarted:
 				if !o.Terminal {
-					return fmt.Errorf("response_started/client_committed network must be terminal")
+					return fmt.Errorf("response_started network must be terminal")
 				}
 				if !o.BusinessFrameSent {
-					return fmt.Errorf("response_started/client_committed requires BusinessFrameSent")
+					return fmt.Errorf("response_started requires BusinessFrameSent")
 				}
 			default:
-				return fmt.Errorf("status0 network must be not_sent, sent_ambiguous or response_started/client_committed")
+				return fmt.Errorf("status0 network must be not_sent, sent_ambiguous or response_started")
 			}
 		case o.HTTPStatus >= 200 && o.HTTPStatus <= 299:
 			return fmt.Errorf("failed cannot have 2xx status")
@@ -465,9 +462,9 @@ func (o AttemptOutcome) Validate() error {
 		if o.HTTPStatus != 0 {
 			return fmt.Errorf("client_cancel must have status 0")
 		}
-		// explicitly allowed states: not_sent, sent_ambiguous, response_started, client_committed (flow-only)
+		// explicitly allowed states: not_sent, sent_ambiguous, response_started
 		switch o.Commit {
-		case CommitNotSent, CommitSentAmbiguous, CommitResponseStarted, CommitClientCommitted:
+		case CommitNotSent, CommitSentAmbiguous, CommitResponseStarted:
 		default:
 			return fmt.Errorf("client_cancel has invalid commit %v", o.Commit)
 		}

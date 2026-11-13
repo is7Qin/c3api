@@ -6,7 +6,7 @@ package repository_test
 
 // P0-A 回归门禁（spec-commit-state-and-round-billing §0，G0-a~G0-d/G0-f）：
 // 写侧已按交付事实计费（forward.go:462-473：error_type='none' 或 commit_state
-// ∈ {sent_ambiguous,response_started,client_committed} → usage_logs），读侧账本
+// ∈ {sent_ambiguous,response_started} → usage_logs），读侧账本
 // 与统计必须用同一谓词（billable_sql.go 的 billableSQL / notBillableErrSQL），
 // 否则「已交付的失败行」永久滞留 usagelog_unbilled_id 部分索引且滞 lag 不可见。
 //

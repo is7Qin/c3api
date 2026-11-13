@@ -160,7 +160,7 @@ var aggHistExpr = `ARRAY[count(*) FILTER (WHERE ttft_ms < 50),
 //
 // 谓词 = billableSQL（与写侧 forward.go:463「进 usage_logs」分支逐字对应，见
 // billable_sql.go）：成功行（error_type='none'）与已交付失败行（commit_state
-// ∈ {sent_ambiguous,response_started,client_committed}）同属 usage 源、全字段计
+// ∈ {sent_ambiguous,response_started}）同属 usage 源、全字段计
 // ——写侧双轨下这两类行确实在 usage_logs 且可计费，故其 cost/tokens 必须计入，
 // 且不能再被 err 源加一次。ec = FILTER (error_type <> 'none') 因此同时覆盖已交
 // 付失败的请求/错误计数。
@@ -185,7 +185,7 @@ GROUP BY 1, 2, 3`
 // aggErrLogSQL err_logs → 不可计费错误行补充（count 语义；谓词 =
 // notBillableErrSQL，与 billableSQL 严格互补，见 billable_sql.go）。写侧双轨
 // （forward.go:463-472）：错误行既进 err_logs，可计费时又进 usage_logs；本查询
-// 只计后者未覆盖的子集，防双计——已交付失败（commit_state ∈ 三值）归 usage 源，
+// 只计后者未覆盖的子集，防双计——已交付失败（commit_state ∈ 两值）归 usage 源，
 // 其余错误行（含 NULL 经 COALESCE 落成的空串）归本源。
 //
 // **rc = count(*)**（本查询只见不可计费错误行，request_count 必须计入）；

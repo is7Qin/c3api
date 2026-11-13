@@ -92,8 +92,7 @@ export default {
     "not_sent": "未发送",
     "sent_ambiguous": "已发送（不确定）",
     "upstream_responded": "上游已响应（未下发）",
-    "response_started": "已开始下发",
-    "client_committed": "已确认下发"
+    "response_started": "已开始下发"
   },
   "error403": {
     "title": "无权访问",

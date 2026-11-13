@@ -127,13 +127,13 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		oc := base
 		oc.Result = ResultSuccess
 		oc.HTTPStatus = 200
-		oc.Commit = CommitClientCommitted
+		oc.Commit = CommitResponseStarted
 		oc.Terminal = true
 		oc.BusinessFrameSent = true
 		oc.Usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 		health := &AttemptHealthEvent{Kind: rule.KindOK}
 		p.observeDispatchOutcome(ctx, oc, health)
-		p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+		p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)), CommitResponseStarted))
 		return 200, nil, true, nil
 	}
 	reqModel := gjson.GetBytes(body, "model").String()
@@ -173,13 +173,13 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	out := base
 	out.Result = ResultSuccess
 	out.HTTPStatus = 200
-	out.Commit = CommitClientCommitted
+	out.Commit = CommitResponseStarted
 	out.Terminal = true
 	out.BusinessFrameSent = true
 	out.Usage = AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}
 	health := &AttemptHealthEvent{Kind: rule.KindOK}
 	p.observeDispatchOutcome(ctx, out, health)
-	p.finish(sel, logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)))
+	p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, 200, domain.ErrNone, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, start)), CommitResponseStarted))
 	return 200, nil, true, nil
 }
 
