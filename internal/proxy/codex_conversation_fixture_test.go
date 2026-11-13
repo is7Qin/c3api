@@ -294,7 +294,7 @@ func (u *convUpstream) allBytes() string {
 
 // convIdentity 一次上游请求可观测的身份面（HTTP：头 + 体；WS：握手头 + 第 i 帧）。
 type convIdentity struct {
-	auth, sessionHdr, threadHdr, windowHdr, turnState, routingHint string
+	auth, sessionHdr, threadHdr, windowHdr, turnState, routingHint  string
 	turnMeta                                                        string
 	metaSession, metaThread, metaWindow, metaInstallation, metaTurn string
 	metaTurnState                                                   string
