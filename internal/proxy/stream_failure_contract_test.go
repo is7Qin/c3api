@@ -84,11 +84,15 @@ func TestStreamFailureG1CodexWSInbandPayloadIs5xx(t *testing.T) {
 
 // G2：同 G1 现场 ⇒ 规则事件收到 kind=5xx 且 **status 为空**（不合成状态）。
 // 协议：MarkResult 异步投递 → FlushRules 排空 → 读 health sink。
+// G2：健康面口径同 S1b——已提交的流内失败只有 5xx 归因、没有合成状态码。
+// 文案用**非过载** 5xx：过载命中 seed-5xx-503-overload 后全透不惩罚（见
+// TestInbandOverloadFailureIsNotPenalized），不再产生规则事件，因此
+// 「事件带 kind=5xx、status=nil」这条契约只能在非过载文案上验证。
 func TestStreamFailureG2CodexWSInbandPayloadHealthIs5xxNoStatus(t *testing.T) {
 	testHealthSink.reset()
 	up, _ := newCodexWSScriptUpstream(t,
 		`{"type":"response.output_text.delta","delta":"hi"}`,
-		`{"type":"error","error":{"type":"server_error","message":"`+inbandOverloadMsg+`"}}`)
+		`{"type":"error","error":{"type":"server_error","message":"`+inbandServerErrMsg+`"}}`)
 	store := &captureLogStore{}
 	p, _ := newWSErrProxy(t, up.URL, map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-10")}, store)
 	pinWSRoute(p, 10)

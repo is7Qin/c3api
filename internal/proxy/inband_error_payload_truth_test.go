@@ -46,6 +46,15 @@ const chatErrFrame = `data: {"error":{"type":"server_error","message":"` + inban
 // chatNormalFrame 一帧正常业务 chunk（S1b 用：业务字节已写）。
 const chatNormalFrame = `data: {"id":"c1","object":"chat.completion.chunk","choices":[{"delta":{"content":"hi"}}]}` + "\n\n"
 
+// inbandServerErrMsg 非过载 5xx 的上游原文。与过载文案分开：过载命中
+// seed-5xx-503-overload（全透、不惩罚，见 TestInbandOverloadFailureIsNotPenalized），
+// 而「流内失败 ⇒ 5xx 归因 + seed-5xx 冷却」这条契约只有非过载文案才成立
+// （带 http_status 条件的旧种子配方对已提交流永不命中，属于已修的缺陷）。
+const inbandServerErrMsg = "upstream internal server error"
+
+// chatServerErrFrame 非过载 5xx 的 chat 错误帧（S1b 用）。
+const chatServerErrFrame = `data: {"error":{"type":"server_error","message":"` + inbandServerErrMsg + `"}}` + "\n\n"
+
 // inbandSSEUpstream 按脚本逐段写原始 SSE 字节的假上游（写满即 EOF）。
 // hits 记录被请求次数（failover 断言面）。
 type inbandSSEUpstream struct {
@@ -253,7 +262,7 @@ func TestInbandS1bChatCommittedErrorFrameIs5xx(t *testing.T) {
 	testHealthSink.reset()
 	hr := newHealthReadback(t)
 	up, u := newInbandSSEUpstream(t, "/v1/chat/completions", "Authorization", "Bearer sk-upstream",
-		chatNormalFrame, chatErrFrame)
+		chatNormalFrame, chatServerErrFrame)
 	store := &captureLogStore{}
 	p := newInbandChatProxy(t, up.URL, 1, store) // 两个候选：证明不换号
 
@@ -262,7 +271,7 @@ func TestInbandS1bChatCommittedErrorFrameIs5xx(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, "已提交 ⇒ 客户端 200；body=%q", rec.Body.String())
 	body := rec.Body.String()
 	require.Contains(t, body, "event: error", "已提交时补写协议 error 帧")
-	require.Contains(t, body, inbandOverloadMsg, "客户端文案必须含上游原文（RawJSON 契约）")
+	require.Contains(t, body, inbandServerErrMsg, "客户端文案必须含上游原文（RawJSON 契约）")
 
 	rows := drainLogs(t, p, store)
 	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows),
@@ -288,6 +297,37 @@ func TestInbandS1bChatCommittedErrorFrameIs5xx(t *testing.T) {
 			"取用准入门必须判定为不可用")
 	}
 	require.Empty(t, hr.statesFor(t, 2), "另一账号零尝试（不得有 health 记录）")
+	require.Equal(t, 1, u.attempts(), "已提交流不换号：上游恰一次尝试")
+}
+
+// TestInbandOverloadFailureIsNotPenalized 过载文案命中 seed-5xx-503-overload：
+// 已提交的流内失败照旧按 5xx 归因（usage/err_logs 与客户端观感都不变），但
+// **不惩罚**——没有规则动作事件、没有 health 记录，账号不被罚 10 分钟。
+//
+// 这是「上游过载 ≠ 账号坏」的回归守卫：旧种子要求 http_status=503，而已提交流的
+// 规则事件 HTTPStatus 恒 nil，于是过载永远落回 seed-5xx 罚 10 分钟。
+func TestInbandOverloadFailureIsNotPenalized(t *testing.T) {
+	testHealthSink.reset()
+	hr := newHealthReadback(t)
+	up, u := newInbandSSEUpstream(t, "/v1/chat/completions", "Authorization", "Bearer sk-upstream",
+		chatNormalFrame, chatErrFrame)
+	store := &captureLogStore{}
+	p := newInbandChatProxy(t, up.URL, 1, store)
+
+	rec := postChatStream(t, p)
+
+	require.Equal(t, http.StatusOK, rec.Code, "已提交 ⇒ 客户端 200；body=%q", rec.Body.String())
+	require.Contains(t, rec.Body.String(), inbandOverloadMsg, "过载原文仍原样给客户端")
+
+	rows := drainLogs(t, p, store)
+	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows),
+		"归因与记账不变：仍是已交付的失败双轨；rows=%+v", rows)
+	require.Equal(t, domain.Err5xx, rows[0].ErrorType, "过载仍是 5xx 归因")
+	require.Equal(t, 0, rows[0].StatusCode, "序 1 不合成状态码")
+
+	p.sched.FlushRules()
+	require.Empty(t, testHealthSink.eventsFor(1), "过载全透：不得产生任何规则动作事件")
+	require.Empty(t, hr.statesFor(t, 1), "过载不惩罚：不得写 health 记录、不得进入冷却")
 	require.Equal(t, 1, u.attempts(), "已提交流不换号：上游恰一次尝试")
 }
 
@@ -531,7 +571,7 @@ func wsDialInbound(t *testing.T, srv *httptest.Server) *websocket.Conn {
 func TestInbandS6InboundWSErrorFrameIs5xx(t *testing.T) {
 	testHealthSink.reset()
 	hr := newHealthReadback(t)
-	up, u := fakeResponsesWSScript(t, `{"type":"error","error":{"type":"server_error","message":"`+inbandOverloadMsg+`"}}`)
+	up, u := fakeResponsesWSScript(t, `{"type":"error","error":{"type":"server_error","message":"`+inbandServerErrMsg+`"}}`)
 	store := &captureLogStore{}
 	p, srv := wsHealthProxy(t, up.URL, store)
 
