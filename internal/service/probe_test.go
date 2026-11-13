@@ -523,6 +523,7 @@ func TestProbeNoUpstreamTextLeakLog(t *testing.T) {
 	logPath := filepath.Join(t.TempDir(), "probe.log")
 	logger, err := logx.New("info", logPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, logger.Close()) })
 	svc := New(Deps{
 		Store:          &probeReadOnlyStore{acc: acc},
 		Invalidate:     NopInvalidator{},
@@ -689,6 +690,8 @@ func newProbeLogger(t *testing.T) (*logx.Logger, string) {
 	path := filepath.Join(t.TempDir(), "probe.log")
 	logger, err := logx.New("info", path)
 	require.NoError(t, err)
+	// 先关 sink 再让 t.TempDir 清理：不关闭的话 Windows 删不掉日志文件。
+	t.Cleanup(func() { require.NoError(t, logger.Close()) })
 	return logger, path
 }
 

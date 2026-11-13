@@ -331,14 +331,11 @@ func TestUpsertTemplateExtTransportTypeExistencePrecedesGate(t *testing.T) {
 // TestUpsertTemplateExtTransportDowngradeWarns WARN 是"实验臂何时被降级"的
 // 唯一事后证据，所以它必须真的写进日志，且**只**为放行的降级写一条。
 func TestUpsertTemplateExtTransportDowngradeWarns(t *testing.T) {
-	// 日志目录用 os.MkdirTemp 而不是 t.TempDir()：zap 会持有日志文件句柄，
-	// t.TempDir() 的自动清理在 Windows 上会因句柄未释放而让测试假红。
-	dir, err := os.MkdirTemp("", "c3api-transport-warn-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	logPath := filepath.Join(dir, "warn.log")
+	logPath := filepath.Join(t.TempDir(), "warn.log")
 	log, err := logx.New("warn", logPath)
 	require.NoError(t, err)
+	// 先关 sink 再让 t.TempDir 清理：不关闭的话 Windows 删不掉日志文件。
+	t.Cleanup(func() { require.NoError(t, log.Close()) })
 
 	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: log}
 	ctx := context.Background()
@@ -391,14 +388,12 @@ func (s *failingExtWriteStore) UpsertTemplateExt(context.Context, *domain.Templa
 // TestUpsertTemplateExtTransportNoWarnWhenWriteFails WARN 落在落库成功之后：
 // 写库失败时一条都不能写——否则审计里会出现"已降级"的假证据。
 func TestUpsertTemplateExtTransportNoWarnWhenWriteFails(t *testing.T) {
-	// 同 TestUpsertTemplateExtTransportDowngradeWarns：日志目录用 os.MkdirTemp，
-	// 不用 t.TempDir()（zap 持有文件句柄，Windows 上自动清理会假红）。
-	dir, err := os.MkdirTemp("", "c3api-transport-nowarn-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	logPath := filepath.Join(dir, "warn.log")
+	// 同 TestUpsertTemplateExtTransportDowngradeWarns：先关 sink 再让
+	// t.TempDir 清理（Windows 上句柄未释放会删不掉文件）。
+	logPath := filepath.Join(t.TempDir(), "warn.log")
 	log, err := logx.New("warn", logPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, log.Close()) })
 
 	writeErr := errors.New("boom: ext write failed")
 	st := &failingExtWriteStore{fakeStore: newFakeStore(), err: writeErr}
@@ -435,14 +430,12 @@ func TestUpsertTemplateExtTransportNoWarnWhenWriteFails(t *testing.T) {
 // repository 层的用例只能断言"未落库"（它看不见日志）；"无 WARN"必须在这里断言
 // ——WARN 在 service、且只在落库成功之后写。
 func TestUpsertTemplateExtTransportConflictNoWarn(t *testing.T) {
-	// 同 TestUpsertTemplateExtTransportDowngradeWarns：日志目录用 os.MkdirTemp，
-	// 不用 t.TempDir()（zap 持有文件句柄，Windows 上自动清理会假红）。
-	dir, err := os.MkdirTemp("", "c3api-transport-conflict-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	logPath := filepath.Join(dir, "warn.log")
+	// 同 TestUpsertTemplateExtTransportDowngradeWarns：先关 sink 再让
+	// t.TempDir 清理（Windows 上句柄未释放会删不掉文件）。
+	logPath := filepath.Join(t.TempDir(), "warn.log")
 	log, err := logx.New("warn", logPath)
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, log.Close()) })
 
 	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: log}
 	ctx := context.Background()

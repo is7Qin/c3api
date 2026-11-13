@@ -21,12 +21,11 @@ import (
 
 func newMailWorkerFileLogger(t *testing.T) (*logx.Logger, string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "mail-worker-log-")
-	require.NoError(t, err)
-	path := filepath.Join(dir, "mail.json")
+	path := filepath.Join(t.TempDir(), "mail.json")
 	logger, err := logx.New("info", path)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	// 先关 sink 再让 t.TempDir 清理：不关闭的话 Windows 删不掉日志文件。
+	t.Cleanup(func() { require.NoError(t, logger.Close()) })
 	return logger, path
 }
 

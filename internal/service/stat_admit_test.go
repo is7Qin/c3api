@@ -56,12 +56,11 @@ func (s statsLogSink) count(t *testing.T, msg string) int {
 // newStatsAdmitSvc 带 logger + Retention 的 Service（判定时钟固定注入）。
 func newStatsAdmitSvc(t *testing.T, fs *fakeStore, ret domain.Retention, now time.Time) (*Service, statsLogSink) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "stats-admit-log-")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	path := filepath.Join(dir, "stats.json")
+	path := filepath.Join(t.TempDir(), "stats.json")
 	logger, err := logx.New("warn", path)
 	require.NoError(t, err)
+	// 先关 sink 再让 t.TempDir 清理：不关闭的话 Windows 删不掉日志文件。
+	t.Cleanup(func() { require.NoError(t, logger.Close()) })
 	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: &invRecorder{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: logger, EmailCodeStore: testEmailCodes, Retention: ret})
 	svc.statsNow = func() time.Time { return now }
 	return svc, statsLogSink{log: logger, path: path}
