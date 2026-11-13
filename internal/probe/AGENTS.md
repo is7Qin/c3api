@@ -72,7 +72,9 @@ latency_ms / status_code / 回显 model / 固定分类 error + 有限错误码 d
    `[:lineEnd]`，不带同一次 read 的预读尾巴。单行 data 直接引用 body 切片，只有
    多行 data 才写复用缓冲，2 MiB 的 `data:0\n\n` 微事件洪泛分配为 O(body)。
    cap 构造私有；生产只经 `guardedHTTPClient` / `guardedHTTPClient200Only` /
-   `guardedCodexTransport`。
+   `guardedCodexTransport`。`guardedCodexTransport` 包的是出口的 `eg.Codex.Transport`
+   （关闭自动压缩的 Codex 底座，与生产 sdkbridge 同源）；`eg.Codex == nil` 只有测试
+   字面量，回退 `eg.HTTP.Transport`。
 5. **期限/准入边界在 service**：本包只读 `ctx.Err()` 并映射状态 0 的固定文案；
    任何超时/取消（含响应头已到但 body 未读完、SDK 吞掉非 200/401 预读 body
    错误、以及图片取图阶段）必须优先于真实 HTTP 状态、响应体上限溢出与状态分类。
@@ -139,4 +141,10 @@ go test ./internal/probe/ ./internal/sdkbridge/ ./internal/service/ -count=1
 go test ./internal/probe/ -run TestProbeCodex -count=1
 go test ./internal/probe/ -run 'TestProbeDeepJSON|TestProbeCodexNewlineFlood|TestProbeCodexTinyEventFlood' -count=1
 go test ./internal/probe/ -run 'TestProbe.*Images|TestProbe.*Search|TestProbe.*Preview|TestSanitizePreview' -count=1
+go test ./internal/probe/ -run TestProbeCodexTransportNoAutoGzip -count=1
 ```
+
+## 最近变更
+
+- 2026-11-13 `e0744c9`（codex-conversation-integration §5.5）：`guardedCodexTransport`
+  改用 `eg.Codex` 底座（codex 探测出站不带自动 `Accept-Encoding: gzip`）。

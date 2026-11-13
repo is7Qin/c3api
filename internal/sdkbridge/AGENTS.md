@@ -7,6 +7,12 @@
 
 - 生产 Codex 适配：`Codex`（`codex.go`）持有账号级 SDK client/Auth 缓存、fatal
   回调、轮转与 WS/HTTP 传输；`clients.go` 是 SDK 工厂接线。
+  - Codex HTTP（`clientOnEgress` 的 `WithTransport`）与 WS 拨号（`DialPrepared`）都用出口
+    池派生的 `eg.Codex.Transport`（关闭自动压缩的独立连接池，`egressCodexTransport`）；
+    `eg.Codex == nil` 时回退 `eg.HTTP.Transport`——只为测试里手写的 `egress.Client`
+    字面量，生产不会出现。
+  - WS 空闲连接上限 `codexWSConnCacheCapacity = 256`（每个 HTTPClient = 账号 × 出口；
+    仅上限、不预分配）；`Options.WSConnCache` 只是可测性入口。
 - 诊断/探测 seam（`stream_body_once.go` / `one_shot.go`）——全部只做一次临时
   PAT client + `WithTransport`（不传 `WithTimeout`；期限只由 ctx 决定），
   **不取** ClientTable/Auth 缓存、**不装** fatal 回调、**不轮转**、**不写日志**：
@@ -34,6 +40,8 @@
   两次调用之间没有共享账号状态（不缓存 fatal、不刷新）。
 - 非 200 body 由 SDK 读尽并关闭；调用方 cap transport 负责对应上限。
 - codex WS 面不喂任何客户端头（spec §12）；HTTP 面头策略仅在 `pkg/aiclient` 维护。
+- Codex 出站不带 Go 自动加的 `Accept-Encoding: gzip`：只能用 `eg.Codex`，不得改回
+  `eg.HTTP`（`TestCodexEgressTransportNoAutoGzip`）。
 - 生成物不手改；日志只走 `pkg/logx`。
 
 ## 验证
@@ -42,4 +50,13 @@
 go test ./internal/sdkbridge/ -count=1
 go test ./internal/sdkbridge/ -run TestStreamBodyOnce -count=1
 go test ./internal/sdkbridge/ -run 'TestGenerateImageOnce|TestSearchOnce|TestOneShot' -count=1
+go test ./internal/sdkbridge/ -run TestCodexEgressTransportNoAutoGzip -count=1
 ```
+
+## 最近变更
+
+- 2026-11-13 `e0744c9`（codex-conversation-integration §5.5）：Codex HTTP/WS 改用
+  `eg.Codex` 底座。
+- 2026-11-13（§5.7）：`codexWSConnCacheCapacity` 2048 → 256（会话路径线程按对话分配，
+  槽位上界不再是空闲连接数上界）。接入第二轮还会改：会话簿装配、`WithConversation`/
+  `WithFirstFrame`。
