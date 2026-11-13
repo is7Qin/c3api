@@ -347,24 +347,18 @@ func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, req
 }
 
 // resolveFormatContinuation 续接解析与钉选阶段（handleFormat 提取）：contPrevID
-// 为空或首个预留为 Codex 凭据 → 原样返回（零续接 Redis）。否则 contResolve 查绑定（失败 fail-closed：先释放
-// 已占并发槽，记录后写出）；再 contPin 推进计划到绑定账号（失败 fail-closed：
+// 为空 → 原样返回（零续接 Redis）。否则 contResolve 查绑定（失败 fail-closed：先释放
+// 已占并发槽，记录后写出；首个预留为 Codex 且未命中 → 不钉选原样返回）；命中再 contPin 推进计划到绑定账号（失败 fail-closed：
 // 记录后写出，绝不迁移到其他账号）。ok=false 表示已收尾写出，调用方直接 return。
 // 释放/记录时机与现状逐字一致（contPin 内部自行释放被跳过候选）。
 func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.ResponseWriter, r *http.Request, reqID string, groupID, userID int64, reqModel, contPrevID string, start time.Time, sel *scheduler.Selection, plan *scheduler.AttemptPlan, attempt scheduler.Attempt) (*scheduler.Selection, scheduler.Attempt, *continuation.Binding, bool) {
 	if contPrevID == "" {
 		return sel, attempt, nil, true
 	}
-	// Codex 不做续接：首个预留是 Codex 凭据时跳过 contResolve/contPin
-	// （hardContinuation=false，计划照常故障转移）。previous_response_id 留在
-	// 请求体里交给 SDK 白名单处理；Codex 侧从不写续接绑定，查了只会 410。
-	// 选中 API key 账号时保持现状（混合组可能经旧绑定钉选到其他账号）。
-	if sel.CredentialType.IsCodex() {
-		return sel, attempt, nil, true
-	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
-	// fail-closed（释放已占并发槽，零上游拨号）。
-	b, ferr := p.contResolve(r.Context(), userID, groupID, contProtocolREST, contPrevID, attempt)
+	// fail-closed（释放已占并发槽，零上游拨号）。首个预留是 Codex 且未命中 →
+	// 不钉选（见 resolveContinuationBinding）。
+	b, ferr := p.resolveContinuationBinding(r.Context(), userID, groupID, contProtocolREST, contPrevID, sel, attempt)
 	if ferr != nil {
 		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
@@ -373,6 +367,9 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 	}
 	// 续接钉选：计划推进到绑定账号（其余候选释放跳过）；绑定账号身份漂移或
 	// 不可派生 → fail-closed，绝不迁移到其他账号。
+	if b == nil {
+		return sel, attempt, nil, true
+	}
 	pinned, pinnedAttempt, ferr := p.contPin(plan, sel, attempt, b)
 	if ferr != nil {
 		p.recordRejected(r.Context(), reqID, groupID, b.AccountID, reqModel, "", format, ferr.status, domain.Err4xx, 0, usageTuple{}, start, ferr.msg)
@@ -380,6 +377,27 @@ func (p *Proxy) resolveFormatContinuation(format domain.RequestFormat, w http.Re
 		return sel, attempt, nil, false
 	}
 	return pinned, pinnedAttempt, b, true
+}
+
+// resolveContinuationBinding 续接解析（REST 与 WS 共用，m1 修订）：照常先
+// contResolve——
+//   - 命中 → 返回绑定，调用方照旧 contPin（API key 产出的 id 在首个预留为 Codex
+//     时仍钉回原账号）；
+//   - 未命中（missing/expired）且首个预留 sel 是 Codex → (nil, nil)：不 410、
+//     hardContinuation=false，previous_response_id 留在请求里交给 SDK（Codex 不写
+//     续接绑定，它产出的 id 从来查不到）；续接 store 未装配同理（不可能有绑定）；
+//   - 未命中且首个预留不是 Codex → 照旧 410；Redis 不可用 → 照旧 503（无法判断
+//     是否存在绑定，fail-closed 不分凭据类型）。
+func (p *Proxy) resolveContinuationBinding(ctx context.Context, userID, groupID int64, protocolTag, prevID string, sel *scheduler.Selection, attempt scheduler.Attempt) (*continuation.Binding, *formatError) {
+	codexFirst := sel.CredentialType.IsCodex()
+	if codexFirst && p.cont == nil {
+		return nil, nil
+	}
+	b, ferr := p.contResolve(ctx, userID, groupID, protocolTag, prevID, attempt)
+	if ferr == errContNotFound && codexFirst {
+		return nil, nil
+	}
+	return b, ferr
 }
 
 // chatAttempt handleFormat 的 attempt 实现（覆盖 chat/responses/anthropic/
