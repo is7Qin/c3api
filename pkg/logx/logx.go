@@ -44,6 +44,26 @@ type Logger struct {
 	closer *sinkCloser
 }
 
+// encoderConfig 是日志字段契约的唯一来源（键名 + 编码器）。键名一改，/logs 的
+// 消费方与既有 grep/告警就会静默失效，所以键名单独钉在测试里（logx 内部用例）。
+//
+// StacktraceKey 与 zap 默认生产配置对齐（改前经 zap.Config 的默认值同样生效）：
+// 它只决定「有 stacktrace 时写到哪个键」，本包未启用 AddStacktrace（见 New），
+// 因此 Error 级当前不输出该字段——与改前的输出逐字节等价。要让 error 日志带上
+// 堆栈，在 New 里把 zap.AddStacktrace(zapcore.ErrorLevel) 加上即可（键已就位）。
+func encoderConfig() zapcore.EncoderConfig {
+	return zapcore.EncoderConfig{
+		MessageKey:    "msg",
+		LevelKey:      "level",
+		TimeKey:       "ts",
+		CallerKey:     "caller",
+		StacktraceKey: "stacktrace",
+		EncodeLevel:   zapcore.LowercaseLevelEncoder,
+		EncodeTime:    zapcore.ISO8601TimeEncoder,
+		EncodeCaller:  zapcore.ShortCallerEncoder,
+	}
+}
+
 // New 按 level 与 output 构建 JSON logger。output 为空等价于 "stdout"，
 // 其余按 zap 的 sink 语义解释（文件路径/URL）。
 //
@@ -61,16 +81,7 @@ func New(level, output string) (*Logger, error) {
 	if err != nil {
 		return nil, err
 	}
-	encCfg := zapcore.EncoderConfig{
-		MessageKey:   "msg",
-		LevelKey:     "level",
-		TimeKey:      "ts",
-		CallerKey:    "caller",
-		EncodeLevel:  zapcore.LowercaseLevelEncoder,
-		EncodeTime:   zapcore.ISO8601TimeEncoder,
-		EncodeCaller: zapcore.ShortCallerEncoder,
-	}
-	core := zapcore.NewCore(zapcore.NewJSONEncoder(encCfg), ws, lv)
+	core := zapcore.NewCore(zapcore.NewJSONEncoder(encoderConfig()), ws, lv)
 	// AddCallerSkip(1) 抵掉本包的 Debug/Info/Warn/Error 包装层，caller 仍是业务调用点。
 	z := zap.New(core, zap.AddCaller(), zap.AddCallerSkip(1))
 	return &Logger{l: z, closer: &sinkCloser{fn: closeFn}}, nil

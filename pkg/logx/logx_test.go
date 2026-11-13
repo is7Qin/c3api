@@ -163,8 +163,9 @@ func TestJSONShapeAndCallerSkip(t *testing.T) {
 		strings.HasSuffix(caller, "logx_test.go:"+strconv.Itoa(infoLine+1)),
 		"caller 必须是业务调用点 %d，实际 %q", infoLine+1, caller)
 
-	// Error 级：等价于旧实现（StacktraceKey 为空 ⇒ 不输出 stacktrace，
-	// 但 error 字段仍在）。
+	// Error 级：与改前等价——StacktraceKey 已对齐 zap 默认值，但本包不启用
+	// AddStacktrace，所以记录里没有 stacktrace 字段（键集是精确断言 ⇒ 一旦有人
+	// 打开 AddStacktrace 而没有同步本契约，这里立刻红）。error 字段仍在。
 	require.Equal(t, []string{"caller", "error", "level", "msg", "ts"}, keysOf(recs[1]))
 	require.Equal(t, "error", recs[1]["level"])
 	require.Equal(t, "boom", recs[1]["error"])
