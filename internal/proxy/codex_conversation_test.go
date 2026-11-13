@@ -10,6 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -192,4 +193,104 @@ func TestCodexConversationFailoverAcrossDomains(t *testing.T) {
 	require.True(t, mr.Exists(turnKey("d2")))
 	require.Equal(t, "ts-1", mr.HGet(turnKey("d2"), "ts"), "成功尝试的 turn-state 归 d2")
 	require.Empty(t, mr.HGet(turnKey("d1"), "ts"), "原域轮次记录不被写入 turn-state")
+}
+
+const convWSFrame1 = `{"type":"response.create","model":"gpt-4o","input":[{"role":"user","content":"ws question"}]}`
+
+// requireHandshakeMatchesFrame 握手 turn-metadata / 线程头与该连接首帧的 client_metadata
+// 一致（握手按首帧计算）。
+func requireHandshakeMatchesFrame(t *testing.T, id convIdentity) {
+	t.Helper()
+	require.NotEmpty(t, id.turnMeta, "握手带 x-codex-turn-metadata")
+	require.Equal(t, id.metaTurn, gjson.Get(id.turnMeta, "turn_id").String())
+	require.Equal(t, id.metaThread, gjson.Get(id.turnMeta, "thread_id").String())
+	require.Equal(t, id.threadHdr, id.metaThread)
+	require.Equal(t, "model="+id.model, id.routingHint, "routing-hint 按首帧模型")
+}
+
+// TestCodexWSConversationFirstFrame（C3-6）：WS 会话路径 WithConversation 的首帧与实际
+// 首帧逐字节相同（Send 复用 Dial 的计算，会话簿只 Prepare 一次）；故障转移换号且模型
+// 映射不同时，第二次尝试的握手与首帧都按第二个账号的映射计算。
+func TestCodexWSConversationFirstFrame(t *testing.T) {
+	hdr := http.Header{"Session-Id": {"ws-conv"}}
+	t.Run("single attempt", func(t *testing.T) {
+		book := newMiniredisBook(t, miniredis.RunT(t))
+		up, u := newConvUpstream(t)
+		p := newConvTestProxy(t, up.URL, convTestOpts{accs: []convTestAcc{{id: 10}}, book: book})
+		wsConvSession(t, p, hdr, convWSFrame1)
+
+		w := u.wire(t, 0)
+		require.True(t, w.ws)
+		id := w.identity(0)
+		requireHandshakeMatchesFrame(t, id)
+		require.Equal(t, "gpt-4o", id.model)
+		st := book.Stats()
+		require.Equal(t, int64(1), st.ConversationCacheMisses)
+		require.Zero(t, st.ConversationCacheHits, "首帧与 Dial 的 first 逐字节相同 → Send 不再 Prepare")
+		require.Equal(t, int64(1), st.Opens)
+	})
+
+	t.Run("failover with different mapping", func(t *testing.T) {
+		testHealthSink.reset()
+		book := newMiniredisBook(t, miniredis.RunT(t))
+		up, u := newConvUpstream(t, http.StatusTooManyRequests, http.StatusOK)
+		p := newConvTestProxy(t, up.URL, convTestOpts{
+			accs:  []convTestAcc{{id: 10, domain: "dd", mapped: "gpt-5.4"}, {id: 20, domain: "dd", mapped: "gpt-5.5"}},
+			order: []int64{10, 20},
+			book:  book,
+		})
+		wsConvSession(t, p, hdr, convWSFrame1)
+
+		require.Equal(t, 2, u.n())
+		first, second := u.wire(t, 0).identity(0), u.wire(t, 1).identity(0)
+		require.Equal(t, "Bearer "+convPAT(10), first.auth)
+		require.Equal(t, "model=gpt-5.4", first.routingHint, "首拨按账号 10 的映射")
+		require.Equal(t, "Bearer "+convPAT(20), second.auth)
+		require.Equal(t, "gpt-5.5", second.model, "第二个账号实际 Send 的首帧按其映射改写")
+		requireHandshakeMatchesFrame(t, second)
+		st := book.Stats()
+		require.Equal(t, int64(1), st.ConversationCacheMisses)
+		require.Equal(t, int64(1), st.ConversationCacheHits, "两次 Dial 各 Prepare 一次；Send 复用（首帧与拨号所用逐字节相同）")
+	})
+}
+
+// TestCodexWSSlotHandshakeHeaders（C3-7 WS）：无对话标识 → 槽位路径（会话簿不参与），
+// 握手带按首帧计算的 routing-hint 与 turn-metadata（WithFirstFrame）。
+func TestCodexWSSlotHandshakeHeaders(t *testing.T) {
+	book := newMiniredisBook(t, miniredis.RunT(t))
+	up, u := newConvUpstream(t)
+	p := newConvTestProxy(t, up.URL, convTestOpts{accs: []convTestAcc{{id: 10, mapped: "gpt-5.4"}}, book: book})
+	wsConvSession(t, p, nil, convWSFrame1)
+
+	id := u.wire(t, 0).identity(0)
+	requireHandshakeMatchesFrame(t, id)
+	require.Equal(t, "gpt-5.4", id.model)
+	require.True(t, isUUIDv7(id.metaThread))
+	require.Equal(t, convInstallation(10), id.metaInstallation)
+	require.Equal(t, codexsdk.ConversationStats{}, book.Stats(), "槽位路径不碰会话簿")
+}
+
+// TestCodexSlotPathStillWorks（C3-7 HTTP/WS）：会话簿已装配但无对话标识 → HTTP 与 WS
+// 都走槽位，请求为新形态（HTTP 体 zstd、client_metadata 由 SDK 合成）；K=1 时相邻
+// 请求复用同一槽位线程。
+func TestCodexSlotPathStillWorks(t *testing.T) {
+	book := newMiniredisBook(t, miniredis.RunT(t))
+	up, u := newConvUpstream(t)
+	p := newConvTestProxy(t, up.URL, convTestOpts{accs: []convTestAcc{{id: 10, maxConc: 1}}, book: book})
+
+	code, out := postConv(t, p, "ck-1", convNewTurn1, nil)
+	require.Equal(t, http.StatusOK, code, out)
+	wsConvSession(t, p, nil, convWSFrame1)
+	code, out = postConv(t, p, "ck-1", convFollowUp1, nil)
+	require.Equal(t, http.StatusOK, code, out)
+
+	h0, ws, h2 := u.wire(t, 0), u.wire(t, 1), u.wire(t, 2)
+	require.Equal(t, "zstd", h0.header.Get("Content-Encoding"), "HTTP 体由 SDK 整形并 zstd 压缩")
+	a := h0.identity(0)
+	require.True(t, isUUIDv7(a.metaThread))
+	require.Equal(t, a.threadHdr, a.metaThread)
+	require.Equal(t, a.metaThread, ws.identity(0).metaThread, "K=1：同一槽位线程")
+	require.Equal(t, a.metaThread, h2.identity(0).metaThread)
+	require.Empty(t, h2.identity(0).turnState, "槽位路径不带 turn-state")
+	require.Equal(t, codexsdk.ConversationStats{}, book.Stats(), "槽位路径不碰会话簿")
 }
