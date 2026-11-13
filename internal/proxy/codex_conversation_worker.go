@@ -10,6 +10,13 @@
 // 纪律：Flush 的批与预算由 SDK 管（每批 256、2s）；worker 只负责节拍与停机。同一
 // 时刻只有一个 Flush 在跑（节拍 goroutine 与 Close/FlushNow 由 flushMu 串行）。
 // 热路径（Prepare 命中）与本 worker 无交互，不新增锁与分配。
+//
+// 取消纪律：SDK 的 Flush 先把条目出队成批再 SaveTurns，失败批不回队——所以节拍
+// Flush 一律用 context.WithoutCancel（每批由 SDK 自带 2s 预算兜底），在途批次不会
+// 被停机信号或 Close 打断；节拍循环只在两次 Flush 之间检查退出。循环的退出信号只
+// 来自 Close（不随 StartAll 的信号 ctx 取消）：SIGTERM 后的 HTTP 排空窗口里仍在
+// 入队的轮次照常按节拍落盘，不全压给 Close 的最后一次 Flush（对齐 ContBindWorker
+// “批次 ctx 以 Background 为基”的先例）。
 package proxy
 
 import (
@@ -46,9 +53,11 @@ type ConversationWorker struct {
 	flushMu sync.Mutex
 
 	started   atomic.Bool
+	loopCtx   context.Context // 节拍循环的退出信号（只由 Close 取消）
 	cancel    context.CancelFunc
 	loopDone  chan struct{}
 	closeOnce sync.Once
+	closeErr  error
 }
 
 // NewConversationWorker 构造会话簿 worker；book 须非 nil，log 可 nil（静默）。
@@ -73,8 +82,9 @@ func (w *ConversationWorker) Start(ctx context.Context) error {
 	if !w.started.CompareAndSwap(false, true) {
 		return fmt.Errorf("codex-conversation worker: already started")
 	}
-	lctx, cancel := context.WithCancel(ctx)
-	w.cancel = cancel
+	// 剥离调用方取消（StartAll 的信号 ctx）、保留值：循环跑到 Close 为止。
+	lctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+	w.loopCtx, w.cancel = lctx, cancel
 	go func() {
 		defer close(w.loopDone)
 		worker.Loop(lctx, "codex-conversation", w.log, w.loop)
@@ -85,12 +95,14 @@ func (w *ConversationWorker) Start(ctx context.Context) error {
 func (w *ConversationWorker) loop(ctx context.Context) {
 	t := time.NewTicker(w.interval)
 	defer t.Stop()
+	// 在途 Flush 不受循环退出信号影响（见文件头“取消纪律”）。
+	fctx := context.WithoutCancel(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			w.flush(ctx)
+			w.flush(fctx)
 		}
 	}
 }
@@ -111,8 +123,11 @@ func (w *ConversationWorker) FlushNow(ctx context.Context) {
 	w.flush(ctx)
 }
 
-// Close 幂等：停节拍 → 等 loop 退出（受 ctx 预算约束）→ 在剩余预算内最后
-// Flush 一次。未 Start 也安全（直接最后一次 Flush）。
+// Close 幂等：停节拍（在途 Flush 跑完，不被打断）→ 等 loop 退出（受 ctx 预算
+// 约束）→ 在剩余预算内最后 Flush 一次。未 Start 也安全（直接最后一次 Flush）。
+// 预算耗尽（loop 未按时退出，或轮到最后一次 Flush 时预算已到期）返回包装了
+// ctx.Err() 的错误并 Warn——队列里可能还有未落盘的轮次，交给停机链报
+// “shutdown incomplete”，不静默 nil。重复调用返回首次结果。
 func (w *ConversationWorker) Close(ctx context.Context) error {
 	w.closeOnce.Do(func() {
 		if w.started.Load() {
@@ -120,18 +135,23 @@ func (w *ConversationWorker) Close(ctx context.Context) error {
 			select {
 			case <-w.loopDone:
 			case <-ctx.Done():
+				w.closeErr = fmt.Errorf("codex-conversation close: loop did not exit within budget: %w", ctx.Err())
 				if w.log != nil {
-					w.log.Warn("codex-conversation close: loop did not exit in time")
+					w.log.Warn("codex-conversation close: loop did not exit in time, final flush skipped", logx.Error(ctx.Err()))
 				}
 				return
 			}
 		}
-		if ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
+			w.closeErr = fmt.Errorf("codex-conversation close: budget exhausted before final flush: %w", err)
+			if w.log != nil {
+				w.log.Warn("codex-conversation close: budget exhausted, final flush skipped", logx.Error(err))
+			}
 			return
 		}
 		w.flush(ctx)
 	})
-	return nil
+	return w.closeErr
 }
 
 // conversationWorkerStats /ops/workers 观测快照（handler.StatsProvider 形态）。

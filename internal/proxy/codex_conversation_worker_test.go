@@ -90,7 +90,7 @@ func TestConversationWorkerFlushOnClose(t *testing.T) {
 }
 
 // TestConversationWorkerCloseWithoutStart 未 Start 的 Close 也最后 Flush 一次；
-// 预算已到期则不再 Flush（停机预算内语义）。
+// 预算已到期则不再 Flush（停机预算内语义），并返回预算错误（不静默 nil）。
 func TestConversationWorkerCloseWithoutStart(t *testing.T) {
 	store := newChanConvStore()
 	book := codexsdk.NewConversationBook(store)
@@ -99,12 +99,96 @@ func TestConversationWorkerCloseWithoutStart(t *testing.T) {
 	expired, cancel := context.WithCancel(context.Background())
 	cancel()
 	w0 := NewConversationWorker(book, nil, ConversationWorkerConfig{})
-	require.NoError(t, w0.Close(expired))
+	err := w0.Close(expired)
+	require.ErrorIs(t, err, context.Canceled, "预算耗尽跳过最后一次 Flush ⇒ 返回错误")
+	require.ErrorIs(t, w0.Close(context.Background()), context.Canceled, "幂等：重复调用返回首次结果")
 	require.Len(t, store.saved, 0, "预算已到期：不再 Flush")
 
 	w := NewConversationWorker(book, nil, ConversationWorkerConfig{})
 	require.NoError(t, w.Close(context.Background()))
 	require.Len(t, store.saved, 1, "未 Start 的 Close 仍最后 Flush 一次")
+}
+
+// blockingConvStore SaveTurns 阻塞到 release 关闭（或 ctx 结束）的存储替身：
+// entered 投递在途批次的 ctx（用例据此确认“Flush 已在 SaveTurns 里”）；ctx 先结束
+// 则按 SDK 存储契约返回 ctx.Err()（整批失败）。
+type blockingConvStore struct {
+	*chanConvStore
+	entered chan context.Context
+	release chan struct{}
+}
+
+func (s *blockingConvStore) SaveTurns(ctx context.Context, batch []codexsdk.TurnWrite) ([]codexsdk.TurnResult, error) {
+	s.entered <- ctx
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-s.release:
+	}
+	return s.chanConvStore.SaveTurns(ctx, batch)
+}
+
+// TestConversationWorkerCloseDuringSaveKeepsBatch 评审 B I1：节拍 Flush 已在
+// SaveTurns 中阻塞时调用 Close——在途批次的 ctx 不得被 Close 取消（SDK 失败批不回
+// 队，取消即丢），Close 等它落盘后返回；SaveTurnsFailures==0。
+func TestConversationWorkerCloseDuringSaveKeepsBatch(t *testing.T) {
+	store := &blockingConvStore{chanConvStore: newChanConvStore(), entered: make(chan context.Context, 1), release: make(chan struct{})}
+	book := codexsdk.NewConversationBook(store)
+	w := NewConversationWorker(book, nil, ConversationWorkerConfig{Interval: time.Millisecond})
+	require.NoError(t, w.Start(context.Background()))
+	key := enqueueFirstTurn(t, book, "conv-inflight")
+
+	var saveCtx context.Context
+	select {
+	case saveCtx = <-store.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("节拍未进入 SaveTurns")
+	}
+
+	closed := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		closed <- w.Close(ctx)
+	}()
+	<-w.loopCtx.Done() // 确定性屏障：Close 已发出停循环信号
+	require.NoError(t, saveCtx.Err(), "停循环不得取消在途批次的 ctx")
+	close(store.release)
+
+	select {
+	case err := <-closed:
+		require.NoError(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close 未在在途批次落盘后返回")
+	}
+	batch := <-store.saved
+	require.Len(t, batch, 1)
+	require.Equal(t, key, batch[0].Key, "在途批次落盘，不丢")
+	st := w.Stats().(conversationWorkerStats)
+	require.Zero(t, st.ConvSaveTurnsFailures)
+	require.Equal(t, int64(1), st.ConvSaveTurnsCalls)
+}
+
+// TestConversationWorkerTicksAfterStartCtxCanceled 评审 B I1 附带：StartAll 的信号
+// ctx 取消（SIGTERM）后节拍继续，HTTP 排空窗口里新入队的轮次仍按节拍落盘；只有
+// Close 停循环。
+func TestConversationWorkerTicksAfterStartCtxCanceled(t *testing.T) {
+	store := newChanConvStore()
+	book := codexsdk.NewConversationBook(store)
+	w := NewConversationWorker(book, nil, ConversationWorkerConfig{Interval: time.Millisecond})
+	sig, stop := context.WithCancel(context.Background())
+	require.NoError(t, w.Start(sig))
+	t.Cleanup(func() { _ = w.Close(context.Background()) })
+	stop()
+
+	key := enqueueFirstTurn(t, book, "conv-drain")
+	select {
+	case batch := <-store.saved:
+		require.Equal(t, key, batch[0].Key)
+	case <-time.After(5 * time.Second):
+		t.Fatal("信号 ctx 取消后节拍停止：排空窗口内入队的轮次未落盘")
+	}
+	require.NoError(t, w.loopCtx.Err(), "循环只由 Close 停止")
 }
 
 // TestConversationWorkerTickerFlush 节拍驱动 Flush（间隔可注入）：入队后由 ticker
