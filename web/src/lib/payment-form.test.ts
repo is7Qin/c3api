@@ -46,7 +46,7 @@ const emptyStrings = (config: Record<string, string>) =>
 
 describe('resolveFormState：元数据三态（P52）', () => {
   it('loading：不可打开、不可提交，且 config 里一个键都没有', () => {
-    const state = resolveFormState('loading', ACCOUNT, SCHEMA)
+    const state = resolveFormState({ metaState: 'loading', account: ACCOUNT, fields: SCHEMA })
     assert.equal(state.openable, false)
     assert.equal(state.submittable, false)
     assert.deepEqual(state.fields, [])
@@ -54,7 +54,7 @@ describe('resolveFormState：元数据三态（P52）', () => {
   })
 
   it('loading：账户已有值也不返回任何键（没有键就没有可提交的空串）', () => {
-    const state = resolveFormState('loading', ACCOUNT, SCHEMA)
+    const state = resolveFormState({ metaState: 'loading', account: ACCOUNT, fields: SCHEMA })
     for (const field of SCHEMA) {
       assert.equal(Object.hasOwn(state.config, field.name), false, `${field.name} 不得出现在 loading 态`)
     }
@@ -62,14 +62,14 @@ describe('resolveFormState：元数据三态（P52）', () => {
   })
 
   it('loading：新建态同样是空表（不是"每个字段都算改过"的初值）', () => {
-    const state = resolveFormState('loading', null, SCHEMA)
+    const state = resolveFormState({ metaState: 'loading', account: null, fields: SCHEMA })
     assert.equal(state.openable, false)
     assert.equal(state.submittable, false)
     assert.deepEqual(state.config, {})
   })
 
   it('failed：不可提交（列表照常可读由页面决定，纯函数这里一律关死）', () => {
-    const state = resolveFormState('failed', ACCOUNT, SCHEMA)
+    const state = resolveFormState({ metaState: 'failed', account: ACCOUNT, fields: SCHEMA })
     assert.equal(state.openable, false)
     assert.equal(state.submittable, false)
     assert.deepEqual(state.fields, [])
@@ -77,20 +77,20 @@ describe('resolveFormState：元数据三态（P52）', () => {
   })
 
   it('ready：fields 来自 schema，顺序原样（不排序）', () => {
-    const state = resolveFormState('ready', ACCOUNT, SCHEMA)
+    const state = resolveFormState({ metaState: 'ready', account: ACCOUNT, fields: SCHEMA })
     assert.equal(state.openable, true)
     assert.equal(state.submittable, true)
     assert.deepEqual(state.fields.map(f => f.name), SCHEMA.map(f => f.name))
   })
 
   it('ready：fields 是副本，调用方改写不会污染入参', () => {
-    const state = resolveFormState('ready', ACCOUNT, SCHEMA)
+    const state = resolveFormState({ metaState: 'ready', account: ACCOUNT, fields: SCHEMA })
     state.fields.pop()
     assert.equal(SCHEMA.length, 4)
   })
 
   it('ready：secret 字段回落 ***，非 secret 字段取账户值', () => {
-    const state = resolveFormState('ready', ACCOUNT, SCHEMA)
+    const state = resolveFormState({ metaState: 'ready', account: ACCOUNT, fields: SCHEMA })
     assert.deepEqual(state.config, {
       base_url: 'https://pay.example.com',
       pid: '1001',
@@ -102,34 +102,34 @@ describe('resolveFormState：元数据三态（P52）', () => {
 
   it('ready：secret 字段在账户里缺席或是空串时回落 ***（绝不留空串）', () => {
     for (const config of [{}, { private_key: '' }, { private_key: null }]) {
-      const state = resolveFormState('ready', { config }, SCHEMA)
+      const state = resolveFormState({ metaState: 'ready', account: { config }, fields: SCHEMA })
       assert.equal(state.config.private_key, SECRET_MASK, JSON.stringify(config))
     }
   })
 
   it('ready：非 secret 字段缺席/非字符串回落空串（与 secret 的 *** 语义不同）', () => {
-    const state = resolveFormState('ready', { config: { pid: 1001 } }, SCHEMA)
+    const state = resolveFormState({ metaState: 'ready', account: { config: { pid: 1001 } }, fields: SCHEMA })
     assert.equal(state.config.pid, '')
     assert.equal(state.config.base_url, '')
   })
 
   it('account === null（新建）：fields 来自 schema，初值全为空串（secret 也不预置 ***）', () => {
-    const state = resolveFormState('ready', null, SCHEMA)
+    const state = resolveFormState({ metaState: 'ready', account: null, fields: SCHEMA })
     assert.equal(state.openable, true)
     assert.deepEqual(state.fields.map(f => f.name), SCHEMA.map(f => f.name))
     assert.deepEqual(state.config, { base_url: '', pid: '', private_key: '', public_key: '' })
   })
 
   it('缺省第三参：ready 也只得到空字段表（不凭账户 config 猜字段）', () => {
-    const state = resolveFormState('ready', ACCOUNT)
+    const state = resolveFormState({ metaState: 'ready', account: ACCOUNT })
     assert.equal(state.openable, true)
     assert.deepEqual(state.fields, [])
     assert.deepEqual(state.config, {})
   })
 
   it('每次都是新对象（不存在被调用方共享改写的单例）', () => {
-    const a = resolveFormState('loading', ACCOUNT, SCHEMA)
-    const b = resolveFormState('loading', ACCOUNT, SCHEMA)
+    const a = resolveFormState({ metaState: 'loading', account: ACCOUNT, fields: SCHEMA })
+    const b = resolveFormState({ metaState: 'loading', account: ACCOUNT, fields: SCHEMA })
     assert.notEqual(a, b)
     assert.notEqual(a.config, b.config)
   })

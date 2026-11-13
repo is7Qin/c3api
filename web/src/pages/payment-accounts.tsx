@@ -374,7 +374,10 @@ function AccountDrawer({
   const capabilities = useMemo(() => meta?.capabilities ?? [], [meta])
 
   // 三态决策（P52）在这里一次算完；下面所有"能不能打开 / 能不能提交"都只读 form.*。
-  const form = useMemo(() => resolveFormState(metaState, account, schema), [metaState, account, schema])
+  const form = useMemo(
+    () => resolveFormState({ metaState, account, fields: schema }),
+    [metaState, account, schema],
+  )
 
   // 初值**只**来自 resolveFormState：绝不在 fields 还没到时自己拼一份"每个键都是空串"的
   // config——那会让每个字段都算改过，一次保存把密钥写成空串（N49，空串 ≠ `***`）。
@@ -448,7 +451,7 @@ function AccountDrawer({
       setRevision(view.config_revision)
       // 保存后把凭据表单回落到服务端**掩码视图**：密钥重新变回 `***`，明文不留在
       // 输入框里（下一次保存若没改就直接回传 `***` = 保持原值）。
-      if (!isNew) setConfig(resolveFormState('ready', view, schema).config)
+      if (!isNew) setConfig(resolveFormState({ metaState: 'ready', account: view, fields: schema }).config)
       toast.add({
         title: isNew ? t('paymentAccounts.created') : t('paymentAccounts.saved'),
         type: 'success',

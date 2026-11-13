@@ -47,6 +47,17 @@ export type FormState = {
 // 每次都给新对象：调用方拿到的 state 不允许被共享/改写。
 const closed = (): FormState => ({ openable: false, submittable: false, fields: [], config: {} })
 
+/** `resolveFormState` 的入参（**单个对象**：三个位置参数里有两个可以缺省，顺序靠记忆，
+ *  再加一个参数就会变成"第 4 个是什么来着"——具名入参让调用点自解释，也让将来加
+ *  `accountKey`/`provider` 之类不再动所有调用点）。 */
+export type FormStateInput = {
+  metaState: MetaState
+  account: AccountLike | null
+  /** 选中协议的 `config_schema.fields`（元数据 ready 时才有；缺省空表只用于
+   *  loading/failed 这类不关心字段的调用点）。 */
+  fields?: readonly ConfigField[]
+}
+
 /**
  * 元数据三态 × 账户 → 表单状态（P52 的唯一决策落点）。
  *
@@ -54,15 +65,8 @@ const closed = (): FormState => ({ openable: false, submittable: false, fields: 
  *   密钥被清空的根源（§18-3 / N49）：空串不会被 `***` 合并当成"保持原值"。
  * - `ready`：fields = schema（原样、不排序），config 按字段名从账户取值，secret 回落 `***`。
  * - `account === null`（新建）：fields/config 来自 schema 的空串初值（secret 也要用户手填）。
- *
- * @param fields 选中协议的 `config_schema.fields`（元数据 ready 时才有；缺省空表只用于
- *   loading/failed 这类不关心字段的调用点）。
  */
-export function resolveFormState(
-  metaState: MetaState,
-  account: AccountLike | null,
-  fields: readonly ConfigField[] = [],
-): FormState {
+export function resolveFormState({ metaState, account, fields = [] }: FormStateInput): FormState {
   if (metaState !== 'ready') return closed()
   const config: Record<string, string> = {}
   for (const f of fields) {
