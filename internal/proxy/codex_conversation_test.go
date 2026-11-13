@@ -5,12 +5,16 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
 	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
+
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 const (
@@ -293,4 +297,84 @@ func TestCodexSlotPathStillWorks(t *testing.T) {
 	require.Equal(t, a.metaThread, h2.identity(0).metaThread)
 	require.Empty(t, h2.identity(0).turnState, "槽位路径不带 turn-state")
 	require.Equal(t, codexsdk.ConversationStats{}, book.Stats(), "槽位路径不碰会话簿")
+}
+
+// TestCodexClientIdentityNeverEgress（C3-12）：客户端头与体里的对话标识、
+// client_metadata、prompt_cache_key 哨兵不出现在假上游收到的任何字节里（头 + zstd
+// 解压后的 HTTP 体 + WS 帧）。三种传输（HTTP→HTTP、HTTP→WS、WS→WS）+ 协议转换车道，
+// 会话路径与槽位路径（会话簿 nil）各跑一遍。
+func TestCodexClientIdentityNeverEgress(t *testing.T) {
+	sentinels := []string{"SENTINEL-HDR-THREAD", "SENTINEL-HDR-SESS", "SENTINEL-HDR-XSESS",
+		"SENTINEL-PCK", "SENTINEL-CONV", "SENTINEL-SID", "SENTINEL-CM"}
+	hdr := map[string]string{"Thread-Id": sentinels[0], "Session-Id": sentinels[1], "X-Session-Id": sentinels[2]}
+	bodyKeys := `"prompt_cache_key":"SENTINEL-PCK","conversation_id":"SENTINEL-CONV","session_id":"SENTINEL-SID","client_metadata":{"k":"SENTINEL-CM"}`
+	respBody := `{"model":"gpt-4o","stream":true,` + bodyKeys + `,"input":[{"role":"user","content":"hi"}]}`
+	wsFrame := `{"type":"response.create","model":"gpt-4o",` + bodyKeys + `,"input":[{"role":"user","content":"hi"}]}`
+	chatBody := `{"model":"gpt-4o","stream":true,` + bodyKeys + `,"messages":[{"role":"user","content":"hi"}]}`
+
+	lanes := []struct {
+		name      string
+		transport domain.CodexResponsesTransport
+		run       func(t *testing.T, p *Proxy)
+	}{
+		{"http to http", domain.CodexResponsesTransportHTTP, func(t *testing.T, p *Proxy) {
+			code, out := postConv(t, p, "ck-1", respBody, hdr)
+			require.Equal(t, http.StatusOK, code, out)
+		}},
+		{"http to ws", domain.CodexResponsesTransportWS, func(t *testing.T, p *Proxy) {
+			code, out := postConv(t, p, "ck-1", respBody, hdr)
+			require.Equal(t, http.StatusOK, code, out)
+		}},
+		{"ws to ws", domain.CodexResponsesTransportHTTP, func(t *testing.T, p *Proxy) {
+			h := http.Header{}
+			for k, v := range hdr {
+				h.Set(k, v)
+			}
+			wsConvSession(t, p, h, wsFrame)
+		}},
+		{"converted chat to resp", domain.CodexResponsesTransportHTTP, func(t *testing.T, p *Proxy) {
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatBody))
+			req.Header.Set("Authorization", "Bearer ck-1")
+			req.Header.Set("Content-Type", "application/json")
+			for k, v := range hdr {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+			AIRouter(p).ServeHTTP(rec, req)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}},
+	}
+	for _, lane := range lanes {
+		for _, withBook := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s book=%v", lane.name, withBook), func(t *testing.T) {
+				var book *codexsdk.ConversationBook
+				if withBook {
+					book = newMiniredisBook(t, miniredis.RunT(t))
+				}
+				up, u := newConvUpstream(t)
+				p := newConvTestProxy(t, up.URL, convTestOpts{
+					accs: []convTestAcc{{id: 10}}, transport: lane.transport, book: book,
+					pcs: []domain.ProtocolConvert{domain.ProtocolConvertChatToResp},
+				})
+				lane.run(t, p)
+				require.Equal(t, 1, u.n())
+				w := u.wire(t, 0)
+				require.Equal(t, lane.transport == domain.CodexResponsesTransportWS || lane.name == "ws to ws", w.ws)
+				if w.ws {
+					require.NotEmpty(t, w.frames, "上游收到请求帧")
+				} else {
+					require.True(t, gjson.ValidBytes(w.body), "HTTP 体已解压")
+				}
+				wire := u.allBytes()
+				require.Contains(t, wire, "Bearer "+convPAT(10), "扫描面含头")
+				require.Contains(t, wire, `"client_metadata"`, "扫描面含解压后的体/帧")
+				for _, s := range sentinels {
+					require.NotContains(t, wire, s, "哨兵出网")
+				}
+				if withBook {
+					require.Equal(t, int64(1), book.Stats().Opens, "带对话标识 → 会话路径（转换车道用原始头体）")
+				}
+			})
+		}
+	}
 }
