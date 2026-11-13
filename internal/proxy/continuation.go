@@ -225,6 +225,7 @@ func contFrameID(frame []byte) string {
 // wsContFrame 一条被闸门扣住的上游 WS 帧（typ + 模型改写后的载荷）：首个
 // response id 的 Redis ACK 前不得转发客户端；ACK 后按序放出。
 type wsContFrame struct {
-	typ   websocket.MessageType
-	frame []byte
+	typ      websocket.MessageType
+	frame    []byte
+	errFrame bool // 上游错误载荷帧：转发但不计业务交付（与 ws_relay 的 businessN 同口径）
 }

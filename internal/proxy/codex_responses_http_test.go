@@ -1226,10 +1226,13 @@ func TestCodexResponsesStreamClientDisconnect(t *testing.T) {
 	require.Equal(t, domain.StatusActive, ri.Status, "客户端断开不 MarkResult（上游无错）")
 	require.Zero(t, ri.Concurrency, "abort 收尾释放并发槽")
 	require.NoError(t, p.rec.Close(context.Background()))
+	waitStoreLogs(t, store, 1) // 零 usage 行；errlog worker 20ms 周期落袋
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Len(t, store.logs, 1)
+	require.Len(t, store.logs, 1, "零业务帧 ⇒ 只落 err_logs 一行")
 	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType, "客户端断开 → 200 ErrAbort（记录不丢）")
+	require.NotNil(t, store.logs[0].CommitState)
+	require.Equal(t, "not_sent", *store.logs[0].CommitState, "首帧写失败、零业务帧 ⇒ not_sent")
 	require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
 	require.Equal(t, domain.FormatOpenAIResponses, store.logs[0].Format)
 }

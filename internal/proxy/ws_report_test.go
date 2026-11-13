@@ -65,7 +65,7 @@ func TestWSOutcome_clientAbortIsResponseStarted(t *testing.T) {
 func TestWSOutcome_upstreamErrorIsSentAmbiguous(t *testing.T) {
 	sel := selForWSReport()
 	base := wsDispatchedBase(sel, "gpt-4o", time.Now())
-	out := wsOutcomeForUpstreamError(base, usageTuple{it: 1}, nil)
+	out := wsOutcomeForUpstreamError(base, true, usageTuple{it: 1}, nil)
 	require.NoError(t, out.Validate())
 	require.Equal(t, CommitSentAmbiguous, out.Commit)
 	require.Equal(t, ResultFailed, out.Result)
@@ -75,10 +75,10 @@ func TestWSOutcome_upstreamErrorIsSentAmbiguous(t *testing.T) {
 	require.False(t, CanRetry(CallerResponsesWS, out))
 
 	// 一帧业务字节都没写出去：类型层仍只能是 sent_ambiguous（Validate 要求
-	// BusinessFrameSent），但**日志列**按真实下行计数落 upstream_responded ⇒
-	// 不计费（§5.2(4) 折叠口径）。
-	require.Equal(t, CommitUpstreamResponded, commitStateOfWSDelivery(ResultFailed, false))
-	require.Equal(t, CommitSentAmbiguous, commitStateOfWSDelivery(out.Result, out.BusinessFrameSent))
+	// BusinessFrameSent=true，属占位编码），但**持久化列**按真实下行计数折算
+	// upstream_responded ⇒ 不计费（commitStateFor 单一真值表）。
+	require.Equal(t, CommitUpstreamResponded, commitStateFor(false, false, false))
+	require.Equal(t, CommitSentAmbiguous, commitStateFor(true, false, false))
 }
 
 func TestWSOutcome_notSentNetworkIsRetryable(t *testing.T) {

@@ -156,10 +156,12 @@ func TestTerminalOutcomesAllMappings(t *testing.T) {
 			require.NoError(t, p.errlog.Close(context.Background()))
 			store.mu.Lock()
 			defer store.mu.Unlock()
-			require.Len(t, store.logs, 2, "499 双轨")
+			require.Len(t, store.logs, 1, "499 只进 err_logs：零业务帧 ⇒ not_sent，不可计费（用户裁定）")
 			for i, l := range store.logs {
 				require.Equal(t, 499, l.StatusCode, "行 %d 499", i)
 				require.Equal(t, domain.ErrAbort, l.ErrorType)
+				require.NotNil(t, l.CommitState, "行 %d 必须落交付态", i)
+				require.Equal(t, "not_sent", *l.CommitState, "行 %d 零业务帧 ⇒ not_sent", i)
 				require.Equal(t, "gpt-4o", l.Model)
 				require.Equal(t, tc.wantMapped, l.MappedModel, "行 %d MappedModel 必须等于当轮用量身份", i)
 			}

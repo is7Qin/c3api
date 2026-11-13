@@ -87,6 +87,9 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			}
 			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5）。
 			f := streamFailureOf(ctx, exit, err)
+			// 交付事实快照（必须在补写 SSE error 帧之前）：补写失败会把 WriteFailed
+			// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
+			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit != streamExitClientCancel && out.Committed() {
 				writeClientStreamError(out, domain.FormatAnthropic, err)
 			}
@@ -94,6 +97,9 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			oc := base
 			oc.HTTPStatus = 0
 			oc.Terminal = true
+			// 类型层占位编码（Validate：failed+status 0+terminal 的 sent_ambiguous 要求
+			// BusinessFrameSent=true）。真实交付事实由出口的 sserelay.Output 另算，
+			// 持久化列只读 Output 事实，不读本字段。
 			oc.BusinessFrameSent = true
 			oc.Commit = CommitSentAmbiguous
 			if exit == streamExitClientCancel {
@@ -108,7 +114,9 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			p.observeDispatchOutcome(ctx, oc, streamFailureHealth(f))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatAnthropic, logStatusForFailure(f), f.ET, usageTuple{it: it, ot: ot, tt: it + ot, cr: cr, cc: cc}, start))
 			l.ErrorMessage = f.message()
-			p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
+			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，
+			// clientCancel 由出口归因派生（0a/0c）。
+			p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))
 			return 0, nil, true, nil
 		}
 		tt = it + ot

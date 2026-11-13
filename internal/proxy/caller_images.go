@@ -124,19 +124,27 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			}
 			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5）。
 			f := streamFailureOf(ctx, exit, err)
+			// 交付事实快照（必须在补写 SSE error 帧之前）：补写失败会把 WriteFailed
+			// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
+			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit == streamExitClientCancel {
 				// 图像流客户端断开不触发健康惩罚；保留已采 usage。
 				outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultClientCancel, 0, CommitResponseStarted, ttft != nil, true, false))
 				p.observeDispatchOutcome(ctx, outcome, nil)
 				l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, logStatusForFailure(f), f.ET, u, start))
 				l.ErrorMessage = f.message()
-				p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
+				// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，
+				// clientCancel 由出口归因派生（0a）。
+				p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))
 				return 0, nil, true, nil
 			}
 			if exit == streamExitCommitted {
 				writeClientStreamError(out, domain.FormatOpenAIImages, err)
 			}
 			code := statusOf(err)
+			// 类型层占位编码（Validate：failed+status 0 的 sent_ambiguous 要求
+			// BusinessFrameSent=true；非 0 状态只能 upstream_responded）。真实交付
+			// 事实由出口的 sserelay.Output 另算，持久化列不读本字段。
 			commit := CommitUpstreamResponded
 			business := false
 			if code == 0 {
@@ -147,7 +155,9 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			p.observeDispatchOutcome(ctx, outcome, streamFailureHealth(f))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, logStatusForFailure(f), f.ET, u, start))
 			l.ErrorMessage = f.message()
-			p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
+			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，
+			// clientCancel 由出口归因派生（0b/0c）。
+			p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))
 			return 0, nil, true, nil
 		}
 		outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultSuccess, 200, CommitResponseStarted, true, true, false))

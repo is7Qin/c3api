@@ -391,6 +391,8 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		case streamExitClientCancel:
 			// 0a 客户端断开：上游已消费请求（成功），仍须记录用量（成功请求丢日志
 			// 防线）；按 abort 收尾不 MarkResult、不投递健康事件。
+			// 交付事实快照：本分支不补写 error 帧，仍按统一时点先取事实。
+			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 			o.Result = ResultClientCancel
 			o.HTTPStatus = 0
@@ -398,7 +400,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			o.BusinessFrameSent = true
 			o.Terminal = true
 			emitCodexOutcome(ctx, p, sel, o, nil)
-			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrAbort, ut, start)), commitStateOfAbort(out)))
+			p.finish(sel, withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, http.StatusOK, domain.ErrAbort, ut, start)), commitStateFor(framesSent, writeFailed, true)))
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
@@ -409,9 +411,13 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		}
 		// 已提交 / 写失败：终态归因只在这里算一次（§3 序 0b–0c + 1–5）。
 		f := streamFailureOf(ctx, exit, err)
+		// 交付事实快照（必须在补写 SSE error 帧之前）：补写失败会把 WriteFailed
+		// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
+		framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 		if f.ET == domain.ErrAbort {
 			// 0c 客户端侧结束（下行写不进去）：abort 行 + 不投递健康事件。
-			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, commitStateOfAbort(out), err)
+			// clientCancel 由归因派生（序 0c ⇒ abort）。
+			p.recordStreamAbort(ctx, reqID, groupID, start, sel, reqModel, ut, commitStateFor(framesSent, writeFailed, clientEnded(exit, f)), err)
 			return 0, nil, true, nil
 		}
 		if out.Committed() {
@@ -420,16 +426,16 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 		o.Result = ResultFailed
 		o.HTTPStatus = 0
-		// 类型层交付态受 AttemptOutcome.Validate 约束（status 0 只允许
-		// not_sent/sent_ambiguous/response_started/client_committed），故这里记
-		// sent_ambiguous；日志列落真实折叠值（commitStateOfFailure）。
+		// 类型层占位编码（Validate：failed+status 0+terminal 的 sent_ambiguous 要求
+		// BusinessFrameSent=true）。真实交付事实由 commitStateFor 从 out 的写出事实
+		// 另算，持久化列不读本字段——二者不得互相喂值。
 		o.Commit = CommitSentAmbiguous
-		o.BusinessFrameSent = out.BusinessFrameSent()
+		o.BusinessFrameSent = true
 		o.Terminal = true
 		emitCodexOutcome(ctx, p, sel, o, streamFailureHealth(f))
 		l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, f.Status, f.ET, ut, start))
 		l.ErrorMessage = f.message()
-		p.finish(sel, withCommit(l, commitStateOfFailure(out)))
+		p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))
 		return 0, nil, true, nil
 	}
 	o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))

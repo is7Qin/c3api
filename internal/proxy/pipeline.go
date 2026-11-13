@@ -378,7 +378,9 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 		// WS 修复性声明（gate Minor 2c）：WS 拨号/首帧转发阶段断连同样归
 		// 此分支（现状记连接级错误冷却无辜账号——统一 499 语义不冷却）。
 		if code == 0 && r.Context().Err() != nil {
-			l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start)), CommitSentAmbiguous)
+			// 交付事实（唯一折算入口）：首字节前客户端断连——一帧业务帧都没写、
+			// 也没有写失败，clientCancel=true ⇒ not_sent（用户裁定：零业务帧不可计费）。
+			l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start)), commitStateFor(false, false, true))
 			msg := "client closed request before upstream response"
 			l.ErrorMessage = &msg
 			p.finish(sel, l)

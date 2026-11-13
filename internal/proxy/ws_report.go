@@ -109,23 +109,26 @@ func wsOutcomeForClientAbort(base AttemptOutcome, sent bool, u usageTuple, ttft 
 	return o
 }
 
-// wsOutcomeForUpstreamError 上游侧失败的观测事实。
+// wsOutcomeForUpstreamError 上游侧失败的观测事实。sent 是 relayWS 的真实业务帧
+// 计数（businessN > 0），代表本次尝试是否真的下发过业务帧。
 //
-// ⚠ 结构性限制（spec §4）：AttemptOutcome.Validate 对「failed + status 0 + terminal」
-// 只允许 sent_ambiguous / response_started / client_committed，且这三者都**要求**
-// BusinessFrameSent=true —— 「上游已响应但一帧业务字节都没发出去」在类型上无法
-// 表达。因此类型层保持 sent_ambiguous + BusinessFrameSent=true（观测与重试矩阵的
-// 既有语义），**日志列的交付态**由 commitStateOfWSDelivery 按真实下行计数折算
-// （一帧未写 ⇒ upstream_responded ⇒ 不计费）。
-func wsOutcomeForUpstreamError(base AttemptOutcome, u usageTuple, ttft *int64) AttemptOutcome {
+// ⚠ 类型层占位编码（spec §4，Validate 不改）：AttemptOutcome.Validate 对
+// 「failed + status 0 + terminal」只允许 sent_ambiguous / response_started /
+// client_committed，且 sent_ambiguous 也要求 BusinessFrameSent=true —— 「上游
+// 已响应但一帧业务字节都没发出去」在类型上无法表达。因此这里保留
+// sent_ambiguous + BusinessFrameSent=true 作为**类型层编码**（观测与重试矩阵的
+// 既有语义），真实交付事实 sent 只交给 reportWSOutcome → commitStateFor 落
+// commit_state；持久化列不读 outcome.BusinessFrameSent。
+func wsOutcomeForUpstreamError(base AttemptOutcome, sent bool, u usageTuple, ttft *int64) AttemptOutcome {
 	o := base
 	o.Result = ResultFailed
 	o.HTTPStatus = 0
 	o.Commit = CommitSentAmbiguous
-	o.BusinessFrameSent = true // 已见业务帧但上游异常，需冷却
+	o.BusinessFrameSent = true // 类型层占位；真实事实 = 形参 sent（持久化另算）
 	o.Terminal = true
 	o.Timing.TTFTMS = ttft
 	o.Usage = wsUsageFromTuple(u)
+	_ = sent
 	return o
 }
 
@@ -179,7 +182,7 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 	return o
 }
 
-func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64, cause error) error {
+func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64, sent, writeFailed bool, cause error) error {
 	if err := outcome.Validate(); err != nil {
 		return err
 	}
@@ -202,7 +205,7 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 		// 客户端侧结束：200 + abort（未写出任何业务帧则 499），不投递健康事件。
 		status = 200
 		et = domain.ErrAbort
-		if !outcome.BusinessFrameSent {
+		if !sent {
 			status = statusClientClosedRequest
 		}
 	case ResultFailed:
@@ -222,7 +225,15 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 	// Single owner observation (quality + bounded flow) + health marking; the
 	// finish owns the lease release exactly once.
 	p.observeDispatchOutcome(ctx, outcome, health)
-	commit := commitStateOfWSDelivery(outcome.Result, outcome.BusinessFrameSent)
+	// 交付事实 → 持久化 commit_state（唯一折算入口）：sent 是 relayWS 在**补写
+	// 终态帧之前**快照的业务帧计数（businessN>0），writeFailed 是补写前的下行写
+	// 失败事实（网关终态错误帧/关闭帧不计业务交付），clientCancel 来自 Result。
+	// 成功行不在失败真值表内（error_type=none 恒可计费），沿用 outcome 已确认的
+	// 交付态（response_started）。
+	commit := outcome.Commit
+	if outcome.Result != ResultSuccess {
+		commit = commitStateFor(sent, writeFailed, outcome.Result == ResultClientCancel)
+	}
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, u, start)), commit)
 	// 中止/失败行必须留因（cause 为分类阶段快照的真实错误：上游关闭帧、上游流内
 	// 错误载荷、读写网络错误、context.Canceled）。成功行 cause 恒 nil ⇒ NULL。

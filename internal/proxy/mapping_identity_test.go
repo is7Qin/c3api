@@ -195,10 +195,12 @@ func TestBillingModelTerminalOutcomes(t *testing.T) {
 		require.NoError(t, p.errlog.Close(context.Background()))
 		store.mu.Lock()
 		defer store.mu.Unlock()
-		require.Len(t, store.logs, 2, "499 abort 双轨：usage_logs + err_logs 各一行")
+		require.Len(t, store.logs, 1, "499 abort 只进 err_logs：零业务帧 ⇒ not_sent，不可计费（用户裁定）")
 		for i, l := range store.logs {
 			require.Equal(t, statusClientClosedRequest, l.StatusCode, "行 %d：首字节前断连记 499", i)
 			require.Equal(t, domain.ErrAbort, l.ErrorType, "行 %d：断连记 abort", i)
+			require.NotNil(t, l.CommitState, "行 %d：必须落交付态", i)
+			require.Equal(t, "not_sent", *l.CommitState, "行 %d：零业务帧 ⇒ not_sent", i)
 			require.Equal(t, "gpt-4o", l.Model, "行 %d：Model = 客户端请求模型", i)
 			require.Equal(t, "", l.MappedModel, "行 %d：implicit 499 行不记录 MappedModel", i)
 		}

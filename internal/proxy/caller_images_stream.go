@@ -134,6 +134,9 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 		exit := classifyStreamExit(r.Context(), out, genErr, usageObs, ttft)
 		// 归因只算一次（§3 序 0a–0c + 1–5）：各分支只消费结论。
 		f := streamFailureOf(r.Context(), exit, genErr)
+		// 交付事实快照（必须在补写 SSE error 帧之前）：补写失败会把 WriteFailed
+		// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
+		framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 		switch exit {
 		case streamExitClientCancel:
 			// 客户端断开：已收集张数照常计费落账，不 MarkResult（不可转移）。
@@ -141,7 +144,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			p.observeDispatchOutcome(ctx, outcome, nil)
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, logStatusForFailure(f), f.ET, u, start))
 			l.ErrorMessage = f.message()
-			p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
+			p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
@@ -158,8 +161,9 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 				writeClientStreamError(out, domain.FormatOpenAIImages, genErr)
 			}
 			code := statusOf(genErr)
-			// 类型层交付态（AttemptOutcome.Validate）：非 0 状态只能用 upstream_responded，
-			// 0 状态只能用 sent_ambiguous——真实折叠值走日志列（commitStateOfFailure）。
+			// 类型层占位编码（Validate：failed+status 0 的 sent_ambiguous 要求
+			// BusinessFrameSent=true；非 0 状态只能 upstream_responded）。真实交付
+			// 事实由出口的 sserelay.Output 另算，持久化列不读本字段。
 			outCommit := CommitSentAmbiguous
 			if code != 0 {
 				outCommit = CommitUpstreamResponded
@@ -168,7 +172,9 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			p.observeDispatchOutcome(ctx, outcome, streamFailureHealth(f))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, logStatusForFailure(f), f.ET, u, start))
 			l.ErrorMessage = f.message()
-			p.finish(sel, withCommit(l, commitStateOfFailure(out)))
+			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，
+			// clientCancel 由出口归因派生（0b/0c）。
+			p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))
 			return 0, nil, true, nil
 		}
 	}

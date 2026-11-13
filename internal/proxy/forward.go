@@ -30,7 +30,6 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/usage"
-	"github.com/is7qin/c3api/pkg/sserelay"
 	"github.com/is7qin/c3api/pkg/aiclient"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -498,14 +497,34 @@ func commitStateOf(c CommitState) *string {
 	return &s
 }
 
-// commitStateForExit 日志行的交付事实（出口判定的唯一折算入口）：0a/0c 客户端侧
-// 结束走 abort 口径（§5.2「沿用今天 abort 对同状态的口径」），其余（0b + 序 1–5）
-// 按真实写出事实折算。
-func commitStateForExit(exit streamExitKind, out *sserelay.Output) CommitState {
-	if exit == streamExitClientCancel || exit == streamExitWriteFailed {
-		return commitStateOfAbort(out)
+// commitStateFor 一次尝试的交付事实 → 持久化 commit_state（spec §5.2/§5.3）。
+// 三个入参都是**真实事实**：framesSent 来自 sserelay.Output.BusinessFrameSent()
+// 或 relayWS 的 businessN>0；writeFailed 来自 Output.WriteFailed() / WS 出口的
+// 下行写失败事实；clientCancel 表示「客户端侧结束本次尝试」（ResultClientCancel
+// 或序 0a/0c）。这是**唯一**折算入口——任何出口不得再自建第二套分支。
+//
+//	已写业务帧 + 写失败 / 非客户端结束 ⇒ sent_ambiguous（已交付，去向不确定）
+//	已写业务帧 + 客户端结束（链路未断） ⇒ response_started
+//	零业务帧 + 客户端结束             ⇒ not_sent（没发 ⇒ 不可计费）
+//	零业务帧 + 非客户端结束           ⇒ upstream_responded（发了没答 ⇒ 不可计费）
+func commitStateFor(framesSent, writeFailed, clientCancel bool) CommitState {
+	if !framesSent {
+		if clientCancel {
+			return CommitNotSent
+		}
+		return CommitUpstreamResponded
 	}
-	return commitStateOfFailure(out)
+	if writeFailed || !clientCancel {
+		return CommitSentAmbiguous
+	}
+	return CommitResponseStarted
+}
+
+// clientEnded 把出口判定 + 归因结论折算成 commitStateFor 的 clientCancel 入参：
+// 序 0a（直接取消）与序 0c（下游写不进去，归因 abort）都是客户端侧结束本次尝试；
+// 序 0b（网关超时）与序 1–5（上游失败）不算。派生只做这一次，调用点不重复分支。
+func clientEnded(exit streamExitKind, f streamFailure) bool {
+	return exit == streamExitClientCancel || f.ET == domain.ErrAbort
 }
 
 // logStatusForFailure 失败行的 status_code：客户端侧结束仍记 200（响应头早已提交，
@@ -515,49 +534,6 @@ func logStatusForFailure(f streamFailure) int {
 		return http.StatusOK
 	}
 	return f.Status
-}
-
-// commitStateOfAbort 客户端侧结束（序 0a/0c）的交付事实：§5.2 明确「沿用今天
-// abort 对同状态的口径」——这类行仍然计费（半异常计费语义），钱的归属只由本列
-// 决定，不由 error_type 决定。写过业务帧 ⇒ response_started；一帧业务字节都没
-// 写出去 ⇒ sent_ambiguous（交付不确定，仍按今天 abort 的口径计入放行侧）。
-func commitStateOfAbort(out *sserelay.Output) CommitState {
-	if out.BusinessFrameSent() {
-		return CommitResponseStarted
-	}
-	return CommitSentAmbiguous
-}
-
-// commitStateOfWSDelivery WS 下行的交付事实折算（§5.3：事实源是 relayWS 的真实
-// 下行帧计数——网关生成的错误帧/关闭帧/ping 不计业务交付）。客户端取消沿用今天
-// abort 的可计费口径（§5.2），故写没写过业务帧都落在可计费侧。
-func commitStateOfWSDelivery(result AttemptResult, sent bool) CommitState {
-	if result == ResultClientCancel {
-		if sent {
-			return CommitResponseStarted
-		}
-		return CommitSentAmbiguous
-	}
-	if sent {
-		return CommitSentAmbiguous
-	}
-	return CommitUpstreamResponded
-}
-
-// commitStateOfFailure 已提交流失败出口的交付事实折算（spec §5.2「折算规则」/
-// §5.3）：事实源是 sserelay.Output 的真实写出计数，**不是**出口自己构造的常量。
-//
-//	写过业务帧（网关下行写成功）  ⇒ sent_ambiguous（已写、但断链后去向不确定）
-//	一帧业务字节都没写出 + 曾写失败 ⇒ sent_ambiguous（沿用今天 abort 对同状态的
-//	                                计费口径——本轮不改钱；「没发」由未提交车道
-//	                                记 not_sent）
-//	一帧业务字节都没写出            ⇒ upstream_responded（上游答了失败、我们什么
-//	                                都没发出去 ⇒ 不可计费）
-func commitStateOfFailure(out *sserelay.Output) CommitState {
-	if out.BusinessFrameSent() || out.WriteFailed() {
-		return CommitSentAmbiguous
-	}
-	return CommitUpstreamResponded
 }
 
 // withCommit 给已构建的日志行补交付事实（出口事实源 = AttemptOutcome.Commit /

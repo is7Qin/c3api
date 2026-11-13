@@ -128,9 +128,12 @@ func TestInboundWSCommittedFailureCarriesErrorMessage(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows), "rows=%+v", rows)
+	require.Equal(t, logTracks{usage: 0, errs: 1, abort: 0}, inbandTracks(rows),
+		"零业务帧 + 上游错误 ⇒ err_logs 1 行、usage_logs 0 行（upstream_responded 不可计费）；rows=%+v", rows)
 
 	row := failureRow(t, rows)
+	require.NotNil(t, row.CommitState)
+	require.Equal(t, "upstream_responded", *row.CommitState, "错误帧不是业务交付 ⇒ 零业务帧")
 	require.Equal(t, domain.Err5xx, row.ErrorType, "流内错误载荷 ⇒ 5xx（序 1）")
 	require.NotNil(t, row.ErrorMessage, "失败行必须带错误文本")
 	require.Contains(t, *row.ErrorMessage, inbandOverloadMsg,

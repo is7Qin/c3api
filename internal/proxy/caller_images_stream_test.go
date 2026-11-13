@@ -561,8 +561,18 @@ func TestStreamImageZeroEventCommitFlushFails(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 0, code)
 	require.True(t, handled)
-	l := collectImageLogs(t, p, store)
+	// 零业务帧 + 写失败 + 客户端侧结束 ⇒ not_sent：只留错误明细，不计费（用户裁定）。
+	require.NoError(t, p.rec.Close(context.Background()))
+	store.mu.Lock()
+	require.Empty(t, store.logs, "零业务帧 ⇒ usage_logs 0 行")
+	store.mu.Unlock()
+	require.NoError(t, p.errlog.Close(context.Background()))
+	rows := storeRows(store)
+	require.Len(t, rows, 1, "失败明细仍进 err_logs")
+	l := rows[0]
 	require.Equal(t, domain.ErrAbort, l.ErrorType, "Commit/FlushError 失败不得记成功")
+	require.NotNil(t, l.CommitState)
+	require.Equal(t, "not_sent", *l.CommitState, "零业务帧 ⇒ not_sent，不可计费")
 	require.Equal(t, int64(0), l.CallCount)
 }
 

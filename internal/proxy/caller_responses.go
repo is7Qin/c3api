@@ -109,6 +109,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			}
 			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5），出口只提供事实。
 			f := streamFailureOf(ctx, exit, err)
+			// 交付事实快照（必须在补写 SSE error 帧之前）：补写失败会把 WriteFailed
+			// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
+			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit != streamExitClientCancel && out.Committed() {
 				writeClientStreamError(out, domain.FormatOpenAIResponses, err)
 			}
@@ -130,7 +133,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			p.observeDispatchOutcome(ctx, oc, streamFailureHealth(f))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, logStatusForFailure(f), f.ET, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start))
 			l.ErrorMessage = f.message()
-			p.finish(sel, withCommit(l, commitStateForExit(exit, out)))
+			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，
+			// clientCancel 由出口归因派生（0a/0c）。
+			p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))
 			return 0, nil, true, nil
 		}
 		oc := base

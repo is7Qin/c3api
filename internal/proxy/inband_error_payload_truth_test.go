@@ -542,9 +542,11 @@ func TestInbandS6InboundWSErrorFrameIs5xx(t *testing.T) {
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure) // 上游确实 1000 关闭 ⇒ 不虚构 1011
 
 	rows := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 0}, inbandTracks(rows),
-		"入站 WS 流内错误载荷记 5xx：usage_logs 恰 1 行 + err_logs 恰 1 行；rows=%+v", rows)
+	require.Equal(t, logTracks{usage: 0, errs: 1, abort: 0}, inbandTracks(rows),
+		"零业务帧 + 上游错误帧 ⇒ err_logs 1 行、usage_logs 0 行（upstream_responded 不可计费）；rows=%+v", rows)
 	require.Equal(t, domain.Err5xx, rows[0].ErrorType, "上游已明确表态 ⇒ 5xx（序 1），不是 abort")
+	require.NotNil(t, rows[0].CommitState)
+	require.Equal(t, "upstream_responded", *rows[0].CommitState, "错误帧不是业务交付 ⇒ 零业务帧")
 	require.Equal(t, 0, rows[0].StatusCode, "序 1 不合成状态码")
 	require.Equal(t, int64(0), rows[0].InputTokens)
 	require.Equal(t, int64(0), rows[0].OutputTokens)

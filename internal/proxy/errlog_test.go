@@ -335,13 +335,14 @@ func TestProxyClientDisconnectBeforeFirstByte(t *testing.T) {
 	require.NoError(t, p.errlog.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Len(t, store.logs, 2, "499 abort 双轨：usage_logs（放行路径 abort）+ err_logs（豁免队列）各一行，request_id 关联")
+	require.Len(t, store.logs, 1, "499 abort 只进 err_logs：零业务帧 ⇒ not_sent，不可计费（用户裁定）")
 	l := store.logs[0]
 	require.Equal(t, statusClientClosedRequest, l.StatusCode, "首字节前断连记 499")
 	require.Equal(t, domain.ErrAbort, l.ErrorType, "首字节前断连记 abort 而非 network")
+	require.NotNil(t, l.CommitState)
+	require.Equal(t, "not_sent", *l.CommitState, "零业务帧 + 客户端侧结束 ⇒ not_sent")
 	require.NotNil(t, l.ErrorMessage)
 	require.Contains(t, *l.ErrorMessage, "client closed request", "断连错误文本落盘")
-	require.Equal(t, l.RequestID, store.logs[1].RequestID, "双轨行 request_id 关联")
 }
 
 // SDK 本地校验错误归 4xx（spec 2026-08-16-anthropic-stream-accept-design）：

@@ -962,13 +962,19 @@ func TestProxyClientDisconnectFreesSlot(t *testing.T) {
 	require.Empty(t, testHealthSink.throttlesFor(1),
 		"客户端侧结束不惩罚账号（I3：下游连接断裂是客户端行为，旧实现误冷却无辜账号）")
 	require.Zero(t, ri.Concurrency, "客户端断开必须释放并发槽")
-	require.Equal(t, 1, p.rec.Pending(), "写出失败按上游读失败处理，记 ErrAbort 用量")
-	// 客户端断开（recordStreamAbort）Model=客户端请求模型
+	require.Zero(t, p.rec.Pending(), "零业务帧 ⇒ not_sent，不进 usage_logs（用户裁定）")
+	// 客户端断开（recordStreamAbort）Model=客户端请求模型；失败明细仍进 err_logs。
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
+	require.Empty(t, store.logs, "零业务帧 ⇒ usage_logs 0 行")
+	store.mu.Unlock()
+	require.NoError(t, p.errlog.Close(context.Background()))
+	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Len(t, store.logs, 1, "must capture exactly one usage log")
+	require.Len(t, store.logs, 1, "失败明细必须落 err_logs")
 	require.Equal(t, domain.ErrAbort, store.logs[0].ErrorType)
+	require.NotNil(t, store.logs[0].CommitState)
+	require.Equal(t, "not_sent", *store.logs[0].CommitState, "零业务帧 + 客户端侧结束 ⇒ not_sent")
 	require.Equal(t, "gpt-4o", store.logs[0].Model, "recordStreamAbort：Model = 客户端请求模型")
 }
 

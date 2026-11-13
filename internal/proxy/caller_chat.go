@@ -100,12 +100,18 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			}
 			// 已提交 / 写失败：唯一归因只在这里算一次（§3 序 0a–0c + 1–5）。
 			f := streamFailureOf(ctx, exit, err)
+			// 交付事实快照（必须在补写 SSE error 帧之前）：补写失败会把
+			// WriteFailed 由 false 翻成 true，晚读会让同一次故障的取值漂移。
+			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit != streamExitClientCancel && out.Committed() {
 				writeClientStreamError(out, domain.FormatOpenAIChat, err)
 			}
 			// 中止/失败都保留已采集的 usage/TTFT（成功请求丢日志防线）。
-			outcome := chatOutcomeForAbort(base, out.BusinessFrameSent(), usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, exit == streamExitClientCancel)
-			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, f, commitStateOfAbort(out))
+			outcome := chatOutcomeForAbort(base, framesSent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, exit == streamExitClientCancel)
+			// 交付事实（唯一折算入口）：framesSent/writeFailed 取快照（sserelay.Output
+			// 在补写前的真实事实，不是出口构造的常量），clientCancel 由出口归因派生。
+			commit := commitStateFor(framesSent, writeFailed, clientEnded(exit, f))
+			_ = p.reportChatOutcome(ctx, outcome, sel, reqID, groupID, reqModel, start, f, commit)
 			return 0, nil, true, nil
 		}
 		// 流式成功：携带 TTFT 与已聚合的 usage 经 typed outcome 统一记录，保证 exactly-one 观测与记录归一。
