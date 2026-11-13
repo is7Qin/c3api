@@ -1866,7 +1866,8 @@ export default {
       "disk_free_bytes": "Disk free (bytes)",
       "disk_eta_seconds": "Disk exhaustion ETA (s)",
       "capacity_blocked": "Capacity gate closed to new supplier traffic",
-      "disk_observed_unix_ms": "Disk observed at"
+      "disk_observed_unix_ms": "Disk observed at",
+      "rejected": "Rejected observations"
     },
     "routing": {
       "title": "Routing lanes",

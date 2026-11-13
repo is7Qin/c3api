@@ -1866,7 +1866,8 @@ export default {
       "disk_free_bytes": "磁盘可用空间（字节）",
       "disk_eta_seconds": "磁盘耗尽预计（秒）",
       "capacity_blocked": "容量闸已关闭新供应商流量",
-      "disk_observed_unix_ms": "磁盘观测时刻"
+      "disk_observed_unix_ms": "磁盘观测时刻",
+      "rejected": "观测面拒收次数"
     },
     "routing": {
       "title": "路由观测道",

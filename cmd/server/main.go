@@ -827,6 +827,9 @@ func main() {
 	// conc-sync ×2 协调面观测（spec conc-sync-ops-stats）：fail-open 静默退化的
 	// 唯一可见痕迹——视图冻结时 last_tick_ok 翻 false、consecutive_errors 增长。
 	opsWorkers = append(opsWorkers, concSync, accConcSync)
+	// 派发观测面不变量（本 spec）：观测拒收 = 一次 attempt 在 quality/flow 记账里
+	// 消失，只可能是非法 outcome（编程错误），正常恒 0；非零是唯一的可查痕迹。
+	opsWorkers = append(opsWorkers, proxy.NewDispatchObserverStats(px))
 	// /api/admin/overview + /api/admin/users-top（spec 2026-08-14）：门禁在途快照
 	// （Auth.InFlightUsers 只读访问器——零锁冷面）与 billing 游标积压 lag 族观测
 	// （flusher 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改

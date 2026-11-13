@@ -91,13 +91,17 @@ func (p *Proxy) observeDispatchOutcome(ctx context.Context, outcome AttemptOutco
 		// 控制流不变：观测被拒仍不向上传播（观测面不是请求成败的责任人）。但
 		// **不得静默**——非法 outcome（Validate 拒收，如零业务帧的
 		// sent_ambiguous+BusinessFrameSent=false）或非派发结果会让这次尝试在
-		// quality/flow 里无声消失，事后只能靠"数字对不上"猜。
-		if err != nil && p.log != nil {
-			p.log.Warn("dispatch observation rejected outcome",
-				logx.Int64("account_id", outcome.AccountID),
-				logx.String("result", outcome.Result.String()),
-				logx.String("commit", outcome.Commit.String()),
-				logx.Error(err))
+		// quality/flow 里无声消失，事后只能靠"数字对不上"猜。计数与 Warn 同处：
+		// 计数注入前就装好（logger 可能为 nil），两者都不改变控制流。
+		if err != nil {
+			p.observationRejected.Add(1)
+			if p.log != nil {
+				p.log.Warn("dispatch observation rejected outcome",
+					logx.Int64("account_id", outcome.AccountID),
+					logx.String("result", outcome.Result.String()),
+					logx.String("commit", outcome.Commit.String()),
+					logx.Error(err))
+			}
 		}
 	}
 	if health != nil && outcome.IsCountedForQuality() && p.sched != nil {
@@ -110,6 +114,32 @@ func (p *Proxy) observeDispatchOutcome(ctx context.Context, outcome AttemptOutco
 		}
 		p.sched.MarkResult(outcome.AccountID, health.Kind, health.ResetAt, status, health.ErrorMessage, outcome.MappedModel)
 	}
+}
+
+// dispatchObserverStats /ops/workers 观测快照（handler.StatsProvider 形态）。
+// json 键清单同步义务：openapi.yaml WorkerStatus.stats description + web locales
+// ops.stats.*（前端缺 key 兜底显示原始字段名）。
+type dispatchObserverStats struct {
+	Rejected int64 `json:"rejected"` // 观测面拒收的终态 attempt 累计（自启动）
+}
+
+// DispatchObserverStats 把派发观测面的内部不变量计数挂到运维面。
+//
+// 为什么需要它：观测面拒收一次终态 attempt 意味着该 attempt 在 quality/flow
+// 记账里被丢弃——只可能是编程错误（非法 outcome，日志同时有一条 Warn）。正常
+// 流量恒 0；非零即"数字对不上"的唯一可查痕迹。
+//
+// 为什么在这里：计数属于 proxy 的内部不变量，归属 proxy 自己；对外只经
+// handler.StatsProvider 暴露（/api/admin/ops/workers），不掺入 /healthz
+// （那是进程/传输运行时探针，见 internal/server 的 inflight/goroutines/heap）。
+type DispatchObserverStats struct{ p *Proxy }
+
+func NewDispatchObserverStats(p *Proxy) *DispatchObserverStats { return &DispatchObserverStats{p: p} }
+
+func (s *DispatchObserverStats) Name() string { return "dispatch-observer" }
+
+func (s *DispatchObserverStats) Stats() any {
+	return dispatchObserverStats{Rejected: s.p.observationRejected.Load()}
 }
 
 func (p *Proxy) pipelineObserver(sel *scheduler.Selection, attempt scheduler.Attempt, appendFlow AttemptFlowAppend) (*AttemptObserver, bool) {

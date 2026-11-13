@@ -124,13 +124,11 @@ func TestFailoverPipeline_handledTruePerformsNoSharedCleanup(t *testing.T) {
 // ⇒ Validate 拒收），断言：记录一次 Warn（account_id/result/commit/错误文本）、
 // 不 panic、不阻断（非法丢弃不毒化观测器，随后的合法 outcome 仍正常完成）。
 func TestPipelineObserverIllegalOutcomeIsLoggedNotDropped(t *testing.T) {
-	dir, err := os.MkdirTemp("", "c3api-obswarn-*")
-	require.NoError(t, err)
-	// zap 持有文件句柄（Windows 上删除会失败）：清理忽略错误（与 errlog_test 同模式）。
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	logOut := filepath.Join(dir, "warn.log")
+	logOut := filepath.Join(t.TempDir(), "warn.log")
 	logger, err := logx.New("warn", logOut)
 	require.NoError(t, err)
+	// 先关 sink 再让 t.TempDir 清理：不关闭的话 Windows 删不掉日志文件。
+	t.Cleanup(func() { require.NoError(t, logger.Close()) })
 	p := &Proxy{log: logger}
 
 	base := AttemptOutcome{
@@ -154,9 +152,13 @@ func TestPipelineObserverIllegalOutcomeIsLoggedNotDropped(t *testing.T) {
 
 	p.observeDispatchOutcome(ctx, illegal, nil) // 不 panic、不阻断
 	require.Empty(t, flow, "非法 outcome 仍被丢弃（控制流不变：不向上传播、不落 flow）")
+	stats := NewDispatchObserverStats(p)
+	require.Equal(t, "dispatch-observer", stats.Name(), "运维面的 worker 名（kebab-case，先例 auth-sync/quality-sync）")
+	require.Equal(t, int64(1), rejectedOf(stats), "被拒的尝试必须计数（/api/admin/ops/workers 可读）")
 
 	p.observeDispatchOutcome(ctx, wsOutcomeForSuccess(base, nil, usageTuple{}), nil)
 	require.Len(t, flow, 1, "非法丢弃不得毒化观测器：随后的合法 outcome 仍正常完成")
+	require.Equal(t, int64(1), rejectedOf(stats), "合法 outcome 不得增加被拒计数")
 
 	data, err := os.ReadFile(logOut)
 	require.NoError(t, err)
@@ -166,4 +168,43 @@ func TestPipelineObserverIllegalOutcomeIsLoggedNotDropped(t *testing.T) {
 	require.Contains(t, logged, `"result":"failed"`)
 	require.Contains(t, logged, `"commit":"sent_ambiguous"`)
 	require.Contains(t, logged, "sent_ambiguous requires BusinessFrameSent", "告警必须带 Validate 的错误文本")
+}
+
+// TestPipelineObserverRejectedCountsWithoutLogger 计数与 Warn 解耦：logger 未
+// 装配时仍然计数（运维面 /api/admin/ops/workers 是唯一读点，不能因为没日志
+// 就看不见），且拒绝不改变控制流（不 panic、不向上传播）。
+func TestPipelineObserverRejectedCountsWithoutLogger(t *testing.T) {
+	base := AttemptOutcome{
+		ID: AttemptID("attempt-1"), RouteClassID: RouteClassID("rc-1"), QualityClassID: QualityClassID("qc-1"),
+		Fingerprint: CandidateFingerprint("fp-1"), TemplateID: 3, AccountID: 42,
+		RequestedModel: "gpt-4o", MappedModel: "gpt-4o",
+		CallerCategory: CallerChat, OperationTag: OperationTag(domain.OpChatCompletions),
+		Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
+	}
+	illegal := base
+	illegal.Result = ResultFailed
+	illegal.Commit = CommitSentAmbiguous
+	illegal.BusinessFrameSent = false // 非法：sent_ambiguous 要求业务帧已下行
+	illegal.Terminal = true
+	require.Error(t, illegal.Validate(), "前提：该 outcome 必须非法")
+
+	p := &Proxy{} // 无 logger、无 sched
+	stats := NewDispatchObserverStats(p)
+	require.Zero(t, rejectedOf(stats))
+
+	reject := func() {
+		obs := NewAttemptObserver(nil, nil, nil, nil)
+		ctx := context.WithValue(context.Background(), ctxKeyDispatch{}, &dispatchObservation{observer: obs, base: base})
+		p.observeDispatchOutcome(ctx, illegal, nil)
+	}
+	reject()
+	require.Equal(t, int64(1), rejectedOf(stats))
+	reject()
+	require.Equal(t, int64(2), rejectedOf(stats))
+}
+
+// rejectedOf 经 handler.StatsProvider 形态读计数：proxy 没有 public 访问器，
+// 这也是测试侧唯一允许的读取路径（与运维面同一条接缝）。
+func rejectedOf(s *DispatchObserverStats) int64 {
+	return s.Stats().(dispatchObserverStats).Rejected
 }

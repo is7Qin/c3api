@@ -42,6 +42,19 @@ func TestHealthz(t *testing.T) {
 	require.Contains(t, body, "inflight")
 	require.Contains(t, body, "goroutines")
 	require.Contains(t, body, "heap")
+	// /healthz 是进程/传输运行时探针（LB、编排器消费）：键集固定为这三项。
+	// 业务层状态（如 proxy 的观测拒收计数）不得进入这里——它的家是
+	// /api/admin/ops/workers（handler.StatsProvider）。本断言就是那道边界门。
+	require.ElementsMatch(t, []string{"inflight", "goroutines", "heap"}, keysOf(body))
+}
+
+// keysOf 取 JSON 对象顶层键（边界断言用：多一个键就是越界）。
+func keysOf(m map[string]any) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 func TestUnknownPath404(t *testing.T) {

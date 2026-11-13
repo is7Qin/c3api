@@ -82,7 +82,12 @@ type Proxy struct {
 	// contBind 区分。
 	contBinder *ContBindWorker
 	inflight   atomic.Int64
-	callers    map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
+	// observationRejected 被观测面拒绝的终态尝试累计（Validate 拒收的非法
+	// outcome，如零业务帧的 sent_ambiguous；只可能是编程错误）。进程内、自启动起。
+	// 不导出、不设 public 访问器：唯一读者是同包的 DispatchObserverStats
+	// （/api/admin/ops/workers）；它是 proxy 的内部不变量，不进 /healthz。
+	observationRejected atomic.Int64
+	callers             map[domain.RequestFormat]UpstreamCaller // 格式 → 上游调用器（New 构造，零查找 per-request 只一次 map 读）
 	// imageGenerations/imageEdits images 端点调用器（同一格式
 	// openai-images 两个端点，上游子路径不同——handleFormat 按请求路径选
 	// 调用器，New 一次性构造免 per-request 分配）。

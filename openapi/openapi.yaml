@@ -5684,6 +5684,9 @@ components:
         #     （装载尝试累计）, success int64（成功装载累计）, snapshot object
         #     （三态：loaded bool / revision int64 / last_success_unix_ms int64
         #     （0 = 从未）/ stale_age_ms int64（-1 = 从未成功））
+        #   dispatch-observer（派发观测面内部不变量）: rejected int64（观测面拒收
+        #     的终态 attempt 累计；正常 0，非零 = 有 attempt 从 quality/flow 记账中
+        #     丢弃，需查 Warn 日志）
         stats:
           description: 各 worker 异构观测字段；完整字段清单见本 schema 上方 yaml 注释（与各 worker Stats() 实现同步维护）
     SnapshotState:
