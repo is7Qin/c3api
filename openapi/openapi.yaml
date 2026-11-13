@@ -5616,7 +5616,11 @@ components:
         #     进程级整形计数: shape_anonymous, shape_partial_identity,
         #     shape_duplicate_keys, shape_non_string_instructions,
         #     shape_dual_tool_sources, shape_unknown_models,
-        #     shape_incremental_reinjects
+        #     shape_incremental_reinjects, shape_prewarms（HTTP→WS 新连接预热帧）,
+        #     shape_prewarm_conn_failures（预热阶段连接错误，真实请求未发出）,
+        #     shape_prewarm_rejections（预热收到 4xx/429，提交前返回）,
+        #     shape_prewarm_redials（预热失败终态后重拨）, shape_prewarm_chained,
+        #     shape_prewarm_unchained（预热成功后真实帧带 / 不带 previous_response_id）
         #   pricing-sync: running bool, last_sync_unix_ms int64（最近 fetch 尝试时刻）
         #   retention: last_patrol_unix_ms int64（最近巡检完成时刻）,
         #     last_dropped_log_partitions int64, last_dropped_errlog_partitions int64,

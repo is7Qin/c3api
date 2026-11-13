@@ -62,10 +62,23 @@ func (u *codexLegUpstream) handle(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer c.CloseNow()
-		// 读一帧（SDK 只发一帧 response.create）：先读后写，避免与客户端发送竞态。
-		_, _, _ = c.Read(r.Context())
-		_ = c.Write(r.Context(), websocket.MessageText, []byte(codexLegWSCompletedFrame))
-		return
+		// 先读后写，避免与客户端发送竞态。新连接首请求 SDK 先发预热帧
+		// （generate:false，官方 HTTP→WS 预热）：按官方上游回 created/completed 后
+		// 继续读真实 response.create，再回终态帧。
+		for {
+			typ, msg, err := c.Read(r.Context())
+			if err != nil {
+				return
+			}
+			if isPrewarmFrame(msg) {
+				if writePrewarmResponse(c, typ) != nil {
+					return
+				}
+				continue
+			}
+			_ = c.Write(r.Context(), websocket.MessageText, []byte(codexLegWSCompletedFrame))
+			return
+		}
 	}
 	u.mu.Lock()
 	u.posts++

@@ -57,7 +57,7 @@ func TestConversationWorkerSatisfiesStatsProvider(t *testing.T) {
 	require.NoError(t, err)
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(raw, &m))
-	for _, k := range []string{"conv_opens", "conv_conversation_cache_hits", "conv_queue_drops", "conv_save_turns_failures", "conv_local_rejects", "shape_anonymous", "shape_unknown_models", "shape_incremental_reinjects"} {
+	for _, k := range []string{"conv_opens", "conv_conversation_cache_hits", "conv_queue_drops", "conv_save_turns_failures", "conv_local_rejects", "shape_anonymous", "shape_unknown_models", "shape_incremental_reinjects", "shape_prewarms", "shape_prewarm_rejections"} {
 		_, present := m[k]
 		require.True(t, present, "codex-conversation stats must expose %q", k)
 	}

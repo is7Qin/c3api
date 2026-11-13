@@ -33,15 +33,16 @@ import (
 // 出网字节的假上游（HTTP SSE 与 WS 同一个 server）。---
 
 // newMiniredisBook 在 mr 上构造一份会话簿（每次调用一个独立的 redis client，模拟
-// 一个副本）。
+// 一个副本）。ContextTimeoutEnabled 与生产 pkg/redisx 一致：redisstore.New 要求它为
+// true（否则每批 30ms 预算不生效，构造时 panic）。
 func newMiniredisBook(t *testing.T, mr *miniredis.Miniredis) *codexsdk.ConversationBook {
 	t.Helper()
-	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), ContextTimeoutEnabled: true})
 	t.Cleanup(func() { _ = rdb.Close() })
 	return codexsdk.NewConversationBook(redisstore.New(rdb))
 }
 
-// flushBook 同步落地会话簿写入队列（第三步的 worker 之前，测试手动 Flush）。
+// flushBook 同步落地会话簿写入队列（不经 worker 的确定性屏障）。
 func flushBook(t *testing.T, b *codexsdk.ConversationBook) {
 	t.Helper()
 	require.NoError(t, b.Flush(context.Background()))

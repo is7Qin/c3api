@@ -44,13 +44,23 @@ import (
 // codex 形状归一后的字节，区别于 aiclient 路径的零解析直转）+ 读满 frameLimit
 // 帧后 1000 关闭帧。
 type codexWSUpstream struct {
-	mu         sync.Mutex
-	upgrades   int
-	headers    []http.Header
-	frames     []string
-	steps      []int
-	last       int
-	frameLimit int
+	mu       sync.Mutex
+	upgrades int
+	headers  []http.Header
+	frames   []string
+	// prewarms 记 SDK 在新建连接上先发的预热帧（generate:false；codex-sdk HTTP→WS
+	// 预热，官方 0.169.0 行为）。预热帧按官方上游回 created/completed、不进 frames、
+	// 不计入 frameLimit、不触发 frameScript：frames 只记真实 response.create，
+	// "上游 create 恰 N"类断言的含义不变。
+	prewarms []string
+	// prewarmScript 非 nil 时改写对预热帧的应答：按序写这些帧后正常关闭（空切片 =
+	// 不回任何帧直接关闭，模拟预热阶段连接错误）。nil = 官方 created/completed。
+	prewarmScript []string
+	// prewarmScriptLimit >0：prewarmScript 只作用于前 N 个预热帧（之后按官方应答）。
+	prewarmScriptLimit int
+	steps              []int
+	last               int
+	frameLimit         int
 	// frameScript 非 nil 时改写"收到首个客户端帧之后"的行为：按序写这些帧，然后
 	// 正常关闭（不回声、不发内置 created/delta/completed 事件流）。它把"上游只
 	// 回一帧错误就收尾"变成可编程形态（静默/半闭形态仍用 steps+frameLimit）。
@@ -113,6 +123,28 @@ func newCodexWSServer(t *testing.T, u *codexWSUpstream) *httptest.Server {
 			if err != nil {
 				return
 			}
+			if isPrewarmFrame(msg) {
+				u.mu.Lock()
+				u.prewarms = append(u.prewarms, string(msg))
+				pwScript := u.prewarmScript
+				if u.prewarmScriptLimit > 0 && len(u.prewarms) > u.prewarmScriptLimit {
+					pwScript = nil
+				}
+				u.mu.Unlock()
+				if pwScript != nil {
+					for _, f := range pwScript {
+						if err := c.Write(r.Context(), typ, []byte(f)); err != nil {
+							return
+						}
+					}
+					_ = c.Close(websocket.StatusNormalClosure, "")
+					return
+				}
+				if err := writePrewarmResponse(c, typ); err != nil {
+					return
+				}
+				continue
+			}
 			u.mu.Lock()
 			u.frames = append(u.frames, string(msg))
 			script := u.frameScript
@@ -155,6 +187,31 @@ func newCodexWSServer(t *testing.T, u *codexWSUpstream) *httptest.Server {
 	}))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// isPrewarmFrame 判定 SDK HTTP→WS 预热帧（response.create 且 generate:false）。
+func isPrewarmFrame(msg []byte) bool {
+	return gjson.GetBytes(msg, "generate").Type == gjson.False
+}
+
+// writePrewarmResponse 按官方上游对预热帧的应答下发 created/completed（不带 id：
+// 真实帧不链 previous_response_id、发全量，与改动前的真实帧字节一致）。
+func writePrewarmResponse(c *websocket.Conn, typ websocket.MessageType) error {
+	for _, f := range []string{
+		`{"type":"response.created","response":{"object":"response","status":"in_progress"}}`,
+		`{"type":"response.completed","response":{"object":"response","status":"completed"}}`,
+	} {
+		if err := c.Write(context.Background(), typ, []byte(f)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (u *codexWSUpstream) prewarmsSnapshot() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]string(nil), u.prewarms...)
 }
 
 func (u *codexWSUpstream) upgradesN() int {

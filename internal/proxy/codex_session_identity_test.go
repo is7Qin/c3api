@@ -70,7 +70,13 @@ type sessionWSReq struct {
 type sessionWSUpstream struct {
 	srv         *httptest.Server
 	handshakeTS string
-	gate        <-chan struct{} // 非 nil：收到请求帧后阻塞到它关闭才回帧（G6 占满租借用）
+	// prewarmTS 非空：对 SDK 的预热帧（generate:false，HTTP→WS 新连接首请求，官方
+	// 0.169.0 行为）在 response.metadata 签发这个 ts。预热帧单独记进 prewarms，
+	// 不消耗 steps、不进 reqs、不投递 arrived、不受 gate 阻塞——reqs 只含真实
+	// response.create，"第 N 个请求"类断言的含义不变。
+	prewarmTS string
+	prewarms  []sessionWSReq
+	gate      <-chan struct{} // 非 nil：收到请求帧后阻塞到它关闭才回帧（G6 占满租借用）
 
 	mu       sync.Mutex
 	steps    []sessionWSStep
@@ -166,6 +172,18 @@ func (u *sessionWSUpstream) serveWS(w http.ResponseWriter, r *http.Request) {
 			window:       cm.Get("x-codex-window-id").String(),
 			ts:           cm.Get("x-codex-turn-state").String(),
 		}
+		if isPrewarmFrame(data) {
+			u.mu.Lock()
+			u.prewarms = append(u.prewarms, req)
+			pw := sessionWSStep{id: fmt.Sprintf("pw-%d", len(u.prewarms)), ts: u.prewarmTS}
+			u.mu.Unlock()
+			for _, f := range pw.frames() {
+				if werr := c.Write(r.Context(), websocket.MessageText, []byte(f)); werr != nil {
+					return
+				}
+			}
+			continue
+		}
 		u.mu.Lock()
 		u.reqs = append(u.reqs, req)
 		step := u.nextStepLocked()
@@ -217,6 +235,12 @@ func (u *sessionWSUpstream) nextStepLocked() sessionWSStep {
 	u.steps = u.steps[1:]
 	u.last = s
 	return s
+}
+
+func (u *sessionWSUpstream) prewarmRequests() []sessionWSReq {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return append([]sessionWSReq(nil), u.prewarms...)
 }
 
 func (u *sessionWSUpstream) upgradeCount() int {
@@ -419,12 +443,16 @@ func TestSessionG1WindowAdvanceKeepsConnection(t *testing.T) {
 	require.Equal(t, thread+":0", reqs[crossed-1].window, "跨越只发生一次")
 }
 
-// TestSessionG3bReplayPolicyOff G3b：槽位路径 ⇒ 上游握手/事件都签发，网关任何请求
-// 都不带（既不发送也不捕获，Sink=nil）；连接复用照常。
-func TestSessionG3bReplayPolicyOff(t *testing.T) {
+// TestSessionG3bSlotTurnStateNotReplayedAcrossRequests G3b：槽位路径 ⇒ 上游握手、
+// 预热与事件都签发 ts，网关不跨请求重放（Sink=nil、Turn.State 恒空）；连接复用照常。
+// 唯一例外是 SDK 的 HTTP→WS 预热：新连接首请求在**同一次交换内**先发预热帧，真实帧
+// 带预热签发的 ts（官方 0.169.0 行为，codex-sdk 49c2950 exchange.prewarm）；下一个
+// 请求命中缓存连接、不预热，不带任何 ts。
+func TestSessionG3bSlotTurnStateNotReplayedAcrossRequests(t *testing.T) {
 	up, u := newSessionWSUpstream(t, "T1",
 		sessionWSStep{id: "b1", ts: "T2", usage: true},
 		sessionWSStep{id: "b2", usage: true})
+	u.prewarmTS = "TP"
 	p, _ := newSessionWSProxy(t, up.URL, 1)
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
@@ -432,11 +460,13 @@ func TestSessionG3bReplayPolicyOff(t *testing.T) {
 	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
 	postResponsesOK(t, srv, `{"model":"gpt-4o","input":"hi"}`)
 
+	pws := u.prewarmRequests()
+	require.Len(t, pws, 1, "只有新连接首请求预热")
+	require.Equal(t, "", pws[0].ts, "预热帧不带 ts")
 	reqs := u.requests()
 	require.Len(t, reqs, 2)
-	for i, r := range reqs {
-		require.Equal(t, "", r.ts, "第 %d 个请求不得带 ts", i)
-	}
+	require.Equal(t, "TP", reqs[0].ts, "同一次交换内：真实帧带预热签发的 ts（官方行为）")
+	require.Equal(t, "", reqs[1].ts, "跨请求不重放：握手 T1、事件 T2、预热 TP 都不带")
 	require.Equal(t, 1, u.upgradeCount(), "不带 ts 不影响连接复用")
 }
 
@@ -687,6 +717,9 @@ func TestSessionG2NaturalRetirementClosesOldConnection(t *testing.T) {
 	reqs := u.requests()
 	last := reqs[len(reqs)-1]
 	require.NotEqual(t, firstThread, last.thread, "退休后换新线程")
-	require.Empty(t, last.ts, "槽位路径不带 ts（新线程首请求同样）")
+	// 新线程首请求在新连接上先预热（预热应答不签发 ts）；旧线程事件签发的 T-win
+	// 不跨请求重放。
+	require.GreaterOrEqual(t, len(u.prewarmRequests()), 2, "新线程新连接首请求预热")
+	require.Empty(t, last.ts, "槽位路径不重放 ts（新线程首请求同样不带旧线程的 T-win）")
 	require.GreaterOrEqual(t, u.upgradeCount(), 2, "新线程重拨（旧连接已摘除）")
 }

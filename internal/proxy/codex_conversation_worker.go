@@ -177,6 +177,12 @@ type conversationWorkerStats struct {
 	ShapeDualToolSources       int64 `json:"shape_dual_tool_sources"`
 	ShapeUnknownModels         int64 `json:"shape_unknown_models"`
 	ShapeIncrementalReinjects  int64 `json:"shape_incremental_reinjects"`
+	ShapePrewarms              int64 `json:"shape_prewarms"`
+	ShapePrewarmConnFailures   int64 `json:"shape_prewarm_conn_failures"`
+	ShapePrewarmRejections     int64 `json:"shape_prewarm_rejections"`
+	ShapePrewarmRedials        int64 `json:"shape_prewarm_redials"`
+	ShapePrewarmChained        int64 `json:"shape_prewarm_chained"`
+	ShapePrewarmUnchained      int64 `json:"shape_prewarm_unchained"`
 }
 
 // Stats handler.StatsProvider 契约：原子读组装（零锁）。
@@ -221,5 +227,11 @@ func (w *ConversationWorker) Stats() any {
 		ShapeDualToolSources:       s.DualToolSources,
 		ShapeUnknownModels:         s.UnknownModels,
 		ShapeIncrementalReinjects:  s.IncrementalReinjects,
+		ShapePrewarms:              s.Prewarms,
+		ShapePrewarmConnFailures:   s.PrewarmConnFailures,
+		ShapePrewarmRejections:     s.PrewarmRejections,
+		ShapePrewarmRedials:        s.PrewarmRedials,
+		ShapePrewarmChained:        s.PrewarmChained,
+		ShapePrewarmUnchained:      s.PrewarmUnchained,
 	}
 }
