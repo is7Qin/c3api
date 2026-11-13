@@ -609,8 +609,9 @@ func main() {
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
 	// 调度摘除 + 审计契约）。egressPool/rotation 同构造期一次给齐（构造后
 	// 不存在半装配形态）：出口池就是调度器那一个——**同一个池**才能让 codex
-	// 面的 transport 与 HTTP 面共享同一条连接池（`sel.Egress.HTTP.Transport`
-	// 与 `Pool.For(spec)` 同源，spec-proxy-pool §4.6）；池的底座是 httpx 网关
+	// 面的 transport 与调度器解析的出口同源（`sel.Egress.Codex.Transport` 与
+	// `Pool.For(spec)` 同源，spec-proxy-pool §4.6；Codex 是池内由底座派生的关闭
+	// 自动压缩副本，与 HTTP 面同规格、各自一份连接池）；池的底座是 httpx 网关
 	// 同形态的 client（SDK 默认 MaxIdleConnsPerHost=2 有压测连接风暴史；
 	// Proxy=nil 直连防劫持），直连出口即那份底座。
 	// rotation Upsert 部分更新（codex_oauth_token/refresh/expires_at 保旧）+

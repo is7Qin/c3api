@@ -736,3 +736,33 @@ func TestPickIsAllocationFree(t *testing.T) {
 	})
 	require.Zero(t, allocs, "选路必须零分配（否则每请求多一次 GC 压力）")
 }
+
+// CloneWithCompressionDisabled：逐片独立连接池、每片 DisableCompression=true、
+// 连接配额与 Proxy 原样继承，原分片不被污染；再对派生副本 CloneWithProxy 时
+// 关闭压缩随 Clone 保留（出口池对 Codex 底座做代理克隆走的就是这条）。
+// 负例：返回 s 本身（共享连接池）或漏设 DisableCompression ⇒ 红。
+func TestShardCloneWithCompressionDisabled(t *testing.T) {
+	base := &http.Transport{ForceAttemptHTTP2: true, MaxIdleConns: 100, MaxIdleConnsPerHost: 10}
+	st := NewShardedTransport(base, 3)
+	cd, ok := st.CloneWithCompressionDisabled().(*ShardedTransport)
+	require.True(t, ok, "CloneWithCompressionDisabled 必须返回分片副本")
+	require.Equal(t, 3, cd.ShardCount())
+	for i := range st.shards {
+		require.NotSame(t, st.shards[i].tr, cd.shards[i].tr, "派生分片必须是独立连接池")
+		require.True(t, cd.shards[i].tr.DisableCompression)
+		require.False(t, st.shards[i].tr.DisableCompression, "原分片不得被污染")
+		require.Equal(t, st.shards[i].tr.MaxIdleConns, cd.shards[i].tr.MaxIdleConns)
+		require.Equal(t, st.shards[i].tr.MaxIdleConnsPerHost, cd.shards[i].tr.MaxIdleConnsPerHost)
+		require.True(t, cd.shards[i].tr.ForceAttemptHTTP2)
+	}
+	proxyURL, err := url.Parse("http://127.0.0.1:3128")
+	require.NoError(t, err)
+	px, ok := cd.CloneWithProxy(http.ProxyURL(proxyURL)).(*ShardedTransport)
+	require.True(t, ok)
+	for i := range px.shards {
+		require.True(t, px.shards[i].tr.DisableCompression, "代理克隆必须保留关闭压缩")
+		require.NotNil(t, px.shards[i].tr.Proxy)
+	}
+	var nilST *ShardedTransport
+	require.Nil(t, nilST.CloneWithCompressionDisabled())
+}

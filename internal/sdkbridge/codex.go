@@ -41,7 +41,8 @@ type Codex struct {
 	wsCache int
 	// egress 出口池（构造期注入；M3 取代旧的单个 http.RoundTripper 字段）。
 	// SDK 客户端的 transport 是**构造期**参数，所以出口只能按账号在 clientFor
-	// 构造时注入（`eg.HTTP.Transport`——与 HTTP 面共享同一连接池）；同一账号
+	// 构造时注入（`eg.Codex.Transport`——同一出口派生的关闭自动压缩连接池，见
+	// egressCodexTransport）；同一账号
 	// 不同出口靠 clientKey 的 proxy 维分桶。nil 且调用面要求出口 ⇒ 明确 error
 	// （errEgressNotWired），绝不静默退回底座。
 	egress *egress.Pool
@@ -560,11 +561,11 @@ func (a *Codex) clientOnEgress(e *codexEntry, eg *egress.Client, transport domai
 	key := clientKey{proxy: egressDigest(eg), transport: transport.Key()}
 	return a.clients.Client(e, key, func() *codexsdk.HTTPClient {
 		return codexsdk.NewHTTPClient(e.auth,
-			// 出口 transport（spec §4.6）：eg 恒非 nil（resolveEgress 保证），直连时
-			// 就是底座 transport、与 HTTP 面共享同一连接池。底座是裸 client
-			// （`Transport == nil`）时 WithTransport(nil) 等价于"不加 Transport"——
-			// 所以这里恒注入、不写分支（测试路径也走这一条，与生产同构）。
-			codexsdk.WithTransport(eg.HTTP.Transport),
+			// 出口 transport（spec §4.6）：eg 恒非 nil（resolveEgress 保证），用该出口
+			// 的 Codex 底座（关闭自动压缩的独立连接池，egressCodexTransport）。底座是
+			// 裸 client（`Transport == nil`）时 WithTransport(nil) 等价于"不加
+			// Transport"——所以这里恒注入、不写分支（测试路径也走这一条，与生产同构）。
+			codexsdk.WithTransport(egressCodexTransport(eg)),
 			// responses 出站传输（spec §5）：同样恒注入。WithResponsesTransport
 			// (TransportHTTP) 与"不注入"等价，而不写 if 分支的原因正是要让"注入点
 			// 被删掉"这种变异在组合用例里现红（删了它，ws 臂会静默跑 HTTP）。
@@ -581,6 +582,17 @@ func (a *Codex) clientOnEgress(e *codexEntry, eg *egress.Client, transport domai
 			codexsdk.WithWSConnCache(a.wsCache),
 		)
 	})
+}
+
+// egressCodexTransport 取出口的 Codex 出站 transport（关闭自动压缩，egress.Client.Codex）。
+//
+// `Codex == nil` 只出现在测试里手写的 `egress.Client` 字面量（egress.Pool 构造的
+// 出口恒带 Codex）：回退 HTTP 面 transport，保持这些测试的既有出站路径。
+func egressCodexTransport(eg *egress.Client) http.RoundTripper {
+	if eg.Codex == nil {
+		return eg.HTTP.Transport
+	}
+	return eg.Codex.Transport
 }
 
 // RetireThread 退役账号某线程的空闲 WS 连接（线程退休 / 重载丢槽的唯一出口）。
@@ -846,10 +858,10 @@ func (a *Codex) DialPrepared(ctx context.Context, p Prepared, eg *egress.Client,
 	if err != nil {
 		return nil, err
 	}
-	// 出口 transport 与 HTTP 面同一注入点（spec §4.6.4）：ws 握手走
+	// 出口 transport 与 Codex HTTP 面同一注入点（spec §4.6.4）：ws 握手走
 	// `HTTPClient.Do`，transport 上的 Proxy 是代理唯一的注入面。eg 恒非 nil；
 	// `Transport == nil`（裸底座）时 WithTransport(nil) 等价 SDK 默认。
-	opts = append(opts, codexsdk.WithTransport(eg.HTTP.Transport))
+	opts = append(opts, codexsdk.WithTransport(egressCodexTransport(eg)))
 	c, err := codexsdk.Dial(ctx, e.auth, id, opts...)
 	if err != nil {
 		return nil, a.translateDialError(e, p.srcRev, err)

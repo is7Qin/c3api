@@ -149,6 +149,26 @@ func (s *ShardedTransport) CloneWithProxy(proxy func(*http.Request) (*url.URL, e
 	return out
 }
 
+// CloneWithCompressionDisabled 派生一个独立副本，每片 `Clone()` 后设
+// `DisableCompression=true`（出口池给 Codex 出站派生底座用：Go 默认会自动加
+// `Accept-Encoding: gzip` 并透明解压，官方 Codex 客户端不发这个头）。
+//
+// 与 CloneWithProxy 同理返回 http.RoundTripper：出口池只凭结构认领能力，不 import
+// 本包。克隆出的分片**不与原分片共享连接池**；其余参数（含已摊分的连接配额与
+// Proxy）原样继承，所以对派生副本再调 CloneWithProxy 时关闭压缩的设置随 Clone 保留。
+func (s *ShardedTransport) CloneWithCompressionDisabled() http.RoundTripper {
+	if s == nil {
+		return nil
+	}
+	out := &ShardedTransport{shards: make([]shard, len(s.shards))}
+	for i := range s.shards {
+		tr := s.shards[i].tr.Clone()
+		tr.DisableCompression = true
+		out.shards[i].tr = tr
+	}
+	return out
+}
+
 // countedBody 在 body 关闭时归还分片在飞计数。
 //
 // Close 必须**幂等**且不为负：调用方（代理层、SDK）存在读完再 Close、defer Close

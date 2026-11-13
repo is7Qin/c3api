@@ -18,9 +18,16 @@ import (
 //
 // Spec 是**值**且零值 = 直连：直连与代理走同一个类型，出栈处没有"有没有代理"
 // 的第二个分支（spec-proxy-pool §4.2 的核心）。
+//
+// Codex 是同一条出口的 Codex 出站 client：底座 transport 派生出的**关闭自动压缩**
+// 副本（`DisableCompression=true`——Go 默认自动加 `Accept-Encoding: gzip`，官方
+// Codex 客户端不发）。它有自己的连接池，与 HTTP 同 Spec、同代理；sdkbridge 的
+// Codex HTTP/WS 与探测的 codex seam 只用它。底座 transport 类型未知（只有测试会
+// 走到）时不派生，Codex 与 HTTP 是同一个 *http.Client。生产里 Codex 恒非 nil。
 type Client struct {
-	Spec Spec // 零值 = 直连
-	HTTP *http.Client
+	Spec  Spec // 零值 = 直连
+	HTTP  *http.Client
+	Codex *http.Client
 }
 
 // Pool 是**进程级持久**的出口 client 注册表：按 Spec.Key() 复用，不随快照回收
@@ -29,22 +36,28 @@ type Client struct {
 // 生命周期纪律：For / Detach 只可能在快照期与管理面写后调用（低频）；热路径只
 // 读快照上已解析好的 *Client 指针——0 次 map 读、0 次分支、0 分配。
 type Pool struct {
-	mu     sync.Mutex
-	base   *http.Client // 克隆底座（与 aiclient Factory 共用同一个 client）
-	direct *Client      // 构造期单例（Spec 零值，base 原样）
-	byKey  map[[16]byte]*Client
+	mu   sync.Mutex
+	base *http.Client // 克隆底座（与 aiclient Factory 共用同一个 client）
+	// codexBase 是 base 派生的关闭自动压缩底座（构造期一次）；底座 transport 类型
+	// 未知时就是 base 本身（见 codexClientOf）。
+	codexBase *http.Client
+	direct    *Client // 构造期单例（Spec 零值，base / codexBase 原样）
+	byKey     map[[16]byte]*Client
 }
 
 // NewPool 建池。base 是直连底座（生产由 main 注入与 aiclient Factory 同一个
-// client）；nil ⇒ http.DefaultClient（仅测试路径会用到）。
+// client）；nil ⇒ http.DefaultClient（仅测试路径会用到）。Codex 出站底座在这里
+// 由 base 派生（签名不变：调用方不必知道 Codex 要关闭自动压缩）。
 func NewPool(base *http.Client) *Pool {
 	if base == nil {
 		base = http.DefaultClient
 	}
+	codexBase := codexClientOf(base)
 	return &Pool{
-		base:   base,
-		direct: &Client{HTTP: base},
-		byKey:  make(map[[16]byte]*Client),
+		base:      base,
+		codexBase: codexBase,
+		direct:    &Client{HTTP: base, Codex: codexBase},
+		byKey:     make(map[[16]byte]*Client),
 	}
 }
 
@@ -66,7 +79,14 @@ func (p *Pool) For(spec Spec) *Client {
 	if c, ok := p.byKey[key]; ok {
 		return c
 	}
-	c := &Client{Spec: spec, HTTP: p.newClient(spec)}
+	hc := p.newClient(p.base, spec)
+	codex := hc
+	if p.codexBase != p.base {
+		// Codex 底座同样按本规格克隆（独立连接池、同一代理；DisableCompression 随
+		// Clone 保留）。底座未派生（类型未知，只有测试）时 Codex 就是 HTTP 本身。
+		codex = p.newClient(p.codexBase, spec)
+	}
+	c := &Client{Spec: spec, HTTP: hc, Codex: codex}
 	p.byKey[key] = c
 	return c
 }
@@ -95,10 +115,17 @@ func (p *Pool) Detach(active map[[16]byte]struct{}) []*Client {
 }
 
 // CloseClients 关闭一批已从注册表摘除的出口 client 的空闲连接（锁外调用；nil 安全）。
+// HTTP 与 Codex 是两个连接池，两份都关（同一个 client 时只关一次）。
 func CloseClients(clients []*Client) {
 	for _, c := range clients {
-		if c != nil && c.HTTP != nil {
+		if c == nil {
+			continue
+		}
+		if c.HTTP != nil {
 			c.HTTP.CloseIdleConnections()
+		}
+		if c.Codex != nil && c.Codex != c.HTTP {
+			c.Codex.CloseIdleConnections()
 		}
 	}
 }
@@ -116,7 +143,7 @@ func (p *Pool) Size() int {
 //
 // schema 白名单校验在写面（§3.5）；这里按 Go 原生能力装配：socks5 / socks5h /
 // http / https 四种都经 Transport.Proxy（https 代理需 Go ≥1.24）。
-func (p *Pool) newClient(spec Spec) *http.Client {
+func (p *Pool) newClient(base *http.Client, spec Spec) *http.Client {
 	u := &url.URL{Scheme: spec.Scheme, Host: spec.Addr()}
 	if spec.Username != "" {
 		// 有用户名无密码 ⇒ url.User（URL 形态 `user@host`，不臆造一个空密码段）。
@@ -126,8 +153,41 @@ func (p *Pool) newClient(spec Spec) *http.Client {
 			u.User = url.UserPassword(spec.Username, spec.Password)
 		}
 	}
-	hc := *p.base // 按值克隆：Timeout/CheckRedirect/Jar 沿用底座
-	hc.Transport = cloneTransport(p.base, http.ProxyURL(u))
+	hc := *base // 按值克隆：Timeout/CheckRedirect/Jar 沿用底座
+	hc.Transport = cloneTransport(base, http.ProxyURL(u))
+	return &hc
+}
+
+// compressionDisabler 是"能派生**独立副本**并关闭自动压缩"的 transport 能力
+// （仿 proxyCloner：接口声明在消费方，pkg/httpx 的 ShardedTransport 凭结构实现）。
+type compressionDisabler interface {
+	CloneWithCompressionDisabled() http.RoundTripper
+}
+
+// codexClientOf 由底座派生 Codex 出站 client：transport 克隆后
+// `DisableCompression=true`，Timeout/CheckRedirect/Jar 按值沿用底座。
+//
+//   - compressionDisabler（生产的分片底座）：逐片克隆；
+//   - *http.Transport（生产的单 transport 底座）：Clone 后设字段；
+//   - 其他（nil Transport、测试里的改写 RoundTripper，如 proxy 包 testEgressPool
+//     的重写 transport）：**不派生**，返回 base 本身——Codex 与 HTTP 是同一个
+//     client。只有测试会走到这里。**不得**照搬 cloneTransport 退回
+//     http.DefaultTransport 的规则：那会让测试流量绕过改写 transport 直连真实上游。
+func codexClientOf(base *http.Client) *http.Client {
+	var rt http.RoundTripper
+	switch tr := base.Transport.(type) {
+	case compressionDisabler:
+		rt = tr.CloneWithCompressionDisabled()
+	case *http.Transport:
+		c := tr.Clone()
+		c.DisableCompression = true
+		rt = c
+	}
+	if rt == nil {
+		return base
+	}
+	hc := *base
+	hc.Transport = rt
 	return &hc
 }
 

@@ -17,8 +17,8 @@ type TransportConfig struct {
 	MaxIdleConnsPerHost int
 	// MaxConnsPerHost 单 host 连接总数上限（含在用+空闲；0 = 不限）。
 	// 网关既有 client 保持 0 不限（压测验证形态）；出口池按代理 spec 克隆同一底座，
-	// codex 的 HTTP/WS 两条路径也用这份底座（sdkbridge/codex.go 注入 eg.HTTP.Transport），
-	// 因此这里没有第二处参数来源。
+	// codex 的 HTTP/WS 两条路径用的是出口池由这份底座派生的关闭自动压缩副本
+	// （egress.Client.Codex，参数随 Clone 继承），因此这里没有第二处参数来源。
 	MaxConnsPerHost int
 	IdleConnTimeout time.Duration
 	DialTimeout     time.Duration
@@ -31,8 +31,8 @@ type TransportConfig struct {
 	// http.ProxyFromEnvironment——HTTP_PROXY 设了会静默改道全部上游请求
 	//（含 x-api-key/Authorization 凭据，WS 升级大概率失败），压测行为随
 	// 环境漂移。装配方显式决定：生产只有 main 一处 NewClient，codex 的 HTTP 与
-	// WS 两条路径都注入出口池的 eg.HTTP.Transport（sdkbridge/codex.go），
-	// 因此这里的每个参数对它们同样生效。
+	// WS 两条路径都注入出口池的 eg.Codex.Transport（同一底座派生、只多了
+	// DisableCompression，sdkbridge/codex.go），因此这里的每个参数对它们同样生效。
 	Proxy func(*http.Request) (*url.URL, error)
 }
 

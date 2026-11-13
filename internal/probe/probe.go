@@ -325,7 +325,8 @@ func probeResponseLimits(spec domain.ProbeSpec) (okMax, errorMax int64) {
 	return domain.ProbeMaxBodyBytes, domain.ProbeMaxBodyBytes
 }
 
-// guardedCodexTransport 构造 codex 的传输守卫（origin 固定 chatgpt.com）。
+// guardedCodexTransport 构造 codex 的传输守卫（origin 固定 chatgpt.com），下层是
+// 出口的 Codex 底座（关闭自动压缩）。
 func (p *Prober) guardedCodexTransport(spec domain.ProbeSpec) (http.RoundTripper, error) {
 	if p.pool == nil {
 		return nil, errors.New("egress pool not configured")
@@ -334,9 +335,15 @@ func (p *Prober) guardedCodexTransport(spec domain.ProbeSpec) (http.RoundTripper
 	if eg == nil || eg.HTTP == nil {
 		return nil, errors.New("egress client not configured")
 	}
+	// Codex 出站用出口的 Codex 底座（关闭自动压缩，egress.Client.Codex）；Codex
+	// 为 nil 只出现在测试里手写的出口字面量，回退 HTTP 面 transport。
+	next := eg.HTTP.Transport
+	if eg.Codex != nil {
+		next = eg.Codex.Transport
+	}
 	okMax, errorMax := probeResponseLimits(spec)
 	return newCappedTransportLimit(&originGuard{
-		next:   transportOrDefault(eg.HTTP.Transport),
+		next:   transportOrDefault(next),
 		scheme: codexOriginScheme,
 		host:   codexOriginHost,
 		port:   codexOriginPort,
