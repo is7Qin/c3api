@@ -11,11 +11,18 @@
     池派生的 `eg.Codex.Transport`（关闭自动压缩的独立连接池，`egressCodexTransport`）；
     `eg.Codex == nil` 时回退 `eg.HTTP.Transport`——只为测试里手写的 `egress.Client`
     字面量，生产不会出现。
+  - 每请求身份由 proxy 给出：`ResponsesPrepared`/`StreamBodyPrepared` 收 `codexsdk.Identity`
+    （会话路径由 SDK 会话簿 `Prepare` 合成，槽位路径为 `Selection.IdentityFor`）；WS 拨号
+    `DialPrepared` 透传 `WithConversation(book, req, frame)` 或 `WithFirstFrame(frame)`。
+    `translateError`/`translateDialError` 保留错误链（`EnvelopeError`、`DialError` 都实现
+    `Unwrap`），proxy 才能 `errors.Is(err, codexsdk.ErrInvalidRequestBody)` 做本地拒绝。
   - WS 空闲连接上限 `codexWSConnCacheCapacity = 256`（每个 HTTPClient = 账号 × 出口；
     仅上限、不预分配）；`Options.WSConnCache` 只是可测性入口。
 - 诊断/探测 seam（`stream_body_once.go` / `one_shot.go`）——全部只做一次临时
   PAT client + `WithTransport`（不传 `WithTimeout`；期限只由 ctx 决定），
-  **不取** ClientTable/Auth 缓存、**不装** fatal 回调、**不轮转**、**不写日志**：
+  **不取** ClientTable/Auth 缓存、**不装** fatal 回调、**不轮转**、**不写日志**；
+  身份恒为匿名（`codexsdk.Identity{}`），**不经会话簿**（不读写 Redis）；探测 payload
+  自带 `model`，不会触发 SDK 本地拒绝：
   - `StreamBodyOnce`：`StreamBody` 的 200/非 200 状态与 raw 搬运；
     `AuthPermanentlyRevokedError` 记 401；200 body 在 `BodyReader` 返回后恰好
     关闭一次；`BodyReader` 禁止 Close。
@@ -52,11 +59,3 @@ go test ./internal/sdkbridge/ -run TestStreamBodyOnce -count=1
 go test ./internal/sdkbridge/ -run 'TestGenerateImageOnce|TestSearchOnce|TestOneShot' -count=1
 go test ./internal/sdkbridge/ -run TestCodexEgressTransportNoAutoGzip -count=1
 ```
-
-## 最近变更
-
-- 2026-11-13 `e0744c9`（codex-conversation-integration §5.5）：Codex HTTP/WS 改用
-  `eg.Codex` 底座。
-- 2026-11-13（§5.7）：`codexWSConnCacheCapacity` 2048 → 256（会话路径线程按对话分配，
-  槽位上界不再是空闲连接数上界）。接入第二轮还会改：会话簿装配、`WithConversation`/
-  `WithFirstFrame`。

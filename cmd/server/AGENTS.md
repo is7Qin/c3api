@@ -12,6 +12,11 @@
   创建 prober 超时/信号量。
 - 依赖显式顺序构造；禁止事后 `Set*` 回填（构造环结构性消除）。
 - worker 注册序 = 反序排空序；改顺序前读注释。
+- Codex 会话簿：`convBook := codexsdk.NewConversationBook(redisstore.New(rdb))` 恒构造（与
+  续接 store 同一个 `rdb`，连接池生命周期归 redisx），经 `proxy.Deps.Conversations` 注入；
+  `convW := proxy.NewConversationWorker(convBook, log, …)` 在 `managedWorkers` 里紧跟
+  `contBindW`（`worker_order_test` 断言紧邻），反向停机时在 rec/errlogW 之前最后 Flush。
+  其 `Stats()` 经 `statsProviders` 进 `/api/admin/ops/workers`（`ops_stats_wiring_test`）。
 
 ## 不变量
 

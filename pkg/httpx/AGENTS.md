@@ -35,9 +35,3 @@
 go test ./pkg/httpx/ -count=1
 go test ./pkg/httpx/ -run TestShardCloneWithCompressionDisabled -count=1
 ```
-
-## 最近变更
-
-- 2026-11-13 `e0744c9`（codex-conversation-integration §5.5）：新增
-  `CloneWithCompressionDisabled`；`TransportConfig` 注释改为 Codex 走
-  `egress.Client.Codex`。

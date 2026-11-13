@@ -38,6 +38,8 @@ chi(internal/server/server.go)
 | rule-engine | 事件通道+1min 窗口清理 | 有界 chan 满则丢弃计数 |
 | usage | `usage.flush_interval`(500ms)+`quota_flush_interval`(10s) | 按 userID 分片 8 worker；毒行二分隔离 |
 | errlog | `usage.errlog_flush_interval`(500ms) | exemptQ(必存)/rejectQ(风暴采样)双队列，来源不可串 |
+| cont-bind | 批节奏内部默认(2ms 凑批/256 条) | REST 流式续接异步绑定；停机先禁入队再排空 |
+| codex-conversation | 50ms 节拍(内部默认，无配置键) | Codex 会话簿 `book.Flush` 批量落 Redis；紧跟 cont-bind 注册，停机预算内最后 Flush 一次；Stats 暴露 conv_*/shape_* |
 | pricing-sync | settings `price_sync_cron`(默认 0 3 * * *) | 启动即拉一次+gronx cron |
 | retention | 每小时 | DROP 过期日分区+预建今明；redemption_uses 有界 DELETE≤5000/轮 TTL 固定 90d |
 | stats-agg | `usage.stats_agg_interval`(5m，0=禁用) | 双区间分离：watermark 只推进到 T=now−lag，绝不推进到重算上界 R1；advisory lock 单写者 |

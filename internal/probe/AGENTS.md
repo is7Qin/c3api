@@ -143,8 +143,3 @@ go test ./internal/probe/ -run 'TestProbeDeepJSON|TestProbeCodexNewlineFlood|Tes
 go test ./internal/probe/ -run 'TestProbe.*Images|TestProbe.*Search|TestProbe.*Preview|TestSanitizePreview' -count=1
 go test ./internal/probe/ -run TestProbeCodexTransportNoAutoGzip -count=1
 ```
-
-## 最近变更
-
-- 2026-11-13 `e0744c9`（codex-conversation-integration §5.5）：`guardedCodexTransport`
-  改用 `eg.Codex` 底座（codex 探测出站不带自动 `Accept-Encoding: gzip`）。

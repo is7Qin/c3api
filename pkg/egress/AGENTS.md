@@ -27,6 +27,9 @@
   （会让测试流量绕过改写 transport 打真实上游）。
 - `For` 对 HTTP 与 Codex 两个底座分别按 spec 克隆；`DisableCompression` 随 Clone
   保留。`CloseClients` 两份连接池都关（同一 client 只关一次）。
+- **连接配额翻倍**：Codex 底座是独立连接池，`MaxConnsPerHost`/空闲连接等配额随 Clone
+  原样继承、不与 `HTTP` 分摊——每个出口（直连与每个代理 spec）的实际连接上限是配置值
+  的两倍。容量规划与上游/代理的连接数限制按两倍估算。
 - `NewPool` 签名与 `httpx.TransportConfig` 不为 Codex 增加参数：调用方不必知道
   Codex 要关压缩，参数来源只有一处底座。
 - 能力接口（`proxyCloner`、`compressionDisabler`）声明在本包，`pkg/httpx` 的
@@ -44,9 +47,3 @@
 go test ./pkg/egress/ ./pkg/httpx/ -count=1
 go test ./pkg/egress/ -run TestCodexTransportNoAutoGzip -count=1
 ```
-
-## 最近变更
-
-- 2026-11-13 `e0744c9`（codex-conversation-integration §5.5，C3-9）：新增
-  `Client.Codex` 与 `codexClientOf`，`For`/`CloseClients` 同步两份连接池。接入第二轮
-  不预期再改本包。

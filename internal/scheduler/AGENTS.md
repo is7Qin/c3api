@@ -13,7 +13,7 @@
   - 槽位路径：`IdentityFor(first)` 取槽位会话身份（`first` = `!AnalyzeConversationInput(payload).FollowUp()`；
     `Sink=nil`、`Turn.State=""`，不带也不捕获 turn-state）；`StepIdentity()` 仅在成功取到
     usage 且上游连接已归还后调用一次；
-  - 会话路径（本轮新增）：`Conversation`（= `AttemptPlanIdentity.Conversation`）、
+  - 会话路径：`Conversation`（= `AttemptPlanIdentity.Conversation`）、
     `CacheDomain`（生效缓存域，私有域 = `private:<账号ID>`）、`InstallationID`。
 - 槽位池：`identity_pool.go`（`claimCodexSession`、上界 `maxIdentityPoolSlots` 1024）；
   跨实例账号并发视图：`concsync.go`。
@@ -37,7 +37,8 @@
 ## 边界
 
 - 会话簿（Redis 共享的对话身份）在 SDK 与 proxy，不在本包；本包只给出“是否走会话路径”
-  与账号级事实。`Conversation` 的入口置位（proxy caller）留给接入第二轮。
+  与账号级事实。`Conversation` 由 proxy 入口置位（`rm.hasConv && p.conversations != nil`：
+  会话簿为 nil 时回到槽位路径，避免匿名身份）。
 - 出口 client 来自 `pkg/egress`（快照解析成 `*egress.Client` 指针）；连接回收在快照
   reconcile。
 
@@ -47,10 +48,3 @@
 go test ./internal/scheduler/ -count=1
 go test ./internal/scheduler/ -run 'TestConversationSkipsSlotClaim|TestReserveConversationNoNewAllocs|TestClaimAndIdentityZeroAlloc' -count=1
 ```
-
-## 最近变更
-
-- 2026-11-13 `9524d5a`、`e24aa01`（codex-conversation-integration §5.2，C3-3/C3-15）：
-  `AttemptPlanIdentity.Conversation`、`Selection.Conversation/CacheDomain/InstallationID`、
-  快照期 `cacheDomain/installationID`；会话路径跳过槽位认领。接入第二轮还会改：
-  proxy 入口置位、book 为 nil 时回到槽位。

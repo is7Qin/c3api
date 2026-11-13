@@ -5,7 +5,7 @@
 
 ## OVERVIEW
 
-自托管 AI 网关：单 Go 二进制（内嵌 React 控制台）统一暴露六种请求格式——OpenAI Responses（REST+WS）、Anthropic Messages、Chat Completions、Images、Codex search、模型列表。无状态网关 + 双必需依赖：PostgreSQL 18（全部持久状态）+ Redis 8（实例发现心跳 + 短时验证码，非缓存层）；跨实例失效走 NOTIFY `c3api_invalidate`。Beta 状态：schema/config 无迁移路径，升级=全新部署。
+自托管 AI 网关：单 Go 二进制（内嵌 React 控制台）统一暴露六种请求格式——OpenAI Responses（REST+WS）、Anthropic Messages、Chat Completions、Images、Codex search、模型列表。无状态网关 + 双必需依赖：PostgreSQL 18（全部持久状态）+ Redis 8（实例发现心跳 + 短时验证码 + Responses 续接绑定 + Codex 会话簿 `codex:conv:*`/`codex:turn:*`，非缓存层）；跨实例失效走 NOTIFY `c3api_invalidate`。Beta 状态：schema/config 无迁移路径，升级=全新部署。
 
 ## STRUCTURE
 
@@ -54,7 +54,7 @@ openapi/ deploy/ scripts/build.sh   # 无 Makefile
 | `ConvertRequest`/`StreamMapper` | func/struct | internal/protoconv/protoconv.go | 请求转换六方向分发；流式逐帧零分配映射（chat 源两方向的帧由 `chat_stream.go` 自解析） |
 | `Factory` / `rawPostCT` | struct/method | pkg/aiclient/aiclient.go | 模板级客户端缓存+URL 缓存；HTTP 面走 `RelayHeaders`（default-allow + `relayDeny`） |
 | `Relay`/`InferEventName` | func | pkg/sserelay/relay.go | 池化 SSE 中继；inLine 续片状态机 |
-| `Codex` | struct | internal/sdkbridge/codex.go:27 | codex SDK 适配：账号级缓存+fatal 回调+轮换 |
+| `Codex` | struct | internal/sdkbridge/codex.go:27 | codex SDK 适配：账号级缓存+fatal 回调+轮换；出站走 `egress.Client.Codex`（关自动 gzip）。有对话标识 → SDK 会话簿（`proxy.Deps.Conversations`，`codexRequestPrep`/`dialCodexWS`）合成身份，否则槽位身份（`Selection.IdentityFor`）；SDK 本地拒绝 `ErrInvalidRequestBody` → 客户端 400（`codex_local_reject.go`） |
 | `SettleBalanceBatch` / `SettleFefoBatch` | method | internal/repository/billing_settle.go:60/:67 | 双车道语句化结算：扣减+billed 标记同事务原子（每窗口一次往返）；`runSettleStmt` 的 marked==batch 比对守卫 → `errConcurrentMark` 堵锁丢失双扣 |
 
 ## CONVENTIONS

@@ -173,6 +173,10 @@ type compressionDisabler interface {
 //     的重写 transport）：**不派生**，返回 base 本身——Codex 与 HTTP 是同一个
 //     client。只有测试会走到这里。**不得**照搬 cloneTransport 退回
 //     http.DefaultTransport 的规则：那会让测试流量绕过改写 transport 直连真实上游。
+//
+// 连接配额翻倍：派生出的是**独立连接池**，MaxConnsPerHost/MaxIdleConns 等配额随
+// Clone 原样继承、不与 HTTP 分摊——每个出口（直连与每个代理 spec）的实际连接上限
+// 是配置值的两倍（HTTP 一份 + Codex 一份）。
 func codexClientOf(base *http.Client) *http.Client {
 	var rt http.RoundTripper
 	switch tr := base.Transport.(type) {

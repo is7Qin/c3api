@@ -156,6 +156,7 @@ func (s *ShardedTransport) CloneWithProxy(proxy func(*http.Request) (*url.URL, e
 // 与 CloneWithProxy 同理返回 http.RoundTripper：出口池只凭结构认领能力，不 import
 // 本包。克隆出的分片**不与原分片共享连接池**；其余参数（含已摊分的连接配额与
 // Proxy）原样继承，所以对派生副本再调 CloneWithProxy 时关闭压缩的设置随 Clone 保留。
+// 因为配额是继承而非分摊，同一出口的连接上限实际翻倍（原底座一份 + 本副本一份）。
 func (s *ShardedTransport) CloneWithCompressionDisabled() http.RoundTripper {
 	if s == nil {
 		return nil
