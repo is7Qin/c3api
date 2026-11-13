@@ -44,6 +44,14 @@ type snapshotStatic struct {
 	// 它不进 staticKey：键里的 planKey.proxyDigest 已承载"走哪条线"，client
 	// 指针只是同一事实的运行期载体（换规格 ⇒ 摘要变 ⇒ 新叶子 ⇒ 新指针）。
 	egress *egress.Client
+	// cacheDomain 账号**生效**缓存域（同 cacheDomainForAccount：未配置 = 私有域
+	// `private:<账号ID>`）；installationID 账号 ext 的 installation（同
+	// installationIDOf，缺列 = ""）。两者都在构造期一次定型，预留时只做字段拷贝进
+	// Selection（会话路径不认领槽位，installation 只能从这里来；私有域拼接若放在
+	// 预留里会每次分配）。源字段已在键里（cacheDomain / accountID /
+	// codexInstallation），换值 ⇒ 换叶子 ⇒ 新值。
+	cacheDomain    string
+	installationID string
 	// key 是 canonical digest 复用位点：由 newSnapshotStatic（唯一构造函数）
 	// 一次派生并随不可变叶持有——planKeyOf(av) 直接返回它，重载路径不再逐叶
 	// 现算五类摘要。key 在首次读取前有效、发布后只读；src 切片/映射只读，

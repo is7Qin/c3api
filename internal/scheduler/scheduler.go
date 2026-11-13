@@ -140,7 +140,17 @@ type Selection struct {
 	session *codexSession
 	// pool 会话所属池（线程退役出口；owner 对齐不读池——凭据失效是账号级的，且对齐
 	// 用的是会话自己的字段，见 IdentityFor）。全忙兜底的临时会话无池。
-	pool             *identityPool
+	pool *identityPool
+	// Conversation 本次预留走**会话路径**（= AttemptPlanIdentity.Conversation）：
+	// 未认领槽位（session 恒 nil），身份由 SDK 会话簿按对话合成。proxy 只读这一位
+	// 决定走会话簿，不读未导出的 session。
+	Conversation bool
+	// CacheDomain 选中账号的**生效**缓存域（私有域 = `private:<账号ID>`）、
+	// InstallationID 选中账号的 installation：会话路径构造会话键与请求的来源
+	// （不认领槽位后 IdentityFor 是零值，不能从那里取）。均为快照构建期定型的
+	// 账号静态视图字段，预留时只做字段拷贝（零分配）。
+	CacheDomain      string
+	InstallationID   string
 	ModelMappingMode domain.ModelMappingMode
 	// SupplierFinance 选中本账号时捕获的不可变财务上下文（spec 2026-10-09
 	// §4.2/§4.6）：供给准入门放行候选时**同一次视图读取**捕获归属/分成/代数，

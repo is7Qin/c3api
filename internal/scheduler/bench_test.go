@@ -160,7 +160,11 @@ func TestSelectionSizeAMD64(t *testing.T) {
 	// +16：CodexResponsesTransport 的 string 头（spec-codex-outbound-transport
 	// §5：模板级开关随快照定型，Selection 携带**原值**，消费方只调 Key()/Name()）。
 	// 它是构造期参数、热路径只读一个已定型的字符串，不进任何判断分支。
-	require.Equal(t, uintptr(232), unsafe.Sizeof(Selection{}))
+	// +40：会话路径三项（codex-conversation-integration §5.2）——Conversation 位
+	// （bool，随对齐占 8）+ CacheDomain/InstallationID 两个 string 头。都是快照
+	// 构建期定型的账号静态视图字段，预留时只做字段拷贝（零分配）；232→272 的尺寸级由
+	// 240B 变为 288B（每次预留多 48 堆字节），但分配**次数**不变（C3-15 断言次数）。
+	require.Equal(t, uintptr(272), unsafe.Sizeof(Selection{}))
 }
 
 func TestSelectMappingIdentitiesHaveEqualAllocations(t *testing.T) {

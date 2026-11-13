@@ -230,11 +230,18 @@ func (s *Scheduler) reserveOnView(plan *AttemptPlan, v *RoutingView) (*Selection
 		// 失败面的 err_logs.message 用（`proxy_id=<id>`，spec §5.1）。不进决策：
 		// 可用性位在 Routable，出口在 Egress。nil = 直连（失败日志不写 proxy_id）。
 		ProxyID: curAv.acc.ProxyID,
+		// 会话路径的账号级事实：快照构建期已定型（同 egress），这里只拷字段。
+		CacheDomain:    curAv.cacheDomain,
+		InstallationID: curAv.installationID,
+		Conversation:   plan.identity.Conversation,
 	}
 	// 认领会话（reserve 并发 CAS 已通过、Selection 装配点——**不在 predicate
 	// 内**，避免后置校验异常路径泄漏会话）。仅 codex 凭据认领（claimCodexSession
 	// 内判定），非 codex → nil。池注册表取自本视图静态根——与门禁 limit 同源。
-	selected.session, selected.pool = s.claimCodexSession(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType)
+	// 会话路径（Conversation）不认领：身份由 SDK 会话簿合成，槽位池无占用、无推进。
+	if !plan.identity.Conversation {
+		selected.session, selected.pool = s.claimCodexSession(v.static.identityPools, curAv.acc.ID, curAv.tpl.CredentialType)
+	}
 	// 财务上下文随选中固定（供给准入门放行时同一次视图读取捕获；§4.2/§4.6）：
 	// 收尾只按本值落账，不再 Load/查 owner。
 	selected.SupplierFinance = admittedFinance

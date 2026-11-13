@@ -26,6 +26,9 @@ type AttemptPlanIdentity struct {
 	ApplyModelMapping bool
 	AffinityHash      uint64
 	HasAffinity       bool
+	// Conversation 请求带对话标识且会话簿已装配：预留**不认领**槽位（身份由 SDK
+	// 会话簿按对话合成），该位原样写进 Selection.Conversation。零值 = 槽位路径。
+	Conversation bool
 }
 
 type AttemptLane string

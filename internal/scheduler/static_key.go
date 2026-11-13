@@ -197,6 +197,12 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	// 之后候选过滤与计划 fence 都只读这一个 bool。放在 key 派生之前，使
 	// `k.routable = av.routable` 与字段派生同源、不可能失配。
 	av.routable = routableFor(av.acc.Enabled, av.acc.ProxyID, av.acc.Proxy)
+	// 会话路径的两项账号级事实同样构造期定型（预留只拷字段，零分配）。仅 Codex
+	// 凭据填：非 Codex 面不走会话簿，零值即"无会话路径事实"。
+	if av.tpl != nil && av.tpl.CredentialType.IsCodex() {
+		av.cacheDomain = cacheDomainForAccount(av.acc.ID, av.acc.CacheDomain)
+		av.installationID = installationIDOf(av.acc.Ext)
+	}
 	var k planKey
 	k.accountID = av.acc.ID
 	k.name = av.acc.Name
