@@ -227,8 +227,8 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // 闭包；无状态单例，per-request 差异（client/首帧/strip 标记）经 attemptState
 // 流入，热路径零新增分配）。差异段：codex 拨号分流（dialCodexWS +
 // handleCodexDialError）与静态拨号（credentialFor + ResponsesWSDial）、relay
-// （relayWS 合一骨架 + 双传输适配 aiclientTransport/codexTransport——首帧模型
-// 改写 + 双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
+// （首帧模型改写在拨号前按当次 sel 预处理；relayWS 合一骨架 + 双传输适配
+// aiclientTransport/codexTransport——双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
 // 错误文本回传（分通道）：4xx respBody 只放上游 body message（无则空——
 // 帧侧 wsSink emOr 回退固定网关文案），dialErr 全文走 callErr 通道（循环 4xx
 // 分支以 callErr 回退落盘保全文）；0/5xx/429 保持 msg 归一兜底（上游 message
@@ -250,7 +250,10 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
 		// 组 + 心跳单源全部在 dialCodexWS/codexTransport（codex_responses_ws.go）；
 		// 该面**不递任何客户端头**（spec §12：只发 SDK 自己写的头），故不存在"头部族剥离清单"这种东西。
-		up, prep, dialErr := p.dialCodexWS(r, sel)
+		// 首帧按**当次** sel 改写模型（故障转移换号时映射可能不同）；同一份字节
+		// 既给拨号（握手头与 Turn.First 的依据）又给 relay 写出——二者必须逐字节相同。
+		frame := wsFirstFrameForSel(st.first, sel, reqModel)
+		up, prep, dialErr := p.dialCodexWS(r, sel, frame)
 		if dialErr == nil {
 			// frameHook：每帧判死嗅探（唯一跨边界点——读帧成功后、usage
 			// 嗅探与 client.Write 前调用，即 relayWS 的 frameHook 调用序）；
@@ -263,7 +266,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 					p.codex.FatalPrepared(prep, fatal)
 				}
 			}
-			handled, fwMsg := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, st.first)
+			handled, fwMsg := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, frame)
 			if handled {
 				return 0, nil, nil, true, nil
 			}
@@ -297,11 +300,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	up, resp, dialErr := p.clients.ResponsesWSDial(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponsesWS, defaultPathResponsesWS), cred, aiclient.RelayHeaders(r.Header), sel.Egress.HTTP)
 	cancel()
 	if dialErr == nil {
-		// stripTier 删除动作（现状 relay 内部）上移调用方（spec 修订）：与
-		// relayWS 首帧模型改写同点执行——sjson 单字段 splice 可交换、行为
-		// 等价；字段存在性由 extractTier 非 auto 档保证（缺失/类型错已在前
-		// 拒绝）。读限在 aiclientTransport 构造器内应用（现状首行语义）。
-		first := st.first
+		// 首帧模型改写与 stripTier 删除都在调用方预处理（relayWS 原样写出）：
+		// sjson 单字段 splice 可交换、行为等价；字段存在性由 extractTier 非 auto
+		// 档保证（缺失/类型错已在前拒绝）。读限在 aiclientTransport 构造器内应用
+		// （现状首行语义）。
+		first := wsFirstFrameForSel(st.first, sel, reqModel)
 		if st.stripTier {
 			if nf, err := sjson.DeleteBytes(first, "service_tier"); err == nil {
 				first = nf

@@ -25,20 +25,20 @@ var (
 )
 
 // TestResizeSamePolicyMigratesSessionPointers 容量变化（策略不变）只迁移会话指针：
-// 线程/窗口计数/ts/owner 全部随对象走，池不复制任何会话状态。
+// 线程/窗口计数全部随对象走，池不复制任何会话状态。
 func TestResizeSamePolicyMigratesSessionPointers(t *testing.T) {
 	old := newTestPool(2, policyA)
-	old.slots[0].turnState = "T0"
-	threads := []string{old.slots[0].thread, old.slots[1].thread}
+	old.slots[0].st.Turns = 5
+	threads := []string{old.slots[0].st.ThreadID, old.slots[1].st.ThreadID}
 
 	grown := resizeForTest(old, poolSpec{accountID: 7, k: 4, installationID: "inst", policy: policyA})
 	require.Len(t, grown.slots, 4)
 	for i := range 2 {
 		require.Same(t, old.slots[i], grown.slots[i], "同一策略：按位次迁移会话指针")
-		require.Equal(t, threads[i], grown.slots[i].thread)
+		require.Equal(t, threads[i], grown.slots[i].st.ThreadID)
 		require.Equal(t, policyA, grown.slots[i].policy)
 	}
-	require.Equal(t, "T0", grown.slots[0].turnState, "会话状态随对象迁移")
+	require.Equal(t, uint64(5), grown.slots[0].st.Turns, "会话状态随对象迁移")
 	for i := 2; i < 4; i++ {
 		require.NotSame(t, old.slots[0], grown.slots[i], "扩容位次是新会话")
 		require.Equal(t, policyA, grown.slots[i].policy)
@@ -122,5 +122,5 @@ func TestFallbackSessionUsesPoolPolicy(t *testing.T) {
 	require.NotNil(t, ephem)
 	require.Nil(t, ephPool, "兜底身份无池")
 	require.Equal(t, policyB, ephem.policy, "兜底身份的策略取自池字段")
-	require.Equal(t, "inst", ephem.installation, "installation 同源")
+	require.Equal(t, "inst", ephem.st.InstallationID, "installation 同源")
 }

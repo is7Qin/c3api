@@ -63,6 +63,8 @@ const codexAuthFailedMsg = "codex authorization failed"
 //   - 会话身份（请求数据）：Dial 收 Identity——握手头 + 帧内 metadata 的
 //     session/thread/window/installation 全部来自本次租借的会话
 //   - 本车道**不使用 ts 重放**（§5.2-3：1:1 透传语义，ts 既不带也不捕获）
+//   - frame 是本次尝试将要写出的首帧（已按当次 sel 改写模型）：用于判定
+//     Turn.First 与握手的 routing-hint/turn-metadata（WithFirstFrame）
 //   - WithPingInterval(0)：禁 SDK 内部心跳（心跳单源——编排层 30s+10s）
 //   - WS 读帧空闲上限由 SDK 默认值负责（300s = 上游 DEFAULT_STREAM_IDLE_TIMEOUT_MS；
 //     只计"一次取帧等待里没有任何可交付帧"，Ping/Pong 不续命）。本车道不设、也不许
@@ -80,7 +82,7 @@ const codexAuthFailedMsg = "codex authorization failed"
 // 刚换上的新凭据 Auth。
 //
 // 错误经适配层翻译（DialError → 信封 + Refreshed；裸 fatal → 统一回调上报）。
-func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsdk.Client, sdkbridge.Prepared, error) {
+func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []byte) (*codexsdk.Client, sdkbridge.Prepared, error) {
 	if p.codex == nil {
 		return nil, sdkbridge.Prepared{}, errCodexWSNotIntegrated
 	}
@@ -88,18 +90,19 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection) (*codexsd
 		return nil, sdkbridge.Prepared{}, errCodexExtMissing
 	}
 	cred := sel.Credential()
-	// 请求准备顺序（§3.3）：取得租借 → **准备条目句柄** → 对齐 owner（可能清 ts）→
-	// 构造 Identity，全部经 `codexRequestPrep` 一次完成（顺序不可反）。
-	//
-	// 入站 WS 车道 1:1 透传：身份随连接传入，但**不走 ts 重放**（§5.2-3）——既不
-	// 发送也不捕获，Sink 为 nil。这条策略作为 `replay=false` 传给 IdentityFor（与
-	// owner 对齐同一个调用），而不是先取身份再清字段：会话的 staleness 不能靠车道
-	// 类型事后补。
-	prep, id, err := p.codexRequestPrep(sel, &cred, false)
+	// 只取条目句柄，不经 codexRequestPrep（§5.3）：WS 的身份与首帧绑定，下面按
+	// frame 组装。入站 WS 车道 1:1 透传，不带也不捕获 turn-state（Sink=nil）。
+	prep, err := p.codex.Prepare(&cred)
 	if err != nil {
 		return nil, sdkbridge.Prepared{}, err
 	}
+	// TODO(codex-conversation-integration 第二步)：sel.Conversation 为真时走
+	// WithConversation(book, req, frame) 且 id 传零值。本步只接槽位路径。
+	id := sel.IdentityFor(!codexsdk.AnalyzeConversationInput(frame).FollowUp())
 	opts := []codexsdk.Option{
+		// 握手的 routing-hint 与 turn-metadata 按随后第一次 Send 的帧计算：frame 必须
+		// 与 relayWS 实际写出的首帧逐字节相同（调用方传同一份字节）。
+		codexsdk.WithFirstFrame(frame),
 		codexsdk.WithPingInterval(0), // 心跳单源：编排层 30s+10s 单一所有者
 	}
 	// 裁决（spec §12）：codex 面不透传任何客户端头，握手头全由 SDK 生成（伪装身份、

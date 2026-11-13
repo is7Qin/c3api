@@ -42,8 +42,8 @@ type wsRelayTransport interface {
 	CloseNow()
 }
 
-// relayWS 合一骨架：首帧模型改写（ModelMapping 语义，与 setModel 同构；首帧
-// = 请求帧非流式中间帧，图像剥离预处理点；调用方已预处理 stripTier——原样转发）
+// relayWS 合一骨架：首帧由调用方预处理（模型改写见 wsFirstFrameForSel——
+// ModelMapping 语义，与 setModel 同构；非 Codex 另有 stripTier）后原样转发
 // → 转发首帧 → 双向事件帧 1:1 relay（流式中间帧零解析零拷贝直转）→ 关闭/错误传播
 // → usage 记录。返回 (handled, fwMsg)：handled = 请求已处理完毕（成功/客户端断开/
 // 流中止已记录）；false = 首帧转发失败（上游未消费，记 not-sent 可重试），fwMsg
@@ -52,7 +52,7 @@ type wsRelayTransport interface {
 // usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**——codex
 // 路径的判死帧 FatalAuth 钩子即挂此处（客户端写失败时判死帧仍触发 FatalAuth）。
 func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwMsg string) {
-	if fwMsg, fwFailed := relayWSFirstFrame(up, r, sel, reqModel, firstTyp, first); fwFailed {
+	if fwMsg, fwFailed := relayWSFirstFrame(up, r, firstTyp, first); fwFailed {
 		return false, fwMsg
 	}
 
@@ -432,28 +432,33 @@ func isResponsesCompleted(data []byte) bool {
 	return bytes.Equal(data[start+1:end-1], completedTypeBytes)
 }
 
-// relayWSFirstFrame 首帧模型改写 + 转发（relayWS 提取）：sel.Model 非空且与
-// reqModel 不同 → sjson 改写 model（改写失败/帧非合法 JSON → 原样转发，上游自行
-// 校验）；写失败 → CloseNow 并返回截断错误文本（failed=true，调用方按连接级错误
-// 转移，保留可重试语义）。
+// wsFirstFrameForSel 按本次尝试的 sel 改写首帧模型：sel.Model 非空且与 reqModel
+// 不同 → sjson 改写 model（改写失败/帧非合法 JSON → 原样返回，上游或 SDK 自行
+// 校验）。由 wsAttempt 在拨号前调用（每次尝试一次，故障转移换号按当次 sel 重算），
+// 结果原样交给 relayWS 写出；Codex 分支还把同一份字节交给拨号（WithFirstFrame）。
+func wsFirstFrameForSel(first []byte, sel *scheduler.Selection, reqModel string) []byte {
+	if sel.Model != "" && sel.Model != reqModel {
+		if nf, err := sjson.SetBytes(first, "model", sel.Model); err == nil {
+			return nf
+		}
+	}
+	return first
+}
+
+// relayWSFirstFrame 首帧转发（relayWS 提取）：first 已由调用方预处理（模型改写
+// 见 wsFirstFrameForSel，非 Codex 分支另有 stripTier），这里原样写出；写失败 →
+// CloseNow 并返回截断错误文本（failed=true，调用方按连接级错误转移，保留可重试语义）。
 //
 // 重复键：首帧的重复 model/stream 在**更上游**就被拒了——caller_responses_ws.go
 // 读帧之后、选号与拨号之前用 duplicateTopLevelKey 校验并回错误帧（与 HTTP 入口
-// caller.go 同一条规则）。不在这里处理的原因：此函数只有 up.Write 一个出口，
-// 拒绝需要选号前的无副作用窗口。
+// caller.go 同一条规则）。
 //
 // ⚠ 范围限定：该守卫只覆盖**首帧**（response.create）。后续客户端帧按字节原样
 // 转发（本文件上方 client-loop），它们的 model 不参与路由、也不做重复键校验；
 // 因此不要把首帧守卫描述成「整个 WS 会话的模型身份已强制」。
-func relayWSFirstFrame(up wsRelayTransport, r *http.Request, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (fwMsg string, failed bool) {
+func relayWSFirstFrame(up wsRelayTransport, r *http.Request, firstTyp websocket.MessageType, first []byte) (fwMsg string, failed bool) {
 	// 首帧未送达视为上游未消费，不可记业务帧已见，保留可重试语义。
-	frame := first
-	if sel.Model != "" && sel.Model != reqModel {
-		if nf, err := sjson.SetBytes(first, "model", sel.Model); err == nil {
-			frame = nf
-		} // 改写失败（帧非合法 JSON）→ 原样转发，上游自行校验
-	}
-	if err := up.Write(r.Context(), firstTyp, frame); err != nil {
+	if err := up.Write(r.Context(), firstTyp, first); err != nil {
 		up.CloseNow()
 		return domain.TruncateErrMsg(err.Error()), true
 	}

@@ -10,7 +10,8 @@
 - 选号入口：`NewAttemptPlan` / `NewAttemptPlanWithCacheAffinity`（`attempt_plan_reservation.go`）
   → `ReserveAttempt(plan)` 返回 `*Selection` + `Attempt`；proxy 失败转移靠计划推进。
 - `Selection`（`scheduler.go`）：选中账号的只读视图 + 租约。Codex 相关：
-  - 槽位路径：`IdentityFor(owner, replay)` 取槽位会话身份；`StepIdentity()` 仅在成功取到
+  - 槽位路径：`IdentityFor(first)` 取槽位会话身份（`first` = `!AnalyzeConversationInput(payload).FollowUp()`；
+    `Sink=nil`、`Turn.State=""`，不带也不捕获 turn-state）；`StepIdentity()` 仅在成功取到
     usage 且上游连接已归还后调用一次；
   - 会话路径（本轮新增）：`Conversation`（= `AttemptPlanIdentity.Conversation`）、
     `CacheDomain`（生效缓存域，私有域 = `private:<账号ID>`）、`InstallationID`。

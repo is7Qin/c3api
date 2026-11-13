@@ -138,8 +138,7 @@ type Selection struct {
 	// session 本次预留认领的 codex 会话（仅 codex 凭据；nil = 无会话——非 codex
 	// 面不认领）。Release 归还；IdentityFor/StepIdentity 经它读写。
 	session *codexSession
-	// pool 会话所属池（线程退役出口；owner 对齐不读池——凭据失效是账号级的，且对齐
-	// 用的是会话自己的字段，见 IdentityFor）。全忙兜底的临时会话无池。
+	// pool 会话所属池（线程退役出口）。全忙兜底的临时会话无池。
 	pool *identityPool
 	// Conversation 本次预留走**会话路径**（= AttemptPlanIdentity.Conversation）：
 	// 未认领槽位（session 恒 nil），身份由 SDK 会话簿按对话合成。proxy 只读这一位
@@ -183,38 +182,19 @@ func (s *Selection) Release() {
 	}
 }
 
-// IdentityFor 本次请求的身份数据（identity 是**请求数据**，§3.1）——**一步**完成
-// 「对齐 owner → 构造 Identity」。
+// IdentityFor 本次请求的槽位身份数据（identity 是**请求数据**，§3.1）。
 //
-// 为什么只有这一个入口：这两步有强制先后（owner 变了必须先清 ts，再由调用方取
-// 身份），分成两个可反序调用的方法就只能靠注释约束顺序——历史上 WS 车道正是靠
-// "调完再清 replay" 补的。现在策略作为参数给全：`replay=false` 的车道在**同一
-// 次调用**里既不发送也不捕获 ts（ts 恒空、Sink = nil），顺序错不了。
+// first = 本请求是一轮的第一个请求（调用方取 `!AnalyzeConversationInput(payload).FollowUp()`）。
+// 槽位路径不重放、不捕获 turn-state：Sink 恒 nil、Turn.State 恒空——与此前
+// `codexTurnStateReplay=false` 的线上行为等价。全部取自会话（installation 是账号级
+// 稳定项、与 session/thread/window 同源），字段拷贝、零分配。
 //
-// owner 取自本次请求准备好的条目句柄（`Prepared.Owner`：条目构造时定型的稳定
-// 字段），不拿请求里的凭据快照重新散列（那会在条目尚未重建时给出"新 owner + 旧
-// auth"），也不读池上的计数器（池会被整体替换；会话字段跟着会话对象走，重载窗口
-// 里发生的对齐不会丢）。owner 为零值（未装配/匿名调用面）= 不对齐。
-//
-// 全部取自会话：installation 是账号级稳定项、与 session/thread/window 同源，故
-// 不再与账号 ext 各存一份。无会话（非 codex / 池缺席）→ 零值（SDK 内层 omit）。
-func (s *Selection) IdentityFor(owner [16]byte, replay bool) codexsdk.Identity {
+// 无会话（非 codex / 池缺席 / 会话路径不认领槽位）→ 零值（SDK 视为匿名）。
+func (s *Selection) IdentityFor(first bool) codexsdk.Identity {
 	if s == nil || s.session == nil {
 		return codexsdk.Identity{}
 	}
-	// 对齐（§3.2 凭据替换 / §3.3 请求准备顺序）：owner 变了 ⇒ 先清 ts。
-	// 失效源是会话自己的字段，不是池上的计数器：owner 属于账号凭据这一稳定事实，
-	// 会话对象跨池迁移（resize）时字段随对象走，所以「新池已建、尚未发布」的窗口
-	// 里发生的对齐不会丢。清 ts 只能由租借持有者做——状态字段没有第二读者。
-	if owner != ([16]byte{}) && s.session.credOwner != owner {
-		s.session.credOwner = owner
-		s.session.turnState = ""
-	}
-	id := s.session.identity()
-	if !replay {
-		id.TurnState, id.Sink = "", nil
-	}
-	return id
+	return s.session.identity(first)
 }
 
 // StepIdentity 推进本会话一次完成轮（§3.2 推进）——**仅成功取到 usage、且上游

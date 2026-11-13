@@ -69,32 +69,34 @@ func syncForTest(prev *identityPool, spec poolSpec) *identityPool {
 	return np
 }
 
-// TestSelectionCodexIdentityFromSession 身份四元组一次给全（Session + Meta 同源），
-// installation 取自会话（单一来源）——与账号 ext 无关；无会话 → 零值。
+// TestSelectionCodexIdentityFromSession 槽位身份一次给全：installation / session /
+// window（含 context_window_id）取自会话（单一来源）——与账号 ext 无关；Turn 只带
+// first；Sink=nil、Turn.State=""（槽位路径不带 turn-state）；无会话 → 零值。
 func TestSelectionCodexIdentityFromSession(t *testing.T) {
 	session := newCodexSession("slot-inst", testPolicy())
-	session.turnState = "T1"
 	sel := &Selection{
 		session: session,
 		Ext:     codexExt("ext-inst"), // 故意与会话不一致：注入必须取会话
 	}
-	id := sel.IdentityFor([16]byte{}, true)
-	require.Equal(t, session.thread, id.Session.SessionID)
-	require.Equal(t, session.thread, id.Session.ThreadID)
+	id := sel.IdentityFor(true)
+	require.Equal(t, session.st.ThreadID, id.Session.SessionID)
+	require.Equal(t, session.st.ThreadID, id.Session.ThreadID)
 	require.Equal(t, session.windowID, id.Session.WindowID)
-	require.Equal(t, "slot-inst", id.Meta.InstallationID, "installation 取会话，非 ext")
-	require.Equal(t, id.Session.SessionID, id.Meta.SessionID)
-	require.Equal(t, id.Session.ThreadID, id.Meta.ThreadID)
-	require.Equal(t, id.Session.WindowID, id.Meta.WindowID)
-	require.Equal(t, "T1", id.TurnState, "ts 来自会话")
-	require.Same(t, session, id.Sink, "Sink 指向会话本身（ts 落点）")
-	require.Equal(t, session.threadKey, threadKeyOf("slot-inst", session.thread), "threadKey 与 SDK 同构")
+	require.Empty(t, id.Session.ClientRequestID, "空 = SDK 取 ThreadID")
+	require.Equal(t, "slot-inst", id.InstallationID, "installation 取会话，非 ext")
+	require.Equal(t, session.st.WindowN, id.Window.Number, "窗口号与 WindowID 的 n 一致")
+	require.NotEmpty(t, session.st.ContextWindowID)
+	require.Equal(t, session.st.ContextWindowID, id.Window.ContextID, "context_window_id 取会话")
+	require.Equal(t, codexsdk.Turn{First: true}, id.Turn, "Turn 只带 first（ID/StartedAt 由 SDK 每请求生成，State 恒空）")
+	require.Nil(t, id.Sink, "槽位路径不捕获 turn-state")
+	require.Equal(t, session.threadKey, threadKeyOf("slot-inst", session.st.ThreadID), "threadKey 与 SDK 同构")
+	require.False(t, sel.IdentityFor(false).Turn.First, "first 原样透传")
 
 	// 无会话（非 codex / 池缺席）→ 零值（不注入）。
 	empty := &Selection{Ext: codexExt("ext-inst")}
-	require.Zero(t, empty.IdentityFor([16]byte{}, true))
+	require.Zero(t, empty.IdentityFor(true))
 	var nilSel *Selection
-	require.Zero(t, nilSel.IdentityFor([16]byte{}, true))
+	require.Zero(t, nilSel.IdentityFor(true))
 }
 
 // TestSessionStepAdvancesWindow 推进只由「完成轮数」驱动：turns 每步 +1；跨
@@ -102,23 +104,23 @@ func TestSelectionCodexIdentityFromSession(t *testing.T) {
 func TestSessionStepAdvancesWindow(t *testing.T) {
 	session := newCodexSession("inst", testPolicy())
 	firstWindow := session.windowID
-	require.Equal(t, session.thread+":0", firstWindow, "windowID = thread:0")
+	require.Equal(t, session.st.ThreadID+":0", firstWindow, "windowID = thread:0")
 
-	firstNextAt := session.nextAt
+	firstNextAt := session.st.NextWindowAt
 	require.GreaterOrEqual(t, firstNextAt, uint64(48))
 	require.LessOrEqual(t, firstNextAt, uint64(96))
 
 	for i := uint64(1); i < firstNextAt; i++ {
 		require.Empty(t, session.step(), "窗口内不退休")
-		require.Equal(t, i, session.turns)
-		require.Equal(t, uint64(0), session.windowN)
+		require.Equal(t, i, session.st.Turns)
+		require.Equal(t, uint64(0), session.st.WindowN)
 		require.Equal(t, firstWindow, session.windowID, "窗口内 windowID 不变（不重算、不分配）")
 	}
 	require.Empty(t, session.step(), "跨窗口不退休")
-	require.Equal(t, uint64(1), session.windowN)
-	require.Equal(t, session.thread+":1", session.windowID, "跨窗口 ⇒ windowID 递增")
-	require.Greater(t, session.nextAt, firstNextAt, "阈值随窗口推进")
-	require.Equal(t, firstNextAt+windowSpanOf(session.thread, 1, firstNextAt), session.nextAt)
+	require.Equal(t, uint64(1), session.st.WindowN)
+	require.Equal(t, session.st.ThreadID+":1", session.windowID, "跨窗口 ⇒ windowID 递增")
+	require.Greater(t, session.st.NextWindowAt, firstNextAt, "阈值随窗口推进")
+	require.Equal(t, firstNextAt+windowSpanOf(session.st.ThreadID, 1, firstNextAt), session.st.NextWindowAt)
 }
 
 // windowSpanOf 用 SDK 的公开纯值类型复算 (thread, windowIndex) 的 span：造一个
@@ -132,22 +134,21 @@ func windowSpanOf(threadID string, windowIndex, nextAt uint64) uint64 {
 	return next.NextWindowAt - nextAt
 }
 
-// TestSessionRetireClearsTurnStateAndReportsOldThreadKey 退休（§3.2）：
-// ① 旧 threadKey 被报出（调用方锁外退役连接）② ts 清空 ③ 新线程 + 计数归零 +
-// windowID/threadKey 重算 + wmax 重抽。
-func TestSessionRetireClearsTurnStateAndReportsOldThreadKey(t *testing.T) {
+// TestSessionRetireReportsOldThreadKey 退休（§3.2）：
+// ① 旧 threadKey 被报出（调用方锁外退役连接）② 新线程 + 计数归零 +
+// windowID/threadKey/context_window_id 重算 + wmax 重抽。
+func TestSessionRetireReportsOldThreadKey(t *testing.T) {
 	spy := &retireSpy{}
 	pool := newTestPoolWith(1, codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}, spy.fn)
 	session := pool.claim()
 	require.NotNil(t, session)
-	oldThread, oldKey := session.thread, session.threadKey
-	session.SetTurnState("T-old")
+	oldThread, oldKey, oldCtx := session.st.ThreadID, session.threadKey, session.st.ContextWindowID
 
 	sel := &Selection{session: session, pool: pool}
 	retiredAt := 0
 	for i := 1; i <= 96; i++ {
 		sel.StepIdentity()
-		if session.thread != oldThread {
+		if session.st.ThreadID != oldThread {
 			retiredAt = i
 			break
 		}
@@ -156,21 +157,20 @@ func TestSessionRetireClearsTurnStateAndReportsOldThreadKey(t *testing.T) {
 	require.LessOrEqual(t, retiredAt, 96, "96 轮内必退休（span≤96）")
 
 	require.Equal(t, []string{fmt.Sprintf("7|%s", oldKey)}, spy.snapshot(), "退休报出**旧** threadKey（锁外退役入口）")
-	require.Empty(t, session.turnState, "退休清 ts（M3：不清就带旧 ts 进新线程）")
-	require.NotEqual(t, oldThread, session.thread, "退休换新线程")
-	require.Equal(t, uint64(0), session.turns, "退休归零轮数")
-	require.Equal(t, uint64(0), session.windowN, "退休归零窗口")
-	require.Equal(t, session.thread+":0", session.windowID, "windowID 重算")
-	require.Equal(t, threadKeyOf("inst", session.thread), session.threadKey, "threadKey 重算")
-	require.Equal(t, uint64(1), session.wmax, "wmax 按策略重抽（WMax=1 固定）")
-	require.Equal(t, session.thread+":0", sel.IdentityFor([16]byte{}, true).Session.WindowID, "下一个请求用新线程")
+	require.NotEqual(t, oldCtx, session.st.ContextWindowID, "退休换新 context_window_id")
+	require.NotEqual(t, oldThread, session.st.ThreadID, "退休换新线程")
+	require.Equal(t, uint64(0), session.st.Turns, "退休归零轮数")
+	require.Equal(t, uint64(0), session.st.WindowN, "退休归零窗口")
+	require.Equal(t, session.st.ThreadID+":0", session.windowID, "windowID 重算")
+	require.Equal(t, threadKeyOf("inst", session.st.ThreadID), session.threadKey, "threadKey 重算")
+	require.Equal(t, uint64(1), session.st.WMax, "wmax 按策略重抽（WMax=1 固定）")
+	require.Equal(t, session.st.ThreadID+":0", sel.IdentityFor(true).Session.WindowID, "下一个请求用新线程")
 
-	// 退休后旧 threadKey 永不复用（UUIDv7 新线程）；新会话首请求不带 ts。
+	// 退休后旧 threadKey 永不复用（UUIDv7 新线程）。
 	require.NotEqual(t, oldKey, session.threadKey)
-	require.Empty(t, sel.IdentityFor([16]byte{}, true).TurnState)
 }
 
-// TestResizeMigratesOwnedSessions 容量变化按位次迁移（沿用线程/窗口计数/ts）；
+// TestResizeMigratesOwnedSessions 容量变化按位次迁移（沿用线程/窗口计数）；
 // 空闲旧会话被缩容丢弃 ⇒ 立即退役旧线程（G10 的空闲侧）。
 func TestResizeMigratesOwnedSessions(t *testing.T) {
 	spy := &retireSpy{}
@@ -178,17 +178,15 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 	threads := make([]string, 4)
 	keys := make([]string, 4)
 	for i, s := range old.slots {
-		threads[i], keys[i] = s.thread, s.threadKey
-		old.slots[i].SetTurnState(fmt.Sprintf("T%d", i))
-		old.slots[i].turns = uint64(10 + i)
+		threads[i], keys[i] = s.st.ThreadID, s.threadKey
+		old.slots[i].st.Turns = uint64(10 + i)
 	}
 
 	shrunk := resizeForTest(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy(), retire: spy.fn})
 	require.Len(t, shrunk.slots, 2)
 	for i := range 2 {
-		require.Equal(t, threads[i], shrunk.slots[i].thread, "保留位次沿用线程")
-		require.Equal(t, fmt.Sprintf("T%d", i), shrunk.slots[i].turnState, "保留位次不丢 ts")
-		require.Equal(t, uint64(10+i), shrunk.slots[i].turns, "保留位次不丢计数器")
+		require.Equal(t, threads[i], shrunk.slots[i].st.ThreadID, "保留位次沿用线程")
+		require.Equal(t, uint64(10+i), shrunk.slots[i].st.Turns, "保留位次不丢计数器")
 		require.False(t, shrunk.slots[i].busy.Load(), "迁移后空闲（新池尚未发布）")
 	}
 	require.Equal(t, []string{fmt.Sprintf("7|%s", keys[2]), fmt.Sprintf("7|%s", keys[3])}, spy.snapshot(),
@@ -196,19 +194,17 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 
 	grown := resizeForTest(shrunk, poolSpec{accountID: 7, k: 4, installationID: "inst", policy: testPolicy(), retire: spy.fn})
 	require.Len(t, grown.slots, 4)
-	require.Equal(t, threads[0], grown.slots[0].thread)
-	require.Equal(t, threads[1], grown.slots[1].thread)
-	require.NotEmpty(t, grown.slots[2].thread, "扩容位次开新线程")
-	require.NotEmpty(t, grown.slots[3].thread)
-	require.NotEqual(t, grown.slots[2].thread, grown.slots[3].thread)
+	require.Equal(t, threads[0], grown.slots[0].st.ThreadID)
+	require.Equal(t, threads[1], grown.slots[1].st.ThreadID)
+	require.NotEmpty(t, grown.slots[2].st.ThreadID, "扩容位次开新线程")
+	require.NotEmpty(t, grown.slots[3].st.ThreadID)
+	require.NotEqual(t, grown.slots[2].st.ThreadID, grown.slots[3].st.ThreadID)
 	for i := range 2 {
-		require.Equal(t, fmt.Sprintf("T%d", i), grown.slots[i].turnState, "扩容不丢保留位次的 ts")
+		require.Equal(t, uint64(10+i), grown.slots[i].st.Turns, "扩容不丢保留位次的计数器")
 	}
 	for i := 2; i < 4; i++ {
-		require.Empty(t, grown.slots[i].turnState, "新会话无 ts（G10：K 2→4 首请求不带 ts）")
-		id := (&Selection{session: grown.slots[i], pool: grown}).IdentityFor([16]byte{}, true)
-		require.Empty(t, id.TurnState)
-		require.Equal(t, grown.slots[i].thread+":0", id.Session.WindowID, "新会话 window 从 0 起")
+		id := (&Selection{session: grown.slots[i], pool: grown}).IdentityFor(true)
+		require.Equal(t, grown.slots[i].st.ThreadID+":0", id.Session.WindowID, "新会话 window 从 0 起")
 	}
 }
 
@@ -220,14 +216,14 @@ func TestResizeDroppedInFlightSessionNotHandedOver(t *testing.T) {
 	old := newTestPoolWith(4, testPolicy(), spy.fn)
 	inFlight := old.slots[3]
 	require.True(t, inFlight.busy.CompareAndSwap(false, true), "模拟持者在飞")
-	inFlightThread := inFlight.thread
+	inFlightThread := inFlight.st.ThreadID
 
 	droppedIdle := old.slots[2].threadKey
 	shrunk := resizeForTest(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy(), retire: spy.fn})
 	require.Len(t, shrunk.slots, 2)
 	require.Equal(t, []string{"7|" + droppedIdle}, spy.snapshot(),
 		"只退役空闲的丢槽；在飞丢槽不做任何交接（不读其状态）")
-	require.Equal(t, inFlightThread, inFlight.thread, "持者的会话状态不被迁移方改写")
+	require.Equal(t, inFlightThread, inFlight.st.ThreadID, "持者的会话状态不被迁移方改写")
 	require.True(t, inFlight.busy.Load(), "持者仍持有 busy（收尾照常）")
 	for _, s := range shrunk.slots {
 		require.NotSame(t, inFlight, s, "在飞会话不进入新池")
@@ -238,15 +234,14 @@ func TestResizeDroppedInFlightSessionNotHandedOver(t *testing.T) {
 }
 
 // TestResizeInstallationChangeRebuildsAllSessions installation 变 ⇒ 该账号**全部
-// 会话重建**：旧线程逐个退役、ts 全清、新会话首请求不带 ts（G11 的会话面）。
+// 会话重建**：旧线程逐个退役、新会话用新 installation（G11 的会话面）。
 func TestResizeInstallationChangeRebuildsAllSessions(t *testing.T) {
 	spy := &retireSpy{}
 	old := newTestPoolWith(3, testPolicy(), spy.fn)
 	oldThreads := make([]string, 3)
 	oldKeys := make([]string, 3)
 	for i, s := range old.slots {
-		oldThreads[i], oldKeys[i] = s.thread, s.threadKey
-		s.SetTurnState("T-stale")
+		oldThreads[i], oldKeys[i] = s.st.ThreadID, s.threadKey
 	}
 
 	np := resizeForTest(old, poolSpec{accountID: 7, k: 3, installationID: "inst-new", policy: testPolicy(), retire: spy.fn})
@@ -255,11 +250,10 @@ func TestResizeInstallationChangeRebuildsAllSessions(t *testing.T) {
 		"7|" + oldKeys[0], "7|" + oldKeys[1], "7|" + oldKeys[2],
 	}, spy.snapshot(), "逐个退役旧线程")
 	for i, s := range np.slots {
-		require.NotEqual(t, oldThreads[i], s.thread, "全部会话重建（新线程）")
-		require.Equal(t, "inst-new", s.installation, "installation 取本次生效值")
-		require.Equal(t, threadKeyOf("inst-new", s.thread), s.threadKey, "threadKey 随 installation 重算")
-		require.Empty(t, s.turnState, "ts 全清（新 owner 不重放旧 ts）")
-		require.Empty(t, (&Selection{session: s, pool: np}).IdentityFor([16]byte{}, true).TurnState)
+		require.NotEqual(t, oldThreads[i], s.st.ThreadID, "全部会话重建（新线程）")
+		require.Equal(t, "inst-new", s.st.InstallationID, "installation 取本次生效值")
+		require.Equal(t, threadKeyOf("inst-new", s.st.ThreadID), s.threadKey, "threadKey 随 installation 重算")
+		require.Equal(t, "inst-new", (&Selection{session: s, pool: np}).IdentityFor(true).InstallationID)
 	}
 }
 
@@ -289,17 +283,17 @@ func TestIdentityPoolClaimReleaseNoCrossSession(t *testing.T) {
 		require.False(t, seen[s], "会话不得重复认领")
 		seen[s] = true
 		require.True(t, s.busy.Load())
-		threads[s.thread] = true
+		threads[s.st.ThreadID] = true
 	}
 	require.Len(t, threads, 3, "K 个会话身份互不相同（不串台）")
 	require.Nil(t, pool.claim(), "全忙 → nil（兜底在外层）")
 
 	pool.slots[1].release()
 	require.False(t, pool.slots[1].busy.Load())
-	thread := pool.slots[1].thread
+	thread := pool.slots[1].st.ThreadID
 	again := pool.claim()
 	require.Same(t, pool.slots[1], again, "唯一空闲会话被认领")
-	require.Equal(t, thread, again.thread, "复用（占用）不改身份")
+	require.Equal(t, thread, again.st.ThreadID, "复用（占用）不改身份")
 	again.release()
 }
 
@@ -404,7 +398,7 @@ func TestIdentityPoolResizeBusySlotNotMigrated(t *testing.T) {
 		require.NotSame(t, busy, s, "在飞会话不迁移（不与在途请求共享身份）")
 	}
 	require.NotSame(t, busy, rebuilt.slots[busyIdx], "在飞位次新开会话")
-	require.Equal(t, busy.thread, busyPool.slots[busyIdx].thread, "持者身份不被改写")
+	require.Equal(t, busy.st.ThreadID, busyPool.slots[busyIdx].st.ThreadID, "持者身份不被改写")
 }
 
 // TestIdentityPoolRotatePolicyImmutable 轮换策略是**池的不可变构造参数**：池与会话
@@ -451,90 +445,7 @@ func TestClaimCodexSessionOnlyCodexAndFallback(t *testing.T) {
 	for _, sl := range pool.slots {
 		require.NotSame(t, ephem, sl)
 	}
-	require.NotEmpty(t, ephem.thread)
-}
-
-// TestSessionCredGenSurvivesPendingPoolPublication 凭据 owner 失效**不依赖池的发布
-// 时机**，也不依赖"被租到的那一条会话"（B2 回归，替代原名
-// TestClearTurnStatesAdvancesGeneration）：
-//
-//	① 两个会话都已对齐 owner A 并各自持有 ts=T-old；
-//	② 重载建好新池（会话按位次迁移——ts/owner 都是**会话字段**），但尚未发布；
-//	③ 发布窗口内发生凭据替换：旧池仍被旧视图持有者使用，**两条会话各租借一次**都会
-//	   对齐 owner B；
-//	④ 新池发布后：**每个**会话的下一租借都必须是空 ts。
-//
-// 旧实现（池级 credGen + resize 时 `np.credGen.Store(old.credGen.Load())` 值拷贝）在
-// ②③④ 之间丢掉失效：清 ts 推进的是旧池，新池发布后会话看不到刚推进的代际，T-old 被
-// 带进新 owner 的上游会话（oracle B1-路径二）。
-//
-// ③④ 的位次是**判别力**的关键（momus N3）：③ 必须把两条会话都租一遍（这样"只清被
-// 租到的那一条"的池级实现会让另一条带着 T-old 存活），④ 必须**逆序**访问（先访问
-// ③ 最后清过的那条）——否则池级 owner 在 ④ 的第一次访问时已经"顺手"清了两条，用例
-// 对池级失效源仍然是绿的。
-func TestSessionCredGenSurvivesPendingPoolPublication(t *testing.T) {
-	ownerA, ownerB := [16]byte{0x0a}, [16]byte{0x0b}
-	old := newTestPool(2, testPolicy())
-
-	// ① 两条会话各自完成一轮（拿到 T-old）并已对齐 owner A。
-	for _, s := range old.slots {
-		require.True(t, s.busy.CompareAndSwap(false, true))
-		// 请求准备顺序：先对齐 owner（会话刚建，ts 尚空），请求结束后 Sink 才落 ts。
-		(&Selection{session: s, pool: old}).IdentityFor(ownerA, true)
-		s.SetTurnState("T-old")
-		s.release()
-	}
-
-	// ② 重载：新池已建（两条会话按位次迁移，不重建），尚未发布。
-	next := resizeForTest(old, poolSpec{accountID: 7, k: 3, installationID: "inst", policy: testPolicy()})
-	require.Same(t, old.slots[0], next.slots[0], "会话对象跨池迁移（owner/ts 都是会话字段）")
-	require.Same(t, old.slots[1], next.slots[1], "会话对象跨池迁移（位次 1）")
-
-	// ③ 发布窗口内的凭据替换：旧池仍可见，**两条会话各租借一次**（每次都要在租借内
-	// 先清 ts——失效源是会话字段时两条都会被清；克隆到池上时只会清被租到的那一条）。
-	for i := range 2 {
-		stale := old.claim()
-		require.NotNil(t, stale, "①已全部归还 ⇒ 窗口内两次租借都应成功（%d）", i)
-		(&Selection{session: stale, pool: old}).IdentityFor(ownerB, true)
-		require.Empty(t, stale.turnState, "凭据替换 ⇒ 租借内先清 ts（位次 %d）", i)
-		stale.release()
-	}
-
-	// ④ 新池发布后到来的请求（同一份凭据 = owner B）：**每条**会话都不得再带回 T-old。
-	// 逆序访问：先走被 ③ 最后清过的那条，让「池级失效源」在第二次访问时已无清 ts 动作。
-	for i, held := range []*codexSession{next.slots[1], next.slots[0]} {
-		require.True(t, held.busy.CompareAndSwap(false, true))
-		sel := &Selection{session: held, pool: next}
-		sel.IdentityFor(ownerB, true)
-		require.Empty(t, sel.IdentityFor([16]byte{}, true).TurnState,
-			"逆序第 %d 条：失效必须跨「新池已建、尚未发布」窗口存活，且覆盖该账号全部会话", i)
-		held.release()
-	}
-}
-
-// TestResizeWithoutOwnerChangeKeepsTurnState 正控（momus N2）：owner 没有变化的重载
-// **不得过度清理**——resize 后的首次租借必须保留 ts。
-//
-// 这一条是 pending owner 那一类变异的对偶：把 owner 搬回池上、让 resize 重建失效源，
-// 会让"每次重载都清 ts"，而只看"凭据替换后必须清"的用例抓不到这种过度清理。
-func TestResizeWithoutOwnerChangeKeepsTurnState(t *testing.T) {
-	owner := [16]byte{0x0c}
-	old := newTestPool(1, testPolicy())
-	held := old.slots[0]
-	require.True(t, held.busy.CompareAndSwap(false, true))
-	(&Selection{session: held, pool: old}).IdentityFor(owner, true)
-	held.SetTurnState("T-keep")
-	held.release()
-
-	next := resizeForTest(old, poolSpec{accountID: 7, k: 2, installationID: "inst", policy: testPolicy()})
-	require.Same(t, held, next.slots[0], "会话对象跨池迁移（同一 owner 的会话身份不变）")
-
-	require.True(t, held.busy.CompareAndSwap(false, true))
-	sel := &Selection{session: held, pool: next}
-	sel.IdentityFor(owner, true)
-	require.Equal(t, "T-keep", sel.IdentityFor([16]byte{}, true).TurnState,
-		"owner 未变 ⇒ 重载后的首次租借保留 ts（不允许无差别清空）")
-	held.release()
+	require.NotEmpty(t, ephem.st.ThreadID)
 }
 
 // TestReleaseFreesSessionBeforeConcurrencyDecrement 释放窗口内 claim 恒成功
@@ -657,21 +568,24 @@ func TestReloadPublishesPoolWithView(t *testing.T) {
 }
 
 // TestClaimAndIdentityZeroAlloc §4 预算：租借 + Identity 构造稳态 0 allocs
-// （windowID/threadKey 预计算在会话上；Sink 是指针接口不装箱）。
+// （windowID/threadKey 预计算在会话上；Identity 只做字段拷贝，Sink 恒 nil）。
 func TestClaimAndIdentityZeroAlloc(t *testing.T) {
 	pool := newTestPool(1, testPolicy())
+	sel := &Selection{pool: pool}
 	var sink codexsdk.TurnStateSink
-	var window string
+	var window, ctxWindow string
 	allocs := testing.AllocsPerRun(1000, func() {
 		session := pool.claim()
 		if session == nil {
 			t.Fatal("单槽空闲时 claim 必须成功")
 		}
-		id := session.identity()
-		sink, window = id.Sink, id.Session.WindowID // 保留引用，防被优化掉
+		sel.session = session
+		id := sel.IdentityFor(true)
+		sink, window, ctxWindow = id.Sink, id.Session.WindowID, id.Window.ContextID // 保留引用，防被优化掉
 		session.release()
 	})
 	require.Zero(t, allocs, "租借 + 身份构造不得分配（allocs=%v）", allocs)
-	require.NotNil(t, sink)
+	require.Nil(t, sink, "槽位身份不带 turn-state 落点")
 	require.NotEmpty(t, window)
+	require.NotEmpty(t, ctxWindow)
 }

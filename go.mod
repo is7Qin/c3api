@@ -53,6 +53,7 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/klauspost/compress v1.17.11 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/go-wordwrap v1.0.1 // indirect
@@ -76,3 +77,6 @@ require (
 	golang.org/x/mod v0.42.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )
+
+// TEMP: 本地 SDK 快照，SDK push 后删除
+replace github.com/is7Qin/codex-sdk => /home/unitree/project/codex-sdk-worktrees/snapshot-for-c3api

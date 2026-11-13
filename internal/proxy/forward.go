@@ -106,9 +106,6 @@ type Proxy struct {
 	// fatal 统一回调全在适配层；main 经 Deps.Codex 注入，nil = 未装配 → codex
 	// 类型 501 显式拒绝——防 nil 误走凭据缺失 502）。
 	codex *sdkbridge.Codex
-	// turnStateReplay 是 ts 重放策略（§5.1）：构造期取单点常量
-	// codexTurnStateReplay，仅测试覆盖（同一用例要跑 true/false 两态，G3a/G3b）。
-	turnStateReplay bool
 	// wsHeartbeatInterval resp-ws 心跳间隔 seam（测试缩短 200ms 验证心跳节
 	// 奏；默认 responsesWSHeartbeatInterval——New 构造，生产路径不变）。
 	wsHeartbeatInterval time.Duration
@@ -155,7 +152,6 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		log: log, bill: bill, errlog: errlog,
 		codex: deps.Codex, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
-		turnStateReplay:     codexTurnStateReplay,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
 		wsConns:             newWSRegistry(),
 	}

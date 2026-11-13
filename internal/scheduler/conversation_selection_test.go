@@ -53,7 +53,7 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		require.NotNil(t, pool)
 		threads := make([]string, len(pool.slots))
 		for i, sl := range pool.slots {
-			threads[i] = sl.thread
+			threads[i] = sl.st.ThreadID
 		}
 
 		sel := reserveOnce(t, s, route, true)
@@ -66,7 +66,7 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		sel.Release()
 		requirePoolIdle(t, pool)
 		for i, sl := range pool.slots {
-			require.Equal(t, threads[i], sl.thread, "槽位 %d 不得推进", i)
+			require.Equal(t, threads[i], sl.st.ThreadID, "槽位 %d 不得推进", i)
 		}
 	})
 

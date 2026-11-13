@@ -3,7 +3,7 @@
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 //
 // codex 会话池（账号级 K 会话）：一个会话 = 一条上游线程的完整生命周期——
-// installation / thread / window 计数 / turn-state / 连接身份。身份不再是客户端的
+// installation / thread / window 计数 / 连接身份。身份不再是客户端的
 // 构造期配置，而是**请求数据**：会话池摊开成 `Identity` 交给一次调用（spec S4 §3.1）。
 //
 // 并发模型沿用原槽位池：认领 = 旋转游标 + 逐槽 CAS，归还 = Store(false)——无
@@ -30,80 +30,51 @@ import (
 // codexSession 一个会话：busy 独占标志 + 线程生命周期状态（§3.1 字段表）。
 //
 // 租借（busy.CAS false→true）成功的一方独占全部状态字段直到 release：读写都在
-// 租借期内，没有第二读者。credOwner 记录本会话已对齐的凭据 owner——它跟着**会话
-// 对象**走（含跨池迁移），不复制到池上：池会被整体替换，复制即丢失效（§3.2）。
+// 租借期内，没有第二读者。线程状态直接持有 SDK 的纯值类型 `IdentityState`（含
+// `ContextWindowID`），windowID/threadKey 是它的派生值，在开线程与 step 时一次算好，
+// 组装身份时只做字段拷贝（零分配）。
+//
+// 槽位路径不重放、不捕获 turn-state（Sink 恒 nil、Turn.State 恒空），所以会话上
+// 没有 ts 字段，也不需要随凭据 owner 对齐。
 type codexSession struct {
-	busy         atomic.Bool
-	installation string
-	thread       string
-	windowN      uint64
-	windowID     string
-	threadKey    string
-	turns        uint64
-	nextAt       uint64
-	wmax         uint64
-	turnState    string
+	busy atomic.Bool
+	st   codexsdk.IdentityState
+	// windowID = st.WindowID()、threadKey = threadKeyOf(st)：预计算，避免每请求拼接。
+	windowID  string
+	threadKey string
 	// policy 建会话时抄下的轮换策略（只读：与池的构造参数恒同值）。step 用它推进
 	// 窗口/退休；resize 永不改写它——策略真的变了就换新会话。
 	policy codexsdk.RotatePolicy
-	// credOwner 已对齐的凭据 owner 签名（sdkbridge.CredOwner）。零值 = 尚未对齐
-	// （新会话没有 ts 可清，首次对齐只是把它写上）。
-	credOwner [16]byte
 }
 
-// SetTurnState 是 SDK 的 TurnStateSink：一次普通赋值（§3.2）。
+// identity 本次请求的身份数据（§3.2 租借）：session == thread（根线程语义），
+// 窗口号与 context_window_id 取会话当前值；first 由调用方按请求体判定。
 //
-// 契约保证只在租借期内被调用（`Body.Close`/聚合返回之后不再回调，§2.2），所以
-// 这里既不加锁也不做代际判定。
-func (s *codexSession) SetTurnState(ts string) { s.turnState = ts }
-
-// identity 本次请求的身份数据（§3.2 租借）：Session 与 Meta 同源（session ==
-// thread，根线程语义），ts 取会话当前值，Sink 指向本会话。
-//
-// windowID/threadKey 预计算在会话上 ⇒ 本函数零分配（§4）；Sink 是指针接口，
-// 装进接口不产生分配。
-func (s *codexSession) identity() codexsdk.Identity {
+// 直接组装 Identity 而不调 `IdentityState.Identity`——后者每次重算 WindowID 会分配。
+// 全部是字段拷贝 ⇒ 零分配；Sink=nil、Turn.State=""（槽位路径不带 turn-state）。
+func (s *codexSession) identity(first bool) codexsdk.Identity {
 	return codexsdk.Identity{
-		Session: codexsdk.Session{SessionID: s.thread, ThreadID: s.thread, WindowID: s.windowID},
-		Meta: codexsdk.CodexMeta{
-			InstallationID: s.installation,
-			SessionID:      s.thread,
-			ThreadID:       s.thread,
-			WindowID:       s.windowID,
-		},
-		TurnState: s.turnState,
-		Sink:      s,
+		InstallationID: s.st.InstallationID,
+		Session:        codexsdk.Session{SessionID: s.st.ThreadID, ThreadID: s.st.ThreadID, WindowID: s.windowID},
+		Window:         codexsdk.Window{Number: s.st.WindowN, ContextID: s.st.ContextWindowID},
+		Turn:           codexsdk.Turn{First: first},
 	}
 }
 
-// step 推进一次完成轮（§3.2 推进）：turns++；跨过 nextAt ⇒ 窗口 +1、windowID 重算、
-// nextAt 叠加下一个 span。窗口数达 wmax（>0）⇒ 退休，返回**旧** threadKey（调用方
-// 在锁外用它退役旧线程的空闲连接）。
-//
-// 窗口 span / 退休阈值沿用 SDK 的纯值类型 `IdentityState`/`Step`：那是同一套
-// （thread, windowN）确定性派生，网关只是把状态摊在自己的普通字段上，不再有第二个
-// 实现可以漂移。
+// step 推进一次完成轮（§3.2 推进）：委托 SDK 的 `Step`（窗口 span / 退休阈值是同一套
+// 确定性派生，不存在第二个实现可以漂移）。窗口推进 ⇒ windowID 重算（ContextWindowID
+// 由 Step 一并换新）；退休 ⇒ 返回**旧** threadKey（调用方在锁外用它退役旧线程的空闲
+// 连接），并重算 windowID/threadKey。
 func (s *codexSession) step() string {
-	cur := codexsdk.IdentityState{
-		InstallationID: s.installation,
-		ThreadID:       s.thread,
-		Turns:          s.turns,
-		WindowN:        s.windowN,
-		NextWindowAt:   s.nextAt,
-		WMax:           s.wmax,
-	}
-	next := codexsdk.Step(cur, s.policy)
-	s.turns, s.nextAt = next.Turns, next.NextWindowAt
-	if next.ThreadID != s.thread {
-		// 退休（§3.2）：① 记旧 threadKey ② ts 清空 ③ 新线程 + 计数/阈值/上限重算。
+	prev := s.st
+	s.st = codexsdk.Step(prev, s.policy)
+	if s.st.ThreadID != prev.ThreadID {
 		old := s.threadKey
-		s.turnState = ""
-		s.thread, s.windowN, s.windowID = next.ThreadID, next.WindowN, next.WindowID()
-		s.threadKey, s.wmax = threadKeyOf(s.installation, next.ThreadID), next.WMax
+		s.windowID, s.threadKey = s.st.WindowID(), threadKeyOf(s.st.InstallationID, s.st.ThreadID)
 		return old
 	}
-	if next.WindowN != s.windowN {
-		s.windowN, s.windowID = next.WindowN, next.WindowID()
+	if s.st.WindowN != prev.WindowN {
+		s.windowID = s.st.WindowID()
 	}
 	return ""
 }
@@ -126,15 +97,10 @@ func threadKeyOf(installationID, threadID string) string {
 func newCodexSession(installationID string, policy codexsdk.RotatePolicy) *codexSession {
 	st := codexsdk.NewIdentityState(installationID, policy)
 	return &codexSession{
-		installation: installationID,
-		thread:       st.ThreadID,
-		windowN:      st.WindowN,
-		windowID:     st.WindowID(),
-		threadKey:    threadKeyOf(installationID, st.ThreadID),
-		turns:        st.Turns,
-		nextAt:       st.NextWindowAt,
-		wmax:         st.WMax,
-		policy:       policy,
+		st:        st,
+		windowID:  st.WindowID(),
+		threadKey: threadKeyOf(installationID, st.ThreadID),
+		policy:    policy,
 	}
 }
 
@@ -142,9 +108,6 @@ func newCodexSession(installationID string, policy codexsdk.RotatePolicy) *codex
 // 的旋转起点（round-robin 打散并发）。slots 切片发布后不再增删；逐会话状态经
 // 租借独占。轮换策略是**池的不可变构造参数**（policy），会话只持有建会话时的
 // 只读副本——这样"策略"没有第二个可写副本，resize 也不需要同步它。
-//
-// 池上**没有**任何凭据失效状态：owner 对齐读的是请求自己的凭据、落在会话字段上
-// （§3.2），所以重载换池、pending 池交错都不会丢失效。
 type identityPool struct {
 	slots          []*codexSession
 	cursor         atomic.Uint64
@@ -218,8 +181,8 @@ type poolSpec struct {
 //
 // 迁移判据是**原子预留**（旧会话 busy CAS false→true）：只有取得所有权的旧会话才
 // 被读写——重载不得碰在飞会话的状态（读它就是在和持有者竞争，§3.2）。预留成功的
-// 位次迁移会话（沿用线程/窗口计数/ts/owner）；installation 或轮换策略变 ⇒ 该账号
-// 全部会话重建（旧线程空闲连接退役、ts 不迁）。缩容丢弃的位次：预留成功（=空闲）
+// 位次迁移会话（沿用线程/窗口计数）；installation 或轮换策略变 ⇒ 该账号
+// 全部会话重建（旧线程空闲连接退役）。缩容丢弃的位次：预留成功（=空闲）
 // ⇒ 收集退役旧线程；预留失败（=在飞）⇒ **不做任何交接**，其残留 idle 由 SDK 的
 // idle TTL 时间有界回收（§5.2-5）。旧池 GC。
 //

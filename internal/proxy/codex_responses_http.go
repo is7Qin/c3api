@@ -148,38 +148,22 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 	return p.nonstreamCodexResponses(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred, body)
 }
 
-// codexTurnStateReplay 是 turn-state 重放策略的**单点常量**（§5.1）：
-//   - false：本请求既不带 ts 也不捕获（Identity 的 ts 恒空、Sink = nil）；
-//   - true：本请求带会话当前 ts，上游签发新值即覆盖（"更新即跟随、跟随即复用"）。
+// codexRequestPrep 请求准备（§5.3）：取得条目句柄 → 构造本次尝试的 Identity。
+// 错误原样上抛，由调用方按各自车道既有的错误映射收口（HTTP / stream 的状态面
+// 不同，不在这里归一）。payload 是**实际发给 SDK 的体**（转换车道为转换后的体）：
+// 它决定本请求是不是一轮的第一个请求（`Turn.First`）。每次尝试调用一次——跨账号
+// 故障转移时按当次 sel 重算。
 //
-// 重放**不违反**真实客户端契约——恰恰是它的默认行为（codex-rs
-// `core/src/client.rs`：`x-codex-turn-state` 自述 "sticky routing token captured
-// earlier in the turn"；同一条连接上每个后续请求都把捕获值塞进
-// `client_metadata`（:2311-2312），HTTP 车道则每个请求都带同名请求头
-// （:1638-1642 → :2687-2703）；只有换账号/换 auth owner 才 reset（:1884-1886）。
-// WS 握手头不带它（:1558-1566 与 :1498 传 None）——"只在帧里带"只对握手成立）。
-//
-// 因此 gate 不是"契约是否允许"，而是**收益未测**：开 true 后上游是否真的按 token
-// 命中同一分片（prompt cache 局部性 → TTFT/成本），需要真实账号多轮 A/B 才能定量。
-// 在那之前生产保持 false（错开不亏，开错可能把命中率变化记成"波动"）。
-const codexTurnStateReplay = false
-
-// codexRequestPrep 请求准备两步合一（§3.3）：取得条目句柄 → 对齐 owner（可能清 ts）
-// → 构造 Identity。错误原样上抛，由调用方按各自车道既有的错误映射收口（HTTP /
-// stream / ws 的状态面不同，不在这里归一）。replay 是本车道的 ts 重放策略（WS 车道
-// 恒 false：身份随连接传入，客户端帧自带 ts，网关不二次注入）。
-//
-// 顺序是契约：`IdentityFor` 必须拿**本次请求准备好的条目句柄**的 owner（
-// `Prepared.Owner`，条目构造时定型的稳定字段），不能拿请求里的凭据快照重新散列
-// （条目尚未重建时会给出"新 owner + 旧 auth"），也不读池上的计数器（池整体替换会
-// 丢）。先构造 Identity 再清 ts 更不行：换凭据后的第一个请求会带着旧 owner 的 ts
-// 出去，事后追不回来。所以重放/清空是 `IdentityFor` 的**参数**，不是后置步骤。
-func (p *Proxy) codexRequestPrep(sel *scheduler.Selection, cred *domain.AccountCredential, replay bool) (sdkbridge.Prepared, codexsdk.Identity, error) {
+// 槽位路径：`sel.IdentityFor(first)`，不带也不捕获 turn-state（Sink=nil）。
+func (p *Proxy) codexRequestPrep(ctx context.Context, sel *scheduler.Selection, cred *domain.AccountCredential, payload []byte) (sdkbridge.Prepared, codexsdk.Identity, error) {
 	prep, err := p.codex.Prepare(cred)
 	if err != nil {
 		return sdkbridge.Prepared{}, codexsdk.Identity{}, err
 	}
-	return prep, sel.IdentityFor(prep.Owner(), replay), nil
+	// TODO(codex-conversation-integration 第二步)：sel.Conversation 为真时走会话簿
+	// `book.Prepare(ctx, ConversationRequest{...})` 合成身份。本步未接，暂按槽位
+	// 取值（会话路径未认领槽位 ⇒ 零值身份）。
+	return prep, sel.IdentityFor(!codexsdk.AnalyzeConversationInput(payload).FollowUp()), nil
 }
 
 // nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——
@@ -193,9 +177,8 @@ func (p *Proxy) nonstreamCodexResponses(ctx context.Context, w http.ResponseWrit
 // sel.Model 等价；短路守卫零分配）→ 适配层 Responses → out.Body 写出（直连 =
 // 合成体原样转发 application/json；转换 = responses 合成体经 protoconv 反向映射
 // 回客户端协议 + 客户端模型回填）→ 合成体顶层 usage 提取（SDK 把 response.usage
-// 提升到合成体顶层；无 type 字段）。turn-state：属**会话**（ts 只经 Identity 发送、
-// 只经 Sink 落回会话，§3.1）——本层不读也不回写；跨轮是否重放由 codexTurnStateReplay
-// 单点策略决定。
+// 提升到合成体顶层；无 type 字段）。turn-state：槽位路径既不带也不捕获（Sink=nil）
+// ——本层不读也不回写。
 // 日志 Format 由 out.LogFormat() 自报。
 // transport 为出站传输实参（原生车道 = Selection 原值；转换车道钉 http）。
 func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, out codexRespBody, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
@@ -209,10 +192,10 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// failover 可转移）。
 	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
 	defer cancel()
-	// 请求级身份（§3.1）：**先准备条目句柄**（owner 与 auth/client 同版），
-	// 再对齐 owner，最后由会话给出 Session/Meta/ts/Sink——同账号并发各持不同会话 ⇒
-	// 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的构造期配置。
-	prep, id, err := p.codexRequestPrep(sel, cred, p.turnStateReplay)
+	// 请求级身份（§3.1）：**先准备条目句柄**，再由会话给出身份——同账号并发各持
+	// 不同会话 ⇒ 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的
+	// 构造期配置。
+	prep, id, err := p.codexRequestPrep(ctx, sel, cred, streamBody)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -295,8 +278,8 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	if err != nil {
 		return 0, nil, false, err
 	}
-	// 请求级身份同非流式（先准备条目句柄，再对齐 owner——同样必须先于身份快照）。
-	prep, id, err := p.codexRequestPrep(sel, cred, p.turnStateReplay)
+	// 请求级身份同非流式（先准备条目句柄，再取身份）。
+	prep, id, err := p.codexRequestPrep(ctx, sel, cred, streamBody)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
