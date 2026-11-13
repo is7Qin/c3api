@@ -174,6 +174,7 @@ describe('接线：路由闸门（App.tsx）', () => {
     assert.notEqual(i, -1, '找不到 SupplierFeatureGate')
     const j = app.indexOf('\nfunction ', i + 1)
     const body = app.slice(i, j === -1 ? undefined : j)
+    assert.ok(body.includes('const { supplier, resolved } = useFeatures()'), '闸门必须从 useFeatures() 解构 resolved，不得另造常量')
     // 钩子必须无条件先调（rules of hooks），解构出的 resolved 不是分支：分支段从
     // useFeatures() 之后算起。
     const hook = body.indexOf('useFeatures()')
@@ -205,6 +206,7 @@ describe('接线：页面内容面', () => {
     assert.ok(proxyPage.includes('!isSupplier && supplier'))
     assert.equal(count(proxyPage, /\{showOwner &&/g), 2, '表头与单元格必须同一条件，否则列错位')
     assert.ok(proxyPage.includes('proxies.subtitleAdminPlatform'))
+    assert.ok(proxyPage.includes(": supplier ? 'proxies.subtitleAdmin' : 'proxies.subtitleAdminPlatform'"), '副标题必须按开关二选一')
   })
 
   it('运维页：统计项经 isOpsStatVisible 过滤，空态看过滤后的同一份', () => {
@@ -225,6 +227,8 @@ describe('接线：开关只读一次', () => {
     assert.ok(featuresHook.includes('gcTime: Infinity'))
     assert.ok(featuresHook.includes("['user', 'features']"))
     assert.ok(featuresHook.includes('enabled: Boolean(userAuth.getToken())'))
+    assert.ok(featuresHook.includes('supplier: q.data?.supplier === true'), '加载中/失败必须按关闭（fail-closed）')
+    assert.ok(featuresHook.includes('resolved: q.isSuccess || q.isError'), '失败也算已有结论，否则闸门永久空白')
   })
 
   it('扫描面非空且覆盖页面与路由文件（glob 坏掉时不许静默全绿）', () => {
