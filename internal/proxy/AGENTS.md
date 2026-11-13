@@ -65,7 +65,10 @@
   该帧、会话继续、不写错误槽。识别只在错误分支做，热路径零开销；`sdkbridge` 必须保留
   错误链。
 - `ConversationWorker`：`worker.Loop` 驱动节拍（默认 50ms，可注入）调 `book.Flush`，Flush
-  串行（`flushMu`）；`Close` 在停机预算内最后 Flush 一次；`FlushNow` 是测试屏障。`Stats()`
+  串行（`flushMu`）。节拍 Flush 用 `context.WithoutCancel`（SDK 每批自带 2s 预算；失败批
+  不回队，取消即丢），循环只由 `Close` 停止、只在两次 Flush 之间检查退出（SIGTERM 后的
+  排空窗口仍按节拍落盘）；`Close` 在停机预算内最后 Flush 一次，预算耗尽返回错误（不静默
+  nil）；`FlushNow` 是测试屏障。`Stats()`
   扁平键：`conv_*` = `ConversationStats` 全部字段 + `conv_local_rejects`，`shape_*` =
   `ShapeStatsSnapshot()` 全部字段；改字段须同步 `openapi.yaml` `WorkerStatus.stats` 注释与
   `web/src/locales/{en,zh}.ts` 的 `ops.stats.*`（`TestConversationWorkerStatsKeys` 对齐 SDK 字段）。
