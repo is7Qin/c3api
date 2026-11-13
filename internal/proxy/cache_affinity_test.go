@@ -24,7 +24,7 @@ func TestAffinityIdentity_prefersExplicitKeys(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			hash, has := affinityIdentity(tc.values[0], tc.values[1], tc.values[2])
+			hash, has := affinityIdentity(convHeaders{}, tc.values[0], tc.values[1], tc.values[2])
 			require.Equal(t, tc.has, has)
 			if tc.has {
 				require.Equal(t, scheduler.CacheAffinityHash(tc.want), hash)
@@ -34,14 +34,15 @@ func TestAffinityIdentity_prefersExplicitKeys(t *testing.T) {
 }
 
 func TestAffinityIdentity_emptyExplicitKeyUsesNoAffinity(t *testing.T) {
-	hash, has := affinityIdentity([]byte(`""`), []byte(`""`), []byte(`""`))
+	hash, has := affinityIdentity(convHeaders{}, []byte(`""`), []byte(`""`), []byte(`""`))
 	require.Zero(t, hash)
 	require.False(t, has)
 }
 
 func TestAffinityIdentityFromFrame_readsOnlyTopLevelExplicitKeys(t *testing.T) {
 	frame := []byte(`{"input":{"session_id":"nested"},"conversation_id":"conversation"}`)
-	hash, has := affinityIdentityFromFrame(frame)
+	hash, has, raw := affinityIdentityFromFrame(convHeaders{}, frame)
 	require.True(t, has)
 	require.Equal(t, scheduler.CacheAffinityHash("conversation"), hash)
+	require.Equal(t, `"conversation"`, string(raw))
 }

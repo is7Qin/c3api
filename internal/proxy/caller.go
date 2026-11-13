@@ -153,7 +153,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	if err != nil && (errors.Is(err, scheduler.ErrFormatUnavailable) || errors.Is(err, scheduler.ErrNoAvailable) || errors.Is(err, scheduler.ErrAttemptsExhausted)) {
 		if tgt, conv, ok := convertedRoute(rm.meta.ProtocolConverts, format); ok {
 			// Target identity uses same request identity but target RouteClassID
-			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
+			targetIdentity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
 			if sel2, plan2, attempt2, err2 := p.selectWithPlan(groupID, tgt, reqModel, targetIdentity); err2 == nil {
 				sel2GuardActive := true
 				defer func() {
@@ -278,9 +278,13 @@ func (p *Proxy) readAndParseFormatBody(format domain.RequestFormat, w http.Respo
 		var vals [6][]byte
 		scanKeys(body, requestAffinityKeys, vals[:])
 		streamRaw, modelRaw, tierRaw := vals[0], vals[1], vals[2]
-		affinityHash, hasAffinity := affinityIdentity(vals[3], vals[4], vals[5])
+		// 粘性键与对话标识（spec §5.1）：头用规范形键直接查 map，体复用 scanKeys
+		// 已取的原始值切片；协议转换车道同样用这里算好的原始头体。零新增分配。
+		ch := readConvHeaders(r.Header)
+		affinityHash, hasAffinity := affinityIdentity(ch, vals[3], vals[4], vals[5])
 		rm.AffinityHash = affinityHash
 		rm.HasAffinity = hasAffinity
+		rm.setConversation(ch, vals[3], vals[4], vals[5])
 		switch {
 		case streamRaw == nil || bytes.Equal(streamRaw, falseBytes) || bytes.Equal(streamRaw, nullBytes):
 			stream = false
@@ -332,7 +336,7 @@ func (p *Proxy) readAndParseFormatBody(format domain.RequestFormat, w http.Respo
 // 不同）。返回 (sel, plan, attempt, err) 与 selectWithPlan(*) 逐字一致（只提
 // 函数，零语义变化）。
 func (p *Proxy) selectFormatPlan(format domain.RequestFormat, groupID int64, reqID, reqModel string, rm *reqMeta, route forwardRoute) (*scheduler.Selection, scheduler.AttemptPlan, scheduler.Attempt, error) {
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
 	if format == domain.FormatOpenAIImages {
 		if ic, ok := route.caller.(*imagesCaller); ok {
 			rr := scheduler.RouteRefForOp(groupID, string(format), reqModel, ic.operationTag())

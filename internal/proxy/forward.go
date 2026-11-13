@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
@@ -106,6 +107,10 @@ type Proxy struct {
 	// fatal 统一回调全在适配层；main 经 Deps.Codex 注入，nil = 未装配 → codex
 	// 类型 501 显式拒绝——防 nil 误走凭据缺失 502）。
 	codex *sdkbridge.Codex
+	// conversations Codex 会话簿（spec §5.3；main 经 Deps.Conversations 注入，恒非
+	// nil）。nil 只出现在测试：选号时 Conversation 恒 false ⇒ 回到槽位路径，
+	// 不会产出匿名身份。
+	conversations *codexsdk.ConversationBook
 	// wsHeartbeatInterval resp-ws 心跳间隔 seam（测试缩短 200ms 验证心跳节
 	// 奏；默认 responsesWSHeartbeatInterval——New 构造，生产路径不变）。
 	wsHeartbeatInterval time.Duration
@@ -140,6 +145,9 @@ type Deps struct {
 	// ContBind REST 流式异步绑定 worker（nil = 未装配 → REST 流式绑定 no-op，
 	// 未装配形态零行为变化；与 Continuation 同处注入）。
 	ContBind *ContBindWorker
+	// Conversations Codex 会话簿（带对话标识的 Codex 请求由它合成身份，Redis 跨副本
+	// 共享；main 恒构造）。nil 只出现在测试 → 带对话标识的请求也走槽位路径。
+	Conversations *codexsdk.ConversationBook
 }
 
 // New 构造代理。creds 为凭据注册表（直接参数注入，编译期强制；
@@ -151,7 +159,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		log: log, bill: bill, errlog: errlog,
-		codex: deps.Codex, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
+		codex: deps.Codex, conversations: deps.Conversations, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
 		wsConns:             newWSRegistry(),
 	}
@@ -572,6 +580,13 @@ type reqMeta struct {
 	AffinityHash uint64
 	HasAffinity  bool
 	clientIP     string // 客户端 IP（guardPipeline 入口鉴权前提取；401 及全部拒绝路径带）
+	// 对话标识（设计 §2，spec §5.1）：入口按六个来源取第一个非空并只记录来源——
+	// convHeader 是头值（本身是 string，零复制），convBody 是体/首帧中原始字符串值
+	// 的切片（含引号；引用请求体或 WS 首帧，二者在请求期间存活且不是池化缓冲）。
+	// 不在入口物化；Codex 尝试里经 conversation() 物化后只用于 ConversationKey。
+	hasConv    bool
+	convHeader string
+	convBody   []byte
 }
 
 // logWithCtx 从 ctx 读请求元数据填日志归属（user_id/key_id；context 传递

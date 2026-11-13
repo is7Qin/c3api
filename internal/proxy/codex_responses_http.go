@@ -152,18 +152,40 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 // 错误原样上抛，由调用方按各自车道既有的错误映射收口（HTTP / stream 的状态面
 // 不同，不在这里归一）。payload 是**实际发给 SDK 的体**（转换车道为转换后的体）：
 // 它决定本请求是不是一轮的第一个请求（`Turn.First`）。每次尝试调用一次——跨账号
-// 故障转移时按当次 sel 重算。
+// 故障转移时按当次 sel 重算（跨缓存域时对话键随之改变）。
 //
-// 槽位路径：`sel.IdentityFor(first)`，不带也不捕获 turn-state（Sink=nil）。
+//   - 会话路径（sel.Conversation，选号时已保证 p.conversations != nil）：会话簿
+//     按 (缓存域, API key, 对话标识) 合成身份；本副本命中零 Redis。
+//   - 槽位路径：`sel.IdentityFor(first)`，不带也不捕获 turn-state（Sink=nil）。
 func (p *Proxy) codexRequestPrep(ctx context.Context, sel *scheduler.Selection, cred *domain.AccountCredential, payload []byte) (sdkbridge.Prepared, codexsdk.Identity, error) {
 	prep, err := p.codex.Prepare(cred)
 	if err != nil {
 		return sdkbridge.Prepared{}, codexsdk.Identity{}, err
 	}
-	// TODO(codex-conversation-integration 第二步)：sel.Conversation 为真时走会话簿
-	// `book.Prepare(ctx, ConversationRequest{...})` 合成身份。本步未接，暂按槽位
-	// 取值（会话路径未认领槽位 ⇒ 零值身份）。
-	return prep, sel.IdentityFor(!codexsdk.AnalyzeConversationInput(payload).FollowUp()), nil
+	in := codexsdk.AnalyzeConversationInput(payload)
+	if req, ok := p.conversationRequest(ctx, sel, prep, in); ok {
+		return prep, p.conversations.Prepare(ctx, req), nil
+	}
+	return prep, sel.IdentityFor(!in.FollowUp()), nil
+}
+
+// conversationRequest 组装会话簿请求（HTTP 与 WS 共用）。ok=false ⇒ 走槽位路径：
+// 本次预留不是会话路径，或尝试 ctx 里取不到 reqMeta / 对话标识（按无对话标识
+// 处理）。对话标识只在这里物化，且只进 ConversationKey（SHA-256）。
+func (p *Proxy) conversationRequest(ctx context.Context, sel *scheduler.Selection, prep sdkbridge.Prepared, in codexsdk.ConversationInput) (codexsdk.ConversationRequest, bool) {
+	if !sel.Conversation || p.conversations == nil {
+		return codexsdk.ConversationRequest{}, false
+	}
+	rm, ok := ctx.Value(ctxKeyReqMeta{}).(*reqMeta)
+	if !ok || !rm.hasConv {
+		return codexsdk.ConversationRequest{}, false
+	}
+	return codexsdk.ConversationRequest{
+		Key:            codexsdk.NewConversationKey(sel.CacheDomain, rm.meta.KeyID, rm.conversation()),
+		InstallationID: sel.InstallationID,
+		Owner:          prep.Owner(),
+		Input:          in,
+	}, true
 }
 
 // nonstreamCodexResponses 直连 codex resp 非流式（薄封装 core：注入直连 output——

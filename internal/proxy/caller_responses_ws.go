@@ -138,7 +138,9 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reqModel := gjson.GetBytes(first, "model").String()
-	rm.AffinityHash, rm.HasAffinity = affinityIdentityFromFrame(first)
+	// 粘性键与对话标识（spec §5.1）：升级请求头 + 首帧；首帧的体值原始切片由
+	// 亲和取值同时给出（同一组键、同一顺序），零新增分配。
+	rm.setWSEntryIdentity(r.Header, first)
 
 	// 硬续接（WS 面）：首帧 previous_response_id 在计划就绪后解析绑定并钉选
 	// 账号（route class 取计划规范身份，与 create 侧绑定键同源）；解析失败
@@ -176,7 +178,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 
 	// 选号（含账号并发槽抢占）：格式硬过滤由调度器路由承担（模板
 	// SupportedFormats 含 resp-ws 才建路由）。挂死客户端不占槽（槽在首帧后取）。
-	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity}
+	identity := scheduler.AttemptPlanIdentity{RequestID: reqID, UserID: rm.meta.UserID, ApplyModelMapping: true, AffinityHash: rm.AffinityHash, HasAffinity: rm.HasAffinity, Conversation: rm.hasConv && p.conversations != nil}
 	sel, plan, attempt, err := p.selectWithPlan(groupID, domain.FormatOpenAIResponsesWS, reqModel, identity)
 	if err != nil {
 		wsWriteError(client, selectErrorMessage(err))
