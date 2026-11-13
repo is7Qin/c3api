@@ -741,7 +741,7 @@ func main() {
 	}
 	aiRouter := proxy.AIRouter(px)
 	iss := jwtauth.NewIssuer(cfg.Auth.JWTSecret)
-	userHandler := userapi.Router(svc, iss, auth, ruleEngine, log)
+	userHandler := userapi.Router(svc, iss, auth, ruleEngine, log, userapi.Features{Supplier: cfg.Supplier.Enabled})
 	// 支付公开回调面（/api/payment/*，spec §7-2）：**无身份鉴权**（网关不带 JWT），
 	// 由 server.go 挂在非 admin 鉴权组；协议真伪由 provider 验签判定，入账只经
 	// svc.CompleteOrder。同一份 providers 装配同时给 service（注册表）与本包

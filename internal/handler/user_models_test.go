@@ -59,7 +59,7 @@ func newModelCatalogRouters(t *testing.T, route catalogSched) (
 	ar.Mount("/", adminH.Router())
 
 	iss := auth.NewIssuer("test-secret")
-	ur := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil, nil)
+	ur := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil, nil, userapi.Features{})
 
 	do := func(h http.Handler) func(string, string, string, string) *httptest.ResponseRecorder {
 		return func(method, path, body, token string) *httptest.ResponseRecorder {

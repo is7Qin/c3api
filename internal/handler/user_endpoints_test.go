@@ -44,7 +44,15 @@ func (f fakeUserStatus) AuthenticateManagement(*http.Request) (domain.Management
 
 // newTestUserRouter /user 测试路由（真实 svc + fake store + 真实 Issuer）。
 // svc 一并返回：settings 快照测试需经 UpdateSetting（快照重载）改配置。
+// 功能开关取零值（全部关闭），需要开关的用例走 newTestUserRouterWithFeatures。
 func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *httptest.ResponseRecorder, *fakeStore, *auth.Issuer, *service.Service) {
+	t.Helper()
+	return newTestUserRouterWithFeatures(t, userapi.Features{})
+}
+
+// newTestUserRouterWithFeatures 同 newTestUserRouter，功能开关由调用方注入
+// （与 main 装配同一入口：Router 构造期参数）。
+func newTestUserRouterWithFeatures(t *testing.T, features userapi.Features) (func(method, path, body, token string) *httptest.ResponseRecorder, *fakeStore, *auth.Issuer, *service.Service) {
 	t.Helper()
 	store := newFakeStore()
 	// main 装配序（先快照 → worker → svc 一次注入，零回填）。
@@ -54,7 +62,7 @@ func newTestUserRouter(t *testing.T) (func(method, path, body, token string) *ht
 	require.NoError(t, mw.Start(t.Context()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
 	iss := auth.NewIssuer("test-secret")
-	router := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil, nil)
+	router := userapi.Router(svc, iss, fakeUserStatus{store: store}, nil, nil, features)
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if token != "" {

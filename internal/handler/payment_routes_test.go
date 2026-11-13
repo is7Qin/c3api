@@ -202,7 +202,7 @@ func newPaymentHarnessBare(t *testing.T, providers ...domain.PaymentProvider) *p
 		pay:      paymentapi.Router(svc, nil),
 		admin:    New(svc).Router(),
 		adminPay: paymentadminapi.New(svc, nil).Router(),
-		user:     userapi.Router(svc, iss, fakeUserStatus{store: store}, nil, nil),
+		user:     userapi.Router(svc, iss, fakeUserStatus{store: store}, nil, nil, userapi.Features{}),
 		token:    token,
 		userID:   u.ID,
 	}

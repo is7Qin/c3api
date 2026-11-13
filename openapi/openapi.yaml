@@ -1888,6 +1888,19 @@ paths:
               schema: { $ref: '#/components/schemas/StatsCapabilities' }
         default:
           $ref: '#/components/responses/Error'
+  /api/user/features:
+    get:
+      operationId: GetUserFeatures
+      tags: [user]
+      summary: 部署级功能开关（启动配置的只读投影；改动需重启）
+      responses:
+        '200':
+          description: 功能开关
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Features' }
+        default:
+          $ref: '#/components/responses/Error'
   /api/user/redemptions:
     post:
       operationId: PostUserRedemptions
@@ -3653,6 +3666,11 @@ components:
           type: object
           additionalProperties: { type: integer }
           description: 每候选存储实际读表的保留天数（读多表取最保守者；0 = 该表未启用分区保留，覆盖守卫关闭）
+    Features:
+      type: object
+      required: [supplier]
+      properties:
+        supplier: { type: boolean, description: "供应商功能（config supplier.enabled）。false 时 /api/user/supplier/* 未挂载" }
     DeletedResponse:
       type: object
       required: [deleted]

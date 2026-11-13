@@ -1407,6 +1407,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/features": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 部署级功能开关（启动配置的只读投影；改动需重启） */
+        get: operations["GetUserFeatures"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/redemptions": {
         parameters: {
             query?: never;
@@ -2836,6 +2853,10 @@ export interface components {
             coverage_days: {
                 [key: string]: number;
             };
+        };
+        Features: {
+            /** @description 供应商功能（config supplier.enabled）。false 时 /api/user/supplier/* 未挂载 */
+            supplier: boolean;
         };
         DeletedResponse: {
             deleted: boolean;
@@ -8290,6 +8311,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["StatsCapabilities"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUserFeatures: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 功能开关 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Features"];
                 };
             };
             default: components["responses"]["Error"];

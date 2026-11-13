@@ -299,6 +299,7 @@ export class ApiClient {
   register = (b: components['schemas']['UserAuthRegister']) => this.request<components['schemas']['UserAuthResponse']>('/auth/register', { method: 'POST', body: JSON.stringify(b) })
   login = (b: components['schemas']['UserAuthLogin']) => this.request<components['schemas']['UserAuthResponse']>('/auth/login', { method: 'POST', body: JSON.stringify(b) })
   me = () => this.request<components['schemas']['User']>('/auth/me')
+  features = () => this.request<components['schemas']['Features']>('/features')
   listUserGroups = () => this.request<components['schemas']['UserGroup'][]>('/groups')
   listUserModels = () => this.request<components['schemas']['CatalogGroup'][]>('/models')
   listUserKeys = (p?: ListParams) => this.request<components['schemas']['KeyListResponse']>('/keys', { params: toQuery(p) })

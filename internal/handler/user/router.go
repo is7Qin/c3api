@@ -24,11 +24,13 @@ import (
 // rules 为规则引擎（/api/user/err_logs 行级脱敏用；main 装配注入——非 New，
 // 测试构造零回归；nil = 不脱敏）。log 为面日志（/forgot-password 反枚举路径的
 // 发送失败可观测出口；nil = 静默）。p 为单一鉴权快照面（users + mgmt 合并；
-// proxy.Auth 实现；支持 mk- 凭证以 owner 身份访问 /api/user 面）。
-func Router(svc *service.Service, iss *auth.Issuer, p auth.SnapshotProvider, rules *rule.RuleEngine, log *logx.Logger) http.Handler {
+// proxy.Auth 实现；支持 mk- 凭证以 owner 身份访问 /api/user 面）。features 为
+// 部署级功能开关（启动配置投影，/api/user/features 原样回显；零值 = 全部关闭）。
+func Router(svc *service.Service, iss *auth.Issuer, p auth.SnapshotProvider, rules *rule.RuleEngine, log *logx.Logger, features Features) http.Handler {
 	api := New(svc, iss)
 	api.rules = rules
 	api.log = log
+	api.features = features
 	return Mount(api, iss, p)
 }
 

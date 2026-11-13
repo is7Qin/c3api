@@ -307,6 +307,12 @@ type ErrorResponseStorage string
 // ErrorType defines model for ErrorType.
 type ErrorType string
 
+// Features defines model for Features.
+type Features struct {
+	// Supplier 供应商功能（config supplier.enabled）。false 时 /api/user/supplier/* 未挂载
+	Supplier bool `json:"supplier"`
+}
+
 // ForgotPasswordRequest defines model for ForgotPasswordRequest.
 type ForgotPasswordRequest struct {
 	Email string `json:"email"`
@@ -1029,6 +1035,9 @@ type ServerInterface interface {
 	// 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/err_logs)
 	GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams)
+	// 部署级功能开关（启动配置的只读投影；改动需重启）
+	// (GET /api/user/features)
+	GetUserFeatures(w http.ResponseWriter, r *http.Request)
 	// 可选组列表（public 全部 + 已授予 private；只读，key 创建时选组）
 	// (GET /api/user/groups)
 	GetUserGroups(w http.ResponseWriter, r *http.Request)
@@ -1161,6 +1170,12 @@ func (_ Unimplemented) PutUserBalanceWarningThreshold(w http.ResponseWriter, r *
 // 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
 // (GET /api/user/err_logs)
 func (_ Unimplemented) GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 部署级功能开关（启动配置的只读投影；改动需重启）
+// (GET /api/user/features)
+func (_ Unimplemented) GetUserFeatures(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1541,6 +1556,20 @@ func (siw *ServerInterfaceWrapper) GetUserErrLogs(w http.ResponseWriter, r *http
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetUserErrLogs(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUserFeatures operation middleware
+func (siw *ServerInterfaceWrapper) GetUserFeatures(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserFeatures(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2391,6 +2420,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/err_logs", wrapper.GetUserErrLogs)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/features", wrapper.GetUserFeatures)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/groups", wrapper.GetUserGroups)

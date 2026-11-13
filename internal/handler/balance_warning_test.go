@@ -33,14 +33,14 @@ func TestUserBalanceWarningThreshold_Handler(t *testing.T) {
 	}}
 	token, err := iss.Issue(u.ID, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
-	userRouter := handleruser.Router(svc, iss, provider, nil, nil)
+	userRouter := handleruser.Router(svc, iss, provider, nil, nil, handleruser.Features{})
 	authed := &bwAuthedHandler{r: userRouter, token: token}
 
 	// Unauthenticated
 	req := httptest.NewRequest(http.MethodPut, "/api/user/balance-warning-threshold", strings.NewReader(`{"balance_warning_threshold":5}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	plain := handleruser.Router(svc, iss, provider, nil, nil)
+	plain := handleruser.Router(svc, iss, provider, nil, nil, handleruser.Features{})
 	plain.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
 
@@ -178,7 +178,7 @@ func TestUserBalanceWarningThreshold_OverflowViaHandler(t *testing.T) {
 	provider := &fakeUserProviderBW{users: map[int64]domain.UserSnapshot{u.ID: {Status: domain.UserStatusActive, Role: domain.RoleUser, TokenVersion: 0}}}
 	token, err := iss.Issue(u.ID, "ovh@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
-	router := handleruser.Router(svc, iss, provider, nil, nil)
+	router := handleruser.Router(svc, iss, provider, nil, nil, handleruser.Features{})
 	authed := &bwAuthedHandler{r: router, token: token}
 	overflow := float64(math.MaxInt64)/1e5 + 10000
 	body := strings.NewReader(`{"balance_warning_threshold":` + jsonNumber(overflow) + `}`)

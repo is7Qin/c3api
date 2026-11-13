@@ -42,7 +42,7 @@ func newUserTempPGRouter(t *testing.T) (*repository.Repository, func(method, pat
 	require.NoError(t, err)
 	svc := service.New(service.Deps{Store: repos, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: testEmailCodes})
 	iss := auth.NewIssuer("test-secret")
-	router := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil, nil)
+	router := userapi.Router(svc, iss, pgUserStatus{repos: repos}, nil, nil, userapi.Features{})
 	do := func(method, path, body, token string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, path, strings.NewReader(body))
 		if token != "" {

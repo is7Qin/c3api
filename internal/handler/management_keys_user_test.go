@@ -62,7 +62,7 @@ func TestUserFaceManagementKeys(t *testing.T) {
 	iss := auth.NewIssuer("mgmt-user-secret")
 	tok, err := iss.Issue(42, "u@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
-	router := handleruser.Router(svc, iss, mgmtUsers{}, nil, nil)
+	router := handleruser.Router(svc, iss, mgmtUsers{}, nil, nil, handleruser.Features{})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, mkReq(http.MethodPost, "/api/user/management-keys", "Bearer "+tok, `{"name":"mine"}`))
@@ -86,7 +86,7 @@ func TestSupplierFaceManagementKeys(t *testing.T) {
 	mgmt := fakeMgmt{metas: map[string]domain.ManagementKeyMeta{
 		"mk-sup": {ID: 1, UserID: 42, Status: domain.ManagementKeyStatusActive},
 	}}
-	router := handleruser.Router(svc, iss, fakeSnapshot{users, mgmt}, nil, nil)
+	router := handleruser.Router(svc, iss, fakeSnapshot{users, mgmt}, nil, nil, handleruser.Features{})
 
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, mkReq(http.MethodPost, "/api/user/management-keys", "Bearer mk-sup", `{"name":"sup"}`))
@@ -111,7 +111,7 @@ func TestAdminManagementKeysCRUD(t *testing.T) {
 	require.NoError(t, err)
 	userTok, err := iss.Issue(8, "user@example.com", string(domain.RoleUser), 0)
 	require.NoError(t, err)
-	router := handleruser.Router(svc, iss, mgmtUsers{roles: map[int64]domain.Role{7: domain.RolePlatformAdmin}}, nil, nil)
+	router := handleruser.Router(svc, iss, mgmtUsers{roles: map[int64]domain.Role{7: domain.RolePlatformAdmin}}, nil, nil, handleruser.Features{})
 	admin := "Bearer " + adminTok
 
 	// platform_admin JWT 自服务 create → 明文 mk-（owner = claims uid）。
