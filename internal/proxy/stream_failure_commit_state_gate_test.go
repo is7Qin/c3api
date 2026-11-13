@@ -32,7 +32,7 @@ import (
 //	framesSent=false, !clientCancel                ⇒ upstream_responded
 //
 // 读回协议：异步一律先 p.rec.Close / p.errlog.Close（或 errlog worker 的
-// waitStoreLogs）再断言；禁 time.Sleep；只用 require；t.Parallel() 保持 0。
+// waitStoreLogs）再断言；禁 time.Sleep；只用 require；不并行执行（并行调用计数保持 0）。
 
 // h6CodexErrorEvent codex HTTP 上游的流内错误事件（type 精确匹配 sserelay 判据）。
 const h6CodexErrorEvent = `{"type":"error","error":{"type":"server_error","message":"` + inbandOverloadMsg + `"}}`
