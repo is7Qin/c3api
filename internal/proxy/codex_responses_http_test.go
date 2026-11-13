@@ -491,7 +491,8 @@ func TestCodexResponsesNonstreamTimeout(t *testing.T) {
 	waitStoreLogs(t, store, 1)
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType, "超时收尾记 code 0 ErrNetwork")
+	require.Equal(t, domain.ErrTimeout, store.logs[0].ErrorType,
+		"非流式零帧网关预算到期 ⇒ timeout（旧实现记 network）")
 	require.Zero(t, store.logs[0].StatusCode)
 }
 

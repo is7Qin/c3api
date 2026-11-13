@@ -33,6 +33,10 @@ const (
 	Kind4xx
 	Kind5xx
 	KindNetwork // 连接级（code==0）事件——独立类型，不吃 5xx 冷却
+	// KindTimeout 上游预算内零产出（SDK WS 读空闲 / 网关 UpstreamStreamTimeout）。
+	// **必须追加在末尾**：Kind 是 iota，插在中间会改掉已落库/已序列化事件的整数
+	// 语义（streamFailureHealth 用 `f.Kind == 0` 判「不投递健康」）。
+	KindTimeout
 )
 
 func (k Kind) String() string {
@@ -47,6 +51,8 @@ func (k Kind) String() string {
 		return "5xx"
 	case KindNetwork:
 		return "network"
+	case KindTimeout:
+		return "timeout"
 	}
 	return "unknown"
 }
@@ -65,6 +71,8 @@ func kindFromString(s string) Kind {
 		return Kind5xx
 	case "network":
 		return KindNetwork
+	case "timeout":
+		return KindTimeout
 	}
 	return -1
 }
@@ -308,6 +316,9 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 //	                    （status_code=0 ⇒ 规则事件 HTTPStatus 恒 nil），旧版「kind+503+overload」
 //	                    对已提交流永远不命中，于是上游过载被 seed-5xx 罚 10 分钟；改后只按
 //	                    类别+文案匹配，已提交与未提交两条路径都能命中。
+//	seed-timeout（p18）   kind=timeout → throttle(account, open, 10m) + 502/"Upstream request failed"
+//	                     （上游预算内零产出；**不带 http_status 条件**——已提交的流内失败
+//	                     按 §3.1 不合成状态码（status_code=0），带 status 条件永不命中）
 //	seed-5xx（p20）      kind=5xx   → throttle(account, open, 10m) + 502/"Upstream request failed"（归一）
 //	seed-network（p25）  kind=network → throttle(account, open, 5s) + 502/"Upstream request failed"
 //	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
@@ -348,6 +359,14 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 			Name: "seed-5xx-503-overload", Enabled: true, Priority: 16,
 			When: domain.RuleWhen{Kind: new("5xx"), ErrorMessageContains: new("overload")},
 			Then: domain.RuleThen{}, // 过载全透：码/文原样过，不惩罚不归一
+		},
+		{
+			// 上游预算内零产出：冷却 10m（与 5xx 同档）。不带 http_status 条件——
+			// 已提交的流内失败恒无状态码（§3.1），带条件则永不命中（同
+			// seed-5xx-503-overload 的历史教训）。
+			Name: "seed-timeout", Enabled: true, Priority: 18,
+			When: domain.RuleWhen{Kind: new("timeout")},
+			Then: domain.RuleThen{Throttle: throttleOpen(10 * 60 * 1000), ResponseCode: new(502), CustomMessage: new("Upstream request failed")},
 		},
 		{
 			Name: "seed-5xx", Enabled: true, Priority: 20,

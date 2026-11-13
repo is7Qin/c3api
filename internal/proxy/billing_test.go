@@ -515,8 +515,8 @@ func TestProxyQuotaDeductedByStreamAbortCost(t *testing.T) {
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
-		"序 0b：网关 UpstreamStreamTimeout 到期 ⇒ network（旧实现误标 abort）")
+	require.Equal(t, domain.ErrTimeout, store.logs[0].ErrorType,
+		"序 0b：网关 UpstreamStreamTimeout（sentinel）⇒ timeout（旧实现记 network/abort）")
 }
 
 // TestProxyQuotaNoDeltaOnRecordPath 跨路径回归：record 入口（WS 首
@@ -928,14 +928,15 @@ func TestProxyBillingStreamAbortCostsTokens(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Len(t, testHealthSink.throttlesFor(1), 1, "停滞超时记 连接级/5xx 分流惩罚")
+	require.Empty(t, testHealthSink.throttlesFor(1),
+		"已发业务帧的 timeout 不冷却账号（§5 冷却条件：仅零业务帧才投递 KindTimeout）")
 	require.Zero(t, ri.Concurrency)
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
-		"序 0b：网关 UpstreamStreamTimeout 到期 ⇒ network（旧实现误标 abort）")
+	require.Equal(t, domain.ErrTimeout, store.logs[0].ErrorType,
+		"序 0b：网关 UpstreamStreamTimeout（sentinel）⇒ timeout（旧实现记 network/abort）")
 	require.Equal(t, int64(5), store.logs[0].InputTokens, "中止前已累积的 usage 帧不丢")
 	require.Equal(t, int64(7), store.logs[0].OutputTokens)
 	require.Equal(t, int64(190), store.logs[0].Cost, "5×1e7+7×2e7 → 190 毫分（计费不丢）")
@@ -983,8 +984,8 @@ func TestProxyBillingStreamAbortGroupMultiplier(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
-		"序 0b：网关 UpstreamStreamTimeout 到期 ⇒ network（旧实现误标 abort）")
+	require.Equal(t, domain.ErrTimeout, store.logs[0].ErrorType,
+		"序 0b：网关 UpstreamStreamTimeout（sentinel）⇒ timeout（旧实现记 network/abort）")
 	require.Equal(t, int64(285), store.logs[0].Cost, "中止路径组倍率生效：190×15000/10000 = 285 毫分")
 }
 

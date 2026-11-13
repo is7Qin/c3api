@@ -30,7 +30,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 		// 客户端请求模型：流式无完整 params 解析，gjson 顶层
 		// 提取（1 次分配，远低于旧的完整参数解析）。ChatModel 即 string 别名。
 		reqModel := gjson.GetBytes(body, "model").String()
-		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
+		ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 		defer cancel()
 		// SDK NewStreaming 会在请求层注入 "stream": true；原始请求必须显式注入，
 		// 否则上游按非流式响应，relay 收不到 SSE。注入后仍需发送原始 body。
@@ -96,7 +96,8 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			exit := classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc}, ttft)
 			if exit == streamExitUncommitted {
 				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
-				return statusOf(err), nil, false, err
+				// 网关预算到期（零帧）给错误打标记：pipeline 归类成 timeout（§3.1）。
+				return statusOf(err), nil, false, markGatewayBudget(ctx, err)
 			}
 			// 已提交 / 写失败：唯一归因只在这里算一次（§3 序 0a–0c + 1–5）。
 			f := streamFailureOf(ctx, exit, err)

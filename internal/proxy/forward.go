@@ -717,9 +717,10 @@ func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int
 		p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
 	}
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start)), commit)
-	// 中止行必须留因（causeMessage：上游信封 message 优先，退 err 全文）：没有它
-	// 用户面只剩「已中止」+ 空列，等于把故障原因整个吞掉。
-	l.ErrorMessage = causeMessage(err)
+	// 中止行必须留因（§3.2）：abort 落可读结论，**不**落库内部文案（用户实证：
+	// 该列出现 `failed to get reader: failed to read frame header: EOF`）。原始
+	// error 仍在上一行的进程日志里（Warn，含完整错误链），不在用户可见字段。
+	l.ErrorMessage = userFacingFailureMessage(domain.ErrAbort, err)
 	p.finish(sel, l)
 }
 
@@ -869,18 +870,20 @@ func causeMessage(err error) *string {
 // 本 helper 是四个非流式面（chat/responses/anthropic/converted）共用的一条出栈，
 // 所以出口只在这一个地方交给 aiclient。
 func (p *Proxy) rawJSON(ctx context.Context, sel *scheduler.Selection, path, authHeader, auth string, body []byte, in http.Header) ([]byte, int, []byte, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	resp, err := p.clients.RawPost(ctx, sel.TemplateID, sel.BaseURL, path, authHeader, auth, body, in, sel.Egress.HTTP)
 	if err != nil {
-		return nil, 0, nil, err
+		// 网关预算到期（UpstreamTimeout 的哨兵）⇒ 错误带标记，pipeline 归类成
+		// timeout 而不是 network（§3.1：上游零产出 ≠ 传输层断开）。
+		return nil, 0, nil, markGatewayBudget(ctx, err)
 	}
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusOK:
 		data, rerr := io.ReadAll(resp.Body)
 		if rerr != nil {
-			return nil, 0, nil, rerr
+			return nil, 0, nil, markGatewayBudget(ctx, rerr)
 		}
 		return data, 0, nil, nil
 	case resp.StatusCode >= 400:

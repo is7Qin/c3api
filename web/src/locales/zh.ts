@@ -86,6 +86,7 @@ export default {
     "auth": "鉴权失败",
     "no_account": "无账号",
     "abort": "已中止",
+    "timeout": "上游超时",
     "billing": "计费失败"
   },
   "commitState": {

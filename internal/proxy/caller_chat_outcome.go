@@ -88,7 +88,9 @@ func (p *Proxy) reportChatOutcome(ctx context.Context, outcome AttemptOutcome, s
 		// 上游可能已消费请求，token 照常落账。
 		et = domain.ErrAbort
 	default:
-		status, et, health = f.Status, f.ET, streamFailureHealth(f)
+		// timeout 仅零业务帧时冷却（§5）：交付事实取 outcome 已确认的
+		// BusinessFrameSent（chatOutcomeForAbort 的 sent 形参），不另造计数器。
+		status, et, health = f.Status, f.ET, timeoutHealth(f, outcome.BusinessFrameSent)
 	}
 	u := usageTuple{it: outcome.Usage.InputTokens, ot: outcome.Usage.OutputTokens, tt: outcome.Usage.InputTokens + outcome.Usage.OutputTokens, cr: outcome.Usage.CacheReadTokens, cc: outcome.Usage.CacheCreationTokens}
 	if outcome.Timing.TTFTMS != nil {

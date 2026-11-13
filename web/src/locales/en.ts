@@ -86,6 +86,7 @@ export default {
     "auth": "Auth failure",
     "no_account": "No account",
     "abort": "Aborted",
+    "timeout": "Upstream timeout",
     "billing": "Billing error"
   },
   "commitState": {

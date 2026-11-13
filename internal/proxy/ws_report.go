@@ -233,7 +233,9 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 			health = &AttemptHealthEvent{Kind: rule.Kind4xx}
 		} else {
 			f := classifyStreamFailure(cause)
-			status, et, health = f.Status, f.ET, streamFailureHealth(f)
+			// timeout 仅零业务帧时冷却（§5）：sent 是 relayWS 在补写终态帧之前
+			// 快照的业务帧计数（businessN > 0），与 SSE 出口同一守卫。
+			status, et, health = f.Status, f.ET, timeoutHealth(f, sent)
 		}
 	}
 	// Single owner observation (quality + bounded flow) + health marking; the
@@ -251,8 +253,9 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, u, start)), commit)
 	// 中止/失败行必须留因（cause 为分类阶段快照的真实错误：上游关闭帧、上游流内
 	// 错误载荷、读写网络错误、context.Canceled）。成功行 cause 恒 nil ⇒ NULL。
+	// abort/timeout 落可读文案（§3.2：禁止库内部文本落用户可见字段）。
 	if outcome.Result != ResultSuccess {
-		l.ErrorMessage = causeMessage(cause)
+		l.ErrorMessage = userFacingFailureMessage(et, cause)
 	}
 	if ttftCopy != nil {
 		l.TTFTMS = ttftCopy

@@ -222,7 +222,11 @@ const (
 	ErrAuth      ErrorType = "auth"
 	ErrNoAccount ErrorType = "no_account"
 	ErrAbort     ErrorType = "abort"
-	ErrBilling   ErrorType = "billing" // 计费拒绝（缺价/余额不足 402）
+	// ErrTimeout 网关等不到上游产出（SDK WS 读空闲 / 网关 UpstreamStreamTimeout）。
+	// 与 ErrNetwork（传输层断开）、ErrAbort（客户端侧结束）分开：前者是「连接
+	// 还活着但上游不产出」，冷却策略不同（§5：仅零业务帧时惩罚上游）。
+	ErrTimeout ErrorType = "timeout"
+	ErrBilling ErrorType = "billing" // 计费拒绝（缺价/余额不足 402）
 )
 
 // ErrMsgMaxLen 错误文本域内截断上限（usagelog.error_message varchar(500)

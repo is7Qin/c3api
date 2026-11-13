@@ -80,11 +80,14 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 		}
 		return p.streamImageGeneration(ctx, w, r, reqID, groupID, start, sel, reqModel, &cred2, params, gen)
 	}
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	opTag := codexImagesOpTag(r)
 	img, err := p.codex.GenerateImage(ctx, &cred2, sel.Egress, params)
 	if err != nil {
+		// 网关预算到期（UpstreamTimeout 哨兵）给错误打标记：pipeline 零状态归类
+		// 判成 timeout（§3.1：上游零产出 ≠ 传输层断开）。
+		err = markGatewayBudget(ctx, err)
 		if sdkbridge.IsFatal(err) {
 			code := statusOf(err)
 			if code == 0 {

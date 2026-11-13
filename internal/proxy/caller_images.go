@@ -75,7 +75,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 	// generations 与 edits 共用图像计费口径，但 operation tag 必须保持独立，避免质量数据碰撞。
 
 	if stream {
-		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
+		ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 		defer cancel()
 		resp, err := p.clients.ImagesRaw(ctx, sel.TemplateID, sel.BaseURL, c.upstreamPath(sel), cred, upCT, upBody, r.Header, sel.Egress.HTTP)
 		if err != nil {
@@ -120,7 +120,8 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 			exit := classifyStreamExit(ctx, out, err, usage, ttft)
 			if exit == streamExitUncommitted {
 				// 未提交 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
-				return statusOf(err), nil, false, err
+				// 网关预算到期（零帧）给错误打标记：pipeline 归类成 timeout（§3.1）。
+				return statusOf(err), nil, false, markGatewayBudget(ctx, err)
 			}
 			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5）。
 			f := streamFailureOf(ctx, exit, err)
@@ -152,7 +153,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 				business = true
 			}
 			outcome := mergeDispatchBase(ctx, imagesOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
-			p.observeDispatchOutcome(ctx, outcome, streamFailureHealth(f))
+			p.observeDispatchOutcome(ctx, outcome, timeoutHealth(f, framesSent))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIImages, logStatusForFailure(f), f.ET, u, start))
 			l.ErrorMessage = f.message()
 			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，

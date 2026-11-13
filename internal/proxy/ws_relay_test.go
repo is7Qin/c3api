@@ -251,8 +251,14 @@ func TestRelayWSUpstreamNormalClose(t *testing.T) {
 // 传播同码关闭帧；200 ErrAbort 记录（断前已嗅探 usage 不丢）；不 MarkResult
 // （不冷却无辜账号）+ 并发槽释放。
 func TestRelayWSClientAbort(t *testing.T) {
+	// 脚本第二帧是**非终态**业务帧：终态帧之后再出现帧 = 已进入下一轮，本轮未完成
+	// ⇒ 客户端结束仍归 abort（§3 归因表第二行）。只有帧序停在 completed 上才是
+	// 「本轮完成」⇒ none（G1）。
 	ft := &fakeTransport{
-		readQueue: []fakeRead{{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)}},
+		readQueue: []fakeRead{
+			{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)},
+			{typ: websocket.MessageText, frame: []byte(wsDeltaFrame)},
+		},
 		readBlock: make(chan struct{}), // 队列耗尽后阻塞：up-loop 不抢首退（客户端退出先发生，分类确定）
 	}
 	env, c, _ := newRelayWSTest(t, ft, nil,
@@ -263,6 +269,7 @@ func TestRelayWSClientAbort(t *testing.T) {
 	// 先读完 completed 帧（up-loop 的 client.Write 确定成功——客户端关闭在
 	// 帧消费之后，clientErr 恒为关闭帧错误而非写失败竞态），再主动关闭
 	require.Equal(t, responsesWSCompletedFrame, string(readResponsesWSFrame(t, c)))
+	require.Equal(t, wsDeltaFrame, string(readResponsesWSFrame(t, c)), "下一轮业务帧（本轮未完成）")
 	require.NoError(t, c.Close(websocket.StatusNormalClosure, "")) // 客户端主动结束会话
 	r := <-env.out
 	require.True(t, r.handled)
@@ -297,14 +304,18 @@ func TestRelayWSClientAbort(t *testing.T) {
 // 1011 关闭 + 传输 CloseNow 直拆（上游已死免握手）。
 func TestRelayWSUpstreamError(t *testing.T) {
 	testHealthSink.reset()
+	// 中间的非终态帧保证「最后一轮未完成」：否则 completed 之后的上游读失败会被
+	// 归为「本轮已完成」（§3 第一行）而不是 network。
 	ft := &fakeTransport{readQueue: []fakeRead{
 		{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)},
+		{typ: websocket.MessageText, frame: []byte(wsDeltaFrame)},
 		{typ: 0, err: errors.New("upstream network error")},
 	}}
 	env, c, _ := newRelayWSTest(t, ft, nil,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`))
 
 	require.Equal(t, responsesWSCompletedFrame, string(readResponsesWSFrame(t, c)), "completed 帧原样透传")
+	require.Equal(t, wsDeltaFrame, string(readResponsesWSFrame(t, c)), "下一轮业务帧原样透传")
 	readResponsesWSClose(t, c, websocket.StatusInternalError) // 1011 内部错误传播
 	r := <-env.out
 	require.True(t, r.handled)
@@ -338,8 +349,13 @@ func TestRelayWSUpstreamError(t *testing.T) {
 // （p.finish）必须先于关闭传播（up.Close）——传输 Close 阻塞期间记录已在
 // pending（客户端"感知会话结束"与"记录入队"之间无竞态窗口，记录不丢）。
 func TestRelayWSRecordFirst(t *testing.T) {
+	// 完成路径的 up.Close 在 report 之前（既有顺序），观测「记录先行」必须在
+	// abort 分支：故脚本停在非终态帧上（本轮未完成 ⇒ abort）。
 	ft := &fakeTransport{
-		readQueue:   []fakeRead{{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)}},
+		readQueue: []fakeRead{
+			{typ: websocket.MessageText, frame: []byte(responsesWSCompletedFrame)},
+			{typ: websocket.MessageText, frame: []byte(wsDeltaFrame)},
+		},
 		readBlock:   make(chan struct{}), // 同上：客户端退出先发生
 		closeCalled: make(chan struct{}, 1),
 		closeBlock:  make(chan struct{}), // 关闭传播阻塞闸——观测记录先行
@@ -350,6 +366,7 @@ func TestRelayWSRecordFirst(t *testing.T) {
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	require.Equal(t, responsesWSCompletedFrame, string(readResponsesWSFrame(t, c))) // 帧消费后关闭（clientErr 恒为关闭帧错误）
+	require.Equal(t, wsDeltaFrame, string(readResponsesWSFrame(t, c)))
 	require.NoError(t, c.Close(websocket.StatusNormalClosure, ""))
 	<-ft.closeCalled // 传输 Close 已进入（= 分类已完成、p.finish 已先行执行）
 	require.Equal(t, 1, env.p.rec.Pending(), "记录先行：关闭传播（up.Close）发出前用量已入队")

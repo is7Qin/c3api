@@ -28,7 +28,7 @@ var errStreamWriteFailed = errors.New("image stream write failed")
 
 func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, params *domain.ImageGenParams, gen imageStreamGenerator) (int, []byte, bool, error) {
 	// 首事件前保留 HTTP 错误语义；首事件后只能写 SSE error 帧，计费使用已收集的图片和令牌。
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 
 	opTag := OperationTag(domain.OpImagesGenerations)
@@ -148,6 +148,9 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			return 0, nil, true, nil
 		case streamExitUncommitted:
 			// 未提交失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
+			// 网关预算到期（零帧）给错误打标记：pipeline 归类成 timeout（§3.1）。
+			// 注意用本函数的**预算 ctx**（不是 r.Context()）：哨兵挂在它上面。
+			genErr = markGatewayBudget(ctx, genErr)
 			if sdkbridge.IsFatal(genErr) {
 				code := streamUpstreamStatus(statusOf(genErr))
 				if code == 0 {
@@ -169,7 +172,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 				outCommit = CommitUpstreamResponded
 			}
 			outcome := mergeDispatchBase(ctx, imagesStreamOutcome(reqID, sel, reqModel, opTag, timing, usageObs, ResultFailed, AttemptStatus(code), outCommit, code == 0, true, false))
-			p.observeDispatchOutcome(ctx, outcome, streamFailureHealth(f))
+			p.observeDispatchOutcome(ctx, outcome, timeoutHealth(f, framesSent))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, logStatusForFailure(f), f.ET, u, start))
 			l.ErrorMessage = f.message()
 			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，

@@ -597,8 +597,8 @@ func TestConvertedChatToMessStreamingAbortNoDelta(t *testing.T) {
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
 	lg := store.logs[0]
-	require.Equal(t, domain.ErrNetwork, lg.ErrorType,
-		"停滞超时（网关 UpstreamStreamTimeout）⇒ network（序 0b）；旧实现记 abort 是误标")
+	require.Equal(t, domain.ErrTimeout, lg.ErrorType,
+		"停滞超时（网关 UpstreamStreamTimeout）⇒ timeout（序 0b）；旧实现记 abort/network 是误标")
 	require.Equal(t, int64(10), lg.InputTokens, "中止前已收到的 message_start 不丢")
 	require.Zero(t, lg.OutputTokens, "缺 message_delta → ot 0")
 	require.Equal(t, int64(10), lg.TotalTokens, "缺 delta 中止 → tt = it（native 同式，非 0）")

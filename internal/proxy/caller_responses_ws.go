@@ -402,13 +402,26 @@ const (
 	relayEndUpstreamError
 )
 
-// relayClassify 错误分类：上游关闭帧（upClose）优先于一切——
-// 客户端循环并发写失败（net.ErrClosed）只归因网络错误槽，绝不覆盖关闭帧
-// （健康上游 + 正常关闭帧 → 恒成功）；无关闭帧时：客户端断开 → abort，
-// 其余（上游错误/失联）→ 错误。返回结束类型与收尾依据错误（abort/error
-// 分支的关闭码与记录来源）。约定：至少一个槽非 nil（首退者必记录）。
-func relayClassify(upClose *websocket.CloseError, upErr, clientErr, pingErr error) (relayEnd, error) {
+// relayClassify 错误分类（spec-commit-state-and-round-billing §3 归因表）：
+// 先看「本轮是否已读到终态帧」（completed），再看谁先结束。
+//
+// completed == true 时恒为完成（§3 表第一行）：客户端能收到终态帧，说明网关已
+// 读到本轮终态，之后是谁先断（客户端干净关 1000 / 客户端裸断 / 上游收尾关闭）
+// 都不改归属。旧实现只判「上游关闭码是否正常」，于是**客户端读完就断**（干净关闭
+// 1000、或裸断）落到 `case clientErr != nil` → relayEndClientAbort，把一次完整
+// 交付记成「已中止」。修法不是区分 1000 与裸断（两者都是客户端侧结束），而是
+// 按「本轮是否已读到终态帧」判——未读到才是 abort。
+//
+// completed == false 时维持既有槽位优先级：上游正常关闭码 → 完成；客户端断开 →
+// abort；其余（上游错误关闭/网络错误/心跳失联）→ 错误。约定：至少一个槽非 nil
+// （首退者必记录）。
+//
+// completed 由调用方在 up-loop 内用**既有**的 isResponsesCompleted 判定后传入
+// （ws_relay.go），本函数不重新解析帧。
+func relayClassify(upClose *websocket.CloseError, upErr, clientErr, pingErr error, completed bool) (relayEnd, error) {
 	switch {
+	case completed:
+		return relayEndUpstreamClosed, nil
 	case upClose != nil && isNormalWSCloseCode(upClose.Code):
 		return relayEndUpstreamClosed, nil
 	case clientErr != nil:

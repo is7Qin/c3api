@@ -257,10 +257,11 @@ func TestStreamFailureG5bPayloadErrorBeatsCancel(t *testing.T) {
 	require.Nil(t, streamFailureHealth(g))
 }
 
-// G6：上游失败 + 已交付（含 usage 帧后停滞 → 网关 UpstreamStreamTimeout）⇒
-// 序 0b：network（不是 abort）；金额一字不动（真实产出不得白送），且已交付
-// 失败仍双轨（usage_logs + err_logs 各一行）。
-func TestStreamFailureG6DeliveredUpstreamFailureIsNetworkAndBilled(t *testing.T) {
+// G4（spec-commit-state-and-round-billing §5）：网关 `UpstreamStreamTimeout`
+// （经 `context.WithTimeoutCause` 注入的哨兵）⇒ `error_type=timeout`；已交付的
+// 真实产出照常计费——金额断言 5/7/190 一字不动（旧实现记 network；本用例在旧
+// 实现上必红：类别断言与 timeout 冲突）。已交付失败仍双轨（usage_logs + err_logs）。
+func TestStreamFailureG4GatewayTimeoutIsTimeoutAndBilled(t *testing.T) {
 	testHealthSink.reset()
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -296,8 +297,8 @@ func TestStreamFailureG6DeliveredUpstreamFailureIsNetworkAndBilled(t *testing.T)
 	require.Len(t, raw, 2, "已交付的失败双轨：usage_logs 1 行 + err_logs 1 行（同指针）")
 
 	row := rows[0]
-	require.Equal(t, domain.ErrNetwork, row.ErrorType,
-		"序 0b：网关自己的 UpstreamStreamTimeout 到期是上游侧失败（旧实现误标 abort）")
+	require.Equal(t, domain.ErrTimeout, row.ErrorType,
+		"序 0b：网关自己的 UpstreamStreamTimeout（sentinel）到期是上游侧失败 ⇒ timeout（旧实现记 network）")
 	require.Equal(t, int64(5), row.InputTokens, "中止前已累积的 usage 帧不丢")
 	require.Equal(t, int64(7), row.OutputTokens)
 	require.Equal(t, int64(190), row.Cost, "5×1e7+7×2e7 → 190 毫分：已交付的失败必须计费")
@@ -378,4 +379,3 @@ func TestStreamFailureG9ContFailAfterAckIsNotAbort(t *testing.T) {
 		"I9：relayWSContFail 属归因输入域，contAcked 分支不得再默认 abort")
 	require.NotNil(t, rows[0].ErrorMessage, "失败行必须留因")
 }
-

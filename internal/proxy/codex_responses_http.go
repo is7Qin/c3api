@@ -7,7 +7,6 @@ package proxy
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -212,7 +211,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// 覆盖整个响应体读取会切断长流式 SSE）——非流式方法各自包 ctx 超时；TCP
 	// 黑洞读停滞 → 超时触发 → 连接级错误转移（并发槽/连接/goroutine 不无限占用，
 	// failover 可转移）。
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	// 请求级身份（§3.1）：**先准备条目句柄**，再由会话给出身份——同账号并发各持
 	// 不同会话 ⇒ 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的
@@ -238,11 +237,10 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 			writeCodexInvalidBody(out.Writer())
 			return 0, nil, true, nil
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return statusOf(err), upstreamBody(err), false, err
-		}
+		// 网关预算到期（UpstreamTimeout 哨兵）⇒ 错误带标记，pipeline 零状态归类
+		// 判成 timeout；客户端自己的 deadline/取消不带此标记（§3.1）。
 		code := statusOf(err)
-		return code, upstreamBody(err), false, err
+		return code, upstreamBody(err), false, markGatewayBudget(ctx, err)
 	}
 	// 写出字节：直连原样透传合成体；转换路径反向映射回客户端协议（+ 客户端模型
 	// 回填）。转换失败在任何字节写出前返回，交 failover 分类（→ 500）。
@@ -300,7 +298,7 @@ func (p *Proxy) streamCodexResponses(ctx context.Context, w http.ResponseWriter,
 // → 不 MarkResult（200 ErrAbort——上游已消费请求，token 取断前已收 usage）；
 // 未提交读取失败 → pipeline；已提交 → 客户端协议 SSE error + recordStreamAbort。
 func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWriter, r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, cred *domain.AccountCredential, body []byte, plan codexStreamPlan, transport domain.CodexResponsesTransport) (int, []byte, bool, error) {
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	streamBody, err := setModel(body, sel.Model)
 	if err != nil {
@@ -417,7 +415,8 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			// body 带上游原文（SDK *HTTPError.RawJSON）：否则 429 行的 ErrorMessage
 			// 恒空（pipeline.go:355-358 从 body 取 message），"网关侧看不到为什么"的
 			// 原始症状会以"看到 429 但不知道原因"的形式残留。
-			return statusOf(err), upstreamBody(err), false, err
+			// 网关预算到期（零帧）给错误打标记：pipeline 归类成 timeout（§3.1）。
+			return statusOf(err), upstreamBody(err), false, markGatewayBudget(ctx, err)
 		}
 		// 已提交 / 写失败：终态归因只在这里算一次（§3 序 0b–0c + 1–5）。
 		f := streamFailureOf(ctx, exit, err)
@@ -443,7 +442,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		// 互相喂值（见 helper 注释）。
 		o.Commit, o.BusinessFrameSent = typeLayerTerminalFailure()
 		o.Terminal = true
-		emitCodexOutcome(ctx, p, sel, o, streamFailureHealth(f))
+		emitCodexOutcome(ctx, p, sel, o, timeoutHealth(f, framesSent))
 		l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, f.Status, f.ET, ut, start))
 		l.ErrorMessage = f.message()
 		p.finish(sel, withCommit(l, commitStateFor(framesSent, writeFailed, clientEnded(exit, f))))

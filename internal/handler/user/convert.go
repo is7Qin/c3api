@@ -173,10 +173,11 @@ func (h *UserAPI) toAPIErrLog(l *domain.UsageLog) UserErrLog {
 const upstreamRejectedMsg = "upstream rejected request"
 
 // errTypeKind error_type → 规则事件类别（行级脱敏全函数映射）：Err4xx→4xx、
-// Err429→429、Err5xx→5xx、ErrNetwork→network、ErrAbort→5xx（保守——半异常
-// 行可能含上游文本）；其余 error_type（ErrAuth/ErrBilling/ErrNoAccount/
-// ErrNone 等本地拒绝行）一律无 kind——不参与策略匹配，原样返回（本地拒绝行
-// message 恒网关文案 "invalid gateway key"/"no available account" 等，无泄漏面）。
+// Err429→429、Err5xx→5xx、ErrNetwork→network、ErrAbort→5xx、ErrTimeout→5xx
+// （后两者保守——半异常行可能含上游文本）；其余 error_type（ErrAuth/ErrBilling/
+// ErrNoAccount/ErrNone 等本地拒绝行）一律无 kind——不参与策略匹配，原样返回
+// （本地拒绝行 message 恒网关文案 "invalid gateway key"/"no available account"
+// 等，无泄漏面）。
 func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
 	switch et {
 	case domain.Err4xx:
@@ -188,6 +189,10 @@ func errTypeKind(et domain.ErrorType) (rule.Kind, bool) {
 	case domain.ErrNetwork:
 		return rule.KindNetwork, true
 	case domain.ErrAbort:
+		return rule.Kind5xx, true
+	case domain.ErrTimeout:
+		// 用户面保守：与 ErrAbort 同档（timeout 也可能已下发部分业务帧，
+		// 归到 5xx 让用户侧看到「上游故障」而不是别的）。
 		return rule.Kind5xx, true
 	}
 	return 0, false

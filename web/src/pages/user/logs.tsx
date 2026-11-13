@@ -11,7 +11,7 @@ import { Card } from '@/components/ui/card'
 import { DateRangePicker } from '@/components/date-range-picker'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ERROR_TYPES, USAGE_ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, CommitStateBadge, isStreamBroken, fmtDuration } from '@/components/log-display'
+import { ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, CommitStateBadge, isStreamBroken, fmtDuration } from '@/components/log-display'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -27,7 +27,6 @@ import { useDebounced } from '@/lib/use-debounced'
 import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 
-type ErrorType = components['schemas']['ErrorType']
 // 用户面行类型（无 AccountID/TemplateID——用户级契约不含上游拓扑）。
 type UsageLog = components['schemas']['UserUsageLog']
 type ErrLog = components['schemas']['UserErrLog']
@@ -114,13 +113,11 @@ export default function UserLogs() {
   const debouncedGroup = useDebounced(filters.group_id, 300)
   const debouncedModel = useDebounced(filters.model, 300)
   const debouncedStatus = useDebounced(filters.status_code, 300)
-  // Tab 切换：各自独立游标链（hook 按参数变化重置）；usage 面错误类型值域收窄为
-  // none/abort，超出值重置（收窄逻辑属调用方，hook 只收归一后参数）。
+  // Tab 切换：各自独立游标链（hook 按参数变化重置）。error_type 的 usage 面与
+  // 错误面**同值域**（P0-A 之后 usage_logs 承载所有可计费错误行）⇒ 切 tab 不需要
+  // 再收窄/重置筛选（旧的 none/abort 子集收窄已随语义变更删除）。
   const switchTab = (v: string) => {
     setTab(v as 'usage' | 'errors')
-    if (v === 'usage' && filters.error_type && !USAGE_ERROR_TYPES.includes(filters.error_type as ErrorType)) {
-      setFilters(f => ({ ...f, error_type: '' }))
-    }
   }
 
   // 参数对象随 filter/limit/tab 派生（游标由 hook 注入）。
@@ -207,14 +204,14 @@ export default function UserLogs() {
           <div className="space-y-1.5">
             <Label>{t('user.logs.filter.errorType')}</Label>
             <Select
-              items={Object.fromEntries([[ERROR_ALL, t('user.logs.filter.all')], ...(tab === 'errors' ? ERROR_TYPES : USAGE_ERROR_TYPES).map(et => [et, t(`errorType.${et}`)])])}
+              items={Object.fromEntries([[ERROR_ALL, t('user.logs.filter.all')], ...ERROR_TYPES.map(et => [et, t(`errorType.${et}`)])])}
               value={filters.error_type || ERROR_ALL}
               onValueChange={v => set({ error_type: v === ERROR_ALL ? '' : v })}
             >
               <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value={ERROR_ALL} label={t('user.logs.filter.all')}>{t('user.logs.filter.all')}</SelectItem>
-                {(tab === 'errors' ? ERROR_TYPES : USAGE_ERROR_TYPES).map(et => <SelectItem key={et} value={et} label={t(`errorType.${et}`)}>{t(`errorType.${et}`)}</SelectItem>)}
+                {ERROR_TYPES.map(et => <SelectItem key={et} value={et} label={t(`errorType.${et}`)}>{t(`errorType.${et}`)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>

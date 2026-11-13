@@ -7,7 +7,6 @@ package proxy
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"time"
@@ -215,7 +214,7 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 	// https://chatgpt.com/backend-api/codex/alpha/search，网关零拼装。
 	cred := sel.Credential()
 	// 非流式超时：TCP 黑洞读停滞 → 超时触发 → 连接级错误转移
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	// SDK 路径结构上不采客户端头：x-codex-turn-metadata 到此不转发（静态路径
 	// 走 RelayHeaders，该键如实透传——见 callStaticSearch）
@@ -224,10 +223,9 @@ func (p *Proxy) callCodexSearch(ctx context.Context, w http.ResponseWriter, r *h
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return statusOf(err), upstreamBody(err), false, err
-		}
-		return statusOf(err), upstreamBody(err), false, err
+		// 网关预算到期（WithTimeoutCause 的哨兵）给错误打标记：pipeline 的零状态
+		// 归类据此判成 timeout（§3.1），客户端自己的 deadline 不会带这个标记。
+		return statusOf(err), upstreamBody(err), false, markGatewayBudget(ctx, err)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -260,17 +258,16 @@ func (p *Proxy) callStaticSearch(ctx context.Context, w http.ResponseWriter, r *
 	}
 	// 非流式超时：TCP 黑洞读停滞 → 超时触发 → 连接级错误
 	// 转移
-	ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamTimeout)
+	ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
 	defer cancel()
 	resp, err := p.clients.SearchRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeySearch, defaultPathSearch), cred, body, r.Header, sel.Egress.HTTP)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
 		}
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return statusOf(err), upstreamBody(err), false, err
-		}
-		return statusOf(err), upstreamBody(err), false, err
+		// 网关预算到期（WithTimeoutCause 的哨兵）给错误打标记：pipeline 的零状态
+		// 归类据此判成 timeout（§3.1），客户端自己的 deadline 不会带这个标记。
+		return statusOf(err), upstreamBody(err), false, markGatewayBudget(ctx, err)
 	}
 	if resp.StatusCode != http.StatusOK {
 		rb := readUpstreamBody(resp)

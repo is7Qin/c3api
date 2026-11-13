@@ -68,7 +68,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			return http.StatusBadRequest, nil, true, nil
 		}
 		reqModel := gjson.GetBytes(body, "model").String()
-		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
+		ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 		defer cancel()
 		streamBody, err := setModel(body, sel.Model)
 		if err != nil {
@@ -191,7 +191,8 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			exit := classifyStreamExit(ctx, out, err, usage, ttft)
 			if exit == streamExitUncommitted {
 				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）
-				return statusOf(err), nil, false, err
+				// 网关预算到期（零帧）给错误打标记：pipeline 归类成 timeout（§3.1）。
+				return statusOf(err), nil, false, markGatewayBudget(ctx, err)
 			}
 			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5）。
 			f := streamFailureOf(ctx, exit, err)
@@ -215,7 +216,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				}
 				outcome = mergeDispatchBase(ctx, convertedOutcome(reqID, sel, reqModel, opTag, timing, usage, ResultFailed, AttemptStatus(code), commit, business, true, false))
 			}
-			p.observeDispatchOutcome(ctx, outcome, streamFailureHealth(f))
+			p.observeDispatchOutcome(ctx, outcome, timeoutHealth(f, framesSent))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), client, logStatusForFailure(f), f.ET, u, start))
 			l.ErrorMessage = f.message()
 			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，

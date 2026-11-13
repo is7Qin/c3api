@@ -102,24 +102,59 @@ func TestStreamFailureHealth(t *testing.T) {
 		"客户端侧结束不投递健康事件（Kind 零值 ⇒ nil）")
 }
 
-// TestStreamFailureOfWriteFailed 序 0b / 0c 必须分开：写失败本身是客户端侧结束
-// （abort，不投递健康），但网关自己的 UpstreamStreamTimeout 到期是上游侧失败
-// （network）——把后者记 abort 是误标。
-func TestStreamFailureOfWriteFailed(t *testing.T) {
+// G12（spec §3.1 反例门禁）：同一条写失败分别由**网关流预算**与**客户端自己的
+// deadline** 触发，类别必须相反（timeout vs abort）。
+//
+// 旧实现只看 `ctx.Err() == context.DeadlineExceeded`，两者都落 network ⇒ 客户端
+// 自己的期限被错记成上游问题（本用例第二段在旧实现上必红）。
+func TestStreamFailureGatewayVsClientDeadline(t *testing.T) {
 	cause := errors.New("write: broken pipe")
 
-	f := streamFailureOf(context.Background(), streamExitWriteFailed, cause)
-	require.Equal(t, domain.ErrAbort, f.ET, "序 0c：客户端侧结束")
-	require.Zero(t, f.Kind, "0c 不投递健康事件")
+	// 段 1：网关预算到期（caller 用 WithTimeoutCause 注入的哨兵）。
+	gwCtx, gwCancel := context.WithTimeoutCause(context.Background(), 0, errGatewayUpstreamTimeout)
+	defer gwCancel()
+	<-gwCtx.Done()
+	f := streamFailureOf(gwCtx, streamExitWriteFailed, cause)
+	require.Equal(t, domain.ErrTimeout, f.ET, "网关预算到期 ⇒ timeout（上游在预算内未产出）")
+	require.Equal(t, rule.KindTimeout, f.Kind, "timeout 带独立 kind ⇒ seed-timeout 命中")
+	require.Equal(t, msgUpstreamTimeoutNoOutput, f.Message, "§3.2：落可读文案，不落库内部文本")
 
-	deadlineCtx, cancel := context.WithTimeout(context.Background(), 0)
-	defer cancel()
-	<-deadlineCtx.Done()
-	f = streamFailureOf(deadlineCtx, streamExitWriteFailed, cause)
-	require.Equal(t, domain.ErrNetwork, f.ET, "序 0b：网关 UpstreamStreamTimeout 到期")
-	require.Equal(t, rule.KindNetwork, f.Kind)
+	// 段 2：客户端请求 ctx 自己的 deadline 到期（无哨兵）⇒ abort，绝不 network。
+	clCtx, clCancel := context.WithTimeout(context.Background(), 0)
+	defer clCancel()
+	<-clCtx.Done()
+	g := streamFailureOf(clCtx, streamExitWriteFailed, cause)
+	require.Equal(t, domain.ErrAbort, g.ET,
+		"客户端自己的 deadline ⇒ abort（旧实现记 network = 把客户端期限当上游故障）")
+	require.Zero(t, g.Kind, "abort 不投递健康事件")
+	require.NotEqual(t, f.ET, g.ET, "两个 deadline 的类别必须相反")
 
-	f = streamFailureOf(context.Background(), streamExitCommitted, &fakeEnvelope{status: http.StatusBadGateway})
-	require.Equal(t, domain.Err5xx, f.ET, "已提交出口回到序 1–5")
-	require.Equal(t, http.StatusBadGateway, f.Status)
+	// 段 3：无 ctx 期限的真实下行断裂 ⇒ 仍是 abort（0c）。
+	h := streamFailureOf(context.Background(), streamExitWriteFailed, cause)
+	require.Equal(t, domain.ErrAbort, h.ET, "序 0c：客户端侧结束")
+	require.Zero(t, h.Kind, "0c 不投递健康事件")
+
+	// 已提交出口回到序 1–5。
+	i := streamFailureOf(context.Background(), streamExitCommitted, &fakeEnvelope{status: http.StatusBadGateway})
+	require.Equal(t, domain.Err5xx, i.ET, "已提交出口回到序 1–5")
+	require.Equal(t, http.StatusBadGateway, i.Status)
+}
+
+// TestUserFacingFailureMessage §3.2：abort / timeout 的 error_message 必须是可读
+// 文案（禁止库内部文本），其余类别保持 causeMessage 的既有口径（上游原文优先）。
+func TestUserFacingFailureMessage(t *testing.T) {
+	internal := errors.New("failed to get reader: failed to read frame header: EOF")
+
+	for _, et := range []domain.ErrorType{domain.ErrAbort, domain.ErrTimeout} {
+		got := userFacingFailureMessage(et, internal)
+		require.NotNil(t, got, "abort/timeout 恒有可读文案（不留 NULL）")
+		require.NotContains(t, *got, "failed to get reader", "et=%s: 禁止库内部文本", et)
+	}
+	require.Equal(t, msgClientAbortedBeforeDone, *userFacingFailureMessage(domain.ErrAbort, internal))
+	require.Equal(t, msgUpstreamTimeoutNoOutput, *userFacingFailureMessage(domain.ErrTimeout, internal))
+
+	// 其余类别不归一（上游信封原文照旧）。
+	payload := &sserelay.PayloadError{Type: "server_error", Message: inbandOverloadMsg}
+	require.Equal(t, inbandOverloadMsg, *userFacingFailureMessage(domain.Err5xx, payload))
+	require.Nil(t, userFacingFailureMessage(domain.Err5xx, nil), "无原因 ⇒ NULL")
 }

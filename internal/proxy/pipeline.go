@@ -220,6 +220,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 	lastSel := sel
 	var (
 		lastCode   int
+		lastErr    error  // 最后一次实际尝试的错误（耗尽路径类别/kind 判定用）
 		lastErrMsg string // 最后一次实际尝试的错误文本（耗尽路径 ErrorMessage 用）
 		lastHdr    http.Header
 		lastBody   []byte
@@ -294,6 +295,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		p.observeDispatchFailure(callCtx, dispatch, code)
 		openDispatch = nil
 		lastCode = code
+		lastErr = callErr
 		lastHdr = hdr
 		lastBody = respBody
 		var terminate bool
@@ -324,7 +326,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 	if !attempted {
 		lastSel.Release()
 	}
-	p.writeFailoverExhausted(w, r, format, reqID, groupID, start, reqModel, lastSel, lastCode, lastErrMsg, lastHdr, lastBody, st, sink)
+	p.writeFailoverExhausted(w, r, format, reqID, groupID, start, reqModel, lastSel, lastCode, lastErr, lastErrMsg, lastHdr, lastBody, st, sink)
 }
 
 // failoverPrecheckPrice 缺价预检阶段（failoverLoopWithPlan 提取）：命中即
@@ -408,11 +410,17 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 			// 直连（ProxyID == nil）恒为 no-op：零代理部署的 message 不变。
 			lastErrMsg = withEgressNote(lastErrMsg, sel)
 		}
-		// 5xx/0 分支统一走 Classify（seed-5xx/seed-network 恒命中 → 恒投递，
-		// 行为不变）。防呆 b：分支不拆 ≠ 恒传 Kind5xx——事件 kind
-		// 按单点分流 helper（code==0→network）计算，否则 code==0 事件不命中
-		// seed-network → 不投递 → 连接级冷却整体失效。
+		// 5xx/0 分支统一走 Classify（seed-5xx/seed-network/seed-timeout 按 kind
+		// 命中）。防呆 b：分支不拆 ≠ 恒传 Kind5xx——事件 kind 按单点分流 helper
+		// 计算（5xx → Kind5xx；code==0 → network 或 timeout，见下），否则 code==0
+		// 事件不命中连接级种子 → 不投递 → 冷却整体失效。
 		kind := scheduler.RuleKindOf(code)
+		if code == 0 {
+			// 零状态再分两类（§3 归因表）：网关预算到期 = 上游在预算内未产出
+			// ⇒ timeout（seed-timeout 10m）；其余零状态 = 传输层断开 ⇒ network
+			// （seed-network 5s）。旧实现一律 network，把「零产出」罚成 5s。
+			_, kind = zeroStatusFailureClass(callErr)
+		}
 		var hp *int
 		if code > 0 {
 			hp = &code
@@ -463,13 +471,15 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 // 的 kind/HTTPStatus/Message 重新分类取 then → status/头透传 → buildLog +
 // recordLog → 统一写出（via rule.UnifiedMessage；WS/HTTP 分流）。字段/文案/时机
 // 逐字一致。
-func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, lastSel *scheduler.Selection, lastCode int, lastErrMsg string, lastHdr http.Header, lastBody []byte, st attemptState, sink pipelineSink) {
+func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, lastSel *scheduler.Selection, lastCode int, lastErr error, lastErrMsg string, lastHdr http.Header, lastBody []byte, st attemptState, sink pipelineSink) {
 	et := domain.Err5xx
 	switch lastCode {
 	case http.StatusTooManyRequests:
 		et = domain.Err429
 	case 0:
-		et = domain.ErrNetwork
+		// 零状态：网关预算到期 ⇒ timeout（上游零产出）；其余 ⇒ network（§3.1）。
+		// lastErr 携带 markGatewayBudget 打的标记（非流式/未提交路径都经过它）。
+		et, _ = zeroStatusFailureClass(lastErr)
 	}
 	// 耗尽统一公式：按最后一次尝试的 kind/HTTPStatus/Message 重新分类获取 then
 	var then domain.RuleThen
@@ -479,6 +489,9 @@ func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, f
 			kind = rule.Kind429
 		} else if lastCode >= 400 && lastCode < 500 {
 			kind = rule.Kind4xx
+		} else if lastCode == 0 {
+			// 与上面 et 同源：零状态再分 timeout / network。
+			_, kind = zeroStatusFailureClass(lastErr)
 		}
 		var hp *int
 		if lastCode != 0 {
@@ -496,7 +509,11 @@ func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, f
 		commit = CommitUpstreamResponded
 	}
 	l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, usageIdentity(format, lastSel, reqModel), format, lastCode, et, usageTuple{}, start)), commit)
-	if lastErrMsg != "" {
+	// 归因文本（§3.2）：timeout 落可读结论（「上游在预算内未产出」），不把传输层
+	// 内部文案写进用户可见列；其余类别沿用 lastErrMsg（network 行含出口注解）。
+	if et == domain.ErrTimeout {
+		l.ErrorMessage = userFacingFailureMessage(et, lastErr)
+	} else if lastErrMsg != "" {
 		l.ErrorMessage = &lastErrMsg
 	}
 	p.recordLog(l)

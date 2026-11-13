@@ -37,7 +37,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if stream {
 		// 客户端请求模型：流式不解析完整参数，仅 gjson 提取顶层 model；原始字节中继，上游通过 ResponseRaw 直透
 		reqModel := gjson.GetBytes(body, "model").String()
-		ctx, cancel := context.WithTimeout(ctx, p.cfg.UpstreamStreamTimeout)
+		ctx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout)
 		defer cancel()
 		// 模型映射：等价 SDK 路径对 params.Model 的覆盖，客户端已带 stream:true 无需注入，命中则零分配复用原切片
 		streamBody, err := setModel(body, sel.Model)
@@ -107,7 +107,8 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			exit := classifyStreamExit(ctx, out, err, AttemptUsage{InputTokens: it, OutputTokens: ot, CacheReadTokens: cr, CacheCreationTokens: cc, CallCount: img}, ttft)
 			if exit == streamExitUncommitted {
 				// 未提交读取失败 → pipeline（handled=false，可 failover/写 JSON）；缓冲残余丢弃。
-				return statusOf(err), nil, false, err
+				// 网关预算到期（零帧）给错误打标记：pipeline 归类成 timeout（§3.1）。
+				return statusOf(err), nil, false, markGatewayBudget(ctx, err)
 			}
 			// 已提交 / 写失败：唯一归因（§3 序 0a–0c + 1–5），出口只提供事实。
 			f := streamFailureOf(ctx, exit, err)
@@ -132,7 +133,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 					p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
 				}
 			}
-			p.observeDispatchOutcome(ctx, oc, streamFailureHealth(f))
+			p.observeDispatchOutcome(ctx, oc, timeoutHealth(f, framesSent))
 			l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponses, logStatusForFailure(f), f.ET, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}, start))
 			l.ErrorMessage = f.message()
 			// 交付事实（唯一折算入口）：framesSent/writeFailed 取补写前快照，

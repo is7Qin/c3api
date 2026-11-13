@@ -159,9 +159,13 @@ func fakeResponsesWSHoldOpen(t *testing.T, frames ...string) (*httptest.Server, 
 	return srv, done
 }
 
-// H4：客户端取消、已下发 1 帧业务帧（链路未断）⇒ response_started；双轨、按已
-// 采 usage 计费（usage_logs 成员资格 = 计费资格；金额口径由 G6 覆盖）。
-func TestStreamFailureH4ClientCancelAfterOneFrameIsResponseStarted(t *testing.T) {
+// H4（§3 归因表第一行，旧断言已按新语义纠正）：上游已下发**终态帧**且客户端
+// 已收到 ⇒ 本轮完成（error_type=none，单轨），交付态 response_started 可计费，
+// 已采 usage 不丢。
+//
+// 旧断言是 usage+err_logs 双轨 + abort——正是 §1 的现场（「客户端读完即断被记已
+// 中止」）。abort + response_started（终态帧之前断）由 G2 覆盖。
+func TestStreamFailureH4CompletedRoundThenClientEndIsNone(t *testing.T) {
 	testHealthSink.reset()
 	up, done := fakeResponsesWSHoldOpen(t, responsesWSCompletedFrame)
 	store := &captureLogStore{}
@@ -177,12 +181,15 @@ func TestStreamFailureH4ClientCancelAfterOneFrameIsResponseStarted(t *testing.T)
 		"收尾必须把 response_started 行入队")
 
 	raw := drainLogs(t, p, store)
-	require.Equal(t, logTracks{usage: 1, errs: 1, abort: 1}, inbandTracks(raw), "rows=%+v", raw)
-	row := failureRow(t, raw)
-	require.Equal(t, domain.ErrAbort, row.ErrorType, "客户端侧结束 ⇒ abort")
+	rows := uniqueRows(t, raw)
+	require.Equal(t, logTracks{usage: 1, errs: 0, abort: 0}, inbandTracks(raw),
+		"已读到终态帧 ⇒ none：只有 usage_logs 一行，err_logs 无该行；rows=%+v", raw)
+	require.Len(t, rows, 1)
+	row := rows[0]
+	require.Equal(t, domain.ErrNone, row.ErrorType, "本轮已终态完成 ⇒ none（不是 abort）")
 	requireCommitState(t, row, CommitResponseStarted)
 	require.True(t, commitStateBillable(row.CommitState))
-	require.Equal(t, http.StatusOK, row.StatusCode, "已交付的取消记 200（既有语义）")
+	require.Equal(t, http.StatusOK, row.StatusCode)
 	require.Equal(t, int64(2), row.InputTokens, "已采 usage 不丢（6 gross − cached 1 − cache_write 3）")
 	require.Equal(t, int64(5), row.OutputTokens)
 }
@@ -322,7 +329,11 @@ func TestStreamFailureH7DispatchedFailureOutcomesValidate(t *testing.T) {
 		p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 			map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, nil, store)
 		_, fc := wireObserverHarness(t, p)
-		ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+		// deadline 必须携带**网关预算哨兵**（§3.1）：客户端自己的 deadline 现在归
+		// abort（不产出失败 outcome，§3 归因表第二行），只有网关预算到期才是 0b 出口。
+		// 生产路径上这条 cause 由 caller 的 WithTimeoutCause(ctx,
+		// p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout) 注入。
+		ctx, cancel := context.WithTimeoutCause(context.Background(), 80*time.Millisecond, errGatewayUpstreamTimeout)
 		defer cancel()
 		w := &h7DeadlineWriter{header: make(http.Header), ctx: ctx, first: make(chan struct{})}
 		req := httptest.NewRequest(http.MethodPost, "/v1/responses",
@@ -344,7 +355,7 @@ func TestStreamFailureH7DispatchedFailureOutcomesValidate(t *testing.T) {
 		require.NoError(t, p.rec.Close(context.Background()))
 		waitStoreLogs(t, store, 1) // 零业务帧 ⇒ 只有 err_logs 一行
 		row := failureRow(t, storeRows(store))
-		require.Equal(t, domain.ErrNetwork, row.ErrorType, "序 0b：网关超时 ⇒ network")
+		require.Equal(t, domain.ErrTimeout, row.ErrorType, "序 0b：网关预算到期（sentinel）⇒ timeout")
 		requireCommitState(t, row, CommitUpstreamResponded)
 	})
 
@@ -391,7 +402,7 @@ func TestStreamFailureH7DispatchedFailureOutcomesValidate(t *testing.T) {
 //     的哨兵同时红。
 //
 // 场景说明：codex HTTP 的「零业务帧 + 已提交失败」只能由**上游失败在下行首帧
-// 暴露**（序 0b：网关 UpstreamStreamTimeout 到期，归因 network）建立——纯流内
+// 暴露**（序 0b：网关 UpstreamStreamTimeout 到期，归因 timeout）建立——纯流内
 // 错误载荷在零帧时 Committed()=false，走 streamExitUncommitted 交 pipeline
 // （stream_exit.go 的未提交分支），根本不进本出口、也不产出 AttemptOutcome。
 // 故这里用 deadlineWriter 精确复现该出口（与 §5 H7 同一现场）。
@@ -403,7 +414,11 @@ func TestStreamFailureH7ReverseCodexZeroFrameFailureOutcomeValidates(t *testing.
 	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
 		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, nil, store)
 	_, fc := wireObserverHarness(t, p)
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	// deadline 必须携带**网关预算哨兵**（§3.1）：客户端自己的 deadline 现在归
+	// abort（不产出失败 outcome，§3 归因表第二行），只有网关预算到期才是 0b 出口。
+	// 生产路径上这条 cause 由 caller 的 WithTimeoutCause(ctx,
+	// p.cfg.UpstreamStreamTimeout, errGatewayUpstreamTimeout) 注入。
+	ctx, cancel := context.WithTimeoutCause(context.Background(), 80*time.Millisecond, errGatewayUpstreamTimeout)
 	defer cancel()
 	w := &h7DeadlineWriter{header: make(http.Header), ctx: ctx, first: make(chan struct{})}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses",
@@ -438,7 +453,7 @@ func TestStreamFailureH7ReverseCodexZeroFrameFailureOutcomeValidates(t *testing.
 	require.NoError(t, p.rec.Close(context.Background()))
 	waitStoreLogs(t, store, 1)
 	row := failureRow(t, storeRows(store))
-	require.Equal(t, domain.ErrNetwork, row.ErrorType, "序 0b：网关超时 ⇒ network")
+	require.Equal(t, domain.ErrTimeout, row.ErrorType, "序 0b：网关预算到期（sentinel）⇒ timeout")
 	requireCommitState(t, row, CommitUpstreamResponded)
 }
 

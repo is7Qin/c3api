@@ -801,7 +801,9 @@ func TestRelayClassifyCloseFramePriority(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			end, endErr := relayClassify(tt.upClose, tt.upErr, tt.clientErr, tt.pingErr)
+			// 本表全部是「本轮未读到终态帧」的组合（completed=false）：终态帧事实的
+			// 分支见 TestRelayClassifyCompletedTerminalFrame。
+			end, endErr := relayClassify(tt.upClose, tt.upErr, tt.clientErr, tt.pingErr, false)
 			require.Equal(t, tt.want, end)
 			require.Equal(t, tt.wantErr, endErr)
 		})
@@ -819,22 +821,57 @@ func TestRelayClassifyWSIdleTimeout(t *testing.T) {
 	require.False(t, errors.Is(idle, context.DeadlineExceeded),
 		"空闲超时哨兵不得包装 DeadlineExceeded（续接 ACK 分支会误判）")
 
-	end, endErr := relayClassify(nil, idle, nil, nil)
+	end, endErr := relayClassify(nil, idle, nil, nil, false)
 	require.Equal(t, relayEndUpstreamError, end, "读空闲超时按上游错误计冷却")
 	require.ErrorIs(t, endErr, codexsdk.ErrWSIdleTimeout)
 	require.Equal(t, websocket.StatusInternalError, wsCloseStatus(endErr),
 		"WS 上以 1011 传播（与其它上游网络错误同形）")
 
 	// 与心跳失联并存：诊断取 upErr（首因是读空闲，不是 ping 超时）
-	end, endErr = relayClassify(nil, idle, nil, errors.New("pong timeout"))
+	end, endErr = relayClassify(nil, idle, nil, errors.New("pong timeout"), false)
 	require.Equal(t, relayEndUpstreamError, end)
 	require.ErrorIs(t, endErr, codexsdk.ErrWSIdleTimeout)
 
 	// 客户端同时断开仍归 abort（不计冷却）——既有槽位优先级不变
 	clientClose := &websocket.CloseError{Code: websocket.StatusNormalClosure}
-	end, endErr = relayClassify(nil, idle, clientClose, nil)
+	end, endErr = relayClassify(nil, idle, clientClose, nil, false)
 	require.Equal(t, relayEndClientAbort, end)
 	require.Equal(t, clientClose, endErr)
+}
+
+// TestRelayClassifyCompletedTerminalFrame 「已读到本轮终态帧」是分类的第一输入
+// （spec §3 归因表）：读到即完成，之后是谁先断都不改归属——客户端收到完整响应
+// 后干净关闭（1000）或裸断（无关闭帧的读失败）都不得记成「已中止」。
+// 对照组（completed=false 的同一条客户端关闭）证明这不是把 abort 语义放宽。
+func TestRelayClassifyCompletedTerminalFrame(t *testing.T) {
+	cleanClose := &websocket.CloseError{Code: websocket.StatusNormalClosure}
+	bareDisconnect := io.ErrUnexpectedEOF // 裸断：无关闭帧的读失败
+	upWriteFail := net.ErrClosed
+
+	for _, tt := range []struct {
+		name      string
+		upClose   *websocket.CloseError
+		upErr     error
+		clientErr error
+		pingErr   error
+	}{
+		{"终态帧后客户端干净关闭", nil, nil, cleanClose, nil},
+		{"终态帧后客户端裸断", nil, nil, bareDisconnect, nil},
+		{"终态帧后上游正常关闭帧 + 写失败", &websocket.CloseError{Code: websocket.StatusNormalClosure}, upWriteFail, nil, nil},
+		{"终态帧后上游错误关闭帧", &websocket.CloseError{Code: websocket.StatusInternalError}, nil, nil, nil},
+		{"终态帧后心跳失联", nil, nil, nil, errors.New("pong timeout")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			end, endErr := relayClassify(tt.upClose, tt.upErr, tt.clientErr, tt.pingErr, true)
+			require.Equal(t, relayEndUpstreamClosed, end, "已读终态帧 ⇒ 本轮完成（error_type=none）")
+			require.NoError(t, endErr, "完成轮不产出收尾错误（不落 err_logs）")
+		})
+	}
+
+	// 对照组：同一条客户端干净关闭，但**未**读到终态帧 ⇒ 仍是 abort。
+	end, endErr := relayClassify(nil, nil, cleanClose, nil, false)
+	require.Equal(t, relayEndClientAbort, end)
+	require.Equal(t, cleanClose, endErr)
 }
 
 // TestResponsesWSConcurrentWriteClose 端到端竞态复现：上游关闭帧与客户端

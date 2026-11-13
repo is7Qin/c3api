@@ -820,12 +820,14 @@ func TestProxyStreamAbortFreesSlot(t *testing.T) {
 	require.Equal(t, 1, p.rec.Pending(), "中止路径记 ErrAbort 用量")
 }
 
-// 回归（评审 Critical）：流式上游停滞超过 UpstreamStreamTimeout 必须按上游错误
-// 处理——记 ErrAbort + MarkResult(连接级/5xx 分流) → seed-5xx throttle 投递。此前 sserelay.
-// normalize 把 ctx 超时折叠为 context.Canceled，tryChat 按 errors.Is(err,
-// context.Canceled) 走了"客户端断开"分支：释放槽位但不 MarkResult、不记用量
-// （账号保持 active、Pending 0），与迁移前 SDK 路径（记 ErrAbort + 惩罚）相悖。
-func TestProxyStreamTimeoutMarksThrottle(t *testing.T) {
+// 回归（评审 Critical + §5 冷却条件）：流式上游停滞超过 UpstreamStreamTimeout
+// 必须按**上游侧失败**收尾——不得被 sserelay.normalize 折叠成 context.Canceled
+// 后走「客户端断开」分支（那样会释放槽位却不记用量、不归因）。
+//
+// 类别已随归因表改为 timeout（旧实现 network）；且本 fixture 已写出 1 帧业务帧
+// ⇒ 按 §5「timeout 仅零业务帧才冷却」**不投递**健康事件（零帧的 timeout 仍然
+// 冷却，见 TestTimeoutHealthSSEZeroFrameKeepsKind）。
+func TestProxyStreamTimeoutDeliveredDoesNotThrottle(t *testing.T) {
 	testHealthSink.reset()
 	up := fakeOpenAI(t, "stall-stream")
 	defer up.Close()
@@ -847,15 +849,16 @@ func TestProxyStreamTimeoutMarksThrottle(t *testing.T) {
 	p.sched.FlushRules() // MarkResult 异步投递：断言前排空
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
-	require.Len(t, testHealthSink.throttlesFor(1), 1, "停滞超时记 连接级/5xx 分流惩罚")
+	require.Empty(t, testHealthSink.throttlesFor(1),
+		"已发业务帧的 timeout 不冷却账号（§5：仅零业务帧才罚上游）")
 	require.Zero(t, ri.Concurrency, "超时中止路径必须释放并发槽")
 	require.Equal(t, 1, p.rec.Pending(), "超时中止必须记一条 ErrAbort 用量")
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1, "must capture exactly one usage log")
-	require.Equal(t, domain.ErrNetwork, store.logs[0].ErrorType,
-		"超时中止是上游侧失败（序 0b）⇒ network；旧实现误标 abort")
+	require.Equal(t, domain.ErrTimeout, store.logs[0].ErrorType,
+		"网关预算到期是上游侧失败（序 0b）⇒ timeout；旧实现记 network/abort")
 	require.Equal(t, "gpt-4o", store.logs[0].Model, "recordStreamAbort：Model = 客户端请求模型")
 	require.Equal(t, "", store.logs[0].MappedModel, "无映射 → MappedModel 空")
 }

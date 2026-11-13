@@ -213,6 +213,12 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// commitStateFor 的 writeFailed 入参。只在 up-loop 与主 goroutine 的收尾 flushing
 	// 写，读取前分别由 upLoopDone/wg 建立 happens-before。
 	var downstreamWriteFailed bool
+	// roundCompleted 是「本轮是否已读到协议终态帧」这一**分类输入**（spec §3 归因表
+	// 的 completed 列）：只在本 goroutine 内写，读取在 `<-upLoopDone` 之后（close 提供
+	// happens-before）。它不落库（I3）——只进 relayClassify 的入参。
+	// 终态帧即本轮末帧：之后还有帧 ⇒ 已是下一轮，清零（长连接可承载多轮；轮状态
+	// 机另属后续提交，本处只保留「当前轮」这一个事实）。
+	var roundCompleted bool
 	wg.Go(func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer close(upLoopDone)                   // 编排等本读者退出后再分类，保证记录可见性
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
@@ -259,6 +265,12 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			if upPayloadErr != nil && isResponsesCompleted(f) {
 				upPayloadErr = nil
 			}
+			// 本轮终态帧事实（§3 归因表 completed）：子串预筛（memmem、零分配、
+			// 不解析 JSON）命中才做精确 type 判定（isResponsesCompleted 的
+			// scanKeyValue）。终态帧即本轮末帧——之后再有帧就是下一轮 ⇒ 清零。
+			// 只在 up-loop 内写，编排在 `<-upLoopDone` 之后读（close 建
+			// happens-before），与 upPayloadErr/businessN 同款纪律。
+			roundCompleted = bytes.Contains(f, completedTypeBytes) && isResponsesCompleted(f)
 			// 热路径纪律：只嗅探 response.completed 帧（精确 type 判定，
 			// usage_extract.go sniffResponsesCompletedUsage scanKeyValue 单遍扫描
 			// 零分配）；流式中间帧零解析直转——网关层零分配，库层每帧 io.ReadAll
@@ -410,7 +422,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	endMu.Lock()
 	uc, ue, ce, pe := upClose, upErr, clientErr, pingErr
 	endMu.Unlock()
-	end, endErr := relayClassify(uc, ue, ce, pe)
+	end, endErr := relayClassify(uc, ue, ce, pe, roundCompleted)
 	// 收尾改判（spec-inband-error-truth §3-3）：上游"正常关闭"但本连接上见过
 	// 未清零的错误帧 ⇒ 失败。**两个都换**——正常关闭时 relayClassify 的 endErr 是
 	// nil，只换 end 会让 wsCloseStatus(nil) 返 1011、客户端拿到虚构的内部错误码，
