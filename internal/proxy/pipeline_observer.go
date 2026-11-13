@@ -9,6 +9,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // ctxKeyDispatch carries the single owner-created dispatch observation from
@@ -81,10 +82,22 @@ func mergeDispatchBase(ctx context.Context, own AttemptOutcome) AttemptOutcome {
 // runs — observation ownership belongs to the dispatch owner.
 func (p *Proxy) observeDispatchOutcome(ctx context.Context, outcome AttemptOutcome, health *AttemptHealthEvent) {
 	if d := dispatchFromContext(ctx); d != nil {
+		var err error
 		if outcome.Result == ResultClientCancel {
-			_ = d.observer.Cancel(outcome)
+			err = d.observer.Cancel(outcome)
 		} else {
-			_ = d.observer.Complete(outcome, nil)
+			err = d.observer.Complete(outcome, nil)
+		}
+		// 控制流不变：观测被拒仍不向上传播（观测面不是请求成败的责任人）。但
+		// **不得静默**——非法 outcome（Validate 拒收，如零业务帧的
+		// sent_ambiguous+BusinessFrameSent=false）或非派发结果会让这次尝试在
+		// quality/flow 里无声消失，事后只能靠"数字对不上"猜。
+		if err != nil && p.log != nil {
+			p.log.Warn("dispatch observation rejected outcome",
+				logx.Int64("account_id", outcome.AccountID),
+				logx.String("result", outcome.Result.String()),
+				logx.String("commit", outcome.Commit.String()),
+				logx.Error(err))
 		}
 	}
 	if health != nil && outcome.IsCountedForQuality() && p.sched != nil {

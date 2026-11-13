@@ -486,7 +486,7 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 	//   - ACK 后（帧已可见）：与流中止同轨的派生归因——**不得再默认 abort**。
 	var f streamFailure
 	if contAcked {
-		out = wsOutcomeForUpstreamError(base, businessN > 0, u, ttft)
+		out = wsOutcomeForUpstreamError(base, u, ttft)
 		f = classifyStreamFailure(contFail)
 	} else {
 		out.Result = ResultFailed
@@ -543,7 +543,9 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 		// 上游错误/心跳超时：业务帧已见但连接异常，需冷却。sent/writeFailed 都是
 		// relayWS 在**补写终态帧之前**快照的真实事实（businessN 计数 / 下行写
 		// 失败）；reportWSOutcome 先落盘，随后才写关闭帧，故取值不随补写漂移。
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, businessN > 0, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, businessN > 0, writeFailed, endErr)
+		// 真实计数只进持久化（reportWSOutcome 的 sent 形参），不进 outcome 的
+		// 类型层编码（见 typeLayerTerminalFailure）。
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, businessN > 0, writeFailed, endErr)
 		code := wsCloseStatus(endErr)
 		// 流内错误载荷（spec-inband-error-truth §3-3）：上游**确实**是正常关闭
 		// （发完错误帧后 1000），客户端观感不得变——关闭码保持 1000，不虚构 1011。

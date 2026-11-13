@@ -5,6 +5,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/pkg/logx"
 )
 
 type handledPipelineAttempt struct{}
@@ -110,4 +113,57 @@ func TestFailoverPipeline_handledTruePerformsNoSharedCleanup(t *testing.T) {
 	// the session and attempt thread by value — zero values here prove
 	// a handled terminal performs no shared cleanup without any identity.
 	p.failoverLoopWithPlan(httptest.NewRecorder(), req, "chat", "req-handled", 1, time.Now(), "gpt-4o", nil, &scheduler.Selection{}, scheduler.AttemptPlan{}, scheduler.Attempt{}, attemptState{}, handledPipelineAttempt{}, &httpSink{}, false)
+}
+
+// TestPipelineObserverIllegalOutcomeIsLoggedNotDropped 非法 outcome 的丢弃必须可
+// 观测，但控制流不变：AttemptObserver.Complete 先用 Validate 拒收，旧实现
+// `_ = ...` 把这条事实静默吞掉——「类型层占位编码」一度正是这样制造非法 outcome
+// 并被无声丢弃的（H7 现场），事后只剩「数字对不上」。
+//
+// 用例构造零业务帧 + failed + status 0 + sent_ambiguous（BusinessFrameSent=false
+// ⇒ Validate 拒收），断言：记录一次 Warn（account_id/result/commit/错误文本）、
+// 不 panic、不阻断（非法丢弃不毒化观测器，随后的合法 outcome 仍正常完成）。
+func TestPipelineObserverIllegalOutcomeIsLoggedNotDropped(t *testing.T) {
+	dir, err := os.MkdirTemp("", "c3api-obswarn-*")
+	require.NoError(t, err)
+	// zap 持有文件句柄（Windows 上删除会失败）：清理忽略错误（与 errlog_test 同模式）。
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	logOut := filepath.Join(dir, "warn.log")
+	logger, err := logx.New("warn", logOut)
+	require.NoError(t, err)
+	p := &Proxy{log: logger}
+
+	base := AttemptOutcome{
+		ID: AttemptID("attempt-1"), RouteClassID: RouteClassID("rc-1"), QualityClassID: QualityClassID("qc-1"),
+		Fingerprint: CandidateFingerprint("fp-1"), TemplateID: 3, AccountID: 42,
+		RequestedModel: "gpt-4o", MappedModel: "gpt-4o",
+		CallerCategory: CallerChat, OperationTag: OperationTag(domain.OpChatCompletions),
+		Ordinal: 1, IdentityRevision: 1, Lane: LanePrimary, Generation: 1,
+	}
+	illegal := base
+	illegal.Result = ResultFailed
+	illegal.HTTPStatus = 0
+	illegal.Commit = CommitSentAmbiguous
+	illegal.BusinessFrameSent = false // 非法：sent_ambiguous 要求业务帧已下行
+	illegal.Terminal = true
+	require.Error(t, illegal.Validate(), "前提：该 outcome 必须非法（零业务帧 + sent_ambiguous）")
+
+	var flow []AttemptOutcome
+	obs := NewAttemptObserver(nil, nil, func(o AttemptOutcome) { flow = append(flow, o) }, nil)
+	ctx := context.WithValue(context.Background(), ctxKeyDispatch{}, &dispatchObservation{observer: obs, base: base})
+
+	p.observeDispatchOutcome(ctx, illegal, nil) // 不 panic、不阻断
+	require.Empty(t, flow, "非法 outcome 仍被丢弃（控制流不变：不向上传播、不落 flow）")
+
+	p.observeDispatchOutcome(ctx, wsOutcomeForSuccess(base, nil, usageTuple{}), nil)
+	require.Len(t, flow, 1, "非法丢弃不得毒化观测器：随后的合法 outcome 仍正常完成")
+
+	data, err := os.ReadFile(logOut)
+	require.NoError(t, err)
+	logged := string(data)
+	require.Contains(t, logged, "dispatch observation rejected outcome", "非法 outcome 必须留痕（不静默）")
+	require.Contains(t, logged, `"account_id":42`, "告警必须可定位到账号")
+	require.Contains(t, logged, `"result":"failed"`)
+	require.Contains(t, logged, `"commit":"sent_ambiguous"`)
+	require.Contains(t, logged, "sent_ambiguous requires BusinessFrameSent", "告警必须带 Validate 的错误文本")
 }

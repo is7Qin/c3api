@@ -426,11 +426,12 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 		o.Result = ResultFailed
 		o.HTTPStatus = 0
-		// 类型层占位编码（Validate：failed+status 0+terminal 的 sent_ambiguous 要求
-		// BusinessFrameSent=true）。真实交付事实由 commitStateFor 从 out 的写出事实
-		// 另算，持久化列不读本字段——二者不得互相喂值。
-		o.Commit = CommitSentAmbiguous
-		o.BusinessFrameSent = true
+		// 类型层占位编码统一收口（typeLayerTerminalFailure）：Validate 对
+		// 「failed + status 0 + terminal」只接受 sent_ambiguous/response_started/
+		// client_committed 且都要求 BusinessFrameSent=true。真实交付事实由
+		// commitStateFor 从 out 的写出事实另算，持久化列不读本字段——二者不得
+		// 互相喂值（见 helper 注释）。
+		o.Commit, o.BusinessFrameSent = typeLayerTerminalFailure()
 		o.Terminal = true
 		emitCodexOutcome(ctx, p, sel, o, streamFailureHealth(f))
 		l := logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), plan.logFormat, f.Status, f.ET, ut, start))

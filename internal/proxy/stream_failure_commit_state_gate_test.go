@@ -380,6 +380,68 @@ func TestStreamFailureH7DispatchedFailureOutcomesValidate(t *testing.T) {
 	})
 }
 
+// TestStreamFailureH7ReverseCodexZeroFrameFailureOutcomeValidates 是 H7 的**反向
+// 变异留档**（oracle 要求可执行化）：codex 已提交失败出口在「零业务帧」时的
+// outcome 必须合法，且必须**恰好**是 typeLayerTerminalFailure() 的编码。
+//
+// 变异检验（把注释里的口头约定变成红绿灯）：
+//   - 若有人把占位退回 `o.BusinessFrameSent = framesSent`（零帧 ⇒ false），
+//     Validate 拒收 → emitCodexOutcome 丢弃 → flow 捕获为空 → 本用例红；
+//   - 若有人删掉 helper 或让某个出口自拼常量，helper 断言 + ws_report_test
+//     的哨兵同时红。
+//
+// 场景说明：codex HTTP 的「零业务帧 + 已提交失败」只能由**上游失败在下行首帧
+// 暴露**（序 0b：网关 UpstreamStreamTimeout 到期，归因 network）建立——纯流内
+// 错误载荷在零帧时 Committed()=false，走 streamExitUncommitted 交 pipeline
+// （stream_exit.go 的未提交分支），根本不进本出口、也不产出 AttemptOutcome。
+// 故这里用 deadlineWriter 精确复现该出口（与 §5 H7 同一现场）。
+func TestStreamFailureH7ReverseCodexZeroFrameFailureOutcomeValidates(t *testing.T) {
+	testHealthSink.reset()
+	up, _ := newCodexHTTPUpstream(t, codexHTTPStep{status: 200, events: []string{t6RespCreated}})
+	defer up.Close()
+	store := &captureLogStore{}
+	p, _ := newTestCodexRespProxy(t, credential.TypeCodexPAT,
+		map[int64]*domain.AccountExt{10: codexPATExt(10, "pat-1")}, up.URL, nil, nil, store)
+	_, fc := wireObserverHarness(t, p)
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	w := &h7DeadlineWriter{header: make(http.Header), ctx: ctx, first: make(chan struct{})}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses",
+		strings.NewReader(`{"model":"gpt-4o","stream":true}`)).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer ck-1")
+	req.Header.Set("Content-Type", "application/json")
+	p.HandleResponses(w, req)
+	select {
+	case <-w.first:
+	default:
+		t.Fatal("首帧写未发生——零帧上游失败出口未建立")
+	}
+
+	outcomes := fc.snapshot()
+	requireValidOutcomes(t, outcomes)
+	o := outcomes[0]
+	wantCommit, wantSent := typeLayerTerminalFailure()
+	require.Equal(t, wantCommit, o.Commit, "codex 已提交失败出口必须用类型层唯一编码")
+	require.Equal(t, wantSent, o.BusinessFrameSent)
+	require.Equal(t, ResultFailed, o.Result)
+	require.Equal(t, AttemptStatus(0), o.HTTPStatus)
+	require.True(t, o.Terminal)
+
+	// 反向变异（可执行版）：同一 outcome 若按真实交付事实（零帧）写
+	// BusinessFrameSent=false，必须过不了 Validate —— 证明「退回 framesSent」
+	// 不会静默通过，只会被观测面丢弃（现已留 Warn 痕迹）。
+	mutated := o
+	mutated.BusinessFrameSent = false
+	require.Error(t, mutated.Validate(), "零帧 sent_ambiguous+false 必须被 Validate 拒绝（占位不可退回真实计数）")
+
+	// 交付事实不经过 outcome：零业务帧 ⇒ 持久化 upstream_responded（不可计费）。
+	require.NoError(t, p.rec.Close(context.Background()))
+	waitStoreLogs(t, store, 1)
+	row := failureRow(t, storeRows(store))
+	require.Equal(t, domain.ErrNetwork, row.ErrorType, "序 0b：网关超时 ⇒ network")
+	requireCommitState(t, row, CommitUpstreamResponded)
+}
+
 // h7DeadlineWriter 首帧 Write 阻塞到请求 ctx deadline 后返回 deadline 错误：
 // 复现「零业务帧 + 网关超时」写失败出口（序 0b）。
 type h7DeadlineWriter struct {

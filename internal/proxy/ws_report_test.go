@@ -65,7 +65,7 @@ func TestWSOutcome_clientAbortIsResponseStarted(t *testing.T) {
 func TestWSOutcome_upstreamErrorIsSentAmbiguous(t *testing.T) {
 	sel := selForWSReport()
 	base := wsDispatchedBase(sel, "gpt-4o", time.Now())
-	out := wsOutcomeForUpstreamError(base, true, usageTuple{it: 1}, nil)
+	out := wsOutcomeForUpstreamError(base, usageTuple{it: 1}, nil)
 	require.NoError(t, out.Validate())
 	require.Equal(t, CommitSentAmbiguous, out.Commit)
 	require.Equal(t, ResultFailed, out.Result)
@@ -73,6 +73,11 @@ func TestWSOutcome_upstreamErrorIsSentAmbiguous(t *testing.T) {
 	require.True(t, out.BusinessFrameSent)
 	require.True(t, out.Terminal)
 	require.False(t, CanRetry(CallerResponsesWS, out))
+
+	// 类型层编码唯一来源：helper 的返回值就是字段值（返回 true 的语义只出现一次）。
+	wantCommit, wantSent := typeLayerTerminalFailure()
+	require.Equal(t, wantCommit, out.Commit)
+	require.Equal(t, wantSent, out.BusinessFrameSent)
 
 	// 一帧业务字节都没写出去：类型层仍只能是 sent_ambiguous（Validate 要求
 	// BusinessFrameSent=true，属占位编码），但**持久化列**按真实下行计数折算

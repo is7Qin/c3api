@@ -109,26 +109,40 @@ func wsOutcomeForClientAbort(base AttemptOutcome, sent bool, u usageTuple, ttft 
 	return o
 }
 
-// wsOutcomeForUpstreamError 上游侧失败的观测事实。sent 是 relayWS 的真实业务帧
-// 计数（businessN > 0），代表本次尝试是否真的下发过业务帧。
+// typeLayerTerminalFailure 是「类型层终态失败」在 AttemptOutcome 上的**唯一**
+// 编码点：Commit = sent_ambiguous、BusinessFrameSent = true（返回值即字段名，
+// 调用点只做 `o.Commit, o.BusinessFrameSent = typeLayerTerminalFailure()`）。
 //
-// ⚠ 类型层占位编码（spec §4，Validate 不改）：AttemptOutcome.Validate 对
-// 「failed + status 0 + terminal」只允许 sent_ambiguous / response_started /
-// client_committed，且 sent_ambiguous 也要求 BusinessFrameSent=true —— 「上游
-// 已响应但一帧业务字节都没发出去」在类型上无法表达。因此这里保留
-// sent_ambiguous + BusinessFrameSent=true 作为**类型层编码**（观测与重试矩阵的
-// 既有语义），真实交付事实 sent 只交给 reportWSOutcome → commitStateFor 落
-// commit_state；持久化列不读 outcome.BusinessFrameSent。
-func wsOutcomeForUpstreamError(base AttemptOutcome, sent bool, u usageTuple, ttft *int64) AttemptOutcome {
+// 它是**类型层编码**，不是交付事实：AttemptOutcome.Validate() 的
+// 「ResultFailed + HTTPStatus == 0 + Terminal」矩阵（attempt_outcome.go 的
+// failed/status0 分支）只允许 not_sent / sent_ambiguous / response_started /
+// client_committed，而 terminal 下后三者都要求 BusinessFrameSent=true —— 也就是
+// 「上游已响应、但一帧业务字节都没发出去」在类型层**无法表达**。矩阵不该为这条
+// 观测面放宽（它同时守卫重试与计费），因此保留这条编码，并把「为什么它不是事实」
+// 钉在这里。
+//
+// 交付事实的唯一来源是 commitStateFor 的**真实入参**（各出口在补写终态帧之前
+// 快照的 framesSent / writeFailed / clientCancel，见 reportWSOutcome、
+// relayWSContFail、codex 流式已提交失败出口）；持久化列不读
+// outcome.BusinessFrameSent。两者不得互相喂值：本 helper 不读任何写出事实，
+// 交付事实也**不得**从 outcome.Commit / outcome.BusinessFrameSent 反推。
+func typeLayerTerminalFailure() (commit CommitState, businessFrameSent bool) {
+	return CommitSentAmbiguous, true
+}
+
+// wsOutcomeForUpstreamError 上游侧失败的观测事实（上游错误帧、断流、心跳超时
+// 同轨）。没有 sent 形参：类型层表达不了「零业务帧的终态失败」（见
+// typeLayerTerminalFailure），把真实计数塞进形参只能被丢弃或被误读成事实。
+// 真实交付事实由 relayWS 在补写终态帧**之前**快照（businessN > 0 / writeFailed），
+// 单独交给 reportWSOutcome → commitStateFor。
+func wsOutcomeForUpstreamError(base AttemptOutcome, u usageTuple, ttft *int64) AttemptOutcome {
 	o := base
 	o.Result = ResultFailed
 	o.HTTPStatus = 0
-	o.Commit = CommitSentAmbiguous
-	o.BusinessFrameSent = true // 类型层占位；真实事实 = 形参 sent（持久化另算）
+	o.Commit, o.BusinessFrameSent = typeLayerTerminalFailure()
 	o.Terminal = true
 	o.Timing.TTFTMS = ttft
 	o.Usage = wsUsageFromTuple(u)
-	_ = sent
 	return o
 }
 
