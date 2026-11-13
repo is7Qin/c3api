@@ -301,8 +301,10 @@ func TestCodexSlotPathStillWorks(t *testing.T) {
 
 // TestCodexClientIdentityNeverEgress（C3-12）：客户端头与体里的对话标识、
 // client_metadata、prompt_cache_key 哨兵不出现在假上游收到的任何字节里（头 + zstd
-// 解压后的 HTTP 体 + WS 帧）。三种传输（HTTP→HTTP、HTTP→WS、WS→WS）+ 协议转换车道，
-// 会话路径与槽位路径（会话簿 nil）各跑一遍。
+// 解压后的 HTTP 体 + WS 帧），也不以原文进入 Redis（会话簿落盘后遍历 miniredis 全部
+// 键与值）。三种传输（HTTP→HTTP、HTTP→WS、WS→WS）+ 两条协议转换车道（chat→resp、
+// messages→resp）；另有“无头、标识只来自体键”的 HTTP 与 WS 车道。会话路径与槽位
+// 路径（会话簿 nil）各跑一遍。
 func TestCodexClientIdentityNeverEgress(t *testing.T) {
 	sentinels := []string{"SENTINEL-HDR-THREAD", "SENTINEL-HDR-SESS", "SENTINEL-HDR-XSESS",
 		"SENTINEL-PCK", "SENTINEL-CONV", "SENTINEL-SID", "SENTINEL-CM"}
@@ -311,6 +313,7 @@ func TestCodexClientIdentityNeverEgress(t *testing.T) {
 	respBody := `{"model":"gpt-4o","stream":true,` + bodyKeys + `,"input":[{"role":"user","content":"hi"}]}`
 	wsFrame := `{"type":"response.create","model":"gpt-4o",` + bodyKeys + `,"input":[{"role":"user","content":"hi"}]}`
 	chatBody := `{"model":"gpt-4o","stream":true,` + bodyKeys + `,"messages":[{"role":"user","content":"hi"}]}`
+	messBody := `{"model":"gpt-4o","stream":true,"max_tokens":64,` + bodyKeys + `,"messages":[{"role":"user","content":"hi"}]}`
 
 	lanes := []struct {
 		name      string
@@ -343,23 +346,36 @@ func TestCodexClientIdentityNeverEgress(t *testing.T) {
 			AIRouter(p).ServeHTTP(rec, req)
 			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		}},
+		{"converted messages to resp", domain.CodexResponsesTransportHTTP, func(t *testing.T, p *Proxy) {
+			rec := postAnthropicConv(t, p, messBody, hdr)
+			require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		}},
+		{"http body key only", domain.CodexResponsesTransportHTTP, func(t *testing.T, p *Proxy) {
+			code, out := postConv(t, p, "ck-1", respBody, nil)
+			require.Equal(t, http.StatusOK, code, out)
+		}},
+		{"ws body key only", domain.CodexResponsesTransportHTTP, func(t *testing.T, p *Proxy) {
+			wsConvSession(t, p, nil, wsFrame)
+		}},
 	}
 	for _, lane := range lanes {
 		for _, withBook := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s book=%v", lane.name, withBook), func(t *testing.T) {
 				var book *codexsdk.ConversationBook
+				var mr *miniredis.Miniredis
 				if withBook {
-					book = newMiniredisBook(t, miniredis.RunT(t))
+					mr = miniredis.RunT(t)
+					book = newMiniredisBook(t, mr)
 				}
 				up, u := newConvUpstream(t)
 				p := newConvTestProxy(t, up.URL, convTestOpts{
 					accs: []convTestAcc{{id: 10}}, transport: lane.transport, book: book,
-					pcs: []domain.ProtocolConvert{domain.ProtocolConvertChatToResp},
+					pcs: []domain.ProtocolConvert{domain.ProtocolConvertChatToResp, domain.ProtocolConvertMessToResp},
 				})
 				lane.run(t, p)
 				require.Equal(t, 1, u.n())
 				w := u.wire(t, 0)
-				require.Equal(t, lane.transport == domain.CodexResponsesTransportWS || lane.name == "ws to ws", w.ws)
+				require.Equal(t, lane.transport == domain.CodexResponsesTransportWS || strings.HasPrefix(lane.name, "ws "), w.ws)
 				if w.ws {
 					require.NotEmpty(t, w.frames, "上游收到请求帧")
 				} else {
@@ -373,8 +389,40 @@ func TestCodexClientIdentityNeverEgress(t *testing.T) {
 				}
 				if withBook {
 					require.Equal(t, int64(1), book.Stats().Opens, "带对话标识 → 会话路径（转换车道用原始头体）")
+					flushBook(t, book)
+					stored := miniredisContents(t, mr)
+					require.Contains(t, stored, "codex:conv:", "扫描面含会话记录")
+					require.Contains(t, stored, "codex:turn:", "扫描面含轮次记录")
+					for _, s := range sentinels {
+						require.NotContains(t, stored, s, "对话标识原文进 Redis")
+					}
 				}
 			})
 		}
 	}
+}
+
+// miniredisContents 拼出 miniredis 全部键名与值（string 与 hash；其他类型直接
+// 失败，防扫描面漏类型）。不用 Dump：它截断长值。
+func miniredisContents(t *testing.T, mr *miniredis.Miniredis) string {
+	t.Helper()
+	var b strings.Builder
+	for _, k := range mr.Keys() {
+		b.WriteString(k + "\n")
+		switch typ := mr.Type(k); typ {
+		case "string":
+			v, err := mr.Get(k)
+			require.NoError(t, err)
+			b.WriteString(v + "\n")
+		case "hash":
+			fields, err := mr.HKeys(k)
+			require.NoError(t, err)
+			for _, f := range fields {
+				b.WriteString(f + "=" + mr.HGet(k, f) + "\n")
+			}
+		default:
+			require.FailNowf(t, "未覆盖的 Redis 类型", "key=%s type=%s", k, typ)
+		}
+	}
+	return b.String()
 }
