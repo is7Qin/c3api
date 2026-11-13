@@ -630,9 +630,9 @@ func postResponsesTS(t *testing.T, srv *httptest.Server, body, turnState string)
 	return resp
 }
 
-// TestCodexResponsesTurnStateNeverSentByDefault（G3b）：槽位路径既不发送也不捕获
+// TestCodexResponsesSlotTurnStateNeverSent（G3b）：槽位路径既不发送也不捕获
 // turn-state：上游连续签发 ts，网关任何请求都不带；身份头/连接复用照常。
-func TestCodexResponsesTurnStateNeverSentByDefault(t *testing.T) {
+func TestCodexResponsesSlotTurnStateNeverSent(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t,
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-1"},
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-2"},

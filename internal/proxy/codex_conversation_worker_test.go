@@ -128,7 +128,7 @@ func (s *blockingConvStore) SaveTurns(ctx context.Context, batch []codexsdk.Turn
 	return s.chanConvStore.SaveTurns(ctx, batch)
 }
 
-// TestConversationWorkerCloseDuringSaveKeepsBatch 评审 B I1：节拍 Flush 已在
+// TestConversationWorkerCloseDuringSaveKeepsBatch 节拍 Flush 已在
 // SaveTurns 中阻塞时调用 Close——在途批次的 ctx 不得被 Close 取消（SDK 失败批不回
 // 队，取消即丢），Close 等它落盘后返回；SaveTurnsFailures==0。
 func TestConversationWorkerCloseDuringSaveKeepsBatch(t *testing.T) {
@@ -169,7 +169,7 @@ func TestConversationWorkerCloseDuringSaveKeepsBatch(t *testing.T) {
 	require.Equal(t, int64(1), st.ConvSaveTurnsCalls)
 }
 
-// TestConversationWorkerTicksAfterStartCtxCanceled 评审 B I1 附带：StartAll 的信号
+// TestConversationWorkerTicksAfterStartCtxCanceled StartAll 的信号
 // ctx 取消（SIGTERM）后节拍继续，HTTP 排空窗口里新入队的轮次仍按节拍落盘；只有
 // Close 停循环。
 func TestConversationWorkerTicksAfterStartCtxCanceled(t *testing.T) {

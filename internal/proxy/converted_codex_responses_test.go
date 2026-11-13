@@ -353,9 +353,9 @@ func TestConvertedCodexExtMissing(t *testing.T) {
 	require.Equal(t, 0, upc.callsN(), "配置错误不触达上游")
 }
 
-// TestConvertedCodexTurnStateReplay spec §5.9：转换路径与直连同一条 ts 策略——
+// TestConvertedCodexSlotTurnStateNeverSent 转换路径与直连同一条 ts 策略——
 // 槽位路径既不发送也不捕获：上游签发、客户端自带的 ts 都不进上游请求。
-func TestConvertedCodexTurnStateReplay(t *testing.T) {
+func TestConvertedCodexSlotTurnStateNeverSent(t *testing.T) {
 	up, upc := newCodexHTTPUpstream(t,
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}, turnState: "ts-9"},
 		codexHTTPStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
+// deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
+
 package proxy
 
 import (
@@ -71,6 +74,18 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		code, body := postConv(t, p, "ck-1", convNewTurn1, convHdr("conv-a"))
 		require.Equal(t, http.StatusOK, code, body)
 		require.Equal(t, 1, u.n())
+		// 零身份（Identity{}）= SDK 匿名形态：无线程/会话/窗口/installation，也不带
+		// 客户端的对话标识。
+		id := u.wire(t, 0).identity(0)
+		require.Equal(t, "gpt-4o", id.model, "观测面有效：体已解压可读")
+		require.Equal(t, "Bearer "+convPAT(10), id.auth)
+		require.Empty(t, id.threadHdr, "零身份：无 Thread-Id 头")
+		require.Empty(t, id.sessionHdr, "零身份：无 Session-Id 头（客户端的 conv-a 不透传）")
+		require.Empty(t, id.windowHdr)
+		require.Empty(t, id.metaThread, "零身份：client_metadata 无 thread_id")
+		require.Empty(t, id.metaSession)
+		require.Empty(t, id.metaInstallation)
+		require.Empty(t, id.metaTurn)
 	})
 }
 
@@ -140,6 +155,33 @@ func TestCodexConversationCrossReplica(t *testing.T) {
 	require.Equal(t, first.metaTurn, follow.metaTurn, "同一轮次号")
 	require.Equal(t, first.threadHdr, follow.threadHdr, "同一线程")
 	require.Equal(t, int64(1), bookB.Stats().Loads, "B 本地未命中 → 一次 Load")
+}
+
+// TestCodexConversationTurnStateOwner（spec §5.3 Owner 参数）：turn-state 按凭据归属
+// 复用。同一会话簿、同缓存域两个账号：首请求到账号 A（上游签发 ts-0）并落地后，同一
+// 轮的后续请求换到账号 B → 线程与轮次号相同（同域同对话），但 B 不得带上 A 的
+// turn-state（B 尚无自己的值 ⇒ 不带）。同 owner 复用由 C3-5 覆盖。
+func TestCodexConversationTurnStateOwner(t *testing.T) {
+	mr := miniredis.RunT(t)
+	book := newMiniredisBook(t, mr)
+	up, u := newConvUpstream(t)
+	pA := newConvTestProxy(t, up.URL, convTestOpts{accs: []convTestAcc{{id: 10, domain: "team-a"}}, book: book})
+	pB := newConvTestProxy(t, up.URL, convTestOpts{accs: []convTestAcc{{id: 11, domain: "team-a"}}, book: book})
+
+	code, out := postConv(t, pA, "ck-1", convNewTurn1, convHdr("conv-owner"))
+	require.Equal(t, http.StatusOK, code, out)
+	flushBook(t, book)
+
+	code, out = postConv(t, pB, "ck-1", convFollowUp1, convHdr("conv-owner"))
+	require.Equal(t, http.StatusOK, code, out)
+
+	first, onB := u.wire(t, 0).identity(0), u.wire(t, 1).identity(0)
+	require.Equal(t, "Bearer "+convPAT(10), first.auth)
+	require.Equal(t, "Bearer "+convPAT(11), onB.auth)
+	require.Equal(t, first.threadHdr, onB.threadHdr, "同域同对话：线程相同")
+	require.Equal(t, first.metaTurn, onB.metaTurn, "同一轮次号")
+	require.Empty(t, onB.turnState, "换账号：不得带上另一凭据签发的 ts-0")
+	require.Empty(t, onB.metaTurnState)
 }
 
 // TestCodexConversationLocalHitZeroRedis（C3-14）：本副本命中时（对话与轮次都在本地
