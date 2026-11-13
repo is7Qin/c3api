@@ -88,7 +88,15 @@ const router = createBrowserRouter([
       },
       // 管理面结算工作台：不在 app 支内，先过供应商开关闸门（关闭 = 404，与角色无关），
       // 开启后再过 RequireAdmin（非 admin 仍是 403）。路径更具体，优先于 app 支匹配。
-      { path: 'app/supplier', element: <SupplierFeatureGate />, children: [{ element: <RequireAdmin />, children: [{ index: true, element: <SupplierAdmin /> }] }] },
+      {
+        path: 'app/supplier',
+        element: <SupplierFeatureGate />,
+        children: [
+          { element: <RequireAdmin />, children: [
+            { index: true, element: <SupplierAdmin /> },
+          ] },
+        ],
+      },
       {
         path: 'user',
         children: [
@@ -104,18 +112,24 @@ const router = createBrowserRouter([
           { path: 'wallet', element: <UserWallet /> },
           // 供应商控制台（spec 2026-10-09 §6.1）：先过供应商开关闸门（关闭 = 404），
           // 再过门控 RequireSupplier（supplier | platform_admin）。
-          { path: 'supplier', element: <SupplierFeatureGate />, children: [{ element: <RequireSupplier />, children: [
-            // 整个供应商域注入 supplierApi（base /api/user/supplier）作用域。
-            { element: <SupplierScope />, children: [
-              { index: true, element: <SupplierConsole /> },
-              // 账号管理页**复用同一 Accounts 组件**（作用域由 Provider 单一对象决定，
-              // 不再传 scope prop）。
-              { path: 'accounts', element: <Accounts /> },
-              // 供应商面出口代理池（spec proxy-pool §7）：同一个代理页组件，作用域由
-              // SupplierScope 注入（base /api/user/supplier ⇒ /api/user/supplier/proxies）。
-              { path: 'proxies', element: <SupplierProxies /> },
-            ] },
-          ] }] },
+          {
+            path: 'supplier',
+            element: <SupplierFeatureGate />,
+            children: [
+              { element: <RequireSupplier />, children: [
+                // 整个供应商域注入 supplierApi（base /api/user/supplier）作用域。
+                { element: <SupplierScope />, children: [
+                  { index: true, element: <SupplierConsole /> },
+                  // 账号管理页**复用同一 Accounts 组件**（作用域由 Provider 单一对象决定，
+                  // 不再传 scope prop）。
+                  { path: 'accounts', element: <Accounts /> },
+                  // 供应商面出口代理池（spec proxy-pool §7）：同一个代理页组件，作用域由
+                  // SupplierScope 注入（base /api/user/supplier ⇒ /api/user/supplier/proxies）。
+                  { path: 'proxies', element: <SupplierProxies /> },
+                ] },
+              ] },
+            ],
+          },
         ],
       },
     ],

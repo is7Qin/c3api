@@ -112,6 +112,8 @@ const read = (rel: string) => readFileSync(new URL(rel, srcRoot), 'utf8')
 const count = (src: string, re: RegExp) => (src.match(re) ?? []).length
 const shell = read('components/app-shell.tsx')
 const app = read('App.tsx')
+// 路由结构断言只看嵌套与顺序，不看排版：空白归一后匹配，单行与多行写法等价。
+const appFlat = app.replace(/\s+/g, ' ')
 const accounts = read('pages/accounts.tsx')
 const users = read('pages/users.tsx')
 const proxyPage = read('components/proxy-pool-page.tsx')
@@ -122,46 +124,49 @@ describe('接线：AppShell（菜单与面包屑）', () => {
   it('顶层取开关；管理组经 adminNavFor、供应商组经 showSupplierNav', () => {
     assert.ok(shell.includes('useFeatures('))
     assert.ok(shell.includes('adminNavFor(adminNav, supplier)'))
-    assert.ok(shell.includes('showSupplierNav('))
+    assert.ok(shell.includes('showSupplierNav(me?.Role, supplier)'))
   })
 
-  it('面包屑传入开关，且函数体首行先挡供应商路径', () => {
+  it('面包屑传入开关，且在任何路径分支之前先挡供应商路径', () => {
     assert.match(shell, /breadcrumbFor\(location\.pathname, supplier\)/)
     const at = shell.indexOf('function breadcrumbFor(')
     assert.notEqual(at, -1, '找不到 breadcrumbFor')
     const body = shell.slice(at, shell.indexOf('\n}\n', at))
-    assert.ok(body.includes('isSupplierPath('))
-    assert.match(body, /\| null \{\n {2}if \(!supplier && isSupplierPath\(pathname\)\) return null\n/)
+    const guard = 'if (!supplier && isSupplierPath(pathname)) return null'
+    const firstBranch = body.indexOf('if (pathname.startsWith')
+    assert.ok(body.includes(guard), 'breadcrumbFor 缺少供应商路径守卫')
+    assert.notEqual(firstBranch, -1, '找不到 breadcrumbFor 的路径分支')
+    assert.ok(body.indexOf(guard) < firstBranch, '守卫必须先于 /app、/user 分支')
   })
 })
 
 describe('接线：路由闸门（App.tsx）', () => {
   it('两条供应商路由的 element 都是闸门，各组件只挂一次', () => {
-    assert.equal(count(app, /element: <SupplierFeatureGate \/>/g), 2)
-    assert.equal(count(app, /path: 'app\/supplier'/g), 1)
-    assert.equal(count(app, /element: <SupplierAdmin \/>/g), 1)
-    assert.equal(count(app, /element: <RequireAdmin \/>/g), 2, 'app 支 + app/supplier 支')
-    assert.equal(count(app, /element: <RequireSupplier \/>/g), 1)
+    assert.equal(count(appFlat, /element: <SupplierFeatureGate \/>/g), 2)
+    assert.equal(count(appFlat, /path: 'app\/supplier'/g), 1)
+    assert.equal(count(appFlat, /element: <SupplierAdmin \/>/g), 1)
+    assert.equal(count(appFlat, /element: <RequireAdmin \/>/g), 2, 'app 支 + app/supplier 支')
+    assert.equal(count(appFlat, /element: <RequireSupplier \/>/g), 1)
   })
 
   it('/app/supplier 是独立兄弟支：闸门在外，RequireAdmin 在支内、位于 SupplierAdmin 之前', () => {
-    assert.match(app, /path: 'app\/supplier', element: <SupplierFeatureGate \/>/)
+    assert.match(appFlat, /path: 'app\/supplier', element: <SupplierFeatureGate \/>/)
     const anchor = "path: 'app/supplier'"
-    const s = app.indexOf(anchor)
-    const e = app.indexOf('element: <SupplierAdmin />')
+    const s = appFlat.indexOf(anchor)
+    const e = appFlat.indexOf('element: <SupplierAdmin />')
     assert.ok(e > s, 'SupplierAdmin 必须在 app/supplier 支之后出现')
-    const branch = app.slice(s + anchor.length, e)
+    const branch = appFlat.slice(s + anchor.length, e)
     assert.doesNotMatch(branch, /path: '/, 'SupplierAdmin 只能位于 app/supplier 支内')
     assert.ok(branch.includes('element: <RequireAdmin />'), '角色门控必须在该支内、闸门之内')
   })
 
   it('/user/supplier：闸门在外，RequireSupplier 在闸门与 SupplierScope 之间', () => {
     const anchor = "path: 'supplier', element: <SupplierFeatureGate />"
-    assert.match(app, /path: 'supplier', element: <SupplierFeatureGate \/>/)
-    const u = app.indexOf(anchor)
-    const v = app.indexOf('element: <SupplierScope />')
+    assert.match(appFlat, /path: 'supplier', element: <SupplierFeatureGate \/>/)
+    const u = appFlat.indexOf(anchor)
+    const v = appFlat.indexOf('element: <SupplierScope />')
     assert.ok(v > u, 'SupplierScope 必须在闸门之内')
-    assert.ok(app.slice(u, v).includes('element: <RequireSupplier />'))
+    assert.ok(appFlat.slice(u, v).includes('element: <RequireSupplier />'))
   })
 
   it('闸门分支顺序：未登录 → 加载中 → 关闭 404 → 放行', () => {
@@ -196,13 +201,16 @@ describe('接线：页面内容面', () => {
     assert.ok(!users.includes('const ROLES'))
   })
 
-  it('代理池：归属列受开关约束，关闭时副标题换平台文案', () => {
+  it('代理池：归属列表头与单元格都受开关约束，关闭时副标题换平台文案', () => {
     assert.ok(proxyPage.includes('!isSupplier && supplier'))
+    assert.equal(count(proxyPage, /\{showOwner &&/g), 2, '表头与单元格必须同一条件，否则列错位')
     assert.ok(proxyPage.includes('proxies.subtitleAdminPlatform'))
   })
 
-  it('运维页：统计项经 isOpsStatVisible 过滤', () => {
+  it('运维页：统计项经 isOpsStatVisible 过滤，空态看过滤后的同一份', () => {
     assert.ok(ops.includes('isOpsStatVisible(k, supplier)'))
+    assert.ok(ops.includes('entries.length === 0'))
+    assert.ok(!ops.includes('Object.keys(w.stats ?? {}).length === 0'), '空态不得再看未过滤的 stats')
   })
 })
 
@@ -212,8 +220,9 @@ describe('接线：开关只读一次', () => {
     .map((p) => p.replaceAll('\\', '/'))
     .filter((p) => /\.tsx?$/.test(p) && !p.endsWith('.test.ts') && !p.endsWith('schema.d.ts'))
 
-  it('hook 固定同一 query key、会话内不过期、未登录不请求', () => {
+  it('hook 固定同一 query key、页面生命周期内不过期也不回收、未登录不请求', () => {
     assert.ok(featuresHook.includes('staleTime: Infinity'))
+    assert.ok(featuresHook.includes('gcTime: Infinity'))
     assert.ok(featuresHook.includes("['user', 'features']"))
     assert.ok(featuresHook.includes('enabled: Boolean(userAuth.getToken())'))
   })

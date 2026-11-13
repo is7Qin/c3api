@@ -7,9 +7,11 @@ import { userApi } from '@/lib/api/client'
 import { userAuth } from '@/lib/auth'
 
 // 部署级功能开关（GET /api/user/features）的唯一读取入口：AppShell、页面与路由闸门
-// 共用同一 query key，由 react-query 去重，一次会话只请求一次。值是启动配置的投影
-// （改动需重启），故 staleTime 无限、不落 localStorage（持久化会读到旧值）。
+// 共用同一 query key，由 react-query 去重。值是启动配置的投影（改动需重启），故
+// staleTime 与 gcTime 都无限：成功值在页面生命周期内只取一次（AppShell 卸载后回来
+// 也不重取，刷新页面才重取）；不落 localStorage（持久化会读到旧值）。
 // 未登录不发请求；失败沿用全局 retry: 0 与 401 拦截，不在这里另写重试或 401 分支。
+// 失败不会被当作成功值缓存：新观察者挂载时重新请求一次（自愈）。
 //
 // supplier = 开关已确定为开启；resolved = 已有确定结论（成功或失败）。加载中与失败
 // 时 supplier 恒为 false——内容面据此 fail-closed，路由闸门再按 resolved 区分「加载中
@@ -19,6 +21,7 @@ export function useFeatures(): { supplier: boolean; resolved: boolean } {
     queryKey: ['user', 'features'],
     queryFn: () => userApi.features(),
     staleTime: Infinity,
+    gcTime: Infinity,
     enabled: Boolean(userAuth.getToken()),
   })
   return { supplier: q.data?.supplier === true, resolved: q.isSuccess || q.isError }
