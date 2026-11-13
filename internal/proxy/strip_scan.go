@@ -600,6 +600,7 @@ var (
 	cacheReadInputTokensKeyBytes     = []byte("cache_read_input_tokens")
 	cacheCreationInputTokensKeyBytes = []byte("cache_creation_input_tokens")
 	messageKeyBytes                  = []byte("message")
+	createdTypeBytes                 = []byte("response.created")
 	completedTypeBytes               = []byte("response.completed")
 	imageGenCallBytes                = []byte("image_generation_call")
 	typeImageGenTool                 = []byte("image_generation_tool")

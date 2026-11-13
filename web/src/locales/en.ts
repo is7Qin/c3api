@@ -156,7 +156,7 @@ export default {
     "waterWarning": "— near the limit, consider scaling up",
     "resourcesTitle": "Resource totals",
     "trendTitle": "Traffic trend",
-    "trendDesc": "Requests per day (browser timezone), last 7 days",
+    "trendDesc": "Requests per day (browser timezone), last 7 days · Long-lived (WS) connections count one upstream round each, not one per connection",
     "trendEmpty": "No usage in this period",
     "usersTopTitle": "Live concurrency top",
     "usersTopDesc": "In-flight requests per user, refreshes every 10s (this instance)",
@@ -996,6 +996,7 @@ export default {
       "seriesHitRate": "Cache hit rate"
     },
     "chartDesc": "Aggregated by time bucket; bar height scaled to the maximum",
+    "requestsNote": "Long-lived (WS) connections count one upstream round each, not one per connection",
     "table": {
       "time": "Time",
       "requests": "Requests",
@@ -2120,6 +2121,7 @@ export default {
         "seriesHitRate": "Cache hit rate"
       },
       "chartDesc": "Aggregated by time bucket; bar height scaled to the maximum",
+      "requestsNote": "Long-lived (WS) connections count one upstream round each, not one per connection",
       "modelLabel": "Model",
       "modelPlaceholder": "e.g. gpt-4o (all if empty)",
       "table": {
@@ -2185,6 +2187,7 @@ export default {
       "recentTitle": "Usage (last 7 days)",
       "recentEmpty": "No usage in the last 7 days",
       "requests": "Requests",
+      "requestsNote": "Long-lived (WS) connections count one upstream round each, not one per connection",
       "tokens": "Tokens",
       "cost": "Cost"
     },

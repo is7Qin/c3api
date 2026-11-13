@@ -156,7 +156,7 @@ export default {
     "waterWarning": "— 接近上限，建议扩容",
     "resourcesTitle": "资源总数",
     "trendTitle": "流量趋势",
-    "trendDesc": "近 7 天每日请求量（浏览器时区）",
+    "trendDesc": "近 7 天每日请求量（浏览器时区）· 长连接（WS）每轮上游调用计一次，与连接数不同",
     "trendEmpty": "该时段暂无用量",
     "usersTopTitle": "实时并发排行",
     "usersTopDesc": "每用户实时在途请求（每 10 秒刷新；本实例视角）",
@@ -996,6 +996,7 @@ export default {
       "seriesHitRate": "读缓存命中率"
     },
     "chartDesc": "按时间桶聚合，柱高按最大值缩放",
+    "requestsNote": "长连接（WS）每轮上游调用计一次，与连接数不同",
     "table": {
       "time": "时间",
       "requests": "请求数",
@@ -2120,6 +2121,7 @@ export default {
         "seriesHitRate": "读缓存命中率"
       },
       "chartDesc": "按时间桶聚合，柱高按最大值缩放",
+      "requestsNote": "长连接（WS）每轮上游调用计一次，与连接数不同",
       "modelLabel": "模型",
       "modelPlaceholder": "如 gpt-4o（留空为全部）",
       "table": {
@@ -2185,6 +2187,7 @@ export default {
       "recentTitle": "最近 7 天用量",
       "recentEmpty": "近 7 天暂无用量",
       "requests": "请求数",
+      "requestsNote": "长连接（WS）每轮上游调用计一次，与连接数不同",
       "tokens": "Token",
       "cost": "成本"
     },

@@ -151,6 +151,9 @@ export default function UserOverview() {
                     </div>
                   </div>
                 )}
+                {!statsQ.isError && totalReq > 0 && (
+                  <p className="mt-2 text-xs text-muted-foreground">{t('user.overview.requestsNote')}</p>
+                )}
               </CardContent>
             </Card>
           </motion.div>

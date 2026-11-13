@@ -80,10 +80,13 @@ func waitRelayIdle(t *testing.T, p *Proxy) {
 
 // 终态帧（Responses 协议）与业务帧样本。
 const (
-	wsDeltaFrame         = `{"type":"response.output_text.delta","delta":"hi"}`
-	wsCompletedFrame     = `{"type":"response.completed","response":{"id":"r1","usage":{"input_tokens":3,"output_tokens":4}}}`
-	wsCompletedNoUsage   = `{"type":"response.completed","response":{"id":"r1"}}`
-	wsCompletedThenDelta = `{"type":"response.output_text.delta","delta":"again"}`
+	wsDeltaFrame       = `{"type":"response.output_text.delta","delta":"hi"}`
+	wsCompletedFrame   = `{"type":"response.completed","response":{"id":"r1","usage":{"input_tokens":3,"output_tokens":4}}}`
+	wsCompletedNoUsage = `{"type":"response.completed","response":{"id":"r1"}}`
+
+	// wsSecondRoundCreated 下一轮的首帧：completed 之后的轮边界**只**由
+	// response.created 触发（§6.1：每轮真正的开始必伴 created，杂帧不开轮）。
+	wsSecondRoundCreated = `{"type":"response.created","response":{"id":"r2"}}`
 )
 
 // G1（§3 归因表第一行）：客户端收到完整响应后**裸断**（无关闭帧的 TCP 直断）⇒
@@ -165,11 +168,12 @@ func TestStreamFailureG2ClientDisconnectBeforeTerminalIsAbort(t *testing.T) {
 }
 
 // TestStreamFailureG2TerminalFrameThenNextRoundDisconnectIsAbort 长连接的轮次
-// 语义：上一轮 completed 之后又出现新帧 ⇒ 已进入下一轮，此时断仍是 abort
-// （completed 事实是「当前轮」，不是「本连接曾经完成过」）。
+// 语义：上一轮 completed 之后又出现**下一轮首帧** response.created ⇒ 已进入下一轮，
+// 此时断仍是 abort（completed 事实是「当前轮」，不是「本连接曾经完成过」）；
+// completed 之后的杂帧不构成轮起点，这种情形由 round 门禁 G17 钉住。
 func TestStreamFailureG2TerminalFrameThenNextRoundDisconnectIsAbort(t *testing.T) {
 	testHealthSink.reset()
-	up, _ := fakeResponsesWSHoldScript(t, wsCompletedFrame, wsCompletedThenDelta)
+	up, _ := fakeResponsesWSHoldScript(t, wsCompletedFrame, wsSecondRoundCreated)
 	store := &captureLogStore{}
 	p, srv := wsHealthProxy(t, up.URL, store)
 
@@ -179,7 +183,18 @@ func TestStreamFailureG2TerminalFrameThenNextRoundDisconnectIsAbort(t *testing.T
 
 	waitRelayIdle(t, p)
 	rows := uniqueRows(t, drainLogs(t, p, store))
-	require.Len(t, rows, 1, "rows=%+v", rows)
-	require.Equal(t, domain.ErrAbort, rows[0].ErrorType,
-		"下一轮已开始且未读到其终态帧 ⇒ abort（不是「本连接完成过就恒 none」）")
+	// 每轮一行（§6.2）：第 1 轮已在终态帧处结算成 none，第 2 轮（由 response.created
+	// 开出）未读到终态帧就断 ⇒ 独立的 abort 行。
+	require.Len(t, rows, 2, "rows=%+v", rows)
+	nones, aborts := 0, 0
+	for _, row := range rows {
+		switch row.ErrorType {
+		case domain.ErrNone:
+			nones++
+		case domain.ErrAbort:
+			aborts++
+		}
+	}
+	require.Equal(t, 1, nones, "第 1 轮：completed ⇒ none")
+	require.Equal(t, 1, aborts, "下一轮已开始且未读到其终态帧 ⇒ abort（不是「本连接完成过就恒 none」）")
 }

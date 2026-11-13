@@ -356,8 +356,11 @@ func TestStreamFailureG9ContFailAfterAckIsNotAbort(t *testing.T) {
 		}
 		defer client.CloseNow()
 		var wg sync.WaitGroup
+		// 轮上下文：contAcked=true 的收尾行 = 当前轮（G9 只关心归因，轮号用首轮）。
+		rd := newRound(reqID, start)
+		rd.businessN = 1
 		p.relayWSContFail(client, &fakeTransport{}, &wg, r.Context(), errContUnavailable,
-			true, 1, sel, reqID, 10, "gpt-4o", start, usageTuple{}, nil)
+			true, rd, sel, 10, "gpt-4o", start)
 	}))
 	defer srv.Close()
 	c := dialResponsesWS(t, srv)

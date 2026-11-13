@@ -100,14 +100,19 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	defer relayCancel()
 	endCh := make(chan struct{}, 3)
 	var (
-		it, ot, tt, cr, cc        int64
-		img                       int64 // resp 检测功能调用计数（spec §6 旁路；respImageDetectOn 门控）——落 CallCount
-		ttft                      *int64
+		ttft                      *int64 // 连接级 TTFT（= 第 1 轮首帧；轮级 TTFT 在 round.ttft）
 		wg                        sync.WaitGroup
 		endMu                     sync.Mutex
 		upClose                   *websocket.CloseError // 上游关闭帧（分类最高权威，仅 up-loop 写入）
 		upErr, clientErr, pingErr error
 	)
+	// cur 当前轮（§6.1 轮状态机，spec-commit-state-and-round-billing §6）。多轮
+	// 车道 = 一条入站 WS 长连接上的第 index 轮；轮 1 起点 = 连接开始时刻。
+	//
+	// 写者纪律：只有 up-loop 写轮字段（终态帧 → 完成 → 当场结算 → 翻轮），编排在
+	// `<-upLoopDone` 之后读快照（close 建 happens-before）——与旧 businessN/
+	// roundCompleted 同款，故 billingSettled 用普通 bool（无跨 goroutine 结算者）。
+	cur := newRound(reqID, start)
 	// setErr 记录单侧退出错误（首写生效；取消副作用不记录）。dst 指针即
 	// 变量地址，单 goroutine 之外只有并发写 upErr 的可能——同语义（上游侧），
 	// 首写即可。
@@ -203,22 +208,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 无需加锁：只在 up-loop 内写，编排读它之前先 `<-upLoopDone`（close 提供
 	// happens-before）。
 	var upPayloadErr *sserelay.PayloadError
-	// businessN 是真实下行业务帧计数（spec-stream-failure-truth §5.3）：计费资格
-	// （commit_state）的事实源。旧实现里 wsOutcomeFor{ClientAbort,UpstreamError}
-	// 的 BusinessFrameSent=true 是构造常量而非事实。只统计「上游帧成功写客户端」
-	// 的次数——网关自己生成的错误帧（contFail 收尾 / wsWriteError）、关闭帧、心跳
-	// ping 都不计业务交付。同样只在 up-loop 内写，编排在 `<-upLoopDone` 之后读。
-	var businessN int
 	// downstreamWriteFailed 是真实下行写失败事实（client.Write 返回错误）：
 	// commitStateFor 的 writeFailed 入参。只在 up-loop 与主 goroutine 的收尾 flushing
 	// 写，读取前分别由 upLoopDone/wg 建立 happens-before。
 	var downstreamWriteFailed bool
-	// roundCompleted 是「本轮是否已读到协议终态帧」这一**分类输入**（spec §3 归因表
-	// 的 completed 列）：只在本 goroutine 内写，读取在 `<-upLoopDone` 之后（close 提供
-	// happens-before）。它不落库（I3）——只进 relayClassify 的入参。
-	// 终态帧即本轮末帧：之后还有帧 ⇒ 已是下一轮，清零（长连接可承载多轮；轮状态
-	// 机另属后续提交，本处只保留「当前轮」这一个事实）。
-	var roundCompleted bool
 	wg.Go(func() { // 上游 → 客户端（热路径：预筛嗅探 response.completed 取 usage）
 		defer close(upLoopDone)                   // 编排等本读者退出后再分类，保证记录可见性
 		defer relayRecover("up-loop", &clientErr) // panic 按身份入槽：本 goroutine 故障归客户端侧
@@ -265,34 +258,40 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			if upPayloadErr != nil && isResponsesCompleted(f) {
 				upPayloadErr = nil
 			}
-			// 本轮终态帧事实（§3 归因表 completed）：子串预筛（memmem、零分配、
-			// 不解析 JSON）命中才做精确 type 判定（isResponsesCompleted 的
-			// scanKeyValue）。终态帧即本轮末帧——之后再有帧就是下一轮 ⇒ 清零。
+			// 终态帧事实（§6.1 轮状态机）：子串预筛（memmem、零分配、不解析 JSON）
+			// 命中才做精确 type 判定（isResponsesCompleted 的 scanKeyValue）。
+			//
+			// 轮边界 = **当前轮已 completed 且收到 response.created**——每轮真正的
+			// 开始必然伴随上游的 created 帧（带新 response id），不是任意帧：
+			//   - 本轮 Open → CompletedWith/WithoutUsage，**当场结算本轮**（轮边界只
+			//     做「取常量 + 一次 INSERT 入队 + 一次内存扣减」）；
+			//   - 本轮已是 Completed* ⇒ 同一轮的第二个终态帧 = 协议违规，
+			//     InvalidDuplicate：只 Warn、不结算、不写行（§6.2.2）；
+			//   - completed 之后的**非 created 杂帧**（response.done /
+			//     output_item.done / 心跳型事件 / 回声…）= 本轮的收尾帧，**不翻轮**：
+			//     否则会开出一个从未真正开始的空轮，收尾时给它写一条
+			//     error_type=none / 200 的假成功行（进 usage_logs、虚增
+			//     request_count，BillingCapture 开启时还白扣一条零价行）；
+			//   - completed 之后的 response.created = 下一轮起点 ⇒ 翻轮（起点前移、
+			//     用量/帧数清零）。正常轮开始时 created 也会到达，但那时
+			//     cur.completed() 为 false，不会误 roll。
+			// 杂帧照旧 1:1 透传，只是记账仍归本轮。
 			// 只在 up-loop 内写，编排在 `<-upLoopDone` 之后读（close 建
-			// happens-before），与 upPayloadErr/businessN 同款纪律。
-			roundCompleted = bytes.Contains(f, completedTypeBytes) && isResponsesCompleted(f)
-			// 热路径纪律：只嗅探 response.completed 帧（精确 type 判定，
-			// usage_extract.go sniffResponsesCompletedUsage scanKeyValue 单遍扫描
-			// 零分配）；流式中间帧零解析直转——网关层零分配，库层每帧 io.ReadAll
-			// 物化 + flate 属库内账目。
-			if u, ok := sniffResponsesCompletedUsage(f); ok {
-				it, ot, tt, cr, cc = u.it, u.ot, u.tt, u.cr, u.cc
-				// codex 会话轮次推进（成功取到 usage 时 Step 一次；非 codex
-				// Selection 无会话 → no-op）。**多轮语义**：入站 WS 长连接一次
-				// 订阅可承载多轮，每轮一帧 response.completed → 每帧各推进一次
-				// （多次观测，语义正确）。与 HTTP 流式分支的 usageTaken「仅取
-				// 首个」守卫有意不同：后者单次响应只可能有一个终态 completed
-				// 帧，此处则每轮各一个——非缺陷，勿据文档统一。
-				sel.StepIdentity()
-				// 响应检测旁路（spec §6）：completed 帧恒在流末——最终计数由其
-				// 覆盖（最后帧语义）；门控关闭（api_key/strip 开）→ 零额外解析。
-				if respImageDetectOn(sel) {
-					img = respImageCountCompleted(f)
+			// happens-before），与 upPayloadErr 同款纪律。
+			completed := bytes.Contains(f, completedTypeBytes) && isResponsesCompleted(f)
+			if completed {
+				if cur.observeCompleted(p, f, sel) {
+					p.settleRound(relayCtx, cur, sel, reqModel, groupID)
 				}
+			} else if cur.completed() && isResponsesCreated(f) {
+				cur.roll(time.Now())
 			}
-			if ttft == nil {
-				ms := time.Since(start).Milliseconds()
-				ttft = &ms
+			if cur.ttft == nil {
+				ms := time.Since(cur.StartedAt).Milliseconds()
+				cur.ttft = &ms
+				if ttft == nil {
+					ttft = cur.ttft // 连接级 TTFT = 第 1 轮首帧（轮 1 起点 = start，与旧值同）
+				}
 			}
 			out := f
 			if typ == websocket.MessageText && respModel != "" {
@@ -328,7 +327,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 							return
 						}
 						if !pf.errFrame {
-							businessN++
+							cur.businessN++
 						}
 					}
 					contPending, contPendingN = nil, 0
@@ -350,7 +349,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			// 业务交付计数：网关生成的错误帧 / 关闭帧 / ping 不计（上方），
 			// 上游错误载荷帧是失败信号而非模型产出，同样不计。
 			if frameErr == nil {
-				businessN++
+				cur.businessN++
 			}
 		}
 	})
@@ -387,6 +386,10 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// upLoopDone/hbDone 保证 upClose/pingErr 先于快照可见。
 	<-upLoopDone
 	<-hbDone
+	// 连接收尾：Selection 租约是**连接级**的（§6.4）——release 只在收尾调一次，
+	// 每轮结算（settle）永不 Release。放在分类/落盘之前，保持既有观测顺序
+	// 「记录可见 ⇒ 并发槽已归还」（finish 旧实现同为先 Release 后落盘）。
+	sel.Release()
 
 	// 分类与关闭传播（纯函数可单测）：
 	// ① 上游正常关闭（1000/1001）→ 成功，已见业务帧；② 客户端断开 → abort，已见业务帧不计冷却；
@@ -394,13 +397,14 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	// 先记录后发关闭帧：避免关闭帧先达使对端断开导致记录丢失，优雅停机需等在途归零。
 	// 槽读取在 endMu 下快照：client-loop 是唯一可能未退出的写者（其 Read 由
 	// 下方关闭传播解除），同锁互斥即无数据竞争。
-	u := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
+	// 轮级用量/帧数不再在这里聚合（§6.2：每轮已在终态帧处结算）；收尾只拿
+	// 当前轮快照（连接级观测 + 未完成轮的失败行）。
 	logCtx := relayCtx
 	if ttft != nil {
 		logCtx = context.WithValue(relayCtx, ctxKeyTTFT{}, ttft)
 	}
 	if contFail != nil {
-		p.relayWSContFail(client, up, &wg, logCtx, contFail, contAcked, businessN, sel, reqID, groupID, reqModel, start, u, ttft)
+		p.relayWSContFail(client, up, &wg, logCtx, contFail, contAcked, cur, sel, groupID, reqModel, start)
 		return true, nil
 	}
 	if contTag != "" && !contAcked && len(contPending) > 0 {
@@ -422,7 +426,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	endMu.Lock()
 	uc, ue, ce, pe := upClose, upErr, clientErr, pingErr
 	endMu.Unlock()
-	end, endErr := relayClassify(uc, ue, ce, pe, roundCompleted)
+	end, endErr := relayClassify(uc, ue, ce, pe, cur.completed())
 	// 收尾改判（spec-inband-error-truth §3-3）：上游"正常关闭"但本连接上见过
 	// 未清零的错误帧 ⇒ 失败。**两个都换**——正常关闭时 relayClassify 的 endErr 是
 	// nil，只换 end 会让 wsCloseStatus(nil) 返 1011、客户端拿到虚构的内部错误码，
@@ -430,7 +434,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	if end == relayEndUpstreamClosed && upPayloadErr != nil {
 		end, endErr = relayEndUpstreamError, upPayloadErr
 	}
-	p.relayWSPropagate(client, up, logCtx, sel, reqID, groupID, reqModel, start, u, ttft, businessN, downstreamWriteFailed, end, endErr)
+	p.relayWSPropagate(client, up, logCtx, sel, cur, groupID, reqModel, start, downstreamWriteFailed, end, endErr)
 	wg.Wait() // client-loop 的阻塞 Read 已被上方关闭传播/直拆解除
 	return true, nil
 }
@@ -449,6 +453,22 @@ func isResponsesCompleted(data []byte) bool {
 		return false
 	}
 	return bytes.Equal(data[start+1:end-1], completedTypeBytes)
+}
+
+// isResponsesCreated 判定一帧是否是 response.created（轮边界判据，6 行、零分配）。
+//
+// 一轮真正的开始**必然**伴随上游的 response.created（带新 response id），故它才是
+// 「下一轮起点」的唯一凭据：completed 之后到达的收尾杂帧（response.done /
+// output_item.done / 心跳型事件 / 回声）不得翻轮——否则会开出一个从未真正开始的
+// 空轮，收尾时落一条 none/200 的假成功行（虚增 request_count + 白扣一条零价账）。
+// 实现照抄 isResponsesCompleted：scanKeyValue 精确取 type 后 bytes.Equal（不反序列化、
+// 不分配）；同样的两道守卫（ok/越界/首字节必须是引号）保证 data[start+1:end-1] 不越界。
+func isResponsesCreated(data []byte) bool {
+	start, end, ok := scanKeyValue(data, typeKeyBytes)
+	if !ok || start >= len(data) || data[start] != '"' {
+		return false
+	}
+	return bytes.Equal(data[start+1:end-1], createdTypeBytes)
 }
 
 // wsFirstFrameForSel 按本次尝试的 sel 改写首帧模型：sel.Model 非空且与 reqModel
@@ -491,7 +511,11 @@ func relayWSFirstFrame(up wsRelayTransport, r *http.Request, firstTyp websocket.
 // 网关侧失败不冷却账号（health=nil）。ACK 后新 id 绑定失败 = 帧已可见，走
 // sent_ambiguous 终态（与流中止同轨）。错误帧写出后 CloseNow 直拆（免库内 5s
 // 握手超时），wg.Wait 全 join。记录/字段/时机逐字一致。
-func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg *sync.WaitGroup, logCtx context.Context, contFail *formatError, contAcked bool, businessN int, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64) {
+//
+// 轮归属（§6.2「两表同 ID」）：本收尾写的是**当前轮**（rd）——ID/created_at/
+// LatencyMS 全部由 rd 提供（buildRoundLog），不得另取 reqID/time.Now()。若本轮
+// 已是 Completed*（完成帧 = 吸收态，且已当场结算），这里不再写行。
+func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg *sync.WaitGroup, logCtx context.Context, contFail *formatError, contAcked bool, rd *round, sel *scheduler.Selection, groupID int64, reqModel string, start time.Time) {
 	// 硬续接 fail-closed（WS create 面）：绑定权威不可用/冲突——缓冲帧
 	// 弃置（未绑定 id 永不达客户端），错误帧可达后收尾；已消耗用量保留
 	// 计费；网关侧失败不冷却账号（health=nil）。ACK 后新 id 绑定失败 =
@@ -501,7 +525,7 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 	// 拆连接解除 client-loop 的阻塞 Read 后 wg.Wait 全 join。
 	ectx, ecancel := context.WithTimeout(context.Background(), responsesWSCloseTimeout)
 	if err := client.Write(ectx, websocket.MessageText, wsErrorFrame(contFail.msg)); err != nil && p.log != nil {
-		p.log.Warn("continuation error frame write failed", logx.String("request_id", reqID), logx.Error(err))
+		p.log.Warn("continuation error frame write failed", logx.String("request_id", rd.requestID()), logx.Error(err))
 	}
 	ecancel()
 	_ = client.CloseNow()
@@ -513,15 +537,15 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 	//   - ACK 后（帧已可见）：与流中止同轨的派生归因——**不得再默认 abort**。
 	var f streamFailure
 	if contAcked {
-		out = wsOutcomeForUpstreamError(base, u, ttft)
+		out = wsOutcomeForUpstreamError(base, rd.usage, rd.ttft)
 		f = classifyStreamFailure(contFail)
 	} else {
 		out.Result = ResultFailed
 		out.HTTPStatus = AttemptStatus(contFail.status)
 		out.Commit = CommitUpstreamResponded
 		out.Terminal = true
-		out.Usage = wsUsageFromTuple(u)
-		out.Timing.TTFTMS = ttft
+		out.Usage = wsUsageFromTuple(rd.usage)
+		out.Timing.TTFTMS = rd.ttft
 		f = streamFailure{
 			Status:  contFail.status,
 			ET:      domain.Err5xx,
@@ -531,17 +555,21 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 	}
 	// 网关侧失败不冷却账号（health=nil）：续接权威不可用是网关自身的问题。
 	p.observeDispatchOutcome(logCtx, out, nil)
-	// 交付事实（唯一折算入口）：framesSent = 真实业务帧计数 businessN>0，在写
-	// 终态错误帧**之前**就已冻结（businessN 只由 up-loop 写，这里读的是终值）。
-	// contFail 是网关 fail-closed 收尾（绑定/缓冲/ACK 失败），不是客户端侧结束，
-	// 也没有业务帧写失败——writeFailed/clientCancel 恒 false；后续写 wsErrorFrame
-	// 的成败不改变交付事实（错误帧不是业务帧）。
-	commit := commitStateFor(businessN > 0, false, false)
-	l := withCommit(logWithCtx(logCtx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, f.Status, f.ET, u, start)), commit)
-	// 与其余中止/失败出口同口径：contFail 的文案就是网关给出的失败原因
-	// （续接权威不可用/绑定冲突），落盘后 err_logs 才有可读文本。
-	l.ErrorMessage = f.message()
-	p.finish(sel, l)
+	// 交付事实（唯一折算入口）：framesSent = 本轮真实业务帧计数，在写终态错误帧
+	// **之前**就已冻结（businessN 只由 up-loop 写，这里读的是终值）。contFail 是
+	// 网关 fail-closed 收尾（绑定/缓冲/ACK 失败），不是客户端侧结束，也没有业务
+	// 帧写失败——writeFailed/clientCancel 恒 false；后续写 wsErrorFrame 的成败不
+	// 改变交付事实（错误帧不是业务帧）。
+	commit := commitStateFor(rd.businessN > 0, false, false)
+	if !rd.completed() {
+		rd.state = RoundAborted
+		l := withCommit(logWithCtx(logCtx, p.buildRoundLog(rd, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, f.Status, f.ET, rd.usage)), commit)
+		// 与其余中止/失败出口同口径：contFail 的文案就是网关给出的失败原因
+		// （续接权威不可用/绑定冲突），落盘后 err_logs 才有可读文本。
+		l.ErrorMessage = f.message()
+		rd.settle(p, sel, l)
+	}
+	sel.Release() // CAS 幂等：收尾已释放过则为 no-op
 	up.CloseNow()
 	wg.Wait()
 }
@@ -549,13 +577,17 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 // relayWSPropagate 关闭传播阶段（relayWS 提取）：按分类结果（relayEnd/endErr）
 // 完成关闭握手/直拆 + reportWSOutcome 落盘（成功 / 客户端 abort / 上游错误三分支）。
 // 关闭帧优先级与「先记录后关」的时机逐字一致。
-func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, logCtx context.Context, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64, businessN int, writeFailed bool, end relayEnd, endErr error) {
+//
+// 轮归属（§6.4）：每轮已在自己的终态帧处结算；本函数只在**最后一轮仍 Open**
+// （RoundAborted）时写一条失败行（§6.3），且该行的 request_id/created_at 由 rd
+// 提供。release 只在连接收尾调一次。
+func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, logCtx context.Context, sel *scheduler.Selection, rd *round, groupID int64, reqModel string, start time.Time, writeFailed bool, end relayEnd, endErr error) {
 	base := mergeDispatchBase(logCtx, wsDispatchedBase(sel, reqModel, start))
 	switch end {
 	case relayEndUpstreamClosed:
 		_ = up.Close(websocket.StatusNormalClosure, "") // 上游已发关闭帧，完成握手
 		// 先记录后关：业务帧已见，成功落盘后再向客户端发关闭帧
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForSuccess(base, ttft, u), sel, reqID, groupID, reqModel, start, u, ttft, true, false, nil)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForSuccess(base, rd.ttft, rd.usage), sel, rd, groupID, reqModel, true, false, nil)
 		_ = client.Close(websocket.StatusNormalClosure, "")
 	case relayEndClientAbort:
 		_ = client.CloseNow() // 客户端已断开，免握手等待
@@ -564,7 +596,7 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 			code = wsCloseStatus(endErr)
 		}
 		// 客户端 abort：业务帧已见但不计冷却，向上游传播关闭
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, businessN > 0, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, businessN > 0, writeFailed, endErr)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForClientAbort(base, rd.businessN > 0, rd.usage, rd.ttft), sel, rd, groupID, reqModel, rd.businessN > 0, writeFailed, endErr)
 		_ = up.Close(code, "")
 	case relayEndUpstreamError:
 		// 上游错误/心跳超时：业务帧已见但连接异常，需冷却。sent/writeFailed 都是
@@ -572,7 +604,7 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 		// 失败）；reportWSOutcome 先落盘，随后才写关闭帧，故取值不随补写漂移。
 		// 真实计数只进持久化（reportWSOutcome 的 sent 形参），不进 outcome 的
 		// 类型层编码（见 typeLayerTerminalFailure）。
-		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, u, ttft), sel, reqID, groupID, reqModel, start, u, ttft, businessN > 0, writeFailed, endErr)
+		_ = p.reportWSOutcome(logCtx, wsOutcomeForUpstreamError(base, rd.usage, rd.ttft), sel, rd, groupID, reqModel, rd.businessN > 0, writeFailed, endErr)
 		code := wsCloseStatus(endErr)
 		// 流内错误载荷（spec-inband-error-truth §3-3）：上游**确实**是正常关闭
 		// （发完错误帧后 1000），客户端观感不得变——关闭码保持 1000，不虚构 1011。
@@ -582,6 +614,7 @@ func (p *Proxy) relayWSPropagate(client *websocket.Conn, up wsRelayTransport, lo
 		_ = client.Close(code, "")
 		up.CloseNow() // 上游已失联，免握手等待
 	}
+	sel.Release() // CAS 幂等（relayWS 收尾已释放；调用方 leaseGuard 重复调亦为 no-op）
 }
 
 // wsErrorFrame 网关终态错误帧（与 wsWriteError 的帧形一致）。contFail 收尾

@@ -213,7 +213,9 @@ func TestCodexInvalidBodyIsClientError(t *testing.T) {
 		waitStoreLogs(t, store, 1)
 		store.mu.Lock()
 		defer store.mu.Unlock()
-		require.Len(t, store.logs, 1)
+		// 一行 = 一条轮：completed 轮当场结算；其后的回声帧不是新轮起点（轮边界 =
+		// completed + response.created，§6.1），不落任何行。
+		require.Len(t, store.logs, 1, "每轮一行：completed 轮当场结算，收尾杂帧不另开轮")
 		require.Equal(t, domain.ErrNone, store.logs[0].ErrorType, "结束分类不变（成功）")
 		require.Equal(t, http.StatusOK, store.logs[0].StatusCode)
 		require.Equal(t, rulesBefore, p.sched.RuleEventsSubmitted(), "中间帧本地拒绝 MarkResult 0 次（成功收尾的 ok 事件在无 ok 规则时短路）")

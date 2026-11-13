@@ -243,7 +243,8 @@ func TestResponsesWSHandshakeAndBidirectionalPassthrough(t *testing.T) {
 	require.Len(t, hooks.frames, 3, "上游收到全部客户端帧")
 	require.Equal(t, f1, hooks.frames[0])
 
-	// 用量记录：5 计数 + 成功路径。
+	// 用量记录：5 计数 + 成功路径。一行/轮：终态帧之后的回声帧**不是**新轮起点
+	// （轮边界 = completed + response.created，§6.1），不另落行。
 	require.NoError(t, p.rec.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -303,13 +304,14 @@ func TestResponsesWSModelMapping(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, "gpt-4o", store.logs[0].Model, "Model = 客户端请求模型")
-	require.Equal(t, "o3", store.logs[0].MappedModel, "MappedModel = 映射后实际模型")
+	lg := store.logs[0]
+	require.Equal(t, "gpt-4o", lg.Model, "Model = 客户端请求模型")
+	require.Equal(t, "o3", lg.MappedModel, "MappedModel = 映射后实际模型")
 }
 
-// 客户端提前断开：上游已消费请求（已完成 usage 帧已嗅探）→ 200 + ErrAbort
-// 记录（token 取断前已嗅探值），不 MarkResult（不冷却无辜账号）。分表路由：
-// abort 无计费（cost=0）→ err_logs 双轨豁免行（不入 usage_logs）。
+// 客户端在**本轮已完成之后**断开：不 MarkResult（不冷却无辜账号），且不把已
+// 结算的轮降级成 abort（§6.1：completed 是吸收态）——用量落在完成轮的结算行里。
+// completed 之后的回声帧不是新一轮（无 response.created），故不再有 abort 双轨。
 func TestResponsesWSClientAbortRecordsUsage(t *testing.T) {
 	up := fakeResponsesWS(t, &fakeWSHooks{frameLimit: 0}) // 不主动关闭，等网关关
 	defer up.Close()
@@ -324,24 +326,29 @@ func TestResponsesWSClientAbortRecordsUsage(t *testing.T) {
 	}
 	require.NoError(t, c.Close(websocket.StatusNormalClosure, "")) // 客户端主动结束会话
 
-	// relay 感知客户端关闭是异步的：等记录进双轨（rec pending / errlog 队列）
+	// 用量在**终态帧处**就已结算（每轮一行），而连接级收尾（含并发槽归还）要等
+	// relay 感知客户端关闭 ⇒ 同步点是连接结束（inflight 归零），不是行出现。
+	require.Eventually(t, func() bool { return p.Inflight() == 0 }, 3*time.Second, 10*time.Millisecond,
+		"relay 必须感知客户端关闭并收尾")
 	require.Eventually(t, func() bool {
 		store.mu.Lock()
 		defer store.mu.Unlock()
 		return len(store.logs) >= 1 || p.rec.Pending() > 0 || p.errlog.Queued() > 0
-	}, 3*time.Second, 10*time.Millisecond, "relay 必须感知客户端关闭并记录用量")
+	}, 3*time.Second, 10*time.Millisecond, "relay 必须记录本轮用量")
 	require.NoError(t, p.rec.Close(context.Background()))
 	require.NoError(t, p.errlog.Close(context.Background()))
 	store.mu.Lock()
 	defer store.mu.Unlock()
-	require.Len(t, store.logs, 2, "abort 双轨：usage_logs（放行路径 abort）+ err_logs（豁免队列）各一行，request_id 关联")
+	// 一行：断开发生在 completed 之后，而 completed 之后没有 response.created
+	// ⇒ 不存在第 2 轮（轮边界 = completed + response.created，§6.1），既不另落
+	// abort 行也不多开 err_logs。
+	require.Len(t, store.logs, 1, "完成轮一行；completed 之后的杂帧不开新轮")
 	lg := store.logs[0]
-	require.Equal(t, domain.ErrAbort, lg.ErrorType)
+	require.Equal(t, domain.ErrNone, lg.ErrorType, "完成轮不是错误行（断开不改已结算的轮）")
 	require.Equal(t, http.StatusOK, lg.StatusCode)
-	require.Equal(t, int64(2), lg.InputTokens, "断开前已嗅探的 usage 不丢（可计费输入 = 6 − cached 1 − cache_write 3）")
+	require.Equal(t, int64(2), lg.InputTokens, "完成轮的 usage 不丢（可计费输入 = 6 − cached 1 − cache_write 3）")
 	require.Equal(t, int64(5), lg.OutputTokens)
 	require.Equal(t, int64(11), lg.TotalTokens)
-	require.Equal(t, lg.RequestID, store.logs[1].RequestID, "双轨行 request_id 关联")
 	ri, ok := p.sched.Runtime(1)
 	require.True(t, ok)
 	require.Zero(t, ri.Concurrency, "客户端断开后并发槽必须释放")
@@ -964,8 +971,9 @@ func TestResponsesWSBillingTierFast(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, "fast", store.logs[0].BillingTier, "WS service_tier=fast → BillingTier=fast 落库")
-	require.Equal(t, int64(240), store.logs[0].Cost, "fast ×2.0：120×2 = 240 毫分（与 HTTP 同价；可计费输入 it'=6−1−3=2 → 2×10+5×20=120 毫分，cr/cc 车道本例无缓存价 → 0）")
+	lg := store.logs[0]
+	require.Equal(t, "fast", lg.BillingTier, "WS service_tier=fast → BillingTier=fast 落库")
+	require.Equal(t, int64(240), lg.Cost, "fast ×2.0：120×2 = 240 毫分（与 HTTP 同价；可计费输入 it'=6−1−3=2 → 2×10+5×20=120 毫分，cr/cc 车道本例无缓存价 → 0）")
 }
 
 // TestResponsesWSBillingTierAuto 无 service_tier：BillingTier="auto"（与 HTTP
@@ -989,8 +997,9 @@ func TestResponsesWSBillingTierAuto(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, "auto", store.logs[0].BillingTier, "WS 无 service_tier → BillingTier=auto")
-	require.Equal(t, int64(120), store.logs[0].Cost, "auto 基础价：it'=6−1−3=2 → 2×10 + 输出 5×20 = 120 毫分（缓存车道单独计价，本例无缓存价 → 0）")
+	lg := store.logs[0]
+	require.Equal(t, "auto", lg.BillingTier, "WS 无 service_tier → BillingTier=auto")
+	require.Equal(t, int64(120), lg.Cost, "auto 基础价：it'=6−1−3=2 → 2×10 + 输出 5×20 = 120 毫分（缓存车道单独计价，本例无缓存价 → 0）")
 }
 
 // TestResponsesWSQuotaDeductedByFinalCost 跨路径回归：resp-ws 会话
@@ -1054,8 +1063,9 @@ func TestResponsesWSBillingTierStrip(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, "fast", store.logs[0].BillingTier, "剥离路径计费照常（tier 已提取）")
-	require.Equal(t, int64(240), store.logs[0].Cost, "strip 路径同归一后基础价 ×2.0：120×2 = 240")
+	lg := store.logs[0]
+	require.Equal(t, "fast", lg.BillingTier, "剥离路径计费照常（tier 已提取）")
+	require.Equal(t, int64(240), lg.Cost, "strip 路径同归一后基础价 ×2.0：120×2 = 240")
 }
 
 // TestResponsesWSBillingTierReject reject 策略：Select 前拒绝——客户端收到 error

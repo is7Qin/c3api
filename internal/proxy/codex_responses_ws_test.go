@@ -796,8 +796,9 @@ func TestCodexWSDial429Failover(t *testing.T) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	require.Len(t, store.logs, 1)
-	require.Equal(t, domain.ErrNone, store.logs[0].ErrorType, "failover 后成功")
-	require.Equal(t, int64(20), store.logs[0].AccountID, "落账 = 成功尝试账号")
+	lg := store.logs[0]
+	require.Equal(t, domain.ErrNone, lg.ErrorType, "failover 后成功")
+	require.Equal(t, int64(20), lg.AccountID, "落账 = 成功尝试账号")
 }
 
 // TestCodexWSDeathFrameFatal WS 业务判死事件帧（§3 唯一跨边界点）：

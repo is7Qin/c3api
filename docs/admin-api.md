@@ -904,6 +904,18 @@ key 是 AI 请求（`/v1/*`）的鉴权凭证，归属一个用户与一个分�
 | `AboveHit` | bool | 任一分量超 `above_threshold` 命中分段计价 |
 | `Overdraft` | bool | 本次扣费透支（余额不足扣为负余额；`[billing]` 开启且允许透支时可能为 true） |
 
+> **WebSocket 多轮：一轮一行（`request_id` 的 `#rK` 后缀）**。入站 WebSocket（`/v1/responses` 长连接）一次连接可承载多轮上游调用。记账按**轮**：每轮一条 `usage_logs`——
+>
+> - `request_id`：第 1 轮 = 连接级原值；第 K（≥2）轮 = 原值 + `#rK`。同一连接的多轮共享前缀，`#rK` 为第 K 轮；同一轮的 `usage_logs` 与 `err_logs` 用**同一个**派生 `request_id`，两表可直接按它关联。
+> - `created_at`：取**轮起点**（不是落库时刻）；**WS 单轮（第 1 轮）的 `created_at` = 连接开始时刻**，多轮车道每一轮也各用其轮起点。副作用是它不再是「写入 DB 的时刻」，但在轮内与 `LatencyMS` 同源。由此有三个可观测影响：
+>   - **分区路由**：偏移在分钟级（≤ 连接寿命），行仍落在同一日分区，无风险；跨午夜的连接，其行落在**开始日**分区。
+>   - **`UnbilledLag`**：队头 `created_at` 只是近似值，偏差上界从「秒级」（flush 缓冲 + 时钟偏移）变为「连接寿命」（分钟级）——仍远小于天级护栏阈值（保留期 80%），并随游标推进收敛。
+>   - **按小时桶统计**：一轮落在**开始时刻**所在的小时桶，不是结束时刻。
+>   - **为什么必须这样**：`(request_id, created_at)` 是轮幂等的键（复用 `usage_logs` 既有唯一索引 `usagelog_request_id_created_at`）——同一轮两次结算必须得到同一个 `created_at`；若取落库时刻，两次结算时刻不同 ⇒ 唯一索引失效，重复行无法被 `ON CONFLICT DO NOTHING` 吸收。
+> - `LatencyMS`：多轮车道 = **本轮到结算**的耗时（`settle_at − 轮起点`），**不是连接总时长**；单轮车道（SSE/非流式）语义不变。
+> - 完成帧是吸收态：一轮一旦观测到 `response.completed`，之后连接抖动不会回头改这一轮的类别；未观测到完成帧就断开的轮落一条失败行（`error_type != none`），允许携带已采的部分用量。
+> - 统计口径：`request_count` 因此等于**上游轮次**（含失败轮），不是连接数。前端展示请按此文案解释。
+
 ### 查询错误日志
 
 `GET /api/admin/err_logs?limit=20&cursor=1234&group_id=1&account_id=2&model=gpt-4o&status_code=429&error_type=billing&from=2026-08-06T00:00:00Z&to=2026-08-06T23:59:59Z`

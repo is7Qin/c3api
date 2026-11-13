@@ -207,7 +207,9 @@ export default function Stats() {
       <Card>
         <CardHeader>
           <CardTitle>{metric === 'requests' ? t('stats.chartRequestsTitle') : t('stats.chartTokensTitle')}</CardTitle>
-          <CardDescription>{t('stats.chartDesc')}</CardDescription>
+          <CardDescription>
+            {metric === 'requests' ? `${t('stats.chartDesc')} · ${t('stats.requestsNote')}` : t('stats.chartDesc')}
+          </CardDescription>
         </CardHeader>
         <CardContent>
           {isError ? (

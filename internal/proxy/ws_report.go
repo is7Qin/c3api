@@ -196,14 +196,9 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 	return o
 }
 
-func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, reqID string, groupID int64, reqModel string, start time.Time, u usageTuple, ttft *int64, sent, writeFailed bool, cause error) error {
+func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel *scheduler.Selection, rd *round, groupID int64, reqModel string, sent, writeFailed bool, cause error) error {
 	if err := outcome.Validate(); err != nil {
 		return err
-	}
-	ttftCopy := ttft
-	if ttft != nil {
-		v := *ttft
-		ttftCopy = &v
 	}
 	status := int(outcome.HTTPStatus)
 	et := domain.ErrNone
@@ -238,9 +233,16 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 			status, et, health = f.Status, f.ET, timeoutHealth(f, sent)
 		}
 	}
-	// Single owner observation (quality + bounded flow) + health marking; the
-	// finish owns the lease release exactly once.
+	// Single owner observation (quality + bounded flow) + health marking.
+	// 连接级观测**恒**发生（含本轮已完成、不再写行的情形）——它只描述连接。
 	p.observeDispatchOutcome(ctx, outcome, health)
+	// 轮级写行（§6.1/§6.3）：完成帧是吸收态且**已当场结算**——本轮不再写行
+	// （否则同一轮出两行、两表无法按 request_id 关联）。仍为 RoundOpen ⇒
+	// RoundAborted 失败行：轮号取当前轮（第 K 轮 ⇒ request_id = base#rK）。
+	if rd.completed() {
+		return nil
+	}
+	rd.state = RoundAborted
 	// 交付事实 → 持久化 commit_state（唯一折算入口）：sent 是 relayWS 在**补写
 	// 终态帧之前**快照的业务帧计数（businessN>0），writeFailed 是补写前的下行写
 	// 失败事实（网关终态错误帧/关闭帧不计业务交付），clientCancel 来自 Result。
@@ -250,16 +252,13 @@ func (p *Proxy) reportWSOutcome(ctx context.Context, outcome AttemptOutcome, sel
 	if outcome.Result != ResultSuccess {
 		commit = commitStateFor(sent, writeFailed, outcome.Result == ResultClientCancel)
 	}
-	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, u, start)), commit)
+	l := withCommit(logWithCtx(ctx, p.buildRoundLog(rd, groupID, outcome.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, status, et, rd.usage)), commit)
 	// 中止/失败行必须留因（cause 为分类阶段快照的真实错误：上游关闭帧、上游流内
 	// 错误载荷、读写网络错误、context.Canceled）。成功行 cause 恒 nil ⇒ NULL。
 	// abort/timeout 落可读文案（§3.2：禁止库内部文本落用户可见字段）。
 	if outcome.Result != ResultSuccess {
 		l.ErrorMessage = userFacingFailureMessage(et, cause)
 	}
-	if ttftCopy != nil {
-		l.TTFTMS = ttftCopy
-	}
-	p.finish(sel, l)
+	rd.settle(p, sel, l)
 	return nil
 }
