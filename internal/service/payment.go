@@ -449,7 +449,7 @@ func (s *Service) resolveChannelIn(ctx context.Context, cand paymentCandidates, 
 // 一律**不看**该开关——钱已收的路径不能被开关掐断（F16）：开关管"能不能卖"，
 // 不管"能不能结算"。
 func (s *Service) PaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
-	if !s.settingBool(domain.SettingPaymentEnabled, false) {
+	if !s.PaymentEnabled() {
 		// 空可售集：用户面渲染"暂无可用方式"即可，不是错误（§5-1b）。
 		return []PaymentMethod{}, nil
 	}
@@ -609,7 +609,7 @@ func (s *Service) CreateOrder(ctx context.Context, userID int64, in CreateOrderI
 	if userID <= 0 {
 		return nil, fmt.Errorf("%w: missing user", ErrInvalidInput)
 	}
-	if !s.settingBool(domain.SettingPaymentEnabled, false) {
+	if !s.PaymentEnabled() {
 		return nil, fmt.Errorf("%w: payment disabled (%s)", ErrUnavailable, domain.SettingPaymentEnabled)
 	}
 	usdCents, err := parseUSDAmount(in.AmountUSD)
@@ -1648,6 +1648,14 @@ func effectiveMaxUSD(maxUSD, rateMicro int64) int64 {
 		return arithmeticCap
 	}
 	return maxUSD
+}
+
+// PaymentEnabled 支付网关总开关（运行时设置 payment.enabled，读内存设置快照，缺省关）。
+// 售卖面（PaymentMethods / CreateOrder）与控制台可见性（/api/user/features 的
+// payment）共用这一处判定；结算面（notify / sync / return / CompleteOrder /
+// CloseOrder）一律不看它——已收的钱不能被开关掐断（F16）。
+func (s *Service) PaymentEnabled() bool {
+	return s.settingBool(domain.SettingPaymentEnabled, false)
 }
 
 // settingBool 读开关：缺失/非法 → fallback（配置面只接受 true/false）。

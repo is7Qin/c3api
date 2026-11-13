@@ -1414,7 +1414,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** 部署级功能开关（启动配置的只读投影；改动需重启） */
+        /** 功能开关（supplier = 启动配置投影，改动需重启；payment = 运行时设置 payment.enabled，即时生效） */
         get: operations["GetUserFeatures"];
         put?: never;
         post?: never;
@@ -2857,6 +2857,8 @@ export interface components {
         Features: {
             /** @description 供应商功能（config supplier.enabled）。false 时 /api/user/supplier/* 未挂载 */
             supplier: boolean;
+            /** @description 支付网关（运行时设置 payment.enabled，读设置快照，改动即时生效）。false 时控制台隐藏支付账户、支付订单与钱包；回调/查单/关单照常 */
+            payment: boolean;
         };
         DeletedResponse: {
             deleted: boolean;

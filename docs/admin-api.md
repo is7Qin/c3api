@@ -654,7 +654,7 @@
 
 - `POST /user/auth/register` / `POST /user/auth/login`：注册（受 `signup_enabled` 设置；开启注册邮箱验证后还需先经 `/user/auth/register-code` 获取并携带 `code` 字段）与登录，返回 JWT + 用户对象（`Balance` 同样 USD float64）。
 - `GET /user/auth/me`：当前用户信息。
-- `GET /user/features`：部署级功能开关（`{"supplier": bool}`，启动配置投影，改动需重启；关闭时前端不展示供应商入口）。
+- `GET /user/features`：功能开关 `{"supplier": bool, "payment": bool}`。`supplier` 是启动配置投影（改动需重启；关闭时前端不展示供应商入口）；`payment` 是运行时设置 `payment.enabled`（读设置快照，改动即时生效；关闭时前端不展示支付账户、支付订单与钱包，回调/查单/关单照常）。
 - `POST /user/auth/change-password`：修改密码（旧密码校验复用登录语义——失败 `401` 同登录文案防枚举；新密码非空且 ≤72 字节，非法 `400`；**不撤销既有 JWT**，新密码下次登录生效），见下方「用户面：修改密码」。
 - `POST /user/auth/register-code`：发送注册验证码（受 `mail.register_verification` + `signup_enabled` 双闸；未开验证 → `400` 哨兵文案；同邮箱 `60s` 限频 → `429`；已注册邮箱静默抑制发送仍返回 `{sent:true}`——防枚举）。响应恒 `{"sent":true}`。
 - `POST /user/auth/forgot-password`：忘记密码发码。**恒 `200 {"sent":true}` 同形响应（防枚举）**——无论账号是否存在、邮件是否启用；实际发送条件 = `mail.enabled` 且账号存在且未限频。

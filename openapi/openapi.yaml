@@ -1892,7 +1892,7 @@ paths:
     get:
       operationId: GetUserFeatures
       tags: [user]
-      summary: 部署级功能开关（启动配置的只读投影；改动需重启）
+      summary: 功能开关（supplier = 启动配置投影，改动需重启；payment = 运行时设置 payment.enabled，即时生效）
       responses:
         '200':
           description: 功能开关
@@ -3668,9 +3668,10 @@ components:
           description: 每候选存储实际读表的保留天数（读多表取最保守者；0 = 该表未启用分区保留，覆盖守卫关闭）
     Features:
       type: object
-      required: [supplier]
+      required: [supplier, payment]
       properties:
         supplier: { type: boolean, description: "供应商功能（config supplier.enabled）。false 时 /api/user/supplier/* 未挂载" }
+        payment: { type: boolean, description: "支付网关（运行时设置 payment.enabled，读设置快照，改动即时生效）。false 时控制台隐藏支付账户、支付订单与钱包；回调/查单/关单照常" }
     DeletedResponse:
       type: object
       required: [deleted]

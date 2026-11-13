@@ -309,6 +309,9 @@ type ErrorType string
 
 // Features defines model for Features.
 type Features struct {
+	// Payment 支付网关（运行时设置 payment.enabled，读设置快照，改动即时生效）。false 时控制台隐藏支付账户、支付订单与钱包；回调/查单/关单照常
+	Payment bool `json:"payment"`
+
 	// Supplier 供应商功能（config supplier.enabled）。false 时 /api/user/supplier/* 未挂载
 	Supplier bool `json:"supplier"`
 }
@@ -1041,7 +1044,7 @@ type ServerInterface interface {
 	// 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/err_logs)
 	GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams)
-	// 部署级功能开关（启动配置的只读投影；改动需重启）
+	// 功能开关（supplier = 启动配置投影，改动需重启；payment = 运行时设置 payment.enabled，即时生效）
 	// (GET /api/user/features)
 	GetUserFeatures(w http.ResponseWriter, r *http.Request)
 	// 可选组列表（public 全部 + 已授予 private；只读，key 创建时选组）
@@ -1179,7 +1182,7 @@ func (_ Unimplemented) GetUserErrLogs(w http.ResponseWriter, r *http.Request, pa
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 部署级功能开关（启动配置的只读投影；改动需重启）
+// 功能开关（supplier = 启动配置投影，改动需重启；payment = 运行时设置 payment.enabled，即时生效）
 // (GET /api/user/features)
 func (_ Unimplemented) GetUserFeatures(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)

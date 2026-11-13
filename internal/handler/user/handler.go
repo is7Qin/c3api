@@ -26,7 +26,8 @@ type UserAPI struct {
 	// 记 Warn 后照常返回 200（main 装配经 Router 注入；nil = 静默）。
 	log *logx.Logger
 	// features 部署级功能开关（启动配置的只读投影，改动需重启；main 装配经 Router
-	// 注入——零值 = 全部关闭）。控制台据此决定是否展示供应商入口。
+	// 注入——零值 = 全部关闭）。控制台据此决定是否展示供应商入口。只承载 Supplier：
+	// Payment 是运行时设置，由 GetUserFeatures 每次请求从设置快照覆盖。
 	features Features
 	// now 可注入时钟（默认 time.Now）——P3 相对窗口 `?window=` 的服务端自持时刻
 	// 从这里取。与 AdminAPI.now 是**同一套机制**（每面一个可注入字段），不是第二
