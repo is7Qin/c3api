@@ -56,6 +56,7 @@ var staticReaderFuncs = map[string]string{
 	"invalidateOneIntoLocked":    "单组折叠：复用/替换叶子并登记引用集",
 	"IsLatched":                  "latch 谓词按 (指纹, K) 判定",
 	"MarkResult":                 "运行结果记账：状态、K、template_id、事件组",
+	"PlanHasNonCodexCandidate":   "续接解析前置判定：计划候选的模板凭据类型（是否全为 Codex）",
 	"ProbeAccount":               "探针：把整个账号交给候选指纹权威",
 	"Runtimes":                   "运行时视图：并发上限与名字",
 	"attachCompilerFacts":        "把逐账号编译事实挂到静态根",
