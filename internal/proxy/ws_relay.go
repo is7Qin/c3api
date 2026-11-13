@@ -45,15 +45,15 @@ type wsRelayTransport interface {
 // relayWS 合一骨架：首帧由调用方预处理（模型改写见 wsFirstFrameForSel——
 // ModelMapping 语义，与 setModel 同构；非 Codex 另有 stripTier）后原样转发
 // → 转发首帧 → 双向事件帧 1:1 relay（流式中间帧零解析零拷贝直转）→ 关闭/错误传播
-// → usage 记录。返回 (handled, fwMsg)：handled = 请求已处理完毕（成功/客户端断开/
-// 流中止已记录）；false = 首帧转发失败（上游未消费，记 not-sent 可重试），fwMsg
-// 为截断错误文本，调用方按连接级错误转移。业务帧未送达前可重试，送达后不再迁移。
+// → usage 记录。返回 (handled, fwErr)：handled = 请求已处理完毕（成功/客户端断开/
+// 流中止已记录）；false = 首帧转发失败（上游未消费，记 not-sent 可重试），fwErr
+// 为原始错误（保留链），调用方截断成文本后按连接级错误转移。业务帧未送达前可重试，送达后不再迁移。
 // frameHook 可选（nil = aiclient 路径零开销——指针比较）：**读帧成功后、
 // usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**——codex
 // 路径的判死帧 FatalAuth 钩子即挂此处（客户端写失败时判死帧仍触发 FatalAuth）。
-func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwMsg string) {
-	if fwMsg, fwFailed := relayWSFirstFrame(up, r, firstTyp, first); fwFailed {
-		return false, fwMsg
+func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwErr error) {
+	if err := relayWSFirstFrame(up, r, firstTyp, first); err != nil {
+		return false, err
 	}
 
 	// --- 双向 relay：三个方向各自 goroutine，首退者触发取消 ---
@@ -183,6 +183,13 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				return
 			}
 			if err := up.Write(relayCtx, typ, f); err != nil {
+				// SDK 本地拒绝（§5.4，仅 Codex 传输会返回）：该帧未出网，连接完好——
+				// 回客户端一帧错误、丢弃该帧、会话继续；不写错误槽、不改结束分类。
+				if isCodexInvalidBody(err) {
+					convLocalRejects.Add(1)
+					_ = writeCodexInvalidBodyFrame(relayCtx, client)
+					continue
+				}
 				setErr(&upErr, err)
 				exit()
 				return
@@ -382,7 +389,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	}
 	if contFail != nil {
 		p.relayWSContFail(client, up, &wg, logCtx, contFail, contAcked, businessN, sel, reqID, groupID, reqModel, start, u, ttft)
-		return true, ""
+		return true, nil
 	}
 	if contTag != "" && !contAcked && len(contPending) > 0 {
 		// 流结束而无 id 帧（无可续接身份）：缓冲字节安全放出（与 REST 闸门
@@ -413,7 +420,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 	}
 	p.relayWSPropagate(client, up, logCtx, sel, reqID, groupID, reqModel, start, u, ttft, businessN, downstreamWriteFailed, end, endErr)
 	wg.Wait() // client-loop 的阻塞 Read 已被上方关闭传播/直拆解除
-	return true, ""
+	return true, nil
 }
 
 // isResponsesCompleted 判定一帧是否是 response.completed（spec-inband-error-truth
@@ -447,7 +454,8 @@ func wsFirstFrameForSel(first []byte, sel *scheduler.Selection, reqModel string)
 
 // relayWSFirstFrame 首帧转发（relayWS 提取）：first 已由调用方预处理（模型改写
 // 见 wsFirstFrameForSel，非 Codex 分支另有 stripTier），这里原样写出；写失败 →
-// CloseNow 并返回截断错误文本（failed=true，调用方按连接级错误转移，保留可重试语义）。
+// CloseNow 并返回原始错误（调用方按连接级错误转移，保留可重试语义；Codex 分支先
+// 识别 SDK 本地拒绝）。
 //
 // 重复键：首帧的重复 model/stream 在**更上游**就被拒了——caller_responses_ws.go
 // 读帧之后、选号与拨号之前用 duplicateTopLevelKey 校验并回错误帧（与 HTTP 入口
@@ -456,13 +464,14 @@ func wsFirstFrameForSel(first []byte, sel *scheduler.Selection, reqModel string)
 // ⚠ 范围限定：该守卫只覆盖**首帧**（response.create）。后续客户端帧按字节原样
 // 转发（本文件上方 client-loop），它们的 model 不参与路由、也不做重复键校验；
 // 因此不要把首帧守卫描述成「整个 WS 会话的模型身份已强制」。
-func relayWSFirstFrame(up wsRelayTransport, r *http.Request, firstTyp websocket.MessageType, first []byte) (fwMsg string, failed bool) {
-	// 首帧未送达视为上游未消费，不可记业务帧已见，保留可重试语义。
+func relayWSFirstFrame(up wsRelayTransport, r *http.Request, firstTyp websocket.MessageType, first []byte) error {
+	// 首帧未送达视为上游未消费，不可记业务帧已见，保留可重试语义。错误原样返回
+	// （保留错误链：Codex 分支要按 errors.Is 识别 SDK 本地拒绝）。
 	if err := up.Write(r.Context(), firstTyp, first); err != nil {
 		up.CloseNow()
-		return domain.TruncateErrMsg(err.Error()), true
+		return err
 	}
-	return "", false
+	return nil
 }
 
 // relayWSContFail 硬续接 fail-closed 收尾（relayWS 提取）：绑定权威不可用/冲突

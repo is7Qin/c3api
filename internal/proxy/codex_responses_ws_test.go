@@ -299,6 +299,35 @@ func waitStoreLogs(t *testing.T, store *captureLogStore, n int) {
 	}, 3*time.Second, 20*time.Millisecond, "明细必须落袋（usage/errlog 双轨）")
 }
 
+// codexWSInvalidMidFrame 不带 model 的中间帧（升级前的用例原样）：SDK 整形拒绝
+// （ErrInvalidRequestBody）。
+const codexWSInvalidMidFrame = `{"type":"response.input_text.delta","delta":"typing"}`
+
+// codexWSSessionWithLocalReject 写首帧并读 nFirst 帧（上游事件流 + 首帧回声）；
+// 此时上游已无待下发帧，再写一帧不带 model 的中间帧 → 客户端收到本地拒绝错误帧
+// （帧序确定）、conv_local_rejects 加一、会话继续；最后写 rest 并读 nRest 帧。
+// 返回读到的上游帧（不含本地拒绝帧）。
+func codexWSSessionWithLocalReject(t *testing.T, c *websocket.Conn, first string, nFirst int, rest []string, nRest int) []string {
+	t.Helper()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(first)))
+	got := make([]string, 0, nFirst+nRest)
+	for range nFirst {
+		got = append(got, string(readResponsesWSFrame(t, c)))
+	}
+	before := convLocalRejects.Load()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(codexWSInvalidMidFrame)))
+	require.JSONEq(t, `{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"invalid request body"}}`,
+		string(readResponsesWSFrame(t, c)), "不带 model 的中间帧 → 本地拒绝错误帧")
+	require.Equal(t, before+1, convLocalRejects.Load(), "conv_local_rejects 递增")
+	for _, f := range rest {
+		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
+	}
+	for range nRest {
+		got = append(got, string(readResponsesWSFrame(t, c)))
+	}
+	return got
+}
+
 // dialResponsesWSHeaders 测试客户端拨网关（自定义头——伪装冲突面断言用）。
 func dialResponsesWSHeaders(t *testing.T, srv *httptest.Server, h http.Header) *websocket.Conn {
 	t.Helper()
@@ -387,13 +416,9 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	f1 := `{"type":"response.create","model":"gpt-4o","input":"hi"}`
 	f2 := `{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`
 	f3 := `{"type":"custom.mid","model":"gpt-4o","n":42}`
-	for _, f := range []string{f1, f2, f3} {
-		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
-	}
-	var got []string
-	for range 6 {
-		got = append(got, string(readResponsesWSFrame(t, c)))
-	}
+	// 首帧 → 事件流 3 帧 + 回声；不带 model 的中间帧 → 本地拒绝、会话继续；
+	// f2/f3 → 两帧回声（got 不含本地拒绝帧）。
+	got := codexWSSessionWithLocalReject(t, c, f1, 4, []string{f2, f3}, 2)
 	require.Equal(t, `{"type":"response.created","response":{"id":"rsp_ws_1","model":"gpt-4o"}}`, got[0])
 	require.Equal(t, `{"type":"response.output_text.delta","delta":"hi"}`, got[1])
 	require.Contains(t, got[2], `"type":"response.completed"`)
@@ -451,6 +476,9 @@ func TestCodexWSMockRotateRefreshSuccess(t *testing.T) {
 	}
 	require.Len(t, threadKeys, 1, "同一连接三帧同一会话身份")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+	hooks.mu.Lock()
+	require.Len(t, hooks.frames, 3, "本地拒绝的中间帧不出网")
+	hooks.mu.Unlock()
 
 	// 握手面断言（伪装头）：两次升级（401 首拨 + 轮转后重拨），账号鉴权
 	// 注入（首拨旧 at / 重拨新 at——轮转生效）；网关 key 不泄漏；伪装身份
@@ -693,17 +721,10 @@ func TestCodexWSDial429Failover(t *testing.T) {
 	defer srv.Close()
 	c := dialResponsesWS(t, srv)
 	defer c.CloseNow()
-	for _, f := range []string{
-		`{"type":"response.create","model":"gpt-4o","input":"hi"}`,
-		`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`,
-		`{"type":"custom.mid","model":"gpt-4o","n":42}`,
-	} {
-		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
-	}
-	// 事件流 3 帧 + 回声 3 帧（读满 6——上游 frameLimit=3 后 1000 关闭）
-	for range 6 {
-		_ = readResponsesWSFrame(t, c)
-	}
+	// 事件流 3 帧 + 回声 3 帧（上游 frameLimit=3 后 1000 关闭）；其间不带 model 的
+	// 中间帧本地拒绝、会话继续。
+	_ = codexWSSessionWithLocalReject(t, c, `{"type":"response.create","model":"gpt-4o","input":"hi"}`, 4,
+		[]string{`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`, `{"type":"custom.mid","model":"gpt-4o","n":42}`}, 2)
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	hooks.mu.Lock()
@@ -789,19 +810,11 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 	defer s.Close()
 	c := dialResponsesWS(t, s)
 	defer c.CloseNow()
-	for _, f := range []string{
-		`{"type":"response.create","model":"gpt-4o","input":"hi"}`,
-		`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`,
-		`{"type":"custom.mid","model":"gpt-4o","n":42}`,
-	} {
-		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
-	}
 	// 事件流（判死帧 + created + completed）+ 3 回声——判死帧照常透传客户端
-	//（错误事件属业务流），上游 3 帧后 1000 关闭
-	got := make([]string, 0, 6)
-	for range 6 {
-		got = append(got, string(readResponsesWSFrame(t, c)))
-	}
+	//（错误事件属业务流），上游 3 帧后 1000 关闭；其间不带 model 的中间帧本地
+	// 拒绝、会话继续。
+	got := codexWSSessionWithLocalReject(t, c, `{"type":"response.create","model":"gpt-4o","input":"hi"}`, 4,
+		[]string{`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`, `{"type":"custom.mid","model":"gpt-4o","n":42}`}, 2)
 	require.Contains(t, got[0], `"type":"error"`)
 	require.Contains(t, got[0], `"token_invalidated"`, "判死帧透传客户端")
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)

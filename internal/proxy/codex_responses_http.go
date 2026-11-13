@@ -232,6 +232,12 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
 		}
+		// SDK 本地拒绝（§5.4）：客户端错误、未出网——本地 400 终止，不分类不转移。
+		if isCodexInvalidBody(err) {
+			p.finishCodexInvalidBody(ctx, reqID, groupID, start, sel, reqModel, out.LogFormat())
+			writeCodexInvalidBody(out.Writer())
+			return 0, nil, true, nil
+		}
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return statusOf(err), upstreamBody(err), false, err
 		}
@@ -315,6 +321,12 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		// 客户端断开（上游响应前）优先归因。
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
+		}
+		// SDK 本地拒绝（§5.4）：首帧前、头未提交——本地 400 终止，不分类不转移。
+		if isCodexInvalidBody(err) {
+			p.finishCodexInvalidBody(ctx, reqID, groupID, start, sel, reqModel, plan.logFormat)
+			writeCodexInvalidBody(w)
+			return 0, nil, true, nil
 		}
 		// 首帧前信封错误（4xx 透传 / 429/5xx failover / fatal）：未写出任何
 		// 字节，HTTP 状态可用，交 failover 循环分类。SDK StreamBody 对所有非
@@ -462,6 +474,8 @@ type codexRespBody interface {
 	Body(raw []byte) error
 	// LogFormat 日志 Format 口径（直连 = openai-responses；转换 = 客户端协议）。
 	LogFormat() domain.RequestFormat
+	// Writer 客户端响应写出面（本地拒绝等网关自身错误直接写，不经转换）。
+	Writer() http.ResponseWriter
 }
 
 // codexDirectOutput 直连非流式渲染：合成体原样透传。
@@ -480,6 +494,8 @@ func (o *codexDirectOutput) Body(raw []byte) error {
 }
 
 func (o *codexDirectOutput) LogFormat() domain.RequestFormat { return domain.FormatOpenAIResponses }
+
+func (o *codexDirectOutput) Writer() http.ResponseWriter { return o.w }
 
 // codexConvertedOutput 协议转换非流式渲染：上游 responses 合成体经 protoconv 反向
 // 映射回客户端协议；clientModel 非空 → 回填客户端模型。
@@ -508,6 +524,8 @@ func (o *codexConvertedOutput) Body(raw []byte) error {
 	_, _ = o.w.Write(conv)
 	return nil
 }
+
+func (o *codexConvertedOutput) Writer() http.ResponseWriter { return o.w }
 
 func (o *codexConvertedOutput) LogFormat() domain.RequestFormat {
 	c, _ := clientAndTargetOf(o.dir)

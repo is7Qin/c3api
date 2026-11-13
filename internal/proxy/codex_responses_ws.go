@@ -128,6 +128,7 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 // handleCodexDialError codex WS 拨号失败分类与收尾（返回
 // stop=true 请求已终止，false = 连接级/429 转移——本函数已完成分类，调用方
 // MarkResult 后继续 failover 循环）：
+//   - SDK 本地拒绝（ErrInvalidRequestBody）→ 400 错误帧收尾（不分类不转移）
 //   - 适配层未装配 → 501 语义本地拒绝（释放槽 + recordRejected + 错误帧）
 //   - 裸 fatal（Dial 401 轮转路径 refresh 失败——RefreshOAuthError/
 //     AccountDisabledError）：适配层已统一回调上报（账号失效剔除 + 摘除）；
@@ -139,6 +140,12 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 //   - 信封 429 → Kind429 转移；信封 5xx / 裸 RefreshError / 网络（code 0）
 //     → RuleKindOf(code) 转移（正常 failover）
 func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string) {
+	// SDK 本地拒绝（§5.4）：首帧不能整形，Dial 未拨号即返回；经 translateDialError
+	// 包装后仍按 errors.Is 识别。客户端错误——错误帧 + 400 记录，不分类不转移。
+	if isCodexInvalidBody(dialErr) {
+		p.rejectCodexWSInvalidBody(r, reqID, groupID, start, sel, reqModel, client)
+		return true, 0, ""
+	}
 	if errors.Is(dialErr, errCodexWSNotIntegrated) {
 		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())

@@ -268,16 +268,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 					p.codex.FatalPrepared(prep, fatal)
 				}
 			}
-			handled, fwMsg := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, frame)
+			handled, fwErr := p.relayWS(st.client, newCodexTransport(up), frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, frame)
 			if handled {
 				return 0, nil, nil, true, nil
 			}
-			if fwMsg == "" {
-				fwMsg = "upstream first frame write failed"
-			}
-			// 首帧未写出表示上游尚未消费请求，保留 not-sent/retryable 语义；业务帧写出后不得迁移。
-			// 观测归循环统一（observeDispatchFailure：code 0 → not_sent failed）。
-			return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
+			return p.codexFirstFrameFailed(r, reqID, groupID, start, sel, reqModel, st.client, fwErr)
 		}
 		if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
 			// 501/fatal/4xx 已收尾（错误帧与记录已落），请求终止不再转移
@@ -312,13 +307,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 				first = nf
 			}
 		}
-		handled, fwMsg := p.relayWS(st.client, newAiclientTransport(up), nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, first)
+		handled, fwErr := p.relayWS(st.client, newAiclientTransport(up), nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, first)
 		if handled {
 			return 0, nil, nil, true, nil
 		}
-		if fwMsg == "" {
-			fwMsg = "upstream first frame write failed"
-		}
+		fwMsg := firstFrameFailMsg(fwErr)
 		// 首帧未写出表示上游尚未消费请求，保留 not-sent/retryable 语义；业务帧写出后不得迁移。
 		// 观测归循环统一（observeDispatchFailure：code 0 → not_sent failed）。
 		return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
@@ -472,6 +465,30 @@ func wsWriteError(client *websocket.Conn, msg string) {
 	defer cancel()
 	_ = client.Write(ctx, websocket.MessageText, b)
 	_ = client.Close(websocket.StatusNormalClosure, "")
+}
+
+// codexFirstFrameFailed Codex 首帧转发失败收口（wsAttempt codex 分支）：
+//   - SDK 本地拒绝（§5.4，首帧不能整形）→ 客户端错误：错误帧 + 400 记录，
+//     handled=true，不分类不转移（上游连接已由 relayWSFirstFrame CloseNow）。
+//     Dial 已按同一份首帧字节整形过，当前 SDK 下本分支只作防御。
+//   - 其余 → 首帧未写出表示上游尚未消费请求，保留 not-sent/retryable 语义；观测
+//     归循环统一（observeDispatchFailure：code 0 → not_sent failed）。
+func (p *Proxy) codexFirstFrameFailed(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, fwErr error) (int, []byte, http.Header, bool, error) {
+	if isCodexInvalidBody(fwErr) {
+		p.rejectCodexWSInvalidBody(r, reqID, groupID, start, sel, reqModel, client)
+		return 0, nil, nil, true, nil
+	}
+	fwMsg := firstFrameFailMsg(fwErr)
+	return 0, []byte(fwMsg), nil, false, errors.New(fwMsg)
+}
+
+// firstFrameFailMsg 首帧转发失败的截断文本（空错误文本回退固定文案）。
+func firstFrameFailMsg(err error) string {
+	var msg string
+	if err != nil {
+		msg = domain.TruncateErrMsg(err.Error())
+	}
+	return emOr(msg, "upstream first frame write failed")
 }
 
 // emOr 取非空错误文本（4xx 透传：上游 body message 优先，缺省回退网关文案）。

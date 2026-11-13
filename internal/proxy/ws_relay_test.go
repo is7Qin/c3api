@@ -179,13 +179,21 @@ func newRelayWSTestHBI(t *testing.T, ft *fakeTransport, frameHook func([]byte), 
 			return
 		}
 		defer client.CloseNow()
-		handled, fwMsg := p.relayWS(client, ft, frameHook, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, first)
-		out <- relayOutcome{handled: handled, fwMsg: fwMsg}
+		handled, fwErr := p.relayWS(client, ft, frameHook, r, reqID, 10, start, sel, "gpt-4o", websocket.MessageText, first)
+		out <- relayOutcome{handled: handled, fwMsg: relayErrText(fwErr)}
 	}))
 	t.Cleanup(srv.Close)
 	c := dialResponsesWS(t, srv)
 	t.Cleanup(func() { c.CloseNow() })
 	return &relayWSTestEnv{p: p, store: logs, ft: ft, out: out}, c, srv
+}
+
+// relayErrText 首帧失败错误的截断文本（nil = ""，与改为返回 error 前的 fwMsg 同义）。
+func relayErrText(err error) string {
+	if err == nil {
+		return ""
+	}
+	return domain.TruncateErrMsg(err.Error())
 }
 
 // TestRelayWSFirstFrameWriteFail 首帧转发失败 → (false, fwMsg) + CloseNow 直拆

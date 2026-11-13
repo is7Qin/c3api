@@ -130,16 +130,9 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	// 1000 关闭；伪装四元组帧级注入断言）
 	c := dialResponsesWS(t, srv)
 	defer c.CloseNow()
-	for _, f := range []string{
-		`{"type":"response.create","model":"gpt-4o","input":"hi"}`,
-		`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`,
-		`{"type":"custom.mid","model":"gpt-4o","n":42}`,
-	} {
-		require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(f)))
-	}
-	for range 6 {
-		_ = readResponsesWSFrame(t, c)
-	}
+	// 其间不带 model 的中间帧本地拒绝、会话继续，不影响计费行。
+	_ = codexWSSessionWithLocalReject(t, c, `{"type":"response.create","model":"gpt-4o","input":"hi"}`, 4,
+		[]string{`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`, `{"type":"custom.mid","model":"gpt-4o","n":42}`}, 2)
 	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
 
 	// 握手头 + 帧内 metadata：伪装身份 = 运行时槽身份（session/thread/window
@@ -147,6 +140,7 @@ func TestCodexResponsesWSBillingPG(t *testing.T) {
 	// 落库 ext（账号级稳定项）。
 	hooks.mu.Lock()
 	require.Equal(t, 1, hooks.upgrades, "真实凭据单拨成功")
+	require.Len(t, hooks.frames, 3, "本地拒绝的中间帧不出网")
 	require.Equal(t, "Bearer pat-pg-1", hooks.headers[0].Get("Authorization"), "PAT 直供适配层")
 	h := hooks.headers[0]
 	require.True(t, isUUIDv7(h.Get("Session-Id")), "session-id = 槽身份（UUIDv7）")
