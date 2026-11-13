@@ -302,8 +302,12 @@ func (e *RuleEngine) Reload(ctx context.Context) error {
 //
 //	seed-429（p10）      kind=429   → throttle(account, retry_after, use_reset) + ResponseCode nil(透429) + CustomMessage "rate limited"（码透文不透；ResetAt 缺失回落 30s 默认）
 //	seed-4xx-400（p15）  kind=4xx + http_status=400 → ResponseCode nil + CustomMessage nil（400 全透；其余 4xx 默认归一 502——无规则即归一；直插 store，其 Then{} 与用户规则 Then{} 全透语义等价）
-//	seed-5xx-503-overload（p16）kind=5xx + http_status=503 + error_message_contains="overload"（小写敏感）→ ResponseCode nil +
-//	                    CustomMessage nil（503 overload 全透——码/文原样过，不惩罚不归一；其余 503 落回 seed-5xx 归一）
+//	seed-5xx-503-overload（p16）kind=5xx + error_message_contains="overload"（小写敏感）→ ResponseCode nil +
+//	                    CustomMessage nil（overload 全透——码/文原样过，不惩罚不归一；非过载文案落回 seed-5xx 归一）
+//	                    不要求 http_status=503 的原因：已提交的流内失败按规范 §3.1 不合成状态码
+//	                    （status_code=0 ⇒ 规则事件 HTTPStatus 恒 nil），旧版「kind+503+overload」
+//	                    对已提交流永远不命中，于是上游过载被 seed-5xx 罚 10 分钟；改后只按
+//	                    类别+文案匹配，已提交与未提交两条路径都能命中。
 //	seed-5xx（p20）      kind=5xx   → throttle(account, open, 10m) + 502/"Upstream request failed"（归一）
 //	seed-network（p25）  kind=network → throttle(account, open, 5s) + 502/"Upstream request failed"
 //	                       （连接级独立类型——原连接级 5s 语义，不吃 10m）
@@ -342,8 +346,8 @@ func (e *RuleEngine) seedRules(ctx context.Context) error {
 		},
 		{
 			Name: "seed-5xx-503-overload", Enabled: true, Priority: 16,
-			When: domain.RuleWhen{Kind: new("5xx"), HTTPStatus: new(503), ErrorMessageContains: new("overload")},
-			Then: domain.RuleThen{}, // 503 overload 全透：码/文原样过，不惩罚不归一
+			When: domain.RuleWhen{Kind: new("5xx"), ErrorMessageContains: new("overload")},
+			Then: domain.RuleThen{}, // 过载全透：码/文原样过，不惩罚不归一
 		},
 		{
 			Name: "seed-5xx", Enabled: true, Priority: 20,

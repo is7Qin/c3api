@@ -368,7 +368,7 @@ func TestSeedRules(t *testing.T) {
 	require.NoError(t, e.Reload(context.Background()))
 
 	// 种子 5 条（fresh setup 哲学，指针即意图）：429/throttle(retry_after,use_reset)+文不透、
-	// 4xx+400 全透、5xx+503+overload 全透、5xx/throttle(open,10m)+502/generic、
+	// 4xx+400 全透、5xx+overload 全透（不要求状态码）、5xx/throttle(open,10m)+502/generic、
 	// network/throttle(open,5s)+502/generic，priority 10/15/16/20/25。
 	// 恢复无种子规则——RuntimeHealth 探针是唯一恢复路径。
 	require.Equal(t, int64(5), mustCountAny(t, st))
@@ -395,10 +395,10 @@ func TestSeedRules(t *testing.T) {
 	require.Nil(t, rules[1].Then.Throttle)
 	require.False(t, rules[1].Then.FailAccount)
 	require.Equal(t, "5xx", *rules[2].When.Kind)
-	require.Equal(t, 503, *rules[2].When.HTTPStatus)
+	require.Nil(t, rules[2].When.HTTPStatus, "过载种子不要求状态码：已提交的流内失败恒无状态码")
 	require.Equal(t, "overload", *rules[2].When.ErrorMessageContains)
 	require.Nil(t, rules[2].Then.ResponseCode, "seed-5xx-503-overload 码透传 nil")
-	require.Nil(t, rules[2].Then.CustomMessage, "seed-5xx-503-overload 文透传 nil（503 overload 全透）")
+	require.Nil(t, rules[2].Then.CustomMessage, "seed-5xx-503-overload 文透传 nil（overload 全透）")
 	require.Nil(t, rules[2].Then.Throttle)
 	require.Equal(t, "5xx", *rules[3].When.Kind)
 	require.NotNil(t, rules[3].Then.Throttle)
