@@ -721,7 +721,7 @@ func newCodexRespUpstream(t *testing.T, steps ...codexRespStep) (*httptest.Serve
 		c.last = steps[len(steps)-1]
 	}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
+		b := readUpstreamBody(r)
 		c.mu.Lock()
 		c.calls++
 		c.auths = append(c.auths, r.Header.Get("Authorization"))
@@ -806,7 +806,7 @@ func respCred(accountID int64, at, rt string) *domain.AccountCredential {
 
 // TestCodexResponsesAggregateNonstream 合成非流式：PAT 静态直连 → SSE 事件聚
 // 合 → 合成体正确（id/output 流序/usage 原样）；wire 面：鉴权头 + stream:true
-// 注入（payload 未带 stream）+ 其余字段保留。
+// 注入（payload 未带 stream）+ model 保留、字符串 input 规范成一条 user 消息。
 func TestCodexResponsesAggregateNonstream(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
@@ -822,62 +822,90 @@ func TestCodexResponsesAggregateNonstream(t *testing.T) {
 	if !gjson.GetBytes(c.body(0), "stream").Bool() {
 		t.Fatalf("payload 未带 stream 应注入 stream:true, body = %s", c.body(0))
 	}
-	if gjson.GetBytes(c.body(0), "model").String() != "gpt-5.6" || gjson.GetBytes(c.body(0), "input").String() != "hi" {
-		t.Fatalf("注入不应动其余字段: %s", c.body(0))
-	}
-	// 未配置 identity（nil）：SDK 仍恒带 turn_id（真实 client_metadata()
-	// 无条件 turn_id）。
-	cm := gjson.GetBytes(c.body(0), "client_metadata")
-	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "未配置 identity 仍注入自动 turn_id: %s", cm.Raw)
-	require.False(t, cm.Get("x-codex-installation-id").Exists(), "未配置不注入静态键")
+	require.Equal(t, "gpt-5.6", gjson.GetBytes(c.body(0), "model").String(), "model 原样")
+	require.JSONEq(t, `[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]`,
+		gjson.GetBytes(c.body(0), "input").Raw, "字符串 input 规范成一条 user 消息")
+	require.False(t, gjson.GetBytes(c.body(0), "store").Bool(), "store 恒 false")
+	// 零值 identity = 匿名：不写 client_metadata、删除 prompt_cache_key。
+	require.False(t, gjson.GetBytes(c.body(0), "client_metadata").Exists(), "匿名不写 client_metadata: %s", c.body(0))
+	require.False(t, gjson.GetBytes(c.body(0), "prompt_cache_key").Exists(), "匿名删除 prompt_cache_key")
 }
 
-// TestCodexResponsesIdentityMetadata 伪装身份注入（spec 2026-08-15）：
-// Responses 传 session/meta → 上游请求体 client_metadata 恒 4 key
-// （x-codex-installation-id/session_id/thread_id/x-codex-window-id——CodexMeta
-// 与 WithSession 同值双设不冲突）+ turn_id 自动 UUIDv7（payload 未带）+ 条件
-// 键不出现（未配置）+ 其余字段不改写。
+// TestCodexResponsesIdentityMetadata 伪装身份注入（SDK 整形 §5.3 HTTP 列）：
+// Responses 传 Identity → 上游请求体 client_metadata 恰为官方 9 键（身份四键 +
+// turn_id/root_turn_id 同一 UUIDv7 + turn 形态 turn-metadata + mcp_attribution +
+// guardian_credits_requested）；HTTP 面不在体里写 turn-state / ws 专属键；
+// prompt_cache_key = SessionID；客户端 input 原样。
 func TestCodexResponsesIdentityMetadata(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-id"}
-	sess := &codexsdk.Session{SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
-	meta := &codexsdk.CodexMeta{InstallationID: "inst-1", SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"}
+	id := codexsdk.Identity{
+		InstallationID: "inst-1",
+		Session:        codexsdk.Session{SessionID: "sess-1", ThreadID: "thread-1", WindowID: "thread-1:0"},
+		Window:         codexsdk.Window{Number: 0},
+	}
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","input":"hi"}`), codexsdk.Identity{Session: *sess, Meta: *meta}, domain.CodexResponsesTransportDefault)
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","input":[{"role":"user","content":"hi"}]}`), id, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	cm := gjson.GetBytes(c.body(0), "client_metadata")
 	require.Equal(t, "inst-1", cm.Get("x-codex-installation-id").String(), "installation_id 注入")
 	require.Equal(t, "sess-1", cm.Get("session_id").String(), "session_id 注入")
 	require.Equal(t, "thread-1", cm.Get("thread_id").String(), "thread_id 注入")
 	require.Equal(t, "thread-1:0", cm.Get("x-codex-window-id").String(), "window_id 注入")
-	require.True(t, isUUIDv7(cm.Get("turn_id").String()), "turn_id 自动 UUIDv7（payload 未带）")
-	for _, k := range []string{"x-openai-subagent", "x-codex-parent-thread-id", "parent_turn_id", "x-codex-turn-metadata"} {
-		require.False(t, cm.Get(k).Exists(), "未配置条件键不注入: %s", k)
+	turnID := cm.Get("turn_id").String()
+	require.True(t, isUUIDv7(turnID), "turn_id 自动 UUIDv7（Turn.ID 为空）")
+	require.Equal(t, turnID, cm.Get("root_turn_id").String(), "root_turn_id 与 turn_id 同值")
+	require.Equal(t, `{"status":"none"}`, cm.Get("mcp_attribution").String())
+	require.Equal(t, "true", cm.Get("guardian_credits_requested").String())
+	tm := gjson.Parse(cm.Get("x-codex-turn-metadata").String())
+	require.Equal(t, "turn", tm.Get("request_kind").String(), "HTTP 带 turn 形态 turn-metadata")
+	require.Equal(t, turnID, tm.Get("turn_id").String())
+	require.Equal(t, "sess-1", tm.Get("session_id").String())
+	var keys []string
+	cm.ForEach(func(k, _ gjson.Result) bool { keys = append(keys, k.String()); return true })
+	require.ElementsMatch(t, []string{
+		"session_id", "thread_id", "x-codex-window-id", "x-codex-installation-id",
+		"turn_id", "root_turn_id", "x-codex-turn-metadata", "mcp_attribution", "guardian_credits_requested",
+	}, keys, "HTTP client_metadata 恰为官方键集（turn-state/ws 专属键不在体里）")
+	require.Equal(t, "sess-1", gjson.GetBytes(c.body(0), "prompt_cache_key").String(), "prompt_cache_key = SessionID")
+	require.JSONEq(t, `[{"role":"user","content":"hi"}]`, gjson.GetBytes(c.body(0), "input").Raw, "客户端 input 元素原样")
+}
+
+// testSlotIdentity 非匿名测试身份（SessionID 非空——SessionID 为空的身份按匿名处理）。
+func testSlotIdentity(inst, thread string) codexsdk.Identity {
+	return codexsdk.Identity{
+		InstallationID: inst,
+		Session:        codexsdk.Session{SessionID: thread, ThreadID: thread, WindowID: thread + ":0"},
 	}
-	require.Equal(t, "hi", gjson.GetBytes(c.body(0), "input").String(), "注入不应动其余字段")
 }
 
 // TestCodexResponsesIdentityTurnIDOverride payload 自带 turn_id 恒被网关覆盖为
-// 自动 UUIDv7（codex 面客户端 client_metadata 永不透传：优先级 = 网关值 > payload）。
+// 自动 UUIDv7（codex 面客户端 client_metadata 永不透传：整个对象丢弃，由身份重建）。
 func TestCodexResponsesIdentityTurnIDOverride(t *testing.T) {
 	up, c := newCodexRespUpstream(t, codexRespStep{status: 200, events: []string{t6RespCreated, t6RespItemEv, t6RespDone}})
 	defer up.Close()
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-t"}
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep","x-client":"leak"}}`), testSlotIdentity("inst-t", "thread-t"), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	got := gjson.GetBytes(c.body(0), "client_metadata.turn_id").String()
 	require.True(t, isUUIDv7(got), "客户端 turn_id 不透传，网关注入自动 UUIDv7: %s", got)
 	require.NotEqual(t, "tid-keep", got, "客户端 turn_id 应被覆盖")
+	require.False(t, gjson.GetBytes(c.body(0), "client_metadata.x-client").Exists(), "客户端 client_metadata 其余键同样丢弃")
+
+	// 匿名身份：客户端 client_metadata 同样丢弃，且不重建。
+	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","client_metadata":{"turn_id":"tid-keep"}}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
+	require.NoError(t, err)
+	require.False(t, gjson.GetBytes(c.body(1), "client_metadata").Exists(), "匿名：客户端 client_metadata 不透传")
 }
 
 // TestCodexStreamBodyPassthrough StreamBody 透传：cred → 缓存取 HTTPClient →
 // 返回**未关闭**的 raw body（上游原始 SSE 字节含 data: 前缀与 [DONE]——verbatim，
 // 与 Stream 的逐 data: 载荷不同）；turn-state 只经 Identity 流动（Sink 收签发值、
-// 下一请求按 TurnState 带上）。
+// 下一请求按 Turn.State 带上）。
 func TestCodexStreamBodyPassthrough(t *testing.T) {
 	up, c := newCodexRespUpstream(t,
 		codexRespStep{status: 200, events: []string{t6RespCreated, t6RespDone}, turnState: "st-body"},
@@ -886,7 +914,8 @@ func TestCodexStreamBodyPassthrough(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-body"}
 	sink := &testSink{}
-	id := codexsdk.Identity{Meta: codexsdk.CodexMeta{InstallationID: "inst-s"}, Sink: sink}
+	id := testSlotIdentity("inst-s", "thread-s")
+	id.Sink = sink
 
 	resp, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), id, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
@@ -897,7 +926,7 @@ func TestCodexStreamBodyPassthrough(t *testing.T) {
 	require.Contains(t, string(body), "data: "+t6RespCreated+"\n\n", "raw 帧原样（data: 前缀保留）")
 	require.Contains(t, string(body), "data: [DONE]", "原始 [DONE] 保留（verbatim）")
 	require.Equal(t, "Bearer pat-body", c.auth(0), "凭据透传")
-	// 伪装身份注入（等价流式路径覆盖）：client_metadata 恒带 installation_id +
+	// 伪装身份注入（等价流式路径覆盖）：client_metadata 带 installation_id +
 	// 自动 turn_id。
 	cm := gjson.GetBytes(c.body(0), "client_metadata")
 	require.Equal(t, "inst-s", cm.Get("x-codex-installation-id").String(), "StreamBody 路径同样注入伪装身份")
@@ -906,12 +935,12 @@ func TestCodexStreamBodyPassthrough(t *testing.T) {
 	require.Equal(t, []string{"st-body"}, sink.snapshot(), "本次响应头签发值经 Sink 交付")
 
 	// 下一次请求按会话当前值（Sink 给出的 st-body）带上——会话侧就是这么填的。
-	id.TurnState, id.Sink = "st-body", nil
+	id.Turn.State, id.Sink = "st-body", nil
 	resp2, err := a.StreamBody(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m","stream":true}`), id, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	_, _ = io.Copy(io.Discard, resp2.Body)
 	_ = resp2.Body.Close()
-	require.Equal(t, "st-body", c.turnState(1), "逐请求按 Identity.TurnState 带上 ts")
+	require.Equal(t, "st-body", c.turnState(1), "逐请求按 Identity.Turn.State 带上 ts")
 }
 
 // t6RespCallItem 工具调用输出项 fixture（轮边界判定面——item.type function_call）。
@@ -927,8 +956,8 @@ func TestCodexResponsesIdentityChangeReusesClient(t *testing.T) {
 	defer up.Close()
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-r"}
-	id1 := codexsdk.Identity{Meta: codexsdk.CodexMeta{InstallationID: "inst-1", ThreadID: "t1", WindowID: "t1:0"}}
-	id2 := codexsdk.Identity{Meta: codexsdk.CodexMeta{InstallationID: "inst-2", ThreadID: "t2", WindowID: "t2:0"}}
+	id1 := testSlotIdentity("inst-1", "t1")
+	id2 := testSlotIdentity("inst-2", "t2")
 
 	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), id1, domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
@@ -944,7 +973,7 @@ func TestCodexResponsesIdentityChangeReusesClient(t *testing.T) {
 }
 
 // TestCodexResponsesTurnStateViaIdentitySink turn-state 只走 Identity：请求带
-// Identity.TurnState（= 本请求的 ts），上游签发值只经 Identity.Sink 交付。
+// Identity.Turn.State（= 本请求的 ts），上游签发值只经 Identity.Sink 交付。
 //
 // 客户端不再持有 ts（无 provider/observer），所以"ts 变了"不是重建理由；ts 的
 // 存储属会话（网关侧）；SDK 侧只负责按请求带上与按回调落点交付。
@@ -956,26 +985,31 @@ func TestCodexResponsesTurnStateViaIdentitySink(t *testing.T) {
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-ts"}
 	sink := &testSink{}
+	withTS := func(ts string, sink codexsdk.TurnStateSink) codexsdk.Identity {
+		id := testSlotIdentity("inst-ts", "thread-ts")
+		id.Turn.State, id.Sink = ts, sink
+		return id
+	}
 
 	// 轮首：不带 ts；上游签发 ts-1 → 只进 Sink。
 	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`),
-		codexsdk.Identity{Sink: sink}, domain.CodexResponsesTransportDefault)
+		withTS("", sink), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
 	require.Equal(t, "", c.turnState(0), "轮首不带头")
 	require.Equal(t, []string{"ts-1"}, sink.snapshot(), "签发值经 Sink 交付")
 
 	// 下一次请求：带 Sink 给出的值（会话把它填回来）。
 	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`),
-		codexsdk.Identity{TurnState: "ts-1", Sink: sink}, domain.CodexResponsesTransportDefault)
+		withTS("ts-1", sink), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	require.Equal(t, "ts-1", c.turnState(1), "请求按 Identity.TurnState 带上 ts")
+	require.Equal(t, "ts-1", c.turnState(1), "请求按 Identity.Turn.State 带上 ts")
 	require.Equal(t, []string{"ts-1"}, sink.snapshot(), "无签发值 ⇒ Sink 不再被调用")
 
 	// Sink 为 nil：不 panic、不捕获（帧/体照旧）。
 	_, err = a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`),
-		codexsdk.Identity{TurnState: "ts-2"}, domain.CodexResponsesTransportDefault)
+		withTS("ts-2", nil), domain.CodexResponsesTransportDefault)
 	require.NoError(t, err)
-	require.Equal(t, "ts-2", c.turnState(2), "TurnState 逐请求生效（无客户端重建）")
+	require.Equal(t, "ts-2", c.turnState(2), "Turn.State 逐请求生效（无客户端重建）")
 }
 
 // searchReqPayload search 端点请求 fixture（opaque——网关零解析断言面）。
@@ -1059,7 +1093,7 @@ func TestCodexResponsesEnvelope4xx(t *testing.T) {
 	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, up.URL)), nil, RotationDeps{})
 	cred := &domain.AccountCredential{AccountID: 9, PATKey: "pat-4xx"}
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
 	require.Error(t, err)
 	var env *EnvelopeError
 	require.True(t, errors.As(err, &env), "信封类型 errors.As 命中: %v", err)
@@ -1121,7 +1155,7 @@ func TestCodexResponsesFatal(t *testing.T) {
 	a := NewCodex(handler.add, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
 	cred := respCred(7, "at-old", "rt-1")
 
-	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
+	_, err := a.Responses(context.Background(), cred, a.DirectEgress(), []byte(`{"model":"m"}`), codexsdk.Identity{}, domain.CodexResponsesTransportDefault)
 	require.Error(t, err)
 	var ap *codexsdk.AuthPermanentlyRevokedError
 	require.True(t, errors.As(err, &ap), "fatal 原样透传（errors.As 命中）: %v", err)
@@ -1364,8 +1398,8 @@ func dialCred(accountID int64) *domain.AccountCredential {
 }
 
 // TestCodexDialPATSuccess PAT 凭据 Dial 成功：升级头带 Bearer pat；连接建
-// 立后 Send/Recv 帧回声往返（帧经 SDK 无条件归一：白名单内键保留 +
-// 强制 store:false）。
+// 立后 Send/Recv 帧回声往返（帧经 SDK 无条件整形：白名单内键保留、input 规范化、
+// 强制 store:false；匿名不写 client_metadata）。
 func TestCodexDialPATSuccess(t *testing.T) {
 	srv, up := newCodexWSUpstream(t, 200)
 	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, srv.URL)), nil, RotationDeps{})
@@ -1382,9 +1416,11 @@ func TestCodexDialPATSuccess(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(f, &echo))
 	require.Equal(t, "echo", echo.Type)
-	require.Contains(t, echo.Payload, `"input":"hi"`, "白名单内键原样保留")
+	require.Equal(t, "gpt-4o", gjson.Get(echo.Payload, "model").String(), "model 原样保留")
+	require.JSONEq(t, `[{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}]`,
+		gjson.Get(echo.Payload, "input").Raw, "字符串 input 规范成一条 user 消息")
 	require.Contains(t, echo.Payload, `"store":false`, "SDK 无条件强制 store:false")
-	require.Contains(t, echo.Payload, `"client_metadata"`, "伪装注入照常")
+	require.False(t, gjson.Get(echo.Payload, "client_metadata").Exists(), "零值身份 = 匿名：不写 client_metadata")
 	c.CloseNow()
 	require.Equal(t, 1, up.upgradesN())
 	require.Equal(t, "Bearer pat-1", up.header(0).Get("Authorization"))

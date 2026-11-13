@@ -105,11 +105,9 @@ func benchCodexAdapter(b *testing.B) (*Codex, *domain.AccountCredential, []byte)
 func benchCodexIdentity() codexsdk.Identity {
 	sess := codexsdk.Session{SessionID: "bench-session", ThreadID: "bench-thread", WindowID: "bench-thread:0"}
 	return codexsdk.Identity{
-		Session: sess,
-		Meta: codexsdk.CodexMeta{
-			InstallationID: "bench-install", SessionID: "bench-session",
-			ThreadID: "bench-thread", WindowID: "bench-thread:0",
-		},
+		InstallationID: "bench-install",
+		Session:        sess,
+		Window:         codexsdk.Window{Number: 0},
 	}
 }
 

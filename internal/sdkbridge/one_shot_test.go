@@ -47,7 +47,7 @@ func TestGenerateImageOnceSuccess(t *testing.T) {
 	tr := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requests.Add(1)
 		raw, _ := io.ReadAll(req.Body)
-		captured = onceCapturedRequest{path: req.URL.Path, auth: req.Header.Get("Authorization"), body: raw}
+		captured = onceCapturedRequest{path: req.URL.Path, auth: rawAuthorization(req.Header), body: raw}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body}, nil
 	})
 	status, raw, err := sdkbridge.GenerateImageOnce(context.Background(), "pat-x", "acct", tr, generateImageParams())
@@ -215,7 +215,7 @@ func TestSearchOnceSuccess(t *testing.T) {
 	tr := roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		requests.Add(1)
 		raw, _ := io.ReadAll(req.Body)
-		captured = onceCapturedRequest{path: req.URL.Path, auth: req.Header.Get("Authorization"), body: raw}
+		captured = onceCapturedRequest{path: req.URL.Path, auth: rawAuthorization(req.Header), body: raw}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: body}, nil
 	})
 	status, raw, err := sdkbridge.SearchOnce(context.Background(), "pat", "acct", tr, payload)
@@ -343,4 +343,14 @@ func TestOneShotNilTransport(t *testing.T) {
 	_, _, err = sdkbridge.SearchOnce(context.Background(), "pat", "acct", nil, testSearchPayload())
 	require.Error(t, err)
 	require.False(t, errors.Is(err, sdkbridge.ErrBodyTooLarge))
+}
+
+// rawAuthorization 读出站请求头里 SDK 实际写入的鉴权值：SDK 用小写名直接赋值
+// （`h["authorization"]`，不经 Header.Set 规范化），RoundTripper 这一侧看到的是原始
+// map 键，`Header.Get` 读不到。只认小写键——断言的正是新形态。
+func rawAuthorization(h http.Header) string {
+	if v := h["authorization"]; len(v) > 0 {
+		return v[0]
+	}
+	return ""
 }

@@ -309,7 +309,7 @@ func wsReuseCred() *domain.AccountCredential {
 type wsReuseSess struct {
 	mu      sync.Mutex
 	session codexsdk.Session
-	meta    codexsdk.CodexMeta
+	inst    string
 	ts      string
 	seen    []string
 }
@@ -318,12 +318,7 @@ func newWSReuseSess(installationID string) *wsReuseSess {
 	thread := codexsdk.NewUUIDv7()
 	return &wsReuseSess{
 		session: codexsdk.Session{SessionID: thread, ThreadID: thread, WindowID: thread + ":0"},
-		meta: codexsdk.CodexMeta{
-			InstallationID: installationID,
-			SessionID:      thread,
-			ThreadID:       thread,
-			WindowID:       thread + ":0",
-		},
+		inst:    installationID,
 	}
 }
 
@@ -348,12 +343,12 @@ func (s *wsReuseSess) issued() []string {
 }
 
 func (s *wsReuseSess) threadKey() string {
-	return s.meta.InstallationID + "|" + s.meta.ThreadID + "|" + s.meta.ThreadID
+	return s.inst + "|" + s.session.ThreadID + "|" + s.session.ThreadID
 }
 
 // identity 本次请求的身份：ts = 会话当前值，Sink = 会话（与网关同构）。
 func (s *wsReuseSess) identity() codexsdk.Identity {
-	return codexsdk.Identity{Session: s.session, Meta: s.meta, TurnState: s.turnState(), Sink: s}
+	return codexsdk.Identity{InstallationID: s.inst, Session: s.session, Turn: codexsdk.Turn{State: s.turnState()}, Sink: s}
 }
 
 // wsReuseStream 发一次 ws 臂 StreamBody 并读尽关闭（与 proxy 侧消费语义同形：
@@ -400,10 +395,11 @@ func TestCodexWSReuseAcrossTurns(t *testing.T) {
 }
 
 // TestCodexAggregateTurnStateKeepsEventIssuedValue 聚合臂（非流式 `Responses`）在
-// WS 新握手时先收到握手签发值（T1），随后 `response.metadata` 事件签发新值（T2）。
-// 适配层**不得**在请求返回后用响应头快照回写会话：那会把 T2 倒退成 T1。
+// WS 新握手时握手响应头带 T1，随后 `response.metadata` 事件签发新值（T2）。
+// turn-state 只认 `response.metadata` 事件（SDK 整形 §5.5）：握手头不交给 Sink，
+// 适配层也**不得**在请求返回后用响应头快照回写会话（那会把 T2 倒退成 T1）。
 //
-// 判据两条：① Sink 序列以 T2 收尾（事件值最后落）；② 下一次请求帧里带 T2。
+// 判据两条：① Sink 序列只有事件值 T2；② 下一次请求帧里带 T2。
 func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
 	up := newWSReuseUpstream(t, "T1",
 		wsReuseStep{created: true, id: "agg1", ts: "T2"},
@@ -416,7 +412,7 @@ func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
 	_, err := a.Responses(t.Context(), cred, a.DirectEgress(),
 		[]byte(`{"model":"gpt-5.6","input":[]}`), sess.identity(), domain.CodexResponsesTransportWS)
 	require.NoError(t, err)
-	require.Equal(t, []string{"T1", "T2"}, sess.issued(), "握手 T1 → 事件 T2（返回阶段不回写旧快照）")
+	require.Equal(t, []string{"T2"}, sess.issued(), "握手头 T1 不进 Sink；只有事件 T2（返回阶段不回写旧快照）")
 	require.Equal(t, "T2", sess.turnState(), "会话保留事件签发值")
 
 	// 黑盒面：下一次同会话请求必须带 T2（不是 T1）。
@@ -432,13 +428,14 @@ func TestCodexAggregateTurnStateKeepsEventIssuedValue(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // TestCodexWSTurnReplayWithinTurn B：同一轮内重复请求携带**同一个** ts（第一次
-// 由握手签发、后两次重放它），全程 upgrades == 1。
+// 由 `response.metadata` 事件签发、后两次重放它；握手头的值被忽略），全程
+// upgrades == 1。
 //
 // 轮首不带 ts——这正是 M2（把 ts 搬回连接身份/构造期）现形的地方：构造期快照停在
 // ""，第二次请求要带 T1 就只能重建 client ⇒ upgrades 变 2。
 func TestCodexWSTurnReplayWithinTurn(t *testing.T) {
-	up := newWSReuseUpstream(t, "T1",
-		wsReuseStep{created: true, id: "b1"},
+	up := newWSReuseUpstream(t, "T-handshake",
+		wsReuseStep{created: true, id: "b1", ts: "T1"},
 		wsReuseStep{created: true, id: "b2"},
 		wsReuseStep{created: true, id: "b3"},
 	)
@@ -451,7 +448,7 @@ func TestCodexWSTurnReplayWithinTurn(t *testing.T) {
 	}
 
 	require.Equal(t, []string{"", "T1", "T1"}, up.wsRequestTS(),
-		"轮首不带 → 握手签发 T1 → 轮内两次重放同一个 ts")
+		"轮首不带 → 事件签发 T1（握手头不算）→ 轮内两次重放同一个 ts")
 	require.Equal(t, 1, up.upgradeCount(), "轮内重放不换连接")
 }
 
@@ -773,6 +770,8 @@ func TestCodexTurnStateSinkG9NoCallbackAfterClose(t *testing.T) {
 	up := newWSReuseUpstream(t, "T1",
 		wsReuseStep{created: true, id: "s1", ts: "T2", lateTS: "T-late"},
 		wsReuseStep{created: true, id: "s2"},
+		// 聚合臂那一轮的事件签发值（握手头不再交给 Sink，没有它聚合臂就没有签发面）。
+		wsReuseStep{created: true, id: "s3", ts: "T3"},
 	)
 	a, _ := wsReuseCodex(t, up)
 	cred := wsReuseCred()
@@ -801,6 +800,7 @@ func TestCodexTurnStateSinkG9NoCallbackAfterClose(t *testing.T) {
 	require.NotZero(t, aggCount)
 	require.Equal(t, aggSess.issued()[aggCount-1], aggSess.turnState(),
 		"聚合臂以**最后一次**签发值收尾（握手快照不回写）")
+	require.Equal(t, "T3", aggSess.turnState())
 	readAndCloseBody(t, wsReuseStream(t, a, cred, sess.identity(), domain.CodexResponsesTransportWS).Body)
 	require.Len(t, aggSess.issued(), aggCount, "聚合返回后 Sink 计数不增")
 }
