@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// 管理面支付账户页（spec 支付网关 v2 §11 / §10-3 / §18）：账户列表 + 新建/编辑抽屉 +
+// 管理面支付账户页（spec 支付网关 v2 §11 / §10-3 / §18）：账户列表 + 新建/编辑弹窗 +
 // 渠道子表。这是「v2 把凭据从 settings 搬进数据行」之后的唯一配置入口：
 //
 //   · **账户是数据**：key / provider / merchant_ref 创建后只读（key 是网关后台填过的
@@ -121,8 +121,8 @@ export default function PaymentAccounts() {
   const metaState = metaStateOf(providersQ)
   const providers = useMemo<readonly PaymentProviderInfo[]>(() => providersQ.data?.providers ?? [], [providersQ.data])
   // 新建账户要选协议、要按协议渲染凭据表单 → 元数据没起来（或注册表为空）时入口禁用：
-  // 没有 providers[] 就没有协议可选，硬开抽屉只能让人对着一个空表单按保存。
-  // 编辑入口只在 loading 时禁用：failed 态列表照常可读，抽屉里只关掉协议下拉与配置表单。
+  // 没有 providers[] 就没有协议可选，硬开弹窗只能让人对着一个空表单按保存。
+  // 编辑入口只在 loading 时禁用：failed 态列表照常可读，弹窗里只关掉协议下拉与配置表单。
   const canCreate = metaState === 'ready' && providers.length > 0
   const createHint =
     metaState === 'failed'
@@ -131,7 +131,7 @@ export default function PaymentAccounts() {
         ? t('paymentAccounts.unknownProvider')
         : undefined
 
-  // drawer 主体：'new' = 新建；string = 按 key 编辑（对象从列表快照派生，渠道保存后自动刷新）
+  // 弹窗主体：'new' = 新建；string = 按 key 编辑（对象从列表快照派生，渠道保存后自动刷新）
   const [editing, setEditing] = useState<'new' | string | null>(null)
   const editingAccount = useMemo(
     () => (editing && editing !== 'new' ? rows.find(r => r.key === editing) ?? null : null),
@@ -280,11 +280,11 @@ export default function PaymentAccounts() {
         </ScrollArea>
       )}
 
-      {/* —— 新建/编辑抽屉（右侧整高）：key 变化才重挂表单，渠道保存不清空草稿 —— */}
+      {/* —— 新建/编辑弹窗（视口居中；内容超高时弹窗内滚动）：key 变化才重挂表单，渠道保存不清空草稿 —— */}
       <Dialog open={editing != null} onOpenChange={o => { if (!o) setEditing(null) }}>
-        <DialogContent className="top-0 right-0 left-auto h-dvh max-h-dvh translate-x-0 translate-y-0 rounded-none rounded-l-[14px] sm:max-w-2xl">
+        <DialogContent className="sm:max-w-2xl">
           {editing != null && (
-            <AccountDrawer
+            <AccountDialog
               key={editingAccount?.key ?? 'new'}
               account={editingAccount}
               isNew={editing === 'new'}
@@ -328,11 +328,11 @@ export default function PaymentAccounts() {
   )
 }
 
-// AccountDrawer 账户表单 + 渠道子表。
+// AccountDialog 账户表单 + 渠道子表。
 //
 // isNew：key/provider 可填（创建后只读）；编辑态两者只读展示。渠道子表只在编辑态出现
 // （新建时账户还不存在，没有可挂渠道的行）。
-function AccountDrawer({
+function AccountDialog({
   account,
   isNew,
   metaState,
@@ -350,7 +350,7 @@ function AccountDrawer({
   const { t } = useTranslation()
   const qc = useQueryClient()
 
-  // —— 账户字段（编辑态初值来自列表快照；抽屉按 key 重挂，故初值即状态）——
+  // —— 账户字段（编辑态初值来自列表快照；弹窗按 key 重挂，故初值即状态）——
   const [key, setKey] = useState(account?.key ?? '')
   // 新建时默认选元数据里的第一个协议（服务端已按 name 升序，前端不再排序）。
   const [provider, setProvider] = useState(account?.provider ?? providers[0]?.name ?? '')
@@ -359,10 +359,10 @@ function AccountDrawer({
   const [enabled, setEnabled] = useState(account?.enabled ?? true)
   // 本地版本号：只改元数据的请求也带上它（revision 未变时条件仍成立，不会误报 409）。
   const [revision, setRevision] = useState(account?.config_revision ?? 0)
-  // stale：服务端回过 409（别人先改了）。此时**禁止再提交**——抽屉按 key 挂载，
+  // stale：服务端回过 409（别人先改了）。此时**禁止再提交**——弹窗按 key 挂载，
   // account prop 更新（列表已失效重取）不会重置本地 revision，硬重试只会重复 409；
   // 而"自动采用新版本再写一次"正好会把别人的改动覆盖掉（CAS 要防的就是这个）。
-  // 唯一安全的出路是关闭抽屉重开（重挂 → 用服务端最新值重建表单）。
+  // 唯一安全的出路是关闭弹窗重开（重挂 → 用服务端最新值重建表单）。
   const [stale, setStale] = useState(false)
   const [formErr, setFormErr] = useState<string | null>(null)
 
@@ -447,7 +447,7 @@ function AccountDrawer({
       applyView(view)
       setStale(false)
       // 下一次保存要基于**服务端刚回的**版本：本地状态不像 account prop 那样
-      // 跟随 query cache 重挂（抽屉按 key 挂载，key 不变就不会重建）。
+      // 跟随 query cache 重挂（弹窗按 key 挂载，key 不变就不会重建）。
       setRevision(view.config_revision)
       // 保存后把凭据表单回落到服务端**掩码视图**：密钥重新变回 `***`，明文不留在
       // 输入框里（下一次保存若没改就直接回传 `***` = 保持原值）。
@@ -653,7 +653,7 @@ function AccountDrawer({
         </div>
 
         {formErr && <p className="text-sm text-destructive">{formErr}</p>}
-        {/* 409 的常驻提示：关闭重开抽屉会用服务端最新值重建表单（§19-1）。 */}
+        {/* 409 的常驻提示：关闭重开弹窗会用服务端最新值重建表单（§19-1）。 */}
         {stale && <p className="text-sm text-destructive">{t('paymentAccounts.saveConflict')}</p>}
         {save.isError && <p className="text-sm text-destructive">{errMsg(save.error)}</p>}
 
@@ -736,7 +736,7 @@ function ChannelSection({
       return api.deletePaymentAccountChannel(req.key, req.payType)
     },
     onSuccess: () => {
-      // 204 无 body：拿不到新视图，失效列表由抽屉重新派生（渠道行已消失）
+      // 204 无 body：拿不到新视图，失效列表由弹窗重新派生（渠道行已消失）
       qc.invalidateQueries({ queryKey: ['payment-accounts'] })
       toast.add({ title: t('paymentAccounts.channelDeleted'), type: 'success' })
     },

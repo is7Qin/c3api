@@ -2553,7 +2553,7 @@ export default {
     "configSection": "Provider credentials",
     "configSecretHint": "Secret fields are never echoed: keep *** to leave them unchanged, or type a new value to replace them.",
     "configRequired": "Required fields must not be empty: {{fields}}",
-    "createFirstHint": "Once the account exists you can maintain its channels in this drawer (upsert by pay_type).",
+    "createFirstHint": "Once the account exists you can maintain its channels in this dialog (upsert by pay_type).",
     "unknownProvider": "Unregistered provider or metadata unavailable: there is no field definition to render (the server rejects it too).",
     "metaFailed": "Failed to load provider metadata: the provider dropdown and the credentials form are disabled (the account list and channel disable/delete keep working).",
     "field": {

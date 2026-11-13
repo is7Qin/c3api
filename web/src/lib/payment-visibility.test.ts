@@ -8,6 +8,7 @@
 //     jsdom / 渲染测试），只守最容易静默回归的形状：菜单两组都过滤、面包屑守卫先于
 //     路径分支、三张页面都在闸门之内且管理面两页在 RequireAdmin 之内、闸门分支顺序、
 //     设置页保存总开关后让开关缓存失效。
+//   - 支付账户新建/编辑弹窗保持视口居中（不再被覆盖成右侧整高抽屉）。
 // 运行：`node --test`。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
@@ -69,6 +70,7 @@ const app = read('App.tsx')
 const appFlat = app.replace(/\s+/g, ' ')
 const featuresHook = read('lib/use-features.ts')
 const settings = read('pages/settings.tsx')
+const paymentAccounts = read('pages/payment-accounts.tsx')
 
 describe('接线：AppShell（菜单与面包屑）', () => {
   it('同一次 useFeatures() 取两个开关；管理组与用户组都经 paymentNavFor', () => {
@@ -145,3 +147,10 @@ describe('接线：开关取值与失效', () => {
   })
 })
 
+describe('支付账户新建/编辑弹窗', () => {
+  it('视口居中：不再覆盖默认居中定位为右侧整高抽屉', () => {
+    const tags = paymentAccounts.match(/<DialogContent className="[^"]*"/g) ?? []
+    assert.ok(tags.length > 0, '找不到 DialogContent')
+    for (const tag of tags) assert.doesNotMatch(tag, /\b(left-auto|right-0|top-0|translate-[xy]-0|h-dvh)\b/, tag)
+  })
+})

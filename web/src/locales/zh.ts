@@ -2553,7 +2553,7 @@ export default {
     "configSection": "协议凭据",
     "configSecretHint": "密钥字段不回显：显示 *** 时保持原值，重填即替换。",
     "configRequired": "必填字段不能为空：{{fields}}",
-    "createFirstHint": "账户创建后可在本抽屉里维护渠道（按 pay_type upsert）。",
+    "createFirstHint": "账户创建后可在本弹窗里维护渠道（按 pay_type upsert）。",
     "unknownProvider": "该协议未注册或元数据不可用：没有可用的字段定义（服务端也会拒绝）。",
     "metaFailed": "协议元数据加载失败：协议下拉与凭据表单已禁用（账户列表与渠道的停用/删除不受影响）。",
     "field": {
