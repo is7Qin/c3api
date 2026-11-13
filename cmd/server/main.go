@@ -610,6 +610,10 @@ func main() {
 	// SDK redisstore（codex:conv:* / codex:turn:*）共享；c3api 只注入 rdb，连接池
 	// 生命周期归 redisx。恒构造（nil 只出现在测试 → 回到槽位路径）。
 	convBook := codexsdk.NewConversationBook(redisstore.New(rdb))
+	// 会话簿 worker（Name="codex-conversation"）：50ms 节拍 book.Flush 把轮次写
+	// 批量落 Redis，停机预算内最后 Flush 一次；Stats 暴露 conv_*/shape_* 计数。
+	// 纳管紧跟 contBindW（managedWorkers 下方统一 wm.Register）。
+	convW := proxy.NewConversationWorker(convBook, log, proxy.ConversationWorkerConfig{})
 	// codex SDK 适配层装配（§3——统一失效回调先落生图路径；全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
 	// 调度摘除 + 审计契约）。egressPool/rotation 同构造期一次给齐（构造后
@@ -815,7 +819,7 @@ func main() {
 	// supplier worker 插在 rec 之前（§5.5：reverse-shutdown 时 rec 先关 → 先落完整
 	// 账本，credit 再排空其消费；关闭态 supplierWorkers 为 nil，append 不贡献元素）。
 	managedWorkers = append(managedWorkers, supplierWorkers...)
-	managedWorkers = append(managedWorkers, rec, errlogW, contBindW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
+	managedWorkers = append(managedWorkers, rec, errlogW, contBindW, convW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// 供应商财务视图装载器（独立于 billing.enabled 的 ticker，§6.4）不在

@@ -5598,6 +5598,25 @@ components:
         #     dropped int64（队列满/已关闭丢弃累计）, failed int64（批量失败/逐条
         #     I/O 错误累计）, conflicts int64（CAS conflict 累计——保留旧绑定，非
         #     必然 410）, unattributed int64（可归属拒绝累计：缺 dispatch/reqMeta/指纹）
+        #   codex-conversation（Codex 会话簿 Flush worker；全部 int64 单调计数，
+        #     *_entries 为当前条目数）: conv_conversation_cache_hits,
+        #     conv_conversation_cache_misses, conv_turn_cache_hits,
+        #     conv_turn_cache_misses, conv_conversation_entries, conv_turn_entries,
+        #     conv_opens, conv_open_failures（含熔断拒绝与超时）, conv_advances,
+        #     conv_advance_failures, conv_loads, conv_load_failures,
+        #     conv_breaker_opens, conv_breaker_rejects（熔断期间被拒的存储调用）,
+        #     conv_one_shot_identities, conv_temporary_turns, conv_queue_drops
+        #     （写入队列满丢弃）, conv_save_turns_calls, conv_save_turns_failures
+        #     （整批失败）, conv_save_item_failures（单条失败）,
+        #     conv_turn_state_ignored, conv_ws_untracked_connections,
+        #     conv_ws_incremental_injects, conv_ws_local_temporary_turns,
+        #     conv_ws_late_turn_states, conv_sweeps, conv_sweep_deleted,
+        #     conv_sweep_nanos（清扫累计耗时 ns）, conv_local_rejects（SDK 本地拒绝
+        #     ErrInvalidRequestBody 累计——HTTP/WS 四落点合计，按客户端 400 处理）;
+        #     进程级整形计数: shape_anonymous, shape_partial_identity,
+        #     shape_duplicate_keys, shape_non_string_instructions,
+        #     shape_dual_tool_sources, shape_unknown_models,
+        #     shape_incremental_reinjects
         #   pricing-sync: running bool, last_sync_unix_ms int64（最近 fetch 尝试时刻）
         #   retention: last_patrol_unix_ms int64（最近巡检完成时刻）,
         #     last_dropped_log_partitions int64, last_dropped_errlog_partitions int64,

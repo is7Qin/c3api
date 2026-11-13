@@ -167,7 +167,10 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 	// quality-sync so reverse shutdown closes quality-sync first (its failed
 	// flush may still refill the owner) and the owner second.
 	mustBefore("qualityFlowOwner", "qualitySync")
-	business := []string{"mailW", "warningWorker", "billingWorker", "inv", "schedW", "ruleEngine", "rec", "errlogW", "pricingSync", "retention", "statsAgg", "qualityFlowOwner", "qualitySync", "concSync", "accConcSync"}
+	// Codex 会话簿 worker 紧跟 cont-bind（spec §5.6）：反向停机时先于 cont-bind
+	// 关闭，最后一次 Flush 发生在 rec/errlogW 关闭之前。
+	require.Equal(t, pos["contBindW"]+1, pos["convW"], "convW must immediately follow contBindW, got %v", order)
+	business := []string{"mailW", "warningWorker", "billingWorker", "inv", "schedW", "ruleEngine", "rec", "errlogW", "contBindW", "convW", "pricingSync", "retention", "statsAgg", "qualityFlowOwner", "qualitySync", "concSync", "accConcSync"}
 	for _, b := range business {
 		mustBefore(b, "disco")
 	}
