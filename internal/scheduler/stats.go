@@ -30,6 +30,10 @@ type SchedulerStats struct {
 	// identical to the last successful compile (the M-advance recheck path).
 	// Expose-only; NOT a fallback and NOT a recompile.
 	SkippedCompiles uint64 `json:"skipped_compiles"`
+	// FingerprintSkips = MarkResult/failureEvent 因候选指纹算不出而丢弃的事件数
+	// （账号缺身份字段）。非零即表示规则引擎**完全没机会评估**该事件——
+	// 这是「规则配了但没生效」的第一个观测面（spec 2026-11-14 §1）。
+	FingerprintSkips uint64 `json:"fingerprint_skips"`
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。
@@ -42,6 +46,7 @@ func (s *Scheduler) Stats() any {
 		ActiveIncidents:        int(s.incidentActive.Load()),
 		LastIncidentEvalUnixMs: s.incidentEvalMs.Load(),
 		SkippedCompiles:        s.skipCount.Load(),
+		FingerprintSkips:       s.fingerprintSkips.Load(),
 	}
 	if v := s.view.Load(); v != nil && v.decision != nil {
 		st.DecisionGeneration = v.decision.generation

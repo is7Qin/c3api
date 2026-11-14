@@ -63,13 +63,19 @@ func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params Ge
 }
 
 // GetAccountsId 账号详情（ServerInterface）。
+//
+// health 是**运行时投影**（调度器健康视图），领域对象不持有它——单独取一次
+// 再贴上（spec 2026-11-14 §3.3）：详情与列表因此同源，不出现「列表显示冷却中、
+// 详情显示无记录」的割裂。
 func (h *AdminAPI) GetAccountsId(w http.ResponseWriter, r *http.Request, id int64) {
 	acc, err := h.svc.GetAccount(r.Context(), id)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	httpface.WriteJSON(w, http.StatusOK, toAPIAccount(acc))
+	out := toAPIAccount(acc)
+	out.Health = toAPIAccountHealth(h.svc.GetAccountHealth(id))
+	httpface.WriteJSON(w, http.StatusOK, out)
 }
 
 // GetAccountsIdGroups 账号的全部分组 id（编辑回显；账号缺 id → 404，

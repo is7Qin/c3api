@@ -193,7 +193,14 @@ type RuleEngine struct {
 	matched         atomic.Uint64
 	persistDropped  atomic.Uint64
 	persistFailures atomic.Uint64
-	persistPending  atomic.Int64 // queued + inflight
+	// 失败四分类（spec 2026-11-14 §2）：只记分类，总数 persistFailures 语义不变
+	// （未分类的 PersistErrOther 只进总数）。分类由 scheduler 侧 wrap 的
+	// rule.PersistError 提供——rule 不 import scheduler（依赖方向 scheduler → rule）。
+	persistMissingRevision     atomic.Uint64
+	persistMissingFingerprint  atomic.Uint64
+	persistFingerprintMismatch atomic.Uint64
+	persistStaleRevision       atomic.Uint64
+	persistPending             atomic.Int64 // queued + inflight
 
 	rules   []compiledRule // enabled、priority 升序（预编译）
 	rulesMu sync.RWMutex
@@ -247,6 +254,24 @@ func (e *RuleEngine) PersistDropped() int64 { return int64(e.persistDropped.Load
 
 // PersistFailures 持久化执行失败累计。
 func (e *RuleEngine) PersistFailures() int64 { return int64(e.persistFailures.Load()) }
+
+// countPersistFailure 记一次持久化失败：总是推进总数（原语义：含未分类），
+// 再按 rule.PersistError.Kind 额外推进四个分类字段之一（spec 2026-11-14 §2）。
+// 未包装的错误（含 health sink 失败、仓储 IO 故障）只进总数——分类字段
+// 不会因为「不知道原因」而虚增。
+func (e *RuleEngine) countPersistFailure(err error) {
+	e.persistFailures.Add(1)
+	switch ClassifyPersistError(err) {
+	case PersistErrMissingRevision:
+		e.persistMissingRevision.Add(1)
+	case PersistErrMissingFingerprint:
+		e.persistMissingFingerprint.Add(1)
+	case PersistErrFingerprintMismatch:
+		e.persistFingerprintMismatch.Add(1)
+	case PersistErrStaleRevision:
+		e.persistStaleRevision.Add(1)
+	}
+}
 
 // PersistQueued 当前持久化 pending（queued + in-flight）— fixes len(channel) lie.
 func (e *RuleEngine) PersistQueued() int { return int(e.persistPending.Load()) }
@@ -495,7 +520,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			sink := e.healthSink
 			if sink != nil {
 				if err := sink.Throttle(ev, *r.Then.Throttle); err != nil {
-					e.persistFailures.Add(1)
+					e.countPersistFailure(err)
 					if e.log != nil {
 						e.log.Warn("health throttle failed", logx.Error(err))
 					}
@@ -509,7 +534,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			sink := e.healthSink
 			if sink != nil {
 				if err := sink.FailAccount(ev); err != nil {
-					e.persistFailures.Add(1)
+					e.countPersistFailure(err)
 					if e.log != nil {
 						e.log.Warn("health fail-account failed", logx.Error(err))
 					}

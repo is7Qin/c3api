@@ -529,6 +529,9 @@ type Account struct {
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
 
+	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）
+	Health *AccountHealth `json:"health,omitempty"`
+
 	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）
 	ProxyId *int64 `json:"proxy_id"`
 
@@ -598,6 +601,18 @@ type AccountExtCredentialType string
 // AccountGroupsResponse defines model for AccountGroupsResponse.
 type AccountGroupsResponse struct {
 	GroupIds []int64 `json:"group_ids"`
+}
+
+// AccountHealth 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）
+type AccountHealth struct {
+	// Routes 该档命中的健康键数（账号×质量类×身份×代际 = 一条候选路由）
+	Routes *int `json:"routes,omitempty"`
+
+	// State 该账号所有健康键里最严重的一档：open | retry_after | probing | ready（严重度递减）。不用 enum：生成物里的包级常量名（open/ready…）会与本包既有标识符抢名字
+	State string `json:"state"`
+
+	// Until 该档最早到期时刻（UTC）；null = 无到期
+	Until *time.Time `json:"until"`
 }
 
 // AccountListResponse defines model for AccountListResponse.
@@ -728,6 +743,9 @@ type AccountView struct {
 	Concurrency            *int64   `json:"concurrency,omitempty"`
 	ErrCount               *int     `json:"err_count,omitempty"`
 	ErrRate                *float64 `json:"err_rate,omitempty"`
+
+	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）
+	Health *AccountHealth `json:"health,omitempty"`
 
 	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）
 	ProxyId *int64 `json:"proxy_id"`

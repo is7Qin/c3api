@@ -118,7 +118,7 @@ func (e *RuleEngine) processPersistItem(ctx context.Context, item PersistItem, r
 	fn := e.persistFn
 	if fn != nil {
 		if err := fn(ctx, item); err != nil && ctx.Err() == nil {
-			e.persistFailures.Add(1)
+			e.countPersistFailure(err)
 			if e.log != nil {
 				e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
 			}

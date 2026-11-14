@@ -501,7 +501,9 @@ export default {
       "enabled": "已启用",
       "disabled": "已禁用",
       "failed": "已失效",
-      "failedTip": "来源：{{source}} · {{time}}"
+      "failedTip": "来源：{{source}} · {{time}}",
+      "cooldown": "冷却中",
+      "cooldownTip": "冷却至 {{time}} · {{routes}} 条路由 · 剩余 {{left}}"
     },
     "recover": "恢复",
     "recoverSuccess": "已发起恢复——账号重新进入探测中",
@@ -1269,9 +1271,9 @@ export default {
         "none": "不惩罚",
         "noneHint": "仅响应整形；不改账号路由。",
         "throttle": "限流（Throttle）",
-        "throttleHint": "临时降权账号或命中路由，到期自动恢复。",
+        "throttleHint": "临时降低该账号（或命中的路由）的优先级，到期自动恢复。",
         "fail_account": "摘除账号",
-        "fail_accountHint": "终态：锁存账号退出路由，需人工恢复。"
+        "fail_accountHint": "终态处置：将账号从路由中摘除，直到手动恢复。"
       },
       "asyncHint": "动作经有界队列异步生效；故障风暴下事件允许被丢弃。规则摘号是尽力而为，不等同 SDK 类型化 fatal 通道。",
       "throttle": {
@@ -1739,7 +1741,7 @@ export default {
       "evaluated": "已评估",
       "admitted": "已入队",
       "suppressed": "已抑制",
-      "cooldown_suppressed": "冷却抑制",
+      "cooldown_suppressed": "冷却已抑制",
       "claim_failed_total": "认领失败",
       "release_failed_total": "释放失败",
       "drop_warn_threshold": "丢弃告警阈值",

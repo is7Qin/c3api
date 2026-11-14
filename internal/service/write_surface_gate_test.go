@@ -98,6 +98,9 @@ var allowedServiceMethods = []string{
 	"GetAccount",
 	"GetAccountExt",
 	"GetAccountGroups",
+	// GetAccountHealth 是调度器健康视图的只读投影（spec 2026-11-14 §3.2）：
+	// 不落库、不推进配置/身份代际——登记为读面。
+	"GetAccountHealth",
 	"GetBalanceWarningThreshold",
 	"GetCode",
 	"GetCodeUses",

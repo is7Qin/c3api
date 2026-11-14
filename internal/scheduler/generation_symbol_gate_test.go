@@ -163,23 +163,35 @@ var revisionVocabulary = map[string]string{
 	"LifecycleRevision":          "C：客户端 CAS 令牌（域模型、回显、前置条件）",
 	"LifecycleRevisionEQ":        "C：ent 相等谓词（前置条件 WHERE）",
 	"MaxLifecycleRevision":       "C：编译水位（DB 变更检测，非 fence）",
-	"Revision":                   "泛化名：healthEntry 的 Redis 记录槽位（值 = K）",
-	"SetConfigRevision":          "配置代际：ent 写入（payment_accounts.config_revision 创建即落 1，配置缓存键起点；spec 支付网关 v2 §3-1）",
-	"SetIdentityRevision":        "K：ent 写入",
-	"SetLifecycleRevision":       "C：ent 写入",
-	"SettlementRevision":         "结算单 CAS revision：认领命令 approved→paying 前置条件（非账号代际 C/K）",
-	"SourceRevision":             "K：凭据事件的**来源**身份纪元（sdkbridge.CredentialFailure / RotationStore 围栏参数）",
-	"expectedIdentityRevision":   "K：参数名（失效路径）",
-	"sourceRevision":             "K：字段/参数名（来源纪元；条目冻结的那一版）",
-	"expectedRevision":           "可重载：管理面前置条件指 C，运行时失效动词指 K",
-	"identityRevision":           "K：参数/字段名（latch、continuation、失效重试）",
-	"revision":                   "泛化名：编译器事实的候选内容代际（值 = K）、SetProbing 的 K 参数",
-	"scanAccountExtRevision":     "K：仓库层扫描器名（一条 SQL 读出凭据投影 + 父行 K；名字里的 Revision 指它读出的那个 K）",
+	// persist 失败分类（spec 2026-11-14 §2）：名字里的 Revision 全部指 K（身份代际），
+	// 与 C（lifecycle_revision）无关——这里的「陈旧」是 K 被管理面推进，不是客户端 CAS。
+	"PersistErrMissingRevision":      "K：persist 失败分类——事件缺期望身份代际 K（scheduler.ErrMissingExpectedRevision 的分类投影，非 C）",
+	"PersistErrStaleRevision":        "K：persist 失败分类——落库 CAS 发现 K 已推进（repository.ErrStaleIdentityRevision 的分类投影，非 C）",
+	"PersistFailuresMissingRevision": "K：观测字段 persist_failures_missing_revision（缺 K 的失败计数）",
+	"PersistFailuresStaleRevision":   "K：观测字段 persist_failures_stale_revision（K 已陈旧的失败计数）",
+	"Revision":                       "泛化名：healthEntry 的 Redis 记录槽位（值 = K）",
+	"SetConfigRevision":              "配置代际：ent 写入（payment_accounts.config_revision 创建即落 1，配置缓存键起点；spec 支付网关 v2 §3-1）",
+	"SetIdentityRevision":            "K：ent 写入",
+	"SetLifecycleRevision":           "C：ent 写入",
+	"SettlementRevision":             "结算单 CAS revision：认领命令 approved→paying 前置条件（非账号代际 C/K）",
+	"SourceRevision":                 "K：凭据事件的**来源**身份纪元（sdkbridge.CredentialFailure / RotationStore 围栏参数）",
+	"expectedIdentityRevision":       "K：参数名（失效路径）",
+	"sourceRevision":                 "K：字段/参数名（来源纪元；条目冻结的那一版）",
+	"expectedRevision":               "可重载：管理面前置条件指 C，运行时失效动词指 K",
+	"identityRevision":               "K：参数/字段名（latch、continuation、失效重试）",
+	"persistMissingRevision":         "K：RuleEngine 原子计数（缺乏期望 K 的 persist 失败）",
+	"persistStaleRevision":           "K：RuleEngine 原子计数（K 已陈旧的 persist 失败）",
+	"revision":                       "泛化名：编译器事实的候选内容代际（值 = K）、SetProbing 的 K 参数",
+	"scanAccountExtRevision":         "K：仓库层扫描器名（一条 SQL 读出凭据投影 + 父行 K；名字里的 Revision 指它读出的那个 K）",
 }
 
 // revisionTags 是扫描面上全部含 "revision" 的结构体标签（已去引号）。
 var revisionTags = map[string]string{
 	`json:"identity_revision"`: "K：continuation 绑定线格式的第三分量",
+	// persist 失败分类（spec 2026-11-14 §2）：两个 tag 里的 revision 指 K（缺 K / K 已陈旧），
+	// 与 C 无关——保留"_revision"后缀是刻意与既有哨兵名对齐，不是复用泛化名。
+	`json:"persist_failures_missing_revision"`: "K：缺期望身份代际的 persist 失败计数（观测面）",
+	`json:"persist_failures_stale_revision"`:   "K：K 已陈旧（被管理面推进）的 persist 失败计数（观测面）",
 }
 
 // --- 扫描基础设施 ---

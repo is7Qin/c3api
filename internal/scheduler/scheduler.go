@@ -1062,6 +1062,16 @@ func (s *Scheduler) Runtime(accountID int64) (RuntimeInfo, bool) {
 	}, true
 }
 
+// AccountHealth 账号级冷却聚合（spec 2026-11-14 §3.1）：转发 RuntimeHealth 的
+// 只读投影。s.health == nil（未装配健康投影 / 测试最小装配）⇒ false——管理面
+// 见到的是「无冷却记录」，而不是崩溃或空档位。
+func (s *Scheduler) AccountHealth(accountID int64) (AccountHealth, bool) {
+	if s == nil || s.health == nil {
+		return AccountHealth{}, false
+	}
+	return s.health.AccountHealth(accountID)
+}
+
 // AccountRuntime 账号运行时视图（/api/admin/overview 聚合专用；含账号名——err_top
 // 为账号维度，name = 账号名）。与 RuntimeInfo 同源（快照 EWMA/并发原子读），
 // 仅多带聚合所需字段（含 Enabled——手动启停轴）。

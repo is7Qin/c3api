@@ -501,7 +501,9 @@ export default {
       "enabled": "Enabled",
       "disabled": "Disabled",
       "failed": "Failed",
-      "failedTip": "Source: {{source}} · {{time}}"
+      "failedTip": "Source: {{source}} · {{time}}",
+      "cooldown": "Cooling down",
+      "cooldownTip": "Cooling until {{time}} · {{routes}} route(s) · {{left}} left"
     },
     "recover": "Recover",
     "recoverSuccess": "Recovery requested — account re-enters probing",

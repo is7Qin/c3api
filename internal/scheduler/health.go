@@ -629,6 +629,81 @@ func (h *RuntimeHealth) ViewRunID() string {
 	return v.runID
 }
 
+// AccountHealth 账号级冷却聚合（spec 2026-11-14 §3.1）：该账号**所有** HealthKey
+// 里最严重的一档，以及**该档**的最早到期时刻与命中键数。三字段描述同一档——
+// State 是档位、Until 是这档里最早恢复的时刻、Routes 是这档里的键数（一个键 =
+// 一个 账号×质量类×身份×代际 组合，即一条候选路由）。
+//
+// 严重度 open > retry_after > probing > ready（与 HealthState.severity 同序）。
+type AccountHealth struct {
+	State  string    // "open" | "retry_after" | "probing" | "ready"
+	Until  time.Time // 该档最早到期时刻（UTC）；Zero = 无到期
+	Routes int       // 该档命中的 HealthKey 数
+}
+
+// accountHealthState 把内部 HealthState 投影成契约小写标识（openapi Account.health.state）。
+func accountHealthState(s HealthState) string {
+	switch s {
+	case StateOPEN:
+		return "open"
+	case StateRetryAfter:
+		return "retry_after"
+	case StateProbing:
+		return "probing"
+	default:
+		return "ready"
+	}
+}
+
+// minExpiresAt 取两个到期时刻（unix ms）的较早者；0 表示未设置（不参与比较）。
+func minExpiresAt(cur, cand int64) int64 {
+	if cand <= 0 {
+		return cur
+	}
+	if cur <= 0 || cand < cur {
+		return cand
+	}
+	return cur
+}
+
+// AccountHealth 账号级冷却聚合：**只读**投影（不改健康状态、不触发同步）。
+// 无任何该账号的 entry ⇒ ok=false（前端按「无冷却记录」处理，与 READY 区分）。
+func (h *RuntimeHealth) AccountHealth(accountID int64) (AccountHealth, bool) {
+	v := h.view.Load()
+	if v == nil {
+		return AccountHealth{}, false
+	}
+	var (
+		found   bool
+		best    HealthState
+		bestSev int
+		untilMs int64
+		routes  int
+	)
+	for k, e := range v.entries {
+		if k.AccountID != accountID {
+			continue
+		}
+		sev := e.State.severity()
+		switch {
+		case !found || sev > bestSev:
+			found, best, bestSev = true, e.State, sev
+			untilMs, routes = e.ExpiresAt, 1
+		case sev == bestSev:
+			routes++
+			untilMs = minExpiresAt(untilMs, e.ExpiresAt)
+		}
+	}
+	if !found {
+		return AccountHealth{}, false
+	}
+	out := AccountHealth{State: accountHealthState(best), Routes: routes}
+	if untilMs > 0 {
+		out.Until = time.UnixMilli(untilMs).UTC()
+	}
+	return out, true
+}
+
 // Sync performs INFO run_id + gen-before/records/gen-after atomic read.
 // Fail-closed on INFO/global-generation/record errors and never treats error as empty.
 // Expiry cleanup uses one Lua script that re-reads global generation and per-record generation/revision before each ZREM/HDEL; errors propagate and freeze view.

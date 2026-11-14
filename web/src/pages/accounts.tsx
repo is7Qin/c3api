@@ -55,7 +55,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { toast } from '@/components/ui/toast'
-import { browserTimeZone, fmtTokens, formatPercent, formatDateTime, toRFC3339, truncate } from '@/components/fmt'
+import { browserTimeZone, fmtTokens, formatPercent, formatDateTime, formatRemaining, toRFC3339, truncate } from '@/components/fmt'
 import { StatsWindowNotice } from '@/components/stats-window-notice'
 import { compositeMaxSpanSeconds } from '@/lib/stats-capabilities'
 import { cn } from '@/lib/utils'
@@ -178,11 +178,16 @@ function UsageCell({ item }: { item?: components['schemas']['AccountUsageItem'] 
 // —— 生命周期展示（fenced 端点为唯一写面；倍率/缓存域校验见 lib/account-config）——
 const fmtMult = (v?: number | null): string => (v == null ? '—' : `×${Number(v.toFixed(4))}`)
 
-// 生命周期状态徽章对：管理面 enabled（契约恒回显；缺失按禁用展示——fail-closed）
-// + 运行时失效（failed_at 置位即标红，tooltip 携带来源/时刻；恢复唯一入口 recover）。
+// 生命周期状态徽章：管理面 enabled（契约恒回显；缺失按禁用展示——fail-closed）
+// + 运行时失效（failed_at 置位即标红，tooltip 携带来源/时刻；恢复唯一入口 recover）
+// + 冷却（health.state = open/retry_after 时标琥珀，tooltip 携带到期时刻/路由数）。
+// 两个运行时轴视觉区分：红 = 终态摘除（需人工恢复），琥珀 = 自愈冷却（到期自动恢复）。
 function LifecycleBadges({ a }: { a: AccountView }) {
   const { t } = useTranslation()
   const enabled = a.Enabled === true
+  // 只展示会自愈的两档：probing/ready 不改变「现在还能不能用」的判断，
+  // 混进徽章列只会稀释红色终态的信号。
+  const cooling = a.health?.state === 'open' || a.health?.state === 'retry_after'
   return (
     <div className="flex items-center gap-1.5">
       <Badge variant="secondary" className={cn('gap-1.5', enabled ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
@@ -199,6 +204,23 @@ function LifecycleBadges({ a }: { a: AccountView }) {
           </TooltipTrigger>
           <TooltipContent>
             {t('accounts.state.failedTip', { source: a.FailureSource ?? '—', time: formatDateTime(a.FailedAt) })}
+          </TooltipContent>
+        </Tooltip>
+      )}
+      {cooling && a.health && (
+        <Tooltip>
+          <TooltipTrigger render={<span className="inline-flex" />}>
+            <Badge variant="secondary" className="gap-1.5 text-amber-600 dark:text-amber-400">
+              <span className="size-1.5 shrink-0 rounded-full bg-amber-500" />
+              {t('accounts.state.cooldown')}
+            </Badge>
+          </TooltipTrigger>
+          <TooltipContent>
+            {t('accounts.state.cooldownTip', {
+              time: formatDateTime(a.health.until ?? undefined),
+              routes: a.health.routes ?? 0,
+              left: formatRemaining(a.health.until) ?? '—',
+            })}
           </TooltipContent>
         </Tooltip>
       )}

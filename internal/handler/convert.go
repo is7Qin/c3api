@@ -157,10 +157,27 @@ func toAPIAccountView(v *service.AccountView) AccountView {
 		SupplierUserId:         base.SupplierUserId, // 归属回显（列表展示/清空入口依赖）
 		CreatedAt:              base.CreatedAt,
 		UpdatedAt:              base.UpdatedAt,
+		Health:                 toAPIAccountHealth(v.Health), // 冷却明细（nil = 无健康记录）
 		Concurrency:            &v.Concurrency,
 		ErrRate:                &v.ErrRate,
 		ErrCount:               &v.ErrCount,
 	}
+}
+
+// toAPIAccountHealth 账号级冷却明细 → 契约类型（spec 2026-11-14 §3.3）。
+// nil 视图 ⇒ nil（契约字段缺席 = 无健康记录）——**不**编造一个 "ready"：
+// 「无记录」与「READY 记录存在」是两件事，合成一件事会让运维无法区分。
+// routes 是可选字段（*int），nil 视图时不输出。
+func toAPIAccountHealth(v *service.AccountHealthView) *AccountHealth {
+	if v == nil {
+		return nil
+	}
+	out := &AccountHealth{State: v.State, Until: v.Until}
+	if v.Routes > 0 {
+		routes := v.Routes
+		out.Routes = &routes
+	}
+	return out
 }
 
 // toAPIGroup 分组领域对象 → 契约类型（PriceMultiplier 万分数 → 正常值

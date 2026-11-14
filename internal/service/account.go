@@ -6,10 +6,12 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -386,11 +388,59 @@ func groupsOfPatch(p repository.AccountPatch) []int64 {
 // AccountView 是账号的管理端视图（含调度器运行时信息）。运行时并发/EWMA
 // 指标与请求路径同源（快照原子读）；账号生命周期（enabled/failed_at）与失效
 // 恢复走 fenced 端点，不在视图内重复。
+//
+// Health 是**冷却明细**（spec 2026-11-14 §3.2）：nil = 该账号无健康记录
+// （与「READY 但记录存在」区分——后者 State="ready"）。
 type AccountView struct {
 	*domain.Account
-	Concurrency int64   `json:"concurrency"`
-	ErrRate     float64 `json:"err_rate"`
-	ErrCount    int     `json:"err_count"`
+	Concurrency int64              `json:"concurrency"`
+	ErrRate     float64            `json:"err_rate"`
+	ErrCount    int                `json:"err_count"`
+	Health      *AccountHealthView `json:"health"`
+}
+
+// AccountHealthView 账号级冷却明细（调度器健康投影的管理端副本）。
+// Until nil = 无到期；Routes = 该档命中的健康键数（一个键 = 一条候选路由）。
+type AccountHealthView struct {
+	State  string
+	Until  *time.Time
+	Routes int
+}
+
+// accountHealthProvider 调度器的账号级冷却投影能力（*scheduler.Scheduler 实现）。
+//
+// 能力探测取用（同 RouteModelsProvider 先例）：**不进 RuntimeProvider 接口**——
+// 现有调度器 mock 全部只实现 Runtime/Runtimes，往接口里加方法会一次性打爆它们；
+// 未装配该能力时 AccountView.Health 保持 nil（降级 = 无冷却记录）。
+type accountHealthProvider interface {
+	AccountHealth(accountID int64) (scheduler.AccountHealth, bool)
+}
+
+// toAccountHealthView 调度器聚合 → 管理端视图（ok=false ⇒ nil）。
+func toAccountHealthView(h scheduler.AccountHealth, ok bool) *AccountHealthView {
+	if !ok {
+		return nil
+	}
+	v := &AccountHealthView{State: h.State, Routes: h.Routes}
+	if !h.Until.IsZero() {
+		until := h.Until
+		v.Until = &until
+	}
+	return v
+}
+
+// GetAccountHealth 单账号冷却明细（详情回显用；无记录/未装配 ⇒ nil）。
+// 列表走 ListAccountViews 内联取值（同一能力口径），此处供 GET 单个账号复用——
+// 名字用 Get 前缀：它是纯读投影（不落库、不推进 C/K），与账号写面门禁同口径。
+func (s *Service) GetAccountHealth(accountID int64) *AccountHealthView {
+	if s.sched == nil {
+		return nil
+	}
+	hp, ok := s.sched.(accountHealthProvider)
+	if !ok {
+		return nil
+	}
+	return toAccountHealthView(hp.AccountHealth(accountID))
 }
 
 // ListAccountViews 账号管理端视图（含调度器运行时信息）。handler 列表入口，
@@ -409,6 +459,9 @@ func (s *Service) ListAccountViews(ctx context.Context, q repository.ListQuery) 
 		if s.sched != nil {
 			if ri, ok := s.sched.Runtime(a.ID); ok {
 				v.Concurrency, v.ErrRate, v.ErrCount = ri.Concurrency, ri.ErrRate, ri.ErrCount
+			}
+			if hp, ok := s.sched.(accountHealthProvider); ok {
+				v.Health = toAccountHealthView(hp.AccountHealth(a.ID))
 			}
 		}
 		out = append(out, v)

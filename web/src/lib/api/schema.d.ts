@@ -2944,6 +2944,7 @@ export interface components {
             FailedAt?: string | null;
             /** @description 失效来源（rule/sdk 等；随 recover 清除） */
             FailureSource?: string | null;
+            health?: components["schemas"]["AccountHealth"];
             /**
              * Format: int64
              * @description 配置代际 C（客户端 CAS 令牌 + DB 变更水位）：每次写面落库无条件 +1；PATCH 以 If-Match 作前置条件（陈旧 → 412），recover 以 body expected_revision（陈旧 → 409）
@@ -2982,6 +2983,18 @@ export interface components {
              * @description 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
              */
             DeletedAt?: string | null;
+        };
+        /** @description 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数） */
+        AccountHealth: {
+            /** @description 该账号所有健康键里最严重的一档：open | retry_after | probing | ready（严重度递减）。不用 enum：生成物里的包级常量名（open/ready…）会与本包既有标识符抢名字 */
+            state: string;
+            /**
+             * Format: date-time
+             * @description 该档最早到期时刻（UTC）；null = 无到期
+             */
+            until?: string | null;
+            /** @description 该档命中的健康键数（账号×质量类×身份×代际 = 一条候选路由） */
+            routes?: number;
         };
         AccountView: components["schemas"]["Account"] & {
             /** Format: int64 */

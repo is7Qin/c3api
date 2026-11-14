@@ -18,7 +18,13 @@ type RuleEngineStats struct {
 	PersistQueued     int   `json:"persist_queued"`      // 持久化队列积压
 	PersistCap        int   `json:"persist_cap"`         // 持久化容量
 	PersistDropped    int64 `json:"persist_dropped"`     // 持久化满丢弃
-	PersistFailures   int64 `json:"persist_failures"`    // 持久化执行失败
+	PersistFailures   int64 `json:"persist_failures"`    // 持久化执行失败（总数，语义不变：含四个分类与未分类）
+	// 失败四分类（spec 2026-11-14 §2）：`persist_failures` 只回答「有没有失败」，
+	// 这四个字段回答「卡在哪一步」——缺 K / 缺 I / I 不一致 / K 已陈旧。
+	PersistFailuresMissingRevision     int64 `json:"persist_failures_missing_revision"`
+	PersistFailuresMissingFingerprint  int64 `json:"persist_failures_missing_fingerprint"`
+	PersistFailuresFingerprintMismatch int64 `json:"persist_failures_fingerprint_mismatch"`
+	PersistFailuresStaleRevision       int64 `json:"persist_failures_stale_revision"`
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。
@@ -33,5 +39,10 @@ func (e *RuleEngine) Stats() any {
 		PersistCap:        cap(e.persistCh),
 		PersistDropped:    int64(e.persistDropped.Load()),
 		PersistFailures:   int64(e.persistFailures.Load()),
+		// 分类字段（额外观测面；总数语义不变）
+		PersistFailuresMissingRevision:     int64(e.persistMissingRevision.Load()),
+		PersistFailuresMissingFingerprint:  int64(e.persistMissingFingerprint.Load()),
+		PersistFailuresFingerprintMismatch: int64(e.persistFingerprintMismatch.Load()),
+		PersistFailuresStaleRevision:       int64(e.persistStaleRevision.Load()),
 	}
 }
