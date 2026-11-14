@@ -661,12 +661,14 @@ func TestProxyFailoverOn429(t *testing.T) {
 	require.Equal(t, domain.Err429, store.logs[0].ErrorType)
 }
 
-// 5xx：连接级/5xx 分流投递 MarkResult（seed-5xx open 10m throttle）；重试矩阵
-// 裁定 5xx 终态不转移（无幂等能力证明）——单账号单次派发后直接耗尽 502（非 429
-// 不设 Retry-After），第二账号不被派发。
-func TestProxyTerminalOn5xx(t *testing.T) {
+// 零字节 500 在尝试预算内换号（spec-retry-5xx §1–§3）：failover 循环把请求改派给
+// 第二账号；每个**被派发**的账号各触发一次 seed-5xx 冷却（open 10m，冷却与换号是
+// 两套独立机制，规则本身未改）。两个账号都 500 ⇒ 预算耗尽回到 502（非 429，不设
+// Retry-After）。
+func TestProxyRetriesZeroByte5xxOnAnotherAccount(t *testing.T) {
 	testHealthSink.reset()
-	up := fakeOpenAI(t, "500")
+	var hits atomic.Int64
+	up := fakeStatusUpstream(&hits, http.StatusInternalServerError)
 	defer up.Close()
 	p := newTestProxy(t, up.URL, 1)
 	tpl2 := &domain.Template{ID: 2, Name: "t2", BaseURL: up.URL, CredentialType: credential.TypeAPIKey, SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIChat}, Models: []string{"gpt-4o"}}
@@ -684,16 +686,15 @@ func TestProxyTerminalOn5xx(t *testing.T) {
 	p.HandleChat(rec, req)
 	require.Equal(t, 502, rec.Code, "body=%s", rec.Body.String())
 	require.Empty(t, rec.Header().Get("Retry-After"))
+	require.Equal(t, int64(2), hits.Load(), "零字节 500 换号一次（FailoverAttempts=2）")
 	sched.FlushRules() // MarkResult 异步投递：断言前排空
-	// 首账号被 seed-5xx 惩罚恰一次（open 10m throttle）；5xx 终态不转移——
-	// 第二账号从未派发，不收任何惩罚。
-	ths := testHealthSink.throttlesFor(1)
-	require.Len(t, ths, 1, "账号 1 5xx 惩罚恰一次投递")
-	require.Equal(t, domain.ThrottleModeOpen, ths[0].Mode)
-	require.NotNil(t, ths[0].DurationMs)
-	require.Equal(t, int64(10*60*1000), *ths[0].DurationMs, "seed-5xx throttle 10m")
-	require.Empty(t, testHealthSink.throttlesFor(2), "5xx 终态不转移：账号 2 不被派发")
+	// 两次 500 各惩罚一次（seed-5xx open 10m）：冷却与换号是两套独立机制。
 	for _, id := range []int64{1, 2} {
+		ths := testHealthSink.throttlesFor(id)
+		require.Len(t, ths, 1, "账号 %d 5xx 惩罚恰一次投递", id)
+		require.Equal(t, domain.ThrottleModeOpen, ths[0].Mode)
+		require.NotNil(t, ths[0].DurationMs)
+		require.Equal(t, int64(10*60*1000), *ths[0].DurationMs, "seed-5xx throttle 10m")
 		ri, ok := sched.Runtime(id)
 		require.True(t, ok)
 		require.Zero(t, ri.Concurrency, "failover 后并发槽必须全部释放")

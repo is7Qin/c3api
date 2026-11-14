@@ -131,7 +131,9 @@ func TestSelectSessionParity_retryMatrixOnThreadedAttempts(t *testing.T) {
 
 	require.True(t, p.shouldRetryWithPlan(context.Background(), 0, errors.New("dial failed"), attempt, false))
 	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, attempt, false))
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, attempt, false))
+	// 行为变更（spec-retry-5xx）：零字节 500 可换号；非白名单 501 仍然不可。
+	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, attempt, false))
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusNotImplemented, nil, attempt, false))
 	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusBadRequest, nil, attempt, false))
 	// Hard continuation never migrates, even on 429.
 	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, attempt, true))

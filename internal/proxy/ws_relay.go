@@ -543,6 +543,10 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 		out.Result = ResultFailed
 		out.HTTPStatus = AttemptStatus(contFail.status)
 		out.Commit = CommitUpstreamResponded
+		// 硬续接 fail-closed **不换号**（Terminal 保持 true，即使 contFail.status
+		// 落在可重试 5xx 集合内，如 502/503）：绑定权威只存在于当次上游响应，
+		// 换号既取不到 previous_response_id，也会让客户端看到两段语义。这里
+		// 无法用「零字节」判定换号权——正确判据是续接绑定本身。
 		out.Terminal = true
 		out.Usage = wsUsageFromTuple(rd.usage)
 		out.Timing.TTFTMS = rd.ttft

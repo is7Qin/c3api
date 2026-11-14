@@ -299,9 +299,11 @@ func TestFailoverLoop_PlanDispatchBoundedByMaxAttempts(t *testing.T) {
 	}
 }
 
-// Replay safety: an upstream 5xx terminates the plan-driven failover — no
-// second dispatch, even with attempt budget left (no proven idempotency).
-func TestFailoverLoop_Plan5xxTerminatesWithoutRetry(t *testing.T) {
+// Zero-byte upstream 5xx (retryable set) replays across accounts up to the
+// attempt budget: the upstream answered before any business byte was written,
+// so another account can still serve the request. Codes outside the retryable
+// set (501/505/...) still terminate — see retry_matrix_5xx_test.go.
+func TestFailoverLoop_Plan5xxReplaysZeroByteAttempts(t *testing.T) {
 	var hits atomic.Int64
 	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -317,7 +319,7 @@ func TestFailoverLoop_Plan5xxTerminatesWithoutRetry(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.HandleChat(rec, req)
 
-	require.Equal(t, int64(1), hits.Load(), "5xx must not replay across accounts")
+	require.Equal(t, int64(3), hits.Load(), "zero-byte 5xx may replay across accounts within the attempt budget")
 	for id := int64(1); id <= 4; id++ {
 		ri, ok := p.sched.Runtime(id)
 		require.True(t, ok)

@@ -180,11 +180,14 @@ func wsOutcomeForUpstreamStatus(base AttemptOutcome, status int, u usageTuple, t
 		return o
 	}
 	if status >= 500 && status <= 599 {
-		// 5xx 已响应未见业务帧，需冷却
+		// 5xx 已响应未见业务帧：可重试集合内不短路换号（Terminal=false，矩阵
+		// 仍会在已写字节/hard continuation 时挡住），其余 5xx（501/505 等）
+		// 保持终态。冷却与换号独立：本出口不决定冷却，仍由调用方 Classify
+		// → MarkResult 按 RuleKindOf(5xx) 命中 seed-5xx。
 		o.Commit = CommitUpstreamResponded
 		o.Result = ResultFailed
 		o.HTTPStatus = AttemptStatus(status)
-		o.Terminal = true
+		o.Terminal = !IsRetryable5xx(AttemptStatus(status))
 		o.BusinessFrameSent = false
 		return o
 	}

@@ -86,6 +86,11 @@ func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, 
 		terminal = false
 	case code == http.StatusTooManyRequests:
 		terminal = false
+	case IsRetryable5xx(AttemptStatus(code)):
+		// Transient/gateway 5xx with zero business bytes may migrate to another
+		// account. The commit/byte prerequisites are enforced by the retry matrix
+		// (Commit != upstream_responded, BusinessFrameSent, HardContinuation).
+		terminal = false
 	}
 	return dispatchFailureOutcome(pipelineBase(attempt), code, clientCancel, terminal)
 }

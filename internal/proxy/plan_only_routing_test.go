@@ -143,8 +143,12 @@ func TestShouldRetryWithPlan_UsesCanonicalAttemptVerdicts(t *testing.T) {
 		"not-sent network failure is retryable")
 	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusTooManyRequests, nil, attempt, false),
 		"ordinary 429 is retryable")
-	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, attempt, false),
-		"5xx never replays")
+	// 行为变更（spec-retry-5xx）：零业务字节的可重试 5xx 现在可以换号；
+	// 501/505 等非白名单 5xx 仍然不再派发。
+	require.True(t, p.shouldRetryWithPlan(context.Background(), http.StatusInternalServerError, nil, attempt, false),
+		"zero-byte retryable 5xx replays")
+	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusNotImplemented, nil, attempt, false),
+		"501 is permanently incompatible")
 	require.False(t, p.shouldRetryWithPlan(context.Background(), http.StatusBadRequest, nil, attempt, false))
 
 	cancelled, cancel := context.WithCancel(context.Background())

@@ -189,6 +189,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				out.Result = ResultFailed
 				out.HTTPStatus = AttemptStatus(ferr.status)
 				out.Commit = CommitUpstreamResponded
+				// 续接绑定 fail-closed **不换号**：绑定权威只在这一账号的上游
+				// 响应里，换号拿不到该 id（ferr.status 即便是 502/503 也不能
+				// 借用「可重试 5xx」语义）。
 				out.Terminal = true
 				p.observeDispatchOutcome(ctx, out, nil)
 				writeErr(w, ferr)

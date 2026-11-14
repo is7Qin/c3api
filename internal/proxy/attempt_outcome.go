@@ -426,7 +426,12 @@ func (o AttemptOutcome) Validate() error {
 			if o.Commit != CommitUpstreamResponded {
 				return fmt.Errorf("5xx must be upstream_responded")
 			}
-			if !o.Terminal {
+			// 可重试 5xx（retry_matrix.IsRetryable5xx）的零业务字节尝试允许非终态：
+			// 它正是换号重试的输入。已写字节的 5xx 仍必须终态；不在白名单里的 5xx
+			// （501/505 等）也仍必须终态——类型层不给出「可以换号」的错误暗示。
+			// upstream_responded 已由上面的 BusinessFrameSent 一致性检查钉死为
+			// 「零业务字节」，所以这里不需要再看字节。
+			if !o.Terminal && !IsRetryable5xx(o.HTTPStatus) {
 				return fmt.Errorf("5xx must be terminal")
 			}
 		case o.HTTPStatus == 0:

@@ -156,6 +156,10 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		// fatal 鉴权失败由 SDK 统一判定并回调上报，此处仅固定文案不泄内部细节，原文仅落盘
 		base := mergeDispatchBase(r.Context(), wsDispatchedBase(sel, reqModel, start))
 		out := wsOutcomeForUpstreamStatus(base, 500, usageTuple{}, nil)
+		// fatal 鉴权失败是**终态**（请求就此收尾，SDK 已摘除该账号，不做换号）：
+		// 这里借 500 只是取「5xx 已响应/零字节」的观测形状，绝不能借用
+		// 「可重试 5xx ⇒ 非终态」那一层语义。
+		out.Terminal = true
 		// fatal 不计额外冷却（SDK 回调已上报失效）：观测无 health，仅 quality+flow。
 		p.observeDispatchOutcome(r.Context(), out, nil)
 		msg := domain.TruncateErrMsg(dialErr.Error())
