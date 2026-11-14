@@ -205,21 +205,37 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 // sniffCodexWSDeath 预筛 WS 业务判死事件帧：分类知识已收拢 SDK——
 // ClassifyAuthFatalFrame 与 HTTP 面 classifyAT401 共享私有 isATFatalCode 码集
 // （单一真相：SDK 扩码自动双面生效），网关不再持有码集副本。本地仅保留热路
-// 径预筛：bytes.Contains 零分配挡掉绝大多数帧，未命中零跨包调用。其余帧
-// （含非判死错误事件——业务错误透传不判死）→ nil。
+// 径预筛：bytes.Contains 零分配挡掉绝大多数帧，未命中零跨包调用。
 //
-// 预筛针取错误事件帧标记 `"type":"error"`——JSON 键名协议固定小写（值大小写
-// 与空白形态由解析层 EqualFold 兜底，判死码值任意大小写均命中）；带前导/
-// 尾随空白键名（`"type" : "error"`）→ 预筛漏过 → 帧照常透传（与既有预筛同
-// 形态风险，上游不产出）。
-func sniffCodexWSDeath(f []byte) *codexsdk.AuthPermanentlyRevokedError {
-	if !bytes.Contains(f, []byte(`"type":"error"`)) {
-		return nil
+// 两类判死帧都走这里（返回值因此收宽成 error）：
+//   - **鉴权码**（token_invalidated / token_revoked）→ SDK `ClassifyAuthFatalFrame`；
+//   - **业务码**（402 + deactivated_workspace）→ 网关侧 `ClassifyAccountFatal`
+//     （业务错误体归网关解析，码集边界见 sdkbridge/account_fatal.go）。
+//
+// 其余帧（含非判死错误事件——业务错误透传不判死）→ nil。
+//
+// 鉴权码那一支的预筛针取错误事件帧标记 `"type":"error"`——JSON 键名协议固定
+// 小写（值大小写与空白形态由解析层 EqualFold 兜底，判死码值任意大小写均命中）；
+// 带前导/尾随空白键名（`"type" : "error"`）→ 预筛漏过 → 帧照常透传（与既有
+// 预筛同形态风险，上游不产出）。
+func sniffCodexWSDeath(f []byte) error {
+	if bytes.Contains(f, []byte(`"type":"error"`)) &&
+		strings.EqualFold(gjson.GetBytes(f, "type").String(), "error") {
+		if fatal := codexsdk.ClassifyAuthFatalFrame(f); fatal != nil {
+			return fatal // 鉴权码优先：它同时也是 SDK 的 fatal 类型面
+		}
 	}
-	if !strings.EqualFold(gjson.GetBytes(f, "type").String(), "error") {
-		return nil // 非错误事件帧（业务内容误含错误帧标记）→ 不判死
+	// 业务码不要求 `"type":"error"`：上游 402 信封两种承载都见过（带 type 的
+	// 错误事件帧、裸 `{"error":{...},"status":402}` 体）。判定本身自带短针预筛，
+	// 未命中零分配返回 nil——逐帧成本与上面那行 bytes.Contains 同档。
+	//
+	// 必须显式 `if x != nil` 再交给 error 接口：ClassifyAccountFatal 返回的是
+	// **具体指针类型**，直接 `return` 会把 typed-nil 装进 error（`!= nil` 成立）
+	// ⇒ 每一帧都被当成判死帧，账号随即被毒化摘除（happy path 直接断流）。
+	if af := sdkbridge.ClassifyAccountFatal(0, f); af != nil {
+		return af
 	}
-	return codexsdk.ClassifyAuthFatalFrame(f)
+	return nil
 }
 
 // 伪装身份注入源：scheduler.Selection.IdentityFor 一次给全四元组

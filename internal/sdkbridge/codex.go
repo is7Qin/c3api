@@ -878,6 +878,14 @@ func (a *Codex) DialPrepared(ctx context.Context, p Prepared, eg *egress.Client,
 // （fatal → 统一回调 + 原样；RefreshError/网络 → 原样 → 网关 failover 分类）。
 func (a *Codex) translateDialError(e *codexEntry, srcRev int64, err error) error {
 	if de, ok := errors.AsType[*codexsdk.DialError](err); ok {
+		// 业务面账号级终止（402 + deactivated_workspace）：升级响应的 body 由
+		// DialError.Body 携带（SDK ≤1KiB 截断），与本面同一条判定——判死并原样
+		// 上抛，不再包信封（IsFatal 命中 ⇒ handleCodexDialError 走 fatal 终态）。
+		if fatal := ClassifyAccountFatal(de.StatusCode, de.Body); fatal != nil {
+			fatal.Err = de
+			a.reportFatal(e, srcRev, fatal)
+			return fatal
+		}
 		env := NewEnvelopeError(de.StatusCode, "", de)
 		env.Refreshed = de.Refreshed
 		return env
@@ -1244,6 +1252,10 @@ const rotateWritebackTimeout = 3 * time.Second
 //     请求句柄或凭据快照的版本），与回调路径共享去重但不共享"当前值"。
 //   - RefreshError → 不上报（可重试——对齐 SDK 语义 auth_errors.go:53-58，
 //     网关按既有 failover 分类处理）
+//   - *HTTPError 且错误体带业务判死码（402 + deactivated_workspace）→ 账号级
+//     终止：上报后**原样上抛 AccountFatalError**（不包信封——见下方分支注释）。
+//     这一档必须先于信封判定：包成信封就只是"这一次请求被拒"，同一账号下一条
+//     请求还会被派发同一个 402。
 //   - *HTTPError → 信封包装（EnvelopeError：StatusCode()/RawJSON()/Unwrap 链；
 //     *HTTPError 自身已有 RawJSON()，包装保留是为了 StatusCode() 方法面与 Unwrap 链）
 //   - 其余（网络/解析等）原样透传（code 0 连接级分类）
@@ -1265,22 +1277,36 @@ func (a *Codex) translateError(e *codexEntry, srcRev int64, err error) error {
 		return err
 	}
 	if he, ok := errors.AsType[*codexsdk.HTTPError](err); ok {
+		// 业务面账号级终止（402 + deactivated_workspace）：**先于信封**判定——它
+		// 不是"上游拒绝了这个请求"，而是"这个账号再也不会有请求成功"。判死并原样
+		// 上抛（不换信封：网关 statusOf 仍拿 402、causeMessage 仍拿上游原文，
+		// 但 IsFatal 命中 ⇒ 请求收尾、不换号）。
+		if fatal := ClassifyAccountFatal(he.StatusCode, he.Raw); fatal != nil {
+			fatal.Err = he
+			a.reportFatal(e, srcRev, fatal)
+			return fatal
+		}
 		return NewEnvelopeError(he.StatusCode, string(he.Raw), he)
 	}
 	return err
 }
 
-// asFatal 判定 SDK 错误是否为账号级终止类（fatal 五类，errors.As 穿透信封
-// 包装链——EnvelopeError.Unwrap 保留链）。RefreshError 不在 fatal 集（可重试
+// asFatal 判定 SDK 错误是否为账号级终止类（fatal 五类 + 业务面判死一类，errors.As
+// 穿透信封包装链——EnvelopeError.Unwrap 保留链）。RefreshError 不在 fatal 集（可重试
 // ——auth_errors.go:53-58 语义）。
+//
+// AccountFatalError 是**网关侧**结论（业务错误体 402 + deactivated_workspace，见
+// account_fatal.go）：进了本函数，`IsFatal` 的所有调用面（Dial 不转移、镜像面
+// 终止、额度面 ErrAuthExpired）自动与 SDK 原生 fatal 同档——判死只有一套语义。
 func asFatal(err error) error {
 	var (
 		re *codexsdk.RefreshOAuthError
 		ap *codexsdk.AuthPermanentlyRevokedError
 		ad *codexsdk.AccountDisabledError
 		cd *codexsdk.CallbackDeliveryError
+		af *AccountFatalError
 	)
-	if errors.As(err, &re) || errors.As(err, &ap) || errors.As(err, &ad) || errors.As(err, &cd) {
+	if errors.As(err, &re) || errors.As(err, &ap) || errors.As(err, &ad) || errors.As(err, &cd) || errors.As(err, &af) {
 		return err
 	}
 	return nil
