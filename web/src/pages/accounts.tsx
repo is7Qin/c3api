@@ -1262,12 +1262,12 @@ export default function Accounts() {
 
       {/* —— 创建/编辑对话框 —— */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{editing ? t('accounts.editTitle', { id: editing.ID ?? 0 }) : t('accounts.newTitle')}</DialogTitle>
             <DialogDescription>{t('accounts.dialogDesc')}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
+          <ScrollArea className="min-h-0 gap-3 pr-2">
             <div className="space-y-1.5">
               <Label htmlFor="acc-name">{t('accounts.nameLabel')}</Label>
               <Input id="acc-name" value={view.name} placeholder={t('accounts.namePlaceholder')} onChange={e => update('name', e.target.value)} />
@@ -1497,7 +1497,7 @@ export default function Accounts() {
             {save.isError && errMsg(save.error) && (
               <p className="text-sm text-destructive">{errMsg(save.error)}</p>
             )}
-          </div>
+          </ScrollArea>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialogOpen(false)}>{t('common.cancel')}</Button>
             <Button
@@ -1549,12 +1549,12 @@ export default function Accounts() {
 
       {/* —— 批量更新对话框：AccountConfigPatch 字段子集（缺席 = 保持原值） —— */}
       <Dialog open={batchUpdateOpen} onOpenChange={o => { if (!o) closeBatchUpdate() }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t('accounts.batchUpdateTitle')}</DialogTitle>
             <DialogDescription>{t('accounts.batchUpdateDesc')}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
+          <ScrollArea className="min-h-0 gap-3 pr-2">
             <div className="space-y-1.5">
               <Label htmlFor="ba-name">{t('accounts.nameLabel')}</Label>
               <Input id="ba-name" value={batchDraft.name ?? ''} placeholder={t('accounts.namePlaceholder')} onChange={e => { const v = e.target.value; if (v === '') clearBatch('name'); else updateBatch('name', v) }} />
@@ -1674,7 +1674,7 @@ export default function Accounts() {
             {batchUpdate.isError && errMsg(batchUpdate.error) && (
               <p className="text-sm text-destructive">{errMsg(batchUpdate.error)}</p>
             )}
-          </div>
+          </ScrollArea>
           <DialogFooter>
             <Button variant="outline" onClick={() => closeBatchUpdate()} disabled={batchUpdate.isPending}>{t('common.cancel')}</Button>
             <Button onClick={submitBatchUpdate} disabled={batchUpdate.isPending}>
@@ -1688,12 +1688,12 @@ export default function Accounts() {
 
       {/* —— 扩展配置（codex 生态账号；credential_type 分流 codex_oauth_* 列组 / codex_pat_key；身份四元组只读） —— */}
       <Dialog open={!!extTarget} onOpenChange={o => { if (!o && !extSave.isPending) setExtTarget(null) }}>
-        <DialogContent className="sm:max-w-md">
+        <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-md">
           <DialogHeader>
             <DialogTitle>{t('accounts.ext.title', { id: extTarget?.ID ?? 0 })}</DialogTitle>
             <DialogDescription>{t('accounts.ext.desc')}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-3">
+          <ScrollArea className="min-h-0 gap-3 pr-2">
             <div className="space-y-1.5">
               <Label>{t('accounts.ext.credentialType')}</Label>
               <Badge variant="outline" className="font-mono">{extQ.data?.credential_type ?? extCredentialType}</Badge>
@@ -1770,7 +1770,7 @@ export default function Accounts() {
             {extSave.isError && errMsg(extSave.error) && (
               <p className="text-sm text-destructive">{errMsg(extSave.error)}</p>
             )}
-          </div>
+          </ScrollArea>
           <DialogFooter>
             <Button variant="outline" onClick={() => setExtTarget(null)} disabled={extSave.isPending}>{t('common.cancel')}</Button>
             <Button
@@ -1792,7 +1792,7 @@ export default function Accounts() {
             <DialogTitle>{t('accounts.usageDetail.title', { name: usageDetail?.Name ?? '—', id: usageDetail?.ID ?? 0 })}</DialogTitle>
             <DialogDescription>{t(`accounts.usageDetail.range.${activeKey}` as DynamicKey)}</DialogDescription>
           </DialogHeader>
-          <div className="flex-1 overflow-y-auto px-6 py-4">
+          <ScrollArea className="min-h-0 flex-1 px-6 py-4">
             <div className="space-y-4">
             <div className="flex justify-end">
               <Select
@@ -1892,7 +1892,7 @@ export default function Accounts() {
               </ScrollArea>
             )}
             </div>
-          </div>
+          </ScrollArea>
           {/* mx-0 mb-0：本弹窗是 p-0（自管内边距），DialogFooter 默认的 -mx-4 -mb-4 是为
               DialogContent 默认 p-4 抵消用的；不抵消会让页脚比弹窗宽 32px，被 overflow-hidden 裁掉两侧 */}
           <DialogFooter className="mx-0 mb-0 shrink-0 rounded-b-[14px] border-t bg-muted/10 px-6 py-5">
