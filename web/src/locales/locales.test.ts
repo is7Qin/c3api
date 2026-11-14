@@ -30,6 +30,14 @@ const DYNAMIC_SENTINELS = [
   'supplierAdmin.act.confirmFailed',
   'status.failed',
   'dashboard.statusCards.failed',
+  // dateRange.preset.* 由组件里的模板字符串 `dateRange.preset.${key}` 拼出，静态抽取器
+  // 只看见字面前缀，5 个叶子无人守——全量列出（键集与顺序的权威在 lib/date-presets.ts
+  // 的 DATE_PRESET_KEYS）。
+  'dateRange.preset.today',
+  'dateRange.preset.last7d',
+  'dateRange.preset.thisWeek',
+  'dateRange.preset.last30d',
+  'dateRange.preset.thisMonth',
 ]
 
 describe('locales 资源完整性', () => {

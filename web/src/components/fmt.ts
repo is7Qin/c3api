@@ -77,10 +77,24 @@ export function localOffsetSuffix(d: Date): string {
   return ` UTC${offMin < 0 ? '-' : '+'}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`
 }
 
-// 默认近 24h 日志范围（datetime-local 本地时区字面量；调用方在组件挂载时固定一次，
+// 默认日志范围（datetime-local 本地时区字面量；调用方在组件挂载时固定一次，
 // 避免渲染期时间漂移；from/to 契约必填）。
-export function defaultLogRange(): { from: string; to: string } {
-  const to = new Date()
+//
+// 窗口整体后移 1h：`[now + 1h − 24h, now + 1h]`，**跨度恒 24h**（下界由上界派生，
+// 不是"只把上界加一小时"）。上界越出此刻是有意的，两个理由：
+//  ① 本函数只精确到分钟，上界若取"此刻"会被截断到当前分钟的 :00——最新 ≤60s
+//     的记录落在窗口外（表现为"刚发生的那条查不到"）；
+//  ② 上界与账号「用量明细」的上界同小时：那边是 [⌈now⌉h − 24h, ⌈now⌉h]，服务端
+//     domain.WindowFromDuration 把 now 向上取整到整点。记 now = M + s（M = now 截到
+//     分钟，0 ≤ s < 60s），则 to = M + 60min ≥ ⌈now⌉h 恒成立。
+// 注意下界同时上移，**不是明细窗口的超集**：from ∈ [⌈now⌉h − 24h, +60min)，即旧形态
+// 最早的那 ≤1h 不再入窗——这是整体后移的直接后果。
+// 上界落在未来不产生多余行——未来没有记录；服务端 Admit 只校验 from<to，没有
+// "上界不得晚于 now"的约束（KindUsageList 的 CostCap=0，跨度不设上限）。
+// `nowMs` 仅供测试注入固定时钟（整点/整点+1ms/分钟末这类边界在真实时钟下不可复现）；
+// 生产调用点一律不传，行为等价于 `Date.now()`。
+export function defaultLogRange(nowMs: number = Date.now()): { from: string; to: string } {
+  const to = new Date(nowMs + 3600 * 1000)
   const from = new Date(to.getTime() - 24 * 3600 * 1000)
   const local = (d: Date) =>
     `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`

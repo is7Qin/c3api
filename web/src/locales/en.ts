@@ -1180,7 +1180,14 @@ export default {
     "label": "Time range",
     "from": "From",
     "to": "To",
-    "placeholder": "Select time range"
+    "placeholder": "Select time range",
+    "preset": {
+      "today": "Today",
+      "last7d": "Last 7 days",
+      "thisWeek": "This week",
+      "last30d": "Last 30 days",
+      "thisMonth": "This month"
+    }
   },
   "rules": {
     "title": "Rules",

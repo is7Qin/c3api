@@ -10,6 +10,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { CalendarIcon } from 'lucide-react'
 import type { DateRange } from 'react-day-picker'
+import { DATE_PRESET_KEYS, presetRange } from '@/lib/date-presets'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
@@ -56,6 +57,9 @@ export function DateRangePicker({
   // 表达"未完成"，否则补 to=from 会令第二次点击被视为新范围起点，两日范围
   // 永远选不出——2026-08-14 修复）；range 完成提交后清空。
   const [draft, setDraft] = useState<DateRange | undefined>(undefined)
+  // 预设按钮的 disabled 判定用挂载时刻固定一次（与 stats 页 minDate 的 mountedMs
+  // 同源），渲染期不读时钟：否则每次 render 的 minDate 比较基准都在漂。
+  const [mountedNow] = useState(() => new Date())
 
   const selected: DateRange | undefined =
     draft ??
@@ -119,6 +123,35 @@ export function DateRangePicker({
         )}
       </PopoverTrigger>
       <PopoverContent align="start" className="w-auto p-0">
+        {/* 快捷预设：区间语义全在 lib/date-presets.ts，这里只渲染 + 提交。
+            点击时现取此刻（不复用 mountedNow）——区间是"从今天起算"的，
+            停用判定的单调性保证挂载时 enabled 蕴含点击时仍 enabled。
+
+            disabled 用**瞬时**比较（from < minDate），与下方 Calendar 的
+            `{ before: minDate }`（react-day-picker 按**日**粒度比较）有意不同：
+            minDate = now − 能力上限跨度，是"窗口起点不得早于此刻这个瞬间"的闸门；
+            日历放行 minDate 当天，是既有行为（那天 00:00 可能早于闸门 <24h，选择后
+            服务端按 window_too_long / raw_horizon 400，由 StatsWindowNotice 呈现）。
+            预设宁严不宽——不能让一个已知会 400 的窗口一键填入。 */}
+        <div className="flex flex-wrap gap-1 border-b p-2">
+          {DATE_PRESET_KEYS.map(key => (
+            <Button
+              key={key}
+              type="button"
+              variant="ghost"
+              size="xs"
+              disabled={minDate ? new Date(presetRange(key, mountedNow).from) < minDate : false}
+              onClick={() => {
+                const r = presetRange(key)
+                onChange(r)
+                setDraft(undefined)
+                setOpen(false)
+              }}
+            >
+              {t(`dateRange.preset.${key}`)}
+            </Button>
+          ))}
+        </div>
         <Calendar
           mode="range"
           numberOfMonths={2}

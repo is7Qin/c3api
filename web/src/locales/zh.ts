@@ -1180,7 +1180,14 @@ export default {
     "label": "时间范围",
     "from": "开始",
     "to": "结束",
-    "placeholder": "选择时间范围"
+    "placeholder": "选择时间范围",
+    "preset": {
+      "today": "今天",
+      "last7d": "近7天",
+      "thisWeek": "本周",
+      "last30d": "近30天",
+      "thisMonth": "本月"
+    }
   },
   "rules": {
     "title": "规则",
