@@ -52,6 +52,17 @@ func CanRetry(cat CallerCategory, o AttemptOutcome) bool {
 	case CommitSentAmbiguous, CommitResponseStarted:
 		return false
 	}
+	// 账号级终止（凭据作废 / 账号停用）：账号已被摘除，同样的请求换个账号通常
+	// 就能成——让一次账号侧死亡变成用户可见失败没有意义。前提与前一条相同是
+	// "零交付"：上面已挡掉 sent_ambiguous / response_started 与
+	// HasPossiblyWrittenBytes，这里再挡 business frame 与 hard continuation
+	// （绑定账号的续接换个账号无解）。
+	if o.AccountFatal {
+		if o.BusinessFrameSent || o.HardContinuation {
+			return false
+		}
+		return o.Commit == CommitNotSent || o.Commit == CommitUpstreamResponded
+	}
 	// Explicit pre-response 429: must be upstream_responded, ordinary non-hard
 	if o.HTTPStatus == 429 && o.Commit == CommitUpstreamResponded {
 		if o.HardContinuation {

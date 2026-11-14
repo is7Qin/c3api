@@ -15,7 +15,6 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -151,13 +150,8 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			// 网关预算到期（零帧）给错误打标记：pipeline 归类成 timeout（§3.1）。
 			// 注意用本函数的**预算 ctx**（不是 r.Context()）：哨兵挂在它上面。
 			genErr = markGatewayBudget(ctx, genErr)
-			if sdkbridge.IsFatal(genErr) {
-				code := streamUpstreamStatus(statusOf(genErr))
-				if code == 0 {
-					code = http.StatusBadGateway
-				}
-				return code, upstreamBody(genErr), false, genErr
-			}
+			// 账号级终止（sdkbridge.IsFatal）不在这里特判：分类归循环的 account-fatal
+			// 分支，换不换由 typed retry matrix 裁决（零交付才允许）。
 			return streamUpstreamStatus(statusOf(genErr)), upstreamBody(genErr), false, genErr
 		default: // 写失败 / 已提交
 			if out.Committed() {

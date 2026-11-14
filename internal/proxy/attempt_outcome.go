@@ -203,6 +203,10 @@ type AttemptOutcome struct {
 	HardContinuation  bool
 	BusinessFrameSent bool
 	IsMalformed       bool
+	// AccountFatal 这次失败是**账号级**的（凭据永久失效 / 账号停用 / 工作区停用），
+	// 不是请求本身有问题：换个账号这条请求通常就能成。与 Terminal 正交——
+	// 已向客户端交付过字节时它仍然终态（不能撤回已发出的响应）。
+	AccountFatal bool
 }
 
 func (o AttemptOutcome) IsDispatched() bool {
@@ -353,6 +357,11 @@ func (o AttemptOutcome) Validate() error {
 			return fmt.Errorf("malformed cannot be cancel/local/reservation")
 		}
 	}
+	// 账号级终止只能是"失败"这一档：客户端取消不是账号的判决，local/reservation
+	// reject 更不是（它们连上游都没碰）。
+	if o.AccountFatal && o.Result != ResultFailed {
+		return fmt.Errorf("account_fatal requires ResultFailed")
+	}
 	// Timing / usage
 	if o.Timing.LatencyMS < 0 {
 		return fmt.Errorf("LatencyMS must be >=0")
@@ -419,7 +428,12 @@ func (o AttemptOutcome) Validate() error {
 			if o.Commit != CommitUpstreamResponded {
 				return fmt.Errorf("4xx must be upstream_responded")
 			}
-			if !o.Terminal {
+			// 账号级终止（401 判死码 / 402 工作区停用）的零业务字节尝试允许非终态：
+			// 它正是换号重试的输入——账号已被摘除，同样的请求换个账号通常就能成。
+			// 普通 4xx（参数/权限/模型不对）仍是确定性拒绝：同参数换号只会把一次
+			// 拒绝放大成 N 次调用，必须终态。upstream_responded 已由上面的
+			// BusinessFrameSent 一致性检查钉死为「零业务字节」。
+			if !o.Terminal && !o.AccountFatal {
 				return fmt.Errorf("4xx must be terminal")
 			}
 		case o.HTTPStatus >= 500 && o.HTTPStatus <= 599:

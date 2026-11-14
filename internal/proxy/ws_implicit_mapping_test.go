@@ -205,7 +205,9 @@ func TestResponsesWSExplicitMapping(t *testing.T) {
 
 func TestCodexWSImplicitMapping(t *testing.T) {
 	store := &captureLogStore{}
-	up, upstreamFrames := newCodexWSMappingUpstream(t, "upstream-b", true)
+	// 判死帧已不再透传（零交付 ⇒ 换号），映射断言改用无判死帧的上游：
+	// 判死帧语义由 TestCodexWSDeathFrameFatal / TestCodexWSFatalFirstFrameRetriesAnotherAccount 守。
+	up, upstreamFrames := newCodexWSMappingUpstream(t, "upstream-b", false)
 	defer up.Close()
 	p, recorder := newCodexWSProxyWithMapping(t, up.URL, domain.ModelMappingModeImplicit, store)
 	srv := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
@@ -214,14 +216,9 @@ func TestCodexWSImplicitMapping(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText, []byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
 	f1 := string(readResponsesWSFrame(t, c))
-	require.Contains(t, f1, `"token_invalidated"`, "death frame must be forwarded")
-	f2 := string(readResponsesWSFrame(t, c))
-	require.Contains(t, f2, `"model":"gpt-4o"`, "client must see rewritten client model")
-	require.NotContains(t, f2, `"model":"upstream-b"`)
-	require.Equal(t, 1, recorderCalls(recorder), "fatal hook must observe death frame")
-	_, acc, reason := recorder.snapshot()
-	require.Equal(t, int64(10), acc)
-	require.Contains(t, reason, "token_invalidated")
+	require.Contains(t, f1, `"model":"gpt-4o"`, "client must see rewritten client model")
+	require.NotContains(t, f1, `"model":"upstream-b"`)
+	require.Equal(t, 0, recorderCalls(recorder), "无判死帧 → 无失效上报")
 	upstreamFrames.mu.Lock()
 	require.Len(t, upstreamFrames.frames, 1)
 	require.Contains(t, upstreamFrames.frames[0], `"model":"upstream-b"`, "hook must have seen original before rewrite")

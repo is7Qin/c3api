@@ -52,8 +52,12 @@ type wsRelayTransport interface {
 // usage 嗅探（sniffResponsesCompletedUsage）与 client.Write 之前调用**——codex
 // 路径的判死帧 FatalAuth 钩子即挂此处（客户端写失败时判死帧仍触发 FatalAuth）。
 func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook func([]byte), r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, firstTyp websocket.MessageType, first []byte) (handled bool, fwErr error) {
-	if err := relayWSFirstFrame(up, r, firstTyp, first); err != nil {
-		return false, err
+	// first == nil：首个客户端帧**已由调用方转发**（codex 分支的"首帧判死预读"
+	// 需要先转发再预读——上游只有收到 create 才会回第一帧；见 wsAttempt）。
+	if first != nil {
+		if err := relayWSFirstFrame(up, r, firstTyp, first); err != nil {
+			return false, err
+		}
 	}
 
 	// --- 双向 relay：三个方向各自 goroutine，首退者触发取消 ---

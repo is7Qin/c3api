@@ -236,6 +236,15 @@ func (p *Proxy) finish(sel *scheduler.Selection, l *domain.UsageLog) {
 	if sel != nil {
 		sel.Release()
 	}
+	p.recordAttemptLog(sel, l)
+}
+
+// recordAttemptLog 落账（计费 + 供应商盖章 + 入库），**不动并发槽**。
+//
+// 拆出来的唯一理由：账号级终止的失败行要落，但请求还要换号继续——槽必须由
+// 故障转移循环在重试前统一释放（finish 会在这里就 Release，导致循环的
+// "release exactly once before retry" 变成双释放）。
+func (p *Proxy) recordAttemptLog(sel *scheduler.Selection, l *domain.UsageLog) {
 	if l != nil {
 		p.applyBilling(l)
 		if p.cfg.BillingCapture {

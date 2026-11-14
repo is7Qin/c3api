@@ -9,12 +9,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/coder/websocket"
 	codexsdk "github.com/is7Qin/codex-sdk"
-	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -51,11 +49,6 @@ var errCodexWSNotIntegrated = errors.New("codex responses unavailable (adapter n
 // 耗尽 502 语义）；不上报失效（避免 account 0 无谓上报——同款）。
 var errCodexExtMissing = errors.New("codex account missing account_ext snapshot (config error)")
 
-// codexAuthFailedMsg codex fatal 用户帧固定文案（裁决：fatal 语义 = 授权
-// 失败——复用 "upstream rejected request" 语义不准；不泄 SDK 内部机制串如
-// "refresh 被拒绝"/重试次数）。落盘侧 ErrorMessage 仍写 dialErr 原文
-// （:125-127），此路径无 Warn——落盘是唯一留痕。
-const codexAuthFailedMsg = "codex authorization failed"
 
 // dialCodexWS 组装一次 codex WS Dial（凭当前请求选中账号 cred）：
 //   - 凭据线：sel.Ext 快照 → AccountCredential 派生（relay 线；热路径零 DB）
@@ -130,50 +123,41 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 // MarkResult 后继续 failover 循环）：
 //   - SDK 本地拒绝（ErrInvalidRequestBody）→ 400 错误帧收尾（不分类不转移）
 //   - 适配层未装配 → 501 语义本地拒绝（释放槽 + recordRejected + 错误帧）
-//   - 裸 fatal（Dial 401 轮转路径 refresh 失败——RefreshOAuthError/
-//     AccountDisabledError）：适配层已统一回调上报（账号失效剔除 + 摘除）；
-//     **该请求不转移**——finish（code 0 ErrNetwork）+ 错误帧收尾
+//   - 裸 fatal（Dial 401 轮转路径 refresh 失败 / 账号停用 / 工作区停用）：
+//     适配层已统一回调上报（failed_at + 快照摘除）。**账号级终止 ≠ 请求级
+//     拒绝**——零业务字节 ⇒ 这条请求换个账号还能成，所以这里不写客户端、
+//     不自行收尾，把分类交回循环（account-fatal 分支落这一跳的账，typed
+//     retry matrix 决定换不换；hard continuation 仍不换）
 //   - 信封 4xx（DialError → EnvelopeError：401/403 升级拒绝）→ 确定性拒绝透
 //     传不转移（与 aiclient 路径 4xx 同构：finish + 错误帧 + 记录）；
 //     Refreshed=true（已轮转重连一次仍失败）→ 4xx 分支天然不再触达同账号，
 //     网关避免双份刷新
 //   - 信封 429 → Kind429 转移；信封 5xx / 裸 RefreshError / 网络（code 0）
 //     → RuleKindOf(code) 转移（正常 failover）
-func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string) {
+func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, client *websocket.Conn, dialErr error) (stop bool, lastCode int, lastErrMsg string, callErr error) {
 	// SDK 本地拒绝（§5.4）：首帧不能整形，Dial 未拨号即返回；经 translateDialError
 	// 包装后仍按 errors.Is 识别。客户端错误——错误帧 + 400 记录，不分类不转移。
 	if isCodexInvalidBody(dialErr) {
 		p.rejectCodexWSInvalidBody(r, reqID, groupID, start, sel, reqModel, client)
-		return true, 0, ""
+		return true, 0, "", nil
 	}
 	if errors.Is(dialErr, errCodexWSNotIntegrated) {
 		sel.Release()
 		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusNotImplemented, domain.ErrBilling, 0, usageTuple{}, start, errCodexWSNotIntegrated.Error())
 		wsWriteError(client, errCodexWSNotIntegrated.Error())
-		return true, 0, ""
+		return true, 0, "", nil
 	}
 	if sdkbridge.IsFatal(dialErr) {
-		// fatal 鉴权失败由 SDK 统一判定并回调上报，此处仅固定文案不泄内部细节，原文仅落盘
-		base := mergeDispatchBase(r.Context(), wsDispatchedBase(sel, reqModel, start))
-		out := wsOutcomeForUpstreamStatus(base, 500, usageTuple{}, nil)
-		// fatal 鉴权失败是**终态**（请求就此收尾，SDK 已摘除该账号，不做换号）：
-		// 这里借 500 只是取「5xx 已响应/零字节」的观测形状，绝不能借用
-		// 「可重试 5xx ⇒ 非终态」那一层语义。
-		out.Terminal = true
-		// fatal 不计额外冷却（SDK 回调已上报失效）：观测无 health，仅 quality+flow。
-		p.observeDispatchOutcome(r.Context(), out, nil)
-		msg := domain.TruncateErrMsg(dialErr.Error())
-		l := logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 0, domain.ErrNetwork, usageTuple{}, start))
-		l.ErrorMessage = &msg
-		p.finish(sel, l)
-		wsWriteError(client, codexAuthFailedMsg)
-		return true, 0, ""
+		// 账号级终止：SDK 已判死并回调摘除该账号。这一跳零业务字节 ⇒ 请求还能
+		// 换号继续，**不写客户端、不在这里收尾**——错误原样交给循环分类
+		// （classifyFailoverAttempt 的 account-fatal 分支落这一跳的账）。
+		return false, statusOf(dialErr), domain.TruncateErrMsg(dialErr.Error()), dialErr
 	}
 	code := statusOf(dialErr)
 	msg := dialErr.Error()
 	switch {
 	case code == http.StatusTooManyRequests:
-		return false, code, domain.TruncateErrMsg(msg)
+		return false, code, domain.TruncateErrMsg(msg), nil
 	case code >= 400 && code < 500:
 		// 4xx 确定性拒绝不转移，走规则引擎仅 CustomMessage 生效
 		em := domain.TruncateErrMsg(msg)
@@ -195,47 +179,30 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 		} else {
 			wsWriteError(client, emOr(em, "upstream rejected request"))
 		}
-		return true, 0, ""
+		return true, 0, "", nil
 	default:
 		// 5xx/网络/刷新错误走连接级转移，5xx 保留原码便于规则匹配
-		return false, code, domain.TruncateErrMsg(msg)
+		return false, code, domain.TruncateErrMsg(msg), dialErr
 	}
 }
 
-// sniffCodexWSDeath 预筛 WS 业务判死事件帧：分类知识已收拢 SDK——
-// ClassifyAuthFatalFrame 与 HTTP 面 classifyAT401 共享私有 isATFatalCode 码集
-// （单一真相：SDK 扩码自动双面生效），网关不再持有码集副本。本地仅保留热路
-// 径预筛：bytes.Contains 零分配挡掉绝大多数帧，未命中零跨包调用。
+// sniffCodexWSDeath 上游帧判死嗅探（每帧一次）。
 //
-// 两类判死帧都走这里（返回值因此收宽成 error）：
-//   - **鉴权码**（token_invalidated / token_revoked）→ SDK `ClassifyAuthFatalFrame`；
-//   - **业务码**（402 + deactivated_workspace）→ 网关侧 `ClassifyAccountFatal`
-//     （业务错误体归网关解析，码集边界见 sdkbridge/account_fatal.go）。
+// **网关不持有任何码集副本**：判据（鉴权码 token_invalidated / token_revoked、
+// 账号码 deactivated_workspace、字段路径、大小写纪律）全部在 SDK 的
+// codexsdk.ClassifyFatalUpstream（upstream_error.go）——扩码只改 SDK，五个承载面
+// 自动同步。本地只留一层零分配预筛：没有 `"error"` 的帧（绝大多数内容帧）直接
+// 返回，连跨包调用都不发生。
 //
-// 其余帧（含非判死错误事件——业务错误透传不判死）→ nil。
+// 两种承载都认（同一事实，不同外壳），所以预筛只看 `"error"` 不看 `"type"`：
 //
-// 鉴权码那一支的预筛针取错误事件帧标记 `"type":"error"`——JSON 键名协议固定
-// 小写（值大小写与空白形态由解析层 EqualFold 兜底，判死码值任意大小写均命中）；
-// 带前导/尾随空白键名（`"type" : "error"`）→ 预筛漏过 → 帧照常透传（与既有
-// 预筛同形态风险，上游不产出）。
+//	WS 错误事件帧  {"type":"error","status":402,"error":{"code":"..."}}
+//	错误信封体     {"error":{"code":"..."},"status":402}
 func sniffCodexWSDeath(f []byte) error {
-	if bytes.Contains(f, []byte(`"type":"error"`)) &&
-		strings.EqualFold(gjson.GetBytes(f, "type").String(), "error") {
-		if fatal := codexsdk.ClassifyAuthFatalFrame(f); fatal != nil {
-			return fatal // 鉴权码优先：它同时也是 SDK 的 fatal 类型面
-		}
+	if !bytes.Contains(f, []byte(`"error"`)) {
+		return nil
 	}
-	// 业务码不要求 `"type":"error"`：上游 402 信封两种承载都见过（带 type 的
-	// 错误事件帧、裸 `{"error":{...},"status":402}` 体）。判定本身自带短针预筛，
-	// 未命中零分配返回 nil——逐帧成本与上面那行 bytes.Contains 同档。
-	//
-	// 必须显式 `if x != nil` 再交给 error 接口：ClassifyAccountFatal 返回的是
-	// **具体指针类型**，直接 `return` 会把 typed-nil 装进 error（`!= nil` 成立）
-	// ⇒ 每一帧都被当成判死帧，账号随即被毒化摘除（happy path 直接断流）。
-	if af := sdkbridge.ClassifyAccountFatal(0, f); af != nil {
-		return af
-	}
-	return nil
+	return codexsdk.ClassifyFatalUpstream(f)
 }
 
 // 伪装身份注入源：scheduler.Selection.IdentityFor 一次给全四元组
@@ -277,3 +244,40 @@ func (t *codexTransport) Close(code websocket.StatusCode, reason string) error {
 }
 
 func (t *codexTransport) CloseNow() { t.up.CloseNow() }
+
+// bufferedTransport 单帧回放：给"首帧判死预读"用。
+//
+// 预读必须能反悔——绝大多数上游的第一帧是正常的 response.created，读出来判一下
+// 没事就得原样交回 relay 转发。只缓冲一帧（错误事件帧/created 都是小帧），不改变
+// 任何既有顺序与所有权。
+type bufferedTransport struct {
+	wsRelayTransport
+	typ        websocket.MessageType
+	pending    []byte
+	hasPending bool
+}
+
+func (t *bufferedTransport) Read(ctx context.Context) (websocket.MessageType, []byte, error) {
+	if t.hasPending {
+		t.hasPending = false
+		return t.typ, t.pending, nil
+	}
+	return t.wsRelayTransport.Read(ctx)
+}
+
+// peekFirstFrame 预读上游第一帧：账号级终止 ⇒ 返回该致命错误（不缓冲）；
+// 其余 ⇒ 缓冲原样回放，返回 nil。读失败原样返回（交给调用方按零状态归类）。
+//
+// 为什么必须在 relay 之前预读：判死帧一旦写给客户端，这条请求就换了号也换不
+// ——客户端已经看到这一段响应。零交付是"换号重试"的硬前提。
+func (t *bufferedTransport) peekFirstFrame(ctx context.Context) (error, error) {
+	typ, f, err := t.wsRelayTransport.Read(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if fatal := sniffCodexWSDeath(f); fatal != nil {
+		return fatal, nil
+	}
+	t.typ, t.pending, t.hasPending = typ, f, true
+	return nil, nil
+}

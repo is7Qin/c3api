@@ -88,13 +88,10 @@ func (c *codexImagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *
 		// 网关预算到期（UpstreamTimeout 哨兵）给错误打标记：pipeline 零状态归类
 		// 判成 timeout（§3.1：上游零产出 ≠ 传输层断开）。
 		err = markGatewayBudget(ctx, err)
-		if sdkbridge.IsFatal(err) {
-			code := statusOf(err)
-			if code == 0 {
-				code = http.StatusBadGateway
-			}
-			return code, upstreamBody(err), false, err
-		}
+		// 账号级终止（sdkbridge.IsFatal）不在这里特判：致命事实由 SDK 判在 err 上，
+		// 循环的 account-fatal 分支落这一跳的账、typed retry matrix 决定换号。
+		// 旧实现把 401/402 这类"账号死了"的错改成 502 交给规则归一——那是在
+		// 用状态码说谎（上游明明给了 4xx），也让"能不能换号"退化成 5xx 判据。
 		return statusOf(err), upstreamBody(err), false, err
 	}
 	wire, err := sdkbridge.MarshalImageResponse(img)

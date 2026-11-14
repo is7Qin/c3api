@@ -46,16 +46,32 @@ func TestRegression_NoDuplicateMarkResultAndReleaseOnHandledFalse(t *testing.T) 
 	require.Equal(t, int64(0), riFinal.Concurrency, "pipeline release exactly once")
 }
 
-func TestRegression_CodexFatalStatus0NotRetryable(t *testing.T) {
+func TestRegression_CodexFatalRetriesWithoutFabricatedStatus(t *testing.T) {
 	require.True(t, sdkbridge.IsFatal(&codexsdk.RefreshOAuthError{}), "sanity: RefreshOAuthError is fatal")
 	require.False(t, sdkbridge.IsFatal(&codexsdk.HTTPError{StatusCode: 0}), "plain network error not fatal")
+
+	// 换号判据是 AccountFatal（账号已摘除），不是伪造出来的状态码：
+	// status 保持上游真值（0 = 上游没给过），矩阵照样允许换号。
 	sel := &scheduler.Selection{AccountID: 1, TemplateID: 1, Model: "m", CandidateFingerprint: "fp"}
-	oFatal := codexImagesOutcome("req-fatal", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultFailed, AttemptStatus(0), CommitUpstreamResponded, false, true, false)
-	require.True(t, oFatal.Terminal, "fatal status-0 must be terminal")
-	require.False(t, CanRetry(oFatal.CallerCategory, oFatal), "fatal must not be retryable")
+	oFatal := codexImagesOutcome("req-fatal", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultFailed, AttemptStatus(0), CommitNotSent, false, false, false)
+	require.False(t, oFatal.Terminal, "零交付的账号级终止不得终态")
+	oFatal.AccountFatal = true
+	require.True(t, CanRetry(oFatal.CallerCategory, oFatal), "账号级终止 status-0 ⇒ 可换号")
+
+	// 已交付字节的账号级终止仍然终态（不能撤回已发出的响应）
+	oWritten := oFatal
+	oWritten.Commit = CommitResponseStarted
+	oWritten.BusinessFrameSent = true
+	oWritten.Terminal = true
+	require.False(t, CanRetry(oWritten.CallerCategory, oWritten), "已交付字节不换号")
+
+	// 非账号级终止的 status-0 仍按既有的 network/not_sent 规则（不变）
 	oNet := codexImagesOutcome("req-net", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultFailed, AttemptStatus(0), CommitNotSent, false, false, false)
 	require.False(t, oNet.Terminal, "network status-0 must be non-terminal retryable")
 	require.True(t, CanRetry(oNet.CallerCategory, oNet), "network not_sent must be retryable")
+
+	// 端到端：上游 401 + token_invalidated → 判死（handled=false 交循环换号），
+	// code 保持上游真值 401，不再被改写成 502 去骗 5xx 判据。
 	up, _ := newCodexImageUpstream(t, codexUpStep{status: 401, body: `{"error":{"code":"token_invalidated"}}`})
 	defer up.Close()
 	store := &captureLogStore{}
@@ -67,15 +83,10 @@ func TestRegression_CodexFatalStatus0NotRetryable(t *testing.T) {
 	code, _, handled, callErr := p.codexImagesGenerations.Call(context.Background(), w, req, "req-fatal-2", 10, time.Now(), sel2, "", []byte(`{"model":"gpt-image-2","prompt":"x"}`), false)
 	require.False(t, handled, "codex fatal pre-response is handled=false (pipeline owns single MarkResult/Release)")
 	require.True(t, sdkbridge.IsFatal(callErr), "fatal must be SDK-authoritative")
-	require.NotEqual(t, 0, code, "fatal status-0 must not remain 0 (retryable network); mapped to terminal code")
-	_ = code
-	_ = handled
+	// AuthPermanentlyRevokedError 自身不带 HTTP 状态码（判死依据是码），所以这里
+	// 的真值就是 0——换号判据是 AccountFatal，不需要一个编出来的状态码。
+	require.Equal(t, 0, code, "不伪造 502：判死类型没有状态码就是 0")
 	sel2.Release()
-	// status-0 fatal must be mapped to non-retryable (not network)
-	fatalNetErr := &codexsdk.RefreshOAuthError{}
-	require.True(t, sdkbridge.IsFatal(fatalNetErr))
-	oFatalNet := codexImagesOutcome("req-fatal-net", sel, "m", OperationTag(domain.OpImagesGenerations), AttemptTiming{}, AttemptUsage{}, ResultFailed, AttemptStatus(502), CommitUpstreamResponded, false, true, false)
-	require.False(t, CanRetry(oFatalNet.CallerCategory, oFatalNet), "status-0 fatal mapped to 502 must not be retryable network")
 }
 
 // TestRegression_ImagesSetModelFailureNotSilentlyForwarded 钉住 S6 修复：JSON

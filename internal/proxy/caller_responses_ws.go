@@ -271,19 +271,45 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			if p.codexWSTransportWrap != nil {
 				tr = p.codexWSTransportWrap(tr)
 			}
-			handled, fwErr := p.relayWS(st.client, tr, frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, frame)
+			// 首帧判死预读（账号级终止的唯一"未交付"窗口）：这条连接的**第一帧**
+			// 就是判死帧时，零业务字节已交付 ⇒ 请求换号还能成，所以不把错误帧写给
+			// 客户端，直接作废本跳、把致命错误交回循环（typed retry matrix 决定换
+			// 不换）。不是判死帧就把那一帧原样缓冲回放，relay 行为零变化。
+			//
+			// 读失败（超时/断流）也走同一条出口：零帧未交付，分类归循环（code 0 →
+			// zeroStatusFailureClass 分 timeout/network），与首帧转发失败同档。
+			buf := &bufferedTransport{wsRelayTransport: tr}
+			// 首帧必须先出网：上游只有收到 response.create 才会回第一帧。转发失败
+			// 与 relayWS 内的同一路径等价（not-sent 可重试）。
+			if fwErr := relayWSFirstFrame(buf, r, st.firstTyp, frame); fwErr != nil {
+				return p.codexFirstFrameFailed(r, reqID, groupID, start, sel, reqModel, st.client, fwErr)
+			}
+			fatalFrame, peekErr := buf.peekFirstFrame(ctx)
+			if fatalFrame != nil {
+				// 死亡上报（与 relay 内 frameHook 唯一跨边界点同一调用，来源句柄
+				// 仍是本次连接的 prep）
+				p.codex.FatalPrepared(prep, fatalFrame)
+				return statusOf(fatalFrame), upstreamBody(fatalFrame), nil, false, fatalFrame
+			}
+			if peekErr != nil {
+				return 0, []byte(domain.TruncateErrMsg(peekErr.Error())), nil, false, peekErr
+			}
+			// first=nil：首帧已在上方转发（预读需要它先出网）
+			handled, fwErr := p.relayWS(st.client, buf, frameHook, r, reqID, groupID, start, sel, reqModel, st.firstTyp, nil)
 			if handled {
 				return 0, nil, nil, true, nil
 			}
 			return p.codexFirstFrameFailed(r, reqID, groupID, start, sel, reqModel, st.client, fwErr)
 		}
-		if stop, code, msg := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
-			// 501/fatal/4xx 已收尾（错误帧与记录已落），请求终止不再转移
+		if stop, code, msg, callErr := p.handleCodexDialError(r, reqID, groupID, start, sel, reqModel, st.client, dialErr); stop {
+			// 501/本地拒绝/4xx 已收尾（错误帧与记录已落），请求终止不再转移
 			return 0, nil, nil, true, nil
 		} else {
-			// 429/5xx/网络错误走 failover 转移，分类与冷却由循环统一处理
-			// （观测归 observeDispatchFailure）。
-			return code, []byte(msg), nil, false, nil
+			// 429/5xx/网络错误/**账号级终止**走 failover 转移，分类与冷却由循环
+			// 统一处理（观测归 observeDispatchFailure）。callErr 必须带上：
+			// 账号级终止的判据就是它（sdkbridge.IsFatal），吞掉会让账号死亡退化成
+			// 一次普通连接失败。
+			return code, []byte(msg), nil, false, callErr
 		}
 	}
 	cred, err := p.credentialFor(ctx, sel)

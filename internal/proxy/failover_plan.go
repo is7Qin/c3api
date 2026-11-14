@@ -7,6 +7,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 func (p *Proxy) normalizedAttempts() int {
@@ -79,8 +80,12 @@ func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Sele
 // callErr and client context.
 func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, ctx context.Context) AttemptOutcome {
 	clientCancel := code == 0 && ctx != nil && ctx.Err() != nil
+	accountFatal := !clientCancel && callErr != nil && sdkbridge.IsFatal(callErr)
 	terminal := true
 	switch {
+	case accountFatal:
+		// 账号级终止：账号已摘除，换个账号通常就能成（零交付前提由矩阵裁决）。
+		terminal = false
 	case clientCancel:
 	case code == 0 && callErr != nil:
 		terminal = false
@@ -92,7 +97,9 @@ func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, 
 		// (Commit != upstream_responded, BusinessFrameSent, HardContinuation).
 		terminal = false
 	}
-	return dispatchFailureOutcome(pipelineBase(attempt), code, clientCancel, terminal)
+	o := dispatchFailureOutcome(pipelineBase(attempt), code, clientCancel, terminal)
+	o.AccountFatal = accountFatal
+	return o
 }
 
 // shouldRetryWithPlan consults the typed retry matrix with the canonical

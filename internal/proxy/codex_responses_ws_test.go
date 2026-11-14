@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -83,6 +84,85 @@ func newCodexWSScriptUpstream(t *testing.T, frames ...string) (*httptest.Server,
 	t.Helper()
 	u := &codexWSUpstream{last: 200, frameScript: frames}
 	return newCodexWSServer(t, u), u
+}
+
+// newCodexWSFatalFirstUpstream 首帧判死上游：**第一次连接**收到 create 后立刻回
+// fatalFrame 并 1000 关闭；后续连接回正常事件流（created/completed + 回声）。
+//
+// 不按凭据值区分：候选先后由调度器决定（两个同构候选不保证顺序），按"第一个
+// 被拨的账号必死"建模，用例就不会因顺序翻转而假绿/假红——断言从实际看到的
+// Authorization 反推。用来守"账号错误换号重试"的两条路径：零交付判死 = 换号，
+// 单账号 = 耗尽收尾。
+func newCodexWSFatalFirstUpstream(t *testing.T, fatalFrame string) (*httptest.Server, *codexWSUpstream) {
+	t.Helper()
+	// frameLimit=1：承接账号收到一份 create 就把整轮发完并正常关闭（用例客户端
+	// 只写一帧，让它等第二帧会挂到超时）。
+	u := &codexWSUpstream{last: 200, frameLimit: 1}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
+			w.WriteHeader(404)
+			return
+		}
+		u.mu.Lock()
+		u.upgrades++
+		u.headers = append(u.headers, r.Header.Clone())
+		fatal := u.upgrades == 1 // 第一个被拨的账号必死
+		u.mu.Unlock()
+		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{CompressionMode: websocket.CompressionContextTakeover})
+		if err != nil {
+			return
+		}
+		defer c.CloseNow()
+		streamed := false
+		n := 0
+		for {
+			typ, msg, err := c.Read(context.Background())
+			if err != nil {
+				return
+			}
+			if isPrewarmFrame(msg) {
+				if err := writePrewarmResponse(c, typ); err != nil {
+					return
+				}
+				continue
+			}
+			u.mu.Lock()
+			u.frames = append(u.frames, string(msg))
+			u.mu.Unlock()
+			if fatal {
+				if err := c.Write(context.Background(), typ, []byte(fatalFrame)); err != nil {
+					return
+				}
+				_ = c.Close(websocket.StatusNormalClosure, "")
+				return
+			}
+			if !streamed {
+				streamed = true
+				for _, f := range []string{
+					`{"type":"response.created","response":{"id":"rsp_ws_ok","model":"gpt-4o"}}`,
+					responsesWSCompletedFrame,
+				} {
+					if err := c.Write(context.Background(), typ, []byte(f)); err != nil {
+						return
+					}
+				}
+			}
+			payload, err := json.Marshal(map[string]any{"type": "echo", "payload": string(msg)})
+			if err != nil {
+				return
+			}
+			if err := c.Write(context.Background(), typ, payload); err != nil {
+				return
+			}
+			n++
+			if n >= u.frameLimit {
+				_ = c.Close(websocket.StatusNormalClosure, "")
+				return
+			}
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv, u
 }
 
 // newCodexWSServer 是两种构造共用的 handler 装配（u 必须已填好 steps/frameScript）。
@@ -698,11 +778,12 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	require.Equal(t, domain.ThrottleModeOpen, ths[0].Mode, "punish 规则的 Throttle 必须生效")
 }
 
-// TestCodexWSFatalNoTransfer 裸 fatal（refresh 判死 invalid_grant）→ 统一回
-// 调上报（账号失效剔除）+ **该请求不转移**：双账号池中健康账号不被
-// 触达（升级恰 1 次）；客户端收错误帧；失效上报恰一次（account 10）。
-func TestCodexWSFatalNoTransfer(t *testing.T) {
-	up, hooks := newCodexWSUpstream(t, []int{401}, 0)
+// TestCodexWSFatalStatus0RetriesHealthAccount 裸 fatal（refresh 判死
+// invalid_grant，status 0）**也换号**：账号级终止与状态码无关——账户死了，
+// 同样的请求换个账号就能成。双账号池里健康账号承接成功，客户端拿到正常事件流。
+func TestCodexWSFatalStatus0RetriesHealthAccount(t *testing.T) {
+	// 升级按序：账号 10 = 401（触发 refresh → 判死），账号 20 = 200（承接）
+	up, hooks := newCodexWSUpstream(t, []int{401, 200}, 1)
 	defer up.Close()
 	newCodexWSRefreshMock(t, codexUpStep{status: 401, body: `{"error":"invalid_grant"}`})
 	store := &captureLogStore{}
@@ -717,14 +798,17 @@ func TestCodexWSFatalNoTransfer(t *testing.T) {
 	defer c.CloseNow()
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	ef := readResponsesWSFrame(t, c)
-	require.Contains(t, string(ef), `"type":"error"`)
-	require.Contains(t, string(ef), "codex authorization failed", "fatal 用户帧固定文案（不泄 SDK 内部机制串）")
-	require.NotContains(t, string(ef), "refresh 被拒绝", "SDK 内部机制串不得上用户帧")
-	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+	// 客户端拿到的是承接账号的正常流（判死不出网）
+	frames := drainUntilClose(t, c)
+	require.NotEmpty(t, frames)
+	require.Contains(t, frames[0], `"response.created"`, "换号后从新账号重新开始这一轮；got=%q", frames[0])
+	for _, f := range frames {
+		require.NotContains(t, f, "refresh 被拒绝", "SDK 内部机制串不得上用户帧")
+		require.NotContains(t, f, "token_invalidated", "判死痕迹不得泄漏给客户端")
+	}
 
 	hooks.mu.Lock()
-	require.Equal(t, 1, hooks.upgrades, "该请求不转移——另一账号（健康）不得被触达")
+	require.Equal(t, 2, hooks.upgrades, "账号 10 判死后换号到账号 20（各拨一次）")
 	hooks.mu.Unlock()
 	require.Equal(t, 1, recorderCalls(recorder), "统一回调恰一次")
 	_, acc, _ := recorder.snapshot()
@@ -801,22 +885,24 @@ func TestCodexWSDial429Failover(t *testing.T) {
 	require.Equal(t, int64(20), lg.AccountID, "落账 = 成功尝试账号")
 }
 
-// TestCodexWSDeathFrameFatal WS 业务判死事件帧（§3 唯一跨边界点）：
-// token_invalidated 错误帧 → 适配层 FatalAuth（Auth.Fatal 毒化 + 统一失效
-// 回调单次上报——写 failed_at + StatusDisabled，共用处理函数）；判死帧
-// 照常透传客户端；会话随后 1000 正常收尾。
+// TestCodexWSDeathFrameFatal WS 业务判死事件帧（§3 唯一跨边界点）在**零交付**
+// 时不再透传客户端：判死帧到达时一帧业务帧都没写 ⇒ 请求还能换号，所以判死帧
+// 被就地吞掉、本网络跳作废（旧契约是"判死帧照常透传"，那是把账号死亡变成用户
+// 可见失败）。
+//
+// 单账号 ⇒ 换号没有候选 ⇒ 走耗尽收尾（网关错误帧 + 正常关闭），账号摘除、
+// 上报恰一次。换号成功的正例见 TestCodexWSFatalFirstFrameRetriesAnotherAccount。
 func TestCodexWSDeathFrameFatal(t *testing.T) {
-	// 定制上游：首客户端帧后下发判死事件帧 + created + completed + 回声，
-	// 3 帧后 1000 关闭（codexWSUpstream 固定事件流不含判死帧——独立 handler）
 	mu := &codexWSUpstream{last: 200, frameLimit: 3}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
 			w.WriteHeader(404)
 			return
 		}
-		mu.mu.Lock()
-		mu.upgrades++
-		mu.mu.Unlock()
+		srvMu := mu
+		srvMu.mu.Lock()
+		srvMu.upgrades++
+		srvMu.mu.Unlock()
 		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
 		if err != nil {
 			return
@@ -829,9 +915,9 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 			if err != nil {
 				return
 			}
-			mu.mu.Lock()
-			mu.frames = append(mu.frames, string(msg))
-			mu.mu.Unlock()
+			srvMu.mu.Lock()
+			srvMu.frames = append(srvMu.frames, string(msg))
+			srvMu.mu.Unlock()
 			if !streamed {
 				streamed = true
 				for _, f := range []string{
@@ -853,7 +939,7 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 				return
 			}
 			n++
-			if n >= mu.frameLimit {
+			if n >= srvMu.frameLimit {
 				_ = c.Close(websocket.StatusNormalClosure, "")
 				return
 			}
@@ -864,30 +950,45 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 	p, recorder := newTestCodexWSProxy(t, credential.TypeCodexOAuth,
 		map[int64]*domain.AccountExt{10: codexWSExt(10, "at-10", "rt-10")}, srv.URL, nil, store)
 
-	s := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
-	defer s.Close()
-	c := dialResponsesWS(t, s)
+	gw := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	defer gw.Close()
+	c := dialResponsesWS(t, gw)
 	defer c.CloseNow()
-	// 事件流（判死帧 + created + completed）+ 3 回声——判死帧照常透传客户端
-	//（错误事件属业务流），上游 3 帧后 1000 关闭；其间不带 model 的中间帧本地
-	// 拒绝、会话继续。
-	got := codexWSSessionWithLocalReject(t, c, `{"type":"response.create","model":"gpt-4o","input":"hi"}`, 4,
-		[]string{`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`, `{"type":"custom.mid","model":"gpt-4o","n":42}`}, 2)
-	require.Contains(t, got[0], `"type":"error"`)
-	require.Contains(t, got[0], `"token_invalidated"`, "判死帧透传客户端")
-	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+	got := drainUntilClose(t, c)
+	require.NotEmpty(t, got, "收尾必须给客户端一帧（网关错误帧）")
+	for _, f := range got {
+		require.NotContains(t, f, "token_invalidated", "判死帧不得透传客户端（%s）", f)
+	}
 
 	// 失效上报恰一次（§3 显式 FailureHandler——共用处理函数）
 	require.Equal(t, 1, recorderCalls(recorder), "帧判死 → 统一回调恰一次")
 	_, acc, reason := recorder.snapshot()
 	require.Equal(t, int64(10), acc)
 	require.Contains(t, reason, "token_invalidated", "last_error 留痕失效原因摘要")
-	// 调度摘除持久化面：快照置 disabled
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "帧判死 → 账号失效摘除")
-	// 会话正常收尾（上游 1000 → 成功）
 	require.NoError(t, p.rec.Close(context.Background()))
+}
+
+// drainUntilClose 读到关闭为止（判死帧被吞掉后客户端只该看到网关自己的收尾帧）。
+func drainUntilClose(t *testing.T, c *websocket.Conn) []string {
+	t.Helper()
+	var got []string
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_, b, err := c.Read(ctx)
+		cancel()
+		if err != nil {
+			var ce websocket.CloseError
+			require.True(t, errors.As(err, &ce), "expect close frame, got %v", err)
+			require.Equal(t, websocket.StatusNormalClosure, ce.Code)
+			return got
+		}
+		got = append(got, string(b))
+	}
 }
 
 // deactivatedWorkspaceFrame 用户实证的上游 402 业务错误（workspace 被停用）——
@@ -895,65 +996,10 @@ func TestCodexWSDeathFrameFatal(t *testing.T) {
 const deactivatedWorkspaceFrame = `{"type":"error","status":402,"error":{"message":"Payment Required","type":null,"code":"deactivated_workspace","param":null}}`
 
 // TestCodexWSDeactivatedWorkspaceFrameFatal 业务判死帧（402 +
-// deactivated_workspace）端到端：账号级终态——失效上报恰一次（last_error 留码）
-// → 快照置 disabled（不再被调度选中）；帧属业务流、照常透传客户端。
-// 与 token_invalidated 判死帧同一处理链，只是码集归网关
-// （sdkbridge/account_fatal.go）。
-//
-// 上游用"回声保活 + 帧上限关闭"（与 TestCodexWSDeathFrameFatal 同款）而不是
-// "发一帧就关"：判死会摘掉适配层条目，发一帧就关时上游 1000 与客户端侧 flush
-// 抢时序，读帧断言会偶发 EOF（实测 30 次里 1 次）。
+// deactivated_workspace）零交付：判死 → 账号摘除、上报一次带码；帧不达客户端
+// （换号的前提）。单账号 ⇒ 换号无候选 ⇒ 耗尽收尾。
 func TestCodexWSDeactivatedWorkspaceFrameFatal(t *testing.T) {
-	mu := &codexWSUpstream{last: 200, frameLimit: 2}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/responses" && r.URL.Path != "/backend-api/codex/responses" {
-			w.WriteHeader(404)
-			return
-		}
-		mu.mu.Lock()
-		mu.upgrades++
-		mu.mu.Unlock()
-		c, err := websocket.Accept(w, r, &websocket.AcceptOptions{})
-		if err != nil {
-			return
-		}
-		defer c.CloseNow()
-		streamed := false
-		n := 0
-		for {
-			typ, msg, err := c.Read(context.Background())
-			if err != nil {
-				return
-			}
-			mu.mu.Lock()
-			mu.frames = append(mu.frames, string(msg))
-			mu.mu.Unlock()
-			if !streamed {
-				streamed = true
-				for _, f := range []string{
-					deactivatedWorkspaceFrame,
-					`{"type":"response.created","response":{"id":"rsp_ws_1","model":"gpt-4o"}}`,
-					responsesWSCompletedFrame,
-				} {
-					if err := c.Write(context.Background(), typ, []byte(f)); err != nil {
-						return
-					}
-				}
-			}
-			payload, err := json.Marshal(map[string]any{"type": "echo", "payload": string(msg)})
-			if err != nil {
-				return
-			}
-			if err := c.Write(context.Background(), typ, payload); err != nil {
-				return
-			}
-			n++
-			if n >= mu.frameLimit {
-				_ = c.Close(websocket.StatusNormalClosure, "")
-				return
-			}
-		}
-	}))
+	srv, mu := newCodexWSFatalFirstUpstream(t, deactivatedWorkspaceFrame)
 	defer srv.Close()
 
 	store := &captureLogStore{}
@@ -964,40 +1010,90 @@ func TestCodexWSDeactivatedWorkspaceFrameFatal(t *testing.T) {
 	defer gw.Close()
 	c := dialResponsesWS(t, gw)
 	defer c.CloseNow()
-
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	// 判死帧及其后的 created/completed 照常透传（诊断面不吞上游原文），
-	// 第 4 帧是上游对本次 create 的回声（保活＋证明连接未被判死切断）。
-	got := readResponsesWSFrame(t, c)
-	require.Contains(t, string(got), "deactivated_workspace", "判死帧透传客户端；got=%q", got)
-	readResponsesWSFrame(t, c) // created
-	readResponsesWSFrame(t, c) // completed
-	readResponsesWSFrame(t, c) // echo(create)
-	// 再发一帧：会话继续（判死只影响账号，不断客户端），上游照回声后关闭。
-	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
-		[]byte(`{"type":"response.input_text.delta","model":"gpt-4o","delta":"typing"}`)))
-	readResponsesWSFrame(t, c) // echo(delta)
-	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+	got := drainUntilClose(t, c)
+	for _, f := range got {
+		require.NotContains(t, f, "deactivated_workspace", "判死帧不得透传客户端（%s）", f)
+	}
 
-	// ① 失效上报恰一次，原因是这条业务判死（last_error 带码）
 	require.Equal(t, 1, recorderCalls(recorder), "业务判死帧 → 统一回调恰一次")
 	_, acc, reason := recorder.snapshot()
 	require.Equal(t, int64(10), acc)
 	require.Contains(t, reason, "deactivated_workspace", "last_error 留痕失效原因（码）")
-
-	// ② 调度摘除：快照置 disabled（重启等价由 failed_at 装载保证，见 PG 链用例）
 	ri, ok := p.sched.Runtime(10)
 	require.True(t, ok)
 	require.Equal(t, domain.StatusDisabled, ri.Status, "业务判死 → 账号失效摘除")
 
-	// ③ 不重发：上游收到的 create 恰 1（判死不会换号重试）
 	mu.mu.Lock()
 	frames := append([]string(nil), mu.frames...)
-	upgrades := mu.upgrades
 	mu.mu.Unlock()
-	require.Equal(t, 1, upgrades, "上游只拨一次")
-	require.Len(t, frames, 2, "create 与 delta 各 1，无重发；frames=%v", frames)
+	require.Len(t, frames, 1, "上游收到的 create 恰 1（不重发）；frames=%v", frames)
+	require.NoError(t, p.rec.Close(context.Background()))
+}
+
+// TestCodexWSFatalFirstFrameRetriesAnotherAccount **账号错误换号重试**的主门禁：
+// 第一账号首帧就判死（402 + deactivated_workspace，零业务字节）⇒ 请求换到第二
+// 账号并**成功交付**；第一账号被摘除、第二账号仍可用；客户端只看到第二账号的
+// 正常事件流，看不到任何判死痕迹。
+func TestCodexWSFatalFirstFrameRetriesAnotherAccount(t *testing.T) {
+	srv, mu := newCodexWSFatalFirstUpstream(t, deactivatedWorkspaceFrame)
+	defer srv.Close()
+
+	store := &captureLogStore{}
+	p, recorder := newTestCodexWSProxy(t, credential.TypeCodexOAuth, map[int64]*domain.AccountExt{
+		10: codexWSExt(10, "at-10", "rt-10"),
+		20: codexWSExt(20, "at-20", "rt-20"),
+	}, srv.URL, nil, store)
+
+	gw := httptest.NewServer(http.HandlerFunc(p.HandleResponsesWS))
+	defer gw.Close()
+	c := dialResponsesWS(t, gw)
+	defer c.CloseNow()
+	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
+		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
+
+	// 客户端拿到的是**第二账号**的完整事件流（created / completed + 回声）
+	got := drainUntilClose(t, c)
+	require.Contains(t, got[0], "response.created", "换号后从新账号重新开始这一轮；got=%q", got[0])
+	require.Contains(t, got[1], "response.completed")
+	for _, f := range got {
+		require.NotContains(t, f, "deactivated_workspace", "判死痕迹不得泄漏给客户端（%s）", f)
+	}
+
+	mu.mu.Lock()
+	upgrades := mu.upgrades
+	auths := make([]string, 0, len(mu.headers))
+	for _, h := range mu.headers {
+		auths = append(auths, h.Get("Authorization"))
+	}
+	frames := append([]string(nil), mu.frames...)
+	mu.mu.Unlock()
+	require.Equal(t, 2, upgrades, "判死账号之后必须换号（两个候选各拨一次）")
+	require.NotEqual(t, auths[0], auths[1], "两次拨号必须落在不同账号")
+	require.Len(t, frames, 2, "两个账号各收到一次 create（同一请求重发）")
+
+	// 判决对象从实际拨号顺序反推（候选先后由调度器决定）
+	dead, alive := int64(0), int64(0)
+	switch auths[0] {
+	case "Bearer at-10":
+		dead, alive = 10, 20
+	case "Bearer at-20":
+		dead, alive = 20, 10
+	}
+	require.NotZero(t, dead, "首选必须带候选凭据；got=%q", auths[0])
+
+	require.Equal(t, 1, recorderCalls(recorder), "只有被判死的账号上报一次")
+	_, acc, reason := recorder.snapshot()
+	require.Equal(t, dead, acc, "判决落在首选账号上")
+	require.Contains(t, reason, "deactivated_workspace")
+
+	riDead, ok := p.sched.Runtime(dead)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusDisabled, riDead.Status, "判死账号被摘除")
+	riAlive, ok := p.sched.Runtime(alive)
+	require.True(t, ok)
+	require.Equal(t, domain.StatusActive, riAlive.Status, "承接账号不受影响")
 
 	require.NoError(t, p.rec.Close(context.Background()))
 }
@@ -1009,6 +1105,8 @@ func TestCodexWSDeactivatedWorkspaceFrameFatal(t *testing.T) {
 // 与"业务帧面"分开守：两条承载路径的 body 来源不同（升级响应体 vs 帧），
 // 断一条就有一个 402 只烧派发不判死。
 func TestCodexWSDial402DeactivatedWorkspaceFatal(t *testing.T) {
+	// 两个候选都在升级面被判死（同一具死体）⇒ 都摘除、都没换号价值 ⇒ 耗尽收尾。
+	// 这条守"判死换号不会变成无限重试"：候选耗尽即收尾。
 	var mu sync.Mutex
 	upgrades := 0
 	var authSeen string // 首个（也是唯一）升级请求的 Authorization（确定判决落在哪个账号）
@@ -1042,39 +1140,24 @@ func TestCodexWSDial402DeactivatedWorkspaceFatal(t *testing.T) {
 
 	require.NoError(t, c.Write(context.Background(), websocket.MessageText,
 		[]byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`)))
-	frame := readResponsesWSFrame(t, c)
-	require.Equal(t, codexAuthFailedMsg, gjson.GetBytes(frame, "error.message").String(),
-		"fatal 终态：固定鉴权失败文案（不泄漏上游内部细节）；frame=%q", frame)
-	readResponsesWSClose(t, c, websocket.StatusNormalClosure)
+	frames := drainUntilClose(t, c)
+	require.NotEmpty(t, frames, "耗尽也要给客户端一帧")
+	for _, f := range frames {
+		require.NotContains(t, f, "deactivated_workspace", "判死痕迹不得泄漏给客户端")
+	}
 
 	mu.Lock()
-	n, firstAuth := upgrades, authSeen
+	n := upgrades
 	mu.Unlock()
-	require.Equal(t, 1, n, "判死是终态：不换号（第二账号不拨号）")
+	require.Equal(t, 2, n, "两个候选都被派发一次（第一个判死后换号，第二个也死才收尾）")
 
-	// 哪个账号被选中由调度器决定（两个同构候选不保证先后），所以判决对象从
-	// 上游看到的凭据反推——断言"被判死的就是被派发的那个，另一个仍可用"。
-	dispatched := int64(0)
-	switch firstAuth {
-	case "Bearer at-10":
-		dispatched = 10
-	case "Bearer at-20":
-		dispatched = 20
+	// 两个账号都被判死、都摘除（谁先谁后由调度器决定，不做顺序断言）
+	require.Equal(t, 2, recorderCalls(recorder), "两个候选各上报一次")
+	for _, id := range []int64{10, 20} {
+		ri, ok := p.sched.Runtime(id)
+		require.True(t, ok)
+		require.Equal(t, domain.StatusDisabled, ri.Status, "账号 %d 应被摘除", id)
 	}
-	require.NotZero(t, dispatched, "首个升级请求必须带候选账号凭据；got=%q", firstAuth)
-
-	require.Equal(t, 1, recorderCalls(recorder), "升级 402 判死 → 上报恰一次")
-	_, acc, reason := recorder.snapshot()
-	require.Equal(t, dispatched, acc, "判决落在被派发的账号上")
-	require.Contains(t, reason, "deactivated_workspace")
-
-	ri, ok := p.sched.Runtime(dispatched)
-	require.True(t, ok)
-	require.Equal(t, domain.StatusDisabled, ri.Status, "升级判死 → 账号失效摘除")
-	other := int64(30) - dispatched
-	riOther, ok := p.sched.Runtime(other)
-	require.True(t, ok)
-	require.Equal(t, domain.StatusActive, riOther.Status, "另一账号仍可用（判死不扩散）")
 
 	require.NoError(t, p.rec.Close(context.Background()))
 }
@@ -1112,10 +1195,10 @@ func TestSniffCodexWSDeath(t *testing.T) {
 	} {
 		got := sniffCodexWSDeath([]byte(frame))
 		require.NotNil(t, got, "业务判死码必须命中：%s", frame)
-		var af *sdkbridge.AccountFatalError
-		require.ErrorAs(t, got, &af)
-		require.Equal(t, 402, af.Status, "状态码取帧内 status")
-		require.Equal(t, "deactivated_workspace", af.Code)
+		var ad *codexsdk.AccountDisabledError
+		require.ErrorAs(t, got, &ad, "判定类型由 SDK 产出（网关零码集）")
+		require.Equal(t, 402, ad.StatusCode, "状态码取帧内 status")
+		require.Equal(t, "deactivated_workspace", ad.Detail)
 	}
 	// 非错误帧（业务内容误含错误帧标记）→ 不判死
 	require.Nil(t, sniffCodexWSDeath([]byte(`{"type":"response.output_text.delta","delta":"token_invalidated"}`)))

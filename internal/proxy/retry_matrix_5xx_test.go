@@ -212,3 +212,37 @@ func TestShouldRetryWithPlanRetryable5xx(t *testing.T) {
 	require.False(t, p.shouldRetryWithPlan(ctx, 502, nil, attemptOpt(), true), "hard 502 不得换号")
 	require.False(t, p.shouldRetryWithPlan(ctx, 501, nil, attemptOpt(), false), "501 不得换号")
 }
+
+// --- 账号级终止（凭据作废 / 账号停用）换号 ---
+
+// TestCanRetryAccountFatal 账号级终止的换号门槛：零交付就能换（账号已经摘除，
+// 换个账号通常就能成）；已交付字节 / hard continuation 一律不换。
+func TestCanRetryAccountFatal(t *testing.T) {
+	base := func(o AttemptOutcome) AttemptOutcome {
+		o.AccountFatal = true
+		return o
+	}
+	// 零交付：not_sent 与 upstream_responded 都允许
+	require.True(t, CanRetry(CallerCodexWS, base(outcomeForKind("not_sent", CallerCodexWS, false))))
+	o := base(outcomeForKind("not_sent", CallerCodexWS, false))
+	o.Commit = CommitUpstreamResponded
+	o.HTTPStatus = 402
+	require.True(t, CanRetry(CallerCodexWS, o), "上游答了 4xx 但没交付字节 ⇒ 可换号")
+
+	// 已交付字节（sent_ambiguous / response_started）⇒ 不换（上面通用闸门挡住）
+	require.False(t, CanRetry(CallerCodexWS, base(outcomeForKind("sent_ambiguous", CallerCodexWS, false))))
+	require.False(t, CanRetry(CallerCodexWS, base(outcomeForKind("response_started", CallerCodexWS, false))))
+
+	// hard continuation ⇒ 不换（绑定账号的续接换个账号无解）
+	require.False(t, CanRetry(CallerCodexWS, base(outcomeForKind("not_sent", CallerCodexWS, true))))
+
+	// 非账号级终止的普通 4xx 仍不换
+	plain := outcomeForKind("not_sent", CallerCodexWS, false)
+	plain.Commit = CommitUpstreamResponded
+	plain.HTTPStatus = 402
+	require.False(t, CanRetry(CallerCodexWS, plain), "普通 4xx 不受影响")
+
+	// 客户端取消不是账号判决
+	cancel := base(outcomeForKind("client_cancel", CallerCodexWS, false))
+	require.False(t, CanRetry(CallerCodexWS, cancel))
+}

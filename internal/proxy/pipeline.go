@@ -14,6 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // --- 转发管线骨架（三份内联管线合一） ---
@@ -349,6 +350,46 @@ func (p *Proxy) failoverPrecheckPrice(w http.ResponseWriter, r *http.Request, fo
 // Classify/MarkResult 后 terminate。返回最后的错误文本与是否终止（terminate=true
 // 调用方直接 return）。错误分类/冷却/日志字段/时机逐字一致。
 func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *scheduler.Selection, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
+	// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
+	// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
+	// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则
+	// 无辜账号冷却 + failover 空转 + error_type 误记 network）；记
+	// 499（nginx "client closed request" 约定）+ ErrAbort，立即返回。
+	// tokens 必然 0 → cost=0 不计费；客户端已断，不写 HTTP 响应。
+	// 流式路径的流中止/首字节后断连由 caller 内部分类（handled=true），
+	// 到不了这里——本分支只覆盖 SDK 请求阶段（首字节前）的断连。
+	// WS 修复性声明（gate Minor 2c）：WS 拨号/首帧转发阶段断连同样归
+	// 此分支（现状记连接级错误冷却无辜账号——统一 499 语义不冷却）。
+	if code == 0 && r.Context().Err() != nil {
+		// 交付事实（唯一折算入口）：首字节前客户端断连——一帧业务帧都没写、
+		// 也没有写失败，clientCancel=true ⇒ not_sent（用户裁定：零业务帧不可计费）。
+		l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start)), commitStateFor(false, false, true))
+		msg := "client closed request before upstream response"
+		l.ErrorMessage = &msg
+		p.finish(sel, l)
+		return "", true
+	}
+	// 账号级终止（凭据永久失效 / 账号停用 / 工作区停用）：SDK 已在错误边界上判死，
+	// 并通过统一回调把账号摘除（failed_at + failure_source + 快照 disabled）。
+	//
+	// 这里只落**这一跳**的账，**不写客户端**：零业务字节 ⇒ 这条请求换个账号还能
+	// 成。旧实现把它当终态直接回错误帧，等于让一次账号侧死亡变成用户可见失败。
+	// 换不换由 typed retry matrix 裁决（hard continuation / 已交付字节仍然终态）。
+	if sdkbridge.IsFatal(callErr) {
+		et := domain.ErrNetwork
+		commit := CommitNotSent
+		if code >= 400 && code < 500 {
+			et = domain.Err4xx
+			commit = CommitUpstreamResponded
+		}
+		msg := domain.TruncateErrMsg(callErr.Error())
+		l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, code, et, usageTuple{}, start)), commit)
+		if msg != "" {
+			l.ErrorMessage = &msg
+		}
+		p.recordAttemptLog(sel, l) // 槽由循环释放（随后可能换号）
+		return msg, false
+	}
 	if code == http.StatusTooManyRequests {
 		// 429：上游 body message（既有语义；域内截断 500）。WS 拨号 429 的
 		// 错误文本经 respBody 传递（可能为 SDK 纯文本）——提取为空时直取
@@ -369,25 +410,7 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 			p.sched.MarkResult(sel.AccountID, rule.Kind429, nil, code, lastErrMsg, sel.Model)
 		}
 	} else if code >= 500 || code == 0 {
-		// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
-		// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
-		// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则
-		// 无辜账号冷却 + failover 空转 + error_type 误记 network）；记
-		// 499（nginx "client closed request" 约定）+ ErrAbort，立即返回。
-		// tokens 必然 0 → cost=0 不计费；客户端已断，不写 HTTP 响应。
-		// 流式路径的流中止/首字节后断连由 caller 内部分类（handled=true），
-		// 到不了这里——本分支只覆盖 SDK 请求阶段（首字节前）的断连。
-		// WS 修复性声明（gate Minor 2c）：WS 拨号/首帧转发阶段断连同样归
-		// 此分支（现状记连接级错误冷却无辜账号——统一 499 语义不冷却）。
-		if code == 0 && r.Context().Err() != nil {
-			// 交付事实（唯一折算入口）：首字节前客户端断连——一帧业务帧都没写、
-			// 也没有写失败，clientCancel=true ⇒ not_sent（用户裁定：零业务帧不可计费）。
-			l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start)), commitStateFor(false, false, true))
-			msg := "client closed request before upstream response"
-			l.ErrorMessage = &msg
-			p.finish(sel, l)
-			return "", true
-		}
+		// 客户端取消已在函数开头拦下（code==0 && r.Context().Err() != nil）。
 		// 5xx：上游 body message（既有语义）。连接级/凭据错（code==0）：
 		// err.Error() 全文填 last_error 与耗尽记录（域内截断 500）——Warn
 		// 由 attempt 内部代发（文案两版本保留不统一，循环不代发）。
