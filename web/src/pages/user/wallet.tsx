@@ -342,8 +342,9 @@ export default function UserWallet() {
                   </div>
                 </div>
 
-                {/* 预估实付：参考汇率 × 金额。**仅供参考**：权威值是建单响应的 pay_amount，
-                    跳转前的确认层会再展示一次（spec §5-3） */}
+                {/* 预估实付：参考汇率 × 金额（spec §5-3 说它不是报价承诺）。范围与免责文案
+                    属于"说明"而不是"决策"，已经从卡片里去掉——上限在输入框下有 limitHint，
+                    权威金额在跳转前的确认层再展示一次。 */}
                 {method && (
                   <div className="rounded-[10px] border border-border/60 bg-black/[0.02] p-3 text-sm dark:bg-white/[0.03]">
                     <div className="flex flex-wrap items-center gap-x-6 gap-y-1">
@@ -357,14 +358,7 @@ export default function UserWallet() {
                         {t('user.wallet.rateReferenceLabel')}{' '}
                         <span className="tabular-nums text-foreground">{method.rate}</span>
                       </span>
-                      <span className="text-muted-foreground">
-                        {t('user.wallet.rangeLabel')}{' '}
-                        <span className="tabular-nums text-foreground">
-                          {method.min_usd} – {method.max_usd} USD
-                        </span>
-                      </span>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">{t('user.wallet.payAmountHint')}</p>
                   </div>
                 )}
 
