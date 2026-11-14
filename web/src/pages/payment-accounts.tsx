@@ -280,9 +280,12 @@ export default function PaymentAccounts() {
         </ScrollArea>
       )}
 
-      {/* —— 新建/编辑弹窗（视口居中；内容超高时弹窗内滚动）：key 变化才重挂表单，渠道保存不清空草稿 —— */}
+      {/* —— 新建/编辑弹窗（视口居中；内容超高时弹窗内滚动）：key 变化才重挂表单，渠道保存不清空草稿 ——
+          弹窗是 grid 三行：头部 auto、主体 minmax(0,1fr)（可收缩 → 只有它滚）、页脚 auto。
+          overflow-hidden 必须显式给：DialogContent 自己声明了 overflow-y-auto，不关掉就会
+          和主体里的自绘滚动条同时出现两条竖条。 */}
       <Dialog open={editing != null} onOpenChange={o => { if (!o) setEditing(null) }}>
-        <DialogContent className="sm:max-w-2xl">
+        <DialogContent className="grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-4xl">
           {editing != null && (
             <AccountDialog
               key={editingAccount?.key ?? 'new'}
@@ -504,8 +507,12 @@ function AccountDialog({
         </DialogDescription>
       </DialogHeader>
 
-      <div className="space-y-5">
-        {/* —— 身份（key/provider 创建后只读）—— */}
+      {/* 主体区：只滚这一块 —— 头部与页脚固定，长表单（多把密钥 + 渠道表）不会把
+          "保存"顶出视口；滚动条用项目自绘的那条（原生滚动条在深色模式下是浅色粗条）。
+          弹窗内容不高时它就是一个普通容器，不出现滚动条。 */}
+      <ScrollArea className="min-h-0 gap-5 pr-2">
+        {/* —— 账户信息（key/provider 创建后只读）—— */}
+        <p className="text-sm font-medium">{t('paymentAccounts.identitySection')}</p>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label htmlFor="pay-account-key">{t('paymentAccounts.keyLabel')}</Label>
@@ -584,64 +591,68 @@ function AccountDialog({
           <p className="text-sm font-medium">{t('paymentAccounts.configSection')}</p>
           {form.openable ? (
             <>
-              {form.fields.map(f => {
-                const id = `pay-account-cfg-${f.name}`
-                const control = controlFor(f)
-                const value = config[f.name] ?? ''
-                const label = fieldLabel(f, k => t(k as DynamicKey))
-                const placeholder = f.example ?? ''
-                const required = f.required === true
-                const onChange = (v: string) => setConfig(prev => ({ ...prev, [f.name]: v }))
-                return (
-                  <div key={f.name} className="space-y-1.5">
-                    <Label htmlFor={id}>
-                      {label}
-                      {required && <span className="ml-1 text-destructive" aria-hidden="true">*</span>}
-                      {label !== f.name && (
-                        <code className="ml-2 font-mono text-xs text-muted-foreground">{f.name}</code>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {form.fields.map(f => {
+                  const id = `pay-account-cfg-${f.name}`
+                  const control = controlFor(f)
+                  const value = config[f.name] ?? ''
+                  const label = fieldLabel(f, k => t(k as DynamicKey))
+                  const placeholder = f.example ?? ''
+                  const required = f.required === true
+                  const onChange = (v: string) => setConfig(prev => ({ ...prev, [f.name]: v }))
+                  // 短字段并排、多行密钥独占一行：两列栅格里把一个 4 行的 PEM 挤进
+                  // 半宽只会让换行更难看清（字段名由协议声明，这里不点名）。
+                  return (
+                    <div key={f.name} className={cn('space-y-1.5', control === 'multiline' && 'sm:col-span-2')}>
+                      <Label htmlFor={id}>
+                        {label}
+                        {required && <span className="ml-1 text-destructive" aria-hidden="true">*</span>}
+                        {label !== f.name && (
+                          <code className="ml-2 font-mono text-xs text-muted-foreground">{f.name}</code>
+                        )}
+                      </Label>
+                      {/* 控件由 kind 决定（§18-2 / N43 修订）：secret 不再强制密码框——
+                          密钥是运维自己粘的，藏成圆点只会让"换行被吃掉"这类问题看不见
+                          （线上事故形状）。读面恒 `***`，输入框里永远不是已存的密钥。 */}
+                      {control === 'password' ? (
+                        <Input
+                          id={id}
+                          type="password"
+                          className="font-mono"
+                          value={value}
+                          onChange={e => onChange(e.target.value)}
+                          placeholder={placeholder}
+                          spellCheck={false}
+                          autoComplete="new-password"
+                          aria-required={required || undefined}
+                        />
+                      ) : control === 'multiline' ? (
+                        <Textarea
+                          id={id}
+                          className="min-h-24 font-mono text-xs"
+                          value={value}
+                          onChange={e => onChange(e.target.value)}
+                          placeholder={placeholder}
+                          spellCheck={false}
+                          autoComplete="off"
+                          aria-required={required || undefined}
+                        />
+                      ) : (
+                        <Input
+                          id={id}
+                          className="font-mono"
+                          value={value}
+                          onChange={e => onChange(e.target.value)}
+                          placeholder={placeholder}
+                          spellCheck={false}
+                          autoComplete="off"
+                          aria-required={required || undefined}
+                        />
                       )}
-                    </Label>
-                    {/* 控件由 kind 决定（§18-2 / N43 修订）：secret 不再强制密码框——
-                        密钥是运维自己粘的，藏成圆点只会让"换行被吃掉"这类问题看不见
-                        （线上事故形状）。读面恒 `***`，输入框里永远不是已存的密钥。 */}
-                    {control === 'password' ? (
-                      <Input
-                        id={id}
-                        type="password"
-                        className="font-mono"
-                        value={value}
-                        onChange={e => onChange(e.target.value)}
-                        placeholder={placeholder}
-                        spellCheck={false}
-                        autoComplete="new-password"
-                        aria-required={required || undefined}
-                      />
-                    ) : control === 'multiline' ? (
-                      <Textarea
-                        id={id}
-                        className="min-h-24 font-mono text-xs"
-                        value={value}
-                        onChange={e => onChange(e.target.value)}
-                        placeholder={placeholder}
-                        spellCheck={false}
-                        autoComplete="off"
-                        aria-required={required || undefined}
-                      />
-                    ) : (
-                      <Input
-                        id={id}
-                        className="font-mono"
-                        value={value}
-                        onChange={e => onChange(e.target.value)}
-                        placeholder={placeholder}
-                        spellCheck={false}
-                        autoComplete="off"
-                        aria-required={required || undefined}
-                      />
-                    )}
-                  </div>
-                )
-              })}
+                    </div>
+                  )
+                  })}
+              </div>
               <p className="text-xs text-muted-foreground">{t('paymentAccounts.configSecretHint')}</p>
             </>
           ) : metaState === 'failed' ? (
@@ -675,7 +686,7 @@ function AccountDialog({
             <AlertDescription>{t('paymentAccounts.createFirstHint')}</AlertDescription>
           </Alert>
         )}
-      </div>
+      </ScrollArea>
 
       <DialogFooter className="sm:justify-between">
         <Button variant="outline" onClick={onClose} disabled={save.isPending}>
