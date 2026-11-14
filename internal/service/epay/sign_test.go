@@ -649,3 +649,152 @@ func require(t *testing.T, ok bool, format string, args ...any) {
 		t.Fatalf(format, args...)
 	}
 }
+
+// ---------- 密钥材料形态（线上事故：`private key is not PEM`）----------
+//
+// 彩虹易支付后台给商户的私钥/公钥常常是**裸 base64**（PKCS#8 / PKIX DER），没有
+// PEM 头；本仓原先只认 PEM，于是创建账户必然 400、列表 config_error 非空、选路
+// 直接跳过该账户。这一组用例把"三种形态 × 编解码变体"逐条钉住，并**用签名/验签
+// 证明解析出来的确实是一对可用密钥**（只断言"能解析"会被"解析成错的 key"骗过）。
+
+// keyForms 返回同一把私钥/公钥的多种粘贴形态（name → 文本）。
+func keyForms(t *testing.T) map[string][2]string {
+	t.Helper()
+	keys := testKeys(t)
+
+	privBlock, _ := pem.Decode([]byte(keys.privatePEM))
+	pubBlock, _ := pem.Decode([]byte(keys.publicPEM))
+	if privBlock == nil || pubBlock == nil {
+		t.Fatalf("test fixture PEM 解不开")
+	}
+	priv, err := x509.ParsePKCS8PrivateKey(privBlock.Bytes)
+	if err != nil {
+		t.Fatalf("fixture: parse pkcs8: %v", err)
+	}
+	rsaPriv, ok := priv.(*rsa.PrivateKey)
+	if !ok {
+		t.Fatalf("fixture: not RSA")
+	}
+	pkcs1PrivDER := x509.MarshalPKCS1PrivateKey(rsaPriv)
+	pkcs1PubDER := x509.MarshalPKCS1PublicKey(&rsaPriv.PublicKey)
+
+	wrap := func(b64 string) string { // 按 64 列折行（后台/编辑器常见）
+		var sb strings.Builder
+		for i := 0; i < len(b64); i += 64 {
+			end := min(i+64, len(b64))
+			sb.WriteString(b64[i:end])
+			sb.WriteString("\n")
+		}
+		return sb.String()
+	}
+	escaped := func(b64 string) string { // 字面量 \n（JSON 往返后没被还原的形态）
+		var sb strings.Builder
+		for i := 0; i < len(b64); i += 64 {
+			end := min(i+64, len(b64))
+			sb.WriteString(b64[i:end])
+			sb.WriteString(`\n`)
+		}
+		return sb.String()
+	}
+
+	stdPriv := base64.StdEncoding.EncodeToString(privBlock.Bytes)
+	stdPub := base64.StdEncoding.EncodeToString(pubBlock.Bytes)
+	stdPrivPKCS1 := base64.StdEncoding.EncodeToString(pkcs1PrivDER)
+	stdPubPKCS1 := base64.StdEncoding.EncodeToString(pkcs1PubDER)
+
+	return map[string][2]string{
+		"pem":                {keys.privatePEM, keys.publicPEM},
+		"pem-crlf":           {strings.ReplaceAll(keys.privatePEM, "\n", "\r\n"), strings.ReplaceAll(keys.publicPEM, "\n", "\r\n")},
+		"pem-no-trailing-nl": {strings.TrimSpace(keys.privatePEM), strings.TrimSpace(keys.publicPEM)},
+		"pem-single-line":    {strings.ReplaceAll(keys.privatePEM, "\n", ""), strings.ReplaceAll(keys.publicPEM, "\n", "")},
+		// 单行 input 在部分平台把换行换成空格（也是"头还在但报 not PEM"的成因）
+		"pem-space-joined":     {strings.ReplaceAll(keys.privatePEM, "\n", " "), strings.ReplaceAll(keys.publicPEM, "\n", " ")},
+		"bare-pkcs8-pkix":      {stdPriv, stdPub},
+		"bare-pkcs1":           {stdPrivPKCS1, stdPubPKCS1},
+		"bare-wrapped-64":      {wrap(stdPriv), wrap(stdPub)},
+		"bare-escaped-newline": {escaped(stdPriv), escaped(stdPub)},
+		"bare-quoted":          {`"` + stdPriv + `"`, `'` + stdPub + `'`},
+		"bare-url-safe":        {base64.URLEncoding.EncodeToString(privBlock.Bytes), base64.URLEncoding.EncodeToString(pubBlock.Bytes)},
+		"bare-raw-std":         {base64.RawStdEncoding.EncodeToString(privBlock.Bytes), base64.RawStdEncoding.EncodeToString(pubBlock.Bytes)},
+	}
+}
+
+// TestParseKeysAcceptRealWorldForms 三种材料形态都必须解析成功，且**签出来的值能被
+// 解出来的公钥验过**（证明 pair 正确，不是"解析到了别的 key"）。
+func TestParseKeysAcceptRealWorldForms(t *testing.T) {
+	forms := keyForms(t)
+	params := notifyParams()
+	for name, pair := range forms {
+		t.Run(name, func(t *testing.T) {
+			if _, err := parseRSAPrivateKey(pair[0]); err != nil {
+				t.Fatalf("parseRSAPrivateKey(%s): %v", name, err)
+			}
+			if _, err := parseRSAPublicKey(pair[1]); err != nil {
+				t.Fatalf("parseRSAPublicKey(%s): %v", name, err)
+			}
+			signed := url.Values{}
+			for k, vs := range params {
+				signed[k] = append([]string(nil), vs...)
+			}
+			sign, err := SignValues(signed, pair[0])
+			if err != nil {
+				t.Fatalf("SignValues(%s): %v", name, err)
+			}
+			signed.Set(signField, sign)
+			signed.Set(signTypeField, signTypeRSA)
+			if err := VerifyValues(signed, pair[1]); err != nil {
+				t.Fatalf("VerifyValues(%s): %v（解析出的私钥/公钥不是同一对）", name, err)
+			}
+		})
+	}
+}
+
+// TestParseKeysRejectGarbage 反向判据：垃圾输入必须报 config missing，且错误里
+// **同时说清接受的两种形态**（运维照着日志就能改，不必猜）。
+func TestParseKeysRejectGarbage(t *testing.T) {
+	cases := map[string]string{
+		"empty":          "   ",
+		"prose":          "not a key at all", // 含空格：必须报 not base64（不是 ASN.1 噪声）
+		"broken-base64":  "-----BEGIN PRIVATE KEY-----!!!-----END PRIVATE KEY-----",
+		"base64-garbage": base64.StdEncoding.EncodeToString([]byte("definitely not DER")),
+	}
+	for name, in := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseRSAPrivateKey(in)
+			if !errors.Is(err, domain.ErrConfigMissing) {
+				t.Fatalf("parseRSAPrivateKey(%s) err = %v, want ErrConfigMissing", name, err)
+			}
+			if !strings.Contains(err.Error(), "PEM or bare base64") {
+				t.Fatalf("parseRSAPrivateKey(%s) err = %v, 必须说清接受的形态", name, err)
+			}
+			if _, err := parseRSAPublicKey(in); !errors.Is(err, domain.ErrConfigMissing) {
+				t.Fatalf("parseRSAPublicKey(%s) err = %v, want ErrConfigMissing", name, err)
+			}
+		})
+	}
+}
+
+// TestParseConfigAcceptsEveryKeyForm 用户侧的真实形状（**创建账户必须成功**）：
+// 管理面表单里粘进来的可能是易支付后台给的裸 base64，也可能是**换行被控件吃掉**的
+// PEM（带 `-----BEGIN-----` 头、body 全挤在一行）——后者正是线上
+// `epay config private_key: private key is not PEM` 的现场。
+func TestParseConfigAcceptsEveryKeyForm(t *testing.T) {
+	for name, pair := range keyForms(t) {
+		t.Run(name, func(t *testing.T) {
+			raw := `{"base_url":"https://pay.example.com","pid":"1001","private_key":` +
+				strconv.Quote(pair[0]) + `,"public_key":` + strconv.Quote(pair[1]) + `}`
+			cfg, err := New(nil).ParseConfig([]byte(raw))
+			if err != nil {
+				t.Fatalf("凭据形态 %s 必须被接受（线上事故形状）：%v", name, err)
+			}
+			if got := cfg.MerchantRef(); got != "1001" {
+				t.Fatalf("MerchantRef() = %q, want 1001", got)
+			}
+		})
+	}
+
+	// 反向判据：垃圾 base64 仍必须被拒——兼容形态不等于放弃校验。
+	if _, err := New(nil).ParseConfig([]byte(`{"base_url":"https://pay.example.com","pid":"1001","private_key":"AAAA","public_key":"AAAA"}`)); err == nil {
+		t.Fatalf("垃圾 base64 仍必须被拒")
+	}
+}

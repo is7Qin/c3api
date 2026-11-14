@@ -135,7 +135,7 @@ describe('resolveFormState：元数据三态（P52）', () => {
   })
 })
 
-describe('controlFor：kind → 控件（未知 kind 的 secret 感知降级，N43）', () => {
+describe('controlFor：控件只看 kind，secret 不参与（N43 修订）', () => {
   it('已知 kind 直接映射', () => {
     assert.equal(controlFor({ name: 'a', kind: 'text' }), 'text')
     assert.equal(controlFor({ name: 'b', kind: 'url' }), 'text')
@@ -143,17 +143,17 @@ describe('controlFor：kind → 控件（未知 kind 的 secret 感知降级，N
     assert.equal(controlFor({ name: 'd', kind: 'multiline' }), 'multiline')
   })
 
-  it('未知 kind + secret === true → password 控件（秘密字段绝不因"前端不认识"落成明文）', () => {
-    assert.equal(controlFor({ name: 'otp', kind: 'otp', secret: true }), 'password')
-    assert.equal(controlFor({ name: 'pin', kind: 'pin-pad', secret: true }), 'password')
+  it('secret === true 不改变控件：多行密钥仍是 textarea（看得见才查得出换行被吃）', () => {
+    assert.equal(controlFor({ name: 'private_key', kind: 'multiline', secret: true }), 'multiline')
+    assert.equal(controlFor({ name: 'token', kind: 'text', secret: true }), 'text')
+    assert.equal(controlFor({ name: 'token', kind: 'url', secret: true }), 'text')
   })
 
-  it('未知 kind + secret === false → text 控件', () => {
-    assert.equal(controlFor({ name: 'region', kind: 'select', secret: false }), 'text')
-  })
-
-  it('未知 kind 且未声明 secret → 按非秘密降级为 text', () => {
-    assert.equal(controlFor({ name: 'region', kind: 'select' }), 'text')
+  it('未知 kind（含 secret: true）→ text：可见控件 + warning，不藏成圆点', () => {
+    for (const secret of [true, false, undefined]) {
+      assert.equal(controlFor({ name: 'otp', kind: 'otp', secret }), 'text')
+      assert.equal(controlFor({ name: 'pin', kind: 'pin-pad', secret }), 'text')
+    }
   })
 })
 
@@ -168,7 +168,8 @@ describe('unknownKindWarning / warnUnknownKinds：降级必须可观测（§18-7
     assert.ok(msg !== null)
     assert.match(msg, /epay_v2/)
     assert.match(msg, /otp/)
-    assert.match(msg, /password/)
+    // 降级到哪个控件必须写在文案里（N43 修订后未知 kind 一律 text）
+    assert.match(msg, /degrading to "text"/)
   })
 
   it('warnUnknownKinds 走 console.warn，且同一 (provider, kind) 只发一次', () => {

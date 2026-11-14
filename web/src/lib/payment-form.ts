@@ -93,9 +93,18 @@ export function isKnownKind(kind: string): boolean {
 }
 
 /**
- * kind → 控件。`secret` 是秘密字段的**唯一**声明口（§18-2），所以未知 kind 必须
- * secret 感知降级（N43）：`secret:true` 的未知 kind 一律用 password 控件——秘密字段
- * 永不因为"前端不认识这个 kind"落成明文输入框。
+ * kind → 控件。**只看 `kind`**：`secret` 不参与控件选择（它只驱动读面掩码与 PUT 的
+ * `***` 合并）。
+ *
+ * 这条**曾经是反的**：旧规则"`secret:true` 的未知 kind 一律 password"（N43）会让
+ * 运维看不见自己粘进去的东西。线上事故正是这么发生的——带 `-----BEGIN-----` 头的
+ * 私钥填进单行 `type=password` 控件，浏览器把换行吃掉，服务端报
+ * `private key is not PEM`，而输入框里只有一排圆点，**现场证据被控件类型藏起来了**。
+ *
+ * 现在"看得见"不泄漏任何东西：读面恒 `***`，输入框里永远不是已存的密钥，只有操作者
+ * 自己刚粘进去的文本；自动补全/历史的风险由 `autoComplete="off"`（密码框用
+ * `new-password"）承担，不靠控件类型。未知 kind 仍然**可见**（`text`），并照旧发
+ * warning（§18-7 的可观测性不变）。
  */
 export function controlFor(field: ConfigField): ControlKind {
   switch (field.kind) {
@@ -107,7 +116,7 @@ export function controlFor(field: ConfigField): ControlKind {
     case 'text':
       return 'text'
     default:
-      return field.secret === true ? 'password' : 'text'
+      return 'text'
   }
 }
 

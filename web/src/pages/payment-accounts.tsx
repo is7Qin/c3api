@@ -578,7 +578,8 @@ function AccountDialog({
           </div>
         </div>
 
-        {/* —— 协议凭据（按 config_schema.fields 动态渲染；secret 字段 password + 掩码回显）—— */}
+        {/* —— 协议凭据（按 config_schema.fields 动态渲染；控件只看 kind，secret 只驱动
+             读面掩码与 "***" 合并）—— */}
         <div className="space-y-2">
           <p className="text-sm font-medium">{t('paymentAccounts.configSection')}</p>
           {form.openable ? (
@@ -600,8 +601,9 @@ function AccountDialog({
                         <code className="ml-2 font-mono text-xs text-muted-foreground">{f.name}</code>
                       )}
                     </Label>
-                    {/* secret 字段一律 password（§11 / §18-2）：掩码回显 ***，不改就原样回传。
-                        未知 kind 的降级已在 controlFor 里做过 secret 感知判定。 */}
+                    {/* 控件由 kind 决定（§18-2 / N43 修订）：secret 不再强制密码框——
+                        密钥是运维自己粘的，藏成圆点只会让"换行被吃掉"这类问题看不见
+                        （线上事故形状）。读面恒 `***`，输入框里永远不是已存的密钥。 */}
                     {control === 'password' ? (
                       <Input
                         id={id}

@@ -17,6 +17,9 @@ package epay
 //     长度 344、尾部恒为 `==`，不排除会把每条合法通知都拒掉（B39）。
 //   - 签：商户私钥 RSA-PKCS1v15 + SHA-256 → base64；验：平台公钥。
 //   - 私钥 PKCS8 → PKCS1；公钥 PKIX → PKCS1。
+//   - **密钥材料三种粘贴形态都收**（见 decodeKeyMaterial）：标准 PEM、换行被吃掉的
+//     PEM、裸 base64（PKCS#1/PKCS#8/PKIX DER）。彩虹易支付后台给的就是裸 base64，
+//     只认 PEM 会把真实商户密钥全部拒掉（线上事故形状：`private key is not PEM`）。
 //   - base64 四试：Std / RawStd / URL / RawURL（缺 padding 的网关不该被判死）。
 
 import (
@@ -184,19 +187,111 @@ func decodeSignature(sign string) ([]byte, error) {
 	return nil, fmt.Errorf("epay: signature is not base64 (std/rawstd/url/rawurl): %w", firstErr)
 }
 
+// decodeKeyMaterial 把"粘贴进来的密钥材料"统一成 DER 字节。**三种真实形态都要收**：
+//
+//  1. 标准 PEM（`-----BEGIN ...-----` 包裹、行宽 64）；
+//  2. **换行被吃掉的 PEM**：单行 `<input>` / JSON 往返常见，marker 还在但 body 全在一行；
+//  3. **裸 base64**：彩虹易支付后台给私钥/公钥的方式常常就是 PKCS#8 / PKIX DER 的
+//     base64，**没有 PEM 头**。只认 PEM 会把真实商户密钥全部拒掉——这正是线上
+//     `private key is not PEM` 的来历。
+//
+// 另外容忍：首尾空白、成对引号（从 shell/env 连引号一起粘）、字面量 `\n`（后端把
+// 换行转义后存进 jsonb 的形态）、base64 体里的折行/空格（很多面板按 64 列折行）。
+func decodeKeyMaterial(text string) ([]byte, error) {
+	s := strings.TrimSpace(text)
+	if s == "" {
+		return nil, errors.New("empty key material")
+	}
+	if len(s) >= 2 {
+		if (s[0] == '"' && s[len(s)-1] == '"') || (s[0] == '\'' && s[len(s)-1] == '\'') {
+			s = strings.TrimSpace(s[1 : len(s)-1])
+		}
+	}
+	// 字面量转义（JSON 里 "\n" 没被还原）：只在**完全没有真实换行**时替换，
+	// 否则会误伤 body 里恰好出现的反斜杠+字母组合（base64 字母表不含 `\`）。
+	if !strings.ContainsAny(s, "\r\n") && strings.Contains(s, `\n`) {
+		s = strings.ReplaceAll(s, `\r`, "\r") // `\r\n` 由这两条覆盖
+		s = strings.ReplaceAll(s, `\n`, "\n")
+	}
+	// ① 标准 PEM（pem.Decode 自己会跳过前导空白/多余文本）。
+	if block, _ := pem.Decode([]byte(s)); block != nil {
+		return block.Bytes, nil
+	}
+	// ② marker 还在、换行没了：取 BEGIN/END 之间的文本当 base64 解。
+	if body, ok := pemBodyWithoutNewlines(s); ok {
+		if der, err := decodeBase64Lenient(body); err == nil {
+			return der, nil
+		}
+	}
+	// ③ 裸 base64。
+	return decodeBase64Lenient(s)
+}
+
+// pemBodyWithoutNewlines 从"单行 PEM"里取出 base64 主体（`-----BEGIN X-----` 之后、
+// `-----END X-----` 之前的文本）。marker 不完整时返回 ok=false，交给裸 base64 兜底。
+func pemBodyWithoutNewlines(s string) (string, bool) {
+	const beginTag = "-----BEGIN "
+	i := strings.Index(s, beginTag)
+	if i < 0 {
+		return "", false
+	}
+	rest := s[i+len(beginTag):]
+	j := strings.Index(rest, "-----") // BEGIN 行的收尾
+	if j < 0 {
+		return "", false
+	}
+	body := rest[j+len("-----"):]
+	if k := strings.Index(body, "-----END "); k >= 0 {
+		body = body[:k]
+	}
+	return body, true
+}
+
+// decodeBase64Lenient 去掉空白后依次试四种 base64 变体（与签名解码同一组变体）。
+func decodeBase64Lenient(s string) ([]byte, error) {
+	// 空白一律剥掉（含空格）：单行 `<input>` 在部分平台会把粘贴进来的换行**换成
+	// 空格**而不是删掉，PDF/Word 里复制的 PEM 也常带空格。这里的输入是密钥材料
+	// （base64 字母表不含空格），剥掉是无损的；签名路径**不走本函数**——签名里的
+	// 空格有语义（F60 的 `+` 还原），那边不能用这套宽松规则。
+	clean := strings.Map(func(r rune) rune {
+		switch r {
+		case ' ', '\t', '\r', '\n':
+			return -1
+		}
+		return r
+	}, s)
+	if clean == "" {
+		return nil, errors.New("empty key material")
+	}
+	var firstErr error
+	for _, enc := range base64Variants {
+		raw, err := enc.DecodeString(clean)
+		if err == nil {
+			return raw, nil
+		}
+		if firstErr == nil {
+			firstErr = err
+		}
+	}
+	return nil, fmt.Errorf("not base64 (std/rawstd/url/rawurl): %w", firstErr)
+}
+
 // parseRSAPrivateKey 解析 RSA 私钥：PKCS1 直读，否则按 PKCS8 解（PKCS8 → PKCS1）。
 // 配置缺失/格式错一律包 domain.ErrConfigMissing（§6：503 + 缺失键名，不回显私钥）。
-func parseRSAPrivateKey(pemText string) (*rsa.PrivateKey, error) {
-	block, _ := pem.Decode([]byte(pemText))
-	if block == nil {
-		return nil, fmt.Errorf("%w: private key is not PEM", domain.ErrConfigMissing)
+// 材料形态（PEM / 单行 PEM / 裸 base64）由 decodeKeyMaterial 统一。
+func parseRSAPrivateKey(text string) (*rsa.PrivateKey, error) {
+	der, err := decodeKeyMaterial(text)
+	if err != nil {
+		return nil, fmt.Errorf("%w: private key must be PEM or bare base64 (PKCS#1/PKCS#8): %v",
+			domain.ErrConfigMissing, err)
 	}
-	if key, err := x509.ParsePKCS1PrivateKey(block.Bytes); err == nil {
+	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
 		return key, nil
 	}
-	parsed, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+	parsed, err := x509.ParsePKCS8PrivateKey(der)
 	if err != nil {
-		return nil, fmt.Errorf("%w: parse private key: %v", domain.ErrConfigMissing, err)
+		return nil, fmt.Errorf("%w: private key must be PEM or bare base64 (PKCS#1/PKCS#8): %v",
+			domain.ErrConfigMissing, err)
 	}
 	key, ok := parsed.(*rsa.PrivateKey)
 	if !ok {
@@ -206,17 +301,20 @@ func parseRSAPrivateKey(pemText string) (*rsa.PrivateKey, error) {
 }
 
 // parseRSAPublicKey 解析 RSA 公钥：PKCS1 直读，否则按 PKIX 解（PKIX → PKCS1）。
-func parseRSAPublicKey(pemText string) (*rsa.PublicKey, error) {
-	block, _ := pem.Decode([]byte(pemText))
-	if block == nil {
-		return nil, fmt.Errorf("%w: public key is not PEM", domain.ErrConfigMissing)
+// 材料形态同上（易支付的平台公钥同样常给裸 base64）。
+func parseRSAPublicKey(text string) (*rsa.PublicKey, error) {
+	der, err := decodeKeyMaterial(text)
+	if err != nil {
+		return nil, fmt.Errorf("%w: public key must be PEM or bare base64 (PKCS#1/PKIX): %v",
+			domain.ErrConfigMissing, err)
 	}
-	if key, err := x509.ParsePKCS1PublicKey(block.Bytes); err == nil {
+	if key, err := x509.ParsePKCS1PublicKey(der); err == nil {
 		return key, nil
 	}
-	parsed, err := x509.ParsePKIXPublicKey(block.Bytes)
+	parsed, err := x509.ParsePKIXPublicKey(der)
 	if err != nil {
-		return nil, fmt.Errorf("%w: parse public key: %v", domain.ErrConfigMissing, err)
+		return nil, fmt.Errorf("%w: public key must be PEM or bare base64 (PKCS#1/PKIX): %v",
+			domain.ErrConfigMissing, err)
 	}
 	key, ok := parsed.(*rsa.PublicKey)
 	if !ok {

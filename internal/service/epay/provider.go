@@ -90,8 +90,10 @@ func (e *notifyRejection) FailReason() string { return e.reason }
 // Config 易支付 V2 的账户凭据（密封：嵌入 domain.AccountConfigSeal）。
 //
 // 一行 = 一家上游的一个商户号：`pid` 是网关自述的商户标识（= MerchantRef，
-// 承载 (provider, merchant_ref) 唯一索引），`base_url` 是网关地址，两把 PEM
-// 是本商户的签名/验签密钥。
+// 承载 (provider, merchant_ref) 唯一索引），`base_url` 是网关地址，两把密钥
+// 是本商户的签名/验签密钥。密钥材料**三种形态都收**（标准 PEM / 换行被吃掉的
+// PEM / 裸 base64）：易支付后台给的常常是没有 PEM 头的单行 base64
+// （见 sign.go:decodeKeyMaterial）。
 type Config struct {
 	domain.AccountConfigSeal
 
@@ -153,7 +155,10 @@ func (p *Provider) ConfigSchema() domain.ConfigSchema {
 		{Name: ConfigFieldBaseURL, Kind: domain.ConfigFieldURL, Required: true,
 			Example: "https://pay.example.com"},
 		{Name: ConfigFieldPID, Kind: domain.ConfigFieldText, Required: true, Example: "1001"},
-		{Name: ConfigFieldPrivateKey, Kind: domain.ConfigFieldPassword, Secret: true, Required: true,
+		// private_key 用 multiline：PEM 是多行文本，单行 `<input>` 会把换行吃掉
+		// （浏览器粘贴时直接丢），只剩一堆无法解析的碎片；textarea 对"单行 base64"
+		// 同样友好。它仍是 Secret（读面恒 `***`），秘密性不靠控件类型保证。
+		{Name: ConfigFieldPrivateKey, Kind: domain.ConfigFieldMultiline, Secret: true, Required: true,
 			Example: "-----BEGIN PRIVATE KEY-----"},
 		{Name: ConfigFieldPublicKey, Kind: domain.ConfigFieldMultiline, Required: true,
 			Example: "-----BEGIN PUBLIC KEY-----"},
@@ -163,7 +168,7 @@ func (p *Provider) ConfigSchema() domain.ConfigSchema {
 // ParseConfig 解析并校验账户凭据（创建/更新写面与管理面列表共用）。
 //
 // 失败**必须**让写面 400、让列表 config_error 非空、让选路跳过该账户（§4：
-// 解析失败静默只允许存在于选路内部）。校验面刻意包含"密钥可解析"：PEM 坏掉
+// 解析失败静默只允许存在于选路内部）。校验面刻意包含"密钥可解析"：密钥坏掉
 // 的账户在选路阶段看不出问题，却会在签名/验签时把每一笔订单变成 503。
 func (p *Provider) ParseConfig(raw []byte) (domain.AccountConfig, error) {
 	if len(raw) == 0 {
