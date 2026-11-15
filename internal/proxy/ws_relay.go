@@ -262,8 +262,17 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			if upPayloadErr != nil && isResponsesCompleted(f) {
 				upPayloadErr = nil
 			}
-			// 终态帧事实（§6.1 轮状态机）：子串预筛（memmem、零分配、不解析 JSON）
-			// 命中才做精确 type 判定（isResponsesCompleted 的 scanKeyValue）。
+			// 终态帧事实（§6.1 轮状态机）：**只做精确 type 判定**（isResponsesCompleted
+			// 的 scanKeyValue——字节扫描、零分配、不反序列化）。
+			//
+			// 曾经在这里加过一层 `bytes.Contains(f, completedTypeBytes)` 子串预筛，那是
+			// gjson 时代的产物（当年精确判定要一次完整 gjson 解析）。现在精确判定是
+			// scanKeyValue：`type` 通常为首键 ⇒ 24 ns 恒定、与帧长无关，而 memmem 预筛是
+			// **全帧**成本（4 KiB 52.9 ns / 64 KiB 703 ns / 1 MiB 11.6 µs）。所以预筛纯是
+			// 净亏。删掉它不改变判定：`isResponsesCompleted` 要求顶层 type 的**裸字节**
+			// 等于 response.completed，成立即意味着这 18 字节在帧内出现 ⇒ 预筛恒真 ⇒
+			// `A && B ≡ B`。病态帧（type 不靠前）也从"memmem + 一次结构走"降为"一次结构走"，
+			// 最坏不变差。
 			//
 			// 轮边界 = **当前轮已 completed 且收到 response.created**——每轮真正的
 			// 开始必然伴随上游的 created 帧（带新 response id），不是任意帧：
@@ -282,7 +291,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 			// 杂帧照旧 1:1 透传，只是记账仍归本轮。
 			// 只在 up-loop 内写，编排在 `<-upLoopDone` 之后读（close 建
 			// happens-before），与 upPayloadErr 同款纪律。
-			completed := bytes.Contains(f, completedTypeBytes) && isResponsesCompleted(f)
+			completed := isResponsesCompleted(f)
 			if completed {
 				if cur.observeCompleted(p, f, sel) {
 					p.settleRound(relayCtx, cur, sel, reqModel, groupID)

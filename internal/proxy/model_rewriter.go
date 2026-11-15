@@ -10,8 +10,29 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+// rewriteResponseModelJSON 把响应体里三处既有 model 字段改写成客户端请求的模型名
+// （隐式映射模式；`model == ""` 恒走空路径）。
+//
+// **两段式：先字节预筛，再全帧校验。** 三条改写路径（`model` / `response.model` /
+// `message.model`）都要求帧内出现裸键字节 `model`：`scanKeyValue` 用
+// `parseJSONString` 取引号之间的**原始字节**（不解 `\uXXXX`），再与 `modelKeyBytes`
+// 做 `bytes.Equal`。所以"命中 model 键" ⇒ 帧内必含连续 5 字节 `model`，预筛是
+// **真超集**，不存在漏判；预筛 miss 时原实现三个分支也全部 `continue`、`json.Valid`
+// 也只原样返回 body，故输出逐字节相同。
+//
+// 代价对比（内容帧，无命中，Ryzen 7 7840H / go1.27）：
+//
+//	                    4 KiB      64 KiB     1 MiB
+//	改前（json.Valid+3 遍）  7293 ns   112061 ns  1726057 ns
+//	改后（预筛 miss）         90 ns      772 ns    12696 ns
+//
+// 即 81× / 145× / 136×——大帧上这是帧路径**最贵的一项**（判死嗅探同口径 12.4 µs/MiB）。
+// 预筛命中（真出现 `model` 字样，含"正文里恰好有这个词"）只是回到原路径，无副作用。
 func rewriteResponseModelJSON(body []byte, model string) []byte {
-	if model == "" || !json.Valid(body) {
+	if model == "" || !bytes.Contains(body, modelKeyBytes) {
+		return body
+	}
+	if !json.Valid(body) {
 		return body
 	}
 	original := body
