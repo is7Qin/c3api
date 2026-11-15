@@ -2158,8 +2158,7 @@ export default {
     },
     "overview": {
       "title": "Overview",
-      "subtitle": "Your balance, concurrency limit, and recent usage",
-      "balanceTitle": "Account balance",
+      "subtitle": "Your API keys and last-7-day usage",
       "maxConcurrency": "Max concurrency",
       "createdAt": "Registered at",
       "unlimited": "Unlimited",

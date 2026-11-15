@@ -2158,8 +2158,7 @@ export default {
     },
     "overview": {
       "title": "总览",
-      "subtitle": "账户余额、并发上限与近期用量",
-      "balanceTitle": "账户余额",
+      "subtitle": "API Keys 与近 7 天用量概览",
       "maxConcurrency": "并发上限",
       "createdAt": "注册时间",
       "unlimited": "不限",
