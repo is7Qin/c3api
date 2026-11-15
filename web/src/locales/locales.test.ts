@@ -38,6 +38,14 @@ const DYNAMIC_SENTINELS = [
   'dateRange.preset.thisWeek',
   'dateRange.preset.last30d',
   'dateRange.preset.thisMonth',
+  // 钱包页（wallet-topup-redeem）的动态 key：订单状态徽章 / 筛选与兑换记录的类型列都由
+  // 运行时值拼出（`user.wallet.status.${status}` 与 `redemptions.type.${CodeType}`）。
+  'user.wallet.status.pending',
+  'user.wallet.status.paid',
+  'user.wallet.status.closed',
+  'redemptions.type.balance',
+  'redemptions.type.concurrency',
+  'redemptions.type.temp_balance',
 ]
 
 describe('locales 资源完整性', () => {

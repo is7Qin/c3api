@@ -22,7 +22,6 @@ import UserModels from '@/pages/user/models'
 import UserManagementKeys from '@/pages/user/management-keys'
 import UserLogs from '@/pages/user/logs'
 import UserStats from '@/pages/user/stats'
-import UserRedemptions from '@/pages/user/redemptions'
 import UserWallet from '@/pages/user/wallet'
 import UserProfile from '@/pages/user/profile'
 import Forbidden from '@/pages/forbidden'
@@ -93,8 +92,10 @@ const router = createBrowserRouter([
           ] },
         ],
       },
-      // 支付网关三张页面：不在 app / user 支内，先过支付开关闸门（关闭 = 404，与角色无关），
-      // 开启后管理面两页再过 RequireAdmin（非 admin 仍是 403），钱包对已登录用户放行。
+      // 支付管理面两张页面：不在 app 支内，先过支付开关闸门（关闭 = 404，与角色无关），
+      // 开启后再过 RequireAdmin（非 admin 仍是 403）。
+      // 用户面钱包**不在**闸门内（wallet-topup-redeem）：支付关闭时它仍必须可达且默认落在
+      // 兑换，充值区块由页面自己读同一个开关；这也让 PAYMENT_PATHS 只描述管理面。
       {
         element: <PaymentFeatureGate />,
         children: [
@@ -104,8 +105,6 @@ const router = createBrowserRouter([
             // 支付账户/渠道配置面（spec v2 §11）：key/协议/优先级/启停/渠道子表/config_error。
             { path: 'app/payment-accounts', element: <PaymentAccounts /> },
           ] },
-          // 钱包（spec 支付网关 §7-1/§9）：渠道 → 下单 → 跳网关；`?order=` 进入时轮询到账。
-          { path: 'user/wallet', element: <UserWallet /> },
         ],
       },
       {
@@ -118,7 +117,11 @@ const router = createBrowserRouter([
           { path: 'management-keys', element: <UserManagementKeys /> },
           { path: 'logs', element: <UserLogs /> },
           { path: 'stats', element: <UserStats /> },
-          { path: 'redemptions', element: <UserRedemptions /> },
+          // 钱包（wallet-topup-redeem）：余额 + 充值/兑换 + 两类记录的唯一入口。
+          // 不在 PaymentFeatureGate 内——支付关闭时仍可达，页面自身按开关只隐藏充值区块。
+          { path: 'wallet', element: <UserWallet /> },
+          // 兼容路由：旧兑换页已并入钱包，书签/外链在此立即重定向到兑换 Tab（不渲染旧页）。
+          { path: 'redemptions', element: <Navigate to="/user/wallet?tab=redeem" replace /> },
           // 供应商控制台（spec 2026-10-09 §6.1）：先过供应商开关闸门（关闭 = 404），
           // 再过门控 RequireSupplier（supplier | platform_admin）。
           {

@@ -38,9 +38,8 @@ const userNav: readonly NavItem[] = [
   { to: '/user/models', key: 'user.nav.models', icon: Boxes, end: false },
   { to: '/user/logs', key: 'user.nav.logs', icon: FileText, end: false },
   { to: '/user/stats', key: 'user.nav.stats', icon: BarChart3, end: false },
-  { to: '/user/redemptions', key: 'user.nav.redemptions', icon: Ticket, end: false },
-  // 钱包（spec 支付网关 §9）：充值下单 + 我的订单；网关 return 会带回 /user/wallet?order=…
-  // 支付网关关闭时由 paymentNavFor 去掉。
+  // 钱包（wallet-topup-redeem）：余额 + 充值/兑换 + 两类记录的唯一用户入口。它**不在**
+  // PAYMENT_PATHS 里——支付关闭时仍要可达（默认落在兑换），所以不会被 paymentNavFor 过滤。
   { to: '/user/wallet', key: 'user.nav.wallet', icon: CreditCard, end: false },
 ]
 
@@ -125,7 +124,8 @@ export default function AppShell() {
   })
   const isAdmin = me?.Role === 'platform_admin'
   // 功能开关（加载中 / 失败按关闭）：管理组的结算工作台、供应商组与面包屑读 supplier；
-  // 管理组的支付订单/支付账户、用户组的钱包与面包屑读 payment。
+  // 管理组的支付订单/支付账户读 payment（用户组的钱包不在支付管理面集合里，故支付关闭
+  // 时仍留在菜单中——它是兑换的唯一入口）。
   const { supplier, payment } = useFeatures()
   // 菜单组顺序：管理域（仅 admin）→ 供应商域（supplier | admin）→ 用户中心（全员）。
   const navs: NavGroup[] = [
