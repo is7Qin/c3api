@@ -34,6 +34,8 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          secrets: |
+            codex_sdk_token=${{ secrets.CODEX_SDK_TOKEN }}
           cache-from: type=gha, scope=c3api-alpha-build
           cache-to: type=gha, mode=max, scope=c3api-alpha-build
           tags: |

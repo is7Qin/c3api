@@ -25,6 +25,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: authorise private modules
+        env:
+          CODEX_SDK_TOKEN: ${{ secrets.CODEX_SDK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CODEX_SDK_TOKEN}" ]; then
+            go env -w GOPRIVATE=github.com/is7Qin/codex-sdk
+            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin/codex-sdk".insteadOf "https://github.com/is7Qin/codex-sdk"
+          fi
       - name: vet
         run: go vet ./...
       - name: no static admin token residue
@@ -61,6 +70,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
+      - name: authorise private modules
+        env:
+          CODEX_SDK_TOKEN: ${{ secrets.CODEX_SDK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CODEX_SDK_TOKEN}" ]; then
+            go env -w GOPRIVATE=github.com/is7Qin/codex-sdk
+            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin/codex-sdk".insteadOf "https://github.com/is7Qin/codex-sdk"
+          fi
       - name: go generate (handler + ent)
         run: go generate ./internal/handler/ ./internal/ent/
       - name: no drift in api.gen.go / ent generated code

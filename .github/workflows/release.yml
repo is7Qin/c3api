@@ -39,6 +39,8 @@ jobs:
           # GHA 缓存：pnpm/go 依赖层跨构建复用（首轮全量、后续命中层缓存）。
           # 配 Dockerfile --platform=$BUILDPLATFORM 原生构建后 QEMU 模拟面已消，
           # 缓存再吃掉依赖重下载。
+          secrets: |
+            codex_sdk_token=${{ secrets.CODEX_SDK_TOKEN }}
           cache-from: type=gha, scope=c3api-build
           cache-to: type=gha, mode=max, scope=c3api-build
           # 版本 tag（如 v0.0.1-beta.1）+ beta 浮动 tag（compose/README 用户拉最新）。
@@ -72,6 +74,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod # 显式装齐（runner 预装 Go 不保证与 go.mod 匹配）
+      - name: authorise private modules
+        env:
+          CODEX_SDK_TOKEN: ${{ secrets.CODEX_SDK_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "${CODEX_SDK_TOKEN}" ]; then
+            go env -w GOPRIVATE=github.com/is7Qin/codex-sdk
+            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin/codex-sdk".insteadOf "https://github.com/is7Qin/codex-sdk"
+          fi
       - name: Build and pack
         env:
           GOOS: ${{ matrix.goos }}

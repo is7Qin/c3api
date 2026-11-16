@@ -31,7 +31,15 @@ ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+# 依赖凭证经 BuildKit secret 注入（id=codex_sdk_token）；缺省时本段跳过。
+RUN --mount=type=secret,id=codex_sdk_token,required=false \
+    set -eu; \
+    if [ -s /run/secrets/codex_sdk_token ]; then \
+      apk add --no-cache git >/dev/null && \
+      git config --global url."https://x-access-token:$(cat /run/secrets/codex_sdk_token)@github.com/is7Qin/codex-sdk".insteadOf "https://github.com/is7Qin/codex-sdk" && \
+      go env -w GOPRIVATE=github.com/is7Qin/codex-sdk; \
+    fi; \
+    go mod download
 COPY . .
 # 多阶段产物经 COPY --from=web 传递（阶段间是独立容器，不能直接 cp 前阶段路径）
 RUN rm -rf cmd/server/dist && mkdir -p cmd/server/dist
