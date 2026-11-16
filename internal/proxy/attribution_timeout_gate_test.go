@@ -72,9 +72,17 @@ func fakeResponsesWSHoldScript(t *testing.T, frames ...string) (*httptest.Server
 
 // waitRelayIdle 等一次请求的收尾完成（inflight 归零在 finish/记录之后）：裸断
 // 场景拿不到网关关闭帧，只能靠这个同步点再读落库结果。
+//
+// **上限必须大于一次关闭握手的上界**，否则这条门禁测的就成了"收尾快不快"而不是
+// "收尾有没有完成"：客户端 abort 分支对上游走的是优雅 `up.Close`，而 coder/websocket
+// 的契约是「写关闭帧最多 5s + 等对端关闭帧最多 5s」——对端不读（保持连接的假上游就是
+// 这样）时，inflight 要等满一个关闭超时才归零。原来的 5s 上限与这个量级正面相撞：
+// 本机常年 10ms 走不到那条路径，CI 上已因此红过一次（2026-11-16）。
+// 真正的卡死（goroutine 泄漏）在 3× 关闭超时之后仍然会红，判据没有被放松。
 func waitRelayIdle(t *testing.T, p *Proxy) {
 	t.Helper()
-	require.Eventually(t, func() bool { return p.Inflight() == 0 }, 5*time.Second, 10*time.Millisecond,
+	require.Eventually(t, func() bool { return p.Inflight() == 0 },
+		responsesWSCloseTimeout+10*time.Second, 10*time.Millisecond,
 		"relay 收尾必须完成（inflight 归零）")
 }
 
