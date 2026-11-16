@@ -229,7 +229,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 // 流入，热路径零新增分配）。差异段：codex 拨号分流（dialCodexWS +
 // handleCodexDialError）与静态拨号（credentialFor + ResponsesWSDial）、relay
 // （首帧模型改写在拨号前按当次 sel 预处理；relayWS 合一骨架 + 双传输适配
-// aiclientTransport/codexTransport——双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
+// aiclientTransport 与 *sdkbridge.Stream——双向帧透传 + usage 嗅探 + codex 每帧判死钩子）。
 // 错误文本回传（分通道）：4xx respBody 只放上游 body message（无则空——
 // 帧侧 wsSink emOr 回退固定网关文案），dialErr 全文走 callErr 通道（循环 4xx
 // 分支以 callErr 回退落盘保全文）；0/5xx/429 保持 msg 归一兜底（上游 message
@@ -249,7 +249,8 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		// 适配层（不经 credentialFor 单字符串路径：codex 凭据为复合结构
 		// oauth_token+refresh_token+expires_at+pat+accountID，单字符串契约表
 		// 达不了——注册表未注册 codex 类型，见 dialCodexWS 注释），伪装四元
-		// 组 + 心跳单源全部在 dialCodexWS/codexTransport（codex_responses_ws.go）；
+		// 组 + 心跳单源全部在 dialCodexWS 与 *sdkbridge.Stream（codex_responses_ws.go /
+		// sdkbridge/stream.go）；
 		// 该面**不递任何客户端头**（spec §12：只发 SDK 自己写的头），故不存在"头部族剥离清单"这种东西。
 		// 首帧按**当次** sel 改写模型（故障转移换号时映射可能不同）；同一份字节
 		// 既给拨号（握手头与 Turn.First 的依据）又给 relay 写出——二者必须逐字节相同。

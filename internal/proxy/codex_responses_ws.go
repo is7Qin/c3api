@@ -22,13 +22,13 @@ import (
 // --- codex 独立 relay 变体（codex-oauth/codex-pat 类型 resp-ws 接线） ---
 // 独立文件族（用户拍板文件边界：codex 相关处理不散落现有 caller/forward 文件，
 // 面现在只经 sdkbridge —— 本包不再 import codex-sdk）。与 aiclient 路径同构的编
-// 排（合一骨架 relayWS + 传输适配 codexTransport 抽 5 方法传输接口
+// 排（合一骨架 relayWS + 传输适配抽 5 方法传输接口
 // wsRelayTransport，见 ws_relay.go）：双向帧中继（客户端帧经 SDK 按 codex
 // 形状归一）/ usage 嗅探（response.completed——sniffResponsesCompletedUsage
 // 复用）/ 关闭分类（relayClassify/recordClose 复用）/ 心跳（30s Ping + 10s
 // pong 超时同款）——
 // 差异收口在本文件：传输面 = *sdkbridge.Stream（具体薄壳，五方法纯转发，
-// Close/CloseNow——SDK 具体类型经 codexTransport 适配接口）与每帧判死钩子
+// SDK 的 *codexsdk.Client 经此壳实现 wsRelayTransport）与每帧判死钩子
 // frameHook（见 wsAttempt 调用点）；服务端 Accept 侧 = 既有
 // *websocket.Conn 不动。
 //
