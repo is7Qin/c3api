@@ -24,8 +24,6 @@ import (
 
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
-	codexsdk "github.com/is7Qin/codex-sdk"
-	"github.com/is7Qin/codex-sdk/redisstore"
 	"github.com/jackc/pgx/v5/stdlib"
 
 	jwtauth "github.com/is7qin/c3api/internal/auth"
@@ -279,7 +277,7 @@ func main() {
 	sched := scheduler.New(scheduler.Config{
 		SyncInterval:   cfg.Scheduler.SyncInterval,
 		StalenessProbe: repos.Groups,
-		RotatePolicy:   codexsdk.DefaultRotatePolicy(),
+		RotatePolicy:   sdkbridge.DefaultRotatePolicy(),
 		Egress:         egressPool,
 		// 线程退休与配置批次应用都走同一张表：退线只退役会话线程，账号资源只按
 		// 控制器算好的**资源指令**（保留键集合 / 待删账号 / 批次代号）摘除——
@@ -609,11 +607,13 @@ func main() {
 	// Codex 会话簿（设计 §3）：带对话标识的 Codex 请求由它合成身份，跨副本经
 	// SDK redisstore（codex:conv:* / codex:turn:*）共享；c3api 只注入 rdb，连接池
 	// 生命周期归 redisx。恒构造（nil 只出现在测试 → 回到槽位路径）。
-	convBook := codexsdk.NewConversationBook(redisstore.New(rdb))
+	convBook := sdkbridge.NewBook(rdb)
 	// 会话簿 worker（Name="codex-conversation"）：50ms 节拍 book.Flush 把轮次写
 	// 批量落 Redis，停机预算内最后 Flush 一次；Stats 暴露 conv_*/shape_* 计数。
 	// 纳管紧跟 contBindW（managedWorkers 下方统一 wm.Register）。
-	convW := proxy.NewConversationWorker(convBook, log, proxy.ConversationWorkerConfig{})
+	convW := sdkbridge.NewConversationWorker(convBook, log, sdkbridge.ConversationWorkerConfig{
+		LocalRejects: proxy.ConvLocalRejects,
+	})
 	// codex SDK 适配层装配（§3——统一失效回调先落生图路径；全量）：
 	// 适配层构造注册 WithOnAuthFatal → 统一回调 → 失效处理链（写 failed_at +
 	// 调度摘除 + 审计契约）。egressPool/rotation 同构造期一次给齐（构造后

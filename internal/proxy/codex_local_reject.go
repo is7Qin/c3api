@@ -34,9 +34,15 @@ var codexInvalidBodyJSON = []byte(`{"error":{"message":"invalid request body","t
 // codexInvalidBodyFrame WS 本地拒绝错误帧（拨号、首帧、后续帧三处同一帧）。
 var codexInvalidBodyFrame = []byte(`{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"invalid request body"}}`)
 
-// convLocalRejects 本地拒绝累计（进程级；四个落点共用），经 codex-conversation
-// worker 的 Stats() 以 conv_local_rejects 暴露。
+// convLocalRejects 本地拒绝累计（进程级；四个落点共用），经 sdkbridge 的
+// codex-conversation worker 以 conv_local_rejects 暴露。
+//
+// 计数归本包（拒绝发生在转发面），导出面给 worker：把读口当构造参数注入，而不是
+// 让 worker 反向 import proxy——后者会成环。
 var convLocalRejects atomic.Int64
+
+// ConvLocalRejects 本地拒绝累计的只读快照（/ops/workers 的 conv_local_rejects）。
+func ConvLocalRejects() int64 { return convLocalRejects.Load() }
 
 // isCodexInvalidBody 判定 SDK 本地拒绝（穿透 sdkbridge.EnvelopeError 与
 // codexsdk.DialError 的 Unwrap 链）。

@@ -12,9 +12,12 @@ import (
 )
 
 // TestConversationBookWiring 生产恒构造并注入 Codex 会话簿（spec §5.6）：main 里
-// convBook := codexsdk.NewConversationBook(redisstore.New(rdb))，同一个 convBook 既经
-// proxy.Deps{Conversations: convBook} 注入代理，又交给 proxy.NewConversationWorker。
+// convBook := sdkbridge.NewBook(rdb)，同一个 convBook 既经
+// proxy.Deps{Conversations: convBook} 注入代理，又交给 sdkbridge.NewConversationWorker。
 // 删掉任一处（Deps 不注入 ⇒ 会话路径整体回落槽位，没有别的用例会红）本用例即失败。
+//
+// 顺带钉住边界：构造点必须是 sdkbridge.NewBook —— 直接 `codexsdk.NewConversationBook`
+// 或 `redisstore.New` 会让 cmd/server 重新持有 SDK 概念（tripwire 也会判红）。
 func TestConversationBookWiring(t *testing.T) {
 	_, f := parseMainGo(t)
 	mainFn := findFuncDecl(t, f, "main")
@@ -31,14 +34,11 @@ func TestConversationBookWiring(t *testing.T) {
 				return true
 			}
 			ce, ok := x.Rhs[0].(*ast.CallExpr)
-			if !ok || !isPkgCall(ce, "codexsdk", "NewConversationBook") || len(ce.Args) != 1 {
+			if !ok || !isPkgCall(ce, "sdkbridge", "NewBook") || len(ce.Args) != 1 {
 				return true
 			}
-			inner, ok := ce.Args[0].(*ast.CallExpr)
-			if ok && isPkgCall(inner, "redisstore", "New") && len(inner.Args) == 1 {
-				if id, ok := inner.Args[0].(*ast.Ident); ok && id.Name == "rdb" {
-					built = true
-				}
+			if id, ok := ce.Args[0].(*ast.Ident); ok && id.Name == "rdb" {
+				built = true
 			}
 		case *ast.CompositeLit:
 			sel, ok := x.Type.(*ast.SelectorExpr)
@@ -62,7 +62,7 @@ func TestConversationBookWiring(t *testing.T) {
 				}
 			}
 		case *ast.CallExpr:
-			if isPkgCall(x, "proxy", "NewConversationWorker") && len(x.Args) >= 1 {
+			if isPkgCall(x, "sdkbridge", "NewConversationWorker") && len(x.Args) >= 1 {
 				if id, ok := x.Args[0].(*ast.Ident); ok && id.Name == "convBook" {
 					workerGetsBook = true
 				}
@@ -70,7 +70,7 @@ func TestConversationBookWiring(t *testing.T) {
 		}
 		return true
 	})
-	require.True(t, built, "main 必须构造 convBook := codexsdk.NewConversationBook(redisstore.New(rdb))")
+	require.True(t, built, "main 必须构造 convBook := sdkbridge.NewBook(rdb)")
 	require.True(t, injected, "main 必须经 proxy.Deps{Conversations: convBook} 注入会话簿")
 	require.True(t, workerGetsBook, "会话簿 worker 必须 Flush 同一个 convBook")
 }

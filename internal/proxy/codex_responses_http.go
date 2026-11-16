@@ -162,28 +162,33 @@ func (p *Proxy) codexRequestPrep(ctx context.Context, sel *scheduler.Selection, 
 		return sdkbridge.Prepared{}, codexsdk.Identity{}, err
 	}
 	in := codexsdk.AnalyzeConversationInput(payload)
-	if req, ok := p.conversationRequest(ctx, sel, prep, in); ok {
-		return prep, p.conversations.Prepare(ctx, req), nil
+	if req, ok := p.bookRequest(ctx, sel, prep); ok {
+		return prep, p.conversations.Identity(ctx, req, payload), nil
 	}
 	return prep, sel.IdentityFor(!in.FollowUp()), nil
 }
 
-// conversationRequest 组装会话簿请求（HTTP 与 WS 共用）。ok=false ⇒ 走槽位路径：
-// 本次预留不是会话路径，或尝试 ctx 里取不到 reqMeta / 对话标识（按无对话标识
-// 处理）。对话标识只在这里物化，且只进 ConversationKey（SHA-256）。
-func (p *Proxy) conversationRequest(ctx context.Context, sel *scheduler.Selection, prep sdkbridge.Prepared, in codexsdk.ConversationInput) (codexsdk.ConversationRequest, bool) {
+// bookRequest 把宿主侧原料收进会话簿请求（HTTP 与 WS 共用）。ok=false ⇒ 走槽位
+// 路径：本次预留不是会话路径，或尝试 ctx 里取不到 reqMeta / 对话标识（按无对话
+// 标识处理）。
+//
+// 这里刻意只给原料（缓存域、API key 行号、对话标识、安装号、owner）：会话键的派生
+// 算法与 payload 的形状判定都在 sdkbridge 内，宿主既不知道键长什么样，也无法伪造一个
+// 看起来合法的请求。对话标识只在这里物化，且只进 ConversationKey（SHA-256）。
+func (p *Proxy) bookRequest(ctx context.Context, sel *scheduler.Selection, prep sdkbridge.Prepared) (sdkbridge.BookRequest, bool) {
 	if !sel.Conversation || p.conversations == nil {
-		return codexsdk.ConversationRequest{}, false
+		return sdkbridge.BookRequest{}, false
 	}
 	rm, ok := ctx.Value(ctxKeyReqMeta{}).(*reqMeta)
 	if !ok || !rm.hasConv {
-		return codexsdk.ConversationRequest{}, false
+		return sdkbridge.BookRequest{}, false
 	}
-	return codexsdk.ConversationRequest{
-		Key:            codexsdk.NewConversationKey(sel.CacheDomain, rm.meta.KeyID, rm.conversation()),
+	return sdkbridge.BookRequest{
+		CacheDomain:    sel.CacheDomain,
+		APIKeyID:       rm.meta.KeyID,
+		ConversationID: rm.conversation(),
 		InstallationID: sel.InstallationID,
 		Owner:          prep.Owner(),
-		Input:          in,
 	}, true
 }
 

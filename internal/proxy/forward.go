@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 
@@ -110,7 +109,7 @@ type Proxy struct {
 	// conversations Codex 会话簿（spec §5.3；main 经 Deps.Conversations 注入，恒非
 	// nil）。nil 只出现在测试：选号时 Conversation 恒 false ⇒ 回到槽位路径，
 	// 不会产出匿名身份。
-	conversations *codexsdk.ConversationBook
+	conversations *sdkbridge.Book
 	// codexWSTransportWrap 测试 seam（生产恒 nil，只多一次指针比较）：包装 wsAttempt
 	// codex 分支的上游传输。当前 SDK 在 Dial 阶段已按同一份首帧整形并拒绝，首帧
 	// Send 不会再返回 ErrInvalidRequestBody；用例经它注入首帧失败，覆盖
@@ -152,7 +151,7 @@ type Deps struct {
 	ContBind *ContBindWorker
 	// Conversations Codex 会话簿（带对话标识的 Codex 请求由它合成身份，Redis 跨副本
 	// 共享；main 恒构造）。nil 只出现在测试 → 带对话标识的请求也走槽位路径。
-	Conversations *codexsdk.ConversationBook
+	Conversations *sdkbridge.Book
 }
 
 // New 构造代理。creds 为凭据注册表（直接参数注入，编译期强制；

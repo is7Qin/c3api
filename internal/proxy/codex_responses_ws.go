@@ -97,8 +97,8 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 	in := codexsdk.AnalyzeConversationInput(frame)
 	var id codexsdk.Identity
 	var first codexsdk.Option
-	if req, ok := p.conversationRequest(r.Context(), sel, prep, in); ok {
-		first = codexsdk.WithConversation(p.conversations, req, frame)
+	if req, ok := p.bookRequest(r.Context(), sel, prep); ok {
+		first = p.conversations.Option(req, frame)
 	} else {
 		id = sel.IdentityFor(!in.FollowUp())
 		first = codexsdk.WithFirstFrame(frame)

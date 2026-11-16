@@ -5,16 +5,17 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/handler"
 	"github.com/is7qin/c3api/internal/proxy"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/worker"
 )
 
@@ -46,8 +47,13 @@ func TestContBindWorkerSatisfiesStatsProvider(t *testing.T) {
 // 扁平键（conv_* 会话簿计数 + conv_local_rejects，shape_* 整形计数——清单见
 // openapi.yaml WorkerStatus.stats）。
 func TestConversationWorkerSatisfiesStatsProvider(t *testing.T) {
-	book := codexsdk.NewConversationBook(nopConvStore{})
-	w := proxy.NewConversationWorker(book, nil, proxy.ConversationWorkerConfig{})
+	// 真会话簿（miniredis）——装配断言不需要存储调用，但构造路径必须与生产同一个
+	// （sdkbridge.NewBook），否则这个用例无法证明 main 那条线装得上。
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), ContextTimeoutEnabled: true})
+	t.Cleanup(func() { _ = rdb.Close() })
+	book := sdkbridge.NewBook(rdb)
+	w := sdkbridge.NewConversationWorker(book, nil, sdkbridge.ConversationWorkerConfig{})
 
 	providers := statsProviders([]worker.Worker{w}, nil)
 	require.Len(t, providers, 1, "codex-conversation must be admitted by statsProviders (no Warn branch)")
@@ -66,23 +72,4 @@ func TestConversationWorkerSatisfiesStatsProvider(t *testing.T) {
 		_, isNum := v.(float64)
 		require.True(t, isNum, "stats must be flat numbers, %q = %v", k, v)
 	}
-}
-
-// nopConvStore 会话簿存储空实现（仅装配断言用，不发生存储调用）。
-type nopConvStore struct{}
-
-func (nopConvStore) Open(context.Context, codexsdk.ConversationKey, codexsdk.ConversationRecord) (codexsdk.ConversationRecord, bool, error) {
-	return codexsdk.ConversationRecord{}, false, nil
-}
-
-func (nopConvStore) Advance(context.Context, codexsdk.ConversationKey, uint64, uint64, string) (codexsdk.ConversationRecord, error) {
-	return codexsdk.ConversationRecord{}, nil
-}
-
-func (nopConvStore) Load(context.Context, codexsdk.ConversationKey, uint64) (codexsdk.ConversationRecord, bool, codexsdk.TurnRecord, bool, error) {
-	return codexsdk.ConversationRecord{}, false, codexsdk.TurnRecord{}, false, nil
-}
-
-func (nopConvStore) SaveTurns(context.Context, []codexsdk.TurnWrite) ([]codexsdk.TurnResult, error) {
-	return nil, nil
 }

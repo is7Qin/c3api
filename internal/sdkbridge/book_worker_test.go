@@ -2,20 +2,28 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-package proxy
+package sdkbridge
 
 import (
 	"context"
-	"encoding/json"
-	"reflect"
-	"regexp"
-	"strings"
 	"testing"
 	"time"
 
 	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 )
+
+// 会话簿 worker 的语义验收：Flush 节拍、停机预算、幂等、在途批次不被取消。
+//
+// 这些用例必须直接替换 SDK 的 ConversationStore（要按批次做 channel 屏障、要能把
+// SaveTurns 卡住），所以它们只能在能看见 codexsdk 的包里——这正是把 worker 搬进
+// sdkbridge 的理由之一。
+
+// newTestBook 用替身 store 造一份会话簿（生产走 NewBook(rdb)）。这里不用
+// redis.Scripter，因为用例要观察批次而不只是最终键值。
+func newTestBook(store codexsdk.ConversationStore) *Book {
+	return &Book{b: codexsdk.NewConversationBook(store)}
+}
 
 // chanConvStore 会话簿存储替身：Open 恒按新建返回 fresh；SaveTurns 把批次投进
 // saved（channel 屏障——用例按收到批次判定 Flush 已发生，不靠 sleep）。
@@ -49,14 +57,15 @@ func (s *chanConvStore) SaveTurns(_ context.Context, batch []codexsdk.TurnWrite)
 }
 
 // enqueueFirstTurn 新对话的首个请求：会话簿 Open 后把首轮记录入写入队列（尚未落盘）。
-func enqueueFirstTurn(t *testing.T, book *codexsdk.ConversationBook, conv string) codexsdk.ConversationKey {
+func enqueueFirstTurn(t *testing.T, book *Book, conv string) codexsdk.ConversationKey {
 	t.Helper()
 	key := codexsdk.NewConversationKey("cfg:1", 1, conv)
-	id := book.Prepare(context.Background(), codexsdk.ConversationRequest{
-		Key:            key,
+	id := book.Identity(context.Background(), BookRequest{
+		CacheDomain:    "cfg:1",
+		APIKeyID:       1,
+		ConversationID: conv,
 		InstallationID: "inst-1",
-		Input:          codexsdk.AnalyzeConversationInput([]byte(`{"model":"gpt-4o","input":"hi"}`)),
-	})
+	}, []byte(`{"model":"gpt-4o","input":"hi"}`))
 	require.True(t, id.Turn.First, "新对话首个请求")
 	return key
 }
@@ -65,7 +74,7 @@ func enqueueFirstTurn(t *testing.T, book *codexsdk.ConversationBook, conv string
 // 设为 1h（运行期间不可能触发），Close 返回时已入队的首轮记录必须已交给存储。
 func TestConversationWorkerFlushOnClose(t *testing.T) {
 	store := newChanConvStore()
-	book := codexsdk.NewConversationBook(store)
+	book := newTestBook(store)
 	w := NewConversationWorker(book, nil, ConversationWorkerConfig{Interval: time.Hour})
 	require.Equal(t, "codex-conversation", w.Name())
 	require.NoError(t, w.Start(context.Background()))
@@ -93,7 +102,7 @@ func TestConversationWorkerFlushOnClose(t *testing.T) {
 // 预算已到期则不再 Flush（停机预算内语义），并返回预算错误（不静默 nil）。
 func TestConversationWorkerCloseWithoutStart(t *testing.T) {
 	store := newChanConvStore()
-	book := codexsdk.NewConversationBook(store)
+	book := newTestBook(store)
 	enqueueFirstTurn(t, book, "conv-nostart")
 
 	expired, cancel := context.WithCancel(context.Background())
@@ -110,7 +119,7 @@ func TestConversationWorkerCloseWithoutStart(t *testing.T) {
 }
 
 // blockingConvStore SaveTurns 阻塞到 release 关闭（或 ctx 结束）的存储替身：
-// entered 投递在途批次的 ctx（用例据此确认“Flush 已在 SaveTurns 里”）；ctx 先结束
+// entered 投递在途批次的 ctx（用例据此确认"Flush 已在 SaveTurns 里"）；ctx 先结束
 // 则按 SDK 存储契约返回 ctx.Err()（整批失败）。
 type blockingConvStore struct {
 	*chanConvStore
@@ -133,7 +142,7 @@ func (s *blockingConvStore) SaveTurns(ctx context.Context, batch []codexsdk.Turn
 // 队，取消即丢），Close 等它落盘后返回；SaveTurnsFailures==0。
 func TestConversationWorkerCloseDuringSaveKeepsBatch(t *testing.T) {
 	store := &blockingConvStore{chanConvStore: newChanConvStore(), entered: make(chan context.Context, 1), release: make(chan struct{})}
-	book := codexsdk.NewConversationBook(store)
+	book := newTestBook(store)
 	w := NewConversationWorker(book, nil, ConversationWorkerConfig{Interval: time.Millisecond})
 	require.NoError(t, w.Start(context.Background()))
 	key := enqueueFirstTurn(t, book, "conv-inflight")
@@ -174,7 +183,7 @@ func TestConversationWorkerCloseDuringSaveKeepsBatch(t *testing.T) {
 // Close 停循环。
 func TestConversationWorkerTicksAfterStartCtxCanceled(t *testing.T) {
 	store := newChanConvStore()
-	book := codexsdk.NewConversationBook(store)
+	book := newTestBook(store)
 	w := NewConversationWorker(book, nil, ConversationWorkerConfig{Interval: time.Millisecond})
 	sig, stop := context.WithCancel(context.Background())
 	require.NoError(t, w.Start(sig))
@@ -195,7 +204,7 @@ func TestConversationWorkerTicksAfterStartCtxCanceled(t *testing.T) {
 // 落盘——以存储收到批次为屏障。
 func TestConversationWorkerTickerFlush(t *testing.T) {
 	store := newChanConvStore()
-	book := codexsdk.NewConversationBook(store)
+	book := newTestBook(store)
 	w := NewConversationWorker(book, nil, ConversationWorkerConfig{Interval: time.Millisecond})
 	require.Equal(t, conversationFlushIntervalDefault, NewConversationWorker(book, nil, ConversationWorkerConfig{}).interval, "默认 50ms")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -215,49 +224,9 @@ func TestConversationWorkerTickerFlush(t *testing.T) {
 // TestConversationWorkerFlushNow FlushNow 同步排空（测试屏障）。
 func TestConversationWorkerFlushNow(t *testing.T) {
 	store := newChanConvStore()
-	book := codexsdk.NewConversationBook(store)
+	book := newTestBook(store)
 	w := NewConversationWorker(book, nil, ConversationWorkerConfig{Interval: time.Hour})
 	enqueueFirstTurn(t, book, "conv-now")
 	w.FlushNow(context.Background())
 	require.Len(t, store.saved, 1)
-}
-
-// TestConversationWorkerStatsKeys Stats 扁平键：conv_* 覆盖 ConversationStats 全部
-// 字段 + conv_local_rejects，shape_* 覆盖 ShapeStats 全部字段（SDK 增字段 ⇒ 本用例
-// 红，提醒同步 openapi 注释与 locales）；本地拒绝计数直出。
-func TestConversationWorkerStatsKeys(t *testing.T) {
-	book := codexsdk.NewConversationBook(newChanConvStore())
-	w := NewConversationWorker(book, nil, ConversationWorkerConfig{})
-	raw, err := json.Marshal(w.Stats())
-	require.NoError(t, err)
-	var got map[string]int64
-	require.NoError(t, json.Unmarshal(raw, &got))
-
-	want := map[string]bool{"conv_local_rejects": true}
-	for _, f := range reflect.VisibleFields(reflect.TypeFor[codexsdk.ConversationStats]()) {
-		want["conv_"+snakeCase(f.Name)] = true
-	}
-	for _, f := range reflect.VisibleFields(reflect.TypeFor[codexsdk.ShapeStats]()) {
-		want["shape_"+snakeCase(f.Name)] = true
-	}
-	keys := map[string]bool{}
-	for k := range got {
-		keys[k] = true
-	}
-	require.Equal(t, want, keys)
-
-	before := got["conv_local_rejects"]
-	convLocalRejects.Add(1)
-	raw, err = json.Marshal(w.Stats())
-	require.NoError(t, err)
-	require.NoError(t, json.Unmarshal(raw, &got))
-	require.Equal(t, before+1, got["conv_local_rejects"])
-}
-
-var snakeBoundary = regexp.MustCompile(`([a-z0-9])([A-Z])|([A-Z]+)([A-Z][a-z])`)
-
-// snakeCase Go 字段名 → json 蛇形键（WSUntrackedConnections → ws_untracked_connections）。
-func snakeCase(s string) string {
-	s = snakeBoundary.ReplaceAllString(s, "${1}${3}_${2}${4}")
-	return strings.ToLower(s)
 }

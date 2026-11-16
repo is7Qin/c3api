@@ -17,8 +17,6 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/coder/websocket"
-	codexsdk "github.com/is7Qin/codex-sdk"
-	"github.com/is7Qin/codex-sdk/redisstore"
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
@@ -38,15 +36,15 @@ import (
 // newMiniredisBook 在 mr 上构造一份会话簿（每次调用一个独立的 redis client，模拟
 // 一个副本）。ContextTimeoutEnabled 与生产 pkg/redisx 一致：redisstore.New 要求它为
 // true（否则每批 30ms 预算不生效，构造时 panic）。
-func newMiniredisBook(t *testing.T, mr *miniredis.Miniredis) *codexsdk.ConversationBook {
+func newMiniredisBook(t *testing.T, mr *miniredis.Miniredis) *sdkbridge.Book {
 	t.Helper()
 	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), ContextTimeoutEnabled: true})
 	t.Cleanup(func() { _ = rdb.Close() })
-	return codexsdk.NewConversationBook(redisstore.New(rdb))
+	return sdkbridge.NewBook(rdb)
 }
 
 // flushBook 同步落地会话簿写入队列（不经 worker 的确定性屏障）。
-func flushBook(t *testing.T, b *codexsdk.ConversationBook) {
+func flushBook(t *testing.T, b *sdkbridge.Book) {
 	t.Helper()
 	require.NoError(t, b.Flush(context.Background()))
 }
@@ -65,7 +63,7 @@ type convTestOpts struct {
 	order     []int64 // 非空：两种格式都发布这个确定的候选序
 	transport domain.CodexResponsesTransport
 	pcs       []domain.ProtocolConvert // ck-1 的协议转换方向
-	book      *codexsdk.ConversationBook
+	book      *sdkbridge.Book
 }
 
 func convInstallation(id int64) string {

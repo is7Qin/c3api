@@ -5,7 +5,6 @@
 package proxy
 
 import (
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,11 +12,11 @@ import (
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
-	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 const (
@@ -46,7 +45,7 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		code, body = postConv(t, p, "ck-1", convNewTurn1, convHdr("conv-a"))
 		require.Equal(t, http.StatusOK, code, body)
 		conv := u.wire(t, 1).identity(0)
-		require.Equal(t, int64(1), book.Stats().Opens, "会话路径经会话簿 Open")
+		require.Equal(t, int64(1), book.Stats().ConvOpens, "会话路径经会话簿 Open")
 		require.NotEqual(t, slot.metaThread, conv.metaThread, "会话路径不用槽位身份")
 		require.Equal(t, conv.threadHdr, conv.metaThread)
 
@@ -54,7 +53,7 @@ func TestConversationSkipsSlotClaim(t *testing.T) {
 		code, body = postConv(t, p, "ck-1", convNewTurn2, nil)
 		require.Equal(t, http.StatusOK, code, body)
 		require.Equal(t, slot.metaThread, u.wire(t, 2).identity(0).metaThread)
-		require.Equal(t, int64(1), book.Stats().Opens, "槽位路径不碰会话簿")
+		require.Equal(t, int64(1), book.Stats().ConvOpens, "槽位路径不碰会话簿")
 	})
 
 	t.Run("nil book falls back to slot", func(t *testing.T) {
@@ -154,7 +153,7 @@ func TestCodexConversationCrossReplica(t *testing.T) {
 	require.Equal(t, "ts-0", follow.turnState, "B 从共享存储取回 A 捕获的 turn-state")
 	require.Equal(t, first.metaTurn, follow.metaTurn, "同一轮次号")
 	require.Equal(t, first.threadHdr, follow.threadHdr, "同一线程")
-	require.Equal(t, int64(1), bookB.Stats().Loads, "B 本地未命中 → 一次 Load")
+	require.Equal(t, int64(1), bookB.Stats().ConvLoads, "B 本地未命中 → 一次 Load")
 }
 
 // TestCodexConversationTurnStateOwner（spec §5.3 Owner 参数）：turn-state 按凭据归属
@@ -230,11 +229,10 @@ func TestCodexConversationFailoverAcrossDomains(t *testing.T) {
 	require.Equal(t, convInstallation(20), b.metaInstallation)
 	flushBook(t, book)
 
-	turn := codexsdk.AnalyzeConversationInput([]byte(convNewTurn1)).TurnKey
-	require.NotZero(t, turn)
+	// 键布局归 SDK：这里只说"请看这条记录的键"，具体长什么样由 sdkbridge 代拼
+	// （TurnRecordKey 的正确性由 sdkbridge 自己的 miniredis 用例保证）。
 	turnKey := func(domain string) string {
-		k := codexsdk.NewConversationKey(domain, 1, "conv-fo")
-		return fmt.Sprintf("codex:turn:%s:%016x", hex.EncodeToString(k[:]), turn)
+		return sdkbridge.TurnRecordKey(domain, 1, "conv-fo", []byte(convNewTurn1))
 	}
 	require.True(t, mr.Exists(turnKey("d2")))
 	require.Equal(t, "ts-1", mr.HGet(turnKey("d2"), "ts"), "成功尝试的 turn-state 归 d2")
@@ -271,9 +269,9 @@ func TestCodexWSConversationFirstFrame(t *testing.T) {
 		requireHandshakeMatchesFrame(t, id)
 		require.Equal(t, "gpt-4o", id.model)
 		st := book.Stats()
-		require.Equal(t, int64(1), st.ConversationCacheMisses)
-		require.Zero(t, st.ConversationCacheHits, "首帧与 Dial 的 first 逐字节相同 → Send 不再 Prepare")
-		require.Equal(t, int64(1), st.Opens)
+		require.Equal(t, int64(1), st.ConvConversationCacheMisses)
+		require.Zero(t, st.ConvConversationCacheHits, "首帧与 Dial 的 first 逐字节相同 → Send 不再 Prepare")
+		require.Equal(t, int64(1), st.ConvOpens)
 	})
 
 	t.Run("failover with different mapping", func(t *testing.T) {
@@ -295,8 +293,8 @@ func TestCodexWSConversationFirstFrame(t *testing.T) {
 		require.Equal(t, "gpt-5.5", second.model, "第二个账号实际 Send 的首帧按其映射改写")
 		requireHandshakeMatchesFrame(t, second)
 		st := book.Stats()
-		require.Equal(t, int64(1), st.ConversationCacheMisses)
-		require.Equal(t, int64(1), st.ConversationCacheHits, "两次 Dial 各 Prepare 一次；Send 复用（首帧与拨号所用逐字节相同）")
+		require.Equal(t, int64(1), st.ConvConversationCacheMisses)
+		require.Equal(t, int64(1), st.ConvConversationCacheHits, "两次 Dial 各 Prepare 一次；Send 复用（首帧与拨号所用逐字节相同）")
 	})
 }
 
@@ -313,7 +311,7 @@ func TestCodexWSSlotHandshakeHeaders(t *testing.T) {
 	require.Equal(t, "gpt-5.4", id.model)
 	require.True(t, isUUIDv7(id.metaThread))
 	require.Equal(t, convInstallation(10), id.metaInstallation)
-	require.Equal(t, codexsdk.ConversationStats{}, book.Stats(), "槽位路径不碰会话簿")
+	require.Equal(t, sdkbridge.BookStats{}, book.Stats(), "槽位路径不碰会话簿")
 }
 
 // TestCodexSlotPathStillWorks（C3-7 HTTP/WS）：会话簿已装配但无对话标识 → HTTP 与 WS
@@ -338,7 +336,7 @@ func TestCodexSlotPathStillWorks(t *testing.T) {
 	require.Equal(t, a.metaThread, ws.identity(0).metaThread, "K=1：同一槽位线程")
 	require.Equal(t, a.metaThread, h2.identity(0).metaThread)
 	require.Empty(t, h2.identity(0).turnState, "槽位路径不带 turn-state")
-	require.Equal(t, codexsdk.ConversationStats{}, book.Stats(), "槽位路径不碰会话簿")
+	require.Equal(t, sdkbridge.BookStats{}, book.Stats(), "槽位路径不碰会话簿")
 }
 
 // TestCodexClientIdentityNeverEgress（C3-12）：客户端头与体里的对话标识、
@@ -403,7 +401,7 @@ func TestCodexClientIdentityNeverEgress(t *testing.T) {
 	for _, lane := range lanes {
 		for _, withBook := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s book=%v", lane.name, withBook), func(t *testing.T) {
-				var book *codexsdk.ConversationBook
+				var book *sdkbridge.Book
 				var mr *miniredis.Miniredis
 				if withBook {
 					mr = miniredis.RunT(t)
@@ -430,7 +428,7 @@ func TestCodexClientIdentityNeverEgress(t *testing.T) {
 					require.NotContains(t, wire, s, "哨兵出网")
 				}
 				if withBook {
-					require.Equal(t, int64(1), book.Stats().Opens, "带对话标识 → 会话路径（转换车道用原始头体）")
+					require.Equal(t, int64(1), book.Stats().ConvOpens, "带对话标识 → 会话路径（转换车道用原始头体）")
 					flushBook(t, book)
 					stored := miniredisContents(t, mr)
 					require.Contains(t, stored, "codex:conv:", "扫描面含会话记录")
