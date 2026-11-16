@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-// SDK 本地拒绝（spec §5.4）：codexsdk.ErrInvalidRequestBody 表示请求体不能整形成
+// SDK 本地拒绝（spec §5.4）：SDK 的 invalid-request-body 判据表示请求体不能整形成
 // Codex responses 请求（不是 JSON 对象 / 缺字符串 model / service_tier 含控制字节
 // 等），SDK 在出网前拒绝。它是**客户端错误**：账号没坏、上游没收到任何字节，
 // 换号也必然同结果。因此四个落点（HTTP 两个 core 的 SDK 错误分支、WS 拨号、WS
@@ -44,7 +44,8 @@ var convLocalRejects atomic.Int64
 func ConvLocalRejects() int64 { return convLocalRejects.Load() }
 
 // isCodexInvalidBody 判定 SDK 本地拒绝（穿透 sdkbridge.EnvelopeError 与
-// codexsdk.DialError 的 Unwrap 链）。
+// sdkbridge.EnvelopeError 与 SDK dial 错误的 Unwrap 链）；识别入口只有
+// sdkbridge.IsInvalidBody 一处——本包不再直连 SDK 的错误码。
 func isCodexInvalidBody(err error) bool {
 	return sdkbridge.IsInvalidBody(err)
 }

@@ -5,7 +5,7 @@
 package sdkbridge
 
 import (
-	"go/build"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -21,9 +21,14 @@ import (
 // 边界门禁：**除了本包，任何包都不许 import codex-sdk。**
 //
 // 为什么不是 `rg`：文本搜索分不清 import、注释、字符串与文档；别名（`sdk "…"`）、
-// 点导入、`//go:build` 排除的文件、生成文件、`_test.go` 都是绕过面。这里按
-// `go/parser` 读 `ImportSpec.Path` 的**字面路径**，并用 `go/build.MatchFile` 让
-// 构建约束生效（含 `_test.go`）——别名改不了路径，注释不会被当成 import。
+// 点导入、生成文件、`_test.go` 都是绕过面。这里按 `go/parser` 读 `ImportSpec.Path`
+// 的**字面路径**——别名改不了路径，注释不会被当成 import。
+//
+// **刻意不按构建约束过滤**（第一版用了 `build.Default.MatchFile`，被 T1 评审判红）：
+// 它会把非当前 GOOS/GOARCH 的文件与 `//go:build ignore` 排除在扫描面外，而那正好是
+// 藏越界 import 的地方（Linux CI 看见的代码与本地扫描面不同 = 门禁形同虚设）。
+// 代价是可能扫到永远不参与构建的文件——那也应当被审，不该被静默跳过。
+// symlink 同样不在 WalkDir 的跟踪面上，所以一旦出现直接判错（不许用链接绕过）。
 //
 // 断言是**双向相等**：新增一处越界 import ⇒ 红；把某处修好而没同步收缩白名单 ⇒
 // 也红（陈旧条目同样算错）。这样"允许集"永远等于"尚未迁移的清单"，而不是一张
@@ -128,12 +133,13 @@ func moduleRoot(t *testing.T) string {
 	}
 }
 
-// goFiles 枚举模块内所有**被当前构建约束接受**的 .go 文件（含 _test.go 与生成代码）。
+// goFiles 枚举模块内**全部** .go 文件（含 _test.go、生成代码、平台专用文件、
+// `//go:build ignore` 的文件）——见文件头"刻意不按构建约束过滤"。
+//
 // 生成目录（internal/ent）也扫：它同样不许 import SDK。
 func goFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
-	ctx := build.Default
 	skip := map[string]bool{
 		".git": true, "node_modules": true, "testdata": true,
 		"bin": true, "tmp": true, ".crush": true, "web": true,
@@ -142,21 +148,17 @@ func goFiles(t *testing.T, root string) []string {
 		if err != nil {
 			return err
 		}
+		if d.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("扫描面内出现 symlink：%s。gate 不跟随符号链接 ⇒ 一段被链接进来的"+
+				"源码可以整段逃过边界检查；请移除它，或把该情形一并写进本门禁", path)
+		}
 		if d.IsDir() {
 			if path != root && skip[d.Name()] {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		name := d.Name()
-		if !strings.HasSuffix(name, ".go") {
-			return nil
-		}
-		ok, err := ctx.MatchFile(filepath.Dir(path), name)
-		if err != nil {
-			return err
-		}
-		if ok {
+		if strings.HasSuffix(d.Name(), ".go") {
 			out = append(out, path)
 		}
 		return nil

@@ -6,6 +6,7 @@ package sdkbridge
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/alicebob/miniredis/v2"
@@ -43,8 +44,18 @@ func TestTurnRecordKeyPointsAtWrittenRecord(t *testing.T) {
 	}, payload)
 	require.NoError(t, book.Flush(context.Background()))
 
-	key := TurnRecordKey("cfg:1", 1, "conv-x", payload)
-	require.True(t, mr.Exists(key), "TurnRecordKey 指向的键必须真的被写下；实际键集=%v", mr.Keys())
+	// 不是"存在即可"：把存储里真实的 turn 键**枚举出来**再与代拼结果求等。
+	// 只查 Exists 会有两个漏洞——别的路径碰巧写了我猜的键（假阳性），以及
+	// 布局换了前缀时我猜的键仍可能因旧记录而存在（假阴性）。
+	var written []string
+	for _, k := range mr.Keys() {
+		if strings.HasPrefix(k, "codex:turn:") {
+			written = append(written, k)
+		}
+	}
+	require.Len(t, written, 1, "一次首轮请求应当且只应当写一条 turn 记录；实际键集=%v", mr.Keys())
+	require.Equal(t, written[0], TurnRecordKey("cfg:1", 1, "conv-x", payload),
+		"TurnRecordKey 必须与存储层写下的键逐字节相同（布局归 SDK，本包只是代拼）")
 }
 
 // TestBookRequestDerivesSameKeyAsSDK BookRequest 的派生必须与 SDK 同源：T1 把
