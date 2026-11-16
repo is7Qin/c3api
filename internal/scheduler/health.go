@@ -119,7 +119,10 @@ type healthEntry struct {
 	Revision   int64       `json:"rev"`
 	UpdatedAt  int64       `json:"updated_at"` // unix milli
 	TTLms      int64       `json:"ttl_ms"`
-	ExpiresAt  int64       `json:"expires_at"` // explicit until deadline: UpdatedAt+TTLms
+	// ExpiresAt 显式截止时刻（unix milli）：优先取记录 HASH 的绝对 until
+	// （写入时的业务截止，跨进程稳定）；S2 之前的旧记录没有该字段，回落
+	// UpdatedAt+TTLms。
+	ExpiresAt int64 `json:"expires_at"`
 }
 
 // healthView is the single immutable view published via atomic.Pointer.
@@ -172,26 +175,84 @@ const (
 	healthSyncInterval    = 500 * time.Millisecond
 	healthProbeInterval   = 1 * time.Second
 	healthCleanupBound    = 100
+
+	// healthMaxTTL 冷却记录的硬上界（31d）。Lua 里同一数值以字面量
+	// 2678400000 出现（脚本看不到 Go 常量），TestThrottleExtendHardCap31d
+	// 用「PTTL 精确等于 healthMaxTTL」行为上钉死两者相等——改一边不改另一边
+	// 必须判红。
+	healthMaxTTL = 31 * 24 * time.Hour
 )
 
 var (
 	ErrProbeStaleRevision = errors.New("health probe: stale revision")
 
-	// Lua throttle/READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL
-	throttleLua = `
+	// throttleMaxLua 原子写健康记录：generation / revision / 记录 HASH / 活动 ZSET
+	// / tombstone / TTL。两档语义由 ARGV[8]（mode）选择：
+	//
+	//   - latch：LatchSink 的判决写入面，**可建、可改**；TTL 与绝对 until 都取
+	//     max(本次, 记录现值)，后到的 30s 冷却打不回 24min/7d 的冷却。
+	//   - extend：429 补拉写回面，只延长一条**仍然存在、状态相同、未过截止**的
+	//     记录；不存在/异状态/已过截止 ⇒ 返回 0，且不 INCR、不写任何键。这道
+	//     闸门是「一条冷却只能被它自己那条判决延长」的唯一边界：迟到的补拉
+	//     不得新建运维已清除的冷却、改写 5xx 的 OPEN、或复活自然到期的记录。
+	//
+	// 不变量（由哪一行保证）：
+	//   - untilMs 是正数（过去/零抬到 now+1s）：由 untilMs 的两行夹取保证；读路径
+	//     把非正 until 当坏记录，故过去的 ResetAt 也必须落成合法记录。
+	//   - eff > 0：由上面「untilMs ≥ now+minTTL」直接保证（旧版在这里有一条
+	//     `eff <= 0` 兜底，数学上不可达，已删）。
+	//   - eff ≥ untilMs-nowMs：同样由上一条直接保证（旧版的二次补齐不可达，已删）。
+	//   - TTL 只延长：oldTTL 参与 max。对带 until 的记录，until 的 max 已覆盖；
+	//     这条只对 S2 之前「有长 TTL、无 until」的旧记录起作用（N3）。
+	//   - 硬上界 31d 双夹：本次 until 与历史 until/PTTL 都夹，旧坏值不得把新记录
+	//     带过 31d；与 Go 侧 healthMaxTTL 对齐（见该常量注释）。
+	//
+	// 为什么不用 Redis TIME：本仓的 ResetAt / ExpiresAt 记账全用调用方本地时钟
+	// （currentMs），Lua 里另起一套时钟会让同一事件有两个基准，机器间偏差直接
+	// 变成提前/延后过期。now_ms 由调用方传入。
+	//
+	// 四个既有不变量保持原顺序：gen 递增 → 记录 HASH → 活动 ZSET → tombstone 清理。
+	throttleMaxLua = `
 local genKey = KEYS[1]
-local recPrefix = ARGV[5]
 local activeKey = KEYS[2]
 local tombHash = KEYS[3]
-local tombPrefix = ARGV[6]
 local field = ARGV[1]
 local state = ARGV[2]
 local rev = ARGV[3]
-local ttl = ARGV[4]
-local gen = redis.call('INCR', genKey)
+local untilMs = tonumber(ARGV[4])
+local recPrefix = ARGV[5]
+local tombPrefix = ARGV[6]
+local nowMs = tonumber(ARGV[7])
+local mode = ARGV[8]
+local minTTL = 1000
+local maxTTL = 2678400000
+local nowPlusMax = nowMs + maxTTL
+-- 业务截止必须是**正数**：读路径把非正 until 当坏记录（冻结视图），所以过去/零值
+-- 统一抬到 now+1s（与旧实现「过去 ResetAt ⇒ 1s」等价）。正的亚秒截止是合法输入，
+-- 不做下夹——调用方/测试用它模拟快速到期，抬到 1s 会改变既有语义。
+if untilMs <= nowMs then untilMs = nowMs + minTTL end
+if untilMs > nowPlusMax then untilMs = nowPlusMax end    -- 超长按 31d 上界截
 local recKey = recPrefix .. field
-redis.call('HSET', recKey, 'state', state, 'gen', gen, 'rev', rev, 'ttl', ttl)
-redis.call('PEXPIRE', recKey, ttl)
+local oldTTL = redis.call('PTTL', recKey)                -- -1 无过期 / -2 不存在
+if oldTTL > maxTTL then oldTTL = maxTTL end              -- 旧坏值不得突破硬上界
+local oldUntilRaw = redis.call('HGET', recKey, 'until')
+local oldUntil = tonumber(oldUntilRaw) or 0              -- 坏值（非数字）按 0 处理，不得让整键写不进
+if oldUntil > nowPlusMax then oldUntil = nowPlusMax end  -- 同上：历史坏 until 也要夹
+-- extend 闸门必须放在 INCR 之前：拒绝路径（返回 0）不得产生任何写副作用。
+-- 只看「是否存在 + 状态是否相同 + 是否已过截止」——正是补拉与运维恢复/其他
+-- 失败类别/自然到期之间的边界；latch 面不做此检查（可建、可改）。
+if mode == 'extend' then
+  -- EXISTS 与下一行的 state 闸门对"记录不存在"等价（HGET 返回 false）；保留它是把"不存在"显式化，删掉它不会被任何用例发现。
+  if redis.call('EXISTS', recKey) == 0 then return 0 end
+  if redis.call('HGET', recKey, 'state') ~= state then return 0 end
+  if oldUntil > 0 and oldUntil <= nowMs then return 0 end
+end
+if oldUntil > untilMs then untilMs = oldUntil end        -- 业务截止也只延长
+local eff = untilMs - nowMs                            -- > 0：由上面 untilMs ≥ now+minTTL 保证
+if oldTTL > 0 and oldTTL > eff then eff = oldTTL end     -- TTL 只延长（legacy 无 until 记录唯一的受益者）
+local gen = redis.call('INCR', genKey)
+redis.call('HSET', recKey, 'state', state, 'gen', gen, 'rev', rev, 'ttl', eff, 'until', untilMs)
+redis.call('PEXPIRE', recKey, eff)
 redis.call('ZADD', activeKey, gen, field)
 redis.call('HDEL', tombHash, field)
 redis.call('DEL', tombPrefix .. field)
@@ -502,24 +563,60 @@ func (h *RuntimeHealth) probeLoop(ctx context.Context) {
 	}
 }
 
-// Throttle performs Lua throttle atomic generation/revision/record HASH/active ZSET/tombstone/TTL.
-func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state HealthState, ttl time.Duration) (int64, error) {
+// ThrottleExtend 把健康记录写到**绝对**截止时刻 until（只延长，不缩短）。
+// latch 面语义：**可建、可改**——记录不存在时创建，存在时按 max 只延长。
+//
+// 入参是绝对时间而不是相对 TTL：同一账号可能被多实例、重复 429、补拉结果反复
+// 写同一条记录，相对值每换算一次就漂一次；绝对值只会收敛到最晚的那个。Lua 侧
+// 用 PTTL 与 HGET until 取 max，因此并发写不会把长冷却改短；上界 31d 在 Go 与
+// Lua 两侧各夹一次。
+//
+// now 取自 h.currentMs（与 ExpiresAt 记账同一个时钟），不读 Redis TIME。
+func (h *RuntimeHealth) ThrottleExtend(ctx context.Context, key HealthKey, state HealthState, until time.Time) (int64, error) {
+	return h.throttleExtend(ctx, key, state, until, "latch")
+}
+
+// ExtendCooldown 只延长一条**仍然存在、状态相同、未过截止**的冷却记录，是 429
+// 补拉写回面（与 latch 的 ThrottleExtend 相对）。不存在 / 异状态 / 已过截止
+// ⇒ 返回 (0,nil) 且不推进 generation、不写任何键，调用方按拒绝计数。
+//
+// 这是 429 补拉与运维手动恢复（ClearAccount + SetProbing）、其他失败类别
+// （5xx 的 OPEN 判决）以及自然到期之间的唯一边界：迟到的补拉只能延长"它自己
+// 那条判决"，绝不能把已被清除/改写/过期的冷却复活。
+func (h *RuntimeHealth) ExtendCooldown(ctx context.Context, key HealthKey, state HealthState, until time.Time) (int64, error) {
+	return h.throttleExtend(ctx, key, state, until, "extend")
+}
+
+// throttleExtend 是两档写入面的共同实现；mode 决定 Lua 是否执行存在性/状态/
+// 截止闸门（见 throttleMaxLua）。
+func (h *RuntimeHealth) throttleExtend(ctx context.Context, key HealthKey, state HealthState, until time.Time, mode string) (int64, error) {
 	if h.client == nil {
 		return 0, fmt.Errorf("health: no redis")
 	}
 	field := key.String()
-	ttlMs := ttl.Milliseconds()
-	if ttlMs <= 0 {
-		ttlMs = 30000
-	}
-	stateStr := state.String()
-	res, err := h.client.Eval(ctx, throttleLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash}, field, stateStr, fmt.Sprintf("%d", key.IdentityRevision), fmt.Sprintf("%d", ttlMs), healthRecordPrefix, healthTombstonePrefix).Result()
+	nowMs := h.currentMs()
+	res, err := h.client.Eval(ctx, throttleMaxLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash},
+		field, state.String(), fmt.Sprintf("%d", key.IdentityRevision),
+		fmt.Sprintf("%d", until.UnixMilli()), healthRecordPrefix, healthTombstonePrefix,
+		fmt.Sprintf("%d", nowMs), mode).Result()
 	if err != nil {
 		return 0, err
 	}
 	gen := redisInt64(res)
-	h.lastGen.Store(gen)
+	if gen > 0 { // 拒绝（extend 闸门）返回 0：不得把已知世代打回 0
+		h.lastGen.Store(gen)
+	}
 	return gen, nil
+}
+
+// Throttle 相对 TTL 形态（保留既有调用点语义）：换算成绝对 until 后走
+// ThrottleExtend，因此**同样只延长**——短冷却不会覆盖已有长冷却。
+// 非正 TTL 沿用既有 30s 兜底。
+func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state HealthState, ttl time.Duration) (int64, error) {
+	if ttl <= 0 {
+		ttl = 30 * time.Second
+	}
+	return h.ThrottleExtend(ctx, key, state, time.UnixMilli(h.currentMs()+ttl.Milliseconds()))
 }
 
 // MarkReady attempts Lua READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL
@@ -878,11 +975,31 @@ func (h *RuntimeHealth) syncBuildRecords(ctx context.Context, members []string, 
 		if ttlMs <= 0 {
 			return nil, nil, fmt.Errorf("health: invalid ttl %d for %s", ttlMs, field)
 		}
+		untilStr := strings.TrimSpace(m["until"])
+		hasUntil := untilStr != ""
+		untilMs := int64(0)
+		if hasUntil {
+			untilMs, err = parseGenStrict(untilStr)
+			if err != nil {
+				return nil, nil, fmt.Errorf("health: malformed until for %s: %w", field, err)
+			}
+			if untilMs <= 0 {
+				return nil, nil, fmt.Errorf("health: invalid until %d for %s", untilMs, field)
+			}
+		}
 		expiresAt := nowMs + ttlMs
+		if hasUntil {
+			// 绝对 until 是写入时的业务截止，跨进程稳定，优先于本地推算。
+			expiresAt = untilMs
+		}
 		updatedAt := nowMs
 		if prevForExpiry != nil {
 			if prevEntry, ok := prevForExpiry.entries[k]; ok && prevEntry.Generation == gen {
-				expiresAt = prevEntry.ExpiresAt
+				// 同一代记录没被重写过：沿用上次发布的值，避免视图随每次 Sync 漂移。
+				// 旧记录（无 until）的 ExpiresAt 也只能靠这条 carry-over 稳定。
+				if !hasUntil {
+					expiresAt = prevEntry.ExpiresAt
+				}
 				updatedAt = prevEntry.UpdatedAt
 				ttlMs = prevEntry.TTLms
 			}
