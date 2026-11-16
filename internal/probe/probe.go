@@ -335,11 +335,11 @@ func (p *Prober) guardedCodexTransport(spec domain.ProbeSpec) (http.RoundTripper
 	if eg == nil || eg.HTTP == nil {
 		return nil, errors.New("egress client not configured")
 	}
-	// Codex 出站用出口的 Codex 底座（关闭自动压缩，egress.Client.Codex）；Codex
+	// Codex 出站用出口的"关闭自动压缩"底座（egress.Client.NoCompression）；Codex
 	// 为 nil 只出现在测试里手写的出口字面量，回退 HTTP 面 transport。
 	next := eg.HTTP.Transport
-	if eg.Codex != nil {
-		next = eg.Codex.Transport
+	if eg.NoCompression != nil {
+		next = eg.NoCompression.Transport
 	}
 	okMax, errorMax := probeResponseLimits(spec)
 	return newCappedTransportLimit(&originGuard{

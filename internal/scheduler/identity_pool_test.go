@@ -132,7 +132,6 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 	}
 }
 
-
 // TestResizeSamePolicyKeepsThreadProgress 同策略 resize 迁移的是**会话对象本身**：
 // 状态随对象走，进度不可能被重置。
 //

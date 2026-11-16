@@ -49,10 +49,10 @@ var sdkImportAllowlist = map[string]string{}
 // 越界用法，个数不变、门禁照样绿。逐文件白名单 + 双向相等才真正锁住"哪些文件、
 // 为什么"（T3 评审第 6 条）。
 var sdkTestImportAllowlist = map[string]string{
-	"internal/proxy/codex_local_reject_test.go":      "集成面：必须注入 SDK 的 ErrInvalidRequestBody 才能驱动'拨号前拒绝'整条链路；判据单测在 sdkbridge/fatal_test.go",
-	"internal/proxy/caller_responses_ws_test.go":     "集成面：必须注入 SDK 的 ErrWSIdleTimeout 才能驱动读空闲超时的收尾分类；判据单测在 sdkbridge/fatal_test.go",
-	"internal/proxy/codex_responses_ws_test.go":      "集成面：必须构造 SDK 的账号停用/凭据撤销错误与伪装身份常量才能验证判死与握手头",
-	"internal/proxy/codex_session_identity_test.go":  "集成面：读握手头常量 HeaderTurnState 才能断言 turn-state 落点",
+	"internal/proxy/codex_local_reject_test.go":       "集成面：必须注入 SDK 的 ErrInvalidRequestBody 才能驱动'拨号前拒绝'整条链路；判据单测在 sdkbridge/fatal_test.go",
+	"internal/proxy/caller_responses_ws_test.go":      "集成面：必须注入 SDK 的 ErrWSIdleTimeout 才能驱动读空闲超时的收尾分类；判据单测在 sdkbridge/fatal_test.go",
+	"internal/proxy/codex_responses_ws_test.go":       "集成面：必须构造 SDK 的账号停用/凭据撤销错误与伪装身份常量才能验证判死与握手头",
+	"internal/proxy/codex_session_identity_test.go":   "集成面：读握手头常量 HeaderTurnState 才能断言 turn-state 落点",
 	"internal/proxy/caller_images_regression_test.go": "集成面：必须构造 SDK 的 *HTTPError / RefreshOAuthError 才能验证生图错误翻译",
 }
 

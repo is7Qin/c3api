@@ -66,7 +66,7 @@ func TestCodexEgressTransportNoAutoGzip(t *testing.T) {
 		srv.Close()
 	})
 	pool := egress.NewPool(&http.Client{Transport: dialPinnedTransport(srv)})
-	require.NotSame(t, pool.Direct().HTTP, pool.Direct().Codex)
+	require.NotSame(t, pool.Direct().HTTP, pool.Direct().NoCompression)
 	a := NewCodex(nil, pool, nil, RotationDeps{})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()

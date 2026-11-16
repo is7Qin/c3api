@@ -31,8 +31,8 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // sessionWSStep 上游对**一次**请求的响应脚本：created →（可选）metadata →

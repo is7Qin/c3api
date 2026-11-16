@@ -16,12 +16,11 @@ import (
 	"sync/atomic"
 	"time"
 
-
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
-	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"

@@ -8,7 +8,6 @@ import (
 	"context"
 	"errors"
 
-
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/sdkbridge"

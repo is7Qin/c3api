@@ -19,15 +19,14 @@ import (
 // Spec 是**值**且零值 = 直连：直连与代理走同一个类型，出栈处没有"有没有代理"
 // 的第二个分支（spec-proxy-pool §4.2 的核心）。
 //
-// Codex 是同一条出口的 Codex 出站 client：底座 transport 派生出的**关闭自动压缩**
-// 副本（`DisableCompression=true`——Go 默认自动加 `Accept-Encoding: gzip`，官方
-// Codex 客户端不发）。它有自己的连接池，与 HTTP 同 Spec、同代理；sdkbridge 的
-// Codex HTTP/WS 与探测的 codex seam 只用它。底座 transport 类型未知（只有测试会
+// NoCompression 是同一条出口的**关闭自动压缩**出站 client：底座 transport 派生的副本（`DisableCompression=true`——Go 默认自动加 `Accept-Encoding: gzip`，官方
+// Codex 客户端不发）。它有自己的连接池，与 HTTP 同 Spec、同代理；需要"不发 Accept-Encoding"的调用面
+// （Codex 的 HTTP/WS 与探测 seam）只用它。底座 transport 类型未知（只有测试会
 // 走到）时不派生，Codex 与 HTTP 是同一个 *http.Client。生产里 Codex 恒非 nil。
 type Client struct {
-	Spec  Spec // 零值 = 直连
-	HTTP  *http.Client
-	Codex *http.Client
+	Spec          Spec // 零值 = 直连
+	HTTP          *http.Client
+	NoCompression *http.Client
 }
 
 // Pool 是**进程级持久**的出口 client 注册表：按 Spec.Key() 复用，不随快照回收
@@ -38,11 +37,11 @@ type Client struct {
 type Pool struct {
 	mu   sync.Mutex
 	base *http.Client // 克隆底座（与 aiclient Factory 共用同一个 client）
-	// codexBase 是 base 派生的关闭自动压缩底座（构造期一次）；底座 transport 类型
+	// noCompressionBase 是 base 派生的关闭自动压缩底座（构造期一次）；底座 transport 类型
 	// 未知时就是 base 本身（见 codexClientOf）。
-	codexBase *http.Client
-	direct    *Client // 构造期单例（Spec 零值，base / codexBase 原样）
-	byKey     map[[16]byte]*Client
+	noCompressionBase *http.Client
+	direct            *Client // 构造期单例（Spec 零值，base / codexBase 原样）
+	byKey             map[[16]byte]*Client
 }
 
 // NewPool 建池。base 是直连底座（生产由 main 注入与 aiclient Factory 同一个
@@ -52,12 +51,12 @@ func NewPool(base *http.Client) *Pool {
 	if base == nil {
 		base = http.DefaultClient
 	}
-	codexBase := codexClientOf(base)
+	noCompressionBase := codexClientOf(base)
 	return &Pool{
-		base:      base,
-		codexBase: codexBase,
-		direct:    &Client{HTTP: base, Codex: codexBase},
-		byKey:     make(map[[16]byte]*Client),
+		base:              base,
+		noCompressionBase: noCompressionBase,
+		direct:            &Client{HTTP: base, NoCompression: noCompressionBase},
+		byKey:             make(map[[16]byte]*Client),
 	}
 }
 
@@ -80,13 +79,13 @@ func (p *Pool) For(spec Spec) *Client {
 		return c
 	}
 	hc := p.newClient(p.base, spec)
-	codex := hc
-	if p.codexBase != p.base {
+	nc := hc
+	if p.noCompressionBase != p.base {
 		// Codex 底座同样按本规格克隆（独立连接池、同一代理；DisableCompression 随
 		// Clone 保留）。底座未派生（类型未知，只有测试）时 Codex 就是 HTTP 本身。
-		codex = p.newClient(p.codexBase, spec)
+		nc = p.newClient(p.noCompressionBase, spec)
 	}
-	c := &Client{Spec: spec, HTTP: hc, Codex: codex}
+	c := &Client{Spec: spec, HTTP: hc, NoCompression: nc}
 	p.byKey[key] = c
 	return c
 }
@@ -115,7 +114,7 @@ func (p *Pool) Detach(active map[[16]byte]struct{}) []*Client {
 }
 
 // CloseClients 关闭一批已从注册表摘除的出口 client 的空闲连接（锁外调用；nil 安全）。
-// HTTP 与 Codex 是两个连接池，两份都关（同一个 client 时只关一次）。
+// HTTP 与 NoCompression 是两个连接池，两份都关（同一个 client 时只关一次）。
 func CloseClients(clients []*Client) {
 	for _, c := range clients {
 		if c == nil {
@@ -124,8 +123,8 @@ func CloseClients(clients []*Client) {
 		if c.HTTP != nil {
 			c.HTTP.CloseIdleConnections()
 		}
-		if c.Codex != nil && c.Codex != c.HTTP {
-			c.Codex.CloseIdleConnections()
+		if c.NoCompression != nil && c.NoCompression != c.HTTP {
+			c.NoCompression.CloseIdleConnections()
 		}
 	}
 }

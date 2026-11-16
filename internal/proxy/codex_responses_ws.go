@@ -48,7 +48,6 @@ var errCodexWSNotIntegrated = errors.New("codex responses unavailable (adapter n
 // 耗尽 502 语义）；不上报失效（避免 account 0 无谓上报——同款）。
 var errCodexExtMissing = errors.New("codex account missing account_ext snapshot (config error)")
 
-
 // dialCodexWS 组装一次 codex WS Dial（凭当前请求选中账号 cred）：
 //   - 凭据线：sel.Ext 快照 → AccountCredential 派生（relay 线；热路径零 DB）
 //   - 端点归 SDK 官方默认（wss://chatgpt.com/backend-api/codex/responses）
