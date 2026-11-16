@@ -29,9 +29,15 @@ import type { components } from '@/lib/api/schema'
 type Rule = components['schemas']['Rule']
 type RuleCreate = components['schemas']['RuleCreate']
 
-// 规则事件类型（spec：ok | 429 | 4xx | 5xx | network——error 已拆分为
-// 4xx/5xx/network，连接级独立 network）。
-const KINDS = ['ok', '429', '4xx', '5xx', 'network'] as const
+// 规则事件类型（后端 rule.Kind 的线格式：ok | 429 | 4xx | 5xx | network | timeout）。
+// timeout = 上游预算内零产出（SDK WS 读空闲 / 网关 UpstreamStreamTimeout）；后端
+// ValidateWhen 已接受、种子规则 seed-timeout 也在用——前端漏了它，页面既建不出
+// timeout 规则，列表里也只会显示原始 key。
+const KINDS = ['ok', '429', '4xx', '5xx', 'network', 'timeout'] as const
+
+// 有 HTTP 状态码的类别：timeout 的事件 status 恒 0（网关侧零产出没有状态码），
+// 状态码条件对它永不命中，故不放进「添加条件」候选。
+const STATUS_KINDS = ['ok', '429', '4xx', '5xx', 'network'] as const
 
 // —— typed 路由动作（后端 domain.RuleThen 严格反序列化 + ValidateThen 语义校验）——
 // then.throttle = {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}
@@ -55,7 +61,7 @@ interface CondRow { field: WhenField; value: string | string[] }
 
 interface WhenFieldMeta {
   key: WhenField
-  kinds: readonly string[] // kind 归属：'any' | '429' | '4xx' | '5xx' | 'network' | 'ok'（error_message_contains 联合归属 4xx|5xx|network）
+  kinds: readonly string[] // kind 归属：'any' | '429' | '4xx' | '5xx' | 'network' | 'ok' | 'timeout'
   input: 'number' | 'text' | 'tags'
   placeholder?: string
   min?: number
@@ -66,8 +72,10 @@ interface WhenFieldMeta {
 // 匹配器元数据表：key 与后端 when JSON 键一致；kinds 驱动"添加条件"下拉过滤；
 // input/min/max/step 决定值输入控件（操作符由字段类型隐含，无操作符选择器）。
 const WHEN_FIELDS: WhenFieldMeta[] = [
-  { key: 'http_status', kinds: ['any'], input: 'number', placeholder: '503', min: 400, max: 599 },
-  { key: 'http_status_in', kinds: ['any'], input: 'tags', placeholder: '[500,502]' },
+  { key: 'http_status', kinds: STATUS_KINDS, input: 'number', placeholder: '503', min: 400, max: 599 },
+  { key: 'http_status_in', kinds: STATUS_KINDS, input: 'tags', placeholder: '[500,502]' },
+  // timeout 的错误信息是固定网关文案（「上游在预算内未产出」），匹配上游原文恒假——
+  // 不提供 error_message_contains（否则又是一种可保存的死配置）。
   { key: 'error_message_contains', kinds: ['4xx', '5xx', 'network'], input: 'text', placeholder: 'unhealthy' },
   { key: 'error_message_contains_in', kinds: ['4xx', '5xx', 'network'], input: 'tags', placeholder: '[overload,busy]' },
   { key: 'account_id', kinds: ['any'], input: 'number', placeholder: '12' },
@@ -75,6 +83,9 @@ const WHEN_FIELDS: WhenFieldMeta[] = [
   { key: 'group_id', kinds: ['any'], input: 'number', placeholder: '1' },
   { key: 'model', kinds: ['any'], input: 'text', placeholder: 'gpt-4o' },
   { key: 'model_in', kinds: ['any'], input: 'tags', placeholder: '[gpt-5-0611,gpt-4o]' },
+  // 窗口计数是账号级全事件总量（engine.go total = ok+failure+t429）。timeout 自身
+  // 不贡献计数（windows.go 无 timeout 桶），但 total 仍可被别类事件满足——通用
+  // 字段对 timeout 保留；「N 次 timeout → 升级」需后端加独立桶（backlog）。
   { key: 'window_seconds', kinds: ['any'], input: 'number', placeholder: '60', min: 1 },
   { key: 'count_total_ge', kinds: ['any'], input: 'number', placeholder: '10', min: 1 },
   { key: 'count_429_ge', kinds: ['429'], input: 'number', placeholder: '3', min: 0 },

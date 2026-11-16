@@ -216,6 +216,58 @@ func TestRecoverAccountWithoutClearers(t *testing.T) {
 	require.Equal(t, int64(6), got.LifecycleRevision)
 }
 
+// TestRecoverAccountClearsHealthWithoutFailure 钉住「UI 敢给冷却账号放恢复按钮」的
+// 后端前提：recover 不要求 failed_at 置位。只在冷却（health 有记录、failed_at 为空）
+// 的账号同样要执行 latch 释放 + 健康清除 + PROBING 写——否则页面上的按钮会变成
+// 「点了只 bump revision，冷却纹丝不动」。
+func TestRecoverAccountClearsHealthWithoutFailure(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeStore()
+	_, err := fs.CreateTemplate(ctx, &domain.Template{ID: 1, Name: "tpl", CredentialType: "api_key"})
+	require.NoError(t, err)
+	acc, err := fs.CreateAccount(ctx, &domain.Account{
+		Name: "cooling", TemplateID: 1, UpstreamKey: "sk-a", Enabled: true,
+		LifecycleRevision: 5, IdentityRevision: 3, UpstreamCostMultiplierBp: new(10000),
+	})
+	require.NoError(t, err)
+	require.Nil(t, acc.FailedAt, "前提：只在运行时冷却、没有终态失效")
+
+	prober := &fakeRecoverProber{}
+	latch := &fakeRecoverLatch{}
+	healthClear := &fakeRecoverHealthClear{}
+	svc := &Service{store: fs, inv: &invRecorder{}, recoverProber: prober, recoverLatch: latch, recoverHealthClear: healthClear}
+
+	got, err := svc.RecoverAccount(ctx, acc.ID, 5)
+	require.NoError(t, err)
+	require.Equal(t, int64(6), got.LifecycleRevision, "恢复同样推进 C")
+	require.Equal(t, []int64{acc.ID}, healthClear.cleared, "failed_at 为空也必须清冷却记录")
+	require.Equal(t, []int64{acc.ID}, latch.cleared)
+	require.Equal(t, []probeCall{{acc.ID, 3}}, prober.calls, "PROBING 仍按身份代际 K 落键")
+}
+
+// TestRecoverAccountHealthClearFailureIsBestEffort 钉住健康清除失败的语义：
+// CAS 已提交（失效字段已清、C 已 +1），故不回滚、不上抛；latch 释放与 PROBING
+// 写仍要执行。代价是「200 成功但冷却记录还在」——契约描述必须如实写成
+// best-effort，调用方可重试或等 TTL/Sync 收敛。
+func TestRecoverAccountHealthClearFailureIsBestEffort(t *testing.T) {
+	ctx := context.Background()
+	fs := newFakeStore()
+	acc := seedLifecycleAccount(t, fs)
+	prober := &fakeRecoverProber{}
+	latch := &fakeRecoverLatch{}
+	healthClear := &fakeRecoverHealthClear{err: errors.New("redis down")}
+	inv := &invRecorder{}
+	svc := &Service{store: fs, inv: inv, recoverProber: prober, recoverLatch: latch, recoverHealthClear: healthClear}
+
+	got, err := svc.RecoverAccount(ctx, acc.ID, 5)
+	require.NoError(t, err, "健康清除失败不得回滚已提交的 CAS")
+	require.Equal(t, int64(6), got.LifecycleRevision)
+	require.Nil(t, got.FailedAt)
+	require.Equal(t, []int64{acc.ID}, latch.cleared, "健康清除失败不得跳过 latch 释放")
+	require.Equal(t, []probeCall{{acc.ID, 3}}, prober.calls, "健康清除失败仍写 PROBING（探针环兜底）")
+	require.Len(t, inv.calls, 1)
+}
+
 // TestPatchAccountEnabled 账号启用/禁用经唯一写点：落值 + 无条件推进 C；
 // disable 不清失效字段（失效恢复唯一入口 = RecoverAccount）。
 func TestPatchAccountEnabled(t *testing.T) {

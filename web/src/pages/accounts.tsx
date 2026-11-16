@@ -22,6 +22,7 @@ import {
   proxySelectItems,
   proxySelectValue,
 } from '@/lib/account-proxy'
+import { isCooling } from '@/lib/account-health'
 import {
   assertCreate,
   defaults,
@@ -179,15 +180,16 @@ function UsageCell({ item }: { item?: components['schemas']['AccountUsageItem'] 
 const fmtMult = (v?: number | null): string => (v == null ? '—' : `×${Number(v.toFixed(4))}`)
 
 // 生命周期状态徽章：管理面 enabled（契约恒回显；缺失按禁用展示——fail-closed）
-// + 运行时失效（failed_at 置位即标红，tooltip 携带来源/时刻；恢复唯一入口 recover）
+// + 运行时失效（failed_at 置位即标红，tooltip 携带来源/时刻）
 // + 冷却（health.state = open/retry_after 时标琥珀，tooltip 携带到期时刻/路由数）。
-// 两个运行时轴视觉区分：红 = 终态摘除（需人工恢复），琥珀 = 自愈冷却（到期自动恢复）。
+// 两个运行时轴都可经 /recover 人工清除：红 = 终态摘除（必须人工），
+// 琥珀 = 自愈冷却（默认可自愈；强制恢复会 bump LifecycleRevision 并置 30s PROBING）。
 function LifecycleBadges({ a }: { a: AccountView }) {
   const { t } = useTranslation()
   const enabled = a.Enabled === true
   // 只展示会自愈的两档：probing/ready 不改变「现在还能不能用」的判断，
   // 混进徽章列只会稀释红色终态的信号。
-  const cooling = a.health?.state === 'open' || a.health?.state === 'retry_after'
+  const cooling = isCooling(a.health)
   return (
     <div className="flex items-center gap-1.5">
       <Badge variant="secondary" className={cn('gap-1.5', enabled ? 'text-emerald-700 dark:text-emerald-400' : 'text-muted-foreground')}>
@@ -1224,8 +1226,10 @@ export default function Accounts() {
                         >
                           {a.Enabled === true ? <Ban /> : <CircleCheck />}
                         </Button>
-                        {/* 失效恢复与启停语义分离：仅 failed_at 置位时出现（enable 不清失效） */}
-                        {a.FailedAt && (
+                        {/* 恢复入口：终态失效或冷却中都可人工清除（enable 不清失效/冷却）。
+                            /recover 会 CAS +1、清健康记录并写 30s PROBING；冷却的默认
+                            路径是到期自愈，这里是强制干预（会立即重新探测上游）。 */}
+                        {(a.FailedAt || isCooling(a.health)) && (
                           <Button
                             variant="ghost"
                             size="icon-sm"

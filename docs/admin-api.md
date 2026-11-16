@@ -267,7 +267,7 @@
 | 轴 | 字段 | 语义 |
 |---|---|---|
 | 启用轴 | `enabled` | 管理端启停（`PATCH /accounts/{id}`，fenced）。禁用 = 不参与选号；**enable 不清失效字段** |
-| 失效轴 | `failed_at` + `failure_source`（`rule`/`sdk`）+ `last_error` | 运行时终态判死（规则 `fail_account` 命中 / SDK 凭据 fatal）；恢复唯一入口 `POST /accounts/{id}/recover` |
+| 失效轴 | `failed_at` + `failure_source`（`rule`/`sdk`）+ `last_error` | 运行时终态判死（规则 `fail_account` 命中 / SDK 凭据 fatal）；恢复唯一入口 `POST /accounts/{id}/recover`。**运行时冷却（`health.state = open/retry_after`）也可经同一端点强制清除**——默认路径是到期自愈，强制恢复会立即重新探测上游 |
 
 - 两轴独立：重新启用不清失效，清除失效不覆盖管理禁用。`failed_at != null` 或 `enabled = false` 的账号不进入任何路由计划热车道，也不被自动探索复活。
 - 两个代际分开：`lifecycle_revision`（C，客户端 CAS 令牌）**每次写入** +1；`identity_revision`（K，身份代际）仅在管理面**身份类写入**真的改变取值时 +1。所有 fenced 端点必须携带 `expected_revision`（即 C），过期 → `409`（重读账号后重试）。在途判定（失效判决 / latch / 健康记录 / continuation 绑定）一律围栏在 (I, K) 上、**不**看 C；SDK 内部 OAuth 自动轮转两个代际都不动——既不失效在途计划，也不失效在途 continuation/fatal fence。
@@ -279,7 +279,7 @@
 | 方法/路径 | 请求体 | 语义 |
 |---|---|---|
 | `PATCH /api/admin/accounts/{id}` | `AccountConfigPatch`（+ 可选 `If-Match: <C>`） | 账号配置的**唯一**写面：一次调用原子更新 `name` / `template_id` / `base_url` / `upstream_key` / `max_concurrency` / `group_ids` / `enabled` / `cache_domain` / `upstream_cost_multiplier`。三态：可空标量 `null` = 清空、缺席 = 不变、不可空标量 `null` 或可空标量 `""` → `400`；`group_ids: []` = 清空、`group_ids: null` = 不变。`If-Match` 陈旧 → `412`、语法非法（`W/` / 多值 / `*` / 非整数）→ `400`、缺席 = 无条件生效 |
-| `POST /api/admin/accounts/{id}/recover` | `{expected_revision}` | 失效恢复唯一入口：清 `failed_at`/`failure_source`/`last_error` + C +1（K 不变）→ 显式释放 latch + 按账号清健康记录（含 Redis 墓碑）→ 新代际 PROBING。**不切 `enabled`** |
+| `POST /api/admin/accounts/{id}/recover` | `{expected_revision}` | 运行时恢复唯一入口（失效 + 冷却共用）：清 `failed_at`/`failure_source`/`last_error` + C +1（K 不变）→ 显式释放 latch + 按账号**尽力**清健康记录（含 Redis 墓碑；Redis 失败只记日志、不影响 200，记录按 TTL/Sync 收敛）→ 新代际 PROBING。**不切 `enabled`** |
 
 成功均 `200` 回显新代际账号对象；`404` 账号不存在；`409` 代际过期。
 

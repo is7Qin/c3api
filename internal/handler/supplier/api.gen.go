@@ -179,7 +179,7 @@ type Account struct {
 	// Enabled 管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离）
 	Enabled *bool `json:"Enabled,omitempty"`
 
-	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）
+	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复入口 POST /accounts/{id}/recover——失效与强制解除冷却共用）
 	FailedAt *time.Time `json:"FailedAt"`
 
 	// FailureSource 失效来源（rule/sdk 等；随 recover 清除）
@@ -203,7 +203,7 @@ type Account struct {
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
 
-	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）
+	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影。主路径是到期由 Sync 自动过期；人工清理由 POST /accounts/{id}/recover 触发（尽力而为，失败只记日志）
 	Health *AccountHealth `json:"health,omitempty"`
 
 	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）
@@ -277,7 +277,7 @@ type AccountGroupsResponse struct {
 	GroupIds []int64 `json:"group_ids"`
 }
 
-// AccountHealth 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）
+// AccountHealth 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影。主路径是到期由 Sync 自动过期；人工清理由 POST /accounts/{id}/recover 触发（尽力而为，失败只记日志）
 type AccountHealth struct {
 	// Routes 该档命中的健康键数（账号×质量类×身份×代际 = 一条候选路由）
 	Routes *int `json:"routes,omitempty"`
@@ -391,7 +391,7 @@ type AccountView struct {
 	// Enabled 管理面启停（写面 PATCH /accounts/{id} 的 enabled 字段；与运行时失效语义分离）
 	Enabled *bool `json:"Enabled,omitempty"`
 
-	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复唯一入口 POST /accounts/{id}/recover）
+	// FailedAt 运行时失效时刻（rule 判死/SDK fatal；null = 未失效；恢复入口 POST /accounts/{id}/recover——失效与强制解除冷却共用）
 	FailedAt *time.Time `json:"FailedAt"`
 
 	// FailureSource 失效来源（rule/sdk 等；随 recover 清除）
@@ -418,7 +418,7 @@ type AccountView struct {
 	ErrCount               *int     `json:"err_count,omitempty"`
 	ErrRate                *float64 `json:"err_rate,omitempty"`
 
-	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）
+	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影。主路径是到期由 Sync 自动过期；人工清理由 POST /accounts/{id}/recover 触发（尽力而为，失败只记日志）
 	Health *AccountHealth `json:"health,omitempty"`
 
 	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）
@@ -1231,7 +1231,7 @@ type ServerInterface interface {
 	// 读取账号的全部分组 id（编辑回显；不随账号列表返回）
 	// (GET /api/user/supplier/accounts/{id}/groups)
 	GetSupplierAccountsIdGroups(w http.ResponseWriter, r *http.Request, id int64)
-	// 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
+	// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
 	// (POST /api/user/supplier/accounts/{id}/recover)
 	PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64)
 	// 对本人归属的单个账号发起一次单模型探测（不落库、不计费；越域 ⇒ 404）
@@ -1378,7 +1378,7 @@ func (_ Unimplemented) GetSupplierAccountsIdGroups(w http.ResponseWriter, r *htt
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 失效恢复（fenced）：清 failed_at/last_error/failure_source + revision CAS +1 → 新代际置 PROBING 待探针
+// 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
 // (POST /api/user/supplier/accounts/{id}/recover)
 func (_ Unimplemented) PostSupplierAccountsIdRecover(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)
