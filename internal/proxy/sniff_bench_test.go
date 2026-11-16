@@ -39,7 +39,7 @@ func sniffBenchFrames() map[string][]byte {
 		"content-100B": []byte(`{"type":"response.output_text.delta","delta":"hello world","item_id":"msg_1","output_index":0}`),
 		"fatal-402":    []byte(`{"type":"error","status":402,"error":{"message":"Payment Required","code":"deactivated_workspace"}}`),
 	}
-	out["content-64KB"] = contentFrame(64 << 10, false)
+	out["content-64KB"] = contentFrame(64<<10, false)
 	out["errorword-4KB"] = contentFrame(4<<10, true)
 	out["errorword-64KB"] = contentFrame(64<<10, true)
 	out["errorword-1MB"] = contentFrame(1<<20, true)

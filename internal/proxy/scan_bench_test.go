@@ -15,19 +15,21 @@ import (
 // 帧路径**成本结构**基线（2026-11-16 建立，T0 落地时定稿）。用途有三个：
 //
 //  1. 回答"帧处理还能快多少"——先量，再改，不猜；
+//
 //  2. 给边界重构立"不得新增"的对照基线（T1–T3 每个提交都要跑它，ns/op 与 allocs/op
 //     不得劣化）；
+//
 //  3. 记录**曾经搞错过的判断**：早期只量了三个扫描，得出"大帧成本几乎全在判死嗅探
 //     上"，据此差点给判死嗅探加尺寸闸（有语义损失）。补测后结论反过来：
 //
-//	每帧动作                            4 KiB      64 KiB     1 MiB     谁在调
-//	模型改写（改前）                     7293 ns   112061 ns  1726057 ns  ws_relay.go:302
-//	模型改写（T0 后，预筛 miss）            90 ns      772 ns    12696 ns  同上
-//	completed memmem 预筛（T0 删除）      52.9 ns    703 ns    11598 ns  ws_relay.go:285
-//	completed 精确判定（T0 后唯一路径）    22.8 ns     23.4 ns    23.4 ns  同上
-//	判死嗅探 sniffCodexWSDeath           88.8 ns    764 ns    12400 ns  ws_relay.go:249
-//	载荷预筛 AsPayloadError              93.4 ns      5.7 ns      5.8 ns  ws_relay.go:258
-//	单次 memmem 参照                     87.8 ns    766 ns    12100 ns  —
+//     每帧动作                            4 KiB      64 KiB     1 MiB     谁在调
+//     模型改写（改前）                     7293 ns   112061 ns  1726057 ns  ws_relay.go:302
+//     模型改写（T0 后，预筛 miss）            90 ns      772 ns    12696 ns  同上
+//     completed memmem 预筛（T0 删除）      52.9 ns    703 ns    11598 ns  ws_relay.go:285
+//     completed 精确判定（T0 后唯一路径）    22.8 ns     23.4 ns    23.4 ns  同上
+//     判死嗅探 sniffCodexWSDeath           88.8 ns    764 ns    12400 ns  ws_relay.go:249
+//     载荷预筛 AsPayloadError              93.4 ns      5.7 ns      5.8 ns  ws_relay.go:258
+//     单次 memmem 参照                     87.8 ns    766 ns    12100 ns  —
 //
 // 结构结论（T0 之后）：**帧路径上已没有全帧扫描的赢利点**。模型改写与 completed
 // 都是 O(1) 命中路径（预筛 miss / type 首键），判死嗅探是唯一剩下的全帧 memmem，
