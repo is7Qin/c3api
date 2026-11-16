@@ -127,3 +127,9 @@ go run ./tools/loadtest -mode stream -addr http://127.0.0.1:8080 -key ck-xxx -co
 - **env 覆盖只替换第一个下划线**：C3API_DB_DSN→db.dsn；前缀必须大写
 - **billing 默认开启**：空价格表=所有模型 402，需先 POST /api/admin/pricing/sync
 - CI 无 `-race`、无 GOMAXPROCS、e2e 不进 CI——这三条是已知取舍不是遗漏
+- **`internal/proxy` 已知 flaky（2026-11-16 实测；均非某次改动引入，别为单次红灯改断言）**：
+  - `TestRoundG16bNoSecondRowPerRound/unbillable_abort_is_err_only_once`——期望 `network` 实得 `abort`：全量单跑 ≈1/30，**main（`d593e8a6`）与重构分支同率复现**。上游 panic 断流与「客户端已走」的分类竞态（ANTI-PATTERNS 第 6 条的边界）。
+  - `TestFoldProducer_concurrentRequestsConserveSameMinute`——守恒 8→6/7：只在 `-race` 全量下见过（分支 2/26，main 0/32，Fisher p≈0.2 无差异证据）。`-run` 单跑 60 次不复现，吃的是包级负载。
+  - `TestCodexSlotPathStillWorks`——第三个请求偶发非 200（1 次，未捕获 body）。在 `HandleResponsesWS` 收尾插 50ms 探针后第三个请求照旧 200 ⇒ **「抢账号并发槽」假设不成立**，成因仍未定。
+  - `TestAnthropicErrorFrameConsumedBySDK`、`TestSessionG6LeaseExclusiveAndCancelDoesNotAdvance`、SDK 的 3 个 shape/instructions-id 用例——历史观察，本次未复测。
+  - 处置：红灯先 `-count=10 -run <name>` 复跑，再拿 main 对照，最后才怀疑改动。
