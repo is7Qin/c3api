@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -162,7 +163,18 @@ type codexEntry struct {
 	usageAt    time.Time
 	usageErrAt time.Time
 	usageErr   error
-	// usageMu 保护上面四个字段：它们由 usage 拉取协程与快照读取面并发访问，与
+	// usageWindows 是与 usage/usageAt **同一次**成功拉取得到的窗口事实
+	// （`UsageStatus.QuotaState()`，冷却判决的唯一输入——见 ExhaustedUntil）。
+	// 它不随 usage 快照结构走：`usage` 是收敛后的 domain 契约（不含窗口列表），
+	// 窗口原样留在这里，避免为了判决再去解析 Raw 或加宽 domain 契约。
+	//
+	// 生命周期与 usage 完全同步：成功拉取时与 usage/usageAt 同一临界区写入；
+	// **TTL 命中路径不重写**（命中只读缓存，窗口事实属于那次拉取的时刻，把它
+	// 按"现在"重写就等于伪造新鲜度）；失败不写也不清（上一份事实仍描述那次
+	// 观测，读到它只会给出已经过期的 reset，被 ExhaustedUntil 的时刻校验剔除）；
+	// 条目重建（凭据签名变化）随新条目归 nil——窗口事实属于旧身份的那次会话。
+	usageWindows []codexsdk.QuotaWindow
+	// usageMu 保护上面五个字段：它们由 usage 拉取协程与快照读取面并发访问，与
 	// **条目重建**无关——所以用条目自己的叶锁，不复用表锁（表锁只保护 map 与
 	// client 桶的摘除）。
 	usageMu sync.Mutex
@@ -661,7 +673,7 @@ const (
 // 条目一并清除）→ 5min TTL 命中直接返回（零上游）；未命中 → 实例 semaphore
 // （容量 8，有界并发）→ SDK GetUsage（e.client 复用——固定 SDK 官方端点
 // https://chatgpt.com/backend-api/wham/usage，网关零拼装，test transport 仅 host 重写保留官方 path）→ 白名单收敛映射（fromSDKUsage）→ 写
-// e.usage + e.usageAt。失败 → 写 e.usageErrAt（60s 冷却）。
+// e.usage + e.usageAt + e.usageWindows（同一临界区）。失败 → 写 e.usageErrAt（60s 冷却）。
 //
 // 错误分类**纯判定零副作用**（gate Major 3——不复用 translateError：其 fatal
 // 分支 reportFatal → evictIfCurrent 删 entry，冷却随 entry 消失）：IsFatal（fatal 五类
@@ -722,15 +734,52 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 		return nil, classifyUsageErr(err)
 	}
 	s := fromSDKUsage(resp)
+	// windows 在锁外算：`QuotaState()` 是纯映射（无 IO、不碰条目），而临界区只
+	// 该包住"五个字段一起翻页"这件事本身。它必须与 usage/usageAt **同一**临界区
+	// 提交——否则读面可能看到"新快照 + 旧窗口"（或反之），那就是把两次观测拼成
+	// 一次事实。
+	windows := resp.QuotaState()
 	e.usageMu.Lock()
 	e.usage = s
 	e.usageAt = time.Now()
+	e.usageWindows = windows
 	// 成功清冷却态（死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
 	// 状态机卫生——检查顺序调整不误服旧哨兵）。
 	e.usageErrAt = time.Time{}
 	e.usageErr = nil
 	e.usageMu.Unlock()
 	return s, nil
+}
+
+// QuotaDeadline 该账号当前"额度打满后最晚可信 reset"（冷却截止候选）。
+//
+// 语义分三段，**都复用** GetUsageSnapshot 这一条拉取路径——本面绝不另开拉取
+// （那会让"一次 429 一次上游"的上界失效，见设计 §5.2）：
+//
+//  1. `GetUsageSnapshot(ctx, cred)`：命中 TTL/失败冷却就零上游，未命中才拉；
+//  2. 读该账号条目里那次成功拉取留下的窗口事实（`usageWindows`）；
+//  3. `ExhaustedUntil(windows, time.Now())`：卫生校验 + 取最晚 reset。
+//
+// 错误面原样透传（ErrAuthExpired / ErrUpstream / ctx 错误）：调用方据此决定
+// 「补拉失败 ⇒ 冷却时长不变长」，本函数不替它降级成 false。
+//
+// 返回 false 的三种来由都合法且不可区分（调用方一律"不延长"）：没有窗口
+// 事实（未拉过/条目已重建）、窗口都没打满、事实全被卫生条件剔除。
+func (a *Codex) QuotaDeadline(ctx context.Context, cred *domain.AccountCredential) (time.Time, bool, error) {
+	if _, err := a.GetUsageSnapshot(ctx, cred); err != nil {
+		return time.Time{}, false, err
+	}
+	e := a.clients.Get(cred.AccountID)
+	if e == nil {
+		return time.Time{}, false, nil
+	}
+	// 只取切片头（SDK 每次 QuotaState() 都返回新切片，元素由本包独占），
+	// 临界区里不做映射/判决——两件事都不需要互斥。
+	e.usageMu.Lock()
+	windows := e.usageWindows
+	e.usageMu.Unlock()
+	until, ok := ExhaustedUntil(windows, time.Now())
+	return until, ok, nil
 }
 
 // snapshotCachedFor 命中路径零分配快查：按 accountID 查 entry + TTL
@@ -798,13 +847,19 @@ func classifyUsageErr(err error) error {
 // 映射（spec 变更 3——砍四留四：approx_*/瞬时布尔/派生状态/RateLimitReached
 // 一律不进契约；每块 nil → 不出字段；ResetAt Unix 秒 → time.Time；ResetAt 0
 // （上游主窗口省略）→ nil 不出字段；Balance 空串 → nil 不出字段——零填充语义）。
+//
+// **UsedPercent 是唯一的有损收敛**：SDK 侧是 `float64`（上游会发 99.5，用 int
+// 解码会让整个响应失败），domain 侧保持 `int`（改它会牵动 openapi 生成物与前端
+// schema，收益只是多一位小数）。这里四舍五入到整数——精度只影响展示；冷却判决
+// 走 SDK 的窗口事实（`QuotaWindow.UsedPercent` 原样 float64，见 ExhaustedUntil），
+// **不用这个字段**，所以收敛不改变任何冷却决定。
 func fromSDKUsage(u *codexsdk.UsageStatus) *domain.CodexUsageSnapshot {
 	if u == nil {
 		return nil
 	}
 	s := &domain.CodexUsageSnapshot{PlanType: u.PlanType}
 	if rl := u.RateLimit; rl != nil && rl.PrimaryWindow != nil {
-		s.RateLimit = &domain.CodexRateLimit{UsedPercent: rl.PrimaryWindow.UsedPercent}
+		s.RateLimit = &domain.CodexRateLimit{UsedPercent: int(math.Round(rl.PrimaryWindow.UsedPercent))}
 		if rl.PrimaryWindow.ResetAt > 0 {
 			t := time.Unix(int64(rl.PrimaryWindow.ResetAt), 0).UTC()
 			s.RateLimit.ResetAt = &t
