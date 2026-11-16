@@ -44,11 +44,16 @@ fi
 # cheap on Linux CI but a few seconds each on slower hosts, and the repository
 # package alone opens a clone per test. A -timeout in "$@" still wins.
 #
+# **必须低于 CI 那个 step 的 timeout-minutes（30）**：两者相等时 step 先被杀，
+# go test 的挂死 panic 来不及打出 goroutine 栈——2026-11-16 就吃过一次，
+# internal/proxy 挂死 30 分钟，日志里只剩一句 "action timed out"，不知道挂在
+# 哪一行。留 10 分钟余量换一份栈。
+#
 # TestPerfGateToolSchemaHotPath asserts ns/op against the M record (×2.5). It lives
 # behind the `perf` build tag: `go test ./...` does not even compile it, so the
 # parallel pass cannot see it at all — no -skip flag, no "skip then re-run"
 # convention. The explicit line below is the only place it runs (one pass).
 # Allocation gates are load-independent and stay in the default run
 # (TestToolSchemaAllocsGate).
-go test -p "$p" -timeout 30m "$@" ./...
-go test -tags perf -p 1 -timeout 30m "$@" -run '^TestPerfGateToolSchemaHotPath$' ./internal/protoconv
+go test -p "$p" -timeout 20m "$@" ./...
+go test -tags perf -p 1 -timeout 20m "$@" -run '^TestPerfGateToolSchemaHotPath$' ./internal/protoconv
