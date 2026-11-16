@@ -53,6 +53,18 @@ type Codex struct {
 	usageSem      chan struct{}
 	usageTTL      time.Duration
 	usageCooldown time.Duration
+	// usageNow usage 面的时间源（构造期 = time.Now）。TTL、失败冷却与"哪份观测
+	// 更新鲜"全读它——门禁要求"推进时间"而不是 sleep，测试在启动任何拉取协程
+	// **之前**替换这个函数；数据面不写它，故不需要锁。
+	usageNow func() time.Time
+	// usageFlightMu/usageFlights 同 `(accountID, K)` 的在飞拉取登记（设计 §5.1
+	// 的单飞键 = `(accountID, identityRevision)`；§5.2 的上界表"同键并发 N 次 ⇒
+	// 1 次上游"）。双检只能防**已完成**拉取的重复：semaphore 等槽期间落地的结果
+	// 会被二次快照判定拦住，但 N 个请求同时通过双检、一起阻塞在**尚未返回**的
+	// 首拉上时，双检什么也拦不住（实测 8 并发同 K ⇒ 8 次上游）。所以这里必须有
+	// 一张显式的在飞表。
+	usageFlightMu sync.Mutex
+	usageFlights  map[usageFlightKey]*usageFlight
 }
 
 // (SetTransport setter deleted by hygiene: transport is a construction-time
@@ -158,25 +170,39 @@ type codexEntry struct {
 	reported  atomic.Bool
 	// usage 额度快照缓存（GetUsageSnapshot 5min TTL）+ 失败冷却起点
 	// （60s——gate Major 2）：重建（sig 变化）随新条目一并清除；usageErr 只存
-	// 分类哨兵（ErrAuthExpired/ErrUpstream），不缓存错误体。
-	usage      *domain.CodexUsageSnapshot
-	usageAt    time.Time
-	usageErrAt time.Time
-	usageErr   error
+	// 分类哨兵（ErrAuthExpired/ErrUpstream/ErrUsageStale），不缓存错误体。
+	usage   *domain.CodexUsageSnapshot
+	usageAt time.Time
+	// usageRev 这份 usage/usageWindows 是**哪一代身份 K** 拉到的
+	// （`AccountCredential.IdentityRevision`，R2-Q5）。命中条件因此是
+	// `usageRev == k && 新鲜`，而**不是** `srcRev == k`：
+	//
+	// srcRev 是资源归属的单调观测值（见上），会被后来的同签名请求抬升、也从不
+	// 回退——用它判命中会让 K=3 的请求命中 K=2 写下的 usage（条目按签名复用，
+	// 换代不重建）。usageRev 只由拉取方写、只记**实际发起那次拉取**的 K。
+	usageRev int64
+	// usageErrAt/usageErr/usageErrRev 失败冷却三元组：起点、分类哨兵、
+	// **这次失败属于哪一代 K**。冷却只挡同代际（`usageErrRev == k && 新鲜`）；
+	// 换代后立刻允许补拉一次——否则 base_url/installation 这类不动凭据字节的
+	// 身份写入会被上一代的 60s 冷却错误阻挡。三者同一临界区翻页，不撕裂。
+	usageErrAt  time.Time
+	usageErr    error
+	usageErrRev int64
 	// usageWindows 是与 usage/usageAt **同一次**成功拉取得到的窗口事实
 	// （`UsageStatus.QuotaState()`，冷却判决的唯一输入——见 ExhaustedUntil）。
 	// 它不随 usage 快照结构走：`usage` 是收敛后的 domain 契约（不含窗口列表），
 	// 窗口原样留在这里，避免为了判决再去解析 Raw 或加宽 domain 契约。
 	//
-	// 生命周期与 usage 完全同步：成功拉取时与 usage/usageAt 同一临界区写入；
-	// **TTL 命中路径不重写**（命中只读缓存，窗口事实属于那次拉取的时刻，把它
+	// 生命周期与 usage 完全同步：成功拉取时与 usage/usageAt/usageRev **同一临界区**
+	// 写入；**TTL 命中路径不重写**（命中只读缓存，窗口事实属于那次拉取的时刻，把它
 	// 按"现在"重写就等于伪造新鲜度）；失败不写也不清（上一份事实仍描述那次
 	// 观测，读到它只会给出已经过期的 reset，被 ExhaustedUntil 的时刻校验剔除）；
 	// 条目重建（凭据签名变化）随新条目归 nil——窗口事实属于旧身份的那次会话。
 	usageWindows []codexsdk.QuotaWindow
-	// usageMu 保护上面五个字段：它们由 usage 拉取协程与快照读取面并发访问，与
+	// usageMu 保护上面七个字段：它们由 usage 拉取协程与快照读取面并发访问，与
 	// **条目重建**无关——所以用条目自己的叶锁，不复用表锁（表锁只保护 map 与
-	// client 桶的摘除）。
+	// client 桶的摘除）。数据、时刻、代际标签三件套必须在这个锁里一起翻页，
+	// 读面才不会看到"新快照 + 旧代际"或"旧窗口 + 新时刻"。
 	usageMu sync.Mutex
 }
 
@@ -217,6 +243,8 @@ func NewCodex(failure FailureHandler, egressPool *egress.Pool, clients *ClientTa
 		usageSem:      make(chan struct{}, usageFetchConcurrency),
 		usageTTL:      defaultUsageSnapshotTTL,
 		usageCooldown: defaultUsageCooldown,
+		usageNow:      time.Now,
+		usageFlights:  make(map[usageFlightKey]*usageFlight),
 	}
 }
 
@@ -640,7 +668,7 @@ func closeWSIdleConns(clients []*codexsdk.HTTPClient) {
 	}
 }
 
-// —— codex 额度快照（GetUsageSnapshot——TTL 缓存 + 有界并发 + 失败冷却） ——
+// —— codex 额度快照（GetUsageSnapshot——代际绑定 + 单飞 + TTL/冷却 + 有界并发） ——
 
 // ErrAuthExpired 凭据失效分类错误（GetUsageSnapshot 错误面——IsFatal 纯判定
 // 零副作用：usage 查询面不重复上报不摘除——凭据失效由会话路径（Dial/
@@ -652,10 +680,21 @@ var ErrAuthExpired = errors.New("codex: usage auth expired")
 // RefreshError 等一律保守归本类；upstream_error 映射输入）。
 var ErrUpstream = errors.New("codex: usage upstream error")
 
+// ErrUsageStale 本次观测已不属于当前身份代际：拉取在途期间同签名的身份写入
+// 把 K 抬过了拉取起点（`entry.srcRev` 前进、`cred` 字节不变 ⇒ 条目不重建）。
+// 结果**已丢弃**：快照、窗口事实、时刻、`usageRev` 与失败冷却一律未写。
+//
+// 调用方语义：按「无事实」处理——它既不是上游错误也不是凭据错误，而是"这一趟
+// 白跑了"（不延长冷却、不判账号失败；下一次按新 K 重新拉）。为什么必须丢弃：
+// 把旧代际的观测写进缓存并标成新一代，就是让新身份命中它从未观测过的事实
+// （R2-Q5 的反例：K=3 命中 K=2 写的 usage）。
+var ErrUsageStale = errors.New("codex: usage snapshot superseded by identity change")
+
 // usageFetchConcurrency 快照拉取有界并发上限（所有调用面共享节流：管理面
 // 几百账号懒加载 + 未来路由面共用同一上限，防 OpenAI 429；只限并发不限速率
 // ——速率上限由失败冷却封顶）。实例级 semaphore（Codex.usageSem）容量即此值，
-// 挂实例消除包级可变状态（S8）。
+// 挂实例消除包级可变状态（S8）。**只有 leader 抢槽**（见 usageFlightKey）：
+// follower 不占并发额度，否则 8 个 follower 就能把槽占满而 leader 永远拿不到。
 const usageFetchConcurrency = 8
 
 // 快照 TTL 与失败冷却默认值（挂 Codex 实例字段 usageTTL/usageCooldown——见
@@ -668,12 +707,47 @@ const (
 	defaultUsageCooldown = 60 * time.Second
 )
 
+// usageFlightKey 单飞键 = `(accountID, K)`（设计 §5.1/§5.2）。
+//
+// **不含凭据签名**：K 只由管理面身份写入推进，所以同账号同代际的并发请求必然
+// 看同一份凭据内容；把签名放进来只会让"同代际、快照里字节不同的两次调用"并发
+// 打两次上游（签名是重建判据，不是观测代际）。反向也不成立——同签名不同 K 必须
+// **分开**：那是两代身份，各自的观测不得互相冒充。
+type usageFlightKey struct {
+	accountID int64
+	rev       int64
+}
+
+// usageFollowRetries follower 重试次数：leader 的 ctx 死了不等于本调用被取消。
+// 上界必须有——否则"每次 leader 都被取消"会变成不退出的重试环；2 次足够覆盖
+// 一次偶然的连接断开，又不会把调用方预算耗在同一个坏上游上。
+const usageFollowRetries = 2
+
+// usageFlight 一次在飞拉取：`done` 关闭后 snap/err 可读（happens-before 由
+// close 建立）。结果对所有 follower 共享——与 singleflight 同语义：连同错误
+// 一起共享，**但 leader 自己的 ctx 死亡不是 follower 的结论**（它说明的是
+// leader 的连接断了，不是 follower 的调用被取消——见 usageFollowRetries）。
+type usageFlight struct {
+	done chan struct{}
+	snap *domain.CodexUsageSnapshot
+	err  error
+}
+
 // GetUsageSnapshot 账号 codex 额度快照（ChatGPT 面 wham/usage）：cred →
-// 缓存条目（entryFor——sig 比对/重建，重建时 usage/usageAt/usageErrAt 随新
-// 条目一并清除）→ 5min TTL 命中直接返回（零上游）；未命中 → 实例 semaphore
-// （容量 8，有界并发）→ SDK GetUsage（e.client 复用——固定 SDK 官方端点
+// 缓存条目（entryFor——sig 比对/重建，重建时 usage/usageAt/usageRev/
+// usageErrAt/usageErr/usageErrRev 随新条目一并清除）→ 5min TTL **且同代际**
+// 命中直接返回（零上游）；未命中 → `(accountID, K)` 单飞（follower 只等结论，
+// 不占并发额度；leader 的 ctx 死亡时有界重试，不连坐——见 usageFollowRetries）
+// → leader 抢实例 semaphore（容量 8，有界并发）→ SDK GetUsage
+// （e.client 复用——固定 SDK 官方端点
 // https://chatgpt.com/backend-api/wham/usage，网关零拼装，test transport 仅 host 重写保留官方 path）→ 白名单收敛映射（fromSDKUsage）→ 写
-// e.usage + e.usageAt + e.usageWindows（同一临界区）。失败 → 写 e.usageErrAt（60s 冷却）。
+// e.usage + e.usageAt + e.usageRev + e.usageWindows（同一临界区）。失败 → 写
+// e.usageErrAt + e.usageErr + e.usageErrRev（60s **同代际**冷却）。
+//
+// **代际（R2-Q5）**：命中要 `usageRev == cred.IdentityRevision`（`srcRev` 是
+// 资源归属的单调观测值，不能当观测代际）；失败冷却只挡 `usageErrRev == K` 的
+// 那一代（换代立即允许补拉一次）；拉取期间 K 前进 ⇒ 结果丢弃并返回
+// ErrUsageStale（见函数内注释）。
 //
 // 错误分类**纯判定零副作用**（gate Major 3——不复用 translateError：其 fatal
 // 分支 reportFatal → evictIfCurrent 删 entry，冷却随 entry 消失）：IsFatal（fatal 五类
@@ -681,7 +755,7 @@ const (
 // 其余（*HTTPError/网络/RefreshError，含非致命 401——无判死标记的拒绝属上游
 // 面，不从状态码反推鉴权结论）保守归 ErrUpstream。usage 是查询面不是会话面——凭据失效
 // 由会话路径上报（防循环），entry 恒保留（fatal 后后续调用仍命中冷却）。
-// 命中路径零分配：先按 accountID 查 entry.usage（map 查 + 锁 + 时间
+// 命中路径零分配：先按 accountID 查 entry.usage（map 查 + 锁 + 时间与代际
 // 比较——不计算 credSig/不重建条目），命中直接返回；未命中才走
 // clientFor（entryFor 签名比对/重建）。
 //
@@ -690,7 +764,10 @@ const (
 // 账号的活跃集**：请求路径只取/建资源，配置可见性只由配置权威下发的资源指令改写
 // （`ClientTable.ApplyBatch`；直连键由权威显式列入保留集，不是表的特例）。
 func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCredential) (*domain.CodexUsageSnapshot, error) {
-	if s, ok := a.snapshotCachedFor(cred.AccountID); ok {
+	// 本请求代表的身份代际：整条路径只认这一个值（不回读条目上的当前 K——那会
+	// 把别的请求的推进算到这次观测头上）。
+	startK := cred.IdentityRevision
+	if s, ok := a.snapshotCachedFor(cred.AccountID, startK); ok {
 		return s, nil
 	}
 	e, client, err := a.usageClientFor(cred)
@@ -702,53 +779,96 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 		}
 		return nil, err
 	}
-	if s, ok := a.snapshotCached(e); ok {
+	if s, ok := a.snapshotCached(e, startK); ok {
 		return s, nil
 	}
-	if err := a.snapshotCooldown(e); err != nil {
+	if err := a.snapshotCooldown(e, startK); err != nil {
 		return nil, err
 	}
+	// 单飞：同 `(accountID, K)` 的并发调用只让一个去打上游，其余等它的结论。
+	key := usageFlightKey{accountID: cred.AccountID, rev: startK}
+	var flight *usageFlight
+	for attempts := 0; ; {
+		f, leader := a.joinUsageFlight(key)
+		if leader {
+			flight = f
+			break
+		}
+		select {
+		case <-f.done:
+			// 只有「别人的 ctx 到期 / 被取消」且本调用仍活着时才重试；自己的取消
+			// 原样返回。重试即重新 join（不复制 flight、不手工关 done）：要么自己
+			// 成为新 leader，要么并到别人的新 flight 上。
+			if ctx.Err() == nil && isFlightCtxErr(f.err) && attempts < usageFollowRetries {
+				attempts++
+				continue
+			}
+			return f.snap, f.err
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	// leader：任何返回路径都必须摘除登记并发布结论——否则同键后来者会永远等一个
+	// 不会关闭的 done。
+	var (
+		snap *domain.CodexUsageSnapshot
+		ferr error
+	)
+	defer func() { a.finishUsageFlight(key, flight, snap, ferr) }()
 	select {
 	case a.usageSem <- struct{}{}:
 	case <-ctx.Done():
-		return nil, ctx.Err()
+		ferr = ctx.Err()
+		return nil, ferr
 	}
 	defer func() { <-a.usageSem }()
-	// 双检：semaphore 等待期间并发请求可能已拉取成功/失败（TTL/冷却语义保持
-	// ——不重复拉取、不重复报错）。
-	if s, ok := a.snapshotCached(e); ok {
+	// 双检：等槽期间同键的前一位 leader（已结束、登记已摘）或别的代际可能已经
+	// 写好结论（TTL/冷却语义保持——不重复拉取、不重复报错）。
+	if s, ok := a.snapshotCached(e, startK); ok {
+		snap = s
 		return s, nil
 	}
-	if err := a.snapshotCooldown(e); err != nil {
+	if err := a.snapshotCooldown(e, startK); err != nil {
+		ferr = err
 		return nil, err
 	}
+	// 拉取起点两件事：`fetchStartedAt` 是本次观测"有多新"的上界（新鲜度比较，
+	// 见 commitUsage）；`seenAtStart` 是当时的归属代际观测值（判"本次拉取期间
+	// 身份有没有前进"，见下）。
+	fetchStartedAt := a.now()
+	seenAtStart := e.srcRev.Load()
 	resp, err := client.GetUsage(ctx)
 	if err != nil {
 		// 取消/超时短路（task review 2026-08-18 Important 1）：ctx 取消 →
 		// 不写失败冷却（误记会锁死该账号 60s——管理面批量拉取切页触发面）、
 		// 返回 ctx 错误本身保留取消身份（不误归 ErrUpstream）。
 		if ctxErr := ctx.Err(); ctxErr != nil {
+			ferr = ctxErr
 			return nil, ctxErr
 		}
-		a.recordUsageFailure(e, err)
-		return nil, classifyUsageErr(err)
+		ferr = classifyUsageErr(err)
+		a.recordUsageFailure(e, startK, err)
+		return nil, ferr
 	}
 	s := fromSDKUsage(resp)
 	// windows 在锁外算：`QuotaState()` 是纯映射（无 IO、不碰条目），而临界区只
-	// 该包住"五个字段一起翻页"这件事本身。它必须与 usage/usageAt **同一**临界区
-	// 提交——否则读面可能看到"新快照 + 旧窗口"（或反之），那就是把两次观测拼成
-	// 一次事实。
+	// 该包住"数据 + 时刻 + 代际标签一起翻页"这件事本身（见 commitUsage）——
+	// 否则读面可能看到"新快照 + 旧窗口"（或反之），那就是把两次观测拼成一次事实。
 	windows := resp.QuotaState()
-	e.usageMu.Lock()
-	e.usage = s
-	e.usageAt = time.Now()
-	e.usageWindows = windows
-	// 成功清冷却态（死状态不留：哨兵仅在 usageErrAt 新鲜时被读取，但
-	// 状态机卫生——检查顺序调整不误服旧哨兵）。
-	e.usageErrAt = time.Time{}
-	e.usageErr = nil
-	e.usageMu.Unlock()
-	return s, nil
+	// 本次拉取期间身份前进 ⇒ 丢弃结果（R2-Q5）。不变量与证明：
+	//  - 任何写入都带 `usageRev = startK` 的诚实标签，而命中要求 `usageRev == k`
+	//    ⇒ 旧代的观测永远不会被新代际消费（写错标签才是唯一的破口）；
+	//  - 判据取"开始时的 srcRev 观测值"：`srcRev` 是单调值，开始**之前**就被抬到
+	//    startK 之上的情形（seen == seenAtStart）不是本次拉取造成的，不丢弃——
+	//    其安全性由 commitUsage 的单调闸门保证（新一代已写过 ⇒ 旧代不降级）；
+	//  - 于是丢弃只覆盖"在途期间换代"这一种确定情形，ErrUsageStale 的语义不被
+	//    扩大（它仍只表示"这趟白跑了"，不含"写不进去"）。
+	if seen := e.srcRev.Load(); seen > startK && seen > seenAtStart {
+		ferr = ErrUsageStale
+		return nil, ferr
+	}
+	snap = a.commitUsage(e, s, windows, startK, fetchStartedAt)
+	return snap, nil
 }
 
 // QuotaDeadline 该账号当前"额度打满后最晚可信 reset"（冷却截止候选）。
@@ -757,14 +877,20 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 // （那会让"一次 429 一次上游"的上界失效，见设计 §5.2）：
 //
 //  1. `GetUsageSnapshot(ctx, cred)`：命中 TTL/失败冷却就零上游，未命中才拉；
-//  2. 读该账号条目里那次成功拉取留下的窗口事实（`usageWindows`）；
-//  3. `ExhaustedUntil(windows, time.Now())`：卫生校验 + 取最晚 reset。
+//  2. 读该账号条目里那次成功拉取留下的窗口事实（`usageWindows`）——**只读本
+//     代际的那份**（`usageRev == cred.IdentityRevision`）；
+//  3. `ExhaustedUntil(windows, now)`：卫生校验 + 取最晚 reset。
 //
-// 错误面原样透传（ErrAuthExpired / ErrUpstream / ctx 错误）：调用方据此决定
-// 「补拉失败 ⇒ 冷却时长不变长」，本函数不替它降级成 false。
+// 步骤 2 的代际校验不是装饰：GetUsageSnapshot 与读窗口之间隔着一次表查询，若
+// 期间另一个代际的拉取写回了条目，读到的就是**别人的**窗口事实——用它算截止
+// 等于把 A 代的冷却时长建在 B 代的观测上。归属不符 ⇒ 当作"没有窗口事实"。
 //
-// 返回 false 的三种来由都合法且不可区分（调用方一律"不延长"）：没有窗口
-// 事实（未拉过/条目已重建）、窗口都没打满、事实全被卫生条件剔除。
+// 错误面原样透传（ErrAuthExpired / ErrUpstream / ErrUsageStale / ctx 错误）：
+// 调用方据此决定「补拉失败 ⇒ 冷却时长不变长」，本函数不替它降级成 false。
+//
+// 返回 false 的四种来由都合法且不可区分（调用方一律"不延长"）：没有窗口
+// 事实（未拉过/条目已重建）、窗口属于别的代际、窗口都没打满、事实全被卫生
+// 条件剔除。
 func (a *Codex) QuotaDeadline(ctx context.Context, cred *domain.AccountCredential) (time.Time, bool, error) {
 	if _, err := a.GetUsageSnapshot(ctx, cred); err != nil {
 		return time.Time{}, false, err
@@ -777,56 +903,162 @@ func (a *Codex) QuotaDeadline(ctx context.Context, cred *domain.AccountCredentia
 	// 临界区里不做映射/判决——两件事都不需要互斥。
 	e.usageMu.Lock()
 	windows := e.usageWindows
+	rev := e.usageRev
 	e.usageMu.Unlock()
-	until, ok := ExhaustedUntil(windows, time.Now())
+	if rev != cred.IdentityRevision {
+		return time.Time{}, false, nil
+	}
+	until, ok := ExhaustedUntil(windows, a.now())
 	return until, ok, nil
 }
 
-// snapshotCachedFor 命中路径零分配快查：按 accountID 查 entry + TTL
-// 判定——命中直接返回缓存实例，不经过 clientFor/credSig/
-// entryFor（重建判定）。未命中/无 entry → nil（走完整路径）。
-func (a *Codex) snapshotCachedFor(accountID int64) (*domain.CodexUsageSnapshot, bool) {
+// snapshotCachedFor 命中路径零分配快查：按 accountID 查 entry + **同代际**
+// TTL 判定——命中直接返回缓存实例，不经过 clientFor/credSig/entryFor（重建
+// 判定）。未命中/无 entry/代际不符 → nil（走完整路径）。
+//
+// k 是必须的：条目按凭据签名复用，K 前进时条目**不会**重建（凭据字节没变），
+// 少了这一维就会把上一代的快照当成这一代的事实返回。
+func (a *Codex) snapshotCachedFor(accountID int64, k int64) (*domain.CodexUsageSnapshot, bool) {
 	e := a.clients.Get(accountID)
 	if e == nil {
 		return nil, false
 	}
 	e.usageMu.Lock()
 	defer e.usageMu.Unlock()
-	if e.usage != nil && time.Since(e.usageAt) < a.usageTTL {
+	if e.usage != nil && e.usageRev == k && a.now().Sub(e.usageAt) < a.usageTTL {
 		return e.usage, true
 	}
 	return nil, false
 }
 
-// snapshotCached 快照 TTL 命中判定（5min 慢变量；e.usage nil = 未拉取过）。
-func (a *Codex) snapshotCached(e *codexEntry) (*domain.CodexUsageSnapshot, bool) {
+// snapshotCached 快照命中判定（5min 慢变量 + 同代际；e.usage nil = 未拉取过）。
+func (a *Codex) snapshotCached(e *codexEntry, k int64) (*domain.CodexUsageSnapshot, bool) {
 	e.usageMu.Lock()
 	defer e.usageMu.Unlock()
-	if e.usage != nil && time.Since(e.usageAt) < a.usageTTL {
+	if e.usage != nil && e.usageRev == k && a.now().Sub(e.usageAt) < a.usageTTL {
 		return e.usage, true
 	}
 	return nil, false
 }
 
-// snapshotCooldown 失败冷却判定（60s）：冷却中 → 返回分类哨兵（
-// ErrAuthExpired/ErrUpstream——非错误体，冷却后重试拉取新错误）；冷却外 →
-// nil（可拉取）。
-func (a *Codex) snapshotCooldown(e *codexEntry) error {
+// snapshotCooldown 失败冷却判定（60s，**同代际**）：`usageErrRev == k` 且新鲜 →
+// 返回分类哨兵（ErrAuthExpired/ErrUpstream——非错误体，冷却后重试拉取新错误）；
+// 其余（别的代际的失败、已过冷却、从未失败）→ nil（可拉取）。
+//
+// 换代就放行（`usageErrRev != k` ⇒ nil）是裁定的一部分：base URL/installation
+// 这类不动凭据字节的身份写入之后，旧代际的 60s 冷却不得挡住新代际的第一次补拉。
+func (a *Codex) snapshotCooldown(e *codexEntry, k int64) error {
 	e.usageMu.Lock()
 	defer e.usageMu.Unlock()
-	if !e.usageErrAt.IsZero() && time.Since(e.usageErrAt) < a.usageCooldown {
+	if e.usageErrRev == k && !e.usageErrAt.IsZero() && a.now().Sub(e.usageErrAt) < a.usageCooldown {
 		return e.usageErr
 	}
 	return nil
 }
 
-// recordUsageFailure 失败冷却起点（gate Major 2）：写 usageErrAt + 分类哨兵
-// （不缓存错误体）。
-func (a *Codex) recordUsageFailure(e *codexEntry, err error) {
+// recordUsageFailure 失败冷却起点（gate Major 2）：同一临界区写
+// usageErrAt + 分类哨兵 + **失败所属代际**（不缓存错误体）——三元组必须一起
+// 翻页，否则读面可能把 A 代的失败时间配上 B 代的标签。
+func (a *Codex) recordUsageFailure(e *codexEntry, k int64, err error) {
+	sentinel := classifyUsageErr(err)
+	now := a.now()
 	e.usageMu.Lock()
-	e.usageErrAt = time.Now()
-	e.usageErr = classifyUsageErr(err)
-	e.usageMu.Unlock()
+	defer e.usageMu.Unlock()
+	// 单调闸门（S4a §1，与 commitUsage 同一条纪律）：新一代的失败记录已经写过
+	// ⇒ 旧代的失败不得把它降级——哪怕这只是一段冷却，它也会让新代际被一段自己
+	// 没经历过的冷却挡住。
+	if e.usageErrRev > k {
+		return
+	}
+	e.usageErrAt = now
+	e.usageErr = sentinel
+	e.usageErrRev = k
+}
+
+// commitUsage 成功结果提交：数据、时刻、代际标签（以及冷却清零）在**同一**
+// usageMu 临界区里一起翻页——读面永远看不到"新快照 + 旧标签"或"旧窗口 + 新
+// 时刻"。
+//
+// 新鲜度（设计 §5.3）：同代际缓存里已有**不比本次拉取开始更旧**的结果 ⇒ 本次
+// 观测不算更新鲜，不覆盖，直接把缓存里那份交回调用方（它属于同一代际，代表
+// 同一事实且更近）。判据取**拉取开始时刻**而不是返回时刻：返回顺序由网络决定，
+// 开始时刻才是"这次观测最晚可能有多旧"的上界——用返回时刻比较等于让"先发后到"
+// 的旧观测覆盖新观测。
+//
+// 比较用 `!usageAt.Before(fetchStartedAt)`（即 **>=**，不是严格的 After）：
+// `time.Now()` 的粒度在 Windows 上可以粗到毫秒级，两个真正交错的观测会拿到
+// **逐纳秒相等**的时刻（本用例在 CI 与本地都实际撞到过）。相等时无法判先后，
+// 保守选"保留缓存"——否则"后返回者覆盖先返回者"会以秒级概率重现（门禁 16
+// 就是用它判红的）。
+//
+// 单调（S4a §1）：`usageRev` 只许单调不减——本次观测属于比缓存**更旧**的代际
+// （k < usageRev，即拉取开始前凭据快照就已落后）时照样不落缓存，只把观测交回
+// 调用方。它与新鲜度是两条正交的闸门：新鲜度比"时刻"，单调比"代际"。
+func (a *Codex) commitUsage(e *codexEntry, s *domain.CodexUsageSnapshot, windows []codexsdk.QuotaWindow, k int64, fetchStartedAt time.Time) *domain.CodexUsageSnapshot {
+	now := a.now()
+	e.usageMu.Lock()
+	defer e.usageMu.Unlock()
+	// 单调闸门（S4a §1）：新一代已经写过 ⇒ 旧代的观测不得把它降级（usageRev 只
+	// 许单调不减）。本次结果仍然交回调用方（它问的就是 k 这一代），只是不落缓存。
+	if e.usageRev > k {
+		return s
+	}
+	if e.usageRev == k && !e.usageAt.Before(fetchStartedAt) {
+		return e.usage
+	}
+	e.usage = s
+	e.usageAt = now
+	e.usageRev = k
+	e.usageWindows = windows
+	// 成功清冷却态（死状态不留：哨兵仅在"同代际 + 新鲜"时被读取，但状态机
+	// 卫生——检查顺序调整不误服旧哨兵；代际标签一并归零）。
+	e.usageErrAt = time.Time{}
+	e.usageErr = nil
+	e.usageErrRev = 0
+	return s
+}
+
+// now usage 面的时间源（构造期 = time.Now）。集中一处：TTL、失败冷却与新鲜度
+// 判定共用同一个时钟，测试才能靠"推进时间"而不是 sleep 来判门禁。
+func (a *Codex) now() time.Time {
+	if a.usageNow == nil {
+		return time.Now()
+	}
+	return a.usageNow()
+}
+
+// joinUsageFlight 加入 `(accountID, K)` 的在飞拉取。leader=true 表示由本次调用
+// 去打上游；false 表示等 leader 的结论（**不占 semaphore 槽**——follower 若也
+// 抢槽，8 个 follower 就能把容量占满、leader 永远拿不到，直接死锁）。
+func (a *Codex) joinUsageFlight(key usageFlightKey) (*usageFlight, bool) {
+	a.usageFlightMu.Lock()
+	defer a.usageFlightMu.Unlock()
+	if f := a.usageFlights[key]; f != nil {
+		return f, false
+	}
+	f := &usageFlight{done: make(chan struct{})}
+	a.usageFlights[key] = f
+	return f, true
+}
+
+// finishUsageFlight 摘除在飞登记并发布结论（先写结论再关 done：follower 的
+// 读取由 close 建立 happens-before）。摘除只在登记仍是自己时进行——同一键的
+// 后一位 leader 可能已经接手。
+func (a *Codex) finishUsageFlight(key usageFlightKey, f *usageFlight, snap *domain.CodexUsageSnapshot, err error) {
+	a.usageFlightMu.Lock()
+	if a.usageFlights[key] == f {
+		delete(a.usageFlights, key)
+	}
+	a.usageFlightMu.Unlock()
+	f.snap = snap
+	f.err = err
+	close(f.done)
+}
+
+// isFlightCtxErr leader 的结论是不是"它自己的 ctx 死了"（取消 / 超时）。这种情形下
+// follower 自己的 ctx 仍然活着：把别人的取消当成自己的结论就是白丢一次补拉。
+func isFlightCtxErr(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // classifyUsageErr 错误分类纯判定（gate Major 3——零副作用不上报不摘除）。

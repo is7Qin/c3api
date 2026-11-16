@@ -316,16 +316,15 @@ func TestCodexUsageSnapshotCancelNoCooldown(t *testing.T) {
 	mu.Unlock()
 }
 
-// TestCodexUsageSnapshotSameAccountDoubleCheck 同账号并发首拉双检（
-// 红绿用例）：N 并发同账号 → in-flight 恰 ≤8（semaphore 有界）→ 其余请求在
-// 槽释放后经**二次双检**命中已完成的首拉（槽释放 ⟹ 同账号 usage 已写——写
-// 先于 defer 释放槽，窗口闭合）→ 上游恰 8 次（无双检则 20 次级联全拉）+ 全
-// 部返回内容一致的快照（channel 闸门同步，禁 sleep）。
+// TestCodexUsageSnapshotSameAccountSingleflight 同账号**同代际** N 并发首拉 ⇒
+// 上游**恰 1 次**（S4a：设计 §5.1 的单飞键 = `(accountID, K)`，§5.2 上界表
+// "同键并发 N 次 ⇒ 1 次"）。
 //
-// 注：本实现无 per-account 单飞——同账号 in-flight 突发上限 = semaphore 容量
-// （8，spec「全网关 ≤8 并发」）；双检防的是**已完成**拉取的重复（队列等待者
-// 零补拉），非 in-flight 去重。
-func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
+// S4a 之前这条用例断言的是"上游恰 8 次"（semaphore 容量）——因为当时只有
+// semaphore + 双检：双检只能拦住"已经写好结果"的重复，拦不住 8 个请求同时通过
+// 双检、一起阻塞在**尚未返回**的首拉上（实测就是 8 次上游）。现在由在飞表去重，
+// 双检保留（等槽期间前一位 leader / 别的代际可能已经写好结论）。
+func TestCodexUsageSnapshotSameAccountSingleflight(t *testing.T) {
 	srv, c := newUsageUpstream(t, codexUpstreamStep{status: 200, body: usageOKBody})
 	c.release = make(chan struct{}) // handler 积住直至放行
 	release := sync.OnceFunc(func() { close(c.release) })
@@ -345,25 +344,23 @@ func TestCodexUsageSnapshotSameAccountDoubleCheck(t *testing.T) {
 			results[i], errs[i] = a.GetUsageSnapshot(ctx, cred)
 		}(i)
 	}
-	// 等 semaphore 饱和（8 个 in-flight 积住）——channel 信号 + 超时兜底
+	// 等 leader 到达上游（channel 信号 + 超时兜底），再放行——follower 全在等它。
 	deadline := time.After(5 * time.Second)
-	for c.maxConcurrent() < usageFetchConcurrency {
+	for c.callsN() == 0 {
 		select {
 		case <-deadline:
-			t.Fatalf("usage 上游并发未达 semaphore 上限（当前 %d）", c.maxConcurrent())
+			t.Fatalf("usage 上游未收到 leader 请求")
 		case <-time.After(time.Millisecond):
 		}
 	}
+	require.Equal(t, 1, c.maxConcurrent(), "只有 leader 打上游（follower 不占并发额度）")
 	release()
 	wg.Wait()
 
-	require.Equal(t, usageFetchConcurrency, c.callsN(), "同账号 N 并发首拉 → 上游恰 8 次（in-flight 突发有界 + 双检防级联——无双检则 20 次级联全拉）")
+	require.Equal(t, 1, c.callsN(), "同 (accountID, K) N 并发 ⇒ 上游恰 1 次")
 	for i := range n {
 		require.NoError(t, errs[i])
-		// 8 个 in-flight 各自产出自有实例（最后写者胜入缓存）；等待者双检/快查
-		// 命中缓存实例——内容一律相同（同一上游响应），指针可比性仅限 TTL 命
-		// 中路径（TestCodexUsageSnapshotTTL 已锚定 Same）
-		require.Equal(t, *results[0], *results[i], "全部返回内容一致的快照")
+		require.Same(t, results[0], results[i], "全部拿到同一份观测实例（TTL 命中/单飞共享）")
 	}
 }
 
