@@ -79,6 +79,10 @@ var allowedServiceMethods = []string{
 	"CreateRule",
 	"CreateTemplate",
 	"CreateUser",
+	// CustomPages 是只读配置视图（spec 2026-11-16 §6-5）：读 settings 快照 →
+	// Parse/Normalize/Validate 后返回，不落库、不推进任何代际——登记为读面。
+	// 配置写入仍走既有的 UpdateSetting 单点（custom_pages 分支只做归一化）。
+	"CustomPages",
 	"DeactivateCode",
 	"DeactivateCodesBatch",
 	"DeleteAccount",

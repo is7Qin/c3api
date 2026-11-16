@@ -17,12 +17,25 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 
-export interface NavItem {
+// NavItem 是判别联合（spec 2026-11-16 §7.1）：内置项带 i18n `key`，自定义内嵌页
+// 带用户输入的 `text`。`text?: never` / `key?: never` 让「两个字段同时出现」变成
+// 编译错误——否则 `key` 会被写成 `DynamicKey | string`，渲染点又会退回 `t(key)`，
+// 而用户 label 传给 `t()` 只会显示成 key 本身或空白。
+interface NavItemBase {
   to: string
-  key: DynamicKey
   icon: LucideIcon
   end?: boolean
 }
+
+export type NavItem = NavItemBase &
+  (
+    | { key: DynamicKey; text?: never } // 内置项：i18n 键
+    | { text: string; key?: never } // 自定义项：用户输入的标签
+  )
+
+// 唯一标签取法：有 text 用 text，否则把 key 交给 t()。所有渲染点（桌面侧栏、
+// 移动端下拉、未来新增入口）都走这里，避免任何一处再直接解构 key。
+export const navLabel = (item: NavItem, t: (k: DynamicKey) => string) => ('text' in item ? item.text : t(item.key))
 
 export interface NavGroup {
   titleKey?: DynamicKey
@@ -39,18 +52,22 @@ export default function AppSidebar({ navs, userEmail }: { navs: readonly NavGrou
   const avatarInitial = userEmail ? userEmail.charAt(0).toUpperCase() : ''
 
   const renderItems = (items: readonly NavItem[]) =>
-    items.map(({ to, key, icon: Icon, end }) => (
-      <NavLink
-        key={to}
-        to={to}
-        end={end}
-        className={({ isActive }) =>
-          `group relative flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm font-medium transition-all duration-200 ${isActive ? 'bg-white text-[#1d1d1f] shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.06] dark:bg-white/[0.11] dark:text-white dark:ring-white/10 dark:shadow-none' : 'text-[#6e6e73] hover:bg-black/[0.04] hover:text-[#1d1d1f] dark:text-[#a1a1a6] dark:hover:bg-white/[0.07] dark:hover:text-white'}`
-        }
-      >
-        <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {t(key)}
-      </NavLink>
-    ))
+    items.map(item => {
+      // 只解构渲染需要的字段：label 必须走 navLabel（自定义项没有 key，解构会直接编译失败）。
+      const { to, icon: Icon, end } = item
+      return (
+        <NavLink
+          key={to}
+          to={to}
+          end={end}
+          className={({ isActive }) =>
+            `group relative flex min-h-10 items-center gap-2.5 rounded-[10px] px-3 text-sm font-medium transition-all duration-200 ${isActive ? 'bg-white text-[#1d1d1f] shadow-[0_1px_3px_rgba(0,0,0,0.08)] ring-1 ring-black/[0.06] dark:bg-white/[0.11] dark:text-white dark:ring-white/10 dark:shadow-none' : 'text-[#6e6e73] hover:bg-black/[0.04] hover:text-[#1d1d1f] dark:text-[#a1a1a6] dark:hover:bg-white/[0.07] dark:hover:text-white'}`
+          }
+        >
+          <Icon className="h-4 w-4 transition-transform duration-200 group-hover:scale-105" /> {navLabel(item, t)}
+        </NavLink>
+      )
+    })
 
   return (
     <aside data-od-id="app-sidebar" className="hidden w-[264px] shrink-0 border-r border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] text-[#1d1d1f] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] md:flex md:flex-col dark:border-[rgba(148,180,220,0.32)] dark:bg-[color:var(--glass-card-dark)] dark:text-[#f5f5f7] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)]">

@@ -12,6 +12,12 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for CustomPageVisibility.
+const (
+	CustomPageVisibilityAdmin CustomPageVisibility = "admin"
+	CustomPageVisibilityUser  CustomPageVisibility = "user"
+)
+
 // Defines values for ErrorResponseReason.
 const (
 	CubeHorizon     ErrorResponseReason = "cube_horizon"
@@ -253,6 +259,23 @@ type CreateOrderResponse struct {
 
 	// Rate 汇率快照（%d.%06d）
 	Rate string `json:"rate"`
+}
+
+// CustomPage defines model for CustomPage.
+type CustomPage struct {
+	ID         string               `json:"ID"`
+	Icon       string               `json:"Icon"`
+	Label      string               `json:"Label"`
+	URL        string               `json:"URL"`
+	Visibility CustomPageVisibility `json:"Visibility"`
+}
+
+// CustomPageVisibility defines model for CustomPage.Visibility.
+type CustomPageVisibility string
+
+// CustomPagesResponse defines model for CustomPagesResponse.
+type CustomPagesResponse struct {
+	Pages []CustomPage `json:"Pages"`
 }
 
 // DeletedResponse defines model for DeletedResponse.
@@ -1041,6 +1064,9 @@ type ServerInterface interface {
 	// 设置余额预警阈值（USD；0 = 关闭；负值/非有限/正值舍入为0 拒绝）
 	// (PUT /api/user/balance-warning-threshold)
 	PutUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request)
+	// 按角色过滤后的启用条目；配置损坏 → 500 固定文案 custom pages config is invalid
+	// (GET /api/user/custom-pages)
+	GetUserCustomPages(w http.ResponseWriter, r *http.Request)
 	// 我的错误明细（err_logs 完整错误面：拒绝 + 异常双轨；强制 user_id = 当前用户，防越权）
 	// (GET /api/user/err_logs)
 	GetUserErrLogs(w http.ResponseWriter, r *http.Request, params GetUserErrLogsParams)
@@ -1173,6 +1199,12 @@ func (_ Unimplemented) GetUserBalanceWarningThreshold(w http.ResponseWriter, r *
 // 设置余额预警阈值（USD；0 = 关闭；负值/非有限/正值舍入为0 拒绝）
 // (PUT /api/user/balance-warning-threshold)
 func (_ Unimplemented) PutUserBalanceWarningThreshold(w http.ResponseWriter, r *http.Request) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 按角色过滤后的启用条目；配置损坏 → 500 固定文案 custom pages config is invalid
+// (GET /api/user/custom-pages)
+func (_ Unimplemented) GetUserCustomPages(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -1452,6 +1484,20 @@ func (siw *ServerInterfaceWrapper) PutUserBalanceWarningThreshold(w http.Respons
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutUserBalanceWarningThreshold(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetUserCustomPages operation middleware
+func (siw *ServerInterfaceWrapper) GetUserCustomPages(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetUserCustomPages(w, r)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -2426,6 +2472,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/api/user/balance-warning-threshold", wrapper.PutUserBalanceWarningThreshold)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/api/user/custom-pages", wrapper.GetUserCustomPages)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/api/user/err_logs", wrapper.GetUserErrLogs)

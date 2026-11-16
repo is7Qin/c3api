@@ -1905,6 +1905,19 @@ paths:
               schema: { $ref: '#/components/schemas/Features' }
         default:
           $ref: '#/components/responses/Error'
+  /api/user/custom-pages:
+    get:
+      operationId: GetUserCustomPages
+      tags: [user]
+      summary: 按角色过滤后的启用条目；配置损坏 → 500 固定文案 custom pages config is invalid
+      responses:
+        '200':
+          description: 条目列表（空数组 = 未配置或当前角色无可见条目；顺序即配置顺序，Enabled 不下发）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CustomPagesResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /api/user/redemptions:
     post:
       operationId: PostUserRedemptions
@@ -3679,6 +3692,22 @@ components:
       properties:
         supplier: { type: boolean, description: "供应商功能（config supplier.enabled）。false 时 /api/user/supplier/* 未挂载" }
         payment: { type: boolean, description: "支付网关（运行时设置 payment.enabled，读设置快照，改动即时生效）。false 时控制台隐藏支付账户、支付订单与钱包；回调/查单/关单照常" }
+    CustomPage:
+      type: object
+      required: [ID, Label, URL, Visibility, Icon]
+      properties:
+        ID: { type: string }
+        Label: { type: string }
+        URL: { type: string }
+        Visibility:
+          type: string
+          enum: [admin, user]   # 同 GroupVisibility 先例：枚举进 schema，前端拿到字面量联合
+        Icon: { type: string }  # 刻意不给 enum：新增图标不应让旧前端编译失败（与 payment kind 开集同理由）
+    CustomPagesResponse:
+      type: object
+      required: [Pages]
+      properties:
+        Pages: { type: array, items: { $ref: '#/components/schemas/CustomPage' } }
     DeletedResponse:
       type: object
       required: [deleted]

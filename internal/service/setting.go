@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"slices"
 	"strconv"
 
@@ -79,6 +80,37 @@ func (s *Service) UpdateSetting(ctx context.Context, key, value string) (*domain
 		if effective("mail.enabled") != "true" || effective("mail.smtp_host") == "" || effective("mail.from_address") == "" {
 			return nil, ErrInvalidInput
 		}
+	}
+	// custom_pages 是全仓唯一一条 JSON 承载的 string 设置：写入前按
+	// Parse → Normalize → Validate → Marshal（spec §4.5 唯一顺序）处理，并用
+	// 归一化结果覆盖 value。
+	//
+	// 覆盖必须在 store.SetSetting **之前**：下面三个"同一个值"必须字节一致——
+	// ① 本函数返回体 set.Value（管理面保存后直接回显）；
+	// ② 库内落的值（后端重启/其它实例重载时读到的）；
+	// ③ 随后 reloadSettings 灌进快照的值（读路径 Service.CustomPages 看到的）。
+	// 若把校验放到 SetSetting 之后（或干脆只校验不改 value），三者就会分叉：
+	// 设置页显示的是归一化串、库里躺的是原始串，下一次保存又拿原始串再归一化，
+	// 幂等性与 diff 稳定性都没了。
+	if key == domain.SettingCustomPages {
+		pages, err := domain.ParseCustomPages(value)
+		if err != nil {
+			// 带详情的 400（spec §6-4 修订 / §19-3）：httpface.writeInvalidInput 直接拿
+			// err.Error() 当 400 body，前端 toast 原样显示——丢掉详情就没法指出"第几条、
+			// 哪个字段"，§13 的验收项不成立。errors.Is 仍可判别（%w 包住哨兵）。
+			return nil, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
+		}
+		pages = domain.NormalizeCustomPages(pages)
+		if err := domain.ValidateCustomPages(pages); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
+		}
+		// Marshal 失败是编码层的内部错误（正常输入走不到），没有可定位的管理面语义，
+		// 保持泛化文案：给管理员一句"service: invalid input"比暴露编码器错误更有用。
+		normalized, err := domain.MarshalCustomPages(pages)
+		if err != nil {
+			return nil, ErrInvalidInput
+		}
+		value = normalized
 	}
 	set, err := s.store.SetSetting(ctx, key, def.Type, value)
 	if err != nil {

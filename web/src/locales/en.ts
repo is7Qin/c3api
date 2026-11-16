@@ -1596,7 +1596,8 @@ export default {
       "tierPolicy": "Service tier policy",
       "mail": "Mail",
       "balanceWarning": "Balance warning",
-      "payment": "Payment"
+      "payment": "Payment",
+      "customPages": "Embedded pages"
     },
     "labels": {
       "signup_enabled": "Open signup",
@@ -1689,7 +1690,67 @@ export default {
       "invalidEmail": "Enter a valid email address"
     },
     "restored": "Restored",
-    "restoreDefault": "Restore default"
+    "restoreDefault": "Restore default",
+    "customPages": {
+      "title": "Embedded pages",
+      "desc": "Add sidebar entries that embed external sites in the console content area; the order here is the sidebar order and disabled entries are hidden.",
+      "add": "Add entry",
+      "save": "Save",
+      "saving": "Saving…",
+      "moveUp": "Move up",
+      "moveDown": "Move down",
+      "remove": "Remove",
+      "empty": "No entries yet; add one to get a sidebar entry.",
+      "id": "ID",
+      "idHint": "Lowercase letters, digits and dashes; cannot be changed after creation (it is part of the link)",
+      "label": "Label",
+      "url": "URL",
+      "visibility": "Visibility",
+      "icon": "Icon",
+      "enabled": "Enabled",
+      "visibilityAdmin": "Admin console",
+      "visibilityUser": "User console",
+      "icons": {
+        "link": "Link",
+        "globe": "Globe",
+        "book": "Docs",
+        "chart": "Chart",
+        "lifebuoy": "Support",
+        "ticket": "Ticket",
+        "code": "Code",
+        "sparkles": "Sparkles"
+      },
+      "issue": {
+        "tooMany": "Too many entries (max 20)",
+        "tooLarge": "The configuration exceeds 64 KiB once serialized (shorten URLs or remove entries)",
+        "idRequired": "ID is required",
+        "idTooLong": "ID must be at most 32 bytes",
+        "idPattern": "ID must use lowercase letters, digits and dashes, starting with a letter or digit",
+        "duplicateId": "ID duplicates an earlier entry",
+        "labelRequired": "Label is required",
+        "labelTooLong": "Label must be at most 40 characters",
+        "urlRequired": "URL is required",
+        "urlTooLong": "URL must be at most 2048 bytes",
+        "urlScheme": "URL must start with http:// or https://",
+        "urlCredentials": "URL must not contain user info (user:pass@)",
+        "urlControlChar": "URL must not contain control characters such as newlines",
+        "visibilityInvalid": "Visibility is invalid (must be admin or user)",
+        "iconInvalid": "Icon is not in the allowed list"
+      },
+      "corrupt": "The stored configuration cannot be parsed (invalid JSON, not an array, a non-object entry, or a non-boolean enabled); it must be cleared and rebuilt.",
+      "invalidBanner": "The saved configuration has problems — fix them before saving (editing is not blocked):",
+      "reset": "Clear and reset",
+      "resetConfirm": "This deletes every embedded page entry and saves an empty configuration. It cannot be undone."
+    }
+  },
+  "customPage": {
+    "openInNewTab": "Open in new tab",
+    "blockedHint": "If this area is blank, the target site may refuse to be embedded — use “Open in new tab”.",
+    "dismissHint": "Got it",
+    "invalidUrl": "This entry's URL is invalid (must start with http:// or https://); fix it on the settings page.",
+    "notFoundTitle": "Page not found",
+    "notFoundDesc": "This entry does not exist, is disabled, or does not belong to this console.",
+    "backHome": "Back to home"
   },
   "ops": {
     "title": "Ops",

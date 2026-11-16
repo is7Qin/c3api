@@ -20,6 +20,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { MailChannelTestCard } from '@/components/mail-channel-test-card'
+import { CustomPagesEditor } from '@/components/custom-pages-editor'
 import { toast } from '@/components/ui/toast'
 import type { components } from '@/lib/api/schema'
 
@@ -53,6 +54,10 @@ const GROUPS = [
     'payment.portal_base_url',
     'payment.order_ttl_minutes',
   ] },
+  // 内嵌页面：值是一整条 JSON 数组（顺序 = 侧栏顺序），必须走专用编辑器。放进 GROUPS
+  // 即被 GROUPED_KEYS 自动排除在「其他」卡片之外——否则它会落到 SettingRow 的单行
+  // Input 上，把结构吃掉（本仓刚因单行控件吃掉 PEM 换行踩过）。
+  { id: 'customPages', keys: ['custom_pages'] },
 ] as const
 const GROUPED_KEYS = new Set<string>(GROUPS.flatMap(g => g.keys))
 // 支付网关总开关：也是 GET /api/user/features 的 payment。保存后让开关缓存失效，
@@ -253,6 +258,8 @@ export default function SettingsPage() {
                     {smtpCard}
                     <div className="space-y-4"><MailTemplateCard purpose="register_code" /><MailTemplateCard purpose="reset_code" /><MailTemplateCard purpose="balance_warning" /><MailChannelTestCard /></div>
                   </div>
+                ) : g.id === 'customPages' ? (
+                  <CustomPagesEditor value={byKey.get('custom_pages')?.Value ?? ''} />
                 ) : smtpCard}
               </TabsContent>
             )

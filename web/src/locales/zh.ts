@@ -1596,7 +1596,8 @@ export default {
       "tierPolicy": "服务档位策略",
       "mail": "邮件",
       "balanceWarning": "余额预警",
-      "payment": "支付"
+      "payment": "支付",
+      "customPages": "内嵌页面"
     },
     "labels": {
       "signup_enabled": "开放注册",
@@ -1689,7 +1690,67 @@ export default {
       "invalidEmail": "请输入有效的邮箱地址"
     },
     "restored": "已恢复默认",
-    "restoreDefault": "还原默认"
+    "restoreDefault": "还原默认",
+    "customPages": {
+      "title": "内嵌页面",
+      "desc": "在侧栏中添加入口，把外部站点嵌入控制台内容区；顺序即侧栏顺序，停用项不展示。",
+      "add": "新增条目",
+      "save": "保存",
+      "saving": "保存中…",
+      "moveUp": "上移",
+      "moveDown": "下移",
+      "remove": "删除",
+      "empty": "还没有条目；新增一条即可在侧栏出现入口。",
+      "id": "ID",
+      "idHint": "小写字母、数字与连字符，创建后不可修改（它是链接的一部分）",
+      "label": "名称",
+      "url": "地址",
+      "visibility": "可见范围",
+      "icon": "图标",
+      "enabled": "启用",
+      "visibilityAdmin": "仅管理台",
+      "visibilityUser": "用户台",
+      "icons": {
+        "link": "链接",
+        "globe": "地球",
+        "book": "文档",
+        "chart": "图表",
+        "lifebuoy": "支持",
+        "ticket": "工单",
+        "code": "代码",
+        "sparkles": "特效"
+      },
+      "issue": {
+        "tooMany": "条目数超过上限（最多 20 条）",
+        "tooLarge": "配置序列化后超过 64 KiB（请缩短地址或减少条目）",
+        "idRequired": "请填写 id",
+        "idTooLong": "id 最多 32 字节",
+        "idPattern": "id 只能用小写字母、数字与连字符，且以字母或数字开头",
+        "duplicateId": "id 与前面的条目重复",
+        "labelRequired": "请填写名称",
+        "labelTooLong": "名称最多 40 个字符",
+        "urlRequired": "请填写地址",
+        "urlTooLong": "地址最多 2048 字节",
+        "urlScheme": "地址必须以 http:// 或 https:// 开头",
+        "urlCredentials": "地址不得包含用户名或密码（user:pass@）",
+        "urlControlChar": "地址不得包含换行等控制字符",
+        "visibilityInvalid": "可见范围非法（只能是 admin 或 user）",
+        "iconInvalid": "图标不在可选清单内"
+      },
+      "corrupt": "当前配置无法解析（JSON 语法错、不是数组、混有非对象条目，或 enabled 不是布尔值），只能清空后重新配置。",
+      "invalidBanner": "已保存的配置存在问题，保存前请先修正（不阻塞继续编辑）：",
+      "reset": "清空重置",
+      "resetConfirm": "将删除全部内嵌页面条目并保存空配置，此操作不可撤销。"
+    }
+  },
+  "customPage": {
+    "openInNewTab": "在新窗口打开",
+    "blockedHint": "若此处空白，可能是目标站点禁止被内嵌，请用「在新窗口打开」。",
+    "dismissHint": "知道了",
+    "invalidUrl": "该条目的地址非法（需以 http:// 或 https:// 开头），请到设置页修正。",
+    "notFoundTitle": "页面不存在",
+    "notFoundDesc": "该条目不存在、已停用，或不属于当前控制台。",
+    "backHome": "返回首页"
   },
   "ops": {
     "title": "运维状态",

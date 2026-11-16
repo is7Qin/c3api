@@ -37,7 +37,13 @@ func Router(svc *service.Service, iss *auth.Issuer, p auth.SnapshotProvider, rul
 
 // Mount 把已构造的 UserAPI 挂上公开/身份鉴权分流。导出是为了测试在 New 之后
 // SetClock 再挂路由；生产走 Router。
+//
+// 这里顺带把鉴权快照面注入 api（`p` 是既有参数）：快照是 /user 面**角色判定**的唯一
+// 数据源（§19-1）。放在 Mount 而不是只放 Router，是因为测试也走 New + Mount ——
+// 只改 Router 会让测试路径拿到 nil provider，权限判定静默 fail-closed 成全"普通用户"，
+// 权限用例就会以"看不见 admin 条目"的样子假绿。
 func Mount(api *UserAPI, iss *auth.Issuer, p auth.SnapshotProvider) http.Handler {
+	api.users = p
 	publicPaths := map[string]bool{
 		"/api/user/auth/register":        true,
 		"/api/user/auth/login":           true,

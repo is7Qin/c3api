@@ -300,6 +300,10 @@ export class ApiClient {
   login = (b: components['schemas']['UserAuthLogin']) => this.request<components['schemas']['UserAuthResponse']>('/auth/login', { method: 'POST', body: JSON.stringify(b) })
   me = () => this.request<components['schemas']['User']>('/auth/me')
   features = () => this.request<components['schemas']['Features']>('/features')
+  // 内嵌页面条目（spec 2026-11-16 §4.4）：走 **userApi** 实例（/api/user/custom-pages），
+  // 管理台与用户台共用同一登录态与同一份 query key；服务端按角色过滤，
+  // 响应里不含 Enabled（只下发启用项）。
+  customPages = () => this.request<components['schemas']['CustomPagesResponse']>('/custom-pages')
   listUserGroups = () => this.request<components['schemas']['UserGroup'][]>('/groups')
   listUserModels = () => this.request<components['schemas']['CatalogGroup'][]>('/models')
   listUserKeys = (p?: ListParams) => this.request<components['schemas']['KeyListResponse']>('/keys', { params: toQuery(p) })

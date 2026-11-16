@@ -10,6 +10,7 @@ package user
 import (
 	"time"
 
+	"github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -19,6 +20,12 @@ import (
 type UserAPI struct {
 	svc *service.Service
 	iss tokenIssuer
+	// users 鉴权快照面（Router/Mount 注入；nil = 取不到快照，按非管理员 fail-closed）。
+	// **角色判定的唯一数据源**：/user 面 claims.Role 来自 JWT，而 UpdateUser 改角色只
+	// upsertUserSnapshot、不 bump token_version ⇒ 被降权的旧 JWT 里仍写着旧角色。用
+	// claims 判定会让降权用户继续拿到 visibility=admin 条目（§8-S5 破防）、新升权用户
+	// 又只看得到管理台侧栏却拿不到 admin 条目（spec 2026-11-16 §19-1）。
+	users auth.SnapshotProvider
 	// rules 规则引擎（/api/user/err_logs 行级脱敏用：平台问题行 error_message 按
 	// Classify 判定替换固定文案；main 装配经 Router 注入——nil = 不脱敏）。
 	rules *rule.RuleEngine

@@ -39,6 +39,8 @@ import Orders from '@/pages/orders'
 import PaymentAccounts from '@/pages/payment-accounts'
 import PricingPage from '@/pages/pricing'
 import SettingsPage from '@/pages/settings'
+// 内嵌页路由页（spec 2026-11-16 §7-9）：/app 与 /user 共用同一组件，scope 区分控制台。
+import CustomPage from '@/pages/custom-page'
 import Ops from '@/pages/ops'
 import SupplierConsole from '@/pages/supplier/console'
 import SupplierProxies from '@/pages/supplier/proxies'
@@ -78,6 +80,8 @@ const router = createBrowserRouter([
           { path: 'redemption-codes', element: <RedemptionCodes /> },
           { path: 'pricing', element: <PricingPage /> },
           { path: 'settings', element: <SettingsPage /> },
+          // 管理台内嵌页（spec 2026-11-16 §7-9）：条目按 :id 查当前控制台可见列表。
+          { path: 'custom/:id', element: <CustomPage scope="admin" /> },
           { path: 'ops', element: <Ops /> },
         ],
       },
@@ -120,6 +124,8 @@ const router = createBrowserRouter([
           // 钱包（wallet-topup-redeem）：余额 + 充值/兑换 + 两类记录的唯一入口。
           // 不在 PaymentFeatureGate 内——支付关闭时仍可达，页面自身按开关只隐藏充值区块。
           { path: 'wallet', element: <UserWallet /> },
+          // 用户台内嵌页（spec 2026-11-16 §7-9）：与 /app/custom/:id 同一组件，scope 不同。
+          { path: 'custom/:id', element: <CustomPage scope="user" /> },
           // 兼容路由：旧兑换页已并入钱包，书签/外链在此立即重定向到兑换 Tab（不渲染旧页）。
           { path: 'redemptions', element: <Navigate to="/user/wallet?tab=redeem" replace /> },
           // 供应商控制台（spec 2026-10-09 §6.1）：先过供应商开关闸门（关闭 = 404），

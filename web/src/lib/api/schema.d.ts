@@ -1428,6 +1428,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/custom-pages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 按角色过滤后的启用条目；配置损坏 → 500 固定文案 custom pages config is invalid */
+        get: operations["GetUserCustomPages"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/redemptions": {
         parameters: {
             query?: never;
@@ -2866,6 +2883,17 @@ export interface components {
             supplier: boolean;
             /** @description 支付网关（运行时设置 payment.enabled，读设置快照，改动即时生效）。false 时控制台隐藏支付账户、支付订单与钱包；回调/查单/关单照常 */
             payment: boolean;
+        };
+        CustomPage: {
+            ID: string;
+            Label: string;
+            URL: string;
+            /** @enum {string} */
+            Visibility: "admin" | "user";
+            Icon: string;
+        };
+        CustomPagesResponse: {
+            Pages: components["schemas"]["CustomPage"][];
         };
         DeletedResponse: {
             deleted: boolean;
@@ -8362,6 +8390,27 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Features"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetUserCustomPages: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 条目列表（空数组 = 未配置或当前角色无可见条目；顺序即配置顺序，Enabled 不下发） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomPagesResponse"];
                 };
             };
             default: components["responses"]["Error"];

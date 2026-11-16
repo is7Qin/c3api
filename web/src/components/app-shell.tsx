@@ -8,10 +8,13 @@ import { LayoutDashboard, Boxes, Users, UserCog, FolderOpen, FileText, BarChart3
 import { useQuery } from '@tanstack/react-query'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
+import { userAuth } from '@/lib/auth'
 import { setLang, type AppLang, type DynamicKey } from '@/lib/i18n'
 import { adminNavFor, isSupplierPath, showSupplierNav } from '@/lib/supplier-visibility'
 import { isPaymentPath, paymentNavFor } from '@/lib/payment-visibility'
+import { CUSTOM_PAGES_QUERY_KEY, iconForCustomPage, pagesForConsole } from '@/lib/custom-pages'
 import { useFeatures } from '@/lib/use-features'
+import type { components } from '@/lib/api/schema'
 import { Button } from '@/components/ui/button'
 import { ModeToggle } from '@/components/mode-toggle'
 import { cn } from '@/lib/utils'
@@ -22,7 +25,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from '@/components/ui/breadcrumb'
-import AppSidebar, { type NavItem, type NavGroup } from '@/components/app-sidebar'
+import AppSidebar, { navLabel, type NavItem, type NavGroup } from '@/components/app-sidebar'
 import { AccountMenuItems } from '@/components/account-menu-items'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -31,8 +34,13 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem,
 // 侧边栏/顶栏不重挂（消除闪烁）。导航由 me().Role 决定：
 // platform_admin 同时看到管理组（/app）与用户组（/user），普通用户仅用户组。
 
+// 静态菜单表只放内置项（联合的左分支）：显式把 key 收窄成必填，`breadcrumbFor` 才能
+// 直接读 `item.key` 而不用在每个拐点处理 `undefined`（自定义项只会在 AppShell 运行时
+// 追加，从不进这三张表）。
+type StaticNavItem = NavItem & { key: DynamicKey }
+
 // 用户中心菜单组（个人中心入口在底部用户卡内，不放导航）
-const userNav: readonly NavItem[] = [
+const userNav: readonly StaticNavItem[] = [
   { to: '/user', key: 'user.nav.overview', icon: LayoutDashboard, end: true },
   { to: '/user/keys', key: 'user.nav.keys', icon: KeyRound, end: false },
   { to: '/user/models', key: 'user.nav.models', icon: Boxes, end: false },
@@ -47,7 +55,7 @@ const userNav: readonly NavItem[] = [
 // 概览独立首位 → 代理配置域（模板/账户/规则——上游资源与转发策略）→ 客户域
 // （用户/分组——下游消费方，与账户不直接相邻）→ 观测域（日志/统计）→ 商业域
 // （兑换码/计费）→ 系统域（设置/运维）。平铺不拆子分组标题。
-const adminNav: readonly NavItem[] = [
+const adminNav: readonly StaticNavItem[] = [
   { to: '/app/dashboard', key: 'nav.overview', icon: LayoutDashboard },
   { to: '/app/templates', key: 'nav.templates', icon: Boxes },
   { to: '/app/accounts', key: 'nav.accounts', icon: Users },
@@ -74,7 +82,7 @@ const adminNav: readonly NavItem[] = [
 // 供应商控制台菜单组（spec 2026-10-09 §6.1）：仅 supplier / platform_admin 可见，
 // 且供应商功能已开启（showSupplierNav）。
 // 账号管理页复用同一 /app/accounts 组件（作用域参数化），此处只提供入口路径。
-const supplierNav: readonly NavItem[] = [
+const supplierNav: readonly StaticNavItem[] = [
   { to: '/user/supplier', key: 'supplier.nav.console', icon: Wallet, end: true },
   { to: '/user/supplier/accounts', key: 'supplier.nav.accounts', icon: Users, end: false },
   // 供应商面出口代理池（spec §3.6：只能看/写自己名下的条目）
@@ -86,26 +94,56 @@ const LANGS: { code: AppLang; label: string }[] = [
   { code: 'en', label: 'EN' },
 ]
 
-// 路径 → 面包屑两级（分组根 + 当前页）；未知路径返回 null（顶栏不渲染面包屑）。
+// 面包屑是判别联合（spec 2026-11-16 §7.4）：静态页的页名是 i18n key，自定义内嵌页的
+// 页名是用户输入的 label。两者不能混进同一个字段——把 label 当 key 传给 `t()` 会渲染成
+// key 本身（甚至空白），而类型系统在这里就能挡住：`pageKey` 与 `pageText` 互斥。
+type Breadcrumb =
+  | { root: string; section: DynamicKey; pageKey: DynamicKey } // 静态页：i18n key
+  | { root: string; section: DynamicKey; pageText: string } // 自定义页：用户 label
+
+// 自定义内嵌页路径（与 App.tsx 的 `custom/:id` 子路由同形）。
+const CUSTOM_PAGE_PATH = /^\/(app|user)\/custom\/([^/]+)$/
+
+// 自定义内嵌页的面包屑：命中 `^/(app|user)/custom/([^/]+)$` 且该 id 在**当前控制台
+// 可见列表**里才出面包屑（越权 URL 与内容区同样不渲染，§8-S5）。
+// 单独成函数是因为既有接线测试钉住了 `breadcrumbFor(pathname, supplier, payment)` 的
+// 三参调用形态；pages 是运行期数据，由调用方传进来。
+function customPageCrumbFor(
+  pathname: string,
+  pages: readonly components['schemas']['CustomPage'][],
+): Breadcrumb | null {
+  const custom = CUSTOM_PAGE_PATH.exec(pathname)
+  if (!custom) return null
+  const isAdminScope = custom[1] === 'app'
+  const page = pagesForConsole(pages, isAdminScope ? 'admin' : 'user').find(p => p.ID === custom[2])
+  if (!page) return null
+  return {
+    root: isAdminScope ? '/app' : '/user',
+    section: isAdminScope ? 'user.nav.adminSection' : 'user.nav.userSection',
+    pageText: page.Label,
+  }
+}
+
+// 静态页 → 面包屑两级（分组根 + 当前页）；未知路径返回 null（顶栏不渲染面包屑）。
 // 映射直接复用 adminNav/userNav（同一来源，避免漂移）：
 // /app/* → 管理台 + 对应页名；/user/* → 用户中心 + 对应页名。
 // 供应商功能未确定开启时，供应商路径不渲染面包屑；支付网关同理（闸门在内容区渲染 404）。
-function breadcrumbFor(pathname: string, supplier: boolean, payment: boolean): { root: string; section: DynamicKey; page: DynamicKey } | null {
+function breadcrumbFor(pathname: string, supplier: boolean, payment: boolean): Breadcrumb | null {
   if (!supplier && isSupplierPath(pathname)) return null
   if (!payment && isPaymentPath(pathname)) return null
   if (pathname.startsWith('/app')) {
-    if (pathname === '/app') return { root: '/app', section: 'user.nav.adminSection', page: 'nav.overview' }
+    if (pathname === '/app') return { root: '/app', section: 'user.nav.adminSection', pageKey: 'nav.overview' }
     const item = adminNav.find((n) => n.to === pathname)
-    return item ? { root: '/app', section: 'user.nav.adminSection', page: item.key } : null
+    return item ? { root: '/app', section: 'user.nav.adminSection', pageKey: item.key } : null
   }
   if (pathname.startsWith('/user')) {
-    if (pathname === '/user/profile') return { root: '/user', section: 'user.nav.userSection', page: 'user.nav.profile' }
+    if (pathname === '/user/profile') return { root: '/user', section: 'user.nav.userSection', pageKey: 'user.nav.profile' }
     // 管理 API key 页面已从 userNav 移除（入口改在账户菜单），面包屑需特判保留视觉。
-    if (pathname === '/user/management-keys') return { root: '/user', section: 'user.nav.userSection', page: 'user.nav.managementKeys' }
+    if (pathname === '/user/management-keys') return { root: '/user', section: 'user.nav.userSection', pageKey: 'user.nav.managementKeys' }
     const supplierItem = supplierNav.find((n) => n.to === pathname)
-    if (supplierItem) return { root: '/user', section: 'user.nav.supplierSection', page: supplierItem.key }
+    if (supplierItem) return { root: '/user', section: 'user.nav.supplierSection', pageKey: supplierItem.key }
     const item = userNav.find((n) => n.to === pathname)
-    return item ? { root: '/user', section: 'user.nav.userSection', page: item.key } : null
+    return item ? { root: '/user', section: 'user.nav.userSection', pageKey: item.key } : null
   }
   return null
 }
@@ -127,14 +165,34 @@ export default function AppShell() {
   // 管理组的支付订单/支付账户读 payment（用户组的钱包不在支付管理面集合里，故支付关闭
   // 时仍留在菜单中——它是兑换的唯一入口）。
   const { supplier, payment } = useFeatures()
+  // 内嵌页条目（spec §7.2/§7.3）：与设置页保存后失效的是同一个 key（单点定义在
+  // lib/custom-pages.ts），两个控制台共享缓存。
+  const { data: pagesData } = useQuery({
+    queryKey: CUSTOM_PAGES_QUERY_KEY,
+    queryFn: () => userApi.customPages(),
+    staleTime: 60_000,
+    // 无 token 时（登出竞态）不发请求：§7.2 原文要求，且 401 会触发全局跳登录。
+    enabled: Boolean(userAuth.getToken()),
+  })
+  const pages = pagesData?.Pages ?? []
+  // 自定义侧栏项：label 是用户数据（走 `text` 分支，不进 i18n），图标未知时回退 link。
+  const customNavFor = (scope: 'admin' | 'user'): NavItem[] =>
+    pagesForConsole(pages, scope).map(page => ({
+      to: `${scope === 'admin' ? '/app' : '/user'}/custom/${page.ID}`,
+      text: page.Label,
+      icon: iconForCustomPage(page.Icon),
+    }))
   // 菜单组顺序：管理域（仅 admin）→ 供应商域（supplier | admin）→ 用户中心（全员）。
+  // 自定义项**必须追加在** paymentNavFor(...) 之后（§7.3）：它们不参与支付/供应商闸门
+  // （isPaymentPath/isSupplierPath 只认静态路径集合），插在过滤前会被误判。
   const navs: NavGroup[] = [
-    ...(isAdmin ? [{ titleKey: 'user.nav.adminSection' as const, items: paymentNavFor(adminNavFor(adminNav, supplier), payment) }] : []),
+    ...(isAdmin ? [{ titleKey: 'user.nav.adminSection' as const, items: [...paymentNavFor(adminNavFor(adminNav, supplier), payment), ...customNavFor('admin')] }] : []),
     ...(showSupplierNav(me?.Role, supplier) ? [{ titleKey: 'user.nav.supplierSection' as const, items: supplierNav }] : []),
-    { titleKey: 'user.nav.userSection' as const, items: paymentNavFor(userNav, payment) },
+    { titleKey: 'user.nav.userSection' as const, items: [...paymentNavFor(userNav, payment), ...customNavFor('user')] },
   ]
-  // 顶栏面包屑（两级）：未知路径返回 null 不渲染
-  const crumb = breadcrumbFor(location.pathname, supplier, payment)
+  // 顶栏面包屑（两级）：自定义页优先（静态表里没有这些路径），其余回落到静态映射；
+  // 未知路径返回 null 不渲染。
+  const crumb = customPageCrumbFor(location.pathname, pages) ?? breadcrumbFor(location.pathname, supplier, payment)
   return (
     <div data-od-id="app-shell" className="relative z-10 flex h-screen overflow-hidden bg-transparent text-[#1d1d1f] dark:text-[#f5f5f7]">
       {/* h-screen 锁定视口高度：侧边栏 nav 与 main 各自 ScrollArea 独立滚动（自绘
@@ -158,7 +216,10 @@ export default function AppShell() {
                   </BreadcrumbItem>
                   <BreadcrumbSeparator className="hidden md:block" />
                   <BreadcrumbItem>
-                    <BreadcrumbPage className="font-semibold text-foreground">{t(crumb.page)}</BreadcrumbPage>
+                    {/* 判别联合的分支必须在这里同步：`pageText` 是用户 label，**不能**进 t()。 */}
+                    <BreadcrumbPage className="font-semibold text-foreground">
+                      {'pageKey' in crumb ? t(crumb.pageKey) : crumb.pageText}
+                    </BreadcrumbPage>
                   </BreadcrumbItem>
                 </BreadcrumbList>
               </Breadcrumb>
@@ -176,12 +237,16 @@ export default function AppShell() {
                     <DropdownMenuGroup key={group.titleKey ?? group.items[0]?.to}>
                       {groupIndex > 0 && <DropdownMenuSeparator />}
                       {group.titleKey && <DropdownMenuLabel className="px-2 py-1.5 text-[11px] font-semibold tracking-wide text-[#6e6e73] dark:text-[#b8b8c0]">{t(group.titleKey)}</DropdownMenuLabel>}
-                      {group.items.map(({ to, key, icon: Icon }) => (
-                        <DropdownMenuItem key={to} render={<Link to={to} />} className="min-h-10 rounded-[9px] text-[#1d1d1f] focus:bg-[#e8e8ed] focus:text-[#1d1d1f] dark:text-[#f5f5f7] dark:focus:bg-white/12 dark:focus:text-white">
-                          <Icon className="size-4" />
-                          {t(key)}
-                        </DropdownMenuItem>
-                      ))}
+                      {group.items.map(item => {
+                        // 移动端下拉与桌面侧栏渲染同一份 navs（§9-U8），标签同样走 navLabel。
+                        const { to, icon: Icon } = item
+                        return (
+                          <DropdownMenuItem key={to} render={<Link to={to} />} className="min-h-10 rounded-[9px] text-[#1d1d1f] focus:bg-[#e8e8ed] focus:text-[#1d1d1f] dark:text-[#f5f5f7] dark:focus:bg-white/12 dark:focus:text-white">
+                            <Icon className="size-4" />
+                            {navLabel(item, t)}
+                          </DropdownMenuItem>
+                        )
+                      })}
                     </DropdownMenuGroup>
                   ))}
                   {/* 账户条目（个人中心 / 管理 API key / 登出）——移动端（< md）亦可达。 */}

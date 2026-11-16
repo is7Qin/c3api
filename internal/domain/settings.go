@@ -57,6 +57,9 @@ var DefaultSettings = []Setting{
 	{Key: SettingPortalBaseURL, Type: SettingTypeString, Value: ""},
 	// pending 单有效期（分钟，1..1440）：0 = 立即过期，等于把建单功能关掉。
 	{Key: SettingOrderTTLMinutes, Type: SettingTypeNumber, Value: "30", Min: i64p(1), Max: i64p(1440)},
+	// 自定义嵌入页（spec 2026-11-16 §4.1）：值为 JSON 数组字符串，顺序即展示顺序；
+	// 默认 "[]" = 功能未启用。解析/归一/校验/序列化的唯一入口见 custompage.go。
+	{Key: SettingCustomPages, Type: SettingTypeString, Value: "[]"},
 }
 
 // i64p 注册表数值值域指针辅助（Min/Max 域字面量；nil = 无限制，见 Setting 注释）。
