@@ -29,9 +29,16 @@ import type { components } from '@/lib/api/schema'
 type Rule = components['schemas']['Rule']
 type RuleCreate = components['schemas']['RuleCreate']
 
-// 规则事件类型（spec：ok | 429 | 4xx | 5xx | network——error 已拆分为
-// 4xx/5xx/network，连接级独立 network）。
-const KINDS = ['ok', '429', '4xx', '5xx', 'network'] as const
+// 规则事件类型（后端 rule.Kind 的线格式：ok | 429 | 4xx | 5xx | network | timeout）。
+// timeout = 上游预算内零产出（SDK WS 读空闲 / 网关 UpstreamStreamTimeout）；后端
+// ValidateWhen 已接受、种子规则 seed-timeout 也在用——前端漏了它，页面既建不出
+// timeout 规则，列表里也只会显示原始 key。
+const KINDS = ['ok', '429', '4xx', '5xx', 'network', 'timeout'] as const
+
+// 有 HTTP 状态码 / 窗口计数的类别：timeout 的 status 恒 0，且 rule/windows.go 的
+// 桶只有 ok/failure/t429（timeout 不进任何桶）——窗口/状态码条件对它永不命中，
+// 故不放进「添加条件」候选，避免可保存的死配置。
+const COUNTED_KINDS = ['ok', '429', '4xx', '5xx', 'network'] as const
 
 // —— typed 路由动作（后端 domain.RuleThen 严格反序列化 + ValidateThen 语义校验）——
 // then.throttle = {scope: account|account_route, mode: retry_after|open, duration_ms?, use_reset}
@@ -55,7 +62,7 @@ interface CondRow { field: WhenField; value: string | string[] }
 
 interface WhenFieldMeta {
   key: WhenField
-  kinds: readonly string[] // kind 归属：'any' | '429' | '4xx' | '5xx' | 'network' | 'ok'（error_message_contains 联合归属 4xx|5xx|network）
+  kinds: readonly string[] // kind 归属：'any' | '429' | '4xx' | '5xx' | 'network' | 'ok' | 'timeout'
   input: 'number' | 'text' | 'tags'
   placeholder?: string
   min?: number
@@ -66,17 +73,17 @@ interface WhenFieldMeta {
 // 匹配器元数据表：key 与后端 when JSON 键一致；kinds 驱动"添加条件"下拉过滤；
 // input/min/max/step 决定值输入控件（操作符由字段类型隐含，无操作符选择器）。
 const WHEN_FIELDS: WhenFieldMeta[] = [
-  { key: 'http_status', kinds: ['any'], input: 'number', placeholder: '503', min: 400, max: 599 },
-  { key: 'http_status_in', kinds: ['any'], input: 'tags', placeholder: '[500,502]' },
-  { key: 'error_message_contains', kinds: ['4xx', '5xx', 'network'], input: 'text', placeholder: 'unhealthy' },
-  { key: 'error_message_contains_in', kinds: ['4xx', '5xx', 'network'], input: 'tags', placeholder: '[overload,busy]' },
+  { key: 'http_status', kinds: COUNTED_KINDS, input: 'number', placeholder: '503', min: 400, max: 599 },
+  { key: 'http_status_in', kinds: COUNTED_KINDS, input: 'tags', placeholder: '[500,502]' },
+  { key: 'error_message_contains', kinds: ['4xx', '5xx', 'network', 'timeout'], input: 'text', placeholder: 'unhealthy' },
+  { key: 'error_message_contains_in', kinds: ['4xx', '5xx', 'network', 'timeout'], input: 'tags', placeholder: '[overload,busy]' },
   { key: 'account_id', kinds: ['any'], input: 'number', placeholder: '12' },
   { key: 'template_id', kinds: ['any'], input: 'number', placeholder: '3' },
   { key: 'group_id', kinds: ['any'], input: 'number', placeholder: '1' },
   { key: 'model', kinds: ['any'], input: 'text', placeholder: 'gpt-4o' },
   { key: 'model_in', kinds: ['any'], input: 'tags', placeholder: '[gpt-5-0611,gpt-4o]' },
-  { key: 'window_seconds', kinds: ['any'], input: 'number', placeholder: '60', min: 1 },
-  { key: 'count_total_ge', kinds: ['any'], input: 'number', placeholder: '10', min: 1 },
+  { key: 'window_seconds', kinds: COUNTED_KINDS, input: 'number', placeholder: '60', min: 1 },
+  { key: 'count_total_ge', kinds: COUNTED_KINDS, input: 'number', placeholder: '10', min: 1 },
   { key: 'count_429_ge', kinds: ['429'], input: 'number', placeholder: '3', min: 0 },
   { key: 'ratio_429_ge', kinds: ['429'], input: 'number', placeholder: '0.5', min: 0, max: 1, step: 0.01 },
   // count_failure_ge/ratio_failure_ge 语义 = 失败事件桶（4xx/5xx/network 并入）。

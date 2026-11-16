@@ -1218,6 +1218,7 @@ export default {
       "4xx": "4xx",
       "5xx": "5xx",
       "network": "Network",
+      "timeout": "Timeout (no upstream output)",
       "ok": "OK"
     },
     "whenTitle": "Match (when)",

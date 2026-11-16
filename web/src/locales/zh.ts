@@ -1218,6 +1218,7 @@ export default {
       "4xx": "4xx",
       "5xx": "5xx",
       "network": "连接错误",
+      "timeout": "超时（上游零产出）",
       "ok": "成功"
     },
     "whenTitle": "匹配条件（when）",
