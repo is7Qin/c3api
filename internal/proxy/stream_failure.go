@@ -8,10 +8,10 @@ import (
 	"context"
 	"errors"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
 
@@ -102,7 +102,7 @@ func classifyStreamFailure(cause error) streamFailure {
 	// 序 0b'：SDK WS 读空闲超时——上游连接活着但预算内零产出（§5）。必须排在
 	// statusOf 之前：该哨兵**不**包装 any 状态（statusOf 会返 0，落到序 5 被记成
 	// network）。文案落可读结论：SDK 自述文本属于库内部文案（§3.2）。
-	if errors.Is(cause, codexsdk.ErrWSIdleTimeout) {
+	if sdkbridge.IsWSIdleTimeout(cause) {
 		return streamFailure{ET: domain.ErrTimeout, Kind: rule.KindTimeout, Message: msgUpstreamTimeoutNoOutput}
 	}
 	// 序 0b'：网关预算到期（非流式/未提交路径把该事实挂在错误链上，见

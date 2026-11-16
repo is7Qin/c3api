@@ -38,8 +38,6 @@ import (
 var sdkImportAllowlist = map[string]string{
 	"internal/proxy/codex_responses_ws.go": "T3：*codexsdk.Client / Option / Identity 的 dial 参数包（CallRequest 未落地）",
 	"internal/proxy/codex_responses_http.go": "T3：codexsdk.Identity 作为 codexRequestPrep 的返回值（CallRequest 未落地）",
-	"internal/proxy/codex_local_reject.go":  "T2：errors.Is(codexsdk.ErrInvalidRequestBody)",
-	"internal/proxy/stream_failure.go":      "T2：errors.Is(codexsdk.ErrWSIdleTimeout)",
 	"internal/scheduler/scheduler.go":       "T3：Config.RotatePolicy / IdentityFor 返回 SDK 值",
 	"internal/scheduler/identity_pool.go":   "T3：IdentityState / Step / Session / Turn / Window 的持有者",
 }

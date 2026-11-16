@@ -202,7 +202,7 @@ func sniffCodexWSDeath(f []byte) error {
 	if !bytes.Contains(f, []byte(`"error"`)) {
 		return nil
 	}
-	return codexsdk.ClassifyFatalUpstream(f)
+	return sdkbridge.ClassifyFatal(f)
 }
 
 // 伪装身份注入源：scheduler.Selection.IdentityFor 一次给全四元组

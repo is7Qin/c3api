@@ -12,16 +12,15 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
-	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // codexInvalidBodyMsg 本地拒绝的固定文案（落盘与客户端同一句，不带 SDK 原文）。
@@ -47,7 +46,7 @@ func ConvLocalRejects() int64 { return convLocalRejects.Load() }
 // isCodexInvalidBody 判定 SDK 本地拒绝（穿透 sdkbridge.EnvelopeError 与
 // codexsdk.DialError 的 Unwrap 链）。
 func isCodexInvalidBody(err error) bool {
-	return err != nil && errors.Is(err, codexsdk.ErrInvalidRequestBody)
+	return sdkbridge.IsInvalidBody(err)
 }
 
 // finishCodexInvalidBody 本地拒绝收尾记录（四个落点共用）：计数 + 400/Err4xx
