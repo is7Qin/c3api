@@ -33,7 +33,7 @@ func newSchedWithLatch(t *testing.T, m *memLoader) (*Scheduler, *latch.LatchStor
 	t.Helper()
 	ls := latch.NewLatchStore()
 	hub := latch.NewHub()
-	sink := NewLatchSink(nil, ls, hub)
+	sink := NewLatchSink(nil, ls, hub, nil)
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, sink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	s := New(testCfg(), m, re, nil, nil, ls, hub)
@@ -46,7 +46,7 @@ func newSchedWithLatch(t *testing.T, m *memLoader) (*Scheduler, *latch.LatchStor
 func TestThrottleAccountWildcard(t *testing.T) {
 	h, _, mr := newTestHealthWithLatch(t)
 	_ = mr
-	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub(), nil)
 	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 5, CandidateFingerprint: testIdentity, RouteClassID: "r1", QualityClassID: "q1"}
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000)), UseReset: false}
 	require.NoError(t, sink.Throttle(ev, th))
@@ -59,7 +59,7 @@ func TestThrottleAccountWildcard(t *testing.T) {
 
 func TestThrottleAccountRouteRequiresIDsAndPropagation(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
-	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub(), nil)
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccountRoute, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000)), UseReset: false}
 	require.NoError(t, sink.Throttle(rule.Event{AccountID: 2, ExpectedIdentityRevision: 3, CandidateFingerprint: testIdentity, RouteClassID: "", QualityClassID: "q1"}, th))
 	require.NoError(t, h.Sync(context.Background()))
@@ -161,7 +161,7 @@ func TestLatchSinkProbeAndEffectiveStateWithLatch(t *testing.T) {
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
 	ls := latch.NewLatchStore()
 	hub := latch.NewHub()
-	sink := NewLatchSink(h, ls, hub)
+	sink := NewLatchSink(h, ls, hub, nil)
 	// barrier for concurrent throttle and select
 	m := newMemLoader(map[int64][]*domain.Account{10: {acc(1, tpl(1, domain.FormatOpenAIChat, []string{"m"}), 4)}})
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, nil, nil)

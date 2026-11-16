@@ -21,7 +21,7 @@ func TestHealthControllerThrottlePropagatesRedisError(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = redisx.Close(c) })
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
-	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub(), nil)
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(5000))}
 	ev := rule.Event{AccountID: 1, ExpectedIdentityRevision: 1, RouteClassID: "r1", QualityClassID: "q1"}
 	// barrier: ensure Redis error propagates via returned error, not discarded
@@ -36,7 +36,7 @@ func TestHealthControllerThrottleSuccessWithBarrier(t *testing.T) {
 	mr, c := newHealthTestRedis(t)
 	_ = mr
 	h := NewRuntimeHealth(c, "self-a", nil, nil)
-	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub())
+	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub(), nil)
 	th := domain.ThrottleAction{Scope: domain.ThrottleScopeAccount, Mode: domain.ThrottleModeOpen, DurationMs: new(int64(3000))}
 	done := make(chan error, 1)
 	go func() {

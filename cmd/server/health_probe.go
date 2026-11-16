@@ -9,6 +9,7 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 // codexUsageProber codex 凭据类型的探测路由面（*sdkbridge.Codex 满足）：codex
@@ -89,21 +90,18 @@ func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error
 	if tpl == nil {
 		return fmt.Errorf("health probe: account %d has no template", key.AccountID)
 	}
-	switch tpl.CredentialType {
-	case credential.TypeCodexOAuth, credential.TypeCodexPAT:
+	// 凭据派生与 429 补拉 resolver **同源**（sdkbridge 的唯一一份实现，同一 K 口径）。
+	cred, isCodex := sdkbridge.CodexCredentialFromAccount(acct)
+	switch {
+	case isCodex:
 		if p.codex == nil {
 			return fmt.Errorf("health probe: codex adapter not wired for account %d", key.AccountID)
 		}
-		cred := domain.CredentialFromExt(acct.Ext)
-		cred.AccountID = key.AccountID
-		// 来源身份代际：健康探针手上有完整账号行，K 与凭据同源（无 Selection 的调用面
-		// 必须自己补上——0 会被失效链拒绝为"来源未知"）。
-		cred.IdentityRevision = acct.IdentityRevision
 		if _, err := p.codex.GetUsageSnapshot(cctx, &cred); err != nil {
 			return fmt.Errorf("health probe: codex usage probe failed for account %d: %w", key.AccountID, err)
 		}
 		return nil
-	case credential.TypeAPIKey, credential.TypeResponsesSpecial:
+	case tpl.CredentialType == credential.TypeAPIKey, tpl.CredentialType == credential.TypeResponsesSpecial:
 		// api_key 族无合成探测面（/v1/models 与流量无关，已删除）——探测视为通过，恢复由时间窗+真实流量判定。
 		return nil
 	default:

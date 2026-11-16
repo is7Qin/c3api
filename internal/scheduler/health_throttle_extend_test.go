@@ -308,7 +308,7 @@ func TestThrottleExtendMultiQualityIsolation(t *testing.T) {
 func TestLatchSinkPastResetAtStaysOneSecond(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
-	sink := NewLatchSink(h, nil, nil)
+	sink := NewLatchSink(h, nil, nil, nil)
 	ctx := context.Background()
 
 	past := now.Add(-time.Hour)
@@ -328,7 +328,7 @@ func TestLatchSinkPastResetAtStaysOneSecond(t *testing.T) {
 func TestLatchSinkSeedsDoNotShorten(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
-	sink := NewLatchSink(h, nil, nil)
+	sink := NewLatchSink(h, nil, nil, nil)
 	ctx := context.Background()
 
 	openFor := func(d time.Duration) domain.ThrottleAction {

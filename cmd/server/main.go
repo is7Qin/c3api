@@ -238,11 +238,21 @@ func main() {
 	// 就绪后构造真 probe，经 healthWorker 在 Start 期一次性交接，无回填）。
 	// sched 构造即持 health（构造注入，无 Set* 回填）。
 	runtimeHealth := scheduler.NewRuntimeHealth(rdb, src, disco.LiveMembers, log)
+	// 429 额度补拉（设计 §5.4 / R3 裁定）：投递面是独立的 QuotaQueue——sink 只
+	// 持队列、worker 只消费队列，这一层把「worker ⟷ LatchSink」的构造环拆开了。
+	// 为什么先建队列后建 worker：sink 必须先于 ruleEngine、ruleEngine 必须先于
+	// sched，而 worker 执行任务时要 sched.ProbeAccount 与 codex 适配器（resolver）
+	// ——后两者都晚于 sink。队列本身无依赖，先建它、sink 拿它，worker 等 sched
+	// 与 codex 适配器就绪后再建：依赖图无环，也不需要任何晚绑定指针或回填。
+	// resolver 注册表同样先建后填：codex 适配器就绪后按两个凭据类型注册（仍在
+	// 装配期，worker 尚未 Start）。
+	quotaResolvers := scheduler.NewQuotaResolvers()
+	quotaQueue := scheduler.NewQuotaQueue(0)
 	// 锁存一等组件（根因重开）：main 拥有 LatchStore + Hub 各恰好一次，
 	// 经构造参出借——latch→hub→sink→persistFn→ruleEngine→sched 序，无 Set* 回填。
 	latchStore := latch.NewLatchStore()
 	hub := latch.NewHub()
-	latchSink := scheduler.NewLatchSink(runtimeHealth, latchStore, hub)
+	latchSink := scheduler.NewLatchSink(runtimeHealth, latchStore, hub, quotaQueue)
 	persistFn := scheduler.NewRulePersistFunc(repos, latchStore, schedGroupPub{pub}, log)
 	// 规则引擎构造（不 Reload——New 只建结构；sink/persist 一次性注入）。
 	ruleEngine := rule.New(rule.Config{}, repos.Rules, log, latchSink, persistFn)
@@ -651,6 +661,16 @@ func main() {
 	if err != nil {
 		fatalf("quality: %v", err)
 	}
+	// 429 额度补拉 resolver 注册（设计 §5.4 / R3 第 5 条）：codex 两个凭据类型
+	// （OAuth / PAT）共用同一个 SDK 适配器实例——usage 拉取走同一套凭据栈。
+	// 注册在装配期（worker 未 Start）；未注册的凭据族由 worker 计 unsupported 跳过。
+	quotaResolvers.Register(credential.TypeCodexOAuth, codexAdapter)
+	quotaResolvers.Register(credential.TypeCodexPAT, codexAdapter)
+	// 补拉 worker 在此构造（sched 与 codex 适配器均已就绪）：账号解析面直接是
+	// sched.ProbeAccount（与健康 probe 同一选号快照视图），resolver 注册也已完成。
+	// 队列早已建好并被 sink 持有，此处只是交给消费者——仍早于 wm.StartAll，
+	// 不含任何回填。
+	quotaW := scheduler.NewQuotaWorker(quotaQueue, runtimeHealth, quotaResolvers, sched.ProbeAccount, log, scheduler.QuotaWorkerConfig{})
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
@@ -819,7 +839,7 @@ func main() {
 	// supplier worker 插在 rec 之前（§5.5：reverse-shutdown 时 rec 先关 → 先落完整
 	// 账本，credit 再排空其消费；关闭态 supplierWorkers 为 nil，append 不贡献元素）。
 	managedWorkers = append(managedWorkers, supplierWorkers...)
-	managedWorkers = append(managedWorkers, rec, errlogW, contBindW, convW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
+	managedWorkers = append(managedWorkers, rec, errlogW, contBindW, convW, quotaW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
 	opsCandidates := append([]worker.Worker{}, managedWorkers...)
 	opsCandidates = append(opsCandidates, listener, authSync)
 	// 供应商财务视图装载器（独立于 billing.enabled 的 ticker，§6.4）不在

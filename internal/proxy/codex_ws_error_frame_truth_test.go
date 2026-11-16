@@ -121,7 +121,7 @@ func newHealthReadback(t *testing.T) *healthReadback {
 
 	h := scheduler.NewRuntimeHealth(c, "self-test", nil, nil)
 	prevSink, prevHealth := testRuleSink, testRuntimeHealth
-	testRuleSink = dualHealthSink{rec: testHealthSink, latch: scheduler.NewLatchSink(h, nil, nil)}
+	testRuleSink = dualHealthSink{rec: testHealthSink, latch: scheduler.NewLatchSink(h, nil, nil, nil)}
 	testRuntimeHealth = h
 	t.Cleanup(func() { testRuleSink, testRuntimeHealth = prevSink, prevHealth })
 	return &healthReadback{h: h}

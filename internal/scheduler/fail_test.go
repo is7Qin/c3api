@@ -150,7 +150,7 @@ func TestMarkResultFailAccountUsesLifecycleRevision(t *testing.T) {
 	// 构造期接线（无回填）：latch/hub 先行 → sink → rule → sched（New 内订阅）。
 	ls := latch.NewLatchStore()
 	hub := latch.NewHub()
-	sink := NewLatchSink(nil, ls, hub)
+	sink := NewLatchSink(nil, ls, hub, nil)
 	re := rule.New(rule.Config{}, store, nil, sink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	s := New(testCfg(), m, re, nil, nil, ls, hub)
