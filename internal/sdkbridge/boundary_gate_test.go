@@ -153,10 +153,6 @@ func moduleRoot(t *testing.T) string {
 func goFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
-	skip := map[string]bool{
-		".git": true, "node_modules": true, "testdata": true,
-		"bin": true, "tmp": true, ".crush": true, "web": true,
-	}
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -166,7 +162,7 @@ func goFiles(t *testing.T, root string) []string {
 				"源码可以整段逃过边界检查；请移除它，或把该情形一并写进本门禁", path)
 		}
 		if d.IsDir() {
-			if path != root && skip[d.Name()] {
+			if path != root && skipScanDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -180,6 +176,30 @@ func goFiles(t *testing.T, root string) []string {
 	return out
 }
 
+// skipScanDir 报告某个目录是否落在扫描面之外。
+//
+// **点前缀目录一律跳过**：那里住的是仓库与开发机的元数据（版本库内部、构建与
+// 编辑器缓存、本地笔记），不是仓库源码。第一版只按名字点名跳过几个目录，后果是
+// 一次真实失败：某个点前缀目录里留着个 0 字节的 .go 文件（编辑器/工具的中途产物），
+// 解析必炸，边界门禁于是在干净检出上直接红——门禁的绿红取决于"这台机器上还留着
+// 什么"而不是仓库内容，这条边界就废了。
+//
+// 点前缀之外的跳过项仍然点名：`node_modules`/`testdata`/`bin`/`tmp` 是构建或
+// 夹具产物，`web` 是前端树（无 Go 源）。这些名字一旦变体（如 `bind`、`tmp2`）
+// 会被重新扫到——宁可多看，不可漏看。
+func skipScanDir(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	return skippedScanDirs[name]
+}
+
+// skippedScanDirs 点前缀之外的扫描面排除项（理由见 skipScanDir）。
+var skippedScanDirs = map[string]bool{
+	"node_modules": true, "testdata": true,
+	"bin": true, "tmp": true, "web": true,
+}
+
 // relSlash 模块内相对路径（统一 / 分隔，与白名单键一致）。
 func relSlash(root, path string) string {
 	rel, err := filepath.Rel(root, path)
@@ -187,4 +207,37 @@ func relSlash(root, path string) string {
 		return path
 	}
 	return filepath.ToSlash(rel)
+}
+
+// TestGoFilesSkipsDotDirs 钉住扫描面的边界：点前缀目录里的 .go 残留不进扫描面；
+// 点前缀之外的排除项按名字生效；其余目录里的 .go **一律**进扫描面——哪怕它解析
+// 不了，也要由解析断言判红，不许被静默跳过。
+//
+// 为什么要有这条测试：扫描面一旦退化成"只扫我列过的那几个目录"，越界 import 就能
+// 靠一个新目录名躲过去；反过来，扫描面一旦扩大到非源码目录，门禁的绿红就取决于
+// "这台机器上还留着什么"——两种错都真实发生过。
+func TestGoFilesSkipsDotDirs(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, body string) {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
+	}
+	write("pkg/real.go", "package pkg\n")
+	write("pkg/deep/nested.go", "package deep\n")
+	write(".hidden/scratch.go", "") // 0 字节：中途产物的真实形状，解析必失败
+	write(".git/objects/blob.go", "")
+	write(".cache/build/step.go", "")
+	write("node_modules/dep/dep.go", "package dep\n")
+	write("testdata/fixture.go", "package fixture\n")
+	write("web/src/main.go", "package main\n")
+	write("bin/tool.go", "package tool\n")
+
+	var got []string
+	for _, f := range goFiles(t, root) {
+		got = append(got, relSlash(root, f))
+	}
+	sort.Strings(got)
+	require.Equal(t, []string{"pkg/deep/nested.go", "pkg/real.go"}, got,
+		"扫描面只认仓库源码：点前缀目录与产物目录不进，普通目录一个不漏")
 }
