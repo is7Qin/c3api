@@ -34,11 +34,8 @@ import (
 // 也红（陈旧条目同样算错）。这样"允许集"永远等于"尚未迁移的清单"，而不是一张
 // 只会变长的豁免表。
 //
-// 测试文件用**上限棘轮**而不是逐文件白名单：剩下的 5 个是 `internal/proxy` 的**集成**
-// 用例，它们必须注入 SDK 的哨兵错误（ErrInvalidRequestBody / ErrWSIdleTimeout）与
-// 真实错误类型（HTTPError / AccountDisabledError）才能驱动整条链路——判据本身的单测
-// 已经在 sdkbridge（fatal_test.go / threads_test.go），集成面保留哨兵是必要成本。
-// 上限只许降：新增一个持 SDK 的测试文件必须先删掉一个。
+// 测试文件也走**逐文件白名单 + 双向相等**（T3 评审第 6 条：数量上限只约束个数、
+// 不约束内容，换个文件塞别的越界用法照样绿）。
 
 // sdkImportAllowlist 非测试文件里仍允许 import codex-sdk 的站点，值写"为什么还不能
 // 清"。T1 快照；T2 删三行（Fatal 面）；T3 清空。
@@ -46,8 +43,18 @@ import (
 // 想放行时必须显式加行并写理由——空表意味着"没有豁免"。
 var sdkImportAllowlist = map[string]string{}
 
-// sdkTestImportCeiling 仍持 SDK 的**测试文件**数上限（不含本包）。只许降；T3 归零。
-const sdkTestImportCeiling = 5
+// sdkTestImportAllowlist 仍持 SDK 的**测试文件**（不含本包），值写"为什么还需要"。
+//
+// 为什么不用"数量上限"：上限只约束个数，不约束**内容**——把一个文件的断言换成另一批
+// 越界用法，个数不变、门禁照样绿。逐文件白名单 + 双向相等才真正锁住"哪些文件、
+// 为什么"（T3 评审第 6 条）。
+var sdkTestImportAllowlist = map[string]string{
+	"internal/proxy/codex_local_reject_test.go":      "集成面：必须注入 SDK 的 ErrInvalidRequestBody 才能驱动'拨号前拒绝'整条链路；判据单测在 sdkbridge/fatal_test.go",
+	"internal/proxy/caller_responses_ws_test.go":     "集成面：必须注入 SDK 的 ErrWSIdleTimeout 才能驱动读空闲超时的收尾分类；判据单测在 sdkbridge/fatal_test.go",
+	"internal/proxy/codex_responses_ws_test.go":      "集成面：必须构造 SDK 的账号停用/凭据撤销错误与伪装身份常量才能验证判死与握手头",
+	"internal/proxy/codex_session_identity_test.go":  "集成面：读握手头常量 HeaderTurnState 才能断言 turn-state 落点",
+	"internal/proxy/caller_images_regression_test.go": "集成面：必须构造 SDK 的 *HTTPError / RefreshOAuthError 才能验证生图错误翻译",
+}
 
 // sdkImportPath 是被垄断的 import 路径前缀（含子包，如 .../redisstore）。
 const sdkImportPath = "github.com/is7Qin/codex-sdk"
@@ -104,15 +111,22 @@ func TestSDKImportsOnlyInBridge(t *testing.T) {
 		}
 	}
 
-	// 2) 测试文件：数量棘轮（只降不升）。
-	if len(testHits) > sdkTestImportCeiling {
-		t.Errorf("持 SDK 的测试文件从 %d 涨到 %d（上限 sdkTestImportCeiling=%d）："+
-			"新用例请改用 sdkbridge 的宿主类型\n%s",
-			sdkTestImportCeiling, len(testHits), sdkTestImportCeiling,
-			strings.Join(testHits, "\n"))
+	// 2) 测试文件：逐文件白名单，同样双向相等。
+	gotTests := map[string]bool{}
+	for _, f := range testHits {
+		gotTests[f] = true
+		if _, ok := sdkTestImportAllowlist[f]; !ok {
+			t.Errorf("越界 import（测试文件）：%s。集成用例确实需要 SDK 哨兵/错误类型时，"+
+				"必须显式加进 sdkTestImportAllowlist 并写明理由；能用宿主类型写的一律搬 sdkbridge", f)
+		}
 	}
-	t.Logf("边界快照：非测试文件 %d 处（白名单 %d 条）、测试文件 %d 个（上限 %d）",
-		len(prodHits), len(sdkImportAllowlist), len(testHits), sdkTestImportCeiling)
+	for f, why := range sdkTestImportAllowlist {
+		if !gotTests[f] {
+			t.Errorf("测试白名单陈旧：%s 已不再 import codex-sdk（%s）。请删掉这一行", f, why)
+		}
+	}
+	t.Logf("边界快照：非测试文件 %d 处（白名单 %d 条）、测试文件 %d 个（白名单 %d 条）",
+		len(prodHits), len(sdkImportAllowlist), len(testHits), len(sdkTestImportAllowlist))
 }
 
 // moduleRoot 从当前测试的工作目录向上找 go.mod。

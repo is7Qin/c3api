@@ -71,6 +71,11 @@ func (r CallRequest) wsIdentity() (codexsdk.Identity, []codexsdk.Option) {
 }
 
 // httpIdentity HTTP 面的身份（会话路径急切 Prepare；槽位路径直接组装）。
+//
+// 时机说明（T3 评审第 2 条）：`Prepare` 从 proxy 的请求准备阶段**移到了这里**，仍在
+// 同一次尝试、同一个 ctx 上只调一次，紧邻 SDK 调用。因此唯一可观察的差别是：若 ctx
+// 在进入本函数前已被取消，错误由 `Prepare` 而不是 SDK 调用报出——两者都会让这次尝试
+// 失败，分类同属"未发送/上游失败"，不改变重试决策。
 func (r CallRequest) httpIdentity(ctx context.Context) codexsdk.Identity {
 	if r.Book != nil {
 		return r.Book.prepare(ctx)

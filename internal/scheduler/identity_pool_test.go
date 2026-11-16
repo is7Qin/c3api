@@ -132,6 +132,45 @@ func TestResizeMigratesOwnedSessions(t *testing.T) {
 	}
 }
 
+
+// TestResizeSamePolicyKeepsThreadProgress 同策略 resize 迁移的是**会话对象本身**：
+// 状态随对象走，进度不可能被重置。
+//
+// 为什么断言指针身份而不是"剩余步数"：`windowSpan` 由 (threadID, windowIndex) 确定性
+// 派生，**不同线程的跨度不同**，跨会话比步数是错的尺子（第一版就这么写错了，
+// 179 步 vs 97 步）。真正的判据是结构性的一条：迁移后 `np.slots[i]` 就是原来那个
+// `*codexSession`——同一个句柄、同一份协议状态。剩下只需再验一句"迁移后状态机还活着"。
+func TestResizeSamePolicyKeepsThreadProgress(t *testing.T) {
+	policy := sdkbridge.RotatePolicy{WMaxLo: 2, WMaxHi: 2} // 每线程活 2 个窗口即退休
+
+	pool := newTestPool(1, policy)
+	session := pool.claim()
+	require.NotNil(t, session)
+	key := sessionThreadKey(session)
+
+	const walked = 7
+	for i := 0; i < walked; i++ {
+		require.Empty(t, session.step(), "前 %d 步不该退休", walked)
+	}
+	session.release() // 归还后 resize：空闲会话才按位次迁移
+
+	np := resizeForTest(pool, poolSpec{accountID: 7, k: 1, installationID: "inst", policy: policy})
+	require.Same(t, session, np.slots[0], "同策略 resize 迁移会话指针（协议状态随对象走，不重建）")
+	require.Equal(t, key, sessionThreadKey(np.slots[0]), "迁移后仍是同一条线程")
+
+	// 状态机迁移后仍然活着：能继续推进并在有界步数内退休。
+	migrated := np.slots[0]
+	retired := false
+	for i := 1; i <= 500; i++ {
+		if migrated.step() != "" {
+			retired = true
+			break
+		}
+	}
+	require.True(t, retired, "迁移后窗口推进与退休仍工作（500 步内未退休）")
+	require.NotEqual(t, key, sessionThreadKey(migrated), "退休后换新线程键")
+}
+
 // TestResizeDroppedInFlightSessionNotHandedOver 缩容丢弃的**在飞**会话不做任何
 // 交接（§3.2/§5.2-5）：迁移方不读它的字段（那是数据竞争）、不退役它的线程——
 // 残留 idle 由 SDK 的 idle TTL 时间有界回收。
