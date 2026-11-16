@@ -324,7 +324,7 @@ export default function Orders() {
                   <TableRow key={o.id} data-state={detailId === o.id ? 'selected' : undefined}>
                     <TableCell className="tabular-nums">{o.id}</TableCell>
                     <TableCell><code className="font-mono text-sm">{o.order_no}</code></TableCell>
-                    <TableCell className="tabular-nums">{o.user_id}</TableCell>
+                    <TableCell className="tabular-nums">#{o.user_id}</TableCell>
                     <TableCell><StatusBadge status={o.status} /></TableCell>
                     <TableCell className="tabular-nums">{o.amount_usd} USD</TableCell>
                     <TableCell className="tabular-nums">{o.pay_amount} {o.currency}</TableCell>
@@ -403,7 +403,7 @@ export default function Orders() {
                 </div>
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">{t('orders.table.userId')}</p>
-                  <p className="tabular-nums text-sm">{detail.user_id}</p>
+                  <p className="tabular-nums text-sm">#{detail.user_id}</p>
                 </div>
                 <div className="space-y-1">
                   <p className="text-xs text-muted-foreground">{t('orders.field.accountKey')}</p>
