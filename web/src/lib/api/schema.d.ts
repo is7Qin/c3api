@@ -293,12 +293,13 @@ export interface paths {
          * 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
          * @description 运行时恢复入口：终态失效（rule 判死/SDK fatal）与运行冷却（health.state =
          *     open/retry_after）共用。CAS expected_revision 命中才清失效三字段并 +1，
-         *     随后清该账号全部健康记录（含 Redis 墓碑）、释放失效锁存，并对新 revision
+         *     随后尽力清除该账号全部健康记录（含 Redis 墓碑）、释放失效锁存，并对新 revision
          *     写通配 PROBING（探针环接管：READY 前不吃正常流量）。冷却的默认路径是到期
          *     自愈；本端点用于上游已恢复但记录仍压住账号时的强制干预——会立即重新探测
-         *     上游，若是 429 限流可能再次被判冷却。expected_revision 过期 → 409（前端须
-         *     重读账号后重试）；本端点不启用被禁用的账号（enabled 独立，经 PATCH
-         *     /accounts/{id} 修改）。
+         *     上游，若是 429 限流可能再次被判冷却。健康清除是尽力而为：Redis 失败只记
+         *     日志、不影响 200（记录按 TTL/Sync 收敛，必要时重试恢复）。expected_revision
+         *     过期 → 409（前端须重读账号后重试）；本端点不启用被禁用的账号（enabled
+         *     独立，经 PATCH /accounts/{id} 修改）。
          */
         post: operations["PostAccountsIdRecover"];
         delete?: never;
@@ -2221,8 +2222,9 @@ export interface paths {
          * 运行时恢复（fenced）：清 failed_at/last_error/failure_source 与运行冷却 + revision CAS +1 → 新代际置 PROBING 待探针
          * @description 复用管理面恢复入口：终态失效与运行冷却（health.state = open/retry_after）
          *     共用。CAS expected_revision 命中才清失效三字段并 +1，随后清该账号全部健康
-         *     记录、释放失效锁存，并对新 revision 写通配 PROBING（探针环接管）。冷却默认
-         *     到期自愈；强制恢复会立即重新探测上游。expected_revision 过期 → 409；本端点
+         *     记录（尽力而为：失败只记日志）、释放失效锁存，并对新 revision 写通配
+         *     PROBING（探针环接管）。冷却默认到期自愈；强制恢复会立即重新探测上游。
+         *     expected_revision 过期 → 409；本端点
          *     不启用被禁用的账号（enabled 独立，经 PATCH /api/user/supplier/accounts/{id} 修改）。
          */
         post: operations["PostSupplierAccountsIdRecover"];
@@ -2989,7 +2991,7 @@ export interface components {
              */
             DeletedAt?: string | null;
         };
-        /** @description 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影，清理由 POST /accounts/{id}/recover 触发 */
+        /** @description 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影。主路径是到期由 Sync 自动过期；人工清理由 POST /accounts/{id}/recover 触发（尽力而为，失败只记日志） */
         AccountHealth: {
             /** @description 该账号所有健康键里最严重的一档：open | retry_after | probing | ready（严重度递减）。不用 enum：生成物里的包级常量名（open/ready…）会与本包既有标识符抢名字 */
             state: string;

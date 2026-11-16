@@ -529,7 +529,7 @@ type Account struct {
 	UpstreamCostMultiplier *float64 `json:"UpstreamCostMultiplier,omitempty"`
 	UpstreamKey            *string  `json:"UpstreamKey,omitempty"`
 
-	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影，清理由 POST /accounts/{id}/recover 触发
+	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影。主路径是到期由 Sync 自动过期；人工清理由 POST /accounts/{id}/recover 触发（尽力而为，失败只记日志）
 	Health *AccountHealth `json:"health,omitempty"`
 
 	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）
@@ -603,7 +603,7 @@ type AccountGroupsResponse struct {
 	GroupIds []int64 `json:"group_ids"`
 }
 
-// AccountHealth 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影，清理由 POST /accounts/{id}/recover 触发
+// AccountHealth 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影。主路径是到期由 Sync 自动过期；人工清理由 POST /accounts/{id}/recover 触发（尽力而为，失败只记日志）
 type AccountHealth struct {
 	// Routes 该档命中的健康键数（账号×质量类×身份×代际 = 一条候选路由）
 	Routes *int `json:"routes,omitempty"`
@@ -744,7 +744,7 @@ type AccountView struct {
 	ErrCount               *int     `json:"err_count,omitempty"`
 	ErrRate                *float64 `json:"err_rate,omitempty"`
 
-	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影，清理由 POST /accounts/{id}/recover 触发
+	// Health 账号级冷却聚合（最严重一档 + 该档最早到期时刻 + 该档路由数）；只读投影。主路径是到期由 Sync 自动过期；人工清理由 POST /accounts/{id}/recover 触发（尽力而为，失败只记日志）
 	Health *AccountHealth `json:"health,omitempty"`
 
 	// ProxyId 出口代理 id（null = 直连/未绑定；非 null = 绑定的代理对当前调用方可见）。写面 PATCH /accounts/{id} 的 proxy_id（供应商面亦可写，落 §3.6 绑定谓词，越界 404）

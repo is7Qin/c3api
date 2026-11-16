@@ -41,6 +41,12 @@ describe('accounts.tsx：冷却账号的恢复入口', () => {
     assert.match(page, /\{\(a\.FailedAt \|\| isCooling\(a\.health\)\) && \(/)
   })
 
+  // revision 缺失时 recover 会用 `?? 0` 兜底，后端对 expected_revision < 1 直接
+  // 400——必须禁用按钮，而不是让用户点到错误。
+  it('LifecycleRevision 缺失时按钮禁用（防 400）', () => {
+    assert.match(page, /disabled=\{recover\.isPending \|\| a\.LifecycleRevision == null\}/)
+  })
+
   it('旧注释「仅 failed_at 置位时出现」已删除，恢复语义注释覆盖冷却', () => {
     assert.equal(/仅 failed_at 置位时出现/.test(page), false)
     assert.match(page, /冷却的默认[\s\S]{0,40}路径是到期自愈/)
