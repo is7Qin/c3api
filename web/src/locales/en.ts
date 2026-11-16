@@ -1745,8 +1745,6 @@ export default {
   },
   "customPage": {
     "openInNewTab": "Open in new tab",
-    "blockedHint": "If this area is blank, the target site may refuse to be embedded — use “Open in new tab”.",
-    "dismissHint": "Got it",
     "invalidUrl": "This entry's URL is invalid (must start with http:// or https://); fix it on the settings page.",
     "notFoundTitle": "Page not found",
     "notFoundDesc": "This entry does not exist, is disabled, or does not belong to this console.",

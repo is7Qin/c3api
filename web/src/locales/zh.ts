@@ -1745,8 +1745,6 @@ export default {
   },
   "customPage": {
     "openInNewTab": "在新窗口打开",
-    "blockedHint": "若此处空白，可能是目标站点禁止被内嵌，请用「在新窗口打开」。",
-    "dismissHint": "知道了",
     "invalidUrl": "该条目的地址非法（需以 http:// 或 https:// 开头），请到设置页修正。",
     "notFoundTitle": "页面不存在",
     "notFoundDesc": "该条目不存在、已停用，或不属于当前控制台。",

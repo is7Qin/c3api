@@ -460,7 +460,7 @@ describe('§10 i18n：动态 key 的文案在 zh/en 都要存在', () => {
     'iconInvalid',
   ]
   // B3 的 frame / 路由页消费，本批先落 key（§10）。
-  const VIEW_KEYS = ['openInNewTab', 'blockedHint', 'dismissHint', 'invalidUrl', 'notFoundTitle', 'notFoundDesc', 'backHome']
+  const VIEW_KEYS = ['openInNewTab', 'invalidUrl', 'notFoundTitle', 'notFoundDesc', 'backHome']
 
   it('issue 码值、图标名与内嵌页文案键在两侧同名同存', () => {
     for (const file of ['../locales/zh.ts', '../locales/en.ts']) {

@@ -41,12 +41,12 @@ export default function CustomPage({ scope }: { scope: 'admin' | 'user' }) {
   const page = pagesForConsole(pagesQ.data?.Pages ?? [], scope).find(p => p.ID === id)
 
   // 取数中 → 骨架（形状与真正的内容区一致，避免加载完成后高度跳动）。
-  // 高度与 frame 的三处同值（§9-U1）：11rem 会让收起骨架的瞬间内容区高度变化 36px。
+  // 高度与 frame 的三处同值（§9-U1）：数值差一档，收起骨架的瞬间内容区高度就会跳。
   if (pagesQ.isLoading) {
     return (
       <div className="space-y-3">
         <Skeleton className="h-7 w-48" />
-        <Skeleton className="h-[calc(100dvh-13.5rem)] min-h-[420px] w-full" />
+        <Skeleton className="h-[calc(100dvh-11rem)] min-h-[420px] w-full" />
       </div>
     )
   }
@@ -90,6 +90,6 @@ export default function CustomPage({ scope }: { scope: 'admin' | 'user' }) {
     )
   }
 
-  // key = page.ID：换条目时重挂 frame，`onLoad`/提示行的状态不会带到下一页。
+  // key = page.ID：换条目时重挂 frame，`onLoad` 的状态不会带到下一页。
   return <CustomPageFrame key={page.ID} page={page} />
 }

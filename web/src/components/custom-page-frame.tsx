@@ -13,13 +13,12 @@
 // 白屏；配置者 = 平台管理员，URL 视为可信）。
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { ExternalLink, Info, X } from 'lucide-react'
+import { ExternalLink } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { userApi } from '@/lib/api/client'
 import { userAuth } from '@/lib/auth'
 import { buildEmbeddedUrl, resolveTheme } from '@/lib/custom-pages'
 import { useTheme } from '@/components/theme-provider'
-import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import type { components } from '@/lib/api/schema'
@@ -31,11 +30,10 @@ type ConsolePage = components['schemas']['CustomPage']
 export function CustomPageFrame({ page }: { page: ConsolePage }) {
   const { t, i18n } = useTranslation()
   const { theme } = useTheme()
-  // 提示行关一次就够：同一页面实例内不再出现，切到别的条目由父组件的 key 重置状态。
-  const [hintOpen, setHintOpen] = useState(true)
   // `onLoad` = 「浏览器触发了加载事件」，**不是**「内嵌成功」：X-Frame-Options 拒绝时
   // 同样触发、`onError` 也不可靠（跨域读不到响应头，§9-U3）。所以骨架只负责首屏占位，
-  // 不做任何失败探测；失败提示交给下面那行恒定文案。
+  // 不做任何失败探测。被拒时用户看到的是空白，兜底只有页头常驻的「在新窗口打开」——
+  // 不再加提示行（用户决定：那行只在失败时才有意义，却恒定占掉一行高度）。
   const [loaded, setLoaded] = useState(false)
 
   // me.ID 作为 `user_id` 随 URL 下发；staleTime 与 AppShell 的同键查询同档（60s），
@@ -92,32 +90,14 @@ export function CustomPageFrame({ page }: { page: ConsolePage }) {
         )}
       </div>
 
-      {/* 恒显示的可关闭提示（§9-U3②）：提示文案可验证，内嵌失败探测不可验证。 */}
-      {hintOpen && (
-        <div className="flex items-start gap-2 rounded-[10px] border border-[rgba(19,45,83,0.18)] bg-[color:var(--glass-card-light)] px-3 py-2 backdrop-blur-[var(--glass-blur)] dark:border-[rgba(148,180,220,0.25)] dark:bg-[color:var(--glass-card-dark)]">
-          <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-          <p className="flex-1 text-sm text-muted-foreground">{t('customPage.blockedHint')}</p>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-xs"
-            aria-label={t('customPage.dismissHint')}
-            onClick={() => setHintOpen(false)}
-            className="shrink-0 text-muted-foreground"
-          >
-            <X />
-          </Button>
-        </div>
-      )}
-
       {isHttp ? (
         // 高度按视口算（§9-U1）：iframe 自己滚动，外层不再出现第二条滚动条。
-        // 数值：顶栏 56 + pt-9 36 + 标题行 28 + 两处 gap 24 + 提示行 36 + pb-8 32 ≈ 212px
-        // = 13.25rem，取 13.5rem 留 4px 余量。iframe / 骨架 / 非法态三处**必须同值**，
-        // 否则切换状态时内容区高度会跳（写 11rem 会溢出 36px → 双滚动条）。
+        // 数值：顶栏 56 + pt-9 36 + 标题行 28 + gap 12 + pb-8 32 ≈ 164px（实测内容区
+        // 约 170px），取 11rem = 176px，留 6px 余量。iframe / 骨架 / 非法态三处
+        // **必须同值**，否则切换状态时内容区高度会跳。
         // min-h 兜住小屏（420px 是可用下限）。
         !meReady ? (
-          <Skeleton className="h-[calc(100dvh-13.5rem)] min-h-[420px] w-full rounded-[14px]" />
+          <Skeleton className="h-[calc(100dvh-11rem)] min-h-[420px] w-full rounded-[14px]" />
         ) : (
           <div className="relative overflow-hidden rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] dark:border-[rgba(148,180,220,0.32)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)]">
             {!loaded && <Skeleton className="absolute inset-0 z-10 h-full w-full rounded-none" />}
@@ -127,14 +107,14 @@ export function CustomPageFrame({ page }: { page: ConsolePage }) {
               referrerPolicy="no-referrer"
               allow="fullscreen"
               onLoad={() => setLoaded(true)}
-              className="block h-[calc(100dvh-13.5rem)] min-h-[420px] w-full border-0 bg-white dark:bg-[#0b0b0c]"
+              className="block h-[calc(100dvh-11rem)] min-h-[420px] w-full border-0 bg-white dark:bg-[#0b0b0c]"
             />
           </div>
         )
       ) : (
         // 非 http(s)：不渲染 iframe（浏览器会用当前页的 origin 去解析相对地址），
         // 直接给可行动的空态——去设置页修 URL。高度与 iframe/骨架同值（§9-U1）。
-        <Card className="h-[calc(100dvh-13.5rem)] min-h-[420px] items-center justify-center text-center">
+        <Card className="h-[calc(100dvh-11rem)] min-h-[420px] items-center justify-center text-center">
           <p className="px-6 text-sm text-muted-foreground">{t('customPage.invalidUrl')}</p>
         </Card>
       )}
