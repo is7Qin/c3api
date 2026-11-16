@@ -267,7 +267,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 					p.codex.FatalPrepared(prep, fatal)
 				}
 			}
-			var tr wsRelayTransport = newCodexTransport(up)
+			var tr wsRelayTransport = up // *sdkbridge.Stream 结构化满足 wsRelayTransport（同一次接口跳，未新增层）
 			if p.codexWSTransportWrap != nil {
 				tr = p.codexWSTransportWrap(tr)
 			}

@@ -20,10 +20,9 @@ import (
 
 	"github.com/is7qin/c3api/pkg/egress"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
-
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -38,27 +37,13 @@ import (
 // 没有 ts 字段，也不需要随凭据 owner 对齐。
 type codexSession struct {
 	busy atomic.Bool
-	st   codexsdk.IdentityState
-	// windowID = st.WindowID()、threadKey = threadKeyOf(st)：预计算，避免每请求拼接。
-	windowID  string
+	// h 线程句柄（**不透明**）：协议状态由 sdkbridge.Threads 持有，本包只搬运。
+	h sdkbridge.ThreadHandle
+	// threadKey 连接复用键（不透明字符串）：退休时交给 retire，不解析、不拼装。
 	threadKey string
-	// policy 建会话时抄下的轮换策略（只读：与池的构造参数恒同值）。step 用它推进
-	// 窗口/退休；resize 永不改写它——策略真的变了就换新会话。
-	policy codexsdk.RotatePolicy
-}
-
-// identity 本次请求的身份数据（§3.2 租借）：session == thread（根线程语义），
-// 窗口号与 context_window_id 取会话当前值；first 由调用方按请求体判定。
-//
-// 直接组装 Identity 而不调 `IdentityState.Identity`——后者每次重算 WindowID 会分配。
-// 全部是字段拷贝 ⇒ 零分配；Sink=nil、Turn.State=""（槽位路径不带 turn-state）。
-func (s *codexSession) identity(first bool) codexsdk.Identity {
-	return codexsdk.Identity{
-		InstallationID: s.st.InstallationID,
-		Session:        codexsdk.Session{SessionID: s.st.ThreadID, ThreadID: s.st.ThreadID, WindowID: s.windowID},
-		Window:         codexsdk.Window{Number: s.st.WindowN, ContextID: s.st.ContextWindowID},
-		Turn:           codexsdk.Turn{First: first},
-	}
+	// threads 建会话时绑定的工厂（无状态，仅承载策略）。step 走它的唯一变更入口；
+	// resize 永不改写它——策略真的变了就换新会话。
+	threads *sdkbridge.Threads
 }
 
 // step 推进一次完成轮（§3.2 推进）：委托 SDK 的 `Step`（窗口 span / 退休阈值是同一套
@@ -66,17 +51,11 @@ func (s *codexSession) identity(first bool) codexsdk.Identity {
 // 由 Step 一并换新）；退休 ⇒ 返回**旧** threadKey（调用方在锁外用它退役旧线程的空闲
 // 连接），并重算 windowID/threadKey。
 func (s *codexSession) step() string {
-	prev := s.st
-	s.st = codexsdk.Step(prev, s.policy)
-	if s.st.ThreadID != prev.ThreadID {
-		old := s.threadKey
-		s.windowID, s.threadKey = s.st.WindowID(), threadKeyOf(s.st.InstallationID, s.st.ThreadID)
-		return old
+	retired := s.threads.Step(s.h) // 唯一状态转移入口（窗口 span / 退休阈值都在 bridge 内）
+	if retired != "" {
+		s.threadKey = s.threads.Key(s.h)
 	}
-	if s.st.WindowN != prev.WindowN {
-		s.windowID = s.st.WindowID()
-	}
-	return ""
+	return retired
 }
 
 // release 归还会话（非阻塞 Store——无 channel 锁、无容量死锁）；nil 安全。
@@ -86,22 +65,12 @@ func (s *codexSession) release() {
 	}
 }
 
-// threadKeyOf 连接复用键，与 SDK 同构：installation|session|thread。本池的
-// session == thread（根线程语义），所以是 installation|thread|thread。
-func threadKeyOf(installationID, threadID string) string {
-	return installationID + "|" + threadID + "|" + threadID
-}
-
 // newCodexSession 开一个新会话：身份状态用 installationID 开新线程（线程 UUIDv7、
 // WMax 按 policy 抽样、turns/window 归零），windowID/threadKey 一次算好。
-func newCodexSession(installationID string, policy codexsdk.RotatePolicy) *codexSession {
-	st := codexsdk.NewIdentityState(installationID, policy)
-	return &codexSession{
-		st:        st,
-		windowID:  st.WindowID(),
-		threadKey: threadKeyOf(installationID, st.ThreadID),
-		policy:    policy,
-	}
+func newCodexSession(installationID string, policy sdkbridge.RotatePolicy) *codexSession {
+	th := sdkbridge.NewThreads(policy)
+	h := th.Open(installationID)
+	return &codexSession{h: h, threadKey: th.Key(h), threads: th}
 }
 
 // identityPool 账号级会话池（无锁）：容量 K = 账号 MaxConcurrency；cursor 为认领
@@ -115,7 +84,7 @@ type identityPool struct {
 	accountID      int64
 	// policy 本池的轮换策略（构造后不变）。所有会话按它开线程、按它推进；resize
 	// 比较它与新配置决定"迁移会话指针"还是"开新会话"。
-	policy codexsdk.RotatePolicy
+	policy sdkbridge.RotatePolicy
 	// retireThread 退役某线程的空闲 WS 连接（构造期注入；nil = 未接——测试形态）。
 	// 退休与重载丢槽都走它，装配点唯一。
 	retireThread func(accountID int64, threadKey string)
@@ -126,9 +95,9 @@ type identityPool struct {
 
 // rotatePolicy 返回本池的轮换策略（**不可变构造参数**：读它不碰任何会话字段，
 // 因此兜底路径/配置比较都可以在租借之外安全读）。
-func (p *identityPool) rotatePolicy() codexsdk.RotatePolicy {
+func (p *identityPool) rotatePolicy() sdkbridge.RotatePolicy {
 	if p == nil {
-		return codexsdk.RotatePolicy{}
+		return sdkbridge.RotatePolicy{}
 	}
 	return p.policy
 }
@@ -173,7 +142,7 @@ type poolSpec struct {
 	accountID      int64
 	k              int
 	installationID string
-	policy         codexsdk.RotatePolicy
+	policy         sdkbridge.RotatePolicy
 	retire         func(accountID int64, threadKey string)
 }
 

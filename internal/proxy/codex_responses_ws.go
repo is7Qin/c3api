@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
@@ -22,13 +21,13 @@ import (
 
 // --- codex 独立 relay 变体（codex-oauth/codex-pat 类型 resp-ws 接线） ---
 // 独立文件族（用户拍板文件边界：codex 相关处理不散落现有 caller/forward 文件，
-// codexsdk import 仅限本文件族 + sdkbridge 扩展）。与 aiclient 路径同构的编
+// 面现在只经 sdkbridge —— 本包不再 import codex-sdk）。与 aiclient 路径同构的编
 // 排（合一骨架 relayWS + 传输适配 codexTransport 抽 5 方法传输接口
 // wsRelayTransport，见 ws_relay.go）：双向帧中继（客户端帧经 SDK 按 codex
 // 形状归一）/ usage 嗅探（response.completed——sniffResponsesCompletedUsage
 // 复用）/ 关闭分类（relayClassify/recordClose 复用）/ 心跳（30s Ping + 10s
 // pong 超时同款）——
-// 差异收口在本文件：传输适配层 = *codexsdk.Client 具体类型（Send/Recv/Ping/
+// 差异收口在本文件：传输面 = *sdkbridge.Stream（具体薄壳，五方法纯转发，
 // Close/CloseNow——SDK 具体类型经 codexTransport 适配接口）与每帧判死钩子
 // frameHook（见 wsAttempt 调用点）；服务端 Accept 侧 = 既有
 // *websocket.Conn 不动。
@@ -76,7 +75,7 @@ var errCodexExtMissing = errors.New("codex account missing account_ext snapshot 
 // 刚换上的新凭据 Auth。
 //
 // 错误经适配层翻译（DialError → 信封 + Refreshed；裸 fatal → 统一回调上报）。
-func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []byte) (*codexsdk.Client, sdkbridge.Prepared, error) {
+func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []byte) (*sdkbridge.Stream, sdkbridge.Prepared, error) {
 	if p.codex == nil {
 		return nil, sdkbridge.Prepared{}, errCodexWSNotIntegrated
 	}
@@ -94,18 +93,11 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 	// 同设）；槽位路径：按首帧判定 Turn.First。两条路径的握手 routing-hint 与
 	// turn-metadata 都按随后第一次 Send 的帧计算：frame 必须与 relayWS 实际写出的
 	// 首帧逐字节相同（调用方传同一份字节）。
-	in := codexsdk.AnalyzeConversationInput(frame)
-	var id codexsdk.Identity
-	var first codexsdk.Option
+	// 身份与首帧一次给全（CallRequest）：会话路径由会话簿按三元组合成，槽位路径取
+	// 线程句柄；两侧的 Turn.First 与握手 routing-hint 都由**同一份 frame** 判定。
+	call := sdkbridge.CallRequest{Thread: sel.Thread(), Frame: frame}
 	if req, ok := p.bookRequest(r.Context(), sel, prep); ok {
-		first = p.conversations.Option(req, frame)
-	} else {
-		id = sel.IdentityFor(!in.FollowUp())
-		first = codexsdk.WithFirstFrame(frame)
-	}
-	opts := []codexsdk.Option{
-		first,
-		codexsdk.WithPingInterval(0), // 心跳单源：编排层 30s+10s 单一所有者
+		call.Book = p.conversations.Call(req, frame)
 	}
 	// 裁决（spec §12）：codex 面不透传任何客户端头，握手头全由 SDK 生成（伪装身份、
 	// beta、session 四元组、Authorization）；此处不喂任何客户端头。
@@ -114,8 +106,8 @@ func (p *Proxy) dialCodexWS(r *http.Request, sel *scheduler.Selection, frame []b
 	// 转移（零新分支；wrapped ctx 取消不向上传播，不落 499）。
 	ctx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
 	defer cancel()
-	c, err := p.codex.DialPrepared(ctx, prep, sel.Egress, id, opts...)
-	return c, prep, err
+	stream, err := p.codex.DialCall(ctx, prep, sel.Egress, call)
+	return stream, prep, err
 }
 
 // handleCodexDialError codex WS 拨号失败分类与收尾（返回
@@ -190,7 +182,7 @@ func (p *Proxy) handleCodexDialError(r *http.Request, reqID string, groupID int6
 //
 // **网关不持有任何码集副本**：判据（鉴权码 token_invalidated / token_revoked、
 // 账号码 deactivated_workspace、字段路径、大小写纪律）全部在 SDK 的
-// codexsdk.ClassifyFatalUpstream（upstream_error.go）——扩码只改 SDK，五个承载面
+// sdkbridge.ClassifyFatal（内部即 SDK 的 ClassifyFatalUpstream）——扩码只改 SDK，五个承载面
 // 自动同步。本地只留一层零分配预筛：没有 `"error"` 的帧（绝大多数内容帧）直接
 // 返回，连跨包调用都不发生。
 //
@@ -208,42 +200,6 @@ func sniffCodexWSDeath(f []byte) error {
 // 伪装身份注入源：scheduler.Selection.IdentityFor 一次给全四元组
 // （installation_id / session_id / thread_id / window_id，全部取自槽状态）——
 // proxy 不再回账号 ext 拼装，杜绝 installation 双源。
-
-// codexTransport 上游侧 *codexsdk.Client 的 wsRelayTransport 适配（codex 路
-// 径）：typ 语义沿用 relayWS 传输面约定——Send 忽略 typ 恒文本（SDK Send 内部
-// 恒以 MessageText 写连接）、Recv 丢弃帧类型 → Read 恒返回 MessageText
-// （responses WS 协议全 text 帧，binary 帧降级文本转发，风险低——既有降级
-// 语义）；Ping/Close/CloseNow 直通 SDK（Close 幂等 closeOnce；pong 由 relay
-// 循环的常驻 Read 处理——满足 SDK Client 并发读写前提）。错误原样透传（SDK Recv
-// 透传 coder/websocket 错误 → errors.As *CloseError 成立，relayClassify/recordClose
-// 直接复用）。
-//
-// 读帧上限：每次 Read 对应一次 SDK Recv，各带 5 分钟读空闲预算（口径见
-// dialCodexWS）。因此本循环跨轮常驻读在多轮会话里同样受该预算约束——
-// ErrWSIdleTimeout 作为普通上游错误落进 upErr 槽，relayClassify 判
-// relayEndUpstreamError（不重试、不归还缓存，客户端收 1011）。
-type codexTransport struct{ up *codexsdk.Client }
-
-func newCodexTransport(up *codexsdk.Client) *codexTransport {
-	return &codexTransport{up: up}
-}
-
-func (t *codexTransport) Write(ctx context.Context, _ websocket.MessageType, frame []byte) error {
-	return t.up.Send(ctx, frame)
-}
-
-func (t *codexTransport) Read(ctx context.Context) (websocket.MessageType, []byte, error) {
-	f, err := t.up.Recv(ctx)
-	return websocket.MessageText, f, err
-}
-
-func (t *codexTransport) Ping(ctx context.Context) error { return t.up.Ping(ctx) }
-
-func (t *codexTransport) Close(code websocket.StatusCode, reason string) error {
-	return t.up.Close(code, reason)
-}
-
-func (t *codexTransport) CloseNow() { t.up.CloseNow() }
 
 // bufferedTransport 单帧回放：给"首帧判死预读"用。
 //

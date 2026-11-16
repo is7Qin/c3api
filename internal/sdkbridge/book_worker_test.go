@@ -60,12 +60,12 @@ func (s *chanConvStore) SaveTurns(_ context.Context, batch []codexsdk.TurnWrite)
 func enqueueFirstTurn(t *testing.T, book *Book, conv string) codexsdk.ConversationKey {
 	t.Helper()
 	key := codexsdk.NewConversationKey("cfg:1", 1, conv)
-	id := book.Identity(context.Background(), BookRequest{
+	id := book.Call(BookRequest{
 		CacheDomain:    "cfg:1",
 		APIKeyID:       1,
 		ConversationID: conv,
 		InstallationID: "inst-1",
-	}, []byte(`{"model":"gpt-4o","input":"hi"}`))
+	}, []byte(`{"model":"gpt-4o","input":"hi"}`)).prepare(context.Background())
 	require.True(t, id.Turn.First, "新对话首个请求")
 	return key
 }

@@ -31,6 +31,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
@@ -513,7 +514,7 @@ func TestSessionG6LeaseExclusiveAndCancelDoesNotAdvance(t *testing.T) {
 	gate := make(chan struct{})
 	up, u := newSessionWSUpstream(t, "", sessionWSStep{id: "d1", usage: true})
 	u.gate = gate
-	p, _ := newSessionWSProxy(t, up.URL, 1, withCodexRotatePolicy(codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
+	p, _ := newSessionWSProxy(t, up.URL, 1, withCodexRotatePolicy(sdkbridge.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
 	srv, barrier := newBarrierServer(t, AIRouter(p))
 
 	// 1) 占住唯一租借：流式请求，上游被 gate 卡住（不回帧），客户端不读 body。
@@ -685,7 +686,7 @@ func TestSessionAccountRemovalClosesTransportResources(t *testing.T) {
 func TestSessionG2NaturalRetirementClosesOldConnection(t *testing.T) {
 	up, u := newSessionWSUpstream(t, "",
 		sessionWSStep{id: "g2", ts: "T-win", usage: true})
-	p, _ := newSessionWSProxy(t, up.URL, 1, withCodexRotatePolicy(codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
+	p, _ := newSessionWSProxy(t, up.URL, 1, withCodexRotatePolicy(sdkbridge.RotatePolicy{WMaxLo: 1, WMaxHi: 1}))
 	srv := httptest.NewServer(AIRouter(p))
 	defer srv.Close()
 

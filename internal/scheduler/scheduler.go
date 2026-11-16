@@ -16,10 +16,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/worker"
@@ -53,7 +53,7 @@ type Config struct {
 	// RotatePolicy codex 伪装身份轮换策略（SDK 类型）：会话池开线程与推进用它
 	// 采样/演进。零值 = WMaxHi 0（线程不退休）；窗口推进口径（按完成轮数、每窗口
 	// 随机 span）由 SDK 内部定。
-	RotatePolicy codexsdk.RotatePolicy
+	RotatePolicy sdkbridge.RotatePolicy
 	// RetireThread 退役账号某线程的空闲 WS 连接（sdkbridge.ClientTable 实现；nil =
 	// 未接——测试/未装配形态）。线程退休与重载丢槽的唯一出口。
 	//
@@ -190,11 +190,11 @@ func (s *Selection) Release() {
 // 稳定项、与 session/thread/window 同源），字段拷贝、零分配。
 //
 // 无会话（非 codex / 池缺席 / 会话路径不认领槽位）→ 零值（SDK 视为匿名）。
-func (s *Selection) IdentityFor(first bool) codexsdk.Identity {
+func (s *Selection) Thread() sdkbridge.ThreadHandle {
 	if s == nil || s.session == nil {
-		return codexsdk.Identity{}
+		return sdkbridge.ThreadHandle{}
 	}
-	return s.session.identity(first)
+	return s.session.h
 }
 
 // StepIdentity 推进本会话一次完成轮（§3.2 推进）——**仅成功取到 usage、且上游

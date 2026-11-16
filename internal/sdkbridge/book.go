@@ -57,22 +57,5 @@ func (r BookRequest) request(payload []byte) codexsdk.ConversationRequest {
 	}
 }
 
-// Identity 会话路径的一次身份（HTTP 面：每次尝试调用一次，跨账号故障转移时按当次
-// 选择重算）。payload 必须是**实际发给上游的体**——它决定本条是不是一轮的第一个
-// 请求（Turn.First），与 SDK 内部的判定同源。
-//
-// 返回值是 SDK 的值类型，宿主只准透传给调用面、不得读取或构造字段：dial 参数包的
-// 聚合（CallRequest）在下一个提交完成，届时本方法返回不透明句柄。
-func (b *Book) Identity(ctx context.Context, req BookRequest, payload []byte) codexsdk.Identity {
-	return b.b.Prepare(ctx, req.request(payload))
-}
-
-// Option WS 面的逐帧身份（等价 SDK 的 WithConversation）：身份随首帧逐帧合成，
-// turn-state 由会话簿按轮次管理。frame 同时是 Turn.First 的判据与连接上的首帧。
-func (b *Book) Option(req BookRequest, frame []byte) codexsdk.Option {
-	r := req.request(frame)
-	return codexsdk.WithConversation(b.b, r, frame)
-}
-
 // Flush 同步排空写入队列一次（批大小与预算归 SDK；同一时刻只允许一个 Flush）。
 func (b *Book) Flush(ctx context.Context) error { return b.b.Flush(ctx) }

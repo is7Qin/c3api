@@ -17,7 +17,6 @@ import (
 	"testing"
 	"time"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 
@@ -181,7 +180,7 @@ func withCodexIdentitySlots(n int) codexRespProxyOption {
 // 用途（G6 “取消不推进”的行为观测）：策略 WMax=1 时，**任何**推进都会在一个
 // 窗口内（48–96 轮）把线程退掉；所以“大量取消之后线程与 window 不变”就是
 // “取消不推进”的可观测形式，不需要读会话私有计数器。
-func withCodexRotatePolicy(p codexsdk.RotatePolicy) codexRespProxyOption {
+func withCodexRotatePolicy(p sdkbridge.RotatePolicy) codexRespProxyOption {
 	return func(_ *domain.Template, _ *domain.Account, schedCfg *scheduler.Config) { schedCfg.RotatePolicy = p }
 }
 

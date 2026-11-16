@@ -6,42 +6,40 @@ package scheduler
 
 // 轮换策略的**不可变构造参数**契约（spec §3.3b-3）：resize 只迁移会话指针，不写
 // 已发布会话；策略真的变了就开新会话并回收旧线程。三条用例分别固定：迁移、重建、
-// 以及「resize 期间策略只读」的并发判别（`-race` 下旧实现会在写 os.policy 处现红）。
+// 以及「resize 期间策略只读」的并发判别（`-race` 下旧实现会在写 os.threads.Policy() 处现红）。
 
 import (
 	"runtime"
 	"sync"
 	"testing"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
 var (
-	policyA = codexsdk.RotatePolicy{WMaxLo: 1, WMaxHi: 3}
-	policyB = codexsdk.RotatePolicy{WMaxLo: 4, WMaxHi: 9}
+	policyA = sdkbridge.RotatePolicy{WMaxLo: 1, WMaxHi: 3}
+	policyB = sdkbridge.RotatePolicy{WMaxLo: 4, WMaxHi: 9}
 )
 
 // TestResizeSamePolicyMigratesSessionPointers 容量变化（策略不变）只迁移会话指针：
 // 线程/窗口计数全部随对象走，池不复制任何会话状态。
 func TestResizeSamePolicyMigratesSessionPointers(t *testing.T) {
 	old := newTestPool(2, policyA)
-	old.slots[0].st.Turns = 5
-	threads := []string{old.slots[0].st.ThreadID, old.slots[1].st.ThreadID}
+	threads := []string{sessionThreadKey(old.slots[0]), sessionThreadKey(old.slots[1])}
 
 	grown := resizeForTest(old, poolSpec{accountID: 7, k: 4, installationID: "inst", policy: policyA})
 	require.Len(t, grown.slots, 4)
 	for i := range 2 {
 		require.Same(t, old.slots[i], grown.slots[i], "同一策略：按位次迁移会话指针")
-		require.Equal(t, threads[i], grown.slots[i].st.ThreadID)
-		require.Equal(t, policyA, grown.slots[i].policy)
+		require.Equal(t, threads[i], sessionThreadKey(grown.slots[i]))
+		require.Equal(t, policyA, grown.slots[i].threads.Policy())
 	}
-	require.Equal(t, uint64(5), grown.slots[0].st.Turns, "会话状态随对象迁移")
 	for i := 2; i < 4; i++ {
 		require.NotSame(t, old.slots[0], grown.slots[i], "扩容位次是新会话")
-		require.Equal(t, policyA, grown.slots[i].policy)
+		require.Equal(t, policyA, grown.slots[i].threads.Policy())
 	}
 
 	shrunk := resizeForTest(grown, poolSpec{accountID: 7, k: 1, installationID: "inst", policy: policyA})
@@ -59,8 +57,8 @@ func TestResizePolicyChangeRebuildsSessions(t *testing.T) {
 	require.Len(t, next.slots, 2)
 	for i := range 2 {
 		require.NotSame(t, old.slots[i], next.slots[i], "策略变化 ⇒ 新会话")
-		require.Equal(t, policyB, next.slots[i].policy, "新会话按新策略构造")
-		require.Equal(t, policyA, old.slots[i].policy, "已发布池/会话的策略不被 resize 改写")
+		require.Equal(t, policyB, next.slots[i].threads.Policy(), "新会话按新策略构造")
+		require.Equal(t, policyA, old.slots[i].threads.Policy(), "已发布池/会话的策略不被 resize 改写")
 		require.Equal(t, policyA, old.rotatePolicy())
 	}
 	require.Equal(t, policyB, next.rotatePolicy())
@@ -69,7 +67,7 @@ func TestResizePolicyChangeRebuildsSessions(t *testing.T) {
 
 // TestResizePolicyReadDuringResize resize 期间策略只读（§3.3b 第 4 条的并发判别
 // 用例）：多个读者在租借之外反复读旧池策略，同时执行策略变更的 resize。策略只在
-// 构造期写入 ⇒ `-race` 干净；旧实现（resize 写 os.policy）在这里现红。
+// 构造期写入 ⇒ `-race` 干净；旧实现（resize 写 os.threads.Policy()）在这里现红。
 func TestResizePolicyReadDuringResize(t *testing.T) {
 	const k = 4
 	old := newTestPool(k, policyA)
@@ -100,7 +98,7 @@ func TestResizePolicyReadDuringResize(t *testing.T) {
 		require.Equal(t, policyB, next.rotatePolicy())
 		require.Equal(t, policyA, old.rotatePolicy(), "旧池策略恒定")
 		for _, sl := range old.slots {
-			require.Equal(t, policyA, sl.policy, "旧会话策略恒定（resize 不写共享会话）")
+			require.Equal(t, policyA, sl.threads.Policy(), "旧会话策略恒定（resize 不写共享会话）")
 		}
 	}
 	close(stop)
@@ -121,6 +119,5 @@ func TestFallbackSessionUsesPoolPolicy(t *testing.T) {
 	ephem, ephPool := s.claimCodexSession(reg, 7, credential.TypeCodexOAuth)
 	require.NotNil(t, ephem)
 	require.Nil(t, ephPool, "兜底身份无池")
-	require.Equal(t, policyB, ephem.policy, "兜底身份的策略取自池字段")
-	require.Equal(t, "inst", ephem.st.InstallationID, "installation 同源")
+	require.Equal(t, policyB, ephem.threads.Policy(), "兜底身份的策略取自池字段")
 }

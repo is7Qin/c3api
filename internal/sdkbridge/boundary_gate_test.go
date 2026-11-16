@@ -34,21 +34,20 @@ import (
 // 也红（陈旧条目同样算错）。这样"允许集"永远等于"尚未迁移的清单"，而不是一张
 // 只会变长的豁免表。
 //
-// 测试文件用**上限棘轮**而不是逐文件白名单：`internal/proxy` 与 `internal/scheduler`
-// 的用例大量构造 SDK 值（IdentityState、RotatePolicy、ConversationRequest），逐个
-// 列出来只会变成噪音。这里只钉"最多还有几个测试文件持 SDK"，上限只许降，T3 降到 0。
+// 测试文件用**上限棘轮**而不是逐文件白名单：剩下的 5 个是 `internal/proxy` 的**集成**
+// 用例，它们必须注入 SDK 的哨兵错误（ErrInvalidRequestBody / ErrWSIdleTimeout）与
+// 真实错误类型（HTTPError / AccountDisabledError）才能驱动整条链路——判据本身的单测
+// 已经在 sdkbridge（fatal_test.go / threads_test.go），集成面保留哨兵是必要成本。
+// 上限只许降：新增一个持 SDK 的测试文件必须先删掉一个。
 
 // sdkImportAllowlist 非测试文件里仍允许 import codex-sdk 的站点，值写"为什么还不能
 // 清"。T1 快照；T2 删三行（Fatal 面）；T3 清空。
-var sdkImportAllowlist = map[string]string{
-	"internal/proxy/codex_responses_ws.go": "T3：*codexsdk.Client / Option / Identity 的 dial 参数包（CallRequest 未落地）",
-	"internal/proxy/codex_responses_http.go": "T3：codexsdk.Identity 作为 codexRequestPrep 的返回值（CallRequest 未落地）",
-	"internal/scheduler/scheduler.go":       "T3：Config.RotatePolicy / IdentityFor 返回 SDK 值",
-	"internal/scheduler/identity_pool.go":   "T3：IdentityState / Step / Session / Turn / Window 的持有者",
-}
+// **已清空（T3）**：非测试文件里零处 import codex-sdk。表留在这里是为了让下一个人
+// 想放行时必须显式加行并写理由——空表意味着"没有豁免"。
+var sdkImportAllowlist = map[string]string{}
 
 // sdkTestImportCeiling 仍持 SDK 的**测试文件**数上限（不含本包）。只许降；T3 归零。
-const sdkTestImportCeiling = 8
+const sdkTestImportCeiling = 5
 
 // sdkImportPath 是被垄断的 import 路径前缀（含子包，如 .../redisstore）。
 const sdkImportPath = "github.com/is7Qin/codex-sdk"

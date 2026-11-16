@@ -36,12 +36,12 @@ func TestTurnRecordKeyPointsAtWrittenRecord(t *testing.T) {
 	book := newMiniredisBook(t, mr)
 	payload := []byte(`{"model":"gpt-4o","input":[{"role":"user","content":"hi"}]}`)
 
-	book.Identity(context.Background(), BookRequest{
+	book.Call(BookRequest{
 		CacheDomain:    "cfg:1",
 		APIKeyID:       1,
 		ConversationID: "conv-x",
 		InstallationID: "inst-1",
-	}, payload)
+	}, payload).prepare(context.Background())
 	require.NoError(t, book.Flush(context.Background()))
 
 	// 不是"存在即可"：把存储里真实的 turn 键**枚举出来**再与代拼结果求等。

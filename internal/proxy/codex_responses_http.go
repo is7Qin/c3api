@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"time"
 
-	codexsdk "github.com/is7Qin/codex-sdk"
 	"github.com/tidwall/gjson"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -156,16 +155,16 @@ func (p *Proxy) callCodexResponses(ctx context.Context, w http.ResponseWriter, r
 //   - 会话路径（sel.Conversation，选号时已保证 p.conversations != nil）：会话簿
 //     按 (缓存域, API key, 对话标识) 合成身份；本副本命中零 Redis。
 //   - 槽位路径：`sel.IdentityFor(first)`，不带也不捕获 turn-state（Sink=nil）。
-func (p *Proxy) codexRequestPrep(ctx context.Context, sel *scheduler.Selection, cred *domain.AccountCredential, payload []byte) (sdkbridge.Prepared, codexsdk.Identity, error) {
+func (p *Proxy) codexRequestPrep(ctx context.Context, sel *scheduler.Selection, cred *domain.AccountCredential, payload []byte) (sdkbridge.Prepared, sdkbridge.CallRequest, error) {
 	prep, err := p.codex.Prepare(cred)
 	if err != nil {
-		return sdkbridge.Prepared{}, codexsdk.Identity{}, err
+		return sdkbridge.Prepared{}, sdkbridge.CallRequest{}, err
 	}
-	in := codexsdk.AnalyzeConversationInput(payload)
+	call := sdkbridge.CallRequest{Thread: sel.Thread(), Frame: payload}
 	if req, ok := p.bookRequest(ctx, sel, prep); ok {
-		return prep, p.conversations.Identity(ctx, req, payload), nil
+		call.Book = p.conversations.Call(req, payload)
 	}
-	return prep, sel.IdentityFor(!in.FollowUp()), nil
+	return prep, call, nil
 }
 
 // bookRequest 把宿主侧原料收进会话簿请求（HTTP 与 WS 共用）。ok=false ⇒ 走槽位
@@ -221,7 +220,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// 请求级身份（§3.1）：**先准备条目句柄**，再由会话给出身份——同账号并发各持
 	// 不同会话 ⇒ 上游见多条独立线程。身份经 SDK 每次调用传入，不再是连接/客户端的
 	// 构造期配置。
-	prep, id, err := p.codexRequestPrep(ctx, sel, cred, streamBody)
+	prep, call, err := p.codexRequestPrep(ctx, sel, cred, streamBody)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -231,7 +230,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	// 出站传输开关由调用方给值（原生车道 = Selection 原值；转换车道钉 http，
 	// 见 caller_converted.go）。sdkbridge 侧按它分 client 条目——构造期参数，
 	// 改模板 ⇒ 换条目。**同一个 prep 句柄**继续取 client/auth（不查第二次）。
-	resp, err := p.codex.ResponsesPrepared(ctx, prep, sel.Egress, streamBody, id, transport)
+	raw, err := p.codex.ResponsesCall(ctx, prep, sel.Egress, call, transport)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -249,12 +248,12 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	}
 	// 写出字节：直连原样透传合成体；转换路径反向映射回客户端协议（+ 客户端模型
 	// 回填）。转换失败在任何字节写出前返回，交 failover 分类（→ 500）。
-	if err := out.Body(resp.Raw); err != nil {
+	if err := out.Body(raw); err != nil {
 		return http.StatusInternalServerError, nil, false, err
 	}
 	// 合成体顶层 usage：缺失/显式 null → ok=false → 恒 0。
 	var it, ot, tt, cr, cc int64
-	if t, ok := responsesBodyUsage(resp.Raw); ok {
+	if t, ok := responsesBodyUsage(raw); ok {
 		it, ot, tt, cr, cc = t.it, t.ot, t.tt, t.cr, t.cc
 		// 推进（§3.3）：SDK 的聚合臂在返回前已 Close（连接同步归还进 idle 表），
 		// 所以此刻推进/退休看得见那条连接。仅"成功取到 usage"才推进。
@@ -262,7 +261,7 @@ func (p *Proxy) nonstreamCodexResponsesCore(ctx context.Context, r *http.Request
 	}
 	var img int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 	if respImageDetectOn(sel) {
-		img = respImageCountBody(resp.Raw)
+		img = respImageCountBody(raw)
 	}
 	ut := usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc, calls: img}
 	o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, nil))
@@ -310,7 +309,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		return 0, nil, false, err
 	}
 	// 请求级身份同非流式（先准备条目句柄，再取身份）。
-	prep, id, err := p.codexRequestPrep(ctx, sel, cred, streamBody)
+	prep, call, err := p.codexRequestPrep(ctx, sel, cred, streamBody)
 	if err != nil {
 		if r.Context().Err() != nil {
 			return 0, nil, false, r.Context().Err()
@@ -319,7 +318,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 	}
 	// 出站传输开关同非流式（原生车道 = Selection 原值；转换车道钉 http）。
 	// 同一个 prep 句柄继续取 client/auth（不查第二次）。
-	resp, err := p.codex.StreamBodyPrepared(ctx, prep, sel.Egress, streamBody, id, transport)
+	resp, err := p.codex.StreamBodyCall(ctx, prep, sel.Egress, call, transport)
 	if err != nil {
 		// 客户端断开（上游响应前）优先归因。
 		if r.Context().Err() != nil {
