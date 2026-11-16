@@ -82,7 +82,7 @@ func TestCodexResponsesHTTPBillingPG(t *testing.T) {
 	// 调度器接真实 loader（快照含 Ext eager-load；请求期零 DB）
 	re := rule.New(rule.Config{}, repos.Rules, nil, nil, nil)
 	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
-	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// transport 取自 sel.Egress.HTTP().Transport，两者不同源就等于没接线——
 	// 请求会绕过测试替身直接打真实 codex 端点）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransport(up.URL))
 	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, repos.Groups, re, nil, nil, nil, nil)

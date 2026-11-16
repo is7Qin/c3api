@@ -23,7 +23,7 @@ import (
 // errNilEgressClient 出栈 client 缺失（跨包契约违例）。
 //
 // 每个出栈入口的末参 `hc *http.Client` 是**本次出口**（调度器快照上已解析好的
-// `Selection.Egress.HTTP`，直连也走同一条抽象）：本包不认识"代理"，只认识
+// `Selection.Egress.HTTP()`，直连也走同一条抽象）：本包不认识"代理"，只认识
 // client。`hc == nil` 意味着调用方漏了接线——那是装配错误，必须变成可诊断的
 // network 失败而不是 nil 指针 panic。
 //

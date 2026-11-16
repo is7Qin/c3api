@@ -85,7 +85,7 @@ func newConvertedCodexTestProxy(t *testing.T, credType credential.Type, accounts
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
-	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// transport 取自 sel.Egress.HTTP().Transport，两者不同源就等于没接线——
 	// 请求会绕过测试替身直接打真实 codex 端点）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	// 线程退役与配置批次（活跃集 + 账号删除）出口与生产同形：先构造共享表，再交给调度器与适配层。
@@ -422,7 +422,7 @@ func newConvertedCodexTestProxyAccs(t *testing.T, accs map[int64][]*domain.Accou
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的 transport
-	// 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线）。
+	// 取自 sel.Egress.HTTP().Transport，两者不同源就等于没接线）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	// 线程退役与配置批次（活跃集 + 账号删除）出口与生产同形：先构造共享表，再交给调度器与适配层。
 	codexClients := sdkbridge.NewClientTable()

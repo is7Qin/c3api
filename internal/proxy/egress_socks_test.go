@@ -37,7 +37,7 @@ func TestEgressSOCKS5RemoteResolvesDomainAndAuth(t *testing.T) {
 
 	// 目标写成一个**不存在于本机 DNS 的域名**：如果客户端本地解析，这里一定失败；
 	// 它成功了就证明"域名原样交给代理"（远程解析）。
-	resp, err := c.HTTP.Get("http://egress-socks-target.test:8080/v1/chat/completions")
+	resp, err := c.HTTP().Get("http://egress-socks-target.test:8080/v1/chat/completions")
 	require.NoError(t, err, "socks5 出口必须经代理建连（本地无法解析该域名）")
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
@@ -69,7 +69,7 @@ func TestEgressSOCKS5WrongCredentialsFail(t *testing.T) {
 	pool := egress.NewPool(nil)
 	c := pool.For(egress.New("socks5", host, port, "right-user", "wrong-pass"))
 
-	_, err := c.HTTP.Get("http://egress-socks-target.test:8080/v1/chat/completions")
+	_, err := c.HTTP().Get("http://egress-socks-target.test:8080/v1/chat/completions")
 	require.Error(t, err, "socks5 认证失败必须变成请求错误")
 
 	_, _, auths, _ := socks.snapshot()
@@ -90,7 +90,7 @@ func TestEgressSOCKS5NoAuth(t *testing.T) {
 
 	pool := egress.NewPool(nil)
 	c := pool.For(egress.New("socks5", host, port, "", ""))
-	resp, err := c.HTTP.Get("http://egress-socks-target.test/v1/responses")
+	resp, err := c.HTTP().Get("http://egress-socks-target.test/v1/responses")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)

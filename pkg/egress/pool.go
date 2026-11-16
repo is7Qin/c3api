@@ -23,11 +23,50 @@ import (
 // Codex 客户端不发）。它有自己的连接池，与 HTTP 同 Spec、同代理；需要"不发 Accept-Encoding"的调用面
 // （Codex 的 HTTP/WS 与探测 seam）只用它。底座 transport 类型未知（只有测试会
 // 走到）时不派生，Codex 与 HTTP 是同一个 *http.Client。生产里 Codex 恒非 nil。
+// Flavour 是出口 client 的**口味**：闭集，枚举的是"同一条出口上需要几种出站行为"。
+//
+// 为什么是闭集数组而不是 map/接口/字符串键：口味派生是**构造期**动作，读取是每请求
+// 动作。数组 + 具名 accessor（**常量下标**）内联后与读字段同价（实测 0.225 ns vs
+// 0.231 ns/次）；换成 map 是哈希查找，换成 `Client(f Flavour)` 变量下标是 1.8×
+// （0.41 ns/次，边界检查 + 常数折叠不了）。见 specs/2026-11-16-egress-flavours-design.md §2。
+type Flavour uint8
+
+const (
+	// FlavourHTTP 标准出站（压缩语义按 Go 默认）。
+	FlavourHTTP Flavour = iota
+	// FlavourNoCompression 关闭自动压缩的出站：对齐那些不发 `Accept-Encoding: gzip`
+	// 的上游客户端（Codex 的 HTTP/WS 与探测 seam 用它）。
+	FlavourNoCompression
+
+	numFlavours
+)
+
+// Client 是一条出口：连接规格 + 每种口味一个专属 *http.Client。
+//
+// 专属的是 **Transport**（= 专属连接池）：换出口必须换连接池，否则同一条 upstream
+// keep-alive 连接会被跨出口复用——出口配置换了，实际走的连接没换。底座 client 的
+// 其余行为（Timeout/CheckRedirect/Jar）按值克隆，出口不改它们的语义。
+//
+// Spec 是**值**且零值 = 直连：直连与代理走同一个类型，出栈处没有"有没有代理"的第二
+// 个分支（spec-proxy-pool §4.2 的核心）。
+//
+// 口味存在数组里（而不是按名字摊成字段）：**新增一种口味只改常量表与底座表**，
+// `For` 的派生循环与 `CloseClients` 的关闭循环自动覆盖——"加了口味忘了关连接池"
+// 这个静默泄漏因此写不出来。
 type Client struct {
-	Spec          Spec // 零值 = 直连
-	HTTP          *http.Client
-	NoCompression *http.Client
+	Spec    Spec // 零值 = 直连
+	clients [numFlavours]*http.Client
 }
+
+// HTTP 标准出站 client。
+func (c *Client) HTTP() *http.Client { return c.clients[FlavourHTTP] }
+
+// NoCompression 关闭自动压缩的出站 client。
+//
+// 与 HTTP 同 Spec、同代理、同 Timeout/CheckRedirect/Jar，差别只在
+// `DisableCompression=true` 与它自己的连接池（独立连接池 ⇒ 每个出口的实际连接上限
+// 是配置值的倍数：每种口味各一份）。
+func (c *Client) NoCompression() *http.Client { return c.clients[FlavourNoCompression] }
 
 // Pool 是**进程级持久**的出口 client 注册表：按 Spec.Key() 复用，不随快照回收
 // （改 base_url 不该重建代理连接池），旧规格靠显式 Detach + 锁外关闭并移除。
@@ -35,13 +74,16 @@ type Client struct {
 // 生命周期纪律：For / Detach 只可能在快照期与管理面写后调用（低频）；热路径只
 // 读快照上已解析好的 *Client 指针——0 次 map 读、0 次分支、0 分配。
 type Pool struct {
-	mu   sync.Mutex
-	base *http.Client // 克隆底座（与 aiclient Factory 共用同一个 client）
-	// noCompressionBase 是 base 派生的关闭自动压缩底座（构造期一次）；底座 transport 类型
-	// 未知时就是 base 本身（见 codexClientOf）。
-	noCompressionBase *http.Client
-	direct            *Client // 构造期单例（Spec 零值，base / codexBase 原样）
-	byKey             map[[16]byte]*Client
+	mu sync.Mutex
+	// bases 是每种口味的底座 client（构造期一次定型）。同一指针出现在多个槽位 ⇒
+	// 该口味无法独立派生，`For` 会让它们共用同一个克隆（保持旧的"就是同一个 client"
+	// 语义）。
+	bases [numFlavours]*http.Client
+	// canDeriveNoCompression 构造期算好：底座 transport 是否支持派生关闭自动压缩的
+	// 副本。取代上一版 `noCompressionBase != base` 的**指针比较**——那是隐式类型开关。
+	canDeriveNoCompression bool
+	direct                 *Client // 构造期单例（Spec 零值，各口味底座原样）
+	byKey                  map[[16]byte]*Client
 }
 
 // NewPool 建池。base 是直连底座（生产由 main 注入与 aiclient Factory 同一个
@@ -51,13 +93,16 @@ func NewPool(base *http.Client) *Pool {
 	if base == nil {
 		base = http.DefaultClient
 	}
-	noCompressionBase := codexClientOf(base)
-	return &Pool{
-		base:              base,
-		noCompressionBase: noCompressionBase,
-		direct:            &Client{HTTP: base, NoCompression: noCompressionBase},
-		byKey:             make(map[[16]byte]*Client),
+	noCompression := codexClientOf(base)
+	p := &Pool{
+		canDeriveNoCompression: noCompression != base,
+		byKey:                  make(map[[16]byte]*Client),
 	}
+	p.bases[FlavourHTTP] = base
+	p.bases[FlavourNoCompression] = noCompression
+	// 直连出口：各口味用底座本身（不克隆，直连就是底座）。
+	p.direct = &Client{clients: p.bases}
+	return p
 }
 
 // Direct 返回直连出口（Spec 零值，构造期单例——未绑定账号的出口恒是这一个）。
@@ -78,14 +123,22 @@ func (p *Pool) For(spec Spec) *Client {
 	if c, ok := p.byKey[key]; ok {
 		return c
 	}
-	hc := p.newClient(p.base, spec)
-	nc := hc
-	if p.noCompressionBase != p.base {
-		// Codex 底座同样按本规格克隆（独立连接池、同一代理；DisableCompression 随
-		// Clone 保留）。底座未派生（类型未知，只有测试）时 Codex 就是 HTTP 本身。
-		nc = p.newClient(p.noCompressionBase, spec)
+	c := &Client{Spec: spec}
+	for f := range c.clients {
+		if c.clients[f] != nil {
+			continue
+		}
+		// 每种口味一份独立连接池、同一代理；口味间的差异（如 DisableCompression）
+		// 已在 bases 里定型，这里不认任何具体口味。
+		c.clients[f] = p.newClient(p.bases[f], spec)
+		for g := f + 1; g < int(numFlavours); g++ {
+			if p.bases[g] == p.bases[f] {
+				// 同一底座 ⇒ 共用同一个克隆（旧语义：底座不能派生时两个口味就是
+				// 同一个 *http.Client）。
+				c.clients[g] = c.clients[f]
+			}
+		}
 	}
-	c := &Client{Spec: spec, HTTP: hc, NoCompression: nc}
 	p.byKey[key] = c
 	return c
 }
@@ -120,11 +173,12 @@ func CloseClients(clients []*Client) {
 		if c == nil {
 			continue
 		}
-		if c.HTTP != nil {
-			c.HTTP.CloseIdleConnections()
-		}
-		if c.NoCompression != nil && c.NoCompression != c.HTTP {
-			c.NoCompression.CloseIdleConnections()
+		// 遍历口味：新增口味自动被关闭（漏关是静默泄漏，所以不能靠人记得写第二段）。
+		// 同一 client 出现两次是允许的——CloseIdleConnections 幂等，不需要判重。
+		for _, hc := range c.clients {
+			if hc != nil {
+				hc.CloseIdleConnections()
+			}
 		}
 	}
 }

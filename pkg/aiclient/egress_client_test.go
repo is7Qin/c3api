@@ -14,8 +14,8 @@ import (
 )
 
 // hcOf 取工厂底座 client：七个出栈入口的末参是**本次出口**（生产恒传
-// `sel.Egress.HTTP`），本包测试没有调度器，统一用它自己的底座——与生产
-// `Pool.Direct().HTTP` 是同一个 client（main 里 hc 同时喂 pool 与 factory）。
+// `sel.Egress.HTTP()`），本包测试没有调度器，统一用它自己的底座——与生产
+// `Pool.Direct().HTTP()` 是同一个 client（main 里 hc 同时喂 pool 与 factory）。
 // 只改调用点、不改任何既有断言。
 func hcOf(f *Factory) *http.Client { return f.hc }
 

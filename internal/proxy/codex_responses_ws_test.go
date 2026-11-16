@@ -6,11 +6,11 @@ package proxy
 
 import (
 	"context"
-	"errors"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -392,7 +392,7 @@ func newTestCodexWSProxy(t *testing.T, credType credential.Type, accounts map[in
 	re := rule.New(rule.Config{}, &fakeRuleStore{rules: map[int64]domain.Rule{}, next: 1}, nil, testHealthSink, nil)
 	require.NoError(t, re.Reload(context.Background()))
 	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
-	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// transport 取自 sel.Egress.HTTP().Transport，两者不同源就等于没接线——
 	// 请求会绕过测试替身直接打真实 codex 端点）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, upstream))
 	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)
@@ -741,7 +741,7 @@ func TestCodexWSDial401RuleCustomMessage(t *testing.T) {
 	rec := usage.New(usage.UsageConfig{BatchSize: 100, FlushInterval: time.Hour, QuotaFlushInterval: time.Hour}, store, nil)
 	cfg := Config{MaxBodySize: 1 << 20, FailoverAttempts: 2, UpstreamTimeout: 5 * time.Second, UpstreamStreamTimeout: 30 * time.Second, UsageCapture: true}
 	// 出口池：调度器快照与 codex 适配层用**同一个**（M3 起 codex 客户端的
-	// transport 取自 sel.Egress.HTTP.Transport，两者不同源就等于没接线——
+	// transport 取自 sel.Egress.HTTP().Transport，两者不同源就等于没接线——
 	// 请求会绕过测试替身直接打真实 codex 端点）。
 	egPool := testEgressPool(newProxyOfficialRewriteTransportWithAssert(t, up.URL))
 	sched := scheduler.New(scheduler.Config{SyncInterval: time.Hour, Egress: egPool}, noopLoader{accs: accs}, re, nil, nil, nil, nil)

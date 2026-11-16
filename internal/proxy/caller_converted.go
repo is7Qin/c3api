@@ -77,11 +77,11 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var resp *http.Response
 		switch target {
 		case domain.FormatOpenAIResponses:
-			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP)
+			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP())
 		case domain.FormatAnthropic:
-			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP)
+			resp, err = p.clients.AnthMessageRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyAnthropic, defaultPathAnthropic), cred, streamBody, r.Header, sel.Egress.HTTP())
 		case domain.FormatOpenAIChat:
-			resp, err = p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP)
+			resp, err = p.clients.ChatCompletionRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyChat, defaultPathChat), cred, streamBody, r.Header, sel.Egress.HTTP())
 		}
 		if err != nil {
 			return statusOf(err), upstreamBody(err), false, err

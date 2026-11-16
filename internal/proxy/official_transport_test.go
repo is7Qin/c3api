@@ -105,7 +105,7 @@ func TestProxyOfficialRewriteTransport_ConcurrentNoHangAndMismatch(t *testing.T)
 //
 // 为什么需要它：混合类型夹具（同组内 codex 账号 + api_key 账号）里，api_key 面
 // 的出栈目标是本地替身 URL（`Template.BaseURL` = 替身），它不在官方端点白名单里；
-// 而 M3 起**两条面共用同一个出口池**（`sel.Egress.HTTP` 对 codex SDK 与 aiclient
+// 而 M3 起**两条面共用同一个出口池**（`sel.Egress.HTTP()` 对 codex SDK 与 aiclient
 // 是同一个 transport），所以夹具的池必须两种流量都能承载。codex-only 夹具继续用
 // `...WithAssert`（只认官方端点，多了就是接线错）。
 func newEgressRewriteTransport(t *testing.T, target string) http.RoundTripper {

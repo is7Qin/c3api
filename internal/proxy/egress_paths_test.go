@@ -284,7 +284,7 @@ func egressFaceCases() []egressFaceCase {
 // 只见替身注入的标记头；**解绑（Direct）**后标记头消失。每面各一条：chat（流+非流）、
 // responses、anthropic、images（JSON+multipart）、search、resp-ws。
 //
-// 这条用例同时是"接线门"：任何一面忘了把 `sel.Egress.HTTP`（或 codex 面的
+// 这条用例同时是"接线门"：任何一面忘了把 `sel.Egress.HTTP()`（或 codex 面的
 // `sel.Egress`）传下去，bound 子用例就会因为 `mark=0` 失败——而不是静默直连。
 func TestEgressPathsEveryFaceGoesThroughProxy(t *testing.T) {
 	for _, tc := range egressFaceCases() {
@@ -326,7 +326,7 @@ func TestEgressPathsSelectionCarriesBinding(t *testing.T) {
 	require.NotEqual(t, (egress.Spec{}), sel.Egress.Spec, "绑定账号的出口带规格")
 	require.NotNil(t, sel.ProxyID, "绑定行 id 与出口同源携带（失败日志要用）")
 	require.Equal(t, int64(7), *sel.ProxyID)
-	require.NotNil(t, sel.Egress.HTTP.Transport, "代理出口必须是自己的 transport（专属连接池）")
+	require.NotNil(t, sel.Egress.HTTP().Transport, "代理出口必须是自己的 transport（专属连接池）")
 
 	direct := newEgressPathProxy(t, up.URL, []domain.RequestFormat{domain.FormatOpenAIChat}, "", false)
 	sel2, err := direct.sched.Select(10, domain.FormatOpenAIChat, "gpt-4o")

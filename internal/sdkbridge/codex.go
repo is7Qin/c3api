@@ -41,7 +41,7 @@ type Codex struct {
 	wsCache int
 	// egress 出口池（构造期注入；M3 取代旧的单个 http.RoundTripper 字段）。
 	// SDK 客户端的 transport 是**构造期**参数，所以出口只能按账号在 clientFor
-	// 构造时注入（`eg.NoCompression.Transport`——同一出口派生的关闭自动压缩连接池，见
+	// 构造时注入（`eg.NoCompression().Transport`——同一出口派生的关闭自动压缩连接池，见
 	// egressCodexTransport）；同一账号
 	// 不同出口靠 clientKey 的 proxy 维分桶。nil 且调用面要求出口 ⇒ 明确 error
 	// （errEgressNotWired），绝不静默退回底座。
@@ -588,15 +588,15 @@ func (a *Codex) clientOnEgress(e *codexEntry, eg *egress.Client, transport domai
 	})
 }
 
-// egressCodexTransport 取出口的"关闭自动压缩"出站 transport（egress.Client.NoCompression）。
+// egressCodexTransport 取出口的"关闭自动压缩"出站 transport（egress.Client.NoCompression()）。
 //
 // `Codex == nil` 只出现在测试里手写的 `egress.Client` 字面量（egress.Pool 构造的
 // 出口恒带 Codex）：回退 HTTP 面 transport，保持这些测试的既有出站路径。
 func egressCodexTransport(eg *egress.Client) http.RoundTripper {
-	if eg.NoCompression == nil {
-		return eg.HTTP.Transport
+	if eg.NoCompression() == nil {
+		return eg.HTTP().Transport
 	}
-	return eg.NoCompression.Transport
+	return eg.NoCompression().Transport
 }
 
 // RetireThread 退役账号某线程的空闲 WS 连接（线程退休 / 重载丢槽的唯一出口）。

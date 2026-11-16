@@ -39,7 +39,7 @@ func dialPinnedTransport(srv *httptest.Server) *http.Transport {
 // TestCodexEgressTransportNoAutoGzip（C3-9 的 sdkbridge 接线）：Codex HTTP（含 ws
 // 腿的 HTTPClient）与 DialPrepared 两处 WithTransport 都用出口的 Codex 底座——上游
 // 收到的请求与握手都没有 Accept-Encoding；同一出口的 HTTP 面仍自动带 gzip。
-// 负例：任一处改回 eg.HTTP.Transport ⇒ 对应臂收到 gzip，红。
+// 负例：任一处改回 eg.HTTP().Transport ⇒ 对应臂收到 gzip，红。
 func TestCodexEgressTransportNoAutoGzip(t *testing.T) {
 	up := &transportUpstream{}
 	var mu sync.Mutex
@@ -66,7 +66,7 @@ func TestCodexEgressTransportNoAutoGzip(t *testing.T) {
 		srv.Close()
 	})
 	pool := egress.NewPool(&http.Client{Transport: dialPinnedTransport(srv)})
-	require.NotSame(t, pool.Direct().HTTP, pool.Direct().NoCompression)
+	require.NotSame(t, pool.Direct().HTTP(), pool.Direct().NoCompression())
 	a := NewCodex(nil, pool, nil, RotationDeps{})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -84,7 +84,7 @@ func TestCodexEgressTransportNoAutoGzip(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.CloseNow())
 
-	resp, err := pool.Direct().HTTP.Get("https://chatgpt.com/plain")
+	resp, err := pool.Direct().HTTP().Get("https://chatgpt.com/plain")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 

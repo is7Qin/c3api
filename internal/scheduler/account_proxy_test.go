@@ -233,7 +233,7 @@ func TestReloadPrunesUnreferencedEgress(t *testing.T) {
 
 // TestEgressHotPathIsFieldRead 把 G5「零开销」的可读部分钉在测试里：Selection 的
 // 出口只来自快照字段的一次读——同一份池、两次选号拿到**同一个指针**（没有 per-call
-// For/建 client），且 `Selection.Egress.HTTP` 是池里那个 client 的 HTTP。
+// For/建 client），且 `Selection.Egress.HTTP()` 是池里那个 client 的 HTTP。
 func TestEgressHotPathIsFieldRead(t *testing.T) {
 	tplA := tpl(1, domain.FormatOpenAIChat, []string{"gpt-4o"})
 	px := &domain.Proxy{ID: 1, Scheme: domain.ProxySchemeHTTPS, Host: "10.0.0.1", Port: 8443, Enabled: true}
@@ -245,7 +245,7 @@ func TestEgressHotPathIsFieldRead(t *testing.T) {
 		sel, err := s.Select(10, domain.FormatOpenAIChat, "gpt-4o")
 		require.NoError(t, err)
 		require.Same(t, pool.For(specOfDomain(px)), sel.Egress)
-		require.NotNil(t, sel.Egress.HTTP)
+		require.NotNil(t, sel.Egress.HTTP())
 		sel.Release()
 	}
 	require.Equal(t, sizeBefore, pool.Size(), "选号不得建新 client（热路径零池操作）")

@@ -98,27 +98,27 @@ func TestCodexTransportNoAutoGzip(t *testing.T) {
 			pool := NewPool(base)
 
 			direct := pool.Direct()
-			require.Same(t, base, direct.HTTP, "HTTP 面直连仍是底座原样")
-			require.NotNil(t, direct.NoCompression)
-			require.NotSame(t, direct.HTTP, direct.NoCompression, "已知底座必须派生独立的 Codex client")
-			require.NotSame(t, direct.HTTP.Transport, direct.NoCompression.Transport, "Codex 必须是独立连接池")
+			require.Same(t, base, direct.HTTP(), "HTTP 面直连仍是底座原样")
+			require.NotNil(t, direct.NoCompression())
+			require.NotSame(t, direct.HTTP(), direct.NoCompression(), "已知底座必须派生独立的 Codex client")
+			require.NotSame(t, direct.HTTP().Transport, direct.NoCompression().Transport, "Codex 必须是独立连接池")
 
-			getAndDrain(t, direct.NoCompression, up.srv.URL+"/codex")
+			getAndDrain(t, direct.NoCompression(), up.srv.URL+"/codex")
 			require.Empty(t, up.last(t).acceptEncoding, "Codex 直连出站不得自动带 Accept-Encoding")
-			getAndDrain(t, direct.HTTP, up.srv.URL+"/other")
+			getAndDrain(t, direct.HTTP(), up.srv.URL+"/other")
 			require.Equal(t, []string{"gzip"}, up.last(t).acceptEncoding, "非 Codex 面仍自动带 gzip")
 
 			host, port := splitHostPort(t, proxy.srv.Listener.Addr().String())
 			c := pool.For(New("http", host, port, "", ""))
-			require.NotNil(t, c.NoCompression)
-			require.NotSame(t, c.HTTP, c.NoCompression)
-			require.NotSame(t, c.HTTP.Transport, c.NoCompression.Transport, "代理出口的 Codex 也必须是独立连接池")
+			require.NotNil(t, c.NoCompression())
+			require.NotSame(t, c.HTTP(), c.NoCompression())
+			require.NotSame(t, c.HTTP().Transport, c.NoCompression().Transport, "代理出口的 Codex 也必须是独立连接池")
 
-			getAndDrain(t, c.NoCompression, "http://upstream.invalid/codex")
+			getAndDrain(t, c.NoCompression(), "http://upstream.invalid/codex")
 			seen := proxy.last(t)
 			require.Equal(t, "http://upstream.invalid/codex", seen.uri, "Codex 面必须经代理（绝对 URI）")
 			require.Empty(t, seen.acceptEncoding, "Codex 经代理出站不得自动带 Accept-Encoding")
-			getAndDrain(t, c.HTTP, "http://upstream.invalid/other")
+			getAndDrain(t, c.HTTP(), "http://upstream.invalid/other")
 			seen = proxy.last(t)
 			require.Equal(t, "http://upstream.invalid/other", seen.uri)
 			require.Equal(t, []string{"gzip"}, seen.acceptEncoding, "非 Codex 面经代理仍自动带 gzip")
@@ -138,16 +138,16 @@ func TestCodexTransportNoAutoGzip(t *testing.T) {
 			return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 		})}
 		pool := NewPool(base)
-		require.Same(t, pool.Direct().HTTP, pool.Direct().NoCompression, "未知 RoundTripper 不派生：Codex 就是 HTTP")
+		require.Same(t, pool.Direct().HTTP(), pool.Direct().NoCompression(), "未知 RoundTripper 不派生：Codex 就是 HTTP")
 		c := pool.For(New("http", "127.0.0.1", 3128, "", ""))
-		require.Same(t, c.HTTP, c.NoCompression, "未知 RoundTripper 的代理出口同样 Codex == HTTP")
+		require.Same(t, c.HTTP(), c.NoCompression(), "未知 RoundTripper 的代理出口同样 Codex == HTTP")
 
-		getAndDrain(t, pool.Direct().NoCompression, "http://upstream.invalid/x")
+		getAndDrain(t, pool.Direct().NoCompression(), "http://upstream.invalid/x")
 		require.Equal(t, int32(1), hits.Load(), "Codex 面必须仍走测试的改写 transport（不得退回 DefaultTransport）")
 		require.NotPanics(t, func() { CloseClients([]*Client{pool.Direct(), c}) })
 
 		nilBase := NewPool(nil)
-		require.Same(t, nilBase.Direct().HTTP, nilBase.Direct().NoCompression, "nil 底座（DefaultClient）不派生")
+		require.Same(t, nilBase.Direct().HTTP(), nilBase.Direct().NoCompression(), "nil 底座（DefaultClient）不派生")
 	})
 }
 

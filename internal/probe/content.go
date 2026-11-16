@@ -609,7 +609,7 @@ func (p *Prober) downloadProbeImage(ctx context.Context, spec domain.ProbeSpec) 
 		return nil, "", domain.ProbeErrorImageFetchFailed
 	}
 	eg := p.pool.For(spec.Egress)
-	if eg == nil || eg.HTTP == nil {
+	if eg == nil || eg.HTTP() == nil {
 		return nil, "", domain.ProbeErrorImageFetchFailed
 	}
 	target, err := url.Parse(spec.ImageURL)
@@ -619,10 +619,10 @@ func (p *Prober) downloadProbeImage(ctx context.Context, spec domain.ProbeSpec) 
 	// URL userinfo 会被 net/http 自动转成 Basic Authorization 头；探测取图必须
 	// 保持全新空头，不能把 URL 里的凭据带到图片源。
 	target.User = nil
-	hc := *eg.HTTP
+	hc := *eg.HTTP()
 	hc.Jar = nil // 克隆 client 必须清空 Jar
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	hc.Transport = transportOrDefault(eg.HTTP.Transport)
+	hc.Transport = transportOrDefault(eg.HTTP().Transport)
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {

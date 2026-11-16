@@ -48,7 +48,7 @@ func TestEgressHTTPConnectProxyTunnel(t *testing.T) {
 	c := pool.For(spec)
 	require.Equal(t, spec.Key(), c.Spec.Key(), "同一规格复用同一出口 client")
 
-	resp, err := c.HTTP.Get(up.URL + "/v1/responses")
+	resp, err := c.HTTP().Get(up.URL + "/v1/responses")
 	require.NoError(t, err, "CONNECT 隧道必须建立")
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
@@ -79,7 +79,7 @@ func TestEgressHTTPPlainProxySendsAbsoluteURI(t *testing.T) {
 	pool := egress.NewPool(up.Client())
 	c := pool.For(specOfProxyURL(t, "http", proxy.URL, "u", "p"))
 
-	resp, err := c.HTTP.Get(up.URL + "/v1/chat/completions")
+	resp, err := c.HTTP().Get(up.URL + "/v1/chat/completions")
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -105,7 +105,7 @@ func TestEgressHTTPProxyAuthRequired407(t *testing.T) {
 	pool := egress.NewPool(up.Client())
 	c := pool.For(specOfProxyURL(t, "http", proxy.URL, "wrong", "wrong"))
 
-	resp, err := c.HTTP.Get(up.URL + "/v1/responses")
+	resp, err := c.HTTP().Get(up.URL + "/v1/responses")
 	require.Error(t, err, "407 必须变成请求错误（不静默直连）")
 	if resp != nil {
 		resp.Body.Close()
@@ -134,7 +134,7 @@ func TestEgressHTTPConnectFailed(t *testing.T) {
 	pool := egress.NewPool(up.Client())
 	c := pool.For(specOfProxyURL(t, "http", proxy.URL, "", ""))
 
-	_, err := c.HTTP.Get(up.URL + "/v1/responses")
+	_, err := c.HTTP().Get(up.URL + "/v1/responses")
 	require.Error(t, err, "CONNECT 失败必须变成请求错误")
 	require.Contains(t, err.Error(), "Bad Gateway",
 		"错误里能看出是代理拒绝建隧道：%v", err)
@@ -155,6 +155,6 @@ func TestEgressHTTPProxyRefused(t *testing.T) {
 
 	pool := egress.NewPool(up.Client())
 	c := pool.For(specOfProxyURL(t, "http", deadURL, "", ""))
-	_, err := c.HTTP.Get(up.URL + "/v1/chat/completions")
+	_, err := c.HTTP().Get(up.URL + "/v1/chat/completions")
 	require.Error(t, err, "代理拒连必须变成请求错误")
 }

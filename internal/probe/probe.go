@@ -292,17 +292,17 @@ func (p *Prober) guardedHTTPClientWith(spec domain.ProbeSpec, onlyOKOverflow boo
 		return nil, errors.New("egress pool not configured")
 	}
 	eg := p.pool.For(spec.Egress)
-	if eg == nil || eg.HTTP == nil {
+	if eg == nil || eg.HTTP() == nil {
 		return nil, errors.New("egress client not configured")
 	}
 	u, err := url.Parse(spec.BaseURL)
 	if err != nil || u.Scheme == "" || u.Hostname() == "" {
 		return nil, fmt.Errorf("invalid base_url %q", spec.BaseURL)
 	}
-	hc := *eg.HTTP
+	hc := *eg.HTTP()
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	guard := &originGuard{
-		next:   transportOrDefault(eg.HTTP.Transport),
+		next:   transportOrDefault(eg.HTTP().Transport),
 		scheme: strings.ToLower(u.Scheme),
 		host:   strings.ToLower(u.Hostname()),
 		port:   effectivePort(u),
@@ -332,14 +332,14 @@ func (p *Prober) guardedCodexTransport(spec domain.ProbeSpec) (http.RoundTripper
 		return nil, errors.New("egress pool not configured")
 	}
 	eg := p.pool.For(spec.Egress)
-	if eg == nil || eg.HTTP == nil {
+	if eg == nil || eg.HTTP() == nil {
 		return nil, errors.New("egress client not configured")
 	}
-	// Codex 出站用出口的"关闭自动压缩"底座（egress.Client.NoCompression）；Codex
+	// Codex 出站用出口的"关闭自动压缩"底座（egress.Client.NoCompression()）；Codex
 	// 为 nil 只出现在测试里手写的出口字面量，回退 HTTP 面 transport。
-	next := eg.HTTP.Transport
-	if eg.NoCompression != nil {
-		next = eg.NoCompression.Transport
+	next := eg.HTTP().Transport
+	if eg.NoCompression() != nil {
+		next = eg.NoCompression().Transport
 	}
 	okMax, errorMax := probeResponseLimits(spec)
 	return newCappedTransportLimit(&originGuard{

@@ -61,11 +61,11 @@ func TestPoolDirectSingleton(t *testing.T) {
 	pool := NewPool(nil)
 	direct := pool.Direct()
 	require.NotNil(t, direct)
-	require.NotNil(t, direct.HTTP)
+	require.NotNil(t, direct.HTTP())
 	require.Equal(t, Spec{}, direct.Spec, "直连 = 零值 Spec")
 	require.Same(t, direct, pool.Direct())
 	require.Same(t, direct, pool.For(Spec{}), "For 零值 spec ⇒ Direct()")
-	require.Same(t, http.DefaultClient, direct.HTTP, "base == nil ⇒ http.DefaultClient")
+	require.Same(t, http.DefaultClient, direct.HTTP(), "base == nil ⇒ http.DefaultClient")
 	require.Equal(t, 0, pool.Size(), "直连不占注册表条目")
 }
 
@@ -76,8 +76,8 @@ func TestPoolNilBaseDoesNotPanic(t *testing.T) {
 	require.NotPanics(t, func() {
 		c := pool.For(New("http", "127.0.0.1", 3128, "", ""))
 		require.NotNil(t, c)
-		require.NotNil(t, c.HTTP)
-		require.NotNil(t, c.HTTP.Transport)
+		require.NotNil(t, c.HTTP())
+		require.NotNil(t, c.HTTP().Transport)
 	})
 }
 
@@ -91,9 +91,9 @@ func TestPoolSpecsGetDistinctTransports(t *testing.T) {
 
 	a := pool.For(New("http", "127.0.0.1", 3128, "", ""))
 	b := pool.For(New("socks5", "127.0.0.1", 1080, "", ""))
-	require.NotSame(t, a.HTTP.Transport, b.HTTP.Transport)
+	require.NotSame(t, a.HTTP().Transport, b.HTTP().Transport)
 
-	tr, ok := a.HTTP.Transport.(*http.Transport)
+	tr, ok := a.HTTP().Transport.(*http.Transport)
 	require.True(t, ok)
 	require.NotNil(t, tr.Proxy, "代理 client 必须装配 Transport.Proxy")
 	req, err := http.NewRequest(http.MethodGet, "http://upstream.example/", nil)
@@ -107,7 +107,7 @@ func TestPoolSpecsGetDistinctTransports(t *testing.T) {
 	require.True(t, ok)
 	require.Nil(t, baseTr.Proxy, "底座 Transport 不得被代理装配改写")
 	// 直连 client 的 Transport 就是底座本身（零改造）。
-	require.Same(t, base.Transport, pool.Direct().HTTP.Transport)
+	require.Same(t, base.Transport, pool.Direct().HTTP().Transport)
 }
 
 // TestPoolDetachKeepsActiveAndRemovesRest 钉住 Detach 的取舍与幂等：活跃项保留
@@ -153,7 +153,7 @@ func TestPoolDetachClosesIdleConnections(t *testing.T) {
 	pool := NewPool(nil)
 	spec := New("http", host, port, "", "")
 	c := pool.For(spec)
-	resp, err := c.HTTP.Get("http://upstream.invalid/x")
+	resp, err := c.HTTP().Get("http://upstream.invalid/x")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
@@ -185,7 +185,7 @@ func TestPoolForRoutesThroughProxy(t *testing.T) {
 
 	pool := NewPool(nil)
 	c := pool.For(New("http", host, port, "alice", "s3cret"))
-	resp, err := c.HTTP.Get("http://upstream.invalid/hello")
+	resp, err := c.HTTP().Get("http://upstream.invalid/hello")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 
@@ -221,18 +221,18 @@ func TestPoolClonesShardedTransport(t *testing.T) {
 	host, port := splitHostPort(t, proxyAddr)
 	c := pool.For(New("http", host, port, "", ""))
 
-	tr, ok := c.HTTP.Transport.(*httpx.ShardedTransport)
+	tr, ok := c.HTTP().Transport.(*httpx.ShardedTransport)
 	require.True(t, ok, "分片底座经出口池后必须仍是分片（否则经代理的账号退回单连接）")
 	require.Equal(t, 4, tr.ShardCount())
-	require.NotSame(t, base.Transport, c.HTTP.Transport, "出口必须有自己的连接池")
-	require.Equal(t, 42*time.Second, c.HTTP.Timeout, "Timeout 必须沿用底座")
+	require.NotSame(t, base.Transport, c.HTTP().Transport, "出口必须有自己的连接池")
+	require.Equal(t, 42*time.Second, c.HTTP().Timeout, "Timeout 必须沿用底座")
 	// CheckRedirect 必须沿用底座的**行为**，不只是"非 nil"（被换成别的非 nil 函数也要红）。
-	require.NotNil(t, c.HTTP.CheckRedirect, "CheckRedirect 必须沿用底座")
-	require.ErrorIs(t, c.HTTP.CheckRedirect(
+	require.NotNil(t, c.HTTP().CheckRedirect, "CheckRedirect 必须沿用底座")
+	require.ErrorIs(t, c.HTTP().CheckRedirect(
 		&http.Request{URL: &url.URL{Scheme: "http", Host: "upstream.example"}}, nil),
 		http.ErrUseLastResponse, "克隆后必须仍是底座那个拒绝跟随重定向的回调")
 
-	resp, err := c.HTTP.Get("http://upstream.example/echo")
+	resp, err := c.HTTP().Get("http://upstream.example/echo")
 	require.NoError(t, err)
 	resp.Body.Close()
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -319,7 +319,7 @@ func TestPoolDetachClosesIdleConnectionsOnShardedBase(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := c.HTTP.Get("http://upstream.invalid/x")
+			resp, err := c.HTTP().Get("http://upstream.invalid/x")
 			if err != nil {
 				mu.Lock()
 				errs = append(errs, err)
@@ -387,9 +387,9 @@ func TestPoolHonorsAnyProxyCloner(t *testing.T) {
 	pool := NewPool(base)
 	c := pool.For(New("http", "127.0.0.1", 3128, "", ""))
 
-	tr, ok := c.HTTP.Transport.(*foreignProxyTransport)
+	tr, ok := c.HTTP().Transport.(*foreignProxyTransport)
 	require.True(t, ok, "实现了 CloneWithProxy 的 transport 必须被认领（池子只认能力）")
-	require.NotSame(t, base.Transport, c.HTTP.Transport, "出口必须是独立副本")
+	require.NotSame(t, base.Transport, c.HTTP().Transport, "出口必须是独立副本")
 	require.NotNil(t, tr.proxy, "Proxy 必须被覆盖")
 
 	req, err := http.NewRequest(http.MethodGet, "http://upstream.invalid/x", nil)
@@ -398,9 +398,9 @@ func TestPoolHonorsAnyProxyCloner(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "http://127.0.0.1:3128", u.String())
 
-	resp, err := c.HTTP.Get("http://upstream.invalid/x")
+	resp, err := c.HTTP().Get("http://upstream.invalid/x")
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.EqualValues(t, 1, hits.Load(), "请求必须走 stub 本身（不是 DefaultTransport 兜底）")
-	require.Same(t, base.Transport, pool.Direct().HTTP.Transport, "直连仍是底座本身，不被克隆")
+	require.Same(t, base.Transport, pool.Direct().HTTP().Transport, "直连仍是底座本身，不被克隆")
 }

@@ -19,7 +19,7 @@ import (
 
 // TestProbeCodexTransportNoAutoGzip：guardedCodexTransport 的下层是出口的 Codex
 // 底座（关闭自动压缩）——底座是真实 *http.Transport 时，codex 探测请求不带
-// Accept-Encoding。负例：改回 eg.HTTP.Transport ⇒ 收到 gzip，红。
+// Accept-Encoding。负例：改回 eg.HTTP().Transport ⇒ 收到 gzip，红。
 func TestProbeCodexTransportNoAutoGzip(t *testing.T) {
 	got := make(chan []string, 1)
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
