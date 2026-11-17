@@ -52,10 +52,18 @@ function DialogContent({
   return (
     <DialogPortal>
       <DialogOverlay />
+      {/* grid-cols-1 是**列宽**的唯一实现点（根因已实测，2026-11-17）：Popup 是 grid，但调用方
+          通常只传 `grid-rows-[…]`（行）⇒ 隐式列宽 = `auto` = 最宽子项的 max-content。账号
+          「编辑账号」弹窗里出口代理 `<Select>` 的长标签（`whitespace-nowrap`）把这一列撑到
+          448.9px > 内容盒 416px，再被 `overflow-hidden` 硬裁 ⇒ 用户看到「右边被截断」。
+          显式列 = `repeat(1, minmax(0,1fr))`：列宽不再由内容决定，任何弹窗的超长 nowrap 内容
+          都退化为「在框内省略」，不再把框撑破（一处改，全站弹窗受益）。
+          只约束列宽：行结构（`grid-rows-[auto_minmax(0,1fr)_auto]` 三段高度）与尺寸
+          （`sm:max-w-*`）仍由各页面自定，不要在这里接管。 */}
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
-          "fixed top-1/2 left-1/2 z-50 grid max-h-[calc(100dvh-2rem)] max-h-[calc(100svh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] p-4 text-sm text-popover-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] duration-100 outline-none dark:border-[rgba(148,180,220,0.32)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+          "fixed top-1/2 left-1/2 z-50 grid grid-cols-1 max-h-[calc(100dvh-2rem)] max-h-[calc(100svh-2rem)] w-full max-w-[calc(100%-2rem)] -translate-x-1/2 -translate-y-1/2 gap-4 overflow-y-auto overscroll-contain rounded-[14px] border border-[rgba(19,45,83,0.26)] bg-[color:var(--glass-card-light)] p-4 text-sm text-popover-foreground shadow-[inset_0_1px_0_rgba(255,255,255,0.5),0_10px_36px_rgba(19,45,83,0.16)] backdrop-blur-[var(--glass-blur)] duration-100 outline-none dark:border-[rgba(148,180,220,0.32)] dark:bg-[color:var(--glass-card-dark)] dark:shadow-[inset_0_1px_0_rgba(255,255,255,0.07),0_10px_36px_rgba(2,6,14,0.5)] sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
           className
         )}
         {...props}

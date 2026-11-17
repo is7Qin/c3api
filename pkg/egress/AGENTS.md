@@ -12,6 +12,9 @@
     client）；构造期一次由 base 派生 Codex 底座（`codexClientOf`）。
   - `Direct()` 直连单例；`For(spec)` 按 `Spec.Key()` 复用或克隆（同代理、独立连接池）；
     `Detach(active)` 摘除不再引用的 client；`CloseClients` 锁外关空闲连接。
+  - `NewClient(base, spec)`：**一次性**出口 client（按值克隆底座 + 专属 Transport），
+    **不进注册表**——探测这类非快照期动作专用，用完由调用方 `CloseIdleConnections`；
+    代理 URL 与 `For` 共用 `proxyURL`（唯一实现点）。
 - `Client{Spec, HTTP, Codex}`：`HTTP` 给通用上游；`Codex` 是同一出口由底座派生的
   **关闭自动压缩**副本（`DisableCompression=true`，Go 默认会加
   `Accept-Encoding: gzip`，官方 Codex 客户端不发），自有连接池、同 Spec 同代理。

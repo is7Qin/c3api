@@ -98,9 +98,10 @@ func TestPoolSpecsGetDistinctTransports(t *testing.T) {
 	require.NotNil(t, tr.Proxy, "代理 client 必须装配 Transport.Proxy")
 	req, err := http.NewRequest(http.MethodGet, "http://upstream.example/", nil)
 	require.NoError(t, err)
-	proxyURL, err := tr.Proxy(req)
+	// 局部名不用 proxyURL：那是本包的函数（唯一实现点），同名会把它遮蔽成看不见。
+	pu, err := tr.Proxy(req)
 	require.NoError(t, err)
-	require.Equal(t, "http://127.0.0.1:3128", proxyURL.String())
+	require.Equal(t, "http://127.0.0.1:3128", pu.String())
 
 	// 克隆底座不得污染底座本身（底座的连接池仍归直连用）。
 	baseTr, ok := base.Transport.(*http.Transport)

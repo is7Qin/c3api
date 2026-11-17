@@ -43,9 +43,9 @@ func proxyOwnerPred(scope domain.AccountScope) []predicate.Proxy {
 	return nil
 }
 
-// ProxyFields 代理条目的**可写列**（创建与更新共用）：不含探测三列、不含归属、不含
-// 时间戳与 id。那四项各有唯一的产生方式——探测三列只由 WriteProxyProbe 写、归属只由
-// 调用方的 scope 钉、时间戳由列默认、id 自增。
+// ProxyFields 代理条目的**可写列**（创建与更新共用）：不含探测四列（at/ok/error/ip）、
+// 不含归属、不含时间戳与 id。那四项各有唯一的产生方式——探测四列只由 WriteProxyProbe
+// 写、归属只由调用方的 scope 钉、时间戳由列默认、id 自增。
 //
 // 为什么要有这个类型：此前创建/更新都拿完整的 `domain.Proxy` 当入参，"哪些字段真的
 // 会被写"只能靠注释宣布（"p.Username 在更新面被忽略"）——调用方看不出边界，看漏了也
@@ -180,9 +180,9 @@ func applyProxySecret(u *ent.ProxyUpdate, c ProxyCredential) {
 // 写回」——后者有 read-modify-write 窗口：并发的另一次改凭据会被这次写回用读到的
 // 旧值覆盖（静默回滚），而 spec §6.1 的 PUT 语义要求三态原子。
 //
-// 入参是 ProxyUpdate：可写列由类型给出，**探测三列根本不在里面**——于是"PUT 不能把
+// 入参是 ProxyUpdate：可写列由类型给出，**探测四列根本不在里面**——于是"PUT 不能把
 // 上一次探测结论静默抹成从未探测"不再是一条要靠注释维持的纪律（探测结论是运维唯一
-// 的现场证据，不能因为改个备注而丢）。
+// 的现场证据，不能因为改个备注而丢；出口 IP 同理）。
 //
 // 其余可写列按入参整体覆盖（幂等、不依赖旧值）。软删行视同不存在；name 撞其它
 // 存活/已软删条目一律 ErrConflict（唯一索引不含 deleted_at——与 template 同语义）。
@@ -263,15 +263,25 @@ func (r *ProxyRepo) DeleteProxy(ctx context.Context, id int64) error {
 	})
 }
 
-// WriteProxyProbe 写回探测结果三元组（last_probe_at / ok / error）。errText 由调用方
-// 脱敏（§5.2）；探测结果**不影响** Routable（§6.3：enabled 是唯一开关）。
-func (r *ProxyRepo) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error {
+// WriteProxyProbe 写回探测结论四元组（last_probe_at / ok / error / ip）——这四列
+// 的**唯一**写点（全量 UpdateProxy 的入参里根本没有它们）。errText 由调用方脱敏
+// （§5.2）；探测结果**不影响** Routable（§6.3：enabled 是唯一开关）。
+//
+// ip 与 errText 是**同一次**探测的结论，必须整行覆盖写：ip 传空即清空上一次的值
+// （第二段失败不能留旧 IP 冒充本次结果）。不变量（§3.3 三态矩阵）：
+//   - ok=false ⇒ errText 是 TCP 错误、ip 必为 "";
+//   - ok=true && errText=="" ⇒ ip 是本次取到的出口 IP；
+//   - ok=true && errText!="" ⇒ TCP 通但取出口 IP 失败（第二段），ip 必为 ""。
+//
+// 仓储只负责"把调用方给的四元组原样落库"，不推断第二段是否跑过。
+func (r *ProxyRepo) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText, ip string) error {
 	n, err := r.client.Proxy.Update().
 		Where(proxy.IDEQ(id), proxy.DeletedAtIsNil()).
 		Where(proxyOwnerPred(domain.AccountScopeFrom(ctx))...).
 		SetLastProbeAt(at).
 		SetLastProbeOk(ok).
 		SetLastProbeError(errText).
+		SetLastProbeIP(ip).
 		Save(ctx)
 	if err != nil {
 		return err

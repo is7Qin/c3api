@@ -41,13 +41,21 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
   )
 }
 
+// 值槽是**单行省略**的唯一实现点（根因已实测，2026-11-17）：
+// - `min-w-0`：值槽是 trigger 的 flex 子项，默认 `min-width:auto` ⇒ 它的 min-content 贡献是
+//   整段标签（外面是 `whitespace-nowrap`），既把所在 grid 列撑到 max-content，也让自己不收缩；
+// - `truncate` 取代原来的 `line-clamp-1`：`line-clamp` 只有 `overflow:hidden` 的硬裁（没有
+//   「…」），而 truncate = `nowrap + overflow:hidden + text-overflow: ellipsis`，长标签以省略号收尾；
+// - `block` 而非 `flex`：`text-overflow` 只作用于**自己的**行内文本，值变成 flex 容器后文本会
+//   成为匿名 flex item，Chromium 实测「flex 容器 + truncate」不出省略号（只有硬裁）。值槽里
+//   只有一段 label，块布局就够；垂直居中由 trigger 的 `items-center` 负责。
 type SelectValueProps = Omit<SelectPrimitive.Value.Props, "children"> & { children?: never }
 
 function SelectValue({ className, ...props }: SelectValueProps) {
   return (
     <SelectPrimitive.Value
       data-slot="select-value"
-      className={cn("flex flex-1 text-left", className)}
+      className={cn("block min-w-0 flex-1 truncate text-left", className)}
       {...props}
     />
   )
@@ -66,7 +74,7 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "flex w-fit items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2 pl-2.5 text-sm whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-placeholder:text-muted-foreground data-[size=default]:h-8 data-[size=sm]:h-7 data-[size=sm]:rounded-[min(var(--radius-md),10px)] *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "flex w-fit items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2 pl-2.5 text-sm whitespace-nowrap transition-colors outline-none select-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-placeholder:text-muted-foreground data-[size=default]:h-8 data-[size=sm]:h-7 data-[size=sm]:rounded-[min(var(--radius-md),10px)] dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}

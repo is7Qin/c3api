@@ -194,8 +194,11 @@ export function buildProxyPayload(initial: ProxyView | null, draft: ProxyDraft, 
 //   分用户名与密码（密码可含 ':'）；`u:@host` ⇒ 无密码（后端允许"有用户名无密码"）。
 // - host/port 从右侧切：`[::1]:1080` 靠方括号给 IPv6 定界；其余取**最后一个** ':'。
 //   **裸 IPv6 必须写方括号**——`::1:1080` 无法判断哪个冒号是端口分隔符，报 badHost。
-// - name 由端点派生（`scheme://host:port`，与列表展示同一拼法 proxyEndpoint），超 64 字符
-//   报 nameTooLong 而**不静默截断**：截断会造出难以察觉的重名。
+// - name 由端点派生（`scheme://host:port`，与列表展示同一拼法 proxyEndpoint），**批次内**
+//   同端点第 k 次出现加 `#k` 后缀（见 assignImportNames）。最终名超 64 rune 报 nameTooLong
+//   而**不静默截断**：截断会造出难以察觉的重名。
+// - 解析分成两遍：第一遍只判语法、暂存派生**基名**；第二遍 `assignImportNames` 才定**最终名**
+//   （序号要看整批上下文，单行看不到「这是本批第几次」）。
 //
 // 边界（C3 的教训）：本函数只判"能否构成请求"（结构），**不判地址值是否合法**——端口范围
 // 越界必然 400，属结构约束；私网/回环拒绝与 host 字符集仍只有后端一份判据。
@@ -207,7 +210,7 @@ export type ProxyImportParseError =
   | 'emptyHost' // host 为空
   | 'badHost' // 方括号不配对，或裸 IPv6（必须写方括号）
   | 'badScheme' // scheme 不在白名单
-  | 'nameTooLong' // 派生 name 超过 64 字符
+  | 'nameTooLong' // 最终 name（派生基名 + 批次内 `#k` 后缀）超过 64 rune
   | 'emptyUsername' // 写了 `@` 但用户名是空的
 
 export interface ProxyImportLine {
@@ -229,7 +232,48 @@ export function parseProxyImportLines(text: string, defaultScheme: ProxyScheme):
     if (raw === '' || raw.startsWith('#')) continue
     out.push({ line: i + 1, raw, ...parseProxyImportLine(raw, defaultScheme) })
   }
-  return out
+  // 第二遍：批次内派名。序号是**整批**的属性（单行看不到自己是本批第几次），
+  // 故语法解析与派名必须分开；调用方拿到的 config.name 已是最终名。
+  return assignImportNames(out)
+}
+
+// —— 派名：批次内序号后缀（spec-proxy-import-naming §1）——
+//
+// 为什么需要它：name 由端点派生，同一端点不同凭据是**合法且常见**的（一个网关十个账号），
+// 但派生名相同就会撞域内唯一索引（平台池 `(name)`、私池 `(owner_uid,name)`），
+// 于是第 2..N 行全报「该名称已被占用」。
+//
+// 规则（只看这一批粘贴进来的内容，**不查库**）：
+// - 按原文行序，把**解析成功**的行按派生基名 `base = scheme://host:port` 分组；
+// - 组内第一次出现用 `base`，第 k 次（k ≥ 2）用 `base#k`；
+// - 组内只有一行 ⇒ 名字与「无后缀时代」逐字节相同（单行导入零行为变化）；
+// - 前缀 **不是** `user@`：`name` 会进 `domain.Proxy.String()` 的日志与 `err_logs.message`
+//   （spec §5.2「凭据落盘」红线），把 username 拼进名字等于把凭据写进日志。序号无此风险。
+// - `#` 不会撞既有基名，且这条不依赖 host 的字符集（后端其实**允许** host 含 `#`）：
+//   基名恒为 `<scheme>://<host>:<port>`，而 port 是纯十进制数字 ⇒ 基名恒以 `:<digit>` 结尾；
+//   `#k` 追加在 port 数字**之后** ⇒ 带后缀的名字恒以 `#<digit>` 结尾，不可能是任何基名；
+//   两个带后缀的名字相等只可能 base 与 k 都相等。scheme 白名单（四值）与 host 拒绝 `/ @`
+//   只是额外的收窄，真正的保证在上面这两句结构事实里。
+// - **不查库 = 不猜服务端状态**：贴了 10 行就要 10 条（批次内重复是明示意图）；
+//   跨批次重复仍报 conflict——「你已经导过这份清单了」是信息，不是缺陷（不做静默 upsert/改名）。
+// - **不静默截断**：判据是**最终名**（含 `#k`）≤ 64 rune，超了该行自己担 `nameTooLong`
+//   （既有错误码、文案不变），其余行不受影响。
+//
+// 纯函数：不改写入参；base 由 scheme/host/port 现拼（不读 config.name）⇒ 对已派名的输入
+// 再调一次结果不变（幂等），也不会把 `base#2` 当成新的基名。
+export function assignImportNames(lines: ProxyImportLine[]): ProxyImportLine[] {
+  const seen = new Map<string, number>()
+  return lines.map(line => {
+    if (line.config === undefined) return line // 语法已经失败的行不参与分组，也不占序号
+    const { scheme, host, port } = line.config
+    const base = proxyEndpoint({ scheme, host, port })
+    const k = (seen.get(base) ?? 0) + 1
+    seen.set(base, k)
+    const name = k === 1 ? base : `${base}#${k}`
+    // rune 计数：与后端 utf8.RuneCountInString 同口径（`[...s].length` = 码位个数）。
+    if ([...name].length > PROXY_NAME_MAX) return { line: line.line, raw: line.raw, error: 'nameTooLong' }
+    return { ...line, config: { ...line.config, name } }
+  })
 }
 
 function parseProxyImportLine(
@@ -281,10 +325,11 @@ function parseProxyImportLine(
   const port = Number(portRaw)
   if (port < PROXY_PORT_MIN || port > PROXY_PORT_MAX) return { error: 'badPort' }
 
-  const name = proxyEndpoint({ scheme, host, port })
-  if ([...name].length > PROXY_NAME_MAX) return { error: 'nameTooLong' }
+  // 派生**基名**（与列表展示同一拼法）。这里只暂存，不做长度判定：最终名还要看批次内
+  // 序号（`#k`），判据必须落在 assignImportNames 的最终名上，否则 `base#2` 会绕过上限。
+  const base = proxyEndpoint({ scheme, host, port })
 
-  const config: ProxyConfig = { name, scheme, host, port }
+  const config: ProxyConfig = { name: base, scheme, host, port }
   if (username !== '') config.username = username
   if (password !== undefined && password !== '') config.password = password
   return { config }

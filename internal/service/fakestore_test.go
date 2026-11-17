@@ -3178,7 +3178,7 @@ func (f *fakeStore) DeleteProxy(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error {
+func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText, ip string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	row, exists := f.proxies[id]
@@ -3188,6 +3188,7 @@ func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time,
 	row.p.LastProbeAt = &at
 	row.p.LastProbeOK = ok
 	row.p.LastProbeError = errText
+	row.p.LastProbeIP = ip
 	return nil
 }
 

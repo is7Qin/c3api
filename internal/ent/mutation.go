@@ -16864,6 +16864,7 @@ type ProxyMutation struct {
 	last_probe_at    *time.Time
 	last_probe_ok    *bool
 	last_probe_error *string
+	last_probe_ip    *string
 	updated_at       *time.Time
 	deleted_at       *time.Time
 	created_at       *time.Time
@@ -17515,6 +17516,42 @@ func (m *ProxyMutation) ResetLastProbeError() {
 	m.last_probe_error = nil
 }
 
+// SetLastProbeIP sets the "last_probe_ip" field.
+func (m *ProxyMutation) SetLastProbeIP(s string) {
+	m.last_probe_ip = &s
+}
+
+// LastProbeIP returns the value of the "last_probe_ip" field in the mutation.
+func (m *ProxyMutation) LastProbeIP() (r string, exists bool) {
+	v := m.last_probe_ip
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLastProbeIP returns the old "last_probe_ip" field's value of the Proxy entity.
+// If the Proxy object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ProxyMutation) OldLastProbeIP(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLastProbeIP is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLastProbeIP requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLastProbeIP: %w", err)
+	}
+	return oldValue.LastProbeIP, nil
+}
+
+// ResetLastProbeIP resets all changes to the "last_probe_ip" field.
+func (m *ProxyMutation) ResetLastProbeIP() {
+	m.last_probe_ip = nil
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (m *ProxyMutation) SetUpdatedAt(t time.Time) {
 	m.updated_at = &t
@@ -17670,7 +17707,7 @@ func (m *ProxyMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ProxyMutation) Fields() []string {
-	fields := make([]string, 0, 15)
+	fields := make([]string, 0, 16)
 	if m.name != nil {
 		fields = append(fields, proxy.FieldName)
 	}
@@ -17706,6 +17743,9 @@ func (m *ProxyMutation) Fields() []string {
 	}
 	if m.last_probe_error != nil {
 		fields = append(fields, proxy.FieldLastProbeError)
+	}
+	if m.last_probe_ip != nil {
+		fields = append(fields, proxy.FieldLastProbeIP)
 	}
 	if m.updated_at != nil {
 		fields = append(fields, proxy.FieldUpdatedAt)
@@ -17748,6 +17788,8 @@ func (m *ProxyMutation) Field(name string) (ent.Value, bool) {
 		return m.LastProbeOk()
 	case proxy.FieldLastProbeError:
 		return m.LastProbeError()
+	case proxy.FieldLastProbeIP:
+		return m.LastProbeIP()
 	case proxy.FieldUpdatedAt:
 		return m.UpdatedAt()
 	case proxy.FieldDeletedAt:
@@ -17787,6 +17829,8 @@ func (m *ProxyMutation) OldField(ctx context.Context, name string) (ent.Value, e
 		return m.OldLastProbeOk(ctx)
 	case proxy.FieldLastProbeError:
 		return m.OldLastProbeError(ctx)
+	case proxy.FieldLastProbeIP:
+		return m.OldLastProbeIP(ctx)
 	case proxy.FieldUpdatedAt:
 		return m.OldUpdatedAt(ctx)
 	case proxy.FieldDeletedAt:
@@ -17885,6 +17929,13 @@ func (m *ProxyMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetLastProbeError(v)
+		return nil
+	case proxy.FieldLastProbeIP:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLastProbeIP(v)
 		return nil
 	case proxy.FieldUpdatedAt:
 		v, ok := value.(time.Time)
@@ -18057,6 +18108,9 @@ func (m *ProxyMutation) ResetField(name string) error {
 		return nil
 	case proxy.FieldLastProbeError:
 		m.ResetLastProbeError()
+		return nil
+	case proxy.FieldLastProbeIP:
+		m.ResetLastProbeIP()
 		return nil
 	case proxy.FieldUpdatedAt:
 		m.ResetUpdatedAt()

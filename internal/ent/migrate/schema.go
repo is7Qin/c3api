@@ -492,6 +492,7 @@ var (
 		{Name: "last_probe_at", Type: field.TypeTime, Nullable: true},
 		{Name: "last_probe_ok", Type: field.TypeBool, Default: false},
 		{Name: "last_probe_error", Type: field.TypeString, Default: ""},
+		{Name: "last_probe_ip", Type: field.TypeString, Default: ""},
 		{Name: "updated_at", Type: field.TypeTime},
 		{Name: "deleted_at", Type: field.TypeTime, Nullable: true},
 		{Name: "created_at", Type: field.TypeTime},

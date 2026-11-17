@@ -270,14 +270,18 @@ func init() {
 	proxyDescLastProbeError := proxyFields[12].Descriptor()
 	// proxy.DefaultLastProbeError holds the default value on creation for the last_probe_error field.
 	proxy.DefaultLastProbeError = proxyDescLastProbeError.Default.(string)
+	// proxyDescLastProbeIP is the schema descriptor for last_probe_ip field.
+	proxyDescLastProbeIP := proxyFields[13].Descriptor()
+	// proxy.DefaultLastProbeIP holds the default value on creation for the last_probe_ip field.
+	proxy.DefaultLastProbeIP = proxyDescLastProbeIP.Default.(string)
 	// proxyDescUpdatedAt is the schema descriptor for updated_at field.
-	proxyDescUpdatedAt := proxyFields[13].Descriptor()
+	proxyDescUpdatedAt := proxyFields[14].Descriptor()
 	// proxy.DefaultUpdatedAt holds the default value on creation for the updated_at field.
 	proxy.DefaultUpdatedAt = proxyDescUpdatedAt.Default.(func() time.Time)
 	// proxy.UpdateDefaultUpdatedAt holds the default value on update for the updated_at field.
 	proxy.UpdateDefaultUpdatedAt = proxyDescUpdatedAt.UpdateDefault.(func() time.Time)
 	// proxyDescCreatedAt is the schema descriptor for created_at field.
-	proxyDescCreatedAt := proxyFields[15].Descriptor()
+	proxyDescCreatedAt := proxyFields[16].Descriptor()
 	// proxy.DefaultCreatedAt holds the default value on creation for the created_at field.
 	proxy.DefaultCreatedAt = proxyDescCreatedAt.Default.(func() time.Time)
 	redemptioncodeFields := schema.RedemptionCode{}.Fields()

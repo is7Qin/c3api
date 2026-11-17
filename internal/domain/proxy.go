@@ -60,9 +60,19 @@ type Proxy struct {
 	Remark         string
 	LastProbeAt    *time.Time // nil = 从未探测
 	LastProbeOK    bool
-	LastProbeError string    // 已脱敏的错误文本（§5.2）
-	CreatedAt      time.Time // 管理面读模型回显（§6.1）；不参与任何判定
-	UpdatedAt      time.Time // 同上
+	LastProbeError string // 已脱敏的错误文本（§5.2）
+	// LastProbeIP 是**探测结论列**（spec §3.3/§3.4）：最近一次探测经这条代理看到的
+	// 出口 IP，空串 = 未取到。**不进任何键、不影响可路由性**（Enabled 是唯一可用性
+	// 开关，Routable 只看它 + 绑定是否可用），只用于回显与排障。
+	//
+	// **写入侧不变量（不是 DB 约束）**：`LastProbeOK && LastProbeError != ""` ⇔
+	// 第一段 TCP 通、第二段取 IP 失败，此时本字段为 ""；LastProbeOK = false ⇒ 第二段
+	// 未尝试，本字段同样为 ""。这条等价关系**由 service.ProbeProxy 的那一次整行覆盖写
+	// 保证**——DB 层没有 CHECK/触发器，手工改库（运维 SQL、数据修复脚本）不受此限，
+	// 读侧不得把它当作数据库保证来推导业务结论。
+	LastProbeIP string    // 整行覆盖写：第二段失败必须清空上一次的值
+	CreatedAt   time.Time // 管理面读模型回显（§6.1）；不参与任何判定
+	UpdatedAt   time.Time // 同上
 }
 
 // EgressSpec 把领域代理对象降为出口规格值（egress.Spec）——**唯一的转换点**：

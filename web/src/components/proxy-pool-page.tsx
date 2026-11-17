@@ -261,7 +261,8 @@ export default function ProxyPoolPage() {
                     </span>
                   </TableCell>
                   <TableCell className="text-xs">
-                    {/* 探测结论只显示在行内：拨不通 = 200 + last_probe_ok=false，不是请求失败 */}
+                    {/* 探测结论只显示在行内：拨不通 = 200 + last_probe_ok=false，不是请求失败。
+                        ok 只表示「TCP 拨得通」，出口 IP 与错误文本各自独立呈现（spec §3.3）。 */}
                     {p.last_probe_at == null ? (
                       <span className="text-muted-foreground">{t('proxies.probeNever')}</span>
                     ) : (
@@ -270,7 +271,18 @@ export default function ProxyPoolPage() {
                           {p.last_probe_ok ? t('proxies.probeOK') : t('proxies.probeFailed')}
                           <span className="ml-1.5 text-muted-foreground">{formatDateTime(p.last_probe_at)}</span>
                         </div>
-                        {!p.last_probe_ok && p.last_probe_error && (
+                        {/* 第二段结论：经这条代理看到的出口 IP（空 = 未取到，原因在下面那行）。 */}
+                        {p.last_probe_ip && (
+                          <div className="flex items-center gap-1 select-text">
+                            <span className="text-muted-foreground">{t('proxies.probeEgressIP')}</span>
+                            <span className="font-mono tabular-nums">{p.last_probe_ip}</span>
+                          </div>
+                        )}
+                        {/* 错误文本**与 ok 无关**：ok=true 且这里非空 ⇔ TCP 通、但取 IP 失败；
+                            只在 !ok 时显示会让「IP 为什么是空的」对用户不可见（spec §3.3）。
+                            文本是**后端原文**（与导入失败行同一策略：conflict 有本地化文案，
+                            其余透出原文便于定位），因此中英混杂是有意的，不要做二次包装。 */}
+                        {p.last_probe_error && (
                           <div className="truncate text-muted-foreground" title={p.last_probe_error}>{truncate(p.last_probe_error, 80)}</div>
                         )}
                       </div>

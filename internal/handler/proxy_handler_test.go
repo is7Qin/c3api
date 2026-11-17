@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/require"
@@ -139,6 +141,37 @@ func TestProxyCreateListGet(t *testing.T) {
 	require.Equal(t, false, list.Rows[1]["has_password"])
 }
 
+// TestProxyListCarriesLastProbeIP `last_probe_ip` 的 **wire 正例**：只断言 null（未取到）
+// 会让映射整段可删而不红——空串在生成物里恒被省略成 null，负例与「字段根本没接上」
+// 长得一模一样。这里经**唯一写者** WriteProxyProbe 落一个真实 IP，再走列表端点断言
+// 它原样出现在 JSON 里；另一条从未探测 ⇒ 仍是 null（同风格的负例）。
+func TestProxyListCarriesLastProbeIP(t *testing.T) {
+	r, store := newProxyRouter(t)
+	withIP := createProxy(t, r, `{"name":"with-ip","scheme":"socks5","host":"10.0.0.1","port":1080}`)
+	withoutIP := createProxy(t, r, `{"name":"without-ip","scheme":"socks5","host":"10.0.0.2","port":1080}`)
+
+	fixed := time.Date(2026, 11, 17, 8, 9, 10, 0, time.UTC)
+	// 矩阵第二行：TCP 通 + 取到 IP ⇒ ok=true + 无错误 + 有 IP。写回走探测四列的唯一
+	// 入口（service.Store 同签名），不手工改 fakeStore 的内部字段。
+	require.NoError(t, store.WriteProxyProbe(context.Background(), withIP, fixed, true, "", "203.0.113.7"))
+
+	rec := doProxy(r, http.MethodGet, "/api/admin/proxies", "")
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var list struct {
+		Rows []map[string]any `json:"rows"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+	require.Len(t, list.Rows, 2)
+
+	require.EqualValues(t, withIP, list.Rows[0]["id"])
+	require.Equal(t, "203.0.113.7", list.Rows[0]["last_probe_ip"], "出口 IP 必须出现在 wire 上（删掉映射这行就红）")
+	require.Equal(t, true, list.Rows[0]["last_probe_ok"])
+	require.Nil(t, list.Rows[0]["last_probe_error"], "取到 IP ⇒ 无错误文本")
+
+	require.EqualValues(t, withoutIP, list.Rows[1]["id"])
+	require.Nil(t, list.Rows[1]["last_probe_ip"], "空 = 未取到 ⇒ null（与 last_probe_error 同风格）")
+}
+
 // TestProxyCredentialTriState 凭据三态（spec §3.3）：缺席 = 保留 / null = 清空 /
 // 值 = 落值 / "" = 400。username 与 password 同规矩（同一份三态语义）。
 func TestProxyCredentialTriState(t *testing.T) {
@@ -257,17 +290,30 @@ func TestProxyValidation400(t *testing.T) {
 	require.Equal(t, "::1", decodeProxyBody(t, rec)["host"])
 }
 
-// TestProxyProbe 探测：可达 ⇒ last_probe_ok=true；不可达 ⇒ 仍是 200 + ok=false +
-// 脱敏后的错误文本（拨不通是探测结论，不是 API 错误）。
+// TestProxyProbe 探测（spec §3.3 三态矩阵）：TCP 段与出口 IP 段**互不覆盖**——
+// TCP 拨得通但取不到出口 IP ⇒ 仍是 200 + ok=true + 错误文本 + IP 为空；
+// TCP 拨不通 ⇒ 200 + ok=false + 脱敏后的错误文本（拨不通是探测结论，不是 API 错误）。
 func TestProxyProbe(t *testing.T) {
 	r, _ := newProxyRouter(t)
 
-	// 可达：真起一个 TCP 监听（只拨 TCP，无握手 ⇒ 无需实现任何协议）。
+	// 可达：真起一个 TCP 监听，**接受即关**。第一段（TCP 拨号）因此通，第二段
+	// （经这条代理取出口 IP）立刻以 EOF 失败——不实现任何代理协议、不出网，也不
+	// 烧第二段的 10s 预算。本用例钉的是矩阵**第三行**（ok=true + 错误文本 + IP 空）；
+	// 第二行（TCP 通 + 真的取到 IP）只有 service 能覆盖：probeEgress 是那一侧的可测缝。
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer ln.Close()
-	addr, ok := ln.Addr().(*net.TCPAddr)
-	require.True(t, ok)
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return // ln 关闭 ⇒ 收尾退出
+			}
+			_ = conn.Close()
+		}
+	}()
+	addr, isTCP := ln.Addr().(*net.TCPAddr)
+	require.True(t, isTCP)
 	upID := createProxy(t, r, `{"name":"up","scheme":"http","host":"127.0.0.1","port":`+
 		strconv.Itoa(addr.Port)+`}`)
 
@@ -275,9 +321,12 @@ func TestProxyProbe(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	up := decodeProxyBody(t, rec)
 	requireNoPasswordKey(t, up)
-	require.Equal(t, true, up["last_probe_ok"], "可达 ⇒ last_probe_ok=true")
+	require.Equal(t, true, up["last_probe_ok"], "TCP 拨得通 ⇒ last_probe_ok 仍为 true（它只表示 TCP 段）")
 	require.NotNil(t, up["last_probe_at"], "探测后必须回显探测时刻")
-	require.Nil(t, up["last_probe_error"], "成功探测无错误文本")
+	require.Nil(t, up["last_probe_ip"], "取不到出口 IP ⇒ null")
+	upErr, isStr := up["last_probe_error"].(string)
+	require.True(t, isStr, "ok=true 且取 IP 失败必须回显原因，否则用户无法解释 IP 为什么是空的：%v", up)
+	require.NotEmpty(t, upErr)
 
 	// 不可达：拿一个刚关掉的端口（拒连）。
 	dead, err := net.Listen("tcp", "127.0.0.1:0")
@@ -296,6 +345,7 @@ func TestProxyProbe(t *testing.T) {
 	down := decodeProxyBody(t, rec)
 	requireNoPasswordKey(t, down)
 	require.Equal(t, false, down["last_probe_ok"])
+	require.Nil(t, down["last_probe_ip"], "第一段就失败 ⇒ IP 段未尝试，必须是 null（矩阵第一行）")
 	probeErr, ok := down["last_probe_error"].(string)
 	require.True(t, ok, "失败探测必须回显错误文本：%v", down)
 	require.NotEmpty(t, probeErr)

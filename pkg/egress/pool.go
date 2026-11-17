@@ -130,7 +130,7 @@ func (p *Pool) For(spec Spec) *Client {
 		}
 		// 每种口味一份独立连接池、同一代理；口味间的差异（如 DisableCompression）
 		// 已在 bases 里定型，这里不认任何具体口味。
-		c.clients[f] = p.newClient(p.bases[f], spec)
+		c.clients[f] = NewClient(p.bases[f], spec)
 		for g := f + 1; g < int(numFlavours); g++ {
 			if p.bases[g] == p.bases[f] {
 				// 同一底座 ⇒ 共用同一个克隆（旧语义：底座不能派生时两个口味就是
@@ -191,23 +191,49 @@ func (p *Pool) Size() int {
 	return len(p.byKey)
 }
 
-// newClient 由底座克隆出**专属连接池**的 client：Transport 一律克隆（不可共享，
-// 否则 Proxy 会写到别人的连接池上），Proxy 指向本规格的代理 URL。
+// proxyURL 把连接规格装配成 Transport.Proxy 认的代理 URL。
 //
-// schema 白名单校验在写面（§3.5）；这里按 Go 原生能力装配：socks5 / socks5h /
-// http / https 四种都经 Transport.Proxy（https 代理需 Go ≥1.24）。
-func (p *Pool) newClient(base *http.Client, spec Spec) *http.Client {
+// **唯一实现点**：Pool.For（快照期持久 client）与 NewClient（探测这类一次性旁路
+// client）共用这一处。两处各拼一次 URL 就会出现"池里的 client 与探测 client 走
+// 不同认证形态"这种没人一眼看得出的偏差（例如一处漏了 url.User：生产流量认证通过、
+// 探测恒 407，而两边都"能跑"）。
+//
+// 认证形态按 Go 原生能力装配：有用户名无密码 ⇒ url.User（URL 形态 `user@host`，
+// 不臆造一个空密码段）；空用户名 ⇒ 无 userinfo（没有用户名就无从认证，此时密码
+// 也不该出现在 URL 里）。
+func proxyURL(spec Spec) *url.URL {
 	u := &url.URL{Scheme: spec.Scheme, Host: spec.Addr()}
 	if spec.Username != "" {
-		// 有用户名无密码 ⇒ url.User（URL 形态 `user@host`，不臆造一个空密码段）。
 		if spec.Password == "" {
 			u.User = url.User(spec.Username)
 		} else {
 			u.User = url.UserPassword(spec.Username, spec.Password)
 		}
 	}
-	hc := *base // 按值克隆：Timeout/CheckRedirect/Jar 沿用底座
-	hc.Transport = cloneTransport(base, http.ProxyURL(u))
+	return u
+}
+
+// NewClient 由底座**按值克隆**出一个经 spec 出网的一次性 client：Transport 一律
+// 克隆（不可共享，否则 Proxy 会写到别人的连接池上），Proxy 指向本规格的代理 URL；
+// Timeout/CheckRedirect/Jar 沿用底座（出口不改它们的语义）。base == nil ⇒
+// http.DefaultClient（与 NewPool 同款缺省，只有测试路径会走到）。
+//
+// **不进 Pool 注册表**——探测这类旁路动作不要用 Pool.For 代替，两个方向都会坏：
+//   - 注册表只放**快照期**规格：Detach 的 active 集由"当前配置引用到的摘要"给出，
+//     探测造出来的 client 没有快照期身份 ⇒ 下一次 Detach 把它当"不再引用"摘除并
+//     关连接，探测可能落在一个正在被关闭的 client 上；
+//   - 反过来，为了不被摘除而把它留在表里 ⇒ 永久占一个条目（泄漏），且同一规格
+//     出现两个连接池，连接配额凭空翻倍。
+//
+// 一次性 client 由调用方收尾：用完 `CloseIdleConnections()` 后丢弃（没人替它管
+// 生命周期）。零值 spec（直连）没有代理可装配，不要走这里——直连就是底座本身
+// （与 Pool.Direct 同一语义）。
+func NewClient(base *http.Client, spec Spec) *http.Client {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	hc := *base
+	hc.Transport = cloneTransport(base, http.ProxyURL(proxyURL(spec)))
 	return &hc
 }
 

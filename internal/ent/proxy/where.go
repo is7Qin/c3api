@@ -114,6 +114,11 @@ func LastProbeError(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldLastProbeError, v))
 }
 
+// LastProbeIP applies equality check predicate on the "last_probe_ip" field. It's identical to LastProbeIPEQ.
+func LastProbeIP(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldLastProbeIP, v))
+}
+
 // UpdatedAt applies equality check predicate on the "updated_at" field. It's identical to UpdatedAtEQ.
 func UpdatedAt(v time.Time) predicate.Proxy {
 	return predicate.Proxy(sql.FieldEQ(FieldUpdatedAt, v))
@@ -772,6 +777,71 @@ func LastProbeErrorEqualFold(v string) predicate.Proxy {
 // LastProbeErrorContainsFold applies the ContainsFold predicate on the "last_probe_error" field.
 func LastProbeErrorContainsFold(v string) predicate.Proxy {
 	return predicate.Proxy(sql.FieldContainsFold(FieldLastProbeError, v))
+}
+
+// LastProbeIPEQ applies the EQ predicate on the "last_probe_ip" field.
+func LastProbeIPEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEQ(FieldLastProbeIP, v))
+}
+
+// LastProbeIPNEQ applies the NEQ predicate on the "last_probe_ip" field.
+func LastProbeIPNEQ(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNEQ(FieldLastProbeIP, v))
+}
+
+// LastProbeIPIn applies the In predicate on the "last_probe_ip" field.
+func LastProbeIPIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldIn(FieldLastProbeIP, vs...))
+}
+
+// LastProbeIPNotIn applies the NotIn predicate on the "last_probe_ip" field.
+func LastProbeIPNotIn(vs ...string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldNotIn(FieldLastProbeIP, vs...))
+}
+
+// LastProbeIPGT applies the GT predicate on the "last_probe_ip" field.
+func LastProbeIPGT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGT(FieldLastProbeIP, v))
+}
+
+// LastProbeIPGTE applies the GTE predicate on the "last_probe_ip" field.
+func LastProbeIPGTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldGTE(FieldLastProbeIP, v))
+}
+
+// LastProbeIPLT applies the LT predicate on the "last_probe_ip" field.
+func LastProbeIPLT(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLT(FieldLastProbeIP, v))
+}
+
+// LastProbeIPLTE applies the LTE predicate on the "last_probe_ip" field.
+func LastProbeIPLTE(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldLTE(FieldLastProbeIP, v))
+}
+
+// LastProbeIPContains applies the Contains predicate on the "last_probe_ip" field.
+func LastProbeIPContains(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContains(FieldLastProbeIP, v))
+}
+
+// LastProbeIPHasPrefix applies the HasPrefix predicate on the "last_probe_ip" field.
+func LastProbeIPHasPrefix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasPrefix(FieldLastProbeIP, v))
+}
+
+// LastProbeIPHasSuffix applies the HasSuffix predicate on the "last_probe_ip" field.
+func LastProbeIPHasSuffix(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldHasSuffix(FieldLastProbeIP, v))
+}
+
+// LastProbeIPEqualFold applies the EqualFold predicate on the "last_probe_ip" field.
+func LastProbeIPEqualFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldEqualFold(FieldLastProbeIP, v))
+}
+
+// LastProbeIPContainsFold applies the ContainsFold predicate on the "last_probe_ip" field.
+func LastProbeIPContainsFold(v string) predicate.Proxy {
+	return predicate.Proxy(sql.FieldContainsFold(FieldLastProbeIP, v))
 }
 
 // UpdatedAtEQ applies the EQ predicate on the "updated_at" field.

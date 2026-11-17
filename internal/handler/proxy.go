@@ -234,8 +234,10 @@ func proxyInputFromBody(f *ProxyConfig) (service.ProxyInput, error) {
 //  1. **password 恒不出**（spec §3.3）：读模型里没有这个键，只回 has_password；
 //  2. username 非密、原样回显；空 = 无认证 ⇒ null（而不是空串），让前端用一处
 //     判据（present/absent）区分「有认证」与「无认证」；
-//  3. last_probe_at / last_probe_error 的 never-probed / 无错误在 domain 侧是
-//     nil / ""，线格式统一折成 null（与 §6.1 读模型的可空字段一致）。
+//  3. last_probe_at / last_probe_error / last_probe_ip 的 never-probed / 无错误 /
+//     未取到 IP 在 domain 侧是 nil / "" / ""，线格式统一折成 null（与 §6.1 读模型的可空
+//     字段一致）。last_probe_ip 空 = 未取到——`ok=true` 时为空即「TCP 通、但经代理取 IP
+//     失败」，原因仍在 last_probe_error 里（spec §3.3 三态矩阵）。
 //  4. **owner_uid 只读回显**（§3.6）：nil 原样落成 null（= 平台代理）。管理员靠它看出
 //     这条属于谁；供应商面看到的恒是自己的 uid（不构成泄露——它看不到别人的条目）。
 func toAPIProxy(p domain.Proxy) Proxy {
@@ -261,6 +263,10 @@ func toAPIProxy(p domain.Proxy) Proxy {
 	if p.LastProbeError != "" {
 		probeErr := p.LastProbeError
 		out.LastProbeError = &probeErr
+	}
+	if p.LastProbeIP != "" {
+		probeIP := p.LastProbeIP
+		out.LastProbeIp = &probeIP
 	}
 	return out
 }

@@ -264,7 +264,9 @@ describe('批量导入接线（spec-proxy-import）', () => {
   })
 
   it('派生 name 复用 proxyEndpoint（与列表展示同一拼法，不另写一份）', () => {
-    assert.match(proxyForm, /const name = proxyEndpoint\(\{ scheme, host, port \}\)/)
+    // 基名只有一个拼法；批次内序号是**第二遍**（assignImportNames）的事，页面不参与。
+    assert.match(proxyForm, /const base = proxyEndpoint\(\{ scheme, host, port \}\)/)
+    assert.match(proxyForm, /return assignImportNames\(out\)/)
   })
 
   it('失败行按 reason 分流：conflict 用本地化文案，其余透出后端原文', () => {
@@ -300,5 +302,32 @@ describe('批量导入接线（spec-proxy-import）', () => {
     assert.deepEqual(errKeys(enLocale), [
       'badHost', 'badPort', 'badScheme', 'emptyHost', 'emptyUsername', 'importErrors', 'nameTooLong', 'needPort',
     ])
+  })
+})
+
+// 探测列是 last_probe_ip / last_probe_error 的**唯一渲染点**（spec-probe §3.3 三态矩阵）。
+// 这里守两条最容易静默回归的接线：出口 IP 有没有被读出来，错误文本有没有又被 ok 门控起来。
+describe('探测列：出口 IP 与错误文本（spec-probe §3.3）', () => {
+  it('last_probe_ip 非空 ⇒ 行内显示「出口 IP」，mono + tabular-nums 且可选中', () => {
+    assert.match(proxyPage, /\{p\.last_probe_ip && \(/)
+    assert.match(proxyPage, /t\('proxies\.probeEgressIP'\)/)
+    assert.match(proxyPage, /className="font-mono tabular-nums">\{p\.last_probe_ip\}/)
+    assert.match(proxyPage, /select-text/, '出口 IP 要可复制')
+  })
+
+  it('last_probe_error 与 last_probe_ok 解耦：ok=true 时同样显示（否则取 IP 失败的原因不可见）', () => {
+    // 旧形状把错误文本包在 `!p.last_probe_ok && …` 里 ⇒ ok=true + error≠'' 的三态行永远看不到原因。
+    assert.ok(
+      !/!\s*p\.last_probe_ok\s*&&\s*p\.last_probe_error/.test(proxyPage),
+      '错误文本不得再由 last_probe_ok 门控',
+    )
+    assert.match(proxyPage, /\{p\.last_probe_error && \(/)
+    // 既有展示口径不变：truncate 80 + title 全文。
+    assert.match(proxyPage, /title=\{p\.last_probe_error\}>\{truncate\(p\.last_probe_error, 80\)\}/)
+  })
+
+  it('i18n 标签两侧同键同批（zh「出口 IP」/ en「Egress IP」）', () => {
+    assert.match(zhLocale, /"probeEgressIP": "出口 IP"/)
+    assert.match(enLocale, /"probeEgressIP": "Egress IP"/)
   })
 })

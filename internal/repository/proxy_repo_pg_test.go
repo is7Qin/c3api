@@ -23,7 +23,7 @@ import (
 // 与 service.UpdateProxy（补 id 与凭据三态）。把同样的投影搬进 repository 就等于把刚
 // 删掉的"完整对象当补丁"放回来。
 //
-// 归属/探测三列/时间戳**不在**投影里：它们在 DTO 里根本不存在，故这些用例仍能证明
+// 归属/探测四列/时间戳**不在**投影里：它们在 DTO 里根本不存在，故这些用例仍能证明
 // 「写面碰不到它们」——只是从"运行时忽略"变成了"表达不出来"。
 func createOf(p domain.Proxy) repository.ProxyCreate {
 	return repository.ProxyCreate{
@@ -263,15 +263,20 @@ func TestPGDeleteProxyUnbindsAccounts(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestPGWriteProxyProbe 钉住探测写回：last_probe_at / last_probe_ok /
-// last_probe_error 三个字段整批落值（注入固定时间，不依赖 time.Now 的毫秒差）。
+// TestPGWriteProxyProbe 钉住探测写回：last_probe_at / ok / error / ip 四列整批落值
+// （注入固定时间，不依赖 time.Now 的毫秒差）。
+//
+// 三态矩阵（§3.3）在仓库侧的可观测形态，一条子链一个态：
+//   - 两段全过 ⇒ ok=true、error 为空串、ip = 本次取到的出口 IP；
+//   - 第二段失败 ⇒ ok **仍是 true**、error=第二段文本、ip 必须被清空（整行覆盖写）；
+//   - 第一段失败 ⇒ ok=false、ip 为空串。
 func TestPGWriteProxyProbe(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()
 	id := seedPGProxyNamed(t, repos, "probe-1")
 
 	okAt := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
-	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, okAt, true, ""))
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, okAt, true, "", "203.0.113.7"))
 
 	got, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
@@ -279,27 +284,43 @@ func TestPGWriteProxyProbe(t *testing.T) {
 	require.True(t, got.LastProbeAt.Equal(okAt), "探测时刻落库并读回（want %v, got %v）", okAt, got.LastProbeAt)
 	require.True(t, got.LastProbeOK)
 	require.Empty(t, got.LastProbeError)
+	require.Equal(t, "203.0.113.7", got.LastProbeIP, "出口 IP 落库并读回")
 
-	// 失败探测覆盖三元组；探测结果不改条目可用性（§6.3：enabled 是唯一开关）。
-	failAt := time.Date(2026, 8, 2, 3, 4, 5, 0, time.UTC)
-	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, failAt, false, "dial tcp 10.0.0.9:1080: connection refused"))
+	// 第二段失败（TCP 通、取出口 IP 失败）：ok 语义不变，错误文本落同一列，**旧 IP 必须
+	// 被清空**——否则列表会把上一次的 IP 当成本次结论展示（§3.3 末条）。
+	egressFailAt := time.Date(2026, 8, 2, 3, 4, 5, 0, time.UTC)
+	egressErr := "取出口 IP 失败: dial tcp api.ip.sb:443: connection refused"
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, egressFailAt, true, egressErr, ""))
+	got, err = repos.Proxies.GetProxy(ctx, id)
+	require.NoError(t, err)
+	require.NotNil(t, got.LastProbeAt)
+	require.True(t, got.LastProbeAt.Equal(egressFailAt))
+	require.True(t, got.LastProbeOK, "取 IP 失败不改 TCP 结论（ok 仍是 true）")
+	require.Equal(t, egressErr, got.LastProbeError)
+	require.Empty(t, got.LastProbeIP, "第二段失败必须清空上一次的 IP（整行覆盖写）")
+
+	// 第一段失败：ok=false、错误文本落库、IP 为空；探测结果不改条目可用性
+	// （§6.3：enabled 是唯一开关）。
+	failAt := time.Date(2026, 8, 2, 4, 5, 6, 0, time.UTC)
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, failAt, false, "dial tcp 10.0.0.9:1080: connection refused", ""))
 	got, err = repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
 	require.NotNil(t, got.LastProbeAt)
 	require.True(t, got.LastProbeAt.Equal(failAt))
 	require.False(t, got.LastProbeOK)
 	require.Contains(t, got.LastProbeError, "connection refused")
+	require.Empty(t, got.LastProbeIP, "第一段失败 ⇒ 第二段未尝试，IP 必为空")
 	require.True(t, got.Enabled, "探测失败不改变 enabled（不影响 Routable）")
 
 	// 已软删条目：探测写回视同不存在。
 	require.NoError(t, repos.Proxies.DeleteProxy(ctx, id))
-	require.ErrorIs(t, repos.Proxies.WriteProxyProbe(ctx, id, failAt, true, ""), repository.ErrNotFound)
+	require.ErrorIs(t, repos.Proxies.WriteProxyProbe(ctx, id, failAt, true, "", "203.0.113.9"), repository.ErrNotFound)
 }
 
-// TestPGProxyUpdateKeepsProbeOwnership 钉住**列的写者归属**：探测三列只由
+// TestPGProxyUpdateKeepsProbeOwnership 钉住**列的写者归属**：探测四列只由
 // WriteProxyProbe 写，管理面全量更新（UpdateProxy）不得顺带抹掉探测结论。
 // 反例：改个 remark 就把 last_probe_* 清成「从未探测」——运维唯一的现场证据丢了，
-// 而 PUT 的入参里根本没有这三列，调用方无从察觉。
+// 而 PUT 的入参里根本没有这四列，调用方无从察觉。
 //
 // C4/S10 之后这条形状**表达不出来**（ProxyUpdate 里没有探测列），断言因此只守
 // 仓库的 SET 列表这一侧：若有人手滑把 SetLastProbeX 加回 UpdateProxy，这里就红。
@@ -309,9 +330,9 @@ func TestPGProxyUpdateKeepsProbeOwnership(t *testing.T) {
 	id := seedPGProxyNamed(t, repos, "probe-owner")
 
 	probedAt := time.Date(2026, 8, 3, 9, 30, 0, 0, time.UTC)
-	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, probedAt, true, ""))
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, probedAt, true, "", "198.51.100.4"))
 
-	// 全量更新：只改 remark。探测三列与归属**不在更新 DTO 里**，故这里连"故意填
+	// 全量更新：只改 remark。探测四列与归属**不在更新 DTO 里**，故这里连"故意填
 	// 零值试试"都写不出来——剩下的断言仍钉住它们没被清掉。
 	cur, err := repos.Proxies.GetProxy(ctx, id)
 	require.NoError(t, err)
@@ -325,11 +346,12 @@ func TestPGProxyUpdateKeepsProbeOwnership(t *testing.T) {
 	require.True(t, after.LastProbeAt.Equal(probedAt), "探测时刻原样保留")
 	require.True(t, after.LastProbeOK, "探测结论原样保留")
 	require.Empty(t, after.LastProbeError)
+	require.Equal(t, "198.51.100.4", after.LastProbeIP, "全量更新不得清掉出口 IP（WriteProxyProbe 独占写）")
 }
 
 // TestPGProxyUpdatePasswordTriState 钉住密码三态（spec §6.1 PUT 语义）：nil = 不变、
 // &"" = 清空、&"v" = 落值；三态**不牵动**非密字段的「全量覆盖」语义，也不写探测
-// 三列（探测列仍由 WriteProxyProbe 独占）。
+// 四列（探测列仍由 WriteProxyProbe 独占）。
 //
 // 为什么仓库层必须原子表达「不变」：若 service 用「先读旧密码再整体写回」，并发
 // 的另一次改密码会被这次写回用读到的旧值静默覆盖（read-modify-write 窗口）。
@@ -343,7 +365,7 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 	require.NoError(t, err)
 
 	probedAt := time.Date(2026, 8, 4, 7, 8, 9, 0, time.UTC)
-	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, probedAt, true, ""))
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctx, id, probedAt, true, "", "192.0.2.10"))
 
 	// 1) password = nil：旧密码原样保留，非密字段照改。
 	cur, err := repos.Proxies.GetProxy(ctx, id)
@@ -360,8 +382,9 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 	require.Equal(t, "edited", got.Remark)
 	require.Equal(t, "pass1", got.Password, "password=nil ⇒ 不变（旧密码原样保留）")
 	require.Equal(t, "user1", got.Username)
-	require.NotNil(t, got.LastProbeAt, "全量更新不写探测三列")
+	require.NotNil(t, got.LastProbeAt, "全量更新不写探测四列")
 	require.True(t, got.LastProbeOK)
+	require.Equal(t, "192.0.2.10", got.LastProbeIP, "全量更新不写出口 IP")
 
 	// 2) password = &""：清空（落 NULL → 读回空串）。
 	require.NoError(t, repos.Proxies.UpdateProxy(ctx, updateOf(got, repository.ProxyCredential{Password: new("")})))
@@ -377,6 +400,7 @@ func TestPGProxyUpdatePasswordTriState(t *testing.T) {
 	require.Equal(t, "pass2", got.Password)
 	require.NotNil(t, got.LastProbeAt, "三态任一分支都不得写探测列")
 	require.True(t, got.LastProbeOK)
+	require.Equal(t, "192.0.2.10", got.LastProbeIP, "三态任一分支都不得写出口 IP")
 
 	// 4) username 也是三态（与 password 同一对凭据，规矩必须一样）：
 	//    nil ⇒ 不动它；只改 password 不影响 username。
@@ -474,11 +498,12 @@ func TestPGProxyScopeIsolation(t *testing.T) {
 
 	// ⑤ 探测写回同样带作用域。
 	probeAt := time.Date(2026, 8, 2, 10, 0, 0, 0, time.UTC)
-	require.ErrorIs(t, repos.Proxies.WriteProxyProbe(ctxA, proxyB, probeAt, true, ""), repository.ErrNotFound)
-	require.NoError(t, repos.Proxies.WriteProxyProbe(ctxA, proxyA, probeAt, true, ""))
+	require.ErrorIs(t, repos.Proxies.WriteProxyProbe(ctxA, proxyB, probeAt, true, "", "203.0.113.30"), repository.ErrNotFound)
+	require.NoError(t, repos.Proxies.WriteProxyProbe(ctxA, proxyA, probeAt, true, "", "203.0.113.31"))
 	probed, err := repos.Proxies.GetProxy(adminCtx, proxyA)
 	require.NoError(t, err)
 	require.True(t, probed.LastProbeOK)
+	require.Equal(t, "203.0.113.31", probed.LastProbeIP, "自己的出口才写得进 IP")
 
 	// ⑥ 删除：越域 ⇒ 404 且条目仍在。
 	require.ErrorIs(t, repos.Proxies.DeleteProxy(ctxA, proxyB), repository.ErrNotFound)

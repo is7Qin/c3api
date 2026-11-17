@@ -769,7 +769,10 @@ type Proxy struct {
 
 	// LastProbeError 已脱敏的探测错误（凭据恒被替换）
 	LastProbeError *string `json:"last_probe_error"`
-	LastProbeOk    bool    `json:"last_probe_ok"`
+
+	// LastProbeIp 最近一次探测经该代理看到的出口 IP；空 = 未取到（ok=true 时为空 ⇒ TCP 通但取 IP 失败，原因见 last_probe_error）
+	LastProbeIp *string `json:"last_probe_ip"`
+	LastProbeOk bool    `json:"last_probe_ok"`
 
 	// Name trim 后 1..64；与未软删条目唯一
 	Name string `json:"name"`
@@ -1267,7 +1270,7 @@ type ServerInterface interface {
 	// 全量更新自己的条目 + 凭据三态（不改 last_probe_*；改地址同样拒私网）
 	// (PUT /api/user/supplier/proxies/{id})
 	PutSupplierProxiesId(w http.ResponseWriter, r *http.Request, id int64)
-	// TCP 探测自己的条目（5s）+ 写回 last_probe_*，返回最新条目
+	// 探测自己的条目（TCP 5s + 经代理取出口 IP 10s）+ 写回 last_probe_*，返回最新条目
 	// (POST /api/user/supplier/proxies/{id}/probe)
 	PostSupplierProxiesIdProbe(w http.ResponseWriter, r *http.Request, id int64)
 	// 我的结算单（分页）
@@ -1450,7 +1453,7 @@ func (_ Unimplemented) PutSupplierProxiesId(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// TCP 探测自己的条目（5s）+ 写回 last_probe_*，返回最新条目
+// 探测自己的条目（TCP 5s + 经代理取出口 IP 10s）+ 写回 last_probe_*，返回最新条目
 // (POST /api/user/supplier/proxies/{id}/probe)
 func (_ Unimplemented) PostSupplierProxiesIdProbe(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)

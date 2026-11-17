@@ -158,6 +158,20 @@ func (_c *ProxyCreate) SetNillableLastProbeError(v *string) *ProxyCreate {
 	return _c
 }
 
+// SetLastProbeIP sets the "last_probe_ip" field.
+func (_c *ProxyCreate) SetLastProbeIP(v string) *ProxyCreate {
+	_c.mutation.SetLastProbeIP(v)
+	return _c
+}
+
+// SetNillableLastProbeIP sets the "last_probe_ip" field if the given value is not nil.
+func (_c *ProxyCreate) SetNillableLastProbeIP(v *string) *ProxyCreate {
+	if v != nil {
+		_c.SetLastProbeIP(*v)
+	}
+	return _c
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_c *ProxyCreate) SetUpdatedAt(v time.Time) *ProxyCreate {
 	_c.mutation.SetUpdatedAt(v)
@@ -253,6 +267,10 @@ func (_c *ProxyCreate) defaults() {
 		v := proxy.DefaultLastProbeError
 		_c.mutation.SetLastProbeError(v)
 	}
+	if _, ok := _c.mutation.LastProbeIP(); !ok {
+		v := proxy.DefaultLastProbeIP
+		_c.mutation.SetLastProbeIP(v)
+	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		v := proxy.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
@@ -285,6 +303,9 @@ func (_c *ProxyCreate) check() error {
 	}
 	if _, ok := _c.mutation.LastProbeError(); !ok {
 		return &ValidationError{Name: "last_probe_error", err: errors.New(`ent: missing required field "Proxy.last_probe_error"`)}
+	}
+	if _, ok := _c.mutation.LastProbeIP(); !ok {
+		return &ValidationError{Name: "last_probe_ip", err: errors.New(`ent: missing required field "Proxy.last_probe_ip"`)}
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "Proxy.updated_at"`)}
@@ -372,6 +393,10 @@ func (_c *ProxyCreate) createSpec() (*Proxy, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.LastProbeError(); ok {
 		_spec.SetField(proxy.FieldLastProbeError, field.TypeString, value)
 		_node.LastProbeError = value
+	}
+	if value, ok := _c.mutation.LastProbeIP(); ok {
+		_spec.SetField(proxy.FieldLastProbeIP, field.TypeString, value)
+		_node.LastProbeIP = value
 	}
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(proxy.FieldUpdatedAt, field.TypeTime, value)
@@ -620,6 +645,18 @@ func (u *ProxyUpsert) SetLastProbeError(v string) *ProxyUpsert {
 // UpdateLastProbeError sets the "last_probe_error" field to the value that was provided on create.
 func (u *ProxyUpsert) UpdateLastProbeError() *ProxyUpsert {
 	u.SetExcluded(proxy.FieldLastProbeError)
+	return u
+}
+
+// SetLastProbeIP sets the "last_probe_ip" field.
+func (u *ProxyUpsert) SetLastProbeIP(v string) *ProxyUpsert {
+	u.Set(proxy.FieldLastProbeIP, v)
+	return u
+}
+
+// UpdateLastProbeIP sets the "last_probe_ip" field to the value that was provided on create.
+func (u *ProxyUpsert) UpdateLastProbeIP() *ProxyUpsert {
+	u.SetExcluded(proxy.FieldLastProbeIP)
 	return u
 }
 
@@ -927,6 +964,20 @@ func (u *ProxyUpsertOne) SetLastProbeError(v string) *ProxyUpsertOne {
 func (u *ProxyUpsertOne) UpdateLastProbeError() *ProxyUpsertOne {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateLastProbeError()
+	})
+}
+
+// SetLastProbeIP sets the "last_probe_ip" field.
+func (u *ProxyUpsertOne) SetLastProbeIP(v string) *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetLastProbeIP(v)
+	})
+}
+
+// UpdateLastProbeIP sets the "last_probe_ip" field to the value that was provided on create.
+func (u *ProxyUpsertOne) UpdateLastProbeIP() *ProxyUpsertOne {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateLastProbeIP()
 	})
 }
 
@@ -1407,6 +1458,20 @@ func (u *ProxyUpsertBulk) SetLastProbeError(v string) *ProxyUpsertBulk {
 func (u *ProxyUpsertBulk) UpdateLastProbeError() *ProxyUpsertBulk {
 	return u.Update(func(s *ProxyUpsert) {
 		s.UpdateLastProbeError()
+	})
+}
+
+// SetLastProbeIP sets the "last_probe_ip" field.
+func (u *ProxyUpsertBulk) SetLastProbeIP(v string) *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.SetLastProbeIP(v)
+	})
+}
+
+// UpdateLastProbeIP sets the "last_probe_ip" field to the value that was provided on create.
+func (u *ProxyUpsertBulk) UpdateLastProbeIP() *ProxyUpsertBulk {
+	return u.Update(func(s *ProxyUpsert) {
+		s.UpdateLastProbeIP()
 	})
 }
 

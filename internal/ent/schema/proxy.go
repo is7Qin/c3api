@@ -49,6 +49,18 @@ func (Proxy) Fields() []ent.Field {
 		field.Time("last_probe_at").Optional().Nillable(),
 		field.Bool("last_probe_ok").Default(false),
 		field.String("last_probe_error").Default(""), // 错误文本已脱敏（§5.2）
+		// last_probe_ip 是**探测结论列**（spec §3.3/§3.4）：最近一次探测经这条代理
+		// 看到的出口 IP，空串 = 未取到。**不进任何键、不影响可路由性**（enabled 是
+		// 唯一可用性开关），只用于回显与排障。
+		//
+		// 不变量（错误文本复用同一列换来的语义，必须写死）：
+		//   `ok = true` 且 `last_probe_error != ""` ⇔ **TCP 通、但取出口 IP 失败**，
+		//   此时本列必为 ""；
+		//   `ok = false` ⇒ TCP 就没通，第二段未尝试，本列同样必为 ""。
+		// 即：本列非空 ⇒ ok = true 且 last_probe_error = ""（三态矩阵 §3.3）。
+		// 「最近一次探测的结论」是整行覆盖写：第二段失败必须把上一次的 IP 清空，
+		// 不能留旧值冒充本次结果。
+		field.String("last_probe_ip").Default(""),
 		field.Time("updated_at").Default(time.Now).UpdateDefault(time.Now),
 		field.Time("deleted_at").Optional().Nillable(), // 软删除时间戳（nil = 存活）；null 语义 = 未删除
 		field.Time("created_at").Default(time.Now),

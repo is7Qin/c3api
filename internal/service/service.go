@@ -188,8 +188,11 @@ type ProxyStore interface {
 	UpdateProxy(ctx context.Context, in repository.ProxyUpdate) error
 	// DeleteProxy 软删 + **同事务**解绑（account.proxy_id → NULL，回落直连）。
 	DeleteProxy(ctx context.Context, id int64) error
-	// WriteProxyProbe 探测三列（at/ok/error）的唯一写者：全量更新不碰它们。
-	WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error
+	// WriteProxyProbe 探测四列（at/ok/error/ip）的唯一写者：全量更新不碰它们。
+	//
+	// **整行覆盖**写（spec §3.3）：一次调用写下本次探测的全部结论，失败路径必须把
+	// ip 传 ""——留旧值等于让上一次的出网身份冒充本次结果。
+	WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText, ip string) error
 	// LookupProxyForBinding 绑定谓词所需的归属事实（spec §3.6）。**跨 scope 读取**：
 	// 判的是「能不能绑」而不是「能不能看」——供应商面要能判出「这条不是我的」，
 	// 管理员要能绑私池代理，两者都要求不被调用方作用域挡住。
@@ -562,6 +565,11 @@ type Service struct {
 	// statsNow 当前时间源（nil = time.Now；Service 测试注入固定时钟——统计
 	// 窗口守卫与路由观测窗口守卫共用同一时钟源）。
 	statsNow func() time.Time
+	// probeEgress 探测第二段（经代理取出口 IP）的执行面：New 一次性填入真实实现，
+	// 测试直接覆写本字段注入桩（照 statsNow 先例；**不加 Deps 键、无事后 Set* 回填**，
+	// AGENTS.md 纪律）。nil ⇒ 回落到真实实现——直接构造 Service 的既有测试不会因为
+	// 忘了注入而 panic（见 Service.probeEgressIP）。
+	probeEgress func(ctx context.Context, p domain.Proxy) (string, error)
 	// routingRetentionDays 路由观测保留天数（New 经
 	// Deps.RoutingObservationRetentionDays 一次性注入；0 = 未装配，
 	// 守卫关闭）。见 validateRoutingRetention。
@@ -677,6 +685,7 @@ func New(deps Deps) *Service {
 		codexLogin:                  deps.CodexLogin,
 		prober:                      deps.Prober,
 		probeGate:                   newProbeLimiter(),
+		probeEgress:                 probeProxyEgressIP,
 		paymentRegistry:             deps.PaymentRegistry,
 		retention:                   deps.Retention}
 	if deps.SettingsSnapshot != nil {

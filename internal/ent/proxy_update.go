@@ -240,6 +240,20 @@ func (_u *ProxyUpdate) SetNillableLastProbeError(v *string) *ProxyUpdate {
 	return _u
 }
 
+// SetLastProbeIP sets the "last_probe_ip" field.
+func (_u *ProxyUpdate) SetLastProbeIP(v string) *ProxyUpdate {
+	_u.mutation.SetLastProbeIP(v)
+	return _u
+}
+
+// SetNillableLastProbeIP sets the "last_probe_ip" field if the given value is not nil.
+func (_u *ProxyUpdate) SetNillableLastProbeIP(v *string) *ProxyUpdate {
+	if v != nil {
+		_u.SetLastProbeIP(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *ProxyUpdate) SetUpdatedAt(v time.Time) *ProxyUpdate {
 	_u.mutation.SetUpdatedAt(v)
@@ -386,6 +400,9 @@ func (_u *ProxyUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	}
 	if value, ok := _u.mutation.LastProbeError(); ok {
 		_spec.SetField(proxy.FieldLastProbeError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.LastProbeIP(); ok {
+		_spec.SetField(proxy.FieldLastProbeIP, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(proxy.FieldUpdatedAt, field.TypeTime, value)
@@ -631,6 +648,20 @@ func (_u *ProxyUpdateOne) SetNillableLastProbeError(v *string) *ProxyUpdateOne {
 	return _u
 }
 
+// SetLastProbeIP sets the "last_probe_ip" field.
+func (_u *ProxyUpdateOne) SetLastProbeIP(v string) *ProxyUpdateOne {
+	_u.mutation.SetLastProbeIP(v)
+	return _u
+}
+
+// SetNillableLastProbeIP sets the "last_probe_ip" field if the given value is not nil.
+func (_u *ProxyUpdateOne) SetNillableLastProbeIP(v *string) *ProxyUpdateOne {
+	if v != nil {
+		_u.SetLastProbeIP(*v)
+	}
+	return _u
+}
+
 // SetUpdatedAt sets the "updated_at" field.
 func (_u *ProxyUpdateOne) SetUpdatedAt(v time.Time) *ProxyUpdateOne {
 	_u.mutation.SetUpdatedAt(v)
@@ -807,6 +838,9 @@ func (_u *ProxyUpdateOne) sqlSave(ctx context.Context) (_node *Proxy, err error)
 	}
 	if value, ok := _u.mutation.LastProbeError(); ok {
 		_spec.SetField(proxy.FieldLastProbeError, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.LastProbeIP(); ok {
+		_spec.SetField(proxy.FieldLastProbeIP, field.TypeString, value)
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(proxy.FieldUpdatedAt, field.TypeTime, value)

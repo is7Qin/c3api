@@ -230,6 +230,7 @@ func toDomainProxy(p *ent.Proxy) domain.Proxy {
 		LastProbeAt:    p.LastProbeAt,
 		LastProbeOK:    p.LastProbeOk,
 		LastProbeError: p.LastProbeError,
+		LastProbeIP:    p.LastProbeIP,
 		// 管理面读模型回显（§6.1）：两列只读，不参与路由判定。
 		CreatedAt: p.CreatedAt,
 		UpdatedAt: p.UpdatedAt,

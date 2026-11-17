@@ -41,6 +41,8 @@ type Proxy struct {
 	LastProbeOk bool `json:"last_probe_ok,omitempty"`
 	// LastProbeError holds the value of the "last_probe_error" field.
 	LastProbeError string `json:"last_probe_error,omitempty"`
+	// LastProbeIP holds the value of the "last_probe_ip" field.
+	LastProbeIP string `json:"last_probe_ip,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
 	UpdatedAt time.Time `json:"updated_at,omitempty"`
 	// DeletedAt holds the value of the "deleted_at" field.
@@ -59,7 +61,7 @@ func (*Proxy) scanValues(columns []string) ([]any, error) {
 			values[i] = new(sql.NullBool)
 		case proxy.FieldID, proxy.FieldOwnerUID, proxy.FieldPort:
 			values[i] = new(sql.NullInt64)
-		case proxy.FieldName, proxy.FieldScheme, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldRemark, proxy.FieldLastProbeError:
+		case proxy.FieldName, proxy.FieldScheme, proxy.FieldHost, proxy.FieldUsername, proxy.FieldPassword, proxy.FieldRemark, proxy.FieldLastProbeError, proxy.FieldLastProbeIP:
 			values[i] = new(sql.NullString)
 		case proxy.FieldLastProbeAt, proxy.FieldUpdatedAt, proxy.FieldDeletedAt, proxy.FieldCreatedAt:
 			values[i] = new(sql.NullTime)
@@ -161,6 +163,12 @@ func (_m *Proxy) assignValues(columns []string, values []any) error {
 			} else if value.Valid {
 				_m.LastProbeError = value.String
 			}
+		case proxy.FieldLastProbeIP:
+			if value, ok := values[i].(*sql.NullString); !ok {
+				return fmt.Errorf("unexpected type %T for field last_probe_ip", values[i])
+			} else if value.Valid {
+				_m.LastProbeIP = value.String
+			}
 		case proxy.FieldUpdatedAt:
 			if value, ok := values[i].(*sql.NullTime); !ok {
 				return fmt.Errorf("unexpected type %T for field updated_at", values[i])
@@ -261,6 +269,9 @@ func (_m *Proxy) String() string {
 	builder.WriteString(", ")
 	builder.WriteString("last_probe_error=")
 	builder.WriteString(_m.LastProbeError)
+	builder.WriteString(", ")
+	builder.WriteString("last_probe_ip=")
+	builder.WriteString(_m.LastProbeIP)
 	builder.WriteString(", ")
 	builder.WriteString("updated_at=")
 	builder.WriteString(_m.UpdatedAt.Format(time.ANSIC))

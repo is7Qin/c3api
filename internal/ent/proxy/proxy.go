@@ -37,6 +37,8 @@ const (
 	FieldLastProbeOk = "last_probe_ok"
 	// FieldLastProbeError holds the string denoting the last_probe_error field in the database.
 	FieldLastProbeError = "last_probe_error"
+	// FieldLastProbeIP holds the string denoting the last_probe_ip field in the database.
+	FieldLastProbeIP = "last_probe_ip"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
 	// FieldDeletedAt holds the string denoting the deleted_at field in the database.
@@ -62,6 +64,7 @@ var Columns = []string{
 	FieldLastProbeAt,
 	FieldLastProbeOk,
 	FieldLastProbeError,
+	FieldLastProbeIP,
 	FieldUpdatedAt,
 	FieldDeletedAt,
 	FieldCreatedAt,
@@ -84,6 +87,8 @@ var (
 	DefaultLastProbeOk bool
 	// DefaultLastProbeError holds the default value on creation for the "last_probe_error" field.
 	DefaultLastProbeError string
+	// DefaultLastProbeIP holds the default value on creation for the "last_probe_ip" field.
+	DefaultLastProbeIP string
 	// DefaultUpdatedAt holds the default value on creation for the "updated_at" field.
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
@@ -158,6 +163,11 @@ func ByLastProbeOk(opts ...sql.OrderTermOption) OrderOption {
 // ByLastProbeError orders the results by the last_probe_error field.
 func ByLastProbeError(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldLastProbeError, opts...).ToFunc()
+}
+
+// ByLastProbeIP orders the results by the last_probe_ip field.
+func ByLastProbeIP(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldLastProbeIP, opts...).ToFunc()
 }
 
 // ByUpdatedAt orders the results by the updated_at field.

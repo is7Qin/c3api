@@ -378,8 +378,8 @@ func (r *Repository) DeleteProxy(ctx context.Context, id int64) error {
 	return r.Proxies.DeleteProxy(ctx, id)
 }
 
-func (r *Repository) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error {
-	return r.Proxies.WriteProxyProbe(ctx, id, at, ok, errText)
+func (r *Repository) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText, ip string) error {
+	return r.Proxies.WriteProxyProbe(ctx, id, at, ok, errText, ip)
 }
 
 // LookupProxyForBinding 绑定谓词的跨 scope 窄读（§3.6）：判「能不能绑」而非「能不能

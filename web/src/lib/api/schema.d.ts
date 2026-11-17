@@ -1079,8 +1079,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * TCP 探测（5s）+ 写回 last_probe_*，返回最新条目
-         * @description 只拨 TCP，不验证认证与出口 IP；结果不影响 enabled（唯一可用性开关）。 **拨不通不是 API 错误**：仍是 200，body 里 last_probe_ok=false + 已脱敏的 last_probe_error。只有条目不存在（404）或写回失败才是错误。
+         * 探测（TCP 5s + 经代理取出口 IP 10s）+ 写回 last_probe_*，返回最新条目
+         * @description 两段式：先拨 TCP（5s），成功后经这条代理请求出口 IP 服务（10s）并把结果写回 last_probe_ip。**last_probe_ok 只表示 TCP 段**——ok=true 且 last_probe_error 非空 ⇔ TCP 拨得通、但取出口 IP 失败（此时 last_probe_ip 为空）。 探测结论不影响 enabled / 可路由性，也不触发失效。 **拨不通不是 API 错误**：仍是 200，body 里 last_probe_ok=false + 已脱敏的 last_probe_error。只有条目不存在（404）或写回失败才是错误。
          */
         post: operations["PostProxiesIdProbe"];
         delete?: never;
@@ -2375,8 +2375,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * TCP 探测自己的条目（5s）+ 写回 last_probe_*，返回最新条目
-         * @description 与管理面同一实现：只拨 TCP，不验证认证与出口 IP；结果不影响 enabled。 拨不通仍是 200（body 里 last_probe_ok=false + 已脱敏错误）；只有条目不存在 （含越域/已软删，一律 404）或写回失败才是错误。
+         * 探测自己的条目（TCP 5s + 经代理取出口 IP 10s）+ 写回 last_probe_*，返回最新条目
+         * @description 与管理面同一实现：两段式——先拨 TCP（5s），成功后经这条代理请求出口 IP 服务（10s）并把结果写回 last_probe_ip。**last_probe_ok 只表示 TCP 段**——ok=true 且 last_probe_error 非空 ⇔ TCP 拨得通、但取出口 IP 失败（此时 last_probe_ip 为空）。 探测结论不影响 enabled / 可路由性，也不触发失效。 拨不通仍是 200（body 里 last_probe_ok=false + 已脱敏错误）；只有条目不存在 （含越域/已软删，一律 404）或写回失败才是错误。
          */
         post: operations["PostSupplierProxiesIdProbe"];
         delete?: never;
@@ -5243,6 +5243,8 @@ export interface components {
             last_probe_ok: boolean;
             /** @description 已脱敏的探测错误（凭据恒被替换） */
             last_probe_error?: string | null;
+            /** @description 最近一次探测经该代理看到的出口 IP；空 = 未取到（ok=true 时为空 ⇒ TCP 通但取 IP 失败，原因见 last_probe_error） */
+            last_probe_ip?: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -7640,7 +7642,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 创建后的条目（含新 id 与探测三列初值） */
+            /** @description 创建后的条目（含新 id 与探测四列初值） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7761,7 +7763,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error） */
+            /** @description 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error/last_probe_ip） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9953,7 +9955,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description 创建后的条目（含新 id、owner_uid = 本人、探测三列初值） */
+            /** @description 创建后的条目（含新 id、owner_uid = 本人、探测四列初值） */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10074,7 +10076,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error） */
+            /** @description 探测后的最新条目（含 last_probe_at/last_probe_ok/last_probe_error/last_probe_ip） */
             200: {
                 headers: {
                     [name: string]: unknown;

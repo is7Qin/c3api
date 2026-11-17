@@ -7,7 +7,11 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"testing"
@@ -301,13 +305,48 @@ func TestDeleteProxy(t *testing.T) {
 	require.Nil(t, unbound.ProxyID, "删除代理 ⇒ 同事务解绑（proxy_id 落 NULL = 直连）")
 }
 
-// TestProbeProxyUnreachable 不可达地址：返回条目 + LastProbeOK=false + 脱敏错误
-// 文本，且 enabled 不变、探测时刻来自注入时钟（不赌墙钟毫秒差）、不触发失效。
+// probeEgressStub 第二段（经代理取出口 IP）的注入桩（spec §3.5 的可测缝）：
+// 计数 + 固定返回。真跑第二段要连 api.ip.sb，单测不能依赖它。
+//
+// 计数器不加锁：本包无 t.Parallel()（AGENTS.md），用例串行。
+type probeEgressStub struct {
+	calls int
+	ip    string
+	err   error
+}
+
+// fn 返回可直接赋给 Service.probeEgress 的桩函数。
+func (s *probeEgressStub) fn() func(context.Context, domain.Proxy) (string, error) {
+	return func(context.Context, domain.Proxy) (string, error) {
+		s.calls++
+		return s.ip, s.err
+	}
+}
+
+// listeningTCPAddr 开一个本机临时监听端口（t.Cleanup 关闭）：第一段 TCP 能真拨通，
+// 第二段交给注入桩（否则它会真的去连 api.ip.sb 等 10s）。
+func listeningTCPAddr(t *testing.T) (string, int) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	require.NoError(t, err)
+	port, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+	return host, port
+}
+
+// TestProbeProxyUnreachable 第一段失败（矩阵第一行）：LastProbeOK=false + 脱敏错误
+// 文本 + **IP 空**，且第二段零调用（不发起任何出网请求）；enabled 不变、探测时刻来自
+// 注入时钟（不赌墙钟毫秒差）、不触发失效。
 func TestProbeProxyUnreachable(t *testing.T) {
 	svc, _, rec := newProxyTestService()
 	ctx := context.Background()
 	fixed := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
 	svc.statsNow = func() time.Time { return fixed }
+	egress := &probeEgressStub{ip: "203.0.113.7"}
+	svc.probeEgress = egress.fn()
 
 	username, password := "probe-user", "probe-secret"
 	id, err := svc.CreateProxy(ctx, ProxyInput{
@@ -323,27 +362,29 @@ func TestProbeProxyUnreachable(t *testing.T) {
 	require.NotEmpty(t, got.LastProbeError, "失败原因落库（运维唯一现场证据）")
 	require.NotContains(t, got.LastProbeError, password, "错误文本不得含密码（§5.2）")
 	require.NotContains(t, got.LastProbeError, username, "错误文本不得含用户名")
+	require.Empty(t, got.LastProbeIP, "TCP 不通 ⇒ 不取 IP（矩阵第一行）")
+	require.Equal(t, 0, egress.calls, "第一段失败 ⇒ 第二段**零调用**（§3.3 / M7）")
 	require.NotNil(t, got.LastProbeAt)
 	require.True(t, got.LastProbeAt.Equal(fixed), "探测时刻来自注入时钟（want %v, got %v）", fixed, got.LastProbeAt)
 	require.True(t, got.Enabled, "探测结果不影响 enabled（§6.3：enabled 是唯一开关）")
 	require.Equal(t, before, rec.total(), "探测不改路由 ⇒ 不触发失效")
 }
 
-// TestProbeProxyReachable 探测成功的正例：本机临时监听端口（t.Cleanup 关闭），
-// 三元组落成 ok=true / 空错误文本。
+// TestProbeProxyReachable 探测成功的正例：本机临时监听端口（t.Cleanup 关闭）当真
+// 代理地址，第二段注入桩返回固定 IP —— 四列落成 ok=true / 空错误文本 / ip。
+//
+// **必须注入桩**（spec §3.5 末条）：裸 net.Listen 骗不过第二段，它会真的去连
+// api.ip.sb——要么等满 10s，要么让 LastProbeError 断言莫名其妙地红。
 func TestProbeProxyReachable(t *testing.T) {
 	svc, _, _ := newProxyTestService()
 	ctx := context.Background()
 	fixed := time.Date(2026, 8, 11, 1, 2, 3, 0, time.UTC)
 	svc.statsNow = func() time.Time { return fixed }
+	const wantIP = "198.51.100.4"
+	egress := &probeEgressStub{ip: wantIP}
+	svc.probeEgress = egress.fn()
 
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = ln.Close() })
-	host, portStr, err := net.SplitHostPort(ln.Addr().String())
-	require.NoError(t, err)
-	port, err := strconv.Atoi(portStr)
-	require.NoError(t, err)
+	host, port := listeningTCPAddr(t)
 
 	id, err := svc.CreateProxy(ctx, ProxyInput{
 		Name: "reachable", Scheme: domain.ProxySchemeHTTP, Host: host, Port: port,
@@ -354,11 +395,243 @@ func TestProbeProxyReachable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, got.LastProbeOK, "监听中的端口可拨通")
 	require.Empty(t, got.LastProbeError)
+	require.Equal(t, wantIP, got.LastProbeIP, "第二段取到的出口 IP 落库")
+	require.Equal(t, 1, egress.calls, "第一段通 ⇒ 第二段恰好跑一次")
 	require.NotNil(t, got.LastProbeAt)
 	require.True(t, got.LastProbeAt.Equal(fixed))
 
 	// 探测不含认证校验（§6.3）：这条条目无凭据也能拨通。
 	require.Empty(t, got.Username)
+}
+
+// TestProbeProxyTwoStage §3.3 三态矩阵的四条子例（spec §3.5 的 service 侧判据）：
+// 两段全过 / TCP 失败且第二段零调用 / 第二段失败仍 ok=true / 第二段失败清掉旧 IP。
+//
+// 断言按**列**而不是按"整体结果"写：`ok` 只表示 TCP，出口 IP 是另一列——这两个结论
+// 互不覆盖正是 owner 的裁决（§3.3），测试必须钉住它，别在下一次改动里被"统一"掉。
+func TestProbeProxyTwoStage(t *testing.T) {
+	const wantIP = "203.0.113.7"
+
+	t.Run("both_stages_pass", func(t *testing.T) {
+		svc, _, _ := newProxyTestService()
+		ctx := context.Background()
+		fixed := time.Date(2026, 8, 12, 3, 4, 5, 0, time.UTC)
+		svc.statsNow = func() time.Time { return fixed }
+		egress := &probeEgressStub{ip: wantIP}
+		svc.probeEgress = egress.fn()
+
+		host, port := listeningTCPAddr(t)
+		id, err := svc.CreateProxy(ctx, ProxyInput{
+			Name: "both-stages", Scheme: domain.ProxySchemeSOCKS5, Host: host, Port: port,
+		})
+		require.NoError(t, err)
+
+		got, err := svc.ProbeProxy(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 1, egress.calls)
+		require.True(t, got.LastProbeOK)
+		require.Empty(t, got.LastProbeError, "两段全过 ⇒ 无错误文本")
+		require.Equal(t, wantIP, got.LastProbeIP)
+		require.True(t, got.LastProbeAt.Equal(fixed))
+	})
+
+	t.Run("tcp_failure_skips_egress", func(t *testing.T) {
+		svc, _, _ := newProxyTestService()
+		ctx := context.Background()
+		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 5, 0, 0, time.UTC) }
+		egress := &probeEgressStub{ip: wantIP}
+		svc.probeEgress = egress.fn()
+
+		id, err := svc.CreateProxy(ctx, ProxyInput{
+			Name: "tcp-fails", Scheme: domain.ProxySchemeHTTP, Host: "127.0.0.1", Port: closedTCPPort(t),
+		})
+		require.NoError(t, err)
+
+		got, err := svc.ProbeProxy(ctx, id)
+		require.NoError(t, err)
+		require.False(t, got.LastProbeOK)
+		require.NotEmpty(t, got.LastProbeError)
+		require.Empty(t, got.LastProbeIP)
+		require.Equal(t, 0, egress.calls, "第一段失败不得发起第二段（M7 的变异靶子）")
+	})
+
+	t.Run("egress_failure_keeps_ok", func(t *testing.T) {
+		svc, _, _ := newProxyTestService()
+		ctx := context.Background()
+		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 6, 0, 0, time.UTC) }
+		username, password := "egress-user", "egress-secret"
+		calls := 0
+		// 桩错误里**故意带凭据**：这段文本会落库并回显，服务层必须过 proxyRedactedError
+		// （M6 的变异靶子——去掉脱敏这句断言就红）。
+		svc.probeEgress = func(_ context.Context, p domain.Proxy) (string, error) {
+			calls++
+			return "", fmt.Errorf("egress ip probe: dial socks5://%s:%s@%s: proxy refused",
+				p.Username, p.Password, p.Host)
+		}
+
+		host, port := listeningTCPAddr(t)
+		id, err := svc.CreateProxy(ctx, ProxyInput{
+			Name: "egress-fails", Scheme: domain.ProxySchemeSOCKS5, Host: host, Port: port,
+			Username: &username, Password: &password,
+		})
+		require.NoError(t, err)
+
+		got, err := svc.ProbeProxy(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 1, calls)
+		require.True(t, got.LastProbeOK, "TCP 通 ⇒ ok 仍是 true（§3.3 中间列的语义不变）")
+		require.NotEmpty(t, got.LastProbeError, "第二段失败原因必须落库（否则用户看不出 IP 为什么是空的）")
+		require.NotContains(t, got.LastProbeError, password, "第二段错误文本不得含密码（§5.2 / §5.3-3）")
+		require.NotContains(t, got.LastProbeError, username, "第二段错误文本不得含用户名")
+		require.Contains(t, got.LastProbeError, "***", "被替换而非丢弃上下文")
+		require.Empty(t, got.LastProbeIP)
+		// 不变量（§3.3）：ok=true 且 error 非空 ⇔ 第一段通、第二段失败。
+		require.True(t, got.LastProbeOK && got.LastProbeError != "")
+	})
+
+	t.Run("egress_failure_clears_previous_ip", func(t *testing.T) {
+		svc, _, _ := newProxyTestService()
+		ctx := context.Background()
+		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 7, 0, 0, time.UTC) }
+
+		host, port := listeningTCPAddr(t)
+		id, err := svc.CreateProxy(ctx, ProxyInput{
+			Name: "clears-old-ip", Scheme: domain.ProxySchemeHTTP, Host: host, Port: port,
+		})
+		require.NoError(t, err)
+
+		// 第一次探测成功：旧 IP 落库。
+		svc.probeEgress = (&probeEgressStub{ip: wantIP}).fn()
+		first, err := svc.ProbeProxy(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, wantIP, first.LastProbeIP)
+
+		// 第二次探测第二段失败：整行覆盖写必须把旧 IP 清掉（M5 的变异靶子）。
+		svc.probeEgress = (&probeEgressStub{err: errors.New("egress ip probe: api.ip.sb: connection timed out")}).fn()
+		second, err := svc.ProbeProxy(ctx, id)
+		require.NoError(t, err)
+		require.True(t, second.LastProbeOK)
+		require.NotEmpty(t, second.LastProbeError)
+		require.Empty(t, second.LastProbeIP, "第二段失败必须清空上一次的 IP，不能留旧值冒充本次结果（§3.3 末条）")
+	})
+
+	t.Run("canceled_parent_ctx_does_not_fail_egress", func(t *testing.T) {
+		svc, _, _ := newProxyTestService()
+		ctx := context.Background()
+		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 8, 0, 0, time.UTC) }
+
+		host, port := listeningTCPAddr(t)
+		id, err := svc.CreateProxy(ctx, ProxyInput{
+			Name: "canceled-parent", Scheme: domain.ProxySchemeHTTP, Host: host, Port: port,
+		})
+		require.NoError(t, err)
+
+		// 桩**观察 ctx**（真实实现同款：HTTP 请求带 ctx，一取消就失败）——否则「第二段
+		// 继承了请求 ctx」这个缺陷在桩上根本显不出来。
+		calls := 0
+		svc.probeEgress = func(egressCtx context.Context, _ domain.Proxy) (string, error) {
+			calls++
+			if err := egressCtx.Err(); err != nil {
+				return "", fmt.Errorf("egress ip probe: %w", err)
+			}
+			return wantIP, nil
+		}
+
+		canceled, cancel := context.WithCancel(ctx)
+		cancel() // 客户端已断开（这里更狠：发请求之前就断了）
+
+		got, err := svc.ProbeProxy(canceled, id)
+		require.NoError(t, err, "fakeStore 不读 ctx（真实 PG 在请求已断时写不进去，那是既有行为）")
+		require.Equal(t, 1, calls)
+		require.True(t, got.LastProbeOK)
+		require.Empty(t, got.LastProbeError, "客户端走了不代表这条代理取不到 IP（与第一段 dialProxyAddr 同一条理由）")
+		require.Equal(t, wantIP, got.LastProbeIP, "父 ctx 的取消不得让探测结论变成「IP 空 + 错误文本」")
+	})
+}
+
+// TestProbeEgressIPRealPath 第二段**真实实现**（不经桩）：把 proxyProbeEgressURL
+// 指到一个不可解析的假域，于是请求只能经注入的假 HTTP 代理出去——这正是该常量必须是
+// var 的理由（spec §3.2/§3.5：单测不许真连 api.ip.sb）。
+//
+// 假代理用普通 httptest 服务器即可：向 **http** 目标发请求时 Go 的 Transport 以
+// 绝对 URI 形态直接把请求发给代理（不需要 CONNECT 隧道）；https 目标才要 CONNECT，
+// 所以这里把 URL 也设成 http。
+func TestProbeEgressIPRealPath(t *testing.T) {
+	origURL := proxyProbeEgressURL
+	t.Cleanup(func() { proxyProbeEgressURL = origURL })
+	proxyProbeEgressURL = "http://egress.invalid/ip"
+
+	// newFakeProxy 启一个假出口代理，返回它作为 domain.Proxy 的规格。gotTargetHost
+	// 非 nil 时记录代理侧看到的目标 host（证明请求确实走了代理而非直连）。
+	newFakeProxy := func(t *testing.T, status int, body string, gotTargetHost *string) domain.Proxy {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if gotTargetHost != nil {
+				*gotTargetHost = r.Host
+			}
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
+		}))
+		t.Cleanup(srv.Close)
+		addr := strings.TrimPrefix(srv.URL, "http://")
+		host, portStr, err := net.SplitHostPort(addr)
+		require.NoError(t, err)
+		port, err := strconv.Atoi(portStr)
+		require.NoError(t, err)
+		return domain.Proxy{Scheme: domain.ProxySchemeHTTP, Host: host, Port: port}
+	}
+
+	t.Run("through_proxy_returns_ip", func(t *testing.T) {
+		svc, _, _ := newProxyTestService()
+		ctx := context.Background()
+		svc.statsNow = func() time.Time { return time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC) }
+
+		var targetHost string
+		spec := newFakeProxy(t, http.StatusOK, "203.0.113.7\n", &targetHost)
+		id, err := svc.CreateProxy(ctx, ProxyInput{
+			Name: "real-egress", Scheme: spec.Scheme, Host: spec.Host, Port: spec.Port,
+		})
+		require.NoError(t, err)
+		// **不注入桩**：probeEgress 为 nil ⇒ 走真实实现（子进程里的 New 也是这条）。
+		require.Nil(t, svc.probeEgress)
+
+		got, err := svc.ProbeProxy(ctx, id)
+		require.NoError(t, err)
+		require.True(t, got.LastProbeOK)
+		require.Empty(t, got.LastProbeError)
+		require.Equal(t, "203.0.113.7", got.LastProbeIP, "真实第二段：经代理 GET 纯文本端点 → ParseIP 规范化后落库")
+		require.Equal(t, "egress.invalid", targetHost, "请求确实经代理发出（绝对 URI 形态）")
+	})
+
+	t.Run("non_ip_body_is_second_stage_failure", func(t *testing.T) {
+		svc, _, _ := newProxyTestService()
+		ctx := context.Background()
+		svc.statsNow = func() time.Time { return time.Date(2026, 8, 13, 9, 1, 0, 0, time.UTC) }
+
+		spec := newFakeProxy(t, http.StatusOK, "<html>captive portal</html>", nil)
+		id, err := svc.CreateProxy(ctx, ProxyInput{
+			Name: "real-egress-bad-body", Scheme: spec.Scheme, Host: spec.Host, Port: spec.Port,
+		})
+		require.NoError(t, err)
+
+		got, err := svc.ProbeProxy(ctx, id)
+		require.NoError(t, err)
+		require.True(t, got.LastProbeOK, "TCP 通 ⇒ ok 仍是 true，脏响应只让 IP 段失败")
+		require.Contains(t, got.LastProbeError, "not an IP address")
+		require.Empty(t, got.LastProbeIP)
+	})
+
+	t.Run("non_200_status_fails", func(t *testing.T) {
+		spec := newFakeProxy(t, http.StatusBadGateway, "203.0.113.7", nil)
+		// 真实实现的预算由调用方给（ProbeProxy 挂 proxyProbeEgressTimeout），这里
+		// 直接调就得自己带上限，避免假代理不回包把用例挂死。
+		ectx, cancel := context.WithTimeout(context.Background(), proxyProbeEgressTimeout)
+		defer cancel()
+		ip, err := probeProxyEgressIP(ectx, spec)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unexpected status 502")
+		require.Empty(t, ip)
+	})
 }
 
 // TestProbeProxyNotFound 缺 id → 404（探测写回也走同一映射）。

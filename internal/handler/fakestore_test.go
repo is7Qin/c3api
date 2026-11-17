@@ -3176,7 +3176,7 @@ func (f *fakeStore) DeleteProxy(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText string) error {
+func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time, ok bool, errText, ip string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	row, exists := f.proxies[id]
@@ -3186,6 +3186,9 @@ func (f *fakeStore) WriteProxyProbe(ctx context.Context, id int64, at time.Time,
 	row.p.LastProbeAt = &at
 	row.p.LastProbeOK = ok
 	row.p.LastProbeError = errText
+	// 出口 IP 与 ok 互不覆盖（spec §3.3）：第二段失败时调用方传 ""，必须**清掉**上一次的值，
+	// 否则旧 IP 会冒充本次结论。四列同一次整行覆盖写。
+	row.p.LastProbeIP = ip
 	return nil
 }
 

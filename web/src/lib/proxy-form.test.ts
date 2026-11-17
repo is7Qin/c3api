@@ -13,6 +13,7 @@ import {
   PROXY_HOST_MAX,
   PROXY_NAME_MAX,
   PROXY_SCHEMES,
+  assignImportNames,
   buildProxyPayload,
   parseProxyImportLines,
   emptyProxyDraft,
@@ -267,5 +268,92 @@ describe('parseProxyImportLines', () => {
     assert.equal(rows.length, 2)
     assert.ok(rows[0].config)
     assert.equal(rows[1].error, 'needPort')
+  })
+})
+
+// —— 派名：批次内序号后缀（spec §1.2 / §5.1）——
+//
+// 这段守的是「同端点不同凭据」这条**合法且常见**的输入：名字只含 scheme://host:port，
+// 故同批次内必须靠序号区分，否则第 2..N 行全撞唯一索引。判据只看这一批粘贴内容（不查库）。
+describe('assignImportNames（批次内 #k 派名）', () => {
+  const names = (text: string, scheme: ProxyScheme = 'http') =>
+    parseProxyImportLines(text, scheme).map(r => (r.config ? r.config.name : `!${r.error}`))
+
+  it('§5.1-1 10 行同端点不同凭据 ⇒ base、base#2 … base#10', () => {
+    const text = Array.from({ length: 10 }, (_, i) => `socks5h://gw${i + 1}:p${i + 1}@107.151.220.6:12570`).join('\n')
+    const base = 'socks5h://107.151.220.6:12570'
+    assert.deepEqual(names(text, 'socks5h'), [base, ...Array.from({ length: 9 }, (_, i) => `${base}#${i + 2}`)])
+  })
+
+  it('§5.1-2 单行 ⇒ 与今天逐字节相同（单行导入零行为变化）', () => {
+    const [row] = parseProxyImportLines('http://h.example.com:8080', 'http')
+    assert.deepEqual(row.config, { name: 'http://h.example.com:8080', scheme: 'http', host: 'h.example.com', port: 8080 })
+  })
+
+  it('§5.1-3 A A B ⇒ A、A#2、B；行号与原文对齐不变', () => {
+    const rows = parseProxyImportLines(
+      ['http://a.example.com:8080', 'http://a.example.com:8080', 'http://b.example.com:8080'].join('\n'),
+      'http',
+    )
+    assert.deepEqual(rows.map(r => r.config?.name), [
+      'http://a.example.com:8080',
+      'http://a.example.com:8080#2',
+      'http://b.example.com:8080',
+    ])
+    assert.deepEqual(rows.map(r => r.line), [1, 2, 3])
+    assert.deepEqual(rows.map(r => r.raw), [
+      'http://a.example.com:8080',
+      'http://a.example.com:8080',
+      'http://b.example.com:8080',
+    ])
+  })
+
+  it('语法失败的行不参与分组、也不占序号', () => {
+    const rows = parseProxyImportLines(
+      ['http://a.example.com:8080', 'not-a-proxy', 'http://a.example.com:8080'].join('\n'),
+      'http',
+    )
+    assert.equal(rows[1].error, 'needPort')
+    assert.equal(rows[2].config?.name, 'http://a.example.com:8080#2')
+  })
+
+  it('§5.1-5 基名 63 rune + 同批第二次 ⇒ 该行 nameTooLong，其余行不受影响', () => {
+    // `http://` (7) + host (53) + ':' (1) + '80' (2) = 63 rune ⇒ 第一次合法，`#2` 后 65 ⇒ 超长。
+    const base = `http://${'a'.repeat(53)}:80`
+    assert.equal([...base].length, PROXY_NAME_MAX - 1)
+    const rows = parseProxyImportLines([base, base, 'http://ok.example.com:8080'].join('\n'), 'http')
+    assert.equal(rows[0].config?.name, base, '63 rune 的第一行仍然合法')
+    assert.equal(rows[1].error, 'nameTooLong', '最终名 65 rune ⇒ 既有错误码，不静默截断')
+    assert.equal(rows[1].config, undefined, '失败行不带 config（页面据此挡住提交）')
+    assert.equal(rows[2].config?.name, 'http://ok.example.com:8080', '其余行不受影响')
+  })
+
+  it('§5.1-7 名字里永不含 username/password（name 会进日志与 err_logs）', () => {
+    const users = Array.from({ length: 10 }, (_, i) => `gateway-user-${i + 1}`)
+    const pwds = Array.from({ length: 10 }, (_, i) => `s3cret-pass-${i + 1}`)
+    const rows = parseProxyImportLines(
+      users.map((u, i) => `socks5h://${u}:${pwds[i]}@107.151.220.6:12570`).join('\n'),
+      'socks5h',
+    )
+    assert.equal(rows.length, 10)
+    // 先确认凭据真的被解析进去了（否则「名字不含凭据」会假绿）。
+    rows.forEach((r, i) => {
+      assert.equal(r.config?.username, users[i])
+      assert.equal(r.config?.password, pwds[i])
+    })
+    const base = 'socks5h://107.151.220.6:12570'
+    const got = rows.map(r => r.config?.name)
+    assert.deepEqual(got, [base, ...Array.from({ length: 9 }, (_, i) => `${base}#${i + 2}`)])
+    for (const name of got) {
+      for (const secret of [...users, ...pwds]) assert.ok(!name?.includes(secret), `名字里出现了凭据：${name}`)
+    }
+  })
+
+  it('幂等（base 由 scheme/host/port 现拼）且不改写入参', () => {
+    const rows = parseProxyImportLines('http://a.example.com:80\nhttp://a.example.com:80', 'http')
+    const snapshot = JSON.parse(JSON.stringify(rows))
+    assert.deepEqual(assignImportNames(rows), rows)
+    assert.deepEqual(JSON.parse(JSON.stringify(rows)), snapshot, '入参不得被原地改写')
+    assert.equal(rows[1].config?.name, 'http://a.example.com:80#2')
   })
 })
