@@ -1759,7 +1759,18 @@ export default {
     "snapshotsTitle": "快照注册表",
     "snapshotsDesc": "配置快照的加载与重载状态",
     "snapshotName": "名称",
-    "snapshotScopes": "变更 Scope",
+    "snapshotNames": {
+      "auth": "鉴权快照",
+      "scheduler": "调度器快照",
+      "rules": "规则快照",
+      "balances": "余额快照",
+      "pricing": "价格快照",
+      "supplier-view": "供应商视图快照"
+    },
+    "snapshotScopeColumn": "变更 Scope",
+    "snapshotScopes": {
+      "settings": "设置"
+    },
     "snapshotLastReload": "最近重载",
     "snapshotLastError": "最近错误",
     "snapshotNoError": "成功",
@@ -1771,6 +1782,7 @@ export default {
     "noSnapshots": "暂无快照",
     "boolYes": "是",
     "boolNo": "否",
+    "statItems": "{{count}} 项",
     "workers": {
       "invalidate": "失效去抖",
       "scheduler": "选号调度器",
@@ -1795,7 +1807,10 @@ export default {
       "runtime-health": "健康投影道",
       "supplier-credit": "供应商记账",
       "supplier-thaw": "供应商解冻",
-      "supplier-view": "供应商财务视图"
+      "supplier-view": "供应商财务视图",
+      "quota-deadline": "429 额度补拉",
+      "dispatch-observer": "分发观测",
+      "sdk-failure-retry": "失败重试"
     },
     "stats": {
       "dirty": "有待执行重载",
@@ -1981,7 +1996,28 @@ export default {
       "disk_eta_seconds": "磁盘耗尽预计（秒）",
       "capacity_blocked": "容量闸已关闭新供应商流量",
       "disk_observed_unix_ms": "磁盘观测时刻",
-      "rejected": "观测面拒收次数"
+      "rejected": "观测面拒收次数",
+      "dropped": "丢弃",
+      "empty": "空结果",
+      "enqueued": "入队",
+      "extended": "已延长",
+      "failed": "失败",
+      "fingerprint_skips": "指纹跳过",
+      "persist_failures_fingerprint_mismatch": "持久化失败·指纹不符",
+      "persist_failures_missing_fingerprint": "持久化失败·缺指纹",
+      "persist_failures_missing_revision": "持久化失败·缺代际",
+      "persist_failures_stale_revision": "持久化失败·代际过期",
+      "stale": "代际丢弃",
+      "unsupported": "未支持"
+    },
+    "statField": {
+      "loaded": "已装载",
+      "revision": "版本",
+      "last_success_unix_ms": "最近成功",
+      "stale_age_ms": "距今",
+      "partitions": "被挡分区",
+      "first_blocked_unix_ms": "首次被挡",
+      "oldest_uncredited_unix_ms": "最老未确认债权"
     },
     "routing": {
       "title": "路由观测道",

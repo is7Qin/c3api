@@ -16,25 +16,9 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { fmtTTFT } from '@/components/fmt'
 import { fetchAllRoutingPlanRoutes } from '@/lib/routing-plan'
+import { formatStatValue, statTooltip } from '@/lib/ops-stats'
 import { isOpsStatVisible } from '@/lib/supplier-visibility'
 import { useFeatures } from '@/lib/use-features'
-
-// stats 为契约自由 schema（unknown）：各 worker 异构观测字段。通用渲染分支：
-// 数字（unix_ms 时间戳字段转时间显示）、布尔、字符串，其余 JSON 摘要。
-function fmtStatValue(v: unknown, key: string): string {
-  if (typeof v === 'number') {
-    // last_redis_attempt_ms 是毫秒时间戳（契约命名遗留 _ms 后缀，非时长）
-    if ((key.endsWith('unix_ms') || key === 'last_redis_attempt_ms') && v > 0) {
-      return new Date(v).toLocaleString()
-    }
-    return v.toLocaleString()
-  }
-  if (typeof v === 'boolean') return v ? 'true' : 'false'
-  if (typeof v === 'string') return v || '—'
-  if (v === null || v === undefined) return '—'
-  const s = JSON.stringify(v)
-  return s.length > 60 ? `${s.slice(0, 60)}…` : s
-}
 
 export default function Ops() {
   const { t } = useTranslation()
@@ -111,7 +95,7 @@ export default function Ops() {
           <AlertDescription>{t('ops.loadFailedDesc')}</AlertDescription>
         </Alert>
       ) : opsQ.isLoading ? (
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 items-start">
           {Array.from({ length: 6 }).map((_, i) => (
             <Skeleton key={i} className="h-40" />
           ))}
@@ -122,8 +106,10 @@ export default function Ops() {
               事故计数直出 worker stats 字段，前端零重算；缺道 = 未装配，不渲染占位 */}
           <RoutingLanes workers={workers} planIncidents={planIncidents} />
 
-          {/* Workers：每 worker 一卡，stats 通用 key-value 渲染 */}
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3">
+          {/* Workers：每 worker 一卡，stats 通用 key-value 渲染。
+              items-start：卡片各按内容高度，不被同行最高的一条（如 quota-deadline
+              9 项）拉齐而留大片空白 */}
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-3 items-start">
             {workers.length === 0 ? (
               <p className="col-span-full py-6 text-center text-sm text-muted-foreground">{t('ops.noWorkers')}</p>
             ) : (
@@ -147,14 +133,17 @@ export default function Ops() {
                             <dt className="shrink-0 text-xs text-muted-foreground" title={k}>
                               {t(`ops.stats.${k}`, { defaultValue: k })}
                             </dt>
-                            <dd className="flex min-w-0 items-center justify-end gap-2" title={fmtStatValue(v, k)}>
+                            {/* title 是原始值（对象/数组为完整 JSON），单元格永不显示 JSON */}
+                            <dd className="flex min-w-0 items-center justify-end gap-2" title={statTooltip(v, k)}>
                               {typeof v === 'boolean' ? (
                                 // 布尔观测位统一徽章：是（绿）/ 否（灰）
                                 <Badge variant={v ? 'default' : 'secondary'} className="text-xs">
                                   {v ? t('ops.boolYes') : t('ops.boolNo')}
                                 </Badge>
                               ) : (
-                                <span className="min-w-0 truncate font-mono text-sm tabular-nums">{fmtStatValue(v, k)}</span>
+                                <span className="min-w-0 truncate font-mono text-sm tabular-nums">
+                                  {formatStatValue(v, k, { field: kk => t(`ops.statField.${kk}`, { defaultValue: kk }), items: n => t('ops.statItems', { count: n }) })}
+                                </span>
                               )}
                             </dd>
                           </div>
@@ -186,7 +175,7 @@ export default function Ops() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>{t('ops.snapshotName')}</TableHead>
-                      <TableHead>{t('ops.snapshotScopes')}</TableHead>
+                      <TableHead>{t('ops.snapshotScopeColumn')}</TableHead>
                       <TableHead>{t('ops.snapshotLastReload')}</TableHead>
                       <TableHead>{t('ops.snapshotLastError')}</TableHead>
                     </TableRow>
@@ -194,12 +183,16 @@ export default function Ops() {
                   <TableBody className="[&_td]:py-3.5">
                     {snapshots.map(s => (
                       <TableRow key={s.name}>
-                        <TableCell className="font-medium">{s.name}</TableCell>
+                        <TableCell className="font-medium">
+                          {t(`ops.snapshotNames.${s.name}` as DynamicKey, { defaultValue: s.name })}
+                        </TableCell>
                         <TableCell>
                           {s.scopes && s.scopes.length > 0 ? (
                             <div className="flex flex-wrap gap-1.5">
                               {s.scopes.map(sc => (
-                                <span key={sc} className="inline-flex items-center rounded-full border border-black/10 bg-black/[0.04] px-2 py-0.5 font-mono text-xs dark:border-white/10 dark:bg-white/10">{sc}</span>
+                                <span key={sc} className="inline-flex items-center rounded-full border border-black/10 bg-black/[0.04] px-2 py-0.5 font-mono text-xs dark:border-white/10 dark:bg-white/10">
+                                  {t(`ops.snapshotScopes.${sc}` as DynamicKey, { defaultValue: sc })}
+                                </span>
                               ))}
                             </div>
                           ) : (
@@ -236,7 +229,7 @@ export default function Ops() {
 }
 
 // 路由观测道面板：从 workers 数组按名取 stats（unknown 契约），只挑选呈现
-// 关键字段——数值/时刻全部服务端原值，前端仅做展示格式化（fmtStatValue）。
+// 关键字段——数值/时刻全部服务端原值，前端仅做展示格式化（formatStatValue）。
 type WorkerEntry = NonNullable<components['schemas']['WorkersResponse']['workers']>[number]
 
 const laneNum = (s: Record<string, unknown> | undefined, k: string): number | undefined =>
@@ -268,11 +261,11 @@ function RoutingLanes({ workers, planIncidents }: { workers: WorkerEntry[]; plan
       rows: [
         [t('ops.routing.generation'), (laneNum(compiler, 'decision_generation') ?? 0).toLocaleString()],
         [t('ops.routing.routes'), (laneNum(compiler, 'decision_routes') ?? 0).toLocaleString()],
-        [t('ops.routing.lastCompileOk'), fmtStatValue(okMs, 'last_compile_ok_unix_ms')],
-        [t('ops.routing.lastCompileErr'), fmtStatValue(errMs, 'last_compile_err_unix_ms')],
+        [t('ops.routing.lastCompileOk'), formatStatValue(okMs, 'last_compile_ok_unix_ms')],
+        [t('ops.routing.lastCompileErr'), formatStatValue(errMs, 'last_compile_err_unix_ms')],
         [t('ops.routing.compilePending'), `${laneNum(compiler, 'compile_pending') ?? 0} / ${laneNum(compiler, 'compile_cap') ?? 0}`],
         [t('ops.routing.activeIncidents'), (laneNum(compiler, 'active_incidents') ?? 0).toLocaleString()],
-        [t('ops.routing.lastIncidentEval'), fmtStatValue(evalMs, 'last_incident_eval_unix_ms')],
+        [t('ops.routing.lastIncidentEval'), formatStatValue(evalMs, 'last_incident_eval_unix_ms')],
       ],
       incidents: [
         ...(errMs > 0 && errMs >= okMs ? [t('ops.routing.incidentCompileFailed')] : []),
@@ -308,7 +301,7 @@ function RoutingLanes({ workers, planIncidents }: { workers: WorkerEntry[]; plan
     lanes.push({
       key: 'rollup', stats: rollup,
       rows: [
-        [t('ops.routing.watermark'), fmtStatValue(wm, 'watermark_unix_ms')],
+        [t('ops.routing.watermark'), formatStatValue(wm, 'watermark_unix_ms')],
         [t('ops.routing.lastBuckets'), (laneNum(rollup, 'last_buckets') ?? 0).toLocaleString()],
         [t('ops.routing.lastRows'), (laneNum(rollup, 'last_rows') ?? 0).toLocaleString()],
         [t('ops.routing.lastDuration'), fmtTTFT(laneNum(rollup, 'last_duration_ms') ?? 0)],
@@ -324,7 +317,7 @@ function RoutingLanes({ workers, planIncidents }: { workers: WorkerEntry[]; plan
       rows: [
         [t('ops.routing.generation'), (laneNum(health, 'generation') ?? 0).toLocaleString()],
         [t('ops.routing.records'), `${(laneNum(health, 'records') ?? 0).toLocaleString()} (${[laneNum(health, 'open'), laneNum(health, 'retry_after'), laneNum(health, 'probing'), laneNum(health, 'ready')].map(n => n ?? 0).join('/')})`],
-        [t('ops.routing.lastSyncOk'), fmtStatValue(laneNum(health, 'last_sync_ok_unix_ms'), 'last_sync_ok_unix_ms')],
+        [t('ops.routing.lastSyncOk'), formatStatValue(laneNum(health, 'last_sync_ok_unix_ms'), 'last_sync_ok_unix_ms')],
         [t('ops.routing.syncErrors'), syncErr.toLocaleString()],
         [t('ops.routing.lastTick'), tickOk ? t('ops.boolYes') : t('ops.boolNo')],
       ],
@@ -342,7 +335,7 @@ function RoutingLanes({ workers, planIncidents }: { workers: WorkerEntry[]; plan
         <CardDescription>{t('ops.routing.desc')}</CardDescription>
       </CardHeader>
       <CardContent>
-        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 xl:grid-cols-4 items-start">
           {lanes.map(l => (
             <div key={l.key} className="min-w-0">
               <div className="mb-1.5 text-sm font-medium">{t(`ops.routing.lane.${l.key}` as DynamicKey)}</div>

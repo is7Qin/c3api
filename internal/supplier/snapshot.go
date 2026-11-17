@@ -102,11 +102,16 @@ func (s *SupplierSnapshot) Load() *SupplierView {
 
 // SupplierSnapshotObs 视图可观测（ops 面；§4.4 三态：loaded / last_success /
 // stale_age）。
+//
+// json 键是 /ops/workers 的对外契约（嵌在 supplier.ViewLoadStats.snapshot 里），
+// 必须与 web 的 ops.statField.* 同形（snake_case）。struct 默认按字段名输出
+// PascalCase（Loaded/Revision…），前端只能显示原始名——故逐字段显式打 tag，
+// snapshot_json_test.go 钉死键集。
 type SupplierSnapshotObs struct {
-	Loaded            bool
-	Revision          int64
-	LastSuccessUnixMs int64 // 0 = 从未成功
-	StaleAgeMs        int64 // 距上次成功装载；从未成功 = -1
+	Loaded            bool  `json:"loaded"`
+	Revision          int64 `json:"revision"`
+	LastSuccessUnixMs int64 `json:"last_success_unix_ms"` // 0 = 从未成功
+	StaleAgeMs        int64 `json:"stale_age_ms"`         // 距上次成功装载；从未成功 = -1
 }
 
 // Obs 返回快照可观测状态（now 注入便于测试）。

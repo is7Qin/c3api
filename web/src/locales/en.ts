@@ -1759,7 +1759,18 @@ export default {
     "snapshotsTitle": "Snapshot registry",
     "snapshotsDesc": "Config snapshot load / reload state",
     "snapshotName": "Name",
-    "snapshotScopes": "Scopes",
+    "snapshotNames": {
+      "auth": "Auth",
+      "scheduler": "Scheduler",
+      "rules": "Rules",
+      "balances": "Balances",
+      "pricing": "Pricing",
+      "supplier-view": "Supplier view"
+    },
+    "snapshotScopeColumn": "Scopes",
+    "snapshotScopes": {
+      "settings": "Settings"
+    },
     "snapshotLastReload": "Last reload",
     "snapshotLastError": "Last error",
     "snapshotNoError": "OK",
@@ -1771,6 +1782,7 @@ export default {
     "noSnapshots": "No snapshots",
     "boolYes": "Yes",
     "boolNo": "No",
+    "statItems": "{{count}} items",
     "workers": {
       "invalidate": "Invalidation debouncer",
       "scheduler": "Account scheduler",
@@ -1795,7 +1807,10 @@ export default {
       "runtime-health": "Runtime health lane",
       "supplier-credit": "Supplier credit",
       "supplier-thaw": "Supplier thaw",
-      "supplier-view": "Supplier finance view"
+      "supplier-view": "Supplier finance view",
+      "quota-deadline": "429 quota top-up",
+      "dispatch-observer": "Dispatch observer",
+      "sdk-failure-retry": "Failure retry"
     },
     "stats": {
       "dirty": "Reload pending",
@@ -1981,7 +1996,28 @@ export default {
       "disk_eta_seconds": "Disk exhaustion ETA (s)",
       "capacity_blocked": "Capacity gate closed to new supplier traffic",
       "disk_observed_unix_ms": "Disk observed at",
-      "rejected": "Rejected observations"
+      "rejected": "Rejected observations",
+      "dropped": "Dropped",
+      "empty": "Empty",
+      "enqueued": "Enqueued",
+      "extended": "Extended",
+      "failed": "Failed",
+      "fingerprint_skips": "Fingerprint skips",
+      "persist_failures_fingerprint_mismatch": "Persist failures: fingerprint mismatch",
+      "persist_failures_missing_fingerprint": "Persist failures: missing fingerprint",
+      "persist_failures_missing_revision": "Persist failures: missing revision",
+      "persist_failures_stale_revision": "Persist failures: stale revision",
+      "stale": "Stale",
+      "unsupported": "Unsupported"
+    },
+    "statField": {
+      "loaded": "Loaded",
+      "revision": "Revision",
+      "last_success_unix_ms": "Last success",
+      "stale_age_ms": "Age",
+      "partitions": "Blocked partitions",
+      "first_blocked_unix_ms": "First blocked",
+      "oldest_uncredited_unix_ms": "Oldest uncredited"
     },
     "routing": {
       "title": "Routing lanes",
