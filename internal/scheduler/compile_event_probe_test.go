@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
+	"strings"
 	"testing"
 
 	"entgo.io/ent/dialect"
@@ -142,14 +144,35 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	require.Equal(t, loads2+1, cl.loadsN(), "baseline converged: the second tick is a hit")
 
 	// --- code-path proof: the single authorized production call-site ---
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	mainSrc, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "cmd", "server", "main.go"))
-	require.NoError(t, err)
+	// 装配按阶段拆文件之后（main.go + wiring_*.go），"main.go 里没有"不再等价于
+	// "包里没有"——守卫扫**整包**（排除 _test.go，按文件名排序拼接）。
+	mainSrc := readCmdServerPackage(t)
 	// 该字面量在 gofmt 下会随字段增删重新对齐，故按"折叠空白"匹配：本守卫要证明的
 	// 是"生产唯一调用点接了 repo 版探针"，不是某一次的对齐宽度。
-	require.Contains(t, foldSpaces(string(mainSrc)), "StalenessProbe: repos.Groups,",
+	require.Contains(t, foldSpaces(mainSrc), "StalenessProbe: repos.Groups,",
 		"production must wire the repo-backed probe in the scheduler Config literal (sole production call-site)")
+}
+
+// readCmdServerPackage 读 cmd/server **整包**源码（排除 _test.go，按文件名排序
+// 拼接）：装配阶段化之后，装配门钉的是"生产装配存在"，不是"某个具体文件里存在"。
+func readCmdServerPackage(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(file), "..", "..", "cmd", "server", "*.go"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "cmd/server 源码必须可读（装配门不能静默空扫）")
+	slices.Sort(paths)
+	var src strings.Builder
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		b, rerr := os.ReadFile(path)
+		require.NoError(t, rerr)
+		src.Write(b)
+	}
+	return src.String()
 }
 
 // foldSpaces 把连续空白折叠为单个空格（跨行字面量断言用：gofmt 会随字段增删

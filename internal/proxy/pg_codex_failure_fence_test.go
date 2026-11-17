@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -236,15 +237,37 @@ func TestCodexFatalChainUsesFencedPathPG(t *testing.T) {
 // 源码扫描钉住生产装配。漏掉任一项即退化为简化路径（判决不与身份对齐、对端只能
 // 靠周期兜底），且退化是静默的——故必须有机械门。
 func TestProductionWiresFailureFenceDeps(t *testing.T) {
-	_, file, _, ok := runtime.Caller(0)
-	require.True(t, ok)
-	src, err := os.ReadFile(filepath.Join(filepath.Dir(file), "..", "..", "cmd", "server", "main.go"))
-	require.NoError(t, err)
+	// 装配按阶段拆文件之后（main.go + wiring_*.go），"main.go 里没有"不再等价于
+	// "包里没有"——装配门扫**整包**（排除 _test.go，按文件名排序拼接）。
+	src := readCmdServerPackage(t)
 	// 折叠空白后匹配：gofmt 会随字段增删重新对齐，装配门不该因此假失败。
-	normalized := regexp.MustCompile(`\s+`).ReplaceAllString(string(src), " ")
+	normalized := regexp.MustCompile(`\s+`).ReplaceAllString(src, " ")
 	// 用 True + 自定义消息（而非 Contains）：断言失败时不要把整个 main.go 打出来。
 	require.True(t, strings.Contains(normalized, "Latch: latchStore,"),
 		"生产必须把锁存装配进 sdkbridge.FailureDeps —— 缺失则失效链不走围栏路径")
 	require.True(t, strings.Contains(normalized, "Publisher: schedGroupPub{pub},"),
 		"生产必须把组级发布面装配进 sdkbridge.FailureDeps —— 缺失则失效不对端广播")
+}
+
+// readCmdServerPackage 读 cmd/server **整包**源码（排除 _test.go，按文件名排序
+// 拼接）：装配按阶段拆文件之后（main.go + wiring_*.go），装配门钉的是"生产装配
+// 存在"，不是"某个具体文件里存在"；拼接顺序固定，断言与文件系统返回顺序无关。
+func readCmdServerPackage(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	paths, err := filepath.Glob(filepath.Join(filepath.Dir(file), "..", "..", "cmd", "server", "*.go"))
+	require.NoError(t, err)
+	require.NotEmpty(t, paths, "cmd/server 源码必须可读（装配门不能静默空扫）")
+	slices.Sort(paths)
+	var src strings.Builder
+	for _, path := range paths {
+		if strings.HasSuffix(path, "_test.go") {
+			continue
+		}
+		b, rerr := os.ReadFile(path)
+		require.NoError(t, rerr)
+		src.Write(b)
+	}
+	return src.String()
 }
