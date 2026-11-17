@@ -50,7 +50,7 @@ var _ rule.HealthSink = (*LatchSink)(nil)
 func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	var state HealthState
 	var ttl time.Duration
-	// resetUntil 非 nil ⇒ 这条动作有**绝对**截止（use_reset），走 ThrottleExtend；
+	// resetUntil 非 nil ⇒ 这条动作有**绝对**截止（use_reset），走 ThrottleUntil；
 	// 其余分支仍是相对时长，走 Throttle（内部换算成 now+ttl，用的是健康面自己的
 	// 时钟 currentMs）。这里绝不能用 time.Now() 自己换算：健康面在测试里可注入
 	// 时钟，两套时钟一混，绝对 until 就会落在 now 之前，冷却被夹成 1s。
@@ -95,7 +95,7 @@ func (s *LatchSink) Throttle(ev rule.Event, th domain.ThrottleAction) error {
 	if s.Health != nil {
 		var err error
 		if resetUntil != nil {
-			_, err = s.Health.ThrottleExtend(context.Background(), key, state, *resetUntil)
+			_, err = s.Health.ThrottleUntil(context.Background(), key, state, *resetUntil)
 		} else {
 			_, err = s.Health.Throttle(context.Background(), key, state, ttl)
 		}

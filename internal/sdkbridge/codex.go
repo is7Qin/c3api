@@ -174,7 +174,7 @@ type codexEntry struct {
 	usage   *domain.CodexUsageSnapshot
 	usageAt time.Time
 	// usageRev 这份 usage/usageWindows 是**哪一代身份 K** 拉到的
-	// （`AccountCredential.IdentityRevision`，R2-Q5）。命中条件因此是
+	// （`AccountCredential.IdentityRevision`）。命中条件因此是
 	// `usageRev == k && 新鲜`，而**不是** `srcRev == k`：
 	//
 	// srcRev 是资源归属的单调观测值（见上），会被后来的同签名请求抬升、也从不
@@ -687,7 +687,7 @@ var ErrUpstream = errors.New("codex: usage upstream error")
 // 调用方语义：按「无事实」处理——它既不是上游错误也不是凭据错误，而是"这一趟
 // 白跑了"（不延长冷却、不判账号失败；下一次按新 K 重新拉）。为什么必须丢弃：
 // 把旧代际的观测写进缓存并标成新一代，就是让新身份命中它从未观测过的事实
-// （R2-Q5 的反例：K=3 命中 K=2 写的 usage）。
+// （反例：K=3 命中 K=2 写的 usage）。
 var ErrUsageStale = errors.New("codex: usage snapshot superseded by identity change")
 
 // usageFetchConcurrency 快照拉取有界并发上限（所有调用面共享节流：管理面
@@ -744,7 +744,7 @@ type usageFlight struct {
 // e.usage + e.usageAt + e.usageRev + e.usageWindows（同一临界区）。失败 → 写
 // e.usageErrAt + e.usageErr + e.usageErrRev（60s **同代际**冷却）。
 //
-// **代际（R2-Q5）**：命中要 `usageRev == cred.IdentityRevision`（`srcRev` 是
+// **代际**：命中要 `usageRev == cred.IdentityRevision`（`srcRev` 是
 // 资源归属的单调观测值，不能当观测代际）；失败冷却只挡 `usageErrRev == K` 的
 // 那一代（换代立即允许补拉一次）；拉取期间 K 前进 ⇒ 结果丢弃并返回
 // ErrUsageStale（见函数内注释）。
@@ -855,7 +855,7 @@ func (a *Codex) GetUsageSnapshot(ctx context.Context, cred *domain.AccountCreden
 	// 该包住"数据 + 时刻 + 代际标签一起翻页"这件事本身（见 commitUsage）——
 	// 否则读面可能看到"新快照 + 旧窗口"（或反之），那就是把两次观测拼成一次事实。
 	windows := resp.QuotaState()
-	// 本次拉取期间身份前进 ⇒ 丢弃结果（R2-Q5）。不变量与证明：
+	// 本次拉取期间身份前进 ⇒ 丢弃结果。不变量与证明：
 	//  - 任何写入都带 `usageRev = startK` 的诚实标签，而命中要求 `usageRev == k`
 	//    ⇒ 旧代的观测永远不会被新代际消费（写错标签才是唯一的破口）；
 	//  - 判据取"开始时的 srcRev 观测值"：`srcRev` 是单调值，开始**之前**就被抬到
@@ -964,7 +964,7 @@ func (a *Codex) recordUsageFailure(e *codexEntry, k int64, err error) {
 	now := a.now()
 	e.usageMu.Lock()
 	defer e.usageMu.Unlock()
-	// 单调闸门（S4a §1，与 commitUsage 同一条纪律）：新一代的失败记录已经写过
+	// 单调闸门（与 commitUsage 同一条纪律）：新一代的失败记录已经写过
 	// ⇒ 旧代的失败不得把它降级——哪怕这只是一段冷却，它也会让新代际被一段自己
 	// 没经历过的冷却挡住。
 	if e.usageErrRev > k {
@@ -988,17 +988,16 @@ func (a *Codex) recordUsageFailure(e *codexEntry, k int64, err error) {
 // 比较用 `!usageAt.Before(fetchStartedAt)`（即 **>=**，不是严格的 After）：
 // `time.Now()` 的粒度在 Windows 上可以粗到毫秒级，两个真正交错的观测会拿到
 // **逐纳秒相等**的时刻（本用例在 CI 与本地都实际撞到过）。相等时无法判先后，
-// 保守选"保留缓存"——否则"后返回者覆盖先返回者"会以秒级概率重现（门禁 16
-// 就是用它判红的）。
+// 保守选"保留缓存"——否则"后返回者覆盖先返回者"会以秒级概率重现。
 //
-// 单调（S4a §1）：`usageRev` 只许单调不减——本次观测属于比缓存**更旧**的代际
+// 单调：`usageRev` 只许单调不减——本次观测属于比缓存**更旧**的代际
 // （k < usageRev，即拉取开始前凭据快照就已落后）时照样不落缓存，只把观测交回
 // 调用方。它与新鲜度是两条正交的闸门：新鲜度比"时刻"，单调比"代际"。
 func (a *Codex) commitUsage(e *codexEntry, s *domain.CodexUsageSnapshot, windows []codexsdk.QuotaWindow, k int64, fetchStartedAt time.Time) *domain.CodexUsageSnapshot {
 	now := a.now()
 	e.usageMu.Lock()
 	defer e.usageMu.Unlock()
-	// 单调闸门（S4a §1）：新一代已经写过 ⇒ 旧代的观测不得把它降级（usageRev 只
+	// 单调闸门：新一代已经写过 ⇒ 旧代的观测不得把它降级（usageRev 只
 	// 许单调不减）。本次结果仍然交回调用方（它问的就是 k 这一代），只是不落缓存。
 	if e.usageRev > k {
 		return s

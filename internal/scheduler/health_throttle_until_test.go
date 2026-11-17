@@ -19,6 +19,8 @@ import (
 //
 // 为什么不直接断言 Lua 脚本文本：文本会随注释/空格变化，而门禁要钉的是
 // 「短冷却打不回长冷却」「31d 上界」「绝对 until 跨进程稳定」这些可观测事实。
+// （「两脚本共享核心必须逐字相同」是另一类性质——它在行为上不可观察，见
+// health_throttle_lua_test.go；那里不是把行为断言换成了文本断言。）
 
 // fixedHealthNow 测试用的固定时刻（时区无关：比较一律走 UnixMilli）。
 var fixedHealthNow = time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
@@ -32,15 +34,15 @@ func newFixedClockHealth(t *testing.T, c *redis.Client, selfID string) (*Runtime
 	return h, &now
 }
 
-func TestThrottleExtendDoesNotShorten(t *testing.T) {
+func TestThrottleUntilDoesNotShorten(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	key := healthKeyFor(11, "q1", 1)
 
-	_, err := h.ThrottleExtend(context.Background(), key, StateRetryAfter, now.Add(24*time.Minute))
+	_, err := h.ThrottleUntil(context.Background(), key, StateRetryAfter, now.Add(24*time.Minute))
 	require.NoError(t, err)
 	// 后到的短冷却（典型：seed-5xx 的 10m）不得覆盖已有的 24m。
-	_, err = h.ThrottleExtend(context.Background(), key, StateOPEN, now.Add(10*time.Minute))
+	_, err = h.ThrottleUntil(context.Background(), key, StateOPEN, now.Add(10*time.Minute))
 	require.NoError(t, err)
 
 	require.NoError(t, h.Sync(context.Background()))
@@ -53,16 +55,16 @@ func TestThrottleExtendDoesNotShorten(t *testing.T) {
 	require.Equal(t, 24*time.Minute, pttl, "Redis TTL 也只延长")
 }
 
-func TestThrottleExtendMultiInstanceMonotonic(t *testing.T) {
+func TestThrottleUntilMultiInstanceMonotonic(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	hA, now := newFixedClockHealth(t, c, "self-a")
 	hB, _ := newFixedClockHealth(t, c, "self-b")
 
 	// 长 → 短（另一实例交错写）：不缩短。
 	long := healthKeyFor(21, "q1", 1)
-	_, err := hA.ThrottleExtend(context.Background(), long, StateRetryAfter, now.Add(24*time.Minute))
+	_, err := hA.ThrottleUntil(context.Background(), long, StateRetryAfter, now.Add(24*time.Minute))
 	require.NoError(t, err)
-	_, err = hB.ThrottleExtend(context.Background(), long, StateOPEN, now.Add(10*time.Minute))
+	_, err = hB.ThrottleUntil(context.Background(), long, StateOPEN, now.Add(10*time.Minute))
 	require.NoError(t, err)
 	pttl, err := c.PTTL(context.Background(), healthRecordPrefix+long.String()).Result()
 	require.NoError(t, err)
@@ -70,21 +72,21 @@ func TestThrottleExtendMultiInstanceMonotonic(t *testing.T) {
 
 	// 短 → 长：正常延长。
 	grow := healthKeyFor(22, "q1", 1)
-	_, err = hA.ThrottleExtend(context.Background(), grow, StateOPEN, now.Add(10*time.Minute))
+	_, err = hA.ThrottleUntil(context.Background(), grow, StateOPEN, now.Add(10*time.Minute))
 	require.NoError(t, err)
-	_, err = hB.ThrottleExtend(context.Background(), grow, StateRetryAfter, now.Add(24*time.Minute))
+	_, err = hB.ThrottleUntil(context.Background(), grow, StateRetryAfter, now.Add(24*time.Minute))
 	require.NoError(t, err)
 	pttl, err = c.PTTL(context.Background(), healthRecordPrefix+grow.String()).Result()
 	require.NoError(t, err)
 	require.Equal(t, 24*time.Minute, pttl)
 }
 
-func TestThrottleExtendHardCap31d(t *testing.T) {
+func TestThrottleUntilHardCap31d(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	key := healthKeyFor(31, "q1", 1)
 
-	_, err := h.ThrottleExtend(context.Background(), key, StateRetryAfter, now.Add(90*24*time.Hour))
+	_, err := h.ThrottleUntil(context.Background(), key, StateRetryAfter, now.Add(90*24*time.Hour))
 	require.NoError(t, err)
 
 	// 行为上钉死「Go 常量 == Lua 字面量」：若两边不同步，这里的精确值就会红。
@@ -97,7 +99,7 @@ func TestThrottleExtendHardCap31d(t *testing.T) {
 	require.Equal(t, now.Add(healthMaxTTL).UnixMilli(), h.View()[key].ExpiresAt, "业务截止同样被截断")
 }
 
-func TestThrottleExtendRecordInvariants(t *testing.T) {
+func TestThrottleUntilRecordInvariants(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	key := healthKeyFor(41, "q1", 1)
@@ -137,14 +139,14 @@ func TestThrottleExtendRecordInvariants(t *testing.T) {
 	require.Equal(t, now.Add(6*time.Minute).UnixMilli(), h.View()[key].ExpiresAt)
 }
 
-func TestThrottleExtendAbsoluteUntil(t *testing.T) {
+func TestThrottleUntilAbsoluteUntil(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	ctx := context.Background()
 	key := healthKeyFor(51, "q1", 1)
 	sevenDays := now.Add(7 * 24 * time.Hour)
 
-	_, err := h.ThrottleExtend(ctx, key, StateOPEN, sevenDays)
+	_, err := h.ThrottleUntil(ctx, key, StateOPEN, sevenDays)
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(ctx))
 	health, ok := h.AccountHealth(key.AccountID)
@@ -152,7 +154,7 @@ func TestThrottleExtendAbsoluteUntil(t *testing.T) {
 	require.Equal(t, sevenDays.UnixMilli(), health.Until.UnixMilli(), "Until 必须等于业务截止")
 
 	// 短写不覆盖长 until（业务截止也只延长）。
-	_, err = h.ThrottleExtend(ctx, key, StateOPEN, now.Add(time.Hour))
+	_, err = h.ThrottleUntil(ctx, key, StateOPEN, now.Add(time.Hour))
 	require.NoError(t, err)
 	require.NoError(t, h.Sync(ctx))
 	health, ok = h.AccountHealth(key.AccountID)
@@ -171,10 +173,10 @@ func TestThrottleExtendAbsoluteUntil(t *testing.T) {
 	require.Equal(t, now.UnixMilli()+60000, h.View()[legacy].ExpiresAt, "缺 until 的旧记录回落 now+ttl")
 }
 
-// TestThrottleExtendKeepsTTLAlignedWithUntil 手工坏记录（until 7 天后但 TTL 只剩
+// TestThrottleUntilKeepsTTLAlignedWithUntil 手工坏记录（until 7 天后但 TTL 只剩
 // 1 小时）被再次写入时，TTL 必须补齐到 until 之后：否则记录会早于业务截止消失，
 // 账号在窗口仍然打满时提前回到 READY。
-func TestThrottleExtendKeepsTTLAlignedWithUntil(t *testing.T) {
+func TestThrottleUntilKeepsTTLAlignedWithUntil(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	ctx := context.Background()
@@ -189,17 +191,17 @@ func TestThrottleExtendKeepsTTLAlignedWithUntil(t *testing.T) {
 	require.NoError(t, c.PExpire(ctx, healthRecordPrefix+field, time.Hour).Err())
 	require.NoError(t, c.ZAdd(ctx, healthActiveZSet, redis.Z{Score: 1, Member: field}).Err())
 
-	_, err := h.ThrottleExtend(ctx, key, StateOPEN, now.Add(2*time.Hour))
+	_, err := h.ThrottleUntil(ctx, key, StateOPEN, now.Add(2*time.Hour))
 	require.NoError(t, err)
 	pttl, err := c.PTTL(ctx, healthRecordPrefix+field).Result()
 	require.NoError(t, err)
 	require.Equal(t, 7*24*time.Hour, pttl, "TTL 必须补齐到 until 之后")
 }
 
-// TestThrottleExtendCapsLegacyOverlongUntil 历史坏记录（until/TTL 都是 60d）被再次
+// TestThrottleUntilCapsLegacyOverlongUntil 历史坏记录（until/TTL 都是 60d）被再次
 // 写入时，旧值参与 max 之后仍必须被 31d 上界夹住——否则「只延长」会把坏值永久
 // 传播下去，冷却记录再也无法过期。
-func TestThrottleExtendCapsLegacyOverlongUntil(t *testing.T) {
+func TestThrottleUntilCapsLegacyOverlongUntil(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	ctx := context.Background()
@@ -214,7 +216,7 @@ func TestThrottleExtendCapsLegacyOverlongUntil(t *testing.T) {
 	require.NoError(t, c.PExpire(ctx, healthRecordPrefix+field, 60*24*time.Hour).Err())
 	require.NoError(t, c.ZAdd(ctx, healthActiveZSet, redis.Z{Score: 1, Member: field}).Err())
 
-	_, err := h.ThrottleExtend(ctx, key, StateOPEN, now.Add(5*time.Minute))
+	_, err := h.ThrottleUntil(ctx, key, StateOPEN, now.Add(5*time.Minute))
 	require.NoError(t, err)
 
 	pttl, err := c.PTTL(ctx, healthRecordPrefix+field).Result()
@@ -226,17 +228,17 @@ func TestThrottleExtendCapsLegacyOverlongUntil(t *testing.T) {
 	require.LessOrEqual(t, storedUntil, now.Add(healthMaxTTL).UnixMilli(), "旧坏 until 必须被夹回 31d")
 }
 
-// TestThrottleExtendPastDeadlineStaysReadable 过去的截止时刻必须被规范化成
+// TestThrottleUntilPastDeadlineStaysReadable 过去的截止时刻必须被规范化成
 // **正数** until：读路径把非正 until 当坏记录（冻结视图），所以这里既断言 1s 的
 // 存活窗口，也断言随后一次 Sync 不会失败。
-func TestThrottleExtendPastDeadlineStaysReadable(t *testing.T) {
+func TestThrottleUntilPastDeadlineStaysReadable(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	ctx := context.Background()
 	key := healthKeyFor(47, "q1", 1)
 	field := key.String()
 
-	_, err := h.ThrottleExtend(ctx, key, StateOPEN, now.Add(-time.Hour))
+	_, err := h.ThrottleUntil(ctx, key, StateOPEN, now.Add(-time.Hour))
 	require.NoError(t, err)
 
 	pttl, err := c.PTTL(ctx, healthRecordPrefix+field).Result()
@@ -279,9 +281,9 @@ func TestMarkReadyClearsRecord(t *testing.T) {
 	require.False(t, ok, "READY 的键不得出现在健康视图里")
 }
 
-// TestThrottleExtendMultiQualityIsolation 账号级（quality="*"）与 route 质量类
+// TestThrottleUntilMultiQualityIsolation 账号级（quality="*"）与 route 质量类
 // 记录是两条独立键：一方延长不得改写另一方。
-func TestThrottleExtendMultiQualityIsolation(t *testing.T) {
+func TestThrottleUntilMultiQualityIsolation(t *testing.T) {
 	_, c := newHealthTestRedis(t)
 	h, now := newFixedClockHealth(t, c, "self-a")
 	ctx := context.Background()
@@ -289,9 +291,9 @@ func TestThrottleExtendMultiQualityIsolation(t *testing.T) {
 	accountKey := healthKeyFor(49, "*", 1)
 	routeKey := healthKeyFor(49, "q1", 1)
 
-	_, err := h.ThrottleExtend(ctx, accountKey, StateRetryAfter, now.Add(24*time.Minute))
+	_, err := h.ThrottleUntil(ctx, accountKey, StateRetryAfter, now.Add(24*time.Minute))
 	require.NoError(t, err)
-	_, err = h.ThrottleExtend(ctx, routeKey, StateOPEN, now.Add(10*time.Minute))
+	_, err = h.ThrottleUntil(ctx, routeKey, StateOPEN, now.Add(10*time.Minute))
 	require.NoError(t, err)
 
 	accountTTL, err := c.PTTL(ctx, healthRecordPrefix+accountKey.String()).Result()

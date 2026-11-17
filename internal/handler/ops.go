@@ -34,6 +34,9 @@ import (
 // 同步义务：改 Stats() 返回的字段（增删改名）必须同步
 // openapi.yaml WorkerStatus.stats 的字段清单（description），否则契约
 // 文档过期且无人知——清单是消费方（前端/运维脚本）的唯一依据。
+//
+// 口径补充（scheduler 的 quota 队列）：关闭排空会把剩余条目从 enqueued 转入
+// dropped，故 enqueued + dropped 恒等于 Enqueue 调用次数（两者之和守恒）。
 type StatsProvider interface {
 	Name() string
 	Stats() any

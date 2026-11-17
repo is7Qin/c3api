@@ -345,6 +345,9 @@ func TestQuotaWorkerDropsWhenFull(t *testing.T) {
 
 	require.NoError(t, w.Close(context.Background()))
 	require.Equal(t, int64(2), w.Dropped(), "关闭后队列剩余计入 dropped")
+	require.Zero(t, w.Queued(), "关闭后队列必须排空")
+	enqueued, dropped, _ := q.Stats()
+	require.Equal(t, int64(2), enqueued+dropped, "守恒：enqueued+dropped == Enqueue 调用次数")
 }
 
 // TestQuotaWorkerStartAfterCloseFails：Close 先于 Start 之后不允许再启动
@@ -411,6 +414,8 @@ func TestQuotaWorkerCloseDrainsQueue(t *testing.T) {
 	require.NoError(t, w.Close(context.Background()))
 	require.Zero(t, w.Queued(), "关闭后队列必须排空")
 	require.Equal(t, int64(2), w.Dropped(), "队列剩余 = 两条未消费任务")
+	enqueued, dropped, _ := q.Stats()
+	require.Equal(t, int64(2), enqueued+dropped, "守恒：enqueued+dropped == Enqueue 调用次数")
 	require.Zero(t, health.count())
 }
 

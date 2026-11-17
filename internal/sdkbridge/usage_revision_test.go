@@ -147,6 +147,72 @@ func (u *usageRevUpstream) maxConcurrent() int {
 	return u.maxCon
 }
 
+// usageFlightCase 一次 usage 拉取编排的固定底座：可编排上游 + 共享 ClientTable +
+// n 个适配器（各自独立在飞表）+ 注入时钟。
+//
+// 契约（改它之前先读——下面四条都是既有断言的成立前提，不是风格偏好）：
+//   - **时钟是参数**：now 非 nil 时注入它创建的**每一个**适配器
+//     （EqualTimestamp 要求 a1/a2 同一固定时钟，漏注入一个就判不出"相等时刻
+//     保留缓存"）；nil = 用真实时钟。
+//   - **n=2 时"共享 ClientTable + 各自 flights"是参数**，不许简化成单适配器：
+//     共享表才能让两个适配器落在**同一条目**上，各自 flights 才能让同 K 的两个
+//     上游观测同时在途。简化后第二个请求会并到第一个 flight 上，
+//     waitArrived(t,1) 直接 5s 超时——症状会被误读成环境问题。
+//   - readUsageCache 保持"同一 usageMu 读 8 字段"的联合快照，不许拆 per-field
+//     getter：本组钉的就是"数据/时刻/代际/失败三元组一起翻页"。
+//   - usageWaitProbe 保留（follower 的等待点靠它，不许换成 sleep）。
+type usageFlightCase struct {
+	up       *usageRevUpstream
+	tbl      *ClientTable
+	adapters []*Codex
+}
+
+// newUsageFlightCase 造一次编排：上游按 steps 逐个放行，适配器共享一张表。
+func newUsageFlightCase(t *testing.T, now func() time.Time, n int, steps ...codexUpstreamStep) *usageFlightCase {
+	t.Helper()
+	c := &usageFlightCase{up: newUsageRevUpstream(t, steps...), tbl: NewClientTable()}
+	pool := testEgressPool(newOfficialRewriteTransport(t, c.up.srv.URL))
+	for range n {
+		a := NewCodex(nil, pool, c.tbl, RotationDeps{})
+		if now != nil {
+			a.usageNow = now
+		}
+		c.adapters = append(c.adapters, a)
+	}
+	return c
+}
+
+// a 取第 i 个适配器（越界即编排写错：直接判死，不要静默给 nil）。
+func (c *usageFlightCase) a(i int) *Codex {
+	if i >= len(c.adapters) {
+		panic("usageFlightCase: adapter index out of range")
+	}
+	return c.adapters[i]
+}
+
+// usageFetch 一次在途拉取的句柄：done 关闭后 snap/err 可读（-race 安全：写发生
+// 在 close(done) 之前，读发生在 <-done 之后）。
+type usageFetch struct {
+	done chan struct{}
+	snap *domain.CodexUsageSnapshot
+	err  error
+}
+
+func (f *usageFetch) wait() { <-f.done }
+
+// startUsageFetch 起一个拉取并立刻返回句柄。禁止在测试里散写
+// `var s *...; var e error; done := make(chan struct{}); go func(){...}()`：
+// 那样每个用例都要复制一遍"写者/读者之间只靠 close(done) 建 happens-before"，
+// 漏一处就是 -race 下的假红或假绿。
+func startUsageFetch(a *Codex, ctx context.Context, cred *domain.AccountCredential) *usageFetch {
+	f := &usageFetch{done: make(chan struct{})}
+	go func() {
+		defer close(f.done)
+		f.snap, f.err = a.GetUsageSnapshot(ctx, cred)
+	}()
+	return f
+}
+
 // usageCacheView 一次读面上的完整缓存状态（同一 usageMu 临界区读出——"不撕裂"
 // 断言的观测面：数据、时刻、代际标签、失败三元组必须彼此一致）。
 type usageCacheView struct {
@@ -192,32 +258,26 @@ func readUsageCache(t *testing.T, tbl *ClientTable, accountID int64) usageCacheV
 // 上游，见报告）。真正把并发压成 1 的是 `(accountID,K)` 在飞表。
 func TestUsageConcurrentSameRevisionFetchesOnce(t *testing.T) {
 	const k = int64(7)
-	u := newUsageRevUpstream(t, codexUpstreamStep{status: 200, body: usageRevBody(11)})
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
+	fc := newUsageFlightCase(t, nil, 1, codexUpstreamStep{status: 200, body: usageRevBody(11)})
+	u, a := fc.up, fc.a(0)
 	cred := usageCredRev(1, k)
 
 	const n = usageFetchConcurrency
-	snaps := make([]*domain.CodexUsageSnapshot, n)
-	errs := make([]error, n)
-	var wg sync.WaitGroup
+	flights := make([]*usageFetch, n)
 	for i := range n {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			snaps[i], errs[i] = a.GetUsageSnapshot(context.Background(), cred)
-		}(i)
+		flights[i] = startUsageFetch(a, context.Background(), cred)
 	}
 	u.waitArrived(t, 0) // leader 已在上游 in-flight
 	u.allow(0)
-	wg.Wait()
 
 	require.Equal(t, 1, u.callsN(), "同 (accountID,K) 8 并发 ⇒ 上游恰 1 次")
 	require.Equal(t, 1, u.maxConcurrent(), "并发峰值 1（follower 只等结论，不打上游）")
 	for i := range n {
-		require.NoErrorf(t, errs[i], "第 %d 个调用必须成功", i)
-		require.Same(t, snaps[0], snaps[i], "8 个调用拿到同一份观测实例")
+		flights[i].wait()
+		require.NoErrorf(t, flights[i].err, "第 %d 个调用必须成功", i)
+		require.Same(t, flights[0].snap, flights[i].snap, "8 个调用拿到同一份观测实例")
 	}
-	v := readUsageCache(t, a.clients, 1)
+	v := readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, k, v.rev, "缓存标签 = 本次拉取的 K")
 	require.Equal(t, 11, v.percent)
 }
@@ -226,13 +286,12 @@ func TestUsageConcurrentSameRevisionFetchesOnce(t *testing.T) {
 // 第二次零上游 → **推进时间**（注入时钟，不 sleep 60s）后重新拉取并成功。
 func TestUsageFailureCooldownPerRevision(t *testing.T) {
 	const k = int64(5)
-	u := newUsageRevUpstream(t,
+	now := time.Date(2026, time.December, 1, 9, 0, 0, 0, time.UTC)
+	fc := newUsageFlightCase(t, func() time.Time { return now }, 1,
 		codexUpstreamStep{status: 500, body: `{"error":{"message":"boom"}}`},
 		codexUpstreamStep{status: 200, body: usageRevBody(12)},
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
-	now := time.Date(2026, time.December, 1, 9, 0, 0, 0, time.UTC)
-	a.usageNow = func() time.Time { return now }
+	u, a := fc.up, fc.a(0)
 	cred := usageCredRev(1, k)
 	ctx := context.Background()
 
@@ -240,7 +299,7 @@ func TestUsageFailureCooldownPerRevision(t *testing.T) {
 	_, err := a.GetUsageSnapshot(ctx, cred)
 	require.ErrorIs(t, err, ErrUpstream, "500 → ErrUpstream 分类")
 	require.Equal(t, 1, u.callsN())
-	v := readUsageCache(t, a.clients, 1)
+	v := readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, k, v.errRev, "失败冷却标上本次拉取的 K")
 	require.Equal(t, ErrUpstream, v.err)
 	require.Truef(t, v.errAt.Equal(now), "失败时刻取自注入时钟: %v", v.errAt)
@@ -257,7 +316,7 @@ func TestUsageFailureCooldownPerRevision(t *testing.T) {
 	require.NoError(t, err, "冷却到期后重新拉取")
 	require.Equal(t, 12, snap.RateLimit.UsedPercent)
 	require.Equal(t, 2, u.callsN())
-	v = readUsageCache(t, a.clients, 1)
+	v = readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, k, v.rev, "成功写回本代标签")
 	require.Truef(t, v.at.Equal(now), "成功时刻取自注入时钟: %v", v.at)
 	require.True(t, v.errAt.IsZero(), "成功清冷却起点")
@@ -273,12 +332,12 @@ func TestUsageFailureCooldownPerRevision(t *testing.T) {
 // 这一代的观测（丢弃只针对拉取**在途**期间的抬升，门禁 27）；但缓存也不降级
 // （S4a 整改 §1 单调闸门：新一代已写过 ⇒ 旧代观测只回给调用方，不落缓存）。
 func TestUsageCacheIsGenerationBound(t *testing.T) {
-	u := newUsageRevUpstream(t,
+	fc := newUsageFlightCase(t, nil, 1,
 		codexUpstreamStep{status: 200, body: usageRevBody(21)},
 		codexUpstreamStep{status: 200, body: usageRevBody(22)},
 		codexUpstreamStep{status: 200, body: usageRevBody(23)},
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
+	u, a := fc.up, fc.a(0)
 	cred2, cred3 := usageCredRev(1, 2), usageCredRev(1, 3)
 	ctx := context.Background()
 
@@ -287,14 +346,14 @@ func TestUsageCacheIsGenerationBound(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 21, s2.RateLimit.UsedPercent)
 	require.Equal(t, 1, u.callsN(), "K=2 首次拉取 1 次上游")
-	require.Equal(t, int64(2), readUsageCache(t, a.clients, 1).rev)
+	require.Equal(t, int64(2), readUsageCache(t, fc.tbl, 1).rev)
 
 	u.allow(1)
 	s3, err := a.GetUsageSnapshot(ctx, cred3)
 	require.NoError(t, err)
 	require.Equal(t, 22, s3.RateLimit.UsedPercent, "K=3 不得命中 K=2 的快照")
 	require.Equal(t, 2, u.callsN(), "换代必须重新拉取")
-	v := readUsageCache(t, a.clients, 1)
+	v := readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, int64(3), v.rev, "标签跟随后一次拉取")
 	require.Equal(t, 22, v.percent)
 
@@ -305,7 +364,7 @@ func TestUsageCacheIsGenerationBound(t *testing.T) {
 	require.Equal(t, 3, u.callsN(), "无跨代际命中：K=2 再拉一次")
 	// S4a 整改 §1：旧代际不降级——调用方拿到自己这一代的观测（23），但缓存仍是
 	// K=3 那份（usageRev 只许单调不减）。
-	v = readUsageCache(t, a.clients, 1)
+	v = readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, int64(3), v.rev, "旧代观测不得把 usageRev 降级（§1 单调闸门）")
 	require.Equal(t, 22, v.percent, "新一代的事实原样保留")
 }
@@ -319,54 +378,39 @@ func TestUsageCacheIsGenerationBound(t *testing.T) {
 // 第一份写入之前 ⇒ 它的观测不算更新鲜。
 func TestUsageOlderFetchDoesNotOverwriteFresherCache(t *testing.T) {
 	const k = int64(4)
-	u := newUsageRevUpstream(t,
+	fc := newUsageFlightCase(t, nil, 2,
 		codexUpstreamStep{status: 200, body: usageRevBody(31)},
 		codexUpstreamStep{status: 200, body: usageRevBody(32)},
 	)
-	pool := testEgressPool(newOfficialRewriteTransport(t, u.srv.URL))
-	tbl := NewClientTable()
-	a1 := NewCodex(nil, pool, tbl, RotationDeps{})
-	a2 := NewCodex(nil, pool, tbl, RotationDeps{})
+	u, a1, a2 := fc.up, fc.a(0), fc.a(1)
 	cred := usageCredRev(1, k)
 	ctx := context.Background()
 
-	var (
-		s1, s2 *domain.CodexUsageSnapshot
-		e1, e2 error
-	)
-	done1 := make(chan struct{})
-	go func() {
-		defer close(done1)
-		s1, e1 = a1.GetUsageSnapshot(ctx, cred)
-	}()
+	f1 := startUsageFetch(a1, ctx, cred)
 	u.waitArrived(t, 0) // 先发者已在上游 in-flight
 
-	done2 := make(chan struct{})
-	go func() {
-		defer close(done2)
-		s2, e2 = a2.GetUsageSnapshot(ctx, cred)
-	}()
+	f2 := startUsageFetch(a2, ctx, cred)
 	u.waitArrived(t, 1) // 后发者也已在上游（不同实例 ⇒ 不同单飞表）
 
 	// 先发者先返回：它写下的就是"更新鲜"的那份。
 	u.allow(0)
-	<-done1
-	require.NoError(t, e1)
-	first := readUsageCache(t, tbl, 1)
+	f1.wait()
+	require.NoError(t, f1.err)
+	first := readUsageCache(t, fc.tbl, 1)
 	require.True(t, first.hasSnap)
 	require.Equal(t, 31, first.percent)
 	require.Equal(t, k, first.rev)
 
 	// 后发者晚返回：它开始于 first 写入之前 ⇒ 观测不更新鲜 ⇒ 不覆盖。
 	u.allow(1)
-	<-done2
-	require.NoError(t, e2, "不覆盖不是错误：调用方拿到缓存里更鲜的那份")
-	after := readUsageCache(t, tbl, 1)
+	f2.wait()
+	require.NoError(t, f2.err, "不覆盖不是错误：调用方拿到缓存里更鲜的那份")
+	after := readUsageCache(t, fc.tbl, 1)
 	require.True(t, first.at.Equal(after.at), "后返回者不得改写缓存时刻: %v → %v", first.at, after.at)
 	require.Equal(t, first.percent, after.percent, "后返回者不得改写缓存数据")
 	require.Equal(t, first.rev, after.rev)
 	require.Equal(t, first.windows, after.windows, "窗口事实也不得被后返回者覆盖")
-	require.Same(t, s1, s2, "后返回者拿到缓存里更鲜的那份（与先返回者是同一实例）")
+	require.Same(t, f1.snap, f2.snap, "后返回者拿到缓存里更鲜的那份（与先返回者是同一实例）")
 }
 
 // TestUsageEqualTimestampKeepsCache 门禁 16 的边界：`!usageAt.Before(fetchStartedAt)`
@@ -376,51 +420,34 @@ func TestUsageOlderFetchDoesNotOverwriteFresherCache(t *testing.T) {
 // Windows 上 time.Now 的粒度可以粗到毫秒，真实交错真的会撞到相等时刻。
 func TestUsageEqualTimestampKeepsCache(t *testing.T) {
 	const k = int64(4)
-	u := newUsageRevUpstream(t,
+	now := time.Date(2026, time.December, 1, 9, 0, 0, 0, time.UTC)
+	fc := newUsageFlightCase(t, func() time.Time { return now }, 2,
 		codexUpstreamStep{status: 200, body: usageRevBody(33)},
 		codexUpstreamStep{status: 200, body: usageRevBody(34)},
 	)
-	pool := testEgressPool(newOfficialRewriteTransport(t, u.srv.URL))
-	tbl := NewClientTable()
-	now := time.Date(2026, time.December, 1, 9, 0, 0, 0, time.UTC)
-	a1 := NewCodex(nil, pool, tbl, RotationDeps{})
-	a2 := NewCodex(nil, pool, tbl, RotationDeps{})
-	a1.usageNow = func() time.Time { return now }
-	a2.usageNow = func() time.Time { return now }
+	u, a1, a2 := fc.up, fc.a(0), fc.a(1)
 	cred := usageCredRev(1, k)
 	ctx := context.Background()
 
-	var (
-		s1, s2 *domain.CodexUsageSnapshot
-		e1, e2 error
-	)
-	done1 := make(chan struct{})
-	go func() {
-		defer close(done1)
-		s1, e1 = a1.GetUsageSnapshot(ctx, cred)
-	}()
+	f1 := startUsageFetch(a1, ctx, cred)
 	u.waitArrived(t, 0)
 
-	done2 := make(chan struct{})
-	go func() {
-		defer close(done2)
-		s2, e2 = a2.GetUsageSnapshot(ctx, cred)
-	}()
+	f2 := startUsageFetch(a2, ctx, cred)
 	u.waitArrived(t, 1)
 
 	u.allow(0)
-	<-done1
-	require.NoError(t, e1)
-	require.Equal(t, 33, s1.RateLimit.UsedPercent)
-	first := readUsageCache(t, tbl, 1)
+	f1.wait()
+	require.NoError(t, f1.err)
+	require.Equal(t, 33, f1.snap.RateLimit.UsedPercent)
+	first := readUsageCache(t, fc.tbl, 1)
 	require.Truef(t, first.at.Equal(now), "写入的时刻取自注入时钟: %v", first.at)
 
 	// 后发者的 fetchStartedAt 与缓存时刻**相等**：判不出先后 ⇒ 保守保留缓存。
 	u.allow(1)
-	<-done2
-	require.NoError(t, e2, "相等时刻不算错误：调用方拿到缓存里那份")
-	require.Same(t, s1, s2, "两个观测拿到逐纳秒相等的时刻 ⇒ 保守保留缓存（同一实例）")
-	after := readUsageCache(t, tbl, 1)
+	f2.wait()
+	require.NoError(t, f2.err, "相等时刻不算错误：调用方拿到缓存里那份")
+	require.Same(t, f1.snap, f2.snap, "两个观测拿到逐纳秒相等的时刻 ⇒ 保守保留缓存（同一实例）")
+	after := readUsageCache(t, fc.tbl, 1)
 	require.Truef(t, after.at.Equal(now), "缓存时刻不得被后返回者改写: %v", after.at)
 	require.Equal(t, 33, after.percent, "缓存数据不得被后返回者覆盖")
 	require.Equal(t, k, after.rev)
@@ -432,43 +459,27 @@ func TestUsageEqualTimestampKeepsCache(t *testing.T) {
 // 持有 K=3 那份；两个代际的失败冷却互不阻挡。整组配合 -race 跑。
 func TestUsageInterleavedRevisionsDoNotCrossHit(t *testing.T) {
 	boom := `{"error":{"message":"boom"}}`
-	u := newUsageRevUpstream(t,
+	fc := newUsageFlightCase(t, nil, 1,
 		codexUpstreamStep{status: 200, body: usageRevBody(41)}, // K=2 的观测（将被丢弃）
 		codexUpstreamStep{status: 200, body: usageRevBody(42)}, // K=3 的观测
 		codexUpstreamStep{status: 200, body: usageRevBody(43)}, // K=2 的第二次（新拉取）
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
+	u, a := fc.up, fc.a(0)
 	cred2, cred3 := usageCredRev(1, 2), usageCredRev(1, 3)
 	ctx := context.Background()
 
-	var (
-		s2 *domain.CodexUsageSnapshot
-		e2 error
-	)
-	done2 := make(chan struct{})
-	go func() {
-		defer close(done2)
-		s2, e2 = a.GetUsageSnapshot(ctx, cred2)
-	}()
+	f2 := startUsageFetch(a, ctx, cred2)
 	u.waitArrived(t, 0) // K=2 在上游 in-flight
 
-	var (
-		s3 *domain.CodexUsageSnapshot
-		e3 error
-	)
-	done3 := make(chan struct{})
-	go func() {
-		defer close(done3)
-		s3, e3 = a.GetUsageSnapshot(ctx, cred3)
-	}()
+	f3 := startUsageFetch(a, ctx, cred3)
 	u.waitArrived(t, 1) // K=3 也发起（不同代际 ⇒ 不并到 K=2 那次拉取上）
 
 	// K=2 结果先回：本次拉取期间身份从 2 前进到 3 ⇒ 丢弃，什么都不写。
 	u.allow(0)
-	<-done2
-	require.ErrorIs(t, e2, ErrUsageStale, "拉取期间身份前进 ⇒ 结果丢弃")
-	require.Nil(t, s2)
-	v := readUsageCache(t, a.clients, 1)
+	f2.wait()
+	require.ErrorIs(t, f2.err, ErrUsageStale, "拉取期间身份前进 ⇒ 结果丢弃")
+	require.Nil(t, f2.snap)
+	v := readUsageCache(t, fc.tbl, 1)
 	require.False(t, v.hasSnap, "旧代际结果不得写快照")
 	require.Equal(t, int64(0), v.rev, "也不得留下代际标签")
 	require.Nil(t, v.windows, "丢弃不得写窗口事实")
@@ -477,17 +488,17 @@ func TestUsageInterleavedRevisionsDoNotCrossHit(t *testing.T) {
 
 	// K=3 返回后才写入，标签是 3。
 	u.allow(1)
-	<-done3
-	require.NoError(t, e3)
-	require.Equal(t, 42, s3.RateLimit.UsedPercent)
-	v = readUsageCache(t, a.clients, 1)
+	f3.wait()
+	require.NoError(t, f3.err)
+	require.Equal(t, 42, f3.snap.RateLimit.UsedPercent)
+	v = readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, int64(3), v.rev, "缓存持有 K=3 那份")
 	require.Equal(t, 42, v.percent)
 
 	// K=3 再调 ⇒ 命中自己那份（零上游）。
 	got3, err := a.GetUsageSnapshot(ctx, cred3)
 	require.NoError(t, err)
-	require.Same(t, s3, got3, "同代际命中同一实例")
+	require.Same(t, f3.snap, got3, "同代际命中同一实例")
 	require.Equal(t, 2, u.callsN())
 
 	// K=2 再调 ⇒ 不得命中 K=3 的事实 ⇒ 重新拉（第 3 次上游）。
@@ -498,24 +509,24 @@ func TestUsageInterleavedRevisionsDoNotCrossHit(t *testing.T) {
 	require.Equal(t, 3, u.callsN(), "跨代际无命中")
 	// S4a 整改 §1：旧代际不降级——调用方拿到自己这一代的观测（已断言 43），
 	// 但缓存仍是 K=3 那一份（usageRev 只许单调不减）。
-	v = readUsageCache(t, a.clients, 1)
+	v = readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, int64(3), v.rev, "旧代观测不得把 usageRev 降级（§1 单调闸门）")
 	require.Equal(t, 42, v.percent, "新一代的事实原样保留")
 
 	// 失败冷却按代际隔离：同代际内照旧生效，换代立即允许补拉。
 	t.Run("failure_cooldown_is_per_revision", func(t *testing.T) {
-		u := newUsageRevUpstream(t,
+		fc := newUsageFlightCase(t, nil, 1,
 			codexUpstreamStep{status: 500, body: boom},
 			codexUpstreamStep{status: 500, body: boom},
 			codexUpstreamStep{status: 500, body: boom},
 		)
-		a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
+		u, a := fc.up, fc.a(0)
 		cred2, cred3 := usageCredRev(1, 2), usageCredRev(1, 3)
 
 		u.allow(0)
 		_, err := a.GetUsageSnapshot(ctx, cred2)
 		require.ErrorIs(t, err, ErrUpstream)
-		require.Equal(t, int64(2), readUsageCache(t, a.clients, 1).errRev)
+		require.Equal(t, int64(2), readUsageCache(t, fc.tbl, 1).errRev)
 
 		_, err = a.GetUsageSnapshot(ctx, cred2)
 		require.ErrorIs(t, err, ErrUpstream)
@@ -525,7 +536,7 @@ func TestUsageInterleavedRevisionsDoNotCrossHit(t *testing.T) {
 		_, err = a.GetUsageSnapshot(ctx, cred3)
 		require.ErrorIs(t, err, ErrUpstream)
 		require.Equal(t, 2, u.callsN(), "K=2 的冷却不挡 K=3：换代立即补拉一次")
-		require.Equal(t, int64(3), readUsageCache(t, a.clients, 1).errRev)
+		require.Equal(t, int64(3), readUsageCache(t, fc.tbl, 1).errRev)
 
 		// 反向：新代先写了失败记录 ⇒ 旧代的失败不得把它降级（S4a 整改 §1），
 		// 所以旧代这次拉取照常发生（换代放行），但缓存里仍是 K=3 那段冷却。
@@ -533,7 +544,7 @@ func TestUsageInterleavedRevisionsDoNotCrossHit(t *testing.T) {
 		_, err = a.GetUsageSnapshot(ctx, cred2)
 		require.ErrorIs(t, err, ErrUpstream)
 		require.Equal(t, 3, u.callsN(), "新代的冷却同样不挡旧代：换代放行一次补拉")
-		require.Equal(t, int64(3), readUsageCache(t, a.clients, 1).errRev, "旧代的失败不降级（§1 单调闸门）")
+		require.Equal(t, int64(3), readUsageCache(t, fc.tbl, 1).errRev, "旧代的失败不降级（§1 单调闸门）")
 	})
 }
 
@@ -563,35 +574,19 @@ func (c *usageWaitProbe) Done() <-chan struct{} {
 // context.Canceled，于是有界重试（usageFollowRetries）并自己打第 2 次上游。
 func TestUsageFollowerRetriesAfterLeaderCancel(t *testing.T) {
 	const k = int64(6)
-	u := newUsageRevUpstream(t,
+	fc := newUsageFlightCase(t, nil, 1,
 		codexUpstreamStep{status: 200, body: usageRevBody(51)}, // leader 那次（会被取消）
 		codexUpstreamStep{status: 200, body: usageRevBody(52)}, // follower 重试
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
+	u, a := fc.up, fc.a(0)
 	cred := usageCredRev(1, k)
 
 	ctx1, cancel1 := context.WithCancel(context.Background())
-	var (
-		s1 *domain.CodexUsageSnapshot
-		e1 error
-	)
-	leaderDone := make(chan struct{})
-	go func() {
-		defer close(leaderDone)
-		s1, e1 = a.GetUsageSnapshot(ctx1, cred)
-	}()
+	leader := startUsageFetch(a, ctx1, cred)
 	u.waitArrived(t, 0) // leader 已在上游 in-flight（已持有单飞登记）
 
 	fctx := newUsageWaitProbe(context.Background())
-	var (
-		s2 *domain.CodexUsageSnapshot
-		e2 error
-	)
-	followerDone := make(chan struct{})
-	go func() {
-		defer close(followerDone)
-		s2, e2 = a.GetUsageSnapshot(fctx, cred)
-	}()
+	follower := startUsageFetch(a, fctx, cred)
 	select {
 	case <-fctx.waited: // follower 已排到 leader 的 flight 上（它不占上游）
 	case <-time.After(5 * time.Second):
@@ -599,17 +594,17 @@ func TestUsageFollowerRetriesAfterLeaderCancel(t *testing.T) {
 	}
 
 	cancel1()
-	<-leaderDone
-	require.ErrorIs(t, e1, context.Canceled, "leader 自己的取消原样返回")
-	require.Nil(t, s1)
+	leader.wait()
+	require.ErrorIs(t, leader.err, context.Canceled, "leader 自己的取消原样返回")
+	require.Nil(t, leader.snap)
 
 	u.waitArrived(t, 1) // follower 重试 ⇒ 成为新 leader ⇒ 第 2 次上游
 	u.allow(1)
-	<-followerDone
-	require.NoError(t, e2, "leader 的取消不得连坐 follower（usageFollowRetries）")
-	require.Equal(t, 52, s2.RateLimit.UsedPercent)
+	follower.wait()
+	require.NoError(t, follower.err, "leader 的取消不得连坐 follower（usageFollowRetries）")
+	require.Equal(t, 52, follower.snap.RateLimit.UsedPercent)
 	require.Equal(t, 2, u.callsN())
-	v := readUsageCache(t, a.clients, 1)
+	v := readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, k, v.rev)
 	require.Equal(t, 52, v.percent)
 }
@@ -624,7 +619,7 @@ func TestQuotaDeadlineAfterEntryRebuild(t *testing.T) {
 		k    = int64(3)
 	)
 	resetAt := time.Now().Add(left).Truncate(time.Second)
-	u := newUsageRevUpstream(t,
+	fc := newUsageFlightCase(t, nil, 1,
 		codexUpstreamStep{status: 200, body: usageWindowBody(
 			100, int64(week/time.Second), resetAt.Unix(), int64(left/time.Second),
 		)},
@@ -632,7 +627,7 @@ func TestQuotaDeadlineAfterEntryRebuild(t *testing.T) {
 			4, int64(week/time.Second), resetAt.Unix(), int64(left/time.Second),
 		)},
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
+	u, a := fc.up, fc.a(0)
 	cred := usageCredRev(1, k)
 	ctx := context.Background()
 
@@ -655,7 +650,7 @@ func TestQuotaDeadlineAfterEntryRebuild(t *testing.T) {
 	entry, err := a.entryFor(rebuilt)
 	require.NoError(t, err)
 	require.NotSame(t, old, entry, "签名变化 ⇒ 条目替换")
-	fresh := readUsageCache(t, a.clients, 1)
+	fresh := readUsageCache(t, fc.tbl, 1)
 	require.False(t, fresh.hasSnap, "新条目没有任何 usage 事实")
 	require.Empty(t, fresh.windows)
 
@@ -693,7 +688,7 @@ func TestQuotaDeadlineIgnoresForeignGenerationWindows(t *testing.T) {
 		left = 6 * 24 * time.Hour
 	)
 	resetAt := time.Now().Add(left).Truncate(time.Second)
-	u := newUsageRevUpstream(t,
+	fc := newUsageFlightCase(t, nil, 1,
 		codexUpstreamStep{status: 200, body: usageWindowBody(
 			100, int64(week/time.Second), resetAt.Unix(), int64(left/time.Second),
 		)},
@@ -701,7 +696,7 @@ func TestQuotaDeadlineIgnoresForeignGenerationWindows(t *testing.T) {
 			4, int64(week/time.Second), resetAt.Unix(), int64(left/time.Second),
 		)},
 	)
-	a := NewCodex(nil, testEgressPool(newOfficialRewriteTransport(t, u.srv.URL)), nil, RotationDeps{})
+	u, a := fc.up, fc.a(0)
 	cred3, cred2 := usageCredRev(1, 3), usageCredRev(1, 2)
 	ctx := context.Background()
 
@@ -711,7 +706,7 @@ func TestQuotaDeadlineIgnoresForeignGenerationWindows(t *testing.T) {
 	require.True(t, ok, "K=3 的 7d 打满窗口 ⇒ 有可信截止")
 	require.Truef(t, until.Equal(resetAt), "截止 = %v, 期望 %v", until, resetAt)
 	require.Equal(t, 1, u.callsN())
-	v := readUsageCache(t, a.clients, 1)
+	v := readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, int64(3), v.rev)
 	require.Len(t, v.windows, 1, "K=3 留下一份窗口事实")
 
@@ -722,7 +717,7 @@ func TestQuotaDeadlineIgnoresForeignGenerationWindows(t *testing.T) {
 	require.False(t, ok, "不得把 K=3 的 7d reset 当成 K=2 的冷却截止")
 	require.True(t, until.IsZero(), "无截止时必须是零值时刻")
 	require.Equal(t, 2, u.callsN(), "代际不符必须重新拉取（不得跨代际命中）")
-	v = readUsageCache(t, a.clients, 1)
+	v = readUsageCache(t, fc.tbl, 1)
 	require.Equal(t, int64(3), v.rev, "K=2 的观测不得把 usageRev 降级（§1 单调闸门）")
 	require.Len(t, v.windows, 1, "缓存里仍是 K=3 那份窗口事实")
 	require.Equal(t, 100, v.percent, "K=3 打满的那份快照原样保留")

@@ -177,7 +177,7 @@ const (
 	healthCleanupBound    = 100
 
 	// healthMaxTTL 冷却记录的硬上界（31d）。Lua 里同一数值以字面量
-	// 2678400000 出现（脚本看不到 Go 常量），TestThrottleExtendHardCap31d
+	// 2678400000 出现（脚本看不到 Go 常量），TestThrottleUntilHardCap31d
 	// 用「PTTL 精确等于 healthMaxTTL」行为上钉死两者相等——改一边不改另一边
 	// 必须判红。
 	healthMaxTTL = 31 * 24 * time.Hour
@@ -186,22 +186,20 @@ const (
 var (
 	ErrProbeStaleRevision = errors.New("health probe: stale revision")
 
-	// throttleMaxLua 原子写健康记录：generation / revision / 记录 HASH / 活动 ZSET
-	// / tombstone / TTL。两档语义由 ARGV[8]（mode）选择：
+	// throttleLua latch 面（Throttle / ThrottleUntil）：原子写健康记录——generation /
+	// revision / 记录 HASH / 活动 ZSET / tombstone / TTL，**可建、可改**。补拉面见
+	// extendCooldownLua：两脚本的共享核心**逐字相同**（KEYS/ARGV 绑定、31d 双夹、
+	// until 规范化、只延长、六步写入、return gen），分叉即安全不变量被破；唯一的
+	// 代码差异是对方多出的补拉三闸。
 	//
-	//   - latch：LatchSink 的判决写入面，**可建、可改**；TTL 与绝对 until 都取
-	//     max(本次, 记录现值)，后到的 30s 冷却打不回 24min/7d 的冷却。
-	//   - extend：429 补拉写回面，只延长一条**仍然存在、状态相同、未过截止**的
-	//     记录；不存在/异状态/已过截止 ⇒ 返回 0，且不 INCR、不写任何键。这道
-	//     闸门是「一条冷却只能被它自己那条判决延长」的唯一边界：迟到的补拉
-	//     不得新建运维已清除的冷却、改写 5xx 的 OPEN、或复活自然到期的记录。
+	// ARGV 逐位同义契约见脚本首行（ARGV[1]=field … ARGV[7]=nowMs）；Go 侧只有
+	// writeCooldown 一处构造实参，两脚本共用同一份 KEYS/ARGV 顺序。
 	//
 	// 不变量（由哪一行保证）：
 	//   - untilMs 是正数（过去/零抬到 now+1s）：由 untilMs 的两行夹取保证；读路径
 	//     把非正 until 当坏记录，故过去的 ResetAt 也必须落成合法记录。
-	//   - eff > 0：由上面「untilMs ≥ now+minTTL」直接保证（旧版在这里有一条
-	//     `eff <= 0` 兜底，数学上不可达，已删）。
-	//   - eff ≥ untilMs-nowMs：同样由上一条直接保证（旧版的二次补齐不可达，已删）。
+	//   - eff > 0：由上面「untilMs ≥ now+minTTL」直接保证。
+	//   - eff ≥ untilMs-nowMs：同样由上一条直接保证。
 	//   - TTL 只延长：oldTTL 参与 max。对带 until 的记录，until 的 max 已覆盖；
 	//     这条只对 S2 之前「有长 TTL、无 until」的旧记录起作用（N3）。
 	//   - 硬上界 31d 双夹：本次 until 与历史 until/PTTL 都夹，旧坏值不得把新记录
@@ -212,7 +210,8 @@ var (
 	// 变成提前/延后过期。now_ms 由调用方传入。
 	//
 	// 四个既有不变量保持原顺序：gen 递增 → 记录 HASH → 活动 ZSET → tombstone 清理。
-	throttleMaxLua = `
+	throttleLua = `
+-- ARGV[1]=field ARGV[2]=state ARGV[3]=rev ARGV[4]=untilMs ARGV[5]=recPrefix ARGV[6]=tombPrefix ARGV[7]=nowMs
 local genKey = KEYS[1]
 local activeKey = KEYS[2]
 local tombHash = KEYS[3]
@@ -223,7 +222,6 @@ local untilMs = tonumber(ARGV[4])
 local recPrefix = ARGV[5]
 local tombPrefix = ARGV[6]
 local nowMs = tonumber(ARGV[7])
-local mode = ARGV[8]
 local minTTL = 1000
 local maxTTL = 2678400000
 local nowPlusMax = nowMs + maxTTL
@@ -238,15 +236,56 @@ if oldTTL > maxTTL then oldTTL = maxTTL end              -- 旧坏值不得突�
 local oldUntilRaw = redis.call('HGET', recKey, 'until')
 local oldUntil = tonumber(oldUntilRaw) or 0              -- 坏值（非数字）按 0 处理，不得让整键写不进
 if oldUntil > nowPlusMax then oldUntil = nowPlusMax end  -- 同上：历史坏 until 也要夹
--- extend 闸门必须放在 INCR 之前：拒绝路径（返回 0）不得产生任何写副作用。
--- 只看「是否存在 + 状态是否相同 + 是否已过截止」——正是补拉与运维恢复/其他
--- 失败类别/自然到期之间的边界；latch 面不做此检查（可建、可改）。
-if mode == 'extend' then
-  -- EXISTS 与下一行的 state 闸门对"记录不存在"等价（HGET 返回 false）；保留它是把"不存在"显式化，删掉它不会被任何用例发现。
-  if redis.call('EXISTS', recKey) == 0 then return 0 end
-  if redis.call('HGET', recKey, 'state') ~= state then return 0 end
-  if oldUntil > 0 and oldUntil <= nowMs then return 0 end
-end
+if oldUntil > untilMs then untilMs = oldUntil end        -- 业务截止也只延长
+local eff = untilMs - nowMs                            -- > 0：由上面 untilMs ≥ now+minTTL 保证
+if oldTTL > 0 and oldTTL > eff then eff = oldTTL end     -- TTL 只延长（legacy 无 until 记录唯一的受益者）
+local gen = redis.call('INCR', genKey)
+redis.call('HSET', recKey, 'state', state, 'gen', gen, 'rev', rev, 'ttl', eff, 'until', untilMs)
+redis.call('PEXPIRE', recKey, eff)
+redis.call('ZADD', activeKey, gen, field)
+redis.call('HDEL', tombHash, field)
+redis.call('DEL', tombPrefix .. field)
+return gen
+`
+	// extendCooldownLua 补拉面（ExtendCooldown）：只延长一条**仍然存在、状态相同、
+	// 未过截止**的记录；拒绝（返回 0）不 INCR、不写任何键。latch 面见 throttleLua：
+	// 共享核心**逐字相同**，本脚本只多下面三道闸——那是两脚本唯一的代码差异。
+	//
+	// 三闸是「一条冷却只能被它自己那条判决延长」的唯一边界：迟到的补拉不得新建
+	// 运维已清除的冷却、改写 5xx 的 OPEN、或复活自然到期的记录。
+	extendCooldownLua = `
+-- ARGV[1]=field ARGV[2]=state ARGV[3]=rev ARGV[4]=untilMs ARGV[5]=recPrefix ARGV[6]=tombPrefix ARGV[7]=nowMs
+local genKey = KEYS[1]
+local activeKey = KEYS[2]
+local tombHash = KEYS[3]
+local field = ARGV[1]
+local state = ARGV[2]
+local rev = ARGV[3]
+local untilMs = tonumber(ARGV[4])
+local recPrefix = ARGV[5]
+local tombPrefix = ARGV[6]
+local nowMs = tonumber(ARGV[7])
+local minTTL = 1000
+local maxTTL = 2678400000
+local nowPlusMax = nowMs + maxTTL
+-- 业务截止必须是**正数**：读路径把非正 until 当坏记录（冻结视图），所以过去/零值
+-- 统一抬到 now+1s（与旧实现「过去 ResetAt ⇒ 1s」等价）。正的亚秒截止是合法输入，
+-- 不做下夹——调用方/测试用它模拟快速到期，抬到 1s 会改变既有语义。
+if untilMs <= nowMs then untilMs = nowMs + minTTL end
+if untilMs > nowPlusMax then untilMs = nowPlusMax end    -- 超长按 31d 上界截
+local recKey = recPrefix .. field
+local oldTTL = redis.call('PTTL', recKey)                -- -1 无过期 / -2 不存在
+if oldTTL > maxTTL then oldTTL = maxTTL end              -- 旧坏值不得突破硬上界
+local oldUntilRaw = redis.call('HGET', recKey, 'until')
+local oldUntil = tonumber(oldUntilRaw) or 0              -- 坏值（非数字）按 0 处理，不得让整键写不进
+if oldUntil > nowPlusMax then oldUntil = nowPlusMax end  -- 同上：历史坏 until 也要夹
+-- 补拉三闸（相对 throttleLua 唯一的代码差异）：必须放在 INCR 之前——拒绝路径
+-- （返回 0）不得产生任何写副作用。只看「是否存在 + 状态是否相同 + 是否已过截止」，
+-- 正是补拉与运维恢复/其他失败类别/自然到期之间的边界；latch 面不做此检查（可建、可改）。
+-- EXISTS 与下一行的 state 闸门对「记录不存在」等价（HGET 返回 false）；保留它是把「不存在」显式化。
+if redis.call('EXISTS', recKey) == 0 then return 0 end
+if redis.call('HGET', recKey, 'state') ~= state then return 0 end
+if oldUntil > 0 and oldUntil <= nowMs then return 0 end
 if oldUntil > untilMs then untilMs = oldUntil end        -- 业务截止也只延长
 local eff = untilMs - nowMs                            -- > 0：由上面 untilMs ≥ now+minTTL 保证
 if oldTTL > 0 and oldTTL > eff then eff = oldTTL end     -- TTL 只延长（legacy 无 until 记录唯一的受益者）
@@ -563,8 +602,9 @@ func (h *RuntimeHealth) probeLoop(ctx context.Context) {
 	}
 }
 
-// ThrottleExtend 把健康记录写到**绝对**截止时刻 until（只延长，不缩短）。
-// latch 面语义：**可建、可改**——记录不存在时创建，存在时按 max 只延长。
+// ThrottleUntil latch 面：绝对截止，**可建可改**（use_reset 带 ResetAt）。
+// 把健康记录写到截止时刻 until（只延长，不缩短）：记录不存在时创建，存在时按
+// max 只延长。
 //
 // 入参是绝对时间而不是相对 TTL：同一账号可能被多实例、重复 429、补拉结果反复
 // 写同一条记录，相对值每换算一次就漂一次；绝对值只会收敛到最晚的那个。Lua 侧
@@ -572,51 +612,52 @@ func (h *RuntimeHealth) probeLoop(ctx context.Context) {
 // Lua 两侧各夹一次。
 //
 // now 取自 h.currentMs（与 ExpiresAt 记账同一个时钟），不读 Redis TIME。
-func (h *RuntimeHealth) ThrottleExtend(ctx context.Context, key HealthKey, state HealthState, until time.Time) (int64, error) {
-	return h.throttleExtend(ctx, key, state, until, "latch")
+func (h *RuntimeHealth) ThrottleUntil(ctx context.Context, key HealthKey, state HealthState, until time.Time) (int64, error) {
+	return h.writeCooldown(ctx, key, state, until, throttleLua)
 }
 
-// ExtendCooldown 只延长一条**仍然存在、状态相同、未过截止**的冷却记录，是 429
-// 补拉写回面（与 latch 的 ThrottleExtend 相对）。不存在 / 异状态 / 已过截止
-// ⇒ 返回 (0,nil) 且不推进 generation、不写任何键，调用方按拒绝计数。
+// ExtendCooldown 补拉面：只延长**仍存在 + 同 state + 未过截止**的记录；拒绝
+// 返回 (0,nil)。这是 429 补拉写回面（与 latch 的 ThrottleUntil 相对）。不存在 /
+// 异状态 / 已过截止 ⇒ 不推进 generation、不写任何键，调用方按拒绝计数。
 //
 // 这是 429 补拉与运维手动恢复（ClearAccount + SetProbing）、其他失败类别
 // （5xx 的 OPEN 判决）以及自然到期之间的唯一边界：迟到的补拉只能延长"它自己
 // 那条判决"，绝不能把已被清除/改写/过期的冷却复活。
 func (h *RuntimeHealth) ExtendCooldown(ctx context.Context, key HealthKey, state HealthState, until time.Time) (int64, error) {
-	return h.throttleExtend(ctx, key, state, until, "extend")
+	return h.writeCooldown(ctx, key, state, until, extendCooldownLua)
 }
 
-// throttleExtend 是两档写入面的共同实现；mode 决定 Lua 是否执行存在性/状态/
-// 截止闸门（见 throttleMaxLua）。
-func (h *RuntimeHealth) throttleExtend(ctx context.Context, key HealthKey, state HealthState, until time.Time, mode string) (int64, error) {
+// writeCooldown 是两个写入面的唯一实现，也是**唯一实参构造点**：两方法只差脚本
+// 字符串，KEYS/ARGV 逐位相同（契约见两脚本首行）。闸门在 extendCooldownLua 内部，
+// Go 侧不参与判定。
+func (h *RuntimeHealth) writeCooldown(ctx context.Context, key HealthKey, state HealthState, until time.Time, script string) (int64, error) {
 	if h.client == nil {
 		return 0, fmt.Errorf("health: no redis")
 	}
 	field := key.String()
 	nowMs := h.currentMs()
-	res, err := h.client.Eval(ctx, throttleMaxLua, []string{healthGenKey, healthActiveZSet, healthTombstoneHash},
+	res, err := h.client.Eval(ctx, script, []string{healthGenKey, healthActiveZSet, healthTombstoneHash},
 		field, state.String(), fmt.Sprintf("%d", key.IdentityRevision),
 		fmt.Sprintf("%d", until.UnixMilli()), healthRecordPrefix, healthTombstonePrefix,
-		fmt.Sprintf("%d", nowMs), mode).Result()
+		fmt.Sprintf("%d", nowMs)).Result()
 	if err != nil {
 		return 0, err
 	}
 	gen := redisInt64(res)
-	if gen > 0 { // 拒绝（extend 闸门）返回 0：不得把已知世代打回 0
+	if gen > 0 { // 拒绝（extend 三闸）返回 0：不得把已知世代打回 0
 		h.lastGen.Store(gen)
 	}
 	return gen, nil
 }
 
-// Throttle 相对 TTL 形态（保留既有调用点语义）：换算成绝对 until 后走
-// ThrottleExtend，因此**同样只延长**——短冷却不会覆盖已有长冷却。
-// 非正 TTL 沿用既有 30s 兜底。
+// Throttle latch 面：相对 TTL，**可建可改**（保留既有调用点语义）。
+// 换算成绝对 until 后走 ThrottleUntil，因此**同样只延长**——短冷却不会覆盖
+// 已有长冷却。非正 TTL 沿用既有 30s 兜底。
 func (h *RuntimeHealth) Throttle(ctx context.Context, key HealthKey, state HealthState, ttl time.Duration) (int64, error) {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}
-	return h.ThrottleExtend(ctx, key, state, time.UnixMilli(h.currentMs()+ttl.Milliseconds()))
+	return h.ThrottleUntil(ctx, key, state, time.UnixMilli(h.currentMs()+ttl.Milliseconds()))
 }
 
 // MarkReady attempts Lua READY atomic generation/revision/record HASH/active ZSET/tombstone/TTL

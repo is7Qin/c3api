@@ -97,7 +97,7 @@ var _ QuotaResolverRegistry = (*QuotaResolvers)(nil)
 // QuotaHealthWriter 补拉结论的唯一写入口（*RuntimeHealth 满足）。只暴露
 // ExtendCooldown：补拉是「对既有判决的时长补全」，不是新判决——记录不存在/
 // 状态已被别的判决改写/已过截止 ⇒ Lua 拒绝（返回 0），补拉不得重建或改写。
-// 故不给 Throttle/ThrottleExtend/MarkReady 等其它写入面（编译期钉死，写得少
+// 故不给 Throttle/ThrottleUntil/MarkReady 等其它写入面（编译期钉死，写得少
 // 就错得少）。
 type QuotaHealthWriter interface {
 	ExtendCooldown(ctx context.Context, key HealthKey, state HealthState, until time.Time) (int64, error)
@@ -128,10 +128,12 @@ type QuotaWorkerConfig struct {
 }
 
 // quotaWorkerStats /ops/workers 观测快照（handler.StatsProvider 形态）。
-// json 键清单（enqueued/dropped/extended/rejected/empty/failed/stale/unsupported/queued）尚未同步到 openapi 的 WorkerStatus.stats 描述与 web 的 ops.stats.*；补观测面时一并补，别把它当成"已同步"。
+// json 键清单（enqueued/dropped/extended/rejected/empty/failed/stale/unsupported/queued）
+// 的契约位置只有一处：openapi/openapi.yaml 的 WorkerStatus.stats 字段清单——改
+// 字段必须同步那里（同步义务钉在 handler/ops.go 的 StatsProvider 注释）。
 type quotaWorkerStats struct {
-	Enqueued    int64 `json:"enqueued"`    // 成功入队累计
-	Dropped     int64 `json:"dropped"`     // 队列满/已关闭丢弃累计
+	Enqueued    int64 `json:"enqueued"`    // 成功入队累计（关闭排空时按条转入 dropped：两者之和 == Enqueue 调用次数）
+	Dropped     int64 `json:"dropped"`     // 队列满/已关闭丢弃累计（含关闭排空转来的剩余）
 	Extended    int64 `json:"extended"`    // 经 ExtendCooldown 实际延长冷却累计
 	Rejected    int64 `json:"rejected"`    // 补拉被闸门拒绝（记录已清除/异状态/已过截止）累计
 	Empty       int64 `json:"empty"`       // 补拉成功但无有效窗口 ⇒ 不写累计
@@ -306,8 +308,8 @@ func (w *QuotaWorker) handle(ctx context.Context, task QuotaTask) {
 
 // Close 幂等关闭：置位 closed（worker 终态）→ 取消 runCtx（在途补拉的 ctx
 // 立即到期）→ 等 loop 退出（受 ctx 预算约束，**不死等**）→ 关闭队列（此后外部
-// Enqueue 一律丢弃计数、不入队）→ 排空剩余并按 dropped 计。未 Start 也安全
-// （无 goroutine 可等）。
+// Enqueue 一律丢弃计数、不入队；剩余条目由队列在同锁置位后锁外排空并计入
+// dropped）。未 Start 也安全（无 goroutine 可等）。
 func (w *QuotaWorker) Close(ctx context.Context) error {
 	w.closeOnce.Do(func() {
 		w.mu.Lock()
@@ -327,20 +329,10 @@ func (w *QuotaWorker) Close(ctx context.Context) error {
 			}
 		}
 		// 队列随 worker 一起进入终态：此后 sink 侧的 Enqueue 直接丢弃计数（不再
-		// 往一个没有消费者的 channel 里塞）。置位只缩窗不封窗：已通过 closed 判定、
-		// 却在本次排空之后才投递的条目，由 QuotaQueue.Enqueue 的投递后复检收回
-		// （见 quota_queue.go）。
+		// 往一个没有消费者的 channel 里塞）。排空归 QuotaQueue.Close——置位与投递
+		// 互斥在同一把锁里，故它排空的是终态剩余（worker 不再单独排空：那会把同一
+		// 批任务在账上记两次）。
 		w.q.Close()
-		// 停止取新任务后队列里剩下的不会再被补拉：计入队列的 dropped（与运行期
-		// 背压同口径）。
-		for {
-			select {
-			case <-w.q.ch:
-				w.q.dropped.Add(1)
-			default:
-				return
-			}
-		}
 	})
 	return nil
 }

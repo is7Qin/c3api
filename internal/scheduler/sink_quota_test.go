@@ -91,7 +91,7 @@ func TestLatchSinkQuotaAccountScopeUsesWildcardQuality(t *testing.T) {
 }
 
 // TestLatchSinkSkipsQuotaWhenResetAtPresent：事件已带绝对截止 ⇒ 已在
-// ThrottleExtend 落定，无需补拉（重复投递只会白烧一次上游查询）。
+// ThrottleUntil 落定，无需补拉（重复投递只会白烧一次上游查询）。
 func TestLatchSinkSkipsQuotaWhenResetAtPresent(t *testing.T) {
 	h, _, _ := newTestHealthWithLatch(t)
 	q := newQuotaQueueForSink()
@@ -143,7 +143,7 @@ func TestLatchSinkSkipsQuotaWithoutUseReset(t *testing.T) {
 // TestLatchSinkSkipsQuotaWhenWriteFails：「写入成功之后」是硬条件：健康写失败
 // ⇒ 返回错误且不投递（没有可补全的判决，补拉会白烧一次上游查询）。
 func TestLatchSinkSkipsQuotaWhenWriteFails(t *testing.T) {
-	// nil client 的 RuntimeHealth：ThrottleExtend 恒返回 "health: no redis"。
+	// nil client 的 RuntimeHealth：ThrottleUntil 恒返回 "health: no redis"。
 	h := NewRuntimeHealth(nil, "self-a", nil, nil)
 	q := newQuotaQueueForSink()
 	sink := NewLatchSink(h, latch.NewLatchStore(), latch.NewHub(), q)
