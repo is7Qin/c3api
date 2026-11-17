@@ -12,6 +12,7 @@ import { useAccountSurface } from '@/lib/api/scope'
 import { useFeatures } from '@/lib/use-features'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
 import { parseMultiplier, validCacheDomain } from '@/lib/account-config'
+import { GROUP_FILTER_ALL, groupFilterOptions, groupFilterValue } from '@/lib/account-group-filter'
 import {
   PROXY_DIRECT_VALUE,
   PROXY_UNCHANGED_VALUE,
@@ -287,12 +288,13 @@ export default function Accounts() {
   const [offset, setOffset] = useState(0)
   const [limit, setLimit] = useState(20)
   const [templateId, setTemplateId] = useState('all') // 'all' = 全部模板
+  const [groupIdFilter, setGroupIdFilter] = useState(GROUP_FILTER_ALL) // 三态 sentinel：all / ungrouped / String(groupId)
   const [enabledFilter, setEnabledFilter] = useState('all') // 'all' | 'true' | 'false'（管理面启停，与失效无关）
 
   const { data, isLoading, isError, error } = useQuery({
     queryKey: [
       'accounts',
-      { limit, offset, name, sort: activeSort ?? 'id', order, template_id: templateId === 'all' ? undefined : Number(templateId), enabled: enabledFilter === 'all' ? undefined : enabledFilter === 'true' },
+      { limit, offset, name, sort: activeSort ?? 'id', order, template_id: templateId === 'all' ? undefined : Number(templateId), enabled: enabledFilter === 'all' ? undefined : enabledFilter === 'true', group_id: groupFilterValue(groupIdFilter) },
     ],
     queryFn: () =>
       api.listAccounts({
@@ -303,6 +305,8 @@ export default function Accounts() {
         order,
         template_id: templateId === 'all' ? undefined : Number(templateId),
         enabled: enabledFilter === 'all' ? undefined : enabledFilter === 'true',
+        // 三态：undefined = 缺席（不过滤）/ 0 = 未分组 / >0 = 该分组 id
+        group_id: groupFilterValue(groupIdFilter),
       }),
     refetchInterval: 10_000,
   })
@@ -313,6 +317,11 @@ export default function Accounts() {
   const hasOauthTemplates = useMemo(() => templates.some(tp => tp.CredentialType === 'codex-oauth'), [templates])
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: () => api.listGroups({ limit: 100 }) })
   const groups = groupsQ.data?.rows ?? []
+  // 分组筛选的选项：复用上面这一份分组查询（不新开请求）；空列表仍有「全部/未分组」。
+  const groupOptions = groupFilterOptions(groups)
+  const groupOptionLabels = Object.fromEntries(
+    groupOptions.map(o => [o.value, o.labelKey ? t(o.labelKey) : (o.name ?? o.value)]),
+  )
   const rows = useMemo(() => data?.rows ?? [], [data?.rows])
 
   // 行勾选（跨页保留，筛选/翻页后清空）——
@@ -517,11 +526,14 @@ export default function Accounts() {
     }
   }
   const changeTemplate = (v: string) => { setTemplateId(v); resetPage() }
+  // 分组筛选：与搜索/模板筛选同一条纪律——切条件即回第 1 页（否则 offset 落在旧结果集里）。
+  const changeGroupFilter = (v: string) => { setGroupIdFilter(v); resetPage() }
   const changeEnabled = (v: string) => { setEnabledFilter(v); resetPage() }
-  const hasFilters = name !== '' || templateId !== 'all' || enabledFilter !== 'all'
+  const hasFilters = name !== '' || templateId !== 'all' || groupIdFilter !== GROUP_FILTER_ALL || enabledFilter !== 'all'
   const clearFilters = () => {
     setName('')
     setTemplateId('all')
+    setGroupIdFilter(GROUP_FILTER_ALL)
     setEnabledFilter('all')
     resetPage()
   }
@@ -1051,6 +1063,22 @@ export default function Accounts() {
             <SelectItem value="all" label={t('accounts.allTemplates')}>{t('accounts.allTemplates')}</SelectItem>
             {templates.map(tp => (
               <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>{tp.Name ?? `#${tp.ID}`}</SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {/* 分组单选（三态：全部分组 / 未分组 / 某分组）——选项与 wire 换算都在
+            lib/account-group-filter 纯函数里（sentinel ⇄ 缺席/0/id 的唯一换算点）。 */}
+        <Select
+          items={groupOptionLabels}
+          value={groupIdFilter}
+          onValueChange={changeGroupFilter}
+        >
+          <SelectTrigger size="default" className="w-44 data-[size=default]:h-9" aria-label={t('accounts.groupFilter.label')}>
+            <SelectValue placeholder={t('accounts.groupFilter.label')} />
+          </SelectTrigger>
+          <SelectContent>
+            {groupOptions.map(o => (
+              <SelectItem key={o.value} value={o.value} label={groupOptionLabels[o.value]}>{groupOptionLabels[o.value]}</SelectItem>
             ))}
           </SelectContent>
         </Select>

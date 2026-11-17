@@ -492,6 +492,11 @@ export default {
     "filterTemplate": "Filter template",
     "filterState": "Filter state",
     "allTemplates": "All templates",
+    "groupFilter": {
+      "label": "Filter group",
+      "all": "All groups",
+      "ungrouped": "Ungrouped"
+    },
     "filterEmpty": "No accounts match the filters",
     "batchUpdateTitle": "Batch update accounts",
     "batchUpdateDesc": "Fill in only the fields to change; leave empty to keep current values",

@@ -5633,6 +5633,8 @@ export interface components {
         AccountTemplateId: number;
         /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
         AccountEnabled: boolean;
+        /** @description 分组筛选（三态）：缺省 = 不过滤；0 = 未分组（没有任何分组）；正数 = 该分组 id。负数 ⇒ 400。 */
+        AccountGroupId: number;
         /** @description 绝对窗口下界（含，RFC3339）。窗口两形态**恰择一**（from+to，或 window 单独）：与 window 同给 / 只给一端 / 都不给 → 400 `reason=window_ambiguous`。给出 from/to 时不做时区改写；服务端按判定把两端向后取整到整点（生效窗口见响应头 X-Stats-Effective-From/To） */
         StatsFrom: string;
         /** @description 绝对窗口上界（不含，RFC3339）。与 from 同生共死：只给一端 → 400 `reason=window_ambiguous`；from 不早于 to → 400 `reason=window_invalid` */
@@ -5920,6 +5922,8 @@ export interface operations {
                 template_id?: components["parameters"]["AccountTemplateId"];
                 /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
                 enabled?: components["parameters"]["AccountEnabled"];
+                /** @description 分组筛选（三态）：缺省 = 不过滤；0 = 未分组（没有任何分组）；正数 = 该分组 id。负数 ⇒ 400。 */
+                group_id?: components["parameters"]["AccountGroupId"];
             };
             header?: never;
             path?: never;
@@ -9386,6 +9390,8 @@ export interface operations {
                 template_id?: components["parameters"]["AccountTemplateId"];
                 /** @description 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关） */
                 enabled?: components["parameters"]["AccountEnabled"];
+                /** @description 分组筛选（三态）：缺省 = 不过滤；0 = 未分组（没有任何分组）；正数 = 该分组 id。负数 ⇒ 400。 */
+                group_id?: components["parameters"]["AccountGroupId"];
             };
             header?: never;
             path?: never;

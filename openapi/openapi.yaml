@@ -216,6 +216,7 @@ paths:
         - $ref: '#/components/parameters/ListOrder'
         - $ref: '#/components/parameters/AccountTemplateId'
         - $ref: '#/components/parameters/AccountEnabled'
+        - $ref: '#/components/parameters/AccountGroupId'
       responses:
         '200':
           description: 账号视图列表
@@ -2621,6 +2622,7 @@ paths:
         - $ref: '#/components/parameters/ListOrder'
         - $ref: '#/components/parameters/AccountTemplateId'
         - $ref: '#/components/parameters/AccountEnabled'
+        - $ref: '#/components/parameters/AccountGroupId'
       responses:
         '200':
           description: 账号视图列表（仅本人归属）
@@ -3374,6 +3376,12 @@ components:
       required: false
       description: "管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关）"
       schema: { type: boolean }
+    AccountGroupId:
+      name: group_id
+      in: query
+      required: false
+      description: "分组筛选（三态）：缺省 = 不过滤；0 = 未分组（没有任何分组）；正数 = 该分组 id。负数 ⇒ 400。"
+      schema: { type: integer, format: int64 }
     # ---- 绝对窗口两端（usage/统计共用）----
     StatsFrom:
       name: from

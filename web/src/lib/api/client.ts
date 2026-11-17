@@ -46,6 +46,9 @@ export type TemplateListParams = ListParams
 export interface AccountListParams extends ListParams {
   template_id?: number
   enabled?: boolean
+  // 分组三态（spec 2026-11-17）：undefined = 缺席（不过滤）/ 0 = 未分组 / >0 = 该分组。
+  // **不要**用「0 = 不过滤」读它——0 是「未分组」这一档。
+  group_id?: number
 }
 export type GroupListParams = ListParams
 

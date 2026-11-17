@@ -14,6 +14,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/account"
+	"github.com/is7qin/c3api/internal/ent/group"
 	"github.com/is7qin/c3api/internal/ent/predicate"
 	"github.com/is7qin/c3api/internal/ent/proxy"
 )
@@ -184,6 +185,19 @@ func (r *AccountRepo) ListAccounts(ctx context.Context, q ListQuery) ([]*domain.
 	}
 	if q.Enabled != nil {
 		pred = pred.Where(account.EnabledEQ(*q.Enabled))
+	}
+	// 分组三态（spec 2026-11-17 §1.2，唯一判据点）：nil = 不过滤；&0 = 未分组
+	// （没有任何分组）；&n>0 = 命中该分组。谓词只认「account_groups 里有行」：
+	// 「软删分组 + 活跃账号」的正常路径**不可达**（删分组前过 checkGroupEmpty，
+	// internal/service/group.go:121,172——组内还有未软删账号即 409；本查询又恒带
+	// DeletedAtIsNil()）。若历史数据真有这种悬挂行，同样按「有行即算有组」处理，
+	// 不为它加特例。
+	if q.AccountGroupID != nil {
+		if *q.AccountGroupID == 0 {
+			pred = pred.Where(account.Not(account.HasGroups()))
+		} else {
+			pred = pred.Where(account.HasGroupsWith(group.IDEQ(*q.AccountGroupID)))
+		}
 	}
 	total, err := pred.Count(ctx)
 	if err != nil {

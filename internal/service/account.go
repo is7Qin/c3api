@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -145,7 +146,22 @@ func (s *Service) ListAccounts(ctx context.Context, q repository.ListQuery) ([]*
 	if err := validateListQuery(q, listSortFields["accounts"]); err != nil {
 		return nil, 0, err
 	}
+	if err := validateAccountGroupFilter(q); err != nil {
+		return nil, 0, err
+	}
 	return s.store.ListAccounts(ctx, q)
+}
+
+// validateAccountGroupFilter 账号列表分组筛选的三态校验（spec 2026-11-17 §1.3）：
+// nil = 不过滤、&0 = 未分组、&n>0 = 该分组**全部合法**；只有负数被拒——
+// 三态里没有负数的位置，落成「空列表」会把非法输入伪装成正常的空结果。
+// 错误带字段级说明（ErrInvalidInput 的 400 body 直接取 err.Error()，与
+// `rate_micro must be positive` 同款）。仓储只认三态，不重复校验。
+func validateAccountGroupFilter(q repository.ListQuery) error {
+	if q.AccountGroupID != nil && *q.AccountGroupID < 0 {
+		return fmt.Errorf("%w: group_id must be >= 0", ErrInvalidInput)
+	}
+	return nil
 }
 
 // PatchAccount 账号配置的**唯一写点**：三态补丁一次落库，无条件推进配置代际 C
@@ -447,6 +463,9 @@ func (s *Service) GetAccountHealth(accountID int64) *AccountHealthView {
 // 与 ListAccounts 一致做 sort/order 校验（非法 → ErrInvalidInput → 400）。
 func (s *Service) ListAccountViews(ctx context.Context, q repository.ListQuery) ([]*AccountView, int64, error) {
 	if err := validateListQuery(q, listSortFields["accounts"]); err != nil {
+		return nil, 0, err
+	}
+	if err := validateAccountGroupFilter(q); err != nil {
 		return nil, 0, err
 	}
 	accs, total, err := s.store.ListAccounts(ctx, q)

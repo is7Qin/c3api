@@ -1009,6 +1009,9 @@ type UsageGatewayStats struct {
 // AccountEnabled defines model for AccountEnabled.
 type AccountEnabled = bool
 
+// AccountGroupId defines model for AccountGroupId.
+type AccountGroupId = int64
+
 // AccountTemplateId defines model for AccountTemplateId.
 type AccountTemplateId = int64
 
@@ -1054,6 +1057,9 @@ type GetSupplierAccountsParams struct {
 
 	// Enabled 管理面启停过滤：true = 仅启用，false = 仅禁用；缺省 = 不过滤（与运行时失效 failed_at 无关）
 	Enabled *AccountEnabled `form:"enabled,omitempty" json:"enabled,omitempty"`
+
+	// GroupId 分组筛选（三态）：缺省 = 不过滤；0 = 未分组（没有任何分组）；正数 = 该分组 id。负数 ⇒ 400。
+	GroupId *AccountGroupId `form:"group_id,omitempty" json:"group_id,omitempty"`
 }
 
 // GetSupplierAccountsParamsOrder defines parameters for GetSupplierAccounts.
@@ -1553,6 +1559,14 @@ func (siw *ServerInterfaceWrapper) GetSupplierAccounts(w http.ResponseWriter, r 
 	err = runtime.BindQueryParameter("form", true, false, "enabled", r.URL.Query(), &params.Enabled)
 	if err != nil {
 		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "enabled", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "group_id" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "group_id", r.URL.Query(), &params.GroupId)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "group_id", Err: err})
 		return
 	}
 

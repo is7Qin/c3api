@@ -84,6 +84,10 @@ type fakeStore struct {
 	// lastPatch 记录最近一次 UpdateAccountsBatch 收到的 patch（
 	// 断言 handler 的 group_ids nil/[] 映射是否真正传到了 repo 层）。
 	lastPatch repository.AccountPatch
+	// listQueries 记录每次 ListAccounts 收到的查询（spec 2026-11-17：group_id
+	// 三态入参断言用）。**追加**而非只留最后一次——同一用例会连打「缺席 / 0 / 7」
+	// 三次，只看最后一次就分不清哪一次丢了态。
+	listQueries []repository.ListQuery
 	// aggIDs/aggFrom/aggTo 记录最近一次 ScanUsageAgg 收参（缺省时间注入断言用）。
 	aggIDs  []int64
 	aggFrom time.Time
@@ -292,6 +296,7 @@ func (f *fakeStore) GetAccountWithTemplate(ctx context.Context, id int64) (*doma
 func (f *fakeStore) ListAccounts(ctx context.Context, q repository.ListQuery) ([]*domain.Account, int64, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.listQueries = append(f.listQueries, q)
 	out := make([]*domain.Account, 0, len(f.accs))
 	for _, a := range f.accs {
 		// enabled 三态过滤（镜像真实 repo 谓词：nil = 不过滤）。

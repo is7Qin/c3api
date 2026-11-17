@@ -38,8 +38,12 @@ type ListQuery struct {
 	// Enabled 账号专属三态过滤：nil = 不过滤；&true = 仅启用；&false = 仅禁用。
 	// 与运行时失效（failed_at）无关——管理面启停是独立维度。
 	Enabled *bool
-	UserID  int64 // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
-	GroupID int64 // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
+	// AccountGroupID 账号列表专属分组筛选（三态，与 keys 的 GroupID 语义不同，
+	// 故必须是独立字段 + 指针）：nil = 不过滤；&0 = 未分组；&n(>0) = 该分组。
+	// 负数由 service 层拒绝（ErrInvalidInput → 400），本层只认三态、不重复校验。
+	AccountGroupID *int64
+	UserID         int64 // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
+	GroupID        int64 // keys 管理端专属：0 = 不过滤（对齐 TemplateID 先例）
 }
 
 var ErrInvalidSort = errors.New("invalid sort field")

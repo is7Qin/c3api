@@ -492,6 +492,11 @@ export default {
     "filterTemplate": "模板筛选",
     "filterState": "启停筛选",
     "allTemplates": "全部模板",
+    "groupFilter": {
+      "label": "分组筛选",
+      "all": "全部分组",
+      "ungrouped": "未分组"
+    },
     "filterEmpty": "没有符合条件的账号",
     "batchUpdateTitle": "批量更新账号",
     "batchUpdateDesc": "仅填写需要修改的字段，留空表示保持原值",

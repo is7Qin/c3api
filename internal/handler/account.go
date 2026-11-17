@@ -40,15 +40,21 @@ func (h *AdminAPI) PostAccounts(w http.ResponseWriter, r *http.Request) {
 }
 
 // GetAccounts 账号列表（分页/筛选/排序，含运行时视图，ServerInterface）。
+//
+// group_id 是**三态**（spec 2026-11-17 §1.1）：生成物里它是 `*AccountGroupId`
+// （= *int64 别名），故 `params.GroupId` 直接落成 repository 的 `AccountGroupID`
+// ——**不得**用「0 = 不过滤」的旧先例读它（`group_id=0` 是「只看未分组」）。
+// 负数校验在 service（ErrInvalidInput → 400）。
 func (h *AdminAPI) GetAccounts(w http.ResponseWriter, r *http.Request, params GetAccountsParams) {
 	q := repository.ListQuery{
-		Limit:      httpface.ClampLimit(int(httpface.Deref(params.Limit))),
-		Offset:     int(httpface.Deref(params.Offset)),
-		Name:       httpface.Deref(params.Name),
-		Sort:       httpface.Deref(params.Sort),
-		Order:      string(httpface.Deref(params.Order)),
-		TemplateID: httpface.Deref(params.TemplateId),
-		Enabled:    params.Enabled,
+		Limit:          httpface.ClampLimit(int(httpface.Deref(params.Limit))),
+		Offset:         int(httpface.Deref(params.Offset)),
+		Name:           httpface.Deref(params.Name),
+		Sort:           httpface.Deref(params.Sort),
+		Order:          string(httpface.Deref(params.Order)),
+		TemplateID:     httpface.Deref(params.TemplateId),
+		Enabled:        params.Enabled,
+		AccountGroupID: params.GroupId,
 	}
 	rows, total, err := h.svc.ListAccountViews(r.Context(), q)
 	if err != nil {

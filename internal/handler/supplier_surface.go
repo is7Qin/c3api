@@ -47,6 +47,8 @@ type supplierSurface struct {
 // ---- 账号/分组/模板子集（§2.5）：类型化直调管理面 AdminAPI 实现。----
 
 // GetSupplierAccounts GET /api/user/supplier/accounts。
+// group_id 与模板/启停筛选同款直传（三态由生成层的指针保住：缺席 ≠ 0）；
+// 作用域仍由中间件注入 ctx，筛别人分组里的账号不会漏数据。
 func (s supplierSurface) GetSupplierAccounts(w http.ResponseWriter, r *http.Request, params supplier.GetSupplierAccountsParams) {
 	s.api.GetAccounts(w, r, GetAccountsParams{
 		Limit:      params.Limit,
@@ -56,6 +58,7 @@ func (s supplierSurface) GetSupplierAccounts(w http.ResponseWriter, r *http.Requ
 		Order:      (*GetAccountsParamsOrder)(params.Order),
 		TemplateId: params.TemplateId,
 		Enabled:    params.Enabled,
+		GroupId:    params.GroupId,
 	})
 }
 
