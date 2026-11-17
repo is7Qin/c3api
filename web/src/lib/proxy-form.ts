@@ -204,6 +204,15 @@ export function buildProxyPayload(initial: ProxyView | null, draft: ProxyDraft, 
 // 越界必然 400，属结构约束；私网/回环拒绝与 host 字符集仍只有后端一份判据。
 export const PROXY_IMPORT_MAX_ROWS = 100
 
+// 批量探测的前端并发上限（**唯一落点**，页面与单测都从这里取）：4 低于浏览器同源 6 连接上限，
+// 而单条探测服务端最坏 15s（TCP 5s + 取出口 IP 10s）。
+export const PROBE_CONCURRENCY = 4
+
+// 批量探测单条调用的**页面侧**上限（唯一落点）：服务端最坏 15s ⇒ 留一倍余量 30s。
+// 为什么必须有：悬挂的 fetch（NAT 黑洞、代理链路半开）没有上限，`running` 会永久为真，
+// 批量按钮与所有行内单条探测按钮会被一起锁死。到点按「请求失败」结论落地。
+export const PROBE_CALL_TIMEOUT_MS = 30_000
+
 export type ProxyImportParseError =
   | 'needPort' // 没有端口段
   | 'badPort' // 端口不是 1..65535 的十进制数
@@ -232,8 +241,7 @@ export function parseProxyImportLines(text: string, defaultScheme: ProxyScheme):
     if (raw === '' || raw.startsWith('#')) continue
     out.push({ line: i + 1, raw, ...parseProxyImportLine(raw, defaultScheme) })
   }
-  // 第二遍：批次内派名。序号是**整批**的属性（单行看不到自己是本批第几次），
-  // 故语法解析与派名必须分开；调用方拿到的 config.name 已是最终名。
+  // 第二遍：派名。序号是**整批**的属性（单行看不到自己是本批第几次）⇒ 语法解析与派名必须分开。
   return assignImportNames(out)
 }
 
@@ -243,24 +251,19 @@ export function parseProxyImportLines(text: string, defaultScheme: ProxyScheme):
 // 但派生名相同就会撞域内唯一索引（平台池 `(name)`、私池 `(owner_uid,name)`），
 // 于是第 2..N 行全报「该名称已被占用」。
 //
-// 规则（只看这一批粘贴进来的内容，**不查库**）：
-// - 按原文行序，把**解析成功**的行按派生基名 `base = scheme://host:port` 分组；
-// - 组内第一次出现用 `base`，第 k 次（k ≥ 2）用 `base#k`；
-// - 组内只有一行 ⇒ 名字与「无后缀时代」逐字节相同（单行导入零行为变化）；
-// - 前缀 **不是** `user@`：`name` 会进 `domain.Proxy.String()` 的日志与 `err_logs.message`
+// 规则（只看这一批粘贴进来的内容，**不查库**）：解析成功的行按派生基名分组，首次用 `base`、
+// 第 k 次（k ≥ 2）用 `base#k`；组内只有一行 ⇒ 名字与「无后缀时代」逐字节相同。
+// - 后缀**不是** `user@`：`name` 会进 `domain.Proxy.String()` 的日志与 `err_logs.message`
 //   （spec §5.2「凭据落盘」红线），把 username 拼进名字等于把凭据写进日志。序号无此风险。
-// - `#` 不会撞既有基名，且这条不依赖 host 的字符集（后端其实**允许** host 含 `#`）：
-//   基名恒为 `<scheme>://<host>:<port>`，而 port 是纯十进制数字 ⇒ 基名恒以 `:<digit>` 结尾；
-//   `#k` 追加在 port 数字**之后** ⇒ 带后缀的名字恒以 `#<digit>` 结尾，不可能是任何基名；
-//   两个带后缀的名字相等只可能 base 与 k 都相等。scheme 白名单（四值）与 host 拒绝 `/ @`
-//   只是额外的收窄，真正的保证在上面这两句结构事实里。
+// - `#k` 撞不上任何基名，且不依赖 host 的字符集（后端其实**允许** host 含 `#`）：
+//   基名恒为 `<scheme>://<host>:<port>`，port 是纯十进制 ⇒ 基名恒以 `:<digit>` 结尾；
+//   `#k` 追加在 port 数字**之后** ⇒ 带后缀的名字恒以 `#<digit>` 结尾。
 // - **不查库 = 不猜服务端状态**：贴了 10 行就要 10 条（批次内重复是明示意图）；
 //   跨批次重复仍报 conflict——「你已经导过这份清单了」是信息，不是缺陷（不做静默 upsert/改名）。
-// - **不静默截断**：判据是**最终名**（含 `#k`）≤ 64 rune，超了该行自己担 `nameTooLong`
-//   （既有错误码、文案不变），其余行不受影响。
-//
-// 纯函数：不改写入参；base 由 scheme/host/port 现拼（不读 config.name）⇒ 对已派名的输入
-// 再调一次结果不变（幂等），也不会把 `base#2` 当成新的基名。
+// - **不静默截断**：判据是**最终名**（含 `#k`）≤ 64 rune，超了该行自己担 `nameTooLong`，
+//   其余行不受影响。
+// - 幂等：base 由 scheme/host/port 现拼（不读 `config.name`）⇒ 对已派名的输入再调一次结果不变，
+//   也不会把 `base#2` 当成新的基名。
 export function assignImportNames(lines: ProxyImportLine[]): ProxyImportLine[] {
   const seen = new Map<string, number>()
   return lines.map(line => {

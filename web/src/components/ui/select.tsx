@@ -42,13 +42,12 @@ function SelectGroup({ className, ...props }: SelectPrimitive.Group.Props) {
 }
 
 // 值槽是**单行省略**的唯一实现点（根因已实测，2026-11-17）：
-// - `min-w-0`：值槽是 trigger 的 flex 子项，默认 `min-width:auto` ⇒ 它的 min-content 贡献是
-//   整段标签（外面是 `whitespace-nowrap`），既把所在 grid 列撑到 max-content，也让自己不收缩；
-// - `truncate` 取代原来的 `line-clamp-1`：`line-clamp` 只有 `overflow:hidden` 的硬裁（没有
-//   「…」），而 truncate = `nowrap + overflow:hidden + text-overflow: ellipsis`，长标签以省略号收尾；
-// - `block` 而非 `flex`：`text-overflow` 只作用于**自己的**行内文本，值变成 flex 容器后文本会
-//   成为匿名 flex item，Chromium 实测「flex 容器 + truncate」不出省略号（只有硬裁）。值槽里
-//   只有一段 label，块布局就够；垂直居中由 trigger 的 `items-center` 负责。
+// - `min-w-0`：默认 `min-width:auto` 时值槽的 min-content 贡献是整段标签（外面是
+//   `whitespace-nowrap`）⇒ 既把所在列撑到 max-content，也让自己不收缩；
+// - `truncate` 而非 `line-clamp-1`：后者只有 `overflow:hidden` 的硬裁，没有「…」；
+// - `block` 而非 `flex`：`text-overflow` 只作用于自己的行内文本，值变成 flex 容器后文本成为
+//   匿名 flex item，Chromium 实测不出省略号（只有硬裁）。值槽只有一段 label，块布局够用；
+//   垂直居中由 trigger 的 `items-center` 负责。
 type SelectValueProps = Omit<SelectPrimitive.Value.Props, "children"> & { children?: never }
 
 function SelectValue({ className, ...props }: SelectValueProps) {

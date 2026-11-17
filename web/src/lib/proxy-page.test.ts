@@ -9,7 +9,8 @@
 //   ② 代理页调的相对路径与 schema.d.ts 的操作 id 对应得上（两套 path 互不重叠）；
 //   ③ 账号编辑的 payload 投影（模块 draftToPatch）对「未触碰」不产生 proxy_id（防线：整表单覆盖会静默
 //      解绑管理员绑的、而读面不可见的平台代理）；
-//   ④ codex 类型账号不再置灰（v7 已覆盖 codex 面）。
+//   ④ codex 类型账号不再置灰（v7 已覆盖 codex 面）；
+//   ⑤ 批量探测：并发上限只有一个来源、批量路径只在全部结束后刷一次列表（M10/M11）。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -32,6 +33,7 @@ const client = read('../lib/api/client.ts')
 const schema = read('../lib/api/schema.d.ts')
 const accounts = read('../pages/accounts.tsx')
 const draftModule = read('./account-draft.ts')
+const concurrencySrc = read('./concurrency.ts')
 const proxyPage = read('../components/proxy-pool-page.tsx')
 const proxyForm = read('../lib/proxy-form.ts')
 const enLocale = read('../locales/en.ts')
@@ -329,5 +331,169 @@ describe('探测列：出口 IP 与错误文本（spec-probe §3.3）', () => {
   it('i18n 标签两侧同键同批（zh「出口 IP」/ en「Egress IP」）', () => {
     assert.match(zhLocale, /"probeEgressIP": "出口 IP"/)
     assert.match(enLocale, /"probeEgressIP": "Egress IP"/)
+  })
+})
+
+// 批量探测（spec batch-probe §1）：前端有界并发扇出。这里守三条最容易静默回归的接线——
+// 并发上限只有一个来源、批量路径只在全部结束后刷一次列表、逐条完成即回填。
+describe('批量探测接线（spec batch-probe §1）', () => {
+  // 跑批函数的函数体：以 `const runBatchProbe = async () => {` 起，到其**两空格缩进的收尾 `}`**
+  // 为止（体内没有更浅的闭合行）。按结构锚点切片，不按行号。
+  const batchRunner = (() => {
+    const at = proxyPage.indexOf('const runBatchProbe = async () => {')
+    assert.notEqual(at, -1, '找不到批量探测的跑批函数')
+    const end = proxyPage.indexOf('\n  }\n', at)
+    assert.notEqual(end, -1, '跑批函数的收尾花括号找不到（缩进变了要同步改本锚点）')
+    return proxyPage.slice(at, end)
+  })()
+
+  // 单条探测的包装（页面侧上限 + 失败转 outcome）：同样的结构锚点切片。
+  const probeOnce = (() => {
+    const at = proxyPage.indexOf('const probeOnce = async (id: number): Promise<ProbeOutcome> => {')
+    assert.notEqual(at, -1, '找不到 probeOnce')
+    const end = proxyPage.indexOf('\n  }\n', at)
+    assert.notEqual(end, -1, 'probeOnce 的收尾花括号找不到')
+    return proxyPage.slice(at, end)
+  })()
+
+  it('★ 并发常量只定义一处：页面从 lib/proxy-form 取用，绝不写字面量（M10 靶子）', () => {
+    // 定义点唯一：三份源码里 `PROBE_CONCURRENCY = <数字>` 只出现一次。
+    const defs = (proxyForm + proxyPage + concurrencySrc).match(/PROBE_CONCURRENCY\s*=\s*\d/g) ?? []
+    assert.equal(defs.length, 1, 'PROBE_CONCURRENCY 只能有一个定义点')
+    assert.match(proxyForm, /export const PROBE_CONCURRENCY = 4/)
+    // 使用点必须传常量（改常量 1 / 100 时 mapWithConcurrency 单测的峰值断言会红）。
+    assert.match(batchRunner, /mapWithConcurrency\(ids, PROBE_CONCURRENCY,/)
+    assert.ok(!/mapWithConcurrency\([^)]*,\s*\d+\s*,/.test(batchRunner), 'limit 必须是常量，不是字面量')
+  })
+
+  it('按钮：无选中或 running 时禁用，文案在「批量探测 (N)」与「探测中 x/N」之间切换', () => {
+    const at = proxyPage.indexOf('data-od-id="proxy-batch-probe"')
+    assert.notEqual(at, -1, '找不到批量探测按钮')
+    const btn = proxyPage.slice(proxyPage.lastIndexOf('<Button', at), proxyPage.indexOf('</Button>', at))
+    assert.match(btn, /disabled=\{running \|\| selectedIds\.length === 0\}/)
+    assert.match(btn, /t\('proxies\.batchProbeRunning', \{ done: /)
+    assert.match(btn, /t\('proxies\.batchProbe', \{ count: selectedIds\.length \}\)/)
+  })
+
+  it('★ 只在全部结束后 invalidate 一次（M11 靶子：改成每条都刷必红）', () => {
+    assert.equal(batchRunner.match(/invalidate\(\)/g)?.length, 1, '批量路径只能有一处 invalidate')
+    assert.ok(
+      batchRunner.indexOf('await mapWithConcurrency') < batchRunner.indexOf('invalidate()'),
+      '刷新必须在全部探测之后（逐条刷 = 每条都重载列表）',
+    )
+    // 单条 probe mutation 的 onSuccess 就是「每条都刷」——批量路径不得复用它。
+    assert.ok(!/probe\.mutate/.test(batchRunner), '批量路径不得复用单条 probe mutation')
+  })
+
+  it('逐条完成即回填（单条失败也进结果表），不是等全部结束才显示', () => {
+    assert.match(batchRunner, /setLive\(prev => applyOutcome\(prev, id, outcome\)\)/)
+    // 请求失败在 probeOnce 内转成 outcome：既不 reject（否则整批提前收尾），也不丢行。
+    assert.match(probeOnce, /catch \(e\) \{[\s\S]{0,160}?kind: 'requestFailed'/)
+    assert.match(probeOnce, /return \{ kind: 'row', row, at: row\.last_probe_at/, '200 结论同样落成 outcome')
+    // 渲染：本轮结论（含第四态）经 probeCell 交给 ProbeCell；占位只给「在跑、还没结论」的行。
+    assert.match(
+      proxyPage,
+      /const probeCell = \(p: ProxyView\) => \{[\s\S]{0,220}?<ProbeCell p=\{probeView\(p, outcome\)\} live=\{outcome\} pending=\{running && inBatch\(p\.id\) && outcome === undefined\} \/>/,
+    )
+    // 归属判定走批次快照：跑批期间 rows 变化不改变「谁在跑、结果给谁」。
+    assert.match(
+      proxyPage,
+      /const liveFor = \(id: number\): ProbeOutcome \| undefined => \(running && !inBatch\(id\) \? undefined : live\.get\(id\)\)/,
+    )
+  })
+
+  it('★ 批次快照固定归属：跑批期间 rows 变化不得让在跑的行丢占位/丢结果（P1-3）', () => {
+    assert.match(proxyPage, /const \[batchIds, setBatchIds\] = useState<number\[\] \| null>\(null\)/)
+    assert.match(proxyPage, /const inBatch = \(id: number\) => batchSet !== null && batchSet\.has\(id\)/)
+    assert.match(batchRunner, /setBatchIds\(ids\)/, '开始时把选中集固定成批次快照')
+    assert.match(batchRunner, /setBatchIds\(null\)/, '结束时清快照')
+    // 占位/归属都不得回退到每帧从 rows 派生的 selectedSet（那正是 P1-3 的回归形状）。
+    assert.ok(!/pending=\{running && selectedSet\.has/.test(proxyPage), '占位判定不得回退到 selectedSet')
+    assert.ok(!/withLiveProbe/.test(proxyPage), '结果归属不得绕过批次快照（旧的 withLiveProbe 已删除）')
+  })
+
+  it('★ 刷新失败时保留已拿到的结论：按 query error 判定，不看 promise（P1-2）', () => {
+    // invalidateQueries 在 refetch 失败时**仍然 resolve** ⇒ 判据只能是 query 的 error 状态。
+    assert.match(batchRunner, /const refreshError = qc\.getQueryState\(\['proxies', kind\]\)\?\.error/)
+    assert.match(
+      batchRunner,
+      /if \(refreshError == null\) \{[\s\S]{0,260}?pruneForRound\(prev, myRun, runRef\.current\)/,
+      '只有刷新成功才丢成功结论',
+    )
+    assert.ok(!/\.then\(\(\) => setLive\(/.test(batchRunner), '不得只按 promise 收尾（失败也 resolve）')
+    // 刷新失败要让用户知道（复用既有 loadFailed 文案，不新造键）。
+    assert.match(batchRunner, /t\('common\.loadFailed', \{ message:/)
+  })
+
+  it('★ 轮次令牌：上一轮的收尾不得清掉新一轮的结果（B）', () => {
+    assert.match(proxyPage, /const runRef = useRef\(0\)/)
+    assert.match(batchRunner, /const myRun = runRef\.current \+ 1\n    runRef\.current = myRun/)
+    // 跨轮不生效的判定被搬进纯函数（probe-live.test.ts 有专项用例），这里守调用点。
+    assert.match(batchRunner, /pruneForRound\(prev, myRun, runRef\.current\)/)
+  })
+
+  it('★ 服务端重新决定这一行 ⇒ 本地结论作废（A：单条探测 / 编辑 / 删除三处）', () => {
+    // 单条探测成功：服务端已写回更新的 last_probe_*。
+    assert.match(proxyPage, /onSuccess: \(_row, id\) => \{[\s\S]{0,220}?setLive\(prev => dropIds\(prev, \[id\]\)\)/)
+    // 编辑保存成功：被编辑的那一行。
+    assert.match(proxyPage, /if \(editing\) setLive\(prev => dropIds\(prev, \[editing\.id\]\)\)/)
+    // 删除成功：整行消失。
+    assert.match(proxyPage, /onSuccess: \(_res, id\) => \{[\s\S]{0,260}?setLive\(prev => dropIds\(prev, \[id\]\)\)/)
+    // 刷新后服务端更晚的结论由 pickLive 的 at 比较兜住（差异语义的用例在 probe-live.test.ts）。
+    assert.match(proxyPage, /pickLive\(p, liveFor\(p\.id\)\)/)
+  })
+
+  it('★ requestFailed 是第四态：不写探测列、单独分支渲染（C）', () => {
+    assert.match(proxyPage, /live\?\.kind === 'requestFailed'/, '第四态必须有独立分支')
+    const at = proxyPage.indexOf("live?.kind === 'requestFailed'")
+    const branch = proxyPage.slice(at, proxyPage.indexOf('if (p.last_probe_at == null)', at))
+    assert.ok(!/last_probe_ok/.test(branch), '第四态不得读/写 ok 列（显示「可达/不可达」就是伪造结论）')
+    assert.match(branch, /t\('proxies\.batchProbeRequestFailed'/)
+    // 合并只由 probeView 做（requestFailed 原样返回列表快照，见 probe-live.test.ts）。
+    assert.match(proxyPage, /p=\{probeView\(p, outcome\)\}/)
+  })
+
+  it('★ 删除后不留幽灵：live 与选中集一起清；跑批期间禁止改/删（D）', () => {
+    assert.match(
+      proxyPage,
+      /setLive\(prev => dropIds\(prev, \[id\]\)\)\n      setSelected\(s => s\.filter\(x => x !== id\)\)/,
+      '删除成功要同时清掉本地结论与选中项',
+    )
+    assert.match(proxyPage, /title=\{t\('common\.edit'\)\} onClick=\{\(\) => openEdit\(p\)\} disabled=\{running\}/)
+    assert.match(proxyPage, /title=\{t\('common\.delete'\)\} onClick=\{\(\) => setDeleting\(p\)\} disabled=\{running\}/)
+  })
+
+  it('★ 单条调用有页面侧上限：超时常量与并发上限同处、只一处（E）', () => {
+    const defs = (proxyForm + proxyPage).match(/PROBE_CALL_TIMEOUT_MS\s*=\s*[\d_]+/g) ?? []
+    assert.equal(defs.length, 1, 'PROBE_CALL_TIMEOUT_MS 只能有一个定义点')
+    assert.match(proxyForm, /export const PROBE_CALL_TIMEOUT_MS = 30_000/)
+    assert.match(probeOnce, /withTimeout\(\n?\s*api\.probeProxy\(id\),\n?\s*PROBE_CALL_TIMEOUT_MS,/)
+    assert.match(probeOnce, /t\('proxies\.batchProbeTimedOut', \{ seconds: PROBE_CALL_TIMEOUT_MS \/ 1000 \}\)/)
+    // 超时也是 requestFailed 结论（否则一条悬挂调用会让 running 永久为真）。
+    assert.match(probeOnce, /kind: 'requestFailed'/)
+  })
+
+  it('汇总 toast 分三档 + 请求失败（§3.3：ok 且有错误 ≠ 成功）', () => {
+    assert.match(batchRunner, /if \(outcome\.kind === 'requestFailed'\) requestFailed\+\+/)
+    assert.match(batchRunner, /else if \(!outcome\.row\.last_probe_ok\) unreachable\+\+/)
+    assert.match(batchRunner, /else if \(outcome\.row\.last_probe_error\) egressFailed\+\+/, 'TCP 通但取 IP 失败要单列')
+    assert.match(batchRunner, /t\('proxies\.batchProbeOutcomes', \{ reachable, unreachable, egressFailed, requestFailed \}\)/)
+    assert.match(batchRunner, /type: reachable === ids\.length \? 'success' : 'error'/)
+    assert.ok(!proxyPage.includes("'proxies.batchProbeSummary'"), '旧的双档汇总键必须删净')
+    for (const locale of [enLocale, zhLocale]) {
+      assert.ok(locale.includes('"batchProbeOutcomes"'), '新旧键两侧都要有 batchProbeOutcomes')
+      assert.ok(!locale.includes('"batchProbeSummary"'), '旧的双档汇总键必须删净')
+    }
+  })
+
+  it('多选列照 accounts 页做法：表头全选 + 行内 checkbox + data-state 高亮', () => {
+    assert.match(proxyPage, /const \[selected, setSelected\] = useState<number\[\]>\(\[\]\)/)
+    assert.match(proxyPage, /indeterminate=\{someChecked && !allChecked\}/)
+    assert.match(proxyPage, /const toggleRow = \(id: number\) => setSelected/)
+    assert.match(proxyPage, /data-state=\{selectedSet\.has\(p\.id\) \? 'selected' : undefined\}/)
+  })
+
+  it('选中集跑完不清空（失败的常常要重试）', () => {
+    assert.ok(!/setSelected\(\[\]\)/.test(batchRunner), '批量路径不得清空选中集')
   })
 })

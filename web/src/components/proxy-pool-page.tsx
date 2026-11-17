@@ -18,16 +18,34 @@
 // 批量导入（spec-proxy-import）也在这一个组件里：两面复用同一批 API 方法，切 base 即切
 // 作用域；粘贴文本的解析是 lib/proxy-form 的 parseProxyImportLines（纯函数、可单测），
 // 本文件只管状态与展示。
-import { useMemo, useState } from 'react'
+//
+// 批量探测（spec batch-probe §1）同理：多选列 + 有界并发（PROBE_CONCURRENCY）逐条打**既有**
+// 单条探测端点，逐行回填、末尾只刷一次列表——不加后端批量端点（探测不触发任何失效，
+// 没有「N 次单条 POST = N 次调度全量重载」那个理由）。
+import { useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Radar, Lock, Network, CircleCheck, Ban, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import type { DynamicKey } from '@/lib/i18n'
 import { useAccountSurface } from '@/lib/api/scope'
 import { useFeatures } from '@/lib/use-features'
 import { ApiError, ApiUnauthorized } from '@/lib/api/client'
+import { mapWithConcurrency } from '@/lib/concurrency'
 import {
+  applyOutcome,
+  dropIds,
+  pickLive,
+  probeView,
+  pruneForRound,
+  withTimeout,
+  type ProbeLive,
+  type ProbeOutcome,
+} from '@/lib/probe-live'
+import {
+  PROBE_CALL_TIMEOUT_MS,
+  PROBE_CONCURRENCY,
   PROXY_IMPORT_MAX_ROWS,
   PROXY_SCHEMES,
   buildProxyPayload,
@@ -58,6 +76,50 @@ import { Textarea } from '@/components/ui/textarea'
 import { toast } from '@/components/ui/toast'
 import { formatDateTime, truncate } from '@/components/fmt'
 
+// 失败行只按 reason 分流文案：conflict 有本地化说法，其余（invalid/internal）透出后端
+// 原文——那才是能定位问题的信息（行内错误带字段级说明，见 spec-proxy-import §4）。
+function importReasonText(t: TFunction, r: ProxyImportRowResult) {
+  return r.reason === 'conflict' ? t('proxies.nameConflict') : (r.error ?? t('proxies.importRowFailed'))
+}
+
+// 探测结论只显示在行内：拨不通 = 200 + last_probe_ok=false，不是请求失败。
+// ok 只表示「TCP 拨得通」，出口 IP 与错误文本各自独立呈现（spec §3.3）：错误文本与 ok 无关
+// （ok=true 且非空 ⇔ TCP 通、取 IP 失败），且是**后端原文**——中英混杂是有意的，不要二次包装。
+// 三个入参各管一种状态：`p` = 列表快照或服务端结论（`probeView` 已合并），`pending` = 本轮
+// 正在跑还没结论，`live` = 本轮结论（只有它是 `requestFailed` 时才渲染**第四态**）。
+// 第四态与「不可达」必须分开：前者是「浏览器↔服务器」失败（4xx/5xx/网络/超时），后者是
+// 服务端给出的探测结论；把前者写成 last_probe_ok=false 就等于伪造结论（§3.3 三态矩阵之外的态）。
+function ProbeCell({ p, pending = false, live }: { p: ProxyView; pending?: boolean; live?: ProbeOutcome }) {
+  const { t } = useTranslation()
+  if (pending) return <span className="text-muted-foreground">{t('proxies.batchProbeInFlight')}</span>
+  if (live?.kind === 'requestFailed') {
+    return (
+      <div className="space-y-0.5">
+        <div className="text-destructive">{t('proxies.batchProbeRequestFailed', { message: live.message })}</div>
+        <div className="text-muted-foreground">{formatDateTime(live.at)}</div>
+      </div>
+    )
+  }
+  if (p.last_probe_at == null) return <span className="text-muted-foreground">{t('proxies.probeNever')}</span>
+  return (
+    <div className="space-y-0.5">
+      <div className={p.last_probe_ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}>
+        {p.last_probe_ok ? t('proxies.probeOK') : t('proxies.probeFailed')}
+        <span className="ml-1.5 text-muted-foreground">{formatDateTime(p.last_probe_at)}</span>
+      </div>
+      {p.last_probe_ip && (
+        <div className="flex items-center gap-1 select-text">
+          <span className="text-muted-foreground">{t('proxies.probeEgressIP')}</span>
+          <span className="font-mono tabular-nums">{p.last_probe_ip}</span>
+        </div>
+      )}
+      {p.last_probe_error && (
+        <div className="truncate text-muted-foreground" title={p.last_probe_error}>{truncate(p.last_probe_error, 80)}</div>
+      )}
+    </div>
+  )
+}
+
 export default function ProxyPoolPage() {
   const { kind, api } = useAccountSurface()
   const isSupplier = kind === 'supplier'
@@ -73,6 +135,25 @@ export default function ProxyPoolPage() {
   const rows = q.data?.rows ?? []
   const invalidate = () => qc.invalidateQueries({ queryKey: ['proxies', kind] })
   const errMsg = (e: unknown) => (e instanceof ApiUnauthorized ? null : (e as Error)?.message)
+
+  // —— 探测相关状态（单条与批量共用一个 live 表）——
+  // `probing === null` 即未在跑：按钮文案、行内占位、行内动作的禁用都从它派生。
+  const [probing, setProbing] = useState<{ done: number; total: number } | null>(null)
+  const [live, setLive] = useState<ProbeLive>(() => new Map())
+  const running = probing !== null
+  // 轮次令牌（B）：每次跑批 +1。上一轮的收尾（还在等列表刷新）只允许动**自己那一轮**的条目，
+  // 否则它会把新一轮刚回填的结果删掉（`探测中 x/N` 会跳着走）。
+  const runRef = useRef(0)
+  // 批次快照：跑批期间 rows 会被刷新/编辑换掉（保存一条代理就会 invalidate），所以「谁在跑、
+  // 结果归谁」一律按**开始那一刻**的 id 判定，而不是每帧从 rows/selected 重算——否则在跑的
+  // 行会突然丢掉占位、或结果落到别的行上。`selectedIds` 只负责按钮计数与全选态。
+  const [batchIds, setBatchIds] = useState<number[] | null>(null)
+  const batchSet = batchIds === null ? null : new Set(batchIds)
+  const inBatch = (id: number) => batchSet !== null && batchSet.has(id)
+  // 行内即时结果的归属：**跑批期间只认批次快照**；跑完 batchIds 清空后，留下的只为
+  // 「请求失败」那种服务端没有的结论（成功结论由刷新后的列表取代）。「服务端是否已有更新
+  // 结论」的取舍在 pickLive（渲染时按行判定，纯函数、有单测）。
+  const liveFor = (id: number): ProbeOutcome | undefined => (running && !inBatch(id) ? undefined : live.get(id))
 
   // —— 对话框（创建/编辑共用一个）——
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -107,15 +188,20 @@ export default function ProxyPoolPage() {
     },
     onSuccess: () => {
       void invalidate()
+      // 这一行已被服务端重新决定（改名/改端点/清除凭据）⇒ 本地探测快照立刻作废。
+      if (editing) setLive(prev => dropIds(prev, [editing.id]))
       setDialogOpen(false)
       toast.add({ title: t(editing ? 'proxies.updateSuccess' : 'proxies.createSuccess'), type: 'success' })
     },
   })
   const remove = useMutation({
     mutationFn: (id: number) => api.deleteProxy(id),
-    onSuccess: () => {
+    onSuccess: (_res, id) => {
       void invalidate()
       setDeleting(null)
+      // 行没了 ⇒ 结果与选中都要跟着走（否则统计/全选会把幽灵 id 算进来）。
+      setLive(prev => dropIds(prev, [id]))
+      setSelected(s => s.filter(x => x !== id))
       toast.add({ title: t('proxies.deleteSuccess'), type: 'success' })
     },
   })
@@ -123,8 +209,94 @@ export default function ProxyPoolPage() {
   // 只把服务端写回的结论刷新到行内。
   const probe = useMutation({
     mutationFn: (id: number) => api.probeProxy(id),
-    onSuccess: () => { void invalidate() },
+    onSuccess: (_row, id) => {
+      void invalidate()
+      // 服务端刚给出更新的结论 ⇒ 批量那一轮留在行内的本地结论（含请求失败）不再需要。
+      setLive(prev => dropIds(prev, [id]))
+    },
   })
+
+  // —— 批量探测（spec batch-probe §1）：前端有界并发扇出 ——
+  // 选中集按 id 保存，跑完**不清空**（失败的常常要重试）；行集合随刷新变化时按当前 rows
+  // 过滤（本页无分页，rows 即全集），已消失的 id 不会被送进请求。
+  // 不套 useMemo：rows 本身每次渲染都可能换身份，缓存不了，反而让每次渲染多一层。
+  const [selected, setSelected] = useState<number[]>([])
+  const selectedIds = rows.filter(p => selected.includes(p.id)).map(p => p.id)
+  const selectedSet = new Set(selectedIds)
+  const allChecked = rows.length > 0 && rows.every(p => selectedSet.has(p.id))
+  const someChecked = rows.some(p => selectedSet.has(p.id))
+  const toggleRow = (id: number) => setSelected(s => (s.includes(id) ? s.filter(x => x !== id) : [...s, id]))
+  const toggleAll = (c: boolean) =>
+    setSelected(s => {
+      const ids = rows.map(p => p.id)
+      return c ? Array.from(new Set([...s, ...ids])) : s.filter(x => !ids.includes(x))
+    })
+
+  // running 与进度、live 表、轮次令牌、批次快照都在上方声明（单条探测也要用它们）。
+  // 单条探测：调用 + 页面侧上限；**永不 reject**（一切失败都转成 requestFailed 结论）。
+  // 超时也归这一支：悬挂的 fetch 没有上限，`running` 会永久为真 ⇒ 按钮全锁。
+  const probeOnce = async (id: number): Promise<ProbeOutcome> => {
+    try {
+      const row = await withTimeout(
+        api.probeProxy(id),
+        PROBE_CALL_TIMEOUT_MS,
+        t('proxies.batchProbeTimedOut', { seconds: PROBE_CALL_TIMEOUT_MS / 1000 }),
+      )
+      return { kind: 'row', row, at: row.last_probe_at ?? new Date().toISOString() }
+    } catch (e) {
+      return { kind: 'requestFailed', message: (e as Error)?.message ?? '', at: new Date().toISOString() }
+    }
+  }
+
+  const runBatchProbe = async () => {
+    const ids = selectedIds
+    if (ids.length === 0 || running) return
+    const myRun = runRef.current + 1
+    runRef.current = myRun
+    setLive(new Map()) // 新一轮从干净的表开始（旧结论由列表快照/本轮结果提供）
+    setBatchIds(ids)
+    setProbing({ done: 0, total: ids.length })
+    // 三档结论各自计数（§3.3：ok=true 但 last_probe_error 非空 ⇔ TCP 通、取 IP 失败，
+    // 不能算「成功」）；浏览器↔服务器的失败（4xx/5xx/网络/超时）是第四类，单独计。
+    let reachable = 0
+    let unreachable = 0
+    let egressFailed = 0
+    let requestFailed = 0
+    try {
+      // 调用方回调**不可能** reject：probeOnce 自带 try/catch（探测调用、响应字段、t() 全在
+      // 里面），计数与 applyOutcome 都是纯算术/不可变 Map 操作，两个 setState 的 updater 也不抛。
+      // ⇒ mapWithConcurrency 不会因单条失败整体拒绝，finally 只负责收尾，不是错误兜底。
+      await mapWithConcurrency(ids, PROBE_CONCURRENCY, async id => {
+        const outcome = await probeOnce(id)
+        if (outcome.kind === 'requestFailed') requestFailed++
+        else if (!outcome.row.last_probe_ok) unreachable++
+        else if (outcome.row.last_probe_error) egressFailed++
+        else reachable++
+        setLive(prev => applyOutcome(prev, id, outcome))
+        setProbing(prev => (prev ? { done: prev.done + 1, total: prev.total } : prev))
+      })
+    } finally {
+      setProbing(null)
+      setBatchIds(null)
+      // **只在这里刷一次**：单条 probe mutation 的 onSuccess 是「每条都刷」，批量路径不得复用它。
+      await invalidate()
+      // `invalidateQueries` 在 refetch 失败时**仍然 resolve**（query-core 对不抛错的重取吞掉
+      // rejection）⇒ 判据只能是 query 的 error 状态。刷新失败时列表还是旧数据，这时清掉本轮
+      // 结论会让行退回「从未探测」——结论比旧快照新，整份保留。
+      const refreshError = qc.getQueryState(['proxies', kind])?.error
+      if (refreshError == null) {
+        // 服务端已把 last_probe_* 落库 ⇒ 成功结论由列表取代；请求失败服务端没有，留在行内。
+        // 轮次令牌兜底：若这期间又起了新一轮，这次收尾**不得动**它的条目。
+        setLive(prev => pruneForRound(prev, myRun, runRef.current))
+      }
+      toast.add({
+        title: t('proxies.batchProbeOutcomes', { reachable, unreachable, egressFailed, requestFailed }),
+        // 刷新失败不新造文案：复用页面既有的「加载失败：{{message}}」告诉用户行内是旧列表 + 新结论。
+        description: refreshError == null ? undefined : t('common.loadFailed', { message: (refreshError as Error)?.message ?? '' }),
+        type: reachable === ids.length ? 'success' : 'error',
+      })
+    }
+  }
 
   // —— 批量导入（spec-proxy-import）——
   // `submitted` 是**提交那一刻**的行快照（行号 + 派生名）：响应的 index 是请求下标，
@@ -168,11 +340,6 @@ export default function ProxyPoolPage() {
     importMut.mutate(rows)
   }
 
-  // 失败行只按 reason 分流文案：conflict 有本地化说法，其余（invalid/internal）透出后端
-  // 原文——那才是能定位问题的信息（行内错误带字段级说明，见 spec-proxy-import §4）。
-  const importReasonText = (r: ProxyImportRowResult) =>
-    r.reason === 'conflict' ? t('proxies.nameConflict') : (r.error ?? t('proxies.importRowFailed'))
-
   const submit = () => {
     const errs = validateProxyForm(draft)
     setErrors(errs)
@@ -188,6 +355,13 @@ export default function ProxyPoolPage() {
   const schemeItems = useMemo(() => Object.fromEntries(PROXY_SCHEMES.map(s => [s, s])), [])
   const schemaErr = save.isError && save.error instanceof ApiError && save.error.status === 409
 
+  // 行内探测单元格：`p` 是列表快照（`probeView` 会合上「本轮的服务端结论」），`live` 供第四态
+  // （请求失败）单独渲染，`pending` 只给「本轮在跑、还没结论」的行。
+  const probeCell = (p: ProxyView) => {
+    const outcome = pickLive(p, liveFor(p.id))
+    return <ProbeCell p={probeView(p, outcome)} live={outcome} pending={running && inBatch(p.id) && outcome === undefined} />
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -198,6 +372,17 @@ export default function ProxyPoolPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            data-od-id="proxy-batch-probe"
+            variant="outline"
+            onClick={() => void runBatchProbe()}
+            disabled={running || selectedIds.length === 0}
+          >
+            <Radar />
+            {running
+              ? t('proxies.batchProbeRunning', { done: probing?.done ?? 0, total: probing?.total ?? 0 })
+              : t('proxies.batchProbe', { count: selectedIds.length })}
+          </Button>
           <Button variant="outline" onClick={openImport}><Upload /> {t('proxies.import')}</Button>
           <Button onClick={openCreate}><Plus /> {t('proxies.new')}</Button>
         </div>
@@ -223,6 +408,14 @@ export default function ProxyPoolPage() {
           <Table className="min-w-[980px]" containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
             <TableHeader>
               <TableRow>
+                <TableHead className="w-10">
+                  <Checkbox
+                    checked={allChecked}
+                    indeterminate={someChecked && !allChecked}
+                    onCheckedChange={c => toggleAll(c === true)}
+                    aria-label={t('proxies.batchProbeSelected', { count: selectedIds.length })}
+                  />
+                </TableHead>
                 <TableHead className="w-12">ID</TableHead>
                 <TableHead className="w-48">{t('proxies.table.name')}</TableHead>
                 <TableHead className="w-64">{t('proxies.table.endpoint')}</TableHead>
@@ -235,7 +428,10 @@ export default function ProxyPoolPage() {
             </TableHeader>
             <TableBody className="[&_td]:py-3">
               {rows.map(p => (
-                <TableRow key={p.id}>
+                <TableRow key={p.id} data-state={selectedSet.has(p.id) ? 'selected' : undefined}>
+                  <TableCell>
+                    <Checkbox checked={selectedSet.has(p.id)} onCheckedChange={() => toggleRow(p.id)} />
+                  </TableCell>
                   <TableCell className="tabular-nums">{p.id}</TableCell>
                   <TableCell className="max-w-48">
                     <div className="truncate" title={p.name}>{p.name}</div>
@@ -260,34 +456,7 @@ export default function ProxyPoolPage() {
                       {p.enabled ? t('accounts.state.enabled') : t('accounts.state.disabled')}
                     </span>
                   </TableCell>
-                  <TableCell className="text-xs">
-                    {/* 探测结论只显示在行内：拨不通 = 200 + last_probe_ok=false，不是请求失败。
-                        ok 只表示「TCP 拨得通」，出口 IP 与错误文本各自独立呈现（spec §3.3）。 */}
-                    {p.last_probe_at == null ? (
-                      <span className="text-muted-foreground">{t('proxies.probeNever')}</span>
-                    ) : (
-                      <div className="space-y-0.5">
-                        <div className={p.last_probe_ok ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}>
-                          {p.last_probe_ok ? t('proxies.probeOK') : t('proxies.probeFailed')}
-                          <span className="ml-1.5 text-muted-foreground">{formatDateTime(p.last_probe_at)}</span>
-                        </div>
-                        {/* 第二段结论：经这条代理看到的出口 IP（空 = 未取到，原因在下面那行）。 */}
-                        {p.last_probe_ip && (
-                          <div className="flex items-center gap-1 select-text">
-                            <span className="text-muted-foreground">{t('proxies.probeEgressIP')}</span>
-                            <span className="font-mono tabular-nums">{p.last_probe_ip}</span>
-                          </div>
-                        )}
-                        {/* 错误文本**与 ok 无关**：ok=true 且这里非空 ⇔ TCP 通、但取 IP 失败；
-                            只在 !ok 时显示会让「IP 为什么是空的」对用户不可见（spec §3.3）。
-                            文本是**后端原文**（与导入失败行同一策略：conflict 有本地化文案，
-                            其余透出原文便于定位），因此中英混杂是有意的，不要做二次包装。 */}
-                        {p.last_probe_error && (
-                          <div className="truncate text-muted-foreground" title={p.last_probe_error}>{truncate(p.last_probe_error, 80)}</div>
-                        )}
-                      </div>
-                    )}
-                  </TableCell>
+                  <TableCell className="text-xs">{probeCell(p)}</TableCell>
                   {showOwner && (
                     <TableCell className="text-xs">
                       {p.owner_uid == null
@@ -297,7 +466,8 @@ export default function ProxyPoolPage() {
                   )}
                   <TableCell className="text-right">
                     <div className="inline-flex items-center gap-1">
-                      <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)}>
+                      {/* 跑批期间禁止改/删：批次快照里的行在途中被编辑或删除，结论归属就说不清了。 */}
+                      <Button variant="ghost" size="icon-sm" title={t('common.edit')} onClick={() => openEdit(p)} disabled={running}>
                         <Pencil />
                       </Button>
                       <Button
@@ -305,11 +475,11 @@ export default function ProxyPoolPage() {
                         size="icon-sm"
                         title={t('proxies.probeAction')}
                         onClick={() => probe.mutate(p.id)}
-                        disabled={probe.isPending}
+                        disabled={probe.isPending || running}
                       >
                         <Radar />
                       </Button>
-                      <Button variant="ghost" size="icon-sm" title={t('common.delete')} onClick={() => setDeleting(p)}>
+                      <Button variant="ghost" size="icon-sm" title={t('common.delete')} onClick={() => setDeleting(p)} disabled={running}>
                         <Trash2 className="text-destructive" />
                       </Button>
                     </div>
@@ -493,7 +663,7 @@ export default function ProxyPoolPage() {
                     <div key={r.index} className="flex items-center gap-2">
                       <span className="w-10 shrink-0 tabular-nums text-muted-foreground">L{at?.line ?? r.index + 1}</span>
                       <span className={r.ok ? 'shrink-0 text-emerald-600 dark:text-emerald-400' : 'shrink-0 text-destructive'}>
-                        {r.ok ? t('proxies.importRowOK') : importReasonText(r)}
+                        {r.ok ? t('proxies.importRowOK') : importReasonText(t, r)}
                       </span>
                       <span className="truncate font-mono text-muted-foreground" title={at?.name ?? r.name}>{at?.name ?? r.name}</span>
                     </div>

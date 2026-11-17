@@ -305,20 +305,27 @@ func TestDeleteProxy(t *testing.T) {
 	require.Nil(t, unbound.ProxyID, "删除代理 ⇒ 同事务解绑（proxy_id 落 NULL = 直连）")
 }
 
-// probeEgressStub 第二段（经代理取出口 IP）的注入桩（spec §3.5 的可测缝）：
-// 计数 + 固定返回。真跑第二段要连 api.ip.sb，单测不能依赖它。
+// probeEgressStub 第二段（经代理取出口 IP）的注入桩（spec §3.5 的可测缝）：计数 + 固定
+// 返回；observe 非 nil 时先看 ctx 并可返回错误（模拟真实 HTTP 请求一取消就失败——不观察
+// ctx 就显不出「第二段继承了请求 ctx」这个缺陷）。真跑第二段要连 api.ip.sb，单测不能依赖它。
 //
 // 计数器不加锁：本包无 t.Parallel()（AGENTS.md），用例串行。
 type probeEgressStub struct {
-	calls int
-	ip    string
-	err   error
+	calls   int
+	ip      string
+	err     error
+	observe func(context.Context) error
 }
 
 // fn 返回可直接赋给 Service.probeEgress 的桩函数。
 func (s *probeEgressStub) fn() func(context.Context, domain.Proxy) (string, error) {
-	return func(context.Context, domain.Proxy) (string, error) {
+	return func(ctx context.Context, _ domain.Proxy) (string, error) {
 		s.calls++
+		if s.observe != nil {
+			if err := s.observe(ctx); err != nil {
+				return "", err
+			}
+		}
 		return s.ip, s.err
 	}
 }
@@ -337,23 +344,63 @@ func listeningTCPAddr(t *testing.T) (string, int) {
 	return host, port
 }
 
+// probeFixtureNow 探测夹具的注入时刻（statsNow）：用例不赌墙钟毫秒差。
+var probeFixtureNow = time.Date(2026, 8, 12, 3, 4, 5, 0, time.UTC)
+
+// withScheme 让 seed 建一条指定 scheme 的条目（默认 SOCKS5）。
+func withScheme(s domain.ProxyScheme) func(*ProxyInput) {
+	return func(in *ProxyInput) { in.Scheme = s }
+}
+
+// withCreds 让 seed 带上一对凭据（脱敏靶子要用它把密码落到条目上）。
+func withCreds(user, pass string) func(*ProxyInput) {
+	return func(in *ProxyInput) { in.Username, in.Password = &user, &pass }
+}
+
+// newProbeFixture 探测用例的固定装配：fake store + 注入时钟。临时端口/httptest 服务器
+// 各自挂 t.Cleanup，夹具本身不额外持有资源。
+//
+// seed(name, host, port, opts...) 建一条代理并返回 id（默认 SOCKS5 + 无凭据）。ctx 是
+// Background：fakeStore 不读 ctx 的取消，真实 PG 在请求已断时写不进去是既有行为——
+// 「父 ctx 已取消」只能靠桩观察 ctx 来验。
+func newProbeFixture(t *testing.T) (*Service, context.Context, func(name, host string, port int, opts ...func(*ProxyInput)) int64) {
+	t.Helper()
+	svc, _, _ := newProxyTestService()
+	svc.statsNow = func() time.Time { return probeFixtureNow }
+	ctx := context.Background()
+	seed := func(name, host string, port int, opts ...func(*ProxyInput)) int64 {
+		t.Helper()
+		in := ProxyInput{Name: name, Scheme: domain.ProxySchemeSOCKS5, Host: host, Port: port}
+		for _, opt := range opts {
+			opt(&in)
+		}
+		id, err := svc.CreateProxy(ctx, in)
+		require.NoError(t, err)
+		return id
+	}
+	return svc, ctx, seed
+}
+
+// probeInvalidations 取夹具装进 Service 的失效记录器（「探测不触发失效」要用它）：
+// 夹具签名只给 svc/ctx/seed，记录器仍是 newProxyTestService 装进去的同一个 *invRecorder。
+func probeInvalidations(t *testing.T, svc *Service) *invRecorder {
+	t.Helper()
+	rec, ok := svc.inv.(*invRecorder)
+	require.True(t, ok, "newProbeFixture 必须装 *invRecorder")
+	return rec
+}
+
 // TestProbeProxyUnreachable 第一段失败（矩阵第一行）：LastProbeOK=false + 脱敏错误
 // 文本 + **IP 空**，且第二段零调用（不发起任何出网请求）；enabled 不变、探测时刻来自
 // 注入时钟（不赌墙钟毫秒差）、不触发失效。
 func TestProbeProxyUnreachable(t *testing.T) {
-	svc, _, rec := newProxyTestService()
-	ctx := context.Background()
-	fixed := time.Date(2026, 8, 10, 12, 0, 0, 0, time.UTC)
-	svc.statsNow = func() time.Time { return fixed }
+	svc, ctx, seed := newProbeFixture(t)
 	egress := &probeEgressStub{ip: "203.0.113.7"}
 	svc.probeEgress = egress.fn()
 
 	username, password := "probe-user", "probe-secret"
-	id, err := svc.CreateProxy(ctx, ProxyInput{
-		Name: "unreachable", Scheme: domain.ProxySchemeSOCKS5, Host: "127.0.0.1",
-		Port: closedTCPPort(t), Username: &username, Password: &password,
-	})
-	require.NoError(t, err)
+	id := seed("unreachable", "127.0.0.1", closedTCPPort(t), withCreds(username, password))
+	rec := probeInvalidations(t, svc)
 	before := rec.total()
 
 	got, err := svc.ProbeProxy(ctx, id)
@@ -365,7 +412,7 @@ func TestProbeProxyUnreachable(t *testing.T) {
 	require.Empty(t, got.LastProbeIP, "TCP 不通 ⇒ 不取 IP（矩阵第一行）")
 	require.Equal(t, 0, egress.calls, "第一段失败 ⇒ 第二段**零调用**（§3.3 / M7）")
 	require.NotNil(t, got.LastProbeAt)
-	require.True(t, got.LastProbeAt.Equal(fixed), "探测时刻来自注入时钟（want %v, got %v）", fixed, got.LastProbeAt)
+	require.True(t, got.LastProbeAt.Equal(probeFixtureNow), "探测时刻来自注入时钟（want %v, got %v）", probeFixtureNow, got.LastProbeAt)
 	require.True(t, got.Enabled, "探测结果不影响 enabled（§6.3：enabled 是唯一开关）")
 	require.Equal(t, before, rec.total(), "探测不改路由 ⇒ 不触发失效")
 }
@@ -376,20 +423,13 @@ func TestProbeProxyUnreachable(t *testing.T) {
 // **必须注入桩**（spec §3.5 末条）：裸 net.Listen 骗不过第二段，它会真的去连
 // api.ip.sb——要么等满 10s，要么让 LastProbeError 断言莫名其妙地红。
 func TestProbeProxyReachable(t *testing.T) {
-	svc, _, _ := newProxyTestService()
-	ctx := context.Background()
-	fixed := time.Date(2026, 8, 11, 1, 2, 3, 0, time.UTC)
-	svc.statsNow = func() time.Time { return fixed }
+	svc, ctx, seed := newProbeFixture(t)
 	const wantIP = "198.51.100.4"
 	egress := &probeEgressStub{ip: wantIP}
 	svc.probeEgress = egress.fn()
 
 	host, port := listeningTCPAddr(t)
-
-	id, err := svc.CreateProxy(ctx, ProxyInput{
-		Name: "reachable", Scheme: domain.ProxySchemeHTTP, Host: host, Port: port,
-	})
-	require.NoError(t, err)
+	id := seed("reachable", host, port)
 
 	got, err := svc.ProbeProxy(ctx, id)
 	require.NoError(t, err)
@@ -398,155 +438,177 @@ func TestProbeProxyReachable(t *testing.T) {
 	require.Equal(t, wantIP, got.LastProbeIP, "第二段取到的出口 IP 落库")
 	require.Equal(t, 1, egress.calls, "第一段通 ⇒ 第二段恰好跑一次")
 	require.NotNil(t, got.LastProbeAt)
-	require.True(t, got.LastProbeAt.Equal(fixed))
+	require.True(t, got.LastProbeAt.Equal(probeFixtureNow))
 
 	// 探测不含认证校验（§6.3）：这条条目无凭据也能拨通。
 	require.Empty(t, got.Username)
 }
 
-// TestProbeProxyTwoStage §3.3 三态矩阵的四条子例（spec §3.5 的 service 侧判据）：
-// 两段全过 / TCP 失败且第二段零调用 / 第二段失败仍 ok=true / 第二段失败清掉旧 IP。
+// TestProbeProxyTwoStage §3.3 三态矩阵的五条子例（spec §3.5 的 service 侧判据）：
+// 两段全过 / TCP 失败且第二段零调用 / 第二段失败仍 ok=true / 第二段失败清掉旧 IP /
+// 父 ctx 已取消不算第二段失败。
 //
 // 断言按**列**而不是按"整体结果"写：`ok` 只表示 TCP，出口 IP 是另一列——这两个结论
 // 互不覆盖正是 owner 的裁决（§3.3），测试必须钉住它，别在下一次改动里被"统一"掉。
 func TestProbeProxyTwoStage(t *testing.T) {
 	const wantIP = "203.0.113.7"
+	const (
+		probeCredUser = "egress-user"
+		probeCredPass = "egress-secret"
+	)
+	reachableAddr := func(t *testing.T) (string, int) { return listeningTCPAddr(t) }
+	closedAddr := func(t *testing.T) (string, int) { return "127.0.0.1", closedTCPPort(t) }
 
-	t.Run("both_stages_pass", func(t *testing.T) {
-		svc, _, _ := newProxyTestService()
-		ctx := context.Background()
-		fixed := time.Date(2026, 8, 12, 3, 4, 5, 0, time.UTC)
-		svc.statsNow = func() time.Time { return fixed }
-		egress := &probeEgressStub{ip: wantIP}
-		svc.probeEgress = egress.fn()
+	cases := []struct {
+		name string
+		stub *probeEgressStub
+		// addr 第一段的落点。
+		addr func(t *testing.T) (host string, port int)
+		// creds 把 probeCredUser/probeCredPass 落到条目上（第二段的错误文本故意带同一对
+		// 字面量：去掉脱敏，NotContains 就红）。
+		creds bool
+		// preProbe 在注入 stub 之前跑：造「上一次探测留下旧 IP」这类前态。
+		preProbe func(t *testing.T, svc *Service, ctx context.Context, id int64)
+		// parentCanceled 为 true 时用「已取消的父 ctx」调 ProbeProxy。
+		parentCanceled bool
 
-		host, port := listeningTCPAddr(t)
-		id, err := svc.CreateProxy(ctx, ProxyInput{
-			Name: "both-stages", Scheme: domain.ProxySchemeSOCKS5, Host: host, Port: port,
-		})
-		require.NoError(t, err)
+		wantOK           bool
+		wantOKMsg        string
+		wantIP           string
+		wantIPMsg        string
+		wantEmptyErr     bool
+		wantErrMsg       string
+		wantErrContains  string
+		wantErrRedacted  bool
+		wantOKWithErr    bool
+		wantStubCalls    int
+		wantStubCallsMsg string
+		wantNoErrMsg     string
+		wantAt           time.Time
+	}{
+		{
+			name:          "both_stages_pass",
+			stub:          &probeEgressStub{ip: wantIP},
+			addr:          reachableAddr,
+			wantOK:        true,
+			wantIP:        wantIP,
+			wantEmptyErr:  true,
+			wantErrMsg:    "两段全过 ⇒ 无错误文本",
+			wantStubCalls: 1,
+			wantAt:        probeFixtureNow,
+		},
+		{
+			name:             "tcp_failure_skips_egress",
+			stub:             &probeEgressStub{ip: wantIP},
+			addr:             closedAddr,
+			wantStubCalls:    0,
+			wantStubCallsMsg: "第一段失败不得发起第二段（M7 的变异靶子）",
+		},
+		{
+			name: "egress_failure_keeps_ok",
+			// 桩错误里**故意带凭据**：这段文本会落库并回显，服务层必须过 proxyRedactedError
+			// （M6 的变异靶子——去掉脱敏这句断言就红）。
+			stub: &probeEgressStub{err: fmt.Errorf(
+				"egress ip probe: dial socks5://%s:%s@127.0.0.1:1080: proxy refused",
+				probeCredUser, probeCredPass)},
+			addr:            reachableAddr,
+			creds:           true,
+			wantOK:          true,
+			wantOKMsg:       "TCP 通 ⇒ ok 仍是 true（§3.3 中间列的语义不变）",
+			wantErrMsg:      "第二段失败原因必须落库（否则用户看不出 IP 为什么是空的）",
+			wantErrContains: "***",
+			wantErrRedacted: true,
+			wantOKWithErr:   true,
+			wantStubCalls:   1,
+		},
+		{
+			name: "egress_failure_clears_previous_ip",
+			stub: &probeEgressStub{err: errors.New("egress ip probe: api.ip.sb: connection timed out")},
+			addr: reachableAddr,
+			preProbe: func(t *testing.T, svc *Service, ctx context.Context, id int64) {
+				// 第一次探测成功：旧 IP 落库。
+				svc.probeEgress = (&probeEgressStub{ip: wantIP}).fn()
+				first, err := svc.ProbeProxy(ctx, id)
+				require.NoError(t, err)
+				require.Equal(t, wantIP, first.LastProbeIP)
+			},
+			wantOK:        true,
+			wantIPMsg:     "第二段失败必须清空上一次的 IP，不能留旧值冒充本次结果（§3.3 末条）",
+			wantStubCalls: 1,
+		},
+		{
+			name: "canceled_parent_ctx_does_not_fail_egress",
+			// 桩**观察 ctx**（真实实现同款：HTTP 请求带 ctx，一取消就失败）——否则「第二段
+			// 继承了请求 ctx」这个缺陷在桩上根本显不出来。
+			stub: &probeEgressStub{ip: wantIP, observe: func(ctx context.Context) error {
+				if err := ctx.Err(); err != nil {
+					return fmt.Errorf("egress ip probe: %w", err)
+				}
+				return nil
+			}},
+			addr:           reachableAddr,
+			parentCanceled: true,
+			wantOK:         true,
+			wantIP:         wantIP,
+			wantIPMsg:      "父 ctx 的取消不得让探测结论变成「IP 空 + 错误文本」",
+			wantEmptyErr:   true,
+			wantErrMsg:     "客户端走了不代表这条代理取不到 IP（与第一段 dialProxyAddr 同一条理由）",
+			wantStubCalls:  1,
+			wantNoErrMsg:   "fakeStore 不读 ctx（真实 PG 在请求已断时写不进去，那是既有行为）",
+		},
+	}
 
-		got, err := svc.ProbeProxy(ctx, id)
-		require.NoError(t, err)
-		require.Equal(t, 1, egress.calls)
-		require.True(t, got.LastProbeOK)
-		require.Empty(t, got.LastProbeError, "两段全过 ⇒ 无错误文本")
-		require.Equal(t, wantIP, got.LastProbeIP)
-		require.True(t, got.LastProbeAt.Equal(fixed))
-	})
-
-	t.Run("tcp_failure_skips_egress", func(t *testing.T) {
-		svc, _, _ := newProxyTestService()
-		ctx := context.Background()
-		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 5, 0, 0, time.UTC) }
-		egress := &probeEgressStub{ip: wantIP}
-		svc.probeEgress = egress.fn()
-
-		id, err := svc.CreateProxy(ctx, ProxyInput{
-			Name: "tcp-fails", Scheme: domain.ProxySchemeHTTP, Host: "127.0.0.1", Port: closedTCPPort(t),
-		})
-		require.NoError(t, err)
-
-		got, err := svc.ProbeProxy(ctx, id)
-		require.NoError(t, err)
-		require.False(t, got.LastProbeOK)
-		require.NotEmpty(t, got.LastProbeError)
-		require.Empty(t, got.LastProbeIP)
-		require.Equal(t, 0, egress.calls, "第一段失败不得发起第二段（M7 的变异靶子）")
-	})
-
-	t.Run("egress_failure_keeps_ok", func(t *testing.T) {
-		svc, _, _ := newProxyTestService()
-		ctx := context.Background()
-		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 6, 0, 0, time.UTC) }
-		username, password := "egress-user", "egress-secret"
-		calls := 0
-		// 桩错误里**故意带凭据**：这段文本会落库并回显，服务层必须过 proxyRedactedError
-		// （M6 的变异靶子——去掉脱敏这句断言就红）。
-		svc.probeEgress = func(_ context.Context, p domain.Proxy) (string, error) {
-			calls++
-			return "", fmt.Errorf("egress ip probe: dial socks5://%s:%s@%s: proxy refused",
-				p.Username, p.Password, p.Host)
-		}
-
-		host, port := listeningTCPAddr(t)
-		id, err := svc.CreateProxy(ctx, ProxyInput{
-			Name: "egress-fails", Scheme: domain.ProxySchemeSOCKS5, Host: host, Port: port,
-			Username: &username, Password: &password,
-		})
-		require.NoError(t, err)
-
-		got, err := svc.ProbeProxy(ctx, id)
-		require.NoError(t, err)
-		require.Equal(t, 1, calls)
-		require.True(t, got.LastProbeOK, "TCP 通 ⇒ ok 仍是 true（§3.3 中间列的语义不变）")
-		require.NotEmpty(t, got.LastProbeError, "第二段失败原因必须落库（否则用户看不出 IP 为什么是空的）")
-		require.NotContains(t, got.LastProbeError, password, "第二段错误文本不得含密码（§5.2 / §5.3-3）")
-		require.NotContains(t, got.LastProbeError, username, "第二段错误文本不得含用户名")
-		require.Contains(t, got.LastProbeError, "***", "被替换而非丢弃上下文")
-		require.Empty(t, got.LastProbeIP)
-		// 不变量（§3.3）：ok=true 且 error 非空 ⇔ 第一段通、第二段失败。
-		require.True(t, got.LastProbeOK && got.LastProbeError != "")
-	})
-
-	t.Run("egress_failure_clears_previous_ip", func(t *testing.T) {
-		svc, _, _ := newProxyTestService()
-		ctx := context.Background()
-		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 7, 0, 0, time.UTC) }
-
-		host, port := listeningTCPAddr(t)
-		id, err := svc.CreateProxy(ctx, ProxyInput{
-			Name: "clears-old-ip", Scheme: domain.ProxySchemeHTTP, Host: host, Port: port,
-		})
-		require.NoError(t, err)
-
-		// 第一次探测成功：旧 IP 落库。
-		svc.probeEgress = (&probeEgressStub{ip: wantIP}).fn()
-		first, err := svc.ProbeProxy(ctx, id)
-		require.NoError(t, err)
-		require.Equal(t, wantIP, first.LastProbeIP)
-
-		// 第二次探测第二段失败：整行覆盖写必须把旧 IP 清掉（M5 的变异靶子）。
-		svc.probeEgress = (&probeEgressStub{err: errors.New("egress ip probe: api.ip.sb: connection timed out")}).fn()
-		second, err := svc.ProbeProxy(ctx, id)
-		require.NoError(t, err)
-		require.True(t, second.LastProbeOK)
-		require.NotEmpty(t, second.LastProbeError)
-		require.Empty(t, second.LastProbeIP, "第二段失败必须清空上一次的 IP，不能留旧值冒充本次结果（§3.3 末条）")
-	})
-
-	t.Run("canceled_parent_ctx_does_not_fail_egress", func(t *testing.T) {
-		svc, _, _ := newProxyTestService()
-		ctx := context.Background()
-		svc.statsNow = func() time.Time { return time.Date(2026, 8, 12, 3, 8, 0, 0, time.UTC) }
-
-		host, port := listeningTCPAddr(t)
-		id, err := svc.CreateProxy(ctx, ProxyInput{
-			Name: "canceled-parent", Scheme: domain.ProxySchemeHTTP, Host: host, Port: port,
-		})
-		require.NoError(t, err)
-
-		// 桩**观察 ctx**（真实实现同款：HTTP 请求带 ctx，一取消就失败）——否则「第二段
-		// 继承了请求 ctx」这个缺陷在桩上根本显不出来。
-		calls := 0
-		svc.probeEgress = func(egressCtx context.Context, _ domain.Proxy) (string, error) {
-			calls++
-			if err := egressCtx.Err(); err != nil {
-				return "", fmt.Errorf("egress ip probe: %w", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc, ctx, seed := newProbeFixture(t)
+			host, port := tc.addr(t)
+			var opts []func(*ProxyInput)
+			if tc.creds {
+				opts = append(opts, withCreds(probeCredUser, probeCredPass))
 			}
-			return wantIP, nil
-		}
+			id := seed(tc.name, host, port, opts...)
+			if tc.preProbe != nil {
+				tc.preProbe(t, svc, ctx, id)
+			}
+			svc.probeEgress = tc.stub.fn()
 
-		canceled, cancel := context.WithCancel(ctx)
-		cancel() // 客户端已断开（这里更狠：发请求之前就断了）
+			probeCtx := ctx
+			if tc.parentCanceled {
+				canceled, cancel := context.WithCancel(ctx)
+				cancel() // 客户端已断开（这里更狠：发请求之前就断了）
+				probeCtx = canceled
+			}
 
-		got, err := svc.ProbeProxy(canceled, id)
-		require.NoError(t, err, "fakeStore 不读 ctx（真实 PG 在请求已断时写不进去，那是既有行为）")
-		require.Equal(t, 1, calls)
-		require.True(t, got.LastProbeOK)
-		require.Empty(t, got.LastProbeError, "客户端走了不代表这条代理取不到 IP（与第一段 dialProxyAddr 同一条理由）")
-		require.Equal(t, wantIP, got.LastProbeIP, "父 ctx 的取消不得让探测结论变成「IP 空 + 错误文本」")
-	})
+			got, err := svc.ProbeProxy(probeCtx, id)
+			require.NoError(t, err, tc.wantNoErrMsg)
+			require.Equal(t, tc.wantStubCalls, tc.stub.calls, tc.wantStubCallsMsg)
+			require.Equal(t, tc.wantOK, got.LastProbeOK, tc.wantOKMsg)
+			if tc.wantEmptyErr {
+				require.Empty(t, got.LastProbeError, tc.wantErrMsg)
+			} else {
+				require.NotEmpty(t, got.LastProbeError, tc.wantErrMsg)
+			}
+			if tc.wantErrRedacted {
+				require.NotContains(t, got.LastProbeError, probeCredPass, "第二段错误文本不得含密码（§5.2 / §5.3-3）")
+				require.NotContains(t, got.LastProbeError, probeCredUser, "第二段错误文本不得含用户名")
+			}
+			if tc.wantErrContains != "" {
+				require.Contains(t, got.LastProbeError, tc.wantErrContains, "被替换而非丢弃上下文")
+			}
+			if tc.wantIP != "" {
+				require.Equal(t, tc.wantIP, got.LastProbeIP, tc.wantIPMsg)
+			} else {
+				require.Empty(t, got.LastProbeIP, tc.wantIPMsg)
+			}
+			if tc.wantOKWithErr {
+				// 不变量（§3.3）：ok=true 且 error 非空 ⇔ 第一段通、第二段失败。
+				require.True(t, got.LastProbeOK && got.LastProbeError != "")
+			}
+			if !tc.wantAt.IsZero() {
+				require.True(t, got.LastProbeAt.Equal(tc.wantAt))
+			}
+		})
+	}
 }
 
 // TestProbeEgressIPRealPath 第二段**真实实现**（不经桩）：把 proxyProbeEgressURL
@@ -582,16 +644,11 @@ func TestProbeEgressIPRealPath(t *testing.T) {
 	}
 
 	t.Run("through_proxy_returns_ip", func(t *testing.T) {
-		svc, _, _ := newProxyTestService()
-		ctx := context.Background()
-		svc.statsNow = func() time.Time { return time.Date(2026, 8, 13, 9, 0, 0, 0, time.UTC) }
+		svc, ctx, seed := newProbeFixture(t)
 
 		var targetHost string
 		spec := newFakeProxy(t, http.StatusOK, "203.0.113.7\n", &targetHost)
-		id, err := svc.CreateProxy(ctx, ProxyInput{
-			Name: "real-egress", Scheme: spec.Scheme, Host: spec.Host, Port: spec.Port,
-		})
-		require.NoError(t, err)
+		id := seed("real-egress", spec.Host, spec.Port, withScheme(spec.Scheme))
 		// **不注入桩**：probeEgress 为 nil ⇒ 走真实实现（子进程里的 New 也是这条）。
 		require.Nil(t, svc.probeEgress)
 
@@ -604,15 +661,10 @@ func TestProbeEgressIPRealPath(t *testing.T) {
 	})
 
 	t.Run("non_ip_body_is_second_stage_failure", func(t *testing.T) {
-		svc, _, _ := newProxyTestService()
-		ctx := context.Background()
-		svc.statsNow = func() time.Time { return time.Date(2026, 8, 13, 9, 1, 0, 0, time.UTC) }
+		svc, ctx, seed := newProbeFixture(t)
 
 		spec := newFakeProxy(t, http.StatusOK, "<html>captive portal</html>", nil)
-		id, err := svc.CreateProxy(ctx, ProxyInput{
-			Name: "real-egress-bad-body", Scheme: spec.Scheme, Host: spec.Host, Port: spec.Port,
-		})
-		require.NoError(t, err)
+		id := seed("real-egress-bad-body", spec.Host, spec.Port, withScheme(spec.Scheme))
 
 		got, err := svc.ProbeProxy(ctx, id)
 		require.NoError(t, err)

@@ -52,14 +52,10 @@ function DialogContent({
   return (
     <DialogPortal>
       <DialogOverlay />
-      {/* grid-cols-1 是**列宽**的唯一实现点（根因已实测，2026-11-17）：Popup 是 grid，但调用方
-          通常只传 `grid-rows-[…]`（行）⇒ 隐式列宽 = `auto` = 最宽子项的 max-content。账号
-          「编辑账号」弹窗里出口代理 `<Select>` 的长标签（`whitespace-nowrap`）把这一列撑到
-          448.9px > 内容盒 416px，再被 `overflow-hidden` 硬裁 ⇒ 用户看到「右边被截断」。
-          显式列 = `repeat(1, minmax(0,1fr))`：列宽不再由内容决定，任何弹窗的超长 nowrap 内容
-          都退化为「在框内省略」，不再把框撑破（一处改，全站弹窗受益）。
-          只约束列宽：行结构（`grid-rows-[auto_minmax(0,1fr)_auto]` 三段高度）与尺寸
-          （`sm:max-w-*`）仍由各页面自定，不要在这里接管。 */}
+      {/* `grid-cols-1` 只约束**列宽**（根因已实测 2026-11-17）：调用方通常只传 `grid-rows-[…]`，
+          隐式列宽 = `auto` = 最宽子项的 max-content ⇒ 账号弹窗里 `<Select>` 的长标签把列撑到
+          448.9px > 内容盒 416px，被 `overflow-hidden` 硬裁。显式列让超长 nowrap 内容退化为
+          「在框内省略」（一处改，全站弹窗受益）。行结构与 `sm:max-w-*` 仍由页面自定，别在这里接管。 */}
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(
@@ -100,9 +96,8 @@ function DialogHeader({ className, ...props }: React.ComponentProps<"div">) {
   )
 }
 
-// 页脚做成整幅贴边的色带：-mx-4 -mb-4 抵消 DialogContent 的默认 p-4，让色带铺满
-// 弹窗底边并与圆角对齐。**DialogContent 若用 p-0 自管内边距，页脚必须传 mx-0 mb-0**
-// ——否则页脚比弹窗宽 32px，被 overflow-hidden 裁掉两侧（按钮和圆角都会被切）。
+// **DialogContent 若用 p-0 自管内边距，页脚必须传 mx-0 mb-0**——否则页脚比弹窗宽 32px，
+// 被 overflow-hidden 裁掉两侧（按钮和圆角都会被切）。
 function DialogFooter({
   className,
   showCloseButton = false,

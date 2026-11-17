@@ -242,8 +242,7 @@ func (s *Service) DeleteProxy(ctx context.Context, id int64) error {
 	return nil
 }
 
-// ProbeProxy 两段式探测（spec §3.2）：① TCP 拨号（5s）② 经这条代理取出口 IP（10s）
-// → 一次写回探测四列 → 返回最新条目。第二段只在第一段成功后跑。
+// ProbeProxy 两段式探测（spec §3.2）：读条目 → 跑两段判定 → 一次写回探测四列 → 再读返回。
 //
 // 返回 **(条目, nil)** 而非错误：拨不通、取不到 IP 都是探测结论（落 last_probe_*），
 // 不是 API 失败——探测的目的就是把「这条线现在什么样」记下来。只有条目不存在
@@ -256,8 +255,8 @@ func (s *Service) DeleteProxy(ctx context.Context, id int64) error {
 //	TCP 通 + 取到 IP    ⇒ ok=true,  error="",             ip=<ip>
 //	TCP 通 + 取 IP 失败 ⇒ ok=true,  error=第二段脱敏文本, ip=""
 //
-// 即 **`ok=true` 且 `last_probe_error != ""` ⇔ 第一段通、第二段失败**。第二段失败
-// 不改 ok（端口确实通），也**不留**上一次的 IP（整行覆盖写，§3.3 末条）。
+// 两段共用 `last_probe_error` 一列（不新增「第二段错误」列）：于是
+// **`ok=true` 且 `last_probe_error != ""` ⇔ 第一段通、第二段失败**，一个判定式看全矩阵。
 //
 // 探测**不改变** enabled/Routable（spec §6.3），故不触发失效通知。
 func (s *Service) ProbeProxy(ctx context.Context, id int64) (domain.Proxy, error) {
@@ -265,29 +264,7 @@ func (s *Service) ProbeProxy(ctx context.Context, id int64) (domain.Proxy, error
 	if err != nil {
 		return domain.Proxy{}, mapRepoErr(err)
 	}
-	ok, errText, ip := true, "", ""
-	if probeErr := dialProxyAddr(ctx, cur.Host, cur.Port); probeErr != nil {
-		// 第一段失败即止：第二段**不跑**（矩阵第一行），ip 保持 ""。
-		ok, errText = false, proxyRedactedError(probeErr, cur)
-	} else {
-		// 第二段的 10s 预算挂在**这一段**（不是整个探测）：TCP 的 5s 已经花完，
-		// 叠加才是两段串行的真实最坏值 ≈15s。挂在 seam 外侧 ⇒ 桩与真实实现同预算。
-		//
-		// **剥掉取消信号**（与第一段 dialProxyAddr 同一条理由）：客户端断开不等于这条
-		// 代理取不到 IP。继承请求 ctx 就会把「客户端走了」记成「TCP 通、但取 IP 失败」，
-		// 还顺手清空上一次的 IP——一个与代理无关的事件污染探测结论。写回仍用原 ctx
-		// （请求真断了则写不进去，那是既有行为）。
-		egressCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), proxyProbeEgressTimeout)
-		got, egressErr := s.probeEgressIP(egressCtx, cur)
-		cancel() // 立即释放计时器：探测是旁路动作，不等 GC 收
-		if egressErr != nil {
-			// 第一段通、第二段失败：ok 仍是 true（TCP 语义不变），错误文本必须脱敏
-			// ——HTTP 客户端错误可能带 userinfo（spec §3.2），ip 保持 ""（清旧值）。
-			errText = proxyRedactedError(egressErr, cur)
-		} else {
-			ip = got
-		}
-	}
+	ok, errText, ip := s.probeStages(ctx, cur)
 	// 探测时刻走**注入时钟**（Service.statsClock：statsNow 注入，nil = time.Now）——
 	// 既有 now 注入模式，测试用固定时间，不赌墙钟毫秒差。
 	at := s.statsClock()
@@ -301,6 +278,31 @@ func (s *Service) ProbeProxy(ctx context.Context, id int64) (domain.Proxy, error
 	return latest, nil
 }
 
+// probeStages 两段判定（spec §3.2）：① TCP 拨号（proxyProbeTimeout）② 经这条代理取出口 IP。
+// 第一段失败即止；第二段失败**不改** ok（端口确实通），只是错误文本落成脱敏值、IP 留空
+// ——整行覆盖写，故上一次的 IP 一并清掉。不碰仓储、不取时钟：写回由调用方做。
+func (s *Service) probeStages(ctx context.Context, p domain.Proxy) (ok bool, errText, ip string) {
+	if dialErr := dialProxyAddr(ctx, p.Host, p.Port); dialErr != nil {
+		return false, proxyRedactedError(dialErr, p), ""
+	}
+	// 第二段的 10s 预算挂在**这一段**（不是整个探测）：TCP 的 5s 已经花完，叠加才是两段
+	// 串行的真实最坏值 ≈15s。挂在 seam 外侧 ⇒ 桩与真实实现同预算。
+	//
+	// **剥掉取消信号**（与第一段 dialProxyAddr 同一条理由）：客户端断开不等于这条代理取不到
+	// IP。继承请求 ctx 就会把「客户端走了」记成「TCP 通、但取 IP 失败」，还顺手清空上一次的
+	// IP——一个与代理无关的事件污染探测结论。写回仍用原 ctx（请求真断了则写不进去，那是既有
+	// 行为）。
+	egressCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), proxyProbeEgressTimeout)
+	got, egressErr := s.probeEgressIP(egressCtx, p)
+	cancel() // 立即释放计时器：探测是旁路动作，不等 GC 收
+	if egressErr != nil {
+		// HTTP 客户端错误可能带 userinfo（spec §3.2），必须过脱敏再落库；ip 留空即整行覆盖写
+		// 清掉旧值（§3.3 末条）。
+		return true, proxyRedactedError(egressErr, p), ""
+	}
+	return true, "", got
+}
+
 // probeEgressIP 第二段的**可测缝**（spec §3.5）：测试覆写 Service.probeEgress 注入桩，
 // nil ⇒ 回落到真实实现 probeProxyEgressIP。走方法而不是在 ProbeProxy 里直接调函数，
 // 是为了让「第二段被调用了几次」在单测里可数（裸 net.Listen 当不了 api.ip.sb）。
@@ -311,31 +313,30 @@ func (s *Service) probeEgressIP(ctx context.Context, p domain.Proxy) (string, er
 	return probeProxyEgressIP(ctx, p)
 }
 
-// probeProxyEgressIP 经**这条代理**取一次出口 IP（spec §3.2）：现造一次性 client、
-// 用完关空闲连接后丢弃——**不进 egress.Pool 注册表**（探测是旁路动作，注册表只放
-// 快照期规格；进表会被下一次 Detach 摘除，或永久占一个条目，见 egress.NewClient 注释）。
+// newProbeEgressClient 现造一个一次性 client：**调用方负责 `CloseIdleConnections`**（用完
+// 即丢，不复用连接池）。
 //
-// 错误原文可能带 userinfo（Transport 的代理拨号错误会回显代理 URL），调用方必须过
-// proxyRedactedError 再落库。
+// **不进 egress.Pool 注册表**：探测是旁路动作，注册表只放快照期规格；进表会被下一次
+// Detach 摘除，或永久占一个条目（见 egress.NewClient 注释）。
 //
-// 预算由**调用方**给：ProbeProxy 在第二段外侧挂 proxyProbeEgressTimeout，本函数不再
-// 叠一层（两层同样的 deadline 只会让读者以为其中一层另有含义）。
-//
-// 已知限制（spec §3.6，有意取舍不是回归）：服务器出网被封 api.ip.sb、或代理是内网/
-// 专线取不到公网出口 IP 时，这一段恒失败 ⇒ 用户看到 ok=true + 错误文本 + IP 缺失。
-// owner 选定的语义就是「TCP 结论与出口结论分列」，不能为了好看把 ok 打回 false。
-func probeProxyEgressIP(ctx context.Context, p domain.Proxy) (string, error) {
+// **不跟随重定向**：跟随会让"出口 IP"取自另一个端点，并把一次探测变成一条可被第三方
+// 端点任意拉长的链路。
+func newProbeEgressClient(p domain.Proxy) *http.Client {
 	// 规格经 domain 的**唯一转换点**（internal/domain/proxy.go: EgressSpec）：scheme/
 	// host/port/凭据的拼装只允许出现在那里，探测不得自己再来一份（否则两处对 IPv6
 	// 方括号、scheme 归一的处理会各走各的，认证形态也可能悄悄不一致）。
-	spec := p.EgressSpec()
-	hc := egress.NewClient(nil, spec)
-	defer hc.CloseIdleConnections()
-	// 固定语义（spec §3.2）：不跟随重定向——跟随会让"出口 IP"取自另一个端点，并把
-	// 一次探测变成一条可被第三方端点任意拉长的链路。
+	hc := egress.NewClient(nil, p.EgressSpec())
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return hc
+}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, proxyProbeEgressURL, nil)
+// fetchEgressIP 发一次 GET 并解析纯文本 IP。
+//
+// `LimitReader` 把「服务器吐回一个 HTML 页」变成 64 字节内可判的无效数据，而不是把内存吃满；
+// 错误原文可能带 userinfo（Transport 的代理拨号错误会回显代理 URL），调用方必须过
+// proxyRedactedError 再落库。
+func fetchEgressIP(ctx context.Context, hc *http.Client, url string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("egress ip probe: %w", err)
 	}
@@ -356,6 +357,20 @@ func probeProxyEgressIP(ctx context.Context, p domain.Proxy) (string, error) {
 		return "", fmt.Errorf("egress ip probe: response is not an IP address")
 	}
 	return addr.String(), nil
+}
+
+// probeProxyEgressIP 经**这条代理**取一次出口 IP（spec §3.2）。
+//
+// 预算由**调用方**给：ProbeProxy 在第二段外侧挂 proxyProbeEgressTimeout，本函数不再
+// 叠一层（两层同样的 deadline 只会让读者以为其中一层另有含义）。
+//
+// 已知限制（spec §3.6，有意取舍不是回归）：服务器出网被封 api.ip.sb、或代理是内网/
+// 专线取不到公网出口 IP 时，这一段恒失败 ⇒ 用户看到 ok=true + 错误文本 + IP 缺失。
+// owner 选定的语义就是「TCP 结论与出口结论分列」，不能为了好看把 ok 打回 false。
+func probeProxyEgressIP(ctx context.Context, p domain.Proxy) (string, error) {
+	hc := newProbeEgressClient(p)
+	defer hc.CloseIdleConnections()
+	return fetchEgressIP(ctx, hc, proxyProbeEgressURL)
 }
 
 // invalidateProxyPool 代理条目变更后的失效（spec §8 失效矩阵）：与 template 变更

@@ -229,7 +229,7 @@ func proxyInputFromBody(f *ProxyConfig) (service.ProxyInput, error) {
 	return in, nil
 }
 
-// toAPIProxy domain → 线格式。三条不可逆的投影决定：
+// toAPIProxy domain → 线格式。四条不可逆的投影决定：
 //
 //  1. **password 恒不出**（spec §3.3）：读模型里没有这个键，只回 has_password；
 //  2. username 非密、原样回显；空 = 无认证 ⇒ null（而不是空串），让前端用一处
@@ -256,17 +256,8 @@ func toAPIProxy(p domain.Proxy) Proxy {
 		CreatedAt:   p.CreatedAt,
 		UpdatedAt:   p.UpdatedAt,
 	}
-	if p.Username != "" {
-		username := p.Username
-		out.Username = &username
-	}
-	if p.LastProbeError != "" {
-		probeErr := p.LastProbeError
-		out.LastProbeError = &probeErr
-	}
-	if p.LastProbeIP != "" {
-		probeIP := p.LastProbeIP
-		out.LastProbeIp = &probeIP
-	}
+	out.Username = optionalStr(p.Username)
+	out.LastProbeError = optionalStr(p.LastProbeError)
+	out.LastProbeIp = optionalStr(p.LastProbeIP)
 	return out
 }
