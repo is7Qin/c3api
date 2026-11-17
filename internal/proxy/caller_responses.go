@@ -64,6 +64,10 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 异步续接（§3.1：统一写出前 seam）：首个有效响应 id 帧在写出前快照入队
 		// 一次。未装配（store/worker nil）不加逻辑，保持零行为变化。
 		var contEnqueued bool
+		// 终态观察（F1）：本车道是**透传**，终态帧由上游产生、网关只观察不伪造。
+		// 客户端判据只认 completed/failed/incomplete 三事件，故这里只做精确 type
+		// 判定（命中后才 json.Valid 复核，见 isResponsesTerminal）。
+		var terminalSeen bool
 		mapper := newResponseModelSSEMapper(sel.ClientResponseModel(reqModel))
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 			Output: out,
@@ -71,6 +75,9 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			FailOnErrorPayload: true,
 			Mapper:             mapper,
 			OnEvent: func(ev sserelay.Event) {
+				if !terminalSeen {
+					terminalSeen = isResponsesTerminal(ev)
+				}
 				// 统一写出前采样 seam：TTFT/usage/图像计数 + 续接入队同点。
 				if ttft == nil {
 					ms := time.Since(start).Milliseconds()
@@ -97,6 +104,18 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			},
 		})
 		resp.Body.Close()
+		// 上游在终态之后尾块读错/多垃圾（§3.3）：客户端已经拿到终态 ⇒ 不翻失败、
+		// 不追加第二条终态，按成功收口（err 清空走下方成功出口；写失败是客户端侧
+		// 事实，仍走失败出口）。
+		if terminalCloseOut(ctx, err, terminalSeen, out.WriteFailed()) {
+			err = nil
+		}
+		// 干净 EOF 但整条流没有终态事件（F1）：客户端判据会把半截流当成「流提前
+		// 结束」，真原因（429/500/读错）也随之丢失 ⇒ 本流按失败收口，出口补一条
+		// response.failed 终态（D2）。
+		if err == nil && !terminalSeen {
+			err = errResponsesStreamIncomplete
+		}
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
@@ -116,7 +135,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
 			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit != streamExitClientCancel && out.Committed() {
-				writeClientStreamError(out, domain.FormatOpenAIResponses, err)
+				writeClientStreamError(out, domain.FormatOpenAIResponses, err, terminalSeen)
 			}
 			// 中止/失败都保留已收集用量（成功请求丢日志防线）。
 			oc := base

@@ -350,6 +350,9 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		img                int64 // resp 检测功能调用计数（旁路；respImageDetectOn 门控）——落 CallCount
 		usageTaken         bool  // 首个 completed 帧已取（usage 只读一次）
 		ttft               *int64
+		// terminalSeen 直连车道的客户端终态观察（透传：终态帧由上游产生，网关只
+		// 观察不伪造）；转换车道用 plan.terminalDone（mapper.Done）。
+		terminalSeen bool
 	)
 	err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{
 		Output:   out,
@@ -361,6 +364,11 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		// （§6-9 本轮不接）。
 		FailOnErrorPayload: plan.mapper == nil,
 		OnEvent: func(ev sserelay.Event) {
+			// 终态观察（F1，仅直连）：转换车道的客户端终态由 plan.finish /
+			// mapper 自产，上游帧协议的终态嗅探在那里不适用。
+			if plan.mapper == nil && !terminalSeen {
+				terminalSeen = isResponsesTerminal(ev)
+			}
 			// 唯一写出前采样 seam（含 drop 帧）：TTFT 仅对**真实 payload** 计时
 			// （旧 SDK 只对真实 data 行回调——纯注释/控制帧、仅 [DONE] 不计；
 			// 保真「输出前、drop 帧也记」）。
@@ -386,6 +394,23 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 		},
 	})
 	_ = resp.Body.Close()
+	// 客户端终态（§3.3）：直连车道由 isResponsesTerminal 观察上游帧；转换车道用
+	// plan.terminalDone（mapper.Done——客户端终态由 mapper 自产）。
+	clientTerminalSeen := terminalSeen
+	if plan.terminalDone != nil {
+		clientTerminalSeen = plan.terminalDone()
+	}
+	// 终态之后尾块读错/多垃圾：客户端已拿到终态 ⇒ 不翻失败、不追加第二条终态，
+	// 按成功收口（写失败是客户端侧事实，仍走失败出口）。
+	if terminalCloseOut(ctx, err, clientTerminalSeen, out.WriteFailed()) {
+		err = nil
+	}
+	// 干净 EOF 但直连流整条没有终态事件（F1）⇒ 截断按失败收口。**必须早于
+	// StepIdentity**：否则截断仍推进身份/退休。转换子车道由 plan.finish 自己保证
+	// 终态（Finish 对不支持的方向返回 nil，无终态即该方向既有语义）。
+	if err == nil && !clientTerminalSeen && plan.mapper == nil {
+		err = errResponsesStreamIncomplete
+	}
 	// 推进/退休（§3.3 顺序契约）：relay 读到终态 → Close（连接同步归还进 idle 表）
 	// → Step（退休此刻才看得见那条连接）→ finish。提前 Close / 取消 / 读取失败
 	// **不推进不退休**；failover 重试因此不可能"先推进再失败"。
@@ -434,7 +459,7 @@ func (p *Proxy) streamCodexResponsesCore(ctx context.Context, w http.ResponseWri
 			return 0, nil, true, nil
 		}
 		if out.Committed() {
-			writeClientStreamError(out, plan.logFormat, err)
+			writeClientStreamError(out, plan.logFormat, err, clientTerminalSeen)
 		}
 		o := mergeDispatchBase(ctx, codexDispatchBase(sel, reqModel, reqID, start, ut, ttft))
 		o.Result = ResultFailed
@@ -545,6 +570,11 @@ type codexStreamPlan struct {
 	mapper func(sserelay.Event) ([]byte, bool)
 	// finish 流末按「目标终止帧尚未产生」条件补发（converted 专用；direct = nil）。
 	finish func() []byte
+	// terminalDone 客户端终态是否已产出（converted 专用 = mapper.Done；direct =
+	// nil）。用于（a）错误出口判断「客户端已见终态，不再追加第二条」，（b）尾随
+	// 读错时不把已完成的流翻成失败。direct 车道没有 mapper，它用 isResponsesTerminal
+	// 直接观察上游帧。
+	terminalDone func() bool
 	// logFormat 日志 Format 口径。
 	logFormat domain.RequestFormat
 }
@@ -565,9 +595,10 @@ func codexConvertedStreamPlan(dir domain.ProtocolConvert, clientModel string) co
 	}
 	client, _ := clientAndTargetOf(dir)
 	return codexStreamPlan{
-		mapper:    a.mapEvent,
-		finish:    a.finish,
-		logFormat: client,
+		mapper:       a.mapEvent,
+		finish:       a.finish,
+		terminalDone: a.mapper.Done,
+		logFormat:    client,
 	}
 }
 

@@ -74,9 +74,27 @@ func carryStreamUsage(ctx context.Context, usage AttemptUsage, ttft *int64) {
 	}
 }
 
+// terminalCloseOut 报告「尾随错误是否可以按成功收口」：客户端已拿到终态，且错误
+// 不是取消类、也不是真实下行写失败（spec-responses-terminal-truth §3.3）。
+//
+// 取消**必须**排除：classifyStreamExit 的 streamExitClientCancel 负责 abort 记账
+// （ResultClientCancel）与槽位释放口径；把取消吞成 success 会让一次「客户端已
+// 收到终态后断开」的尝试漏记客户端侧结束。"已见终态"只说明交付完成，不说明本次
+// 尝试以成功结束。四条车道（responses 透传 / codex 直连 / 转换 / codex converted）
+// 共用本谓词，避免各写一套漏项（R2 评审 must-fix）。
+func terminalCloseOut(ctx context.Context, err error, terminalSeen, writeFailed bool) bool {
+	return err != nil && terminalSeen && !writeFailed &&
+		!errors.Is(err, context.Canceled) && !errors.Is(ctx.Err(), context.Canceled)
+}
+
 // writeClientStreamError 写客户端协议 SSE error 帧（已提交且写侧可用时）；
 // WriteFailed 由 Output.WriteError 内部短路（不补写）。format 为客户端协议
 // （Chat/Responses/Images = OpenAI 形态；Anthropic = type:error 信封）。
-func writeClientStreamError(out *sserelay.Output, format domain.RequestFormat, err error) {
-	_ = out.WriteError(buildErrorFrame(format, streamErrMessage(err)))
+//
+// clientTerminalSeen 表示**客户端已经收到过终态事件**（Responses 车道才有意义：
+// 透传车道由 isResponsesTerminal 观察，转换车道由 mapper.Done 判定）。已见终态
+// 时不再追加 response.failed 第二条终态——一条流两个终态会让客户端与记账自相
+// 矛盾（spec-responses-terminal-truth §3.3/§3.4）。
+func writeClientStreamError(out *sserelay.Output, format domain.RequestFormat, err error, clientTerminalSeen bool) {
+	_ = out.WriteError(buildErrorFrame(format, streamErrMessage(err), !clientTerminalSeen))
 }

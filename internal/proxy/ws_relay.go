@@ -484,6 +484,40 @@ func isResponsesCreated(data []byte) bool {
 	return bytes.Equal(data[start+1:end-1], createdTypeBytes)
 }
 
+// isResponsesTerminal 判定一帧是否是 Responses 终态事件（completed / failed /
+// incomplete）——「客户端已收到终态」的唯一判据（HTTP 透传车道用）。
+//
+// 客户端判据（pi-ai `processResponsesStream`）只认这三个事件之一：`event: error`
+// 与无 type 的裸错误载荷都不算终态，故「上游干净收流但没发终态」必须由本函数
+// 识别出来补一条。
+//
+// 两个来源都认：`event:` 名与 data 顶层 `type`。**不调 ev.EventName()**——缺
+// `event:` 行时它会走 InferEventName 反序列化（每帧一次分配），这里两次
+// bytes.Equal 就够。命中后追加 json.Valid 复核：relay 会把 EOF 处的半截末行
+// 当空行派发（relay.go:454-475），若截断正好切在 `"type":"response.completed"`
+// 之后，没有复核就会把半截帧误判成已终态。复核只在命中时跑（罕见），常规帧
+// 仍只是一次 scanKeyValue + 若干次 bytes.Equal（零分配）。
+func isResponsesTerminal(ev sserelay.Event) bool {
+	if !isResponsesTerminalType(ev.Event) {
+		start, end, ok := scanKeyValue(ev.Data, typeKeyBytes)
+		if !ok || start >= len(ev.Data) || ev.Data[start] != '"' {
+			return false
+		}
+		if !isResponsesTerminalType(ev.Data[start+1 : end-1]) {
+			return false
+		}
+	}
+	// 半截末行（EOF 截断）即便 type 已完整也不得算作已终态。
+	return json.Valid(ev.Data)
+}
+
+// isResponsesTerminalType 事件名/type 值是否落在终态集合内（三种）。
+func isResponsesTerminalType(name []byte) bool {
+	return bytes.Equal(name, completedTypeBytes) ||
+		bytes.Equal(name, failedTypeBytes) ||
+		bytes.Equal(name, incompleteTypeBytes)
+}
+
 // wsFirstFrameForSel 按本次尝试的 sel 改写首帧模型：sel.Model 非空且与 reqModel
 // 不同 → sjson 改写 model（改写失败/帧非合法 JSON → 原样返回，上游或 SDK 自行
 // 校验）。由 wsAttempt 在拨号前调用（每次尝试一次，故障转移换号按当次 sel 重算），

@@ -247,6 +247,11 @@ func TestProductionWiresFailureFenceDeps(t *testing.T) {
 		"生产必须把锁存装配进 sdkbridge.FailureDeps —— 缺失则失效链不走围栏路径")
 	require.True(t, strings.Contains(normalized, "Publisher: schedGroupPub{pub},"),
 		"生产必须把组级发布面装配进 sdkbridge.FailureDeps —— 缺失则失效不对端广播")
+	// R2（momus）：单字段字面量 Contains 有两种盲区——删掉其中一行（另一行仍在）
+	// 仍绿；把字段注释掉（字面量还在注释里）也仍绿。故再钉一条**相邻代码序列**：
+	// 前导 `, ` 让注释化后的 `, // Latch: …` 也失配，且两字段必须成对出现。
+	require.True(t, strings.Contains(normalized, ", Latch: latchStore, Publisher: schedGroupPub{pub}, }"),
+		"生产必须在同一次 FailureDeps 装配里相邻给出 Latch 与 Publisher —— 缺任一（或注释掉）即静默退化为简化路径")
 }
 
 // readCmdServerPackage 读 cmd/server **整包**源码（排除 _test.go，按文件名排序

@@ -458,15 +458,15 @@ func (m *StreamMapper) BindableID() string { return m.id }
 // 终止帧 → 补发）。
 func (m *StreamMapper) Done() bool { return m.done }
 
-// Finish 按方向返回**与目标 mapper 自产终止相同**的终止帧（流末补发用）。
-// 仅 codex converted 命中的两方向有定义：
+// Finish 按方向返回**与目标 mapper 自产终止相同**的终止帧（流末补发用）：
 //   - MessToResp（client=Messages）→ mirror mapRespToMess 的 response.completed
 //     收尾：message_delta{stop_reason:"", stop_sequence:nil, usage:respUsageToMess(nil)}
 //     ++ message_stop；
-//   - ChatToResp（client=Chat）→ mirror mapRespToChat 终止：`data: [DONE]\n\n`。
+//   - ChatToResp（client=Chat）→ mirror mapRespToChat 终止：`data: [DONE]\n\n`；
+//   - RespToMess（client=Responses）→ mirror mapMessToResp 的 message_stop 收尾
+//     （respTerminal：response.completed + 累计 output/usage，m.done 去重）。
 //
-// 其余方向 → nil（非 codex native converted 不在适配层覆盖内）。调用方须先查
-// Done()，仅在目标终止帧尚未产生时补发。
+// 其余方向 → nil。调用方须先查 Done()，仅在目标终止帧尚未产生时补发。
 func (m *StreamMapper) Finish() []byte {
 	switch m.dir {
 	case domain.ProtocolConvertMessToResp:
@@ -482,6 +482,12 @@ func (m *StreamMapper) Finish() []byte {
 		return append(f, EncodeFrame("message_stop", map[string]any{"type": "message_stop"})...)
 	case domain.ProtocolConvertChatToResp:
 		return []byte("data: [DONE]\n\n")
+	case domain.ProtocolConvertRespToMess:
+		// 正常 EOF（上游 Anthropic 没发 message_stop 就关流）时 client=Responses
+		// 侧的唯一终态出口：与 mapMessToResp 的 message_stop 收尾同一条出口
+		// （respTerminal，靠 m.done 保证恰好一次）。缺了它客户端只看到半截流
+		// （spec-responses-terminal-truth F3）。
+		return m.respTerminal()
 	case domain.ProtocolConvertMessToChat, domain.ProtocolConvertRespToChat:
 		// 正常 EOF（上游没发 [DONE] 就关流）时 client 侧的收尾：与 chatTerminal
 		// 同一条出口，靠 m.done 保证无论 [DONE] 还是 EOF 都**恰好一次**。

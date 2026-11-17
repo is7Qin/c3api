@@ -564,7 +564,7 @@ func TestVocabSelfComplete(t *testing.T) {
 	require.ElementsMatch(t, []string{
 		"response.created", "response.output_item.added", "response.output_item.done",
 		"response.output_text.delta", "response.reasoning_summary_text.delta",
-		"response.function_call_arguments.delta", "response.completed", "error",
+		"response.function_call_arguments.delta", "response.completed", "response.failed", "error",
 	}, respEventVocab)
 	require.ElementsMatch(t, []string{
 		"message_start", "content_block_start", "content_block_delta",

@@ -402,6 +402,13 @@ func newTestProxyTplTimeoutRec(t *testing.T, tpl *domain.Template, accountID int
 		ID: accountID, TemplateID: tpl.ID, Template: tpl, UpstreamKey: "sk-upstream",
 		Enabled: true, LifecycleRevision: 1, IdentityRevision: 1, MaxConcurrency: 4,
 	}}}
+	return newTestProxyTplAccountsRec(t, accs, usageCapture, streamTimeout, rec, bill, errWriter)
+}
+
+// newTestProxyTplAccountsRec 同 newTestProxyTplTimeoutRec，但**账号集合由调用方
+// 给**（多账号 failover 场景：每个账号可挂自己的模板/上游；accs 的组号即路由组）。
+func newTestProxyTplAccountsRec(t *testing.T, accs map[int64][]*domain.Account, usageCapture bool, streamTimeout time.Duration, rec *usage.Recorder, bill *BillingHooks, errWriter usage.ErrLogInserter) *Proxy {
+	t.Helper()
 	cfg := Config{
 		MaxBodySize: 1 << 20, FailoverAttempts: 2,
 		UpstreamTimeout:       5 * time.Second,

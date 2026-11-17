@@ -386,38 +386,74 @@ func (m *StreamMapper) mapMessToResp(name string, data []byte) ([]byte, bool) {
 		}
 		return nil, true
 	case "message_stop":
+		// 终态已产出（error 帧已置 done）⇒ 丢弃；否则与流末 EOF 共用同一条出口。
 		if m.done {
 			return nil, true
 		}
-		m.done = true
-		input := m.messInputTotal()
-		// A4（§2.4）：Message 的 stop_reason 在 message_delta 已记录（m.reason），
-		// 收尾时落实成 resp 的 status + incomplete_details。
-		status, details := respStatusFromMessStop(m.reason)
-		resp := map[string]any{
-			"id": m.id, "object": "response", "created_at": 0, "status": status,
-			"model": m.model, "output": m.messOutputItems(),
-			"usage": map[string]any{
-				"input_tokens": input, "output_tokens": m.ot, "total_tokens": input + m.ot,
-				"input_tokens_details": respInputDetails(m.cached, m.cacheCreate),
-			},
-		}
-		if details != nil {
-			resp["incomplete_details"] = details
-		}
-		return EncodeFrame("response.completed", map[string]any{
-			"type":     "response.completed",
-			"response": resp,
-		}), false
+		return m.respTerminal(), false
 	case "error":
-		if e, ok := ev["error"].(map[string]any); ok {
-			msg, _ := str(e, "message")
-			typ, _ := str(e, "type")
-			return EncodeFrame("error", map[string]any{"code": typ, "message": msg}), false
+		// 上游 error 事件 → Responses 终态 `response.failed`（F4）。
+		//
+		// 旧实现发 `event: error` + 无 type 的裸载荷 `{code,message}`：客户端判据
+		// （pi-ai processResponsesStream）既不认为失败也不认为终态 ⇒ 用户只看得到
+		// 「流提前结束」。现在与 chat 源 resp 目标（chatError）同构：一条
+		// response.failed 收尾，m.done 置位 ⇒ 之后不会再有 response.completed。
+		if m.done {
+			return nil, true
 		}
-		return nil, true
+		e, ok := ev["error"].(map[string]any)
+		if !ok {
+			return nil, true
+		}
+		msg, _ := str(e, "message")
+		code, _ := str(e, "type")
+		if code == "" {
+			code = "upstream_error"
+		}
+		m.done = true
+		resp := m.respEnvelope("failed")
+		resp["error"] = map[string]any{"code": code, "message": msg}
+		return EncodeFrame("response.failed", map[string]any{
+			"type": "response.failed", "response": resp,
+		}), false
 	}
 	return nil, true
+}
+
+// respEnvelope Responses 终态 response 对象（completed / failed 同构：id/model/
+// output/usage 与流内帧同源），status 由调用方给出。
+func (m *StreamMapper) respEnvelope(status string) map[string]any {
+	input := m.messInputTotal()
+	return map[string]any{
+		"id": m.id, "object": "response", "created_at": 0, "status": status,
+		"model": m.model, "output": m.messOutputItems(),
+		"usage": map[string]any{
+			"input_tokens": input, "output_tokens": m.ot, "total_tokens": input + m.ot,
+			"input_tokens_details": respInputDetails(m.cached, m.cacheCreate),
+		},
+	}
+}
+
+// respTerminal 产出 Responses 终态 `response.completed`：上游 message_stop 与
+// 流末正常 EOF（StreamMapper.Finish）**共用同一条出口**，靠 m.done 去重 ⇒
+// 无论上游发没发 message_stop，客户端都恰好收到一条终态。
+//
+// A4（§2.4）：Message 的 stop_reason 在 message_delta 已记录（m.reason），收尾
+// 时落实成 resp 的 status + incomplete_details。
+func (m *StreamMapper) respTerminal() []byte {
+	if m.done {
+		return nil
+	}
+	m.done = true
+	status, details := respStatusFromMessStop(m.reason)
+	resp := m.respEnvelope(status)
+	if details != nil {
+		resp["incomplete_details"] = details
+	}
+	return EncodeFrame("response.completed", map[string]any{
+		"type":     "response.completed",
+		"response": resp,
+	})
 }
 
 // respStatusFromMessStop Messages stop_reason → resp 的 (status,

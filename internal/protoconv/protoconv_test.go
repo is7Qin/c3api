@@ -1282,9 +1282,9 @@ func TestAPIAlignDisableParallel(t *testing.T) {
 }
 
 // TestStreamMapperDoneFinish 终止态查询与按方向补发帧（codex converted 适配层流末
-// 补发用）：Done() 仅在 completed/failed 后为真；Finish() 按方向返回与目标 mapper
-// 自产终止**相同形态**的帧（MessToResp → message_delta ++ message_stop；
-// ChatToResp → data: [DONE]；其余方向 → nil）。
+// 补发用）：Done() 仅在产出终态后为真；Finish() 按方向返回与目标 mapper 自产终止
+// **相同形态**的帧（MessToResp → message_delta ++ message_stop；
+// ChatToResp → data: [DONE]；RespToMess → response.completed；其余方向 → nil）。
 func TestStreamMapperDoneFinish(t *testing.T) {
 	// ChatToResp：初始 Done=false，Finish= data: [DONE]。
 	c := NewStreamMapper(domain.ProtocolConvertChatToResp)
@@ -1304,7 +1304,14 @@ func TestStreamMapperDoneFinish(t *testing.T) {
 	_, _ = m.Map("response.completed", []byte(`{"type":"response.completed","response":{"id":"r","status":"completed"}}`))
 	require.True(t, m.Done())
 
-	// 其余方向（非 codex converted）→ nil。
-	require.Nil(t, NewStreamMapper(domain.ProtocolConvertRespToMess).Finish())
+	// RespToMess：Finish = respTerminal（client=Responses 的唯一 EOF 兜底），m.done 去重。
+	r := NewStreamMapper(domain.ProtocolConvertRespToMess)
+	require.False(t, r.Done())
+	respFin := string(r.Finish())
+	require.Contains(t, respFin, "event: response.completed", "缺 message_stop 时补 Responses 终态")
+	require.True(t, r.Done(), "Finish 产出终态后 Done=true")
+	require.Nil(t, r.Finish(), "恰好一次（m.done 去重）")
+
+	// 无定义的方向 → nil。
 	require.Nil(t, NewStreamMapper(domain.ProtocolConvertChatToMess).Finish())
 }

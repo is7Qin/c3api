@@ -530,7 +530,7 @@ func TestStreamFailureH5bFactsSnapshotBeforeSupplementaryErrorFrame(t *testing.T
 	framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 
 	// 客户端恰好也读不走：补写 error 帧失败 ⇒ WriteFailed 由 false 翻 true。
-	_ = out.WriteError(buildErrorFrame(domain.FormatOpenAIChat, "boom"))
+	_ = out.WriteError(buildErrorFrame(domain.FormatOpenAIChat, "boom", false))
 	require.True(t, out.WriteFailed(), "补写失败确实翻转 WriteFailed（漂移源）")
 
 	require.Equal(t, CommitResponseStarted, commitStateFor(framesSent, writeFailed, true),

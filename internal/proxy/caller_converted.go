@@ -109,12 +109,17 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		// 永远收不到 message_stop、resp 侧永远收不到 response.completed，客户端
 		// 只能靠超时判死。Finish 内部按 m.done 去重 ⇒ 与 [DONE] 恰好二选一。
 		//
+		// 客户端是 Responses 的方向（RespToMess：上游 Anthropic）**同样必须**注入：
+		// Anthropic 干净 EOF 且没发 message_stop 时，转换车道之外没有任何兜底 ⇒
+		// 客户端零终态（spec-responses-terminal-truth F3）。Finish 对不支持的方向
+		// 返回 nil，多注入一个方向是安全的。
+		//
 		// I1：终止帧同样要过 rewriteConvertedFrames —— 它内部是
 		// `response.completed.response.model`，不过这里就会被写成**上游**模型名，
 		// 而同一流前面的帧（response.created 等）已是客户端模型名，客户端读到的
 		// 模型名前后不一致。与 Mapper 分支同一处改写、同一判空。
 		var terminal func() []byte
-		if isChatSource(c.dir) {
+		if client == domain.FormatOpenAIResponses || isChatSource(c.dir) {
 			terminal = func() []byte {
 				fin := mapper.Finish()
 				if len(fin) == 0 || clientModel == "" {
@@ -180,6 +185,12 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			},
 		})
 		resp.Body.Close()
+		// 已见客户端终态（mapper 自产的 completed/failed）后上游尾块读错/多垃圾：
+		// 客户端已拿到终态 ⇒ 不翻失败、不追加第二条终态（§3.3；写失败是客户端侧
+		// 事实，仍走失败出口）。
+		if terminalCloseOut(ctx, err, mapper.Done(), out.WriteFailed()) {
+			err = nil
+		}
 		if ttft != nil {
 			ctx = context.WithValue(ctx, ctxKeyTTFT{}, ttft)
 		}
@@ -200,7 +211,7 @@ func (c *convertedCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
 			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit != streamExitClientCancel && out.Committed() {
-				writeClientStreamError(out, client, err)
+				writeClientStreamError(out, client, err, mapper.Done())
 			}
 			// 客户端取消与上游中断区分：取消不计健康惩罚，两者都仍需计费落账。
 			var outcome AttemptOutcome

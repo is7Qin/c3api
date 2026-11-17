@@ -140,7 +140,7 @@ func (c *imagesCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.
 				return 0, nil, true, nil
 			}
 			if exit == streamExitCommitted {
-				writeClientStreamError(out, domain.FormatOpenAIImages, err)
+				writeClientStreamError(out, domain.FormatOpenAIImages, err, false)
 			}
 			code := statusOf(err)
 			// 类型层占位编码（Validate：failed+status 0 的 sent_ambiguous 要求

@@ -151,6 +151,10 @@ func TestCompileEvent_ProductionProbeWired(t *testing.T) {
 	// 是"生产唯一调用点接了 repo 版探针"，不是某一次的对齐宽度。
 	require.Contains(t, foldSpaces(mainSrc), "StalenessProbe: repos.Groups,",
 		"production must wire the repo-backed probe in the scheduler Config literal (sole production call-site)")
+	// R2（momus）：单字段字面量能被「注释掉该字段」绕过（字面量还在注释里）。
+	// 故再钉一条**相邻代码序列**（前导 `, ` 让 `// StalenessProbe: …` 失配）。
+	require.Contains(t, foldSpaces(mainSrc), ", StalenessProbe: repos.Groups, RotatePolicy:",
+		"production must wire the repo-backed probe as an adjacent field of the scheduler Config literal (removed or commented-out field must fail)")
 }
 
 // readCmdServerPackage 读 cmd/server **整包**源码（排除 _test.go，按文件名排序

@@ -92,7 +92,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			// 由 false 翻成 true，晚读会让同一次故障的取值漂移。
 			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit != streamExitClientCancel && out.Committed() {
-				writeClientStreamError(out, domain.FormatAnthropic, err)
+				writeClientStreamError(out, domain.FormatAnthropic, err, false)
 			}
 			// 中止/失败都保留断前已收到的用量（防丢日志）。
 			oc := base

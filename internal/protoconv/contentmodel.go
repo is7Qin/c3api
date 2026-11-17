@@ -892,6 +892,7 @@ var respEventVocab = []string{
 	"response.reasoning_summary_text.delta",
 	"response.function_call_arguments.delta",
 	"response.completed",
+	"response.failed",
 	"error",
 }
 

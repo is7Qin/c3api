@@ -37,6 +37,16 @@ const (
 // 哨兵才能把两者分开：命中哨兵 ⇒ timeout（上游侧），否则 ⇒ abort（客户端侧）。
 var errGatewayUpstreamTimeout = errors.New("proxy: gateway upstream stream budget exhausted")
 
+// errResponsesStreamIncomplete 上游干净 EOF，但整条 Responses 流没有出现过终态
+// 事件（completed / failed / incomplete）。客户端判据（pi-ai
+// `processResponsesStream`）不认 `event: error`、也不认无 type 的裸错误载荷：
+// 少了终态它只会报 "stream ended before a terminal response event"，真原因被
+// 吞掉。故本流按失败收口（截断 = 失败），并由出口补一条 response.failed 终态。
+//
+// 无 status ⇒ classifyStreamFailure 序 5 ⇒ ErrNetwork / KindNetwork（既有冷却
+// 策略：重复截断确实是账号信号）。
+var errResponsesStreamIncomplete = errors.New("upstream ended the stream without a terminal response event")
+
 // gatewayBudgetError 给「网关预算到期」的传输错误**打标记**（不改文案、不改错误链）：
 // 非流式/未提交路径的 ctx 在 helper 内派生并丢弃，归类点（pipeline 的
 // classifyFailoverAttempt / writeFailoverExhausted）拿不到它，只能靠错误本身携带

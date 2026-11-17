@@ -105,7 +105,7 @@ func (c *chatCaller) Call(ctx context.Context, w http.ResponseWriter, r *http.Re
 			// WriteFailed 由 false 翻成 true，晚读会让同一次故障的取值漂移。
 			framesSent, writeFailed := out.BusinessFrameSent(), out.WriteFailed()
 			if exit != streamExitClientCancel && out.Committed() {
-				writeClientStreamError(out, domain.FormatOpenAIChat, err)
+				writeClientStreamError(out, domain.FormatOpenAIChat, err, false)
 			}
 			// 中止/失败都保留已采集的 usage/TTFT（成功请求丢日志防线）。
 			outcome := chatOutcomeForAbort(base, framesSent, usageTuple{it: it, ot: ot, tt: tt, cr: cr, cc: cc}, ttft, exit == streamExitClientCancel)

@@ -155,7 +155,7 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			return streamUpstreamStatus(statusOf(genErr)), upstreamBody(genErr), false, genErr
 		default: // 写失败 / 已提交
 			if out.Committed() {
-				writeClientStreamError(out, domain.FormatOpenAIImages, genErr)
+				writeClientStreamError(out, domain.FormatOpenAIImages, genErr, false)
 			}
 			code := statusOf(genErr)
 			// 类型层占位编码（Validate：failed+status 0 的 sent_ambiguous 要求
@@ -228,10 +228,16 @@ func buildCompletedFrame(ev *domain.ImageStreamEvent) []byte {
 //     （`{"error":{"message":…,"type":"server_error"}}`）——openai-go `ssestream`
 //     以此判失败（packages/ssestream/ssestream.go:169/181）；
 //   - Anthropic：`event: error` + `{"type":"error","error":{"type":"api_error",
-//     "message":…}}`。
+//     "message":…}}`；
+//   - Responses（且 appendTerminal）：在上面的 error 帧之后追加一条
+//     `event: response.failed` 终态帧（spec-responses-terminal-truth §3.4）。
 //
 // 不得只发 `{"message":…}`：SDK 不将其识别为失败，截断会被当作正常结束。
-func buildErrorFrame(format domain.RequestFormat, message string) []byte {
+//
+// appendTerminal 只对 Responses 生效：调用方在「客户端已经收到过终态」时传
+// false——否则一条流会出现两个终态（completed ++ failed），客户端与记账都会
+// 自相矛盾。
+func buildErrorFrame(format domain.RequestFormat, message string, appendTerminal bool) []byte {
 	if format == domain.FormatAnthropic {
 		buf := bytes.NewBuffer(make([]byte, 0, len("event: error\ndata: ")+len(message)+64))
 		buf.WriteString(`event: error` + "\ndata: ")
@@ -241,17 +247,49 @@ func buildErrorFrame(format domain.RequestFormat, message string) []byte {
 		buf.WriteString("}}\n\n")
 		return buf.Bytes()
 	}
-	buf := bytes.NewBuffer(make([]byte, 0, len("event: error\ndata: ")+len(message)+48))
+	buf := bytes.NewBuffer(make([]byte, 0, len("event: error\ndata: ")+len(message)+192))
 	buf.WriteString(`event: error` + "\ndata: ")
-	buf.WriteString(`{"error":{"message":`)
 	m, _ := json.Marshal(message)
+	buf.WriteString(`{"error":{"message":`)
 	buf.Write(m)
 	buf.WriteString(`,"type":"server_error"}}` + "\n\n")
+	if format != domain.FormatOpenAIResponses || !appendTerminal {
+		return buf.Bytes()
+	}
+	// Responses 终态：pi-ai 只认 completed/failed/incomplete —— 裸 error 帧会被
+	// 它忽略，客户端于是只看到「流提前结束」。字段齐全（sequence_number 与
+	// response.{id,created_at,status,output,error} 是 openai-go 的 required），
+	// 严格客户端解码不会炸；顺序保持 error 在前（openai-go 首帧即失败，pi-ai
+	// 忽略它继续读到 failed，两者拿到同一条 message）。
+	payload, _ := json.Marshal(map[string]any{
+		"type":            "response.failed",
+		"sequence_number": 0,
+		"response": map[string]any{
+			"id":         "",
+			"object":     "response",
+			"created_at": time.Now().Unix(),
+			"status":     "failed",
+			"model":      "",
+			"output":     []any{},
+			"error": map[string]any{
+				"code":    "upstream_error",
+				"message": message,
+			},
+		},
+	})
+	buf.WriteString("event: response.failed" + "\ndata: ")
+	buf.Write(payload)
+	buf.WriteString("\n\n")
 	return buf.Bytes()
 }
 
 // streamErrMessage 提取错误帧的 message 文案：
 func streamErrMessage(err error) string {
+	// 截断哨兵没有上游信封，必须取它自己的文案——否则会退化成通用
+	// "upstream connection error"，客户端永远看不到真原因（截断/无终态）。
+	if errors.Is(err, errResponsesStreamIncomplete) {
+		return err.Error()
+	}
 	type rawJSONer interface{ RawJSON() string }
 	if rj, ok := err.(rawJSONer); ok {
 		if raw := rj.RawJSON(); raw != "" {

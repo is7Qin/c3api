@@ -602,6 +602,8 @@ var (
 	messageKeyBytes                  = []byte("message")
 	createdTypeBytes                 = []byte("response.created")
 	completedTypeBytes               = []byte("response.completed")
+	failedTypeBytes                  = []byte("response.failed")
+	incompleteTypeBytes              = []byte("response.incomplete")
 	imageGenCallBytes                = []byte("image_generation_call")
 	typeImageGenTool                 = []byte("image_generation_tool")
 	typeImageEdits                   = []byte("image_edits")
