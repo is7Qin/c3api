@@ -26,8 +26,8 @@ import (
 // quality-sync first (its failed flushes still refill the owner) and the
 // owner second.
 func TestQualityFlowOwnerWiring(t *testing.T) {
-	_, f := parseMainGo(t)
-	mainFn := findFuncDecl(t, f, "main")
+	_, f := parseSrcFile(t, "wiring_run.go")
+	mainFn := findFuncDecl(t, f, "run")
 
 	ownerFromRecorder := false
 	var ordered []string

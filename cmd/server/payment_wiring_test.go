@@ -269,7 +269,10 @@ func TestPaymentWiringGate3DependencyGraph(t *testing.T) {
 //   - `paymentregistry.Registry` 调用恰 1 次（清单的唯一入口）；
 //   - `domain.NewProviderRegistry` 调用 0 次（空注册表合法 ⇒ 必须单独禁）。
 func TestPaymentWiringGate4MainGoAssemblyShape(t *testing.T) {
-	_, file := parseMainGo(t)
+	// 装配根拆成多文件后，本层的四个计数在**整包合并视图**上求值（更强）：
+	// []domain.PaymentProvider 字面量、service.Deps 恰一次、PaymentRegistry 恰一次、
+	// domain.NewProviderRegistry 零次——写进任一 wiring_*.go 都会被看见。
+	_, file := parsePkgSrc(t)
 	alias := wiringImportAliases(t, file)
 
 	// 4a. 不得出现 []domain.PaymentProvider 字面量。
@@ -289,7 +292,7 @@ func TestPaymentWiringGate4MainGoAssemblyShape(t *testing.T) {
 		}
 		return true
 	})
-	require.Empty(t, sliceLits, "main.go 不得出现 []domain.PaymentProvider 字面量（协议集合只能来自 paymentregistry）")
+	require.Empty(t, sliceLits, "cmd/server 不得出现 []domain.PaymentProvider 字面量（协议集合只能来自 paymentregistry）")
 
 	// 4b. service.Deps 字面量里的两个字段计数。
 	registryFields, legacyFields := 0, 0
@@ -321,7 +324,7 @@ func TestPaymentWiringGate4MainGoAssemblyShape(t *testing.T) {
 		}
 		return true
 	})
-	require.Equal(t, 1, depsLits, "main.go 必须恰好构造一次 service.Deps")
+	require.Equal(t, 1, depsLits, "cmd/server 必须恰好构造一次 service.Deps")
 	require.Equal(t, 1, registryFields, "service.Deps 里 PaymentRegistry 必须恰 1 次（装配唯一入口）")
 	require.Equal(t, 0, legacyFields, "service.Deps 不得再出现 PaymentProviders（弱契约已删除）")
 
@@ -367,7 +370,7 @@ func TestPaymentWiringGate5ProtocolNamesAbsentFromMainGo(t *testing.T) {
 	require.True(t, slices.IsSorted(names),
 		"All() 是唯一排序点（name 升序），实际 %v：调用方不得再排序，注册表也不得退化成插入序", names)
 
-	_, file := parseMainGo(t)
+	_, file := parsePkgSrc(t)
 	var literals []string
 	ast.Inspect(file, func(n ast.Node) bool {
 		lit, ok := n.(*ast.BasicLit)
@@ -381,11 +384,11 @@ func TestPaymentWiringGate5ProtocolNamesAbsentFromMainGo(t *testing.T) {
 		literals = append(literals, value)
 		return true
 	})
-	require.NotEmpty(t, literals, "main.go 的字符串字面量扫面是空转")
+	require.NotEmpty(t, literals, "cmd/server 的字符串字面量扫面是空转")
 
 	for _, name := range names {
 		require.NotContains(t, literals, name,
-			"main.go 出现了协议名字面量 %q：协议名只能来自 paymentregistry（构造与命名都不得内联）", name)
+			"cmd/server 出现了协议名字面量 %q：协议名只能来自 paymentregistry（构造与命名都不得内联）", name)
 	}
 }
 

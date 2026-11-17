@@ -16,8 +16,13 @@ import (
 // lifecycle (managedWorkers) + ops visibility, with shutdown ordering
 // worker drain → recorder finalization → Redis client close.
 func TestQualitySyncWiring(t *testing.T) {
-	_, f := parseMainGo(t)
-	mainFn := findFuncDecl(t, f, "main")
+	// 装配拆阶段后的两个视图：质量面构造（recorder/worker/构造器尾参）在整包
+	// 合并视图上求值（写进任一 wiring_*.go 都会被看见）；生命周期成员关系
+	// （managedWorkers 展开 + shutdownTail 委派）钉在 wiring_run.go 的 run 里
+	// ——那边才是注册序的唯一主语。
+	_, pkg := parsePkgSrc(t)
+	_, f := parseSrcFile(t, "wiring_run.go")
+	runFn := findFuncDecl(t, f, "run")
 
 	isCall := func(n ast.Node, recv, sel string) (*ast.CallExpr, bool) {
 		ce, ok := n.(*ast.CallExpr)
@@ -90,8 +95,7 @@ func TestQualitySyncWiring(t *testing.T) {
 		return true
 	}
 
-	ast.Inspect(mainFn, func(n ast.Node) bool {
-		walkOrdered(n)
+	ast.Inspect(pkg, func(n ast.Node) bool {
 		if as, ok := n.(*ast.AssignStmt); ok && len(as.Lhs) >= 1 && len(as.Rhs) == 1 {
 			if ce, ok := as.Rhs[0].(*ast.CallExpr); ok {
 				if se, ok := ce.Fun.(*ast.SelectorExpr); ok && se.Sel.Name == "NewRecorder" {
@@ -145,6 +149,11 @@ func TestQualitySyncWiring(t *testing.T) {
 				}
 			}
 		}
+		return true
+	})
+	// 视图 2：wiring_run.go 的 run——生命周期成员关系与停机尾部委派。
+	ast.Inspect(runFn, func(n ast.Node) bool {
+		walkOrdered(n)
 		if ce, ok := n.(*ast.CallExpr); ok {
 			if id, ok := ce.Fun.(*ast.Ident); ok && id.Name == "shutdownTail" {
 				tailCalled = true

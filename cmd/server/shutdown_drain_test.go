@@ -99,13 +99,13 @@ func TestShutdownHTTPServerHonorsDrain(t *testing.T) {
 // 负例：main 里改成 shutdownHTTPServer(shutdownCtx, httpSrv, 2*time.Second, log) ⇒ 红。
 func TestMainWiresConfiguredDrain(t *testing.T) {
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "main.go", nil, 0)
+	file, err := parser.ParseFile(fset, "wiring_run.go", nil, 0)
 	require.NoError(t, err)
 
 	var wired bool
 	ast.Inspect(file, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
-		if !ok || fn.Name == nil || fn.Name.Name != "main" || fn.Body == nil {
+		if !ok || fn.Name == nil || fn.Name.Name != "run" || fn.Body == nil {
 			return true
 		}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {

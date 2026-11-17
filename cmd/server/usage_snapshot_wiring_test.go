@@ -16,15 +16,21 @@ import (
 // the handler via the constructor (OpsOptions.UsageSnap), never via a
 // service setter.
 func TestUsageSnapshotCtorWiring(t *testing.T) {
-	_, f := parseMainGo(t)
+	// 缺席钉扫**整包**（回填写进任一 wiring_*.go 都红，旧版只看 main.go 更弱）；
+	// OpsOptions 字面量钉在 wiring_run.go——handler.New 的唯一构造点。
+	_, pkg := parsePkgSrc(t)
+	ast.Inspect(pkg, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == "SetUsageSnapshotter" {
+			t.Errorf("cmd/server 仍含 SetUsageSnapshotter 回填调用")
+			return false
+		}
+		return true
+	})
 
+	_, f := parseSrcFile(t, "wiring_run.go")
 	usageSnapKey := false
 	usageSnapValue := ""
 	ast.Inspect(f, func(n ast.Node) bool {
-		if id, ok := n.(*ast.Ident); ok && id.Name == "SetUsageSnapshotter" {
-			t.Errorf("main.go 仍含 SetUsageSnapshotter 回填调用")
-			return false
-		}
 		lit, ok := n.(*ast.CompositeLit)
 		if !ok {
 			return true

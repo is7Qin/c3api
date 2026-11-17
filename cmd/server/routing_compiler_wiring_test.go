@@ -24,8 +24,8 @@ import (
 // the unique scheduler snapshot registration (one publisher, one registry
 // entry — the registry rejects duplicate names).
 func TestRoutingCompilerWiring(t *testing.T) {
-	_, f := parseMainGo(t)
-	mainFn := findFuncDecl(t, f, "main")
+	_, f := parseSrcFile(t, "wiring_run.go")
+	mainFn := findFuncDecl(t, f, "run")
 
 	var (
 		srcPos        token.Pos
@@ -39,13 +39,18 @@ func TestRoutingCompilerWiring(t *testing.T) {
 		startAllPos   token.Pos
 		schedSnapLits int
 	)
-	ast.Inspect(mainFn, func(n ast.Node) bool {
+	// schedSnapshot 字面量的**唯一性**钉扫整包（注册点已搬进 wiring_billing.go；
+	// 合并视图比"只看 main.go"更强：第二处注册写进任何文件都会红）。
+	_, pkg := parsePkgSrc(t)
+	ast.Inspect(pkg, func(n ast.Node) bool {
 		if cl, ok := n.(*ast.CompositeLit); ok {
 			if tn, ok := cl.Type.(*ast.Ident); ok && tn.Name == "schedSnapshot" {
 				schedSnapLits++
 			}
-			return true
 		}
+		return true
+	})
+	ast.Inspect(mainFn, func(n ast.Node) bool {
 		// schedW := schedWorker{...} pins the Start-time handoff adapter.
 		if as, ok := n.(*ast.AssignStmt); ok && len(as.Lhs) == 1 && len(as.Rhs) == 1 {
 			if lhs, ok := as.Lhs[0].(*ast.Ident); ok && lhs.Name == "schedW" {
@@ -175,4 +180,6 @@ func TestRoutingCompilerWiring(t *testing.T) {
 	require.Less(t, int(srcPos), int(startAllPos), "schedSrc must precede wm.StartAll (Start-time handoff contract)")
 	require.Less(t, int(schedWPos), int(startAllPos), "schedW must precede wm.StartAll")
 	require.Equal(t, 1, schedSnapLits, "scheduler snapshot registered exactly once (unique publisher/registry)")
+	// 拆分守卫：三条顺序断言的主语只允许出现在 wiring_run.go（拆开即 FailNow）。
+	requireSubjectsOnlyIn(t, "wiring_run.go", "schedSrc", "schedW", "snapReg.ReloadAll", "wm.StartAll")
 }

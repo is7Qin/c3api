@@ -19,8 +19,8 @@ import (
 // 顺带钉住边界：构造点必须是 sdkbridge.NewBook —— 直接 `codexsdk.NewConversationBook`
 // 或 `redisstore.New` 会让 cmd/server 重新持有 SDK 概念（tripwire 也会判红）。
 func TestConversationBookWiring(t *testing.T) {
-	_, f := parseMainGo(t)
-	mainFn := findFuncDecl(t, f, "main")
+	_, f := parseSrcFile(t, "wiring_codex.go")
+	mainFn := findFuncDecl(t, f, "newCodexFace")
 
 	var built, injected, workerGetsBook bool
 	ast.Inspect(mainFn.Body, func(n ast.Node) bool {

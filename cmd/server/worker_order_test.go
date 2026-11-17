@@ -21,9 +21,15 @@ func isWmRegister(ce *ast.CallExpr) bool {
 	return ok && id.Name == "wm"
 }
 
+// TestWorkerRegistrationPartialOrder 钉住注册序（= 反向排空序）。
+//
+// 装配按阶段拆文件后，主语是 `wiring_run.go` 的 `run`：`managedWorkers :=
+// orderedWorkers(...)` / `append` 展开 / 6 次 `wm.Register` 必须仍在这一个函数
+// 体里——注册序的**完整性**（"没有第三个注册点"）只有在单一视图上才成立。
+// 可选 worker 的 typed-nil 守卫（warningW/billFlusher）同样在此函数内。
 func TestWorkerRegistrationPartialOrder(t *testing.T) {
-	_, f := parseMainGo(t)
-	mainFn := findFuncDecl(t, f, "main")
+	_, f := parseSrcFile(t, "wiring_run.go")
+	mainFn := findFuncDecl(t, f, "run")
 	var order []string
 	var ordered []string
 	var appendOrder []string
@@ -32,30 +38,24 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 	guardedBilling := false
 	guardedWarning := false
 
-	isBillGuard := func(cond ast.Expr) bool {
+	// 守卫左值是 `billFlusher`/`warningW`：拆阶段后可能写成 `bl.billFlusher`
+	// （字段），故按末段名匹配——约束逐字不变："必须在 != nil 守卫里"。
+	guardField := func(cond ast.Expr) string {
 		bin, ok := cond.(*ast.BinaryExpr)
 		if !ok || bin.Op.String() != "!=" {
-			return false
+			return ""
 		}
-		l, ok := bin.X.(*ast.Ident)
-		if !ok || l.Name != "billFlusher" {
-			return false
+		if r, ok := exprName(bin.Y); !ok || r != "nil" {
+			return ""
 		}
-		r, ok := bin.Y.(*ast.Ident)
-		return ok && r.Name == "nil"
+		name, ok := exprName(bin.X)
+		if !ok {
+			return ""
+		}
+		return name
 	}
-	isWarningGuard := func(cond ast.Expr) bool {
-		bin, ok := cond.(*ast.BinaryExpr)
-		if !ok || bin.Op.String() != "!=" {
-			return false
-		}
-		l, ok := bin.X.(*ast.Ident)
-		if !ok || l.Name != "warningW" {
-			return false
-		}
-		r, ok := bin.Y.(*ast.Ident)
-		return ok && r.Name == "nil"
-	}
+	isBillGuard := func(cond ast.Expr) bool { return guardField(cond) == "billFlusher" }
+	isWarningGuard := func(cond ast.Expr) bool { return guardField(cond) == "warningW" }
 
 	var walk func([]ast.Stmt)
 	walk = func(list []ast.Stmt) {
@@ -69,18 +69,18 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 								managedFound = true
 								ordered = ordered[:0]
 								for _, a := range ce.Args {
-									id, ok := a.(*ast.Ident)
-									require.True(t, ok, "orderedWorkers arg must be ident, got %T", a)
-									ordered = append(ordered, id.Name)
+									name, ok := exprName(a)
+									require.True(t, ok, "orderedWorkers arg must be ident/selector, got %T", a)
+									ordered = append(ordered, name)
 								}
 							}
 							// managedWorkers = append(managedWorkers, ...)：供应商
 							// worker 切片 / 后续业务 worker 追加（spec §5.5 装配形态）。
 							if fun, ok := ce.Fun.(*ast.Ident); ok && fun.Name == "append" && len(ce.Args) >= 2 {
-								if head, ok := ce.Args[0].(*ast.Ident); ok && head.Name == "managedWorkers" {
+								if head, ok := exprName(ce.Args[0]); ok && head == "managedWorkers" {
 									for _, a := range ce.Args[1:] {
-										if id, ok := a.(*ast.Ident); ok {
-											appendOrder = append(appendOrder, id.Name)
+										if name, ok := exprName(a); ok {
+											appendOrder = append(appendOrder, name)
 										}
 									}
 								}
@@ -94,7 +94,7 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 					continue
 				}
 				if len(ce.Args) == 1 && ce.Ellipsis != token.NoPos {
-					if id, ok := ce.Args[0].(*ast.Ident); ok && id.Name == "managedWorkers" {
+					if name, ok := exprName(ce.Args[0]); ok && name == "managedWorkers" {
 						require.True(t, managedFound, "wm.Register(managedWorkers...) without prior managedWorkers := orderedWorkers(...)")
 						require.NotEmpty(t, ordered, "orderedWorkers args empty")
 						order = append(order, ordered...)
@@ -104,8 +104,8 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 					}
 				}
 				for _, a := range ce.Args {
-					if id, ok := a.(*ast.Ident); ok {
-						order = append(order, id.Name)
+					if name, ok := exprName(a); ok {
+						order = append(order, name)
 					}
 				}
 			case *ast.IfStmt:
@@ -114,12 +114,12 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 				if billGuard || warnGuard {
 					for _, st := range x.Body.List {
 						if as, ok := st.(*ast.AssignStmt); ok && len(as.Lhs) == 1 && len(as.Rhs) == 1 {
-							if lhs, ok := as.Lhs[0].(*ast.Ident); ok {
-								if rhs, ok := as.Rhs[0].(*ast.Ident); ok {
-									if billGuard && lhs.Name == "billingWorker" && rhs.Name == "billFlusher" {
+							if lhs, ok := exprName(as.Lhs[0]); ok {
+								if rhs, ok := exprName(as.Rhs[0]); ok {
+									if billGuard && lhs == "billingWorker" && rhs == "billFlusher" {
 										guardedBilling = true
 									}
-									if warnGuard && lhs.Name == "warningWorker" && rhs.Name == "warningW" {
+									if warnGuard && lhs == "warningWorker" && rhs == "warningW" {
 										guardedWarning = true
 									}
 								}
@@ -178,6 +178,9 @@ func TestWorkerRegistrationPartialOrder(t *testing.T) {
 		mustBefore(b, "listener")
 		mustBefore(b, "authSync")
 	}
+	// 拆分守卫：注册序的产物（含两次 typed-nil 守卫的 LHS）只允许出现在
+	// wiring_run.go——搬出该文件即代表"注册序不再有单一主语"，直接 FailNow。
+	requireSubjectsOnlyIn(t, "wiring_run.go", "managedWorkers", "warningWorker", "billingWorker", "supplierWorkers")
 	lastTwo := map[string]bool{order[len(order)-2]: true, order[len(order)-1]: true}
 	require.True(t, lastTwo["listener"] && lastTwo["authSync"], "final two must be listener and authSync, got %v", order)
 }

@@ -1,12 +1,18 @@
 # cmd/server — 组合根
 
 > 根 `AGENTS.md` 覆盖项目级约定；`internal/AGENTS.md` 是分层地图。本文件只讲
-> `main.go` 的装配边界。
+> 装配边界（`main.go` + `wiring_*.go`）。
 
 ## 职责 / 入口
 
-- `main.go` 是唯一组合根：配置加载 → PG/Redis/worker → repository → service →
-  handler/router → HTTP/WS → 优雅退出。
+- 装配分 6 个阶段（`wiring_{infra,health,notify,billing,codex,run}.go`，每文件一个
+  构造函数），只允许"后阶段依赖前阶段"；`main.go` 只剩 flag/config/两个 protoconv
+  sink/`run(ctx)`，配置 → PG/Redis/worker → repository → service → handler/router →
+  HTTP/WS → 优雅退出这条链由阶段顺序表达。
+- 唯一允许的前向引用是 `infraFace.supplierSnap`（billing 阶段写入、retention 回调
+  运行期读）；其余符号不许晚绑定，禁止服务定位器/聚合根。
+- `defer` 只留在 `main`/`run` 这一层（阶段函数零 defer）：阶段返回后仍持有句柄，
+  只有进程级生命周期能保证"最后一步释放"。
 - 探测装配：`accountprobe.New(clients, egressPool)` 只传执行依赖（aiclient
   Factory + 出口池）；准入（4+16）与 30s 总期限在 `internal/service`，不在本层
   创建 prober 超时/信号量。
