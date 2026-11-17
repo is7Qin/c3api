@@ -55,18 +55,9 @@ func (h *AdminAPI) PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r
 		imported := res.Imported
 		out.AccountId = &id
 		out.Imported = &imported
-		if res.AccountName != "" {
-			name := res.AccountName
-			out.AccountName = &name
-		}
-		if res.Email != "" {
-			email := res.Email
-			out.Email = &email
-		}
-		if res.CodexAccountID != "" {
-			codexID := res.CodexAccountID
-			out.CodexAccountId = &codexID
-		}
+		out.AccountName = optionalStr(res.AccountName)
+		out.Email = optionalStr(res.Email)
+		out.CodexAccountId = optionalStr(res.CodexAccountID)
 	}
 	httpface.WriteJSON(w, http.StatusOK, out)
 }
