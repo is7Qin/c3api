@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 )
 
@@ -85,7 +86,7 @@ func TestStaticKeyHasNoPointerSliceOrMapFields(t *testing.T) {
 			// 不碰任何账号字段，没有这一位键就判等 ⇒ 旧叶子继续带着"可派发"结论入场。
 			"routable",
 			"codexAccountID", "codexInstallation",
-			"codexEmail", "codexPATKey",
+			"codexEmail", "codexPATKey", "bpsProfileDigest",
 			"credentialType", "stripImageTools", "modelsDigest", "formatModelsKey",
 			"supportedFormats", "modelMappingKey",
 			"upstreamPathsKey", // custom 路径进 planKey：改路径必须换新计划
@@ -213,6 +214,30 @@ func TestStaticKeyGuardDetectsPointerField(t *testing.T) {
 //
 // 同时也锁住「切片/映射事实按规范序比较」：groupIDs/Models 的顺序不同但集合
 // 相同 ⇒ 键相等（规范序摘要）。
+func TestStaticKeyBPSProfileDigestInvalidatesSemanticProfileChanges(t *testing.T) {
+	profileA := []byte(`{"profile_id":"p","device_id":"d"}`)
+	profileB := []byte(`{"device_id":"d","profile_id":"other"}`)
+	makeSnapshot := func(profile []byte) *snapshotStatic {
+		tpl := &domain.Template{
+			ID:               3,
+			CredentialType:   credential.TypeBPS,
+			SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		}
+		acc := domain.Account{
+			ID: 7, TemplateID: tpl.ID, Template: tpl, Enabled: true,
+			MaxConcurrency: 1, IdentityRevision: 4,
+			Ext: &domain.AccountExt{AccountID: 7, CredentialType: credential.TypeBPS, BPSProfile: profile},
+		}
+		return newSnapshotStatic(acc, tpl, nil, directEgress())
+	}
+	old := makeSnapshot(profileA)
+	same := makeSnapshot([]byte(` { "device_id": "d", "profile_id": "p" } `))
+	changed := makeSnapshot(profileB)
+	require.Equal(t, old.key.bpsProfileDigest, same.key.bpsProfileDigest)
+	require.NotEqual(t, old.key.bpsProfileDigest, changed.key.bpsProfileDigest)
+	require.NotEqual(t, old.key, changed.key)
+}
+
 func TestStaticKeyEqualAcrossDistinctSnapshotsWithIdenticalFacts(t *testing.T) {
 	// inputs 每次调用都分配全新对象（tpl + Ext 都是新指针），模拟 buildSnapshots
 	// 每轮重载的行为。构造统一走 newSnapshotStatic（唯一构造函数）——**先变更输入

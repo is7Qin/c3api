@@ -26,6 +26,9 @@ func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (
 	if t.CredentialType.IsCodex() && t.BaseURL != "" {
 		return nil, fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
 	}
+	if t.CredentialType.IsBPS() && !domain.BPSBaseURLAllowed(t.BaseURL) {
+		return nil, fmt.Errorf("%w: BPS template base_url must be empty or fixed endpoint", ErrInvalidInput)
+	}
 	row, err := r.client.Template.Create().
 		SetName(t.Name).SetBaseURL(t.BaseURL).
 		// 全字段 Set（含 credential_type）：空串兜底在 service 层（防默认值被绕过）

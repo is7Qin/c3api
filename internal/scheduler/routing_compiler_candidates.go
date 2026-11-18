@@ -205,6 +205,12 @@ func filterCandidates(candidates []compilerCandidateFacts) []compilerCandidateFa
 		if fact.static.tpl == nil || (fact.static.tpl.CredentialType != "" && !fact.static.tpl.CredentialType.Valid()) {
 			continue
 		}
+		// Phase 1 has no safe JSONB repository projection yet. A BPS candidate
+		// without a canonical profile digest is therefore unroutable rather than
+		// silently falling back to Codex/static-key identity.
+		if fact.static.tpl.CredentialType.IsBPS() && fact.static.bpsProfileDigest == "" {
+			continue
+		}
 		out = append(out, fact)
 	}
 	// Drop the references held by the compacted-away tail so filtered-out leaf

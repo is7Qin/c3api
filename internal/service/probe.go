@@ -182,6 +182,11 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		token          string
 		codexAccountID string
 	)
+	if tpl.CredentialType.IsBPS() {
+		// Phase 1 has no BPS probe adapter yet. Refuse rather than falling into
+		// the static-key probe path or fabricating Codex identity semantics.
+		return nil, ErrUnavailable
+	}
 	if tpl.CredentialType.IsCodex() {
 		cred, cerr := s.store.GetOwnedAccountCredential(pctx, id)
 		// 凭据的 ErrNotFound/其它错误也不能掩盖已过期期限。

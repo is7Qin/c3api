@@ -5,6 +5,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -28,6 +29,10 @@ type AccountCredential struct {
 	// 它与会话的 installation 同源，是"这份凭据还是不是同一版账号身份"的判据之一
 	// （sdkbridge.CredOwner）；不属于凭据本身，故不参与重建签名（credKey）。
 	InstallationID string
+	// BPSProfile is an opaque, cloned profile JSON projection; BPS does not use
+	// Codex installation identity semantics. Its canonical digest remains an
+	// internal routing/cache discriminator rather than a public credential field.
+	BPSProfile json.RawMessage
 	// IdentityRevision **来源身份代际 K**（account.identity_revision 的投影，与上面
 	// 各列**同一次快照读**）。凭据事件（判死/构造失败/轮转回写）必须带着"产生它的
 	// 那一版身份"走到持久化围栏：K 只由管理面身份类写入推进（SDK 自刷新不动），
@@ -47,18 +52,18 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 		return AccountCredential{}
 	}
 	c := AccountCredential{AccountID: e.AccountID}
-	// 账号标识 codex 两类型统一投影（非 codex 类型不带——调用方按类型分流，
-	// 非本类型的列不触达）。
-	if e.CredentialType.IsCodex() {
+	// ChatGPT account id is shared by Codex/BPS OAuth, but installation
+	// identity remains Codex-only.
+	if e.CredentialType.IsResponsesProvider() {
 		if e.CodexAccountID != nil {
 			c.CodexAccountID = *e.CodexAccountID
 		}
-		if e.CodexIdentity != nil {
+		if e.CredentialType.IsCodex() && e.CodexIdentity != nil {
 			c.InstallationID = e.CodexIdentity.InstallationID
 		}
 	}
 	switch e.CredentialType {
-	case credential.TypeCodexOAuth:
+	case credential.TypeCodexOAuth, credential.TypeBPS:
 		if e.CodexOAuthToken != nil {
 			c.OAuthToken = *e.CodexOAuthToken
 		}
@@ -66,6 +71,9 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 			c.OAuthRefreshToken = *e.CodexOAuthRefreshToken
 		}
 		c.OAuthExpiresAt = e.CodexOAuthExpiresAt
+		if e.CredentialType.IsBPS() {
+			c.BPSProfile = append(json.RawMessage(nil), e.BPSProfile...)
+		}
 	case credential.TypeCodexPAT:
 		if e.CodexPATKey != nil {
 			c.PATKey = *e.CodexPATKey

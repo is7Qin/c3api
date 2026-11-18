@@ -205,29 +205,42 @@ func loadTemplates(ctx context.Context, client *ent.Client, ids []int64) (map[in
 }
 
 func validateCodexAccountBaseURL(tpl *domain.Template, baseURL *string) error {
-	if tpl.CredentialType.IsCodex() && baseURL != nil && *baseURL != "" {
+	if baseURL == nil {
+		return nil
+	}
+	if tpl.CredentialType.IsCodex() && *baseURL != "" {
 		return fmt.Errorf("%w: codex account base_url must be empty", ErrInvalidInput)
+	}
+	if tpl.CredentialType.IsBPS() && !domain.BPSBaseURLAllowed(*baseURL) {
+		return fmt.Errorf("%w: BPS account base_url must be empty or fixed endpoint", ErrInvalidInput)
 	}
 	return nil
 }
 
 func validateCodexTemplateUpdate(ctx context.Context, client *ent.Client, tpl *domain.Template) error {
-	if !tpl.CredentialType.IsCodex() {
+	if !tpl.CredentialType.IsCodex() && !tpl.CredentialType.IsBPS() {
 		return nil
 	}
-	if tpl.BaseURL != "" {
+	if tpl.CredentialType.IsCodex() && tpl.BaseURL != "" {
 		return fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
 	}
-	hasOverride, err := client.Account.Query().Where(
+	if tpl.CredentialType.IsBPS() && !domain.BPSBaseURLAllowed(tpl.BaseURL) {
+		return fmt.Errorf("%w: BPS template base_url must be empty or fixed endpoint", ErrInvalidInput)
+	}
+	overrideQuery := client.Account.Query().Where(
 		account.TemplateIDEQ(tpl.ID),
 		account.BaseURLNotNil(),
 		account.BaseURLNEQ(""),
-	).Exist(ctx)
+	)
+	if tpl.CredentialType.IsBPS() {
+		overrideQuery = overrideQuery.Where(account.BaseURLNEQ(domain.BPSDefaultEndpoint))
+	}
+	hasOverride, err := overrideQuery.Exist(ctx)
 	if err != nil {
 		return err
 	}
 	if hasOverride {
-		return fmt.Errorf("%w: referenced codex account base_url must be empty", ErrInvalidInput)
+		return fmt.Errorf("%w: referenced provider account base_url is not allowed", ErrInvalidInput)
 	}
 	return nil
 }

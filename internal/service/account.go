@@ -36,16 +36,19 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 	if err != nil {
 		return nil, mapRepoErr(err) // 模板缺 id → 404
 	}
-	// upstream_key 必填性按模板类型：codex-oauth/codex-pat 凭据走 account_ext
-	// （创建后经 /accounts/{id}/ext 配置），可空；其余类型静态透传必填。
+	// upstream_key 必填性按 provider capability：Codex/BPS OAuth 凭据走
+	// account_ext，可空；静态-key provider 才要求 upstream_key。
 	key := ""
 	if p.UpstreamKey != nil {
 		key = *p.UpstreamKey
 	}
-	if key == "" && !tpl.CredentialType.IsCodex() {
+	if key == "" && tpl.CredentialType.UsesStaticKey() {
 		return nil, ErrInvalidInput
 	}
 	if tpl.CredentialType.IsCodex() && p.BaseURL != nil && *p.BaseURL != "" {
+		return nil, ErrInvalidInput
+	}
+	if tpl.CredentialType.IsBPS() && p.BaseURL != nil && !domain.BPSBaseURLAllowed(*p.BaseURL) {
 		return nil, ErrInvalidInput
 	}
 	if p.GroupIDs != nil {
@@ -203,7 +206,10 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 	if p.UpstreamKey != nil {
 		key = *p.UpstreamKey
 	}
-	if key == "" && !tpl.CredentialType.IsCodex() {
+	if key == "" && tpl.CredentialType.UsesStaticKey() {
+		return nil, ErrInvalidInput
+	}
+	if tpl.CredentialType.IsBPS() && p.BaseURL != nil && !domain.BPSBaseURLAllowed(*p.BaseURL) {
 		return nil, ErrInvalidInput
 	}
 	if p.GroupIDs != nil {

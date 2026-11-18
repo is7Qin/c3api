@@ -225,6 +225,8 @@ func stableCredentialDigest(credType credential.Type, upstreamKey string, patKey
 		b := make([]byte, 32)
 		copy(b, h[:])
 		return b, nil
+	case credential.TypeBPS:
+		return nil, fmt.Errorf("routing: BPS profile digest must be supplied separately")
 	default:
 		return nil, fmt.Errorf("routing: unsupported credential type %q", credType)
 	}
@@ -247,6 +249,7 @@ type CandidateKey struct {
 	CodexAccountID   string // codex 账号级稳定项
 	InstallationID   string // codex 账号级稳定项（installation_id）
 	CodexEmail       string // 仅为语义完整；当前 hashFields 未纳入（见 static_key.go）
+	BPSProfileDigest string // internal canonical BPS profile digest
 	StripImageTools  bool
 }
 
@@ -259,28 +262,41 @@ func CandidateFingerprint(k CandidateKey) (CandidateFingerprintVal, error) {
 	if !k.CredType.Valid() {
 		return CandidateFingerprintVal{}, fmt.Errorf("routing: invalid credential_type %q", k.CredType)
 	}
-	if k.EffectiveBaseURL == "" {
-		// codex 凭据 base_url 合法为空：数据面 URL 归 SDK 官方默认所有
-		//（accountcred.go 契约），凭据身份由 PAT/OAuth 身份输入承载（均入
-		// digest）——空 base_url 拒绝只适用于静态路由族（api_key 无
-		// base_url = 不可路由）。
-		switch k.CredType {
-		case credential.TypeCodexOAuth, credential.TypeCodexPAT:
-		default:
-			return CandidateFingerprintVal{}, fmt.Errorf("routing: effectiveBaseURL must not be empty")
+	if k.CredType == credential.TypeBPS {
+		if !BPSBaseURLAllowed(k.EffectiveBaseURL) {
+			return CandidateFingerprintVal{}, fmt.Errorf("routing: BPS baseURL must be empty or fixed endpoint")
 		}
+		if k.BPSProfileDigest == "" {
+			return CandidateFingerprintVal{}, fmt.Errorf("routing: BPS profile digest is required")
+		}
+	} else if k.EffectiveBaseURL == "" && k.CredType != credential.TypeCodexOAuth && k.CredType != credential.TypeCodexPAT {
+		return CandidateFingerprintVal{}, fmt.Errorf("routing: effectiveBaseURL must not be empty")
 	}
 	var canonicalOrigin string
-	if k.EffectiveBaseURL != "" {
+	if k.CredType == credential.TypeBPS {
+		// Keep the fixed path in the identity; CanonicalOrigin intentionally
+		// strips paths for ordinary static-key routing.
+		canonicalOrigin = BPSDefaultEndpoint
+	} else if k.EffectiveBaseURL != "" {
 		var err error
 		canonicalOrigin, err = CanonicalOrigin(k.EffectiveBaseURL)
 		if err != nil {
 			return CandidateFingerprintVal{}, err
 		}
 	}
-	digest, err := stableCredentialDigest(k.CredType, k.UpstreamKey, k.PATKey)
-	if err != nil {
-		return CandidateFingerprintVal{}, err
+	var digest []byte
+	var err error
+	if k.CredType == credential.TypeBPS {
+		h := sha256.Sum256([]byte(k.BPSProfileDigest))
+		digest = append([]byte(nil), h[:]...)
+	} else {
+		digest, err = stableCredentialDigest(k.CredType, k.UpstreamKey, k.PATKey)
+		if err != nil {
+			return CandidateFingerprintVal{}, err
+		}
+	}
+	if k.CredType == credential.TypeBPS && !utf8.ValidString(k.BPSProfileDigest) {
+		return CandidateFingerprintVal{}, fmt.Errorf("routing: BPS profile digest not valid UTF-8")
 	}
 	for _, s := range []string{k.InstallationID, k.CodexAccountID} {
 		if !utf8.ValidString(s) {
@@ -297,7 +313,12 @@ func CandidateFingerprint(k CandidateKey) (CandidateFingerprintVal, error) {
 	strip := fieldBool(k.StripImageTools)
 	inst, _ := fieldString(k.InstallationID)
 	caid, _ := fieldString(k.CodexAccountID)
-	h := hashFields(acc, tpl, ct, orig, digest, strip, inst, caid)
+	fields := [][]byte{acc, tpl, ct, orig, digest, strip, inst, caid}
+	if k.CredType == credential.TypeBPS {
+		bpsDigest, _ := fieldString(k.BPSProfileDigest)
+		fields = append(fields, bpsDigest)
+	}
+	h := hashFields(fields...)
 	return CandidateFingerprintVal(h), nil
 }
 
@@ -311,7 +332,7 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 	}
 	// 只读账号级稳定身份项：installation_id（CodexIdentity 退役为运行时槽状态后
 	// session/thread/window 不再是决策输入）；CodexIdentity 仅保留 InstallationID。
-	var patKey, email, codexAccountID, installationID string
+	var patKey, email, codexAccountID, installationID, bpsProfileDigest string
 	if a.Ext != nil {
 		if a.Ext.CodexPATKey != nil {
 			patKey = *a.Ext.CodexPATKey
@@ -322,7 +343,10 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 		if a.Ext.CodexAccountID != nil {
 			codexAccountID = *a.Ext.CodexAccountID
 		}
-		if a.Ext.CodexIdentity != nil {
+		if a.Template.CredentialType.IsBPS() {
+			bpsProfileDigest = BPSProfileHash(a.Ext.BPSProfile)
+		}
+		if a.Template.CredentialType.IsCodex() && a.Ext.CodexIdentity != nil {
 			installationID = a.Ext.CodexIdentity.InstallationID
 		}
 	}
@@ -335,6 +359,7 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 		PATKey:           patKey,
 		CodexEmail:       email,
 		CodexAccountID:   codexAccountID,
+		BPSProfileDigest: bpsProfileDigest,
 		StripImageTools:  a.Template.StripImageTools,
 		InstallationID:   installationID,
 	})

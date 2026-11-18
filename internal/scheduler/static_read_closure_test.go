@@ -108,6 +108,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.routable":              {staticPathField, "routable"},          // 唯一可用性决策位（**快照事实**，不是领域字段）：构造期一次定型（enabled ∧（未绑定 ∨ 绑定可用）），候选过滤只读它
 	"$S.cacheDomain":           {staticPathField, "cacheDomain"},       // 生效缓存域（构造期由 $S.acc.ID + $S.acc.CacheDomain 定型）：预留只拷进 Selection.CacheDomain
 	"$S.installationID":        {staticPathField, "codexInstallation"}, // installation（构造期由 $S.acc.Ext.CodexIdentity.InstallationID 定型）：预留只拷进 Selection.InstallationID
+	"$S.bpsProfileDigest":      {staticPathField, "bpsProfileDigest"},  // BPS profile canonical digest，构造期冻结后进入 planKey
 	"$S.egress":                {staticPathContainer, "恒非 nil 的出口 client 指针：直接交给 Selection（热路径零判断）、组级重派生时原样接续、prune 时取摘要"},
 
 	// --- 账号侧标量 ---
@@ -127,6 +128,7 @@ var staticReadPaths = map[string]staticReadSpec{
 	"$S.acc.Ext.CodexAccountID":               {staticPathField, "codexAccountID"},
 	"$S.acc.Ext.CodexEmail":                   {staticPathField, "codexEmail"},
 	"$S.acc.Ext.CodexPATKey":                  {staticPathField, "codexPATKey"},
+	"$S.acc.Ext.BPSProfile":                   {staticPathField, "bpsProfileDigest"},
 	"$S.acc.Ext.CodexIdentity.InstallationID": {staticPathField, "codexInstallation"},
 
 	// --- 账号凭据面（载荷：只影响叶子内容是否新鲜） ---

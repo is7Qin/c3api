@@ -89,7 +89,7 @@ func validateUpstreamPaths(paths map[string]string) (map[string]string, error) {
 }
 
 // validateTemplateExt 校验模板 ext 行：credential_type ∈ {responses-special,
-// codex-oauth, codex-pat, custom}（api_key 主列类型无 ext 行；类型一致性——
+// codex-oauth, codex-pat, custom, bps}（api_key 主列类型无 ext 行；类型一致性——
 // ext 行类型必须 == 父模板类型——由 UpsertTemplateExt 校验）。模板是共享配置面：
 // 可空列 strip_image_tools（四类型公共能力开关，nil = 未配置 = 关闭）与
 // upstream_paths（仅 custom 有意义，nil = 全部按格式默认端点）。

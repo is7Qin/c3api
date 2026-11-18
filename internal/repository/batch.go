@@ -160,8 +160,9 @@ func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p 
 		}
 		if p.BaseURL != nil && *p.BaseURL != "" {
 			for _, id := range ids {
-				if templates[id].CredentialType.IsCodex() {
-					return fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
+				tpl := templates[id]
+				if tpl.CredentialType.IsCodex() || (tpl.CredentialType.IsBPS() && !domain.BPSBaseURLAllowed(*p.BaseURL)) {
+					return fmt.Errorf("%w: provider template base_url is not allowed", ErrInvalidInput)
 				}
 			}
 		}

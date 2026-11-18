@@ -45,6 +45,9 @@ func callerKindForFormat(f domain.RequestFormat) domain.CallerKind {
 }
 
 func tplSupportsFormat(tpl *domain.Template, format domain.RequestFormat) bool {
+	if tpl.CredentialType.IsBPS() && !domain.BPSFormatsOnly([]domain.RequestFormat{format}) {
+		return false
+	}
 	return slices.Contains(tpl.SupportedFormats, format)
 }
 

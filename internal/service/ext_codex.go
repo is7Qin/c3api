@@ -58,21 +58,30 @@ func formatUUID(b []byte) string {
 	return string(out)
 }
 
-// validateAccountExt 校验账号 ext 行：credential_type ∈ {codex-oauth, codex-pat}
-// （类型白名单）；installation_id 必存（账号级唯一持久身份，service 自动生成
-// 兜底）；oauth 只允许 codex_oauth_* 列组 + 最小完整性（至少 codex_oauth_token，
-// refresh/expires 可空——refresh 未过期场景可缺）；pat 只允许 codex_pat_key。
-// 身份由 service 维护（导入时生成、持久复用），不参与列组约束。
+// validateAccountExt 校验账号 ext 行：credential_type ∈ {codex-oauth, codex-pat, bps}
+// （类型白名单）；Codex installation 仅对 Codex 类型必存，BPS 要求 OAuth
+// token + complete profile projection。Codex oauth 只允许 codex_oauth_* 列组 +
+// 最小完整性（至少 codex_oauth_token，refresh/expires 可空）；pat 只允许
+// codex_pat_key。身份由 service 维护（导入时生成、持久复用），不参与列组约束。
 //
-// 身份缺失（nil CodexIdentity / installation 空）→ 400（正确行为——loud）：
-// 应用写路径恒带完整身份（自动生成/沿用），NULL 身份行仅手工 SQL 可达
-// （损坏行）；拒绝而非静默写残缺身份——防止消费面组装残缺伪装身份。
+// Codex 身份缺失（nil CodexIdentity / installation 空）→ 400（loud）：应用写路径
+// 恒带完整身份（自动生成/沿用），NULL 身份行仅手工 SQL 可达（损坏行）；拒绝而非
+// 静默写残缺身份，防止消费面组装残缺伪装身份。BPS 不走该 installation 门。
 func validateAccountExt(e *domain.AccountExt) error {
 	if e.AccountID <= 0 {
 		return ErrInvalidInput
 	}
 	if !e.CredentialType.ValidAccountExt() {
 		return ErrInvalidInput
+	}
+	if e.CredentialType.IsBPS() {
+		if e.CodexPATKey != nil || e.CodexOAuthToken == nil {
+			return ErrInvalidInput
+		}
+		if err := domain.ValidateBPSProfileJSON(e.BPSProfile); err != nil {
+			return ErrInvalidInput
+		}
+		return nil
 	}
 	if e.CodexIdentity == nil || e.CodexIdentity.InstallationID == "" {
 		return ErrInvalidInput
@@ -168,6 +177,13 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 	if tpl.CredentialType != e.CredentialType {
 		return nil, ErrInvalidInput // 父行（模板）类型与 ext 行类型必须一致
 	}
+	// Phase 1 exposes the pure BPS projection/validation contract, but the
+	// generated Ent JSONB writer has not yet been upgraded to merge the raw
+	// envelope. Refuse persistence rather than silently dropping bps profile or
+	// unknown keys.
+	if e.CredentialType.IsBPS() {
+		return nil, ErrUnavailable
+	}
 	// 存量 ext 单读走 **scoped** 入口（C1）：owner 谓词 AND 进同一 SQL，越域不读
 	// 他人 ext。无存量行与越域同族 ErrNotFound；越域在 store.GetAccount 已被 404
 	// 拦截，故此处缺行即「首次创建」。
@@ -176,10 +192,13 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 		return nil, mapRepoErr(err) // 非缺行错误原样上抛（不误判为首次写入）
 	}
 	if err == nil {
-		// 已有行：installation 缺省 → 沿用存量（持久复用）
-		fillIdentityDefaults(e, cur)
-	} else {
-		// 无存量行：installation 缺省自动生成
+		// Codex installation is independent from BPS profile; only Codex carries
+		// the legacy identity default/retention behavior.
+		if !e.CredentialType.IsBPS() {
+			fillIdentityDefaults(e, cur)
+		}
+	} else if !e.CredentialType.IsBPS() {
+		// 无存量行：installation 缺省自动生成（Codex only）
 		if e.CodexIdentity == nil {
 			e.CodexIdentity = &domain.CodexIdentity{}
 		}
@@ -222,7 +241,7 @@ func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*
 		if rerr != nil && !errors.Is(rerr, repository.ErrNotFound) {
 			return nil, mapRepoErr(rerr)
 		}
-		if rerr == nil && row.CodexIdentity != nil && *row.CodexIdentity != *e.CodexIdentity {
+		if !e.CredentialType.IsBPS() && rerr == nil && row.CodexIdentity != nil && *row.CodexIdentity != *e.CodexIdentity {
 			e.CodexIdentity = row.CodexIdentity // 持久身份已漂移 → 完全采用
 		}
 	}

@@ -97,6 +97,31 @@ func TestRoutingFingerprintGolden(t *testing.T) {
 	require.Equal(t, fp3, fp3b, "oauth email must not change fingerprint")
 }
 
+func TestBPSCandidateFingerprintUsesFixedEndpointAndProfileDigest(t *testing.T) {
+	profile := []byte(`{"profile_id":"p","device_id":"d"}`)
+	base := CandidateKey{
+		AccountID:        7,
+		TemplateID:       11,
+		CredType:         credential.TypeBPS,
+		BPSProfileDigest: BPSProfileHash(profile),
+	}
+	fp, err := CandidateFingerprint(base)
+	require.NoError(t, err)
+	changed := base
+	changed.BPSProfileDigest = BPSProfileHash([]byte(`{"profile_id":"other"}`))
+	fpChanged, err := CandidateFingerprint(changed)
+	require.NoError(t, err)
+	require.NotEqual(t, fp, fpChanged)
+	badEndpoint := base
+	badEndpoint.EffectiveBaseURL = "https://evil.example/api"
+	_, err = CandidateFingerprint(badEndpoint)
+	require.Error(t, err)
+	missingProfile := base
+	missingProfile.BPSProfileDigest = ""
+	_, err = CandidateFingerprint(missingProfile)
+	require.Error(t, err)
+}
+
 func TestRoutingFingerprintInvalidation(t *testing.T) {
 	base := CandidateKey{
 		AccountID:        1,

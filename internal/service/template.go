@@ -99,7 +99,13 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 			return ErrNotFound // 缺 id（validateIDs 已去重，数量可精确对比）
 		}
 		for _, t := range tpls {
-			if t.CredentialType == credential.TypeAPIKey {
+			if t.CredentialType == credential.TypeAPIKey || t.CredentialType == credential.TypeCustom {
+				continue
+			}
+			if t.CredentialType.IsBPS() {
+				if !domain.BPSFormatsOnly(*p.SupportedFormats) {
+					return ErrInvalidInput
+				}
 				continue
 			}
 			for _, f := range *p.SupportedFormats {
@@ -118,7 +124,7 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 			return ErrNotFound
 		}
 		for _, tpl := range tpls {
-			if tpl.CredentialType.IsCodex() {
+			if tpl.CredentialType.IsCodex() || (tpl.CredentialType.IsBPS() && !domain.BPSBaseURLAllowed(*p.BaseURL)) {
 				return ErrInvalidInput
 			}
 		}

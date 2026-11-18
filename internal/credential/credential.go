@@ -41,7 +41,7 @@ const (
 )
 
 // Valid 类型是否已注册可用的凭据类型（模板主列 credential_type 全量：api_key
-// 四格式任意；生态三类型只支持 resp/resp-ws——service 校验）。未知类型（含
+// 四格式任意；生态类型按 provider capability 做格式校验）。未知类型（含
 // 空串）→ false。
 func (t Type) Valid() bool {
 	switch t {

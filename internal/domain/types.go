@@ -407,6 +407,9 @@ func (t *Template) FormatsFor() []RequestFormat { return t.SupportedFormats }
 // FormatSupports 格式 f 是否支持模型 m（模型级限制）：
 // f 不在 SupportedFormats → false；FormatModels[f] 配置了 → m ∈ 列表；未配置 → true。
 func (t *Template) FormatSupports(f RequestFormat, m string) bool {
+	if t.CredentialType.IsBPS() && !BPSFormatsOnly([]RequestFormat{f}) {
+		return false
+	}
 	if !slices.Contains(t.SupportedFormats, f) {
 		return false
 	}
@@ -532,7 +535,7 @@ func MultBp(v *int) int {
 }
 
 // TemplateExt 模板类型化扩展配置（template_ext 子表，1:1）：credential_type
-// ∈ {responses-special, codex-oauth, codex-pat, custom} 的模板才有 ext 行
+// ∈ {responses-special, codex-oauth, codex-pat, custom, bps} 的模板才有 ext 行
 // （api_key 主列类型无 ext 行）。模板是共享配置面：只承载类型声明 +
 // StripImageTools 公共能力开关（通用）+ custom 的逐格式路径——凭据列组
 // （oauth/pat）一律在账号级 account_ext（账号私有）。nil = 未配置（NULL 落库）。
@@ -563,7 +566,8 @@ type CodexIdentity struct {
 }
 
 // AccountExt 账号类型化鉴权扩展（account_ext 子表，1:1）：credential_type
-// ∈ {codex-oauth, codex-pat}（账号只两种 codex 类型）。字段按作用分组：
+// ∈ {codex-oauth, codex-pat, bps}。BPS 复用 OAuth 列组并携带 opaque profile
+// projection；不使用 Codex installation。字段按作用分组：
 // 标识 → 身份（codex_identity jsonb 单列）→ 凭据 → 管理标识。身份只含安装级
 // InstallationID（UUIDv4 安装级永久；导入时 service NewCodexIdentity() 自动
 // 生成并持久化、账号存在期间稳定）；会话级 session/thread/window 已退役为
@@ -582,6 +586,9 @@ type AccountExt struct {
 	CodexPATKey            *string        // 凭据：pat
 	CodexEmail             *string        // 管理标识：账号登录邮箱（导入时人工/上游提供，非自动生成，可空）
 	CodexAccountID         *string        // 上游账号/空间标识（可留空——导入/保存时自动识别；识别失败：导入行拒绝、保存留空）
+	// BPSProfile is the complete opaque bps-sdk DeviceProfile JSON. It is a
+	// projection only in this phase; repository/handler persistence is later.
+	BPSProfile json.RawMessage `json:"bps_profile,omitempty"`
 }
 
 // CodexImportConfig 导入面 body 级账号配置（作用于本次**新建**账号——已存在

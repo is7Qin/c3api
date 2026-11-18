@@ -907,6 +907,9 @@ func validateTemplate(t *domain.Template) error {
 	if t.CredentialType.IsCodex() && t.BaseURL != "" {
 		return ErrInvalidInput
 	}
+	if t.CredentialType.IsBPS() && !domain.BPSBaseURLAllowed(t.BaseURL) {
+		return ErrInvalidInput
+	}
 	if t.Name == "" {
 		return ErrInvalidInput
 	}
@@ -922,14 +925,14 @@ func validateTemplate(t *domain.Template) error {
 	if err != nil {
 		return err
 	}
-	// 类型-格式约束（扩展）：responses-special/codex-oauth/codex-pat
-	// 类型模板支持 resp / resp-ws / openai-images / openai-search 格式（images 直连
-	// 为：responses-special 与 api_key 同支持两图片端点，codex 类型
-	// 走 SDK 生图；search 为：search 端点四类型分派全可达——
-	// codex 类型走 SDK Search、api_key/responses-special 静态透传）；api_key 类型全部格式任意。
-	// 生态三类型限定 resp/resp-ws/images/search；api_key 与 custom 支持全部格式
-	// （custom = 静态 Key + 自定义路径，路径本身不改变协议形状）。
-	if t.CredentialType != credential.TypeAPIKey && t.CredentialType != credential.TypeCustom {
+	// Provider-specific format gates: BPS is strictly standard Responses HTTP/WS;
+	// existing Codex/special compatibility continues to allow its established
+	// image/search formats. Static-key api_key/custom remain unrestricted here.
+	if t.CredentialType.IsBPS() {
+		if !domain.BPSFormatsOnly(t.SupportedFormats) {
+			return ErrInvalidInput
+		}
+	} else if t.CredentialType != credential.TypeAPIKey && t.CredentialType != credential.TypeCustom {
 		for _, f := range t.SupportedFormats {
 			if f != domain.FormatOpenAIResponses && f != domain.FormatOpenAIResponsesWS && f != domain.FormatOpenAIImages && f != domain.FormatOpenAISearch {
 				return ErrInvalidInput

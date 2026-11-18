@@ -82,6 +82,10 @@ type planKey struct {
 	codexInstallation string
 	codexEmail        string
 	codexPATKey       string // 凭据值：pat（api_key/pat 类型上游鉴权用；同时进候选指纹）
+	// bpsProfileDigest is the canonical digest of the opaque BPS profile. It is
+	// independent from Codex installation identity and participates in the
+	// routing/leaf fence for TypeBPS only.
+	bpsProfileDigest string
 
 	// --- §5.5b(1) 模板侧源字段（I 不覆盖的那些） ---
 	credentialType   credential.Type
@@ -203,6 +207,9 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 		av.cacheDomain = cacheDomainForAccount(av.acc.ID, av.acc.CacheDomain)
 		av.installationID = installationIDOf(av.acc.Ext)
 	}
+	if av.tpl != nil && av.tpl.CredentialType.IsBPS() && av.acc.Ext != nil {
+		av.bpsProfileDigest = domain.BPSProfileHash(av.acc.Ext.BPSProfile)
+	}
 	var k planKey
 	k.accountID = av.acc.ID
 	k.name = av.acc.Name
@@ -239,6 +246,9 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 		k.modelMappingKey = digestModelMapping(tpl.ModelMapping)
 		k.upstreamPathsKey = digestUpstreamPaths(tpl.UpstreamPaths)
 		k.codexResponsesTransport = tpl.CodexResponsesTransport.Key()
+		if tpl.CredentialType.IsBPS() {
+			k.bpsProfileDigest = av.bpsProfileDigest
+		}
 	}
 	k.groupIDsDigest = digestInt64s(av.groupIDs)
 	av.key = k
