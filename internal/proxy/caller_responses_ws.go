@@ -313,6 +313,10 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			return code, []byte(msg), nil, false, callErr
 		}
 	}
+	if sel.CredentialType.IsBPS() {
+		p.rejectBPSWS(st.client, r, reqID, groupID, start, sel, reqModel)
+		return 0, nil, nil, true, nil
+	}
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
 		// 凭据获取失败，上游未消费记 not-sent 可重试，未见业务帧（观测归循环）

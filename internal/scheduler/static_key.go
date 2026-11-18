@@ -236,8 +236,8 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 			// never consumes Codex email/PAT/installation identity.
 			k.codexAccountID = derefString(ext.CodexAccountID)
 		} else {
-			// Preserve the existing static-key/Codex leaf semantics. A nil
-			// template is the legacy test/assembly shape and keeps that behavior.
+			// Preserve the pre-BPS static-key semantics for all other legacy
+			// template shapes. BPS is the only provider-specific exclusion.
 			k.codexAccountID = derefString(ext.CodexAccountID)
 			k.codexEmail = derefString(ext.CodexEmail)
 			k.codexPATKey = derefString(ext.CodexPATKey)

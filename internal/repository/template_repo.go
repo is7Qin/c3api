@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 	"github.com/is7qin/c3api/internal/ent/template"
@@ -113,8 +114,12 @@ func (r *TemplateRepo) UpdateTemplate(ctx context.Context, t *domain.Template) (
 		if err := lockTemplateWrites(ctx, driver, []int64{t.ID}); err != nil {
 			return err
 		}
-		if _, err := client.Template.Get(ctx, t.ID); err != nil {
+		current, err := client.Template.Get(ctx, t.ID)
+		if err != nil {
 			return errMissingID(err, t.ID)
+		}
+		if current.CredentialType == string(credential.TypeBPS) {
+			return ErrProviderNotWired
 		}
 		if err := validateCodexTemplateUpdate(ctx, client, t); err != nil {
 			return err

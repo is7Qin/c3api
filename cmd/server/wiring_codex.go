@@ -179,6 +179,9 @@ func newCodexFace(d codexDeps) *codexFace {
 	// 注册在装配期（worker 未 Start）；未注册的凭据族由 worker 计 unsupported 跳过。
 	quotaResolvers.Register(credential.TypeCodexOAuth, codexAdapter)
 	quotaResolvers.Register(credential.TypeCodexPAT, codexAdapter)
+	// BPS has no trusted quota-window API. Register its independent no-window
+	// resolver so 429 cooldowns never fabricate a Codex reset deadline.
+	quotaResolvers.Register(credential.TypeBPS, sdkbridge.BPSNoWindowQuotaResolver{})
 	// 补拉 worker 在此构造（sched 与 codex 适配器均已就绪）：账号解析面直接是
 	// sched.ProbeAccount（与健康 probe 同一选号快照视图），resolver 注册也已完成。
 	// 队列早已建好并被 sink 持有，此处只是交给消费者——仍早于 wm.StartAll，

@@ -104,6 +104,10 @@ func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error
 	case tpl.CredentialType == credential.TypeAPIKey, tpl.CredentialType == credential.TypeResponsesSpecial:
 		// api_key 族无合成探测面（/v1/models 与流量无关，已删除）——探测视为通过，恢复由时间窗+真实流量判定。
 		return nil
+	case tpl.CredentialType == credential.TypeBPS:
+		// BPS must not be probed through the Codex usage path. Until its
+		// durable TokenStore/client probe is wired, keep health fail-closed.
+		return fmt.Errorf("health probe: BPS adapter not wired for account %d", key.AccountID)
 	default:
 		return fmt.Errorf("health probe: account %d has unknown credential type %q", key.AccountID, tpl.CredentialType)
 	}

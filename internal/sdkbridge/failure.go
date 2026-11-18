@@ -207,7 +207,7 @@ func HandleFailure(ctx context.Context, deps FailureDeps, event CredentialFailur
 			if !ok {
 				return ErrMissingCredentialDiscriminator
 			}
-			if !ct.IsCodex() {
+			if !ct.IsResponsesProvider() {
 				return nil
 			}
 			fp, ferr := canonicalFingerprint(acct)
