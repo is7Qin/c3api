@@ -124,10 +124,30 @@ func main() {
 	defer in.cancelStartup()
 	defer in.pool.Close()
 
-	hl := newHealthFace(cfg, log, in)
-	nf := newNotifyFace(log, in)
-	bl := newBillingFace(cfg, log, in, hl, nf)
-	cx := newCodexFace(cfg, log, in, hl, bl)
+	hl := newHealthFace(healthDeps{
+		cfg: cfg, log: log,
+		rdb: in.rdb, repos: in.repos, src: in.src, disco: in.disco, pub: in.pub,
+		egress: in.egress, codexClients: in.codexClients, startupCtx: in.startupCtx,
+		// 前向槽保存字段地址：写入发生在后面的 billing 阶段。
+		supplierSnap: supplierSnapshotSlot{p: &in.supplierSnap},
+	})
+	nf := newNotifyFace(log, notifyDeps{rdb: in.rdb, repos: in.repos, settingsSnap: in.settingsSnap})
+	bl := newBillingFace(billingDeps{
+		cfg: cfg, log: log,
+		rdb: in.rdb, repos: in.repos, src: in.src, pub: in.pub, hc: in.hc,
+		egress: in.egress, settingsSnap: in.settingsSnap, svcLoc: in.svcLoc,
+		sched: hl.sched, ruleEngine: hl.ruleEngine, runtimeHealth: hl.runtimeHealth,
+		latchStore: hl.latchStore, cooldown: nf.cooldown, mailW: nf.mailW,
+		supplierSnap: supplierSnapshotSlot{p: &in.supplierSnap},
+	})
+	cx := newCodexFace(codexDeps{
+		cfg: cfg, log: log,
+		rdb: in.rdb, repos: in.repos, src: in.src, pub: in.pub, egress: in.egress,
+		hc: in.hc, codexClients: in.codexClients, disco: in.disco,
+		sched: hl.sched, rec: hl.rec, errlogW: hl.errlogW, latchStore: hl.latchStore,
+		quotaQueue: hl.quotaQueue, runtimeHealth: hl.runtimeHealth,
+		auth: bl.auth, clients: bl.clients, svc: bl.svc, billHooks: bl.billHooks,
+	})
 
 	// 停机信号与本层同生命周期：stop 必须晚于 run 的停机链（run 里读 ctx）。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

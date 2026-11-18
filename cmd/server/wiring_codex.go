@@ -10,16 +10,26 @@ package main
 
 import (
 	"math"
+	"net/http"
+
+	"github.com/redis/go-redis/v9"
 
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/discovery"
+	"github.com/is7qin/c3api/internal/latch"
+	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
 	"github.com/is7qin/c3api/internal/proxy"
 	"github.com/is7qin/c3api/internal/quality"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/usage"
+	"github.com/is7qin/c3api/pkg/aiclient"
+	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -53,12 +63,41 @@ type codexFace struct {
 }
 
 // newCodexFace 装配阶段 5（依赖 infra / health / billing）。
-func newCodexFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *healthFace, bl *billingFace) *codexFace {
-	repos, rdb, src, pub := in.repos, in.rdb, in.src, in.pub
-	egressPool, hc, codexClients := in.egress, in.hc, in.codexClients
-	sched, rec, errlogW, latchStore := hl.sched, hl.rec, hl.errlogW, hl.latchStore
-	quotaQueue := hl.quotaQueue
-	auth, clients, svc := bl.auth, bl.clients, bl.svc
+// codexDeps 是阶段 5 实际读到的前四阶段字段（窄化，spec §7.2）。
+//
+// 18 个字段看着仍然宽，但它跨 infra/health/billing 三个来源：宽面时代这里是
+// 「三个 Face 的并集」（约 40 个可触达字段），现在每一行都是本阶段真读到的。
+type codexDeps struct {
+	cfg           *config.Config
+	log           *logx.Logger
+	rdb           *redis.Client
+	repos         *repository.Repository
+	src           string
+	pub           *notify.Publisher
+	egress        *egress.Pool
+	hc            *http.Client
+	codexClients  *sdkbridge.ClientTable
+	disco         *discovery.Discovery
+	sched         *scheduler.Scheduler
+	rec           *usage.Recorder
+	errlogW       *usage.ErrLogWorker
+	latchStore    *latch.LatchStore
+	quotaQueue    *scheduler.QuotaQueue
+	runtimeHealth *scheduler.RuntimeHealth
+	auth          *proxy.Auth
+	clients       *aiclient.Factory
+	svc           *service.Service
+	billHooks     *proxy.BillingHooks
+}
+
+// newCodexFace 装配阶段 5（只依赖 codexDeps）。
+func newCodexFace(d codexDeps) *codexFace {
+	cfg, log := d.cfg, d.log
+	repos, rdb, src, pub := d.repos, d.rdb, d.src, d.pub
+	egressPool, hc, codexClients := d.egress, d.hc, d.codexClients
+	sched, rec, errlogW, latchStore := d.sched, d.rec, d.errlogW, d.latchStore
+	quotaQueue := d.quotaQueue
+	auth, clients, svc := d.auth, d.clients, d.svc
 	f := &codexFace{}
 
 	// 429 额度补拉 resolver 注册表（设计 §5.4 / R3 第 5 条）：先建后填——
@@ -144,7 +183,7 @@ func newCodexFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *healt
 	// sched.ProbeAccount（与健康 probe 同一选号快照视图），resolver 注册也已完成。
 	// 队列早已建好并被 sink 持有，此处只是交给消费者——仍早于 wm.StartAll，
 	// 不含任何回填。
-	quotaW := scheduler.NewQuotaWorker(quotaQueue, hl.runtimeHealth, quotaResolvers, sched.ProbeAccount, log, scheduler.QuotaWorkerConfig{})
+	quotaW := scheduler.NewQuotaWorker(quotaQueue, d.runtimeHealth, quotaResolvers, sched.ProbeAccount, log, scheduler.QuotaWorkerConfig{})
 	f.quotaW = quotaW
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
@@ -159,7 +198,7 @@ func newCodexFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *healt
 		LowBalanceConcCap:            cfg.Proxy.LowBalanceMaxConcurrency,
 		LowBalanceConcThresholdMilli: int64(math.Round(cfg.Proxy.LowBalanceThresholdUSD * 1e5)),
 		StreamKeepaliveInterval:      cfg.Proxy.StreamKeepaliveInterval,
-	}, sched, credential.New(), rec, clients, auth, log, bl.billHooks, errlogW, proxy.Deps{
+	}, sched, credential.New(), rec, clients, auth, log, d.billHooks, errlogW, proxy.Deps{
 		Codex:         codexAdapter,
 		Recorder:      qualityRecorder,
 		Continuation:  contStore,
@@ -188,10 +227,10 @@ func newCodexFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *healt
 	// ceil(剩余/N) + limit RPM ceil(rpm/N)。N = Redis 心跳活体数（disco 实时读
 	// atomic），gate/limit 在每次预算分配时现读 provider（gate.go:106-121），
 	// 心跳计数变化 ≤1 tick 天然生效，无需任何 reload 触发。
-	px.SetInstancesProvider(in.disco)
+	px.SetInstancesProvider(d.disco)
 	// scheduler 选号侧同一 N 源（spec conc-share-borrow-account §1.1）：账号并发
 	// 份额除数 = Redis 心跳活体数，ReserveAttempt 入口现读，心跳变化 ≤1 tick 生效。
-	sched.SetInstancesProvider(in.disco)
+	sched.SetInstancesProvider(d.disco)
 	// 并发门跨实例共识 worker（spec conc-share-borrow-gate §1.5）：500ms 一条
 	// pipeline 双向同步受限层级在途 → gate 第二快照（clusterView），请求路径
 	// 零 Redis；nil/未启动 = 无视图 = 全额本地语义。self 与 NOTIFY Src /

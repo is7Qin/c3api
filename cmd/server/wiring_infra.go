@@ -76,6 +76,40 @@ type infraFace struct {
 	supplierSnap *supplier.SupplierSnapshot
 }
 
+// supplierSnapshotSlot 是前向槽的**引用载体**：保存字段地址，而不是字段值。
+//
+// 为什么需要它：health 阶段注册的回调在**运行期**才读这个槽，而值由后一步的
+// billing 阶段写入。若把 `in.supplierSnap` 按值拷进窄结构（窄化的默认做法），
+// 拷贝发生在 billing 之前，快照永远是 nil——磁盘满是保护会静默失效，编译器、
+// 单测、diff review 都看不出来。槽保存 `**T`，写入与读取落到同一个字段上。
+//
+// 同理，窄结构里不允许出现 `*infraFace` 本身：那会把整个宽面重新暴露给
+// health 阶段，抵消窄化的目的。
+type supplierSnapshotSlot struct{ p **supplier.SupplierSnapshot }
+
+func (s supplierSnapshotSlot) get() *supplier.SupplierSnapshot {
+	if s.p == nil {
+		return nil // 槽未接线：与「billing 尚未写入」同语义
+	}
+	return *s.p
+}
+
+func (s supplierSnapshotSlot) set(v *supplier.SupplierSnapshot) {
+	if s.p != nil {
+		*s.p = v
+	}
+}
+
+// capacityBlockedHook 把「磁盘满是 ⇒ 停供应商新流量」的回调与槽解耦，便于单测：
+// 装配期 health 先注册、billing 后写入，回调必须在**调用时**才解引用。
+func capacityBlockedHook(slot supplierSnapshotSlot) func(bool) {
+	return func(blocked bool) {
+		if snap := slot.get(); snap != nil {
+			snap.SetCapacityBlocked(blocked)
+		}
+	}
+}
+
 // newInfra 装配阶段 1（依赖 cfg/log）。
 func newInfra(cfg *config.Config, log *logx.Logger) *infraFace {
 	f := &infraFace{cfg: cfg, log: log}

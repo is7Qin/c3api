@@ -11,8 +11,12 @@
 package main
 
 import (
+	"github.com/redis/go-redis/v9"
+
 	"github.com/is7qin/c3api/internal/notification"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -22,10 +26,22 @@ type notifyFace struct {
 	mailW    *service.MailWorker
 }
 
-// newNotifyFace 装配阶段 3（依赖 infra）。
-func newNotifyFace(log *logx.Logger, in *infraFace) *notifyFace {
-	rdb, repos := in.rdb, in.repos
-	settingsSnap := in.settingsSnap
+// notifyDeps 是阶段 3 **实际从 infra 阶段读到的全部字段**（窄化，spec §7.2）。
+//
+// 为什么不直接收 *infraFace：那样本阶段可以触达 infra 造的任何东西（连接池、
+// 出口池、codex 客户端、实例发现…），而其中只有 3 个是它真需要的。窄结构把
+// 「本阶段需要什么」变成一行可 review 的投影，未来新增 infra 产物也不会默认
+// 对每个阶段可见。
+type notifyDeps struct {
+	rdb          *redis.Client
+	repos        *repository.Repository
+	settingsSnap *settingssnap.Snapshot
+}
+
+// newNotifyFace 装配阶段 3（只依赖 notifyDeps）。
+func newNotifyFace(log *logx.Logger, d notifyDeps) *notifyFace {
+	rdb, repos := d.rdb, d.repos
+	settingsSnap := d.settingsSnap
 	f := &notifyFace{}
 
 	// 余额预警已知键清理（Redis）：构造期一次建好，Deps 与

@@ -10,12 +10,20 @@
 package main
 
 import (
+	"context"
+
+	"github.com/redis/go-redis/v9"
+
 	"github.com/is7qin/c3api/internal/config"
+	"github.com/is7qin/c3api/internal/discovery"
 	"github.com/is7qin/c3api/internal/latch"
+	"github.com/is7qin/c3api/internal/notify"
+	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/usage"
+	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -39,10 +47,29 @@ type healthFace struct {
 	retention   *usage.RetentionWorker
 }
 
-// newHealthFace 装配阶段 2（依赖 infra）。
-func newHealthFace(cfg *config.Config, log *logx.Logger, in *infraFace) *healthFace {
-	rdb, repos, src, disco, pub := in.rdb, in.repos, in.src, in.disco, in.pub
-	egressPool, codexClients, startupCtx := in.egress, in.codexClients, in.startupCtx
+// healthDeps 是阶段 2 **实际从 infra 阶段读到的全部字段**（窄化，spec §7.2）。
+//
+// supplierSnap 是唯一的前向槽：它保存的是字段地址（不是值），因为本阶段注册的
+// 容量门回调在运行期才读，而快照由后面 billing 阶段写入。按值投影会让保护失效。
+type healthDeps struct {
+	cfg          *config.Config
+	log          *logx.Logger
+	rdb          *redis.Client
+	repos        *repository.Repository
+	src          string
+	disco        *discovery.Discovery
+	pub          *notify.Publisher
+	egress       *egress.Pool
+	codexClients *sdkbridge.ClientTable
+	startupCtx   context.Context
+	supplierSnap supplierSnapshotSlot
+}
+
+// newHealthFace 装配阶段 2（只依赖 healthDeps）。
+func newHealthFace(d healthDeps) *healthFace {
+	cfg, log := d.cfg, d.log
+	rdb, repos, src, disco, pub := d.rdb, d.repos, d.src, d.disco, d.pub
+	egressPool, codexClients, startupCtx := d.egress, d.codexClients, d.startupCtx
 	f := &healthFace{}
 
 	// 运行时健康投影先建（intelligent-routing lane）：只依赖 rdb/src/disco
@@ -149,12 +176,9 @@ func newHealthFace(cfg *config.Config, log *logx.Logger, in *infraFace) *healthF
 		// 容量处置（spec §3.11）：数据盘可用空间探针（best-effort，"." 所在卷）；
 		// 低于下限 ⇒ 停供应商新流量（经回调置位视图快照的容量门）。
 		DiskProbe: usage.NewDiskProbe("."),
-		OnCapacityBlocked: func(blocked bool) {
-			// 调用时读字段（不是注册时快照）：billing 阶段才写成非 nil。
-			if in.supplierSnap != nil {
-				in.supplierSnap.SetCapacityBlocked(blocked)
-			}
-		},
+		// 容量门必须经槽引用：本回调在运行期才触发，而快照由 billing 阶段
+		// （本阶段之后）写入。按值捕获 = 永远读到 nil（见 supplierSnapshotSlot）。
+		OnCapacityBlocked: capacityBlockedHook(d.supplierSnap),
 	}, repos, log)
 	f.retention = retention
 	// 路由观测写面守卫同源：同一份 observation_retention_days 交给分区仓，

@@ -9,8 +9,14 @@
   构造函数），只允许"后阶段依赖前阶段"；`main.go` 只剩 flag/config/两个 protoconv
   sink/`run(ctx)`，配置 → PG/Redis/worker → repository → service → handler/router →
   HTTP/WS → 优雅退出这条链由阶段顺序表达。
+- 阶段 2–5 **不再收整个 `*xxxFace`**，而是各收一个窄结构（`healthDeps` /
+  `notifyDeps` / `billingDeps` / `codexDeps`）：字段集就是本阶段真实读到的字段，
+  在 `main.go` 的调用点一行行投影出来。新增 infra 产物**默认对所有阶段不可见**，
+  要让它可见必须改窄结构（`stage_deps_test` 会钉住字段数）。
 - 唯一允许的前向引用是 `infraFace.supplierSnap`（billing 阶段写入、retention 回调
-  运行期读）；其余符号不许晚绑定，禁止服务定位器/聚合根。
+  运行期读）。窄结构里它必须是 `supplierSnapshotSlot`（保存字段地址）而不是
+  `*SupplierSnapshot`：按值投影会在 billing 之前拷贝到 nil，磁盘满是保护静默失效。
+  其余符号不许晚绑定，禁止服务定位器/聚合根。
 - `defer` 只留在 `main`/`run` 这一层（阶段函数零 defer）：阶段返回后仍持有句柄，
   只有进程级生命周期能保证"最后一步释放"。
 - 探测装配：`accountprobe.New(clients, egressPool)` 只传执行依赖（aiclient

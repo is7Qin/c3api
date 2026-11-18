@@ -17,22 +17,29 @@ import (
 	"strings"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/invalidate"
+	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/notification"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/paymentregistry"
 	accountprobe "github.com/is7qin/c3api/internal/probe"
 	"github.com/is7qin/c3api/internal/proxy"
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/rule"
+	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/internal/settingssnap"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/verification"
 	"github.com/is7qin/c3api/pkg/aiclient"
+	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -75,13 +82,41 @@ type billingFace struct {
 }
 
 // newBillingFace 装配阶段 4（依赖 infra / health / notify）。
-func newBillingFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *healthFace, nf *notifyFace) *billingFace {
-	repos, rdb, src, pub := in.repos, in.rdb, in.src, in.pub
-	hc, egressPool := in.hc, in.egress
-	settingsSnap, svcLoc := in.settingsSnap, in.svcLoc
-	sched, ruleEngine := hl.sched, hl.ruleEngine
-	runtimeHealth, latchStore := hl.runtimeHealth, hl.latchStore
-	bwCooldown, mailW := nf.cooldown, nf.mailW
+// billingDeps 是阶段 4 实际读到的前三阶段字段（窄化，spec §7.2）。
+//
+// 这个阶段横跨 infra / health / notify 三个来源，因此窄化收益最大的不是字段数
+// 本身，而是「本阶段到底用到哪些前阶段产物」变成一行投影：加字段必须显式决策。
+type billingDeps struct {
+	cfg           *config.Config
+	log           *logx.Logger
+	rdb           *redis.Client
+	repos         *repository.Repository
+	src           string
+	pub           *notify.Publisher
+	hc            *http.Client
+	egress        *egress.Pool
+	settingsSnap  *settingssnap.Snapshot
+	svcLoc        *time.Location
+	sched         *scheduler.Scheduler
+	ruleEngine    *rule.RuleEngine
+	runtimeHealth *scheduler.RuntimeHealth
+	latchStore    *latch.LatchStore
+	cooldown      *notification.Cooldown
+	mailW         *service.MailWorker
+	// supplierSnap 是前向槽的写入侧：写入必须落到 infraFace 的那个字段上，
+	// retention 的运行期回调才看得到（见 supplierSnapshotSlot）。
+	supplierSnap supplierSnapshotSlot
+}
+
+// newBillingFace 装配阶段 4（只依赖 billingDeps）。
+func newBillingFace(d billingDeps) *billingFace {
+	cfg, log := d.cfg, d.log
+	repos, rdb, src, pub := d.repos, d.rdb, d.src, d.pub
+	hc, egressPool := d.hc, d.egress
+	settingsSnap, svcLoc := d.settingsSnap, d.svcLoc
+	sched, ruleEngine := d.sched, d.ruleEngine
+	runtimeHealth, latchStore := d.runtimeHealth, d.latchStore
+	bwCooldown, mailW := d.cooldown, d.mailW
 	f := &billingFace{}
 
 	auth := proxy.NewAuth(repos.Keys, repos.Users, repos.ManagementKeys, log, cfg.Billing.Enabled)
@@ -182,13 +217,14 @@ func newBillingFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *hea
 		initCancel()
 		// 前向槽写入点（唯一允许的那一个）：retention 的容量处置回调在运行期读
 		// infraFace.supplierSnap；本写入发生在装配期、早于 wm.StartAll。
-		in.supplierSnap = supplier.NewSupplierSnapshot(supplierViewStaleThreshold)
-		supplierViewLoader := supplier.NewViewLoader(supplier.ViewConfig{Interval: cfg.Billing.BalanceRefreshInterval}, suppRepo, in.supplierSnap, log)
+		supplierSnap := supplier.NewSupplierSnapshot(supplierViewStaleThreshold)
+		d.supplierSnap.set(supplierSnap)
+		supplierViewLoader := supplier.NewViewLoader(supplier.ViewConfig{Interval: cfg.Billing.BalanceRefreshInterval}, suppRepo, supplierSnap, log)
 		f.supplierViewLoader = supplierViewLoader
 		// 三态观测注入（typed observation；§4.4/A13④）——否则「功能开了但从未装载
 		// 成功」在 ops 面不可见。
 		supplierViewLoader.SetObsProvider(func(now time.Time) supplier.SupplierSnapshotObs {
-			return in.supplierSnap.Obs(now)
+			return supplierSnap.Obs(now)
 		})
 	}
 	// 支付协议注册表（spec 支付网关 v2 §4，N53–N55）：清单**只增不减**——下线协议
