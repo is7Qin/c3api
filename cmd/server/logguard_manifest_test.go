@@ -33,9 +33,10 @@ var logGuardAllowlist = map[string]int{
 }
 
 // TestLogGuardManifest 扫全仓非测试源码，要求 `log != nil` 守卫的多重集与
-// 冻结表完全一致：少了不报（说明又清掉一条，是好事，但请同步删表项），多了必红。
+// 冻结表**完全一致**：多了必红（有人又加了一层“空 logger 会 panic”的旧认知），
+// 少了也必红（守卫被清掉但表项没删——不清理会让表逐渐变成“历史残留”。）。
 func TestLogGuardManifest(t *testing.T) {
-	root := filepath.Join("..", "..")
+	root := repoRoot(t)
 	got := map[string]int{}
 
 	for _, dir := range []string{"internal", "cmd"} {
@@ -77,15 +78,41 @@ func TestLogGuardManifest(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	var extra []string
+	var drift []string
+	// 多了 / 数量不符。
 	for k, n := range got {
 		if logGuardAllowlist[k] != n {
-			extra = append(extra, k+"  got="+itoa(n)+" want="+itoa(logGuardAllowlist[k]))
+			drift = append(drift, k+"  got="+itoa(n)+" want="+itoa(logGuardAllowlist[k]))
 		}
 	}
-	sort.Strings(extra)
-	require.Empty(t, extra,
-		"出现了未登记的 `log != nil` 守卫：空 logger 已静默，请直接打日志；若确需保留（参数含副作用调用），把该行登记进 logGuardAllowlist 并写明理由")
+	// 少了（白名单残留）：删了源码守卫却没删表项。不查这一向，表会越积越脏，
+	// 下一个人会以为那些守卫还在。
+	for k, want := range logGuardAllowlist {
+		if got[k] == 0 {
+			drift = append(drift, k+"  got=0 want="+itoa(want)+"（守卫已删，请同步删表项）")
+		}
+	}
+	sort.Strings(drift)
+	require.Empty(t, drift,
+		"`log != nil` 守卫与冻结表不一致：空 logger 已静默，新增守卫请先确认它不是“怕 panic”；若确实因为日志参数含副作用调用而必须保留，把该行登记进 logGuardAllowlist 并写明理由")
+}
+
+// repoRoot 从当前测试目录向上找到含 go.mod 的目录，不依赖写死的 ../..。
+// go test 的 cwd 就是包目录，但「相对层级」会随包移动而失效；向上找根更稳。
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	require.NoError(t, err)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("找不到仓库根（从 %s 向上未遇 go.mod）", dir)
+		}
+		dir = parent
+	}
 }
 
 // hasLogNilCmp 判断一行是否含 `\blog\b != nil`（小写 log，排除 errlog 一类后缀）。
