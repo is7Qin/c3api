@@ -35,6 +35,9 @@ const (
 	// template_ext.upstream_paths）。支持全部 6 种格式；路径未配置时回落官方
 	// 默认端点，因此行为与 api_key 在未配置路径时完全一致。
 	TypeCustom Type = "custom"
+	// TypeBPS BPS desktop OAuth account. BPS owns its endpoint, profile and
+	// OAuth credential through account_ext; it is deliberately not Codex.
+	TypeBPS Type = "bps"
 )
 
 // Valid 类型是否已注册可用的凭据类型（模板主列 credential_type 全量：api_key
@@ -42,7 +45,7 @@ const (
 // 空串）→ false。
 func (t Type) Valid() bool {
 	switch t {
-	case TypeAPIKey, TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom:
+	case TypeAPIKey, TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom, TypeBPS:
 		return true
 	}
 	return false
@@ -52,7 +55,7 @@ func (t Type) Valid() bool {
 // 表达静态 Key 语义）。
 func (t Type) ValidTemplateExt() bool {
 	switch t {
-	case TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom:
+	case TypeResponsesSpecial, TypeCodexOAuth, TypeCodexPAT, TypeCustom, TypeBPS:
 		return true
 	}
 	return false
@@ -61,7 +64,7 @@ func (t Type) ValidTemplateExt() bool {
 // ValidAccountExt 账号 ext 子表可用类型（账号只两种 codex 类型）。
 func (t Type) ValidAccountExt() bool {
 	switch t {
-	case TypeCodexOAuth, TypeCodexPAT:
+	case TypeCodexOAuth, TypeCodexPAT, TypeBPS:
 		return true
 	}
 	return false
@@ -69,6 +72,34 @@ func (t Type) ValidAccountExt() bool {
 
 // IsCodex codex 号池类型（oauth / pat）：鉴权走 SDK；请求格式限定 resp/resp-ws。
 func (t Type) IsCodex() bool { return t == TypeCodexOAuth || t == TypeCodexPAT }
+
+// IsBPS reports the independent BPS OAuth provider. It intentionally does not
+// alias IsCodex: BPS has different identity, profile and transport semantics.
+func (t Type) IsBPS() bool { return t == TypeBPS }
+
+// IsResponsesProvider reports providers backed by a Responses-native SDK.
+func (t Type) IsResponsesProvider() bool { return t.IsCodex() || t.IsBPS() }
+
+// UsesAccountExt reports credential types whose secret/profile lives in an
+// account extension rather than the static upstream_key column.
+func (t Type) UsesAccountExt() bool { return t.IsCodex() || t.IsBPS() }
+
+// UsesStaticKey reports providers that require the account upstream_key.
+func (t Type) UsesStaticKey() bool {
+	return t == TypeAPIKey || t == TypeResponsesSpecial || t == TypeCustom
+}
+
+// RequiresFixedEndpoint reports providers that own their upstream endpoint.
+func (t Type) RequiresFixedEndpoint() bool { return t.IsCodex() || t.IsBPS() }
+
+// SupportsResponsesFormat reports whether a provider may serve one of the two
+// standard Responses formats. BPS is deliberately restricted to these formats.
+func (t Type) SupportsResponsesFormat(format string) bool {
+	if format != "openai-responses" && format != "openai-responses-ws" {
+		return false
+	}
+	return t.IsResponsesProvider() || t == TypeResponsesSpecial || t == TypeCustom
+}
 
 // CredentialInput 凭据取用输入：api_key 类型用 APIKey（调度 Selection 携带
 // 的静态 Key）；oauth 等类型后续按 AccountID 从凭据扩展表加载。

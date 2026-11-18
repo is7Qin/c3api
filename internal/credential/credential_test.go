@@ -11,6 +11,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBPSProviderCapabilities(t *testing.T) {
+	require.True(t, TypeBPS.Valid())
+	require.True(t, TypeBPS.ValidTemplateExt())
+	require.True(t, TypeBPS.ValidAccountExt())
+	require.True(t, TypeBPS.IsBPS())
+	require.True(t, TypeBPS.IsResponsesProvider())
+	require.True(t, TypeBPS.UsesAccountExt())
+	require.False(t, TypeBPS.UsesStaticKey())
+	require.True(t, TypeBPS.RequiresFixedEndpoint())
+	require.True(t, TypeBPS.SupportsResponsesFormat("openai-responses"))
+	require.True(t, TypeBPS.SupportsResponsesFormat("openai-responses-ws"))
+	require.False(t, TypeBPS.SupportsResponsesFormat("openai-chat"))
+	require.False(t, TypeBPS.IsCodex())
+}
+
 func TestTypeValid(t *testing.T) {
 	require.True(t, TypeAPIKey.Valid())
 	require.False(t, Type("").Valid(), "空类型不合法")
