@@ -137,6 +137,11 @@ func TestBPSPrepareFailsClosedForMissingStoreProfileAndWrongProvider(t *testing.
 	require.ErrorIs(t, err, credential.ErrUnsupported)
 	_, err = adapter.Prepare(context.Background(), BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponses})
 	require.ErrorIs(t, err, ErrBPSEgressRequired)
+	_, err = adapter.Prepare(context.Background(), BPSRequestSource{
+		Credential: cred, Format: domain.FormatOpenAIResponses,
+		Egress: egress.NewPool(&http.Client{}).Direct(),
+	})
+	require.ErrorIs(t, err, ErrBPSEgressRequired, "nil RoundTripper must not use http.DefaultTransport")
 }
 
 func TestBPSTokenStoreAdapterFencesUpstreamAndOwnerK(t *testing.T) {

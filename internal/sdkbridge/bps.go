@@ -204,7 +204,7 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 	client := source.Egress.HTTP()
 	rt := client.Transport
 	if rt == nil {
-		rt = http.DefaultTransport
+		return nil, ErrBPSEgressRequired
 	}
 	owner := fmt.Sprintf("c3-account:%d", cred.AccountID)
 	key := BPSTokenKey{
