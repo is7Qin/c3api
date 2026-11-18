@@ -32,9 +32,7 @@ func (s *Service) CreateManagementKey(ctx context.Context, ownerID int64, name s
 	}
 	s.registerManagementKey(created)
 	s.publish(ctx, notify.Change{ManagementKeys: true})
-	if s.log != nil {
-		s.log.Info("management key created", logx.Int64("id", created.ID), logx.Int64("user_id", ownerID))
-	}
+	s.log.Info("management key created", logx.Int64("id", created.ID), logx.Int64("user_id", ownerID))
 	return created, nil
 }
 

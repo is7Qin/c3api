@@ -103,7 +103,7 @@ func TestMailConfigAndTLSMapping(t *testing.T) {
 		mw := newTestMailWorker(svc)
 		require.NoError(t, mw.Start(context.Background()))
 		t.Cleanup(func() { _ = mw.Close(context.Background()) })
-		svc.mailEnqueue = mw.Enqueue
+		svc.mailEnqueue = mw
 		require.ErrorIs(t, svc.SendRegisterCode(context.Background(), "a@b.com"), ErrMailNotConfigured)
 
 		setMailSettings(t, fs, svc, map[string]string{

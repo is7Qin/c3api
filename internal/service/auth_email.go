@@ -55,15 +55,13 @@ func (s *Service) SendRegisterCode(ctx context.Context, email string) error {
 	if s.mailEnqueue == nil {
 		return ErrMailNotConfigured
 	}
-	if err := s.mailEnqueue(MailSendTask{
+	if err := s.mailEnqueue.Enqueue(MailSendTask{
 		To:      email,
 		Purpose: domain.EmailTemplateRegisterCode,
 		Code:    plain,
 		TTLMin:  int(domain.EmailCodeTTL / time.Minute),
 	}); err != nil {
-		if s.log != nil {
-			s.log.Error("register code enqueue failed", logx.String("email", email), logx.Error(err))
-		}
+		s.log.Error("register code enqueue failed", logx.String("email", email), logx.Error(err))
 		return err
 	}
 	return nil
@@ -92,9 +90,7 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 	}
 	plain, sha, err := generateCode()
 	if err != nil {
-		if s.log != nil {
-			s.log.Error("generate reset code failed", logx.Error(err))
-		}
+		s.log.Error("generate reset code failed", logx.Error(err))
 		return nil
 	}
 	expires := time.Now().Add(domain.EmailCodeTTL)
@@ -105,7 +101,7 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 		return nil
 	}
 	if s.mailEnqueue != nil {
-		_ = s.mailEnqueue(MailSendTask{
+		_ = s.mailEnqueue.Enqueue(MailSendTask{
 			To:      email,
 			Purpose: domain.EmailTemplateResetCode,
 			Code:    plain,

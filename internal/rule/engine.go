@@ -521,9 +521,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			if sink != nil {
 				if err := sink.Throttle(ev, *r.Then.Throttle); err != nil {
 					e.countPersistFailure(err)
-					if e.log != nil {
-						e.log.Warn("health throttle failed", logx.Error(err))
-					}
+					e.log.Warn("health throttle failed", logx.Error(err))
 				}
 			}
 			e.matched.Add(1)
@@ -535,9 +533,7 @@ func (e *RuleEngine) HandleEvent(ctx context.Context, ev Event) {
 			if sink != nil {
 				if err := sink.FailAccount(ev); err != nil {
 					e.countPersistFailure(err)
-					if e.log != nil {
-						e.log.Warn("health fail-account failed", logx.Error(err))
-					}
+					e.log.Warn("health fail-account failed", logx.Error(err))
 				}
 			}
 			e.matched.Add(1)

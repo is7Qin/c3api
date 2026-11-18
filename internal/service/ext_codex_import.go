@@ -279,9 +279,7 @@ func (s *Service) importCodexAccounts(ctx context.Context, rows []codexImportRow
 		}
 		gs, gErr := s.store.GetAccountGroups(ctx, out.AccountID)
 		if gErr != nil {
-			if s.log != nil {
-				s.log.Warn("codex import: account groups query failed", logx.Int64("account_id", out.AccountID), logx.Error(gErr))
-			}
+			s.log.Warn("codex import: account groups query failed", logx.Int64("account_id", out.AccountID), logx.Error(gErr))
 			continue
 		}
 		gids = append(gids, gs...)

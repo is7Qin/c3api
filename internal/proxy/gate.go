@@ -396,10 +396,8 @@ func (g *concurrencyGate) reclaim(meta domain.KeyMeta, q *keyQuota) bool {
 	used, err := g.reclaimer.QuotaUsed(ctx, meta.KeyID)
 	if err != nil {
 		q.retryAt.Store(time.Now().Add(quotaReclaimRetry).UnixNano())
-		if g.log != nil {
-			g.log.Warn("quota budget reclaim failed (read quota_used)", logx.Error(err),
-				logx.Int64("key_id", meta.KeyID))
-		}
+		g.log.Warn("quota budget reclaim failed (read quota_used)", logx.Error(err),
+			logx.Int64("key_id", meta.KeyID))
 		// 软门禁：DB 错不误伤——本请求放行，预算补 1（退避期内其余到达 429）
 		q.budget.Store(q.consumed.Load() + 1)
 		return true

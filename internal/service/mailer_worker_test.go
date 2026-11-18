@@ -95,7 +95,7 @@ func TestMailWorkerRetrySuccessAfterTwoFails(t *testing.T) {
 	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.mailEnqueue = mw.Enqueue
+	svc.mailEnqueue = mw
 
 	stub := newFlakyStub(t, 2)
 	port := flakyPort(stub)
@@ -141,7 +141,7 @@ func TestMailWorkerAllFailFailedAndLastErr(t *testing.T) {
 	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.mailEnqueue = mw.Enqueue
+	svc.mailEnqueue = mw
 
 	stub := newSMTPStub(t, true) // hang -> timeout each attempt
 	_ = stub

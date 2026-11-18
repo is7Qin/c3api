@@ -149,7 +149,7 @@ func (s *Scheduler) compileOnce() {
 		// Not a fallback and not a success: no decision is produced, so the
 		// compile-ok / incident-eval stamps stay untouched.
 		s.skipCount.Add(1)
-		if s.log != nil && s.log.DebugEnabled() {
+		if s.log.DebugEnabled() {
 			total := 0
 			if target.routeIndex != nil {
 				total = target.routeIndex.totalRoutes
@@ -179,9 +179,7 @@ func (s *Scheduler) compileOnce() {
 	}
 	if err != nil {
 		s.compileErrMs.Store(s.timeNow().UnixMilli())
-		if s.log != nil {
-			s.log.Warn("routing compile failed; retaining previous decision view", logx.Error(err))
-		}
+		s.log.Warn("routing compile failed; retaining previous decision view", logx.Error(err))
 		return
 	}
 	s.compileOKMs.Store(s.timeNow().UnixMilli())

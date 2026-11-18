@@ -105,7 +105,7 @@ func (h *AdminAPI) assembleUpstream(ctx context.Context, items []domain.AccountU
 			// 误标 auth_expired 比多打一次上游更糟；C 增长已由失效上报幂等守卫
 			// 兜住，故此处 fail-open 安全）。
 			frozen, source, ferr := h.svc.AccountUsageFrozen(ctx, items[i].AccountID)
-			if ferr != nil && ctx.Err() == nil && h.log != nil {
+			if ferr != nil && ctx.Err() == nil {
 				h.log.Warn("accounts usage: frozen-state lookup failed", logx.Int64("account_id", items[i].AccountID), logx.Error(ferr))
 			}
 			if ferr == nil && frozen {
@@ -128,7 +128,7 @@ func (h *AdminAPI) assembleUpstream(ctx context.Context, items []domain.AccountU
 			default:
 				// 未知上游错误 → 不误标：null/null（ctx 取消为请求已死信号，
 				// 不记 Warn）。
-				if ctx.Err() == nil && h.log != nil {
+				if ctx.Err() == nil {
 					h.log.Warn("accounts usage: account upstream lookup failed", logx.Int64("account_id", items[i].AccountID), logx.Error(err))
 				}
 			}

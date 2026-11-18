@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/is7qin/c3api/internal/billing"
@@ -36,6 +37,14 @@ import (
 )
 
 // billingFace 是阶段 4 的产物。
+// 编译期断言：三个消费方接口由生产实现满足。放在这里而不是实现包里——
+// 依赖方向是「实现方不必知道消费方」（service 定义接口，scheduler /
+// MailWorker / Cooldown 各自实现），所以断言只能在装配点。
+var (
+	_ service.MailEnqueuer    = (*service.MailWorker)(nil)
+	_ service.CooldownClearer = (*notification.Cooldown)(nil)
+)
+
 type billingFace struct {
 	auth    *proxy.Auth
 	clients *aiclient.Factory
@@ -195,7 +204,9 @@ func newBillingFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *hea
 		fatalf("payment registry: %v", err)
 	}
 	f.paymentReg = paymentReg
-	svc := service.New(service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Auth: auth, Log: log, EmailCodeStore: verification.New(rdb),
+	// Deps 先落到具名变量（不是内联字面量）：Validate 要能在 New 之前拿到可读错误，
+	// Features 要能打一行「这次开了什么」。这两行的顺序是契约——先校验再构造。
+	deps := service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Auth: auth, Log: log, EmailCodeStore: verification.New(rdb),
 		// codex 设备码登录：无服务端会话（发起返回凭据、完成时一次性轮询落库），
 		// 因此只需协议面装配，无 Redis 依赖。
 		CodexLogin:         sdkbridge.NewCodexLogin(),
@@ -209,17 +220,23 @@ func newBillingFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *hea
 			ErrLog: cfg.Usage.ErrLogRetentionDays,
 			Stats:  cfg.Usage.StatsRetentionDays,
 		},
-		ClearBalanceWarningCooldown:     bwCooldown.Clear,
+		ClearBalanceWarningCooldown:     bwCooldown,
 		RecoverProber:                   runtimeHealth,
 		RecoverLatch:                    latchStore,
 		RecoverHealthClear:              runtimeHealth,
 		DefaultMaxConcurrency:           cfg.Scheduler.DefaultMaxConcurrency,
 		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
 		SupplierThawGranularity:         cfg.Supplier.ThawGranularity,
-		CompileNotify:                   sched.RequestCompile,
-		MailEnqueue:                     mailW.Enqueue,
+		CompileNotify:                   sched,
+		MailEnqueue:                     mailW,
 		PaymentRegistry:                 paymentReg,
-		SettingsSnapshot:                settingsSnap})
+		SettingsSnapshot:                settingsSnap,
+	}
+	if err := deps.Validate(); err != nil {
+		fatalf("service deps: %v", err)
+	}
+	log.Info("service assembly", logx.String("features", strings.Join(deps.Features(), ",")))
+	svc := service.New(deps)
 	f.svc = svc
 	// 快照注册表装配（统一生命周期）：五路快照（auth/scheduler/rules/pricing/
 	// balances——billing 关闭不注册）登记 scope 与 Reload。注册只登记元数据

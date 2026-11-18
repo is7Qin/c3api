@@ -177,7 +177,7 @@ func newInfra(cfg *config.Config, log *logx.Logger) *infraFace {
 	// fail-safe），mailW 与 svc 同源共享该指针（NOTIFY 只刷一处，无分叉）；
 	// mailW.Enqueue 经 Deps.MailEnqueue 一次注入，零 Set* 回填。
 	settingsSnap := settingssnap.New(repos, log)
-	if err := settingsSnap.Load(context.Background()); err != nil && log != nil {
+	if err := settingsSnap.Load(context.Background()); err != nil {
 		log.Warn("settings snapshot initial load failed", logx.Error(err))
 	}
 	f.settingsSnap = settingsSnap

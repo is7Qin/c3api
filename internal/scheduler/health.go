@@ -560,9 +560,7 @@ func (h *RuntimeHealth) Close(ctx context.Context) error {
 			select {
 			case <-d:
 			case <-ctx.Done():
-				if h.log != nil {
-					h.log.Warn("runtime-health close timeout, loop still running", logx.Error(ctx.Err()))
-				}
+				h.log.Warn("runtime-health close timeout, loop still running", logx.Error(ctx.Err()))
 				return fmt.Errorf("health: close join incomplete: %w", ctx.Err())
 			}
 		}
@@ -1253,9 +1251,7 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 			if cnt >= 2 {
 				if _, err := h.MarkReady(ctx, key, curGen, 30*time.Second); err != nil {
 					h.probeErrors.Add(1)
-					if h.log != nil {
-						h.log.Warn("health probe MarkReady failed", logx.Int64("account_id", key.AccountID), logx.Error(err))
-					}
+					h.log.Warn("health probe MarkReady failed", logx.Int64("account_id", key.AccountID), logx.Error(err))
 				}
 				h.mu.Lock()
 				delete(h.successCount, field)
@@ -1270,9 +1266,7 @@ func (h *RuntimeHealth) probeTick(ctx context.Context) {
 			if !errors.Is(err, ErrProbeStaleRevision) {
 				if _, terr := h.Throttle(ctx, key, StateOPEN, 30*time.Second); terr != nil {
 					h.probeErrors.Add(1)
-					if h.log != nil {
-						h.log.Warn("health probe reopen throttle failed", logx.Int64("account_id", key.AccountID), logx.Error(terr))
-					}
+					h.log.Warn("health probe reopen throttle failed", logx.Int64("account_id", key.AccountID), logx.Error(terr))
 				}
 			}
 		}

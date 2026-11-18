@@ -50,7 +50,7 @@ func (s *Service) reloadPricingAndNotifyCompiler(ctx context.Context) {
 	// 相等性唯一主人是编译道（scheduler.EqualResolvedPrices）：service 不再
 	// 手写对偶比较，字段增减自动跟随。
 	if !maps.EqualFunc(before, after, scheduler.EqualResolvedPrices) {
-		s.compileNotify()
+		s.compileNotify.RequestCompile()
 	}
 	// 跨实例传播不依赖上面的变化检测：同值写本地静默编译，但对端实例仍需
 	// 重载（快照内容一致则重载无害）。
@@ -76,9 +76,7 @@ func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, erro
 	for offset := 0; ; offset += pricingReloadPage {
 		rows, _, err := s.store.ListPriceEntries(ctx, repository.ListQuery{Limit: pricingReloadPage, Offset: offset, Sort: "model", Order: "asc"}, nil, nil, nil, "")
 		if err != nil {
-			if s.log != nil {
-				s.log.Warn("pricing snapshot reload failed", logx.Error(err))
-			}
+			s.log.Warn("pricing snapshot reload failed", logx.Error(err))
 			return nil, err
 		}
 		all = append(all, rows...)
@@ -88,9 +86,7 @@ func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, erro
 	}
 	variants, err := s.store.ListAllPriceVariants(ctx)
 	if err != nil {
-		if s.log != nil {
-			s.log.Warn("pricing variant snapshot reload failed", logx.Error(err))
-		}
+		s.log.Warn("pricing variant snapshot reload failed", logx.Error(err))
 		return nil, err
 	}
 	entriesMap := make(map[string]*domain.PriceEntry, len(all))

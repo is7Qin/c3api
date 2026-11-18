@@ -32,7 +32,7 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 	counts := map[string]int{
 		"ruleEngine.SetHealthSink":  0,
 		"ruleEngine.SetPersistFunc": 0,
-		"service.New:RecoverProber": 0,
+		"service.New:identArg":      0,
 	}
 	// 旧装配残留：HealthController 构造与 sched 派生锁存一律不得出现。
 	absentSels := map[string]int{
@@ -53,6 +53,8 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 	}
 	firstOffset := map[string]token.Pos{}
 	argCounts := map[string][]int{}
+	// newArgName 记录 service.New 收到的变量名，供「关联性钉」使用。
+	var newArgName string
 
 	// 视图 1：整包——缺席钉与唯一性钉（RecoverProber 注入、参量钉）。
 	ast.Inspect(pkg, func(n ast.Node) bool {
@@ -83,23 +85,60 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 				argCounts[want] = append(argCounts[want], len(ce.Args))
 			}
 		}
-		// service.New 的 Deps 复合字面量中 RecoverProber 字段出现次数。
-		if recv.Name == "service" && sel.Sel.Name == "New" {
-			for _, arg := range ce.Args {
-				ast.Inspect(arg, func(m ast.Node) bool {
-					kv, ok := m.(*ast.KeyValueExpr)
-					if !ok {
-						return true
-					}
-					if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "RecoverProber" {
-						counts["service.New:RecoverProber"]++
-					}
-					return true
-				})
+		// service.New 必须与 Deps 字面量分离：装配层要先 deps.Validate() 再
+		// service.New(deps)（spec 2026-11-18 §5.2）。内联字面量会让 Validate 无
+		// 值可引用，因此这里钉三件事——New 的实参是具名变量、该变量由 service.Deps
+		// 字面量赋值、且这个字面量里带着 RecoverProber（关联性钉，见下方 depsIdents）。
+		if recv.Name == "service" && sel.Sel.Name == "New" && len(ce.Args) == 1 {
+			if id, ok := ce.Args[0].(*ast.Ident); ok {
+				counts["service.New:identArg"]++
+				newArgName = id.Name
 			}
 		}
 		return true
 	})
+	// Deps 字面量 → 变量名，以及该字面量是否带 RecoverProber。
+	//
+	// 为什么不能只数全包的 RecoverProber 出现次数：那样可以构造「重名但传错」的
+	// 装配——包里另有一个带 RecoverProber 的 Deps 字面量，而交给 New 的那个没有，
+	// 计数照样是 1。必须把「New 收的变量」和「字面量里有没有该字段」连起来判。
+	depsIdents := map[string]bool{}
+	ast.Inspect(pkg, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+		lhs, ok := as.Lhs[0].(*ast.Ident)
+		if !ok {
+			return true
+		}
+		lit, ok := as.Rhs[0].(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if pkgIdent, ok := sel.X.(*ast.Ident); !ok || pkgIdent.Name != "service" || sel.Sel.Name != "Deps" {
+			return true
+		}
+		depsIdents[lhs.Name] = litHasKey(lit, "RecoverProber")
+		return true
+	})
+	// Deps 的 RecoverProber 字段全包出现次数（唯一性钉，跨文件生效）。
+	kvProber := 0
+	ast.Inspect(pkg, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "RecoverProber" {
+			kvProber++
+		}
+		return true
+	})
+
 	// 视图 2：wiring_health.go——六站构造序的主语所在文件。
 	ast.Inspect(healthFn, func(n ast.Node) bool {
 		ce, ok := n.(*ast.CallExpr)
@@ -137,7 +176,14 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 	for key, n := range absentRecvSels {
 		require.Equal(t, 0, n, "%s 必须缺席（main 自持 latch，不再派生）", key)
 	}
-	require.Equal(t, 1, counts["service.New:RecoverProber"], "service.New:RecoverProber 必须恰好接线一次")
+	require.Equal(t, 1, kvProber, "RecoverProber 必须恰好接线一次")
+	// 关联性钉：New 收的变量必须就是带 RecoverProber 的那个 Deps 字面量。
+	// 只数「全包出现一次」不够——另造一个带该字段的字面量、交给 New 另一个没有
+	// 该字段的字面量，计数依旧为 1。
+	require.Len(t, depsIdents, 1, "装配层必须恰有一个 service.Deps 字面量")
+	require.True(t, depsIdents[newArgName],
+		"service.New 的实参 %q 必须来自含 RecoverProber 的 Deps 字面量", newArgName)
+	require.Equal(t, 1, counts["service.New:identArg"], "service.New 必须收具名 Deps 变量（先 Validate 再构造）")
 	// 构造序钉：六站全在且严格递增。
 	for _, key := range orderKeys {
 		require.Contains(t, firstOffset, key, "%s 必须在 newHealthFace 中构造（顺序钉主语被拆到其它文件 ⇒ 返工）", key)
@@ -153,4 +199,18 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 	// 参量钉：rule.New 恰 5 参、scheduler.New 恰 7 参（各恰好一次调用）。
 	require.Equal(t, []int{5}, argCounts["rule.New"], "rule.New 必须恰 5 参（cfg,store,log,sink,persist）")
 	require.Equal(t, []int{7}, argCounts["scheduler.New"], "scheduler.New 必须恰 7 参（cfg,loader,rule,h,log,latch,hub）")
+}
+
+// litHasKey 判断复合字面量里有没有名为 name 的字段。
+func litHasKey(lit *ast.CompositeLit, name string) bool {
+	for _, el := range lit.Elts {
+		kv, ok := el.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+		if id, ok := kv.Key.(*ast.Ident); ok && id.Name == name {
+			return true
+		}
+	}
+	return false
 }

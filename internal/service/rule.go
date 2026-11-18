@@ -74,9 +74,7 @@ func (s *Service) CreateRule(ctx context.Context, in RuleInput) (*domain.Rule, e
 	}
 	s.reloadRules(ctx)
 	s.publish(ctx, notify.Change{Rules: true})
-	if s.log != nil {
-		s.log.Info("rule created", logx.Int64("id", id), logx.String("name", in.Name))
-	}
+	s.log.Info("rule created", logx.Int64("id", id), logx.String("name", in.Name))
 	return s.getRule(ctx, id)
 }
 
@@ -169,7 +167,7 @@ func (s *Service) reloadRules(ctx context.Context) {
 	if s.ruleReload == nil {
 		return
 	}
-	if err := s.ruleReload.Reload(context.WithoutCancel(ctx)); err != nil && s.log != nil {
+	if err := s.ruleReload.Reload(context.WithoutCancel(ctx)); err != nil {
 		s.log.Warn("rule engine reload failed", logx.Error(err))
 	}
 }

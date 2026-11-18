@@ -143,7 +143,7 @@ func (w *SyncWorker) Sync(ctx context.Context) error {
 	if w.reload != nil {
 		w.reload()
 	}
-	if err == nil && w.log != nil {
+	if err == nil {
 		w.log.Info("pricing: sync done",
 			logx.Int("rows", len(res.PriceEntries)),
 			logx.Int("variants", len(res.Variants)),
@@ -160,6 +160,11 @@ func (w *SyncWorker) Sync(ctx context.Context) error {
 func (w *SyncWorker) syncOnce(ctx context.Context) {
 	start := w.now()
 	if err := w.Sync(ctx); err != nil {
+		// 编译器保留 guard（P0 例外）：日志参数含 w.now()/w.settings.* 调用。删掉
+		// guard 会让这些调用从「有条件」变成「无条件」，测试夹具（seqSettings、
+		// 递增时钟）会因此多消费一格序列——
+		// TestCronLoopInvalidCronRetry 就是这么红的。生产路径 log 恒非 nil，
+		// 保留 guard 的行为与删除后完全一致。
 		if w.log != nil {
 			w.log.Warn("pricing: sync failed",
 				logx.String("url", w.settings.PriceSourceURL()),
@@ -175,6 +180,9 @@ func (w *SyncWorker) cronLoop(ctx context.Context) {
 	for {
 		d, err := w.nextDelay()
 		if err != nil {
+			// 编译器保留 guard（P0 例外）：参数里的 w.settings.PriceSyncCron() 是
+			// 有状态读（seqSettings 按调用序返回），删 guard 会让它每轮多读一次，
+			// 打乱夹具序列。理由同 syncOnce。
 			if w.log != nil {
 				w.log.Warn("pricing: invalid price_sync_cron",
 					logx.String("cron", w.settings.PriceSyncCron()), logx.Error(err))

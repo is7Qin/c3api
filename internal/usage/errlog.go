@@ -171,11 +171,9 @@ func (w *ErrLogWorker) enqueue(q chan *domain.UsageLog, l *domain.UsageLog, drop
 	default:
 		n := dropped.Add(1)
 		if n >= threshold && warned.CompareAndSwap(false, true) {
-			if w.log != nil {
-				w.log.Warn("errlog queue full, dropping (storm sampling)",
-					logx.Int64("dropped", n), logx.Int64("threshold", threshold),
-					logx.Int("queue_cap", cap(q)))
-			}
+			w.log.Warn("errlog queue full, dropping (storm sampling)",
+				logx.Int64("dropped", n), logx.Int64("threshold", threshold),
+				logx.Int("queue_cap", cap(q)))
 		}
 	}
 }
@@ -200,11 +198,9 @@ func (w *ErrLogWorker) flush() {
 	if err := w.writer.InsertBatch(ctx, batch); err != nil {
 		w.refillExempt(exempts)   // 豁免行回灌重试（保 provenance）
 		w.dropBatch(nil, rejects) // 拒绝行按采样语义丢弃（计数入类）
-		if w.log != nil {
-			w.log.Warn("errlog batch insert failed, exempt requeued for retry",
-				logx.Error(err), logx.String("request_id", firstRequestID(exempts, rejects)),
-				logx.Int("exempt_requeued", len(exempts)), logx.Int("reject_dropped", len(rejects)))
-		}
+		w.log.Warn("errlog batch insert failed, exempt requeued for retry",
+			logx.Error(err), logx.String("request_id", firstRequestID(exempts, rejects)),
+			logx.Int("exempt_requeued", len(exempts)), logx.Int("reject_dropped", len(rejects)))
 	} else {
 		w.inserted.Add(int64(len(batch)))
 	}
@@ -289,9 +285,7 @@ func (w *ErrLogWorker) Close(ctx context.Context) error {
 			select {
 			case <-w.loopDone:
 			case <-ctx.Done():
-				if w.log != nil {
-					w.log.Warn("errlog close: loop did not exit in time")
-				}
+				w.log.Warn("errlog close: loop did not exit in time")
 			}
 		}
 		var flushed int64
@@ -307,10 +301,8 @@ func (w *ErrLogWorker) Close(ctx context.Context) error {
 				w.dropBatch(exempts, rejects)
 				w.droppedExempt.Add(int64(len(w.exemptQ))) // 双轨行剩余（豁免队列）
 				w.droppedReject.Add(int64(len(w.rejectQ))) // 拒绝行剩余（普通队列）
-				if w.log != nil {
-					w.log.Warn("errlog close: shutdown budget exceeded, truncated drain",
-						logx.Int64("flushed_logs", flushed), logx.Int64("remaining_logs", int64(remaining)))
-				}
+				w.log.Warn("errlog close: shutdown budget exceeded, truncated drain",
+					logx.Int64("flushed_logs", flushed), logx.Int64("remaining_logs", int64(remaining)))
 				return
 			}
 			batch := append(exempts, rejects...) // 复用豁免切片预留容量（len ≤ BatchSize，零新分配）
@@ -324,21 +316,17 @@ func (w *ErrLogWorker) Close(ctx context.Context) error {
 					}
 				}
 				w.dropBatch(nil, rejects) // 拒绝行按采样语义丢弃（计数入类）
-				if w.log != nil {
-					w.log.Warn("errlog close drain batch failed",
-						logx.Error(err), logx.String("request_id", firstRequestID(exempts, rejects)))
-				}
+				w.log.Warn("errlog close drain batch failed",
+					logx.Error(err), logx.String("request_id", firstRequestID(exempts, rejects)))
 				continue
 			}
 			w.inserted.Add(int64(len(batch)))
 			flushed += int64(len(batch))
 		}
-		if w.log != nil {
-			w.log.Info("errlog worker closed",
-				logx.Int64("inserted_logs", w.inserted.Load()),
-				logx.Int64("dropped_reject", w.droppedReject.Load()),
-				logx.Int64("dropped_exempt", w.droppedExempt.Load()))
-		}
+		w.log.Info("errlog worker closed",
+			logx.Int64("inserted_logs", w.inserted.Load()),
+			logx.Int64("dropped_reject", w.droppedReject.Load()),
+			logx.Int64("dropped_exempt", w.droppedExempt.Load()))
 	})
 	return nil
 }

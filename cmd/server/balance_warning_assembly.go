@@ -60,10 +60,8 @@ func statsProviders(candidates []worker.Worker, log *logx.Logger) []handler.Stat
 			providers = append(providers, provider)
 			continue
 		}
-		if log != nil {
-			log.Warn("worker does not implement StatsProvider, missing from /api/admin/ops/workers",
-				logx.String("worker", candidate.Name()))
-		}
+		log.Warn("worker does not implement StatsProvider, missing from /api/admin/ops/workers",
+			logx.String("worker", candidate.Name()))
 	}
 	return providers
 }

@@ -79,9 +79,7 @@ func (s *Scheduler) invalidateGroupsLocked(ids []int64, reclaim *poolReclaim) {
 		}
 		accs, err := s.loader.LoadGroupAccounts(ctx, gid)
 		if err != nil {
-			if s.log != nil {
-				s.log.Warn("group reload failed", logx.Int64("group_id", gid), logx.Error(err))
-			}
+			s.log.Warn("group reload failed", logx.Int64("group_id", gid), logx.Error(err))
 			s.reloadRequired = true
 			continue
 		}

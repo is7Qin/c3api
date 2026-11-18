@@ -43,7 +43,7 @@ func (s *Service) AccountUsageCredential(ctx context.Context, accountID int64) (
 		mapped := mapRepoErr(err)
 		// 非 ErrNotFound store 故障 → Warn + 透错（handler 侧记 null/null，
 		// 不误标上游问题；ctx 取消为请求已死信号，不记 Warn）。
-		if ctx.Err() == nil && s.log != nil {
+		if ctx.Err() == nil {
 			s.log.Warn("accounts usage: account upstream lookup failed", logx.Int64("account_id", accountID), logx.Error(mapped))
 		}
 		return nil, mapped

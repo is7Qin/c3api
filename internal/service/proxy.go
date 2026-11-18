@@ -96,9 +96,7 @@ func (s *Service) CreateProxy(ctx context.Context, in ProxyInput) (int64, error)
 		return 0, err
 	}
 	s.invalidateProxyPool(ctx)
-	if s.log != nil {
-		s.log.Info("proxy created", logx.Int64("id", id), logx.String("name", name))
-	}
+	s.log.Info("proxy created", logx.Int64("id", id), logx.String("name", name))
 	return id, nil
 }
 

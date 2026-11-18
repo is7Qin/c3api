@@ -64,9 +64,7 @@ func (s *Service) CreateKey(ctx context.Context, userID int64, name string, grou
 	// key 创建是多实例缺口（不进 invalidate）：其余实例鉴权快照需全量
 	// Reload 覆盖（v1 不做增量定向）。
 	s.publish(ctx, notify.Change{Keys: true})
-	if s.log != nil {
-		s.log.Info("key created", logx.Int64("id", created.ID), logx.Int64("user_id", userID), logx.String("name", name))
-	}
+	s.log.Info("key created", logx.Int64("id", created.ID), logx.Int64("user_id", userID), logx.String("name", name))
 	return created, nil
 }
 
@@ -224,9 +222,7 @@ func (s *Service) RotateKey(ctx context.Context, userID, keyID int64) (*domain.K
 		s.upsertKeyMetaInMemory(updated, user, g.ProtocolConverts) // 写后注册纯内存（不可失败）
 	}
 	s.publish(ctx, notify.Change{Keys: true}) // 轮换 = 旧明文失效 + 新明文注册 → 全量覆盖
-	if s.log != nil {
-		s.log.Info("key rotated", logx.Int64("id", keyID), logx.Int64("user_id", userID))
-	}
+	s.log.Info("key rotated", logx.Int64("id", keyID), logx.Int64("user_id", userID))
 	return updated, nil
 }
 

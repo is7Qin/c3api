@@ -147,7 +147,7 @@ func (h *AdminAPI) writeOrderErr(w http.ResponseWriter, err error) {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
-	if reason == domain.OrderFailReasonClosed && h.log != nil {
+	if reason == domain.OrderFailReasonClosed {
 		// closed 分支的拒绝必须留 ERROR 日志（§4-2/B11）：这是"已付款未入账"。
 		h.log.Error("orders: paid but order is closed (manual follow-up required)",
 			logx.String("reason", reason), logx.Error(err))

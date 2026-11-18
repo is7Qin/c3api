@@ -19,10 +19,15 @@ import (
 	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/internal/service"
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
 // codexFace 是阶段 5 的产物。
+// 编译期断言：路由编译触发面由 *scheduler.Scheduler 满足（P3 把 func 字段
+// 还原成消费方接口后，赋值点不再有编译器帮助暴露签名漂移）。
+var _ service.CompileTrigger = (*scheduler.Scheduler)(nil)
+
 type codexFace struct {
 	quotaResolvers *scheduler.QuotaResolvers
 	quotaW         *scheduler.QuotaWorker

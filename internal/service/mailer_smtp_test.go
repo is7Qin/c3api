@@ -127,7 +127,7 @@ func TestMailerTimeoutNeverRespondingStub(t *testing.T) {
 	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.mailEnqueue = mw.Enqueue
+	svc.mailEnqueue = mw
 	stub := newSMTPStub(t, true)
 	port := stubPort(stub)
 	setMailSettings(t, fs, svc, map[string]string{
@@ -154,7 +154,7 @@ func TestMailerErrNotConfiguredWhenDisabled(t *testing.T) {
 	mw := newTestMailWorker(svc)
 	require.NoError(t, mw.Start(context.Background()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
-	svc.mailEnqueue = mw.Enqueue
+	svc.mailEnqueue = mw
 	setMailSettings(t, fs, svc, map[string]string{
 		"mail.enabled": "false", "mail.smtp_host": "127.0.0.1", "mail.smtp_port": "2525", "mail.from_address": "from@example.com", "mail.tls": "none",
 		"signup_enabled": "true", "mail.register_verification": "true",

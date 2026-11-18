@@ -329,15 +329,11 @@ func (w *CreditWorker) batchLimit() int {
 }
 
 func (w *CreditWorker) warn(msg string, fields ...logx.Field) {
-	if w.log != nil {
-		w.log.Warn(msg, fields...)
-	}
+	w.log.Warn(msg, fields...)
 }
 
 func (w *CreditWorker) logInfo(msg string, fields ...logx.Field) {
-	if w.log != nil {
-		w.log.Info(msg, fields...)
-	}
+	w.log.Info(msg, fields...)
 }
 
 // CreditStats 观测面快照。

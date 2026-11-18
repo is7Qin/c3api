@@ -108,7 +108,7 @@ func (c *anthropicCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				oc.Commit = CommitResponseStarted
 			} else {
 				oc.Result = ResultFailed
-				if p.log != nil && f.ET != domain.ErrAbort {
+				if f.ET != domain.ErrAbort {
 					p.log.Warn("upstream stream aborted", logx.String("request_id", reqID))
 				}
 			}

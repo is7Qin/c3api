@@ -692,11 +692,9 @@ func (s *Service) CreateOrder(ctx context.Context, userID int64, in CreateOrderI
 		reason := domain.OrderFailReasonInternal
 		if closeErr := s.closeOrderAfterPayURLFailure(ctx, created.ID, &reason); closeErr != nil {
 			// 关单也失败 → 订单留 pending（TTL 兜底，不 panic、不回滚）。
-			if s.log != nil {
-				s.log.Error("payment: close order after pay url failure",
-					logx.String("out_trade_no", created.OutTradeNo),
-					logx.Bool("pay_url_close_failed", true), logx.Error(closeErr))
-			}
+			s.log.Error("payment: close order after pay url failure",
+				logx.String("out_trade_no", created.OutTradeNo),
+				logx.Bool("pay_url_close_failed", true), logx.Error(closeErr))
 		}
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
@@ -1033,11 +1031,9 @@ func (s *Service) CloseOrder(ctx context.Context, id int64, force bool) (*CloseR
 				if reason := OrderFailReason(cerr); reason != "" {
 					s.markNotifyFailure(ctx, o.OutTradeNo, reason)
 				}
-				if s.log != nil {
-					s.log.Error("payment: close refused, order is paid but credit failed",
-						logx.String("out_trade_no", o.OutTradeNo), logx.String("trade_no", ev.TradeNo),
-						logx.Error(cerr))
-				}
+				s.log.Error("payment: close refused, order is paid but credit failed",
+					logx.String("out_trade_no", o.OutTradeNo), logx.String("trade_no", ev.TradeNo),
+					logx.Error(cerr))
 				return nil, fmt.Errorf("%w: order %s is paid but credit failed: %w", ErrUpstream, o.OutTradeNo, cerr)
 			}
 			fresh, err := s.store.GetOrderByID(ctx, id)
@@ -1212,7 +1208,7 @@ func (s *Service) markNotifyFailure(ctx context.Context, outTradeNo, reason stri
 	if reason == "" {
 		return
 	}
-	if err := s.store.MarkOrderNotifyFailure(ctx, outTradeNo, reason); err != nil && s.log != nil {
+	if err := s.store.MarkOrderNotifyFailure(ctx, outTradeNo, reason); err != nil {
 		s.log.Warn("payment: mark notify failure",
 			logx.String("out_trade_no", outTradeNo), logx.String("reason", reason), logx.Error(err))
 	}

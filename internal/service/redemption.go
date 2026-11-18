@@ -116,11 +116,9 @@ func (s *Service) GenerateCodes(ctx context.Context, req GenerateRequest, create
 			}
 			return nil, mapRepoErr(err)
 		}
-		if s.log != nil {
-			s.log.Info("redemption codes generated",
-				logx.Int("count", count), logx.String("type", string(req.Type)),
-				logx.Int64("created_by", createdBy))
-		}
+		s.log.Info("redemption codes generated",
+			logx.Int("count", count), logx.String("type", string(req.Type)),
+			logx.Int64("created_by", createdBy))
 		return codes, nil
 	}
 	panic("unreachable") // 循环内 5 次迭代全部 return（continue 仅 attempt<4，末次冲突必 return）

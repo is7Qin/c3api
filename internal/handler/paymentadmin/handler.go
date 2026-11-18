@@ -324,9 +324,7 @@ func (a *API) writeErr(w http.ResponseWriter, err error) {
 	case errors.Is(err, service.ErrUnavailable):
 		httpface.WriteErr(w, http.StatusServiceUnavailable, err.Error())
 	default:
-		if a.log != nil {
-			a.log.Error("paymentadmin: request failed", logx.Error(err))
-		}
+		a.log.Error("paymentadmin: request failed", logx.Error(err))
 		httpface.WriteErr(w, http.StatusInternalServerError, "internal error")
 	}
 }

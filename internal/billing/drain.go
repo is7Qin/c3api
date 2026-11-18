@@ -103,7 +103,7 @@ func (f *Flusher) settleLaneParallel(ctx context.Context, lane string, settle se
 				if failed != nil {
 					failed[bucket] = true
 				}
-				if f.log != nil && ctx.Err() == nil {
+				if ctx.Err() == nil {
 					f.log.Warn("billing settle lane failed",
 						logx.String("lane", lane),
 						logx.Int("bucket", bucket),
@@ -140,10 +140,8 @@ func (f *Flusher) applySettlement(s domain.SettlementSummary) {
 	}
 	if s.Quarantined > 0 {
 		f.quarantined.Add(s.Quarantined)
-		if f.log != nil {
-			f.log.Warn("billing settle: rows marked without deduction",
-				logx.Int64("rows", s.Quarantined))
-		}
+		f.log.Warn("billing settle: rows marked without deduction",
+			logx.Int64("rows", s.Quarantined))
 	}
 }
 
@@ -153,7 +151,7 @@ func (f *Flusher) applySettlement(s domain.SettlementSummary) {
 func (f *Flusher) sweepZeroCost(ctx context.Context) int64 {
 	rows, err := f.store.FetchUnbilledBatch(ctx, fetchBatchLimit)
 	if err != nil {
-		if f.log != nil && ctx.Err() == nil {
+		if ctx.Err() == nil {
 			f.log.Warn("billing cursor fetch failed", logx.Error(err))
 		}
 		return 0
@@ -168,7 +166,7 @@ func (f *Flusher) sweepZeroCost(ctx context.Context) int64 {
 		return 0
 	}
 	if err := f.store.MarkBilledBulk(ctx, zeroIDs); err != nil {
-		if f.log != nil && ctx.Err() == nil {
+		if ctx.Err() == nil {
 			f.log.Warn("billing cursor zero-cost mark failed", logx.Error(err))
 		}
 		return 0

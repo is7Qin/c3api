@@ -95,13 +95,11 @@ func (p *Proxy) observeDispatchOutcome(ctx context.Context, outcome AttemptOutco
 		// 计数注入前就装好（logger 可能为 nil），两者都不改变控制流。
 		if err != nil {
 			p.observationRejected.Add(1)
-			if p.log != nil {
-				p.log.Warn("dispatch observation rejected outcome",
-					logx.Int64("account_id", outcome.AccountID),
-					logx.String("result", outcome.Result.String()),
-					logx.String("commit", outcome.Commit.String()),
-					logx.Error(err))
-			}
+			p.log.Warn("dispatch observation rejected outcome",
+				logx.Int64("account_id", outcome.AccountID),
+				logx.String("result", outcome.Result.String()),
+				logx.String("commit", outcome.Commit.String()),
+				logx.Error(err))
 		}
 	}
 	if health != nil && outcome.IsCountedForQuality() && p.sched != nil {

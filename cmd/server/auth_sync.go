@@ -86,9 +86,7 @@ func (w *authSync) Start(ctx context.Context) error {
 					now := time.Now().UnixMilli()
 					w.failures.Add(1)
 					w.lastFailure.Store(now)
-					if w.log != nil {
-						w.log.Warn("auth periodic reload failed", logx.Error(err))
-					}
+					w.log.Warn("auth periodic reload failed", logx.Error(err))
 				} else {
 					w.lastReload.Store(time.Now().UnixMilli()) // 仅成功时前进
 				}

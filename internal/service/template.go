@@ -24,9 +24,7 @@ func (s *Service) CreateTemplate(ctx context.Context, t *domain.Template) (*doma
 	}
 	s.inv.Templates()
 	s.publish(ctx, notify.Change{Templates: true})
-	if s.log != nil {
-		s.log.Info("template created", logx.Int64("id", created.ID), logx.String("name", created.Name))
-	}
+	s.log.Info("template created", logx.Int64("id", created.ID), logx.String("name", created.Name))
 	return created, nil
 }
 

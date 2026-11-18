@@ -53,7 +53,7 @@ func (s *Service) RecoverAccount(ctx context.Context, id, expectedRevision int64
 		s.recoverLatch.Clear(id)
 	}
 	if s.recoverHealthClear != nil {
-		if _, err := s.recoverHealthClear.ClearAccount(ctx, id); err != nil && s.log != nil {
+		if _, err := s.recoverHealthClear.ClearAccount(ctx, id); err != nil {
 			s.log.Warn("recover health clear failed", logx.Int64("account_id", id), logx.Error(err))
 		}
 	}
@@ -61,14 +61,12 @@ func (s *Service) RecoverAccount(ctx context.Context, id, expectedRevision int64
 		// 健康记录按 K（identity_revision）隔离——EffectiveState 以 K 查询，
 		// 故 PROBING 必须以 K 写入，否则该记录永不被命中。恢复**不是身份写入**：
 		// K 不变，故 CAS 前取到的 K 仍然有效（无需重取）。
-		if err := s.recoverProber.SetProbing(ctx, id, acct.IdentityRevision); err != nil && s.log != nil {
+		if err := s.recoverProber.SetProbing(ctx, id, acct.IdentityRevision); err != nil {
 			s.log.Warn("recover probing health write failed", logx.Int64("account_id", id), logx.Error(err))
 		}
 	}
 	s.invalidateAccountLifecycle(ctx, id)
-	if s.log != nil {
-		s.log.Info("account recovered", logx.Int64("account_id", id), logx.Int64("revision", expectedRevision+1))
-	}
+	s.log.Info("account recovered", logx.Int64("account_id", id), logx.Int64("revision", expectedRevision+1))
 	return s.accountOrErr(ctx, id)
 }
 
@@ -76,7 +74,7 @@ func (s *Service) RecoverAccount(ctx context.Context, id, expectedRevision int64
 // （旧组查询失败 → 空集 + Warn，30s 同步兜底——与账号写面同纪律）。
 func (s *Service) invalidateAccountLifecycle(ctx context.Context, id int64) {
 	gids, err := s.store.GetAccountGroups(ctx, id)
-	if err != nil && s.log != nil {
+	if err != nil {
 		s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
 	}
 	s.inv.Accounts(gids, false)

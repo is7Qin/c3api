@@ -103,32 +103,80 @@ func build(lv zapcore.Level, ws zapcore.WriteSyncer, closeFn func(), errOut zapc
 	return &Logger{l: z, closer: &sinkCloser{fn: closeFn}}
 }
 
-func (l *Logger) Debug(msg string, fields ...Field) { l.l.Debug(msg, fields...) }
-func (l *Logger) Info(msg string, fields ...Field)  { l.l.Info(msg, fields...) }
-func (l *Logger) Warn(msg string, fields ...Field)  { l.l.Warn(msg, fields...) }
-func (l *Logger) Error(msg string, fields ...Field) { l.l.Error(msg, fields...) }
+// 空日志即静默：nil 接收者与零值（&Logger{}）的四个级别一律返回。
+//
+// 为什么把判定下沉到这里：调用点此前各自写 `if x.log != nil { x.log.Warn(...) }`
+// （全仓 200+ 处），把「日志没配」这件事重复决策了 200 次。判定只有一份实现时，
+// 调用点可以直接写日志语句。
+//
+// 两级都要判：nil 接收者是「没给 logger」，零值接收者是「给了但没构造完」——
+// 后者在 r1 方案里仍会 panic，而本包是导出的，零值必须定义。
+func (l *Logger) Debug(msg string, fields ...Field) {
+	if l == nil || l.l == nil {
+		return
+	}
+	l.l.Debug(msg, fields...)
+}
+
+func (l *Logger) Info(msg string, fields ...Field) {
+	if l == nil || l.l == nil {
+		return
+	}
+	l.l.Info(msg, fields...)
+}
+
+func (l *Logger) Warn(msg string, fields ...Field) {
+	if l == nil || l.l == nil {
+		return
+	}
+	l.l.Warn(msg, fields...)
+}
+
+func (l *Logger) Error(msg string, fields ...Field) {
+	if l == nil || l.l == nil {
+		return
+	}
+	l.l.Error(msg, fields...)
+}
 
 // DebugEnabled level=debug 是否生效（accessLog 等 Debug 字段构造的 level 守卫
 // ——zap 的字段编码短路在调用内，字段切片已在调用点物化逃逸；热路径先判再
 // 构造，level 恒定无双读风险）。zapcore 不泄露（内部判定）。
+// 空 logger 返回 false：调用点据它短路字段构造，与「logger 为 nil 时整段跳过」
+// 的原语义一致。
 func (l *Logger) DebugEnabled() bool {
+	if l == nil || l.l == nil {
+		return false
+	}
 	return l.l.Core().Enabled(zapcore.DebugLevel)
 }
 
 // With 派生带固定字段的子 logger；子 logger 与父共享 sink 所有权。
+// 空 logger 返回 nil，保持链式调用（nil.With(...).Info(...) 仍静默）。
 func (l *Logger) With(fields ...Field) *Logger {
+	if l == nil || l.l == nil {
+		return nil
+	}
 	return &Logger{l: l.l.With(fields...), closer: l.closer}
 }
 
-func (l *Logger) Sync() error { return l.l.Sync() }
+// Sync 刷新 sink；空 logger 返回 nil（与 Close 同纪律）。
+func (l *Logger) Sync() error {
+	if l == nil || l.l == nil {
+		return nil
+	}
+	return l.l.Sync()
+}
 
 // Close 刷新并释放输出 sink（文件输出在 Windows 上不关闭则无法删除）。
 // 可重复调用；nil logger 安全。Sync 的报错被忽略——sink 已关闭时不应再失败。
 func (l *Logger) Close() error {
-	if l == nil {
+	if l == nil || l.l == nil {
 		return nil
 	}
 	_ = l.l.Sync()
-	l.closer.release()
+	if l.closer != nil { // 零值/手工字面量没有 sink 所有权
+		l.closer.release()
+	}
 	return nil
 }

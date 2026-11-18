@@ -215,9 +215,7 @@ func (w *ContBindWorker) flush(base context.Context, batch []continuation.BindRe
 	results, err := w.store.CreateOrRefreshBatch(ctx, batch)
 	if err != nil {
 		w.failed.Add(int64(len(batch)))
-		if w.log != nil {
-			w.log.Warn("cont-bind batch failed", logx.Error(err), logx.Int("batch", len(batch)))
-		}
+		w.log.Warn("cont-bind batch failed", logx.Error(err), logx.Int("batch", len(batch)))
 		return
 	}
 	for i := range results {
@@ -248,9 +246,7 @@ func (w *ContBindWorker) Close(ctx context.Context) error {
 			select {
 			case <-w.loopDone:
 			case <-ctx.Done():
-				if w.log != nil {
-					w.log.Warn("cont-bind close: loop did not exit in time")
-				}
+				w.log.Warn("cont-bind close: loop did not exit in time")
 			}
 		}
 		for {
@@ -263,10 +259,8 @@ func (w *ContBindWorker) Close(ctx context.Context) error {
 				// 不当作 failed（failed 保留给"已发往 Redis 但落库失败"）。
 				remaining := len(batch) + len(w.ch)
 				w.dropped.Add(int64(remaining))
-				if w.log != nil {
-					w.log.Warn("cont-bind close: shutdown budget exceeded, truncated drain",
-						logx.Int("remaining", remaining))
-				}
+				w.log.Warn("cont-bind close: shutdown budget exceeded, truncated drain",
+					logx.Int("remaining", remaining))
 				break
 			}
 			w.flush(ctx, batch)

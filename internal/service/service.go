@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -531,9 +532,9 @@ type Service struct {
 	// compileNotify 路由编译触发面（New 经 Deps.CompileNotify
 	// 一次性注入；nil = 未装配，定价写面静默——仅编译道装配后有效。
 	// 调用方承诺非阻塞，见 pricing.go）。
-	compileNotify               func()
-	mailEnqueue                 func(MailSendTask) error
-	clearBalanceWarningCooldown func(context.Context, int64, int64) error
+	compileNotify               CompileTrigger
+	mailEnqueue                 MailEnqueuer
+	clearBalanceWarningCooldown CooldownClearer
 	// defaultMaxConcurrency 创建期 max_concurrency 缺省落值（main 经
 	// Deps.DefaultMaxConcurrency 一次性注入；0 = 未装配，create 视为
 	// 未提供由校验拒绝）。
@@ -575,6 +576,29 @@ type Service struct {
 	// 守卫关闭）。见 validateRoutingRetention。
 	routingRetentionDays int
 	log                  *logx.Logger
+}
+
+// CompileTrigger 路由编译触发面（生产实现 *scheduler.Scheduler）。调用方
+// 承诺非阻塞（见 pricing.go）——接口不表达该承诺，它是调用纪律。
+//
+// 历史形态是 Deps.CompileNotify func()，注释称「func 值注入，无 import 环」。
+// 但本包本就 import scheduler，而 scheduler/notification 都不 import 本包，
+// 环并不存在：func 值只丢掉了类型信息（看不出谁实现）与可 mock 性，并让
+// 字段额外背一条 nil 语义。同批还原的还有 MailEnqueuer / CooldownClearer。
+type CompileTrigger interface {
+	RequestCompile()
+}
+
+// MailEnqueuer 邮件异步入队面（生产实现 *MailWorker）。nil = 未装配 ⇒
+// SendRegisterCode 退化为 ErrMailNotConfigured。存在性本身是语义，不可 no-op。
+type MailEnqueuer interface {
+	Enqueue(MailSendTask) error
+}
+
+// CooldownClearer 余额预警偏好变更后的 Redis 已知键清理面（生产实现
+// *notification.Cooldown）。nil = 禁用清理（仅做偏好持久化）。
+type CooldownClearer interface {
+	Clear(context.Context, int64, int64) error
 }
 
 // Deps 是 New 的**全部**构造依赖（S2/C4：原 8 位置参数折叠为单个具名结构——
@@ -619,7 +643,7 @@ type Deps struct {
 	Retention domain.Retention
 	// ClearBalanceWarningCooldown 余额预警偏好变更后的 Redis 已知键清理：
 	// nil = 禁用清理（仅做偏好持久化）。
-	ClearBalanceWarningCooldown func(context.Context, int64, int64) error
+	ClearBalanceWarningCooldown CooldownClearer
 	// RecoverProber 恢复→PROBING 健康写入面：nil = 跳过 PROBING 写
 	// （调度器同步周期兜底收敛）。
 	RecoverProber RecoverProber
@@ -629,13 +653,16 @@ type Deps struct {
 	RecoverHealthClear RecoverHealthClearer
 	// CompileNotify 路由编译触发面（定价写面统一出口的 notify 回调）：
 	// nil = 未装配（测试/降级路径），定价写面纯重载 + 仍发布 NOTIFY，
-	// 同值写静默纪律见 reloadPricingAndNotifyCompiler。生产装配
-	// scheduler.RequestCompile（func 值注入，无 import 环）。
-	CompileNotify func()
+	// 同值写静默纪律见 reloadPricingAndNotifyCompiler。生产装配传
+	// *scheduler.Scheduler（实现 CompileTrigger）。
+	//
+	// 注意 nil 在这里选中**不同执行路径**（见 pricing.go:41），不只是「关日志式」
+	// 的可否：装配后每次定价写面要额外做两次全模型快照 + 逐模型比较。
+	CompileNotify CompileTrigger
 	// MailEnqueue 邮件异步入队面（auth_email.go 经此入队；nil = 未装配 →
 	// SendRegisterCode 退化为 ErrMailNotConfigured）。生产经构造一次性注入
-	// mailW.Enqueue（根因重开——构造参数，零事后回填）。
-	MailEnqueue func(MailSendTask) error
+	// *MailWorker（实现 MailEnqueuer；根因重开——构造参数，零事后回填）。
+	MailEnqueue MailEnqueuer
 	// SettingsSnapshot settings 快照共享指针（根因重开）：生产由 main
 	// 一次构造、Service 与 MailWorker 同源共享；nil = New 内自建（测试/
 	// 字面量 Service 兼容——各测自有快照，无跨实例语义）。
@@ -663,6 +690,105 @@ type Deps struct {
 	// （显式语义：无可用协议，methods 空列表、建单 503），与其它可选装配面同纪律。
 	// 注册表把 nil 元素/空名/重名与 name 升序一次定死，service 只做 Get/All。
 	PaymentRegistry *domain.ProviderRegistry
+}
+
+// Validate 在装配期检查 Deps 的完整性，替代 24 段「nil = 未装配」的自然语言注释。
+//
+// 两类判据：
+//
+//  1. 必选：Store 与 EmailCodeStore。New 对 EmailCodeStore 仍然 panic（fail-fast
+//     纪律不变）；Validate 让装配层在调用 New 之前拿到一条可读错误，而不是栈崩。
+//  2. typed-nil：接口字段里装了 nil 具体值（装箱陷阱）。这是 2026-08-10 事故的
+//     正面回应——当时 nil *billing.Balances 被装进接口，`!= nil` 判真后打到 nil
+//     receiver panic。判据只对**接口 kind** 的字段生效：四个指针字段
+//     （Log/TimeLocation/SettingsSnapshot/PaymentRegistry）的 nil 都是合法装配
+//     （见各自注释），纳入会误杀。
+//
+// 不检查「某个可选面是否装配」：那是装配层的事实，不是契约；漏接由
+// cmd/server 的 AST 装配门（rule_wiring_test 等）负责，比运行期断言更早更准。
+func (d Deps) Validate() error {
+	var missing []string
+	if d.Store == nil {
+		missing = append(missing, "Store")
+	}
+	if d.EmailCodeStore == nil {
+		missing = append(missing, "EmailCodeStore")
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("service: 必选依赖为空: %s", strings.Join(missing, ", "))
+	}
+
+	var bad []string
+	for _, f := range []struct {
+		name string
+		v    any
+	}{
+		{"Store", d.Store},
+		{"Scheduler", d.Scheduler},
+		{"Invalidate", d.Invalidate},
+		{"Publisher", d.Publisher},
+		{"RuleReload", d.RuleReload},
+		{"Auth", d.Auth},
+		{"SupplierViewReload", d.SupplierViewReload},
+		{"EmailCodeStore", d.EmailCodeStore},
+		{"RecoverProber", d.RecoverProber},
+		{"RecoverLatch", d.RecoverLatch},
+		{"RecoverHealthClear", d.RecoverHealthClear},
+		{"CompileNotify", d.CompileNotify},
+		{"MailEnqueue", d.MailEnqueue},
+		{"CodexLogin", d.CodexLogin},
+		{"Prober", d.Prober},
+	} {
+		if isTypedNil(f.v) {
+			bad = append(bad, fmt.Sprintf("deps.%s: typed-nil %T", f.name, f.v))
+		}
+	}
+	if len(bad) > 0 {
+		return errors.New("service: " + strings.Join(bad, "; "))
+	}
+	return nil
+}
+
+// isTypedNil 判定「接口里装了一个 nil 具体值」。真 nil 接口返回 false（那不是
+// typed-nil，由必选那一条判）；值型实现（如 NopInvalidator{}）返回 false。
+func isTypedNil(v any) bool {
+	if v == nil {
+		return false
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return rv.IsNil()
+	default:
+		return false
+	}
+}
+
+// Features 返回本次装配实际打开的可选面名单（稳定排序），供启动时打一行——
+// 运维不必读代码就知道「这次到底开了什么」。这是 nil 语义的唯一可观测出口。
+func (d Deps) Features() []string {
+	out := make([]string, 0, 14)
+	add := func(name string, on bool) {
+		if on {
+			out = append(out, name)
+		}
+	}
+	add("account_prober", d.Prober != nil)
+	add("codex_login", d.CodexLogin != nil)
+	add("compile_trigger", d.CompileNotify != nil)
+	add("cooldown_clear", d.ClearBalanceWarningCooldown != nil)
+	add("invalidate", d.Invalidate != nil)
+	add("mail_enqueue", d.MailEnqueue != nil)
+	add("payment_registry", d.PaymentRegistry != nil)
+	add("publisher", d.Publisher != nil)
+	add("recover_health_clear", d.RecoverHealthClear != nil)
+	add("recover_latch", d.RecoverLatch != nil)
+	add("recover_prober", d.RecoverProber != nil)
+	add("rule_reload", d.RuleReload != nil)
+	add("supplier_view_reload", d.SupplierViewReload != nil)
+	add("time_zone", d.TimeLocation != nil)
+	slices.Sort(out)
+	return out
 }
 
 // New 构造 Service（全部依赖经单一 Deps 注入，S2 消重）。

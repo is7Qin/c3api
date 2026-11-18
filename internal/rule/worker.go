@@ -107,9 +107,7 @@ func (e *RuleEngine) processPersistItem(ctx context.Context, item PersistItem, r
 			e.persistPending.Store(0)
 		}
 		if r := recover(); r != nil {
-			if e.log != nil {
-				e.log.Warn("persist callback panicked", logx.Any("panic", r))
-			}
+			e.log.Warn("persist callback panicked", logx.Any("panic", r))
 			if rethrow {
 				panic(r)
 			}
@@ -119,9 +117,7 @@ func (e *RuleEngine) processPersistItem(ctx context.Context, item PersistItem, r
 	if fn != nil {
 		if err := fn(ctx, item); err != nil && ctx.Err() == nil {
 			e.countPersistFailure(err)
-			if e.log != nil {
-				e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
-			}
+			e.log.Warn("rule action persistence failed", logx.Int64("account_id", item.Event.AccountID), logx.Error(err))
 		}
 	}
 }
@@ -157,9 +153,7 @@ func (e *RuleEngine) Close(ctx context.Context) error {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		if e.log != nil {
-			e.log.Warn("rule-engine close timeout, dropping queued events")
-		}
+		e.log.Warn("rule-engine close timeout, dropping queued events")
 	}
 	// Cancel persist loop and wait for in-flight callback to finish (worker pattern).
 	e.persistMu.Lock()
@@ -172,9 +166,7 @@ func (e *RuleEngine) Close(ctx context.Context) error {
 			select {
 			case <-doneCh:
 			case <-ctx.Done():
-				if e.log != nil {
-					e.log.Warn("rule-engine persist close timeout, waiting for callback")
-				}
+				e.log.Warn("rule-engine persist close timeout, waiting for callback")
 				<-doneCh
 			}
 		}
@@ -196,13 +188,11 @@ func (e *RuleEngine) Enqueue(ev Event) {
 	default:
 		n := e.dropped.Add(1)
 		if n >= uint64(e.dropWarnThreshold) && e.warnDropped.CompareAndSwap(false, true) {
-			if e.log != nil {
-				e.log.Warn("rule-engine event queue full, dropping events",
-					logx.Int64("dropped", int64(n)),
-					logx.Int64("threshold", e.dropWarnThreshold),
-					logx.Int("queue_cap", cap(e.ch)),
-				)
-			}
+			e.log.Warn("rule-engine event queue full, dropping events",
+				logx.Int64("dropped", int64(n)),
+				logx.Int64("threshold", e.dropWarnThreshold),
+				logx.Int("queue_cap", cap(e.ch)),
+			)
 		}
 	}
 }

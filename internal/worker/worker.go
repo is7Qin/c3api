@@ -70,7 +70,7 @@ func (m *Manager) StartAll(ctx context.Context) error {
 		if err := w.Start(ctx); err != nil {
 			started = append(started, w)
 			for _, s := range slices.Backward(started) {
-				if cerr := s.Close(ctx); cerr != nil && m.log != nil {
+				if cerr := s.Close(ctx); cerr != nil {
 					m.log.Warn("worker close failed on start rollback", logx.String("worker", s.Name()), logx.Error(cerr))
 				}
 			}
@@ -96,9 +96,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("worker %s close: %w", w.Name(), err)
 			}
-			if m.log != nil {
-				m.log.Warn("worker close failed", logx.String("worker", w.Name()), logx.Error(err))
-			}
+			m.log.Warn("worker close failed", logx.String("worker", w.Name()), logx.Error(err))
 		}
 	}
 	done := make(chan struct{})
@@ -109,9 +107,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	select {
 	case <-done:
 	case <-ctx.Done():
-		if m.log != nil {
-			m.log.Warn("worker goroutines still running at shutdown deadline", logx.Error(ctx.Err()))
-		}
+		m.log.Warn("worker goroutines still running at shutdown deadline", logx.Error(ctx.Err()))
 	}
 	return firstErr
 }
@@ -124,7 +120,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 func (m *Manager) Go(ctx context.Context, name string, fn func(ctx context.Context)) {
 	m.wg.Go(func() {
 		defer func() {
-			if r := recover(); r != nil && m.log != nil {
+			if r := recover(); r != nil {
 				m.log.Warn("worker goroutine panicked",
 					logx.String("worker", name),
 					logx.Any("panic", r),

@@ -89,7 +89,7 @@ func TestResolvePricesWithVariant(t *testing.T) {
 func TestPricingChangeNotifiesCompiler(t *testing.T) {
 	fs := newFakeStore()
 	var calls int
-	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes, CompileNotify: func() { calls++ }})
+	svc := New(Deps{Store: fs, Scheduler: nil, Invalidate: NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: nil, Log: nil, EmailCodeStore: testEmailCodes, CompileNotify: compileTriggerFunc(func() { calls++ })})
 	require.NoError(t, svc.ReloadPricingCtx(context.Background()))
 	ctx := context.Background()
 
@@ -195,7 +195,7 @@ func TestPricingWritePublishesPricingChange(t *testing.T) {
 
 	t.Run("装配路径（compileNotify 非 nil）仍发布", func(t *testing.T) {
 		svc, _, pr := newPubSvc()
-		svc.compileNotify = func() {}
+		svc.compileNotify = compileTriggerFunc(func() {})
 		_, err := svc.UpsertPriceEntry(ctx, manual)
 		require.NoError(t, err)
 		got := pr.last()

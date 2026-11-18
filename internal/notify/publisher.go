@@ -140,7 +140,7 @@ func (p *Publisher) Publish(ctx context.Context, ch Change) error {
 	ch.Src = p.src // 接收端跳过自播（Src 含实例随机 nonce，跨实例唯一；空 src = 不跳过，单实例部署无碍）
 	payload := Marshal(ch)
 	_, err := p.pool.Exec(ctx, notifySQL, string(payload))
-	if err != nil && p.log != nil {
+	if err != nil {
 		p.log.Warn("notify publish failed", logx.String("channel", Channel), logx.Error(err))
 	}
 	return err

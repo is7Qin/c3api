@@ -459,13 +459,11 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		sdkErr := callErr.Error()
 		// Warn 留痕：两种子路径（SDK 识别归 4xx / 网络错误）同款——错误
 		// 文本全量、request_id/account_id/model 字段，识别错误不因识别而丢留痕。
-		if a.p.log != nil {
-			a.p.log.Warn("upstream connection failure",
-				logx.String("request_id", reqID),
-				logx.Int64("account_id", sel.AccountID),
-				logx.String("model", sel.Model),
-				logx.Error(callErr))
-		}
+		a.p.log.Warn("upstream connection failure",
+			logx.String("request_id", reqID),
+			logx.Int64("account_id", sel.AccountID),
+			logx.String("model", sel.Model),
+			logx.Error(callErr))
 		// SDK 校验错误识别（spec，检测前置）：anthropic-sdk-go
 		// v1.62.0 client.go:316（CalculateNonStreamingTimeout）对
 		// max_tokens 大 + 非流式请求本地拒绝——无网络请求、无状态码

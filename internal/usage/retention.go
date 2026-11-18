@@ -252,30 +252,26 @@ func (w *RetentionWorker) runOnce() {
 		cutoff := now.AddDate(0, 0, -w.cfg.LogRetentionDays)
 		res, err := w.parts.RetireUsageLogPartitions(ctx, cutoff)
 		if err != nil {
-			if w.log != nil {
-				w.log.Warn("retention retire usage_logs partitions failed", logx.Error(err))
-			}
+			w.log.Warn("retention retire usage_logs partitions failed", logx.Error(err))
 		} else {
 			w.lastDropLogs.Store(int64(res.Dropped))
 			w.lastBlockedLogs.Store(int64(len(res.Blocked)))
 			// 持久 blocked 告警状态（§3.11）：被挡分区跨巡检轮保留，解除轮清空。
 			w.updateBlockedAlert(now, res.Blocked)
-			if res.Dropped > 0 && w.log != nil {
+			if res.Dropped > 0 {
 				w.log.Info("retention retired usage_logs partitions", logx.Int("count", res.Dropped))
 			}
 			// 未确认资金事件不得随 retention 删除（§3.11）：被挡分区进入持久
 			// 告警（分项规模 + 最老债权时刻），运维须扩容磁盘/恢复 credit/thaw
 			// 后重试；绝不能默默清掉债务。
 			for _, b := range res.Blocked {
-				if w.log != nil {
-					w.log.Warn("retention blocked usage_logs partition (unconfirmed liability)",
-						logx.String("partition", b.Name),
-						logx.Int64("uncredited_earn_rows", b.UncreditedEarnRows),
-						logx.Int64("unbilled_rows", b.UnbilledRows),
-						logx.Int64("recon_source_keys", b.ReconSourceKeys),
-						logx.Int64("recon_mismatch", b.ReconMismatch),
-						logx.Int64("recon_open_keys", b.ReconOpenKeys))
-				}
+				w.log.Warn("retention blocked usage_logs partition (unconfirmed liability)",
+					logx.String("partition", b.Name),
+					logx.Int64("uncredited_earn_rows", b.UncreditedEarnRows),
+					logx.Int64("unbilled_rows", b.UnbilledRows),
+					logx.Int64("recon_source_keys", b.ReconSourceKeys),
+					logx.Int64("recon_mismatch", b.ReconMismatch),
+					logx.Int64("recon_open_keys", b.ReconOpenKeys))
 			}
 		}
 	}
@@ -283,12 +279,10 @@ func (w *RetentionWorker) runOnce() {
 		cutoff := now.AddDate(0, 0, -w.cfg.ErrLogRetentionDays)
 		n, err := w.parts.DropErrLogPartitionsBefore(ctx, cutoff)
 		if err != nil {
-			if w.log != nil {
-				w.log.Warn("retention drop err_logs partitions failed", logx.Error(err))
-			}
+			w.log.Warn("retention drop err_logs partitions failed", logx.Error(err))
 		} else {
 			w.lastDropErrLogs.Store(int64(n))
-			if n > 0 && w.log != nil {
+			if n > 0 {
 				w.log.Info("retention dropped err_logs partitions", logx.Int("count", n))
 			}
 		}
@@ -297,23 +291,19 @@ func (w *RetentionWorker) runOnce() {
 		cutoff := now.AddDate(0, 0, -w.cfg.StatsRetentionDays)
 		n, err := w.parts.DropUsageStatsPartitionsBefore(ctx, cutoff)
 		if err != nil {
-			if w.log != nil {
-				w.log.Warn("retention drop usage_stats partitions failed", logx.Error(err))
-			}
+			w.log.Warn("retention drop usage_stats partitions failed", logx.Error(err))
 		} else {
 			w.lastDropStats.Store(int64(n))
-			if n > 0 && w.log != nil {
+			if n > 0 {
 				w.log.Info("retention dropped usage_stats partitions", logx.Int("count", n))
 			}
 		}
 		m, err2 := w.parts.DropUsageEntityStatsPartitionsBefore(ctx, cutoff)
 		if err2 != nil {
-			if w.log != nil {
-				w.log.Warn("retention drop usage_entity_stats partitions failed", logx.Error(err2))
-			}
+			w.log.Warn("retention drop usage_entity_stats partitions failed", logx.Error(err2))
 		} else {
 			w.lastDropEntityStats.Store(int64(m))
-			if m > 0 && w.log != nil {
+			if m > 0 {
 				w.log.Info("retention dropped usage_entity_stats partitions", logx.Int("count", m))
 			}
 		}
@@ -326,31 +316,25 @@ func (w *RetentionWorker) runOnce() {
 	if w.cfg.RoutingObservationRetentionDays > 0 {
 		cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
 		if n, err := w.parts.DropRoutingQualityFactBefore(ctx, cutoff); err != nil {
-			if w.log != nil {
-				w.log.Warn("retention drop routing_quality_fact partitions failed", logx.Error(err))
-			}
+			w.log.Warn("retention drop routing_quality_fact partitions failed", logx.Error(err))
 		} else {
 			w.lastDropRoutingQuality.Store(int64(n))
-			if n > 0 && w.log != nil {
+			if n > 0 {
 				w.log.Info("retention dropped routing_quality_fact partitions", logx.Int("count", n))
 			}
 		}
 		if n, err := w.parts.DropRoutingFlowFactBefore(ctx, cutoff); err != nil {
-			if w.log != nil {
-				w.log.Warn("retention drop routing_flow_fact partitions failed", logx.Error(err))
-			}
+			w.log.Warn("retention drop routing_flow_fact partitions failed", logx.Error(err))
 		} else {
 			w.lastDropRoutingFlow.Store(int64(n))
-			if n > 0 && w.log != nil {
+			if n > 0 {
 				w.log.Info("retention dropped routing_flow_fact partitions", logx.Int("count", n))
 			}
 		}
 		n, err := w.parts.DeleteRoutingFlowSnapshotStateBefore(ctx, cutoff)
 		if err != nil {
-			if w.log != nil {
-				w.log.Warn("retention delete routing snapshot state failed", logx.Error(err))
-			}
-		} else if n > 0 && w.log != nil {
+			w.log.Warn("retention delete routing snapshot state failed", logx.Error(err))
+		} else if n > 0 {
 			w.log.Info("retention deleted routing snapshot state", logx.Int("count", n))
 		}
 	}
@@ -359,45 +343,31 @@ func (w *RetentionWorker) runOnce() {
 	// （分区三表 O(1) DROP 之外的普通表清理路径），失败 Warn 下轮重试。
 	n, err := w.parts.DeleteRedemptionUsesBefore(ctx, now.AddDate(0, 0, -redemptionUseRetentionDays))
 	if err != nil {
-		if w.log != nil {
-			w.log.Warn("retention delete redemption_uses failed", logx.Error(err))
-		}
-	} else if n > 0 && w.log != nil {
+		w.log.Warn("retention delete redemption_uses failed", logx.Error(err))
+	} else if n > 0 {
 		w.log.Info("retention deleted redemption_uses", logx.Int("count", n))
 	}
 	if err := w.parts.EnsureUsageLogPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
-		if w.log != nil {
-			w.log.Warn("retention pre-create usage_logs partitions failed", logx.Error(err))
-		}
+		w.log.Warn("retention pre-create usage_logs partitions failed", logx.Error(err))
 	}
 	if err := w.parts.EnsureErrLogPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
-		if w.log != nil {
-			w.log.Warn("retention pre-create err_logs partitions failed", logx.Error(err))
-		}
+		w.log.Warn("retention pre-create err_logs partitions failed", logx.Error(err))
 	}
 	if err := w.parts.EnsureUsageStatsPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
-		if w.log != nil {
-			w.log.Warn("retention pre-create usage_stats partitions failed", logx.Error(err))
-		}
+		w.log.Warn("retention pre-create usage_stats partitions failed", logx.Error(err))
 	}
 	if err := w.parts.EnsureUsageEntityStatsPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
-		if w.log != nil {
-			w.log.Warn("retention pre-create usage_entity_stats partitions failed", logx.Error(err))
-		}
+		w.log.Warn("retention pre-create usage_entity_stats partitions failed", logx.Error(err))
 	}
 	if err := w.parts.EnsureRoutingFactPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
-		if w.log != nil {
-			w.log.Warn("retention pre-create routing fact partitions failed", logx.Error(err))
-		}
+		w.log.Warn("retention pre-create routing fact partitions failed", logx.Error(err))
 	}
 	// 兜底观测（A17）：预建后取分区概况。失败保留上轮值（与 lastDrop* 同约定：
 	// 失败不覆盖，lastPatrol 仍推进），但置 statsStale 让过期值可见。最老分区
 	// 早于 cutoff ⇒ Warn——正常巡检下不可能发生，一旦出现即分区 DROP 未生效
 	// （worker 停摆或 DROP 持续失败），而分区静默无界增长。
 	if st, err := w.parts.RoutingFactPartitionStats(ctx); err != nil {
-		if w.log != nil {
-			w.log.Warn("retention routing partition stats failed", logx.Error(err))
-		}
+		w.log.Warn("retention routing partition stats failed", logx.Error(err))
 		w.statsStale.Store(true)
 	} else {
 		w.partitionCount.Store(int64(st.Count))
@@ -411,7 +381,7 @@ func (w *RetentionWorker) runOnce() {
 		w.statsStale.Store(false)
 		if !st.Oldest.IsZero() && w.cfg.RoutingObservationRetentionDays > 0 {
 			cutoff := domain.RoutingObservationCutoff(now, w.cfg.RoutingObservationRetentionDays)
-			if st.Oldest.Before(cutoff) && w.log != nil {
+			if st.Oldest.Before(cutoff) {
 				w.log.Warn("retention routing partitions older than the observation cutoff",
 					logx.Int("partition_count", st.Count),
 					logx.String("oldest_partition", st.Oldest.UTC().Format(time.RFC3339)),
@@ -494,14 +464,12 @@ func (w *RetentionWorker) sampleDisk(now time.Time) {
 	// 处置边沿：低于下限 ⇒ blocked；恢复 ⇒ 复位。回调只在状态翻转时触发一次。
 	blocked := free < w.diskMinFree
 	if blocked != w.capacityBlocked.Swap(blocked) {
-		if w.log != nil {
-			if blocked {
-				w.log.Warn("retention capacity below floor; stopping new supplier ingress",
-					logx.Int64("free_bytes", free), logx.Int64("floor_bytes", w.diskMinFree))
-			} else {
-				w.log.Info("retention capacity recovered; resuming supplier ingress",
-					logx.Int64("free_bytes", free))
-			}
+		if blocked {
+			w.log.Warn("retention capacity below floor; stopping new supplier ingress",
+				logx.Int64("free_bytes", free), logx.Int64("floor_bytes", w.diskMinFree))
+		} else {
+			w.log.Info("retention capacity recovered; resuming supplier ingress",
+				logx.Int64("free_bytes", free))
 		}
 		if w.onCapacity != nil {
 			w.onCapacity(blocked)

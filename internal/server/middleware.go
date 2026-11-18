@@ -136,7 +136,7 @@ func accessLog(log *logx.Logger) func(http.Handler) http.Handler {
 			// ~3.8% newobject；-gcflags=-m=2 实证本文件 Debug 调用点 escape）——
 			// level=info（生产/压测默认）时整段跳过，字段切片分配归零；level 运行
 			// 时恒定（config Load 时 parse），无双读风险。
-			if log != nil && log.DebugEnabled() {
+			if log.DebugEnabled() {
 				log.Debug("http request",
 					logx.String("request_id", reqID),
 					logx.String("method", r.Method),
@@ -223,15 +223,13 @@ func recoverer(log *logx.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if rec := recover(); rec != nil {
-					if log != nil {
-						// debug.Stack()：panic 定位靠栈——无栈日志只有 message 无法
-						// 溯源（栈在错误路径才物化，热路径零成本）。
-						log.Error("panic recovered",
-							logx.Any("panic", rec),
-							logx.String("stack", string(debug.Stack())),
-							logx.String("path", r.URL.Path),
-						)
-					}
+					// debug.Stack()：panic 定位靠栈——无栈日志只有 message 无法
+					// 溯源（栈在错误路径才物化，热路径零成本）。
+					log.Error("panic recovered",
+						logx.Any("panic", rec),
+						logx.String("stack", string(debug.Stack())),
+						logx.String("path", r.URL.Path),
+					)
 					// 已写头 → 只记日志 + 关闭连接，不再写 body（500 JSON 会污染
 					// 已开始的流——受益面仅 SSE；WS/Hijack 面字节本就丢弃，行为
 					// 不变，见 spec Minor 6）。关连接 = 对端读到异常截断而非干净

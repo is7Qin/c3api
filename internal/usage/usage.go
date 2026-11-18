@@ -158,7 +158,7 @@ func (r *Recorder) Record(l *domain.UsageLog) {
 	if r.closed.Load() { // Close 完成后无消费者——防御性缺口：
 		// Warn 恰好一次（不刷屏）；明细仍聚合入 pending **不丢**（驻留内存由
 		// 本 Warn 观测，worker 管理器顺序保证正常停机不触发）。
-		if r.closeWarned.CompareAndSwap(false, true) && r.log != nil {
+		if r.closeWarned.CompareAndSwap(false, true) {
 			r.log.Warn("usage record after close: detail retained in memory (no consumer)",
 				logx.String("request_id", l.RequestID))
 		}
@@ -168,9 +168,7 @@ func (r *Recorder) Record(l *domain.UsageLog) {
 	n := r.pendingN.Add(1)
 	r.mu.Unlock()
 	if n > pendingWaterline && r.warned.CompareAndSwap(false, true) {
-		if r.log != nil {
-			r.log.Warn("usage pending exceeds waterline", logx.Int64("pending_logs", n), logx.Int64("waterline", pendingWaterline))
-		}
+		r.log.Warn("usage pending exceeds waterline", logx.Int64("pending_logs", n), logx.Int64("waterline", pendingWaterline))
 	}
 }
 
@@ -292,9 +290,7 @@ func (r *Recorder) flushLogs(ctx context.Context) int64 {
 						// 单行 chunk 无法二分归因（无同级半可对照）——按整库
 						// 故障语义回灌不丢（BatchSize=1 仅测试形态；防故障期
 						// 单行误丢）。
-						if r.log != nil {
-							r.log.Warn("usage batch insert failed (DB-wide), refilled", logx.Error(err))
-						}
+						r.log.Warn("usage batch insert failed (DB-wide), refilled", logx.Error(err))
 						r.refillLogs(s[start:])
 						return
 					}
@@ -323,12 +319,10 @@ func (r *Recorder) flushLogs(ctx context.Context) int64 {
 						if r.failCounts[si] > 0 {
 							r.failCounts[si] = 0 // 毒丸定位隔离 → 计数复位
 						}
-						if r.log != nil {
-							r.log.Error("usage batch insert failed, dropping poison row",
-								logx.Error(err), logx.String("request_id", poison.RequestID),
-								logx.Int("dropped_logs", 1))
-						}
-					} else if r.log != nil {
+						r.log.Error("usage batch insert failed, dropping poison row",
+							logx.Error(err), logx.String("request_id", poison.RequestID),
+							logx.Int("dropped_logs", 1))
+					} else {
 						r.log.Warn("usage batch insert failed (DB-wide), refilled", logx.Error(err))
 					}
 					if len(refill) > 0 {
@@ -493,9 +487,7 @@ func (r *Recorder) flushQuota(ctx context.Context) {
 			continue
 		}
 		if err := qw.AddQuotaUsed(ctx, group); err != nil {
-			if r.log != nil {
-				r.log.Warn("usage quota writeback failed", logx.Error(err))
-			}
+			r.log.Warn("usage quota writeback failed", logx.Error(err))
 			r.mu.Lock()
 			for k, v := range group {
 				r.quotaUsed[k] += v
@@ -505,7 +497,7 @@ func (r *Recorder) flushQuota(ctx context.Context) {
 		}
 		flushedKeys += len(group)
 	}
-	if remainingKeys > 0 && r.log != nil {
+	if remainingKeys > 0 {
 		r.log.Warn("usage quota flush truncated on shutdown budget",
 			logx.Int("quota_flushed_keys", flushedKeys), logx.Int("quota_remaining_keys", remainingKeys))
 	}
@@ -533,9 +525,7 @@ func (r *Recorder) Close(ctx context.Context) error {
 			select {
 			case <-r.loopDone:
 			case <-ctx.Done():
-				if r.log != nil {
-					r.log.Warn("usage close: loops did not exit in time")
-				}
+				r.log.Warn("usage close: loops did not exit in time")
 			}
 		}
 		// 等在途批次（有界）：flushLogs/flushQuota 由 flushMu 串行——"是否有
@@ -562,9 +552,7 @@ func (r *Recorder) Close(ctx context.Context) error {
 			case <-acquired:
 				r.flushMu.Unlock()
 			case <-time.After(inflightAbandonGrace):
-				if r.log != nil {
-					r.log.Warn("usage close: in-flight flush not finished in time, abandoning drain")
-				}
+				r.log.Warn("usage close: in-flight flush not finished in time, abandoning drain")
 				r.closed.Store(true)
 				return
 			}
@@ -574,10 +562,8 @@ func (r *Recorder) Close(ctx context.Context) error {
 		var flushed int64
 		for r.pendingN.Load() > 0 {
 			if ctx.Err() != nil { // 预算到期：截断退出（剩余明细由 flushLogs 截断回灌，丢 ≤1 flush 窗口）
-				if r.log != nil {
-					r.log.Warn("usage close: shutdown budget exceeded, truncated drain",
-						logx.Int64("flushed_logs", flushed), logx.Int64("remaining_logs", r.pendingN.Load()))
-				}
+				r.log.Warn("usage close: shutdown budget exceeded, truncated drain",
+					logx.Int64("flushed_logs", flushed), logx.Int64("remaining_logs", r.pendingN.Load()))
 				break
 			}
 			flushed += r.flushLogs(ctx)

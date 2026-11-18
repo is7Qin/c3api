@@ -266,13 +266,11 @@ func (s *Scheduler) recordCompileFallback(cause string, scopeEntries, affectedRo
 	case fallbackFullStage:
 		return
 	default:
-		if s.log != nil {
-			s.log.Warn("compile full-fidelity fallback",
-				logx.String("cause", cause),
-				logx.Int("scope_entries", scopeEntries),
-				logx.Int("affected_routes", affectedRoutes),
-				logx.Int("total_routes", totalRoutes))
-		}
+		s.log.Warn("compile full-fidelity fallback",
+			logx.String("cause", cause),
+			logx.Int("scope_entries", scopeEntries),
+			logx.Int("affected_routes", affectedRoutes),
+			logx.Int("total_routes", totalRoutes))
 	}
 }
 

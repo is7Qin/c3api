@@ -119,7 +119,7 @@ func (w *ConversationWorker) flush(ctx context.Context) {
 	w.flushMu.Lock()
 	err := w.book.Flush(ctx)
 	w.flushMu.Unlock()
-	if err != nil && w.log != nil && ctx.Err() == nil {
+	if err != nil && ctx.Err() == nil {
 		w.log.Warn("codex-conversation flush failed", logx.Error(err))
 	}
 }
@@ -142,17 +142,13 @@ func (w *ConversationWorker) Close(ctx context.Context) error {
 			case <-w.loopDone:
 			case <-ctx.Done():
 				w.closeErr = fmt.Errorf("codex-conversation close: loop did not exit within budget: %w", ctx.Err())
-				if w.log != nil {
-					w.log.Warn("codex-conversation close: loop did not exit in time, final flush skipped", logx.Error(ctx.Err()))
-				}
+				w.log.Warn("codex-conversation close: loop did not exit in time, final flush skipped", logx.Error(ctx.Err()))
 				return
 			}
 		}
 		if err := ctx.Err(); err != nil {
 			w.closeErr = fmt.Errorf("codex-conversation close: budget exhausted before final flush: %w", err)
-			if w.log != nil {
-				w.log.Warn("codex-conversation close: budget exhausted, final flush skipped", logx.Error(err))
-			}
+			w.log.Warn("codex-conversation close: budget exhausted, final flush skipped", logx.Error(err))
 			return
 		}
 		w.flush(ctx)

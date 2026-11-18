@@ -383,9 +383,7 @@ func (s *Scheduler) claimCodexSession(pools *identityRegistry, accountID int64, 
 	if session := pool.claim(); session != nil {
 		return session, pool
 	}
-	if s.log != nil {
-		s.log.Warn("codex session pool exhausted; using ephemeral identity", logx.Int64("account_id", accountID))
-	}
+	s.log.Warn("codex session pool exhausted; using ephemeral identity", logx.Int64("account_id", accountID))
 	return newCodexSession(pool.installationID, pool.rotatePolicy()), nil
 }
 

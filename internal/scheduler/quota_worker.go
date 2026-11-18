@@ -261,12 +261,10 @@ func (w *QuotaWorker) handle(ctx context.Context, task QuotaTask) {
 	until, ok, err := resolver.ResolveThrottleDeadline(cctx, acct)
 	if err != nil {
 		w.failed.Add(1)
-		if w.log != nil {
-			// Debug：补拉失败含上游 429/网络抖动，属预期面；可见性交给 failed 计数。
-			w.log.Debug("quota-deadline resolve failed",
-				logx.Int64("account_id", task.AccountID),
-				logx.Error(err))
-		}
+		// Debug：补拉失败含上游 429/网络抖动，属预期面；可见性交给 failed 计数。
+		w.log.Debug("quota-deadline resolve failed",
+			logx.Int64("account_id", task.AccountID),
+			logx.Error(err))
 		return
 	}
 	if !ok {
@@ -286,21 +284,17 @@ func (w *QuotaWorker) handle(ctx context.Context, task QuotaTask) {
 	gen, err := w.health.ExtendCooldown(cctx, key, task.State, until)
 	if err != nil {
 		w.failed.Add(1)
-		if w.log != nil {
-			w.log.Debug("quota-deadline extend failed",
-				logx.Int64("account_id", task.AccountID),
-				logx.Error(err))
-		}
+		w.log.Debug("quota-deadline extend failed",
+			logx.Int64("account_id", task.AccountID),
+			logx.Error(err))
 		return
 	}
 	if gen == 0 {
 		// 记录已不存在 / 状态被别的判决改写 / 已过截止：补拉被判拒绝。
 		// 这是运维恢复或其他失败类别赢下了这场竞争，不是错误；不得计入 extended。
 		w.rejected.Add(1)
-		if w.log != nil {
-			w.log.Debug("quota-deadline extend rejected",
-				logx.Int64("account_id", task.AccountID))
-		}
+		w.log.Debug("quota-deadline extend rejected",
+			logx.Int64("account_id", task.AccountID))
 		return
 	}
 	w.extended.Add(1)
@@ -323,9 +317,7 @@ func (w *QuotaWorker) Close(ctx context.Context) error {
 			select {
 			case <-done:
 			case <-ctx.Done():
-				if w.log != nil {
-					w.log.Warn("quota-deadline close: loop did not exit in time")
-				}
+				w.log.Warn("quota-deadline close: loop did not exit in time")
 			}
 		}
 		// 队列随 worker 一起进入终态：此后 sink 侧的 Enqueue 直接丢弃计数（不再

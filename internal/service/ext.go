@@ -190,7 +190,7 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 	// 留下一条假的"已降级"证据，而审计必须反映事实（spec §4.3 第 5 步）。
 	// old 取事务内那一次读（闭包捕获），new 取落库返回值：回显入参可能与实际
 	// 落库值不一致。s.log 可能为 nil（测试/降级装配），守卫与其余写面一致。
-	if down && s.log != nil {
+	if down {
 		s.log.Warn("codex responses transport downgraded",
 			logx.Int64("template_id", saved.TemplateID),
 			logx.String("old", string(oldTransport)),

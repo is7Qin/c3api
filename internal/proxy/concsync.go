@@ -171,9 +171,7 @@ func (w *ConcSyncWorker) Close(ctx context.Context) error {
 		select {
 		case <-w.done:
 		case <-ctx.Done():
-			if w.log != nil {
-				w.log.Warn("conc-sync: loop stop timed out", logx.Error(ctx.Err()))
-			}
+			w.log.Warn("conc-sync: loop stop timed out", logx.Error(ctx.Err()))
 		}
 	})
 	return nil

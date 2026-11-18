@@ -58,7 +58,7 @@ func newTestUserRouterWithFeatures(t *testing.T, features userapi.Features) (fun
 	// main 装配序（先快照 → worker → svc 一次注入，零回填）。
 	snap := settingssnap.New(store, nil)
 	mw := service.NewMailWorker(service.MailDeps{Settings: snap, Templates: store})
-	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, MailEnqueue: mw.Enqueue, SettingsSnapshot: snap})
+	svc := service.New(service.Deps{Store: store, Scheduler: fakeSched{}, Invalidate: service.NopInvalidator{}, Publisher: nil, RuleReload: nil, Auth: &fakeKeys{}, Log: nil, EmailCodeStore: store, MailEnqueue: mw, SettingsSnapshot: snap})
 	require.NoError(t, mw.Start(t.Context()))
 	t.Cleanup(func() { _ = mw.Close(context.Background()) })
 	iss := auth.NewIssuer("test-secret")

@@ -151,7 +151,7 @@ func (r *round) roll(now time.Time) {
 // 返回 true 表示本次观测**刚刚完成**本轮（调用方据此触发结算）。
 func (r *round) observeCompleted(p *Proxy, f []byte, sel *scheduler.Selection) bool {
 	if r.completed() {
-		if r.state != RoundInvalidDuplicate && p.log != nil {
+		if r.state != RoundInvalidDuplicate {
 			p.log.Warn("responses round duplicate completed frame",
 				logx.String("request_id", r.requestID()),
 				logx.Int64("round_index", int64(r.index)),
