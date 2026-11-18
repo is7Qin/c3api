@@ -157,7 +157,7 @@ The gateway loads `config.toml` (see `config.example.toml`), overlaid by `C3API_
 
 See `config.example.toml` for the full schema (server, log, auth, db, redis, proxy, upstream, scheduler, usage, billing, routing, supplier).
 
-- **Fresh setup only (no migration path)** — schemas and configuration are not backward-compatible between versions: an upgrade means a brand-new database and a re-checked configuration (see [Status: Beta](#status-beta)).
+- **The app no longer migrates the schema** (since this release): startup only reads the schema watermark — it never creates or alters tables. Schema changes belong to the versioned migrations behind `-migrate up`. See [Upgrades and migrations](#upgrades-and-migrations).
 - **Env-only deployments** (e.g. K8s): pass `-config ""` to skip the config file entirely — the flag defaults to `config.toml`, and a missing file is a startup error.
 - **Config is read once at startup** — changes require a rolling restart (no hot reload).
 - **Invalid config fails fast at startup** with the offending key: non-positive durations/intervals, unknown keys (typos, removed keys), missing required secrets, and placeholder values (`change-me`, `dev-jwt-secret-for-local`, …) are all rejected.
@@ -168,6 +168,58 @@ See `config.example.toml` for the full schema (server, log, auth, db, redis, pro
 - `compose.yml` — production stack: one `db` (postgres:18-alpine, bind-mounted data under `deploy/data/pg`) + one `redis` (redis:8-alpine, ephemeral coordination + short-lived verification codes — no persistence) + one `app` container (non-root, read-only config mount from `deploy/config.toml`, healthcheck).
 - `Dockerfile` — three-stage build (node → go → alpine), producing a single static binary with the UI embedded.
 - **Dual required dependencies**: PostgreSQL 18 (all durable state, source of record) + Redis 8 (ephemeral coordination + short-lived email verification codes — instance discovery heartbeats and verification codes; never a cache layer). Both are startup-mandatory. Do not set an eviction policy (`allkeys-lru` etc.) for this instance: an evicted code is benign (the user just re-requests one), but keep it out of the configuration.
+
+### Upgrades and migrations
+
+**Single host (compose), three steps** — if the middle one fails, stop there: the old container is still serving.
+
+```bash
+docker compose pull
+docker compose run --rm app -migrate up   # one-shot; non-zero = failed
+docker compose up -d
+```
+
+**k8s (Helm)**: `migrations.job.enabled: true` (the default) runs a `-migrate up` Job on
+`pre-install,pre-upgrade`, so a failed migration makes `helm upgrade` fail *before* the
+Deployment is touched. Turning it off (`--set migrations.job.enabled=false`) means you
+**must** run the same command yourself before `helm upgrade`. The migration Job never
+passes `-allow-contract`: shrinkage is irreversible and stays an explicit operator action.
+
+**Forgetting the migration is not silent**: the new container still answers `/healthz` 200
+(liveness), `/readyz` 503, every business/write surface 503, and the log says
+`run c3api -migrate up`. That is why there are two probes: liveness → `/healthz`,
+readiness → `/readyz`.
+
+**Migration files are immutable, byte for byte**: the ledger stores a checksum of the SQL
+each applied version ran, so any edit — including a comment-only one — is a drift and the
+binary reports NotReady (`-migrate status` prints recorded vs current). Restore the file or
+add a new version; the process never accepts a drifted file. `go run
+./internal/db/migrate/gen/cmd -check` is the CI check that keeps the generated artifacts
+byte-identical.
+
+**A NotReady process does not heal itself**: the gate is a startup verdict, and the NotReady
+server runs no retention (old partitions are not dropped), no NOTIFY consumer and no
+discovery heartbeat. Fix the schema and **restart the pod** — the fresh snapshot at startup
+is what restores cache consistency, and the skipped invalidations cannot be replayed. If it
+stays NotReady, watch disk (nothing is reclaiming old partitions) and the capacity estimate
+N (it deliberately does not count itself in, so N reads low instead of routing traffic to a
+pod that cannot serve).
+
+**One-time adoption of an older database** (a database created before this release has an
+empty ledger): `-migrate up` refuses and points at `-migrate adopt`. First upgrade to the
+last release that still created the schema at startup, then:
+
+```bash
+docker compose run --rm app -migrate adopt --snapshot 0001
+```
+
+and only then upgrade to this release. Adoption is always explicit; the process never adopts
+a database on its own.
+
+**Rollback**: `helm rollback` / redeploying the previous image rolls back code only, never
+the schema (expand-only keeps the old binary able to read the new database). Dropping schema
+needs `-migrate down -allow-destructive` (the data goes with it), and every old pod must be
+gone first.
 
 ### GC tuning (optional, default off)
 

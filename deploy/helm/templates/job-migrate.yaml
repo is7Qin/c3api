@@ -1,0 +1,118 @@
+{{- if .Values.migrations.job.enabled }}
+{{- /*
+  Schema migration Job（spec 2026-11-18-schema-migrations §2.10）。
+
+  为什么是 hook 而不是 initContainer / app 内的启动步骤：
+    - pre-install/pre-upgrade ⇒ 迁移先于新 Deployment 动；hook 失败时 helm upgrade
+      在**动 Deployment 之前**失败，老副本继续按旧 schema 服务；
+    - app 容器永不迁移 ⇒ 不会出现 N 个 pod 并发跑同一批 DDL。
+  contract 阶段（不可逆收缩）**永不**从这里跑：本 Job 只带 `-migrate up`，绝不带
+  `-allow-contract`——收缩必须由人确认"不再回滚到旧镜像"。
+  backoffLimit: 0：迁移不是可重试任务，失败就停在这里，让运维看日志决定。
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "c3api.fullname" . }}-migrate
+  labels:
+    {{- include "c3api.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  backoffLimit: {{ .Values.migrations.job.backoffLimit }}
+  activeDeadlineSeconds: {{ .Values.migrations.job.activeDeadlineSeconds }}
+  template:
+    metadata:
+      labels:
+        {{- include "c3api.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrate
+    spec:
+      restartPolicy: Never
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "c3api.serviceAccountName" . }}
+      # 与 Deployment 同因：C3API_ 前缀的 env 全被当配置键，service-link 注入的
+      # C3API_SERVICE_* 会让 config.Load 直接失败。
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: {{ .Values.app.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.app.securityContext.runAsUser }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: c3api-migrate
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          # 与 app 完全相同的配置源 + 子命令；跑完即退出（非 0 = 失败）。
+          args:
+            - "-config"
+            {{- if .Values.config.inline }}
+            - "/etc/c3api/config.toml"
+            {{- else }}
+            - ""
+            {{- end }}
+            - "-migrate"
+            - "up"
+          env:
+            - name: C3API_SERVER_ADDR
+              value: ":{{ .Values.app.port }}"
+            # config.Load 要求三项必填（jwt_secret / db.dsn / redis.addr），所以 Job
+            # 必须拿到与 app 同一份配置；迁移自身只连 DB。
+            - name: C3API_AUTH_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "c3api.secretName" . }}
+                  key: auth-jwt-secret
+            - name: C3API_DB_DSN
+              {{- if .Values.externalDatabase.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalDatabase.existingSecret }}
+                  key: db-dsn
+              {{- else }}
+              value: {{ required "externalDatabase.dsn or externalDatabase.existingSecret is required" .Values.externalDatabase.dsn | quote }}
+              {{- end }}
+            - name: C3API_REDIS_ADDR
+              {{- if .Values.externalRedis.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.externalRedis.existingSecret }}
+                  key: redis-addr
+              {{- else }}
+              value: {{ required "externalRedis.addr or externalRedis.existingSecret is required" .Values.externalRedis.addr | quote }}
+              {{- end }}
+          {{- with .Values.app.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: {{ .Values.app.securityContext.allowPrivilegeEscalation }}
+            readOnlyRootFilesystem: {{ .Values.app.readOnlyRootFilesystem }}
+            capabilities:
+              {{- toYaml .Values.app.securityContext.capabilities | nindent 14 }}
+          volumeMounts:
+            {{- if .Values.app.tmpVolume }}
+            - name: tmp
+              mountPath: /tmp
+            {{- end }}
+            {{- if .Values.config.inline }}
+            - name: config
+              mountPath: /etc/c3api
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.app.tmpVolume }}
+        - name: tmp
+          emptyDir: {}
+        {{- end }}
+        {{- if .Values.config.inline }}
+        - name: config
+          configMap:
+            name: {{ include "c3api.fullname" . }}
+        {{- end }}
+{{- end }}

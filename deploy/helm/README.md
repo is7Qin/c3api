@@ -31,8 +31,23 @@ helm upgrade c3api ./deploy/helm -f my-values.yaml
 
 Changing `config.content` (or `secrets.jwtSecret` when
 `secrets.create=true`) updates a checksum annotation and triggers a rolling
-restart. The application creates its schema on first start (fresh setup only —
-no migration path); back up external PostgreSQL before upgrading.
+restart.
+
+**The app no longer creates its schema at startup.** `migrations.job.enabled`
+(default `true`) renders a `pre-install,pre-upgrade` hook Job that runs the same
+image with `-migrate up`, so a failed migration stops `helm upgrade` before the
+Deployment rolls and old pods keep serving. With it disabled you must run that
+command yourself first:
+
+```bash
+kubectl run c3api-migrate --rm -it --restart=Never \
+  --image=<same image> -- -config "" -migrate up
+```
+
+The Job never passes `-allow-contract` (schema shrinkage is irreversible and
+stays an explicit operator action). A pod that finds an unusable schema stays
+alive and NotReady: `/healthz` 200, `/readyz` 503, business surfaces 503, and
+the log says `run c3api -migrate up`.
 
 ## Uninstalling
 
@@ -103,7 +118,10 @@ helm install c3api ./deploy/helm \
 | `app.readOnlyRootFilesystem` | Read-only root filesystem | `true` |
 | `app.tmpVolume` | Mount emptyDir at `/tmp` | `true` |
 | `app.securityContext` | Non-root / dropped caps | see `values.yaml` |
-| `app.probes.*` | startup/liveness/readiness probes on `/healthz` | enabled |
+| `migrations.job.enabled` | Render the `pre-install,pre-upgrade` migration Job (`-migrate up`); disable only if you run the migration yourself | `true` |
+| `migrations.job.backoffLimit` | Job retries — a migration is not retryable | `0` |
+| `migrations.job.activeDeadlineSeconds` | Hard ceiling for the migration Job | `600` |
+| `app.probes.*` | startup/liveness probes on `/healthz`; readiness on `/readyz` | enabled |
 | `app.terminationGracePeriodSeconds` | Graceful shutdown budget — must be >= `server.shutdown_drain` + 11s (8s main tail + 3s independent tail); e.g. drain `2s` => 13s | `60` |
 | `app.lifecycle` | Container `lifecycle` block rendered verbatim (e.g. `preStop` sleep so endpoints drain before SIGTERM). Counted **inside** the grace period | `{}` |
 | `app.strategy` | RollingUpdate `maxUnavailable`/`maxSurge` | `0` / `1` |
@@ -128,8 +146,11 @@ helm install c3api ./deploy/helm \
   default `config.content` sets `server.addr=":18080"` and always injects
   `C3API_SERVER_ADDR=":<app.port>"` to match the Service and probes. If you
   override `app.port`, keep `config.content` consistent.
-- **Probes:** all three probes use `/healthz`, which reports process liveness
-  only (not DB/Redis). The app fail-fasts on dependencies at startup.
+- **Probes:** startup and liveness use `/healthz` (process liveness only, never
+  DB/Redis — a schema mismatch must not restart the process); readiness uses
+  `/readyz`, which reports the schema gate (`{schema:{db,db_contract,binary,mode}}`)
+  and is the only signal that removes a pod from the Service. The app still
+  fail-fasts on missing required configuration and on unreachable PostgreSQL/Redis.
 - **PodDisruptionBudget:** enabling it with only one replica fails rendering
   (a PDB with `minAvailable=1` and a single replica blocks all voluntary
   evictions); use `replicaCount > 1` (or `autoscaling.minReplicas > 1`).

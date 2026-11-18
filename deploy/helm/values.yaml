@@ -47,6 +47,26 @@ externalRedis:
   addr: ""                     # host:port, e.g. redis:6379
   existingSecret: ""           # or read the addr from a Secret (key: redis-addr); takes precedence
 
+# --- Schema migrations (pre-install/pre-upgrade hook Job) ---
+# The app container NEVER migrates: N pods running the same DDL concurrently is the
+# failure mode this Job exists to prevent. The Job runs the release image with
+# `-migrate up` before the Deployment rolls, with backoffLimit 0 and a hard
+# deadline, so a failed migration stops `helm upgrade` before any pod is replaced.
+#
+# It never passes `-allow-contract`: contract migrations are irreversible shrinkage
+# and must be an explicit operator action (`-migrate up -allow-contract`).
+#
+# Turning this off means YOU must run the migration yourself before `helm upgrade`:
+#   kubectl run c3api-migrate --rm -it --restart=Never \
+#     --image=<same image> -- <same args> -migrate up
+# Otherwise the new pods come up NotReady: /healthz 200, /readyz 503, business
+# surfaces 503, and the log says `run c3api -migrate up`.
+migrations:
+  job:
+    enabled: true
+    backoffLimit: 0            # a migration is not a retryable task
+    activeDeadlineSeconds: 600 # hard ceiling; a migration that runs 10 minutes is stuck on a lock
+
 # --- Application configuration ---
 config:
   inline: true                 # true: render config.toml into a ConfigMap; false: env-only (-config "")

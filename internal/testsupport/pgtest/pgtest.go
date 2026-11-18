@@ -90,6 +90,11 @@ const (
 	templateReadyMarker = "pgtest:template-ready"
 	// hashLen is how many hex digits of the source hash go into a template name.
 	hashLen = 12
+	// templateBuildTimeout bounds the first build of a template (every migration
+	// against an empty database). A hang here used to be indistinguishable from
+	// a slow suite; the timeout plus the duration log make it a failure with a
+	// number attached.
+	templateBuildTimeout = 120 * time.Second
 	// identMaxLen is PostgreSQL's identifier length limit in bytes.
 	identMaxLen = 63
 	// dbPoolMax is the connection-pool ceiling OpenPool gives every pool it opens
@@ -526,13 +531,21 @@ func ensureTemplate(t testing.TB, m *maint, e *testEnv, migrate func(ctx context
 		return "", fmt.Errorf("create template %q: %w", name, err)
 	}
 	// migrate owns and closes its own connection to the template, so the
-	// template is connection-free again once it returns.
-	if err := migrate(ctx, e.dsn(name)); err != nil {
+	// template is connection-free again once it returns. The first build of a
+	// template runs every migration; if it hangs, the timeout is what turns that
+	// into a readable failure instead of a suite that never finishes.
+	buildCtx, cancelBuild := context.WithTimeout(ctx, templateBuildTimeout)
+	started := time.Now()
+	err = migrate(buildCtx, e.dsn(name))
+	cancelBuild()
+	took := time.Since(started)
+	if err != nil {
 		// Do not leave a half-migrated template behind: a later run would see
 		// the name and reuse it.
 		_, _ = m.conn.ExecContext(ctx, "DROP DATABASE IF EXISTS "+quoteIdent(name)+" WITH (FORCE)")
-		return "", fmt.Errorf("migrate template %q: %w", name, err)
+		return "", fmt.Errorf("migrate template %q (took %s, timeout %s): %w", name, took.Round(time.Millisecond), templateBuildTimeout, err)
 	}
+	t.Logf("pgtest: built template %q in %s", name, took.Round(time.Millisecond))
 	// Write the readiness marker last, through the maintenance connection (never
 	// a template connection), so "marker present ∧ value == marker" proves the
 	// migration — schema, partitions and seed — completed. CREATE DATABASE ...
@@ -585,32 +598,25 @@ func templateName(e *testEnv) (string, error) {
 	return templatePrefix + hash, nil
 }
 
-// templateHash hashes the sources that determine the template's schema and
-// seed: every ent schema file, the generated migrate schema, and the repository
-// files that carry partition DDL, the price/codex seeds and the migration hook.
+// templateHash hashes everything that decides the template's schema and seed:
+//
+//   - every ent schema file and the generated migrate schema (the model truth);
+//   - **every embedded migration file** — the template is built by running them
+//     (`migrate.Up`), so a changed migration must build a new template;
+//   - the migration runner sources, which carry `migrate.RequiredVersion`;
+//   - the repository files that carry the partition DDLs, the partition single
+//     entry (and its `EnsureAllTablePartitionsVersion`) plus the price/codex seeds.
+//
+// Missing any of these makes a changed migration/partition rule keep cloning the
+// old template: the suite stays green while testing a stale schema (假绿). The two
+// version constants are covered by content hashing rather than by referencing
+// them, because pgtest must not import `repository` or `db/migrate` — those
+// packages' own tests import pgtest, so the reverse import is a test import cycle.
 func templateHash(e *testEnv) (string, error) {
-	schemaDir := filepath.Join(e.root, "internal", "ent", "schema")
-	entries, err := os.ReadDir(schemaDir)
+	paths, err := templateHashInputs(e)
 	if err != nil {
-		return "", fmt.Errorf("read ent schema dir: %w", err)
+		return "", err
 	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
-	paths := make([]string, 0, len(names)+4)
-	for _, n := range names {
-		paths = append(paths, filepath.Join(schemaDir, n))
-	}
-	paths = append(paths,
-		filepath.Join(e.root, "internal", "ent", "migrate", "schema.go"),
-		filepath.Join(e.root, "internal", "repository", "partition.go"),
-		filepath.Join(e.root, "internal", "repository", "price_bootstrap.go"),
-		filepath.Join(e.root, "internal", "repository", "repository.go"),
-	)
 	h := sha256.New()
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
@@ -621,6 +627,78 @@ func templateHash(e *testEnv) (string, error) {
 		_, _ = h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil))[:hashLen], nil
+}
+
+// templateHashInputs 返回进 hash 的文件清单（排序稳定：同等内容必须同等 hash）。
+func templateHashInputs(e *testEnv) ([]string, error) {
+	schemaDir := filepath.Join(e.root, "internal", "ent", "schema")
+	names, err := sortedGoFiles(schemaDir)
+	if err != nil {
+		return nil, fmt.Errorf("read ent schema dir: %w", err)
+	}
+	migrationsDir := filepath.Join(e.root, "internal", "db", "migrate", "migrations")
+	migrationNames, err := migrationHashFiles(migrationsDir)
+	if err != nil {
+		return nil, fmt.Errorf("read migrations dir: %w", err)
+	}
+	paths := make([]string, 0, len(names)+len(migrationNames)+6)
+	for _, n := range names {
+		paths = append(paths, filepath.Join(schemaDir, n))
+	}
+	for _, n := range migrationNames {
+		paths = append(paths, filepath.Join(migrationsDir, n))
+	}
+	paths = append(paths,
+		filepath.Join(e.root, "internal", "ent", "migrate", "schema.go"),
+		filepath.Join(e.root, "internal", "db", "migrate", "migrate.go"),
+		filepath.Join(e.root, "internal", "db", "migrate", "runner.go"),
+		filepath.Join(e.root, "internal", "repository", "partition.go"),
+		filepath.Join(e.root, "internal", "repository", "price_bootstrap.go"),
+		filepath.Join(e.root, "internal", "repository", "repository.go"),
+		filepath.Join(e.root, "internal", "repository", "routing.go"),
+	)
+	return paths, nil
+}
+
+// migrationHashFiles 列出迁移目录里参与模板 hash 的文件（排序稳定）。
+//
+// 为什么是「目录 → 清单」而不是一份常量名单：模板名是「这套迁移跑出来的
+// schema」的指纹，任何写死的清单都会在新版本落地时静默漏掉文件——测试继续拿
+// 旧模板跑，全绿，而跑的是没人发布的 schema（假绿）。清单必须来自目录本身；
+// 排序让同等内容得到同等名字（模板可复用），内容一变名字就变。
+//
+// 目录为空即错：那意味着模板会被「什么都没跑」地建出来，比漏一个文件更糟。
+func migrationHashFiles(dir string) ([]string, error) {
+	names, err := sortedFilesWithSuffix(dir, ".sql")
+	if err != nil {
+		return nil, err
+	}
+	if len(names) == 0 {
+		return nil, fmt.Errorf("no .sql migrations in %s: the template would be built from an empty schema", dir)
+	}
+	return names, nil
+}
+
+// sortedGoFiles 列目录下的 .go 文件（排序）。
+func sortedGoFiles(dir string) ([]string, error) {
+	return sortedFilesWithSuffix(dir, ".go")
+}
+
+// sortedFilesWithSuffix 列目录下指定后缀的文件名并排序（目录缺失即错：让
+// "迁移目录改名了"表现为模板构建失败，而不是静默少 hash 一批文件）。
+func sortedFilesWithSuffix(dir, suffix string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), suffix) {
+			names = append(names, entry.Name())
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
 
 // SweepStaleTemplates drops every template database whose content hash differs

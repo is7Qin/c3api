@@ -118,9 +118,11 @@ spec:
             failureThreshold: {{ .Values.app.probes.liveness.failureThreshold }}
           {{- end }}
           {{- if .Values.app.probes.readiness.enabled }}
+          # readiness -> /readyz (schema gate). Liveness stays on /healthz: an
+          # unusable schema must never restart the process (spec 2.6).
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: {{ .Values.app.port }}
             periodSeconds: {{ .Values.app.probes.readiness.periodSeconds }}
             timeoutSeconds: {{ .Values.app.probes.readiness.timeoutSeconds }}

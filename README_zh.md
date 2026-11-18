@@ -156,7 +156,7 @@ cd web && pnpm install && pnpm run dev
 
 完整配置项（server / log / auth / db / redis / proxy / upstream / scheduler / usage / billing / routing / supplier）见 `config.example.toml`。
 
-- **仅全新部署（不适配迁移）**——表结构与配置跨版本不向后兼容：升级即全新创建数据库、从零重核对配置（见上方"状态：Beta"说明）。
+- **迁移不再由 app 自动执行**（本版起）：进程启动只读 schema 水位，不建表、不改表；表结构只归版本化迁移 `-migrate up` 管。升级三步见下方「升级与迁移」。
 - **纯 env 部署**（如 K8s）：传 `-config ""` 完全跳过配置文件——flag 默认 config.toml，无文件即启动失败。
 - **配置仅启动时读取**，变更需滚动重启（无热更新）。
 - **非法配置启动即报错**（含字段名）：duration/间隔 ≤0 或 <1ms、未知键（拼写错误/已移除旧键）、必填密钥缺失、占位符（change-me、dev-jwt-secret-for-local 等）一律拒绝。
@@ -166,6 +166,49 @@ cd web && pnpm install && pnpm run dev
 - `compose.yml` — 生产编排：`db`（postgres:18-alpine，数据挂载在 `deploy/data/pg`）+ `redis`（redis:8-alpine，易失状态（协调 + 短时效验证码）——不持久化）+ `app`（单容器，非 root、配置只读挂载自 `deploy/config.toml`、健康检查）。
 - `Dockerfile` — 三阶段构建（node → go → alpine），产出内嵌 UI 的静态单二进制。
 - **双必需依赖**：PostgreSQL 18（全部持久状态，唯一真相源）+ Redis 8（可丢的易失状态——实例发现心跳与短时效邮箱验证码；永不作为缓存层）。二者均为启动强制项；勿配 `allkeys-lru` 等淘汰策略——验证码被淘汰仅致用户重发，无害但应避免。
+
+### 升级与迁移
+
+**单机（compose）三步**——中间那步失败就停在这里，老容器还在跑：
+
+```bash
+docker compose pull
+docker compose run --rm app -migrate up   # 一次性；非 0 = 失败
+docker compose up -d
+```
+
+**k8s（Helm）**：`migrations.job.enabled: true`（默认）会在 `pre-install,pre-upgrade` 跑一个
+`-migrate up` 的 Job，失败即让 `helm upgrade` 在动 Deployment 之前失败。关掉它
+（`--set migrations.job.enabled=false`）就**必须**自己在 `helm upgrade` 前跑同一条命令。
+迁移 Job 永不带 `-allow-contract`：收缩阶段不可逆，只能由人显式确认。
+
+**忘了迁移不会静默出错**：新容器 `/healthz` 仍 200（存活），`/readyz` 503，所有业务/写面
+503，日志写 `run c3api -migrate up`。探针因此分成两个：liveness → `/healthz`，
+readiness → `/readyz`。
+
+**迁移文件逐字节不可变**：账本记录每个已应用版本实际执行 SQL 的 checksum，任何改动——
+哪怕只改注释——都算漂移，二进制会判 NotReady（`-migrate status` 打印记录值 vs 当前值）。
+恢复原文件或新增版本；进程永不接受漂移的文件。`go run ./internal/db/migrate/gen/cmd
+-check` 是 CI 上保证生成产物逐字节一致的那道门。
+
+**NotReady 不会自愈**：闸门是启动期一次判定，NotReady 的进程不跑 retention（旧分区不
+DROP）、不消费 NOTIFY、也不发发现心跳。修好 schema 后**必须重启 Pod**——启动时的快照/
+重载才是缓存一致性的补偿，期间跳过的失效通知无法重放。长期 NotReady 要盯两件事：磁盘
+（没有东西在回收旧分区）与容量估算 N（它有意不把自己计入，N 只会偏低，而不会把流量导
+给一个不能服务的 pod）。
+
+**老库一次性收养**（M0b 之前建的库账本为空）：`-migrate up` 会拒绝并提示 `-migrate adopt`。
+先升到「最后一个启动期自动建表的版本」把 schema 追平，再：
+
+```bash
+docker compose run --rm app -migrate adopt --snapshot 0001
+```
+
+然后才升到本版。收养是显式动作，进程永不自动收养。
+
+**回滚**：`helm rollback` / 换回旧镜像只回代码、不回库（expand-only 保证旧代码能读新库）。
+要拆 schema 才需要 `-migrate down -allow-destructive`（数据随之丢弃），且执行前先确认旧版本
+pod 已全部退出。
 
 ## 许可
 

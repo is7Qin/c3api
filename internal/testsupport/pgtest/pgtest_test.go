@@ -145,10 +145,13 @@ func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	ctx := context.Background()
 	m := openMaint(t)
 
-	// Build a template that is already a couple of days old: its four
-	// partitioned tables carry partitions for (now-2) and (now-1) only, never
-	// today's. This stands in for a reusable template whose source hash has not
-	// changed since it was built.
+	// Build a template that is already a couple of days old: all six partitioned
+	// parents carry partitions for (now-2) and (now-1) only, never today's. This
+	// stands in for a reusable template whose source hash has not changed since it
+	// was built. The fixture must be faithful: production tops a clone up through
+	// the single entry, which refuses to run when any of the seven groups is
+	// missing (spec §2.7), so a template with only four groups would be a shape
+	// production can never produce.
 	staleName := "c3api_test_template_staleprobe"
 	_, err := m.Exec(ctx, "DROP DATABASE IF EXISTS "+staleName+" WITH (FORCE)")
 	require.NoError(t, err)
@@ -167,6 +170,7 @@ func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	require.NoError(t, repo.EnsureErrLogPartitioned(ctx, past))
 	require.NoError(t, repo.EnsureUsageStatsPartitioned(ctx, past))
 	require.NoError(t, repo.EnsureUsageEntityStatsPartitioned(ctx, past))
+	require.NoError(t, repo.Partitions.EnsureRoutingPartitions(ctx, past))
 	// Leave no resident connection on the template before cloning from it.
 	require.NoError(t, sqlDB.Close())
 
@@ -192,7 +196,7 @@ func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 
 	today := time.Now().UTC().Format("20060102")
-	for _, tbl := range []string{"usage_logs", "err_logs", "usage_stats", "usage_entity_stats"} {
+	for _, tbl := range []string{"usage_logs", "err_logs", "usage_stats", "usage_entity_stats", "routing_quality_fact", "routing_flow_fact"} {
 		var ok bool
 		require.NoError(t, conn.QueryRow(ctx,
 			`SELECT to_regclass($1) IS NOT NULL`, "public."+tbl+"_"+today).Scan(&ok))

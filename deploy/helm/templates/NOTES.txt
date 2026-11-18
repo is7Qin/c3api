@@ -27,6 +27,9 @@ Port:    {{ $svcPort }} (container listens on :{{ .Values.app.port }})
    existing Secret). Prefer a Redis instance WITHOUT an allkeys-lru eviction
    policy (eviction only forces verification-code re-issue).
 
-4. Persistence & upgrades: the application creates its schema on first start
-   (fresh setup only, no migration path). Back up external PostgreSQL before
-   upgrading.
+4. Persistence & upgrades: the app never creates or alters its schema. The
+   schema comes from the {{ if .Values.migrations.job.enabled }}pre-install/pre-upgrade migration Job (migrations.job.enabled=true){{ else }}migration step you must run yourself (migrations.job.enabled=false){{ end }}:
+   `-migrate up`. Readiness is /readyz; a pod that finds an unusable schema stays
+   alive and NotReady instead of crash-looping. Back up external PostgreSQL
+   before upgrading. An older database needs a one-time `-migrate adopt
+   --snapshot 0001` first (see the chart README).
