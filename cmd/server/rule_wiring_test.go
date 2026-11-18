@@ -32,7 +32,7 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 	counts := map[string]int{
 		"ruleEngine.SetHealthSink":  0,
 		"ruleEngine.SetPersistFunc": 0,
-		"service.New:RecoverProber": 0,
+		"service.New:identArg":      0,
 	}
 	// 旧装配残留：HealthController 构造与 sched 派生锁存一律不得出现。
 	absentSels := map[string]int{
@@ -83,23 +83,30 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 				argCounts[want] = append(argCounts[want], len(ce.Args))
 			}
 		}
-		// service.New 的 Deps 复合字面量中 RecoverProber 字段出现次数。
-		if recv.Name == "service" && sel.Sel.Name == "New" {
-			for _, arg := range ce.Args {
-				ast.Inspect(arg, func(m ast.Node) bool {
-					kv, ok := m.(*ast.KeyValueExpr)
-					if !ok {
-						return true
-					}
-					if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "RecoverProber" {
-						counts["service.New:RecoverProber"]++
-					}
-					return true
-				})
+		// service.New 必须与 Deps 字面量分离：装配层要先 deps.Validate() 再
+		// service.New(deps)（spec 2026-11-18 §5.2）。内联字面量会让 Validate 无
+		// 值可引用，因此这里钉两件事——New 的实参是具名变量，且 RecoverProber
+		// 全包恰好接线一次（计数在下方 kvProber）。
+		if recv.Name == "service" && sel.Sel.Name == "New" && len(ce.Args) == 1 {
+			if _, ok := ce.Args[0].(*ast.Ident); ok {
+				counts["service.New:identArg"]++
 			}
 		}
 		return true
 	})
+	// Deps 的 RecoverProber 字段全包出现次数（唯一性钉，跨文件生效）。
+	kvProber := 0
+	ast.Inspect(pkg, func(n ast.Node) bool {
+		kv, ok := n.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "RecoverProber" {
+			kvProber++
+		}
+		return true
+	})
+
 	// 视图 2：wiring_health.go——六站构造序的主语所在文件。
 	ast.Inspect(healthFn, func(n ast.Node) bool {
 		ce, ok := n.(*ast.CallExpr)
@@ -137,7 +144,8 @@ func TestRuleHealthWiringOnce(t *testing.T) {
 	for key, n := range absentRecvSels {
 		require.Equal(t, 0, n, "%s 必须缺席（main 自持 latch，不再派生）", key)
 	}
-	require.Equal(t, 1, counts["service.New:RecoverProber"], "service.New:RecoverProber 必须恰好接线一次")
+	require.Equal(t, 1, kvProber, "RecoverProber 必须恰好接线一次")
+	require.Equal(t, 1, counts["service.New:identArg"], "service.New 必须收具名 Deps 变量（先 Validate 再构造）")
 	// 构造序钉：六站全在且严格递增。
 	for _, key := range orderKeys {
 		require.Contains(t, firstOffset, key, "%s 必须在 newHealthFace 中构造（顺序钉主语被拆到其它文件 ⇒ 返工）", key)
