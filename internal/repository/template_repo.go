@@ -23,6 +23,9 @@ type TemplateRepo struct {
 }
 
 func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
+	if t.CredentialType.IsBPS() {
+		return nil, ErrProviderNotWired
+	}
 	if t.CredentialType.IsCodex() && t.BaseURL != "" {
 		return nil, fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
 	}
@@ -102,6 +105,9 @@ func (r *TemplateRepo) ListTemplates(ctx context.Context, q ListQuery) ([]*domai
 }
 
 func (r *TemplateRepo) UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
+	if t.CredentialType.IsBPS() {
+		return nil, ErrProviderNotWired
+	}
 	var row *ent.Template
 	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
 		if err := lockTemplateWrites(ctx, driver, []int64{t.ID}); err != nil {

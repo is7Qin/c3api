@@ -154,6 +154,9 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 	if tpl.CredentialType != e.CredentialType {
 		return nil, ErrInvalidInput // 父模板类型与 ext 行类型必须一致
 	}
+	if err := rejectBPSTemplateExt(e); err != nil {
+		return nil, err
+	}
 	if err := validateTemplateExt(e); err != nil { // 第 0 步：类型存在性
 		return nil, err
 	}

@@ -18,6 +18,7 @@ import (
 // 数据面 URL 归 SDK 官方默认所有，网关不再派生或传递 BaseURL。
 type AccountCredential struct {
 	AccountID         int64
+	CredentialType    credential.Type
 	OAuthToken        string
 	OAuthRefreshToken string
 	OAuthExpiresAt    *time.Time
@@ -51,7 +52,7 @@ func CredentialFromExt(e *AccountExt) AccountCredential {
 	if e == nil {
 		return AccountCredential{}
 	}
-	c := AccountCredential{AccountID: e.AccountID}
+	c := AccountCredential{AccountID: e.AccountID, CredentialType: e.CredentialType}
 	// ChatGPT account id is shared by Codex/BPS OAuth, but installation
 	// identity remains Codex-only.
 	if e.CredentialType.IsResponsesProvider() {

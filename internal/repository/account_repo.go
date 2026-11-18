@@ -84,6 +84,9 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 		if err != nil {
 			return err
 		}
+		if templates[a.TemplateID].CredentialType.IsBPS() {
+			return ErrProviderNotWired
+		}
 		if err := validateCodexAccountBaseURL(templates[a.TemplateID], a.BaseURL); err != nil {
 			return err
 		}

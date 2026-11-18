@@ -59,6 +59,9 @@ type TemplateExtDecide func(old *domain.TemplateExt) (down bool, err error)
 // decide **不得为 nil**（spec v4.26 写死）：nil 不是"不判定"，而是"把 409 门整个
 // 关掉"，故入口处 panic——绝不静默放行。
 func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, decide TemplateExtDecide) (*domain.TemplateExt, bool, error) {
+	if e != nil && e.CredentialType.IsBPS() {
+		return nil, false, ErrProviderNotWired
+	}
 	if decide == nil {
 		// nil 不是"不判定"，而是"把判定整个关掉"——那正是 409 门要防的事，所以它是
 		// 编程错误（不是可重试的运行时状态），入口处直接 panic：绝不静默放行。

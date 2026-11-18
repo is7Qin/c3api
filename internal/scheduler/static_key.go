@@ -230,11 +230,20 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.proxyDigest = specOfDomain(av.acc.Proxy).Key()
 	k.routable = av.routable
 	if ext := av.acc.Ext; ext != nil {
-		k.codexAccountID = derefString(ext.CodexAccountID)
-		k.codexEmail = derefString(ext.CodexEmail)
-		k.codexPATKey = derefString(ext.CodexPATKey)
-		if id := ext.CodexIdentity; id != nil {
-			k.codexInstallation = id.InstallationID
+		isBPS := av.tpl != nil && av.tpl.CredentialType.IsBPS()
+		if isBPS {
+			// BPS needs the verified upstream account claim for auth, but it
+			// never consumes Codex email/PAT/installation identity.
+			k.codexAccountID = derefString(ext.CodexAccountID)
+		} else {
+			// Preserve the existing static-key/Codex leaf semantics. A nil
+			// template is the legacy test/assembly shape and keeps that behavior.
+			k.codexAccountID = derefString(ext.CodexAccountID)
+			k.codexEmail = derefString(ext.CodexEmail)
+			k.codexPATKey = derefString(ext.CodexPATKey)
+			if id := ext.CodexIdentity; id != nil {
+				k.codexInstallation = id.InstallationID
+			}
 		}
 	}
 	if tpl := av.tpl; tpl != nil {

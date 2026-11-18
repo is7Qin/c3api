@@ -186,6 +186,9 @@ func requireOwnedAccountInTx(ctx context.Context, client *ent.Client, accountID 
 // 生成/沿用——正常路径恒非 nil；jsonb NULL → ClearX 清空，身份无清空路径）；
 // codex_oauth_* / codex_pat_key / codex_email 由 service 维护（nil → 清空）。
 func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
+	if e != nil && e.CredentialType.IsBPS() {
+		return nil, ErrProviderNotWired
+	}
 	_, err := r.client.AccountExt.Create().
 		SetAccountID(e.AccountID).
 		SetCredentialType(string(e.CredentialType)).
@@ -254,6 +257,9 @@ func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.Account
 // 挡住、直到本事务结束——不存在「先无锁 Exist 通过、另一连接转属并提交、随后 INSERT
 // 不复核 owner」的窗口（spec S:139/S:826）。
 func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.AccountExt) (bool, error) {
+	if e != nil && e.CredentialType.IsBPS() {
+		return false, ErrProviderNotWired
+	}
 	var inserted bool
 	err := withWriteTx(ctx, r.driver, func(client *ent.Client, txDrv dialect.Driver) error {
 		if err := lockOwnedAccountForUpdate(ctx, txDrv, e.AccountID); err != nil {
@@ -638,6 +644,9 @@ func (r *AccountExtRepo) AdminWritePATKeyCAS(ctx context.Context, accountID int6
 // 全在同一事务与同一 owner 谓词内（不再有服务面先 TryInsert 落引、后 CAS 拒绝的
 // 转属窗口）。并发首写败者的 CAS 因 revision 不推进而失败并回滚，不会覆盖赢者身份。
 func (r *AccountExtRepo) AdminUpsertAccountExtCAS(ctx context.Context, e *domain.AccountExt, expectedRevision int64) (*domain.AccountExt, error) {
+	if e != nil && e.CredentialType.IsBPS() {
+		return nil, ErrProviderNotWired
+	}
 	tx, err := r.client.Tx(ctx)
 	if err != nil {
 		return nil, err

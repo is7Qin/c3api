@@ -30,6 +30,10 @@ var ErrConflict = errors.New("repository: conflict")
 // ErrInvalidInput 表示写入会破坏跨实体业务不变量。
 var ErrInvalidInput = errors.New("repository: invalid input")
 
+// ErrProviderNotWired prevents management writes from creating BPS rows before
+// the raw-profile persistence and adapter wiring are complete.
+var ErrProviderNotWired = errors.New("repository: provider not wired")
+
 // --- 批量更新字段子集（nil 字段 = 不更新） ---
 
 type TemplatePatch struct {
@@ -167,6 +171,9 @@ func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p 
 			}
 		}
 		for _, id := range ids {
+			if templates[id].CredentialType.IsBPS() {
+				return ErrProviderNotWired
+			}
 			u := client.Template.UpdateOneID(id)
 			if p.Name != nil {
 				u = u.SetName(*p.Name)
@@ -281,6 +288,11 @@ func (r *AccountRepo) updateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			templates, err := loadTemplates(ctx, client, templateIDs)
 			if err != nil {
 				return err
+			}
+			for _, tpl := range templates {
+				if tpl.CredentialType.IsBPS() {
+					return ErrProviderNotWired
+				}
 			}
 			for _, row := range locked {
 				templateID := row.TemplateID

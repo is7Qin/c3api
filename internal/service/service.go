@@ -1158,6 +1158,9 @@ func mapRepoErr(err error) error { return mapRepoErrCore(err, true) }
 // withInvalidInput：规则写面不做 repository.ErrInvalidInput 归类）。ErrNotFound /
 // ErrConflict 保留详情（404/409 响应带上下文），其余原样返回。
 func mapRepoErrCore(err error, withInvalidInput bool) error {
+	if errors.Is(err, repository.ErrProviderNotWired) {
+		return fmt.Errorf("%w: provider is not wired", ErrUnavailable)
+	}
 	if withInvalidInput && errors.Is(err, repository.ErrInvalidInput) {
 		return ErrInvalidInput
 	}
