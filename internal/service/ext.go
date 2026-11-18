@@ -147,6 +147,9 @@ func (s *Service) GetTemplateExt(ctx context.Context, templateID int64) (*domain
 // 故写入后必须与模板其余写面同规失效：Templates() 全量重载调度快照 + 失效
 // 客户端工厂，并广播 NOTIFY 使多实例收敛。
 func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, confirm string) (*domain.TemplateExt, error) {
+	if e == nil {
+		return nil, ErrInvalidInput
+	}
 	tpl, err := s.store.GetTemplate(ctx, e.TemplateID)
 	if err != nil {
 		return nil, mapRepoErr(err)

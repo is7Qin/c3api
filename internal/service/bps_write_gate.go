@@ -36,21 +36,30 @@ func (s *Service) rejectBPSAccountWrite(ctx context.Context, ids []int64, finalT
 }
 
 func rejectBPSTemplate(t *domain.Template) error {
-	if t != nil && t.CredentialType.IsBPS() {
+	if t == nil {
+		return ErrInvalidInput
+	}
+	if t.CredentialType.IsBPS() {
 		return ErrUnavailable
 	}
 	return nil
 }
 
 func rejectBPSTemplateExt(e *domain.TemplateExt) error {
-	if e != nil && e.CredentialType.IsBPS() {
+	if e == nil {
+		return ErrInvalidInput
+	}
+	if e.CredentialType.IsBPS() {
 		return ErrUnavailable
 	}
 	return nil
 }
 
 func rejectBPSAccountExt(e *domain.AccountExt) error {
-	if e != nil && e.CredentialType.IsBPS() {
+	if e == nil {
+		return ErrInvalidInput
+	}
+	if e.CredentialType.IsBPS() {
 		return ErrUnavailable
 	}
 	return nil

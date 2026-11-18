@@ -123,6 +123,9 @@ func (s bpsTokenStoreAdapter) SaveCAS(ctx context.Context, upstreamAccountID str
 	next, err := s.store.SaveCAS(ctx, s.key, expectedRevision, BPSTokenSet{
 		AccessToken: set.AccessToken, RefreshToken: set.RefreshToken, ExpiresAt: set.ExpiresAt,
 	})
+	if errors.Is(err, ErrBPSTokenConflict) {
+		return 0, fmt.Errorf("%w: %v", bpssdk.ErrTokenStoreConflict, err)
+	}
 	return next, err
 }
 

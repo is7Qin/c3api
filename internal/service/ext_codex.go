@@ -164,6 +164,9 @@ func fillIdentityDefaults(e *domain.AccountExt, cur *domain.AccountExt) {
 // 成功写入后按账号写面统一失效面做组级定向重载 + NOTIFY（快照重载幂等：值
 // 相等即复用叶子，不打断在途计划，故无条件重载恒正确，无需按值判定）。
 func (s *Service) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
+	if e == nil {
+		return nil, ErrInvalidInput
+	}
 	acc, err := s.store.GetAccount(ctx, e.AccountID) // scoped 单读：越域/缺失 ⇒ 404
 	if err != nil {
 		return nil, mapRepoErr(err)
