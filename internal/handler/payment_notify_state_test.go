@@ -400,8 +400,8 @@ func TestPaymentMethodsOnlySellableChannels(t *testing.T) {
 		chOn    bool
 		cur     string
 	}{
-		{"acct_ok", "3001", true, epay.PayTypeAlipay, 1, 7_200_000, true, "CNY"},   // max_usd 见下方
-		{"acct_off", "3002", true, epay.PayTypeWxpay, 1, 7_200_000, false, "CNY"},  // 渠道停用
+		{"acct_ok", "3001", true, epay.PayTypeAlipay, 1, 7_200_000, true, "CNY"},    // max_usd 见下方
+		{"acct_off", "3002", true, epay.PayTypeWxpay, 1, 7_200_000, false, "CNY"},   // 渠道停用
 		{"acct_badcur", "3003", true, epay.PayTypeWxpay, 1, 7_200_000, true, "JPY"}, // 非白名单币种
 	}
 	for _, c := range cases {

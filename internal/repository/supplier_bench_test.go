@@ -5,12 +5,12 @@
 package repository_test
 
 // supplier_bench_test.go A17 性能阈值（spec 2026-10-09 §7.1 P1–P3；P4 全链写放大
-// 由编排者手动执行，不进本文件）。**条件性**：需真实 PG（TEST_DATABASE_URL），
-// 未设则 Skip；CI 不可满足。
+// 由编排者手动执行，不进本文件）。**条件性**：需真实 PG（PG 测试 DSN），
+// 未设则经 pgtest.DSN 统一闸门 Skip（CI 的 require-PG 开关为 1 时直接失败）；CI 不可满足。
 //
 // 运行示例：
 //
-//	TEST_DATABASE_URL=postgres://... go test ./internal/repository/ \
+//	先导出 PG 测试 DSN（见 pgtest 包文档），然后 go test ./internal/repository/ \
 //	  -run '^$' -bench 'BenchmarkSupplier' -benchmem -benchtime 100x -count 3
 //
 // 阈值判据见 §7.1：P1 追平率 ≥ 到达率；P2 INSERT/billed-mark P99 ≤ 基线×1.10；
@@ -30,15 +30,13 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 // benchSetup 建独立 schema 的仓库 + 池（bench 专用；随 B 结束清理）。
 func benchSetup(b *testing.B) (*repository.Repository, *pgxpool.Pool) {
 	b.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		b.Skip("TEST_DATABASE_URL not set; skipping A17 supplier benchmark")
-	}
+	dsn := pgtest.DSN(b) // 统一闸门：CI 的 require-PG 开关为 1 时缺 DSN 直接失败
 	ctx := context.Background()
 	schema := fmt.Sprintf("c3api_supplier_bench_%d_%d", os.Getpid(), time.Now().UnixNano())
 	cfg, err := pgxpool.ParseConfig(dsn)

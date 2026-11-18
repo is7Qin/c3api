@@ -8,7 +8,7 @@ package service
 // 编排必须走作用域谓词——越域读/写 ⇒ 404，且转属交错（屏障，无 sleep）下写事务
 // 按作用域拒绝，不落引他人账号。
 //
-// 跑法：TEST_DATABASE_URL=... go test ./internal/service/ -run 'AccountExtScope|AccountExtTransfer' -count=1 -v
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test ./internal/service/ -run 'AccountExtScope|AccountExtTransfer' -count=1 -v
 
 import (
 	"context"

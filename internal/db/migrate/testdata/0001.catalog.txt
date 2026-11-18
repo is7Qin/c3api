@@ -1,0 +1,660 @@
+column|account_exts|attnum=10|name=account_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|account_exts|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|account_exts|attnum=2|name=credential_type|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|account_exts|attnum=3|name=codex_identity|type=jsonb|notnull=false|identity=|generated=|collation=|default=
+column|account_exts|attnum=4|name=codex_oauth_token|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|account_exts|attnum=5|name=codex_oauth_refresh_token|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|account_exts|attnum=6|name=codex_oauth_expires_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|account_exts|attnum=7|name=codex_pat_key|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|account_exts|attnum=8|name=codex_email|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|account_exts|attnum=9|name=codex_account_id|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|account_groups|attnum=1|name=account_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|account_groups|attnum=2|name=group_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|accounts|attnum=10|name=enabled|type=boolean|notnull=true|identity=|generated=|collation=|default=true
+column|accounts|attnum=11|name=lifecycle_revision|type=bigint|notnull=true|identity=|generated=|collation=|default=1
+column|accounts|attnum=12|name=identity_revision|type=bigint|notnull=true|identity=|generated=|collation=|default=1
+column|accounts|attnum=13|name=upstream_cost_multiplier_bp|type=bigint|notnull=true|identity=|generated=|collation=|default=10000
+column|accounts|attnum=14|name=cache_domain|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=15|name=supplier_user_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=16|name=proxy_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=17|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|accounts|attnum=18|name=deleted_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=19|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|accounts|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|accounts|attnum=20|name=template_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|accounts|attnum=2|name=name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|accounts|attnum=3|name=base_url|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=4|name=upstream_key|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|accounts|attnum=5|name=max_concurrency|type=bigint|notnull=true|identity=|generated=|collation=|default=8
+column|accounts|attnum=6|name=last_error|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=7|name=last_used_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=8|name=failed_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|accounts|attnum=9|name=failure_source|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|balance_logs|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|balance_logs|attnum=2|name=user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|balance_logs|attnum=3|name=amount|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|balance_logs|attnum=4|name=balance_after|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|balance_logs|attnum=5|name=source|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|balance_logs|attnum=6|name=operator_id|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|balance_logs|attnum=7|name=note|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|balance_logs|attnum=8|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|email_templates|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|email_templates|attnum=2|name=purpose|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|email_templates|attnum=3|name=subject|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|email_templates|attnum=4|name=body_text|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|email_templates|attnum=5|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|err_logs|attnum=10|name=format|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|err_logs|attnum=11|name=status_code|type=integer|notnull=true|identity=|generated=|collation=|default=0
+column|err_logs|attnum=12|name=error_type|type=character varying|notnull=true|identity=|generated=|collation=|default='none'::character varying
+column|err_logs|attnum=13|name=commit_state|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=14|name=error_message|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=15|name=latency_ms|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|err_logs|attnum=16|name=billing_tier|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=17|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|err_logs|attnum=1|name=id|type=bigint|notnull=true|identity=|generated=|collation=|default=nextval('err_logs_id_seq'::regclass)
+column|err_logs|attnum=2|name=request_id|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|err_logs|attnum=3|name=client_ip|type=text|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=4|name=group_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=5|name=account_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=6|name=template_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=7|name=user_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=8|name=key_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|err_logs|attnum=9|name=model|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|group_assignments|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|group_assignments|attnum=2|name=price_multiplier|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|group_assignments|attnum=3|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|group_assignments|attnum=4|name=group_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|group_assignments|attnum=5|name=user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|groups|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|groups|attnum=2|name=name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|groups|attnum=3|name=description|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|groups|attnum=4|name=visibility|type=character varying|notnull=true|identity=|generated=|collation=|default='public'::character varying
+column|groups|attnum=5|name=price_multiplier|type=bigint|notnull=true|identity=|generated=|collation=|default=10000
+column|groups|attnum=6|name=protocol_convert|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|groups|attnum=7|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|groups|attnum=8|name=deleted_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|groups|attnum=9|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|keys|attnum=10|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|keys|attnum=11|name=group_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|keys|attnum=12|name=user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|keys|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|keys|attnum=2|name=name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|keys|attnum=3|name=key_raw|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|keys|attnum=4|name=status|type=character varying|notnull=true|identity=|generated=|collation=|default='active'::character varying
+column|keys|attnum=5|name=max_concurrency|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|keys|attnum=6|name=quota|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|keys|attnum=7|name=quota_used|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|keys|attnum=8|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|keys|attnum=9|name=deleted_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|management_keys|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|management_keys|attnum=2|name=name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|management_keys|attnum=3|name=key_raw|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|management_keys|attnum=4|name=status|type=character varying|notnull=true|identity=|generated=|collation=|default='active'::character varying
+column|management_keys|attnum=5|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|management_keys|attnum=6|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|management_keys|attnum=7|name=deleted_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|management_keys|attnum=8|name=user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=10|name=rate_micro|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=11|name=pay_type|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=12|name=trade_no|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|orders|attnum=13|name=redemption_code_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|orders|attnum=14|name=raw_notify|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|orders|attnum=15|name=fail_reason|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|orders|attnum=16|name=fail_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|orders|attnum=17|name=last_notify_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|orders|attnum=18|name=resolved_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|orders|attnum=19|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|orders|attnum=20|name=paid_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|orders|attnum=21|name=expires_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=2|name=out_trade_no|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=3|name=user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=4|name=provider|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=5|name=account_key|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=6|name=status|type=character varying|notnull=true|identity=|generated=|collation=|default='pending'::character varying
+column|orders|attnum=7|name=credit_milli|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=8|name=pay_minor|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|orders|attnum=9|name=currency|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=10|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=11|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|payment_accounts|attnum=2|name=key|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=3|name=provider|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=4|name=merchant_ref|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=5|name=display_name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=6|name=enabled|type=boolean|notnull=true|identity=|generated=|collation=|default=true
+column|payment_accounts|attnum=7|name=priority|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|payment_accounts|attnum=8|name=config|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|payment_accounts|attnum=9|name=config_revision|type=bigint|notnull=true|identity=|generated=|collation=|default=1
+column|payment_channels|attnum=10|name=account_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|payment_channels|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|payment_channels|attnum=2|name=pay_type|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|payment_channels|attnum=3|name=enabled|type=boolean|notnull=true|identity=|generated=|collation=|default=true
+column|payment_channels|attnum=4|name=currency|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|payment_channels|attnum=5|name=rate_micro|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|payment_channels|attnum=6|name=min_usd|type=bigint|notnull=true|identity=|generated=|collation=|default=1
+column|payment_channels|attnum=7|name=max_usd|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|payment_channels|attnum=8|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|payment_channels|attnum=9|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|price_entries|attnum=10|name=img_out_tok_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=11|name=price_per_image|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=12|name=provider|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=13|name=max_input_tokens|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=14|name=max_output_tokens|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=15|name=supports_prompt_caching|type=boolean|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=16|name=raw|type=jsonb|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=17|name=source|type=character varying|notnull=true|identity=|generated=|collation=|default='manual'::character varying
+column|price_entries|attnum=18|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|price_entries|attnum=19|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|price_entries|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|price_entries|attnum=2|name=model|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|price_entries|attnum=3|name=mode|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|price_entries|attnum=4|name=input_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=5|name=output_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=6|name=cache_read_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=7|name=cache_write_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=8|name=price_per_call|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_entries|attnum=9|name=img_in_tok_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=10|name=mult_bp|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=11|name=set_input_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=12|name=set_output_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=13|name=set_cache_read_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=14|name=set_cache_creation_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=15|name=set_price_per_call|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=16|name=set_img_in_tok_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=17|name=set_img_out_tok_per_m|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=18|name=set_price_per_image|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=19|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|price_variants|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|price_variants|attnum=20|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|price_variants|attnum=2|name=model|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|price_variants|attnum=3|name=seq|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|price_variants|attnum=4|name=service_tier|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=5|name=ctx_min|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=6|name=ctx_max|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=7|name=time_start|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=8|name=time_end|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|price_variants|attnum=9|name=dow_mask|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|proxies|attnum=10|name=remark|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|proxies|attnum=11|name=last_probe_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|proxies|attnum=12|name=last_probe_ok|type=boolean|notnull=true|identity=|generated=|collation=|default=false
+column|proxies|attnum=13|name=last_probe_error|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|proxies|attnum=14|name=last_probe_ip|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|proxies|attnum=15|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|proxies|attnum=16|name=deleted_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|proxies|attnum=17|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|proxies|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|proxies|attnum=2|name=name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|proxies|attnum=3|name=owner_uid|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|proxies|attnum=4|name=scheme|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|proxies|attnum=5|name=host|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|proxies|attnum=6|name=port|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|proxies|attnum=7|name=username|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|proxies|attnum=8|name=password|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|proxies|attnum=9|name=enabled|type=boolean|notnull=true|identity=|generated=|collation=|default=true
+column|redemption_codes|attnum=10|name=status|type=character varying|notnull=true|identity=|generated=|collation=|default='active'::character varying
+column|redemption_codes|attnum=11|name=created_by|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|redemption_codes|attnum=12|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=13|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|redemption_codes|attnum=2|name=code|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=3|name=type|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=4|name=value|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=5|name=remark|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=6|name=expires_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=7|name=resource_expires_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|redemption_codes|attnum=8|name=max_uses|type=bigint|notnull=true|identity=|generated=|collation=|default=1
+column|redemption_codes|attnum=9|name=used_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|redemption_uses|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|redemption_uses|attnum=2|name=user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|redemption_uses|attnum=3|name=value|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|redemption_uses|attnum=4|name=resource_expires_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|redemption_uses|attnum=5|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|redemption_uses|attnum=6|name=code_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=10|name=outcome|type=text|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=11|name=is_terminal|type=boolean|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=12|name=instance_src|type=text|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=13|name=min_generation|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=14|name=chain_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_flow_fact|attnum=15|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=1|name=id|type=bigint|notnull=true|identity=|generated=|collation=|default=nextval('routing_flow_fact_id_seq'::regclass)
+column|routing_flow_fact|attnum=2|name=route_class_id|type=bytea|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=3|name=terminal_minute|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=4|name=ordinal|type=smallint|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=5|name=lane|type=text|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=6|name=account_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=7|name=previous_account_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|routing_flow_fact|attnum=8|name=previous_outcome|type=text|notnull=true|identity=|generated=|collation=|default=''::text
+column|routing_flow_fact|attnum=9|name=transition_reason|type=text|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_snapshot_state|attnum=1|name=terminal_minute|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_snapshot_state|attnum=2|name=instance_src|type=text|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_snapshot_state|attnum=3|name=highest_sequence|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|routing_flow_snapshot_state|attnum=4|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=10|name=count_429|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=11|name=count_ordinary_4xx|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=12|name=count_5xx|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=13|name=count_network|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=14|name=ttft_n|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=15|name=ttft_sum_log_q32|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=16|name=ttft_sumsq_log_q32|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=17|name=ttft_hist|type=bigint[]|notnull=true|identity=|generated=|collation=|default='{0,0,0,0,0,0,0,0,0,0}'::bigint[]
+column|routing_quality_fact|attnum=18|name=input_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=19|name=output_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=1|name=id|type=bigint|notnull=true|identity=|generated=|collation=|default=nextval('routing_quality_fact_id_seq'::regclass)
+column|routing_quality_fact|attnum=20|name=cache_read_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=21|name=cache_create_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=22|name=calls|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=23|name=images|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=24|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=2|name=route_class_id|type=bytea|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=3|name=candidate_fingerprint|type=bytea|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=4|name=bucket_minute|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=5|name=instance_src|type=text|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=6|name=quality_class_id|type=bytea|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=7|name=absolute_sequence|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|routing_quality_fact|attnum=8|name=attempts|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|routing_quality_fact|attnum=9|name=successes|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|rules|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|rules|attnum=2|name=name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|rules|attnum=3|name=enabled|type=boolean|notnull=true|identity=|generated=|collation=|default=true
+column|rules|attnum=4|name=priority|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|rules|attnum=5|name=when|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|rules|attnum=6|name=then|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|rules|attnum=7|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|rules|attnum=8|name=deleted_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|rules|attnum=9|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|settings|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|settings|attnum=2|name=key|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|settings|attnum=3|name=type|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|settings|attnum=4|name=value|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|settings|attnum=5|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|stats_agg_watermark|attnum=1|name=id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|stats_agg_watermark|attnum=2|name=watermark|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|supplier_balances|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|supplier_balances|attnum=2|name=supplier_user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|supplier_balances|attnum=3|name=available|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|supplier_balances|attnum=4|name=lifetime_credited|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|supplier_balances|attnum=5|name=lifetime_paid|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|supplier_balances|attnum=6|name=share_bp|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|supplier_balances|attnum=7|name=freeze_hours|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|supplier_balances|attnum=8|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|supplier_balances|attnum=9|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|supplier_frozen_chunks|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|supplier_frozen_chunks|attnum=2|name=supplier_user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|supplier_frozen_chunks|attnum=3|name=available_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|supplier_frozen_chunks|attnum=4|name=amount|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|supplier_reconciliation|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|supplier_reconciliation|attnum=2|name=supplier_user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|supplier_reconciliation|attnum=3|name=source_day|type=date|notnull=true|identity=|generated=|collation=|default=
+column|supplier_reconciliation|attnum=4|name=gross_cost|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|supplier_reconciliation|attnum=5|name=earned|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|supplier_reconciliation|attnum=6|name=row_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|supplier_reconciliation|attnum=7|name=state|type=character varying|notnull=true|identity=|generated=|collation=|default='open'::character varying
+column|supplier_reconciliation|attnum=8|name=closed_revision|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|supplier_reconciliation|attnum=9|name=closed_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=10|name=requested_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=11|name=requested_operator|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=12|name=reviewed_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=13|name=reviewer_user_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=14|name=payout_operator_user_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=15|name=payout_started_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=16|name=payment_key|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=17|name=external_ref|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=18|name=payee_snapshot|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=19|name=payout_failure_reason|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|supplier_settlements|attnum=20|name=payout_failed_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=21|name=risk_review|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=22|name=paid_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=23|name=paid_operator_user_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=24|name=note|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=25|name=reject_reason|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=2|name=supplier_user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=3|name=kind|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=4|name=amount_millis|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=5|name=period_start|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=6|name=period_end|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|supplier_settlements|attnum=7|name=status|type=character varying|notnull=true|identity=|generated=|collation=|default='pending'::character varying
+column|supplier_settlements|attnum=8|name=revision|type=bigint|notnull=true|identity=|generated=|collation=|default=1
+column|supplier_settlements|attnum=9|name=request_key|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|temp_balances|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|temp_balances|attnum=2|name=amount|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|temp_balances|attnum=3|name=expires_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|temp_balances|attnum=4|name=note|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|temp_balances|attnum=5|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|temp_balances|attnum=6|name=user_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|template_exts|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|template_exts|attnum=2|name=credential_type|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|template_exts|attnum=3|name=strip_image_tools|type=boolean|notnull=false|identity=|generated=|collation=|default=
+column|template_exts|attnum=4|name=upstream_paths|type=jsonb|notnull=false|identity=|generated=|collation=|default=
+column|template_exts|attnum=5|name=codex_responses_transport|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|template_exts|attnum=6|name=template_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=10|name=deleted_at|type=timestamp with time zone|notnull=false|identity=|generated=|collation=|default=
+column|templates|attnum=11|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|templates|attnum=2|name=name|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=3|name=base_url|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=4|name=credential_type|type=character varying|notnull=true|identity=|generated=|collation=|default='api_key'::character varying
+column|templates|attnum=5|name=supported_formats|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=6|name=models|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=7|name=format_models|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=8|name=model_mapping|type=jsonb|notnull=true|identity=|generated=|collation=|default=
+column|templates|attnum=9|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|usage_entity_stats|attnum=10|name=output_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=11|name=total_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=12|name=cache_read_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=13|name=cache_creation_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=14|name=cost|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=15|name=raw_cost|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=16|name=ttft_total_ms|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=17|name=ttft_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=18|name=ttft_max_ms|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=19|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|usage_entity_stats|attnum=1|name=id|type=bigint|notnull=true|identity=|generated=|collation=|default=nextval('usage_entity_stats_id_seq'::regclass)
+column|usage_entity_stats|attnum=2|name=bucket_time|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|usage_entity_stats|attnum=3|name=entity_type|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|usage_entity_stats|attnum=4|name=entity_id|type=bigint|notnull=true|identity=|generated=|collation=|default=
+column|usage_entity_stats|attnum=5|name=model|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|usage_entity_stats|attnum=6|name=request_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=7|name=error_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=8|name=call_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_entity_stats|attnum=9|name=input_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=10|name=mapped_model|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=11|name=format|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|usage_logs|attnum=12|name=error_type|type=character varying|notnull=true|identity=|generated=|collation=|default='none'::character varying
+column|usage_logs|attnum=13|name=commit_state|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=14|name=latency_ms|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=15|name=ttft_ms|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=16|name=input_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=17|name=price_input_millis|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=18|name=output_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=19|name=price_output_millis|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=1|name=id|type=bigint|notnull=true|identity=|generated=|collation=|default=nextval('usage_logs_id_seq'::regclass)
+column|usage_logs|attnum=20|name=total_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=21|name=cache_read_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=22|name=price_cache_read_millis|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=23|name=cache_creation_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=24|name=price_cache_creation_millis|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=25|name=call_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=26|name=price_per_call_millis|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=27|name=cost|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=28|name=raw_cost|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=29|name=billing_tier|type=character varying|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=2|name=request_id|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|usage_logs|attnum=30|name=above_hit|type=boolean|notnull=true|identity=|generated=|collation=|default=false
+column|usage_logs|attnum=31|name=overdraft|type=boolean|notnull=true|identity=|generated=|collation=|default=false
+column|usage_logs|attnum=32|name=billed|type=boolean|notnull=true|identity=|generated=|collation=|default=false
+column|usage_logs|attnum=33|name=supplier_user_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=34|name=supplier_earn_millis|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_logs|attnum=35|name=supplier_credited|type=boolean|notnull=true|identity=|generated=|collation=|default=false
+column|usage_logs|attnum=36|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|usage_logs|attnum=3|name=client_ip|type=text|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=4|name=group_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=5|name=account_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=6|name=template_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=7|name=user_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=8|name=key_id|type=bigint|notnull=false|identity=|generated=|collation=|default=
+column|usage_logs|attnum=9|name=model|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|usage_stats|attnum=10|name=cache_read_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=11|name=cache_creation_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=12|name=cost|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=13|name=raw_cost|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=14|name=call_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=15|name=ttft_total_ms|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=16|name=ttft_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=17|name=ttft_max_ms|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=18|name=ttft_hist|type=bigint[]|notnull=true|identity=|generated=|collation=|default='{0,0,0,0,0,0,0,0,0,0}'::bigint[]
+column|usage_stats|attnum=19|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|usage_stats|attnum=1|name=id|type=bigint|notnull=true|identity=|generated=|collation=|default=nextval('usage_stats_id_seq'::regclass)
+column|usage_stats|attnum=2|name=bucket_time|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|usage_stats|attnum=3|name=group_id|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=4|name=model|type=character varying|notnull=true|identity=|generated=|collation=|default=''::character varying
+column|usage_stats|attnum=5|name=request_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=6|name=error_count|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=7|name=input_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=8|name=output_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|usage_stats|attnum=9|name=total_tokens|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|users|attnum=10|name=created_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|users|attnum=11|name=updated_at|type=timestamp with time zone|notnull=true|identity=|generated=|collation=|default=
+column|users|attnum=1|name=id|type=bigint|notnull=true|identity=d|generated=|collation=|default=
+column|users|attnum=2|name=email|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|users|attnum=3|name=password_hash|type=character varying|notnull=true|identity=|generated=|collation=|default=
+column|users|attnum=4|name=role|type=character varying|notnull=true|identity=|generated=|collation=|default='user'::character varying
+column|users|attnum=5|name=status|type=character varying|notnull=true|identity=|generated=|collation=|default='active'::character varying
+column|users|attnum=6|name=max_concurrency|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|users|attnum=7|name=balance|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|users|attnum=8|name=balance_warning_threshold|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+column|users|attnum=9|name=token_version|type=bigint|notnull=true|identity=|generated=|collation=|default=0
+constraint|account_exts|name=account_exts_accounts_ext|type=f|validated=true|def=FOREIGN KEY (account_id) REFERENCES accounts(id)
+constraint|account_exts|name=account_exts_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|account_groups|name=account_groups_account_id|type=f|validated=true|def=FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+constraint|account_groups|name=account_groups_group_id|type=f|validated=true|def=FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
+constraint|account_groups|name=account_groups_pkey|type=p|validated=true|def=PRIMARY KEY (account_id, group_id)
+constraint|accounts|name=accounts_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|accounts|name=accounts_templates_accounts|type=f|validated=true|def=FOREIGN KEY (template_id) REFERENCES templates(id)
+constraint|balance_logs|name=balance_logs_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|email_templates|name=email_templates_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|err_logs|name=err_logs_pkey|type=p|validated=true|def=PRIMARY KEY (id, created_at)
+constraint|group_assignments|name=group_assignments_groups_assignments|type=f|validated=true|def=FOREIGN KEY (group_id) REFERENCES groups(id)
+constraint|group_assignments|name=group_assignments_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|group_assignments|name=group_assignments_users_group_assignments|type=f|validated=true|def=FOREIGN KEY (user_id) REFERENCES users(id)
+constraint|groups|name=groups_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|keys|name=keys_groups_keys|type=f|validated=true|def=FOREIGN KEY (group_id) REFERENCES groups(id)
+constraint|keys|name=keys_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|keys|name=keys_users_keys|type=f|validated=true|def=FOREIGN KEY (user_id) REFERENCES users(id)
+constraint|management_keys|name=management_keys_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|management_keys|name=management_keys_users_management_keys|type=f|validated=true|def=FOREIGN KEY (user_id) REFERENCES users(id)
+constraint|orders|name=orders_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|payment_accounts|name=payment_accounts_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|payment_channels|name=payment_channels_payment_accounts_channels|type=f|validated=true|def=FOREIGN KEY (account_id) REFERENCES payment_accounts(id) ON DELETE CASCADE
+constraint|payment_channels|name=payment_channels_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|price_entries|name=price_entries_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|price_variants|name=price_variants_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|proxies|name=proxies_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|redemption_codes|name=redemption_codes_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|redemption_uses|name=redemption_uses_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|redemption_uses|name=redemption_uses_redemption_codes_uses|type=f|validated=true|def=FOREIGN KEY (code_id) REFERENCES redemption_codes(id)
+constraint|routing_flow_fact|name=routing_flow_fact_pkey|type=p|validated=true|def=PRIMARY KEY (id, terminal_minute)
+constraint|routing_flow_fact|name=routing_flow_fact_route_class_id_check|type=c|validated=true|def=CHECK ((octet_length(route_class_id) = 32))
+constraint|routing_flow_snapshot_state|name=routing_flow_snapshot_state_pkey|type=p|validated=true|def=PRIMARY KEY (terminal_minute, instance_src)
+constraint|routing_quality_fact|name=routing_quality_fact_attempts_check|type=c|validated=true|def=CHECK ((attempts >= 0))
+constraint|routing_quality_fact|name=routing_quality_fact_candidate_fingerprint_check|type=c|validated=true|def=CHECK ((octet_length(candidate_fingerprint) = 32))
+constraint|routing_quality_fact|name=routing_quality_fact_pkey|type=p|validated=true|def=PRIMARY KEY (id, bucket_minute)
+constraint|routing_quality_fact|name=routing_quality_fact_quality_class_id_check|type=c|validated=true|def=CHECK ((octet_length(quality_class_id) = 32))
+constraint|routing_quality_fact|name=routing_quality_fact_route_class_id_check|type=c|validated=true|def=CHECK ((octet_length(route_class_id) = 32))
+constraint|rules|name=rules_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|settings|name=settings_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|stats_agg_watermark|name=stats_agg_watermark_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|stats_agg_watermark|name=stats_agg_watermark_single|type=c|validated=true|def=CHECK ((id = 1))
+constraint|supplier_balances|name=supplier_balances_available_non_negative|type=c|validated=true|def=CHECK ((available >= 0))
+constraint|supplier_balances|name=supplier_balances_freeze_hours_non_negative|type=c|validated=true|def=CHECK (((freeze_hours IS NULL) OR (freeze_hours >= 0)))
+constraint|supplier_balances|name=supplier_balances_lifetime_credited_non_negative|type=c|validated=true|def=CHECK ((lifetime_credited >= 0))
+constraint|supplier_balances|name=supplier_balances_lifetime_paid_non_negative|type=c|validated=true|def=CHECK ((lifetime_paid >= 0))
+constraint|supplier_balances|name=supplier_balances_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|supplier_balances|name=supplier_balances_share_bp_range|type=c|validated=true|def=CHECK (((share_bp IS NULL) OR ((share_bp >= 0) AND (share_bp <= 10000))))
+constraint|supplier_frozen_chunks|name=supplier_frozen_chunks_amount_positive|type=c|validated=true|def=CHECK ((amount > 0))
+constraint|supplier_frozen_chunks|name=supplier_frozen_chunks_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|supplier_reconciliation|name=supplier_reconciliation_earned_non_negative|type=c|validated=true|def=CHECK ((earned >= 0))
+constraint|supplier_reconciliation|name=supplier_reconciliation_gross_cost_non_negative|type=c|validated=true|def=CHECK ((gross_cost >= 0))
+constraint|supplier_reconciliation|name=supplier_reconciliation_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|supplier_reconciliation|name=supplier_reconciliation_row_count_non_negative|type=c|validated=true|def=CHECK ((row_count >= 0))
+constraint|supplier_settlements|name=supplier_settlements_amount_positive|type=c|validated=true|def=CHECK ((amount_millis > 0))
+constraint|supplier_settlements|name=supplier_settlements_period_order|type=c|validated=true|def=CHECK ((period_end >= period_start))
+constraint|supplier_settlements|name=supplier_settlements_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|temp_balances|name=temp_balances_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|temp_balances|name=temp_balances_users_temp_balances|type=f|validated=true|def=FOREIGN KEY (user_id) REFERENCES users(id)
+constraint|template_exts|name=template_exts_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|template_exts|name=template_exts_templates_ext|type=f|validated=true|def=FOREIGN KEY (template_id) REFERENCES templates(id)
+constraint|templates|name=templates_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+constraint|usage_entity_stats|name=usage_entity_stats_pkey|type=p|validated=true|def=PRIMARY KEY (id, bucket_time)
+constraint|usage_logs|name=usage_logs_pkey|type=p|validated=true|def=PRIMARY KEY (id, created_at)
+constraint|usage_stats|name=usage_stats_pkey|type=p|validated=true|def=PRIMARY KEY (id, bucket_time)
+constraint|users|name=users_pkey|type=p|validated=true|def=PRIMARY KEY (id)
+index|account_exts_pkey|table=account_exts|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX account_exts_pkey ON public.account_exts USING btree (id)
+index|account_groups_pkey|table=account_groups|unique=true|primary=true|nkeyatts=2|indkey=1 2|predicate=|options=|def=CREATE UNIQUE INDEX account_groups_pkey ON public.account_groups USING btree (account_id, group_id)
+index|accountext_account_id|table=account_exts|unique=true|primary=false|nkeyatts=1|indkey=10|predicate=|options=|def=CREATE UNIQUE INDEX accountext_account_id ON public.account_exts USING btree (account_id)
+index|accountext_codex_email_codex_account_id|table=account_exts|unique=true|primary=false|nkeyatts=2|indkey=8 9|predicate=|options=|def=CREATE UNIQUE INDEX accountext_codex_email_codex_account_id ON public.account_exts USING btree (codex_email, codex_account_id)
+index|accounts_pkey|table=accounts|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX accounts_pkey ON public.accounts USING btree (id)
+index|balance_logs_pkey|table=balance_logs|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX balance_logs_pkey ON public.balance_logs USING btree (id)
+index|balancelog_user_id_id|table=balance_logs|unique=false|primary=false|nkeyatts=2|indkey=2 1|predicate=|options=|def=CREATE INDEX balancelog_user_id_id ON public.balance_logs USING btree (user_id, id)
+index|email_templates_pkey|table=email_templates|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX email_templates_pkey ON public.email_templates USING btree (id)
+index|emailtemplate_purpose|table=email_templates|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX emailtemplate_purpose ON public.email_templates USING btree (purpose)
+index|err_logs_pkey|table=err_logs|unique=true|primary=true|nkeyatts=2|indkey=1 17|predicate=|options=|def=CREATE UNIQUE INDEX err_logs_pkey ON ONLY public.err_logs USING btree (id, created_at)
+index|errlog_created_at|table=err_logs|unique=false|primary=false|nkeyatts=1|indkey=17|predicate=|options=|def=CREATE INDEX errlog_created_at ON ONLY public.err_logs USING btree (created_at)
+index|errlog_group_id_created_at|table=err_logs|unique=false|primary=false|nkeyatts=2|indkey=4 17|predicate=|options=|def=CREATE INDEX errlog_group_id_created_at ON ONLY public.err_logs USING btree (group_id, created_at)
+index|errlog_user_id_created_at|table=err_logs|unique=false|primary=false|nkeyatts=2|indkey=7 17|predicate=|options=|def=CREATE INDEX errlog_user_id_created_at ON ONLY public.err_logs USING btree (user_id, created_at)
+index|group_assignments_pkey|table=group_assignments|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX group_assignments_pkey ON public.group_assignments USING btree (id)
+index|groupassignment_group_id_user_id|table=group_assignments|unique=true|primary=false|nkeyatts=2|indkey=4 5|predicate=|options=|def=CREATE UNIQUE INDEX groupassignment_group_id_user_id ON public.group_assignments USING btree (group_id, user_id)
+index|groups_name_key|table=groups|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX groups_name_key ON public.groups USING btree (name)
+index|groups_pkey|table=groups|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX groups_pkey ON public.groups USING btree (id)
+index|key_group_id_deleted_at|table=keys|unique=false|primary=false|nkeyatts=2|indkey=11 9|predicate=|options=|def=CREATE INDEX key_group_id_deleted_at ON public.keys USING btree (group_id, deleted_at)
+index|key_user_id_deleted_at|table=keys|unique=false|primary=false|nkeyatts=2|indkey=12 9|predicate=|options=|def=CREATE INDEX key_user_id_deleted_at ON public.keys USING btree (user_id, deleted_at)
+index|keys_key_raw_key|table=keys|unique=true|primary=false|nkeyatts=1|indkey=3|predicate=|options=|def=CREATE UNIQUE INDEX keys_key_raw_key ON public.keys USING btree (key_raw)
+index|keys_pkey|table=keys|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX keys_pkey ON public.keys USING btree (id)
+index|management_keys_key_raw_key|table=management_keys|unique=true|primary=false|nkeyatts=1|indkey=3|predicate=|options=|def=CREATE UNIQUE INDEX management_keys_key_raw_key ON public.management_keys USING btree (key_raw)
+index|management_keys_pkey|table=management_keys|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX management_keys_pkey ON public.management_keys USING btree (id)
+index|managementkey_user_id_deleted_at|table=management_keys|unique=false|primary=false|nkeyatts=2|indkey=8 7|predicate=|options=|def=CREATE INDEX managementkey_user_id_deleted_at ON public.management_keys USING btree (user_id, deleted_at)
+index|order_account_key_id|table=orders|unique=false|primary=false|nkeyatts=2|indkey=5 1|predicate=|options=|def=CREATE INDEX order_account_key_id ON public.orders USING btree (account_key, id)
+index|order_status_created_at|table=orders|unique=false|primary=false|nkeyatts=2|indkey=6 19|predicate=|options=|def=CREATE INDEX order_status_created_at ON public.orders USING btree (status, created_at)
+index|order_user_id_id|table=orders|unique=false|primary=false|nkeyatts=2|indkey=3 1|predicate=|options=|def=CREATE INDEX order_user_id_id ON public.orders USING btree (user_id, id)
+index|orders_out_trade_no_key|table=orders|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX orders_out_trade_no_key ON public.orders USING btree (out_trade_no)
+index|orders_pkey|table=orders|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX orders_pkey ON public.orders USING btree (id)
+index|orders_redemption_code_id_key|table=orders|unique=true|primary=false|nkeyatts=1|indkey=13|predicate=|options=|def=CREATE UNIQUE INDEX orders_redemption_code_id_key ON public.orders USING btree (redemption_code_id)
+index|payment_accounts_key_key|table=payment_accounts|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX payment_accounts_key_key ON public.payment_accounts USING btree (key)
+index|payment_accounts_pkey|table=payment_accounts|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX payment_accounts_pkey ON public.payment_accounts USING btree (id)
+index|payment_channels_pkey|table=payment_channels|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX payment_channels_pkey ON public.payment_channels USING btree (id)
+index|paymentaccount_provider_merchant_ref|table=payment_accounts|unique=true|primary=false|nkeyatts=2|indkey=3 4|predicate=|options=|def=CREATE UNIQUE INDEX paymentaccount_provider_merchant_ref ON public.payment_accounts USING btree (provider, merchant_ref)
+index|paymentchannel_account_id_pay_type|table=payment_channels|unique=true|primary=false|nkeyatts=2|indkey=10 2|predicate=|options=|def=CREATE UNIQUE INDEX paymentchannel_account_id_pay_type ON public.payment_channels USING btree (account_id, pay_type)
+index|price_entries_model_key|table=price_entries|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX price_entries_model_key ON public.price_entries USING btree (model)
+index|price_entries_pkey|table=price_entries|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX price_entries_pkey ON public.price_entries USING btree (id)
+index|price_variants_pkey|table=price_variants|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX price_variants_pkey ON public.price_variants USING btree (id)
+index|pricevariant_model_seq|table=price_variants|unique=true|primary=false|nkeyatts=2|indkey=2 3|predicate=|options=|def=CREATE UNIQUE INDEX pricevariant_model_seq ON public.price_variants USING btree (model, seq)
+index|proxies_pkey|table=proxies|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX proxies_pkey ON public.proxies USING btree (id)
+index|proxy_name|table=proxies|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=(owner_uid IS NULL)|options=|def=CREATE UNIQUE INDEX proxy_name ON public.proxies USING btree (name) WHERE (owner_uid IS NULL)
+index|proxy_owner_uid_name|table=proxies|unique=true|primary=false|nkeyatts=2|indkey=3 2|predicate=(owner_uid IS NOT NULL)|options=|def=CREATE UNIQUE INDEX proxy_owner_uid_name ON public.proxies USING btree (owner_uid, name) WHERE (owner_uid IS NOT NULL)
+index|redemption_codes_code_key|table=redemption_codes|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX redemption_codes_code_key ON public.redemption_codes USING btree (code)
+index|redemption_codes_pkey|table=redemption_codes|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX redemption_codes_pkey ON public.redemption_codes USING btree (id)
+index|redemption_uses_pkey|table=redemption_uses|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX redemption_uses_pkey ON public.redemption_uses USING btree (id)
+index|redemptionuse_code_id_user_id|table=redemption_uses|unique=true|primary=false|nkeyatts=2|indkey=6 2|predicate=|options=|def=CREATE UNIQUE INDEX redemptionuse_code_id_user_id ON public.redemption_uses USING btree (code_id, user_id)
+index|redemptionuse_user_id|table=redemption_uses|unique=false|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE INDEX redemptionuse_user_id ON public.redemption_uses USING btree (user_id)
+index|routing_flow_fact_pkey|table=routing_flow_fact|unique=true|primary=true|nkeyatts=2|indkey=1 3|predicate=|options=|def=CREATE UNIQUE INDEX routing_flow_fact_pkey ON ONLY public.routing_flow_fact USING btree (id, terminal_minute)
+index|routing_flow_fact_read|table=routing_flow_fact|unique=false|primary=false|nkeyatts=2|indkey=2 3|predicate=|options=|def=CREATE INDEX routing_flow_fact_read ON ONLY public.routing_flow_fact USING btree (route_class_id, terminal_minute)
+index|routing_flow_fact_uniq|table=routing_flow_fact|unique=true|primary=false|nkeyatts=11|indkey=3 12 2 4 5 6 7 8 9 10 11|predicate=|options=|def=CREATE UNIQUE INDEX routing_flow_fact_uniq ON ONLY public.routing_flow_fact USING btree (terminal_minute, instance_src, route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome, transition_reason, outcome, is_terminal) NULLS NOT DISTINCT
+index|routing_flow_snapshot_state_pkey|table=routing_flow_snapshot_state|unique=true|primary=true|nkeyatts=2|indkey=1 2|predicate=|options=|def=CREATE UNIQUE INDEX routing_flow_snapshot_state_pkey ON public.routing_flow_snapshot_state USING btree (terminal_minute, instance_src)
+index|routing_quality_fact_bucket|table=routing_quality_fact|unique=false|primary=false|nkeyatts=1|indkey=4|predicate=|options=|def=CREATE INDEX routing_quality_fact_bucket ON ONLY public.routing_quality_fact USING btree (bucket_minute)
+index|routing_quality_fact_pkey|table=routing_quality_fact|unique=true|primary=true|nkeyatts=2|indkey=1 4|predicate=|options=|def=CREATE UNIQUE INDEX routing_quality_fact_pkey ON ONLY public.routing_quality_fact USING btree (id, bucket_minute)
+index|routing_quality_fact_uniq|table=routing_quality_fact|unique=true|primary=false|nkeyatts=5|indkey=2 3 4 5 6|predicate=|options=|def=CREATE UNIQUE INDEX routing_quality_fact_uniq ON ONLY public.routing_quality_fact USING btree (route_class_id, candidate_fingerprint, bucket_minute, instance_src, quality_class_id)
+index|rules_name_key|table=rules|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX rules_name_key ON public.rules USING btree (name)
+index|rules_pkey|table=rules|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX rules_pkey ON public.rules USING btree (id)
+index|rules_priority_key|table=rules|unique=true|primary=false|nkeyatts=1|indkey=4|predicate=|options=|def=CREATE UNIQUE INDEX rules_priority_key ON public.rules USING btree (priority)
+index|settings_key_key|table=settings|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX settings_key_key ON public.settings USING btree (key)
+index|settings_pkey|table=settings|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX settings_pkey ON public.settings USING btree (id)
+index|stats_agg_watermark_pkey|table=stats_agg_watermark|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX stats_agg_watermark_pkey ON public.stats_agg_watermark USING btree (id)
+index|supplier_balances_pkey|table=supplier_balances|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX supplier_balances_pkey ON public.supplier_balances USING btree (id)
+index|supplier_frozen_chunks_pkey|table=supplier_frozen_chunks|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX supplier_frozen_chunks_pkey ON public.supplier_frozen_chunks USING btree (id)
+index|supplier_reconciliation_pkey|table=supplier_reconciliation|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX supplier_reconciliation_pkey ON public.supplier_reconciliation USING btree (id)
+index|supplier_settlements_pkey|table=supplier_settlements|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX supplier_settlements_pkey ON public.supplier_settlements USING btree (id)
+index|supplierbalance_supplier_user_id|table=supplier_balances|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX supplierbalance_supplier_user_id ON public.supplier_balances USING btree (supplier_user_id)
+index|supplierfrozenchunk_available_at|table=supplier_frozen_chunks|unique=false|primary=false|nkeyatts=1|indkey=3|predicate=|options=|def=CREATE INDEX supplierfrozenchunk_available_at ON public.supplier_frozen_chunks USING btree (available_at)
+index|supplierfrozenchunk_supplier_user_id_available_at|table=supplier_frozen_chunks|unique=true|primary=false|nkeyatts=2|indkey=2 3|predicate=|options=|def=CREATE UNIQUE INDEX supplierfrozenchunk_supplier_user_id_available_at ON public.supplier_frozen_chunks USING btree (supplier_user_id, available_at)
+index|supplierreconciliation_supplier_user_id_source_day|table=supplier_reconciliation|unique=true|primary=false|nkeyatts=2|indkey=2 3|predicate=|options=|def=CREATE UNIQUE INDEX supplierreconciliation_supplier_user_id_source_day ON public.supplier_reconciliation USING btree (supplier_user_id, source_day)
+index|suppliersettlement_payment_key|table=supplier_settlements|unique=true|primary=false|nkeyatts=1|indkey=16|predicate=|options=|def=CREATE UNIQUE INDEX suppliersettlement_payment_key ON public.supplier_settlements USING btree (payment_key)
+index|suppliersettlement_requested_operator_request_key|table=supplier_settlements|unique=true|primary=false|nkeyatts=2|indkey=11 9|predicate=|options=|def=CREATE UNIQUE INDEX suppliersettlement_requested_operator_request_key ON public.supplier_settlements USING btree (requested_operator, request_key)
+index|suppliersettlement_status_requested_at|table=supplier_settlements|unique=false|primary=false|nkeyatts=2|indkey=7 10|predicate=|options=|def=CREATE INDEX suppliersettlement_status_requested_at ON public.supplier_settlements USING btree (status, requested_at)
+index|suppliersettlement_supplier_user_id_period_end|table=supplier_settlements|unique=false|primary=false|nkeyatts=2|indkey=2 6|predicate=|options=|def=CREATE INDEX suppliersettlement_supplier_user_id_period_end ON public.supplier_settlements USING btree (supplier_user_id, period_end)
+index|temp_balances_pkey|table=temp_balances|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX temp_balances_pkey ON public.temp_balances USING btree (id)
+index|tempbalance_user_id_expires_at|table=temp_balances|unique=false|primary=false|nkeyatts=2|indkey=6 3|predicate=|options=|def=CREATE INDEX tempbalance_user_id_expires_at ON public.temp_balances USING btree (user_id, expires_at)
+index|template_exts_pkey|table=template_exts|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX template_exts_pkey ON public.template_exts USING btree (id)
+index|templateext_template_id|table=template_exts|unique=true|primary=false|nkeyatts=1|indkey=6|predicate=|options=|def=CREATE UNIQUE INDEX templateext_template_id ON public.template_exts USING btree (template_id)
+index|templates_name_key|table=templates|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX templates_name_key ON public.templates USING btree (name)
+index|templates_pkey|table=templates|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX templates_pkey ON public.templates USING btree (id)
+index|usage_entity_stats_pkey|table=usage_entity_stats|unique=true|primary=true|nkeyatts=2|indkey=1 2|predicate=|options=|def=CREATE UNIQUE INDEX usage_entity_stats_pkey ON ONLY public.usage_entity_stats USING btree (id, bucket_time)
+index|usage_logs_pkey|table=usage_logs|unique=true|primary=true|nkeyatts=2|indkey=1 36|predicate=|options=|def=CREATE UNIQUE INDEX usage_logs_pkey ON ONLY public.usage_logs USING btree (id, created_at)
+index|usage_stats_pkey|table=usage_stats|unique=true|primary=true|nkeyatts=2|indkey=1 2|predicate=|options=|def=CREATE UNIQUE INDEX usage_stats_pkey ON ONLY public.usage_stats USING btree (id, bucket_time)
+index|usageentity_bucket_time_entity_type_entity_id_model|table=usage_entity_stats|unique=true|primary=false|nkeyatts=4|indkey=2 3 4 5|predicate=|options=|def=CREATE UNIQUE INDEX usageentity_bucket_time_entity_type_entity_id_model ON ONLY public.usage_entity_stats USING btree (bucket_time, entity_type, entity_id, model)
+index|usageentity_entity_type_entity_id_bucket_time|table=usage_entity_stats|unique=false|primary=false|nkeyatts=3|indkey=3 4 2|predicate=|options=|def=CREATE INDEX usageentity_entity_type_entity_id_bucket_time ON ONLY public.usage_entity_stats USING btree (entity_type, entity_id, bucket_time)
+index|usagelog_account_id_created_at|table=usage_logs|unique=false|primary=false|nkeyatts=2|indkey=5 36|predicate=|options=|def=CREATE INDEX usagelog_account_id_created_at ON ONLY public.usage_logs USING btree (account_id, created_at)
+index|usagelog_created_at|table=usage_logs|unique=false|primary=false|nkeyatts=1|indkey=36|predicate=|options=|def=CREATE INDEX usagelog_created_at ON ONLY public.usage_logs USING btree (created_at)
+index|usagelog_group_id_created_at|table=usage_logs|unique=false|primary=false|nkeyatts=2|indkey=4 36|predicate=|options=|def=CREATE INDEX usagelog_group_id_created_at ON ONLY public.usage_logs USING btree (group_id, created_at)
+index|usagelog_key_id_created_at|table=usage_logs|unique=false|primary=false|nkeyatts=2|indkey=8 36|predicate=|options=|def=CREATE INDEX usagelog_key_id_created_at ON ONLY public.usage_logs USING btree (key_id, created_at)
+index|usagelog_request_id_created_at|table=usage_logs|unique=true|primary=false|nkeyatts=2|indkey=2 36|predicate=|options=|def=CREATE UNIQUE INDEX usagelog_request_id_created_at ON ONLY public.usage_logs USING btree (request_id, created_at)
+index|usagelog_supplier_created_at|table=usage_logs|unique=false|primary=false|nkeyatts=2|indkey=33 36|predicate=((supplier_user_id IS NOT NULL) AND (supplier_earn_millis > 0))|options=|def=CREATE INDEX usagelog_supplier_created_at ON ONLY public.usage_logs USING btree (supplier_user_id, created_at) WHERE ((supplier_user_id IS NOT NULL) AND (supplier_earn_millis > 0))
+index|usagelog_unbilled_id|table=usage_logs|unique=false|primary=false|nkeyatts=1|indkey=1|predicate=(NOT billed)|options=|def=CREATE INDEX usagelog_unbilled_id ON ONLY public.usage_logs USING btree (id) WHERE (NOT billed)
+index|usagelog_uncredited_earn_id|table=usage_logs|unique=false|primary=false|nkeyatts=1|indkey=1|predicate=((NOT supplier_credited) AND (supplier_earn_millis > 0))|options=|def=CREATE INDEX usagelog_uncredited_earn_id ON ONLY public.usage_logs USING btree (id) WHERE ((NOT supplier_credited) AND (supplier_earn_millis > 0))
+index|usagelog_user_id_created_at|table=usage_logs|unique=false|primary=false|nkeyatts=2|indkey=7 36|predicate=|options=|def=CREATE INDEX usagelog_user_id_created_at ON ONLY public.usage_logs USING btree (user_id, created_at)
+index|usagestat_bucket_time_group_id_model|table=usage_stats|unique=true|primary=false|nkeyatts=3|indkey=2 3 4|predicate=|options=|def=CREATE UNIQUE INDEX usagestat_bucket_time_group_id_model ON ONLY public.usage_stats USING btree (bucket_time, group_id, model)
+index|users_email_key|table=users|unique=true|primary=false|nkeyatts=1|indkey=2|predicate=|options=|def=CREATE UNIQUE INDEX users_email_key ON public.users USING btree (email)
+index|users_pkey|table=users|unique=true|primary=true|nkeyatts=1|indkey=1|predicate=|options=|def=CREATE UNIQUE INDEX users_pkey ON public.users USING btree (id)
+partitioned|err_logs|strategy=r|key=created_at
+partitioned|routing_flow_fact|strategy=r|key=terminal_minute
+partitioned|routing_quality_fact|strategy=r|key=bucket_minute
+partitioned|usage_entity_stats|strategy=r|key=bucket_time
+partitioned|usage_logs|strategy=r|key=created_at
+partitioned|usage_stats|strategy=r|key=bucket_time
+sequence|account_exts_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=account_exts.id
+sequence|accounts_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=accounts.id
+sequence|balance_logs_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=balance_logs.id
+sequence|email_templates_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=email_templates.id
+sequence|err_logs_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=err_logs.id
+sequence|group_assignments_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=group_assignments.id
+sequence|groups_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=groups.id
+sequence|keys_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=keys.id
+sequence|management_keys_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=management_keys.id
+sequence|orders_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=orders.id
+sequence|payment_accounts_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=payment_accounts.id
+sequence|payment_channels_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=payment_channels.id
+sequence|price_entries_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=price_entries.id
+sequence|price_variants_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=price_variants.id
+sequence|proxies_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=proxies.id
+sequence|redemption_codes_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=redemption_codes.id
+sequence|redemption_uses_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=redemption_uses.id
+sequence|routing_flow_fact_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=routing_flow_fact.id
+sequence|routing_quality_fact_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=routing_quality_fact.id
+sequence|rules_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=rules.id
+sequence|settings_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=settings.id
+sequence|supplier_balances_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=supplier_balances.id
+sequence|supplier_frozen_chunks_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=supplier_frozen_chunks.id
+sequence|supplier_reconciliation_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=supplier_reconciliation.id
+sequence|supplier_settlements_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=supplier_settlements.id
+sequence|temp_balances_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=temp_balances.id
+sequence|template_exts_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=template_exts.id
+sequence|templates_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=templates.id
+sequence|usage_entity_stats_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=usage_entity_stats.id
+sequence|usage_logs_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=usage_logs.id
+sequence|usage_stats_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=usage_stats.id
+sequence|users_id_seq|type=bigint|start=1|increment=1|min=1|max=9223372036854775807|cache=1|cycle=false|owned=users.id
+table|account_exts|relkind=r|persistence=p|tablespace=|options=
+table|account_groups|relkind=r|persistence=p|tablespace=|options=
+table|accounts|relkind=r|persistence=p|tablespace=|options=
+table|balance_logs|relkind=r|persistence=p|tablespace=|options=
+table|email_templates|relkind=r|persistence=p|tablespace=|options=
+table|err_logs|relkind=p|persistence=p|tablespace=|options=
+table|group_assignments|relkind=r|persistence=p|tablespace=|options=
+table|groups|relkind=r|persistence=p|tablespace=|options=
+table|keys|relkind=r|persistence=p|tablespace=|options=
+table|management_keys|relkind=r|persistence=p|tablespace=|options=
+table|orders|relkind=r|persistence=p|tablespace=|options=
+table|payment_accounts|relkind=r|persistence=p|tablespace=|options=
+table|payment_channels|relkind=r|persistence=p|tablespace=|options=
+table|price_entries|relkind=r|persistence=p|tablespace=|options=
+table|price_variants|relkind=r|persistence=p|tablespace=|options=
+table|proxies|relkind=r|persistence=p|tablespace=|options=
+table|redemption_codes|relkind=r|persistence=p|tablespace=|options=
+table|redemption_uses|relkind=r|persistence=p|tablespace=|options=
+table|routing_flow_fact|relkind=p|persistence=p|tablespace=|options=
+table|routing_flow_snapshot_state|relkind=r|persistence=p|tablespace=|options=
+table|routing_quality_fact|relkind=p|persistence=p|tablespace=|options=
+table|rules|relkind=r|persistence=p|tablespace=|options=
+table|settings|relkind=r|persistence=p|tablespace=|options=
+table|stats_agg_watermark|relkind=r|persistence=p|tablespace=|options=
+table|supplier_balances|relkind=r|persistence=p|tablespace=|options=
+table|supplier_frozen_chunks|relkind=r|persistence=p|tablespace=|options=
+table|supplier_reconciliation|relkind=r|persistence=p|tablespace=|options=
+table|supplier_settlements|relkind=r|persistence=p|tablespace=|options=
+table|temp_balances|relkind=r|persistence=p|tablespace=|options=
+table|template_exts|relkind=r|persistence=p|tablespace=|options=
+table|templates|relkind=r|persistence=p|tablespace=|options=
+table|usage_entity_stats|relkind=p|persistence=p|tablespace=|options=
+table|usage_logs|relkind=p|persistence=p|tablespace=|options=
+table|usage_stats|relkind=p|persistence=p|tablespace=|options=
+table|users|relkind=r|persistence=p|tablespace=|options=

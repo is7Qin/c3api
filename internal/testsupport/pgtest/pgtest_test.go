@@ -28,16 +28,14 @@ import (
 
 func skipNoPG(t *testing.T) {
 	t.Helper()
-	if os.Getenv("TEST_DATABASE_URL") == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping PostgreSQL integration test")
-	}
+	pgtest.DSN(t) // 统一闸门：TEST_REQUIRE_PG=1 时缺 DSN 直接失败
 }
 
 // openMaint opens a raw connection to the maintenance database so the tests can
 // inspect/modify template databases directly.
 func openMaint(t *testing.T) *pgx.Conn {
 	t.Helper()
-	u, err := url.Parse(os.Getenv("TEST_DATABASE_URL"))
+	u, err := url.Parse(pgtest.DSN(t))
 	require.NoError(t, err)
 	maint := os.Getenv("C3API_TEST_MAINT_DB")
 	if maint == "" {
@@ -130,7 +128,7 @@ func TestCloneIdempotentIsolated(t *testing.T) {
 // addresses its template and clone databases.
 func dsnFor(t *testing.T, db string) string {
 	t.Helper()
-	u, err := url.Parse(os.Getenv("TEST_DATABASE_URL"))
+	u, err := url.Parse(pgtest.DSN(t))
 	require.NoError(t, err)
 	u.Path = "/" + db
 	return u.String()

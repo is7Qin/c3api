@@ -36,7 +36,7 @@ import (
 // Publisher，失效链会静默退化为"只写 failed_at"的简化路径：判决不再与"身份是否
 // 被授权变更"对齐，且对端只能靠周期兜底收敛——本用例以可观测指纹钉住该装配。
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./internal/proxy/ -run TestCodexFatalChainUsesFencedPathPG -v
 
 // latchAcquire 一次锁存获取的可观测记录。

@@ -34,11 +34,11 @@ import (
 // 启动就绪时序（快照注册表）真实 PG 集成基座（与 repository/pricing 包同款
 // 约定）：
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test_snap \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./cmd/server/ -run TestStartupReloadAllPG -v
 //
 // 每测试克隆一个私有数据库（pgtest.Clone，隔离粒度 = database）；未设置
-// TEST_DATABASE_URL → t.Skip。
+// PG 测试 DSN → t.Skip。
 
 // testEmailCodes 无行为 EmailCodeStore（service.New 必选依赖的测试占位：
 // PG 装配测试不触验证码面；验证码行为由 service/handler 的 fake 真实现覆盖）。

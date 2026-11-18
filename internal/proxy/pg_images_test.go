@@ -36,10 +36,10 @@ import (
 
 // 真实 PG 集成（与 pg_responses_special_test.go 同款约定）：
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./internal/proxy/ -run TestPGImages -v
 //
-// 未设置 TEST_DATABASE_URL → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
+// 未设置 PG 测试 DSN → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
 // 隔离粒度 = database）：与同包其它 PG 测试并行跑不互踩。断言面：路由集成（spec §7）——api_key /
 // responses-special 两类型 × generations/edits 两端点直连、multipart 不撞
 // json.Valid 硬门、402 生死、纯 image 价模型不被 chat 预检误杀。

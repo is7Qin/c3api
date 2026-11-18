@@ -16,7 +16,7 @@ import (
 )
 
 // newBatchGroupPG 测试私有 clone 上的服务：注入记录失效与发布的假件，调用方可
-// 断言事务提交后的失效动作面。未设置 TEST_DATABASE_URL 则跳过。
+// 断言事务提交后的失效动作面。未设置 PG 测试 DSN 则跳过。
 func newBatchGroupPG(t *testing.T) (*Service, *repository.Repository, *invRecorder, *pubRecorder) {
 	t.Helper()
 	dsn := pgtest.Clone(t)

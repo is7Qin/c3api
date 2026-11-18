@@ -18,7 +18,7 @@ import (
 // 订单仓储的真实 PostgreSQL 面（spec 支付网关 v2 §3-3 / §4-4 / §8）。
 //
 // 基座与 redemption_repo_test.go 同款：newPGReposShared → pgtest.Clone，未设
-// TEST_DATABASE_URL 时 envOrSkip 直接 t.Skip（skip ≠ green）。
+// PG 测试 DSN 时 envOrSkip 直接 t.Skip（skip ≠ green）。
 //
 // 为什么必须在真库上跑（D 批的两个洞都在这三条 SQL 里，fake store 不执行它们）：
 //   - M14「MarkOrderPaid 不判状态」：条件迁移 `WHERE status='pending'` 只在真库

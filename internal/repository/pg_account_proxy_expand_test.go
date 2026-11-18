@@ -9,7 +9,7 @@ package repository_test
 // 这是本阶段最容易做错的一处（把「管理员看得见」当成「读路径一律展开」，供应商面
 // 就会拿到别人代理的名字）。
 //
-// 跑法：TEST_DATABASE_URL=... go test -count=1 -p 1 ./internal/repository/ \
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test -count=1 -p 1 ./internal/repository/ \
 //      -run 'PGAccountReadExpandsProxy' -v
 
 import (

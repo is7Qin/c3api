@@ -27,7 +27,7 @@ import (
 // failed_at + last_error + StatusDisabled 持久化 → 重启快照重载仍摘除 →
 // 管理面恢复 status→active 双清 + 恢复调度）。
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test_t5 \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./internal/proxy/ -run TestCodexFatalChainPG -v
 //
 // 独立 schema 与既有 PG 测试隔离（proxy_codex_ws_test 等）；依赖真实 refresh

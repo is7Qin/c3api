@@ -6,7 +6,7 @@ package repository_test
 
 // 游标分页性能基准（≥1M 行基准并入正式测试——此前仅 tmp 测量未入库，
 // 提交内 EXPLAIN 是 1 行分区无 ANALYZE，实测计划与声称的 pkey backward 不符）。
-// 真实 PG（TEST_DATABASE_URL）：当日分区灌 ≥1M 行（INSERT...SELECT 服务端生成，
+// 真实 PG（需 PG 测试 DSN）：当日分区灌 ≥1M 行（INSERT...SELECT 服务端生成，
 // 零客户端往返）→ ANALYZE → 断言 keyset 游标页毫秒级 + 计划形态（pkey Index
 // Scan Backward、无 Seq Scan、分区裁剪到当日分区），并与 OFFSET 深翻页对比
 // （keyset 修复的核心：OFFSET 12ms 级 → 游标页 0.1ms 级）。

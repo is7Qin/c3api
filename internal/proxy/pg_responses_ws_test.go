@@ -27,10 +27,10 @@ import (
 
 // 真实 PG 计费 e2e（与 repository/pricing 包同款约定）：
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./internal/proxy/ -run TestResponsesWSBillingPG -v
 //
-// 未设置 TEST_DATABASE_URL → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
+// 未设置 PG 测试 DSN → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
 // 隔离粒度 = database）：与 repository 包的 PG 测试——两包测试并发跑不互踩。
 
 // TestResponsesWSBillingPG resp-ws 全链路计费落库：WS 请求 → usage 嗅探 →

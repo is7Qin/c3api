@@ -29,10 +29,10 @@ import (
 
 // 真实 PG 集成（与 pg_responses_ws_test.go 同款约定）：
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./internal/proxy/ -run TestPGResponsesSpecialCredential -v
 //
-// 未设置 TEST_DATABASE_URL → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
+// 未设置 PG 测试 DSN → t.Skip。每测试克隆一个私有数据库（pgtest.Clone，
 // 隔离粒度 = database）：与同包 pg_responses_ws_test、repository 包的 PG 测试
 // 并行跑均不互踩。
 

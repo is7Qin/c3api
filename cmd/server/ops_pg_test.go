@@ -8,11 +8,11 @@ package main
 // 状态一致断言——pending 增长、落盘计数、retention DROP 分区数、注册表 Status
 // 同步；typed struct 断言；admin 鉴权）。
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@localhost:5432/c3api_test_ops \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./cmd/server/ -run TestOpsWorkersPG -v
 //
 // 每测试克隆一个私有数据库（pgtest.Clone，隔离粒度 = database，取自迁移模板）。
-// 未设置 TEST_DATABASE_URL → t.Skip。
+// 未设置 PG 测试 DSN → t.Skip。
 
 import (
 	"context"

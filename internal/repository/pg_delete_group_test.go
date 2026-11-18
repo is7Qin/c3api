@@ -13,7 +13,7 @@ import (
 // NOT delete the account or the membership row. Consequently the single-group
 // loader (whose membership subquery does not filter deleted groups) still returns
 // the account, while the full loader (which filters group.DeletedAtIsNil) drops
-// the group entirely. Skips without TEST_DATABASE_URL (skip never counts as pass).
+// the group entirely. Skips without the PG test DSN (skip never counts as pass).
 func TestPGDeleteGroupOnlyLeavesAccountAndMembership(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()

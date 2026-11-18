@@ -17,7 +17,7 @@ package repository_test
 // 屏障在旧形状命中的“第二条语句”处触发，在新形状命中的“唯一一条语句”处触发——两者
 // 都在同一文本点命中，故新实现恒返回正确结果、旧的转属窗口无法再制造越权读/写。
 //
-// 跑法：TEST_DATABASE_URL=... go test -race -count=1 -p 1 ./internal/repository/ \
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test -race -count=1 -p 1 ./internal/repository/ \
 //      -run 'PGExtTransferBarrier' -v
 
 import (

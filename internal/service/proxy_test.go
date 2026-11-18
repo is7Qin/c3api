@@ -309,7 +309,7 @@ func TestDeleteProxy(t *testing.T) {
 // 返回；observe 非 nil 时先看 ctx 并可返回错误（模拟真实 HTTP 请求一取消就失败——不观察
 // ctx 就显不出「第二段继承了请求 ctx」这个缺陷）。真跑第二段要连 api.ip.sb，单测不能依赖它。
 //
-// 计数器不加锁：本包无 t.Parallel()（AGENTS.md），用例串行。
+// 计数器不加锁：本包测试串行（AGENTS.md 全仓禁用并行原语）。
 type probeEgressStub struct {
 	calls   int
 	ip      string

@@ -13,7 +13,7 @@ package handler
 // （§12 B42）。fake 面的 MarkOrderNotifyFailure 是同一份语义的替身，只有真实
 // SQL 才能证明 UPDATE 的 WHERE 子句真的只碰审计列。
 //
-// 无 TEST_DATABASE_URL 时 `pgtest.Clone` 直接 t.Skip（skip ≠ green）。
+// 无 PG 测试 DSN 时 `pgtest.Clone` 直接 t.Skip（skip ≠ green）。
 
 import (
 	"encoding/json"

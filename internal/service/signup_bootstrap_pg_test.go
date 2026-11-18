@@ -21,11 +21,11 @@ import (
 // ---------------------------------------------------------------------------
 // 真实 PostgreSQL 测试基座（测试基座真实 PG 纪律：repository/service
 // 测试一律真实 PG，不 pgxmock）。启动方式同 repository 包：
-//   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test \
+//   先导出 PG 测试 DSN（见 pgtest 包文档）
 //     scripts/test.sh -run TestRegisterUserBootstrapFirstAdminPG -v
 //
 // 隔离粒度 = database：每个测试从已迁移模板克隆一个私有库（pgtest.Clone）。
-// 未设置 TEST_DATABASE_URL → t.Skip。
+// 未设置 PG 测试 DSN → t.Skip。
 // ---------------------------------------------------------------------------
 
 // TestRegisterUserBootstrapFirstAdminPG 首个注册用户 bootstrap 真实 PG 验证

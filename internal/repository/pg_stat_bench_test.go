@@ -7,7 +7,7 @@ package repository_test
 // 统计读取面下推基准（spec 2026-08-23 §7）：真实 PG 上 trend/top 两查询的
 // 单次往返成本（30 天 × 多维度桶量级）。跑法：
 //
-//	TEST_DATABASE_URL=... go test -bench BenchmarkStats -run '^$' ./internal/repository/
+//	先导出 PG 测试 DSN（见 pgtest 包文档），然后 go test -bench BenchmarkStats -run '^$' ./internal/repository/
 //
 // 基座同 pg_stat_test.go（newPGRepos 每 benchmark 重建 schema；串行）。
 

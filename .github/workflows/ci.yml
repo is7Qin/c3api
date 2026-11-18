@@ -55,6 +55,12 @@ jobs:
       - name: test
         env:
           TEST_DATABASE_URL: "postgres://postgres:c3api@localhost:5432/c3api_test?sslmode=disable"
+          # 迁移地基的 TestMain 闸门：CI 里 PG 必须真跑，缺 DSN 时直接失败而不是
+          # 让 migrate/catalog/gen/gen-cmd 的 PG 用例静默 SKIP 出一份假绿报告。
+          # 必须叫 TEST_* 而不是 C3API_*：internal/config/config.go:250 把 C3API_
+          # 前缀的**所有** env 映射成配置键，C3API_REQUIRE_PG 会被解析成 unknown
+          # key `require`，让 internal/config 整包测试失败。
+          TEST_REQUIRE_PG: "1"
         # scripts/test.sh gives every PG test its own clone of one migrated
         # template database (CREATE DATABASE ... TEMPLATE), so package test
         # binaries run concurrently again — the old -p 1 serialisation is gone.

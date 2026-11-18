@@ -6,7 +6,7 @@ package repository_test
 
 // supplier_pg_test.go 用**真实 PostgreSQL** 执行供应商记账链/解冻链/结算链/管理面
 // 五态/视图装载/liability/PATCH/分区退休屏障的真实 SQL（spec 2026-10-09 §5/§6）。
-// 跑法：TEST_DATABASE_URL=... go test -count=1 -p 1 ./internal/repository/ -run PG -v
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test -count=1 -p 1 ./internal/repository/ -run PG -v
 
 import (
 	"context"

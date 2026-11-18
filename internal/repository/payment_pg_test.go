@@ -18,7 +18,7 @@ import (
 // 支付账户 / 渠道的真实 PostgreSQL 面（spec 支付网关 v2 §3-1 / §3-2 / §10-3）。
 //
 // 基座与 redemption_repo_test.go 同款：newPGReposShared → pgtest.Clone，未设
-// TEST_DATABASE_URL 时 envOrSkip 直接 t.Skip（skip ≠ green）。
+// PG 测试 DSN 时 envOrSkip 直接 t.Skip（skip ≠ green）。
 //
 // 为什么这些用例必须在真库上跑：D 批暴露的两个缺口都落在**repo 层的 SQL/索引**
 // 上，而既有 P 用例走 fake store，压根不执行那段 SQL——

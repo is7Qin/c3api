@@ -100,6 +100,28 @@ const (
 // skipMessage is returned by env resolution when TEST_DATABASE_URL is unset.
 const skipMessage = "TEST_DATABASE_URL not set; skipping PostgreSQL integration test"
 
+// requirePGEnv is the single kill switch for "this environment must run PG tests".
+// TEST_REQUIRE_PG=1 turns a missing TEST_DATABASE_URL into a hard failure instead
+// of a skip. It deliberately lives outside the C3API_ prefix: internal/config's
+// loader maps every C3API_* env to a config key (config.go:250), so a C3API_*
+// switch would be parsed as an unknown config key and break every Load().
+const requirePGEnv = "TEST_REQUIRE_PG"
+
+// skipOrFatal is the only place that decides "skip or fail" when PostgreSQL is
+// absent. Every PG entrypoint (envOrSkip / DSN) must go through it: CI sets
+// TEST_REQUIRE_PG=1, so a missing DSN fails the build instead of producing a
+// green report where every integration test silently skipped.
+func skipOrFatal(t testing.TB) {
+	t.Helper()
+	if strings.TrimSpace(os.Getenv("TEST_DATABASE_URL")) != "" {
+		return
+	}
+	if os.Getenv(requirePGEnv) == "1" {
+		t.Fatalf("%s=1 but TEST_DATABASE_URL is empty: export TEST_DATABASE_URL='postgres://postgres:c3api@localhost:15432/c3api_test?sslmode=disable'", requirePGEnv)
+	}
+	t.Skip(skipMessage)
+}
+
 // Data-layer hooks. They are registered once (via an init in package pgrepo)
 // and must be non-nil before Clone is used.
 var (
@@ -180,9 +202,7 @@ func openEnv() (*testEnv, error) {
 // TEST_DATABASE_URL is unset (integration tests only run against a real server).
 func envOrSkip(t testing.TB) *testEnv {
 	t.Helper()
-	if os.Getenv("TEST_DATABASE_URL") == "" {
-		t.Skip(skipMessage)
-	}
+	skipOrFatal(t)
 	e, err := loadEnv()
 	if err != nil {
 		t.Fatalf("pgtest: %v", err)
@@ -293,11 +313,8 @@ func CloneEmpty(t testing.TB) string {
 // rare caller that needs the raw configured URL.
 func DSN(t testing.TB) string {
 	t.Helper()
-	raw := os.Getenv("TEST_DATABASE_URL")
-	if raw == "" {
-		t.Skip(skipMessage)
-	}
-	return raw
+	skipOrFatal(t)
+	return os.Getenv("TEST_DATABASE_URL")
 }
 
 // OpenPool opens a pgx connection pool on dsn with MaxConns=dbPoolMax and a

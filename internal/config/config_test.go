@@ -75,6 +75,25 @@ func TestEnvOverlay(t *testing.T) {
 	require.Equal(t, int64(7), c.Proxy.MaxInflight)
 }
 
+// TestRequirePGEnvStaysOutOfConfigNamespace 锁住测试开关的命名空间：Load 的
+// env.Provider（config.go:250）把**所有** C3API_ 前缀 env 映射成配置键，且
+// ErrorUnused 对未知键 fail-fast——所以 `C3API_REQUIRE_PG=1` 会被解析成配置键
+// `require`，让每一次 Load 调用（进而整个 internal/config 测试包）失败。
+// 测试开关因此放在 TEST_ 前缀下：CI 设 TEST_REQUIRE_PG=1，闸门在
+// internal/testsupport/pgtest.skipOrFatal，由 pgtest.DSN / CloneEmpty 触发
+// （各包的 TestMain 已删除，没有第二处闸门）。本用例只证这个名字不会被 Load
+// 当成配置键。
+//
+// pre-existing 同类坑（本次不改，记录在 _scratch/migrate-m0a-impl-r3.md）：
+// scripts/test.sh:14-19 的 C3API_TEST_MAINT_DB / C3API_TEST_TEMPLATE /
+// C3API_TEST_P 同样落在 C3API_ 命名空间里（会解析成 `test.*`）。
+func TestRequirePGEnvStaysOutOfConfigNamespace(t *testing.T) {
+	setenvRequired(t)
+	t.Setenv("TEST_REQUIRE_PG", "1") // t.Setenv 自动在 Cleanup 里还原
+	_, err := Load("")
+	require.NoError(t, err, "TEST_REQUIRE_PG must not be parsed as a config key")
+}
+
 // TestLoadFromTOML 非占位正常路径：example 占位值已改空 + 强制 env 注入——经 env
 // 注入三密钥验证文件加载与 duration 字符串解析（"500ms"）回归。
 func TestLoadFromTOML(t *testing.T) {
@@ -503,10 +522,10 @@ func TestLoadShutdownDrainBounds(t *testing.T) {
 // 给了多少停机时间，只能把仓库里发布的配置当契约读。要覆盖的是"应用**实际**会拿到的
 // drain"，三条入口都要算：
 //
-//	1) 代码默认（不写该键的部署）；
-//	2) compose 挂载的 deploy/config.toml；
-//	3) helm：config.content（inline 时原样渲染成 TOML）→ 再叠加 app.env 的
-//	   C3API_SERVER_SHUTDOWN_DRAIN（env 在文件之后生效，与环境变量优先级一致）。
+//  1. 代码默认（不写该键的部署）；
+//  2. compose 挂载的 deploy/config.toml；
+//  3. helm：config.content（inline 时原样渲染成 TOML）→ 再叠加 app.env 的
+//     C3API_SERVER_SHUTDOWN_DRAIN（env 在文件之后生效，与环境变量优先级一致）。
 //
 // 三者取最大预算，再要求两份模板的 grace >= **GracefulStopBudget**（预算 + 主 deadline
 // 之后仍会跑的独立收尾 3s）。docker 默认的 10s 连主 deadline 都不够，所以必须显式写。

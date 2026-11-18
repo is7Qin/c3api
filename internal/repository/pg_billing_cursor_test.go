@@ -10,7 +10,7 @@ package repository_test
 // MarkBilledBulk 零价扫尾 / UnbilledLag 度量 / AcquireBillingLock 会话锁）逐族
 // 验收。语义等价断言在结算语句族；EPQ 并发标记族为最高优先新族（协调者行锁屏障）。
 //
-// 基座约定同 pg_account_groups_test.go：TEST_DATABASE_URL 未设置 → t.Skip；
+// 基座约定同 pg_account_groups_test.go：PG 测试 DSN 未设置 → t.Skip；
 // newPGRepos 每测 DROP SCHEMA 重建；串行无 t.Parallel；testify 只 require。
 
 import (

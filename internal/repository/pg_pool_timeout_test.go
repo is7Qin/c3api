@@ -12,27 +12,24 @@ package repository_test
 // 冲突（57014，见 f1-impl-report.md）→ 不设会话级，计费路径执行时长由
 // 结算语句 per-query 10s ctx 超时兜底（settleTimeout，
 // TestPGBillingDeductLockTimeout）。纯读测试（SHOW），不动表。**刻意**绕开
-// pgtest.Clone/OpenPool，直连 TEST_DATABASE_URL 基库：本测试断言的是
+// pgtest.Clone/OpenPool，直连 PG 测试 DSN 基库：本测试断言的是
 // repository.OpenPG 自身的连接池补丁（lock_timeout / MaxConnLifetime），必须
 // 不经过 pgtest 的池装配——spec §6.4「OpenPool 唯一开池入口」在此有意破例。
-// TEST_DATABASE_URL 未设置 → t.Skip。
+// PG 测试 DSN 未设置 → pgtest.DSN 统一闸门（默认 Skip；CI 的 require-PG 开关为 1 时直接失败）。
 
 import (
 	"context"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/repository"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 func TestPGOpenPGTimeoutParams(t *testing.T) {
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	dsn := pgtest.DSN(t) // 统一闸门：CI 的 require-PG 开关为 1 时缺 DSN 直接失败
 	ctx := context.Background()
 	pool, err := repository.OpenPG(ctx, dsn, 2)
 	require.NoError(t, err)

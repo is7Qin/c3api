@@ -34,7 +34,7 @@ import (
 // LoadGroupsAccounts 快照 → Selection.Ext → AccountCredential 派生直供适配层；
 // 上游为本地 mock SSE 面——真实上游不可控）：
 //
-//	TEST_DATABASE_URL=postgres://postgres:c3api@127.0.0.1:15432/c3api_test \
+//	先导出 PG 测试 DSN（见 pgtest 包文档）
 //	  go test ./internal/proxy/ -run TestCodexResponsesHTTPBillingPG -v
 //
 // 独立 schema（c3api_test_t6）避共享库并发踩踏。断言面：SDK 合成体透传 +

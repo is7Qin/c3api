@@ -27,7 +27,7 @@ import (
 // DEFAULT ” (old rows backfilled to the empty string, never NULL). The old
 // schema is reproduced by dropping the column from a migrated clone. Runs the
 // real entry point repository.NewWithPG(ctx, drv, true, pool). Skips without
-// TEST_DATABASE_URL (skip never counts as pass).
+// the PG test DSN (skip never counts as pass).
 func TestPGGroupDescriptionMigration(t *testing.T) {
 	ctx := context.Background()
 	dsn := pgtest.Clone(t)

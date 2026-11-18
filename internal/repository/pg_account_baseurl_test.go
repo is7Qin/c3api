@@ -16,7 +16,7 @@ import (
 
 // TestAccountBaseURLRoundTripPG 账号级 base_url 往返：设值落库/读回/
 // 清空（nil 往返）；批量 patch 三态："" → NULL 清空、非空 → 落值、nil → 不变。
-// 真实 PostgreSQL 基座（TEST_DATABASE_URL 未设 → t.Skip）。
+// 真实 PostgreSQL 基座（PG 测试 DSN 未设 → t.Skip）。
 func TestAccountBaseURLRoundTripPG(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()

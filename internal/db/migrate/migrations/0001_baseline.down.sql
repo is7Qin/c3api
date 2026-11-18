@@ -1,0 +1,39 @@
+-- 0001_baseline.down.sql — GENERATED FILE, DO NOT EDIT.
+-- ROLLBACK DROPS: 全部业务表（35 张）及其序列/索引/数据；仅供空库与测试库使用。
+-- 逆序 DROP：建表顺序即外键依赖顺序，故逆序不需要 CASCADE。
+SET search_path = public;
+DROP TABLE IF EXISTS public.routing_flow_snapshot_state;
+DROP TABLE IF EXISTS public.stats_agg_watermark;
+DROP TABLE IF EXISTS public.routing_flow_fact;
+DROP TABLE IF EXISTS public.routing_quality_fact;
+DROP TABLE IF EXISTS public.usage_entity_stats;
+DROP TABLE IF EXISTS public.usage_stats;
+DROP TABLE IF EXISTS public.err_logs;
+DROP TABLE IF EXISTS public.usage_logs;
+DROP TABLE IF EXISTS public.template_exts;
+DROP TABLE IF EXISTS public.temp_balances;
+DROP TABLE IF EXISTS public.redemption_uses;
+DROP TABLE IF EXISTS public.redemption_codes;
+DROP TABLE IF EXISTS public.payment_channels;
+DROP TABLE IF EXISTS public.payment_accounts;
+DROP TABLE IF EXISTS public.management_keys;
+DROP TABLE IF EXISTS public.keys;
+DROP TABLE IF EXISTS public.group_assignments;
+DROP TABLE IF EXISTS public.users;
+DROP TABLE IF EXISTS public.account_groups;
+DROP TABLE IF EXISTS public.groups;
+DROP TABLE IF EXISTS public.account_exts;
+DROP TABLE IF EXISTS public.accounts;
+DROP TABLE IF EXISTS public.templates;
+DROP TABLE IF EXISTS public.proxies;
+DROP TABLE IF EXISTS public.rules;
+DROP TABLE IF EXISTS public.supplier_reconciliation;
+DROP TABLE IF EXISTS public.orders;
+DROP TABLE IF EXISTS public.price_variants;
+DROP TABLE IF EXISTS public.price_entries;
+DROP TABLE IF EXISTS public.supplier_frozen_chunks;
+DROP TABLE IF EXISTS public.supplier_settlements;
+DROP TABLE IF EXISTS public.email_templates;
+DROP TABLE IF EXISTS public.balance_logs;
+DROP TABLE IF EXISTS public.settings;
+DROP TABLE IF EXISTS public.supplier_balances;

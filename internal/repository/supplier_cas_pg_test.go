@@ -6,7 +6,7 @@ package repository_test
 
 // supplier_cas_pg_test.go 补 A11（五态 CAS 并发竞争）与 A21③④（申请幂等键并发/
 // 唯一冲突回滚条件扣）的**真实 PG 并发**验收（spec 2026-10-09 §7）。
-// 跑法：TEST_DATABASE_URL=... go test -count=1 -p 1 ./internal/repository/ -run PG -v
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test -count=1 -p 1 ./internal/repository/ -run PG -v
 
 import (
 	"context"

@@ -8,7 +8,7 @@ package repository_test
 // PostgreSQL 上的越域拒绝证据：C1 修复后 usage 聚合与 ext 单读都必须把 owner 谓词
 // AND 进 SQL，越域 id 在**数据库层**被过滤，应用层拿不到他人数据。
 //
-// 跑法：TEST_DATABASE_URL=... go test -count=1 -p 1 ./internal/repository/ \
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test -count=1 -p 1 ./internal/repository/ \
 //      -run 'PGAccountScope|PGUsageAggScope' -v
 
 import (

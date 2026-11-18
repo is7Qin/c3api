@@ -9,11 +9,10 @@ package repository
 // （不再使用包级可变全局），故本文件用内包 package repository（外部的
 // repository_test 无法访问未导出方法）；自建独立 schema，不 DROP public。
 //
-// 跑法：TEST_DATABASE_URL=... go test ./internal/repository/ -run 'BatchOwnerLockSet' -count=1 -v
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test ./internal/repository/ -run 'BatchOwnerLockSet' -count=1 -v
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
 const batchLockTestSchema = "batch_lock_test"
@@ -30,10 +30,7 @@ const batchLockTestSchema = "batch_lock_test"
 // newBatchLockTestRepo 独立 schema 上的仓库（供内包 N1 测试）。
 func newBatchLockTestRepo(t *testing.T) *Repository {
 	t.Helper()
-	dsn := os.Getenv("TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("TEST_DATABASE_URL not set; skipping real-PostgreSQL test")
-	}
+	dsn := pgtest.DSN(t) // 统一闸门：CI 的 require-PG 开关为 1 时缺 DSN 直接失败
 	if strings.Contains(dsn, "?") {
 		dsn += "&search_path=" + batchLockTestSchema
 	} else {

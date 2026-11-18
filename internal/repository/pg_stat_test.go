@@ -499,7 +499,7 @@ func TestPGStatsAggV2CubeEquivalence(t *testing.T) {
 	unsent := usageLogRow("u-abort-unsent", unsentAt, domain.ErrAbort, 1, 11, 21, 31, "gpt-4o",
 		120, 240, 5, 6, 999, 1999, 2, new(int64(150)))
 	unsent.CommitState = testCommitState("not_sent") // 覆盖 helper 自动补的 response_started
-	unsent.Cost = 0                                 // 未交付不产生费用
+	unsent.Cost = 0                                  // 未交付不产生费用
 	logs = append(logs, unsent)
 	// 同一 attempt 的 err_logs 明细（写侧双轨）：err 源据此计入 1 行（ec 同步 +1），
 	// usage 源则必须按 commit_state=not_sent 把它排除。
@@ -637,7 +637,7 @@ func TestPGStatsAbortSplitNoDoubleCount(t *testing.T) {
 	unsent := usageLogRow("u-abort-unsent", h.Add(4*time.Minute), domain.ErrAbort, 3, 0, 42, 0, "gpt-4o",
 		100, 100, 0, 0, 500, 700, 3, ttft(900))
 	unsent.CommitState = testCommitState("not_sent") // 覆盖 helper 自动补的 response_started
-	unsent.Cost = 0                                 // 未交付不产生费用
+	unsent.Cost = 0                                  // 未交付不产生费用
 	require.NoError(t, repos.Usages.InsertBatch(ctx, []*domain.UsageLog{
 		usageLogRow("a1", h.Add(time.Minute), domain.ErrAbort, 3, 0, 42, 0, "gpt-4o", 7, 8, 1, 1, 60, 120, 5, ttft(200)),
 		usageLogRow("a2", h.Add(2*time.Minute), domain.ErrNone, 3, 0, 42, 0, "gpt-4o", 1, 1, 0, 0, 10, 20, 0, nil),

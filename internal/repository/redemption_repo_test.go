@@ -18,7 +18,7 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// 真实 PG 基座（newPGRepos；TEST_DATABASE_URL 未设置 → Skip）：
+// 真实 PG 基座（newPGRepos；PG 测试 DSN 未设置 → Skip）：
 // 兑换码全部测试 —— code 唯一冲突、批量生成、use 唯一约束、批量失效幂等、
 // 条件递增并发防超卖、原子资源方法、WithTx 回滚。
 

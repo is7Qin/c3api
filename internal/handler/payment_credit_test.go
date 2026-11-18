@@ -118,7 +118,7 @@ func TestPaymentNotifyExtensionFieldIsSigned(t *testing.T) {
 
 	rec := postNotify(t, p, paymentMainAccount, func(v url.Values) {
 		v.Set("out_trade_no", created.OrderNo)
-		v.Set("site_name", "示例站点")   // 扩展字段（网关会带 site_name/param 等）
+		v.Set("site_name", "示例站点") // 扩展字段（网关会带 site_name/param 等）
 		v.Set("param", "trace-12345")
 		v.Set("buyer", "payer@example.com")
 	})

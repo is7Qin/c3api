@@ -111,7 +111,7 @@ func idempotentPatchForSpec(spec domain.AccountFieldSpec, got *domain.Account, g
 // "静态快照被更新"的一半由调度器侧的静态键逐字段子用例覆盖（每个配置或身份
 // 字段改了就换键），本包不再重复实现快照断言，只钉住代际推进。
 //
-// 真实 PostgreSQL 基座（TEST_DATABASE_URL 未设则跳过）。
+// 真实 PostgreSQL 基座（PG 测试 DSN 未设则跳过）。
 func TestPGAccountFieldPatchAdvancesGeneration(t *testing.T) {
 	repos := newPGReposShared(t)
 	ctx := context.Background()

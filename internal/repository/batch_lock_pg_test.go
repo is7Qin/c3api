@@ -8,7 +8,7 @@ package repository_test
 // 转属/配置写线程对同一批账号交错写，users→accounts 固定锁序必须永不触发 40P01
 // （deadlock detected），全部收敛成功。
 //
-// 跑法：TEST_DATABASE_URL=... go test ./internal/repository/ -run 'PGAccountOwnershipNoDeadlock' -count=1 -v
+// 跑法（先导出 PG 测试 DSN，见 pgtest 包文档）：go test ./internal/repository/ -run 'PGAccountOwnershipNoDeadlock' -count=1 -v
 
 import (
 	"context"

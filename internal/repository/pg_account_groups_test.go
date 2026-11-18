@@ -28,9 +28,9 @@ import (
 // 既有 pgxmock 测试保留不动）。
 //
 // 启动方式：deploy/test-compose.yml 起 postgres:18，然后
-//   TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15432/c3api_test scripts/test.sh -run PG -v
+//   导出 PG 测试 DSN（见 pgtest 包文档）后 scripts/test.sh -run PG -v
 //
-// 未设置 TEST_DATABASE_URL → t.Skip（不炸本地/CI 无库环境）。
+// 未设置 PG 测试 DSN → t.Skip（不炸本地/CI 无库环境）。
 //
 // 隔离粒度 = database：每个测试从已迁移模板克隆一个私有库（pgtest.Clone 按
 // 测试幂等），迁移只在模板构建时跑一次。

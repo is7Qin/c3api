@@ -935,20 +935,20 @@ type KeyMeta struct {
 // price_per_image 非 nil 时只按「张数 × 每张价」收，不再叠加 image token
 // 价；按张列缺省（NULL）才走 img_in/out_tok_per_m。
 type UsageLog struct {
-	ID                       int64
-	RequestID                string
-	ClientIP                 string // 客户端 IP（供应商头按序识别 + RemoteAddr 兜底——proxy.behind_cdn 门控；审计/排障标识，非安全边界；空 = 理论无（提取恒有兜底））
-	GroupID                  int64  // 0 = 无
-	AccountID                int64  // 0 = 无
-	TemplateID               int64  // 0 = 无
-	UserID                   int64  // 0 = 无（鉴权失败/无 key）
-	KeyID                    int64  // 0 = 无
-	Model                    string
-	MappedModel              string // 空 = 未映射
-	Format                   RequestFormat
-	StatusCode               int
-	ErrorType                ErrorType
-	ErrorMessage             *string // nil = 无错误文本（NULL 落库）
+	ID           int64
+	RequestID    string
+	ClientIP     string // 客户端 IP（供应商头按序识别 + RemoteAddr 兜底——proxy.behind_cdn 门控；审计/排障标识，非安全边界；空 = 理论无（提取恒有兜底））
+	GroupID      int64  // 0 = 无
+	AccountID    int64  // 0 = 无
+	TemplateID   int64  // 0 = 无
+	UserID       int64  // 0 = 无（鉴权失败/无 key）
+	KeyID        int64  // 0 = 无
+	Model        string
+	MappedModel  string // 空 = 未映射
+	Format       RequestFormat
+	StatusCode   int
+	ErrorType    ErrorType
+	ErrorMessage *string // nil = 无错误文本（NULL 落库）
 	// CommitState 交付事实（spec-stream-failure-truth §5.2，可空）。取值域 =
 	// proxy.CommitState.String() 的四个值（domain 不 import proxy，字面量由
 	// proxy 侧写入）：not_sent / sent_ambiguous / upstream_responded /

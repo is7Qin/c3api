@@ -5,7 +5,7 @@
 package repository_test
 
 // 计费结算语句测量基准（三车道拓扑适配，spec-f2opt-settlement）：SettleBalanceBatch /
-// SettleFefoBatch 单语句耗时构成测量。真实 PG（TEST_DATABASE_URL，独立库）+
+// SettleFefoBatch 单语句耗时构成测量。真实 PG（PG 测试 DSN，独立库）+
 // pg_stat_statements（容器需 -c shared_preload_libraries=pg_stat_statements 启动）：
 //   - 每次调用整语句 Go 侧耗时（含网络往返），≥5 轮取中位数（首轮预热）；
 //   - 运行窗口内 pg_stat_statements 按语句类型拆分服务器侧耗时与往返次数
@@ -15,7 +15,7 @@ package repository_test
 // InsertBatch 是唯一写者——种子 unbilled 行先行（不计入结算计时窗口）。
 //
 // 用法（默认跳过，显式开启）：
-//   HOTFIX_BENCH=1 TEST_DATABASE_URL=postgres://postgres:c3api@localhost:15433/c3api_test_hotfix \
+//   先 HOTFIX_BENCH=1 并导出 PG 测试 DSN（见 pgtest 包文档）
 //     go test ./internal/repository/ -run TestSettleBenchComposition -v
 
 import (

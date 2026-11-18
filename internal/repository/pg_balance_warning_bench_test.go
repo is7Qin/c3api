@@ -22,7 +22,7 @@ import (
 	"github.com/is7qin/c3api/internal/testsupport/pgtest"
 )
 
-// 余额预警结算基准（真实 PG：TEST_DATABASE_URL 未设置 → b.Skip）：逐场景测
+// 余额预警结算基准（真实 PG：未设置 PG 测试 DSN → b.Skip）：逐场景测
 // SettleBalanceBatch / SettleFefoBatch 的耗时构成——每轮 StopTimer 重灌种子行
 // （不计入计时），StartTimer 后跑 K 桶结算并采样 WAL 增量。
 //
