@@ -12,7 +12,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 	"sync/atomic"
 	"time"
 
@@ -937,7 +936,7 @@ func buildRoutes(accs []*accountSnapshot) map[routeKey]*route {
 		var t2 []*accountSnapshot
 		for _, a := range accs {
 			tpl := a.static.Load().tpl
-			if tpl == nil || !slices.Contains(tpl.SupportedFormats, format) {
+			if tpl == nil || !tplSupportsFormat(tpl, format) {
 				continue
 			}
 			if tpl.HasModelSpace() {
