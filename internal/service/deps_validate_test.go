@@ -51,6 +51,21 @@ func TestDepsValidateTypedNil(t *testing.T) {
 	require.Contains(t, err.Error(), "typed-nil")
 }
 
+// nilStore 内嵌 Store 接口：nil 指针也能满足接口，用于构造最宽必选面的装箱
+// 陷阱（方法被调到才炸，正是这类 bug 难查的原因）。
+type nilStore struct{ Store }
+
+// TestDepsValidateTypedNilStore 必选面同样会装箱：Store 装了 nil 具体值之后
+// `Store == nil` 为假，必选判据放行，直到第一次查询才炸。Store 是全仓最宽的
+// 依赖面，漏检它等于 typed-nil 判据只覆盖了一半。
+func TestDepsValidateTypedNilStore(t *testing.T) {
+	d := Deps{Store: (*nilStore)(nil), EmailCodeStore: testEmailCodes}
+	err := d.Validate()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "Store")
+	require.Contains(t, err.Error(), "typed-nil")
+}
+
 // TestDepsValidateValueImplementation 反例：值型实现（NopInvalidator{}）不是
 // typed-nil。判据若把 Interface kind 之外的都交回去，这里必须过。
 func TestDepsValidateValueImplementation(t *testing.T) {

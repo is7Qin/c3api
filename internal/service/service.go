@@ -723,6 +723,7 @@ func (d Deps) Validate() error {
 		name string
 		v    any
 	}{
+		{"Store", d.Store},
 		{"Scheduler", d.Scheduler},
 		{"Invalidate", d.Invalidate},
 		{"Publisher", d.Publisher},
