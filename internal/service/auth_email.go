@@ -55,7 +55,7 @@ func (s *Service) SendRegisterCode(ctx context.Context, email string) error {
 	if s.mailEnqueue == nil {
 		return ErrMailNotConfigured
 	}
-	if err := s.mailEnqueue(MailSendTask{
+	if err := s.mailEnqueue.Enqueue(MailSendTask{
 		To:      email,
 		Purpose: domain.EmailTemplateRegisterCode,
 		Code:    plain,
@@ -101,7 +101,7 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 		return nil
 	}
 	if s.mailEnqueue != nil {
-		_ = s.mailEnqueue(MailSendTask{
+		_ = s.mailEnqueue.Enqueue(MailSendTask{
 			To:      email,
 			Purpose: domain.EmailTemplateResetCode,
 			Code:    plain,

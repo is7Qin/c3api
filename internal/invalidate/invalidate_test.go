@@ -242,6 +242,10 @@ func TestDebounceMerge(t *testing.T) {
 	r.clock.waitTimer(t, gen)
 	r.clock.fire()
 	waitCalls(t, r.auth.calls, 1)
+	// reloadAll 内部先 Auth.Reload 后 Sched.InvalidateAll（invalidate.go:321/329），
+	// 两个计数器之间没有同步点：只等 auth 会让 sched 断言撞上执行 goroutine 的
+	// 中间态（TestDebounceMerge 曾随机红，sched full = 0）。等两个计数器都到 1。
+	waitCalls(t, r.sched.fullCalls, 1)
 	// 一次合并重载：auth 1 次（非 2）、余额全量 1、sched 全量 1、clients 1、
 	// 倍率定向 1。
 	if got := r.auth.calls(); got != 1 {

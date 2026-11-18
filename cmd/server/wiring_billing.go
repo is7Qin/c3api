@@ -36,6 +36,14 @@ import (
 )
 
 // billingFace 是阶段 4 的产物。
+// 编译期断言：三个消费方接口由生产实现满足。放在这里而不是实现包里——
+// 依赖方向是「实现方不必知道消费方」（service 定义接口，scheduler /
+// MailWorker / Cooldown 各自实现），所以断言只能在装配点。
+var (
+	_ service.MailEnqueuer    = (*service.MailWorker)(nil)
+	_ service.CooldownClearer = (*notification.Cooldown)(nil)
+)
+
 type billingFace struct {
 	auth    *proxy.Auth
 	clients *aiclient.Factory
@@ -209,15 +217,15 @@ func newBillingFace(cfg *config.Config, log *logx.Logger, in *infraFace, hl *hea
 			ErrLog: cfg.Usage.ErrLogRetentionDays,
 			Stats:  cfg.Usage.StatsRetentionDays,
 		},
-		ClearBalanceWarningCooldown:     bwCooldown.Clear,
+		ClearBalanceWarningCooldown:     bwCooldown,
 		RecoverProber:                   runtimeHealth,
 		RecoverLatch:                    latchStore,
 		RecoverHealthClear:              runtimeHealth,
 		DefaultMaxConcurrency:           cfg.Scheduler.DefaultMaxConcurrency,
 		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
 		SupplierThawGranularity:         cfg.Supplier.ThawGranularity,
-		CompileNotify:                   sched.RequestCompile,
-		MailEnqueue:                     mailW.Enqueue,
+		CompileNotify:                   sched,
+		MailEnqueue:                     mailW,
 		PaymentRegistry:                 paymentReg,
 		SettingsSnapshot:                settingsSnap})
 	f.svc = svc

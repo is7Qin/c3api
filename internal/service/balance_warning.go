@@ -42,7 +42,7 @@ func (s *Service) UpdateBalanceWarningThreshold(ctx context.Context, userID int6
 	s.publish(ctx, notify.Change{Users: true})
 	if previousThreshold > 0 && previousThreshold != millis && s.clearBalanceWarningCooldown != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 200*time.Millisecond)
-		err := s.clearBalanceWarningCooldown(cleanupCtx, userID, previousThreshold)
+		err := s.clearBalanceWarningCooldown.Clear(cleanupCtx, userID, previousThreshold)
 		cancel()
 		if err != nil {
 			s.log.Warn("balance warning cooldown cleanup failed", logx.Int64("user_id", userID))
