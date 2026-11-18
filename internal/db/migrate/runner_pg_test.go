@@ -676,7 +676,7 @@ func TestUpRefusesContractWithoutOptIn(t *testing.T) {
 	require.Contains(t, err.Error(), "0002_cleanup_contract")
 	require.Contains(t, err.Error(), "0003_drop_pair_contract")
 	require.Contains(t, err.Error(), "irreversibly")
-	require.Contains(t, err.Error(), "-migrate-allow-contract")
+	require.Contains(t, err.Error(), "-allow-contract")
 
 	// 显式承认后整批执行（含两条 contract）。
 	res, err := r.up(ctx, UpOptions{AllowContract: true})

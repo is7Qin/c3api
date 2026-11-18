@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io/fs"
 	"sort"
@@ -26,6 +27,18 @@ const (
 	defaultLockTimeout = 60 * time.Second
 	defaultLockPoll    = 250 * time.Millisecond
 )
+
+// lockTimeoutBudget 是迁移会话的**锁预算**（spec §2.10）：每条迁移在事务里先
+// `SET LOCAL lock_timeout`，再执行 DDL。
+//
+// 为什么是 3s 而不是等：一条要拿 ACCESS EXCLUSIVE 的 DDL 一旦排队，后面所有
+// 读写请求会**排在它后面**一起被堵住（PG 的锁等待是 FIFO）。宁可本进程 3s 内
+// 失败退出、运维择机重跑，也不把表堵死。
+const lockTimeoutBudget = "3s"
+
+// lockNotAvailableSQLState 是 PG 的 lock_not_available（`SET LOCAL lock_timeout`
+// 到点后抛的 SQLSTATE）。
+const lockNotAvailableSQLState = "55P03"
 
 // LockOptions 是 advisory lock 的行为参数（测试可注入更短超时）。
 type LockOptions struct {
@@ -246,13 +259,13 @@ func blockedContracts(migrations []Migration, from, target int64) []Migration {
 }
 
 // contractGateError 一次性列出全部被挡版本：运维看一次错误就能决定是否显式承认
-// 这批不可逆收缩（-migrate-allow-contract）。
+// 这批不可逆收缩（`-migrate up -allow-contract`）。
 func contractGateError(blocked []Migration) error {
 	names := make([]string, len(blocked))
 	for i, m := range blocked {
 		names[i] = fmt.Sprintf("%04d_%s", m.Version, m.Name)
 	}
-	return fmt.Errorf("migrate: refusing to apply %d contract migration(s) [%s]: contract phases shrink the schema irreversibly (DROP TABLE/COLUMN, data loss); pass -migrate-allow-contract (UpOptions.AllowContract) to confirm",
+	return fmt.Errorf("migrate: refusing to apply %d contract migration(s) [%s]: contract phases shrink the schema irreversibly (DROP TABLE/COLUMN, data loss); pass -allow-contract with -migrate up (UpOptions.AllowContract) to confirm",
 		len(blocked), strings.Join(names, ", "))
 }
 
@@ -263,9 +276,12 @@ func (r *runner) apply(ctx context.Context, m Migration) (AppliedMigration, erro
 		return AppliedMigration{}, fmt.Errorf("migrate: begin tx for %04d_%s: %w", m.Version, m.Name, err)
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := setLockBudget(ctx, tx); err != nil {
+		return AppliedMigration{}, fmt.Errorf("migrate: apply %04d_%s: %w", m.Version, m.Name, err)
+	}
 	start := time.Now()
 	if _, err := tx.ExecContext(ctx, m.UpSQL); err != nil {
-		return AppliedMigration{}, fmt.Errorf("migrate: apply %04d_%s: %w", m.Version, m.Name, err)
+		return AppliedMigration{}, fmt.Errorf("migrate: apply %04d_%s: %w", m.Version, m.Name, lockTimeoutHint(err))
 	}
 	execMS := int(time.Since(start).Milliseconds())
 	appliedAt := time.Now().UTC()
@@ -347,8 +363,11 @@ func (r *runner) rollback(ctx context.Context, row AppliedMigration, downSQL str
 		return fmt.Errorf("migrate: begin tx for down %04d_%s: %w", row.Version, row.Name, err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	if _, err := tx.ExecContext(ctx, downSQL); err != nil {
+	if err := setLockBudget(ctx, tx); err != nil {
 		return fmt.Errorf("migrate: rollback %04d_%s: %w", row.Version, row.Name, err)
+	}
+	if _, err := tx.ExecContext(ctx, downSQL); err != nil {
+		return fmt.Errorf("migrate: rollback %04d_%s: %w", row.Version, row.Name, lockTimeoutHint(err))
 	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM public.`+catalog.ControlTable+` WHERE version = $1`, row.Version); err != nil {
@@ -358,6 +377,34 @@ func (r *runner) rollback(ctx context.Context, row AppliedMigration, downSQL str
 		return fmt.Errorf("migrate: commit down %04d_%s: %w", row.Version, row.Name, err)
 	}
 	return nil
+}
+
+// setLockBudget 在迁移事务里设置事务级锁预算 `SET LOCAL lock_timeout`。
+//
+// 作用域是本事务：事务结束（提交/回滚）即失效，不会污染连接池里后续的语句；
+// 也正因为是 LOCAL，它只能写在显式事务里——apply/rollback 恰好都是单事务。
+func setLockBudget(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `SET LOCAL lock_timeout = '`+lockTimeoutBudget+`'`)
+	return err
+}
+
+// lockTimeoutHint 把「等锁超时」折成可运维文案：说明是**另一事务持锁**、结论是
+// **稍后重跑**（spec §2.11）。其它错误原样返回——真正的语法/依赖错误不该被
+// 这句文案掩盖。
+func lockTimeoutHint(err error) error {
+	if err == nil || !isLockNotAvailable(err) {
+		return err
+	}
+	return fmt.Errorf("lock not acquired within lock_timeout=%s: another transaction holds a conflicting lock on this schema; retry later (%w)",
+		lockTimeoutBudget, err)
+}
+
+func isLockNotAvailable(err error) bool {
+	var sqlState interface{ SQLState() string }
+	if errors.As(err, &sqlState) {
+		return sqlState.SQLState() == lockNotAvailableSQLState
+	}
+	return strings.Contains(err.Error(), lockNotAvailableSQLState)
 }
 
 // rollbackSummary 从 down 文件头（`-- ROLLBACK DROPS: …`）取「会丢什么」。
@@ -437,6 +484,11 @@ func (r *runner) verify(ctx context.Context) (Verdict, error) {
 		}
 		m, ok := byVersion[row.Version]
 		switch {
+		case !ok && row.Version > v.BinaryHead:
+			// 本二进制没有的版本，且版本号比自己的 head 大 ⇒ 这是**新二进制**
+			// 留下的（账本只追加）。expand-only 保证旧代码能跑新库，所以它是
+			// k8s 回退时的正常态：记 WARN，不算问题（spec §2.5 第 4 条）。
+			v.Ahead = append(v.Ahead, row.Version)
 		case !ok:
 			v.Problems = append(v.Problems, fmt.Sprintf("applied version %04d_%s is not in this binary", row.Version, row.Name))
 		case string(m.Checksum) != string(row.Checksum):

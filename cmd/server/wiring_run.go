@@ -312,33 +312,45 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 
 	// 注册序 = workerOrder 表（唯一的顺序事实源）。缺席规则与 fail-fast 全在
 	// assembleWorkers 里：缺键与 nil 值同义，cfg 说不该缺席就必须有值。
+	byName := map[string]worker.Worker{
+		"mailW":            mailW,
+		"inv":              inv,
+		"schedW":           schedW,
+		"ruleEngine":       ruleEngine,
+		"retryWorker":      retryWorker,
+		"healthW":          healthW,
+		"rec":              rec,
+		"errlogW":          errlogW,
+		"contBindW":        contBindW,
+		"convW":            convW,
+		"quotaW":           quotaW,
+		"pricingSync":      pricingSync,
+		"retention":        retention,
+		"statsAgg":         statsAgg,
+		"qualityFlowOwner": qualityFlowOwner,
+		"qualitySync":      qualitySync,
+		"concSync":         concSync,
+		"accConcSync":      accConcSync,
+		"disco":            disco,
+		"listener":         listener,
+		"authSync":         authSync,
+	}
+	// 可选 worker 用**不塞键**表达缺席。绝不能写成「nil 也塞进 map」：
+	// `var p *supplier.ViewLoader = nil` 装进 map[string]worker.Worker 是非 nil
+	// 接口（动态类型就绪、值才是 nil），assembleWorkers 的缺席判据 `!ok || w == nil`
+	// 读不到它，于是「关闭态」被判成「cfg 说该关却给了值」并 panic——默认配置
+	// （supplier.enabled=false，也是 deploy/config.toml 的取值）曾在启动时就这么崩。
+	if warningWorker != nil {
+		byName["warningWorker"] = warningWorker
+	}
+	if billingWorker != nil {
+		byName["billingWorker"] = billingWorker
+	}
+	if supplierViewLoader != nil {
+		byName["supplierViewLoader"] = supplierViewLoader
+	}
 	plan := assembleWorkers(workerSet{
-		byName: map[string]worker.Worker{
-			"mailW":              mailW,
-			"warningWorker":      warningWorker,
-			"billingWorker":      billingWorker,
-			"inv":                inv,
-			"schedW":             schedW,
-			"ruleEngine":         ruleEngine,
-			"retryWorker":        retryWorker,
-			"healthW":            healthW,
-			"rec":                rec,
-			"errlogW":            errlogW,
-			"contBindW":          contBindW,
-			"convW":              convW,
-			"quotaW":             quotaW,
-			"pricingSync":        pricingSync,
-			"retention":          retention,
-			"statsAgg":           statsAgg,
-			"qualityFlowOwner":   qualityFlowOwner,
-			"qualitySync":        qualitySync,
-			"supplierViewLoader": supplierViewLoader,
-			"concSync":           concSync,
-			"accConcSync":        accConcSync,
-			"disco":              disco,
-			"listener":           listener,
-			"authSync":           authSync,
-		},
+		byName: byName,
 		groups: map[string][]worker.Worker{"supplierWorkers": supplierWorkers},
 	}, cfg)
 
@@ -400,6 +412,10 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 		AIHandler:           planReadyGate(sched, aiRouter),
 		WebFS:               webUI(),
 		Logger:              log,
+		// /readyz 与业务面 503 的读点（schema 启动门）。启动期已判定为可服务才
+		// 走到这里，所以运行期它恒为 200——那份状态仍要接进来：探针读到的是
+		// **本进程真实的判定依据**，不是一句"能跑到这里就算好了"。
+		Ready: in.schema.status,
 	})
 
 	// http.Server 超时：IdleTimeout 防 keep-alive 空闲连接

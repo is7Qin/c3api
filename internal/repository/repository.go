@@ -94,6 +94,18 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 	return newRepository(client, drv, pool), nil
 }
 
+// NewWithoutMigrate 构建仓库且**不建任何 schema**（生产启动路径的唯一入口）。
+//
+// 为什么要有这个具名变体：`NewWithPG(ctx, drv, false, pool)` 把「不迁移」表达成
+// 一个裸 bool 字面量——调用点读起来与「传错了一个开关」无法区分，而它承载的是
+// 「schema 只归版本化迁移管」这条结构性约束。命名即契约：看到 NewWithoutMigrate
+// 就知道本进程绝不写 schema；需要建表的人只能去 `-migrate up`。
+//
+// 测试/工具里仍可用 NewWithPG(..., true, ...) 走 ent 自动迁移（既有用例依赖）。
+func NewWithoutMigrate(ctx context.Context, drv dialect.Driver, pool *pgxpool.Pool) (*Repository, error) {
+	return NewWithPG(ctx, drv, false, pool)
+}
+
 // newRepository 用给定 client/driver 构建全量仓库：New/NewWithPG/WithTx 复用
 // 同一构造函数；WithTx 注入 tx client + 事务驱动，fn 内所有方法调用都走 tx ——
 // pool 进 Stats（离线聚合 SQL 直查直写自 Acquire 独立连接，不进
@@ -974,6 +986,24 @@ func (r *Repository) AcquireBillingLock(ctx context.Context) (release func(), ok
 }
 
 // --- usagelog 按日分区（main 装配 bootstrap + retention worker） ---
+
+// EnsureAllTablePartitionsVersion 是分区单入口的行为版本（spec §2.7）。
+//
+// 改动 EnsureAllTablePartitions 的**建分区规则**——父表清单、建分区的顺序、预建
+// 窗口——就必须 +1：pgtest 的模板 hash 把它算进去，否则测试会 clone 到一份按旧
+// 规则建好分区的模板，「补分区逻辑改了」这件事只会表现为夜深人静时的
+// `no partition of relation … found`。实现细节（注释、错误文案）不需要 +1。
+const EnsureAllTablePartitionsVersion = 1
+
+// EnsureAllTablePartitions 是补齐按日分区的唯一入口（spec §2.7）。
+//
+// 为什么必须唯一：分区缺失只在**写入时**炸（`no partition of relation … found`），
+// 分散的调用点漏掉一张表不会有任何编译/启动错误，只会让那一路写入在日界后失败。
+// 动词与顺序见 PartitionRepo.EnsureAllTablePartitions；父表缺失 ⇒ 报错指向
+// `c3api -migrate up`（父表由迁移建，启动不再建表）。
+func (r *Repository) EnsureAllTablePartitions(ctx context.Context, from, to time.Time) error {
+	return r.Partitions.EnsureAllTablePartitions(ctx, from, to)
+}
 
 // EnsureUsageLogPartitioned 分区 bootstrap（幂等）：未分区 → DROP 重建分区表
 // + 预建当日/明日分区 + 索引；已分区 → 仅补齐分区。

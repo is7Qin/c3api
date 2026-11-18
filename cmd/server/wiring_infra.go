@@ -26,6 +26,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/is7qin/c3api/internal/config"
+	"github.com/is7qin/c3api/internal/db/migrate"
 	"github.com/is7qin/c3api/internal/discovery"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
@@ -37,6 +38,12 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/redisx"
 )
+
+// partitionHorizon 是分区预建窗口（spec §2.7）：`EnsureAllTablePartitions(now, now+24h)`。
+//
+// 两个调用点（`-migrate up` 退出前、正常启动在写 worker 之前）必须用同一个值：
+// 窗口一边 24h 一边 48h 不会报错，只会在某个日界让其中一条路径漏建分区。
+const partitionHorizon = 24 * time.Hour
 
 // infraFace 是阶段 1 的产物：所有"进程级基础设施句柄"。后续每个阶段都只从它取
 // 连接/仓库/发布器，不自己 Open 第二份（redisx.Open 全仓唯一构造点）。
@@ -68,6 +75,10 @@ type infraFace struct {
 	codexClients *sdkbridge.ClientTable
 
 	settingsSnap *settingssnap.Snapshot
+
+	// schema 是启动门（spec §2.5/§2.6）：能不能服务、水位是多少。main 用它在
+	// 构建业务图之前分叉；server 的 /readyz 与业务面 503 都读它。
+	schema *schemaGate
 
 	// supplierSnap 是**唯一允许的前向槽**（spec §2.2）：由 billing 阶段在
 	// supplier.enabled 分支写入，health 阶段的 retention 容量处置回调在**运行期**
@@ -150,39 +161,55 @@ func newInfra(cfg *config.Config, log *logx.Logger) *infraFace {
 	// ent v0.14.6 的 entsql.OpenDB 只接受 *sql.DB：pgxpool 经 pgx/stdlib 桥接（用户决策 2026-08-05）
 	db := stdlib.OpenDBFromPool(pool)
 	drv := entsql.OpenDB(dialect.Postgres, db)
-	repos, err := repository.NewWithPG(startupCtx, drv, true, pool) // pool 供 Stats.Upsert COPY 两阶段批量写与 Billing 结算语句直连事务 + 会话锁专用连接（ledger-cursor）
+	// **启动不再建表**（spec §1 承诺 1）：schema 只归版本化迁移管，app 进程连
+	// 「顺手补齐」都没有——建表真相多一处，`-migrate up` 就不再是唯一的升级动作。
+	// 需要建表的人去跑 `-migrate up`；本进程只读水位。
+	repos, err := repository.NewWithoutMigrate(startupCtx, drv, pool) // pool 供 Stats.Upsert COPY 两阶段批量写与 Billing 结算语句直连事务 + 会话锁专用连接（ledger-cursor）
 	if err != nil {
-		fatalDB("migrate", err)
+		fatalDB("repository", err)
 	}
 	f.repos = repos
-	// 统计桶界时区不在装配面：持久化恒规范 UTC，浏览器时区逐请求解析注入
-	// （handler → service → repository 方法参数），无进程级可变状态。
-	// usage_logs/err_logs/usage_stats 分区 bootstrap（分表设计 +
-	// 三表统一分区机制）：ent migrate 已跳过三表
-	// （migrateHookExcludesPartitioned——atlas 对分区表 diff 规划期必失败，实测
-	// 结论见 internal/repository/partition.go），此处独占建分区表 + 预建当日/明日
-	// 分区 + 索引；幂等（已分区 → 仅补齐分区），失败即 fatal（明细/审计/统计表
-	// 不可缺）。
-	if err := repos.EnsureUsageLogPartitioned(startupCtx, time.Now()); err != nil {
-		fatalDB("usagelog partition bootstrap", err)
+
+	// 版本门（spec §2.5）：先算水位，再决定「这个进程能不能服务这个库」。
+	// 迁移永不在这里执行——`up` 只是显式命令（§2.10/§2.14）。
+	verdict, err := migrate.Verify(startupCtx, db)
+	if err != nil {
+		fatalDB("schema verify", err)
 	}
-	if err := repos.EnsureErrLogPartitioned(startupCtx, time.Now()); err != nil {
-		fatalDB("err_logs partition bootstrap", err)
-	}
-	if err := repos.EnsureUsageStatsPartitioned(startupCtx, time.Now()); err != nil {
-		fatalDB("usage_stats partition bootstrap", err)
-	}
-	if err := repos.EnsureUsageEntityStatsPartitioned(startupCtx, time.Now()); err != nil {
-		fatalDB("usage_entity_stats partition bootstrap", err)
-	}
-	if err := repos.Partitions.EnsureRoutingPartitions(startupCtx, time.Now()); err != nil {
-		fatalDB("routing partition bootstrap", err)
-	}
-	if err := repos.EnsurePriceVariantsEffectCheck(startupCtx); err != nil {
-		fatalDB("price_variants effect check bootstrap", err)
-	}
-	if err := repos.EnsureCodexSearchSeed(startupCtx); err != nil {
-		fatalDB("codex-search price seed bootstrap", err)
+	gate := newSchemaGate(verdict)
+	f.schema = gate
+	if !gate.ready() {
+		// 不 fatal：进程要活着，由 /readyz 摘流（§2.6）。真正的收口在 main：
+		// 判定为不可服务时连后续阶段图都不构建，避免启动期 DB 读把进程打死。
+		log.Warn("schema gate: not serviceable by this binary",
+			logx.String("reason", gate.decision.Reason),
+			logx.Int64("db_head", verdict.DBHead),
+			logx.Int64("db_contract", verdict.DBContract),
+			logx.Int64("binary_head", verdict.BinaryHead),
+			logx.Int64("binary_required", migrate.RequiredVersion),
+		)
+	} else {
+		for _, warning := range gate.decision.Warnings {
+			log.Warn("schema gate: serving on the expand-only guarantee", logx.String("detail", warning))
+		}
+		// 分区补齐（spec §2.7）：**唯一入口**，且必须早于任何写路径（worker/快照/
+		// 种子）。父表由 0001 建立；父表缺失 ⇒ 报「run `c3api -migrate up`」，
+		// 不再由启动建表。
+		//
+		// 统计桶界时区不在装配面：持久化恒规范 UTC，浏览器时区逐请求解析注入
+		// （handler → service → repository 方法参数），无进程级可变状态。
+		now := time.Now()
+		if err := repos.EnsureAllTablePartitions(startupCtx, now, now.Add(partitionHorizon)); err != nil {
+			fatalDB("table partitions", err)
+		}
+		// 下面两条仍是启动期 bootstrap（spec §3「本批不做」把它们收敛进迁移）：
+		// price_variants 的 effect CHECK 与 codex-search 按次价种子。
+		if err := repos.EnsurePriceVariantsEffectCheck(startupCtx); err != nil {
+			fatalDB("price_variants effect check bootstrap", err)
+		}
+		if err := repos.EnsureCodexSearchSeed(startupCtx); err != nil {
+			fatalDB("codex-search price seed bootstrap", err)
+		}
 	}
 	// NOTIFY 发布器（多实例广播，设计文档 §2）。实例 ID = hostname-pid-
 	// nonce（config 无实例字段，最小方案；容器化多实例同 hostname、
@@ -211,8 +238,13 @@ func newInfra(cfg *config.Config, log *logx.Logger) *infraFace {
 	// fail-safe），mailW 与 svc 同源共享该指针（NOTIFY 只刷一处，无分叉）；
 	// mailW.Enqueue 经 Deps.MailEnqueue 一次注入，零 Set* 回填。
 	settingsSnap := settingssnap.New(repos, log)
-	if err := settingsSnap.Load(context.Background()); err != nil {
-		log.Warn("settings snapshot initial load failed", logx.Error(err))
+	if gate.ready() {
+		if err := settingsSnap.Load(context.Background()); err != nil {
+			log.Warn("settings snapshot initial load failed", logx.Error(err))
+		}
+	} else {
+		// 库都不可用时首载只会失败：跳过，别把"schema 不兼容"伪装成"settings 读失败"。
+		log.Warn("settings snapshot initial load skipped: schema gate is not ready")
 	}
 	f.settingsSnap = settingsSnap
 

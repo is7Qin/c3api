@@ -32,8 +32,12 @@ type Options struct {
 	MaxInflight       int64
 	ReadHeaderTimeout time.Duration
 	MaxHeaderBytes    int
-	AdminHandler      http.Handler // 已挂 /api/admin/* 路由
-	UserHandler       http.Handler // 已挂 /api/user/* 路由（内部完成公开/身份分流）
+	// Ready 是 schema 启动门的读点（spec §2.5/§2.6）：每次调用返回当前水位与
+	// 「本二进制能不能服务这个库」。nil = 恒可服务（无 DB 的单元测试/纯路由用例）。
+	// 它返回 false 时：/readyz 503，/api/* 与 /v1/* 在鉴权之前被拒成 503。
+	Ready        ReadyFunc
+	AdminHandler http.Handler // 已挂 /api/admin/* 路由
+	UserHandler  http.Handler // 已挂 /api/user/* 路由（内部完成公开/身份分流）
 	// SupplierHandler 供应商面（/api/user/supplier/*）：RequireJWT + 快照基
 	// RequireRole(supplier|platform_admin) + 作用域注入 + **契约生成路由**
 	// （openapi 里 tag `supplier` 的 path；未登记者未注册 ⇒ 404），账号/分组(只读)/
@@ -73,6 +77,11 @@ func NewServer(opts Options) *Server {
 	// 旧序（recoverer 外层）recoverer 只见裸 writer，无法感知已写头。
 	r.Use(accessLog(opts.Logger))
 	r.Use(recoverer(opts.Logger))
+	// schema 闸门（spec §2.6 的三个写面收口点之一，也是业务面的唯一 HTTP 收口）：
+	// 必须挂在**注册任何路由之前**（chi 的 Use 只允许在路由注册前调用），否则
+	// 摘流信号只对后续注册的路由生效——那种"部分路由 503"的形态没有任何测试能
+	// 一眼看出来。
+	r.Use(schemaGuard(opts.Ready))
 
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		var ms runtime.MemStats
@@ -82,6 +91,19 @@ func NewServer(opts Options) *Server {
 			"goroutines": runtime.NumGoroutine(),
 			"heap":       ms.HeapAlloc,
 		})
+	})
+
+	// /readyz 是**唯一的摘流信号**（spec §2.6）：/healthz 恒 200（liveness 永不为
+	// schema 抖动重启进程），不可服务只在这里体现为 503。必须在 SPA fallback 之前
+	// 注册，并且出现在 NotFound 的 API 白名单里——否则浏览器导航（Accept: text/html）
+	// 会拿到 index.html = 200，readinessProbe 永远绿。
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		status, ready := schemaReadiness(opts.Ready)
+		code := http.StatusOK
+		if !ready {
+			code = http.StatusServiceUnavailable
+		}
+		httpface.WriteJSON(w, code, map[string]any{"schema": status})
 	})
 
 	r.Group(func(r chi.Router) {
@@ -164,7 +186,7 @@ func NewServer(opts Options) *Server {
 		// 回 index.html。
 		r.NotFound(func(w http.ResponseWriter, r *http.Request) {
 			p := r.URL.Path
-			if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1") || strings.HasPrefix(p, "/assets/") || p == "/healthz" || p == "/favicon.svg" {
+			if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/v1") || strings.HasPrefix(p, "/assets/") || p == "/healthz" || p == "/readyz" || p == "/favicon.svg" {
 				http.NotFound(w, r)
 				return
 			}

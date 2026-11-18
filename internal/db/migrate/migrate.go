@@ -7,8 +7,11 @@
 //   - 锁用两参 pg_try_advisory_lock + 轮询 + 超时（默认 60s），持在专用连接上——
 //     池复用即丢锁，与 repository.go 的既有铁律同源。
 //   - Down 默认拒绝：必须显式 AllowDestructive；origin='adopted' 的行永久拒绝 down。
+//   - 每条迁移在事务里先 `SET LOCAL lock_timeout = '3s'`（§2.10）：拿不到锁就快速
+//     失败，绝不排队堵表。
 //
-// 本包不参与启动路径：M0a 只提供库与生成器，合并后运行时行为零变化。
+// 运行时边界：app 进程**永不**执行迁移。启动只调 Verify（算水位、不写库）与
+// Decide（折成 serve/readonly），`up`/`down`/`adopt` 只经命令行显式触发。
 package migrate
 
 import (
@@ -80,6 +83,17 @@ func Head() (version int64, phase string) {
 	return last.Version, last.Phase
 }
 
+// RequiredVersion 是本二进制**真正依赖**的最低 expand 版本（spec §2.13）。
+//
+// 它是**代码常量**，不是从迁移文件头推断出来的：仓库里没有「在线二进制版本
+// 注册表」，任何从文件头/文件名推断「最老在线二进制」的机制都是假精度，只会多
+// 出一处需要同步的真相。代码开始依赖新列/新表时，人跟它一起改：
+//
+//   - `0001_baseline` 是唯一建表真相 ⇒ 1；
+//   - 将来某个二进制读了 0002 建的列，那个二进制必须把它改成 2，否则
+//     `db_head < RequiredVersion` 的库会被误判成「可服务」，然后在查询里报 42703。
+const RequiredVersion int64 = 1
+
 // LegacyFixture 是「老路径建出来的 schema」冻结快照的文件名（testdata/legacy 下）。
 // 它不是内嵌资源：只在 PG 用例里由 database/sql 直接执行，不进二进制。
 const LegacyFixture = "aba8042e.sql"
@@ -94,7 +108,7 @@ func Snapshot(tag string) (catalog.Manifest, error) {
 }
 
 // ErrDestructiveDenied 是 Down 未显式允许破坏性操作时的拒绝原因。
-var ErrDestructiveDenied = errors.New("migrate: down is destructive and requires explicit AllowDestructive")
+var ErrDestructiveDenied = errors.New("migrate: down is destructive and requires explicit AllowDestructive (CLI: -migrate down -allow-destructive)")
 
 // ErrAdoptedBaseline 是 origin='adopted' 的版本被要求 down 时的拒绝原因。
 var ErrAdoptedBaseline = errors.New("migrate: adopted baseline versions can never be rolled back")
@@ -151,7 +165,7 @@ type ChecksumMismatch struct {
 	Current  string
 }
 
-// Verdict 是启动门需要的版本水位（spec §2.5）。本阶段只做计算，不接启动路径。
+// Verdict 是启动门需要的版本水位（spec §2.5）。
 type Verdict struct {
 	// BinaryHead / BinaryContract 是二进制内嵌迁移的最高版本 / 最高收缩版本。
 	BinaryHead     int64
@@ -159,12 +173,66 @@ type Verdict struct {
 	// DBHead / DBContract 是库里已应用的最高版本 / 最高收缩版本。
 	DBHead     int64
 	DBContract int64
+	// Ahead 是「已应用、但本二进制没有」的版本（> BinaryHead）。这是 k8s 回退
+	// 场景下的正常状态：expand-only 保证旧二进制能跑新库，所以它是 WARN 而不是
+	// 问题。低于 BinaryHead 的未知版本仍是问题（有人删了迁移）。
+	Ahead []int64
 	// Problems 非空表示不可服务（缺版本、收缩超前、checksum 不一致、未知版本）。
 	Problems []string
 }
 
 // Compatible 表示按 expand-only 承诺可以服务当前库。
 func (v Verdict) Compatible() bool { return len(v.Problems) == 0 }
+
+// 进程级服务模式（spec §2.6）：readOnly 只由 Verify 决定，不由配置开关决定。
+const (
+	// ModeServe 正常服务（含「库比二进制新、contract 水位相同」的 WARN 态）。
+	ModeServe = "serve"
+	// ModeReadonly 不可服务：进程存活但业务/写面全拒（NotReady，不是 CrashLoop）。
+	ModeReadonly = "readonly"
+)
+
+// Decision 是启动门的判定：Mode + 人话原因 + 需要 WARN 的兼容态说明。
+type Decision struct {
+	Mode string
+	// Reason 非空 = 不可服务的原因（逐条拼接，含下一步该做什么）。
+	Reason string
+	// Warnings 是可以服务但必须被看见的兼容态（库比二进制新）。
+	Warnings []string
+}
+
+// Ready 表示可以服务。
+func (d Decision) Ready() bool { return d.Mode == ModeServe }
+
+// Decide 把 Verify 的水位折成进程级模式（spec §2.5）：
+//
+//	db_head < RequiredVersion            ⇒ readonly（缺本二进制必需的列/表）
+//	contract 水位超前 / checksum 漂移     ⇒ readonly（收缩已发生，本二进制真不兼容）
+//	db_head > binary_head，contract 相同 ⇒ serve + WARN（k8s 回退靠这条）
+//	相等                                 ⇒ serve
+//
+// 迁移永不在这里执行：本函数只判「能不能服务」。
+func Decide(v Verdict) Decision {
+	var reasons []string
+	if v.DBHead < RequiredVersion {
+		reasons = append(reasons, fmt.Sprintf(
+			"database schema head %d is behind this binary's required version %d: run `c3api -migrate up`",
+			v.DBHead, RequiredVersion))
+	}
+	reasons = append(reasons, v.Problems...)
+	d := Decision{Mode: ModeServe}
+	if len(reasons) > 0 {
+		d.Mode = ModeReadonly
+		d.Reason = strings.Join(reasons, "; ")
+		return d
+	}
+	if v.DBHead > v.BinaryHead {
+		d.Warnings = append(d.Warnings, fmt.Sprintf(
+			"database schema head %d is ahead of this binary's head %d (contract watermarks equal: %d); serving on the expand-only guarantee",
+			v.DBHead, v.BinaryHead, v.DBContract))
+	}
+	return d
+}
 
 // AdoptOptions 是 baseline 收养的参数（spec §2.8）。
 type AdoptOptions struct {
@@ -220,7 +288,19 @@ type UpOptions struct {
 // contract 阶段默认拒跑：任何待应用的 contract 都会让整个 up 在**写入之前**被拒，
 // 并一次性列出全部被挡版本（见 UpOptions.AllowContract）。
 func Up(ctx context.Context, db *sql.DB, opts UpOptions) (Result, error) {
-	return newRunner(db, migrationFS, LockOptions{}).up(ctx, opts)
+	return UpFS(ctx, db, nil, opts)
+}
+
+// UpFS 是 Up 的「可注入迁移集」版本（fsys == nil ⇒ 内嵌迁移集，与 Up 等价）。
+//
+// 它存在只为造证据：生产迁移集当前**全是 expand**（0001），而「contract 阶段
+// 默认拒跑、且拒绝发生在任何写入之前」这条 CLI 级契约必须有一条真的 contract
+// 迁移才能演出来。生产路径恒走 Up，命令行也只在拿不到内嵌集时才用本变体。
+func UpFS(ctx context.Context, db *sql.DB, fsys fs.FS, opts UpOptions) (Result, error) {
+	if fsys == nil {
+		fsys = migrationFS
+	}
+	return newRunner(db, fsys, LockOptions{}).up(ctx, opts)
 }
 
 // Down 回滚**最后一个**已应用版本（必须显式 AllowDestructive）。

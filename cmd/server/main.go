@@ -44,12 +44,19 @@ func main() {
 	cfgPath := flag.String("config", "config.toml", "path to TOML config")
 	pprofAddr := flag.String("pprof", "", "listen addr for /debug/pprof (heap/goroutine profile under load)")
 	showVersion := flag.Bool("version", false, "print version and exit")
+	mig := registerMigrateFlags(flag.CommandLine)
 	flag.Parse()
 
 	// -version 纯打印退出：不加载配置/不连 DB，任何环境（含容器外裸二进制）可查。
 	if *showVersion {
 		fmt.Printf("c3api %s\n", version)
 		return
+	}
+	// 迁移 flag 在**加载配置之前**校验：拼错子命令/漏掉闸门时不该因为
+	// "config 不存在"而先报另一个错（两个错叠在一起，运维只看得到第一个）。
+	migOpt, err := mig.options()
+	if err != nil {
+		fatalf("%v", err)
 	}
 
 	cfg, err := config.Load(*cfgPath)
@@ -62,6 +69,11 @@ func main() {
 	log, err := logx.New(cfg.Log.Level, cfg.Log.Output)
 	if err != nil {
 		fatalf("logger: %v", err)
+	}
+	// -migrate：迁移子命令不进 HTTP 服务，跑完即退出（非 0 = 失败）。分支放在
+	// protoconv sink 与 pprof 之前：子命令既不转换协议也不监听端口。
+	if migOpt.Command != "" {
+		os.Exit(runMigrate(cfg, migOpt))
 	}
 	// 工具 schema 方言的退化必须可见（spec §3.5 / I3 护栏④）：任一退化或兜底
 	// 都记 WARN，带 direction/tool/reason/schema_bytes/root_keys；计数由
@@ -124,36 +136,42 @@ func main() {
 	defer in.cancelStartup()
 	defer in.pool.Close()
 
-	hl := newHealthFace(healthDeps{
-		cfg: cfg, log: log,
-		rdb: in.rdb, repos: in.repos, src: in.src, disco: in.disco, pub: in.pub,
-		egress: in.egress, codexClients: in.codexClients, startupCtx: in.startupCtx,
-		// 前向槽保存字段地址：写入发生在后面的 billing 阶段。
-		supplierSnap: supplierSnapshotSlot{p: &in.supplierSnap},
-	})
-	nf := newNotifyFace(log, notifyDeps{rdb: in.rdb, repos: in.repos, settingsSnap: in.settingsSnap})
-	bl := newBillingFace(billingDeps{
-		cfg: cfg, log: log,
-		rdb: in.rdb, repos: in.repos, src: in.src, pub: in.pub, hc: in.hc,
-		egress: in.egress, settingsSnap: in.settingsSnap, svcLoc: in.svcLoc,
-		sched: hl.sched, ruleEngine: hl.ruleEngine, runtimeHealth: hl.runtimeHealth,
-		latchStore: hl.latchStore, cooldown: nf.cooldown, mailW: nf.mailW,
-		supplierSnap: supplierSnapshotSlot{p: &in.supplierSnap},
-	})
-	cx := newCodexFace(codexDeps{
-		cfg: cfg, log: log,
-		rdb: in.rdb, repos: in.repos, src: in.src, pub: in.pub, egress: in.egress,
-		hc: in.hc, codexClients: in.codexClients, disco: in.disco,
-		sched: hl.sched, rec: hl.rec, errlogW: hl.errlogW, latchStore: hl.latchStore,
-		quotaQueue: hl.quotaQueue, runtimeHealth: hl.runtimeHealth,
-		auth: bl.auth, clients: bl.clients, svc: bl.svc, billHooks: bl.billHooks,
-	})
-
-	// 停机信号与本层同生命周期：stop 必须晚于 run 的停机链（run 里读 ctx）。
+	// 停机信号与两条运行路径同生命周期：stop 必须晚于它们的收尾（run 的停机链
+	// 读 ctx，serveNotReady 也在 <-ctx.Done() 上等信号）。
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	run(ctx, in, hl, nf, bl, cx)
+	// 版本门（spec §2.5/§2.6）：schema 不可服务时**不构建业务图**，只起探针面。
+	// 分叉在 dispatchServe（可测：见 dispatch_test.go），这里只交装配回调——
+	// 回调在不可服务时**不会被调用**，阶段构造函数里的启动期 DB 读（代理装配门 /
+	// 供应商残留校验 / settings 首载）就不会把进程打成 CrashLoopBackOff。
+	dispatchServe(ctx, in, func() {
+		hl := newHealthFace(healthDeps{
+			cfg: cfg, log: log,
+			rdb: in.rdb, repos: in.repos, src: in.src, disco: in.disco, pub: in.pub,
+			egress: in.egress, codexClients: in.codexClients, startupCtx: in.startupCtx,
+			// 前向槽保存字段地址：写入发生在后面的 billing 阶段。
+			supplierSnap: supplierSnapshotSlot{p: &in.supplierSnap},
+		})
+		nf := newNotifyFace(log, notifyDeps{rdb: in.rdb, repos: in.repos, settingsSnap: in.settingsSnap})
+		bl := newBillingFace(billingDeps{
+			cfg: cfg, log: log,
+			rdb: in.rdb, repos: in.repos, src: in.src, pub: in.pub, hc: in.hc,
+			egress: in.egress, settingsSnap: in.settingsSnap, svcLoc: in.svcLoc,
+			sched: hl.sched, ruleEngine: hl.ruleEngine, runtimeHealth: hl.runtimeHealth,
+			latchStore: hl.latchStore, cooldown: nf.cooldown, mailW: nf.mailW,
+			supplierSnap: supplierSnapshotSlot{p: &in.supplierSnap},
+		})
+		cx := newCodexFace(codexDeps{
+			cfg: cfg, log: log,
+			rdb: in.rdb, repos: in.repos, src: in.src, pub: in.pub, egress: in.egress,
+			hc: in.hc, codexClients: in.codexClients, disco: in.disco,
+			sched: hl.sched, rec: hl.rec, errlogW: hl.errlogW, latchStore: hl.latchStore,
+			quotaQueue: hl.quotaQueue, runtimeHealth: hl.runtimeHealth,
+			auth: bl.auth, clients: bl.clients, svc: bl.svc, billHooks: bl.billHooks,
+		})
+		run(ctx, in, hl, nf, bl, cx)
+	})
 }
 
 // fatalDB 启动期 DB 操作失败 fatal：30s 预算超时 → 明确可归因文案。
@@ -164,7 +182,12 @@ func fatalDB(step string, err error) {
 	fatalf("%s: %v", step, err)
 }
 
-func fatalf(format string, args ...any) {
+// fatalf 是启动期致命错误的唯一出口。
+//
+// 为什么是变量而不是 func：`不可服务 ≠ 致命` 这条承诺的**可观察**证据是「致命
+// 出口没被调用」，而真 fatalf 会 os.Exit——测试只能看到一个进程退出码，看不到
+// 是哪一步致命。变量形式让测试把它换成记录器并断言零调用（生产实现不变）。
+var fatalf = func(format string, args ...any) {
 	_, _ = os.Stderr.WriteString("fatal: " + fmt.Sprintf(format, args...) + "\n")
 	os.Exit(1)
 }

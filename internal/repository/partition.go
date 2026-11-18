@@ -507,6 +507,59 @@ func (r *PartitionRepo) ensureTablePartitioned(ctx context.Context, table, parti
 	return r.EnsureTablePartitions(ctx, table, now, now.AddDate(0, 0, 1))
 }
 
+// partPartitionedParents 是「按日分区的父表」清单与顺序（spec §2.7 七组的前六组）：
+// 顺序 = 迁移顺序，别按字母重排——报错时运维看到的第一张表就是最早该存在的表。
+var partPartitionedParents = []struct {
+	table     string
+	partition string // 分区键（仅作文档与错误信息，建分区由 EnsureTablePartitions 负责）
+}{
+	{"usage_logs", "created_at"},
+	{"err_logs", "created_at"},
+	{"usage_stats", "bucket_time"},
+	{"usage_entity_stats", "bucket_time"},
+	{"routing_quality_fact", "bucket_minute"},
+	{"routing_flow_fact", "terminal_minute"},
+}
+
+// staticPartitionCycleTable 是七组的最后一组：静态表（不分区，没有按日实例），
+// 唯一建表点是 0001，这里只校验它存在（spec §2.7：运行时不得再 CREATE 它）。
+const staticPartitionCycleTable = "routing_flow_snapshot_state"
+
+// EnsureAllTablePartitions 是**补齐按日分区的唯一入口**（spec §2.7）。
+//
+// 调用点只有两个：`-migrate up` 退出前、正常启动在版本门通过后且任何写 worker
+// 之前。父表由迁移（0001）建立；本函数只做两件事：
+//
+//  1. 六张分区父表：校验父表存在，再建 [from, to] 内的按日分区；
+//  2. routing_flow_snapshot_state：校验静态表存在（不建表）。
+//
+// 父表缺失 ⇒ 直接报错指向 `c3api -migrate up`。启动期建父表是第二建表真相，
+// 也正是「跑过迁移的库」与「启动随手建出来的库」不可区分的原因。
+func (r *PartitionRepo) EnsureAllTablePartitions(ctx context.Context, from, to time.Time) error {
+	for _, p := range partPartitionedParents {
+		ok, err := r.partitionExists(ctx, p.table)
+		if err != nil {
+			return fmt.Errorf("check partition parent %s: %w", p.table, err)
+		}
+		if !ok {
+			return fmt.Errorf("partition parent public.%s (%s) is missing: run `c3api -migrate up` (parent tables come from migrations, not from startup)",
+				p.table, p.partition)
+		}
+		if err := r.EnsureTablePartitions(ctx, p.table, from, to); err != nil {
+			return fmt.Errorf("%s partitions: %w", p.table, err)
+		}
+	}
+	ok, err := r.partitionExists(ctx, staticPartitionCycleTable)
+	if err != nil {
+		return fmt.Errorf("check %s: %w", staticPartitionCycleTable, err)
+	}
+	if !ok {
+		return fmt.Errorf("public.%s is missing: run `c3api -migrate up` (static tables come from migrations, not from startup)",
+			staticPartitionCycleTable)
+	}
+	return nil
+}
+
 // EnsureUsageLogPartitioned usage_logs 分区 bootstrap（既有 API，见
 // ensureTablePartitioned；分区键 created_at）。
 func (r *PartitionRepo) EnsureUsageLogPartitioned(ctx context.Context, now time.Time) error {

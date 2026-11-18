@@ -13,6 +13,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/handler"
+	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
@@ -172,6 +173,48 @@ func TestAssembleWorkersAbsence(t *testing.T) {
 		delete(set.groups, "supplierWorkers")
 		require.Panics(t, func() { assembleWorkers(set, enabledCfg()) }, "enabled=true 但 credit 未装配必须炸")
 	})
+}
+
+// TestOptionalWorkerSlotsUseAbsenceNotTypedNil 钉住可选槽只允许一种写法。
+//
+// 生产装配（buildRuntime）对可选 worker 一律「不塞键」表达缺席；绝不能写成
+// 「nil 也塞进 map」：`var p *supplier.ViewLoader = nil` 装进 map[string]worker.Worker
+// 是**非 nil 接口**（动态类型就绪、值才是 nil），assembleWorkers 的缺席判据
+// `!ok || w == nil` 读不到它，于是「关闭态」被判成「cfg 说该关却给了值」并 panic
+// ——默认配置（supplier.enabled=false，也是 deploy/config.toml 的取值）曾在启动
+// 时就这么崩。
+func TestOptionalWorkerSlotsUseAbsenceNotTypedNil(t *testing.T) {
+	var loader *supplier.ViewLoader // 关闭态的真实形状：typed nil
+
+	cfg := enabledCfg()
+	cfg.Supplier.Enabled = false
+	set := fullWorkerSet()
+	delete(set.groups, "supplierWorkers")
+
+	// 生产写法：关闭态 ⇒ 键根本不出现 ⇒ 合法缺席，不 panic。
+	delete(set.byName, "supplierViewLoader")
+	require.NotPanics(t, func() { assembleWorkers(set, cfg) })
+
+	// 变异：把 typed nil 也塞进 map ⇒ fail-fast 必须红（缺席 vs 有值仍被区分）。
+	set.byName["supplierViewLoader"] = loader
+	require.Panics(t, func() { assembleWorkers(set, cfg) })
+}
+
+// TestOptionalWorkerSlotsAreNilGuarded 是上一条的结构面：装配点必须用
+// 「具体指针判 nil 再 byName[...] = ...」，不能把可选槽写回 map 字面量。
+//
+// 为什么用文本门而不是行为门：buildRuntime 需要整棵装配图（PG/Redis），单元测试
+// 到不了那里；而这条规则的失效形态（typed nil 进 map）在启动期才炸，且默认配置
+// 就是失效态。文本门读的是本包唯一的装配点，改法只有两种：保持 if 守卫，或者
+// 明知故犯地把键写回字面量——后者在 diff 里显式可见。
+func TestOptionalWorkerSlotsAreNilGuarded(t *testing.T) {
+	src := readSrcFile(t, "wiring_run.go")
+	for _, slot := range []string{"warningWorker", "billingWorker", "supplierViewLoader"} {
+		require.Contains(t, src, "if "+slot+" != nil {",
+			"可选槽 %s 必须先判 nil：typed nil 装进 worker.Worker 是非 nil 接口，assembleWorkers 会 panic", slot)
+		require.Contains(t, src, `byName["`+slot+`"] = `+slot,
+			"可选槽 %s 只能在 if 守卫内写入 byName（缺席 = 不塞键）", slot)
+	}
 }
 
 // statsWorker 同时满足 worker.Worker 与 handler.StatsProvider。

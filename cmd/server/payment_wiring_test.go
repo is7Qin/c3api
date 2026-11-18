@@ -63,6 +63,9 @@ var cmdServerInternalImports = []string{
 	wiringModulePath + "/internal/config",
 	wiringModulePath + "/internal/continuation",
 	wiringModulePath + "/internal/credential",
+	// schema 启动门（`-migrate` 子命令 + Verify/Decide）：装配根只为"能不能服务"
+	// 读水位，不执行迁移。
+	wiringModulePath + "/internal/db/migrate",
 	wiringModulePath + "/internal/discovery",
 	wiringModulePath + "/internal/domain",
 	wiringModulePath + "/internal/handler",
