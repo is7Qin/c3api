@@ -208,7 +208,7 @@ func (f *Flusher) consumeCycle(ctx context.Context, drain bool) int64 {
 	release, ok, err := f.store.AcquireBillingLock(ctx)
 	switch {
 	case err != nil:
-		if f.log != nil && ctx.Err() == nil {
+		if ctx.Err() == nil {
 			f.log.Warn("billing cursor lock acquire failed", logx.Error(err))
 		}
 	case !ok:
@@ -252,7 +252,7 @@ func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 	}
 	oldest, ok, err := f.store.UnbilledLag(ctx)
 	if err != nil {
-		if f.log != nil && ctx.Err() == nil {
+		if ctx.Err() == nil {
 			f.log.Warn("billing cursor lag probe failed", logx.Error(err))
 		}
 		return
@@ -269,7 +269,7 @@ func (f *Flusher) refreshLag(ctx context.Context, force bool) {
 	}
 	retention := time.Duration(int64(f.cfg.LogRetentionDays) * int64(24*time.Hour))
 	if time.Since(oldest) > time.Duration(float64(retention)*lagWarnFraction) {
-		if f.lagWarned.CompareAndSwap(false, true) && f.log != nil {
+		if f.lagWarned.CompareAndSwap(false, true) {
 			f.log.Warn("billing cursor lag exceeds retention guardrail, consumption stalled?",
 				logx.Any("oldest_unbilled", oldest),
 				logx.Int("log_retention_days", f.cfg.LogRetentionDays))
@@ -293,9 +293,7 @@ func (f *Flusher) Close(ctx context.Context) error {
 			select {
 			case <-f.loopDone:
 			case <-ctx.Done():
-				if f.log != nil {
-					f.log.Warn("billing flusher close: consumer loop did not exit in time")
-				}
+				f.log.Warn("billing flusher close: consumer loop did not exit in time")
 			}
 		}
 		acquired := make(chan struct{})
@@ -312,19 +310,15 @@ func (f *Flusher) Close(ctx context.Context) error {
 			case <-acquired:
 				f.flushMu.Unlock()
 			case <-time.After(inflightAbandonGrace):
-				if f.log != nil {
-					f.log.Warn("billing flusher close: in-flight cycle not finished in time, abandoning drain")
-				}
+				f.log.Warn("billing flusher close: in-flight cycle not finished in time, abandoning drain")
 				return
 			}
 		}
 		var flushed int64
 		for {
 			if ctx.Err() != nil { // 预算到期：截断退出（剩余行保持 unbilled，重启收敛）
-				if f.log != nil {
-					f.log.Warn("billing flusher close: shutdown budget exceeded, truncated drain",
-						logx.Int64("consumed_rows", flushed))
-				}
+				f.log.Warn("billing flusher close: shutdown budget exceeded, truncated drain",
+					logx.Int64("consumed_rows", flushed))
 				return
 			}
 			// drain=true：排空语境绕过 lag 节流强制刷新（Momus 维度5——判据新鲜度）。
@@ -333,7 +327,7 @@ func (f *Flusher) Close(ctx context.Context) error {
 			if n == 0 {
 				// 本周期无进展（游标清空/锁他实例持有/DB 故障/预算内取消）——退出
 				// 不空转，剩余行由下周期/下次启动收敛；预算已到期 → 归因截断 Warn。
-				if ctx.Err() != nil && f.log != nil {
+				if ctx.Err() != nil {
 					f.log.Warn("billing flusher close: shutdown budget exceeded, truncated drain",
 						logx.Int64("consumed_rows", flushed))
 				}

@@ -649,9 +649,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 			// revert per-sink ack
 			w.revertRedisCursorLocked()
 			w.minuteAbs = savedMinuteAbs
-			if w.log != nil {
-				w.log.Warn("quality redis publish failed", logx.Error(err))
-			}
+			w.log.Warn("quality redis publish failed", logx.Error(err))
 			w.mu.Unlock()
 			return
 		}
@@ -694,9 +692,7 @@ func (w *SyncWorker) doRedisLocked(ctx context.Context) {
 			w.stats.LastRedisError = w.lastRedisError
 			w.stats.RedisErrors++
 			w.mu.Unlock()
-			if w.log != nil {
-				w.log.Warn("quality redis flow publish failed", logx.Error(err))
-			}
+			w.log.Warn("quality redis flow publish failed", logx.Error(err))
 			return
 		}
 	}
@@ -860,11 +856,9 @@ func (w *SyncWorker) doPGLocked(ctx context.Context) {
 					// 租约（ackPG：标记 everPersisted 且置 clean，停止每轮重试
 					// 刷屏）。三处缺一即"无痕消失"（判据 B5）。
 					routingLateSnapshotDropped.Add(1)
-					if w.log != nil {
-						w.log.Warn("routing flow snapshot dropped beyond observation retention",
-							logx.String("minute", time.Unix(minute, 0).UTC().Format(time.RFC3339)),
-							logx.String("instance_src", w.instanceSrc))
-					}
+					w.log.Warn("routing flow snapshot dropped beyond observation retention",
+						logx.String("minute", time.Unix(minute, 0).UTC().Format(time.RFC3339)),
+						logx.String("instance_src", w.instanceSrc))
 					w.rec.flow.ackPG(tok)
 					settled = true
 					return
@@ -957,9 +951,7 @@ func (w *SyncWorker) refillQualityDelta(rows []qRow, originalPend map[int64]map[
 			w.mu.Lock()
 			w.stats.DroppedQuality++
 			w.mu.Unlock()
-			if w.log != nil {
-				w.log.Warn("quality refill dropped due to capacity", logx.Error(err))
-			}
+			w.log.Warn("quality refill dropped due to capacity", logx.Error(err))
 		}
 	}
 }

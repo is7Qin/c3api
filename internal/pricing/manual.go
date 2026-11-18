@@ -64,9 +64,7 @@ func (w *SyncWorker) SyncNow(ctx context.Context) (*SyncStats, error) {
 	}
 	res, err := w.fetch.Fetch(ctx, url)
 	if err != nil {
-		if w.log != nil {
-			w.log.Warn("pricing sync failed", logx.Error(err))
-		}
+		w.log.Warn("pricing sync failed", logx.Error(err))
 		return nil, fmt.Errorf("%w: %w", ErrPriceFetch, err)
 	}
 	entries := res.PriceEntries
@@ -121,9 +119,7 @@ func (w *SyncWorker) Preview(ctx context.Context) (*Preview, error) {
 	}
 	res, err := w.fetch.Fetch(ctx, url)
 	if err != nil {
-		if w.log != nil {
-			w.log.Warn("pricing sync preview failed", logx.Error(err))
-		}
+		w.log.Warn("pricing sync preview failed", logx.Error(err))
 		return nil, fmt.Errorf("%w: %w", ErrPriceFetch, err)
 	}
 	entries := res.PriceEntries

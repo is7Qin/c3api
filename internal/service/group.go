@@ -46,9 +46,7 @@ func (s *Service) CreateGroup(ctx context.Context, name string, description stri
 	}
 	s.inv.Multipliers()
 	s.publish(ctx, notify.Change{Multipliers: true})
-	if s.log != nil {
-		s.log.Info("group created", logx.Int64("id", created.ID), logx.String("name", name))
-	}
+	s.log.Info("group created", logx.Int64("id", created.ID), logx.String("name", name))
 	return created, nil
 }
 

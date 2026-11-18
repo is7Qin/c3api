@@ -204,9 +204,7 @@ func (w *ThawWorker) batchLimit() int {
 }
 
 func (w *ThawWorker) warn(msg string, fields ...logx.Field) {
-	if w.log != nil {
-		w.log.Warn(msg, fields...)
-	}
+	w.log.Warn(msg, fields...)
 }
 
 // ThawStats 解冻观测面快照。

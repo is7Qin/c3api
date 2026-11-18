@@ -158,8 +158,6 @@ func (s *Service) SetUserGroups(ctx context.Context, userID int64, groupIDs []in
 	}
 	s.inv.Multipliers()
 	s.publish(ctx, notify.Change{Multipliers: true}) // 倍率/授予变更跨实例传播（组维度写路径已有，用户维度写补齐）
-	if s.log != nil {
-		s.log.Info("user groups set", logx.Int64("user_id", userID), logx.Int64("count", int64(len(groupIDs))))
-	}
+	s.log.Info("user groups set", logx.Int64("user_id", userID), logx.Int64("count", int64(len(groupIDs))))
 	return groupIDs, post, nil
 }

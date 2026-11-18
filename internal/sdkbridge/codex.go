@@ -316,9 +316,7 @@ func (a *Codex) GenerateImageStream(ctx context.Context, cred *domain.AccountCre
 		// （不静默透传——未知类型落入网关 default 静默分支则落账 0 张零告警）。
 		t, ok := mapStreamEventType(ev.Type)
 		if !ok {
-			if a.log != nil {
-				a.log.Warn("codex image stream: unknown event type skipped", logx.String("type", ev.Type))
-			}
+			a.log.Warn("codex image stream: unknown event type skipped", logx.String("type", ev.Type))
 			return nil
 		}
 		var usage *domain.ImageUsage
@@ -1498,17 +1496,13 @@ func (a *Codex) rotateWriteback(e *codexEntry, at, rt string) {
 		if errors.Is(err, repository.ErrStaleIdentityRevision) {
 			// 存储围栏拒绝：这一版身份已被管理面替换（旧 Auth 在途 refresh 迟到的
 			// 结果）。丢弃即可——新凭据的令牌由新条目自己维护。
-			if a.log != nil {
-				a.log.Warn("codex rotation writeback rejected by identity fence",
-					logx.Int64("account_id", e.accountID), logx.Int64("source_identity_revision", srcRev))
-			}
+			a.log.Warn("codex rotation writeback rejected by identity fence",
+				logx.Int64("account_id", e.accountID), logx.Int64("source_identity_revision", srcRev))
 			return
 		}
-		if a.log != nil {
-			// 运维信号即时留痕（重试至多 3 次各记一条——DB 故障持续期的
-			// 真实告警；fatal 上报后账号摘除，告警自停）
-			a.log.Warn("codex rotation writeback failed", logx.Int64("account_id", e.accountID), logx.Error(err))
-		}
+		// 运维信号即时留痕（重试至多 3 次各记一条——DB 故障持续期的
+		// 真实告警；fatal 上报后账号摘除，告警自停）
+		a.log.Warn("codex rotation writeback failed", logx.Int64("account_id", e.accountID), logx.Error(err))
 		// 契约：回调失败 → panic → SDK recover → pending 重试 → 达阈值
 		// CallbackDeliveryError fatal（令牌无法持久化 = 账号失效信号）
 		panic(err)

@@ -182,9 +182,7 @@ func (w *StatsAggWorker) runOnce(ctx context.Context) {
 	start := w.now()
 	release, ok, err := w.store.AcquireStatsAggLock(ctx)
 	if err != nil {
-		if w.log != nil {
-			w.log.Warn("stats agg: advisory lock failed", logx.Error(err))
-		}
+		w.log.Warn("stats agg: advisory lock failed", logx.Error(err))
 		return
 	}
 	if !ok {
@@ -245,20 +243,16 @@ func (w *StatsAggWorker) runOnce(ctx context.Context) {
 	w.lastBuckets.Store(int64(len(cube) + len(entity)))
 	w.lastRows.Store(detailRows)
 	w.lastDuration.Store(time.Since(start).Milliseconds())
-	if w.log != nil {
-		w.log.Info("stats agg cycle complete",
-			logx.Int("cube_buckets", len(cube)), logx.Int("entity_buckets", len(entity)),
-			logx.Int64("rows", detailRows),
-			logx.Int64("watermark_ms", t.UnixMilli()),
-			logx.String("range", r0.UTC().Format("2006-01-02T15:04Z")+".."+r1.UTC().Format("2006-01-02T15:04Z")))
-	}
+	w.log.Info("stats agg cycle complete",
+		logx.Int("cube_buckets", len(cube)), logx.Int("entity_buckets", len(entity)),
+		logx.Int64("rows", detailRows),
+		logx.Int64("watermark_ms", t.UnixMilli()),
+		logx.String("range", r0.UTC().Format("2006-01-02T15:04Z")+".."+r1.UTC().Format("2006-01-02T15:04Z")))
 }
 
 // warnErr 失败 Warn（统一文案——worker 自愈：watermark 未推进，下轮重试不双计）。
 func (w *StatsAggWorker) warnErr(step string, err error) {
-	if w.log != nil {
-		w.log.Warn("stats agg cycle failed", logx.String("step", step), logx.Error(err))
-	}
+	w.log.Warn("stats agg cycle failed", logx.String("step", step), logx.Error(err))
 }
 
 // Close 幂等（worker.Worker 契约）：取消循环并等待在途周期释放会话锁。

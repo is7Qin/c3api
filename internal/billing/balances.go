@@ -72,23 +72,17 @@ func NewBalances(loader BalanceLoader, log *logx.Logger) *Balances {
 func (b *Balances) Reload(ctx context.Context) error {
 	m, err := b.loader.LoadBalances(ctx)
 	if err != nil {
-		if b.log != nil {
-			b.log.Warn("balance snapshot reload failed", logx.Error(err))
-		}
+		b.log.Warn("balance snapshot reload failed", logx.Error(err))
 		return err
 	}
 	gm, err := b.loader.LoadGroupMultipliers(ctx)
 	if err != nil {
-		if b.log != nil {
-			b.log.Warn("group multiplier snapshot reload failed", logx.Error(err))
-		}
+		b.log.Warn("group multiplier snapshot reload failed", logx.Error(err))
 		return err
 	}
 	am, err := b.loader.LoadAssignmentMultipliers(ctx)
 	if err != nil {
-		if b.log != nil {
-			b.log.Warn("assignment multiplier snapshot reload failed", logx.Error(err))
-		}
+		b.log.Warn("assignment multiplier snapshot reload failed", logx.Error(err))
 		return err
 	}
 	snap := make(map[int64]*atomic.Int64, len(m))
@@ -109,16 +103,12 @@ func (b *Balances) Reload(ctx context.Context) error {
 func (b *Balances) ReloadMultipliers(ctx context.Context) error {
 	gm, err := b.loader.LoadGroupMultipliers(ctx)
 	if err != nil {
-		if b.log != nil {
-			b.log.Warn("group multiplier snapshot reload failed", logx.Error(err))
-		}
+		b.log.Warn("group multiplier snapshot reload failed", logx.Error(err))
 		return err
 	}
 	am, err := b.loader.LoadAssignmentMultipliers(ctx)
 	if err != nil {
-		if b.log != nil {
-			b.log.Warn("assignment multiplier snapshot reload failed", logx.Error(err))
-		}
+		b.log.Warn("assignment multiplier snapshot reload failed", logx.Error(err))
 		return err
 	}
 	b.mult.Store(&multipliers{assignments: am, groups: gm})

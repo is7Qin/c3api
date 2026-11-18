@@ -63,9 +63,7 @@ func Mount(api *API) http.Handler {
 		ErrorHandlerFunc: func(w http.ResponseWriter, _ *http.Request, err error) {
 			// 路径参数绑定失败（account 段永远是 string，实际不可达）也不许回
 			// JSON：网关只认 success/fail。
-			if api.log != nil {
-				api.log.Warn("payment: bind request param", logx.Error(err))
-			}
+			api.log.Warn("payment: bind request param", logx.Error(err))
 			writeText(w, http.StatusBadRequest, notifyFail)
 		},
 	})
@@ -95,17 +93,13 @@ func (h *API) PaymentNotify(w http.ResponseWriter, r *http.Request, account stri
 	acct, err := h.svc.GetPaymentAccount(ctx, account)
 	if err != nil {
 		if errors.Is(err, service.ErrNotFound) || errors.Is(err, service.ErrInvalidInput) {
-			if h.log != nil {
-				h.log.Warn("payment: notify for unknown account", logx.String("account", account))
-			}
+			h.log.Warn("payment: notify for unknown account", logx.String("account", account))
 			writeText(w, http.StatusNotFound, notifyFail)
 			return
 		}
 		// DB 故障不是"这个账户不存在"：503 让网关重试（404 会让它放弃）。
-		if h.log != nil {
-			h.log.Error("payment: load payment account",
-				logx.String("account", account), logx.Error(err))
-		}
+		h.log.Error("payment: load payment account",
+			logx.String("account", account), logx.Error(err))
 		writeText(w, http.StatusServiceUnavailable, notifyFail)
 		return
 	}
@@ -113,13 +107,11 @@ func (h *API) PaymentNotify(w http.ResponseWriter, r *http.Request, account stri
 	// ② 配置（enabled=false **照常处理**：钱可能已经收了；只有 cfg 坏才 503）。
 	cfg, err := h.svc.GetPaymentAccountConfig(ctx, acct)
 	if err != nil {
-		if h.log != nil {
-			// 协议未注册属于第 ③ 步的语义，但第 ② 步在无协议时无法解析配置——
-			// 两者都是 503，日志里区分开便于排障。
-			h.log.Error("payment: notify config unavailable",
-				logx.String("account", account), logx.String("provider", string(acct.Provider)),
-				logx.Error(err))
-		}
+		// 协议未注册属于第 ③ 步的语义，但第 ② 步在无协议时无法解析配置——
+		// 两者都是 503，日志里区分开便于排障。
+		h.log.Error("payment: notify config unavailable",
+			logx.String("account", account), logx.String("provider", string(acct.Provider)),
+			logx.Error(err))
 		writeText(w, http.StatusServiceUnavailable, notifyFail)
 		return
 	}
@@ -128,10 +120,8 @@ func (h *API) PaymentNotify(w http.ResponseWriter, r *http.Request, account stri
 	// 迟到回调就永远验不了签，所以这里按"可修复的装配问题"处理）。
 	p, ok := h.svc.PaymentProvider(acct.Provider)
 	if !ok {
-		if h.log != nil {
-			h.log.Error("payment: notify for unregistered provider",
-				logx.String("account", account), logx.String("provider", string(acct.Provider)))
-		}
+		h.log.Error("payment: notify for unregistered provider",
+			logx.String("account", account), logx.String("provider", string(acct.Provider)))
 		writeText(w, http.StatusServiceUnavailable, notifyFail)
 		return
 	}
@@ -171,10 +161,8 @@ func (h *API) PaymentNotify(w http.ResponseWriter, r *http.Request, account stri
 func (h *API) verifyErr(w http.ResponseWriter, ctx context.Context, account string, ev domain.NotifyEvent, err error) {
 	switch {
 	case errors.Is(err, domain.ErrConfigMissing), errors.Is(err, domain.ErrConfigProviderMismatch):
-		if h.log != nil {
-			h.log.Error("payment: notify verify config unusable",
-				logx.String("account", account), logx.Error(err))
-		}
+		h.log.Error("payment: notify verify config unusable",
+			logx.String("account", account), logx.Error(err))
 		writeText(w, http.StatusServiceUnavailable, notifyFail)
 		return
 	}
@@ -183,10 +171,8 @@ func (h *API) verifyErr(w http.ResponseWriter, ctx context.Context, account stri
 		h.rejectNotify(w, ctx, ev, postVerifyReason(err), http.StatusOK)
 		return
 	}
-	if h.log != nil {
-		h.log.Debug("payment: notify rejected",
-			logx.String("account", account), logx.Error(err))
-	}
+	h.log.Debug("payment: notify rejected",
+		logx.String("account", account), logx.Error(err))
 	writeText(w, http.StatusOK, notifyFail)
 }
 
@@ -225,18 +211,14 @@ func (h *API) completeErr(w http.ResponseWriter, ctx context.Context, ev domain.
 	switch {
 	case errors.Is(err, domain.ErrOrderNotFound):
 		// 未知单号：200 fail，**不写** fail_reason（记录它等于让伪造签名污染任意订单）。
-		if h.log != nil {
-			h.log.Warn("payment: notify for unknown out_trade_no",
-				logx.String("out_trade_no", ev.OutTradeNo))
-		}
+		h.log.Warn("payment: notify for unknown out_trade_no",
+			logx.String("out_trade_no", ev.OutTradeNo))
 		writeText(w, http.StatusOK, notifyFail)
 		return
 	case errors.Is(err, domain.ErrAccountMismatch):
 		// 第 ⑧ 步：等额同币也可能来自另一家账户 → 只落审计，不入账（P32/B42）。
-		if h.log != nil {
-			h.log.Warn("payment: notify account mismatch",
-				logx.String("out_trade_no", ev.OutTradeNo), logx.Error(err))
-		}
+		h.log.Warn("payment: notify account mismatch",
+			logx.String("out_trade_no", ev.OutTradeNo), logx.Error(err))
 		h.rejectNotify(w, ctx, ev, domain.OrderFailReasonAccount, http.StatusOK)
 		return
 	case errors.Is(err, service.ErrProviderMismatch):
@@ -251,18 +233,14 @@ func (h *API) completeErr(w http.ResponseWriter, ctx context.Context, ev domain.
 		return
 	case errors.Is(err, service.ErrOrderClosed):
 		// 已关单却收到成功通知：资损信号，ERROR 日志 + fail_reason=closed（P10/B11）。
-		if h.log != nil {
-			h.log.Error("payment: paid notify for closed order (manual follow-up required)",
-				logx.String("out_trade_no", ev.OutTradeNo), logx.String("trade_no", ev.TradeNo))
-		}
+		h.log.Error("payment: paid notify for closed order (manual follow-up required)",
+			logx.String("out_trade_no", ev.OutTradeNo), logx.String("trade_no", ev.TradeNo))
 		h.rejectNotify(w, ctx, ev, domain.OrderFailReasonClosed, http.StatusOK)
 		return
 	case errors.Is(err, domain.ErrUserUnavailable):
 		// 用户被禁/被删：钱已收、不入账 → 必须留信号（解禁后补码并 resolve）。
-		if h.log != nil {
-			h.log.Warn("payment: notify for unavailable user",
-				logx.String("out_trade_no", ev.OutTradeNo), logx.Error(err))
-		}
+		h.log.Warn("payment: notify for unavailable user",
+			logx.String("out_trade_no", ev.OutTradeNo), logx.Error(err))
 		h.rejectNotify(w, ctx, ev, domain.OrderFailReasonUser, http.StatusOK)
 		return
 	}
@@ -272,10 +250,8 @@ func (h *API) completeErr(w http.ResponseWriter, ctx context.Context, ev domain.
 	// 按 internal 处理（绝不 200 吞掉）。
 	reason := service.OrderFailReason(err)
 	if reason == "" || reason == domain.OrderFailReasonInternal {
-		if h.log != nil {
-			h.log.Error("payment: notify internal error",
-				logx.String("out_trade_no", ev.OutTradeNo), logx.Error(err))
-		}
+		h.log.Error("payment: notify internal error",
+			logx.String("out_trade_no", ev.OutTradeNo), logx.Error(err))
 		h.rejectNotify(w, ctx, ev, domain.OrderFailReasonInternal, http.StatusInternalServerError)
 		return
 	}
@@ -301,7 +277,7 @@ func postVerifyReason(err error) string {
 // rejectNotify 落一次失败审计并回 fail（审计失败只告警，不影响响应语义）。
 func (h *API) rejectNotify(w http.ResponseWriter, ctx context.Context, ev domain.NotifyEvent, reason string, status int) {
 	h.svc.RecordNotifyFailure(ctx, ev.OutTradeNo, reason)
-	if h.log != nil && reason != domain.OrderFailReasonClosed {
+	if reason != domain.OrderFailReasonClosed {
 		// closed 已在调用点打过 ERROR；其余在这里留一条 Warn 便于串联审计。
 		h.log.Warn("payment: notify failed",
 			logx.String("out_trade_no", ev.OutTradeNo),

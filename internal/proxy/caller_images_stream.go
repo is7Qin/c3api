@@ -88,11 +88,9 @@ func (p *Proxy) streamImageGeneration(ctx context.Context, w http.ResponseWriter
 			// 逐事件 Flush（与原 writeFrame 语义一致，保首字节/事件级延迟）。
 			return out.DrainFlush()
 		default:
-			if p.log != nil {
-				p.log.Warn("image stream: unknown event type skipped",
-					logx.String("request_id", reqID),
-					logx.String("type", string(ev.Type)))
-			}
+			p.log.Warn("image stream: unknown event type skipped",
+				logx.String("request_id", reqID),
+				logx.String("type", string(ev.Type)))
 			return nil
 		}
 	})

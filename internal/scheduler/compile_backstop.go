@@ -81,9 +81,7 @@ func (s *Scheduler) refreshProbeBaseline(ctx context.Context) {
 	c, err := s.stalenessProbe(ctx)
 	if err != nil {
 		s.reloadRequired = true
-		if s.log != nil {
-			s.log.Warn("compile staleness baseline refresh failed; keeping previous baseline", logx.Error(err))
-		}
+		s.log.Warn("compile staleness baseline refresh failed; keeping previous baseline", logx.Error(err))
 		return
 	}
 	s.lastProbe.Store(&c)
@@ -107,23 +105,21 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 		// construction (fresh every tick ≤ 2×SyncInterval). Production wires
 		// the repository-backed probe at the construction site (§9-A2); the
 		// event path already carries scope without it.
-		if err := s.reload(ctx); err != nil && s.log != nil {
+		if err := s.reload(ctx); err != nil {
 			s.log.Warn("scheduler sync failed", logx.Error(err))
 		}
 		return
 	}
 	c, err := s.stalenessProbe(ctx)
 	if err != nil {
-		if s.log != nil {
-			s.log.Warn("compile staleness probe failed; full reload fail-safe", logx.Error(err))
-		}
+		s.log.Warn("compile staleness probe failed; full reload fail-safe", logx.Error(err))
 		s.recordCompileFallback("probe-error", 0, 0, 0)
 		// Fail-safe full reload under publisher.mu; reloadLocked itself sets the
 		// sticky obligation on failure (single error source), so a subsequent
 		// healthy tick retries (probe errors leave the baseline untouched, so
 		// the retry is not probe-gated).
 		s.withPublisherLock(func(reclaim *poolReclaim) {
-			if rerr := s.reloadLocked(ctx, reclaim); rerr != nil && s.log != nil {
+			if rerr := s.reloadLocked(ctx, reclaim); rerr != nil {
 				s.log.Warn("scheduler sync failed", logx.Error(rerr))
 			}
 		})
@@ -159,7 +155,7 @@ func (s *Scheduler) backstopTick(ctx context.Context) {
 			}
 			return
 		}
-		if rerr := s.reloadLocked(ctx, reclaim); rerr != nil && s.log != nil {
+		if rerr := s.reloadLocked(ctx, reclaim); rerr != nil {
 			s.log.Warn("scheduler sync failed", logx.Error(rerr))
 		}
 	})

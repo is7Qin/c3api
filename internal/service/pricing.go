@@ -76,9 +76,7 @@ func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, erro
 	for offset := 0; ; offset += pricingReloadPage {
 		rows, _, err := s.store.ListPriceEntries(ctx, repository.ListQuery{Limit: pricingReloadPage, Offset: offset, Sort: "model", Order: "asc"}, nil, nil, nil, "")
 		if err != nil {
-			if s.log != nil {
-				s.log.Warn("pricing snapshot reload failed", logx.Error(err))
-			}
+			s.log.Warn("pricing snapshot reload failed", logx.Error(err))
 			return nil, err
 		}
 		all = append(all, rows...)
@@ -88,9 +86,7 @@ func (s *Service) loadPricingSnapshot(ctx context.Context) (*priceSnapshot, erro
 	}
 	variants, err := s.store.ListAllPriceVariants(ctx)
 	if err != nil {
-		if s.log != nil {
-			s.log.Warn("pricing variant snapshot reload failed", logx.Error(err))
-		}
+		s.log.Warn("pricing variant snapshot reload failed", logx.Error(err))
 		return nil, err
 	}
 	entriesMap := make(map[string]*domain.PriceEntry, len(all))

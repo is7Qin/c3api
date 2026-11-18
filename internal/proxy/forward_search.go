@@ -168,13 +168,11 @@ func (a *searchAttempt) call(ctx context.Context, w http.ResponseWriter, r *http
 	if code == 0 && callErr != nil && ctx.Err() == nil {
 		// Warn 留痕（连接级/凭据错全文——Warn 不截断；循环不代发）。ctx 已取
 		// 消（499 分支）不 Warn
-		if a.p.log != nil {
-			a.p.log.Warn("upstream search connection failure",
-				logx.String("request_id", reqID),
-				logx.Int64("account_id", sel.AccountID),
-				logx.String("model", sel.Model),
-				logx.Error(callErr))
-		}
+		a.p.log.Warn("upstream search connection failure",
+			logx.String("request_id", reqID),
+			logx.Int64("account_id", sel.AccountID),
+			logx.String("model", sel.Model),
+			logx.Error(callErr))
 	}
 	return code, respBody, nil, handled, callErr
 }

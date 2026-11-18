@@ -27,13 +27,11 @@ func Loop(ctx context.Context, name string, log *logx.Logger, fn func(context.Co
 			defer func() {
 				if r := recover(); r != nil {
 					panicked = true
-					if log != nil {
-						log.Error("worker loop panicked, restarting",
-							logx.String("worker", name),
-							logx.Any("panic", r),
-							logx.String("stack", string(debug.Stack())),
-						)
-					}
+					log.Error("worker loop panicked, restarting",
+						logx.String("worker", name),
+						logx.Any("panic", r),
+						logx.String("stack", string(debug.Stack())),
+					)
 				}
 			}()
 			fn(ctx)
@@ -65,7 +63,7 @@ func GoLoop(ctx context.Context, name string, log *logx.Logger, fn func(context.
 // Recover runs fn with one-shot panic recovery and error log (no restart).
 func Recover(name string, log *logx.Logger, fn func()) {
 	defer func() {
-		if r := recover(); r != nil && log != nil {
+		if r := recover(); r != nil {
 			log.Error("worker goroutine panicked",
 				logx.String("worker", name),
 				logx.Any("panic", r),
@@ -80,7 +78,7 @@ func Recover(name string, log *logx.Logger, fn func()) {
 func GoRecover(name string, log *logx.Logger, fn func()) {
 	go func() {
 		defer func() {
-			if r := recover(); r != nil && log != nil {
+			if r := recover(); r != nil {
 				log.Error("worker goroutine panicked",
 					logx.String("worker", name),
 					logx.Any("panic", r),
@@ -95,7 +93,7 @@ func GoRecover(name string, log *logx.Logger, fn func()) {
 // CatchPanic recovers from panic in the caller goroutine and logs Error.
 // Usage: defer worker.CatchPanic("name", log)
 func CatchPanic(name string, log *logx.Logger) {
-	if r := recover(); r != nil && log != nil {
+	if r := recover(); r != nil {
 		log.Error("worker goroutine panicked",
 			logx.String("worker", name),
 			logx.Any("panic", r),

@@ -447,9 +447,7 @@ func (s *Scheduler) Close(ctx context.Context) error {
 		select {
 		case <-*d:
 		case <-ctx.Done():
-			if s.log != nil {
-				s.log.Warn("scheduler close timeout, compile loop still running")
-			}
+			s.log.Warn("scheduler close timeout, compile loop still running")
 		}
 	}
 	return nil
@@ -573,10 +571,8 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 	// （重试不会让装配回来，粘性重试只是空转；启动期由 main 的 fatalf 兜住）。
 	if !s.egressWired {
 		if accID, proxyID, bound := proxyBoundAccount(m); bound {
-			if s.log != nil {
-				s.log.Warn("egress pool not wired but accounts are bound to proxies; keeping previous snapshot",
-					logx.Int64("account_id", accID), logx.Int64("proxy_id", proxyID))
-			}
+			s.log.Warn("egress pool not wired but accounts are bound to proxies; keeping previous snapshot",
+				logx.Int64("account_id", accID), logx.Int64("proxy_id", proxyID))
 			return fmt.Errorf("%w: account %d → proxy %d", ErrEgressNotWired, accID, proxyID)
 		}
 	}
@@ -640,7 +636,7 @@ func (s *Scheduler) reloadLocked(ctx context.Context, reclaim *poolReclaim) erro
 			if av == nil || oldAv == nil || av.acc.IdentityRevision == oldAv.acc.IdentityRevision {
 				continue
 			}
-			if _, err := s.health.ClearAccount(ctx, id); err != nil && s.log != nil {
+			if _, err := s.health.ClearAccount(ctx, id); err != nil {
 				s.log.Warn("health clear on identity revision advance failed", logx.Int64("account_id", id), logx.Error(err))
 			}
 		}
@@ -1025,7 +1021,7 @@ func removeGid(gids []int64, gid int64) []int64 {
 }
 
 func (s *Scheduler) InvalidateAll() {
-	if err := s.reload(context.Background()); err != nil && s.log != nil {
+	if err := s.reload(context.Background()); err != nil {
 		s.log.Warn("scheduler reload failed", logx.Error(err))
 	}
 }

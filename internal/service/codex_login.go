@@ -50,9 +50,7 @@ func (s *Service) StartCodexOAuthDeviceLogin(ctx context.Context) (*domain.Codex
 	}
 	code, err := s.codexLogin.StartDeviceFlow(ctx)
 	if err != nil {
-		if s.log != nil {
-			s.log.Warn("codex device login: start flow failed", logx.Error(err))
-		}
+		s.log.Warn("codex device login: start flow failed", logx.Error(err))
 		// 上游细节只进日志：认证端点错误体可能含内部追踪串，不透给客户端。
 		return nil, fmt.Errorf("%w: 设备码申请失败（上游不可用）", serviceerr.ErrUpstream)
 	}
@@ -95,9 +93,7 @@ func (s *Service) CompleteCodexOAuthDeviceLogin(ctx context.Context, authID, use
 
 	status, tokens, err := s.codexLogin.PollDeviceFlow(ctx, authID, userCode)
 	if err != nil {
-		if s.log != nil {
-			s.log.Warn("codex device login: poll failed", logx.Error(err))
-		}
+		s.log.Warn("codex device login: poll failed", logx.Error(err))
 		return nil, fmt.Errorf("%w: 设备码轮询失败（上游不可用）", serviceerr.ErrUpstream)
 	}
 	switch status {
@@ -123,9 +119,7 @@ func (s *Service) importCodexOAuthLogin(ctx context.Context, tokens *domain.Code
 	}
 	row, err := newCodexOAuthRow(0, tokens.Email, tokens.AccountID, tokens.AccessToken, tokens.RefreshToken, tokens.ExpiresAt)
 	if err != nil {
-		if s.log != nil {
-			s.log.Warn("codex device login: token bundle rejected", logx.Error(err))
-		}
+		s.log.Warn("codex device login: token bundle rejected", logx.Error(err))
 		// 校验文案是导入面词汇（codex_oauth_*）：对外给可操作提示，细节只进日志。
 		return nil, fmt.Errorf("%w: 登录响应凭据不完整，请重新登录", serviceerr.ErrUpstream)
 	}
@@ -137,10 +131,8 @@ func (s *Service) importCodexOAuthLogin(ctx context.Context, tokens *domain.Code
 	}
 	out := outcomes[0]
 	if out.Err != nil {
-		if s.log != nil {
-			s.log.Warn("codex device login: import failed",
-				logx.String("email", tokens.Email), logx.Error(out.Err))
-		}
+		s.log.Warn("codex device login: import failed",
+			logx.String("email", tokens.Email), logx.Error(out.Err))
 		// 冲突（键已存在/账号已删除）与存储故障是两类事实：前者可操作，后者是
 		// 服务器故障。上游授权码已消费，两者都要求重新登录，但状态码不能混。
 		if errors.Is(out.Err, ErrConflict) {

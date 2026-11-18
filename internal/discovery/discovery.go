@@ -152,14 +152,12 @@ func (d *Discovery) Close(ctx context.Context) error {
 		select {
 		case <-d.done:
 		case <-ctx.Done(): // 排空预算耗尽：Warn 继续退出，不阻塞停机链
-			if d.log != nil {
-				d.log.Warn("discovery: loop stop timed out", logx.Error(ctx.Err()))
-			}
+			d.log.Warn("discovery: loop stop timed out", logx.Error(ctx.Err()))
 		}
 		// WithoutCancel：停机链 ctx 已取消/将取消，ZREM 用独立短预算尽力而为。
 		zctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), zremTimeout)
 		defer cancel()
-		if err := d.client.ZRem(zctx, MembersKey, d.self).Err(); err != nil && d.log != nil {
+		if err := d.client.ZRem(zctx, MembersKey, d.self).Err(); err != nil {
 			d.log.Warn("discovery: zrem self failed", logx.String("self", d.self), logx.Error(err))
 		}
 	})
@@ -255,7 +253,7 @@ func (d *Discovery) tick(ctx context.Context) {
 	copy(cp, members)
 	d.members.Store(&cp)
 	d.errs.Store(0)
-	if d.failed.CompareAndSwap(true, false) && d.log != nil {
+	if d.failed.CompareAndSwap(true, false) {
 		d.log.Info("discovery: redis recovered, resuming heartbeat",
 			logx.String("self", d.self), logx.Int("instances", int(n)))
 	}

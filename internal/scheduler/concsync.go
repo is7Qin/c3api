@@ -160,9 +160,7 @@ func (w *AccConcSyncWorker) Close(ctx context.Context) error {
 		select {
 		case <-w.done:
 		case <-ctx.Done():
-			if w.log != nil {
-				w.log.Warn("account-conc-sync: loop stop timed out", logx.Error(ctx.Err()))
-			}
+			w.log.Warn("account-conc-sync: loop stop timed out", logx.Error(ctx.Err()))
 		}
 	})
 	return nil

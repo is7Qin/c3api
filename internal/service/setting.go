@@ -146,7 +146,7 @@ func (s *Service) ReloadSettings(ctx context.Context) error {
 // 失败 fail-safe：仅告警，保留旧快照/空快照继续——读快照缺失
 // 按零值处理（与无配置现状行为一致），不阻断服务启动。
 func (s *Service) reloadSettings(ctx context.Context) {
-	if err := s.ReloadSettings(ctx); err != nil && s.log != nil {
+	if err := s.ReloadSettings(ctx); err != nil {
 		s.log.Warn("settings snapshot reload failed", logx.Error(err))
 	}
 }

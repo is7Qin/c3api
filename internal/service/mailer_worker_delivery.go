@@ -48,13 +48,11 @@ func (w *MailWorker) process(ctx context.Context, t MailSendTask) {
 			return
 		} else {
 			lastErr = err
-			if w.log != nil {
-				w.log.Error("mail deliver failed",
-					logx.String("purpose", string(t.Purpose)),
-					logx.Int("attempt", attempt+1),
-					logx.String("failure_category", mailFailureCategory(err)),
-				)
-			}
+			w.log.Error("mail deliver failed",
+				logx.String("purpose", string(t.Purpose)),
+				logx.Int("attempt", attempt+1),
+				logx.String("failure_category", mailFailureCategory(err)),
+			)
 		}
 	}
 	w.failed.Add(1)
@@ -200,8 +198,6 @@ func (w *MailWorker) deliver(ctx context.Context, t MailSendTask) error {
 	if err := client.DialAndSendWithContext(sendCtx, msg); err != nil {
 		return err
 	}
-	if w.log != nil {
-		w.log.Info("mail sent", logx.String("purpose", string(t.Purpose)))
-	}
+	w.log.Info("mail sent", logx.String("purpose", string(t.Purpose)))
 	return nil
 }

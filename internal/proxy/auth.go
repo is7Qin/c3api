@@ -140,9 +140,7 @@ func (a *Auth) Reload(ctx context.Context) error {
 }
 
 func (a *Auth) logWarn(msg string, err error) {
-	if a.log != nil {
-		a.log.Warn(msg, logx.Error(err))
-	}
+	a.log.Warn(msg, logx.Error(err))
 }
 
 // Upsert 增量刷新单个 key（key 创建/轮换/更新后调用；门禁计数器同步）。

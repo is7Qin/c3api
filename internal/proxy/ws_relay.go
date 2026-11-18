@@ -170,14 +170,12 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 				*dst = err
 			}
 			endMu.Unlock()
-			if p.log != nil {
-				p.log.Error("ws relay panic",
-					logx.String("request_id", reqID),
-					logx.Int64("account_id", sel.AccountID),
-					logx.String("goroutine", who),
-					logx.Any("panic", rec),
-				)
-			}
+			p.log.Error("ws relay panic",
+				logx.String("request_id", reqID),
+				logx.Int64("account_id", sel.AccountID),
+				logx.String("goroutine", who),
+				logx.Any("panic", rec),
+			)
 			exit()
 		}
 	}
@@ -603,7 +601,7 @@ func (p *Proxy) relayWSContFail(client *websocket.Conn, up wsRelayTransport, wg 
 	// 收尾挂在库内握手超时上（5s）——relay 退出不得等客户端响应，主动
 	// 拆连接解除 client-loop 的阻塞 Read 后 wg.Wait 全 join。
 	ectx, ecancel := context.WithTimeout(context.Background(), responsesWSCloseTimeout)
-	if err := client.Write(ectx, websocket.MessageText, wsErrorFrame(contFail.msg)); err != nil && p.log != nil {
+	if err := client.Write(ectx, websocket.MessageText, wsErrorFrame(contFail.msg)); err != nil {
 		p.log.Warn("continuation error frame write failed", logx.String("request_id", rd.requestID()), logx.Error(err))
 	}
 	ecancel()

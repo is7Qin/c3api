@@ -55,7 +55,7 @@ func (h *UserAPI) PostUserAuthForgotPassword(w http.ResponseWriter, r *http.Requ
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	if err := h.svc.SendForgotPasswordCode(r.Context(), in.Email); err != nil && h.log != nil {
+	if err := h.svc.SendForgotPasswordCode(r.Context(), in.Email); err != nil {
 		h.log.Warn("user forgot-password: send code failed", logx.Error(err))
 	}
 	httpface.WriteJSON(w, http.StatusOK, SentResponse{Sent: true})

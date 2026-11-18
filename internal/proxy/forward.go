@@ -284,9 +284,7 @@ func (p *Proxy) applyBilling(l *domain.UsageLog) {
 	}
 	rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
 	if !ok {
-		if p.log != nil {
-			p.log.Warn("billing price lookup failed", logx.String("model", model))
-		}
+		p.log.Warn("billing price lookup failed", logx.String("model", model))
 		l.BillingTier = "no_price"
 		return
 	}
@@ -335,9 +333,7 @@ func (p *Proxy) applyImageBilling(l *domain.UsageLog) {
 	}
 	rp, ok := p.bill.Resolver.ResolvePrices(model, l.InputTokens, l.BillingTier, time.Now())
 	if !ok || (rp.ImgInTokPerM == nil && rp.ImgOutTokPerM == nil && rp.PricePerImage == nil) {
-		if p.log != nil {
-			p.log.Warn("billing image price lookup failed", logx.String("model", model))
-		}
+		p.log.Warn("billing image price lookup failed", logx.String("model", model))
 		l.BillingTier = "no_price"
 		return
 	}
@@ -721,9 +717,7 @@ type usageTuple struct {
 // commit 是本次尝试的交付事实（§5.2：计费资格由它决定，不再由 error_type
 // 决定）：写过业务帧的失败照常计费（sent_ambiguous），一帧未写出的失败不计费。
 func (p *Proxy) recordStreamAbort(ctx context.Context, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, u usageTuple, commit CommitState, err error) {
-	if p.log != nil {
-		p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
-	}
+	p.log.Warn("upstream stream aborted", logx.String("request_id", reqID), logx.Error(err))
 	l := withCommit(logWithCtx(ctx, p.buildLog(reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), sel.Format, 200, domain.ErrAbort, u, start)), commit)
 	// 中止行必须留因（§3.2）：abort 落可读结论，**不**落库内部文案（用户实证：
 	// 该列出现 `failed to get reader: failed to read frame header: EOF`）。原始

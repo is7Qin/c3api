@@ -101,17 +101,13 @@ func (s *Service) RegisterUser(ctx context.Context, email, password string) (*do
 		if err := s.store.CreateTempBalance(ctx, created.ID, temp, &expiresAt, &note); err != nil {
 			// 赠品插行失败不阻断注册（否则注册报错 → 客户端重试
 			// → 409 email 死锁）；仅告警，用户已创建成功。
-			if s.log != nil {
-				s.log.Warn("signup temp balance insert failed", logx.Int64("user_id", created.ID), logx.Error(err))
-			}
+			s.log.Warn("signup temp balance insert failed", logx.Int64("user_id", created.ID), logx.Error(err))
 		}
 	}
 	s.upsertUserSnapshot(created)
 	s.inv.Users()
 	s.publish(ctx, notify.Change{Users: true})
-	if s.log != nil {
-		s.log.Info("user registered", logx.Int64("id", created.ID), logx.String("email", email))
-	}
+	s.log.Info("user registered", logx.Int64("id", created.ID), logx.String("email", email))
 	return created, nil
 }
 
@@ -246,9 +242,7 @@ func (s *Service) CreateUser(ctx context.Context, email, password string, role d
 	s.upsertUserSnapshot(created)
 	s.inv.Users()
 	s.publish(ctx, notify.Change{Users: true})
-	if s.log != nil {
-		s.log.Info("user created by admin", logx.Int64("id", created.ID), logx.String("email", email), logx.String("role", string(role)))
-	}
+	s.log.Info("user created by admin", logx.Int64("id", created.ID), logx.String("email", email), logx.String("role", string(role)))
 	return created, nil
 }
 

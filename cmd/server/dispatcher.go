@@ -112,7 +112,7 @@ func (d *dispatcher) Apply(ctx context.Context, ch notify.Change) {
 		// gate.reload 触发。settings 为低频路径，同步 DB 读可接受；去抖 Mark 由
 		// 本次同步重载取代（免 200ms 后重复 ReloadSettings），失败 Warn + 模块
 		// 周期 ticker / 下次变更兜底收敛。
-		if err := d.svc.ReloadSettings(ctx); err != nil && d.log != nil {
+		if err := d.svc.ReloadSettings(ctx); err != nil {
 			d.log.Warn("settings reload failed", logx.Error(err))
 		}
 		d.reloadScopes(ctx, snapshot.ScopeSettings)
@@ -123,7 +123,7 @@ func (d *dispatcher) Apply(ctx context.Context, ch notify.Change) {
 	if ch.Pricing {
 		// 定价快照：与 settings 同款同步直连（低频路径，不去抖；发布端已本地
 		// 重载，此处对端收敛）。失败 Warn + pricing-sync 周期兜底。
-		if err := d.svc.ReloadPricingCtx(ctx); err != nil && d.log != nil {
+		if err := d.svc.ReloadPricingCtx(ctx); err != nil {
 			d.log.Warn("pricing reload failed", logx.Error(err))
 		}
 	}

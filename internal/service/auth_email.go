@@ -61,9 +61,7 @@ func (s *Service) SendRegisterCode(ctx context.Context, email string) error {
 		Code:    plain,
 		TTLMin:  int(domain.EmailCodeTTL / time.Minute),
 	}); err != nil {
-		if s.log != nil {
-			s.log.Error("register code enqueue failed", logx.String("email", email), logx.Error(err))
-		}
+		s.log.Error("register code enqueue failed", logx.String("email", email), logx.Error(err))
 		return err
 	}
 	return nil
@@ -92,9 +90,7 @@ func (s *Service) SendForgotPasswordCode(ctx context.Context, email string) erro
 	}
 	plain, sha, err := generateCode()
 	if err != nil {
-		if s.log != nil {
-			s.log.Error("generate reset code failed", logx.Error(err))
-		}
+		s.log.Error("generate reset code failed", logx.Error(err))
 		return nil
 	}
 	expires := time.Now().Add(domain.EmailCodeTTL)

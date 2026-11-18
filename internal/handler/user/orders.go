@@ -130,10 +130,8 @@ func (h *UserAPI) userOrder(ctx context.Context, o *domain.Order, withAccount bo
 	}
 	payURL, err := h.svc.OrderPayURL(ctx, o)
 	if err != nil {
-		if h.log != nil {
-			h.log.Warn("user: re-sign order pay url",
-				logx.String("out_trade_no", o.OutTradeNo), logx.Error(err))
-		}
+		h.log.Warn("user: re-sign order pay url",
+			logx.String("out_trade_no", o.OutTradeNo), logx.Error(err))
 		return out
 	}
 	out.PayUrl = &payURL

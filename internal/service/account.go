@@ -242,7 +242,7 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 	if p.GroupIDs != nil {
 		gids = append(gids, (*p.GroupIDs)...)
 	}
-	if gErr != nil && s.log != nil {
+	if gErr != nil {
 		s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(gErr))
 	}
 	identityChanged := identityChangedIn(results)
@@ -287,7 +287,7 @@ func (s *Service) checkGroupsExist(ctx context.Context, ids []int64) error {
 func (s *Service) DeleteAccount(ctx context.Context, id int64) error {
 	// 删除前查旧组（删除后快照须移除该账号）。
 	gids, err := s.store.GetAccountGroups(ctx, id)
-	if err != nil && s.log != nil {
+	if err != nil {
 		s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
 	}
 	if err := mapRepoErr(s.store.DeleteAccount(ctx, id)); err != nil {
@@ -307,9 +307,7 @@ func (s *Service) DeleteAccountsBatch(ctx context.Context, ids []int64) error {
 	for _, id := range ids {
 		gs, err := s.store.GetAccountGroups(ctx, id)
 		if err != nil {
-			if s.log != nil {
-				s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
-			}
+			s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
 			continue
 		}
 		gids = append(gids, gs...)
@@ -367,9 +365,7 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 	for _, id := range ids {
 		gs, err := s.store.GetAccountGroups(ctx, id)
 		if err != nil {
-			if s.log != nil {
-				s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
-			}
+			s.log.Warn("account groups query failed", logx.Int64("account_id", id), logx.Error(err))
 			continue
 		}
 		gids = append(gids, gs...)

@@ -87,11 +87,9 @@ func (w *Worker) drainWithBudget(ctx context.Context) error {
 					}
 				}
 				w.dropped.Add(int64(n))
-				if w.log != nil {
-					w.log.Warn("notification drain budget exhausted, dropped remaining",
-						logx.Int64("dropped", w.dropped.Load()),
-					)
-				}
+				w.log.Warn("notification drain budget exhausted, dropped remaining",
+					logx.Int64("dropped", w.dropped.Load()),
+				)
 			}
 			return ctx.Err()
 		default:

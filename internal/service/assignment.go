@@ -64,9 +64,7 @@ func (s *Service) SetGroupAssignments(ctx context.Context, groupID int64, userID
 	}
 	s.inv.Multipliers()
 	s.publish(ctx, notify.Change{Multipliers: true})
-	if s.log != nil {
-		s.log.Info("group assignments set", logx.Int64("group_id", groupID), logx.Int64("count", int64(len(userIDs))))
-	}
+	s.log.Info("group assignments set", logx.Int64("group_id", groupID), logx.Int64("count", int64(len(userIDs))))
 	return userIDs, post, nil
 }
 
