@@ -18,11 +18,64 @@ import (
 
 // TestCommittedArtifactsMatchGenerator 是 -check 模式的测试入口：重新生成并与已
 // 提交的 migrations/ 与 testdata/ 逐字节比对。漂移 ⇒ 红（CI 与本地同一条断言）。
+//
+// PG 版本只放行 spec 里那一条「同 major 不同 patch」的告警：CI 的
+// postgres:18-alpine 是浮动 tag，自己就会滚补丁版（产物头 180006 vs runner
+// 180007），gen.Check 按设计只回 WARN、rc 仍 0——把这条 WARN 当失败等于让 CI
+// 单方面变红。跨 major 仍是 error，照样红。
 func TestCommittedArtifactsMatchGenerator(t *testing.T) {
 	dsn := pgtest.DSN(t)
 	warnings, err := Check(context.Background(), Config{DSN: dsn})
 	require.NoError(t, err)
-	require.Empty(t, warnings, "same PG patch level as the committed artifacts ⇒ no warning expected")
+	allowed, unexpected := patchOnlyWarnings(warnings)
+	require.Empty(t, unexpected, "only a same-major patch-level difference may pass (allowed: %v)", allowed)
+}
+
+// patchOnlyWarnings 只放行「同 major 不同 patch」这一种已文档化的告警；
+// 任何别的告警都必须让测试失败（否则真漂移会被这条豁免吞掉）。
+//
+// 判据是文本 + 语义双重保险：必须「含 patch level differs」且「不含 major
+// differs」。语义上 patch 差异是 gen.Check 唯一以 WARN 返回的情况（跨 major 走
+// error；-force-version 后的那条写的是 major differs），文本上再钉一次：改措辞
+// 或新增告警都会落进 unexpected，而不是被静默放过。
+func patchOnlyWarnings(ws []string) (allowed, unexpected []string) {
+	for _, w := range ws {
+		if strings.Contains(w, "patch level differs") && !strings.Contains(w, "major differs") {
+			allowed = append(allowed, w)
+			continue
+		}
+		unexpected = append(unexpected, w)
+	}
+	return allowed, unexpected
+}
+
+// patchOnlyWarnings 是纯函数，所以这条用例不连 PG、也不看本机补丁版：跑在
+// 180006 或 180007 的机器上结论相同。
+func TestPatchOnlyWarnings(t *testing.T) {
+	const (
+		patch = "gen: PostgreSQL patch level differs from the committed artifacts (generated on 180006, running 180007); same major 18, staying quiet"
+		major = "gen: PostgreSQL major differs from the committed artifacts (generated on major 17, running major 18); forced by -force-version"
+	)
+	cases := []struct {
+		name           string
+		warnings       []string
+		wantAllowed    []string
+		wantUnexpected []string
+	}{
+		{name: "no warnings"},
+		{name: "patch only", warnings: []string{patch}, wantAllowed: []string{patch}},
+		{name: "cross major", warnings: []string{major}, wantUnexpected: []string{major}},
+		{name: "unrelated warning", warnings: []string{"stale"}, wantUnexpected: []string{"stale"}},
+		{name: "empty warning", warnings: []string{""}, wantUnexpected: []string{""}},
+		{name: "mixed", warnings: []string{patch, major, "stale"}, wantAllowed: []string{patch}, wantUnexpected: []string{major, "stale"}},
+		// 两种措辞都出现 ⇒ 不放行：宁可红，也不让豁免吞掉真漂移。
+		{name: "both phrasings", warnings: []string{patch + " / major differs"}, wantUnexpected: []string{patch + " / major differs"}},
+	}
+	for _, tc := range cases {
+		allowed, unexpected := patchOnlyWarnings(tc.warnings)
+		require.Equal(t, tc.wantAllowed, allowed, tc.name)
+		require.Equal(t, tc.wantUnexpected, unexpected, tc.name)
+	}
 }
 
 // TestGenerateIsDeterministic 连跑两次生成器：产物必须逐字节相同（排序稳定、
@@ -133,7 +186,12 @@ func TestCheckPGVersionPolicyEndToEnd(t *testing.T) {
 	}
 
 	// 同 major（换一个小版本号）：只告警，退出码仍是 0。
-	rewrite(recorded - (recorded % 10000) + 1)
+	// 本机若是 x.1 就换 x.2——重写成同一个版本号等于没改，那条告警根本不会出现。
+	sameMajor := recorded - (recorded % 10000) + 1
+	if sameMajor == recorded {
+		sameMajor++
+	}
+	rewrite(sameMajor)
 	warnings, err := Check(context.Background(), cfg)
 	require.NoError(t, err, "same-major differences must not fail -check")
 	require.Len(t, warnings, 1)
