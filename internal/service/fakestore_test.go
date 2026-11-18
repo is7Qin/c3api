@@ -149,6 +149,10 @@ type fakeStore struct {
 	// routingObservedCalls 记录 QueryObservedRouteClasses 被调用次数（计划为空时
 	// 的短路测试断言其为 0）。
 	routingObservedCalls int
+	// routingMultiCalls / routingMultiIDs 记录 QueryFlowFactStatsMulti 的调用
+	// 次数与 route 集（重试聚合的默认视图必须是「一次查询覆盖全部 route」）。
+	routingMultiCalls int
+	routingMultiIDs   []domain.RouteClassIDVal
 	// usageCredReads 额度面一次组装实际发生的 store 读次数（GetOwnedAccountCredential /
 	// GetOwnedAccountExt / GetAccount 各自 +1）：钉"凭据内容与父行 K 必须一次读出"
 	// ——分两次读会让它变成 2，而那正是"旧内容 + 新 K"的窗口。

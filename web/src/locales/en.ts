@@ -2067,6 +2067,29 @@ export default {
       "incidentTickFailed": "last tick failed",
       "incidentSyncErrors": "sync errors",
       "planIncident": "{{kind}} incident · group {{group}} · {{model}} · {{degraded}}/{{comparable}} degraded"
+    },
+    "retry": {
+      "title": "Retries",
+      "desc": "Last 24 hours of upstream attempts: retry rate, average attempts, exhaustion rate, post-retry success rate (all routes merged)",
+      "rate": "Retry rate",
+      "avgAttempts": "Avg attempts",
+      "exhaustedRate": "Exhaustion rate",
+      "retrySuccessRate": "Post-retry success",
+      "counts": "Upstream attempts {{requests}} · attempts {{attempts}}",
+      "routes": "{{count}} routes",
+      "queriedAt": "Queried {{time}}",
+      "byReason": "By reason (attempt dimension)",
+      "byReasonEmpty": "No failed edges in this window",
+      "empty": "No upstream attempts in this window",
+      "errorTitle": "Could not load retry metrics",
+      "errorDesc": "The observation read face is unavailable or the window was rejected (pass a route when the route count is over the cap)",
+      "outcome429": "429 throttled",
+      "outcome5xx": "5xx upstream",
+      "outcomeNetwork": "Network failure",
+      "outcome4xx": "4xx terminal",
+      "outcomeError": "Other error",
+      "outcomeClientCancel": "Client cancelled",
+      "outcomeUnknown": "Unknown outcome"
     }
   },
   "user": {

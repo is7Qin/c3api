@@ -2067,6 +2067,29 @@ export default {
       "incidentTickFailed": "最近心跳失败",
       "incidentSyncErrors": "同步失败累计",
       "planIncident": "{{kind}} 事故 · 组 {{group}} · {{model}} · 退化 {{degraded}}/{{comparable}}"
+    },
+    "retry": {
+      "title": "重试",
+      "desc": "近 24 小时上游尝试的重试率 / 平均尝试数 / 耗尽率 / 重试后成功率（窗口内全部 route 合并）",
+      "rate": "重试率",
+      "avgAttempts": "平均尝试数",
+      "exhaustedRate": "耗尽率",
+      "retrySuccessRate": "重试后成功率",
+      "counts": "上游尝试 {{requests}} · 尝试总数 {{attempts}}",
+      "routes": "{{count}} 个 route",
+      "queriedAt": "查询于 {{time}}",
+      "byReason": "按原因分解（尝试维度）",
+      "byReasonEmpty": "窗口内没有失败边",
+      "empty": "窗口内没有上游尝试记录",
+      "errorTitle": "重试聚合加载失败",
+      "errorDesc": "观测读面不可用或窗口被拒（route 数超限时请指定 route 后再试）",
+      "outcome429": "429 限流",
+      "outcome5xx": "5xx 上游",
+      "outcomeNetwork": "网络失败",
+      "outcome4xx": "4xx 终态",
+      "outcomeError": "其他错误",
+      "outcomeClientCancel": "客户端取消",
+      "outcomeUnknown": "未知结局"
     }
   },
   "user": {

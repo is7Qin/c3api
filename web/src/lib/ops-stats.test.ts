@@ -7,7 +7,7 @@
 // 运行：`node --test`。
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { formatStatValue, statTooltip } from './ops-stats.ts'
+import { formatAverage, formatRate, formatStatValue, statTooltip } from './ops-stats.ts'
 
 // supplier-view 的 snapshot（internal/supplier/view.go:114-121 的四字段形态）。
 const snapshot = {
@@ -124,5 +124,32 @@ describe('statTooltip：原始值只进 title', () => {
     assert.equal(statTooltip(true, 'x'), 'true')
     assert.equal(statTooltip(null, 'x'), '—')
     assert.equal(statTooltip('', 'x'), '—')
+  })
+})
+
+describe('formatRate / formatAverage：重试卡的比值单元格', () => {
+  it('比值 → 百分比（一位小数）', () => {
+    assert.equal(formatRate(1), '100.0%')
+    assert.equal(formatRate(0), '0.0%')
+    assert.equal(formatRate(0.125), '12.5%')
+    assert.equal(formatRate(1 / 3), '33.3%')
+  })
+
+  it('null = 服务端「分母为 0」⇒ —（不是 0%）', () => {
+    assert.equal(formatRate(null), '—')
+    assert.equal(formatRate(undefined), '—')
+    assert.equal(formatAverage(null), '—')
+    assert.equal(formatAverage(undefined), '—')
+  })
+
+  it('NaN/Infinity 不是比值 ⇒ —（算式残渣永不进界面）', () => {
+    assert.equal(formatRate(Number.NaN), '—')
+    assert.equal(formatRate(Number.POSITIVE_INFINITY), '—')
+    assert.equal(formatAverage(Number.NaN), '—')
+  })
+
+  it('均值保留一位小数（平均尝试数 3.0 不是 3）', () => {
+    assert.equal(formatAverage(3), '3.0')
+    assert.equal(formatAverage(1.25), '1.3')
   })
 })

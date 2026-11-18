@@ -15,10 +15,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Skeleton } from '@/components/ui/skeleton'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { fmtTTFT } from '@/components/fmt'
+import { RetryCard } from '@/components/retry-card'
 import { fetchAllRoutingPlanRoutes } from '@/lib/routing-plan'
 import { formatStatValue, statTooltip } from '@/lib/ops-stats'
 import { isOpsStatVisible } from '@/lib/supplier-visibility'
 import { useFeatures } from '@/lib/use-features'
+
+// 重试卡的观察窗口：固定近 24h（滚动窗口，UTC 分钟对齐由服务端仓储读面完成）。
+// 比率指标窗口太短会被单次故障主导；24h 覆盖一个完整工作日，且远在观测保留
+// 期之内（默认 7 天、配置地板 2 天），故不会触发服务端的保留期裁剪 400。
+const RETRY_WINDOW_MS = 24 * 60 * 60 * 1000
 
 export default function Ops() {
   const { t } = useTranslation()
@@ -48,6 +54,19 @@ export default function Ops() {
     refetchInterval: 10_000,
   })
 
+  // 重试聚合（/routing/retry）：只读聚合面，1 分钟轮询即可（24h 窗口的比率
+  // 不会因为 10s 刷新而变得更新鲜）。route 缺省 = 服务端枚举窗口内有流量的
+  // 全部 route（上限 200，超限 400 → 卡片显示错误态与要求指定 route 的说明）。
+  const retryQ = useQuery({
+    queryKey: ['ops', 'routing-retry'],
+    queryFn: () => {
+      const to = new Date()
+      const from = new Date(to.getTime() - RETRY_WINDOW_MS)
+      return api.getRoutingRetry({ from: from.toISOString(), to: to.toISOString() })
+    },
+    refetchInterval: 60_000,
+  })
+
   const workers = opsQ.data?.workers ?? []
   const snapshots = opsQ.data?.snapshots ?? []
   const planIncidents = (planQ.data?.routes ?? [])
@@ -73,8 +92,8 @@ export default function Ops() {
               {t('ops.generatedAt', { time: new Date(opsQ.data.generated_at).toLocaleTimeString() })}
             </span>
           )}
-          <Button variant="outline" size="sm" onClick={() => { opsQ.refetch(); planQ.refetch() }} disabled={opsQ.isFetching}>
-            <RefreshCw className={`size-4 ${opsQ.isFetching ? 'animate-spin' : ''}`} />
+          <Button variant="outline" size="sm" onClick={() => { opsQ.refetch(); planQ.refetch(); retryQ.refetch() }} disabled={opsQ.isFetching || retryQ.isFetching}>
+            <RefreshCw className={`size-4 ${opsQ.isFetching || retryQ.isFetching ? 'animate-spin' : ''}`} />
             {t('ops.refresh')}
           </Button>
         </div>
@@ -105,6 +124,10 @@ export default function Ops() {
           {/* 路由观测四道（compiler/quality-sync/rollup/runtime-health）：新鲜度 +
               事故计数直出 worker stats 字段，前端零重算；缺道 = 未装配，不渲染占位 */}
           <RoutingLanes workers={workers} planIncidents={planIncidents} />
+
+          {/* 重试聚合卡（重试率 / 平均尝试数 / 耗尽率 / 重试后成功率 + 按原因
+              分解的横向条）。比值 null（服务端「分母为 0」）显示 —，绝不显示 0%。 */}
+          <RetryCard q={retryQ} />
 
           {/* Workers：每 worker 一卡，stats 通用 key-value 渲染。
               items-start：卡片各按内容高度，不被同行最高的一条（如 quota-deadline

@@ -114,6 +114,23 @@ GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previou
 ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_outcome,
 	transition_reason, outcome, is_terminal DESC`
 
+// flowFactStatsMultiSQL is flowFactStatsSQL with the single-route equality
+// predicate widened to ANY($1) — the rest of the statement (GROUP BY /
+// ORDER BY / measures) is verbatim, so summing the multi-route result is
+// identical to summing one call per route class. The access path is unchanged:
+// (route_class_id, terminal_minute range) is still served by
+// routing_flow_fact_read (ANY is planned as one index range per array entry).
+const flowFactStatsMultiSQL = `
+SELECT route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
+	transition_reason, outcome, is_terminal,
+	MIN(min_generation)::bigint, SUM(chain_count)::bigint
+FROM routing_flow_fact
+WHERE route_class_id = ANY($1) AND terminal_minute >= $2 AND terminal_minute < $3
+GROUP BY route_class_id, ordinal, lane, account_id, previous_account_id, previous_outcome,
+	transition_reason, outcome, is_terminal
+ORDER BY ordinal, lane, account_id, previous_account_id NULLS FIRST, previous_outcome,
+	transition_reason, outcome, is_terminal DESC`
+
 // observedRouteClassesSQL lists the distinct route classes that have at least
 // one routing_flow_fact row in the half-open minute window [from, to). The
 // predicate carries only the terminal_minute range (no route_class_id
@@ -191,6 +208,51 @@ func (r *PartitionRepo) QueryFlowFactStats(ctx context.Context, routeClass domai
 	return out, nil
 }
 
+// QueryFlowFactStatsMulti aggregates routing_flow_fact over the half-open
+// minute window [from, to) for a set of route classes in ONE statement. Rows
+// keep the same shape as QueryFlowFactStats (one row per complete edge
+// identity, chain_count summed across shards/minutes); the only difference is
+// that the route class is an ANY() set instead of an equality. An empty set
+// short-circuits to a non-nil empty result — ANY('{}') is always false, so the
+// round trip would only add latency.
+func (r *PartitionRepo) QueryFlowFactStatsMulti(ctx context.Context, routeClasses []domain.RouteClassIDVal, from, to time.Time) ([]RoutingFlowStat, error) {
+	out := []RoutingFlowStat{}
+	if len(routeClasses) == 0 {
+		return out, nil
+	}
+	from, to = from.UTC().Truncate(time.Minute), to.UTC().Truncate(time.Minute)
+	// []byte per element: the column is bytea and pgx encodes [][]byte as
+	// bytea[] for the ANY($1) array parameter (no SQL-side casting needed).
+	classIDs := make([][]byte, len(routeClasses))
+	for i := range routeClasses {
+		classIDs[i] = routeClasses[i][:]
+	}
+	rows := &entsql.Rows{}
+	if err := r.driver.Query(ctx, flowFactStatsMultiSQL, []any{classIDs, from, to}, rows); err != nil {
+		return nil, fmt.Errorf("routing flow fact multi query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s RoutingFlowStat
+		var rt []byte
+		var prevAcc sql.NullInt64
+		if err := rows.Scan(&rt, &s.Ordinal, &s.Lane, &s.AccountID, &prevAcc, &s.PreviousOutcome,
+			&s.TransitionReason, &s.Outcome, &s.IsTerminal, &s.MinGeneration, &s.ChainCount); err != nil {
+			return nil, fmt.Errorf("routing flow fact multi query: scan: %w", err)
+		}
+		copy(s.RouteClassID[:], rt)
+		if prevAcc.Valid {
+			v := prevAcc.Int64
+			s.PreviousAccountID = &v
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("routing flow fact multi query: %w", err)
+	}
+	return out, nil
+}
+
 // QueryObservedRouteClasses returns the distinct route classes that have at
 // least one routing_flow_fact row in the half-open minute window [from, to),
 // ascending. from/to are truncated to UTC minutes first (same as the other
@@ -232,6 +294,11 @@ func (r *Repository) QueryFlowFactStats(ctx context.Context, routeClass domain.R
 // QueryObservedRouteClasses 组合面委托（同上）。
 func (r *Repository) QueryObservedRouteClasses(ctx context.Context, from, to time.Time) ([]domain.RouteClassIDVal, error) {
 	return r.Partitions.QueryObservedRouteClasses(ctx, from, to)
+}
+
+// QueryFlowFactStatsMulti 组合面委托（同上）。
+func (r *Repository) QueryFlowFactStatsMulti(ctx context.Context, routeClasses []domain.RouteClassIDVal, from, to time.Time) ([]RoutingFlowStat, error) {
+	return r.Partitions.QueryFlowFactStatsMulti(ctx, routeClasses, from, to)
 }
 
 // parseRoutingHist parses a Postgres bigint[] literal ("{1,2,3}") into a slice;

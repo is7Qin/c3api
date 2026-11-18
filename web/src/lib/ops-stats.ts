@@ -98,3 +98,17 @@ export function statTooltip(v: unknown, key: string): string {
   if (typeof v === 'string') return v || DASH
   return String(v)
 }
+
+// 比值（0–1）→ 百分比单元格。`null` 是服务端的「分母为 0」语义（契约 nullable），
+// 必须显示 DASH——显示 0% 会把「无法计算」说成「算出来是 0」。NaN/Infinity 同理
+// （不是比值），绝不把算式残渣写进界面。
+export function formatRate(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return DASH
+  return `${(v * 100).toFixed(1)}%`
+}
+
+// 均值单元格（如平均尝试数）：保留一位小数；null（分母为 0）显示 DASH。
+export function formatAverage(v: number | null | undefined): string {
+  if (v === null || v === undefined || !Number.isFinite(v)) return DASH
+  return v.toFixed(1)
+}

@@ -1814,6 +1814,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/routing/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 重试聚合（重试率 / 平均尝试数 / 耗尽率 / 重试后成功率 + 按原因分解）
+         * @description routing_flow_fact 的聚合读（零迁移、只读、不碰写路径）。口径（v6，每条链恰一条
+         *     ordinal=1 边；ordinal 允许空洞——本地拒绝 / 402 预检不产生边，T₁ = 终局落在
+         *     ordinal=1 的链数和，R = C₁ − T₁ = 重试过的请求数）：
+         *     request_count = C₁（ordinal=1 链数和）；
+         *     attempt_total = Σ_k C_k（每条边 = 一次尝试）；
+         *     retry_rate = (C₁ − T₁) / C₁；
+         *     avg_attempts = Σ_k C_k / C₁（**不是** Σ k·C_k / C₁——三尝试请求会得 6.0）；
+         *     exhausted_rate = (C₁ − S − X) / C₁（S = success 边链数和，X = client_cancel
+         *     边链数和；减 X 是必须的，否则客户端主动取消会被算成「重试耗尽」）；
+         *     retry_success_rate = Σ_{k≥2} S_k / (C₁ − T₁)（分母 = 重试过的请求数；重试后全失败
+         *     = 0，不是 null）。
+         *     分母为 0 ⇒ null（不是 0/NaN）。by_reason 是非 success 边按 outcome 的分解
+         *     （chain_count 降序、并列 outcome 升序），client_cancel 单列、不并入耗尽率。
+         *     route 缺省 = 窗口内实际有流量的全部 route class（QueryObservedRouteClasses，
+         *     与当前发布计划无关）；超过 200 ⇒ 400 要求显式 route，绝不静默截断。
+         *     route 只做 64-hex 解析——**不校验当前发布计划目录**，故历史 route 也能查。
+         *     窗口 ≤90d（超界 400，整窗拒绝）；空窗口返回 0 计数 + null 比值，不是 404。
+         */
+        get: operations["GetRoutingRetry"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/routing/frontier": {
         parameters: {
             query?: never;
@@ -4851,6 +4887,58 @@ export interface components {
             flow_overflow_dropped_chains: number;
             /** @description 硬崩丢失不可量化标记，恒 true */
             process_crash_loss_unobservable: boolean;
+        };
+        /** @description 按结局分解的一列（尝试维度——chain_count = 走过该结局边的请求数之和，同一请求的多条尝试边各计一次） */
+        RoutingRetryReason: {
+            /** @description 边结局（429 / 5xx / network / 4xx / error；client_cancel 单列，不并入耗尽率） */
+            outcome: string;
+            /**
+             * Format: int64
+             * @description 该结局的链数和（SUM）
+             */
+            chain_count: number;
+        };
+        /** @description 重试聚合（routing_flow_fact 只读聚合；四条比值 null = 分母为 0） */
+        RoutingRetryResponse: {
+            /** @description 参与计算的 route 数（显式 route = 1；缺省 = 窗口内观测到的 route 数） */
+            routes: number;
+            /**
+             * Format: date-time
+             * @description 本次查询的服务器时刻（UTC）
+             */
+            queried_at: string;
+            /**
+             * Format: int64
+             * @description C₁ = ordinal=1 边链数和（「上游尝试」：本地拒绝不落 flow，故不是全部请求数）
+             */
+            request_count: number;
+            /**
+             * Format: int64
+             * @description Σ_k C_k = 尝试总数（每条边 = 一次尝试）
+             */
+            attempt_total: number;
+            /**
+             * Format: double
+             * @description (C₁ − T₁) / C₁；T₁ = 终局停在首发的链数和，R = C₁ − T₁ = 重试过的请求数；C₁=0 ⇒ null
+             */
+            retry_rate: number | null;
+            /**
+             * Format: double
+             * @description Σ_k C_k / C₁（**不是** Σ k·C_k / C₁）；C₁=0 ⇒ null
+             */
+            avg_attempts: number | null;
+            /**
+             * Format: double
+             * @description (C₁ − S − X) / C₁（S = success 边链数和、X = client_cancel 边链数和；减 X 避免把主动取消算成耗尽）；C₁=0 ⇒ null
+             */
+            exhausted_rate: number | null;
+            /**
+             * Format: double
+             * @description Σ_{k≥2} S_k / (C₁ − T₁)（分母 = 重试过的请求数）；C₁ − T₁ = 0 ⇒ null（一个请求都没重试过）；重试后全失败 = 0
+             */
+            retry_success_rate: number | null;
+            /** @description 非 success 边按 outcome 分组（chain_count 降序、并列 outcome 升序）；空窗口 = []；client_cancel 单列 */
+            by_reason: components["schemas"]["RoutingRetryReason"][];
         };
         RoutingFrontierCandidate: {
             candidate_fingerprint: string;
@@ -9115,6 +9203,31 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RoutingFlowResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetRoutingRetry: {
+        parameters: {
+            query: {
+                route?: string;
+                from: string;
+                to: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 重试聚合（四个比值 null = 分母 0；空窗口 routes=0、计数 0、比值 null） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoutingRetryResponse"];
                 };
             };
             default: components["responses"]["Error"];

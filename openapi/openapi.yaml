@@ -2398,6 +2398,41 @@ paths:
               schema: { $ref: '#/components/schemas/RoutingFlowResponse' }
         default:
           $ref: '#/components/responses/Error'
+  /routing/retry:
+    get:
+      operationId: GetRoutingRetry
+      tags: [routing]
+      summary: 重试聚合（重试率 / 平均尝试数 / 耗尽率 / 重试后成功率 + 按原因分解）
+      description: |
+        routing_flow_fact 的聚合读（零迁移、只读、不碰写路径）。口径（v6，每条链恰一条
+        ordinal=1 边；ordinal 允许空洞——本地拒绝 / 402 预检不产生边，T₁ = 终局落在
+        ordinal=1 的链数和，R = C₁ − T₁ = 重试过的请求数）：
+        request_count = C₁（ordinal=1 链数和）；
+        attempt_total = Σ_k C_k（每条边 = 一次尝试）；
+        retry_rate = (C₁ − T₁) / C₁；
+        avg_attempts = Σ_k C_k / C₁（**不是** Σ k·C_k / C₁——三尝试请求会得 6.0）；
+        exhausted_rate = (C₁ − S − X) / C₁（S = success 边链数和，X = client_cancel
+        边链数和；减 X 是必须的，否则客户端主动取消会被算成「重试耗尽」）；
+        retry_success_rate = Σ_{k≥2} S_k / (C₁ − T₁)（分母 = 重试过的请求数；重试后全失败
+        = 0，不是 null）。
+        分母为 0 ⇒ null（不是 0/NaN）。by_reason 是非 success 边按 outcome 的分解
+        （chain_count 降序、并列 outcome 升序），client_cancel 单列、不并入耗尽率。
+        route 缺省 = 窗口内实际有流量的全部 route class（QueryObservedRouteClasses，
+        与当前发布计划无关）；超过 200 ⇒ 400 要求显式 route，绝不静默截断。
+        route 只做 64-hex 解析——**不校验当前发布计划目录**，故历史 route 也能查。
+        窗口 ≤90d（超界 400，整窗拒绝）；空窗口返回 0 计数 + null 比值，不是 404。
+      parameters:
+        - { name: route, in: query, required: false, schema: { type: string, description: 64-hex 路由类 ID；非法 hex → 400；不查当前计划目录（历史 route 可查）；缺省 = 窗口内观测到的全部 route } }
+        - { name: from, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: to, in: query, required: true, schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: 重试聚合（四个比值 null = 分母 0；空窗口 routes=0、计数 0、比值 null）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RoutingRetryResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /routing/frontier:
     get:
       operationId: GetRoutingFrontier
@@ -5493,6 +5528,30 @@ components:
         incomplete_chain_dropped: { type: integer, format: int64, description: 本进程已观察 cleanup 缺 terminal 的链（非上游失败） }
         flow_overflow_dropped_chains: { type: integer, format: int64, description: 故障预算淘汰链（容量/入队拒绝；非上游失败） }
         process_crash_loss_unobservable: { type: boolean, description: 硬崩丢失不可量化标记，恒 true }
+    RoutingRetryReason:
+      type: object
+      description: 按结局分解的一列（尝试维度——chain_count = 走过该结局边的请求数之和，同一请求的多条尝试边各计一次）
+      required: [outcome, chain_count]
+      properties:
+        outcome: { type: string, description: 边结局（429 / 5xx / network / 4xx / error；client_cancel 单列，不并入耗尽率） }
+        chain_count: { type: integer, format: int64, description: 该结局的链数和（SUM） }
+    RoutingRetryResponse:
+      type: object
+      description: 重试聚合（routing_flow_fact 只读聚合；四条比值 null = 分母为 0）
+      required: [routes, queried_at, request_count, attempt_total, retry_rate, avg_attempts, exhausted_rate, retry_success_rate, by_reason]
+      properties:
+        routes: { type: integer, description: 参与计算的 route 数（显式 route = 1；缺省 = 窗口内观测到的 route 数） }
+        queried_at: { type: string, format: date-time, description: 本次查询的服务器时刻（UTC） }
+        request_count: { type: integer, format: int64, description: C₁ = ordinal=1 边链数和（「上游尝试」：本地拒绝不落 flow，故不是全部请求数） }
+        attempt_total: { type: integer, format: int64, description: Σ_k C_k = 尝试总数（每条边 = 一次尝试） }
+        retry_rate: { type: number, format: double, nullable: true, description: "(C₁ − T₁) / C₁；T₁ = 终局停在首发的链数和，R = C₁ − T₁ = 重试过的请求数；C₁=0 ⇒ null" }
+        avg_attempts: { type: number, format: double, nullable: true, description: Σ_k C_k / C₁（**不是** Σ k·C_k / C₁）；C₁=0 ⇒ null }
+        exhausted_rate: { type: number, format: double, nullable: true, description: "(C₁ − S − X) / C₁（S = success 边链数和、X = client_cancel 边链数和；减 X 避免把主动取消算成耗尽）；C₁=0 ⇒ null" }
+        retry_success_rate: { type: number, format: double, nullable: true, description: "Σ_{k≥2} S_k / (C₁ − T₁)（分母 = 重试过的请求数）；C₁ − T₁ = 0 ⇒ null（一个请求都没重试过）；重试后全失败 = 0" }
+        by_reason:
+          type: array
+          items: { $ref: '#/components/schemas/RoutingRetryReason' }
+          description: 非 success 边按 outcome 分组（chain_count 降序、并列 outcome 升序）；空窗口 = []；client_cancel 单列
     RoutingFrontierCandidate:
       type: object
       required: [candidate_fingerprint, known, account_id, template_id, identity_revision, quality_class_id, mapped_model, attempts, successes, success_lcb, success_ucb, ttft_lcb, ttft_ucb, ttft_known, input_unit_cost, cost_known, insufficient, on_frontier]

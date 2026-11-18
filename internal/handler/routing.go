@@ -34,6 +34,22 @@ func (h *AdminAPI) GetRoutingFlow(w http.ResponseWriter, r *http.Request, params
 	httpface.WriteJSON(w, http.StatusOK, toAPIRoutingFlow(res))
 }
 
+// GetRoutingRetry 重试聚合 — ServerInterface。route 缺省 = 窗口内全部观测
+// route（默认视图）；超 200 个 route 由 service 报 400（要求显式 route）——
+// handler 只做取值，不重复实现守卫/钳制。
+func (h *AdminAPI) GetRoutingRetry(w http.ResponseWriter, r *http.Request, params GetRoutingRetryParams) {
+	res, err := h.svc.QueryRoutingRetry(r.Context(), service.RoutingRetryQuery{
+		RouteID: httpface.Deref(params.Route),
+		From:    params.From,
+		To:      params.To,
+	})
+	if err != nil {
+		httpface.WriteServiceErr(w, err)
+		return
+	}
+	httpface.WriteJSON(w, http.StatusOK, toAPIRoutingRetry(res))
+}
+
 // GetRoutingFrontier 质量-成本前沿 — ServerInterface。limit 缺省/越界由
 // service 归一钳制（≤0→20，>200→200），handler 不重复实现。
 func (h *AdminAPI) GetRoutingFrontier(w http.ResponseWriter, r *http.Request, params GetRoutingFrontierParams) {
@@ -112,6 +128,27 @@ func toAPIRoutingFlow(res *service.RoutingFlowResult) RoutingFlowResponse {
 			})
 		}
 		out.Lanes = append(out.Lanes, apiLane)
+	}
+	return out
+}
+
+// toAPIRoutingRetry 重试聚合投影（service → 契约类型）。四个比值指针原样透传：
+// nil 即 null（分母 0），转换层绝不把它折叠成 0——那是撒谎。by_reason 恒非 nil
+// （空窗口 = []）。
+func toAPIRoutingRetry(res *service.RoutingRetrySummary) RoutingRetryResponse {
+	out := RoutingRetryResponse{
+		Routes:           res.Routes,
+		QueriedAt:        res.QueriedAt,
+		RequestCount:     res.RequestCount,
+		AttemptTotal:     res.AttemptTotal,
+		RetryRate:        res.RetryRate,
+		AvgAttempts:      res.AvgAttempts,
+		ExhaustedRate:    res.ExhaustedRate,
+		RetrySuccessRate: res.RetrySuccessRate,
+		ByReason:         make([]RoutingRetryReason, 0, len(res.ByReason)),
+	}
+	for _, r := range res.ByReason {
+		out.ByReason = append(out.ByReason, RoutingRetryReason{Outcome: r.Outcome, ChainCount: r.ChainCount})
 	}
 	return out
 }

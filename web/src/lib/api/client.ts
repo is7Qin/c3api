@@ -288,6 +288,11 @@ export class ApiClient {
     this.request<components['schemas']['RoutingFlowResponse']>('/routing/flow', { params: toQuery(p) })
   getRoutingFrontier = (p: { route: string; from: string; to: string; offset?: number; limit?: number }) =>
     this.request<components['schemas']['RoutingFrontierResponse']>('/routing/frontier', { params: toQuery(p) })
+  // 重试聚合（routing_flow_fact 只读）：route 缺省 = 窗口内全部观测到的 route
+  // （服务端上限 200，超限 400 要求显式 route）。四个比值 null = 分母为 0——
+  // 页面必须显示 —，不得折成 0（契约 nullable，gen:api 已生成）。
+  getRoutingRetry = (p: { route?: string; from: string; to: string }) =>
+    this.request<components['schemas']['RoutingRetryResponse']>('/routing/retry', { params: toQuery(p) })
   // observed_from/observed_to 成对给出时，routes 只保留半开窗口 [from,to) 内有流量的
   // 已发布路由（单端 → 服务端 400）。gen:api 只重生 schema.d.ts，故手写 params 须同步。
   getRoutingPlan = (p?: { search?: string; route?: string; observed_from?: string; observed_to?: string; offset?: number; limit?: number; candidates_offset?: number; candidates_limit?: number }) =>

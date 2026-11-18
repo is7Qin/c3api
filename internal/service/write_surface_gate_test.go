@@ -173,6 +173,7 @@ var allowedServiceMethods = []string{
 	"QueryRoutingFlow",
 	"QueryRoutingFrontier",
 	"QueryRoutingPlan",
+	"QueryRoutingRetry",
 	"QueryStatsTTFT",
 	"QueryStatsTop",
 	"QueryStatsTrend",

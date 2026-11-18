@@ -2137,6 +2137,45 @@ type RoutingPlanRoute struct {
 	Ref RoutingPlanRef `json:"ref"`
 }
 
+// RoutingRetryReason 按结局分解的一列（尝试维度——chain_count = 走过该结局边的请求数之和，同一请求的多条尝试边各计一次）
+type RoutingRetryReason struct {
+	// ChainCount 该结局的链数和（SUM）
+	ChainCount int64 `json:"chain_count"`
+
+	// Outcome 边结局（429 / 5xx / network / 4xx / error；client_cancel 单列，不并入耗尽率）
+	Outcome string `json:"outcome"`
+}
+
+// RoutingRetryResponse 重试聚合（routing_flow_fact 只读聚合；四条比值 null = 分母为 0）
+type RoutingRetryResponse struct {
+	// AttemptTotal Σ_k C_k = 尝试总数（每条边 = 一次尝试）
+	AttemptTotal int64 `json:"attempt_total"`
+
+	// AvgAttempts Σ_k C_k / C₁（**不是** Σ k·C_k / C₁）；C₁=0 ⇒ null
+	AvgAttempts *float64 `json:"avg_attempts"`
+
+	// ByReason 非 success 边按 outcome 分组（chain_count 降序、并列 outcome 升序）；空窗口 = []；client_cancel 单列
+	ByReason []RoutingRetryReason `json:"by_reason"`
+
+	// ExhaustedRate (C₁ − S − X) / C₁（S = success 边链数和、X = client_cancel 边链数和；减 X 避免把主动取消算成耗尽）；C₁=0 ⇒ null
+	ExhaustedRate *float64 `json:"exhausted_rate"`
+
+	// QueriedAt 本次查询的服务器时刻（UTC）
+	QueriedAt time.Time `json:"queried_at"`
+
+	// RequestCount C₁ = ordinal=1 边链数和（「上游尝试」：本地拒绝不落 flow，故不是全部请求数）
+	RequestCount int64 `json:"request_count"`
+
+	// RetryRate (C₁ − T₁) / C₁；T₁ = 终局停在首发的链数和，R = C₁ − T₁ = 重试过的请求数；C₁=0 ⇒ null
+	RetryRate *float64 `json:"retry_rate"`
+
+	// RetrySuccessRate Σ_{k≥2} S_k / (C₁ − T₁)（分母 = 重试过的请求数）；C₁ − T₁ = 0 ⇒ null（一个请求都没重试过）；重试后全失败 = 0
+	RetrySuccessRate *float64 `json:"retry_success_rate"`
+
+	// Routes 参与计算的 route 数（显式 route = 1；缺省 = 窗口内观测到的 route 数）
+	Routes int `json:"routes"`
+}
+
 // Rule defines model for Rule.
 type Rule struct {
 	CreatedAt time.Time `json:"CreatedAt"`
@@ -3063,6 +3102,13 @@ type GetRoutingPlanParams struct {
 	CandidatesLimit  *int       `form:"candidates_limit,omitempty" json:"candidates_limit,omitempty"`
 }
 
+// GetRoutingRetryParams defines parameters for GetRoutingRetry.
+type GetRoutingRetryParams struct {
+	Route *string   `form:"route,omitempty" json:"route,omitempty"`
+	From  time.Time `form:"from" json:"from"`
+	To    time.Time `form:"to" json:"to"`
+}
+
 // ListRulesParams defines parameters for ListRules.
 type ListRulesParams struct {
 	Enabled *bool `form:"enabled,omitempty" json:"enabled,omitempty"`
@@ -3632,6 +3678,9 @@ type ServerInterface interface {
 	// 当前发布路由计划解释（只读投影，无历史 generation 参数）
 	// (GET /routing/plan)
 	GetRoutingPlan(w http.ResponseWriter, r *http.Request, params GetRoutingPlanParams)
+	// 重试聚合（重试率 / 平均尝试数 / 耗尽率 / 重试后成功率 + 按原因分解）
+	// (GET /routing/retry)
+	GetRoutingRetry(w http.ResponseWriter, r *http.Request, params GetRoutingRetryParams)
 	// 规则列表（enabled 过滤，priority 升序）
 	// (GET /rules)
 	ListRules(w http.ResponseWriter, r *http.Request, params ListRulesParams)
@@ -4118,6 +4167,12 @@ func (_ Unimplemented) GetRoutingFrontier(w http.ResponseWriter, r *http.Request
 // 当前发布路由计划解释（只读投影，无历史 generation 参数）
 // (GET /routing/plan)
 func (_ Unimplemented) GetRoutingPlan(w http.ResponseWriter, r *http.Request, params GetRoutingPlanParams) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 重试聚合（重试率 / 平均尝试数 / 耗尽率 / 重试后成功率 + 按原因分解）
+// (GET /routing/retry)
+func (_ Unimplemented) GetRoutingRetry(w http.ResponseWriter, r *http.Request, params GetRoutingRetryParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -6419,6 +6474,63 @@ func (siw *ServerInterfaceWrapper) GetRoutingPlan(w http.ResponseWriter, r *http
 	handler.ServeHTTP(w, r)
 }
 
+// GetRoutingRetry operation middleware
+func (siw *ServerInterfaceWrapper) GetRoutingRetry(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetRoutingRetryParams
+
+	// ------------- Optional query parameter "route" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "route", r.URL.Query(), &params.Route)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "route", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "from" -------------
+
+	if paramValue := r.URL.Query().Get("from"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "from"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Required query parameter "to" -------------
+
+	if paramValue := r.URL.Query().Get("to"); paramValue != "" {
+
+	} else {
+		siw.ErrorHandlerFunc(w, r, &RequiredParamError{ParamName: "to"})
+		return
+	}
+
+	err = runtime.BindQueryParameter("form", true, true, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetRoutingRetry(w, r, params)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
 // ListRules operation middleware
 func (siw *ServerInterfaceWrapper) ListRules(w http.ResponseWriter, r *http.Request) {
 
@@ -8115,6 +8227,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/routing/plan", wrapper.GetRoutingPlan)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/routing/retry", wrapper.GetRoutingRetry)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/rules", wrapper.ListRules)

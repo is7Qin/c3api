@@ -34,6 +34,10 @@ type RoutingPlanProvider interface {
 type RoutingFactReader interface {
 	QueryQualityFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingQualityStat, error)
 	QueryFlowFactStats(ctx context.Context, routeClass domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingFlowStat, error)
+	// QueryFlowFactStatsMulti 一次查询覆盖多个 route class（SQL 与单 route 版
+	// 同形，谓词换成 ANY($1)）。重试聚合的默认视图（无 route）走这条：N 个
+	// route 一次往返，而不是 N 次查询。
+	QueryFlowFactStatsMulti(ctx context.Context, routeClasses []domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingFlowStat, error)
 	// QueryObservedRouteClasses 列出窗口 [from,to) 内 routing_flow_fact 有记录的
 	// 路由类集合（计划展示面用它把 routes 收敛到「窗口内有流量」）。
 	QueryObservedRouteClasses(ctx context.Context, from, to time.Time) ([]domain.RouteClassIDVal, error)
@@ -220,6 +224,74 @@ func validateRoutingWindow(from, to time.Time) error {
 		return ErrInvalidInput
 	}
 	return nil
+}
+
+// routingRetryRouteMax 无 route 默认视图的 route 数上限（= 既有分页上限
+// 200，不是 20：RouteClassID(group, format, model, op) 单组常见 route 数就
+// 超过 20，取 20 会让默认视图退化成 400）。超限**报错要求显式 route**，
+// 绝不静默截断——截断后的重试率看起来正常，实则漏了整段 route。
+const routingRetryRouteMax = routingPlanRouteMax
+
+// RoutingRetryQuery 重试聚合入参。RouteID 为空 = 窗口内全部观测到的 route
+// class（QueryObservedRouteClasses），否则只算该 route。
+type RoutingRetryQuery struct {
+	RouteID string // 64-hex route class ID；只做 hex 解析，不查当前计划目录
+	From    time.Time
+	To      time.Time
+}
+
+// QueryRoutingRetry 重试聚合（重试率 / 平均尝试数 / 耗尽率 / 重试后成功率 +
+// 按结局分解）。窗口与保留守卫与 /routing/flow **同一份**实现
+// （validateRoutingWindow + validateRoutingRetention），UTC 分钟对齐由仓储
+// 读面完成。
+//
+// route 解析只用 domain.HexToID，**不用 resolveRoutingRoute**：后者只认当前
+// 发布计划目录，历史 route（已下线 / 未发布视图）会被 404，而观测面要回答的
+// 正是「这些 route 当时重试了多少」。故空集合恒 200（0 计数 + null 比值），
+// 不是 404。
+func (s *Service) QueryRoutingRetry(ctx context.Context, q RoutingRetryQuery) (*RoutingRetrySummary, error) {
+	if err := validateRoutingWindow(q.From, q.To); err != nil {
+		return nil, err
+	}
+	if err := s.validateRoutingRetention(q.From); err != nil {
+		return nil, err
+	}
+	reader, ok := s.store.(RoutingFactReader)
+	if !ok {
+		return nil, errRoutingNotWired
+	}
+	var (
+		rows   []repository.RoutingFlowStat
+		routes int
+		err    error
+	)
+	if q.RouteID != "" {
+		raw, hexErr := domain.HexToID(q.RouteID)
+		if hexErr != nil {
+			return nil, ErrInvalidInput
+		}
+		routes = 1
+		rows, err = reader.QueryFlowFactStats(ctx, domain.RouteClassIDVal(raw), q.From, q.To)
+	} else {
+		observed, obsErr := reader.QueryObservedRouteClasses(ctx, q.From, q.To)
+		if obsErr != nil {
+			return nil, obsErr
+		}
+		routes = len(observed)
+		if routes > routingRetryRouteMax {
+			return nil, fmt.Errorf("service: %d observed route classes exceed the %d-route cap; pass route to scope the aggregation: %w",
+				routes, routingRetryRouteMax, ErrInvalidInput)
+		}
+		// 一次查询覆盖全部 route（ANY($1) 聚合变体），不是 N 次查询。
+		rows, err = reader.QueryFlowFactStatsMulti(ctx, observed, q.From, q.To)
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := summarizeRoutingRetry(rows)
+	out.Routes = routes
+	out.QueriedAt = s.statsClock().UTC()
+	return &out, nil
 }
 
 // QueryRoutingFlow 按 terminal_at 归属窗口查询一条路由类的完整链边聚合。

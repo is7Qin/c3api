@@ -51,6 +51,17 @@ func (f *fakeStore) QueryFlowFactStats(_ context.Context, routeClass domain.Rout
 	return f.routingFlowRows, nil
 }
 
+func (f *fakeStore) QueryFlowFactStatsMulti(_ context.Context, routeClasses []domain.RouteClassIDVal, from, to time.Time) ([]repository.RoutingFlowStat, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.routingMultiCalls++
+	f.routingMultiIDs = append([]domain.RouteClassIDVal(nil), routeClasses...)
+	if f.routingFactErr != nil {
+		return nil, f.routingFactErr
+	}
+	return f.routingFlowRows, nil
+}
+
 func (f *fakeStore) QueryObservedRouteClasses(_ context.Context, from, to time.Time) ([]domain.RouteClassIDVal, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
