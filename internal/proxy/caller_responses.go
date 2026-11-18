@@ -66,7 +66,8 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		var contEnqueued bool
 		// 终态观察（F1）：本车道是**透传**，终态帧由上游产生、网关只观察不伪造。
 		// 客户端判据只认 completed/failed/incomplete 三事件，故这里只做精确 type
-		// 判定（命中后才 json.Valid 复核，见 isResponsesTerminal）。
+		// 判定，外加确认帧已完整收齐（ev.Raw 帧尾空行，见 endsWithBlankLine）：
+		// EOF 残帧即便 type 已完整也不算终态（见 isResponsesTerminal）。
 		var terminalSeen bool
 		mapper := newResponseModelSSEMapper(sel.ClientResponseModel(reqModel))
 		err = sserelay.Relay(ctx, w, resp.Body, sserelay.Config{

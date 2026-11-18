@@ -493,10 +493,11 @@ func isResponsesCreated(data []byte) bool {
 //
 // 两个来源都认：`event:` 名与 data 顶层 `type`。**不调 ev.EventName()**——缺
 // `event:` 行时它会走 InferEventName 反序列化（每帧一次分配），这里两次
-// bytes.Equal 就够。命中后追加 json.Valid 复核：relay 会把 EOF 处的半截末行
-// 当空行派发（relay.go:454-475），若截断正好切在 `"type":"response.completed"`
-// 之后，没有复核就会把半截帧误判成已终态。复核只在命中时跑（罕见），常规帧
-// 仍只是一次 scanKeyValue + 若干次 bytes.Equal（零分配）。
+// bytes.Equal 就够。命中后还要确认帧**已完整收齐**：relay 会把 EOF 处的半截
+// 末行当空行派发（relay.go:454-475），若截断正好切在 `"type":"response.completed"`
+// 之后，只看名字就会把半截帧误判成已终态。完整性改看 ev.Raw 的空行后缀
+// （O(1)，见 endsWithBlankLine）而不再 json 解码整帧：终态帧可达 MB 级，逐字节
+// 校验是 O(帧体)，本机 1 MB 帧实测 ~0.97 ms，白烧在每条流的收尾处。
 func isResponsesTerminal(ev sserelay.Event) bool {
 	if !isResponsesTerminalType(ev.Event) {
 		start, end, ok := scanKeyValue(ev.Data, typeKeyBytes)
@@ -507,8 +508,39 @@ func isResponsesTerminal(ev sserelay.Event) bool {
 			return false
 		}
 	}
-	// 半截末行（EOF 截断）即便 type 已完整也不得算作已终态。
-	return json.Valid(ev.Data)
+	// 半截末行（EOF 截断）即便 type 已完整也不得算作已终态：完整性看 Raw 的
+	// 空行后缀（O(1)、零分配），不再对帧体做 json 校验。
+	return endsWithBlankLine(ev.Raw)
+}
+
+// endsWithBlankLine 报告 raw 是否以「空行」结束——即 relay 已把这帧完整收齐。
+//
+// 为什么看空行而不 json.Valid：帧体可达 MB 级，逐字节校验是 O(帧体)；空行后缀
+// 只在末尾 ≤3 字节，O(1) 且零分配。契约来自 sserelay.Event.Raw（完整原始帧，
+// 含结尾空行）。
+//
+// 只查**两个区分性后缀**（不是四个）：空行与前一行各可 LF / CRLF 收尾，组合共
+// 四种，两个后缀即可全辨：
+//
+//	\n\n   —— 覆盖 \n\n（LF/LF）与 \r\n\n（前一行 CRLF、空行 LF）；
+//	\n\r\n —— 覆盖 \n\r\n（空行 CRLF、前一行 LF）与 \r\n\r\n（CRLF/CRLF）。
+//
+// 再写一条 \r\n\r\n 分支是死代码：它的末三字节就是 \n\r\n，第二条先命中；多这一条
+// 还会顶破内联预算（-gcflags=-m 实测 cost 99 > 80；两条后缀本机 cost 54，可内联）。
+//
+// 为什么必须是**两个相邻**终止符：EOF 残帧是 rb.rest() 切出的无换行残尾
+// （relay.go:264-272、:446-476），其 Raw 可能只以单个 \r\n 结束（末行完整、只缺
+// 终止空行），也可能连行终止符都没有。只要求「以某个终止符结尾」会把前者判成
+// 完整，正是原来的 json.Valid 复核要挡的那类误判。
+//
+// 孤 \r 不必处理：relay 只把 \n 与 \r\n 当行终止符（relay.go:485-495），孤 \r
+// 留在行内，不可能出现在空行位置。生产路径的 Raw 恒非空（relay.go:469-475、
+// :484-495），空 Raw 落 false，无需回退分支。
+func endsWithBlankLine(raw []byte) bool {
+	n := len(raw)
+	// 两个区分性后缀，顺序判定、最多看 3 字节。
+	return n >= 2 && raw[n-2] == '\n' && raw[n-1] == '\n' ||
+		n >= 3 && raw[n-3] == '\n' && raw[n-2] == '\r' && raw[n-1] == '\n'
 }
 
 // isResponsesTerminalType 事件名/type 值是否落在终态集合内（三种）。

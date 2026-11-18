@@ -42,12 +42,49 @@ const (
 	respTermIncomplete = `{"type":"response.incomplete","response":{"id":"resp_t","object":"response","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`
 )
 
-// sseData 组一帧 SSE（event 名为空 = data-only 帧）。
+// frameTail 帧的收尾形态——relay 的三种真实产物（relay.go:404-434、:264-272）。
+type frameTail int
+
+const (
+	tailComplete frameTail = iota // 完整帧：`data:` 行 + 结尾空行（正常切帧）
+	tailLineOnly                  // 末行完整、只缺结尾空行（EOF 时已切出的最后一个整行）
+	tailNoTerm                    // 无行终止符的残尾（rb.rest() 原样切出的半截末行）
+)
+
+// sseData 组一帧 SSE（event 名为空 = data-only 帧），含结尾空行——完整帧形态。
+// 全文件**唯一**的 wire 拼装点：frameEvent 与集成用例共用，避免同一格式两份真相
+// 漂移后单测测的是 relay 不会产出的形态。
 func sseData(event, data string) string {
 	if event == "" {
 		return "data: " + data + "\n\n"
 	}
 	return "event: " + event + "\ndata: " + data + "\n\n"
+}
+
+// frameEvent 造一帧 relay 真实形态的事件：wire 由 sseData 给出（唯一真相），再按
+// tail 削掉结尾。三种收尾都必须造得出来——终态判据看的是 Raw 的空行后缀
+// （sserelay.Event.Raw 契约：完整原始帧，含结尾空行），只造完整帧测不到残帧路径。
+func frameEvent(event, data string, tail frameTail) sserelay.Event {
+	raw := sseData(event, data)
+	switch tail {
+	case tailLineOnly: // 去掉空行，保留 `data:` 行自己的行终止符
+		raw = strings.TrimSuffix(raw, "\n")
+	case tailNoTerm: // 连行终止符也不留
+		raw = strings.TrimSuffix(strings.TrimSuffix(raw, "\n"), "\n")
+	}
+	return sserelay.Event{Raw: []byte(raw), Event: []byte(event), Data: []byte(data)}
+}
+
+// terminalPayload 造一个约 size 字节的 response.completed 载荷（type 在前、
+// pad 补长），用于「终态帧可达 MB 级」的回归锁。
+func terminalPayload(size int) string {
+	const head = `{"type":"response.completed","response":{"id":"r","pad":"`
+	const tail = `"}}`
+	pad := size - len(head) - len(tail)
+	if pad < 0 {
+		pad = 0
+	}
+	return head + strings.Repeat("a", pad) + tail
 }
 
 // sseTopLevelTypes 按 SSE 空行切帧，返回每帧 data 载荷的顶层 type（多行 data 合并；
@@ -514,11 +551,11 @@ func TestResponsesPassthroughEmpty200And204NotStream(t *testing.T) {
 }
 
 // TestIsResponsesTerminal spec §3.1/§4-4/§4-5/§4-6：终态嗅探的两个来源 + 顶层
-// 判定 + json.Valid 复核。
+// 判定 + 帧完整性（Raw 的空行后缀）。事件一律按 relay 真实形态构造 Raw，否则
+// 测的是「Raw 恒空」的假路径。
 func TestIsResponsesTerminal(t *testing.T) {
-	terminal := func(name, data string) bool {
-		return isResponsesTerminal(sserelay.Event{Event: []byte(name), Data: []byte(data)})
-	}
+	terminal := func(name, data string) bool { return isResponsesTerminal(frameEvent(name, data, tailComplete)) }
+	truncated := func(name, data string) bool { return isResponsesTerminal(frameEvent(name, data, tailLineOnly)) }
 	// 两个来源都认。
 	require.True(t, terminal("response.completed", `{"response":{"id":"r"}}`), "只有 event: 名也算终态")
 	require.True(t, terminal("", `{"type":"response.completed","response":{"id":"r"}}`), "只有 data.type 也算终态")
@@ -529,30 +566,134 @@ func TestIsResponsesTerminal(t *testing.T) {
 		"正文子串不得当终态")
 	require.False(t, terminal("", `{"delta":"response.completed"}`))
 	require.False(t, terminal("response.created", `{"type":"response.created"}`))
-	// json.Valid 复核：type 已完整但载荷被 EOF 截断 ⇒ 不算终态。
-	require.False(t, terminal("", `{"type":"response.completed","response":{"id":"r"`), "半截 JSON 不算终态")
-	require.False(t, terminal("response.completed", `{"type":"response.completed"`), "event 名 + 半截 data 也不算")
+	// 完整性复核：type 已完整但载荷被 EOF 截断（缺结尾空行）⇒ 不算终态。
+	require.False(t, truncated("", `{"type":"response.completed","response":{"id":"r"`), "半截 JSON 不算终态")
+	require.False(t, truncated("response.completed", `{"type":"response.completed"`), "event 名 + 半截 data 也不算")
 	// 空 / 非 JSON / 结构未闭合（scanKeyValue 直接判定无该键）。
 	require.False(t, terminal("", ""))
 	require.False(t, terminal("", "not-json"))
 	require.False(t, terminal("", `{"type":`))
 	require.False(t, terminal("", `{"type":"`))
+	// 判据边界：完整性只看 ev.Raw 的空行后缀，**不再看 data 的 JSON 合法性**——
+	// 旧 json.Valid 复核的替代物就是它，两者不是「与」的关系。名字已命中 + 帧已
+	// 完整收齐 ⇒ 终态，与载荷能否解码无关。
+	//
+	// 这是**故意的不一致 Event**（Raw 是完整帧、Data 是半截 JSON）：锚定的是判据
+	// 边界而非 relay 的真实产物（生产路径 Raw 恒与 Data 同源）。没有这条，"把整帧
+	// json 校验加回来"这种退化不会让任何用例变红——json.Valid 在该载荷形状下不
+	// 分配，"1 MB 零分配"断言对它没有鉴别力。
+	require.True(t, isResponsesTerminal(sserelay.Event{
+		Raw:   []byte("event: response.completed\ndata: {\"type\":\"response.completed\"\n\n"),
+		Event: []byte("response.completed"),
+		Data:  []byte(`{"type":"response.completed"`), // 刻意不合法
+	}), "判定不得依赖 data 的 JSON 合法性")
 }
 
-// TestIsResponsesTerminalZeroAlloc 热路径纪律：常规帧（非终态）零分配——若改成
-// ev.EventName() 逐帧推断，这里就会红。
-func TestIsResponsesTerminalZeroAlloc(t *testing.T) {
-	named := sserelay.Event{
-		Event: []byte("response.output_text.delta"),
-		Data:  []byte(respTermDelta),
+// TestIsResponsesTerminalFrameCompleteness spec §5.3 守卫：帧完整性判据必须同时
+// 满足「两种行终止符都认」与「必须两个相邻终止符」。用例逐条 t.Run——同一子测试内
+// require 会 fail-fast，判据退化后就看不到后面的守卫。
+//
+// 变异自证：退化成只认 bytes.HasSuffix(raw, "\n\n") ⇒ 纯 CRLF 与「LF 行 + CRLF 空行」
+// 两条完整帧用例红；退化成「只认单个行终止符」⇒ 两条缺空行残帧用例红。
+func TestIsResponsesTerminalFrameCompleteness(t *testing.T) {
+	const data = `{"type":"response.completed"}`
+	// frame 用两条行终止符拼一帧：prev 收 data 行、blank 作空行（"" = 缺空行）。
+	// 这里的 raw 必须逐字节手拼——被测的就是行终止符组合本身。
+	frame := func(prev, blank string) sserelay.Event {
+		return sserelay.Event{
+			Raw:   []byte("event: response.completed" + prev + "data: " + data + prev + blank),
+			Event: []byte("response.completed"),
+			Data:  []byte(data),
+		}
 	}
+	cases := []struct {
+		name string
+		ev   sserelay.Event
+		want bool
+		why  string
+	}{
+		{"lf", frame("\n", "\n"), true, "LF 完整帧（\\n\\n）"},
+		{"crlf", frame("\r\n", "\r\n"), true, "CRLF 完整帧（\\r\\n\\r\\n）"},
+		{"crlf-line-lf-blank", frame("\r\n", "\n"), true, "混合：前一行为 CRLF、空行 LF（…}\\r\\n\\n）"},
+		{"lf-line-crlf-blank", frame("\n", "\r\n"), true, "混合：前一行为 LF、空行 CRLF（…}\\n\\r\\n）"},
+		{"lf-no-blank", frame("\n", ""), false, "LF 残帧：末行完整、缺终止空行"},
+		{"crlf-no-blank", frame("\r\n", ""), false, "CRLF 残帧：末行完整、缺终止空行"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, isResponsesTerminal(tc.ev), tc.why)
+		})
+	}
+	// 防御面：生产路径 Raw 恒非空，但空 Raw 不得 panic、也不得算终态。
+	require.False(t, isResponsesTerminal(sserelay.Event{Data: []byte(respTermDone)}), "Raw 为空不得算终态")
+	// 无行终止符的残尾（relay.go:264-272 的 rb.rest() 形态：一个 \n 都没有）—
+	// 必须判未终态。tailNoTerm 的 helper 能力此前只有 e2e 覆盖，这里补结构面。
+	require.False(t, isResponsesTerminal(frameEvent("response.completed", data, tailNoTerm)),
+		"无行终止符的残尾不得算终态")
+}
+
+// TestIsResponsesTerminalUnterminatedIsTightening 有意收紧（spec §3 坑 2 / §4.1）：
+// 终态帧的 `data:` 行已完整写出、载荷本身也是完整合法的终态 JSON，**只缺结尾空行**
+// 时必须判「未终态」——这不是漏判。relay 原样写 frame.Bytes()，客户端收到的字节
+// 同样没有结尾空行，多数 SSE 解析器不会派发这个未终止事件 ⇒ 网关必须按未终态收口
+// 并补一条真终态帧（旧口径下这种流既不补终态又记 success，客户端最后报
+// "stream ended before a terminal response event"）。
+func TestIsResponsesTerminalUnterminatedIsTightening(t *testing.T) {
+	ev := frameEvent("response.completed",
+		`{"type":"response.completed","response":{"id":"r","status":"completed"}}`, tailLineOnly)
+	// 两条前提：载荷合法、帧确实缺空行。缺任何一条，本用例就退化成「半截 JSON」。
+	require.True(t, json.Valid(ev.Data), "前提：载荷是完整合法的终态 JSON，本用例锁的是帧完整性而非载荷合法性")
+	require.False(t, strings.HasSuffix(string(ev.Raw), "\n\n"), "前提：帧确实缺结尾空行")
+	require.False(t, isResponsesTerminal(ev), "缺空行的终态帧必须按未终态收口（有意收紧，不是漏判）")
+}
+
+// TestEndsWithBlankLineDegenerate 长度守卫（n>=2 / n>=3）的边界表：momus 的
+// n>=1 / n>=4 错位与下标写反变异此前全绿，其中两条还真会 panic。逐条 t.Run，
+// 让 panic 只打红自己那一格。
+func TestEndsWithBlankLineDegenerate(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want bool
+	}{
+		{"empty", "", false},
+		{"lf", "\n", false},
+		{"cr", "\r", false},
+		{"plain", "a", false},
+		{"crlf", "\r\n", false},
+		{"lf-cr", "\n\r", false},
+		{"blank-lf", "\n\n", true},
+		{"text-crlf", "a\r\n", false},
+		{"blank-crlf", "\r\n\r\n", true},
+		{"blank-lf-crlf", "\n\r\n", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var got bool
+			require.NotPanics(t, func() { got = endsWithBlankLine([]byte(tc.raw)) }, "退化输入不得 panic")
+			require.Equal(t, tc.want, got, "raw=%q", tc.raw)
+		})
+	}
+}
+
+// TestIsResponsesTerminalZeroAlloc 热路径纪律：常规帧（非终态）与 1 MB 终态帧都
+// 必须零分配——若改成 ev.EventName() 逐帧推断，前两条必红。
+//
+// 注意 1 MB 那条只锁新判据自身的分配数，**对 json.Valid 没有鉴别力**：go1.27 的
+// json.Valid 在该载荷上同样 0 allocs/op（本机实测，代价是 ~0.97 ms 的整帧扫描）。
+// 「别再退回整帧校验」由 TestIsResponsesTerminal 的判据边界用例与基准的 ns/op 锁。
+func TestIsResponsesTerminalZeroAlloc(t *testing.T) {
+	named := frameEvent("response.output_text.delta", respTermDelta, tailComplete)
 	require.Zero(t, testing.AllocsPerRun(100, func() { _ = isResponsesTerminal(named) }), "具名常规帧终态嗅探零分配")
 	// data-only（缺 event: 行）且 **type 不是首键**：InferEventName 的锚点快路径
 	// （typeAnchorPrefix）不命中 ⇒ 回退全量解码，每帧一次分配。若实现改调
 	// ev.EventName()，这里必红（首键形态有锚点快路径、不分配，鉴别力不足）。
-	dataOnly := sserelay.Event{Data: []byte(`{"item_id":"msg_1","type":"response.output_text.delta","delta":"hi"}`)}
+	dataOnly := frameEvent("", `{"item_id":"msg_1","type":"response.output_text.delta","delta":"hi"}`, tailComplete)
 	require.Zero(t, testing.AllocsPerRun(100, func() { _ = isResponsesTerminal(dataOnly) }),
 		"data-only 帧终态嗅探零分配（不得走 EventName 推断）")
+	// 1 MB 终态帧：旧判据在这里是 ~1 ms 的整帧扫描；空行后缀只看末尾 ≤3 字节。
+	huge := frameEvent("response.completed", terminalPayload(1<<20), tailComplete)
+	require.Zero(t, testing.AllocsPerRun(20, func() { _ = isResponsesTerminal(huge) }), "1 MB 终态帧终态嗅探零分配")
 }
 
 // TestWriteClientStreamErrorSkipsSecondTerminal spec §3.4：已见客户端终态时出口
@@ -695,9 +836,11 @@ func TestCodexConvertedLaneTerminalComesFromPlan(t *testing.T) {
 //
 // 为什么用「截断的 completed 帧」：哨兵若晚于 StepIdentity，只有 `usageTaken`
 // 为真的截断才会走进推进分支（纯 delta 截断的 usageTaken=false，顺序不可观测）。
-// 故上游发 `{"type":"response.completed",…, "usage":{…}`（type 与 usage 都在、
-// JSON 不合法）⇒ usageTaken=true 而 isResponsesTerminal=false，正是该顺序的
-// 可观测形态。
+// 故上游发 `data: {"type":"response.completed",…, "usage":{…}`（type 与 usage 的
+// 字节都在、JSON 不合法）**且不留帧尾**（末行无行终止符 = EOF 残帧，relay.go:446-476
+// 的残尾形态）⇒ usageTaken=true 而 isResponsesTerminal=false，正是该顺序的可观测
+// 形态。残帧必须真的缺结尾空行：终态判据看帧结构完整性，补上 `\n\n` 就变成
+// 「完整帧 + 坏 JSON」，判据会认作已终态，本用例随即失去观测面。
 //
 // 观测面用行为而不是私有字段：WMax=1 时跨窗即退休换线程，而一个窗口 = 48..96
 // 轮（spanHi=96）⇒ 推进 97 次必换线程、不推进则线程/window 恒为首轮。
@@ -724,7 +867,8 @@ func TestCodexResponsesTruncationDoesNotAdvanceIdentity(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 		fl := w.(http.Flusher)
 		if calls.Add(1) <= drives {
-			_, _ = io.WriteString(w, "data: "+truncated+"\n\n")
+			// 残帧：只写 data 行、不留行终止符/空行（真实 EOF 截断形态）。
+			_, _ = io.WriteString(w, "data: "+truncated)
 		} else {
 			_, _ = io.WriteString(w, "data: "+t6RespCreated+"\n\n"+"data: "+t6RespDone+"\n\n")
 		}
