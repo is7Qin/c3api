@@ -221,7 +221,7 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 	snapReg, disp, listener, authSync := bl.snapReg, bl.disp, bl.listener, bl.authSync
 	supplierViewLoader, suppRepo := bl.supplierViewLoader, bl.suppRepo
 	effectiveInflight, qualityRecorder := cx.effectiveInflight, cx.qualityRecorder
-	px, codexAdapter, probe := cx.px, cx.codex, cx.probe
+	px, codexAdapter, bpsAdapter, probe := cx.px, cx.codex, cx.bps, cx.probe
 	retryWorker, quotaW := cx.retryWorker, cx.quotaW
 	contBindW, convW, pricingSync := cx.contBindW, cx.convW, cx.pricingSync
 	qualitySync := cx.qualitySync
@@ -434,7 +434,14 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 	r.shutdownHTTP = func(ctx context.Context) { shutdownHTTPServer(ctx, r.httpSrv, r.drain, r.log) }
 	r.closeWS = r.px.CloseAllWS
 	r.waitInflight = func(ctx context.Context) { waitForInflight(r.px, ctx, r.log) }
-	r.tail = func(ctx context.Context) { shutdownTail(ctx, r.wm, r.quality, r.rdb, r.log) }
+	r.tail = func(ctx context.Context) {
+		if bpsAdapter != nil {
+			if err := bpsAdapter.Close(); err != nil {
+				r.log.Warn("shutdown: BPS client cache close failed", logx.Error(err))
+			}
+		}
+		shutdownTail(ctx, r.wm, r.quality, r.rdb, r.log)
+	}
 	return r
 }
 

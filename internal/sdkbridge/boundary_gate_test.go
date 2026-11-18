@@ -129,6 +129,33 @@ func TestSDKImportsOnlyInBridge(t *testing.T) {
 		len(prodHits), len(sdkImportAllowlist), len(testHits), len(sdkTestImportAllowlist))
 }
 
+// TestBPSImportsOnlyInBridge mirrors the Codex boundary for bps-sdk,
+// including test files. Provider-specific errors and wire types belong in this
+// package; proxy tests must use the provider-neutral sdkbridge contract.
+func TestBPSImportsOnlyInBridge(t *testing.T) {
+	root := moduleRoot(t)
+	const bpsImportPath = "github.com/is7Qin/bps-sdk"
+	var hits []string
+	for _, f := range goFiles(t, root) {
+		rel := relSlash(root, f)
+		if strings.HasPrefix(rel, selfPkgDir+"/") {
+			continue
+		}
+		fset := token.NewFileSet()
+		af, err := parser.ParseFile(fset, f, nil, parser.ImportsOnly)
+		require.NoError(t, err, "解析 %s", rel)
+		for _, spec := range af.Imports {
+			p := strings.Trim(spec.Path.Value, "\\\"")
+			if p == bpsImportPath || strings.HasPrefix(p, bpsImportPath+"/") {
+				hits = append(hits, rel)
+				break
+			}
+		}
+	}
+	sort.Strings(hits)
+	require.Empty(t, hits, "bps-sdk 只能由 %s 持有；proxy/service/handler 测试也必须使用 sdkbridge contract", selfPkgDir)
+}
+
 // moduleRoot 从当前测试的工作目录向上找 go.mod。
 func moduleRoot(t *testing.T) string {
 	t.Helper()

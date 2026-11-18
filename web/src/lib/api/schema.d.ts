@@ -317,7 +317,7 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** 读取账号类型化鉴权扩展（编辑回显；仅 codex-oauth/codex-pat 账号有 ext 行） */
+        /** 读取账号类型化鉴权扩展（编辑回显；Codex/BPS 账号有 ext 行，BPS profile 不回显） */
         get: operations["GetAccountsIdExt"];
         /** 幂等写入账号类型化鉴权扩展（Create/Update 合一；全列更新含 NULL 清空） */
         put: operations["PutAccountsIdExt"];
@@ -3211,10 +3211,10 @@ export interface components {
             /** Format: int64 */
             account_id?: number;
             /**
-             * @description 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
+             * @description 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key；bps 只允许 OAuth 列组，profile 仅存储不回显
              * @enum {string}
              */
-            credential_type: "codex-oauth" | "codex-pat";
+            credential_type: "codex-oauth" | "codex-pat" | "bps";
             codex_identity?: components["schemas"]["CodexIdentity"];
             /** @description 凭据：oauth 访问令牌（oauth 行必填——最小完整性） */
             codex_oauth_token?: string | null;

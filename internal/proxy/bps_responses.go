@@ -56,9 +56,13 @@ func isBPSLocalReject(err error) bool {
 
 var errBPSInvalidBody = &formatError{status: http.StatusBadRequest, msg: "invalid request body"}
 
+func writeBPSInvalidBodyFrame(ctx context.Context, client *websocket.Conn) error {
+	return writeCodexInvalidBodyFrame(ctx, client)
+}
+
 func (p *Proxy) bpsHTTPError(ctx context.Context, w http.ResponseWriter, reqID string, groupID int64, start time.Time, sel *scheduler.Selection, reqModel string, err error) (int, []byte, bool, error) {
 	if isBPSLocalReject(err) {
-		sel.Release()
+		p.finishBPSLocalReject(ctx, reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponses)
 		writeErr(w, errBPSInvalidBody)
 		return 0, nil, true, nil
 	}

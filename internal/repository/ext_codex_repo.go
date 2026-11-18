@@ -24,9 +24,9 @@ import (
 	"github.com/is7qin/c3api/internal/ent/accountext"
 )
 
-// AccountExtRepo 账号类型化鉴权扩展（account_ext 1:1 边缘表；codex 专用——
-// credential_type ∈ {codex-oauth, codex-pat}，codex 列组：codex_identity
-// （持久身份 jsonb，仅 installation_id；service 导入时自动生成、持久复用）+
+// AccountExtRepo 账号类型化鉴权扩展（account_ext 1:1 边缘表；Codex/BPS
+// provider-specific validation and shared identity envelope；Codex 列组：codex_identity
+// （持久身份 jsonb，含 installation_id/BPS profile）+
 // codex_oauth_* 组 + codex_pat_key 组；列组类型约束由 service 校验）。未来
 // claude oauth 等新类型 → 新增 ext_claude_repo.go 同构。
 type AccountExtRepo struct {

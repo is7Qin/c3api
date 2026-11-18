@@ -81,7 +81,7 @@ func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Sele
 // callErr and client context.
 func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, ctx context.Context) AttemptOutcome {
 	clientCancel := code == 0 && ctx != nil && ctx.Err() != nil
-	accountFatal := !clientCancel && callErr != nil && sdkbridge.IsFatal(callErr)
+	accountFatal := !clientCancel && callErr != nil && (sdkbridge.IsFatal(callErr) || sdkbridge.IsBPSAccountFatal(callErr))
 	terminal := true
 	var bpsErr *bpsAttemptError
 	noRetryBPS := errors.As(callErr, &bpsErr) && bpsErr.noRetry

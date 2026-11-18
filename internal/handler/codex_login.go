@@ -5,6 +5,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -45,19 +46,33 @@ func (h *AdminAPI) PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.R
 
 // PostAccountsCodexDeviceLoginComplete performs exactly one manual completion.
 func (h *AdminAPI) PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
+	body, err := httpface.DecodeRaw(r)
+	if err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
 	var in CodexDeviceLoginCompleteBody
-	if err := httpface.Decode(r, &in); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(body))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil {
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			err = errors.New("unexpected trailing data after JSON body")
+		}
+		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+		return
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
 	var profile []byte
-	if in.BpsProfile != nil {
-		var err error
-		profile, err = json.Marshal(*in.BpsProfile)
-		if err != nil {
-			httpface.WriteErr(w, http.StatusBadRequest, "invalid bps_profile")
-			return
-		}
+	if raw, ok := fields["bps_profile"]; ok && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		profile = append([]byte(nil), raw...)
 	}
 	res, err := h.svc.CompleteDeviceLogin(r.Context(), loginProvider(in.Provider), in.DeviceAuthId, in.UserCode, in.TemplateId, in.GroupId, profile)
 	if err != nil {

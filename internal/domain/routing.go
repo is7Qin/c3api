@@ -327,7 +327,9 @@ func AccountCandidateFingerprint(a *Account) (CandidateFingerprintVal, error) {
 		return CandidateFingerprintVal{}, fmt.Errorf("routing: missing account or template")
 	}
 	baseURL := a.Template.BaseURL
-	if a.BaseURL != nil && *a.BaseURL != "" {
+	if a.Template.CredentialType.IsBPS() {
+		baseURL = BPSDefaultEndpoint
+	} else if a.BaseURL != nil && *a.BaseURL != "" {
 		baseURL = *a.BaseURL
 	}
 	// 只读账号级稳定身份项：installation_id（CodexIdentity 退役为运行时槽状态后

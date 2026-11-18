@@ -30,8 +30,8 @@ var ErrConflict = errors.New("repository: conflict")
 // ErrInvalidInput 表示写入会破坏跨实体业务不变量。
 var ErrInvalidInput = errors.New("repository: invalid input")
 
-// ErrProviderNotWired prevents management writes from creating BPS rows before
-// the raw-profile persistence and adapter wiring are complete.
+// ErrProviderNotWired rejects a BPS extension/account write that bypasses the
+// transaction/CAS entry point required for profile and identity fencing.
 var ErrProviderNotWired = errors.New("repository: provider not wired")
 
 // --- 批量更新字段子集（nil 字段 = 不更新） ---

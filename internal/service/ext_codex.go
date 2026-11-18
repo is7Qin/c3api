@@ -15,9 +15,9 @@ import (
 	"github.com/is7qin/c3api/internal/repository"
 )
 
-// —— 账号类型化鉴权扩展（account_ext 1:1；codex 专用——账号只两种 codex 类型，
-// codex 列组：持久身份（codex_identity jsonb 单列——仅 installation_id）+
-// codex_oauth_* 组 + codex_pat_key 组。数据层 CRUD + 契约） ——
+// —— 账号类型化鉴权扩展（account_ext 1:1；Codex/BPS 共用 OAuth 列组与
+// codex_identity JSONB envelope，Codex 额外维护 installation_id，BPS 维护 opaque
+// profile；PAT 列组仍仅适用于 Codex）。数据层 CRUD + 契约） ——
 
 // NewCodexIdentity 生成 codex 账号持久身份（账号导入时自动生成、持久复用；
 // 纯函数零依赖——标准库 crypto/rand 构造 UUIDv4 形状）。持久身份现只含安装级

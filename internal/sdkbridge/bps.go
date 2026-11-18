@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/coder/websocket"
@@ -71,14 +72,33 @@ func BPSFormatTransport(format domain.RequestFormat) (BPSTransport, error) {
 // BPS is the independent BPS adapter. Redis persistence is implemented by
 // bps-sdk/redisstore; c3api supplies its existing Redis connection and only
 // freezes the c3 owner/K scope when constructing the SDK TokenAuth.
+type bpsClientEntry struct {
+	key       string
+	client    *bpssdk.Client
+	accountID int64
+	transport BPSTransport
+}
+
 type BPS struct {
 	redisStore *bpsredis.Store
 	storeErr   error
+	failure    FailureHandler
+	mu         sync.Mutex
+	clients    map[string]*bpsClientEntry
+	fatalMu    sync.Mutex
+	fatal      map[string]bool
 }
 
-func NewBPS(rdb redis.Scripter) *BPS {
+// NewBPS receives the application's Redis connection; the SDK-owned redisstore
+// retains token ownership. The optional failure callback is the c3api K-fenced
+// account-failure seam shared with the Codex adapter.
+func NewBPS(rdb redis.Scripter, failure ...FailureHandler) *BPS {
 	store, err := bpsredis.New(rdb)
-	return &BPS{redisStore: store, storeErr: err}
+	var fh FailureHandler
+	if len(failure) > 0 {
+		fh = failure[0]
+	}
+	return &BPS{redisStore: store, storeErr: err, failure: fh, clients: make(map[string]*bpsClientEntry), fatal: make(map[string]bool)}
 }
 
 // BPSRequestSource is the one frozen input bundle for a BPS attempt. Keeping
@@ -102,8 +122,11 @@ type BPSPrepared struct {
 	transport        BPSTransport
 	upstreamAccount  string
 	profile          json.RawMessage
+	profileHash      string
 	egress           *egress.Client
 	client           *bpssdk.Client
+	fatalOnce        sync.Once
+	reportFatal      func(error)
 }
 
 func (p *BPSPrepared) AccountID() int64             { return p.accountID }
@@ -116,7 +139,7 @@ func (p *BPSPrepared) ProfileJSON() []byte          { return append([]byte(nil),
 
 // Prepare validates BPS-only credential/profile invariants, derives transport
 // from format, and creates a client using the fixed SDK endpoint. The c3
-// account/K owner is passed only to BPSTokenStore; NewTokenAuth receives the
+// account/K owner is passed only to the SDK-owned redisstore TokenStore; NewTokenAuth receives the
 // verified upstream CodexAccountID exactly as required by the SDK.
 func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepared, error) {
 	if a == nil || a.redisStore == nil || a.storeErr != nil {
@@ -154,41 +177,95 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 	if rt == nil {
 		return nil, ErrBPSEgressRequired
 	}
-	store, err := a.redisStore.ForOwner(bpsredis.Owner{
-		ID: fmt.Sprint(cred.AccountID), Revision: cred.IdentityRevision,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrBPSStoreUnavailable, err)
+	profileHash := domain.BPSProfileHash(profile)
+	cacheKey := fmt.Sprintf("%d:%d:%s:%s:%x:%s", cred.AccountID, cred.IdentityRevision, cred.CodexAccountID, profileHash, source.Egress.Spec.Key(), transport.String())
+	a.mu.Lock()
+	entry := a.clients[cacheKey]
+	if entry == nil {
+		store, storeErr := a.redisStore.ForOwner(bpsredis.Owner{
+			ID: fmt.Sprint(cred.AccountID), Revision: cred.IdentityRevision,
+		})
+		if storeErr != nil {
+			a.mu.Unlock()
+			return nil, fmt.Errorf("%w: %w", ErrBPSStoreUnavailable, storeErr)
+		}
+		auth, authErr := bpssdk.NewTokenAuth(
+			cred.OAuthToken, cred.OAuthRefreshToken, cred.CodexAccountID, "",
+			store, bpssdk.WithAuthHTTPTransport(rt),
+		)
+		if authErr != nil {
+			a.mu.Unlock()
+			a.reportFatal(cacheKey, cred, authErr)
+			return nil, authErr
+		}
+		options := []bpssdk.Option{
+			bpssdk.WithEndpoint(domain.BPSDefaultEndpoint),
+			bpssdk.WithDeviceProfileJSON(profile),
+			bpssdk.WithHTTPTransport(rt),
+			bpssdk.WithUnboundedConcurrency(),
+			bpssdk.WithRequestBudget(bpssdk.Budget{MaxRequests: -1}),
+			bpssdk.WithRawResponse(true),
+		}
+		if transport == BPSTransportWS {
+			options = append(options, bpssdk.WithResponsesTransport(bpssdk.TransportWS))
+		} else {
+			options = append(options, bpssdk.WithResponsesTransport(bpssdk.TransportHTTP))
+		}
+		sdkClient, authErr := bpssdk.NewClient(auth, options...)
+		if authErr != nil {
+			a.mu.Unlock()
+			a.reportFatal(cacheKey, cred, authErr)
+			return nil, authErr
+		}
+		entry = &bpsClientEntry{key: cacheKey, client: sdkClient, accountID: cred.AccountID, transport: transport}
+		for key, old := range a.clients {
+			if old.accountID == cred.AccountID && old.transport == transport && key != cacheKey {
+				delete(a.clients, key)
+				_ = old.client.Close()
+			}
+		}
+		a.clients[cacheKey] = entry
+		a.fatalMu.Lock()
+		delete(a.fatal, fmt.Sprintf("%d:%d", cred.AccountID, cred.IdentityRevision))
+		a.fatalMu.Unlock()
 	}
-	auth, err := bpssdk.NewTokenAuth(
-		cred.OAuthToken, cred.OAuthRefreshToken, cred.CodexAccountID, "",
-		store, bpssdk.WithAuthHTTPTransport(rt),
-	)
-	if err != nil {
-		return nil, err
-	}
-	options := []bpssdk.Option{
-		bpssdk.WithEndpoint(domain.BPSDefaultEndpoint),
-		bpssdk.WithDeviceProfileJSON(profile),
-		bpssdk.WithHTTPTransport(rt),
-		bpssdk.WithUnboundedConcurrency(),
-		bpssdk.WithRequestBudget(bpssdk.Budget{MaxRequests: -1}),
-		bpssdk.WithRawResponse(true),
-	}
-	if transport == BPSTransportWS {
-		options = append(options, bpssdk.WithResponsesTransport(bpssdk.TransportWS))
-	} else {
-		options = append(options, bpssdk.WithResponsesTransport(bpssdk.TransportHTTP))
-	}
-	sdkClient, err := bpssdk.NewClient(auth, options...)
-	if err != nil {
-		return nil, err
-	}
+	a.mu.Unlock()
 	return &BPSPrepared{
 		accountID: cred.AccountID, identityRevision: cred.IdentityRevision,
 		format: source.Format, transport: transport, upstreamAccount: cred.CodexAccountID,
-		profile: profile, egress: source.Egress, client: sdkClient,
+		profile: append(json.RawMessage(nil), profile...), egress: source.Egress, client: entry.client,
+		profileHash: profileHash, reportFatal: func(err error) { a.reportFatal(cacheKey, cred, err) },
 	}, nil
+}
+
+func (a *BPS) reportFatal(cacheKey string, cred domain.AccountCredential, err error) {
+	if a == nil || ClassifyBPSFailure(err).Kind != BPSFailureAccountFatal {
+		return
+	}
+	a.mu.Lock()
+	if entry := a.clients[cacheKey]; entry != nil {
+		delete(a.clients, cacheKey)
+		_ = entry.client.Close()
+	}
+	a.mu.Unlock()
+	key := fmt.Sprintf("%d:%d", cred.AccountID, cred.IdentityRevision)
+	a.fatalMu.Lock()
+	if a.fatal[key] {
+		a.fatalMu.Unlock()
+		return
+	}
+	a.fatal[key] = true
+	a.fatalMu.Unlock()
+	if a.failure != nil {
+		a.failure(CredentialFailure{AccountID: cred.AccountID, SourceRevision: cred.IdentityRevision, Cause: err})
+	}
+}
+
+func (p *BPSPrepared) report(err error) {
+	if p == nil || err == nil || p.reportFatal == nil {
+		return
+	}
+	p.fatalOnce.Do(func() { p.reportFatal(err) })
 }
 
 // Probe performs one authenticated catalog/access request on the selected
@@ -220,6 +297,7 @@ func (p *BPSPrepared) Responses(ctx context.Context, payload []byte) (BPSResult,
 	}
 	response, err := p.client.Responses(ctx, payload)
 	if err != nil {
+		p.report(err)
 		return BPSResult{}, err
 	}
 	raw := append(json.RawMessage(nil), response.Raw...)
@@ -239,7 +317,11 @@ func (p *BPSPrepared) Models(ctx context.Context) (*bpssdk.Catalog, error) {
 	if p.transport != BPSTransportHTTP {
 		return nil, fmt.Errorf("sdkbridge: BPS catalog probe requires HTTP format")
 	}
-	return p.client.Models(ctx)
+	catalog, err := p.client.Models(ctx)
+	if err != nil {
+		p.report(err)
+	}
+	return catalog, err
 }
 
 func (p *BPSPrepared) StreamBody(ctx context.Context, payload []byte) (*http.Response, error) {
@@ -249,7 +331,11 @@ func (p *BPSPrepared) StreamBody(ctx context.Context, payload []byte) (*http.Res
 	if p.transport != BPSTransportHTTP {
 		return nil, fmt.Errorf("sdkbridge: BPS stream body requires HTTP format")
 	}
-	return p.client.StreamBody(ctx, payload)
+	resp, err := p.client.StreamBody(ctx, payload)
+	if err != nil {
+		p.report(err)
+	}
+	return resp, err
 }
 
 // BPSStream is the provider-neutral WS frame reader. The bps-sdk Session and
@@ -308,16 +394,33 @@ func (p *BPSPrepared) DialFrame(ctx context.Context, frame []byte) (*BPSStream, 
 	}
 	session, err := p.client.DialFrame(ctx, frame)
 	if err != nil {
+		p.report(err)
 		return nil, err
 	}
 	return &BPSStream{session: session}, nil
 }
 
-func (p *BPSPrepared) Close() error {
-	if p == nil || p.client == nil {
+func (p *BPSPrepared) Close() error { return nil }
+
+// Close releases all cached SDK clients after the request/worker drain.
+func (a *BPS) Close() error {
+	if a == nil {
 		return nil
 	}
-	return p.client.Close()
+	a.mu.Lock()
+	entries := make([]*bpsClientEntry, 0, len(a.clients))
+	for key, entry := range a.clients {
+		delete(a.clients, key)
+		entries = append(entries, entry)
+	}
+	a.mu.Unlock()
+	var first error
+	for _, entry := range entries {
+		if err := entry.client.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
 }
 
 // BPSFailureKind is the provider-neutral BPS classifier contract. Policy is a
@@ -354,6 +457,10 @@ type bpsStatusError interface {
 // callers to bps-sdk sentinel errors.
 func IsBPSIdleTimeout(err error) bool {
 	return errors.Is(err, bpssdk.ErrStreamIdleTimeout)
+}
+
+func IsBPSAccountFatal(err error) bool {
+	return ClassifyBPSFailure(err).Kind == BPSFailureAccountFatal
 }
 
 func ClassifyBPSFailure(err error) BPSFailure {
@@ -420,7 +527,7 @@ func ClassifyBPSFailure(err error) BPSFailure {
 		failure.Kind = BPSFailureIncomplete
 		return failure
 	}
-	if bpssdk.IsInvalidRequestBody(err) || errors.Is(err, bpssdk.ErrRequestTooLarge) || errors.Is(err, bpssdk.ErrFrameTooLarge) {
+	if bpssdk.IsInvalidRequestBody(err) || errors.Is(err, bpssdk.ErrInvalidFrame) || errors.Is(err, bpssdk.ErrRequestTooLarge) || errors.Is(err, bpssdk.ErrFrameTooLarge) {
 		failure.Kind = BPSFailureLocalReject
 		return failure
 	}

@@ -13,6 +13,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
 )
 
 // ---------------------------------------------------------------------------
@@ -87,6 +90,51 @@ func newDeps(store *fakeStore, failer *fakeFailer) FailureDeps {
 func failEvent(accountID, sourceRevision int64, cause error) CredentialFailure {
 	return CredentialFailure{AccountID: accountID, SourceRevision: sourceRevision, Cause: cause}
 }
+
+type bpsCASFailureStore struct {
+	full *domain.Account
+	cas  int
+}
+
+func (s *bpsCASFailureStore) SetAccountFailed(context.Context, int64, time.Time, string) error {
+	return nil
+}
+func (s *bpsCASFailureStore) GetAccount(context.Context, int64) (*domain.Account, error) {
+	return &domain.Account{ID: s.full.ID, IdentityRevision: s.full.IdentityRevision}, nil
+}
+func (s *bpsCASFailureStore) GetAccountWithTemplate(context.Context, int64) (*domain.Account, error) {
+	return s.full, nil
+}
+func (s *bpsCASFailureStore) FailAccountCAS(context.Context, int64, int64, string, time.Time, string) error {
+	s.cas++
+	return nil
+}
+
+type bpsCASFailureFailer struct{ calls int }
+
+func (f *bpsCASFailureFailer) FailAccount(int64) { f.calls++ }
+
+func TestHandleFailureBPSLoadsProfileBeforeCandidateFence(t *testing.T) {
+	profile := []byte(`{"profile_id":"p"}`)
+	full := &domain.Account{
+		ID: 7, IdentityRevision: 3,
+		Template: &domain.Template{ID: 9, CredentialType: credential.TypeBPS},
+		Ext: &domain.AccountExt{
+			AccountID: 7, CredentialType: credential.TypeBPS,
+			CodexAccountID:  ptrString("upstream"),
+			CodexEmail:      ptrString("bps@example.com"),
+			CodexOAuthToken: ptrString("at"), CodexOAuthRefreshToken: ptrString("rt"),
+			BPSProfile: profile,
+		},
+	}
+	store, failer := &bpsCASFailureStore{full: full}, &bpsCASFailureFailer{}
+	err := HandleFailure(context.Background(), FailureDeps{Store: store, Failer: failer, Latch: newRetryFakeLatch()}, CredentialFailure{AccountID: 7, SourceRevision: 3, Cause: errors.New("bps auth fatal")})
+	require.NoError(t, err)
+	require.Equal(t, 1, store.cas)
+	require.Equal(t, 1, failer.calls)
+}
+
+func ptrString(s string) *string { return &s }
 
 func TestHandleFailure(t *testing.T) {
 	store, failer := &fakeStore{}, &fakeFailer{}

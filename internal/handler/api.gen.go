@@ -16,6 +16,7 @@ import (
 
 // Defines values for AccountExtCredentialType.
 const (
+	AccountExtCredentialTypeBps        AccountExtCredentialType = "bps"
 	AccountExtCredentialTypeCodexOauth AccountExtCredentialType = "codex-oauth"
 	AccountExtCredentialTypeCodexPat   AccountExtCredentialType = "codex-pat"
 )
@@ -600,11 +601,11 @@ type AccountExt struct {
 	// CodexPatKey 凭据：pat
 	CodexPatKey *string `json:"codex_pat_key"`
 
-	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
+	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key；bps 只允许 OAuth 列组，profile 仅存储不回显
 	CredentialType AccountExtCredentialType `json:"credential_type"`
 }
 
-// AccountExtCredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
+// AccountExtCredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key；bps 只允许 OAuth 列组，profile 仅存储不回显
 type AccountExtCredentialType string
 
 // AccountGroupsResponse defines model for AccountGroupsResponse.
@@ -3555,7 +3556,7 @@ type ServerInterface interface {
 	// 部分更新账号（三态：缺省=不变；可空标量 null=清空、""=400；不可空标量 null=400；有值=落值）
 	// (PATCH /accounts/{id})
 	PatchAccountsId(w http.ResponseWriter, r *http.Request, id int64, params PatchAccountsIdParams)
-	// 读取账号类型化鉴权扩展（编辑回显；仅 codex-oauth/codex-pat 账号有 ext 行）
+	// 读取账号类型化鉴权扩展（编辑回显；Codex/BPS 账号有 ext 行，BPS profile 不回显）
 	// (GET /accounts/{id}/ext)
 	GetAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64)
 	// 幂等写入账号类型化鉴权扩展（Create/Update 合一；全列更新含 NULL 清空）
@@ -3901,7 +3902,7 @@ func (_ Unimplemented) PatchAccountsId(w http.ResponseWriter, r *http.Request, i
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 读取账号类型化鉴权扩展（编辑回显；仅 codex-oauth/codex-pat 账号有 ext 行）
+// 读取账号类型化鉴权扩展（编辑回显；Codex/BPS 账号有 ext 行，BPS profile 不回显）
 // (GET /accounts/{id}/ext)
 func (_ Unimplemented) GetAccountsIdExt(w http.ResponseWriter, r *http.Request, id int64) {
 	w.WriteHeader(http.StatusNotImplemented)

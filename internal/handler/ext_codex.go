@@ -14,9 +14,9 @@ import (
 	"github.com/is7qin/c3api/internal/sdkbridge"
 )
 
-// —— 账号类型化鉴权扩展（account_ext 1:1；codex 专用——codex_identity jsonb
-// 持久身份（仅 installation_id）+ codex_oauth_* 组 + codex_pat_key 组；未来
-// claude oauth 等新类型 → 新增 ext_claude.go 同构） ——
+// —— 账号类型化鉴权扩展（account_ext 1:1；Codex/BPS 共用 codex_identity
+// JSONB envelope 与 OAuth 列组；PAT 列组仍仅适用于 Codex；BPS profile 只写入登录
+// contract，不在此响应面回显） ——
 
 // GetAccountsIdExt 账号类型化鉴权扩展（编辑回显；仅 codex-oauth/codex-pat
 // 账号有 ext 行，ServerInterface）。账号缺 id / 无 ext 行 → 404。

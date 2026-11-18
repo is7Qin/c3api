@@ -6,8 +6,6 @@ package proxy
 
 import (
 	"context"
-
-	bpssdk "github.com/is7Qin/bps-sdk"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -19,14 +17,19 @@ import (
 	"github.com/is7qin/c3api/internal/scheduler"
 )
 
-func TestBPSResponsesClassifiesTypedErrorsWithoutLosingStatus(t *testing.T) {
+type bpsTestStatusError int
+
+func (e bpsTestStatusError) Error() string   { return "BPS test upstream status" }
+func (e bpsTestStatusError) StatusCode() int { return int(e) }
+
+func TestBPSResponsesPreservesProviderNeutralStatus(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		err  error
 		code int
 	}{
-		{name: "rate", err: &bpssdk.RateLimitError{APIError: bpssdk.APIError{Status: 429, Raw: []byte(`{"error":"slow"}`)}}, code: 429},
-		{name: "policy", err: &bpssdk.PolicyError{APIError: bpssdk.APIError{Status: 403, Raw: []byte(`{"error":"policy"}`)}}, code: 403},
+		{name: "rate", err: bpsTestStatusError(http.StatusTooManyRequests), code: http.StatusTooManyRequests},
+		{name: "policy", err: bpsTestStatusError(http.StatusForbidden), code: http.StatusForbidden},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			code, safe := bpsErrorResponse(tc.err)

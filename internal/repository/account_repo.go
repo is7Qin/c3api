@@ -172,7 +172,7 @@ func (r *AccountRepo) GetAccountWithTemplate(ctx context.Context, id int64) (*do
 	row, err := r.client.Account.Query().
 		Where(account.IDEQ(id)).
 		Where(accountOwnerPred(domain.AccountScopeFrom(ctx))...).
-		WithTemplate().Only(ctx)
+		WithTemplate().WithExt().Only(ctx)
 	if err != nil {
 		return nil, errMissingID(err, id)
 	}

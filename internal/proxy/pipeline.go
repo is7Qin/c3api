@@ -375,7 +375,7 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 	// 这里只落**这一跳**的账，**不写客户端**：零业务字节 ⇒ 这条请求换个账号还能
 	// 成。旧实现把它当终态直接回错误帧，等于让一次账号侧死亡变成用户可见失败。
 	// 换不换由 typed retry matrix 裁决（hard continuation / 已交付字节仍然终态）。
-	if sdkbridge.IsFatal(callErr) {
+	if sdkbridge.IsFatal(callErr) || sdkbridge.IsBPSAccountFatal(callErr) {
 		et := domain.ErrNetwork
 		commit := CommitNotSent
 		if code >= 400 && code < 500 {

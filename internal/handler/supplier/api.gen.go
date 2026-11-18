@@ -15,6 +15,7 @@ import (
 
 // Defines values for AccountExtCredentialType.
 const (
+	AccountExtCredentialTypeBps        AccountExtCredentialType = "bps"
 	AccountExtCredentialTypeCodexOauth AccountExtCredentialType = "codex-oauth"
 	AccountExtCredentialTypeCodexPat   AccountExtCredentialType = "codex-pat"
 )
@@ -45,8 +46,8 @@ const (
 
 // Defines values for DeviceLoginProvider.
 const (
-	Bps   DeviceLoginProvider = "bps"
-	Codex DeviceLoginProvider = "codex"
+	DeviceLoginProviderBps   DeviceLoginProvider = "bps"
+	DeviceLoginProviderCodex DeviceLoginProvider = "codex"
 )
 
 // Defines values for ErrorResponseReason.
@@ -129,12 +130,12 @@ const (
 
 // Defines values for TemplateCredentialType.
 const (
-	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
-	TemplateCredentialTypeBps              TemplateCredentialType = "bps"
-	TemplateCredentialTypeCodexOauth       TemplateCredentialType = "codex-oauth"
-	TemplateCredentialTypeCodexPat         TemplateCredentialType = "codex-pat"
-	TemplateCredentialTypeCustom           TemplateCredentialType = "custom"
-	TemplateCredentialTypeResponsesSpecial TemplateCredentialType = "responses-special"
+	ApiKey           TemplateCredentialType = "api_key"
+	Bps              TemplateCredentialType = "bps"
+	CodexOauth       TemplateCredentialType = "codex-oauth"
+	CodexPat         TemplateCredentialType = "codex-pat"
+	Custom           TemplateCredentialType = "custom"
+	ResponsesSpecial TemplateCredentialType = "responses-special"
 )
 
 // Defines values for TemplateSupportedFormats.
@@ -272,11 +273,11 @@ type AccountExt struct {
 	// CodexPatKey 凭据：pat
 	CodexPatKey *string `json:"codex_pat_key"`
 
-	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
+	// CredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key；bps 只允许 OAuth 列组，profile 仅存储不回显
 	CredentialType AccountExtCredentialType `json:"credential_type"`
 }
 
-// AccountExtCredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key
+// AccountExtCredentialType 类型-列组约束（service 校验）：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key；bps 只允许 OAuth 列组，profile 仅存储不回显
 type AccountExtCredentialType string
 
 // AccountGroupsResponse defines model for AccountGroupsResponse.

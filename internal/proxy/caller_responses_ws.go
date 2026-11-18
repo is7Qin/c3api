@@ -357,8 +357,8 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		if handled {
 			return 0, nil, nil, true, nil
 		}
-		msg := firstFrameFailMsg(fwErr)
-		return 0, []byte(msg), nil, false, fwErr
+		code, safe := bpsErrorResponse(fwErr)
+		return code, []byte(safe.Error()), nil, false, safe
 	}
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
@@ -425,16 +425,8 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 }
 
 func bpsWSError(err error) (int, []byte, http.Header, bool, error) {
-	failure := sdkbridge.ClassifyBPSFailure(err)
-	code := failure.Status
-	if code < 400 || code > 599 {
-		code = 0
-	}
-	msg := ""
-	if err != nil {
-		msg = domain.TruncateErrMsg(err.Error())
-	}
-	return code, []byte(msg), nil, false, err
+	code, safe := bpsErrorResponse(err)
+	return code, []byte(safe.Error()), nil, false, safe
 }
 
 // aiclientTransport 上游侧 *websocket.Conn 的 wsRelayTransport 适配（aiclient

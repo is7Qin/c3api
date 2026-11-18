@@ -215,9 +215,13 @@ func newSnapshotStatic(acc domain.Account, tpl *domain.Template, groupIDs []int6
 	k.name = av.acc.Name
 	k.templateID = av.acc.TemplateID
 	if av.tpl != nil {
-		k.baseURL = av.tpl.BaseURL
+		if av.tpl.CredentialType.IsBPS() {
+			k.baseURL = domain.BPSDefaultEndpoint
+		} else {
+			k.baseURL = av.tpl.BaseURL
+		}
 	}
-	if av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
+	if (av.tpl == nil || !av.tpl.CredentialType.IsBPS()) && av.acc.BaseURL != nil && *av.acc.BaseURL != "" {
 		k.baseURL = *av.acc.BaseURL
 	}
 	k.upstreamKey = av.acc.UpstreamKey

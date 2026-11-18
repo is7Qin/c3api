@@ -67,6 +67,27 @@ func bpsCredential(t *testing.T) domain.AccountCredential {
 	}
 }
 
+func TestBPSPrepareSharesClientAndEvictsFatalGeneration(t *testing.T) {
+	var failures []CredentialFailure
+	adapter := NewBPS(bpsRedisClient(t), func(ev CredentialFailure) { failures = append(failures, ev) })
+	hc := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return bpsHTTPResponse(), nil })}
+	eg := egress.NewPool(hc).Direct()
+	cred := bpsCredential(t)
+	p1, err := adapter.Prepare(context.Background(), BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponses, Egress: eg})
+	require.NoError(t, err)
+	p2, err := adapter.Prepare(context.Background(), BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponses, Egress: eg})
+	require.NoError(t, err)
+	require.Same(t, p1.client, p2.client, "same account/K/profile/egress shares TokenAuth singleflight")
+	p1.report(&bpssdk.AuthFatalError{APIError: bpssdk.APIError{Status: http.StatusUnauthorized, Class: bpssdk.ClassAuthFatal}})
+	require.Len(t, failures, 1)
+	p3, err := adapter.Prepare(context.Background(), BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponses, Egress: eg})
+	require.NoError(t, err)
+	require.NotSame(t, p1.client, p3.client, "fatal evicts poisoned client so recovery at same K can rebuild")
+	p3.report(&bpssdk.AuthFatalError{APIError: bpssdk.APIError{Status: http.StatusUnauthorized, Class: bpssdk.ClassAuthFatal}})
+	require.Len(t, failures, 2, "new cache generation can report a later fatal after recovery")
+	require.NoError(t, adapter.Close())
+}
+
 func TestBPSFormatTransportOnlyResponses(t *testing.T) {
 	httpTransport, err := BPSFormatTransport(domain.FormatOpenAIResponses)
 	require.NoError(t, err)

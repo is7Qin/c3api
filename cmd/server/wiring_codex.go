@@ -50,6 +50,7 @@ type codexFace struct {
 	convBook  *sdkbridge.Book
 	convW     *sdkbridge.ConversationWorker
 	codex     *sdkbridge.Codex
+	bps       *sdkbridge.BPS
 
 	effectiveInflight int64
 	qualityRecorder   *quality.Recorder
@@ -151,13 +152,14 @@ func newCodexFace(d codexDeps) *codexFace {
 	// Latch/Publisher 必须装配：SDK 失效链据此走**围栏路径**（先锁存 → 以身份
 	// 代际 K 为 guard 的 CAS 落库 → 组级 NOTIFY）；缺任一项即退化为只写 failed_at
 	// 的简化路径——判决不再与"身份是否被授权变更"对齐，且对端只能靠周期兜底收敛。
-	codexAdapter := sdkbridge.NewCodex(sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
+	failureHandler := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
 		Store:     repos.Accounts,
 		Failer:    sched,
 		Log:       log,
 		Latch:     latchStore,
 		Publisher: schedGroupPub{pub},
-	}), egressPool, codexClients, sdkbridge.RotationDeps{
+	})
+	codexAdapter := sdkbridge.NewCodex(failureHandler, egressPool, codexClients, sdkbridge.RotationDeps{
 		Store:              repos.AccountExts,
 		InvalidateSnapshot: sched.InvalidateAccount,
 		Log:                log,
@@ -191,7 +193,8 @@ func newCodexFace(d codexDeps) *codexFace {
 	// 不含任何回填。
 	quotaW := scheduler.NewQuotaWorker(quotaQueue, d.runtimeHealth, quotaResolvers, sched.ProbeAccount, log, scheduler.QuotaWorkerConfig{})
 	f.quotaW = quotaW
-	bpsAdapter := sdkbridge.NewBPS(rdb)
+	bpsAdapter := sdkbridge.NewBPS(rdb, failureHandler)
+	f.bps = bpsAdapter
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
