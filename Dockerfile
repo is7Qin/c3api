@@ -32,12 +32,14 @@ ARG TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
 # 依赖凭证经 BuildKit secret 注入（id=codex_sdk_token）；缺省时本段跳过。
+# 授权按属主前缀（github.com/is7Qin）覆盖**全部**私有模块：逐包列举漏过一次——
+# bps-sdk 并进来时镜像构建拉不到包。
 RUN --mount=type=secret,id=codex_sdk_token,required=false \
     set -eu; \
     if [ -s /run/secrets/codex_sdk_token ]; then \
       apk add --no-cache git >/dev/null && \
-      git config --global url."https://x-access-token:$(cat /run/secrets/codex_sdk_token)@github.com/is7Qin/codex-sdk".insteadOf "https://github.com/is7Qin/codex-sdk" && \
-      go env -w GOPRIVATE=github.com/is7Qin/codex-sdk; \
+      git config --global url."https://x-access-token:$(cat /run/secrets/codex_sdk_token)@github.com/is7Qin".insteadOf "https://github.com/is7Qin" && \
+      go env -w GOPRIVATE=github.com/is7Qin; \
     fi; \
     go mod download
 COPY . .

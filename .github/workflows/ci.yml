@@ -31,8 +31,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${CODEX_SDK_TOKEN}" ]; then
-            go env -w GOPRIVATE=github.com/is7Qin/codex-sdk
-            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin/codex-sdk".insteadOf "https://github.com/is7Qin/codex-sdk"
+            # 按属主前缀授权，覆盖 is7Qin 名下**全部**私有模块（codex-sdk、bps-sdk，
+            # 以及下一个）：逐包列举漏过一次——bps-sdk 并进来时 CI 全线拉不到包。
+            go env -w GOPRIVATE=github.com/is7Qin
+            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
           fi
       - name: vet
         run: go vet ./...
@@ -82,8 +84,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${CODEX_SDK_TOKEN}" ]; then
-            go env -w GOPRIVATE=github.com/is7Qin/codex-sdk
-            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin/codex-sdk".insteadOf "https://github.com/is7Qin/codex-sdk"
+            # 按属主前缀授权，覆盖 is7Qin 名下**全部**私有模块（codex-sdk、bps-sdk，
+            # 以及下一个）：逐包列举漏过一次——bps-sdk 并进来时 CI 全线拉不到包。
+            go env -w GOPRIVATE=github.com/is7Qin
+            git config --global url."https://x-access-token:${CODEX_SDK_TOKEN}@github.com/is7Qin".insteadOf "https://github.com/is7Qin"
           fi
       - name: go generate (handler + ent)
         run: go generate ./internal/handler/ ./internal/ent/

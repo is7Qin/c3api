@@ -34,6 +34,7 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
+          # 同一 token 授权 is7Qin 名下全部私有模块（Dockerfile 里按属主前缀重写 URL）。
           secrets: |
             codex_sdk_token=${{ secrets.CODEX_SDK_TOKEN }}
           cache-from: type=gha, scope=c3api-alpha-build
