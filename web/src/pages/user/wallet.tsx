@@ -361,7 +361,8 @@ export default function UserWallet() {
         : String(meQ.data.MaxConcurrency)
 
   return (
-    <div className="space-y-6">
+    // 表单页：底纹与兑换码输入都是单行控件，超宽屏铺满会拉成 2000px 长条 → 只在大屏居中收窄
+    <div className="mx-auto w-full space-y-6 @[2000px]/main:max-w-6xl">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{t('user.wallet.title')}</h1>
       </div>

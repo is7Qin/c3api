@@ -31,9 +31,9 @@ const fadeUp = {
 
 function InfoRow({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="text-sm">{children}</span>
+    <div className="grid grid-cols-[minmax(7rem,auto)_minmax(0,1fr)] items-center gap-3">
+      <span className="min-w-0 text-sm text-muted-foreground">{label}</span>
+      <span className="min-w-0 break-words text-sm">{children}</span>
     </div>
   )
 }
@@ -69,7 +69,7 @@ export default function UserProfile() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full space-y-6 @[2000px]/main:max-w-6xl">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{t('user.profile.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('user.profile.subtitle')}</p>
@@ -157,36 +157,39 @@ export default function UserProfile() {
         </motion.div>
       </div>
 
-      <BalanceWarningCard />
+      {/* 余额预警 / 修改密码并排：两卡各自独占整行时右半片会留空（宽屏 2×2 才平衡） */}
+      <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
+        <BalanceWarningCard />
 
-      <motion.div {...fadeUp} transition={{ duration: 0.25, delay: 0.12 }}>
-        <Card className="max-w-xl">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <KeyRound className="size-4" /> {t('user.profile.pwdTitle')}
-            </CardTitle>
-            <CardDescription>{t('user.profile.pwdSubtitle')}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="up-old">{t('user.profile.oldPassword')}</Label>
-              <Input id="up-old" type="password" autoComplete="current-password" value={oldPwd} onChange={e => { setOldPwd(e.target.value); setErr('') }} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="up-new">{t('user.profile.newPassword')}</Label>
-              <Input id="up-new" type="password" autoComplete="new-password" value={newPwd} onChange={e => { setNewPwd(e.target.value); setErr('') }} />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="up-confirm">{t('user.profile.confirmPassword')}</Label>
-              <Input id="up-confirm" type="password" autoComplete="new-password" value={confirm} onChange={e => { setConfirm(e.target.value); setErr('') }} onKeyDown={e => { if (e.key === 'Enter') submit() }} />
-            </div>
-            {err && <p className="text-sm text-destructive">{err}</p>}
-            <Button disabled={loading} onClick={submit}>
-              {loading ? t('user.profile.submitting') : t('user.profile.submit')}
-            </Button>
-          </CardContent>
-        </Card>
-      </motion.div>
+        <motion.div {...fadeUp} transition={{ duration: 0.25, delay: 0.12 }}>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <KeyRound className="size-4" /> {t('user.profile.pwdTitle')}
+              </CardTitle>
+              <CardDescription>{t('user.profile.pwdSubtitle')}</CardDescription>
+            </CardHeader>
+            <CardContent className="max-w-xl space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="up-old">{t('user.profile.oldPassword')}</Label>
+                <Input id="up-old" type="password" autoComplete="current-password" value={oldPwd} onChange={e => { setOldPwd(e.target.value); setErr('') }} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="up-new">{t('user.profile.newPassword')}</Label>
+                <Input id="up-new" type="password" autoComplete="new-password" value={newPwd} onChange={e => { setNewPwd(e.target.value); setErr('') }} />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="up-confirm">{t('user.profile.confirmPassword')}</Label>
+                <Input id="up-confirm" type="password" autoComplete="new-password" value={confirm} onChange={e => { setConfirm(e.target.value); setErr('') }} onKeyDown={e => { if (e.key === 'Enter') submit() }} />
+              </div>
+              {err && <p className="text-sm text-destructive">{err}</p>}
+              <Button disabled={loading} onClick={submit}>
+                {loading ? t('user.profile.submitting') : t('user.profile.submit')}
+              </Button>
+            </CardContent>
+          </Card>
+        </motion.div>
+      </div>
     </div>
   )
 }

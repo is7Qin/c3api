@@ -136,7 +136,7 @@ export default function UserModels() {
             {g.Models.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t('user.models.empty')}</p>
             ) : (
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 @[2000px]/main:grid-cols-4">
                 {g.Models.map(m => {
                   const rows = priceRows(m)
                   return (

@@ -73,7 +73,7 @@ export function BalanceWarningCard() {
 
   return (
     <motion.div {...fadeUp} transition={{ duration: 0.25, delay: 0.09 }}>
-      <Card className="max-w-xl">
+      <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <BellRing className="size-4" /> {t('user.profile.balanceWarningTitle')}
@@ -92,7 +92,7 @@ export function BalanceWarningCard() {
             <>
               <div className="space-y-1.5">
                 <Label htmlFor="bw-threshold">{t('user.profile.balanceWarningLabel')}</Label>
-                <div className="flex min-w-0 items-center gap-2">
+                <div className="flex min-w-0 max-w-sm items-center gap-2">
                   <div className="relative min-w-0 flex-1">
                     <span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center text-sm text-muted-foreground" aria-hidden="true">
                       $

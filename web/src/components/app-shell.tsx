@@ -271,8 +271,8 @@ export default function AppShell() {
               </div>
             </div>
           </header>
-          <div data-od-id="app-shell-content" className="@container/main flex flex-col bg-transparent px-4 pb-6 pt-7 lg:px-8 lg:pb-8 lg:pt-9">
-            <div className="mx-auto flex w-full max-w-[1440px] flex-col gap-4 md:gap-6">
+          <div data-od-id="app-shell-content" className="@container/main flex flex-col bg-transparent px-3 pb-6 pt-7 lg:px-5 lg:pb-8 lg:pt-9">
+            <div className="flex w-full flex-col gap-4 md:gap-6">
               <motion.div key={location.pathname} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
                 <Outlet />
               </motion.div>

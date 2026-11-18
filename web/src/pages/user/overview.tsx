@@ -57,7 +57,7 @@ export default function UserOverview() {
   const loading = meQ.isLoading || keysQ.isLoading || statsQ.isLoading
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto w-full space-y-6 @[2000px]/main:max-w-5xl">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">{t('user.overview.title')}</h1>
         <p className="text-sm text-muted-foreground">{t('user.overview.subtitle')}</p>

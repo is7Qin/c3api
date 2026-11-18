@@ -157,14 +157,14 @@ function SettingRow({ setting }: { setting: Setting }) {
       <Input id={controlId} type={isPassword ? 'password' : 'text'} className="w-full max-w-full lg:w-96 bg-black/[0.04] border-black/10 dark:bg-black/20 dark:border-white/10" value={draft} onChange={e => { setDraft(e.target.value); setErr(null) }} onBlur={() => { if (draft !== current) doSave(submitValue()) }} onKeyDown={onEnter} />
     )
   return (
-    <div className="flex flex-col gap-3 py-3 lg:flex-row lg:items-start lg:justify-between lg:gap-5">
-      <div className="min-w-0 flex-1">
+    <div className="grid gap-3 border-b border-border py-3 last:border-b-0 lg:grid-cols-[minmax(0,1fr)_24rem] lg:items-start lg:gap-x-8">
+      <div className="min-w-0 max-w-[72ch]">
         <div className="flex items-center gap-2"><Label htmlFor={controlId} className="text-sm font-medium">{t(`settings.labels.${key}` as DynamicKey)}</Label><code className="font-mono text-xs text-muted-foreground">{key}</code></div>
         <p className="text-xs text-muted-foreground">{t(`settings.descs.${key}` as DynamicKey)}</p>
         {isUsd && !err && <p className="text-xs text-muted-foreground"><span className="whitespace-nowrap">{t('settings.usdHint')}</span></p>}
         {err && <p className="text-xs text-destructive">{err}</p>}
       </div>
-      <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto lg:shrink-0 lg:justify-end">{control}</div>
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-auto lg:justify-self-end">{control}</div>
     </div>
   )
 }
@@ -236,8 +236,11 @@ export default function SettingsPage() {
   const { data, isLoading, isError, error } = useQuery({ queryKey: ['settings'], queryFn: () => api.getSettings() })
   const byKey = new Map((data ?? []).map(s => [s.Key ?? '', s]))
   const others = (data ?? []).filter(s => s.Key && !GROUPED_KEYS.has(s.Key))
+  // `@container/page` 让邮件页的分栏按**页面自身宽度**决定（`@[1400px]/page`），
+  // 否则视口断点会在「页面已被 max-w-6xl 收窄」时仍然分两列，把标签压成竖排。
+  // 注意：`container-type: inline-size` 后 `w-full` 是承重属性，删掉页面根会塌成 0 宽。
   return (
-    <motion.div className="space-y-6" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+    <motion.div className="mx-auto w-full space-y-6 @container/page @[2000px]/main:max-w-6xl" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
       <div><h1 className="text-2xl font-semibold tracking-tight">{t('settings.title')}</h1><p className="text-sm text-muted-foreground">{t('settings.subtitle')}</p></div>
       {isError ? <p className="text-sm text-destructive">{t('common.loadFailed', { message: (error as Error).message })}</p> : isLoading ? <div className="space-y-2">{Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-12" />)}</div> : data?.length === 0 ? <Card className="flex flex-col items-center gap-2 py-12 text-muted-foreground"><SettingsIcon className="size-10" /><p className="font-medium">{t('settings.emptyTitle')}</p></Card> : (
         <Tabs defaultValue="signup">
@@ -249,12 +252,12 @@ export default function SettingsPage() {
           {GROUPS.map(g => {
             const rows = g.keys.map(k => byKey.get(k)).filter((s): s is Setting => !!s)
             const smtpCard = rows.length > 0 && (
-              <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}`)}</CardTitle></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>
+              <Card><CardHeader><CardTitle>{t(`settings.groups.${g.id}`)}</CardTitle></CardHeader><div className="px-(--card-spacing)">{rows.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>
             )
             return (
               <TabsContent key={g.id} value={g.id} className="space-y-4 pt-4">
                 {g.id === 'mail' ? (
-                  <div className="grid grid-cols-1 items-start gap-4 2xl:grid-cols-2">
+                  <div className="grid grid-cols-1 items-start gap-4 @[1400px]/page:grid-cols-2">
                     {smtpCard}
                     <div className="space-y-4"><MailTemplateCard purpose="register_code" /><MailTemplateCard purpose="reset_code" /><MailTemplateCard purpose="balance_warning" /><MailChannelTestCard /></div>
                   </div>
@@ -264,7 +267,7 @@ export default function SettingsPage() {
               </TabsContent>
             )
           })}
-          {others.length > 0 && <Card><CardHeader><CardTitle>{t('settings.otherTitle')}</CardTitle><CardDescription>{t('settings.otherDesc')}</CardDescription></CardHeader><div className="divide-y divide-border px-(--card-spacing)">{others.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>}
+          {others.length > 0 && <Card><CardHeader><CardTitle>{t('settings.otherTitle')}</CardTitle><CardDescription>{t('settings.otherDesc')}</CardDescription></CardHeader><div className="px-(--card-spacing)">{others.map(s => <SettingRow key={s.Key} setting={s} />)}</div></Card>}
         </Tabs>
       )}
     </motion.div>
