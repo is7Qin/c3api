@@ -30,10 +30,14 @@ import (
 	"github.com/is7qin/c3api/internal/handler/paymentadmin"
 	userapi "github.com/is7qin/c3api/internal/handler/user"
 	"github.com/is7qin/c3api/internal/proxy"
+	"github.com/is7qin/c3api/internal/quality"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/server"
+	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/supplier"
 	"github.com/is7qin/c3api/internal/worker"
+	"github.com/redis/go-redis/v9"
+
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
@@ -163,7 +167,30 @@ func buildOps(plan []workerEntry, extra []handler.StatsProvider, log *logx.Logge
 }
 
 // run 装配阶段 6 并驱动整个生命周期（`ctx` 由 main 的 signal.NotifyContext 提供）。
-func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl *billingFace, cx *codexFace) {
+// appRuntime 是「构造完成、尚未启动」的装配产物：run 不再持有二十几个局部变量，
+// 启动与停机都从这里取。字段刻意只放**跨阶段使用**的东西——构造期用完即弃的
+// 中间量（router、issuer、srv）留在 buildRuntime 里。
+type appRuntime struct {
+	cfg     *config.Config
+	log     *logx.Logger
+	plan    []workerEntry
+	httpSrv *http.Server
+	wm      *worker.Manager
+	px      *proxy.Proxy
+	quality *quality.Recorder
+	rdb     *redis.Client
+	snapReg *snapshot.Registry
+	disp    *dispatcher
+	drain   time.Duration
+}
+
+// buildRuntime 装配阶段 6 的构造部分（handler/router/HTTP server/worker plan）。
+//
+// 注意三个闭包必须在**调用时**读字段，不能改成构造期快照：
+//   - schedSrc.Prices 读 svc 的定价快照（每次编译都要最新价）；
+//   - Snapshots 读 snapReg 状态（注册表随 ReloadAll 变化）；
+//   - BillingAlerts 读 billFlusher.Stats()（lag 必须实时，否则运维看到的是启动值）。
+func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl *billingFace, cx *codexFace) *appRuntime {
 	// 解包前阶段产物为与旧 main 同名的局部（只读；语句级零改动）。写回一律走
 	// 阶段 struct，别名不回写——避免出现"注册时抄一份"的副本。
 	cfg, log := in.cfg, in.log
@@ -214,11 +241,6 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 	// 组内——账户行里有商户私钥，绝不能落到无鉴权路径。
 	paymentAdminHandler := paymentadmin.New(svc, log).Router()
 
-	// /api/admin/ops/workers 运维观测（spec 2026-08-11，并入管理面）：
-	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持
-	// 具体引用，断言实现 handler.StatsProvider 的入列；快照注册表状态单独
-	// 经 Status 直出）。WithOps 注入，路由由契约 chi-server 生成。
-	// 同一有序切片同时供 ops 聚合与 Manager 注册，避免观测面与生命周期面漏接。
 	// optional worker 先转为 real nil interface，禁止 typed-nil 穿透条件装配。
 	var warningWorker worker.Worker
 	if bl.warningW != nil {
@@ -268,32 +290,46 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 		}
 		supplierWorkers = supplierWorkersFor(cfg.Supplier.Enabled, cfg.Supplier.FreezeEnabled, thawW, creditW)
 	}
-	managedWorkers := orderedWorkers(mailW, warningWorker, billingWorker, inv, schedW, ruleEngine, retryWorker, healthW)
-	// supplier worker 插在 rec 之前（§5.5：reverse-shutdown 时 rec 先关 → 先落完整
-	// 账本，credit 再排空其消费；关闭态 supplierWorkers 为 nil，append 不贡献元素）。
-	managedWorkers = append(managedWorkers, supplierWorkers...)
-	managedWorkers = append(managedWorkers, rec, errlogW, contBindW, convW, quotaW, pricingSync, retention, statsAgg, qualityFlowOwner, qualitySync)
-	opsCandidates := append([]worker.Worker{}, managedWorkers...)
-	opsCandidates = append(opsCandidates, listener, authSync)
-	// 供应商财务视图装载器（独立于 billing.enabled 的 ticker，§6.4）不在
-	// managedWorkers 里（单独 wm.Register），须显式入候选才能在 /ops/workers
-	// 呈现装载计数 + 三态；nil（关闭态）不入列（避免 typed-nil 断言 panic）。
-	if supplierViewLoader != nil {
-		opsCandidates = append(opsCandidates, supplierViewLoader)
-	}
-	// （spec 2026-08-13）：StatsProvider 断言失败 Warn 一次；无 Stats 的
-	// worker 合法，但启动期明确提示其不会出现在运维端点。
-	opsWorkers := statsProviders(opsCandidates, log)
-	// discovery 实例发现观测（foundation spec §2.4）：alive N / last_tick_ok /
-	// consecutive_errors——Redis 故障冻结期在运维面可见（instances 停走 +
-	// consecutive_errors 增长）。
-	opsWorkers = append(opsWorkers, disco)
-	// conc-sync ×2 协调面观测（spec conc-sync-ops-stats）：fail-open 静默退化的
-	// 唯一可见痕迹——视图冻结时 last_tick_ok 翻 false、consecutive_errors 增长。
-	opsWorkers = append(opsWorkers, concSync, accConcSync)
-	// 派发观测面不变量（本 spec）：观测拒收 = 一次 attempt 在 quality/flow 记账里
-	// 消失，只可能是非法 outcome（编程错误），正常恒 0；非零是唯一的可查痕迹。
-	opsWorkers = append(opsWorkers, proxy.NewDispatchObserverStats(px))
+
+	// 注册序 = workerOrder 表（唯一的顺序事实源）。缺席规则与 fail-fast 全在
+	// assembleWorkers 里：缺键与 nil 值同义，cfg 说不该缺席就必须有值。
+	plan := assembleWorkers(workerSet{
+		byName: map[string]worker.Worker{
+			"mailW":              mailW,
+			"warningWorker":      warningWorker,
+			"billingWorker":      billingWorker,
+			"inv":                inv,
+			"schedW":             schedW,
+			"ruleEngine":         ruleEngine,
+			"retryWorker":        retryWorker,
+			"healthW":            healthW,
+			"rec":                rec,
+			"errlogW":            errlogW,
+			"contBindW":          contBindW,
+			"convW":              convW,
+			"quotaW":             quotaW,
+			"pricingSync":        pricingSync,
+			"retention":          retention,
+			"statsAgg":           statsAgg,
+			"qualityFlowOwner":   qualityFlowOwner,
+			"qualitySync":        qualitySync,
+			"supplierViewLoader": supplierViewLoader,
+			"concSync":           concSync,
+			"accConcSync":        accConcSync,
+			"disco":              disco,
+			"listener":           listener,
+			"authSync":           authSync,
+		},
+		groups: map[string][]worker.Worker{"supplierWorkers": supplierWorkers},
+	}, cfg)
+
+	// /api/admin/ops/workers 运维观测（spec 2026-08-11，并入管理面）：
+	// 独立 Stats 契约不改 worker.Worker——装配侧类型断言聚合（各模块已持
+	// 具体引用，断言实现 handler.StatsProvider 的入列；快照注册表状态单独
+	// 经 Status 直出）。WithOps 注入，路由由契约 chi-server 生成。
+	// dispatch-observer 只进 ops、不进注册：它是「观测拒收」的唯一可查痕迹，
+	// 必须显式作为 extra 传进去，否则 plan 派生会顺手把它吃掉。
+	opsWorkers := buildOps(plan, []handler.StatsProvider{proxy.NewDispatchObserverStats(px)}, log)
 	// /api/admin/overview + /api/admin/users-top（spec 2026-08-14）：门禁在途快照
 	// （Auth.InFlightUsers 只读访问器——零锁冷面）与 billing 游标积压 lag 族观测
 	// （flusher 直读；未装配 nil → 端点空/零值）经 OpsOptions 注入——不改
@@ -347,57 +383,6 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 		Logger:              log,
 	})
 
-	// 统一启动就绪（快照注册表）：构造链完成后全量首刷（并行；各快照错误独立
-	// Warn 不阻塞启动——DB 故障时快照保持空/旧值，模块周期 ticker / listener
-	// FullRefresh 兜底收敛）。取代此前分散的 ruleEngine.Reload fatalf +
-	// sched.InvalidateAllSync fatalf + auth/billBalances 构造时加载：scheduler
-	// 首刷在此完成（Select 在 nil 快照上 panic 的窗口随单一入口消灭），规则
-	// 空表种子亦在此写入（失败降级 Warn——注册表 Status 可观测）。
-	errs := snapReg.ReloadAll(ctx)
-	for name, err := range errs {
-		logSnapshotReloadErr(log, "snapshot initial reload failed", name, err)
-	}
-	// 启动双刷：ReloadAll 返回空 map = 全部成功（snapshot.go 契约
-	// ——成功者不出现）→ 置位首连跳过标志（dispatcher.bootLoaded，wm.StartAll
-	// 之前——程序序保证监听器首连必见标志）：首连的 FullRefresh CAS 消费后跳过
-	// 五路 ReloadAll（单实例健康启动下第二遍纯冗余，大表启动 DB 负载/就绪延迟
-	// 约翻倍）、仅补 ReloadSettings；多实例 pre-LISTEN 漏窗 ≤30s sched 同步 /
-	// 60s auth-sync 兜底收敛，可接受。部分失败不置位 → 首连仍全量（兜底收敛
-	// 不破坏）。
-	if len(errs) == 0 {
-		disp.bootLoaded.Store(true)
-	}
-	// 统一 worker 管理：顺序启动、反向排空。注册序 email → notification(条件)
-	// → billing(条件) → 业务 worker，保证停机时 usage recorder 先落完整账本，
-	// billing 再终扫游标，随后 notification 排空已提交告警，最后 email 排空独立
-	// 的注册/重置队列。billing 关闭时 email 仍无条件注册，管理端 channel-test 与
-	// auth 邮件行为保持独立。
-	wm := worker.New(log)
-	wm.Register(managedWorkers...) // invalidate 去抖器执行 goroutine（单 goroutine 串行）；errlog 错误明细排空在 rec 之后注册 → 反向排空先于 rec；retention/stats-agg 顺序无依赖（覆盖语义幂等，停摆窗口由追赶上限收敛）。billFlusher 缺位时：计费关闭，billable 行出生即 billed=true 吸收态，无未扣积压
-	// 供应商财务视图刷新 ticker（独立于 billing.enabled；§6.4）：在 managedWorkers
-	// 之后注册 ⇒ 反向排空最早关（刷新 ticker 无须排空语义）。
-	if supplierViewLoader != nil {
-		wm.Register(supplierViewLoader)
-	}
-	// conc-sync 业务区段尾部（spec §1.5：协调态可丢、无排空顺序依赖——停机即停
-	// tick，在途 HASH 字段 ≤4s ts 出局 + 16s EXPIRE 自灭，Close 无清理义务）。
-	wm.Register(concSync)
-	// 账号层孪生同段并排（spec conc-share-borrow-account §2：同款协调态语义）。
-	wm.Register(accConcSync)
-	// discovery 在业务 worker 之后、listener/authSync 之前注册（foundation spec
-	// §2.3 装配序）：反向排空时 listener 先停接收、discovery 随即 ZREM 自身缩容
-	// 掉出 N，再排业务 worker——billing 游标终扫前集群基数已收敛。
-	wm.Register(disco)
-	// listener/auth-sync 最后注册 → 反向排空最先关：停止接收/周期刷新后再排空
-	// 业务 worker（scheduler 排空回写仍会发布 NOTIFY，自播跳过、其它实例接收，
-	// 无依赖）。
-	wm.Register(listener, authSync)
-	if err := wm.StartAll(ctx); err != nil {
-		fatalf("worker start: %v", err)
-	}
-	// 调度器初始加载已由上方注册表 ReloadAll 完成（先于 StartAll 与流量）——
-	// 此处不再单独 InvalidateAllSync（单一启动入口）。
-
 	// http.Server 超时：IdleTimeout 防 keep-alive 空闲连接
 	// 与 goroutine 无限驻留（有效 key 吃满 50000 并发面数小时即修复面）；ReadTimeout
 	// = proxy.upstream_timeout 同源单一事实源（120s）——只限请求头+体读取时长，不
@@ -413,6 +398,65 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 		IdleTimeout:       60 * time.Second,
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 	}
+
+	return &appRuntime{
+		cfg:     cfg,
+		log:     log,
+		plan:    plan,
+		httpSrv: httpSrv,
+		px:      px,
+		quality: qualityRecorder,
+		rdb:     rdb,
+		snapReg: snapReg,
+		disp:    disp,
+		drain:   cfg.Server.ShutdownDrain,
+	}
+}
+
+// start 执行启动段：快照首刷 → worker 注册与启动 → 监听端口 → Serve goroutine。
+//
+// worker 注册必须在这里而不是 buildRuntime：注册序与「启动」是同一个生命周期
+// 决策，且 ReloadAll 必须早于 StartAll（单一启动入口，见下）。
+func (r *appRuntime) start(ctx context.Context) {
+	log := r.log
+	// 统一启动就绪（快照注册表）：构造链完成后全量首刷（并行；各快照错误独立
+	// Warn 不阻塞启动——DB 故障时快照保持空/旧值，模块周期 ticker / listener
+	// FullRefresh 兜底收敛）。取代此前分散的 ruleEngine.Reload fatalf +
+	// sched.InvalidateAllSync fatalf + auth/billBalances 构造时加载：scheduler
+	// 首刷在此完成（Select 在 nil 快照上 panic 的窗口随单一入口消灭），规则
+	// 空表种子亦在此写入（失败降级 Warn——注册表 Status 可观测）。
+	errs := r.snapReg.ReloadAll(ctx)
+	for name, err := range errs {
+		logSnapshotReloadErr(log, "snapshot initial reload failed", name, err)
+	}
+	// 启动双刷：ReloadAll 返回空 map = 全部成功（snapshot.go 契约
+	// ——成功者不出现）→ 置位首连跳过标志（dispatcher.bootLoaded，wm.StartAll
+	// 之前——程序序保证监听器首连必见标志）：首连的 FullRefresh CAS 消费后跳过
+	// 五路 ReloadAll（单实例健康启动下第二遍纯冗余，大表启动 DB 负载/就绪延迟
+	// 约翻倍）、仅补 ReloadSettings；多实例 pre-LISTEN 漏窗 ≤30s sched 同步 /
+	// 60s auth-sync 兜底收敛，可接受。部分失败不置位 → 首连仍全量（兜底收敛
+	// 不破坏）。
+	if len(errs) == 0 {
+		r.disp.bootLoaded.Store(true)
+	}
+	// 统一 worker 管理：顺序启动、反向排空。注册序由 workerOrder 表决定
+	// （email → notification(条件) → billing(条件) → 业务 worker → 协调/发现/
+	// 监听），保证停机时 usage recorder 先落完整账本，billing 再终扫游标，
+	// 随后 notification 排空已提交告警，最后 email 排空独立的注册/重置队列。
+	//
+	// 单点注册：循环必须**正序**消费 plan。反向遍历会让排空也反（Manager 按
+	// 注册逆序关），rec 在 billing 之前关 ⇒ 明细静默丢——这条没有任何运行期
+	// 门能看见，只有 TestAssembleWorkersOrder 与这行注释守。
+	r.wm = worker.New(log)
+	for _, e := range r.plan {
+		r.wm.Register(e.w)
+	}
+	if err := r.wm.StartAll(ctx); err != nil {
+		fatalf("worker start: %v", err)
+	}
+	// 调度器初始加载已由上方注册表 ReloadAll 完成（先于 StartAll 与流量）——
+	// 此处不再单独 InvalidateAllSync（单一启动入口）。
+
 	// 对端存活归传输层（第一性原理：内核知道对端没在 ACK，应用层不重复发明）：
 	// listener 级 KeepAliveConfig 被所有已接受连接继承——含 WS hijacked 连接
 	// （net/http Server 不覆盖该设置）。对端死亡 → 内核断言连接失效 → 读侧报错
@@ -426,23 +470,33 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 			Count:    3,
 		},
 	}
-	ln, err := lc.Listen(context.Background(), "tcp", cfg.Server.Addr)
+	ln, err := lc.Listen(context.Background(), "tcp", r.cfg.Server.Addr)
 	if err != nil {
-		fatalf("server: listen %s: %v", cfg.Server.Addr, err)
+		fatalf("server: listen %s: %v", r.cfg.Server.Addr, err)
 	}
-	wm.Go(ctx, "http-server", func(_ context.Context) {
-		log.Info("server listening", logx.String("addr", cfg.Server.Addr))
-		if err := httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	r.wm.Go(ctx, "http-server", func(_ context.Context) {
+		log.Info("server listening", logx.String("addr", r.cfg.Server.Addr))
+		if err := r.httpSrv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			fatalf("server: %v", err)
 		}
 	})
+}
+
+// run 装配阶段 6 并驱动整个生命周期（`ctx` 由 main 的 signal.NotifyContext 提供）。
+//
+// 停机链**内联在本函数**（不抽方法）：它与 shutdownCtx 的构造时机、defer cancel
+// 的层级是一件事，而预算时钟必须从收到信号那一刻起算——提前构造会让 ctx 在
+// 运行几分钟后早已超时（在途流强断、billing 无终扫）。
+func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl *billingFace, cx *codexFace) {
+	r := buildRuntime(ctx, in, hl, nf, bl, cx)
+	r.start(ctx)
 
 	// 1) 等停机信号（SIGINT/SIGTERM）：之前的全部语句都是装配，不接流量。
 	<-ctx.Done()
 	// 停机总预算 = 配置的 HTTP 优雅窗口 + 固定尾部（对账/排空/终态日志）。窗口之所以
 	// 可配：流式请求的收尾时长随部署规模变化（默认 2s 是为公网短请求调的），而尾部
 	// 预算是"排空能不能做完"的下限，不是策略，故不给配。
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownBudget())
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), r.cfg.Server.ShutdownBudget())
 	// 为什么 defer 在这一层：budget 的 cancel 必须晚于下面 5 步（每步都读这个 ctx），
 	// 且必须早于 main 的 pool.Close()/stop()——所以它与停机链同层，不下移到阶段函数。
 	defer cancel()
@@ -461,11 +515,11 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 	//    在 shutdownTail：排空失败不再 `_ =` 静默——Error 级 "shutdown
 	//    incomplete" 显式上报且不宣称 clean shutdown（review blocker
 	//    2026-08-30）。
-	shutdownHTTPServer(shutdownCtx, httpSrv, cfg.Server.ShutdownDrain, log)
-	px.CloseAllWS()
-	waitForInflight(px, shutdownCtx, log)
-	shutdownTail(shutdownCtx, wm, qualityRecorder, rdb, log)
-	_ = log.Sync()
+	shutdownHTTPServer(shutdownCtx, r.httpSrv, r.drain, r.log)
+	r.px.CloseAllWS()
+	waitForInflight(r.px, shutdownCtx, r.log)
+	shutdownTail(shutdownCtx, r.wm, r.quality, r.rdb, r.log)
+	_ = r.log.Sync()
 }
 
 // waitForInflight 等在途请求归零（优雅停机第 3 步）：100ms 轮询 px.Inflight()；

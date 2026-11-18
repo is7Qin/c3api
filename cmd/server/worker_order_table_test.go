@@ -5,6 +5,8 @@
 package main
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,6 +16,34 @@ import (
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
+
+// workerSlotIndex 取注册序里某个槽的下标（-1 = 不存在）。
+func workerSlotIndex(name string) int {
+	for i, s := range workerOrder {
+		if s.name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// TestWorkerOrderSingleOwner 注册序只允许有一个主语：表定义在 wiring_run.go，
+// 其它生产文件不得另抄一份（两份表必然漂移，而顺序错了没有任何运行期门能看见）。
+func TestWorkerOrderSingleOwner(t *testing.T) {
+	entries, err := os.ReadDir(".")
+	require.NoError(t, err)
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		n := strings.Count(readSrcFile(t, e.Name()), "workerOrder")
+		if e.Name() == "wiring_run.go" {
+			require.GreaterOrEqual(t, n, 1, "wiring_run.go 必须定义 workerOrder")
+			continue
+		}
+		require.Zero(t, n, "%s 不得引用 workerOrder（注册序只允许一个主语）", e.Name())
+	}
+}
 
 // frozenWorkerOrder 是注册序的冻结基线（来源 `354b6082`：wiring_run.go:145/148/149
 // 的 orderedWorkers + 两次 append，以及 6 处 wm.Register 的先后）。

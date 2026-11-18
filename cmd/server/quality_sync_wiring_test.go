@@ -45,55 +45,10 @@ func TestQualitySyncWiring(t *testing.T) {
 		recorderSet  bool // proxy.Deps{Recorder: qualityRecorder} wired into proxy.New(...)
 		syncCtor     bool // qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...)
 		syncNotify   bool // ctor 尾参 = sched.RequestCompile（缺陷 B 事件驱动编译，构造器注入、无回填）
-		inManaged    bool // qualitySync ∈ orderedWorkers(...) args
-		managedFound bool
 		tailCalled   bool // main delegates the shutdown tail: shutdownTail(...)
 		seq          []string
 	)
 	appendSeq := func(m string) { seq = append(seq, m) }
-
-	// managedWorkers := orderedWorkers(...) — collect ident args.
-	var walkOrdered func(n ast.Node) bool
-	walkOrdered = func(n ast.Node) bool {
-		as, ok := n.(*ast.AssignStmt)
-		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
-			return true
-		}
-		lhs, ok := as.Lhs[0].(*ast.Ident)
-		if !ok || lhs.Name != "managedWorkers" {
-			return true
-		}
-		ce, ok := as.Rhs[0].(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-		fun, ok := ce.Fun.(*ast.Ident)
-		if !ok {
-			return true
-		}
-		if fun.Name == "orderedWorkers" {
-			managedFound = true
-			for _, a := range ce.Args {
-				if id, ok := a.(*ast.Ident); ok && id.Name == "qualitySync" {
-					inManaged = true
-				}
-			}
-			return true
-		}
-		// managedWorkers = append(managedWorkers, ..., qualitySync, ...)：spec §5.5
-		// 装配形态下 qualitySync 落在 append 尾部。
-		if fun.Name == "append" && len(ce.Args) >= 2 {
-			if head, ok := ce.Args[0].(*ast.Ident); ok && head.Name == "managedWorkers" {
-				managedFound = true
-				for _, a := range ce.Args[1:] {
-					if id, ok := a.(*ast.Ident); ok && id.Name == "qualitySync" {
-						inManaged = true
-					}
-				}
-			}
-		}
-		return true
-	}
 
 	ast.Inspect(pkg, func(n ast.Node) bool {
 		if as, ok := n.(*ast.AssignStmt); ok && len(as.Lhs) >= 1 && len(as.Rhs) == 1 {
@@ -153,7 +108,6 @@ func TestQualitySyncWiring(t *testing.T) {
 	})
 	// 视图 2：wiring_run.go 的 run——生命周期成员关系与停机尾部委派。
 	ast.Inspect(runFn, func(n ast.Node) bool {
-		walkOrdered(n)
 		if ce, ok := n.(*ast.CallExpr); ok {
 			if id, ok := ce.Fun.(*ast.Ident); ok && id.Name == "shutdownTail" {
 				tailCalled = true
@@ -184,8 +138,7 @@ func TestQualitySyncWiring(t *testing.T) {
 	require.True(t, recorderSet, "proxy.Deps{Recorder: qualityRecorder} not found (must be wired via constructor, no setters)")
 	require.True(t, syncCtor, "qualitySync := quality.NewSyncWorker(qualityRecorder, rdb, repos.Partitions, ...) not found")
 	require.True(t, syncNotify, "quality.NewSyncWorker(..., sched.RequestCompile) not found (must be injected via constructor, no setters)")
-	require.True(t, managedFound, "managedWorkers := orderedWorkers(...) not found")
-	require.True(t, inManaged, "qualitySync must be registered via orderedWorkers(...) for lifecycle + ops stats")
+	require.NotEqual(t, -1, workerSlotIndex("qualitySync"), "qualitySync 必须在注册序表里（否则生命周期与 ops 都没有它）")
 	require.True(t, tailCalled, "main must delegate the shutdown tail to shutdownTail(...)")
 
 	// Shutdown ordering: worker manager drain (quality-sync Close flushes and,

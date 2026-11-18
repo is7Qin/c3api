@@ -102,7 +102,10 @@ func TestMainWiresConfiguredDrain(t *testing.T) {
 	file, err := parser.ParseFile(fset, "wiring_run.go", nil, 0)
 	require.NoError(t, err)
 
-	var wired bool
+	// 两级钉：停机链必须用 runtime 上的 drain 字段，而该字段必须由 cfg 投影而来。
+	// 只钉其中一级都拦不住「写回常量」：直接传 cfg 的旧形态拦不住字段被写死，
+	// 只钉字段也拦不住投影时写死默认值。
+	wiredField := false
 	ast.Inspect(file, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
 		if !ok || fn.Name == nil || fn.Name.Name != "run" || fn.Body == nil {
@@ -113,20 +116,46 @@ func TestMainWiresConfiguredDrain(t *testing.T) {
 			if !ok || len(call.Args) < 3 {
 				return true
 			}
-			id, ok := call.Fun.(*ast.Ident)
-			if !ok || id.Name != "shutdownHTTPServer" {
+			if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "shutdownHTTPServer" && dottedExpr(call.Args[2]) == "r.drain" {
+				wiredField = true
+			}
+			return true
+		})
+		return true
+	})
+
+	projected := false
+	ast.Inspect(file, func(n ast.Node) bool {
+		fn, ok := n.(*ast.FuncDecl)
+		if !ok || fn.Name == nil || fn.Name.Name != "buildRuntime" || fn.Body == nil {
+			return true
+		}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			cl, ok := n.(*ast.CompositeLit)
+			if !ok {
 				return true
 			}
-			// 实参是 cfg.Server.ShutdownDrain ⇒ 拍平成点号串比较（别只认一层 Selector）
-			if dottedExpr(call.Args[2]) == "cfg.Server.ShutdownDrain" {
-				wired = true
+			if tn, ok := cl.Type.(*ast.Ident); !ok || tn.Name != "appRuntime" {
+				return true
 			}
-			return false
+			for _, el := range cl.Elts {
+				kv, ok := el.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				if id, ok := kv.Key.(*ast.Ident); ok && id.Name == "drain" && dottedExpr(kv.Value) == "cfg.Server.ShutdownDrain" {
+					projected = true
+				}
+			}
+			return true
 		})
-		return false
+		return true
 	})
-	require.True(t, wired,
-		"main 必须把 cfg.Server.ShutdownDrain 传给 shutdownHTTPServer（写回常量会让配置完全失效）")
+
+	require.True(t, wiredField,
+		"停机链必须用 r.drain 调 shutdownHTTPServer（写回常量会让配置完全失效）")
+	require.True(t, projected,
+		"buildRuntime 必须把 cfg.Server.ShutdownDrain 投进 appRuntime.drain")
 }
 
 // dottedExpr 把 a.b.c 形态的表达式拍平成 "a.b.c"；其它形态返回空串。

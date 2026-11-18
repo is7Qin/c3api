@@ -94,16 +94,23 @@ func TestShutdownChainOrderAndNoDeferInStages(t *testing.T) {
 	})
 	require.True(t, deferInsideRun, "唯一的 defer 必须在 run() 内（与停机链同层）")
 
-	// 3) wm.Register( 次数与实参集合。
+	// 3) 注册点唯一：全包只允许一处 .Register(，且它消费 workerOrder 装配出来的 plan。
+	// 原来的「恰 6 次 + 实参名集合」由 worker_order_table_test 的全序断言取代——
+	// 全序相等比集合相等更强，且能一并封住反向遍历与截断。
 	_, def := parseSrcFile(t, "wiring_run.go")
-	count, names := collectRegisterArgs(findFuncDecl(t, def, "run"))
-	require.Equal(t, 6, count, "wiring_run.go 里 wm.Register( 必须恰 6 次（managedWorkers / supplierViewLoader / concSync / accConcSync / disco / listener+authSync）")
-	require.Equal(t, []string{
-		"mailW", "warningWorker", "billingWorker", "inv", "schedW", "ruleEngine", "retryWorker", "healthW",
-		"supplierWorkers", "rec", "errlogW", "contBindW", "convW", "quotaW", "pricingSync", "retention",
-		"statsAgg", "qualityFlowOwner", "qualitySync",
-		"supplierViewLoader", "concSync", "accConcSync", "disco", "listener", "authSync",
-	}, names, "注册的 worker 集合必须与 worker_order_test 的 mustBefore 表逐一对应（漏一个 = 该 worker 永不启动/永不排空）")
+	regCalls := 0
+	ast.Inspect(def, func(n ast.Node) bool {
+		ce, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		if sel, ok := ce.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Register" {
+			regCalls++
+		}
+		return true
+	})
+	require.Equal(t, 1, regCalls,
+		"wiring_run.go 只允许一处 Register 调用（单点注册）；新增注册点必须走 workerOrder 表")
 }
 
 // countDeferStmts 数一个源文件里 defer 语句的个数（AST，不数注释/字符串）。
