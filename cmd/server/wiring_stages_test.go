@@ -31,16 +31,34 @@ func TestShutdownChainOrderAndNoDeferInStages(t *testing.T) {
 	_, f := parseSrcFile(t, "wiring_run.go")
 	runFn := findFuncDecl(t, f, "run")
 
-	// 1) 5 步链：按源码顺序抽调用名（Ident 取名字；SelectorExpr 取末段名）。
+	// 1) 5 步链：顺序在 (*appRuntime).shutdown 里；信号必须先于链。
+	shutFn := findMethodDecl(t, f, "appRuntime", "shutdown")
 	chain := map[string]bool{
-		"shutdownHTTPServer": true,
-		"CloseAllWS":         true,
-		"waitForInflight":    true,
-		"shutdownTail":       true,
-		"Sync":               true,
+		"shutdownHTTP": true,
+		"closeWS":      true,
+		"waitInflight": true,
+		"tail":         true,
+		"Sync":         true,
 	}
 	var got []string
-	ctxDonePos, chainStart := token.NoPos, token.NoPos
+	ast.Inspect(shutFn, func(n ast.Node) bool {
+		ce, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name, ok := exprName(ce.Fun)
+		if !ok || !chain[name] {
+			return true
+		}
+		got = append(got, name)
+		return true
+	})
+	require.Equal(t,
+		[]string{"shutdownHTTP", "closeWS", "waitInflight", "tail", "Sync"},
+		got, "停机链顺序必须固定：Shutdown → 强断长连接 → 等在途归零 → wm 反向排空 + 尾部 → 终态日志")
+
+	// 信号必须先于链：<-ctx.Done() 之后才允许 r.shutdown(...)。
+	ctxDonePos, shutCallPos := token.NoPos, token.NoPos
 	ast.Inspect(runFn, func(n ast.Node) bool {
 		if ue, ok := n.(*ast.UnaryExpr); ok && ue.Op == token.ARROW {
 			if ce, ok := ue.X.(*ast.CallExpr); ok {
@@ -56,21 +74,14 @@ func TestShutdownChainOrderAndNoDeferInStages(t *testing.T) {
 		if !ok {
 			return true
 		}
-		name, ok := exprName(ce.Fun)
-		if !ok || !chain[name] {
-			return true
+		if se, ok := ce.Fun.(*ast.SelectorExpr); ok && se.Sel.Name == "shutdown" && !shutCallPos.IsValid() {
+			shutCallPos = ce.Pos()
 		}
-		if !chainStart.IsValid() {
-			chainStart = ce.Pos()
-		}
-		got = append(got, name)
 		return true
 	})
-	require.Equal(t,
-		[]string{"shutdownHTTPServer", "CloseAllWS", "waitForInflight", "shutdownTail", "Sync"},
-		got, "停机链顺序必须固定：Shutdown → 强断长连接 → 等在途归零 → wm 反向排空 + 尾部 → 终态日志")
 	require.True(t, ctxDonePos.IsValid(), "run() 必须在 <-ctx.Done() 上等停机信号（否则停机链无人触发）")
-	require.Less(t, int(ctxDonePos), int(chainStart), "必须先等到 <-ctx.Done() 再动停机链（信号在前）")
+	require.True(t, shutCallPos.IsValid(), "run() 必须在信号后调用 r.shutdown(...)")
+	require.Less(t, int(ctxDonePos), int(shutCallPos), "必须先等到 <-ctx.Done() 再动停机链（信号在前）")
 
 	// 2) defer 只允许在生命周期层。
 	for _, name := range []string{

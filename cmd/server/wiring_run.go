@@ -166,6 +166,18 @@ func buildOps(plan []workerEntry, extra []handler.StatsProvider, log *logx.Logge
 	return append(statsProviders(ws, log), extra...)
 }
 
+// shutdown 执行五步停机链（顺序即语义，见 run 的注释）。
+//
+// 抽成方法只为「顺序可测」：四个副作用点是字段，测试替换后能断言完整调用序；
+// shutdownCtx 仍由 run 构造并 defer cancel——预算时钟必须从信号点起算。
+func (r *appRuntime) shutdown(ctx context.Context) {
+	r.shutdownHTTP(ctx)
+	r.closeWS()
+	r.waitInflight(ctx)
+	r.tail(ctx)
+	_ = r.log.Sync()
+}
+
 // run 装配阶段 6 并驱动整个生命周期（`ctx` 由 main 的 signal.NotifyContext 提供）。
 // appRuntime 是「构造完成、尚未启动」的装配产物：run 不再持有二十几个局部变量，
 // 启动与停机都从这里取。字段刻意只放**跨阶段使用**的东西——构造期用完即弃的
@@ -182,6 +194,13 @@ type appRuntime struct {
 	snapReg *snapshot.Registry
 	disp    *dispatcher
 	drain   time.Duration
+
+	// 停机链的四个副作用点：出厂接真实实现，测试整体替换以断言调用序。
+	// 不抽接口：*http.Server / *proxy.Proxy 的方法集远大于这里要的几个。
+	shutdownHTTP func(ctx context.Context)
+	closeWS      func()
+	waitInflight func(ctx context.Context)
+	tail         func(ctx context.Context)
 }
 
 // buildRuntime 装配阶段 6 的构造部分（handler/router/HTTP server/worker plan）。
@@ -399,7 +418,7 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 		MaxHeaderBytes:    cfg.Server.MaxHeaderBytes,
 	}
 
-	return &appRuntime{
+	r := &appRuntime{
 		cfg:     cfg,
 		log:     log,
 		plan:    plan,
@@ -411,6 +430,12 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 		disp:    disp,
 		drain:   cfg.Server.ShutdownDrain,
 	}
+	// 停机链的副作用点接真实实现；测试替换这四个字段即可断言调用序。
+	r.shutdownHTTP = func(ctx context.Context) { shutdownHTTPServer(ctx, r.httpSrv, r.drain, r.log) }
+	r.closeWS = r.px.CloseAllWS
+	r.waitInflight = func(ctx context.Context) { waitForInflight(r.px, ctx, r.log) }
+	r.tail = func(ctx context.Context) { shutdownTail(ctx, r.wm, r.quality, r.rdb, r.log) }
+	return r
 }
 
 // start 执行启动段：快照首刷 → worker 注册与启动 → 监听端口 → Serve goroutine。
@@ -515,11 +540,7 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 	//    在 shutdownTail：排空失败不再 `_ =` 静默——Error 级 "shutdown
 	//    incomplete" 显式上报且不宣称 clean shutdown（review blocker
 	//    2026-08-30）。
-	shutdownHTTPServer(shutdownCtx, r.httpSrv, r.drain, r.log)
-	r.px.CloseAllWS()
-	waitForInflight(r.px, shutdownCtx, r.log)
-	shutdownTail(shutdownCtx, r.wm, r.quality, r.rdb, r.log)
-	_ = r.log.Sync()
+	r.shutdown(shutdownCtx)
 }
 
 // waitForInflight 等在途请求归零（优雅停机第 3 步）：100ms 轮询 px.Inflight()；

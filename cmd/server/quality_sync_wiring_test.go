@@ -22,7 +22,7 @@ func TestQualitySyncWiring(t *testing.T) {
 	// ——那边才是注册序的唯一主语。
 	_, pkg := parsePkgSrc(t)
 	_, f := parseSrcFile(t, "wiring_run.go")
-	runFn := findFuncDecl(t, f, "run")
+	buildFn := findFuncDecl(t, f, "buildRuntime")
 
 	isCall := func(n ast.Node, recv, sel string) (*ast.CallExpr, bool) {
 		ce, ok := n.(*ast.CallExpr)
@@ -106,8 +106,8 @@ func TestQualitySyncWiring(t *testing.T) {
 		}
 		return true
 	})
-	// 视图 2：wiring_run.go 的 run——生命周期成员关系与停机尾部委派。
-	ast.Inspect(runFn, func(n ast.Node) bool {
+	// 视图 2：buildRuntime——停机尾部委派（r.tail 字段绑定到 shutdownTail）。
+	ast.Inspect(buildFn, func(n ast.Node) bool {
 		if ce, ok := n.(*ast.CallExpr); ok {
 			if id, ok := ce.Fun.(*ast.Ident); ok && id.Name == "shutdownTail" {
 				tailCalled = true

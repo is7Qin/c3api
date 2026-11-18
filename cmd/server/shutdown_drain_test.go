@@ -108,7 +108,7 @@ func TestMainWiresConfiguredDrain(t *testing.T) {
 	wiredField := false
 	ast.Inspect(file, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
-		if !ok || fn.Name == nil || fn.Name.Name != "run" || fn.Body == nil {
+		if !ok || fn.Name == nil || fn.Name.Name != "buildRuntime" || fn.Body == nil {
 			return true
 		}
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
