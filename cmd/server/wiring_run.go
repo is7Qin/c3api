@@ -23,6 +23,7 @@ import (
 
 	jwtauth "github.com/is7qin/c3api/internal/auth"
 	"github.com/is7qin/c3api/internal/billing"
+	"github.com/is7qin/c3api/internal/config"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler"
 	paymentapi "github.com/is7qin/c3api/internal/handler/payment"
@@ -35,6 +36,131 @@ import (
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 )
+
+// workerSlot 是注册序的一格。name 是装配期语义名（不是 worker.Name()）。
+//
+// skipWhen 回答「这个槽为什么可以缺席」：它拿 cfg，返回 true 才允许缺席。用谓词
+// 而不是 bool——bool 只能表达「允许缺席」，表达不了「为什么」，于是「billing
+// 关闭」与「有人漏写了 map 赋值」变得无法区分（后者会让 billing 游标不推进，
+// 而且没有日志、没有错误）。
+type workerSlot struct {
+	name     string
+	skipWhen func(*config.Config) bool // nil = 恒不可缺席
+	expand   bool                      // 该槽是一组 worker，按切片顺序展开
+}
+
+// workerOrder 是注册序的唯一事实源：注册按正序，排空按反序（worker.Manager 的
+// 契约）。改这里就是改生命周期语义，worker_order_test 与本文件的表测试会一起看。
+var workerOrder = []workerSlot{
+	{name: "mailW"},
+	{name: "warningWorker", skipWhen: func(c *config.Config) bool { return !c.Billing.Enabled }},
+	{name: "billingWorker", skipWhen: func(c *config.Config) bool { return !c.Billing.Enabled }},
+	{name: "inv"},
+	{name: "schedW"},
+	{name: "ruleEngine"},
+	{name: "retryWorker"},
+	{name: "healthW"},
+	// supplier 组：内部顺序（thaw → credit）与「谁出现」仍归 supplierWorkersFor，
+	// 已有 supplier_assembly_test 覆盖。不拆成两行——optional 只能表达「可以缺席」，
+	// 表达不了「为什么缺席」；拆开后 enabled=true 但 credit 缺失会被静默跳过。
+	{name: "supplierWorkers", skipWhen: func(c *config.Config) bool { return !c.Supplier.Enabled }, expand: true},
+	{name: "rec"},
+	{name: "errlogW"},
+	{name: "contBindW"},
+	{name: "convW"},
+	{name: "quotaW"},
+	{name: "pricingSync"},
+	{name: "retention"},
+	{name: "statsAgg"},
+	{name: "qualityFlowOwner"},
+	{name: "qualitySync"},
+	{name: "supplierViewLoader", skipWhen: func(c *config.Config) bool { return !c.Supplier.Enabled }},
+	{name: "concSync"},
+	{name: "accConcSync"},
+	{name: "disco"},
+	{name: "listener"},
+	{name: "authSync"},
+}
+
+// workerEntry 是装配期解析出来的一格：名字 + 具体 worker。
+type workerEntry struct {
+	name string
+	w    worker.Worker
+}
+
+// workerSet 是装配期收集到的全部 worker：单例按名字，可展开组按切片。
+type workerSet struct {
+	byName map[string]worker.Worker
+	groups map[string][]worker.Worker
+}
+
+// assembleWorkers 把 workerSet 归一成有序 plan。唯一缺席规则：
+//
+//	w, ok := set.byName[name]; 缺席 := !ok || w == nil
+//
+// 三种结果：
+//   - 缺席 && skipWhen(cfg)        → 跳过（合法关闭）
+//   - 缺席 && !skipWhen(cfg)       → panic（漏装配，或键名写错）
+//   - 存在 && skipWhen(cfg)        → panic（cfg 说该关，却给了值）
+//
+// 为什么「缺失」与「nil 值」必须同义：warningWorker/billingWorker 是
+// `var w worker.Worker; if cond { w = … }`——关闭态留下的是**值为 nil 的键**，
+// 不是缺键。只判缺失会让 nil 溜进 plan，最终 wm.Register(nil) → StartAll 在
+// nil 接口上 panic，进程起不来。
+func assembleWorkers(set workerSet, cfg *config.Config) []workerEntry {
+	plan := make([]workerEntry, 0, len(workerOrder))
+	for _, slot := range workerOrder {
+		skipOK := slot.skipWhen != nil && slot.skipWhen(cfg)
+
+		if slot.expand {
+			live := make([]worker.Worker, 0, len(set.groups[slot.name]))
+			for _, w := range set.groups[slot.name] {
+				if w != nil {
+					live = append(live, w)
+				}
+			}
+			switch {
+			case len(live) > 0 && skipOK:
+				panic("worker assembly: 组 " + slot.name + " 有值但 cfg 要求关闭")
+			case len(live) > 0:
+				for _, w := range live {
+					plan = append(plan, workerEntry{name: slot.name, w: w})
+				}
+			case skipOK:
+				// 合法缺席
+			default:
+				panic("worker assembly: 必需组 " + slot.name + " 为空（cfg 不允许缺席）")
+			}
+			continue
+		}
+
+		w, ok := set.byName[slot.name]
+		absent := !ok || w == nil
+		switch {
+		case absent && skipOK:
+			// 合法缺席
+		case absent:
+			panic("worker assembly: 必需 worker " + slot.name + " 缺席（cfg 不允许缺席；漏装配或键名写错）")
+		case skipOK:
+			panic("worker assembly: " + slot.name + " 有值但 cfg 要求关闭（装配与 cfg 不一致）")
+		default:
+			plan = append(plan, workerEntry{name: slot.name, w: w})
+		}
+	}
+	return plan
+}
+
+// buildOps 把注册序投影成 /ops/workers 的候选集：plan 派生项在前，extra 追加在后。
+//
+// extra 承载「只进 ops、不进注册」的观测器（proxy.NewDispatchObserverStats）——
+// 它是「观测拒收」的唯一可查痕迹，不能被 plan 派生顺手吃掉，所以显式参数化。
+func buildOps(plan []workerEntry, extra []handler.StatsProvider, log *logx.Logger) []handler.StatsProvider {
+	ws := make([]worker.Worker, 0, len(plan))
+	for _, e := range plan {
+		ws = append(ws, e.w)
+	}
+	return append(statsProviders(ws, log), extra...)
+}
 
 // run 装配阶段 6 并驱动整个生命周期（`ctx` 由 main 的 signal.NotifyContext 提供）。
 func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl *billingFace, cx *codexFace) {

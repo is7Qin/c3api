@@ -191,6 +191,39 @@ func requireSubjectsOnlyIn(t *testing.T, owner string, subjects ...string) {
 	}
 }
 
+// findMethodDecl 在文件内定位带接收者的方法；缺失即 FailNow。
+//
+// findFuncDecl 只认 fn.Recv == nil，所以 (*runtime).shutdown / (*runtime).start
+// 这类目标必须走本函数——否则「把解析目标改成方法」的那几行门在第一步就会
+// FailNow，实施者最省事的解法是把门删掉（静默降级）。
+func findMethodDecl(t *testing.T, f *ast.File, recv, name string) *ast.FuncDecl {
+	t.Helper()
+	for _, d := range f.Decls {
+		fn, ok := d.(*ast.FuncDecl)
+		if !ok || fn.Recv == nil || fn.Name.Name != name || len(fn.Recv.List) != 1 {
+			continue
+		}
+		if recvTypeName(fn.Recv.List[0].Type) == recv {
+			return fn
+		}
+	}
+	require.FailNow(t, "method not found", "expected method (%s).%s", recv, name)
+	return nil
+}
+
+// recvTypeName 剥掉 *T / T[P] 外壳，取类型名。
+func recvTypeName(e ast.Expr) string {
+	switch x := e.(type) {
+	case *ast.Ident:
+		return x.Name
+	case *ast.StarExpr:
+		return recvTypeName(x.X)
+	case *ast.IndexExpr:
+		return recvTypeName(x.X)
+	}
+	return ""
+}
+
 // findFuncDecl 在文件内定位顶层无接收者函数；缺失即 FailNow（原各测试的
 // "main func not found" / "shutdownTail func not found" 断言收敛于此）。
 func findFuncDecl(t *testing.T, f *ast.File, name string) *ast.FuncDecl {
