@@ -171,8 +171,8 @@ func (r *TemplateRepo) UpdateTemplatesBatch(ctx context.Context, ids []int64, p 
 			}
 		}
 		for _, id := range ids {
-			if templates[id].CredentialType.IsBPS() {
-				return ErrProviderNotWired
+			if templates[id].CredentialType.IsBPS() && p.SupportedFormats != nil && !domain.BPSFormatsOnly(*p.SupportedFormats) {
+				return fmt.Errorf("%w: BPS template requires Responses formats", ErrInvalidInput)
 			}
 			u := client.Template.UpdateOneID(id)
 			if p.Name != nil {
@@ -289,15 +289,20 @@ func (r *AccountRepo) updateAccountsBatch(ctx context.Context, ids []int64, p Ac
 			if err != nil {
 				return err
 			}
-			for _, tpl := range templates {
-				if tpl.CredentialType.IsBPS() {
-					return ErrProviderNotWired
-				}
-			}
 			for _, row := range locked {
 				templateID := row.TemplateID
 				if p.TemplateID != nil {
 					templateID = *p.TemplateID
+				}
+				if templates[row.TemplateID].CredentialType.IsBPS() != templates[templateID].CredentialType.IsBPS() {
+					return fmt.Errorf("%w: cannot change an account to or from BPS", ErrInvalidInput)
+				}
+				key := row.UpstreamKey
+				if p.UpstreamKey != nil {
+					key = *p.UpstreamKey
+				}
+				if templates[templateID].CredentialType.IsBPS() && key != "" {
+					return fmt.Errorf("%w: BPS accounts cannot use an upstream key", ErrInvalidInput)
 				}
 				baseURL := row.BaseURL
 				if p.BaseURL != nil {

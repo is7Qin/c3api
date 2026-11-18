@@ -213,6 +213,14 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
 		return
 	}
+	// BPS SDK does not support Codex continuation semantics; reject before any
+	// continuation Redis lookup or upstream preparation.
+	if contPrevID != "" && sel.CredentialType.IsBPS() {
+		sel.Release()
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSInvalidBody.msg)
+		writeErr(w, errBPSInvalidBody)
+		return
+	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
 	// fail-closed（释放已占并发槽，零上游拨号）。
 	sel, attempt, contBinding, ok := p.resolveFormatContinuation(format, w, r, reqID, groupID, rm.meta.UserID, reqModel, contPrevID, start, sel, &plan, attempt)
@@ -441,6 +449,12 @@ func (a *chatAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.R
 		callErr  error
 	)
 	if sel.CredentialType.IsCodex() {
+		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, "", body, st.stream)
+	} else if sel.CredentialType.IsBPS() {
+		if st.format != domain.FormatOpenAIResponses || st.routeFormat != domain.FormatOpenAIResponses {
+			a.p.rejectBPSHTTP(w, r, reqID, groupID, start, sel, reqModel, st.format)
+			return 0, nil, nil, true, nil
+		}
 		code, respBody, handled, callErr = caller.Call(ctx, w, r, reqID, groupID, start, sel, "", body, st.stream)
 	} else {
 		cred, err := a.p.credentialFor(ctx, sel)

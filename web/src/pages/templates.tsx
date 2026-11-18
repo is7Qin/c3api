@@ -67,17 +67,20 @@ const FORMAT_LABELS: Record<TemplateFormat, string> = {
 const FORMATS = Object.keys(FORMAT_LABELS) as TemplateFormat[]
 
 // 凭据类型（模板级：一个模板 = 一种号池，账号继承）
-const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-special', 'codex-oauth', 'codex-pat', 'custom']
-// 生态三类型：走 SDK 类型化端点；模板格式联动限制为 resp / resp-ws / images /
-// search（service 校验前置——与 validateTemplate 白名单一致）
+const CREDENTIAL_TYPES: TemplateCredentialType[] = ['api_key', 'responses-special', 'codex-oauth', 'codex-pat', 'bps', 'custom']
+// Type-specific SDK formats. BPS deliberately excludes Images/Search: its login
+// and data plane are Responses HTTP/WS only in this UI contract.
 const ECO_CREDENTIAL_TYPES: TemplateCredentialType[] = ['responses-special', 'codex-oauth', 'codex-pat']
 const ECO_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws', 'openai-images', 'openai-search']
+const BPS_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws']
+const isBPSCredential = (credentialType?: string | null): credentialType is 'bps' => credentialType === 'bps'
 
 // 路径键 / 门禁 / 写面 body 组装在 lib/template-extensions.ts（纯函数，node --test 覆盖）
 const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> = {
   'responses-special': 'bg-violet-500/10 text-violet-600 dark:bg-violet-400/10 dark:text-violet-400',
   'codex-oauth': 'bg-sky-500/10 text-sky-600 dark:bg-sky-400/10 dark:text-sky-400',
   'codex-pat': 'bg-amber-500/10 text-amber-600 dark:bg-amber-400/10 dark:text-amber-400',
+  bps: 'bg-emerald-500/10 text-emerald-600 dark:bg-emerald-400/10 dark:text-emerald-400',
 }
 
 type MappingMode = components['schemas']['ModelMappingEntry']['mode']
@@ -140,7 +143,7 @@ function toForm(t: Template): FormState {
   const ct = t.CredentialType ?? ''
   return {
     name: t.Name ?? '',
-    base_url: isCodexCredential(ct) ? '' : (t.BaseURL ?? ''),
+    base_url: isCodexCredential(ct) || isBPSCredential(ct) ? '' : (t.BaseURL ?? ''),
     credential_type: ct,
     supported_formats: [...(t.SupportedFormats ?? [])],
     modelsText: (t.Models ?? []).join(', '),
@@ -201,7 +204,7 @@ function toBody(f: FormState): TemplateCreate {
   const ct = (f.credential_type || 'api_key') as string
   return {
     name: f.name.trim(),
-    base_url: isCodexCredential(ct) ? '' : f.base_url.trim(),
+    base_url: isCodexCredential(ct) || isBPSCredential(ct) ? '' : f.base_url.trim(),
     credential_type: ct as TemplateCreate['credential_type'],
     supported_formats: f.supported_formats,
     models: splitList(f.modelsText),
@@ -246,7 +249,7 @@ function FormFields({
   setForm,
   error,
   batch = false,
-  batchCodex = false,
+  batchFixedEndpoint = false,
   batchMappingMode = 'unchanged',
   setBatchMappingMode,
 }: {
@@ -254,7 +257,7 @@ function FormFields({
   setForm: (updater: (f: FormState) => FormState) => void
   error?: string | null
   batch?: boolean // 批量更新隐藏凭据类型（TemplatePatch 不支持类型变更）
-  batchCodex?: boolean
+  batchFixedEndpoint?: boolean
   batchMappingMode?: BatchMappingMode
   setBatchMappingMode?: (v: BatchMappingMode) => void
 }) {
@@ -300,8 +303,8 @@ function FormFields({
         />
       </div>
       {batch ? (
-        batchCodex ? (
-          <p className="text-xs text-muted-foreground">{t('templates.batchBaseUrlCodexDisabled')}</p>
+        batchFixedEndpoint ? (
+          <p className="text-xs text-muted-foreground">{t('templates.batchBaseUrlFixedDisabled')}</p>
         ) : (
           <div className="space-y-1.5">
             <Label htmlFor="tpl-base">BaseURL</Label>
@@ -314,8 +317,8 @@ function FormFields({
             <p className="text-xs text-muted-foreground">{t('templates.baseUrlOptional')}</p>
           </div>
         )
-      ) : isCodexCredential(form.credential_type) ? (
-        <p className="text-xs text-muted-foreground">{t('templates.baseUrlCodexHidden')}</p>
+      ) : isCodexCredential(form.credential_type) || isBPSCredential(form.credential_type) ? (
+        <p className="text-xs text-muted-foreground">{isBPSCredential(form.credential_type) ? t('templates.baseUrlBPSHidden') : t('templates.baseUrlCodexHidden')}</p>
       ) : (
         <div className="space-y-1.5">
           <Label htmlFor="tpl-base">BaseURL</Label>
@@ -338,16 +341,17 @@ function FormFields({
             items={Object.fromEntries(CREDENTIAL_TYPES.map(ct => [ct, t(`templates.credentialType.${ct}`)]))}
             value={form.credential_type || 'api_key'}
             onValueChange={v => setForm(f => {
-              // 生态三类型：supported_formats 联动限制为 resp / resp-ws（service 校验前置）
               const isCodex = isCodexCredential(v)
-              if (!ECO_CREDENTIAL_TYPES.includes(v as TemplateCredentialType)) return { ...f, credential_type: v, base_url: isCodex ? '' : f.base_url }
-              const supported_formats = f.supported_formats.filter(x => ECO_FORMATS.includes(x))
-              const format_models = f.format_models.filter(r => ECO_FORMATS.includes(r.format))
+              const isBPS = isBPSCredential(v)
+              if (!isBPS && !ECO_CREDENTIAL_TYPES.includes(v as TemplateCredentialType)) return { ...f, credential_type: v, base_url: f.base_url }
+              const allowed = isBPS ? BPS_FORMATS : ECO_FORMATS
+              const supported_formats = f.supported_formats.filter(x => allowed.includes(x))
+              const format_models = f.format_models.filter(r => allowed.includes(r.format))
               return {
                 ...f,
                 credential_type: v,
-                base_url: isCodex ? '' : f.base_url,
-                supported_formats: supported_formats.length ? supported_formats : [...ECO_FORMATS],
+                base_url: isCodex || isBPS ? '' : f.base_url,
+                supported_formats: supported_formats.length ? supported_formats : [...allowed],
                 format_models,
               }
             })}
@@ -359,7 +363,9 @@ function FormFields({
               ))}
             </SelectContent>
           </Select>
-          {ECO_CREDENTIAL_TYPES.includes(form.credential_type as TemplateCredentialType) && (
+          {isBPSCredential(form.credential_type) ? (
+            <p className="text-xs text-muted-foreground">{t('templates.bpsFormatHint')}</p>
+          ) : ECO_CREDENTIAL_TYPES.includes(form.credential_type as TemplateCredentialType) && (
             <p className="text-xs text-muted-foreground">{t('templates.ecoFormatHint')}</p>
           )}
         </div>
@@ -407,7 +413,7 @@ function FormFields({
       <div className="space-y-1.5">
         <Label>{t('templates.supportedFormatsLabel')}</Label>
         <div className="flex flex-wrap gap-1.5">
-          {(ECO_CREDENTIAL_TYPES.includes(form.credential_type as TemplateCredentialType) ? ECO_FORMATS : FORMATS).map(f => {
+          {(isBPSCredential(form.credential_type) ? BPS_FORMATS : ECO_CREDENTIAL_TYPES.includes(form.credential_type as TemplateCredentialType) ? ECO_FORMATS : FORMATS).map(f => {
             const on = form.supported_formats.includes(f)
             return (
               <Button
@@ -604,20 +610,20 @@ export default function Templates() {
   // pendingTemplateID 记录「表单对应的模板行已经落库、但链式写 ext 失败」的 id：
   // 此时 editing 仍为 null（新建），重试必须走 update，否则会再建一个重复模板。
   const [pendingTemplateID, setPendingTemplateID] = useState<number | null>(null)
-  // 批量更新时若选中任一 codex 模板则禁用 BaseURL（混合/全 Codex 均不发送已知无效请求；api_key/responses-special 保持可编辑；stale 行 fail-closed）
-  const isBatchCodex = useMemo(() => {
+  // SDK 固定端点类型不允许批量改写 BaseURL；stale 行 fail-closed。
+  const isBatchFixedEndpoint = useMemo(() => {
     if (selected.length === 0) return false
     return selected.some(id => {
       const t = rows.find(r => r.ID === id)
       if (!t) return true
-      return isCodexCredential(t.CredentialType as string)
+      return isCodexCredential(t.CredentialType as string) || isBPSCredential(t.CredentialType as string)
     })
   }, [selected, rows])
   useEffect(() => {
-    if (isBatchCodex && form.base_url !== '') {
+    if (isBatchFixedEndpoint && form.base_url !== '') {
       setForm(f => ({ ...f, base_url: '' }))
     }
-  }, [isBatchCodex, form.base_url])
+  }, [isBatchFixedEndpoint, form.base_url])
 
   // —— 批量更新对话框 ——
   const [batchOpen, setBatchOpen] = useState(false)
@@ -773,7 +779,7 @@ export default function Templates() {
       } else {
         await api.updateTemplate(id, toBody(f))
       }
-      if (id && (ECO_CREDENTIAL_TYPES.includes(ct) || ct === 'custom')) {
+      if (id && (ECO_CREDENTIAL_TYPES.includes(ct as TemplateCredentialType) || ct === 'custom')) {
         const body: TemplateExt = extWriteBody(f, ct)
         try {
           await api.putTemplateExt(id, body)
@@ -828,6 +834,10 @@ export default function Templates() {
       setValidationMsg(tr('templates.formRequired'))
       return
     }
+    if (isBPSCredential(form.credential_type) && form.supported_formats.some(f => !BPS_FORMATS.includes(f))) {
+      setValidationMsg(tr('templates.bpsFormatHint'))
+      return
+    }
     const mappingErr = validateMappingRows(form.model_mapping, tr)
     if (mappingErr) {
       setValidationMsg(mappingErr)
@@ -846,7 +856,7 @@ export default function Templates() {
       }
     }
     const fields = toPatch(form, batchMappingMode)
-    if (isBatchCodex) delete (fields as Record<string, unknown>).base_url
+    if (isBatchFixedEndpoint) delete (fields as Record<string, unknown>).base_url
     if (Object.keys(fields).length === 0) {
       setValidationMsg(tr('templates.batchUpdateEmpty'))
       return
@@ -1058,7 +1068,7 @@ export default function Templates() {
             <DialogDescription>{tr('templates.batchUpdateDesc')}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
-            <FormFields form={form} setForm={setForm} batch batchCodex={isBatchCodex} batchMappingMode={batchMappingMode} setBatchMappingMode={setBatchMappingMode} />
+            <FormFields form={form} setForm={setForm} batch batchFixedEndpoint={isBatchFixedEndpoint} batchMappingMode={batchMappingMode} setBatchMappingMode={setBatchMappingMode} />
             {validationMsg && <p className="text-sm text-destructive">{validationMsg}</p>}
             {batchUpdate.isError && errMsg(batchUpdate.error) && (
               <p className="text-sm text-destructive">{errMsg(batchUpdate.error)}</p>

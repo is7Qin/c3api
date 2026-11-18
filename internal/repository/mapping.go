@@ -5,6 +5,9 @@
 package repository
 
 import (
+	"encoding/json"
+	"fmt"
+
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
@@ -93,14 +96,14 @@ func toDomainTemplateExt(e *ent.TemplateExt) *domain.TemplateExt {
 	}
 }
 
-// toDomainAccountExt ent → domain 投影（codex_identity jsonb 已由生成层扫描器
-// 解包为 *domain.CodexIdentity——NULL → nil、坏 json → 查询报错原样透传；
-// 此处直拷不重解包）。
-func toDomainAccountExt(e *ent.AccountExt) *domain.AccountExt {
+// toDomainAccountExt projects only the fields owned by the current provider.
+func accountExtColumns(e *ent.AccountExt) *domain.AccountExt {
+	if e == nil {
+		return nil
+	}
 	return &domain.AccountExt{
 		AccountID:              e.AccountID,
 		CredentialType:         credential.Type(e.CredentialType),
-		CodexIdentity:          e.CodexIdentity,
 		CodexOAuthToken:        e.CodexOauthToken,
 		CodexOAuthRefreshToken: e.CodexOauthRefreshToken,
 		CodexOAuthExpiresAt:    e.CodexOauthExpiresAt,
@@ -108,6 +111,36 @@ func toDomainAccountExt(e *ent.AccountExt) *domain.AccountExt {
 		CodexEmail:             e.CodexEmail,
 		CodexAccountID:         e.CodexAccountID,
 	}
+}
+
+func toDomainAccountExt(e *ent.AccountExt) (*domain.AccountExt, error) {
+	ext := accountExtColumns(e)
+	if err := projectAccountIdentity(ext, e.CodexIdentity); err != nil {
+		return nil, err
+	}
+	return ext, nil
+}
+
+func projectAccountIdentity(ext *domain.AccountExt, env *domain.IdentityEnvelope) error {
+	if ext.CredentialType.IsBPS() {
+		if env != nil {
+			ext.BPSProfile = (*env).BPSProfile()
+		}
+		if err := validateBPSExt(ext); err != nil {
+			return fmt.Errorf("%w: account_id=%d: %s", errInvalidBPSAccountExt, ext.AccountID, err.Error())
+		}
+		return nil
+	}
+	if env != nil {
+		id := &domain.CodexIdentity{}
+		if raw, ok := (*env)["installation_id"]; ok {
+			if err := json.Unmarshal(raw, &id.InstallationID); err != nil {
+				return fmt.Errorf("account_id=%d: invalid installation_id in codex_identity", ext.AccountID)
+			}
+		}
+		ext.CodexIdentity = id
+	}
+	return nil
 }
 
 func toDomainGroupAssignment(a *ent.GroupAssignment) *domain.GroupAssignment {
@@ -211,7 +244,9 @@ func toDomainAccount(a *ent.Account) *domain.Account {
 	// 无 ext 边 → nil（与 Template.StripImageTools 同款合并先例，定死
 	// 路线）。
 	if len(a.Edges.Ext) > 0 {
-		d.Ext = toDomainAccountExt(a.Edges.Ext[0])
+		if ext, err := toDomainAccountExt(a.Edges.Ext[0]); err == nil {
+			d.Ext = ext
+		}
 	}
 	return d
 }

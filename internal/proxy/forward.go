@@ -106,6 +106,7 @@ type Proxy struct {
 	// fatal 统一回调全在适配层；main 经 Deps.Codex 注入，nil = 未装配 → codex
 	// 类型 501 显式拒绝——防 nil 误走凭据缺失 502）。
 	codex *sdkbridge.Codex
+	bps   *sdkbridge.BPS
 	// conversations Codex 会话簿（spec §5.3；main 经 Deps.Conversations 注入，恒非
 	// nil）。nil 只出现在测试：选号时 Conversation 恒 false ⇒ 回到槽位路径，
 	// 不会产出匿名身份。
@@ -142,6 +143,8 @@ type Proxy struct {
 type Deps struct {
 	// Codex codex SDK 适配层（nil = 未装配 → codex 类型请求 501）。
 	Codex *sdkbridge.Codex
+	// BPS SDK adapter (nil = fail closed for BPS requests).
+	BPS *sdkbridge.BPS
 	// Recorder 质量记录器（休眠依赖；nil = 未装配）。
 	Recorder *quality.Recorder
 	// Continuation 硬续接绑定存储（nil = 未装配 → continuation 请求 fail-closed）。
@@ -163,7 +166,7 @@ func New(cfg Config, sched *scheduler.Scheduler, creds *credential.Registry, rec
 	p := &Proxy{
 		cfg: cfg, sched: sched, creds: creds, rec: rec, clients: clients, auth: auth,
 		log: log, bill: bill, errlog: errlog,
-		codex: deps.Codex, conversations: deps.Conversations, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
+		codex: deps.Codex, bps: deps.BPS, conversations: deps.Conversations, qualityRecorder: deps.Recorder, cont: deps.Continuation, contBinder: deps.ContBind,
 		wsHeartbeatInterval: responsesWSHeartbeatInterval,
 		wsConns:             newWSRegistry(),
 	}

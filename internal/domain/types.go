@@ -553,14 +553,8 @@ type TemplateExt struct {
 	CodexResponsesTransport CodexResponsesTransport
 }
 
-// CodexIdentity codex 账号持久身份（account_ext.codex_identity jsonb 序列化
-// 契约类型——json tag 即落库形态）。仅保留安装级 installation_id：账号存在
-// 期间稳定、运行时唯一被消费的身份项（安装级永久；internal/proxy/scheduler
-// 注入源）。会话级 session/thread/window 已退役为运行时槽状态（scheduler
-// 槽位池按完成轮数演化——见 internal/scheduler/identity_pool.go），不再是持久身份，
-// 故不在此结构承载；旧行 jsonb 内的多余键读取时被忽略（jsonb blob 反序列化
-// 丢弃未知键），写侧恒只落 installation_id。空字段 = 未提供（service 归一：
-// 空 → 自动生成/沿用存量；identity 无清空路径——账号存在期间稳定）。
+// CodexIdentity is the Codex-only installation projection of the shared
+// account_ext.codex_identity envelope. It does not carry other providers' data.
 type CodexIdentity struct {
 	InstallationID string `json:"installation_id"`
 }
@@ -586,9 +580,9 @@ type AccountExt struct {
 	CodexPATKey            *string        // 凭据：pat
 	CodexEmail             *string        // 管理标识：账号登录邮箱（导入时人工/上游提供，非自动生成，可空）
 	CodexAccountID         *string        // 上游账号/空间标识（可留空——导入/保存时自动识别；识别失败：导入行拒绝、保存留空）
-	// BPSProfile is the complete opaque bps-sdk DeviceProfile JSON. It is a
-	// projection only in this phase; repository/handler persistence is later.
-	BPSProfile json.RawMessage `json:"bps_profile,omitempty"`
+	// BPSProfile is the opaque bps-sdk DeviceProfile JSON stored in the identity
+	// envelope. A nil write retains the stored profile; it is not an API response.
+	BPSProfile json.RawMessage `json:"-"`
 }
 
 // CodexImportConfig 导入面 body 级账号配置（作用于本次**新建**账号——已存在

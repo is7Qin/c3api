@@ -6,13 +6,17 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 import { copyText } from '@/components/key-box'
 import { useScopedApi } from '@/lib/api/scope'
 import type { components } from '@/lib/api/schema'
+import { deviceLoginCompleteFields, deviceLoginProvider, type DeviceLoginProvider } from '@/lib/device-login'
 
 type Template = components['schemas']['Template']
 type Group = components['schemas']['Group']
 type Challenge = components['schemas']['CodexDeviceLoginStart']
+
+type LoginTarget = { templateId: number; provider: DeviceLoginProvider; label: string }
 type Phase = 'idle' | 'starting' | 'code' | 'checking' | 'done' | 'expired' | 'denied' | 'error'
 
 // 设备码登录（ChatGPT OAuth device flow）：**状态在前端**。
@@ -29,8 +33,15 @@ type Phase = 'idle' | 'starting' | 'code' | 'checking' | 'done' | 'expired' | 'd
 export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone }: { open: boolean; onOpenChange: (open: boolean) => void; templates: Template[]; groups: Group[]; onDone: () => void }) {
   const api = useScopedApi()
   const { t } = useTranslation()
-  const oauthTemplates = useMemo(() => templates.filter(tp => tp.CredentialType === 'codex-oauth'), [templates])
+  const loginTargets = useMemo(() => templates.flatMap(tp => {
+    const provider = deviceLoginProvider(tp.CredentialType)
+    if (!provider) return []
+    const suffix = provider === 'bps' ? t('accounts.login.bpsTemplateSuffix') : t('accounts.login.codexTemplateSuffix')
+    return [{ templateId: tp.ID, provider, label: `${tp.Name ?? `#${tp.ID}`} · ${suffix}` }]
+  }), [templates, t])
   const [templateId, setTemplateId] = useState('')
+  const [profileText, setProfileText] = useState('')
+  const [target, setTarget] = useState<LoginTarget | null>(null)
   const [groupId, setGroupId] = useState('')
   const [challenge, setChallenge] = useState<Challenge | null>(null)
   const [phase, setPhase] = useState<Phase>('idle')
@@ -40,11 +51,15 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
   const [deadline, setDeadline] = useState<number | null>(null)
   // 请求代次：关闭/重开/重置后，上一轮的迟到响应不得改写本轮状态。
   const genRef = useRef(0)
+  const inFlight = useRef(false)
 
   const reset = () => {
     genRef.current++
+    inFlight.current = false
     setTemplateId('')
     setGroupId('')
+    setProfileText('')
+    setTarget(null)
     setChallenge(null)
     setPhase('idle')
     setError('')
@@ -54,8 +69,7 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
   }
 
   useEffect(() => {
-    if (open) reset()
-    else genRef.current++
+    reset()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
@@ -63,11 +77,16 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
   useEffect(() => {
     if (phase !== 'code' || deadline == null) return
     const left = deadline - Date.now()
-    if (left <= 0) {
+    const expire = () => {
+      setProfileText('')
+      setChallenge(null)
       setPhase('expired')
+    }
+    if (left <= 0) {
+      expire()
       return
     }
-    const timer = window.setTimeout(() => setPhase('expired'), left)
+    const timer = window.setTimeout(expire, left)
     return () => window.clearTimeout(timer)
   }, [phase, deadline])
 
@@ -76,45 +95,67 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
     onOpenChange(next)
   }
 
+  const selectedTarget = loginTargets.find(tp => String(tp.templateId) === templateId)
+  const activeProvider = (target ?? selectedTarget)?.provider
+  const templateOptions = target ? [target] : loginTargets
+
   const start = async () => {
+    if (phase !== 'idle' || inFlight.current || !selectedTarget) return
     const gen = ++genRef.current
+    inFlight.current = true
+    setTarget(selectedTarget)
     setPhase('starting')
     setError('')
     setPendingHint(false)
     try {
-      const res = await api.startCodexDeviceLogin()
+      const res = await api.startCodexDeviceLogin(selectedTarget.provider === 'bps' ? 'bps' : undefined)
       if (gen !== genRef.current) return
       setChallenge(res)
       setDeadline(res.expires_in_seconds > 0 ? Date.now() + res.expires_in_seconds * 1000 : null)
       setPhase('code')
     } catch (e) {
       if (gen !== genRef.current) return
+      setProfileText('')
       setPhase('error')
       setError((e as Error)?.message ?? '')
+    } finally {
+      if (gen === genRef.current) inFlight.current = false
     }
   }
 
   const complete = async () => {
-    if (!challenge || !templateId) return
+    if (phase !== 'code' || inFlight.current || !challenge || !target) return
     if (deadline != null && Date.now() >= deadline) {
+      setProfileText('')
+      setChallenge(null)
       setPhase('expired')
       return
     }
+    const fields = deviceLoginCompleteFields(target.provider, profileText)
+    if (!fields) {
+      setError(t('accounts.login.profileInvalid'))
+      return
+    }
     const gen = genRef.current
+    inFlight.current = true
     setPhase('checking')
+    setPendingHint(false)
     setError('')
     try {
       const res = await api.completeCodexDeviceLogin({
         device_auth_id: challenge.device_auth_id,
         user_code: challenge.user_code,
-        template_id: Number(templateId),
+        template_id: target.templateId,
         group_id: groupId ? Number(groupId) : null,
+        ...fields,
       })
       if (res.status === 'authorized') {
         // 已落库就是事实：即使弹窗已关闭/重置也刷新列表（迟到响应不改写状态）。
         onDone()
         if (gen !== genRef.current) return
         setDeadline(null)
+        setProfileText('')
+        setChallenge(null)
         setPhase('done')
         return
       }
@@ -125,12 +166,16 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
         return
       }
       setDeadline(null)
+      setProfileText('')
+      setChallenge(null)
       setPhase(res.status)
     } catch (e) {
       // 网络/上游故障：一次性码通常仍有效，保留现场让用户重试一次。
       if (gen !== genRef.current) return
       setPhase('code')
       setError((e as Error)?.message ?? '')
+    } finally {
+      if (gen === genRef.current) inFlight.current = false
     }
   }
 
@@ -142,7 +187,8 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
     }
   }
 
-  const pickersEditable = phase === 'idle' || phase === 'code'
+  // Template/provider are frozen once the upstream device grant has started.
+  const templateEditable = phase === 'idle'
   const showPickers = phase === 'idle' || phase === 'starting' || phase === 'code' || phase === 'checking'
 
   return (
@@ -156,33 +202,52 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
         {showPickers && (
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <Label>{t('accounts.login.template')}</Label>
+              <Label htmlFor="login-template">{t('accounts.login.template')}</Label>
               <Select
-                items={Object.fromEntries(oauthTemplates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`]))}
+                items={Object.fromEntries(templateOptions.map(tp => [String(tp.templateId), tp.label]))}
                 value={templateId || null}
-                onValueChange={v => setTemplateId(String(v ?? ''))}
-                disabled={!pickersEditable}
+                onValueChange={v => {
+                  if (!templateEditable || inFlight.current) return
+                  setTemplateId(String(v ?? ''))
+                  setProfileText('')
+                }}
+                disabled={!templateEditable}
               >
-                <SelectTrigger className="h-10 w-full">
+                <SelectTrigger id="login-template" className="h-10 w-full">
                   <SelectValue placeholder={t('accounts.login.templatePlaceholder')} />
                 </SelectTrigger>
                 <SelectContent>
-                  {oauthTemplates.map(tp => (
-                    <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>
-                      {tp.Name ?? `#${tp.ID}`}
-                    </SelectItem>
+                  {templateOptions.map(tp => (
+                    <SelectItem key={tp.templateId} value={String(tp.templateId)} label={tp.label}>{tp.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
-              {oauthTemplates.length === 0 && <p className="text-xs text-destructive">{t('accounts.login.noTemplate')}</p>}
+              {templateOptions.length === 0 && <p className="text-xs text-destructive">{t('accounts.login.noTemplate')}</p>}
             </div>
+            {activeProvider === 'bps' && (
+              <div className="space-y-1.5">
+                <Label htmlFor="bps-profile">{t('accounts.login.profileLabel')}</Label>
+                <Textarea
+                  id="bps-profile"
+                  value={profileText}
+                  onChange={e => setProfileText(e.target.value)}
+                  disabled={phase === 'starting' || phase === 'checking'}
+                  placeholder={t('accounts.login.profilePlaceholder')}
+                  spellCheck={false}
+                  autoComplete="off"
+                  aria-describedby="bps-profile-hint"
+                  className="min-h-40 font-mono text-xs"
+                />
+                <p id="bps-profile-hint" className="text-xs text-muted-foreground">{t('accounts.login.profileHint')}</p>
+              </div>
+            )}
             <div className="space-y-1.5">
               <Label>{t('accounts.login.group')}</Label>
               <Select
                 items={Object.fromEntries([['__none', t('accounts.login.groupNone')], ...groups.map(g => [String(g.ID), g.Name ?? `#${g.ID}`])])}
                 value={groupId || '__none'}
                 onValueChange={v => setGroupId(v === '__none' ? '' : String(v ?? ''))}
-                disabled={!pickersEditable}
+                disabled={phase === 'starting' || phase === 'checking'}
               >
                 <SelectTrigger className="h-10 w-full">
                   <SelectValue />
@@ -267,7 +332,7 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
               <Button variant="outline" onClick={() => close(false)}>
                 {t('common.cancel')}
               </Button>
-              <Button onClick={start} disabled={!templateId || oauthTemplates.length === 0 || phase === 'starting'}>
+              <Button onClick={start} disabled={!selectedTarget || phase === 'starting'}>
                 {phase === 'starting' ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 {t('accounts.login.start')}
               </Button>
@@ -278,7 +343,7 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
               <Button variant="outline" onClick={() => close(false)}>
                 {t('common.cancel')}
               </Button>
-              <Button onClick={complete} disabled={!templateId}>
+              <Button onClick={complete} disabled={!target}>
                 {t('accounts.login.completeAction')}
               </Button>
             </>

@@ -37,7 +37,7 @@ func (_c *AccountExtCreate) SetCredentialType(v string) *AccountExtCreate {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (_c *AccountExtCreate) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtCreate {
+func (_c *AccountExtCreate) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtCreate {
 	_c.mutation.SetCodexIdentity(v)
 	return _c
 }
@@ -339,7 +339,7 @@ func (u *AccountExtUpsert) UpdateCredentialType() *AccountExtUpsert {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (u *AccountExtUpsert) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpsert {
+func (u *AccountExtUpsert) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpsert {
 	u.Set(accountext.FieldCodexIdentity, v)
 	return u
 }
@@ -541,7 +541,7 @@ func (u *AccountExtUpsertOne) UpdateCredentialType() *AccountExtUpsertOne {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (u *AccountExtUpsertOne) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpsertOne {
+func (u *AccountExtUpsertOne) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpsertOne {
 	return u.Update(func(s *AccountExtUpsert) {
 		s.SetCodexIdentity(v)
 	})
@@ -929,7 +929,7 @@ func (u *AccountExtUpsertBulk) UpdateCredentialType() *AccountExtUpsertBulk {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (u *AccountExtUpsertBulk) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpsertBulk {
+func (u *AccountExtUpsertBulk) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpsertBulk {
 	return u.Update(func(s *AccountExtUpsert) {
 		s.SetCodexIdentity(v)
 	})

@@ -62,9 +62,6 @@ func (r *TemplateExtRepo) UpsertTemplateExt(ctx context.Context, e *domain.Templ
 	if e == nil {
 		return nil, false, ErrInvalidInput
 	}
-	if e.CredentialType.IsBPS() {
-		return nil, false, ErrProviderNotWired
-	}
 	if decide == nil {
 		// nil 不是"不判定"，而是"把判定整个关掉"——那正是 409 门要防的事，所以它是
 		// 编程错误（不是可重试的运行时状态），入口处直接 panic：绝不静默放行。

@@ -34,6 +34,7 @@ type healthProber struct {
 	lookup  func(accountID int64) (*domain.Account, bool)
 	runtime func(accountID int64) (scheduler.RuntimeInfo, bool)
 	codex   codexUsageProber
+	bps     func(context.Context, *domain.Account) error
 	timeout time.Duration
 }
 
@@ -44,8 +45,12 @@ type healthProber struct {
 // 重载后刷新，运行时状态则随 FailAccount 同步翻转，故冻结必须看运行时状态）。
 func newHealthProber(lookup func(accountID int64) (*domain.Account, bool),
 	runtime func(accountID int64) (scheduler.RuntimeInfo, bool),
-	codex codexUsageProber, timeout time.Duration) scheduler.ProbeFunc {
-	p := &healthProber{lookup: lookup, runtime: runtime, codex: codex, timeout: timeout}
+	codex codexUsageProber, timeout time.Duration, bps ...func(context.Context, *domain.Account) error) scheduler.ProbeFunc {
+	var bpsProbe func(context.Context, *domain.Account) error
+	if len(bps) > 0 {
+		bpsProbe = bps[0]
+	}
+	p := &healthProber{lookup: lookup, runtime: runtime, codex: codex, bps: bpsProbe, timeout: timeout}
 	return p.probe
 }
 
@@ -105,9 +110,13 @@ func (p *healthProber) probe(ctx context.Context, key scheduler.HealthKey) error
 		// api_key 族无合成探测面（/v1/models 与流量无关，已删除）——探测视为通过，恢复由时间窗+真实流量判定。
 		return nil
 	case tpl.CredentialType == credential.TypeBPS:
-		// BPS must not be probed through the Codex usage path. Until its
-		// durable TokenStore/client probe is wired, keep health fail-closed.
-		return fmt.Errorf("health probe: BPS adapter not wired for account %d", key.AccountID)
+		if p.bps == nil {
+			return fmt.Errorf("health probe: BPS adapter not wired for account %d", key.AccountID)
+		}
+		if err := p.bps(cctx, acct); err != nil {
+			return fmt.Errorf("health probe: BPS access probe failed for account %d: %w", key.AccountID, err)
+		}
+		return nil
 	default:
 		return fmt.Errorf("health probe: account %d has unknown credential type %q", key.AccountID, tpl.CredentialType)
 	}

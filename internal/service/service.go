@@ -544,9 +544,9 @@ type Service struct {
 	//（测试/降级路径），仅做值域校验。
 	supplierGranularity time.Duration
 	tzLoc               *time.Location
-	// codexLogin codex 设备码登录协议面（sdkbridge.CodexLogin 实现；nil =
-	// 未装配，端点 503——与其它可选装配面同语义，无降级路径）。
+	// Device-login providers share the stateless manual-completion protocol.
 	codexLogin CodexLoginProvider
+	bpsLogin   BPSLoginProvider
 	// prober 单账号单模型探测执行面（internal/probe.Prober 实现；nil = 未装配，
 	// ProbeAccount 返回装配错误 → handler 500）。
 	prober AccountProber
@@ -676,9 +676,10 @@ type Deps struct {
 	// 窗口守卫的 cutoff 来源，与 retention worker 同源（同一份天数 + 同一换算）。
 	// 0 = 未装配（测试/降级路径），守卫关闭。
 	RoutingObservationRetentionDays int
-	// CodexLogin codex 设备码登录协议面（sdkbridge.CodexLogin 实现）。nil =
-	// 端点 503（测试/降级路径）。协议细节全部在实现侧，service 只见接口。
+	// CodexLogin is the ChatGPT/Codex device authorization provider.
 	CodexLogin CodexLoginProvider
+	// BPSLogin is the BPS device authorization provider; nil keeps BPS fail-closed.
+	BPSLogin BPSLoginProvider
 	// Prober 单账号单模型探测执行面（internal/probe.Prober 实现；main 构造
 	// 注入）。nil = 未装配 → ProbeAccount 返回装配错误（handler 500）。
 	Prober AccountProber
@@ -809,6 +810,7 @@ func New(deps Deps) *Service {
 		routingRetentionDays:        deps.RoutingObservationRetentionDays,
 		supplierGranularity:         deps.SupplierThawGranularity,
 		codexLogin:                  deps.CodexLogin,
+		bpsLogin:                    deps.BPSLogin,
 		prober:                      deps.Prober,
 		probeGate:                   newProbeLimiter(),
 		probeEgress:                 probeProxyEgressIP,

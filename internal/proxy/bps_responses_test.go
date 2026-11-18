@@ -6,6 +6,8 @@ package proxy
 
 import (
 	"context"
+
+	bpssdk "github.com/is7Qin/bps-sdk"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -16,6 +18,24 @@ import (
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/scheduler"
 )
+
+func TestBPSResponsesClassifiesTypedErrorsWithoutLosingStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		code int
+	}{
+		{name: "rate", err: &bpssdk.RateLimitError{APIError: bpssdk.APIError{Status: 429, Raw: []byte(`{"error":"slow"}`)}}, code: 429},
+		{name: "policy", err: &bpssdk.PolicyError{APIError: bpssdk.APIError{Status: 403, Raw: []byte(`{"error":"policy"}`)}}, code: 403},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, safe := bpsErrorResponse(tc.err)
+			require.Equal(t, tc.code, code)
+			require.ErrorIs(t, safe, tc.err)
+			require.Equal(t, "BPS upstream rejected request", safe.Error())
+		})
+	}
+}
 
 func TestBPSResponsesNeverFallsThroughStaticCaller(t *testing.T) {
 	p := &Proxy{cfg: Config{UsageCapture: false}}

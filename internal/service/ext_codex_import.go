@@ -47,7 +47,8 @@ type codexImportRow struct {
 	oauthRT      string
 	oauthExpires *time.Time
 	patKey       string
-	maxConc      int // 显式归一（缺省 25——导入面裁决覆盖账号表默认 8）
+	bpsProfile   []byte // complete opaque profile, only used when creating BPS rows
+	maxConc      int    // 显式归一（缺省 25——导入面裁决覆盖账号表默认 8）
 }
 
 // ImportCodexOAuthAccounts 批量导入 codex-oauth 凭据（ServerInterface 依赖面）：
@@ -149,6 +150,23 @@ func codexOAuthRow(index int, it domain.CodexOAuthImportItem) (codexImportRow, e
 //
 // token 与 refresh 成对必填：codex-oauth 账号的续期完全依赖 refresh_token，
 // 只有 access token 的账号在首次过期后即失效。
+func newBPSOAuthRow(index int, email, accountID, at, rt string, expires *time.Time, profile []byte) (codexImportRow, error) {
+	if !validEmail(email) {
+		return codexImportRow{}, errors.New("bps_email 必填且须为合法邮箱")
+	}
+	if accountID == "" {
+		return codexImportRow{}, errors.New("bps_account_id 必填")
+	}
+	if at == "" || rt == "" {
+		return codexImportRow{}, errors.New("bps_oauth_token 与 bps_oauth_refresh_token 必须成对提供")
+	}
+	if err := domain.ValidateBPSProfileJSON(profile); err != nil {
+		return codexImportRow{}, errors.New("BPS profile 无效")
+	}
+	return codexImportRow{index: index, email: email, accountID: accountID,
+		oauthToken: at, oauthRT: rt, oauthExpires: expires, bpsProfile: append([]byte(nil), profile...), maxConc: 25}, nil
+}
+
 func newCodexOAuthRow(index int, email, accountID, at, rt string, expires *time.Time) (codexImportRow, error) {
 	if !validEmail(email) {
 		return codexImportRow{}, errors.New("codex_email 必填且须为合法邮箱")
@@ -307,7 +325,7 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 		// 存在：类型匹配 → updated（只更新凭据列）；不匹配 → 行级 failed
 		// （凭据列组不同，混写是脏——不跨类型 updated）
 		if cur.CredentialType != credType {
-			return codexImportOutcome{}, fmt.Errorf("凭据类型不匹配：已存在 %s 账号（codex_email=%q codex_account_id=%q）", cur.CredentialType, row.email, row.accountID)
+			return codexImportOutcome{}, conflictErr(fmt.Sprintf("凭据类型不匹配：已存在 %s 账号（codex_email=%q codex_account_id=%q）", cur.CredentialType, row.email, row.accountID))
 		}
 		// 软删账号不自动复活（task review Minor 1——删除意图权威，凭据更新
 		// 无意义）：updated 只对存活账号；命中已软删 → 行级 failed（管理面
@@ -332,7 +350,11 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 	if sc := domain.AccountScopeFrom(ctx); sc.Set {
 		supplierUID = sc.OwnerUID
 	}
-	identity := NewCodexIdentity()
+	var identity *domain.CodexIdentity
+	if credType != credential.TypeBPS {
+		id := NewCodexIdentity()
+		identity = &id
+	}
 	var created *domain.Account
 	err = s.store.WithTx(ctx, func(tx repository.TxStore) error {
 		acc, err := tx.CreateAccount(ctx, &domain.Account{
@@ -348,10 +370,13 @@ func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID 
 		}
 		created = acc
 		ext := &domain.AccountExt{
-			AccountID: acc.ID, CredentialType: credType, CodexIdentity: &identity,
+			AccountID: acc.ID, CredentialType: credType, CodexIdentity: identity,
 			CodexEmail: &row.email, CodexAccountID: &row.accountID,
 		}
-		if credType == credential.TypeCodexOAuth {
+		if credType == credential.TypeBPS {
+			ext.BPSProfile = append([]byte(nil), row.bpsProfile...)
+		}
+		if credType == credential.TypeCodexOAuth || credType == credential.TypeBPS {
 			ext.CodexOAuthToken = &row.oauthToken
 			ext.CodexOAuthRefreshToken = &row.oauthRT
 			ext.CodexOAuthExpiresAt = row.oauthExpires
@@ -386,6 +411,15 @@ func (s *Service) updateCodexCredentials(ctx context.Context, accountID int64, r
 		return mapRepoErr(err)
 	}
 	expected := acc.LifecycleRevision
+	if credType == credential.TypeBPS {
+		_, err := s.store.AdminUpsertAccountExtCAS(ctx, &domain.AccountExt{
+			AccountID: accountID, CredentialType: credential.TypeBPS,
+			CodexEmail: &row.email, CodexAccountID: &row.accountID,
+			CodexOAuthToken: &row.oauthToken, CodexOAuthRefreshToken: &row.oauthRT,
+			CodexOAuthExpiresAt: row.oauthExpires, BPSProfile: append([]byte(nil), row.bpsProfile...),
+		}, expected)
+		return mapRepoErr(err)
+	}
 	if credType == credential.TypeCodexOAuth {
 		return mapRepoErr(s.store.AdminWriteOAuthRotationCAS(ctx, accountID, expected, row.oauthToken, row.oauthRT, row.oauthExpires))
 	}

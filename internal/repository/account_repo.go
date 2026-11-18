@@ -85,7 +85,12 @@ func (r *AccountRepo) CreateAccount(ctx context.Context, a *domain.Account) (*do
 			return err
 		}
 		if templates[a.TemplateID].CredentialType.IsBPS() {
-			return ErrProviderNotWired
+			if _, inTx := r.driver.(*txDriver); !inTx {
+				return ErrProviderNotWired
+			}
+			if a.UpstreamKey != "" {
+				return fmt.Errorf("%w: BPS accounts cannot use an upstream key", ErrInvalidInput)
+			}
 		}
 		if err := validateCodexAccountBaseURL(templates[a.TemplateID], a.BaseURL); err != nil {
 			return err

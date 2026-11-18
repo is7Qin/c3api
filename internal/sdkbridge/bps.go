@@ -13,7 +13,11 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/coder/websocket"
+
 	bpssdk "github.com/is7Qin/bps-sdk"
+	bpsredis "github.com/is7Qin/bps-sdk/redisstore"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
@@ -24,8 +28,7 @@ import (
 // BPS account has no complete persisted DeviceProfile.
 var ErrBPSProfileRequired = errors.New("sdkbridge: BPS device profile required")
 
-// ErrBPSIdentityMismatch means that an SDK callback attempted to use a
-// different upstream account than the one frozen by Prepare.
+// ErrBPSIdentityMismatch means the selected credential has an incomplete identity or OAuth pair.
 var ErrBPSIdentityMismatch = errors.New("sdkbridge: BPS upstream account identity mismatch")
 
 // ErrBPSStoreUnavailable means the adapter was constructed without the
@@ -35,12 +38,6 @@ var ErrBPSStoreUnavailable = errors.New("sdkbridge: BPS token store unavailable"
 // ErrBPSEgressRequired prevents a BPS credential from silently using the
 // process default HTTP client or an unbound proxy path.
 var ErrBPSEgressRequired = errors.New("sdkbridge: BPS egress required")
-
-// ErrBPSOwnerMismatch means a token-store implementation did not receive the
-// account/K owner captured by Prepare. It is deliberately separate from an
-// upstream account-id mismatch: c3 account identity and upstream account id
-// must never be silently conflated.
-var ErrBPSOwnerMismatch = errors.New("sdkbridge: BPS token owner mismatch")
 
 // BPS transport is derived from the request format. There is no provider-owned
 // transport field in domain.Template, AccountCredential, or Selection.
@@ -71,72 +68,17 @@ func BPSFormatTransport(format domain.RequestFormat) (BPSTransport, error) {
 	}
 }
 
-// BPSTokenSet is the sdkbridge-owned token persistence shape. It intentionally
-// does not expose bps-sdk.TokenSet to repository/service callers.
-type BPSTokenSet struct {
-	AccessToken  string
-	RefreshToken string
-	ExpiresAt    time.Time
-}
-
-// BPSTokenKey is the c3-owned owner/K fence passed to persistence. UpstreamID
-// is checked against the string key received from bps-sdk, but is never
-// replaced with the c3 account id or a concatenation containing K.
-type BPSTokenKey struct {
-	AccountID         int64
-	IdentityRevision  int64
-	Owner             string
-	UpstreamAccountID string
-}
-
-// BPSTokenStore is the c3 persistence seam for BPS refresh-token rotation.
-// Implementations must enforce AccountID, IdentityRevision and Owner as a
-// single ownership tuple and CAS expectedRevision in SaveCAS.
-type BPSTokenStore interface {
-	Load(ctx context.Context, key BPSTokenKey) (BPSTokenSet, int64, error)
-	SaveCAS(ctx context.Context, key BPSTokenKey, expectedRevision int64, set BPSTokenSet) (int64, error)
-}
-
-type bpsTokenStoreAdapter struct {
-	store BPSTokenStore
-	key   BPSTokenKey
-}
-
-func (s bpsTokenStoreAdapter) Load(ctx context.Context, upstreamAccountID string) (bpssdk.TokenSet, int64, error) {
-	if upstreamAccountID != s.key.UpstreamAccountID {
-		return bpssdk.TokenSet{}, 0, fmt.Errorf("%w: got %q want %q", ErrBPSIdentityMismatch, upstreamAccountID, s.key.UpstreamAccountID)
-	}
-	set, revision, err := s.store.Load(ctx, s.key)
-	if err != nil {
-		return bpssdk.TokenSet{}, 0, err
-	}
-	return bpssdk.TokenSet{AccessToken: set.AccessToken, RefreshToken: set.RefreshToken, ExpiresAt: set.ExpiresAt}, revision, nil
-}
-
-func (s bpsTokenStoreAdapter) SaveCAS(ctx context.Context, upstreamAccountID string, expectedRevision int64, set bpssdk.TokenSet) (int64, error) {
-	if upstreamAccountID != s.key.UpstreamAccountID {
-		return 0, fmt.Errorf("%w: got %q want %q", ErrBPSIdentityMismatch, upstreamAccountID, s.key.UpstreamAccountID)
-	}
-	if s.key.AccountID <= 0 || s.key.IdentityRevision <= 0 || s.key.Owner == "" {
-		return 0, ErrBPSOwnerMismatch
-	}
-	next, err := s.store.SaveCAS(ctx, s.key, expectedRevision, BPSTokenSet{
-		AccessToken: set.AccessToken, RefreshToken: set.RefreshToken, ExpiresAt: set.ExpiresAt,
-	})
-	if errors.Is(err, ErrBPSTokenConflict) {
-		return 0, fmt.Errorf("%w: %v", bpssdk.ErrTokenStoreConflict, err)
-	}
-	return next, err
-}
-
-// BPS is the independent BPS adapter. It has no Codex client table, identity
-// pool, conversation book, or Codex transport dependency.
+// BPS is the independent BPS adapter. Redis persistence is implemented by
+// bps-sdk/redisstore; c3api supplies its existing Redis connection and only
+// freezes the c3 owner/K scope when constructing the SDK TokenAuth.
 type BPS struct {
-	store BPSTokenStore
+	redisStore *bpsredis.Store
+	storeErr   error
 }
 
-func NewBPS(store BPSTokenStore) *BPS {
-	return &BPS{store: store}
+func NewBPS(rdb redis.Scripter) *BPS {
+	store, err := bpsredis.New(rdb)
+	return &BPS{redisStore: store, storeErr: err}
 }
 
 // BPSRequestSource is the one frozen input bundle for a BPS attempt. Keeping
@@ -177,7 +119,10 @@ func (p *BPSPrepared) ProfileJSON() []byte          { return append([]byte(nil),
 // account/K owner is passed only to BPSTokenStore; NewTokenAuth receives the
 // verified upstream CodexAccountID exactly as required by the SDK.
 func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepared, error) {
-	if a == nil || a.store == nil {
+	if a == nil || a.redisStore == nil || a.storeErr != nil {
+		if a != nil && a.storeErr != nil {
+			return nil, fmt.Errorf("%w: %v", ErrBPSStoreUnavailable, a.storeErr)
+		}
 		return nil, ErrBPSStoreUnavailable
 	}
 	if ctx == nil {
@@ -209,15 +154,15 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 	if rt == nil {
 		return nil, ErrBPSEgressRequired
 	}
-	owner := fmt.Sprintf("c3-account:%d", cred.AccountID)
-	key := BPSTokenKey{
-		AccountID: cred.AccountID, IdentityRevision: cred.IdentityRevision,
-		Owner: owner, UpstreamAccountID: cred.CodexAccountID,
+	store, err := a.redisStore.ForOwner(bpsredis.Owner{
+		ID: fmt.Sprint(cred.AccountID), Revision: cred.IdentityRevision,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrBPSStoreUnavailable, err)
 	}
 	auth, err := bpssdk.NewTokenAuth(
 		cred.OAuthToken, cred.OAuthRefreshToken, cred.CodexAccountID, "",
-		bpsTokenStoreAdapter{store: a.store, key: key},
-		bpssdk.WithAuthHTTPTransport(rt),
+		store, bpssdk.WithAuthHTTPTransport(rt),
 	)
 	if err != nil {
 		return nil, err
@@ -244,6 +189,18 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 		format: source.Format, transport: transport, upstreamAccount: cred.CodexAccountID,
 		profile: profile, egress: source.Egress, client: sdkClient,
 	}, nil
+}
+
+// Probe performs one authenticated catalog/access request on the selected
+// egress. It does not synthesize quota windows or alter account health itself.
+func (a *BPS) Probe(ctx context.Context, cred domain.AccountCredential, eg *egress.Client) error {
+	prepared, err := a.Prepare(ctx, BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponses, Egress: eg})
+	if err != nil {
+		return err
+	}
+	defer prepared.Close()
+	_, err = prepared.Models(ctx)
+	return err
 }
 
 // BPSResult is the provider-neutral non-stream result. Raw is a cloned
@@ -275,6 +232,16 @@ func (p *BPSPrepared) Responses(ctx context.Context, payload []byte) (BPSResult,
 	return BPSResult{Raw: raw, RequestID: response.RequestID, Format: p.format}, nil
 }
 
+func (p *BPSPrepared) Models(ctx context.Context) (*bpssdk.Catalog, error) {
+	if p == nil || p.client == nil {
+		return nil, ErrBPSStoreUnavailable
+	}
+	if p.transport != BPSTransportHTTP {
+		return nil, fmt.Errorf("sdkbridge: BPS catalog probe requires HTTP format")
+	}
+	return p.client.Models(ctx)
+}
+
 func (p *BPSPrepared) StreamBody(ctx context.Context, payload []byte) (*http.Response, error) {
 	if p == nil || p.client == nil {
 		return nil, ErrBPSStoreUnavailable
@@ -291,19 +258,45 @@ type BPSStream struct {
 	session *bpssdk.Session
 }
 
-func (s *BPSStream) Read(ctx context.Context) ([]byte, error) {
+func (s *BPSStream) Write(ctx context.Context, typ websocket.MessageType, frame []byte) error {
 	if s == nil || s.session == nil {
-		return nil, io.ErrClosedPipe
+		return io.ErrClosedPipe
 	}
-	_, data, err := s.session.Read(ctx)
-	return append([]byte(nil), data...), err
+	if typ != websocket.MessageText {
+		return bpssdk.ErrInvalidFrame
+	}
+	return s.session.Write(ctx, bpssdk.MessageText, frame)
 }
 
-func (s *BPSStream) Close() error {
+func (s *BPSStream) Read(ctx context.Context) (websocket.MessageType, []byte, error) {
+	if s == nil || s.session == nil {
+		return websocket.MessageText, nil, io.ErrClosedPipe
+	}
+	typ, data, err := s.session.Read(ctx)
+	if typ != bpssdk.MessageText {
+		return websocket.MessageText, append([]byte(nil), data...), bpssdk.ErrInvalidFrame
+	}
+	return websocket.MessageText, append([]byte(nil), data...), err
+}
+
+func (s *BPSStream) Ping(ctx context.Context) error {
+	if s == nil || s.session == nil {
+		return io.ErrClosedPipe
+	}
+	return s.session.Ping(ctx)
+}
+
+func (s *BPSStream) Close(code websocket.StatusCode, reason string) error {
 	if s == nil || s.session == nil {
 		return nil
 	}
-	return s.session.Close(1000, "")
+	return s.session.Close(int(code), reason)
+}
+
+func (s *BPSStream) CloseNow() {
+	if s != nil && s.session != nil {
+		_ = s.session.CloseNow()
+	}
 }
 
 func (p *BPSPrepared) DialFrame(ctx context.Context, frame []byte) (*BPSStream, error) {
@@ -355,6 +348,12 @@ type BPSFailure struct {
 
 type bpsStatusError interface {
 	StatusCode() int
+}
+
+// IsBPSIdleTimeout identifies a BPS upstream read stall without coupling proxy
+// callers to bps-sdk sentinel errors.
+func IsBPSIdleTimeout(err error) bool {
+	return errors.Is(err, bpssdk.ErrStreamIdleTimeout)
 }
 
 func ClassifyBPSFailure(err error) BPSFailure {

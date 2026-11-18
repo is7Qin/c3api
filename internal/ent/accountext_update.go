@@ -59,7 +59,7 @@ func (_u *AccountExtUpdate) SetNillableCredentialType(v *string) *AccountExtUpda
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (_u *AccountExtUpdate) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpdate {
+func (_u *AccountExtUpdate) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpdate {
 	_u.mutation.SetCodexIdentity(v)
 	return _u
 }
@@ -376,7 +376,7 @@ func (_u *AccountExtUpdateOne) SetNillableCredentialType(v *string) *AccountExtU
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (_u *AccountExtUpdateOne) SetCodexIdentity(v *domain.CodexIdentity) *AccountExtUpdateOne {
+func (_u *AccountExtUpdateOne) SetCodexIdentity(v *domain.IdentityEnvelope) *AccountExtUpdateOne {
 	_u.mutation.SetCodexIdentity(v)
 	return _u
 }

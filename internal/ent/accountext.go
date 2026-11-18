@@ -25,7 +25,7 @@ type AccountExt struct {
 	// CredentialType holds the value of the "credential_type" field.
 	CredentialType string `json:"credential_type,omitempty"`
 	// CodexIdentity holds the value of the "codex_identity" field.
-	CodexIdentity *domain.CodexIdentity `json:"codex_identity,omitempty"`
+	CodexIdentity *domain.IdentityEnvelope `json:"codex_identity,omitempty"`
 	// CodexOauthToken holds the value of the "codex_oauth_token" field.
 	CodexOauthToken *string `json:"codex_oauth_token,omitempty"`
 	// CodexOauthRefreshToken holds the value of the "codex_oauth_refresh_token" field.

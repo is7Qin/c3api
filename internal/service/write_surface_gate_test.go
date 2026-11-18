@@ -67,7 +67,7 @@ var allowedServiceMethods = []string{
 	"CloseOrder",
 	// 设备码登录（发起/完成）：完成时**复用**导入核心（单行 upsert），不新增落库
 	// 路径/不新增代际推进点——与导入动词同属账号写面，故在此表登记。
-	"CompleteCodexOAuthDeviceLogin",
+	"CompleteDeviceLogin",
 	"CompleteOrder",
 	"CreateAccount",
 	"CreateGroup",
@@ -203,7 +203,7 @@ var allowedServiceMethods = []string{
 	"SetGroupAssignments",
 	"SetUserGroups",
 	"SoftDeletePaymentAccount",
-	"StartCodexOAuthDeviceLogin",
+	"StartDeviceLogin",
 	"StatsCapabilities",
 	"SupplierChunks",
 	"SupplierEarnings",
@@ -239,9 +239,7 @@ var allowedServiceMethods = []string{
 // 删除标记。除此之外不得有其它推进配置或身份代际的写方法：配置中间层的三个
 // 单字段 CAS 写点（启停、倍率、缓存域）若还存在，必落在此表之外，门必失败。
 var allowedServiceAccountWrites = []string{
-	// 设备码登录（完成时落库）：凭据来源不同、落库点相同（importCodexAccounts）。
-	// 登记在此 = 显式承认它是账号写面入口，而不是绕开收口的新写路径。
-	"CompleteCodexOAuthDeviceLogin",
+	"CompleteDeviceLogin",
 	"CreateAccount",
 	"CreatePaymentAccount",
 	"DeleteAccount",
@@ -251,7 +249,6 @@ var allowedServiceAccountWrites = []string{
 	"PatchAccount",
 	"RecoverAccount",
 	"SoftDeletePaymentAccount",
-	"StartCodexOAuthDeviceLogin",
 	"UpdateAccountsBatch",
 	"UpdatePaymentAccount",
 	"UpsertAccountExt",
@@ -326,7 +323,7 @@ func exportedServiceMethods(files []*ast.File, receiver string) []string {
 // 归属）不含这三者，不在此门内。模板侧的 UpsertTemplateExt 也不含这三者，
 // 自然排除。
 func isServiceAccountDomain(name string) bool {
-	return strings.Contains(name, "Account") ||
+	return name == "CompleteDeviceLogin" || strings.Contains(name, "Account") ||
 		strings.Contains(name, "OAuth") ||
 		strings.Contains(name, "PAT")
 }

@@ -52,6 +52,12 @@ const (
 	CodexDeviceLoginResultStatusPending    CodexDeviceLoginResultStatus = "pending"
 )
 
+// Defines values for DeviceLoginProvider.
+const (
+	DeviceLoginProviderBps   DeviceLoginProvider = "bps"
+	DeviceLoginProviderCodex DeviceLoginProvider = "codex"
+)
+
 // Defines values for ErrorResponseReason.
 const (
 	CubeHorizon     ErrorResponseReason = "cube_horizon"
@@ -275,6 +281,7 @@ const (
 // Defines values for TemplateCredentialType.
 const (
 	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
+	TemplateCredentialTypeBps              TemplateCredentialType = "bps"
 	TemplateCredentialTypeCodexOauth       TemplateCredentialType = "codex-oauth"
 	TemplateCredentialTypeCodexPat         TemplateCredentialType = "codex-pat"
 	TemplateCredentialTypeCustom           TemplateCredentialType = "custom"
@@ -294,6 +301,7 @@ const (
 // Defines values for TemplateCreateCredentialType.
 const (
 	TemplateCreateCredentialTypeApiKey           TemplateCreateCredentialType = "api_key"
+	TemplateCreateCredentialTypeBps              TemplateCreateCredentialType = "bps"
 	TemplateCreateCredentialTypeCodexOauth       TemplateCreateCredentialType = "codex-oauth"
 	TemplateCreateCredentialTypeCodexPat         TemplateCreateCredentialType = "codex-pat"
 	TemplateCreateCredentialTypeCustom           TemplateCreateCredentialType = "custom"
@@ -312,10 +320,11 @@ const (
 
 // Defines values for TemplateExtCredentialType.
 const (
-	TemplateExtCredentialTypeCodexOauth       TemplateExtCredentialType = "codex-oauth"
-	TemplateExtCredentialTypeCodexPat         TemplateExtCredentialType = "codex-pat"
-	TemplateExtCredentialTypeCustom           TemplateExtCredentialType = "custom"
-	TemplateExtCredentialTypeResponsesSpecial TemplateExtCredentialType = "responses-special"
+	Bps              TemplateExtCredentialType = "bps"
+	CodexOauth       TemplateExtCredentialType = "codex-oauth"
+	CodexPat         TemplateExtCredentialType = "codex-pat"
+	Custom           TemplateExtCredentialType = "custom"
+	ResponsesSpecial TemplateExtCredentialType = "responses-special"
 )
 
 // Defines values for TemplatePatchSupportedFormats.
@@ -900,15 +909,21 @@ type CodexCredits struct {
 	Balance *string `json:"balance"`
 }
 
-// CodexDeviceLoginCompleteBody 完成设备码登录请求体（模板/分组在此提供——发起阶段不产生本地状态）
+// CodexDeviceLoginCompleteBody 手动完成设备码登录；发起阶段不产生服务端会话。
 type CodexDeviceLoginCompleteBody struct {
+	// BpsProfile BPS 必填：SDK 生成的完整 DeviceProfile JSON；换码前校验，仅写入，不回显。
+	BpsProfile *map[string]interface{} `json:"bps_profile,omitempty"`
+
 	// DeviceAuthId 发起响应原样回传
 	DeviceAuthId string `json:"device_auth_id"`
 
 	// GroupId 可选：新建账号归组（不存在 → 404，且不消费上游授权码）
 	GroupId *int64 `json:"group_id"`
 
-	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == codex-oauth——错配 → 400，且不消费上游授权码）
+	// Provider 登录上游；省略 = codex。
+	Provider *DeviceLoginProvider `json:"provider,omitempty"`
+
+	// TemplateId 模板类型须匹配 provider（codex-oauth 或 bps）；错配不会消费上游授权码。
 	TemplateId int64 `json:"template_id"`
 
 	// UserCode 发起响应原样回传
@@ -1082,6 +1097,15 @@ type DeactivateResponse struct {
 // DeletedResponse defines model for DeletedResponse.
 type DeletedResponse struct {
 	Deleted bool `json:"deleted"`
+}
+
+// DeviceLoginProvider 登录上游；省略 = codex。
+type DeviceLoginProvider string
+
+// DeviceLoginStartBody defines model for DeviceLoginStartBody.
+type DeviceLoginStartBody struct {
+	// Provider 登录上游；省略 = codex。
+	Provider *DeviceLoginProvider `json:"provider,omitempty"`
 }
 
 // ErrLog 错误明细审计（err_logs 瘦表：拒绝 + 异常双轨；无 token/价格列）
@@ -2556,7 +2580,7 @@ type Template struct {
 	BaseURL   string    `json:"BaseURL"`
 	CreatedAt time.Time `json:"CreatedAt"`
 
-	// CredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
+	// CredentialType 模板号池类型；BPS 只支持 Responses HTTP/WS，使用固定上游端点。
 	CredentialType *TemplateCredentialType `json:"CredentialType,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
@@ -2570,7 +2594,7 @@ type Template struct {
 	UpdatedAt        time.Time                     `json:"UpdatedAt"`
 }
 
-// TemplateCredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
+// TemplateCredentialType 模板号池类型；BPS 只支持 Responses HTTP/WS，使用固定上游端点。
 type TemplateCredentialType string
 
 // TemplateSupportedFormats defines model for Template.SupportedFormats.
@@ -3370,6 +3394,9 @@ type PostAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
 // PostAccountsBatchUpdateJSONRequestBody defines body for PostAccountsBatchUpdate for application/json ContentType.
 type PostAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
+// PostAccountsCodexDeviceLoginJSONRequestBody defines body for PostAccountsCodexDeviceLogin for application/json ContentType.
+type PostAccountsCodexDeviceLoginJSONRequestBody = DeviceLoginStartBody
+
 // PostAccountsCodexDeviceLoginCompleteJSONRequestBody defines body for PostAccountsCodexDeviceLoginComplete for application/json ContentType.
 type PostAccountsCodexDeviceLoginCompleteJSONRequestBody = CodexDeviceLoginCompleteBody
 
@@ -3510,10 +3537,10 @@ type ServerInterface interface {
 	// 批量更新账号（fields 为任意字段子集）
 	// (POST /accounts/batch-update)
 	PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
-	// 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
+	// 发起 ChatGPT/BPS 设备码登录（用户浏览器授权后调 complete）
 	// (POST /accounts/codex-device-login)
 	PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request)
-	// 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
+	// 完成 ChatGPT/BPS 设备码登录（单次轮询；pending 可再次调用）
 	// (POST /accounts/codex-device-login/complete)
 	PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request)
 	// 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
@@ -3840,13 +3867,13 @@ func (_ Unimplemented) PostAccountsBatchUpdate(w http.ResponseWriter, r *http.Re
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
+// 发起 ChatGPT/BPS 设备码登录（用户浏览器授权后调 complete）
 // (POST /accounts/codex-device-login)
 func (_ Unimplemented) PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
+// 完成 ChatGPT/BPS 设备码登录（单次轮询；pending 可再次调用）
 // (POST /accounts/codex-device-login/complete)
 func (_ Unimplemented) PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)

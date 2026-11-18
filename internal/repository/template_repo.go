@@ -23,9 +23,16 @@ type TemplateRepo struct {
 	driver dialect.Driver
 }
 
+func validateBPSTemplateFormats(t *domain.Template) error {
+	if t.CredentialType.IsBPS() && !domain.BPSFormatsOnly(t.SupportedFormats) {
+		return fmt.Errorf("%w: BPS templates require Responses formats", ErrInvalidInput)
+	}
+	return nil
+}
+
 func (r *TemplateRepo) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
-	if t.CredentialType.IsBPS() {
-		return nil, ErrProviderNotWired
+	if err := validateBPSTemplateFormats(t); err != nil {
+		return nil, err
 	}
 	if t.CredentialType.IsCodex() && t.BaseURL != "" {
 		return nil, fmt.Errorf("%w: codex template base_url must be empty", ErrInvalidInput)
@@ -106,9 +113,6 @@ func (r *TemplateRepo) ListTemplates(ctx context.Context, q ListQuery) ([]*domai
 }
 
 func (r *TemplateRepo) UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
-	if t.CredentialType.IsBPS() {
-		return nil, ErrProviderNotWired
-	}
 	var row *ent.Template
 	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
 		if err := lockTemplateWrites(ctx, driver, []int64{t.ID}); err != nil {
@@ -118,8 +122,11 @@ func (r *TemplateRepo) UpdateTemplate(ctx context.Context, t *domain.Template) (
 		if err != nil {
 			return errMissingID(err, t.ID)
 		}
-		if current.CredentialType == string(credential.TypeBPS) {
-			return ErrProviderNotWired
+		if (current.CredentialType == string(credential.TypeBPS)) != t.CredentialType.IsBPS() {
+			return fmt.Errorf("%w: cannot change a template to or from BPS", ErrInvalidInput)
+		}
+		if err := validateBPSTemplateFormats(t); err != nil {
+			return err
 		}
 		if err := validateCodexTemplateUpdate(ctx, client, t); err != nil {
 			return err

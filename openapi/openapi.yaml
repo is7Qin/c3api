@@ -320,8 +320,12 @@ paths:
     post:
       operationId: PostAccountsCodexDeviceLogin
       tags: [accounts]
-      summary: 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
-      description: 无服务端会话——发起响应自带完成所需的凭据，任意实例都能处理 complete。
+      summary: 发起 ChatGPT/BPS 设备码登录（用户浏览器授权后调 complete）
+      description: 同一入口按 provider 选择 codex 或 bps；无服务端会话，任意实例都能处理 complete。
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceLoginStartBody' }
       responses:
         '200':
           description: 设备码（前端展示 user_code + verification_uri，完成授权后回传 complete）
@@ -334,8 +338,8 @@ paths:
     post:
       operationId: PostAccountsCodexDeviceLoginComplete
       tags: [accounts]
-      summary: 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
-      description: 模板/分组校验先于上游轮询——上游授权码一次性，先换码再拒绝会烧掉用户刚授权的凭据。
+      summary: 完成 ChatGPT/BPS 设备码登录（单次轮询；pending 可再次调用）
+      description: provider=codex 或 bps；模板/profile 校验先于上游轮询——上游授权码一次性，先换码再拒绝会烧掉用户刚授权的凭据。
       requestBody:
         required: true
         content:
@@ -2778,7 +2782,11 @@ paths:
     post:
       operationId: PostSupplierAccountsCodexDeviceLogin
       tags: [supplier]
-      summary: 发起 codex 设备码登录（归属恒为 JWT 本人；无服务端会话）
+      summary: 发起 ChatGPT/BPS 设备码登录（归属恒为 JWT 本人；无服务端会话）
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DeviceLoginStartBody' }
       responses:
         '200':
           description: 设备码（前端展示 user_code + verification_uri）
@@ -2791,7 +2799,7 @@ paths:
     post:
       operationId: PostSupplierAccountsCodexDeviceLoginComplete
       tags: [supplier]
-      summary: 完成设备码登录（落库归属 = JWT 本人；无跨用户会话可越权）
+      summary: 完成 ChatGPT/BPS 设备码登录（落库归属 = JWT 本人；无跨用户会话可越权）
       requestBody:
         required: true
         content:
@@ -3781,7 +3789,7 @@ components:
         # credential_type 模板级：一个模板 = 一种号池；缺省 = api_key。
         # 生态三类型（responses-special/codex-oauth/codex-pat）只支持 resp / resp-ws /
         # openai-images / openai-search 格式（service 校验）；类型化配置走 /templates/{id}/ext。
-        credential_type: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat, custom], default: api_key }
+        credential_type: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat, custom, bps], default: api_key }
         supported_formats:
           type: array
           minItems: 1
@@ -3811,7 +3819,7 @@ components:
         ID: { type: integer, format: int64 }
         Name: { type: string }
         BaseURL: { type: string, description: "credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (non-empty override, or empty for default/route failure)" }
-        CredentialType: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat, custom], description: 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式 }
+        CredentialType: { type: string, enum: [api_key, responses-special, codex-oauth, codex-pat, custom, bps], description: 模板号池类型；BPS 只支持 Responses HTTP/WS，使用固定上游端点。 }
         SupportedFormats:
           type: array
           items: { type: string, enum: [openai-chat, openai-responses, openai-responses-ws, openai-images, openai-search, anthropic] }
@@ -4061,7 +4069,7 @@ components:
       properties:
         # template_id 只读（响应）；请求体忽略——路径 {id} 为准。
         template_id: { type: integer, format: int64 }
-        credential_type: { type: string, enum: [responses-special, codex-oauth, codex-pat, custom], description: "类型声明；必须与父模板 credential_type 一致（不一致 → 400）" }
+        credential_type: { type: string, enum: [responses-special, codex-oauth, codex-pat, custom, bps], description: "类型声明；必须与父模板 credential_type 一致（不一致 → 400）" }
         # 模板是共享配置面：可空列 strip_image_tools（公共能力开关，生态三类型与
         # custom 均可配）——凭据列组（oauth/pat）一律在账号级 account_ext（账号私有）。
         strip_image_tools: { type: boolean, nullable: true, description: "公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭）" }
@@ -4172,6 +4180,14 @@ components:
         cache_domain: { type: string, description: "可选：新建账号的共享缓存域（缺省/空串 = 账号私有域；非空须为合法小写域名 ≤253——非法 → 400 整批拒绝）" }
         upstream_cost_multiplier: { type: number, format: double, minimum: 0, maximum: 10, description: "可选：新建账号的采购成本倍率（缺省 ×1；0–10，0 = 免费；越界 → 400 整批拒绝）" }
         supplier_user_id: { type: integer, format: int64, nullable: true, description: "保留：供应商面出现 ⇒ 400（归属恒为 JWT 本人；导入不分配归属）" }
+    DeviceLoginProvider:
+      type: string
+      enum: [codex, bps]
+      description: 登录上游；省略 = codex。
+    DeviceLoginStartBody:
+      type: object
+      properties:
+        provider: { $ref: '#/components/schemas/DeviceLoginProvider' }
     CodexDeviceLoginStart:
       type: object
       required: [device_auth_id, user_code, verification_uri, interval_seconds, expires_in_seconds]
@@ -4184,11 +4200,17 @@ components:
     CodexDeviceLoginCompleteBody:
       type: object
       required: [device_auth_id, user_code, template_id]
-      description: 完成设备码登录请求体（模板/分组在此提供——发起阶段不产生本地状态）
+      description: 手动完成设备码登录；发起阶段不产生服务端会话。
       properties:
+        provider: { $ref: '#/components/schemas/DeviceLoginProvider' }
         device_auth_id: { type: string, description: "发起响应原样回传" }
         user_code: { type: string, description: "发起响应原样回传" }
-        template_id: { type: integer, format: int64, description: "必填：codex 账号归属模板（credential_type 必须 == codex-oauth——错配 → 400，且不消费上游授权码）" }
+        bps_profile:
+          type: object
+          additionalProperties: true
+          writeOnly: true
+          description: "BPS 必填：SDK 生成的完整 DeviceProfile JSON；换码前校验，仅写入，不回显。"
+        template_id: { type: integer, format: int64, description: "模板类型须匹配 provider（codex-oauth 或 bps）；错配不会消费上游授权码。" }
         group_id: { type: integer, format: int64, nullable: true, description: "可选：新建账号归组（不存在 → 404，且不消费上游授权码）" }
     CodexDeviceLoginResult:
       type: object

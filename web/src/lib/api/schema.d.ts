@@ -207,8 +207,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 发起 codex 设备码登录（返回 device_auth_id/user_code；用户浏览器授权后调 complete）
-         * @description 无服务端会话——发起响应自带完成所需的凭据，任意实例都能处理 complete。
+         * 发起 ChatGPT/BPS 设备码登录（用户浏览器授权后调 complete）
+         * @description 同一入口按 provider 选择 codex 或 bps；无服务端会话，任意实例都能处理 complete。
          */
         post: operations["PostAccountsCodexDeviceLogin"];
         delete?: never;
@@ -227,8 +227,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * 完成设备码登录（单次轮询：pending 可再次调用；authorized 当场落库；过期/拒绝 → 终态）
-         * @description 模板/分组校验先于上游轮询——上游授权码一次性，先换码再拒绝会烧掉用户刚授权的凭据。
+         * 完成 ChatGPT/BPS 设备码登录（单次轮询；pending 可再次调用）
+         * @description provider=codex 或 bps；模板/profile 校验先于上游轮询——上游授权码一次性，先换码再拒绝会烧掉用户刚授权的凭据。
          */
         post: operations["PostAccountsCodexDeviceLoginComplete"];
         delete?: never;
@@ -2153,7 +2153,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 发起 codex 设备码登录（归属恒为 JWT 本人；无服务端会话） */
+        /** 发起 ChatGPT/BPS 设备码登录（归属恒为 JWT 本人；无服务端会话） */
         post: operations["PostSupplierAccountsCodexDeviceLogin"];
         delete?: never;
         options?: never;
@@ -2170,7 +2170,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 完成设备码登录（落库归属 = JWT 本人；无跨用户会话可越权） */
+        /** 完成 ChatGPT/BPS 设备码登录（落库归属 = JWT 本人；无跨用户会话可越权） */
         post: operations["PostSupplierAccountsCodexDeviceLoginComplete"];
         delete?: never;
         options?: never;
@@ -2946,7 +2946,7 @@ export interface components {
              * @default api_key
              * @enum {string}
              */
-            credential_type: "api_key" | "responses-special" | "codex-oauth" | "codex-pat" | "custom";
+            credential_type: "api_key" | "responses-special" | "codex-oauth" | "codex-pat" | "custom" | "bps";
             supported_formats: ("openai-chat" | "openai-responses" | "openai-responses-ws" | "openai-images" | "openai-search" | "anthropic")[];
             models?: string[];
             format_models?: {
@@ -2968,10 +2968,10 @@ export interface components {
             /** @description credential-type conditional: codex-oauth/codex-pat always empty (non-empty forbidden); api_key/responses-special may include a protocol prefix such as /zen but must not end in /v1 (non-empty override, or empty for default/route failure) */
             BaseURL: string;
             /**
-             * @description 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
+             * @description 模板号池类型；BPS 只支持 Responses HTTP/WS，使用固定上游端点。
              * @enum {string}
              */
-            CredentialType?: "api_key" | "responses-special" | "codex-oauth" | "codex-pat" | "custom";
+            CredentialType?: "api_key" | "responses-special" | "codex-oauth" | "codex-pat" | "custom" | "bps";
             SupportedFormats: ("openai-chat" | "openai-responses" | "openai-responses-ws" | "openai-images" | "openai-search" | "anthropic")[];
             Models?: string[];
             FormatModels?: {
@@ -3197,7 +3197,7 @@ export interface components {
              * @description 类型声明；必须与父模板 credential_type 一致（不一致 → 400）
              * @enum {string}
              */
-            credential_type: "responses-special" | "codex-oauth" | "codex-pat" | "custom";
+            credential_type: "responses-special" | "codex-oauth" | "codex-pat" | "custom" | "bps";
             /** @description 公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭） */
             strip_image_tools?: boolean | null;
             /** @description codex 出站传输：""（默认=http）/"http"/"ws"。全列替换语义：缺省或 null 即清空为默认面。仅 codex-oauth/codex-pat 可配非空值。 */
@@ -3319,6 +3319,14 @@ export interface components {
              */
             supplier_user_id?: number | null;
         };
+        /**
+         * @description 登录上游；省略 = codex。
+         * @enum {string}
+         */
+        DeviceLoginProvider: "codex" | "bps";
+        DeviceLoginStartBody: {
+            provider?: components["schemas"]["DeviceLoginProvider"];
+        };
         CodexDeviceLoginStart: {
             /** @description 上游轮询凭据（短期；complete 时回传；不落日志、不落库） */
             device_auth_id: string;
@@ -3331,15 +3339,20 @@ export interface components {
             /** @description 设备码有效期（0 = 上游未下发） */
             expires_in_seconds: number;
         };
-        /** @description 完成设备码登录请求体（模板/分组在此提供——发起阶段不产生本地状态） */
+        /** @description 手动完成设备码登录；发起阶段不产生服务端会话。 */
         CodexDeviceLoginCompleteBody: {
+            provider?: components["schemas"]["DeviceLoginProvider"];
             /** @description 发起响应原样回传 */
             device_auth_id: string;
             /** @description 发起响应原样回传 */
             user_code: string;
+            /** @description BPS 必填：SDK 生成的完整 DeviceProfile JSON；换码前校验，仅写入，不回显。 */
+            bps_profile?: {
+                [key: string]: unknown;
+            };
             /**
              * Format: int64
-             * @description 必填：codex 账号归属模板（credential_type 必须 == codex-oauth——错配 → 400，且不消费上游授权码）
+             * @description 模板类型须匹配 provider（codex-oauth 或 bps）；错配不会消费上游授权码。
              */
             template_id: number;
             /**
@@ -6218,7 +6231,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeviceLoginStartBody"];
+            };
+        };
         responses: {
             /** @description 设备码（前端展示 user_code + verification_uri，完成授权后回传 complete） */
             200: {
@@ -9711,7 +9728,11 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["DeviceLoginStartBody"];
+            };
+        };
         responses: {
             /** @description 设备码（前端展示 user_code + verification_uri） */
             200: {

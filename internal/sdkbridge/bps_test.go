@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
 	bpssdk "github.com/is7Qin/bps-sdk"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
 
 	"github.com/is7qin/c3api/internal/credential"
@@ -21,31 +23,12 @@ import (
 	"github.com/is7qin/c3api/pkg/egress"
 )
 
-type bpsStoreFixture struct {
-	loadKey BPSTokenKey
-	saveKey BPSTokenKey
-	loadSet BPSTokenSet
-	loads   int
-	saves   int
-}
-
-func (s *bpsStoreFixture) Load(_ context.Context, key BPSTokenKey) (BPSTokenSet, int64, error) {
-	s.loads++
-	s.loadKey = key
-	set := s.loadSet
-	if set.AccessToken == "" {
-		set = BPSTokenSet{AccessToken: "at", RefreshToken: "rt", ExpiresAt: time.Now().Add(time.Hour)}
-	}
-	return set, 4, nil
-}
-
-func (s *bpsStoreFixture) SaveCAS(_ context.Context, key BPSTokenKey, expected int64, set BPSTokenSet) (int64, error) {
-	s.saves++
-	s.saveKey = key
-	if expected != 4 || set.AccessToken == "" {
-		return 0, errors.New("unexpected CAS input")
-	}
-	return 5, nil
+func bpsRedisClient(t *testing.T) *redis.Client {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), ContextTimeoutEnabled: true})
+	t.Cleanup(func() { _ = client.Close() })
+	return client
 }
 
 func validBPSProfile(t *testing.T) []byte {
@@ -98,8 +81,7 @@ func TestBPSFormatTransportOnlyResponses(t *testing.T) {
 }
 
 func TestBPSPrepareClonesProfileUsesFixedEndpointAndFreezesFacts(t *testing.T) {
-	store := &bpsStoreFixture{}
-	adapter := NewBPS(store)
+	adapter := NewBPS(bpsRedisClient(t))
 	hc := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return bpsHTTPResponse(), nil
 	})}
@@ -123,7 +105,7 @@ func TestBPSPrepareFailsClosedForMissingStoreProfileAndWrongProvider(t *testing.
 	_, err := NewBPS(nil).Prepare(context.Background(), BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponses})
 	require.ErrorIs(t, err, ErrBPSStoreUnavailable)
 
-	adapter := NewBPS(&bpsStoreFixture{})
+	adapter := NewBPS(bpsRedisClient(t))
 	eg := egress.NewPool(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return bpsHTTPResponse(), nil
 	})}).Direct()
@@ -144,29 +126,13 @@ func TestBPSPrepareFailsClosedForMissingStoreProfileAndWrongProvider(t *testing.
 	require.ErrorIs(t, err, ErrBPSEgressRequired, "nil RoundTripper must not use http.DefaultTransport")
 }
 
-func TestBPSTokenStoreAdapterFencesUpstreamAndOwnerK(t *testing.T) {
-	store := &bpsStoreFixture{}
-	key := BPSTokenKey{AccountID: 42, IdentityRevision: 9, Owner: "c3-account:42", UpstreamAccountID: "upstream-acct"}
-	adapter := bpsTokenStoreAdapter{store: store, key: key}
-	set, revision, err := adapter.Load(context.Background(), "upstream-acct")
-	require.NoError(t, err)
-	require.Equal(t, int64(4), revision)
-	require.Equal(t, "at", set.AccessToken)
-	require.Equal(t, key, store.loadKey)
-	_, _, err = adapter.Load(context.Background(), "other-upstream")
-	require.ErrorIs(t, err, ErrBPSIdentityMismatch)
-	_, err = adapter.SaveCAS(context.Background(), "upstream-acct", 4, bpssdk.TokenSet{AccessToken: "new", RefreshToken: "rt"})
-	require.NoError(t, err)
-	require.Equal(t, key, store.saveKey)
-}
-
 func TestBPSHTTPResponsesAndStreamUseFixedEndpoint(t *testing.T) {
 	var gotURL string
 	hc := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 		gotURL = req.URL.String()
 		return bpsHTTPResponse(), nil
 	})}
-	adapter := NewBPS(&bpsStoreFixture{})
+	adapter := NewBPS(bpsRedisClient(t))
 	prepared, err := adapter.Prepare(context.Background(), BPSRequestSource{Credential: bpsCredential(t), Format: domain.FormatOpenAIResponses, Egress: egress.NewPool(hc).Direct()})
 	require.NoError(t, err)
 	result, err := prepared.Responses(context.Background(), []byte(`{"model":"gpt-6-astra","input":"hi"}`))

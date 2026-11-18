@@ -20,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/aiclient"
 )
 
@@ -190,6 +191,12 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 不钉选（hardContinuation=false），previous_response_id 原样随首帧交给
 	// SDK；命中照旧钉选（见 resolveContinuationBinding）。
 	var contBinding *continuation.Binding
+	if contPrevID != "" && sel.CredentialType.IsBPS() {
+		sel.Release()
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSInvalidBody.msg)
+		wsWriteError(client, errBPSInvalidBody.msg)
+		return
+	}
 	if contPrevID != "" {
 		b, ferr := p.resolveContinuationBinding(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, sel, &plan, attempt)
 		if ferr != nil {
@@ -314,8 +321,44 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		}
 	}
 	if sel.CredentialType.IsBPS() {
-		p.rejectBPSWS(st.client, r, reqID, groupID, start, sel, reqModel)
-		return 0, nil, nil, true, nil
+		if p.bps == nil {
+			p.rejectBPSWS(st.client, r, reqID, groupID, start, sel, reqModel)
+			return 0, nil, nil, true, nil
+		}
+		cred := sel.Credential()
+		prepared, err := p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponsesWS, Egress: sel.Egress})
+		if err != nil {
+			if isBPSLocalReject(err) {
+				p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponsesWS)
+				wsWriteError(st.client, errBPSInvalidBody.msg)
+				return 0, nil, nil, true, nil
+			}
+			return bpsWSError(err)
+		}
+		defer prepared.Close()
+		frame := wsFirstFrameForSel(st.first, sel, reqModel)
+		if st.stripTier {
+			if nf, err := sjson.DeleteBytes(frame, "service_tier"); err == nil {
+				frame = nf
+			}
+		}
+		dialCtx, cancel := context.WithTimeout(r.Context(), wsDialTimeout)
+		up, dialErr := prepared.DialFrame(dialCtx, frame)
+		cancel()
+		if dialErr != nil {
+			if isBPSLocalReject(dialErr) {
+				p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponsesWS)
+				wsWriteError(st.client, errBPSInvalidBody.msg)
+				return 0, nil, nil, true, nil
+			}
+			return bpsWSError(dialErr)
+		}
+		handled, fwErr := p.relayWS(st.client, up, nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, nil)
+		if handled {
+			return 0, nil, nil, true, nil
+		}
+		msg := firstFrameFailMsg(fwErr)
+		return 0, []byte(msg), nil, false, fwErr
 	}
 	cred, err := p.credentialFor(ctx, sel)
 	if err != nil {
@@ -379,6 +422,19 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		return code, []byte(msg), nil, false, dialErr
 	}
 	return code, []byte(msg), nil, false, nil
+}
+
+func bpsWSError(err error) (int, []byte, http.Header, bool, error) {
+	failure := sdkbridge.ClassifyBPSFailure(err)
+	code := failure.Status
+	if code < 400 || code > 599 {
+		code = 0
+	}
+	msg := ""
+	if err != nil {
+		msg = domain.TruncateErrMsg(err.Error())
+	}
+	return code, []byte(msg), nil, false, err
 }
 
 // aiclientTransport 上游侧 *websocket.Conn 的 wsRelayTransport 适配（aiclient

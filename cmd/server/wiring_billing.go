@@ -246,6 +246,7 @@ func newBillingFace(d billingDeps) *billingFace {
 		// codex 设备码登录：无服务端会话（发起返回凭据、完成时一次性轮询落库），
 		// 因此只需协议面装配，无 Redis 依赖。
 		CodexLogin:         sdkbridge.NewCodexLogin(),
+		BPSLogin:           sdkbridge.NewBPSLogin(hc),
 		Prober:             accountProber,
 		SupplierViewReload: supplierViewReloader(f.supplierViewLoader),
 		TimeLocation:       svcLoc,

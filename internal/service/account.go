@@ -46,12 +46,9 @@ func (s *Service) CreateAccount(ctx context.Context, p repository.AccountPatch) 
 		return nil, ErrInvalidInput
 	}
 	if tpl.CredentialType.IsBPS() {
-		return nil, ErrUnavailable
+		return nil, fmt.Errorf("%w: use device login to create a BPS account", ErrInvalidInput)
 	}
 	if tpl.CredentialType.IsCodex() && p.BaseURL != nil && *p.BaseURL != "" {
-		return nil, ErrInvalidInput
-	}
-	if tpl.CredentialType.IsBPS() && p.BaseURL != nil && !domain.BPSBaseURLAllowed(*p.BaseURL) {
 		return nil, ErrInvalidInput
 	}
 	if p.GroupIDs != nil {
@@ -209,13 +206,10 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 	if p.UpstreamKey != nil {
 		key = *p.UpstreamKey
 	}
-	if tpl.CredentialType.IsBPS() {
-		return nil, ErrUnavailable
-	}
 	if key == "" && tpl.CredentialType.UsesStaticKey() {
 		return nil, ErrInvalidInput
 	}
-	if tpl.CredentialType.IsBPS() && p.BaseURL != nil && !domain.BPSBaseURLAllowed(*p.BaseURL) {
+	if tpl.CredentialType.IsBPS() && (key != "" || (p.BaseURL != nil && !domain.BPSBaseURLAllowed(*p.BaseURL))) {
 		return nil, ErrInvalidInput
 	}
 	if p.GroupIDs != nil {
@@ -339,9 +333,6 @@ func (s *Service) UpdateAccountsBatch(ctx context.Context, ids []int64, p reposi
 		return nil, err
 	}
 	if err := validateAccountPatch(p); err != nil {
-		return nil, err
-	}
-	if err := s.rejectBPSAccountWrite(ctx, ids, p.TemplateID); err != nil {
 		return nil, err
 	}
 	// 出口代理绑定三态（spec-proxy-pool §3.6 唯一绑定谓词）：批量面**逐账号**判定

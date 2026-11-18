@@ -9,14 +9,10 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-// AccountExt 账号类型化鉴权扩展（1:1 边缘表；credential_type ∈
-// {codex-oauth, codex-pat}——账号只两种 codex 类型）。列组按类型约束由
-// service 校验：oauth 只允许 codex_oauth_* 列组；pat 只允许 codex_pat_key。
-// 持久身份（账号存在期间稳定）合并为 codex_identity jsonb 单列：仅
-// installation_id（UUIDv4 安装级永久，导入时 service NewCodexIdentity() 自动
-// 生成）；会话级 session/thread/window 已退役为运行时槽状态（scheduler 槽位池
-// 按完成轮数演化），不再持久化。除 id/account_id/credential_type 外全 nullable
-// （未来其他账号类型复用表加自己的列组，零约束冲突）。
+// AccountExt 账号类型化鉴权扩展（1:1 边缘表）。credential_type 及列组约束
+// 由 service/repository 校验；codex_identity 是可扩展 JSONB envelope：Codex
+// installation_id、BPS profile subtree 和未知字段共存，任何 writer 必须 merge 保留
+// 非本 writer 所有字段。
 type AccountExt struct{ ent.Schema }
 
 func (AccountExt) Fields() []ent.Field {
@@ -24,9 +20,8 @@ func (AccountExt) Fields() []ent.Field {
 		field.Int64("id"),
 		field.Int64("account_id"),
 		field.String("credential_type"),
-		// —— 持久身份（jsonb 单列；导入时 service NewCodexIdentity() 自动
-		// 生成、账号存在期间稳定；nil = 未配置/旧数据异常）——
-		field.JSON("codex_identity", &domain.CodexIdentity{}).Optional(),
+		// Provider identity envelope, preserving fields not owned by this writer.
+		field.JSON("codex_identity", &domain.IdentityEnvelope{}).Optional(),
 		// —— 凭据列组（按 credential_type 约束：oauth 只允许 codex_oauth_*；pat 只允许 codex_pat_key）——
 		field.String("codex_oauth_token").Optional().Nillable(),
 		field.String("codex_oauth_refresh_token").Optional().Nillable(),

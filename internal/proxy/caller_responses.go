@@ -16,6 +16,7 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/rule"
 	"github.com/is7qin/c3api/internal/scheduler"
+	"github.com/is7qin/c3api/internal/sdkbridge"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/sserelay"
 )
@@ -31,12 +32,25 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	if sel.CredentialType.IsCodex() {
 		return p.callCodexResponses(ctx, w, r, reqID, groupID, start, sel, body, stream)
 	}
+	var prepared *sdkbridge.BPSPrepared
 	if sel.CredentialType.IsBPS() {
-		p.rejectBPSHTTP(w, r, reqID, groupID, start, sel, gjson.GetBytes(body, "model").String(), domain.FormatOpenAIResponses)
-		return 0, nil, true, nil
+		if p.bps == nil {
+			p.rejectBPSHTTP(w, r, reqID, groupID, start, sel, gjson.GetBytes(body, "model").String(), domain.FormatOpenAIResponses)
+			return 0, nil, true, nil
+		}
+		var err error
+		prepared, err = p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: sel.Credential(), Format: sel.Format, Egress: sel.Egress})
+		if err != nil {
+			if ctx.Err() != nil {
+				return 0, nil, false, ctx.Err()
+			}
+			p.rejectBPSHTTP(w, r, reqID, groupID, start, sel, gjson.GetBytes(body, "model").String(), domain.FormatOpenAIResponses)
+			return 0, nil, true, nil
+		}
+		defer prepared.Close()
 	}
 	// 图像工具剥离：受模板开关门控，内部先对 "image" 子串预筛，无命中零解析直接透传，命中才最小解析改写
-	if sel.StripImageTools {
+	if prepared == nil && sel.StripImageTools {
 		body = stripImageTools(body)
 	}
 	if stream {
@@ -49,9 +63,17 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		if err != nil {
 			return 0, nil, false, err
 		}
-		resp, err := p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP())
-		if err != nil {
-			return statusOf(err), upstreamBody(err), false, err
+		var resp *http.Response
+		if prepared != nil {
+			resp, err = prepared.StreamBody(ctx, streamBody)
+			if err != nil {
+				return p.bpsHTTPError(ctx, w, reqID, groupID, start, sel, reqModel, err)
+			}
+		} else {
+			resp, err = p.clients.ResponseRaw(ctx, sel.TemplateID, sel.BaseURL, targetPath(sel, pathKeyResponses, defaultPathResponses), cred, streamBody, r.Header, sel.Egress.HTTP())
+			if err != nil {
+				return statusOf(err), upstreamBody(err), false, err
+			}
 		}
 		if resp.StatusCode != http.StatusOK {
 			rb := readUpstreamBody(resp)
@@ -101,7 +123,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 				}
 				// 续接入队（W1）：Codex 凭据在函数入口已分流，此处只有 API key
 				// 账号；Codex 不绑定续接。
-				if !contEnqueued && p.contBindWired() {
+				if prepared == nil && !contEnqueued && p.contBindWired() {
 					if id := contFrameID(ev.Data); id != "" {
 						p.contEnqueue(ctx, contProtocolREST, id, groupID)
 						contEnqueued = true
@@ -189,12 +211,26 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 		sel.Release()
 		return 400, nil, true, nil
 	}
-	data, code, errBody, err := p.rawJSON(ctx, sel, targetPath(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, r.Header)
-	if err != nil {
-		return statusOf(err), nil, false, err
-	}
-	if code != 0 {
-		return code, errBody, false, nil
+	var data []byte
+	if prepared != nil {
+		callCtx, cancel := context.WithTimeoutCause(ctx, p.cfg.UpstreamTimeout, errGatewayUpstreamTimeout)
+		defer cancel()
+		result, err := prepared.Responses(callCtx, upBody)
+		if err != nil {
+			return p.bpsHTTPError(callCtx, w, reqID, groupID, start, sel, reqModel, err)
+		}
+		data = result.Raw
+	} else {
+		var code int
+		var errBody []byte
+		var err error
+		data, code, errBody, err = p.rawJSON(ctx, sel, targetPath(sel, pathKeyResponses, defaultPathResponses), "Authorization", "Bearer "+cred, upBody, r.Header)
+		if err != nil {
+			return statusOf(err), nil, false, err
+		}
+		if code != 0 {
+			return code, errBody, false, nil
+		}
 	}
 	if m := sel.ClientResponseModel(reqModel); m != "" {
 		data = rewriteResponseModelJSON(data, m)
@@ -207,7 +243,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 	base := mergeDispatchBase(ctx, responsesBaseOutcome(reqID, groupID, sel, string(reqModel), start, nil, it, ot, tt, cr, cc, img))
 	// ACK-before-visible：响应 id 在 Redis 绑定确认前不得写出（store 未装配
 	// 零开销）。W2：Codex 凭据在函数入口已分流，Codex 不绑定续接。绑定失败/冲突 → fail-closed：响应弃置，客户端只见归一错误。
-	if p.cont != nil {
+	if prepared == nil && p.cont != nil {
 		if id := gjson.GetBytes(data, "id").String(); id != "" {
 			if ferr := p.contBind(ctx, contProtocolREST, id, groupID); ferr != nil {
 				out := base

@@ -9,6 +9,8 @@
 package main
 
 import (
+	"context"
+	"fmt"
 	"math"
 	"net/http"
 
@@ -18,6 +20,7 @@ import (
 	"github.com/is7qin/c3api/internal/continuation"
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/discovery"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/latch"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/pricing"
@@ -188,6 +191,7 @@ func newCodexFace(d codexDeps) *codexFace {
 	// 不含任何回填。
 	quotaW := scheduler.NewQuotaWorker(quotaQueue, d.runtimeHealth, quotaResolvers, sched.ProbeAccount, log, scheduler.QuotaWorkerConfig{})
 	f.quotaW = quotaW
+	bpsAdapter := sdkbridge.NewBPS(rdb)
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,
 		UpstreamTimeout:       cfg.Proxy.UpstreamTimeout,
@@ -203,6 +207,7 @@ func newCodexFace(d codexDeps) *codexFace {
 		StreamKeepaliveInterval:      cfg.Proxy.StreamKeepaliveInterval,
 	}, sched, credential.New(), rec, clients, auth, log, d.billHooks, errlogW, proxy.Deps{
 		Codex:         codexAdapter,
+		BPS:           bpsAdapter,
 		Recorder:      qualityRecorder,
 		Continuation:  contStore,
 		ContBind:      contBindW,
@@ -224,7 +229,19 @@ func newCodexFace(d codexDeps) *codexFace {
 	// 裁决：/v1/models 与流量无关，已删除——探测视为通过，恢复由时间窗+真实
 	// 流量判定）。超时同上游请求预算。probe 经 healthWorker 在 Start 期一次性
 	// 交给 runtimeHealth（Start 前记录 fail-closed 停在 OPEN/PROBING，绝不 READY）。
-	probe := newHealthProber(sched.ProbeAccount, sched.Runtime, codexAdapter, cfg.Proxy.UpstreamTimeout)
+	probe := newHealthProber(sched.ProbeAccount, sched.Runtime, codexAdapter, cfg.Proxy.UpstreamTimeout, func(ctx context.Context, acct *domain.Account) error {
+		cred := domain.CredentialFromExt(acct.Ext)
+		cred.AccountID = acct.ID
+		cred.IdentityRevision = acct.IdentityRevision
+		if acct.Template == nil || acct.Template.CredentialType != credential.TypeBPS || acct.Ext == nil {
+			return fmt.Errorf("BPS credential unavailable")
+		}
+		eg := egressPool.Direct()
+		if acct.Proxy != nil {
+			eg = egressPool.For(acct.Proxy.EgressSpec())
+		}
+		return bpsAdapter.Probe(ctx, cred, eg)
+	})
 	f.probe = probe
 	// 多实例集群 N 注入（discovery 接管，consumer spec §2.2）：gate 预算
 	// ceil(剩余/N) + limit RPM ceil(rpm/N)。N = Redis 心跳活体数（disco 实时读

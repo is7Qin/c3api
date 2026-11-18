@@ -42,6 +42,14 @@ type CodexLoginTokens struct {
 	ExpiresAt    *time.Time
 }
 
+// DeviceLoginProvider selects the upstream identity used by the shared login UI.
+type DeviceLoginProvider string
+
+const (
+	DeviceLoginCodex DeviceLoginProvider = "codex"
+	DeviceLoginBPS   DeviceLoginProvider = "bps"
+)
+
 // CodexLoginStatus 设备码轮询状态（service → handler 契约，落响应体 status）。
 type CodexLoginStatus string
 

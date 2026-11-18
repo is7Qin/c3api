@@ -40,7 +40,7 @@ func TestTemplatesIdExt(t *testing.T) {
 	require.Equal(t, 200, rec.Code, "put template ext: %s", rec.Body.String())
 	var ext TemplateExt
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &ext))
-	require.Equal(t, TemplateExtCredentialTypeResponsesSpecial, ext.CredentialType)
+	require.Equal(t, TemplateExtCredentialType(credential.TypeResponsesSpecial), ext.CredentialType)
 	require.NotNil(t, ext.StripImageTools)
 	require.True(t, *ext.StripImageTools)
 	require.Equal(t, tpl.ID, *ext.TemplateId, "响应带 template_id")

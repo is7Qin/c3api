@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"entgo.io/ent/dialect"
@@ -48,7 +49,6 @@ type extIdentityField uint8
 
 const (
 	extCredentialType extIdentityField = iota
-	extIdentity
 	extOAuthToken
 	extOAuthRefresh
 	extOAuthExpires
@@ -76,10 +76,7 @@ func extIdentityChanged(cur, next *domain.AccountExt, fields ...extIdentityField
 			if next.CredentialType != cur.CredentialType {
 				return true
 			}
-		case extIdentity:
-			if !sameCodexIdentity(next.CodexIdentity, cur.CodexIdentity) {
-				return true
-			}
+
 		case extOAuthToken:
 			if derefString(next.CodexOAuthToken) != derefString(cur.CodexOAuthToken) {
 				return true
@@ -109,14 +106,6 @@ func extIdentityChanged(cur, next *domain.AccountExt, fields ...extIdentityField
 	return false
 }
 
-// sameCodexIdentity 持久身份按值相等（nil 与 nil 相等；现只含 installation_id）。
-func sameCodexIdentity(a, b *domain.CodexIdentity) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	return *a == *b
-}
-
 // derefString nil 安全的字符串取值：凭据面比较里 nil 与空串同值（该写面 nil = 清空）。
 func derefString(s *string) string {
 	if s == nil {
@@ -133,16 +122,21 @@ func sameTimePtr(a, b *time.Time) bool {
 	return a.Equal(*b)
 }
 
-// loadAccountExtInTx 读事务内的 ext 行；无行 → (nil, nil)（首次创建是"变更"）。
-func loadAccountExtInTx(ctx context.Context, tx *ent.Client, accountID int64) (*domain.AccountExt, error) {
+func accountExtRow(ctx context.Context, tx *ent.Client, accountID int64) (*ent.AccountExt, error) {
 	row, err := tx.AccountExt.Query().Where(accountext.AccountIDEQ(accountID)).Only(ctx)
-	if err != nil {
-		if ent.IsNotFound(err) {
-			return nil, nil
-		}
+	if ent.IsNotFound(err) {
+		return nil, nil
+	}
+	return row, err
+}
+
+// loadAccountExtInTx returns nil for a missing row and rejects corrupt projections.
+func loadAccountExtInTx(ctx context.Context, tx *ent.Client, accountID int64) (*domain.AccountExt, error) {
+	row, err := accountExtRow(ctx, tx, accountID)
+	if err != nil || row == nil {
 		return nil, err
 	}
-	return toDomainAccountExt(row), nil
+	return toDomainAccountExt(row)
 }
 
 // bumpAccountGeneration 在同一个 UPDATE 里推进 C（无条件）并按需推进 K：C 用
@@ -181,32 +175,71 @@ func requireOwnedAccountInTx(ctx context.Context, client *ent.Client, accountID 
 	return nil
 }
 
-// UpsertAccountExt 幂等写入（同 TemplateExtRepo.UpsertTemplateExt 语义：
-// 冲突 UPDATE 显式 ClearX 清 NULL）。codex_identity 必存（nil 由 service
-// 生成/沿用——正常路径恒非 nil；jsonb NULL → ClearX 清空，身份无清空路径）；
-// codex_oauth_* / codex_pat_key / codex_email 由 service 维护（nil → 清空）。
+// UpsertAccountExt is the existing transaction import entry point. For BPS it
+// is insert-only and inside WithTx; replacement must use AdminUpsertAccountExtCAS.
 func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error) {
 	if e == nil {
 		return nil, ErrInvalidInput
 	}
 	if e.CredentialType.IsBPS() {
-		return nil, ErrProviderNotWired
+		if _, inTx := r.driver.(*txDriver); !inTx {
+			return nil, ErrProviderNotWired
+		}
 	}
-	_, err := r.client.AccountExt.Create().
+	var saved *domain.AccountExt
+	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		if err := lockOwnedAccountForUpdate(ctx, driver, e.AccountID); err != nil {
+			return err
+		}
+		if err := validateAccountExtTemplate(ctx, client, e); err != nil {
+			return err
+		}
+		cur, err := accountExtRow(ctx, client, e.AccountID)
+		if err != nil {
+			return err
+		}
+		if cur != nil && e.CredentialType.IsBPS() {
+			return fmt.Errorf("%w: existing BPS credentials require a fenced write", ErrConflict)
+		}
+		identity, err := mergeIdentityForWrite(cur, e)
+		if err != nil {
+			return err
+		}
+		if err := upsertAccountExtRow(ctx, client, e, identity); err != nil {
+			return err
+		}
+		saved, err = loadAccountExtInTx(ctx, client, e.AccountID)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return saved, nil
+}
+
+func newAccountExtCreate(client *ent.Client, e *domain.AccountExt, identity *domain.IdentityEnvelope) *ent.AccountExtCreate {
+	create := client.AccountExt.Create().
 		SetAccountID(e.AccountID).
 		SetCredentialType(string(e.CredentialType)).
-		SetCodexIdentity(e.CodexIdentity).
 		SetNillableCodexOauthToken(e.CodexOAuthToken).
 		SetNillableCodexOauthRefreshToken(e.CodexOAuthRefreshToken).
 		SetNillableCodexOauthExpiresAt(e.CodexOAuthExpiresAt).
 		SetNillableCodexPatKey(e.CodexPATKey).
 		SetNillableCodexEmail(e.CodexEmail).
-		SetNillableCodexAccountID(e.CodexAccountID).
+		SetNillableCodexAccountID(e.CodexAccountID)
+	if identity != nil {
+		create.SetCodexIdentity(identity)
+	}
+	return create
+}
+
+func upsertAccountExtRow(ctx context.Context, client *ent.Client, e *domain.AccountExt, identity *domain.IdentityEnvelope) error {
+	_, err := newAccountExtCreate(client, e, identity).
 		OnConflictColumns(accountext.FieldAccountID).
 		Update(func(u *ent.AccountExtUpsert) {
 			u.SetCredentialType(string(e.CredentialType))
-			if e.CodexIdentity != nil {
-				u.SetCodexIdentity(e.CodexIdentity)
+			if identity != nil {
+				u.SetCodexIdentity(identity)
 			} else {
 				u.ClearCodexIdentity()
 			}
@@ -242,10 +275,7 @@ func (r *AccountExtRepo) UpsertAccountExt(ctx context.Context, e *domain.Account
 			}
 		}).
 		ID(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return r.GetAccountExt(ctx, e.AccountID)
+	return err
 }
 
 // TryInsertAccountExt 先写者胜的空插入（首写原子性——并发双导入同一账号时
@@ -263,24 +293,19 @@ func (r *AccountExtRepo) TryInsertAccountExt(ctx context.Context, e *domain.Acco
 	if e == nil {
 		return false, ErrInvalidInput
 	}
-	if e.CredentialType.IsBPS() {
-		return false, ErrProviderNotWired
-	}
 	var inserted bool
 	err := withWriteTx(ctx, r.driver, func(client *ent.Client, txDrv dialect.Driver) error {
 		if err := lockOwnedAccountForUpdate(ctx, txDrv, e.AccountID); err != nil {
 			return err
 		}
-		err := client.AccountExt.Create().
-			SetAccountID(e.AccountID).
-			SetCredentialType(string(e.CredentialType)).
-			SetCodexIdentity(e.CodexIdentity).
-			SetNillableCodexOauthToken(e.CodexOAuthToken).
-			SetNillableCodexOauthRefreshToken(e.CodexOAuthRefreshToken).
-			SetNillableCodexOauthExpiresAt(e.CodexOAuthExpiresAt).
-			SetNillableCodexPatKey(e.CodexPATKey).
-			SetNillableCodexEmail(e.CodexEmail).
-			SetNillableCodexAccountID(e.CodexAccountID).
+		if err := validateAccountExtTemplate(ctx, client, e); err != nil {
+			return err
+		}
+		identity, err := mergeIdentityForWrite(nil, e)
+		if err != nil {
+			return err
+		}
+		err = newAccountExtCreate(client, e, identity).
 			OnConflictColumns(accountext.FieldAccountID).
 			DoNothing().
 			Exec(ctx)
@@ -394,7 +419,94 @@ func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmai
 		}
 		return nil, err
 	}
-	return toDomainAccountExt(row), nil
+	return toDomainAccountExt(row)
+}
+
+var errInvalidBPSAccountExt = errors.New("repository: invalid stored BPS credentials")
+
+// mergeIdentityForWrite mutates only the field owned by this credential type.
+// Read the original envelope under the account lock, not from caller projections.
+func mergeIdentityForWrite(cur *ent.AccountExt, next *domain.AccountExt) (*domain.IdentityEnvelope, error) {
+	var env domain.IdentityEnvelope
+	if cur != nil && cur.CodexIdentity != nil {
+		env = *cur.CodexIdentity
+	}
+	if next.CredentialType.IsBPS() {
+		profile := next.BPSProfile
+		if profile == nil {
+			profile = env.BPSProfile()
+		}
+		candidate := *next
+		candidate.BPSProfile = profile
+		if err := validateBPSExt(&candidate); err != nil {
+			return nil, fmt.Errorf("%w: %s", ErrInvalidInput, err.Error())
+		}
+		if next.BPSProfile != nil {
+			merged, err := env.ReplaceBPSProfile(profile)
+			return &merged, err
+		}
+	} else if next.CodexIdentity != nil {
+		merged, err := env.MergeCodexInstallation(next.CodexIdentity.InstallationID)
+		return &merged, err
+	} else if _, present := env["installation_id"]; present {
+		// Keep the existing nil-CodexIdentity clear contract, but clear only
+		// the Codex-owned field, never BPS or future keys.
+		env = env.Clone()
+		delete(env, "installation_id")
+		if len(env) == 0 {
+			return nil, nil
+		}
+	}
+	if env == nil {
+		return nil, nil
+	}
+	return &env, nil
+}
+
+func validateBPSExt(ext *domain.AccountExt) error {
+	if err := domain.ValidateBPSProfileJSON(ext.BPSProfile); err != nil {
+		return errors.New("BPS profile must be a non-null JSON object")
+	}
+	if strings.TrimSpace(derefString(ext.CodexOAuthToken)) == "" ||
+		strings.TrimSpace(derefString(ext.CodexOAuthRefreshToken)) == "" ||
+		strings.TrimSpace(derefString(ext.CodexAccountID)) == "" || ext.CodexPATKey != nil {
+		return errors.New("BPS requires OAuth credentials and upstream account ID, without a PAT")
+	}
+	return nil
+}
+
+func identityEnvelopeChanged(cur *ent.AccountExt, next *domain.IdentityEnvelope) (bool, error) {
+	var old *domain.IdentityEnvelope
+	if cur != nil {
+		old = cur.CodexIdentity
+	}
+	before, err := json.Marshal(old)
+	if err != nil {
+		return false, err
+	}
+	after, err := json.Marshal(next)
+	if err != nil {
+		return false, err
+	}
+	return !domain.IdentityJSONEqual(before, after), nil
+}
+
+func validateAccountExtTemplate(ctx context.Context, client *ent.Client, ext *domain.AccountExt) error {
+	tpl, err := client.Account.Query().Where(account.IDEQ(ext.AccountID)).QueryTemplate().Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return fmt.Errorf("%w: account %d has no template", ErrNotFound, ext.AccountID)
+		}
+		return err
+	}
+	ct := credential.Type(tpl.CredentialType)
+	// Legacy Codex ext rows predate template credential typing and are allowed
+	// to retain their existing method contract. BPS is strict: never write BPS
+	// credentials through a non-BPS template (or a non-BPS ext through BPS).
+	if ct.IsBPS() != ext.CredentialType.IsBPS() {
+		return fmt.Errorf("%w: account template credential type %q does not match BPS extension %q", ErrInvalidInput, ct, ext.CredentialType)
+	}
+	return nil
 }
 
 // accountExtQuery ext 查询基座：作用域未注入（管理面全量）⇒ 不附加谓词；供应商面
@@ -436,7 +548,7 @@ func (r *AccountExtRepo) GetAccountExt(ctx context.Context, accountID int64) (*d
 		}
 		return nil, err
 	}
-	return toDomainAccountExt(row), nil
+	return toDomainAccountExt(row)
 }
 
 // GetOwnedAccountExt 作用域内的 ext 单读（§2.5）：owner 谓词经**关联子查询
@@ -464,7 +576,7 @@ func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64
 		}
 		return nil, err
 	}
-	return toDomainAccountExt(row), nil
+	return toDomainAccountExt(row)
 }
 
 // accountExtProjectionColumns ext 投影的列清单：额度面凭据投影与调度器快照共用
@@ -472,9 +584,6 @@ func (r *AccountExtRepo) GetOwnedAccountExt(ctx context.Context, accountID int64
 const accountExtProjectionColumns = `e.account_id, e.credential_type, e.codex_identity,
        e.codex_oauth_token, e.codex_oauth_refresh_token, e.codex_oauth_expires_at,
        e.codex_pat_key, e.codex_email, e.codex_account_id`
-
-// jsonNullLiteral jsonb 列里的 JSON 空字面量（不是 SQL NULL：两者都表示"未配置"）。
-var jsonNullLiteral = []byte("null")
 
 // nullStrPtr 可空文本列 → 指针（NULL 与空串在领域模型里都是"未提供"）。
 func nullStrPtr(v sql.NullString) *string {
@@ -516,15 +625,17 @@ func scanAccountExtRevision(rows *entsql.Rows) (*domain.AccountExt, int64, error
 		t := oauthExpires.Time
 		ext.CodexOAuthExpiresAt = &t
 	}
-	// codex_identity 是 jsonb：SQL NULL（len==0）与 JSON 字面量 `null` 都表示"未配置
-	// 身份" ⇒ nil（与 ent 生成层扫描器同语义）。不能按"字段全空即视为 nil"判断——
-	// `{}` 与 `null` 语义不同（前者是"配置了空身份"，后者是"没有身份"）。
-	if raw := bytes.TrimSpace(identity); len(raw) > 0 && !bytes.Equal(raw, jsonNullLiteral) {
-		var id domain.CodexIdentity
-		if err := json.Unmarshal(raw, &id); err != nil {
+	var env *domain.IdentityEnvelope
+	if raw := bytes.TrimSpace(identity); len(raw) != 0 {
+		if err := json.Unmarshal(raw, &env); err != nil {
+			if ext.CredentialType.IsBPS() {
+				return nil, 0, fmt.Errorf("%w: account_id=%d: invalid identity envelope", errInvalidBPSAccountExt, ext.AccountID)
+			}
 			return nil, 0, fmt.Errorf("account_id=%d codex_identity decode: %w", ext.AccountID, err)
 		}
-		ext.CodexIdentity = &id
+	}
+	if err := projectAccountIdentity(&ext, env); err != nil {
+		return nil, 0, err
 	}
 	return &ext, identityRevision, nil
 }
@@ -653,90 +764,43 @@ func (r *AccountExtRepo) AdminUpsertAccountExtCAS(ctx context.Context, e *domain
 	if e == nil {
 		return nil, ErrInvalidInput
 	}
-	if e.CredentialType.IsBPS() {
-		return nil, ErrProviderNotWired
-	}
-	tx, err := r.client.Tx(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	if err := requireOwnedAccountInTx(ctx, tx.Client(), e.AccountID); err != nil {
-		return nil, err
-	}
-	cur, err := loadAccountExtInTx(ctx, tx.Client(), e.AccountID)
-	if err != nil {
-		return nil, err
-	}
-	advanceIdentity := extIdentityChanged(cur, e,
-		extCredentialType, extIdentity, extOAuthToken, extOAuthRefresh,
-		extOAuthExpires, extPATKey, extEmail, extCodexAccountID)
-	n, err := bumpAccountGeneration(ctx, tx.Client(), e.AccountID, expectedRevision, advanceIdentity)
-	if err != nil {
-		return nil, err
-	}
-	if n == 0 {
-		// 并发转属把账号移出当前作用域 ⇒ ErrNotFound（404）；否则 revision 陈旧。
-		if oerr := requireOwnedAccountInTx(ctx, tx.Client(), e.AccountID); oerr != nil {
-			return nil, oerr
+	var saved *domain.AccountExt
+	err := withWriteTx(ctx, r.driver, func(client *ent.Client, driver dialect.Driver) error {
+		if err := lockOwnedAccountForUpdate(ctx, driver, e.AccountID); err != nil {
+			return err
 		}
-		return nil, fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, e.AccountID, expectedRevision)
-	}
-	// Upsert ext via tx
-	_, err = tx.AccountExt.Create().
-		SetAccountID(e.AccountID).
-		SetCredentialType(string(e.CredentialType)).
-		SetCodexIdentity(e.CodexIdentity).
-		SetNillableCodexOauthToken(e.CodexOAuthToken).
-		SetNillableCodexOauthRefreshToken(e.CodexOAuthRefreshToken).
-		SetNillableCodexOauthExpiresAt(e.CodexOAuthExpiresAt).
-		SetNillableCodexPatKey(e.CodexPATKey).
-		SetNillableCodexEmail(e.CodexEmail).
-		SetNillableCodexAccountID(e.CodexAccountID).
-		OnConflictColumns(accountext.FieldAccountID).
-		Update(func(u *ent.AccountExtUpsert) {
-			u.SetCredentialType(string(e.CredentialType))
-			if e.CodexIdentity != nil {
-				u.SetCodexIdentity(e.CodexIdentity)
-			} else {
-				u.ClearCodexIdentity()
-			}
-			if e.CodexOAuthToken != nil {
-				u.SetCodexOauthToken(*e.CodexOAuthToken)
-			} else {
-				u.ClearCodexOauthToken()
-			}
-			if e.CodexOAuthRefreshToken != nil {
-				u.SetCodexOauthRefreshToken(*e.CodexOAuthRefreshToken)
-			} else {
-				u.ClearCodexOauthRefreshToken()
-			}
-			if e.CodexOAuthExpiresAt != nil {
-				u.SetCodexOauthExpiresAt(*e.CodexOAuthExpiresAt)
-			} else {
-				u.ClearCodexOauthExpiresAt()
-			}
-			if e.CodexPATKey != nil {
-				u.SetCodexPatKey(*e.CodexPATKey)
-			} else {
-				u.ClearCodexPatKey()
-			}
-			if e.CodexEmail != nil {
-				u.SetCodexEmail(*e.CodexEmail)
-			} else {
-				u.ClearCodexEmail()
-			}
-			if e.CodexAccountID != nil {
-				u.SetCodexAccountID(*e.CodexAccountID)
-			} else {
-				u.ClearCodexAccountID()
-			}
-		}).ID(ctx)
+		if err := validateAccountExtTemplate(ctx, client, e); err != nil {
+			return err
+		}
+		cur, err := accountExtRow(ctx, client, e.AccountID)
+		if err != nil {
+			return err
+		}
+		identity, err := mergeIdentityForWrite(cur, e)
+		if err != nil {
+			return err
+		}
+		identityChanged, err := identityEnvelopeChanged(cur, identity)
+		if err != nil {
+			return err
+		}
+		advanceIdentity := identityChanged || extIdentityChanged(accountExtColumns(cur), e,
+			extCredentialType, extOAuthToken, extOAuthRefresh, extOAuthExpires, extPATKey, extEmail, extCodexAccountID)
+		n, err := bumpAccountGeneration(ctx, client, e.AccountID, expectedRevision, advanceIdentity)
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return fmt.Errorf("%w: account_id=%d expected revision %d stale", ErrStaleRevision, e.AccountID, expectedRevision)
+		}
+		if err := upsertAccountExtRow(ctx, client, e, identity); err != nil {
+			return err
+		}
+		saved, err = loadAccountExtInTx(ctx, client, e.AccountID)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return r.GetAccountExt(ctx, e.AccountID)
+	return saved, nil
 }

@@ -64,6 +64,7 @@ import { cn } from '@/lib/utils'
 import type { components } from '@/lib/api/schema'
 import { CodexImportDialog } from '@/components/codex-import/import-dialog'
 import { CodexLoginDialog } from '@/components/codex-import/login-dialog'
+import { deviceLoginProvider } from '@/lib/device-login'
 import { SupplierPicker } from '@/components/supplier/supplier-picker'
 import { AccountTestDialog } from '@/components/account-test-dialog'
 
@@ -313,8 +314,8 @@ export default function Accounts() {
   const templatesQ = useQuery({ queryKey: ['templates'], queryFn: () => api.listTemplates({ limit: 100 }) })
   // 稳定引用：未加载时的 [] 不能每帧换身份（batchTplCtx 的 useMemo 依赖它）
   const templates = useMemo(() => templatesQ.data?.rows ?? [], [templatesQ.data])
-  // 设备码登录只对 codex-oauth 模板可用（其它类型没有 OAuth 凭据面）。
-  const hasOauthTemplates = useMemo(() => templates.some(tp => tp.CredentialType === 'codex-oauth'), [templates])
+  // Shared device login accepts Codex OAuth and BPS templates.
+  const hasLoginTemplates = useMemo(() => templates.some(tp => deviceLoginProvider(tp.CredentialType) !== null), [templates])
   const groupsQ = useQuery({ queryKey: ['groups'], queryFn: () => api.listGroups({ limit: 100 }) })
   const groups = groupsQ.data?.rows ?? []
   // 分组筛选的选项：复用上面这一份分组查询（不新开请求）；空列表仍有「全部/未分组」。
@@ -1026,7 +1027,7 @@ export default function Accounts() {
           <p className="text-sm text-muted-foreground">{t('accounts.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
-        <Button variant="outline" onClick={() => setLoginOpen(true)} disabled={!hasOauthTemplates} title={!hasOauthTemplates ? t('accounts.login.noTemplate') : undefined}>
+        <Button variant="outline" onClick={() => setLoginOpen(true)} disabled={!hasLoginTemplates} title={!hasLoginTemplates ? t('accounts.login.noTemplate') : undefined}>
           <LogIn /> {t('accounts.login.button')}
         </Button>
         <Button variant="outline" onClick={() => setImportOpen(true)} disabled={templates.length === 0} title={templates.length === 0 ? '无可用模板，请先创建 codex-oauth/pat 模板' : undefined}>

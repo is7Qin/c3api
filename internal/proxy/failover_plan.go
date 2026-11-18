@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/is7qin/c3api/internal/domain"
@@ -82,7 +83,10 @@ func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, 
 	clientCancel := code == 0 && ctx != nil && ctx.Err() != nil
 	accountFatal := !clientCancel && callErr != nil && sdkbridge.IsFatal(callErr)
 	terminal := true
+	var bpsErr *bpsAttemptError
+	noRetryBPS := errors.As(callErr, &bpsErr) && bpsErr.noRetry
 	switch {
+	case noRetryBPS:
 	case accountFatal:
 		// 账号级终止：账号已摘除，换个账号通常就能成（零交付前提由矩阵裁决）。
 		terminal = false

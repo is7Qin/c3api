@@ -15,9 +15,6 @@ import (
 )
 
 func (s *Service) CreateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
-	if err := rejectBPSTemplate(t); err != nil {
-		return nil, err
-	}
 	if err := validateTemplate(t); err != nil {
 		return nil, err
 	}
@@ -47,18 +44,8 @@ func (s *Service) ListTemplates(ctx context.Context, q repository.ListQuery) ([]
 }
 
 func (s *Service) UpdateTemplate(ctx context.Context, t *domain.Template) (*domain.Template, error) {
-	if err := rejectBPSTemplate(t); err != nil {
-		return nil, err
-	}
 	if err := validateTemplate(t); err != nil {
 		return nil, err
-	}
-	current, err := s.store.GetTemplate(ctx, t.ID)
-	if err != nil {
-		return nil, mapRepoErr(err)
-	}
-	if current.CredentialType.IsBPS() {
-		return nil, ErrUnavailable
 	}
 	updated, err := s.store.UpdateTemplate(ctx, t)
 	if err != nil {
@@ -97,19 +84,6 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 	if err := validateTemplatePatch(p); err != nil {
 		return err
 	}
-	// Every template mutation is fail-closed while BPS profile persistence is
-	// unwired, including patches that do not touch supported_formats/base_url.
-	tpls, err := s.store.GetTemplatesByIDs(ctx, ids)
-	if err != nil {
-		return mapRepoErr(err)
-	}
-	if len(tpls) == len(ids) {
-		for _, tpl := range tpls {
-			if tpl.CredentialType.IsBPS() {
-				return ErrUnavailable
-			}
-		}
-	}
 	// 类型-格式约束：批量 patch 不含 credential_type，supported_formats 变更
 	// 时按既有行类型校验（special/oauth/pat 模板只能改成 resp/resp-ws/
 	// openai-images/openai-search——扩展：images 直连两类型同支持，
@@ -125,11 +99,14 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 			return ErrNotFound // 缺 id（validateIDs 已去重，数量可精确对比）
 		}
 		for _, t := range tpls {
-			if t.CredentialType == credential.TypeAPIKey || t.CredentialType == credential.TypeCustom {
+			if t.CredentialType.IsBPS() {
+				if !domain.BPSFormatsOnly(*p.SupportedFormats) {
+					return ErrInvalidInput
+				}
 				continue
 			}
-			if t.CredentialType.IsBPS() {
-				return ErrUnavailable
+			if t.CredentialType == credential.TypeAPIKey || t.CredentialType == credential.TypeCustom {
+				continue
 			}
 			for _, f := range *p.SupportedFormats {
 				if f != domain.FormatOpenAIResponses && f != domain.FormatOpenAIResponsesWS && f != domain.FormatOpenAIImages && f != domain.FormatOpenAISearch {
@@ -147,10 +124,7 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 			return ErrNotFound
 		}
 		for _, tpl := range tpls {
-			if tpl.CredentialType.IsBPS() {
-				return ErrUnavailable
-			}
-			if tpl.CredentialType.IsCodex() {
+			if tpl.CredentialType.IsCodex() || (tpl.CredentialType.IsBPS() && !domain.BPSBaseURLAllowed(*p.BaseURL)) {
 				return ErrInvalidInput
 			}
 		}

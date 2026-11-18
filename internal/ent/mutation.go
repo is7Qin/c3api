@@ -1997,7 +1997,7 @@ type AccountExtMutation struct {
 	typ                       string
 	id                        *int64
 	credential_type           *string
-	codex_identity            **domain.CodexIdentity
+	codex_identity            **domain.IdentityEnvelope
 	codex_oauth_token         *string
 	codex_oauth_refresh_token *string
 	codex_oauth_expires_at    *time.Time
@@ -2189,12 +2189,12 @@ func (m *AccountExtMutation) ResetCredentialType() {
 }
 
 // SetCodexIdentity sets the "codex_identity" field.
-func (m *AccountExtMutation) SetCodexIdentity(di *domain.CodexIdentity) {
-	m.codex_identity = &di
+func (m *AccountExtMutation) SetCodexIdentity(de *domain.IdentityEnvelope) {
+	m.codex_identity = &de
 }
 
 // CodexIdentity returns the value of the "codex_identity" field in the mutation.
-func (m *AccountExtMutation) CodexIdentity() (r *domain.CodexIdentity, exists bool) {
+func (m *AccountExtMutation) CodexIdentity() (r *domain.IdentityEnvelope, exists bool) {
 	v := m.codex_identity
 	if v == nil {
 		return
@@ -2205,7 +2205,7 @@ func (m *AccountExtMutation) CodexIdentity() (r *domain.CodexIdentity, exists bo
 // OldCodexIdentity returns the old "codex_identity" field's value of the AccountExt entity.
 // If the AccountExt object wasn't provided to the builder, the object is fetched from the database.
 // An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *AccountExtMutation) OldCodexIdentity(ctx context.Context) (v *domain.CodexIdentity, err error) {
+func (m *AccountExtMutation) OldCodexIdentity(ctx context.Context) (v *domain.IdentityEnvelope, err error) {
 	if !m.op.Is(OpUpdateOne) {
 		return v, errors.New("OldCodexIdentity is only allowed on UpdateOne operations")
 	}
@@ -2697,7 +2697,7 @@ func (m *AccountExtMutation) SetField(name string, value ent.Value) error {
 		m.SetCredentialType(v)
 		return nil
 	case accountext.FieldCodexIdentity:
-		v, ok := value.(*domain.CodexIdentity)
+		v, ok := value.(*domain.IdentityEnvelope)
 		if !ok {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}

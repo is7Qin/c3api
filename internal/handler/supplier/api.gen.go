@@ -43,6 +43,12 @@ const (
 	CodexDeviceLoginResultStatusPending    CodexDeviceLoginResultStatus = "pending"
 )
 
+// Defines values for DeviceLoginProvider.
+const (
+	Bps   DeviceLoginProvider = "bps"
+	Codex DeviceLoginProvider = "codex"
+)
+
 // Defines values for ErrorResponseReason.
 const (
 	CubeHorizon     ErrorResponseReason = "cube_horizon"
@@ -124,6 +130,7 @@ const (
 // Defines values for TemplateCredentialType.
 const (
 	TemplateCredentialTypeApiKey           TemplateCredentialType = "api_key"
+	TemplateCredentialTypeBps              TemplateCredentialType = "bps"
 	TemplateCredentialTypeCodexOauth       TemplateCredentialType = "codex-oauth"
 	TemplateCredentialTypeCodexPat         TemplateCredentialType = "codex-pat"
 	TemplateCredentialTypeCustom           TemplateCredentialType = "custom"
@@ -468,15 +475,21 @@ type CodexCredits struct {
 	Balance *string `json:"balance"`
 }
 
-// CodexDeviceLoginCompleteBody 完成设备码登录请求体（模板/分组在此提供——发起阶段不产生本地状态）
+// CodexDeviceLoginCompleteBody 手动完成设备码登录；发起阶段不产生服务端会话。
 type CodexDeviceLoginCompleteBody struct {
+	// BpsProfile BPS 必填：SDK 生成的完整 DeviceProfile JSON；换码前校验，仅写入，不回显。
+	BpsProfile *map[string]interface{} `json:"bps_profile,omitempty"`
+
 	// DeviceAuthId 发起响应原样回传
 	DeviceAuthId string `json:"device_auth_id"`
 
 	// GroupId 可选：新建账号归组（不存在 → 404，且不消费上游授权码）
 	GroupId *int64 `json:"group_id"`
 
-	// TemplateId 必填：codex 账号归属模板（credential_type 必须 == codex-oauth——错配 → 400，且不消费上游授权码）
+	// Provider 登录上游；省略 = codex。
+	Provider *DeviceLoginProvider `json:"provider,omitempty"`
+
+	// TemplateId 模板类型须匹配 provider（codex-oauth 或 bps）；错配不会消费上游授权码。
 	TemplateId int64 `json:"template_id"`
 
 	// UserCode 发起响应原样回传
@@ -642,6 +655,15 @@ type CodexUsageSnapshot struct {
 // DeletedResponse defines model for DeletedResponse.
 type DeletedResponse struct {
 	Deleted bool `json:"deleted"`
+}
+
+// DeviceLoginProvider 登录上游；省略 = codex。
+type DeviceLoginProvider string
+
+// DeviceLoginStartBody defines model for DeviceLoginStartBody.
+type DeviceLoginStartBody struct {
+	// Provider 登录上游；省略 = codex。
+	Provider *DeviceLoginProvider `json:"provider,omitempty"`
 }
 
 // ErrorResponse defines model for ErrorResponse.
@@ -965,7 +987,7 @@ type Template struct {
 	BaseURL   string    `json:"BaseURL"`
 	CreatedAt time.Time `json:"CreatedAt"`
 
-	// CredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
+	// CredentialType 模板号池类型；BPS 只支持 Responses HTTP/WS，使用固定上游端点。
 	CredentialType *TemplateCredentialType `json:"CredentialType,omitempty"`
 
 	// DeletedAt 软删除时间戳；null = 存活（列表过滤已删；GET 单个可查已删项）
@@ -979,7 +1001,7 @@ type Template struct {
 	UpdatedAt        time.Time                     `json:"UpdatedAt"`
 }
 
-// TemplateCredentialType 模板号池类型；生态三类型只支持 resp / resp-ws / images / search 格式
+// TemplateCredentialType 模板号池类型；BPS 只支持 Responses HTTP/WS，使用固定上游端点。
 type TemplateCredentialType string
 
 // TemplateSupportedFormats defines model for Template.SupportedFormats.
@@ -1166,6 +1188,9 @@ type PostSupplierAccountsBatchImportCodexPatJSONRequestBody = CodexPATImportBody
 // PostSupplierAccountsBatchUpdateJSONRequestBody defines body for PostSupplierAccountsBatchUpdate for application/json ContentType.
 type PostSupplierAccountsBatchUpdateJSONRequestBody = BatchUpdateAccountsBody
 
+// PostSupplierAccountsCodexDeviceLoginJSONRequestBody defines body for PostSupplierAccountsCodexDeviceLogin for application/json ContentType.
+type PostSupplierAccountsCodexDeviceLoginJSONRequestBody = DeviceLoginStartBody
+
 // PostSupplierAccountsCodexDeviceLoginCompleteJSONRequestBody defines body for PostSupplierAccountsCodexDeviceLoginComplete for application/json ContentType.
 type PostSupplierAccountsCodexDeviceLoginCompleteJSONRequestBody = CodexDeviceLoginCompleteBody
 
@@ -1213,10 +1238,10 @@ type ServerInterface interface {
 	// 批量更新账号（fields 为任意字段子集；字段层与管理面零差异化）
 	// (POST /api/user/supplier/accounts/batch-update)
 	PostSupplierAccountsBatchUpdate(w http.ResponseWriter, r *http.Request)
-	// 发起 codex 设备码登录（归属恒为 JWT 本人；无服务端会话）
+	// 发起 ChatGPT/BPS 设备码登录（归属恒为 JWT 本人；无服务端会话）
 	// (POST /api/user/supplier/accounts/codex-device-login)
 	PostSupplierAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request)
-	// 完成设备码登录（落库归属 = JWT 本人；无跨用户会话可越权）
+	// 完成 ChatGPT/BPS 设备码登录（落库归属 = JWT 本人；无跨用户会话可越权）
 	// (POST /api/user/supplier/accounts/codex-device-login/complete)
 	PostSupplierAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request)
 	// 账号用量聚合（统一 usage API——批量 ≤100 条；窗口 from/to 或 window 恰择一）
@@ -1333,13 +1358,13 @@ func (_ Unimplemented) PostSupplierAccountsBatchUpdate(w http.ResponseWriter, r 
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 发起 codex 设备码登录（归属恒为 JWT 本人；无服务端会话）
+// 发起 ChatGPT/BPS 设备码登录（归属恒为 JWT 本人；无服务端会话）
 // (POST /api/user/supplier/accounts/codex-device-login)
 func (_ Unimplemented) PostSupplierAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
-// 完成设备码登录（落库归属 = JWT 本人；无跨用户会话可越权）
+// 完成 ChatGPT/BPS 设备码登录（落库归属 = JWT 本人；无跨用户会话可越权）
 // (POST /api/user/supplier/accounts/codex-device-login/complete)
 func (_ Unimplemented) PostSupplierAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNotImplemented)

@@ -5,59 +5,70 @@
 package handler
 
 import (
+	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/handler/httpface"
 )
 
-// —— codex 设备码登录（发起 → 完成；无服务端会话）——
-//
-// 契约层只做结构解码 + 响应组装；协议在 sdkbridge、编排与落库在 service。
-// 管理面与供应商面共用同一对实现（供应商面 wrapper 类型化直调，作用域经 ctx
-// 注入），因此两面的字段语义、幂等键、配置缺省完全一致。
-//
-// **状态在前端**：发起响应自带完成所需凭据；完成端点由用户在浏览器授权后触发，
-// 网关当场轮询一次。没有 Redis/进程内会话，任意实例、任意重启都成立。
+func loginProvider(raw *DeviceLoginProvider) domain.DeviceLoginProvider {
+	if raw == nil || *raw == "" {
+		return domain.DeviceLoginCodex
+	}
+	return domain.DeviceLoginProvider(*raw)
+}
 
-// PostAccountsCodexDeviceLogin 发起设备码登录（ServerInterface）：向上游申请
-// 用户码，返回展示面与完成凭据。
+// PostAccountsCodexDeviceLogin is the shared ChatGPT/BPS device-login start.
+// An empty body remains valid for backwards-compatible Codex clients.
 func (h *AdminAPI) PostAccountsCodexDeviceLogin(w http.ResponseWriter, r *http.Request) {
-	ch, err := h.svc.StartCodexOAuthDeviceLogin(r.Context())
+	var in DeviceLoginStartBody
+	if r.ContentLength != 0 {
+		if err := httpface.Decode(r, &in); err != nil && !errors.Is(err, io.EOF) {
+			httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
+			return
+		}
+	}
+	ch, err := h.svc.StartDeviceLogin(r.Context(), loginProvider(in.Provider))
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
 	httpface.WriteJSON(w, http.StatusOK, CodexDeviceLoginStart{
-		DeviceAuthId:     ch.DeviceAuthID,
-		UserCode:         ch.UserCode,
-		VerificationUri:  ch.VerificationURL,
-		IntervalSeconds:  ch.IntervalSeconds,
+		DeviceAuthId: ch.DeviceAuthID, UserCode: ch.UserCode,
+		VerificationUri: ch.VerificationURL, IntervalSeconds: ch.IntervalSeconds,
 		ExpiresInSeconds: ch.ExpiresInSeconds,
 	})
 }
 
-// PostAccountsCodexDeviceLoginComplete 完成设备码登录（ServerInterface）：单次
-// 轮询；pending 时前端可再次调用，authorized 当场落库并返回账号定位。
+// PostAccountsCodexDeviceLoginComplete performs exactly one manual completion.
 func (h *AdminAPI) PostAccountsCodexDeviceLoginComplete(w http.ResponseWriter, r *http.Request) {
 	var in CodexDeviceLoginCompleteBody
 	if err := httpface.Decode(r, &in); err != nil {
 		httpface.WriteErr(w, http.StatusBadRequest, "invalid json: "+err.Error())
 		return
 	}
-	res, err := h.svc.CompleteCodexOAuthDeviceLogin(r.Context(), in.DeviceAuthId, in.UserCode, in.TemplateId, in.GroupId)
+	var profile []byte
+	if in.BpsProfile != nil {
+		var err error
+		profile, err = json.Marshal(*in.BpsProfile)
+		if err != nil {
+			httpface.WriteErr(w, http.StatusBadRequest, "invalid bps_profile")
+			return
+		}
+	}
+	res, err := h.svc.CompleteDeviceLogin(r.Context(), loginProvider(in.Provider), in.DeviceAuthId, in.UserCode, in.TemplateId, in.GroupId, profile)
 	if err != nil {
 		httpface.WriteServiceErr(w, err)
 		return
 	}
 	out := CodexDeviceLoginResult{Status: CodexDeviceLoginResultStatus(res.Status)}
 	if res.AccountID > 0 {
-		id := res.AccountID
-		imported := res.Imported
-		out.AccountId = &id
-		out.Imported = &imported
-		out.AccountName = optionalStr(res.AccountName)
-		out.Email = optionalStr(res.Email)
-		out.CodexAccountId = optionalStr(res.CodexAccountID)
+		id, imported := res.AccountID, res.Imported
+		out.AccountId, out.Imported = &id, &imported
+		out.AccountName, out.Email, out.CodexAccountId = optionalStr(res.AccountName), optionalStr(res.Email), optionalStr(res.CodexAccountID)
 	}
 	httpface.WriteJSON(w, http.StatusOK, out)
 }

@@ -5,6 +5,7 @@
 // 薄 fetch 封装：token 注入、401 归一化、类型化返回（schema.d.ts 生成）。
 // 响应字段为 Go 大写风格（ID/Name/...），前端按此使用，不做 camelCase 转换。
 import type { components } from './schema.d.ts'
+import type { DeviceLoginCompleteFields } from '@/lib/device-login'
 import { userAuth } from '@/lib/auth'
 // 协议元数据（spec §18-2）的响应形状：字段元数据是 **UI 元数据**，`kind` 刻意是开集
 // （openapi 不写 enum，否则协议新增 kind 时旧前端编译即红），故类型与消费点同住
@@ -204,15 +205,13 @@ export class ApiClient {
   // —— codex 凭据批量导入（行级失败归 failed——HTTP 恒 200）——
   importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
   importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
-  // —— codex 设备码登录（ChatGPT OAuth device flow）——
-  // 发起返回 device_auth_id/user_code 与展示信息；用户在浏览器授权后调用 complete，
-  // 服务端**当场轮询一次**并落库（无服务端会话、无 Redis）。complete 返回
-  // pending/authorized/expired/denied 四态：pending = 再点一次，其余为终态。
-  // device_auth_id 是短期 bearer 凭据：只在发起者的浏览器上下文里流转。
-  startCodexDeviceLogin = () => this.request<components['schemas']['CodexDeviceLoginStart']>('/accounts/codex-device-login', { method: 'POST' })
-  // 完成端点由**用户操作**触发（浏览器授权后点一次）：无服务端会话，回传发起响应
-  // 的凭据 + 落库参数；pending 表示上游还没看到授权，再点一次即可。
-  completeCodexDeviceLogin = (b: components['schemas']['CodexDeviceLoginCompleteBody']) =>
+  // —— shared ChatGPT/BPS device login (manual completion; no polling) ——
+  // These additive fields are intentionally kept local until OpenAPI is regenerated.
+  startCodexDeviceLogin = (provider?: 'bps') => this.request<components['schemas']['CodexDeviceLoginStart']>(
+    '/accounts/codex-device-login',
+    provider === 'bps' ? { method: 'POST', body: JSON.stringify({ provider }) } : { method: 'POST' },
+  )
+  completeCodexDeviceLogin = (b: components['schemas']['CodexDeviceLoginCompleteBody'] & DeviceLoginCompleteFields) =>
     this.request<components['schemas']['CodexDeviceLoginResult']>('/accounts/codex-device-login/complete', { method: 'POST', body: JSON.stringify(b) })
   // —— 规则 ——
   listRules = (p?: { enabled?: boolean }) => this.request<components['schemas']['RuleListResponse']>('/rules', { params: toQuery(p) })

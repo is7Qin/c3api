@@ -204,9 +204,12 @@ export default {
       "responses-special": "Responses 专属",
       "codex-oauth": "Codex OAuth",
       "codex-pat": "Codex PAT",
+      "bps": "BPS OAuth",
       "custom": "高级自定义"
     },
     "ecoFormatHint": "生态类型只支持 OpenAI Responses / Responses (WS) / Images / Search 格式",
+    "bpsFormatHint": "BPS 仅支持 OpenAI Responses（HTTP 和 WS）。",
+    "baseUrlBPSHidden": "BPS 使用固定端点 https://bps.openai.com/basispoints/api，BaseURL 留空。",
     "nameLabel": "名称",
     "namePlaceholder": "如 openai-main",
     "supportedFormatsLabel": "支持的请求格式",
@@ -270,7 +273,7 @@ export default {
     },
     "baseUrlOptional": "api_key / responses-special：可带协议前缀（如 /zen），但不要以 /v1 结尾，网关会再拼 /v1；留空可能导致路由失败。codex-oauth / codex-pat 须留空（SDK 默认端点，非空将被拒绝）。",
     "baseUrlCodexHidden": "Codex OAuth / PAT 使用 SDK 默认端点——不可设置 BaseURL，须保持为空（非空将被拒绝）。",
-    "batchBaseUrlCodexDisabled": "Codex 模板使用 SDK 默认端点，不发送 BaseURL"
+    "batchBaseUrlFixedDisabled": "所选模板包含使用 SDK 固定端点的类型，不会发送 BaseURL。"
   },
   "accounts": {
     "title": "账号",
@@ -321,11 +324,17 @@ export default {
     },
     "login": {
       "button": "登录 ChatGPT",
-      "title": "通过 ChatGPT 登录添加 Codex 账号",
-      "desc": "在浏览器完成授权后点「我已完成授权」，账号会当场写入号池（与批量导入同一条写入路径）",
+      "title": "登录 ChatGPT 或 BPS",
+      "desc": "选择模板，在浏览器完成授权后点「我已完成授权」。只有点击按钮才会发送请求。",
       "template": "账号模板",
-      "templatePlaceholder": "选择 codex-oauth 模板",
-      "noTemplate": "没有 codex-oauth 模板，请先创建模板",
+      "templatePlaceholder": "选择 Codex OAuth 或 BPS 模板",
+      "codexTemplateSuffix": "ChatGPT/Codex",
+      "bpsTemplateSuffix": "BPS",
+      "noTemplate": "没有 Codex OAuth 或 BPS 模板，请先创建模板",
+      "profileLabel": "BPS DeviceProfile JSON",
+      "profilePlaceholder": "粘贴完整的 SDK DeviceProfile JSON 对象",
+      "profileHint": "BPS 必填。内容只保留在当前弹窗中，随手动完成请求提交。",
+      "profileInvalid": "请粘贴完整且非空的 DeviceProfile JSON 对象，再完成 BPS 登录",
       "group": "分组（可选）",
       "groupNone": "暂不分组",
       "ungroupedHint": "未分配分组的账号不接流量——可稍后在账号列表里归组",

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -27,8 +26,7 @@ func TestBPSRefreshUsesPreparedEgressHTTPClient(t *testing.T) {
 		}
 		return bpsHTTPResponse(), nil
 	})}
-	store := &bpsStoreFixture{loadSet: BPSTokenSet{AccessToken: "at", RefreshToken: "rt", ExpiresAt: time.Unix(1, 0)}}
-	adapter := NewBPS(store)
+	adapter := NewBPS(bpsRedisClient(t))
 	cred := bpsCredential(t)
 	cred.OAuthToken = bpsJWTWithExpiry("upstream-acct", 1)
 	eg := egress.NewPool(client).Direct()
@@ -43,7 +41,4 @@ func TestBPSRefreshUsesPreparedEgressHTTPClient(t *testing.T) {
 	}
 	require.True(t, sawRefresh, "refresh must use the prepared egress HTTP client: %v", urls)
 	require.True(t, sawBPS, "upstream call must use the fixed BPS endpoint: %v", urls)
-	require.Equal(t, int64(42), store.saveKey.AccountID)
-	require.Equal(t, int64(9), store.saveKey.IdentityRevision)
-	require.Equal(t, "c3-account:42", store.saveKey.Owner)
 }

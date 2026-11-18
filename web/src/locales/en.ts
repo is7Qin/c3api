@@ -204,9 +204,12 @@ export default {
       "responses-special": "Responses Special",
       "codex-oauth": "Codex OAuth",
       "codex-pat": "Codex PAT",
+      "bps": "BPS OAuth",
       "custom": "Advanced custom"
     },
     "ecoFormatHint": "Ecosystem types support only OpenAI Responses / Responses (WS) / Images / Search formats",
+    "bpsFormatHint": "BPS supports only OpenAI Responses (HTTP and WS).",
+    "baseUrlBPSHidden": "BPS uses the fixed endpoint https://bps.openai.com/basispoints/api. Leave BaseURL empty.",
     "nameLabel": "Name",
     "namePlaceholder": "e.g. openai-main",
     "supportedFormatsLabel": "Supported request formats",
@@ -270,7 +273,7 @@ export default {
     },
     "baseUrlOptional": "For api_key / responses-special: a protocol prefix such as /zen is allowed, but the value must not end in /v1 — the gateway appends /v1; empty may fail to route. Codex OAuth/PAT must be empty (SDK default, non-empty is forbidden).",
     "baseUrlCodexHidden": "Codex OAuth / PAT uses the SDK default endpoint — BaseURL is not used and must stay empty (non-empty will be rejected).",
-    "batchBaseUrlCodexDisabled": "Codex templates use the SDK default endpoint — BaseURL is unavailable and will not be sent."
+    "batchBaseUrlFixedDisabled": "A selected template uses a fixed SDK endpoint — BaseURL will not be sent."
   },
   "accounts": {
     "title": "Accounts",
@@ -321,11 +324,17 @@ export default {
     },
     "login": {
       "button": "Sign in with ChatGPT",
-      "title": "Add a Codex account via ChatGPT sign-in",
-      "desc": "Finish authorizing in the browser, then click “I've authorized” — the account is written into the pool right away (same write path as batch import)",
+      "title": "Sign in to ChatGPT or BPS",
+      "desc": "Choose a template, finish authorization in the browser, then click “I've authorized”. Requests are sent only when you click a button.",
       "template": "Account template",
-      "templatePlaceholder": "Select a codex-oauth template",
-      "noTemplate": "No codex-oauth template yet — create one first",
+      "templatePlaceholder": "Select a Codex OAuth or BPS template",
+      "codexTemplateSuffix": "ChatGPT/Codex",
+      "bpsTemplateSuffix": "BPS",
+      "noTemplate": "No Codex OAuth or BPS template yet — create one first",
+      "profileLabel": "BPS DeviceProfile JSON",
+      "profilePlaceholder": "Paste the complete SDK DeviceProfile JSON object",
+      "profileHint": "Required for BPS. It stays in this dialog only and is sent once with the manual completion request.",
+      "profileInvalid": "Paste a complete, non-empty DeviceProfile JSON object before completing BPS sign-in",
       "group": "Group (optional)",
       "groupNone": "No group for now",
       "ungroupedHint": "Ungrouped accounts receive no traffic — you can assign a group later in the account list",
