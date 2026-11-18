@@ -40,18 +40,22 @@ const supplierViewStaleThreshold = 60 * time.Second
 // thaw 关）。关闭态（enabled=false）返回 nil（G1：关闭态零注册——append 不贡献
 // 元素）。freeze_enabled=false 时仅 credit（解冻 worker 不注册，存量释放由 credit
 // 周期执行，§5.4）。抽成纯函数以便对 enabled×freeze_enabled 组合做切片断言。
+//
+// credit 缺失是**装配缺陷**而不是关闭态：enabled=true 时 credit 决定扣款/结算
+// 是否推进，静默返回空切片会让资金面停摆且无任何日志。因此这里 fail-fast；
+// thaw 缺失仍按防御处理（解冻能力可由 credit 周期兜底）。
 func supplierWorkersFor(enabled, freezeEnabled bool, thaw, credit worker.Worker) []worker.Worker {
 	if !enabled {
 		return nil
+	}
+	if credit == nil {
+		panic("supplier workers: enabled=true 但 credit worker 未装配（资金面不允许静默降级）")
 	}
 	var ws []worker.Worker
 	if freezeEnabled && thaw != nil {
 		ws = append(ws, thaw)
 	}
-	if credit != nil {
-		ws = append(ws, credit)
-	}
-	return ws
+	return append(ws, credit)
 }
 
 // validateSupplierOverrides 启动期 override 集合校验（spec 2026-10-09 §5.5/A16⑦）：

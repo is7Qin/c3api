@@ -12,7 +12,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/is7qin/c3api/internal/quality"
-	"github.com/is7qin/c3api/internal/worker"
 	"github.com/is7qin/c3api/pkg/logx"
 	"github.com/is7qin/c3api/pkg/redisx"
 )
@@ -36,6 +35,13 @@ func shutdownHTTPServer(ctx context.Context, srv *http.Server, drain time.Durati
 
 const qualityRecorderCloseBudget = time.Second
 
+// workerDrainer 是 shutdownTail 需要的全部 Manager 能力：只有 Shutdown 一个方法。
+// 收窄后 shutdown_tail_test 仍传真实 *worker.Manager（天然满足），而停机链顺序
+// 测试可以注入记录调用序的替身。
+type workerDrainer interface {
+	Shutdown(context.Context) error
+}
+
 // shutdownTail 优雅停机尾部（顺序契约：worker 反向排空 → quality recorder
 // 终态快照 → Redis 客户端释放 → 终态日志）。独立成函数：让"排空失败"成为
 // 可行为测试观测的接缝（shutdown_tail_test.go）。
@@ -50,7 +56,7 @@ const qualityRecorderCloseBudget = time.Second
 //   - 终态不宣称 clean shutdown：失败时以 "shutdown incomplete" Error 收尾，
 //     文案明示 pending 只保留在 recorder 终态快照（纯内存，随进程退出）——
 //     数据面真实状态不粉饰。
-func shutdownTail(shutdownCtx context.Context, wm *worker.Manager, qualityRecorder *quality.Recorder, rdb *redis.Client, log *logx.Logger) {
+func shutdownTail(shutdownCtx context.Context, wm workerDrainer, qualityRecorder *quality.Recorder, rdb *redis.Client, log *logx.Logger) {
 	// 反向排空 worker：quality-sync 的 Close 在此链内排空 Redis/PG，PG 失败
 	// 时把未落库 quality/flow refill 回 recorder pending（重试语义）——
 	// recorder 必须仍开着，关闭的 recorder 把 refill 当容量拒绝 → 静默丢弃。

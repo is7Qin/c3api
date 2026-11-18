@@ -25,16 +25,15 @@ import (
 // entry — the registry rejects duplicate names).
 func TestRoutingCompilerWiring(t *testing.T) {
 	_, f := parseSrcFile(t, "wiring_run.go")
-	mainFn := findFuncDecl(t, f, "run")
+	mainFn := findFuncDecl(t, f, "buildRuntime")
+	startFn := findMethodDecl(t, f, "appRuntime", "start")
+	runFn := findFuncDecl(t, f, "run")
 
 	var (
 		srcPos        token.Pos
 		qualityArgOK  bool
 		pricesArgOK   bool
 		schedWPos     token.Pos
-		schedWIdx     = -1
-		schedWPrev    string
-		schedWNext    string
 		reloadAllPos  token.Pos
 		startAllPos   token.Pos
 		schedSnapLits int
@@ -68,24 +67,6 @@ func TestRoutingCompilerWiring(t *testing.T) {
 		}
 		se, ok := ce.Fun.(*ast.SelectorExpr)
 		if !ok {
-			// orderedWorkers(mailW, warningWorker, billingWorker, inv, schedW, ...)
-			if fun, ok := ce.Fun.(*ast.Ident); ok && fun.Name == "orderedWorkers" {
-				for i, a := range ce.Args {
-					if id, ok := a.(*ast.Ident); ok && id.Name == "schedW" {
-						schedWIdx = i
-						if i > 0 {
-							if prev, ok := ce.Args[i-1].(*ast.Ident); ok {
-								schedWPrev = prev.Name
-							}
-						}
-						if i+1 < len(ce.Args) {
-							if next, ok := ce.Args[i+1].(*ast.Ident); ok {
-								schedWNext = next.Name
-							}
-						}
-					}
-				}
-			}
 			return true
 		}
 		id, ok := se.X.(*ast.Ident)
@@ -93,12 +74,36 @@ func TestRoutingCompilerWiring(t *testing.T) {
 			return true
 		}
 		switch {
-		case id.Name == "snapReg" && se.Sel.Name == "ReloadAll":
-			reloadAllPos = ce.Pos()
-		case id.Name == "wm" && se.Sel.Name == "StartAll":
-			startAllPos = ce.Pos()
 		case (id.Name == "sched" && (se.Sel.Name == "SetWindowedQualitySource" || se.Sel.Name == "SetPricesSource")):
-			t.Errorf("deleted setter sched.%s still called in main.go — sources must flow structurally via schedWorker", se.Sel.Name)
+			t.Errorf("deleted setter sched.%s still called in buildRuntime — sources must flow structurally via schedWorker", se.Sel.Name)
+		}
+		return true
+	})
+
+	// 启动段：快照首刷与 worker 启动在 (*appRuntime).start 里。
+	ast.Inspect(startFn, func(n ast.Node) bool {
+		ce, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		se, ok := ce.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		// start 里是方法接收者形态（r.snapReg.ReloadAll / r.wm.StartAll），
+		// 所以取选择器的末段名而不是 Ident。
+		recv := ""
+		switch x := se.X.(type) {
+		case *ast.Ident:
+			recv = x.Name
+		case *ast.SelectorExpr:
+			recv = x.Sel.Name
+		}
+		switch {
+		case recv == "snapReg" && se.Sel.Name == "ReloadAll":
+			reloadAllPos = ce.Pos()
+		case recv == "wm" && se.Sel.Name == "StartAll":
+			startAllPos = ce.Pos()
 		}
 		return true
 	})
@@ -169,17 +174,38 @@ func TestRoutingCompilerWiring(t *testing.T) {
 	require.True(t, srcPos.IsValid(), "schedSrc := &scheduler.CompilerSources{...} not found in main.go — compiler must have a real production source")
 	require.True(t, qualityArgOK, "quality source must be NewWindowedQualityProvider(qualityRecorder, ...)")
 	require.True(t, pricesArgOK, "prices source must call svc.ResolvedPricesByModel")
-	require.True(t, schedWPos.IsValid(), "schedW := schedWorker{...} not found in main.go — sources hand off at Start, never via setters")
-	require.Equal(t, 4, schedWIdx, "schedW must hold sched's exact position in orderedWorkers (index 4)")
-	require.Equal(t, "inv", schedWPrev, "schedW predecessor must stay inv")
-	require.Equal(t, "ruleEngine", schedWNext, "schedW successor must stay ruleEngine")
-	require.True(t, reloadAllPos.IsValid(), "snapReg.ReloadAll not found")
-	require.True(t, startAllPos.IsValid(), "wm.StartAll not found")
-	require.Less(t, int(srcPos), int(reloadAllPos), "schedSrc must precede snapReg.ReloadAll (sources assembled before first reload)")
-	require.Less(t, int(schedWPos), int(reloadAllPos), "schedW must precede snapReg.ReloadAll")
-	require.Less(t, int(srcPos), int(startAllPos), "schedSrc must precede wm.StartAll (Start-time handoff contract)")
-	require.Less(t, int(schedWPos), int(startAllPos), "schedW must precede wm.StartAll")
+	require.True(t, schedWPos.IsValid(), "schedW := schedWorker{...} not found in buildRuntime — sources hand off at Start, never via setters")
+	require.Equal(t, 4, workerSlotIndex("schedW"), "schedW must hold sched's exact position in workerOrder (index 4)")
+	require.Equal(t, "inv", workerOrder[workerSlotIndex("schedW")-1].name, "schedW predecessor must stay inv")
+	require.Equal(t, "ruleEngine", workerOrder[workerSlotIndex("schedW")+1].name, "schedW successor must stay ruleEngine")
+	require.True(t, reloadAllPos.IsValid(), "snapReg.ReloadAll not found in (*appRuntime).start")
+	require.True(t, startAllPos.IsValid(), "wm.StartAll not found in (*appRuntime).start")
+	// 跨函数的顺序不再靠 token 位置：buildRuntime 必须先于 start 被调用，
+	// 否则「快照源在首次 Reload 之前就绪」这条契约不成立。
+	buildPos, startCallPos := token.NoPos, token.NoPos
+	ast.Inspect(runFn, func(n ast.Node) bool {
+		ce, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		switch fn := ce.Fun.(type) {
+		case *ast.Ident:
+			if fn.Name == "buildRuntime" {
+				buildPos = ce.Pos()
+			}
+		case *ast.SelectorExpr:
+			if fn.Sel.Name == "start" {
+				startCallPos = ce.Pos()
+			}
+		}
+		return true
+	})
+	require.True(t, buildPos.IsValid() && startCallPos.IsValid(), "run 必须调用 buildRuntime 与 start")
+	require.Less(t, int(buildPos), int(startCallPos), "buildRuntime 必须先于 start（快照源先就绪再首刷）")
 	require.Equal(t, 1, schedSnapLits, "scheduler snapshot registered exactly once (unique publisher/registry)")
 	// 拆分守卫：三条顺序断言的主语只允许出现在 wiring_run.go（拆开即 FailNow）。
-	requireSubjectsOnlyIn(t, "wiring_run.go", "schedSrc", "schedW", "snapReg.ReloadAll", "wm.StartAll")
+	// 主语归属：schedSrc/schedW 只允许出现在 wiring_run.go。ReloadAll/StartAll
+	// 已改成方法接收者形态（r.snapReg.ReloadAll / r.wm.StartAll），存在性由上面的
+	// reloadAllPos/startAllPos 断言钉住，不再作为「点号主语」索引。
+	requireSubjectsOnlyIn(t, "wiring_run.go", "schedSrc", "schedW")
 }
