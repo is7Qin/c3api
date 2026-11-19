@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 )
@@ -2266,15 +2267,8 @@ func (t *fakeTx) UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*d
 	return &c, nil
 }
 
-func (t *fakeTx) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
-	for _, e := range t.accExts {
-		if e.CodexEmail != nil && *e.CodexEmail == codexEmail &&
-			e.CodexAccountID != nil && *e.CodexAccountID == codexAccountID {
-			c := *e
-			return &c, nil
-		}
-	}
-	return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", repository.ErrNotFound, codexEmail, codexAccountID)
+func (t *fakeTx) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string, credType credential.Type) (*domain.AccountExt, error) {
+	return findFakeCodexExt(t.accExts, codexEmail, codexAccountID, credType)
 }
 
 func (t *fakeTx) DeletePriceVariantsByModel(_ context.Context, model string) error {
@@ -2447,17 +2441,48 @@ func (f *fakeStore) FindMissingOwnedAccountID(ctx context.Context, ids []int64) 
 
 // FindAccountExtByCodexKey 组合幂等键查重（批量导入；镜像真实 repo
 // 双条件 AND——缺行 → ErrNotFound）。
-func (f *fakeStore) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
+func (f *fakeStore) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string, credType credential.Type) (*domain.AccountExt, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, e := range f.accExts {
-		if e.CodexEmail != nil && *e.CodexEmail == codexEmail &&
-			e.CodexAccountID != nil && *e.CodexAccountID == codexAccountID {
-			c := *e
-			return &c, nil
+	return findFakeCodexExt(f.accExts, codexEmail, codexAccountID, credType)
+}
+
+// findFakeCodexExt 镜像真实 repo 的身份组收窄：同组内优先同类型行，否则组内
+// 最早行（调用方据此判跨类型冲突）；组外行（例如同一 ChatGPT 账号的 BPS 行）
+// 不参与 Codex 查重。
+func findFakeCodexExt(exts map[int64]*domain.AccountExt, codexEmail, codexAccountID string, credType credential.Type) (*domain.AccountExt, error) {
+	group := credType.IdentityGroup()
+	inGroup := func(t credential.Type) bool {
+		for _, g := range group {
+			if g == t {
+				return true
+			}
+		}
+		return false
+	}
+	var bestSame, bestAny *domain.AccountExt
+	for _, e := range exts {
+		if e.CodexEmail == nil || *e.CodexEmail != codexEmail ||
+			e.CodexAccountID == nil || *e.CodexAccountID != codexAccountID ||
+			!inGroup(e.CredentialType) {
+			continue
+		}
+		if bestAny == nil || e.AccountID < bestAny.AccountID {
+			bestAny = e
+		}
+		if e.CredentialType == credType && (bestSame == nil || e.AccountID < bestSame.AccountID) {
+			bestSame = e
 		}
 	}
-	return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", repository.ErrNotFound, codexEmail, codexAccountID)
+	pick := bestSame
+	if pick == nil {
+		pick = bestAny
+	}
+	if pick == nil {
+		return nil, fmt.Errorf("%w: codex_email=%q codex_account_id=%q missing", repository.ErrNotFound, codexEmail, codexAccountID)
+	}
+	c := *pick
+	return &c, nil
 }
 
 // WriteOAuthRotation oauth 凭据三列部分更新（镜像真实 repo 部分更新语义——

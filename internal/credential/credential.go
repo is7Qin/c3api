@@ -84,6 +84,24 @@ func (t Type) IsResponsesProvider() bool { return t.IsCodex() || t.IsBPS() }
 // account extension rather than the static upstream_key column.
 func (t Type) UsesAccountExt() bool { return t.IsCodex() || t.IsBPS() }
 
+// IdentityGroup returns the credential types that share one upstream identity
+// namespace with t. Codex OAuth and PAT authenticate the same upstream Codex
+// account, so they remain one dedup group (a second row for the other Codex
+// credential type is a conflict). BPS is an independent provider with its own
+// endpoint, quota and device profile: the same ChatGPT e-mail/account may
+// legitimately exist as both a Codex account and a BPS account, so BPS only
+// deduplicates against BPS.
+func (t Type) IdentityGroup() []Type {
+	switch {
+	case t.IsCodex():
+		return []Type{TypeCodexOAuth, TypeCodexPAT}
+	case t.IsBPS():
+		return []Type{TypeBPS}
+	default:
+		return []Type{t}
+	}
+}
+
 // UsesStaticKey reports providers that require the account upstream_key.
 func (t Type) UsesStaticKey() bool {
 	return t == TypeAPIKey || t == TypeResponsesSpecial || t == TypeCustom

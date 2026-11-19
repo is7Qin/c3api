@@ -104,18 +104,19 @@ func TestMigrateUpBootstrapsEmptyDatabasePG(t *testing.T) {
 
 	require.Equal(t, 0, runMigrateUp(ctx, db, pool, nil, migrateOptions{Command: migrateCmdUp}))
 
+	head, _ := migrate.Head()
 	require.Equal(t, 35, countBusinessTables(t, db), "0001 建 35 张业务表（27 ent + 6 分区父表 + 2 静态表）")
-	require.Equal(t, 1, countRows(t, db, catalog.ControlTable), "账本恰一行（0001）")
+	require.Equal(t, int(head), countRows(t, db, catalog.ControlTable), "账本恰 head 行")
 	requirePartitionHorizon(t, db)
 
 	// 幂等：第二次 up 不应用任何版本，也不改变对象数。
 	require.Equal(t, 0, runMigrateUp(ctx, db, pool, nil, migrateOptions{Command: migrateCmdUp}))
 	require.Equal(t, 35, countBusinessTables(t, db))
-	require.Equal(t, 1, countRows(t, db, catalog.ControlTable))
+	require.Equal(t, int(head), countRows(t, db, catalog.ControlTable))
 
 	ledger, err := migrate.Status(ctx, db)
 	require.NoError(t, err)
-	require.Len(t, ledger.Applied, 1)
+	require.Len(t, ledger.Applied, int(head))
 	require.Empty(t, ledger.Pending)
 	require.Empty(t, ledger.Mismatches)
 }

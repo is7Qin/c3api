@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/is7qin/c3api/internal/billing"
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/ent"
 )
@@ -80,6 +81,12 @@ func New(drv dialect.Driver, migrate bool) (*Repository, error) {
 // max_conns）。
 // ctx 供 migrate（ent Schema.Create）使用——生产 main 传 startupCtx
 // （30s 预算，超时 fatal 文案 "db bootstrap timed out after 30s" 可归因）。
+//
+// migrate=true 是**测试/工具专用**的 ent 自动迁移：它按 ent schema 建出的是
+// `0001_baseline` 的冻结形状，**不会**应用 0002+ 的增量迁移（例如
+// account_ext 的两条部分唯一索引）。需要与生产一致 schema 的 PG 用例请用
+// pgtest（它在模板库上跑内嵌迁移）；任何生产路径都必须走 NewWithoutMigrate，
+// schema 变更只归 `-migrate up`。
 func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxpool.Pool) (*Repository, error) {
 	client := ent.NewClient(ent.Driver(drv))
 	if migrate {
@@ -101,7 +108,8 @@ func NewWithPG(ctx context.Context, drv dialect.Driver, migrate bool, pool *pgxp
 // 「schema 只归版本化迁移管」这条结构性约束。命名即契约：看到 NewWithoutMigrate
 // 就知道本进程绝不写 schema；需要建表的人只能去 `-migrate up`。
 //
-// 测试/工具里仍可用 NewWithPG(..., true, ...) 走 ent 自动迁移（既有用例依赖）。
+// 测试/工具里仍可用 NewWithPG(..., true, ...) 走 ent 自动迁移（既有用例依赖），
+// 但它只建 0001 基线——依赖 0002+ 形状的用例必须用 pgtest。
 func NewWithoutMigrate(ctx context.Context, drv dialect.Driver, pool *pgxpool.Pool) (*Repository, error) {
 	return NewWithPG(ctx, drv, false, pool)
 }
@@ -312,7 +320,7 @@ type TxStore interface {
 	// tx 版 Repository 天然实现（newRepository 完整构造），类型收窄延续：
 	// 闭包只能调清单内方法）。GetTemplate 不入事务面——模板存在性顶层已校验，
 	// credential_type 即端点类型（oauth 端点恒 codex-oauth）。
-	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error)
+	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string, credType credential.Type) (*domain.AccountExt, error)
 	CreateAccount(ctx context.Context, a *domain.Account) (*domain.Account, error)
 	SetAccountGroups(ctx context.Context, accountID int64, groupIDs []int64) error
 	UpsertAccountExt(ctx context.Context, e *domain.AccountExt) (*domain.AccountExt, error)
@@ -548,8 +556,8 @@ func (r *Repository) GetOwnedAccountCredential(ctx context.Context, accountID in
 
 // FindAccountExtByCodexKey 组合幂等键查重（批量导入——(codex_email,
 // codex_account_id) 双条件；缺行 → ErrNotFound）。
-func (r *Repository) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
-	return r.AccountExts.FindAccountExtByCodexKey(ctx, codexEmail, codexAccountID)
+func (r *Repository) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string, credType credential.Type) (*domain.AccountExt, error) {
+	return r.AccountExts.FindAccountExtByCodexKey(ctx, codexEmail, codexAccountID, credType)
 }
 
 // WriteOAuthRotation oauth 凭据三列部分更新（SDK 轮转回写 sdkbridge.RotationStore

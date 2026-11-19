@@ -70,7 +70,7 @@ func registerMigrateFlags(fs *flag.FlagSet) *migrateFlags {
 	fs.BoolVar(&m.allowDestructive, "allow-destructive", false,
 		"with -migrate down: confirm that dropping what the migration created also drops the data")
 	fs.StringVar(&m.snapshot, "snapshot", "",
-		"with -migrate adopt: fingerprint tag of the last released schema (e.g. 0001)")
+		"with -migrate adopt: fingerprint tag of the last released schema (e.g. 0002; 0001 = legacy baseline)")
 	return m
 }
 
@@ -153,7 +153,7 @@ func (m *migrateFlags) options() (migrateOptions, error) {
 			return migrateOptions{}, err
 		}
 		if strings.TrimSpace(m.snapshot) == "" {
-			return migrateOptions{}, errors.New("`-migrate adopt` requires -snapshot <tag>: the fingerprint of the last released schema (e.g. -snapshot 0001). Adoption is never automatic")
+			return migrateOptions{}, errors.New("`-migrate adopt` requires -snapshot <tag>: the fingerprint of the last released schema (e.g. -snapshot 0002; 0001 = legacy baseline). Adoption is never automatic")
 		}
 		opt.Snapshot = strings.TrimSpace(m.snapshot)
 	case migrateCmdStatus, migrateCmdVerify:

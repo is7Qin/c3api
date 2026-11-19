@@ -150,7 +150,7 @@ func TestPostAccountsCodexDeviceLoginComplete(t *testing.T) {
 	require.Equal(t, "a@example.com", *done.Email)
 	require.Equal(t, "acc-1", *done.CodexAccountId)
 
-	ext, err := store.FindAccountExtByCodexKey(context.Background(), "a@example.com", "acc-1")
+	ext, err := store.FindAccountExtByCodexKey(context.Background(), "a@example.com", "acc-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, *done.AccountId, ext.AccountID)
 	require.Equal(t, "rt", *ext.CodexOAuthRefreshToken)

@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/credential"
 )
 
 // —— codex 批量导入 account id 缺省补全（完整语义见 sdkbridge/codex_account_id.go；
@@ -34,7 +36,7 @@ func TestImportCodexOAuthDerivesAccountID(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
 		require.Equal(t, 1, out.Imported)
 		require.Empty(t, out.Failed)
-		ext, err := store.FindAccountExtByCodexKey(ctx, "d@example.com", "acc-derived-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "d@example.com", "acc-derived-1", credential.TypeCodexOAuth)
 		require.NoError(t, err, "派生值参与幂等键并落库")
 		require.Equal(t, "acc-derived-1", *ext.CodexAccountID)
 	})
@@ -81,7 +83,7 @@ func TestImportCodexPATDerivesAccountID(t *testing.T) {
 		require.Equal(t, 1, out.Imported)
 		require.Empty(t, out.Failed)
 		require.Equal(t, int32(1), hits.Load(), "缺省行应触发一次 whoami")
-		ext, err := store.FindAccountExtByCodexKey(ctx, "w@example.com", "acc-whoami-2")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "w@example.com", "acc-whoami-2", credential.TypeCodexOAuth)
 		require.NoError(t, err, "派生值参与幂等键并落库")
 		require.Equal(t, "acc-whoami-2", *ext.CodexAccountID)
 	})

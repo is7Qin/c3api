@@ -400,26 +400,48 @@ func (r *AccountExtRepo) WriteOAuthRotation(ctx context.Context, accountID int64
 	return nil
 }
 
-// FindAccountExtByCodexKey 组合幂等键查重（批量导入专用——
-// (codex_email, codex_account_id) 双条件 AND 定位，对齐唯一索引；GetAccountExt
-// 仅按 account_id，查重面不存在）。命中返回行（含 credential_type——跨类型
-// 判定用）；缺行 → ErrNotFound。
+// FindAccountExtByCodexKey 组合幂等键查重（批量导入专用——(codex_email,
+// codex_account_id) 双条件 + 凭据身份组定位；GetAccountExt 仅按 account_id，
+// 查重面不存在）。命中返回行（含 credential_type——跨类型判定用）；缺行 →
+// ErrNotFound。
+//
+// **身份组（§2.5）**：同一个 ChatGPT 账号可以在 Codex 与 BPS 两个独立 provider
+// 下各存在一行（不同 endpoint / 配额 / profile），故查重必须按
+// credential.IdentityGroup() 收窄：BPS 只与 BPS 去重，Codex 仍在 oauth/pat
+// 之间互斥（0002 的两条部分唯一索引在同一层面兜底）。组内优先返回与本次凭据
+// 同类型的行；否则返回组内最早行，由调用方按 `cur.CredentialType != credType`
+// 判跨类型冲突。
 //
 // **作用域（§2.5）**：供应商面（ctx 带作用域）时 owner 谓词经子查询 AND 进**同
 // 一条 SQL**——他人归属的同键行查不到，于是不会走「先全局命中、再应用层比归属」
 // 的 TOCTOU 路径（那正是 spec 明令禁止的形状）。跨归属同键随后撞全局唯一索引
 // （23505）⇒ 行级 failed，不改他人行（调用方把它翻成不透出他人 id 的文案）。
-func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error) {
-	row, err := r.accountExtQuery(ctx).
-		Where(accountext.CodexEmailEQ(codexEmail), accountext.CodexAccountIDEQ(codexAccountID)).
-		Only(ctx)
+func (r *AccountExtRepo) FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string, credType credential.Type) (*domain.AccountExt, error) {
+	group := credType.IdentityGroup()
+	types := make([]string, 0, len(group))
+	for _, t := range group {
+		types = append(types, string(t))
+	}
+	rows, err := r.accountExtQuery(ctx).
+		Where(
+			accountext.CodexEmailEQ(codexEmail),
+			accountext.CodexAccountIDEQ(codexAccountID),
+			accountext.CredentialTypeIn(types...),
+		).
+		Order(ent.Asc(accountext.FieldID)).
+		All(ctx)
 	if err != nil {
-		if ent.IsNotFound(err) {
-			return nil, fmt.Errorf("%w: codex key not found in scope", ErrNotFound)
-		}
 		return nil, err
 	}
-	return toDomainAccountExt(row)
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("%w: codex key not found in scope", ErrNotFound)
+	}
+	for _, row := range rows {
+		if credential.Type(row.CredentialType) == credType {
+			return toDomainAccountExt(row)
+		}
+	}
+	return toDomainAccountExt(rows[0])
 }
 
 var errInvalidBPSAccountExt = errors.New("repository: invalid stored BPS credentials")

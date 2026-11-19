@@ -89,16 +89,21 @@ func Head() (version int64, phase string) {
 // 注册表」，任何从文件头/文件名推断「最老在线二进制」的机制都是假精度，只会多
 // 出一处需要同步的真相。代码开始依赖新列/新表时，人跟它一起改：
 //
-//   - `0001_baseline` 是唯一建表真相 ⇒ 1；
-//   - 将来某个二进制读了 0002 建的列，那个二进制必须把它改成 2，否则
-//     `db_head < RequiredVersion` 的库会被误判成「可服务」，然后在查询里报 42703。
-const RequiredVersion int64 = 1
+//   - `0001_baseline` 是建表基线 ⇒ 1；
+//   - `0002_account_ext_identity_group` 把导入幂等键按凭据类型收窄（同一
+//     ChatGPT 账号可以同时是 Codex 与 BPS 账号）⇒ 2。没有这条索引，BPS 导入
+//     会撞 0001 的两列唯一索引，功能在旧库上直接不可用，所以它是硬要求。
+//
+// 将来某个二进制读了 0002 建的列，那个二进制必须把它改成 2，否则
+// `db_head < RequiredVersion` 的库会被误判成「可服务」，然后在查询里报 42703。
+const RequiredVersion int64 = 2
 
 // LegacyFixture 是「老路径建出来的 schema」冻结快照的文件名（testdata/legacy 下）。
 // 它不是内嵌资源：只在 PG 用例里由 database/sql 直接执行，不进二进制。
 const LegacyFixture = "aba8042e.sql"
 
-// Snapshot 返回内嵌的静态指纹快照（testdata/<tag>.catalog.txt）。tag 形如 "0001"。
+// Snapshot 返回内嵌的静态指纹快照（testdata/<tag>.catalog.txt）。tag 是四位版本号
+// （"0001" 是 0001 单独建出来的老库基线，"0002" 是当前 head 的完整 shape）。
 func Snapshot(tag string) (catalog.Manifest, error) {
 	body, err := snapshotFS.ReadFile(path.Join("testdata", tag+".catalog.txt"))
 	if err != nil {
@@ -236,8 +241,8 @@ func Decide(v Verdict) Decision {
 
 // AdoptOptions 是 baseline 收养的参数（spec §2.8）。
 type AdoptOptions struct {
-	// Snapshot 是已知发布版本的指纹 tag（"0001"）：账本空 + 有 schema 时，当前
-	// catalog 必须与该快照逐对象相等。
+	// Snapshot 是已知发布版本的指纹 tag（"0001" 老库基线、"0002" 当前 head）：
+	// 账本空 + 有 schema 时，当前 catalog 必须与该快照逐对象相等。
 	Snapshot string
 	// SchemaVersion 是 settings.schema_version 的期望值。非空且库里存了别的值
 	// 即判定「账本丢失」并拒绝。
@@ -293,7 +298,7 @@ func Up(ctx context.Context, db *sql.DB, opts UpOptions) (Result, error) {
 
 // UpFS 是 Up 的「可注入迁移集」版本（fsys == nil ⇒ 内嵌迁移集，与 Up 等价）。
 //
-// 它存在只为造证据：生产迁移集当前**全是 expand**（0001），而「contract 阶段
+// 它存在只为造证据：生产迁移集当前**全是 expand**（0001/0002），而「contract 阶段
 // 默认拒跑、且拒绝发生在任何写入之前」这条 CLI 级契约必须有一条真的 contract
 // 迁移才能演出来。生产路径恒走 Up，命令行也只在拿不到内嵌集时才用本变体。
 func UpFS(ctx context.Context, db *sql.DB, fsys fs.FS, opts UpOptions) (Result, error) {

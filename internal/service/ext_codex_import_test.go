@@ -57,7 +57,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		require.Equal(t, 0, res.Updated)
 		require.Empty(t, res.Failed)
 
-		ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, credential.TypeCodexOAuth, ext.CredentialType)
 		require.Equal(t, "at-1", *ext.CodexOAuthToken)
@@ -85,7 +85,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		require.Equal(t, 1, res.Updated)
 		require.Empty(t, res.Failed)
 
-		ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, "at-2", *ext.CodexOAuthToken, "凭据更新")
 		require.Equal(t, "rt-2", *ext.CodexOAuthRefreshToken)
@@ -110,7 +110,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		require.Equal(t, 0, res.Updated)
 		require.Empty(t, res.Failed)
 		for _, key := range [][2]string{{"a@example.com", "acc-2"}, {"b@example.com", "acc-1"}} {
-			_, err := store.FindAccountExtByCodexKey(ctx, key[0], key[1])
+			_, err := store.FindAccountExtByCodexKey(ctx, key[0], key[1], credential.TypeCodexOAuth)
 			require.NoError(t, err, "组合键语义：同 email 多 account_id / 同 account_id 多 email 共存")
 		}
 	})
@@ -126,7 +126,7 @@ func TestImportCodexOAuthAccountsIdempotent(t *testing.T) {
 		require.Equal(t, 1, res.Imported)
 		require.Equal(t, 1, res.Updated)
 		require.Empty(t, res.Failed)
-		ext, err := store.FindAccountExtByCodexKey(ctx, "c@example.com", "acc-9")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "c@example.com", "acc-9", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, "at-last", *ext.CodexOAuthToken, "批内同键逐行顺序应用后者胜")
 		require.Equal(t, "rt-last", *ext.CodexOAuthRefreshToken)
@@ -148,7 +148,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
 	require.Empty(t, res.Failed)
-	ext, err := store.FindAccountExtByCodexKey(ctx, "p@example.com", "p-1")
+	ext, err := store.FindAccountExtByCodexKey(ctx, "p@example.com", "p-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexPAT, ext.CredentialType)
 	require.Equal(t, "pat-1", *ext.CodexPATKey)
@@ -163,7 +163,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 	require.Equal(t, 0, res.Imported)
 	require.Equal(t, 1, res.Updated)
 	require.Empty(t, res.Failed)
-	ext, err = store.FindAccountExtByCodexKey(ctx, "p@example.com", "p-1")
+	ext, err = store.FindAccountExtByCodexKey(ctx, "p@example.com", "p-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, "pat-2", *ext.CodexPATKey, "pat_key 更新")
 	require.Equal(t, identity, ext.CodexIdentity, "身份沿用（部分更新零触碰）")
@@ -184,7 +184,7 @@ func TestImportCodexPATAccountsIdempotent(t *testing.T) {
 	require.Len(t, res.Failed, 1)
 	require.Equal(t, 0, res.Failed[0].Index, "failed index = items 原始下标")
 	require.Contains(t, res.Failed[0].Error, "凭据类型不匹配")
-	ext, err = store.FindAccountExtByCodexKey(ctx, "p@example.com", "p-1")
+	ext, err = store.FindAccountExtByCodexKey(ctx, "p@example.com", "p-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexPAT, ext.CredentialType, "跨类型不混写（oauth 列零写入）")
 	require.Nil(t, ext.CodexOAuthToken)
@@ -218,9 +218,9 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 		require.Equal(t, 3, res.Failed[1].Index)
 		require.Contains(t, res.Failed[1].Error, "成对")
 		// 失败行不落库；成功行落库
-		_, err = store.FindAccountExtByCodexKey(ctx, "bad-email", "a2")
+		_, err = store.FindAccountExtByCodexKey(ctx, "bad-email", "a2", credential.TypeCodexOAuth)
 		require.ErrorIs(t, err, repository.ErrNotFound)
-		_, err = store.FindAccountExtByCodexKey(ctx, "ok2@example.com", "a3")
+		_, err = store.FindAccountExtByCodexKey(ctx, "ok2@example.com", "a3", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 	})
 
@@ -251,7 +251,7 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 		require.Empty(t, res.Failed)
-		ext, err := store.FindAccountExtByCodexKey(ctx, "v5@example.com", "v5")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "v5@example.com", "v5", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.NotNil(t, ext.CodexOAuthExpiresAt)
 		require.Equal(t, exp, ext.CodexOAuthExpiresAt.UTC().Format(time.RFC3339))
@@ -268,7 +268,7 @@ func TestImportCodexRowLevelFailures(t *testing.T) {
 		require.Len(t, res.Failed, 1)
 		require.Contains(t, res.Failed[0].Error, "missing")
 		// 单行事务整体回滚：无 account 行无 ext 行（无孤儿）
-		_, err = store.FindAccountExtByCodexKey(ctx, "g1@example.com", "g1")
+		_, err = store.FindAccountExtByCodexKey(ctx, "g1@example.com", "g1", credential.TypeCodexOAuth)
 		require.ErrorIs(t, err, repository.ErrNotFound, "ext 无残留")
 		for _, a := range store.accs {
 			require.NotEqual(t, "g1@example.com", a.Name, "account 无残留")
@@ -292,7 +292,7 @@ func TestImportCodexTxRollback(t *testing.T) {
 	require.Equal(t, 0, res.Imported)
 	require.Len(t, res.Failed, 1)
 	require.Contains(t, res.Failed[0].Error, "injected")
-	_, err = store.FindAccountExtByCodexKey(ctx, "rb@example.com", "rb")
+	_, err = store.FindAccountExtByCodexKey(ctx, "rb@example.com", "rb", credential.TypeCodexOAuth)
 	require.ErrorIs(t, err, repository.ErrNotFound, "ext 回滚")
 	for _, a := range store.accs {
 		require.NotEqual(t, "rb@example.com", a.Name, "account 回滚（无孤儿）")
@@ -351,7 +351,7 @@ func TestImportCodexSoftDeletedAccount(t *testing.T) {
 	}, &tplID, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
-	ext, err := store.FindAccountExtByCodexKey(ctx, "del@example.com", "del")
+	ext, err := store.FindAccountExtByCodexKey(ctx, "del@example.com", "del", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 
 	// 软删（fake 硬删——直接置 DeletedAt 模拟真实 repo 软删形态）
@@ -373,7 +373,7 @@ func TestImportCodexSoftDeletedAccount(t *testing.T) {
 	acc, err := store.GetAccount(ctx, ext.AccountID)
 	require.NoError(t, err)
 	require.NotNil(t, acc.DeletedAt, "账号仍软删（不自动复活）")
-	ext2, err := store.FindAccountExtByCodexKey(ctx, "del@example.com", "del")
+	ext2, err := store.FindAccountExtByCodexKey(ctx, "del@example.com", "del", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, "at-1", *ext2.CodexOAuthToken, "凭据未更新（updated 只对存活账号）")
 }
@@ -484,7 +484,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Imported)
 
-		ext, err := store.FindAccountExtByCodexKey(ctx, "cfg@example.com", "cfg-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "cfg@example.com", "cfg-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
@@ -501,7 +501,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 		}, &tplID, nil, domain.CodexImportConfig{})
 		require.NoError(t, err)
-		ext, err := store.FindAccountExtByCodexKey(ctx, "def@example.com", "def-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "def@example.com", "def-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
@@ -517,7 +517,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 		}, &tplID, nil, domain.CodexImportConfig{CacheDomain: new("")})
 		require.NoError(t, err)
-		ext, err := store.FindAccountExtByCodexKey(ctx, "empty@example.com", "empty-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "empty@example.com", "empty-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)
@@ -546,7 +546,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, res.Updated)
 
-		ext, err := store.FindAccountExtByCodexKey(ctx, "upd@example.com", "upd-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "upd@example.com", "upd-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, "at-2", *ext.CodexOAuthToken, "凭据更新")
 		acc, err := store.GetAccount(ctx, ext.AccountID)
@@ -564,7 +564,7 @@ func TestImportCodexConfigOnCreate(t *testing.T) {
 				CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt"},
 		}, &tplID, nil, domain.CodexImportConfig{UpstreamCostMultiplierBp: new(0)})
 		require.NoError(t, err)
-		ext, err := store.FindAccountExtByCodexKey(ctx, "free@example.com", "free-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "free@example.com", "free-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)

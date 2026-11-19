@@ -51,27 +51,27 @@ func TestFindAccountExtByCodexKeyPG(t *testing.T) {
 	seed("k1", "k@example.com", new("ka-1"), credential.TypeCodexOAuth)
 	seed("k2", "k@example.com", new("ka-2"), credential.TypeCodexOAuth)
 
-	got, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "ka-1")
+	got, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "ka-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, "k@example.com", *got.CodexEmail)
 	require.Equal(t, "ka-1", *got.CodexAccountID)
 	require.Equal(t, credential.TypeCodexOAuth, got.CredentialType, "命中行含 credential_type（跨类型判定用）")
 	require.Equal(t, "at", *got.CodexOAuthToken)
 
-	got2, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "ka-2")
+	got2, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "ka-2", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, "ka-2", *got2.CodexAccountID, "同 email 多 account_id 精确命中各自行")
 
 	// 缺行 → ErrNotFound
-	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "ka-3")
+	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "ka-3", credential.TypeCodexOAuth)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, repository.ErrNotFound), "缺行 → ErrNotFound: %v", err)
 
 	// 同 account_id 多 email（组合键另一维度）——pat 行共存
 	seed("k3", "k3@example.com", new("kb-1"), credential.TypeCodexPAT)
-	got3, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k3@example.com", "kb-1")
+	got3, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "k3@example.com", "kb-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexPAT, got3.CredentialType, "pat 行命中")
-	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "kb-1")
+	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "k@example.com", "kb-1", credential.TypeCodexOAuth)
 	require.True(t, errors.Is(err, repository.ErrNotFound), "email 维度不同不误命中")
 }

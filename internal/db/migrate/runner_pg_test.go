@@ -101,16 +101,26 @@ func appliedVersions(t *testing.T, db *sql.DB) []int64 {
 	return out
 }
 
-// T1：空库 Up 后静态 manifest == 已提交的 0001 快照；动态规则通过。
-func TestUpMatchesBaselineSnapshot(t *testing.T) {
+// headSnapshotTag 是「当前全部迁移跑完」的指纹 tag（0002…）。
+// 0001 快照仍然存在，但它是**老库收养基线**：只描述 0001 建出来的形状，
+// 新迁移会在它之上追加对象，所以空库 Up 必须与 head 快照比。
+func headSnapshotTag(t *testing.T) string {
+	t.Helper()
+	v, _ := Head()
+	return fmt.Sprintf("%04d", v)
+}
+
+// T1：空库 Up 后静态 manifest == 已提交的 head 快照；动态规则通过。
+func TestUpMatchesHeadSnapshot(t *testing.T) {
 	ctx := context.Background()
 	db := newEmptyDB(t)
 
 	res, err := Up(ctx, db, UpOptions{})
 	require.NoError(t, err)
 	require.Equal(t, int64(0), res.From)
-	require.Equal(t, int64(1), res.To)
-	require.Len(t, res.Applied, 1)
+	head, _ := Head()
+	require.Equal(t, head, res.To)
+	require.Len(t, res.Applied, int(head))
 	require.Equal(t, OriginExecuted, res.Applied[0].Origin)
 	require.GreaterOrEqual(t, res.Applied[0].ExecutionMS, 0)
 
@@ -121,11 +131,11 @@ func TestUpMatchesBaselineSnapshot(t *testing.T) {
 	t.Logf("catalog dump of the full 0001 schema: %s (%d static objects)", dumpTook.Round(time.Millisecond), len(got.Lines()))
 	require.Less(t, dumpTook, 5*time.Second, "catalog dump must stay under 5s (schema-qualified pg_catalog queries)")
 
-	want, err := Snapshot("0001")
+	want, err := Snapshot(headSnapshotTag(t))
 	require.NoError(t, err)
-	// 两个方向都断言：缺失 = I2 红；多出 = 有人改了 0001 却没重跑生成器。
-	require.Empty(t, catalog.Missing(want, got), "I2: migrated catalog must be a superset of the 0001 snapshot")
-	require.Empty(t, catalog.Missing(got, want), "catalog must not grow beyond the committed 0001 snapshot (rerun go generate)")
+	// 两个方向都断言：缺失 = I2 红；多出 = 有人改了迁移却没重跑快照生成。
+	require.Empty(t, catalog.Missing(want, got), "I2: migrated catalog must be a superset of the head snapshot")
+	require.Empty(t, catalog.Missing(got, want), "catalog must not grow beyond the committed head snapshot (regenerate it)")
 	require.Equal(t, want.Static, got.Static)
 
 	require.Empty(t, got.Dynamic.Violations, "dynamic partition rules must hold")
@@ -135,15 +145,15 @@ func TestUpMatchesBaselineSnapshot(t *testing.T) {
 
 	ledger, err := Status(ctx, db)
 	require.NoError(t, err)
-	require.Len(t, ledger.Applied, 1)
+	require.Len(t, ledger.Applied, int(head))
 	require.Empty(t, ledger.Pending)
 	require.Empty(t, ledger.Mismatches)
 
 	verdict, err := Verify(ctx, db)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), verdict.DBHead)
+	require.Equal(t, head, verdict.DBHead)
 	require.Equal(t, int64(0), verdict.DBContract)
-	require.Equal(t, int64(1), verdict.BinaryHead)
+	require.Equal(t, head, verdict.BinaryHead)
 	require.True(t, verdict.Compatible(), strings.Join(verdict.Problems, "; "))
 }
 
@@ -188,8 +198,11 @@ func TestExpandOnlyInvariant(t *testing.T) {
 	})
 }
 
-// 生成的 down 必须真能拆：up → down → up 之后 catalog 逐字段相等（0001 是建表类
-// 迁移，spec §2.9 的「列集语义相等」在这里可以升格为逐字节相等）。
+// 生成的 down 必须真能拆：up → 逐版本 down 到 0 → up 之后 catalog 逐字段相等
+// （建表类迁移，spec §2.9 的「列集语义相等」在这里可以升格为逐字节相等）。
+//
+// down 只回滚**最后一个**版本，所以多版本时逐次回滚；0002 是索引类迁移，
+// 它回滚后 0001 的表仍在，全部回滚完才允许断言「无残留表」。
 func TestBaselineRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	db := newEmptyDB(t)
@@ -199,10 +212,17 @@ func TestBaselineRoundTrip(t *testing.T) {
 	before, err := Inspect(ctx, db)
 	require.NoError(t, err)
 
-	down, err := Down(ctx, db, DownOptions{AllowDestructive: true})
-	require.NoError(t, err)
-	require.Len(t, down.Rolled, 1)
-	require.Contains(t, down.SQL[0], "ROLLBACK DROPS:")
+	head, _ := Head()
+	var summaries []string
+	for v := head; v >= 1; v-- {
+		down, err := Down(ctx, db, DownOptions{AllowDestructive: true})
+		require.NoError(t, err)
+		require.Len(t, down.Rolled, 1)
+		require.Equal(t, v, down.Rolled[0].Version)
+		summaries = append(summaries, down.SQL[0])
+	}
+	require.Contains(t, strings.Join(summaries, "\n"), "ROLLBACK DROPS:")
+
 	var leftovers int
 	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -365,7 +385,8 @@ func TestChecksumMismatchOnRealBaselineOneByte(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "checksum mismatch")
 	require.Contains(t, err.Error(), "immutable")
-	require.Equal(t, 1, openCount(t, db, catalog.ControlTable))
+	head, _ := Head()
+	require.Equal(t, int(head), openCount(t, db, catalog.ControlTable))
 }
 
 // T7：Down 默认拒绝（必须显式 AllowDestructive），且拒绝信息里列出会丢什么。
@@ -405,21 +426,22 @@ func TestAdoptedBaselineCannotBeRolledBack(t *testing.T) {
 	_, err = db.ExecContext(ctx, `DROP TABLE public.`+catalog.ControlTable)
 	require.NoError(t, err)
 
-	adopted, err := Adopt(ctx, db, AdoptOptions{Snapshot: "0001"})
+	head, _ := Head()
+	adopted, err := Adopt(ctx, db, AdoptOptions{Snapshot: headSnapshotTag(t)})
 	require.NoError(t, err)
-	require.Len(t, adopted.Adopted, 1)
+	require.Len(t, adopted.Adopted, int(head))
 	require.Equal(t, OriginAdopted, adopted.Adopted[0].Origin)
 
 	status, err := Status(ctx, db)
 	require.NoError(t, err)
-	require.Len(t, status.Applied, 1)
+	require.Len(t, status.Applied, int(head))
 	require.Equal(t, OriginAdopted, status.Applied[0].Origin)
 
 	_, err = Down(ctx, db, DownOptions{AllowDestructive: true})
 	require.ErrorIs(t, err, ErrAdoptedBaseline)
 
 	// 账本本身还在（拒绝发生在任何 DDL 之前）。
-	require.Equal(t, 1, openCount(t, db, catalog.ControlTable))
+	require.Equal(t, int(head), openCount(t, db, catalog.ControlTable))
 }
 
 // spec §2.8：账本空 + 已有 schema 时 up 必须拒绝并把运维指向 adopt（不自动收养）。
@@ -605,9 +627,9 @@ func TestDroppedColumnInvisibleToCatalog(t *testing.T) {
 
 	before, err := Inspect(ctx, db)
 	require.NoError(t, err)
-	golden, err := Snapshot("0001")
+	golden, err := Snapshot(headSnapshotTag(t))
 	require.NoError(t, err)
-	require.Equal(t, golden.Static, before.Static, "sanity: a freshly migrated DB equals the snapshot")
+	require.Equal(t, golden.Static, before.Static, "sanity: a freshly migrated DB equals the head snapshot")
 
 	// 写入一行再删列：数据与 pg_attribute 的 dead row 都真实存在。
 	execScript(t, db, `
@@ -632,9 +654,10 @@ ALTER TABLE public.settings DROP COLUMN ghost;
 	// Adopt 视角：账本丢了之后，这个「曾经删过列」的库必须能收养成功。
 	_, err = db.ExecContext(ctx, `DROP TABLE public.`+catalog.ControlTable)
 	require.NoError(t, err)
-	adopted, err := Adopt(ctx, db, AdoptOptions{Snapshot: "0001"})
+	head, _ := Head()
+	adopted, err := Adopt(ctx, db, AdoptOptions{Snapshot: headSnapshotTag(t)})
 	require.NoError(t, err, "a DB that once dropped a column must still be adoptable")
-	require.Len(t, adopted.Adopted, 1)
+	require.Len(t, adopted.Adopted, int(head))
 	require.Empty(t, adopted.Tolerated)
 }
 
@@ -764,8 +787,92 @@ func TestAdoptRejectsLedgerLostSchemaVersion(t *testing.T) {
 	execScript(t, db, `INSERT INTO public.settings (key, type, value, updated_at)
 VALUES ('schema_version', 'string', '1', now());`)
 
-	_, err = Adopt(ctx, db, AdoptOptions{Snapshot: "0001"})
+	_, err = Adopt(ctx, db, AdoptOptions{Snapshot: headSnapshotTag(t)})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "ledger lost")
 	require.Contains(t, err.Error(), `schema_version="1"`)
+}
+
+// TestUp0002PreservesExistingCodexRows 是 0002 的**存量库升级**证据：先升到
+// 0001 并写入一对 Codex 账号（旧两列唯一索引只允许一行），此时同键 BPS 行必须
+// 被拒；升到 head 之后同一 BPS 行必须能插入，且 Codex 行原样不动。这条直接覆盖
+// 线上「已有 codex-oauth、再登 BPS」的升级路径。
+func TestUp0002PreservesExistingCodexRows(t *testing.T) {
+	ctx := context.Background()
+	db := newEmptyDB(t)
+
+	_, err := Up(ctx, db, UpOptions{Target: 1})
+	require.NoError(t, err)
+
+	execScript(t, db, `
+INSERT INTO public.templates (name, base_url, credential_type, supported_formats, models, format_models, model_mapping, updated_at, created_at)
+VALUES ('legacy-tpl', '', 'codex-oauth', '["openai-responses"]'::jsonb, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, now(), now());
+INSERT INTO public.accounts (name, upstream_key, updated_at, created_at, template_id)
+VALUES ('legacy-codex', '', now(), now(), 1),
+       ('legacy-bps', '', now(), now(), 1);
+INSERT INTO public.account_exts (account_id, credential_type, codex_email, codex_account_id, codex_oauth_token, codex_oauth_refresh_token, codex_identity)
+VALUES (1, 'codex-oauth', 'same@example.com', 'acct-1', 'at-codex', 'rt-codex', '{"installation_id":"i-1"}'::jsonb);
+`)
+
+	// 0001 形态：同键 BPS 行必须被两列唯一索引拒绝（这就是线上 bug 的 DB 面）。
+	_, err = db.ExecContext(ctx, `
+INSERT INTO public.account_exts (account_id, credential_type, codex_email, codex_account_id, codex_oauth_token)
+VALUES (2, 'bps', 'same@example.com', 'acct-1', 'at-bps');
+`)
+	require.Error(t, err, "0001 的两列唯一索引必须挡住同一身份的 BPS 行")
+
+	_, err = Up(ctx, db, UpOptions{})
+	require.NoError(t, err)
+
+	_, err = db.ExecContext(ctx, `
+INSERT INTO public.account_exts (account_id, credential_type, codex_email, codex_account_id, codex_oauth_token)
+VALUES (2, 'bps', 'same@example.com', 'acct-1', 'at-bps');
+`)
+	require.NoError(t, err, "0002 之后同一身份的 BPS 行必须可插入")
+
+	var codexToken, bpsToken string
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT codex_oauth_token FROM public.account_exts WHERE account_id = 1`).Scan(&codexToken))
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT codex_oauth_token FROM public.account_exts WHERE account_id = 2`).Scan(&bpsToken))
+	require.Equal(t, "at-codex", codexToken, "升级不得改写既有 Codex 凭据")
+	require.Equal(t, "at-bps", bpsToken)
+}
+
+// TestDown0002FailsLoudlyWhenIdentitiesCoexist 0002 的 down 在**合法并存状态**下
+// 无法恢复两列全表唯一索引（Codex + BPS 同身份两行）。它必须：
+//   - 失败，且原因说清「这是合法并存，不是脏数据」；
+//   - 整体回滚（库仍停在 0002），两行都还在——绝不为了能回滚顺手删行。
+func TestDown0002FailsLoudlyWhenIdentitiesCoexist(t *testing.T) {
+	ctx := context.Background()
+	db := newEmptyDB(t)
+	_, err := Up(ctx, db, UpOptions{})
+	require.NoError(t, err)
+
+	execScript(t, db, `
+INSERT INTO public.templates (name, base_url, credential_type, supported_formats, models, format_models, model_mapping, updated_at, created_at)
+VALUES ('coexist-tpl', '', 'codex-oauth', '["openai-responses"]'::jsonb, '[]'::jsonb, '{}'::jsonb, '{}'::jsonb, now(), now());
+INSERT INTO public.accounts (name, upstream_key, updated_at, created_at, template_id)
+VALUES ('coexist-codex', '', now(), now(), 1),
+       ('coexist-bps', '', now(), now(), 1);
+INSERT INTO public.account_exts (account_id, credential_type, codex_email, codex_account_id, codex_oauth_token)
+VALUES (1, 'codex-oauth', 'both@example.com', 'acct-both', 'at-codex'),
+       (2, 'bps', 'both@example.com', 'acct-both', 'at-bps');
+`)
+
+	_, err = Down(ctx, db, DownOptions{AllowDestructive: true})
+	require.Error(t, err, "并存状态下不能静默回滚")
+	require.Contains(t, err.Error(), "keep one account per identity",
+		"拒绝必须说明这是合法并存，而不是把 23505 直接甩给运维")
+
+	head, _ := Head()
+	status, err := Status(ctx, db)
+	require.NoError(t, err)
+	require.Len(t, status.Applied, int(head), "失败的 down 必须整体回滚，库仍停在 head")
+	require.Empty(t, status.Pending)
+
+	var rows int
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT count(*) FROM public.account_exts WHERE codex_email = 'both@example.com'`).Scan(&rows))
+	require.Equal(t, 2, rows, "拒绝回滚不得删掉任何一行")
 }

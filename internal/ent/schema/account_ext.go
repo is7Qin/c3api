@@ -51,9 +51,18 @@ func (AccountExt) Edges() []ent.Edge {
 func (AccountExt) Indexes() []ent.Index {
 	return []ent.Index{
 		index.Fields("account_id").Unique(), // 1:1（upsert 冲突列）
-		// 幂等组合键（批量导入按 (codex_email, codex_account_id) 定位）：
-		// NULL 不参与唯一（PG 语义）——两行同 email 但 codex_account_id 全 NULL
-		// 可共存；非空由 service 校验保证（缺省先自动识别，仍空才拒绝导入行）。
+		// 幂等组合键（批量导入按 (codex_email, codex_account_id) + 凭据身份组
+		// 定位）：NULL 不参与唯一（PG 语义）——两行同 email 但 codex_account_id
+		// 全 NULL 可共存；非空由 service 校验保证（缺省先自动识别，仍空才拒绝
+		// 导入行）。
+		//
+		// 这里是 0001_baseline 的**冻结**形状：线上唯一性已由
+		// 0002_account_ext_identity_group 拆成两条部分唯一索引——
+		// credential_type <> 'bps'（Codex oauth/pat 仍互斥）与
+		// credential_type = 'bps'（BPS 单独幂等），因此同一个 ChatGPT 身份可以
+		// 同时是 Codex 与 BPS 账号，而 Codex 内部强度不变。
+		// 0001 已进账本（checksum 不可变），改 schema 形状要新增迁移，不要重跑
+		// 基线生成器。
 		index.Fields("codex_email", "codex_account_id").Unique(),
 	}
 }

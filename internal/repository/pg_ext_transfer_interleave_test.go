@@ -190,7 +190,7 @@ func TestPGExtCodexKeyTransferBarrier(t *testing.T) {
 		err error
 	)
 	wg.Go(func() {
-		got, err = brepos.FindAccountExtByCodexKey(scopeCtx(owner.ID), email, acctID)
+		got, err = brepos.FindAccountExtByCodexKey(scopeCtx(owner.ID), email, acctID, credential.TypeCodexOAuth)
 	})
 
 	<-bar.reached

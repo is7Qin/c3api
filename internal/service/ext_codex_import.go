@@ -317,7 +317,7 @@ func (s *Service) importCodexAccounts(ctx context.Context, rows []codexImportRow
 // 成功时返回账号 id/名称（新建行 id 取自事务内 CreateAccount，updated 行复用
 // 查重时读到的账号）——调用方不再需要额外回读。
 func (s *Service) importCodexRow(ctx context.Context, row codexImportRow, tplID int64, groupID *int64, credType credential.Type, cfg domain.CodexImportConfig) (codexImportOutcome, error) {
-	cur, err := s.store.FindAccountExtByCodexKey(ctx, row.email, row.accountID)
+	cur, err := s.store.FindAccountExtByCodexKey(ctx, row.email, row.accountID, credType)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return codexImportOutcome{}, err
 	}
@@ -428,13 +428,15 @@ func (s *Service) updateCodexCredentials(ctx context.Context, accountID int64, r
 
 // importKeyConflictErr 唯一索引冲突 → 行级 failed 文案（并发同键兜底面；
 // 也覆盖**跨归属同组合键**：供应商面查重带作用域 ⇒ 他人归属的同键行查不到，
-// 落到 INSERT 撞全局唯一索引 (codex_email, codex_account_id) ⇒ 23505）。
+// 落到 INSERT 撞全局唯一索引 ⇒ 23505）。0002 把唯一性拆成两条部分索引：
+// Codex（credential_type <> 'bps'）与 BPS 各自一条键，所以同一上游身份在
+// Codex/BPS 各一行不会撞；只有同组内重复或并发才会。
 // 文案**不得回显他人 id**：判据里只出现本次请求自带的 email/account_id（那是
 // 调用方自己的输入），归属与行 id 一律不出现——越域探针拿不到任何他人信息。
 func importKeyConflictErr(err error) error {
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == "23505" {
-		return conflictErr("键冲突：同 (codex_email, codex_account_id) 账号已存在或并发导入，本行未写入")
+		return conflictErr("键冲突：同 (codex_email, codex_account_id) 的同组账号已存在或并发导入，本行未写入")
 	}
 	return err
 }

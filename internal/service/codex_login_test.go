@@ -218,7 +218,7 @@ func TestCompleteCodexOAuthDeviceLoginImports(t *testing.T) {
 	require.Equal(t, "a@example.com", res.Email)
 	require.Equal(t, "acc-1", res.CodexAccountID)
 
-	ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1")
+	ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, credential.TypeCodexOAuth, ext.CredentialType)
 	require.Equal(t, "at-1", *ext.CodexOAuthToken)
@@ -246,7 +246,7 @@ func TestCompleteCodexOAuthDeviceLoginImports(t *testing.T) {
 	require.False(t, res2.Imported, "同键 → 凭据更新")
 	require.Equal(t, res.AccountID, res2.AccountID)
 
-	ext, err = store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1")
+	ext, err = store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, "at-2", *ext.CodexOAuthToken)
 }
@@ -263,7 +263,7 @@ func TestCompleteCodexOAuthDeviceLoginSupplierScope(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexLoginAuthorized, res.Status)
 
-	ext, err := store.FindAccountExtByCodexKey(ctx, "s@example.com", "acc")
+	ext, err := store.FindAccountExtByCodexKey(ctx, "s@example.com", "acc", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	acc, err := store.GetAccount(ctx, ext.AccountID)
 	require.NoError(t, err)
@@ -300,7 +300,7 @@ func TestCompleteCodexOAuthDeviceLoginRejectsIncompleteTokens(t *testing.T) {
 		_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
 		require.ErrorIs(t, err, ErrUpstream, name)
 
-		ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "a@example.com", "acc-1", credential.TypeCodexOAuth)
 		require.NoError(t, err, name)
 		require.Equal(t, "at-good", *ext.CodexOAuthToken, name+": 既有凭据不得被覆盖")
 		require.Equal(t, "rt-good", *ext.CodexOAuthRefreshToken, name+": 有效 RT 不得被空值覆盖")
@@ -367,7 +367,7 @@ func TestCompleteCodexOAuthDeviceLoginRowErrorClassification(t *testing.T) {
 	// 首次成功（建立同键账号）
 	_, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
 	require.NoError(t, err)
-	ext, err := store.FindAccountExtByCodexKey(ctx, "c@example.com", "acc-c")
+	ext, err := store.FindAccountExtByCodexKey(ctx, "c@example.com", "acc-c", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	now := time.Now()
 	store.mu.Lock()
@@ -386,4 +386,51 @@ func TestCompleteCodexOAuthDeviceLoginRowErrorClassification(t *testing.T) {
 	_, err = brokenSvc.CompleteDeviceLogin(ctx, domain.DeviceLoginCodex, "auth-1", "code", 1, nil)
 	require.Error(t, err)
 	require.NotErrorIs(t, err, ErrConflict)
+}
+
+// TestBPSLoginCoexistsWithCodexAccountForSameUpstreamIdentity 同一个 ChatGPT
+// 账号已经作为 codex-oauth 存在时，BPS 登录必须新建独立的 BPS 账号，而不是以
+// 「凭据类型不匹配」失败。BPS 与 Codex 是两个独立 provider（不同 endpoint、
+// 配额、device profile），同一上游身份在两边各一行是合法状态；Codex 内部
+// oauth/pat 仍互斥（见 ext_codex_import_test.go 的跨类型用例）。
+func TestBPSLoginCoexistsWithCodexAccountForSameUpstreamIdentity(t *testing.T) {
+	ctx := context.Background()
+	store := newFakeStore()
+	store.tpls[1] = &domain.Template{ID: 1, Name: "codex", CredentialType: credential.TypeCodexOAuth}
+	store.tpls[3] = &domain.Template{ID: 3, Name: "bps", CredentialType: credential.TypeBPS}
+	svc := New(Deps{
+		Store: store, Invalidate: &invRecorder{}, EmailCodeStore: testEmailCodes,
+		BPSLogin: &fakeBPSLoginProvider{fakeCodexLoginProvider: fakeCodexLoginProvider{
+			status: domain.CodexLoginAuthorized,
+			tokens: &domain.CodexLoginTokens{
+				Email: "same@example.com", AccountID: "acct-shared",
+				AccessToken: "at-bps", RefreshToken: "rt-bps",
+			},
+			code: domain.CodexDeviceCode{AuthID: "auth-1", UserCode: "code"},
+		}},
+	})
+
+	tplID := int64(1)
+	codex, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{{
+		CodexEmail: "same@example.com", CodexAccountID: "acct-shared",
+		CodexOAuthToken: "at-codex", CodexOAuthRefreshToken: "rt-codex",
+	}}, &tplID, nil, domain.CodexImportConfig{})
+	require.NoError(t, err)
+	require.Equal(t, 1, codex.Imported)
+
+	res, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginBPS, "auth-1", "code", 3, nil)
+	require.NoError(t, err, "同一上游身份不得阻塞 BPS 登录")
+	require.Equal(t, domain.CodexLoginAuthorized, res.Status)
+	require.True(t, res.Imported, "BPS 必须新建独立账号行")
+
+	codexExt, err := store.FindAccountExtByCodexKey(ctx, "same@example.com", "acct-shared", credential.TypeCodexOAuth)
+	require.NoError(t, err)
+	require.Equal(t, credential.TypeCodexOAuth, codexExt.CredentialType)
+	require.Equal(t, "at-codex", *codexExt.CodexOAuthToken, "Codex 行凭据零触碰")
+
+	bpsExt, err := store.FindAccountExtByCodexKey(ctx, "same@example.com", "acct-shared", credential.TypeBPS)
+	require.NoError(t, err)
+	require.Equal(t, credential.TypeBPS, bpsExt.CredentialType)
+	require.Equal(t, "at-bps", *bpsExt.CodexOAuthToken)
+	require.NotEqual(t, codexExt.AccountID, bpsExt.AccountID, "两个 provider 各自独立账号行")
 }

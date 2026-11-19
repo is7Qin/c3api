@@ -75,7 +75,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		require.Equal(t, 1, res.Imported)
 		require.Empty(t, res.Failed)
 
-		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg1@example.com", "pg-1")
+		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg1@example.com", "pg-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, "at-1", *ext.CodexOAuthToken)
 		require.Equal(t, "rt-1", *ext.CodexOAuthRefreshToken)
@@ -101,7 +101,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		require.Equal(t, 1, res.Updated)
 		require.Empty(t, res.Failed)
 
-		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg1@example.com", "pg-1")
+		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg1@example.com", "pg-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, "at-2", *ext.CodexOAuthToken, "凭据更新")
 		require.Equal(t, "rt-2", *ext.CodexOAuthRefreshToken)
@@ -126,7 +126,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		require.Equal(t, 2, res.Imported)
 		require.Empty(t, res.Failed)
 		for _, key := range [][2]string{{"pg1@example.com", "pg-2"}, {"pg2@example.com", "pg-1"}} {
-			_, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, key[0], key[1])
+			_, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, key[0], key[1], credential.TypeCodexOAuth)
 			require.NoError(t, err, "组合键语义共存")
 		}
 	})
@@ -142,7 +142,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		require.Equal(t, 1, res.Imported)
 		require.Equal(t, 1, res.Updated)
 		require.Empty(t, res.Failed)
-		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg3@example.com", "pg-3")
+		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg3@example.com", "pg-3", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, "at-last", *ext.CodexOAuthToken, "批内同键逐行顺序应用后者胜")
 	})
@@ -166,7 +166,7 @@ func TestImportCodexAccountsPG(t *testing.T) {
 		require.Len(t, res.Failed, 1)
 		require.Equal(t, 0, res.Failed[0].Index)
 		require.Contains(t, res.Failed[0].Error, "凭据类型不匹配")
-		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg4@example.com", "pg-4")
+		ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "pg4@example.com", "pg-4", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		require.Equal(t, credential.TypeCodexPAT, ext.CredentialType, "跨类型不混写")
 		require.Nil(t, ext.CodexOAuthToken, "oauth 列零写入")
@@ -195,7 +195,7 @@ func TestImportCodexTemplateTypeMismatchPG(t *testing.T) {
 	require.ErrorIs(t, err, ErrInvalidInput)
 
 	// 整批拒绝零写入
-	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "tm@example.com", "tm")
+	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "tm@example.com", "tm", credential.TypeCodexOAuth)
 	require.ErrorIs(t, err, repository.ErrNotFound, "错配批零写入")
 }
 
@@ -212,7 +212,7 @@ func TestImportCodexSoftDeletedPG(t *testing.T) {
 	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
-	ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sd@example.com", "sd")
+	ext, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sd@example.com", "sd", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 
 	// 真实软删（deleted_at 置值）
@@ -231,7 +231,7 @@ func TestImportCodexSoftDeletedPG(t *testing.T) {
 	acc, err := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.NoError(t, err)
 	require.NotNil(t, acc.DeletedAt, "账号仍软删（不自动复活）")
-	ext2, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sd@example.com", "sd")
+	ext2, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sd@example.com", "sd", credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, "at-1", *ext2.CodexOAuthToken, "凭据未更新（updated 只对存活账号）")
 }
@@ -255,7 +255,7 @@ func TestImportCodexTxRollbackPG(t *testing.T) {
 	require.Contains(t, res.Failed[0].Error, "missing")
 
 	// 无孤儿：无 ext 行 + 无 account 行
-	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "rbpg@example.com", "rbpg")
+	_, err = repos.AccountExts.FindAccountExtByCodexKey(ctx, "rbpg@example.com", "rbpg", credential.TypeCodexOAuth)
 	require.ErrorIs(t, err, repository.ErrNotFound, "ext 行回滚零残留")
 	accs, _, err := repos.Accounts.ListAccounts(ctx, repository.ListQuery{Name: "rbpg@example.com"})
 	require.NoError(t, err)
@@ -297,4 +297,103 @@ func TestImportCodexSnapshotPG(t *testing.T) {
 func pgStrPtr(t *testing.T, s string) *string {
 	t.Helper()
 	return &s
+}
+
+// TestBPSImportCoexistsWithCodexAccountPG 同一个 ChatGPT 身份（email + 上游
+// account id）先作为 codex-oauth 存在时，BPS 登录必须新建独立的 BPS 账号，而不是
+// 撞 0001 的两列唯一索引后报「凭据类型不匹配」。
+//
+// 0002 迁移把导入幂等键收窄成 (codex_email, codex_account_id, credential_type)；
+// 本用例跑在真实 PG 上，因此同时是那条迁移的回归：没有 0002，第二次插入会 23505。
+func TestBPSImportCoexistsWithCodexAccountPG(t *testing.T) {
+	svc, repos := newCodexImportPG(t)
+	ctx := context.Background()
+
+	oauthTpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
+		Name: "bps-coexist-codex", CredentialType: credential.TypeCodexOAuth,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		ModelMapping:     domain.ModelMapping{},
+	})
+	require.NoError(t, err)
+	bpsTpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
+		Name: "bps-coexist-bps", CredentialType: credential.TypeBPS,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		ModelMapping:     domain.ModelMapping{},
+	})
+	require.NoError(t, err)
+
+	const email, upstream = "coexist@example.com", "acct-shared-1"
+	codexRes, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{{
+		CodexEmail: email, CodexAccountID: upstream,
+		CodexOAuthToken: "at-codex", CodexOAuthRefreshToken: "rt-codex",
+	}}, &oauthTpl.ID, nil, domain.CodexImportConfig{})
+	require.NoError(t, err)
+	require.Equal(t, 1, codexRes.Imported)
+
+	svc.bpsLogin = &fakeBPSLoginProvider{fakeCodexLoginProvider: fakeCodexLoginProvider{
+		status: domain.CodexLoginAuthorized,
+		tokens: &domain.CodexLoginTokens{
+			Email: email, AccountID: upstream, AccessToken: "at-bps", RefreshToken: "rt-bps",
+		},
+		code: domain.CodexDeviceCode{AuthID: "auth-coexist", UserCode: "code"},
+	}}
+	bpsRes, err := svc.CompleteDeviceLogin(ctx, domain.DeviceLoginBPS, "auth-coexist", "code", bpsTpl.ID, nil)
+	require.NoError(t, err, "同一上游身份不得阻塞 BPS 登录")
+	require.Equal(t, domain.CodexLoginAuthorized, bpsRes.Status)
+	require.True(t, bpsRes.Imported, "BPS 必须新建独立账号行")
+	require.NotZero(t, bpsRes.AccountID)
+
+	codexExt, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, email, upstream, credential.TypeCodexOAuth)
+	require.NoError(t, err)
+	require.Equal(t, credential.TypeCodexOAuth, codexExt.CredentialType)
+	require.Equal(t, "at-codex", *codexExt.CodexOAuthToken, "Codex 行凭据零触碰")
+
+	bpsExt, err := repos.AccountExts.FindAccountExtByCodexKey(ctx, email, upstream, credential.TypeBPS)
+	require.NoError(t, err)
+	require.Equal(t, credential.TypeBPS, bpsExt.CredentialType)
+	require.Equal(t, "at-bps", *bpsExt.CodexOAuthToken)
+	require.NotEqual(t, codexExt.AccountID, bpsExt.AccountID, "两个 provider 各自独立账号行")
+}
+
+// TestCodexIdentityGroupStillExclusivePG 0002 拆索引后，Codex 组内部仍必须互斥：
+// 同一 (codex_email, codex_account_id) 再写一条 codex-pat 行要撞部分唯一索引
+// （23505）。放宽 BPS 与 Codex 的并存，不能顺手放宽 oauth/pat 混写。
+func TestCodexIdentityGroupStillExclusivePG(t *testing.T) {
+	svc, repos := newCodexImportPG(t)
+	ctx := context.Background()
+
+	oauthTpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
+		Name: "grp-codex-oauth", CredentialType: credential.TypeCodexOAuth,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		ModelMapping:     domain.ModelMapping{},
+	})
+	require.NoError(t, err)
+	patTpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
+		Name: "grp-codex-pat", CredentialType: credential.TypeCodexPAT,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		ModelMapping:     domain.ModelMapping{},
+	})
+	require.NoError(t, err)
+
+	const email, upstream = "group@example.com", "acct-group-1"
+	res, err := svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{{
+		CodexEmail: email, CodexAccountID: upstream,
+		CodexOAuthToken: "at", CodexOAuthRefreshToken: "rt",
+	}}, &oauthTpl.ID, nil, domain.CodexImportConfig{})
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Imported, "base oauth row must exist")
+
+	// 直接由 repo 写入第二条同组（不同 Codex 类型）行：import 层的跨类型检查
+	// 之外，DB 的部分唯一索引也必须是兜底，而不是只有应用层记得判。
+	acc, err := repos.Accounts.CreateAccount(ctx, &domain.Account{
+		Name: "pat-duplicate", TemplateID: patTpl.ID, Enabled: true, MaxConcurrency: 1,
+	})
+	require.NoError(t, err)
+	_, err = repos.AccountExts.UpsertAccountExt(ctx, &domain.AccountExt{
+		AccountID: acc.ID, CredentialType: credential.TypeCodexPAT,
+		CodexEmail: pgStrPtr(t, email), CodexAccountID: pgStrPtr(t, upstream),
+		CodexPATKey: pgStrPtr(t, "pat-key"),
+	})
+	require.Error(t, err, "oauth 与 pat 共用同一身份组，第二行必须被唯一索引拒绝")
+	require.Contains(t, err.Error(), "23505")
 }

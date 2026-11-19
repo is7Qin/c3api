@@ -281,9 +281,9 @@ type AccountExtStore interface {
 	// "旧凭据内容 + 新 K"，让旧 Auth 的事件通过新身份的围栏）。
 	GetOwnedAccountCredential(ctx context.Context, accountID int64) (*domain.AccountCredential, error)
 	// FindAccountExtByCodexKey 组合幂等键查重（批量导入——(codex_email,
-	// codex_account_id)；GetAccountExt 仅按 account_id，查重面不存在）；缺行 →
-	// ErrNotFound。
-	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string) (*domain.AccountExt, error)
+	// codex_account_id) + 凭据身份组；GetAccountExt 仅按 account_id，查重面不
+	// 存在）；缺行 → ErrNotFound。
+	FindAccountExtByCodexKey(ctx context.Context, codexEmail, codexAccountID string, credType credential.Type) (*domain.AccountExt, error)
 	// WriteOAuthRotation oauth 凭据三列部分更新（SDK 轮转回写）：带来源身份代际
 	// 围栏（不增任何代际；K 已被管理面推进 ⇒ ErrStaleIdentityRevision）。
 	WriteOAuthRotation(ctx context.Context, accountID int64, expectedIdentityRevision int64, at, rt string, expiresAt *time.Time) error

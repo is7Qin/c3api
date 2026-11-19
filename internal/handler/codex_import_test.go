@@ -215,7 +215,7 @@ func TestPostAccountsBatchImportCodexConfig(t *testing.T) {
 			"upstream_cost_multiplier": 2.5}`)
 		require.Equal(t, 200, rec.Code, "body: %s", rec.Body.String())
 
-		ext, err := store.FindAccountExtByCodexKey(ctx, "cfg@example.com", "cfg-1")
+		ext, err := store.FindAccountExtByCodexKey(ctx, "cfg@example.com", "cfg-1", credential.TypeCodexOAuth)
 		require.NoError(t, err)
 		acc, err := store.GetAccount(ctx, ext.AccountID)
 		require.NoError(t, err)

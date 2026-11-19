@@ -239,12 +239,12 @@ func TestPGCodexKeyScopeIsolation(t *testing.T) {
 
 	otherCtx := scopeCtx(other.ID)
 	// ① 供应商面（他人）：同组合键查重**查不到**（作用域谓词 AND 进 SQL）。
-	_, err := repos.AccountExts.FindAccountExtByCodexKey(otherCtx, email, acctID)
+	_, err := repos.AccountExts.FindAccountExtByCodexKey(otherCtx, email, acctID, credential.TypeCodexOAuth)
 	require.ErrorIs(t, err, repository.ErrNotFound,
 		"越域同键不得被全局查重命中（否则即 spec 禁止的 TOCTOU 形态）")
 
 	// 管理面（无作用域）：同键可见（证明过滤确由作用域引入）。
-	got, err := repos.AccountExts.FindAccountExtByCodexKey(context.Background(), email, acctID)
+	got, err := repos.AccountExts.FindAccountExtByCodexKey(context.Background(), email, acctID, credential.TypeCodexOAuth)
 	require.NoError(t, err)
 	require.Equal(t, a.ID, got.AccountID)
 

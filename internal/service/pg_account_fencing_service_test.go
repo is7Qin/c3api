@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 )
@@ -23,7 +24,7 @@ func TestServiceImportFencing(t *testing.T) {
 	}, &oauthTpl, &gid, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Imported)
-	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "fence@example.com", "fence-1")
+	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "fence@example.com", "fence-1", credential.TypeCodexOAuth)
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	require.Equal(t, "tok1", *ext.CodexOAuthToken)
@@ -34,7 +35,7 @@ func TestServiceImportFencing(t *testing.T) {
 	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.NoError(t, err)
 	require.Equal(t, 1, res.Updated)
-	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "fence@example.com", "fence-1")
+	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "fence@example.com", "fence-1", credential.TypeCodexOAuth)
 	require.Equal(t, "tok2", *ext2.CodexOAuthToken)
 	acc2, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(2), acc2.LifecycleRevision, "admin re-import must increment revision 1->2")
@@ -49,14 +50,14 @@ func TestServiceSDKRefreshNotFenced(t *testing.T) {
 		{CodexEmail: "sdk@example.com", CodexAccountID: "sdk-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
 	}, &oauthTpl, &gid, domain.CodexImportConfig{})
 	require.Equal(t, 1, res.Imported)
-	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sdk@example.com", "sdk-1")
+	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sdk@example.com", "sdk-1", credential.TypeCodexOAuth)
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// SDK rotation via unfenced method
 	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 1, "tok-sdk", "rt-sdk", nil))
 	acc2, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(1), acc2.LifecycleRevision, "SDK refresh must not increment")
-	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sdk@example.com", "sdk-1")
+	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "sdk@example.com", "sdk-1", credential.TypeCodexOAuth)
 	require.Equal(t, "tok-sdk", *ext2.CodexOAuthToken)
 }
 
@@ -69,7 +70,7 @@ func TestServiceExtPutFencing(t *testing.T) {
 		{CodexEmail: "ext@example.com", CodexAccountID: "ext-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
 	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	require.Equal(t, 1, res.Imported)
-	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "ext@example.com", "ext-1")
+	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "ext@example.com", "ext-1", credential.TypeCodexOAuth)
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// Admin ext PUT
@@ -168,7 +169,7 @@ func TestServiceStaleImportNotUpdate(t *testing.T) {
 	_, _ = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "stale@example.com", CodexAccountID: "stale-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
 	}, &oauthTpl, &gid, domain.CodexImportConfig{})
-	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")
+	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1", credential.TypeCodexOAuth)
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	// admin re-import to 2
@@ -177,7 +178,7 @@ func TestServiceStaleImportNotUpdate(t *testing.T) {
 	}, &oauthTpl, nil, domain.CodexImportConfig{})
 	acc2, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(2), acc2.LifecycleRevision)
-	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")
+	ext2, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1", credential.TypeCodexOAuth)
 	require.Equal(t, "tok2", *ext2.CodexOAuthToken)
 	// stale admin rotation with old revision should fail and not change ext nor revision
 	// test ext stale via AdminWriteOAuthRotationCAS
@@ -185,13 +186,13 @@ func TestServiceStaleImportNotUpdate(t *testing.T) {
 	require.ErrorIs(t, err, repository.ErrConflict)
 	afterStale, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), afterStale.LifecycleRevision, "stale must not increment")
-	ext3, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")
+	ext3, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1", credential.TypeCodexOAuth)
 	require.Equal(t, "tok2", *ext3.CodexOAuthToken, "stale must not update ext")
 	// SDK refresh should still update ext without increment
 	require.NoError(t, repos.AccountExts.WriteOAuthRotation(ctx, acc.ID, 2, "tok-sdk2", "rt-sdk2", nil))
 	afterSDK, _ := repos.Accounts.GetAccount(ctx, acc.ID)
 	require.Equal(t, int64(2), afterSDK.LifecycleRevision, "SDK refresh must not increment after admin")
-	extSDK, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1")
+	extSDK, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale@example.com", "stale-1", credential.TypeCodexOAuth)
 	require.Equal(t, "tok-sdk2", *extSDK.CodexOAuthToken)
 }
 
@@ -202,7 +203,7 @@ func TestServiceStaleExtPutNotUpdate(t *testing.T) {
 	_, _ = svc.ImportCodexOAuthAccounts(ctx, []domain.CodexOAuthImportItem{
 		{CodexEmail: "stale-ext2@example.com", CodexAccountID: "stale-ext2-1", CodexOAuthToken: "tok1", CodexOAuthRefreshToken: "rt1"},
 	}, &oauthTpl, nil, domain.CodexImportConfig{})
-	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale-ext2@example.com", "stale-ext2-1")
+	ext, _ := repos.AccountExts.FindAccountExtByCodexKey(ctx, "stale-ext2@example.com", "stale-ext2-1", credential.TypeCodexOAuth)
 	acc, _ := repos.Accounts.GetAccount(ctx, ext.AccountID)
 	require.Equal(t, int64(1), acc.LifecycleRevision)
 	e := &domain.AccountExt{AccountID: acc.ID, CredentialType: "codex-oauth", CodexIdentity: ext.CodexIdentity, CodexOAuthToken: new("tok2"), CodexOAuthRefreshToken: new("rt2"), CodexEmail: ext.CodexEmail, CodexAccountID: ext.CodexAccountID}
