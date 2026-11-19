@@ -478,9 +478,6 @@ type CodexCredits struct {
 
 // CodexDeviceLoginCompleteBody 手动完成设备码登录；发起阶段不产生服务端会话。
 type CodexDeviceLoginCompleteBody struct {
-	// BpsProfile BPS 必填：SDK 生成的完整 DeviceProfile JSON；换码前校验，仅写入，不回显。
-	BpsProfile *map[string]interface{} `json:"bps_profile,omitempty"`
-
 	// DeviceAuthId 发起响应原样回传
 	DeviceAuthId string `json:"device_auth_id"`
 

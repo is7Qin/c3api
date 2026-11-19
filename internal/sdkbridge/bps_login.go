@@ -24,13 +24,14 @@ func NewBPSLogin(client *http.Client) *BPSLogin {
 	return &BPSLogin{device: bpssdk.NewDeviceAuth("", client)}
 }
 
-// ValidateProfile delegates semantic validation to the SDK, before exchange.
-func (*BPSLogin) ValidateProfile(raw []byte) error {
-	var profile bpssdk.DeviceProfile
-	if err := json.Unmarshal(raw, &profile); err != nil {
-		return err
+// GenerateProfile delegates complete DeviceProfile generation to the SDK.
+// The profile is created server-side and returned only to the service import path.
+func (*BPSLogin) GenerateProfile() ([]byte, error) {
+	profile, err := bpssdk.GenerateDesktopDeviceProfile()
+	if err != nil {
+		return nil, err
 	}
-	return profile.Validate()
+	return json.Marshal(profile)
 }
 
 func (l *BPSLogin) StartDeviceFlow(ctx context.Context) (*domain.CodexDeviceCode, error) {

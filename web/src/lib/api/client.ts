@@ -206,7 +206,7 @@ export class ApiClient {
   importCodexOauthAccounts = (b: components['schemas']['CodexOAuthImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-oauth', { method: 'POST', body: JSON.stringify(b) })
   importCodexPatAccounts = (b: components['schemas']['CodexPATImportBody']) => this.request<components['schemas']['ImportResult']>('/accounts/batch-import-codex-pat', { method: 'POST', body: JSON.stringify(b) })
   // —— shared ChatGPT/BPS device login (manual completion; no polling) ——
-  // These additive fields are intentionally kept local until OpenAPI is regenerated.
+  // BPS DeviceProfile generation is server-side in bps-sdk; the browser sends no profile.
   startCodexDeviceLogin = (provider?: 'bps') => this.request<components['schemas']['CodexDeviceLoginStart']>(
     '/accounts/codex-device-login',
     provider === 'bps' ? { method: 'POST', body: JSON.stringify({ provider }) } : { method: 'POST' },

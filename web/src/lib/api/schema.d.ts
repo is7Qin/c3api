@@ -228,7 +228,7 @@ export interface paths {
         put?: never;
         /**
          * 完成 ChatGPT/BPS 设备码登录（单次轮询；pending 可再次调用）
-         * @description provider=codex 或 bps；模板/profile 校验先于上游轮询——上游授权码一次性，先换码再拒绝会烧掉用户刚授权的凭据。
+         * @description provider=codex 或 bps；模板/group 校验先于上游轮询。授权成功后，BPS profile 由服务端直接调用 bps-sdk 生成并持久化。
          */
         post: operations["PostAccountsCodexDeviceLoginComplete"];
         delete?: never;
@@ -3346,10 +3346,6 @@ export interface components {
             device_auth_id: string;
             /** @description 发起响应原样回传 */
             user_code: string;
-            /** @description BPS 必填：SDK 生成的完整 DeviceProfile JSON；换码前校验，仅写入，不回显。 */
-            bps_profile?: {
-                [key: string]: unknown;
-            };
             /**
              * Format: int64
              * @description 模板类型须匹配 provider（codex-oauth 或 bps）；错配不会消费上游授权码。

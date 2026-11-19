@@ -31,6 +31,16 @@ func bpsRedisClient(t *testing.T) *redis.Client {
 	return client
 }
 
+func TestBPSLoginGeneratesSDKProfile(t *testing.T) {
+	raw, err := NewBPSLogin(nil).GenerateProfile()
+	require.NoError(t, err)
+	var profile bpssdk.DeviceProfile
+	require.NoError(t, json.Unmarshal(raw, &profile))
+	require.NoError(t, profile.Validate())
+	require.NotEmpty(t, profile.ProfileID)
+	require.NotEmpty(t, profile.BPSDeviceID)
+}
+
 func validBPSProfile(t *testing.T) []byte {
 	t.Helper()
 	p, err := bpssdk.GenerateDeviceProfile(bpssdk.ProfileSeed{

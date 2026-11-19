@@ -6,11 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
 import { copyText } from '@/components/key-box'
 import { useScopedApi } from '@/lib/api/scope'
 import type { components } from '@/lib/api/schema'
-import { deviceLoginCompleteFields, deviceLoginProvider, type DeviceLoginProvider } from '@/lib/device-login'
+import { deviceLoginProvider, type DeviceLoginProvider } from '@/lib/device-login'
 
 type Template = components['schemas']['Template']
 type Group = components['schemas']['Group']
@@ -40,7 +39,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
     return [{ templateId: tp.ID, provider, label: `${tp.Name ?? `#${tp.ID}`} · ${suffix}` }]
   }), [templates, t])
   const [templateId, setTemplateId] = useState('')
-  const [profileText, setProfileText] = useState('')
   const [target, setTarget] = useState<LoginTarget | null>(null)
   const [groupId, setGroupId] = useState('')
   const [challenge, setChallenge] = useState<Challenge | null>(null)
@@ -58,7 +56,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
     inFlight.current = false
     setTemplateId('')
     setGroupId('')
-    setProfileText('')
     setTarget(null)
     setChallenge(null)
     setPhase('idle')
@@ -78,7 +75,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
     if (phase !== 'code' || deadline == null) return
     const left = deadline - Date.now()
     const expire = () => {
-      setProfileText('')
       setChallenge(null)
       setPhase('expired')
     }
@@ -96,7 +92,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
   }
 
   const selectedTarget = loginTargets.find(tp => String(tp.templateId) === templateId)
-  const activeProvider = (target ?? selectedTarget)?.provider
   const templateOptions = target ? [target] : loginTargets
 
   const start = async () => {
@@ -115,7 +110,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
       setPhase('code')
     } catch (e) {
       if (gen !== genRef.current) return
-      setProfileText('')
       setPhase('error')
       setError((e as Error)?.message ?? '')
     } finally {
@@ -126,14 +120,8 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
   const complete = async () => {
     if (phase !== 'code' || inFlight.current || !challenge || !target) return
     if (deadline != null && Date.now() >= deadline) {
-      setProfileText('')
       setChallenge(null)
       setPhase('expired')
-      return
-    }
-    const fields = deviceLoginCompleteFields(target.provider, profileText)
-    if (!fields) {
-      setError(t('accounts.login.profileInvalid'))
       return
     }
     const gen = genRef.current
@@ -147,14 +135,13 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
         user_code: challenge.user_code,
         template_id: target.templateId,
         group_id: groupId ? Number(groupId) : null,
-        ...fields,
+        provider: target.provider,
       })
       if (res.status === 'authorized') {
         // 已落库就是事实：即使弹窗已关闭/重置也刷新列表（迟到响应不改写状态）。
         onDone()
         if (gen !== genRef.current) return
         setDeadline(null)
-        setProfileText('')
         setChallenge(null)
         setPhase('done')
         return
@@ -166,7 +153,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
         return
       }
       setDeadline(null)
-      setProfileText('')
       setChallenge(null)
       setPhase(res.status)
     } catch (e) {
@@ -209,7 +195,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
                 onValueChange={v => {
                   if (!templateEditable || inFlight.current) return
                   setTemplateId(String(v ?? ''))
-                  setProfileText('')
                 }}
                 disabled={!templateEditable}
               >
@@ -224,23 +209,6 @@ export function CodexLoginDialog({ open, onOpenChange, templates, groups, onDone
               </Select>
               {templateOptions.length === 0 && <p className="text-xs text-destructive">{t('accounts.login.noTemplate')}</p>}
             </div>
-            {activeProvider === 'bps' && (
-              <div className="space-y-1.5">
-                <Label htmlFor="bps-profile">{t('accounts.login.profileLabel')}</Label>
-                <Textarea
-                  id="bps-profile"
-                  value={profileText}
-                  onChange={e => setProfileText(e.target.value)}
-                  disabled={phase === 'starting' || phase === 'checking'}
-                  placeholder={t('accounts.login.profilePlaceholder')}
-                  spellCheck={false}
-                  autoComplete="off"
-                  aria-describedby="bps-profile-hint"
-                  className="min-h-40 font-mono text-xs"
-                />
-                <p id="bps-profile-hint" className="text-xs text-muted-foreground">{t('accounts.login.profileHint')}</p>
-              </div>
-            )}
             <div className="space-y-1.5">
               <Label>{t('accounts.login.group')}</Label>
               <Select

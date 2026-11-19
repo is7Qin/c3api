@@ -24,7 +24,7 @@ type CodexLoginProvider interface {
 
 type BPSLoginProvider interface {
 	CodexLoginProvider
-	ValidateProfile([]byte) error
+	GenerateProfile() ([]byte, error)
 }
 
 func (s *Service) loginProvider(provider domain.DeviceLoginProvider) (CodexLoginProvider, credential.Type, error) {
@@ -72,9 +72,11 @@ func (s *Service) StartDeviceLogin(ctx context.Context, provider domain.DeviceLo
 }
 
 // CompleteDeviceLogin validates the local template/group before performing
-// exactly one upstream poll. Pending is returned to the browser for a manual
-// retry; no service-side timer, Redis session, or automatic request exists.
-func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.DeviceLoginProvider, authID, userCode string, tplID int64, groupID *int64, profile []byte) (*domain.CodexLoginResult, error) {
+// exactly one upstream poll. For an authorized BPS login, the provider SDK
+// generates the DeviceProfile server-side before persistence. Pending is
+// returned to the browser for a manual retry; no service-side timer, Redis
+// session, or automatic request exists.
+func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.DeviceLoginProvider, authID, userCode string, tplID int64, groupID *int64) (*domain.CodexLoginResult, error) {
 	p, credType, err := s.loginProvider(provider)
 	if err != nil {
 		return nil, err
@@ -90,13 +92,6 @@ func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.Devic
 			return nil, err
 		}
 	}
-	if credType == credential.TypeBPS {
-		if err := s.bpsLogin.ValidateProfile(profile); err != nil {
-			return nil, fmt.Errorf("%w: BPS profile 无效", ErrInvalidInput)
-		}
-	} else if len(profile) != 0 {
-		return nil, fmt.Errorf("%w: bps_profile 仅用于 BPS 登录", ErrInvalidInput)
-	}
 	status, tokens, err := p.PollDeviceFlow(ctx, authID, userCode)
 	if err != nil {
 		s.log.Warn("device login: poll failed", logx.Error(err))
@@ -108,6 +103,13 @@ func (s *Service) CompleteDeviceLogin(ctx context.Context, provider domain.Devic
 	case domain.CodexLoginAuthorized:
 	default:
 		return nil, fmt.Errorf("service: 未知设备码登录状态 %q", status)
+	}
+	var profile []byte
+	if credType == credential.TypeBPS {
+		profile, err = s.bpsLogin.GenerateProfile()
+		if err != nil {
+			return nil, fmt.Errorf("%w: BPS profile 生成失败", serviceerr.ErrUpstream)
+		}
 	}
 	return s.importOAuthLogin(ctx, tokens, tplID, groupID, credType, profile)
 }
