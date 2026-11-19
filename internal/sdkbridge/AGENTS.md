@@ -18,6 +18,11 @@
     `Unwrap`），proxy 才能 `errors.Is(err, codexsdk.ErrInvalidRequestBody)` 做本地拒绝。
   - WS 空闲连接上限 `codexWSConnCacheCapacity = 256`（每个 HTTPClient = 账号 × 出口；
     仅上限、不预分配）；`Options.WSConnCache` 只是可测性入口。
+- **BPS 探测**：复用数据面同一 `BPS` 实例与同一 `(accountID, identityRevision)`
+  TokenAuth（HTTP/WS client 共享，auth 缓存与 client 同锁）；`Probe:true` 时 prepared
+  与 `Prepare` 两处 `reportFatal` 均跳过、传输取模板值（空=HTTP，不按 Format 推导）、
+  `Detail=裸 code`/`OutputPreview=未脱敏`（由 service 收口）；AccountFatal 删除该代际
+  auth 与全部共享 client（同 K 可重建）；探测可触发 token 轮换（写 Redis）。
 - 诊断/探测 seam（`stream_body_once.go` / `one_shot.go`）——全部只做一次临时
   PAT client + `WithTransport`（不传 `WithTimeout`；期限只由 ctx 决定），
   **不取** ClientTable/Auth 缓存、**不装** fatal 回调、**不轮转**、**不写日志**；

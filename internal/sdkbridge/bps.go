@@ -79,6 +79,7 @@ type bpsClientEntry struct {
 	client    *bpssdk.Client
 	accountID int64
 	transport BPSTransport
+	authKey   string
 }
 
 type BPS struct {
@@ -87,6 +88,7 @@ type BPS struct {
 	failure    FailureHandler
 	mu         sync.Mutex
 	clients    map[string]*bpsClientEntry
+	auths      map[string]*bpssdk.TokenAuth
 	fatalMu    sync.Mutex
 	fatal      map[string]bool
 }
@@ -100,7 +102,7 @@ func NewBPS(rdb redis.Scripter, failure ...FailureHandler) *BPS {
 	if len(failure) > 0 {
 		fh = failure[0]
 	}
-	return &BPS{redisStore: store, storeErr: err, failure: fh, clients: make(map[string]*bpsClientEntry), fatal: make(map[string]bool)}
+	return &BPS{redisStore: store, storeErr: err, failure: fh, clients: make(map[string]*bpsClientEntry), auths: make(map[string]*bpssdk.TokenAuth), fatal: make(map[string]bool)}
 }
 
 // BPSRequestSource is the one frozen input bundle for a BPS attempt. Keeping
@@ -115,8 +117,12 @@ type BPSRequestSource struct {
 	// Transport is the template-level Responses egress (""/"http"/"ws"), the same
 	// knob Codex uses. It only matters for the HTTP client lane: the WS client
 	// lane already speaks WebSocket to the upstream. "ws" here means "dial BPS
-	// over WebSocket but keep streaming SSE to an HTTP client".
+	// over WebSocket but keep streaming SSE to an HTTP client.
 	Transport domain.CodexResponsesTransport
+	// Probe marks an admin test call: it must not mutate account health, so
+	// neither Prepare nor the returned value reports fatal failures, and the
+	// transport is taken from Transport ("" = HTTP) instead of Format.
+	Probe bool
 }
 
 // BPSPrepared freezes all account-scoped facts for one request attempt. The
@@ -169,14 +175,25 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 	if source.Egress == nil || source.Egress.HTTP() == nil {
 		return nil, ErrBPSEgressRequired
 	}
-	transport, err := BPSFormatTransport(source.Format)
-	if err != nil {
-		return nil, err
-	}
-	// 模板级出站传输（与 Codex 同一个开关）：HTTP 客户端 + ws 上游 ⇒ SDK 走
-	// WebSocket，仍以标准 SSE 回客户端；WS 客户端车道本来就必须 WS，忽略之。
-	if source.Transport == domain.CodexResponsesTransportWS {
-		transport = BPSTransportWS
+	var transport BPSTransport
+	if source.Probe {
+		// 管理面探测固定走模板传输（空 = HTTP），不按 Format 推导：同一个账号
+		// 的 HTTP/WS client 共享 TokenAuth，但探测不该额外造出另一种传输。
+		transport = BPSTransportHTTP
+		if source.Transport == domain.CodexResponsesTransportWS {
+			transport = BPSTransportWS
+		}
+	} else {
+		formatTransport, formatErr := BPSFormatTransport(source.Format)
+		if formatErr != nil {
+			return nil, formatErr
+		}
+		transport = formatTransport
+		// 模板级出站传输（与 Codex 同一个开关）：HTTP 客户端 + ws 上游 ⇒ SDK 走
+		// WebSocket，仍以标准 SSE 回客户端；WS 客户端车道本来就必须 WS，忽略之。
+		if source.Transport == domain.CodexResponsesTransportWS {
+			transport = BPSTransportWS
+		}
 	}
 	if cred.AccountID <= 0 || cred.IdentityRevision <= 0 || cred.CodexAccountID == "" || cred.OAuthToken == "" || cred.OAuthRefreshToken == "" {
 		return nil, ErrBPSIdentityMismatch
@@ -192,6 +209,7 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 	}
 	profileHash := domain.BPSProfileHash(profile)
 	cacheKey := fmt.Sprintf("%d:%d:%s:%s:%x:%s", cred.AccountID, cred.IdentityRevision, cred.CodexAccountID, profileHash, source.Egress.Spec.Key(), transport.String())
+	authKey := fmt.Sprintf("%d:%d", cred.AccountID, cred.IdentityRevision)
 	a.mu.Lock()
 	entry := a.clients[cacheKey]
 	if entry == nil {
@@ -202,14 +220,21 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 			a.mu.Unlock()
 			return nil, fmt.Errorf("%w: %w", ErrBPSStoreUnavailable, storeErr)
 		}
-		auth, authErr := bpssdk.NewTokenAuth(
-			cred.OAuthToken, cred.OAuthRefreshToken, cred.CodexAccountID, "",
-			store, bpssdk.WithAuthHTTPTransport(rt),
-		)
-		if authErr != nil {
-			a.mu.Unlock()
-			a.reportFatal(cacheKey, cred, authErr)
-			return nil, authErr
+		auth := a.auths[authKey]
+		if auth == nil {
+			newAuth, authErr := bpssdk.NewTokenAuth(
+				cred.OAuthToken, cred.OAuthRefreshToken, cred.CodexAccountID, "",
+				store, bpssdk.WithAuthHTTPTransport(rt),
+			)
+			if authErr != nil {
+				a.mu.Unlock()
+				if !source.Probe {
+					a.reportFatal(cacheKey, cred, authErr)
+				}
+				return nil, authErr
+			}
+			auth = newAuth
+			a.auths[authKey] = auth
 		}
 		options := []bpssdk.Option{
 			bpssdk.WithEndpoint(domain.BPSDefaultEndpoint),
@@ -224,17 +249,20 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 		} else {
 			options = append(options, bpssdk.WithResponsesTransport(bpssdk.TransportHTTP))
 		}
-		sdkClient, authErr := bpssdk.NewClient(auth, options...)
-		if authErr != nil {
+		sdkClient, clientErr := bpssdk.NewClient(auth, options...)
+		if clientErr != nil {
 			a.mu.Unlock()
-			a.reportFatal(cacheKey, cred, authErr)
-			return nil, authErr
+			if !source.Probe {
+				a.reportFatal(cacheKey, cred, clientErr)
+			}
+			return nil, clientErr
 		}
-		entry = &bpsClientEntry{key: cacheKey, client: sdkClient, accountID: cred.AccountID, transport: transport}
+		entry = &bpsClientEntry{key: cacheKey, client: sdkClient, accountID: cred.AccountID, transport: transport, authKey: authKey}
 		for key, old := range a.clients {
 			if old.accountID == cred.AccountID && old.transport == transport && key != cacheKey {
 				delete(a.clients, key)
 				_ = old.client.Close()
+				a.dropAuthIfUnused(old.authKey)
 			}
 		}
 		a.clients[cacheKey] = entry
@@ -243,22 +271,48 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 		a.fatalMu.Unlock()
 	}
 	a.mu.Unlock()
-	return &BPSPrepared{
+	prepared := &BPSPrepared{
 		accountID: cred.AccountID, identityRevision: cred.IdentityRevision,
 		format: source.Format, transport: transport, upstreamAccount: cred.CodexAccountID,
 		profile: append(json.RawMessage(nil), profile...), egress: source.Egress, client: entry.client,
-		profileHash: profileHash, reportFatal: func(err error) { a.reportFatal(cacheKey, cred, err) },
-	}, nil
+		profileHash: profileHash,
+	}
+	if !source.Probe {
+		prepared.reportFatal = func(err error) { a.reportFatal(cacheKey, cred, err) }
+	}
+	return prepared, nil
+}
+
+// dropAuthIfUnused removes the shared auth once no cached client references it.
+// Caller holds a.mu.
+func (a *BPS) dropAuthIfUnused(authKey string) {
+	for _, entry := range a.clients {
+		if entry.authKey == authKey {
+			return
+		}
+	}
+	delete(a.auths, authKey)
 }
 
 func (a *BPS) reportFatal(cacheKey string, cred domain.AccountCredential, err error) {
 	if a == nil || ClassifyBPSFailure(err).Kind != BPSFailureAccountFatal {
 		return
 	}
+	authKey := fmt.Sprintf("%d:%d", cred.AccountID, cred.IdentityRevision)
 	a.mu.Lock()
 	if entry := a.clients[cacheKey]; entry != nil {
 		delete(a.clients, cacheKey)
 		_ = entry.client.Close()
+	}
+	// A fatal is credential-level: every client sharing this authKey (including
+	// the other transport) must go, and the auth itself is dropped so the next
+	// Prepare at the same K rebuilds a fresh TokenAuth instead of staying dead.
+	delete(a.auths, authKey)
+	for key, entry := range a.clients {
+		if entry.authKey == authKey {
+			delete(a.clients, key)
+			_ = entry.client.Close()
+		}
 	}
 	a.mu.Unlock()
 	key := fmt.Sprintf("%d:%d", cred.AccountID, cred.IdentityRevision)
@@ -281,6 +335,131 @@ func (p *BPSPrepared) report(err error) {
 	p.fatalOnce.Do(func() { p.reportFatal(err) })
 }
 
+// BPSProbeRequest is one admin test call. Egress is the account's resolved
+// egress; Transport is the template transport ("" = HTTP) and only selects the
+// transport for this probe, never for the data plane.
+type BPSProbeRequest struct {
+	Credential     domain.AccountCredential
+	Egress         *egress.Client
+	Transport      domain.CodexResponsesTransport
+	Format         domain.RequestFormat
+	RequestedModel string
+	UpstreamModel  string
+	Input          string
+}
+
+// ProbeAccount runs one Responses call in probe mode: no account-health
+// mutation, shared client/auth with the data plane. Errors return a populated
+// ProbeResult; only local failures return err.
+func (a *BPS) ProbeAccount(ctx context.Context, req BPSProbeRequest) (domain.ProbeResult, error) {
+	prepared, err := a.Prepare(ctx, BPSRequestSource{
+		Credential: req.Credential, Format: req.Format, Egress: req.Egress,
+		Transport: req.Transport, Probe: true,
+	})
+	if err != nil {
+		return domain.ProbeResult{}, err
+	}
+	payload, err := json.Marshal(map[string]string{"model": req.UpstreamModel, "input": req.Input})
+	if err != nil {
+		return domain.ProbeResult{}, err
+	}
+	start := time.Now()
+	result, callErr := prepared.Responses(ctx, payload)
+	out := bpsProbeResult(callErr, result, req)
+	out.LatencyMS = time.Since(start).Milliseconds()
+	return out, nil
+}
+
+// bpsProbeResult maps one Responses outcome to the shared probe vocabulary.
+// Detail is the raw SDK code; the service runs it through the allowlist.
+func bpsProbeResult(err error, res BPSResult, req BPSProbeRequest) domain.ProbeResult {
+	out := domain.ProbeResult{
+		Format: req.Format, RequestedModel: req.RequestedModel, UpstreamModel: req.UpstreamModel,
+	}
+	if err != nil {
+		failure := ClassifyBPSFailure(err)
+		out.StatusCode = failure.Status
+		out.Detail = bpsErrorCode(err)
+		if len(res.Raw) > domain.ProbeMaxBodyBytes || errors.Is(err, bpssdk.ErrResponseTooLarge) {
+			out.Error = domain.ProbeErrorBodyTooLarge
+			return out
+		}
+		switch failure.Kind {
+		case BPSFailureAccountFatal:
+			out.Error = domain.ProbeErrorUpstreamAuth
+		case BPSFailurePolicy:
+			out.Error = domain.ProbeErrorUpstreamRejected
+		case BPSFailureQuota, BPSFailureRateLimit:
+			out.Error = domain.ProbeErrorUpstreamRateLimit
+		case BPSFailureLocalReject:
+			out.Error = domain.ProbeErrorRequestFailed
+		case BPSFailureIdleTimeout:
+			out.Error = domain.ProbeErrorTimedOut
+		case BPSFailureIncomplete:
+			out.Error = domain.ProbeErrorStreamFailed
+		case BPSFailureAmbiguous:
+			out.Error = domain.ProbeErrorUpstream
+		case BPSFailureTransport:
+			if failure.Dispatched {
+				out.Error = domain.ProbeErrorUpstream
+			} else {
+				out.Error = domain.ProbeErrorRequestFailed
+			}
+		default:
+			out.Error = domain.ProbeErrorUpstream
+		}
+		return out
+	}
+	out.StatusCode = http.StatusOK
+	if len(res.Raw) > domain.ProbeMaxBodyBytes {
+		out.Error = domain.ProbeErrorBodyTooLarge
+		return out
+	}
+	text := bpsOutputText(res.response)
+	if text == "" {
+		out.Error = domain.ProbeErrorNoUsableOutput
+		return out
+	}
+	out.Success = true
+	out.OutputPreview = text
+	return out
+}
+
+// bpsOutputText extracts output[].content[].text where both the item and the
+// part are output_text-bearing; reasoning/encrypted parts are ignored.
+func bpsOutputText(resp *bpssdk.Response) string {
+	if resp == nil {
+		return ""
+	}
+	var parts []string
+	for _, item := range resp.Output {
+		if item.Type != "message" || len(item.Content) == 0 {
+			continue
+		}
+		var content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(item.Content, &content); err != nil {
+			continue
+		}
+		for _, part := range content {
+			if part.Type == "output_text" && part.Text != "" {
+				parts = append(parts, part.Text)
+			}
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func bpsErrorCode(err error) string {
+	var apiErr *bpssdk.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Code
+	}
+	return ""
+}
+
 // Probe performs one authenticated catalog/access request on the selected
 // egress. It does not synthesize quota windows or alter account health itself.
 func (a *BPS) Probe(ctx context.Context, cred domain.AccountCredential, eg *egress.Client) error {
@@ -299,6 +478,9 @@ type BPSResult struct {
 	Raw       json.RawMessage
 	RequestID string
 	Format    domain.RequestFormat
+	// response is the typed SDK response; only in-package probing reads it so
+	// the provider-neutral surface stays Raw/RequestID/Format.
+	response *bpssdk.Response
 }
 
 func (p *BPSPrepared) Responses(ctx context.Context, payload []byte) (BPSResult, error) {
@@ -317,7 +499,7 @@ func (p *BPSPrepared) Responses(ctx context.Context, payload []byte) (BPSResult,
 			return BPSResult{}, err
 		}
 	}
-	return BPSResult{Raw: raw, RequestID: response.RequestID, Format: p.format}, nil
+	return BPSResult{Raw: raw, RequestID: response.RequestID, Format: p.format, response: response}, nil
 }
 
 func (p *BPSPrepared) Models(ctx context.Context) (*bpssdk.Catalog, error) {
@@ -417,6 +599,7 @@ func (a *BPS) Close() error {
 		delete(a.clients, key)
 		entries = append(entries, entry)
 	}
+	clear(a.auths)
 	a.mu.Unlock()
 	var first error
 	for _, entry := range entries {

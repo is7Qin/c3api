@@ -7,7 +7,10 @@
 
 - 一资源一文件；错误哨兵在 `internal/service/errors`；全部持久化经 `Store`。
 - 单账号单模型探测入口：`ProbeAccount`（`probe.go`）。它负责输入校验、组装
-  `domain.ProbeSpec`、读取账号/模板/凭据、写一条 `account_probe` 审计。
+  `domain.ProbeSpec`（非 BPS）或 `BPSAccountProbeRequest`（BPS）、读取账号/模板/凭据、
+  写一条 `account_probe` 审计。BPS 走 `Deps.BPSProbe`；`Prober==nil` 仅非 BPS 为 500，
+  `BPSProbe==nil` 为 BPS 装配错误；仅 BPS 分支调 `probe.FinalizePreview` 与
+  `probe.ErrorCodeDetail`。
 - **准入**：`probe_limit.go` 的 `probeLimiter` 在**仓储读取之前**获取，容量严格为
   `domain.ProbeMaxConcurrency` 个执行槽 + `domain.ProbeMaxWaiters` 个等待位；
   等待位只在排队期间持有。队列满 → 固定 `probe busy`。

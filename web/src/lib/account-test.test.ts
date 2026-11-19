@@ -44,6 +44,11 @@ describe('probeTargets', () => {
       'openai-images.edits',
     ])
     assert.deepEqual(probeTargets(template({ SupportedFormats: ['openai-search'] })), ['openai-search'])
+    // BPS 模板只有 Responses 两种格式：测试入口恢复后目标就这两个。
+    assert.deepEqual(probeTargets(template({ SupportedFormats: ['openai-responses', 'openai-responses-ws'] })), [
+      'openai-responses',
+      'openai-responses-ws',
+    ])
   })
 
   it('UI 目标映射到 wire format + image_mode', () => {

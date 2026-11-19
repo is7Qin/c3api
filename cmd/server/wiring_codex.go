@@ -73,6 +73,7 @@ type codexFace struct {
 // 「三个 Face 的并集」（约 40 个可触达字段），现在每一行都是本阶段真读到的。
 type codexDeps struct {
 	cfg           *config.Config
+	bps           *sdkbridge.BPS
 	log           *logx.Logger
 	rdb           *redis.Client
 	repos         *repository.Repository
@@ -186,6 +187,11 @@ func newCodexFace(d codexDeps) *codexFace {
 	// 注册在装配期（worker 未 Start）；未注册的凭据族由 worker 计 unsupported 跳过。
 	quotaResolvers.Register(credential.TypeCodexOAuth, codexAdapter)
 	quotaResolvers.Register(credential.TypeCodexPAT, codexAdapter)
+	// BPS 适配器由 billing 阶段构造并注入（同一实例/同一 TokenAuth 供数据面与探测）。
+	bpsAdapter := d.bps
+	if bpsAdapter == nil {
+		fatalf("codex: BPS adapter not wired")
+	}
 	// BPS has no trusted quota-window API. Register its independent no-window
 	// resolver so 429 cooldowns never fabricate a Codex reset deadline.
 	quotaResolvers.Register(credential.TypeBPS, sdkbridge.BPSNoWindowQuotaResolver{})
@@ -195,7 +201,6 @@ func newCodexFace(d codexDeps) *codexFace {
 	// 不含任何回填。
 	quotaW := scheduler.NewQuotaWorker(quotaQueue, d.runtimeHealth, quotaResolvers, sched.ProbeAccount, log, scheduler.QuotaWorkerConfig{})
 	f.quotaW = quotaW
-	bpsAdapter := sdkbridge.NewBPS(rdb, failureHandler)
 	f.bps = bpsAdapter
 	px := proxy.New(proxy.Config{
 		MaxBodySize:           cfg.Proxy.MaxBodySize,

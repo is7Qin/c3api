@@ -13,6 +13,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +23,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/billing"
 	"github.com/is7qin/c3api/internal/config"
+	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/invalidate"
 	"github.com/is7qin/c3api/internal/latch"
@@ -73,6 +76,7 @@ type billingFace struct {
 	paymentReg         *domain.ProviderRegistry
 
 	svc      *service.Service
+	bps      *sdkbridge.BPS
 	snapReg  *snapshot.Registry
 	disp     *dispatcher
 	listener *notify.Listener
@@ -240,6 +244,14 @@ func newBillingFace(d billingDeps) *billingFace {
 		fatalf("payment registry: %v", err)
 	}
 	f.paymentReg = paymentReg
+	// BPS 适配器在 billing 阶段构造一次（failure handler 的依赖都已就绪），
+	// 既注入探测面，也经 codexDeps 复用给数据面——同一个实例/同一份 TokenAuth。
+	bpsFailure := sdkbridge.NewFailureHandler(sdkbridge.FailureDeps{
+		Store: repos.Accounts, Failer: sched, Log: log, Latch: latchStore, Publisher: schedGroupPub{pub},
+	})
+	bpsAdapter := sdkbridge.NewBPS(rdb, bpsFailure)
+	f.bps = bpsAdapter
+	bpsProbe := &bpsProber{bps: bpsAdapter, pool: egressPool}
 	// Deps 先落到具名变量（不是内联字面量）：Validate 要能在 New 之前拿到可读错误，
 	// Features 要能打一行「这次开了什么」。这两行的顺序是契约——先校验再构造。
 	deps := service.Deps{Store: repos, Scheduler: sched, Invalidate: inv, Publisher: pub, RuleReload: ruleEngine, Auth: auth, Log: log, EmailCodeStore: verification.New(rdb),
@@ -248,6 +260,7 @@ func newBillingFace(d billingDeps) *billingFace {
 		CodexLogin:         sdkbridge.NewCodexLogin(),
 		BPSLogin:           sdkbridge.NewBPSLogin(hc),
 		Prober:             accountProber,
+		BPSProbe:           bpsProbe,
 		SupplierViewReload: supplierViewReloader(f.supplierViewLoader),
 		TimeLocation:       svcLoc,
 		// Retention 三表原件（不预先折 min：读 N 张表取最保守 floor 是
@@ -356,4 +369,34 @@ func newBillingFace(d billingDeps) *billingFace {
 	}
 
 	return f
+}
+
+// bpsProber is the service.BPSAccountProbe adapter over the shared BPS instance.
+// It resolves the account egress spec and maps local SDK credential errors to a
+// fixed 400; upstream failures are returned in the ProbeResult by the SDK.
+type bpsProber struct {
+	bps  *sdkbridge.BPS
+	pool *egress.Pool
+}
+
+func (p *bpsProber) ProbeAccount(ctx context.Context, in service.BPSAccountProbeRequest) (domain.ProbeResult, error) {
+	if p == nil || p.bps == nil {
+		return domain.ProbeResult{}, errors.New("cmd/server: BPS probe adapter not configured")
+	}
+	if in.Credential == nil {
+		return domain.ProbeResult{}, fmt.Errorf("%w: BPS probe credential missing", service.ErrInvalidInput)
+	}
+	client := p.pool.For(in.Egress)
+	res, err := p.bps.ProbeAccount(ctx, sdkbridge.BPSProbeRequest{
+		Credential: *in.Credential, Egress: client, Transport: in.Transport,
+		Format: in.Format, RequestedModel: in.RequestedModel, UpstreamModel: in.UpstreamModel, Input: in.Input,
+	})
+	if err != nil {
+		if errors.Is(err, sdkbridge.ErrBPSIdentityMismatch) || errors.Is(err, sdkbridge.ErrBPSProfileRequired) ||
+			errors.Is(err, credential.ErrUnsupported) || errors.Is(err, sdkbridge.ErrBPSEgressRequired) {
+			return domain.ProbeResult{}, fmt.Errorf("%w: BPS probe credential invalid", service.ErrInvalidInput)
+		}
+		return domain.ProbeResult{}, err
+	}
+	return res, nil
 }

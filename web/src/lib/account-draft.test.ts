@@ -435,9 +435,10 @@ describe('accounts.tsx：接线形状', () => {
     assert.match(page, /templates\.filter\(tp => !isBpsCt\(tp\.CredentialType\)\)/)
   })
 
-  // BPS 的账号测试面未接入（backlog）：入口必须隐藏，避免点了才吃 503。
-  it('BPS 账号不显示「测试」入口', () => {
-    assert.match(page, /\{!isBpsCt\(batchCtOf\(a\)\) && <DropdownMenuItem onClick=\{\(\) => setTestTarget\(a\)\}/)
+  // BPS 与其它类型共用探测入口；目标列表由模板 SupportedFormats 过滤。
+  it('BPS 账号也显示「测试」入口', () => {
+    assert.match(page, /<DropdownMenuItem onClick=\{\(\) => setTestTarget\(a\)\}/)
+    assert.doesNotMatch(page, /\{!isBpsCt\(batchCtOf\(a\)\) && <DropdownMenuItem onClick=\{\(\) => setTestTarget\(a\)\}/)
   })
 
   it('页面把模板上下文交给投影（单条按选中模板分流，批量四分）', () => {

@@ -1327,8 +1327,8 @@ export default function Accounts() {
                             <Ellipsis />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {/* BPS 账号测试面未接入（backlog）：隐藏入口，避免点了才吃 503。 */}
-                            {!isBpsCt(batchCtOf(a)) && <DropdownMenuItem onClick={() => setTestTarget(a)}>{t('accounts.test.menu')}</DropdownMenuItem>}
+                            {/* BPS 也走同一探测入口；目标列表由模板 SupportedFormats 过滤。 */}
+                            <DropdownMenuItem onClick={() => setTestTarget(a)}>{t('accounts.test.menu')}</DropdownMenuItem>
                             {isCodexTemplate(a) && <DropdownMenuItem onClick={() => openExt(a)}>{t('accounts.ext.button')}</DropdownMenuItem>}
                           </DropdownMenuContent>
                         </DropdownMenu>

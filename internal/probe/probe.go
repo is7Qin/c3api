@@ -886,6 +886,24 @@ var probeErrorCodes = map[string]struct{}{
 	"account_deactivated":        {},
 }
 
+// FinalizePreview applies the shared preview pipeline (sanitize + 64 KiB UTF-8
+// truncation) so callers outside this package cannot forget the cap.
+func FinalizePreview(s string) string {
+	if s == "" {
+		return ""
+	}
+	return truncateBytes(sanitizePreview(s), domain.ProbePreviewMaxLen)
+}
+
+// ErrorCodeDetail returns code=<value> only for a code in the finite public
+// allowlist; everything else (including empty) is dropped.
+func ErrorCodeDetail(code string) string {
+	if _, ok := probeErrorCodes[code]; !ok {
+		return ""
+	}
+	return "code=" + code
+}
+
 // errorCodeDetail 只从上游错误对象提取**内置有限公开表**内的 error.code/
 // error.type，以 code=<value> 返回；message/原始 JSON/其他文本/表外 code 一律
 // 丢弃。
@@ -898,9 +916,8 @@ func errorCodeDetail(body []byte) string {
 		if v.Type != gjson.String {
 			continue
 		}
-		code := v.String()
-		if _, ok := probeErrorCodes[code]; ok {
-			return "code=" + code
+		if detail := ErrorCodeDetail(v.String()); detail != "" {
+			return detail
 		}
 	}
 	return ""

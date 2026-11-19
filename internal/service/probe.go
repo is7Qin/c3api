@@ -14,6 +14,7 @@ import (
 
 	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/probe"
 	"github.com/is7qin/c3api/internal/repository"
 	"github.com/is7qin/c3api/pkg/egress"
 	"github.com/is7qin/c3api/pkg/logx"
@@ -24,6 +25,27 @@ import (
 // handler 按默认 500 映射（装配错误必须显形，不降级为 503）。
 type AccountProber interface {
 	Probe(ctx context.Context, spec domain.ProbeSpec) domain.ProbeResult
+}
+
+// BPSAccountProbe is the BPS probe seam. It is implemented by the cmd/server
+// adapter over the shared sdkbridge.BPS instance; service never imports the
+// SDK. err is a local/assembly failure; an upstream probe failure is returned
+// in ProbeResult (like AccountProber).
+type BPSAccountProbe interface {
+	ProbeAccount(ctx context.Context, in BPSAccountProbeRequest) (domain.ProbeResult, error)
+}
+
+// BPSAccountProbeRequest carries the already-resolved BPS account facts. Egress
+// is the account's resolved egress (fail-closed earlier); Transport is the
+// template transport ("" = HTTP) and Format is the probe target.
+type BPSAccountProbeRequest struct {
+	Credential     *domain.AccountCredential
+	Egress         egress.Spec
+	Transport      domain.CodexResponsesTransport
+	Format         domain.RequestFormat
+	RequestedModel string
+	UpstreamModel  string
+	Input          string
 }
 
 // AccountProbeRequest 是已解码的探测请求（协议无关：handler 从 openapi 生成
@@ -60,7 +82,7 @@ var probeFormats = map[domain.RequestFormat]struct{}{
 //   - 500：仓储故障、探测组件未装配；
 //   - 200 + success=false：探测结论（含 oauth 已过期——不发网络请求）。
 func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRequest) (*domain.ProbeResult, error) {
-	if s.prober == nil {
+	if s.prober == nil && s.bpsProbe == nil {
 		return nil, errors.New("service: account probe prober not configured")
 	}
 	// 先做**不依赖存储**的输入校验：非法 format/超长 model 不得进入仓储等待
@@ -183,9 +205,57 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		codexAccountID string
 	)
 	if tpl.CredentialType.IsBPS() {
-		// Phase 1 has no BPS probe adapter yet. Refuse rather than falling into
-		// the static-key probe path or fabricating Codex identity semantics.
-		return nil, ErrUnavailable
+		if s.bpsProbe == nil {
+			return nil, errors.New("service: BPS probe adapter not configured")
+		}
+		cred, cerr := s.store.GetOwnedAccountCredential(pctx, id)
+		if pctx.Err() != nil {
+			return ctxResult(pctx.Err()), nil
+		}
+		if cerr != nil {
+			if errors.Is(cerr, repository.ErrNotFound) {
+				return nil, fmt.Errorf("%w: 账号缺少 BPS 凭据", ErrInvalidInput)
+			}
+			if errors.Is(cerr, context.Canceled) || errors.Is(cerr, context.DeadlineExceeded) {
+				return ctxResult(cerr), nil
+			}
+			return nil, cerr
+		}
+		transport := domain.CodexResponsesTransportDefault
+		ext, xerr := s.store.GetTemplateExt(pctx, tpl.ID)
+		if pctx.Err() != nil {
+			return ctxResult(pctx.Err()), nil
+		}
+		switch {
+		case xerr == nil:
+			if ext != nil {
+				transport = ext.CodexResponsesTransport
+			}
+		case errors.Is(xerr, repository.ErrNotFound):
+			// 无 ext 行 = 未配置（默认 http）。
+		case errors.Is(xerr, context.Canceled) || errors.Is(xerr, context.DeadlineExceeded):
+			return ctxResult(xerr), nil
+		default:
+			return nil, xerr
+		}
+		res, perr := s.bpsProbe.ProbeAccount(pctx, BPSAccountProbeRequest{
+			Credential: cred, Egress: egressSpec, Transport: transport,
+			Format: format, RequestedModel: model, UpstreamModel: upstreamModel, Input: input,
+		})
+		if pctx.Err() != nil {
+			return ctxResult(pctx.Err()), nil
+		}
+		if perr != nil {
+			if errors.Is(perr, ErrInvalidInput) {
+				return nil, fmt.Errorf("%w: BPS probe credential invalid", ErrInvalidInput)
+			}
+			return nil, perr
+		}
+		res.Format, res.RequestedModel, res.UpstreamModel = format, model, upstreamModel
+		res.OutputPreview = probe.FinalizePreview(res.OutputPreview)
+		res.Detail = probe.ErrorCodeDetail(res.Detail)
+		s.logProbe(id, res)
+		return &res, nil
 	}
 	if tpl.CredentialType.IsCodex() {
 		cred, cerr := s.store.GetOwnedAccountCredential(pctx, id)
@@ -262,6 +332,9 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 	}
 	if err := pctx.Err(); err != nil {
 		return ctxResult(err), nil
+	}
+	if s.prober == nil {
+		return nil, errors.New("service: account probe prober not configured")
 	}
 	res := s.prober.Probe(pctx, spec)
 	s.logProbe(id, res)

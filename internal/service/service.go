@@ -550,6 +550,8 @@ type Service struct {
 	// prober 单账号单模型探测执行面（internal/probe.Prober 实现；nil = 未装配，
 	// ProbeAccount 返回装配错误 → handler 500）。
 	prober AccountProber
+	// bpsProbe BPS 探测面（cmd/server 适配器；nil = 未装配，BPS 探测 500）。
+	bpsProbe BPSAccountProbe
 	// probeGate 在**仓储读取之前**给探测总入口准入：4 执行槽 + 16 等待位，
 	// 防止大量请求在 DB 池前排长队并各自保留请求串；队列满立即 probe busy。
 	probeGate *probeLimiter
@@ -683,6 +685,8 @@ type Deps struct {
 	// Prober 单账号单模型探测执行面（internal/probe.Prober 实现；main 构造
 	// 注入）。nil = 未装配 → ProbeAccount 返回装配错误（handler 500）。
 	Prober AccountProber
+	// BPSProbe BPS 探测面（nil = BPS 探测 500）。
+	BPSProbe BPSAccountProbe
 	// SupplierThawGranularity 解冻粒度（main 传 cfg.Supplier.ThawGranularity）：
 	// 管理面 PATCH share_bp/freeze_hours 跨字段上界校验（§6.4 A16⑤）。0 = 未装配。
 	SupplierThawGranularity time.Duration
@@ -739,6 +743,7 @@ func (d Deps) Validate() error {
 		{"MailEnqueue", d.MailEnqueue},
 		{"CodexLogin", d.CodexLogin},
 		{"Prober", d.Prober},
+		{"BPSProbe", d.BPSProbe},
 	} {
 		if isTypedNil(f.v) {
 			bad = append(bad, fmt.Sprintf("deps.%s: typed-nil %T", f.name, f.v))
@@ -775,6 +780,7 @@ func (d Deps) Features() []string {
 		}
 	}
 	add("account_prober", d.Prober != nil)
+	add("bps_prober", d.BPSProbe != nil)
 	add("codex_login", d.CodexLogin != nil)
 	add("compile_trigger", d.CompileNotify != nil)
 	add("cooldown_clear", d.ClearBalanceWarningCooldown != nil)
@@ -812,6 +818,7 @@ func New(deps Deps) *Service {
 		codexLogin:                  deps.CodexLogin,
 		bpsLogin:                    deps.BPSLogin,
 		prober:                      deps.Prober,
+		bpsProbe:                    deps.BPSProbe,
 		probeGate:                   newProbeLimiter(),
 		probeEgress:                 probeProxyEgressIP,
 		paymentRegistry:             deps.PaymentRegistry,
