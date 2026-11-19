@@ -202,6 +202,18 @@ func (s *Service) PatchAccount(ctx context.Context, id int64, p repository.Accou
 	if err != nil {
 		return nil, mapRepoErr(err)
 	}
+	// 模板切换不得跨 BPS 边界：两边账号行结构不同（凭据列组/identity envelope/
+	// 端点归属），跨边界切换会留下与模板矛盾的 account_ext 行。批量面已在
+	// repository 层拒绝；单条 PATCH 在同一处收口，不能只靠前端下拉过滤。
+	if p.TemplateID != nil && *p.TemplateID != cur.TemplateID {
+		curTpl, cerr := s.store.GetTemplate(ctx, cur.TemplateID)
+		if cerr != nil {
+			return nil, mapRepoErr(cerr)
+		}
+		if curTpl.CredentialType.IsBPS() != tpl.CredentialType.IsBPS() {
+			return nil, fmt.Errorf("%w: cannot switch an account to or from BPS", ErrInvalidInput)
+		}
+	}
 	key := cur.UpstreamKey
 	if p.UpstreamKey != nil {
 		key = *p.UpstreamKey

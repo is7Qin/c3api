@@ -1319,7 +1319,8 @@ export default function Accounts() {
                             <Ellipsis />
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem onClick={() => setTestTarget(a)}>{t('accounts.test.menu')}</DropdownMenuItem>
+                            {/* BPS 账号测试面未接入（backlog）：隐藏入口，避免点了才吃 503。 */}
+                            {!isBpsCt(batchCtOf(a)) && <DropdownMenuItem onClick={() => setTestTarget(a)}>{t('accounts.test.menu')}</DropdownMenuItem>}
                             {isCodexTemplate(a) && <DropdownMenuItem onClick={() => openExt(a)}>{t('accounts.ext.button')}</DropdownMenuItem>}
                           </DropdownMenuContent>
                         </DropdownMenu>

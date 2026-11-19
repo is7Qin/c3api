@@ -2618,7 +2618,7 @@ type TemplateCreateSupportedFormats string
 
 // TemplateExt defines model for TemplateExt.
 type TemplateExt struct {
-	// CodexResponsesTransport codex 出站传输：""（默认=http）/"http"/"ws"。全列替换语义：缺省或 null 即清空为默认面。仅 codex-oauth/codex-pat 可配非空值。
+	// CodexResponsesTransport Responses 出站传输：""（默认=http）/"http"/"ws"。全列替换语义：缺省或 null 即清空为默认面。codex-oauth/codex-pat/bps 可配非空值；ws = 上游 WebSocket，HTTP 客户端仍收 SSE。
 	CodexResponsesTransport *string `json:"codex_responses_transport"`
 
 	// CredentialType 类型声明；必须与父模板 credential_type 一致（不一致 → 400）

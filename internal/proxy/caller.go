@@ -216,8 +216,8 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// BPS SDK does not support Codex continuation semantics; reject before any
 	// continuation Redis lookup or upstream preparation.
 	if contPrevID != "" && sel.CredentialType.IsBPS() {
-		sel.Release()
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSContinuationUnsupported.msg)
+		// 未出网：与其余 BPS 本地拒绝同一收尾（400/Err4xx/not_sent）。
+		p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, format)
 		writeErr(w, errBPSContinuationUnsupported)
 		return
 	}

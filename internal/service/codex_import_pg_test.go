@@ -303,7 +303,7 @@ func pgStrPtr(t *testing.T, s string) *string {
 // account id）先作为 codex-oauth 存在时，BPS 登录必须新建独立的 BPS 账号，而不是
 // 撞 0001 的两列唯一索引后报「凭据类型不匹配」。
 //
-// 0002 迁移把导入幂等键收窄成 (codex_email, codex_account_id, credential_type)；
+// 0002 迁移把导入幂等键拆成两条部分唯一索引（credential_type <> 'bps' 与 = 'bps'）；
 // 本用例跑在真实 PG 上，因此同时是那条迁移的回归：没有 0002，第二次插入会 23505。
 func TestBPSImportCoexistsWithCodexAccountPG(t *testing.T) {
 	svc, repos := newCodexImportPG(t)

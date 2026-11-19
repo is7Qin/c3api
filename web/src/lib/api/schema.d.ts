@@ -3200,7 +3200,7 @@ export interface components {
             credential_type: "responses-special" | "codex-oauth" | "codex-pat" | "custom" | "bps";
             /** @description 公共能力开关：模板级图像 tool 剥离（NULL = 未配置 = 关闭） */
             strip_image_tools?: boolean | null;
-            /** @description codex 出站传输：""（默认=http）/"http"/"ws"。全列替换语义：缺省或 null 即清空为默认面。仅 codex-oauth/codex-pat 可配非空值。 */
+            /** @description Responses 出站传输：""（默认=http）/"http"/"ws"。全列替换语义：缺省或 null 即清空为默认面。codex-oauth/codex-pat/bps 可配非空值；ws = 上游 WebSocket，HTTP 客户端仍收 SSE。 */
             codex_responses_transport?: string | null;
             /** @description custom 专用逐格式路径（原样拼到 base_url 之后，不补 /v1）。PUT 为全列替换：**缺省或 null 即清空**（与 strip_image_tools 同语义），要保留请原样带回已读取的值。键见描述；未配置的键回落该格式默认端点。 */
             upstream_paths?: {

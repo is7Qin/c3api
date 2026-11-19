@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/repository"
 )
 
@@ -379,4 +381,39 @@ func TestTransferKeepsBindingGuard(t *testing.T) {
 		SupplierUserID: &supplierB, ProxyID: new(int64(0)),
 	})
 	require.NoError(t, err)
+}
+
+// TestPatchAccountRejectsBPSBoundarySwitch 模板切换不得跨 BPS 边界：单条 PATCH
+// 曾经只靠前端下拉过滤，API 直调可以把 api_key/codex 账号切到 BPS 模板（或反向），
+// 留下与模板矛盾的 account_ext 行。批量面已在 repository 拒绝，单条在此收口。
+func TestPatchAccountRejectsBPSBoundarySwitch(t *testing.T) {
+	svc, store, _ := newProxyTestService()
+	ctx := context.Background()
+
+	plainTpl := seedTemplate(t, svc, "tpl-plain-boundary")
+	acc := seedAccount(t, svc, plainTpl.ID, "acc-plain-boundary")
+
+	bpsTpl := seedExtTemplate(t, svc, "tpl-bps-boundary", credential.TypeBPS, domain.FormatOpenAIResponses)
+
+	// 非 BPS → BPS：400，且账号模板不变。
+	_, err := svc.PatchAccount(ctx, acc.ID, repository.AccountPatch{TemplateID: &bpsTpl.ID}, nil)
+	require.ErrorIs(t, err, ErrInvalidInput, "跨入 BPS 边界必须 400")
+	unchanged, err := svc.GetAccount(ctx, acc.ID)
+	require.NoError(t, err)
+	require.Equal(t, plainTpl.ID, unchanged.TemplateID, "拒绝路径不得改动模板")
+
+	// BPS → 非 BPS：同样 400。BPS 账号不能走通用创建，直接放进 fake store。
+	bpsAcc := &domain.Account{
+		ID: 9001, Name: "acc-bps-boundary", TemplateID: bpsTpl.ID, Enabled: true,
+		MaxConcurrency: 1, LifecycleRevision: 1, IdentityRevision: 1,
+	}
+	store.accs[bpsAcc.ID] = bpsAcc
+	_, err = svc.PatchAccount(ctx, bpsAcc.ID, repository.AccountPatch{TemplateID: &plainTpl.ID}, nil)
+	require.ErrorIs(t, err, ErrInvalidInput, "跨出 BPS 边界必须 400")
+
+	// 同一侧换模板仍允许（BPS → 另一 BPS 模板）。
+	otherBPS := seedExtTemplate(t, svc, "tpl-bps-boundary-2", credential.TypeBPS, domain.FormatOpenAIResponses)
+	patched, err := svc.PatchAccount(ctx, bpsAcc.ID, repository.AccountPatch{TemplateID: &otherBPS.ID}, nil)
+	require.NoError(t, err, "BPS → BPS 不跨边界")
+	require.Equal(t, otherBPS.ID, patched.TemplateID)
 }

@@ -192,8 +192,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// SDK；命中照旧钉选（见 resolveContinuationBinding）。
 	var contBinding *continuation.Binding
 	if contPrevID != "" && sel.CredentialType.IsBPS() {
-		sel.Release()
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSContinuationUnsupported.msg)
+		p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponsesWS)
 		wsWriteError(client, errBPSContinuationUnsupported.msg)
 		return
 	}
