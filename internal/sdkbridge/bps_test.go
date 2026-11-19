@@ -252,6 +252,11 @@ func TestBPSLocalRejectMessage(t *testing.T) {
 
 	// 工具目录错误必须点名可执行的原因：之前一律塌成同一句话，调用方无法判断
 	// 是类型不支持、名字冲突还是参数非法。
+	require.Equal(t, "model not allowed: gpt-6.2-astra",
+		BPSLocalRejectMessage(fmt.Errorf("%w: gpt-6.2-astra", bpssdk.ErrModelNotAllowed)))
+	require.Equal(t, BPSFailureLocalReject, ClassifyBPSFailure(fmt.Errorf("%w: gpt-6.2-astra", bpssdk.ErrModelNotAllowed)).Kind,
+		"模型不在目录 ⇒ 本地拒绝，不换号重试")
+
 	detail := BPSLocalRejectMessage(fmt.Errorf("%w: unsupported tool type %q", bpssdk.ErrToolCatalogInvalid, "functon"))
 	require.Contains(t, detail, "tool definitions")
 	require.Contains(t, detail, `unsupported tool type "functon"`)

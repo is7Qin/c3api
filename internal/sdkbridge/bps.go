@@ -491,6 +491,11 @@ func ClassifyBPSFailure(err error) BPSFailure {
 		failure.Dispatched = true
 		return failure
 	}
+	if errors.Is(err, bpssdk.ErrModelNotAllowed) {
+		// 目录已刷新但请求模型不在其中：这是调用方请求的问题，本地 400，不换号重试。
+		failure.Kind = BPSFailureLocalReject
+		return failure
+	}
 	if bpssdk.IsAccountFatal(err) {
 		failure.Kind = BPSFailureAccountFatal
 		return failure
@@ -555,6 +560,8 @@ func BPSLocalRejectMessage(err error) string {
 		return "BPS does not support background responses"
 	case errors.Is(err, bpssdk.ErrUnsupportedTextFormat):
 		return "BPS does not support text.format; remove it (plain text output only)"
+	case errors.Is(err, bpssdk.ErrModelNotAllowed):
+		return strings.TrimPrefix(err.Error(), "bps: ")
 	case errors.Is(err, bpssdk.ErrToolCatalogInvalid):
 		// 工具错误只会点名客户端自己提交的类型/名字（不含上游原文），带上能让
 		// 调用方直接改请求，而不是对着笼统的 400 猜。
