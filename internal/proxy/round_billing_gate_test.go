@@ -492,11 +492,14 @@ func TestRoundG16bNoSecondRowPerRound(t *testing.T) {
 	})
 
 	t.Run("unbillable_abort_is_err_only_once", func(t *testing.T) {
-		// 零业务帧的轮：上游直接报错 ⇒ not_sent ⇒ 不可计费 ⇒ 只进 err_logs。
+		// 零业务帧的轮：上游直接报错 ⇒ upstream_responded ⇒ 不可计费 ⇒ 只进 err_logs。
+		// 收尾必须读掉 relay 的关闭帧再等 out：直接 CloseNow 会让 clientErr 与 upErr
+		// 竞态（首写生效、分类优先 clientErr），error_type 在 network/abort 间摇摆。
 		ft := &fakeTransport{readQueue: []fakeRead{{typ: 0, err: errRoundUpstreamBoom}}}
 		env, c, _ := newRoundBillingEnv(t, ft, []byte(`{"type":"response.create","model":"gpt-4o","input":"hi"}`), "")
-		_ = c.CloseNow()
-		<-env.out
+		readResponsesWSClose(t, c, websocket.StatusInternalError)
+		res := <-env.out
+		require.False(t, res.panicked, "relay 必须正常收尾")
 		usageRows, errRows := env.drain(t)
 		require.Empty(t, usageRows, "未交付失败不进 usage_logs")
 		require.Len(t, errRows, 1, "失败行在 err_logs 恰好一行（FSM 拦截第二次写）")
@@ -504,7 +507,7 @@ func TestRoundG16bNoSecondRowPerRound(t *testing.T) {
 	})
 }
 
-// errRoundUpstreamBoom 上游读失败（零帧已交付 ⇒ not_sent）。
+// errRoundUpstreamBoom 上游读失败（零帧 + 无客户端取消 ⇒ upstream_responded）。
 var errRoundUpstreamBoom = &roundUpstreamBoom{}
 
 type roundUpstreamBoom struct{}
