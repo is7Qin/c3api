@@ -356,7 +356,6 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		if handled {
 			return 0, nil, nil, true, nil
 		}
-		p.logBPSFailure(reqID, sel, reqModel, fwErr)
 		code, safe := bpsErrorResponse(fwErr)
 		return code, []byte(safe.Error()), nil, false, safe
 	}
@@ -425,9 +424,13 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 }
 
 func (p *Proxy) bpsWSError(reqID string, sel *scheduler.Selection, reqModel string, err error) (int, []byte, http.Header, bool, error) {
-	p.logBPSFailure(reqID, sel, reqModel, err)
 	code, safe := bpsErrorResponse(err)
-	return code, []byte(safe.Error()), nil, false, safe
+	// codex WS 面同样优先用上游 error.message；没有正文才退回固定句。
+	msg := safe.Error()
+	if m := domain.TruncateErrMsg(upstreamErrMsg(upstreamBody(err))); m != "" {
+		msg = m
+	}
+	return code, []byte(msg), nil, false, safe
 }
 
 // aiclientTransport 上游侧 *websocket.Conn 的 wsRelayTransport 适配（aiclient
