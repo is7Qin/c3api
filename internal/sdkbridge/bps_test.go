@@ -243,10 +243,6 @@ func TestBPSPrepareHonoursTemplateTransport(t *testing.T) {
 // TestBPSLocalRejectMessage 本地拒绝必须点名原因，而不是一律 "invalid request
 // body"（线上无法据此定位是哪个字段不被支持）。
 func TestBPSLocalRejectMessage(t *testing.T) {
-	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrPreviousResponseUnsupported), "previous_response_id")
-	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrUnsupportedTextFormat), "text.format")
-	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrBackgroundUnsupported), "background")
-	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrItemReferenceUnsupported), "item_reference")
 	require.Equal(t, "invalid request body", BPSLocalRejectMessage(nil))
 	require.Equal(t, "invalid request body", BPSLocalRejectMessage(errors.New("opaque")))
 

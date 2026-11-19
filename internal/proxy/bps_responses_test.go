@@ -91,3 +91,20 @@ func TestBPSResponsesNeverFallsThroughStaticCaller(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 	require.Contains(t, w.Body.String(), "BPS responses unavailable")
 }
+
+// TestBPSContinuationSkipped BPS 没有服务端续接：选中 BPS 时删掉
+// previous_response_id（含重复键），非 BPS 原样保留。
+func TestBPSContinuationSkipped(t *testing.T) {
+	bpsSel := &scheduler.Selection{CredentialType: credential.TypeBPS}
+	apiSel := &scheduler.Selection{CredentialType: credential.TypeAPIKey}
+	in := []byte(`{"model":"m","input":"hi","previous_response_id":"r"}`)
+
+	stripped := bpsStripContinuation(bpsSel, in)
+	require.NotContains(t, string(stripped), "previous_response_id")
+	require.Contains(t, string(stripped), `"model":"m"`)
+	require.Equal(t, in, bpsStripContinuation(apiSel, in), "非 BPS 必须原样")
+	require.Equal(t, in, bpsStripContinuation(nil, in), "nil selection 必须原样")
+
+	dup := []byte(`{"previous_response_id":"a","previous_response_id":"b","model":"m"}`)
+	require.NotContains(t, string(bpsStripContinuation(bpsSel, dup)), "previous_response_id", "重复键也必须全部删除")
+}

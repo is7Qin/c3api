@@ -11,7 +11,7 @@ require (
 	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
-	github.com/is7Qin/bps-sdk v0.0.0-20261119075737-3b1b6a4bb63c
+	github.com/is7Qin/bps-sdk v0.0.0-20261119091904-17f25b3984d4
 	github.com/is7Qin/codex-sdk v0.0.0-20261116134023-3f82416a265d
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/klauspost/compress v1.17.11

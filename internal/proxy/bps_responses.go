@@ -12,6 +12,9 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/tidwall/gjson"
+	"github.com/tidwall/sjson"
+
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -66,11 +69,23 @@ func isBPSLocalReject(err error) bool {
 	return sdkbridge.ClassifyBPSFailure(err).Kind == sdkbridge.BPSFailureLocalReject
 }
 
-// errBPSContinuationUnsupported is the pre-SDK rejection of previous_response_id:
-// BPS has no server-side continuation, so the client must resend the full input.
-var errBPSContinuationUnsupported = &formatError{
-	status: http.StatusBadRequest,
-	msg:    sdkbridge.BPSCodePreviousResponseUnsupported,
+// bpsStripContinuation removes previous_response_id from a request selected for a
+// BPS account. BPS has no server-side continuation (the SDK drops the field
+// anyway); removing it here keeps a later failover to a non-BPS account from
+// forwarding an id that was never resolved. sjson deletes one occurrence, so a
+// duplicated key is removed in a bounded loop.
+func bpsStripContinuation(sel *scheduler.Selection, body []byte) []byte {
+	if sel == nil || !sel.CredentialType.IsBPS() {
+		return body
+	}
+	for i := 0; i < 8 && gjson.GetBytes(body, "previous_response_id").Exists(); i++ {
+		next, err := sjson.DeleteBytes(body, "previous_response_id")
+		if err != nil || len(next) >= len(body) {
+			break
+		}
+		body = next
+	}
+	return body
 }
 
 // bpsInvalidBody builds the client-facing 400 for a pre-dial rejection. The SDK

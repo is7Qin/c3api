@@ -143,7 +143,7 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 亲和取值同时给出（同一组键、同一顺序），零新增分配。
 	rm.setWSEntryIdentity(r.Header, first)
 
-	// 硬续接（WS 面）：首帧 previous_response_id 在计划就绪后解析绑定并钉选
+	// 硬续接（WS 面，Codex/BPS 除外）：首帧 previous_response_id 在计划就绪后解析绑定并钉选
 	// 账号（route class 取计划规范身份，与 create 侧绑定键同源）；解析失败
 	// fail-closed（错误帧承载，无 HTTP 码），零上游拨号。
 	contPrevID := gjson.GetBytes(first, "previous_response_id").String()
@@ -191,10 +191,11 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 不钉选（hardContinuation=false），previous_response_id 原样随首帧交给
 	// SDK；命中照旧钉选（见 resolveContinuationBinding）。
 	var contBinding *continuation.Binding
-	if contPrevID != "" && sel.CredentialType.IsBPS() {
-		p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponsesWS)
-		wsWriteError(client, errBPSContinuationUnsupported.msg)
-		return
+	if sel.CredentialType.IsBPS() {
+		// 与 HTTP 面同策略：丢弃 previous_response_id、跳过续接解析；
+		// 删除后的 first 在下面进入 attemptState.first，后续每轮都基于它。
+		contPrevID = ""
+		first = bpsStripContinuation(sel, first)
 	}
 	if contPrevID != "" {
 		b, ferr := p.resolveContinuationBinding(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, sel, &plan, attempt)

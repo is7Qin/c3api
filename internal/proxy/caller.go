@@ -129,7 +129,7 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		return
 	}
 
-	// 硬续接（仅 Responses，Codex 凭据除外）：previous_response_id 把派生钉死在
+	// 硬续接（仅 Responses，Codex/BPS 凭据除外）：previous_response_id 把派生钉死在
 	// 产出该响应的账号上。普通请求（无续接键、其余全部格式）续接零 Redis；
 	// Codex 会话路径的 Redis 访问由 SDK 会话簿按设计 §3 发生（本副本命中时
 	// 零 Redis，回写由会话簿 worker 异步批量完成），不在此处。解析在计划就绪后
@@ -213,13 +213,12 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
 		return
 	}
-	// BPS SDK does not support Codex continuation semantics; reject before any
-	// continuation Redis lookup or upstream preparation.
-	if contPrevID != "" && sel.CredentialType.IsBPS() {
-		// 未出网：与其余 BPS 本地拒绝同一收尾（400/Err4xx/not_sent）。
-		p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, format)
-		writeErr(w, errBPSContinuationUnsupported)
-		return
+	// BPS has no server-side continuation. Drop the id (and skip the Redis
+	// lookup): the SDK ignores the field anyway, and a later failover to a
+	// non-BPS account must not forward an id that was never resolved.
+	if sel.CredentialType.IsBPS() {
+		contPrevID = ""
+		route.body = bpsStripContinuation(sel, route.body)
 	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
 	// fail-closed（释放已占并发槽，零上游拨号）。

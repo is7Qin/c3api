@@ -21,7 +21,10 @@
 // miss with a Codex first reservation does not 410 — hardContinuation=false
 // and the field is left to the SDK whitelist; a miss otherwise still 410s,
 // and a store outage stays fail-closed 503 (an API-key-produced id cannot be
-// told apart, and Codex would silently drop it).
+// told apart, and Codex would silently drop it). BPS never takes part either:
+// when the selected account is BPS the id is deleted from the request and no
+// resolution happens (the SDK drops the field; a later failover to a non-BPS
+// account must not see an unresolved id).
 // Ordinary requests (no previous_response_id, non-Responses formats) issue
 // zero continuation Redis commands; Redis traffic on the Codex conversation
 // path comes from the SDK conversation book (design §3: zero Redis on a

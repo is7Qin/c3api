@@ -543,23 +543,11 @@ func ClassifyBPSFailure(err error) BPSFailure {
 	return failure
 }
 
-// BPSCodePreviousResponseUnsupported 是 continuation 本地拒绝的唯一文案：proxy 的
-// 前置拒绝与 SDK 的归一错误共用同一句，避免两处各写一份后漂移。
-const BPSCodePreviousResponseUnsupported = "BPS does not support previous_response_id; send the full input history"
-
 // BPSLocalRejectMessage turns an SDK pre-dial rejection into an actionable,
 // non-sensitive client message. The raw upstream error text never leaves the
 // adapter; only these fixed sentences and the offending field name do.
 func BPSLocalRejectMessage(err error) string {
 	switch {
-	case errors.Is(err, bpssdk.ErrPreviousResponseUnsupported):
-		return BPSCodePreviousResponseUnsupported
-	case errors.Is(err, bpssdk.ErrItemReferenceUnsupported):
-		return "BPS does not support item_reference; inline the referenced items"
-	case errors.Is(err, bpssdk.ErrBackgroundUnsupported):
-		return "BPS does not support background responses"
-	case errors.Is(err, bpssdk.ErrUnsupportedTextFormat):
-		return "BPS does not support text.format; remove it (plain text output only)"
 	case errors.Is(err, bpssdk.ErrModelNotAllowed):
 		return strings.TrimPrefix(err.Error(), "bps: ")
 	case errors.Is(err, bpssdk.ErrToolCatalogInvalid):

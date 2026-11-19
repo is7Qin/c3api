@@ -50,7 +50,9 @@
   W6/W7 的 `contTag` 对 Codex 为空，均不可达，代码处有注释）。`resolveContinuationBinding`
   （HTTP 与 WS 共用）：计划里没有任何非 Codex 候选（`Scheduler.PlanHasNonCodexCandidate`
   为 false，纯 Codex 组）→ 不做续接解析，不查 Redis，续接存储故障也不 503，
-  `previous_response_id` 交给 SDK。有非 Codex 候选时照常先 `contResolve`：命中 → 照旧
+  `previous_response_id` 交给 SDK。**BPS 选中时同样不解析**：`bpsStripContinuation`
+  删除请求/首帧里的 `previous_response_id` 并跳过 Redis（SDK 也会丢弃该字段；BPS→
+  非 BPS 的 failover 因此不会转发未解析的 id）。有非 Codex 候选时照常先 `contResolve`：命中 → 照旧
   `contPin`（API key 产出的 id 即使首个预留是 Codex 也钉回原账号）；未命中且首个预留是
   Codex → 不 410、`hardContinuation=false`，id 交给 SDK；未命中且首个预留不是 Codex →
   照旧 410；Redis 不可用 → 503（无法判断是否存在 API key 绑定，放行会让 Codex 静默丢

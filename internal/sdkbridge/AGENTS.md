@@ -40,6 +40,16 @@
   GenerateImageOnce 为 `response exceeds 8 MiB`。body 由 SDK 读取/关闭；调用方
   cap transport 保证对应上限（2 MiB / 8 MiB）。
 
+## BPS 文案表
+
+- `BPSLocalRejectMessage` 是唯一文案映射：只输出固定句或 `invalid request body: <field>`，
+  SDK 原文不出适配器。保留 `ErrModelNotAllowed`（`model not allowed: <id>`）、
+  `ErrToolCatalogInvalid`（固定前缀 + `bpsErrorDetail`）与 `*ValidationError`。
+- 不支持参数改为**默认丢弃**后，`ErrPreviousResponseUnsupported`/`ErrItemReferenceUnsupported`/
+  `ErrBackgroundUnsupported`/`ErrUnsupportedTextFormat` 不再有生产者（bps-sdk legacy
+  sentinel）；适配器不再为它们保留文案。`ErrUnsupportedInput` 仍可能来自 malformed
+  输入（非对象 item/part、非 string/array content、保留 part 缺 text）。
+
 ## 不变量
 
 - 不记录/不回显 token、payload、上游原文；SDK error 文本不进入结果。
