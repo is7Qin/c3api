@@ -25,6 +25,7 @@
 package gen
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -49,6 +50,7 @@ import (
 )
 
 //go:generate go run ./cmd
+//go:generate go run ./cmd -snapshot-head
 
 // 产物文件名。
 const (
@@ -296,6 +298,22 @@ func Check(ctx context.Context, cfg Config) (warnings []string, err error) {
 				problems = append(problems, path+": differs from generator output")
 			}
 		case string(got) != files[path]:
+			problems = append(problems, path+": differs from generator output")
+		}
+	}
+	tag, headTxt, err := snapshotHead(ctx, cfg, want.UpSQL)
+	if err != nil {
+		return nil, err
+	}
+	if tag != "0001" {
+		path := filepath.Join(cfg.TestdataDir, tag+".catalog.txt")
+		got, err := os.ReadFile(path)
+		switch {
+		case os.IsNotExist(err):
+			problems = append(problems, path+": missing")
+		case err != nil:
+			return nil, fmt.Errorf("gen: read %s: %w", path, err)
+		case string(got) != headTxt:
 			problems = append(problems, path+": differs from generator output")
 		}
 	}
@@ -578,6 +596,125 @@ func renderDown(statements []statement) string {
 }
 
 // renderCatalog 在空临时库上跑一遍 up.sql，再用 catalog dumper 导出静态指纹。
+// migrationUpName is the only accepted migration filename shape. The leading
+// ^ is required: Go regexp treats a leading * as a quantifier, so "^*" would
+// accept arbitrary prefixes.
+var migrationUpName = regexp.MustCompile(`^\d{4}_.+\.up\.sql$`)
+
+type migrationFile struct {
+	version int64
+	path    string
+}
+
+// migrationFiles lists NNNN_*.up.sql in version order. Bad stems are errors,
+// not skips: a typo must not silently change the head snapshot.
+func migrationFiles(dir string) ([]migrationFile, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("gen: read migrations dir %s: %w", dir, err)
+	}
+	var files []migrationFile
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".up.sql") {
+			continue
+		}
+		if !migrationUpName.MatchString(entry.Name()) {
+			return nil, fmt.Errorf("gen: unexpected migration file %q (want NNNN_name.up.sql)", entry.Name())
+		}
+		version, err := strconv.ParseInt(entry.Name()[:4], 10, 64)
+		if err != nil || version <= 0 {
+			return nil, fmt.Errorf("gen: invalid migration version in %q", entry.Name())
+		}
+		files = append(files, migrationFile{version: version, path: filepath.Join(dir, entry.Name())})
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("gen: no *.up.sql in %s", dir)
+	}
+	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
+	return files, nil
+}
+
+// snapshotHead builds the catalog for the directory's head version: the freshly
+// generated 0001 SQL plus every later up migration, applied to a scratch DB.
+func snapshotHead(ctx context.Context, cfg Config, upSQL0001 string) (tag, catalogTxt string, err error) {
+	files, err := migrationFiles(cfg.MigrationsDir)
+	if err != nil {
+		return "", "", err
+	}
+	head := files[len(files)-1].version
+	tag = fmt.Sprintf("%04d", head)
+	if head <= 1 {
+		return tag, "", nil
+	}
+	var script strings.Builder
+	script.WriteString(upSQL0001)
+	for _, file := range files {
+		if file.version <= 1 {
+			continue
+		}
+		body, err := os.ReadFile(file.path)
+		if err != nil {
+			return "", "", fmt.Errorf("gen: read %s: %w", file.path, err)
+		}
+		if bytes.ContainsRune(body, '\r') || bytes.HasPrefix(body, []byte{0xEF, 0xBB, 0xBF}) {
+			return "", "", fmt.Errorf("gen: %s must be LF-only without BOM", file.path)
+		}
+		script.WriteString("\n")
+		script.Write(body)
+	}
+	catalogTxt, err = renderCatalog(ctx, cfg.DSN, script.String())
+	if err != nil {
+		return "", "", err
+	}
+	return tag, catalogTxt, nil
+}
+
+// SnapshotHead regenerates 0001 in memory, then the head snapshot. CLI use.
+func SnapshotHead(ctx context.Context, cfg Config) (tag, catalogTxt string, err error) {
+	cfg, err = cfg.withArtifactDirs()
+	if err != nil {
+		return "", "", err
+	}
+	artifacts, err := Run(ctx, cfg)
+	if err != nil {
+		return "", "", err
+	}
+	return snapshotHead(ctx, cfg, artifacts.UpSQL)
+}
+
+// WriteHeadSnapshot writes testdata/<tag>.catalog.txt (overwrites).
+func WriteHeadSnapshot(cfg Config, tag, catalogTxt string) (string, error) {
+	cfg, err := cfg.withArtifactDirs()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(cfg.TestdataDir, tag+".catalog.txt")
+	if err := os.WriteFile(path, []byte(catalogTxt), 0o644); err != nil {
+		return "", fmt.Errorf("gen: write %s: %w", path, err)
+	}
+	return path, nil
+}
+
+// unregisteredPartitionParent returns the first partitioned parent absent from
+// catalog.PartitionParents, so a future migration cannot silently repeat the
+// adopt-oracle gap.
+func unregisteredPartitionParent(static string) string {
+	known := make(map[string]bool, len(catalog.PartitionParents))
+	for _, parent := range catalog.PartitionParents {
+		known[parent] = true
+	}
+	for _, line := range strings.Split(static, "\n") {
+		if !strings.HasPrefix(line, "table|") || !strings.Contains(line, "|relkind=p|") {
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimPrefix(line, "table|"), "|")
+		if !known[name] {
+			return name
+		}
+	}
+	return ""
+}
+
 func renderCatalog(ctx context.Context, dsn, upSQL string) (string, error) {
 	scratch, err := newScratchDB(ctx, dsn)
 	if err != nil {
@@ -593,6 +730,9 @@ func renderCatalog(ctx context.Context, dsn, upSQL string) (string, error) {
 	}
 	if m.Static == "" {
 		return "", fmt.Errorf("gen: catalog dumper returned an empty manifest")
+	}
+	if parent := unregisteredPartitionParent(m.Static); parent != "" {
+		return "", fmt.Errorf("gen: partitioned parent %q is not registered in catalog.PartitionParents", parent)
 	}
 	if len(m.Violations) > 0 {
 		return "", fmt.Errorf("gen: baseline must not create views/triggers/policies/functions, found: %s",

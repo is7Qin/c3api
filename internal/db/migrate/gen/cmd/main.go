@@ -73,6 +73,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	fs.SetOutput(stderr)
 	var (
 		check  = fs.Bool("check", false, "regenerate and diff against committed files (non-zero exit on drift)")
+		snap   = fs.Bool("snapshot-head", false, "regenerate testdata/<head>.catalog.txt (the head migration snapshot)")
 		force  = fs.Bool("force-version", false, "with -check: accept a cross-major PostgreSQL difference instead of failing")
 		dsn    = fs.String("dsn", "", "maintenance PostgreSQL DSN (needs CREATEDB); defaults to MIGRATE_GEN_DSN/TEST_DATABASE_URL")
 		migs   = fs.String("migrations", "", "migrations output dir (default: <gen package dir>/../migrations, resolved from the source path, not cwd)")
@@ -92,6 +93,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
+		return 0
+	}
+	if *snap {
+		tag, text, err := gen.SnapshotHead(ctx, cfg)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		if tag == "0001" {
+			fmt.Fprintln(stdout, "gen: head is 0001; nothing to snapshot")
+			return 0
+		}
+		path, err := gen.WriteHeadSnapshot(cfg, tag, text)
+		if err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "gen: head snapshot %s written (%d lines)\n", path, strings.Count(text, "\n"))
 		return 0
 	}
 	if *check {

@@ -155,3 +155,21 @@ func TestExpandOnlyIsNotVacuous(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, ExpandOnly(before, retyped), "a column type change is not expand-only")
 }
+
+func TestAttemptLogsPartitionIsAllowlisted(t *testing.T) {
+	ctx := context.Background()
+	db := newEmptyDB(t)
+	for _, stmt := range []string{
+		`CREATE TABLE public.attempt_logs (id bigint NOT NULL, created_at timestamptz NOT NULL, PRIMARY KEY (id, created_at)) PARTITION BY RANGE (created_at)`,
+		`CREATE TABLE public.attempt_logs_20260101 PARTITION OF public.attempt_logs FOR VALUES FROM ('2026-01-01 00:00:00+00') TO ('2026-01-02 00:00:00+00')`,
+	} {
+		_, err := db.ExecContext(ctx, stmt)
+		require.NoError(t, err, stmt)
+	}
+	m, err := Dump(ctx, db)
+	require.NoError(t, err)
+	require.Contains(t, m.Static, "table|attempt_logs|relkind=p|")
+	require.NotContains(t, m.Static, "attempt_logs_20260101")
+	require.Len(t, m.Dynamic.Partitions, 1)
+	require.Equal(t, "public.attempt_logs", m.Dynamic.Partitions[0].Parent)
+}

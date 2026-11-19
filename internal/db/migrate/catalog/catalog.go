@@ -184,9 +184,9 @@ func loadStrings(ctx context.Context, tx *sql.Tx, query string) ([]string, error
 }
 
 // PartitionParents 是分区父表 allowlist：只有这些父表的按日分区才从静态指纹里
-// 排除（它们走 Dynamic 视图，数量随保留策略变化）。新增分区父表（例如 M0b 的
-// attempt_logs）必须在这里登记——漏登记不会静默吞对象，而是让分区实例出现在
-// 静态指纹里（漂移可见），这是刻意的失败方向。
+// 排除（它们走 Dynamic 视图，数量随保留策略变化）。新增分区父表必须在这里登记——
+// 漏登记会让分区实例出现在静态指纹里（漂移可见），adopt 也会把真实库报成
+// unexpected；gen 侧另有守卫（unregisteredPartitionParent）在生成时失败。
 var PartitionParents = []string{
 	"usage_logs",
 	"err_logs",
@@ -194,6 +194,7 @@ var PartitionParents = []string{
 	"usage_entity_stats",
 	"routing_quality_fact",
 	"routing_flow_fact",
+	"attempt_logs",
 }
 
 // partitionInstanceSQL 构造「该关系是已知父表的按日分区」判定。父归属取自
