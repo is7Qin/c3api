@@ -78,7 +78,7 @@ func bpsStripContinuation(sel *scheduler.Selection, body []byte) []byte {
 	if sel == nil || !sel.CredentialType.IsBPS() {
 		return body
 	}
-	for i := 0; i < 8 && gjson.GetBytes(body, "previous_response_id").Exists(); i++ {
+	for gjson.GetBytes(body, "previous_response_id").Exists() {
 		next, err := sjson.DeleteBytes(body, "previous_response_id")
 		if err != nil || len(next) >= len(body) {
 			break

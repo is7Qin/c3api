@@ -8,6 +8,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
@@ -107,4 +108,12 @@ func TestBPSContinuationSkipped(t *testing.T) {
 
 	dup := []byte(`{"previous_response_id":"a","previous_response_id":"b","model":"m"}`)
 	require.NotContains(t, string(bpsStripContinuation(bpsSel, dup)), "previous_response_id", "重复键也必须全部删除")
+
+	// 两条车道都必须接线到该助手（行为由上面的单测覆盖；这里防漏接）。
+	for _, name := range []string{"caller.go", "caller_responses_ws.go"} {
+		src, err := os.ReadFile(name)
+		require.NoError(t, err, name)
+		require.Contains(t, string(src), `contPrevID = ""`, "%s 必须清空 contPrevID", name)
+		require.Contains(t, string(src), "bpsStripContinuation(sel,", "%s 必须调用 bpsStripContinuation", name)
+	}
 }

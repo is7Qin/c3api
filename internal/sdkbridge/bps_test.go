@@ -313,3 +313,32 @@ func TestBPSModelsUnderWSTransport(t *testing.T) {
 	require.NoError(t, err, "catalog 走 HTTP，ws 传输不得被适配器拒绝")
 	require.NotEmpty(t, catalog.Models)
 }
+
+// TestBPSDropsUnsupportedParams 适配器的 HTTP 车道路径必须把不支持的参数交给 SDK
+// 丢弃：fake egress 捕获的上行 body 不含 previous_response_id/background/text。
+func TestBPSDropsUnsupportedParams(t *testing.T) {
+	var got []byte
+	eg := egress.NewPool(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		got, _ = io.ReadAll(req.Body)
+		return bpsHTTPResponse(), nil
+	})}).Direct()
+	adapter := NewBPS(bpsRedisClient(t))
+	prepared, err := adapter.Prepare(context.Background(), BPSRequestSource{
+		Credential: bpsCredential(t), Format: domain.FormatOpenAIResponses, Egress: eg,
+	})
+	require.NoError(t, err)
+	defer prepared.Close()
+
+	body := []byte(`{"model":"gpt-6-astra","input":"hi","previous_response_id":"r","background":true,"text":{"format":{"type":"json_object"}}}`)
+	resp, err := prepared.StreamBody(context.Background(), body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	var upstream map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(got, &upstream))
+	for _, banned := range []string{"previous_response_id", "background", "text"} {
+		_, ok := upstream[banned]
+		require.False(t, ok, "unsupported top-level %q must be dropped: %.500s", banned, string(got))
+	}
+	require.Contains(t, upstream, "model")
+}

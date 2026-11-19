@@ -130,6 +130,8 @@ github.com/is7Qin/bps-sdk v0.0.0-20261119075737-3b1b6a4bb63c h1:uCBKAdx+DsvdlfVK
 github.com/is7Qin/bps-sdk v0.0.0-20261119075737-3b1b6a4bb63c/go.mod h1:KkxtPluhg+Heu5fpbWo+TdYSZY3lfcVqfYat3TyDMxw=
 github.com/is7Qin/bps-sdk v0.0.0-20261119091904-17f25b3984d4 h1:rD97o2hdAr89ztkC6baiibDR6UrtBwfpxtVNAnwI7JY=
 github.com/is7Qin/bps-sdk v0.0.0-20261119091904-17f25b3984d4/go.mod h1:KkxtPluhg+Heu5fpbWo+TdYSZY3lfcVqfYat3TyDMxw=
+github.com/is7Qin/bps-sdk v0.0.0-20261119092955-bb3074ea3467 h1:cpXSxchfykh8m1hKUQiLU9ERst8QEfdpJ5RlOiOfFq0=
+github.com/is7Qin/bps-sdk v0.0.0-20261119092955-bb3074ea3467/go.mod h1:KkxtPluhg+Heu5fpbWo+TdYSZY3lfcVqfYat3TyDMxw=
 github.com/is7Qin/codex-sdk v0.0.0-20261116134023-3f82416a265d h1:7GT9pxTCXeYWRG2NCTkFKQJmoMGHQAqWWCYzPXyHc7c=
 github.com/is7Qin/codex-sdk v0.0.0-20261116134023-3f82416a265d/go.mod h1:tO7q/+UaIqcdsHe5AiHAgAvcBXqPREreO40PqWBDPN8=
 github.com/jackc/pgpassfile v1.0.0 h1:/6Hmqy13Ss2zCq62VdNG8tM1wchn8zjSGOBJ6icpsIM=
