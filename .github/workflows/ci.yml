@@ -129,3 +129,74 @@ jobs:
       - name: build
         run: pnpm run build
         working-directory: web
+
+  # Helm 契约此前只靠 Go 文本门 TestDeployMigrateJobAndProbes 盯着：`helm template`
+  # 从没在 CI 里跑过，chart 渲染回归（迁移 hook Job 消失、探针路径写错、把
+  # -allow-contract 塞进迁移 Job）要等发到集群才暴露。这里用真实渲染断言同一组
+  # 契约，零额外依赖：只要 helm 与 grep，不装 yq。
+  helm:
+    name: helm
+    runs-on: ubuntu-latest
+    env:
+      # values.yaml 故意把这些键留空（模板用 `required` 强制调用方提供），断言只
+      # 需要结构能渲染出来，所以这里是**占位值，不是真实凭据**。
+      HELM_RENDER_ARGS: >-
+        --set-string externalDatabase.dsn=postgres://ci:placeholder@db:5432/c3api?sslmode=disable
+        --set-string externalRedis.addr=redis:6379
+        --set-string secrets.jwtSecret=ci-placeholder
+    steps:
+      - uses: actions/checkout@v7
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+      - name: helm lint
+        # lint 单独不够：`required` 取不到值只被降级成 INFO 日志，lint 仍退出 0
+        # （helm v3.16.3 实测）。它管的是 chart 结构与 values.schema.json，契约
+        # 断言交给下一步的真实渲染。
+        run: |
+          set -f  # --set 的值含 `?`，只做分词，不当 glob 展开
+          helm lint deploy/helm ${HELM_RENDER_ARGS}
+      - name: render assertions
+        run: |
+          set -euo pipefail
+          set -f  # 同上
+
+          work=$(mktemp -d)
+          fail() {
+            echo "::error::$1"
+            echo '--- rendered manifest ---'
+            cat "$2"
+            exit 1
+          }
+
+          echo '==> render the chart with the default values'
+          helm template c3api deploy/helm ${HELM_RENDER_ARGS} >"$work/default.yaml"
+
+          echo '==> a) default values render the migration Job, args are exactly -migrate up'
+          grep -q '^kind: Job$' "$work/default.yaml" ||
+            fail 'a) no Job rendered: templates/job-migrate.yaml produced nothing' "$work/default.yaml"
+          grep -A1 -e '- "-migrate"' "$work/default.yaml" | grep -q -e '- "up"' ||
+            fail 'a) migration Job args are not "-migrate up"' "$work/default.yaml"
+          if grep -q 'allow-contract' "$work/default.yaml"; then
+            fail 'a) migration Job must never pass -allow-contract' "$work/default.yaml"
+          fi
+
+          echo '==> b) migrations.job.enabled=false drops the Job'
+          helm template c3api deploy/helm ${HELM_RENDER_ARGS} \
+            --set migrations.job.enabled=false >"$work/no-migrate.yaml"
+          if grep -q '^kind: Job$' "$work/no-migrate.yaml"; then
+            fail 'b) Job is still rendered with migrations.job.enabled=false' "$work/no-migrate.yaml"
+          fi
+          if grep -q -e '- "-migrate"' "$work/no-migrate.yaml"; then
+            fail 'b) migration args are still rendered with migrations.job.enabled=false' "$work/no-migrate.yaml"
+          fi
+
+          echo '==> c) Deployment: readiness=/readyz, liveness=/healthz, maxUnavailable=0'
+          grep -A3 'readinessProbe:' "$work/default.yaml" | grep -q 'path: /readyz' ||
+            fail 'c) readinessProbe does not point at /readyz' "$work/default.yaml"
+          grep -A3 'livenessProbe:' "$work/default.yaml" | grep -q 'path: /healthz' ||
+            fail 'c) livenessProbe does not point at /healthz' "$work/default.yaml"
+          grep -A1 'rollingUpdate:' "$work/default.yaml" | grep -qE '^[[:space:]]*maxUnavailable: 0$' ||
+            fail 'c) strategy.rollingUpdate.maxUnavailable is not 0' "$work/default.yaml"
+
+          echo '==> all chart contracts hold'
