@@ -2,7 +2,7 @@
 // Dual-licensed: AGPL-3.0-or-later (open source) or commercial license (closed-source
 // deployment exemption); see LICENSE and LICENSE.commercial. Copyright (c) 2026 is7Qin.
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { motion } from 'framer-motion'
 import { Plus, Pencil, Trash2, Users, Ban, CircleCheck, Ellipsis, Filter, SlidersHorizontal, Upload, LogIn, RotateCcw } from 'lucide-react'
@@ -240,6 +240,20 @@ function toLocalDT(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 function isCodexCt(ct?: string | null) { return ct === 'codex-oauth' || ct === 'codex-pat' }
+function isBpsCt(ct?: string | null) { return ct === 'bps' }
+// 只有这三类把上游 Key 存进 account.upstream_key；codex/bps 的凭据在 account_ext，
+// 账号行必须保持 upstream_key 为空（BPS 非空会被 service 直接拒绝）。
+function usesStaticKeyCt(ct?: string | null) {
+  return ct === 'api_key' || ct === 'responses-special' || ct === 'custom'
+}
+// 单条/批量的模板上下文：'codex' / 'bps' 共用「provider 自带端点、无静态 key」语义。
+// 模板未解析时 fail-closed 归到 'codex'（投影绝不发 key，BaseURL 落 null）。
+function tplCtxOf(ct: string | undefined, unresolved: boolean): TplCtx {
+  if (unresolved) return 'codex'
+  if (isBpsCt(ct)) return 'bps'
+  if (isCodexCt(ct)) return 'codex'
+  return 'nonCodex'
+}
 // PUT 全列更新：account id 优先用表单手填值，空则回显原值防清空
 const codexAccountIdBody = (val: string, cur?: string | null) => val.trim() || cur || null
 // 分组多选（替换语义 UI；disabled 用于回显加载中/批量清空勾选时）。
@@ -579,28 +593,41 @@ export default function Accounts() {
   }
   // 批量有效模板四分：替换模板优先，否则按选中行（账号 Template 回退到模板列表）。
   // 与单条不同，批量会同时命中 codex 与非 codex：mixed/unresolved 下 BaseURL 一律不发。
+  const batchCtOf = useCallback(
+    (acc?: AccountView): string | undefined =>
+      (acc?.Template?.CredentialType as string | undefined) ?? (templates.find(p => p.ID === acc?.TemplateID)?.CredentialType as string | undefined),
+    [templates],
+  )
   const batchTplCtx: TplCtx = useMemo(() => {
     if (batchDraft.template_id !== undefined) {
       const tpl = templates.find(p => String(p.ID) === batchDraft.template_id)
-      const ct = tpl?.CredentialType as string | undefined
-      if (isCodexCt(ct)) return 'codex'
-      if (ct != null) return 'nonCodex'
-      return 'unresolved'
+      return tplCtxOf(tpl?.CredentialType as string | undefined, tpl == null)
     }
-    const states = selected.map(id => {
-      const acc = rows.find(r => r.ID === id)
-      const ct = (acc?.Template?.CredentialType as string | undefined) ?? (templates.find(p => p.ID === acc?.TemplateID)?.CredentialType as string | undefined)
-      if (isCodexCt(ct)) return 'codex' as const
-      if (ct != null) return 'nonCodex' as const
-      return 'unresolved' as const
-    })
+    const states = selected.map(id => tplCtxOf(batchCtOf(rows.find(r => r.ID === id)), false))
     if (states.length === 0) return 'nonCodex'
-    if (states.includes('unresolved')) return 'unresolved'
+    if (states.some(s => s === 'unresolved')) return 'unresolved'
     if (states.every(s => s === 'codex')) return 'codex'
+    if (states.every(s => s === 'bps')) return 'bps'
     if (states.every(s => s === 'nonCodex')) return 'nonCodex'
     return 'mixed'
-  }, [batchDraft.template_id, selected, rows, templates])
-  const isBatchCodex = batchTplCtx === 'codex' // 只给三处 UI 判据用（禁用输入/勾选/提示）
+  }, [batchDraft.template_id, selected, rows, batchCtOf, templates])
+  // 固定端点类型（codex/bps）：BaseURL 由 SDK 拥有，批量面禁用输入与清空勾选。
+  const isBatchFixedEndpoint = batchTplCtx === 'codex' || batchTplCtx === 'bps'
+  // 批量里只要可能命中 BPS，Upstream Key 就必须禁用：BPS 行非空会被 400。
+  const batchHasBps = useMemo(
+    () => batchTplCtx === 'bps' || selected.some(id => isBpsCt(batchCtOf(rows.find(r => r.ID === id)))),
+    [batchTplCtx, selected, rows, batchCtOf],
+  )
+  // 批量换模板同样不得跨 BPS 边界（repository 对 to/from BPS 直接 400）：
+  // 只有「选中行全是 BPS」时才提供 BPS 模板，其余情况只提供非 BPS 模板。
+  const batchAllBps = useMemo(
+    () => selected.length > 0 && selected.every(id => isBpsCt(batchCtOf(rows.find(r => r.ID === id)))),
+    [selected, rows, batchCtOf],
+  )
+  const batchTemplateChoices = useMemo(
+    () => templates.filter(tp => isBpsCt(tp.CredentialType) === batchAllBps),
+    [templates, batchAllBps],
+  )
   // 「清空分组」只由 []（明确的空集合）表达；选了具体分组时勾选框必须是未勾选
   // （否则文案说「清空」、实际是替换，用户取消勾选还会把变更丢掉）。
   const clearGroupsChecked = batchDraft.group_ids !== undefined && batchDraft.group_ids.length === 0
@@ -821,7 +848,7 @@ export default function Accounts() {
       // 唯一投影（创建与编辑共用）：缺席 = 不变，null/[] = 清空。codex 的 base_url
       // 约束、归属的作用域约束都只在这里施加——控件层没有第二套规则。
       const patch = draftToPatch(draft, {
-        tpl: isSelCodex ? 'codex' : 'nonCodex',
+        tpl: tplCtxOf(effectiveSelCt, isSelUnresolved),
         echoProxyId: editing?.proxy_id ?? null,
         isSupplierScope,
       })
@@ -928,9 +955,11 @@ export default function Accounts() {
     const ct = effectiveSelCt
     if (ct === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) return
     if (ct === 'codex-pat' && !codexFields.codex_pat_key.trim()) return
-    // 非 codex 的 key 必填与按钮同一判据：trim 后为空 ⇒ 不提交。
-    // （投影会把纯空白当未表态丢掉，若只判原文非空，创建会打到后端 400。）
-    if (!isCodexCt(ct) && !view.upstream_key.trim()) return
+    // 只有静态 key 类型要求 upstream_key；codex/bps 的凭据在 account_ext，
+    // 账号行必须为空（BPS 非空会被 service 拒绝）。判据与按钮完全一致。
+    if (usesStaticKeyCt(ct) && !view.upstream_key.trim()) return
+    // BPS 账号只能由共享设备码登录创建（service 拒绝通用 create）。
+    if (!editing && isBpsCt(ct)) return
     save.mutate()
   }
 
@@ -1016,6 +1045,19 @@ export default function Accounts() {
     : (selTemplate?.CredentialType as string | undefined)
   const isSelUnresolved = !!view.template_id && effectiveSelCt == null
   const isSelCodex = isCodexCt(effectiveSelCt) || isSelUnresolved
+  // 固定端点类型（codex/bps）：BaseURL 由 SDK 拥有，控件隐藏、保存落 null
+  const isSelFixedEndpoint = isCodexCt(effectiveSelCt) || isBpsCt(effectiveSelCt) || isSelUnresolved
+  // 模板切换不得跨 BPS 边界：两边的账号行结构不同（凭据在 ext、端点归 SDK），
+  // 跨边界切换会留下与模板矛盾的 ext 行（批量面已同样拒绝）。新建走同一判据：
+  // BPS 只能由共享登录创建，通用新建不提供 BPS 模板。
+  const templateChoices = useMemo(() => {
+    // 编辑时以「账号真实模板」为准（列表行可能没有内嵌 Template，按 TemplateID 回查）。
+    const editingCt = editing
+      ? ((editing.Template?.CredentialType as string | undefined) ?? (templates.find(tp => tp.ID === editing.TemplateID)?.CredentialType as string | undefined))
+      : undefined
+    return templates.filter(tp => isBpsCt(tp.CredentialType) === isBpsCt(editingCt))
+  }, [templates, editing])
+  const creatableTemplateCount = useMemo(() => templates.filter(tp => !isBpsCt(tp.CredentialType)).length, [templates])
   // 切模板**不碰** base_url 草稿（codex 约束在投影期施加：保存时落 null，
   // 切回非 codex 时输入框仍显示原值，用户没表态就不写）。
 
@@ -1033,7 +1075,7 @@ export default function Accounts() {
         <Button variant="outline" onClick={() => setImportOpen(true)} disabled={templates.length === 0} title={templates.length === 0 ? '无可用模板，请先创建 codex-oauth/pat 模板' : undefined}>
           <Upload /> {t('accounts.import.button')}
         </Button>
-        <Button onClick={openCreate} disabled={templates.length === 0} title={templates.length === 0 ? t('accounts.noTemplate') : undefined}>
+        <Button onClick={openCreate} disabled={creatableTemplateCount === 0} title={creatableTemplateCount === 0 ? t('accounts.noTemplate') : undefined}>
           <Plus /> {t('accounts.new')}
         </Button>
         </div>
@@ -1335,13 +1377,13 @@ export default function Accounts() {
               <Label>{t('accounts.templateLabel')}</Label>
               {/* 只写模板：base_url 草稿不随模板切换而变（codex 约束在投影期施加，切回不丢值） */}
               <Select
-                items={Object.fromEntries(templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`]))}
+                items={Object.fromEntries(templateChoices.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`]))}
                 value={view.template_id || null}
                 onValueChange={v => update('template_id', String(v))}
               >
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {templates.map(tp => <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>{tp.Name ?? `#${tp.ID}`}</SelectItem>)}
+                  {templateChoices.map(tp => <SelectItem key={tp.ID} value={String(tp.ID)} label={tp.Name ?? `#${tp.ID}`}>{tp.Name ?? `#${tp.ID}`}</SelectItem>)}
                 </SelectContent>
               </Select>
               {isCodexCt(effectiveSelCt) && (
@@ -1412,6 +1454,10 @@ export default function Accounts() {
                   />
                 </div>
               </div>
+            ) : isBpsCt(effectiveSelCt) ? (
+              <p className="text-xs text-muted-foreground">
+                {editing ? t('accounts.bpsCredentialsHint') : t('accounts.bpsCreateHint')}
+              </p>
             ) : (
               <div className="space-y-1.5">
                 <Label htmlFor="acc-key">Upstream Key</Label>
@@ -1431,8 +1477,8 @@ export default function Accounts() {
             )}
             {/* Codex 不可配置 BaseURL：控件隐藏，约束在投影期施加（保存时落 null）；
                 切回非 codex 时草稿仍在，用户没表态就不写 */}
-            {isSelCodex ? (
-              <p className="text-xs text-muted-foreground">{t('accounts.baseUrlCodexHidden')}</p>
+            {isSelFixedEndpoint ? (
+              <p className="text-xs text-muted-foreground">{isBpsCt(effectiveSelCt) ? t('accounts.bpsBaseUrlHidden') : t('accounts.baseUrlCodexHidden')}</p>
             ) : (
               <div className="space-y-1.5">
                 <Label htmlFor="acc-base-url">Base URL</Label>
@@ -1546,7 +1592,8 @@ export default function Accounts() {
                 ((view.cache_domain ?? '').trim() !== '' && !validCacheDomain((view.cache_domain ?? '').trim())) ||
                 (effectiveSelCt === 'codex-oauth' && !codexFields.codex_oauth_token.trim()) ||
                 (effectiveSelCt === 'codex-pat' && !codexFields.codex_pat_key.trim()) ||
-                (!isCodexCt(effectiveSelCt) && !view.upstream_key.trim()) ||
+                (usesStaticKeyCt(effectiveSelCt) && !view.upstream_key.trim()) ||
+                (!editing && isBpsCt(effectiveSelCt)) ||
                 // 分组回显未到不再阻塞保存：写入侧「没表态 = 不发键」，不会清空。
                 // codex 编辑时 ext 回显未到先禁用保存：echo 行 cur 为 undefined
                 // 会使 account id 回退到 null，PUT 全列更新将清空已存值。
@@ -1594,7 +1641,8 @@ export default function Accounts() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-key">Upstream Key</Label>
-              <Input id="ba-key" type="password" value={batchDraft.upstream_key ?? ''} placeholder="sk-..." onChange={e => { const v = e.target.value; if (v === '') clearBatch('upstream_key'); else updateBatch('upstream_key', v) }} />
+              <Input id="ba-key" type="password" value={batchDraft.upstream_key ?? ''} placeholder="sk-..." disabled={batchHasBps} onChange={e => { const v = e.target.value; if (v === '') clearBatch('upstream_key'); else updateBatch('upstream_key', v) }} />
+              {batchHasBps && <p className="text-xs text-muted-foreground">{t('accounts.batchBpsKeyDisabled')}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-base-url">Base URL</Label>
@@ -1602,12 +1650,12 @@ export default function Accounts() {
                 id="ba-base-url"
                 value={batchDraft.base_url ?? ''}
                 placeholder="https://..."
-                disabled={isBatchCodex}
+                disabled={isBatchFixedEndpoint}
                 onChange={e => { const v = e.target.value; if (v === '') clearBatch('base_url'); else updateBatch('base_url', v) }}
               />
-              <p className="text-xs text-muted-foreground">{isBatchCodex ? t('accounts.batchBaseUrlCodexDisabled') : t('accounts.batchBaseUrlHint')}</p>
+              <p className="text-xs text-muted-foreground">{isBatchFixedEndpoint ? t('accounts.batchBaseUrlFixedDisabled') : t('accounts.batchBaseUrlHint')}</p>
               <label className="flex cursor-pointer items-center gap-2.5 py-0.5">
-                <Checkbox checked={batchDraft.base_url === null} disabled={isBatchCodex} onCheckedChange={c => c === true ? updateBatch('base_url', null) : clearBatch('base_url')} />
+                <Checkbox checked={batchDraft.base_url === null} disabled={isBatchFixedEndpoint} onCheckedChange={c => c === true ? updateBatch('base_url', null) : clearBatch('base_url')} />
                 <span className="text-sm">{t('accounts.clearBaseUrl')}</span>
               </label>
               {/* 混合/未解析：输入仍可用（草稿要有清除入口），但提交会被 gate 拒绝 */}
@@ -1621,7 +1669,7 @@ export default function Accounts() {
               <div className="space-y-1.5">
                 <Label>{t('accounts.templateLabel')}</Label>
                 <Select
-                  items={Object.fromEntries([['all', t('list.unchanged')], ...templates.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`])])}
+                  items={Object.fromEntries([['all', t('list.unchanged')], ...batchTemplateChoices.map(tp => [String(tp.ID), tp.Name ?? `#${tp.ID}`])])}
                   value={batchDraft.template_id ?? 'all'}
                   onValueChange={v => v === 'all' ? clearBatch('template_id') : updateBatch('template_id', v)}
                 >

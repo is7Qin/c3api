@@ -83,12 +83,12 @@ export function defaults(): AccountValues {
 // 可空字段回落契约的 null（而不是 ''）——'' 只表示「用户清空了输入框」，基线里没有它。
 export function fromAccountView(a: AccountView, groupIds: number[]): AccountValues {
   const ct = a.Template?.CredentialType
-  const codex = ct === 'codex-oauth' || ct === 'codex-pat'
+  // codex 与 bps 的上游端点都由 SDK 拥有，账号侧没有可编辑的 BaseURL
+  const fixedEndpoint = ct === 'codex-oauth' || ct === 'codex-pat' || ct === 'bps'
   return {
     name: a.Name ?? '',
     template_id: String(a.TemplateID ?? ''),
-    // Codex 不可设置 BaseURL（SDK 默认端点）
-    base_url: codex ? null : (a.BaseURL ?? null),
+    base_url: fixedEndpoint ? null : (a.BaseURL ?? null),
     upstream_key: a.UpstreamKey ?? '',
     max_concurrency: String(a.MaxConcurrency ?? 8),
     group_ids: [...groupIds],
@@ -101,8 +101,10 @@ export function fromAccountView(a: AccountView, groupIds: number[]): AccountValu
   }
 }
 
-// codex 上下文四分：mixed / unresolved 下 BaseURL 一律不发（批量无法按行分流）。
-export type TplCtx = 'codex' | 'nonCodex' | 'mixed' | 'unresolved'
+// 模板上下文：'codex' / 'bps' 都是 **provider 自带端点、账号不持有静态 key** 的类型
+// （投影期一律不发 upstream_key，BaseURL 强制 null）；mixed / unresolved 下
+// BaseURL 一律不发（批量无法按行分流）。
+export type TplCtx = 'codex' | 'bps' | 'nonCodex' | 'mixed' | 'unresolved'
 
 // 唯一投影：草稿 → AccountConfigPatch（创建与编辑共用）
 export function draftToPatch(
@@ -119,9 +121,9 @@ export function draftToPatch(
   // 不可空标量的 '' 是「用户清空了必填框」的非法瞬时值（校验层拦），投影里不发。
   if (d.name !== undefined && d.name.trim() !== '') p.name = d.name.trim()
   if (d.template_id !== undefined && d.template_id !== '') p.template_id = Number(d.template_id)
-  // base_url：codex 只在本批真可能改动模板/基址时强制 null（no-op 保存必须保持空补丁；
-  // 切模板到 codex 的 PATCH 必然带 template_id）；mixed/unresolved 一律不发
-  if (ctx.tpl === 'codex') {
+  // base_url：codex/bps 只在本批真可能改动模板/基址时强制 null（no-op 保存必须保持
+  // 空补丁；切模板到固定端点类型的 PATCH 必然带 template_id）；mixed/unresolved 一律不发
+  if (ctx.tpl === 'codex' || ctx.tpl === 'bps') {
     if (d.template_id !== undefined || d.base_url !== undefined) p.base_url = null
   } else if (ctx.tpl === 'nonCodex' && d.base_url !== undefined) {
     if (d.base_url === null) p.base_url = null
@@ -133,8 +135,9 @@ export function draftToPatch(
       if (u !== '') p.base_url = u
     }
   }
-  // upstream_key：codex 账号不用它（切模板后草稿里的旧值不写）；纯空白 = 未表态
-  if (d.upstream_key !== undefined && ctx.tpl !== 'codex') {
+  // upstream_key：codex/bps 账号不用它（切模板后草稿里的旧值不写，BPS 非空会被后端
+  // 拒绝）；纯空白 = 未表态
+  if (d.upstream_key !== undefined && ctx.tpl !== 'codex' && ctx.tpl !== 'bps') {
     const k = d.upstream_key.trim()
     if (k !== '') p.upstream_key = k
   }

@@ -281,6 +281,12 @@ describe('fromAccountView：回显 → 基线', () => {
     assert.equal(base.base_url, null)
   })
 
+  it('bps 模板的 base_url 同样恒为 null（BPS 端点归 SDK，账号侧不可配）', () => {
+    const base = fromAccountView({ ...view, Template: { CredentialType: 'bps' } }, [])
+    assert.equal(base.base_url, null)
+    assert.equal(base.upstream_key, 'sk-x', '回显原值；投影期不发送')
+  })
+
   it('不改调用方的分组数组（拷贝语义）', () => {
     const ids = [5]
     const base = fromAccountView(view, ids)
@@ -402,16 +408,44 @@ describe('accounts.tsx：接线形状', () => {
     assert.match(page, /maxConcurrencyInvalid \|\|/)
   })
 
-  // 非 codex 的 key 必填与按钮同一判据（trim 后为空）：投影把纯空白当未表态丢掉，
-  // 若只判原文非空，创建会打到后端 400（service/account.go 要求非空）。
-  it('upstream_key 必填判据 trim 后比较（submit 与按钮一致）', () => {
-    assert.match(page, /if \(!isCodexCt\(ct\) && !view\.upstream_key\.trim\(\)\) return/)
-    assert.match(page, /!isCodexCt\(effectiveSelCt\) && !view\.upstream_key\.trim\(\)/)
+  // 只有静态 key 类型要求 upstream_key；codex/bps 的凭据在 account_ext，账号行
+  // 必须为空（BPS 非空会被 service 拒绝）。按钮与 submit 同一判据、trim 后比较。
+  it('upstream_key 必填判据只覆盖静态 key 类型（submit 与按钮一致）', () => {
+    assert.match(page, /if \(usesStaticKeyCt\(ct\) && !view\.upstream_key\.trim\(\)\) return/)
+    assert.match(page, /\(usesStaticKeyCt\(effectiveSelCt\) && !view\.upstream_key\.trim\(\)\) \|\|/)
+    // 反例：不能用「非 codex 一律必填」——那会把 BPS 账号永久锁死保存按钮。
+    assert.equal(/!isCodexCt\(ct\) && !view\.upstream_key/.test(page), false)
   })
 
-  it('页面把模板上下文交给投影（单条按选中模板二分，批量四分）', () => {
-    assert.match(page, /tpl: isSelCodex \? 'codex' : 'nonCodex',/)
+  // BPS 账号的行内凭据由登录维护：编辑页不得出现 Upstream Key/BaseURL 输入，
+  // 通用「新建」也必须被拦下（service 拒绝通用 create）。
+  it('BPS 编辑页隐藏静态凭据输入，且通用新建被拦下', () => {
+    assert.match(page, /isBpsCt\(effectiveSelCt\) \? \(\n\s*<p/)
+    assert.match(page, /accounts\.bpsCredentialsHint/)
+    assert.match(page, /accounts\.bpsCreateHint/)
+    assert.match(page, /accounts\.bpsBaseUrlHidden/)
+    assert.match(page, /!\(editing\) && isBpsCt\(effectiveSelCt\)|\(!editing && isBpsCt\(effectiveSelCt\)\)/)
+  })
+
+  // 模板选择不得跨 BPS 边界：BPS 与 Codex/静态 key 的账号行结构不同，
+  // 跨边界换模板会留下与模板矛盾的 ext 行（repository 对批量 to/from BPS 直接 400）。
+  it('模板选择不跨 BPS 边界（新建不提供 BPS，批量按选中行收窄）', () => {
+    assert.match(page, /templates\.filter\(tp => isBpsCt\(tp\.CredentialType\) === isBpsCt\(editingCt\)\)/)
+    assert.match(page, /templates\.filter\(tp => isBpsCt\(tp\.CredentialType\) === batchAllBps\)/)
+    assert.match(page, /templates\.filter\(tp => !isBpsCt\(tp\.CredentialType\)\)/)
+  })
+
+  it('页面把模板上下文交给投影（单条按选中模板分流，批量四分）', () => {
+    assert.match(page, /tpl: tplCtxOf\(effectiveSelCt, isSelUnresolved\),/)
     assert.match(page, /tpl: batchTplCtx,/)
+  })
+
+  // BPS 与 codex 同属「provider 自带端点、账号不持有静态 key」：投影期一律不发
+  // upstream_key，BaseURL 强制 null（后端对 BPS 的非空 key/base_url 直接 400）。
+  it("tpl: 'bps' ⇒ 不发 upstream_key，BaseURL 落 null", () => {
+    assert.deepEqual(draftToPatch({ upstream_key: 'sk-x', base_url: 'https://evil.example' }, { ...ctx, tpl: 'bps' }), { base_url: null })
+    assert.deepEqual(draftToPatch({ template_id: '7', base_url: 'x' }, { ...ctx, tpl: 'bps' }), { template_id: 7, base_url: null })
+    assert.deepEqual(draftToPatch({}, { ...ctx, tpl: 'bps' }), {}, 'no-op 保存必须保持空补丁')
   })
 
   // codex 凭据回显是 effect 驱动的子状态（spec §3 的非目标），但它同样会被 structural
@@ -465,14 +499,14 @@ describe('accounts.tsx：批量面接线形状', () => {
     assert.equal(/enabled:\s*'all'/.test(page), false)
   })
 
-  it('isBatchCodex 只作 UI 判据（声明 + 三处控件），不再参与投影分支', () => {
-    assert.equal(page.match(/\bisBatchCodex\b/g)?.length, 4)
-    assert.equal(/if \(!isBatchCodex\)/.test(page), false)
+  it('isBatchFixedEndpoint 只作 UI 判据（声明 + 三处控件），不再参与投影分支', () => {
+    assert.equal(page.match(/\bisBatchFixedEndpoint\b/g)?.length, 4)
+    assert.equal(/if \(!isBatchFixedEndpoint\)/.test(page), false)
   })
 
   it('上下文四分：mixed / unresolved 存在，且 BaseURL 真表态时就地拒绝', () => {
     const ctxBody = fnBody(page, 'const batchTplCtx')
-    for (const s of ['codex', 'nonCodex', 'mixed', 'unresolved']) {
+    for (const s of ['codex', 'bps', 'nonCodex', 'mixed', 'unresolved']) {
       assert.match(ctxBody, new RegExp(`return '${s}'`), `batchTplCtx 缺 ${s} 分支`)
     }
     assert.match(batch, /batchTplCtx === 'mixed'/)
