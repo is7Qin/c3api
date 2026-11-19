@@ -319,7 +319,13 @@ func TestBPSModelsUnderWSTransport(t *testing.T) {
 func TestBPSDropsUnsupportedParams(t *testing.T) {
 	var got []byte
 	eg := egress.NewPool(&http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		got, _ = io.ReadAll(req.Body)
+		if strings.HasSuffix(req.URL.Path, "/responses") {
+			body, rerr := io.ReadAll(req.Body)
+			if rerr != nil {
+				t.Errorf("read upstream body: %v", rerr)
+			}
+			got = body
+		}
 		return bpsHTTPResponse(), nil
 	})}).Direct()
 	adapter := NewBPS(bpsRedisClient(t))
@@ -341,4 +347,5 @@ func TestBPSDropsUnsupportedParams(t *testing.T) {
 		require.False(t, ok, "unsupported top-level %q must be dropped: %.500s", banned, string(got))
 	}
 	require.Contains(t, upstream, "model")
+	require.Contains(t, upstream, "input")
 }

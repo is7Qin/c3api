@@ -72,13 +72,14 @@ func isBPSLocalReject(err error) bool {
 // bpsStripContinuation removes previous_response_id from a request selected for a
 // BPS account. BPS has no server-side continuation (the SDK drops the field
 // anyway); removing it here keeps a later failover to a non-BPS account from
-// forwarding an id that was never resolved. sjson deletes one occurrence, so a
-// duplicated key is removed in a bounded loop.
+// forwarding an id that was never resolved. Duplicates are rejected at ingress
+// (previous_response_id is in sensitiveBodyKeys); the capped loop is defence in
+// depth so a caller that bypasses ingress cannot turn this into an O(n²) scan.
 func bpsStripContinuation(sel *scheduler.Selection, body []byte) []byte {
 	if sel == nil || !sel.CredentialType.IsBPS() {
 		return body
 	}
-	for gjson.GetBytes(body, "previous_response_id").Exists() {
+	for i := 0; i < 2 && gjson.GetBytes(body, "previous_response_id").Exists(); i++ {
 		next, err := sjson.DeleteBytes(body, "previous_response_id")
 		if err != nil || len(next) >= len(body) {
 			break
