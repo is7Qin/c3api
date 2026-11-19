@@ -978,7 +978,32 @@ export default {
       "tokens": "总 Tokens",
       "cost": "总费用"
     },
-    "columnSettings": "列设置"
+    "columnSettings": "列设置",
+    "chain": {
+      "open": "查看请求链",
+      "title": "请求链",
+      "coverage": "三源合并：未交付的失败每次一行（attempt_logs / err_logs），成功与已交付在 usage_logs / err_logs；没有 usage 行不等于失败——请求可能仍在进行中，或明细已被采样丢弃（见丢弃计数）。",
+      "window": "窗口 {{from}} – {{to}}（只覆盖最近 7 天）",
+      "sourceAttempt": "尝试",
+      "sourceErr": "错误",
+      "sourceUsage": "终态",
+      "sourceUnknown": "未知来源",
+      "ordinalUnknown": "无序号",
+      "account": "账号",
+      "lane": "通道",
+      "format": "格式",
+      "status": "状态",
+      "outcome": "结局",
+      "errorType": "错误",
+      "commitState": "交付",
+      "latency": "耗时",
+      "emptyTitle": "窗口内没有明细",
+      "emptyDesc": "尝试明细只覆盖 failover 循环可见的失败；成功请求只留 usage 终态行。",
+      "errorDesc": "加载失败：{{message}}",
+      "truncated": "明细已截断：至少一个来源超过行数上限（不静默丢弃，但链不完整）",
+      "samplingHint": "明细为采样面，历史窗口可能有丢弃。",
+      "sampling": "落盘 worker 已丢弃 {{count}} 行"
+    }
   },
   "list": {
     "search": "搜索名称",

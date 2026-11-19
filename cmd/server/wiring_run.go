@@ -35,6 +35,7 @@ import (
 	"github.com/is7qin/c3api/internal/server"
 	"github.com/is7qin/c3api/internal/snapshot"
 	"github.com/is7qin/c3api/internal/supplier"
+	"github.com/is7qin/c3api/internal/usage"
 	"github.com/is7qin/c3api/internal/worker"
 	"github.com/redis/go-redis/v9"
 
@@ -73,7 +74,7 @@ var workerOrder = []workerSlot{
 	// attemptlogW 紧跟在 errlogW **之后**登记 ⇒ 停机时它先于 errlogW 停（反向排空）。
 	// 理由：两张表是同一次失败的两个粒度——attempt_logs 记每一跳，err_logs 记
 	// 终态 + 那一跳的 ordinal。让更粗、更重要的终态面活得比逐跳明细久一点：
-	// 倒过来（先停 errlogW）会留下「有尝试明细、没终态」的请求，S3 只能猜它最终
+	// 倒过来（先停 errlogW）会留下「有尝试明细、没终态」的请求，链视图只能猜它最终
 	// 怎么了；现在的残留（有终态、少了某跳）仍能从 ordinal 的缺口看出缺哪一跳。
 	// 两者都是各自 Close 排空，所以这只是停机预算真被砍断时的取值。
 	{name: "attemptlogW"},
@@ -208,6 +209,17 @@ type appRuntime struct {
 	closeWS      func()
 	waitInflight func(ctx context.Context)
 	tail         func(ctx context.Context)
+}
+
+// attemptDropCounter 把 attempt_logs worker 收窄成 handler 要的「读丢弃总数」
+// 的函数值（见 handler.OpsOptions.AttemptSampling）。nil ⇒ nil 函数值 = 未装配：
+// 取方法值这一步是唯一的 nil 指针风险点（w.Dropped 会捕获一个 nil 接收者，
+// 调用时解引用即 panic），所以在这里、且只在这里判一次空。
+func attemptDropCounter(w *usage.AttemptLogWorker) func() int64 {
+	if w == nil {
+		return nil
+	}
+	return w.Dropped
 }
 
 // buildRuntime 装配阶段 6 的构造部分（handler/router/HTTP server/worker plan）。
@@ -381,6 +393,10 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 		Log:           log,          // fan-out 未知上游错误 Warn
 		Snapshots:     func() []handler.SnapshotState { return snapshotStates(snapReg.Status()) },
 		InFlightUsers: auth.InFlightUsers,
+		// /ops/attempts/{request_id} 的 sampling 段：只注入「读丢弃总数」这一件事
+		// （函数值），不把整个 worker 交给 handler。worker 恒非 nil（健康阶段构造
+		// 失败即 fatalf），仍显式判空以保留「未装配 ⇒ 省略字段」的语义。
+		AttemptSampling: attemptDropCounter(attemptlogW),
 		BillingAlerts: func() handler.BillingAlerts {
 			// 调用时读字段（不是注册时快照）：billing 关闭时字段恒 nil = 端点空值，
 			// 开启时字段在 billing 阶段已就位。

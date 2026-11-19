@@ -15,7 +15,9 @@ import { DateRangePicker } from '@/components/date-range-picker'
 import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuGroup, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, CommitStateBadge, isStreamBroken, fmtDuration } from '@/components/log-display'
+import { ERROR_TYPES, FORMAT_LABELS, ErrorTypeBadge, CommitStateBadge, RequestIdCell, isStreamBroken, fmtDuration } from '@/components/log-display'
+import { AttemptChainDialog, attemptChainTarget } from '@/components/attempt-chain-dialog'
+import type { AttemptChainTarget } from '@/components/attempt-chain-dialog'
 import { LogPagination } from '@/components/log-pagination'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { ScrollArea } from '@/components/ui/scroll-area'
@@ -85,12 +87,13 @@ const FORMAT_ALL = '__all__'
 const STREAM_ALL = '__all__'
 const STREAM_ONLY = 'stream_failures'
 
-// 可隐藏列（时间/请求 ID 始终可见，参考 sub2api 使用明细的列设置模式）；
-// BillingTier/AboveHit/Overdraft 已并入 Tokens 悬停窗（不再独立列）。
+// 可隐藏列（时间始终可见，参考 sub2api 使用明细的列设置模式）；BillingTier/AboveHit/
+// Overdraft 已并入 Tokens 悬停窗（不再独立列）。requestId 是**请求链入口**：它进了
+// 可选列清单，但用户已保存的隐藏集合里没有这个键 ⇒ 默认可见（零迁移）。
 // 隐藏选择持久化到 localStorage（logs-hidden-columns）。用量/错误两 Tab 列集不同。
 const HIDDEN_STORAGE_KEY = 'logs-hidden-columns'
-const USAGE_HIDDENABLE_COLS = ['user', 'key', 'group', 'account', 'model', 'format', 'errorType', 'commitState', 'cost', 'latency', 'tokens'] as const
-const ERR_HIDDENABLE_COLS = ['user', 'key', 'group', 'account', 'model', 'format', 'statusCode', 'errorType', 'commitState', 'errorMessage', 'latency', 'billingTier'] as const
+const USAGE_HIDDENABLE_COLS = ['requestId', 'user', 'key', 'group', 'account', 'model', 'format', 'errorType', 'commitState', 'cost', 'latency', 'tokens'] as const
+const ERR_HIDDENABLE_COLS = ['requestId', 'user', 'key', 'group', 'account', 'model', 'format', 'statusCode', 'errorType', 'commitState', 'errorMessage', 'latency', 'billingTier'] as const
 
 function loadHiddenCols(): Set<string> {
   try {
@@ -340,6 +343,23 @@ export default function Logs() {
   }
   const isColVisible = (key: string) => !hiddenCols.has(key)
 
+  // 请求链对话框（spec 2026-11-18 §4bis：入口只有这一列）。窗口以行的 created_at
+  // 为中心 ±1h，故目标同时带 requestID 与 created_at。
+  const [chainTarget, setChainTarget] = useState<AttemptChainTarget | null>(null)
+  const openChain = (requestID: string, createdAt?: string) =>
+    setChainTarget(attemptChainTarget(requestID, createdAt ?? new Date().toISOString()))
+  // 请求链取数（key 含 request_id + 窗口）：无目标 ⇒ disabled，不发请求。
+  // 窗口由目标随身携带（attemptChainTarget 打开时算一次），key 与查询参数同源。
+  const chainQ = useQuery({
+    queryKey: ['attempt-chain', chainTarget?.requestID, chainTarget?.from, chainTarget?.to],
+    queryFn: () => {
+      if (!chainTarget) throw new Error('attempt chain: no target')
+      return api.getAttemptChain(chainTarget.requestID, { from: chainTarget.from, to: chainTarget.to })
+    },
+    enabled: !!chainTarget,
+    staleTime: 30_000,
+  })
+
   // 「流中断」筛选（客户端派生，spec §5.2）：commit_state ∈ 已交付失败 ∧
   // error_type ≠ none；commit_state = null（未知）不算流中断。
   const visibleRows = filters.stream_broken ? rows.filter(r => isStreamBroken(r as UsageLog | ErrLog)) : rows
@@ -537,7 +557,7 @@ export default function Logs() {
           <Table containerClassName="overflow-x-visible border-0 shadow-none rounded-none bg-transparent backdrop-blur-none">
             <TableHeader className="!bg-transparent">
               <TableRow>
-                <Th>{t('logs.table.requestId')}</Th>
+                {isColVisible('requestId') && <Th>{t('logs.table.requestId')}</Th>}
                 <Th>{t('logs.table.createdAt')}</Th>
                 {isColVisible('user') && <Th className="text-right">{t('logs.table.user')}</Th>}
                 {isColVisible('key') && <Th className="text-right">{t('logs.table.key')}</Th>}
@@ -562,9 +582,11 @@ export default function Logs() {
               {tab === 'usage'
                 ? (visibleRows as UsageLog[]).map(l => (
                 <TableRow key={l.ID}>
-                  <TableCell className="max-w-36">
-                    <span className="block truncate font-mono text-xs text-muted-foreground" title={l.RequestID}>{l.RequestID ?? '—'}</span>
-                  </TableCell>
+                  {isColVisible('requestId') && (
+                    <TableCell className="max-w-36">
+                      <RequestIdCell id={l.RequestID} onOpen={id => openChain(id, l.CreatedAt)} />
+                    </TableCell>
+                  )}
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(l.CreatedAt)}</TableCell>
                   {/* 鉴权归属：用户(邮箱)/Key；组/账号显示名称，未命中回退 #id（0 = 无鉴权） */}
                   {isColVisible('user') && (
@@ -752,9 +774,11 @@ export default function Logs() {
                 ))
                 : (visibleRows as ErrLog[]).map(l => (
                 <TableRow key={l.ID}>
-                  <TableCell className="max-w-36">
-                    <span className="block truncate font-mono text-xs text-muted-foreground" title={l.RequestID}>{l.RequestID ?? '—'}</span>
-                  </TableCell>
+                  {isColVisible('requestId') && (
+                    <TableCell className="max-w-36">
+                      <RequestIdCell id={l.RequestID} onOpen={id => openChain(id, l.CreatedAt)} />
+                    </TableCell>
+                  )}
                   <TableCell className="text-xs text-muted-foreground whitespace-nowrap">{formatDateTime(l.CreatedAt)}</TableCell>
                   {/* 鉴权归属：用户(邮箱)/Key；组/账号显示名称，未命中回退 #id（0 = 无鉴权） */}
                   {isColVisible('user') && (
@@ -852,6 +876,9 @@ export default function Logs() {
         />
         </>
       )}
+
+      {/* 请求链对话框：关闭即清空目标（受控 open=!!target）。 */}
+      <AttemptChainDialog target={chainTarget} q={chainQ} onOpenChange={open => { if (!open) setChainTarget(null) }} />
     </div>
   )
 }

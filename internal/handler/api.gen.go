@@ -37,6 +37,13 @@ const (
 	UpstreamUnavailable AccountUsageItemUpstreamError = "upstream_unavailable"
 )
 
+// Defines values for AttemptChainSource.
+const (
+	AttemptChainSourceAttempt AttemptChainSource = "attempt"
+	AttemptChainSourceErr     AttemptChainSource = "err"
+	AttemptChainSourceUsage   AttemptChainSource = "usage"
+)
+
 // Defines values for BalanceLogSource.
 const (
 	AdminAdjust   BalanceLogSource = "admin_adjust"
@@ -832,6 +839,72 @@ type AdminTempBalancesResponse struct {
 	Total int64                 `json:"total"`
 }
 
+// AttemptChainHop defines model for AttemptChainHop.
+type AttemptChainHop struct {
+	// AccountId 上游账号；0 = 无归属（本地拒绝行）
+	AccountId int64 `json:"account_id"`
+
+	// CommitState 交付状态（与日志行同义）；null = 未知
+	CommitState *string   `json:"commit_state"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	// ErrorMessage 错误文本（写点已截断 500）；null = 无
+	ErrorMessage *string `json:"error_message"`
+
+	// ErrorType domain.Err* 词表；空 = 无
+	ErrorType string `json:"error_type"`
+
+	// Format 请求格式（与 usage_logs.format 同词表；空 = 该源无值）
+	Format string `json:"format"`
+
+	// Lane 调度 lane（仅 attempt_logs 有；其余源 = 空串）
+	Lane      string `json:"lane"`
+	LatencyMs int64  `json:"latency_ms"`
+
+	// Ordinal 尝试序号（0-based 语义 = scheduler.Attempt.Ordinal，从 1 起）；null = 该行没有序号。**允许空洞**：不得按最大值反推尝试次数
+	Ordinal *int `json:"ordinal"`
+
+	// OrdinalUnknown true = 这一跳没有 attempt 语义（err_logs 里本地拒绝/已交付失败的行）
+	OrdinalUnknown bool `json:"ordinal_unknown"`
+
+	// Outcome attempt_logs 的结局 token（success/429/5xx/network/4xx/error/client_cancel）；其余源 = 空串
+	Outcome string `json:"outcome"`
+
+	// Source attempt = attempt_logs（failover 循环可见的失败）；err = err_logs（终态错误/本地拒绝）；usage = usage_logs（成功/已交付的请求级终态）
+	Source AttemptChainSource `json:"source"`
+
+	// StatusCode HTTP 状态（0 = 未拿到响应，或该源没有此列）
+	StatusCode int `json:"status_code"`
+}
+
+// AttemptChainResponse defines model for AttemptChainResponse.
+type AttemptChainResponse struct {
+	// From 本次实际使用的窗口下界（缺省填充后回显）
+	From time.Time `json:"from"`
+
+	// Hops 链行（ordinal 升序；usage 终态恒在最后）；空链 = []
+	Hops      []AttemptChainHop `json:"hops"`
+	RequestId string            `json:"request_id"`
+
+	// Sampling 明细面的采样诚实字段（不要 `sampled: bool`——进程级计数回答不了「这条请求是否被丢过」）
+	Sampling *AttemptChainSampling `json:"sampling,omitempty"`
+
+	// To 本次实际使用的窗口上界（不含）
+	To time.Time `json:"to"`
+
+	// Truncated true = 至少一个来源超过 128 行被截断（不静默截断）
+	Truncated bool `json:"truncated"`
+}
+
+// AttemptChainSampling 明细面的采样诚实字段（不要 `sampled: bool`——进程级计数回答不了「这条请求是否被丢过」）
+type AttemptChainSampling struct {
+	// DroppedTotal attempt_logs 落盘 worker 的丢弃总数（队列满/落库失败/停机截断之和）；>0 ⇒ 明细为采样面，历史窗口可能有丢弃
+	DroppedTotal int64 `json:"dropped_total"`
+}
+
+// AttemptChainSource attempt = attempt_logs（failover 循环可见的失败）；err = err_logs（终态错误/本地拒绝）；usage = usage_logs（成功/已交付的请求级终态）
+type AttemptChainSource string
+
 // BalanceLog defines model for BalanceLog.
 type BalanceLog struct {
 	// Amount 变动额 USD（有符号：正=增加/负=减少；1 USD = 100,000 毫分）
@@ -1128,7 +1201,7 @@ type ErrLog struct {
 	KeyID     *int64  `json:"KeyID,omitempty"`
 	LatencyMS *int64  `json:"LatencyMS,omitempty"`
 	Model     *string `json:"Model,omitempty"`
-	RequestID *string `json:"RequestID,omitempty"`
+	RequestID string  `json:"RequestID"`
 
 	// StatusCode 错误状态码（完整错误面；0 = 连接级）
 	StatusCode *int   `json:"StatusCode,omitempty"`
@@ -2722,8 +2795,8 @@ type UsageLog struct {
 	PricePerCallMillis *int64 `json:"PricePerCallMillis"`
 
 	// RawCost 原始成本（毫分，乘倍率前——免费组 cost=0 但 raw 有值，实际消耗口径）；bill 未装配/无价防御路径恒 0
-	RawCost   *int64  `json:"RawCost,omitempty"`
-	RequestID *string `json:"RequestID,omitempty"`
+	RawCost   *int64 `json:"RawCost,omitempty"`
+	RequestID string `json:"RequestID"`
 
 	// TTFTMS 首 token 时间毫秒（流式首 chunk 采集）；非流式/失败/无首 token 路径 = null
 	TTFTMS      *int64 `json:"TTFTMS"`
@@ -2976,6 +3049,12 @@ type GetKeysParams struct {
 
 // GetKeysParamsOrder defines parameters for GetKeys.
 type GetKeysParamsOrder string
+
+// GetAttemptChainParams defines parameters for GetAttemptChain.
+type GetAttemptChainParams struct {
+	From *time.Time `form:"from,omitempty" json:"from,omitempty"`
+	To   *time.Time `form:"to,omitempty" json:"to,omitempty"`
+}
 
 // GetOrdersParams defines parameters for GetOrders.
 type GetOrdersParams struct {
@@ -3610,6 +3689,9 @@ type ServerInterface interface {
 	// 更新邮件模板（空 body_text 还原内置默认=删行）
 	// (PUT /mail/templates/{purpose})
 	PutMailTemplate(w http.ResponseWriter, r *http.Request, purpose string)
+	// 单请求的尝试链（attempt_logs / err_logs / usage_logs 三源合并）
+	// (GET /ops/attempts/{request_id})
+	GetAttemptChain(w http.ResponseWriter, r *http.Request, requestId string, params GetAttemptChainParams)
 	// 运维观测（worker 状态 + 快照注册表）
 	// (GET /ops/workers)
 	GetOpsWorkers(w http.ResponseWriter, r *http.Request)
@@ -4007,6 +4089,12 @@ func (_ Unimplemented) GetMailTemplates(w http.ResponseWriter, r *http.Request) 
 // 更新邮件模板（空 body_text 还原内置默认=删行）
 // (PUT /mail/templates/{purpose})
 func (_ Unimplemented) PutMailTemplate(w http.ResponseWriter, r *http.Request, purpose string) {
+	w.WriteHeader(http.StatusNotImplemented)
+}
+
+// 单请求的尝试链（attempt_logs / err_logs / usage_logs 三源合并）
+// (GET /ops/attempts/{request_id})
+func (_ Unimplemented) GetAttemptChain(w http.ResponseWriter, r *http.Request, requestId string, params GetAttemptChainParams) {
 	w.WriteHeader(http.StatusNotImplemented)
 }
 
@@ -5386,6 +5474,50 @@ func (siw *ServerInterfaceWrapper) PutMailTemplate(w http.ResponseWriter, r *htt
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.PutMailTemplate(w, r, purpose)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// GetAttemptChain operation middleware
+func (siw *ServerInterfaceWrapper) GetAttemptChain(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+
+	// ------------- Path parameter "request_id" -------------
+	var requestId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "request_id", chi.URLParam(r, "request_id"), &requestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "request_id", Err: err})
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetAttemptChainParams
+
+	// ------------- Optional query parameter "from" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "from", r.URL.Query(), &params.From)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "from", Err: err})
+		return
+	}
+
+	// ------------- Optional query parameter "to" -------------
+
+	err = runtime.BindQueryParameter("form", true, false, "to", r.URL.Query(), &params.To)
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "to", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetAttemptChain(w, r, requestId, params)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -8159,6 +8291,9 @@ func HandlerWithOptions(si ServerInterface, options ChiServerOptions) http.Handl
 	})
 	r.Group(func(r chi.Router) {
 		r.Put(options.BaseURL+"/mail/templates/{purpose}", wrapper.PutMailTemplate)
+	})
+	r.Group(func(r chi.Router) {
+		r.Get(options.BaseURL+"/ops/attempts/{request_id}", wrapper.GetAttemptChain)
 	})
 	r.Group(func(r chi.Router) {
 		r.Get(options.BaseURL+"/ops/workers", wrapper.GetOpsWorkers)

@@ -390,7 +390,7 @@ func toAPIUsageLog(l *domain.UsageLog) UsageLog {
 	et := ErrorType(l.ErrorType)
 	return UsageLog{
 		ID:                       &l.ID,
-		RequestID:                &l.RequestID,
+		RequestID:                l.RequestID,
 		ClientIP:                 &l.ClientIP,
 		GroupID:                  &l.GroupID,
 		AccountID:                &l.AccountID,
@@ -432,7 +432,7 @@ func toAPIErrLog(l *domain.UsageLog) ErrLog {
 	et := ErrorType(l.ErrorType)
 	e := ErrLog{
 		ID:           &l.ID,
-		RequestID:    &l.RequestID,
+		RequestID:    l.RequestID,
 		ClientIP:     &l.ClientIP,
 		GroupID:      &l.GroupID,
 		AccountID:    &l.AccountID,

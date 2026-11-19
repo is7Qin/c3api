@@ -1972,6 +1972,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/ops/attempts/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 单请求的尝试链（attempt_logs / err_logs / usage_logs 三源合并）
+         * @description 三源合并，按 `(request_id, attempt_ordinal)` 去重：同一 attempt 同时落在
+         *     attempt_logs 与 err_logs 时**取 attempt 行**，err 行丢弃且**不回填**其独有
+         *     字段（两表列集不同，缝合会造出并不存在的行）。err 行 ordinal 为 NULL（本地
+         *     拒绝/已交付失败，没有 attempt 语义）时不参与去重，按时间排序并标
+         *     `ordinal_unknown`。usage_logs 行是请求级终态（每请求至多一条），永远保留
+         *     并排在最后。
+         *     排序：ordinal 升序（nil 视为「无序号」排在最前），并列按 created_at、再按
+         *     source（attempt < err < usage）。
+         *     **时间窗必须有**：缺失时默认 now ∓ 24h；from 必须早于 to；跨度上限 7 天
+         *     （明细保留期，超限 400 而不是静默裁剪）。`err_logs` 没有 request_id 索引，
+         *     该腿只能靠 created_at 窗口做分区裁剪 ⇒ 不支持「只给 request_id 全表扫」。
+         *     窗口内查不到 ⇒ 空链 200（不是 404）。每源至多 128 行，超限
+         *     `truncated: true`（绝不静默截断）。
+         *     覆盖边界：attempt_logs 只记 failover 循环可见的失败；成功/已交付与本地拒绝
+         *     的真值在 usage_logs / err_logs。
+         *     **不提供 `in_progress`**：耗尽/本地拒绝本来就没有 usage 行，靠「有无 usage」
+         *     反推「进行中」会在 err_logs 行被背压丢弃时说谎；「没有 usage 行」只说明请求
+         *     可能仍在进行中，或明细已被采样丢弃（见 `sampling.dropped_total`）。
+         */
+        get: operations["GetAttemptChain"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/supplier/overview": {
         parameters: {
             query?: never;
@@ -4397,7 +4434,7 @@ export interface components {
         UsageLog: {
             /** Format: int64 */
             ID?: number;
-            RequestID?: string;
+            RequestID: string;
             /** @description 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 */
             ClientIP?: string;
             /** Format: int64 */
@@ -4599,7 +4636,7 @@ export interface components {
         ErrLog: {
             /** Format: int64 */
             ID?: number;
-            RequestID?: string;
+            RequestID: string;
             /** @description 客户端 IP（CF-Connecting-IP / True-Client-IP / X-Real-IP 按序识别；无则 RemoteAddr 剥端口）；空 = 无 */
             ClientIP?: string;
             /** Format: int64 */
@@ -5124,6 +5161,67 @@ export interface components {
             snapshots: components["schemas"]["SnapshotState"][];
             /** Format: date-time */
             generated_at: string;
+        };
+        /**
+         * @description attempt = attempt_logs（failover 循环可见的失败）；err = err_logs（终态错误/本地拒绝）；usage = usage_logs（成功/已交付的请求级终态）
+         * @enum {string}
+         */
+        AttemptChainSource: "attempt" | "err" | "usage";
+        AttemptChainHop: {
+            source: components["schemas"]["AttemptChainSource"];
+            /** @description 尝试序号（0-based 语义 = scheduler.Attempt.Ordinal，从 1 起）；null = 该行没有序号。**允许空洞**：不得按最大值反推尝试次数 */
+            ordinal: number | null;
+            /** @description true = 这一跳没有 attempt 语义（err_logs 里本地拒绝/已交付失败的行） */
+            ordinal_unknown: boolean;
+            /**
+             * Format: int64
+             * @description 上游账号；0 = 无归属（本地拒绝行）
+             */
+            account_id: number;
+            /** @description 调度 lane（仅 attempt_logs 有；其余源 = 空串） */
+            lane: string;
+            /** @description 请求格式（与 usage_logs.format 同词表；空 = 该源无值） */
+            format: string;
+            /** @description HTTP 状态（0 = 未拿到响应，或该源没有此列） */
+            status_code: number;
+            /** @description attempt_logs 的结局 token（success/429/5xx/network/4xx/error/client_cancel）；其余源 = 空串 */
+            outcome: string;
+            /** @description domain.Err* 词表；空 = 无 */
+            error_type: string;
+            /** @description 交付状态（与日志行同义）；null = 未知 */
+            commit_state?: string | null;
+            /** @description 错误文本（写点已截断 500）；null = 无 */
+            error_message?: string | null;
+            /** Format: int64 */
+            latency_ms: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description 明细面的采样诚实字段（不要 `sampled: bool`——进程级计数回答不了「这条请求是否被丢过」） */
+        AttemptChainSampling: {
+            /**
+             * Format: int64
+             * @description attempt_logs 落盘 worker 的丢弃总数（队列满/落库失败/停机截断之和）；>0 ⇒ 明细为采样面，历史窗口可能有丢弃
+             */
+            dropped_total: number;
+        };
+        AttemptChainResponse: {
+            request_id: string;
+            /**
+             * Format: date-time
+             * @description 本次实际使用的窗口下界（缺省填充后回显）
+             */
+            from: string;
+            /**
+             * Format: date-time
+             * @description 本次实际使用的窗口上界（不含）
+             */
+            to: string;
+            /** @description 链行（ordinal 升序；usage 终态恒在最后）；空链 = [] */
+            hops: components["schemas"]["AttemptChainHop"][];
+            /** @description true = 至少一个来源超过 128 行被截断（不静默截断） */
+            truncated: boolean;
+            sampling?: components["schemas"]["AttemptChainSampling"];
         };
         /** @description 今日汇总（请求 timezone 时区日界，缺省 UTC；cost_usd/raw_cost_usd = 毫分 /1e5 → USD；TTFT 指标仅含首 token 流式请求样本，无样本 = 0） */
         OverviewSummary: {
@@ -9381,6 +9479,32 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WorkersResponse"];
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
+    GetAttemptChain: {
+        parameters: {
+            query?: {
+                from?: string;
+                to?: string;
+            };
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 请求链（hops 恒非 nil；窗口外 = 空链，不是 404） */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttemptChainResponse"];
                 };
             };
             default: components["responses"]["Error"];

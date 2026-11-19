@@ -61,6 +61,15 @@ type OpsOptions struct {
 	// /pricing/sync/preview 经构造直调（*pricing.SyncWorker 满足）；nil =
 	// 未装配 → 端点 500，与旧 service nil-fetcher 降级语义一致）。
 	PricingSync *pricing.SyncWorker
+	// AttemptSampling 尝试明细采样丢弃计数面（/api/admin/ops/attempts/{request_id}
+	// 的 sampling 段；实现 = (*usage.AttemptLogWorker).Dropped 的方法值）。handler
+	// 只需要丢弃总数，不要整个 worker（Enqueue/Close 属于写路径）。
+	//
+	// **函数值接缝**：零值 nil = 未装配 → 响应省略 sampling 字段（不伪造
+	// dropped_total: 0）；非 nil 即可安全直调。typed-nil 在这里不可表达——函数值
+	// 没有动态类型，判空即判「有没有人装配」；唯一的 nil 指针风险是取 w.Dropped
+	// 那一行，而装配处（cmd/server 的 attemptDropCounter）已用 w == nil 挡在前面。
+	AttemptSampling func() int64
 	// Log fan-out 未知上游错误 Warn（nil = 静默；生产由组合根注入）。
 	Log *logx.Logger
 }

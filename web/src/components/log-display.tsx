@@ -78,3 +78,32 @@ export const FORMAT_LABELS: Readonly<Record<string, string>> = {
 } satisfies Record<RequestFormat, string>
 
 export const fmtDuration = (ms: number): string => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${ms}ms`)
+
+// REQUEST_ID_SHOWN_CHARS 请求 ID 的短展示长度（spec 2026-11-18 §4bis：日志页两个
+// Tab 的 request_id 列都截断到约 12 字符 + title 全文）。request_id 可能带 "#rK"
+// 轮次后缀，截断只影响展示——点击传出去的永远是完整值。
+export const REQUEST_ID_SHOWN_CHARS = 12
+
+// RequestIdCell 日志页的 request_id 单元格。**它是请求链的唯一入口**（ops 页不设
+// 查询卡）：onOpen 缺省 = 纯文本（不可点），给了回调就是按钮。
+export function RequestIdCell({ id, onOpen }: { id?: string; onOpen?: (requestID: string) => void }) {
+  const { t } = useTranslation()
+  if (!id) return <span className="text-xs text-muted-foreground">—</span>
+  const short = id.length > REQUEST_ID_SHOWN_CHARS ? `${id.slice(0, REQUEST_ID_SHOWN_CHARS)}…` : id
+  if (!onOpen) {
+    return (
+      <span className="block truncate font-mono text-xs text-muted-foreground" title={id}>{short}</span>
+    )
+  }
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(id)}
+      title={id}
+      aria-label={t('logs.chain.open')}
+      className="block max-w-full truncate rounded-sm font-mono text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+    >
+      {short}
+    </button>
+  )
+}

@@ -282,6 +282,12 @@ export class ApiClient {
   getUsersTop = (p?: { top?: number }) => this.request<components['schemas']['UsersTopResponse']>('/users-top', { params: toQuery(p) })
   // —— 运维观测（/api/admin/ops/workers；管理端专属，契约 ops tag 生成类型）——
   getOpsWorkers = () => this.request<components['schemas']['WorkersResponse']>('/ops/workers')
+  // 请求链（spec 2026-11-18 §4/§4bis）：入口只有日志页的 request_id 单元格。
+  // request_id 可能带 "#rK" 轮次后缀 ⇒ **必须** encodeURIComponent（否则 # 之后
+  // 会被当成 fragment 丢掉，服务端拿到截断的 id 返回空链）。
+  // from/to 缺省 = 服务端 now ∓ 24h（跨度上限 7 天）；页面按行 created_at 给 ±1h。
+  getAttemptChain = (requestId: string, p?: { from?: string; to?: string }) =>
+    this.request<components['schemas']['AttemptChainResponse']>(`/ops/attempts/${encodeURIComponent(requestId)}`, { params: toQuery(p) })
   // —— 智能路由观测面（rollup 聚合 + 当前计划投影，只读）——
   getRoutingFlow = (p: { route: string; from: string; to: string; offset?: number; limit?: number; accounts?: number }) =>
     this.request<components['schemas']['RoutingFlowResponse']>('/routing/flow', { params: toQuery(p) })

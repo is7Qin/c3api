@@ -978,7 +978,32 @@ export default {
       "tokens": "Total tokens",
       "cost": "Total cost"
     },
-    "columnSettings": "Columns"
+    "columnSettings": "Columns",
+    "chain": {
+      "open": "Open request chain",
+      "title": "Request chain",
+      "coverage": "Three sources merged: every undelivered failure is one row (attempt_logs / err_logs); successes and delivered responses live in usage_logs / err_logs. No usage row does not mean failure — the request may still be in flight, or its detail may have been sampled away (see the drop count).",
+      "window": "Window {{from}} – {{to}} (last 7 days only)",
+      "sourceAttempt": "Attempt",
+      "sourceErr": "Error",
+      "sourceUsage": "Terminal",
+      "sourceUnknown": "Unknown source",
+      "ordinalUnknown": "No ordinal",
+      "account": "Account",
+      "lane": "Lane",
+      "format": "Format",
+      "status": "Status",
+      "outcome": "Outcome",
+      "errorType": "Error",
+      "commitState": "Delivery",
+      "latency": "Latency",
+      "emptyTitle": "No detail in this window",
+      "emptyDesc": "Attempt detail only covers failures visible to the failover loop; successful requests keep just the usage terminal row.",
+      "errorDesc": "Failed to load: {{message}}",
+      "truncated": "Truncated: at least one source exceeded its row cap (nothing is dropped silently, but the chain is incomplete)",
+      "samplingHint": "Detail is a sampled surface; older windows may have drops.",
+      "sampling": "{{count}} rows dropped by the writer"
+    }
   },
   "list": {
     "search": "Search name",

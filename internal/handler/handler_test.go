@@ -378,7 +378,7 @@ func TestGetErrLogs(t *testing.T) {
 	require.Len(t, body.Rows, 1)
 	e := body.Rows[0]
 	require.Equal(t, int64(7), *e.ID)
-	require.Equal(t, "r-e1", *e.RequestID)
+	require.Equal(t, "r-e1", e.RequestID)
 	require.Equal(t, 429, *e.StatusCode, "err_logs 完整错误面 status_code")
 	require.Equal(t, ErrorType("429"), *e.ErrorType)
 	require.Equal(t, msg, *e.ErrorMessage)

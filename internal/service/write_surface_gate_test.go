@@ -168,6 +168,7 @@ var allowedServiceMethods = []string{
 	"ProbeAccount",
 	"ProbePaymentAccount",
 	"ProbeProxy",
+	"QueryAttemptChain",
 	"QueryEntityTrend",
 	"QueryErrLogs",
 	"QueryRoutingFlow",

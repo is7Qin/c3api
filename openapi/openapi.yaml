@@ -2563,6 +2563,44 @@ paths:
               schema: { $ref: '#/components/schemas/WorkersResponse' }
         default:
           $ref: '#/components/responses/Error'
+  # 请求链（spec 2026-11-18 retry-observability §4/§4bis）：**入口只有日志页那一列**
+  # （/usage_logs、/err_logs 的 request_id 单元格），ops 页不设查询卡。
+  /ops/attempts/{request_id}:
+    get:
+      operationId: GetAttemptChain
+      tags: [ops]
+      summary: 单请求的尝试链（attempt_logs / err_logs / usage_logs 三源合并）
+      description: |
+        三源合并，按 `(request_id, attempt_ordinal)` 去重：同一 attempt 同时落在
+        attempt_logs 与 err_logs 时**取 attempt 行**，err 行丢弃且**不回填**其独有
+        字段（两表列集不同，缝合会造出并不存在的行）。err 行 ordinal 为 NULL（本地
+        拒绝/已交付失败，没有 attempt 语义）时不参与去重，按时间排序并标
+        `ordinal_unknown`。usage_logs 行是请求级终态（每请求至多一条），永远保留
+        并排在最后。
+        排序：ordinal 升序（nil 视为「无序号」排在最前），并列按 created_at、再按
+        source（attempt < err < usage）。
+        **时间窗必须有**：缺失时默认 now ∓ 24h；from 必须早于 to；跨度上限 7 天
+        （明细保留期，超限 400 而不是静默裁剪）。`err_logs` 没有 request_id 索引，
+        该腿只能靠 created_at 窗口做分区裁剪 ⇒ 不支持「只给 request_id 全表扫」。
+        窗口内查不到 ⇒ 空链 200（不是 404）。每源至多 128 行，超限
+        `truncated: true`（绝不静默截断）。
+        覆盖边界：attempt_logs 只记 failover 循环可见的失败；成功/已交付与本地拒绝
+        的真值在 usage_logs / err_logs。
+        **不提供 `in_progress`**：耗尽/本地拒绝本来就没有 usage 行，靠「有无 usage」
+        反推「进行中」会在 err_logs 行被背压丢弃时说谎；「没有 usage 行」只说明请求
+        可能仍在进行中，或明细已被采样丢弃（见 `sampling.dropped_total`）。
+      parameters:
+        - { name: request_id, in: path, required: true, schema: { type: string, minLength: 1, maxLength: 128, description: 请求 ID（连接级 UUID 或各轮派生的 `<base>#rK`） } }
+        - { name: from, in: query, required: false, schema: { type: string, format: date-time, description: 窗口下界（含）；缺省 = now − 24h } }
+        - { name: to, in: query, required: false, schema: { type: string, format: date-time, description: 窗口上界（不含）；缺省 = now + 24h；跨度上限 7 天 } }
+      responses:
+        '200':
+          description: 请求链（hops 恒非 nil；窗口外 = 空链，不是 404）
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AttemptChainResponse' }
+        default:
+          $ref: '#/components/responses/Error'
   /api/user/supplier/overview:
     get:
       operationId: GetSupplierOverview
@@ -5286,6 +5324,9 @@ components:
             resource_expires_at: { type: string, format: date-time, nullable: true }
     UsageLog:
       type: object
+      # request_id 是日志页打开「请求链」的唯一入口（spec 2026-11-18 §4bis）；
+      # 列在库里 NOT NULL，故契约层必填——前端不得为它写「缺失」分支。
+      required: [RequestID]
       properties:
         ID: { type: integer, format: int64 }
         RequestID: { type: string }
@@ -5376,6 +5417,9 @@ components:
     ErrLog:
       type: object
       description: 错误明细审计（err_logs 瘦表：拒绝 + 异常双轨；无 token/价格列）
+      # request_id 是日志页打开「请求链」的唯一入口（spec 2026-11-18 §4bis）；
+      # 列在库里 NOT NULL，故契约层必填。
+      required: [RequestID]
       properties:
         ID: { type: integer, format: int64 }
         RequestID: { type: string }
@@ -5896,6 +5940,51 @@ components:
           type: array
           items: { $ref: '#/components/schemas/SnapshotState' }
         generated_at: { type: string, format: date-time }
+    # 请求链（spec 2026-11-18 retry-observability §4bis）。三源同形的一跳 + 采样
+    # 诚实字段；usage 终态行按设计没有 ordinal（ordinal_unknown 保持 false——标它
+    # 只是给每一行都挂一个没有信息量的徽标）。
+    AttemptChainSource:
+      type: string
+      enum: [attempt, err, usage]
+      # 生成的名字必须带前缀：裸 Err/Usage/Attempt 会占住 handler 包的导出命名空间。
+      x-enum-varnames: [AttemptChainSourceAttempt, AttemptChainSourceErr, AttemptChainSourceUsage]
+      description: "attempt = attempt_logs（failover 循环可见的失败）；err = err_logs（终态错误/本地拒绝）；usage = usage_logs（成功/已交付的请求级终态）"
+    AttemptChainHop:
+      type: object
+      required: [source, ordinal, ordinal_unknown, account_id, lane, format, status_code, outcome, error_type, latency_ms, created_at]
+      properties:
+        source: { $ref: '#/components/schemas/AttemptChainSource' }
+        ordinal: { type: integer, nullable: true, description: "尝试序号（0-based 语义 = scheduler.Attempt.Ordinal，从 1 起）；null = 该行没有序号。**允许空洞**：不得按最大值反推尝试次数" }
+        ordinal_unknown: { type: boolean, description: "true = 这一跳没有 attempt 语义（err_logs 里本地拒绝/已交付失败的行）" }
+        account_id: { type: integer, format: int64, description: "上游账号；0 = 无归属（本地拒绝行）" }
+        lane: { type: string, description: "调度 lane（仅 attempt_logs 有；其余源 = 空串）" }
+        format: { type: string, description: "请求格式（与 usage_logs.format 同词表；空 = 该源无值）" }
+        status_code: { type: integer, description: "HTTP 状态（0 = 未拿到响应，或该源没有此列）" }
+        outcome: { type: string, description: "attempt_logs 的结局 token（success/429/5xx/network/4xx/error/client_cancel）；其余源 = 空串" }
+        error_type: { type: string, description: "domain.Err* 词表；空 = 无" }
+        commit_state: { type: string, nullable: true, description: "交付状态（与日志行同义）；null = 未知" }
+        error_message: { type: string, nullable: true, description: "错误文本（写点已截断 500）；null = 无" }
+        latency_ms: { type: integer, format: int64 }
+        created_at: { type: string, format: date-time }
+    AttemptChainSampling:
+      type: object
+      required: [dropped_total]
+      description: "明细面的采样诚实字段（不要 `sampled: bool`——进程级计数回答不了「这条请求是否被丢过」）"
+      properties:
+        dropped_total: { type: integer, format: int64, description: "attempt_logs 落盘 worker 的丢弃总数（队列满/落库失败/停机截断之和）；>0 ⇒ 明细为采样面，历史窗口可能有丢弃" }
+    AttemptChainResponse:
+      type: object
+      required: [request_id, from, to, hops, truncated]
+      properties:
+        request_id: { type: string }
+        from: { type: string, format: date-time, description: 本次实际使用的窗口下界（缺省填充后回显） }
+        to: { type: string, format: date-time, description: 本次实际使用的窗口上界（不含） }
+        hops:
+          type: array
+          items: { $ref: '#/components/schemas/AttemptChainHop' }
+          description: 链行（ordinal 升序；usage 终态恒在最后）；空链 = []
+        truncated: { type: boolean, description: "true = 至少一个来源超过 128 行被截断（不静默截断）" }
+        sampling: { $ref: '#/components/schemas/AttemptChainSampling' }
     # 管理端总览（spec 2026-08-14）：OverviewResponse 各段类型。
     OverviewSummary:
       type: object
