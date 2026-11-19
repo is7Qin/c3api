@@ -93,6 +93,16 @@ func TestBPSResponsesNeverFallsThroughStaticCaller(t *testing.T) {
 	require.Contains(t, w.Body.String(), "BPS responses unavailable")
 }
 
+// TestBPSDuplicateContinuationIDRejected previous_response_id 参与入口“重复即拒”
+// （单遍扫描），这是 bpsStripContinuation 循环上限的安全前提。
+func TestBPSDuplicateContinuationIDRejected(t *testing.T) {
+	dup := []byte(`{"model":"m","previous_response_id":"a","previous_response_id":"b"}`)
+	require.Equal(t, "previous_response_id", duplicateTopLevelKey(dup, sensitiveBodyKeys))
+	require.Empty(t, duplicateTopLevelKey([]byte(`{"model":"m","previous_response_id":"a"}`), sensitiveBodyKeys))
+	escaped := []byte(`{"model":"m","previous_\u0072esponse_id":"a","previous_response_id":"b"}`)
+	require.Equal(t, "previous_response_id", duplicateTopLevelKey(escaped, sensitiveBodyKeys), "escaped key must be detected")
+}
+
 // TestBPSContinuationSkipped BPS 没有服务端续接：选中 BPS 时删掉
 // previous_response_id（含重复键），非 BPS 原样保留。
 func TestBPSContinuationSkipped(t *testing.T) {

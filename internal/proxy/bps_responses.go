@@ -73,8 +73,9 @@ func isBPSLocalReject(err error) bool {
 // BPS account. BPS has no server-side continuation (the SDK drops the field
 // anyway); removing it here keeps a later failover to a non-BPS account from
 // forwarding an id that was never resolved. Duplicates are rejected at ingress
-// (previous_response_id is in sensitiveBodyKeys); the capped loop is defence in
-// depth so a caller that bypasses ingress cannot turn this into an O(n²) scan.
+// (previous_response_id is in sensitiveBodyKeys); the capped loop only covers a
+// caller that bypasses ingress — it is not a complete strip for arbitrary
+// callers, and the cap keeps a bypass from turning this into an O(n²) scan.
 func bpsStripContinuation(sel *scheduler.Selection, body []byte) []byte {
 	if sel == nil || !sel.CredentialType.IsBPS() {
 		return body
