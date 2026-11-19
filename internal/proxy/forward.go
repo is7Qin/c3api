@@ -974,7 +974,7 @@ var sensitiveBodyKeys = []string{"model", "stream"}
 // 前置：json.Valid + 根为 object（handleFormat 已保证）；这里只做单遍字节扫描，
 // 复用 strip_scan.go 的字符串/值跳过原语（零分配）。
 // keys 上限 64（uint64 位图）：超过即错判重复，属实现约束而非运行时分支——当前
-// 唯一调用点传 sensitiveBodyKeys（3 个键），扩容前必须同步改实现。
+// 唯一调用点传 sensitiveBodyKeys（2 个键），扩容前必须同步改实现。
 func duplicateTopLevelKey(body []byte, keys []string) string {
 	i := skipSpace(body, 0)
 	if i >= len(body) || body[i] != '{' {
