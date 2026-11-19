@@ -137,7 +137,8 @@ export function draftToPatch(
   }
   // upstream_key：codex/bps 账号不用它（切模板后草稿里的旧值不写，BPS 非空会被后端
   // 拒绝）；纯空白 = 未表态
-  if (d.upstream_key !== undefined && ctx.tpl !== 'codex' && ctx.tpl !== 'bps') {
+  // unresolved = 选中行不在当前页/模板未加载：无法判断是否 BPS，fail-closed 不发。
+  if (d.upstream_key !== undefined && ctx.tpl !== 'codex' && ctx.tpl !== 'bps' && ctx.tpl !== 'unresolved') {
     const k = d.upstream_key.trim()
     if (k !== '') p.upstream_key = k
   }

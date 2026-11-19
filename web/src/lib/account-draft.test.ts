@@ -519,6 +519,18 @@ describe('accounts.tsx：批量面接线形状', () => {
     // 纯空白不算表态：投影会丢弃它，gate 不能因此把用户堵在提示里。
     assert.match(batch, /const baseUrlExpressed = batchDraft\.base_url === null \|\| \(batchDraft\.base_url\?\.trim\(\) \?\? ''\) !== ''/)
     assert.match(batch, /accounts\.batchBaseUrlBlocked/)
+    // 选中行不在当前页时 ct 为 undefined：必须归为 unresolved（此前写死 false 会
+    // 落成 nonCodex，投影就把 base_url/upstream_key 发给未知行）。
+    assert.match(ctxBody, /ct == null \? 'unresolved' : tplCtxOf\(ct, false\)/)
+  })
+
+  it('unresolved 批量投影：BaseURL 与 Upstream Key 都不发', () => {
+    const p = draftToPatch(
+      { upstream_key: 'sk-x', base_url: 'https://x.example' },
+      { ...ctx, tpl: 'unresolved' },
+    )
+    assert.equal(Object.hasOwn(p, 'upstream_key'), false)
+    assert.equal(Object.hasOwn(p, 'base_url'), false)
   })
 
   it('批量最大并发：0/小数在提交口拦下（不发 400，用批量文案）', () => {

@@ -603,7 +603,12 @@ export default function Accounts() {
       const tpl = templates.find(p => String(p.ID) === batchDraft.template_id)
       return tplCtxOf(tpl?.CredentialType as string | undefined, tpl == null)
     }
-    const states = selected.map(id => tplCtxOf(batchCtOf(rows.find(r => r.ID === id)), false))
+    // 选中行可能不在当前页（翻页不清选择）：类型取不到就是 unresolved，不能
+    // 落成 nonCodex —— 那会让投影把 base_url/upstream_key 发给未知行。
+    const states = selected.map(id => {
+      const ct = batchCtOf(rows.find(r => r.ID === id))
+      return ct == null ? 'unresolved' : tplCtxOf(ct, false)
+    })
     if (states.length === 0) return 'nonCodex'
     if (states.some(s => s === 'unresolved')) return 'unresolved'
     if (states.every(s => s === 'codex')) return 'codex'
@@ -614,10 +619,13 @@ export default function Accounts() {
   // 固定端点类型（codex/bps）：BaseURL 由 SDK 拥有，批量面禁用输入与清空勾选。
   const isBatchFixedEndpoint = batchTplCtx === 'codex' || batchTplCtx === 'bps'
   // 批量里只要可能命中 BPS，Upstream Key 就必须禁用：BPS 行非空会被 400。
+  // 批量里只要可能命中 BPS，Upstream Key 就必须禁用：BPS 行非空会被 400。
   const batchHasBps = useMemo(
     () => batchTplCtx === 'bps' || selected.some(id => isBpsCt(batchCtOf(rows.find(r => r.ID === id)))),
     [batchTplCtx, selected, rows, batchCtOf],
   )
+  // 选中行不在当前页/类型未加载：无法判断是不是 BPS，Key 同样禁用（fail-closed）。
+  const batchUnresolved = batchTplCtx === 'unresolved'
   // 批量换模板同样不得跨 BPS 边界（repository 对 to/from BPS 直接 400）：
   // 只有「选中行全是 BPS」时才提供 BPS 模板，其余情况只提供非 BPS 模板。
   const batchAllBps = useMemo(
@@ -1642,8 +1650,8 @@ export default function Accounts() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-key">Upstream Key</Label>
-              <Input id="ba-key" type="password" value={batchDraft.upstream_key ?? ''} placeholder="sk-..." disabled={batchHasBps} onChange={e => { const v = e.target.value; if (v === '') clearBatch('upstream_key'); else updateBatch('upstream_key', v) }} />
-              {batchHasBps && <p className="text-xs text-muted-foreground">{t('accounts.batchBpsKeyDisabled')}</p>}
+              <Input id="ba-key" type="password" value={batchDraft.upstream_key ?? ''} placeholder="sk-..." disabled={batchHasBps || batchUnresolved} onChange={e => { const v = e.target.value; if (v === '') clearBatch('upstream_key'); else updateBatch('upstream_key', v) }} />
+              {(batchHasBps || batchUnresolved) && <p className="text-xs text-muted-foreground">{batchUnresolved && !batchHasBps ? t('accounts.batchUnresolvedKeyDisabled') : t('accounts.batchBpsKeyDisabled')}</p>}
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="ba-base-url">Base URL</Label>

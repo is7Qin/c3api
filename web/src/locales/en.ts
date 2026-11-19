@@ -554,6 +554,7 @@ export default {
     "batchBaseUrlHint": "Unchecked with empty input = unchanged; checked = clear (inherit template)",
     "batchBaseUrlFixedDisabled": "The target template uses an SDK-owned endpoint (Codex / BPS); BaseURL is never sent.",
     "batchBpsKeyDisabled": "The selection or target includes a BPS account: BPS does not use Upstream Key, so the batch leaves it unchanged.",
+    "batchUnresolvedKeyDisabled": "Some selected accounts are off the current page, so their type is unknown; Upstream Key is disabled to avoid writing it to a BPS row.",
     "batchBaseUrlBlocked": "Selected accounts have mixed or unresolved templates, so BaseURL cannot be set safely. Clear the field to submit the other changes.",
     "clearBaseUrl": "Clear base_url",
     "batchGroupLabel": "Groups",

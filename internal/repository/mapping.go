@@ -201,7 +201,9 @@ func toDomainTemplate(t *ent.Template) *domain.Template {
 	// （每模板一条，带 template_id + 原值）。
 	if len(t.Edges.Ext) > 0 {
 		ext := t.Edges.Ext[0]
-		if d.CredentialType.IsCodex() && ext.CredentialType == string(d.CredentialType) {
+		// 合并面 = 所有 Responses 原生 provider（codex 与 bps）。只认 codex 会让
+		// BPS 模板的 ws 停在 ext 行里：写面能存、数据面永远走 HTTP。
+		if (d.CredentialType.IsCodex() || d.CredentialType.IsBPS()) && ext.CredentialType == string(d.CredentialType) {
 			d.CodexResponsesTransport = domain.CodexResponsesTransport(ext.CodexResponsesTransport)
 		}
 	}

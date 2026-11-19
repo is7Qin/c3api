@@ -750,7 +750,7 @@ func (s *Scheduler) warnDirtyCodexTransports(accounts map[int64][]*domain.Accoun
 	for _, accs := range accounts {
 		for _, a := range accs {
 			tpl := a.Template
-			if tpl == nil || !tpl.CredentialType.IsCodex() || tpl.CodexResponsesTransport.Valid() {
+			if tpl == nil || (!tpl.CredentialType.IsCodex() && !tpl.CredentialType.IsBPS()) || tpl.CodexResponsesTransport.Valid() {
 				continue
 			}
 			if _, dup := seen[tpl.ID]; dup {

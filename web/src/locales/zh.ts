@@ -554,6 +554,7 @@ export default {
     "batchBaseUrlHint": "未勾选且留空 = 不变；勾选 = 清空（回继承模板）",
     "batchBaseUrlFixedDisabled": "所选模板使用 SDK 固定端点（Codex / BPS），不会发送 BaseURL。",
     "batchBpsKeyDisabled": "选中或目标包含 BPS 账号：BPS 不使用 Upstream Key，批量不改该字段。",
+    "batchUnresolvedKeyDisabled": "部分选中账号不在当前页、类型未加载：无法确认是否 BPS，Upstream Key 已禁用。",
     "batchBaseUrlBlocked": "选中账号的模板不一致或未解析，无法安全设置 BaseURL：清空该输入框后可提交其余字段。",
     "clearBaseUrl": "清空 base_url",
     "batchGroupLabel": "分组",

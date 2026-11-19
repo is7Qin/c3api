@@ -58,7 +58,7 @@ func isBPSLocalReject(err error) bool {
 // BPS has no server-side continuation, so the client must resend the full input.
 var errBPSContinuationUnsupported = &formatError{
 	status: http.StatusBadRequest,
-	msg:    "BPS does not support previous_response_id; send the full input history",
+	msg:    sdkbridge.BPSCodePreviousResponseUnsupported,
 }
 
 // bpsInvalidBody builds the client-facing 400 for a pre-dial rejection. The SDK

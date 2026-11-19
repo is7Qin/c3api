@@ -576,3 +576,37 @@ WHERE datname = current_database()
 	require.NoError(t, err)
 	require.Equal(t, domain.CodexResponsesTransportWS, got.CodexResponsesTransport)
 }
+
+// TestPGBPSTransportSnapshotMerge BPS 模板的出站传输必须进账号快照。合并门控曾只认
+// codex 类型：BPS 的 ext 行写面能存 ws（200），数据面却永远拿到零值 HTTP，而
+// `sdkbridge.Prepare` 只看快照里的 transport —— ws 开关对 BPS 完全失效。
+func TestPGBPSTransportSnapshotMerge(t *testing.T) {
+	repos := newPGReposShared(t)
+	ctx := context.Background()
+
+	tpl, err := repos.Templates.CreateTemplate(ctx, &domain.Template{
+		Name: "t-bps-transport", BaseURL: "",
+		CredentialType:   credential.TypeBPS,
+		SupportedFormats: []domain.RequestFormat{domain.FormatOpenAIResponses},
+		ModelMapping:     domain.ModelMapping{},
+	})
+	require.NoError(t, err)
+	g := seedPGGroup(t, repos, "g-bps-transport")
+	// BPS 账号不能走通用 CreateAccount（必须经 provider 事务）；本用例只关心快照
+	// 合并，直接落一行账号，避免把 provider 装配拖进仓储测试。
+	acc, err := repos.Client.Account.Create().
+		SetName("a-bps-transport").SetTemplateID(tpl.ID).SetUpstreamKey("").
+		SetMaxConcurrency(8).SetEnabled(true).Save(ctx)
+	require.NoError(t, err)
+	require.NoError(t, repos.Accounts.SetAccountGroups(ctx, acc.ID, []int64{g.ID}))
+
+	seedTemplateExt(t, repos, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeBPS,
+		CodexResponsesTransport: domain.CodexResponsesTransportWS,
+	})
+
+	got, ok := snapshotTransportOf(t, repos, g.ID, acc.ID)
+	require.True(t, ok, "快照必须含该账号")
+	require.Equal(t, domain.CodexResponsesTransportWS, got,
+		"BPS 模板的 ws 必须合并进快照（合并门控不能只认 codex）")
+}
