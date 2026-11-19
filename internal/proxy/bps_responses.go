@@ -6,8 +6,10 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coder/websocket"
@@ -37,9 +39,21 @@ type bpsAttemptError struct {
 func (e *bpsAttemptError) RawJSON() string {
 	var raw interface{ RawJSON() string }
 	if errors.As(e.cause, &raw) {
-		return raw.RawJSON()
+		if body := raw.RawJSON(); body != "" {
+			return body
+		}
 	}
-	return ""
+	// 流内 error frame（server_error 等）没有原始 HTTP body，SDK 只留下 Message；
+	// 5xx 分支不会回退到 err.Error()，不合成这一层 err_logs 就是空的。
+	msg := strings.TrimPrefix(e.cause.Error(), "bps: ")
+	if msg == "" {
+		return ""
+	}
+	body, err := json.Marshal(map[string]string{"message": msg})
+	if err != nil {
+		return ""
+	}
+	return string(body)
 }
 
 func (e *bpsAttemptError) Error() string { return "BPS upstream rejected request" }
