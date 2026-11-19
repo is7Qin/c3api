@@ -2,11 +2,21 @@
 package main
 
 import (
+	"context"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/require"
+
+	"github.com/is7qin/c3api/internal/credential"
+	"github.com/is7qin/c3api/internal/domain"
+	"github.com/is7qin/c3api/internal/sdkbridge"
+	"github.com/is7qin/c3api/internal/service"
+	"github.com/is7qin/c3api/pkg/egress"
 )
 
 // TestBPSAdapterSingleInstance pins the shared-instance wiring: the only
@@ -33,4 +43,29 @@ func TestBPSAdapterSingleInstance(t *testing.T) {
 	mainSrc, err := os.ReadFile("main.go")
 	require.NoError(t, err)
 	require.Contains(t, string(mainSrc), "bps: bl.bps")
+}
+
+// TestBPSProberMapsPrepareFatalToInvalidInput pins the adapter's fixed-400
+// mapping for a stored credential the SDK rejects at construction.
+func TestBPSProberMapsPrepareFatalToInvalidInput(t *testing.T) {
+	ctx := context.Background()
+	mr := miniredis.RunT(t)
+	rdb := redis.NewClient(&redis.Options{Addr: mr.Addr(), ContextTimeoutEnabled: true})
+	t.Cleanup(func() { _ = rdb.Close() })
+	adapter := sdkbridge.NewBPS(rdb)
+	t.Cleanup(func() { _ = adapter.Close() })
+	profile, err := sdkbridge.NewBPSLogin(nil).GenerateProfile()
+	require.NoError(t, err)
+	p := &bpsProber{bps: adapter, pool: egress.NewPool(http.DefaultClient)}
+
+	_, err = p.ProbeAccount(ctx, service.BPSAccountProbeRequest{
+		Credential: &domain.AccountCredential{
+			AccountID: 1, CredentialType: credential.TypeBPS, IdentityRevision: 1,
+			CodexAccountID: "acct", OAuthToken: "not-a-jwt", OAuthRefreshToken: "rt", BPSProfile: profile,
+		},
+		Format: domain.FormatOpenAIResponses, UpstreamModel: "m", Input: "x",
+	})
+	require.ErrorIs(t, err, service.ErrInvalidInput)
+	require.Contains(t, err.Error(), "BPS probe credential invalid")
+	require.NotContains(t, err.Error(), "malformed JWT")
 }
