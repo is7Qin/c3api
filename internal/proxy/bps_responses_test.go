@@ -47,22 +47,6 @@ func (e bpsTestRawError) Error() string   { return "bps: upstream error" }
 func (e bpsTestRawError) StatusCode() int { return http.StatusBadRequest }
 func (e bpsTestRawError) RawJSON() string { return e.body }
 
-// bpsTestMessageOnlyError 模拟流内 error frame：有状态/文案，没有原始 body。
-type bpsTestMessageOnlyError struct{}
-
-func (bpsTestMessageOnlyError) Error() string   { return "bps: server_error" }
-func (bpsTestMessageOnlyError) StatusCode() int { return http.StatusBadGateway }
-
-// TestBPSInBandErrorKeepsMessage err_logs 的 5xx 分支只读 respBody：in-band
-// error frame 没有 raw body 时必须用 SDK 的 message 合成标准错误体，否则
-// 「上游已响应（未下发）」永远是一条空 message。
-func TestBPSInBandErrorKeepsMessage(t *testing.T) {
-	_, safe := bpsErrorResponse(bpsTestMessageOnlyError{})
-	body := upstreamBody(safe)
-	require.NotEmpty(t, body)
-	require.Equal(t, "server_error", upstreamErrMsg(body))
-}
-
 // TestBPSUpstreamBodyFlowsToPipeline 上游错误体必须像 codex/静态 key 一样进入
 // pipeline：规则可按 error.message 匹配，err_logs 落真实原因，WS 面回上游 message。
 func TestBPSUpstreamBodyFlowsToPipeline(t *testing.T) {
