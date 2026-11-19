@@ -303,9 +303,6 @@ func (p *BPSPrepared) Responses(ctx context.Context, payload []byte) (BPSResult,
 	if p == nil || p.client == nil {
 		return BPSResult{}, ErrBPSStoreUnavailable
 	}
-	if p.transport != BPSTransportHTTP {
-		return BPSResult{}, fmt.Errorf("sdkbridge: BPS Responses requires HTTP format")
-	}
 	response, err := p.client.Responses(ctx, payload)
 	if err != nil {
 		p.report(err)
@@ -325,9 +322,6 @@ func (p *BPSPrepared) Models(ctx context.Context) (*bpssdk.Catalog, error) {
 	if p == nil || p.client == nil {
 		return nil, ErrBPSStoreUnavailable
 	}
-	if p.transport != BPSTransportHTTP {
-		return nil, fmt.Errorf("sdkbridge: BPS catalog probe requires HTTP format")
-	}
 	catalog, err := p.client.Models(ctx)
 	if err != nil {
 		p.report(err)
@@ -338,9 +332,6 @@ func (p *BPSPrepared) Models(ctx context.Context) (*bpssdk.Catalog, error) {
 func (p *BPSPrepared) StreamBody(ctx context.Context, payload []byte) (*http.Response, error) {
 	if p == nil || p.client == nil {
 		return nil, ErrBPSStoreUnavailable
-	}
-	if p.transport != BPSTransportHTTP {
-		return nil, fmt.Errorf("sdkbridge: BPS stream body requires HTTP format")
 	}
 	resp, err := p.client.StreamBody(ctx, payload)
 	if err != nil {
