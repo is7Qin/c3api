@@ -156,7 +156,7 @@ func TestExpandOnlyIsNotVacuous(t *testing.T) {
 	require.NotEmpty(t, ExpandOnly(before, retyped), "a column type change is not expand-only")
 }
 
-func TestAttemptLogsPartitionIsAllowlisted(t *testing.T) {
+func TestPartitionParents(t *testing.T) {
 	ctx := context.Background()
 	db := newEmptyDB(t)
 	for _, stmt := range []string{

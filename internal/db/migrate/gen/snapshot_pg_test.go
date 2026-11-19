@@ -91,3 +91,24 @@ func TestUnregisteredPartitionParent(t *testing.T) {
 	require.Empty(t, unregisteredPartitionParent("table|attempt_logs|relkind=p|persistence=p|tablespace=|options=\n"))
 	require.Empty(t, unregisteredPartitionParent("table|foo|relkind=r|persistence=p|tablespace=|options=\n"))
 }
+
+func TestRenderCatalogRejectsUnregisteredPartitionParent(t *testing.T) {
+	dsn := pgtest.DSN(t)
+	_, err := renderCatalog(context.Background(), dsn,
+		`CREATE TABLE public.foo (id bigint NOT NULL, created_at timestamptz NOT NULL, PRIMARY KEY (id, created_at)) PARTITION BY RANGE (created_at)`)
+	require.ErrorContains(t, err, "not registered in catalog.PartitionParents")
+}
+
+func TestSnapshotHeadRejectsCRLFAndDuplicateVersions(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "0001_a.up.sql"), []byte("SELECT 1;\n"), 0o644))
+	crlf := filepath.Join(dir, "0002_b.up.sql")
+	require.NoError(t, os.WriteFile(crlf, []byte("SELECT 1;\r\n"), 0o644))
+	_, _, err := snapshotHead(context.Background(), Config{MigrationsDir: dir}, "SELECT 1;")
+	require.ErrorContains(t, err, "must be LF-only without BOM")
+
+	require.NoError(t, os.WriteFile(crlf, []byte("SELECT 1;\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "0002_c.up.sql"), []byte("SELECT 2;\n"), 0o644))
+	_, err = migrationFiles(dir)
+	require.ErrorContains(t, err, "duplicate migration version 0002")
+}

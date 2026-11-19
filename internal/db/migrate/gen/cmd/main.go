@@ -101,10 +101,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
-		if tag == "0001" {
-			fmt.Fprintln(stdout, "gen: head is 0001; nothing to snapshot")
-			return 0
-		}
 		path, err := gen.WriteHeadSnapshot(cfg, tag, text)
 		if err != nil {
 			fmt.Fprintln(stderr, err)

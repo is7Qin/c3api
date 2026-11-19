@@ -301,11 +301,15 @@ func Check(ctx context.Context, cfg Config) (warnings []string, err error) {
 			problems = append(problems, path+": differs from generator output")
 		}
 	}
-	tag, headTxt, err := snapshotHead(ctx, cfg, want.UpSQL)
+	head, err := migrationHead(cfg.MigrationsDir)
 	if err != nil {
 		return nil, err
 	}
-	if tag != "0001" {
+	if head > 1 {
+		tag, headTxt, err := snapshotHead(ctx, cfg, want.UpSQL)
+		if err != nil {
+			return nil, err
+		}
 		path := filepath.Join(cfg.TestdataDir, tag+".catalog.txt")
 		got, err := os.ReadFile(path)
 		switch {
@@ -595,7 +599,6 @@ func renderDown(statements []statement) string {
 	return sb.String()
 }
 
-// renderCatalog 在空临时库上跑一遍 up.sql，再用 catalog dumper 导出静态指纹。
 // migrationUpName is the only accepted migration filename shape. The leading
 // ^ is required: Go regexp treats a leading * as a quantifier, so "^*" would
 // accept arbitrary prefixes.
@@ -631,7 +634,21 @@ func migrationFiles(dir string) ([]migrationFile, error) {
 		return nil, fmt.Errorf("gen: no *.up.sql in %s", dir)
 	}
 	sort.Slice(files, func(i, j int) bool { return files[i].version < files[j].version })
+	for i := 1; i < len(files); i++ {
+		if files[i].version == files[i-1].version {
+			return nil, fmt.Errorf("gen: duplicate migration version %04d (%s and %s)", files[i].version, files[i-1].path, files[i].path)
+		}
+	}
 	return files, nil
+}
+
+// migrationHead returns the highest version in dir.
+func migrationHead(dir string) (int64, error) {
+	files, err := migrationFiles(dir)
+	if err != nil {
+		return 0, err
+	}
+	return files[len(files)-1].version, nil
 }
 
 // snapshotHead builds the catalog for the directory's head version: the freshly
@@ -644,7 +661,13 @@ func snapshotHead(ctx context.Context, cfg Config, upSQL0001 string) (tag, catal
 	head := files[len(files)-1].version
 	tag = fmt.Sprintf("%04d", head)
 	if head <= 1 {
-		return tag, "", nil
+		// A 0001-only tree still has a baseline snapshot; render it so
+		// -snapshot-head can rewrite 0001.catalog.txt.
+		catalogTxt, err = renderCatalog(ctx, cfg.DSN, upSQL0001)
+		if err != nil {
+			return "", "", err
+		}
+		return tag, catalogTxt, nil
 	}
 	var script strings.Builder
 	script.WriteString(upSQL0001)
@@ -688,6 +711,9 @@ func WriteHeadSnapshot(cfg Config, tag, catalogTxt string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := os.MkdirAll(cfg.TestdataDir, 0o755); err != nil {
+		return "", fmt.Errorf("gen: mkdir %s: %w", cfg.TestdataDir, err)
+	}
 	path := filepath.Join(cfg.TestdataDir, tag+".catalog.txt")
 	if err := os.WriteFile(path, []byte(catalogTxt), 0o644); err != nil {
 		return "", fmt.Errorf("gen: write %s: %w", path, err)
@@ -715,6 +741,7 @@ func unregisteredPartitionParent(static string) string {
 	return ""
 }
 
+// renderCatalog 在空临时库上跑一遍 up.sql，再用 catalog dumper 导出静态指纹。
 func renderCatalog(ctx context.Context, dsn, upSQL string) (string, error) {
 	scratch, err := newScratchDB(ctx, dsn)
 	if err != nil {
