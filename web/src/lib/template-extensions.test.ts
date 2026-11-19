@@ -331,3 +331,17 @@ describe('templates 页面接线 tripwire（保存侧）', () => {
   })
 
 })
+
+// 扩展配置入口必须对 BPS 可见：出站传输住 template_ext，按钮却曾按
+// ECO_CREDENTIAL_TYPES（codex 三类）门控，BPS 模板根本打不开弹窗。
+describe('templates 页：扩展配置入口', () => {
+  const page = readFileSync(new URL('../pages/templates.tsx', import.meta.url), 'utf8')
+  it('按钮与主表单链式写都按「有 ext 行」判定（api_key 除外）', () => {
+    assert.match(page, /const hasTemplateExt = .*credentialType !== 'api_key'/)
+    assert.match(page, /\{hasTemplateExt\(t\.CredentialType as string\) && \(/)
+    assert.match(page, /if \(id && hasTemplateExt\(ct\)\) \{/)
+  })
+  it('BPS 弹窗不渲染 strip_image_tools（该开关只属于 codex/responses-special）', () => {
+    assert.match(page, /!isBPSCredential\(\(extTarget\?\.CredentialType as string\) \?\? ''\)/)
+  })
+})

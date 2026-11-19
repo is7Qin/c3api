@@ -74,6 +74,9 @@ const ECO_CREDENTIAL_TYPES: TemplateCredentialType[] = ['responses-special', 'co
 const ECO_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws', 'openai-images', 'openai-search']
 const BPS_FORMATS: TemplateFormat[] = ['openai-responses', 'openai-responses-ws']
 const isBPSCredential = (credentialType?: string | null): credentialType is 'bps' => credentialType === 'bps'
+// 有 template_ext 行的类型（后端 ValidTemplateExt）：api_key 没有 ext 行，其余都有。
+// 扩展配置按钮与主表单链式写都用它——BPS 也要能打开弹窗配置出站传输。
+const hasTemplateExt = (credentialType?: string | null): boolean => credentialType != null && credentialType !== 'api_key'
 
 // 路径键 / 门禁 / 写面 body 组装在 lib/template-extensions.ts（纯函数，node --test 覆盖）
 const CREDENTIAL_BADGE_STYLES: Partial<Record<TemplateCredentialType, string>> = {
@@ -779,7 +782,7 @@ export default function Templates() {
       } else {
         await api.updateTemplate(id, toBody(f))
       }
-      if (id && (ECO_CREDENTIAL_TYPES.includes(ct as TemplateCredentialType) || ct === 'custom')) {
+      if (id && hasTemplateExt(ct)) {
         const body: TemplateExt = extWriteBody(f, ct)
         try {
           await api.putTemplateExt(id, body)
@@ -1005,7 +1008,7 @@ export default function Templates() {
                       <TableCell className="text-xs text-muted-foreground">{formatDateTime(t.CreatedAt)}</TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">
-                          {ECO_CREDENTIAL_TYPES.includes(t.CredentialType as TemplateCredentialType) && (
+                          {hasTemplateExt(t.CredentialType as string) && (
                             <Button variant="ghost" size="icon-sm" title={tr('templates.ext.button')} aria-label={tr('templates.ext.button')} onClick={() => openExt(t)}>
                               <Settings2 />
                             </Button>
@@ -1096,18 +1099,22 @@ export default function Templates() {
               <Label>{tr('templates.ext.credentialType')}</Label>
               {extTarget && <CredentialTypeBadge credentialType={extTarget.CredentialType} />}
             </div>
-            <div className="flex items-center justify-between gap-2">
-              <div className="space-y-0.5">
-                <Label>{tr('templates.ext.stripImageTools')}</Label>
-                <p className="text-xs text-muted-foreground">{tr('templates.ext.stripImageToolsHint')}</p>
+            {/* strip_image_tools 是 codex/responses-special 的合成图像开关；BPS 没有
+                该语义，不渲染控件也不改它（回显值原样带回）。 */}
+            {!isBPSCredential((extTarget?.CredentialType as string) ?? '') && (
+              <div className="flex items-center justify-between gap-2">
+                <div className="space-y-0.5">
+                  <Label>{tr('templates.ext.stripImageTools')}</Label>
+                  <p className="text-xs text-muted-foreground">{tr('templates.ext.stripImageToolsHint')}</p>
+                </div>
+                <Switch
+                  checked={extStrip === true}
+                  disabled={extQ.isLoading || extSave.isPending}
+                  onCheckedChange={c => setExtStrip(c)}
+                  aria-label={tr('templates.ext.stripImageTools')}
+                />
               </div>
-              <Switch
-                checked={extStrip === true}
-                disabled={extQ.isLoading || extSave.isPending}
-                onCheckedChange={c => setExtStrip(c)}
-                aria-label={tr('templates.ext.stripImageTools')}
-              />
-            </div>
+            )}
             {(isCodexCredential((extTarget?.CredentialType as string) ?? '') || isBPSCredential((extTarget?.CredentialType as string) ?? '')) && (
               <div className="space-y-1.5">
                 <Label htmlFor="ext-transport">{tr('templates.ext.transport')}</Label>
