@@ -46,5 +46,5 @@ go test ./internal/service/ -run TestProbe -count=1
 ```
 
 - **BPS 适配器**：在 billing 阶段构造一次（failure handler 的 repos/sched/latch/pub/log
-  都已就绪），经 `codexDeps.bps` 复用给数据面与探测；`probeBPS` 也在 `wiring_billing.go`
+  都已就绪），经 `codexDeps.bps` 复用给数据面与探测；`bpsProber` 也在 `wiring_billing.go`
   内，**不得使用 `defer`**（关停链测试统计该文件的 defer）。
