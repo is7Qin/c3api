@@ -47,9 +47,10 @@
   回写由 `ConversationWorker` 异步批量完成，不在续接代码里。
 - 硬续接（API key 账号）：missing/expired/Redis 不可用一律 fail-closed（410/503/409），
   零上游拨号；钉选后 `hardContinuation=true`，绝不迁移到其他账号。
-- **BPS 选中时不解析续接**：两条车道在选中账号后调用 `bpsStripContinuation` 删除请求/首帧里的
-  `previous_response_id` 并置空 `contPrevID`，跳过 Redis（SDK 也会丢弃该字段；BPS→非 BPS 的
-  failover 因此不会转发未解析的 id）。判据是**选中账号**，不是计划里是否存在 BPS 候选。
+- **BPS 选中时不解析续接**：两条车道在选中账号后只置空 `contPrevID`（`bpsSkipsContinuation`），
+  跳过 Redis；body/首帧保持原样，`previous_response_id` 由 SDK 的 normalize 丢弃
+  （c3api 不做任何额外的 body 扫描/复制；BPS→非 BPS 的 failover 会携带未解析的 id）。
+  判据是**选中账号**，不是计划里是否存在 BPS 候选。
 - **Codex 不写续接绑定**：没有任何 Codex 传输写续接绑定（W1/W2/W4/W5 在 Codex 分流之后、
   W6/W7 的 `contTag` 对 Codex 为空，均不可达，代码处有注释）。`resolveContinuationBinding`
   （HTTP 与 WS 共用）：计划里没有任何非 Codex 候选（`Scheduler.PlanHasNonCodexCandidate`

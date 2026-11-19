@@ -12,9 +12,6 @@ import (
 
 	"github.com/coder/websocket"
 
-	"github.com/tidwall/gjson"
-	"github.com/tidwall/sjson"
-
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/scheduler"
 	"github.com/is7qin/c3api/internal/sdkbridge"
@@ -69,25 +66,12 @@ func isBPSLocalReject(err error) bool {
 	return sdkbridge.ClassifyBPSFailure(err).Kind == sdkbridge.BPSFailureLocalReject
 }
 
-// bpsStripContinuation removes previous_response_id from a request selected for a
-// BPS account. BPS has no server-side continuation (the SDK drops the field
-// anyway); removing it here keeps a later failover to a non-BPS account from
-// forwarding an id that was never resolved. Duplicates are rejected at ingress
-// (previous_response_id is in sensitiveBodyKeys); the capped loop only covers a
-// caller that bypasses ingress — it is not a complete strip for arbitrary
-// callers, and the cap keeps a bypass from turning this into an O(n²) scan.
-func bpsStripContinuation(sel *scheduler.Selection, body []byte) []byte {
-	if sel == nil || !sel.CredentialType.IsBPS() {
-		return body
-	}
-	for i := 0; i < 2 && gjson.GetBytes(body, "previous_response_id").Exists(); i++ {
-		next, err := sjson.DeleteBytes(body, "previous_response_id")
-		if err != nil || len(next) >= len(body) {
-			break
-		}
-		body = next
-	}
-	return body
+// bpsSkipsContinuation reports whether the selected account must skip
+// continuation resolution: BPS has no server-side continuation, so the id is
+// left in the request for the SDK to drop. c3api deliberately does no body
+// work here (no scan/copy/marshal) — stripping is the SDK's job.
+func bpsSkipsContinuation(sel *scheduler.Selection) bool {
+	return sel != nil && sel.CredentialType.IsBPS()
 }
 
 // bpsInvalidBody builds the client-facing 400 for a pre-dial rejection. The SDK

@@ -93,37 +93,28 @@ func TestBPSResponsesNeverFallsThroughStaticCaller(t *testing.T) {
 	require.Contains(t, w.Body.String(), "BPS responses unavailable")
 }
 
-// TestBPSDuplicateContinuationIDRejected previous_response_id 参与入口“重复即拒”
-// （单遍扫描），这是 bpsStripContinuation 循环上限的安全前提。
-func TestBPSDuplicateContinuationIDRejected(t *testing.T) {
-	dup := []byte(`{"model":"m","previous_response_id":"a","previous_response_id":"b"}`)
-	require.Equal(t, "previous_response_id", duplicateTopLevelKey(dup, sensitiveBodyKeys))
-	require.Empty(t, duplicateTopLevelKey([]byte(`{"model":"m","previous_response_id":"a"}`), sensitiveBodyKeys))
-	escaped := []byte(`{"model":"m","previous_\u0072esponse_id":"a","previous_response_id":"b"}`)
-	require.Equal(t, "previous_response_id", duplicateTopLevelKey(escaped, sensitiveBodyKeys), "escaped key must be detected")
-}
+// TestBPSContinuationPolicy BPS 没有服务端续接：只跳过解析，不碰 body。
+func TestBPSContinuationPolicy(t *testing.T) {
+	require.True(t, bpsSkipsContinuation(&scheduler.Selection{CredentialType: credential.TypeBPS}))
+	require.False(t, bpsSkipsContinuation(&scheduler.Selection{CredentialType: credential.TypeAPIKey}))
+	require.False(t, bpsSkipsContinuation(nil))
 
-// TestBPSContinuationSkipped BPS 没有服务端续接：选中 BPS 时删掉
-// previous_response_id（含重复键），非 BPS 原样保留。
-func TestBPSContinuationSkipped(t *testing.T) {
-	bpsSel := &scheduler.Selection{CredentialType: credential.TypeBPS}
-	apiSel := &scheduler.Selection{CredentialType: credential.TypeAPIKey}
-	in := []byte(`{"model":"m","input":"hi","previous_response_id":"r"}`)
-
-	stripped := bpsStripContinuation(bpsSel, in)
-	require.NotContains(t, string(stripped), "previous_response_id")
-	require.Contains(t, string(stripped), `"model":"m"`)
-	require.Equal(t, in, bpsStripContinuation(apiSel, in), "非 BPS 必须原样")
-	require.Equal(t, in, bpsStripContinuation(nil, in), "nil selection 必须原样")
-
-	dup := []byte(`{"previous_response_id":"a","previous_response_id":"b","model":"m"}`)
-	require.NotContains(t, string(bpsStripContinuation(bpsSel, dup)), "previous_response_id", "重复键也必须全部删除")
-
-	// 两条车道都必须接线到该助手（行为由上面的单测覆盖；这里防漏接）。
+	// 两条车道都必须接线到该判定（防漏接）；body 不出现任何 strip 调用。
 	for _, name := range []string{"caller.go", "caller_responses_ws.go"} {
 		src, err := os.ReadFile(name)
 		require.NoError(t, err, name)
-		require.Contains(t, string(src), `contPrevID = ""`, "%s 必须清空 contPrevID", name)
-		require.Contains(t, string(src), "bpsStripContinuation(sel,", "%s 必须调用 bpsStripContinuation", name)
+		require.Contains(t, string(src), "bpsSkipsContinuation(sel)", "%s 必须调用 bpsSkipsContinuation", name)
+		require.Contains(t, string(src), `contPrevID = ""`, "%s 必须置空 contPrevID", name)
+		require.NotContains(t, string(src), "bpsStripContinuation", "%s 不得再做 body 剥离", name)
 	}
+}
+
+// TestBPSContinuationIDDuplicateAllowed 回退入口的 previous_response_id 重复拒绝：
+// BPS 侧字段由 SDK 丢弃，c3api 不再为它做单遍扫描。
+func TestBPSContinuationIDDuplicateAllowed(t *testing.T) {
+	require.ElementsMatch(t, []string{"model", "stream"}, sensitiveBodyKeys)
+	dup := []byte(`{"model":"m","previous_response_id":"a","previous_response_id":"b"}`)
+	require.Empty(t, duplicateTopLevelKey(dup, sensitiveBodyKeys))
+	escaped := []byte(`{"model":"m","previous_\u0072esponse_id":"a","previous_response_id":"b"}`)
+	require.Empty(t, duplicateTopLevelKey(escaped, sensitiveBodyKeys))
 }

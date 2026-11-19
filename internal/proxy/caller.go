@@ -213,12 +213,10 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 		p.recordRejected(r.Context(), reqID, groupID, 0, reqModel, "", format, statusFor(err), domain.ErrNoAccount, 0, usageTuple{}, start, selectErrorMessage(err))
 		return
 	}
-	// BPS has no server-side continuation. Drop the id (and skip the Redis
-	// lookup): the SDK ignores the field anyway, and a later failover to a
-	// non-BPS account must not forward an id that was never resolved.
-	if sel.CredentialType.IsBPS() {
+	// BPS has no server-side continuation: skip the Redis lookup. The id stays
+	// in the request and the SDK's normalize drops it (c3api does no body work).
+	if bpsSkipsContinuation(sel) {
 		contPrevID = ""
-		route.body = bpsStripContinuation(sel, route.body)
 	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用
 	// fail-closed（释放已占并发槽，零上游拨号）。

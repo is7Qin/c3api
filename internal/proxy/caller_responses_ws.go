@@ -191,11 +191,9 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	// 不钉选（hardContinuation=false），previous_response_id 原样随首帧交给
 	// SDK；命中照旧钉选（见 resolveContinuationBinding）。
 	var contBinding *continuation.Binding
-	if sel.CredentialType.IsBPS() {
-		// 与 HTTP 面同策略：丢弃 previous_response_id、跳过续接解析；
-		// 删除后的 first 在下面进入 attemptState.first，后续每轮都基于它。
+	if bpsSkipsContinuation(sel) {
+		// 与 HTTP 面同策略：只跳过续接解析，首帧原样进 SDK（由 normalize 丢弃字段）。
 		contPrevID = ""
-		first = bpsStripContinuation(sel, first)
 	}
 	if contPrevID != "" {
 		b, ferr := p.resolveContinuationBinding(r.Context(), rm.meta.UserID, groupID, contProtocolWS, contPrevID, sel, &plan, attempt)
