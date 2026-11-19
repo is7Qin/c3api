@@ -46,6 +46,32 @@ func TestDeployMigrateJobAndProbes(t *testing.T) {
 		"activeDeadlineSeconds: {{ .Values.migrations.job.activeDeadlineSeconds }}",
 	}, "重试与超时必须来自 values（迁移不是可重试任务：失败即停；挂住的 DDL 要有硬上限）")
 
+	// 迁移 Job 必须落在与 app 相同的调度面。镜像 tag 可变（alpha 之类）+ imagePullPolicy
+	// 为 IfNotPresent 时，tag 是**按节点**解析的：Job 落到一台还没刷新该 tag 的节点，跑的
+	// 就是旧二进制，而旧二进制内嵌的迁移集里没有这次新增的版本 ⇒ `-migrate up` 打印
+	// "nothing to apply" 并成功退出；新 Deployment 的 Pod 却读到 db_head 落后于自己的
+	// binary_head ⇒ /readyz 503。maxUnavailable: 0 让旧副本继续服务，于是表现为
+	// 「upgrade 成功、迁移 Job 也成功，但新 Pod 不 ready」。继承 app 的调度约束是
+	// 「迁移先于新副本」这条 hook 语义成立的前提，不是可选优化。
+	requireLineBlock(t, jobLines, []string{
+		"{{- with .Values.app.nodeSelector }}",
+		"nodeSelector:",
+		"{{- toYaml . | nindent 8 }}",
+		"{{- end }}",
+	}, "迁移 Job 必须继承 app.nodeSelector：否则它可能落到一台镜像 tag 还没刷新的节点，用旧二进制跑迁移")
+	requireLineBlock(t, jobLines, []string{
+		"{{- with .Values.app.affinity }}",
+		"affinity:",
+		"{{- toYaml . | nindent 8 }}",
+		"{{- end }}",
+	}, "迁移 Job 必须继承 app.affinity：app 的软性落点约束对 Job 同样有效")
+	requireLineBlock(t, jobLines, []string{
+		"{{- with .Values.app.tolerations }}",
+		"tolerations:",
+		"{{- toYaml . | nindent 8 }}",
+		"{{- end }}",
+	}, "迁移 Job 必须继承 app.tolerations：app 容忍的污点 Job 也要容忍，否则 Job 直接 Pending")
+
 	// args 必须**恰好**是：config 路径、-migrate、up，然后列表结束。
 	// 这是「Job 永不跑 contract」的强形式：contract 只能追加在 up 之后，而 up
 	// 之后紧跟着的必须是 env（任何多余参数都会让这条红）。注释里出现

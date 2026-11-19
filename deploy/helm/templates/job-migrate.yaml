@@ -36,6 +36,30 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       serviceAccountName: {{ include "c3api.serviceAccountName" . }}
+      # 与 app 同调度面（nodeSelector / affinity / tolerations 全部继承）。
+      #
+      # 为什么必须同调度面：镜像 tag 可变（alpha/`latest` 之类）且 imagePullPolicy 是
+      # IfNotPresent 时，tag 是**按节点**解析的——每个节点拿自己的镜像存储去对应 tag。
+      # Job 一旦落到还没刷新该 tag 的节点，它跑的是**旧二进制**：旧二进制内嵌的迁移集
+      # 里没有这次新增的版本，于是 `-migrate up` 打印 "nothing to apply" 并**成功**退出
+      # （它没做错任何事——在它的世界里确实没有待应用版本）；而新 Deployment 的 Pod
+      # 读到的 db_head 落后于自己的 binary_head，`/readyz` 503。滚动策略是
+      # maxUnavailable: 0，于是新副本永远不就绪、旧副本继续服务：外部看到的是
+      # 「helm upgrade 成功、迁移 Job 也成功，但新 Pod 不 ready」。
+      # 继承 app 的调度约束让 Job 与 app 落在一处、解析到同一个镜像，才使
+      # 「迁移先于新副本」这条 hook 语义真正成立。
+      {{- with .Values.app.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.app.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       # 与 Deployment 同因：C3API_ 前缀的 env 全被当配置键，service-link 注入的
       # C3API_SERVICE_* 会让 config.Load 直接失败。
       enableServiceLinks: false
