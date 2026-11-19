@@ -85,6 +85,7 @@ type codexDeps struct {
 	sched         *scheduler.Scheduler
 	rec           *usage.Recorder
 	errlogW       *usage.ErrLogWorker
+	attemptlogW   *usage.AttemptLogWorker
 	latchStore    *latch.LatchStore
 	quotaQueue    *scheduler.QuotaQueue
 	runtimeHealth *scheduler.RuntimeHealth
@@ -100,6 +101,7 @@ func newCodexFace(d codexDeps) *codexFace {
 	repos, rdb, src, pub := d.repos, d.rdb, d.src, d.pub
 	egressPool, hc, codexClients := d.egress, d.hc, d.codexClients
 	sched, rec, errlogW, latchStore := d.sched, d.rec, d.errlogW, d.latchStore
+	attemptlogW := d.attemptlogW
 	quotaQueue := d.quotaQueue
 	auth, clients, svc := d.auth, d.clients, d.svc
 	f := &codexFace{}
@@ -217,6 +219,13 @@ func newCodexFace(d codexDeps) *codexFace {
 		Conversations: convBook,
 	})
 	f.px = px
+	// attempt_logs 投递面（spec 2026-11-18 retry-observability §3.2）：写点在
+	// failover 循环里**无条件**触发，通道经 setter 注入而不是加 New 的参数（那会
+	// 污染几十个测试调用点）。typed nil 必须显式判：nil 具体指针装进接口是
+	// **非 nil 接口**，写点会调进 nil 接收者（与 supplierViewLoader 同款陷阱）。
+	if attemptlogW != nil {
+		px.SetAttemptLogs(attemptlogW)
+	}
 	// 规则 typed Throttle/FailAccount 双面已在构造期接线（latch fail-closed
 	// 先于持久化；持久化走有界 persist queue——满可丢、写失败可弃、四指标可观测，
 	// rule best-effort 契约，无 outbox）。接线唯一性由 rule_wiring_test.go 钉死。

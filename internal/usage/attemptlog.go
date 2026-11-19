@@ -12,9 +12,13 @@ package usage
 //     回灌只会把 DB 故障期变成内存与重试放大；
 //   - 无 provenance：链式查询靠 request_id + ordinal 关联，不靠投递顺序。
 //
-// 背压：有界队列 + 投递非阻塞（队列满 → 丢弃 + 原子计数 Dropped）——热路径
-// 绝不因 DB 慢而阻塞请求；DB 写速率上界 = BatchSize/FlushInterval，不随请求
-// 放大。失败按采样语义丢弃（计数 + Warn 边沿一次），绝不重试。
+// 背压：有界队列 + 投递非阻塞（队列满 → 丢弃 + 原子计数）——热路径绝不因 DB
+// 慢而阻塞请求；DB 写速率上界 = BatchSize/FlushInterval，不随请求放大。失败按
+// 采样语义丢弃（计数 + Warn 边沿一次），绝不重试。
+//
+// 丢弃**按原因分账**（DroppedFull / DroppedFailed / DroppedClose /
+// DroppedClosed，Dropped 是四者之和）：对账时分不清「背压」与「DB 故障」等于
+// 没有对账——一个要调批量/节奏，一个要修库，处置完全不同。
 //
 // 落盘行数：单次请求最多 8~N 行（failover 尝试数），但队列按「行」计——多请求
 // 合并成批，BatchSize=100 是有界内存与写放大的折中（err_logs 的 500 不适用：
@@ -73,14 +77,20 @@ type AttemptLogWorker struct {
 	mu     sync.Mutex
 	closed bool
 	// q 有界队列（容量 cfg.QueueSize；投递 select-default 非阻塞）。
-	q           chan *domain.AttemptLog
-	dropped     atomic.Int64 // 丢弃累计（队列满 + 落库失败 + 停机截断）
-	inserted    atomic.Int64 // 成功落盘累计（观测/测试）
-	warnDropped atomic.Bool  // 丢弃告警边沿（≥ 阈值告警一次；队列排空回落）
-	warnFailed  atomic.Bool  // 落库失败告警边沿（连续失败只告警一次；成功一次后复位）
-	started     atomic.Bool
-	loopDone    chan struct{}
-	closeOnce   sync.Once
+	q chan *domain.AttemptLog
+	// 丢弃按原因分账（见文件头）：混成一个数只能看出"丢了"，看不出该干什么。
+	droppedFull   atomic.Int64 // 队列满丢弃（Enqueue 的 default 分支）= 背压
+	droppedFailed atomic.Int64 // 落库失败整批丢弃（insert 失败；不回灌不重试）= DB 故障
+	droppedClose  atomic.Int64 // 停机预算截断（Close 截断分支）= 停机预算不够
+	// droppedClosed 是 **worker 已关之后**的投递（排空完成后仍有写入）：生命周期
+	// 错误，与上面三种"运行期丢弃"不是一回事——单列，免得污染三者的语义。
+	droppedClosed atomic.Int64
+	inserted      atomic.Int64 // 成功落盘累计（观测/测试）
+	warnDropped   atomic.Bool  // 丢弃告警边沿（≥ 阈值告警一次；队列排空回落）
+	warnFailed    atomic.Bool  // 落库失败告警边沿（连续失败只告警一次；成功一次后复位）
+	started       atomic.Bool
+	loopDone      chan struct{}
+	closeOnce     sync.Once
 }
 
 // NewAttemptLogWorker 构造 worker：nil inserter 直接报错（构造即校验，不把空
@@ -141,16 +151,17 @@ func (w *AttemptLogWorker) Enqueue(row *domain.AttemptLog) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
-		w.dropped.Add(1)
+		w.droppedClosed.Add(1)
 		return
 	}
 	select {
 	case w.q <- row:
 	default:
-		n := w.dropped.Add(1)
+		n := w.droppedFull.Add(1)
 		if n >= attemptLogDropWarnThreshold && w.warnDropped.CompareAndSwap(false, true) {
 			w.log.Warn("attemptlog queue full, dropping (bounded backpressure)",
-				logx.Int64("dropped", n), logx.Int64("threshold", attemptLogDropWarnThreshold),
+				logx.Int64("dropped_full", n), logx.Int64("dropped_total", w.Dropped()),
+				logx.Int64("threshold", attemptLogDropWarnThreshold),
 				logx.Int("queue_cap", cap(w.q)))
 		}
 	}
@@ -176,10 +187,11 @@ func (w *AttemptLogWorker) insert(batch []*domain.AttemptLog) bool {
 	ctx, cancel := context.WithTimeout(context.Background(), attemptLogFlushTimeout)
 	defer cancel()
 	if err := w.writer.InsertBatch(ctx, batch); err != nil {
-		w.dropped.Add(int64(len(batch)))
+		failed := w.droppedFailed.Add(int64(len(batch)))
 		if w.warnFailed.CompareAndSwap(false, true) {
 			w.log.Warn("attemptlog batch insert failed, dropping batch (retry disabled by design)",
 				logx.Error(err), logx.Int("rows", len(batch)),
+				logx.Int64("dropped_failed", failed), logx.Int64("dropped_total", w.Dropped()),
 				logx.String("request_id", batch[0].RequestID))
 		}
 		return false
@@ -226,9 +238,10 @@ func (w *AttemptLogWorker) Close(ctx context.Context) error {
 			}
 			if ctx.Err() != nil {
 				remaining := len(batch) + len(w.q)
-				w.dropped.Add(int64(remaining))
+				w.droppedClose.Add(int64(remaining))
 				w.log.Warn("attemptlog close: shutdown budget exceeded, truncated drain",
-					logx.Int64("flushed_rows", flushed), logx.Int64("remaining_rows", int64(remaining)))
+					logx.Int64("flushed_rows", flushed), logx.Int64("remaining_rows", int64(remaining)),
+					logx.Int64("dropped_close", int64(remaining)), logx.Int64("dropped_total", w.Dropped()))
 				return
 			}
 			if w.insert(batch) {
@@ -238,13 +251,36 @@ func (w *AttemptLogWorker) Close(ctx context.Context) error {
 		}
 		w.log.Info("attemptlog worker closed",
 			logx.Int64("inserted_rows", w.inserted.Load()),
-			logx.Int64("dropped_rows", w.dropped.Load()))
+			logx.Int64("dropped_full", w.droppedFull.Load()),
+			logx.Int64("dropped_failed", w.droppedFailed.Load()),
+			logx.Int64("dropped_close", w.droppedClose.Load()),
+			logx.Int64("dropped_closed", w.droppedClosed.Load()),
+			logx.Int64("dropped_total", w.Dropped()))
 	})
 	return nil
 }
 
-// Dropped 丢弃累计（队列满 + 落库失败 + 停机截断；对账指标）。
-func (w *AttemptLogWorker) Dropped() int64 { return w.dropped.Load() }
+// Dropped 丢弃总数 = 四个原因之和（对账口径：到达 - 落盘，不低估）。
+//
+// 只想知道"一共丢了多少"读它；想知道"为什么丢"读下面四个——背压、DB 故障、
+// 停机预算、生命周期错误是四种完全不同的处置。
+func (w *AttemptLogWorker) Dropped() int64 {
+	return w.droppedFull.Load() + w.droppedFailed.Load() + w.droppedClose.Load() + w.droppedClosed.Load()
+}
+
+// DroppedFull 队列满丢弃（背压）：投递速率 > 落盘速率。处置 = 调大 BatchSize/
+// 缩短 FlushInterval，或承认上游失败率本身就该被削。
+func (w *AttemptLogWorker) DroppedFull() int64 { return w.droppedFull.Load() }
+
+// DroppedFailed 落库失败整批丢弃（DB 故障）：处置 = 修库；此时所有明细都在丢。
+func (w *AttemptLogWorker) DroppedFailed() int64 { return w.droppedFailed.Load() }
+
+// DroppedClose 停机预算截断（最后一批没排完）：处置 = 调大停机预算。
+func (w *AttemptLogWorker) DroppedClose() int64 { return w.droppedClose.Load() }
+
+// DroppedClosed worker 已关之后的投递（生命周期错误：Close 之后仍有人写）：
+// 处置 = 查装配/停机顺序，不是调参。
+func (w *AttemptLogWorker) DroppedClosed() int64 { return w.droppedClosed.Load() }
 
 // Inserted 成功落盘累计（观测/测试）。
 func (w *AttemptLogWorker) Inserted() int64 { return w.inserted.Load() }

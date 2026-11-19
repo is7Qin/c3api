@@ -69,6 +69,12 @@ type Proxy struct {
 	// errlog 错误明细落盘 worker（分表设计；nil = 未装配——拒绝/异常路径只聚
 	// 合统计不落 err_logs 明细，测试/未装配形态）。与计费 flusher 完全解耦。
 	errlog *usage.ErrLogWorker
+	// attemptLogs attempt_logs 投递面（spec 2026-11-18 retry-observability §3；
+	// nil = 未装配——写点 no-op）。生产实现 = usage.AttemptLogWorker，经
+	// SetAttemptLogs 在构造后回填（不改 New 的参数签名：那会污染几十个调用点）。
+	// 与 errlog **不同源**：err_logs 记终态错误，本表记「每次失败 dispatch」，
+	// 一次请求可以有 N 行。
+	attemptLogs AttemptLogSink
 	// qualityRecorder is wired by the quality pipeline.
 	// Owned by main, reachable via composition; hot path not yet wired.
 	qualityRecorder    *quality.Recorder

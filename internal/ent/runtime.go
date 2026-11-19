@@ -93,23 +93,23 @@ func init() {
 	errlogFields := schema.ErrLog{}.Fields()
 	_ = errlogFields
 	// errlogDescModel is the schema descriptor for model field.
-	errlogDescModel := errlogFields[8].Descriptor()
+	errlogDescModel := errlogFields[9].Descriptor()
 	// errlog.DefaultModel holds the default value on creation for the model field.
 	errlog.DefaultModel = errlogDescModel.Default.(string)
 	// errlogDescStatusCode is the schema descriptor for status_code field.
-	errlogDescStatusCode := errlogFields[10].Descriptor()
+	errlogDescStatusCode := errlogFields[11].Descriptor()
 	// errlog.DefaultStatusCode holds the default value on creation for the status_code field.
 	errlog.DefaultStatusCode = errlogDescStatusCode.Default.(int)
 	// errlogDescErrorType is the schema descriptor for error_type field.
-	errlogDescErrorType := errlogFields[11].Descriptor()
+	errlogDescErrorType := errlogFields[12].Descriptor()
 	// errlog.DefaultErrorType holds the default value on creation for the error_type field.
 	errlog.DefaultErrorType = errlogDescErrorType.Default.(string)
 	// errlogDescLatencyMs is the schema descriptor for latency_ms field.
-	errlogDescLatencyMs := errlogFields[14].Descriptor()
+	errlogDescLatencyMs := errlogFields[15].Descriptor()
 	// errlog.DefaultLatencyMs holds the default value on creation for the latency_ms field.
 	errlog.DefaultLatencyMs = errlogDescLatencyMs.Default.(int64)
 	// errlogDescCreatedAt is the schema descriptor for created_at field.
-	errlogDescCreatedAt := errlogFields[16].Descriptor()
+	errlogDescCreatedAt := errlogFields[17].Descriptor()
 	// errlog.DefaultCreatedAt holds the default value on creation for the created_at field.
 	errlog.DefaultCreatedAt = errlogDescCreatedAt.Default.(func() time.Time)
 	groupFields := schema.Group{}.Fields()

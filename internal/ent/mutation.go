@@ -4257,36 +4257,38 @@ func (m *EmailTemplateMutation) ResetEdge(name string) error {
 // ErrLogMutation represents an operation that mutates the ErrLog nodes in the graph.
 type ErrLogMutation struct {
 	config
-	op             Op
-	typ            string
-	id             *int64
-	request_id     *string
-	client_ip      *string
-	group_id       *int64
-	addgroup_id    *int64
-	account_id     *int64
-	addaccount_id  *int64
-	template_id    *int64
-	addtemplate_id *int64
-	user_id        *int64
-	adduser_id     *int64
-	key_id         *int64
-	addkey_id      *int64
-	model          *string
-	format         *errlog.Format
-	status_code    *int
-	addstatus_code *int
-	error_type     *string
-	commit_state   *string
-	error_message  *string
-	latency_ms     *int64
-	addlatency_ms  *int64
-	billing_tier   *string
-	created_at     *time.Time
-	clearedFields  map[string]struct{}
-	done           bool
-	oldValue       func(context.Context) (*ErrLog, error)
-	predicates     []predicate.ErrLog
+	op                 Op
+	typ                string
+	id                 *int64
+	request_id         *string
+	attempt_ordinal    *int16
+	addattempt_ordinal *int16
+	client_ip          *string
+	group_id           *int64
+	addgroup_id        *int64
+	account_id         *int64
+	addaccount_id      *int64
+	template_id        *int64
+	addtemplate_id     *int64
+	user_id            *int64
+	adduser_id         *int64
+	key_id             *int64
+	addkey_id          *int64
+	model              *string
+	format             *errlog.Format
+	status_code        *int
+	addstatus_code     *int
+	error_type         *string
+	commit_state       *string
+	error_message      *string
+	latency_ms         *int64
+	addlatency_ms      *int64
+	billing_tier       *string
+	created_at         *time.Time
+	clearedFields      map[string]struct{}
+	done               bool
+	oldValue           func(context.Context) (*ErrLog, error)
+	predicates         []predicate.ErrLog
 }
 
 var _ ent.Mutation = (*ErrLogMutation)(nil)
@@ -4427,6 +4429,76 @@ func (m *ErrLogMutation) OldRequestID(ctx context.Context) (v string, err error)
 // ResetRequestID resets all changes to the "request_id" field.
 func (m *ErrLogMutation) ResetRequestID() {
 	m.request_id = nil
+}
+
+// SetAttemptOrdinal sets the "attempt_ordinal" field.
+func (m *ErrLogMutation) SetAttemptOrdinal(i int16) {
+	m.attempt_ordinal = &i
+	m.addattempt_ordinal = nil
+}
+
+// AttemptOrdinal returns the value of the "attempt_ordinal" field in the mutation.
+func (m *ErrLogMutation) AttemptOrdinal() (r int16, exists bool) {
+	v := m.attempt_ordinal
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldAttemptOrdinal returns the old "attempt_ordinal" field's value of the ErrLog entity.
+// If the ErrLog object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *ErrLogMutation) OldAttemptOrdinal(ctx context.Context) (v *int16, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldAttemptOrdinal is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldAttemptOrdinal requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldAttemptOrdinal: %w", err)
+	}
+	return oldValue.AttemptOrdinal, nil
+}
+
+// AddAttemptOrdinal adds i to the "attempt_ordinal" field.
+func (m *ErrLogMutation) AddAttemptOrdinal(i int16) {
+	if m.addattempt_ordinal != nil {
+		*m.addattempt_ordinal += i
+	} else {
+		m.addattempt_ordinal = &i
+	}
+}
+
+// AddedAttemptOrdinal returns the value that was added to the "attempt_ordinal" field in this mutation.
+func (m *ErrLogMutation) AddedAttemptOrdinal() (r int16, exists bool) {
+	v := m.addattempt_ordinal
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ClearAttemptOrdinal clears the value of the "attempt_ordinal" field.
+func (m *ErrLogMutation) ClearAttemptOrdinal() {
+	m.attempt_ordinal = nil
+	m.addattempt_ordinal = nil
+	m.clearedFields[errlog.FieldAttemptOrdinal] = struct{}{}
+}
+
+// AttemptOrdinalCleared returns if the "attempt_ordinal" field was cleared in this mutation.
+func (m *ErrLogMutation) AttemptOrdinalCleared() bool {
+	_, ok := m.clearedFields[errlog.FieldAttemptOrdinal]
+	return ok
+}
+
+// ResetAttemptOrdinal resets all changes to the "attempt_ordinal" field.
+func (m *ErrLogMutation) ResetAttemptOrdinal() {
+	m.attempt_ordinal = nil
+	m.addattempt_ordinal = nil
+	delete(m.clearedFields, errlog.FieldAttemptOrdinal)
 }
 
 // SetClientIP sets the "client_ip" field.
@@ -5265,9 +5337,12 @@ func (m *ErrLogMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *ErrLogMutation) Fields() []string {
-	fields := make([]string, 0, 16)
+	fields := make([]string, 0, 17)
 	if m.request_id != nil {
 		fields = append(fields, errlog.FieldRequestID)
+	}
+	if m.attempt_ordinal != nil {
+		fields = append(fields, errlog.FieldAttemptOrdinal)
 	}
 	if m.client_ip != nil {
 		fields = append(fields, errlog.FieldClientIP)
@@ -5324,6 +5399,8 @@ func (m *ErrLogMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case errlog.FieldRequestID:
 		return m.RequestID()
+	case errlog.FieldAttemptOrdinal:
+		return m.AttemptOrdinal()
 	case errlog.FieldClientIP:
 		return m.ClientIP()
 	case errlog.FieldGroupID:
@@ -5365,6 +5442,8 @@ func (m *ErrLogMutation) OldField(ctx context.Context, name string) (ent.Value, 
 	switch name {
 	case errlog.FieldRequestID:
 		return m.OldRequestID(ctx)
+	case errlog.FieldAttemptOrdinal:
+		return m.OldAttemptOrdinal(ctx)
 	case errlog.FieldClientIP:
 		return m.OldClientIP(ctx)
 	case errlog.FieldGroupID:
@@ -5410,6 +5489,13 @@ func (m *ErrLogMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetRequestID(v)
+		return nil
+	case errlog.FieldAttemptOrdinal:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetAttemptOrdinal(v)
 		return nil
 	case errlog.FieldClientIP:
 		v, ok := value.(string)
@@ -5524,6 +5610,9 @@ func (m *ErrLogMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *ErrLogMutation) AddedFields() []string {
 	var fields []string
+	if m.addattempt_ordinal != nil {
+		fields = append(fields, errlog.FieldAttemptOrdinal)
+	}
 	if m.addgroup_id != nil {
 		fields = append(fields, errlog.FieldGroupID)
 	}
@@ -5553,6 +5642,8 @@ func (m *ErrLogMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *ErrLogMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case errlog.FieldAttemptOrdinal:
+		return m.AddedAttemptOrdinal()
 	case errlog.FieldGroupID:
 		return m.AddedGroupID()
 	case errlog.FieldAccountID:
@@ -5576,6 +5667,13 @@ func (m *ErrLogMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *ErrLogMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case errlog.FieldAttemptOrdinal:
+		v, ok := value.(int16)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddAttemptOrdinal(v)
+		return nil
 	case errlog.FieldGroupID:
 		v, ok := value.(int64)
 		if !ok {
@@ -5633,6 +5731,9 @@ func (m *ErrLogMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *ErrLogMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(errlog.FieldAttemptOrdinal) {
+		fields = append(fields, errlog.FieldAttemptOrdinal)
+	}
 	if m.FieldCleared(errlog.FieldClientIP) {
 		fields = append(fields, errlog.FieldClientIP)
 	}
@@ -5674,6 +5775,9 @@ func (m *ErrLogMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *ErrLogMutation) ClearField(name string) error {
 	switch name {
+	case errlog.FieldAttemptOrdinal:
+		m.ClearAttemptOrdinal()
+		return nil
 	case errlog.FieldClientIP:
 		m.ClearClientIP()
 		return nil
@@ -5711,6 +5815,9 @@ func (m *ErrLogMutation) ResetField(name string) error {
 	switch name {
 	case errlog.FieldRequestID:
 		m.ResetRequestID()
+		return nil
+	case errlog.FieldAttemptOrdinal:
+		m.ResetAttemptOrdinal()
 		return nil
 	case errlog.FieldClientIP:
 		m.ResetClientIP()

@@ -166,8 +166,8 @@ func main() {
 			cfg: cfg, log: log,
 			rdb: in.rdb, repos: in.repos, src: in.src, pub: in.pub, egress: in.egress,
 			hc: in.hc, codexClients: in.codexClients, disco: in.disco,
-			sched: hl.sched, rec: hl.rec, errlogW: hl.errlogW, latchStore: hl.latchStore,
-			quotaQueue: hl.quotaQueue, runtimeHealth: hl.runtimeHealth,
+			sched: hl.sched, rec: hl.rec, errlogW: hl.errlogW, attemptlogW: hl.attemptlogW,
+			latchStore: hl.latchStore, quotaQueue: hl.quotaQueue, runtimeHealth: hl.runtimeHealth,
 			auth: bl.auth, clients: bl.clients, svc: bl.svc, billHooks: bl.billHooks,
 		})
 		run(ctx, in, hl, nf, bl, cx)

@@ -16,6 +16,8 @@ const (
 	FieldID = "id"
 	// FieldRequestID holds the string denoting the request_id field in the database.
 	FieldRequestID = "request_id"
+	// FieldAttemptOrdinal holds the string denoting the attempt_ordinal field in the database.
+	FieldAttemptOrdinal = "attempt_ordinal"
 	// FieldClientIP holds the string denoting the client_ip field in the database.
 	FieldClientIP = "client_ip"
 	// FieldGroupID holds the string denoting the group_id field in the database.
@@ -54,6 +56,7 @@ const (
 var Columns = []string{
 	FieldID,
 	FieldRequestID,
+	FieldAttemptOrdinal,
 	FieldClientIP,
 	FieldGroupID,
 	FieldAccountID,
@@ -132,6 +135,11 @@ func ByID(opts ...sql.OrderTermOption) OrderOption {
 // ByRequestID orders the results by the request_id field.
 func ByRequestID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldRequestID, opts...).ToFunc()
+}
+
+// ByAttemptOrdinal orders the results by the attempt_ordinal field.
+func ByAttemptOrdinal(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldAttemptOrdinal, opts...).ToFunc()
 }
 
 // ByClientIP orders the results by the client_ip field.

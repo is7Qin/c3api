@@ -54,6 +54,7 @@ var sdkTestImportAllowlist = map[string]string{
 	"internal/proxy/codex_responses_ws_test.go":       "集成面：必须构造 SDK 的账号停用/凭据撤销错误与伪装身份常量才能验证判死与握手头",
 	"internal/proxy/codex_session_identity_test.go":   "集成面：读握手头常量 HeaderTurnState 才能断言 turn-state 落点",
 	"internal/proxy/caller_images_regression_test.go": "集成面：必须构造 SDK 的 *HTTPError / RefreshOAuthError 才能验证生图错误翻译",
+	"internal/proxy/attempt_log_test.go":              "集成面：必须注入 SDK 的 RefreshOAuthError 才能驱动 IsFatal 分支（err_logs.attempt_ordinal 的写点）；判死判据本身的门禁在 sdkbridge 侧",
 }
 
 // sdkImportPath 是被垄断的 import 路径前缀（含子包，如 .../redisstore）。

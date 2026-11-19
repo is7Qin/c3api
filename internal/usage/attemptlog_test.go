@@ -169,7 +169,10 @@ func TestAttemptLogWorkerQueueFullDrops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Enqueue 必须非阻塞完成（有界队列 + select-default）")
 	}
-	require.Equal(t, int64(sent-8), w.Dropped(), "丢弃计数 = 到达 - 队列容量")
+	require.Equal(t, int64(sent-8), w.DroppedFull(), "队列满丢弃 = 到达 - 队列容量")
+	require.Zero(t, w.DroppedFailed(), "队列满不是落库失败：两个原因不能混")
+	require.Zero(t, w.DroppedClose(), "队列满不是停机截断")
+	require.Equal(t, int64(sent-8), w.Dropped(), "Dropped = 各原因之和")
 	require.Equal(t, 8, w.Queued(), "队列有界（内存上界不随风暴增长）")
 }
 
@@ -195,7 +198,9 @@ func TestAttemptLogWorkerFlushInsertFailureDrops(t *testing.T) {
 	w.Enqueue(attemptRow(1))
 	w.flush()
 	require.Zero(t, w.Inserted())
-	require.Equal(t, int64(2), w.Dropped(), "整批丢弃计数")
+	require.Equal(t, int64(2), w.DroppedFailed(), "整批丢弃 = 批行数（落库失败）")
+	require.Zero(t, w.DroppedFull(), "落库失败不是背压：两个原因不能混")
+	require.Equal(t, int64(2), w.Dropped(), "Dropped = 各原因之和")
 	require.Zero(t, w.Queued(), "不回灌（有界队列不是重试缓冲）")
 
 	// DB 恢复 ⇒ 新行正常落盘，历史丢弃不回补。
@@ -203,7 +208,8 @@ func TestAttemptLogWorkerFlushInsertFailureDrops(t *testing.T) {
 	w.Enqueue(attemptRow(2))
 	w.flush()
 	require.Equal(t, int64(1), w.Inserted())
-	require.Equal(t, int64(2), w.Dropped(), "丢弃是终态的（对账指标不回落）")
+	require.Equal(t, int64(2), w.DroppedFailed(), "丢弃是终态的（对账指标不回落）")
+	require.Equal(t, int64(2), w.Dropped())
 }
 
 // TestAttemptLogWorkerFailureWarnsOncePerEpisode 失败告警边沿：连续失败只告警
@@ -240,6 +246,82 @@ func TestAttemptLogWorkerFailureWarnsOncePerEpisode(t *testing.T) {
 		"成功之后的新一轮故障重新告警")
 }
 
+// TestAttemptLogWorkerQueueFullWarnsOnEdge 队列满告警边沿（评审要求补的证据）：
+// 桶满 ⇒ 丢弃累计越过阈值只告警**一次**（热路径不刷日志），队列被 flush 排空
+// 后边沿复位，下一次堆满再告警一次。
+//
+// 为什么这条不能只靠「Dropped() 数字涨了」：计数涨了但告警从不触发，运维永远
+// 不会知道明细在丢（这正是 review 指出的证据缺口）。阈值是包内 var（10_000），
+// 这里临时压低到 3 并 t.Cleanup 还原——它只是采样口径，不是行为。
+func TestAttemptLogWorkerQueueFullWarnsOnEdge(t *testing.T) {
+	old := attemptLogDropWarnThreshold
+	attemptLogDropWarnThreshold = 3
+	t.Cleanup(func() { attemptLogDropWarnThreshold = old })
+
+	w := newTestAttemptLogWorker(t, &captureAttemptLogInserter{}, 1)
+	logger, out := newTestAttemptLogLogger(t)
+	t.Cleanup(func() { _ = logger.Close() })
+	w.log = logger
+
+	fill := func() {
+		for i := range 4 { // 1 行入队 + 3 行丢弃 ≥ 阈值
+			w.Enqueue(attemptRow(i))
+		}
+	}
+	countWarns := func() int {
+		t.Helper()
+		require.NoError(t, logger.Sync())
+		body, err := os.ReadFile(out)
+		require.NoError(t, err)
+		return strings.Count(string(body), "attemptlog queue full, dropping")
+	}
+
+	fill()
+	require.Equal(t, 1, countWarns(), "队列满的告警必须出现（否则明细在丢而无人知）")
+	require.NoError(t, logger.Sync())
+	body, err := os.ReadFile(out)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"dropped_full"`, "告警必须能看出是背压（不是 DB 故障）")
+	require.Contains(t, string(body), `"dropped_total"`, "告警带总量便于对账")
+	for range 2 { // 排空 1 行（batch 100）；再 flush 一次即触发边沿复位
+		w.flush()
+	}
+	require.Zero(t, w.Queued())
+	require.Equal(t, 1, countWarns(), "同一轮堆积只告警一次（不刷屏）")
+
+	fill()
+	require.Equal(t, 2, countWarns(), "排空后再次堆积必须重新告警（边沿复位）")
+}
+
+// TestAttemptLogWorkerDroppedSumsAllReasons 一条 worker 上同时造出三种丢弃，
+// 断言 Dropped() = 各原因之和（对账口径：到达 - 落盘，既不低估也不互相吞掉）。
+//
+// 为什么要这条：拆开计数的唯一风险是「总和不再等于实际丢弃」（漏加一个桶、
+// 某处改回混计），而按原因断言各自为政时看不出来。
+func TestAttemptLogWorkerDroppedSumsAllReasons(t *testing.T) {
+	store := &captureAttemptLogInserter{fail: true}
+	w := newTestAttemptLogWorker(t, store, 1) // 队列容量 1：第 2 行起就是背压
+
+	// 1 行入队 + 2 行丢弃（队列满）
+	for i := range 3 {
+		w.Enqueue(attemptRow(i))
+	}
+	w.flush()                // 入队那 1 行落库失败 ⇒ 整批丢弃
+	w.Enqueue(attemptRow(3)) // 再塞 1 行进队列，供停机截断
+
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	require.NoError(t, w.Close(ctx))
+
+	require.Equal(t, int64(2), w.DroppedFull(), "两次队列满")
+	require.Equal(t, int64(1), w.DroppedFailed(), "一次落库失败（1 行）")
+	require.Equal(t, int64(1), w.DroppedClose(), "停机截断 1 行")
+	require.Zero(t, w.DroppedClosed())
+	require.Equal(t, w.DroppedFull()+w.DroppedFailed()+w.DroppedClose()+w.DroppedClosed(), w.Dropped(),
+		"Dropped() 必须等于各原因之和")
+	require.Equal(t, int64(4), w.Dropped())
+}
+
 // slowAttemptLogInserter 慢落库（预算截断路径模拟——不做真实 sleep：用 ctx 分支）。
 type slowAttemptLogInserter struct {
 	inserted int
@@ -265,7 +347,9 @@ func TestAttemptLogWorkerCloseTruncatesOnBudget(t *testing.T) {
 	defer cancel()
 	require.NoError(t, w.Close(ctx))
 	require.Zero(t, store.inserted, "预算已到期：一行都不落")
-	require.Equal(t, int64(30), w.Dropped(), "截断面 = 本批 + 队列剩余（全部计入丢弃）")
+	require.Equal(t, int64(30), w.DroppedClose(), "截断面 = 本批 + 队列剩余（全部计入停机截断）")
+	require.Zero(t, w.DroppedFull(), "截断不是背压（队列没满）")
+	require.Zero(t, w.DroppedFailed(), "截断不是落库失败（一行都没写过）")
 	require.Zero(t, w.Queued())
 }
 
@@ -276,8 +360,10 @@ func TestAttemptLogWorkerCloseIdempotent(t *testing.T) {
 	require.NoError(t, w.Close(context.Background()))
 	require.NoError(t, w.Close(context.Background()), "重复 Close 不得报错/不得重复排空")
 	require.Equal(t, int64(1), w.Inserted())
+	require.Zero(t, w.DroppedClosed(), "正常停机不该出现「关后投递」")
 
 	w.Enqueue(attemptRow(1)) // Close 之后：丢弃计数，不 panic 不入队
+	require.Equal(t, int64(1), w.DroppedClosed(), "关闭后的投递是生命周期错误，单列")
 	require.Equal(t, int64(1), w.Dropped())
 	require.Zero(t, w.Queued())
 }
@@ -298,6 +384,7 @@ func TestAttemptLogWorkerStartDrainsOnClose(t *testing.T) {
 	require.NoError(t, w.Close(context.Background()))
 	require.Equal(t, int64(5), w.Inserted(), "loop 退出后由 Close 排空")
 	require.Zero(t, w.Dropped())
+	require.Zero(t, w.DroppedClosed(), "正常停机路径不得产生关后投递（生命周期错误的专属计数）")
 }
 
 // newTestAttemptLogLogger 落盘到临时文件的 logger（告警边沿断言用）。

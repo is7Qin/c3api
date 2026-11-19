@@ -28,6 +28,20 @@ func (_c *ErrLogCreate) SetRequestID(v string) *ErrLogCreate {
 	return _c
 }
 
+// SetAttemptOrdinal sets the "attempt_ordinal" field.
+func (_c *ErrLogCreate) SetAttemptOrdinal(v int16) *ErrLogCreate {
+	_c.mutation.SetAttemptOrdinal(v)
+	return _c
+}
+
+// SetNillableAttemptOrdinal sets the "attempt_ordinal" field if the given value is not nil.
+func (_c *ErrLogCreate) SetNillableAttemptOrdinal(v *int16) *ErrLogCreate {
+	if v != nil {
+		_c.SetAttemptOrdinal(*v)
+	}
+	return _c
+}
+
 // SetClientIP sets the "client_ip" field.
 func (_c *ErrLogCreate) SetClientIP(v string) *ErrLogCreate {
 	_c.mutation.SetClientIP(v)
@@ -358,6 +372,10 @@ func (_c *ErrLogCreate) createSpec() (*ErrLog, *sqlgraph.CreateSpec) {
 		_spec.SetField(errlog.FieldRequestID, field.TypeString, value)
 		_node.RequestID = value
 	}
+	if value, ok := _c.mutation.AttemptOrdinal(); ok {
+		_spec.SetField(errlog.FieldAttemptOrdinal, field.TypeInt16, value)
+		_node.AttemptOrdinal = &value
+	}
 	if value, ok := _c.mutation.ClientIP(); ok {
 		_spec.SetField(errlog.FieldClientIP, field.TypeString, value)
 		_node.ClientIP = &value
@@ -479,6 +497,30 @@ func (u *ErrLogUpsert) SetRequestID(v string) *ErrLogUpsert {
 // UpdateRequestID sets the "request_id" field to the value that was provided on create.
 func (u *ErrLogUpsert) UpdateRequestID() *ErrLogUpsert {
 	u.SetExcluded(errlog.FieldRequestID)
+	return u
+}
+
+// SetAttemptOrdinal sets the "attempt_ordinal" field.
+func (u *ErrLogUpsert) SetAttemptOrdinal(v int16) *ErrLogUpsert {
+	u.Set(errlog.FieldAttemptOrdinal, v)
+	return u
+}
+
+// UpdateAttemptOrdinal sets the "attempt_ordinal" field to the value that was provided on create.
+func (u *ErrLogUpsert) UpdateAttemptOrdinal() *ErrLogUpsert {
+	u.SetExcluded(errlog.FieldAttemptOrdinal)
+	return u
+}
+
+// AddAttemptOrdinal adds v to the "attempt_ordinal" field.
+func (u *ErrLogUpsert) AddAttemptOrdinal(v int16) *ErrLogUpsert {
+	u.Add(errlog.FieldAttemptOrdinal, v)
+	return u
+}
+
+// ClearAttemptOrdinal clears the value of the "attempt_ordinal" field.
+func (u *ErrLogUpsert) ClearAttemptOrdinal() *ErrLogUpsert {
+	u.SetNull(errlog.FieldAttemptOrdinal)
 	return u
 }
 
@@ -817,6 +859,34 @@ func (u *ErrLogUpsertOne) SetRequestID(v string) *ErrLogUpsertOne {
 func (u *ErrLogUpsertOne) UpdateRequestID() *ErrLogUpsertOne {
 	return u.Update(func(s *ErrLogUpsert) {
 		s.UpdateRequestID()
+	})
+}
+
+// SetAttemptOrdinal sets the "attempt_ordinal" field.
+func (u *ErrLogUpsertOne) SetAttemptOrdinal(v int16) *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.SetAttemptOrdinal(v)
+	})
+}
+
+// AddAttemptOrdinal adds v to the "attempt_ordinal" field.
+func (u *ErrLogUpsertOne) AddAttemptOrdinal(v int16) *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.AddAttemptOrdinal(v)
+	})
+}
+
+// UpdateAttemptOrdinal sets the "attempt_ordinal" field to the value that was provided on create.
+func (u *ErrLogUpsertOne) UpdateAttemptOrdinal() *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.UpdateAttemptOrdinal()
+	})
+}
+
+// ClearAttemptOrdinal clears the value of the "attempt_ordinal" field.
+func (u *ErrLogUpsertOne) ClearAttemptOrdinal() *ErrLogUpsertOne {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.ClearAttemptOrdinal()
 	})
 }
 
@@ -1367,6 +1437,34 @@ func (u *ErrLogUpsertBulk) SetRequestID(v string) *ErrLogUpsertBulk {
 func (u *ErrLogUpsertBulk) UpdateRequestID() *ErrLogUpsertBulk {
 	return u.Update(func(s *ErrLogUpsert) {
 		s.UpdateRequestID()
+	})
+}
+
+// SetAttemptOrdinal sets the "attempt_ordinal" field.
+func (u *ErrLogUpsertBulk) SetAttemptOrdinal(v int16) *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.SetAttemptOrdinal(v)
+	})
+}
+
+// AddAttemptOrdinal adds v to the "attempt_ordinal" field.
+func (u *ErrLogUpsertBulk) AddAttemptOrdinal(v int16) *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.AddAttemptOrdinal(v)
+	})
+}
+
+// UpdateAttemptOrdinal sets the "attempt_ordinal" field to the value that was provided on create.
+func (u *ErrLogUpsertBulk) UpdateAttemptOrdinal() *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.UpdateAttemptOrdinal()
+	})
+}
+
+// ClearAttemptOrdinal clears the value of the "attempt_ordinal" field.
+func (u *ErrLogUpsertBulk) ClearAttemptOrdinal() *ErrLogUpsertBulk {
+	return u.Update(func(s *ErrLogUpsert) {
+		s.ClearAttemptOrdinal()
 	})
 }
 

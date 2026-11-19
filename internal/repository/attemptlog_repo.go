@@ -60,6 +60,10 @@ func (r *AttemptLogRepo) InsertBatch(ctx context.Context, rows []*domain.Attempt
 }
 
 // insertChunk 插入一个 ≤ attemptLogInsertChunk 行的切片。
+//
+// I1（写入面唯一性）：行只在**一次尝试真实结束**后由 failover 循环投递一次，
+// 本层不做任何"补写/重放/去重"——这里看到几行，就是上游被打了几次（成功那跳不
+// 落行）。幂等性靠"写点唯一"而不是靠本层：想加去重要先证明存在重复投递路径。
 func (r *AttemptLogRepo) insertChunk(ctx context.Context, rows []*domain.AttemptLog) error {
 	var sb strings.Builder
 	sb.Grow(len("INSERT INTO attempt_logs ("+attemptLogInsertColumns+") VALUES ") + len(rows)*40)

@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +27,10 @@ import (
 	// per-clone day-partition top-up).
 	_ "github.com/is7qin/c3api/internal/testsupport/pgtest/pgrepo"
 )
+
+// attemptOrdinalAlterFixture 0003 末尾那条给 err_logs 加列的 ALTER（夹具里被去掉
+// 的那一条，逐字与迁移文件一致——不一致就什么也没去掉，require.NotEqual 会红）。
+const attemptOrdinalAlterFixture = "ALTER TABLE public.err_logs ADD COLUMN attempt_ordinal smallint NULL;"
 
 func skipNoPG(t *testing.T) {
 	t.Helper()
@@ -172,12 +177,20 @@ func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	require.NoError(t, repo.EnsureUsageStatsPartitioned(ctx, past))
 	require.NoError(t, repo.EnsureUsageEntityStatsPartitioned(ctx, past))
 	// attempt_logs 的**父表**在生产里由 0003 迁移建（bootstrap 不建它：父表只
-	// 能来自迁移，见 partition.go 的 EnsureAllTablePartitions 注释）。夹具直接执行
-	// 那份迁移文件，DDL 与生产逐字相同——本用例要证明的是「克隆时的日分区补建」，
+	// 能来自迁移，见 partition.go 的 EnsureAllTablePartitions 注释）。夹具执行
+	// 那份迁移文件的建表/序列/索引文本——本用例要证明的是「克隆时的日分区补建」，
 	// 不是「谁建的父表」。
+	//
+	// 唯一被去掉的是 0003 末尾那条 `ALTER TABLE err_logs ADD COLUMN attempt_ordinal`：
+	// 上面的 EnsureErrLogPartitioned 已经产出**当前形状**（bootstrap 自身会补这一
+	// 列，见 partition.go 的 errLogAttemptOrdinalDDL），再执行一次就是 42701。
+	// 迁移侧与自举侧的同源性由 migrations_ddl_internal_test 的
+	// TestErrLogAttemptOrdinalDDLMatchesMigration 逐字锚，不靠这里重复执行。
 	migrationSQL, err := os.ReadFile(filepath.Join("..", "..", "db", "migrate", "migrations", "0003_attempt_logs.up.sql"))
 	require.NoError(t, err)
-	_, err = sqlDB.ExecContext(ctx, string(migrationSQL))
+	fixtureSQL := strings.ReplaceAll(string(migrationSQL), attemptOrdinalAlterFixture, "")
+	require.NotEqual(t, string(migrationSQL), fixtureSQL, "夹具必须真的去掉了那条 ALTER（防断言空转）")
+	_, err = sqlDB.ExecContext(ctx, fixtureSQL)
 	require.NoError(t, err)
 	require.NoError(t, repo.Partitions.EnsureAttemptLogPartitions(ctx, past, past.AddDate(0, 0, 1)))
 	require.NoError(t, repo.Partitions.EnsureRoutingPartitions(ctx, past))

@@ -70,6 +70,13 @@ var workerOrder = []workerSlot{
 	{name: "supplierWorkers", skipWhen: func(c *config.Config) bool { return !c.Supplier.Enabled }, expand: true},
 	{name: "rec"},
 	{name: "errlogW"},
+	// attemptlogW 紧跟在 errlogW **之后**登记 ⇒ 停机时它先于 errlogW 停（反向排空）。
+	// 理由：两张表是同一次失败的两个粒度——attempt_logs 记每一跳，err_logs 记
+	// 终态 + 那一跳的 ordinal。让更粗、更重要的终态面活得比逐跳明细久一点：
+	// 倒过来（先停 errlogW）会留下「有尝试明细、没终态」的请求，S3 只能猜它最终
+	// 怎么了；现在的残留（有终态、少了某跳）仍能从 ordinal 的缺口看出缺哪一跳。
+	// 两者都是各自 Close 排空，所以这只是停机预算真被砍断时的取值。
+	{name: "attemptlogW"},
 	{name: "contBindW"},
 	{name: "convW"},
 	{name: "quotaW"},
@@ -216,6 +223,7 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 	repos, rdb, disco := in.repos, in.rdb, in.disco
 	runtimeHealth, sched, ruleEngine := hl.runtimeHealth, hl.sched, hl.ruleEngine
 	rec, errlogW, retention, statsAgg := hl.rec, hl.errlogW, hl.retention, hl.statsAgg
+	attemptlogW := hl.attemptlogW
 	mailW := nf.mailW
 	auth, svc, inv := bl.auth, bl.svc, bl.inv
 	snapReg, disp, listener, authSync := bl.snapReg, bl.disp, bl.listener, bl.authSync
@@ -321,6 +329,7 @@ func buildRuntime(ctx context.Context, in *infraFace, hl *healthFace, nf *notify
 		"healthW":          healthW,
 		"rec":              rec,
 		"errlogW":          errlogW,
+		"attemptlogW":      attemptlogW,
 		"contBindW":        contBindW,
 		"convW":            convW,
 		"quotaW":           quotaW,
@@ -554,7 +563,7 @@ func run(ctx context.Context, in *infraFace, hl *healthFace, nf *notifyFace, bl 
 	//    usage 帧照常计费）
 	// 3) waitForInflight：等在途归零（100ms 轮询；超时 Warn 继续不阻塞退出）
 	// 4) wm.Shutdown 反向排空：listener/authSync 最先停止接收 → disco ZREM 缩容
-	//    → accConcSync/concSync → statsAgg/retention/pricingSync/errlogW
+	//    → accConcSync/concSync → statsAgg/retention/pricingSync/attemptlogW/errlogW
 	//    → rec 排空明细 → rule/sched/inv → billing 终扫完整账本
 	//    → notification 排空余额告警 → email 排空 auth 邮件
 	//    （quality-sync 的 Close 在此链内排空 Redis/PG；PG 失败时 refill 回

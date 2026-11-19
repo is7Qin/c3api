@@ -468,7 +468,7 @@ func (p *Proxy) observeDispatchFailure(ctx context.Context, d *dispatchObservati
 	if d == nil || d.observer == nil {
 		return
 	}
-	if code == 0 && ctx.Err() != nil {
+	if dispatchClientCancel(ctx, code) {
 		_ = d.observer.Cancel(withCarriedUsage(dispatchFailureOutcome(d.base, 0, true, true), d))
 		return
 	}

@@ -959,7 +959,16 @@ type UsageLog struct {
 	// {sent_ambiguous, response_started} ⇒ 记 usage_logs。
 	// NULL = **未知**（历史行/未接事实的路径）：不得解释为 not_sent 或
 	// upstream_responded，不回填、不重判；只可用于「不计费」这一条保守判定。
-	CommitState              *string
+	CommitState *string
+	// AttemptOrdinal 本行所属**尝试序号**（err_logs 的 S3 去重锚；spec 2026-11-18
+	// retry-observability §4）。取值 = scheduler.Attempt.Ordinal（恒 > 0）。
+	//
+	// nil = **未知**，而且这不是「缺失值」的委婉说法：本地拒绝（401/额度/402
+	// 预检）、codex 本地拒绝、caller 侧 handled=true 终态都没有 attempt 语义，
+	// S3 显示为 ordinal_unknown。只有 failover 循环内的四处产出点填值（首字节前
+	// 客户端取消 / SDK fatal / 循环可见 4xx / 耗尽）。
+	// **err_logs 专属**：usage_logs 没有这一列，字段只在 errlog_repo 的投影里被读。
+	AttemptOrdinal           *int16
 	LatencyMS                int64
 	TTFTMS                   *int64 // 首 token 时间毫秒；非流式/失败/无首 token 路径 = nil
 	InputTokens              int64  // 输入 token（图片生成含 image input tokens——已并入）

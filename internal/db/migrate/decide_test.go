@@ -64,6 +64,17 @@ func TestDecideFourStates(t *testing.T) {
 	})
 }
 
+// TestDecideFreshAtRequiredVersionWithoutSchemaPresenceGate 启动门**只**看水位与
+// Problems：一次「刚跑完 -migrate up、表/列都在」的库，Verifier 只吐版本号、不吐
+// 任何 Problems ⇒ 必须 Ready。这条钉住「不得偷偷在 Decide 里加 presence 探测」：
+// 任何「再查一下表在不在」的第二次真相，都会让一个合法库因为探测自身的失败
+// （超时/权限/连接池）变成 NotReady。
+func TestDecideFreshAtRequiredVersionWithoutSchemaPresenceGate(t *testing.T) {
+	d := Decide(Verdict{DBHead: RequiredVersion, DBContract: 0, BinaryHead: RequiredVersion, BinaryContract: 0})
+	require.True(t, d.Ready(), "水位达标且无 Problems ⇒ 必须可服务（reason=%q）", d.Reason)
+	require.Empty(t, d.Warnings)
+}
+
 // TestRequiredVersionIsTheBaseline 钉住「代码常量 = 本二进制真正依赖的最低
 // expand 版本」这条底账（spec §2.13）：每次调高它都必须同时带上一条能被
 // `-migrate up` 应用的迁移，否则所有存量部署会在升级后集体 readonly。
@@ -76,6 +87,8 @@ func TestRequiredVersionIsTheBaseline(t *testing.T) {
 	head, _ := Head()
 	require.LessOrEqual(t, RequiredVersion, head,
 		"RequiredVersion 不能超过本二进制的迁移 head：否则二进制要求一个它自己都建不出来的版本")
+	// 两条理由都写在这里，是因为水位是**累积**的：升到 3 的二进制同时需要 2 与 3。
 	require.Equal(t, int64(3), RequiredVersion,
-		"0003 = attempt_logs 表与分区保留（0002 是另一条独立迁移：导入幂等键按凭据类型收窄）")
+		"0002 把导入幂等键按凭据类型收窄（Codex/BPS 同一上游账号可并存）；"+
+			"0003 = attempt_logs 写路径 + err_logs.attempt_ordinal，缺了是 42P01/42703")
 }

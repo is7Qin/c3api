@@ -13,15 +13,19 @@ package repository
 // no-op 预期行为非缺陷。
 
 import (
+	"context"
 	"errors"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 
+	"github.com/is7qin/c3api/internal/ent/errlog"
 	"github.com/is7qin/c3api/internal/ent/usagelog"
 )
 
@@ -354,6 +358,64 @@ func TestPartitionedParentsPutAttemptLogsLast(t *testing.T) {
 	require.Equal(t, 1, seen, "attempt_logs 只登记一次（重复登记会重复建分区）")
 }
 
+// TestEnsureAllTablePartitionsSingleEntryList 「补齐按日分区的唯一入口」必须真的
+// 只有一个迭代源：EnsureAllTablePartitions 逐项巡检的清单 == partPartitionedParents
+// （顺序一致、每项恰好一次），外加末尾那一次静态表检查。
+//
+// 为什么需要它：评审的变异是「删掉 attempt_lock 常量 + 名字串错一字符」——那会让
+// 预建在运行时恒失败，而**所有单元测试与 go vet / go build 仍全绿**（PG 测试才会
+// 红，且是"报错不是断言"）。用 fake partitionExists 把调用序列钉死，缺失/多出/
+// 顺序错都在这里先红。
+//
+// 「每张父表恰好一次」的证据形状：EnsureTablePartitions 对 [from,to] 每个自然日
+// 探一次 partitionExists(父表_YYYYMMDD)，所以 from==to 时调用序列是
+//
+//	[父表, 父表_YYYYMMDD] * N + [静态表]
+//
+// 完全相等即证明：没有手抄的第二份清单、没有漏项、没有重复。
+func TestEnsureAllTablePartitionsSingleEntryList(t *testing.T) {
+	day := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	var calls []string
+	repo := &PartitionRepo{existsFn: func(_ context.Context, name string) (bool, error) {
+		calls = append(calls, name)
+		return true, nil // 全部"已存在" ⇒ 不触发任何 DDL（fake 无需 driver）
+	}}
+	require.NoError(t, repo.EnsureAllTablePartitions(context.Background(), day, day))
+
+	want := make([]string, 0, 2*len(partPartitionedParents)+1)
+	for _, p := range partPartitionedParents {
+		want = append(want, p.table, tablePartitionName(p.table, day))
+	}
+	want = append(want, staticPartitionCycleTable)
+	require.Equal(t, want, calls, "巡检序列 = 登记清单（顺序）+ 每张表当日分区 + 静态表")
+}
+
+// TestAttemptLogInsertColumnsMatchColumnDefs 写面锚：attemptlog_repo 的 INSERT
+// 列串必须与建表列事实源**双向**对应（除 id：id 走序列 DEFAULT），并且与
+// AppendBatch 的绑定顺序逐一相同。
+//
+// 只断言列"不在禁止清单里"是不够的：真正会 42703/42804 的漂移是「DDL 有列但
+// INSERT 漏了」（静默落默认值）与「INSERT 多列但 DDL 没有」（每次插入都失败）。
+// 这里钉的是集合相等 + 顺序（顺序 = args 的绑定顺序，错位会静默写错列）。
+func TestAttemptLogInsertColumnsMatchColumnDefs(t *testing.T) {
+	ddl := ddlColumnNames(strings.Join(attemptLogColumnDefs, "\n"))
+	want := make([]string, 0, len(ddl)-1)
+	for _, c := range ddl {
+		if c != "id" {
+			want = append(want, c)
+		}
+	}
+	got := strings.Split(strings.ReplaceAll(attemptLogInsertColumns, " ", ""), ",")
+	require.ElementsMatch(t, want, got, "INSERT 列集合 = 建表列集合（除 id）")
+	require.Len(t, got, attemptLogInsertColumnCount, "占位符编号依赖这个常量")
+	// 与 insertChunk 的 args 顺序同源（同一份列序的字面量副本）。
+	require.Equal(t, []string{
+		"request_id", "attempt_ordinal", "account_id", "lane", "format",
+		"status_code", "outcome", "error_type", "commit_state", "error_message",
+		"latency_ms", "created_at",
+	}, got, "写点字段投影的落库顺序")
+}
+
 // TestErrLogColumnDefsStopAtBaseline err_logs 的列事实源**冻在 0001**：
 // attempt_ordinal 由 0003 的 ALTER 加（见 migrations_ddl_internal_test.go 的
 // 逐字锚）。往这里追加列会让 0001 重新生成、checksum 漂移 ⇒ 已发布库启动门
@@ -361,6 +423,32 @@ func TestPartitionedParentsPutAttemptLogsLast(t *testing.T) {
 func TestErrLogColumnDefsStopAtBaseline(t *testing.T) {
 	require.NotContains(t, strings.Join(errLogColumnDefs, "\n"), "attempt_ordinal",
 		"0003 加的列不得回流到 0001 的生成器输入（errLogColumnDefs）")
+}
+
+// TestErrLogEntColumnsCoveredByBaselineAnd0003 方向**反**过来的那条锚：
+// errlog.Columns（ent 真正写得出的列）里除 0003 新增列之外，每一列都必须在
+// 0001 baseline 的 DDL 事实源里。
+//
+// 为什么需要它：上面几条都把 errLogColumnDefs 当成唯一真相，可「ent 能写、DDL
+// 没有」这种漂移只有反方向断言能抓——写入时会静默 42703（列不存在），而所有正向
+// 断言都绿。差集被钉成字面量 {attempt_ordinal}：再给 err_logs 加列必须同时改这里
+// （并说明它属于哪个迁移号），不会「加了字段忘了 ALTER」。
+func TestErrLogEntColumnsCoveredByBaselineAnd0003(t *testing.T) {
+	baseline := ddlColumnNames(strings.Join(errLogColumnDefs, "\n"))
+	require.NotEmpty(t, baseline)
+	require.Subset(t, errlog.Columns, baseline,
+		"0001 baseline 的每一列 ent 必须都还写得出来（列被删/改名 ⇒ 这里先红）")
+
+	added := make([]string, 0, 2)
+	for _, col := range errlog.Columns {
+		if !slices.Contains(baseline, col) {
+			added = append(added, col)
+		}
+	}
+	// 0003_attempt_logs.up.sql 的 ALTER 是本清单的唯一合法来源（列的定义与迁移
+	// 文本的逐字锚在 internal/db/migrate/migrations_ddl_internal_test.go）。
+	require.Equal(t, []string{"attempt_ordinal"}, added,
+		"ent 比 0001 baseline 多出的列必须逐条登记（每一条都要有对应的迁移）")
 }
 
 // TestIsBootstrapRaceErrorCodeSet 并发 bootstrap 容忍码集锚：撞名

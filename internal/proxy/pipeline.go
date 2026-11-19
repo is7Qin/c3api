@@ -225,6 +225,9 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		lastErrMsg string // 最后一次实际尝试的错误文本（耗尽路径 ErrorMessage 用）
 		lastHdr    http.Header
 		lastBody   []byte
+		// lastOrdinal 最后一次实际尝试的序号（耗尽行的 err_logs.attempt_ordinal；
+		// 0 = 一次 dispatch 都没发生——Ordinal 恒 > 0，见 scheduler.Attempt.Validate）。
+		lastOrdinal uint8
 	)
 	// Fold-at-source ownership: this loop is the SOLE producer. One
 	// request-local stash per plan-backed dispatched request, only when the
@@ -289,18 +292,28 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 		// for the deferred owner cleanup.
 		callCtx, dispatch := p.beginDispatch(r.Context(), sel, attempt, flow)
 		openDispatch = dispatch
+		// 上游耗时（attempt_logs.latency_ms）：只量真实 dispatch 的两端。成功路径
+		// 只多一次 clock gettime（time.Since 留在 handled 判定之后——成功那跳连
+		// 这行都不执行），零分配零写入（配对基准见 attempt_log_test.go）。
+		callStart := time.Now()
 		code, respBody, hdr, handled, callErr := upstream.call(callCtx, w, r, reqID, groupID, start, sel, reqModel, body, st)
 		if handled {
 			return // attempt 已处理完毕（成功/客户端断开/流中止已记录；本地拒绝已写出无记录）
 		}
+		latency := time.Since(callStart)
 		p.observeDispatchFailure(callCtx, dispatch, code)
 		openDispatch = nil
 		lastCode = code
 		lastErr = callErr
 		lastHdr = hdr
 		lastBody = respBody
+		lastOrdinal = attempt.Ordinal
 		var terminate bool
-		lastErrMsg, terminate = p.classifyFailoverAttempt(w, r, format, reqID, groupID, start, reqModel, mapped, sel, code, respBody, hdr, callErr, st, sink)
+		lastErrMsg, terminate = p.classifyFailoverAttempt(w, r, format, reqID, groupID, start, reqModel, mapped, sel, attempt, code, respBody, hdr, callErr, st, sink)
+		// attempt_logs 写点（唯一）：classify 之后、terminate 之前——这样落库的
+		// error_message 就是 classify 写进 err_logs/耗尽行的同一条文本（单一来源），
+		// 而终止分支（取消/fatal/4xx）也照样留下尝试明细。
+		p.recordFailedDispatch(attempt, reqID, format, code, dispatchClientCancel(callCtx, code), callErr, lastErrMsg, latency)
 		if terminate {
 			return
 		}
@@ -327,7 +340,7 @@ func (p *Proxy) failoverLoopWithPlan(w http.ResponseWriter, r *http.Request, for
 	if !attempted {
 		lastSel.Release()
 	}
-	p.writeFailoverExhausted(w, r, format, reqID, groupID, start, reqModel, lastSel, lastCode, lastErr, lastErrMsg, lastHdr, lastBody, st, sink)
+	p.writeFailoverExhausted(w, r, format, reqID, groupID, start, reqModel, lastSel, lastOrdinal, lastCode, lastErr, lastErrMsg, lastHdr, lastBody, st, sink)
 }
 
 // failoverPrecheckPrice 缺价预检阶段（failoverLoopWithPlan 提取）：命中即
@@ -349,7 +362,12 @@ func (p *Proxy) failoverPrecheckPrice(w http.ResponseWriter, r *http.Request, fo
 // MarkResult（首字节前客户端断连记 499 后 terminate）；4xx → finish + 透传 +
 // Classify/MarkResult 后 terminate。返回最后的错误文本与是否终止（terminate=true
 // 调用方直接 return）。错误分类/冷却/日志字段/时机逐字一致。
-func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *scheduler.Selection, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
+//
+// attempt 是本跳的计划尝试身份：唯一用途是给 err_logs 的 attempt_ordinal 填值
+// （S3 的 (request_id, attempt_ordinal) 去重锚）。**只有本函数里的三处产出点与
+// writeFailoverExhausted 填值**，其余（recordRejected / record / codex 本地拒绝 /
+// caller 侧 handled=true 终态）一律 NULL——它们没有 attempt 语义。
+func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel, mapped string, sel *scheduler.Selection, attempt scheduler.Attempt, code int, respBody []byte, hdr http.Header, callErr error, st attemptState, sink pipelineSink) (lastErrMsg string, terminate bool) {
 	// 首字节前客户端断连（分类正确性，用户实证：模型思考期取消常见）：
 	// r.Context() 已取消 → SDK 返回 context.Canceled（statusOf=0）。这是
 	// 客户端行为，非上游错误——不 failover、不 MarkResult/冷却（否则
@@ -366,8 +384,11 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 		l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, sel.AccountID, reqModel, mapped, format, statusClientClosedRequest, domain.ErrAbort, usageTuple{}, start)), commitStateFor(false, false, true))
 		msg := "client closed request before upstream response"
 		l.ErrorMessage = &msg
+		l.AttemptOrdinal = attemptOrdinalPtr(attempt.Ordinal)
 		p.finish(sel, l)
-		return "", true
+		// 返回同一文本：调用方的 attempt_logs 行必须与这行 err_logs 同文案
+		// （terminate=true 时这个返回值以前是空的，没有人读过它）。
+		return msg, true
 	}
 	// 账号级终止（凭据永久失效 / 账号停用 / 工作区停用）：SDK 已在错误边界上判死，
 	// 并通过统一回调把账号摘除（failed_at + failure_source + 快照 disabled）。
@@ -387,6 +408,7 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 		if msg != "" {
 			l.ErrorMessage = &msg
 		}
+		l.AttemptOrdinal = attemptOrdinalPtr(attempt.Ordinal)
 		p.recordAttemptLog(sel, l) // 槽由循环释放（随后可能换号）
 		return msg, false
 	}
@@ -465,6 +487,7 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 		if em != "" {
 			l.ErrorMessage = &em
 		}
+		l.AttemptOrdinal = attemptOrdinalPtr(attempt.Ordinal)
 		p.finish(sel, l)
 		then, punish := p.sched.Classify(rule.Event{
 			AccountID: sel.AccountID, Kind: rule.Kind4xx, HTTPStatus: &code,
@@ -485,7 +508,8 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 		if punish {
 			p.sched.MarkResult(sel.AccountID, rule.Kind4xx, nil, code, em, sel.Model)
 		}
-		return "", true
+		// 与上面 err 行同文案（以前返回空串，terminate=true 时无人读）。
+		return em, true
 	}
 	return lastErrMsg, false
 }
@@ -494,12 +518,22 @@ func (p *Proxy) classifyFailoverAttempt(w http.ResponseWriter, r *http.Request, 
 // 的 kind/HTTPStatus/Message 重新分类取 then → status/头透传 → buildLog +
 // recordLog → 统一写出（via rule.UnifiedMessage；WS/HTTP 分流）。字段/文案/时机
 // 逐字一致。
-func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, lastSel *scheduler.Selection, lastCode int, lastErr error, lastErrMsg string, lastHdr http.Header, lastBody []byte, st attemptState, sink pipelineSink) {
+//
+// lastOrdinal 是最后一次实际尝试的序号（0 = 循环一次 dispatch 都没发——
+// 该情况下耗尽行的 attempt_ordinal 保持 NULL）。
+func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, format domain.RequestFormat, reqID string, groupID int64, start time.Time, reqModel string, lastSel *scheduler.Selection, lastOrdinal uint8, lastCode int, lastErr error, lastErrMsg string, lastHdr http.Header, lastBody []byte, st attemptState, sink pipelineSink) {
 	et := domain.Err5xx
-	switch lastCode {
-	case http.StatusTooManyRequests:
+	// 无标签 switch：429 必须排在 4xx 之前（429 也是 4xx 区间），
+	// 顺序错会把限流记成普通 4xx。
+	switch {
+	case lastCode == http.StatusTooManyRequests:
 		et = domain.Err429
-	case 0:
+	case lastCode >= 400 && lastCode < 500:
+		// fatal / BPS 账号级的 4xx 会不重试直接走到耗尽。classify 给同一跳记的是
+		// Err4xx，这里若沿用默认的 Err5xx，同一个 attempt 会在 attempt_logs 与
+		// err_logs 里出现两种 error_type（S3 的链会自相矛盾）。
+		et = domain.Err4xx
+	case lastCode == 0:
 		// 零状态：网关预算到期 ⇒ timeout（上游零产出）；其余 ⇒ network（§3.1）。
 		// lastErr 携带 markGatewayBudget 打的标记（非流式/未提交路径都经过它）。
 		et, _ = zeroStatusFailureClass(lastErr)
@@ -532,6 +566,7 @@ func (p *Proxy) writeFailoverExhausted(w http.ResponseWriter, r *http.Request, f
 		commit = CommitUpstreamResponded
 	}
 	l := withCommit(logWithCtx(r.Context(), p.buildLog(reqID, groupID, lastSel.AccountID, reqModel, usageIdentity(format, lastSel, reqModel), format, lastCode, et, usageTuple{}, start)), commit)
+	l.AttemptOrdinal = attemptOrdinalPtr(lastOrdinal)
 	// 归因文本（§3.2）：timeout 落可读结论（「上游在预算内未产出」），不把传输层
 	// 内部文案写进用户可见列；其余类别沿用 lastErrMsg（network 行含出口注解）。
 	if et == domain.ErrTimeout {

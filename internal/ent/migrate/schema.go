@@ -134,6 +134,7 @@ var (
 	ErrLogsColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt64, Increment: true},
 		{Name: "request_id", Type: field.TypeString},
+		{Name: "attempt_ordinal", Type: field.TypeInt16, Nullable: true},
 		{Name: "client_ip", Type: field.TypeString, Nullable: true},
 		{Name: "group_id", Type: field.TypeInt64, Nullable: true},
 		{Name: "account_id", Type: field.TypeInt64, Nullable: true},
@@ -159,17 +160,17 @@ var (
 			{
 				Name:    "errlog_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[16]},
+				Columns: []*schema.Column{ErrLogsColumns[17]},
 			},
 			{
 				Name:    "errlog_group_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[3], ErrLogsColumns[16]},
+				Columns: []*schema.Column{ErrLogsColumns[4], ErrLogsColumns[17]},
 			},
 			{
 				Name:    "errlog_user_id_created_at",
 				Unique:  false,
-				Columns: []*schema.Column{ErrLogsColumns[6], ErrLogsColumns[16]},
+				Columns: []*schema.Column{ErrLogsColumns[7], ErrLogsColumns[17]},
 			},
 		},
 	}

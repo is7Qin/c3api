@@ -53,10 +53,10 @@ func TestWorkerOrderSingleOwner(t *testing.T) {
 // 所以它必须是**字面量**，不得由生产符号生成（否则改代码即改契约）。
 var frozenWorkerOrder = []string{
 	"mailW", "warningWorker", "billingWorker", "inv", "schedW", "ruleEngine",
-	"retryWorker", "healthW", "supplierWorkers", "rec", "errlogW", "contBindW",
-	"convW", "quotaW", "pricingSync", "retention", "statsAgg", "qualityFlowOwner",
-	"qualitySync", "supplierViewLoader", "concSync", "accConcSync", "disco",
-	"listener", "authSync",
+	"retryWorker", "healthW", "supplierWorkers", "rec", "errlogW", "attemptlogW",
+	"contBindW", "convW", "quotaW", "pricingSync", "retention", "statsAgg",
+	"qualityFlowOwner", "qualitySync", "supplierViewLoader", "concSync", "accConcSync",
+	"disco", "listener", "authSync",
 }
 
 // TestWorkerOrderTable 钉住表本身：名字序列、可缺席槽恰好 4 个、可展开槽只有一个。
@@ -77,6 +77,13 @@ func TestWorkerOrderTable(t *testing.T) {
 	require.Equal(t, frozenWorkerOrder, got, "注册序与冻结基线不一致：改顺序即改排空语义")
 	require.Equal(t, 4, skippable, "可缺席槽必须恰 4 个（warning/billing/supplierWorkers/supplierViewLoader）")
 	require.Equal(t, 1, expanded, "可展开槽必须恰 1 个")
+
+	// 顺序的**语义**也要显式（golden 表能拦住搬动，但说不清为什么）：
+	// 注册序 = 启动序，排空 = 反序 ⇒ attemptlogW 登记在 errlogW 之后，停机时先停。
+	// 让终态面（err_logs，带 ordinal）比逐跳明细活得久一点点：倒过来会留下
+	// 「有尝试明细、没终态」的请求，S3 只能猜它最终怎么了。
+	require.Greater(t, workerSlotIndex("attemptlogW"), workerSlotIndex("errlogW"),
+		"attemptlogW 必须登记在 errlogW 之后（反向排空时先停：终态面比逐跳明细活得久）")
 }
 
 // fullWorkerSet 造一套「全部就绪」的 workerSet（含 supplier 组的两个 worker）。

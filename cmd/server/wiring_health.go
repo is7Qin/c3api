@@ -44,6 +44,7 @@ type healthFace struct {
 	rec         *usage.Recorder
 	statsAgg    *usage.StatsAggWorker
 	errlogW     *usage.ErrLogWorker
+	attemptlogW *usage.AttemptLogWorker
 	retention   *usage.RetentionWorker
 }
 
@@ -161,6 +162,17 @@ func newHealthFace(d healthDeps) *healthFace {
 		FlushInterval: cfg.Usage.ErrLogFlushInterval,
 	}, repos.ErrLogs, log)
 	f.errlogW = errlogW
+	// attemptlog worker（spec 2026-11-18 retry-observability §3.3）：每次**失败**
+	// dispatch 一行尝试明细。与 errlog 完全解耦（独立有界队列 + 批量落库 +
+	// 丢弃计数）：err_logs 记的是终态错误，本表记的是「打了几次上游」。
+	//
+	// 落盘节奏（8192 / 100 行 / 500ms）**刻意不进 config**：它们是写面不变量
+	// （原子量级由表设计定，不是运维旋钮），只有保留期可配（attempt_retention_days）。
+	attemptlogW, aerr := usage.NewAttemptLogWorker(usage.AttemptLogConfig{}, repos.AttemptLogs, log)
+	if aerr != nil {
+		fatalf("attemptlog worker: %v", aerr)
+	}
+	f.attemptlogW = attemptlogW
 	// retention worker：三表按日分区保留（分表设计 + usage_stats 分区化，
 	// 清理统一 DROP PARTITION O(1)——PG DELETE 不释放空间）；保留天数
 	// 同源 config（usage_logs = usage.log_retention_days；err_logs =
@@ -168,23 +180,34 @@ func newHealthFace(d healthDeps) *healthFace {
 	// usage.stats_retention_days 默认 180 天——聚合统计长保留）。
 	// 供应商财务视图快照（enabled=true 才构造）经 in.supplierSnap 前向槽桥接
 	// ——回调运行时点晚于 billing 阶段赋值（见 infraFace.supplierSnap 注释）。
-	retention := usage.NewRetention(usage.RetentionConfig{
-		LogRetentionDays:                cfg.Usage.LogRetentionDays,
-		ErrLogRetentionDays:             cfg.Usage.ErrLogRetentionDays,
-		AttemptRetentionDays:            cfg.Usage.AttemptRetentionDays,
-		StatsRetentionDays:              cfg.Usage.StatsRetentionDays,
-		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
-		// 容量处置（spec §3.11）：数据盘可用空间探针（best-effort，"." 所在卷）；
-		// 低于下限 ⇒ 停供应商新流量（经回调置位视图快照的容量门）。
-		DiskProbe: usage.NewDiskProbe("."),
-		// 容量门必须经槽引用：本回调在运行期才触发，而快照由 billing 阶段
-		// （本阶段之后）写入。按值捕获 = 永远读到 nil（见 supplierSnapshotSlot）。
-		OnCapacityBlocked: capacityBlockedHook(d.supplierSnap),
-	}, repos, log)
+	retentionCfg := retentionConfigFrom(cfg)
+	// 容量处置（spec §3.11）：数据盘可用空间探针（best-effort，"." 所在卷）；
+	// 低于下限 ⇒ 停供应商新流量（经回调置位视图快照的容量门）。
+	retentionCfg.DiskProbe = usage.NewDiskProbe(".")
+	// 容量门必须经槽引用：本回调在运行期才触发，而快照由 billing 阶段
+	// （本阶段之后）写入。按值捕获 = 永远读到 nil（见 supplierSnapshotSlot）。
+	retentionCfg.OnCapacityBlocked = capacityBlockedHook(d.supplierSnap)
+	retention := usage.NewRetention(retentionCfg, repos, log)
 	f.retention = retention
 	// 路由观测写面守卫同源：同一份 observation_retention_days 交给分区仓，
 	// UpsertFlowSnapshot 据此拒早于截止的快照（防 retention 删后重建）。
 	repos.Partitions.SetRoutingObservationRetentionDays(cfg.Routing.ObservationRetentionDays)
 
 	return f
+}
+
+// retentionConfigFrom 是 usage.RetentionConfig 的**配置投影**（唯一装配点）：
+// 每个字段都从 cfg 直取，没有任何默认值/转换——这样「装配漏了一个字段」会由
+// TestRetentionConfigFromProjectsEveryField 直接红，而不是等线上某张表永不清理。
+//
+// 运行时协作者（DiskProbe / OnCapacityBlocked / TickerInterval）不在这里：它们
+// 不是配置，由调用方按装配阶段注入（本仓「配置」与「协作者」不混在同一张表）。
+func retentionConfigFrom(cfg *config.Config) usage.RetentionConfig {
+	return usage.RetentionConfig{
+		LogRetentionDays:                cfg.Usage.LogRetentionDays,
+		ErrLogRetentionDays:             cfg.Usage.ErrLogRetentionDays,
+		AttemptRetentionDays:            cfg.Usage.AttemptRetentionDays,
+		StatsRetentionDays:              cfg.Usage.StatsRetentionDays,
+		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
+	}
 }

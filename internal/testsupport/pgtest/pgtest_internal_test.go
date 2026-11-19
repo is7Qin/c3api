@@ -107,6 +107,17 @@ func TestTemplateHashCoversMigrations(t *testing.T) {
 	require.Equal(t, 2, migratePkg, "template hash must include the migration runner sources (they define RequiredVersion)")
 	require.NotZero(t, repositoryFiles, "template hash must include the repository sources that carry the partition rules and seeds")
 
+	// 逐文件清单锚：上面三个计数器只保证「有东西」，漏掉某一个具体文件仍会绿。
+	// 这四个文件决定模板里的 schema 形状与写面 SQL——漏一个 ⇒ 改了它们仍复用旧
+	// 模板 ⇒ 全套 PG 测试在旧 schema 上假绿（最危险的是 attemptlog_repo.go：它的
+	// INSERT 列序变了而模板没重建，跑出来的红是「列不存在」而不是断言失败）。
+	require.Subset(t, inputs, []string{
+		filepath.Join(e.root, "internal", "repository", "partition.go"),
+		filepath.Join(e.root, "internal", "db", "migrate", "migrate.go"),
+		filepath.Join(e.root, "internal", "db", "migrate", "runner.go"),
+		filepath.Join(e.root, "internal", "repository", "attemptlog_repo.go"),
+	}, "template hash must cover the files that define the schema shape and the attempt_logs write SQL")
+
 	// 名字必须随之改变（这样"改了迁移仍复用旧模板"在结构上不可能）。
 	name, err := templateName(e)
 	require.NoError(t, err)

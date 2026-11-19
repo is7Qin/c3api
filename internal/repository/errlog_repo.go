@@ -66,6 +66,10 @@ func buildErrLogCreate(client *ent.Client, l *domain.UsageLog) *ent.ErrLogCreate
 		// commit_state（spec-stream-failure-truth §5.4）：错误明细侧同样携带
 		// 交付事实——nil = 未知（历史行/未接事实路径）。
 		SetNillableCommitState(l.CommitState).
+		// attempt_ordinal（spec 2026-11-18 retry-observability §4）：S3 去重锚。
+		// nil ⇒ 该列不写（NULL = 无 attempt 语义：本地拒绝/record/handled=true
+		// 终态）。列由 0003 的 ALTER 加（本表是分区表，ent 迁移不建它）。
+		SetNillableAttemptOrdinal(l.AttemptOrdinal).
 		SetLatencyMs(l.LatencyMS).
 		SetCreatedAt(l.CreatedAt)
 	// client_ip（S-E 2026-08-17）：非空才 Set（ent 只落被 Set 的列——拒绝行

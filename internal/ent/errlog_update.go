@@ -42,6 +42,33 @@ func (_u *ErrLogUpdate) SetNillableRequestID(v *string) *ErrLogUpdate {
 	return _u
 }
 
+// SetAttemptOrdinal sets the "attempt_ordinal" field.
+func (_u *ErrLogUpdate) SetAttemptOrdinal(v int16) *ErrLogUpdate {
+	_u.mutation.ResetAttemptOrdinal()
+	_u.mutation.SetAttemptOrdinal(v)
+	return _u
+}
+
+// SetNillableAttemptOrdinal sets the "attempt_ordinal" field if the given value is not nil.
+func (_u *ErrLogUpdate) SetNillableAttemptOrdinal(v *int16) *ErrLogUpdate {
+	if v != nil {
+		_u.SetAttemptOrdinal(*v)
+	}
+	return _u
+}
+
+// AddAttemptOrdinal adds value to the "attempt_ordinal" field.
+func (_u *ErrLogUpdate) AddAttemptOrdinal(v int16) *ErrLogUpdate {
+	_u.mutation.AddAttemptOrdinal(v)
+	return _u
+}
+
+// ClearAttemptOrdinal clears the value of the "attempt_ordinal" field.
+func (_u *ErrLogUpdate) ClearAttemptOrdinal() *ErrLogUpdate {
+	_u.mutation.ClearAttemptOrdinal()
+	return _u
+}
+
 // SetClientIP sets the "client_ip" field.
 func (_u *ErrLogUpdate) SetClientIP(v string) *ErrLogUpdate {
 	_u.mutation.SetClientIP(v)
@@ -412,6 +439,15 @@ func (_u *ErrLogUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(errlog.FieldRequestID, field.TypeString, value)
 	}
+	if value, ok := _u.mutation.AttemptOrdinal(); ok {
+		_spec.SetField(errlog.FieldAttemptOrdinal, field.TypeInt16, value)
+	}
+	if value, ok := _u.mutation.AddedAttemptOrdinal(); ok {
+		_spec.AddField(errlog.FieldAttemptOrdinal, field.TypeInt16, value)
+	}
+	if _u.mutation.AttemptOrdinalCleared() {
+		_spec.ClearField(errlog.FieldAttemptOrdinal, field.TypeInt16)
+	}
 	if value, ok := _u.mutation.ClientIP(); ok {
 		_spec.SetField(errlog.FieldClientIP, field.TypeString, value)
 	}
@@ -536,6 +572,33 @@ func (_u *ErrLogUpdateOne) SetNillableRequestID(v *string) *ErrLogUpdateOne {
 	if v != nil {
 		_u.SetRequestID(*v)
 	}
+	return _u
+}
+
+// SetAttemptOrdinal sets the "attempt_ordinal" field.
+func (_u *ErrLogUpdateOne) SetAttemptOrdinal(v int16) *ErrLogUpdateOne {
+	_u.mutation.ResetAttemptOrdinal()
+	_u.mutation.SetAttemptOrdinal(v)
+	return _u
+}
+
+// SetNillableAttemptOrdinal sets the "attempt_ordinal" field if the given value is not nil.
+func (_u *ErrLogUpdateOne) SetNillableAttemptOrdinal(v *int16) *ErrLogUpdateOne {
+	if v != nil {
+		_u.SetAttemptOrdinal(*v)
+	}
+	return _u
+}
+
+// AddAttemptOrdinal adds value to the "attempt_ordinal" field.
+func (_u *ErrLogUpdateOne) AddAttemptOrdinal(v int16) *ErrLogUpdateOne {
+	_u.mutation.AddAttemptOrdinal(v)
+	return _u
+}
+
+// ClearAttemptOrdinal clears the value of the "attempt_ordinal" field.
+func (_u *ErrLogUpdateOne) ClearAttemptOrdinal() *ErrLogUpdateOne {
+	_u.mutation.ClearAttemptOrdinal()
 	return _u
 }
 
@@ -938,6 +1001,15 @@ func (_u *ErrLogUpdateOne) sqlSave(ctx context.Context) (_node *ErrLog, err erro
 	}
 	if value, ok := _u.mutation.RequestID(); ok {
 		_spec.SetField(errlog.FieldRequestID, field.TypeString, value)
+	}
+	if value, ok := _u.mutation.AttemptOrdinal(); ok {
+		_spec.SetField(errlog.FieldAttemptOrdinal, field.TypeInt16, value)
+	}
+	if value, ok := _u.mutation.AddedAttemptOrdinal(); ok {
+		_spec.AddField(errlog.FieldAttemptOrdinal, field.TypeInt16, value)
+	}
+	if _u.mutation.AttemptOrdinalCleared() {
+		_spec.ClearField(errlog.FieldAttemptOrdinal, field.TypeInt16)
 	}
 	if value, ok := _u.mutation.ClientIP(); ok {
 		_spec.SetField(errlog.FieldClientIP, field.TypeString, value)

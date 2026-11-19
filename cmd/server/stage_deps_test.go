@@ -21,7 +21,7 @@ var stageDepsBaseline = map[string]int{
 	"healthDeps":  11,
 	"notifyDeps":  3,
 	"billingDeps": 17,
-	"codexDeps":   20,
+	"codexDeps":   21,
 }
 
 // TestStageDepsAreNarrow 钉两件事：

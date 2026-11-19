@@ -59,6 +59,11 @@ func RequestID(v string) predicate.ErrLog {
 	return predicate.ErrLog(sql.FieldEQ(FieldRequestID, v))
 }
 
+// AttemptOrdinal applies equality check predicate on the "attempt_ordinal" field. It's identical to AttemptOrdinalEQ.
+func AttemptOrdinal(v int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldEQ(FieldAttemptOrdinal, v))
+}
+
 // ClientIP applies equality check predicate on the "client_ip" field. It's identical to ClientIPEQ.
 func ClientIP(v string) predicate.ErrLog {
 	return predicate.ErrLog(sql.FieldEQ(FieldClientIP, v))
@@ -192,6 +197,56 @@ func RequestIDEqualFold(v string) predicate.ErrLog {
 // RequestIDContainsFold applies the ContainsFold predicate on the "request_id" field.
 func RequestIDContainsFold(v string) predicate.ErrLog {
 	return predicate.ErrLog(sql.FieldContainsFold(FieldRequestID, v))
+}
+
+// AttemptOrdinalEQ applies the EQ predicate on the "attempt_ordinal" field.
+func AttemptOrdinalEQ(v int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldEQ(FieldAttemptOrdinal, v))
+}
+
+// AttemptOrdinalNEQ applies the NEQ predicate on the "attempt_ordinal" field.
+func AttemptOrdinalNEQ(v int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldNEQ(FieldAttemptOrdinal, v))
+}
+
+// AttemptOrdinalIn applies the In predicate on the "attempt_ordinal" field.
+func AttemptOrdinalIn(vs ...int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldIn(FieldAttemptOrdinal, vs...))
+}
+
+// AttemptOrdinalNotIn applies the NotIn predicate on the "attempt_ordinal" field.
+func AttemptOrdinalNotIn(vs ...int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldNotIn(FieldAttemptOrdinal, vs...))
+}
+
+// AttemptOrdinalGT applies the GT predicate on the "attempt_ordinal" field.
+func AttemptOrdinalGT(v int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldGT(FieldAttemptOrdinal, v))
+}
+
+// AttemptOrdinalGTE applies the GTE predicate on the "attempt_ordinal" field.
+func AttemptOrdinalGTE(v int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldGTE(FieldAttemptOrdinal, v))
+}
+
+// AttemptOrdinalLT applies the LT predicate on the "attempt_ordinal" field.
+func AttemptOrdinalLT(v int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldLT(FieldAttemptOrdinal, v))
+}
+
+// AttemptOrdinalLTE applies the LTE predicate on the "attempt_ordinal" field.
+func AttemptOrdinalLTE(v int16) predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldLTE(FieldAttemptOrdinal, v))
+}
+
+// AttemptOrdinalIsNil applies the IsNil predicate on the "attempt_ordinal" field.
+func AttemptOrdinalIsNil() predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldIsNull(FieldAttemptOrdinal))
+}
+
+// AttemptOrdinalNotNil applies the NotNil predicate on the "attempt_ordinal" field.
+func AttemptOrdinalNotNil() predicate.ErrLog {
+	return predicate.ErrLog(sql.FieldNotNull(FieldAttemptOrdinal))
 }
 
 // ClientIPEQ applies the EQ predicate on the "client_ip" field.

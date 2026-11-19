@@ -59,6 +59,11 @@ type PartitionRepo struct {
 	// SetRoutingObservationRetentionDays 装配 cfg.Routing.ObservationRetentionDays）：
 	// 写面据此拒早于截止的快照（routing.go UpsertFlowSnapshot 守卫）。0 = 未装配。
 	routingObservationDays int
+	// existsFn 分区存在性探测的测试 seam（nil = 生产实现，见 partitionExists）。
+	// 唯一目的：让「EnsureAllTablePartitions 的迭代源就是登记清单」这条锚能跑
+	// ——否则要造一个能应答 pg_class 查询的假 driver，测的会是驱动而不是清单。
+	// 生产构造（repository.go 的 &PartitionRepo{driver: drv}）恒不设它。
+	existsFn func(ctx context.Context, name string) (bool, error)
 }
 
 // 分区名 = {table}_{YYYYMMDD}（UTC 日；分区边界按 UTC 零点对齐，避免会话
@@ -243,6 +248,27 @@ var errLogColumnDefs = []string{
 }
 
 var errLogCreateDDL = partitionedCreateDDL("err_logs", "created_at", errLogColumnDefs)
+
+// errLogAttemptOrdinalDDL err_logs 的 0003 增量列（**test/bootstrap-only**）。
+//
+// 它是「当前形状 = 0001 + 0003」这条事实的运行时一半：建表输入 errLogColumnDefs
+// 冻结在 0001，多余的那一列由本语句补。文本与 0003_attempt_logs.up.sql 的同一条
+// 语句逐字同源（唯一差异是这里的 IF NOT EXISTS 幂等修饰），锚在
+// migrations_ddl_internal_test.go 的 TestErrLogAttemptOrdinalDDLMatchesMigration。
+//
+// 为什么不让它进 errLogColumnDefs：那份清单是 0001 的**生成器输入**，加一列就是
+// 重新生成已冻结的 0001（账本 checksum 漂移 ⇒ 所有已发布库启动门 NotReady）。
+//
+// 🚨 **生产路径不得经由它加列**：`cmd/server` 里出现 `EnsureErrLogPartitioned`
+// 会被 TestCmdServerOwnsNoBootstrapSchema（cmd/server/schema_channel_gate_test.go）
+// 直接判红——生产 schema 的唯一通道是 `c3api -migrate up`（版本化 + 账本 + 版本门），
+// bootstrap 只服务测试夹具与 legacy 生成器。
+const errLogAttemptOrdinalDDL = "ALTER TABLE err_logs ADD COLUMN IF NOT EXISTS attempt_ordinal smallint NULL"
+
+// ErrLogAttemptOrdinalAlter 导出上面那条自举 ALTER，仅供「迁移 ↔ 运行时」逐字锚
+// （internal/db/migrate/migrations_ddl_internal_test.go）读取。生产路径不得调用
+// ——列的存在性只由 0003 与 EnsureErrLogPartitioned 决定。
+func ErrLogAttemptOrdinalAlter() string { return errLogAttemptOrdinalDDL }
 
 // errLogIndexDDLs 对齐 ent schema Indexes（同名同列；分区表父表索引为分区
 // 索引，子分区自动继承）：created_at 时间窗口查询/清理 + (group_id/user_id,
@@ -446,6 +472,9 @@ func (r *PartitionRepo) IsUsageEntityStatsPartitioned(ctx context.Context) (bool
 // partitionExists 分区表是否存在（幂等预建判定；pgx 下 to_regclass 错误处理
 // 复杂，直接查 pg_class，任意 relkind 均可——分区子表 relkind='r'）。
 func (r *PartitionRepo) partitionExists(ctx context.Context, name string) (bool, error) {
+	if r.existsFn != nil { // 测试 seam（见字段注释）；生产恒 nil
+		return r.existsFn(ctx, name)
+	}
 	rows := &entsql.Rows{}
 	if err := r.driver.Query(ctx, `SELECT COUNT(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = current_schema() AND c.relname = $1`, []any{name}, rows); err != nil {
 		return false, err
@@ -629,8 +658,28 @@ func (r *PartitionRepo) EnsureUsageLogPartitioned(ctx context.Context, now time.
 
 // EnsureErrLogPartitioned err_logs 分区 bootstrap（同路线复用：独立列事实源 +
 // 独立序列 err_logs_id_seq + 独立保留期；分区键 created_at）。
+//
+// 🚨 **test/bootstrap-only，不是生产 schema 通道**：这是「从零自举」的测试夹具
+// 与 legacy 生成器入口（`internal/db/migrate/gen/legacy.go` 用它冻结老形状）。
+// 生产进程只允许 `c3api -migrate up` 建表/加列——`cmd/server` 里出现本函数名会被
+// TestCmdServerOwnsNoBootstrapSchema（cmd/server/schema_channel_gate_test.go）判红。
+//
+// **bootstrap 必须产出当前形状，不是 0001 的形状**：建表输入 errLogColumnDefs 被
+// 冻结成 0001 的生成器输入（改它 = 已发布库的 checksum 漂移），而 0003 之后
+// err_logs 的当前形状 = 0001 + attempt_ordinal。所以这里在建表后补一条幂等
+// ALTER（与 0003 的迁移语句逐字同源）。少了它，写入面（errlog_repo 的
+// buildErrLogCreate 会 Set attempt_ordinal）在自举库上直接 42703——这是
+// TestPGInternalBillablePredicateG0eCoalesce 抓到的真实缺陷。
 func (r *PartitionRepo) EnsureErrLogPartitioned(ctx context.Context, now time.Time) error {
-	return r.ensureTablePartitioned(ctx, "err_logs", "created_at", errLogColumnDefs, errLogIndexDDLs, now)
+	if err := r.ensureTablePartitioned(ctx, "err_logs", "created_at", errLogColumnDefs, errLogIndexDDLs, now); err != nil {
+		return err
+	}
+	// 已建表（含迁移建好的）走 IF NOT EXISTS 无副作用；并发自举由 tolerate-race
+	// 收敛（与其余 bootstrap 步骤同一语义）。
+	if err := r.execDDLTolerateRace(ctx, errLogAttemptOrdinalDDL); err != nil {
+		return fmt.Errorf("add err_logs.attempt_ordinal: %w", err)
+	}
+	return nil
 }
 
 // statsAggWatermarkDDL 离线聚合 watermark 单行表（spec 2026-08-14：settings

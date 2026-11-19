@@ -63,6 +63,11 @@ func TestDefaults(t *testing.T) {
 	require.True(t, c.Billing.Enabled, "计费默认开（全链默认开启）")
 	require.Equal(t, 250*time.Millisecond, c.Billing.FlushInterval, " 游标轮询默认 250ms（spec-f2-ledger-cursor）")
 	require.Equal(t, 10*time.Second, c.Billing.BalanceRefreshInterval)
+	// attempt_logs 保留期（spec 2026-11-18 retry-observability §3.1）：与 err_logs
+	// 同档 7 天——它们是同一次失败的两个视角，没有理由差一个数量级。
+	require.Equal(t, 7, c.Usage.AttemptRetentionDays, "attempt_logs 默认 7 天")
+	require.Equal(t, c.Usage.ErrLogRetentionDays, c.Usage.AttemptRetentionDays,
+		"两档必须同值：一处改另一处忘改会让「同一次失败的两个视角」保留期分叉")
 }
 
 // TestEnvOverlay 改造后保持通过：env 叠加 + duration 解析回归（原只设

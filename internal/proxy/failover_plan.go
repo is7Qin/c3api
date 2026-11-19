@@ -80,7 +80,7 @@ func (p *Proxy) reservePlanAttempt(plan *scheduler.AttemptPlan) (*scheduler.Sele
 // (never a placeholder); commit/result/status come from the observed code,
 // callErr and client context.
 func retryOutcomeForAttempt(attempt scheduler.Attempt, code int, callErr error, ctx context.Context) AttemptOutcome {
-	clientCancel := code == 0 && ctx != nil && ctx.Err() != nil
+	clientCancel := dispatchClientCancel(ctx, code)
 	accountFatal := !clientCancel && callErr != nil && (sdkbridge.IsFatal(callErr) || sdkbridge.IsBPSAccountFatal(callErr))
 	terminal := true
 	var bpsErr *bpsAttemptError

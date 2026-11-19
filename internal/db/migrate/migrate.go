@@ -99,6 +99,11 @@ func Head() (version int64, phase string) {
 //     多一条 expand 迁移本身并不提高水位（旧代码照样能跑新 schema），这里提高
 //     是因为本二进制真的开始依赖它。
 //
+// 「保留期要删 attempt_logs 的分区」**不算**依赖新结构：少删一张不存在的表只是
+// 清理少一项，请求路径不会崩。水位只跟着**请求路径**真正读写的表/列走——所以
+// 0003 的写点（往 attempt_logs 写、往 err_logs 写 ordinal）落地之后，这个水位
+// 才名副其实。
+//
 // 将来某个二进制读了新迁移建的列，它必须把这行改成那一版，否则
 // `db_head < RequiredVersion` 的库会被误判成「可服务」，然后在查询里报 42703。
 const RequiredVersion int64 = 3

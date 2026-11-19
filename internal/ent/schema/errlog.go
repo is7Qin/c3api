@@ -21,6 +21,17 @@ func (ErrLog) Fields() []ent.Field {
 	return []ent.Field{
 		field.Int64("id"),
 		field.String("request_id"),
+		// attempt_ordinal 尝试序号（spec 2026-11-18 retry-observability §4）：
+		// 与 request_id 合成 S3 的去重键——同一 attempt 若在 attempt_logs 与
+		// err_logs 都出现，attempt_logs 行优先。**物理列由 0003_attempt_logs.up.sql
+		// 的 ALTER 加**（本表是分区表，被 migrateHookExcludesPartitioned 从 ent
+		// 迁移里排除 ⇒ 本字段不进 0001 产物；errLogColumnDefs 也刻意不含它）。
+		//
+		// 只有 failover 循环内的四处产出点填值（首字节前客户端取消 / SDK fatal /
+		// 循环可见 4xx / 耗尽），其余一律 NULL：recordRejected 的本地拒绝、
+		// record、codex 本地拒绝、caller 侧 handled=true 终态都没有 attempt
+		// 语义（S3 显示为 ordinal_unknown）。
+		field.Int16("attempt_ordinal").Optional().Nillable(),
 		// client_ip 审计列——供应商头识别 + RemoteAddr
 		// 兜底（proxy.behind_cdn 开关门控；与 usage_logs 同列同步加）；拒绝行
 		// （401 鉴权失败等）也带（guardPipeline 入口鉴权前提取）。NULL = Optional
