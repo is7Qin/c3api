@@ -35,10 +35,13 @@ type Repository struct {
 	Settings       *SettingRepo
 	Usages         *UsageRepo  // usage_logs 明细（消费面改名：log → usage 语义）
 	ErrLogs        *ErrLogRepo // err_logs 错误审计明细（分表设计）
-	Stats          *StatRepo
-	Rules          RuleStore
-	Redemptions    *RedemptionRepo
-	Orders         *OrderRepo // 支付订单（spec 支付网关 §4-1）
+	// AttemptLogs attempt_logs 尝试明细（只写不读：S3 的查询走 SQL，故无 ent
+	// 实体——raw SQL 批量插入，见 attemptlog_repo.go）。
+	AttemptLogs *AttemptLogRepo
+	Stats       *StatRepo
+	Rules       RuleStore
+	Redemptions *RedemptionRepo
+	Orders      *OrderRepo // 支付订单（spec 支付网关 §4-1）
 	// PaymentAccounts / PaymentChannels 支付账户与渠道（spec 支付网关 v2
 	// §3-1/§3-2）：**只走独立提交**，绝不进 TxStore（入账事务里不允许账户 CRUD）。
 	// 注意方法名与上游账号集（Accounts）撞名：账户都是 CreateAccount/ListAccounts，
@@ -48,7 +51,7 @@ type Repository struct {
 	PriceEntries    *PriceEntryRepo
 	PriceVariants   *PriceVariantRepo
 	Billing         *BillingRepo       // 扣费落库
-	Partitions      *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + usage_stats）
+	Partitions      *PartitionRepo     // 分区表 bootstrap/retention（usage_logs + err_logs + attempt_logs + usage_stats + usage_entity_stats）
 	TemplateExts    *TemplateExtRepo   // 模板类型化扩展（template_ext 1:1； 数据层，消费接线）
 	AccountExts     *AccountExtRepo    // 账号类型化鉴权扩展（account_ext 1:1； 数据层，消费接线）
 	EmailTemplates  *EmailTemplateRepo // 邮件模板（email_template；邮件服务）
@@ -134,6 +137,7 @@ func newRepository(client *ent.Client, drv dialect.Driver, pool *pgxpool.Pool) *
 		Settings:        &SettingRepo{client: client},
 		Usages:          &UsageRepo{client: client, pool: pool},
 		ErrLogs:         &ErrLogRepo{client: client},
+		AttemptLogs:     &AttemptLogRepo{driver: drv},
 		Stats:           &StatRepo{client: client, pool: pool},
 		Rules:           &RuleRepo{client: client},
 		Redemptions:     &RedemptionRepo{client: client, driver: drv},
@@ -1001,7 +1005,9 @@ func (r *Repository) AcquireBillingLock(ctx context.Context) (release func(), ok
 // 窗口——就必须 +1：pgtest 的模板 hash 把它算进去，否则测试会 clone 到一份按旧
 // 规则建好分区的模板，「补分区逻辑改了」这件事只会表现为夜深人静时的
 // `no partition of relation … found`。实现细节（注释、错误文案）不需要 +1。
-const EnsureAllTablePartitionsVersion = 1
+//
+// 2：父表清单 6 → 7（加 attempt_logs，属 0003）。
+const EnsureAllTablePartitionsVersion = 2
 
 // EnsureAllTablePartitions 是补齐按日分区的唯一入口（spec §2.7）。
 //
@@ -1054,6 +1060,18 @@ func (r *Repository) EnsureErrLogPartitions(ctx context.Context, now, until time
 // 独立保留期——retention worker 按 ErrLogRetentionDays 调）。
 func (r *Repository) DropErrLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.Partitions.DropErrLogPartitionsBefore(ctx, cutoff)
+}
+
+// EnsureAttemptLogPartitions attempt_logs 预建 [trunc(now), trunc(until)] 每日
+// 分区（retention worker 防日界竞态——不重启的实例靠它拿到明日分区；幂等）。
+func (r *Repository) EnsureAttemptLogPartitions(ctx context.Context, now, until time.Time) error {
+	return r.Partitions.EnsureAttemptLogPartitions(ctx, now, until)
+}
+
+// DropAttemptLogPartitionsBefore attempt_logs DROP 分区下界 < cutoff 的分区
+// （O(1)；独立保留期——retention worker 按 AttemptRetentionDays 调）。
+func (r *Repository) DropAttemptLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.Partitions.DropAttemptLogPartitionsBefore(ctx, cutoff)
 }
 
 // EnsureUsageStatsPartitioned usage_stats 分区 bootstrap（幂等；main 装配在

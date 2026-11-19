@@ -35,9 +35,10 @@ func NewDiskProbe(path string) DiskProbe {
 
 // PartitionManager 分区管理面（repository.Repository 实现）：保留策略只需
 // DROP 过期分区 + 预建未来分区，不感知分区表内部 DDL。now/until 由调用方
-// 传入（start 边界由 now 推导，测试可注入时钟）。四表各自独立调度（保留期
-// 独立：LogRetentionDays / ErrLogRetentionDays / StatsRetentionDays——后者由
-// usage_stats 与 usage_entity_stats 共用，同一循环 DROP+预建）。
+// 传入（start 边界由 now 推导，测试可注入时钟）。五表各自独立调度（保留期
+// 独立：LogRetentionDays / ErrLogRetentionDays / AttemptRetentionDays /
+// StatsRetentionDays——最后一项由 usage_stats 与 usage_entity_stats 共用，
+// 同一循环 DROP+预建）。
 // DeleteRedemptionUsesBefore 是普通表（redemption_uses 无分区可 DROP）的
 // 有界批删路径——同为保留策略的周期清理手段，归口本接口。
 type PartitionManager interface {
@@ -48,6 +49,8 @@ type PartitionManager interface {
 	RetireUsageLogPartitions(ctx context.Context, cutoff time.Time) (domain.UsageLogRetireResult, error)
 	EnsureErrLogPartitions(ctx context.Context, now, until time.Time) error
 	DropErrLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
+	EnsureAttemptLogPartitions(ctx context.Context, now, until time.Time) error
+	DropAttemptLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
 	EnsureUsageStatsPartitions(ctx context.Context, now, until time.Time) error
 	DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error)
 	EnsureUsageEntityStatsPartitions(ctx context.Context, now, until time.Time) error
@@ -73,7 +76,10 @@ const redemptionUseRetentionDays = 90
 type RetentionConfig struct {
 	LogRetentionDays    int // usage_logs 分区保留天数（config usage.log_retention_days；<= 0 = 不删除）
 	ErrLogRetentionDays int // err_logs 分区保留天数（config usage.errlog_retention_days，默认 7 天短保留——错误审计；<= 0 = 不删除）
-	StatsRetentionDays  int // usage_stats 分区保留天数（config usage.stats_retention_days，默认 180 天——聚合统计长保留；<= 0 = 不删除）
+	// AttemptRetentionDays attempt_logs 分区保留天数（config usage.attempt_retention_days，
+	// 默认 7 天——与 err_logs 同档：它们是同一次失败的两个视角）；<= 0 = 不删除。
+	AttemptRetentionDays int
+	StatsRetentionDays   int // usage_stats 分区保留天数（config usage.stats_retention_days，默认 180 天——聚合统计长保留；<= 0 = 不删除）
 	// RoutingObservationRetentionDays 路由观测面（routing_quality_fact /
 	// routing_flow_fact 两张事实分区表 + snapshot_state 交接状态）
 	// 保留天数（config routing.observation_retention_days，默认 7；config 地板 2）。
@@ -95,8 +101,9 @@ type RetentionConfig struct {
 }
 
 // RetentionWorker 按日分区保留 worker（worker.Worker 契约，Name="retention"）：
-// 每小时巡检一次——四表各自独立调度（usage_logs 按 LogRetentionDays、err_logs
-// 按 ErrLogRetentionDays、usage_stats/usage_entity_stats 共用 StatsRetentionDays
+// 每小时巡检一次——五表各自独立调度（usage_logs 按 LogRetentionDays、err_logs
+// 按 ErrLogRetentionDays、attempt_logs 按 AttemptRetentionDays、
+// usage_stats/usage_entity_stats 共用 StatsRetentionDays
 // （同一循环 DROP+预建，180d），同一循环无新增 goroutine）：
 //   - DROP 分区下界 < now - 保留天数的分区（DROP TABLE O(1)，比逐行 DELETE
 //     快 5~6 个量级；按分区名日期判定，无需查元数据——usage_stats 保留清理
@@ -128,8 +135,11 @@ type RetentionWorker struct {
 	lastDropLogs atomic.Int64
 	// lastBlockedLogs 最近一轮 usage_logs 分区退休屏障挡下的分区数（§3.11 应用
 	// 告警；>0 = 存在未确认资金事件，容量耗尽前须处置）。
-	lastBlockedLogs     atomic.Int64
-	lastDropErrLogs     atomic.Int64
+	lastBlockedLogs atomic.Int64
+	lastDropErrLogs atomic.Int64
+	// lastDropAttemptLogs 最近成功轮 attempt_logs DROP 分区数（独立计数：与
+	// err_logs 同为 7 天档，但仍是两张表、两个 cutoff）。
+	lastDropAttemptLogs atomic.Int64
 	lastDropStats       atomic.Int64
 	lastDropEntityStats atomic.Int64
 	// 路由观测面 DROP 计数（与 lastDrop* 同纪律：失败轮保留上轮值）。0 且分区
@@ -287,6 +297,18 @@ func (w *RetentionWorker) runOnce() {
 			}
 		}
 	}
+	if w.cfg.AttemptRetentionDays > 0 {
+		cutoff := now.AddDate(0, 0, -w.cfg.AttemptRetentionDays)
+		n, err := w.parts.DropAttemptLogPartitionsBefore(ctx, cutoff)
+		if err != nil {
+			w.log.Warn("retention drop attempt_logs partitions failed", logx.Error(err))
+		} else {
+			w.lastDropAttemptLogs.Store(int64(n))
+			if n > 0 {
+				w.log.Info("retention dropped attempt_logs partitions", logx.Int("count", n))
+			}
+		}
+	}
 	if w.cfg.StatsRetentionDays > 0 {
 		cutoff := now.AddDate(0, 0, -w.cfg.StatsRetentionDays)
 		n, err := w.parts.DropUsageStatsPartitionsBefore(ctx, cutoff)
@@ -352,6 +374,9 @@ func (w *RetentionWorker) runOnce() {
 	}
 	if err := w.parts.EnsureErrLogPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
 		w.log.Warn("retention pre-create err_logs partitions failed", logx.Error(err))
+	}
+	if err := w.parts.EnsureAttemptLogPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
+		w.log.Warn("retention pre-create attempt_logs partitions failed", logx.Error(err))
 	}
 	if err := w.parts.EnsureUsageStatsPartitions(ctx, now, now.AddDate(0, 0, 1)); err != nil {
 		w.log.Warn("retention pre-create usage_stats partitions failed", logx.Error(err))

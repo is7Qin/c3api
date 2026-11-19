@@ -81,6 +81,10 @@ type RetentionWorkerStats struct {
 	ErrLogRetentionDays             int                    `json:"errlog_retention_days"`
 	StatsRetentionDays              int                    `json:"stats_retention_days"`
 	RoutingObservationRetentionDays int                    `json:"routing_observation_retention_days"` // 路由观测保留天数（oldest_partition_unix_ms 的 cutoff 解释口径：cutoff = now - 本值）
+	// attempt_logs 保留面（S2）：新字段一律追加在尾部——/ops/workers 的呈现顺序
+	// 跟着结构体字段序，插在中间会动前端契约。
+	LastDroppedAttemptLogPartitions int64 `json:"last_dropped_attemptlog_partitions"` // 最近成功轮 attempt_logs DROP 分区数（失败轮保留上轮值；口径同 err_logs）
+	AttemptRetentionDays            int   `json:"attemptlog_retention_days"`          // attempt_logs 分区保留天数（cutoff 解释口径）
 }
 
 // Stats 满足 handler.StatsProvider（独立于 worker.Worker 契约；装配链路见 internal/handler/ops.go 文件头）。
@@ -89,6 +93,7 @@ func (w *RetentionWorker) Stats() any {
 		LastPatrolUnixMs:                 w.lastPatrol.Load(),
 		LastDroppedLogPartitions:         w.lastDropLogs.Load(),
 		LastDroppedErrLogPartitions:      w.lastDropErrLogs.Load(),
+		LastDroppedAttemptLogPartitions:  w.lastDropAttemptLogs.Load(),
 		LastDroppedStatsPartitions:       w.lastDropStats.Load(),
 		LastDroppedEntityStatsPartitions: w.lastDropEntityStats.Load(),
 		LastDroppedRoutingQualityParts:   w.lastDropRoutingQuality.Load(),
@@ -112,6 +117,7 @@ func (w *RetentionWorker) Stats() any {
 		ErrLogRetentionDays:              w.cfg.ErrLogRetentionDays,
 		StatsRetentionDays:               w.cfg.StatsRetentionDays,
 		RoutingObservationRetentionDays:  w.cfg.RoutingObservationRetentionDays,
+		AttemptRetentionDays:             w.cfg.AttemptRetentionDays,
 	}
 }
 

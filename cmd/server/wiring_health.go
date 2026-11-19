@@ -171,6 +171,7 @@ func newHealthFace(d healthDeps) *healthFace {
 	retention := usage.NewRetention(usage.RetentionConfig{
 		LogRetentionDays:                cfg.Usage.LogRetentionDays,
 		ErrLogRetentionDays:             cfg.Usage.ErrLogRetentionDays,
+		AttemptRetentionDays:            cfg.Usage.AttemptRetentionDays,
 		StatsRetentionDays:              cfg.Usage.StatsRetentionDays,
 		RoutingObservationRetentionDays: cfg.Routing.ObservationRetentionDays,
 		// 容量处置（spec §3.11）：数据盘可用空间探针（best-effort，"." 所在卷）；

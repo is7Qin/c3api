@@ -641,7 +641,7 @@ func templateHashInputs(e *testEnv) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read migrations dir: %w", err)
 	}
-	paths := make([]string, 0, len(names)+len(migrationNames)+6)
+	paths := make([]string, 0, len(names)+len(migrationNames)+7)
 	for _, n := range names {
 		paths = append(paths, filepath.Join(schemaDir, n))
 	}
@@ -653,6 +653,9 @@ func templateHashInputs(e *testEnv) ([]string, error) {
 		filepath.Join(e.root, "internal", "db", "migrate", "migrate.go"),
 		filepath.Join(e.root, "internal", "db", "migrate", "runner.go"),
 		filepath.Join(e.root, "internal", "repository", "partition.go"),
+		// attempt_logs 的 INSERT 列表与占位符拼装都在这个文件里：SQL 文本变了
+		// （列序/列集合）就必须重建模板，否则测试会拿旧 schema 跑新语句。
+		filepath.Join(e.root, "internal", "repository", "attemptlog_repo.go"),
 		filepath.Join(e.root, "internal", "repository", "price_bootstrap.go"),
 		filepath.Join(e.root, "internal", "repository", "repository.go"),
 		filepath.Join(e.root, "internal", "repository", "routing.go"),

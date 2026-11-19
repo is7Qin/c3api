@@ -33,6 +33,9 @@ type fakePartitionManager struct {
 	edrops    []time.Time               // err_logs cutoff 参数
 	enows     []time.Time               // err_logs ensure 的 now 参数
 	eensures  []time.Time               // err_logs ensure 的 until 参数
+	adrops    []time.Time               // attempt_logs cutoff 参数（独立保留期）
+	anows     []time.Time               // attempt_logs ensure 的 now 参数
+	aensures  []time.Time               // attempt_logs ensure 的 until 参数
 	sdrops    []time.Time               // usage_stats cutoff 参数
 	snows     []time.Time               // usage_stats ensure 的 now 参数
 	sensures  []time.Time               // usage_stats ensure 的 until 参数
@@ -47,6 +50,7 @@ type fakePartitionManager struct {
 	logDrops  int                       // RetireUsageLogPartitions 回传的 Dropped 数
 	blocked   []domain.BlockedPartition // RetireUsageLogPartitions 回传的被挡分区（屏障告警断言）
 	edropErr  error                     // err_logs drop 失败注入（失败隔离断言）
+	adropErr  error                     // attempt_logs drop 失败注入（失败隔离断言）
 	sdropErr  error                     // usage_stats drop 失败注入（失败隔离断言）
 	esdropErr error                     // usage_entity_stats drop 失败注入（失败隔离断言，与 sdrop 独立）
 	rdelErr   error                     // redemption_uses 批删失败注入（失败隔离断言）
@@ -87,6 +91,21 @@ func (f *fakePartitionManager) EnsureErrLogPartitions(ctx context.Context, now, 
 	defer f.mu.Unlock()
 	f.enows = append(f.enows, now)
 	f.eensures = append(f.eensures, until)
+	return f.ensureErr
+}
+
+func (f *fakePartitionManager) DropAttemptLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.adrops = append(f.adrops, cutoff)
+	return 0, f.adropErr
+}
+
+func (f *fakePartitionManager) EnsureAttemptLogPartitions(ctx context.Context, now, until time.Time) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.anows = append(f.anows, now)
+	f.aensures = append(f.aensures, until)
 	return f.ensureErr
 }
 
@@ -313,6 +332,48 @@ func TestRetentionWorkerErrLogsFailureIsolated(t *testing.T) {
 	require.GreaterOrEqual(t, ee, 2, "err_logs ensure 不受 drop 失败影响")
 	cancel()
 	require.NoError(t, w.Close(ctx))
+}
+
+// TestRetentionWorkerAttemptLogCutoffAndIsolation attempt_logs 的独立保留期：
+// cutoff = now - AttemptRetentionDays（与 err_logs 同档，但仍是自己的调度段），
+// 且它的 DROP 失败不连带其它表（同一轮里后面的表照常跑）。
+//
+// 直接调 runOnce（同步一轮）：这条语义不需要 ticker，也就不需要等。
+func TestRetentionWorkerAttemptLogCutoffAndIsolation(t *testing.T) {
+	pm := &fakePartitionManager{adropErr: errBoom}
+	w := NewRetention(RetentionConfig{
+		LogRetentionDays: 30, ErrLogRetentionDays: 7, AttemptRetentionDays: 2, StatsRetentionDays: 180,
+	}, pm, nil)
+	w.runOnce()
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	require.Len(t, pm.adrops, 1, "attempt_logs drop 每轮一次")
+	now := time.Now().UTC()
+	cut := now.AddDate(0, 0, -2).Truncate(24 * time.Hour)
+	got := pm.adrops[0].UTC().Truncate(24 * time.Hour)
+	require.True(t, cut.Equal(got) || cut.Add(-24*time.Hour).Equal(got) || cut.Add(24*time.Hour).Equal(got),
+		"cutoff = now-2d（AttemptRetentionDays 独立保留期），got=%v want≈%v", pm.adrops[0], cut)
+	require.Len(t, pm.aensures, 1, "预建每轮一次（跨日不重启的实例靠它拿到明日分区）")
+	require.Len(t, pm.edrops, 1, "attempt_logs DROP 失败不连带 err_logs")
+	require.Len(t, pm.sdrops, 1, "也不连带 usage_stats")
+
+	st := w.Stats().(RetentionWorkerStats)
+	require.Zero(t, st.LastDroppedAttemptLogPartitions, "失败轮保留上轮值（0），不写半截数")
+	require.Equal(t, 2, st.AttemptRetentionDays, "观测面暴露本部署的 attempt_logs 保留期")
+}
+
+// TestRetentionWorkerAttemptLogRetentionZeroSkipsDrop <=0 = 不删除（文档化惯例），
+// 但**预建不看保留期**：分区缺失是写入失败，不是保留策略问题。
+func TestRetentionWorkerAttemptLogRetentionZeroSkipsDrop(t *testing.T) {
+	pm := &fakePartitionManager{}
+	w := NewRetention(RetentionConfig{LogRetentionDays: 30, ErrLogRetentionDays: 7}, pm, nil)
+	w.runOnce()
+
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	require.Empty(t, pm.adrops, "AttemptRetentionDays<=0 ⇒ 不 DROP attempt_logs 分区")
+	require.Len(t, pm.aensures, 1, "预建无条件执行")
 }
 
 // TestRetentionWorkerEntityStatsFailureIsolated 四表隔离：usage_entity_stats DROP 失败不影响

@@ -299,6 +299,70 @@ func TestStatsAggColumnAlignment(t *testing.T) {
 	require.Contains(t, statTrendSQL, "COALESCE(sum(cost), 0)::bigint,\n\tCOALESCE(sum(raw_cost), 0)::bigint", "trend SELECT raw 紧随 cost")
 }
 
+// TestAttemptLogColumnDefsMatchCreateDDL attempt_logs 列事实源锚（S2 新表）：
+// 建表 DDL 与事实源列集合一致，且**不是计费表**——cost/token 列一旦混进来，
+// 这张表就会被当成第二份账，而它的职责只是「这次尝试发生了什么」。
+func TestAttemptLogColumnDefsMatchCreateDDL(t *testing.T) {
+	source := ddlColumnNames(strings.Join(attemptLogColumnDefs, "\n"))
+	create := ddlColumnNames(attemptLogCreateDDL)
+	require.NotEmpty(t, source, "事实源列集合非空")
+	require.Equal(t, source, create, "建表 DDL 与事实源列集合一致")
+	// 语义列（缺一行这条尝试就无法定位/无法归类）。
+	for _, want := range []string{"request_id", "attempt_ordinal", "account_id", "lane",
+		"format", "status_code", "outcome", "error_type", "commit_state", "error_message",
+		"latency_ms", "created_at"} {
+		require.Contains(t, source, want, "锚必须覆盖 attempt_logs 语义列 %s", want)
+	}
+	// 非计费表：出现任何一个计费列都说明有人把它当 usage_logs 用。
+	for _, banned := range []string{"cost", "raw_cost", "input_tokens", "output_tokens",
+		"total_tokens", "cache_read_tokens", "cache_creation_tokens", "price_per_call_millis"} {
+		require.NotContains(t, source, banned, "attempt_logs 不是计费表：%s 不得出现", banned)
+	}
+}
+
+// TestAttemptLogIndexDDLs attempt_logs 索引锚：只有 2 条（request_id / account_id
+// + created_at）。第三条裸 (created_at) 是**评审明确砍掉**的：分区键已经让时间窗
+// 查询 pruning，保留清理走整分区退休，它只增写放大。
+func TestAttemptLogIndexDDLs(t *testing.T) {
+	require.Len(t, attemptLogIndexDDLs, 2, "只允许 2 条索引（(created_at) 已砍）")
+	require.Contains(t, attemptLogIndexDDLs[0],
+		"CREATE INDEX attemptlog_request_id_created_at ON attempt_logs (request_id, created_at)",
+		"S3 链式查询的唯一入口索引（request_id + 时间窗）")
+	require.Contains(t, attemptLogIndexDDLs[1],
+		"CREATE INDEX attemptlog_account_id_created_at ON attempt_logs (account_id, created_at)",
+		"账号视角索引（account_id + 时间窗）")
+	for _, ddl := range attemptLogIndexDDLs {
+		require.NotContains(t, ddl, "ON attempt_logs (created_at)",
+			"裸 (created_at) 索引没有消费者，只增写放大")
+	}
+}
+
+// TestPartitionedParentsPutAttemptLogsLast 父表清单的顺序是**迁移顺序**（0001
+// 的六张在前，0003 的 attempt_logs 在最后）：报错时运维看到的第一张表就是最早
+// 该存在的表；顺序被打乱会让「先跑哪个迁移」这件事从错误信息里消失。
+func TestPartitionedParentsPutAttemptLogsLast(t *testing.T) {
+	require.Len(t, partPartitionedParents, 7, "六张 0001 分区父表 + 0003 的 attempt_logs")
+	last := partPartitionedParents[len(partPartitionedParents)-1]
+	require.Equal(t, "attempt_logs", last.table, "attempt_logs 属 0003，排在最后")
+	require.Equal(t, "created_at", last.partition)
+	var seen int
+	for _, p := range partPartitionedParents {
+		if p.table == "attempt_logs" {
+			seen++
+		}
+	}
+	require.Equal(t, 1, seen, "attempt_logs 只登记一次（重复登记会重复建分区）")
+}
+
+// TestErrLogColumnDefsStopAtBaseline err_logs 的列事实源**冻在 0001**：
+// attempt_ordinal 由 0003 的 ALTER 加（见 migrations_ddl_internal_test.go 的
+// 逐字锚）。往这里追加列会让 0001 重新生成、checksum 漂移 ⇒ 已发布库启动门
+// NotReady；而且「err_logs 的当前形状」会变成两个真相。
+func TestErrLogColumnDefsStopAtBaseline(t *testing.T) {
+	require.NotContains(t, strings.Join(errLogColumnDefs, "\n"), "attempt_ordinal",
+		"0003 加的列不得回流到 0001 的生成器输入（errLogColumnDefs）")
+}
+
 // TestIsBootstrapRaceErrorCodeSet 并发 bootstrap 容忍码集锚：撞名
 // （isDuplicateObject——42P07 关系插入撞锁 / 42710 类型名预检撞隐式复合类型 /
 // 23505 CREATE SEQUENCE 并发）+ 缺失（isMissingObject——42P01，stale-DROP 窗

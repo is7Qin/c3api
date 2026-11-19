@@ -38,7 +38,7 @@ func TestDecideFourStates(t *testing.T) {
 
 	t.Run("checksum drift is readonly", func(t *testing.T) {
 		d := Decide(Verdict{
-			DBHead: 2, BinaryHead: 2,
+			DBHead: RequiredVersion, BinaryHead: RequiredVersion,
 			Problems: []string{"checksum mismatch for 0001_baseline: recorded=aa current=bb"},
 		})
 		require.Equal(t, ModeReadonly, d.Mode)
@@ -55,20 +55,27 @@ func TestDecideFourStates(t *testing.T) {
 	})
 
 	t.Run("equal watermarks serve silently", func(t *testing.T) {
-		d := Decide(Verdict{DBHead: 2, DBContract: 0, BinaryHead: 2, BinaryContract: 0})
+		// 相等 = 「库就是本二进制要求的那一版」：直接拿 RequiredVersion，不再写死
+		// 字面量（写死会在提高水位时把这条用例变成「落后也放行」的反向证据）。
+		d := Decide(Verdict{DBHead: RequiredVersion, DBContract: 0, BinaryHead: RequiredVersion, BinaryContract: 0})
 		require.Equal(t, ModeServe, d.Mode)
 		require.Empty(t, d.Warnings)
 		require.True(t, strings.TrimSpace(d.Reason) == "")
 	})
 }
 
-// TestRequiredVersionIsTheBaseline 钉住「代码常量 = 0002」这条底账（spec §2.13）：
-// 每次调高它都必须同时带上一条能被 `-migrate up` 应用的迁移，否则所有存量部署会
-// 在升级后集体 readonly。
+// TestRequiredVersionIsTheBaseline 钉住「代码常量 = 本二进制真正依赖的最低
+// expand 版本」这条底账（spec §2.13）：每次调高它都必须同时带上一条能被
+// `-migrate up` 应用的迁移，否则所有存量部署会在升级后集体 readonly。
+//
+// 这里刻意不写成「RequiredVersion == Head()」的等式：head 会继续前进，下一次
+// 纯 expand 迁移（没人读新结构）不应被逼成一次无意义的水位提升——水位高于库时，
+// 「新二进制先发、迁移后跑」这种合法发布顺序会被判成 NotReady。反方向仍然成立：
+// RequiredVersion 超过 head 表示二进制要求一个自己都建不出来的版本。
 func TestRequiredVersionIsTheBaseline(t *testing.T) {
 	head, _ := Head()
 	require.LessOrEqual(t, RequiredVersion, head,
 		"RequiredVersion 不能超过本二进制的迁移 head：否则二进制要求一个它自己都建不出来的版本")
-	require.Equal(t, int64(2), RequiredVersion,
-		"0002 把导入幂等键按凭据类型收窄（Codex/BPS 同一上游账号可并存）；没有它 BPS 导入在旧库上不可用")
+	require.Equal(t, int64(3), RequiredVersion,
+		"0003 = attempt_logs 表与分区保留（0002 是另一条独立迁移：导入幂等键按凭据类型收窄）")
 }

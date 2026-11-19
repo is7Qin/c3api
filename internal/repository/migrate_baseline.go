@@ -34,6 +34,11 @@ type BaselineTable struct {
 // MigrationBaselineDDLs 返回 0001 baseline 里「不由 ent 生成」的 8 张表：
 // 6 张分区父表 + 2 张代码内静态表（stats_agg_watermark / routing_flow_snapshot_state）。
 //
+// **attempt_logs 不在这里**：它属 0003_attempt_logs（手写迁移），事实源是
+// 同包的 attemptLogColumnDefs / MigrationAttemptLogDDLs。把它加进本函数会让
+// 生成器重写已冻结的 0001（checksum 漂移 ⇒ 启动门 NotReady），这不是「补齐」，
+// 是破坏。
+//
 // 顺序是 0001 的输出顺序：先分区父表（与 wiring 的 bootstrap 顺序一致），再静态表。
 // DDL 全部来自既有事实源（partitionedCreateDDL / 各自的 *ColumnDefs 与 *IndexDDLs /
 // statsAggWatermarkDDL / routingFlowSnapshotStateDDL）——本函数不复制任何列定义，

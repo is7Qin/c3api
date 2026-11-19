@@ -86,6 +86,7 @@ func TestErrLogWorkerStats(t *testing.T) {
 type countingPartitionManager struct {
 	mu                      sync.Mutex
 	logDrops, errDrops      int
+	attemptDrops            int
 	statsDrops, entityDrops int
 	dropErr                 error // usage_logs drop 失败注入
 
@@ -103,6 +104,11 @@ func (c *countingPartitionManager) DropErrLogPartitionsBefore(ctx context.Contex
 	defer c.mu.Unlock()
 	return c.errDrops, nil
 }
+func (c *countingPartitionManager) DropAttemptLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.attemptDrops, nil
+}
 func (c *countingPartitionManager) DropUsageStatsPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -117,6 +123,9 @@ func (c *countingPartitionManager) EnsureUsageLogPartitions(ctx context.Context,
 	return nil
 }
 func (c *countingPartitionManager) EnsureErrLogPartitions(ctx context.Context, now, until time.Time) error {
+	return nil
+}
+func (c *countingPartitionManager) EnsureAttemptLogPartitions(ctx context.Context, now, until time.Time) error {
 	return nil
 }
 func (c *countingPartitionManager) EnsureUsageStatsPartitions(ctx context.Context, now, until time.Time) error {

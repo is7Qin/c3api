@@ -93,17 +93,24 @@ func Head() (version int64, phase string) {
 //   - `0002_account_ext_identity_group` 把导入幂等键按凭据类型收窄（同一
 //     ChatGPT 账号可以同时是 Codex 与 BPS 账号）⇒ 2。没有这条索引，BPS 导入
 //     会撞 0001 的两列唯一索引，功能在旧库上直接不可用，所以它是硬要求。
+//   - 3 = `0003_attempt_logs`（attempt_logs 表 + err_logs.attempt_ordinal）。
+//     写路径真的依赖这两处结构，缺了就是 42P01（表不存在）/ 42703（列不存在）
+//     ——那是**启动期就该拦住**的失败，不是运行期 500。注意判据的方向：仓库里
+//     多一条 expand 迁移本身并不提高水位（旧代码照样能跑新 schema），这里提高
+//     是因为本二进制真的开始依赖它。
 //
-// 将来某个二进制读了 0002 建的列，那个二进制必须把它改成 2，否则
+// 将来某个二进制读了新迁移建的列，它必须把这行改成那一版，否则
 // `db_head < RequiredVersion` 的库会被误判成「可服务」，然后在查询里报 42703。
-const RequiredVersion int64 = 2
+const RequiredVersion int64 = 3
 
 // LegacyFixture 是「老路径建出来的 schema」冻结快照的文件名（testdata/legacy 下）。
 // 它不是内嵌资源：只在 PG 用例里由 database/sql 直接执行，不进二进制。
 const LegacyFixture = "aba8042e.sql"
 
-// Snapshot 返回内嵌的静态指纹快照（testdata/<tag>.catalog.txt）。tag 是四位版本号
-// （"0001" 是 0001 单独建出来的老库基线，"0002" 是当前 head 的完整 shape）。
+// Snapshot 返回内嵌的静态指纹快照（testdata/<tag>.catalog.txt）。tag 是四位版本号：
+//   - "0001" 是 0001 单独建出来的老库基线（legacy 收养用）；
+//   - "0002" 是 0002 跑到 head 的形状（0001 + 身份组索引拆分，用户那条独立迁移）；
+//   - "0003" 是当前 head 的完整 shape（0001 + 0002 + 0003）。
 func Snapshot(tag string) (catalog.Manifest, error) {
 	body, err := snapshotFS.ReadFile(path.Join("testdata", tag+".catalog.txt"))
 	if err != nil {
@@ -241,7 +248,8 @@ func Decide(v Verdict) Decision {
 
 // AdoptOptions 是 baseline 收养的参数（spec §2.8）。
 type AdoptOptions struct {
-	// Snapshot 是已知发布版本的指纹 tag（"0001" 老库基线、"0002" 当前 head）：
+	// Snapshot 是已知发布版本的指纹 tag（"0001" 老库基线、"0002" 0002 head、
+	// "0003" 当前 head）：
 	// 账本空 + 有 schema 时，当前 catalog 必须与该快照逐对象相等。
 	Snapshot string
 	// SchemaVersion 是 settings.schema_version 的期望值。非空且库里存了别的值
@@ -298,7 +306,7 @@ func Up(ctx context.Context, db *sql.DB, opts UpOptions) (Result, error) {
 
 // UpFS 是 Up 的「可注入迁移集」版本（fsys == nil ⇒ 内嵌迁移集，与 Up 等价）。
 //
-// 它存在只为造证据：生产迁移集当前**全是 expand**（0001/0002），而「contract 阶段
+// 它存在只为造证据：生产迁移集当前**全是 expand**（0001/0002/0003），而「contract 阶段
 // 默认拒跑、且拒绝发生在任何写入之前」这条 CLI 级契约必须有一条真的 contract
 // 迁移才能演出来。生产路径恒走 Up，命令行也只在拿不到内嵌集时才用本变体。
 func UpFS(ctx context.Context, db *sql.DB, fsys fs.FS, opts UpOptions) (Result, error) {

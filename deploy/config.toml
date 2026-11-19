@@ -116,6 +116,9 @@ flush_workers = 8
 # errlog_batch_size = 500           # 每批落盘行数
 # errlog_flush_interval = "500ms"   # 批间隔
 # errlog_retention_days = 7         # err_logs 分区保留天数（默认 7 天短保留）
+# attempt_logs 尝试明细（每次 failover 可见失败一行；落盘节奏固定 = 队列 8192 /
+# 批量 100 / 500ms，只有保留期可配）。
+# attempt_retention_days = 7        # attempt_logs 分区保留天数（默认 7 天，与 err_logs 同档）
 # stats_retention_days = 180        # usage_stats 分区保留天数（默认 180 天；
 #                                   # 聚合统计也分区化——清理 DROP 分区 O(1)，
 #                                   # PG DELETE 不释放空间）。

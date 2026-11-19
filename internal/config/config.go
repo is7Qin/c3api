@@ -190,6 +190,10 @@ type UsageConfig struct {
 	ErrLogBatchSize     int           `koanf:"errlog_batch_size"`     // 每批落盘行数（默认 500）
 	ErrLogFlushInterval time.Duration `koanf:"errlog_flush_interval"` // 批间隔（默认 500ms）
 	ErrLogRetentionDays int           `koanf:"errlog_retention_days"` // err_logs 分区保留天数（默认 7 天短保留——错误审计；<= 0 = 不删除）
+	// AttemptRetentionDays attempt_logs 分区保留天数（默认 7 天，与 err_logs 同档
+	// ——尝试明细与错误审计是同一次失败的两个视角，保留期不该错开）；
+	// <= 0 = 不删除。
+	AttemptRetentionDays int `koanf:"attempt_retention_days"`
 	// StatsRetentionDays usage_stats 分区保留天数（默认 180 天——聚合统计长保留；
 	// usage_stats 也分区化，清理 DROP 分区 O(1)——PG DELETE 不释放空间；
 	// <= 0 = 不删除）。
@@ -218,7 +222,7 @@ func defaults() *Config {
 		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10, StreamKeepaliveInterval: 10 * time.Second},
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true, HTTP2Shards: 1},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
-		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, StatsRetentionDays: 180},
+		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, AttemptRetentionDays: 7, StatsRetentionDays: 180},
 		Billing:   BillingConfig{Enabled: true, FlushInterval: 250 * time.Millisecond, BalanceRefreshInterval: 10 * time.Second},
 		Routing:   RoutingConfig{ObservationRetentionDays: 7},
 		Supplier: SupplierConfig{

@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"net/url"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -170,6 +171,15 @@ func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	require.NoError(t, repo.EnsureErrLogPartitioned(ctx, past))
 	require.NoError(t, repo.EnsureUsageStatsPartitioned(ctx, past))
 	require.NoError(t, repo.EnsureUsageEntityStatsPartitioned(ctx, past))
+	// attempt_logs 的**父表**在生产里由 0003 迁移建（bootstrap 不建它：父表只
+	// 能来自迁移，见 partition.go 的 EnsureAllTablePartitions 注释）。夹具直接执行
+	// 那份迁移文件，DDL 与生产逐字相同——本用例要证明的是「克隆时的日分区补建」，
+	// 不是「谁建的父表」。
+	migrationSQL, err := os.ReadFile(filepath.Join("..", "..", "db", "migrate", "migrations", "0003_attempt_logs.up.sql"))
+	require.NoError(t, err)
+	_, err = sqlDB.ExecContext(ctx, string(migrationSQL))
+	require.NoError(t, err)
+	require.NoError(t, repo.Partitions.EnsureAttemptLogPartitions(ctx, past, past.AddDate(0, 0, 1)))
 	require.NoError(t, repo.Partitions.EnsureRoutingPartitions(ctx, past))
 	// Leave no resident connection on the template before cloning from it.
 	require.NoError(t, sqlDB.Close())
@@ -196,7 +206,7 @@ func TestCloneTopsUpDayPartitionsFromStaleTemplate(t *testing.T) {
 	t.Cleanup(func() { _ = conn.Close(context.Background()) })
 
 	today := time.Now().UTC().Format("20060102")
-	for _, tbl := range []string{"usage_logs", "err_logs", "usage_stats", "usage_entity_stats", "routing_quality_fact", "routing_flow_fact"} {
+	for _, tbl := range []string{"usage_logs", "err_logs", "attempt_logs", "usage_stats", "usage_entity_stats", "routing_quality_fact", "routing_flow_fact"} {
 		var ok bool
 		require.NoError(t, conn.QueryRow(ctx,
 			`SELECT to_regclass($1) IS NOT NULL`, "public."+tbl+"_"+today).Scan(&ok))

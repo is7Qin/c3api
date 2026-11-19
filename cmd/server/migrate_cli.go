@@ -248,7 +248,7 @@ func runMigrateUp(ctx context.Context, db *sql.DB, pool *pgxpool.Pool, fsys fs.F
 	if err := repos.EnsureAllTablePartitions(ctx, now, now.Add(partitionHorizon)); err != nil {
 		return migrateFail(opt.Command, "ensure table partitions", err)
 	}
-	fmt.Printf("partitions ensured for [%s, %s) (usage_logs, err_logs, usage_stats, usage_entity_stats, routing_quality_fact, routing_flow_fact, routing_flow_snapshot_state)\n",
+	fmt.Printf("partitions ensured for [%s, %s) (usage_logs, err_logs, attempt_logs, usage_stats, usage_entity_stats, routing_quality_fact, routing_flow_fact, routing_flow_snapshot_state)\n",
 		now.Format(time.RFC3339), now.Add(partitionHorizon).Format(time.RFC3339))
 	return 0
 }

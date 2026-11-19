@@ -95,8 +95,8 @@ func TestMigrateFlagGates(t *testing.T) {
 }
 
 // TestMigrateUpBootstrapsEmptyDatabasePG 是「空库跑一次 up 就够」的完整证据：
-// 35 张业务表（27 ent + 6 分区父表 + 2 静态表）+ 账本 + 六张父表的当日/明日分区，
-// 再跑一次不产生任何变化。
+// 36 张业务表（27 ent + 7 分区父表（0001 六张 + 0003 的 attempt_logs）+ 2 静态表）
+// + 账本（head 行：0001/0002/0003）+ 七张父表的当日/明日分区，再跑一次不产生任何变化。
 func TestMigrateUpBootstrapsEmptyDatabasePG(t *testing.T) {
 	ctx := context.Background()
 	db, dsn := openProbeDBWithDSN(t)
@@ -105,18 +105,19 @@ func TestMigrateUpBootstrapsEmptyDatabasePG(t *testing.T) {
 	require.Equal(t, 0, runMigrateUp(ctx, db, pool, nil, migrateOptions{Command: migrateCmdUp}))
 
 	head, _ := migrate.Head()
-	require.Equal(t, 35, countBusinessTables(t, db), "0001 建 35 张业务表（27 ent + 6 分区父表 + 2 静态表）")
-	require.Equal(t, int(head), countRows(t, db, catalog.ControlTable), "账本恰 head 行")
+	require.Equal(t, 36, countBusinessTables(t, db),
+		"0001+0002+0003 建 36 张业务表（27 ent + 7 分区父表 + 2 静态表；用户那条 0002 只拆索引，不加表）")
+	require.Equal(t, int(head), countRows(t, db, catalog.ControlTable), "账本恰 head 行（0001/0002/0003）")
 	requirePartitionHorizon(t, db)
 
 	// 幂等：第二次 up 不应用任何版本，也不改变对象数。
 	require.Equal(t, 0, runMigrateUp(ctx, db, pool, nil, migrateOptions{Command: migrateCmdUp}))
-	require.Equal(t, 35, countBusinessTables(t, db))
+	require.Equal(t, 36, countBusinessTables(t, db))
 	require.Equal(t, int(head), countRows(t, db, catalog.ControlTable))
 
 	ledger, err := migrate.Status(ctx, db)
 	require.NoError(t, err)
-	require.Len(t, ledger.Applied, int(head))
+	require.Len(t, ledger.Applied, int(head), "账本三行：0001/0002/0003")
 	require.Empty(t, ledger.Pending)
 	require.Empty(t, ledger.Mismatches)
 }
@@ -247,12 +248,13 @@ func countRows(t *testing.T, db *sql.DB, table string) int {
 	return n
 }
 
-// requirePartitionHorizon 断言七组的当日/明日分区齐备（六张父表按日，静态表不过日）。
+// requirePartitionHorizon 断言八组的当日/明日分区齐备（七张父表按日，静态表不过日）。
 func requirePartitionHorizon(t *testing.T, db *sql.DB) {
 	t.Helper()
 	now := time.Now().UTC()
 	for _, table := range []string{
-		"usage_logs", "err_logs", "usage_stats", "usage_entity_stats", "routing_quality_fact", "routing_flow_fact",
+		"usage_logs", "err_logs", "attempt_logs", "usage_stats", "usage_entity_stats",
+		"routing_quality_fact", "routing_flow_fact",
 	} {
 		for _, day := range []time.Time{now, now.Add(24 * time.Hour)} {
 			name := "public." + table + "_" + day.Format("20060102")

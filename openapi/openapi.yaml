@@ -5782,6 +5782,8 @@ components:
         #   pricing-sync: running bool, last_sync_unix_ms int64（最近 fetch 尝试时刻）
         #   retention: last_patrol_unix_ms int64（最近巡检完成时刻）,
         #     last_dropped_log_partitions int64, last_dropped_errlog_partitions int64,
+        #     last_dropped_attemptlog_partitions int64（attempt_logs DROP 分区数；
+        #     独立保留期 attempt_retention_days，失败轮保留上轮值）,
         #     last_dropped_stats_partitions int64（最近成功轮 DROP 分区数；失败轮保留上轮）,
         #     last_dropped_entity_stats_partitions int64（usage_entity_stats
         #     DROP 分区数；与 stats 同 StatsRetentionDays，失败轮保留上轮值）,
@@ -5811,7 +5813,8 @@ components:
         #     disk_eta_seconds int64（预计磁盘耗尽秒数；-1 = unknown）,
         #     capacity_blocked bool（可用空间低于下限 ⇒ 停供应商新流量）,
         #     disk_observed_unix_ms int64（最近一次磁盘采样时刻）,
-        #     log_retention_days int, errlog_retention_days int, stats_retention_days int,
+        #     log_retention_days int, errlog_retention_days int, attemptlog_retention_days int,
+        #     stats_retention_days int,
         #     routing_observation_retention_days int（oldest 的 cutoff 解释口径）
         #   notify: running bool, ready bool（LISTEN + FullRefresh 已完成——不漏增量的启动屏障）
         #   auth-sync: running bool, last_reload_unix_ms int64（最近成功 Reload 时刻）,

@@ -29,10 +29,13 @@ import (
 // usage_stats 分区复用同路线，用户决策 2026-08-11）：50k 并发量级 usage_logs
 // 增长 ~4.3 亿行/天——逐行 DELETE 清理不可行，按月分区单分区 26 亿行仍不可行
 // → PostgreSQL 原生分区表 PARTITION BY RANGE (分区键)，每日一区（usage_logs
-// ~8600 万行），保留期满直接 DROP TABLE O(1)。四表：
+// ~8600 万行），保留期满直接 DROP TABLE O(1)。五表：
 //   - usage_logs 计费明细（分区键 created_at；默认 30 天保留）
 //   - err_logs 错误审计明细（分区键 created_at；风暴背压采样后量可控，默认
 //     7 天短保留，见 usage.ErrLogRetentionDays）
+//   - attempt_logs 尝试明细（分区键 created_at；failover 循环里每次可见失败
+//     attempt 一行，S2 重试观测的数据面；默认 7 天短保留，见
+//     usage.AttemptRetentionDays）
 //   - usage_stats 统计聚合（分区键 bucket_time——小时桶聚合 24 桶/日分区；
 //     默认 180 天保留；PG DELETE 不释放空间，清理必须分区 DROP）
 //   - usage_entity_stats 实体小时卷积（分区键 bucket_time——小时桶聚合；默认
@@ -248,6 +251,62 @@ var errLogIndexDDLs = []string{
 	`CREATE INDEX errlog_created_at ON err_logs (created_at)`,
 	`CREATE INDEX errlog_group_id_created_at ON err_logs (group_id, created_at)`,
 	`CREATE INDEX errlog_user_id_created_at ON err_logs (user_id, created_at)`,
+}
+
+// attemptLogColumnDefs attempt_logs 分区表列定义（单一事实源，锚
+// TestAttemptLogColumnDefsMatchCreateDDL；与 0003_attempt_logs.up.sql 的建表文本
+// 由 migrations_ddl_internal_test.go 逐字锚定）。
+//
+// 本表**不是计费表**：无 token / 价格 / cost 列——它只回答「这次尝试发生了什么」
+// （哪次 dispatch、哪个账号、哪个 lane、什么结局、多久）。outcome / error_type
+// 复用既有投影词表（flowOutcomeToken / domain.Err*），不新增枚举。
+// 语义与列序：
+//   - attempt_ordinal 来自 scheduler.Attempt.Ordinal，**允许空洞**（本地拒绝、
+//     402 预检不产生行）——不得假设连续，也不得用 max(ordinal) 反推尝试次数；
+//   - commit_state NULL = 未知，与 usage_logs/err_logs 同义；
+//   - error_message 由写点 TruncateErrMsg(500) 截断后传入（列本身不约束长度）。
+var attemptLogColumnDefs = []string{
+	`id bigint NOT NULL DEFAULT nextval('attempt_logs_id_seq'::regclass)`,
+	`request_id varchar NOT NULL`,
+	`attempt_ordinal smallint NOT NULL`,
+	`account_id bigint NOT NULL`,
+	`lane text NOT NULL`,
+	`format text NOT NULL`,
+	`status_code integer NOT NULL DEFAULT 0`,
+	`outcome text NOT NULL`,
+	`error_type text NOT NULL`,
+	`commit_state text NULL`,
+	`error_message text NULL`,
+	`latency_ms bigint NOT NULL DEFAULT 0`,
+	`created_at timestamptz NOT NULL`,
+}
+
+var attemptLogCreateDDL = partitionedCreateDDL("attempt_logs", "created_at", attemptLogColumnDefs)
+
+// attemptLogIndexDDLs 只有 2 条——对 spec §3.1「三条索引」的**有意偏离**（评审
+// 裁决）：分区键 created_at 已支撑时间窗 pruning，保留清理走分区退休（整分区
+// DROP，不靠索引），而裸 (created_at) 只带来约 1/3 的写放大与存储、没有任何查询
+// 需要它（S3 的查询恒带 request_id 或 account_id + 时间窗）。加第三条之前请先
+// 找一个真的会走它的查询。
+var attemptLogIndexDDLs = []string{
+	`CREATE INDEX attemptlog_request_id_created_at ON attempt_logs (request_id, created_at)`,
+	`CREATE INDEX attemptlog_account_id_created_at ON attempt_logs (account_id, created_at)`,
+}
+
+// MigrationAttemptLogDDLs 返回 0003_attempt_logs.up.sql 的建表事实源（单表），
+// 供「迁移文本 == 运行时事实源」的逐字锚使用（migrations_ddl_internal_test.go）。
+// 复用 BaselineTable 而不是第二套结构——它与 MigrationBaselineDDLs 的条目同形。
+//
+// **不要**把它并进 MigrationBaselineDDLs：那是 0001 的生成器输入，而 0001 已冻结
+// （checksum 进账本，改一个字节就是一次启动门 NotReady）。attempt_logs 属 0003。
+func MigrationAttemptLogDDLs() BaselineTable {
+	return BaselineTable{
+		Name:        "attempt_logs",
+		Partitioned: true,
+		Sequence:    "attempt_logs_id_seq",
+		Create:      attemptLogCreateDDL,
+		Indexes:     attemptLogIndexDDLs,
+	}
 }
 
 // usageStatsColumnDefs usage_stats 分区表列定义 v2（单一事实源；spec
@@ -507,8 +566,9 @@ func (r *PartitionRepo) ensureTablePartitioned(ctx context.Context, table, parti
 	return r.EnsureTablePartitions(ctx, table, now, now.AddDate(0, 0, 1))
 }
 
-// partPartitionedParents 是「按日分区的父表」清单与顺序（spec §2.7 七组的前六组）：
+// partPartitionedParents 是「按日分区的父表」清单与顺序（spec §2.7 八组的前七组）：
 // 顺序 = 迁移顺序，别按字母重排——报错时运维看到的第一张表就是最早该存在的表。
+// attempt_logs 在最后：它属 0003，其余六张属 0001。
 var partPartitionedParents = []struct {
 	table     string
 	partition string // 分区键（仅作文档与错误信息，建分区由 EnsureTablePartitions 负责）
@@ -519,18 +579,19 @@ var partPartitionedParents = []struct {
 	{"usage_entity_stats", "bucket_time"},
 	{"routing_quality_fact", "bucket_minute"},
 	{"routing_flow_fact", "terminal_minute"},
+	{"attempt_logs", "created_at"},
 }
 
-// staticPartitionCycleTable 是七组的最后一组：静态表（不分区，没有按日实例），
+// staticPartitionCycleTable 是八组的最后一组：静态表（不分区，没有按日实例），
 // 唯一建表点是 0001，这里只校验它存在（spec §2.7：运行时不得再 CREATE 它）。
 const staticPartitionCycleTable = "routing_flow_snapshot_state"
 
 // EnsureAllTablePartitions 是**补齐按日分区的唯一入口**（spec §2.7）。
 //
 // 调用点只有两个：`-migrate up` 退出前、正常启动在版本门通过后且任何写 worker
-// 之前。父表由迁移（0001）建立；本函数只做两件事：
+// 之前。父表由迁移建立（0001 六张 + 0003 的 attempt_logs）；本函数只做两件事：
 //
-//  1. 六张分区父表：校验父表存在，再建 [from, to] 内的按日分区；
+//  1. 七张分区父表：校验父表存在，再建 [from, to] 内的按日分区；
 //  2. routing_flow_snapshot_state：校验静态表存在（不建表）。
 //
 // 父表缺失 ⇒ 直接报错指向 `c3api -migrate up`。启动期建父表是第二建表真相，
@@ -649,6 +710,12 @@ func (r *PartitionRepo) EnsureUsageLogPartitions(ctx context.Context, now, until
 // EnsureErrLogPartitions err_logs 每日分区预建（retention worker 共用）。
 func (r *PartitionRepo) EnsureErrLogPartitions(ctx context.Context, now, until time.Time) error {
 	return r.EnsureTablePartitions(ctx, "err_logs", now, until)
+}
+
+// EnsureAttemptLogPartitions attempt_logs 每日分区预建（retention worker 共用——
+// 跨日不重启的实例靠它拿到明日分区；缺分区时插入整体失败，不是慢，是 500）。
+func (r *PartitionRepo) EnsureAttemptLogPartitions(ctx context.Context, now, until time.Time) error {
+	return r.EnsureTablePartitions(ctx, "attempt_logs", now, until)
 }
 
 // EnsureUsageStatsPartitions usage_stats 每日分区预建（retention worker 共用；
@@ -965,6 +1032,13 @@ func isLockNotAvailable(err error) bool {
 // 保留期：cutoff 由 usage.ErrLogRetentionDays 推导，两表各自调度）。
 func (r *PartitionRepo) DropErrLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
 	return r.DropTablePartitionsBefore(ctx, "err_logs", cutoff)
+}
+
+// DropAttemptLogPartitionsBefore attempt_logs DROP 分区下界早于 cutoff 的分区
+// （独立保留期：cutoff 由 usage.AttemptRetentionDays 推导；attempt_logs 无资金
+// 语义，不需要 usage_logs 那样的退休屏障——它只是一份可丢的尝试明细）。
+func (r *PartitionRepo) DropAttemptLogPartitionsBefore(ctx context.Context, cutoff time.Time) (int, error) {
+	return r.DropTablePartitionsBefore(ctx, "attempt_logs", cutoff)
 }
 
 // DropUsageStatsPartitionsBefore usage_stats DROP 分区下界早于 cutoff 的分区

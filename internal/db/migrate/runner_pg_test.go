@@ -101,7 +101,7 @@ func appliedVersions(t *testing.T, db *sql.DB) []int64 {
 	return out
 }
 
-// headSnapshotTag 是「当前全部迁移跑完」的指纹 tag（0002…）。
+// headSnapshotTag 是「当前全部迁移跑完」的指纹 tag（0003…）。
 // 0001 快照仍然存在，但它是**老库收养基线**：只描述 0001 建出来的形状，
 // 新迁移会在它之上追加对象，所以空库 Up 必须与 head 快照比。
 func headSnapshotTag(t *testing.T) string {
@@ -128,7 +128,7 @@ func TestUpMatchesHeadSnapshot(t *testing.T) {
 	got, err := Inspect(ctx, db)
 	require.NoError(t, err)
 	dumpTook := time.Since(started)
-	t.Logf("catalog dump of the full 0001 schema: %s (%d static objects)", dumpTook.Round(time.Millisecond), len(got.Lines()))
+	t.Logf("catalog dump of the full head schema: %s (%d static objects)", dumpTook.Round(time.Millisecond), len(got.Lines()))
 	require.Less(t, dumpTook, 5*time.Second, "catalog dump must stay under 5s (schema-qualified pg_catalog queries)")
 
 	want, err := Snapshot(headSnapshotTag(t))
@@ -139,8 +139,8 @@ func TestUpMatchesHeadSnapshot(t *testing.T) {
 	require.Equal(t, want.Static, got.Static)
 
 	require.Empty(t, got.Dynamic.Violations, "dynamic partition rules must hold")
-	require.Empty(t, got.Dynamic.Partitions, "0001 must not create partition instances")
-	require.Empty(t, got.Violations, "0001 must not create views/triggers/policies/functions")
+	require.Empty(t, got.Dynamic.Partitions, "migrations must not create partition instances")
+	require.Empty(t, got.Violations, "migrations must not create views/triggers/policies/functions")
 	require.Empty(t, catalog.UnexpectedExtensions(got, catalog.BaseExtensions))
 
 	ledger, err := Status(ctx, db)
@@ -153,8 +153,34 @@ func TestUpMatchesHeadSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, head, verdict.DBHead)
 	require.Equal(t, int64(0), verdict.DBContract)
-	require.Equal(t, head, verdict.BinaryHead)
+	require.Equal(t, head, verdict.BinaryHead, "二进制 head 从内嵌迁移集推导，不写死")
 	require.True(t, verdict.Compatible(), strings.Join(verdict.Problems, "; "))
+}
+
+// TestHeadSnapshotMatchesUpToHead 是「head 快照 == 空库跑到 head 的形状」的**显式**
+// 锚：tag 写死成当前 head 的 "0003"，而不是从 Head() 推导。
+//
+// 为什么还要一条写死 tag 的：推导版（TestUpMatchesHeadSnapshot）在「有人加了 0004
+// 却忘了生成 0004 快照」时也红，但那时红的是 0004 的事；这一条让「0003 快照本身
+// 漂移」当场可归因——快照漂移的后果不是报错，而是 `-migrate adopt -snapshot 0003`
+// 悄悄收不下一个刚跑完 up 的库（adopt 是运维在账本丢失时唯一的出路）。
+func TestHeadSnapshotMatchesUpToHead(t *testing.T) {
+	ctx := context.Background()
+	db := newEmptyDB(t)
+
+	res, err := Up(ctx, db, UpOptions{})
+	require.NoError(t, err)
+	head, _ := Head()
+	require.Equal(t, int64(3), head, "这条锚写死了 0003：加迁移时必须一起改它")
+	require.Equal(t, head, res.To)
+
+	got, err := Inspect(ctx, db)
+	require.NoError(t, err)
+	want, err := Snapshot("0003")
+	require.NoError(t, err)
+	require.Empty(t, catalog.Missing(want, got), "head 的 catalog 必须是 0003 快照的超集")
+	require.Empty(t, catalog.Missing(got, want), "head 的 catalog 不得超出 0003 快照（重跑快照生成）")
+	require.Equal(t, want.Static, got.Static, "0003 快照必须与空库跑到 head 的 Static 逐字节相等")
 }
 
 // T4：I3（expand-only）。同一条测试迁移写成 ADD COLUMN 必须通过，写成 DROP COLUMN
@@ -385,8 +411,10 @@ func TestChecksumMismatchOnRealBaselineOneByte(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "checksum mismatch")
 	require.Contains(t, err.Error(), "immutable")
-	head, _ := Head()
-	require.Equal(t, int(head), openCount(t, db, catalog.ControlTable))
+	// 拒绝发生在任何写入之前：账本仍是「升到 head 时写下的那三条」，一条不多。
+	// 0001 基线 + 0002 身份组索引 + 0003 attempt_logs；写死是有意的——这条断言
+	// 同时钉住「head 的迁移集就是这三条」。
+	require.Equal(t, []int64{1, 2, 3}, appliedVersions(t, db))
 }
 
 // T7：Down 默认拒绝（必须显式 AllowDestructive），且拒绝信息里列出会丢什么。
@@ -746,7 +774,9 @@ func TestUpContractGateSkipsAlreadyApplied(t *testing.T) {
 func TestAdoptRejectsUnexpectedTable(t *testing.T) {
 	ctx := context.Background()
 	db := newEmptyDB(t)
-	_, err := Up(ctx, db, UpOptions{})
+	// 收养对象是 0001 快照：库必须恰好是 0001 的形状（0002 的对象会先被报成
+	// unexpected，真正要测的 rogue_table 就被淹没了）。
+	_, err := Up(ctx, db, UpOptions{Target: 1})
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `DROP TABLE public.`+catalog.ControlTable)
 	require.NoError(t, err)
@@ -762,7 +792,7 @@ func TestAdoptRejectsUnexpectedTable(t *testing.T) {
 func TestAdoptRejectsMissingBaselineTable(t *testing.T) {
 	ctx := context.Background()
 	db := newEmptyDB(t)
-	_, err := Up(ctx, db, UpOptions{})
+	_, err := Up(ctx, db, UpOptions{Target: 1})
 	require.NoError(t, err)
 	_, err = db.ExecContext(ctx, `DROP TABLE public.`+catalog.ControlTable)
 	require.NoError(t, err)
@@ -843,11 +873,19 @@ VALUES (2, 'bps', 'same@example.com', 'acct-1', 'at-bps');
 // 无法恢复两列全表唯一索引（Codex + BPS 同身份两行）。它必须：
 //   - 失败，且原因说清「这是合法并存，不是脏数据」；
 //   - 整体回滚（库仍停在 0002），两行都还在——绝不为了能回滚顺手删行。
+//
+// head 是 0003 之后，down 是单步的：先把 0003 回滚掉（它只删自己的表/列，与本
+// 用例无关），才轮到 0002 的 down 面对「两行并存」这个合法状态。
 func TestDown0002FailsLoudlyWhenIdentitiesCoexist(t *testing.T) {
 	ctx := context.Background()
 	db := newEmptyDB(t)
 	_, err := Up(ctx, db, UpOptions{})
 	require.NoError(t, err)
+
+	rolled3, err := Down(ctx, db, DownOptions{AllowDestructive: true})
+	require.NoError(t, err, "0003 的 down 与本用例无关，必须先成功")
+	require.Len(t, rolled3.Rolled, 1)
+	require.Equal(t, attemptLogMigrationVersion, rolled3.Rolled[0].Version)
 
 	execScript(t, db, `
 INSERT INTO public.templates (name, base_url, credential_type, supported_formats, models, format_models, model_mapping, updated_at, created_at)
@@ -868,11 +906,79 @@ VALUES (1, 'codex-oauth', 'both@example.com', 'acct-both', 'at-codex'),
 	head, _ := Head()
 	status, err := Status(ctx, db)
 	require.NoError(t, err)
-	require.Len(t, status.Applied, int(head), "失败的 down 必须整体回滚，库仍停在 head")
-	require.Empty(t, status.Pending)
+	require.Len(t, status.Applied, int(head)-1,
+		"失败的 down 必须整体回滚：库停在 0002（0003 已在上面回滚）")
+	require.Len(t, status.Pending, 1, "0003 已回滚 ⇒ 重新待应用")
+	require.Equal(t, attemptLogMigrationVersion, status.Pending[0].Version)
 
 	var rows int
 	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT count(*) FROM public.account_exts WHERE codex_email = 'both@example.com'`).Scan(&rows))
 	require.Equal(t, 2, rows, "拒绝回滚不得删掉任何一行")
+}
+
+// 0003 的正反面证据（S2a）：
+//
+//	正面：升到 head ⇒ I2（catalog ⊇ **0002** 快照）+ I3（0003 相对 0002 只加不删）、
+//	      attempt_logs 父表在、err_logs.attempt_ordinal 在且可空、版本门放行；
+//	反面：down 一步（单步语义，回滚的是 head）= 0003 的对象全部消失，
+//	      catalog **逐字节**回到 0002 快照——down 文件真的能拆干净。
+//
+// 为什么 before 是 0002 而不是 0001：用户那条 0002（身份组部分唯一索引）是「拆
+// 索引」——它不是只加不删，拿 0001 当 before 会让 ExpandOnly 断言变成在考别人的
+// 迁移。这里只证明「我们这一条 0003」是纯 expand。
+//
+// 最后一条尤其重要：down 漏一个对象（比如忘了序列）在下一次 up 时会以
+// "already exists" 的形式炸在别人的迁移里，而不是炸在这里。
+func TestUpToHeadIsBaselineSupersetAnd0003RollsBack(t *testing.T) {
+	ctx := context.Background()
+	db := newEmptyDB(t)
+	head, _ := Head()
+
+	res, err := Up(ctx, db, UpOptions{})
+	require.NoError(t, err)
+	require.Equal(t, head, res.To)
+	require.Len(t, res.Applied, int(head), "0001..head 每条迁移都真的被应用")
+
+	atHead, err := Inspect(ctx, db)
+	require.NoError(t, err)
+	base, err := Snapshot("0002")
+	require.NoError(t, err)
+	require.Empty(t, catalog.Missing(base, atHead), "I2: head 的 catalog 必须是 0002 快照的超集")
+	added := catalog.Missing(atHead, base)
+	require.NotEmpty(t, added, "0003 必须真的改变 catalog（否则本用例是空话）")
+	t.Logf("0003 adds %d catalog objects (table/columns/indexes/sequence/partitioned marker + err_logs column)", len(added))
+	require.Empty(t, catalog.ExpandOnly(base, atHead), "I3: 0003 只能加对象，不能删/改类型/加 UNIQUE")
+
+	require.True(t, relationExists(t, db, "attempt_logs"), "0003 必须建 attempt_logs 父表")
+	var nullable bool
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT is_nullable = 'YES' FROM information_schema.columns
+		  WHERE table_schema = 'public' AND table_name = 'err_logs' AND column_name = 'attempt_ordinal'`).
+		Scan(&nullable))
+	require.True(t, nullable, "err_logs.attempt_ordinal 必须可空（循环不可见的行没有序号）")
+
+	verdict, err := Verify(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, head, verdict.DBHead)
+	require.Equal(t, head, verdict.BinaryHead)
+	require.Equal(t, RequiredVersion, verdict.DBHead, "升到 head 后版本门必须放行")
+	require.True(t, verdict.Compatible(), strings.Join(verdict.Problems, "; "))
+
+	rolled, err := Down(ctx, db, DownOptions{AllowDestructive: true})
+	require.NoError(t, err)
+	require.Len(t, rolled.Rolled, 1, "down 是单步的")
+	require.Equal(t, attemptLogMigrationVersion, rolled.Rolled[0].Version, "回滚的是最新版本（0003）")
+	require.False(t, relationExists(t, db, "attempt_logs"), "父表必须消失")
+	require.False(t, relationExists(t, db, "attempt_logs_id_seq"), "序列必须消失（OWNED BY 级联 + 显式 DROP）")
+	var ordinalGone bool
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns
+		                     WHERE table_schema = 'public' AND table_name = 'err_logs'
+		                       AND column_name = 'attempt_ordinal')`).Scan(&ordinalGone))
+	require.True(t, ordinalGone, "err_logs.attempt_ordinal 必须消失")
+
+	after, err := Inspect(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, base.Static, after.Static, "0003 的 down 必须把 catalog 逐字节复原到 0002 快照")
 }

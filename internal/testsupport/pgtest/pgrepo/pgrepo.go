@@ -108,7 +108,7 @@ func ensureCloneDaily(ctx context.Context, dsn string) error {
 	return ensureBase(ctx, repo)
 }
 
-// ensureBase 补齐全部七组（六张分区父表 + 静态快照表）。
+// ensureBase 补齐全部八组（七张分区父表 + 静态快照表）。
 func ensureBase(ctx context.Context, repo *repository.Repository) error {
 	now := time.Now()
 	return repo.EnsureAllTablePartitions(ctx, now, now.Add(partitionHorizon))
