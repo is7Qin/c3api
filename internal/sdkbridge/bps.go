@@ -258,14 +258,17 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 			return nil, clientErr
 		}
 		entry = &bpsClientEntry{key: cacheKey, client: sdkClient, accountID: cred.AccountID, transport: transport, authKey: authKey}
+		// Register the new entry first: reaping an old client that shares this
+		// authKey must see the live reference, or dropAuthIfUnused would delete
+		// the auth the new client is about to use.
+		a.clients[cacheKey] = entry
 		for key, old := range a.clients {
-			if old.accountID == cred.AccountID && old.transport == transport && key != cacheKey {
+			if key != cacheKey && old.accountID == cred.AccountID && old.transport == transport {
 				delete(a.clients, key)
 				_ = old.client.Close()
 				a.dropAuthIfUnused(old.authKey)
 			}
 		}
-		a.clients[cacheKey] = entry
 		a.fatalMu.Lock()
 		delete(a.fatal, fmt.Sprintf("%d:%d", cred.AccountID, cred.IdentityRevision))
 		a.fatalMu.Unlock()
@@ -387,7 +390,7 @@ func bpsProbeResult(err error, res BPSResult, req BPSProbeRequest) domain.ProbeR
 		switch failure.Kind {
 		case BPSFailureAccountFatal:
 			out.Error = domain.ProbeErrorUpstreamAuth
-		case BPSFailurePolicy:
+		case BPSFailurePolicy, BPSFailureModelDenied:
 			out.Error = domain.ProbeErrorUpstreamRejected
 		case BPSFailureQuota, BPSFailureRateLimit:
 			out.Error = domain.ProbeErrorUpstreamRateLimit

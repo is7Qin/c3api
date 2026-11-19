@@ -208,23 +208,28 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		if s.bpsProbe == nil {
 			return nil, errors.New("service: BPS probe adapter not configured")
 		}
+		bpsCtx := func(err error) *domain.ProbeResult {
+			res := ctxResult(err)
+			res.UpstreamModel = upstreamModel
+			return res
+		}
 		cred, cerr := s.store.GetOwnedAccountCredential(pctx, id)
 		if pctx.Err() != nil {
-			return ctxResult(pctx.Err()), nil
+			return bpsCtx(pctx.Err()), nil
 		}
 		if cerr != nil {
 			if errors.Is(cerr, repository.ErrNotFound) {
 				return nil, fmt.Errorf("%w: 账号缺少 BPS 凭据", ErrInvalidInput)
 			}
 			if errors.Is(cerr, context.Canceled) || errors.Is(cerr, context.DeadlineExceeded) {
-				return ctxResult(cerr), nil
+				return bpsCtx(cerr), nil
 			}
 			return nil, cerr
 		}
 		transport := domain.CodexResponsesTransportDefault
 		ext, xerr := s.store.GetTemplateExt(pctx, tpl.ID)
 		if pctx.Err() != nil {
-			return ctxResult(pctx.Err()), nil
+			return bpsCtx(pctx.Err()), nil
 		}
 		switch {
 		case xerr == nil:
@@ -234,7 +239,7 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 		case errors.Is(xerr, repository.ErrNotFound):
 			// 无 ext 行 = 未配置（默认 http）。
 		case errors.Is(xerr, context.Canceled) || errors.Is(xerr, context.DeadlineExceeded):
-			return ctxResult(xerr), nil
+			return bpsCtx(xerr), nil
 		default:
 			return nil, xerr
 		}
@@ -243,7 +248,7 @@ func (s *Service) ProbeAccount(ctx context.Context, id int64, req AccountProbeRe
 			Format: format, RequestedModel: model, UpstreamModel: upstreamModel, Input: input,
 		})
 		if pctx.Err() != nil {
-			return ctxResult(pctx.Err()), nil
+			return bpsCtx(pctx.Err()), nil
 		}
 		if perr != nil {
 			if errors.Is(perr, ErrInvalidInput) {

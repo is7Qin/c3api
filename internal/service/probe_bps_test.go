@@ -78,9 +78,17 @@ func TestProbeAccountBPSFormatGate(t *testing.T) {
 	_, err := svc.ProbeAccount(context.Background(), 11, AccountProbeRequest{Model: "gpt-5.6-sol", Format: domain.FormatAnthropic})
 	require.ErrorIs(t, err, ErrInvalidInput)
 	require.Zero(t, bps.calls)
+
+	// responses-ws 也是合法目标，且透传 ws 模板 transport。
+	res, err := svc.ProbeAccount(context.Background(), 11, AccountProbeRequest{Model: "gpt-5.6-sol", Format: domain.FormatOpenAIResponsesWS})
+	require.NoError(t, err)
+	require.Equal(t, 1, bps.calls)
+	require.Equal(t, domain.FormatOpenAIResponsesWS, bps.req.Format)
+	require.Equal(t, domain.CodexResponsesTransportWS, bps.req.Transport)
+	require.Equal(t, domain.FormatOpenAIResponsesWS, res.Format)
 }
 
-func TestProbeAccountBPSFinalizesResult(t *testing.T) {
+func TestProbeAccountFinalizesBPSResult(t *testing.T) {
 	tpl := bpsProbeTemplate()
 	store := bpsProbeStore(t, tpl)
 	bps := &fakeBPSProbe{result: domain.ProbeResult{
@@ -109,16 +117,20 @@ func TestProbeAccountBPSAssembly(t *testing.T) {
 	svc := newBPSProbeSvc(store, nil, nil)
 	_, err := svc.ProbeAccount(context.Background(), 11, AccountProbeRequest{Model: "gpt-5.6-sol", Format: domain.FormatOpenAIResponses})
 	require.ErrorContains(t, err, "prober not configured")
+	require.Zero(t, store.accCalls.Load(), "both-nil must fail before the store")
 
 	// prober nil but BPS probe present: the BPS path still works.
-	var failures int
 	bps := &fakeBPSProbe{}
 	svc = newBPSProbeSvc(store, bps, nil)
 	res, err := svc.ProbeAccount(context.Background(), 11, AccountProbeRequest{Model: "gpt-5.6-sol", Format: domain.FormatOpenAIResponses})
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.Equal(t, 1, bps.calls)
-	require.Zero(t, failures)
+
+	// BPSProbe nil with a BPS account: assembly error after the store.
+	svc = newBPSProbeSvc(store, nil, &fakeAccountProber{})
+	_, err = svc.ProbeAccount(context.Background(), 11, AccountProbeRequest{Model: "gpt-5.6-sol", Format: domain.FormatOpenAIResponses})
+	require.ErrorContains(t, err, "BPS probe adapter not configured")
 }
 
 func TestProbeAccountBPSContextPriority(t *testing.T) {
@@ -134,4 +146,68 @@ func TestProbeAccountBPSContextPriority(t *testing.T) {
 	require.NotNil(t, res)
 	require.Equal(t, domain.ProbeErrorCanceled, res.Error)
 	require.Zero(t, bps.calls)
+}
+
+type cancellingBPSProbe struct {
+	cancel context.CancelFunc
+	calls  int
+}
+
+func (f *cancellingBPSProbe) ProbeAccount(_ context.Context, _ BPSAccountProbeRequest) (domain.ProbeResult, error) {
+	f.calls++
+	f.cancel()
+	return domain.ProbeResult{Success: true, OutputPreview: "late"}, nil
+}
+
+func TestProbeAccountBPSPostProbeTimeout(t *testing.T) {
+	tpl := bpsProbeTemplate()
+	store := bpsProbeStore(t, tpl)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bps := &cancellingBPSProbe{cancel: cancel}
+	svc := newBPSProbeSvc(store, bps, nil)
+
+	res, err := svc.ProbeAccount(ctx, 11, AccountProbeRequest{Model: "gpt-5.6-sol", Format: domain.FormatOpenAIResponses})
+	require.NoError(t, err)
+	require.Equal(t, 1, bps.calls)
+	require.Equal(t, domain.ProbeErrorCanceled, res.Error)
+	require.Empty(t, res.OutputPreview)
+	require.Equal(t, "gpt-5.6-sol", res.UpstreamModel)
+}
+
+func TestProbeAccountDispatchesByCredentialType(t *testing.T) {
+	cases := []struct {
+		name       string
+		ct         credential.Type
+		proberCall int
+		bpsCall    int
+	}{
+		{"api_key", credential.TypeAPIKey, 1, 0},
+		{"codex_oauth", credential.TypeCodexOAuth, 1, 0},
+		{"bps", credential.TypeBPS, 0, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tpl := staticProbeTemplate()
+			tpl.CredentialType = tc.ct
+			tpl.SupportedFormats = []domain.RequestFormat{domain.FormatOpenAIResponses}
+			tpl.Models = []string{"gpt-5.6-sol"}
+			acc := &domain.Account{ID: 11, Name: "a", TemplateID: tpl.ID, Template: tpl, Enabled: true}
+			if tc.ct == credential.TypeAPIKey {
+				acc.UpstreamKey = "sk-x"
+			}
+			store := &probeReadOnlyStore{
+				acc:  acc,
+				cred: &domain.AccountCredential{AccountID: 11, CredentialType: tc.ct, IdentityRevision: 1, CodexAccountID: "acct", OAuthToken: "at", OAuthRefreshToken: "rt"},
+				ext:  &domain.TemplateExt{TemplateID: tpl.ID, CredentialType: tc.ct},
+			}
+			prober := &fakeAccountProber{result: domain.ProbeResult{Success: true, OutputPreview: "ok"}}
+			bps := &fakeBPSProbe{result: domain.ProbeResult{Success: true, OutputPreview: "ok"}}
+			svc := newBPSProbeSvc(store, bps, prober)
+			_, err := svc.ProbeAccount(context.Background(), 11, AccountProbeRequest{Model: "gpt-5.6-sol", Format: domain.FormatOpenAIResponses})
+			require.NoError(t, err)
+			require.Equal(t, tc.proberCall, prober.calls)
+			require.Equal(t, tc.bpsCall, bps.calls)
+		})
+	}
 }

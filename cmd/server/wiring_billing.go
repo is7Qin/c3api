@@ -392,8 +392,12 @@ func (p *bpsProber) ProbeAccount(ctx context.Context, in service.BPSAccountProbe
 		Format: in.Format, RequestedModel: in.RequestedModel, UpstreamModel: in.UpstreamModel, Input: in.Input,
 	})
 	if err != nil {
+		// Prepare only constructs client/auth: an AccountFatal here means the
+		// stored credential itself is unusable (malformed JWT, claim mismatch),
+		// so it is a fixed 400 rather than a 500 with SDK text.
 		if errors.Is(err, sdkbridge.ErrBPSIdentityMismatch) || errors.Is(err, sdkbridge.ErrBPSProfileRequired) ||
-			errors.Is(err, credential.ErrUnsupported) || errors.Is(err, sdkbridge.ErrBPSEgressRequired) {
+			errors.Is(err, credential.ErrUnsupported) || errors.Is(err, sdkbridge.ErrBPSEgressRequired) ||
+			sdkbridge.ClassifyBPSFailure(err).Kind == sdkbridge.BPSFailureAccountFatal {
 			return domain.ProbeResult{}, fmt.Errorf("%w: BPS probe credential invalid", service.ErrInvalidInput)
 		}
 		return domain.ProbeResult{}, err
