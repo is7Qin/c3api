@@ -40,7 +40,8 @@
   `sel.IdentityFor(!AnalyzeConversationInput(payload).FollowUp())`，不带也不捕获 turn-state。
   WS 首帧按当次 `sel` 改写模型，同一份字节同时给拨号（`WithConversation`/`WithFirstFrame`）
   与 relay 写出——二者必须逐字节相同。
-- 续接 Redis 只在 Responses 带 `previous_response_id` 时发生；普通请求续接零 Redis
+- 续接 Redis 只在 Responses 带 `previous_response_id` 且**选中账号不是 BPS** 时发生
+  （BPS 选中时先删除该字段并跳过解析，见下）；普通请求续接零 Redis
   （`TestContinuationOrdinaryRequestsZeroRedis`）。Codex 会话路径的 Redis 访问由 SDK
   会话簿按设计 §3 发生（本副本命中零 Redis，`TestCodexConversationLocalHitZeroRedis`），
   回写由 `ConversationWorker` 异步批量完成，不在续接代码里。
