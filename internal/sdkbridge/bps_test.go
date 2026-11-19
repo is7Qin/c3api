@@ -209,3 +209,44 @@ func bpsHTTPResponse() *http.Response {
 		Body:   io.NopCloser(strings.NewReader(body)),
 	}
 }
+
+// TestBPSPrepareHonoursTemplateTransport HTTP 客户端车道复用 codex 的出站传输
+// 开关：模板 ws ⇒ 上游走 WebSocket；未配置/显式 http ⇒ HTTP。WS 客户端车道
+// （openai-responses-ws）本来就要求 WS，不受该开关影响。
+func TestBPSPrepareHonoursTemplateTransport(t *testing.T) {
+	adapter := NewBPS(bpsRedisClient(t))
+	eg := egress.NewPool(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return bpsHTTPResponse(), nil
+	})}).Direct()
+	cred := bpsCredential(t)
+
+	for _, tc := range []struct {
+		name      string
+		transport domain.CodexResponsesTransport
+		want      BPSTransport
+	}{
+		{"default", domain.CodexResponsesTransportDefault, BPSTransportHTTP},
+		{"http", domain.CodexResponsesTransportHTTP, BPSTransportHTTP},
+		{"ws", domain.CodexResponsesTransportWS, BPSTransportWS},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prepared, err := adapter.Prepare(context.Background(), BPSRequestSource{
+				Credential: cred, Format: domain.FormatOpenAIResponses, Egress: eg, Transport: tc.transport,
+			})
+			require.NoError(t, err)
+			require.Equal(t, tc.want, prepared.Transport())
+		})
+	}
+	require.NoError(t, adapter.Close())
+}
+
+// TestBPSLocalRejectMessage 本地拒绝必须点名原因，而不是一律 "invalid request
+// body"（线上无法据此定位是哪个字段不被支持）。
+func TestBPSLocalRejectMessage(t *testing.T) {
+	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrPreviousResponseUnsupported), "previous_response_id")
+	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrUnsupportedTextFormat), "text.format")
+	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrBackgroundUnsupported), "background")
+	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrItemReferenceUnsupported), "item_reference")
+	require.Equal(t, "invalid request body", BPSLocalRejectMessage(nil))
+	require.Equal(t, "invalid request body", BPSLocalRejectMessage(errors.New("opaque")))
+}

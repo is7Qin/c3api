@@ -217,8 +217,8 @@ func (p *Proxy) handleFormat(format domain.RequestFormat, w http.ResponseWriter,
 	// continuation Redis lookup or upstream preparation.
 	if contPrevID != "" && sel.CredentialType.IsBPS() {
 		sel.Release()
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSInvalidBody.msg)
-		writeErr(w, errBPSInvalidBody)
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), format, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSContinuationUnsupported.msg)
+		writeErr(w, errBPSContinuationUnsupported)
 		return
 	}
 	// 续接解析：计划规范 route class 下查绑定；missing/expired/Redis 不可用

@@ -160,7 +160,9 @@ func (s *Service) UpsertTemplateExt(ctx context.Context, e *domain.TemplateExt, 
 	if err := validateTemplateExt(e); err != nil { // 第 0 步：类型存在性
 		return nil, err
 	}
-	if !e.CodexResponsesTransport.Valid() || (e.CredentialType.IsBPS() && e.CodexResponsesTransport != "") {
+	// 第 1 步只做值域；类型面（AllowedFor）在 decideTransport 里带着「陈旧行
+	// 原样带回」的幂等例外一起判——预检提前 reject 会挡掉那条合法路径。
+	if !e.CodexResponsesTransport.Valid() {
 		return nil, ErrInvalidInput
 	}
 	if len(e.UpstreamPaths) > 0 {

@@ -257,7 +257,7 @@ export default {
       "stripImageTools": "剥离图像 tool（strip_image_tools）",
       "stripImageToolsHint": "开启后剥离该模板账号响应中的图像 tool；未配置 = 关闭",
       "transport": "出站传输（codex_responses_transport）",
-      "transportHint": "仅 codex 类型可配：未配置 = 默认 HTTP/SSE；ws = 上游改用 WebSocket。注意与入站格式 openai-responses-ws 同名不同义。",
+      "transportHint": "Codex / BPS 模板可配：未配置 = 默认 HTTP/SSE；ws = 上游改用 WebSocket（HTTP 客户端仍以 SSE 收流）。注意与入站格式 openai-responses-ws 同名不同义。",
       "transportDefault": "未配置（默认 http）",
       "transportHttp": "http（HTTP/SSE）",
       "transportWs": "ws（上游 WebSocket）",

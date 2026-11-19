@@ -198,7 +198,7 @@ func (p *Proxy) relayWS(client *websocket.Conn, up wsRelayTransport, frameHook f
 					continue
 				}
 				if sel.CredentialType.IsBPS() && isBPSLocalReject(err) {
-					_ = writeBPSInvalidBodyFrame(relayCtx, client)
+					_ = writeBPSInvalidBodyFrame(relayCtx, client, err)
 					continue
 				}
 				setErr(&upErr, err)

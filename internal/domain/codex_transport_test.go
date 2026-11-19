@@ -95,3 +95,12 @@ func TestCodexResponsesTransportKeyNameAgree(t *testing.T) {
 		}
 	}
 }
+
+// TestCodexResponsesTransportAllowedForBPS BPS 是 Responses 原生 provider：
+// 与 codex 一样复用同一出站传输字段（""/"http"/"ws"），非法字面量仍不放行。
+func TestCodexResponsesTransportAllowedForBPS(t *testing.T) {
+	require.True(t, CodexResponsesTransportDefault.AllowedFor(credential.TypeBPS))
+	require.True(t, CodexResponsesTransportHTTP.AllowedFor(credential.TypeBPS))
+	require.True(t, CodexResponsesTransportWS.AllowedFor(credential.TypeBPS))
+	require.False(t, CodexResponsesTransport("WS").AllowedFor(credential.TypeBPS))
+}

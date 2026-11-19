@@ -36,8 +36,12 @@ func (t CodexResponsesTransport) Valid() bool {
 	return false
 }
 
-// AllowedFor 类型面判定：只有 codex 号池类型（oauth/pat）经过 responses
-// 出站面，非 codex 只接受 ""（"http" 与 "ws" 一样是永不生效的配置）。
+// AllowedFor 类型面判定：只有 Responses 原生 provider（codex oauth/pat 与
+// BPS）经过出站传输面，其余类型只接受 ""（"http" 与 "ws" 一样是永不生效的
+// 配置）。
+//
+// 字段名沿用 codex_* 是历史命名；语义是「Responses 出站传输」，BPS 复用它
+// （http 客户端 + ws 上游仍以 SSE 回客户端，与 Codex 同构）。
 //
 // 非法字面量对任何类型都不放行（service 的第 1 步值域校验先行；这里保持
 // fail-closed，避免"两步都只做了一半"时漏放）。
@@ -45,7 +49,7 @@ func (t CodexResponsesTransport) AllowedFor(ct credential.Type) bool {
 	if !t.Valid() {
 		return false
 	}
-	return ct.IsCodex() || t == CodexResponsesTransportDefault
+	return ct.IsCodex() || ct.IsBPS() || t == CodexResponsesTransportDefault
 }
 
 // Key 计划/缓存键维度的归一："" 与 "http" 同键（否则一次"留空改成显式

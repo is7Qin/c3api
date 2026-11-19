@@ -26,9 +26,18 @@ export const CUSTOM_PATH_FIELDS: { key: string; placeholder: string }[] = [
   { key: 'openai-images.edits', placeholder: 'v1/images/edits' },
 ]
 
-/** codex 号池类型：出站传输只对它们有意义（其余类型提交非空值 → 400）。 */
+/** codex 号池类型：ext 的 codex_* 列组归属（PAT/OAuth 回显等）。 */
 export function isCodexCredentialType(credentialType: string): boolean {
   return credentialType === 'codex-oauth' || credentialType === 'codex-pat'
+}
+
+/**
+ * 出站传输（`codex_responses_transport`）对哪些类型有意义：Responses 原生
+ * provider —— codex oauth/pat 与 BPS。字段名是历史命名；语义是「Responses
+ * 出站传输」，BPS 复用它（HTTP 客户端 + ws 上游仍以 SSE 回客户端）。
+ */
+export function supportsResponsesTransport(credentialType: string): boolean {
+  return isCodexCredentialType(credentialType) || credentialType === 'bps'
 }
 
 /** 降级确认令牌（与 service 的字面量契约一致：`?confirm=transport-downgrade`）。 */
@@ -60,7 +69,7 @@ export type ExtFormFields = ExtWriteFields & { strip_image_tools: boolean }
  * 本文件不 import schema 类型：`node --test` 直接跑 TS（零依赖、零路径别名），
  * 调用点再用 `const body: TemplateExt = extWriteBody(...)` 把契约钉住。 */
 export type TemplateExtWriteBody = {
-  credential_type: 'responses-special' | 'codex-oauth' | 'codex-pat' | 'custom'
+  credential_type: 'responses-special' | 'codex-oauth' | 'codex-pat' | 'custom' | 'bps'
   strip_image_tools: boolean | null
   codex_responses_transport?: string
   upstream_paths?: Record<string, string>
@@ -106,7 +115,8 @@ export function shouldSyncEcho(opts: {
 /**
  * 保存前是否必须拦住：编辑态且表单还没同步过该模板的 ext 回显。
  *
- * 覆盖 `custom`（upstream_paths）**与** codex 两类（codex_responses_transport）：
+ * 覆盖 `custom`（upstream_paths）**与** Responses 原生 provider（codex/bps 的
+ * codex_responses_transport）：
  * 写面是全列替换，回显没走完就写等于把已有配置清成默认——custom 丢 7 条路径，
  * codex 把 `ws` 清回默认 http（一次「只改个名字」的保存就够）。
  *
@@ -120,7 +130,7 @@ export function extEchoBlocked(
   syncedFor: number | null,
 ): boolean {
   if (editingId === null) return false // 新建：没有既有配置可清空
-  if (credentialType !== 'custom' && !isCodexCredentialType(credentialType)) return false // 其余类型不写 ext 字段
+  if (credentialType !== 'custom' && !supportsResponsesTransport(credentialType)) return false // 其余类型不写 ext 字段
   return syncedFor !== editingId
 }
 
@@ -128,9 +138,10 @@ export function extEchoBlocked(
  * ext 写面 body 的**唯一**组装点（两处写面共用）：全列替换，三字段一起发。
  *
  * - `upstream_paths` 只有 custom 发：其余类型提交非空 map → 400；
- * - `codex_responses_transport` 只有 codex 发：非 codex 下 `"http"`/`"ws"` 永远不生效
- *   （→ 400），而陈旧行残留值是否"恰好等于库里的原值"（幂等例外）在 web 侧无法判定，
- *   所以不猜——省略即清空；旧值确实是 `ws` 时由服务端 409 门接住，用户确认后再降级。
+ * - `codex_responses_transport` 只有 Responses 原生 provider（codex/bps）发：其余
+ *   类型下 `"http"`/`"ws"` 永远不生效（→ 400），而陈旧行残留值是否"恰好等于库里的
+ *   原值"（幂等例外）在 web 侧无法判定，所以不猜——省略即清空；旧值确实是 `ws` 时
+ *   由服务端 409 门接住，用户确认后再降级。
  */
 export function extWriteBody(f: ExtWriteFields, credentialType: string): TemplateExtWriteBody {
   const body: TemplateExtWriteBody = {
@@ -138,7 +149,7 @@ export function extWriteBody(f: ExtWriteFields, credentialType: string): Templat
     strip_image_tools: f.strip_image_tools,
   }
   if (credentialType === 'custom') body.upstream_paths = nonEmptyPaths(f.upstream_paths)
-  if (isCodexCredentialType(credentialType)) body.codex_responses_transport = f.codex_responses_transport
+  if (supportsResponsesTransport(credentialType)) body.codex_responses_transport = f.codex_responses_transport
   return body
 }
 

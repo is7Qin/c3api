@@ -93,9 +93,10 @@ describe('extEchoBlocked', () => {
     assert.equal(extEchoBlocked('custom', 7, 7), false)
   })
 
-  // codex 两类也走同一个门禁：写面是全列替换，没回显就保存会把 ws 静默清回默认。
-  it('编辑 codex 类型且尚未同步 → 拦（否则一次改名就把 ws 清回默认）', () => {
-    for (const ct of ['codex-oauth', 'codex-pat']) {
+  // Responses 原生 provider（codex/bps）走同一个门禁：写面是全列替换，
+  // 没回显就保存会把 ws 静默清回默认。
+  it('编辑 codex/bps 且尚未同步 → 拦（否则一次改名就把 ws 清回默认）', () => {
+    for (const ct of ['codex-oauth', 'codex-pat', 'bps']) {
       assert.equal(extEchoBlocked(ct, 7, null), true, ct)
       assert.equal(extEchoBlocked(ct, 7, 9), true, ct)
       assert.equal(extEchoBlocked(ct, 7, 7), false, ct)
@@ -141,11 +142,19 @@ describe('extWriteBody', () => {
   })
 
   // 非 codex 不发送该字段：陈旧行（模板类型改掉后残留 ws）原样带回会被判 400。
-  it('非 codex 类型不发送传输字段（陈旧行原样带回会被判 400）', () => {
-    for (const ct of ['responses-special', 'custom']) {
+  it('非 Responses 原生类型不发送传输字段（陈旧行原样带回会被判 400）', () => {
+    for (const ct of ['responses-special', 'custom', 'api_key']) {
       const body = extWriteBody(fields, ct) as Record<string, unknown>
       assert.equal('codex_responses_transport' in body, false, ct)
     }
+  })
+
+  it('bps：复用同一传输字段（与 codex 同住 template_ext）', () => {
+    assert.deepEqual(extWriteBody(fields, 'bps'), {
+      credential_type: 'bps',
+      strip_image_tools: true,
+      codex_responses_transport: 'ws',
+    })
   })
 
   it('codex 的 "" 原样上送（未配置 = 默认 http，也是全列替换的一次清空）', () => {

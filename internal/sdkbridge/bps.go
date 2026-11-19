@@ -110,6 +110,11 @@ type BPSRequestSource struct {
 	Credential domain.AccountCredential
 	Format     domain.RequestFormat
 	Egress     *egress.Client
+	// Transport is the template-level Responses egress (""/"http"/"ws"), the same
+	// knob Codex uses. It only matters for the HTTP client lane: the WS client
+	// lane already speaks WebSocket to the upstream. "ws" here means "dial BPS
+	// over WebSocket but keep streaming SSE to an HTTP client".
+	Transport domain.CodexResponsesTransport
 }
 
 // BPSPrepared freezes all account-scoped facts for one request attempt. The
@@ -137,8 +142,9 @@ func (p *BPSPrepared) UpstreamAccountID() string    { return p.upstreamAccount }
 func (p *BPSPrepared) Egress() *egress.Client       { return p.egress }
 func (p *BPSPrepared) ProfileJSON() []byte          { return append([]byte(nil), p.profile...) }
 
-// Prepare validates BPS-only credential/profile invariants, derives transport
-// from format, and creates a client using the fixed SDK endpoint. The c3
+// Prepare validates BPS-only credential/profile invariants, derives the upstream
+// transport (format for the WS client lane, template override for the HTTP lane),
+// and creates a client using the fixed SDK endpoint. The c3
 // account/K owner is passed only to the SDK-owned redisstore TokenStore; NewTokenAuth receives the
 // verified upstream CodexAccountID exactly as required by the SDK.
 func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepared, error) {
@@ -164,6 +170,11 @@ func (a *BPS) Prepare(ctx context.Context, source BPSRequestSource) (*BPSPrepare
 	transport, err := BPSFormatTransport(source.Format)
 	if err != nil {
 		return nil, err
+	}
+	// 模板级出站传输（与 Codex 同一个开关）：HTTP 客户端 + ws 上游 ⇒ SDK 走
+	// WebSocket，仍以标准 SSE 回客户端；WS 客户端车道本来就必须 WS，忽略之。
+	if source.Transport == domain.CodexResponsesTransportWS {
+		transport = BPSTransportWS
 	}
 	if cred.AccountID <= 0 || cred.IdentityRevision <= 0 || cred.CodexAccountID == "" || cred.OAuthToken == "" || cred.OAuthRefreshToken == "" {
 		return nil, ErrBPSIdentityMismatch
@@ -532,4 +543,27 @@ func ClassifyBPSFailure(err error) BPSFailure {
 		return failure
 	}
 	return failure
+}
+
+// BPSLocalRejectMessage turns an SDK pre-dial rejection into an actionable,
+// non-sensitive client message. The raw upstream error text never leaves the
+// adapter; only these fixed sentences and the offending field name do.
+func BPSLocalRejectMessage(err error) string {
+	switch {
+	case errors.Is(err, bpssdk.ErrPreviousResponseUnsupported):
+		return "BPS does not support previous_response_id; send the full input history"
+	case errors.Is(err, bpssdk.ErrItemReferenceUnsupported):
+		return "BPS does not support item_reference; inline the referenced items"
+	case errors.Is(err, bpssdk.ErrBackgroundUnsupported):
+		return "BPS does not support background responses"
+	case errors.Is(err, bpssdk.ErrUnsupportedTextFormat):
+		return "BPS does not support text.format; remove it (plain text output only)"
+	case errors.Is(err, bpssdk.ErrToolCatalogInvalid):
+		return "BPS rejected the tool definitions"
+	}
+	var invalid *bpssdk.ValidationError
+	if errors.As(err, &invalid) && invalid.Field != "" {
+		return "invalid request body: " + invalid.Field
+	}
+	return "invalid request body"
 }

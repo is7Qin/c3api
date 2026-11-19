@@ -193,8 +193,8 @@ func (p *Proxy) HandleResponsesWS(w http.ResponseWriter, r *http.Request) {
 	var contBinding *continuation.Binding
 	if contPrevID != "" && sel.CredentialType.IsBPS() {
 		sel.Release()
-		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSInvalidBody.msg)
-		wsWriteError(client, errBPSInvalidBody.msg)
+		p.recordRejected(r.Context(), reqID, groupID, sel.AccountID, reqModel, sel.LogMappedModel(reqModel), domain.FormatOpenAIResponsesWS, http.StatusBadRequest, domain.Err4xx, 0, usageTuple{}, start, errBPSContinuationUnsupported.msg)
+		wsWriteError(client, errBPSContinuationUnsupported.msg)
 		return
 	}
 	if contPrevID != "" {
@@ -326,11 +326,11 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 			return 0, nil, nil, true, nil
 		}
 		cred := sel.Credential()
-		prepared, err := p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponsesWS, Egress: sel.Egress})
+		prepared, err := p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: cred, Format: domain.FormatOpenAIResponsesWS, Egress: sel.Egress, Transport: sel.CodexResponsesTransport})
 		if err != nil {
 			if isBPSLocalReject(err) {
 				p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponsesWS)
-				wsWriteError(st.client, errBPSInvalidBody.msg)
+				wsWriteError(st.client, sdkbridge.BPSLocalRejectMessage(err))
 				return 0, nil, nil, true, nil
 			}
 			return bpsWSError(err)
@@ -348,7 +348,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 		if dialErr != nil {
 			if isBPSLocalReject(dialErr) {
 				p.finishBPSLocalReject(r.Context(), reqID, groupID, start, sel, reqModel, domain.FormatOpenAIResponsesWS)
-				wsWriteError(st.client, errBPSInvalidBody.msg)
+				wsWriteError(st.client, sdkbridge.BPSLocalRejectMessage(dialErr))
 				return 0, nil, nil, true, nil
 			}
 			return bpsWSError(dialErr)

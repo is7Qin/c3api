@@ -26,7 +26,7 @@ func seedExtTemplate(t *testing.T, svc *Service, name string, ct credential.Type
 		formats = []domain.RequestFormat{domain.FormatOpenAIChat}
 	}
 	baseURL := "https://u"
-	if ct.IsCodex() {
+	if ct.IsCodex() || ct.IsBPS() {
 		baseURL = ""
 	}
 	tpl, err := svc.CreateTemplate(context.Background(), &domain.Template{

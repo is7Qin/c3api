@@ -1108,7 +1108,7 @@ export default function Templates() {
                 aria-label={tr('templates.ext.stripImageTools')}
               />
             </div>
-            {isCodexCredential((extTarget?.CredentialType as string) ?? '') && (
+            {(isCodexCredential((extTarget?.CredentialType as string) ?? '') || isBPSCredential((extTarget?.CredentialType as string) ?? '')) && (
               <div className="space-y-1.5">
                 <Label htmlFor="ext-transport">{tr('templates.ext.transport')}</Label>
                 <Select

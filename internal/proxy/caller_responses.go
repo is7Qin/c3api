@@ -39,7 +39,7 @@ func (c *responsesCaller) Call(ctx context.Context, w http.ResponseWriter, r *ht
 			return 0, nil, true, nil
 		}
 		var err error
-		prepared, err = p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: sel.Credential(), Format: sel.Format, Egress: sel.Egress})
+		prepared, err = p.bps.Prepare(ctx, sdkbridge.BPSRequestSource{Credential: sel.Credential(), Format: sel.Format, Egress: sel.Egress, Transport: sel.CodexResponsesTransport})
 		if err != nil {
 			if ctx.Err() != nil {
 				return 0, nil, false, ctx.Err()

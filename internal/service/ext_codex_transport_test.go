@@ -463,3 +463,34 @@ func TestUpsertTemplateExtTransportConflictNoWarn(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, domain.CodexResponsesTransportWS, got, "409 不得改动原值")
 }
+
+// TestUpsertTemplateExtTransportBPS BPS 复用同一出站传输字段：ws 可落库，
+// 降级回 http 仍要显式确认（与 codex 同一条 409 门）。
+func TestUpsertTemplateExtTransportBPS(t *testing.T) {
+	svc := &Service{store: newFakeStore(), inv: &invRecorder{}, log: nil}
+	ctx := context.Background()
+	tpl := seedExtTemplate(t, svc, "t-bps-transport", credential.TypeBPS, domain.FormatOpenAIResponses)
+
+	_, err := svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeBPS,
+		CodexResponsesTransport: domain.CodexResponsesTransportWS,
+	}, "")
+	require.NoError(t, err, "BPS 模板必须能配置 ws 上游")
+	got, ok := storedTransport(t, svc, tpl.ID)
+	require.True(t, ok)
+	require.Equal(t, domain.CodexResponsesTransportWS, got)
+
+	// ws → 未配置 是降级：必须带 confirm。
+	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeBPS,
+	}, "")
+	require.ErrorIs(t, err, ErrConflict)
+	require.Contains(t, err.Error(), "transport-downgrade")
+
+	_, err = svc.UpsertTemplateExt(ctx, &domain.TemplateExt{
+		TemplateID: tpl.ID, CredentialType: credential.TypeBPS,
+	}, transportDowngradeConfirm)
+	require.NoError(t, err)
+	got, _ = storedTransport(t, svc, tpl.ID)
+	require.Equal(t, domain.CodexResponsesTransportDefault, got)
+}

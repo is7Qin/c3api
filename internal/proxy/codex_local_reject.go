@@ -12,6 +12,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -75,6 +76,22 @@ func writeCodexInvalidBodyFrame(ctx context.Context, client *websocket.Conn) err
 	wctx, cancel := context.WithTimeout(ctx, responsesWSCloseTimeout)
 	defer cancel()
 	return client.Write(wctx, websocket.MessageText, codexInvalidBodyFrame)
+}
+
+// writeCodexInvalidBodyFrameMessage 是带具体文案的本地拒绝帧（BPS 用它点名
+// 不支持的字段）。编码失败时回落到固定帧——拒绝路径本身不能再报错。
+func writeCodexInvalidBodyFrameMessage(ctx context.Context, client *websocket.Conn, msg string) error {
+	frame, err := json.Marshal(map[string]any{
+		"type":   "error",
+		"status": http.StatusBadRequest,
+		"error":  map[string]any{"type": "invalid_request_error", "message": msg},
+	})
+	if err != nil {
+		frame = codexInvalidBodyFrame
+	}
+	wctx, cancel := context.WithTimeout(ctx, responsesWSCloseTimeout)
+	defer cancel()
+	return client.Write(wctx, websocket.MessageText, frame)
 }
 
 // rejectCodexWSInvalidBody 拨号/首帧落点的本地拒绝：写错误帧并正常关闭客户端，

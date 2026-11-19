@@ -257,7 +257,7 @@ export default {
       "stripImageTools": "Strip image tools (strip_image_tools)",
       "stripImageToolsHint": "Strips image tools from this template's account responses; unset = off",
       "transport": "Outbound transport (codex_responses_transport)",
-      "transportHint": "Codex templates only: unset = default HTTP/SSE; ws = upstream WebSocket. Not the same as the inbound openai-responses-ws format.",
+      "transportHint": "Codex / BPS templates: unset = default HTTP/SSE; ws = upstream WebSocket (an HTTP client still receives SSE). Not the same as the inbound openai-responses-ws format.",
       "transportDefault": "Unset (default http)",
       "transportHttp": "http (HTTP/SSE)",
       "transportWs": "ws (upstream WebSocket)",
