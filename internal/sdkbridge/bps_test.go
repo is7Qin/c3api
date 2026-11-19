@@ -249,4 +249,34 @@ func TestBPSLocalRejectMessage(t *testing.T) {
 	require.Contains(t, BPSLocalRejectMessage(bpssdk.ErrItemReferenceUnsupported), "item_reference")
 	require.Equal(t, "invalid request body", BPSLocalRejectMessage(nil))
 	require.Equal(t, "invalid request body", BPSLocalRejectMessage(errors.New("opaque")))
+
+	// 工具目录错误必须点名可执行的原因：之前一律塌成同一句话，调用方无法判断
+	// 是类型不支持、名字冲突还是参数非法。
+	detail := BPSLocalRejectMessage(fmt.Errorf("%w: unsupported tool type %q", bpssdk.ErrToolCatalogInvalid, "functon"))
+	require.Contains(t, detail, "tool definitions")
+	require.Contains(t, detail, `unsupported tool type "functon"`)
+	require.NotContains(t, detail, "bridge:")
+}
+
+// TestBPSStreamBodyAcceptsServerSideTools 端到端钉住 SDK 的工具桥行为：客户端
+// 声明 web_search（服务端工具，BPS 自己执行）时请求必须照常发出；function 工具
+// 仍进 preamble。此前 catalog 阶段把服务端工具当非法条目，整单 400。
+func TestBPSStreamBodyAcceptsServerSideTools(t *testing.T) {
+	adapter := NewBPS(bpsRedisClient(t))
+	eg := egress.NewPool(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return bpsHTTPResponse(), nil
+	})}).Direct()
+	prepared, err := adapter.Prepare(context.Background(), BPSRequestSource{
+		Credential: bpsCredential(t), Format: domain.FormatOpenAIResponses, Egress: eg,
+	})
+	require.NoError(t, err)
+	defer prepared.Close()
+
+	body := []byte(`{"model":"gpt-6-astra","input":"hi","tools":[` +
+		`{"type":"web_search"},` +
+		`{"type":"function","name":"probe_echo","parameters":{"type":"object"}}]}`)
+	resp, err := prepared.StreamBody(context.Background(), body)
+	require.NoError(t, err, "服务端工具声明必须被忽略，而不是 400")
+	require.NotNil(t, resp)
+	require.NoError(t, resp.Body.Close())
 }

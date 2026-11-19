@@ -11,8 +11,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 
@@ -550,11 +552,31 @@ func BPSLocalRejectMessage(err error) string {
 	case errors.Is(err, bpssdk.ErrUnsupportedTextFormat):
 		return "BPS does not support text.format; remove it (plain text output only)"
 	case errors.Is(err, bpssdk.ErrToolCatalogInvalid):
-		return "BPS rejected the tool definitions"
+		// 工具错误只会点名客户端自己提交的类型/名字（不含上游原文），带上能让
+		// 调用方直接改请求，而不是对着笼统的 400 猜。
+		return "BPS rejected the tool definitions: " + bpsErrorDetail(err)
 	}
 	var invalid *bpssdk.ValidationError
 	if errors.As(err, &invalid) && invalid.Field != "" {
 		return "invalid request body: " + invalid.Field
 	}
 	return "invalid request body"
+}
+
+// bpsErrorDetail 保留 SDK 校验错误里可执行的那部分（去掉库前缀），并做 UTF-8
+// 安全截断。仅用于工具目录类错误：其内容来自客户端提交的 tools。
+func bpsErrorDetail(err error) string {
+	msg := err.Error()
+	for _, prefix := range []string{"bps: ", "bridge: ", "invalid tool catalog: "} {
+		msg = strings.TrimPrefix(msg, prefix)
+	}
+	const maxDetail = 200
+	if len(msg) <= maxDetail {
+		return msg
+	}
+	cut := maxDetail
+	for cut > 0 && !utf8.RuneStart(msg[cut]) {
+		cut--
+	}
+	return msg[:cut] + "…"
 }
