@@ -280,3 +280,35 @@ func TestBPSStreamBodyAcceptsServerSideTools(t *testing.T) {
 	require.NotNil(t, resp)
 	require.NoError(t, resp.Body.Close())
 }
+
+// catalogHTTPResponse 是 access/catalog 端点的最小合法响应（JSON，不是 SSE）。
+func catalogHTTPResponse() *http.Response {
+	body := `{"allowed":true,"model_catalog":{"source":"local","models":[{"id":"m1"}]}}`
+	return &http.Response{
+		StatusCode: http.StatusOK, Status: "200 OK",
+		Header: http.Header{"Content-Type": []string{"application/json"}},
+		Body:   io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// TestBPSModelsUnderWSTransport 钉住「传输不再被适配器当成 catalog 的前置条件」：
+// catalog 是 SDK 的 HTTP 端点，ws 只是 responses 车道；三处 `requires HTTP
+// format` 守卫曾让 HTTP 客户端 + ws 上游在适配器层直接失败。
+func TestBPSModelsUnderWSTransport(t *testing.T) {
+	adapter := NewBPS(bpsRedisClient(t))
+	eg := egress.NewPool(&http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return catalogHTTPResponse(), nil
+	})}).Direct()
+	cred := bpsCredential(t)
+
+	prepared, err := adapter.Prepare(context.Background(), BPSRequestSource{
+		Credential: cred, Format: domain.FormatOpenAIResponses, Egress: eg,
+		Transport: domain.CodexResponsesTransportWS,
+	})
+	require.NoError(t, err)
+	require.Equal(t, BPSTransportWS, prepared.Transport())
+
+	catalog, err := prepared.Models(context.Background())
+	require.NoError(t, err, "catalog 走 HTTP，ws 传输不得被适配器拒绝")
+	require.NotEmpty(t, catalog.Models)
+}
