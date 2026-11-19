@@ -14,6 +14,16 @@
 | `probe/` | 5 | 单账号单模型探测执行（account-model-test/account-probe-content）：纯执行已准入 ctx；origin 锁定、不跟随重定向、2 MiB 响应体上限、固定分类+有限错误码；文本/images（generations/edits）/search 200-only 安全预览（output_preview/image_previews）、图片取图与脱敏；只读 |
 | billing(14) scheduler(13) domain(15) rule(12) usage(10) protoconv(8) sdkbridge(9) pricing(8) notify(7) server(4) auth(4) invalidate(4) credential(2) config(2) snapshot(2) worker(2) | | 领域件 |
 
+## BPS 接入边界
+
+- **独立 provider**：BPS 的端点、凭据、device profile、Responses/WS 车道全归 `bps-sdk`；c3api 只在 `internal/sdkbridge` 适配。`boundary_gate_test.go` 守门：proxy/service/repository 不得直接 import SDK。
+- **Redis 归 SDK**：`NewBPS(rdb, failureHandler)` 只接收现有 `redis.Client`；token record、key hashing、CAS/fence 在 `bps-sdk/redisstore`。c3api 不写 BPS token key，也不保存登录会话。
+- **profile 只写**：授权成功后由 SDK 生成并随 identity envelope 持久化；请求、响应、日志都没有 raw profile。
+- **身份组**：`credential.Type.IdentityGroup()` 是查重作用域的唯一来源（codex-oauth/codex-pat 同组，bps 独立）；`account_ext` 的唯一性由 `migrations/0002_account_ext_identity_group` 的部分唯一索引承载，Go 侧不再复制第二套类型判断。
+- **迁移**：已应用迁移不可变；schema 变更只新增 `internal/db/migrate/migrations/NNNN_*`，版本水位与 head 快照以迁移包自身为准，不在别处复写。
+- **出站传输**：`template_ext.codex_responses_transport` 对 Responses 原生 provider（codex/bps）同义；`ws` 只改上游车道，客户端 HTTP 仍收 SSE；catalog 恒为 HTTP，不是传输的前置条件。
+- **本地拒绝**：`sdkbridge.BPSLocalRejectMessage` 是唯一文案映射；只输出固定句或字段名，SDK 错误原文与上游 body 不出适配器。
+
 ## 分层与请求流
 
 ```
