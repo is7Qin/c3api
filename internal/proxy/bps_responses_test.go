@@ -6,6 +6,7 @@ package proxy
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,7 +36,9 @@ func TestBPSResponsesPreservesProviderNeutralStatus(t *testing.T) {
 			code, safe := bpsErrorResponse(tc.err)
 			require.Equal(t, tc.code, code)
 			require.ErrorIs(t, safe, tc.err)
-			require.Equal(t, "BPS upstream rejected request", safe.Error())
+			// 固定前缀 + 数值状态 + 分类：WS 面直接写这句，err_logs 也落它；
+			// 上游正文仍然不出现。
+			require.Equal(t, fmt.Sprintf("BPS upstream rejected request (status %d, unknown)", tc.code), safe.Error())
 		})
 	}
 }

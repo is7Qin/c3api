@@ -446,11 +446,43 @@ const (
 )
 
 type BPSFailure struct {
-	Kind       BPSFailureKind
-	Status     int
+	Kind   BPSFailureKind
+	Status int
+	// Code/RequestID 是上游错误体的**标识**（不是正文）：只用于运维日志定位，
+	// 客户端文案仍由各调用面给固定句。
+	Code       string
+	RequestID  string
 	RetryAfter time.Duration
 	Dispatched bool
 	Err        error
+}
+
+// String 给日志用；新增 kind 必须在这里补名字，否则日志会印数字。
+func (k BPSFailureKind) String() string {
+	switch k {
+	case BPSFailureAccountFatal:
+		return "account_fatal"
+	case BPSFailurePolicy:
+		return "policy"
+	case BPSFailureModelDenied:
+		return "model_denied"
+	case BPSFailureQuota:
+		return "quota"
+	case BPSFailureRateLimit:
+		return "rate_limit"
+	case BPSFailureLocalReject:
+		return "local_reject"
+	case BPSFailureAmbiguous:
+		return "ambiguous"
+	case BPSFailureIdleTimeout:
+		return "idle_timeout"
+	case BPSFailureIncomplete:
+		return "incomplete"
+	case BPSFailureTransport:
+		return "transport"
+	default:
+		return "unknown"
+	}
 }
 
 type bpsStatusError interface {
@@ -475,6 +507,11 @@ func ClassifyBPSFailure(err error) BPSFailure {
 	var status bpsStatusError
 	if errors.As(err, &status) {
 		failure.Status = status.StatusCode()
+	}
+	var api *bpssdk.APIError
+	if errors.As(err, &api) {
+		failure.Code = api.Code
+		failure.RequestID = api.RequestID
 	}
 	var transportErr *bpssdk.TransportError
 	if errors.As(err, &transportErr) {

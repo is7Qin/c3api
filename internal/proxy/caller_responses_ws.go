@@ -332,7 +332,7 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 				wsWriteError(st.client, sdkbridge.BPSLocalRejectMessage(err))
 				return 0, nil, nil, true, nil
 			}
-			return bpsWSError(err)
+			return p.bpsWSError(reqID, sel, reqModel, err)
 		}
 		defer prepared.Close()
 		frame := wsFirstFrameForSel(st.first, sel, reqModel)
@@ -350,12 +350,13 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 				wsWriteError(st.client, sdkbridge.BPSLocalRejectMessage(dialErr))
 				return 0, nil, nil, true, nil
 			}
-			return bpsWSError(dialErr)
+			return p.bpsWSError(reqID, sel, reqModel, dialErr)
 		}
 		handled, fwErr := p.relayWS(st.client, up, nil, r, reqID, groupID, start, sel, reqModel, st.firstTyp, nil)
 		if handled {
 			return 0, nil, nil, true, nil
 		}
+		p.logBPSFailure(reqID, sel, reqModel, fwErr)
 		code, safe := bpsErrorResponse(fwErr)
 		return code, []byte(safe.Error()), nil, false, safe
 	}
@@ -423,7 +424,8 @@ func (a *wsAttempt) call(ctx context.Context, w http.ResponseWriter, r *http.Req
 	return code, []byte(msg), nil, false, nil
 }
 
-func bpsWSError(err error) (int, []byte, http.Header, bool, error) {
+func (p *Proxy) bpsWSError(reqID string, sel *scheduler.Selection, reqModel string, err error) (int, []byte, http.Header, bool, error) {
+	p.logBPSFailure(reqID, sel, reqModel, err)
 	code, safe := bpsErrorResponse(err)
 	return code, []byte(safe.Error()), nil, false, safe
 }
