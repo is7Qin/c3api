@@ -982,7 +982,7 @@ func duplicateTopLevelKey(body []byte, keys []string) string {
 		return ""
 	}
 	i++
-	// 命中位图而非 map：键表是包级固定小切片（当前 2 个），map 会为「model 存在」
+	// 命中位图而非 map：键表是包级固定小切片（当前 3 个），map 会为「model 存在」
 	// 这种常见情况分配 hmap+bucket（实测 2 allocs/请求）。位图零分配。
 	var seenMask uint64
 	for {
