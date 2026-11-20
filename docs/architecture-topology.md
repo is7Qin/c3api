@@ -1,9 +1,10 @@
 # github.com/is7qin/c3api 架构拓扑（标准文档）
 
 > 受众：vibecoding agent（改热路径/加表/加 worker/接线前必读）+ 新贡献者 onboarding。
-> 基准：main HEAD `14191f4`（2026-09-23）。**锚点为尽力而为快照**——本文件随代码漂移，改代码位置时同步更新 file:line（§15.9）；未逐条复核的行号请以符号名为准（行号可能偏移，符号名与包路径已复核）。
+> 基准：以 git 历史为准（本文不钉死 commit）。**锚点为尽力而为快照**——本文件随代码漂移；行号只作定位线索，**一律以符号名与包路径为准**。
 > 约定：本文档只陈述 main 现状；快照注册表已合并，§7/§9 按合并后现状陈述。
 > 详细 API 契约见 `docs/admin-api.md` 与 `openapi/openapi.yaml`，本文不重复。
+> 溯源说明：文中「历史 spec <名称>」指未入库的 SDD spec 文档，无在线链接。
 
 ## 1. 系统概览
 
@@ -175,7 +176,7 @@ pkg 职责边界：
 - 六方向（`internal/protoconv/protoconv.go`）：`ConvertRequest`（chat→resp / mess→resp / resp→mess / chat→mess / mess→chat / resp→chat）+ `ConvertResponse`（非流式）；`NewStreamMapper`（流式 SSE 事件映射）+ `StreamMapper.Done()/Finish()`（目标终止帧查询与流末补发——codex converted 适配层在源协议仅 `[DONE]` 或无 `[DONE]` 正常 EOF 时按方向镜像补发；mess→chat / resp→chat 的 `Finish` 接在 `sserelay.Config.Terminal` 上，与上游 `[DONE]` 恰好二选一）；方向常量在 `domain/types.go`。
 - **字节级纪律**（`internal/protoconv/jsraw.go:20-25`）：gjson 预筛（`gjsonKeyEq` 长度校验 + 逐字节比较零分配）→ `gjson.Result.Raw` 零拷贝切片直接拼入输出 → 单缓冲复用（`StreamMapper` 的 buf/dbuf，`internal/protoconv/protoconv.go:84`；帧返回后下一帧覆盖，调用方不得跨帧保留）；chat→resp 方向字节级组装，其余方向 map 组装（`EncodeFrame`）。
 - 缺名帧处理（教训）：无 `event:` 名帧从 data 的 `type` 字段推断（**已上提到共享实现** `pkg/sserelay/relay.go:46` `InferEventName`，protoconv 在 `internal/protoconv/protoconv.go:120` 调用），无法推断原样透传。
-- 转换 on/off 开销实证（`docs/superpowers/plans/2026-08-11-w3-loadtest.md` §二 与 `docs/superpowers/plans/2026-08-11-protoconv-opt-loadtest.md` §一，均压测机（内部环境，IP 存部署清单） 实证）：
+- 转换 on/off 开销实证（`历史 spec 2026-08-11-w3-loadtest` §二 与 `历史 spec 2026-08-11-protoconv-opt-loadtest` §一，均压测机（内部环境，IP 存部署清单） 实证）：
   - w3 历史：on 相对 off = QPS **-16.4%**、每请求 CPU **+32%**（+71.5µs）、首字节 **+34ms**。
   - 字节级优化后（请求 274→6 allocs、流式逐帧 59→1.1 的 benchmark 声明）：QPS 差距收敛至 **-10.9%**（52.3k→46.6k）、CPU **+17.8%**（+41.4µs）、首字节 **+21ms**；pprof 转换路径占比 22.6% → 8.5%。
   - off 基线无回退（52.3k / 232.8µs，与 w3 off 同量级）——"off 热路径零开销"保持成立。
@@ -304,12 +305,12 @@ flowchart LR
 ## 10. 多实例一致性
 
 - **并发扣费（v2 三车道结算）**（`internal/repository/billing_settle.go` + `billing_cursor.go`）：扣减与标记由**结算语句一体完成**（每窗口一次往返）——`SettleBalanceBatch`（Balance 车道：余额-only 用户，batch 谓词 NOT-IN temp-active）与 `SettleFefoBatch`（Temp 车道：temp-active 用户，集合化 FEFO + 差额透支补刀 + 标记一体，谓词 IN temp-active）。两车道 batch 谓词**互斥** → 同用户同周期不跨车道；车道间在会话锁内**顺序**执行（跨道并行即成环），车道内 **K 桶并行**。结算失败按 lane/bucket 独立闭合：失败桶本周期跳过、下周期重放（at-least-once，行保持 unbilled）。全毫分直接扣减（1 USD = 100,000 毫分，零换算零取整）。游标取批/纯标记/lag/会话锁见 `billing_cursor.go`（`FetchUnbilledBatch` / `MarkBilledBulk` / `UnbilledLag` / `AcquireBillingLock`）。`usage_logs` 明细的唯一写者仍是 usage flusher（`InsertBatch`），billing 只标记/消费、不插日志。
-- **多实例取批互斥**：`AcquireBillingLock` 会话级 advisory lock 是**唯一防线**——整周期（含全部车道结算事务 COMMIT）后解锁释放。行锁仲裁跨实例天然串行（`docs/superpowers/plans/2026-08-10-multi-instance-design.md` §1 表）。
+- **多实例取批互斥**：`AcquireBillingLock` 会话级 advisory lock 是**唯一防线**——整周期（含全部车道结算事务 COMMIT）后解锁释放。行锁仲裁跨实例天然串行（`历史 spec 2026-08-10-multi-instance-design` §1 表）。
 - **NOTIFY 跨实例**（§9 全链）：实例 ID = **hostname-pid-nonce**（crypto/rand 6B 随机，`cmd/server/main.go` 装配 + `instanceSrc`）——修复：容器化多实例同 hostname、pid namespace 各自 pid 1 → 纯 hostname-pid 互相碰撞 → 互把对方 NOTIFY 当自播跳过 → 失效静默全灭；自播判等 = 全串相等 `ch.Src == l.cfg.Src`（`internal/notify/listener.go` 注释）。**同一 `instanceSrc` 也是 discovery 心跳与 concSync 的 self 标识**（不自造第二套 ID）。
 - **额度预算分摊**（`internal/proxy/gate.go:434-447` `allocBudget`）：`budget = consumed + ceil(remaining_eff/N)`，**N = Redis 心跳活体实例数**——`internal/discovery` 实现 `InstancesProvider.ClusterInstances()`，gate 与 scheduler 在**每次预算分配时现读** provider，心跳计数变化 ≤1 tick 天然生效，**无需任何 reload 触发**。N **不是配置项**（config 文件可漂移，Redis 心跳是唯一共识源）。并发份额（`concShare`）同源同 N（gate.go:282,291）。
 - **分区 DROP 幂等**（`internal/repository/partition.go:404-416`）：IF NOT EXISTS / IF EXISTS + 撞名 42P07/42710/23505（`isDuplicateObject`）+ **42P01 stale-DROP 窗口**（`isMissingObject`、`isBootstrapRaceError`——并发实例基于过期"未分区"判定 DROP 误删对方刚建表，由最后执行 DROP 的实例补建收敛，已接受）；retention DROP 需 ACCESS EXCLUSIVE 锁与在途插入串行（`internal/usage/retention.go` 注记）。
 - **失效分发兜底面**：auth-sync 60s 兜底 + per-attempt 30s 超时 + 托管 goroutine（`cmd/server/auth_sync.go`）；规则重载 Background ctx 不随请求取消（`internal/invalidate/invalidate.go`）。
-- **已知接受的竞态**（`docs/superpowers/plans/2026-08-10-multi-instance-design.md` §R2）：NOTIFY 重复投递 → mark 幂等合并；`UpdateAccountStatus` 并发 → last-writer-wins；stats Upsert 同桶累加精确；规则种子双写 → 唯一约束幂等；pricing sync 每实例独立 cron 重复 fetch（v1 接受）。
+- **已知接受的竞态**（`历史 spec 2026-08-10-multi-instance-design` §R2）：NOTIFY 重复投递 → mark 幂等合并；`UpdateAccountStatus` 并发 → last-writer-wins；stats Upsert 同桶累加精确；规则种子双写 → 唯一约束幂等；pricing sync 每实例独立 cron 重复 fetch（v1 接受）。
 
 ## 11. API 面
 
@@ -355,13 +356,13 @@ flowchart LR
 
 每条 = 定稿结论 + **为什么** + 来源锚点（代码注释位置或 plan 文件名）。
 
-1. **三词原则（性能 / 边界 / 优雅）**——所有方案取舍的评判标准。为什么：压测驱动演化（53k/s 目标）中每个"快"都要有边界（哪些路径不碰）与优雅（停机/失败不丢语义）。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:5`。
-2. **不计费不入 usage_logs**——usage_logs 成员资格按**放行路径语义（error_type ∈ {none, abort}）**判定，与 cost 无关。为什么：cost>0 判定会漏掉免费分组（倍率 0 成功行）与 0 token 成功行（空响应）；失败行（4xx/5xx/network）不入 usage_logs（拒绝风暴教训：每请求一条明细即无界积压与写放大源头），错误审计归 err_logs。来源：`internal/proxy/forward.go:377-391`（routeLog 注释）+ `docs/superpowers/plans/2026-08-11-errlog-task.md:12`。
-3. **表三分**——usage_logs（计费明细 30 天）/ err_logs（错误明细 7 天）/ usage_stats（聚合统计 180 天），三表独立保留期。为什么：错误审计与计费明细生命周期/查询面不同，混表使两边互相拖累（瘦身 + 短保留）。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:25` + `internal/repository/partition.go:22-31`。
+1. **三词原则（性能 / 边界 / 优雅）**——所有方案取舍的评判标准。为什么：压测驱动演化（53k/s 目标）中每个"快"都要有边界（哪些路径不碰）与优雅（停机/失败不丢语义）。来源：`历史 spec 2026-08-11-errlog-task`。
+2. **不计费不入 usage_logs**——usage_logs 成员资格按**放行路径语义（error_type ∈ {none, abort}）**判定，与 cost 无关。为什么：cost>0 判定会漏掉免费分组（倍率 0 成功行）与 0 token 成功行（空响应）；失败行（4xx/5xx/network）不入 usage_logs（拒绝风暴教训：每请求一条明细即无界积压与写放大源头），错误审计归 err_logs。来源：`internal/proxy/forward.go:377-391`（routeLog 注释）+ `历史 spec 2026-08-11-errlog-task`。
+3. **表三分**——usage_logs（计费明细 30 天）/ err_logs（错误明细 7 天）/ usage_stats（聚合统计 180 天），三表独立保留期。为什么：错误审计与计费明细生命周期/查询面不同，混表使两边互相拖累（瘦身 + 短保留）。来源：`历史 spec 2026-08-11-errlog-task` + `internal/repository/partition.go:22-31`。
 4. **分区 DROP 不 DELETE**——保留清理全部 DROP TABLE O(1)（比逐行 DELETE 快 5~6 个量级）。为什么：50k 并发量级 usage_logs ~4.3 亿行/天，逐行 DELETE 不可行；PG DELETE 不释放空间（usage_stats 180 天清理必须 DROP）。来源：`internal/repository/partition.go:22-31` + `internal/usage/retention.go:62` + `config.example.toml` 的 `usage.log_retention_days` 注释。
-5. **双队列豁免采样**——err_logs 按来源（provenance）分队列：豁免队列（abort/failover 已计费错误）恒落盘，普通队列（401/429/402/400/404 拒绝）风暴采样丢弃。为什么：不可按 error_type 推断来源（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）；已计费错误审计价值最高。来源：`internal/usage/errlog.go:10-16` + `docs/superpowers/plans/2026-08-11-errlog-task.md:10,14`。
+5. **双队列豁免采样**——err_logs 按来源（provenance）分队列：豁免队列（abort/failover 已计费错误）恒落盘，普通队列（401/429/402/400/404 拒绝）风暴采样丢弃。为什么：不可按 error_type 推断来源（Err429/ErrBilling/ErrAuth 在拒绝类与双轨类同时出现）；已计费错误审计价值最高。来源：`internal/usage/errlog.go:10-16` + `历史 spec 2026-08-11-errlog-task`。
 6. **快照注册表边界（已合并）**——注册表不接管模块周期 ticker、不做数据缓存、不进入请求热路径。为什么：避免双 reload 竞争与热路径锁；快照数据形态与周期刷新保持各模块自管。来源：`internal/snapshot/snapshot.go:9-19` 包注释（用户拍板 2026-08-11）。
-7. **单 worker 批量落盘（err_logs）**——无多 worker 并行必要。为什么：DB 写是瓶颈，写速率由 BatchSize/FlushInterval 钉死有界，采样兜底防积压。来源：`docs/superpowers/plans/2026-08-11-errlog-task.md:23`。
+7. **单 worker 批量落盘（err_logs）**——无多 worker 并行必要。为什么：DB 写是瓶颈，写速率由 BatchSize/FlushInterval 钉死有界，采样兜底防积压。来源：`历史 spec 2026-08-11-errlog-task`。
 8. **usage_logs 瘦身**——去 error_message + status_code（保留 error_type，值域收敛 none/abort）。为什么：错误排障列由 err_logs 承载（status_code integer + error_message），明细表瘦身降写放大。**无"存量库"概念**——schema 变更即全新建库，bootstrap 不做增量补列。来源：`internal/ent/schema/usagelog.go:33-39` + `internal/ent/schema/errlog.go:12,35`。
 9. **锁顺序一致化防死锁**——批量 upsert 批内按 model 排序 + 40P01 重试。为什么：多实例并发同批 model 取锁顺序交错 → deadlock detected（压测启动期偶发）；排序消除主因，重试兜底残余。来源：`internal/repository/price_entry_repo.go:38`（sort.SliceStable）+ `internal/repository/litellm_upsert.go:94,103`（isDeadlock / litellmExecBatchWithRetry）。
 10. **ent migrate 跳过分区表**——分区 DDL 由 bootstrap 独占管理。为什么：atlas 对分区表 diff 规划期必失败（真实 PG 实测，ent v0.14.6 + atlas v0.36.2 + PG18）。来源：`internal/repository/partition.go:660-676`。
@@ -371,12 +372,12 @@ flowchart LR
 
 ## 14. 性能基准
 
-- **目标与实测（w3 轮，2026-08-11）**（`docs/superpowers/plans/2026-08-11-w3-loadtest.md` §一，压测机（内部环境，IP 存部署清单） / 24 逻辑 CPU / 62GB，DB postgres:18 同机，loadtest 工具交错跑 + 每请求 CPU 同口径）：
-  - 目标 **53k/s**；实测 10k 并发 **56.3k** total QPS（billing off）/ 50.8k（billing on）、20k **53.3k**、25k **59.9k**——均 ≥ 历史峰值 52.3k，无吞吐塌陷（`docs/superpowers/plans/2026-08-11-w3-loadtest.md:31-33`）。
+- **目标与实测（w3 轮，2026-08-11）**（`历史 spec 2026-08-11-w3-loadtest` §一，压测机（内部环境，IP 存部署清单） / 24 逻辑 CPU / 62GB，DB postgres:18 同机，loadtest 工具交错跑 + 每请求 CPU 同口径）：
+  - 目标 **53k/s**；实测 10k 并发 **56.3k** total QPS（billing off）/ 50.8k（billing on）、20k **53.3k**、25k **59.9k**——均 ≥ 历史峰值 52.3k，无吞吐塌陷（`历史 spec 2026-08-11-w3-loadtest`）。
   - 429 为种子 key 池在途门禁分摊（20k 并发 28.3%、25k 37.7%），非缺陷。
   - **时效注记**：上述数字为 w3 轮历史事实，基准后另有新轮次未收录（2026-08-13）：resp HTTP 10k 并发 33.5k→35.9k QPS、每请求 CPU -15~-17%；resp-ws 2000 连接 86k rounds/s、每轮 CPU 114µs、0 错误（`2026-08-13-resp-loadtest-retest.md`）；sdk-wiring chat 基线 51.5k QPS（落带 46.6-53.9k）、images 直连 70.0k/169µs、SDK 非流式 45-47k、流式 41k/344µs（`2026-08-13-sdk-wiring-loadtest.md`）。与 w3 数字不冲突（51.5k 落带含 w3 值），引用时勿当作最新。
-- **转换成本数据**：见 §5（off 基线 52.3k / 232.8µs；on 差距收敛 -10.9% QPS / +17.8% CPU；pprof 转换路径 22.6%→8.5%）。strip 预筛 ≈1.5% QPS / ~1% CPU 差异（`docs/superpowers/plans/2026-08-11-w3-loadtest.md:65`）。
-- **风暴教训**（压测 2026-08-11 修复链，`internal/billing/flusher.go` / `internal/repository/partition.go` 注释 + `docs/superpowers/plans/2026-08-11-errlog-task.md`）：
+- **转换成本数据**：见 §5（off 基线 52.3k / 232.8µs；on 差距收敛 -10.9% QPS / +17.8% CPU；pprof 转换路径 22.6%→8.5%）。strip 预筛 ≈1.5% QPS / ~1% CPU 差异（`历史 spec 2026-08-11-w3-loadtest`）。
+- **风暴教训**（压测 2026-08-11 修复链，`internal/billing/flusher.go` / `internal/repository/partition.go` 注释 + `历史 spec 2026-08-11-errlog-task`）：
   - **分区漂移**：price 快照列/ttft_ms 合入后旧分区表缺列 → 新二进制连旧库 INSERT 42703 全停；根治 = **全新建库**（无补列路径，schema 变更即重建）——存量漂移面由此不存在。
   - **巨批**：单用户积压 1M+ 行 → 单事务 2000+ 分片串行 8 分钟（xact_age 08:02 实证）+ 堆涨 4.6GB；修复 = 单用户拆事务 ≤10k 行/事务（`internal/billing/flusher.go`）。
   - **缺名帧**：非规范上游缺 `event:` 行 → 流式转换断流；修复 = data `type` 字段推断事件名（现为共享实现 `pkg/sserelay/relay.go:46` `InferEventName`）。
@@ -395,5 +396,5 @@ flowchart LR
 5. **接线（跨包发布/回调）**：读 §9——跨层一律接口化 + cmd/server 装配侧粘合（notify 不 import invalidate、scheduler 不 import notify 是硬约束）；NOTIFY 变更必须进 dispatcher 映射表 + 载荷守卫（>6KB 降级 full）。
 6. **计费改动**：读 §10 + ADR 2/3——扣费恒条件 UPDATE（FEFO + 行锁），预检只是软门禁；usage_logs 只收放行路径行；billing.enabled=false 时 `invBalances` 必须保持 nil 接口（防 typed-nil panic，`cmd/server/main.go:217-221`）。
 7. **测试基座**：repository/service 测试 = 真实 PostgreSQL（独立库命名 `c3api_test_<任务名>` 避开并行竞争），不用 sqlite/pgxmock（pgxmock 仅存单测桥接）；必须 `-race` + gofmt 干净。
-8. **流程**：SDD 三件套——spec 先行（`docs/superpowers/plans/` 当日日期命名）→ spec review 通过才派实现 → 实现 → 内容评审（验收标准核对锚点/裁决清单）→ 合并 main（--no-ff）→ 清理 worktree/分支。commit 中文一句话。
-9. **文档纪律**：本文档锚点随代码漂移——改代码位置时同步更新 file:line；合并时若 main 已前进需重核锚点（spec 事实纪律 2）。
+8. **流程**：SDD 三件套——spec 先行（`.omo/plans/` 当日日期命名）→ spec review 通过才派实现 → 实现 → 内容评审（验收标准核对锚点/裁决清单）→ 合并 main（--no-ff）→ 清理 worktree/分支。commit 中文一句话。
+9. **文档纪律**：本文档锚点随代码漂移——以代码为准，行号仅作定位线索；合并时若 main 已前进需重核锚点。

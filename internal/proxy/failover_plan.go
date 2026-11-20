@@ -14,9 +14,9 @@ import (
 func (p *Proxy) normalizedAttempts() int {
 	n := p.cfg.FailoverAttempts
 	if n <= 0 {
-		return 3
+		return domain.DefaultFailoverAttempts
 	}
-	return min(n, 8)
+	return min(n, domain.MaxFailoverAttempts)
 }
 
 // selectWithPlan binds a request to its compiled attempt plan. Every real AI

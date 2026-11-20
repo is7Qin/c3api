@@ -219,7 +219,7 @@ func defaults() *Config {
 		// 计费路径防卡死）由 OpenPG/SettleBalance·SettleFefo 统一补，DSN 无需手工写（用户
 		// 显式配置同名参数时尊重不覆盖；statement_timeout 不设会话级——副作用核实见 f1-impl-report.md）。
 		DB:        DBConfig{MaxConns: 20},
-		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: 3, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10, StreamKeepaliveInterval: 10 * time.Second},
+		Proxy:     ProxyConfig{MaxBodySize: 64 << 20, MaxInflight: 50000, UpstreamTimeout: 120 * time.Second, UpstreamStreamTimeout: 30 * time.Minute, FailoverAttempts: domain.DefaultFailoverAttempts, UsageCapture: true, BehindCDN: true, LowBalanceMaxConcurrency: 5, LowBalanceThresholdUSD: 10, StreamKeepaliveInterval: 10 * time.Second},
 		Upstream:  UpstreamConfig{MaxIdleConns: 8192, MaxIdleConnsPerHost: 2048, IdleConnTimeout: 90 * time.Second, DialTimeout: 10 * time.Second, ForceHTTP2: true, HTTP2Shards: 1},
 		Scheduler: SchedulerConfig{DefaultMaxConcurrency: 8, SyncInterval: 30 * time.Second},
 		Usage:     UsageConfig{BatchSize: 500, FlushInterval: 500 * time.Millisecond, LogRetentionDays: 30, QuotaFlushInterval: 10 * time.Second, FlushWorkers: 8, StatsAggInterval: 5 * time.Minute, ErrLogQueueSize: 4096, ErrLogBatchSize: 500, ErrLogFlushInterval: 500 * time.Millisecond, ErrLogRetentionDays: 7, AttemptRetentionDays: 7, StatsRetentionDays: 180},
@@ -370,8 +370,8 @@ func validate(c *Config) error {
 	if c.Upstream.HTTP2Shards > 64 {
 		return fmt.Errorf("upstream.http2_shards must be <= 64 (got %d)", c.Upstream.HTTP2Shards)
 	}
-	if c.Proxy.FailoverAttempts > 8 {
-		return fmt.Errorf("proxy.failover_attempts must be <= 8 (got %d)", c.Proxy.FailoverAttempts)
+	if c.Proxy.FailoverAttempts > domain.MaxFailoverAttempts {
+		return fmt.Errorf("proxy.failover_attempts must be <= %d (got %d)", domain.MaxFailoverAttempts, c.Proxy.FailoverAttempts)
 	}
 	// proxy.low_balance_max_concurrency：并发上限不能为负——<0 启动即拒绝。
 	// 仅当 >0（特性开启）时才要求阈值 >0（否则阈值无意义/钳制恒不触发）；

@@ -229,9 +229,8 @@ func (w *CreditWorker) releaseFrozenOnce(ctx context.Context) (int, error) {
 
 // applyWithRetry 有界重试 40P01/55P03（§5.7）。同一批重放幂等（标记计数守卫）。
 func (w *CreditWorker) applyWithRetry(ctx context.Context, batch []BatchRow, freeze map[int64]int) error {
-	const maxAttempts = 5
 	var err error
-	for attempt := range maxAttempts {
+	for attempt := range retryMaxAttempts {
 		if err = w.store.ApplyCreditTx(ctx, batch, freeze); err == nil {
 			return nil
 		}

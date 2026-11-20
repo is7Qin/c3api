@@ -15,6 +15,10 @@ import (
 	"github.com/is7qin/c3api/pkg/logx"
 )
 
+// retryMaxAttempts 是 40P01/55P03 重试的上界（§5.7）。两个 worker（thaw 与
+// credit）共用同一个上界，不许各自再写一份字面量。
+const retryMaxAttempts = 5
+
 // ThawStore 解冻链持久面（repository 实现：四步独立顺序 SQL + 单连接契约 + 提交前
 // 覆盖守卫；§5.3）。ThawDueChunks 返回本批删除的桶行数。
 type ThawStore interface {
@@ -176,9 +180,8 @@ func (w *ThawWorker) recoveryEtaSeconds() int64 {
 
 // thawWithRetry 有界重试 40P01/55P03（§5.7）。同一桶重放幂等（谓词 + 删除同事务）。
 func (w *ThawWorker) thawWithRetry(ctx context.Context) (int, error) {
-	const maxAttempts = 5
 	var err error
-	for attempt := range maxAttempts {
+	for attempt := range retryMaxAttempts {
 		var n int
 		if n, err = w.store.ThawDueChunks(ctx, w.batchLimit()); err == nil {
 			return n, nil

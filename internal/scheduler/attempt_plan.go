@@ -9,7 +9,9 @@ import (
 	"github.com/is7qin/c3api/internal/domain"
 )
 
-const MaxAttemptPlanAccounts = 8
+// MaxAttemptPlanAccounts 是跨账号 attempted-ID 去重槽位数与数组界，来源唯一：
+// domain.MaxFailoverAttempts（配置校验的同一硬上限）。
+const MaxAttemptPlanAccounts = domain.MaxFailoverAttempts
 
 var ErrAttemptsExhausted = errors.New("scheduler: attempt plan exhausted")
 
