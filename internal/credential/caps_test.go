@@ -148,11 +148,11 @@ func TestCapsColumnInvariants(t *testing.T) {
 		require.Equal(t, !static, c.validAcctExt, "%q：账号 ext 子表只为 SDK 通道存在", typ)
 		// 秘密只能在一个地方：两边同时为真意味着同一份凭据有两个断言来源。
 		require.False(t, c.usesAccountExt && c.usesStaticKey, "%q：account_ext 与 upstream_key 互斥", typ)
-		// 能服务 responses 的类型都必须有模板 ext（当前设计事实：格式校验/flags 挂在
-		// template_ext 上）。
-		if c.responsesFormats {
-			require.True(t, c.validTplExt, "%q：responsesFormats ⇒ 模板 ext 子表可用", typ)
-		}
+		// 能服务 responses 的类型 ⟺ 有模板 ext（当前设计事实：格式校验/flags 挂在
+		// template_ext 上，而 api_key 是唯一不碰 responses 格式的 static-key 类型）。
+		// 必须写成等式而不是单向蕴含：单向时把 api_key 两位同时改真仍然成立，
+		// 表 + golden 同步改错就没人咬了（对抗评审的 M4）。
+		require.Equal(t, c.responsesFormats, c.validTplExt, "%q：responsesFormats ⇔ 模板 ext 子表可用", typ)
 	}
 }
 
@@ -173,6 +173,10 @@ var typeNameFragments = []string{"Codex", "BPS", "ResponsesProvider"}
 //
 // 规则：① 方法：除三个既有谓词外不得再有 Is* 形态的新谓词；② 方法名与包级导出函数名
 // 都不得含 Codex / BPS / ResponsesProvider。
+//
+// 已知残余（名字型门禁的固有边界，靠 review 兜底，不假装已覆盖）：
+//   - 换名：如 `NeedsSDKEntry`，既无 `Is` 前缀也不含三段名，本门禁放行；
+//   - 挪包：把 helper 放到别的包（如 `internal/domain`），本门禁只扫本包，放行。
 func TestCredentialPkgOwnsNoTypePredicateHelper(t *testing.T) {
 	names := credentialSourceFiles(t)
 	hit := func(name string) (string, bool) {
