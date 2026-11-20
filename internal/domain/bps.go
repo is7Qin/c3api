@@ -218,16 +218,6 @@ func BPSProfileHash(raw []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-// BPSFormatsOnly reports the format gate for the BPS provider.
-func BPSFormatsOnly(formats []RequestFormat) bool {
-	for _, f := range formats {
-		if f != FormatOpenAIResponses && f != FormatOpenAIResponsesWS {
-			return false
-		}
-	}
-	return true
-}
-
 // ValidateBPSProfileJSON enforces the phase-1 storage boundary: a profile is
 // a complete non-null JSON object. Detailed DeviceProfile validation remains in
 // sdkbridge, where bps-sdk is the authority.

@@ -96,15 +96,6 @@ func (t Type) UsesStaticKey() bool { return capsTable[t].usesStaticKey }
 // RequiresFixedEndpoint reports providers that own their upstream endpoint.
 func (t Type) RequiresFixedEndpoint() bool { return capsTable[t].fixedEndpoint }
 
-// SupportsResponsesFormat reports whether a provider may serve one of the two
-// standard Responses formats. BPS is deliberately restricted to these formats.
-func (t Type) SupportsResponsesFormat(format string) bool {
-	if format != "openai-responses" && format != "openai-responses-ws" {
-		return false
-	}
-	return capsTable[t].responsesFormats
-}
-
 // CredentialInput 凭据取用输入：api_key 类型用 APIKey（调度 Selection 携带
 // 的静态 Key）；oauth 等类型后续按 AccountID 从凭据扩展表加载。
 type CredentialInput struct {

@@ -934,19 +934,11 @@ func validateTemplate(t *domain.Template) error {
 	if err != nil {
 		return err
 	}
-	// Provider-specific format gates: BPS is strictly standard Responses HTTP/WS;
-	// existing Codex/special compatibility continues to allow its established
-	// image/search formats. Static-key api_key/custom remain unrestricted here.
-	if t.CredentialType.IsBPS() {
-		if !domain.BPSFormatsOnly(t.SupportedFormats) {
-			return ErrInvalidInput
-		}
-	} else if t.CredentialType != credential.TypeAPIKey && t.CredentialType != credential.TypeCustom {
-		for _, f := range t.SupportedFormats {
-			if f != domain.FormatOpenAIResponses && f != domain.FormatOpenAIResponsesWS && f != domain.FormatOpenAIImages && f != domain.FormatOpenAISearch {
-				return ErrInvalidInput
-			}
-		}
+	// 格式白名单：唯一真值是 domain.allowedFormats（api_key/custom 全 6 格式；
+	// responses-special/codex 4 格式；bps 仅 responses/ws）。与批量更新模板共用
+	// validateFormatsForType。
+	if err := validateFormatsForType(t.CredentialType, t.SupportedFormats); err != nil {
+		return err
 	}
 	for f, models := range t.FormatModels {
 		if !seen[f] || len(models) == 0 {

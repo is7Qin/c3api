@@ -26,13 +26,12 @@ const (
 // 加一个类型时漏改任何一处都**静默**落 default——编译器不报错，生产走错分支。
 // 收成一张表之后，「漏掉」变成「表里没这一行」：caps_test.go 的 golden 会红。
 type caps struct {
-	ch               Channel
-	validTplExt      bool // 模板 ext 子表可用
-	validAcctExt     bool // 账号 ext 子表可用
-	usesAccountExt   bool // 秘密/profile 在 account_ext
-	usesStaticKey    bool // 需要 account.upstream_key
-	fixedEndpoint    bool // 自带上游端点
-	responsesFormats bool // 可服务 openai-responses / -ws 两种格式
+	ch             Channel
+	validTplExt    bool // 模板 ext 子表可用
+	validAcctExt   bool // 账号 ext 子表可用
+	usesAccountExt bool // 秘密/profile 在 account_ext
+	usesStaticKey  bool // 需要 account.upstream_key
+	fixedEndpoint  bool // 自带上游端点
 }
 
 // capsTable 是唯一的能力真相：类型集合与每个能力位只在这里声明一次，方法只做
@@ -45,40 +44,35 @@ var capsTable = map[Type]caps{
 		usesStaticKey: true,
 	},
 	TypeResponsesSpecial: {
-		ch:               ChannelStaticKey,
-		validTplExt:      true,
-		usesStaticKey:    true,
-		responsesFormats: true,
+		ch:            ChannelStaticKey,
+		validTplExt:   true,
+		usesStaticKey: true,
 	},
 	TypeCustom: {
-		ch:               ChannelStaticKey,
-		validTplExt:      true,
-		usesStaticKey:    true,
-		responsesFormats: true,
+		ch:            ChannelStaticKey,
+		validTplExt:   true,
+		usesStaticKey: true,
 	},
 	TypeCodexOAuth: {
-		ch:               ChannelCodex,
-		validTplExt:      true,
-		validAcctExt:     true,
-		usesAccountExt:   true,
-		fixedEndpoint:    true,
-		responsesFormats: true,
+		ch:             ChannelCodex,
+		validTplExt:    true,
+		validAcctExt:   true,
+		usesAccountExt: true,
+		fixedEndpoint:  true,
 	},
 	TypeCodexPAT: {
-		ch:               ChannelCodex,
-		validTplExt:      true,
-		validAcctExt:     true,
-		usesAccountExt:   true,
-		fixedEndpoint:    true,
-		responsesFormats: true,
+		ch:             ChannelCodex,
+		validTplExt:    true,
+		validAcctExt:   true,
+		usesAccountExt: true,
+		fixedEndpoint:  true,
 	},
 	TypeBPS: {
-		ch:               ChannelBPS,
-		validTplExt:      true,
-		validAcctExt:     true,
-		usesAccountExt:   true,
-		fixedEndpoint:    true,
-		responsesFormats: true,
+		ch:             ChannelBPS,
+		validTplExt:    true,
+		validAcctExt:   true,
+		usesAccountExt: true,
+		fixedEndpoint:  true,
 	},
 }
 

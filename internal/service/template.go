@@ -7,7 +7,6 @@ package service
 import (
 	"context"
 
-	"github.com/is7qin/c3api/internal/credential"
 	"github.com/is7qin/c3api/internal/domain"
 	"github.com/is7qin/c3api/internal/notify"
 	"github.com/is7qin/c3api/internal/repository"
@@ -84,12 +83,11 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 	if err := validateTemplatePatch(p); err != nil {
 		return err
 	}
-	// 类型-格式约束：批量 patch 不含 credential_type，supported_formats 变更
-	// 时按既有行类型校验（special/oauth/pat 模板只能改成 resp/resp-ws/
-	// openai-images/openai-search——扩展：images 直连两类型同支持，
-	// codex 走 SDK 生图；search 四类型分派全可达）。一次 IN 批量取模板（替代
-	// 逐 id GetTemplate 的 N+1）；缺失任一目标 id → 404（与逐 id 语义一致，
-	// 先于任何更新）。
+	// 类型-格式约束：批量 patch 不含 credential_type，supported_formats 变更时按
+	// 既有行类型对照权威表（domain.allowedFormats）逐成员校验——与创建/更新模板
+	// 共用 validateFormatsForType，不再各写一份格式字面量。一次 IN 批量取模板（替代
+	// 逐 id GetTemplate 的 N+1）；缺失任一目标 id → 404（与逐 id 语义一致，先于任何
+	// 更新）。表外历史 credential_type → fail-closed（ErrInvalidInput）。
 	if p.SupportedFormats != nil {
 		tpls, err := s.store.GetTemplatesByIDs(ctx, ids)
 		if err != nil {
@@ -99,19 +97,8 @@ func (s *Service) UpdateTemplatesBatch(ctx context.Context, ids []int64, p repos
 			return ErrNotFound // 缺 id（validateIDs 已去重，数量可精确对比）
 		}
 		for _, t := range tpls {
-			if t.CredentialType.IsBPS() {
-				if !domain.BPSFormatsOnly(*p.SupportedFormats) {
-					return ErrInvalidInput
-				}
-				continue
-			}
-			if t.CredentialType == credential.TypeAPIKey || t.CredentialType == credential.TypeCustom {
-				continue
-			}
-			for _, f := range *p.SupportedFormats {
-				if f != domain.FormatOpenAIResponses && f != domain.FormatOpenAIResponsesWS && f != domain.FormatOpenAIImages && f != domain.FormatOpenAISearch {
-					return ErrInvalidInput
-				}
+			if err := validateFormatsForType(t.CredentialType, *p.SupportedFormats); err != nil {
+				return err
 			}
 		}
 	}

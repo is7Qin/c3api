@@ -20,9 +20,6 @@ func TestBPSProviderCapabilities(t *testing.T) {
 	require.True(t, TypeBPS.UsesAccountExt())
 	require.False(t, TypeBPS.UsesStaticKey())
 	require.True(t, TypeBPS.RequiresFixedEndpoint())
-	require.True(t, TypeBPS.SupportsResponsesFormat("openai-responses"))
-	require.True(t, TypeBPS.SupportsResponsesFormat("openai-responses-ws"))
-	require.False(t, TypeBPS.SupportsResponsesFormat("openai-chat"))
 	require.False(t, TypeBPS.IsCodex())
 }
 

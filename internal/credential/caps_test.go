@@ -32,7 +32,7 @@ type wantBehavior struct {
 	valid, validTplExt, validAcctExt bool
 	isCodex, isBPS, isRespProvider   bool
 	usesAcctExt, usesStaticKey       bool
-	fixedEndpoint, respFmt           bool
+	fixedEndpoint                    bool
 	group                            []Type
 }
 
@@ -47,43 +47,43 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 			valid: true, validTplExt: false, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
 			usesAcctExt: false, usesStaticKey: true,
-			fixedEndpoint: false, respFmt: false,
-			group: []Type{TypeAPIKey},
+			fixedEndpoint: false,
+			group:         []Type{TypeAPIKey},
 		},
 		TypeResponsesSpecial: {
 			valid: true, validTplExt: true, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
 			usesAcctExt: false, usesStaticKey: true,
-			fixedEndpoint: false, respFmt: true,
-			group: []Type{TypeResponsesSpecial},
+			fixedEndpoint: false,
+			group:         []Type{TypeResponsesSpecial},
 		},
 		TypeCustom: {
 			valid: true, validTplExt: true, validAcctExt: false,
 			isCodex: false, isBPS: false, isRespProvider: false,
 			usesAcctExt: false, usesStaticKey: true,
-			fixedEndpoint: false, respFmt: true,
-			group: []Type{TypeCustom},
+			fixedEndpoint: false,
+			group:         []Type{TypeCustom},
 		},
 		TypeCodexOAuth: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: true, isBPS: false, isRespProvider: true,
 			usesAcctExt: true, usesStaticKey: false,
-			fixedEndpoint: true, respFmt: true,
-			group: []Type{TypeCodexOAuth, TypeCodexPAT},
+			fixedEndpoint: true,
+			group:         []Type{TypeCodexOAuth, TypeCodexPAT},
 		},
 		TypeCodexPAT: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: true, isBPS: false, isRespProvider: true,
 			usesAcctExt: true, usesStaticKey: false,
-			fixedEndpoint: true, respFmt: true,
-			group: []Type{TypeCodexOAuth, TypeCodexPAT},
+			fixedEndpoint: true,
+			group:         []Type{TypeCodexOAuth, TypeCodexPAT},
 		},
 		TypeBPS: {
 			valid: true, validTplExt: true, validAcctExt: true,
 			isCodex: false, isBPS: true, isRespProvider: true,
 			usesAcctExt: true, usesStaticKey: false,
-			fixedEndpoint: true, respFmt: true,
-			group: []Type{TypeBPS},
+			fixedEndpoint: true,
+			group:         []Type{TypeBPS},
 		},
 	}
 	// 表键集合与 golden 类型集合绑定：加/删表行而漏改这里 → 红（漏掉一行不再等于
@@ -100,10 +100,6 @@ func TestTypeBehaviorFrozen(t *testing.T) {
 		require.Equal(t, w.usesAcctExt, typ.UsesAccountExt(), "%q.UsesAccountExt", typ)
 		require.Equal(t, w.usesStaticKey, typ.UsesStaticKey(), "%q.UsesStaticKey", typ)
 		require.Equal(t, w.fixedEndpoint, typ.RequiresFixedEndpoint(), "%q.RequiresFixedEndpoint", typ)
-		require.Equal(t, w.respFmt, typ.SupportsResponsesFormat("openai-responses"), "%q.SupportsResponsesFormat(openai-responses)", typ)
-		require.Equal(t, w.respFmt, typ.SupportsResponsesFormat("openai-responses-ws"), "%q.SupportsResponsesFormat(openai-responses-ws)", typ)
-		// 格式白名单与能力位无关：responses-special/codex/bps 只允许两种格式是硬约束。
-		require.False(t, typ.SupportsResponsesFormat("openai-chat"), "%q.SupportsResponsesFormat(openai-chat)", typ)
 		require.Equal(t, w.group, typ.IdentityGroup(), "%q.IdentityGroup：身份组决定账号查重作用域，不能按名称猜", typ)
 	}
 }
@@ -148,11 +144,6 @@ func TestCapsColumnInvariants(t *testing.T) {
 		require.Equal(t, !static, c.validAcctExt, "%q：账号 ext 子表只为 SDK 通道存在", typ)
 		// 秘密只能在一个地方：两边同时为真意味着同一份凭据有两个断言来源。
 		require.False(t, c.usesAccountExt && c.usesStaticKey, "%q：account_ext 与 upstream_key 互斥", typ)
-		// 能服务 responses 的类型 ⟺ 有模板 ext（当前设计事实：格式校验/flags 挂在
-		// template_ext 上，而 api_key 是唯一不碰 responses 格式的 static-key 类型）。
-		// 必须写成等式而不是单向蕴含：单向时把 api_key 两位同时改真仍然成立，
-		// 表 + golden 同步改错就没人咬了（对抗评审的 M4）。
-		require.Equal(t, c.responsesFormats, c.validTplExt, "%q：responsesFormats ⇔ 模板 ext 子表可用", typ)
 	}
 }
 
